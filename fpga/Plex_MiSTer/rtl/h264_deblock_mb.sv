@@ -90,20 +90,21 @@ module h264_deblock_mb #(
 
 	reg [2:0] state;
 
-	// Working window as byte arrays. Access is cycle-iterative (one lane of
-	// one edge segment at a time) so a single read/write port pair is enough
-	// and Quartus can map these to M10K instead of giant fabric mux trees.
-	// Prior packed [8*N-1:0] windows + 4-lane parallel gather synthesized to
-	// ~38k ALMs for this module alone (product-wire3 fit.rpt).
-	(* ramstyle = "no_rw_check" *) reg [7:0] wy [0:255];  // 16x16 luma MB
-	(* ramstyle = "no_rw_check" *) reg [7:0] wu [0:63];   // 8x8 Cb
-	(* ramstyle = "no_rw_check" *) reg [7:0] wv [0:63];   // 8x8 Cr
-	(* ramstyle = "no_rw_check" *) reg [7:0] ly [0:63];   // left luma strip 16x4
-	(* ramstyle = "no_rw_check" *) reg [7:0] lu [0:31];   // left Cb strip 8x4
-	(* ramstyle = "no_rw_check" *) reg [7:0] lv [0:31];
-	(* ramstyle = "no_rw_check" *) reg [7:0] ty [0:63];   // top luma strip 4x16
-	(* ramstyle = "no_rw_check" *) reg [7:0] tu [0:31];   // top Cb strip 4x8
-	(* ramstyle = "no_rw_check" *) reg [7:0] tv [0:31];
+	// Working window as byte arrays (FORCE LOGIC, not M10K).
+	// Quartus 17 VRFX Internal Error ("read to RAM wasn't mapped to a specific
+	// read port") if these are inferred as RAM and then read from comb get_y/
+	// get_c functions. Sequential single-lane filter still keeps the mux tree
+	// small vs the prior packed multi-lane fabric (~38k ALMs).
+	// Upper-row linebufs (lb_*) stay true M10K — only sequential clocked access.
+	(* ramstyle = "logic" *) reg [7:0] wy [0:255];  // 16x16 luma MB
+	(* ramstyle = "logic" *) reg [7:0] wu [0:63];   // 8x8 Cb
+	(* ramstyle = "logic" *) reg [7:0] wv [0:63];   // 8x8 Cr
+	(* ramstyle = "logic" *) reg [7:0] ly [0:63];   // left luma strip 16x4
+	(* ramstyle = "logic" *) reg [7:0] lu [0:31];   // left Cb strip 8x4
+	(* ramstyle = "logic" *) reg [7:0] lv [0:31];
+	(* ramstyle = "logic" *) reg [7:0] ty [0:63];   // top luma strip 4x16
+	(* ramstyle = "logic" *) reg [7:0] tu [0:31];   // top Cb strip 4x8
+	(* ramstyle = "logic" *) reg [7:0] tv [0:31];
 
 	// Upper neighbour line buffers, one entry per macroblock column.
 	// Single-ported, sequential access only — M10K is correct here.
@@ -225,30 +226,11 @@ module h264_deblock_mb #(
 	);
 
 	// ------------------------------------------------------------------
-	// Window access helpers. x may be -4..15 and y -4..15 for luma, -4..7 for
-	// chroma; the negative ranges select the neighbour strips.
+	// Window access — NO functions/tasks that index inferred RAM.
+	// Quartus 17 VRFX crashes ("read to RAM wasn't mapped to a specific read
+	// port") when comb functions read array memories. Inline muxes + fixed-
+	// width addresses only. put_* is expanded in the clocked S_FILT block.
 	// ------------------------------------------------------------------
-	function automatic [7:0] get_y;
-		input integer x;
-		input integer y;
-		begin
-			if (x < 0)      get_y = ly[y * 4 + (x + 4)];
-			else if (y < 0) get_y = ty[(y + 4) * 16 + x];
-			else            get_y = wy[y * 16 + x];
-		end
-	endfunction
-
-	function automatic [7:0] get_c;
-		input        comp;
-		input integer x;
-		input integer y;
-		begin
-			if (x < 0)      get_c = comp ? lv[y * 4 + (x + 4)] : lu[y * 4 + (x + 4)];
-			else if (y < 0) get_c = comp ? tv[(y + 4) * 8 + x] : tu[(y + 4) * 8 + x];
-			else            get_c = comp ? wv[y * 8 + x] : wu[y * 8 + x];
-		end
-	endfunction
-
 	function automatic [LBY_AW-1:0] lby_addr;
 		input [15:0] a;
 		begin
@@ -263,106 +245,235 @@ module h264_deblock_mb #(
 		end
 	endfunction
 
-	task put_y;
-		input integer x;
-		input integer y;
-		input [7:0] v;
-		integer idx;
-		begin
-			if (x < 0) begin
-				idx = y * 4 + (x + 4);
-				ly[idx] <= v;
-			end else if (y < 0) begin
-				idx = (y + 4) * 16 + x;
-				ty[idx] <= v;
-			end else begin
-				idx = y * 16 + x;
-				wy[idx] <= v;
-			end
-		end
-	endtask
-
-	task put_c;
-		input        comp;
-		input integer x;
-		input integer y;
-		input [7:0] v;
-		integer idx;
-		begin
-			if (x < 0) begin
-				idx = y * 4 + (x + 4);
-				if (comp) lv[idx] <= v;
-				else      lu[idx] <= v;
-			end else if (y < 0) begin
-				idx = (y + 4) * 8 + x;
-				if (comp) tv[idx] <= v;
-				else      tu[idx] <= v;
-			end else begin
-				idx = y * 8 + x;
-				if (comp) wv[idx] <= v;
-				else      wu[idx] <= v;
-			end
-		end
-	endtask
-
 	// ------------------------------------------------------------------
 	// Single-lane gather for current (fstep, flane). Lanes iterate in time.
 	// ------------------------------------------------------------------
 	reg [1:0] flane;
 	wire [1:0] flane_last = f_chroma ? 2'd1 : 2'd3;
 
-	reg [7:0] gp3, gp2, gp1, gp0, gq0, gq1, gq2, gq3;
-	integer g_x0;
-	integer g_y0;
-	integer g_pos;
+	// Edge origin and lane position (luma 0..15 / chroma 0..7).
+	wire [4:0] g_edge4 = {3'd0, f_edge} << 2; // *4
+	wire [4:0] g_pos_y = ({3'd0, f_seg} << 2) + {3'd0, flane}; // seg*4+lane
+	wire [3:0] g_pos_c = ({2'd0, f_seg} << 1) + {2'd0, flane[0]}; // seg*2+lane
+
+	// Eight sample coordinates relative to edge (p3..q3).
+	// Vertical edge: x varies, y = g_pos; horizontal: y varies, x = g_pos.
+	reg signed [5:0] gx_p3, gx_p2, gx_p1, gx_p0, gx_q0, gx_q1, gx_q2, gx_q3;
+	reg signed [5:0] gy_p3, gy_p2, gy_p1, gy_p0, gy_q0, gy_q1, gy_q2, gy_q3;
 	always @* begin
-		g_x0 = {30'd0, f_edge} * 4;
-		g_y0 = {30'd0, f_edge} * 4;
+		if (!f_horiz) begin
+			// vertical edge at x = g_edge4
+			gx_p3 = $signed({1'b0, g_edge4}) - 6'sd4;
+			gx_p2 = $signed({1'b0, g_edge4}) - 6'sd3;
+			gx_p1 = $signed({1'b0, g_edge4}) - 6'sd2;
+			gx_p0 = $signed({1'b0, g_edge4}) - 6'sd1;
+			gx_q0 = $signed({1'b0, g_edge4});
+			gx_q1 = $signed({1'b0, g_edge4}) + 6'sd1;
+			gx_q2 = $signed({1'b0, g_edge4}) + 6'sd2;
+			gx_q3 = $signed({1'b0, g_edge4}) + 6'sd3;
+			gy_p3 = f_chroma ? $signed({2'b0, g_pos_c}) : $signed({1'b0, g_pos_y});
+			gy_p2 = gy_p3; gy_p1 = gy_p3; gy_p0 = gy_p3;
+			gy_q0 = gy_p3; gy_q1 = gy_p3; gy_q2 = gy_p3; gy_q3 = gy_p3;
+		end else begin
+			gy_p3 = $signed({1'b0, g_edge4}) - 6'sd4;
+			gy_p2 = $signed({1'b0, g_edge4}) - 6'sd3;
+			gy_p1 = $signed({1'b0, g_edge4}) - 6'sd2;
+			gy_p0 = $signed({1'b0, g_edge4}) - 6'sd1;
+			gy_q0 = $signed({1'b0, g_edge4});
+			gy_q1 = $signed({1'b0, g_edge4}) + 6'sd1;
+			gy_q2 = $signed({1'b0, g_edge4}) + 6'sd2;
+			gy_q3 = $signed({1'b0, g_edge4}) + 6'sd3;
+			gx_p3 = f_chroma ? $signed({2'b0, g_pos_c}) : $signed({1'b0, g_pos_y});
+			gx_p2 = gx_p3; gx_p1 = gx_p3; gx_p0 = gx_p3;
+			gx_q0 = gx_p3; gx_q1 = gx_p3; gx_q2 = gx_p3; gx_q3 = gx_p3;
+		end
+	end
+
+	// Address helpers: map (x,y) into strip or MB window (unsigned indices).
+	// Luma left ly[y*4+(x+4)] x=-4..-1; top ty[(y+4)*16+x] y=-4..-1; MB wy[y*16+x].
+	// Pure arithmetic functions (no array reads) — safe for Quartus 17.
+	function automatic [5:0] y_idx_left;
+		input signed [5:0] x;
+		input signed [5:0] y;
+		reg signed [5:0] x4;
+		begin
+			x4 = x + 6'sd4; // 0..3 when x in -4..-1
+			y_idx_left = {y[3:0], x4[1:0]};
+		end
+	endfunction
+	function automatic [5:0] y_idx_top;
+		input signed [5:0] x;
+		input signed [5:0] y;
+		reg signed [5:0] y4;
+		begin
+			y4 = y + 6'sd4; // 0..3 when y in -4..-1
+			y_idx_top = {y4[1:0], x[3:0]};
+		end
+	endfunction
+	function automatic [7:0] y_idx_mb;
+		input signed [5:0] x;
+		input signed [5:0] y;
+		begin
+			y_idx_mb = {y[3:0], x[3:0]};
+		end
+	endfunction
+	function automatic [4:0] c_idx_left;
+		input signed [5:0] x;
+		input signed [5:0] y;
+		reg signed [5:0] x4;
+		begin
+			x4 = x + 6'sd4;
+			c_idx_left = {y[2:0], x4[1:0]};
+		end
+	endfunction
+	function automatic [4:0] c_idx_top;
+		input signed [5:0] x;
+		input signed [5:0] y;
+		reg signed [5:0] y4;
+		begin
+			y4 = y + 6'sd4;
+			c_idx_top = {y4[1:0], x[2:0]};
+		end
+	endfunction
+	function automatic [5:0] c_idx_mb;
+		input signed [5:0] x;
+		input signed [5:0] y;
+		begin
+			c_idx_mb = {y[2:0], x[2:0]};
+		end
+	endfunction
+
+	// Pure mux sample read — no array-read-inside-function (Quartus-safe).
+	reg [7:0] gp3, gp2, gp1, gp0, gq0, gq1, gq2, gq3;
+	reg [7:0] rd_y0, rd_y1, rd_y2, rd_y3, rd_y4, rd_y5, rd_y6, rd_y7;
+	reg signed [5:0] rx, ry;
+	integer gi;
+	always @* begin
 		gp3 = 8'd0; gp2 = 8'd0; gp1 = 8'd0; gp0 = 8'd0;
 		gq0 = 8'd0; gq1 = 8'd0; gq2 = 8'd0; gq3 = 8'd0;
-		if (!f_chroma) begin
-			g_pos = {30'd0, f_seg} * 4 + {30'd0, flane};
-			if (!f_horiz) begin
-				gp3 = get_y(g_x0 - 4, g_pos);
-				gp2 = get_y(g_x0 - 3, g_pos);
-				gp1 = get_y(g_x0 - 2, g_pos);
-				gp0 = get_y(g_x0 - 1, g_pos);
-				gq0 = get_y(g_x0 + 0, g_pos);
-				gq1 = get_y(g_x0 + 1, g_pos);
-				gq2 = get_y(g_x0 + 2, g_pos);
-				gq3 = get_y(g_x0 + 3, g_pos);
+		rd_y0 = 8'd0; rd_y1 = 8'd0; rd_y2 = 8'd0; rd_y3 = 8'd0;
+		rd_y4 = 8'd0; rd_y5 = 8'd0; rd_y6 = 8'd0; rd_y7 = 8'd0;
+		// Unrolled 8 taps — each is a direct array mux, not a function RAM read.
+		for (gi = 0; gi < 8; gi = gi + 1) begin
+			case (gi)
+				0: begin rx = gx_p3; ry = gy_p3; end
+				1: begin rx = gx_p2; ry = gy_p2; end
+				2: begin rx = gx_p1; ry = gy_p1; end
+				3: begin rx = gx_p0; ry = gy_p0; end
+				4: begin rx = gx_q0; ry = gy_q0; end
+				5: begin rx = gx_q1; ry = gy_q1; end
+				6: begin rx = gx_q2; ry = gy_q2; end
+				default: begin rx = gx_q3; ry = gy_q3; end
+			endcase
+			if (!f_chroma) begin
+				if (rx < 0)
+					case (gi)
+						0: rd_y0 = ly[y_idx_left(rx, ry)];
+						1: rd_y1 = ly[y_idx_left(rx, ry)];
+						2: rd_y2 = ly[y_idx_left(rx, ry)];
+						3: rd_y3 = ly[y_idx_left(rx, ry)];
+						4: rd_y4 = ly[y_idx_left(rx, ry)];
+						5: rd_y5 = ly[y_idx_left(rx, ry)];
+						6: rd_y6 = ly[y_idx_left(rx, ry)];
+						default: rd_y7 = ly[y_idx_left(rx, ry)];
+					endcase
+				else if (ry < 0)
+					case (gi)
+						0: rd_y0 = ty[y_idx_top(rx, ry)];
+						1: rd_y1 = ty[y_idx_top(rx, ry)];
+						2: rd_y2 = ty[y_idx_top(rx, ry)];
+						3: rd_y3 = ty[y_idx_top(rx, ry)];
+						4: rd_y4 = ty[y_idx_top(rx, ry)];
+						5: rd_y5 = ty[y_idx_top(rx, ry)];
+						6: rd_y6 = ty[y_idx_top(rx, ry)];
+						default: rd_y7 = ty[y_idx_top(rx, ry)];
+					endcase
+				else
+					case (gi)
+						0: rd_y0 = wy[y_idx_mb(rx, ry)];
+						1: rd_y1 = wy[y_idx_mb(rx, ry)];
+						2: rd_y2 = wy[y_idx_mb(rx, ry)];
+						3: rd_y3 = wy[y_idx_mb(rx, ry)];
+						4: rd_y4 = wy[y_idx_mb(rx, ry)];
+						5: rd_y5 = wy[y_idx_mb(rx, ry)];
+						6: rd_y6 = wy[y_idx_mb(rx, ry)];
+						default: rd_y7 = wy[y_idx_mb(rx, ry)];
+					endcase
 			end else begin
-				gp3 = get_y(g_pos, g_y0 - 4);
-				gp2 = get_y(g_pos, g_y0 - 3);
-				gp1 = get_y(g_pos, g_y0 - 2);
-				gp0 = get_y(g_pos, g_y0 - 1);
-				gq0 = get_y(g_pos, g_y0 + 0);
-				gq1 = get_y(g_pos, g_y0 + 1);
-				gq2 = get_y(g_pos, g_y0 + 2);
-				gq3 = get_y(g_pos, g_y0 + 3);
-			end
-		end else begin
-			g_pos = {30'd0, f_seg} * 2 + {30'd0, flane};
-			if (!f_horiz) begin
-				gp3 = get_c(f_comp, g_x0 - 4, g_pos);
-				gp2 = get_c(f_comp, g_x0 - 3, g_pos);
-				gp1 = get_c(f_comp, g_x0 - 2, g_pos);
-				gp0 = get_c(f_comp, g_x0 - 1, g_pos);
-				gq0 = get_c(f_comp, g_x0 + 0, g_pos);
-				gq1 = get_c(f_comp, g_x0 + 1, g_pos);
-				gq2 = get_c(f_comp, g_x0 + 2, g_pos);
-				gq3 = get_c(f_comp, g_x0 + 3, g_pos);
-			end else begin
-				gp3 = get_c(f_comp, g_pos, g_y0 - 4);
-				gp2 = get_c(f_comp, g_pos, g_y0 - 3);
-				gp1 = get_c(f_comp, g_pos, g_y0 - 2);
-				gp0 = get_c(f_comp, g_pos, g_y0 - 1);
-				gq0 = get_c(f_comp, g_pos, g_y0 + 0);
-				gq1 = get_c(f_comp, g_pos, g_y0 + 1);
-				gq2 = get_c(f_comp, g_pos, g_y0 + 2);
-				gq3 = get_c(f_comp, g_pos, g_y0 + 3);
+				if (rx < 0) begin
+					if (f_comp)
+						case (gi)
+							0: rd_y0 = lv[c_idx_left(rx, ry)];
+							1: rd_y1 = lv[c_idx_left(rx, ry)];
+							2: rd_y2 = lv[c_idx_left(rx, ry)];
+							3: rd_y3 = lv[c_idx_left(rx, ry)];
+							4: rd_y4 = lv[c_idx_left(rx, ry)];
+							5: rd_y5 = lv[c_idx_left(rx, ry)];
+							6: rd_y6 = lv[c_idx_left(rx, ry)];
+							default: rd_y7 = lv[c_idx_left(rx, ry)];
+						endcase
+					else
+						case (gi)
+							0: rd_y0 = lu[c_idx_left(rx, ry)];
+							1: rd_y1 = lu[c_idx_left(rx, ry)];
+							2: rd_y2 = lu[c_idx_left(rx, ry)];
+							3: rd_y3 = lu[c_idx_left(rx, ry)];
+							4: rd_y4 = lu[c_idx_left(rx, ry)];
+							5: rd_y5 = lu[c_idx_left(rx, ry)];
+							6: rd_y6 = lu[c_idx_left(rx, ry)];
+							default: rd_y7 = lu[c_idx_left(rx, ry)];
+						endcase
+				end else if (ry < 0) begin
+					if (f_comp)
+						case (gi)
+							0: rd_y0 = tv[c_idx_top(rx, ry)];
+							1: rd_y1 = tv[c_idx_top(rx, ry)];
+							2: rd_y2 = tv[c_idx_top(rx, ry)];
+							3: rd_y3 = tv[c_idx_top(rx, ry)];
+							4: rd_y4 = tv[c_idx_top(rx, ry)];
+							5: rd_y5 = tv[c_idx_top(rx, ry)];
+							6: rd_y6 = tv[c_idx_top(rx, ry)];
+							default: rd_y7 = tv[c_idx_top(rx, ry)];
+						endcase
+					else
+						case (gi)
+							0: rd_y0 = tu[c_idx_top(rx, ry)];
+							1: rd_y1 = tu[c_idx_top(rx, ry)];
+							2: rd_y2 = tu[c_idx_top(rx, ry)];
+							3: rd_y3 = tu[c_idx_top(rx, ry)];
+							4: rd_y4 = tu[c_idx_top(rx, ry)];
+							5: rd_y5 = tu[c_idx_top(rx, ry)];
+							6: rd_y6 = tu[c_idx_top(rx, ry)];
+							default: rd_y7 = tu[c_idx_top(rx, ry)];
+						endcase
+				end else begin
+					if (f_comp)
+						case (gi)
+							0: rd_y0 = wv[c_idx_mb(rx, ry)];
+							1: rd_y1 = wv[c_idx_mb(rx, ry)];
+							2: rd_y2 = wv[c_idx_mb(rx, ry)];
+							3: rd_y3 = wv[c_idx_mb(rx, ry)];
+							4: rd_y4 = wv[c_idx_mb(rx, ry)];
+							5: rd_y5 = wv[c_idx_mb(rx, ry)];
+							6: rd_y6 = wv[c_idx_mb(rx, ry)];
+							default: rd_y7 = wv[c_idx_mb(rx, ry)];
+						endcase
+					else
+						case (gi)
+							0: rd_y0 = wu[c_idx_mb(rx, ry)];
+							1: rd_y1 = wu[c_idx_mb(rx, ry)];
+							2: rd_y2 = wu[c_idx_mb(rx, ry)];
+							3: rd_y3 = wu[c_idx_mb(rx, ry)];
+							4: rd_y4 = wu[c_idx_mb(rx, ry)];
+							5: rd_y5 = wu[c_idx_mb(rx, ry)];
+							6: rd_y6 = wu[c_idx_mb(rx, ry)];
+							default: rd_y7 = wu[c_idx_mb(rx, ry)];
+						endcase
+				end
 			end
 		end
+		gp3 = rd_y0; gp2 = rd_y1; gp1 = rd_y2; gp0 = rd_y3;
+		gq0 = rd_y4; gq1 = rd_y5; gq2 = rd_y6; gq3 = rd_y7;
 	end
 
 	wire [7:0] ep2, ep1, ep0, eq0, eq1, eq2;
@@ -469,9 +580,12 @@ module h264_deblock_mb #(
 	end
 
 	integer i;
-	integer w_x0;
-	integer w_y0;
-	integer w_pos;
+	// Writeback coords for filtered taps (p2..q2 / chroma p0,q0).
+	reg signed [5:0] wx0, wy0, wpos;
+	reg signed [5:0] w_x, w_y;
+	reg [7:0] w_v;
+	reg w_do;
+	integer wi;
 
 	always @(posedge clk) begin
 		if (reset) begin
@@ -574,36 +688,56 @@ module h264_deblock_mb #(
 				end
 			end
 
-			// One edge-lane per cycle (shared edge1 datapath).
+			// One edge-lane per cycle (shared edge1 datapath). Inline writes
+			// (no put_* tasks) so Quartus maps each store to one port.
 			S_FILT: begin
-				w_x0 = {30'd0, f_edge} * 4;
-				w_y0 = {30'd0, f_edge} * 4;
+				wx0 = $signed({1'b0, g_edge4});
+				wy0 = $signed({1'b0, g_edge4});
+				wpos = f_chroma ? $signed({2'b0, g_pos_c}) : $signed({1'b0, g_pos_y});
 				if (f_edge_avail && !disable_deblocking && (f_bs != 3'd0)) begin
-					if (!f_chroma) begin
-						w_pos = {30'd0, f_seg} * 4 + {30'd0, flane};
-						if (!f_horiz) begin
-							put_y(w_x0 - 3, w_pos, ep2);
-							put_y(w_x0 - 2, w_pos, ep1);
-							put_y(w_x0 - 1, w_pos, ep0);
-							put_y(w_x0 + 0, w_pos, eq0);
-							put_y(w_x0 + 1, w_pos, eq1);
-							put_y(w_x0 + 2, w_pos, eq2);
-						end else begin
-							put_y(w_pos, w_y0 - 3, ep2);
-							put_y(w_pos, w_y0 - 2, ep1);
-							put_y(w_pos, w_y0 - 1, ep0);
-							put_y(w_pos, w_y0 + 0, eq0);
-							put_y(w_pos, w_y0 + 1, eq1);
-							put_y(w_pos, w_y0 + 2, eq2);
-						end
-					end else begin
-						w_pos = {30'd0, f_seg} * 2 + {30'd0, flane};
-						if (!f_horiz) begin
-							put_c(f_comp, w_x0 - 1, w_pos, ep0);
-							put_c(f_comp, w_x0 + 0, w_pos, eq0);
-						end else begin
-							put_c(f_comp, w_pos, w_y0 - 1, ep0);
-							put_c(f_comp, w_pos, w_y0 + 0, eq0);
+					// Luma writes p2,p1,p0,q0,q1,q2; chroma writes p0,q0 only.
+					for (wi = 0; wi < 6; wi = wi + 1) begin
+						w_do = 1'b0;
+						w_v = 8'd0;
+						w_x = 6'sd0;
+						w_y = 6'sd0;
+						if (!f_chroma) begin
+							w_do = 1'b1;
+							case (wi)
+								0: begin w_v = ep2; if (!f_horiz) begin w_x = wx0 - 6'sd3; w_y = wpos; end else begin w_x = wpos; w_y = wy0 - 6'sd3; end end
+								1: begin w_v = ep1; if (!f_horiz) begin w_x = wx0 - 6'sd2; w_y = wpos; end else begin w_x = wpos; w_y = wy0 - 6'sd2; end end
+								2: begin w_v = ep0; if (!f_horiz) begin w_x = wx0 - 6'sd1; w_y = wpos; end else begin w_x = wpos; w_y = wy0 - 6'sd1; end end
+								3: begin w_v = eq0; if (!f_horiz) begin w_x = wx0;         w_y = wpos; end else begin w_x = wpos; w_y = wy0;         end end
+								4: begin w_v = eq1; if (!f_horiz) begin w_x = wx0 + 6'sd1; w_y = wpos; end else begin w_x = wpos; w_y = wy0 + 6'sd1; end end
+								default: begin w_v = eq2; if (!f_horiz) begin w_x = wx0 + 6'sd2; w_y = wpos; end else begin w_x = wpos; w_y = wy0 + 6'sd2; end end
+							endcase
+							if (w_x < 0)
+								ly[y_idx_left(w_x, w_y)] <= w_v;
+							else if (w_y < 0)
+								ty[y_idx_top(w_x, w_y)] <= w_v;
+							else
+								wy[y_idx_mb(w_x, w_y)] <= w_v;
+						end else if (wi == 2 || wi == 3) begin
+							// chroma: only p0 (wi=2) and q0 (wi=3)
+							w_do = 1'b1;
+							w_v = (wi == 2) ? ep0 : eq0;
+							if (!f_horiz) begin
+								w_x = (wi == 2) ? (wx0 - 6'sd1) : wx0;
+								w_y = wpos;
+							end else begin
+								w_x = wpos;
+								w_y = (wi == 2) ? (wy0 - 6'sd1) : wy0;
+							end
+							if (w_x < 0) begin
+								if (f_comp) lv[c_idx_left(w_x, w_y)] <= w_v;
+								else        lu[c_idx_left(w_x, w_y)] <= w_v;
+							end else if (w_y < 0) begin
+								if (f_comp) tv[c_idx_top(w_x, w_y)] <= w_v;
+								else        tu[c_idx_top(w_x, w_y)] <= w_v;
+							end else begin
+								if (f_comp) wv[c_idx_mb(w_x, w_y)] <= w_v;
+								else        wu[c_idx_mb(w_x, w_y)] <= w_v;
+							end
 						end
 					end
 				end
