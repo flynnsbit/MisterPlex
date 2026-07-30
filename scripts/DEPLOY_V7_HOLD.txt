@@ -5,12 +5,15 @@ Live NOW (untouched this prep):
   --id=misterplex-dev CORENAME=Plex rbf=14eaeff3
   startup hook: --id misterplex-dev (restored); bootcore still OFF
 
-v7 candidate (hybrid 07ff76a4 — NOT deployed):
-  tip:   07ff76a4 = b6071fa (SPI→doorbell steady) + CORENAME warn (ff72293)
-  ARM:   703b2fd410dd0098089b565e7b9b5167
-  freeze: build/arm-deploy-v7-freeze/misterplexd
-  x86:   ba1636a0… NEVER scp
+v7 candidate (hybrid — NOT deployed):
+  tip tree:  029f453 = 07ff76a4 + docs-only lab-IP redaction (no exe path)
+  functional: 07ff76a4 = b6071fa doorbell + CORENAME warn (ff72293)
+  ARM md5:   703b2fd410dd0098089b565e7b9b5167  ← binding identity (not the tip SHA)
+  freeze:    build/arm-deploy-v7-freeze/misterplexd
+             cmp-identical to hybrid build/arm + arm-deploy-candidate/misterplexd-v7
+  x86:       ba1636a0… NEVER scp
   supersedes v6-only 87e8500a (doorbell without CORENAME)
+  AT TRANSFER: re-md5 freeze; refuse if ≠ 703b2fd4…
 
 Full preregister: scripts/DEPLOY_V7_PREREGISTER.txt
   wall 40–90s · rollback prev-c2 a56bbc3c · R1–R7

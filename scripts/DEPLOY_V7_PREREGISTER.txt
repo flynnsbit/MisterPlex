@@ -4,13 +4,17 @@ lane=w-bounce2  prepared ≈2026-07-30T05:00Z  device NOT touched this prep
 ========================================================================
 IDENTITY
 ========================================================================
-tip (hybrid):     07ff76a4  = b6071fa (doorbell promote) + ff72293/07ff76a4 (CORENAME warn)
-ARM freeze:       build/arm-deploy-v7-freeze/misterplexd
-EXPECT_ARM_MD5:   703b2fd410dd0098089b565e7b9b5167
-x86 lab:          ba1636a0… / any non-ARM — NEVER scp
-live now:         a56bbc3c… (v5) --id misterplex-dev CORENAME=Plex rbf=14eaeff3
-supersedes:       v6-only 87e8500a (doorbell without CORENAME) — do not ship v6 alone
-includes:         v4 cast stack + v5 seekGen + v6 SPI→doorbell + CORENAME loud warn
+tip tree (hybrid): 029f453 = 07ff76a4 + docs-only PMS lab-IP redaction (no executable path)
+functional commit: 07ff76a4 = b6071fa (doorbell) + CORENAME warn (ff72293 cherry-pick)
+ARM freeze:        build/arm-deploy-v7-freeze/misterplexd
+EXPECT_ARM_MD5:    703b2fd410dd0098089b565e7b9b5167   ← BINDING (tip SHA is not)
+freeze identity:   cmp-identical to hybrid build/arm/misterplexd and
+                   build/arm-deploy-candidate/misterplexd-v7 (measured 2026-07-30T00:19Z)
+x86 lab:           ba1636a0… / any non-ARM — NEVER scp
+live now:          a56bbc3c… (v5) --id misterplex-dev CORENAME=Plex rbf=14eaeff3
+supersedes:        v6-only 87e8500a (doorbell without CORENAME) — do not ship v6 alone
+includes:          v4 cast stack + v5 seekGen + v6 SPI→doorbell + CORENAME loud warn
+AT TRANSFER:       md5sum freeze immediately before scp; refuse deploy if ≠ EXPECT_ARM_MD5
 
 ========================================================================
 1) DEPLOY SEQUENCE (one visible bounce, daemon only)
