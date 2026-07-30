@@ -7,7 +7,8 @@
 # Pre-registered (publish before measure):
 #   wall-clock: 90–180s claim+bounce + 30–60s daemon install + 15s verify  ≈ 2.5–4 min
 #   on-box after: CORENAME=Plex, --id misterplex-dev, md5=EXPECT_ARM_MD5
-#   RBF unchanged: 41adb98c7a630b541091c22ce291be68
+#   RBF: DO NOT TOUCH. Live wire6 is 14eaeff3270a6f59a434e0f777ed823d
+#        (not 41adb98c — never "restore" that bak). Daemon+conf only.
 #
 # Rollback triggers (act immediately, no deliberation):
 #   R1 --id != misterplex-dev (argv or /resources)
@@ -25,7 +26,7 @@ PASS="${MISTER_PASS:-1}"
 USER="${MISTER_USER:-root}"
 ID_WANT=misterplex-dev
 EXPECT_ARM_MD5="${EXPECT_ARM_MD5:-cd4f422945f50b0267a11290ec9e9adc}"
-EXPECT_RBF_MD5="${EXPECT_RBF_MD5:-41adb98c7a630b541091c22ce291be68}"
+EXPECT_RBF_MD5="${EXPECT_RBF_MD5:-14eaeff3270a6f59a434e0f777ed823d}"
 ROLLBACK_BIN=/media/fat/misterplex/backup/misterplexd.before-20260730T013548Z
 ROLLBACK_CONF=/media/fat/misterplex/backup/misterplex.conf.before-20260730T013548Z
 CAND_ARM="${CAND_ARM:-$HYBRID_ROOT/build/arm/misterplexd}"
@@ -56,26 +57,20 @@ if [[ "$GOT_MD5" != "$EXPECT_ARM_MD5" ]]; then
   log "  got=$GOT_MD5 want=$EXPECT_ARM_MD5"
   exit 1
 fi
-# Architecture belt: must not match known x86 lab hashes
-case "$GOT_MD5" in
-  8798cec0*|ebb1f220*|1e9a1006*|27cb16d9*|ca6e5647*)
-    # ca6e is host bounce2 x86 — never ship
-    if file "$CAND_ARM" | grep -q x86; then
-      log "FAIL: x86 binary"
-      exit 1
-    fi
-    ;;
-esac
+if file "$CAND_ARM" | grep -q x86; then
+  log "FAIL: x86 binary"
+  exit 1
+fi
 
 log "preflight_ok candidate ARM md5 matches expect"
 
 if [[ "$AUTH" != "YES" || "$EXECUTE" != "1" ]]; then
   log "DRY-RUN only (set PARENT_AUTHORIZE_DEPLOY=YES DEPLOY_EXECUTE=1 to ship)"
   log "Would run:"
-  log "  1) no-force claim + visible bounce (Menu→Plex)"
+  log "  1) no-force claim + visible bounce (→Plex)"
   log "  2) install $CAND_ARM via staged deploy (atomic prev-c2 + .new+mv)"
   log "  3) verify on-box md5==$EXPECT_ARM_MD5 and --id=$ID_WANT"
-  log "  4) leave CORENAME=Plex lock released"
+  log "  4) leave CORENAME=Plex lock released; RBF untouched (observe $EXPECT_RBF_MD5)"
   log "  5) on any R1–R4: PREV_BIN=$ROLLBACK_BIN restore (~5–15s)"
   log "pre-registered_duration_s=150..240"
   exit 0
@@ -86,10 +81,7 @@ T0=$(date +%s)
 export MISTER_HOST="$HOST" MISTER_PASS="$PASS" MISTER_USER="$USER"
 export MISTERPLEX_ID="$ID_WANT"
 
-# Stage candidate into this tree's build/arm so deploy_misterplexd.sh picks it
-# without rebuilding a different tip.
 mkdir -p "$ROOT/build/arm"
-# Preserve any local arm build
 if [[ -f "$ROOT/build/arm/misterplexd" ]]; then
   cp -f "$ROOT/build/arm/misterplexd" "$ROOT/build/arm/misterplexd.pre-v4-local.$$"
 fi
@@ -102,100 +94,131 @@ STAGE_MD5=$(md5sum "$ROOT/build/arm/misterplexd" | awk '{print $1}')
 }
 log "staged_local_arm_md5=$STAGE_MD5"
 
-# Skip make rebuild of different sources — deploy script always runs make arm-plexd.
-# Override by pointing BIN via env if supported; else touch-stamp and use MAKEFLAGS.
-# deploy_misterplexd.sh hardcodes make arm-plexd — we need candidate bytes on device.
-# Use a wrapper: copy after make OR patch path. Safest: run remote install path only.
-#
-# Direct path: soft bounce claim, then scp staged binary with deploy script's remote
-# half. To avoid make overwriting candidate, set:
-export SKIP_ARM_REBUILD=1
-# If deploy script ignores SKIP, we install via snapshot of deploy internals:
+# Helper run inside claim (no nested heredoc quoting hell)
+INSTALL_HELPER="$ROOT/build/v4_claim_install.sh"
+cat >"$INSTALL_HELPER" <<HELPER
+#!/usr/bin/env bash
+set -euo pipefail
+HOST=${HOST@Q}
+PASS=${PASS@Q}
+USER=${USER@Q}
+ID_WANT=${ID_WANT@Q}
+EXPECT=${EXPECT_ARM_MD5@Q}
+BIN=${ROOT@Q}/build/arm/misterplexd
+WANT_RBF=${EXPECT_RBF_MD5@Q}
 
-log "STEP1 claim+visible bounce (CORENAME→Plex)"
-# shellcheck disable=SC2086
-MISTER_CLAIM_AGENT=w-bounce2-v4 \
-  "$ROOT/scripts/mister_soft_bounce.sh" claim \
-  --reason "parent-authorised v4 daemon deploy ARM $EXPECT_ARM_MD5" \
-  -- bash -c '
-    set -euo pipefail
-    ROOT="'"$ROOT"'"
-    HOST="'"$HOST"'"
-    PASS="'"$PASS"'"
-    USER="'"$USER"'"
-    ID_WANT="'"$ID_WANT"'"
-    EXPECT="'"$EXPECT_ARM_MD5"'"
-    BIN="'"$ROOT"'/build/arm/misterplexd"
-    echo "INSIDE_CLAIM CORENAME=$(cat /tmp/CORENAME 2>/dev/null || true)"
-    # Atomic deploy (same contract as deploy_misterplexd.sh post-32f0fa3)
-    sshpass -p "$PASS" ssh -o StrictHostKeyChecking=no "$USER@$HOST" \
-      "TAG=before-v4-$(date -u +%Y%m%dT%H%M%SZ) bash -s" <<'"'"'REMOTE_PRE'"'"'
+echo "INSIDE_CLAIM start"
+# CORENAME is on the device; print via ssh for visibility
+sshpass -p "\$PASS" ssh -o StrictHostKeyChecking=no -o ConnectTimeout=12 \
+  "\$USER@\$HOST" 'echo CORENAME_BEFORE=\$(cat /tmp/CORENAME 2>/dev/null || true)'
+
+TAG="before-v4-\$(date -u +%Y%m%dT%H%M%SZ)"
+sshpass -p "\$PASS" ssh -o StrictHostKeyChecking=no -o ConnectTimeout=12 \
+  "\$USER@\$HOST" "TAG='\$TAG' bash -s" <<'REMOTE_PRE'
 set -euo pipefail
 BIN=/media/fat/misterplex/bin/misterplexd
 PREV=/media/fat/misterplex/bin/misterplexd.prev-c2
 CONF=/media/fat/misterplex/misterplex.conf
 BDIR=/media/fat/misterplex/backup
-mkdir -p /media/fat/misterplex/bin "$BDIR"
-if [[ -f "$BIN" ]]; then
-  tmp="${PREV}.new.$$"; cp -f "$BIN" "$tmp"; sync "$tmp" 2>/dev/null || sync || true; mv -f "$tmp" "$PREV"
-  bt="$BDIR/misterplexd.${TAG}"; btmp="${bt}.new.$$"; cp -f "$BIN" "$btmp"; sync "$btmp" 2>/dev/null || sync || true; mv -f "$btmp" "$bt"
-  if [[ -f "$CONF" ]]; then
-    ct="$BDIR/misterplex.conf.${TAG}"; ctmp="${ct}.new.$$"; cp -f "$CONF" "$ctmp"; sync "$ctmp" 2>/dev/null || sync || true; mv -f "$ctmp" "$ct"
+mkdir -p /media/fat/misterplex/bin "\$BDIR"
+if [[ -f "\$BIN" ]]; then
+  tmp="\${PREV}.new.\$\$"
+  cp -f "\$BIN" "\$tmp"
+  sync "\$tmp" 2>/dev/null || sync || true
+  mv -f "\$tmp" "\$PREV"
+  bt="\$BDIR/misterplexd.\${TAG}"
+  btmp="\${bt}.new.\$\$"
+  cp -f "\$BIN" "\$btmp"
+  sync "\$btmp" 2>/dev/null || sync || true
+  mv -f "\$btmp" "\$bt"
+  if [[ -f "\$CONF" ]]; then
+    ct="\$BDIR/misterplex.conf.\${TAG}"
+    ctmp="\${ct}.new.\$\$"
+    cp -f "\$CONF" "\$ctmp"
+    sync "\$ctmp" 2>/dev/null || sync || true
+    mv -f "\$ctmp" "\$ct"
   fi
-  echo "backup_ok prev=$(md5sum "$PREV" | awk "{print \$1}") snap=$bt"
+  echo "backup_ok prev=\$(md5sum "\$PREV" | awk '{print \$1}') snap=\$bt"
 fi
+# Soft-stop only — never kill -9
 if pidof misterplexd >/dev/null 2>&1 || pidof ffmpeg >/dev/null 2>&1; then
-  kill $(pidof misterplexd ffmpeg 2>/dev/null) 2>/dev/null || true
-  sleep 0.4
+  # shellcheck disable=SC2046
+  kill \$(pidof misterplexd ffmpeg 2>/dev/null) 2>/dev/null || true
+  sleep 0.6
 fi
-for p in $(pidof misterplexd 2>/dev/null) $(pidof ffmpeg 2>/dev/null); do kill -9 "$p" 2>/dev/null || true; done
 sleep 0.2
 REMOTE_PRE
-    STAGE=/media/fat/misterplex/bin/misterplexd.new
-    sshpass -p "$PASS" scp -o StrictHostKeyChecking=no "$BIN" "$USER@$HOST:$STAGE"
-    sshpass -p "$PASS" ssh -o StrictHostKeyChecking=no "$USER@$HOST" \
-      "EXPECT='$EXPECT' ID_WANT='$ID_WANT' bash -s" <<'"'"'REMOTE_POST'"'"'
+
+STAGE=/media/fat/misterplex/bin/misterplexd.new
+sshpass -p "\$PASS" scp -o StrictHostKeyChecking=no -o ConnectTimeout=12 \
+  "\$BIN" "\$USER@\$HOST:\$STAGE"
+
+sshpass -p "\$PASS" ssh -o StrictHostKeyChecking=no -o ConnectTimeout=12 \
+  "\$USER@\$HOST" "EXPECT='\$EXPECT' ID_WANT='\$ID_WANT' WANT_RBF='\$WANT_RBF' bash -s" <<'REMOTE_POST'
 set -euo pipefail
 STAGE=/media/fat/misterplex/bin/misterplexd.new
 DEST=/media/fat/misterplex/bin/misterplexd
 CONF=/media/fat/misterplex/misterplex.conf
-chmod +x "$STAGE"
-sync "$STAGE" 2>/dev/null || sync || true
-mv -f "$STAGE" "$DEST"
-got=$(md5sum "$DEST" | awk "{print \$1}")
-echo "onbox_md5=$got"
-if [[ "$got" != "$EXPECT" ]]; then
-  echo "DEPLOY_FAIL md5 want=$EXPECT got=$got" >&2
+chmod +x "\$STAGE"
+sync "\$STAGE" 2>/dev/null || sync || true
+mv -f "\$STAGE" "\$DEST"
+got=\$(md5sum "\$DEST" | awk '{print \$1}')
+echo "onbox_md5=\$got"
+if [[ "\$got" != "\$EXPECT" ]]; then
+  echo "DEPLOY_FAIL md5 want=\$EXPECT got=\$got" >&2
   exit 2
 fi
-# conf product keys — warn only, never silent rewrite
-if ! grep -qE "^[[:space:]]*PRESENT=fpga" "$CONF" 2>/dev/null; then
+if ! grep -qE '^[[:space:]]*PRESENT=fpga' "\$CONF" 2>/dev/null; then
   echo "WARNING: conf missing PRESENT=fpga" >&2
 fi
 : >/media/fat/misterplex/misterplexd.log
-nohup "$DEST" --name MiSTerPlex --id "$ID_WANT" --port 3005 --conf "$CONF" \
+nohup "\$DEST" --name MiSTerPlex --id "\$ID_WANT" --port 3005 --conf "\$CONF" \
   >>/media/fat/misterplex/misterplexd.log 2>&1 &
-sleep 0.8
-ps_line=$(ps w | grep "[m]isterplexd" || true)
-echo "daemon_ps=$ps_line"
-echo "$ps_line" | grep -qE -- "--id[= ]${ID_WANT}( |$)" || {
+sleep 1.0
+ps_line=\$(ps w | grep '[m]isterplexd' || true)
+echo "daemon_ps=\$ps_line"
+echo "\$ps_line" | grep -qE -- "--id[= ]\${ID_WANT}( |\$)" || {
   echo "DEPLOY_FAIL id mismatch" >&2
   exit 7
 }
-res=$(wget -qO- http://127.0.0.1:3005/resources 2>/dev/null || true)
-echo "$res" | grep -q "machineIdentifier=\"${ID_WANT}\"" || {
+res=\$(wget -qO- http://127.0.0.1:3005/resources 2>/dev/null || true)
+echo "\$res" | grep -q "machineIdentifier=\"\${ID_WANT}\"" || {
   echo "DEPLOY_FAIL resources id" >&2
   exit 7
 }
-echo "resources_id_ok=$ID_WANT"
-echo "CORENAME=$(cat /tmp/CORENAME 2>/dev/null || true)"
-rbf=$(md5sum /media/fat/_Utility/Plex.rbf 2>/dev/null | awk "{print \$1}")
-echo "rbf_md5=$rbf"
+echo "resources_id_ok=\$ID_WANT"
+echo "CORENAME=\$(cat /tmp/CORENAME 2>/dev/null || true)"
+rbf=\$(md5sum /media/fat/_Utility/Plex.rbf 2>/dev/null | awk '{print \$1}')
+echo "rbf_md5=\$rbf"
+if [[ -n "\$rbf" && -n "\${WANT_RBF:-}" && "\$rbf" != "\$WANT_RBF" ]]; then
+  echo "WARNING: RBF md5 changed unexpectedly got=\$rbf want_observe=\$WANT_RBF (not restoring)" >&2
+fi
 REMOTE_POST
-  '
+
+echo "INSIDE_CLAIM install_ok"
+HELPER
+chmod +x "$INSTALL_HELPER"
+
+log "STEP1 claim+visible bounce (CORENAME→Plex) then daemon install"
+MISTER_CLAIM_AGENT=w-bounce2-v4 \
+  "$ROOT/scripts/mister_soft_bounce.sh" claim \
+  --reason "parent-authorised v4 daemon deploy ARM ${EXPECT_ARM_MD5}" \
+  -- "$INSTALL_HELPER"
+claim_rc=$?
+echo "claim_install true rc=$claim_rc"
+if [[ "$claim_rc" -ne 0 ]]; then
+  log "FAIL: claim/install rc=$claim_rc"
+  exit "$claim_rc"
+fi
 
 T1=$(date +%s)
 log "deploy_wall_s=$((T1 - T0))"
-log "DONE — hybrid may run REAL_PMS_VALIDATION_PLAN (CORENAME should be Plex)"
+
+# Host-side verify (no token print)
+log "STEP2 host-side verify"
+sshpass -p "$PASS" ssh -o StrictHostKeyChecking=no -o ConnectTimeout=12 \
+  "$USER@$HOST" "echo onbox_md5=\$(md5sum /media/fat/misterplex/bin/misterplexd | awk '{print \$1}'); echo CORENAME=\$(cat /tmp/CORENAME 2>/dev/null||true); ps w | grep '[m]isterplexd' || true; wget -qO- http://127.0.0.1:3005/resources 2>/dev/null | head -c 400; echo; echo rbf=\$(md5sum /media/fat/_Utility/Plex.rbf 2>/dev/null | awk '{print \$1}')"
+
+log "DONE — hand to w-hybrid-arm for post-deploy REAL_PMS (CORENAME=Plex expected)"
 log "Rollback if needed:"
 log "  PREV_BIN=$ROLLBACK_BIN PREV_CONF=$ROLLBACK_CONF ./scripts/restore_misterplexd_prev.sh"
