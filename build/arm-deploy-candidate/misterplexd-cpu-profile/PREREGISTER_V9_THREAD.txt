@@ -1,0 +1,159 @@
+THREAD_CPU v9 PRE-REGISTER — before bounce2 PRESENT_PROFILE=1 capture
+Lane: w-arm-hybrid  2026-07-30  no device  no fix
+Instrument: 8edc5ff media: thread_cpu tid=… j=… (cumulative utime+stime)
+Process anchor: misterplexd 95.5 %onecpu; media PROFILE sum ~8.0; residual ~87.5
+
+==============================================================================
+1) PER-THREAD SPLIT PREDICTION (commit before data)
+==============================================================================
+Long-lived threads during product play (PRESENT=fpga STREAM=0 audio=on):
+  T_media   thr_           — PROFILE buckets ~8 %onecpu (already measured)
+  T_audio   audioThr_      — MrAudio pump
+  T_http    httpThr_       — accept loop (select 200ms) + short-lived workers
+  T_gdm     gdmThr_        — select 200ms
+  T_osd     osdThr_        — mailbox poll ~100ms
+  T_input   inputThr_      — mailbox ~50ms
+  T_tl      pms timeline   — cv.wait worker
+  T_main    main           — sleep 200ms + resumeStrandedMain
+  T_idle    idleThr_       — should be STOPPED during play
+  T_ephem   detached HTTP workers / play resolve — live briefly
+
+PREDICTED share of the ~87.5 residual (and of full 95.5 process):
+
+  Rank  Thread              Residual share   Full process   Confidence
+  R1    T_audio (audioThr_)    45–70 pts      50–75 %onecpu   MEDIUM
+  R2    T_ephem HTTP workers   10–25 pts      10–25 %onecpu   LOW–MED
+        (may be invisible on a single thread_cpu snapshot — see M1)
+  R3    T_media unbucketed      5–15 pts       (on top of 8)  LOW
+  R4    T_osd/input/SPI path    0–10 pts       small         LOW
+  R5    T_http accept+gdm+main+tl  <5 pts      negligible    HIGH they are small
+  R6    MEASUREMENT ARTIFACT   0–40 pts of the "87" may not be
+        optimisable work (see §3). If artifact large, real residual shrinks.
+
+HEADLINE CALL (one sentence):
+  I expect T_audio to hold the plurality of real residual CPU (~half or more of
+  the 87), with a non-trivial chance that a large slice of the 87 is accounting/
+  short-lived-thread visibility rather than one hot loop we can delete.
+
+Why audio (not a fourth flattering guess):
+  - Product log shows MrAudio path active (latency lines); pump does blocking
+    write() of every PCM chunk + open/read/close of MrAudio every ~80ms for
+    queue depth (readMrAudioQueuedBytes).
+  - When audioDue is behind wall by <1s, the pump intentionally does NOT sleep
+    (catch-up flat-out). Steady slight under-run ⇒ continuous read/write CPU.
+  - Host flood ruled out HTTP as 87-pt majority; media PROFILE ruled out read/
+    pacing/overlay/ddr as majority.
+  - F2 SPI is off when MrAudio works (wantF2 = !wantMr) — so not my primary.
+
+Why NOT my top pick = SPI spin / media reader:
+  - Doorbell promote logged; ddr_doorbell 2–510µs; spiWord spin would sit inside
+    ddr_cpu or a named SPI thread and would have shown in media ddr_cpu if on thr_.
+  - Reader already PROFILE-accounted (~1.7%).
+
+==============================================================================
+2) FALSIFIERS (what data kills each candidate)
+==============================================================================
+Use thread_cpu lines at two present_profile samples Δt seconds apart:
+  dj_tid = j_end - j_start
+  %onecpu_tid ≈ 100 * dj_tid / (HZ * Δt)   with HZ from dc/(du*nproc)≈100
+
+F1 AUDIO owns residual
+  EXPECT: T_audio dj dominates live tids; %onecpu_audio ≳ 40; sum(live long-lived)
+          ≈ process dm within ~15 pts.
+  FALSIFY if: T_audio %onecpu < 15 while process still ~90+, OR audio thr absent
+              (no audioThr_ / audio=off) yet process still ~90+.
+
+F2 EPHEMERAL HTTP workers
+  EXPECT: process dm ≫ sum(dj of long-lived tids still alive at both samples);
+          many short-lived tids appear across snapshots with non-zero j; or
+          httpWorkers spikes. Long-lived T_http accept tid stays small.
+  FALSIFY if: sum(long-lived dj) already explains ≥80% of process dm (no gap
+              for dead workers), OR capture with zero timeline clients still ~90%.
+
+F3 MEDIA unbucketed (H2)
+  EXPECT: the tid that is thr_ (highest j among media-named / matches PROFILE
+          activity) has %onecpu ≫ 8+15, i.e. PROFILE under-count.
+  FALSIFY if: thr_ %onecpu stays ~8–12 matching PROFILE sum, residual elsewhere.
+
+F4 SPI / OSD / input
+  EXPECT: osd or input tid high, or media tid high with ddr_doorbell/SPI logs
+          without promote; spi exclusive still per-frame.
+  FALSIFY if: those tids <5 %onecpu and promote steady; no SPI timeout spam.
+
+F5 MAIN/GDM/TL
+  EXPECT: negligible. FALSIFY (surprise) if any >15 %onecpu.
+
+==============================================================================
+3) BORING EXPLANATIONS (explicit) + real-work vs artifact
+==============================================================================
+B1 Busy-wait / zero-timeout poll
+   Code scan: http/gdm use select 200ms; osd/input sleep 50–100ms; main 200ms;
+   audio sleep_until when ahead; video EAGAIN sleeps 2ms. spiWord has a true
+   spin (up to 1e6) but should be rare post-promote.
+   FALSIFY busy-wait majority: no tid with high utime and matching spin site;
+   or profile shows sleeps dominate wall with low cpu (already true for pacing).
+
+B2 Unbuffered / per-frame log write
+   frames= log ~1Hz; present_profile only when PROFILE=1 (this window only).
+   Unlikely 87 pts. FALSIFY: PROFILE=0 process still ~90 (already true on v7 A/B).
+
+B3 Spinning condition_variable
+   timeline worker uses cv.wait — blocks. FALSIFY: T_tl high utime without sends.
+
+B4 Memory bandwidth / uncached DDR memcpy
+   Already inside ddr_cpu ~1.5ms ⇒ ~4.5%onecpu. Can inflate system cost but
+   should still land on T_media jiffies. FALSIFY as residual owner: T_media still ~8.
+
+B5 JIFFIES ACCOUNTING ARTIFACT (parent-flagged — treat seriously)
+   Distinctions that separate artifact from real optimisable work:
+
+   A) Dead-thread gap (visibility artifact of thread_cpu dump, NOT fake process CPU)
+      process_dm - sum(live_tid_dj) ≫ 0 over the same window.
+      Meaning: real CPU happened on threads that exited (often HTTP workers).
+      Still real work — but fix is worker/churn path, not audio.
+      Score as R2 not "fake".
+
+   B) Fake / mis-attributed process CPU
+      - HZ mismatch: reject if dc/(du*nproc) not ~100 (v7 check was ~100.1).
+      - Children included: ffmpeg has separate pid (v7 same_fpid); if mpid threads
+        include decoder threads, ffmpeg_pct would be near 0 — it was 18.4, OK.
+      - Clock accounting of blocked I/O: heavy MrAudio write() in kernel may
+        appear as stime on T_audio. That IS real cost of our write pattern
+        (optimisable: fewer syscalls, larger chunks) — count as real audio cost.
+      - Double-count across samples: use one window, same pids, raw counters.
+
+   C) Wall occupancy mistaken for CPU (already caught)
+      pacing 23ms wall ≠ CPU. Any claim that uses wall buckets as CPU is invalid.
+
+   D) PROFILE=1 observer effect
+      This capture enables PROFILE=1 (extra threadCpuMicros + thread_cpu dump).
+      FALSIFY large observer effect: process %onecpu under PROFILE=1 within ~10
+      pts of 95.5 PROFILE=0 anchor (bounce2 also re-checks 113.9 vs 117.66).
+      If PROFILE=1 process jumps to 120+, part of residual is instrumentation.
+
+SETTLE REAL vs ARTIFACT with one inequality on the capture:
+  Let P = process %onecpu (jiffies formula, same as A/B)
+  Let S = sum over long-lived tids of %onecpu from Δj
+  Let G = P - S   (gap)
+  - If S ≈ P (±15): residual is on long-lived tids → read who; mostly REAL.
+  - If G large and ephem tids explain G: REAL churn (R2).
+  - If G large and no ephem CPU trail: UNKNOWN / possible mis-parse of thread_cpu
+    (sscanf/path) — verify sum of all tid j at single snapshot equals process
+    utime+stime from /proc/pid/stat.
+
+==============================================================================
+4) WHAT I WILL NOT DO
+==============================================================================
+- No fix until attribution card returns from bounce2.
+- No device access; analyse offline only.
+- No RTL.
+
+==============================================================================
+5) SCORING RUBRIC FOR MYSELF (fourth prediction)
+==============================================================================
+HIT:  R1 audio ≥40%onecpu OR (R1 false AND R2 gap explains ≥40 with evidence)
+MISS: neither audio nor ephem gap owns ≥40; residual on unexpected tid or
+      pure artifact with P collapsing under scrutiny.
+PARTIAL: split 30/30 audio+ephem with neither plurality clear.
+
+END PRE-REGISTER — do not edit after bounce2 data arrives; score in RESULT.
