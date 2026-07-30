@@ -1,0 +1,20 @@
+geom 320x240 mbs=300 log2_fn=4 pic_init_qp=23
+chroma_qp_index_offset=-2
+SLICE f=1 nal=1 type=5 i=0 qp=27 bit=24
+HOST f=1 mb=23 (3,1) mt=0 intra=0 i16=0 cbp=0x2d cbp_l=13 cbp_c=2 qp_y=29 qpc=27 chroma_off=-2 bit=2566
+  chrDC[U] tc=4: 1 1 1 1
+  chrDC[V] tc=4: 7 6 4 4
+  chrAC[U][0] tc=0: 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+  chrAC[U][1] tc=0: 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+  chrAC[U][2] tc=0: 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+  chrAC[U][3] tc=0: 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+  chrAC[V][0] tc=3: 5 0 0 0 -4 2 0 0 0 0 0 0 0 0 0
+  chrAC[V][1] tc=0: 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+  chrAC[V][2] tc=7: -1 1 0 0 -1 1 -1 0 0 0 -1 1 0 0 0
+  chrAC[V][3] tc=1: 0 -1 0 0 0 0 0 0 0 0 0 0 0 0 0
+  hostDC[U] after Had+dq: 448 0 0 0
+  hostDC[V] after Had+dq: 2352 112 560 112
+  hostRES[U] maxabs=7 row0: 7 7 7 7 0 0 0 0
+  hostRES[U] full: 7 7 7 7 0 0 0 0 7 7 7 7 0 0 0 0 7 7 7 7 0 0 0 0 7 7 7 7 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+  hostRES[V] maxabs=53 row0: 50 53 49 -4 2 2 2 2
+  hostRES[V] full: 50 53 49 -4 2 2 2 2 50 53 49 -4 2 2 2 2 50 53 49 -4 2 2 2 2 50 53 49 -4 2 2 2 2 2 12 37 1 -3 -3 -3 -3 8 4 23 10 0 0 0 0 5 0 8 12 4 4 4 4 -3 6 8 7 6 6 6 6

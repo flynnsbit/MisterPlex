@@ -2,6 +2,7 @@
 // Usage: dump_p_mb_chroma_res <annexb.264> <frame_idx> <mb_addr>
 #include "libmisterplex/h264_nal.hpp"
 #include "libmisterplex/h264_cavlc.hpp"
+#include "libmisterplex/h264_recon.hpp"
 
 #include <cstdio>
 #include <cstdint>
@@ -386,8 +387,9 @@ int main(int argc, char** argv) {
 			}
 
 			if (mb == want_mb) {
-				std::printf("HOST f=%d mb=%d (%d,%d) mt=%u intra=%d i16=%d cbp=0x%02x cbp_l=%d cbp_c=%d qp=%d chroma_off=%d bit=%zu\n",
-				            frame_idx, mb, mbx, mby, mt, (int)is_intra, (int)is_i16, cbp, cbp_l, cbp_c, qp, chroma_off, br.bit);
+				const int qpc = recon::detail_r::chromaQp(qp, chroma_off);
+				std::printf("HOST f=%d mb=%d (%d,%d) mt=%u intra=%d i16=%d cbp=0x%02x cbp_l=%d cbp_c=%d qp_y=%d qpc=%d chroma_off=%d bit=%zu\n",
+				            frame_idx, mb, mbx, mby, mt, (int)is_intra, (int)is_i16, cbp, cbp_l, cbp_c, qp, qpc, chroma_off, br.bit);
 				if (cbp_c) {
 					for (int p = 0; p < 2; ++p) {
 						std::printf("  chrDC[%c] tc=%d:", p ? 'V' : 'U', chr_dc_tc[p]);
@@ -401,9 +403,53 @@ int main(int argc, char** argv) {
 					for (int p = 0; p < 2; ++p)
 						for (int bi = 0; bi < 4; ++bi) {
 							std::printf("  chrAC[%c][%d] tc=%d:", p ? 'V' : 'U', bi, chr_ac_tc[p][bi]);
-							for (int k = 0; k < 4; ++k) std::printf(" %d", (int)chr_ac[p][bi][k]);
+							for (int k = 0; k < 15; ++k) std::printf(" %d", (int)chr_ac[p][bi][k]);
 							std::printf("\n");
 						}
+				}
+				// Reconstruct residual planes (host gold path) for RTL compare.
+				int16_t plane[2][64] = {};
+				if (cbp_c) {
+					for (int p = 0; p < 2; ++p) {
+						int16_t dc[2][2];
+						recon::detail_r::invChromaDc2x2(chr_dc[p], qpc, dc);
+						std::printf("  hostDC[%c] after Had+dq:", p ? 'V' : 'U');
+						for (int by = 0; by < 2; ++by)
+							for (int bx = 0; bx < 2; ++bx)
+								std::printf(" %d", (int)dc[by][bx]);
+						std::printf("\n");
+						for (int bi = 0; bi < 4; ++bi) {
+							int bx = bi % 2, by = bi / 2;
+							// residualBlock(max=15) packs 15 AC levels in coeff[0..14];
+							// dequant4x4 maps k→zigzag[k+1] (host recon.hpp).
+							int16_t scan[16] = {};
+							if (cbp_c == 2) {
+								for (int k = 0; k < 15; ++k)
+									scan[k] = chr_ac[p][bi][k];
+							}
+							int16_t blkq[4][4];
+							recon::detail_r::dequant4x4(scan, 15, qpc, blkq);
+							blkq[0][0] = dc[by][bx];
+							int16_t idct[4][4];
+							recon::detail_r::idct4x4_residual(blkq, idct);
+							for (int yy = 0; yy < 4; ++yy)
+								for (int xx = 0; xx < 4; ++xx)
+									plane[p][(by * 4 + yy) * 8 + (bx * 4 + xx)] = idct[yy][xx];
+						}
+					}
+				}
+				for (int p = 0; p < 2; ++p) {
+					int maxa = 0;
+					for (int i = 0; i < 64; ++i) {
+						int a = plane[p][i] < 0 ? -plane[p][i] : plane[p][i];
+						if (a > maxa) maxa = a;
+					}
+					std::printf("  hostRES[%c] maxabs=%d row0:", p ? 'V' : 'U', maxa);
+					for (int i = 0; i < 8; ++i) std::printf(" %d", (int)plane[p][i]);
+					std::printf("\n");
+					std::printf("  hostRES[%c] full:", p ? 'V' : 'U');
+					for (int i = 0; i < 64; ++i) std::printf(" %d", (int)plane[p][i]);
+					std::printf("\n");
 				}
 				return 0;
 			}
