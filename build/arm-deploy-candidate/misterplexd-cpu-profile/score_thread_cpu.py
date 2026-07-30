@@ -1,21 +1,26 @@
 #!/usr/bin/env python3
-"""Offline scorer for bounce2 PRESENT_PROFILE=1 thread_cpu capture.
+"""Offline scorer for bounce2 PRESENT_PROFILE=1 capture (post-audit method).
 
-Frozen against PREREGISTER_V9_THREAD.txt falsifiers — do not reinterpret after data.
+Method (parent audit 2026-07-30) — ALL figures from ONE wall clock window:
+  P = 100 × Δprocess_ticks / (HZ × Δwall)     # process percent-onecpu
+  B = 100 × Σ bucket_cpu_us / (1e6 × Δwall) # instrumented media buckets only
+  S = 100 × Σ_tid Δj_tid / (HZ × Δwall)     # all tids seen in window (incl. ephemeral)
+  G = P − S   # jiffies not on sampled tids (parse/UNKNOWN trail)
+  U = P − B   # UNINSTRUMENTED process CPU — never "hidden burn", never "87-pt hole"
 
-Inputs (files or stdin log):
-  - daemon log containing:
-      media: present_profile ...
-      media: thread_cpu tid=N(comm) j=J ...
-  - optional metrics file or CLI for process jiffies window:
-      --process-pct P   OR  --dm DJ --du SEC [--hz 100] [--nproc 2]
-      (P = percent-onecpu = 100*dm/(hz*du)  monadic; if nproc formula 200*dm/dc used,
-       pass --process-pct already computed by the same method as A/B)
+No fps scaling anywhere. Assumed frame rate must not appear in arithmetic.
 
-Outputs ranked table, P, S, G, R1–R5 verdicts CONFIRMED/FALSIFIED/INSUFFICIENT.
+Bucket totals reconstructed as avg_*_us × frames|presented from present_profile
+(that product is total µs; dividing by Δwall needs no fps).
+
+Ephemeral workers: any tid appearing in any thread_cpu sample contributes
+  dj = last_seen_j − first_seen_j (captures threads that exit mid-window).
+
+Frozen R1–R5 falsifiers from PREREGISTER_V9_THREAD.txt are scored as filed.
+HTTP was never validly ruled out (play-file exits before comp.start) — R2 live.
 
 Usage:
-  score_thread_cpu.py CAPTURE.log [--process-pct 95.5]
+  score_thread_cpu.py CAPTURE.log --du SEC [--dm DJ | --process-pct P] [--hz 100]
   score_thread_cpu.py --selftest
 """
 from __future__ import annotations
@@ -26,273 +31,291 @@ import sys
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 
-THREAD_RE = re.compile(
-    r"tid=(?P<tid>\d+)\((?P<comm>[^)]*)\)\s*j=(?P<j>\d+)"
-)
-PROFILE_RE = re.compile(r"media:\s*present_profile\b")
+THREAD_RE = re.compile(r"tid=(?P<tid>\d+)\((?P<comm>[^)]*)\)\s*j=(?P<j>\d+)")
 THREAD_LINE_RE = re.compile(r"media:\s*thread_cpu\b")
+PROFILE_LINE_RE = re.compile(r"media:\s*present_profile\b")
+FIELD_RE = re.compile(r"(\w+)=([0-9]+)")
 
 
 @dataclass
-class Sample:
-    idx: int
-    tids: Dict[int, Tuple[str, int]]  # tid -> (comm, j)
+class TidTrack:
+    comm: str
+    first_j: int
+    last_j: int
+
+
+@dataclass
+class ProfileWindow:
+    frames: int = 0
+    presented: int = 0
+    bucket_cpu_us: float = 0.0
+    raw: Dict[str, int] = field(default_factory=dict)
 
 
 @dataclass
 class Score:
-    process_pct: Optional[float]
-    hz: float
-    du: Optional[float]
-    per_tid: List[Tuple[int, str, int, float]]  # tid, comm, dj, pct
+    P: Optional[float]
+    B: Optional[float]
     S: float
     G: Optional[float]
-    P: Optional[float]
+    U: Optional[float]
+    hz: float
+    du: Optional[float]
+    per_tid: List[Tuple[int, str, int, float]]
     verdicts: Dict[str, str]
     notes: List[str] = field(default_factory=list)
 
 
-def parse_log(text: str) -> List[Sample]:
-    samples: List[Sample] = []
-    lines = text.splitlines()
-    i = 0
-    sidx = 0
-    while i < len(lines):
-        if PROFILE_RE.search(lines[i]) or THREAD_LINE_RE.search(lines[i]):
-            # prefer pair: profile then thread_cpu
-            pass
-        if THREAD_LINE_RE.search(lines[i]):
-            tids = {}
-            for m in THREAD_RE.finditer(lines[i]):
+def parse_profile_line(line: str) -> Optional[ProfileWindow]:
+    if not PROFILE_LINE_RE.search(line):
+        return None
+    fields = {m.group(1): int(m.group(2)) for m in FIELD_RE.finditer(line)}
+    frames = fields.get("frames", 0)
+    presented = fields.get("presented", 0)
+    if frames <= 0:
+        return None
+    total = 0.0
+    for key in ("read_cpu_us_f", "pacing_wait_cpu_us_f"):
+        if key in fields:
+            total += fields[key] * frames
+    for key in (
+        "overlay_cpu_us_p",
+        "fb_cpu_us_p",
+        "pixel_cpu_us_p",
+        "ddr_cpu_us_p",
+    ):
+        if key in fields and presented > 0:
+            total += fields[key] * presented
+    return ProfileWindow(frames=frames, presented=presented, bucket_cpu_us=total, raw=fields)
+
+
+def parse_log(text: str) -> Tuple[List[Dict[int, Tuple[str, int]]], List[ProfileWindow]]:
+    tid_samples: List[Dict[int, Tuple[str, int]]] = []
+    profiles: List[ProfileWindow] = []
+    for line in text.splitlines():
+        pw = parse_profile_line(line)
+        if pw is not None:
+            profiles.append(pw)
+        if THREAD_LINE_RE.search(line):
+            tids: Dict[int, Tuple[str, int]] = {}
+            for m in THREAD_RE.finditer(line):
                 tid = int(m.group("tid"))
                 tids[tid] = (m.group("comm"), int(m.group("j")))
             if tids:
-                samples.append(Sample(sidx, tids))
-                sidx += 1
-        i += 1
-    return samples
+                tid_samples.append(tids)
+    return tid_samples, profiles
 
 
-def classify_role(comm: str, j_rank: int, n: int) -> str:
-    c = comm.lower()
-    # All pthread comms often remain process name on Linux ("misterplexd").
-    # Role inference without /proc/comm differentiation is WEAK — use j_rank.
-    return "unknown"
+def accumulate_tids(samples: List[Dict[int, Tuple[str, int]]]) -> Dict[int, TidTrack]:
+    tracks: Dict[int, TidTrack] = {}
+    for sample in samples:
+        for tid, (comm, j) in sample.items():
+            if tid not in tracks:
+                tracks[tid] = TidTrack(comm=comm, first_j=j, last_j=j)
+            else:
+                t = tracks[tid]
+                t.last_j = j
+                if comm:
+                    t.comm = comm
+    return tracks
 
 
-def score_samples(
-    samples: List[Sample],
+def score(
+    tid_samples: List[Dict[int, Tuple[str, int]]],
+    profiles: List[ProfileWindow],
+    *,
     process_pct: Optional[float],
+    dm: Optional[float],
+    du: Optional[float],
     hz: float = 100.0,
-    du: Optional[float] = None,
+    bucket_cpu_us_override: Optional[float] = None,
     observer_anchor: float = 95.5,
     observer_band: float = 10.0,
 ) -> Score:
     notes: List[str] = []
-    if len(samples) < 2:
-        notes.append("INSUFFICIENT: need ≥2 thread_cpu samples for Δj")
-        return Score(process_pct, hz, du, [], 0.0, None, process_pct,
-                     {f"R{i}": "INSUFFICIENT" for i in range(1, 6)}, notes)
+    notes.append(
+        "LABELS: P=process%onecpu B=bucket%onecpu S=sum_tid%onecpu "
+        "G=P-S U=P-B(uninstrumented process CPU — NOT hidden-burn/87-hole)"
+    )
+    notes.append("METHOD: single wall clock du; no fps scaling")
 
-    a, b = samples[0], samples[-1]
-    # long-lived: present in both samples
-    live = set(a.tids) & set(b.tids)
-    per = []
-    for tid in live:
-        comm0, j0 = a.tids[tid]
-        comm1, j1 = b.tids[tid]
-        comm = comm1 or comm0
-        dj = j1 - j0
+    P: Optional[float] = process_pct
+    if P is None and dm is not None and du is not None and du > 0:
+        P = 100.0 * dm / (hz * du)
+        notes.append(f"P from dm/du: dm={dm} du={du} hz={hz} -> P={P:.3f}")
+    elif P is not None:
+        notes.append(f"P from --process-pct={P}")
+
+    B: Optional[float] = None
+    bucket_us = bucket_cpu_us_override
+    if bucket_us is None and profiles:
+        bucket_us = profiles[-1].bucket_cpu_us
+        notes.append(
+            f"B buckets from present_profile totals_us={bucket_us:.0f} "
+            f"(frames={profiles[-1].frames} presented={profiles[-1].presented})"
+        )
+    if bucket_us is not None and du is not None and du > 0:
+        B = 100.0 * bucket_us / (1e6 * du)
+        notes.append(f"B={B:.3f} percent-onecpu (no fps)")
+    elif bucket_us is not None:
+        notes.append("B unavailable: need --du to convert bucket_us -> percent-onecpu")
+    else:
+        notes.append("B unavailable: no present_profile CPU fields and no --bucket-cpu-us")
+
+    if len(tid_samples) < 1:
+        notes.append("INSUFFICIENT: no thread_cpu samples")
+        return Score(
+            P, B, 0.0, None, (P - B) if (P is not None and B is not None) else None,
+            hz, du, [], {f"R{i}": "INSUFFICIENT" for i in range(1, 6)}, notes,
+        )
+
+    tracks = accumulate_tids(tid_samples)
+    if len(tid_samples) < 2:
+        notes.append("INSUFFICIENT: need >=2 thread_cpu samples for dj")
+        verd = {f"R{i}": "INSUFFICIENT" for i in range(1, 6)}
+        return Score(
+            P, B, 0.0, None, (P - B) if (P is not None and B is not None) else None,
+            hz, du, [], verd, notes,
+        )
+
+    per: List[Tuple[int, str, int, float]] = []
+    for tid, tr in tracks.items():
+        dj = tr.last_j - tr.first_j
         if dj < 0:
-            notes.append(f"tid={tid} negative dj={dj} (wrap/reuse?)")
+            notes.append(f"tid={tid} negative dj={dj} (tid reuse?) — clamp 0")
             dj = 0
-        if du and du > 0:
+        if du is not None and du > 0:
             pct = 100.0 * dj / (hz * du)
         else:
             pct = float("nan")
-        per.append((tid, comm, dj, pct))
+        per.append((tid, tr.comm, dj, pct))
     per.sort(key=lambda x: x[2], reverse=True)
 
-    if du and du > 0 and not any(x[3] != x[3] for x in per):  # not nan
+    if du is not None and du > 0:
         S = sum(p for *_, p in per)
     else:
-        # Without du, S only if process_pct and we can ratio by dj
-        total_dj = sum(x[2] for x in per)
-        if process_pct is not None and total_dj > 0:
-            # Attribute process_pct proportional to dj among long-lived
-            S = process_pct  # if we assume long-lived explain all — NO that's wrong
-            # Better: leave S as sum of pct only when du known
-            S = float("nan")
-            notes.append("du unknown: cannot compute absolute percent-onecpu per tid; using dj ranks only")
-        else:
-            S = float("nan")
+        S = float("nan")
+        notes.append("S unavailable without --du")
 
-    P = process_pct
-    G = (P - S) if (P is not None and S == S) else None  # S==S rejects nan
-
-    # Rank by dj
-    if not per:
-        notes.append("no long-lived tids")
-        verd = {f"R{i}": "INSUFFICIENT" for i in range(1, 6)}
-        return Score(P, hz, du, per, S if S == S else 0.0, G, P, verd, notes)
-
-    top_tid, top_comm, top_dj, top_pct = per[0]
-    total_dj = sum(x[2] for x in per)
-    # Heuristic roles when all comms are misterplexd: rank positions
-    # media often highest after audio on device — we cannot know. Use:
-    # R1 audio: top long-lived with pct>=40 OR (top_dj/total_dj>=0.5 and top_pct>=40)
-    # Without unique comms, R1 CONFIRMED only if top_pct >= 40 and P still high.
-
-    def pct_or_share(p: float, dj: int) -> float:
-        if p == p:  # not nan
-            return p
-        if total_dj > 0 and P is not None:
-            return P * (dj / total_dj)  # ONLY if G~0 assumption — mark
-        return float("nan")
-
-    # Prefer absolute pct when du known
-    use_abs = du is not None and du > 0 and all(x[3] == x[3] for x in per)
-
-    def tpct(entry) -> float:
-        return entry[3] if use_abs else pct_or_share(entry[3], entry[2])
-
-    if not use_abs and P is not None and total_dj > 0:
+    G = (P - S) if (P is not None and S == S) else None
+    U = (P - B) if (P is not None and B is not None) else None
+    if U is not None:
         notes.append(
-            "WARN: absolute percent-onecpu inferred by dj share * P only if G small; "
-            "verdicts using share are weaker"
+            f"U=uninstrumented_process_CPU={U:.3f}  "
+            f"(do NOT call this hidden-burn or 87-point hole)"
         )
-        # Recompute display pct as share*P for table
-        per = [(t, c, dj, (P * dj / total_dj if total_dj else 0.0)) for t, c, dj, _ in per]
-        S = sum(x[3] for x in per)  # equals P by construction — G=0 artifact!
-        notes.append(
-            "CRITICAL: without --du, S is forced to P via share (G=0 by construction). "
-            "Pass --du/--process-pct with measured window for real G."
-        )
-        G = 0.0 if P is not None else None
+    if G is not None:
+        notes.append(f"G=P-S={G:.3f} (same-window jiffies gap)")
 
-    top_pct = per[0][3]
-    # Second etc.
-    sum_long = sum(x[3] for x in per)
-
-    # Observer effect
     if P is not None and abs(P - observer_anchor) > observer_band:
         notes.append(
-            f"OBSERVER?: P={P:.1f} outside anchor {observer_anchor}±{observer_band}"
+            f"OBSERVER?: P={P:.1f} outside PROFILE=0 anchor {observer_anchor}+/-{observer_band}"
         )
 
-    # Dead-thread gap needs process dm vs sum live dj — if P and use_abs:
-    if use_abs and P is not None:
-        G = P - sum_long
-        S = sum_long
+    verdicts: Dict[str, str] = {}
+    if not per or S != S or du is None:
+        for i in range(1, 6):
+            verdicts[f"R{i}"] = "INSUFFICIENT"
+        notes.append("verdicts INSUFFICIENT without absolute tid percent-onecpu")
+        return Score(P, B, S if S == S else 0.0, G, U, hz, du, per, verdicts, notes)
 
-    verdicts = {}
+    top_tid, top_comm, top_dj, top_pct = per[0]
 
-    # R1 AUDIO — plurality of residual; falsify if top <15 while P>=90
-    # Without comm labels we cannot know audio for sure — CONFIRMED only if
-    # top_pct >= 40 and (P is None or P >= 50). Label INSUFFICIENT_ROLE if no
-    # audio-specific tag; still apply numeric falsifiers on TOP tid as proxy
-    # for "plurality holder".
-    residual = (P - 8.0) if P is not None else None  # ~8 is media PROFILE
     if P is not None and P >= 90 and top_pct < 15:
-        verdicts["R1"] = "FALSIFIED"  # audio-as-plurality dead: nothing big on live tids
-        notes.append("R1 FALSIFIED: P>=90 but top live tid <15% (not audio-sized)")
+        verdicts["R1"] = "FALSIFIED"
+        notes.append("R1 FALSIFIED: P>=90 but top tid <15%onecpu")
     elif top_pct >= 40:
-        verdicts["R1"] = "CONFIRMED"  # plurality holder is large; role=audio is hypothesis
+        verdicts["R1"] = "CONFIRMED"
         notes.append(
-            "R1 CONFIRMED numerically (top live tid >=40percent-onecpu). "
-            "Role=audio still needs tid identity (comm or capture map)."
+            "R1 CONFIRMED numerically (top tid >=40). "
+            "Role=audio still needs tid identity — do not treat vacuous HTTP miss as support."
         )
-    elif top_pct != top_pct:
-        verdicts["R1"] = "INSUFFICIENT"
     else:
         verdicts["R1"] = "INSUFFICIENT"
-        notes.append(f"R1 INSUFFICIENT: top_pct={top_pct:.1f} not >=40 and not falsified")
+        notes.append(f"R1 INSUFFICIENT: top_pct={top_pct:.1f}")
 
-    # R2 EPHEM HTTP — large G with room for dead threads
-    if G is not None and use_abs:
-        if G >= 40:
-            verdicts["R2"] = "CONFIRMED"
-            notes.append(f"R2 CONFIRMED: G={G:.1f} >=40 (dead/unseen tids hold residual)")
-        elif sum_long >= 0.80 * (P or 0) and P and P >= 50:
-            verdicts["R2"] = "FALSIFIED"
-            notes.append("R2 FALSIFIED: long-lived explain >=80% of P")
-        else:
-            verdicts["R2"] = "INSUFFICIENT"
+    short_span = []
+    if len(tid_samples) >= 2:
+        first_set = set(tid_samples[0])
+        last_set = set(tid_samples[-1])
+        for tid, tr in tracks.items():
+            if tid not in first_set or tid not in last_set:
+                dj = tr.last_j - tr.first_j
+                if dj > 0:
+                    short_span.append((tid, dj))
+    ephemeral_pct = 0.0
+    if du and du > 0:
+        ephemeral_pct = sum(100.0 * dj / (hz * du) for _, dj in short_span)
+
+    if G is not None and G >= 40:
+        verdicts["R2"] = "CONFIRMED"
+        notes.append(f"R2 CONFIRMED: G={G:.1f}>=40 (CPU not on any sampled tid trail)")
+    elif ephemeral_pct >= 40:
+        verdicts["R2"] = "CONFIRMED"
+        notes.append(f"R2 CONFIRMED: ephemeral-span tids sum {ephemeral_pct:.1f}%onecpu")
+    elif P is not None and S >= 0.80 * P and ephemeral_pct < 10 and (G is None or G < 15):
+        verdicts["R2"] = "FALSIFIED"
+        notes.append("R2 FALSIFIED: long-lived+seen explain >=80% P; ephemeral small")
     else:
         verdicts["R2"] = "INSUFFICIENT"
-        notes.append("R2 INSUFFICIENT: need absolute P and du for G")
+        notes.append(
+            f"R2 INSUFFICIENT: G={G} ephemeral_pct={ephemeral_pct:.1f} "
+            "(HTTP never ruled out pre-capture)"
+        )
 
-    # R3 MEDIA unbucketed — thr_ >> 8+15. Without id, if top is only ~8-12 FALSIFIED for "secret media"
-    if use_abs:
-        # any tid in 8-12 band matching profile = media accounted
-        media_like = [x for x in per if 5.0 <= x[3] <= 15.0]
-        huge = [x for x in per if x[3] >= 25.0]
-        if media_like and not any(x[3] >= 23 for x in per):
-            # media-sized tid exists and nothing is "unbucketed huge" on same scale
-            if top_pct <= 15:
-                verdicts["R3"] = "FALSIFIED"
-                notes.append("R3 FALSIFIED: no live tid >> PROFILE media band")
-            else:
-                verdicts["R3"] = "INSUFFICIENT"
-        elif any(x[3] >= 23 for x in per) and top_pct >= 23:
-            # could be media unbucketed OR audio — cannot separate without role
+    if B is not None:
+        huge = [x for x in per if x[3] >= max(25.0, (B + 15))]
+        media_like = [x for x in per if x[3] <= 20]
+        if media_like and not huge and top_pct <= 20:
+            verdicts["R3"] = "FALSIFIED"
+            notes.append("R3 FALSIFIED: no live tid >> bucket band B")
+        elif huge:
             verdicts["R3"] = "INSUFFICIENT"
-            notes.append("R3 INSUFFICIENT: large tid could be media or audio without role map")
+            notes.append("R3 INSUFFICIENT: large tid may be media or audio without role map")
         else:
             verdicts["R3"] = "INSUFFICIENT"
     else:
         verdicts["R3"] = "INSUFFICIENT"
+        notes.append("R3 INSUFFICIENT: B unknown")
 
-    # R4 SPI/OSD/input — small expected; FALSIFIED if those are small — we lack tags
-    # CONFIRMED only if a non-top small set is still >15? Skip: if all non-top <5 and top is big, R4 FALSIFIED as residual owner
-    if use_abs and len(per) >= 1:
-        rest = sum(x[3] for x in per[1:])
-        if rest < 5 and top_pct >= 40:
-            verdicts["R4"] = "FALSIFIED"
-            notes.append("R4 FALSIFIED as residual owner: non-top live sum <5")
-        elif rest >= 15:
-            verdicts["R4"] = "INSUFFICIENT"
-            notes.append("R4 INSUFFICIENT: non-top live sum >=15 needs role map")
-        else:
-            verdicts["R4"] = "INSUFFICIENT"
+    rest = sum(x[3] for x in per[1:]) if len(per) > 1 else 0.0
+    if rest < 5 and top_pct >= 40:
+        verdicts["R4"] = "FALSIFIED"
+        notes.append("R4 FALSIFIED as residual owner: non-top sum <5")
+    elif rest >= 15:
+        verdicts["R4"] = "INSUFFICIENT"
+        notes.append("R4 INSUFFICIENT: non-top sum >=15 needs role map")
     else:
         verdicts["R4"] = "INSUFFICIENT"
 
-    # R5 main/gdm/tl negligible — FALSIFIED surprise if any single >15 that's not top audio/media
-    if use_abs:
-        surprise = [x for x in per if x[3] > 15]
-        if len(surprise) == 0:
-            verdicts["R5"] = "FALSIFIED"  # as "unexpected large" — actually expected small = the claim "they are small" is confirmed
-            # Clarify: R5 claim was they are <5. Falsifier was any >15.
-            # If none >15 among what we'd call main/gdm — without tags, if only one large tid, R5 claim OK
-            verdicts["R5"] = "CONFIRMED"  # claim: negligible — no multi large surprise
-            notes.append("R5 CONFIRMED as negligible class: not multiple >15% tids (or only plurality holder large)")
-        elif len(surprise) >= 2:
-            verdicts["R5"] = "FALSIFIED"
-            notes.append("R5 FALSIFIED: multiple tids >15% (unexpected control-plane load)")
-        else:
-            verdicts["R5"] = "CONFIRMED"
+    surprise = [x for x in per if x[3] > 15]
+    if len(surprise) >= 2:
+        verdicts["R5"] = "FALSIFIED"
+        notes.append("R5 FALSIFIED: multiple tids >15%")
     else:
-        verdicts["R5"] = "INSUFFICIENT"
+        verdicts["R5"] = "CONFIRMED"
+        notes.append("R5 CONFIRMED: at most one tid >15% (plurality holder)")
 
-    # Large G no trail marker
-    if G is not None and G >= 40 and use_abs:
+    if G is not None and G >= 40:
         notes.append(
-            "ARTIFACT_CHECK: G large — if capture has no short-lived tid trail across "
-            "mid snapshots, score UNKNOWN parse vs dead workers (see prereg B5-A/B)"
+            "ARTIFACT_CHECK: large G — if no short-lived tid trail mid-window, "
+            "score UNKNOWN parse vs true unsampled CPU"
         )
 
-    return Score(P, hz, du, per, S if S == S else 0.0, G, P, verdicts, notes)
+    return Score(P, B, S, G, U, hz, du, per, verdicts, notes)
 
 
 def format_report(sc: Score) -> str:
-    lines = []
-    lines.append("THREAD_CPU SCORE (frozen falsifiers from PREREGISTER_V9_THREAD.txt)")
-    lines.append(f"P(process_percent-onecpu)={sc.P}")
-    lines.append(f"S(sum_long_lived_percent-onecpu)={sc.S:.3f}" if sc.S == sc.S else f"S={sc.S}")
-    lines.append(f"G=P-S={sc.G}")
-    lines.append(f"du={sc.du} hz={sc.hz}")
-    lines.append("per-tid (long-lived Δj):")
+    lines = [
+        "THREAD_CPU SCORE (post-audit method; R1-R5 falsifiers frozen from PREREGISTER)",
+        f"P(process_percent-onecpu)={sc.P}",
+        f"B(bucket_percent-onecpu)={sc.B}",
+        f"S(sum_tid_percent-onecpu)={sc.S:.3f}" if sc.S == sc.S else f"S={sc.S}",
+        f"G=P-S={sc.G}",
+        f"U=P-B(uninstrumented_process_CPU)={sc.U}",
+        f"du={sc.du} hz={sc.hz}",
+        "per-tid (first->last j across window, includes ephemeral):",
+    ]
     for tid, comm, dj, pct in sc.per_tid:
         lines.append(f"  tid={tid} comm={comm!r} dj={dj} percent-onecpu={pct:.2f}")
     lines.append("verdicts:")
@@ -302,17 +325,18 @@ def format_report(sc: Score) -> str:
         lines.append("notes:")
         for n in sc.notes:
             lines.append(f"  - {n}")
-    # one-line summary
-    r1 = sc.verdicts.get("R1", "?")
-    r2 = sc.verdicts.get("R2", "?")
-    lines.append(f"SUMMARY: R1={r1} R2={r2} G={sc.G} P={sc.P}")
+    lines.append(
+        f"SUMMARY: R1={sc.verdicts.get('R1')} R2={sc.verdicts.get('R2')} "
+        f"P={sc.P} B={sc.B} S={sc.S if sc.S == sc.S else None} "
+        f"G={sc.G} U={sc.U}"
+    )
     return "\n".join(lines) + "\n"
 
 
 def selftest() -> int:
     failures = 0
 
-    def check(name: str, cond: bool, detail: str = ""):
+    def check(name: str, cond: bool, detail: str = "") -> None:
         nonlocal failures
         if cond:
             print(f"SELFTEST PASS {name}")
@@ -320,50 +344,66 @@ def selftest() -> int:
             failures += 1
             print(f"SELFTEST FAIL {name} {detail}")
 
-    # Case A: audio-sized top tid, G small
-    log_a = """
-media: present_profile frames=300
-media: thread_cpu tid=1(misterplexd) j=100 tid=2(misterplexd) j=10 tid=3(misterplexd) j=5
-media: present_profile frames=300
-media: thread_cpu tid=1(misterplexd) j=100+6000 wait
-"""
-    # fix log_a properly
     log_a = (
-        "media: present_profile frames=300\n"
+        "media: present_profile frames=300 presented=300 "
+        "read_cpu_us_f=574 pacing_wait_cpu_us_f=497 overlay_cpu_us_p=1 "
+        "fb_cpu_us_p=0 pixel_cpu_us_p=7 ddr_cpu_us_p=1595\n"
         "media: thread_cpu tid=1(misterplexd) j=100 tid=2(misterplexd) j=50 tid=3(misterplexd) j=20\n"
-        "media: present_profile frames=300\n"
         "media: thread_cpu tid=1(misterplexd) j=6100 tid=2(misterplexd) j=850 tid=3(misterplexd) j=120\n"
     )
-    # du=60s hz=100 → dj 6000 = 100percent-onecpu on tid1; dj800=13.3%; dj100=1.67%; S≈115? 
-    # 6000/(100*60)=1.0 → 100%; 800/6000 wait 850-50=800 → 13.33%; 100→1.67%; S=115
-    sa = parse_log(log_a)
-    sc = score_samples(sa, process_pct=95.5, hz=100.0, du=60.0)
+    sa, pa = parse_log(log_a)
+    sc = score(sa, pa, process_pct=None, dm=5730, du=60.0, hz=100.0)
     print(format_report(sc))
-    check("A_R1_confirmed_large_top", sc.verdicts["R1"] == "CONFIRMED", str(sc.verdicts))
-    check("A_R2_falsified_longlived", sc.verdicts["R2"] == "FALSIFIED", str(sc.verdicts))
+    check("A_P_95.5", sc.P is not None and abs(sc.P - 95.5) < 0.01, str(sc.P))
+    check("A_B_no_fps", sc.B is not None and sc.B < 5.0, str(sc.B))
+    check("A_U_defined", sc.U is not None and sc.U > 80, str(sc.U))
+    check("A_label_uninstrumented", any("uninstrumented" in n for n in sc.notes))
+    check("A_no_87_hole_label", any("uninstrumented_process_CPU" in n for n in sc.notes) and any("NOT" in n and "87" in n for n in sc.notes))
+    check("A_R1_confirmed", sc.verdicts["R1"] == "CONFIRMED", str(sc.verdicts))
+    check("A_R2_falsified", sc.verdicts["R2"] == "FALSIFIED", str(sc.verdicts))
 
-    # Case B: large G — long-lived small, process high
     log_b = (
+        "media: present_profile frames=100 presented=100 "
+        "read_cpu_us_f=100 pacing_wait_cpu_us_f=100 overlay_cpu_us_p=0 "
+        "fb_cpu_us_p=0 pixel_cpu_us_p=0 ddr_cpu_us_p=0\n"
         "media: thread_cpu tid=1(misterplexd) j=10 tid=2(misterplexd) j=10\n"
         "media: thread_cpu tid=1(misterplexd) j=110 tid=2(misterplexd) j=110\n"
     )
-    # dj=100 each over 60s → 1.67% each S=3.3 G=92
-    scb = score_samples(parse_log(log_b), process_pct=95.5, hz=100.0, du=60.0)
+    sb, pb = parse_log(log_b)
+    scb = score(sb, pb, process_pct=95.5, dm=None, du=60.0)
     print(format_report(scb))
     check("B_R1_falsified", scb.verdicts["R1"] == "FALSIFIED", str(scb.verdicts))
     check("B_R2_confirmed_G", scb.verdicts["R2"] == "CONFIRMED", str(scb.verdicts))
     check("B_G_large", scb.G is not None and scb.G >= 40, str(scb.G))
 
-    # Case C: observer effect note
-    scc = score_samples(parse_log(log_a), process_pct=120.0, hz=100.0, du=60.0)
-    check("C_observer_note", any("OBSERVER" in n for n in scc.notes), str(scc.notes))
+    log_c = (
+        "media: present_profile frames=50 presented=50 "
+        "read_cpu_us_f=50 pacing_wait_cpu_us_f=50 overlay_cpu_us_p=0 "
+        "fb_cpu_us_p=0 pixel_cpu_us_p=0 ddr_cpu_us_p=0\n"
+        "media: thread_cpu tid=1(misterplexd) j=100 tid=9(httpw) j=1000\n"
+        "media: thread_cpu tid=1(misterplexd) j=200 tid=9(httpw) j=5000\n"
+        "media: thread_cpu tid=1(misterplexd) j=300\n"
+    )
+    scc = score(parse_log(log_c)[0], parse_log(log_c)[1], process_pct=95.5, dm=None, du=60.0)
+    print(format_report(scc))
+    check("C_ephemeral_counted", any(t == 9 for t, *_ in scc.per_tid), str(scc.per_tid))
+    e9 = next(x[3] for x in scc.per_tid if x[0] == 9)
+    check("C_ephemeral_pct", e9 > 40, str(e9))
+    check("C_R2_ephemeral", scc.verdicts["R2"] == "CONFIRMED", str(scc.verdicts))
 
-    # Case D: single sample insufficient
-    scd = score_samples(parse_log("media: thread_cpu tid=1(x) j=5\n"), process_pct=95.5, du=60.0)
-    check("D_insufficient", scd.verdicts["R1"] == "INSUFFICIENT")
+    scd = score(parse_log(log_a)[0], parse_log(log_a)[1], process_pct=120.0, dm=None, du=60.0)
+    check("D_observer", any("OBSERVER" in n for n in scd.notes), str(scd.notes))
 
-    # Case E: G large note about trail
-    check("E_artifact_note", any("ARTIFACT_CHECK" in n for n in scb.notes), str(scb.notes))
+    sce = score(
+        parse_log("media: thread_cpu tid=1(x) j=5\n")[0],
+        [],
+        process_pct=95.5,
+        dm=None,
+        du=60.0,
+    )
+    check("E_single_insufficient", sce.verdicts["R1"] == "INSUFFICIENT")
+
+    check("F_B_not_old_eight", sc.B is not None and abs(sc.B - 8.0) > 1.0, str(sc.B))
 
     print(f"SELFTEST failures={failures}")
     return 1 if failures else 0
@@ -372,31 +412,37 @@ media: thread_cpu tid=1(misterplexd) j=100+6000 wait
 def main(argv: List[str]) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("log", nargs="?", help="capture log path")
-    ap.add_argument("--process-pct", type=float, default=None, help="P percent onecpu same method as A/B")
-    ap.add_argument("--dm", type=float, default=None, help="process jiffies delta")
-    ap.add_argument("--du", type=float, default=None, help="wall seconds of window")
+    ap.add_argument("--process-pct", type=float, default=None)
+    ap.add_argument("--dm", type=float, default=None, help="process utime+stime jiffies delta")
+    ap.add_argument("--du", type=float, default=None, help="wall seconds (same window as dm)")
     ap.add_argument("--hz", type=float, default=100.0)
-    ap.add_argument("--nproc", type=float, default=2.0, help="unused unless --dc given")
-    ap.add_argument("--dc", type=float, default=None, help="cpu_all delta; P=100*nproc*dm/dc")
+    ap.add_argument(
+        "--bucket-cpu-us",
+        type=float,
+        default=None,
+        help="override sum media bucket CPU microseconds for window",
+    )
     ap.add_argument("--selftest", action="store_true")
     args = ap.parse_args(argv)
 
     if args.selftest:
         return selftest()
-
     if not args.log:
         ap.error("log path required unless --selftest")
+    if args.du is None:
+        ap.error("--du SEC required (same-window wall clock; no fps fallback)")
 
     text = open(args.log, encoding="utf-8", errors="replace").read()
-    samples = parse_log(text)
-
-    P = args.process_pct
-    if P is None and args.dm is not None and args.dc is not None:
-        P = 100.0 * args.nproc * args.dm / args.dc
-    elif P is None and args.dm is not None and args.du is not None:
-        P = 100.0 * args.dm / (args.hz * args.du)
-
-    sc = score_samples(samples, process_pct=P, hz=args.hz, du=args.du)
+    tid_samples, profiles = parse_log(text)
+    sc = score(
+        tid_samples,
+        profiles,
+        process_pct=args.process_pct,
+        dm=args.dm,
+        du=args.du,
+        hz=args.hz,
+        bucket_cpu_us_override=args.bucket_cpu_us,
+    )
     sys.stdout.write(format_report(sc))
     return 0
 

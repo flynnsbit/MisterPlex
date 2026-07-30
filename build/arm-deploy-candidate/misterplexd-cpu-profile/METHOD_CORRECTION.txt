@@ -1,0 +1,8 @@
+METHOD CORRECTION (2026-07-30) — does not rewrite PREREGISTER_V9_THREAD predictions
+
+1. Same-window only: P, B, S, G, U share one Δwall. No fps in any formula.
+2. U = P−B = "uninstrumented process CPU" — never "hidden burn" / "87-point hole".
+3. S includes ephemeral tids (first_seen→last_seen j across all samples).
+4. HTTP ruling-out pre-capture was vacuous (play-file before comp.start). R2 live.
+5. R1–R5 falsifiers remain as filed in PREREGISTER_V9_THREAD.txt; score as written.
+6. Scorer: score_thread_cpu.py (requires --du). Selftest rc=0.

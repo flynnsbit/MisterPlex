@@ -1,0 +1,165 @@
+MISTERPLEXD CPU BREAKDOWN — RESULT (host-only) 2026-07-30
+Lane: w-arm-hybrid  no device  tip includes thread_cpu dump
+
+******************************************************************************
+AUDIT CORRECTION (2026-07-30 parent + duck-sol) — do not erase history below
+******************************************************************************
+ORIGINAL CLAIM (kept for the record):
+  "GAP: 95.5 − ~8.0 ≈ 87.5 %onecpu of misterplexd is NOT in media-thread
+   present_profile buckets" and residual framed as "the 87-point hole".
+
+WHAT SURVIVED:
+  - 95.5 %onecpu process CPU is valid: 200×4329/9065 = 95.51 (PROFILE=0, 45.26s).
+  - Bucket arithmetic ~7.98 ≈ published 8.0 for its own (different) window.
+
+WHAT WAS REFUTED:
+  1. 95.5 and ~8.0 were NOT sample-aligned (PROFILE=0 vs PROFILE=1; different
+     windows; assumed 29.9fps load-bearing). Differencing them was invalid.
+  2. Buckets are incomplete coverage of media-thread work, not total media CPU —
+     so "unattributed" was a tautology (uninstrumented code), not unexplained work.
+  3. ~97% wall occupancy is sleeping path time; must not corroborate 95.5.
+  4. HTTP/timeline flood ruling-out was VACUOUS: --play-file returns before
+     comp.start() (~main.cpp lab branch vs companion start). Zero timeline
+     responses. R2 ephemeral HTTP was never tested; band may be low. Prediction
+     in PREREGISTER_V9_THREAD.txt stays filed as written and will be scored as
+     written — do not bias toward R1 from the vacuous miss.
+
+CORRECTED STATEMENT (replaces 87 everywhere going forward):
+  process CPU was 95.5; instrumented buckets were ~7.98 in a different window;
+  uninstrumented process CPU is UNKNOWN.
+
+  Never call P−B "hidden burn" or "the 87-point hole". Name it
+  "uninstrumented process CPU" only when P and B share one wall clock.
+
+METHOD GOING FORWARD (scorer updated):
+  One window, one wall clock:
+    P = 100 × Δprocess_ticks / (HZ × Δwall)
+    B = 100 × Σ bucket_cpu_us / (1e6 × Δwall)   # no fps
+    S = 100 × Σ_tid Δj / (HZ × Δwall)           # all tids incl. ephemeral
+    G = P − S   (same-window jiffies gap)
+    U = P − B   (uninstrumented process CPU)
+  score_thread_cpu.py --selftest → true rc=0 (post-audit).
+
+No fix until same-window attribution lands from bounce2.
+
+******************************************************************************
+ORIGINAL RESULT TEXT FOLLOWS (uncorrected claims preserved)
+******************************************************************************
+
+MISTERPLEXD CPU BREAKDOWN — RESULT (host-only) 2026-07-30
+Lane: w-arm-hybrid  no device  tip includes thread_cpu dump
+
+==============================================================================
+PRE-REGISTER vs ACTUAL
+==============================================================================
+Device anchor (held AFTER-v7 jiffies, PROFILE=0):
+  misterplexd 95.5 %onecpu | ffmpeg 18.4 | combined 113.9
+  ddr_cpu~1.5ms/f + copy~1.2ms/f @~30fps ⇒ ~8 pts present/DDR ceiling from prior
+
+P1 Frame READ 35–50% of misterplexd     MISS as process-share
+   Device PROFILE read_cpu_us_f≈574µs ⇒ ~1.7%onecpu @29.9fps
+   Host PRESENT=none read_cpu≈170µs ⇒ tiny
+P2 Colour/overlay 15–25%                 MISS on product yuv path
+   Device overlay_cpu≈1–7µs (yuv overlay is no-op)
+   Host rgb24 first-window overlay_cpu_us_p≈8.8ms only while overlay visible
+   — lab PRESENT=none artifact, not product
+P3 Audio/pacing 10–20%                   PARTIAL
+   Device pacing_wait_cpu≈497µs ⇒ ~1.5%onecpu (wall pacing_wait≈23ms is SLEEP)
+P4 HTTP/control 5–15%                    MISS as dominant
+   Host companion flood 40 timeline polls/s during play: process still ~1.1%onecpu
+P5 Logging 2–8%                          unseparated; not dominant on host
+P6 Idle/schedule remainder               SEE GAP below
+
+CALIBRATION: third prereg wrong again — expected reader/pacing to own residual;
+measured media-thread PROFILE sum explains only ~8% of the 95.5 process figure.
+
+==============================================================================
+KEY FINDING (evidence-first)
+==============================================================================
+Device PRESENT_PROFILE=1 (held snap_t33 / RESULT after-v7), media thread only:
+  read_cpu_us_f=574
+  pacing_wait_cpu_us_f=497
+  pixel_cpu_us_p=7
+  overlay_cpu_us_p=1
+  ddr_cpu_us_p=1595
+  SUM ≈ 2674 µs/frame × 29.9 fps ≈ 8.0 %onecpu
+
+Device process jiffies (CPU_AB_JIFFIES, PROFILE=0, 45.26s):
+  dm=4329  dc=9065  du=45.260  ⇒ misterplexd=95.5 %onecpu
+  (dc/du/nproc≈100.1 ⇒ HZ=100 consistent)
+
+GAP: 95.5 − ~8.0 ≈ 87.5 %onecpu of misterplexd is NOT in media-thread
+present_profile buckets.
+
+DO NOT confuse wall occupancy with CPU:
+  read_us+pacing_wait_us+ddr_total ≈ 32.6ms/frame wall ≈ 97% core *occupied*
+  but pacing/ddr waits are mostly usleep (pacing_cpu 0.5ms vs wall 23ms).
+  Jiffies track RUNNING time; sleeps do not explain 95%.
+
+==============================================================================
+HOST MEASUREMENTS (this pass)
+==============================================================================
+1) PRESENT=none --play-file clip30s PRESENT_PROFILE=1 --ffmpeg host
+   per-tid jiffies ~17s window (HZ=100):
+     media-like tid ~1.0–1.1 %onecpu
+     helper tid ~0.2 %onecpu
+     main ~0.0
+     SUM ≈ 1.2 %onecpu
+   present_profile: read_cpu~170µs pacing_cpu~160µs ddr=0 (no FPGA)
+   thread_cpu dump lines present (instrumentation verified)
+
+2) Companion timeline flood 40 req/s × 15s during play:
+   SUM ≈ 1.1 %onecpu — HTTP poll storm is NOT a 87-point host mechanism
+
+Confound: host cannot open PRESENT=fpga DDR/MrAudio; product residual may be
+device-only (SPI spin, MrAudio, uncached DDR side-effects on other threads).
+
+==============================================================================
+WHERE THE 87 POINTS ARE *NOT* (ruled out / weak)
+==============================================================================
+- Media-thread read EAGAIN loop as majority CPU (PROFILE read_cpu small)
+- Media-thread A/V pacing sleeps (wall large, cpu small)
+- Product yuv overlay render (no-op)
+- Perfect FPGA decode prize (2–4 pts) — orthogonal and smaller
+- Host-like HTTP timeline polling alone (flood test)
+
+==============================================================================
+RANKED HYPOTHESES FOR THE 87-POINT RESIDUAL (device)
+==============================================================================
+H1 Other misterplexd threads dominate process jiffies
+   audioThr_ (MrAudio write/ioctl), osd/input (should be slow-poll),
+   HTTP workers under real PMS clients, pms timeline worker.
+   SETTLE: PRESENT_PROFILE=1 + new `media: thread_cpu` lines (delta j=)
+H2 Unprofiled work on media thread between buckets
+   lock contention, logging strings, hybrid disabled path still touching SPI,
+   status reads. SETTLE: widen buckets or sample stacks on device
+H3 SPI busy-spin still live on some path
+   spiWord() spins up to 1e6 on ACK; doorbell promote should avoid per-frame
+   exclusive, but OSD fallback / F2 / one-shot paths remain.
+   SETTLE: count SpiExclusive entries during play; thread_cpu on SPI waiter
+H4 Measurement confusor
+   unlikely: HZ cross-check passed; v5→v7 delta matched doorbell reclaim
+
+==============================================================================
+INSTRUMENTATION SHIPPED
+==============================================================================
+When PRESENT_PROFILE=1, each present_profile line is followed by:
+  media: thread_cpu tid=N(comm) j=utime+stime ...
+so a device window can attribute residual by tid without perf/sudo.
+
+Code: arm/misterplexd/media_player.cpp logProfile()
+Host verified: thread_cpu lines in host_profile.log
+
+==============================================================================
+NEXT WIN (plain language)
+==============================================================================
+Do NOT open a large ARM feature until H1 is settled on device.
+If audio or HTTP owns tens of points, that is the next 17-point-class win
+and needs no silicon. If media thread is secretly 90% (H2/profile bug),
+revisit present path. Ask parent to schedule bounce2 PRESENT_PROFILE=1
+window for thread_cpu deltas — host cannot finish attribution.
+
+Gates this pass:
+  make plexd rc=0
+  host_profile rc=0 (thread_cpu present)
+  companion flood rc=0 (~1%onecpu)
