@@ -28,21 +28,60 @@ PORT=3005
 
 ts() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 
+# Supervisor patterns, most-supervisory first, so nothing respawns the daemon
+# underneath us. dedupe_daemon.sh is the legacy racy launcher and must never be
+# left running alongside this one.
+SUPERVISORS='plexctl_supervise.sh misterplexd_supervise.sh dedupe_daemon.sh'
+DAEMON='/bin/misterplexd'
+
+# Match by /proc cmdline, NOT pidof. pidof only matches the executable, so a
+# script started as "/bin/sh /tmp/plexctl_supervise.sh" is invisible to it.
+# Observed on hardware: a stale supervisor survived `pidof plexctl_supervise.sh`
+# and silently respawned a second daemon after a stop.
+pids_matching() {
+  pat="$1"
+  for d in /proc/[0-9]*; do
+    [ -d "$d" ] || continue
+    p=${d#/proc/}
+    if [ "$p" = "$$" ]; then continue; fi
+    [ -r "$d/cmdline" ] || continue
+    cmd=$(tr '\0' ' ' < "$d/cmdline" 2>/dev/null) || continue
+    # Never match this controller or its own forked subshells, which inherit
+    # the parent cmdline and would otherwise look like a target process.
+    case "$cmd" in
+      *plexctl.sh*) continue ;;
+    esac
+    case "$cmd" in
+      *"$pat"*) echo "$p" ;;
+    esac
+  done
+}
+
+any_running() {
+  for pat in $SUPERVISORS $DAEMON; do
+    if [ -n "$(pids_matching "$pat")" ]; then return 0; fi
+  done
+  return 1
+}
+
 stop_all() {
-  # Supervisors first, so nothing respawns the daemon underneath us.
-  for n in plexctl_supervise.sh misterplexd_supervise.sh misterplexd; do
-    for p in $(pidof "$n" 2>/dev/null || true); do
+  for pat in $SUPERVISORS $DAEMON; do
+    for p in $(pids_matching "$pat"); do
       kill "$p" 2>/dev/null || true
     done
   done
   i=0
-  while pidof misterplexd >/dev/null 2>&1 \
-     || pidof misterplexd_supervise.sh >/dev/null 2>&1 \
-     || pidof plexctl_supervise.sh >/dev/null 2>&1; do
+  while any_running; do
     i=$((i + 1))
     if [ "$i" -gt 60 ]; then
       echo "STOP_FAILED still running; refusing kill -9"
-      pidof misterplexd || true
+      for pat in $SUPERVISORS $DAEMON; do
+        for p in $(pids_matching "$pat"); do
+          printf 'STILL_UP pid=%s ' "$p"
+          tr '\0' ' ' < "/proc/$p/cmdline" 2>/dev/null
+          echo
+        done
+      done
       return 9
     fi
     sleep 0.25
@@ -51,14 +90,17 @@ stop_all() {
 }
 
 status() {
-  echo "n_daemon=$(pidof misterplexd 2>/dev/null | wc -w)"
-  echo "n_supervise=$(( $(pidof misterplexd_supervise.sh 2>/dev/null | wc -w) \
-                      + $(pidof plexctl_supervise.sh 2>/dev/null | wc -w) ))"
-  ps | grep -E "[m]isterplexd|[p]lexctl_supervise" | head -10 || true
+  echo "n_daemon=$(pids_matching "$DAEMON" | wc -w)"
+  n_sup=0
+  for pat in $SUPERVISORS; do
+    n_sup=$((n_sup + $(pids_matching "$pat" | wc -w)))
+  done
+  echo "n_supervise=$n_sup"
+  ps | grep -E "[m]isterplexd|[p]lexctl_supervise|[d]edupe_daemon" | head -10 || true
   netstat -lnp 2>/dev/null | grep -E ":$PORT|:32412" || true
-  for p in $(pidof misterplexd 2>/dev/null || true); do
+  for p in $(pids_matching "$DAEMON"); do
     printf 'cmdline: '
-    tr '\0' ' ' < "/proc/$p/cmdline"
+    tr '\0' ' ' < "/proc/$p/cmdline" 2>/dev/null
     echo
   done
 }
@@ -105,7 +147,7 @@ start_bundle() {
   nohup flock -n "$LOCK" /tmp/plexctl_supervise.sh >/dev/null 2>&1 &
   sleep 3
 
-  n=$(pidof misterplexd 2>/dev/null | wc -w)
+  n=$(pids_matching "$DAEMON" | wc -w)
   echo "$(ts) started root=$root n_daemon=$n"
   [ "$n" -eq 1 ] || { echo "ERROR expected exactly 1 daemon, got $n"; status; exit 3; }
   status
