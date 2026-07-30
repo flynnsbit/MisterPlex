@@ -6,6 +6,7 @@
 #include "libmisterplex/idle_screen.hpp"
 #include "libmisterplex/last_frame_latch.hpp"
 #include "libmisterplex/osd_menu.hpp"
+#include "libmisterplex/present_stall.hpp"
 #include "libmisterplex/h264_nal_dispatch.hpp"
 #include "libmisterplex/h264_recon.hpp"
 #include <algorithm>
@@ -2284,10 +2285,9 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                 "same frame");
         usedRawVideo = true;
         presentCount_ = 0;
-        // Consecutive F1 publish failures (DDR fail or hybrid hold-last). Loud after
-        // ~3s @24fps so a frozen scanout + live audio cannot look "healthy".
-        int consecutivePresentFail = 0;
-        bool presentStallLogged = false;
+        // Attempted F1 failures only (DDR fail or hybrid hard-fail hold). Deliberate
+        // reconOwnsF1 skip does not count. Re-arms after a successful present.
+        PresentStallTracker presentStall;
         audioBytes_.store(0);
         std::vector<std::string> args;
         args.push_back(ffmpeg_);
@@ -2678,6 +2678,7 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
             // On hybrid hard-fail: refuse F1 publish for this frame (hold last good F1).
             // Do not fall through to host-as-FPGA — that would be a silent plausible path.
             bool publishF1 = (!reconOwnsF1 || hybridPresent_) && wantFpgaFrameStore;
+            bool hybridHardFailHold = false;
             const uint8_t* txFrame = cleanFrame;
             size_t txBytes = frameBytes;
             std::vector<uint8_t> hybridScratch;
@@ -2736,8 +2737,9 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                             (d.fail_reason ? d.fail_reason : "?") +
                             " — refusing F1 present (no silent FPGA/host claim)");
                         publishF1 = false;
-                        // Hold-last must not mask a dead/hybrid-broken stream forever:
-                        // counted toward consecutivePresentFail below when countPresent.
+                        // Attempted hybrid present that refused — counts as fail (not
+                        // deliberate recon-owns skip).
+                        hybridHardFailHold = true;
                     } else {
                         if ((frameIndex % 30) == 0)
                             log(std::string("media: ") + d.log_line);
@@ -2795,13 +2797,13 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                 }
                 if (!ok) {
                     if (countPresent) {
-                        ++consecutivePresentFail;
+                        presentStall.onAttemptFailed();
                         if ((frameIndex % 30) == 0)
                             log("media: fpga frame_tx: " +
                                 (ddrErr.empty() ? fpga_.lastError() : ddrErr));
                     }
                 } else if (countPresent) {
-                    consecutivePresentFail = 0;
+                    presentStall.onAttemptOk();
                     ++presentCount_;
                     if (profilePresent)
                         ++prof.presented;
@@ -2814,17 +2816,21 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                     }
                 }
             } else if (countPresent && wantFpgaFrameStore) {
-                // Hybrid hard-fail / recon-owns path skipped F1: hold last good frame.
-                ++consecutivePresentFail;
+                if (hybridHardFailHold) {
+                    // Attempted hybrid present refused — hold last F1, count toward stall.
+                    presentStall.onAttemptFailed();
+                } else {
+                    // Deliberate reconOwnsF1 (or other non-attempt): do not cry wolf.
+                    presentStall.onDeliberateSkip();
+                }
             }
-            if (countPresent && wantFpgaFrameStore && !presentStallLogged &&
-                consecutivePresentFail >= 72) {
-                presentStallLogged = true;
-                log("ERROR media: present stall — " + std::to_string(consecutivePresentFail) +
+            if (countPresent && wantFpgaFrameStore && presentStall.shouldLogStall()) {
+                log("ERROR media: present stall — " +
+                    std::to_string(presentStall.consecutive_fail) +
                     " consecutive F1 publish failures (decoded frames=" +
                     std::to_string(frameIndex) + " presents=" + std::to_string(presentCount_) +
                     "); scanout may be frozen while audio continues. Check DDR/PLXD or hybrid "
-                    "ownership; hold-last must not look like healthy playback.");
+                    "hard-fail hold; deliberate recon-owns skip is not a stall.");
             }
 
             restoreOverlayDirty(cleanFrame, dirty);
