@@ -1,0 +1,62 @@
+{
+  "lane": "sv-traverse",
+  "change": "RMW C: pipeline I16 APPLY plane RMW (18 cy/blk after 2-cy fill; was 48)",
+  "source_sha_pre_commit": "3542824b7ec20b574fafad81c81f95e615449d79",
+  "sink_rtl_sha256_pre_commit": "23047b25e25c0ddcab8bd4a1ff621825880171f0f0d59f0c59b3a7cfa197ed26",
+  "base_ab_paint_per_mb_f0": 2965.787,
+  "baseline_pre_AB_paint_per_mb_f0": 4036.907,
+  "budget_cy_mb_320x240_25fps_20MHz": 2667.0,
+  "prereg": {
+    "cy_paint_per_mb_f0_range": [
+      2550,
+      2700
+    ],
+    "mean_save_est": 354,
+    "closes_299_gap_alone": "YES_thin_margin",
+    "alm_delta_range": [
+      0,
+      60
+    ],
+    "dsp_delta": 0,
+    "m10k_new_blocks": 0,
+    "note": "docs/evidence/rmw_c_apply_pipe_prereg.txt"
+  },
+  "measured": {
+    "clip1_320": {
+      "paint_per_mb_frame0": 2620.387,
+      "delta_vs_AB": 345.4,
+      "delta_vs_pre_AB": 1416.52,
+      "vs_budget_2667": 0.9825,
+      "intra_y_mb": "300/300",
+      "intra_y_px": "76800/76800"
+    },
+    "clip2_624": {
+      "paint_per_mb_frame0": 2406.894,
+      "intra_y_mb": "1170/1170",
+      "intra_y_px": "299520/299520"
+    },
+    "red_fault_serial_iq_zero": {
+      "intra_y_mb": "0/300",
+      "intra_y_px": "5/76800",
+      "verdict": "PASS_RED"
+    }
+  },
+  "prereg_verdict": {
+    "cy_range_2550_2700": "HIT",
+    "hard_budget_2667": "HIT",
+    "bitexact_clip1_300": "HIT",
+    "bitexact_clip2_1170": "HIT",
+    "red_twin": "HIT",
+    "save_vs_PRE_354": 345.4,
+    "alm": "UNKNOWN_no_self_fit",
+    "dsp": "UNKNOWN_no_self_fit_PRE_0_mul",
+    "m10k_new": "0_by_diff_no_new_ram_instance"
+  },
+  "floor_no_mem_note": "After C, paint 2620 leaves ~47 cy vs 2667 before chroma. Next no-mem lever D=skip MB_INIT (-256) PRE~2360 if authorised. De-serial IQ/I16 not taken.",
+  "constraints": {
+    "no_new_mem": true,
+    "no_deserial_iq_i16": true,
+    "no_self_quartus": true,
+    "opt_target": 2667
+  }
+}

@@ -1,7 +1,7 @@
 // I-slice residual → Clip1(pred + residual) MB plane sink.
 // plane_y + top_row via h264_byte_ram_sp (registered read: issue→wait→capture).
 // Serial neighbour fetch; serial IQ; serial I16 pred. NO new DSP.
-// RMW diet: no HAD_PAINT (DC in regs + dump/APPLY); MB_DUMP read pipelined 1/cy.
+// RMW diet: no HAD_PAINT; MB_DUMP + I16 APPLY plane RMW pipelined 1/cy after fill.
 // FAULT_SERIAL_IQ_ZERO / FAULT_SERIAL_I16_PRED_128 / FAULT_SKIP_PLANE_NB.
 
 `default_nettype none
@@ -260,9 +260,18 @@ module h264_i_res_recon_sink #(
 	// Combo from lat_* (stable in APPLY) — avoid NBA hazard on dq_done→APPLY.
 	wire [1:0] apply_bx = lat_is_i16 ? blk4_x(lat_idx[3:0] - 4'd1) : blk4_x(lat_idx[3:0]);
 	wire [1:0] apply_by = lat_is_i16 ? blk4_y(lat_idx[3:0] - 4'd1) : blk4_y(lat_idx[3:0]);
-	wire [7:0] apply_addr =
-		(({6'd0, apply_by} * 8'd4 + {6'd0, apply_i[3:2]}) << 4) +
-		 ({6'd0, apply_bx} * 8'd4 + {6'd0, apply_i[1:0]});
+	// Pixel p (0..15) address inside current 4x4 (bx,by).
+	function automatic [7:0] blk_px_addr;
+		input [1:0] bx;
+		input [1:0] by;
+		input [3:0] p;
+		blk_px_addr = (({6'd0, by} * 8'd4 + {6'd0, p[3:2]}) << 4) +
+		              ({6'd0, bx} * 8'd4 + {6'd0, p[1:0]});
+	endfunction
+	wire [7:0] apply_addr = blk_px_addr(apply_bx, apply_by, apply_i[3:0]);
+	// I16 APPLY pipe: capt index = apply_i-2 while apply_i in 2..17
+	wire [3:0] apply_capt_i = 4'(apply_i - 5'd2);
+	wire [7:0] apply_capt_addr = blk_px_addr(apply_bx, apply_by, apply_capt_i);
 
 	reg [7:0] bot_row [0:15];
 	integer ui, yi;
@@ -272,8 +281,6 @@ module h264_i_res_recon_sink #(
 		||(lat_coeff[4]!=0)||(lat_coeff[5]!=0)||(lat_coeff[6]!=0)||(lat_coeff[7]!=0)
 		||(lat_coeff[8]!=0)||(lat_coeff[9]!=0)||(lat_coeff[10]!=0)||(lat_coeff[11]!=0)
 		||(lat_coeff[12]!=0)||(lat_coeff[13]!=0)||(lat_coeff[14]!=0)||(lat_coeff[15]!=0);
-	// Held address for RMW (stable across wait)
-	reg [7:0] rmw_addr;
 	// MB_DUMP pipeline capture address (= cnt-2 while cnt>=2)
 	wire [7:0] dump_cap_a = 8'(cnt - 9'd2);
 	wire [3:0] dump_dc_i  = {dump_cap_a[7:6], dump_cap_a[3:2]};
@@ -316,7 +323,6 @@ module h264_i_res_recon_sink #(
 			i16_hl <= 1'b0;
 			i4_ar_live_r <= 1'b0;
 			i16_above0_cap <= 8'd128;
-			rmw_addr <= 8'd0;
 			for (yi = 0; yi < 256; yi = yi + 1)
 				write_y[yi] <= 8'd128;
 			for (ui = 0; ui < 64; ui = ui + 1) begin
@@ -744,6 +750,7 @@ module h264_i_res_recon_sink #(
 			//============================================================
 			ST_APPLY_PX: begin
 				if (!lat_is_i16) begin
+					// I4: pred+idct already in regs → 1 write/cy (no plane RMW).
 					py_we <= 1'b1;
 					py_waddr <= apply_addr;
 					py_wdata <= any_nz_c ? recon_px[apply_i[3:0]]
@@ -756,29 +763,25 @@ module h264_i_res_recon_sink #(
 					end else
 						apply_i <= apply_i + 5'd1;
 				end else begin
-					// I16 AC RMW 3-cy: plane holds pure pred (no HAD_PAINT).
-					// idct already has DC inject → write clip(pred + idct) always.
-					if (rd_ph == RD_ISSUE) begin
-						rmw_addr <= apply_addr;
-						py_raddr <= apply_addr;
-						rd_ph <= RD_WAIT;
-					end else if (rd_ph == RD_WAIT) begin
-						rd_ph <= RD_CAPT;
-					end else begin
-						tsum = 18'($signed({10'd0, py_q}) + idct_r[apply_i[3:0]]);
+					// C: I16 AC RMW pipelined on u_plane_y (same 2-cy fill as dump).
+					// apply_i 0..17: issue while <16; capt/write at i-2 for i=2..17.
+					// idct has DC inject → write clip(pred + idct). No new memory.
+					if (apply_i < 5'd16)
+						py_raddr <= apply_addr; // issue idx = apply_i
+					if (apply_i >= 5'd2) begin
+						tsum = 18'($signed({10'd0, py_q}) + idct_r[apply_capt_i]);
 						py_we <= 1'b1;
-						py_waddr <= rmw_addr;
+						py_waddr <= apply_capt_addr;
 						py_wdata <= clip_u8(tsum);
-						rd_ph <= RD_ISSUE;
-						if (apply_i == 5'd15) begin
-							i16_ac_recon <= 1'b1;
-							if (apply_any_nz)
-								dbg_luma_nz <= dbg_luma_nz + 32'd1;
-							dbg_blk_applied <= dbg_blk_applied + 32'd1;
-							st <= ST_IDLE;
-						end else
-							apply_i <= apply_i + 5'd1;
 					end
+					if (apply_i == 5'd17) begin
+						i16_ac_recon <= 1'b1;
+						if (apply_any_nz)
+							dbg_luma_nz <= dbg_luma_nz + 32'd1;
+						dbg_blk_applied <= dbg_blk_applied + 32'd1;
+						st <= ST_IDLE;
+					end else
+						apply_i <= apply_i + 5'd1;
 				end
 			end
 
