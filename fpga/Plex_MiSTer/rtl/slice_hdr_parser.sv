@@ -44,6 +44,10 @@ module slice_hdr_parser (
 	output reg  [2:0]  first_mb_part_count,
 	output reg         first_mb_uses_sub_mb,
 	output reg         first_mb_intra,
+	// First P-MB mvd_l0[0] se(v) pair (7.3.5.1). P_Skip / intra → 0.
+	// Product decode_stub uses this for DPB fetch_mv (MVP + mvd).
+	output reg  signed [15:0] first_mb_mvd_x,
+	output reg  signed [15:0] first_mb_mvd_y,
 	// 3.3f/k residual (first I residual block, nC=0)
 	output reg  [4:0]  residual_tc,
 	output reg  [1:0]  residual_t1,
@@ -96,6 +100,10 @@ module slice_hdr_parser (
 	reg [1:0]  i4_sub;     // 0=flag, 1..3=rem bits
 	reg        i4_need_rem;
 	reg [5:0]  cbp_me;     // coded_block_pattern me code
+	// First-MB mvd_l0 walk: part pairs remaining, 0=x / 1=y component.
+	reg [2:0]  mvd_pairs_left;
+	reg        mvd_is_y;
+	reg signed [15:0] mvd_x_tmp;
 
 	// 3.3k CAVLC level / zeros / run; 3.3l-1 place into residual_coeff[]
 	// Width: signed [15:0] — NOT [11:0].  The H.264 spec bounds ordinary 4×4
@@ -138,6 +146,19 @@ module slice_hdr_parser (
 				se_of = -$signed({1'b0, k[7:1]});
 			else
 				se_of = $signed({1'b0, k[7:1]}) + 8'sd1;
+		end
+	endfunction
+
+	// Full-range se(v) for mvd_l0 (may exceed ±127).
+	function automatic signed [15:0] se16_of;
+		input [15:0] k;
+		begin
+			if (k == 16'd0)
+				se16_of = 16'sd0;
+			else if (k[0] == 1'b0)
+				se16_of = -$signed({1'b0, k[15:1]});
+			else
+				se16_of = $signed({1'b0, k[15:1]}) + 16'sd1;
 		end
 	endfunction
 
@@ -239,7 +260,9 @@ module slice_hdr_parser (
 		ST_REFIDX_FLAG = 6'd32,
 		ST_REFIDX_L0   = 6'd33,
 		ST_NIDR_REFMARK = 6'd34,
-		ST_P_MBT       = 6'd35;
+		ST_P_MBT       = 6'd35,
+		// First P-MB mvd_l0 se(v) pairs (x then y per partition, raster order).
+		ST_P_MVD       = 6'd36;
 
 	task automatic res_clear;
 		integer ci;
@@ -317,6 +340,11 @@ module slice_hdr_parser (
 			first_mb_part_count <= 0;
 			first_mb_uses_sub_mb <= 0;
 			first_mb_intra <= 0;
+			first_mb_mvd_x <= 16'sd0;
+			first_mb_mvd_y <= 16'sd0;
+			mvd_pairs_left <= 3'd0;
+			mvd_is_y <= 1'b0;
+			mvd_x_tmp <= 16'sd0;
 			residual_tc <= 0;
 			residual_t1 <= 0;
 			residual_ok <= 0;
@@ -382,6 +410,10 @@ module slice_hdr_parser (
 			first_mb_part_count <= 0;
 			first_mb_uses_sub_mb <= 0;
 			first_mb_intra <= 0;
+			first_mb_mvd_x <= 16'sd0;
+			first_mb_mvd_y <= 16'sd0;
+			mvd_pairs_left <= 3'd0;
+			mvd_is_y <= 1'b0;
 			residual_ok <= 0;
 			residual_tc <= 0;
 			residual_t1 <= 0;
@@ -412,6 +444,10 @@ module slice_hdr_parser (
 					first_mb_part_count <= 0;
 					first_mb_uses_sub_mb <= 0;
 					first_mb_intra <= 0;
+					first_mb_mvd_x <= 16'sd0;
+					first_mb_mvd_y <= 16'sd0;
+					mvd_pairs_left <= 3'd0;
+					mvd_is_y <= 1'b0;
 					residual_ok <= 0;
 					residual_tc <= 0;
 					residual_t1 <= 0;
@@ -586,6 +622,9 @@ module slice_hdr_parser (
 						first_mb_part_count <= p_part_count_of(1'b1, 8'd0);
 						first_mb_uses_sub_mb <= 1'b0;
 						first_mb_intra <= 1'b0;
+						// P_Skip carries no mvd_l0; product MVP may still be nonzero.
+						first_mb_mvd_x <= 16'sd0;
+						first_mb_mvd_y <= 16'sd0;
 						st <= ST_DONE;
 					end else begin
 						first_mb_p_skip <= 1'b0;
@@ -599,6 +638,8 @@ module slice_hdr_parser (
 					first_mb_part_count <= 3'd0;
 					first_mb_uses_sub_mb <= 1'b0;
 					first_mb_intra <= (ue_val <= 16'd25);
+					first_mb_mvd_x <= 16'sd0;
+					first_mb_mvd_y <= 16'sd0;
 				// I_16x16 (1..24): chroma → qpδ → CAVLC DC (nC=0)
 				// I_NxN (0): 16 pred modes → chroma → cbp → qpδ? → first 4x4 residual
 					if (ue_val >= 16'd1 && ue_val <= 16'd24) begin
@@ -617,7 +658,40 @@ module slice_hdr_parser (
 				first_mb_part_count <= p_part_count_of(1'b0, ue_val[7:0]);
 				first_mb_uses_sub_mb <= (ue_val == 16'd3) || (ue_val == 16'd4);
 				first_mb_intra <= (ue_val >= 16'd5) && (ue_val <= 16'd30);
-				st <= ST_DONE;
+				first_mb_mvd_x <= 16'sd0;
+				first_mb_mvd_y <= 16'sd0;
+				// Inter P_L0_16x16/16x8/8x16: parse mvd_l0 se(v) pairs (7.3.5.1).
+				// Baseline product assumes num_ref_idx_l0_active_minus1==0 so no
+				// ref_idx_l0 precedes mvd. P_8x8 sub-mb and intra leave mvd=0.
+				if ((ue_val <= 16'd2) && (p_part_count_of(1'b0, ue_val[7:0]) != 3'd0)) begin
+					mvd_pairs_left <= p_part_count_of(1'b0, ue_val[7:0]);
+					mvd_is_y <= 1'b0;
+					mvd_x_tmp <= 16'sd0;
+					zcnt <= 0; ue_cont <= ST_P_MVD; st <= ST_UE_Z;
+				end else
+					st <= ST_DONE;
+			end
+			ST_P_MVD: begin
+				// ue_val is codeNum for se(v) mvd component.
+				if (!mvd_is_y) begin
+					mvd_x_tmp <= se16_of(ue_val);
+					mvd_is_y <= 1'b1;
+					zcnt <= 0; ue_cont <= ST_P_MVD; st <= ST_UE_Z;
+				end else begin
+					// Commit first partition's pair to product ports; remaining
+					// pairs are consumed so the bit cursor stays aligned.
+					if (mvd_pairs_left == first_mb_part_count) begin
+						first_mb_mvd_x <= mvd_x_tmp;
+						first_mb_mvd_y <= se16_of(ue_val);
+					end
+					mvd_is_y <= 1'b0;
+					if (mvd_pairs_left <= 3'd1)
+						st <= ST_DONE;
+					else begin
+						mvd_pairs_left <= mvd_pairs_left - 3'd1;
+						zcnt <= 0; ue_cont <= ST_P_MVD; st <= ST_UE_Z;
+					end
+				end
 			end
 			ST_I4MODE: begin
 				// Skip 16 Intra4x4 modes: each is flag(1) or flag(0)+rem(3)

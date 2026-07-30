@@ -36,7 +36,10 @@ RTL=(
   "$RTL_DIR/h264_inter_pred.sv"
   "$RTL_DIR/h264_inter_nb_ctx.sv"
   "$RTL_DIR/h264_decode_core.sv"
-  "$RTL_DIR/h264_dpb.sv"
+  "$RTL_DIR/h264_dpb.sv" \
+  "$RTL_DIR/h264_mc_luma_qpel.sv" \
+  "$RTL_DIR/h264_mc_chroma_epel.sv" \
+  "$RTL_DIR/h264_mc_block.sv"
 )
 for f in "$TOP" "$TB" "$SLICE" "$SLICE_ENABLED" "${RTL[@]}"; do
   if [[ ! -f "$f" ]]; then

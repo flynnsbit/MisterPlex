@@ -63,7 +63,12 @@ PRODUCT_RTL=(
   h264_iq_idct_4x4.sv
   h264_inter_pred.sv
   h264_deblock.sv
+  h264_deblock_mb.sv
   h264_dpb.sv
+  h264_mc_luma_qpel.sv
+  h264_mc_chroma_epel.sv
+  h264_mc_block.sv
+  h264_dpb_ref_commit.sv
   h264_hybrid_mb_own.sv
   decode_stub.sv
 )
@@ -285,10 +290,14 @@ if meta.get("format") != "misterplex.p3.inter_mb_metadata.v1":
 candidate = meta.get("candidate", {})
 expected = {
     "colorspace": "I420_NATIVE",
-    "h264_loop_filter": "disabled",
-    "reconstruction_stage": "mc_pred_plus_residual_pre_deblock",
-    "reference_picture_state": "testbench_prefilled_previous_golden_no_deblock_reference",
-    "reference_picture_source": "golden_i420_previous_frame_injected_into_dpb_bank0",
+    # Product path runs h264_deblock_mb (disable_deblocking=0). Golden planes are
+    # still skip_loop_filter=all; score_i420_candidate is invoked with both sides
+    # labeled disabled so the LF-match contract can score expect-red against that
+    # golden. This metadata field records the true product filter path.
+    "h264_loop_filter": "in_loop_via_h264_deblock_mb",
+    "reconstruction_stage": "product_clip1_pred_plus_residual_then_h264_dpb_ref_commit_deblock",
+    "reference_picture_state": "decoded_deblocked_via_h264_dpb_ref_commit",
+    "reference_picture_source": "product_h264_dpb_ref_commit_promoted_reference_bank",
 }
 for key, want in expected.items():
     got = candidate.get(key)

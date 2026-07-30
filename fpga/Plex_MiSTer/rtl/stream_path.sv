@@ -68,6 +68,14 @@ module stream_path #(
 	output wire [2:0]  first_mb_part_count,
 	output wire        first_mb_uses_sub_mb,
 	output wire        first_mb_intra,
+	// First P-MB mvd_l0[0] se(v) → product DPB fetch (MVP + mvd).
+	output wire signed [15:0] first_mb_mvd_x,
+	output wire signed [15:0] first_mb_mvd_y,
+	// Product MV actually driven into DPB fetch (post MVP+mvd).
+	output wire signed [15:0] product_fetch_mv_x,
+	output wire signed [15:0] product_fetch_mv_y,
+	output wire signed [15:0] product_luma_origin_x,
+	output wire signed [15:0] product_luma_origin_y,
 	output wire [5:0]  slice_qp,
 	output wire [1:0]  disable_deblocking_filter_idc,
 	output wire signed [4:0] slice_alpha_c0_offset_div2,
@@ -266,6 +274,8 @@ module stream_path #(
 		.first_mb_part_count(first_mb_part_count),
 		.first_mb_uses_sub_mb(first_mb_uses_sub_mb),
 		.first_mb_intra(first_mb_intra),
+		.first_mb_mvd_x(first_mb_mvd_x),
+		.first_mb_mvd_y(first_mb_mvd_y),
 		.residual_tc(sl_rtc), .residual_t1(sl_rt1), .residual_ok(sl_res_ok),
 		.residual_dc(sl_rdc),
 		.residual_csum(residual_csum),
@@ -319,6 +329,8 @@ module stream_path #(
 		.first_mb_part_count(first_mb_part_count),
 		.first_mb_uses_sub_mb(first_mb_uses_sub_mb),
 		.first_mb_intra(first_mb_intra),
+		.first_mb_mvd_x(first_mb_mvd_x),
+		.first_mb_mvd_y(first_mb_mvd_y),
 		.entropy_cabac(pps_cabac),
 		.first_mb_type_i(sl_mbt),
 		.residual_ok(sl_place_ok),
@@ -336,6 +348,10 @@ module stream_path #(
 		.product_recon_ok(product_recon_ok),
 		.hybrid_own_code(hybrid_own_code),
 		.hybrid_own_reason(hybrid_own_reason),
+		.product_fetch_mv_x(product_fetch_mv_x),
+		.product_fetch_mv_y(product_fetch_mv_y),
+		.product_luma_origin_x(product_luma_origin_x),
+		.product_luma_origin_y(product_luma_origin_y),
 		.wr_en(fs_wr_en),
 		.wr_pixel(fs_wr_pixel),
 		.wr_reset_ptr(fs_wr_reset),
@@ -353,6 +369,9 @@ module stream_path #(
 	             recon_valid | recon_dbg_valid | |recon_sig | |recon_dbg |
 	             hybrid_host_required | product_recon_ok | hybrid_fpga_owned |
 	             |hybrid_own_code | |hybrid_own_reason |
+	             |product_fetch_mv_x | |product_fetch_mv_y |
+	             |product_luma_origin_x | |product_luma_origin_y |
+	             |first_mb_mvd_x | |first_mb_mvd_y |
 	             sl_place_ok | |sl_place_tc | |sl_place_t1 | |sl_place_qp |
 	             residual_coeff[0][0] | residual_coeff[1][0] |
 	             residual_coeff[15][0] | sl_place_coeff[0][0] | sl_place_coeff[15][0];

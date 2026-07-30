@@ -117,6 +117,9 @@ module stream_path_deblock_tb (
 	wire        hybrid_fpga_owned_w;
 	wire        hybrid_host_required_w;
 	wire        product_recon_ok_w;
+	wire signed [15:0] first_mb_mvd_x_w, first_mb_mvd_y_w;
+	wire signed [15:0] product_fetch_mv_x_w, product_fetch_mv_y_w;
+	wire signed [15:0] product_luma_origin_x_w, product_luma_origin_y_w;
 	wire [2:0]  hybrid_own_code_w;
 	wire [3:0]  hybrid_own_reason_w;
 	wire        entropy_cabac_w;
@@ -143,6 +146,12 @@ module stream_path_deblock_tb (
 		.first_mb_p_skip(first_mb_p_skip), .p_skip_run(p_skip_run),
 		.first_mb_part_mode(first_mb_part_mode), .first_mb_part_count(first_mb_part_count),
 		.first_mb_uses_sub_mb(first_mb_uses_sub_mb), .first_mb_intra(first_mb_intra),
+		.first_mb_mvd_x(first_mb_mvd_x_w),
+		.first_mb_mvd_y(first_mb_mvd_y_w),
+		.product_fetch_mv_x(product_fetch_mv_x_w),
+		.product_fetch_mv_y(product_fetch_mv_y_w),
+		.product_luma_origin_x(product_luma_origin_x_w),
+		.product_luma_origin_y(product_luma_origin_y_w),
 		.slice_qp(slice_qp),
 		.disable_deblocking_filter_idc(disable_deblocking_filter_idc),
 		.slice_alpha_c0_offset_div2(slice_alpha_c0_offset_div2),

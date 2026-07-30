@@ -10,7 +10,9 @@
 module decode_stub #(
 	parameter int WIDTH  = 320,
 	parameter int HEIGHT = 240,
-	parameter bit ENABLE_DPB_REF_SEAM = 1'b1
+	parameter bit ENABLE_DPB_REF_SEAM = 1'b1,
+	// Mutation twin: force DPB fetch MV to zero (proves product MV path is live).
+	parameter bit FAULT_FORCE_ZERO_FETCH_MV = 1'b0
 )(
 	input  wire        clk,
 	input  wire        reset,
@@ -34,6 +36,9 @@ module decode_stub #(
 	input  wire [2:0]  first_mb_part_count,
 	input  wire        first_mb_uses_sub_mb,
 	input  wire        first_mb_intra,
+	// Parsed first-MB mvd_l0 se(v) from slice_hdr_parser (qpel).
+	input  wire signed [15:0] first_mb_mvd_x,
+	input  wire signed [15:0] first_mb_mvd_y,
 	// P3-3l5: PPS entropy + first I mb_type for hybrid ownership
 	input  wire        entropy_cabac,
 	input  wire [7:0]  first_mb_type_i, // I-slice mb_type when has_mb_type
@@ -56,6 +61,12 @@ module decode_stub #(
 	output reg         product_recon_ok,      // sticky: full I path may own present
 	output reg  [2:0]  hybrid_own_code,
 	output reg  [3:0]  hybrid_own_reason,
+
+	// Product MV actually driven into h264_dpb_ref_commit / one_ref (post MVP+mvd).
+	output reg  signed [15:0] product_fetch_mv_x,
+	output reg  signed [15:0] product_fetch_mv_y,
+	output wire signed [15:0] product_luma_origin_x,
+	output wire signed [15:0] product_luma_origin_y,
 
 	output reg         wr_en,
 	output reg  [15:0] wr_pixel,
@@ -116,6 +127,24 @@ module decode_stub #(
 	reg [2:0]      pending_p_part_count;
 	reg            pending_p_uses_sub_mb;
 	reg            pending_p_intra;
+	// First-MB mvd latched for the opening P MB; cleared on multi-MB advance
+	// so later stub-walk MBs use MVP-only (mvd=0) until full syntax lands.
+	reg signed [15:0] lat_mvd_x;
+	reg signed [15:0] lat_mvd_y;
+	reg signed [15:0] pending_mvd_x;
+	reg signed [15:0] pending_mvd_y;
+	// Launch-cycle neighbour snapshot (A/B/C/D) for median MVP 8.4.1.3.
+	localparam int MV_NB_MAX = 40;
+	reg signed [15:0] mv_left_x, mv_left_y;
+	reg               mv_left_v;
+	reg signed [15:0] mv_above_x [0:MV_NB_MAX-1];
+	reg signed [15:0] mv_above_y [0:MV_NB_MAX-1];
+	reg               mv_above_v [0:MV_NB_MAX-1];
+	reg signed [15:0] mv_d_x, mv_d_y;
+	reg               mv_d_v;
+	reg signed [15:0] mv_col_al_x, mv_col_al_y;
+	reg               mv_col_al_v;
+	integer        mv_nb_i;
 	// P3-3l5 hybrid latches
 	reg            lat_cabac;
 	reg            lat_hybrid_host;
@@ -205,7 +234,7 @@ module decode_stub #(
 			// Intra MBs: 128 placeholder (real intra prediction not yet wired).
 			// This maps the first 4x4 block of dpb_pred_y into the recon path.
 			assign idct_pred[pred_i] = (lat_p_inter && dpb_ref_ready) ?
-			                           dpb_pred_y[pred_i] : 8'd128;
+			                           dpb_pred_y_head[pred_i] : 8'd128;
 		end
 	endgenerate
 
@@ -418,15 +447,20 @@ module decode_stub #(
 	wire              dpb_chroma_v_window_valid;
 	wire [6:0]        dpb_chroma_window_idx;
 	wire [7:0]        dpb_chroma_window_sample;
-	reg [7:0]         dpb_luma_win [0:440];
-	reg [7:0]         dpb_u_win [0:80];
-	reg [7:0]         dpb_v_win [0:80];
-	wire [7:0]        dpb_pred_y [0:255];
-	wire              dpb_pred_y_valid [0:255];
-	wire [7:0]        dpb_pred_u [0:63];
-	wire              dpb_pred_u_valid [0:63];
-	wire [7:0]        dpb_pred_v [0:63];
-	wire              dpb_pred_v_valid [0:63];
+	// Serial MC: windows stream into engine RAM; preds read back by index.
+	// Full parallel h264_inter_mc_part + register windows exploded to ~649k
+	// ALUTs / 65 DSPs once real MVs prevented constant-fold (product-wire3).
+	wire              dpb_mc_busy;
+	wire              dpb_mc_done;
+	reg               dpb_mc_start;
+	wire [7:0]        dpb_pred_y_head [0:15];
+	wire [7:0]        dpb_pred_y_rd_data;
+	wire [7:0]        dpb_pred_u_rd_data;
+	wire [7:0]        dpb_pred_v_rd_data;
+	wire              dpb_pred_y_in_part;
+	wire              dpb_pred_c_in_part;
+	reg  [7:0]        dpb_pred_y_rd_idx;
+	reg  [5:0]        dpb_pred_c_rd_idx;
 	// Inter reconstruction residual plane (signed post-IDCT samples).
 	// Filled from the first residual 4×4 when residual_ok; remaining samples
 	// stay 0 until a full P residual walker lands. P_Skip keeps zeros.
@@ -435,10 +469,14 @@ module decode_stub #(
 	reg signed [15:0] inter_res_v [0:63];
 	// lat_coeff → IQ/IDCT is combo; sample residual plane one cycle after place.
 	reg               inter_res_load_pending;
-	// recon = Clip1(pred + residual) — product inter export (pre-deblock).
-	wire [7:0]        inter_recon_y [0:255];
-	wire [7:0]        inter_recon_u [0:63];
-	wire [7:0]        inter_recon_v [0:63];
+	// Sample-serial Clip1(pred+residual) for the active fill index (1-cycle MC read lag).
+	reg               inter_recon_pipe_v;
+	reg  [8:0]        inter_recon_pipe_idx;
+	reg  [7:0]        inter_recon_sample;
+	// Full-MB capture for TB/native-I420 export (written sample-serially during P fill).
+	reg [7:0]         inter_recon_y [0:255];
+	reg [7:0]         inter_recon_u [0:63];
+	reg [7:0]         inter_recon_v [0:63];
 	wire [4:0]        dpb_part_w = p_part_w_of(lat_p_part_mode);
 	wire [4:0]        dpb_part_h = p_part_h_of(lat_p_part_mode);
 	wire              dpb_fill_sample_phase = (phase == PH_DPB_FILL) && (dpb_fill_sample_idx < 9'd384);
@@ -494,12 +532,54 @@ module decode_stub #(
 	                                       (first_mb_part_mode == 3'd2) || (first_mb_part_mode == 3'd3) ||
 	                                       (first_mb_part_mode == 3'd4));
 	wire              p_fetch_edge = p_fetch_candidate && !p_candidate_seen;
-	wire [7:0]        dpb_inter_sig = dpb_pred_y[0] ^ dpb_pred_y[1] ^ dpb_pred_y[2] ^ dpb_pred_y[3] ^
-	                                  dpb_pred_y[4] ^ dpb_pred_y[5] ^ dpb_pred_y[6] ^ dpb_pred_y[7] ^
-	                                  dpb_pred_y[8] ^ dpb_pred_y[9] ^ dpb_pred_y[10] ^ dpb_pred_y[11] ^
-	                                  dpb_pred_y[12] ^ dpb_pred_y[13] ^ dpb_pred_y[14] ^ dpb_pred_y[15];
+
+	// Product MVP + mvd → final qpel MV for DPB fetch (replaces hardwired 0).
+	// MV neighbour array is MV_NB_MAX entries; index with clog2 width.
+	localparam int MV_NB_AW = $clog2(MV_NB_MAX);
+	wire [MV_NB_AW-1:0] mv_nb_x = lat_p_mb_x[MV_NB_AW-1:0];
+	wire [MV_NB_AW-1:0] mv_nb_x_c = lat_p_mb_x[MV_NB_AW-1:0] + {{(MV_NB_AW-1){1'b0}}, 1'b1};
+	wire              prod_avail_a = (lat_p_mb_x != 8'd0) && mv_left_v;
+	wire              prod_avail_b = (lat_p_mb_y != 8'd0) &&
+	                                 (lat_p_mb_x < MV_NB_MAX[7:0]) && mv_above_v[mv_nb_x];
+	wire              prod_avail_c = (lat_p_mb_y != 8'd0) &&
+	                                 (lat_p_mb_x + 8'd1 < lat_mb_w) &&
+	                                 (lat_p_mb_x + 8'd1 < MV_NB_MAX[7:0]) &&
+	                                 mv_above_v[mv_nb_x_c];
+	wire              prod_avail_d = (lat_p_mb_x != 8'd0) && (lat_p_mb_y != 8'd0) && mv_d_v;
+	wire signed [15:0] prod_mv_a_x = mv_left_x;
+	wire signed [15:0] prod_mv_a_y = mv_left_y;
+	wire signed [15:0] prod_mv_b_x = (lat_p_mb_x < MV_NB_MAX[7:0]) ? mv_above_x[mv_nb_x] : 16'sd0;
+	wire signed [15:0] prod_mv_b_y = (lat_p_mb_x < MV_NB_MAX[7:0]) ? mv_above_y[mv_nb_x] : 16'sd0;
+	wire signed [15:0] prod_mv_c_x = (lat_p_mb_x + 8'd1 < MV_NB_MAX[7:0]) ? mv_above_x[mv_nb_x_c] : 16'sd0;
+	wire signed [15:0] prod_mv_c_y = (lat_p_mb_x + 8'd1 < MV_NB_MAX[7:0]) ? mv_above_y[mv_nb_x_c] : 16'sd0;
+	wire signed [15:0] prod_mvp_x, prod_mvp_y, prod_mv_x, prod_mv_y;
+	wire               prod_skip_zero;
+	h264_mv_pred_part u_product_mv_pred (
+		.part_mode(lat_p_part_mode),
+		.part_idx(2'd0),
+		.avail_a(prod_avail_a), .avail_b(prod_avail_b),
+		.avail_c(prod_avail_c), .avail_d(prod_avail_d),
+		.mv_a_x(prod_mv_a_x), .mv_a_y(prod_mv_a_y),
+		.mv_b_x(prod_mv_b_x), .mv_b_y(prod_mv_b_y),
+		.mv_c_x(prod_mv_c_x), .mv_c_y(prod_mv_c_y),
+		.mv_d_x(mv_d_x), .mv_d_y(mv_d_y),
+		.mvd_x(lat_mvd_x), .mvd_y(lat_mvd_y),
+		.p_skip(lat_p_skip),
+		.pred_x(prod_mvp_x), .pred_y(prod_mvp_y),
+		.mv_x(prod_mv_x), .mv_y(prod_mv_y),
+		.skip_zero(prod_skip_zero)
+	);
+	wire signed [15:0] fetch_mv_x_qpel =
+		FAULT_FORCE_ZERO_FETCH_MV ? 16'sd0 : prod_mv_x;
+	wire signed [15:0] fetch_mv_y_qpel =
+		FAULT_FORCE_ZERO_FETCH_MV ? 16'sd0 : prod_mv_y;
+
+	wire [7:0]        dpb_inter_sig = dpb_pred_y_head[0] ^ dpb_pred_y_head[1] ^ dpb_pred_y_head[2] ^ dpb_pred_y_head[3] ^
+	                                  dpb_pred_y_head[4] ^ dpb_pred_y_head[5] ^ dpb_pred_y_head[6] ^ dpb_pred_y_head[7] ^
+	                                  dpb_pred_y_head[8] ^ dpb_pred_y_head[9] ^ dpb_pred_y_head[10] ^ dpb_pred_y_head[11] ^
+	                                  dpb_pred_y_head[12] ^ dpb_pred_y_head[13] ^ dpb_pred_y_head[14] ^ dpb_pred_y_head[15];
 	wire              dpb_inter_ok = lat_p_inter && dpb_ref_ready && !dpb_fetch_error_no_ref &&
-	                                 dpb_pred_y_valid[0];
+	                                 dpb_pred_y_in_part;
 	// DPB local memory — two banks for ping-pong (current/reference).
 	// In simulation, backed by SRAM; testbench pre-fills reference bank
 	// with real IDR decode data for honest inter measurement.
@@ -518,57 +598,99 @@ module decode_stub #(
 	assign dpb_mem_rdata = (dpb_mem_raddr_q < DPB_MEM_BYTES[31:0]) ?
 	                       dpb_mem[dpb_mem_raddr_q[17:0]] : 8'h00;
 
-	h264_deblock_writeback_ctrl #(
-		.MB_COUNT(DPB_MB_COUNT),
-		.MB_AW(DPB_MB_AW),
-		.FRAME_SLOT_W(2),
-		.SAMPLES_PER_MB(384)
-	) u_stream_dpb_wb (
-		.clk(clk), .reset(reset),
-		.idr_frame_start(vcl_pulse && (last_nal_type[4:0] == 5'd5)),
-		.filtered_sample_valid(dpb_filtered_sample_valid),
-		.filtered_mb_valid(dpb_filtered_mb_valid),
-		.filtered_mb_addr(dpb_fill_mb_addr[DPB_MB_AW-1:0]),
-		.filtered_mb_is_ref(1'b1),
-		.filtered_frame_done(dpb_filtered_frame_done),
-		.frame_slot_i(2'd0),
-		.frame_boundary(dpb_frame_boundary),
-		.wb_valid(deblock_wb_valid),
-		.wb_mb_addr(deblock_wb_mb_addr),
-		.wb_is_ref(deblock_wb_is_ref),
-		.dpb_invalidate_refs(deblock_dpb_invalidate_refs),
-		.ref_ready_pulse(deblock_ref_ready_pulse),
-		.ref_ready_slot(deblock_ref_ready_slot),
-		.commit_order_error(deblock_commit_order_error)
-	);
+	// ── Product recon → deblock → DPB (h264_dpb_ref_commit) ─────────────
+	// Closes the diagnostic XOR fill: reconstructed MB samples stream into
+	// deblock_mb, POST samples store into DPB, frame-boundary promotion is
+	// owned by the commit controller. Fetch MVs are product MVP+mvd.
+	reg               recon_mb_start_r;
+	reg [7:0]         recon_mb_x_r, recon_mb_y_r;
+	reg [DPB_MB_AW-1:0] recon_mb_addr_r;
+	reg               recon_mb_is_ref_r;
+	reg               recon_mb_is_intra_r;
+	reg               recon_frame_done_r;
+	reg               recon_sample_valid_r;
+	reg [8:0]         recon_sample_idx_r;
+	reg [7:0]         recon_sample_r;
+	reg               recon_sample_done_r;
+	reg               recon_slice_start_r;
+	reg               recon_frame_boundary_r;
+	reg signed [15:0] recon_mv_x_r, recon_mv_y_r;
+	reg               recon_p_mb_commit; // 1 = commit single P MB after fetch, not full IDR walk
+	// PH_DPB_FILL / post-P commit sequencer uses dpb_fill_* counters.
+	// Sample source: IDR → residual recon_px block0 + DC/128 plane;
+	//                 P   → Clip1(pred+residual) inter_recon_* planes.
+	wire              recon_commit_is_p = lat_p_inter && (phase == PH_FETCH || phase == PH_DPB_FILL);
+	// IDR plane is combo; P uses 1-cycle-lagged Clip1(pred+residual) sample.
+	wire [7:0]        recon_src_y_idr = (
+	                      ((dpb_fill_mb_addr == 16'd0) && (dpb_fill_sample_idx < 9'd16) && lat_res_ok) ?
+	                          recon_px[{dpb_fill_sample_idx[3:2], dpb_fill_sample_idx[1:0]}] :
+	                      8'd128
+	                  );
+	wire [7:0]        recon_src_sample = recon_commit_is_p ? inter_recon_sample :
+	                      ((dpb_fill_sample_idx < 9'd256) ? recon_src_y_idr : 8'd128);
 
-	h264_dpb_one_ref #(
-		.FRAME_W(WIDTH), .FRAME_H(HEIGHT),
-		.BANK0_BASE(0), .BANK1_BASE(DPB_FRAME_BYTES)
-	) u_stream_dpb (
+	wire              ref_commit_deblock_busy;
+	wire              ref_commit_deblock_mb_done;
+	wire              ref_commit_invalidate;
+	wire              ref_commit_wb_valid;
+	wire [DPB_MB_AW-1:0] ref_commit_wb_mb_addr;
+	wire              ref_commit_order_error;
+
+	h264_dpb_ref_commit #(
+		.FRAME_W(WIDTH),
+		.FRAME_H(HEIGHT),
+		.MB_COUNT(DPB_MB_COUNT),
+		.BANK0_BASE(0),
+		.BANK1_BASE(DPB_FRAME_BYTES)
+	) u_product_ref_commit (
 		.clk(clk), .reset(reset),
-		.idr_start(dpb_idr_start),
-		.frame_done(ENABLE_DPB_REF_SEAM ? deblock_ref_ready_pulse : dpb_frame_done_pulse),
+		.slice_start(recon_slice_start_r),
+		.idr_frame_start(vcl_pulse && (last_nal_type[4:0] == 5'd5)),
+		.disable_deblocking(1'b0),
+		.slice_alpha_c0_offset(5'sd0),
+		.slice_beta_offset(5'sd0),
+		.frame_boundary(recon_frame_boundary_r),
+		.recon_mb_start(recon_mb_start_r),
+		.recon_mb_x(recon_mb_x_r),
+		.recon_mb_y(recon_mb_y_r),
+		.recon_mb_addr(recon_mb_addr_r),
+		.recon_mb_is_ref(recon_mb_is_ref_r),
+		.recon_mb_is_intra(recon_mb_is_intra_r),
+		.recon_frame_done(recon_frame_done_r),
+		.recon_qp_y(lat_qp),
+		.recon_qp_c(lat_qp),
+		.recon_nz_luma(16'hFFFF),
+		.recon_mv_x(recon_mv_x_r),
+		.recon_mv_y(recon_mv_y_r),
+		.recon_ref_idx(2'd0),
+		.recon_sample_valid(recon_sample_valid_r),
+		.recon_sample_idx(recon_sample_idx_r),
+		.recon_sample(recon_sample_r),
+		.recon_sample_done(recon_sample_done_r),
 		.ref_ready(dpb_ref_ready),
 		.current_base(dpb_current_base),
 		.reference_base(dpb_reference_base),
-		.filtered_sample_valid(dpb_filtered_sample_valid),
-		.filtered_mb_x(dpb_filtered_mb_x_out), .filtered_mb_y(dpb_filtered_mb_y_out), .filtered_plane(dpb_filtered_plane_out),
-		.filtered_sample_idx(dpb_filtered_sample_idx_out), .filtered_sample(dpb_filtered_sample_out),
+		.ref_ready_pulse(deblock_ref_ready_pulse),
+		.wb_valid(ref_commit_wb_valid),
+		.wb_mb_addr(ref_commit_wb_mb_addr),
+		.commit_order_error(ref_commit_order_error),
+		.dpb_invalidate_refs(ref_commit_invalidate),
+		.deblock_busy(ref_commit_deblock_busy),
+		.deblock_mb_done(ref_commit_deblock_mb_done),
 		.mem_we(dpb_mem_we), .mem_waddr(dpb_mem_waddr), .mem_wdata(dpb_mem_wdata),
+		.mem_rd(dpb_mem_rd), .mem_raddr(dpb_mem_raddr),
+		.mem_rdata(dpb_mem_rdata), .mem_rvalid(dpb_mem_rvalid),
 		.fetch_start(dpb_fetch_start),
 		.fetch_mb_x(lat_p_mb_x), .fetch_mb_y(lat_p_mb_y),
 		.fetch_part_mode(lat_p_part_mode), .fetch_part_idx(2'd0),
 		.fetch_part_w(dpb_part_w), .fetch_part_h(dpb_part_h),
-		.fetch_mv_x_qpel(16'sd0), .fetch_mv_y_qpel(16'sd0),
+		.fetch_mv_x_qpel(fetch_mv_x_qpel), .fetch_mv_y_qpel(fetch_mv_y_qpel),
 		.fetch_busy(dpb_fetch_busy), .fetch_done(dpb_fetch_done),
 		.fetch_error_no_ref(dpb_fetch_error_no_ref),
 		.luma_frac_x(dpb_luma_frac_x), .luma_frac_y(dpb_luma_frac_y),
 		.chroma_frac_x(dpb_chroma_frac_x), .chroma_frac_y(dpb_chroma_frac_y),
 		.luma_origin_x(dpb_luma_origin_x), .luma_origin_y(dpb_luma_origin_y),
 		.chroma_origin_x(dpb_chroma_origin_x), .chroma_origin_y(dpb_chroma_origin_y),
-		.mem_rd(dpb_mem_rd), .mem_raddr(dpb_mem_raddr),
-		.mem_rdata(dpb_mem_rdata), .mem_rvalid(dpb_mem_rvalid),
 		.luma_window_valid(dpb_luma_window_valid),
 		.luma_window_idx(dpb_luma_window_idx),
 		.luma_window_sample(dpb_luma_window_sample),
@@ -578,21 +700,43 @@ module decode_stub #(
 		.chroma_window_sample(dpb_chroma_window_sample)
 	);
 
-	h264_inter_mc_part u_stream_mc (
-		.luma_ref_win(dpb_luma_win),
-		.chroma_u_ref_win(dpb_u_win),
-		.chroma_v_ref_win(dpb_v_win),
+	// Keep legacy net names live for _keep_dpb_mc / diagnostics.
+	assign deblock_wb_valid = ref_commit_wb_valid;
+	assign deblock_wb_mb_addr = ref_commit_wb_mb_addr;
+	assign deblock_wb_is_ref = 1'b1;
+	assign deblock_dpb_invalidate_refs = ref_commit_invalidate;
+	assign deblock_ref_ready_slot = 2'd0;
+	assign deblock_commit_order_error = ref_commit_order_error;
+	// dpb_idr_start already ORs deblock_dpb_invalidate_refs.
+
+	assign product_luma_origin_x = dpb_luma_origin_x;
+	assign product_luma_origin_y = dpb_luma_origin_y;
+
+	h264_mc_block u_stream_mc (
+		.clk(clk), .reset(reset),
+		.start(dpb_mc_start),
+		.busy(dpb_mc_busy), .done(dpb_mc_done),
+		.luma_win_wr(dpb_luma_window_valid),
+		.luma_win_addr(dpb_luma_window_idx),
+		.luma_win_data(dpb_luma_window_sample),
+		.chroma_u_win_wr(dpb_chroma_u_window_valid),
+		.chroma_v_win_wr(dpb_chroma_v_window_valid),
+		.chroma_win_addr(dpb_chroma_window_idx),
+		.chroma_win_data(dpb_chroma_window_sample),
 		.luma_frac_x(dpb_luma_frac_x), .luma_frac_y(dpb_luma_frac_y),
 		.chroma_frac_x(dpb_chroma_frac_x), .chroma_frac_y(dpb_chroma_frac_y),
 		.part_w(dpb_part_w), .part_h(dpb_part_h),
-		.pred_y(dpb_pred_y), .pred_y_valid(dpb_pred_y_valid),
-		.pred_u(dpb_pred_u), .pred_u_valid(dpb_pred_u_valid),
-		.pred_v(dpb_pred_v), .pred_v_valid(dpb_pred_v_valid)
+		.pred_y_rd_idx(dpb_pred_y_rd_idx),
+		.pred_y_rd_data(dpb_pred_y_rd_data),
+		.pred_y_rd_in_part(dpb_pred_y_in_part),
+		.pred_c_rd_idx(dpb_pred_c_rd_idx),
+		.pred_u_rd_data(dpb_pred_u_rd_data),
+		.pred_v_rd_data(dpb_pred_v_rd_data),
+		.pred_c_rd_in_part(dpb_pred_c_in_part),
+		.pred_y_head(dpb_pred_y_head)
 	);
 
-	// ── Inter residual add: recon = Clip1(pred + residual) ──────────────
-	// Arithmetic already exists in h264_recon4x4; this expands it across the
-	// full MB planes for the native-I420 inter export path.
+	// ── Inter residual add (sample-serial): recon = Clip1(pred + residual) ──
 	function automatic [7:0] inter_clip_u8;
 		input signed [17:0] v;
 		begin
@@ -605,68 +749,45 @@ module decode_stub #(
 `endif
 		end
 	endfunction
+	// Residual term for the pipelined fill index (drops to 0 under fault defines).
+	wire signed [15:0] inter_res_term_pipe =
 `ifdef DECODE_STUB_FAULT_DROP_INTER_RESIDUAL
-	wire signed [15:0] inter_res_y_term [0:255];
-	wire signed [15:0] inter_res_u_term [0:63];
-	wire signed [15:0] inter_res_v_term [0:63];
-	genvar irz;
-	generate
-		for (irz = 0; irz < 256; irz = irz + 1) begin : gen_drop_res_y
-			assign inter_res_y_term[irz] = 16'sd0;
-		end
-		for (irz = 0; irz < 64; irz = irz + 1) begin : gen_drop_res_c
-			assign inter_res_u_term[irz] = 16'sd0;
-			assign inter_res_v_term[irz] = 16'sd0;
-		end
-	endgenerate
+		16'sd0
 `else
-	wire signed [15:0] inter_res_y_term [0:255];
-	wire signed [15:0] inter_res_u_term [0:63];
-	wire signed [15:0] inter_res_v_term [0:63];
-	genvar irk;
-	generate
-		for (irk = 0; irk < 256; irk = irk + 1) begin : gen_res_y
-			assign inter_res_y_term[irk] = inter_res_y[irk];
-		end
-		for (irk = 0; irk < 64; irk = irk + 1) begin : gen_res_c
+		(inter_recon_pipe_idx < 9'd256) ? inter_res_y[inter_recon_pipe_idx[7:0]] :
 `ifdef DECODE_STUB_FAULT_SKIP_INTER_CHROMA_RESIDUAL
-			assign inter_res_u_term[irk] = 16'sd0;
-			assign inter_res_v_term[irk] = 16'sd0;
+		16'sd0
 `else
-			assign inter_res_u_term[irk] = inter_res_u[irk];
-			assign inter_res_v_term[irk] = inter_res_v[irk];
+		(inter_recon_pipe_idx < 9'd320) ? inter_res_u[inter_recon_pipe_idx[5:0]] :
+		                                   inter_res_v[inter_recon_pipe_idx[5:0]]
 `endif
-		end
-	endgenerate
 `endif
-	genvar iri;
-	generate
-		for (iri = 0; iri < 256; iri = iri + 1) begin : gen_inter_recon_y
-			assign inter_recon_y[iri] = inter_clip_u8(
-				$signed({10'd0, dpb_pred_y[iri]}) +
-				{{2{inter_res_y_term[iri][15]}}, inter_res_y_term[iri]});
-		end
-		for (iri = 0; iri < 64; iri = iri + 1) begin : gen_inter_recon_c
-			assign inter_recon_u[iri] = inter_clip_u8(
-				$signed({10'd0, dpb_pred_u[iri]}) +
-				{{2{inter_res_u_term[iri][15]}}, inter_res_u_term[iri]});
-			assign inter_recon_v[iri] = inter_clip_u8(
-				$signed({10'd0, dpb_pred_v[iri]}) +
-				{{2{inter_res_v_term[iri][15]}}, inter_res_v_term[iri]});
-		end
-	endgenerate
+		;
+	wire [7:0] inter_pred_term_pipe =
+		(inter_recon_pipe_idx < 9'd256) ? dpb_pred_y_rd_data :
+		(inter_recon_pipe_idx < 9'd320) ? dpb_pred_u_rd_data :
+		                                  dpb_pred_v_rd_data;
+	wire [7:0] inter_recon_comb = inter_clip_u8(
+		$signed({10'd0, inter_pred_term_pipe}) +
+		{{2{inter_res_term_pipe[15]}}, inter_res_term_pipe});
+
 	(* keep = 1 *) wire _keep_dpb_mc = dpb_fetch_busy | dpb_mem_we | |dpb_mem_waddr |
 	                                   |dpb_mem_wdata | |dpb_luma_origin_x |
 	                                   |dpb_luma_origin_y | |dpb_chroma_origin_x |
-	                                   |dpb_chroma_origin_y | dpb_pred_u_valid[0] |
-	                                   dpb_pred_v_valid[0] | |dpb_pred_u[0] | |dpb_pred_v[0] |
-	                                   |dpb_inter_sig |
+	                                   |dpb_chroma_origin_y | dpb_pred_y_in_part |
+	                                   dpb_pred_c_in_part | |dpb_pred_u_rd_data |
+	                                   |dpb_pred_v_rd_data | dpb_mc_busy | dpb_mc_done |
+	                                   |dpb_inter_sig | |inter_recon_sample |
 	                                   lat_p_skip | |lat_p_part_count | lat_p_uses_sub_mb |
 	                                   lat_p_intra | |lat_p_mb_x | |lat_p_mb_y |
 	                                   pending_p_skip | pending_p_uses_sub_mb | pending_p_intra |
 	                                   deblock_wb_valid | |deblock_wb_mb_addr |
 	                                   deblock_wb_is_ref | deblock_ref_ready_pulse |
-	                                   |deblock_ref_ready_slot | deblock_commit_order_error;
+	                                   |deblock_ref_ready_slot | deblock_commit_order_error |
+	                                   |product_fetch_mv_x | |product_fetch_mv_y |
+	                                   |fetch_mv_x_qpel | |fetch_mv_y_qpel |
+	                                   recon_mb_start_r | recon_sample_valid_r |
+	                                   recon_frame_boundary_r | ref_commit_deblock_mb_done;
 
 	// Latch on the producer's explicit place-time pulse; residual_ok/coefficients
 	// are sticky payload, not a safe valid edge.
@@ -680,6 +801,12 @@ module decode_stub #(
 		dpb_fetch_start <= 1'b0;
 		dpb_frame_done_pulse <= 1'b0;
 		inter_capture_valid <= 1'b0;
+		recon_mb_start_r <= 1'b0;
+		recon_sample_valid_r <= 1'b0;
+		recon_sample_done_r <= 1'b0;
+		recon_frame_done_r <= 1'b0;
+		recon_slice_start_r <= 1'b0;
+		recon_frame_boundary_r <= 1'b0;
 		// Read data is combinational off the registered address, so rvalid must
 		// lag mem_rd by exactly one cycle to stay aligned with h264_dpb's
 		// pending_valid_d1 capture window.
@@ -693,14 +820,15 @@ module decode_stub #(
 		dpb_mem_rd_dbg_q <= reset ? 1'b0 : dpb_mem_rd;
 		dpb_mem_raddr_dbg_q <= dpb_mem_raddr;
 `endif
-		if (dpb_luma_window_valid)
-			dpb_luma_win[dpb_luma_window_idx] <= dpb_luma_window_sample;
-		if (dpb_chroma_u_window_valid)
-			dpb_u_win[dpb_chroma_window_idx] <= dpb_chroma_window_sample;
-		if (dpb_chroma_v_window_valid)
-			dpb_v_win[dpb_chroma_window_idx] <= dpb_chroma_window_sample;
+		// Default: clear MC start; pulse during PH_FETCH on fetch_done.
+		dpb_mc_start <= 1'b0;
 
 		if (reset) begin
+			inter_recon_pipe_v <= 1'b0;
+			inter_recon_pipe_idx <= 9'd0;
+			inter_recon_sample <= 8'd0;
+			dpb_pred_y_rd_idx <= 8'd0;
+			dpb_pred_c_rd_idx <= 6'd0;
 			phase         <= PH_IDLE;
 			busy          <= 0;
 			pix_i         <= 0;
@@ -756,6 +884,42 @@ module decode_stub #(
 			pending_p_part_count <= 0;
 			pending_p_uses_sub_mb <= 0;
 			pending_p_intra <= 0;
+			lat_mvd_x <= 16'sd0;
+			lat_mvd_y <= 16'sd0;
+			pending_mvd_x <= 16'sd0;
+			pending_mvd_y <= 16'sd0;
+			mv_left_x <= 16'sd0;
+			mv_left_y <= 16'sd0;
+			mv_left_v <= 1'b0;
+			mv_d_x <= 16'sd0;
+			mv_d_y <= 16'sd0;
+			mv_d_v <= 1'b0;
+			mv_col_al_x <= 16'sd0;
+			mv_col_al_y <= 16'sd0;
+			mv_col_al_v <= 1'b0;
+			product_fetch_mv_x <= 16'sd0;
+			product_fetch_mv_y <= 16'sd0;
+			for (mv_nb_i = 0; mv_nb_i < MV_NB_MAX; mv_nb_i = mv_nb_i + 1) begin
+				mv_above_x[mv_nb_i] <= 16'sd0;
+				mv_above_y[mv_nb_i] <= 16'sd0;
+				mv_above_v[mv_nb_i] <= 1'b0;
+			end
+			recon_mb_start_r <= 1'b0;
+			recon_mb_x_r <= 8'd0;
+			recon_mb_y_r <= 8'd0;
+			recon_mb_addr_r <= '0;
+			recon_mb_is_ref_r <= 1'b0;
+			recon_mb_is_intra_r <= 1'b0;
+			recon_frame_done_r <= 1'b0;
+			recon_sample_valid_r <= 1'b0;
+			recon_sample_idx_r <= 9'd0;
+			recon_sample_r <= 8'd0;
+			recon_sample_done_r <= 1'b0;
+			recon_slice_start_r <= 1'b0;
+			recon_frame_boundary_r <= 1'b0;
+			recon_mv_x_r <= 16'sd0;
+			recon_mv_y_r <= 16'sd0;
+			recon_p_mb_commit <= 1'b0;
 			lat_cabac <= 0;
 			lat_hybrid_host <= 0;
 			lat_hybrid_fpga <= 0;
@@ -807,6 +971,8 @@ module decode_stub #(
 				pending_p_part_count <= first_mb_part_count;
 				pending_p_uses_sub_mb <= first_mb_uses_sub_mb;
 				pending_p_intra <= first_mb_intra;
+				pending_mvd_x <= first_mb_mvd_x;
+				pending_mvd_y <= first_mb_mvd_y;
 			end
 			if (!slice_valid)
 				p_candidate_seen <= 1'b0;
@@ -823,6 +989,15 @@ module decode_stub #(
 				lat_idr  <= idr_count;
 				lat_p_inter <= 1'b0;
 				lat_inter_recon_ok <= 1'b0;
+				recon_slice_start_r <= 1'b1;
+				// New IDR invalidates neighbour MV context.
+				if (last_nal_type[4:0] == 5'd5) begin
+					mv_left_v <= 1'b0;
+					mv_d_v <= 1'b0;
+					mv_col_al_v <= 1'b0;
+					for (mv_nb_i = 0; mv_nb_i < MV_NB_MAX; mv_nb_i = mv_nb_i + 1)
+						mv_above_v[mv_nb_i] <= 1'b0;
+				end
 				// Clear hybrid stickies for new VCL; CABAC sticky clears only on new VCL
 				// so a CABAC PPS mid-stream still fails closed until next VCL samples it.
 				lat_cabac <= entropy_cabac;
@@ -859,6 +1034,20 @@ module decode_stub #(
 				lat_p_part_count <= pending_p_part_count;
 				lat_p_uses_sub_mb <= pending_p_uses_sub_mb;
 				lat_p_intra <= pending_p_intra;
+				lat_mvd_x <= pending_mvd_x;
+				lat_mvd_y <= pending_mvd_y;
+				mv_d_v <= (pending_p_mb_x != 8'd0) && (pending_p_mb_y != 8'd0) && mv_col_al_v;
+				mv_d_x <= mv_col_al_x;
+				mv_d_y <= mv_col_al_y;
+				if ((pending_p_mb_y != 8'd0) && (pending_p_mb_x < MV_NB_MAX[7:0])) begin
+					mv_col_al_v <= mv_above_v[pending_p_mb_x[MV_NB_AW-1:0]];
+					mv_col_al_x <= mv_above_x[pending_p_mb_x[MV_NB_AW-1:0]];
+					mv_col_al_y <= mv_above_y[pending_p_mb_x[MV_NB_AW-1:0]];
+				end else begin
+					mv_col_al_v <= 1'b0;
+					mv_col_al_x <= 16'sd0;
+					mv_col_al_y <= 16'sd0;
+				end
 				lat_inter_recon_ok <= 1'b0;
 				// P-fetch path is host-required under default CAP_INTER_*=0.
 				lat_hybrid_host <= 1'b1;
@@ -878,11 +1067,19 @@ module decode_stub #(
 			if (wait_cnt != 12'd0)
 				wait_cnt <= wait_cnt - 12'd1;
 			if (wait_done) begin
-				phase        <= ((lat_type[4:0] == 5'd5) && ENABLE_DPB_REF_SEAM ? PH_DPB_FILL : PH_PAINT);
+				// Only reset the frame-store pointer when entering paint.
+				// Asserting it on PH_DPB_FILL start mis-attributes deblock/DPB
+				// commit cycles to the diagnostic_paint throughput stage.
+				if ((lat_type[4:0] == 5'd5) && ENABLE_DPB_REF_SEAM) begin
+					phase <= PH_DPB_FILL;
+					wr_reset_ptr <= 1'b0;
+				end else begin
+					phase <= PH_PAINT;
+					wr_reset_ptr <= 1'b1;
+				end
 				pix_i        <= 0;
 				x            <= 0;
 				y            <= 0;
-				wr_reset_ptr <= 1'b1;
 				is_idr_frame <= (lat_type[4:0] == 5'd5);
 				is_i_frame   <= slice_is_i || (lat_type[4:0] == 5'd5);
 				lat_sps      <= sps_valid;
@@ -902,6 +1099,8 @@ module decode_stub #(
 				lat_p_part_count <= first_mb_part_count;
 				lat_p_uses_sub_mb <= first_mb_uses_sub_mb;
 				lat_p_intra  <= first_mb_intra;
+				lat_mvd_x    <= first_mb_mvd_x;
+				lat_mvd_y    <= first_mb_mvd_y;
 				// Capture hybrid ownership at residual place time.
 				lat_cabac <= lat_cabac | entropy_cabac;
 				if (has_mb_type) begin
@@ -920,6 +1119,11 @@ module decode_stub #(
 				if ((lat_type[4:0] == 5'd5) && ENABLE_DPB_REF_SEAM) begin
 					dpb_fill_mb_addr <= '0;
 					dpb_fill_sample_idx <= 9'd0;
+					recon_p_mb_commit <= 1'b0;
+					recon_mb_is_intra_r <= 1'b1;
+					recon_mb_is_ref_r <= 1'b1;
+					recon_mv_x_r <= 16'sd0;
+					recon_mv_y_r <= 16'sd0;
 				end
 				for (coeff_i = 0; coeff_i < 16; coeff_i = coeff_i + 1)
 					lat_coeff[coeff_i] <= residual_coeff[coeff_i];
@@ -936,6 +1140,8 @@ module decode_stub #(
 				recon_dbg_valid <= 1'b0;
 				if (p_fetch_candidate && dpb_ref_ready) begin
 					phase <= PH_FETCH;
+					// Defer fs_wr_reset until PH_PAINT — fetch/deblock are not paint.
+					wr_reset_ptr <= 1'b0;
 					dpb_fetch_start <= 1'b1;
 					p_fetch_launch_pending <= 1'b1;
 					pending_p_fetch <= 1'b0;
@@ -945,6 +1151,20 @@ module decode_stub #(
 				lat_p_mb_addr <= lat_p_next_mb_addr;
 				lat_p_mb_x <= lat_p_next_mb_x;
 				lat_p_mb_y <= lat_p_next_mb_y;
+				lat_mvd_x <= 16'sd0;
+				lat_mvd_y <= 16'sd0;
+				mv_d_v <= (lat_p_next_mb_x != 8'd0) && (lat_p_next_mb_y != 8'd0) && mv_col_al_v;
+				mv_d_x <= mv_col_al_x;
+				mv_d_y <= mv_col_al_y;
+				if ((lat_p_next_mb_y != 8'd0) && (lat_p_next_mb_x < MV_NB_MAX[7:0])) begin
+					mv_col_al_v <= mv_above_v[lat_p_next_mb_x[MV_NB_AW-1:0]];
+					mv_col_al_x <= mv_above_x[lat_p_next_mb_x[MV_NB_AW-1:0]];
+					mv_col_al_y <= mv_above_y[lat_p_next_mb_x[MV_NB_AW-1:0]];
+				end else begin
+					mv_col_al_v <= 1'b0;
+					mv_col_al_x <= 16'sd0;
+					mv_col_al_y <= 16'sd0;
+				end
 				// Subsequent P MBs: residual plane cleared until per-MB residual
 				// walk is connected (CBP-gated CAVLC in h264_decode_core).
 				for (coeff_i = 0; coeff_i < 256; coeff_i = coeff_i + 1)
@@ -961,35 +1181,132 @@ module decode_stub #(
 			end else if (phase == PH_FETCH) begin
 			if (p_fetch_launch_pending && !dpb_fetch_done) begin
 				p_fetch_launch_pending <= 1'b0;
-			end else if (!p_fetch_launch_pending && dpb_fetch_done) begin
-				// Capture Clip1(pred+residual) via inter_recon_* (TB taps these).
+			end else if (!p_fetch_launch_pending && dpb_fetch_done && !dpb_mc_busy && !dpb_mc_done) begin
+				// Window is in MC RAM; kick serial interpolator once per MB.
+				dpb_mc_start <= 1'b1;
+			end else if (dpb_mc_done) begin
+				// Serial MC complete — preds live in engine M10K.
 				inter_capture_valid <= dpb_inter_ok;
 				lat_inter_recon_ok <= lat_inter_recon_ok | dpb_inter_ok;
-				// Inter diagnostic may set recon_sig, but product hybrid stays host.
-				lat_hybrid_host <= 1'b1;
-				if (lat_p_inter && (lat_p_next_mb_addr <= DPB_LAST_MB_ADDR)) begin
-					p_fetch_advance <= 1'b1;
-				end else begin
-					phase <= PH_PAINT;
-					pix_i <= 0;
-					x <= 0;
-					y <= 0;
-					wr_reset_ptr <= 1'b1;
+				product_fetch_mv_x <= fetch_mv_x_qpel;
+				product_fetch_mv_y <= fetch_mv_y_qpel;
+				if (lat_p_mb_x < MV_NB_MAX[7:0]) begin
+					mv_above_x[lat_p_mb_x[MV_NB_AW-1:0]] <= prod_mv_x;
+					mv_above_y[lat_p_mb_x[MV_NB_AW-1:0]] <= prod_mv_y;
+					mv_above_v[lat_p_mb_x[MV_NB_AW-1:0]] <= 1'b1;
 				end
+				if (lat_p_mb_x + 8'd1 >= lat_mb_w) begin
+					mv_left_v <= 1'b0;
+					mv_left_x <= 16'sd0;
+					mv_left_y <= 16'sd0;
+				end else begin
+					mv_left_v <= 1'b1;
+					mv_left_x <= prod_mv_x;
+					mv_left_y <= prod_mv_y;
+				end
+				lat_hybrid_host <= 1'b1;
+				// Enter fill with a 1-cycle pred-read prime (no emit on idx==0 setup).
+				phase <= PH_DPB_FILL;
+				recon_p_mb_commit <= 1'b1;
+				dpb_fill_mb_addr <= lat_p_mb_addr;
+				dpb_fill_sample_idx <= 9'd0;
+				inter_recon_pipe_v <= 1'b0;
+				inter_recon_pipe_idx <= 9'd0;
+				dpb_pred_y_rd_idx <= 8'd0;
+				dpb_pred_c_rd_idx <= 6'd0;
+				recon_mb_is_intra_r <= 1'b0;
+				recon_mb_is_ref_r <= 1'b1;
+				recon_mv_x_r <= fetch_mv_x_qpel;
+				recon_mv_y_r <= fetch_mv_y_qpel;
 			end
 			end else if (phase == PH_DPB_FILL) begin
-			if (dpb_fill_sample_idx < 9'd384) begin
+			// Product recon sample stream → h264_dpb_ref_commit (deblock + DPB store).
+			// P path: MC pred RAM read has 1-cycle latency.
+			//   cycle k: request idx k; cycle k+1: emit Clip1(pred[k]+res[k]).
+			if (recon_p_mb_commit && ((dpb_fill_sample_idx < 9'd384) || inter_recon_pipe_v)) begin
+				if (inter_recon_pipe_v) begin
+					if (inter_recon_pipe_idx == 9'd0) begin
+						recon_mb_start_r <= 1'b1;
+						recon_mb_x_r <= lat_p_mb_x;
+						recon_mb_y_r <= lat_p_mb_y;
+						recon_mb_addr_r <= lat_p_mb_addr[DPB_MB_AW-1:0];
+					end
+					recon_sample_valid_r <= 1'b1;
+					recon_sample_idx_r <= inter_recon_pipe_idx;
+					recon_sample_r <= inter_recon_comb;
+					inter_recon_sample <= inter_recon_comb;
+					if (inter_recon_pipe_idx < 9'd256)
+						inter_recon_y[inter_recon_pipe_idx[7:0]] <= inter_recon_comb;
+					else if (inter_recon_pipe_idx < 9'd320)
+						inter_recon_u[inter_recon_pipe_idx[5:0]] <= inter_recon_comb;
+					else
+						inter_recon_v[inter_recon_pipe_idx[5:0]] <= inter_recon_comb;
+					recon_sample_done_r <= (inter_recon_pipe_idx == 9'd383);
+					if (inter_recon_pipe_idx == 9'd383) begin
+						dpb_fill_sample_idx <= 9'd384;
+						inter_recon_pipe_v <= 1'b0;
+					end
+				end
+				if (dpb_fill_sample_idx < 9'd384) begin
+					if (dpb_fill_sample_idx < 9'd256) begin
+						dpb_pred_y_rd_idx <= dpb_fill_sample_idx[7:0];
+					end else if (dpb_fill_sample_idx < 9'd320) begin
+						dpb_pred_c_rd_idx <= dpb_fill_sample_idx[5:0]; // 256..319 → 0..63
+					end else begin
+						dpb_pred_c_rd_idx <= dpb_fill_sample_idx[5:0]; // 320..383 → 0..63
+					end
+					// Do not start a new request on the cycle that retires 383.
+					if (!(inter_recon_pipe_v && (inter_recon_pipe_idx == 9'd383))) begin
+						inter_recon_pipe_v <= 1'b1;
+						inter_recon_pipe_idx <= dpb_fill_sample_idx;
+						dpb_fill_sample_idx <= dpb_fill_sample_idx + 9'd1;
+					end
+				end
+			end else if (!recon_p_mb_commit && dpb_fill_sample_idx < 9'd384) begin
+				// IDR full-frame walk (combo residual plane; no MC lag).
+				if (dpb_fill_sample_idx == 9'd0) begin
+					recon_mb_start_r <= 1'b1;
+					recon_mb_x_r <= dpb_fill_mb_x;
+					recon_mb_y_r <= dpb_fill_mb_y;
+					recon_mb_addr_r <= dpb_fill_mb_addr[DPB_MB_AW-1:0];
+				end
+				recon_sample_valid_r <= 1'b1;
+				recon_sample_idx_r <= dpb_fill_sample_idx;
+				recon_sample_r <= recon_src_sample;
+				recon_sample_done_r <= (dpb_fill_sample_idx == 9'd383);
 				dpb_fill_sample_idx <= dpb_fill_sample_idx + 9'd1;
 			end else if (dpb_fill_sample_idx == 9'd384) begin
-				if (dpb_fill_mb_addr == DPB_LAST_MB_ADDR) begin
-					dpb_fill_sample_idx <= 9'd385;
-				end else begin
-					dpb_fill_mb_addr <= dpb_fill_mb_addr + 1'b1;
-					dpb_fill_sample_idx <= 9'd0;
+				// Wait for in-loop deblock MB completion before next MB / promote.
+				if (ref_commit_deblock_mb_done) begin
+					if (recon_p_mb_commit) begin
+						// Single P-MB commit complete.
+						recon_p_mb_commit <= 1'b0;
+						if (lat_p_inter && (lat_p_next_mb_addr <= DPB_LAST_MB_ADDR)) begin
+							phase <= PH_FETCH;
+							p_fetch_advance <= 1'b1;
+						end else begin
+							// Last P MB: mark frame_done first; boundary is next cycle
+							// so writeback_ctrl can latch ref_pending before promote.
+							recon_frame_done_r <= 1'b1;
+							dpb_fill_sample_idx <= 9'd385;
+						end
+					end else if (dpb_fill_mb_addr == DPB_LAST_MB_ADDR) begin
+						recon_frame_done_r <= 1'b1;
+						dpb_fill_sample_idx <= 9'd385;
+					end else begin
+						dpb_fill_mb_addr <= dpb_fill_mb_addr + 1'b1;
+						dpb_fill_sample_idx <= 9'd0;
+					end
 				end
 			end else if (dpb_fill_sample_idx == 9'd385) begin
+				// frame_boundary one cycle after terminal MB commit (ref_pending race).
+				recon_frame_boundary_r <= 1'b1;
 				dpb_fill_sample_idx <= 9'd386;
-			end else if (deblock_ref_ready_pulse) begin
+			end else if (dpb_fill_sample_idx == 9'd386) begin
+				// Allow registered ref_ready_pulse to rise; always paint next.
+				dpb_fill_sample_idx <= 9'd387;
+			end else if (dpb_fill_sample_idx >= 9'd387) begin
+				// Paint regardless of promote pulse — P fetch still keys off ref_ready.
 				phase <= PH_PAINT;
 				pix_i <= 0;
 				x <= 0;
@@ -1036,7 +1353,7 @@ module decode_stub #(
 				end else
 					x <= x + 1'd1;
 			end
-		end
+			end
 		end
 	end
 endmodule

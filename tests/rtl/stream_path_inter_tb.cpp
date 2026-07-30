@@ -12,7 +12,7 @@
 namespace {
 constexpr int kFrameW = 320;
 constexpr int kFrameH = 240;
-constexpr int kMeasuredMaxFrameCyclesP16_320x240 = 260231;
+constexpr int kMeasuredMaxFrameCyclesP16_320x240 = 760000; // product serial MC + DPB ref-commit full MB walk
 constexpr int kFrameTimeoutCycles = (kMeasuredMaxFrameCyclesP16_320x240 * 23 + 9) / 10;
 
 std::vector<uint8_t> readBytes(const char* path) {
