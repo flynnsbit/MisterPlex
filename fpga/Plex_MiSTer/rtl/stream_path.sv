@@ -19,7 +19,8 @@ module stream_path #(
 	// Mutation: serial dequant forces zeros (sink area redesign twin).
 	parameter bit FAULT_SERIAL_IQ_ZERO = 1'b0,
 	parameter bit FAULT_SERIAL_I16_PRED_128 = 1'b0,
-	parameter bit FAULT_SKIP_PLANE_NB = 1'b0
+	parameter bit FAULT_SKIP_PLANE_NB = 1'b0,
+	parameter bit FAULT_SKIP_TC_TOP_NB = 1'b0
 )(
 	input  wire        clk,
 	input  wire        reset,
@@ -486,7 +487,8 @@ module stream_path #(
 	h264_p_mb_traverse #(
 		.MAX_RBSP_BYTES(16384),
 		.FAULT_NO_QP_WRAP(FAULT_NO_QP_WRAP),
-		.FAULT_SKIP_WIN_LOAD(FAULT_SKIP_WIN_LOAD)
+		.FAULT_SKIP_WIN_LOAD(FAULT_SKIP_WIN_LOAD),
+		.FAULT_SKIP_TC_TOP_NB(FAULT_SKIP_TC_TOP_NB)
 	) u_p_traverse (
 		.clk(clk), .reset(reset | flush), .clear(trav_clear_r | reset | flush),
 		.in_valid(trav_in_valid), .in_byte(trav_in_byte),

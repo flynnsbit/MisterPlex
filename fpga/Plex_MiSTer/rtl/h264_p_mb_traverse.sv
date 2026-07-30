@@ -30,7 +30,8 @@ module h264_p_mb_traverse #(
 	parameter bit FAULT_BAD_SKIP_RUN = 1'b0,     // mutation: treat skip_run as 0
 	parameter bit FAULT_DROP_LAST_ROW_MB = 1'b0, // mutation: drop last MB of each row
 	parameter bit FAULT_NO_QP_WRAP = 1'b0,       // mutation: skip QP_Y mod-52 (4× residual)
-	parameter bit FAULT_SKIP_WIN_LOAD = 1'b0     // mutation: skip serial RBSP→res_win (area twin)
+	parameter bit FAULT_SKIP_WIN_LOAD = 1'b0,    // mutation: skip serial RBSP→res_win (area twin)
+	parameter bit FAULT_SKIP_TC_TOP_NB = 1'b0    // mutation: zero top-row nC/mode edge cache
 ) (
 	input  wire        clk,
 	input  wire        reset,
@@ -150,7 +151,12 @@ module h264_p_mb_traverse #(
 		ST_RES_HOLD       = 8'd42, // stall until residual consumer ACKs
 		ST_RES_MB_END     = 8'd43, // pulse res_mb_end then NEXT_MB
 		ST_RES_WIN_LOAD   = 8'd44, // serial 64B RBSP→res_win (M10K, 1B/cyc)
-		ST_INIT_XY        = 8'd45; // first_mb → curr_x/y counters (no / %)
+		ST_INIT_XY        = 8'd45, // first_mb → curr_x/y counters (no / %)
+		ST_NB_RAM_CLR     = 8'd46, // serial clear tc/mode top M10K at slice start
+		ST_EDGE_LOAD      = 8'd47, // serial load 4 tc + 4 i4 modes for curr MB
+		ST_EDGE_STORE     = 8'd48, // serial write bottom-edge tc/mode to M10K
+		ST_I4_GO          = 8'd49, // after edge load: start_bits → ST_I4_FLAG
+		ST_I16_GO         = 8'd50; // after edge load: start_ue → ST_CHR_UE
 
 	// ---- RBSP bitstream buffer (ACCESS RESTRUCTURE, not attribute-only) ----
 	// map2d root cause was 64 parallel dynamic reads of 8KB rbsp → 8k:1/16k:1
@@ -219,11 +225,12 @@ module h264_p_mb_traverse #(
 	reg [3:0] i4_mode_scan [0:15];
 	reg [3:0] i4_mode_spat [0:15];
 	reg       i4_mode_spat_v [0:15]; // valid for MPM within MB
-	// Left MB right-edge modes (4 rows) + top MB bottom-edge modes
+	// Left MB right-edge modes (4 rows). Top-row modes live in M10K + edge cache.
 	reg [3:0] i4_mode_left [0:3];
 	reg       i4_mode_left_v [0:3];
-	reg [3:0] i4_mode_top [0:64*4-1];
-	reg       i4_mode_top_v [0:64*4-1];
+	// Edge cache: top-row i4 modes for curr_mb_x*4 + 0..3 (loaded ST_EDGE_LOAD)
+	reg [3:0] i4_mode_top_e [0:3];
+	reg       i4_mode_top_e_v [0:3];
 	reg [7:0] slice_type_r;
 	// Residual export hold (copy of last CAVLC result while waiting ready)
 	reg [4:0] res_hold_idx;
@@ -251,14 +258,45 @@ module h264_p_mb_traverse #(
 	reg [7:0] res_win [0:63];
 	reg       cavlc_start_r;
 
-	// nC neighbour total_coeff: top row 4×4 (mb_width*4), left col 4×4 (4)
-	// Indexed by abs 4x4-x within picture for top; left is 4 entries for curr MB.
+	// nC neighbour total_coeff — phase-2 area:
+	// picture top-row in M10K (h264_byte_ram_sp); within-MB spat + 4-entry edge cache.
+	// Kills 256-deep fabric arrays + combo nC mux (prior traverse self 7079 ALUT MISS).
 	localparam int MAX_MB_W = 64;
-	reg [4:0] tc_top [0:MAX_MB_W*4-1];
-	reg       tc_top_v [0:MAX_MB_W*4-1];
+	localparam int NB_TOP_N = MAX_MB_W * 4; // 256
+	localparam int NB_AW = $clog2(NB_TOP_N);
+	reg [4:0] tc_spat [0:15];
+	reg       tc_spat_v [0:15];
+	reg [4:0] tc_top_e [0:3];
+	reg       tc_top_e_v [0:3];
 	reg [4:0] tc_left [0:3];
 	reg       tc_left_v [0:3];
-	// Chroma AC nC: 2 planes × (2×2 blocks/MB). Top: plane × abs 2x2-x.
+	// tc_top M10K: byte pack {2'b0, v, tc[4:0]}
+	reg               tc_ram_we;
+	reg [NB_AW-1:0]   tc_ram_waddr;
+	reg [7:0]         tc_ram_wdata;
+	reg [NB_AW-1:0]   tc_ram_raddr;
+	wire [7:0]        tc_ram_q;
+	// i4_mode_top M10K: byte pack {3'b0, v, mode[3:0]}
+	reg               im_ram_we;
+	reg [NB_AW-1:0]   im_ram_waddr;
+	reg [7:0]         im_ram_wdata;
+	reg [NB_AW-1:0]   im_ram_raddr;
+	wire [7:0]        im_ram_q;
+	h264_byte_ram_sp #(.DEPTH(NB_TOP_N), .AW(NB_AW)) u_tc_top_ram (
+		.clk(clk), .we(tc_ram_we), .waddr(tc_ram_waddr), .wdata(tc_ram_wdata),
+		.raddr(tc_ram_raddr), .q(tc_ram_q)
+	);
+	h264_byte_ram_sp #(.DEPTH(NB_TOP_N), .AW(NB_AW)) u_i4_mode_top_ram (
+		.clk(clk), .we(im_ram_we), .waddr(im_ram_waddr), .wdata(im_ram_wdata),
+		.raddr(im_ram_raddr), .q(im_ram_q)
+	);
+	// Edge preload/store FSM helpers
+	reg [3:0]  nb_k;
+	reg [8:0]  nb_clr_i; // 0..256 clear index
+	reg [1:0]  nb_rd_ph; // 0 issue 1 wait 2 capt
+	reg [7:0]  edge_next_st;
+	reg [3:0]  store_mode; // 0=i4 edge commit 1=tc zero-4 2=unused 3=clr both
+	// Chroma AC nC: still fabric (2×128); secondary to luma top/mode gate.
 	reg [4:0] tc_chr_top [0:1][0:MAX_MB_W*2-1];
 	reg       tc_chr_top_v [0:1][0:MAX_MB_W*2-1];
 	reg [4:0] tc_chr_left [0:1][0:1];
@@ -463,15 +501,15 @@ module h264_p_mb_traverse #(
 				modeA = {1'b0, i4_mode_left[by]};
 			else
 				modeA = -5'sd1;
-			// Above
+			// Above — same-MB spat or preloaded top-edge cache (M10K)
 			abs_x = {curr_x[13:0], 2'b00} + {14'd0, bx};
 			if (by != 2'd0) begin
 				if (i4_mode_spat_v[{by - 2'd1, bx}])
 					modeB = {1'b0, i4_mode_spat[{by - 2'd1, bx}]};
 				else
 					modeB = -5'sd1;
-			end else if (curr_y != 16'd0 && abs_x < 16'd256 && i4_mode_top_v[abs_x[7:0]])
-				modeB = {1'b0, i4_mode_top[abs_x[7:0]]};
+			end else if (curr_y != 16'd0 && i4_mode_top_e_v[bx])
+				modeB = {1'b0, i4_mode_top_e[bx]};
 			else
 				modeB = -5'sd1;
 			if (modeA < 0 || modeB < 0)
@@ -496,36 +534,32 @@ module h264_p_mb_traverse #(
 		end
 	endfunction
 
-	// nC for luma 4x4 i inside current MB
+	// nC for luma 4x4 i inside current MB (edge cache + spat; no fabric tc_top[])
 	function automatic [5:0] luma_nC;
 		input [3:0] bi;
 		reg [1:0] bx, by;
-		reg [15:0] abs_x;
 		reg avail_a, avail_b;
 		reg [4:0] nA, nB;
 		reg [5:0] sum;
 		begin
 			bx = blk4_x(bi);
 			by = blk4_y(bi);
-			abs_x = {curr_x[13:0], 2'b00} + {14'd0, bx};
 			avail_a = (bx != 2'd0) ? 1'b1 : (curr_x != 16'd0);
 			avail_b = (by != 2'd0) ? 1'b1 : (curr_y != 16'd0);
 			if (bx != 2'd0)
-				nA = tc_left_blk(by); // will use progressive left update; see below
-			else if (curr_x != 16'd0)
 				nA = tc_left[by];
+			else if (curr_x != 16'd0)
+				nA = tc_left_v[by] ? tc_left[by] : 5'd0;
 			else
 				nA = 5'd0;
 			if (by != 2'd0)
-				nB = tc_top_local(bx, by);
-			else if (curr_y != 16'd0 && abs_x < MAX_MB_W*4)
-				nB = tc_top_v[abs_x] ? tc_top[abs_x] : 5'd0;
+				nB = tc_spat_v[{by - 2'd1, bx}] ? tc_spat[{by - 2'd1, bx}] : 5'd0;
+			else if (curr_y != 16'd0)
+				nB = tc_top_e_v[bx] ? tc_top_e[bx] : 5'd0;
 			else begin
 				nB = 5'd0;
-				avail_b = avail_b && (curr_y != 16'd0);
+				avail_b = 1'b0;
 			end
-			// Fix nA for same-MB left: use running left within MB via tc_left which
-			// we update after each block. At schedule time we use left of prior block.
 			if (!avail_a && !avail_b)
 				luma_nC = 6'd0;
 			else if (!avail_a)
@@ -536,30 +570,6 @@ module h264_p_mb_traverse #(
 				sum = {1'b0, nA} + {1'b0, nB};
 				luma_nC = (sum + 6'd1) >> 1;
 			end
-		end
-	endfunction
-
-	// Placeholder helpers replaced by regs below — keep functions thin.
-	function automatic [4:0] tc_left_blk;
-		input [1:0] by;
-		begin
-			tc_left_blk = tc_left[by];
-		end
-	endfunction
-	function automatic [4:0] tc_top_local;
-		input [1:0] bx;
-		input [1:0] by;
-		reg [15:0] abs_x;
-		begin
-			// same-MB top: stored into tc_top at abs after each block; for by>0
-			// left-to-right scan guarantees upper block done.
-			abs_x = {curr_x[13:0], 2'b00} + {14'd0, bx};
-			if (abs_x < MAX_MB_W*4 && tc_top_v[abs_x])
-				tc_top_local = tc_top[abs_x];
-			else
-				tc_top_local = 5'd0;
-			// silence unused
-			if (by == 2'd0) tc_top_local = tc_top_local;
 		end
 	endfunction
 
@@ -855,9 +865,14 @@ module h264_p_mb_traverse #(
 			abs_x = {curr_x[13:0], 2'b00} + {14'd0, bx};
 			tc_left[by] <= tc;
 			tc_left_v[by] <= 1'b1;
-			if (abs_x < MAX_MB_W*4) begin
-				tc_top[abs_x] <= tc;
-				tc_top_v[abs_x] <= 1'b1;
+			tc_spat[{by, bx}] <= tc;
+			tc_spat_v[{by, bx}] <= 1'b1;
+			// Bottom row of MB is next-row top: write M10K (single port).
+			// Upper rows only need spat for same-MB nB.
+			if (by == 2'd3 && abs_x < NB_TOP_N) begin
+				tc_ram_we <= 1'b1;
+				tc_ram_waddr <= NB_AW'(abs_x);
+				tc_ram_wdata <= {2'b0, 1'b1, tc};
 			end
 		end
 	endtask
@@ -981,19 +996,29 @@ module h264_p_mb_traverse #(
 			for (ti = 0; ti < 4; ti = ti + 1) begin
 				i4_mode_left[ti] <= 4'd2;
 				i4_mode_left_v[ti] <= 1'b0;
-			end
-			for (ti = 0; ti < 64*4; ti = ti + 1) begin
-				i4_mode_top[ti] <= 4'd2;
-				i4_mode_top_v[ti] <= 1'b0;
-			end
-			for (ti = 0; ti < MAX_MB_W*4; ti = ti + 1) begin
-				tc_top[ti] <= 5'd0;
-				tc_top_v[ti] <= 1'b0;
-			end
-			for (ti = 0; ti < 4; ti = ti + 1) begin
+				i4_mode_top_e[ti] <= 4'd2;
+				i4_mode_top_e_v[ti] <= 1'b0;
+				tc_top_e[ti] <= 5'd0;
+				tc_top_e_v[ti] <= 1'b0;
 				tc_left[ti] <= 5'd0;
 				tc_left_v[ti] <= 1'b0;
 			end
+			for (ti = 0; ti < 16; ti = ti + 1) begin
+				tc_spat[ti] <= 5'd0;
+				tc_spat_v[ti] <= 1'b0;
+			end
+			tc_ram_we <= 1'b0;
+			im_ram_we <= 1'b0;
+			tc_ram_raddr <= '0;
+			im_ram_raddr <= '0;
+			tc_ram_waddr <= '0;
+			im_ram_waddr <= '0;
+			tc_ram_wdata <= 8'd0;
+			im_ram_wdata <= 8'd0;
+			nb_k <= 4'd0;
+			nb_rd_ph <= 2'd0;
+			edge_next_st <= ST_IDLE;
+			store_mode <= 4'd0;
 			begin : rst_chr
 				integer p, x;
 				for (p = 0; p < 2; p = p + 1) begin
@@ -1014,6 +1039,8 @@ module h264_p_mb_traverse #(
 			cavlc_start_r <= 1'b0;
 			res_mb_end <= 1'b0;
 			rbsp_we <= 1'b0;
+			tc_ram_we <= 1'b0;
+			im_ram_we <= 1'b0;
 
 			// Handshake: drop valid when accepted
 			if (mb_valid && mb_ready) begin
@@ -1076,10 +1103,14 @@ module h264_p_mb_traverse #(
 				for (ti = 0; ti < 4; ti = ti + 1) begin
 					tc_left[ti] <= 5'd0;
 					tc_left_v[ti] <= 1'b0;
+					tc_top_e[ti] <= 5'd0;
+					tc_top_e_v[ti] <= 1'b0;
+					i4_mode_top_e[ti] <= 4'd2;
+					i4_mode_top_e_v[ti] <= 1'b0;
 				end
-				for (ti = 0; ti < MAX_MB_W*4; ti = ti + 1) begin
-					tc_top[ti] <= 5'd0;
-					tc_top_v[ti] <= 1'b0;
+				for (ti = 0; ti < 16; ti = ti + 1) begin
+					tc_spat[ti] <= 5'd0;
+					tc_spat_v[ti] <= 1'b0;
 				end
 				begin : start_chr
 					integer p, x;
@@ -1094,7 +1125,10 @@ module h264_p_mb_traverse #(
 						end
 					end
 				end
-				start_ue(ST_HDR_FIRST);
+				// Serial-clear top-row M10Ks (valid bits) once per slice.
+				nb_clr_i <= 9'd0;
+				store_mode <= 4'd3;
+				st <= ST_NB_RAM_CLR;
 			end else if (busy) begin
 				case (st)
 				ST_BITS: begin
@@ -1291,29 +1325,20 @@ module h264_p_mb_traverse #(
 						st <= ST_DONE;
 					end else if (skip_left != 16'd0) begin
 						emit_mb(1'b1);
-						// P_Skip has no residual; clear left tc (inferred zeros)
+						// P_Skip: clear left tc; top-row zeros via ST_EDGE_STORE
 						for (ti = 0; ti < 4; ti = ti + 1) begin
 							tc_left[ti] <= 5'd0;
 							tc_left_v[ti] <= 1'b1;
 						end
-						begin : skip_top
-							integer sx;
-							for (sx = 0; sx < 4; sx = sx + 1) begin
-								if (({curr_x[13:0], 2'b00} + sx[15:0]) < MAX_MB_W*4) begin
-									tc_top[{curr_x[13:0], 2'b00} + sx[15:0]] <= 5'd0;
-									tc_top_v[{curr_x[13:0], 2'b00} + sx[15:0]] <= 1'b1;
-								end
-							end
-						end
 						zero_chr_tc_mb();
-						curr_mb <= curr_mb + 16'd1;
-						advance_mb_xy();
-						skip_left <= skip_left - 16'd1;
+						nb_k <= 4'd0;
+						store_mode <= 4'd1; // write 4 zero tc_top
+						edge_next_st <= ST_SKIP_EMIT; // return to continue skip_left
+						// defer xy advance until store done
+						st <= ST_EDGE_STORE;
 					end else if (curr_mb >= pic_mbs) begin
 						st <= ST_DONE;
 					end else begin
-						// After a skip run, a coded MB follows while bits remain.
-						// Do not require 8 spare bits — skip_run/mb_type ue can be 1 bit.
 						if (bit_pos >= rbsp_bit_total)
 							st <= ST_DONE;
 						else
@@ -1339,7 +1364,14 @@ module h264_p_mb_traverse #(
 								for (zi = 0; zi < 16; zi = zi + 1)
 									i4_mode_spat_v[zi] <= 1'b0;
 							end
-							start_bits(8'd1, ST_I4_FLAG);
+							for (ti = 0; ti < 16; ti = ti + 1) begin
+								tc_spat[ti] <= 5'd0;
+								tc_spat_v[ti] <= 1'b0;
+							end
+							nb_k <= 4'd0;
+							nb_rd_ph <= 2'd0;
+							edge_next_st <= ST_I4_GO;
+							st <= ST_EDGE_LOAD;
 						end else if (ue_value >= 32'd1 && ue_value <= 32'd24) begin
 							is_intra_r <= 1'b1;
 							is_i16_r <= 1'b1;
@@ -1354,7 +1386,14 @@ module h264_p_mb_traverse #(
 								cbp_r <= {cc, (x >= 5'd12) ? 4'hF : 4'h0};
 								i16_mode_r <= x[1:0]; // pred_mode = x % 4
 							end
-							start_ue(ST_CHR_UE);
+							for (ti = 0; ti < 16; ti = ti + 1) begin
+								tc_spat[ti] <= 5'd0;
+								tc_spat_v[ti] <= 1'b0;
+							end
+							nb_k <= 4'd0;
+							nb_rd_ph <= 2'd0;
+							edge_next_st <= ST_I16_GO;
+							st <= ST_EDGE_LOAD;
 						end else begin
 							// PCM / unknown
 							unsupported <= 1'b1;
@@ -1388,7 +1427,19 @@ module h264_p_mb_traverse #(
 						part_mode_r <= PART_INTRA;
 						part_count_r <= 3'd0;
 						i4_idx <= 5'd0;
-						start_bits(8'd1, ST_I4_FLAG);
+						begin : clr_i4_spat_p
+							integer zi;
+							for (zi = 0; zi < 16; zi = zi + 1)
+								i4_mode_spat_v[zi] <= 1'b0;
+						end
+						for (ti = 0; ti < 16; ti = ti + 1) begin
+							tc_spat[ti] <= 5'd0;
+							tc_spat_v[ti] <= 1'b0;
+						end
+						nb_k <= 4'd0;
+						nb_rd_ph <= 2'd0;
+						edge_next_st <= ST_I4_GO;
+						st <= ST_EDGE_LOAD;
 					end else if (ue_value >= 32'd6 && ue_value <= 32'd29) begin
 						// I_16x16 in P: mb_type 6..29 ≡ I types 1..24
 						// cbp_c = ((mt-6)/4)%3; cbp_l = ((mt-6)/12)?15:0
@@ -1405,7 +1456,14 @@ module h264_p_mb_traverse #(
 							// cbp[5:4]=chroma 0..2; cbp[3:0]=luma 0 or 15
 							cbp_r <= {cc, (x >= 5'd12) ? 4'hF : 4'h0};
 						end
-						start_ue(ST_CHR_UE);
+						for (ti = 0; ti < 16; ti = ti + 1) begin
+							tc_spat[ti] <= 5'd0;
+							tc_spat_v[ti] <= 1'b0;
+						end
+						nb_k <= 4'd0;
+						nb_rd_ph <= 2'd0;
+						edge_next_st <= ST_I16_GO;
+						st <= ST_EDGE_LOAD;
 					end else if (ue_value == 32'd30) begin
 						// I_PCM — unsupported in product Baseline walker
 						unsupported <= 1'b1;
@@ -1547,31 +1605,36 @@ module h264_p_mb_traverse #(
 					res_luma_mask <= cbp_r[3:0];
 					res_chroma <= cbp_r[5:4];
 					if (!is_i16_r && cbp_r == 6'd0) begin
-						// inter/I_NxN with no residual; zero tc neighbours
+						// inter/I_NxN with no residual; zero left + top-row M10K
 						for (ti = 0; ti < 4; ti = ti + 1) begin
 							tc_left[ti] <= 5'd0;
 							tc_left_v[ti] <= 1'b1;
 						end
-						begin : ztop
-							integer sx;
-							for (sx = 0; sx < 4; sx = sx + 1) begin
-								if (({curr_x[13:0], 2'b00} + sx[15:0]) < MAX_MB_W*4) begin
-									tc_top[{curr_x[13:0], 2'b00} + sx[15:0]] <= 5'd0;
-									tc_top_v[{curr_x[13:0], 2'b00} + sx[15:0]] <= 1'b1;
-								end
-							end
-						end
 						zero_chr_tc_mb();
+						nb_k <= 4'd0;
+						store_mode <= 4'd1; // 4× tc_top zero
 						if (is_i_slice_r) begin
 							res_mb_end <= 1'b1;
 							res_mb_end_addr <= curr_mb;
-							st <= ST_RES_MB_END;
+							edge_next_st <= ST_RES_MB_END;
 						end else
-							st <= ST_NEXT_MB;
+							edge_next_st <= ST_NEXT_MB;
+						st <= ST_EDGE_STORE;
 					end else begin
 						// I_16x16 always enters residual (DC); inter if cbp!=0
+						// Inter may not have run EDGE_LOAD — load nC top edge now.
 						res_block_i <= 5'd0;
-						st <= ST_RES_SETUP;
+						if (!is_intra_r) begin
+							for (ti = 0; ti < 16; ti = ti + 1) begin
+								tc_spat[ti] <= 5'd0;
+								tc_spat_v[ti] <= 1'b0;
+							end
+							nb_k <= 4'd0;
+							nb_rd_ph <= 2'd0;
+							edge_next_st <= ST_RES_SETUP;
+							st <= ST_EDGE_LOAD;
+						end else
+							st <= ST_RES_SETUP;
 					end
 				end
 				ST_RES_SETUP: begin
@@ -1585,12 +1648,9 @@ module h264_p_mb_traverse #(
 						if (is_i_slice_r) begin
 							res_mb_end <= 1'b1;
 							res_mb_end_addr <= curr_mb;
-							// Commit right/bottom edge modes for next MBs.
-							// I_NxN: real modes. I16/other: host treats neighbour as
-							// mode 2 (DC) for MPM (h264_recon.hpp i4mode=2).
-							begin : commit_i4_edge_modes
+							// Commit right-edge modes to left regs; bottom → M10K store.
+							begin : commit_i4_left
 								integer ei;
-								reg [15:0] ax;
 								for (ei = 0; ei < 4; ei = ei + 1) begin
 									if (!is_i16_r) begin
 										i4_mode_left[ei] <= i4_mode_spat[{ei[1:0], 2'd3}];
@@ -1599,19 +1659,12 @@ module h264_p_mb_traverse #(
 										i4_mode_left[ei] <= 4'd2;
 										i4_mode_left_v[ei] <= 1'b1;
 									end
-									ax = {curr_x[13:0], 2'b00} + ei[15:0];
-									if (ax < 16'd256) begin
-										if (!is_i16_r) begin
-											i4_mode_top[ax[7:0]] <= i4_mode_spat[{2'd3, ei[1:0]}];
-											i4_mode_top_v[ax[7:0]] <= i4_mode_spat_v[{2'd3, ei[1:0]}];
-										end else begin
-											i4_mode_top[ax[7:0]] <= 4'd2;
-											i4_mode_top_v[ax[7:0]] <= 1'b1;
-										end
-									end
 								end
 							end
-							st <= ST_RES_MB_END;
+							nb_k <= 4'd0;
+							store_mode <= 4'd0; // write 4 i4_mode_top bottom
+							edge_next_st <= ST_RES_MB_END;
+							st <= ST_EDGE_STORE;
 						end else
 							st <= ST_NEXT_MB;
 					end else if (!res_slot_coded(res_block_i)) begin
@@ -1796,6 +1849,112 @@ module h264_p_mb_traverse #(
 						start_ue(ST_TYPE_UE);
 					else
 						start_ue(ST_SKIP_UE);
+				end
+				ST_NB_RAM_CLR: begin
+					// Write invalid/zero to both top-row M10Ks (256 entries).
+					tc_ram_we <= 1'b1;
+					tc_ram_waddr <= NB_AW'(nb_clr_i[7:0]);
+					tc_ram_wdata <= 8'd0;
+					im_ram_we <= 1'b1;
+					im_ram_waddr <= NB_AW'(nb_clr_i[7:0]);
+					im_ram_wdata <= 8'd0;
+					if (nb_clr_i == 9'd255) begin
+						nb_clr_i <= 9'd0;
+						start_ue(ST_HDR_FIRST);
+					end else
+						nb_clr_i <= nb_clr_i + 9'd1;
+				end
+				ST_EDGE_LOAD: begin
+					// nb_k 0..3: tc_top edge; 4..7: i4_mode_top edge. 3cy/rd.
+					if (curr_y == 16'd0) begin
+						for (ti = 0; ti < 4; ti = ti + 1) begin
+							tc_top_e[ti] <= 5'd0;
+							tc_top_e_v[ti] <= 1'b0;
+							i4_mode_top_e[ti] <= 4'd2;
+							i4_mode_top_e_v[ti] <= 1'b0;
+						end
+						st <= edge_next_st;
+					end else if (FAULT_SKIP_TC_TOP_NB) begin
+						// RED twin: pretend no top neighbours
+						for (ti = 0; ti < 4; ti = ti + 1) begin
+							tc_top_e[ti] <= 5'd0;
+							tc_top_e_v[ti] <= 1'b0;
+							i4_mode_top_e[ti] <= 4'd2;
+							i4_mode_top_e_v[ti] <= 1'b0;
+						end
+						st <= edge_next_st;
+					end else if (nb_k < 4'd4) begin
+						if (nb_rd_ph == 2'd0) begin
+							tc_ram_raddr <= NB_AW'(({curr_x[13:0], 2'b00} + {14'd0, nb_k[1:0]}));
+							nb_rd_ph <= 2'd1;
+						end else if (nb_rd_ph == 2'd1) begin
+							nb_rd_ph <= 2'd2;
+						end else begin
+							tc_top_e_v[nb_k[1:0]] <= tc_ram_q[5];
+							tc_top_e[nb_k[1:0]] <= tc_ram_q[4:0];
+							nb_rd_ph <= 2'd0;
+							nb_k <= nb_k + 4'd1;
+						end
+					end else if (nb_k < 4'd8) begin
+						if (nb_rd_ph == 2'd0) begin
+							im_ram_raddr <= NB_AW'(({curr_x[13:0], 2'b00} + {14'd0, nb_k[1:0]}));
+							nb_rd_ph <= 2'd1;
+						end else if (nb_rd_ph == 2'd1) begin
+							nb_rd_ph <= 2'd2;
+						end else begin
+							i4_mode_top_e_v[nb_k[1:0]] <= im_ram_q[4];
+							i4_mode_top_e[nb_k[1:0]] <= im_ram_q[3:0];
+							nb_rd_ph <= 2'd0;
+							if (nb_k == 4'd7) begin
+								nb_k <= 4'd0;
+								st <= edge_next_st;
+							end else
+								nb_k <= nb_k + 4'd1;
+						end
+					end else begin
+						nb_k <= 4'd0;
+						st <= edge_next_st;
+					end
+				end
+				ST_EDGE_STORE: begin
+					// store_mode 0: i4 bottom modes; 1: four zero tc_top (skip/cbp0)
+					if (store_mode == 4'd0) begin
+						im_ram_we <= 1'b1;
+						im_ram_waddr <= NB_AW'(({curr_x[13:0], 2'b00} + {14'd0, nb_k[1:0]}));
+						if (!is_i16_r) begin
+							im_ram_wdata <= {3'b0, i4_mode_spat_v[{2'd3, nb_k[1:0]}],
+								i4_mode_spat[{2'd3, nb_k[1:0]}]};
+						end else
+							im_ram_wdata <= {3'b0, 1'b1, 4'd2};
+						if (nb_k == 4'd3) begin
+							nb_k <= 4'd0;
+							st <= edge_next_st;
+						end else
+							nb_k <= nb_k + 4'd1;
+					end else if (store_mode == 4'd1) begin
+						tc_ram_we <= 1'b1;
+						tc_ram_waddr <= NB_AW'(({curr_x[13:0], 2'b00} + {14'd0, nb_k[1:0]}));
+						tc_ram_wdata <= {2'b0, 1'b1, 5'd0};
+						if (nb_k == 4'd3) begin
+							nb_k <= 4'd0;
+							// skip path: advance after store
+							if (edge_next_st == ST_SKIP_EMIT) begin
+								curr_mb <= curr_mb + 16'd1;
+								advance_mb_xy();
+								skip_left <= skip_left - 16'd1;
+							end
+							st <= edge_next_st;
+						end else
+							nb_k <= nb_k + 4'd1;
+					end else begin
+						st <= edge_next_st;
+					end
+				end
+				ST_I4_GO: begin
+					start_bits(8'd1, ST_I4_FLAG);
+				end
+				ST_I16_GO: begin
+					start_ue(ST_CHR_UE);
 				end
 				ST_DONE: begin
 					slice_done <= 1'b1;
