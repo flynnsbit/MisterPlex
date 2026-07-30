@@ -97,6 +97,8 @@ module decode_stub #(
 	localparam [2:0] PH_PAINT = 3'd2;
 	localparam [2:0] PH_FETCH = 3'd3;
 	localparam [2:0] PH_DPB_FILL = 3'd4;
+	// Park first-MB IDR recon into recon_store before DPB fill (real-ref path).
+	localparam [2:0] PH_IDR_STORE = 3'd5;
 	reg            is_idr_frame;
 	reg            is_i_frame;
 	reg [7:0]      lat_type;
@@ -139,13 +141,27 @@ module decode_stub #(
 	reg            trav_active_slice;
 	reg            trav_got_mb;
 	reg            recon_store_pending;
+	reg            idr_recon_pack_pending;
 	integer        coeff_i;
+	integer        idr_pack_i;
+`ifdef VERILATOR
+	// Localisation counters for flat-128 chase (printed once per run).
+	integer        dbg_store_wr_total;
+	integer        dbg_store_wr_idr;
+	integer        dbg_store_wr_p;
+	integer        dbg_store_wr_p_inter_ok;
+	integer        dbg_store_wr_p_inter_fail;
+	integer        dbg_residual_blk0_loads;
+	integer        dbg_printed_recon_counts;
+`endif
 	// Accept a traversal MB when idle-ready for fetch or actively fetching next.
 	// Intra-in-P is accepted (no MC) so the walker never stalls on those MBs.
-	// While parking Clip1 samples into the recon store, do not ACK the walker.
+	// While parking Clip1 samples into the recon store, do not ACK the walker
+	// except on the store-done cycle (pending still 1 under NBA that cycle).
 	wire           trav_can_accept = (phase == PH_IDLE && (dpb_ref_ready || trav_intra)) ||
 	                                 (phase == PH_FETCH && !p_fetch_launch_pending && dpb_fetch_done && !USE_REAL_REF_COMMIT) ||
-	                                 (phase == PH_FETCH && !trav_got_mb && !p_fetch_launch_pending && !dpb_fetch_busy && !recon_store_pending) ||
+	                                 (phase == PH_FETCH && !trav_got_mb && !p_fetch_launch_pending && !dpb_fetch_busy &&
+	                                  (!recon_store_pending || recon_store_done)) ||
 	                                 (phase == PH_IDLE && trav_intra);
 	assign trav_mb_ready = trav_mb_valid && trav_can_accept;
 	// First-MB mvd latched for the opening P MB; cleared on multi-MB advance
@@ -746,6 +762,10 @@ module decode_stub #(
 	endgenerate
 
 	// ── Self-produced recon frame store (USE_REAL_REF_COMMIT) ──────────
+	// IDR: first residual 4×4 → recon_px into MB0; rest of MB0 uses DC
+	// fallback (mirrors paint path). No I-slice MB walker yet → MBs 1..N-1
+	// remain cold mid-gray until that lands. P: every fetch_done parks
+	// Clip1(pred+residual) at lat_p_mb_addr (not gated on dpb_inter_ok).
 	reg               recon_store_write_start;
 	reg [15:0]        recon_store_write_mb;
 	reg               recon_store_idr_mb0_pending;
@@ -894,6 +914,16 @@ module decode_stub #(
 			recon_store_write_mb <= 16'd0;
 			recon_store_pending <= 1'b0;
 			recon_store_idr_mb0_pending <= 1'b0;
+			idr_recon_pack_pending <= 1'b0;
+`ifdef VERILATOR
+			dbg_store_wr_total <= 0;
+			dbg_store_wr_idr <= 0;
+			dbg_store_wr_p <= 0;
+			dbg_store_wr_p_inter_ok <= 0;
+			dbg_store_wr_p_inter_fail <= 0;
+			dbg_residual_blk0_loads <= 0;
+			dbg_printed_recon_counts <= 0;
+`endif
 			lat_mvd_x <= 16'sd0;
 			lat_mvd_y <= 16'sd0;
 			pending_mvd_x <= 16'sd0;
@@ -1169,11 +1199,75 @@ module decode_stub #(
 				inter_res_load_pending <= residual_ok && !first_mb_p_skip;
 				recon_valid  <= 1'b0;
 				recon_dbg_valid <= 1'b0;
+				// Real-ref: park IDR MB0 recon into store before DPB fill.
+				// (Previously IDR jumped straight to PH_DPB_FILL with a cold
+				// store → entire reference frame was mid-gray 128.)
+				if ((lat_type[4:0] == 5'd5) && ENABLE_DPB_REF_SEAM && use_real_ref) begin
+					if (residual_ok) begin
+						phase <= PH_IDR_STORE;
+						idr_recon_pack_pending <= 1'b1;
+					end else begin
+						phase <= PH_DPB_FILL;
+					end
+				end
 				// P VCL: never paint/fetch from wait. Walker events own type-1.
 				if (lat_type[4:0] == 5'd1) begin
 					phase <= PH_IDLE;
 					busy <= 1'b0;
 				end
+			end
+			end else if (phase == PH_IDR_STORE) begin
+			// One-cycle delayed pack (lat_coeff → IQ/IDCT/recon_px settled),
+			// then drain recon_store write before PH_DPB_FILL.
+			if (idr_recon_pack_pending) begin
+				idr_recon_pack_pending <= 1'b0;
+				// MB0 Y: first 4×4 from shared recon_px; remainder DC fallback
+				// (same policy as the RGB paint path for eyes-on diagnostics).
+				for (idr_pack_i = 0; idr_pack_i < 256; idr_pack_i = idr_pack_i + 1) begin
+					if (lat_res_ok && (idr_pack_i[7:4] < 4'd4) && (idr_pack_i[3:0] < 4'd4))
+						idr_mb0_y[idr_pack_i] <= recon_px[{idr_pack_i[5:4], idr_pack_i[1:0]}];
+					else if (lat_res_ok)
+						idr_mb0_y[idr_pack_i] <= recon_from_dc;
+					else
+						idr_mb0_y[idr_pack_i] <= 8'd128;
+				end
+				for (idr_pack_i = 0; idr_pack_i < 64; idr_pack_i = idr_pack_i + 1) begin
+					idr_mb0_u[idr_pack_i] <= 8'd128;
+					idr_mb0_v[idr_pack_i] <= 8'd128;
+				end
+				recon_store_write_mb <= 16'd0;
+				recon_store_write_start <= 1'b1;
+				recon_store_pending <= 1'b1;
+				recon_store_idr_mb0_pending <= 1'b1;
+`ifdef VERILATOR
+				dbg_residual_blk0_loads <= dbg_residual_blk0_loads + 1;
+`endif
+			end else if (recon_store_pending) begin
+				if (recon_store_done) begin
+					recon_store_pending <= 1'b0;
+					recon_store_idr_mb0_pending <= 1'b0;
+					// Drop IDR residual from the inter plane so the first P MB
+					// does not inherit the IDR blk0 residual as a fake P residual.
+					for (coeff_i = 0; coeff_i < 256; coeff_i = coeff_i + 1)
+						inter_res_y[coeff_i] <= 16'sd0;
+					for (coeff_i = 0; coeff_i < 64; coeff_i = coeff_i + 1) begin
+						inter_res_u[coeff_i] <= 16'sd0;
+						inter_res_v[coeff_i] <= 16'sd0;
+					end
+					inter_res_load_pending <= 1'b0;
+					phase <= PH_DPB_FILL;
+					dpb_fill_mb_addr <= '0;
+					dpb_fill_sample_idx <= 9'd0;
+`ifdef VERILATOR
+					dbg_store_wr_total <= dbg_store_wr_total + 1;
+					dbg_store_wr_idr <= dbg_store_wr_idr + 1;
+`endif
+				end
+			end else begin
+				// No write queued (should not happen) — still fill.
+				phase <= PH_DPB_FILL;
+				dpb_fill_mb_addr <= '0;
+				dpb_fill_sample_idx <= 9'd0;
 			end
 			end else if (phase == PH_FETCH) begin
 			if (p_fetch_launch_pending && !dpb_fetch_done) begin
@@ -1227,7 +1321,10 @@ module decode_stub #(
 						y <= 0;
 					end
 				end
-			end else if (!p_fetch_launch_pending && dpb_fetch_done) begin
+			// trav_got_mb gates sticky fetch_done: without it the handler re-fires
+			// every cycle after the first complete (fetch_done stays high until the
+			// next fetch_start) and either spams store writes or starves the walker.
+			end else if (!p_fetch_launch_pending && dpb_fetch_done && trav_got_mb) begin
 				// Capture Clip1(pred+residual) via inter_recon_* (TB taps these).
 				inter_capture_valid <= dpb_inter_ok;
 				lat_inter_recon_ok <= lat_inter_recon_ok | dpb_inter_ok;
@@ -1249,14 +1346,25 @@ module decode_stub #(
 					mv_left_x <= prod_mv_x;
 					mv_left_y <= prod_mv_y;
 				end
-				// Self-produced ref: park Clip1 samples into recon store before next MB.
-				if (use_real_ref && dpb_inter_ok) begin
+				// Consume this fetch result (sticky fetch_done stays high).
+				trav_got_mb <= 1'b0;
+				// Self-produced ref: park Clip1 samples for EVERY fetched MB.
+				// Previously gated on dpb_inter_ok — that skipped store writes when
+				// pred_y_valid[0] was low, leaving cold-128 holes in the reference.
+				if (use_real_ref) begin
 					recon_store_write_mb <= lat_p_mb_addr;
 					recon_store_write_start <= 1'b1;
 					recon_store_pending <= 1'b1;
 					recon_store_idr_mb0_pending <= 1'b0;
+`ifdef VERILATOR
+					dbg_store_wr_total <= dbg_store_wr_total + 1;
+					dbg_store_wr_p <= dbg_store_wr_p + 1;
+					if (dpb_inter_ok)
+						dbg_store_wr_p_inter_ok <= dbg_store_wr_p_inter_ok + 1;
+					else
+						dbg_store_wr_p_inter_fail <= dbg_store_wr_p_inter_fail + 1;
+`endif
 				end else begin
-					trav_got_mb <= 1'b0;
 					// Next walker MB, or finish slice
 					if (trav_mb_ready) begin
 						lat_p_skip <= trav_mb_skip;
@@ -1353,6 +1461,16 @@ module decode_stub #(
 				               {1'b0, lat_inter_recon_ok, lat_p_inter, dpb_ref_ready, 4'd0};
 				recon_dbg_valid <= 1'b1;
 				recon_valid <= lat_res_ok | lat_inter_recon_ok;
+`ifdef VERILATOR
+				// Cumulative store-write localisation (last paint line is final).
+				if (use_real_ref) begin
+					dbg_printed_recon_counts <= dbg_printed_recon_counts + 1;
+					$display("RECON_STORE_COUNTS frame_paint=%0d total=%0d idr=%0d p=%0d p_inter_ok=%0d p_inter_fail=%0d residual_blk0_loads=%0d",
+						dbg_printed_recon_counts, dbg_store_wr_total, dbg_store_wr_idr, dbg_store_wr_p,
+						dbg_store_wr_p_inter_ok, dbg_store_wr_p_inter_fail,
+						dbg_residual_blk0_loads);
+				end
+`endif
 			end
 
 			if (pix_i == PIXELS[ADDR_W:0] - 1'd1) begin

@@ -336,9 +336,14 @@ module stream_path #(
 	reg [7:0]  trav_lat_mb_w, trav_lat_mb_h;
 	wire       trav_in_ready;
 	wire       trav_w_valid;
-	// Syntax walk self-drains (mb_ready=1) so p_mb_count is independent of
-	// stub/DPB timing. Hold samples beats opportunistically for recon_sig.
-	wire       trav_w_ready = 1'b1;
+	// Product default: syntax walk self-drains (mb_ready=1) so p_mb_count is
+	// independent of stub/DPB timing; hold samples opportunistically.
+	// Real-ref measure: backpressure the walker to the 1-deep hold so MBs are
+	// not dropped while decode_stub parks Clip1 samples into recon_store
+	// (otherwise only a few dozen of 300 MBs ever reach the store).
+	reg         hold_v;
+	wire        trav_mb_ready; // from stub
+	wire       trav_w_ready = USE_REAL_REF_COMMIT ? (!hold_v || trav_mb_ready) : 1'b1;
 	wire [15:0] trav_w_addr;
 	wire [7:0]  trav_w_x, trav_w_y;
 	wire        trav_w_skip;
@@ -466,13 +471,11 @@ module stream_path #(
 
 	// 1-deep hold for decode_stub: sample walker beats when free; drop extras.
 	// Syntax completeness is p_mb_count (self-drain), not hold delivery.
-	reg         hold_v;
 	reg [15:0]  hold_addr;
 	reg [7:0]   hold_x, hold_y;
 	reg         hold_skip;
 	reg [2:0]   hold_pm, hold_pc;
 	reg         hold_sub, hold_intra;
-	wire        trav_mb_ready; // from stub
 	wire        trav_mb_valid = hold_v;
 	wire [15:0] trav_mb_addr = hold_addr;
 	wire [7:0]  trav_mb_x = hold_x;
