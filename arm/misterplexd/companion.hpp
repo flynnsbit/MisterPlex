@@ -12,6 +12,12 @@
 
 namespace misterplex {
 
+// True when a UDP datagram on 32412 is a discovery *probe* we should answer.
+// GDM replies embed "plex" (Protocol / Content-Type). Own broadcasts loop back
+// to this socket; bare strstr(...,"plex") re-emits forever (98%onecpu idle).
+// Replies are never probes; M-SEARCH and non-reply "plex" probes still match.
+bool gdmIsDiscoveryProbe(const char* buf);
+
 struct PlayRequest {
     std::string key;
     std::string containerKey;

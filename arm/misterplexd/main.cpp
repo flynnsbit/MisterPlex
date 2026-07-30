@@ -198,18 +198,44 @@ int main(int argc, char** argv) {
         }
 
         confToken = loadConf(confPath, "PLEX_TOKEN");
-        // Cache conf PMS machineIdentifier so cast host (plex.direct vs LAN IP) can
-        // still share conf token when it is the same server — not a foreign PMS.
+        // Probe conf PLEX_BASE at startup (non-fatal). A dead host used to look
+        // healthy (servers=1, later false "update ok") — FIX A principle for conf.
         if (!defaultPms.empty()) {
-            confMachineId = misterplex::fetchPlexMachineIdentifier(defaultPms, confToken);
-            if (!confMachineId.empty())
-                std::fprintf(stderr, "misterplexd: conf PMS machineIdentifier=%s base=%s\n",
-                             confMachineId.c_str(), defaultPms.c_str());
-            else
+            std::vector<std::pair<std::string, std::string>> idHdr;
+            if (!confToken.empty())
+                idHdr.push_back({"X-Plex-Token", confToken});
+            const auto idProbe = misterplex::plexHttpGetBodyResult(
+                misterplex::normalizePlexBase(defaultPms) + "/identity", idHdr, 6, true);
+            if (!idProbe.ok) {
                 std::fprintf(stderr,
-                             "misterplexd: conf PMS /identity unavailable (base=%s) — "
-                             "cast/conf token pairing uses host match only\n",
-                             defaultPms.c_str());
+                             "misterplexd: PLEX_BASE_UNREACHABLE base=%s http=%d — conf PMS "
+                             "does not answer /identity. Idle screen still runs; cast from a "
+                             "live server still works with cast token. Fix PLEX_BASE/PLEX_HOST "
+                             "in misterplex.conf.\n",
+                             defaultPms.c_str(), idProbe.httpStatus);
+            } else {
+                const std::string key = "machineIdentifier=\"";
+                auto p = idProbe.body.find(key);
+                if (p != std::string::npos) {
+                    p += key.size();
+                    auto e = idProbe.body.find('"', p);
+                    if (e != std::string::npos && e > p)
+                        confMachineId = idProbe.body.substr(p, e - p);
+                }
+                if (!confMachineId.empty())
+                    std::fprintf(stderr,
+                                 "misterplexd: conf PMS OK machineIdentifier=%s base=%s\n",
+                                 confMachineId.c_str(), defaultPms.c_str());
+                else
+                    std::fprintf(stderr,
+                                 "misterplexd: conf PMS http=%d but no machineIdentifier in "
+                                 "/identity body base=%s\n",
+                                 idProbe.httpStatus, defaultPms.c_str());
+            }
+        } else {
+            std::fprintf(stderr,
+                         "misterplexd: PLEX_BASE_MISSING — no conf PMS URL; cast requires "
+                         "playMedia address+token\n");
         }
         auto profile = loadConf(confPath, "TRANSCODE_PROFILE");
         if (profile.empty())
@@ -658,6 +684,15 @@ int main(int argc, char** argv) {
             // Loud failure: cast media path used to look healthy while handing ffmpeg
             // nothing useful (or a later silent testsrc). Keep testsrc so lab/companion
             // stubs still move pixels, but never call it a successful resolve.
+            if (resolved.detail.find("metadata http=") != std::string::npos ||
+                resolved.detail.find("no PMS base") != std::string::npos ||
+                base.empty() ||
+                (!defaultPms.empty() && base == defaultPms && confMachineId.empty())) {
+                std::fprintf(stderr,
+                             "misterplexd: RESOLVE_FAIL_CONF_OR_AUTH base=%s detail=%s — check "
+                             "PLEX_BASE reachability and cast/conf token pairing\n",
+                             base.c_str(), resolved.detail.c_str());
+            }
             std::fprintf(stderr,
                          "misterplexd: RESOLVE_FAIL detail=%s base=%s key=%s — falling back to "
                          "test pattern (cast media did NOT resolve)\n",

@@ -3,6 +3,7 @@
 
 #include <arpa/inet.h>
 #include <cctype>
+#include <cerrno>
 #include <cstdlib>
 #include <cstring>
 #include <fcntl.h>
@@ -17,6 +18,18 @@
 #include <vector>
 
 namespace misterplex {
+
+bool gdmIsDiscoveryProbe(const char* buf) {
+    // See companion.hpp — keep semantics identical to 90a82208.
+    if (!buf || !*buf)
+        return false;
+    if (std::strncmp(buf, "HTTP/", 5) == 0)
+        return false;
+    if (std::strstr(buf, "Content-Type: plex/media-player") != nullptr)
+        return false;
+    return std::strstr(buf, "M-SEARCH") != nullptr || std::strstr(buf, "plex") != nullptr;
+}
+
 namespace {
 
 bool setReuse(int fd) {
@@ -606,6 +619,14 @@ void Companion::gdmLoop() {
     }
     setReuse(fd);
     setCloexec(fd);
+    // SO_BROADCAST once at create — not only inside the 5s advertise branch.
+    // Advertise sendto(INADDR_BROADCAST) needs it; leave it on so any future
+    // broadcast-dest path cannot fail silently after a partial setup.
+    {
+        int on = 1;
+        if (setsockopt(fd, SOL_SOCKET, SO_BROADCAST, &on, sizeof(on)) != 0)
+            log(std::string("GDM: SO_BROADCAST failed errno=") + std::to_string(errno));
+    }
     sockaddr_in addr{};
     addr.sin_family = AF_INET;
     addr.sin_addr.s_addr = INADDR_ANY;
@@ -616,38 +637,65 @@ void Companion::gdmLoop() {
         log("GDM: listening UDP 32412");
 
     auto lastAdv = std::chrono::steady_clock::now();
+    auto lastSendErrLog = std::chrono::steady_clock::time_point{};
+    auto logSendtoFail = [&](const char* what, ssize_t n, size_t want) {
+        // Silent sendto was another invisible-failure sink (same class as FIX A).
+        const auto now = std::chrono::steady_clock::now();
+        if (lastSendErrLog != std::chrono::steady_clock::time_point{} &&
+            now - lastSendErrLog < std::chrono::seconds(5))
+            return;
+        lastSendErrLog = now;
+        log(std::string("GDM: sendto ") + what + " failed n=" + std::to_string(n) +
+            " want=" + std::to_string(want) + " errno=" + std::to_string(errno));
+    };
+
     while (running_.load()) {
         fd_set rfds;
         FD_ZERO(&rfds);
         FD_SET(fd, &rfds);
         timeval tv{0, 200000};
         int r = select(fd + 1, &rfds, nullptr, nullptr, &tv);
+        if (r < 0) {
+            if (errno != EINTR)
+                std::this_thread::sleep_for(std::chrono::milliseconds(200));
+            continue;
+        }
         if (r > 0 && FD_ISSET(fd, &rfds)) {
             char buf[2048];
             sockaddr_in peer{};
+            // Always reset plen — reused/stale peer length is a classic UDP bug.
             socklen_t plen = sizeof(peer);
-            ssize_t n = recvfrom(fd, buf, sizeof(buf) - 1, 0, reinterpret_cast<sockaddr*>(&peer), &plen);
+            ssize_t n =
+                recvfrom(fd, buf, sizeof(buf) - 1, 0, reinterpret_cast<sockaddr*>(&peer), &plen);
             if (n > 0) {
                 buf[n] = 0;
-                if (std::strstr(buf, "M-SEARCH") || std::strstr(buf, "plex")) {
+                // Answer probes only. Own HTTP/1.0 200 GDM replies loop back when we
+                // advertise to 255.255.255.255:32412 — must not re-reply (storm).
+                // Broadcast M-SEARCH still matches: recvfrom peer = unicast source;
+                // we sendto that source (not the broadcast dst).
+                if (gdmIsDiscoveryProbe(buf)) {
                     auto payload = gdmPayload();
-                    sendto(fd, payload.data(), payload.size(), 0, reinterpret_cast<sockaddr*>(&peer),
-                           plen);
+                    const ssize_t sn =
+                        sendto(fd, payload.data(), payload.size(), 0,
+                               reinterpret_cast<sockaddr*>(&peer), plen);
+                    if (sn < 0 || static_cast<size_t>(sn) != payload.size())
+                        logSendtoFail("probe-reply", sn, payload.size());
                 }
             }
         }
         auto now = std::chrono::steady_clock::now();
         if (now - lastAdv > std::chrono::seconds(5)) {
             lastAdv = now;
-            int on = 1;
-            setsockopt(fd, SOL_SOCKET, SO_BROADCAST, &on, sizeof(on));
             sockaddr_in bcast{};
             bcast.sin_family = AF_INET;
             bcast.sin_port = htons(32412);
             bcast.sin_addr.s_addr = INADDR_BROADCAST;
             auto payload = gdmPayload();
-            sendto(fd, payload.data(), payload.size(), 0, reinterpret_cast<sockaddr*>(&bcast),
-                   sizeof(bcast));
+            const ssize_t sn =
+                sendto(fd, payload.data(), payload.size(), 0,
+                       reinterpret_cast<sockaddr*>(&bcast), sizeof(bcast));
+            if (sn < 0 || static_cast<size_t>(sn) != payload.size())
+                logSendtoFail("advertise", sn, payload.size());
         }
     }
     close(fd);
