@@ -1,0 +1,120 @@
+AFTER-v9 CARD — w-bounce2 2026-07-30
+==============================================================================
+IDENTITY (leave)
+==============================================================================
+live md5     e9c5e5a1f765dfa9ed9bb330f3f40582  (v9 = v8b 4cbee6ff + thread_cpu 8edc5ff/b8640e34)
+rollback arm v8b 4cbee6ffc72beeba0d4c3641ef7299fd (v7 703b2fd4 behind; never 06c5735a)
+--id         misterplex-dev
+CORENAME     Plex
+RBF          14eaeff3270a6f59a434e0f777ed823d untouched
+conf         PRESENT=fpga STREAM=0 DECODE=320x240 PRESENT_PROFILE=0
+supervise    n_daemon=1 n_supervise=1 (leave repaired after gates TERM hit backoff window)
+bootcore     untouched
+freeze xfer  md5 match local=remote=e9c5e5a1… at transfer (refuse path armed)
+
+==============================================================================
+PRE-REGISTER (scripts/DEPLOY_V9_PREREGISTER.txt) — scored
+==============================================================================
+A PROFILE=0 inert
+  PREDICT: zero thread_cpu / present_profile lines at PROFILE=0
+  ACTUAL:  thread_cpu_count=0 present_profile_count=0 during play (profile0_inert.txt)
+  SCORE:   HIT
+
+B Per-thread split PROFILE=1 (hybrid gap ~87.5)
+  PREDICT P1: sum tid j ≈ process work (instrumentation live)
+  PREDICT P2: media buckets remain small vs process; bulk not in media PROFILE sum alone
+  PREDICT P3: name residual owner if one tid ≥50%
+  ACTUAL (profile1_capture.txt, first→last thread_cpu span, sum_dJ=3993):
+    tid=13645 dJ=3416  **85.5%** of process jiffies in window
+    tid=13774 dJ=303    7.6%
+    tid=13642 dJ=150    3.8%
+    tid=13777 dJ=83     2.1%
+    tid=13636 dJ=25     0.6%  (likely main — lowest delta among survivors)
+    others <1%
+  P1: instrumentation emitted 5× thread_cpu lines with multi-tid j — HIT (not empty)
+  P2: present_profile buckets still small scale (read_cpu~0.4ms, pacing_cpu~0.5ms,
+      ddr_cpu~1.3–1.5ms per presented) while ONE tid owns 85.5% — gap NOT in
+      named media buckets; bulk is on a single misterplexd tid — HIT vs "media
+      buckets are not the bulk"
+  P3: ONE tid ≥50% — tid=13645 at 85.5% — HIT "concentrated" not fragmented
+  COMM name: all /proc comm strings are "misterplexd" (pthread default) — role of
+      13645 is UNKNOWN without further offline mapping (hybrid owns analysis).
+  CONTENT: PMS_REACHABLE=0; playMedia ACK key=/library/metadata/11 then
+      resolve failed → testsrc2 (documented; not real PMS decode path)
+
+C CPU reconcile vs hybrid v7 113.9
+  Method: 200*dj/dc_cpu_all nproc=2 PROFILE=0 wall du=45.570s same_mpid=yes
+  Raw: dc=9118 dm=4405 df=448 → mp=96.6 ff=9.8 combined=106.4
+  same_fpid=no (ffmpeg pid changed mid-window — re-resolve/testsrc respawn)
+  CONTENT=testsrc (PMS down / metadata/11 missing) — **TESTSRC_POISONED**
+  vs 113.9: delta −7.5 combined BUT content class ≠ hybrid metadata/11 real PMS
+  SCORE: **UNSCORED** (not variance claim; not real presentMu cost claim)
+  C2 real-cost claim: NOT MADE (need PMS-up key= window)
+
+D RCA wording (unchanged)
+  Daemon deaths UNEXPLAINED; race fix = hardening only; signal UNCAPTURED.
+
+==============================================================================
+GATES (device)
+==============================================================================
+| gate | bar | measured | score |
+|------|-----|----------|-------|
+| freeze md5 at xfer | match e9c5e5a1 | match | HIT |
+| install md5 live | e9c5e5a1 | e9c5e5a1 | HIT |
+| promote SPI→doorbell | log | both lines present | HIT |
+| ddr_doorbell steady | ≪1ms fail≥2ms | 1–2 µs after first win (323µs first bucket) | HIT |
+| ddr_cpu | ~1.5ms fail≥5ms | 1318–1591 µs | HIT |
+| PORT :3005 during PROFILE=1 | up | PORT_UP=1 | HIT |
+| wrong-target | 409 | 409 | HIT |
+| pfps≈vfps PROFILE=1 | ~29.9 | 29.6–29.7 / 29.6 drops=2 @~50s testsrc | HIT soft |
+| PROFILE=0 restore | conf+log | conf PRESENT_PROFILE=0; log line PRESENT_PROFILE=0 | HIT |
+| PROFILE=0 inert | 0 profile lines | 0/0 | HIT |
+| MENU SILENT on Plex | no CORENAME warn | warn_lines_on_plex_restart=0 | HIT |
+| RBF untouched | 14eaeff3 | 14eaeff3 | HIT |
+| seek+stop flat | frames unchanged after stop | 118→148 | **MISS** |
+| CPU reconcile vs 113.9 | scored only if real PMS | testsrc poisoned combined=106.4 | **UNSCORED** |
+| private-data host | OK | test_no_private_data.sh OK | HIT |
+| cast host gates | PASS | target/ctrl/seek-stop PASS | HIT |
+| make unit | rc=0 | true rc=0 (allowlist +CAST_SEEK_STOP_FAULT) | HIT |
+
+seek+stop MISS notes: log showed "PLAY superseded during resolve" + "seek post-check —
+kill zombie demux"; frames still advanced 118→148 under testsrc. Not scored as product
+regression proof (content class poisoned); still a MISS vs bar on this window.
+
+==============================================================================
+HOST GATES (pre-device)
+==============================================================================
+arm freeze md5 e9c5e5a1… strings: thread_cpu, promoted SPI, kick mode=doorbell
+cast target/ctrl/seek-stop: PASS
+private-data: PASS
+make unit: true rc=0
+define parity: PASS after allowlist CAST_SEEK_STOP_FAULT
+
+==============================================================================
+HYBRID HANDOFF (offline only — no device)
+==============================================================================
+Bundle: build/arm-deploy-v9-window/
+  DEPLOY_V9_PREREGISTER.txt (also scripts/)
+  profile1_capture.txt     — present_profile + thread_cpu gold
+  play_profile1.txt        — PMS_REACHABLE=0, ACK key=, then testsrc
+  profile0_inert.txt       — 0/0 counts
+  cpu_jiffies45.txt        — method-matched but TESTSRC_POISONED
+  log_excerpt_redacted.txt
+  gates_quick.txt host.log install.txt pre_identity.txt
+Headline for analysis: **tid=13645 owns 85.5% of dJ** while media present_profile
+CPU buckets remain ~ms-scale — residual is concentrated on one thread, not HTTP flood
+spread. Role of tid UNKNOWN here (comm=misterplexd all).
+
+==============================================================================
+LEAVE INCIDENT (repaired before stand-by)
+==============================================================================
+gates_quick TERM'd daemon to re-check MENU warn; sample caught n_daemon=0 while
+supervise backoff=8s (SUPERVISE_EXIT exit_status=0). Leave repair waited; daemon
+respawned (pid 14339); n_daemon=1 n_supervise=1 PROFILE=0 confirmed. No kill -9.
+
+==============================================================================
+STAND-BY
+==============================================================================
+No further device access without parent authorisation.
+No sub-delegation of device slot.
+Deaths remain UNEXPLAINED.

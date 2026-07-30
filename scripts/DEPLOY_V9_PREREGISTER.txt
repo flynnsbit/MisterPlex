@@ -1,0 +1,46 @@
+DEPLOY v9 PRE-REGISTER — bounce2 owns device window
+====================================================
+Built: 4cbee6ff (v8b live) + 8edc5ff/b8640e34 thread_cpu only
+ARM freeze md5 (pre-transfer): e9c5e5a1f765dfa9ed9bb330f3f40582
+Rollback armed: v8b 4cbee6ff (behind: v7 703b2fd4; never 06c5735a)
+RBF 14eaeff3 / conf token / bootcore: UNTOUCHED
+--id misterplex-dev only. No sub-delegation.
+
+A) PROFILE=0 inert (blocking)
+   Expect: presentProfile_=false default; logProfile returns before
+   present_profile AND thread_cpu (media_player.cpp ~2483-2491).
+   Fail if: any "media: thread_cpu" or "present_profile" line at PROFILE=0
+   after idle+play, OR combined CPU jumps >+5 vs v8b same method without cause.
+
+B) Per-thread split under PRESENT_PROFILE=1 (measurement, not pass/fail bar)
+   Hybrid: process ~95.5 %onecpu; media PROFILE buckets ~8 → gap ~87.5.
+   PREDICTIONS (fail thresholds = "mechanism wrong if reversed"):
+   P1. Sum of tid jiffies ≈ process dj over same window (±15% OK; if sum << process
+       then /proc task scan broken — HARD MISS instrumentation).
+   P2. Media/decode-related tid(s) own the present_profile buckets (~8%onecpu scale),
+       NOT the bulk of process CPU — if media tid ≥70% of process, gap theory FAILS.
+   P3. Residual bulk is on non-media tid(s): expect candidates audio and/or HTTP/accept
+       and/or unnamed worker. If ONE tid owns ≥50% of process, name it; if spread
+       across many small tids, say "fragmented".
+   P4. No claim that any residual is "idle spin" without jiffies evidence on that tid.
+   HARD FAIL window: daemon death, port 3005 down, wrong --id, CORENAME≠Plex,
+   RBF md5 change, doorbell regress to ≥2ms, or freeze md5 mismatch at transfer.
+
+C) CPU reconcile v7 113.9 vs v8b 117.66 (PROFILE=0, hybrid method)
+   Method LOCKED: 200*dj/dc_cpu_all, nproc=2, same_mpid, wall≈45.26s, PROFILE=0,
+   playMedia key=/library/metadata/11 (NOT path= — path forces testsrc).
+   PREDICTIONS:
+   C1. If PMS up and key= works: combined in [110, 122] band.
+   C2. Fail "real presentMu cost" claim unless delta vs 113.9 ≥ +3 AND two
+       back-to-back windows both show it (single window cannot prove cost).
+   C3. Do NOT conclude "variance" from one number. Publish: method match Y/N,
+       content (real key vs testsrc), same_mpid, raw dc/dm/df/du, and delta.
+   C4. If PMS unreachable → capture labeled TESTSRC_POISONED; reconcile UNSCORED
+       (not a pass, not variance).
+
+D) RCA wording (unchanged)
+   Daemon deaths UNEXPLAINED; race fix = hardening only; signal UNCAPTURED.
+
+E) Leave state
+   PROFILE=0 restored, n_daemon=1, --id misterplex-dev, CORENAME=Plex,
+   RBF 14eaeff3, supervise up, handoff bundle for hybrid offline only.
