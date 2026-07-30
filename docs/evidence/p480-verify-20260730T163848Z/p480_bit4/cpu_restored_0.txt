@@ -1,0 +1,27 @@
+PLAY_WALL_S=15.032
+PLAY_DJ=173
+PLAY_P_ONECPU=11.509
+PLAY_HYB_200DJ=23.018
+PLAY_TID_BEGIN
+tid=1728 dj=79 rate=5.256 state=S start=5029778
+tid=1710 dj=50 rate=3.326 state=S start=5029646
+tid=1730 dj=27 rate=1.796 state=S start=5029780
+tid=30026 dj=11 rate=0.732 state=S start=4247763
+tid=30031 dj=4 rate=0.266 state=S start=4247767
+tid=30033 dj=1 rate=0.067 state=S start=4247767
+tid=30034 dj=0 rate=0.000 state=S start=4247767
+tid=30032 dj=0 rate=0.000 state=S start=4247767
+PLAY_TID_END
+FRAME media: frames=377 vfps=23.3 pfps=23.2 audio_s=15.78 wall_s=16.14 audio=on clock=av-lock av_drift_ms=-29 drops=1 fps=24/1 decode=320x240
+FRAME media: frames=402 vfps=23.3 pfps=23.3 audio_s=16.82 wall_s=17.18 audio=on clock=av-lock av_drift_ms=-31 drops=1 fps=24/1 decode=320x240
+FRAME media: frames=426 vfps=23.4 pfps=23.3 audio_s=17.82 wall_s=18.19 audio=on clock=av-lock av_drift_ms=-31 drops=1 fps=24/1 decode=320x240
+FRAME media: frames=450 vfps=23.4 pfps=23.3 audio_s=18.82 wall_s=19.19 audio=on clock=av-lock av_drift_ms=-31 drops=1 fps=24/1 decode=320x240
+FRAME media: frames=474 vfps=23.4 pfps=23.4 audio_s=19.82 wall_s=20.19 audio=on clock=av-lock av_drift_ms=-31 drops=1 fps=24/1 decode=320x240
+PLAYLOG HTTP OUT 200 playMedia <Timeline type="video" state="buffering" time="0" duration="0" volume="100" mute="0" controllable="playPause,stop,volume,audioStream,subtitleStream,seekTo,skipPrevious,skipNext,stepBack,stepForward" location="fullScreenVideo" mediaIndex="0"
+PLAYLOG playMedia ACK key=/library/metadata/12 offMs=0
+PLAYLOG HTTP IN GET /player/playback/playMedia?key=%2Flibrary%2Fmetadata%2F12&offset=0&commandID=p480-bit4_1&protocol=http&address=192.168.1.41&port=32400&machineIdentifier=4edd44aac1de0b731553a3a187104ecd175571a0&X-Plex-Token=REDACTED HTTP/1.1
+PLAYLOG HTTP OUT 200 playMedia <Timeline type="video" state="buffering" time="0" duration="0" volume="100" mute="0" controllable="playPause,stop,volume,audioStream,subtitleStream,seekTo,skipPrevious,skipNext,stepBack,stepForward" location="fullScreenVideo" mediaIndex="0"
+PLAYLOG playMedia ACK key=/library/metadata/12 offMs=0
+PLAYLOG HTTP IN GET /player/playback/playMedia?key=%2Flibrary%2Fmetadata%2F12&offset=0&commandID=p480-restored_0&protocol=http&address=192.168.1.41&port=32400&machineIdentifier=4edd44aac1de0b731553a3a187104ecd175571a0&X-Plex-Token=REDACTED HTTP/1.1
+PLAYLOG HTTP OUT 200 playMedia <Timeline type="video" state="buffering" time="0" duration="0" volume="100" mute="0" controllable="playPause,stop,volume,audioStream,subtitleStream,seekTo,skipPrevious,skipNext,stepBack,stepForward" location="fullScreenVideo" mediaIndex="0"
+PLAYLOG playMedia ACK key=/library/metadata/12 offMs=0

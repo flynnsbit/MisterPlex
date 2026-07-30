@@ -1,0 +1,28 @@
+=== content_resolution_lines ===
+64:misterplexd: content resolution=320x240 source=OSD O[4] status_word=0x4000 weak=320x240 bitrate=1000
+183:misterplexd: content resolution=320x240 source=OSD O[4] status_word=0x4000 weak=320x240 bitrate=1000
+=== OSD_CONTROL boot ===
+7:misterplexd: OSD_CONTROL=1
+8:misterplexd: OSD_CONTROL=1 — IDLE_SCREEN conf is pre-OSD fallback; first OSD word applies Main's persisted F12 Idle Screen (config/Plex_v7.CFG), then live menu changes.
+35:misterplexd: OSD_CONTROL=1
+36:misterplexd: OSD_CONTROL=1 — IDLE_SCREEN conf is pre-OSD fallback; first OSD word applies Main's persisted F12 Idle Screen (config/Plex_v7.CFG), then live menu changes.
+150:misterplexd: OSD_CONTROL=1
+151:misterplexd: OSD_CONTROL=1 — IDLE_SCREEN conf is pre-OSD fallback; first OSD word applies Main's persisted F12 Idle Screen (config/Plex_v7.CFG), then live menu changes.
+=== DECODE_ALLOW ===
+18:misterplexd: running name=MiSTerPlex id=misterplex-dev port=3005 pms=http://192.168.1.41:32400 servers=1 decode=320x240 decode_source=conf:/media/fat/misterplex/misterplex.conf weak=480p/624x480@2000k h264=baseline@L30 present=fpga auto_next=1 subs=off
+46:misterplexd: running name=MiSTerPlex id=misterplex-dev port=3005 pms=http://192.168.1.41:32400 servers=1 decode=320x240 decode_source=conf:/media/fat/misterplex/misterplex.conf weak=480p/624x480@2000k h264=baseline@L30 present=fpga auto_next=1 subs=off
+163:misterplexd: running name=MiSTerPlex id=misterplex-dev port=3005 pms=http://192.168.1.41:32400 servers=1 decode=320x240 decode_source=conf:/media/fat/misterplex/misterplex.conf weak=480p/624x480@2000k h264=baseline@L30 present=fpga auto_next=1 subs=off
+=== conf keys ===
+PRESENT=fpga
+DECODE=320x240
+OSD_CONTROL=1
+PRESENT_PROFILE=0
+=== conf has ALLOW ===
+0
+=== rbf_hex_search ===
+b'Content resolution' offset -1
+b'320x240' offset -1
+b'640x480' offset -1
+b'v,7;' offset -1
+b'O[4]' offset -1
+b'624x480' offset -1

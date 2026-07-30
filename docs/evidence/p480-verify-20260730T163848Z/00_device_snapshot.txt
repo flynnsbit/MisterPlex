@@ -1,0 +1,35 @@
+SOURCE_SHA=58de897f9fbfe536f0f6654250cd4d6242261983
+TS_UTC=2026-07-30T16:38:48Z
+=== DEVICE SNAPSHOT ===
+md5_daemon=fb9f76192a8f7d248411c2ab2b332542
+md5_rbf=14eaeff3270a6f59a434e0f777ed823d
+-rwxr-xr-x 1 root root  3945300 Jul 29 21:44 /media/fat/_Utility/Plex.rbf
+-rwxr-xr-x 1 root root 12896372 Jul 30 08:03 /media/fat/misterplex/bin/misterplexd
+CORENAME_file=Plex
+n_daemon=1
+n_supervise=1
+PROFILE_hint=
+conf_path=/media/fat/misterplex/misterplex.conf
+PLEX_TOKEN=<redacted>
+PLEX_BASE=http://192.168.1.41:32400
+PLEX_HOST=192.168.1.41
+# v0.3.0 lab-stable pair: 320x240 core 41adb98c + daemon 06c5735a (fb0 cast path)
+PRESENT=fpga
+STREAM=0
+DECODE=320x240
+TRANSCODE_PROFILE=480p
+SUBTITLES=off
+MATCH_SOURCE_HZ=off
+SOURCE_FPS=auto
+AUTO_NEXT=1
+AUDIO_DELAY_MS=0
+AUDIO_CLOCK_PPM=-638
+OSD_CONTROL=1
+AV_OFFSET_MS=0
+STREAM_SKIP_RGB=0
+
+PRESENT_PROFILE=0
+===ps_plex===
+27140 root     {misterplexd_sup} /bin/sh /media/fat/misterplex/bin/misterplexd_supervise.sh
+30026 root     /media/fat/misterplex/bin/misterplexd --name MiSTerPlex --id misterplex-dev --port 3005 --conf /media/fat/misterplex/misterplex.conf
+30036 root     /media/fat/MiSTer /media/fat/_Utility/Plex.rbf

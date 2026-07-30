@@ -1,0 +1,109 @@
+=== frame_tx around 480p ===
+64:misterplexd: content resolution=320x240 source=OSD O[4] status_word=0x4000 weak=320x240 bitrate=1000
+84:media: fpga frame_tx ok via DDR presents=48 frames=49 ms=4
+87:media: fpga frame_tx ok via DDR presents=96 frames=97 ms=4
+91:media: fpga frame_tx ok via DDR presents=144 frames=145 ms=4
+94:media: fpga frame_tx ok via DDR presents=192 frames=193 ms=4
+101:media: fpga frame_tx ok via DDR presents=240 frames=241 ms=4
+104:media: fpga frame_tx ok via DDR presents=288 frames=289 ms=4
+107:media: fpga frame_tx ok via DDR presents=336 frames=337 ms=8
+111:media: fpga frame_tx ok via DDR presents=384 frames=385 ms=4
+114:media: fpga frame_tx ok via DDR presents=432 frames=433 ms=4
+118:media: fpga frame_tx ok via DDR presents=480 frames=481 ms=4
+122:media: fpga frame_tx ok via DDR presents=528 frames=529 ms=4
+125:media: fpga frame_tx ok via DDR presents=576 frames=577 ms=4
+129:media: fpga frame_tx ok via DDR presents=624 frames=625 ms=4
+132:media: fpga frame_tx ok via DDR presents=672 frames=673 ms=4
+138:media: session end frames=719 recon=0 cabac=0 stream=off rawvideo=on present=fpga skip_rgb=0
+183:misterplexd: content resolution=320x240 source=OSD O[4] status_word=0x4000 weak=320x240 bitrate=1000
+203:media: fpga frame_tx ok via DDR presents=48 frames=50 ms=4
+206:media: fpga frame_tx ok via DDR presents=96 frames=98 ms=4
+210:media: fpga frame_tx ok via DDR presents=144 frames=146 ms=4
+213:media: fpga frame_tx ok via DDR presents=192 frames=194 ms=4
+220:media: fpga frame_tx ok via DDR presents=240 frames=242 ms=4
+223:media: fpga frame_tx ok via DDR presents=288 frames=290 ms=4
+226:media: fpga frame_tx ok via DDR presents=336 frames=338 ms=4
+230:media: fpga frame_tx ok via DDR presents=384 frames=386 ms=4
+233:media: fpga frame_tx ok via DDR presents=432 frames=434 ms=4
+238:media: fpga frame_tx ok via DDR presents=480 frames=482 ms=4
+241:media: fpga frame_tx ok via DDR presents=528 frames=530 ms=4
+244:media: fpga frame_tx ok via DDR presents=576 frames=578 ms=4
+248:media: fpga frame_tx ok via DDR presents=624 frames=626 ms=4
+251:media: fpga frame_tx ok via DDR presents=672 frames=674 ms=4
+256:media: session end frames=719 recon=0 cabac=0 stream=off rawvideo=on present=fpga skip_rgb=0
+260:=== SET bit4=0 ===
+261:=== PLAY_BEGIN bit4_0 2026-07-30T16:42:35Z ===
+266:misterplexd: content resolution=320x240 source=OSD O[4] status_word=0x4000 weak=320x240 bitrate=1000
+286:media: fpga frame_tx ok via DDR presents=48 frames=49 ms=4
+289:media: fpga frame_tx ok via DDR presents=96 frames=97 ms=4
+295:media: fpga frame_tx ok via DDR presents=144 frames=145 ms=4
+298:media: fpga frame_tx ok via DDR presents=192 frames=193 ms=4
+303:media: fpga frame_tx ok via DDR presents=240 frames=241 ms=4
+306:media: fpga frame_tx ok via DDR presents=288 frames=289 ms=5
+309:media: fpga frame_tx ok via DDR presents=336 frames=337 ms=4
+313:media: fpga frame_tx ok via DDR presents=384 frames=385 ms=4
+316:media: fpga frame_tx ok via DDR presents=432 frames=433 ms=4
+322:media: session end frames=479 recon=0 cabac=0 stream=off rawvideo=on present=fpga skip_rgb=0
+324:=== SET bit4=1 ===
+326:=== PLAY_BEGIN bit4_1 2026-07-30T16:43:01Z ===
+331:misterplexd: content resolution=624x480 source=OSD O[4] status_word=0x4010 weak=624x480 bitrate=2000
+351:media: fpga frame_tx ok via DDR presents=48 frames=53 ms=8
+354:media: fpga frame_tx ok via DDR presents=96 frames=101 ms=8
+360:media: fpga frame_tx ok via DDR presents=144 frames=149 ms=9
+363:media: fpga frame_tx ok via DDR presents=192 frames=197 ms=8
+368:media: fpga frame_tx ok via DDR presents=240 frames=245 ms=8
+371:media: fpga frame_tx ok via DDR presents=288 frames=293 ms=8
+374:media: fpga frame_tx ok via DDR presents=336 frames=341 ms=8
+378:media: fpga frame_tx ok via DDR presents=384 frames=389 ms=8
+381:media: fpga frame_tx ok via DDR presents=432 frames=437 ms=8
+386:media: fpga frame_tx ok via DDR presents=480 frames=485 ms=11
+390:media: session end frames=501 recon=0 cabac=0 stream=off rawvideo=on present=fpga skip_rgb=0
+392:=== RESTORE bit4=0 ===
+395:=== PLAY_BEGIN restored_0 2026-07-30T16:43:27Z ===
+400:misterplexd: content resolution=320x240 source=OSD O[4] status_word=0x0000 weak=320x240 bitrate=1000
+420:media: fpga frame_tx ok via DDR presents=48 frames=49 ms=4
+423:media: fpga frame_tx ok via DDR presents=96 frames=97 ms=4
+429:media: fpga frame_tx ok via DDR presents=144 frames=145 ms=4
+432:media: fpga frame_tx ok via DDR presents=192 frames=193 ms=4
+436:media: fpga frame_tx ok via DDR presents=240 frames=241 ms=5
+440:media: fpga frame_tx ok via DDR presents=288 frames=289 ms=4
+443:media: fpga frame_tx ok via DDR presents=336 frames=337 ms=4
+447:media: fpga frame_tx ok via DDR presents=384 frames=385 ms=4
+450:media: fpga frame_tx ok via DDR presents=432 frames=433 ms=4
+453:media: fpga frame_tx ok via DDR presents=480 frames=481 ms=4
+458:media: session end frames=484 recon=0 cabac=0 stream=off rawvideo=on present=fpga skip_rgb=0
+=== final state ===
+CORENAME=Plex
+md5_d=fb9f76192a8f7d248411c2ab2b332542
+md5_r=14eaeff3270a6f59a434e0f777ed823d
+n_d=1
+n_s=0 3
+PRESENT=fpga
+DECODE=320x240
+OSD_CONTROL=1
+PRESENT_PROFILE=0
+00000000: 0040 0100 0000 0000 00c0 0000 0000 0000  .@..............
+raw: 00 20 01 00 00 00 00 00 00 c0 00 00 00 00 00 00
+osd lo=0x2000 tv=NTSC fps_sel=0(24) pat=0(none) audio=Off force_bars=0 T10=0 T11=0 R0=0 AR_bits=0
+status has_frame=1 has_audio=0 has_stream=0 underrun=0 has_idr=0 sps_valid=0 pps_valid=0 nalu=0 last_nal=0x00 sps=0x0 bytes_in=0
+<?xml version="1.0" encoding="UTF-8"?><MediaContainer machineIdentifier="misterplex-dev" size="1" commandID="final" location="navigation"><Timeline type="video" state="buffering" time="0" duration="0" volume="100" mute="0" controllable="playPause,stop,volume,audioStream,subtitleStream,seekTo,skipPre
+total 608
+drwxr-xr-x 2 root root 32768 Jul 30 11:43 .
+drwxr-xr-x 3 root root 32768 Jul 30 11:42 ..
+-rwxr-xr-x 1 root root    10 Jul 30 11:42 confstr_before.txt
+-rwxr-xr-x 1 root root  2667 Jul 30 11:42 cpu_bit4_0.txt
+-rwxr-xr-x 1 root root  2668 Jul 30 11:43 cpu_bit4_1.txt
+-rwxr-xr-x 1 root root  2672 Jul 30 11:43 cpu_restored_0.txt
+-rwxr-xr-x 1 root root     3 Jul 30 11:42 http_bit4_0.txt
+-rwxr-xr-x 1 root root     3 Jul 30 11:43 http_bit4_1.txt
+-rwxr-xr-x 1 root root     3 Jul 30 11:43 http_restored_0.txt
+-rwxr-xr-x 1 root root   648 Jul 30 11:42 play_bit4_0.xml
+-rwxr-xr-x 1 root root   648 Jul 30 11:43 play_bit4_1.xml
+-rwxr-xr-x 1 root root   652 Jul 30 11:43 play_restored_0.xml
+-rwxr-xr-x 1 root root   129 Jul 30 11:42 status_before.txt
+-rwxr-xr-x 1 root root   280 Jul 30 11:42 status_bit4_0.txt
+-rwxr-xr-x 1 root root   280 Jul 30 11:43 status_bit4_1.txt
+-rwxr-xr-x 1 root root   280 Jul 30 11:43 status_restored.txt
+-rwxr-xr-x 1 root root   673 Jul 30 11:42 tl_bit4_0.xml
+-rwxr-xr-x 1 root root   673 Jul 30 11:43 tl_bit4_1.xml
+-rwxr-xr-x 1 root root   677 Jul 30 11:43 tl_restored_0.xml

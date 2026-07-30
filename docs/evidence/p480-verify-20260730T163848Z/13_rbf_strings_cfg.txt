@@ -1,0 +1,9 @@
+===CFG_v7===
+00000000: 0040 0100 0000 0000 00c0 0000 0000 0000  .@..............
+===osd_keys===
+-rwxr-xr-x 1 root root 4384 Jul 29 10:09 /media/fat/misterplex/osd_keys.py
+#!/usr/bin/env python3
+"""Inject key sequences into MiSTer via /dev/uinput (run ON the MiSTer).
+
+Used to drive the Plex core OSD from CI/lab automation: MiSTer_cmd has no key
+injection, so the only way to exercise the real user path (Main_MiSTer parses

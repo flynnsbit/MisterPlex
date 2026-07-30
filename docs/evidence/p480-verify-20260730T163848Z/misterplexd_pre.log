@@ -1,0 +1,176 @@
+misterplexd: DECODE adopted coded 320x240 from conf /media/fat/misterplex/misterplex.conf
+misterplexd: MATCH_SOURCE_HZ=off SOURCE_FPS=auto (cadence/OSD path; switchres TODO)
+misterplexd: SKIP_FORWARD_MS=30000 SKIP_BACK_MS=10000
+misterplexd: AUDIO_DELAY_MS=0 (0=fresh, no hardcoded lag)
+misterplexd: AUDIO_CLOCK_PPM=-638
+misterplexd: AV_PRESENT_LEAD_MS=40(default) AV_RESYNC_DROP_MS=80(default)
+misterplexd: OSD_CONTROL=1
+misterplexd: OSD_CONTROL=1 — IDLE_SCREEN conf is pre-OSD fallback; first OSD word applies Main's persisted F12 Idle Screen (config/Plex_v7.CFG), then live menu changes.
+misterplexd: IDLE_SCREEN=logo(default) AV_OFFSET_MS=0
+misterplexd: DDR_MEM_SYNC=1 DDR_MEM_FLUSH=0
+misterplexd: DDR_FRAME_FORMAT=yuv420p
+misterplexd: PRESENT_PROFILE=0
+misterplexd: PRESENT=fpga (fpga required for core HDMI idle/OSD; fb0 alone does not repaint the Plex frame store)
+media: FPGA frame path OK (PRESENT=fpga → DDR YUV420p)
+media: DDR bitstream CTRL=PLXD (STREAM=0, producer dormant)
+media: audio device /dev/MrAudio OK (s16le stereo @ 48k → FPGA)
+companion: GDM + HTTP :3005 name=MiSTerPlex
+misterplexd: running name=MiSTerPlex id=misterplex-dev port=3005 pms=http://192.168.1.41:32400 servers=1 decode=320x240 decode_source=conf:/media/fat/misterplex/misterplex.conf weak=480p/624x480@2000k h264=baseline@L30 present=fpga auto_next=1 subs=off
+misterplexd:   server[0]=http://192.168.1.41:32400 (default)
+GDM: listening UDP 32412
+HTTP: companion on :3005 ip≈192.168.1.183
+misterplexd: DDR kick mode=spi (bring-up); will promote to doorbell on next frame
+media: idle screen painted (mode=0)
+misterplexd: DDR kick steady-state promoted SPI→doorbell (avoid per-frame SpiExclusive/SIGSTOP Main)
+media: OSD word=0x4000 av_offset_ms=0 clock_ppm=-638 resync=on idle=1
+HTTP IN GET /resources HTTP/1.1
+companion: stopped
+2026-07-30T14:32:17Z misterplexd SUPERVISE: DIED exit=0 — restarting in 2s
+misterplexd: DECODE adopted coded 320x240 from conf /media/fat/misterplex/misterplex.conf
+misterplexd: MATCH_SOURCE_HZ=off SOURCE_FPS=auto (cadence/OSD path; switchres TODO)
+misterplexd: SKIP_FORWARD_MS=30000 SKIP_BACK_MS=10000
+misterplexd: AUDIO_DELAY_MS=0 (0=fresh, no hardcoded lag)
+misterplexd: AUDIO_CLOCK_PPM=-638
+misterplexd: AV_PRESENT_LEAD_MS=40(default) AV_RESYNC_DROP_MS=80(default)
+misterplexd: OSD_CONTROL=1
+misterplexd: OSD_CONTROL=1 — IDLE_SCREEN conf is pre-OSD fallback; first OSD word applies Main's persisted F12 Idle Screen (config/Plex_v7.CFG), then live menu changes.
+misterplexd: IDLE_SCREEN=logo(default) AV_OFFSET_MS=0
+misterplexd: DDR_MEM_SYNC=1 DDR_MEM_FLUSH=0
+misterplexd: DDR_FRAME_FORMAT=yuv420p
+misterplexd: PRESENT_PROFILE=0
+misterplexd: PRESENT=fpga (fpga required for core HDMI idle/OSD; fb0 alone does not repaint the Plex frame store)
+media: FPGA frame path OK (PRESENT=fpga → DDR YUV420p)
+media: DDR bitstream CTRL=PLXD (STREAM=0, producer dormant)
+media: audio device /dev/MrAudio OK (s16le stereo @ 48k → FPGA)
+companion: GDM + HTTP :3005 name=MiSTerPlex
+misterplexd: running name=MiSTerPlex id=misterplex-dev port=3005 pms=http://192.168.1.41:32400 servers=1 decode=320x240 decode_source=conf:/media/fat/misterplex/misterplex.conf weak=480p/624x480@2000k h264=baseline@L30 present=fpga auto_next=1 subs=off
+misterplexd:   server[0]=http://192.168.1.41:32400 (default)
+GDM: listening UDP 32412
+HTTP: companion on :3005 ip≈192.168.1.183
+misterplexd: DDR kick mode=spi (bring-up); will promote to doorbell on next frame
+media: idle screen painted (mode=0)
+misterplexd: DDR kick steady-state promoted SPI→doorbell (avoid per-frame SpiExclusive/SIGSTOP Main)
+media: OSD word=0x4000 av_offset_ms=0 clock_ppm=-638 resync=on idle=1
+media: idle screen painted (mode=0)
+media: OSD word=0x0000 av_offset_ms=0 clock_ppm=-638 resync=on idle=0
+media: OSD via DDR mailbox (no SPI)
+media: idle screen painted (mode=1)
+media: OSD word=0x4000 av_offset_ms=0 clock_ppm=-638 resync=on idle=1
+=== REAL_CAST_BEGIN 2026-07-30T14:32:28Z key=/library/metadata/6 ===
+HTTP IN GET /player/playback/stop HTTP/1.1
+HTTP IN GET /player/playback/playMedia?key=%2Flibrary%2Fmetadata%2F6&offset=0&commandID=real-cast-v10&protocol=http&address=192.168.1.41&port=32400&machineIdentifier=4edd44aac1de0b731553a3a187104ecd175571a0&X-Plex-Token=REDACTED HTTP/1.1
+HTTP OUT 200 playMedia <Timeline type="video" state="buffering" time="0" duration="0" volume="100" mute="0" controllable="playPause,stop,volume,audioStream,subtitleStream,seekTo,skipPrevious,skipNext,stepBack,stepForward" location="fullScreenVideo" mediaIndex="0"
+playMedia ACK key=/library/metadata/6 offMs=0
+misterplexd: content resolution=320x240 source=OSD O[4] status_word=0x4000 weak=320x240 bitrate=1000
+misterplexd: resolved PMS universal 480p 320x240 /library/metadata/6 title=Sync 24fps Blip dur=30021 transcode=1 base=http://192.168.1.41:32400
+misterplexd: Content FPS hint=24 (SOURCE_FPS=auto pms_vfr=24p frameRate=24.000 resolved=24) — exact pacing uses resolved rate; switchres TODO
+misterplexd: content fps exact=24/1 (pms frameRate=24.000 vfr=24p)
+misterplexd: PLAY http://192.168.1.41:32400/video/:/transcode/universal/start.mp4?hasMDE=1&path=%2Flibrary%2Fmetadata%2F6&mediaIndex=0&partIndex=0&protocol=http&fastSeek=1&directPlay=0&directStream=0&subtitleSize=100&audioBoost=100&location=lan&copyts=1&session=mplex-9e3779b1&videoQuality=60&videoResolution=320x240&maxVideoBitrate=1000&videoCodec=h264&audioCodec=aac&videoProfile=baseline&videoLevel=30&X-Plex-Token=REDACTED off=0 dur=30021
+media: FPGA frame path OK (PRESENT=fpga → DDR YUV420p)
+media: DDR bitstream CTRL=PLXD (STREAM=0, producer dormant)
+media: audio device /dev/MrAudio OK (s16le stereo @ 48k → FPGA)
+media: content fps=24/1 lead_ms=40 resync_drop_ms=80
+media: STREAM=0 rawvideo(yuv420p)→F1 PRESENT=fpga decode=320x240 coded=320x240 display=320x240 clock=wall-48k-audio+every-frame-present
+media: spawn single-process /media/fat/misterplex/bin/ffmpeg -hide_banner -loglevel error -nostdin -headers [...] -reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5 -i http://192.168.1.41:32400/video/:/transcode/universal/start.mp4?hasMDE=1&path=%2Flibrary%2Fmetadata%2F6&mediaIndex=0&partIndex=0&protocol=http&fastSeek=1&directPlay=0&directStream=0&subtitleSize=100&audioBoost=100&location=lan&copyts=1&session=mplex-9e3779b1&videoQuality=60&videoResolution=320x240&maxVideoBitrate=1000&videoCodec=h264&audioCodec=aac&videoProfile=baseline&videoLevel=30&X-Plex-Token=REDACTED -map 0:v:0 -an -f rawvideo -pix_fmt yuv420p -vf fps=24/1,scale=320:240:force_original_aspect_ratio=decrease,pad=320:240:(ow-iw)/2:(oh-ih)/2 pipe:1 -map 0:a:0? -vn -af aresample=48000 -f s16le -ac 2 -ar 48000 pipe:3
+media: MrAudio open — software-paced 48kHz delay_ms=0 clock_ppm=-638 (adelay in ffmpeg if >0)
+media: A/V origin armed audio_active=1 waited_ms=13
+pms timeline: update ok state=buffering url=http://192.168.1.41:32400/:/timeline?ratingKey=6&key=%2Flibrary%2Fmetadata%2F6&state=buffering&time=0&duration=30021&identifier=com.plexapp.plugins.library&playQueueItemID=6
+pms timeline: update ok state=playing url=http://192.168.1.41:32400/:/timeline?ratingKey=6&key=%2Flibrary%2Fmetadata%2F6&state=playing&time=0&duration=30021&identifier=com.plexapp.plugins.library&playQueueItemID=6
+media: MrAudio playback position available — video now paces off what is HEARD, not what is sent
+media: audio latency 0ms queued=0B
+media: frames=1 vfps=0.94 pfps=0.94 audio_s=0.220 wall_s=1.055 audio=on clock=av-lock av_drift_ms=-21 drops=0 fps=24/1 decode=320x240
+media: A/V resync drop drift_ms=115 drops=1
+media: frames=28 vfps=13.5 pfps=13.0 audio_s=1.240 wall_s=2.063 audio=on clock=av-lock av_drift_ms=-35 drops=1 fps=24/1 decode=320x240
+media: fpga frame_tx ok via DDR presents=48 frames=49 ms=4
+media: frames=52 vfps=16.9 pfps=16.6 audio_s=2.240 wall_s=3.065 audio=on clock=av-lock av_drift_ms=-35 drops=1 fps=24/1 decode=320x240
+media: frames=76 vfps=18.6 pfps=18.4 audio_s=3.240 wall_s=4.067 audio=on clock=av-lock av_drift_ms=-34 drops=1 fps=24/1 decode=320x240
+media: fpga frame_tx ok via DDR presents=96 frames=97 ms=4
+media: frames=100 vfps=19.7 pfps=19.5 audio_s=4.240 wall_s=5.068 audio=on clock=av-lock av_drift_ms=-33 drops=1 fps=24/1 decode=320x240
+media: audio latency 106ms queued=20393B
+media: frames=124 vfps=20.4 pfps=20.2 audio_s=5.240 wall_s=6.070 audio=on clock=av-lock av_drift_ms=-33 drops=1 fps=24/1 decode=320x240
+media: fpga frame_tx ok via DDR presents=144 frames=145 ms=4
+media: frames=148 vfps=20.9 pfps=20.7 audio_s=6.240 wall_s=7.071 audio=on clock=av-lock av_drift_ms=-32 drops=1 fps=24/1 decode=320x240
+media: frames=172 vfps=21.2 pfps=21.1 audio_s=7.260 wall_s=8.092 audio=on clock=av-lock av_drift_ms=-31 drops=1 fps=24/1 decode=320x240
+media: fpga frame_tx ok via DDR presents=192 frames=193 ms=4
+media: frames=197 vfps=21.6 pfps=21.5 audio_s=8.280 wall_s=9.114 audio=on clock=av-lock av_drift_ms=-33 drops=1 fps=24/1 decode=320x240
+HTTP IN GET /player/timeline/poll?wait=0&commandID=tl1 HTTP/1.1
+HTTP OUT 200 timeline <Timeline type="video" state="playing" time="9654" duration="30021" seekRange="0-30021" volume="100" mute="0" controllable="playPause,stop,volume,audioStream,subtitleStream,seekTo,skipPrevious,skipNext,stepBack,stepForward" location="fullSc
+media: frames=221 vfps=21.8 pfps=21.7 audio_s=9.280 wall_s=10.11 audio=on clock=av-lock av_drift_ms=-32 drops=1 fps=24/1 decode=320x240
+pms timeline: update ok state=playing url=http://192.168.1.41:32400/:/timeline?ratingKey=6&key=%2Flibrary%2Fmetadata%2F6&state=playing&time=10276&duration=30021&identifier=com.plexapp.plugins.library&playQueueItemID=6
+media: audio latency 103ms queued=19811B
+media: fpga frame_tx ok via DDR presents=240 frames=241 ms=4
+media: frames=246 vfps=22.0 pfps=21.9 audio_s=10.32 wall_s=11.16 audio=on clock=av-lock av_drift_ms=-34 drops=1 fps=24/1 decode=320x240
+media: frames=271 vfps=22.2 pfps=22.1 audio_s=11.36 wall_s=12.19 audio=on clock=av-lock av_drift_ms=-34 drops=1 fps=24/1 decode=320x240
+media: fpga frame_tx ok via DDR presents=288 frames=289 ms=4
+media: frames=295 vfps=22.3 pfps=22.2 audio_s=12.38 wall_s=13.21 audio=on clock=av-lock av_drift_ms=-34 drops=1 fps=24/1 decode=320x240
+media: frames=320 vfps=22.4 pfps=22.4 audio_s=13.40 wall_s=14.23 audio=on clock=av-lock av_drift_ms=-36 drops=1 fps=24/1 decode=320x240
+media: fpga frame_tx ok via DDR presents=336 frames=337 ms=8
+media: frames=344 vfps=22.5 pfps=22.5 audio_s=14.40 wall_s=15.23 audio=on clock=av-lock av_drift_ms=-35 drops=1 fps=24/1 decode=320x240
+media: audio latency 101ms queued=19520B
+media: frames=368 vfps=22.6 pfps=22.5 audio_s=15.40 wall_s=16.24 audio=on clock=av-lock av_drift_ms=-35 drops=1 fps=24/1 decode=320x240
+media: fpga frame_tx ok via DDR presents=384 frames=385 ms=4
+media: frames=392 vfps=22.7 pfps=22.6 audio_s=16.40 wall_s=17.24 audio=on clock=av-lock av_drift_ms=-35 drops=1 fps=24/1 decode=320x240
+media: frames=417 vfps=22.8 pfps=22.7 audio_s=17.44 wall_s=18.28 audio=on clock=av-lock av_drift_ms=-37 drops=1 fps=24/1 decode=320x240
+media: fpga frame_tx ok via DDR presents=432 frames=433 ms=4
+media: frames=442 vfps=22.8 pfps=22.8 audio_s=18.48 wall_s=19.32 audio=on clock=av-lock av_drift_ms=-38 drops=1 fps=24/1 decode=320x240
+media: frames=466 vfps=22.9 pfps=22.8 audio_s=19.48 wall_s=20.32 audio=on clock=av-lock av_drift_ms=-37 drops=1 fps=24/1 decode=320x240
+pms timeline: update ok state=playing url=http://192.168.1.41:32400/:/timeline?ratingKey=6&key=%2Flibrary%2Fmetadata%2F6&state=playing&time=20283&duration=30021&identifier=com.plexapp.plugins.library&playQueueItemID=6
+media: fpga frame_tx ok via DDR presents=480 frames=481 ms=4
+media: audio latency 100ms queued=19359B
+media: frames=491 vfps=22.9 pfps=22.9 audio_s=20.52 wall_s=21.36 audio=on clock=av-lock av_drift_ms=-39 drops=1 fps=24/1 decode=320x240
+media: frames=515 vfps=23.0 pfps=22.9 audio_s=21.52 wall_s=22.36 audio=on clock=av-lock av_drift_ms=-39 drops=1 fps=24/1 decode=320x240
+media: fpga frame_tx ok via DDR presents=528 frames=529 ms=4
+media: frames=539 vfps=23.0 pfps=23.0 audio_s=22.52 wall_s=23.36 audio=on clock=av-lock av_drift_ms=-39 drops=1 fps=24/1 decode=320x240
+media: frames=563 vfps=23.1 pfps=23.0 audio_s=23.52 wall_s=24.36 audio=on clock=av-lock av_drift_ms=-39 drops=1 fps=24/1 decode=320x240
+media: fpga frame_tx ok via DDR presents=576 frames=577 ms=4
+media: frames=587 vfps=23.1 pfps=23.1 audio_s=24.52 wall_s=25.36 audio=on clock=av-lock av_drift_ms=-39 drops=1 fps=24/1 decode=320x240
+media: audio latency 100ms queued=19280B
+media: frames=611 vfps=23.1 pfps=23.1 audio_s=25.52 wall_s=26.36 audio=on clock=av-lock av_drift_ms=-39 drops=1 fps=24/1 decode=320x240
+media: fpga frame_tx ok via DDR presents=624 frames=625 ms=4
+media: frames=635 vfps=23.2 pfps=23.1 audio_s=26.52 wall_s=27.36 audio=on clock=av-lock av_drift_ms=-39 drops=1 fps=24/1 decode=320x240
+media: frames=659 vfps=23.2 pfps=23.1 audio_s=27.52 wall_s=28.36 audio=on clock=av-lock av_drift_ms=-39 drops=1 fps=24/1 decode=320x240
+media: fpga frame_tx ok via DDR presents=672 frames=673 ms=4
+media: frames=683 vfps=23.2 pfps=23.2 audio_s=28.52 wall_s=29.37 audio=on clock=av-lock av_drift_ms=-39 drops=1 fps=24/1 decode=320x240
+media: frames=707 vfps=23.2 pfps=23.2 audio_s=29.52 wall_s=30.37 audio=on clock=av-lock av_drift_ms=-39 drops=1 fps=24/1 decode=320x240
+pms timeline: update ok state=playing url=http://192.168.1.41:32400/:/timeline?ratingKey=6&key=%2Flibrary%2Fmetadata%2F6&state=playing&time=30021&duration=30021&identifier=com.plexapp.plugins.library&playQueueItemID=6
+HTTP IN GET /player/playback/stop HTTP/1.1
+media: audio pump end bytes=5763072 f2=0
+media: session end frames=719 recon=0 cabac=0 stream=off rawvideo=on present=fpga skip_rgb=0
+pms timeline: update ok state=stopped url=http://192.168.1.41:32400/:/timeline?ratingKey=6&key=%2Flibrary%2Fmetadata%2F6&state=stopped&time=30021&duration=30021&identifier=com.plexapp.plugins.library&playQueueItemID=6
+HTTP IN GET /player/timeline/poll?wait=0&commandID=tlstop HTTP/1.1
+HTTP OUT 200 timeline <Timeline type="video" state="buffering" time="0" duration="0" volume="100" mute="0" controllable="playPause,stop,volume,audioStream,subtitleStream,seekTo,skipPrevious,skipNext,stepBack,stepForward" location="navigation" mediaIndex="0" part
+companion: stopped
+2026-07-30T14:33:05Z misterplexd SUPERVISE: DIED exit=0 — restarting in 4s
+misterplexd: DECODE adopted coded 320x240 from conf /media/fat/misterplex/misterplex.conf
+misterplexd: MATCH_SOURCE_HZ=off SOURCE_FPS=auto (cadence/OSD path; switchres TODO)
+misterplexd: SKIP_FORWARD_MS=30000 SKIP_BACK_MS=10000
+misterplexd: AUDIO_DELAY_MS=0 (0=fresh, no hardcoded lag)
+misterplexd: AUDIO_CLOCK_PPM=-638
+misterplexd: AV_PRESENT_LEAD_MS=40(default) AV_RESYNC_DROP_MS=80(default)
+misterplexd: OSD_CONTROL=1
+misterplexd: OSD_CONTROL=1 — IDLE_SCREEN conf is pre-OSD fallback; first OSD word applies Main's persisted F12 Idle Screen (config/Plex_v7.CFG), then live menu changes.
+misterplexd: IDLE_SCREEN=logo(default) AV_OFFSET_MS=0
+misterplexd: DDR_MEM_SYNC=1 DDR_MEM_FLUSH=0
+misterplexd: DDR_FRAME_FORMAT=yuv420p
+misterplexd: PRESENT_PROFILE=0
+misterplexd: PRESENT=fpga (fpga required for core HDMI idle/OSD; fb0 alone does not repaint the Plex frame store)
+misterplexd: ERROR Plex core NOT loaded (CORENAME=MENU) at startup — PRESENT=fpga so /resources still advertises this player but HDMI/presents cannot work. Load _Utility/Plex.rbf from the OSD (F12), or set bootcore only if the user wants autoload. Casting now will look like it 'doesn't stick'.
+media: FPGA frame path OK (PRESENT=fpga → DDR YUV420p)
+media: DDR bitstream CTRL=PLXD (STREAM=0, producer dormant)
+media: audio device /dev/MrAudio OK (s16le stereo @ 48k → FPGA)
+misterplexd: ERROR Plex core NOT loaded (CORENAME=MENU) at after-initPresent — PRESENT=fpga so /resources still advertises this player but HDMI/presents cannot work. Load _Utility/Plex.rbf from the OSD (F12), or set bootcore only if the user wants autoload. Casting now will look like it 'doesn't stick'.
+companion: GDM + HTTP :3005 name=MiSTerPlex
+misterplexd: running name=MiSTerPlex id=misterplex-dev port=3005 pms=http://192.168.1.41:32400 servers=1 decode=320x240 decode_source=conf:/media/fat/misterplex/misterplex.conf weak=480p/624x480@2000k h264=baseline@L30 present=fpga auto_next=1 subs=off
+misterplexd:   server[0]=http://192.168.1.41:32400 (default)
+GDM: listening UDP 32412
+HTTP: companion on :3005 ip≈192.168.1.183
+media: OSD word=0x0000 av_offset_ms=0 clock_ppm=-638 resync=on idle=0
+media: idle paint DDR failed (will retry on re-probe): sendDdrFrame: no kick/frame via SPI or doorbell: frame store status unavailable (PLXF mailbox absent/unwritten): readFrameStoreStatus: PLXF mailbox absent/unwritten (lo=0x00000000 hi=0x00000000)
+media: OSD word=0x4000 av_offset_ms=0 clock_ppm=-638 resync=on idle=1
+media: OSD via DDR mailbox (no SPI)
+misterplexd: DDR kick mode=spi (bring-up); will promote to doorbell on next frame
+media: idle screen painted (mode=1)
+misterplexd: DDR kick steady-state promoted SPI→doorbell (avoid per-frame SpiExclusive/SIGSTOP Main)
+HTTP IN GET /resources HTTP/1.1
+HTTP IN GET /player/timeline/poll?commandID=probe1 HTTP/1.1
+HTTP OUT 200 timeline <Timeline type="video" state="buffering" time="0" duration="0" volume="100" mute="0" controllable="playPause,stop,volume,audioStream,subtitleStream,seekTo,skipPrevious,skipNext,stepBack,stepForward" location="navigation" mediaIndex="0" part

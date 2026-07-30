@@ -1,0 +1,194 @@
+** WARNING: connection is not using a post-quantum key exchange algorithm.
+** This session may be vulnerable to "store now, decrypt later" attacks.
+** The server may need to be upgraded. See https://openssh.com/pq.html
+PREDICTIONS:
+  A: set_status --bit 4 0 -> content resolution=320x240 status_word bit4=0
+  B: set_status --bit 4 1 -> content resolution label 624x480 (not 640x480), source=OSD O[4], ALLOW absent
+  C: DECODE_ALLOW_LAB_480P absent does not block OSD path
+ALLOW_count=0
+CORENAME=Plex
+=== CONFSTR ===
+confstr: 
+=== STATUS before ===
+status has_frame=1 has_audio=0 has_stream=0 underrun=0 has_idr=0 sps_valid=0 pps_valid=0 nalu=0 last_nal=0x00 sps=0x0 bytes_in=0
+=== SET bit4=0 ===
+raw: 00 60 01 00 00 00 00 00 00 c0 00 00 00 00 00 00
+osd lo=0x6000 tv=NTSC fps_sel=0(24) pat=0(none) audio=Off force_bars=0 T10=0 T11=0 R0=0 AR_bits=0
+status has_frame=1 has_audio=0 has_stream=0 underrun=0 has_idr=0 sps_valid=0 pps_valid=0 nalu=0 last_nal=0x00 sps=0x0 bytes_in=0
+=== PLAY_BEGIN bit4_0 2026-07-30T16:42:35Z ===
+play_http_bit4_0=200
+timeline_bit4_0: state="playing" time="4369"
+--- content res (bit4_0) ---
+misterplexd: content resolution=320x240 source=OSD O[4] status_word=0x4000 weak=320x240 bitrate=1000
+misterplexd: content resolution=320x240 source=OSD O[4] status_word=0x4000 weak=320x240 bitrate=1000
+--- resolve/play (bit4_0) ---
+media: frames=635 vfps=23.3 pfps=23.2 audio_s=26.52 wall_s=27.23 audio=on clock=av-lock av_drift_ms=-36 drops=2 fps=24/1 decode=320x240
+media: frames=659 vfps=23.3 pfps=23.2 audio_s=27.52 wall_s=28.23 audio=on clock=av-lock av_drift_ms=-36 drops=2 fps=24/1 decode=320x240
+media: frames=683 vfps=23.3 pfps=23.2 audio_s=28.52 wall_s=29.23 audio=on clock=av-lock av_drift_ms=-36 drops=2 fps=24/1 decode=320x240
+media: frames=707 vfps=23.3 pfps=23.3 audio_s=29.52 wall_s=30.23 audio=on clock=av-lock av_drift_ms=-36 drops=2 fps=24/1 decode=320x240
+misterplexd: resolved PMS universal 480p 320x240 /library/metadata/12 title=Sync 24000 Long Blip dur=360021 transcode=1 base=http://192.168.1.41:32400
+misterplexd: PLAY http://192.168.1.41:32400/video/:/transcode/universal/start.mp4?hasMDE=1&path=%2Flibrary%2Fmetadata%2F12&mediaIndex=0&partIndex=0&protocol=http&fastSeek=1&directPlay=0&directStream=0&subtitleSize=100&audioBoost=100&location=lan&copyts=1&session=mplex-3c6ef362&videoQuality=60&videoResolution=320x240&maxVideoBitrate=1000&videoCodec=h264&audioCodec=aac&videoProfile=baseline&videoLevel=30&X-Plex-Token=REDACTED off=0 dur=360021
+media: STREAM=0 rawvideo(yuv420p)→F1 PRESENT=fpga decode=320x240 coded=320x240 display=320x240 clock=wall-48k-audio+every-frame-present
+media: spawn single-process /media/fat/misterplex/bin/ffmpeg -hide_banner -loglevel error -nostdin -headers [...] -reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5 -i http://192.168.1.41:32400/video/:/transcode/universal/start.mp4?hasMDE=1&path=%2Flibrary%2Fmetadata%2F12&mediaIndex=0&partIndex=0&protocol=http&fastSeek=1&directPlay=0&directStream=0&subtitleSize=100&audioBoost=100&location=lan&copyts=1&session=mplex-3c6ef362&videoQuality=60&videoResolution=320x240&maxVideoBitrate=1000&videoCodec=h264&audioCodec=aac&videoProfile=baseline&videoLevel=30&X-Plex-Token=REDACTED -map 0:v:0 -an -f rawvideo -pix_fmt yuv420p -vf fps=24/1,scale=320:240:force_original_aspect_ratio=decrease,pad=320:240:(ow-iw)/2:(oh-ih)/2 pipe:1 -map 0:a:0? -vn -af aresample=48000 -f s16le -ac 2 -ar 48000 pipe:3
+media: frames=9 vfps=9.30 pfps=8.27 audio_s=0.420 wall_s=0.967 audio=on clock=av-lock av_drift_ms=-30 drops=1 fps=24/1 decode=320x240
+media: frames=33 vfps=16.6 pfps=16.1 audio_s=1.440 wall_s=1.987 audio=on clock=av-lock av_drift_ms=-37 drops=1 fps=24/1 decode=320x240
+media: frames=57 vfps=19.0 pfps=18.6 audio_s=2.440 wall_s=3.000 audio=on clock=av-lock av_drift_ms=-38 drops=1 fps=24/1 decode=320x240
+media: frames=82 vfps=20.3 pfps=20.1 audio_s=3.480 wall_s=4.029 audio=on clock=av-lock av_drift_ms=-39 drops=1 fps=24/1 decode=320x240
+--- frames (bit4_0) ---
+media: frames=9 vfps=9.30 pfps=8.27 audio_s=0.420 wall_s=0.967 audio=on clock=av-lock av_drift_ms=-30 drops=1 fps=24/1 decode=320x240
+media: frames=33 vfps=16.6 pfps=16.1 audio_s=1.440 wall_s=1.987 audio=on clock=av-lock av_drift_ms=-37 drops=1 fps=24/1 decode=320x240
+media: frames=57 vfps=19.0 pfps=18.6 audio_s=2.440 wall_s=3.000 audio=on clock=av-lock av_drift_ms=-38 drops=1 fps=24/1 decode=320x240
+media: frames=82 vfps=20.3 pfps=20.1 audio_s=3.480 wall_s=4.029 audio=on clock=av-lock av_drift_ms=-39 drops=1 fps=24/1 decode=320x240
+CPU sample bit4_0 mpid=30026
+PLAY_WALL_S=15.031
+PLAY_DJ=172
+PLAY_P_ONECPU=11.443
+PLAY_HYB_200DJ=22.886
+PLAY_TID_BEGIN
+tid=1515 dj=78 rate=5.189 state=R start=5024556
+tid=1496 dj=52 rate=3.460 state=S start=5024426
+tid=1518 dj=27 rate=1.796 state=S start=5024560
+tid=30026 dj=10 rate=0.665 state=S start=4247763
+tid=30031 dj=5 rate=0.333 state=S start=4247767
+tid=30034 dj=1 rate=0.067 state=S start=4247767
+tid=30033 dj=1 rate=0.067 state=S start=4247767
+tid=30032 dj=1 rate=0.067 state=S start=4247767
+PLAY_TID_END
+FRAME media: frames=373 vfps=23.0 pfps=22.9 audio_s=15.62 wall_s=16.17 audio=on clock=av-lock av_drift_ms=-22 drops=1 fps=24/1 decode=320x240
+FRAME media: frames=397 vfps=23.1 pfps=23.0 audio_s=16.62 wall_s=17.17 audio=on clock=av-lock av_drift_ms=-22 drops=1 fps=24/1 decode=320x240
+FRAME media: frames=422 vfps=23.1 pfps=23.0 audio_s=17.68 wall_s=18.24 audio=on clock=av-lock av_drift_ms=-24 drops=1 fps=24/1 decode=320x240
+FRAME media: frames=447 vfps=23.2 pfps=23.1 audio_s=18.70 wall_s=19.26 audio=on clock=av-lock av_drift_ms=-26 drops=1 fps=24/1 decode=320x240
+FRAME media: frames=471 vfps=23.2 pfps=23.1 audio_s=19.70 wall_s=20.26 audio=on clock=av-lock av_drift_ms=-26 drops=1 fps=24/1 decode=320x240
+PLAYLOG HTTP OUT 200 playMedia <Timeline type="video" state="buffering" time="0" duration="0" volume="100" mute="0" controllable="playPause,stop,volume,audioStream,subtitleStream,seekTo,skipPrevious,skipNext,stepBack,stepForward" location="fullScreenVideo" mediaIndex="0"
+PLAYLOG playMedia ACK key=/library/metadata/6 offMs=0
+PLAYLOG HTTP IN GET /player/playback/playMedia?key=%2Flibrary%2Fmetadata%2F6&offset=0&commandID=real-cast-v10&protocol=http&address=192.168.1.41&port=32400&machineIdentifier=4edd44aac1de0b731553a3a187104ecd175571a0&X-Plex-Token=REDACTED HTTP/1.1
+PLAYLOG HTTP OUT 200 playMedia <Timeline type="video" state="buffering" time="0" duration="0" volume="100" mute="0" controllable="playPause,stop,volume,audioStream,subtitleStream,seekTo,skipPrevious,skipNext,stepBack,stepForward" location="fullScreenVideo" mediaIndex="0"
+PLAYLOG playMedia ACK key=/library/metadata/6 offMs=0
+PLAYLOG HTTP IN GET /player/playback/playMedia?key=%2Flibrary%2Fmetadata%2F12&offset=0&commandID=p480-bit4_0&protocol=http&address=192.168.1.41&port=32400&machineIdentifier=4edd44aac1de0b731553a3a187104ecd175571a0&X-Plex-Token=REDACTED HTTP/1.1
+PLAYLOG HTTP OUT 200 playMedia <Timeline type="video" state="buffering" time="0" duration="0" volume="100" mute="0" controllable="playPause,stop,volume,audioStream,subtitleStream,seekTo,skipPrevious,skipNext,stepBack,stepForward" location="fullScreenVideo" mediaIndex="0"
+PLAYLOG playMedia ACK key=/library/metadata/12 offMs=0
+=== SET bit4=1 ===
+raw: 10 40 01 00 00 00 00 00 00 c0 00 00 00 00 00 00
+osd lo=0x4010 tv=NTSC fps_sel=1(30) pat=0(none) audio=Off force_bars=0 T10=0 T11=0 R0=0 AR_bits=0
+status has_frame=1 has_audio=0 has_stream=0 underrun=0 has_idr=0 sps_valid=0 pps_valid=0 nalu=0 last_nal=0x00 sps=0x0 bytes_in=0
+=== PLAY_BEGIN bit4_1 2026-07-30T16:43:01Z ===
+play_http_bit4_1=200
+timeline_bit4_1: state="playing" time="4286"
+--- content res (bit4_1) ---
+misterplexd: content resolution=320x240 source=OSD O[4] status_word=0x4000 weak=320x240 bitrate=1000
+misterplexd: content resolution=624x480 source=OSD O[4] status_word=0x4010 weak=624x480 bitrate=2000
+--- resolve/play (bit4_1) ---
+media: frames=397 vfps=23.1 pfps=23.0 audio_s=16.62 wall_s=17.17 audio=on clock=av-lock av_drift_ms=-22 drops=1 fps=24/1 decode=320x240
+media: frames=422 vfps=23.1 pfps=23.0 audio_s=17.68 wall_s=18.24 audio=on clock=av-lock av_drift_ms=-24 drops=1 fps=24/1 decode=320x240
+media: frames=447 vfps=23.2 pfps=23.1 audio_s=18.70 wall_s=19.26 audio=on clock=av-lock av_drift_ms=-26 drops=1 fps=24/1 decode=320x240
+media: frames=471 vfps=23.2 pfps=23.1 audio_s=19.70 wall_s=20.26 audio=on clock=av-lock av_drift_ms=-26 drops=1 fps=24/1 decode=320x240
+misterplexd: resolved PMS universal 480p 624x480 /library/metadata/12 title=Sync 24000 Long Blip dur=360021 transcode=1 base=http://192.168.1.41:32400
+misterplexd: PLAY http://192.168.1.41:32400/video/:/transcode/universal/start.mp4?hasMDE=1&path=%2Flibrary%2Fmetadata%2F12&mediaIndex=0&partIndex=0&protocol=http&fastSeek=1&directPlay=0&directStream=0&subtitleSize=100&audioBoost=100&location=lan&copyts=1&session=mplex-daa66d13&videoQuality=60&videoResolution=624x480&maxVideoBitrate=2000&videoCodec=h264&audioCodec=aac&videoProfile=baseline&videoLevel=30&X-Plex-Token=REDACTED off=0 dur=360021
+media: STREAM=0 rawvideo(yuv420p)→F1 PRESENT=fpga decode=624x480 coded=624x480 display=624x480 clock=wall-48k-audio+every-frame-present
+media: spawn single-process /media/fat/misterplex/bin/ffmpeg -hide_banner -loglevel error -nostdin -headers [...] -reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5 -i http://192.168.1.41:32400/video/:/transcode/universal/start.mp4?hasMDE=1&path=%2Flibrary%2Fmetadata%2F12&mediaIndex=0&partIndex=0&protocol=http&fastSeek=1&directPlay=0&directStream=0&subtitleSize=100&audioBoost=100&location=lan&copyts=1&session=mplex-daa66d13&videoQuality=60&videoResolution=624x480&maxVideoBitrate=2000&videoCodec=h264&audioCodec=aac&videoProfile=baseline&videoLevel=30&X-Plex-Token=REDACTED -map 0:v:0 -an -f rawvideo -pix_fmt yuv420p -vf fps=24/1,scale=624:480:force_original_aspect_ratio=decrease,pad=624:480:(ow-iw)/2:(oh-ih)/2 pipe:1 -map 0:a:0? -vn -af aresample=48000 -f s16le -ac 2 -ar 48000 pipe:3
+media: frames=7 vfps=7.32 pfps=3.14 audio_s=0.460 wall_s=0.955 audio=on clock=av-lock av_drift_ms=89 drops=4 fps=24/1 decode=624x480
+media: frames=35 vfps=17.4 pfps=14.9 audio_s=1.540 wall_s=2.009 audio=on clock=av-lock av_drift_ms=-21 drops=5 fps=24/1 decode=624x480
+media: frames=60 vfps=19.7 pfps=18.0 audio_s=2.580 wall_s=3.041 audio=on clock=av-lock av_drift_ms=-23 drops=5 fps=24/1 decode=624x480
+media: frames=84 vfps=20.7 pfps=19.5 audio_s=3.580 wall_s=4.048 audio=on clock=av-lock av_drift_ms=-22 drops=5 fps=24/1 decode=624x480
+--- frames (bit4_1) ---
+media: frames=7 vfps=7.32 pfps=3.14 audio_s=0.460 wall_s=0.955 audio=on clock=av-lock av_drift_ms=89 drops=4 fps=24/1 decode=624x480
+media: frames=35 vfps=17.4 pfps=14.9 audio_s=1.540 wall_s=2.009 audio=on clock=av-lock av_drift_ms=-21 drops=5 fps=24/1 decode=624x480
+media: frames=60 vfps=19.7 pfps=18.0 audio_s=2.580 wall_s=3.041 audio=on clock=av-lock av_drift_ms=-23 drops=5 fps=24/1 decode=624x480
+media: frames=84 vfps=20.7 pfps=19.5 audio_s=3.580 wall_s=4.048 audio=on clock=av-lock av_drift_ms=-22 drops=5 fps=24/1 decode=624x480
+CPU sample bit4_1 mpid=30026
+PLAY_WALL_S=15.077
+PLAY_DJ=385
+PLAY_P_ONECPU=25.536
+PLAY_HYB_200DJ=51.072
+PLAY_TID_BEGIN
+tid=1621 dj=256 rate=16.980 state=R start=5027114
+tid=1601 dj=62 rate=4.112 state=S start=5026983
+tid=1623 dj=46 rate=3.051 state=S start=5027117
+tid=30026 dj=9 rate=0.597 state=S start=4247763
+tid=30031 dj=8 rate=0.531 state=S start=4247767
+tid=30034 dj=1 rate=0.066 state=S start=4247767
+tid=30033 dj=1 rate=0.066 state=S start=4247767
+tid=30032 dj=0 rate=0.000 state=S start=4247767
+PLAY_TID_END
+FRAME media: frames=376 vfps=23.1 pfps=22.8 audio_s=15.74 wall_s=16.21 audio=on clock=av-lock av_drift_ms=-27 drops=5 fps=24/1 decode=624x480
+FRAME media: frames=400 vfps=23.2 pfps=22.9 audio_s=16.74 wall_s=17.21 audio=on clock=av-lock av_drift_ms=-27 drops=5 fps=24/1 decode=624x480
+FRAME media: frames=424 vfps=23.2 pfps=23.0 audio_s=17.74 wall_s=18.21 audio=on clock=av-lock av_drift_ms=-27 drops=5 fps=24/1 decode=624x480
+FRAME media: frames=448 vfps=23.3 pfps=23.0 audio_s=18.74 wall_s=19.22 audio=on clock=av-lock av_drift_ms=-27 drops=5 fps=24/1 decode=624x480
+FRAME media: frames=472 vfps=23.3 pfps=23.0 audio_s=19.74 wall_s=20.22 audio=on clock=av-lock av_drift_ms=-26 drops=5 fps=24/1 decode=624x480
+PLAYLOG HTTP OUT 200 playMedia <Timeline type="video" state="buffering" time="0" duration="0" volume="100" mute="0" controllable="playPause,stop,volume,audioStream,subtitleStream,seekTo,skipPrevious,skipNext,stepBack,stepForward" location="fullScreenVideo" mediaIndex="0"
+PLAYLOG playMedia ACK key=/library/metadata/6 offMs=0
+PLAYLOG HTTP IN GET /player/playback/playMedia?key=%2Flibrary%2Fmetadata%2F12&offset=0&commandID=p480-bit4_0&protocol=http&address=192.168.1.41&port=32400&machineIdentifier=4edd44aac1de0b731553a3a187104ecd175571a0&X-Plex-Token=REDACTED HTTP/1.1
+PLAYLOG HTTP OUT 200 playMedia <Timeline type="video" state="buffering" time="0" duration="0" volume="100" mute="0" controllable="playPause,stop,volume,audioStream,subtitleStream,seekTo,skipPrevious,skipNext,stepBack,stepForward" location="fullScreenVideo" mediaIndex="0"
+PLAYLOG playMedia ACK key=/library/metadata/12 offMs=0
+PLAYLOG HTTP IN GET /player/playback/playMedia?key=%2Flibrary%2Fmetadata%2F12&offset=0&commandID=p480-bit4_1&protocol=http&address=192.168.1.41&port=32400&machineIdentifier=4edd44aac1de0b731553a3a187104ecd175571a0&X-Plex-Token=REDACTED HTTP/1.1
+PLAYLOG HTTP OUT 200 playMedia <Timeline type="video" state="buffering" time="0" duration="0" volume="100" mute="0" controllable="playPause,stop,volume,audioStream,subtitleStream,seekTo,skipPrevious,skipNext,stepBack,stepForward" location="fullScreenVideo" mediaIndex="0"
+PLAYLOG playMedia ACK key=/library/metadata/12 offMs=0
+=== RESTORE bit4=0 ===
+raw: 00 00 01 00 00 00 00 00 00 c0 00 00 00 00 00 00
+osd lo=0x0000 tv=NTSC fps_sel=0(24) pat=0(none) audio=Off force_bars=0 T10=0 T11=0 R0=0 AR_bits=0
+status has_frame=1 has_audio=0 has_stream=0 underrun=0 has_idr=0 sps_valid=0 pps_valid=0 nalu=0 last_nal=0x00 sps=0x0 bytes_in=0
+=== PLAY_BEGIN restored_0 2026-07-30T16:43:27Z ===
+play_http_restored_0=200
+timeline_restored_0: state="playing" time="4802"
+--- content res (restored_0) ---
+misterplexd: content resolution=624x480 source=OSD O[4] status_word=0x4010 weak=624x480 bitrate=2000
+misterplexd: content resolution=320x240 source=OSD O[4] status_word=0x0000 weak=320x240 bitrate=1000
+--- resolve/play (restored_0) ---
+media: frames=424 vfps=23.2 pfps=23.0 audio_s=17.74 wall_s=18.21 audio=on clock=av-lock av_drift_ms=-27 drops=5 fps=24/1 decode=624x480
+media: frames=448 vfps=23.3 pfps=23.0 audio_s=18.74 wall_s=19.22 audio=on clock=av-lock av_drift_ms=-27 drops=5 fps=24/1 decode=624x480
+media: frames=472 vfps=23.3 pfps=23.0 audio_s=19.74 wall_s=20.22 audio=on clock=av-lock av_drift_ms=-26 drops=5 fps=24/1 decode=624x480
+media: frames=497 vfps=23.3 pfps=23.1 audio_s=20.78 wall_s=21.25 audio=on clock=av-lock av_drift_ms=-28 drops=5 fps=24/1 decode=624x480
+misterplexd: resolved PMS universal 480p 320x240 /library/metadata/12 title=Sync 24000 Long Blip dur=360021 transcode=1 base=http://192.168.1.41:32400
+misterplexd: PLAY http://192.168.1.41:32400/video/:/transcode/universal/start.mp4?hasMDE=1&path=%2Flibrary%2Fmetadata%2F12&mediaIndex=0&partIndex=0&protocol=http&fastSeek=1&directPlay=0&directStream=0&subtitleSize=100&audioBoost=100&location=lan&copyts=1&session=mplex-78dde6c4&videoQuality=60&videoResolution=320x240&maxVideoBitrate=1000&videoCodec=h264&audioCodec=aac&videoProfile=baseline&videoLevel=30&X-Plex-Token=REDACTED off=0 dur=360021
+media: STREAM=0 rawvideo(yuv420p)→F1 PRESENT=fpga decode=320x240 coded=320x240 display=320x240 clock=wall-48k-audio+every-frame-present
+media: spawn single-process /media/fat/misterplex/bin/ffmpeg -hide_banner -loglevel error -nostdin -headers [...] -reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5 -i http://192.168.1.41:32400/video/:/transcode/universal/start.mp4?hasMDE=1&path=%2Flibrary%2Fmetadata%2F12&mediaIndex=0&partIndex=0&protocol=http&fastSeek=1&directPlay=0&directStream=0&subtitleSize=100&audioBoost=100&location=lan&copyts=1&session=mplex-78dde6c4&videoQuality=60&videoResolution=320x240&maxVideoBitrate=1000&videoCodec=h264&audioCodec=aac&videoProfile=baseline&videoLevel=30&X-Plex-Token=REDACTED -map 0:v:0 -an -f rawvideo -pix_fmt yuv420p -vf fps=24/1,scale=320:240:force_original_aspect_ratio=decrease,pad=320:240:(ow-iw)/2:(oh-ih)/2 pipe:1 -map 0:a:0? -vn -af aresample=48000 -f s16le -ac 2 -ar 48000 pipe:3
+media: frames=14 vfps=14.0 pfps=13.0 audio_s=0.640 wall_s=0.997 audio=on clock=av-lock av_drift_ms=-34 drops=1 fps=24/1 decode=320x240
+media: frames=38 vfps=18.8 pfps=18.3 audio_s=1.660 wall_s=2.017 audio=on clock=av-lock av_drift_ms=-26 drops=1 fps=24/1 decode=320x240
+media: frames=62 vfps=20.5 pfps=20.2 audio_s=2.660 wall_s=3.019 audio=on clock=av-lock av_drift_ms=-26 drops=1 fps=24/1 decode=320x240
+media: frames=86 vfps=21.3 pfps=21.1 audio_s=3.660 wall_s=4.019 audio=on clock=av-lock av_drift_ms=-26 drops=1 fps=24/1 decode=320x240
+--- frames (restored_0) ---
+media: frames=14 vfps=14.0 pfps=13.0 audio_s=0.640 wall_s=0.997 audio=on clock=av-lock av_drift_ms=-34 drops=1 fps=24/1 decode=320x240
+media: frames=38 vfps=18.8 pfps=18.3 audio_s=1.660 wall_s=2.017 audio=on clock=av-lock av_drift_ms=-26 drops=1 fps=24/1 decode=320x240
+media: frames=62 vfps=20.5 pfps=20.2 audio_s=2.660 wall_s=3.019 audio=on clock=av-lock av_drift_ms=-26 drops=1 fps=24/1 decode=320x240
+media: frames=86 vfps=21.3 pfps=21.1 audio_s=3.660 wall_s=4.019 audio=on clock=av-lock av_drift_ms=-26 drops=1 fps=24/1 decode=320x240
+CPU sample restored_0 mpid=30026
+PLAY_WALL_S=15.032
+PLAY_DJ=173
+PLAY_P_ONECPU=11.509
+PLAY_HYB_200DJ=23.018
+PLAY_TID_BEGIN
+tid=1728 dj=79 rate=5.256 state=S start=5029778
+tid=1710 dj=50 rate=3.326 state=S start=5029646
+tid=1730 dj=27 rate=1.796 state=S start=5029780
+tid=30026 dj=11 rate=0.732 state=S start=4247763
+tid=30031 dj=4 rate=0.266 state=S start=4247767
+tid=30033 dj=1 rate=0.067 state=S start=4247767
+tid=30034 dj=0 rate=0.000 state=S start=4247767
+tid=30032 dj=0 rate=0.000 state=S start=4247767
+PLAY_TID_END
+FRAME media: frames=377 vfps=23.3 pfps=23.2 audio_s=15.78 wall_s=16.14 audio=on clock=av-lock av_drift_ms=-29 drops=1 fps=24/1 decode=320x240
+FRAME media: frames=402 vfps=23.3 pfps=23.3 audio_s=16.82 wall_s=17.18 audio=on clock=av-lock av_drift_ms=-31 drops=1 fps=24/1 decode=320x240
+FRAME media: frames=426 vfps=23.4 pfps=23.3 audio_s=17.82 wall_s=18.19 audio=on clock=av-lock av_drift_ms=-31 drops=1 fps=24/1 decode=320x240
+FRAME media: frames=450 vfps=23.4 pfps=23.3 audio_s=18.82 wall_s=19.19 audio=on clock=av-lock av_drift_ms=-31 drops=1 fps=24/1 decode=320x240
+FRAME media: frames=474 vfps=23.4 pfps=23.4 audio_s=19.82 wall_s=20.19 audio=on clock=av-lock av_drift_ms=-31 drops=1 fps=24/1 decode=320x240
+PLAYLOG HTTP OUT 200 playMedia <Timeline type="video" state="buffering" time="0" duration="0" volume="100" mute="0" controllable="playPause,stop,volume,audioStream,subtitleStream,seekTo,skipPrevious,skipNext,stepBack,stepForward" location="fullScreenVideo" mediaIndex="0"
+PLAYLOG playMedia ACK key=/library/metadata/12 offMs=0
+PLAYLOG HTTP IN GET /player/playback/playMedia?key=%2Flibrary%2Fmetadata%2F12&offset=0&commandID=p480-bit4_1&protocol=http&address=192.168.1.41&port=32400&machineIdentifier=4edd44aac1de0b731553a3a187104ecd175571a0&X-Plex-Token=REDACTED HTTP/1.1
+PLAYLOG HTTP OUT 200 playMedia <Timeline type="video" state="buffering" time="0" duration="0" volume="100" mute="0" controllable="playPause,stop,volume,audioStream,subtitleStream,seekTo,skipPrevious,skipNext,stepBack,stepForward" location="fullScreenVideo" mediaIndex="0"
+PLAYLOG playMedia ACK key=/library/metadata/12 offMs=0
+PLAYLOG HTTP IN GET /player/playback/playMedia?key=%2Flibrary%2Fmetadata%2F12&offset=0&commandID=p480-restored_0&protocol=http&address=192.168.1.41&port=32400&machineIdentifier=4edd44aac1de0b731553a3a187104ecd175571a0&X-Plex-Token=REDACTED HTTP/1.1
+PLAYLOG HTTP OUT 200 playMedia <Timeline type="video" state="buffering" time="0" duration="0" volume="100" mute="0" controllable="playPause,stop,volume,audioStream,subtitleStream,seekTo,skipPrevious,skipNext,stepBack,stepForward" location="fullScreenVideo" mediaIndex="0"
+PLAYLOG playMedia ACK key=/library/metadata/12 offMs=0
+=== ALL content resolution lines (tail 15) ===
+misterplexd: content resolution=320x240 source=OSD O[4] status_word=0x4000 weak=320x240 bitrate=1000
+misterplexd: content resolution=320x240 source=OSD O[4] status_word=0x4000 weak=320x240 bitrate=1000
+misterplexd: content resolution=320x240 source=OSD O[4] status_word=0x4000 weak=320x240 bitrate=1000
+misterplexd: content resolution=624x480 source=OSD O[4] status_word=0x4010 weak=624x480 bitrate=2000
+misterplexd: content resolution=320x240 source=OSD O[4] status_word=0x0000 weak=320x240 bitrate=1000
+=== CFG after ===
+00000000: 0040 0100 0000 0000 00c0 0000 0000 0000  .@..............
+CORENAME=Plex
+md5_d=fb9f76192a8f7d248411c2ab2b332542
+md5_r=14eaeff3270a6f59a434e0f777ed823d
+n_d=1
+P480_BIT4_DONE

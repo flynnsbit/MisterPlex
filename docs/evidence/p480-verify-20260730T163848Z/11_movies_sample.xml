@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<MediaContainer size="7" totalSize="7" offset="0" allowSync="1" art="/:/resources/movie-fanart.jpg" identifier="com.plexapp.plugins.library" librarySectionID="1" librarySectionTitle="Movies" librarySectionUUID="7c4bef9b-1712-41a4-a8df-0776c4bfc0ef" mediaTagPrefix="/system/bundle/media/flags/" mediaTagVersion="1783932891" thumb="/:/resources/movie.png" title1="Movies" title2="All Movies" viewGroup="movie" viewMode="65592">
+<Video ratingKey="6" key="/library/metadata/6" guid="local://6" type="movie" title="Sync 24fps Blip" summary="" viewCount="16" lastViewedAt="1785421981" thumb="/library/metadata/6/thumb/1784928689" art="/library/metadata/6/art/1784928689" duration="30021" addedAt="1784928689" updatedAt="1784928689">
+<Media id="5" duration="30021" bitrate="98" width="320" height="240" aspectRatio="1.33" audioChannels="1" audioCodec="aac" videoCodec="h264" videoResolution="sd" container="mp4" videoFrameRate="24p" optimizedForStreaming="1" audioProfile="lc" has64bitOffsets="0" videoProfile="constrained baseline">
+<Part id="5" key="/library/parts/5/1784927130/file.mp4" duration="30021" file="/movies/misterplex-avsync/sync_24fps_blip.mp4" size="385177" audioProfile="lc" container="mp4" has64bitOffsets="0" optimizedForStreaming="1" videoProfile="constrained baseline" />
+</Media>
+<Image alt="Sync 24fps Blip" type="coverPoster" url="/library/metadata/6/thumb/1784928689" />
+<Image alt="Sync 24fps Blip" type="background" url="/library/metadata/6/art/1784928689" />
+<UltraBlurColors topLeft="361a5e" topRight="5d5d5d" bottomRight="68595a" bottomLeft="5d5d5d" />
+</Video>
+<Video ratingKey="7" key="/library/metadata/7" guid="local://7" type="movie" title="Sync 30fps Blip" summary="" viewCount="6" lastViewedAt="1785198865" thumb="/library/metadata/7/thumb/1784928689" art="/library/metadata/7/art/1784928689" duration="30021" addedAt="1784928689" updatedAt="1784928689">
+<Media id="6" duration="30021" bitrate="103" width="320" height="240" aspectRatio="1.33" audioChannels="1" audioCodec="aac" videoCodec="h264" videoResolution="sd" container="mp4" videoFrameRate="NTSC" optimizedForStreaming="1" audioProfile="lc" has64bitOffsets="0" videoProfile="constrained baseline">
+<Part id="6" key="/library/parts/6/1784927131/file.mp4" duration="30021" file="/movies/misterplex-avsync/sync_30fps_blip.mp4" size="415568" audioProfile="lc" container="mp4" has64bitOffsets="0" optimizedForStreaming="1" videoProfile="constrained baseline" />
+</Media>
+<Image alt="Sync 30fps Blip" type="coverPoster" url="/library/metadata/7/thumb/1784928689" />
+<Image alt="Sync 30fps Blip" type="background" url="/library/metadata/7/art/1784928689" />
+<UltraBlurColors topLeft="073534" topRight="5d5d5d" bottomRight="68595a" bottomLeft="5d5d5d" />
+</Video>
+<Video ratingKey="8" key="/library/metadata/8" guid="local://8" type="movie" title="Sync 60fps Blip" summary="" viewCount="1" lastViewedAt="1785220125" thumb="/library/metadata/8/thumb/1784928689" art="/library/metadata/8/art/1784928689" duration="30021" addedAt="1784928689" updatedAt="1784928689">
+<Media id="7" duration="30021" bitrate="127" width="320" height="240" aspectRatio="1.33" audioChannels="1" audioCodec="aac" videoCodec="h264" videoResolution="sd" container="mp4" videoFrameRate="60p" optimizedForStreaming="1" audioProfile="lc" has64bitOffsets="0" videoProfile="constrained baseline">
+<Part id="7" key="/library/parts/7/1784927821/file.mp4" duration="30021" file="/movies/misterplex-avsync/sync_60fps_blip.mp4" size="510396" audioProfile="lc" container="mp4" has64bitOffsets="0" optimizedForStreaming="1" videoProfile="constrained baseline" />
+</Media>
+<Image alt="Sync 60fps Blip" type="coverPoster" url="/library/metadata/8/thumb/1784928689" />
+<Image alt="Sync 60fps Blip" type="background" url="/library/metadata/8/art/1784928689" />
+<UltraBlurColors topLeft="173617" topRight="5d5d5d" bottomRight="68595a" bottomLeft="5d5d5d" />
+</Video>
+<Video ratingKey="11" key="/library/metadata/11" guid="local://11" type="movie" title="Sync 2397fps Blip" summary="" viewOffset="120551" lastViewedAt="1785382759" thumb="/library/metadata/11/thumb/1785023719" art="/library/metadata/11/art/1785023719" duration="360021" addedAt="1785023719" updatedAt="1785023719">
+<Media id="10" duration="360021" bitrate="141" width="320" height="240" aspectRatio="1.33" audioChannels="2" audioCodec="aac" videoCodec="h264" videoResolution="sd" container="mp4" videoFrameRate="24p" optimizedForStreaming="1" audioProfile="lc" has64bitOffsets="0" videoProfile="constrained baseline">
+<Part id="10" key="/library/parts/10/1785023719/file.mp4" duration="360021" file="/movies/misterplex-avsync/sync_2397fps_blip.mp4" size="6515205" audioProfile="lc" container="mp4" has64bitOffsets="0" optimizedForStreaming="1" videoProfile="constrained baseline" />
+</Media>
+<Image alt="Sync 2397fps Blip" type="coverPoster" url="/library/metadata/11/thumb/1785023719" />
+<Image alt="Sync 2397fps Blip" type="background" url="/library/metadata/11/art/1785023719" />
+<UltraBlurColors topLeft="370374" topRight="044304" bottomRight="b20401" bottomLeft="b00a11" />
+</Video>
+<Video ratingKey="12" key="/library/metadata/12" guid="local://12" type="movie" title="Sync 24000 Long Blip" summary="" viewOffset="158774" lastViewedAt="1785304467" thumb="/library/metadata/12/thumb/1785024570" art="/library/metadata/12/art/1785024570" duration="360021" addedAt="1785024570" updatedAt="1785024570">
+<Media id="11" duration="360021" bitrate="146" width="320" height="240" aspectRatio="1.33" audioChannels="2" audioCodec="aac" videoCodec="h264" videoResolution="sd" container="mp4" videoFrameRate="24p" optimizedForStreaming="1" audioProfile="lc" has64bitOffsets="0" videoProfile="constrained baseline">
+<Part id="11" key="/library/parts/11/1785024563/file.mp4" duration="360021" file="/movies/misterplex-avsync/sync_24000_long_blip.mp4" size="6748632" audioProfile="lc" container="mp4" has64bitOffsets="0" optimizedForStreaming="1" videoProfile="constrained baseline" />
+</Media>
+<Image alt="Sync 24000 Long Blip" type="coverPoster" url="/library/metadata/12/thumb/1785024570" />
+<Image alt="Sync 24000 Long Blip" type="background" url="/library/metadata/12/art/1785024570" />
+<UltraBlurColors topLeft="370374" topRight="044304" bottomRight="b20401" bottomLeft="b00a11" />
+</Video>
+<Video ratingKey="10" key="/library/metadata/10" guid="local://10" type="movie" title="Sync Trekmatch 320x240 24 Blip" summary="" thumb="/library/metadata/10/thumb/1784994146" art="/library/metadata/10/art/1784994146" duration="30021" addedAt="1784994145" updatedAt="1784994146">
+<Media id="9" duration="30021" bitrate="140" width="320" height="240" aspectRatio="1.33" audioChannels="2" audioCodec="aac" videoCodec="h264" videoResolution="sd" container="mp4" videoFrameRate="24p" optimizedForStreaming="1" audioProfile="lc" has64bitOffsets="0" videoProfile="constrained baseline">
+<Part id="9" key="/library/parts/9/1784994136/file.mp4" duration="30021" file="/movies/misterplex-avsync/sync_trekmatch_320x240_24_blip.mp4" size="541629" audioProfile="lc" container="mp4" has64bitOffsets="0" optimizedForStreaming="1" videoProfile="constrained baseline" />
+</Media>
+<Image alt="Sync Trekmatch 320x240 24 Blip" type="coverPoster" url="/library/metadata/10/thumb/1784994146" />
+<Image alt="Sync Trekmatch 320x240 24 Blip" type="background" url="/library/metadata/10/art/1784994146" />
+<UltraBlurColors topLeft="370374" topRight="044304" bottomRight="b20401" bottomLeft="b00a11" />
+</Video>
+<Video ratingKey="9" key="/library/metadata/9" guid="local://9" type="movie" title="Sync Trekmatch 1080p24 Blip" summary="" viewCount="7" lastViewedAt="1785234046" thumb="/library/metadata/9/thumb/1784994145" art="/library/metadata/9/art/1784994145" duration="30021" addedAt="1784994145" updatedAt="1784994145">
+<Media id="8" duration="30021" bitrate="642" width="1920" height="1080" aspectRatio="1.78" audioChannels="2" audioCodec="aac" videoCodec="h264" videoResolution="1080" container="mp4" videoFrameRate="24p" optimizedForStreaming="1" audioProfile="lc" has64bitOffsets="0" videoProfile="constrained baseline">
+<Part id="8" key="/library/parts/8/1784994136/file.mp4" duration="30021" file="/movies/misterplex-avsync/sync_trekmatch_1080p24_blip.mp4" size="2426148" audioProfile="lc" container="mp4" has64bitOffsets="0" optimizedForStreaming="1" videoProfile="constrained baseline" />
+</Media>
+<Image alt="Sync Trekmatch 1080p24 Blip" type="coverPoster" url="/library/metadata/9/thumb/1784994145" />
+<Image alt="Sync Trekmatch 1080p24 Blip" type="background" url="/library/metadata/9/art/1784994145" />
+<UltraBlurColors topLeft="332f03" topRight="440403" bottomRight="b20101" bottomLeft="af1214" />
+</Video>
+</MediaContainer>
