@@ -222,7 +222,7 @@ private:
     ProgressFn onProgress_;
     std::string ffmpeg_ = "/media/fat/mistercast/bin/ffmpeg";
     std::string audioDev_ = "/dev/MrAudio";
-    std::string presentMode_ = "fb0"; // "fb0", "fpga", "both"
+    std::string presentMode_ = "fpga"; // "fb0", "fpga", "both", "none"
     bool audioEnabled_ = true;
     bool streamEnabled_ = false; // annex-B → host recon F1 + F3 stub
     std::string streamSkipRgb_ = "auto"; // auto | on | off

@@ -516,8 +516,8 @@ void MediaPlayer::startOsdPoll() {
                 const bool seenBefore = osdSeen_.exchange(true);
                 if (!seenBefore || osdChanged(prev, word)) {
                     lastOsd_.store(word);
-                    // The first word is Main's saved snapshot. Treat idle bits as a
-                    // baseline so stale 0x4000 cannot override IDLE_SCREEN=logo.
+                    // First word: apply persisted F12 Idle Screen (Main CFG).
+                    // Later: idle only when [15:14] change. See shouldApplyOsdIdle.
                     applyOsd(word, shouldApplyOsdIdle(seenBefore, prev, word));
                 }
             }
@@ -642,10 +642,16 @@ void MediaPlayer::paintIdle() {
     // F1 latches the last frame written, so the frame store must be repainted too.
     // C3 frame-store DDR is YUV-only, so encode the same idle renderer as I420
     // instead of ringing the doorbell with an RGB payload.
-    if (!fpga_.ok() && presentMode_ != "none" && fpga_.open()) {
-        useDdrF1_ = true;
-        ddrBank_ = 0;
-        log("media: idle FPGA frame path OK (painting core frame store)");
+    if (!fpga_.ok() && presentMode_ != "none") {
+        if (fpga_.open()) {
+            useDdrF1_ = true;
+            ddrBank_ = 0;
+            log("media: idle FPGA frame path OK (painting core frame store)");
+        } else if (!idleWarned_.exchange(true)) {
+            log("media: ERROR idle cannot open FPGA (PRESENT=" + presentMode_ + "): " +
+                fpga_.lastError() +
+                " — menu Idle Screen changes will not appear on HDMI");
+        }
     }
     if (fpga_.ok()) {
         bool ok = false;
@@ -764,11 +770,22 @@ bool MediaPlayer::initPresent() {
         log("media: PRESENT=none decode-only path (test/lab; no fb0 or FPGA writes)");
         return true;
     }
+    if (presentMode_.empty())
+        presentMode_ = "fpga";
 
-    bool wantFb = (presentMode_ == "fb0" || presentMode_ == "both" || presentMode_.empty());
-    bool wantFpga = (presentMode_ == "fpga" || presentMode_ == "both");
+    // fb0/both still open Linux fb0. The Plex *core* HDMI path always needs the
+    // FPGA DDR frame store for idle/OSD paint — PRESENT=fb0 used to skip
+    // fpga_.open() and left the last latched image forever (user-reported twice).
+    const bool wantFb = (presentMode_ == "fb0" || presentMode_ == "both");
+    const bool wantFpga = true; // every non-none PRESENT must open FPGA for core scanout
+
+    if (presentMode_ == "fb0") {
+        log("media: PRESENT=fb0 — also opening FPGA frame path (core HDMI idle/OSD need "
+            "DDR; fb0 blit alone does not update Plex core scanout)");
+    }
 
     bool any = false;
+    bool fpgaOk = false;
     if (wantFb) {
         if (fb_.open("/dev/fb0")) {
             fb_.clear();
@@ -783,7 +800,8 @@ bool MediaPlayer::initPresent() {
         if (fpga_.open()) {
             useDdrF1_ = true;
             ddrBank_ = 0;
-            log("media: FPGA frame path OK (PRESENT=fpga → DDR YUV420p only)");
+            fpgaOk = true;
+            log("media: FPGA frame path OK (PRESENT=" + presentMode_ + " → DDR YUV420p)");
             // Write PLXD (dormant) to the bitstream ring CTRL so that a DDR probe
             // can distinguish "producer disabled by config" from uninitialised DDR
             // residue. The FPGA reader ignores PLXD; this is diagnostic only.
@@ -806,7 +824,11 @@ bool MediaPlayer::initPresent() {
             }
             any = true;
         } else {
-            log("media: FPGA SPI unavailable: " + fpga_.lastError());
+            log("media: ERROR FPGA SPI unavailable (PRESENT=" + presentMode_ + "): " +
+                fpga_.lastError() +
+                " — core HDMI idle screen and F12 Idle Screen menu cannot repaint "
+                "the DDR frame store. Load Plex.rbf, check SPI/uio, or set "
+                "PRESENT=none for decode-only lab.");
         }
     }
     if (audioEnabled_) {
@@ -818,10 +840,22 @@ bool MediaPlayer::initPresent() {
             log("media: audio device " + audioDev_ + " unavailable (video-only)");
         }
     }
+    // Product PRESENT=fpga|both: FPGA is mandatory (HDMI is the core, not fb0).
+    if (!fpgaOk && (presentMode_ == "fpga" || presentMode_ == "both")) {
+        std::lock_guard<std::mutex> lock(mu_);
+        lastError_ = "FPGA present path required for PRESENT=" + presentMode_;
+        return false;
+    }
     if (!any) {
         std::lock_guard<std::mutex> lock(mu_);
         lastError_ = "no present path (fb0/fpga)";
         return false;
+    }
+    if (!fpgaOk) {
+        // PRESENT=fb0 with no FPGA: companion/fb0 may work; core idle stays frozen.
+        log("media: ERROR PRESENT=" + presentMode_ +
+            " without FPGA — idle-mode rotation on the Plex core will stay stuck on "
+            "the last latched frame. Fix PRESENT/SPI or expect a frozen logo.");
     }
     return true;
 }

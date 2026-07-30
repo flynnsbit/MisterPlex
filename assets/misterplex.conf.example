@@ -24,8 +24,11 @@ DECODE=320x240
 # Legacy per-field overrides (kept for lab experiments):
 # WEAK_RES=320x240
 # WEAK_BITRATE=1000
-# PRESENT=fb0|fpga|both
-PRESENT=fb0
+# PRESENT=fb0|fpga|both|none
+# Product default is fpga: core HDMI idle/OSD need the DDR frame store.
+# PRESENT=fb0 alone freezes the idle screen on the last latched core frame
+# (daemon still opens FPGA for idle when conf says fb0, but prefer fpga).
+PRESENT=fpga
 # STREAM=1  # annex-B → host I-recon F1 + F3 (Phase 3.3i product path)
 # Prefer direct H.264 Part when STREAM=1 (avoids High/CABAC universal for recon).
 # High/CABAC: sticky skip from PPS entropy flag (no residual walk per IDR).

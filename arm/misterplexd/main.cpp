@@ -109,7 +109,10 @@ int main(int argc, char** argv) {
     bool decodeAllowLab480p = false;
     std::string decodeSizeRawCli; // applied after conf so DECODE_ALLOW_LAB_480P is visible
     std::string decodeSizeSource = "default";
-    std::string presentMode = "fb0";
+    // Product default: FPGA DDR frame store is what the Plex core scans to HDMI.
+    // PRESENT=fb0 alone used to skip fpga_.open() and freeze the idle screen
+    // (user-reported twice). Conf PRESENT= still overrides.
+    std::string presentMode = "fpga";
     misterplex::DdrFrameFormat ddrFrameFormat = misterplex::DdrFrameFormat::Yuv420p;
     bool ddrMemSync = true;
     bool ddrMemFlush = false;
@@ -473,6 +476,17 @@ int main(int argc, char** argv) {
         osdControl = confTruthy(loadConf(confPath, "OSD_CONTROL"));
         player.setOsdControl(osdControl);
         std::fprintf(stderr, "misterplexd: OSD_CONTROL=%s\n", osdControl ? "1" : "0");
+        if (!osdControl) {
+            std::fprintf(stderr,
+                         "misterplexd: OSD_CONTROL=0 — F12 menu Idle Screen is inert; "
+                         "only IDLE_SCREEN conf applies. Set OSD_CONTROL=1 with a v3+ "
+                         "Plex.rbf for live + persisted menu rotation.\n");
+        } else {
+            std::fprintf(stderr,
+                         "misterplexd: OSD_CONTROL=1 — IDLE_SCREEN conf is pre-OSD "
+                         "fallback; first OSD word applies Main's persisted F12 Idle "
+                         "Screen (config/Plex_v*.CFG), then live menu changes.\n");
+        }
         std::fprintf(stderr, "misterplexd: IDLE_SCREEN=%s AV_OFFSET_MS=%d\n",
                      idle.empty() ? "logo(default)" : idle.c_str(), player.avOffsetMs());
     }
@@ -497,8 +511,16 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "misterplexd: SUBTITLES=burn (PMS universal)\n");
     else if (subtitleMode == "ffmpeg")
         std::fprintf(stderr, "misterplexd: SUBTITLES=ffmpeg (local files, STREAM=0)\n");
+    std::fprintf(stderr, "misterplexd: PRESENT=%s (fpga required for core HDMI idle/OSD; "
+                         "fb0 alone does not repaint the Plex frame store)\n",
+                 presentMode.c_str());
     if (!player.initPresent()) {
-        std::fprintf(stderr, "misterplexd: WARNING no present path — companion only\n");
+        std::fprintf(stderr,
+                     "misterplexd: ERROR present path failed (PRESENT=%s) — "
+                     "companion may run but core HDMI idle/OSD will not update. "
+                     "Need a loaded Plex.rbf + working FPGA SPI, or set PRESENT=none "
+                     "for decode-only lab.\n",
+                     presentMode.c_str());
     } else {
         // Paint the idle screen at boot so the core never shows a stale frame store.
         player.startIdle();

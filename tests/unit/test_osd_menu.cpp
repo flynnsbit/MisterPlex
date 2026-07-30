@@ -51,19 +51,42 @@ int main() {
         CHECK(d.contentResolution.width == 320);
         CHECK(d.contentResolution.height == 240);
         CHECK(std::string(d.contentResolution.label) == "320x240");
+        CHECK(d.contentResolution.presentPolicy == ContentPresentPolicy::NativeCanvas);
+        CHECK(std::string(d.contentResolution.userLabel) == "320x240");
+        CHECK(osdContentTierFromWord(0x0000) == 0u);
     }
     CHECK(decodeOsdWord(1u << 1).resyncEnabled == false);   // O[1] A/V auto resync
     CHECK(!decodeOsdWord(1u << 3).audioClockTrimEnabled); // O[3] Audio clock trim
-    const auto osd480 = decodeOsdWord(1u << 4).contentResolution; // O[4] 480p path
+    // O[5:4]=01 — 480p path (v7-compatible: bit4 only)
+    const auto osd480 = decodeOsdWord(1u << 4).contentResolution;
+    CHECK(osdContentTierFromWord(1u << 4) == 1u);
     CHECK(osd480.width == kPlex480pCodedWidth);
     CHECK(osd480.height == kPlex480pCodedHeight);
     CHECK(std::string(osd480.label) == "624x480");
+    CHECK(std::string(osd480.userLabel) == "624x480");
     CHECK(osd480.weakBitrateKbps == kPlex480pWeakBitrateKbps);
+    CHECK(osd480.presentPolicy == ContentPresentPolicy::NativeCanvas);
+    // O[5:4]=10 — 16:9-framed 480p canvas (same coded geometry; NOT 720p)
+    const auto osdWs = decodeOsdWord(2u << 4).contentResolution;
+    CHECK(osdContentTierFromWord(2u << 4) == 2u);
+    CHECK(osdWs.width == kPlex480pCodedWidth);
+    CHECK(osdWs.height == kPlex480pCodedHeight);
+    CHECK(std::string(osdWs.label) == "624x480"); // PMS ladder stays WxH
+    CHECK(std::string(osdWs.userLabel) == "16:9-framed 480p");
+    CHECK(osdWs.presentPolicy == ContentPresentPolicy::Widescreen480pCanvas);
+    CHECK(osdWs.weakBitrateKbps == kPlex480pWeakBitrateKbps);
+    // O[5:4]=11 reserved → safe 480p canvas, never native 720p
+    const auto osdRsvd = decodeOsdWord(3u << 4).contentResolution;
+    CHECK(osdContentTierFromWord(3u << 4) == 3u);
+    CHECK(osdRsvd.width == kPlex480pCodedWidth);
+    CHECK(osdRsvd.presentPolicy == ContentPresentPolicy::NativeCanvas);
+    CHECK(kOsdContentTierMask == 0x0030);
+    CHECK(kOsdOwnedMask == 0xC3FA);
     CHECK(decodeOsdWord(0xFu << 6).avOffsetMs == kOsdAvOffsetDefaultMs - 20); // O[9:6] idx 15
     CHECK(decodeOsdWord(8u << 6).avOffsetMs == kOsdAvOffsetDefaultMs - 160); // O[9:6] idx 8
     CHECK(decodeOsdWord(3u << 14).idleMode == 3);           // O[15:14] Idle screen
-    // Core-owned bits must not leak into user settings.
-    for (int bit : {0, 2, 5, 10, 11, 12, 13}) {
+    // Core-owned bits must not leak into user settings (bit5 is tier-owned now).
+    for (int bit : {0, 2, 10, 11, 12, 13}) {
         const OsdSettings d = decodeOsdWord(static_cast<uint16_t>(1u << bit));
         CHECK(d.avOffsetMs == kOsdAvOffsetDefaultMs);
         CHECK(d.resyncEnabled);
@@ -83,23 +106,28 @@ int main() {
     CHECK(contentResolutionFromSize(640, 480).width == kPlex480pCodedWidth);
     CHECK(contentResolutionFromSize(640, 480).weakBitrateKbps == kPlex480pWeakBitrateKbps);
     CHECK(weakBitrateKbpsForCodedSize(480, 360) == kPlex360pWeakBitrateKbps);
+    // Conf DECODE=1280x720 must not invent a native-720p host ladder.
+    const auto conf720 =
+        contentResolutionFromCodedSize(CodedWidth{1280}, CodedHeight{720});
+    CHECK(conf720.width == kPlex480pCodedWidth);
+    CHECK(conf720.presentPolicy == ContentPresentPolicy::NativeCanvas);
+    CHECK(std::string(conf720.userLabel).find("720") == std::string::npos);
 
     // --- change detection ignores core traffic ---
     // [10]/[11] flush pulses and [12]/[13] DDR kick/bank toggle constantly during
     // playback; reacting to them would re-log and re-apply settings every frame.
-    for (int bit : {0, 2, 5, 10, 11, 12, 13})
+    for (int bit : {0, 2, 10, 11, 12, 13})
         CHECK(!osdChanged(0, static_cast<uint16_t>(1u << bit)));
-    for (int bit : {1, 3, 4, 6, 7, 8, 9, 14, 15})
+    for (int bit : {1, 3, 4, 5, 6, 7, 8, 9, 14, 15})
         CHECK(osdChanged(0, static_cast<uint16_t>(1u << bit)));
 
-    // The first OSD word is a baseline snapshot, not proof that the user chose
-    // that idle item during this daemon run. A saved/stale 0x4000 must not turn
-    // IDLE_SCREEN=logo(default) into black just because OSD_CONTROL=1.
-    CHECK(!shouldApplyOsdIdle(false, 0x0000, 0x4000));
-    CHECK(!shouldApplyOsdIdle(true, 0x4000, 0x4000));
-    CHECK(!shouldApplyOsdIdle(true, 0x4000, 0x4040)); // video-delay-only change
-    CHECK(shouldApplyOsdIdle(true, 0x0000, 0x4000));  // live Logo -> Black change
-    CHECK(shouldApplyOsdIdle(true, 0x4000, 0x8000));  // live Black -> Screensaver
+    // First OSD word = Main's persisted F12 Idle Screen (Plex_v*.CFG). Apply it
+    // so menu idle survives daemon restart. Later: idle bits only on change.
+    CHECK(shouldApplyOsdIdle(false, 0x0000, 0x4000));  // startup apply Black
+    CHECK(!shouldApplyOsdIdle(true, 0x4000, 0x4000));  // unchanged
+    CHECK(!shouldApplyOsdIdle(true, 0x4000, 0x4040));  // video-delay-only change
+    CHECK(shouldApplyOsdIdle(true, 0x0000, 0x4000));   // live Logo -> Black
+    CHECK(shouldApplyOsdIdle(true, 0x4000, 0x8000));   // live Black -> Screensaver
     CHECK(kOsdIdleMask == 0xC000);
 
     // --- idle mode bits match CONF_STR order ---

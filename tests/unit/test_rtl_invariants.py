@@ -2014,6 +2014,29 @@ def check_yuv_ddr_writer_contract() -> None:
         "DDR path. A hard-coded black I420 payload clears stale video but makes the selectable "
         "FPGA idle logo/screensaver disappear under PRESENT=fpga.",
     )
+
+    # Silent PRESENT=fb0 default froze core HDMI idle (user ×2). Product default is fpga;
+    # initPresent must open FPGA for every non-none PRESENT (fb0 alone is not enough).
+    main_cpp = read(ROOT / "arm/misterplexd/main.cpp")
+    media_hpp = read(ROOT / "arm/misterplexd/media_player.hpp")
+    check(
+        'std::string presentMode = "fpga"' in main_cpp
+        and 'std::string presentMode_ = "fpga"' in media_hpp
+        and 'std::string presentMode = "fb0"' not in main_cpp
+        and 'std::string presentMode_ = "fb0"' not in media_hpp,
+        "misterplexd PRESENT default must be fpga (not fb0). fb0 skipped fpga_.open() and "
+        "froze the selectable idle screen on the last latched DDR frame.",
+    )
+    check(
+        "wantFpga = true" in media or "const bool wantFpga = true" in media,
+        "initPresent must always open the FPGA path for non-none PRESENT so idle/OSD can "
+        "repaint the core frame store even when conf says PRESENT=fb0.",
+    )
+    check(
+        "ERROR FPGA SPI unavailable" in media
+        and "ERROR idle cannot open FPGA" in media,
+        "Missing FPGA present path must log ERROR (silence was the defect).",
+    )
     check(
         "sendRgb24Frame(buf.data(),w,h,/*F1*/1)" not in compact_media
         and "sendRgb24Frame(buf.data(),w,h,1)" not in compact_media
