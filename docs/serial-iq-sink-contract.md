@@ -236,3 +236,18 @@ Files:
 ---
 
 *End contract. Questions → parent; do not silently diverge from start/busy/done + single-mul rule.*
+
+---
+
+## 9. Map result at `cf6842a` (integrate)
+
+| Metric | Pre-reg | Measured | Verdict |
+|--------|---------|----------|---------|
+| sink DSP | 6..12 | **4** (u_dq=2, u_had=2 shared) | **HIT** |
+| whole DSP | — | **111 / 112** | PASS by 1 |
+| sink comb | ≤4k ALM gate | **39,155** (self 23,211) | **MISS** — IQ serial removed DSP not fabric |
+| i16 pred child | — | **10,643 comb** | phase-2 |
+| plane M10K | — | **0 bits** | phase-2 → `h264_byte_ram_sp` |
+
+**Chroma risk is now concrete:** 1 DSP of device headroom. Parallel muls in chroma = instant wall fail.
+Phase-2 (serial I16 + plane/top M10K) must not add DSP.

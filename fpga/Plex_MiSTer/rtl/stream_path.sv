@@ -17,7 +17,8 @@ module stream_path #(
 	// Mutation: skip serial RBSP→res_win load (area redesign twin).
 	parameter bit FAULT_SKIP_WIN_LOAD = 1'b0,
 	// Mutation: serial dequant forces zeros (sink area redesign twin).
-	parameter bit FAULT_SERIAL_IQ_ZERO = 1'b0
+	parameter bit FAULT_SERIAL_IQ_ZERO = 1'b0,
+	parameter bit FAULT_SERIAL_I16_PRED_128 = 1'b0
 )(
 	input  wire        clk,
 	input  wire        reset,
@@ -653,7 +654,8 @@ module stream_path #(
 		.ENABLE_FIRST_MB_P_FETCH(1'b0),
 		.FAULT_REAL_REF_XOR_FILL(FAULT_REAL_REF_XOR_FILL),
 		.FAULT_DUP_STORE(FAULT_DUP_STORE),
-		.FAULT_SERIAL_IQ_ZERO(FAULT_SERIAL_IQ_ZERO)
+		.FAULT_SERIAL_IQ_ZERO(FAULT_SERIAL_IQ_ZERO),
+		.FAULT_SERIAL_I16_PRED_128(FAULT_SERIAL_I16_PRED_128)
 	) stub (
 		.clk(clk), .reset(reset | flush),
 		.vcl_pulse(vcl_pulse),

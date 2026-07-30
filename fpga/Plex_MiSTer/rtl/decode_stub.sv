@@ -19,7 +19,8 @@ module decode_stub #(
 	parameter bit FAULT_REAL_REF_XOR_FILL = 1'b0,
 	// Mutation twin: double-enqueue same MB store (proves address bitmap RED).
 	parameter bit FAULT_DUP_STORE = 1'b0,
-	parameter bit FAULT_SERIAL_IQ_ZERO = 1'b0
+	parameter bit FAULT_SERIAL_IQ_ZERO = 1'b0,
+	parameter bit FAULT_SERIAL_I16_PRED_128 = 1'b0
 )(
 	input  wire        clk,
 	input  wire        reset,
@@ -824,7 +825,10 @@ module decode_stub #(
 	wire [31:0] i_sink_dbg_blk, i_sink_dbg_mb, i_sink_dbg_nz;
 	wire        i_sink_clear = vcl_pulse && (last_nal_type[4:0] == 5'd5);
 
-	h264_i_res_recon_sink #(.FAULT_SERIAL_IQ_ZERO(FAULT_SERIAL_IQ_ZERO)) u_i_res_sink (
+	h264_i_res_recon_sink #(
+		.FAULT_SERIAL_IQ_ZERO(FAULT_SERIAL_IQ_ZERO),
+		.FAULT_SERIAL_I16_PRED_128(FAULT_SERIAL_I16_PRED_128)
+	) u_i_res_sink (
 		.clk(clk), .reset(reset), .clear(i_sink_clear),
 		.res_blk_valid(i_res_blk_valid),
 		.res_blk_ready(i_res_blk_ready),

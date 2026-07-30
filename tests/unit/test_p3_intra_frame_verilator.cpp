@@ -401,7 +401,7 @@ int runI16Pred(Vp3_intra_frame_tb& dut) {
     tickFrame(dut);
     dut.i16_start = 0;
     int cycles = 1;
-    while (!dut.i16_valid && cycles < 10) {
+    while (!dut.i16_valid && cycles < 300) {
         tickFrame(dut);
         ++cycles;
     }

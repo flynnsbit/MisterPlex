@@ -20,8 +20,8 @@ module p3_intra_frame_tb (
 	input  wire       i16_has_above,
 	input  wire       i16_has_left,
 	output wire       i16_unsupported,
-	output wire       i16_valid,
-	output wire [7:0] i16_pred [0:255],
+	output reg        i16_valid,
+	output reg  [7:0] i16_pred [0:255],
 
 	input  wire        chroma_start,
 	input  wire [1:0] chroma_mode,
@@ -70,8 +70,12 @@ module p3_intra_frame_tb (
 		.recon(i4_recon)
 	);
 
+	wire i16_busy, i16_done, i16_px_valid;
+	wire [7:0] i16_px_addr, i16_px_data;
+	integer i16i;
 	h264_intra16x16_pred pred16 (
 		.clk(clk),
+		.reset(1'b0),
 		.start(i16_start),
 		.mode(i16_mode),
 		.above(i16_above),
@@ -80,9 +84,20 @@ module p3_intra_frame_tb (
 		.has_above(i16_has_above),
 		.has_left(i16_has_left),
 		.unsupported(i16_unsupported),
-		.valid(i16_valid),
-		.pred(i16_pred)
+		.busy(i16_busy),
+		.done(i16_done),
+		.px_valid(i16_px_valid),
+		.px_addr(i16_px_addr),
+		.px_data(i16_px_data)
 	);
+	// Collect serial stream into legacy pred[] / valid for C++ harness.
+	always @(posedge clk) begin
+		i16_valid <= 1'b0;
+		if (i16_px_valid)
+			i16_pred[i16_px_addr] <= i16_px_data;
+		if (i16_done)
+			i16_valid <= 1'b1;
+	end
 
 	h264_chroma8x8_pred pred_chroma (
 		.clk(clk),

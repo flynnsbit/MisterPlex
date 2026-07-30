@@ -13,7 +13,8 @@
 
 module h264_i_res_recon_sink #(
 	parameter int MAX_PIC_W = 1024, // >=624 for clip2; M10K later (attr-only is trap)
-	parameter bit FAULT_SERIAL_IQ_ZERO = 1'b0 // RED: serial dequant forces zeros
+	parameter bit FAULT_SERIAL_IQ_ZERO = 1'b0, // RED: serial dequant forces zeros
+	parameter bit FAULT_SERIAL_I16_PRED_128 = 1'b0 // RED: I16 pred emits 128
 ) (
 	input  wire        clk,
 	input  wire        reset,
@@ -48,13 +49,15 @@ module h264_i_res_recon_sink #(
 	localparam [3:0]
 		ST_IDLE      = 4'd0,
 		ST_SETTLE    = 4'd1,  // lat_* NBA settle before serial start
-		ST_I16_PRED  = 4'd2,
+		ST_I16_PRED  = 4'd2,  // serial I16 pred → plane_y (256 cy)
 		ST_HAD_WAIT  = 4'd3,  // serial I16 DC hadamard
-		ST_IQ_WAIT   = 4'd4,  // serial dequant
-		ST_APPLY_PX  = 4'd5;  // serial pixel writeback (I4 / I16 AC)
+		ST_HAD_PAINT = 4'd4,  // serial DC residual paint (256 cy)
+		ST_IQ_WAIT   = 4'd5,  // serial dequant
+		ST_APPLY_PX  = 4'd6;  // serial pixel writeback (I4 / I16 AC)
 
 	reg [3:0] st;
 	reg [4:0] apply_px_i; // 0..15 serial recon write
+	reg [8:0] paint_i;    // 0..256 serial I16 DC plane paint
 	reg       apply_any_nz;
 	reg [1:0] apply_bx, apply_by;
 	reg       apply_is_i4;
@@ -251,9 +254,12 @@ module h264_i_res_recon_sink #(
 	reg [7:0] i16_tl;
 	reg       i16_ha, i16_hl;
 	reg       i16_start;
-	wire      i16_valid;
+	wire      i16_busy;
+	wire      i16_done;
 	wire      i16_unsup;
-	wire [7:0] i16_pred [0:255];
+	wire      i16_px_valid;
+	wire [7:0] i16_px_addr;
+	wire [7:0] i16_px_data;
 
 	always @(*) begin
 		i16_ha = (cur_mb_y != 8'd0);
@@ -280,8 +286,9 @@ module h264_i_res_recon_sink #(
 			i16_tl = i16_left[0];
 	end
 
-	h264_intra16x16_pred u_i16 (
+	h264_intra16x16_pred #(.FAULT_FORCE_128(FAULT_SERIAL_I16_PRED_128)) u_i16 (
 		.clk(clk),
+		.reset(reset | clear),
 		.start(i16_start),
 		.mode(lat_mode[1:0]),
 		.above(i16_above),
@@ -290,8 +297,11 @@ module h264_i_res_recon_sink #(
 		.has_above(i16_ha),
 		.has_left(i16_hl),
 		.unsupported(i16_unsup),
-		.valid(i16_valid),
-		.pred(i16_pred)
+		.busy(i16_busy),
+		.done(i16_done),
+		.px_valid(i16_px_valid),
+		.px_addr(i16_px_addr),
+		.px_data(i16_px_data)
 	);
 
 	wire signed [28:0] dq_raw [0:15];
@@ -386,6 +396,7 @@ module h264_i_res_recon_sink #(
 		if (reset || clear) begin
 			st <= ST_IDLE;
 			apply_px_i <= 5'd0;
+			paint_i <= 9'd0;
 			apply_any_nz <= 1'b0;
 			apply_bx <= 2'd0;
 			apply_by <= 2'd0;
@@ -532,11 +543,11 @@ module h264_i_res_recon_sink #(
 			end
 
 			ST_I16_PRED: begin
-				if (i16_valid) begin
-					for (yi = 0; yi < 256; yi = yi + 1)
-						plane_y[yi] <= i16_pred[yi];
+				// Stream 256 pred pixels into plane_y (no 256-wide parallel copy).
+				if (i16_px_valid)
+					plane_y[i16_px_addr] <= i16_px_data;
+				if (i16_done) begin
 					i16_pred_done <= 1'b1;
-					// lat_coeff already settled (from prior ST_SETTLE)
 					had_start <= 1'b1;
 					st <= ST_HAD_WAIT;
 				end
@@ -544,20 +555,29 @@ module h264_i_res_recon_sink #(
 
 			ST_HAD_WAIT: begin
 				if (had_done) begin
-					for (b = 0; b < 16; b = b + 1) begin
-						by = b[3:2];
-						bx = b[1:0];
+					for (b = 0; b < 16; b = b + 1)
 						i16_dc[b] <= dc_had[b];
-						for (y = 0; y < 4; y = y + 1)
-							for (x = 0; x < 4; x = x + 1) begin
-								addr = (by * 4 + y) * 16 + (bx * 4 + x);
-								tsum = $signed({10'd0, plane_y[addr]}) +
-									(($signed(dc_had[b]) + 18'sd32) >>> 6);
-								plane_y[addr] <= clip_u8(tsum);
-							end
-					end
+					// Serial DC paint next (was 256-wide parallel add).
+					paint_i <= 9'd0;
+					st <= ST_HAD_PAINT;
+				end
+			end
+
+			ST_HAD_PAINT: begin
+				// One plane_y pixel/cy: pred + ((dc+32)>>6). Use dc_had (stable
+				// until next had_start); i16_dc NBA may still be settling cy0.
+				if (paint_i < 9'd256) begin
+					bx = paint_i[3:2]; // x[3:2] → 4x4 bx
+					by = paint_i[7:6]; // y[3:2] → 4x4 by
+					addr = paint_i[7:0];
+					tsum = $signed({10'd0, plane_y[addr]}) +
+						(($signed(dc_had[{by, bx}]) + 18'sd32) >>> 6);
+					plane_y[addr] <= clip_u8(tsum);
+					paint_i <= paint_i + 9'd1;
+				end else begin
 					i16_dc_valid <= 1'b1;
 					dbg_blk_applied <= dbg_blk_applied + 32'd1;
+					paint_i <= 9'd0;
 					st <= ST_IDLE;
 				end
 			end
