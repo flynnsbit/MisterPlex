@@ -1,0 +1,176 @@
+SPAWN ORDER MAP + IDLE-BURN PRE-REGISTER — w-arm-hybrid
+Offline only. No device. 2026-07-30
+Pairs with ATTRIBUTION_V9.txt (R1 audio MISS). Does not claim a final name.
+
+==============================================================================
+1) THREAD SPAWN ORDER FROM SOURCE (checkable file:line)
+==============================================================================
+Process entry: main() arm/misterplexd/main.cpp:132
+  setThreadName("mplex-main") @ main.cpp:133  → role MAIN (tid == pid)
+
+After successful initPresent() only (main.cpp:559–570):
+  #1  MediaPlayer::startIdle()     main.cpp:568 → media_player.cpp:698
+        idleThr_ = std::thread{… setThreadName("mplex-idle")}
+  #2  MediaPlayer::startOsdPoll()  main.cpp:569 → media_player.cpp:475
+        ONLY if osdControl_ (OSD_CONTROL conf); else returns @ media_player.cpp:470–471
+        osdThr_ = std::thread{… "mplex-osd"}
+  #3  MediaPlayer::startInputPoll() main.cpp:570 → media_player.cpp:545
+        inputThr_ = std::thread{… "mplex-input"}
+
+Lab --play-file may exit before companion (main.cpp:575–616) — not the v9 path.
+
+Companion object constructed (no threads yet): main.cpp:620–624
+
+  #4  PmsTimelineReporter ctor     main.cpp:626–627 → pms_timeline.cpp:72–78
+        worker_ = std::thread{workerLoop; "mplex-pms-tl"}
+        Loop: cv.wait until queue non-empty (pms_timeline.cpp:189–204)
+
+Handlers register detached one-shots (play resolve, seek, skip) — NOT long-lived:
+  main.cpp:961, 1041, 1140, 1166 — spawned on demand, join not kept.
+
+  #5  Companion::start()           main.cpp:1199 → companion.cpp:620–625
+        gdmThr_  = std::thread{gdmLoop;  "mplex-gdm"}   @ companion.cpp:624
+        httpThr_ = std::thread{httpLoop; "mplex-http"}  @ companion.cpp:625
+        gdmLoop: select 200ms + advertise every 5s (companion.cpp:667–700)
+        httpLoop: select 200ms accept; workers detached "mplex-httpw" (1265+)
+
+Main thread then: sleep 200ms + resumeStrandedMain (main.cpp ~1250+)
+
+----- On play() (session) -----
+  stopIdle() joins idleThr_ (media_player.cpp:1070–1081) — idle should DISAPPEAR
+  #P1 thr_ = media thread     media_player.cpp:1116  "mplex-media"
+  inside threadMain, if STREAM: streamThr_  cpp:2229  "mplex-stream"  (v9: STREAM=0 → no)
+  inside threadMain, audio:   audioThr_    cpp:2281/2562 "mplex-audio"
+
+On session end: threadMain joins audio/stream, startIdle() may respawn idle.
+
+Detached HTTP workers / resolve threads: ephemeral; R2 already FALSIFIED (G≈0).
+
+==============================================================================
+2) LONG-LIVED THREADS INDEPENDENT OF PLAYBACK
+==============================================================================
+Always (product daemon, after companion start), regardless of session:
+
+| Role        | Spawn site                         | Steady-state wait (quoted)              |
+|-------------|------------------------------------|-----------------------------------------|
+| MAIN        | process                            | sleep 200ms (main loop)                 |
+| idle        | startIdle @ boot; **joined on play** | sleep 200ms / 100ms saver / 30s static |
+| osd         | startOsd if OSD_CONTROL            | sleep 100ms mailbox / 250ms SPI fb      |
+| input       | startInputPoll                     | sleep 50ms                              |
+| pms-tl      | PmsTimelineReporter ctor           | cv.wait (empty queue at idle)           |
+| gdm         | Companion::start                   | select 200ms                            |
+| http        | Companion::start                   | select 200ms                            |
+
+Play-only: media, audio (+ stream if STREAM=1).
+
+Supervision (misterplexd_supervise.sh) is a **separate process**, not a tid
+inside misterplexd.
+
+==============================================================================
+3) MATCH TO v9 CAPTURE TIDs — ORDINAL, NOT +1 ARITHMETIC
+==============================================================================
+Linux TIDs are **system-global**; gaps between our spawns are normal (other
+tasks, and especially ffmpeg forks between boot threads and play threads).
+So we do **not** claim 13642 == "main+6". We only use:
+  (a) tid==pid ⇒ main
+  (b) increasing tid ≈ later create among *our* threads when spawned in a
+      tight burst without intervening forks
+  (c) lifetime / absolute j
+  (d) j≈0 ⇒ blocked almost forever
+
+Capture stable set during PLAY (idle should be joined away):
+  13636, 13642, 13643, 13644, 13645, 13646, 13774, 13777   (8 tids)
+
+Expected live if OSD_CONTROL=1 and stopIdle worked:
+  main, osd, input, pms-tl, gdm, http, media, audio  = 8  ✓ count match
+
+| tid   | dJ%  | j0→j1        | Best-effort role      | Basis |
+|-------|------|--------------|-----------------------|-------|
+| 13636 | 0.6% | 150→175      | **MAIN**              | tid==pid (PORT_UP + SUPERVISE_CHILD) |
+| 13642 | 3.8% | 250→400      | osd (ordinal #2 live) | first surviving helper after main if idle joined |
+| 13643 | 0.4% | 73→88        | input                 | next ordinal |
+| 13644 | 0.0% | 0→0          | **pms-tl** (strong)   | j≡0 entire window fits cv.wait; no other boot thread is expected to be fully asleep from birth |
+| 13645 |85.5% | 21034→24450  | **UNNAMED hot**       | see §4 — ordinal slot = gdm if map holds, but **gdm source cannot burn 84%** |
+| 13646 | 0.0% | 5→6          | http (ordinal)        | tiny j fits select idle |
+| 13774 | 7.6% | 82→385       | **media thr_**        | late tid, play-scoped, ~B-band |
+| 13777 | 2.1% | 20→103       | **audioThr_**         | latest, play-scoped; R1 dead |
+
+Caveats that keep 13645 from being a locked name:
+  - Ordinal "13645 = gdm" assumes OSD_CONTROL=1 and successful stopIdle and
+    no extra long-lived thread. Conf on box not in this handoff bundle.
+  - **Every long-lived loop as written uses select/cv/sleep.** None should
+    deliver 84 %onecpu. So either (i) identity map is wrong, (ii) a path
+    spins inside a "sleeping" role (SPI spin in osd/idle paint), or
+    (iii) idleThr_ leaked and is still 13645-class.
+  - Therefore: **NAME remains INSUFFICIENT for fix.** Best-effort slot is
+    "5th long-lived after main among {osd,input,tl,gdm,http}" with tl pinned
+    to 13644 via j≡0.
+
+==============================================================================
+4) WHY gdm/http/osd AS-WRITTEN ARE BAD MECHANISM FITS (even if ordinal says gdm)
+==============================================================================
+gdmLoop companion.cpp:667–700 — select(&tv 200ms) every iteration; advertise 5s.
+httpLoop companion.cpp:1251+ — select 200ms.
+osd — sleep 100/250ms between polls.
+input — sleep 50ms.
+pms-tl — cv.wait.
+
+A thread at 84 %onecpu is **RUNNABLE most of the wall**, not blocked in select.
+wchan/stack from bounce2 idle sample should show:
+  - busy-wait/spin: wchan=0, high nonvoluntary or voluntary churn, stack in
+    spiWord/paint/loop body
+  - real syscall work: stack in read/write/ioctl, voluntary switches
+  - sleeping: wchan=wait_*, low CPU (would FALSIFY 13645-class at idle)
+
+==============================================================================
+5) PRE-REGISTER — TRUE IDLE SAMPLE (bounce2 read-only)
+==============================================================================
+Question: does the hot thread burn a core with **no session**?
+
+Already-known prior (not a substitute for the sample):
+  j0=21034 on 13645 implies ≥210s CPU over ~269s process life, including
+  wall time before the PROFILE=1 play window. That is **suggestive** of
+  pre-play burn but is not a controlled idle sample (deploy/play churn in
+  the same process lifetime).
+
+PREDICTION (fifth — file before idle data):
+  **P_idle: YES — a single tid still holds ≥50 %onecpu at true idle
+  (no playMedia session, companion up, PRESENT=fpga).**
+
+  Why: 13645 is boot-era (not play-scoped); absolute j already dominated
+  process lifetime; play threads are only 7.5%+2.1%. The residual is not
+  "decode" or "audio catch-up". Most likely a long-lived control/present
+  path that does not know about sessions.
+
+FALSIFY P_idle:
+  - At true idle, max tid %onecpu < 15 AND sum of all tid %onecpu < 25
+    over ≥20s window (same jiffies method, HZ from dc/(du*nproc)).
+  - Or: the play-time hot tid's starttime is absent (thread died) and no
+    replacement exceeds 15%.
+
+IF P_idle HITS:
+  User-visible defect: **daemon pegs a core whenever the box is on**, larger
+  than the doorbell win, independent of watching anything.
+  Next step: name via comm (mplex-* build) or stack; then quote loop; then fix.
+
+IF P_idle MISSES:
+  Hot path is session-correlated despite boot-era tid (e.g. work queued on
+  that thread only during play). Re-open play-scoped mechanisms on that tid.
+
+Also record from sample (bounce2): voluntary vs nonvoluntary ctxt switches,
+wchan, syscall, stack, starttime — do not invent those here.
+
+==============================================================================
+6) FIX BLOCK
+==============================================================================
+Still **no fix**. Name + quoted loop required. Thread prctl names already
+landed (25789bd) for the next binary; idle sample is read-only on current
+live binary (names may still be misterplexd until named build deploys).
+
+==============================================================================
+7) SELF-SCORE EXPECTATION
+==============================================================================
+0-for-4 on subsystem guesses. P_idle is a behavioral prediction, not a
+role name. Either outcome narrows the search; publish HIT/MISS the same way.
+
+END
