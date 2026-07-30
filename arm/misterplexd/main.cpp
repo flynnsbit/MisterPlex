@@ -800,7 +800,18 @@ int main(int argc, char** argv) {
         logDaemon("misterplexd: PLAY " + misterplex::redactSensitive(resolved.playable) +
                   " off=" + std::to_string(startAt) +
                   " dur=" + std::to_string(resolved.durationMs));
-        player.play(resolved.playable, startAt, resolved.httpHeaders, resolved.durationMs);
+        // PRESENT=fpga with no FPGA returns false here — must never look like a
+        // successful cast (timeline stuck "buffering" with zero frames).
+        if (!player.play(resolved.playable, startAt, resolved.httpHeaders, resolved.durationMs)) {
+            // Keep companion media bind (ratingKey/scrubber) so playMedia ACK
+            // contracts still hold; never fail quietly — operators must see why
+            // demux never starts (classic PRESENT=fpga without SPI on host lab).
+            logDaemon("misterplexd: ERROR PLAY rejected after resolve — "
+                      "player.play() failed (PRESENT path? lastError=" +
+                      player.lastError() +
+                      "). Cast will not demux/decode until present is fixed "
+                      "or PRESENT=none for decode-only lab.");
+        }
     };
 
     // Shared play-queue step: delta=+1 (auto-next / skipNext), delta=-1 (skipPrevious).
