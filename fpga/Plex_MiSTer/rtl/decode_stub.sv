@@ -16,7 +16,9 @@ module decode_stub #(
 	// Mutation twin: force DPB fetch MV to zero (proves product path is live).
 	parameter bit FAULT_FORCE_ZERO_FETCH_MV = 1'b0,
 	// Mutation twin: keep XOR diagnostic fill even when USE_REAL_REF_COMMIT=1.
-	parameter bit FAULT_REAL_REF_XOR_FILL = 1'b0
+	parameter bit FAULT_REAL_REF_XOR_FILL = 1'b0,
+	// Mutation twin: double-enqueue same MB store (proves address bitmap RED).
+	parameter bit FAULT_DUP_STORE = 1'b0
 )(
 	input  wire        clk,
 	input  wire        reset,
@@ -163,21 +165,33 @@ module decode_stub #(
 	integer        idr_pack_i;
 `ifdef VERILATOR
 	// Localisation counters for flat-128 chase (printed once per run).
+	// NOTE: dbg_store_wr_* count write *enqueues*, not unique MB addresses —
+	// use store_mb_bits / STORE_MB_BITMAP for uniqueness.
 	integer        dbg_store_wr_total;
 	integer        dbg_store_wr_idr;
 	integer        dbg_store_wr_p;
 	integer        dbg_store_wr_p_inter_ok;
 	integer        dbg_store_wr_p_inter_fail;
-	integer        dbg_residual_blk0_loads;
+	// Legacy name residual_blk0_loads was wrong: it counted IDR MB0 store
+	// enqueues (PH_IDR_STORE pack), NOT coefficient loads. Renamed.
+	integer        dbg_idr_mb0_store_enqueues;
 	integer        dbg_printed_recon_counts;
 	reg [31:0]     dbg_i_recon_cycles;
+	reg [1199:0]   store_mb_bits;
+	reg [15:0]     store_unique;
+	reg [15:0]     store_dup;
+	reg [15:0]     store_oob;
+	reg [15:0]     store_slice_expected;
 `endif
 	// Accept a traversal MB when idle-ready for fetch or actively fetching next.
 	// Intra-in-P is accepted (no MC) so the walker never stalls on those MBs.
 	// While parking Clip1 samples into the recon store, do not ACK the walker
 	// except on the store-done cycle (pending still 1 under NBA that cycle).
+	// Product same-cycle FETCH accept (no store drain) is still lossless under
+	// unconditional hold backpressure — it only avoids a bubble, never drops.
 	wire           trav_can_accept = (phase == PH_IDLE && (dpb_ref_ready || trav_intra)) ||
-	                                 (phase == PH_FETCH && !p_fetch_launch_pending && dpb_fetch_done && !USE_REAL_REF_COMMIT) ||
+	                                 (phase == PH_FETCH && !p_fetch_launch_pending && dpb_fetch_done &&
+	                                  !recon_store_pending && !USE_REAL_REF_COMMIT) ||
 	                                 (phase == PH_FETCH && !trav_got_mb && !p_fetch_launch_pending && !dpb_fetch_busy &&
 	                                  (!recon_store_pending || recon_store_done)) ||
 	                                 (phase == PH_IDLE && trav_intra) ||
@@ -994,7 +1008,12 @@ module decode_stub #(
 			dbg_store_wr_p <= 0;
 			dbg_store_wr_p_inter_ok <= 0;
 			dbg_store_wr_p_inter_fail <= 0;
-			dbg_residual_blk0_loads <= 0;
+			dbg_idr_mb0_store_enqueues <= 0;
+			store_mb_bits <= '0;
+			store_unique <= 16'd0;
+			store_dup <= 16'd0;
+			store_oob <= 16'd0;
+			store_slice_expected <= 16'd0;
 			dbg_printed_recon_counts <= 0;
 			dbg_i_recon_cycles <= 32'd0;
 `endif
@@ -1048,6 +1067,19 @@ module decode_stub #(
 `ifdef VERILATOR
 				dbg_store_wr_total <= dbg_store_wr_total + 1;
 				dbg_store_wr_idr <= dbg_store_wr_idr + 1;
+				if (i_sink_write_mb < 16'd1200) begin
+					if (store_mb_bits[i_sink_write_mb[10:0]])
+						store_dup <= store_dup + 16'd1;
+					else begin
+						store_mb_bits[i_sink_write_mb[10:0]] <= 1'b1;
+						store_unique <= store_unique + 16'd1;
+					end
+				end else
+					store_oob <= store_oob + 16'd1;
+				if (FAULT_DUP_STORE) begin
+					store_dup <= store_dup + 16'd1;
+					dbg_store_wr_total <= dbg_store_wr_total + 1;
+				end
 `endif
 			end else if (recon_store_pending && recon_store_done && recon_store_i_sink_pending) begin
 				recon_store_pending <= 1'b0;
@@ -1124,6 +1156,16 @@ module decode_stub #(
 				lat_sps <= sps_valid;
 				lat_mb_w <= (mb_w == 0) ? 8'd20 : mb_w;
 				lat_mb_h <= (mb_h == 0) ? 8'd15 : mb_h;
+`ifdef VERILATOR
+				// Fresh per-slice store bitmap (P stores use same 0..mb_w*mb_h-1)
+				store_mb_bits <= '0;
+				store_unique <= 16'd0;
+				store_dup <= 16'd0;
+				store_oob <= 16'd0;
+				store_slice_expected <=
+					16'({8'd0, (mb_w == 0) ? 8'd20 : mb_w}) *
+					16'({8'd0, (mb_h == 0) ? 8'd15 : mb_h});
+`endif
 				lat_res_ok <= 1'b0;
 				lat_res_tc <= 5'd0;
 				lat_res_dc <= 8'sd0;
@@ -1297,6 +1339,14 @@ module decode_stub #(
 					inter_res_load_pending <= 1'b0;
 `ifdef VERILATOR
 					dbg_i_recon_cycles <= 32'd0;
+					store_mb_bits <= '0;
+					store_unique <= 16'd0;
+					store_dup <= 16'd0;
+					store_oob <= 16'd0;
+					// Prefer live SPS mb_w/h; lat_* may still be 0 on first IDR.
+					store_slice_expected <=
+						16'({8'd0, (mb_w == 0) ? ((lat_mb_w == 0) ? 8'd20 : lat_mb_w) : mb_w}) *
+						16'({8'd0, (mb_h == 0) ? ((lat_mb_h == 0) ? 8'd15 : lat_mb_h) : mb_h});
 					$display("I_RECON_ENTER trav_pend=%0d store_pend=%0d",
 						trav_slice_pending, recon_store_pending);
 `endif
@@ -1334,6 +1384,8 @@ module decode_stub #(
 				if (!dbg_printed_recon_counts) begin
 					$display("I_RECON_DONE mb_written=%0d blk_applied=%0d luma_nz_peak=%0d",
 						i_sink_dbg_mb, i_sink_dbg_blk, i_sink_dbg_nz);
+					$display("STORE_MB_BITMAP unique=%0d dup=%0d oob=%0d expected=%0d fault_dup=%0d",
+						store_unique, store_dup, store_oob, store_slice_expected, FAULT_DUP_STORE);
 					dbg_printed_recon_counts <= 1'b1;
 				end
 `endif
@@ -1362,7 +1414,21 @@ module decode_stub #(
 				recon_store_pending <= 1'b1;
 				recon_store_idr_mb0_pending <= 1'b1;
 `ifdef VERILATOR
-				dbg_residual_blk0_loads <= dbg_residual_blk0_loads + 1;
+				dbg_idr_mb0_store_enqueues <= dbg_idr_mb0_store_enqueues + 1;
+				// Store bitmap (MB0 place path)
+				if (16'd0 < 16'd1200) begin
+					if (store_mb_bits[0])
+						store_dup <= store_dup + 16'd1;
+					else begin
+						store_mb_bits[0] <= 1'b1;
+						store_unique <= store_unique + 16'd1;
+					end
+				end
+				if (FAULT_DUP_STORE) begin
+					// Mutation: second enqueue of same MB address
+					store_dup <= store_dup + 16'd1;
+					dbg_store_wr_total <= dbg_store_wr_total + 1;
+				end
 `endif
 			end else if (recon_store_pending) begin
 				if (recon_store_done) begin
@@ -1486,6 +1552,19 @@ module decode_stub #(
 						dbg_store_wr_p_inter_ok <= dbg_store_wr_p_inter_ok + 1;
 					else
 						dbg_store_wr_p_inter_fail <= dbg_store_wr_p_inter_fail + 1;
+					if (lat_p_mb_addr < 16'd1200) begin
+						if (store_mb_bits[lat_p_mb_addr[10:0]])
+							store_dup <= store_dup + 16'd1;
+						else begin
+							store_mb_bits[lat_p_mb_addr[10:0]] <= 1'b1;
+							store_unique <= store_unique + 16'd1;
+						end
+					end else
+						store_oob <= store_oob + 16'd1;
+					if (FAULT_DUP_STORE) begin
+						store_dup <= store_dup + 16'd1;
+						dbg_store_wr_total <= dbg_store_wr_total + 1;
+					end
 `endif
 				end else begin
 					// Next walker MB, or finish slice
@@ -1586,12 +1665,15 @@ module decode_stub #(
 				recon_valid <= lat_res_ok | lat_inter_recon_ok;
 `ifdef VERILATOR
 				// Cumulative store-write localisation (last paint line is final).
+				// dbg_store_wr_* = enqueues; STORE_MB_BITMAP = unique addresses.
 				if (use_real_ref) begin
 					dbg_printed_recon_counts <= dbg_printed_recon_counts + 1;
-					$display("RECON_STORE_COUNTS frame_paint=%0d total=%0d idr=%0d p=%0d p_inter_ok=%0d p_inter_fail=%0d residual_blk0_loads=%0d",
+					$display("RECON_STORE_COUNTS frame_paint=%0d total=%0d idr=%0d p=%0d p_inter_ok=%0d p_inter_fail=%0d idr_mb0_store_enqueues=%0d",
 						dbg_printed_recon_counts, dbg_store_wr_total, dbg_store_wr_idr, dbg_store_wr_p,
 						dbg_store_wr_p_inter_ok, dbg_store_wr_p_inter_fail,
-						dbg_residual_blk0_loads);
+						dbg_idr_mb0_store_enqueues);
+					$display("STORE_MB_BITMAP unique=%0d dup=%0d oob=%0d expected=%0d fault_dup=%0d",
+						store_unique, store_dup, store_oob, store_slice_expected, FAULT_DUP_STORE);
 				end
 `endif
 			end

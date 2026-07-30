@@ -7,7 +7,11 @@ module stream_path #(
 	// Self-produced DPB reference commit (no golden prefill). Sim/measure only
 	// until product IDR recon is complete; default off preserves legacy path.
 	parameter bit USE_REAL_REF_COMMIT = 1'b0,
-	parameter bit FAULT_REAL_REF_XOR_FILL = 1'b0
+	parameter bit FAULT_REAL_REF_XOR_FILL = 1'b0,
+	// Mutation: ACK walker while dropping hold load (proves lossless backpressure).
+	parameter bit FAULT_DROP_TRAV_MB = 1'b0,
+	// Mutation: double-count store address (proves STORE_MB_BITMAP RED).
+	parameter bit FAULT_DUP_STORE = 1'b0
 )(
 	input  wire        clk,
 	input  wire        reset,
@@ -317,7 +321,9 @@ module stream_path #(
 	// Side-buffer slice RBSP, then load the walker when idle so multi-slice
 	// streams are not dropped while a prior walk is in progress.
 	// Product: non-IDR only. Real-ref: also capture IDR for I-slice residual walk.
-	// Walker self-drains (mb_ready=1) at syntax rate; 1-deep hold feeds stub.
+	// 1-deep hold feeds stub. Lossless backpressure is UNCONDITIONAL for product
+	// and real-ref (do not gate behind USE_REAL_REF_COMMIT — that divergence
+	// made p=300 real-ref-only while product dropped hold beats).
 	localparam int TRAV_BUF_MAX = 8192;
 	// Under real-ref, capture IDR so I residual can fill recon_store before P.
 	wire trav_cap_ok = USE_REAL_REF_COMMIT ? 1'b1 : !sl_is_idr;
@@ -340,14 +346,11 @@ module stream_path #(
 	reg [7:0]  trav_lat_mb_w, trav_lat_mb_h;
 	wire       trav_in_ready;
 	wire       trav_w_valid;
-	// Product default: syntax walk self-drains (mb_ready=1) so p_mb_count is
-	// independent of stub/DPB timing; hold samples opportunistically.
-	// Real-ref measure: backpressure the walker to the 1-deep hold so MBs are
-	// not dropped while decode_stub parks Clip1 samples into recon_store
-	// (otherwise only a few dozen of 300 MBs ever reach the store).
 	reg         hold_v;
 	wire        trav_mb_ready; // from stub
-	wire       trav_w_ready = USE_REAL_REF_COMMIT ? (!hold_v || trav_mb_ready) : 1'b1;
+	// Lossless: walker advances only when hold can take the beat.
+	// FAULT_DROP_TRAV_MB: always-ready + skip load when full → drop (RED twin).
+	wire       trav_w_ready = FAULT_DROP_TRAV_MB ? 1'b1 : (!hold_v || trav_mb_ready);
 	wire [15:0] trav_w_addr;
 	wire [7:0]  trav_w_x, trav_w_y;
 	wire        trav_w_skip;
@@ -512,8 +515,8 @@ module stream_path #(
 		.busy(trav_busy), .error(trav_err), .unsupported(trav_unsup)
 	);
 
-	// 1-deep hold for decode_stub: sample walker beats when free; drop extras.
-	// Syntax completeness is p_mb_count (self-drain), not hold delivery.
+	// 1-deep hold for decode_stub. With unconditional backpressure this is
+	// lossless (no drop); FAULT_DROP_TRAV_MB reintroduces drop for RED twin.
 	reg [15:0]  hold_addr;
 	reg [7:0]   hold_x, hold_y;
 	reg         hold_skip;
@@ -529,13 +532,42 @@ module stream_path #(
 	wire        trav_uses_sub = hold_sub;
 	wire        trav_intra = hold_intra;
 
+`ifdef VERILATOR
+	// Delivered-MB address bitmap (stub accepts). Proves unique coverage
+	// independent of dbg_store_wr_* enqueue counts.
+	reg [1199:0] deliv_mb_bits; // up to 1200 MBs (624x480=1170)
+	reg [15:0]    deliv_unique;
+	reg [15:0]    deliv_dup;
+	reg [15:0]    deliv_oob;
+	reg [15:0]    deliv_expected; // mb_w*mb_h latched at slice start
+`endif
+
 	always @(posedge clk) begin
 		if (reset | flush) begin
 			hold_v <= 1'b0;
+`ifdef VERILATOR
+			deliv_mb_bits <= '0;
+			deliv_unique <= 16'd0;
+			deliv_dup <= 16'd0;
+			deliv_oob <= 16'd0;
+			deliv_expected <= 16'd0;
+`endif
 		end else begin
+`ifdef VERILATOR
+			if (trav_start_r) begin
+				deliv_mb_bits <= '0;
+				deliv_unique <= 16'd0;
+				deliv_dup <= 16'd0;
+				deliv_oob <= 16'd0;
+				deliv_expected <= 16'({8'd0, trav_lat_mb_w}) * 16'({8'd0, trav_lat_mb_h});
+			end
+`endif
 			if (hold_v && trav_mb_ready)
 				hold_v <= 1'b0;
-			// Load when empty or same-cycle consumer take
+			// Load when empty or same-cycle consumer take.
+			// Count unique MB addresses at hold *load* (not stub accept) so the
+			// last beat is recorded even if slice_done races ahead of drain.
+			// Fault path: walker always ready but skip load when full → drop.
 			if (trav_w_valid && (!hold_v || trav_mb_ready)) begin
 				hold_v <= 1'b1;
 				hold_addr <= trav_w_addr;
@@ -546,7 +578,27 @@ module stream_path #(
 				hold_pc <= trav_w_part_count;
 				hold_sub <= trav_w_uses_sub;
 				hold_intra <= trav_w_intra;
+`ifdef VERILATOR
+				if (trav_w_addr < 16'd1200) begin
+					if (deliv_mb_bits[trav_w_addr[10:0]])
+						deliv_dup <= deliv_dup + 16'd1;
+					else begin
+						deliv_mb_bits[trav_w_addr[10:0]] <= 1'b1;
+						deliv_unique <= deliv_unique + 16'd1;
+					end
+				end else
+					deliv_oob <= deliv_oob + 16'd1;
+`endif
+			end else if (FAULT_DROP_TRAV_MB && trav_w_valid && hold_v && !trav_mb_ready) begin
+				// Explicit drop under fault (ready forged high above) — no count.
 			end
+`ifdef VERILATOR
+			if (trav_slice_done) begin
+				$display("DELIVERED_MB_BITMAP unique=%0d dup=%0d oob=%0d expected=%0d fault_drop=%0d real_ref=%0d",
+					deliv_unique, deliv_dup, deliv_oob, deliv_expected,
+					FAULT_DROP_TRAV_MB, USE_REAL_REF_COMMIT);
+			end
+`endif
 		end
 	end
 
@@ -590,7 +642,8 @@ module stream_path #(
 		.HEIGHT(FRAME_H),
 		.USE_REAL_REF_COMMIT(USE_REAL_REF_COMMIT),
 		.ENABLE_FIRST_MB_P_FETCH(1'b0),
-		.FAULT_REAL_REF_XOR_FILL(FAULT_REAL_REF_XOR_FILL)
+		.FAULT_REAL_REF_XOR_FILL(FAULT_REAL_REF_XOR_FILL),
+		.FAULT_DUP_STORE(FAULT_DUP_STORE)
 	) stub (
 		.clk(clk), .reset(reset | flush),
 		.vcl_pulse(vcl_pulse),

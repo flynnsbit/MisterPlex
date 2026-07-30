@@ -9,7 +9,9 @@ module stream_path_full_frame_tb #(
 	parameter bit FAULT_PIXEL_XOR = 1'b0,
 	parameter bit FAULT_TRACE_COEFF0_PLUS1 = 1'b0,
 	parameter bit USE_REAL_REF_COMMIT = 1'b0,
-	parameter bit FAULT_REAL_REF_XOR_FILL = 1'b0
+	parameter bit FAULT_REAL_REF_XOR_FILL = 1'b0,
+	parameter bit FAULT_DROP_TRAV_MB = 1'b0,
+	parameter bit FAULT_DUP_STORE = 1'b0
 )(
 	input  wire        clk,
 	input  wire        reset,
@@ -121,7 +123,9 @@ module stream_path_full_frame_tb #(
 		.FRAME_W(FRAME_W),
 		.FRAME_H(FRAME_H),
 		.USE_REAL_REF_COMMIT(USE_REAL_REF_COMMIT),
-		.FAULT_REAL_REF_XOR_FILL(FAULT_REAL_REF_XOR_FILL)
+		.FAULT_REAL_REF_XOR_FILL(FAULT_REAL_REF_XOR_FILL),
+		.FAULT_DROP_TRAV_MB(FAULT_DROP_TRAV_MB),
+		.FAULT_DUP_STORE(FAULT_DUP_STORE)
 	) dut (
 		.clk(clk),
 		.reset(reset),

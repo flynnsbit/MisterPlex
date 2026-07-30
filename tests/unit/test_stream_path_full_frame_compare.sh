@@ -550,6 +550,8 @@ REAL_COMPARE="$REAL_REF_DIR/frame_planes_compare.json"
 # Pre-register (I-slice walk + real I4/I16 luma pred + residual; chroma deferred 128):
 # Expect some MB-exact if modes+nb correct; chroma still kills many MBs.
 # Do not tune toward historical fake 1606.
+SRC_SHA="$(git -C "$ROOT" rev-parse HEAD 2>/dev/null || echo unknown)"
+echo "REAL_REF_MEASURE source_sha=$SRC_SHA" >&2
 echo "REAL_REF_MEASURE pre-register: intra=1..120/300 inter=0..50/3300 (real I pred; chroma deferred 128)" >&2
 
 "$RUN_VERILATOR" --cc --exe --build \
@@ -558,14 +560,45 @@ echo "REAL_REF_MEASURE pre-register: intra=1..120/300 inter=0..50/3300 (real I p
   -CFLAGS "-std=c++17 -O2" \
   "$TOP" "${RTL_ARGS[@]}" "$TB"
 
-"$BUILD_REAL/Vstream_path_full_frame_tb" \
-  --annexb "$BITSTREAM" --golden-planes "$GOLDEN_PLANES" --golden-manifest "$GOLDEN_MANIFEST" \
-  --native-candidate-i420-out "$REAL_CAND" \
-  --inter-metadata-out "$REAL_META" --sequence "$SEQUENCE" \
-  --source-sha256 "$SOURCE_SHA" --width "$WIDTH" --height "$HEIGHT" \
-  --json-out "$REAL_COMPARE" --trace-json-out "$REAL_REF_DIR/mb0_pipeline_trace.json" \
-  --real-ref --expect-red \
-  | tee "$REAL_REF_DIR/sim.log"
+{
+  echo "SOURCE_SHA=$SRC_SHA"
+  "$BUILD_REAL/Vstream_path_full_frame_tb" \
+    --annexb "$BITSTREAM" --golden-planes "$GOLDEN_PLANES" --golden-manifest "$GOLDEN_MANIFEST" \
+    --native-candidate-i420-out "$REAL_CAND" \
+    --inter-metadata-out "$REAL_META" --sequence "$SEQUENCE" \
+    --source-sha256 "$SOURCE_SHA" --width "$WIDTH" --height "$HEIGHT" \
+    --json-out "$REAL_COMPARE" --trace-json-out "$REAL_REF_DIR/mb0_pipeline_trace.json" \
+    --real-ref --expect-red
+} | tee "$REAL_REF_DIR/sim.log"
+
+# Address bitmaps: unique MB coverage (not enqueue counts).
+python3 - "$REAL_REF_DIR/sim.log" <<'PY'
+import re, sys
+log = open(sys.argv[1]).read()
+if "SOURCE_SHA=" not in log:
+    raise SystemExit("FAIL sim.log missing SOURCE_SHA stamp")
+# Delivered hold→stub (all slices): at least one slice with unique==expected==300
+deliv = re.findall(
+    r"DELIVERED_MB_BITMAP unique=(\d+) dup=(\d+) oob=(\d+) expected=(\d+) fault_drop=(\d+) real_ref=(\d+)",
+    log,
+)
+if not deliv:
+    raise SystemExit("FAIL missing DELIVERED_MB_BITMAP lines")
+ok_d = [t for t in deliv if t[0] == t[3] and t[1] == "0" and t[2] == "0" and t[3] == "300" and t[4] == "0"]
+if not ok_d:
+    raise SystemExit(f"FAIL DELIVERED_MB_BITMAP no clean 300-cover slice: {deliv!r}")
+# Store unique for I-recon (real-ref): unique==300 dup==0
+stores = re.findall(
+    r"STORE_MB_BITMAP unique=(\d+) dup=(\d+) oob=(\d+) expected=(\d+) fault_dup=(\d+)",
+    log,
+)
+if not stores:
+    raise SystemExit("FAIL missing STORE_MB_BITMAP lines")
+ok_s = [t for t in stores if t[0] == t[3] == "300" and t[1] == "0" and t[2] == "0" and t[4] == "0"]
+if not ok_s:
+    raise SystemExit(f"FAIL STORE_MB_BITMAP no clean 300-cover: {stores!r}")
+print(f"OK address bitmaps: delivered_ok={len(ok_d)} store_ok={len(ok_s)} sha_line_ok")
+PY
 
 python3 - "$REAL_META" <<'PY'
 import json, sys
@@ -655,4 +688,104 @@ if a == b:
     raise SystemExit("FAIL real-ref XOR twin: candidate identical to clean real-ref (fault inactive)")
 print(f"OK real-ref XOR twin: candidates differ (clean={len(a)} xor={len(b)})")
 PY
+
+# --- Product-mode delivery bitmap (USE_REAL_REF_COMMIT=0) — same lossless hold ---
+BUILD_PROD_BMP="$ROOT/build/verilator/stream_path_full_frame_prod_bmp"
+mkdir -p "$BUILD_PROD_BMP"
+"$RUN_VERILATOR" --cc --exe --build \
+  --Mdir "$BUILD_PROD_BMP" \
+  --top-module stream_path_full_frame_tb -GFRAME_W="$WIDTH" -GFRAME_H="$HEIGHT" \
+  -GUSE_REAL_REF_COMMIT=0 -Wno-fatal \
+  -CFLAGS "-std=c++17 -O2" \
+  "$TOP" "${RTL_ARGS[@]}" "$TB"
+PROD_BMP_LOG="$REAL_REF_DIR/product_delivery_bitmap.log"
+{
+  echo "SOURCE_SHA=$SRC_SHA"
+  "$BUILD_PROD_BMP/Vstream_path_full_frame_tb" \
+    --annexb "$BITSTREAM" --golden-planes "$GOLDEN_PLANES" --golden-manifest "$GOLDEN_MANIFEST" \
+    --native-candidate-i420-out "$REAL_REF_DIR/product_mode_candidate.i420" \
+    --inter-metadata-out "$REAL_REF_DIR/product_mode_metadata.json" --sequence "$SEQUENCE" \
+    --source-sha256 "$SOURCE_SHA" --width "$WIDTH" --height "$HEIGHT" \
+    --json-out "$REAL_REF_DIR/product_mode_compare.json" \
+    --expect-red
+} | tee "$PROD_BMP_LOG"
+python3 - "$PROD_BMP_LOG" <<'PY'
+import re, sys
+log = open(sys.argv[1]).read()
+rows = re.findall(
+    r"DELIVERED_MB_BITMAP unique=(\d+) dup=(\d+) oob=(\d+) expected=(\d+) fault_drop=(\d+) real_ref=(\d+)",
+    log,
+)
+# Product mode: real_ref=0; need a P-slice 300 unique delivery (no drop).
+ok = [t for t in rows if t[5] == "0" and t[0] == t[3] == "300" and t[1] == "0" and t[4] == "0"]
+if not ok:
+    raise SystemExit(f"FAIL product DELIVERED_MB_BITMAP need unique=300: {rows!r}")
+print(f"OK product-mode DELIVERED_MB_BITMAP unique=300 (n={len(ok)})")
+PY
+
+# Mutation FAULT_DROP_TRAV_MB — product mode must NOT cover 300 uniquely.
+BUILD_DROP="$ROOT/build/verilator/stream_path_full_frame_fault_drop"
+mkdir -p "$BUILD_DROP"
+"$RUN_VERILATOR" --cc --exe --build \
+  --Mdir "$BUILD_DROP" \
+  --top-module stream_path_full_frame_tb -GFRAME_W="$WIDTH" -GFRAME_H="$HEIGHT" \
+  -GUSE_REAL_REF_COMMIT=0 -GFAULT_DROP_TRAV_MB=1 -Wno-fatal \
+  -CFLAGS "-std=c++17 -O2" \
+  "$TOP" "${RTL_ARGS[@]}" "$TB"
+DROP_LOG="$REAL_REF_DIR/fault_drop_trav.log"
+"$BUILD_DROP/Vstream_path_full_frame_tb" \
+  --annexb "$BITSTREAM" --golden-planes "$GOLDEN_PLANES" --golden-manifest "$GOLDEN_MANIFEST" \
+  --native-candidate-i420-out "$REAL_REF_DIR/fault_drop_candidate.i420" \
+  --inter-metadata-out "$REAL_REF_DIR/fault_drop_metadata.json" --sequence "$SEQUENCE" \
+  --source-sha256 "$SOURCE_SHA" --width "$WIDTH" --height "$HEIGHT" \
+  --json-out "$REAL_REF_DIR/fault_drop_compare.json" \
+  --expect-red >"$DROP_LOG" 2>&1 || true
+python3 - "$DROP_LOG" <<'PY'
+import re, sys
+log = open(sys.argv[1]).read()
+rows = re.findall(
+    r"DELIVERED_MB_BITMAP unique=(\d+) dup=(\d+) oob=(\d+) expected=(\d+) fault_drop=(\d+)",
+    log,
+)
+if not rows:
+    raise SystemExit("FAIL FAULT_DROP: no DELIVERED_MB_BITMAP")
+# RED: must not have a clean unique==expected==300 with fault_drop=1
+bad = [t for t in rows if t[4] == "1" and t[0] == t[3] == "300" and t[1] == "0"]
+if bad:
+    raise SystemExit(f"FAIL FAULT_DROP twin stayed GREEN (full cover): {bad!r}")
+print(f"OK FAULT_DROP_TRAV_MB RED (rows={rows[:4]!r}...)")
+PY
+
+# Mutation FAULT_DUP_STORE — real-ref store bitmap must show dup>0.
+BUILD_DUP="$ROOT/build/verilator/stream_path_full_frame_fault_dup"
+mkdir -p "$BUILD_DUP"
+"$RUN_VERILATOR" --cc --exe --build \
+  --Mdir "$BUILD_DUP" \
+  --top-module stream_path_full_frame_tb -GFRAME_W="$WIDTH" -GFRAME_H="$HEIGHT" \
+  -GUSE_REAL_REF_COMMIT=1 -GFAULT_DUP_STORE=1 -Wno-fatal \
+  -CFLAGS "-std=c++17 -O2" \
+  "$TOP" "${RTL_ARGS[@]}" "$TB"
+DUP_LOG="$REAL_REF_DIR/fault_dup_store.log"
+"$BUILD_DUP/Vstream_path_full_frame_tb" \
+  --annexb "$BITSTREAM" --golden-planes "$GOLDEN_PLANES" --golden-manifest "$GOLDEN_MANIFEST" \
+  --native-candidate-i420-out "$REAL_REF_DIR/fault_dup_candidate.i420" \
+  --inter-metadata-out "$REAL_REF_DIR/fault_dup_metadata.json" --sequence "$SEQUENCE" \
+  --source-sha256 "$SOURCE_SHA" --width "$WIDTH" --height "$HEIGHT" \
+  --json-out "$REAL_REF_DIR/fault_dup_compare.json" \
+  --real-ref --expect-red >"$DUP_LOG" 2>&1 || true
+python3 - "$DUP_LOG" <<'PY'
+import re, sys
+log = open(sys.argv[1]).read()
+rows = re.findall(
+    r"STORE_MB_BITMAP unique=(\d+) dup=(\d+) oob=(\d+) expected=(\d+) fault_dup=(\d+)",
+    log,
+)
+if not rows:
+    raise SystemExit("FAIL FAULT_DUP: no STORE_MB_BITMAP")
+red = [t for t in rows if t[4] == "1" and int(t[1]) > 0]
+if not red:
+    raise SystemExit(f"FAIL FAULT_DUP twin stayed GREEN (dup=0): {rows!r}")
+print(f"OK FAULT_DUP_STORE RED (sample={red[0]!r})")
+PY
+
 echo "OK REAL_REF_MEASURE complete"
