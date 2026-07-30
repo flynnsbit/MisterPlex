@@ -88,3 +88,5 @@ ALM card: `.agent-work/integ-wiring/serial-deblock-map1-ALMS.txt`
 ### Why not “unroll edges”
 wire3 taught combo 16×16 qpel = 318k ALMs. wire4 taught multi-port deblock windows = ~34k.  
 v1 serial still 25k — better than 34k but **not shippable**.
+## coord-map2 (2026-07-30)
+See docs/coord-map2-ALMS.txt. Decode path at traverse@6dc5993 maps to ~1.24M ALMs (traverse alone ~1.18M comb). **Scoped design does not fit.**

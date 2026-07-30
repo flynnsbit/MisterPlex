@@ -1,0 +1,104 @@
+coord-map2 — decode-path area (quartus_map only, no fit)
+=========================================================
+Date: 2026-07-30
+Pass: coord-map2d
+true rc=0 (quartus_map)
+Log:  .agent-work/integ-wiring/quartus_map_coord2d.log
+RPT:  .agent-work/integ-wiring/coord-map2d.Plex.map.rpt
+Freeze: .agent-work/integ-wiring/COORD_MAP2_FREEZE.txt
+
+Freeze SHAs
+-----------
+product base:     7a9cb598 (feat/disp-fix identity-deblock product) + docs a4f8abd
+traverse modules: 6dc5993  (sv-traverse claimed 300/300 I luma)
+build dir only:   /home/flynnsbit/mplex-builds/coord-map2b/  (probe wiring; NOT product tree)
+
+Method
+------
+Product tree + map_decode_area_probe force-elab of five modules.
+keep_hash XORed into residual_csum via (* noprune *) sticky — without a live
+fanout Quartus prunes the entire probe (coord-map2b lesson: elab ≠ kept).
+
+PRE-REGISTER (before measure)
+-----------------------------
+product: ~21645 ALMs / DSP 74 (coord-map1)
+decode five: UNKNOWN — hoped low-thousands each if cycle-iterative
+deblock serial prior: 25433 ALMs (already MISS vs ≤2500)
+
+MEASURED — whole design (Plex.map.rpt)
+--------------------------------------
+Estimate of Logic utilization (ALMs needed): 1,241,952
+Total DSP blocks: 149
+Total block memory bits: 2,997,709
+
+MEASURED — hierarchical Combinational ALUTs / regs (Resource Utilization by Entity)
+------------------------------------------------------------------------------------
+(Cyclone V map table reports ALUTs; ALM estimate above is the fit-relevant number.)
+
+| Module                         | Comb ALUTs      | Regs     | DSP col | Notes |
+|--------------------------------|-----------------|----------|---------|-------|
+| sys_top                        | 1,264,119       | 124,257  | 149     | whole |
+| map_decode_area_probe          | 1,228,928       | 101,890  | 97      | sum of five + kids |
+| h264_p_mb_traverse:u_trav      | 1,180,271       |  71,982  | 1       | SELF 1,177,415 — KILLER |
+|   h264_cavlc_residual_block    |     2,072       |     713  | 0       | child of traverse |
+| h264_i_res_recon_sink:u_sink   |    40,439       |  15,343  | 64      | alone ~device |
+|   h264_intra16x16_pred         |    10,805       |   2,285  | 0       | |
+|   h264_intra4x4_pred           |     1,490       |       0  | 0       | |
+| h264_i16_dc_hadamard:u_had     |     1,557       |       0  | 32      | combo Hadamard |
+| h264_recon_frame_store:u_rfs   |     6,413       |  14,358  | 0       | MB_COUNT=4 probe only |
+| h264_recon_export:u_exp        |       210       |     188  | 0       | cheap |
+| decode_stub (product, no probe)|    10,931       |   5,064  | 32*     | *M10K col not DSP |
+| h264_mc_luma_qpel (serial)     |       576       |     288  | 0       | wire6 serial OK |
+| h264_deblock_mb (identity)     |     1,094       |   2,199  | 0       | stub |
+
+RFS full-size memory (analytical, not mapped at 300):
+  MB_COUNT=300 * 384 * 8 = 921,600 bits ≈ 90 M10K if inferred.
+  Map used MB_COUNT=4 after full-size uninferred-as-regs → Error 276003.
+  Combo async-read form does not infer M10K; needs registered SDP template.
+
+PREDICTION SCORE
+----------------
+MISS. Hoped decode path "low thousands ALMs"; measured ~1.2M ALMs needed.
+Same failure class as combo qpel (318,897 ALMs): functional sim-pass RTL that
+is combinationally unrolled / multi-port logic-RAM and physically unsynthesizable.
+
+FIT ARITHMETIC vs device 41,910 ALMs
+------------------------------------
+  product wire6/map1 .............. 21,645 ALMs   (52%)
+  + decode path (map2d probe) ..... ~1,220,000    (traverse dominates)
+  + real deblock serial prior ..... 25,433
+  + chroma (sv-mvd) ............... UNKNOWN (not on this freeze)
+  --------------------------------------------
+  product + decode only ........... >> 41,910     DOES NOT FIT
+  product + deblock only .......... 21,645+25,433 = 47,078 = 112%  DOES NOT FIT
+  product + cheap recon_export .... 21,645+~200   fits residual
+
+PLAIN ANSWER: the design as scoped (product + traverse@6dc5993 decode path
++ real deblock + future chroma) CANNOT FIT the DE10-Nano Cyclone V.
+
+What must change before any product integrate of traverse:
+  1. h264_p_mb_traverse: ~1.18M → target low-thousands (serial bit-reader,
+     M10K rbsp window, no combo multi-kB decode trees). Same method as qpel.
+  2. h264_i_res_recon_sink: 40k → low-thousands (share pred datapath; M10K top_row).
+  3. h264_i16_dc_hadamard: 1557 + 32 DSP — borderline OK if shared/time-muxed.
+  4. h264_recon_frame_store: M10K registered read; full 300 MB mem ~90 M10K.
+  5. deblock: still need ≤~2.5k serial (prior serial map 25k MISS); or drop
+     loop filter from silicon and keep identity stub.
+  6. chroma (mvd): measure in coord-map3 after traverse area crash diet.
+
+Budget sketch IF traverse+sink reduced to e.g. 4k+2k and deblock to 2.5k:
+  21645 + 4000 + 2000 + 2500 + chroma(?) + RFS logic
+  ≈ 30k + chroma  → maybe fits with ~10k headroom for chroma/ascal slack.
+  That is aspirational — not measured.
+
+lanes freeze notice
+-------------------
+sv-traverse: modules at 6dc5993 are functionally strong (300/300 I luma claim)
+but area HARD_FAIL class. Area redesign is now on the critical path equal to
+correctness. Do not assume integrate can absorb current RTL.
+sv-mvd: wait for traverse area crash before stacking chroma map; one more
+coord-map after your freeze SHA.
+sv-integrate: owns next map; no fit/RBF/deploy without parent SHA authorise.
+
+fits ≠ decodes; map-ALMs ≠ product decode quality.
+wire6 shipped 14eaeff3 still identity-deblock, intra=0 product path.
