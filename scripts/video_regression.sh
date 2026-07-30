@@ -29,7 +29,23 @@ FRAMES="${FRAMES:-45}"
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 BASE_CORE_MD5=dfebf2bfd08dd70b473b587dd7e81848
+
+# Accepted daemon binaries for the baseline bundle.
+#
+#   7cd10b4d  the pristine v0.2.0 release asset. Good video, but it also ships
+#             two defects measured on hardware: the Plex Web timeline is frozen
+#             at 0:00 (v0.2.0 has no pms_timeline.cpp at all) and the GDM
+#             self-reply storm burns a core at idle (measured 99 %onecpu).
+#   ed6af644  hybrid/v0.2.0-timeline: v0.2.0's 320x240 SPI present path plus the
+#             PMS timeline reporter and the gdmIsDiscoveryProbe filter. Measured
+#             on hardware: timeline advances 0 -> 8511 -> 17874 -> 26637 ms,
+#             idle 1 %onecpu, edge fingerprint LEFT spread 0 / RIGHT spread 0.
+#
+# Both must produce the SAME video fingerprint, because the hybrid deliberately
+# does not touch the present path. A video difference between them is a real
+# regression and must fail.
 BASE_DAEMON_MD5=7cd10b4d438c714a9b8c4766dc982d59
+HYBRID_DAEMON_MD5=ed6af6447856e5a54ce27f77d4181047
 
 # Test clip: the 240p burned-in-telemetry ladder entry. Its overlay text makes
 # left-edge clipping obvious to the eye as well as to the measurement.
@@ -48,9 +64,9 @@ verify_baseline() {
   [ "$got_core" = "$BASE_CORE_MD5" ] \
     && echo "OK   core   $got_core" \
     || { echo "FAIL core   got='$got_core' want='$BASE_CORE_MD5'"; rc=1; }
-  [ "$got_daemon" = "$BASE_DAEMON_MD5" ] \
+  [ "$got_daemon" = "$BASE_DAEMON_MD5" ] || [ "$got_daemon" = "$HYBRID_DAEMON_MD5" ] \
     && echo "OK   daemon $got_daemon" \
-    || { echo "FAIL daemon got='$got_daemon' want='$BASE_DAEMON_MD5'"; rc=1; }
+    || { echo "FAIL daemon got='$got_daemon' want='$BASE_DAEMON_MD5' or '$HYBRID_DAEMON_MD5'"; rc=1; }
   return $rc
 }
 

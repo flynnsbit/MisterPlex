@@ -28,6 +28,41 @@ PORT=3005
 
 ts() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 
+DEV_CORE=/media/fat/Plex.rbf
+V2_CORE=/media/fat/_Utility/Plex_v2.rbf
+V3_CORE=/media/fat/_Utility/Plex_v3.rbf
+
+# Load an RBF and prove the load actually happened.
+#
+# There is NO way to read back which bitstream is live: /tmp/CORENAME and
+# /tmp/RBFNAME both come from the bitstream CONF_STR, and every Plex build
+# reports "Plex", so Plex.rbf, Plex_v2.rbf and Plex_v3.rbf are indistinguishable
+# by name. Measured on hardware: after loading Plex_v2.rbf, RBFNAME was [Plex].
+#
+# What IS observable is that /tmp/RBFNAME's mtime advances on every load, so use
+# that as the "the core really reloaded" signal. Confirming *which* core is live
+# requires an HDMI capture fingerprint (tools/measure_edges.py) and is the
+# caller's job, not this function's.
+load_core() {
+  core="$1"
+  [ -f "$core" ] || { echo "ERROR no core at $core"; return 2; }
+  before=$(stat -c %Y /tmp/RBFNAME 2>/dev/null || echo 0)
+  printf 'load_core %s\n' "$core" > /dev/MiSTer_cmd
+  i=0
+  while [ "$i" -lt 40 ]; do
+    sleep 0.5
+    after=$(stat -c %Y /tmp/RBFNAME 2>/dev/null || echo 0)
+    if [ "$after" != "$before" ]; then
+      echo "$(ts) CORE_LOADED $core (RBFNAME mtime $before -> $after)"
+      sleep 3
+      return 0
+    fi
+    i=$((i + 1))
+  done
+  echo "CORE_LOAD_UNCONFIRMED $core (RBFNAME mtime did not advance from $before)"
+  return 4
+}
+
 # Supervisor patterns, most-supervisory first, so nothing respawns the daemon
 # underneath us. dedupe_daemon.sh is the legacy racy launcher and must never be
 # left running alongside this one.
@@ -45,7 +80,7 @@ pids_matching() {
     p=${d#/proc/}
     if [ "$p" = "$$" ]; then continue; fi
     [ -r "$d/cmdline" ] || continue
-    cmd=$(tr '\0' ' ' < "$d/cmdline" 2>/dev/null) || continue
+    cmd=$( (tr '\0' ' ' < "$d/cmdline") 2>/dev/null ) || continue
     # Never match this controller or its own forked subshells, which inherit
     # the parent cmdline and would otherwise look like a target process.
     case "$cmd" in
@@ -153,10 +188,23 @@ start_bundle() {
   status
 }
 
+# Full graceful cycle: stop the daemon FIRST (so nothing writes frames while the
+# fabric is reconfiguring, and so the binary is not busy), reload the core, prove
+# it loaded, then bring the daemon back up.
+reload_bundle() {
+  root="$1"
+  core="$2"
+  stop_all || exit 9
+  load_core "$core" || exit 4
+  start_bundle "$root"
+}
+
 case "${1:-status}" in
-  dev)    start_bundle "$DEV_ROOT" ;;
-  v2)     start_bundle "$V2_ROOT" ;;
-  stop)   stop_all && echo "stopped" && status ;;
-  status) status ;;
-  *)      echo "usage: $0 {dev|v2|stop|status}"; exit 1 ;;
+  dev)        start_bundle "$DEV_ROOT" ;;
+  v2)         start_bundle "$V2_ROOT" ;;
+  reload-dev) reload_bundle "$DEV_ROOT" "$DEV_CORE" ;;
+  reload-v2)  reload_bundle "$V2_ROOT" "$V2_CORE" ;;
+  stop)       stop_all && echo "stopped" && status ;;
+  status)     status ;;
+  *)          echo "usage: $0 {dev|v2|reload-dev|reload-v2|stop|status}"; exit 1 ;;
 esac
