@@ -1,0 +1,84 @@
+AFTER-v8 CARD — w-bounce2 2026-07-30
+==============================================================================
+IDENTITY (leave)
+==============================================================================
+live md5     4cbee6ffc72beeba0d4c3641ef7299fd  (true v8b)
+false v8     98e8c8da… ROLLED BACK (missing SPI→doorbell promote)
+rollback arm v7 703b2fd410dd0098089b565e7b9b5167 (used mid-window)
+--id         misterplex-dev
+CORENAME     Plex
+RBF          14eaeff3270a6f59a434e0f777ed823d untouched
+conf         PRESENT=fpga STREAM=0 DECODE=320x240 PRESENT_PROFILE=0
+supervise    hook both startup files; live supervise 1 + daemon 1
+bootcore     untouched (still commented)
+
+==============================================================================
+BEFORE (v7 703b2fd4) — death falsify
+==============================================================================
+PREDICT: :3005 DOWN; waitpid captures signal
+ACTUAL:  B3_MISS twice
+  - remote_v7_death_falsify: re-entrant + resolve-fail + 8 burst — port_up=1
+    WRAP_LOG: only WRAP_SPAWN (no WRAP_EXIT) — process never died
+  - concurrent hammer 40+30 parallel playMedia: still up; hammer hung on wgets
+    (killed hammer shells; daemon stayed)
+SIGNAL: still UNKNOWN (death not reproduced under waitpid)
+PUBLISHED MISS: controlled re-entry did not kill v7. Mechanism (code) still
+valid; field race may be timing-rare. Do not claim B3_HIT.
+
+==============================================================================
+FALSE v8 98e8c8da — HARD FAIL → ROLLBACK
+==============================================================================
+Cause (evidence): bounce2 freeze lacked b6071fa promote path.
+  strings freeze: NO "promoted SPI" / "kick mode=doorbell"
+  strings v7: HAS those lines
+  git merge-base --is-ancestor b6071fa HEAD → rc=1 (not ancestor at build)
+Steady on 98e8c8da:
+  ddr_doorbell_us_p ≈ 13392–16046 µs (avg/presented) = ~14ms  FAIL ≥2ms
+  ddr_cpu_us_p ≈ 11.3–11.6 ms  FAIL ≥5ms
+  combined_onecpu=125.64 (hard ≤126 HIT bare; stretch MISS)
+  no promote log line
+ROLLBACK: live restored 703b2fd4; promote strings present on binary.
+
+==============================================================================
+TRUE v8b 4cbee6ff = race fix 1e27506 + doorbell promote 2a4e406 (b6071fa)
+==============================================================================
+PREDICT after: :3005 stays up; doorbell≪1ms; ddr_cpu~1.5ms; combined≈114;
+  409; seek+stop flat; pfps≈vfps; MENU FIRE/SILENT
+
+| gate | bar | measured | score |
+|------|-----|----------|-------|
+| promote SPI→doorbell | log lines | both lines present | HIT |
+| ddr_doorbell | ≪1ms fail≥2ms | steady 1 µs (first win 143µs incl SPI) | HIT |
+| ddr_cpu | ~1.5ms fail≥5ms | 1414–1621 µs | HIT |
+| combined CPU | ≤120.5 stretch / ≤126 hard | 117.66 (mp=99.22 ff=18.44 dt=20.117s) | HIT both |
+| death seq port | stays up | A2_HIT port_up | HIT |
+| wrong-target | 409 | 409 | HIT |
+| seek+stop flat | frames unchanged after stop | 150→150 | HIT |
+| pfps≈vfps | ~29.9 | 29.9/29.9 drops=1 @~40s | HIT |
+| MENU SILENT on Plex | no warn | SILENT_ON_PLEX=HIT | HIT |
+| MENU FIRE on MENU | warn | FIRE_ON_MENU=HIT (CORENAME=MENU ERROR lines) | HIT |
+| RBF untouched | 14eaeff3 | 14eaeff3 | HIT |
+| supervise loud exit | SUPERVISE_EXIT log | observed exit_status=0 on soft kill + respawn backoff | HIT |
+
+vs v7 clean 114.65: combined 117.66 is +3.0 — within noise on 20s window; both clear stretch.
+vs false-v8 125.64 / 14ms doorbell: true v8b restores v7 wins.
+
+==============================================================================
+HOST GATES (pre-device)
+==============================================================================
+cast target/ctrl/seek-stop: PASS (earlier)
+private-data: PASS after IP redact
+make unit: rc=2 under concurrent Quartus + low-mem override — NOT cited as green
+  (critical skip live-PMS baseline; osd/latch/redact FAIL under that run — suspect)
+
+==============================================================================
+UNKNOWNS / FOLLOW-UPS
+==============================================================================
+U1 Exact waitpid signal of historical field deaths — still UNKNOWN (B3 miss)
+U2 ensure_daemon on claim cleanup can start a second bare daemon alongside
+   supervise — observed dual; leave scripts force single supervise. Soft bounce
+   ensure_daemon should prefer supervise if hook installed (not done this window).
+U3 Empty-CORENAME debounce — not observed needed after bounce settle
+
+NO further device thrash. User leave: v8b 4cbee6ff + supervise + Plex + PROFILE=0.
+Rollback armed: v7 703b2fd4 on prev-c2 / prev-v7; never 06c5735a.

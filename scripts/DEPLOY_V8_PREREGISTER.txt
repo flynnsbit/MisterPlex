@@ -1,0 +1,29 @@
+V8 PREREGISTER — w-bounce2
+tip functional: 1e27506 (idle×initPresent) on v7 tree 703b2fd4 lineage
+rollback: v7 703b2fd410dd0098089b565e7b9b5167 ; behind a56bbc3c ; NEVER 06c5735a
+RBF untouched 14eaeff3 ; conf/token/bootcore untouched ; no reboot
+visible bounce ; one deploy ; bounce2 owns device
+
+DURATION predict: build+gates 5-15m ; hook ~60s ; v7 falsify 3-5m ; v8 deploy+after 3-5m ; total ~20-30m wall
+
+BEFORE (live v7 703b2fd4):
+  B1 wrap daemon waitpid — capture EXIT:$? / WIFSIGNALED
+  B2 re-entrant playMedia + resolve→testsrc (R1-R5)
+  B3 EXPECT :3005 goes DOWN (process death) — MISS if stays up
+  B4 signal published whatever it is
+
+AFTER v8:
+  A1 transfer md5 must match freeze ; refuse else
+  A2 identical sequence :3005 STAYS UP
+  A3 ddr_doorbell <<1ms fail>=2ms
+  A4 ddr_cpu ~1.5ms fail>=5ms
+  A5 combined ~114 (soft; jiff if time)
+  A6 wrong-target 409
+  A7 seek+stop flat
+  A8 pfps≈vfps
+  A9 MENU warn FIRE on MENU / SILENT on Plex
+  A10 hook supervise logs EXIT on kill test (optional brief) + product id misterplex-dev
+
+HOOK:
+  respawn with backoff ; loud distinct restart log with exit status
+  additive idempotent both startup files ; bak first ; no bootcore
