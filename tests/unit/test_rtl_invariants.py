@@ -1522,6 +1522,21 @@ def check_present_geometry_stride_contract() -> None:
                 "640x480 presentation must map to the declared 624x480 coded / 618x480 display geometry",
             ),
             (
+                host_norm,
+                "inlineDdrFrameGeometryproductDdrFrameStoreGeometry(){returnplex480pDdrFrameGeometry();}",
+                "product silicon canvas helper must alias the declared 624x480 plex480p contract",
+            ),
+            (
+                host_norm,
+                "inlineDdrFrameGeometryddrFrameGeometryForFpgaPresent(CodedWidth",
+                "FPGA present path must route every decode tier through ddrFrameGeometryForFpgaPresent",
+            ),
+            (
+                media_norm,
+                "wantFpgaDdrCanvas?ddrFrameGeometryForFpgaPresent(outW_,outH_)",
+                "PRESENT=fpga|both must select silicon canvas geometry, never identity-320 from DECODE",
+            ),
+            (
                 media_norm,
                 "constintrawW=ddrGeometry.coded_width.get();",
                 "FFmpeg rawvideo width must be the coded stride width (624) for FPGA-presented 480p",

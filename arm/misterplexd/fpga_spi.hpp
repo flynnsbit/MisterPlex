@@ -315,7 +315,9 @@ private:
     bool ddrMemSync_ = true;
     bool ddrMemFlush_ = false;
     DdrTiming lastDdrTiming_{};
-    DdrFrameLayout ddrLayout_ = makeDdrFrameLayout(320, 240);
+    // Default to the product silicon canvas (624 coded). DECODE=320x240 must not
+    // leave the doorbell/stride at the packed-320 layout or the first frame shears.
+    DdrFrameLayout ddrLayout_ = makeDdrFrameLayout(productDdrFrameStoreGeometry());
     uint32_t doorbellSeq_ = 0;
     double lastDdrBankDoorbellMs_[2] = {-1.0, -1.0};
     bool mboxInit_ = false;

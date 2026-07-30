@@ -4,6 +4,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 
 namespace misterplex {
 
@@ -201,6 +202,11 @@ inline DdrFrameGeometry plex480pDdrFrameGeometry() {
 
 // Map a *presented* scanout size to DDR geometry. 640x480 presented is the
 // plex480p pillarbox contract (coded 624); other sizes fall back to identity.
+//
+// WARNING: do not pass a DECODE/content tier (e.g. 320x240) here and expect a
+// frame the product FPGA can scan out. Product silicon CODED_W/CODED_H are
+// compile-time constants (see productDdrFrameStoreGeometry). Use
+// ddrFrameGeometryForFpgaPresent() for any FPGA DDR publish path.
 inline DdrFrameGeometry ddrFrameGeometryForPresentedSize(PresentedWidth width,
                                                          PresentedHeight height) {
     if (width == kPlex480pPresentedWidth && height == kPlex480pPresentedHeight)
@@ -210,6 +216,30 @@ inline DdrFrameGeometry ddrFrameGeometryForPresentedSize(PresentedWidth width,
 
 inline DdrFrameGeometry ddrFrameGeometryForPresentedSize(int width, int height) {
     return ddrFrameGeometryForPresentedSize(PresentedWidth{width}, PresentedHeight{height});
+}
+
+// Product FPGA DDR frame-store geometry — a SILICON CONSTANT, not DECODE.
+// present_core.sv wires ddr_frame_store with:
+//   CODED_W = DDR_FRAME_CODED_WIDTH (624), Y_LINE_QWORDS = CODED_W/8,
+//   FRAME_W = 640 presented scanout, bank/doorbell from ddr_frame_layout_params.svh.
+// There is no runtime stride/width register the ARM can program. DECODE/OSD O[4]
+// only selects the PMS source ladder; the writer must always emit this canvas
+// (scale+pad content into it) or the image shears line-to-line.
+inline DdrFrameGeometry productDdrFrameStoreGeometry() {
+    return plex480pDdrFrameGeometry();
+}
+
+// FPGA-present geometry for any content/decode tier. Decode WxH is intentionally
+// ignored: a 320x240 source still occupies the 624-byte-stride coded bank after
+// force_original_aspect_ratio=decrease + pad. Returning identity-320 here is the
+// shear defect (ARM line_bytes=320 vs RTL CODED_W=624).
+inline DdrFrameGeometry ddrFrameGeometryForFpgaPresent(CodedWidth /*decodeWidth*/,
+                                                      CodedHeight /*decodeHeight*/) {
+    return productDdrFrameStoreGeometry();
+}
+
+inline DdrFrameGeometry ddrFrameGeometryForFpgaPresent(int decodeWidth, int decodeHeight) {
+    return ddrFrameGeometryForFpgaPresent(CodedWidth{decodeWidth}, CodedHeight{decodeHeight});
 }
 
 inline DdrFrameLayout makeDdrFrameLayout(const DdrFrameGeometry& geom,
@@ -315,6 +345,107 @@ inline bool ddrFrameLayoutValid(const DdrFrameLayout& l) {
     const uint32_t bank1End = bank1 + static_cast<uint32_t>(l.frame_bytes);
     return bank0End <= bank1 && bank1End <= l.doorbell_phys && l.doorbell_phys + 0x1000u <=
                                                         l.phys_base + l.map_bytes;
+}
+
+// True when a layout matches the product silicon frame-store contract (stride,
+// bank, doorbell, coded size). Used by unit gates so ARM/RTL divergence fails
+// in `make unit` instead of as a sheared picture on HDMI.
+inline bool ddrFrameLayoutMatchesProductSilicon(const DdrFrameLayout& l) {
+    if (!ddrFrameLayoutValid(l))
+        return false;
+    if (l.format != DdrFrameFormat::Yuv420p)
+        return false;
+    if (l.coded_width.get() != kPlex480pCodedWidth.get() ||
+        l.coded_height.get() != kPlex480pCodedHeight.get())
+        return false;
+    if (l.line_bytes != kPlex480pYStrideBytes ||
+        l.chroma_line_bytes != kPlex480pChromaStrideBytes)
+        return false;
+    if (l.line_qwords != kPlex480pYuvLumaLineQwords ||
+        l.chroma_line_qwords != kPlex480pYuvChromaLineQwords)
+        return false;
+    if (l.frame_bytes != static_cast<size_t>(kPlex480pYuv420pBytes))
+        return false;
+    if (l.y_offset != static_cast<uint32_t>(kPlex480pYPlaneOffset) ||
+        l.u_offset != static_cast<uint32_t>(kPlex480pUPlaneOffset) ||
+        l.v_offset != static_cast<uint32_t>(kPlex480pVPlaneOffset))
+        return false;
+    if (l.bank_stride != kPlex480pYuv420pBankStride ||
+        l.doorbell_phys != kPlex480pYuv420pDoorbellPhys)
+        return false;
+    return true;
+}
+
+// Center-copy a source I420 frame into a destination coded bank (black-filled).
+// Used when STREAM recon produces a smaller MB frame than the silicon canvas so
+// the publish path still rings the product 624-stride doorbell layout.
+// src must be tightly packed srcW×srcH I420; dst must hold dstGeom coded I420.
+inline bool packYuv420pCenteredIntoCodedBank(const uint8_t* src, int srcW, int srcH,
+                                             uint8_t* dst, const DdrFrameGeometry& dstGeom) {
+    if (!src || !dst || srcW <= 0 || srcH <= 0 || (srcW & 1) || (srcH & 1))
+        return false;
+    const int dstW = dstGeom.coded_width.get();
+    const int dstH = dstGeom.coded_height.get();
+    if (dstW <= 0 || dstH <= 0 || (dstW & 1) || (dstH & 1))
+        return false;
+    if (srcW > dstW || srcH > dstH)
+        return false;
+
+    const size_t dstBytes = yuv420pFrameBytes(dstW, dstH);
+    if (dstBytes == 0)
+        return false;
+
+    // Video black (studio range) for unused coded columns/rows.
+    uint8_t* dstY = dst;
+    uint8_t* dstU = dst + static_cast<size_t>(dstW) * static_cast<size_t>(dstH);
+    uint8_t* dstV = dstU + static_cast<size_t>(dstW / 2) * static_cast<size_t>(dstH / 2);
+    std::memset(dstY, kYuv420BlackY, static_cast<size_t>(dstW) * static_cast<size_t>(dstH));
+    std::memset(dstU, kYuv420BlackU, static_cast<size_t>(dstW / 2) * static_cast<size_t>(dstH / 2));
+    std::memset(dstV, kYuv420BlackV, static_cast<size_t>(dstW / 2) * static_cast<size_t>(dstH / 2));
+
+    // Prefer centering inside the *display* crop window when one is declared so
+    // RTL crop+pillarbox still sees content in the visible columns.
+    const int boxW = dstGeom.display_width.get() > 0 ? dstGeom.display_width.get() : dstW;
+    const int boxH = dstGeom.display_height.get() > 0 ? dstGeom.display_height.get() : dstH;
+    const int boxX0 = dstGeom.crop_left;
+    const int boxY0 = dstGeom.crop_top;
+    int x0 = boxX0 + (boxW - srcW) / 2;
+    int y0 = boxY0 + (boxH - srcH) / 2;
+    if (x0 < 0)
+        x0 = 0;
+    if (y0 < 0)
+        y0 = 0;
+    // Keep even offsets for chroma alignment.
+    x0 &= ~1;
+    y0 &= ~1;
+    if (x0 + srcW > dstW || y0 + srcH > dstH)
+        return false;
+
+    const uint8_t* srcY = src;
+    const uint8_t* srcU = src + static_cast<size_t>(srcW) * static_cast<size_t>(srcH);
+    const uint8_t* srcV = srcU + static_cast<size_t>(srcW / 2) * static_cast<size_t>(srcH / 2);
+    for (int y = 0; y < srcH; ++y) {
+        std::memcpy(dstY + static_cast<size_t>(y0 + y) * static_cast<size_t>(dstW) +
+                        static_cast<size_t>(x0),
+                    srcY + static_cast<size_t>(y) * static_cast<size_t>(srcW),
+                    static_cast<size_t>(srcW));
+    }
+    const int cSrcW = srcW / 2;
+    const int cSrcH = srcH / 2;
+    const int cDstW = dstW / 2;
+    const int cx0 = x0 / 2;
+    const int cy0 = y0 / 2;
+    for (int y = 0; y < cSrcH; ++y) {
+        std::memcpy(dstU + static_cast<size_t>(cy0 + y) * static_cast<size_t>(cDstW) +
+                        static_cast<size_t>(cx0),
+                    srcU + static_cast<size_t>(y) * static_cast<size_t>(cSrcW),
+                    static_cast<size_t>(cSrcW));
+        std::memcpy(dstV + static_cast<size_t>(cy0 + y) * static_cast<size_t>(cDstW) +
+                        static_cast<size_t>(cx0),
+                    srcV + static_cast<size_t>(y) * static_cast<size_t>(cSrcW),
+                    static_cast<size_t>(cSrcW));
+    }
+    return true;
 }
 
 inline uint32_t ddrDoorbellHi(uint32_t seq, int bank, DdrFrameFormat format) {

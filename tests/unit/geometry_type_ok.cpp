@@ -43,6 +43,13 @@ int main() {
     CHECK(fromPresented.coded_width == kPlex480pCodedWidth);
     CHECK(fromPresented.presented_width == kPlex480pPresentedWidth);
 
+    // DECODE=320x240 must still select the silicon 624 canvas for FPGA present.
+    const auto from240 = ddrFrameGeometryForFpgaPresent(CodedWidth{320}, CodedHeight{240});
+    CHECK(from240.coded_width == kPlex480pCodedWidth);
+    CHECK(from240.presented_width == kPlex480pPresentedWidth);
+    CHECK(productDdrFrameStoreGeometry().coded_width == kPlex480pCodedWidth);
+    CHECK(ddrFrameLayoutMatchesProductSilicon(makeDdrFrameLayout(from240)));
+
     CHECK(weakBitrateKbpsForCodedSize(kPlex480pCodedWidth, kPlex480pCodedHeight) ==
           kPlex480pWeakBitrateKbps);
     CHECK(std::string_view(contentResolutionFor480p().label) == "624x480");

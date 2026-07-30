@@ -1399,29 +1399,37 @@ void MediaPlayer::streamPump(int sfd) {
             // C3 frame-store RTL is YUV-only. Never send RGB565 to the DDR doorbell.
             bool ok = false;
             if (useDdrF1_) {
-                // Accept any MB-aligned resolution within the frame store's capacity.
-                // This replaces the old hardcoded 624x480 gate that rejected 640x480
-                // STREAM-mode frames even though the RTL FRAME_W=640 accepts them.
+                // Silicon canvas is always productDdrFrameStoreGeometry() (624 coded).
+                // Accept any MB-aligned recon size that fits, then center-pack into
+                // the compile-time bank so line stride matches RTL CODED_W.
                 if (ddrFrameStoreAcceptsResolution(rec.width, rec.height)) {
-                    const DdrFrameGeometry g = makeDdrFrameGeometry(
-                        CodedWidth{rec.width}, CodedHeight{rec.height},
-                        DisplayWidth{rec.width}, DisplayHeight{rec.height},
-                        kPlex480pPresentedWidth, kPlex480pPresentedHeight,
-                        DdrFramePlacement::Pillarbox);
+                    const DdrFrameGeometry g = ddrFrameGeometryForFpgaPresent(
+                        CodedWidth{rec.width}, CodedHeight{rec.height});
+                    const DdrFrameLayout layout = makeDdrFrameLayout(
+                        g, kDdrFramePhysBase, kDdrFrameStrideAlign, DdrFrameFormat::Yuv420p);
                     ensureYuv420p();
-                    clearYuv420pCropPadding(yuv420p.data(), g);
-                    DdrPublishFrame frame{yuv420p.data(), yuv420p.size(), g,
-                                          DdrFrameFormat::Yuv420p};
-                    std::string ddrErr;
-                    std::lock_guard<std::mutex> lk(presentMu_);
-                    ok = publishDdrFrame(frame, "recon DDR", &ddrErr);
-                    if (!ok) {
-                        log("media: recon YUV420 DDR F1 unavailable: " +
-                            (ddrErr.empty() ? fpga_.lastError() : ddrErr));
-                    } else if ((reconOk % 30) == 0) {
-                        log("media: recon F1 via YUV420 DDR " +
-                            std::to_string(rec.width) + "x" + std::to_string(rec.height) +
-                            " " + std::to_string(static_cast<int>(fpga_.lastPushMs())) + "ms");
+                    std::vector<uint8_t> bank(layout.frame_bytes);
+                    if (!packYuv420pCenteredIntoCodedBank(yuv420p.data(), rec.width, rec.height,
+                                                          bank.data(), g)) {
+                        log("media: recon YUV420 pack into silicon canvas failed " +
+                            std::to_string(rec.width) + "x" + std::to_string(rec.height));
+                    } else {
+                        clearYuv420pCropPadding(bank.data(), g);
+                        DdrPublishFrame frame{bank.data(), bank.size(), g,
+                                              DdrFrameFormat::Yuv420p};
+                        std::string ddrErr;
+                        std::lock_guard<std::mutex> lk(presentMu_);
+                        ok = publishDdrFrame(frame, "recon DDR", &ddrErr);
+                        if (!ok) {
+                            log("media: recon YUV420 DDR F1 unavailable: " +
+                                (ddrErr.empty() ? fpga_.lastError() : ddrErr));
+                        } else if ((reconOk % 30) == 0) {
+                            log("media: recon F1 via YUV420 DDR " +
+                                std::to_string(rec.width) + "x" + std::to_string(rec.height) +
+                                "→" + std::to_string(g.coded_width.get()) + "x" +
+                                std::to_string(g.coded_height.get()) + " " +
+                                std::to_string(static_cast<int>(fpga_.lastPushMs())) + "ms");
+                        }
                     }
                 } else if (!reconDdrMismatchLogged) {
                     reconDdrMismatchLogged = true;
@@ -1991,10 +1999,14 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
     if (onProgress_)
         onProgress_("buffering", startMs, durationMs);
 
-    const bool fpgaOnlyPresent = (presentMode_ == "fpga");
+    // Product silicon CODED_W/H are compile-time (624x480). DECODE/outW_ only
+    // selects the PMS source ladder; FPGA DDR publish must always use the
+    // silicon canvas or line-stride shears (ARM 320 vs RTL 624).
+    const bool wantFpgaDdrCanvas =
+        (presentMode_ == "fpga" || presentMode_ == "both");
     const DdrFrameGeometry ddrGeometry =
-        fpgaOnlyPresent ? ddrFrameGeometryForPresentedSize(outW_, outH_)
-                        : makeDdrFrameGeometry(outW_, outH_);
+        wantFpgaDdrCanvas ? ddrFrameGeometryForFpgaPresent(outW_, outH_)
+                          : makeDdrFrameGeometry(outW_, outH_);
     const int rawW = ddrGeometry.coded_width.get();
     const int rawH = ddrGeometry.coded_height.get();
     const int rawDisplayW = ddrGeometry.display_width.get();
