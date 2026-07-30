@@ -123,6 +123,12 @@ private:
     std::thread httpThr_;
 
     mutable std::mutex mu_;
+    // Serialises transport control (pause/play/stop/seek/step/skip) so the
+    // timeline plant and MediaPlayer callback (SIGSTOP/SIGCONT/…) are one unit.
+    // HTTP workers are concurrent; without this, pause+play race leaves
+    // timeline=playing while ffmpeg is SIGSTOP'd (T). Never hold across header
+    // reads or long demux work — only the state transition + sync callback.
+    std::mutex ctrlMu_;
     std::string state_ = "stopped";
     int64_t timeMs_ = 0;
     int64_t durationMs_ = 0;

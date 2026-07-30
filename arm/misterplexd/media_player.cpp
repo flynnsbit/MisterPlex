@@ -970,6 +970,10 @@ void MediaPlayer::stop() {
 }
 
 void MediaPlayer::pause() {
+    // Serialize transport signals: concurrent pause/resume must not interleave
+    // SIGSTOP/SIGCONT with progress reports (Companion ctrlMu_ is the primary
+    // lock; this is defence-in-depth for any direct call path).
+    std::lock_guard<std::mutex> transport(transportMu_);
     paused_.store(true);
     signalChildren(SIGSTOP);
     showPlaybackOverlay(PlaybackOverlayState::Paused, positionMs_.load(), durationMs());
@@ -978,6 +982,7 @@ void MediaPlayer::pause() {
 }
 
 void MediaPlayer::resume() {
+    std::lock_guard<std::mutex> transport(transportMu_);
     paused_.store(false);
     signalChildren(SIGCONT);
     showPlaybackOverlay(PlaybackOverlayState::Playing, positionMs_.load(), durationMs());
