@@ -1041,42 +1041,51 @@ void Companion::httpServeClient(int c) {
             int64_t ms = parseOffsetMs(req, &present);
             if (ms < 0)
                 ms = 0;
-            int64_t d = 0;
-            int64_t curT = 0;
-            bool active = false;
-            {
-                std::lock_guard<std::mutex> lock(mu_);
-                d = durationMs_;
-                curT = timeMs_;
-                active = wantPlay_;
-                // Clamp seek into known duration so scrubber cannot overshoot.
-                if (d > 0 && ms > d)
-                    ms = d;
-            }
             // No offset=/viewOffset=/time=: ACK only (do not jump to 0 unintentionally).
             // Idle after stop: ACK only — do not re-arm player via onSeek
             // (stop leaves last URL; seekMs would restart without scrubber bind).
             // Same position after clamp: ACK only — avoid demux restart thrash
             // (Web sometimes re-sends the current scrubber thumb position).
-            const bool moved = present && (ms != curT);
+            // active/curT/duration MUST be read inside ctrlMu_ — a check outside the
+            // lock is not a check (stop can clear wantPlay_ between the snapshot and
+            // the plant, then onSeek_ restarts demux behind a completed stop).
             std::string body;
             {
 #ifndef CAST_CTRL_FAULT_NO_SERIALIZE
                 std::lock_guard<std::mutex> ctrl(ctrlMu_);
 #endif
+                int64_t d = 0;
+                int64_t curT = 0;
+                bool active = false;
+                {
+                    std::lock_guard<std::mutex> lock(mu_);
+                    d = durationMs_;
+                    curT = timeMs_;
+                    active = wantPlay_;
+                    // Clamp seek into known duration so scrubber cannot overshoot.
+                    if (d > 0 && ms > d)
+                        ms = d;
+                }
+                const bool moved = present && (ms != curT);
                 if (active && moved) {
                     // Atomic plant: scrub target + time under one lock so demux
                     // progress cannot interleave a stale pin between assign/setState.
+                    bool stillActive = false;
                     {
                         std::lock_guard<std::mutex> lock(mu_);
-                        scrubTargetMs_ = ms;
-                        timeMs_ = ms;
-                        if (d > 0)
-                            durationMs_ = d;
-                        state_ = "buffering";
-                        wantPlay_ = true;
+                        stillActive = wantPlay_;
+                        if (stillActive) {
+                            scrubTargetMs_ = ms;
+                            timeMs_ = ms;
+                            if (d > 0)
+                                durationMs_ = d;
+                            state_ = "buffering";
+                            wantPlay_ = true;
+                        }
                     }
-                    if (onSeek_)
+                    // onSeek_ only if session still live under ctrlMu_ (stop serialises
+                    // on the same lock, so a completed stop cannot be followed by this).
+                    if (stillActive && onSeek_)
                         onSeek_(ms); // async seek launch — returns quickly
                 }
                 body = timelineXml(queryParam(req, "commandID"));
@@ -1099,36 +1108,38 @@ void Companion::httpServeClient(int c) {
             }
             if (isStepBack)
                 step = -step;
-            int64_t t = 0, d = 0;
-            bool active = false;
-            int64_t target = 0;
-            int64_t applied = 0;
-            {
-                std::lock_guard<std::mutex> lock(mu_);
-                t = timeMs_;
-                d = durationMs_;
-                active = wantPlay_;
-                target = t + step;
-                if (target < 0)
-                    target = 0;
-                if (d > 0 && target > d)
-                    target = d;
-                applied = target - t;
-                // applied==0 at bounds: ACK only — no buffering thrash / player restart.
-                if (active && applied != 0) {
-                    scrubTargetMs_ = target;
-                    timeMs_ = target;
-                    if (d > 0)
-                        durationMs_ = d;
-                    state_ = "buffering";
-                    wantPlay_ = true;
-                }
-            }
+            // Plant + onSeek_ under ctrlMu_ with active read inside the lock
+            // (same stop/scrub class as seekTo — do not snapshot wantPlay_ outside).
             std::string body;
             {
 #ifndef CAST_CTRL_FAULT_NO_SERIALIZE
                 std::lock_guard<std::mutex> ctrl(ctrlMu_);
 #endif
+                int64_t t = 0, d = 0;
+                bool active = false;
+                int64_t target = 0;
+                int64_t applied = 0;
+                {
+                    std::lock_guard<std::mutex> lock(mu_);
+                    t = timeMs_;
+                    d = durationMs_;
+                    active = wantPlay_;
+                    target = t + step;
+                    if (target < 0)
+                        target = 0;
+                    if (d > 0 && target > d)
+                        target = d;
+                    applied = target - t;
+                    // applied==0 at bounds: ACK only — no buffering thrash / player restart.
+                    if (active && applied != 0) {
+                        scrubTargetMs_ = target;
+                        timeMs_ = target;
+                        if (d > 0)
+                            durationMs_ = d;
+                        state_ = "buffering";
+                        wantPlay_ = true;
+                    }
+                }
                 // Prefer absolute seek when available so player lands on clamped target
                 // even if positionMs lags companion timeMs_ (progress race).
                 if (active && applied != 0) {

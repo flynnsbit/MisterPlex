@@ -1,0 +1,41 @@
+V4 deploy pre-register (w-bounce2) — NOT executed until parent auth
+================================================================
+Candidate: arm-deploy-candidate @ 5826d2c
+ARM path:  .worktrees/w-arm-hybrid/build/arm/misterplexd
+ARM md5:   cd4f422945f50b0267a11290ec9e9adc
+file:      ELF 32-bit ARM EABI5 static
+x86 lab:   27cb16d99222013f2c9b3794ef76c09f  NEVER scp
+HAS:       bcc0027 ctrlMu_ serialize (+ 87f17f1 workers, a843f43 headers, …)
+
+Device baseline (read-only just now):
+  CORENAME=MENU
+  live md5=f230f95b…  --id=misterplex-dev
+  rollback snap before-20260730T013548Z = f230f95b… (= live)
+  prev-c2 = f230f95b…
+  RBF expect 41adb98c… (unchanged)
+
+Sequence (on auth):
+  1. no-force claim + visible bounce → CORENAME=Plex
+  2. daemon+conf only, no RBF; ARM cd4f4229… only
+  3. atomic backup → stage .new → mv; start --id misterplex-dev
+  4. verify on-box md5 + resources id
+  5. leave CORENAME=Plex, lock released for w-hybrid-arm real-PMS plan
+
+Pre-registered duration: 150–240 s wall (claim/bounce dominant)
+
+Rollback triggers → immediate restore (no debate):
+  R1 --id ≠ misterplex-dev
+  R2 ERROR present path failed | ERROR FPGA SPI unavailable
+  R3 frames/presents not advancing under CORENAME=Plex
+  R4 cast entry vanishes from Plex after select
+Command:
+  PREV_BIN=/media/fat/misterplex/backup/misterplexd.before-20260730T013548Z \
+  PREV_CONF=/media/fat/misterplex/backup/misterplex.conf.before-20260730T013548Z \
+    ./scripts/restore_misterplexd_prev.sh
+  (~5–15s; expect restored_md5=f230f95b… daemon_id_ok=misterplex-dev)
+  NEVER before-20260729T181129 (06c5735a)
+
+Dry-run:
+  ./scripts/DEPLOY_V4_RUNBOOK.sh
+  # true ship only:
+  PARENT_AUTHORIZE_DEPLOY=YES DEPLOY_EXECUTE=1 ./scripts/DEPLOY_V4_RUNBOOK.sh
