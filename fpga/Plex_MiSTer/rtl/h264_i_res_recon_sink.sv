@@ -1,7 +1,9 @@
 // I-slice residual → Clip1(pred + residual) MB plane sink.
 // plane_y + top_row via h264_byte_ram_sp (registered read: issue→wait→capture).
 // Serial neighbour fetch; serial IQ; serial I16 pred. NO new DSP.
-// RMW diet: no HAD_PAINT; MB_DUMP + I16 APPLY plane RMW pipelined 1/cy after fill.
+// RMW diet: no HAD_PAINT; MB_DUMP + I16 APPLY pipelined; skip MB_INIT (D).
+// D invariant: I-slice traverse exports all luma slots (zero if uncoded);
+// I16_PRED paints 256 or I4 APPLY×16 covers plane before DUMP. No new M10K.
 // FAULT_SERIAL_IQ_ZERO / FAULT_SERIAL_I16_PRED_128 / FAULT_SKIP_PLANE_NB.
 
 `default_nettype none
@@ -374,7 +376,8 @@ module h264_i_res_recon_sink #(
 						else
 							tl_mb <= 8'd128;
 						cnt <= 9'd0;
-						after_init_settle <= 1'b1;
+						after_init_settle <= 1'b0;
+						rd_ph <= RD_ISSUE;
 						lat_is_i16 <= res_blk_is_i16;
 						lat_is_luma <= res_blk_is_luma;
 						lat_idx <= res_blk_idx;
@@ -383,7 +386,10 @@ module h264_i_res_recon_sink #(
 						lat_mode <= res_blk_pred_mode;
 						for (ci = 0; ci < 16; ci = ci + 1)
 							lat_coeff[ci] <= res_blk_coeff[ci];
-						st <= ST_MB_INIT;
+						// D: skip ST_MB_INIT 256×128 fill. Plane covered before DUMP by
+						// I16_PRED (256 px) or I4 APPLY on all 16 slots (traverse
+						// zero-exports uncoded I-slice luma). See rmw_d prereg.
+						st <= ST_SETTLE;
 					end else begin
 						lat_is_i16 <= res_blk_is_i16;
 						lat_is_luma <= res_blk_is_luma;
@@ -416,20 +422,16 @@ module h264_i_res_recon_sink #(
 			end
 
 			//============================================================
+			// D: retained for stable state encoding; entry bypassed from IDLE.
+			// If ever re-entered, do not paint 128 — forward to SETTLE/IDLE.
 			ST_MB_INIT: begin
-				if (cnt < 9'd256) begin
-					py_we <= 1'b1;
-					py_waddr <= cnt[7:0];
-					py_wdata <= 8'd128;
-					cnt <= cnt + 9'd1;
-				end else begin
-					cnt <= 9'd0;
-					if (after_init_settle) begin
-						after_init_settle <= 1'b0;
-						st <= ST_SETTLE;
-					end else
-						st <= ST_IDLE;
-				end
+				cnt <= 9'd0;
+				rd_ph <= RD_ISSUE;
+				if (after_init_settle) begin
+					after_init_settle <= 1'b0;
+					st <= ST_SETTLE;
+				end else
+					st <= ST_IDLE;
 			end
 
 			//============================================================

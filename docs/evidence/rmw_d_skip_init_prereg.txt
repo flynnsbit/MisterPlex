@@ -1,0 +1,77 @@
+RMW D — SKIP MB_INIT — PRE-REGISTER (before RTL)
+================================================
+Lane: sv-traverse / tip base be9027c4 (RMW C)
+Authorised: skip ST_MB_INIT plane fill when plane always covered.
+NO new memories. NO new DSP/mul. NO de-serial IQ/I16. Target 2667.
+Bit-exact 300/300, 1170/1170, RED IQ-zero ≪300.
+
+------------------------------------------------------------------------
+INVARIANT (correctness — not clip-local)
+------------------------------------------------------------------------
+Claim: every luma sample of plane_y is written before ST_MB_DUMP for every
+MB the sink processes, without relying on MB_INIT's 128 fill.
+
+Evidence from design (quoted paths), not from clip scores:
+
+1) Sink input domain is I-slice residual only
+   h264_p_mb_traverse.sv export gates:
+     "Export only on I/IDR slices (P residual still bit-aligned here;
+      recon owned by P path)."  (cavlc complete → res_blk_valid if is_i_slice_r)
+   P-slice does not assert res_blk_valid to this sink today.
+
+2) I-slice always exports ALL luma schedule slots (coded OR zero)
+   ST_RES_SETUP when !res_slot_coded:
+     "// I-slice: still export zero-coeff luma so sink runs pred
+      // (uncoded residual ≠ skip prediction / neighbour write)."
+     if (is_i_slice_r &&
+         ((!is_i16_r && res_block_i < 5'd16) ||
+          (is_i16_r && res_block_i <= 5'd16))) → res_blk_valid + coeff=0
+   So uncoded I4 8x8 groups and I16 AC when cbp_l=0 still reach the sink.
+
+3) Coverage by MB type (sink writes)
+   I_16x16: ST_I16_PRED writes py_we for every i16_px_valid; h264_intra16x16_pred
+            serial emits k=0..255 then done (256 px). Runs on lat_idx==0 before AC.
+            AC APPLY only RMW; DUMP reads fully predicted plane.
+   I_NxN:   each lat_idx 0..15 → ST_APPLY_PX I4 writes 16 px (pred or recon).
+            16 blocks × 16 = 256. Order is residual scan; in-MB neighbours read
+            only prior blocks already APPLYed (same as with INIT).
+
+4) PCM / holes
+   mb_type I_PCM → unsupported <= 1 (traverse); does not complete product walk
+   into a partial sink MB. Non-luma slots: sink ST_SETTLE else → IDLE, no plane_y
+   write (chroma is plane_u/v regs, still cleared on new MB in IDLE).
+
+5) Measured schedule completeness (supports, does not prove alone)
+   rmw_ab clip1: blk_applied=5020, mb_written=299
+   221*17 + 79*16 = 5021 → all I16 (DC+16 AC) and all I4×16 applied.
+
+LANDMINE / contract dependency (publish):
+  If traverse ever stops zero-exporting uncoded I-slice luma slots, OR sink
+  begins consuming P-slice intra without a full pred schedule, OR PCM is
+  implemented without a full plane paint — MB_INIT must return.
+  Invariant is: "I-slice full luma slot export + I16_PRED/I4 APPLY coverage"
+  NOT "clips happen to be dense."
+
+  D does NOT skip clearing plane_u/v on new MB (still 128 in IDLE).
+
+------------------------------------------------------------------------
+PRE cycle / area
+------------------------------------------------------------------------
+  MB_INIT is 256 py_we beats once per MB (new mb_addr).
+  PRE save: −256 cy/MB all I MBs → paint_per_mb f0:
+    2620.4 − 256 ≈ 2364.4
+  PRE band: 2300 .. 2450
+  vs 2667: HIT with ~300 cy pad (was ~47 after C)
+  PRE ALM: −5 .. +20 (delete/bypass fill loop; keep state enum)
+  PRE DSP: 0
+  PRE M10K blocks: 0
+
+------------------------------------------------------------------------
+Verification
+------------------------------------------------------------------------
+1. This PRE on disk before RTL
+2. REAL_REF clip1+clip2+RED
+3. If bit-exact MISS → revert; do not "fix" with INIT 128 guess
+4. Document invariant in measure JSON + brief contract note
+
+END PRE-REG

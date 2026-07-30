@@ -1,0 +1,64 @@
+{
+  "lane": "sv-traverse",
+  "change": "RMW D: skip ST_MB_INIT plane 128-fill; coverage via I16_PRED/I4 APPLY under I-slice full luma export",
+  "source_sha_pre_commit": "be9027c419df80ddf25f142fba006aa8b2523419",
+  "sink_rtl_sha256_pre_commit": "adaff9dbf5ba0fba09dc203e1e290fa08ee32648857e0e8b080e382599ae4106",
+  "base_c_paint_per_mb_f0": 2620.387,
+  "budget_cy_mb_320x240_25fps_20MHz": 2667.0,
+  "invariant": {
+    "claim": "plane_y fully written before DUMP without MB_INIT",
+    "depends_on": [
+      "I-slice only export to sink (traverse is_i_slice_r)",
+      "zero-export all uncoded I-slice luma slots (ST_RES_SETUP exp_zero)",
+      "I16_PRED emits 256 px; I4 APPLY all 16 blocks",
+      "PCM unsupported"
+    ],
+    "landmine": "If traverse drops zero-export or sink takes partial P-intra/PCM, restore MB_INIT",
+    "not_clip_local": true
+  },
+  "prereg": {
+    "cy_paint_per_mb_f0_range": [
+      2300,
+      2450
+    ],
+    "mean_save_est": 256,
+    "alm_delta_range": [
+      -5,
+      20
+    ],
+    "dsp_delta": 0,
+    "m10k_new": 0,
+    "note": "docs/evidence/rmw_d_skip_init_prereg.txt"
+  },
+  "measured": {
+    "clip1_320": {
+      "paint_per_mb_frame0": 2474.07,
+      "delta_vs_C": 146.317,
+      "vs_budget_2667": 0.9277,
+      "pad_cy_vs_2667": 192.93,
+      "intra_y_mb": "300/300"
+    },
+    "clip2_624": {
+      "paint_per_mb_frame0": 2236.674,
+      "intra_y_mb": "1170/1170"
+    },
+    "red_fault_serial_iq_zero": {
+      "intra_y_mb": "0/300",
+      "verdict": "PASS_RED"
+    }
+  },
+  "prereg_verdict": {
+    "cy_range_2300_2450": "MISS",
+    "mean_save_256": "MISS",
+    "hard_budget_2667": "HIT",
+    "bitexact_clip1_300": "HIT",
+    "bitexact_clip2_1170": "HIT",
+    "red_twin": "HIT",
+    "note_save_miss": "paint dropped 146.3 not 256 \u2014 paint_per_mb not pure sink; possible write_busy/DPB hide. Sink still removed 256 INIT beats.",
+    "alm": "UNKNOWN_no_self_fit",
+    "dsp": "PRE_0_mul",
+    "m10k_new": 0
+  },
+  "chroma_pad_cy": 192.93,
+  "lever_E_named_not_done": "NB fetch pipe tens/MB \u2014 not spent yet"
+}
