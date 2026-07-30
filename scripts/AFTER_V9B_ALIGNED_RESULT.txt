@@ -1,0 +1,135 @@
+AFTER-v9b ALIGNED CAPTURE — w-bounce2 2026-07-30
+==============================================================================
+METHOD (parent-mandated correction)
+==============================================================================
+One wall clock. No fps scaling. Never difference misaligned windows.
+  HZ = 100 (python os.sysconf SC_CLK_TCK on device)
+  P = 100 × Δprocess_ticks / (HZ × Δwall)
+  B = 100 × Σ raw_bucket_cpu_us × 1e-6 / Δwall
+  CPU buckets only: read_cpu, pacing_wait_cpu, overlay_cpu, fb_cpu, pixel_cpu, ddr_cpu
+  Reconstruct: avg_* × frames|presented per present_profile batch in cleared-log window
+  G = P − B   name: **uninstrumented process CPU** (NOT "hidden burn", NOT "87-hole")
+
+Honest statement (required wording):
+  process CPU was P; instrumented buckets were B in the SAME window;
+  uninstrumented process CPU is G = P−B. The prior "87.5 gap" is not a
+  defensible measured quantity (misaligned PROFILE=0 process vs PROFILE=1
+  buckets + assumed fps). Retracted.
+
+==============================================================================
+IDENTITY (leave)
+==============================================================================
+live md5     e9c5e5a1f765dfa9ed9bb330f3f40582  (v9 unchanged — no rebuild)
+--id         misterplex-dev
+CORENAME     Plex
+RBF          14eaeff3… untouched
+conf         PRESENT=fpga STREAM=0 DECODE=320x240 PRESENT_PROFILE=0
+supervise    n_daemon=1 n_supervise=1
+CONTENT      PMS_REACHABLE=0 → testsrc2 both windows (metadata/11 missing)
+
+==============================================================================
+WINDOW A — PROFILE=1 aligned P/B  (tag=p1)  **PRIMARY**
+==============================================================================
+du=50.330s  dm=4874  df=881  dc=10076  same_mpid=yes  HZ=100
+CONTENT=testsrc
+
+  P  = 100*dm/(HZ*du)     = **96.841**
+  B  = 100*Σcpu_us/1e6/du = **6.531**   (4 batches × 300 frames = 1200 fr, 1197 presented)
+  G  = P − B              = **90.310**  uninstrumented process CPU
+
+  Hybrid cross-ref (same raw ticks, not the primary bar):
+    P_hybrid=96.745  Ff=17.487  Cb=114.232
+
+  Batch CPU totals (µs): 863721, 802800, 798600, 821700
+  Dominant bucket inside B: ddr_cpu (~0.46–0.50s per batch) then read_cpu ≈ pacing_cpu
+
+  LIMIT — B undercount: log emits only complete 300-frame batches; partial
+  trailing frames in the wall window are not in B. sum_frames=1200 over 50.3s
+  ≈ 23.8 completed-batch fps equivalent; last partial batch omitted.
+  Even if B were ~8 (full media buckets), G would remain ~89. **Uninstrumented
+  dominates; B is not the bulk of P.**
+
+  shell tid sampler in this window: FAILED (busybox $12=$1+"2"; set -e/awk).
+  See WINDOW C for fixed python hires (separate wall — do not mix into G).
+
+==============================================================================
+WINDOW B — PROFILE=0 observer + hybrid-style  (tag=p0)
+==============================================================================
+du=45.600s  dm=4524  df=803  dc=9128  same_mpid=yes  PROFILE=0
+CONTENT=testsrc  (B=0 by construction — no present_profile lines)
+
+  P0 = **99.211**
+  P_hybrid=99.124  Ff=17.594  Cb_hybrid=**116.718**
+
+OBSERVER EFFECT (P1 vs P0, same wall formula, both testsrc):
+  P1 − P0 = 96.841 − 99.211 = **−2.37 points**
+  PROFILE=1 does **not** inflate process CPU vs PROFILE=0 in this pair.
+  Cost-when-on: not observed as a large positive tax (slightly lower P1).
+  Pre-register fail band |Δ|>5: not triggered.
+
+==============================================================================
+113.9 vs 117.66 reconcile
+==============================================================================
+Hybrid published 113.9: method 200*dj/dc_cpu_all, PROFILE=0, ~45.26s, real PMS key=.
+This window p0 Cb_hybrid=116.718 method-matched formula BUT CONTENT=testsrc,
+same_fpid path not required for hybrid share formula; PMS down.
+
+  Comparison of 116.718 to 113.9: **UNAVAILABLE** (content class mismatch).
+  Comparison of anything here to historical 117.66: **UNAVAILABLE**
+  (117.66 was PROFILE=1 wall 100*dj/(HZ*dt) 20s — different method).
+  Honest unavailable > confident subtraction.
+
+==============================================================================
+WINDOW C — tid hires supplemental (python ~50ms) PROFILE=1
+==============================================================================
+NOTE: **different wall clock** from Window A. Use for thread shape only; do not
+recompute G from this window's P against Window A's B.
+
+du≈50.51s dm=5063 P_wall≈100.2 (testsrc) sample_lines=4112 unique_tids=10
+sum_tid_dJ=5017 cover_pct=**99.1%** of process dm  (sampler completeness OK)
+
+Rank by dJ:
+  tid=20732  dJ=4259  **84.9%**  life full window  n=514  NOT ephemeral
+  tid=20826  dJ=379    7.6%  birth@2.62s (after play settle)
+  tid=20729  dJ=187    3.7%
+  tid=20828  dJ=129    2.6%  birth@2.62s
+  tid=20725  dJ=39     0.8%  (mpid/main scale)
+  others <0.5%
+
+Ephemeral / short-lived:
+  tid=20728 life 0–2.53s dJ=1  eph=1
+  tid=20808 life 0–2.53s dJ=0  eph=1
+  late births 20826/20828 stay for rest of window (media/audio workers — not flash HTTP)
+
+HTTP ephemeral workers as bulk residual: **NOT supported** by this capture.
+Bulk is one long-lived tid (~85% dJ). Role of that tid still UNKNOWN
+(comm=misterplexd all); hybrid offline may map stacks.
+
+Aligned-window thread_cpu (daemon dump, Window A log) first→last:
+  tid=17119 dJ share **82.9%** (same shape as hires top tid)
+
+LIMIT: threads living ≪50ms may still be missed; cover 99.1% argues little
+process CPU is in sub-sample ephemerals.
+
+==============================================================================
+ARTIFACTS
+==============================================================================
+build/arm-deploy-v9b-aligned/
+  v9b_p1_SCORE.txt v9b_p1_raw.txt v9b_p1_log_excerpt.txt
+  v9b_p0_SCORE.txt v9b_p0_raw.txt
+  v9b_tid_hires.txt v9b_hires_log.txt
+  scripts/DEPLOY_V9B_ALIGNED_PREREGISTER.txt
+  scripts/run_v9b_aligned_capture.sh scripts/run_v9b_tid_hires.sh
+
+Hybrid offline: hand raw scores; scorer emits P,B,G. No device.
+
+==============================================================================
+RCA (unchanged)
+==============================================================================
+Daemon deaths UNEXPLAINED; race fix = hardening only; signal UNCAPTURED.
+
+==============================================================================
+STAND-BY
+==============================================================================
+No further device access without parent authorisation.
+No sub-delegation of device slot.

@@ -1,0 +1,45 @@
+DEPLOY v9b ALIGNED CAPTURE — PRE-REGISTER (method correction)
+=============================================================
+Live binary already v9 e9c5e5a1 (no rebuild unless md5 drifts).
+Parent audit: "87.5 gap" is NOT a defensible quantity (misaligned windows).
+Honest statement required: process CPU was P; instrumented buckets B in SAME
+window; uninstrumented process CPU = P−B (never "hidden burn" / never "87 hole").
+
+METHOD LOCKED (one wall clock, no fps scaling):
+  HZ = 100 (device python os.sysconf SC_CLK_TCK=100; CONFIG_HZ_100 unset but
+            userspace CLK_TCK=100 — publish both if conflict)
+  P = 100 * Δprocess_ticks / (HZ * Δwall_s)
+  B = 100 * Σ_raw_bucket_cpu_us * 1e-6 / Δwall_s
+  CPU buckets only (not wall sleeps):
+    read_cpu, pacing_wait_cpu, overlay_cpu, fb_cpu, pixel_cpu, ddr_cpu
+  Reconstruct batch totals: avg_* * frames|presented per present_profile line
+  that lands inside the cleared-log window.
+  G = P − B   name: "uninstrumented process CPU"
+
+THREADS:
+  High-freq sample /proc/<mpid>/task/*/stat (~50ms) for full window.
+  Track first_seen/last_seen j per tid; report births/deaths (ephemeral).
+  LIMIT: threads that live << sample period may still be under-counted —
+  state that explicitly; do not claim complete capture of all ephemerals.
+
+OBSERVER EFFECT:
+  P1 = P under PRESENT_PROFILE=1 (same play content class)
+  P0 = P under PRESENT_PROFILE=0 (identical wall formula + duration)
+  Fail "instrument free" if |P1−P0| > 5 points without other explanation.
+  (Inert-at-0 already proven structurally; this measures cost-when-on.)
+
+CPU 113.9 vs 117.66:
+  Remeasure current live with hybrid method ONLY:
+    200*dj/dc_cpu_all, nproc=2, ~45.26s, PROFILE=0, same_mpid
+  Compare to published 113.9 only if content class matches (real key= PMS).
+  If testsrc/PMS down: report number + method + CONTENT=testsrc; comparison
+  to 113.9 is **UNAVAILABLE** (not variance).
+
+HTTP back on table: tid sampler must show short-lived workers if any.
+
+DEVICE:
+  visible bounce claim; no reboot; RBF/conf token/bootcore untouched except
+  PRESENT_PROFILE toggle with timestamped backup; restore PROFILE=0; leave
+  n_daemon=1 supervise=1 --id misterplex-dev CORENAME=Plex.
+
+RCA: deaths UNEXPLAINED; race fix hardening only; signal UNCAPTURED.
