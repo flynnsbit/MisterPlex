@@ -1025,6 +1025,21 @@ void MediaPlayer::seekMs(int64_t ms) {
         log("media: seek same-pos " + std::to_string(ms) + " (no-op)");
         return;
     }
+    // stop() may clear currentUrl_ after our snapshot; re-validate under mu_
+    // immediately before demux restart so a late seek thread cannot resurrect
+    // playback from a copied URL after teardown (stop-during-scrub race).
+    {
+        std::lock_guard<std::mutex> lock(mu_);
+        if (currentUrl_.empty()) {
+            log("media: seek abandoned (session cleared)");
+            return;
+        }
+        url = currentUrl_;
+        headers = currentHeaders_;
+        dur = durationMs_;
+        if (dur > 0 && ms > dur)
+            ms = dur;
+    }
     if (onProgress_)
         onProgress_("buffering", ms, dur);
     // Full restart: both RGB/audio and STREAM demux re-spawn at new offset (multi-IDR clean).

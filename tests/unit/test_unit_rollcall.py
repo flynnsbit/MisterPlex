@@ -118,6 +118,8 @@ EXPECTED_COMMANDS = [
     "$(ROOT)/tests/unit/test_p3_inter_stream_path_rtl_sim.sh",
     "$(ROOT)/tests/unit/test_companion_http.sh",
     "bash $(ROOT)/tests/unit/test_cast_target.sh",
+    "bash $(ROOT)/tests/unit/test_cast_ctrl_race.sh",
+    "bash $(ROOT)/tests/unit/test_cast_seek_stop_race.sh",
     "$(ROOT)/tests/unit/test_plex_browse.sh",
     "$(ROOT)/tests/unit/test_play_file_delivery.sh",
     "$(ROOT)/tests/unit/test_no_private_data.sh",
