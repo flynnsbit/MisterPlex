@@ -91,6 +91,18 @@ void PmsTimelineReporter::beginSession(const PmsTimelineSession& session, int64_
         lastPlayingSent_ = {};
         if (!buildPmsTimelineHttpRequest(session_, "buffering", timeMs, durationMs, req)) {
             active_ = false;
+            if (log_) {
+                const char* why = "unknown";
+                if (session.token.empty())
+                    why = "empty token";
+                else if (session.ratingKey.empty())
+                    why = "empty ratingKey";
+                else if (normalizePlexBase(session.baseUrl).empty())
+                    why = "empty/invalid baseUrl";
+                log_(redactSensitive(std::string("pms timeline: beginSession skipped (") + why +
+                                     ") base=" + session.baseUrl +
+                                     " ratingKey=" + session.ratingKey));
+            }
             return;
         }
         lastSentState_ = "buffering";

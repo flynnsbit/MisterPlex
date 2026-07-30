@@ -73,6 +73,11 @@ public:
     // Ensures bindMedia key-match accepts the upcoming doPlay for this key.
     void stagePlay(const PlayRequest& req);
 
+    // Align plant + displayed clock to the demux start about to begin (e.g. PMS
+    // viewOffset when cast omitted offset=). Keeps seek-hold semantics: early
+    // demux restart behind this target still pins; live time ahead adopts.
+    void seedPlaybackPosition(int64_t timeMs, int64_t durationMs);
+
     // Clear media bind (after stop finishes).
     void clearMedia();
 
@@ -124,9 +129,9 @@ private:
     std::string state_ = "stopped";
     int64_t timeMs_ = 0;
     int64_t durationMs_ = 0;
-    // After seek/step plant: pin scrubber to this target until demux playing/
-    // paused/ended is within catchup. Buffering never releases (plant itself is
-    // buffering@target). Async race — early/stale playing@0 must not rewind.
+    // After seek/step plant: pin scrubber while demux is behind this target.
+    // Buffering never releases (plant itself is buffering@target). Playing far
+    // ahead adopts live time (stale plant 0 + viewOffset must not freeze Web).
     // -1 = no hold.
     int64_t scrubTargetMs_ = -1;
     bool wantPlay_ = false;

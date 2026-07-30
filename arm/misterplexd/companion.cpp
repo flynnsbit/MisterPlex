@@ -388,7 +388,12 @@ void Companion::setStateLocked(const std::string& state, int64_t timeMs, int64_t
     // Rules while scrubTargetMs_ >= 0:
     //  - buffering: pin time to the plant (companion plants via buffering@target);
     //    never release — plant call itself must not clear the hold.
-    //  - playing/paused/ended far from plant: reflect transport state only.
+    //  - playing/paused far *behind* plant (seek demux restart@0): keep plant time
+    //    and transport state so the Web thumb does not rewind.
+    //  - playing/paused far *ahead* of plant (stale plant 0 + viewOffset start, or
+    //    first progress jump): release hold and adopt live time. The old symmetric
+    //    "far = pin forever" rule froze Plex Web at 0:00 while PMS /:/timeline still
+    //    advanced from the media thread.
     //  - playing/paused at plant pulse (near, not advanced): apply time, keep hold
     //    so late restart@0 / short-read cannot free-run after the pulse.
     //  - playing/paused advanced past plant by kScrubAdvanceMs: release + apply.
@@ -409,18 +414,21 @@ void Companion::setStateLocked(const std::string& state, int64_t timeMs, int64_t
             return;
         }
         if (delta > kScrubCatchupMs) {
-            if (durationMs > 0)
-                durationMs_ = durationMs;
-            // Reflect live transport but keep the planted scrubber time.
-            if (state == "playing" || state == "paused")
-                state_ = state;
-            wantPlay_ = true;
-            return;
-        }
-        // Near plant: release only after demux advances past plant, or on ended.
-        if (state == "ended" ||
-            ((state == "playing" || state == "paused") &&
-             timeMs >= scrubTargetMs_ + kScrubAdvanceMs)) {
+            // Only suppress rewinds. Demux well ahead of plant is live truth.
+            if (timeMs + kScrubCatchupMs < scrubTargetMs_) {
+                if (durationMs > 0)
+                    durationMs_ = durationMs;
+                if (state == "playing" || state == "paused")
+                    state_ = state;
+                wantPlay_ = true;
+                return;
+            }
+            scrubTargetMs_ = -1;
+            // fall through: adopt live timeMs
+        } else if (state == "ended" ||
+                   ((state == "playing" || state == "paused") &&
+                    timeMs >= scrubTargetMs_ + kScrubAdvanceMs)) {
+            // Near plant: release only after demux advances past plant, or on ended.
             scrubTargetMs_ = -1;
         }
         // else playing@plant pulse: fall through apply time, keep hold
@@ -484,6 +492,25 @@ bool Companion::bindMedia(const PlayRequest& req, int64_t durationMs) {
     wantPlay_ = true;
     prePlayHold_ = false;
     return true;
+}
+
+void Companion::seedPlaybackPosition(int64_t timeMs, int64_t durationMs) {
+    std::lock_guard<std::mutex> lock(mu_);
+    if (timeMs < 0)
+        timeMs = 0;
+    if (durationMs > 0) {
+        durationMs_ = durationMs;
+        if (timeMs > durationMs_)
+            timeMs = durationMs_;
+    } else if (durationMs_ > 0 && timeMs > durationMs_) {
+        timeMs = durationMs_;
+    }
+    timeMs_ = timeMs;
+    // Re-base hold on the real start. Without this, playMedia plant@0 + PMS
+    // viewOffset demux start left Web polls frozen at 0 while media ran ahead.
+    scrubTargetMs_ = timeMs;
+    if (wantPlay_ && (state_ == "stopped" || state_.empty()))
+        state_ = "buffering";
 }
 
 void Companion::stagePlay(const PlayRequest& req) {

@@ -666,8 +666,15 @@ int main(int argc, char** argv) {
                          resolved.videoFrameRate.empty() ? "-" : resolved.videoFrameRate.c_str());
         }
 
-        if (!req.offsetPresent && resolved.viewOffsetMs > 0)
+        if (!req.offsetPresent && resolved.viewOffsetMs > 0) {
+            // PMS continue-watching offset when cast omitted offset=. playMedia already
+            // planted scrubTarget at 0; demux will start at viewOffset. Re-plant so the
+            // companion hold matches the real start (avoids far-ahead freeze at 0:00).
             off = resolved.viewOffsetMs;
+            std::fprintf(stderr,
+                         "misterplexd: applying PMS viewOffsetMs=%lld (cast offset absent)\n",
+                         static_cast<long long>(off));
+        }
 
         misterplex::PlayRequest bound = req;
         if (bound.ratingKey.empty())
@@ -730,6 +737,10 @@ int main(int argc, char** argv) {
                          bound.key.c_str());
             return;
         }
+
+        // Re-base companion plant to the demux start (viewOffset / in-flight seek).
+        // setState(buffering) alone cannot move time while an older plant holds.
+        comp.seedPlaybackPosition(startAt, resolved.durationMs);
 
         // Ensure timeline immediately reports duration + time for scrubber (seekRange).
         comp.setState("buffering", startAt, resolved.durationMs);

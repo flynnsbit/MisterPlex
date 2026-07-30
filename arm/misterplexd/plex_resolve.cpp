@@ -457,9 +457,42 @@ std::string plexFfmpegHeaders(const std::string& sessionId, const std::string& t
 bool plexHttpGetNoBody(const std::string& url,
                        const std::vector<std::pair<std::string, std::string>>& headers,
                        int timeoutSec) {
+    // Prefer curl exit/status over body non-empty: /:/timeline often returns an
+    // empty 200, and error pages (401/403/404) are non-empty — body emptiness was
+    // both false-fail and false-ok depending on PMS version.
     const bool defaultIdentity = !hasHeader(headers, "X-Plex-Client-Identifier");
-    const std::string body = httpGet(url, timeoutSec, curlHeaderArgs(headers), defaultIdentity);
-    return !body.empty();
+    std::ostringstream cmd;
+    cmd << "curl -sS -g -k -L --http1.1 --connect-timeout 6 --max-time " << timeoutSec
+        << " -o /dev/null -w '%{http_code}' -H 'Accept: application/xml'";
+    if (defaultIdentity) {
+        cmd << " -H 'X-Plex-Client-Identifier: misterplex'"
+            << " -H 'X-Plex-Product: Plex Web'"
+            << " -H 'X-Plex-Version: 4.125.0'"
+            << " -H 'X-Plex-Platform: Chrome'"
+            << " -H 'X-Plex-Platform-Version: 120.0'"
+            << " -H 'X-Plex-Device: Linux'"
+            << " -H 'X-Plex-Device-Name: Chrome'"
+            << " -H 'X-Plex-Client-Profile-Name: MiSTerPlex'"
+            << " -H 'X-Plex-Model: bundled'"
+            << " -H 'X-Plex-Provides: player'";
+    }
+    cmd << curlHeaderArgs(headers) << " " << shellQuote(url) << " 2>/dev/null";
+    FILE* p = popen(cmd.str().c_str(), "r");
+    if (!p)
+        return false;
+    std::string out;
+    char buf[64];
+    while (fgets(buf, sizeof(buf), p))
+        out += buf;
+    const int rc = pclose(p);
+    if (rc != 0)
+        return false;
+    // Trim trailing whitespace from %{http_code}
+    while (!out.empty() && (out.back() == '\n' || out.back() == '\r' || out.back() == ' '))
+        out.pop_back();
+    if (out.size() != 3 || out[0] != '2')
+        return false;
+    return true;
 }
 
 std::string buildPlexBase(const std::string& protocol, const std::string& address,
