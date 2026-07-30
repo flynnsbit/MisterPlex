@@ -1232,7 +1232,37 @@ def check_ddr_frame_layout_contract() -> None:
         == cpp_const(host, "kPlex480pPresentedWidth"),
         "480p pillarbox math no longer lands display width exactly in presented width",
     )
+    # Vacuity / red-check: a deliberate RTL coded-width edit must disagree with the
+    # host writer constants (this is the shear: ARM line_bytes vs CODED_W).
+    host_stride = cpp_const(host, "kPlex480pYStrideBytes")
+    rtl_stride = sv_const(rtl, "DDR_FRAME_Y_STRIDE_BYTES")
+    check(
+        host_stride == rtl_stride == 624,
+        f"product Y stride must be 624 on both sides (host={host_stride} rtl={rtl_stride})",
+    )
+    rtl_fault = re.sub(
+        r"(localparam\s+int\s+DDR_FRAME_CODED_WIDTH\s*=\s*)\d+",
+        r"\g<1>320",
+        rtl,
+        count=1,
+    )
+    rtl_fault = re.sub(
+        r"(localparam\s+int\s+DDR_FRAME_Y_STRIDE_BYTES\s*=\s*)\d+",
+        r"\g<1>320",
+        rtl_fault,
+        count=1,
+    )
+    fault_coded = sv_const(rtl_fault, "DDR_FRAME_CODED_WIDTH")
+    fault_stride = sv_const(rtl_fault, "DDR_FRAME_Y_STRIDE_BYTES")
+    if fault_coded == cpp_const(host, "kPlex480pCodedWidth") or fault_stride == host_stride:
+        fail(
+            "deliberate RTL CODED_WIDTH/Y_STRIDE 624→320 fault did not diverge from host "
+            f"(fault_coded={fault_coded} fault_stride={fault_stride} host_stride={host_stride})"
+        )
     print("PASS DDR frame layout ARM/RTL contract")
+    print(
+        "PASS DDR stride parity red-check: RTL CODED_WIDTH/Y_STRIDE 624→320 diverges from host"
+    )
 
 
 def check_runtime_ddr_layout_literal_sweep() -> None:
@@ -1532,6 +1562,15 @@ def check_present_geometry_stride_contract() -> None:
                 "FPGA present path must route every decode tier through ddrFrameGeometryForFpgaPresent",
             ),
             (
+                # Full body pin: decode WxH is ignored; always silicon 624 canvas.
+                # Reverting this to makeDdrFrameGeometry(decodeW,decodeH) is the
+                # classic ARM line_bytes=320 vs RTL CODED_W=624 shear.
+                host_norm,
+                "inlineDdrFrameGeometryddrFrameGeometryForFpgaPresent(CodedWidth,CodedHeight)"
+                "{returnproductDdrFrameStoreGeometry();}",
+                "ddrFrameGeometryForFpgaPresent must ignore DECODE and return productDdrFrameStoreGeometry (624)",
+            ),
+            (
                 media_norm,
                 "wantFpgaDdrCanvas?ddrFrameGeometryForFpgaPresent(outW_,outH_)",
                 "PRESENT=fpga|both must select silicon canvas geometry, never identity-320 from DECODE",
@@ -1651,6 +1690,27 @@ def check_present_geometry_stride_contract() -> None:
     bad_chroma_stride = frame_nt.replace("C_LINE_QWORDS=CODED_W/16", "C_LINE_QWORDS=FRAME_W/16")
     if not missing_stride_requirements(host_nt, media_nt, bad_chroma_stride, ffmpeg_vf_nt):
         fail("deliberately changed RTL chroma stride 312→320 did not make the geometry gate red")
+    # Classic shear: FPGA-present geometry follows DECODE (320) instead of silicon 624.
+    bad_fpga_present_identity = host_nt.replace(
+        "inlineDdrFrameGeometryddrFrameGeometryForFpgaPresent(CodedWidth,CodedHeight)"
+        "{returnproductDdrFrameStoreGeometry();}",
+        "inlineDdrFrameGeometryddrFrameGeometryForFpgaPresent(CodedWidthw,CodedHeighth)"
+        "{returnmakeDdrFrameGeometry(w,h);}",
+    )
+    if not missing_stride_requirements(bad_fpga_present_identity, media_nt, frame_nt, ffmpeg_vf_nt):
+        fail(
+            "deliberately reverted ddrFrameGeometryForFpgaPresent to identity-DECODE "
+            "(320-wide writer vs 624 RTL) did not make the geometry gate red"
+        )
+    bad_media_identity = media_nt.replace(
+        "wantFpgaDdrCanvas?ddrFrameGeometryForFpgaPresent(outW_,outH_)",
+        "wantFpgaDdrCanvas?makeDdrFrameGeometry(outW_,outH_)",
+    )
+    if not missing_stride_requirements(host_nt, bad_media_identity, frame_nt, ffmpeg_vf_nt):
+        fail(
+            "deliberately selected identity-DECODE geometry on PRESENT=fpga "
+            "did not make the geometry gate red"
+        )
 
     print(
         "PASS present geometry/stride chain is declared end-to-end "
