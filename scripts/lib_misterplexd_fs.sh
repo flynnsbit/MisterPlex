@@ -115,3 +115,44 @@ mpx_simulate_mid_copy_fail() {
   echo "mid_copy_fail_dest_intact md5=$after"
   return 0
 }
+
+# Fail-closed: same bytes? rc=0 match, rc=2 mismatch (matches restore_misterplexd_prev).
+# Usage: mpx_require_md5_equal <path_a> <path_b>
+mpx_require_md5_equal() {
+  local a="$1" b="$2"
+  local ma mb
+  ma=$(md5sum "$a" | awk '{print $1}')
+  mb=$(md5sum "$b" | awk '{print $1}')
+  if [[ "$ma" != "$mb" ]]; then
+    echo "RESTORE_FAIL: md5 mismatch want=$ma got=$mb" >&2
+    return 2
+  fi
+  echo "restored_md5=$mb"
+  return 0
+}
+
+# Exact argv --id token (same rule as deploy/restore). rc=0 match, rc=7 mismatch.
+# Usage: mpx_require_ps_id <ps_line> <want_id>
+mpx_require_ps_id() {
+  local ps_line="$1" want="$2"
+  # shellcheck disable=SC2086
+  set -- $ps_line
+  local id_ok=0
+  while [[ $# -gt 0 ]]; do
+    if [[ "$1" == "--id" && -n "${2:-}" ]]; then
+      [[ "$2" == "$want" ]] && id_ok=1
+      break
+    fi
+    if [[ "$1" == --id=* ]]; then
+      [[ "${1#--id=}" == "$want" ]] && id_ok=1
+      break
+    fi
+    shift
+  done
+  if [[ "$id_ok" != "1" ]]; then
+    echo "RESTORE_FAIL: DAEMON_ID_MISMATCH want=${want} ps=${ps_line}" >&2
+    return 7
+  fi
+  echo "daemon_id_ok=${want}"
+  return 0
+}

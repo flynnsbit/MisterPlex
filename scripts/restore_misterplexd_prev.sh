@@ -61,6 +61,7 @@ chmod +x "$stage"
 sync "$stage" 2>/dev/null || sync || true
 mv -f "$stage" "$BIN"
 got_md5=$(md5sum "$BIN" | awk '{print $1}')
+# Fail-closed: never claim restore OK if bytes differ (rc=2).
 if [[ "$got_md5" != "$want_md5" ]]; then
   echo "RESTORE_FAIL: md5 mismatch want=$want_md5 got=$got_md5" >&2
   exit 2

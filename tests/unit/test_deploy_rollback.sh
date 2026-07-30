@@ -95,4 +95,68 @@ grep -q 'PRESENT=fpga' "$CONF" || { echo "FAIL: conf restore"; exit 1; }
 grep -q 'BROKEN' "$CONF" && { echo "FAIL: broken conf remained"; exit 1; }
 echo "PASS conf restore from snapshot"
 
-echo "OK deploy rollback local e2e (byte-identical + mid-fail + hole)"
+# 8) Fail-closed: md5 mismatch → rc=2 (restore must not claim success)
+printf 'CORRUPT\n' >"$LIVE"
+set +e
+mpx_require_md5_equal "$PREV" "$LIVE" >/dev/null 2>"$WORK/md5.err"
+md5_rc=$?
+set -e
+echo "md5_mismatch_rc=$md5_rc"
+[[ "$md5_rc" -eq 2 ]] || { echo "FAIL: md5 mismatch want rc=2 got $md5_rc"; exit 1; }
+grep -q 'RESTORE_FAIL: md5 mismatch' "$WORK/md5.err" || {
+  echo "FAIL: missing RESTORE_FAIL md5 diagnostic"; cat "$WORK/md5.err"; exit 1
+}
+echo "PASS md5 mismatch fail-closed rc=2"
+
+# 9) Fail-closed: wrong --id → rc=7
+set +e
+mpx_require_ps_id '123 ./bin/misterplexd --id misterplex-wrong --port 3005' 'misterplex-dev' \
+  >/dev/null 2>"$WORK/id.err"
+id_rc=$?
+set -e
+echo "id_mismatch_rc=$id_rc"
+[[ "$id_rc" -eq 7 ]] || { echo "FAIL: id mismatch want rc=7 got $id_rc"; exit 1; }
+grep -q 'DAEMON_ID_MISMATCH' "$WORK/id.err" || {
+  echo "FAIL: missing id diagnostic"; cat "$WORK/id.err"; exit 1
+}
+# good id must pass
+mpx_require_ps_id '123 ./bin/misterplexd --id misterplex-dev --port 3005' 'misterplex-dev' >/dev/null
+# prefix must not pass
+set +e
+mpx_require_ps_id '123 ./bin/misterplexd --id misterplex-dev-old --port 3005' 'misterplex-dev' >/dev/null 2>&1
+pref_rc=$?
+set -e
+[[ "$pref_rc" -eq 7 ]] || { echo "FAIL: prefix id should rc=7 got $pref_rc"; exit 1; }
+echo "PASS --id mismatch fail-closed rc=7 (prefix rejected)"
+
+# 10) Full-size ARM binary cycle + wall time (if artifact present)
+ARM_SRC="$ROOT/build/arm/misterplexd"
+CAND_ARM="${CAND_ARM:-$ROOT/../w-arm-hybrid/build/arm/misterplexd}"
+if [[ -f "$ARM_SRC" ]]; then
+  mkdir -p "$WORK/full/bin" "$WORK/full/backup" "$WORK/full/incoming"
+  cp -f "$ARM_SRC" "$WORK/full/bin/misterplexd"
+  if [[ -f "$CAND_ARM" ]]; then
+    cp -f "$CAND_ARM" "$WORK/full/incoming/misterplexd"
+  else
+    # distinct candidate: flip one byte
+    cp -f "$ARM_SRC" "$WORK/full/incoming/misterplexd"
+    printf '\xff' | dd of="$WORK/full/incoming/misterplexd" bs=1 seek=4096 conv=notrunc status=none
+  fi
+  FULL_ORIG=$(md5sum "$WORK/full/bin/misterplexd" | awk '{print $1}')
+  FULL_CAND=$(md5sum "$WORK/full/incoming/misterplexd" | awk '{print $1}')
+  [[ "$FULL_ORIG" != "$FULL_CAND" ]] || { echo "FAIL: full-size orig==cand"; exit 1; }
+  t0=$(date +%s%N)
+  mpx_backup_daemon_atomic "$WORK/full/bin/misterplexd" "$WORK/full/bin/misterplexd.prev-c2"
+  mpx_install_daemon_atomic "$WORK/full/incoming/misterplexd" "$WORK/full/bin/misterplexd"
+  [[ "$(md5sum "$WORK/full/bin/misterplexd" | awk '{print $1}')" == "$FULL_CAND" ]]
+  mpx_restore_daemon_atomic "$WORK/full/bin/misterplexd.prev-c2" "$WORK/full/bin/misterplexd" >/dev/null
+  [[ "$(md5sum "$WORK/full/bin/misterplexd" | awk '{print $1}')" == "$FULL_ORIG" ]]
+  t1=$(date +%s%N)
+  ms=$(( (t1 - t0) / 1000000 ))
+  echo "full_size_orig=$FULL_ORIG cand=$FULL_CAND cycle_ms=$ms size=$(wc -c <"$WORK/full/bin/misterplexd")"
+  echo "PASS full-size ARM binary backup/install/restore byte-identical (${ms}ms local fs)"
+else
+  echo "SKIP full-size ARM cycle (no build/arm/misterplexd)"
+fi
+
+echo "OK deploy rollback local e2e (byte-identical + mid-fail + hole + fail-closed)"

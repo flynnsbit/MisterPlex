@@ -348,7 +348,11 @@ PREV_CONF=/media/fat/misterplex/backup/misterplex.conf.before-20260730T013548Z \
 ```
 
 Local proof (no device): `bash tests/unit/test_deploy_rollback.sh` — backup→install→restore
-byte-identical, mid-copy abort leaves live intact, hole (missing BIN) recovers from prev.
+byte-identical, mid-copy abort leaves live intact, hole (missing BIN) recovers from prev,
+md5 mismatch **rc=2**, wrong `--id` **rc=7**, full-size ARM cycle timed.
+
+**User copy-paste card:** [`scripts/USER_DAEMON_ROLLBACK.txt`](../scripts/USER_DAEMON_ROLLBACK.txt)
+(pre-registered ~5–15s; prefer `before-20260730T013548Z` = live `f230f95b…`).
 
 `restore_misterplexd_prev.sh` **does not** touch the RBF. Restoring an old
 daemon while leaving a mismatched core loaded is the geometry hazard this card forbids.
