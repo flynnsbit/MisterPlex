@@ -1,9 +1,9 @@
 #include "plextv_device.hpp"
 
 #include "log_redact.hpp"
-#include "plex_resolve.hpp"
 
 #include <arpa/inet.h>
+#include <cctype>
 #include <cstdio>
 #include <cstdlib>
 #include <netinet/in.h>
@@ -28,6 +28,8 @@ std::string shellQuote(const std::string& s) {
 
 void appendIdentityHeaders(std::vector<std::pair<std::string, std::string>>& headers,
                            const PlexTvDeviceIdentity& id, const std::string& token) {
+    // Full identity set — parent confirmed these headers cause plex.tv to upsert
+    // a provides=player device record keyed by X-Plex-Client-Identifier.
     headers.push_back({"X-Plex-Client-Identifier", id.clientIdentifier});
     headers.push_back({"X-Plex-Product", id.product});
     headers.push_back({"X-Plex-Version", id.version});
@@ -36,68 +38,136 @@ void appendIdentityHeaders(std::vector<std::pair<std::string, std::string>>& hea
     headers.push_back({"X-Plex-Device-Name", id.deviceName});
     headers.push_back({"X-Plex-Provides", id.provides});
     headers.push_back({"X-Plex-Token", token});
-    headers.push_back({"Accept", "application/xml"});
+    headers.push_back({"Accept", "application/json"});
 }
 
-std::string connectionFormBody(const std::string& lanAddress, uint16_t port) {
-    const std::string uri = "http://" + lanAddress + ":" + std::to_string(port);
-    std::ostringstream body;
-    body << "Connection[][protocol]=http"
-         << "&Connection[][address]=" << urlEncodeQuery(lanAddress)
-         << "&Connection[][port]=" << port
-         << "&Connection[][uri]=" << urlEncodeQuery(uri)
-         << "&Connection[][local]=1";
-    return body.str();
+bool equalsIgnoreCase(const std::string& a, const std::string& b) {
+    if (a.size() != b.size())
+        return false;
+    for (size_t i = 0; i < a.size(); ++i) {
+        if (std::tolower(static_cast<unsigned char>(a[i])) !=
+            std::tolower(static_cast<unsigned char>(b[i])))
+            return false;
+    }
+    return true;
 }
 
 } // namespace
 
-bool buildPlexTvRegisterRequest(const PlexTvDeviceIdentity& id, const std::string& token,
-                                const std::string& lanAddress, PlexTvHttpRequest& out) {
-    out = {};
-    if (token.empty() || id.clientIdentifier.empty() || lanAddress.empty() || id.port == 0)
-        return false;
+std::string plexTvClientIdentifierUnsafeReason(const std::string& id,
+                                               const std::vector<std::string>& foreignIds) {
+    // Trim is not applied — callers must pass the raw --id / Resource-Identifier.
+    if (id.empty())
+        return "empty";
 
-    out.method = "POST";
-    out.url = "https://plex.tv/devices.xml";
-    appendIdentityHeaders(out.headers, id, token);
-    out.headers.push_back({"Content-Type", "application/x-www-form-urlencoded"});
-    out.body = connectionFormBody(lanAddress, id.port);
-    return true;
-}
+    // Whitespace / control characters are never valid.
+    for (unsigned char c : id) {
+        if (c <= 0x20 || c == 0x7f)
+            return "contains whitespace or control characters";
+    }
 
-bool buildPlexTvUnregisterRequest(const std::string& token, const std::string& clientIdentifier,
-                                  const std::string& deviceId, PlexTvHttpRequest& out) {
-    out = {};
-    if (token.empty() || deviceId.empty())
-        return false;
-
-    out.method = "DELETE";
-    out.url = "https://plex.tv/devices/" + urlEncodeQuery(deviceId) + ".xml";
-    // Minimal identity so plex.tv can attribute the delete.
-    out.headers = {
-        {"X-Plex-Token", token},
-        {"X-Plex-Client-Identifier",
-         clientIdentifier.empty() ? std::string("misterplex") : clientIdentifier},
-        {"Accept", "application/xml"},
+    // Hard denylist: compile-time / historical defaults that are shared across
+    // installs or collide with request-identity headers used against PMS.
+    static const char* kBannedExact[] = {
+        "misterplex-1", // main.cpp default when --id is omitted
+        "misterplex",   // generic product slug, not a device id
+        "misterplex-",  // prefix alone
+        "chrome",
+        "plex",
+        "player",
+        "1",
     };
-    return true;
+    for (const char* b : kBannedExact) {
+        if (equalsIgnoreCase(id, b))
+            return std::string("banned default identifier '") + b + "'";
+    }
+
+    // Namespace: player IDs must use the misterplex- prefix so they cannot equal
+    // typical PMS machineIdentifiers (hex UUID strings without this prefix).
+    const std::string prefix = kPlexTvClientIdPrefix;
+    if (id.size() < prefix.size() || id.compare(0, prefix.size(), prefix) != 0)
+        return std::string("must start with '") + prefix + "'";
+
+    // Require a non-trivial suffix after the prefix (at least 3 chars → total >= 13).
+    // "misterplex-dev" (14) and "misterplex-abc" (13) pass; "misterplex-ab" (12) fails.
+    if (id.size() < prefix.size() + 3)
+        return "suffix after misterplex- too short (need >= 3 chars)";
+
+    for (const auto& foreign : foreignIds) {
+        if (!foreign.empty() && id == foreign)
+            return "matches denylisted foreign/PMS identifier";
+    }
+
+    return {};
 }
 
-std::string parsePlexTvDeviceId(const std::string& xml) {
-    // Prefer <Device ... id="N" ...>. First match is enough.
-    const std::string key = "id=\"";
-    // Prefer an id attribute on a Device tag when present.
-    auto dev = xml.find("<Device");
-    size_t searchFrom = (dev == std::string::npos) ? 0 : dev;
-    auto pos = xml.find(key, searchFrom);
-    if (pos == std::string::npos)
-        return {};
-    pos += key.size();
-    auto end = xml.find('"', pos);
-    if (end == std::string::npos || end == pos)
-        return {};
-    return xml.substr(pos, end - pos);
+bool plexTvResourcesBodyMentionsClient(const std::string& body,
+                                       const std::string& clientIdentifier) {
+    if (body.empty() || clientIdentifier.empty())
+        return false;
+    // JSON: "clientIdentifier":"value" or "clientIdentifier": "value"
+    // XML:  clientIdentifier="value"
+    const std::string jsonKey = "\"clientIdentifier\"";
+    const std::string xmlKey = "clientIdentifier=\"";
+    size_t pos = 0;
+    while (pos < body.size()) {
+        auto j = body.find(jsonKey, pos);
+        auto x = body.find(xmlKey, pos);
+        size_t hit = std::string::npos;
+        bool isJson = false;
+        if (j != std::string::npos && (x == std::string::npos || j < x)) {
+            hit = j;
+            isJson = true;
+        } else if (x != std::string::npos) {
+            hit = x;
+            isJson = false;
+        }
+        if (hit == std::string::npos)
+            break;
+        size_t valStart = 0;
+        if (isJson) {
+            auto colon = body.find(':', hit + jsonKey.size());
+            if (colon == std::string::npos)
+                break;
+            auto q1 = body.find('"', colon + 1);
+            if (q1 == std::string::npos)
+                break;
+            valStart = q1 + 1;
+            auto q2 = body.find('"', valStart);
+            if (q2 == std::string::npos)
+                break;
+            if (body.substr(valStart, q2 - valStart) == clientIdentifier)
+                return true;
+            pos = q2 + 1;
+        } else {
+            valStart = hit + xmlKey.size();
+            auto q2 = body.find('"', valStart);
+            if (q2 == std::string::npos)
+                break;
+            if (body.substr(valStart, q2 - valStart) == clientIdentifier)
+                return true;
+            pos = q2 + 1;
+        }
+    }
+    return false;
+}
+
+bool buildPlexTvRegisterRequest(const PlexTvDeviceIdentity& id, const std::string& token,
+                                PlexTvHttpRequest& out,
+                                const std::vector<std::string>& foreignIds) {
+    out = {};
+    if (token.empty())
+        return false;
+    if (!isSafePlexTvClientIdentifier(id.clientIdentifier, foreignIds))
+        return false;
+    if (id.product.empty() || id.provides.empty())
+        return false;
+
+    out.method = "GET";
+    out.url = PlexTvDeviceAnnouncer::kRegisterUrl;
+    appendIdentityHeaders(out.headers, id, token);
+    // No body — registration is the authenticated identity GET itself.
+    return true;
 }
 
 std::string detectLanIpv4() {
@@ -137,7 +207,6 @@ int defaultPlexTvHttp(const PlexTvHttpRequest& req, std::string* responseBody) {
         return 0;
 
     // Capture body + trailing status line without writing to a temp file.
-    // curl -w appends the status after the body on stdout.
     std::ostringstream cmd;
     cmd << "curl -sS -g -k -L --http1.1 --connect-timeout 6 --max-time 12"
         << " -X " << shellQuote(req.method);
@@ -165,12 +234,10 @@ int defaultPlexTvHttp(const PlexTvHttpRequest& req, std::string* responseBody) {
     int status = 0;
     std::string body;
     if (m == std::string::npos) {
-        // No marker — treat entire output as body; status unknown.
         body = out;
     } else {
         body = out.substr(0, m);
         const std::string codeStr = out.substr(m + marker.size());
-        // Trim trailing whitespace/newlines.
         size_t end = codeStr.find_first_not_of("0123456789");
         const std::string digits = (end == std::string::npos) ? codeStr : codeStr.substr(0, end);
         if (!digits.empty())
@@ -190,11 +257,12 @@ PlexTvDeviceAnnouncer::PlexTvDeviceAnnouncer(PlexTvHttpFn http, bool async)
 PlexTvDeviceAnnouncer::~PlexTvDeviceAnnouncer() { stop(); }
 
 void PlexTvDeviceAnnouncer::configure(PlexTvDeviceIdentity identity, std::string token,
-                                      bool enabled) {
+                                      bool enabled, std::vector<std::string> foreignClientIds) {
     std::lock_guard<std::mutex> lock(mu_);
     identity_ = std::move(identity);
     token_ = std::move(token);
     enabled_ = enabled;
+    foreignClientIds_ = std::move(foreignClientIds);
 }
 
 void PlexTvDeviceAnnouncer::logLine(const std::string& s) const {
@@ -215,8 +283,15 @@ void PlexTvDeviceAnnouncer::start() {
             logLine("plextv: registration skipped (PLEX_TOKEN missing)");
             return;
         }
-        if (identity_.clientIdentifier.empty()) {
-            logLine("plextv: registration skipped (client identifier empty)");
+        const std::string why =
+            plexTvClientIdentifierUnsafeReason(identity_.clientIdentifier, foreignClientIds_);
+        if (!why.empty()) {
+            // CRITICAL: never hit plex.tv with an unsafe identifier — that is how
+            // player attributes can merge onto another account device record.
+            logLine("plextv: registration skipped (unsafe clientIdentifier: " + why +
+                    ") id='" + identity_.clientIdentifier +
+                    "' — set a unique --id starting with misterplex- "
+                    "(deploy default: misterplex-dev); refusing network call");
             return;
         }
         stopRequested_ = false;
@@ -243,24 +318,23 @@ void PlexTvDeviceAnnouncer::start() {
 void PlexTvDeviceAnnouncer::attemptOnce(bool startup) {
     PlexTvDeviceIdentity id;
     std::string token;
+    std::vector<std::string> foreign;
     {
         std::lock_guard<std::mutex> lock(mu_);
         id = identity_;
         token = token_;
+        foreign = foreignClientIds_;
     }
 
-    const std::string lan = detectLanIpv4();
-    if (lan.empty()) {
-        logLine(std::string("plextv: registration ") +
-                (startup ? "startup " : "") +
-                "failed — could not detect LAN IPv4 (http_status=0)");
-        std::lock_guard<std::mutex> lock(mu_);
-        ++consecutiveFailures_;
+    // Re-check safety every attempt (configure may race in tests).
+    const std::string why = plexTvClientIdentifierUnsafeReason(id.clientIdentifier, foreign);
+    if (!why.empty()) {
+        logLine("plextv: registration skipped (unsafe clientIdentifier: " + why + ")");
         return;
     }
 
     PlexTvHttpRequest req;
-    if (!buildPlexTvRegisterRequest(id, token, lan, req)) {
+    if (!buildPlexTvRegisterRequest(id, token, req, foreign)) {
         logLine("plextv: registration skipped (incomplete identity)");
         return;
     }
@@ -273,23 +347,27 @@ void PlexTvDeviceAnnouncer::attemptOnce(bool startup) {
         status = 0;
     }
 
-    const bool ok = (status >= 200 && status < 300);
-    if (ok) {
-        const std::string devId = parsePlexTvDeviceId(body);
+    const bool httpOk = (status >= 200 && status < 300);
+    const bool seenSelf = plexTvResourcesBodyMentionsClient(body, id.clientIdentifier);
+
+    if (httpOk) {
         {
             std::lock_guard<std::mutex> lock(mu_);
             consecutiveFailures_ = 0;
-            if (!devId.empty())
-                deviceId_ = devId;
         }
         std::ostringstream msg;
         msg << "plextv: registration succeeded http_status=" << status
+            << " endpoint=api/v2/resources"
             << " clientIdentifier=" << id.clientIdentifier
             << " deviceName=" << id.deviceName
-            << " port=" << id.port
-            << " uri=http://" << lan << ":" << id.port;
-        if (!devId.empty())
-            msg << " deviceId=" << devId;
+            << " provides=" << id.provides
+            << " self_in_body=" << (seenSelf ? "1" : "0");
+        if (!seenSelf) {
+            // 2xx without our id in the body is still treated as success of the
+            // identity call (parent observed registration as a side effect of
+            // 200), but log it so operators can spot odd account state.
+            msg << " warn=clientIdentifier_not_listed_in_resources_body";
+        }
         if (startup)
             msg << " (startup)";
         logLine(msg.str());
@@ -302,6 +380,7 @@ void PlexTvDeviceAnnouncer::attemptOnce(bool startup) {
     }
     std::ostringstream msg;
     msg << "plextv: registration failed http_status=" << status
+        << " endpoint=api/v2/resources"
         << " clientIdentifier=" << id.clientIdentifier;
     if (startup)
         msg << " (startup)";
@@ -314,7 +393,6 @@ void PlexTvDeviceAnnouncer::workerLoop() {
         {
             std::lock_guard<std::mutex> lock(mu_);
             if (consecutiveFailures_ > 0) {
-                // Exponential backoff: 30, 60, 120, ... capped.
                 int shift = consecutiveFailures_ - 1;
                 if (shift > 8)
                     shift = 8;
@@ -347,29 +425,10 @@ void PlexTvDeviceAnnouncer::stop() {
         worker_.join();
     workerStarted_ = false;
 
-    // Best-effort teardown — never block shutdown on plex.tv.
-    PlexTvHttpRequest unreg;
-    std::string token;
-    std::string clientId;
-    std::string deviceId;
-    {
-        std::lock_guard<std::mutex> lock(mu_);
-        token = token_;
-        clientId = identity_.clientIdentifier;
-        deviceId = deviceId_;
-    }
-    if (buildPlexTvUnregisterRequest(token, clientId, deviceId, unreg)) {
-        std::string body;
-        int status = 0;
-        try {
-            status = http_(unreg, &body);
-        } catch (...) {
-            status = 0;
-        }
-        std::ostringstream msg;
-        msg << "plextv: unregister http_status=" << status << " deviceId=" << deviceId;
-        logLine(msg.str());
-    }
+    // No DELETE teardown: legacy devices.xml is 404. Device lastSeenAt ages out
+    // when we stop refreshing. Never issue a network call with a weak id here.
+    if (enabled_)
+        logLine("plextv: announcer stopped (no unregister; record ages out on plex.tv)");
 
     running_.store(false);
 }

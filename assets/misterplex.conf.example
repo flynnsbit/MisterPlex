@@ -13,11 +13,16 @@
 # PLEX_TOKEN=
 #
 # plex.tv player registration (cast target in Plex Web / modern clients).
-# Off by default. When enabled, misterplexd POSTs this player to plex.tv using
-# PLEX_TOKEN and the same client identifier as GDM (--id / Resource-Identifier,
-# typically misterplex-dev) so it appears under provides=player. Refreshes every
-# 5 minutes; fail-soft if plex.tv is unreachable or the token is missing.
-# Requires PLEX_TOKEN. Restart misterplexd after changing.
+# Off by default. When enabled, misterplexd issues an authenticated GET to
+# https://plex.tv/api/v2/resources?includeHttps=1 with the full X-Plex-* identity
+# header set (registration is a side effect of that call; legacy devices.xml is
+# 404). Uses PLEX_TOKEN and the same client identifier as GDM (--id /
+# Resource-Identifier). The identifier MUST be unique and start with
+# "misterplex-" (deploy default: misterplex-dev). Bare "misterplex-1" (main
+# default when --id is omitted) is refused so we never clobber another account
+# device. Refreshes every 5 minutes; fail-soft if plex.tv is unreachable, the
+# token is missing, or the identifier is unsafe. Requires PLEX_TOKEN. Restart
+# misterplexd after changing.
 # PLEXTV_ANNOUNCE=0
 # PLEXTV_ANNOUNCE=1
 
