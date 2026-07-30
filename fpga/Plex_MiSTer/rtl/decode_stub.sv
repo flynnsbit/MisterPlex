@@ -62,7 +62,16 @@ module decode_stub #(
 	output reg         wr_reset_ptr,
 	output reg         swap_req,
 	output reg         busy,
-	output reg  [15:0] frames_out
+	output reg  [15:0] frames_out,
+
+	// P3-3l5 recon export tap → h264_recon_export (dedicated DDR, not present banks).
+	// Mirrors DPB current-frame byte writes; frame_done on ref-ready pulse.
+	output wire        exp_sample_valid,
+	output wire [31:0] exp_sample_off,
+	output wire [7:0]  exp_sample_data,
+	output wire        exp_frame_start,
+	output wire        exp_frame_done,
+	output wire        exp_frame_abort
 );
 
 	localparam int PIXELS = WIDTH * HEIGHT;
@@ -469,9 +478,45 @@ module decode_stub #(
 	                                                             ({5'd0, dpb_fill_mb_x, 3'd0} + {8'd0, dpb_sample_x});
 	wire [15:0]       dpb_abs_y = (dpb_filtered_plane == 2'd0) ? ({4'd0, dpb_fill_mb_y, 4'd0} + {8'd0, dpb_sample_y}) :
 	                                                             ({5'd0, dpb_fill_mb_y, 3'd0} + {8'd0, dpb_sample_y});
-	wire [7:0]        dpb_filtered_sample = (dpb_filtered_plane == 2'd0) ? (8'h20 ^ dpb_abs_x[7:0] ^ {dpb_abs_y[4:0], 3'b000}) :
-	                                       (dpb_filtered_plane == 2'd1) ? (8'h80 + {2'd0, dpb_abs_x[5:0]}) :
-	                                                                      (8'h80 + {2'd0, dpb_abs_y[5:0]});
+	// ── DPB commit sample source (writeback maturity) ───────────────────
+	// Pre-register / measured (w-arm-hybrid audit):
+	//   WAS: synthetic XOR/chroma-ramp (looked structured; poisoned every P ref).
+	//   NOW: genuine recon where the stub actually has it; honest 128 elsewhere.
+	// Per-stage (this file, product path without integ ref_commit):
+	//   IQ/IDCT MB0 blk0 → recon_px[]     GENUINE (h264_recon4x4)
+	//   Inter Clip1(pred+res)             GENUINE arithmetic (inter_recon_*)
+	//   Full I-MB walker                  STUBBED (no per-MB intra stream yet)
+	//   In-loop deblock before DPB store  STUBBED here (h264_dpb_ref_commit is
+	//                                     product-owned by sv-mvd/integ — not
+	//                                     duplicated in this lane)
+	//   DPB one_ref store                 REAL module; content = this sample mux
+	// FAULT: DECODE_STUB_FAULT_DPB_SYNTHETIC_XOR restores the old XOR (must RED).
+	wire [7:0]        dpb_synthetic_sample =
+	                                      (dpb_filtered_plane == 2'd0) ? (8'h20 ^ dpb_abs_x[7:0] ^ {dpb_abs_y[4:0], 3'b000}) :
+	                                      (dpb_filtered_plane == 2'd1) ? (8'h80 + {2'd0, dpb_abs_x[5:0]}) :
+	                                                                     (8'h80 + {2'd0, dpb_abs_y[5:0]});
+	// Raster idx within plane for inter_recon_* / recon_px mapping.
+	wire [7:0]        dpb_y_idx = dpb_fill_sample_idx[7:0];
+	wire [5:0]        dpb_c_idx = dpb_filtered_sample_idx[5:0];
+	// P commit after MC: full MB Clip1(pred+residual). IDR/I: only MB0 4×4 blk0
+	// has IQ/IDCT samples today; remaining luma/chroma = 128 (not XOR).
+	wire              dpb_commit_is_p = lat_p_inter;
+	wire [7:0]        dpb_recon_src_y =
+	                      dpb_commit_is_p ? inter_recon_y[dpb_y_idx] :
+	                      ((dpb_fill_mb_addr == 16'd0) && (dpb_fill_sample_idx < 9'd16) && lat_res_ok) ?
+	                          // recon_px is 4×4 row-major; map fill idx → blk0 order
+	                          recon_px[{dpb_fill_sample_idx[3:2], dpb_fill_sample_idx[1:0]}] :
+	                      8'd128;
+	wire [7:0]        dpb_recon_src_u = dpb_commit_is_p ? inter_recon_u[dpb_c_idx] : 8'd128;
+	wire [7:0]        dpb_recon_src_v = dpb_commit_is_p ? inter_recon_v[dpb_c_idx] : 8'd128;
+	wire [7:0]        dpb_recon_src_sample =
+	                      (dpb_filtered_plane == 2'd0) ? dpb_recon_src_y :
+	                      (dpb_filtered_plane == 2'd1) ? dpb_recon_src_u : dpb_recon_src_v;
+`ifdef DECODE_STUB_FAULT_DPB_SYNTHETIC_XOR
+	wire [7:0]        dpb_filtered_sample = dpb_synthetic_sample;
+`else
+	wire [7:0]        dpb_filtered_sample = dpb_recon_src_sample;
+`endif
 	wire [7:0]        dpb_filtered_mb_x_out = ENABLE_DPB_REF_SEAM ? dpb_fill_mb_x : 8'd0;
 	wire [7:0]        dpb_filtered_mb_y_out = ENABLE_DPB_REF_SEAM ? dpb_fill_mb_y : 8'd0;
 	wire [1:0]        dpb_filtered_plane_out = ENABLE_DPB_REF_SEAM ? dpb_filtered_plane : 2'd0;
@@ -513,6 +558,20 @@ module decode_stub #(
 		if (dpb_mem_we && dpb_mem_waddr < DPB_MEM_BYTES[31:0])
 			dpb_mem[dpb_mem_waddr[17:0]] <= dpb_mem_wdata;
 	end
+
+	// Recon export tap: only current-frame DPB writes (I420 byte offsets).
+	// Contents track the DPB fill sample mux (recon-sourced; see above).
+	// Never the present bank. POST-deblock maturity tracks ref_commit product.
+	wire [31:0] exp_cur_base = dpb_current_base;
+	wire [31:0] exp_off_raw = dpb_mem_waddr - exp_cur_base;
+	assign exp_sample_valid = dpb_mem_we &&
+	                          (dpb_mem_waddr >= exp_cur_base) &&
+	                          (exp_off_raw < DPB_FRAME_BYTES[31:0]);
+	assign exp_sample_off = exp_off_raw;
+	assign exp_sample_data = dpb_mem_wdata;
+	assign exp_frame_start = dpb_idr_start;
+	assign exp_frame_done = ENABLE_DPB_REF_SEAM ? deblock_ref_ready_pulse : dpb_frame_done_pulse;
+	assign exp_frame_abort = reset | deblock_commit_order_error;
 
 	// DPB read port (for MC reference fetch) — 1-cycle latency
 	assign dpb_mem_rdata = (dpb_mem_raddr_q < DPB_MEM_BYTES[31:0]) ?
@@ -783,7 +842,8 @@ module decode_stub #(
 				inter_res_load_pending <= 1'b0;
 				// First residual 4×4 → Y block0 raster positions.
 				for (coeff_i = 0; coeff_i < 16; coeff_i = coeff_i + 1) begin
-					// 8-bit MB-plane index: block0 row={y[1:0],2'b00}, col=x[1:0]
+					// 8-bit Y-plane index (256): block0 row={y[1:0],2'b00}, col=x[1:0]
+					// (zero-extend 6-bit raster pack — ab0e515 / 4e10df0).
 					inter_res_y[{2'b00, coeff_i[3:2], 2'b00, coeff_i[1:0]}] <=
 						idct_residual[coeff_i][15:0];
 				end

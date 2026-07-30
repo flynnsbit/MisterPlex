@@ -81,6 +81,50 @@ constexpr unsigned kPlxdSwapPendingBit = 3;   // bit [35] → bit 3 of upper wor
 constexpr unsigned kPlxdFramesDoneBit = 16;   // bits [63:48] → [31:16] of upper word
 constexpr unsigned kPlxdFramesDoneWidth = 16;
 
+// ---- Hybrid recon export (FPGA→ARM I420, dedicated region — NOT present banks) ----
+// PLXO — Recon export ready/seq (FPGA→ARM).
+// Layout (64-bit LE):
+//   [31:0]   magic 0x504C584F "PLXO"
+//   [32]     ready     — 1 => bank holds a complete frame; safe to memcpy
+//   [33]     bank      — 0/1 which bank is complete
+//   [34]     torn      — 1 => mid-frame abort; ARM must fail closed (ignore pixels)
+//   [35]     fmt_yuv   — 1 = planar I420
+//   [47:36]  reserved 0
+//   [63:48]  seq[15:0] — monotonic; bumps only on ready&&!torn publish
+//
+// Pixel plane (dedicated, never aliases present 0x30000000 *scanout* banks):
+//   bank0 @ kReconExportPhysBase
+//   bank1 @ kReconExportPhysBase + kReconExportBankStride
+//   layout: planar I420 Y then U then V, coded WxH, tightly packed
+// PLXO mailbox sits on the historical control map page (0x3007Fxxx), which the
+// ARM already maps for status — mailbox only, not pixel data.
+constexpr uint32_t kPlxoAddr  = 0x3007F130u;
+constexpr uint32_t kPlxoMagic = 0x504C584Fu; // "PLXO"
+constexpr unsigned kPlxoReadyBit = 0;         // upper word bit 0 → [32]
+constexpr unsigned kPlxoBankBit = 1;          // [33]
+constexpr unsigned kPlxoTornBit = 2;          // [34]
+constexpr unsigned kPlxoFmtYuvBit = 3;        // [35]
+constexpr unsigned kPlxoSeqBit = 16;          // [63:48]
+constexpr unsigned kPlxoSeqWidth = 16;
+// Dedicated recon window: above bitstream ring (0x30140000) and present banks.
+// 512 KiB/bank holds 624x480 I420 (449280 B); prior 256 KiB did NOT.
+constexpr uint32_t kReconExportPhysBase = 0x30200000u;
+constexpr uint32_t kReconExportBankStride = 0x00080000u; // 512 KiB/bank
+constexpr uint32_t kReconExportMapBytes = 0x00100000u;   // 2 banks
+
+// Post-copy PLXO stability: after memcpy, seq+bank+ready+!torn must match the
+// pre-copy snapshot. If the FPGA republished (same bank reused), reject.
+inline bool plxoPostCopyStable(uint32_t lo_before, uint32_t hi_before,
+                               uint32_t lo_after, uint32_t hi_after) {
+    if (lo_before != lo_after || hi_before != hi_after)
+        return false;
+    if (lo_before != kPlxoMagic)
+        return false;
+    const bool ready = ((hi_before >> kPlxoReadyBit) & 1u) != 0;
+    const bool torn = ((hi_before >> kPlxoTornBit) & 1u) != 0;
+    return ready && !torn;
+}
+
 // ---- Bitstream ring mailboxes (ddr_bitstream_reader) ----
 
 // PLXB — Ring CTRL (ARM→FPGA). Bitstream ring control word.
@@ -98,19 +142,20 @@ struct MagicEntry {
     uint32_t magic;
 };
 
-constexpr std::array<MagicEntry, 7> kAllMagics = {{
+constexpr std::array<MagicEntry, 8> kAllMagics = {{
     {"PLXK", kPlxkMagic},
     {"PLXS", kPlxsMagic},
     {"PLXI", kPlxiMagic},
     {"PLXM", kPlxmMagic},
     {"PLXF", kPlxfMagic},
     {"PLXD", kPlxdMagic},
+    {"PLXO", kPlxoMagic},
     {"PLXB", kPlxbMagic},
 }};
 
 // ---- All addressed mailboxes (for address-collision detection) ----
 // Every occupied DDR mailbox slot. Gate rejects overlapping addresses.
-constexpr std::array<MailboxEntry, 8> kAllMailboxes = {{
+constexpr std::array<MailboxEntry, 9> kAllMailboxes = {{
     {"PLXK", kPlxkAddr,     kPlxkMagic,     8, "arm_to_fpga",  true},
     {"PLXS", kPlxsAddr,     kPlxsMagic,     8, "fpga_to_arm",  true},
     {"PLXI", kPlxiAddr,     kPlxiMagic,     8, "fpga_to_arm",  true},
@@ -118,6 +163,7 @@ constexpr std::array<MailboxEntry, 8> kAllMailboxes = {{
     {"PLXF", kPlxfAddr,     kPlxfMagic,     8, "fpga_to_arm",  true},
     {"DIAG", kSdramDiagAddr, 0,             8, "fpga_to_arm",  false},
     {"PLXD", kPlxdAddr,     kPlxdMagic,     8, "fpga_to_arm",  true},
+    {"PLXO", kPlxoAddr,     kPlxoMagic,     8, "fpga_to_arm",  true},
     {"PLXB", kPlxbAddr,     kPlxbMagic,     8, "arm_to_fpga",  true},
 }};
 

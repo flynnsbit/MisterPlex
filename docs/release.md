@@ -144,6 +144,7 @@ from a build before this redaction, rotate the Plex token:**
 | **`PRESENT`** | `fb0` \| `fpga` \| `both` | Where RGB lands |
 | **`STREAM`** | `0` \| `1` | Annex-B → host I-recon F1 + F3 |
 | `STREAM_SKIP_RGB` | `auto` | `auto`: skip heavy RGB when `PRESENT=fpga` (keep audio); `0` always RGB |
+| `HYBRID_PRESENT` | `0` | **Opt-in P3-3l5 hybrid** (default **OFF**). `1` + `STREAM=1`: FPGA-owned intra MBs + host-owned inter MBs composed into F1. Forces continuous host YUV (disables STREAM RGB skip). Ambiguous ownership fails closed — never silent FPGA claim. Does **not** change `PRESENT`/`DECODE`/`STREAM`/`OSD_CONTROL` defaults. |
 | `MATCH_SOURCE_HZ` | `off` | `on` logs target Hz; cadence-only until switchres |
 | `SOURCE_FPS` | `auto` | `auto`\|`12`\|`24`\|`30`\|`60`\|`off` — Content FPS hint from PMS |
 
@@ -160,6 +161,12 @@ Restart after edits: `killall misterplexd` then re-run deploy or the startup lin
 | `both` | `0`/`1` | FFmpeg owns continuous fb0; recon/DDR-YUV F1 for FPGA path. Lab often uses `both` + `STREAM=1`. |
 
 **STREAM hybrid (current product policy):** dual-A9 **host I-recon owns frame-store present** until FPGA residual/IDCT (Phase 3.3l+) is mae-competitive. F3 is diagnostic/stub status; do not expect full FPGA pixel recon on screen yet. Lab RBF needs Template HSync ~60 Hz + `res_dc` tune for stable HDMI.
+
+**`HYBRID_PRESENT` (P3-3l5, default 0):** when `1` with `STREAM=1`, the daemon classifies each MB with the same caps as `h264_hybrid_mb_own.sv` (default CAP_INTRA=1, CAP_INTER=0), consumes FPGA status slice/CABAC signals, and composes host+FPGA I420 into F1 via `libmisterplex/hybrid_compose.hpp` (same contract as `tools/hybrid_compose_i420.py`). Offline-only compose remains the scoring tool; the daemon path is the live product wiring.
+
+**Recon export ABI (P3-3l5, 2026-07-29):** FPGA→ARM I420 **pixel planes** use a **dedicated** window — `mailbox_abi::kReconExportPhysBase` (`0x30200000`), dual bank stride **`0x80000` (512 KiB)** so 624×480 I420 (449280 B) fits (256 KiB does not). Ready/seq mailbox **PLXO** `@ 0x3007F130` magic `PLXO` lives on the historical **control map page** (0x3007Fxxx) — mailbox only, not a pixel bank. **Never** read present *scanout* banks at `0x30000000` for recon (that returns ARM's own last write). RTL: `h264_recon_export.sv` — idle/pending `frame_start` (no bank overlap mid-issue), `sample_count==FRAME_BYTES` before ready, steals stream DDR only when bitstream idle. ARM: double-read PLXO pre-copy, memcpy from published recon bank, **post-copy PLXO re-read** (`plxoPostCopyStable`) rejects seq/bank/ready/torn drift mid-copy; fail closed. Hybrid loud-reclassifies (`used_host_fallback`) when capture fails. `product_recon_ok` is never invented on the host. Daily-driver conf leaves `HYBRID_PRESENT=0`.
+
+**Bandwidth (paper):** export adds one I420 write stream — 320×240 → 115 200 B/frame ≈ **2.88 MB/s @ 25 fps**; 624×480 → ≈ **11.23 MB/s @ 25 fps** — on top of present + DPB (DPB budget on record 28.87 MB/s). **Device-measured hybrid fps / export DDR timing = UNKNOWN** (no deploy this lane). Do not claim a frame rate without that measurement.
 
 **STREAM resolve:** when `STREAM=1`, prefer **direct H.264 Part** from PMS (CAVLC-friendly Baseline/Main) over Chrome universal High/CABAC. Non-H.264 still uses the weak universal ladder. Local `.264` uses elementary demux (no `mp4toannexb`).
 
@@ -262,6 +269,7 @@ geometry/format mismatch risk vs benign preference.
 | **PRESENT** | fb0 | **YES (path)** | `fpga`/`both`/`none` change DDR vs fb0; wrong with STREAM can black-screen or skip RGB. |
 | **STREAM** | 0 | **YES (path)** | annex-B / recon path; product 320×240 cast wants 0. |
 | **STREAM_SKIP_RGB** | auto | **YES (path)** | With PRESENT=fpga can drop RGB from session start. |
+| **HYBRID_PRESENT** | 0 | **YES (path) when on** | Default off. On + STREAM forces continuous host YUV + MB compose; never changes other defaults by itself. |
 | **OSD_CONTROL** | 0 | **YES (ABI)** | On pre-v3 cores reinterprets status bits as bogus A/V offset / content res. |
 | **DDR_MEM_SYNC** / **DDR_MEM_FLUSH** | 1 / 0 | format-adjacent | Wrong flush/sync → stale frames, not bank base. |
 | **PRESENT_PROFILE** | 0 | benign lab | Timing logs only. |

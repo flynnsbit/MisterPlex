@@ -46,6 +46,7 @@ PRODUCT_RTL=(
   h264_deblock.sv
   h264_dpb.sv
   h264_hybrid_mb_own.sv
+  h264_recon_export.sv
   decode_stub.sv
 )
 
