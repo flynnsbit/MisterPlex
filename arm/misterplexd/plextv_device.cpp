@@ -374,16 +374,27 @@ void PlexTvDeviceAnnouncer::attemptOnce(bool startup) {
         return;
     }
 
+    int failures = 0;
     {
         std::lock_guard<std::mutex> lock(mu_);
         ++consecutiveFailures_;
+        failures = consecutiveFailures_;
     }
+    // Rate-limit failure logs: always emit startup + first fail, then every 10th
+    // or when backoff is capped. Endpoint replacement is a separate research lane;
+    // do not spam the device log or burn journal CPU on a sticky 404.
+    const bool logThis = startup || failures == 1 || (failures % 10) == 0 || failures >= 9;
+    if (!logThis)
+        return;
     std::ostringstream msg;
     msg << "plextv: registration failed http_status=" << status
         << " endpoint=api/v2/resources"
-        << " clientIdentifier=" << id.clientIdentifier;
+        << " clientIdentifier=" << id.clientIdentifier
+        << " consecutive=" << failures;
     if (startup)
         msg << " (startup)";
+    if (failures > 1 && (failures % 10) == 0)
+        msg << " (rate-limited; endpoint research pending)";
     logLine(msg.str());
 }
 
