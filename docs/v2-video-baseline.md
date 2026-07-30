@@ -92,6 +92,46 @@ telemetry clip, captures HDMI and measures edge straightness.
   `scripts/plexctl.sh`, which holds an exclusive `flock`; the older
   `dedupe_daemon.sh` races and can spawn a second daemon.
 
+## Cast target does not appear: check the host firewall FIRST
+
+The Plex Media Server runs in a docker container with `net=host` on the
+workstation, so the **workstation's** firewall governs whether the server can
+complete GDM discovery of LAN players. With ufw default-deny, MiSTerPlex's
+discovery replies were dropped before reaching PMS and no cast targets appeared
+in the Plex Web picker.
+
+```bash
+sudo ufw allow from 192.168.1.0/24 to any port 32410:32414 proto udp
+sudo ufw allow from 192.168.1.0/24 to any port 32400 proto tcp
+sudo ufw reload
+```
+
+Verify with a GDM probe — before the rules this timed out, after it returns a
+283-byte reply:
+
+```bash
+python3 - <<'PY'
+import socket
+s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+s.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+s.settimeout(4.0)
+s.sendto(b"M-SEARCH * HTTP/1.1\r\nHost: 192.168.1.255:32412\r\n\r\n",
+         ("192.168.1.255", 32412))
+print(s.recvfrom(2048)[1])
+PY
+```
+
+**Do not conclude from a missing plex.tv registry entry that the fault is
+plex.tv registration.** That inference was made twice here and was wrong both
+times; the real cause was the host firewall. A device can legitimately be absent
+from `plex.tv/api/resources` while local GDM discovery is what is actually
+broken.
+
+Note the ufw conntrack trap when probing by hand: replies to a **broadcast**
+probe arrive from the device's unicast address while the conntrack entry has the
+broadcast destination, so they are classed NEW. Probing from the MiSTer itself
+avoids this.
+
 ## Switching bundles
 
 ```bash
