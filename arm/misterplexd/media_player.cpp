@@ -794,6 +794,9 @@ bool MediaPlayer::initPresent() {
         }
     }
     if (wantFpga) {
+        // Serialize with paintIdle/OSD/present path: open() calls close() and
+        // unmaps /dev/mem. Concurrent idle publish without this lock is a crash.
+        std::lock_guard<std::mutex> lk(presentMu_);
         if (fpga_.open()) {
             useDdrF1_ = true;
             ddrBank_ = 0;
@@ -1056,6 +1059,13 @@ bool MediaPlayer::play(const std::string& urlOrPath, int64_t startOffsetMs,
         killChildren();
         if (thr_.joinable())
             thr_.join();
+        // threadMain always startIdle()s at session end (before join returns).
+        // Without this second stopIdle, initPresent → fpga_.open() → close() can
+        // unmap DDR while the restarted idle painter holds presentMu_ and is
+        // mid-publish — field death after "FPGA frame path OK" on re-entrant
+        // playMedia (resolve-fail→testsrc). stop() already sequences this;
+        // play() must too. Pre-existing before v7; not doorbell/CORENAME.
+        stopIdle();
 
         if (!fb_.ok() && !initPresent())
             return false;

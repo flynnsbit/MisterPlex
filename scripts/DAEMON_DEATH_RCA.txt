@@ -172,3 +172,30 @@ Fix (code, no device required to land):
 | Does testsrc path ever abort? | UNKNOWN code-path audit incomplete | controlled R4 above |
 | Idle/thread terminate residual? | UNKNOWN | abort backtrace if WIFSIGNALED SIGABRT |
 | Recurrence rate | NOT RUN | parent-scheduled R1-R5 |
+
+================================================================
+7. HYBRID HOST HALF SYNTHESIS (2026-07-30T02:47) — bounce2 field half
+================================================================
+Hybrid commit 568a2c70 + RESULT.txt: v7 did NOT introduce exit.
+Mechanism matches our field log shape and our static code read:
+
+  threadMain session end: paintIdle(); startIdle(); log("session end")
+  play(): stopIdle() at entry → join thr_ (restarts idle) → initPresent
+          WITHOUT second stopIdle → fpga.open unmaps while idle may publish
+
+Field (daemon_death.txt) order is exactly:
+  resolve-fail → testsrc → session end → "FPGA frame path OK" (initPresent L~806)
+  → process gone. "FPGA frame path OK" ≠ idle paint ("idle FPGA frame path OK").
+
+bounce2 shipped play() confirmed missing post-join stopIdle (media_player.cpp
+~1057-1060 before this update). stop() already had post-join stopIdle (~960).
+
+Field half still OPEN (parent: no device without auth):
+  U1 waitpid / WIFSIGNALED exact signal — NOT CAPTURED
+  Settling check unchanged: wait-wrapper on next death.
+
+Fix mirrored into bounce2 worktree media_player.cpp (same as 568a2c70) —
+NOT built/deployed. Device falsify when parent authorises:
+  re-entrant playMedia + resolve→testsrc must keep :3005 up on PRESENT=fpga.
+
+Rollback v7 for this defect: NOT indicated (agree with hybrid causality).
