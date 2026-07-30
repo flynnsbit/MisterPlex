@@ -1,0 +1,31 @@
+TS=2026-07-30T172846Z
+CORENAME=Plex
+md5_rbf=14eaeff3270a6f59a434e0f777ed823d
+md5_d=fb9f7619
+=== timeline ===
+<?xml version="1.0" encoding="UTF-8"?><MediaContainer machineIdentifier="misterplex-dev" size="1" commandID="s1-block" location="fullScreenVideo"><Timeline type="video" state="playing" time="349190" duration="5484416" seekRange="0-5484416" volume="100" mute="0" controllable="playPause,stop,volume,audioStream,subtitleStream,seekTo,skipPrevious,skipNext,stepBack,stepForward" location="fullScreenVideo" mediaIndex="0" partIndex="0" machineIdentifier="1cdd1b7f718cb9f111a2a92abcdd50c7733d14fe" protocol="https" address="75-30-183-153.97f3493ee5664b189b604e11500b0a5e.plex.direct" port="32400" providerIdentifier="com.plexapp.plugins.library" key="/library/metadata/40868" containerKey="/playQueues/144481?own=1" ratingKey="40868" playQueueID="144481" playQueueVersion="1" playQueueItemID="40868" /></MediaContainer>
+=== ffmpeg cmdline (truncated token) ===
+/media/fat/misterplex/bin/ffmpeg -hide_banner -loglevel error -nostdin -headers X-Plex-Client-Identifier: misterplex
+X-Plex-Product: Plex Web
+X-Plex-Version: 4.125.0
+X-Plex-Platform: Chrome
+X-Plex-Platform-Version: 120.0
+X-Plex-Device: Linux
+X-Plex-Device-Name: Chrome
+X-Plex-Client-Profile-Name: MiSTerPlex
+X-Plex-Model: bundled
+X-Plex-Provides: player
+X-Plex-Session-Identifier: mplex-3c6ef362
+X-Plex-Token: REDACTED
+ -reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5 -i https://75-30-183-153.97f3493ee5664b189b604e11500b0a5e.plex.direct:32400/video/:/transcode/universal/start.mp4?hasMDE=1&path=%2Flibrary%2Fmetadata%2F40868&mediaIndex=0&partIndex=0&protocol=http&fastSeek=1&directPlay=0&directStream=0&subtitleSize=100&audioBoost=100&location=lan&copyts=1&session=mplex-3c6ef362&videoQuality=60&videoResolution=320x240&maxVideoBitrate=1000&videoCodec=h264&audioCodec=aac&videoProfile=baseline&videoLevel=30&X-Plex-Token=REDACTED -map 0:v:0 -an -f rawvideo -pix_fmt yuv420p -vf fps=24000/1001,scale=320:240:force_original_aspect_ratio=decrease,pad=320:240:(ow-iw)/2:(oh-ih)/2 pipe:1 -map 0:a:0? -vn -af aresample=48000 -f s16le -ac 2 -ar 48000 pipe:3 
+
+=== set_status ===
+raw: 00 40 01 00 00 00 00 00 00 c0 00 00 00 00 00 00
+osd lo=0x4000 tv=NTSC fps_sel=0(24) pat=0(none) audio=Off force_bars=0 T10=0 T11=0 R0=0 AR_bits=0
+=== conf ===
+PLEX_BASE=http://192.168.1.41:32400
+DECODE=320x240
+OSD_CONTROL=1
+PRESENT_PROFILE=0
+S1_ACTION=NOT_RUN reason=user_playing_fullscreen
+host_pms_41=000fail
