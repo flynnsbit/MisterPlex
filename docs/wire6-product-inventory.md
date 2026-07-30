@@ -1,4 +1,5 @@
 # Deployed wire6 (`14eaeff3`) — honest decode inventory
+# PRIVACY_REDACTION: lab PMS IP 192.168.1.41 replaced with YOUR-PLEX-SERVER on 2026-07-30. Measurement numbers, timings, and decode geometry preserved.
 
 **RBF:** `14eaeff3270a6f59a434e0f777ed823d`  
 **Provenance:** `.agent-work/integ-wiring/WIRE6_PROVENANCE.md`  
@@ -56,7 +57,7 @@ FAIL full-frame strict: stream_path pixels differ from reference decoder at fram
 
 ## Playback evidence (not decode quality)
 
-- Cast PMS `192.168.1.41:32400` → HTTP 200  
+- Cast PMS `YOUR-PLEX-SERVER:32400` → HTTP 200  
 - `fpga frame_tx ok via DDR`, `frames≈717 vfps=23.0 clock=av-lock`  
 - This proves **present path liveness** with the new bitstream; it does **not** prove FPGA H.264 pixels are correct (ARM may supply present frames; no pixel readback).
 

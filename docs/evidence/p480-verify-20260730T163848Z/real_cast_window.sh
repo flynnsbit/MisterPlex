@@ -7,7 +7,7 @@ CONF=/media/fat/misterplex/misterplex.conf
 LOG=/media/fat/misterplex/misterplexd.log
 TOKEN=$(grep -E "^[[:space:]]*PLEX_TOKEN=" "$CONF" | head -1 | sed "s/^[^=]*=//" | tr -d "\r")
 BASE=$(grep -E "^[[:space:]]*PLEX_BASE=" "$CONF" | head -1 | sed "s/^[^=]*=//" | tr -d "\r")
-BASE=${BASE:-http://192.168.1.41:32400}
+BASE=${BASE:-http://YOUR-PLEX-SERVER:32400}
 hp=${BASE#http://}; hp=${hp#https://}; hp=${hp%%/*}
 ADDR=${hp%%:*}; PORT=${hp##*:}; [ "$PORT" = "$hp" ] && PORT=32400
 echo "BASE=$BASE ADDR=$ADDR PORT=$PORT token_len=${#TOKEN}"
@@ -130,3 +130,5 @@ echo live_md5=$(md5sum /media/fat/misterplex/bin/misterplexd | awk '{print $1}')
 echo n_d=$(pidof misterplexd | wc -w)
 grep PRESENT_PROFILE "$LOG" | tail -3
 echo REAL_CAST_WINDOW_DONE
+
+# PRIVACY_REDACTION: lab PMS IP 192.168.1.41 replaced with YOUR-PLEX-SERVER on 2026-07-30. Measurement numbers, timings, and decode geometry preserved.

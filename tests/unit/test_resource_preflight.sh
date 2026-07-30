@@ -4,11 +4,30 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 PREFLIGHT="$ROOT/scripts/test_resource_preflight.sh"
 FIX="$ROOT/tests/fixtures/preflight"
 
+# Synthetic host only: never inherit ambient override or live Quartus ps(1).
+# MISTERPLEX_ALLOW_LOW_MEMORY_TESTS=1 is used by the fleet while a sibling map
+# is LIVE; if this unit test inherits it, fail() exits 0 and the swap-exhausted
+# red becomes vacuous. Live quartus_map similarly short-circuits every fixture
+# before meminfo is read. Both must be isolated for the test to mean anything.
+STUB_BIN="$ROOT/build/preflight-stub-bin"
+rm -rf "$STUB_BIN"
+mkdir -p "$STUB_BIN"
+cleanup() { rm -rf "$STUB_BIN"; }
+trap cleanup EXIT
+cat >"$STUB_BIN/ps" <<'PS'
+#!/bin/sh
+# No processes — fixtures must not see the live host's quartus_map.
+exit 0
+PS
+chmod +x "$STUB_BIN/ps"
+
 run_preflight() {
-  MISTERPLEX_PREFLIGHT_SAMPLE_SECONDS=1 \
-  MISTERPLEX_PREFLIGHT_VMSTAT="$FIX/vmstat_quiet" \
-  MISTERPLEX_PREFLIGHT_MEMINFO="$1" \
-  "$PREFLIGHT"
+  env -u MISTERPLEX_ALLOW_LOW_MEMORY_TESTS \
+    PATH="$STUB_BIN:$PATH" \
+    MISTERPLEX_PREFLIGHT_SAMPLE_SECONDS=1 \
+    MISTERPLEX_PREFLIGHT_VMSTAT="$FIX/vmstat_quiet" \
+    MISTERPLEX_PREFLIGHT_MEMINFO="$1" \
+    "$PREFLIGHT"
 }
 
 run_preflight "$FIX/meminfo_high_headroom" >/dev/null
