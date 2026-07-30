@@ -1,0 +1,80 @@
+RMW TAX RECOVERY — PRE-REGISTER (before RTL)
+============================================
+Lane: sv-traverse / rtl/sink-contract-phase2
+Base: 788aa5f sink + 4f281e6 traverse @ tip before this work
+Authorised: A (pipeline MB_DUMP) + B (kill HAD_PAINT RMW)
+Target budget: 2667 cy/MB (320×240 @20 MHz @25). NOT chasing 684.
+NO new DSP. NO de-serial IQ/I16 pred.
+Bit-exact: clip1 300/300, clip2 1170/1170. RED twin must still discriminate.
+
+------------------------------------------------------------------------
+B — Eliminate ST_HAD_PAINT (keep DC in i16_dc regs)
+------------------------------------------------------------------------
+Mechanism (from design, not guess):
+  Today: I16_PRED writes pure pred → HAD_PAINT RMW pred+((dc+32)>>6) all 256 px
+         → AC APPLY does plane - dc_term + idct (idct has DC inject).
+  I16 CBP luma is 0 or 15 only (traverse res_slot_coded: |res_luma_mask).
+  - cbp_l=15: all 16 AC blks APPLY
+  - cbp_l=0:  no AC APPLY; HAD_PAINT is sole DC residual path
+
+  After B:
+  - HAD_WAIT → latch i16_dc[], i16_dc_valid=1, i16_ac_recon=0, IDLE (0 RMW)
+  - APPLY I16: RMW clip(pred + idct) always (remove −dc_term); set i16_ac_recon=1
+  - MB_DUMP capture: if i16_dc_valid && !i16_ac_recon
+        write = clip(py_q + ((i16_dc[blk]+32)>>6))
+      else write = py_q
+  Arithmetic: add/shift only on existing i16_dc — NO new multiplier / DSP.
+
+PRE cycle save:
+  −768 cy/MB on every I16 MB (exact: 256 px × 3 cy RMW removed).
+  Clip1 mix ~221 I16 / 300 → mean ≈ −566 cy/MB on paint if only B.
+  All-I16 analytical: 4037 − 768 = 3269 (still over 2667 alone).
+
+PRE ALM:
+  Remove HAD_PAINT body; add 1-bit i16_ac_recon; dump-path add+clip mux.
+  PRE delta comb ALM: −30 .. +80 (near zero; possibly small win).
+  PRE DSP delta: 0 (hold 111 device / sink 4).
+
+PRE functional: HIT 300/300 and 1170/1170.
+PRE miss modes: wrong dump DC when cbp_l=0; double-DC if APPLY still subtracts.
+
+------------------------------------------------------------------------
+A — Pipeline ST_MB_DUMP plane reads (1 result/cy after fill)
+------------------------------------------------------------------------
+Mechanism:
+  h264_byte_ram_sp: q registered 1 cy after raddr stable → need 2-cy fill,
+  then issue every cycle.
+  Dump 256 px: 2 fill + 256 capture = 258 cy (was 768).
+  TL top_row save stays ~3 cy; bot→top_row we 16 cy; commit 1.
+  New dump total ≈ 258+3+16+1 = 278 (was ~788) → save ≈ 510 cy/MB.
+  Applies to EVERY MB (I4 and I16).
+
+PRE cycle save: −510 cy/MB all MB types.
+PRE ALM: +0 .. +40 comb (issue/capt counters; drop per-px rd_ph thrash).
+PRE DSP: 0.
+
+------------------------------------------------------------------------
+A+B combined PRE
+------------------------------------------------------------------------
+  cy/MB paint_per_mb f0: 4037 − 510 − (768 × f_I16)
+    f_I16≈221/300 → 4037 − 510 − 566 ≈ 2961  (still OVER 2667 by ~294)
+    f_I16=1.0     → 4037 − 510 − 768 = 2759  (OVER 2667 by ~92)
+  Analytical may miss non-I16 mix and DPB/diag composition of 4037.
+  MEASURE decides. Publish hit/miss vs:
+    PRE paint_per_mb f0 ∈ 2700..3100
+    PRE still may MISS ≤2667 — say so if so; do not chase APPLY RMW yet
+      unless parent re-authorises.
+
+  vs 2667 product 240p: likely STILL SLIGHTLY OVER after A+B — honest PRE MISS
+  on hard budget, large improvement on 1.51× → ~1.05–1.15×.
+
+------------------------------------------------------------------------
+Verification plan
+------------------------------------------------------------------------
+1. unit / existing RED twins still green where applicable
+2. REAL_REF full frame clip1 + clip2 (same harness as plane_m10k)
+3. RED: FAULT_SERIAL_IQ_ZERO or FAULT_SKIP_PLANE_NB still collapses
+4. STAGE_CYCLES paint_per_mb frame0 quoted with SOURCE_SHA
+5. No self-Quartus
+
+END PRE-REG — implement only after this file exists on disk.

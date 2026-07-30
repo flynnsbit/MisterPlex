@@ -1,6 +1,7 @@
 // I-slice residual → Clip1(pred + residual) MB plane sink.
 // plane_y + top_row via h264_byte_ram_sp (registered read: issue→wait→capture).
 // Serial neighbour fetch; serial IQ; serial I16 pred. NO new DSP.
+// RMW diet: no HAD_PAINT (DC in regs + dump/APPLY); MB_DUMP read pipelined 1/cy.
 // FAULT_SERIAL_IQ_ZERO / FAULT_SERIAL_I16_PRED_128 / FAULT_SKIP_PLANE_NB.
 
 `default_nettype none
@@ -90,6 +91,9 @@ module h264_i_res_recon_sink #(
 	reg signed [15:0] lat_coeff [0:15];
 	reg signed [15:0] i16_dc [0:15];
 	reg        i16_dc_valid, i16_pred_done;
+	// 1 = at least one I16 AC APPLY wrote pred+idct (cbp_l=15 path).
+	// 0 + i16_dc_valid = cbp_l=0: dump must add ((dc+32)>>6) per 4x4.
+	reg        i16_ac_recon;
 	reg        pend_mb_end;
 	reg [15:0] pend_mb_end_addr;
 
@@ -270,6 +274,9 @@ module h264_i_res_recon_sink #(
 		||(lat_coeff[12]!=0)||(lat_coeff[13]!=0)||(lat_coeff[14]!=0)||(lat_coeff[15]!=0);
 	// Held address for RMW (stable across wait)
 	reg [7:0] rmw_addr;
+	// MB_DUMP pipeline capture address (= cnt-2 while cnt>=2)
+	wire [7:0] dump_cap_a = 8'(cnt - 9'd2);
+	wire [3:0] dump_dc_i  = {dump_cap_a[7:6], dump_cap_a[3:2]};
 
 	always @(posedge clk) begin
 		write_req <= 1'b0;
@@ -290,6 +297,7 @@ module h264_i_res_recon_sink #(
 			cur_mb_y <= 8'd0;
 			i16_dc_valid <= 1'b0;
 			i16_pred_done <= 1'b0;
+			i16_ac_recon <= 1'b0;
 			pend_mb_end <= 1'b0;
 			left_col_v <= 1'b0;
 			tl_mb <= 8'd128;
@@ -352,6 +360,7 @@ module h264_i_res_recon_sink #(
 						cur_mb_y <= res_blk_mb_y;
 						i16_dc_valid <= 1'b0;
 						i16_pred_done <= 1'b0;
+						i16_ac_recon <= 1'b0;
 						if (res_blk_mb_x == 8'd0)
 							left_col_v <= 1'b0;
 						if (res_blk_mb_x != 8'd0 && res_blk_mb_y != 8'd0)
@@ -514,40 +523,24 @@ module h264_i_res_recon_sink #(
 			end
 
 			//============================================================
+			// B: no HAD_PAINT RMW. Keep scaled DC in i16_dc[]; plane_y stays pure
+			// pred until AC APPLY (pred+idct) or MB_DUMP adds ((dc+32)>>6) if cbp_l=0.
 			ST_HAD_WAIT: begin
 				if (had_done) begin
 					for (ci = 0; ci < 16; ci = ci + 1)
 						i16_dc[ci] <= dc_had[ci];
+					i16_dc_valid <= 1'b1;
+					i16_ac_recon <= 1'b0;
+					dbg_blk_applied <= dbg_blk_applied + 32'd1;
 					cnt <= 9'd0;
 					rd_ph <= RD_ISSUE;
-					st <= ST_HAD_PAINT;
+					st <= ST_IDLE;
 				end
 			end
 
-			//============================================================
-			// RMW paint: 3 cy/px — pred + ((dc+32)>>6). Use dc_had (stable).
+			// Retired encoding (B removed body). Keep label so state nums stable.
 			ST_HAD_PAINT: begin
-				if (rd_ph == RD_ISSUE) begin
-					rmw_addr <= cnt[7:0];
-					py_raddr <= cnt[7:0];
-					rd_ph <= RD_WAIT;
-				end else if (rd_ph == RD_WAIT) begin
-					rd_ph <= RD_CAPT;
-				end else begin
-					tsum = $signed({10'd0, py_q}) +
-					       18'(($signed(dc_had[{rmw_addr[7:6], rmw_addr[3:2]}]) + 18'sd32) >>> 6);
-					py_we <= 1'b1;
-					py_waddr <= rmw_addr;
-					py_wdata <= clip_u8(tsum);
-					rd_ph <= RD_ISSUE;
-					if (cnt == 9'd255) begin
-						i16_dc_valid <= 1'b1;
-						dbg_blk_applied <= dbg_blk_applied + 32'd1;
-						st <= ST_IDLE;
-						cnt <= 9'd0;
-					end else
-						cnt <= cnt + 9'd1;
-				end
+				st <= ST_IDLE;
 			end
 
 			//============================================================
@@ -763,7 +756,8 @@ module h264_i_res_recon_sink #(
 					end else
 						apply_i <= apply_i + 5'd1;
 				end else begin
-					// I16 AC RMW 3-cy: pred - ((dc+32)>>6) + idct
+					// I16 AC RMW 3-cy: plane holds pure pred (no HAD_PAINT).
+					// idct already has DC inject → write clip(pred + idct) always.
 					if (rd_ph == RD_ISSUE) begin
 						rmw_addr <= apply_addr;
 						py_raddr <= apply_addr;
@@ -771,16 +765,13 @@ module h264_i_res_recon_sink #(
 					end else if (rd_ph == RD_WAIT) begin
 						rd_ph <= RD_CAPT;
 					end else begin
-						if (any_nz_c) begin
-							tsum = 18'($signed({10'd0, py_q})
-								- 18'(($signed(i16_dc[{apply_by, apply_bx}]) + 18'sd32) >>> 6)
-								+ idct_r[apply_i[3:0]]);
-							py_we <= 1'b1;
-							py_waddr <= rmw_addr;
-							py_wdata <= clip_u8(tsum);
-						end
+						tsum = 18'($signed({10'd0, py_q}) + idct_r[apply_i[3:0]]);
+						py_we <= 1'b1;
+						py_waddr <= rmw_addr;
+						py_wdata <= clip_u8(tsum);
 						rd_ph <= RD_ISSUE;
 						if (apply_i == 5'd15) begin
+							i16_ac_recon <= 1'b1;
 							if (apply_any_nz)
 								dbg_luma_nz <= dbg_luma_nz + 32'd1;
 							dbg_blk_applied <= dbg_blk_applied + 32'd1;
@@ -792,27 +783,41 @@ module h264_i_res_recon_sink #(
 			end
 
 			//============================================================
-			// dump plane 3-cy/px;
-			// then capture tl_for_right from top_row[mbx*16+15] BEFORE overwrite
-			// (prev-row BR pixel = TL for MB to the right); then write bot→top_row.
+			// A: dump plane pipelined 1 result/cy after 2-cy read fill (258 cy),
+			// B: if I16 DC-only (no AC APPLY) fold ((dc+32)>>6) here.
+			// then TL save from top_row[mbx*16+15]; then bot→top_row we ×16.
+			// cnt: 0..257 pipe dump, 258 hold, 259 TL, 260..275 top we, 276 commit.
 			ST_MB_DUMP: begin
-				if (cnt < 9'd256) begin
-					if (rd_ph == RD_ISSUE) begin
+				if (cnt <= 9'd257) begin
+					if (cnt < 9'd256)
 						py_raddr <= cnt[7:0];
-						rd_ph <= RD_WAIT;
-					end else if (rd_ph == RD_WAIT) begin
-						rd_ph <= RD_CAPT;
-					end else begin
-						write_y[cnt[7:0]] <= py_q;
-						if (cnt[3:0] == 4'd15)
-							left_col[cnt[7:4]] <= py_q;
-						if (cnt[7:4] == 4'd15)
-							bot_row[cnt[3:0]] <= py_q;
-						rd_ph <= RD_ISSUE;
-						cnt <= cnt + 9'd1;
+					if (cnt >= 9'd2) begin
+						// dump_cap_a = address issued two cycles earlier
+						if (i16_dc_valid && !i16_ac_recon) begin
+							tsum = $signed({10'd0, py_q}) +
+							       18'(($signed(i16_dc[dump_dc_i]) + 18'sd32) >>> 6);
+							write_y[dump_cap_a] <= clip_u8(tsum);
+							if (dump_cap_a[3:0] == 4'd15)
+								left_col[dump_cap_a[7:4]] <= clip_u8(tsum);
+							if (dump_cap_a[7:4] == 4'd15)
+								bot_row[dump_cap_a[3:0]] <= clip_u8(tsum);
+						end else begin
+							write_y[dump_cap_a] <= py_q;
+							if (dump_cap_a[3:0] == 4'd15)
+								left_col[dump_cap_a[7:4]] <= py_q;
+							if (dump_cap_a[7:4] == 4'd15)
+								bot_row[dump_cap_a[3:0]] <= py_q;
+						end
 					end
-				end else if (cnt == 9'd256) begin
-					// issue top_row read for TL save
+					if (cnt == 9'd257) begin
+						rd_ph <= RD_ISSUE;
+						cnt <= 9'd258;
+					end else
+						cnt <= cnt + 9'd1;
+				end else if (cnt == 9'd258) begin
+					// one-cycle align before TL (rd_ph already ISSUE)
+					cnt <= 9'd259;
+				end else if (cnt == 9'd259) begin
 					if (cur_mb_y != 8'd0 &&
 					    (({8'd0, cur_mb_x} * 16 + 16'd15) < MAX_PIC_W[15:0])) begin
 						if (rd_ph == RD_ISSUE) begin
@@ -823,18 +828,17 @@ module h264_i_res_recon_sink #(
 						end else begin
 							tl_for_right_mb <= tr_q;
 							rd_ph <= RD_ISSUE;
-							cnt <= 9'd257;
+							cnt <= 9'd260;
 						end
 					end else begin
 						tl_for_right_mb <= 8'd128;
 						rd_ph <= RD_ISSUE;
-						cnt <= 9'd257;
+						cnt <= 9'd260;
 					end
-				end else if (cnt < 9'd273) begin
-					// cnt 257..272 → write 16 top_row bytes (index cnt-257)
+				end else if (cnt < 9'd276) begin
 					tr_we <= 1'b1;
-					tr_waddr <= TOP_AW'(({8'd0, cur_mb_x} * 16 + 16'(cnt - 9'd257)));
-					tr_wdata <= bot_row[4'(cnt - 9'd257)];
+					tr_waddr <= TOP_AW'(({8'd0, cur_mb_x} * 16 + 16'(cnt - 9'd260)));
+					tr_wdata <= bot_row[4'(cnt - 9'd260)];
 					cnt <= cnt + 9'd1;
 				end else begin
 					left_col_v <= 1'b1;

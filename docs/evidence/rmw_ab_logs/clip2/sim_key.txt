@@ -1,0 +1,60 @@
+SOURCE_SHA=172d0514a1277b7c4e23989d3cd6efb0d65b0cce
+NOTE=sim pre-commit; RTL dirty then committed with this tip
+324:I_RECON_DONE mb_written=1169 blk_applied=19722 luma_nz_peak=944
+325:STORE_MB_BITMAP unique=1169 dup=0 oob=0 expected=1170 fault_dup=0
+327:STORE_MB_BITMAP unique=1170 dup=0 oob=0 expected=1170 fault_dup=0
+335:STORE_MB_BITMAP unique=1170 dup=0 oob=0 expected=1170 fault_dup=0
+343:STORE_MB_BITMAP unique=1170 dup=0 oob=0 expected=1170 fault_dup=0
+351:STORE_MB_BITMAP unique=1170 dup=0 oob=0 expected=1170 fault_dup=0
+359:STORE_MB_BITMAP unique=1170 dup=0 oob=0 expected=1170 fault_dup=0
+367:STORE_MB_BITMAP unique=1170 dup=0 oob=0 expected=1170 fault_dup=0
+375:STORE_MB_BITMAP unique=1170 dup=0 oob=0 expected=1170 fault_dup=0
+383:STORE_MB_BITMAP unique=1170 dup=0 oob=0 expected=1170 fault_dup=0
+391:STORE_MB_BITMAP unique=1170 dup=0 oob=0 expected=1170 fault_dup=0
+399:STORE_MB_BITMAP unique=1170 dup=0 oob=0 expected=1170 fault_dup=0
+407:STORE_MB_BITMAP unique=1170 dup=0 oob=0 expected=1170 fault_dup=0
+415:STORE_MB_BITMAP unique=1170 dup=0 oob=0 expected=1170 fault_dup=0
+502:STAGE_CYCLES frame=0 parse_cycles=287 paint_cycles=3290336 parse_per_mb=0.245 paint_per_mb=2812.253
+503:STAGE_CYCLES frame=1 parse_cycles=1730726 paint_cycles=299520 parse_per_mb=1479.253 paint_per_mb=256.000
+504:STAGE_CYCLES frame=2 parse_cycles=1735152 paint_cycles=299520 parse_per_mb=1483.036 paint_per_mb=256.000
+505:STAGE_CYCLES frame=3 parse_cycles=1715514 paint_cycles=299520 parse_per_mb=1466.251 paint_per_mb=256.000
+506:STAGE_CYCLES frame=4 parse_cycles=1715512 paint_cycles=299520 parse_per_mb=1466.250 paint_per_mb=256.000
+507:STAGE_CYCLES frame=5 parse_cycles=1720841 paint_cycles=299520 parse_per_mb=1470.804 paint_per_mb=256.000
+508:STAGE_CYCLES frame=6 parse_cycles=1710130 paint_cycles=299520 parse_per_mb=1461.650 paint_per_mb=256.000
+509:STAGE_CYCLES frame=7 parse_cycles=1713316 paint_cycles=299520 parse_per_mb=1464.373 paint_per_mb=256.000
+510:STAGE_CYCLES frame=8 parse_cycles=1728023 paint_cycles=299520 parse_per_mb=1476.943 paint_per_mb=256.000
+511:STAGE_CYCLES frame=9 parse_cycles=1716329 paint_cycles=299520 parse_per_mb=1466.948 paint_per_mb=256.000
+512:STAGE_CYCLES frame=10 parse_cycles=1717087 paint_cycles=299520 parse_per_mb=1467.596 paint_per_mb=256.000
+513:STAGE_CYCLES frame=11 parse_cycles=1711130 paint_cycles=299520 parse_per_mb=1462.504 paint_per_mb=256.000
+514:STAGE_CYCLES_TOTAL frames=12 parse_total=18914047 paint_total=6585056 injection_total=140696 nonvcl_idle_total=768 reset_total=12 parse_per_mb=1347.154 paint_per_mb=469.021 injection_per_mb=10.021
+517:true rc=0
+FULL_FRAME_COMPARE first_bad frame=10 colorspace=I420_FROM_RGB565 plane=Y x=0 y=0 mb_x=0 mb_y=0 pixel_in_mb_x=0 pixel_in_mb_y=0 got=145 ref=77 abs=68
+FULL_FRAME_COMPARE raw frame=10 colorspace=I420_FROM_RGB565 plane=U exact=56 pixels=74880 mae=92.296928 max_abs=232
+FULL_FRAME_COMPARE first_bad frame=10 colorspace=I420_FROM_RGB565 plane=U x=0 y=0 mb_x=0 mb_y=0 pixel_in_mb_x=0 pixel_in_mb_y=0 got=176 ref=90 abs=86
+FULL_FRAME_COMPARE raw frame=10 colorspace=I420_FROM_RGB565 plane=V exact=894 pixels=74880 mae=73.184402 max_abs=209
+FULL_FRAME_COMPARE first_bad frame=10 colorspace=I420_FROM_RGB565 plane=V x=0 y=0 mb_x=0 mb_y=0 pixel_in_mb_x=0 pixel_in_mb_y=0 got=36 ref=239 abs=203
+FULL_FRAME_COMPARE mb frame=10 exact=0 total=1170
+FULL_FRAME_COMPARE raw frame=11 colorspace=I420_FROM_RGB565 plane=Y exact=3076 pixels=299520 mae=83.554601 max_abs=204
+FULL_FRAME_COMPARE first_bad frame=11 colorspace=I420_FROM_RGB565 plane=Y x=0 y=0 mb_x=0 mb_y=0 pixel_in_mb_x=0 pixel_in_mb_y=0 got=145 ref=77 abs=68
+FULL_FRAME_COMPARE raw frame=11 colorspace=I420_FROM_RGB565 plane=U exact=81 pixels=74880 mae=91.809682 max_abs=235
+FULL_FRAME_COMPARE first_bad frame=11 colorspace=I420_FROM_RGB565 plane=U x=0 y=0 mb_x=0 mb_y=0 pixel_in_mb_x=0 pixel_in_mb_y=0 got=176 ref=90 abs=86
+FULL_FRAME_COMPARE raw frame=11 colorspace=I420_FROM_RGB565 plane=V exact=954 pixels=74880 mae=73.099639 max_abs=209
+FULL_FRAME_COMPARE first_bad frame=11 colorspace=I420_FROM_RGB565 plane=V x=0 y=0 mb_x=0 mb_y=0 pixel_in_mb_x=0 pixel_in_mb_y=0 got=36 ref=239 abs=203
+FULL_FRAME_COMPARE mb frame=11 exact=0 total=1170
+DEGENERACY_WARNING inter_captures_constant_y=9328/12870 (partial DPB corruption)
+STAGE_CYCLES frame=0 parse_cycles=287 paint_cycles=3290336 parse_per_mb=0.245 paint_per_mb=2812.253
+STAGE_CYCLES frame=1 parse_cycles=1730726 paint_cycles=299520 parse_per_mb=1479.253 paint_per_mb=256.000
+STAGE_CYCLES frame=2 parse_cycles=1735152 paint_cycles=299520 parse_per_mb=1483.036 paint_per_mb=256.000
+STAGE_CYCLES frame=3 parse_cycles=1715514 paint_cycles=299520 parse_per_mb=1466.251 paint_per_mb=256.000
+STAGE_CYCLES frame=4 parse_cycles=1715512 paint_cycles=299520 parse_per_mb=1466.250 paint_per_mb=256.000
+STAGE_CYCLES frame=5 parse_cycles=1720841 paint_cycles=299520 parse_per_mb=1470.804 paint_per_mb=256.000
+STAGE_CYCLES frame=6 parse_cycles=1710130 paint_cycles=299520 parse_per_mb=1461.650 paint_per_mb=256.000
+STAGE_CYCLES frame=7 parse_cycles=1713316 paint_cycles=299520 parse_per_mb=1464.373 paint_per_mb=256.000
+STAGE_CYCLES frame=8 parse_cycles=1728023 paint_cycles=299520 parse_per_mb=1476.943 paint_per_mb=256.000
+STAGE_CYCLES frame=9 parse_cycles=1716329 paint_cycles=299520 parse_per_mb=1466.948 paint_per_mb=256.000
+STAGE_CYCLES frame=10 parse_cycles=1717087 paint_cycles=299520 parse_per_mb=1467.596 paint_per_mb=256.000
+STAGE_CYCLES frame=11 parse_cycles=1711130 paint_cycles=299520 parse_per_mb=1462.504 paint_per_mb=256.000
+STAGE_CYCLES_TOTAL frames=12 parse_total=18914047 paint_total=6585056 injection_total=140696 nonvcl_idle_total=768 reset_total=12 parse_per_mb=1347.154 paint_per_mb=469.021 injection_per_mb=10.021
+FULL_FRAME_COMPARE summary width=624 height=480 frames=12 nals=15 idr=1 p=11 bytes=70348 p_mb_count_max=1170 p_slice_done_pulses=12 traversed/total=1170/1170 native_inter_mb_captures=12870 native_inter_ignored=0 native_i420_dpb_writes=5391360 cycles=25681382 first_bad_frame=0 strict_pass=0 mode=expect-red
+OK full-frame expected-red: strict reference comparison diverged at frame 0
+true rc=0
