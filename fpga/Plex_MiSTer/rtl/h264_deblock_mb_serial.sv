@@ -278,6 +278,11 @@ module h264_deblock_mb_serial #(
 	localparam [2:0] SRC_LY = 3'd3, SRC_LU = 3'd4, SRC_LV = 3'd5;
 	localparam [2:0] SRC_TY = 3'd6, SRC_TC = 3'd7; // TC uses tu/tv via f_comp
 
+	// Neighbour-strip coords are signed [-4..15]; low bits alone encode
+	// (coord+4) for the left/top pads because those pads only see -4..-1.
+	// gy/gx in -4..-1 → [2:0]+4 wraps 4..7 → 0..3 (3-bit add).
+	wire [2:0] gy_p4 = gy[2:0] + 3'd4;
+
 	reg [2:0] rd_src;
 	reg [7:0] rd_addr;
 	always @* begin
@@ -285,30 +290,31 @@ module h264_deblock_mb_serial #(
 		rd_addr = 8'd0;
 		if (!f_chroma) begin
 			if (gx < 0) begin
+				// ly[0:63]: y*4+(x+4); y=0..15, x=-4..-1 → col=gx[1:0]
 				rd_src = SRC_LY;
-				rd_addr = {2'd0, gy[3:0], gx[1:0] + 2'd0}; // y*4+(x+4); x in -4..-1 → 0..3
-				// fix: x+4
-				rd_addr = gy[3:0] * 8'd4 + {6'd0, gx[1:0] + 2'd0};
-				// when gx=-4, gx[1:0]=0 but need 0; when gx=-1, need 3.
-				// Use (gx+4)
-				rd_addr = {2'd0, gy[3:0]} * 8'd4 + {6'd0, gx[2:0] + 3'd4};
+				rd_addr = {2'd0, gy[3:0], gx[1:0]};
 			end else if (gy < 0) begin
+				// ty[0:63]: (y+4)*16+x; y=-4..-1 → row=gy_p4[1:0]
 				rd_src = SRC_TY;
-				rd_addr = {2'd0, gy[2:0] + 3'd4} * 8'd16 + {3'd0, gx[3:0]};
+				rd_addr = {2'd0, gy_p4[1:0], gx[3:0]};
 			end else begin
+				// wy[0:255]: y*16+x
 				rd_src = SRC_WY;
-				rd_addr = {2'd0, gy[3:0]} * 8'd16 + {4'd0, gx[3:0]};
+				rd_addr = {gy[3:0], gx[3:0]};
 			end
 		end else begin
 			if (gx < 0) begin
+				// lu/lv[0:31]: y*4+(x+4); y=0..7
 				rd_src = f_comp ? SRC_LV : SRC_LU;
-				rd_addr = {3'd0, gy[2:0]} * 8'd4 + {6'd0, gx[2:0] + 3'd4};
+				rd_addr = {3'd0, gy[2:0], gx[1:0]};
 			end else if (gy < 0) begin
+				// tu/tv[0:31]: (y+4)*8+x
 				rd_src = SRC_TC;
-				rd_addr = {3'd0, gy[2:0] + 3'd4} * 8'd8 + {5'd0, gx[2:0]};
+				rd_addr = {3'd0, gy_p4[1:0], gx[2:0]};
 			end else begin
+				// wu/wv[0:63]: y*8+x
 				rd_src = f_comp ? SRC_WV : SRC_WU;
-				rd_addr = {3'd0, gy[2:0]} * 8'd8 + {5'd0, gx[2:0]};
+				rd_addr = {2'd0, gy[2:0], gx[2:0]};
 			end
 		end
 	end
@@ -327,40 +333,47 @@ module h264_deblock_mb_serial #(
 			e_plane = 2'd0; e_src = SRC_WY; e_addr = em[7:0];
 			e_x = blx + {12'd0, em[3:0]}; e_y = bly + {12'd0, em[7:4]};
 		end else if (em < 10'd320) begin
-			e_plane = 2'd0; e_src = SRC_LY; e_addr = {2'd0, em[5:0]}; // left strip 64
-			// left strip layout: rows 0..15, cols -4..-1 → emit only if use_left
+			// left strip 64: rows em[5:2], cols em[1:0]
+			e_plane = 2'd0; e_src = SRC_LY;
 			e_x = blx - 16'd4 + {14'd0, em[1:0]};
 			e_y = bly + {12'd0, em[5:2]};
 			e_gate = use_left;
-			e_addr = em[5:2] * 8'd4 + {6'd0, em[1:0]};
+			e_addr = {2'd0, em[5:2], em[1:0]};
 		end else if (em < 10'd384) begin
-			e_plane = 2'd0; e_src = SRC_TY; e_addr = em[5:0];
+			// ty: relative rows em[5:4] (0..3), cols em[3:0]
+			e_plane = 2'd0; e_src = SRC_TY;
 			e_x = blx + {12'd0, em[3:0]};
 			e_y = bly - 16'd4 + {14'd0, em[5:4]};
 			e_gate = use_top;
-			// ty index (y+4)*16+x with y in -4..-1 → em relative
-			e_addr = {2'd0, em[5:4]} * 8'd16 + {4'd0, em[3:0]};
+			e_addr = {2'd0, em[5:4], em[3:0]};
 		end else if (em < 10'd448) begin
-			e_plane = 2'd1; e_src = SRC_WU; e_addr = em[5:0];
+			e_plane = 2'd1; e_src = SRC_WU; e_addr = {2'd0, em[5:0]};
 			e_x = bcx + {13'd0, em[2:0]}; e_y = bcy + {13'd0, em[5:3]};
 		end else if (em < 10'd512) begin
-			e_plane = 2'd2; e_src = SRC_WV; e_addr = em[5:0];
+			e_plane = 2'd2; e_src = SRC_WV; e_addr = {2'd0, em[5:0]};
 			e_x = bcx + {13'd0, em[2:0]}; e_y = bcy + {13'd0, em[5:3]};
 		end else if (em < 10'd544) begin
 			e_plane = 2'd1; e_src = SRC_LU; e_gate = use_left;
 			e_x = bcx - 16'd4 + {14'd0, em[1:0]}; e_y = bcy + {13'd0, em[4:2]};
-			e_addr = em[4:2] * 8'd4 + {6'd0, em[1:0]};
+			e_addr = {3'd0, em[4:2], em[1:0]};
 		end else begin
 			e_plane = 2'd2; e_src = SRC_LV; e_gate = use_left;
 			e_x = bcx - 16'd4 + {14'd0, em[1:0]}; e_y = bcy + {13'd0, em[4:2]};
-			e_addr = em[4:2] * 8'd4 + {6'd0, em[1:0]};
+			e_addr = {3'd0, em[4:2], em[1:0]};
 		end
 	end
 
-	// Scatter write targets
+	// Scatter write targets + packed RAM indices (exact array widths).
 	reg signed [5:0] sx, sy;
 	reg [7:0] s_data;
 	reg s_write;
+	wire [2:0] sy_p4 = sy[2:0] + 3'd4;
+	wire [5:0] scat_ly_a = {sy[3:0], sx[1:0]};                 // ly[0:63]
+	wire [5:0] scat_ty_a = {sy_p4[1:0], sx[3:0]};               // ty[0:63]
+	wire [7:0] scat_wy_a = {sy[3:0], sx[3:0]};                  // wy[0:255]
+	wire [4:0] scat_lc_a = {sy[2:0], sx[1:0]};                  // lu/lv[0:31]
+	wire [4:0] scat_tc_a = {sy_p4[1:0], sx[2:0]};               // tu/tv[0:31]
+	wire [5:0] scat_wc_a = {sy[2:0], sx[2:0]};                  // wu/wv[0:63]
 	always @* begin
 		sx = 6'sd0; sy = 6'sd0; s_data = 8'd0; s_write = filt_en;
 		if (!f_chroma) begin
@@ -400,6 +413,20 @@ module h264_deblock_mb_serial #(
 			end
 		end
 	end
+
+	// Linebuf offsets: base is LBY_AW/LBC_AW wide; seq counters need matching zext.
+	wire [LBY_AW-1:0] seq_y6 = {{(LBY_AW > 6 ? LBY_AW - 6 : 0){1'b0}}, seq_idx[5:0]};
+	wire [LBC_AW-1:0] seq_c5 = {{(LBC_AW > 5 ? LBC_AW - 5 : 0){1'b0}}, seq_idx[4:0]};
+	// STORE2 patches rightmost 4 cols of left-MB bottom strip: rows 12..15.
+	wire [5:0] store2_off = {seq_idx[3:2], 4'd12} + {4'd0, seq_idx[1:0]};
+	wire [LBY_AW-1:0] store2_y = lb_lbase_y[LBY_AW-1:0] +
+		{{(LBY_AW > 6 ? LBY_AW - 6 : 0){1'b0}}, store2_off};
+
+	// Gather capture: beat gath_i writes previous beat (gath_i-1) into tap/lane.
+	// gath_i is 1..32 when capturing → prev 0..31 → lane=prev[4:3] in 0..3, tap=prev[2:0].
+	wire [5:0] gath_prev = gath_i - 6'd1;
+	wire [1:0] gath_prev_lane = gath_prev[4:3];
+	wire [2:0] gath_prev_tap  = gath_prev[2:0];
 
 	integer i;
 	always @(posedge clk) begin
@@ -496,10 +523,10 @@ module h264_deblock_mb_serial #(
 
 			S_LOAD: begin
 				// sequential top strip from linebuf → ty/tu/tv
-				ty[seq_idx[5:0]] <= lb_y[lb_base_y[LBY_AW-1:0] + seq_idx[5:0]];
+				ty[seq_idx[5:0]] <= lb_y[lb_base_y[LBY_AW-1:0] + seq_y6];
 				if (!seq_idx[5]) begin
-					tu[seq_idx[4:0]] <= lb_u[lb_base_c[LBC_AW-1:0] + seq_idx[4:0]];
-					tv[seq_idx[4:0]] <= lb_v[lb_base_c[LBC_AW-1:0] + seq_idx[4:0]];
+					tu[seq_idx[4:0]] <= lb_u[lb_base_c[LBC_AW-1:0] + seq_c5];
+					tv[seq_idx[4:0]] <= lb_v[lb_base_c[LBC_AW-1:0] + seq_c5];
 				end
 				if (seq_idx == 7'd63) begin
 					fstep <= 6'd0;
@@ -511,26 +538,17 @@ module h264_deblock_mb_serial #(
 			end
 
 			S_GATH: begin
-				// Issue reads; capture previous beat into gp/gq.
-				// Beat 0: issue only. Beats 1..32: capture tap (gath_i-1), issue gath_i.
-				if (gath_i != 6'd0) begin
-					// capture into previous lane/tap
-					case ((gath_i - 6'd1))
-					// expanded via tap/lane of gath_i-1
-					default: begin end
-					endcase
-				end
-				// Capture using computed previous indices
+				// Beat 0: issue only. Beats 1..32: capture tap/lane of gath_i-1.
 				if (gath_i > 6'd0) begin
-					case ((gath_i - 6'd1) & 6'd7)
-					6'd0: gp3[(gath_i - 6'd1) >> 3] <= rd_q;
-					6'd1: gp2[(gath_i - 6'd1) >> 3] <= rd_q;
-					6'd2: gp1[(gath_i - 6'd1) >> 3] <= rd_q;
-					6'd3: gp0[(gath_i - 6'd1) >> 3] <= rd_q;
-					6'd4: gq0[(gath_i - 6'd1) >> 3] <= rd_q;
-					6'd5: gq1[(gath_i - 6'd1) >> 3] <= rd_q;
-					6'd6: gq2[(gath_i - 6'd1) >> 3] <= rd_q;
-					default: gq3[(gath_i - 6'd1) >> 3] <= rd_q;
+					case (gath_prev_tap)
+					3'd0: gp3[gath_prev_lane] <= rd_q;
+					3'd1: gp2[gath_prev_lane] <= rd_q;
+					3'd2: gp1[gath_prev_lane] <= rd_q;
+					3'd3: gp0[gath_prev_lane] <= rd_q;
+					3'd4: gq0[gath_prev_lane] <= rd_q;
+					3'd5: gq1[gath_prev_lane] <= rd_q;
+					3'd6: gq2[gath_prev_lane] <= rd_q;
+					default: gq3[gath_prev_lane] <= rd_q;
 					endcase
 				end
 				if (gath_i == 6'd32) begin
@@ -541,7 +559,6 @@ module h264_deblock_mb_serial #(
 					gath_i <= gath_i + 6'd1;
 				end
 			end
-
 			S_HOLD: begin
 				// edge combo sees stable gp/gq; register outs
 				ep2[0] <= edge_p2[0]; ep2[1] <= edge_p2[1]; ep2[2] <= edge_p2[2]; ep2[3] <= edge_p2[3];
@@ -568,21 +585,21 @@ module h264_deblock_mb_serial #(
 				if (s_write) begin
 					if (!f_chroma) begin
 						if (sx < 0)
-							ly[{2'd0, sy[3:0]} * 8'd4 + {6'd0, sx[2:0] + 3'd4}] <= s_data;
+							ly[scat_ly_a] <= s_data;
 						else if (sy < 0)
-							ty[{2'd0, sy[2:0] + 3'd4} * 8'd16 + {4'd0, sx[3:0]}] <= s_data;
+							ty[scat_ty_a] <= s_data;
 						else
-							wy[{2'd0, sy[3:0]} * 8'd16 + {4'd0, sx[3:0]}] <= s_data;
+							wy[scat_wy_a] <= s_data;
 					end else begin
 						if (sx < 0) begin
-							if (f_comp) lv[{3'd0, sy[2:0]} * 8'd4 + {6'd0, sx[2:0] + 3'd4}] <= s_data;
-							else        lu[{3'd0, sy[2:0]} * 8'd4 + {6'd0, sx[2:0] + 3'd4}] <= s_data;
+							if (f_comp) lv[scat_lc_a] <= s_data;
+							else        lu[scat_lc_a] <= s_data;
 						end else if (sy < 0) begin
-							if (f_comp) tv[{3'd0, sy[2:0] + 3'd4} * 8'd8 + {5'd0, sx[2:0]}] <= s_data;
-							else        tu[{3'd0, sy[2:0] + 3'd4} * 8'd8 + {5'd0, sx[2:0]}] <= s_data;
+							if (f_comp) tv[scat_tc_a] <= s_data;
+							else        tu[scat_tc_a] <= s_data;
 						end else begin
-							if (f_comp) wv[{3'd0, sy[2:0]} * 8'd8 + {5'd0, sx[2:0]}] <= s_data;
-							else        wu[{3'd0, sy[2:0]} * 8'd8 + {5'd0, sx[2:0]}] <= s_data;
+							if (f_comp) wv[scat_wc_a] <= s_data;
+							else        wu[scat_wc_a] <= s_data;
 						end
 					end
 				end
@@ -598,7 +615,6 @@ module h264_deblock_mb_serial #(
 					end
 				end else scat_i <= scat_i + 5'd1;
 			end
-
 			S_EMIT: begin
 				// rd_q loaded this cycle from e_*; publish next cycle via emit_pend
 				emit_pend <= 1'b1;
@@ -613,12 +629,12 @@ module h264_deblock_mb_serial #(
 			end
 
 			S_STORE: begin
-				lb_y[lb_base_y[LBY_AW-1:0] + seq_idx[5:0]] <=
+				lb_y[lb_base_y[LBY_AW-1:0] + seq_y6] <=
 					wy[{2'b11, seq_idx[5:4], seq_idx[3:0]}];
 				if (!seq_idx[5]) begin
-					lb_u[lb_base_c[LBC_AW-1:0] + seq_idx[4:0]] <=
+					lb_u[lb_base_c[LBC_AW-1:0] + seq_c5] <=
 						wu[{1'b1, seq_idx[4:3], seq_idx[2:0]}];
-					lb_v[lb_base_c[LBC_AW-1:0] + seq_idx[4:0]] <=
+					lb_v[lb_base_c[LBC_AW-1:0] + seq_c5] <=
 						wv[{1'b1, seq_idx[4:3], seq_idx[2:0]}];
 				end
 				if (seq_idx == 7'd63) begin
@@ -630,23 +646,24 @@ module h264_deblock_mb_serial #(
 			S_STORE2: begin
 				// Patch left-MB bottom strip if edge0 filtered it; serial copy right cols → ly
 				if (use_left) begin
-					lb_y[lb_lbase_y[LBY_AW-1:0] + {seq_idx[3:2], 4'd12} + {6'd0, seq_idx[1:0]}] <=
-						ly[{2'b11, seq_idx[3:2], seq_idx[1:0]}];
+					lb_y[store2_y] <= ly[{2'b11, seq_idx[3:2], seq_idx[1:0]}];
 				end
 				// rotate right 4 cols of this MB into left strip for next MB
-				ly[seq_idx[3:0] * 8'd4 + 0] <= wy[seq_idx[3:0] * 8'd16 + 8'd12];
-				ly[seq_idx[3:0] * 8'd4 + 1] <= wy[seq_idx[3:0] * 8'd16 + 8'd13];
-				ly[seq_idx[3:0] * 8'd4 + 2] <= wy[seq_idx[3:0] * 8'd16 + 8'd14];
-				ly[seq_idx[3:0] * 8'd4 + 3] <= wy[seq_idx[3:0] * 8'd16 + 8'd15];
+				// ly[y*4+c] / wy[y*16+(12+c)] with exact 6/8-bit indices
+				ly[{seq_idx[3:0], 2'd0}] <= wy[{seq_idx[3:0], 4'd12}];
+				ly[{seq_idx[3:0], 2'd1}] <= wy[{seq_idx[3:0], 4'd13}];
+				ly[{seq_idx[3:0], 2'd2}] <= wy[{seq_idx[3:0], 4'd14}];
+				ly[{seq_idx[3:0], 2'd3}] <= wy[{seq_idx[3:0], 4'd15}];
 				if (seq_idx < 7'd8) begin
-					lu[seq_idx[2:0] * 8'd4 + 0] <= wu[seq_idx[2:0] * 8'd8 + 8'd4];
-					lu[seq_idx[2:0] * 8'd4 + 1] <= wu[seq_idx[2:0] * 8'd8 + 8'd5];
-					lu[seq_idx[2:0] * 8'd4 + 2] <= wu[seq_idx[2:0] * 8'd8 + 8'd6];
-					lu[seq_idx[2:0] * 8'd4 + 3] <= wu[seq_idx[2:0] * 8'd8 + 8'd7];
-					lv[seq_idx[2:0] * 8'd4 + 0] <= wv[seq_idx[2:0] * 8'd8 + 8'd4];
-					lv[seq_idx[2:0] * 8'd4 + 1] <= wv[seq_idx[2:0] * 8'd8 + 8'd5];
-					lv[seq_idx[2:0] * 8'd4 + 2] <= wv[seq_idx[2:0] * 8'd8 + 8'd6];
-					lv[seq_idx[2:0] * 8'd4 + 3] <= wv[seq_idx[2:0] * 8'd8 + 8'd7];
+					// lu/lv[y*4+c] 5-bit; wu/wv[y*8+(4+c)] 6-bit
+					lu[{seq_idx[2:0], 2'd0}] <= wu[{seq_idx[2:0], 3'd4}];
+					lu[{seq_idx[2:0], 2'd1}] <= wu[{seq_idx[2:0], 3'd5}];
+					lu[{seq_idx[2:0], 2'd2}] <= wu[{seq_idx[2:0], 3'd6}];
+					lu[{seq_idx[2:0], 2'd3}] <= wu[{seq_idx[2:0], 3'd7}];
+					lv[{seq_idx[2:0], 2'd0}] <= wv[{seq_idx[2:0], 3'd4}];
+					lv[{seq_idx[2:0], 2'd1}] <= wv[{seq_idx[2:0], 3'd5}];
+					lv[{seq_idx[2:0], 2'd2}] <= wv[{seq_idx[2:0], 3'd6}];
+					lv[{seq_idx[2:0], 2'd3}] <= wv[{seq_idx[2:0], 3'd7}];
 				end
 				if (seq_idx == 7'd15) begin
 					lft_valid <= 1'b1;

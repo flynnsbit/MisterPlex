@@ -64,45 +64,6 @@
     "fpga/Plex_MiSTer/rtl/frame_store.sv": [
       "WIDTHEXPAND:312: /home/flynnsbit/Projects/MisterPlex/fpga/Plex_MiSTer/rtl/frame_store.sv:312:8: Operator ASSIGN expects 32 bits on the Assign RHS, but Assign RHS's VARREF 'base' generates 8 bits."
     ],
-    "fpga/Plex_MiSTer/rtl/h264_deblock_mb_serial.sv": [
-      "WIDTHEXPAND:337: /home/flynnsbit/Projects/MisterPlex/fpga/Plex_MiSTer/rtl/h264_deblock_mb_serial.sv:337:43: Operator ASSIGN expects 8 bits on the Assign RHS, but Assign RHS's SEL generates 6 bits.",
-      "WIDTHEXPAND:344: /home/flynnsbit/Projects/MisterPlex/fpga/Plex_MiSTer/rtl/h264_deblock_mb_serial.sv:344:43: Operator ASSIGN expects 8 bits on the Assign RHS, but Assign RHS's SEL generates 6 bits.",
-      "WIDTHEXPAND:347: /home/flynnsbit/Projects/MisterPlex/fpga/Plex_MiSTer/rtl/h264_deblock_mb_serial.sv:347:43: Operator ASSIGN expects 8 bits on the Assign RHS, but Assign RHS's SEL generates 6 bits.",
-      "WIDTHEXPAND:499: /home/flynnsbit/Projects/MisterPlex/fpga/Plex_MiSTer/rtl/h264_deblock_mb_serial.sv:499:52: Operator ADD expects 11 bits on the RHS, but RHS's SEL generates 6 bits.",
-      "WIDTHEXPAND:501: /home/flynnsbit/Projects/MisterPlex/fpga/Plex_MiSTer/rtl/h264_deblock_mb_serial.sv:501:53: Operator ADD expects 10 bits on the RHS, but RHS's SEL generates 5 bits.",
-      "WIDTHEXPAND:502: /home/flynnsbit/Projects/MisterPlex/fpga/Plex_MiSTer/rtl/h264_deblock_mb_serial.sv:502:53: Operator ADD expects 10 bits on the RHS, but RHS's SEL generates 5 bits.",
-      "WIDTHEXPAND:616: /home/flynnsbit/Projects/MisterPlex/fpga/Plex_MiSTer/rtl/h264_deblock_mb_serial.sv:616:32: Operator ADD expects 11 bits on the RHS, but RHS's SEL generates 6 bits.",
-      "WIDTHEXPAND:619: /home/flynnsbit/Projects/MisterPlex/fpga/Plex_MiSTer/rtl/h264_deblock_mb_serial.sv:619:33: Operator ADD expects 10 bits on the RHS, but RHS's SEL generates 5 bits.",
-      "WIDTHEXPAND:621: /home/flynnsbit/Projects/MisterPlex/fpga/Plex_MiSTer/rtl/h264_deblock_mb_serial.sv:621:33: Operator ADD expects 10 bits on the RHS, but RHS's SEL generates 5 bits.",
-      "WIDTHEXPAND:633: /home/flynnsbit/Projects/MisterPlex/fpga/Plex_MiSTer/rtl/h264_deblock_mb_serial.sv:633:34: Operator ADD expects 11 bits on the RHS, but RHS's REPLICATE generates 6 bits.",
-      "WIDTHEXPAND:633: /home/flynnsbit/Projects/MisterPlex/fpga/Plex_MiSTer/rtl/h264_deblock_mb_serial.sv:633:58: Operator ADD expects 11 bits on the RHS, but RHS's REPLICATE generates 8 bits.",
-      "WIDTHTRUNC:294: /home/flynnsbit/Projects/MisterPlex/fpga/Plex_MiSTer/rtl/h264_deblock_mb_serial.sv:294:13: Operator ASSIGN expects 8 bits on the Assign RHS, but Assign RHS's ADD generates 9 bits.",
-      "WIDTHTRUNC:305: /home/flynnsbit/Projects/MisterPlex/fpga/Plex_MiSTer/rtl/h264_deblock_mb_serial.sv:305:13: Operator ASSIGN expects 8 bits on the Assign RHS, but Assign RHS's ADD generates 9 bits.",
-      "WIDTHTRUNC:526: /home/flynnsbit/Projects/MisterPlex/fpga/Plex_MiSTer/rtl/h264_deblock_mb_serial.sv:526:15: Bit extraction of array[3:0] requires 2 bit index, not 6 bits.",
-      "WIDTHTRUNC:527: /home/flynnsbit/Projects/MisterPlex/fpga/Plex_MiSTer/rtl/h264_deblock_mb_serial.sv:527:15: Bit extraction of array[3:0] requires 2 bit index, not 6 bits.",
-      "WIDTHTRUNC:528: /home/flynnsbit/Projects/MisterPlex/fpga/Plex_MiSTer/rtl/h264_deblock_mb_serial.sv:528:15: Bit extraction of array[3:0] requires 2 bit index, not 6 bits.",
-      "WIDTHTRUNC:529: /home/flynnsbit/Projects/MisterPlex/fpga/Plex_MiSTer/rtl/h264_deblock_mb_serial.sv:529:15: Bit extraction of array[3:0] requires 2 bit index, not 6 bits.",
-      "WIDTHTRUNC:530: /home/flynnsbit/Projects/MisterPlex/fpga/Plex_MiSTer/rtl/h264_deblock_mb_serial.sv:530:15: Bit extraction of array[3:0] requires 2 bit index, not 6 bits.",
-      "WIDTHTRUNC:531: /home/flynnsbit/Projects/MisterPlex/fpga/Plex_MiSTer/rtl/h264_deblock_mb_serial.sv:531:15: Bit extraction of array[3:0] requires 2 bit index, not 6 bits.",
-      "WIDTHTRUNC:532: /home/flynnsbit/Projects/MisterPlex/fpga/Plex_MiSTer/rtl/h264_deblock_mb_serial.sv:532:15: Bit extraction of array[3:0] requires 2 bit index, not 6 bits.",
-      "WIDTHTRUNC:533: /home/flynnsbit/Projects/MisterPlex/fpga/Plex_MiSTer/rtl/h264_deblock_mb_serial.sv:533:18: Bit extraction of array[3:0] requires 2 bit index, not 6 bits.",
-      "WIDTHTRUNC:571: /home/flynnsbit/Projects/MisterPlex/fpga/Plex_MiSTer/rtl/h264_deblock_mb_serial.sv:571:10: Bit extraction of array[63:0] requires 6 bit index, not 9 bits.",
-      "WIDTHTRUNC:573: /home/flynnsbit/Projects/MisterPlex/fpga/Plex_MiSTer/rtl/h264_deblock_mb_serial.sv:573:10: Bit extraction of array[63:0] requires 6 bit index, not 8 bits.",
-      "WIDTHTRUNC:578: /home/flynnsbit/Projects/MisterPlex/fpga/Plex_MiSTer/rtl/h264_deblock_mb_serial.sv:578:22: Bit extraction of array[31:0] requires 5 bit index, not 9 bits.",
-      "WIDTHTRUNC:579: /home/flynnsbit/Projects/MisterPlex/fpga/Plex_MiSTer/rtl/h264_deblock_mb_serial.sv:579:22: Bit extraction of array[31:0] requires 5 bit index, not 9 bits.",
-      "WIDTHTRUNC:581: /home/flynnsbit/Projects/MisterPlex/fpga/Plex_MiSTer/rtl/h264_deblock_mb_serial.sv:581:22: Bit extraction of array[31:0] requires 5 bit index, not 8 bits.",
-      "WIDTHTRUNC:582: /home/flynnsbit/Projects/MisterPlex/fpga/Plex_MiSTer/rtl/h264_deblock_mb_serial.sv:582:22: Bit extraction of array[31:0] requires 5 bit index, not 8 bits.",
-      "WIDTHTRUNC:584: /home/flynnsbit/Projects/MisterPlex/fpga/Plex_MiSTer/rtl/h264_deblock_mb_serial.sv:584:22: Bit extraction of array[63:0] requires 6 bit index, not 8 bits.",
-      "WIDTHTRUNC:585: /home/flynnsbit/Projects/MisterPlex/fpga/Plex_MiSTer/rtl/h264_deblock_mb_serial.sv:585:22: Bit extraction of array[63:0] requires 6 bit index, not 8 bits.",
-      "WIDTHTRUNC:642: /home/flynnsbit/Projects/MisterPlex/fpga/Plex_MiSTer/rtl/h264_deblock_mb_serial.sv:642:39: Bit extraction of array[63:0] requires 6 bit index, not 8 bits.",
-      "WIDTHTRUNC:643: /home/flynnsbit/Projects/MisterPlex/fpga/Plex_MiSTer/rtl/h264_deblock_mb_serial.sv:643:39: Bit extraction of array[63:0] requires 6 bit index, not 8 bits.",
-      "WIDTHTRUNC:644: /home/flynnsbit/Projects/MisterPlex/fpga/Plex_MiSTer/rtl/h264_deblock_mb_serial.sv:644:39: Bit extraction of array[63:0] requires 6 bit index, not 8 bits.",
-      "WIDTHTRUNC:645: /home/flynnsbit/Projects/MisterPlex/fpga/Plex_MiSTer/rtl/h264_deblock_mb_serial.sv:645:39: Bit extraction of array[63:0] requires 6 bit index, not 8 bits.",
-      "WIDTHTRUNC:646: /home/flynnsbit/Projects/MisterPlex/fpga/Plex_MiSTer/rtl/h264_deblock_mb_serial.sv:646:39: Bit extraction of array[63:0] requires 6 bit index, not 8 bits.",
-      "WIDTHTRUNC:647: /home/flynnsbit/Projects/MisterPlex/fpga/Plex_MiSTer/rtl/h264_deblock_mb_serial.sv:647:39: Bit extraction of array[63:0] requires 6 bit index, not 8 bits.",
-      "WIDTHTRUNC:648: /home/flynnsbit/Projects/MisterPlex/fpga/Plex_MiSTer/rtl/h264_deblock_mb_serial.sv:648:39: Bit extraction of array[63:0] requires 6 bit index, not 8 bits.",
-      "WIDTHTRUNC:649: /home/flynnsbit/Projects/MisterPlex/fpga/Plex_MiSTer/rtl/h264_deblock_mb_serial.sv:649:39: Bit extraction of array[63:0] requires 6 bit index, not 8 bits."
-    ],
     "fpga/Plex_MiSTer/rtl/h264_intra_pred.sv": [
       "WIDTHEXPAND:103: /home/flynnsbit/Projects/MisterPlex/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:103:24: Operator ADD expects 32 bits on the LHS, but LHS's VARREF 'top_left' generates 8 bits.",
       "WIDTHEXPAND:103: /home/flynnsbit/Projects/MisterPlex/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:103:71: Operator ADD expects 32 bits on the LHS, but LHS's VARREF 'top_left' generates 8 bits.",
@@ -271,10 +232,6 @@
     },
     "fpga/Plex_MiSTer/rtl/frame_store.sv": {
       "WIDTHEXPAND": 1
-    },
-    "fpga/Plex_MiSTer/rtl/h264_deblock_mb_serial.sv": {
-      "WIDTHEXPAND": 11,
-      "WIDTHTRUNC": 26
     },
     "fpga/Plex_MiSTer/rtl/h264_intra_pred.sv": {
       "WIDTHEXPAND": 101,
