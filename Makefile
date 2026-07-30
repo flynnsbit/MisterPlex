@@ -48,7 +48,7 @@ unit:
 unit-rollcall:
 	python3 $(ROOT)/tests/unit/test_unit_rollcall.py
 
-unit-unlocked: unit-rollcall preflight $(ROOT)/build/test_cadence $(ROOT)/build/test_avclock $(ROOT)/build/test_mraudio_status $(ROOT)/build/test_osd_menu $(ROOT)/build/test_last_frame_latch $(ROOT)/build/test_playback_overlay $(ROOT)/build/test_input_mailbox $(ROOT)/build/test_pixel_format $(ROOT)/build/test_main_guard $(ROOT)/build/test_status_telemetry $(ROOT)/build/test_resolve $(ROOT)/build/test_log_redact $(ROOT)/build/test_pms_timeline $(ROOT)/build/test_companion_eof $(ROOT)/build/test_companion_plant_seek $(ROOT)/build/pms_baseline_probe $(ROOT)/build/test_h264_bitstream_source $(ROOT)/build/test_bitstream_ring_lifecycle $(ROOT)/build/test_frame_store_math $(ROOT)/build/test_coded_size_adopt $(ROOT)/build/test_frame_store_sdram_sim $(ROOT)/build/test_frame_store_ddr_prefetch_sim $(ROOT)/build/test_sdram_memtest_sim $(ROOT)/build/test_sdram_mailbox $(ROOT)/build/test_annexb_count $(ROOT)/build/test_sps_parse $(ROOT)/build/test_slice_hdr $(ROOT)/build/test_cavlc_dc $(ROOT)/build/test_idct_quant $(ROOT)/build/test_p3_host_recon_vectors $(ROOT)/build/test_p3_idct_reference_model $(ROOT)/build/test_p3_inter_pred_vectors $(ROOT)/build/extract_h264_golden
+unit-unlocked: unit-rollcall preflight $(ROOT)/build/test_cadence $(ROOT)/build/test_avclock $(ROOT)/build/test_mraudio_status $(ROOT)/build/test_osd_menu $(ROOT)/build/test_last_frame_latch $(ROOT)/build/test_playback_overlay $(ROOT)/build/test_input_mailbox $(ROOT)/build/test_pixel_format $(ROOT)/build/test_main_guard $(ROOT)/build/test_status_telemetry $(ROOT)/build/test_resolve $(ROOT)/build/test_log_redact $(ROOT)/build/test_pms_timeline $(ROOT)/build/test_companion_eof $(ROOT)/build/test_companion_plant_seek $(ROOT)/build/pms_baseline_probe $(ROOT)/build/test_h264_bitstream_source $(ROOT)/build/test_bitstream_ring_lifecycle $(ROOT)/build/test_frame_store_math $(ROOT)/build/test_coded_size_adopt $(ROOT)/build/test_frame_store_sdram_sim $(ROOT)/build/test_frame_store_ddr_prefetch_sim $(ROOT)/build/test_sdram_memtest_sim $(ROOT)/build/test_sdram_mailbox $(ROOT)/build/test_annexb_count $(ROOT)/build/test_sps_parse $(ROOT)/build/test_slice_hdr $(ROOT)/build/test_cavlc_dc $(ROOT)/build/test_idct_quant $(ROOT)/build/test_p3_host_recon_vectors $(ROOT)/build/test_hybrid_compose_host $(ROOT)/build/test_plxo_post_copy $(ROOT)/build/test_p3_idct_reference_model $(ROOT)/build/test_p3_inter_pred_vectors $(ROOT)/build/extract_h264_golden
 	$(ROOT)/build/test_cadence
 	$(ROOT)/build/test_avclock
 	$(ROOT)/build/test_mraudio_status
@@ -88,6 +88,8 @@ unit-unlocked: unit-rollcall preflight $(ROOT)/build/test_cadence $(ROOT)/build/
 	$(ROOT)/build/test_cavlc_dc $(UNIT_ANNEXB)
 	$(ROOT)/build/test_idct_quant $(UNIT_ANNEXB)
 	$(ROOT)/build/test_p3_host_recon_vectors
+	$(ROOT)/build/test_hybrid_compose_host
+	$(ROOT)/build/test_plxo_post_copy
 	$(ROOT)/tests/unit/test_h264_golden_extractor.sh
 	$(ROOT)/tests/unit/test_h264_frame_plane_goldens.sh
 	$(ROOT)/tests/unit/test_derived_validation_hashes.sh
@@ -95,6 +97,7 @@ unit-unlocked: unit-rollcall preflight $(ROOT)/build/test_cadence $(ROOT)/build/
 	$(ROOT)/tests/unit/test_i420_candidate_score.sh
 	$(ROOT)/tests/unit/test_p3_hybrid_gate.sh
 	python3 $(ROOT)/tests/unit/test_dpb_writeback_source.py
+	$(ROOT)/tests/unit/test_h264_recon_export.sh
 	$(ROOT)/tests/unit/test_h264_p_mb_traverse_rtl_sim.sh
 	$(ROOT)/tests/unit/test_decode_stub_fetch_mv_rtl_sim.sh
 	$(ROOT)/tests/unit/test_h264_multinal_stream_path.sh
@@ -253,6 +256,17 @@ $(ROOT)/build/test_p3_host_recon_vectors: $(ROOT)/tests/unit/test_p3_host_recon_
 		$(ROOT)/tests/fixtures/p3_host_recon/frame_mae_v1.csv
 	@mkdir -p $(ROOT)/build
 	$(CXX) $(CXXFLAGS) -o $@ $(ROOT)/tests/unit/test_p3_host_recon_vectors.cpp
+
+$(ROOT)/build/test_hybrid_compose_host: $(ROOT)/tests/unit/test_hybrid_compose_host.cpp \
+		$(ROOT)/host/libmisterplex/hybrid_compose.hpp
+	@mkdir -p $(ROOT)/build
+	$(CXX) $(CXXFLAGS) -o $@ $(ROOT)/tests/unit/test_hybrid_compose_host.cpp
+
+$(ROOT)/build/test_plxo_post_copy: $(ROOT)/tests/unit/test_plxo_post_copy.cpp \
+		$(ROOT)/host/libmisterplex/mailbox_abi_spec.hpp
+	@mkdir -p $(ROOT)/build
+	$(CXX) $(CXXFLAGS) -o $@ $(ROOT)/tests/unit/test_plxo_post_copy.cpp
+
 
 $(ROOT)/build/extract_h264_golden: $(ROOT)/tools/extract_h264_golden.cpp \
 		$(ROOT)/host/libmisterplex/h264_recon.hpp \

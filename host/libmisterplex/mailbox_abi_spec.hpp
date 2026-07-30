@@ -92,10 +92,12 @@ constexpr unsigned kPlxdFramesDoneWidth = 16;
 //   [47:36]  reserved 0
 //   [63:48]  seq[15:0] — monotonic; bumps only on ready&&!torn publish
 //
-// Pixel plane (dedicated, never aliases present 0x30000000 banks):
+// Pixel plane (dedicated, never aliases present 0x30000000 *scanout* banks):
 //   bank0 @ kReconExportPhysBase
 //   bank1 @ kReconExportPhysBase + kReconExportBankStride
 //   layout: planar I420 Y then U then V, coded WxH, tightly packed
+// PLXO mailbox sits on the historical control map page (0x3007Fxxx), which the
+// ARM already maps for status — mailbox only, not pixel data.
 constexpr uint32_t kPlxoAddr  = 0x3007F130u;
 constexpr uint32_t kPlxoMagic = 0x504C584Fu; // "PLXO"
 constexpr unsigned kPlxoReadyBit = 0;         // upper word bit 0 → [32]
@@ -105,9 +107,23 @@ constexpr unsigned kPlxoFmtYuvBit = 3;        // [35]
 constexpr unsigned kPlxoSeqBit = 16;          // [63:48]
 constexpr unsigned kPlxoSeqWidth = 16;
 // Dedicated recon window: above bitstream ring (0x30140000) and present banks.
+// 512 KiB/bank holds 624x480 I420 (449280 B); prior 256 KiB did NOT.
 constexpr uint32_t kReconExportPhysBase = 0x30200000u;
-constexpr uint32_t kReconExportBankStride = 0x00040000u; // 256 KiB/bank (>624x480 I420)
-constexpr uint32_t kReconExportMapBytes = 0x00080000u;   // 2 banks
+constexpr uint32_t kReconExportBankStride = 0x00080000u; // 512 KiB/bank
+constexpr uint32_t kReconExportMapBytes = 0x00100000u;   // 2 banks
+
+// Post-copy PLXO stability: after memcpy, seq+bank+ready+!torn must match the
+// pre-copy snapshot. If the FPGA republished (same bank reused), reject.
+inline bool plxoPostCopyStable(uint32_t lo_before, uint32_t hi_before,
+                               uint32_t lo_after, uint32_t hi_after) {
+    if (lo_before != lo_after || hi_before != hi_after)
+        return false;
+    if (lo_before != kPlxoMagic)
+        return false;
+    const bool ready = ((hi_before >> kPlxoReadyBit) & 1u) != 0;
+    const bool torn = ((hi_before >> kPlxoTornBit) & 1u) != 0;
+    return ready && !torn;
+}
 
 // ---- Bitstream ring mailboxes (ddr_bitstream_reader) ----
 

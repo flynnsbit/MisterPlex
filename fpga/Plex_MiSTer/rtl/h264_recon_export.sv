@@ -1,40 +1,46 @@
 // h264_recon_export.sv — P3-3l5 FPGA→ARM reconstructed I420 export.
 //
-// Dedicated HPS-DDR region (default 0x30200000), NEVER the present banks at
-// 0x30000000. Aliasing present banks would return the ARM's own last write and
-// silently look like a working hybrid — that trap is forbidden.
+// Pixel planes: dedicated HPS-DDR region (default 0x30200000), NEVER the
+// present scanout banks at 0x30000000. Reading present banks returns the ARM's
+// own last write — silently wrong hybrid.
 //
-// Handshake (PLXO mailbox @ 0x3007F130, magic "PLXO"):
-//   ready=1 && torn=0  → bank holds a complete frame; seq advanced
-//   torn=1             → mid-frame abort; ARM must fail closed
-//   ready=0            → not safe to read (in progress / idle)
+// PLXO mailbox @ 0x3007F130 lives on the historical control/present *map page*
+// (same 0x3007Fxxx window the ARM already maps for status). That is a mailbox
+// only — not a pixel bank. Pixel memcpy uses the dedicated recon map alone.
 //
-// Sample stream: byte writes at I420 frame offsets (same packing as DPB:
-// Y plane then U then V). Writer coalesces to 64-bit DDR beats.
+// Handshake (PLXO magic "PLXO"):
+//   ready=1 && torn=0  → bank holds a *complete* frame; seq advanced
+//   torn=1             → abort / incomplete; ARM must fail closed
+//   ready=0            → not safe to read
 //
-// Expected added HPS bandwidth (paper, 320x240 @ 25 fps): 115200 B * 25
-// ≈ 2.88 MB/s FPGA→DDR on top of present traffic. Device-measured fps = UNKNOWN.
+// Safety (closed, not merely narrowed):
+//   1. frame_start accepted only when idle (or one-deep pending); never flips
+//      wr_bank while a mailbox issue is still updating pub_bank.
+//   2. ready published only if sample_count == FRAME_BYTES (no short write).
+//   3. ARM must post-copy re-read PLXO (seq/bank unchanged) — see fpga_spi.cpp.
+//
+// Bank stride default 512 KiB (0x80000) fits 624×480 I420 (449280 B).
+// Paper bandwidth @320×240/25: +2.88 MB/s. Device fps = UNKNOWN.
 
 module h264_recon_export #(
 	parameter int FRAME_W = 320,
 	parameter int FRAME_H = 240,
 	parameter [31:0] PHYS_BASE = 32'h3020_0000,
-	parameter [31:0] BANK_STRIDE = 32'h0004_0000,
+	// 512 KiB/bank: 320x240 I420=115200; 624x480 I420=449280 — both fit.
+	parameter [31:0] BANK_STRIDE = 32'h0008_0000,
 	parameter [31:0] MAILBOX_PHYS = 32'h3007_F130,
 	parameter [31:0] MAGIC = 32'h504C_584F  // "PLXO"
 )(
 	input  wire        clk,
 	input  wire        reset,
 
-	// Byte sample stream (I420 tightly packed; offset 0 = Y[0])
 	input  wire        sample_valid,
 	input  wire [31:0] sample_off,
 	input  wire [7:0]  sample_data,
-	input  wire        frame_start,   // begin filling the inactive bank
-	input  wire        frame_done,    // all samples for this frame committed
-	input  wire        frame_abort,   // tear — do not publish ready
+	input  wire        frame_start,
+	input  wire        frame_done,
+	input  wire        frame_abort,
 
-	// DDR master (shares stream-side arbiter slot via external mux)
 	output reg         ddr_want,
 	input  wire        ddr_busy,
 	output reg   [7:0] ddr_burstcnt,
@@ -46,37 +52,43 @@ module h264_recon_export #(
 	output reg   [7:0] ddr_be,
 	output reg         ddr_we,
 
-	// Debug / status
 	output wire        busy,
 	output wire [15:0] frames_exported,
 	output wire        last_torn
 );
 	localparam int FRAME_BYTES = FRAME_W * FRAME_H + 2 * ((FRAME_W / 2) * (FRAME_H / 2));
-	// Qword (beat) address for PLXO mailbox; DDRAM_ADDR is byte_addr[31:3].
 	localparam [28:0] MBOX_Q = MAILBOX_PHYS[31:3];
 
-	localparam [1:0] ST_IDLE    = 2'd0;
-	localparam [1:0] ST_FILL    = 2'd1;
-	localparam [1:0] ST_FLUSH   = 2'd2;
-	localparam [1:0] ST_MBOX    = 2'd3;
+	// synthesis translate_off
+	initial begin
+		if (BANK_STRIDE < FRAME_BYTES[31:0]) begin
+			$error("h264_recon_export: BANK_STRIDE too small for FRAME_W x FRAME_H I420");
+		end
+	end
+	// synthesis translate_on
+
+	localparam [1:0] ST_IDLE  = 2'd0;
+	localparam [1:0] ST_FILL  = 2'd1;
+	localparam [1:0] ST_FLUSH = 2'd2;
+	localparam [1:0] ST_MBOX  = 2'd3;
 
 	reg [1:0]  state;
-	reg        wr_bank;       // bank currently being filled
-	reg        pub_bank;      // last published bank
+	reg        wr_bank;
+	reg        pub_bank;
 	reg        torn_sticky;
 	reg [15:0] seq;
 	reg [15:0] frames_q;
 	reg        busy_r;
 	reg        last_torn_r;
+	reg        pending_start;
+	reg [31:0] sample_count;
 
-	// Pending qword assemble (byte → 64-bit)
 	reg        pq_valid;
-	reg [28:0] pq_addr_q;     // qword address (byte_addr[31:3])
+	reg [28:0] pq_addr_q;
 	reg [63:0] pq_data;
 	reg [7:0]  pq_be;
 	reg        pq_bank;
 
-	// Outbound DDR command queue (single slot)
 	reg        cmd_valid;
 	reg        cmd_is_mbox;
 	reg [28:0] cmd_addr;
@@ -86,7 +98,6 @@ module h264_recon_export #(
 	reg        cmd_bank;
 	reg [15:0] cmd_seq;
 
-	// Post-fill: need mailbox publish
 	reg        need_mbox;
 	reg        mbox_torn;
 	reg        mbox_bank;
@@ -105,52 +116,51 @@ module h264_recon_export #(
 	wire [63:0] sample_lane_data = {56'd0, sample_data} << {sample_lane, 3'b000};
 
 	wire can_issue = cmd_valid && !ddr_busy;
-
-	// Merge byte into pending qword (same bank/addr) or push previous.
 	wire pq_hit = pq_valid && (pq_addr_q == sample_q) && (pq_bank == wr_bank);
+	wire start_ready = (state == ST_IDLE) && !cmd_valid && !need_mbox;
 
 	always @(posedge clk) begin
 		if (reset) begin
-			state        <= ST_IDLE;
-			wr_bank      <= 1'b0;
-			pub_bank     <= 1'b0;
-			torn_sticky  <= 1'b0;
-			seq          <= 16'd0;
-			frames_q     <= 16'd0;
-			busy_r       <= 1'b0;
-			last_torn_r  <= 1'b0;
-			pq_valid     <= 1'b0;
-			pq_addr_q    <= 29'd0;
-			pq_data      <= 64'd0;
-			pq_be        <= 8'd0;
-			pq_bank      <= 1'b0;
-			cmd_valid    <= 1'b0;
-			cmd_is_mbox  <= 1'b0;
-			cmd_addr     <= 29'd0;
-			cmd_data     <= 64'd0;
-			cmd_be       <= 8'hFF;
-			cmd_torn     <= 1'b0;
-			cmd_bank     <= 1'b0;
-			cmd_seq      <= 16'd0;
-			need_mbox    <= 1'b0;
-			mbox_torn    <= 1'b0;
-			mbox_bank    <= 1'b0;
-			mbox_seq     <= 16'd0;
-			ddr_want     <= 1'b0;
-			ddr_rd       <= 1'b0;
-			ddr_we       <= 1'b0;
-			ddr_burstcnt <= 8'd1;
-			ddr_addr     <= 29'd0;
-			ddr_din      <= 64'd0;
-			ddr_be       <= 8'hFF;
+			state         <= ST_IDLE;
+			wr_bank       <= 1'b0;
+			pub_bank      <= 1'b0;
+			torn_sticky   <= 1'b0;
+			seq           <= 16'd0;
+			frames_q      <= 16'd0;
+			busy_r        <= 1'b0;
+			last_torn_r   <= 1'b0;
+			pending_start <= 1'b0;
+			sample_count  <= 32'd0;
+			pq_valid      <= 1'b0;
+			pq_addr_q     <= 29'd0;
+			pq_data       <= 64'd0;
+			pq_be         <= 8'd0;
+			pq_bank       <= 1'b0;
+			cmd_valid     <= 1'b0;
+			cmd_is_mbox   <= 1'b0;
+			cmd_addr      <= 29'd0;
+			cmd_data      <= 64'd0;
+			cmd_be        <= 8'hFF;
+			cmd_torn      <= 1'b0;
+			cmd_bank      <= 1'b0;
+			cmd_seq       <= 16'd0;
+			need_mbox     <= 1'b0;
+			mbox_torn     <= 1'b0;
+			mbox_bank     <= 1'b0;
+			mbox_seq      <= 16'd0;
+			ddr_want      <= 1'b0;
+			ddr_rd        <= 1'b0;
+			ddr_we        <= 1'b0;
+			ddr_burstcnt  <= 8'd1;
+			ddr_addr      <= 29'd0;
+			ddr_din       <= 64'd0;
+			ddr_be        <= 8'hFF;
 		end else begin
-			// Default: drop single-cycle strobes; hold level want while cmd pending.
 			ddr_rd <= 1'b0;
 			ddr_we <= 1'b0;
 			if (!cmd_valid)
 				ddr_want <= 1'b0;
 
-			// Complete in-flight issue
 			if (can_issue) begin
 				ddr_want     <= 1'b1;
 				ddr_burstcnt <= 8'd1;
@@ -163,33 +173,45 @@ module h264_recon_export #(
 				if (cmd_is_mbox) begin
 					pub_bank    <= cmd_bank;
 					last_torn_r <= cmd_torn;
-					if (!cmd_torn) begin
+					if (!cmd_torn)
 						frames_q <= frames_q + 16'd1;
-					end
 					busy_r <= 1'b0;
 					state  <= ST_IDLE;
 				end
 			end
 
-			// Frame start: switch fill bank (opposite of last published when possible)
+			// frame_start only when idle; else one-deep pending.
+			// Never derive wr_bank from pub_bank in the same cycle pub_bank updates.
 			if (frame_start) begin
-				wr_bank     <= ~pub_bank;
-				torn_sticky <= 1'b0;
-				busy_r      <= 1'b1;
-				pq_valid    <= 1'b0;
-				need_mbox   <= 1'b0;
-				state       <= ST_FILL;
+				if (start_ready) begin
+					wr_bank       <= ~pub_bank;
+					torn_sticky   <= 1'b0;
+					busy_r        <= 1'b1;
+					pq_valid      <= 1'b0;
+					need_mbox     <= 1'b0;
+					sample_count  <= 32'd0;
+					pending_start <= 1'b0;
+					state         <= ST_FILL;
+				end else begin
+					pending_start <= 1'b1;
+				end
+			end else if (pending_start && start_ready) begin
+				wr_bank       <= ~pub_bank;
+				torn_sticky   <= 1'b0;
+				busy_r        <= 1'b1;
+				pq_valid      <= 1'b0;
+				need_mbox     <= 1'b0;
+				sample_count  <= 32'd0;
+				pending_start <= 1'b0;
+				state         <= ST_FILL;
 			end
 
-			if (frame_abort && (state == ST_FILL || state == ST_FLUSH)) begin
+			if (frame_abort && (state == ST_FILL || state == ST_FLUSH))
 				torn_sticky <= 1'b1;
-			end
 
-			// Accept samples while filling
 			if (state == ST_FILL && sample_in_range) begin
+				sample_count <= sample_count + 32'd1;
 				if (pq_valid && !pq_hit) begin
-					// Push previous pending qword into cmd if free; else drop sample
-					// (fail closed via torn if we cannot drain — mark torn).
 					if (!cmd_valid) begin
 						cmd_valid   <= 1'b1;
 						cmd_is_mbox <= 1'b0;
@@ -197,14 +219,13 @@ module h264_recon_export #(
 						cmd_data    <= pq_data;
 						cmd_be      <= pq_be;
 						ddr_want    <= 1'b1;
-						// start new pending with this sample
-						pq_valid  <= 1'b1;
-						pq_addr_q <= sample_q;
-						pq_bank   <= wr_bank;
-						pq_data   <= sample_lane_data;
-						pq_be     <= sample_be;
+						pq_valid    <= 1'b1;
+						pq_addr_q   <= sample_q;
+						pq_bank     <= wr_bank;
+						pq_data     <= sample_lane_data;
+						pq_be       <= sample_be;
 					end else begin
-						torn_sticky <= 1'b1; // backpressure tear
+						torn_sticky <= 1'b1;
 					end
 				end else if (pq_valid && pq_hit) begin
 					pq_data <= pq_data | sample_lane_data;
@@ -218,8 +239,10 @@ module h264_recon_export #(
 				end
 			end
 
-			// Frame done → flush pending then mailbox
 			if (state == ST_FILL && frame_done) begin
+				// Short write → torn (refuse ready). Include same-cycle sample.
+				if ((sample_count + (sample_in_range ? 32'd1 : 32'd0)) != frame_bytes_u)
+					torn_sticky <= 1'b1;
 				state <= ST_FLUSH;
 			end
 
@@ -235,7 +258,8 @@ module h264_recon_export #(
 						pq_valid    <= 1'b0;
 					end
 				end else if (!cmd_valid && !need_mbox) begin
-					// Prepare mailbox publish
+					// 16-bit seq wrap is deliberate; ARM uses seq for post-copy
+					// identity, not a strict monotonic +1 across wrap.
 					if (!torn_sticky)
 						seq <= seq + 16'd1;
 					need_mbox <= 1'b1;
@@ -247,8 +271,6 @@ module h264_recon_export #(
 			end
 
 			if (state == ST_MBOX && need_mbox && !cmd_valid) begin
-				// PLXO: {seq[15:0], reserved[11:0], fmt, torn, bank, ready, magic}
-				// ready = !torn; torn as flagged; fmt_yuv=1
 				cmd_valid   <= 1'b1;
 				cmd_is_mbox <= 1'b1;
 				cmd_addr    <= MBOX_Q;
@@ -257,21 +279,19 @@ module h264_recon_export #(
 				cmd_bank    <= mbox_bank;
 				cmd_seq     <= mbox_seq;
 				cmd_data    <= {
-					mbox_seq,                           // [63:48]
-					12'd0,                              // [47:36]
-					1'b1,                               // [35] fmt_yuv
-					mbox_torn,                          // [34] torn
-					mbox_bank,                          // [33] bank
-					~mbox_torn,                         // [32] ready
-					MAGIC                               // [31:0]
+					mbox_seq,
+					12'd0,
+					1'b1,
+					mbox_torn,
+					mbox_bank,
+					~mbox_torn,
+					MAGIC
 				};
-				ddr_want    <= 1'b1;
-				need_mbox   <= 1'b0;
+				ddr_want  <= 1'b1;
+				need_mbox <= 1'b0;
 			end
 
-			// Ignore unused read data path
 			if (ddr_dout_ready) begin
-				// no-op
 			end
 		end
 	end
