@@ -1,0 +1,64 @@
+Info: *******************************************************************
+Info: Running Quartus Prime Analysis & Synthesis
+    Info: Version 17.0.2 Build 602 07/19/2017 SJ Lite Edition
+    Info: Copyright (C) 2017  Intel Corporation. All rights reserved.
+    Info: Your use of Intel Corporation's design tools, logic functions 
+    Info: and other software and tools, and its AMPP partner logic 
+    Info: functions, and any output files from any of the foregoing 
+    Info: (including device programming or simulation files), and any 
+    Info: associated documentation or information are expressly subject 
+    Info: to the terms and conditions of the Intel Program License 
+    Info: Subscription Agreement, the Intel Quartus Prime License Agreement,
+    Info: the Intel MegaCore Function License Agreement, or other 
+    Info: applicable license agreement, including, without limitation, 
+    Info: that your use is for the sole purpose of programming logic 
+    Info: devices manufactured by Intel and sold by Intel or its 
+    Info: authorized distributors.  Please refer to the applicable 
+    Info: agreement for further details.
+    Info: Processing started: Thu Jul 30 11:15:08 2026
+Info: Command: quartus_map --read_settings_files=on --write_settings_files=off had_probe -c had_probe
+Info (20032): Parallel compilation is enabled and will use up to 2 processors
+Info (12021): Found 1 design units, including 1 entities, in source file h264_i16_dc_hadamard.sv
+    Info (12023): Found entity 1: h264_i16_dc_hadamard File: /build/h264_i16_dc_hadamard.sv Line: 9
+Info (12021): Found 1 design units, including 1 entities, in source file top_had.sv
+    Info (12023): Found entity 1: top_had File: /build/top_had.sv Line: 2
+Info (12127): Elaborating entity "top_had" for the top level hierarchy
+Info (12128): Elaborating entity "h264_i16_dc_hadamard" for hierarchy "h264_i16_dc_hadamard:u_had" File: /build/top_had.sv Line: 16
+Warning (10230): Verilog HDL assignment warning at h264_i16_dc_hadamard.sv(50): truncated value with size 32 to match size of target (3) File: /build/h264_i16_dc_hadamard.sv Line: 50
+Warning (10230): Verilog HDL assignment warning at h264_i16_dc_hadamard.sv(51): truncated value with size 32 to match size of target (4) File: /build/h264_i16_dc_hadamard.sv Line: 51
+Info (278001): Inferred 2 megafunctions from design logic
+    Info (278004): Inferred divider/modulo megafunction ("lpm_divide") from the following logic: "h264_i16_dc_hadamard:u_had|Div0" File: /build/h264_i16_dc_hadamard.sv Line: 51
+    Info (278004): Inferred divider/modulo megafunction ("lpm_divide") from the following logic: "h264_i16_dc_hadamard:u_had|Mod0" File: /build/h264_i16_dc_hadamard.sv Line: 50
+Info (12130): Elaborated megafunction instantiation "h264_i16_dc_hadamard:u_had|lpm_divide:Div0" File: /build/h264_i16_dc_hadamard.sv Line: 51
+Info (12133): Instantiated megafunction "h264_i16_dc_hadamard:u_had|lpm_divide:Div0" with the following parameter: File: /build/h264_i16_dc_hadamard.sv Line: 51
+    Info (12134): Parameter "LPM_WIDTHN" = "6"
+    Info (12134): Parameter "LPM_WIDTHD" = "3"
+    Info (12134): Parameter "LPM_NREPRESENTATION" = "UNSIGNED"
+    Info (12134): Parameter "LPM_DREPRESENTATION" = "UNSIGNED"
+Info (12021): Found 1 design units, including 1 entities, in source file db/lpm_divide_2am.tdf
+    Info (12023): Found entity 1: lpm_divide_2am File: /build/db/lpm_divide_2am.tdf Line: 25
+Info (12021): Found 1 design units, including 1 entities, in source file db/sign_div_unsign_8kh.tdf
+    Info (12023): Found entity 1: sign_div_unsign_8kh File: /build/db/sign_div_unsign_8kh.tdf Line: 25
+Info (12021): Found 1 design units, including 1 entities, in source file db/alt_u_div_mse.tdf
+    Info (12023): Found entity 1: alt_u_div_mse File: /build/db/alt_u_div_mse.tdf Line: 23
+Info (12130): Elaborated megafunction instantiation "h264_i16_dc_hadamard:u_had|lpm_divide:Mod0" File: /build/h264_i16_dc_hadamard.sv Line: 50
+Info (12133): Instantiated megafunction "h264_i16_dc_hadamard:u_had|lpm_divide:Mod0" with the following parameter: File: /build/h264_i16_dc_hadamard.sv Line: 50
+    Info (12134): Parameter "LPM_WIDTHN" = "6"
+    Info (12134): Parameter "LPM_WIDTHD" = "3"
+    Info (12134): Parameter "LPM_NREPRESENTATION" = "UNSIGNED"
+    Info (12134): Parameter "LPM_DREPRESENTATION" = "UNSIGNED"
+Info (12021): Found 1 design units, including 1 entities, in source file db/lpm_divide_52m.tdf
+    Info (12023): Found entity 1: lpm_divide_52m File: /build/db/lpm_divide_52m.tdf Line: 25
+Info (286030): Timing-Driven Synthesis is running
+Info (16010): Generating hard_block partition "hard_block:auto_generated_inst"
+    Info (16011): Adding 0 node(s), including 0 DDIO, 0 PLL, 0 transceiver and 0 LCELL
+Info (21057): Implemented 775 device resources after synthesis - the final resource count might be different
+    Info (21058): Implemented 264 input pins
+    Info (21059): Implemented 24 output pins
+    Info (21061): Implemented 484 logic cells
+    Info (21062): Implemented 3 DSP elements
+Info: Quartus Prime Analysis & Synthesis was successful. 0 errors, 2 warnings
+    Info: Peak virtual memory: 1086 megabytes
+    Info: Processing ended: Thu Jul 30 11:15:14 2026
+    Info: Elapsed time: 00:00:06
+    Info: Total CPU time (on all processors): 00:00:16

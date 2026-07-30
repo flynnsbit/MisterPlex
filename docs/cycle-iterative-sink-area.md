@@ -201,3 +201,16 @@ Isolated `h264_dequant4x4` map (`dequant-dsp-probe`, `true rc=0`):
 **One parallel dequant already exceeds the whole sink ≤12 DSP target.**  
 Serial `dequant_one` (16 cycles, one mul) remains mandatory.  
 Evidence: `docs/m10k-inference-boundary.md` §Dequant; `.agent-work/integ-wiring/dequant_dsp.map.summary`.
+
+---
+
+## DSP isolation baselines (2026-07-30, integrate)
+
+| Module | Isolated DSP | Isolated ALMs needed | In-tree entity (d57f002) |
+|--------|-------------:|---------------------:|--------------------------|
+| `h264_dequant4x4` | **17** | 240 | child under sink often **32** (drift) |
+| `h264_i16_dc_hadamard` | **3** | 247 | leaf/entity **32** (attribution; not isolation floor) |
+| sink whole | — | — | **64 DSP**, 38,687 comb ALUTs |
+
+**Serial dequant is mandatory** (17 > 12). Had is not a 32-DSP floor in isolation.  
+Full arithmetic: `docs/fit-arithmetic-post-d57f002.md`.

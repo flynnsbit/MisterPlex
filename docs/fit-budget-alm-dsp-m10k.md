@@ -198,4 +198,4 @@ coord-map2b traverse/sink are **not byte-identical** to score SHAs:
 
 ## 9. Honest one-liner (corrected phrasing)
 
-*Functionally exact I-decoder in simulation; synthesis succeeds; design **cannot fit** this FPGA **in its current architecture** (~29.6× on map ALMs needed vs 41,910) — cause localised to **64 parallel dynamic RBSP reads** (traverse) + sink parallel IQ/planes; chroma leaves cheap; DSP overbooked even without traverse; `ramstyle` alone will not save you; M10K bits look survivable only after real inference.*
+*Bit-exact I-decoder on two clips; after d57f002 RBSP restructure the design went from ~30× oversized to **1.51×** (63,199 ALMs needed / 41,910) with M10K RBSP inferred. Traverse bomb is dead (1.18M → 9.2k comb ALUTs). Remaining wall: sink parallel IQ (entity 64 DSP / 38.7k comb) + RFS async uninfer. DSP isolation: dequant **17**, had **3**. See `docs/fit-arithmetic-post-d57f002.md` — do not subtract comb ALUTs from ALMs needed.*
