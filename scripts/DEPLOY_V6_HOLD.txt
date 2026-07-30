@@ -1,0 +1,31 @@
+HOLD — parent auth required. Do NOT deploy v6 until PARENT_AUTHORIZE_DEPLOY=YES.
+
+Live NOW (measured 2026-07-29T23:17Z read-only):
+  onbox_md5=a56bbc3c04863079ac0b29f81c45ceba  (v5 aa9a21f stop/seek)
+  --id=misterplex-dev CORENAME=Plex
+  rbf=14eaeff3270a6f59a434e0f777ed823d  (wire6 — DO NOT TOUCH)
+  conf: PRESENT=fpga STREAM=0 DECODE=320x240 OSD_CONTROL=1 PRESENT_PROFILE absent/0
+  PLEX_TOKEN present — never print/commit; conf rewrite NOT part of v6
+
+v6 candidate (hybrid tip b6071fa — NOT deployed):
+  tip:     b6071fa  fix: promote DDR kick SPI→doorbell after bring-up
+  ARM:     87e8500aedfdea0cf9506572e7d88bd2
+  freeze:  build/arm-deploy-v6-freeze/misterplexd  (this worktree)
+  x86:     98c28bf2… NEVER scp
+  intent:  after SPI bring-up, steady-state doorbell-only (cut per-frame SPI kick cost)
+
+On parent YES:
+  1) no-force claim + visible bounce
+  2) daemon ONLY — no RBF, no conf rewrite
+  3) ship freeze ARM 87e8500a only
+  4) verify on-box md5 + --id misterplex-dev
+  5) leave CORENAME=Plex claim FREE
+  6) hand w-hybrid-arm AFTER profile+CPU A/B
+
+Rollback R1–R5 → v5 a56bbc3c (prev-c2 / before-v6-* snap created at install)
+  NEVER before-20260729T181129 (06c5735a)
+  R5 binding: presents must keep advancing (AFTER-v5 baseline presents→1728 pfps≈vfps)
+
+pre-registered wall: 40–90s (v4=44s v5=36s; claim+bounce dominates)
+DRY-RUN: PARENT_AUTHORIZE_DEPLOY=NO ./scripts/DEPLOY_V6_RUNBOOK.sh
+LIVE:    PARENT_AUTHORIZE_DEPLOY=YES DEPLOY_EXECUTE=1 ./scripts/DEPLOY_V6_RUNBOOK.sh

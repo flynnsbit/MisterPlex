@@ -1,0 +1,97 @@
+STARTUP PERSISTENCE — static evidence (NO REBOOT)
+lane=w-bounce2  host=192.168.1.183  when≈2026-07-30T04:40Z
+live process (pre-existing, not started by boot hook):
+  cwd=/media/fat/misterplex
+  ./bin/misterplexd --name MiSTerPlex --id misterplex-dev --port 3005
+    --conf /media/fat/misterplex/misterplex.conf
+  onbox_md5=a56bbc3c04863079ac0b29f81c45ceba  CORENAME=Plex  rbf=14eaeff3
+
+========================================================================
+TABLE
+========================================================================
+| # | property | method | result | proven? |
+|---|----------|--------|--------|---------|
+| 1 | Daemon starts on cold boot | static: cat live hooks | BOTH /media/fat/linux/_user-startup.sh AND user-startup.sh are 171B "intentionally minimal" with comment "MiSTerPlex … hooks removed for stability." Host grep of hook text: HOOK_NO_DAEMON. mtime 2026-07-29 15:40. | PROVEN: will NOT auto-start |
+| 2 | Startup --id | static: live hook has no misterplexd line; bak-before-default has --id misterplex-183 | Live hook: N/A (no start). Prior bak would start WRONG id misterplex-183 (token-boundary fail vs misterplex-dev). | PROVEN broken if bak restored; PROVEN absent now |
+| 3 | Startup --port / --conf path | static bak + deploy script intent | Bak and deploy_misterplexd.sh LINE use port 3005 and --conf /media/fat/misterplex/misterplex.conf (absolute). Live hook has neither. | PROVEN path/args correct in bak+package; live hook empty |
+| 4 | Which binary hook points at | static | Bak: absolute /media/fat/misterplex/bin/misterplexd. Live install md5 a56bbc3c… matches v5 ship. Live hook points at nothing. Live *process* is relative ./bin/misterplexd via soft-bounce ensure_daemon (cwd misterplex). | PROVEN: installed binary OK; boot path missing |
+| 5 | Conf survives reboot (file on SD) | static: file on /media/fat | misterplex.conf size=380 ino present; keys (token redacted): PLEX_TOKEN=<set> PLEX_BASE PLEX_HOST PRESENT=fpga STREAM=0 DECODE=320x240 OSD_CONTROL=1 + others. SD-backed → survives power cycle unless rewritten. | PROVEN file present; reboot not required for "file persists" claim |
+| 6 | Conf rewrite on boot / daemon start | static code | loadConf/loadConfAll = ifstream read-only (main.cpp:32-45). No ofstream/write of conf in daemon. deploy_misterplexd.sh: existing conf → WARNING only if missing PRESENT=fpga; never silent rewrite (680dea8). Soft bounce: "Does NOT edit misterplex.conf". | PROVEN no daemon rewrite path |
+| 7 | Default PRESENT if conf missing key | static main.cpp:119 | presentMode default "fpga" before conf override. | PROVEN code default fpga (still want explicit conf key) |
+| 8 | PLEX_TOKEN survives | static | conf has PLEX_TOKEN= key (value not printed); daemon only reads. | PROVEN key present; value not dumped |
+| 9 | Plex core autoload on boot | static MiSTer.ini + lastcore | bootcore line COMMENTED: `;bootcore=lastcore`. lastcore.dat: No such file. package_release README: "Load core from OSD". | PROVEN: core load is USER-DRIVEN (MENU), not automatic |
+| 10 | Cast useful after cold boot alone | synthesis of 1+9 | Even if daemon were hooked: without user loading Plex.rbf, CORENAME=MENU → presents cannot advance; cast target may appear but HDMI path needs core. With current hooks: daemon absent AND core MENU → cast target vanishes. | PROVEN degraded cold-boot outcome without manual steps |
+| 11 | v4/v5 deploys reinstalled hook? | static runbooks | DEPLOY_V4/V5 install binary only under claim; did not call deploy_misterplexd.sh hook block. Hook stripped earlier (15:40) before v4/v5. | PROVEN deploys did not restore hook |
+| 12 | End-to-end cold boot behavior | — | NOT EXECUTED (parent: do not reboot daily driver). | REQUIRES USER REBOOT WINDOW |
+
+========================================================================
+QUOTED ARTIFACTS (no secrets)
+========================================================================
+LIVE _user-startup.sh / user-startup.sh (identical md5 0092daea…):
+  #!/bin/sh
+  echo "***" $1 "***"
+  # Default MiSTer user-startup — intentionally minimal.
+  # (SuperDrive buttons/eject, MiSTerPlex, MiSTerCast hooks removed for stability.)
+
+BAK _user-startup.sh.bak-before-default-20260729-154024 (excerpt):
+  nohup /media/fat/misterplex/bin/misterplexd \
+    --name MiSTerPlex --id misterplex-183 --port 3005 \
+    --conf /media/fat/misterplex/misterplex.conf \
+    --pms http://192.168.1.41:32400 \
+    >>/media/fat/misterplex/misterplexd.log 2>&1 &
+
+MiSTer.ini:
+  ;bootcore=lastcore    ; uncomment to autoboot a core...
+
+deploy_misterplexd.sh (canonical hook LINE when deploy used):
+  /media/fat/misterplex/bin/misterplexd --name MiSTerPlex --id misterplex-dev \
+    --port 3005 --conf /media/fat/misterplex/misterplex.conf >>… &
+
+========================================================================
+VERDICT
+========================================================================
+HIGH-VALUE FIND: cold boot today does NOT bring MisterPlex back.
+  - Startup hooks intentionally stripped 2026-07-29 15:40 ("removed for stability").
+  - Prior bak would have returned with WRONG --id misterplex-183 (cast vanish/mismatch class).
+  - Conf + v5 binary on SD are fine and would be used IF something started them with
+    canonical args; nothing does.
+  - Plex core does not autoload (bootcore off; no lastcore.dat).
+
+User power-cycle → MENU, no misterplexd, no cast target until manual:
+  1) load Plex.rbf from OSD
+  2) start daemon with --id misterplex-dev …
+
+========================================================================
+PRE-REGISTERED REBOOT TEST (parent asks user for window)
+========================================================================
+Do NOT run without user window. Expected BEFORE any hook fix:
+
+  PRE:
+    snapshot: md5 bin, conf key list (no token value), hook md5, CORENAME, uptime
+  ACTION:
+    orderly reboot (user or authorized) — not kill -9 storms
+  POST (+90s network up):
+    E1 ps|misterplexd           → EXPECT empty (hook stripped)     FAIL if running wrong id
+    E2 /resources               → EXPECT fail/no listener
+    E3 cat /tmp/CORENAME        → EXPECT MENU (or non-Plex) unless user loaded core
+    E4 conf keys                → EXPECT same PRESENT=fpga DECODE=320x240 STREAM=0
+                                  OSD_CONTROL=1 and PLEX_TOKEN key still set
+    E5 bin md5                  → EXPECT a56bbc3c… (or later authorized ship)
+    E6 after MANUAL:
+         load Plex + nohup … --id misterplex-dev --port 3005 --conf … &
+       → EXPECT resources id=misterplex-dev; optional cast presents advance
+
+PASS criteria for a FIXED hook (separate change, needs parent auth to install):
+  F1 daemon auto-starts ≤30s after net with exact --id misterplex-dev --port 3005
+     --conf /media/fat/misterplex/misterplex.conf
+  F2 bin path absolute /media/fat/misterplex/bin/misterplexd md5 matches ship
+  F3 conf unmodified (token preserved)
+  F4 core still USER-driven unless parent separately authorizes bootcore=Plex
+     (do NOT enable bootcore without user consent — fights CDPlayer dual-use)
+
+Recommended fix shape (NOT applied):
+  Append canonical LINE via deploy_misterplexd.sh hook logic (680dea8) to
+  _user-startup.sh with timestamped bak; never restore misterplex-183 bak as-is.
+  Soft-bounce ensure_daemon already correct for lab sessions only.
+
+Device left untouched this investigation (read-only SSH). claim FREE.
