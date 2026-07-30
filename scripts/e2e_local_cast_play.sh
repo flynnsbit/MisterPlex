@@ -27,34 +27,79 @@ WORK="${WORK:-$ROOT/build/e2e-local-cast}"
 PRESENT_MODE="${PRESENT:-none}"
 mkdir -p "$WORK"
 
+# Host must pass a real ffmpeg binary. Default misterplexd path
+# (/media/fat/misterplex/bin/ffmpeg) is MiSTer-only and yields frames=0 here.
 FFMPEG="${FFMPEG:-$(command -v ffmpeg || true)}"
-[[ -n "$FFMPEG" && -x "$FFMPEG" ]] || { echo "FAIL: ffmpeg missing" >&2; exit 1; }
+[[ -n "$FFMPEG" && -x "$FFMPEG" ]] || { echo "FAIL: ffmpeg missing (set FFMPEG=)" >&2; exit 1; }
 [[ -f "$MEDIA" ]] || { echo "FAIL: media missing: $MEDIA" >&2; exit 1; }
+echo "e2e ffmpeg=${FFMPEG}"
 
 make -C "$ROOT" plexd >/dev/null
 BIN="$ROOT/build/misterplexd"
 
-# Two distinct free ports (pick-then-close races if called twice separately).
-read -r STUB_PORT PLAYER_PORT < <(python3 - <<'PY'
-import socket
-ports = []
-for p in range(13250, 13500):
+STUB_LOG="$WORK/stub_pms.log"
+DAEMON_LOG="$WORK/misterplexd.log"
+STUB_PORT_FILE="$WORK/stub.port"
+: >"$STUB_LOG"
+: >"$DAEMON_LOG"
+rm -f "$STUB_PORT_FILE"
+
+# Bind stub on port 0 (kernel assigns); no pick-then-close race with the player.
+python3 "$ROOT/scripts/stub_pms_cast.py" \
+  --media "$MEDIA" --host 127.0.0.1 --port 0 \
+  --duration-ms 30000 --frame-rate 24 \
+  --write-port-file "$STUB_PORT_FILE" \
+  >"$STUB_LOG" 2>&1 &
+STUB_PID=$!
+
+cleanup() {
+  kill "${DAEMON_PID:-}" 2>/dev/null || true
+  kill "${STUB_PID:-}" 2>/dev/null || true
+  wait "${DAEMON_PID:-}" 2>/dev/null || true
+  wait "${STUB_PID:-}" 2>/dev/null || true
+}
+trap cleanup EXIT
+
+STUB_PORT=""
+for _ in $(seq 1 50); do
+  if ! kill -0 "$STUB_PID" 2>/dev/null; then
+    echo "FAIL: stub_pms died before bind" >&2
+    cat "$STUB_LOG" >&2 || true
+    exit 1
+  fi
+  if [[ -s "$STUB_PORT_FILE" ]]; then
+    STUB_PORT="$(tr -d '[:space:]' <"$STUB_PORT_FILE")"
+    [[ -n "$STUB_PORT" ]] && break
+  fi
+  sleep 0.05
+done
+[[ -n "$STUB_PORT" ]] || {
+  echo "FAIL: stub did not publish port file" >&2
+  cat "$STUB_LOG" >&2 || true
+  exit 1
+}
+
+# Player port: bind+hold until after we know stub's live port (never equal).
+PLAYER_PORT="$(
+  STUB_PORT="$STUB_PORT" python3 - <<'PY'
+import os, socket
+stub = int(os.environ["STUB_PORT"])
+for p in range(13250, 13600):
+    if p == stub:
+        continue
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     try:
         s.bind(("127.0.0.1", p))
     except OSError:
         s.close()
         continue
-    ports.append((p, s))
-    if len(ports) == 2:
-        break
-if len(ports) != 2:
-    raise SystemExit("no free ports")
-print(ports[0][0], ports[1][0])
-for _, s in ports:
     s.close()
+    print(p)
+    raise SystemExit
+raise SystemExit("no free player port")
 PY
-)
+)"
 STUB_BASE="http://127.0.0.1:${STUB_PORT}"
 echo "e2e ports stub=${STUB_PORT} player=${PLAYER_PORT}"
 
@@ -74,25 +119,6 @@ OSD_CONTROL=1
 AUDIO_DEVICE=${AUDIO_DEV}
 IDLE_SCREEN=logo
 EOF
-
-STUB_LOG="$WORK/stub_pms.log"
-DAEMON_LOG="$WORK/misterplexd.log"
-: >"$STUB_LOG"
-: >"$DAEMON_LOG"
-
-python3 "$ROOT/scripts/stub_pms_cast.py" \
-  --media "$MEDIA" --host 127.0.0.1 --port "$STUB_PORT" \
-  --duration-ms 30000 --frame-rate 24 \
-  >"$STUB_LOG" 2>&1 &
-STUB_PID=$!
-
-cleanup() {
-  kill "$DAEMON_PID" 2>/dev/null || true
-  kill "$STUB_PID" 2>/dev/null || true
-  wait "$DAEMON_PID" 2>/dev/null || true
-  wait "$STUB_PID" 2>/dev/null || true
-}
-trap cleanup EXIT
 
 # Stub must be healthy before daemon starts (else resolve hits nothing → testsrc).
 stub_ok=0

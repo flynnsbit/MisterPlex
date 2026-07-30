@@ -182,9 +182,12 @@ def main() -> int:
     Handler.duration_ms = dur
     Handler.frame_rate = args.frame_rate
 
+    # SO_REUSEADDR so e2e can hand off a just-probed port without EADDRINUSE.
+    ThreadingHTTPServer.allow_reuse_address = True
     httpd = ThreadingHTTPServer((args.host, args.port), Handler)
     host, port = httpd.server_address[:2]
     if args.write_port_file:
+        args.write_port_file.parent.mkdir(parents=True, exist_ok=True)
         args.write_port_file.write_text(f"{port}\n")
     print(f"stub_pms: listening http://{host}:{port} media={media} bytes={len(data)}", flush=True)
     try:
