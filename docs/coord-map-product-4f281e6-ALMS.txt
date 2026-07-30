@@ -82,9 +82,11 @@ M10K — quoted (Info 276029 / RAM summary)
 -----------------------------------------
   HIT: u_rbsp_ram  → M10K SDP 16384×8 = 131,072 bits (RAM summary line)
   HIT: u_tc_top_ram → M10K SDP 256×6 = 1,536 bits
-  HIT: stub dpb_mem_rtl_0 → 2,097,152 bits (altsyncram AUTO)
+  HIT: stub dpb_mem_rtl_0 → 2,097,152 bits (Info 276029 + RAM AUTO 262144×8)
+  **MISS i4_mode_top:** instance in Parameter Settings, **absent from RAM summary**;
+    warnings 10036: i4_mode_left / i4_mode_top_e "assigned a value but never read"
+    → array DCE'd on this product elab — **not** a measured M10K win here
   **MISS RFS:** zero Info 276029 naming u_recon_store; entity **bits=0**
-  Uninferred list (276014) names async_fifo×2 + traverse Ram0..3 size — **not RFS**
   → RFS array was **eliminated** (15 comb shell), not inferred and not fabric-RAM'd.
 
 BOMB (what replaced "probe tax")
