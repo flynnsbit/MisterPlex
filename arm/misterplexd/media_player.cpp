@@ -16,10 +16,12 @@
 #include <cstring>
 #include <chrono>
 #include <exception>
+#include <sstream>
 #include <signal.h>
 #include <time.h>
 #include <vector>
 
+#include <dirent.h>
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <sys/types.h>
@@ -2648,6 +2650,64 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                 " ddr_cpu_us_p=" + std::to_string(avgPresented(prof.ddrCpuUs)) +
                 " frame_bytes=" + std::to_string(frameBytes) +
                 " fmt=" + ffmpegPixFmt(videoFmt));
+            // Per-tid jiffies: media-thread buckets alone under-account process
+            // CPU on device (PROFILE ~8%onecpu vs process ~95%). Dump /proc/self/task
+            // so the next PRESENT_PROFILE=1 window attributes residual threads.
+            {
+                DIR* d = opendir("/proc/self/task");
+                if (d) {
+                    std::string line = "media: thread_cpu";
+                    int n = 0;
+                    while (dirent* e = readdir(d)) {
+                        if (e->d_name[0] < '1' || e->d_name[0] > '9')
+                            continue;
+                        char path[96];
+                        std::snprintf(path, sizeof(path), "/proc/self/task/%.16s/stat",
+                                      e->d_name);
+                        int fd = ::open(path, O_RDONLY | O_CLOEXEC);
+                        if (fd < 0)
+                            continue;
+                        char buf[512]{};
+                        ssize_t nr = ::read(fd, buf, sizeof(buf) - 1);
+                        ::close(fd);
+                        if (nr <= 0)
+                            continue;
+                        buf[nr] = 0;
+                        // "tid (comm) state ... utime stime" — comm may contain spaces/').
+                        char* closeParen = std::strrchr(buf, ')');
+                        if (!closeParen)
+                            continue;
+                        char* commOpen = std::strchr(buf, '(');
+                        std::string comm = "?";
+                        if (commOpen && closeParen > commOpen)
+                            comm.assign(commOpen + 1, closeParen);
+                        // After ')': state ppid pgrp session tty tpgid flags
+                        // minflt cminflt majflt cmajflt utime stime ...
+                        std::istringstream iss(closeParen + 1);
+                        char state = 0;
+                        long skip = 0;
+                        unsigned long flags = 0, minflt = 0, cminflt = 0, majflt = 0,
+                                      cmajflt = 0, utime = 0, stime = 0;
+                        iss >> state;
+                        for (int i = 0; i < 5; ++i)
+                            iss >> skip; // ppid pgrp session tty tpgid
+                        iss >> flags >> minflt >> cminflt >> majflt >> cmajflt >> utime >> stime;
+                        if (!iss)
+                            continue;
+                        line += " tid=";
+                        line += e->d_name;
+                        line += "(";
+                        line += comm;
+                        line += ") j=";
+                        line += std::to_string(utime + stime);
+                        if (++n >= 16)
+                            break;
+                    }
+                    closedir(d);
+                    if (n > 0)
+                        log(line);
+                }
+            }
             prof = PresentProfileAccum{};
         };
 
