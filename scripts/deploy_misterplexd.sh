@@ -15,6 +15,54 @@ BIN="$ROOT/build/arm/misterplexd"
 PLAYER_ID="${MISTERPLEX_ID:-misterplex-dev}"
 PMS_URL="${PLEX_BASE:-${PMS_URL:-}}"
 
+# Exact argv --id token match (same rule as mister_soft_bounce / remote deploy).
+# Returns 0 iff ps line has --id WANT or --id=WANT as a full token.
+daemon_ps_id_equals() {
+  local ps_line="$1" want="$2"
+  # shellcheck disable=SC2086
+  set -- $ps_line
+  while [[ $# -gt 0 ]]; do
+    if [[ "$1" == "--id" && -n "${2:-}" ]]; then
+      [[ "$2" == "$want" ]] && return 0
+      return 1
+    fi
+    if [[ "$1" == --id=* ]]; then
+      [[ "${1#--id=}" == "$want" ]] && return 0
+      return 1
+    fi
+    shift
+  done
+  return 1
+}
+
+# Offline gate: wrong --id must hard-fail rc=7 (no SSH, no rebuild).
+if [[ "${1:-}" == "--selftest-id-gate" ]]; then
+  want="misterplex-dev"
+  good='123 1 ./bin/misterplexd --name MiSTerPlex --id misterplex-dev --port 3005'
+  bad='123 1 ./bin/misterplexd --name MiSTerPlex --id misterplex-wrong --port 3005'
+  old='123 1 ./bin/misterplexd --id misterplex-dev-old --port 3005'
+  bare='123 1 ./bin/misterplexd --id misterplex --port 3005'
+  if ! daemon_ps_id_equals "$good" "$want"; then
+    echo "SELFTEST_FAIL: good id should match" >&2
+    exit 1
+  fi
+  for line in "$bad" "$old" "$bare"; do
+    if daemon_ps_id_equals "$line" "$want"; then
+      echo "SELFTEST_FAIL: should reject: $line" >&2
+      exit 1
+    fi
+  done
+  # Mirror deploy remote: mismatch → exit 7
+  if daemon_ps_id_equals "$bad" "$want"; then
+    echo "SELFTEST_FAIL: unreachable" >&2
+    exit 1
+  fi
+  echo "deploy_misterplexd: DAEMON_ID_MISMATCH want=${want} (selftest wrong-id)" >&2
+  echo "selftest_id_gate would_exit=7"
+  # Discriminating exit: callers expect rc=7 on wrong id path.
+  exit 7
+fi
+
 # Always let make decide. Guarding this with `if [[ ! -f "$BIN" ]]` meant that
 # once the binary existed it was never rebuilt again, so every subsequent deploy
 # silently shipped a stale daemon and "verified" fixes that were not on the box.

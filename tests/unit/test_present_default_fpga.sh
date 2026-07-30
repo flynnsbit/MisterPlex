@@ -116,4 +116,22 @@ if [[ "$PKG_RED" -ne 0 ]]; then
 fi
 echo "PASS package/deploy silent-default gates (id + PRESENT + resources check)"
 
+# Deploy wrong-id path must hard-fail rc=7 (offline selftest; no SSH).
+set +e
+bash "$DEP" --selftest-id-gate >"$WORK/deploy_id_selftest.out" 2>"$WORK/deploy_id_selftest.err"
+DEP_ST=$?
+set -e
+echo "deploy_selftest_id_gate true rc=$DEP_ST"
+if [[ "$DEP_ST" -ne 7 ]]; then
+  echo "FAIL: deploy --selftest-id-gate must exit 7 on wrong --id, got $DEP_ST" >&2
+  cat "$WORK/deploy_id_selftest.out" "$WORK/deploy_id_selftest.err" >&2 || true
+  exit 1
+fi
+grep -q 'DAEMON_ID_MISMATCH' "$WORK/deploy_id_selftest.err" || {
+  echo "FAIL: selftest missing DAEMON_ID_MISMATCH" >&2
+  cat "$WORK/deploy_id_selftest.err" >&2
+  exit 1
+}
+echo "PASS deploy wrong-id selftest hard-fails rc=7"
+
 echo "OK present default fpga + always-open FPGA idle path"

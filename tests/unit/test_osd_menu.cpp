@@ -107,6 +107,72 @@ int main() {
     CHECK(idleModeFromBits(2) == IdleMode::Screensaver);
     CHECK(idleModeFromBits(3) == IdleMode::LastFrame);
 
+    // --- OSD word → idle paint buffer checksums (same path applyOsd uses) ---
+    // No HDMI/FPGA readback: prove the daemon paints four distinguishable frames
+    // when driven by O[15:14], and that Screensaver actually moves.
+    auto fnv1a = [](const uint8_t* p, size_t n) -> uint64_t {
+        uint64_t h = 14695981039346656037ull;
+        for (size_t i = 0; i < n; ++i) {
+            h ^= p[i];
+            h *= 1099511628211ull;
+        }
+        return h;
+    };
+    {
+        // applyOsd path: decodeOsdWord → idleModeFromBits → renderIdleYuv420p
+        const int yw = 320, yh = 240;
+        auto paintFromOsdWord = [&](uint16_t word, int phase, std::vector<uint8_t>& yuv) -> bool {
+            const OsdSettings s = decodeOsdWord(word);
+            const IdleMode im = idleModeFromBits(static_cast<unsigned>(s.idleMode));
+            return renderIdleYuv420p(yuv.data(), yw, yh, im, phase);
+        };
+        const size_t ysz = static_cast<size_t>(yw) * yh * 3 / 2;
+        std::vector<uint8_t> yLogo(ysz), yBlack(ysz), ySs0(ysz), ySs1(ysz), yLast(ysz, 0x5A);
+        // OSD idle bits sit at [15:14]: 0=Logo 1=Black 2=Screensaver 3=LastFrame
+        CHECK(paintFromOsdWord(static_cast<uint16_t>(0u << 14), 0, yLogo));
+        CHECK(paintFromOsdWord(static_cast<uint16_t>(1u << 14), 0, yBlack));
+        CHECK(paintFromOsdWord(static_cast<uint16_t>(2u << 14), 0, ySs0));
+        CHECK(paintFromOsdWord(static_cast<uint16_t>(2u << 14), 100, ySs1));
+        CHECK(!paintFromOsdWord(static_cast<uint16_t>(3u << 14), 0, yLast)); // LastFrame no-op
+        const uint64_t cLogo = fnv1a(yLogo.data(), yLogo.size());
+        const uint64_t cBlack = fnv1a(yBlack.data(), yBlack.size());
+        const uint64_t cSs0 = fnv1a(ySs0.data(), ySs0.size());
+        const uint64_t cSs1 = fnv1a(ySs1.data(), ySs1.size());
+        const uint64_t cLast = fnv1a(yLast.data(), yLast.size());
+        std::printf("idle_osd_checksum logo=0x%016llx black=0x%016llx ss0=0x%016llx "
+                    "ss1=0x%016llx lastframe_sentinel=0x%016llx\n",
+                    static_cast<unsigned long long>(cLogo),
+                    static_cast<unsigned long long>(cBlack),
+                    static_cast<unsigned long long>(cSs0),
+                    static_cast<unsigned long long>(cSs1),
+                    static_cast<unsigned long long>(cLast));
+        // Four modes must be distinguishable in the paint buffer.
+        CHECK(cLogo != cBlack);
+        CHECK(cLogo != cSs0);
+        CHECK(cBlack != cSs0);
+        CHECK(cLast != cLogo && cLast != cBlack && cLast != cSs0);
+        // Moving mode must differ across successive paints (user: non-moving logo).
+        CHECK(cSs0 != cSs1);
+        // Black is video black (Y=16, U=V=128), not near-black logo field.
+        const size_t yBytes = static_cast<size_t>(yw) * yh;
+        const size_t cBytes = yBytes / 4;
+        for (size_t i = 0; i < yBytes; ++i)
+            CHECK(yBlack[i] == 16);
+        for (size_t i = 0; i < cBytes; ++i) {
+            CHECK(yBlack[yBytes + i] == 128);
+            CHECK(yBlack[yBytes + cBytes + i] == 128);
+        }
+        // LastFrame left the sentinel untouched.
+        for (uint8_t v : yLast)
+            CHECK(v == 0x5A);
+        // Logo is not all-black (static plex mark on near-black field).
+        size_t logoNonBlack = 0;
+        for (size_t i = 0; i < yBytes; ++i)
+            if (yLogo[i] != 16)
+                ++logoNonBlack;
+        CHECK(logoNonBlack > 0);
+    }
+
     // --- screensaver drift stays on screen and reverses ---
     const int span = 40;
     for (int p = -5000; p < 5000; ++p) {
