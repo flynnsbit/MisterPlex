@@ -1,4 +1,5 @@
 #include "companion.hpp"
+#include "libmisterplex/cast_target.hpp"
 #include "log_redact.hpp"
 
 #include <arpa/inet.h>
@@ -86,7 +87,13 @@ std::string timelineBrief(const std::string& xml) {
 
 void sendHttp(int fd, int code, const char* ctype, const std::string& body) {
     char hdr[320];
-    const char* status = (code == 200) ? "OK" : "Not Found";
+    const char* status = "OK";
+    if (code == 404)
+        status = "Not Found";
+    else if (code == 409)
+        status = "Conflict";
+    else if (code != 200)
+        status = "Error";
     std::snprintf(hdr, sizeof(hdr),
                   "HTTP/1.1 %d %s\r\nContent-Type: %s\r\nContent-Length: %zu\r\n"
                   "Connection: close\r\nAccess-Control-Allow-Origin: *\r\n"
@@ -666,23 +673,44 @@ void Companion::httpLoop() {
             // Request line may carry ?X-Plex-Token=...; Companion::log redacts at sink.
             log("HTTP IN " + requestLine(req));
 
-        {
-            std::lock_guard<std::mutex> lock(mu_);
-            if (req.find("/player/") != std::string::npos || req.find("/resources") != std::string::npos)
-                castBound_ = true;
-        }
-
         if (req.find("OPTIONS") == 0) {
             sendHttp(c, 200, "text/plain", "");
             close(c);
             continue;
         }
 
+        // /resources and /identity must stay open without a target header — that is
+        // how controllers discover machineIdentifier after GDM. Player commands that
+        // name a *different* target are the vanish path and must not be silent.
         if (req.find("GET /resources") != std::string::npos ||
             req.find("GET /identity") != std::string::npos) {
             sendHttp(c, 200, "application/xml", resourcesXml());
             close(c);
             continue;
+        }
+
+        // Cast / timeline / playback: if the controller named a target id and it is
+        // not us, refuse loudly. Pre-fix accepted every /player/* with 200 and no
+        // diagnostic — GDM still showed the player, then the session vanished.
+        if (req.find("/player/") != std::string::npos || req.find("playMedia") != std::string::npos ||
+            req.find("/timeline") != std::string::npos) {
+            std::string gotTarget;
+            if (!castTargetAccepted(req, machineId_, &gotTarget)) {
+                const std::string body =
+                    std::string("CAST_TARGET_MISMATCH expected=") + machineId_ + " got=" + gotTarget +
+                    "\n";
+                log(std::string("ERROR CAST_TARGET_MISMATCH expected=") + machineId_ +
+                    " got=" + gotTarget + " — refusing cast/timeline (picker may vanish)");
+                sendHttp(c, 409, "text/plain", body);
+                close(c);
+                continue;
+            }
+        }
+
+        {
+            std::lock_guard<std::mutex> lock(mu_);
+            if (req.find("/player/") != std::string::npos || req.find("/resources") != std::string::npos)
+                castBound_ = true;
         }
 
         // Unsubscribe: drop cast-bound hold so idle polls can go pure stopped.

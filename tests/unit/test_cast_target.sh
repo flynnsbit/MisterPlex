@@ -1,0 +1,149 @@
+#!/usr/bin/env bash
+# Cast target mismatch: pure unit + HTTP harness + red twin (accept-all fault).
+# No real PMS required — local stub controller via curl.
+set -euo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
+BUILD="$ROOT/build"
+WORK="$BUILD/cast-target-unit"
+mkdir -p "$WORK" "$BUILD"
+
+CXX_BIN="${CXX:-g++}"
+CXX_FLAGS=(-std=c++17 -O2 -Wall -Wextra -I"$ROOT/host")
+
+# --- 1) Green pure unit ---
+"$CXX_BIN" "${CXX_FLAGS[@]}" -o "$BUILD/test_cast_target" "$ROOT/tests/unit/test_cast_target.cpp"
+"$BUILD/test_cast_target"
+echo "PASS test_cast_target pure unit"
+
+# --- 2) Red twin: CAST_TARGET_FAULT_ACCEPT_ALL must FAIL the mismatch CHECK ---
+"$CXX_BIN" "${CXX_FLAGS[@]}" -DCAST_TARGET_FAULT_ACCEPT_ALL \
+  -o "$WORK/test_cast_target_fault" "$ROOT/tests/unit/test_cast_target.cpp"
+set +e
+OUT="$("$WORK/test_cast_target_fault" 2>&1)"
+RC=$?
+set -e
+printf '%s\n' "$OUT"
+if [[ "$RC" -eq 0 ]]; then
+  echo "FAIL: accept-all fault unexpectedly passed (vacuous / check missing)" >&2
+  exit 1
+fi
+grep -q 'castTargetAccepted' <<<"$OUT" || {
+  echo "FAIL: red twin did not hit castTargetAccepted guard" >&2
+  exit 1
+}
+echo "RED OK: accept-all mutant fails mismatch reject (rc=$RC)"
+
+# --- 3) HTTP harness: local daemon as cast target; curl is the stub controller ---
+make -C "$ROOT" plexd >/dev/null
+BIN="$ROOT/build/misterplexd"
+PORT=$(python3 - <<'PY'
+import socket
+for p in range(13200, 13350):
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    try:
+        s.bind(("127.0.0.1", p))
+        print(p)
+        s.close()
+        break
+    except OSError:
+        s.close()
+else:
+    raise SystemExit("no free port")
+PY
+)
+LOG="$WORK/daemon.log"
+: >"$LOG"
+"$BIN" --name CastHarness --id misterplex-dev --port "$PORT" >"$LOG" 2>&1 &
+PID=$!
+cleanup() { kill "$PID" 2>/dev/null || true; wait "$PID" 2>/dev/null || true; }
+trap cleanup EXIT
+
+ok=0
+for _ in $(seq 1 50); do
+  if curl -fsS "http://127.0.0.1:${PORT}/resources" >/dev/null 2>&1; then
+    ok=1
+    break
+  fi
+  kill -0 "$PID" 2>/dev/null || break
+  sleep 0.1
+done
+if [[ "$ok" != 1 ]]; then
+  echo "FAIL: harness daemon not up on :$PORT" >&2
+  cat "$LOG" >&2 || true
+  exit 1
+fi
+
+# Bind check: must not be loopback-only in code (INADDR_ANY). Score via source.
+grep -q 'INADDR_ANY' "$ROOT/arm/misterplexd/companion.cpp" || {
+  echo "FAIL: companion HTTP/GDM not binding INADDR_ANY" >&2
+  exit 1
+}
+echo "PASS companion binds INADDR_ANY (not loopback-only)"
+
+# Matching target → 200 timeline
+set +e
+GOOD=$(curl -sS -o "$WORK/good.body" -w "%{http_code}" \
+  -H "X-Plex-Target-Client-Identifier: misterplex-dev" \
+  "http://127.0.0.1:${PORT}/player/timeline/subscribe?commandID=1")
+set -e
+echo "subscribe_match http=$GOOD"
+if [[ "$GOOD" != "200" ]]; then
+  echo "FAIL: matching target subscribe want 200 got $GOOD" >&2
+  cat "$WORK/good.body" >&2 || true
+  exit 1
+fi
+grep -q 'machineIdentifier="misterplex-dev"' "$WORK/good.body" || {
+  echo "FAIL: timeline missing machineIdentifier=misterplex-dev" >&2
+  cat "$WORK/good.body" >&2
+  exit 1
+}
+echo "PASS matching target subscribe → 200 + id"
+
+# PREDICTION was: pre-fix accepted mismatch with 200 silently.
+# POST-FIX: mismatch must be 409 + CAST_TARGET_MISMATCH (loud).
+set +e
+BAD=$(curl -sS -o "$WORK/bad.body" -w "%{http_code}" \
+  -H "X-Plex-Target-Client-Identifier: misterplex-1" \
+  "http://127.0.0.1:${PORT}/player/timeline/subscribe?commandID=2")
+set -e
+echo "subscribe_mismatch http=$BAD body=$(head -c 200 "$WORK/bad.body")"
+if [[ "$BAD" != "409" ]]; then
+  echo "FAIL: mismatched target want HTTP 409 got $BAD (still silent-accept?)" >&2
+  cat "$WORK/bad.body" >&2 || true
+  exit 1
+fi
+grep -q 'CAST_TARGET_MISMATCH' "$WORK/bad.body" || {
+  echo "FAIL: body missing CAST_TARGET_MISMATCH" >&2
+  cat "$WORK/bad.body" >&2
+  exit 1
+}
+grep -q 'expected=misterplex-dev' "$WORK/bad.body" || {
+  echo "FAIL: body missing expected=misterplex-dev" >&2
+  exit 1
+}
+grep -q 'got=misterplex-1' "$WORK/bad.body" || {
+  echo "FAIL: body missing got=misterplex-1" >&2
+  exit 1
+}
+# Daemon log must also be loud (user cannot see HTTP body on a phone).
+grep -q 'ERROR CAST_TARGET_MISMATCH' "$LOG" || {
+  echo "FAIL: daemon log missing ERROR CAST_TARGET_MISMATCH" >&2
+  cat "$LOG" >&2
+  exit 1
+}
+echo "PASS mismatched target → 409 + loud ERROR CAST_TARGET_MISMATCH"
+
+# No target header still works (lab /resources path already did; poll too).
+set +e
+NOTARGET=$(curl -sS -o "$WORK/nt.body" -w "%{http_code}" \
+  "http://127.0.0.1:${PORT}/player/timeline/poll?commandID=3")
+set -e
+echo "subscribe_notarget http=$NOTARGET"
+if [[ "$NOTARGET" != "200" ]]; then
+  echo "FAIL: no-target poll want 200 got $NOTARGET" >&2
+  exit 1
+fi
+echo "PASS no-target poll still 200"
+
+echo "OK cast target mismatch gate (pure + HTTP harness + red twin)"
