@@ -1,0 +1,435 @@
+HTTP IN GET /player/playback/playMedia?key=%2Flibrary%2Fmetadata%2F12&offset=0&commandID=p480ab-480p HTTP/1.1
+HTTP OUT 200 playMedia <Timeline type="video" state="buffering" time="0" duration="0" volume="100" mute="0" controllable="playPause,stop,volume,audioStream,subtitleStream,seekTo,skipPrevious,skipNext,stepBack,stepForward" location="fullScreenVideo" mediaIndex="0"
+playMedia ACK key=/library/metadata/12 offMs=0
+misterplexd: content resolution=624x480 source=conf/--decode status_word=0x0000 weak=624x480 bitrate=2000
+HTTP IN GET /player/timeline/poll?wait=0 HTTP/1.1
+HTTP OUT 200 timeline <Timeline type="video" state="buffering" time="0" duration="0" volume="100" mute="0" controllable="playPause,stop,volume,audioStream,subtitleStream,seekTo,skipPrevious,skipNext,stepBack,stepForward" location="fullScreenVideo" mediaIndex="0"
+misterplexd: resolved PMS universal 480p 624x480 /library/metadata/12 title=Sync 24000 Long Blip dur=360021 transcode=1 base=http://192.168.1.41:32400
+misterplexd: Content FPS hint=24 (SOURCE_FPS=auto pms_vfr=24p frameRate=24.000 resolved=24) — exact pacing uses resolved rate; switchres TODO
+misterplexd: content fps exact=24/1 (pms frameRate=24.000 vfr=24p)
+misterplexd: PLAY http://192.168.1.41:32400/video/:/transcode/universal/start.mp4?hasMDE=1&path=%2Flibrary%2Fmetadata%2F12&mediaIndex=0&partIndex=0&protocol=http&fastSeek=1&directPlay=0&directStream=0&subtitleSize=100&audioBoost=100&location=lan&copyts=1&session=mplex-9e3779b1&videoQuality=60&videoResolution=624x480&maxVideoBitrate=2000&videoCodec=h264&audioCodec=aac&videoProfile=baseline&videoLevel=30&X-Plex-Token=REDACTED off=0 dur=360021
+media: FPGA frame path OK (PRESENT=fpga → DDR YUV420p)
+media: DDR bitstream CTRL=PLXD (STREAM=0, producer dormant)
+pms timeline: update ok state=buffering url=http://192.168.1.41:32400/:/timeline?ratingKey=12&key=%2Flibrary%2Fmetadata%2F12&state=buffering&time=0&duration=360021&identifier=com.plexapp.plugins.library&playQueueItemID=12
+media: park OSD — Pattern=None, audio tone Off, force bars No
+media: audio device /dev/MrAudio OK (s16le stereo @ 48k → FPGA)
+media: content fps=24/1 lead_ms=40 resync_drop_ms=80
+media: STREAM=0 rawvideo(yuv420p)→F1 PRESENT=fpga decode=624x480 coded=624x480 display=624x480 clock=wall-48k-audio+every-frame-present
+media: spawn single-process /media/fat/misterplex/bin/ffmpeg -hide_banner -loglevel error -nostdin -headers [...] -reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5 -i http://192.168.1.41:32400/video/:/transcode/universal/start.mp4?hasMDE=1&path=%2Flibrary%2Fmetadata%2F12&mediaIndex=0&partIndex=0&protocol=http&fastSeek=1&directPlay=0&directStream=0&subtitleSize=100&audioBoost=100&location=lan&copyts=1&session=mplex-9e3779b1&videoQuality=60&videoResolution=624x480&maxVideoBitrate=2000&videoCodec=h264&audioCodec=aac&videoProfile=baseline&videoLevel=30&X-Plex-Token=REDACTED -map 0:v:0 -an -f rawvideo -pix_fmt yuv420p -vf fps=24/1,scale=624:480:force_original_aspect_ratio=decrease,pad=624:480:(ow-iw)/2:(oh-ih)/2 pipe:1 -map 0:a:0? -vn -af aresample=48000 -f s16le -ac 2 -ar 48000 pipe:3
+media: MrAudio open — software-paced 48kHz delay_ms=0 clock_ppm=-638 (adelay in ffmpeg if >0)
+media: A/V origin armed audio_active=1 waited_ms=4
+pms timeline: update ok state=playing url=http://192.168.1.41:32400/:/timeline?ratingKey=12&key=%2Flibrary%2Fmetadata%2F12&state=playing&time=0&duration=360021&identifier=com.plexapp.plugins.library&playQueueItemID=12
+media: MrAudio playback position available — video now paces off what is HEARD, not what is sent
+media: audio latency 19ms queued=3784B
+media: A/V resync drop drift_ms=176 drops=1
+misterplexd: DDR kick steady-state promoted SPI→doorbell (avoid per-frame SpiExclusive/SIGSTOP Main)
+HTTP IN GET /player/timeline/poll?wait=0 HTTP/1.1
+HTTP OUT 200 timeline <Timeline type="video" state="playing" time="0" duration="360021" seekRange="0-360021" volume="100" mute="0" controllable="playPause,stop,volume,audioStream,subtitleStream,seekTo,skipPrevious,skipNext,stepBack,stepForward" location="fullScr
+media: frames=13 vfps=13.2 pfps=6.10 audio_s=0.740 wall_s=0.983 audio=on clock=av-lock av_drift_ms=107 drops=7 fps=24/1 decode=624x480
+media: frames=40 vfps=20.1 pfps=16.1 audio_s=1.740 wall_s=1.984 audio=on clock=av-lock av_drift_ms=-29 drops=8 fps=24/1 decode=624x480
+media: fpga frame_tx ok via DDR presents=48 frames=56 ms=8
+media: frames=65 vfps=21.5 pfps=18.8 audio_s=2.780 wall_s=3.023 audio=on clock=av-lock av_drift_ms=-31 drops=8 fps=24/1 decode=624x480
+media: frames=89 vfps=22.1 pfps=20.1 audio_s=3.780 wall_s=4.024 audio=on clock=av-lock av_drift_ms=-31 drops=8 fps=24/1 decode=624x480
+media: fpga frame_tx ok via DDR presents=96 frames=104 ms=8
+media: frames=113 vfps=22.4 pfps=20.8 audio_s=4.780 wall_s=5.026 audio=on clock=av-lock av_drift_ms=-30 drops=8 fps=24/1 decode=624x480
+media: audio latency 101ms queued=19527B
+media: frames=137 vfps=22.7 pfps=21.3 audio_s=5.780 wall_s=6.030 audio=on clock=av-lock av_drift_ms=-30 drops=8 fps=24/1 decode=624x480
+media: fpga frame_tx ok via DDR presents=144 frames=152 ms=11
+media: frames=162 vfps=22.9 pfps=21.7 audio_s=6.820 wall_s=7.067 audio=on clock=av-lock av_drift_ms=-32 drops=8 fps=24/1 decode=624x480
+media: frames=186 vfps=23.0 pfps=22.0 audio_s=7.820 wall_s=8.067 audio=on clock=av-lock av_drift_ms=-32 drops=8 fps=24/1 decode=624x480
+media: fpga frame_tx ok via DDR presents=192 frames=200 ms=8
+media: frames=210 vfps=23.1 pfps=22.2 audio_s=8.820 wall_s=9.072 audio=on clock=av-lock av_drift_ms=-31 drops=8 fps=24/1 decode=624x480
+media: frames=234 vfps=23.2 pfps=22.4 audio_s=9.840 wall_s=10.08 audio=on clock=av-lock av_drift_ms=-31 drops=8 fps=24/1 decode=624x480
+media: audio latency 100ms queued=19368B
+pms timeline: update ok state=playing url=http://192.168.1.41:32400/:/timeline?ratingKey=12&key=%2Flibrary%2Fmetadata%2F12&state=playing&time=10330&duration=360021&identifier=com.plexapp.plugins.library&playQueueItemID=12
+media: fpga frame_tx ok via DDR presents=240 frames=248 ms=8
+media: frames=259 vfps=23.3 pfps=22.5 audio_s=10.86 wall_s=11.11 audio=on clock=av-lock av_drift_ms=-33 drops=8 fps=24/1 decode=624x480
+media: frames=283 vfps=23.3 pfps=22.6 audio_s=11.86 wall_s=12.11 audio=on clock=av-lock av_drift_ms=-32 drops=8 fps=24/1 decode=624x480
+media: fpga frame_tx ok via DDR presents=288 frames=296 ms=8
+media: present_profile frames=300 presented=292 drops=8 read_us_f=18468 read_cpu_us_f=1726 read_syscall_us_f=13214 read_eagain_sleep_us_f=5000 read_loop_overhead_us_f=252 read_calls_f=9 read_calls_x100_f=923 read_ok_calls_f=7 read_ok_calls_x100_f=758 read_eagain_f=1 read_eagain_x100_f=165 read_eintr_f=0 read_zero=0 read_bytes_f=449280 read_avg_bytes_call=59271 read_max_bytes_call=65536 pacing_wait_us_f=12499 pacing_wait_cpu_us_f=191 overlay_us_p=1 overlay_cpu_us_p=0 fb_us_p=0 fb_cpu_us_p=0 pixel_us_p=257 pixel_cpu_us_p=5 ddr_wait_us_p=4885 ddr_prep_wait_us_p=3678 ddr_copy_us_p=5707 ddr_flush_us_p=0 ddr_doorbell_us_p=339 ddr_post_wait_us_p=1206 ddr_bank_reuse_wait_us_p=12 ddr_plxd_poll_us_p=0 ddr_plxd_poll_iters_x100_p=0 ddr_plxd_used_x100_p=0 ddr_accounted_us_p=10932 ddr_unaccounted_us_p=20 ddr_total_us_p=10953 ddr_cpu_us_p=5434 frame_bytes=449280 fmt=yuv420p
+media: thread_cpu tid=2720(misterplexd) j=14 tid=2725(misterplexd) j=7 tid=2726(misterplexd) j=0 tid=2727(misterplexd) j=0 tid=2728(misterplexd) j=0 tid=2758(misterplexd) j=220 tid=2760(misterplexd) j=33
+media: frames=307 vfps=23.3 pfps=22.7 audio_s=12.88 wall_s=13.12 audio=on clock=av-lock av_drift_ms=-32 drops=8 fps=24/1 decode=624x480
+media: frames=332 vfps=23.4 pfps=22.8 audio_s=13.90 wall_s=14.15 audio=on clock=av-lock av_drift_ms=-34 drops=8 fps=24/1 decode=624x480
+media: fpga frame_tx ok via DDR presents=336 frames=344 ms=8
+media: frames=356 vfps=23.4 pfps=22.9 audio_s=14.90 wall_s=15.15 audio=on clock=av-lock av_drift_ms=-34 drops=8 fps=24/1 decode=624x480
+media: audio latency 99ms queued=19131B
+media: frames=380 vfps=23.5 pfps=23.0 audio_s=15.90 wall_s=16.15 audio=on clock=av-lock av_drift_ms=-34 drops=8 fps=24/1 decode=624x480
+media: fpga frame_tx ok via DDR presents=384 frames=392 ms=8
+media: frames=404 vfps=23.5 pfps=23.0 audio_s=16.90 wall_s=17.15 audio=on clock=av-lock av_drift_ms=-33 drops=8 fps=24/1 decode=624x480
+media: frames=428 vfps=23.5 pfps=23.1 audio_s=17.90 wall_s=18.15 audio=on clock=av-lock av_drift_ms=-34 drops=8 fps=24/1 decode=624x480
+media: fpga frame_tx ok via DDR presents=432 frames=440 ms=9
+media: frames=453 vfps=23.5 pfps=23.1 audio_s=18.94 wall_s=19.19 audio=on clock=av-lock av_drift_ms=-36 drops=8 fps=24/1 decode=624x480
+media: frames=477 vfps=23.6 pfps=23.2 audio_s=19.94 wall_s=20.19 audio=on clock=av-lock av_drift_ms=-36 drops=8 fps=24/1 decode=624x480
+media: audio latency 100ms queued=19282B
+media: fpga frame_tx ok via DDR presents=480 frames=488 ms=8
+pms timeline: update ok state=playing url=http://192.168.1.41:32400/:/timeline?ratingKey=12&key=%2Flibrary%2Fmetadata%2F12&state=playing&time=20337&duration=360021&identifier=com.plexapp.plugins.library&playQueueItemID=12
+media: frames=501 vfps=23.6 pfps=23.2 audio_s=20.94 wall_s=21.19 audio=on clock=av-lock av_drift_ms=-36 drops=8 fps=24/1 decode=624x480
+media: frames=525 vfps=23.6 pfps=23.2 audio_s=21.96 wall_s=22.20 audio=on clock=av-lock av_drift_ms=-35 drops=8 fps=24/1 decode=624x480
+media: fpga frame_tx ok via DDR presents=528 frames=536 ms=8
+media: frames=550 vfps=23.6 pfps=23.3 audio_s=22.98 wall_s=23.24 audio=on clock=av-lock av_drift_ms=-37 drops=8 fps=24/1 decode=624x480
+media: frames=574 vfps=23.6 pfps=23.3 audio_s=23.98 wall_s=24.24 audio=on clock=av-lock av_drift_ms=-37 drops=8 fps=24/1 decode=624x480
+media: fpga frame_tx ok via DDR presents=576 frames=584 ms=8
+media: frames=599 vfps=23.6 pfps=23.3 audio_s=25.02 wall_s=25.28 audio=on clock=av-lock av_drift_ms=-38 drops=8 fps=24/1 decode=624x480
+media: present_profile frames=300 presented=300 drops=0 read_us_f=18488 read_cpu_us_f=1545 read_syscall_us_f=17045 read_eagain_sleep_us_f=1313 read_loop_overhead_us_f=129 read_calls_f=7 read_calls_x100_f=774 read_ok_calls_f=7 read_ok_calls_x100_f=734 read_eagain_f=0 read_eagain_x100_f=40 read_eintr_f=0 read_zero=0 read_bytes_f=449280 read_avg_bytes_call=61182 read_max_bytes_call=65536 pacing_wait_us_f=13115 pacing_wait_cpu_us_f=194 overlay_us_p=0 overlay_cpu_us_p=0 fb_us_p=0 fb_cpu_us_p=0 pixel_us_p=66 pixel_cpu_us_p=4 ddr_wait_us_p=3727 ddr_prep_wait_us_p=3054 ddr_copy_us_p=5300 ddr_flush_us_p=0 ddr_doorbell_us_p=2 ddr_post_wait_us_p=673 ddr_bank_reuse_wait_us_p=0 ddr_plxd_poll_us_p=0 ddr_plxd_poll_iters_x100_p=0 ddr_plxd_used_x100_p=0 ddr_accounted_us_p=9030 ddr_unaccounted_us_p=15 ddr_total_us_p=9046 ddr_cpu_us_p=5278 frame_bytes=449280 fmt=yuv420p
+media: thread_cpu tid=2720(misterplexd) j=22 tid=2725(misterplexd) j=13 tid=2726(misterplexd) j=0 tid=2727(misterplexd) j=1 tid=2728(misterplexd) j=1 tid=2758(misterplexd) j=435 tid=2760(misterplexd) j=64
+media: audio latency 100ms queued=19220B
+media: frames=623 vfps=23.6 pfps=23.3 audio_s=26.04 wall_s=26.30 audio=on clock=av-lock av_drift_ms=-37 drops=8 fps=24/1 decode=624x480
+media: fpga frame_tx ok via DDR presents=624 frames=632 ms=10
+media: frames=648 vfps=23.7 pfps=23.4 audio_s=27.06 wall_s=27.32 audio=on clock=av-lock av_drift_ms=-39 drops=8 fps=24/1 decode=624x480
+media: frames=672 vfps=23.6 pfps=23.4 audio_s=28.10 wall_s=28.35 audio=on clock=av-lock av_drift_ms=-21 drops=8 fps=24/1 decode=624x480
+media: fpga frame_tx ok via DDR presents=672 frames=680 ms=11
+media: frames=697 vfps=23.7 pfps=23.4 audio_s=29.12 wall_s=29.38 audio=on clock=av-lock av_drift_ms=-21 drops=8 fps=24/1 decode=624x480
+media: frames=721 vfps=23.7 pfps=23.4 audio_s=30.12 wall_s=30.38 audio=on clock=av-lock av_drift_ms=-21 drops=8 fps=24/1 decode=624x480
+media: audio latency 99ms queued=19173B
+media: fpga frame_tx ok via DDR presents=720 frames=728 ms=8
+pms timeline: update ok state=playing url=http://192.168.1.41:32400/:/timeline?ratingKey=12&key=%2Flibrary%2Fmetadata%2F12&state=playing&time=30963&duration=360021&identifier=com.plexapp.plugins.library&playQueueItemID=12
+media: frames=746 vfps=23.7 pfps=23.4 audio_s=31.16 wall_s=31.42 audio=on clock=av-lock av_drift_ms=-23 drops=8 fps=24/1 decode=624x480
+media: frames=770 vfps=23.7 pfps=23.5 audio_s=32.16 wall_s=32.42 audio=on clock=av-lock av_drift_ms=-24 drops=8 fps=24/1 decode=624x480
+media: fpga frame_tx ok via DDR presents=768 frames=776 ms=8
+media: frames=794 vfps=23.7 pfps=23.5 audio_s=33.16 wall_s=33.42 audio=on clock=av-lock av_drift_ms=-24 drops=8 fps=24/1 decode=624x480
+media: frames=818 vfps=23.7 pfps=23.5 audio_s=34.16 wall_s=34.43 audio=on clock=av-lock av_drift_ms=-24 drops=8 fps=24/1 decode=624x480
+media: fpga frame_tx ok via DDR presents=816 frames=824 ms=8
+media: frames=843 vfps=23.7 pfps=23.5 audio_s=35.20 wall_s=35.46 audio=on clock=av-lock av_drift_ms=-26 drops=8 fps=24/1 decode=624x480
+media: audio latency 100ms queued=19255B
+media: frames=867 vfps=23.7 pfps=23.5 audio_s=36.20 wall_s=36.46 audio=on clock=av-lock av_drift_ms=-26 drops=8 fps=24/1 decode=624x480
+media: fpga frame_tx ok via DDR presents=864 frames=872 ms=9
+media: frames=891 vfps=23.7 pfps=23.5 audio_s=37.20 wall_s=37.46 audio=on clock=av-lock av_drift_ms=-25 drops=8 fps=24/1 decode=624x480
+media: present_profile frames=300 presented=300 drops=0 read_us_f=18350 read_cpu_us_f=1616 read_syscall_us_f=16186 read_eagain_sleep_us_f=1932 read_loop_overhead_us_f=230 read_calls_f=7 read_calls_x100_f=784 read_ok_calls_f=7 read_ok_calls_x100_f=724 read_eagain_f=0 read_eagain_x100_f=60 read_eintr_f=0 read_zero=0 read_bytes_f=449280 read_avg_bytes_call=62055 read_max_bytes_call=65536 pacing_wait_us_f=13034 pacing_wait_cpu_us_f=231 overlay_us_p=0 overlay_cpu_us_p=0 fb_us_p=0 fb_cpu_us_p=0 pixel_us_p=18 pixel_cpu_us_p=4 ddr_wait_us_p=4268 ddr_prep_wait_us_p=3040 ddr_copy_us_p=5156 ddr_flush_us_p=0 ddr_doorbell_us_p=2 ddr_post_wait_us_p=1228 ddr_bank_reuse_wait_us_p=0 ddr_plxd_poll_us_p=0 ddr_plxd_poll_iters_x100_p=0 ddr_plxd_used_x100_p=0 ddr_accounted_us_p=9427 ddr_unaccounted_us_p=15 ddr_total_us_p=9443 ddr_cpu_us_p=5178 frame_bytes=449280 fmt=yuv420p
+media: thread_cpu tid=2720(misterplexd) j=32 tid=2725(misterplexd) j=19 tid=2726(misterplexd) j=0 tid=2727(misterplexd) j=2 tid=2728(misterplexd) j=1 tid=2758(misterplexd) j=650 tid=2760(misterplexd) j=100
+media: frames=916 vfps=23.7 pfps=23.5 audio_s=38.24 wall_s=38.50 audio=on clock=av-lock av_drift_ms=-27 drops=8 fps=24/1 decode=624x480
+media: fpga frame_tx ok via DDR presents=912 frames=920 ms=8
+media: frames=940 vfps=23.7 pfps=23.5 audio_s=39.24 wall_s=39.50 audio=on clock=av-lock av_drift_ms=-27 drops=8 fps=24/1 decode=624x480
+media: frames=965 vfps=23.7 pfps=23.6 audio_s=40.28 wall_s=40.54 audio=on clock=av-lock av_drift_ms=-29 drops=8 fps=24/1 decode=624x480
+media: audio latency 100ms queued=19217B
+media: fpga frame_tx ok via DDR presents=960 frames=968 ms=8
+pms timeline: update ok state=playing url=http://192.168.1.41:32400/:/timeline?ratingKey=12&key=%2Flibrary%2Fmetadata%2F12&state=playing&time=40969&duration=360021&identifier=com.plexapp.plugins.library&playQueueItemID=12
+media: frames=989 vfps=23.8 pfps=23.6 audio_s=41.28 wall_s=41.55 audio=on clock=av-lock av_drift_ms=-29 drops=8 fps=24/1 decode=624x480
+media: frames=1013 vfps=23.8 pfps=23.6 audio_s=42.28 wall_s=42.55 audio=on clock=av-lock av_drift_ms=-29 drops=8 fps=24/1 decode=624x480
+media: fpga frame_tx ok via DDR presents=1008 frames=1016 ms=12
+media: frames=1037 vfps=23.8 pfps=23.6 audio_s=43.28 wall_s=43.55 audio=on clock=av-lock av_drift_ms=-29 drops=8 fps=24/1 decode=624x480
+media: frames=1061 vfps=23.8 pfps=23.6 audio_s=44.28 wall_s=44.55 audio=on clock=av-lock av_drift_ms=-28 drops=8 fps=24/1 decode=624x480
+media: fpga frame_tx ok via DDR presents=1056 frames=1064 ms=15
+media: frames=1085 vfps=23.8 pfps=23.6 audio_s=45.28 wall_s=45.55 audio=on clock=av-lock av_drift_ms=-29 drops=8 fps=24/1 decode=624x480
+media: audio latency 100ms queued=19224B
+media: frames=1109 vfps=23.8 pfps=23.6 audio_s=46.28 wall_s=46.55 audio=on clock=av-lock av_drift_ms=-29 drops=8 fps=24/1 decode=624x480
+media: fpga frame_tx ok via DDR presents=1104 frames=1112 ms=8
+media: frames=1133 vfps=23.8 pfps=23.6 audio_s=47.28 wall_s=47.55 audio=on clock=av-lock av_drift_ms=-29 drops=8 fps=24/1 decode=624x480
+media: frames=1157 vfps=23.8 pfps=23.6 audio_s=48.28 wall_s=48.55 audio=on clock=av-lock av_drift_ms=-29 drops=8 fps=24/1 decode=624x480
+media: fpga frame_tx ok via DDR presents=1152 frames=1160 ms=8
+media: frames=1182 vfps=23.8 pfps=23.6 audio_s=49.32 wall_s=49.59 audio=on clock=av-lock av_drift_ms=-31 drops=8 fps=24/1 decode=624x480
+media: present_profile frames=300 presented=300 drops=0 read_us_f=17933 read_cpu_us_f=1471 read_syscall_us_f=17671 read_eagain_sleep_us_f=55 read_loop_overhead_us_f=205 read_calls_f=7 read_calls_x100_f=703 read_ok_calls_f=7 read_ok_calls_x100_f=700 read_eagain_f=0 read_eagain_x100_f=2 read_eintr_f=0 read_zero=0 read_bytes_f=449280 read_avg_bytes_call=64121 read_max_bytes_call=65536 pacing_wait_us_f=14165 pacing_wait_cpu_us_f=223 overlay_us_p=0 overlay_cpu_us_p=0 fb_us_p=0 fb_cpu_us_p=0 pixel_us_p=9 pixel_cpu_us_p=4 ddr_wait_us_p=3723 ddr_prep_wait_us_p=2977 ddr_copy_us_p=5107 ddr_flush_us_p=0 ddr_doorbell_us_p=2 ddr_post_wait_us_p=745 ddr_bank_reuse_wait_us_p=0 ddr_plxd_poll_us_p=0 ddr_plxd_poll_iters_x100_p=0 ddr_plxd_used_x100_p=0 ddr_accounted_us_p=8833 ddr_unaccounted_us_p=14 ddr_total_us_p=8847 ddr_cpu_us_p=5209 frame_bytes=449280 fmt=yuv420p
+media: thread_cpu tid=2720(misterplexd) j=41 tid=2725(misterplexd) j=25 tid=2726(misterplexd) j=0 tid=2727(misterplexd) j=2 tid=2728(misterplexd) j=1 tid=2758(misterplexd) j=862 tid=2760(misterplexd) j=131
+media: frames=1207 vfps=23.8 pfps=23.6 audio_s=50.38 wall_s=50.65 audio=on clock=av-lock av_drift_ms=-32 drops=8 fps=24/1 decode=624x480
+media: fpga frame_tx ok via DDR presents=1200 frames=1208 ms=9
+media: audio latency 100ms queued=19205B
+pms timeline: update ok state=playing url=http://192.168.1.41:32400/:/timeline?ratingKey=12&key=%2Flibrary%2Fmetadata%2F12&state=playing&time=50976&duration=360021&identifier=com.plexapp.plugins.library&playQueueItemID=12
+media: frames=1232 vfps=23.8 pfps=23.6 audio_s=51.40 wall_s=51.67 audio=on clock=av-lock av_drift_ms=-33 drops=8 fps=24/1 decode=624x480
+media: fpga frame_tx ok via DDR presents=1248 frames=1256 ms=8
+media: frames=1256 vfps=23.8 pfps=23.6 audio_s=52.40 wall_s=52.68 audio=on clock=av-lock av_drift_ms=-34 drops=8 fps=24/1 decode=624x480
+media: frames=1281 vfps=23.8 pfps=23.6 audio_s=53.44 wall_s=53.72 audio=on clock=av-lock av_drift_ms=-36 drops=8 fps=24/1 decode=624x480
+media: fpga frame_tx ok via DDR presents=1296 frames=1304 ms=8
+media: frames=1306 vfps=23.8 pfps=23.7 audio_s=54.48 wall_s=54.75 audio=on clock=av-lock av_drift_ms=-37 drops=8 fps=24/1 decode=624x480
+media: audio latency 100ms queued=19215B
+media: frames=1330 vfps=23.8 pfps=23.7 audio_s=55.48 wall_s=55.76 audio=on clock=av-lock av_drift_ms=-37 drops=8 fps=24/1 decode=624x480
+media: fpga frame_tx ok via DDR presents=1344 frames=1352 ms=8
+media: frames=1355 vfps=23.8 pfps=23.7 audio_s=56.52 wall_s=56.80 audio=on clock=av-lock av_drift_ms=-39 drops=8 fps=24/1 decode=624x480
+media: frames=1379 vfps=23.8 pfps=23.7 audio_s=57.52 wall_s=57.80 audio=on clock=av-lock av_drift_ms=-39 drops=8 fps=24/1 decode=624x480
+media: fpga frame_tx ok via DDR presents=1392 frames=1400 ms=8
+media: frames=1403 vfps=23.8 pfps=23.7 audio_s=58.52 wall_s=58.80 audio=on clock=av-lock av_drift_ms=-39 drops=8 fps=24/1 decode=624x480
+media: frames=1427 vfps=23.8 pfps=23.7 audio_s=59.52 wall_s=59.80 audio=on clock=av-lock av_drift_ms=-39 drops=8 fps=24/1 decode=624x480
+media: fpga frame_tx ok via DDR presents=1440 frames=1448 ms=13
+media: audio latency 100ms queued=19212B
+media: frames=1451 vfps=23.8 pfps=23.7 audio_s=60.54 wall_s=60.81 audio=on clock=av-lock av_drift_ms=-39 drops=8 fps=24/1 decode=624x480
+pms timeline: update ok state=playing url=http://192.168.1.41:32400/:/timeline?ratingKey=12&key=%2Flibrary%2Fmetadata%2F12&state=playing&time=60982&duration=360021&identifier=com.plexapp.plugins.library&playQueueItemID=12
+media: frames=1476 vfps=23.8 pfps=23.7 audio_s=61.58 wall_s=61.86 audio=on clock=av-lock av_drift_ms=-21 drops=8 fps=24/1 decode=624x480
+media: fpga frame_tx ok via DDR presents=1488 frames=1496 ms=8
+media: present_profile frames=300 presented=300 drops=0 read_us_f=17379 read_cpu_us_f=1520 read_syscall_us_f=16284 read_eagain_sleep_us_f=867 read_loop_overhead_us_f=226 read_calls_f=7 read_calls_x100_f=743 read_ok_calls_f=7 read_ok_calls_x100_f=719 read_eagain_f=0 read_eagain_x100_f=24 read_eintr_f=0 read_zero=0 read_bytes_f=449280 read_avg_bytes_call=62486 read_max_bytes_call=65536 pacing_wait_us_f=14620 pacing_wait_cpu_us_f=219 overlay_us_p=0 overlay_cpu_us_p=0 fb_us_p=0 fb_cpu_us_p=0 pixel_us_p=52 pixel_cpu_us_p=3 ddr_wait_us_p=3685 ddr_prep_wait_us_p=2984 ddr_copy_us_p=5100 ddr_flush_us_p=0 ddr_doorbell_us_p=2 ddr_post_wait_us_p=701 ddr_bank_reuse_wait_us_p=0 ddr_plxd_poll_us_p=0 ddr_plxd_poll_iters_x100_p=0 ddr_plxd_used_x100_p=0 ddr_accounted_us_p=8788 ddr_unaccounted_us_p=13 ddr_total_us_p=8802 ddr_cpu_us_p=5184 frame_bytes=449280 fmt=yuv420p
+media: thread_cpu tid=2720(misterplexd) j=50 tid=2725(misterplexd) j=30 tid=2726(misterplexd) j=1 tid=2727(misterplexd) j=3 tid=2728(misterplexd) j=2 tid=2758(misterplexd) j=1075 tid=2760(misterplexd) j=162
+media: frames=1501 vfps=23.8 pfps=23.7 audio_s=62.62 wall_s=62.90 audio=on clock=av-lock av_drift_ms=-21 drops=8 fps=24/1 decode=624x480
+media: frames=1525 vfps=23.8 pfps=23.7 audio_s=63.62 wall_s=63.90 audio=on clock=av-lock av_drift_ms=-22 drops=8 fps=24/1 decode=624x480
+media: fpga frame_tx ok via DDR presents=1536 frames=1544 ms=8
+media: frames=1549 vfps=23.8 pfps=23.7 audio_s=64.62 wall_s=64.90 audio=on clock=av-lock av_drift_ms=-22 drops=8 fps=24/1 decode=624x480
+media: audio latency 100ms queued=19216B
+media: frames=1574 vfps=23.8 pfps=23.7 audio_s=65.66 wall_s=65.94 audio=on clock=av-lock av_drift_ms=-24 drops=8 fps=24/1 decode=624x480
+media: fpga frame_tx ok via DDR presents=1584 frames=1592 ms=8
+media: frames=1598 vfps=23.8 pfps=23.7 audio_s=66.66 wall_s=66.95 audio=on clock=av-lock av_drift_ms=-23 drops=8 fps=24/1 decode=624x480
+media: frames=1622 vfps=23.8 pfps=23.7 audio_s=67.68 wall_s=67.95 audio=on clock=av-lock av_drift_ms=-24 drops=8 fps=24/1 decode=624x480
+media: fpga frame_tx ok via DDR presents=1632 frames=1640 ms=8
+media: frames=1647 vfps=23.8 pfps=23.7 audio_s=68.70 wall_s=68.98 audio=on clock=av-lock av_drift_ms=-26 drops=8 fps=24/1 decode=624x480
+media: frames=1671 vfps=23.8 pfps=23.7 audio_s=69.70 wall_s=69.98 audio=on clock=av-lock av_drift_ms=-26 drops=8 fps=24/1 decode=624x480
+media: fpga frame_tx ok via DDR presents=1680 frames=1688 ms=8
+media: audio latency 99ms queued=19054B
+media: frames=1695 vfps=23.8 pfps=23.7 audio_s=70.70 wall_s=70.98 audio=on clock=av-lock av_drift_ms=-24 drops=8 fps=24/1 decode=624x480
+pms timeline: update ok state=playing url=http://192.168.1.41:32400/:/timeline?ratingKey=12&key=%2Flibrary%2Fmetadata%2F12&state=playing&time=70988&duration=360021&identifier=com.plexapp.plugins.library&playQueueItemID=12
+media: frames=1719 vfps=23.8 pfps=23.7 audio_s=71.70 wall_s=71.99 audio=on clock=av-lock av_drift_ms=-26 drops=8 fps=24/1 decode=624x480
+media: fpga frame_tx ok via DDR presents=1728 frames=1736 ms=8
+media: frames=1744 vfps=23.8 pfps=23.7 audio_s=72.74 wall_s=73.02 audio=on clock=av-lock av_drift_ms=-27 drops=8 fps=24/1 decode=624x480
+media: frames=1768 vfps=23.8 pfps=23.7 audio_s=73.74 wall_s=74.03 audio=on clock=av-lock av_drift_ms=-25 drops=8 fps=24/1 decode=624x480
+media: fpga frame_tx ok via DDR presents=1776 frames=1784 ms=8
+media: frames=1792 vfps=23.8 pfps=23.7 audio_s=74.74 wall_s=75.03 audio=on clock=av-lock av_drift_ms=-27 drops=8 fps=24/1 decode=624x480
+media: present_profile frames=300 presented=300 drops=0 read_us_f=18815 read_cpu_us_f=1489 read_syscall_us_f=17862 read_eagain_sleep_us_f=732 read_loop_overhead_us_f=220 read_calls_f=7 read_calls_x100_f=739 read_ok_calls_f=7 read_ok_calls_x100_f=719 read_eagain_f=0 read_eagain_x100_f=20 read_eintr_f=0 read_zero=0 read_bytes_f=449280 read_avg_bytes_call=62428 read_max_bytes_call=65536 pacing_wait_us_f=13199 pacing_wait_cpu_us_f=196 overlay_us_p=0 overlay_cpu_us_p=0 fb_us_p=0 fb_cpu_us_p=0 pixel_us_p=66 pixel_cpu_us_p=4 ddr_wait_us_p=3648 ddr_prep_wait_us_p=3016 ddr_copy_us_p=5105 ddr_flush_us_p=0 ddr_doorbell_us_p=2 ddr_post_wait_us_p=631 ddr_bank_reuse_wait_us_p=0 ddr_plxd_poll_us_p=0 ddr_plxd_poll_iters_x100_p=0 ddr_plxd_used_x100_p=0 ddr_accounted_us_p=8756 ddr_unaccounted_us_p=18 ddr_total_us_p=8774 ddr_cpu_us_p=5187 frame_bytes=449280 fmt=yuv420p
+media: thread_cpu tid=2720(misterplexd) j=60 tid=2725(misterplexd) j=36 tid=2726(misterplexd) j=1 tid=2727(misterplexd) j=4 tid=2728(misterplexd) j=2 tid=2758(misterplexd) j=1286 tid=2760(misterplexd) j=190
+media: audio latency 100ms queued=19239B
+media: frames=1816 vfps=23.8 pfps=23.7 audio_s=75.74 wall_s=76.03 audio=on clock=av-lock av_drift_ms=-27 drops=8 fps=24/1 decode=624x480
+media: fpga frame_tx ok via DDR presents=1824 frames=1832 ms=8
+media: frames=1840 vfps=23.8 pfps=23.7 audio_s=76.74 wall_s=77.03 audio=on clock=av-lock av_drift_ms=-26 drops=8 fps=24/1 decode=624x480
+media: frames=1864 vfps=23.8 pfps=23.7 audio_s=77.74 wall_s=78.03 audio=on clock=av-lock av_drift_ms=-27 drops=8 fps=24/1 decode=624x480
+media: fpga frame_tx ok via DDR presents=1872 frames=1880 ms=8
+media: frames=1889 vfps=23.8 pfps=23.7 audio_s=78.78 wall_s=79.07 audio=on clock=av-lock av_drift_ms=-29 drops=8 fps=24/1 decode=624x480
+media: frames=1913 vfps=23.8 pfps=23.7 audio_s=79.78 wall_s=80.07 audio=on clock=av-lock av_drift_ms=-29 drops=8 fps=24/1 decode=624x480
+media: fpga frame_tx ok via DDR presents=1920 frames=1928 ms=8
+media: audio latency 100ms queued=19219B
+media: frames=1937 vfps=23.8 pfps=23.7 audio_s=80.78 wall_s=81.07 audio=on clock=av-lock av_drift_ms=-28 drops=8 fps=24/1 decode=624x480
+pms timeline: update ok state=playing url=http://192.168.1.41:32400/:/timeline?ratingKey=12&key=%2Flibrary%2Fmetadata%2F12&state=playing&time=81629&duration=360021&identifier=com.plexapp.plugins.library&playQueueItemID=12
+media: frames=1961 vfps=23.8 pfps=23.7 audio_s=81.78 wall_s=82.07 audio=on clock=av-lock av_drift_ms=-28 drops=8 fps=24/1 decode=624x480
+media: fpga frame_tx ok via DDR presents=1968 frames=1976 ms=8
+media: frames=1985 vfps=23.8 pfps=23.7 audio_s=82.78 wall_s=83.07 audio=on clock=av-lock av_drift_ms=-28 drops=8 fps=24/1 decode=624x480
+media: frames=2009 vfps=23.8 pfps=23.7 audio_s=83.78 wall_s=84.07 audio=on clock=av-lock av_drift_ms=-28 drops=8 fps=24/1 decode=624x480
+media: fpga frame_tx ok via DDR presents=2016 frames=2024 ms=9
+media: frames=2033 vfps=23.8 pfps=23.8 audio_s=84.78 wall_s=85.08 audio=on clock=av-lock av_drift_ms=-29 drops=8 fps=24/1 decode=624x480
+media: audio latency 99ms queued=19037B
+media: frames=2057 vfps=23.8 pfps=23.8 audio_s=85.78 wall_s=86.08 audio=on clock=av-lock av_drift_ms=-28 drops=8 fps=24/1 decode=624x480
+media: fpga frame_tx ok via DDR presents=2064 frames=2072 ms=11
+media: frames=2081 vfps=23.8 pfps=23.8 audio_s=86.78 wall_s=87.08 audio=on clock=av-lock av_drift_ms=-29 drops=8 fps=24/1 decode=624x480
+media: present_profile frames=300 presented=300 drops=0 read_us_f=18393 read_cpu_us_f=1527 read_syscall_us_f=17089 read_eagain_sleep_us_f=1105 read_loop_overhead_us_f=199 read_calls_f=7 read_calls_x100_f=753 read_ok_calls_f=7 read_ok_calls_x100_f=723 read_eagain_f=0 read_eagain_x100_f=29 read_eintr_f=0 read_zero=0 read_bytes_f=449280 read_avg_bytes_call=62083 read_max_bytes_call=65536 pacing_wait_us_f=13332 pacing_wait_cpu_us_f=205 overlay_us_p=0 overlay_cpu_us_p=0 fb_us_p=0 fb_cpu_us_p=0 pixel_us_p=212 pixel_cpu_us_p=4 ddr_wait_us_p=3818 ddr_prep_wait_us_p=3150 ddr_copy_us_p=5225 ddr_flush_us_p=0 ddr_doorbell_us_p=3 ddr_post_wait_us_p=668 ddr_bank_reuse_wait_us_p=0 ddr_plxd_poll_us_p=0 ddr_plxd_poll_iters_x100_p=0 ddr_plxd_used_x100_p=0 ddr_accounted_us_p=9046 ddr_unaccounted_us_p=14 ddr_total_us_p=9061 ddr_cpu_us_p=5286 frame_bytes=449280 fmt=yuv420p
+media: thread_cpu tid=2720(misterplexd) j=68 tid=2725(misterplexd) j=42 tid=2726(misterplexd) j=1 tid=2727(misterplexd) j=5 tid=2728(misterplexd) j=3 tid=2758(misterplexd) j=1501 tid=2760(misterplexd) j=225
+media: frames=2106 vfps=23.8 pfps=23.8 audio_s=87.82 wall_s=88.11 audio=on clock=av-lock av_drift_ms=-31 drops=8 fps=24/1 decode=624x480
+media: fpga frame_tx ok via DDR presents=2112 frames=2120 ms=8
+media: frames=2130 vfps=23.9 pfps=23.8 audio_s=88.82 wall_s=89.12 audio=on clock=av-lock av_drift_ms=-31 drops=8 fps=24/1 decode=624x480
+media: frames=2154 vfps=23.9 pfps=23.8 audio_s=89.82 wall_s=90.12 audio=on clock=av-lock av_drift_ms=-30 drops=8 fps=24/1 decode=624x480
+media: fpga frame_tx ok via DDR presents=2160 frames=2168 ms=8
+media: audio latency 100ms queued=19224B
+media: frames=2178 vfps=23.9 pfps=23.8 audio_s=90.82 wall_s=91.12 audio=on clock=av-lock av_drift_ms=-31 drops=8 fps=24/1 decode=624x480
+media: frames=2202 vfps=23.9 pfps=23.8 audio_s=91.82 wall_s=92.12 audio=on clock=av-lock av_drift_ms=-29 drops=8 fps=24/1 decode=624x480
+pms timeline: update ok state=playing url=http://192.168.1.41:32400/:/timeline?ratingKey=12&key=%2Flibrary%2Fmetadata%2F12&state=playing&time=92242&duration=360021&identifier=com.plexapp.plugins.library&playQueueItemID=12
+media: fpga frame_tx ok via DDR presents=2208 frames=2216 ms=11
+media: frames=2226 vfps=23.9 pfps=23.8 audio_s=92.82 wall_s=93.12 audio=on clock=av-lock av_drift_ms=-31 drops=8 fps=24/1 decode=624x480
+media: frames=2250 vfps=23.9 pfps=23.8 audio_s=93.82 wall_s=94.12 audio=on clock=av-lock av_drift_ms=-30 drops=8 fps=24/1 decode=624x480
+media: fpga frame_tx ok via DDR presents=2256 frames=2264 ms=9
+media: frames=2274 vfps=23.9 pfps=23.8 audio_s=94.82 wall_s=95.12 audio=on clock=av-lock av_drift_ms=-31 drops=8 fps=24/1 decode=624x480
+media: audio latency 99ms queued=19146B
+media: frames=2299 vfps=23.9 pfps=23.8 audio_s=95.86 wall_s=96.17 audio=on clock=av-lock av_drift_ms=-31 drops=8 fps=24/1 decode=624x480
+media: fpga frame_tx ok via DDR presents=2304 frames=2312 ms=8
+media: frames=2323 vfps=23.9 pfps=23.8 audio_s=96.86 wall_s=97.17 audio=on clock=av-lock av_drift_ms=-32 drops=8 fps=24/1 decode=624x480
+media: frames=2348 vfps=23.9 pfps=23.8 audio_s=97.92 wall_s=98.22 audio=on clock=av-lock av_drift_ms=-32 drops=8 fps=24/1 decode=624x480
+media: fpga frame_tx ok via DDR presents=2352 frames=2360 ms=8
+media: frames=2373 vfps=23.9 pfps=23.8 audio_s=98.94 wall_s=99.24 audio=on clock=av-lock av_drift_ms=-36 drops=8 fps=24/1 decode=624x480
+media: frames=2397 vfps=23.9 pfps=23.8 audio_s=99.94 wall_s=100.2 audio=on clock=av-lock av_drift_ms=-36 drops=8 fps=24/1 decode=624x480
+media: present_profile frames=300 presented=300 drops=0 read_us_f=18831 read_cpu_us_f=1458 read_syscall_us_f=18115 read_eagain_sleep_us_f=612 read_loop_overhead_us_f=103 read_calls_f=7 read_calls_x100_f=723 read_ok_calls_f=7 read_ok_calls_x100_f=710 read_eagain_f=0 read_eagain_x100_f=12 read_eintr_f=0 read_zero=0 read_bytes_f=449280 read_avg_bytes_call=63249 read_max_bytes_call=65536 pacing_wait_us_f=13052 pacing_wait_cpu_us_f=201 overlay_us_p=0 overlay_cpu_us_p=0 fb_us_p=0 fb_cpu_us_p=0 pixel_us_p=56 pixel_cpu_us_p=4 ddr_wait_us_p=3660 ddr_prep_wait_us_p=3011 ddr_copy_us_p=5201 ddr_flush_us_p=0 ddr_doorbell_us_p=2 ddr_post_wait_us_p=648 ddr_bank_reuse_wait_us_p=0 ddr_plxd_poll_us_p=0 ddr_plxd_poll_iters_x100_p=0 ddr_plxd_used_x100_p=0 ddr_accounted_us_p=8864 ddr_unaccounted_us_p=14 ddr_total_us_p=8878 ddr_cpu_us_p=5257 frame_bytes=449280 fmt=yuv420p
+media: thread_cpu tid=2720(misterplexd) j=77 tid=2725(misterplexd) j=48 tid=2726(misterplexd) j=1 tid=2727(misterplexd) j=5 tid=2728(misterplexd) j=3 tid=2758(misterplexd) j=1713 tid=2760(misterplexd) j=255
+media: fpga frame_tx ok via DDR presents=2400 frames=2408 ms=9
+media: audio latency 100ms queued=19231B
+media: frames=2421 vfps=23.9 pfps=23.8 audio_s=100.9 wall_s=101.2 audio=on clock=av-lock av_drift_ms=-35 drops=8 fps=24/1 decode=624x480
+media: frames=2445 vfps=23.9 pfps=23.8 audio_s=101.9 wall_s=102.2 audio=on clock=av-lock av_drift_ms=-35 drops=8 fps=24/1 decode=624x480
+pms timeline: update ok state=playing url=http://192.168.1.41:32400/:/timeline?ratingKey=12&key=%2Flibrary%2Fmetadata%2F12&state=playing&time=102248&duration=360021&identifier=com.plexapp.plugins.library&playQueueItemID=12
+media: fpga frame_tx ok via DDR presents=2448 frames=2456 ms=8
+media: frames=2469 vfps=23.9 pfps=23.8 audio_s=102.9 wall_s=103.2 audio=on clock=av-lock av_drift_ms=-36 drops=8 fps=24/1 decode=624x480
+media: frames=2493 vfps=23.9 pfps=23.8 audio_s=103.9 wall_s=104.2 audio=on clock=av-lock av_drift_ms=-35 drops=8 fps=24/1 decode=624x480
+media: fpga frame_tx ok via DDR presents=2496 frames=2504 ms=8
+media: frames=2518 vfps=23.9 pfps=23.8 audio_s=104.9 wall_s=105.2 audio=on clock=av-lock av_drift_ms=-37 drops=8 fps=24/1 decode=624x480
+media: audio latency 100ms queued=19232B
+media: frames=2542 vfps=23.9 pfps=23.8 audio_s=105.9 wall_s=106.2 audio=on clock=av-lock av_drift_ms=-37 drops=8 fps=24/1 decode=624x480
+media: fpga frame_tx ok via DDR presents=2544 frames=2552 ms=8
+media: frames=2566 vfps=23.9 pfps=23.8 audio_s=107.0 wall_s=107.3 audio=on clock=av-lock av_drift_ms=-36 drops=8 fps=24/1 decode=624x480
+media: frames=2591 vfps=23.9 pfps=23.8 audio_s=108.0 wall_s=108.3 audio=on clock=av-lock av_drift_ms=-39 drops=8 fps=24/1 decode=624x480
+media: fpga frame_tx ok via DDR presents=2592 frames=2600 ms=8
+media: frames=2615 vfps=23.9 pfps=23.8 audio_s=109.0 wall_s=109.3 audio=on clock=av-lock av_drift_ms=-38 drops=8 fps=24/1 decode=624x480
+media: frames=2639 vfps=23.9 pfps=23.8 audio_s=110.0 wall_s=110.3 audio=on clock=av-lock av_drift_ms=-39 drops=8 fps=24/1 decode=624x480
+media: fpga frame_tx ok via DDR presents=2640 frames=2648 ms=13
+media: audio latency 99ms queued=19157B
+media: frames=2663 vfps=23.9 pfps=23.8 audio_s=111.0 wall_s=111.3 audio=on clock=av-lock av_drift_ms=-38 drops=8 fps=24/1 decode=624x480
+media: frames=2688 vfps=23.9 pfps=23.8 audio_s=112.0 wall_s=112.3 audio=on clock=av-lock av_drift_ms=-21 drops=8 fps=24/1 decode=624x480
+media: fpga frame_tx ok via DDR presents=2688 frames=2696 ms=8
+media: present_profile frames=300 presented=300 drops=0 read_us_f=18494 read_cpu_us_f=1452 read_syscall_us_f=18159 read_eagain_sleep_us_f=67 read_loop_overhead_us_f=267 read_calls_f=7 read_calls_x100_f=702 read_ok_calls_f=7 read_ok_calls_x100_f=700 read_eagain_f=0 read_eagain_x100_f=2 read_eintr_f=0 read_zero=0 read_bytes_f=449280 read_avg_bytes_call=64182 read_max_bytes_call=65536 pacing_wait_us_f=13476 pacing_wait_cpu_us_f=203 overlay_us_p=0 overlay_cpu_us_p=0 fb_us_p=0 fb_cpu_us_p=0 pixel_us_p=7 pixel_cpu_us_p=4 ddr_wait_us_p=3790 ddr_prep_wait_us_p=3153 ddr_copy_us_p=5105 ddr_flush_us_p=0 ddr_doorbell_us_p=2 ddr_post_wait_us_p=636 ddr_bank_reuse_wait_us_p=0 ddr_plxd_poll_us_p=0 ddr_plxd_poll_iters_x100_p=0 ddr_plxd_used_x100_p=0 ddr_accounted_us_p=8898 ddr_unaccounted_us_p=14 ddr_total_us_p=8913 ddr_cpu_us_p=5212 frame_bytes=449280 fmt=yuv420p
+media: thread_cpu tid=2720(misterplexd) j=87 tid=2725(misterplexd) j=53 tid=2726(misterplexd) j=1 tid=2727(misterplexd) j=7 tid=2728(misterplexd) j=4 tid=2758(misterplexd) j=1924 tid=2760(misterplexd) j=285
+pms timeline: update ok state=playing url=http://192.168.1.41:32400/:/timeline?ratingKey=12&key=%2Flibrary%2Fmetadata%2F12&state=playing&time=112896&duration=360021&identifier=com.plexapp.plugins.library&playQueueItemID=12
+media: frames=2713 vfps=23.9 pfps=23.8 audio_s=113.1 wall_s=113.4 audio=on clock=av-lock av_drift_ms=-40 drops=8 fps=24/1 decode=624x480
+media: frames=2737 vfps=23.9 pfps=23.8 audio_s=114.1 wall_s=114.4 audio=on clock=av-lock av_drift_ms=-40 drops=8 fps=24/1 decode=624x480
+media: fpga frame_tx ok via DDR presents=2736 frames=2744 ms=8
+media: frames=2761 vfps=23.9 pfps=23.8 audio_s=115.1 wall_s=115.4 audio=on clock=av-lock av_drift_ms=-22 drops=8 fps=24/1 decode=624x480
+media: audio latency 99ms queued=19180B
+media: frames=2785 vfps=23.9 pfps=23.8 audio_s=116.1 wall_s=116.4 audio=on clock=av-lock av_drift_ms=-22 drops=8 fps=24/1 decode=624x480
+media: fpga frame_tx ok via DDR presents=2784 frames=2792 ms=8
+media: frames=2809 vfps=23.9 pfps=23.8 audio_s=117.1 wall_s=117.4 audio=on clock=av-lock av_drift_ms=-22 drops=8 fps=24/1 decode=624x480
+media: frames=2834 vfps=23.9 pfps=23.8 audio_s=118.1 wall_s=118.4 audio=on clock=av-lock av_drift_ms=-24 drops=8 fps=24/1 decode=624x480
+media: fpga frame_tx ok via DDR presents=2832 frames=2840 ms=8
+media: frames=2858 vfps=23.9 pfps=23.8 audio_s=119.1 wall_s=119.4 audio=on clock=av-lock av_drift_ms=-24 drops=8 fps=24/1 decode=624x480
+media: frames=2882 vfps=23.9 pfps=23.8 audio_s=120.1 wall_s=120.4 audio=on clock=av-lock av_drift_ms=-23 drops=8 fps=24/1 decode=624x480
+media: fpga frame_tx ok via DDR presents=2880 frames=2888 ms=8
+media: audio latency 100ms queued=19218B
+media: frames=2907 vfps=23.9 pfps=23.8 audio_s=121.2 wall_s=121.5 audio=on clock=av-lock av_drift_ms=-26 drops=8 fps=24/1 decode=624x480
+media: frames=2931 vfps=23.9 pfps=23.8 audio_s=122.2 wall_s=122.5 audio=on clock=av-lock av_drift_ms=-25 drops=8 fps=24/1 decode=624x480
+media: fpga frame_tx ok via DDR presents=2928 frames=2936 ms=8
+media: frames=2956 vfps=23.9 pfps=23.8 audio_s=123.2 wall_s=123.5 audio=on clock=av-lock av_drift_ms=-27 drops=8 fps=24/1 decode=624x480
+pms timeline: update ok state=playing url=http://192.168.1.41:32400/:/timeline?ratingKey=12&key=%2Flibrary%2Fmetadata%2F12&state=playing&time=123521&duration=360021&identifier=com.plexapp.plugins.library&playQueueItemID=12
+media: frames=2981 vfps=23.9 pfps=23.8 audio_s=124.2 wall_s=124.6 audio=on clock=av-lock av_drift_ms=-29 drops=8 fps=24/1 decode=624x480
+media: fpga frame_tx ok via DDR presents=2976 frames=2984 ms=8
+media: present_profile frames=300 presented=300 drops=0 read_us_f=18123 read_cpu_us_f=1538 read_syscall_us_f=16112 read_eagain_sleep_us_f=1869 read_loop_overhead_us_f=141 read_calls_f=7 read_calls_x100_f=778 read_ok_calls_f=7 read_ok_calls_x100_f=731 read_eagain_f=0 read_eagain_x100_f=47 read_eintr_f=0 read_zero=0 read_bytes_f=449280 read_avg_bytes_call=61432 read_max_bytes_call=65536 pacing_wait_us_f=13515 pacing_wait_cpu_us_f=209 overlay_us_p=0 overlay_cpu_us_p=0 fb_us_p=0 fb_cpu_us_p=0 pixel_us_p=233 pixel_cpu_us_p=5 ddr_wait_us_p=3782 ddr_prep_wait_us_p=3049 ddr_copy_us_p=5193 ddr_flush_us_p=0 ddr_doorbell_us_p=2 ddr_post_wait_us_p=732 ddr_bank_reuse_wait_us_p=0 ddr_plxd_poll_us_p=0 ddr_plxd_poll_iters_x100_p=0 ddr_plxd_used_x100_p=0 ddr_accounted_us_p=8978 ddr_unaccounted_us_p=14 ddr_total_us_p=8992 ddr_cpu_us_p=5209 frame_bytes=449280 fmt=yuv420p
+media: thread_cpu tid=2720(misterplexd) j=96 tid=2725(misterplexd) j=59 tid=2726(misterplexd) j=1 tid=2727(misterplexd) j=7 tid=2728(misterplexd) j=4 tid=2758(misterplexd) j=2137 tid=2760(misterplexd) j=314
+media: frames=3005 vfps=23.9 pfps=23.8 audio_s=125.3 wall_s=125.6 audio=on clock=av-lock av_drift_ms=-29 drops=8 fps=24/1 decode=624x480
+media: audio latency 100ms queued=19219B
+media: frames=3030 vfps=23.9 pfps=23.8 audio_s=126.3 wall_s=126.6 audio=on clock=av-lock av_drift_ms=-31 drops=8 fps=24/1 decode=624x480
+media: fpga frame_tx ok via DDR presents=3024 frames=3032 ms=8
+media: frames=3054 vfps=23.9 pfps=23.8 audio_s=127.3 wall_s=127.6 audio=on clock=av-lock av_drift_ms=-31 drops=8 fps=24/1 decode=624x480
+media: frames=3078 vfps=23.9 pfps=23.8 audio_s=128.3 wall_s=128.6 audio=on clock=av-lock av_drift_ms=-31 drops=8 fps=24/1 decode=624x480
+media: fpga frame_tx ok via DDR presents=3072 frames=3080 ms=8
+media: frames=3103 vfps=23.9 pfps=23.8 audio_s=129.3 wall_s=129.6 audio=on clock=av-lock av_drift_ms=-32 drops=8 fps=24/1 decode=624x480
+media: frames=3127 vfps=23.9 pfps=23.8 audio_s=130.3 wall_s=130.6 audio=on clock=av-lock av_drift_ms=-32 drops=8 fps=24/1 decode=624x480
+media: fpga frame_tx ok via DDR presents=3120 frames=3128 ms=8
+media: audio latency 100ms queued=19210B
+media: frames=3152 vfps=23.9 pfps=23.8 audio_s=131.4 wall_s=131.7 audio=on clock=av-lock av_drift_ms=-34 drops=8 fps=24/1 decode=624x480
+media: fpga frame_tx ok via DDR presents=3168 frames=3176 ms=10
+media: frames=3176 vfps=23.9 pfps=23.8 audio_s=132.4 wall_s=132.7 audio=on clock=av-lock av_drift_ms=-34 drops=8 fps=24/1 decode=624x480
+pms timeline: update ok state=playing url=http://192.168.1.41:32400/:/timeline?ratingKey=12&key=%2Flibrary%2Fmetadata%2F12&state=playing&time=133528&duration=360021&identifier=com.plexapp.plugins.library&playQueueItemID=12
+media: frames=3201 vfps=23.9 pfps=23.8 audio_s=133.4 wall_s=133.7 audio=on clock=av-lock av_drift_ms=-35 drops=8 fps=24/1 decode=624x480
+media: fpga frame_tx ok via DDR presents=3216 frames=3224 ms=8
+media: frames=3225 vfps=23.9 pfps=23.8 audio_s=134.4 wall_s=134.7 audio=on clock=av-lock av_drift_ms=-35 drops=8 fps=24/1 decode=624x480
+media: frames=3249 vfps=23.9 pfps=23.8 audio_s=135.4 wall_s=135.7 audio=on clock=av-lock av_drift_ms=-36 drops=8 fps=24/1 decode=624x480
+media: audio latency 100ms queued=19222B
+media: fpga frame_tx ok via DDR presents=3264 frames=3272 ms=8
+media: frames=3273 vfps=23.9 pfps=23.8 audio_s=136.4 wall_s=136.7 audio=on clock=av-lock av_drift_ms=-36 drops=8 fps=24/1 decode=624x480
+media: frames=3298 vfps=23.9 pfps=23.8 audio_s=137.4 wall_s=137.8 audio=on clock=av-lock av_drift_ms=-36 drops=8 fps=24/1 decode=624x480
+media: present_profile frames=300 presented=300 drops=0 read_us_f=18102 read_cpu_us_f=1460 read_syscall_us_f=17914 read_eagain_sleep_us_f=60 read_loop_overhead_us_f=127 read_calls_f=7 read_calls_x100_f=702 read_ok_calls_f=7 read_ok_calls_x100_f=700 read_eagain_f=0 read_eagain_x100_f=2 read_eintr_f=0 read_zero=0 read_bytes_f=449280 read_avg_bytes_call=64152 read_max_bytes_call=65536 pacing_wait_us_f=13661 pacing_wait_cpu_us_f=214 overlay_us_p=0 overlay_cpu_us_p=0 fb_us_p=0 fb_cpu_us_p=0 pixel_us_p=10 pixel_cpu_us_p=4 ddr_wait_us_p=3732 ddr_prep_wait_us_p=3068 ddr_copy_us_p=5222 ddr_flush_us_p=0 ddr_doorbell_us_p=2 ddr_post_wait_us_p=663 ddr_bank_reuse_wait_us_p=0 ddr_plxd_poll_us_p=0 ddr_plxd_poll_iters_x100_p=0 ddr_plxd_used_x100_p=0 ddr_accounted_us_p=8957 ddr_unaccounted_us_p=14 ddr_total_us_p=8972 ddr_cpu_us_p=5219 frame_bytes=449280 fmt=yuv420p
+media: thread_cpu tid=2720(misterplexd) j=105 tid=2725(misterplexd) j=64 tid=2726(misterplexd) j=1 tid=2727(misterplexd) j=9 tid=2728(misterplexd) j=4 tid=2758(misterplexd) j=2348 tid=2760(misterplexd) j=344
+media: fpga frame_tx ok via DDR presents=3312 frames=3320 ms=8
+media: frames=3322 vfps=23.9 pfps=23.8 audio_s=138.5 wall_s=138.8 audio=on clock=av-lock av_drift_ms=-37 drops=8 fps=24/1 decode=624x480
+media: frames=3347 vfps=23.9 pfps=23.8 audio_s=139.5 wall_s=139.8 audio=on clock=av-lock av_drift_ms=-39 drops=8 fps=24/1 decode=624x480
+media: fpga frame_tx ok via DDR presents=3360 frames=3368 ms=9
+media: frames=3372 vfps=23.9 pfps=23.8 audio_s=140.5 wall_s=140.8 audio=on clock=av-lock av_drift_ms=-40 drops=8 fps=24/1 decode=624x480
+media: audio latency 100ms queued=19214B
+media: frames=3396 vfps=23.9 pfps=23.8 audio_s=141.5 wall_s=141.9 audio=on clock=av-lock av_drift_ms=-21 drops=8 fps=24/1 decode=624x480
+media: fpga frame_tx ok via DDR presents=3408 frames=3416 ms=8
+media: frames=3421 vfps=23.9 pfps=23.8 audio_s=142.6 wall_s=142.9 audio=on clock=av-lock av_drift_ms=-22 drops=8 fps=24/1 decode=624x480
+pms timeline: update ok state=playing url=http://192.168.1.41:32400/:/timeline?ratingKey=12&key=%2Flibrary%2Fmetadata%2F12&state=playing&time=143534&duration=360021&identifier=com.plexapp.plugins.library&playQueueItemID=12
+media: frames=3445 vfps=23.9 pfps=23.8 audio_s=143.6 wall_s=143.9 audio=on clock=av-lock av_drift_ms=-22 drops=8 fps=24/1 decode=624x480
+media: fpga frame_tx ok via DDR presents=3456 frames=3464 ms=8
+media: frames=3469 vfps=23.9 pfps=23.8 audio_s=144.6 wall_s=144.9 audio=on clock=av-lock av_drift_ms=-22 drops=8 fps=24/1 decode=624x480
+media: frames=3494 vfps=23.9 pfps=23.8 audio_s=145.6 wall_s=145.9 audio=on clock=av-lock av_drift_ms=-24 drops=8 fps=24/1 decode=624x480
+media: audio latency 99ms queued=19176B
+media: fpga frame_tx ok via DDR presents=3504 frames=3512 ms=8
+media: frames=3519 vfps=23.9 pfps=23.8 audio_s=146.7 wall_s=147.0 audio=on clock=av-lock av_drift_ms=-25 drops=8 fps=24/1 decode=624x480
+media: frames=3543 vfps=23.9 pfps=23.8 audio_s=147.7 wall_s=148.0 audio=on clock=av-lock av_drift_ms=-25 drops=8 fps=24/1 decode=624x480
+media: fpga frame_tx ok via DDR presents=3552 frames=3560 ms=8
+media: frames=3567 vfps=23.9 pfps=23.8 audio_s=148.7 wall_s=149.0 audio=on clock=av-lock av_drift_ms=-25 drops=8 fps=24/1 decode=624x480
+media: frames=3591 vfps=23.9 pfps=23.8 audio_s=149.7 wall_s=150.0 audio=on clock=av-lock av_drift_ms=-26 drops=8 fps=24/1 decode=624x480
+media: present_profile frames=300 presented=300 drops=0 read_us_f=18239 read_cpu_us_f=1470 read_syscall_us_f=17871 read_eagain_sleep_us_f=224 read_loop_overhead_us_f=143 read_calls_f=7 read_calls_x100_f=710 read_ok_calls_f=7 read_ok_calls_x100_f=704 read_eagain_f=0 read_eagain_x100_f=6 read_eintr_f=0 read_zero=0 read_bytes_f=449280 read_avg_bytes_call=63818 read_max_bytes_call=65536 pacing_wait_us_f=13830 pacing_wait_cpu_us_f=211 overlay_us_p=0 overlay_cpu_us_p=0 fb_us_p=0 fb_cpu_us_p=0 pixel_us_p=8 pixel_cpu_us_p=4 ddr_wait_us_p=3663 ddr_prep_wait_us_p=2984 ddr_copy_us_p=5175 ddr_flush_us_p=0 ddr_doorbell_us_p=2 ddr_post_wait_us_p=678 ddr_bank_reuse_wait_us_p=0 ddr_plxd_poll_us_p=0 ddr_plxd_poll_iters_x100_p=0 ddr_plxd_used_x100_p=0 ddr_accounted_us_p=8841 ddr_unaccounted_us_p=15 ddr_total_us_p=8856 ddr_cpu_us_p=5225 frame_bytes=449280 fmt=yuv420p
+media: thread_cpu tid=2720(misterplexd) j=114 tid=2725(misterplexd) j=70 tid=2726(misterplexd) j=1 tid=2727(misterplexd) j=9 tid=2728(misterplexd) j=5 tid=2758(misterplexd) j=2561 tid=2760(misterplexd) j=372
+media: fpga frame_tx ok via DDR presents=3600 frames=3608 ms=9
+media: frames=3615 vfps=23.9 pfps=23.8 audio_s=150.7 wall_s=151.0 audio=on clock=av-lock av_drift_ms=-26 drops=8 fps=24/1 decode=624x480
+media: audio latency 100ms queued=19237B
+media: frames=3639 vfps=23.9 pfps=23.8 audio_s=151.7 wall_s=152.0 audio=on clock=av-lock av_drift_ms=-26 drops=8 fps=24/1 decode=624x480
+media: fpga frame_tx ok via DDR presents=3648 frames=3656 ms=8
+media: frames=3663 vfps=23.9 pfps=23.8 audio_s=152.7 wall_s=153.0 audio=on clock=av-lock av_drift_ms=-26 drops=8 fps=24/1 decode=624x480
+pms timeline: update ok state=playing url=http://192.168.1.41:32400/:/timeline?ratingKey=12&key=%2Flibrary%2Fmetadata%2F12&state=playing&time=153543&duration=360021&identifier=com.plexapp.plugins.library&playQueueItemID=12
+media: frames=3687 vfps=23.9 pfps=23.8 audio_s=153.7 wall_s=154.0 audio=on clock=av-lock av_drift_ms=-26 drops=8 fps=24/1 decode=624x480
+media: fpga frame_tx ok via DDR presents=3696 frames=3704 ms=8
+media: frames=3712 vfps=23.9 pfps=23.8 audio_s=154.7 wall_s=155.0 audio=on clock=av-lock av_drift_ms=-27 drops=8 fps=24/1 decode=624x480
+media: frames=3736 vfps=23.9 pfps=23.8 audio_s=155.7 wall_s=156.0 audio=on clock=av-lock av_drift_ms=-27 drops=8 fps=24/1 decode=624x480
+media: audio latency 100ms queued=19214B
+media: fpga frame_tx ok via DDR presents=3744 frames=3752 ms=8
+media: frames=3760 vfps=23.9 pfps=23.8 audio_s=156.7 wall_s=157.0 audio=on clock=av-lock av_drift_ms=-26 drops=8 fps=24/1 decode=624x480
+media: frames=3784 vfps=23.9 pfps=23.8 audio_s=157.7 wall_s=158.0 audio=on clock=av-lock av_drift_ms=-27 drops=8 fps=24/1 decode=624x480
+media: fpga frame_tx ok via DDR presents=3792 frames=3800 ms=8
+media: frames=3809 vfps=23.9 pfps=23.8 audio_s=158.7 wall_s=159.1 audio=on clock=av-lock av_drift_ms=-29 drops=8 fps=24/1 decode=624x480
+media: frames=3833 vfps=23.9 pfps=23.8 audio_s=159.7 wall_s=160.1 audio=on clock=av-lock av_drift_ms=-28 drops=8 fps=24/1 decode=624x480
+media: fpga frame_tx ok via DDR presents=3840 frames=3848 ms=8
+media: frames=3857 vfps=23.9 pfps=23.8 audio_s=160.7 wall_s=161.1 audio=on clock=av-lock av_drift_ms=-29 drops=8 fps=24/1 decode=624x480
+media: audio latency 99ms queued=19168B
+media: frames=3882 vfps=23.9 pfps=23.8 audio_s=161.8 wall_s=162.1 audio=on clock=av-lock av_drift_ms=-30 drops=8 fps=24/1 decode=624x480
+media: fpga frame_tx ok via DDR presents=3888 frames=3896 ms=8
+media: present_profile frames=300 presented=300 drops=0 read_us_f=18555 read_cpu_us_f=1453 read_syscall_us_f=18367 read_eagain_sleep_us_f=115 read_loop_overhead_us_f=72 read_calls_f=7 read_calls_x100_f=704 read_ok_calls_f=7 read_ok_calls_x100_f=701 read_eagain_f=0 read_eagain_x100_f=3 read_eintr_f=0 read_zero=0 read_bytes_f=449280 read_avg_bytes_call=64030 read_max_bytes_call=65536 pacing_wait_us_f=13404 pacing_wait_cpu_us_f=211 overlay_us_p=0 overlay_cpu_us_p=0 fb_us_p=0 fb_cpu_us_p=0 pixel_us_p=11 pixel_cpu_us_p=4 ddr_wait_us_p=3694 ddr_prep_wait_us_p=3017 ddr_copy_us_p=5178 ddr_flush_us_p=0 ddr_doorbell_us_p=2 ddr_post_wait_us_p=676 ddr_bank_reuse_wait_us_p=0 ddr_plxd_poll_us_p=0 ddr_plxd_poll_iters_x100_p=0 ddr_plxd_used_x100_p=0 ddr_accounted_us_p=8874 ddr_unaccounted_us_p=14 ddr_total_us_p=8889 ddr_cpu_us_p=5228 frame_bytes=449280 fmt=yuv420p
+media: thread_cpu tid=2720(misterplexd) j=123 tid=2725(misterplexd) j=76 tid=2726(misterplexd) j=2 tid=2727(misterplexd) j=10 tid=2728(misterplexd) j=5 tid=2758(misterplexd) j=2772 tid=2760(misterplexd) j=401
+media: frames=3906 vfps=23.9 pfps=23.8 audio_s=162.8 wall_s=163.1 audio=on clock=av-lock av_drift_ms=-30 drops=8 fps=24/1 decode=624x480
+pms timeline: update ok state=playing url=http://192.168.1.41:32400/:/timeline?ratingKey=12&key=%2Flibrary%2Fmetadata%2F12&state=playing&time=163547&duration=360021&identifier=com.plexapp.plugins.library&playQueueItemID=12
+media: frames=3930 vfps=23.9 pfps=23.8 audio_s=163.8 wall_s=164.1 audio=on clock=av-lock av_drift_ms=-31 drops=8 fps=24/1 decode=624x480
+media: fpga frame_tx ok via DDR presents=3936 frames=3944 ms=8
+media: frames=3954 vfps=23.9 pfps=23.8 audio_s=164.8 wall_s=165.1 audio=on clock=av-lock av_drift_ms=-31 drops=8 fps=24/1 decode=624x480
+media: frames=3978 vfps=23.9 pfps=23.8 audio_s=165.8 wall_s=166.1 audio=on clock=av-lock av_drift_ms=-30 drops=8 fps=24/1 decode=624x480
+media: audio latency 99ms queued=19199B
+media: fpga frame_tx ok via DDR presents=3984 frames=3992 ms=8
+media: frames=4002 vfps=23.9 pfps=23.8 audio_s=166.8 wall_s=167.1 audio=on clock=av-lock av_drift_ms=-30 drops=8 fps=24/1 decode=624x480
+media: frames=4026 vfps=23.9 pfps=23.8 audio_s=167.8 wall_s=168.1 audio=on clock=av-lock av_drift_ms=-31 drops=8 fps=24/1 decode=624x480
+media: fpga frame_tx ok via DDR presents=4032 frames=4040 ms=12
+media: frames=4050 vfps=23.9 pfps=23.8 audio_s=168.8 wall_s=169.1 audio=on clock=av-lock av_drift_ms=-31 drops=8 fps=24/1 decode=624x480
+media: frames=4074 vfps=23.9 pfps=23.8 audio_s=169.8 wall_s=170.1 audio=on clock=av-lock av_drift_ms=-31 drops=8 fps=24/1 decode=624x480
+media: fpga frame_tx ok via DDR presents=4080 frames=4088 ms=8
+media: frames=4098 vfps=23.9 pfps=23.8 audio_s=170.8 wall_s=171.1 audio=on clock=av-lock av_drift_ms=-31 drops=8 fps=24/1 decode=624x480
+media: audio latency 100ms queued=19224B
+media: frames=4122 vfps=23.9 pfps=23.8 audio_s=171.8 wall_s=172.1 audio=on clock=av-lock av_drift_ms=-31 drops=8 fps=24/1 decode=624x480
+media: fpga frame_tx ok via DDR presents=4128 frames=4136 ms=8
+media: frames=4147 vfps=23.9 pfps=23.8 audio_s=172.8 wall_s=173.2 audio=on clock=av-lock av_drift_ms=-31 drops=8 fps=24/1 decode=624x480
+pms timeline: update ok state=playing url=http://192.168.1.41:32400/:/timeline?ratingKey=12&key=%2Flibrary%2Fmetadata%2F12&state=playing&time=173553&duration=360021&identifier=com.plexapp.plugins.library&playQueueItemID=12
+media: frames=4171 vfps=23.9 pfps=23.8 audio_s=173.8 wall_s=174.2 audio=on clock=av-lock av_drift_ms=-31 drops=8 fps=24/1 decode=624x480
+media: fpga frame_tx ok via DDR presents=4176 frames=4184 ms=8
+media: frames=4195 vfps=23.9 pfps=23.8 audio_s=174.8 wall_s=175.2 audio=on clock=av-lock av_drift_ms=-31 drops=8 fps=24/1 decode=624x480
+media: present_profile frames=300 presented=300 drops=0 read_us_f=17195 read_cpu_us_f=1811 read_syscall_us_f=9956 read_eagain_sleep_us_f=6686 read_loop_overhead_us_f=553 read_calls_f=10 read_calls_x100_f=1027 read_ok_calls_f=8 read_ok_calls_x100_f=846 read_eagain_f=1 read_eagain_x100_f=181 read_eintr_f=0 read_zero=0 read_bytes_f=449280 read_avg_bytes_call=53085 read_max_bytes_call=65536 pacing_wait_us_f=13791 pacing_wait_cpu_us_f=186 overlay_us_p=0 overlay_cpu_us_p=0 fb_us_p=0 fb_cpu_us_p=0 pixel_us_p=918 pixel_cpu_us_p=7 ddr_wait_us_p=3757 ddr_prep_wait_us_p=3053 ddr_copy_us_p=5202 ddr_flush_us_p=0 ddr_doorbell_us_p=2 ddr_post_wait_us_p=704 ddr_bank_reuse_wait_us_p=0 ddr_plxd_poll_us_p=0 ddr_plxd_poll_iters_x100_p=0 ddr_plxd_used_x100_p=0 ddr_accounted_us_p=8961 ddr_unaccounted_us_p=17 ddr_total_us_p=8979 ddr_cpu_us_p=5254 frame_bytes=449280 fmt=yuv420p
+media: thread_cpu tid=2720(misterplexd) j=132 tid=2725(misterplexd) j=82 tid=2726(misterplexd) j=2 tid=2727(misterplexd) j=11 tid=2728(misterplexd) j=6 tid=2758(misterplexd) j=2994 tid=2760(misterplexd) j=431
+media: frames=4219 vfps=23.9 pfps=23.8 audio_s=175.8 wall_s=176.2 audio=on clock=av-lock av_drift_ms=-30 drops=8 fps=24/1 decode=624x480
+media: fpga frame_tx ok via DDR presents=4224 frames=4232 ms=8
+media: audio latency 100ms queued=19225B
+media: frames=4243 vfps=23.9 pfps=23.8 audio_s=176.8 wall_s=177.2 audio=on clock=av-lock av_drift_ms=-30 drops=8 fps=24/1 decode=624x480
+media: frames=4267 vfps=23.9 pfps=23.8 audio_s=177.8 wall_s=178.2 audio=on clock=av-lock av_drift_ms=-31 drops=8 fps=24/1 decode=624x480
+media: fpga frame_tx ok via DDR presents=4272 frames=4280 ms=8
+media: frames=4291 vfps=23.9 pfps=23.8 audio_s=178.8 wall_s=179.2 audio=on clock=av-lock av_drift_ms=-29 drops=8 fps=24/1 decode=624x480
+media: frames=4316 vfps=23.9 pfps=23.8 audio_s=179.9 wall_s=180.2 audio=on clock=av-lock av_drift_ms=-34 drops=8 fps=24/1 decode=624x480
+media: fpga frame_tx ok via DDR presents=4320 frames=4328 ms=8
+media: frames=4340 vfps=23.9 pfps=23.8 audio_s=180.9 wall_s=181.2 audio=on clock=av-lock av_drift_ms=-34 drops=8 fps=24/1 decode=624x480
+media: audio latency 100ms queued=19277B
+media: frames=4365 vfps=23.9 pfps=23.9 audio_s=181.9 wall_s=182.2 audio=on clock=av-lock av_drift_ms=-36 drops=8 fps=24/1 decode=624x480
+media: fpga frame_tx ok via DDR presents=4368 frames=4376 ms=8
+media: frames=4389 vfps=23.9 pfps=23.9 audio_s=182.9 wall_s=183.3 audio=on clock=av-lock av_drift_ms=-36 drops=8 fps=24/1 decode=624x480
+pms timeline: update ok state=playing url=http://192.168.1.41:32400/:/timeline?ratingKey=12&key=%2Flibrary%2Fmetadata%2F12&state=playing&time=183559&duration=360021&identifier=com.plexapp.plugins.library&playQueueItemID=12
+media: frames=4413 vfps=23.9 pfps=23.9 audio_s=183.9 wall_s=184.3 audio=on clock=av-lock av_drift_ms=-36 drops=8 fps=24/1 decode=624x480
+media: fpga frame_tx ok via DDR presents=4416 frames=4424 ms=8
+media: frames=4437 vfps=23.9 pfps=23.9 audio_s=184.9 wall_s=185.3 audio=on clock=av-lock av_drift_ms=-36 drops=8 fps=24/1 decode=624x480
+media: frames=4462 vfps=23.9 pfps=23.9 audio_s=185.9 wall_s=186.3 audio=on clock=av-lock av_drift_ms=-36 drops=8 fps=24/1 decode=624x480
+media: fpga frame_tx ok via DDR presents=4464 frames=4472 ms=9
+media: audio latency 100ms queued=19232B
+media: frames=4486 vfps=23.9 pfps=23.9 audio_s=186.9 wall_s=187.3 audio=on clock=av-lock av_drift_ms=-36 drops=8 fps=24/1 decode=624x480
+media: present_profile frames=300 presented=300 drops=0 read_us_f=19050 read_cpu_us_f=1575 read_syscall_us_f=16530 read_eagain_sleep_us_f=2044 read_loop_overhead_us_f=475 read_calls_f=8 read_calls_x100_f=803 read_ok_calls_f=7 read_ok_calls_x100_f=747 read_eagain_f=0 read_eagain_x100_f=55 read_eintr_f=0 read_zero=0 read_bytes_f=449280 read_avg_bytes_call=60090 read_max_bytes_call=65536 pacing_wait_us_f=12674 pacing_wait_cpu_us_f=192 overlay_us_p=0 overlay_cpu_us_p=0 fb_us_p=0 fb_cpu_us_p=0 pixel_us_p=165 pixel_cpu_us_p=4 ddr_wait_us_p=3811 ddr_prep_wait_us_p=3147 ddr_copy_us_p=5243 ddr_flush_us_p=0 ddr_doorbell_us_p=2 ddr_post_wait_us_p=664 ddr_bank_reuse_wait_us_p=0 ddr_plxd_poll_us_p=0 ddr_plxd_poll_iters_x100_p=0 ddr_plxd_used_x100_p=0 ddr_accounted_us_p=9057 ddr_unaccounted_us_p=16 ddr_total_us_p=9074 ddr_cpu_us_p=5286 frame_bytes=449280 fmt=yuv420p
+media: thread_cpu tid=2720(misterplexd) j=141 tid=2725(misterplexd) j=88 tid=2726(misterplexd) j=2 tid=2727(misterplexd) j=11 tid=2728(misterplexd) j=6 tid=2758(misterplexd) j=3211 tid=2760(misterplexd) j=461
+media: frames=4511 vfps=23.9 pfps=23.9 audio_s=188.0 wall_s=188.3 audio=on clock=av-lock av_drift_ms=-38 drops=8 fps=24/1 decode=624x480
+media: fpga frame_tx ok via DDR presents=4512 frames=4520 ms=8
+media: frames=4535 vfps=23.9 pfps=23.9 audio_s=189.0 wall_s=189.3 audio=on clock=av-lock av_drift_ms=-38 drops=8 fps=24/1 decode=624x480
+media: frames=4559 vfps=23.9 pfps=23.9 audio_s=190.0 wall_s=190.3 audio=on clock=av-lock av_drift_ms=-39 drops=8 fps=24/1 decode=624x480
+media: fpga frame_tx ok via DDR presents=4560 frames=4568 ms=8
+media: frames=4583 vfps=23.9 pfps=23.9 audio_s=191.0 wall_s=191.3 audio=on clock=av-lock av_drift_ms=-38 drops=8 fps=24/1 decode=624x480
+media: audio latency 100ms queued=19231B
+media: frames=4607 vfps=23.9 pfps=23.9 audio_s=192.0 wall_s=192.3 audio=on clock=av-lock av_drift_ms=-38 drops=8 fps=24/1 decode=624x480
+media: fpga frame_tx ok via DDR presents=4608 frames=4616 ms=13
+media: frames=4631 vfps=23.9 pfps=23.9 audio_s=193.0 wall_s=193.3 audio=on clock=av-lock av_drift_ms=-39 drops=8 fps=24/1 decode=624x480
+pms timeline: update ok state=playing url=http://192.168.1.41:32400/:/timeline?ratingKey=12&key=%2Flibrary%2Fmetadata%2F12&state=playing&time=193566&duration=360021&identifier=com.plexapp.plugins.library&playQueueItemID=12
+media: frames=4655 vfps=23.9 pfps=23.9 audio_s=194.0 wall_s=194.3 audio=on clock=av-lock av_drift_ms=-38 drops=8 fps=24/1 decode=624x480
+media: fpga frame_tx ok via DDR presents=4656 frames=4664 ms=8
+media: frames=4679 vfps=23.9 pfps=23.9 audio_s=195.0 wall_s=195.3 audio=on clock=av-lock av_drift_ms=-37 drops=8 fps=24/1 decode=624x480
+media: frames=4703 vfps=23.9 pfps=23.9 audio_s=196.0 wall_s=196.3 audio=on clock=av-lock av_drift_ms=-39 drops=8 fps=24/1 decode=624x480
+media: fpga frame_tx ok via DDR presents=4704 frames=4712 ms=8
+media: audio latency 100ms queued=19230B
+media: frames=4728 vfps=23.9 pfps=23.9 audio_s=197.0 wall_s=197.4 audio=on clock=av-lock av_drift_ms=-40 drops=8 fps=24/1 decode=624x480
+media: frames=4752 vfps=23.9 pfps=23.9 audio_s=198.0 wall_s=198.4 audio=on clock=av-lock av_drift_ms=-40 drops=8 fps=24/1 decode=624x480
+media: fpga frame_tx ok via DDR presents=4752 frames=4760 ms=8
+media: frames=4777 vfps=23.9 pfps=23.9 audio_s=199.1 wall_s=199.4 audio=on clock=av-lock av_drift_ms=-21 drops=8 fps=24/1 decode=624x480
+media: present_profile frames=300 presented=300 drops=0 read_us_f=18387 read_cpu_us_f=1447 read_syscall_us_f=18311 read_eagain_sleep_us_f=7 read_loop_overhead_us_f=68 read_calls_f=7 read_calls_x100_f=700 read_ok_calls_f=7 read_ok_calls_x100_f=700 read_eagain_f=0 read_eagain_x100_f=0 read_eintr_f=0 read_zero=0 read_bytes_f=449280 read_avg_bytes_call=64152 read_max_bytes_call=65536 pacing_wait_us_f=13590 pacing_wait_cpu_us_f=218 overlay_us_p=0 overlay_cpu_us_p=0 fb_us_p=0 fb_cpu_us_p=0 pixel_us_p=8 pixel_cpu_us_p=5 ddr_wait_us_p=3690 ddr_prep_wait_us_p=2997 ddr_copy_us_p=5125 ddr_flush_us_p=0 ddr_doorbell_us_p=2 ddr_post_wait_us_p=692 ddr_bank_reuse_wait_us_p=0 ddr_plxd_poll_us_p=0 ddr_plxd_poll_iters_x100_p=0 ddr_plxd_used_x100_p=0 ddr_accounted_us_p=8818 ddr_unaccounted_us_p=15 ddr_total_us_p=8833 ddr_cpu_us_p=5221 frame_bytes=449280 fmt=yuv420p
+media: thread_cpu tid=2720(misterplexd) j=151 tid=2725(misterplexd) j=94 tid=2726(misterplexd) j=2 tid=2727(misterplexd) j=12 tid=2728(misterplexd) j=7 tid=2758(misterplexd) j=3421 tid=2760(misterplexd) j=490
+media: frames=4801 vfps=23.9 pfps=23.9 audio_s=200.1 wall_s=200.4 audio=on clock=av-lock av_drift_ms=-21 drops=8 fps=24/1 decode=624x480
+media: fpga frame_tx ok via DDR presents=4800 frames=4808 ms=8
+media: frames=4825 vfps=23.9 pfps=23.9 audio_s=201.1 wall_s=201.4 audio=on clock=av-lock av_drift_ms=-22 drops=8 fps=24/1 decode=624x480
+media: audio latency 100ms queued=19227B
+media: frames=4849 vfps=23.9 pfps=23.9 audio_s=202.1 wall_s=202.4 audio=on clock=av-lock av_drift_ms=-22 drops=8 fps=24/1 decode=624x480
+media: fpga frame_tx ok via DDR presents=4848 frames=4856 ms=8
+media: frames=4873 vfps=23.9 pfps=23.9 audio_s=203.1 wall_s=203.4 audio=on clock=av-lock av_drift_ms=-21 drops=8 fps=24/1 decode=624x480
+pms timeline: update ok state=playing url=http://192.168.1.41:32400/:/timeline?ratingKey=12&key=%2Flibrary%2Fmetadata%2F12&state=playing&time=203572&duration=360021&identifier=com.plexapp.plugins.library&playQueueItemID=12
+media: frames=4897 vfps=23.9 pfps=23.9 audio_s=204.1 wall_s=204.4 audio=on clock=av-lock av_drift_ms=-22 drops=8 fps=24/1 decode=624x480
+media: fpga frame_tx ok via DDR presents=4896 frames=4904 ms=8
+media: frames=4922 vfps=23.9 pfps=23.9 audio_s=205.1 wall_s=205.5 audio=on clock=av-lock av_drift_ms=-24 drops=8 fps=24/1 decode=624x480
+media: frames=4947 vfps=23.9 pfps=23.9 audio_s=206.2 wall_s=206.5 audio=on clock=av-lock av_drift_ms=-25 drops=8 fps=24/1 decode=624x480
+media: fpga frame_tx ok via DDR presents=4944 frames=4952 ms=8
+media: audio latency 100ms queued=19215B
+media: frames=4972 vfps=23.9 pfps=23.9 audio_s=207.2 wall_s=207.6 audio=on clock=av-lock av_drift_ms=-27 drops=8 fps=24/1 decode=624x480
+media: frames=4997 vfps=23.9 pfps=23.9 audio_s=208.2 wall_s=208.6 audio=on clock=av-lock av_drift_ms=-29 drops=8 fps=24/1 decode=624x480
+media: fpga frame_tx ok via DDR presents=4992 frames=5000 ms=8
+media: frames=5022 vfps=23.9 pfps=23.9 audio_s=209.3 wall_s=209.6 audio=on clock=av-lock av_drift_ms=-30 drops=8 fps=24/1 decode=624x480
+media: frames=5046 vfps=23.9 pfps=23.9 audio_s=210.3 wall_s=210.6 audio=on clock=av-lock av_drift_ms=-30 drops=8 fps=24/1 decode=624x480
+media: fpga frame_tx ok via DDR presents=5040 frames=5048 ms=8
+media: frames=5070 vfps=23.9 pfps=23.9 audio_s=211.3 wall_s=211.6 audio=on clock=av-lock av_drift_ms=-30 drops=8 fps=24/1 decode=624x480
+media: audio latency 99ms queued=19144B

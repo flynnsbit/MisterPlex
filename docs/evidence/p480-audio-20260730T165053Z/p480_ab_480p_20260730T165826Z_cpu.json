@@ -1,0 +1,334 @@
+{
+  "dwall_s": 182.491623,
+  "ffmpeg_pct_onecpu": 69.022,
+  "ffmpeg_pct_onecpu_thread_sum": 69.028,
+  "formula": "P=100*dticks/(HZ*dwall)",
+  "fps_scaling": false,
+  "hz": 100,
+  "misterplexd_pct_onecpu": 20.79,
+  "misterplexd_pct_onecpu_thread_sum": 20.768,
+  "processes": [
+    {
+      "dticks": 3794,
+      "name": "misterplexd",
+      "pct_onecpu": 20.79,
+      "pid": 2720
+    },
+    {
+      "dticks": 12596,
+      "name": "ffmpeg",
+      "pct_onecpu": 69.022,
+      "pid": 2759
+    }
+  ],
+  "threads": [
+    {
+      "comm": "misterplexd",
+      "dticks": 3110,
+      "flag": "ok",
+      "nivcsw_delta": 34738,
+      "nvcsw_delta": 53104,
+      "pct_onecpu": 17.042,
+      "pid": 2720,
+      "proc": "misterplexd",
+      "tid": 2758
+    },
+    {
+      "comm": "vf#0:0",
+      "dticks": 3064,
+      "flag": "ok",
+      "nivcsw_delta": 18965,
+      "nvcsw_delta": 5828,
+      "pct_onecpu": 16.79,
+      "pid": 2759,
+      "proc": "ffmpeg",
+      "tid": 2769
+    },
+    {
+      "comm": "vf#0:0",
+      "dticks": 2690,
+      "flag": "ok",
+      "nivcsw_delta": 8015,
+      "nvcsw_delta": 5740,
+      "pct_onecpu": 14.74,
+      "pid": 2759,
+      "proc": "ffmpeg",
+      "tid": 2779
+    },
+    {
+      "comm": "vf#0:0",
+      "dticks": 2663,
+      "flag": "ok",
+      "nivcsw_delta": 6953,
+      "nvcsw_delta": 5417,
+      "pct_onecpu": 14.592,
+      "pid": 2759,
+      "proc": "ffmpeg",
+      "tid": 2780
+    },
+    {
+      "comm": "mux0:rawvideo",
+      "dticks": 1083,
+      "flag": "ok",
+      "nivcsw_delta": 323,
+      "nvcsw_delta": 29702,
+      "pct_onecpu": 5.935,
+      "pid": 2759,
+      "proc": "ffmpeg",
+      "tid": 2783
+    },
+    {
+      "comm": "dec0:1:aac",
+      "dticks": 470,
+      "flag": "ok",
+      "nivcsw_delta": 48,
+      "nvcsw_delta": 8641,
+      "pct_onecpu": 2.575,
+      "pid": 2759,
+      "proc": "ffmpeg",
+      "tid": 2772
+    },
+    {
+      "comm": "misterplexd",
+      "dticks": 443,
+      "flag": "ok",
+      "nivcsw_delta": 844,
+      "nvcsw_delta": 17320,
+      "pct_onecpu": 2.428,
+      "pid": 2720,
+      "proc": "misterplexd",
+      "tid": 2760
+    },
+    {
+      "comm": "vf#0:0",
+      "dticks": 397,
+      "flag": "ok",
+      "nivcsw_delta": 38,
+      "nvcsw_delta": 2219,
+      "pct_onecpu": 2.175,
+      "pid": 2759,
+      "proc": "ffmpeg",
+      "tid": 2782
+    },
+    {
+      "comm": "vf#0:0",
+      "dticks": 386,
+      "flag": "ok",
+      "nivcsw_delta": 13,
+      "nvcsw_delta": 2237,
+      "pct_onecpu": 2.115,
+      "pid": 2759,
+      "proc": "ffmpeg",
+      "tid": 2781
+    },
+    {
+      "comm": "av:h264:df0",
+      "dticks": 301,
+      "flag": "ok",
+      "nivcsw_delta": 563,
+      "nvcsw_delta": 1946,
+      "pct_onecpu": 1.649,
+      "pid": 2759,
+      "proc": "ffmpeg",
+      "tid": 2764
+    },
+    {
+      "comm": "av:h264:df2",
+      "dticks": 291,
+      "flag": "ok",
+      "nivcsw_delta": 412,
+      "nvcsw_delta": 1930,
+      "pct_onecpu": 1.595,
+      "pid": 2759,
+      "proc": "ffmpeg",
+      "tid": 2766
+    },
+    {
+      "comm": "av:h264:df1",
+      "dticks": 281,
+      "flag": "ok",
+      "nivcsw_delta": 427,
+      "nvcsw_delta": 2105,
+      "pct_onecpu": 1.54,
+      "pid": 2759,
+      "proc": "ffmpeg",
+      "tid": 2765
+    },
+    {
+      "comm": "dec0:0:h264",
+      "dticks": 188,
+      "flag": "ok",
+      "nivcsw_delta": 37,
+      "nvcsw_delta": 6121,
+      "pct_onecpu": 1.03,
+      "pid": 2759,
+      "proc": "ffmpeg",
+      "tid": 2771
+    },
+    {
+      "comm": "enc1:0:pcm_s16l",
+      "dticks": 180,
+      "flag": "ok",
+      "nivcsw_delta": 17,
+      "nvcsw_delta": 8628,
+      "pct_onecpu": 0.986,
+      "pid": 2759,
+      "proc": "ffmpeg",
+      "tid": 2768
+    },
+    {
+      "comm": "af#1:0",
+      "dticks": 177,
+      "flag": "ok",
+      "nivcsw_delta": 15,
+      "nvcsw_delta": 8598,
+      "pct_onecpu": 0.97,
+      "pid": 2759,
+      "proc": "ffmpeg",
+      "tid": 2770
+    },
+    {
+      "comm": "dmx0:mpegts",
+      "dticks": 164,
+      "flag": "ok",
+      "nivcsw_delta": 13,
+      "nvcsw_delta": 8949,
+      "pct_onecpu": 0.899,
+      "pid": 2759,
+      "proc": "ffmpeg",
+      "tid": 2773
+    },
+    {
+      "comm": "mux1:s16le",
+      "dticks": 155,
+      "flag": "ok",
+      "nivcsw_delta": 17,
+      "nvcsw_delta": 9127,
+      "pct_onecpu": 0.849,
+      "pid": 2759,
+      "proc": "ffmpeg",
+      "tid": 2776
+    },
+    {
+      "comm": "misterplexd",
+      "dticks": 133,
+      "flag": "ok",
+      "nivcsw_delta": 398,
+      "nvcsw_delta": 903,
+      "pct_onecpu": 0.729,
+      "pid": 2720,
+      "proc": "misterplexd",
+      "tid": 2720
+    },
+    {
+      "comm": "enc0:0:rawvideo",
+      "dticks": 100,
+      "flag": "ok",
+      "nivcsw_delta": 10,
+      "nvcsw_delta": 4520,
+      "pct_onecpu": 0.548,
+      "pid": 2759,
+      "proc": "ffmpeg",
+      "tid": 2767
+    },
+    {
+      "comm": "misterplexd",
+      "dticks": 85,
+      "flag": "ok",
+      "nivcsw_delta": 6,
+      "nvcsw_delta": 17982,
+      "pct_onecpu": 0.466,
+      "pid": 2720,
+      "proc": "misterplexd",
+      "tid": 2725
+    },
+    {
+      "comm": "misterplexd",
+      "dticks": 11,
+      "flag": "ok",
+      "nivcsw_delta": 0,
+      "nvcsw_delta": 944,
+      "pct_onecpu": 0.06,
+      "pid": 2720,
+      "proc": "misterplexd",
+      "tid": 2727
+    },
+    {
+      "comm": "ffmpeg",
+      "dticks": 7,
+      "flag": "ok",
+      "nivcsw_delta": 1,
+      "nvcsw_delta": 365,
+      "pct_onecpu": 0.038,
+      "pid": 2759,
+      "proc": "ffmpeg",
+      "tid": 2759
+    },
+    {
+      "comm": "misterplexd",
+      "dticks": 6,
+      "flag": "ok",
+      "nivcsw_delta": 1,
+      "nvcsw_delta": 910,
+      "pct_onecpu": 0.033,
+      "pid": 2720,
+      "proc": "misterplexd",
+      "tid": 2728
+    },
+    {
+      "comm": "misterplexd",
+      "dticks": 2,
+      "flag": "ok",
+      "nivcsw_delta": 0,
+      "nvcsw_delta": 113,
+      "pct_onecpu": 0.011,
+      "pid": 2720,
+      "proc": "misterplexd",
+      "tid": 2726
+    },
+    {
+      "comm": "af#1:0",
+      "dticks": 0,
+      "flag": "ok",
+      "nivcsw_delta": 0,
+      "nvcsw_delta": 0,
+      "pct_onecpu": 0.0,
+      "pid": 2759,
+      "proc": "ffmpeg",
+      "tid": 2774
+    },
+    {
+      "comm": "af#1:0",
+      "dticks": 0,
+      "flag": "ok",
+      "nivcsw_delta": 0,
+      "nvcsw_delta": 0,
+      "pct_onecpu": 0.0,
+      "pid": 2759,
+      "proc": "ffmpeg",
+      "tid": 2775
+    },
+    {
+      "comm": "vf#0:0",
+      "dticks": 0,
+      "flag": "ok",
+      "nivcsw_delta": 0,
+      "nvcsw_delta": 0,
+      "pct_onecpu": 0.0,
+      "pid": 2759,
+      "proc": "ffmpeg",
+      "tid": 2777
+    },
+    {
+      "comm": "vf#0:0",
+      "dticks": 0,
+      "flag": "ok",
+      "nivcsw_delta": 0,
+      "nvcsw_delta": 0,
+      "pct_onecpu": 0.0,
+      "pid": 2759,
+      "proc": "ffmpeg",
+      "tid": 2778
+    }
+  ]
+}

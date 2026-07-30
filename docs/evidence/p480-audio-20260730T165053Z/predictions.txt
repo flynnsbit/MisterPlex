@@ -1,0 +1,8 @@
+PREDICTIONS p480-audio (before measure):
+P1: 180s window 240p drops_delta bounded <=5 and not growing linearly with time.
+P2: 180s window 480p drops_delta higher than 240p but bounded; av_drift late-early |slope| < 30ms over window.
+P3: pfps~23 vs content 24 is mostly running-average startup lag, not sustained 1fps loss.
+P4: HDMI avsync_rate may be UNSCORED if grabber path fails — log av_drift still counts.
+P5: Real Plex UI cast needs user handoff (no client session automation).
+P6: Stop supervise by PID before harness RESTART_DAEMON to avoid n_d=2.
+INSTRUMENT: tests/hw/test_p480_ab_harness.sh

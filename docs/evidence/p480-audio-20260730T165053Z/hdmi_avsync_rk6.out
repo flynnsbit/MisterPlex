@@ -1,0 +1,3 @@
+waiting 26.4s for early window (playback t=30s)
+capture early at playback 29.8s -> p480_audio_rk6_early.mkv
+UNSCORED avsync_measure reason=insufficient-av-events window=early flashes=137 beeps=0 matches=0

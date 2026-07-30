@@ -1,0 +1,128 @@
+SNAP START wall_ns=1785430738289624289
+HZ=100
+PROCS name=misterplexd pids=2720
+PROC misterplexd 2720 utime=342 stime=236 num_threads=7
+PROC_CTXT misterplexd 2720 nvcsw=165 nivcsw=53
+TASK 2720 2720 comm=misterplexd utime=2 stime=22 ticks=24
+TASK_CTXT 2720 2720 comm=misterplexd nvcsw=166 nivcsw=53
+TASK 2720 2725 comm=misterplexd utime=2 stime=11 ticks=13
+TASK_CTXT 2720 2725 comm=misterplexd nvcsw=2792 nivcsw=1
+TASK 2720 2726 comm=misterplexd utime=0 stime=0 ticks=0
+TASK_CTXT 2720 2726 comm=misterplexd nvcsw=25 nivcsw=1
+TASK 2720 2727 comm=misterplexd utime=0 stime=1 ticks=1
+TASK_CTXT 2720 2727 comm=misterplexd nvcsw=153 nivcsw=1
+TASK 2720 2728 comm=misterplexd utime=0 stime=1 ticks=1
+TASK_CTXT 2720 2728 comm=misterplexd nvcsw=151 nivcsw=3
+TASK 2720 2758 comm=misterplexd utime=330 stime=140 ticks=470
+TASK_CTXT 2720 2758 comm=misterplexd nvcsw=7916 nivcsw=4692
+TASK 2720 2760 comm=misterplexd utime=3 stime=66 ticks=69
+TASK_CTXT 2720 2760 comm=misterplexd nvcsw=2551 nivcsw=175
+PROCS name=ffmpeg pids=2759
+PROC ffmpeg 2759 utime=1777 stime=191 num_threads=21
+PROC_CTXT ffmpeg 2759 nvcsw=62 nivcsw=73
+TASK 2759 2759 comm=ffmpeg utime=7 stime=4 ticks=11
+TASK_CTXT 2759 2759 comm=ffmpeg nvcsw=62 nivcsw=73
+TASK 2759 2764 comm=av:h264:df0 utime=46 stime=2 ticks=48
+TASK_CTXT 2759 2764 comm=av:h264:df0 nvcsw=302 nivcsw=66
+TASK 2759 2765 comm=av:h264:df1 utime=43 stime=2 ticks=45
+TASK_CTXT 2759 2765 comm=av:h264:df1 nvcsw=285 nivcsw=40
+TASK 2759 2766 comm=av:h264:df2 utime=43 stime=2 ticks=45
+TASK_CTXT 2759 2766 comm=av:h264:df2 nvcsw=276 nivcsw=78
+TASK 2759 2767 comm=enc0:0:rawvideo utime=10 stime=6 ticks=16
+TASK_CTXT 2759 2767 comm=enc0:0:rawvideo nvcsw=738 nivcsw=3
+TASK 2759 2768 comm=enc1:0:pcm_s16l utime=20 stime=9 ticks=29
+TASK_CTXT 2759 2768 comm=enc1:0:pcm_s16l nvcsw=1369 nivcsw=21
+TASK 2759 2769 comm=vf#0:0 utime=466 stime=26 ticks=492
+TASK_CTXT 2759 2769 comm=vf#0:0 nvcsw=912 nivcsw=3051
+TASK 2759 2770 comm=af#1:0 utime=21 stime=7 ticks=28
+TASK_CTXT 2759 2770 comm=af#1:0 nvcsw=1356 nivcsw=61
+TASK 2759 2771 comm=dec0:0:h264 utime=23 stime=6 ticks=29
+TASK_CTXT 2759 2771 comm=dec0:0:h264 nvcsw=933 nivcsw=57
+TASK 2759 2772 comm=dec0:1:aac utime=63 stime=11 ticks=74
+TASK_CTXT 2759 2772 comm=dec0:1:aac nvcsw=1284 nivcsw=120
+TASK 2759 2773 comm=dmx0:mpegts utime=18 stime=4 ticks=22
+TASK_CTXT 2759 2773 comm=dmx0:mpegts nvcsw=1406 nivcsw=12
+TASK 2759 2774 comm=af#1:0 utime=0 stime=0 ticks=0
+TASK_CTXT 2759 2774 comm=af#1:0 nvcsw=1 nivcsw=0
+TASK 2759 2775 comm=af#1:0 utime=0 stime=0 ticks=0
+TASK_CTXT 2759 2775 comm=af#1:0 nvcsw=1 nivcsw=0
+TASK 2759 2776 comm=mux1:s16le utime=13 stime=12 ticks=25
+TASK_CTXT 2759 2776 comm=mux1:s16le nvcsw=1427 nivcsw=17
+TASK 2759 2777 comm=vf#0:0 utime=0 stime=0 ticks=0
+TASK_CTXT 2759 2777 comm=vf#0:0 nvcsw=1 nivcsw=3
+TASK 2759 2778 comm=vf#0:0 utime=0 stime=0 ticks=0
+TASK_CTXT 2759 2778 comm=vf#0:0 nvcsw=1 nivcsw=2
+TASK 2759 2779 comm=vf#0:0 utime=422 stime=10 ticks=432
+TASK_CTXT 2759 2779 comm=vf#0:0 nvcsw=858 nivcsw=1459
+TASK 2759 2780 comm=vf#0:0 utime=427 stime=6 ticks=433
+TASK_CTXT 2759 2780 comm=vf#0:0 nvcsw=883 nivcsw=1351
+TASK 2759 2781 comm=vf#0:0 utime=59 stime=2 ticks=61
+TASK_CTXT 2759 2781 comm=vf#0:0 nvcsw=355 nivcsw=6
+TASK 2759 2782 comm=vf#0:0 utime=56 stime=8 ticks=64
+TASK_CTXT 2759 2782 comm=vf#0:0 nvcsw=358 nivcsw=15
+TASK 2759 2783 comm=mux0:rawvideo utime=91 stime=85 ticks=176
+TASK_CTXT 2759 2783 comm=mux0:rawvideo nvcsw=4565 nivcsw=144
+SNAP END wall_ns=1785430920781247158
+HZ=100
+PROCS name=misterplexd pids=2720
+PROC misterplexd 2720 utime=2657 stime=1715 num_threads=7
+PROC_CTXT misterplexd 2720 nvcsw=1068 nivcsw=450
+TASK 2720 2720 comm=misterplexd utime=16 stime=141 ticks=157
+TASK_CTXT 2720 2720 comm=misterplexd nvcsw=1069 nivcsw=451
+TASK 2720 2725 comm=misterplexd utime=16 stime=82 ticks=98
+TASK_CTXT 2720 2725 comm=misterplexd nvcsw=20774 nivcsw=7
+TASK 2720 2726 comm=misterplexd utime=0 stime=2 ticks=2
+TASK_CTXT 2720 2726 comm=misterplexd nvcsw=138 nivcsw=1
+TASK 2720 2727 comm=misterplexd utime=1 stime=11 ticks=12
+TASK_CTXT 2720 2727 comm=misterplexd nvcsw=1097 nivcsw=1
+TASK 2720 2728 comm=misterplexd utime=1 stime=6 ticks=7
+TASK_CTXT 2720 2728 comm=misterplexd nvcsw=1061 nivcsw=4
+TASK 2720 2758 comm=misterplexd utime=2551 stime=1029 ticks=3580
+TASK_CTXT 2720 2758 comm=misterplexd nvcsw=61020 nivcsw=39430
+TASK 2720 2760 comm=misterplexd utime=27 stime=485 ticks=512
+TASK_CTXT 2720 2760 comm=misterplexd nvcsw=19871 nivcsw=1019
+PROCS name=ffmpeg pids=2759
+PROC ffmpeg 2759 utime=13126 stime=1438 num_threads=21
+PROC_CTXT ffmpeg 2759 nvcsw=426 nivcsw=74
+TASK 2759 2759 comm=ffmpeg utime=13 stime=5 ticks=18
+TASK_CTXT 2759 2759 comm=ffmpeg nvcsw=427 nivcsw=74
+TASK 2759 2764 comm=av:h264:df0 utime=328 stime=21 ticks=349
+TASK_CTXT 2759 2764 comm=av:h264:df0 nvcsw=2248 nivcsw=629
+TASK 2759 2765 comm=av:h264:df1 utime=307 stime=19 ticks=326
+TASK_CTXT 2759 2765 comm=av:h264:df1 nvcsw=2390 nivcsw=467
+TASK 2759 2766 comm=av:h264:df2 utime=314 stime=22 ticks=336
+TASK_CTXT 2759 2766 comm=av:h264:df2 nvcsw=2206 nivcsw=490
+TASK 2759 2767 comm=enc0:0:rawvideo utime=67 stime=49 ticks=116
+TASK_CTXT 2759 2767 comm=enc0:0:rawvideo nvcsw=5258 nivcsw=13
+TASK 2759 2768 comm=enc1:0:pcm_s16l utime=151 stime=58 ticks=209
+TASK_CTXT 2759 2768 comm=enc1:0:pcm_s16l nvcsw=9997 nivcsw=38
+TASK 2759 2769 comm=vf#0:0 utime=3367 stime=189 ticks=3556
+TASK_CTXT 2759 2769 comm=vf#0:0 nvcsw=6740 nivcsw=22016
+TASK 2759 2770 comm=af#1:0 utime=151 stime=54 ticks=205
+TASK_CTXT 2759 2770 comm=af#1:0 nvcsw=9954 nivcsw=76
+TASK 2759 2771 comm=dec0:0:h264 utime=166 stime=51 ticks=217
+TASK_CTXT 2759 2771 comm=dec0:0:h264 nvcsw=7054 nivcsw=94
+TASK 2759 2772 comm=dec0:1:aac utime=473 stime=71 ticks=544
+TASK_CTXT 2759 2772 comm=dec0:1:aac nvcsw=9925 nivcsw=168
+TASK 2759 2773 comm=dmx0:mpegts utime=145 stime=41 ticks=186
+TASK_CTXT 2759 2773 comm=dmx0:mpegts nvcsw=10355 nivcsw=25
+TASK 2759 2774 comm=af#1:0 utime=0 stime=0 ticks=0
+TASK_CTXT 2759 2774 comm=af#1:0 nvcsw=1 nivcsw=0
+TASK 2759 2775 comm=af#1:0 utime=0 stime=0 ticks=0
+TASK_CTXT 2759 2775 comm=af#1:0 nvcsw=1 nivcsw=0
+TASK 2759 2776 comm=mux1:s16le utime=92 stime=88 ticks=180
+TASK_CTXT 2759 2776 comm=mux1:s16le nvcsw=10554 nivcsw=34
+TASK 2759 2777 comm=vf#0:0 utime=0 stime=0 ticks=0
+TASK_CTXT 2759 2777 comm=vf#0:0 nvcsw=1 nivcsw=3
+TASK 2759 2778 comm=vf#0:0 utime=0 stime=0 ticks=0
+TASK_CTXT 2759 2778 comm=vf#0:0 nvcsw=1 nivcsw=2
+TASK 2759 2779 comm=vf#0:0 utime=3038 stime=84 ticks=3122
+TASK_CTXT 2759 2779 comm=vf#0:0 nvcsw=6598 nivcsw=9474
+TASK 2759 2780 comm=vf#0:0 utime=3012 stime=84 ticks=3096
+TASK_CTXT 2759 2780 comm=vf#0:0 nvcsw=6300 nivcsw=8304
+TASK 2759 2781 comm=vf#0:0 utime=433 stime=14 ticks=447
+TASK_CTXT 2759 2781 comm=vf#0:0 nvcsw=2592 nivcsw=19
+TASK 2759 2782 comm=vf#0:0 utime=412 stime=49 ticks=461
+TASK_CTXT 2759 2782 comm=vf#0:0 nvcsw=2577 nivcsw=53
+TASK 2759 2783 comm=mux0:rawvideo utime=642 stime=617 ticks=1259
+TASK_CTXT 2759 2783 comm=mux0:rawvideo nvcsw=34267 nivcsw=467
