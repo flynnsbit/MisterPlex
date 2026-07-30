@@ -23,6 +23,7 @@ elif [[ "$VERILATOR_RC" -ne 0 ]]; then
 fi
 
 RTL="$ROOT/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv"
+RAM="$ROOT/fpga/Plex_MiSTer/rtl/h264_byte_ram_sp.sv"
 CAVLC="$ROOT/fpga/Plex_MiSTer/rtl/h264_cavlc_residual.sv"
 MODES="$ROOT/fpga/Plex_MiSTer/rtl/h264_p_slice_modes.sv"
 QIP="$ROOT/fpga/Plex_MiSTer/files.qip"
@@ -32,7 +33,7 @@ BUILD="$ROOT/build/verilator/h264_p_mb_traverse"
 BUILD_BAD="$ROOT/build/verilator/h264_p_mb_traverse_bad_skip"
 BUILD_DROP="$ROOT/build/verilator/h264_p_mb_traverse_drop_last"
 
-for f in "$RTL" "$CAVLC" "$QIP" "$TOP" "$TB"; do
+for f in "$RTL" "$RAM" "$CAVLC" "$QIP" "$TOP" "$TB"; do
   if [[ ! -f "$f" ]]; then
     echo "RTL SIM ERROR: missing required file: $f" >&2
     exit 2
@@ -40,6 +41,10 @@ for f in "$RTL" "$CAVLC" "$QIP" "$TOP" "$TB"; do
 done
 if ! grep -q 'rtl/h264_p_mb_traverse.sv' "$QIP"; then
   echo "RTL SIM ERROR: files.qip does not list h264_p_mb_traverse.sv product RTL" >&2
+  exit 2
+fi
+if ! grep -q 'rtl/h264_byte_ram_sp.sv' "$QIP"; then
+  echo "RTL SIM ERROR: files.qip does not list h264_byte_ram_sp.sv product RTL" >&2
   exit 2
 fi
 
@@ -51,7 +56,7 @@ echo "RTL SIM: using $VERILATOR_VERSION" >&2
   --Mdir "$BUILD" \
   --top-module h264_p_mb_traverse_tb_top -Wno-fatal \
   -CFLAGS "-std=c++17 -O2" \
-  "$TOP" "$RTL" "$CAVLC" $([ -f "$MODES" ] && echo "$MODES") "$TB"
+  "$TOP" "$RTL" "$RAM" "$CAVLC" $([ -f "$MODES" ] && echo "$MODES") "$TB"
 "$BUILD/Vh264_p_mb_traverse_tb_top" green
 
 # Mutation: bad skip_run
@@ -59,7 +64,7 @@ echo "RTL SIM: using $VERILATOR_VERSION" >&2
   --Mdir "$BUILD_BAD" \
   --top-module h264_p_mb_traverse_tb_top -GFAULT_BAD_SKIP_RUN=1 -Wno-fatal \
   -CFLAGS "-std=c++17 -O2" \
-  "$TOP" "$RTL" "$CAVLC" $([ -f "$MODES" ] && echo "$MODES") "$TB"
+  "$TOP" "$RTL" "$RAM" "$CAVLC" $([ -f "$MODES" ] && echo "$MODES") "$TB"
 set +e
 BAD_OUT="$("$BUILD_BAD/Vh264_p_mb_traverse_tb_top" fault_bad_skip 2>&1)"
 BAD_RC=$?
@@ -75,7 +80,7 @@ printf '%s\n' "$RED_CHECK"
   --Mdir "$BUILD_DROP" \
   --top-module h264_p_mb_traverse_tb_top -GFAULT_DROP_LAST_ROW_MB=1 -Wno-fatal \
   -CFLAGS "-std=c++17 -O2" \
-  "$TOP" "$RTL" "$CAVLC" $([ -f "$MODES" ] && echo "$MODES") "$TB"
+  "$TOP" "$RTL" "$RAM" "$CAVLC" $([ -f "$MODES" ] && echo "$MODES") "$TB"
 set +e
 DROP_OUT="$("$BUILD_DROP/Vh264_p_mb_traverse_tb_top" fault_drop_last 2>&1)"
 DROP_RC=$?

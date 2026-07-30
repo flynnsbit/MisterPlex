@@ -35,7 +35,7 @@ RTL_PPS="$ROOT/fpga/Plex_MiSTer/rtl/pps_parser.sv"
 RTL_SLICE="$ROOT/fpga/Plex_MiSTer/rtl/slice_hdr_parser.sv"
 RTL_DECODE="$ROOT/fpga/Plex_MiSTer/rtl/decode_stub.sv"
 RTL_RECON_STORE="$ROOT/fpga/Plex_MiSTer/rtl/h264_recon_frame_store.sv"
-RTL_TRAV="$ROOT/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv"
+RTL_TRAV="$ROOT/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv" "$ROOT/fpga/Plex_MiSTer/rtl/h264_byte_ram_sp.sv"
 RTL_I16="$ROOT/fpga/Plex_MiSTer/rtl/h264_i16_dc_hadamard.sv"
 RTL_ISINK="$ROOT/fpga/Plex_MiSTer/rtl/h264_i_res_recon_sink.sv"
 RTL_INTRA="$ROOT/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv"
@@ -63,7 +63,7 @@ done
 for rtl in rtl/stream_path.sv rtl/stream_ingest.sv rtl/ddr_bitstream_reader.sv rtl/bitstream_fifo.sv rtl/nalu_scanner.sv \
            rtl/sps_parser.sv rtl/pps_parser.sv rtl/slice_hdr_parser.sv rtl/decode_stub.sv \
            rtl/h264_recon_frame_store.sv \
-           rtl/h264_p_mb_traverse.sv \
+           rtl/h264_p_mb_traverse.sv h264_byte_ram_sp.sv \
            rtl/h264_i16_dc_hadamard.sv \
            rtl/h264_i_res_recon_sink.sv \
            rtl/h264_intra_pred.sv \

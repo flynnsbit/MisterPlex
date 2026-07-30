@@ -17,10 +17,11 @@
 // Scaffold evidence (pre-fix): slice_hdr_parser ST_MBT/ST_P_MBT → ST_DONE after
 // the first P MB only (first_mb_* ports). That is by design, not a mid-loop bug.
 //
-// Area (cycle-iterative): RBSP lives in M10K with registered read; bit engine
-// consumes one registered byte at a time; residual window loads 64B over 64+
-// cycles. No runtime-indexed combo mux over the full RBSP (see
-// docs/cycle-iterative-traverse-area.md). Target <=3000 ALMs.
+// Area (cycle-iterative): RBSP access RESTRUCTURED (not attribute-only — Quartus
+// left prior ramstyle uninferred). Single-port h264_byte_ram_sp: one raddr/cycle,
+// registered q; bit engine uses that byte; ST_RES_WIN_LOAD serial 64B (kills the
+// 8k:1/16k:1 res_win mux bomb, map2d 1,180,271 comb ALUTs self). Target <=3000 ALMs.
+// Docs: docs/cycle-iterative-traverse-area.md. Units: map number is comb ALUTs.
 
 `default_nettype none
 
@@ -151,35 +152,45 @@ module h264_p_mb_traverse #(
 		ST_RES_WIN_LOAD   = 8'd44, // serial 64B RBSP→res_win (M10K, 1B/cyc)
 		ST_INIT_XY        = 8'd45; // first_mb → curr_x/y counters (no / %)
 
-	// ---- RBSP bitstream buffer: single-port M10K, registered read ----
-	// Combo rbsp[runtime] / 64-wide load_res_window measured 1.18M self comb.
-	(* ramstyle = "M10K, no_rw_check" *)
-	reg [7:0] rbsp_mem [0:MAX_RBSP_BYTES-1];
-	reg [7:0]  rbsp_q;
-	reg [13:0] rbsp_raddr;
-	reg [13:0] rbsp_ra_d1;
+	// ---- RBSP bitstream buffer (ACCESS RESTRUCTURE, not attribute-only) ----
+	// map2d root cause was 64 parallel dynamic reads of 8KB rbsp → 8k:1/16k:1
+	// mux trees (~1.18M comb ALUTs). Attributes on the old array were already
+	// tried and left uninferred. Fix = one registered read port per cycle via
+	// h264_byte_ram_sp + serial ST_RES_WIN_LOAD (see cycle-iterative-traverse-area).
+	localparam int RBSP_AW = (MAX_RBSP_BYTES <= 1) ? 1 : $clog2(MAX_RBSP_BYTES);
+	wire [7:0] rbsp_q;
+	reg [RBSP_AW-1:0] rbsp_raddr;
+	reg [RBSP_AW-1:0] rbsp_ra_d1;
 	reg        rbsp_we;
-	reg [13:0] rbsp_waddr;
+	reg [RBSP_AW-1:0] rbsp_waddr;
 	reg [7:0]  rbsp_wdata;
 	reg [15:0] rbsp_len;
 	// Must hold MAX_RBSP_BYTES*8 (16384*8=131072 → 18 bits). 16-bit bit_pos
 	// wrapped at 65536 and ended the 624x480 IDR walk at ~250/1170 MBs.
 	reg [17:0] bit_pos;
 	wire [31:0] rbsp_bit_total = {16'd0, rbsp_len} << 3;
-	// Registered current parse byte (no combo index into rbsp_mem).
+	// Registered current parse byte (no combo index into RBSP storage).
 	reg [7:0]  bit_byte;
-	reg [13:0] bit_byte_addr;
+	reg [RBSP_AW-1:0] bit_byte_addr;
 	reg        bit_byte_v;
-	wire [13:0] bit_need_addr = bit_pos[17:3];
+	wire [RBSP_AW-1:0] bit_need_addr = bit_pos[3 +: RBSP_AW];
 	wire        bit_from_q = (rbsp_ra_d1 == bit_need_addr);
 	wire        bit_ready = (bit_byte_v && (bit_byte_addr == bit_need_addr)) || bit_from_q;
 	wire        cur_bit = (bit_byte_v && (bit_byte_addr == bit_need_addr))
 		? bit_byte[3'd7 - bit_pos[2:0]]
 		: rbsp_q[3'd7 - bit_pos[2:0]];
-	// Serial residual window load
-	reg [13:0] win_base;
-	reg [13:0] win_raddr;
+	// Serial residual window load (one byte/cycle from rbsp_q)
+	reg [RBSP_AW-1:0] win_base;
 	reg [7:0]  win_k;
+
+	h264_byte_ram_sp #(.DEPTH(MAX_RBSP_BYTES), .AW(RBSP_AW)) u_rbsp_ram (
+		.clk(clk),
+		.we(rbsp_we),
+		.waddr(rbsp_waddr),
+		.wdata(rbsp_wdata),
+		.raddr(rbsp_raddr),
+		.q(rbsp_q)
+	);
 	reg [7:0] st, ret_st;
 	reg [7:0] fixed_left;
 	reg [31:0] fixed_acc;
@@ -265,11 +276,8 @@ module h264_p_mb_traverse #(
 
 	assign in_ready = !busy && (rbsp_len < MAX_RBSP_BYTES[15:0]);
 
-	// Single-port RBSP RAM: one write or one registered read per cycle.
+	// Track prior raddr for bit_ready (1-cycle registered RAM latency).
 	always @(posedge clk) begin
-		if (rbsp_we)
-			rbsp_mem[rbsp_waddr] <= rbsp_wdata;
-		rbsp_q <= rbsp_mem[rbsp_raddr];
 		rbsp_ra_d1 <= rbsp_raddr;
 	end
 
@@ -761,7 +769,7 @@ module h264_p_mb_traverse #(
 			maxv = 5'd16;
 			// Window filled later in ST_RES_WIN_LOAD (serial M10K read).
 			res_win_bit0 <= {abs_bit[17:3], 3'b000};
-			win_base <= abs_bit[17:3];
+			win_base <= abs_bit[3 +: RBSP_AW];
 			win_k <= 8'd0;
 			if (is_i16_r) begin
 				if (idx == 5'd0) begin
@@ -897,14 +905,13 @@ module h264_p_mb_traverse #(
 			rbsp_len <= 16'd0;
 			bit_pos <= 18'd0;
 			rbsp_we <= 1'b0;
-			rbsp_waddr <= 14'd0;
+			rbsp_waddr <= '0;
 			rbsp_wdata <= 8'd0;
-			rbsp_raddr <= 14'd0;
+			rbsp_raddr <= '0;
 			bit_byte <= 8'd0;
-			bit_byte_addr <= 14'd0;
+			bit_byte_addr <= '0;
 			bit_byte_v <= 1'b0;
-			win_base <= 14'd0;
-			win_raddr <= 14'd0;
+			win_base <= '0;
 			win_k <= 8'd0;
 			curr_x_r <= 8'd0;
 			curr_y_r <= 8'd0;
@@ -1019,7 +1026,7 @@ module h264_p_mb_traverse #(
 			// RBSP fill: single write port into M10K
 			if (!busy && in_valid && in_ready) begin
 				rbsp_we <= 1'b1;
-				rbsp_waddr <= rbsp_len[13:0];
+				rbsp_waddr <= rbsp_len[RBSP_AW-1:0];
 				rbsp_wdata <= in_byte;
 				rbsp_len <= rbsp_len + 16'd1;
 			end
@@ -1029,7 +1036,7 @@ module h264_p_mb_traverse #(
 			// (registered M10K read = 1 cycle addr→q).
 			if (st == ST_RES_WIN_LOAD) begin
 				if (win_k <= 8'd63)
-					rbsp_raddr <= win_base + {6'd0, win_k};
+					rbsp_raddr <= win_base + win_k[RBSP_AW-1:0];
 			end else
 				rbsp_raddr <= bit_need_addr;
 
