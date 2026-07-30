@@ -153,15 +153,36 @@ LOG=\$ROOT/misterplexd.log
 SUPLOG=\$ROOT/misterplexd_supervise.log
 backoff=2
 ts() { date -u +%Y-%m-%dT%H:%M:%SZ; }
+# kill -9 / crash with no handler cannot run daemon atexit. Before every spawn
+# and after every exit, SIGCONT any stopped /media/fat/MiSTer so F12/OSD return.
+resume_stopped_main() {
+  for d in /proc/[0-9]*; do
+    [ -r "\$d/cmdline" ] || continue
+    cmd=\$(tr '\\0' ' ' < "\$d/cmdline" 2>/dev/null) || continue
+    case "\$cmd" in
+      /media/fat/MiSTer\ *|*/MiSTer\ *)
+        p=\${d#/proc/}
+        # /proc/pid/stat state is after last ')'
+        st=\$(tr ')' '\\n' < "\$d/stat" 2>/dev/null | tail -n 1 | awk '{print \$1}')
+        if [ "\$st" = "T" ]; then
+          kill -CONT "\$p" 2>/dev/null || true
+          echo "\$(ts) RESUME_MAIN pid=\$p (was T)" >>"\$SUPLOG"
+        fi
+        ;;
+    esac
+  done
+}
 echo "\$(ts) PLEXCTL_SUPERVISE_START root=\$ROOT" >>"\$SUPLOG"
-trap 'kill \$child 2>/dev/null || true; exit 0' TERM INT
+trap 'kill \$child 2>/dev/null || true; resume_stopped_main; exit 0' TERM INT
 while true; do
+  resume_stopped_main
   [ -x "\$BIN" ] || { echo "\$(ts) MISSING \$BIN" >>"\$SUPLOG"; sleep 5; continue; }
   echo "\$(ts) SPAWN \$BIN" >>"\$SUPLOG"
   "\$BIN" --name $NAME --id $ID --port $PORT --conf "\$CONF" >>"\$LOG" 2>&1 &
   child=\$!
   wait "\$child"; st=\$?
   echo "\$(ts) EXIT pid=\$child rc=\$st — respawn in \${backoff}s" >>"\$SUPLOG"
+  resume_stopped_main
   sleep "\$backoff"
   [ "\$backoff" -lt 60 ] && backoff=\$((backoff * 2))
 done
