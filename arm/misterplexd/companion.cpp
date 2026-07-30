@@ -1,6 +1,7 @@
 #include "companion.hpp"
 #include "libmisterplex/cast_target.hpp"
 #include "log_redact.hpp"
+#include "thread_name.hpp"
 
 #include <arpa/inet.h>
 #include <cctype>
@@ -646,6 +647,7 @@ void Companion::stop() {
 }
 
 void Companion::gdmLoop() {
+    setThreadName("mplex-gdm");
     int fd = ::socket(AF_INET, SOCK_DGRAM, 0);
     if (fd < 0) {
         log("GDM: socket failed");
@@ -1221,6 +1223,7 @@ void Companion::httpServeClient(int c) {
 }
 
 void Companion::httpLoop() {
+    setThreadName("mplex-http");
     int fd = ::socket(AF_INET, SOCK_STREAM, 0);
     if (fd < 0) {
         log("HTTP: socket failed");
@@ -1260,6 +1263,7 @@ void Companion::httpLoop() {
         }
         httpWorkers_.fetch_add(1, std::memory_order_relaxed);
         std::thread([this, c]() {
+            setThreadName("mplex-httpw");
             struct WorkerDone {
                 Companion* self;
                 int fd;

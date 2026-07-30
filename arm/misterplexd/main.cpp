@@ -10,6 +10,7 @@
 #include "media_player.hpp"
 #include "pms_timeline.hpp"
 #include "plex_resolve.hpp"
+#include "thread_name.hpp"
 
 #include <algorithm>
 #include <atomic>
@@ -129,6 +130,7 @@ std::string defaultFfmpegPath() {
 } // namespace
 
 int main(int argc, char** argv) {
+    misterplex::setThreadName("mplex-main");
     std::string name = "MiSTerPlex";
     // Canonical cast client id (must match deploy/scripts and PMS registration).
     // A wrong default is worse than a crash: GDM still advertises, casts target an

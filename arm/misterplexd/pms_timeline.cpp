@@ -2,6 +2,7 @@
 
 #include "log_redact.hpp"
 #include "plex_resolve.hpp"
+#include "thread_name.hpp"
 
 #include <algorithm>
 #include <cstdio>
@@ -186,6 +187,7 @@ bool PmsTimelineReporter::send(const Pending& pending) {
 }
 
 void PmsTimelineReporter::workerLoop() {
+    setThreadName("mplex-pms-tl");
     for (;;) {
         Pending pending;
         {

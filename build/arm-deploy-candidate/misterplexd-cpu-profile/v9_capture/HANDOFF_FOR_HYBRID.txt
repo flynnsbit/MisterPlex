@@ -1,0 +1,21 @@
+OFFLINE HANDOFF — bounce2 → w-hybrid-arm (parent-scheduled; NO DEVICE)
+======================================================================
+v9 live md5: e9c5e5a1f765dfa9ed9bb330f3f40582
+= v8b 4cbee6ff + 8edc5ff thread_cpu (bounce2 cherry-pick b8640e34)
+
+Read first:
+  scripts/AFTER_V9_RESULT.txt
+  scripts/DEPLOY_V9_PREREGISTER.txt
+  profile1_capture.txt   ← gold present_profile + thread_cpu
+  cpu_jiffies45.txt      ← PROFILE=0 method match but TESTSRC_POISONED
+
+Headline measurement (PROFILE=1, testsrc content, PMS down):
+  tid=13645 dJ share = 85.5% of sum_dJ across first→last thread_cpu lines
+  Other tids ≤7.6% each
+  present_profile media buckets still small (ddr_cpu~1.3–1.5ms, pacing_cpu~0.5ms)
+  Steady ddr_doorbell_us_p = 1–2 after promote (first bucket 323)
+
+CPU reconcile vs your 113.9: UNSCORED — PMS_REACHABLE=0, CONTENT=testsrc,
+same_fpid=no, combined=106.4 method 200*dj/dc_cpu_all du=45.57s.
+
+Please attribute tid roles offline if you can (stacks / code map). No device.

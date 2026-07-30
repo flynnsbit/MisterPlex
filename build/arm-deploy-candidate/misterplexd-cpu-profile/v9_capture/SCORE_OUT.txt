@@ -1,0 +1,34 @@
+THREAD_CPU SCORE (post-audit method; R1-R5 falsifiers frozen from PREREGISTER)
+P(process_percent-onecpu)=98.494
+B(bucket_percent-onecpu)=6.9153
+S(sum_tid_percent-onecpu)=98.494
+G=P-S=1.4210854715202004e-14
+U=P-B(uninstrumented_process_CPU)=91.5787
+du=40.54054054054054 hz=100.0
+per-tid (first->last j across window, includes ephemeral):
+  tid=13645 comm='misterplexd' dj=3416 percent-onecpu=84.26
+  tid=13774 comm='misterplexd' dj=303 percent-onecpu=7.47
+  tid=13642 comm='misterplexd' dj=150 percent-onecpu=3.70
+  tid=13777 comm='misterplexd' dj=83 percent-onecpu=2.05
+  tid=13636 comm='misterplexd' dj=25 percent-onecpu=0.62
+  tid=13643 comm='misterplexd' dj=15 percent-onecpu=0.37
+  tid=13646 comm='misterplexd' dj=1 percent-onecpu=0.02
+  tid=13644 comm='misterplexd' dj=0 percent-onecpu=0.00
+verdicts:
+  R1: CONFIRMED
+  R2: FALSIFIED
+  R3: INSUFFICIENT
+  R4: INSUFFICIENT
+  R5: CONFIRMED
+notes:
+  - LABELS: P=process%onecpu B=bucket%onecpu S=sum_tid%onecpu G=P-S U=P-B(uninstrumented process CPU — NOT hidden-burn/87-hole)
+  - METHOD: single wall clock du; no fps scaling
+  - P from dm/du: dm=3993.0 du=40.54054054054054 hz=100.0 -> P=98.494
+  - B=6.915 percent-onecpu (no fps)
+  - U=uninstrumented_process_CPU=91.579  (do NOT call this hidden-burn or 87-point hole)
+  - G=P-S=0.000 (same-window jiffies gap)
+  - R1 CONFIRMED numerically (top tid >=40). Role=audio still needs tid identity — do not treat vacuous HTTP miss as support.
+  - R2 FALSIFIED: long-lived+seen explain >=80% P; ephemeral small
+  - R3 INSUFFICIENT: large tid may be media or audio without role map
+  - R5 CONFIRMED: at most one tid >15% (plurality holder)
+SUMMARY: R1=CONFIRMED R2=FALSIFIED P=98.494 B=6.9153 S=98.49399999999999 G=1.4210854715202004e-14 U=91.5787

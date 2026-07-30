@@ -1,6 +1,7 @@
 #include "media_player.hpp"
 #include "death_breadcrumb.hpp"
 #include "log_redact.hpp"
+#include "thread_name.hpp"
 
 #include "libmisterplex/av_clock.hpp"
 #include "libmisterplex/hybrid_compose.hpp"
@@ -472,6 +473,7 @@ void MediaPlayer::startOsdPoll() {
     if (osdThr_.joinable())
         osdThr_.join();
     osdThr_ = std::thread([this] {
+        setThreadName("mplex-osd");
         bool mailboxLogged = false;
         while (osdRun_.load()) {
             uint16_t word = 0;
@@ -541,6 +543,7 @@ void MediaPlayer::startInputPoll() {
     if (inputThr_.joinable())
         inputThr_.join();
     inputThr_ = std::thread([this] {
+        setThreadName("mplex-input");
         bool logged = false;
         while (inputRun_.load()) {
             PlaybackCommand command = PlaybackCommand::None;
@@ -693,6 +696,7 @@ void MediaPlayer::startIdle() {
     if (idleThr_.joinable())
         idleThr_.join();
     idleThr_ = std::thread([this] {
+        setThreadName("mplex-idle");
         while (idleRun_.load()) {
             const IdleMode mode = idleMode();
             if (!idleThreadShouldRepaint(mode, playing_.load(), haveLastFrame_.load())) {
@@ -1110,6 +1114,7 @@ bool MediaPlayer::play(const std::string& urlOrPath, int64_t startOffsetMs,
         playing_.store(true);
         showPlaybackOverlay(PlaybackOverlayState::Playing, startOffsetMs, durationMs);
         thr_ = std::thread([this, urlOrPath, startOffsetMs, httpHeaders, durationMs] {
+            setThreadName("mplex-media");
             try {
                 threadMain(urlOrPath, startOffsetMs, httpHeaders, durationMs);
             } catch (const std::exception& ex) {
@@ -1272,6 +1277,7 @@ pid_t MediaPlayer::spawnAudioOnly(const std::string& url, const std::string& hea
 }
 
 void MediaPlayer::streamPump(int sfd) {
+    setThreadName("mplex-stream");
     // Phase 3.3i/product: demux annex-B → host I-slice recon → YUV420 F1 (+ optional fb0).
     // Also feed the FPGA decoder through the continuous HPS-DDR bitstream ring.
     // Robust multi-IDR: retain last SPS/PPS, recon every I/IDR, sticky CABAC skip.
@@ -1905,6 +1911,7 @@ int64_t MediaPlayer::readMrAudioQueuedBytes() {
 }
 
 void MediaPlayer::audioPump(int afd) {
+    setThreadName("mplex-audio");
     // Drain PCM to MrAudio. Lab evidence: MrAudio write() does NOT pace realtime
     // (audio_s grew ~3× wall → jumpy audio). Pace ourselves to exact 48 kHz wall
     // clock; that back-pressures FFmpeg and thus video.

@@ -1,0 +1,162 @@
+V9 THREAD_CPU ATTRIBUTION — w-arm-hybrid offline
+Source: w-bounce2 build/arm-deploy-v9-window/ (HANDOFF_FOR_HYBRID.txt)
+Content: TESTSRC (PMS_REACHABLE=0). CPU reconcile 113.9 vs 106.4 UNSCORED.
+Date: 2026-07-30
+
+==============================================================================
+1) SCORER (same-window, no fps) — score_thread_cpu.py
+==============================================================================
+Wall clock du for first→last thread_cpu:
+  4 × 300 frames / pfps=29.6 (steady lines in same capture) = 40.541 s
+dm := sum_dJ over stable tids = 3993  (all 8 tasks listed every sample;
+  G≈0 is then expected — not independent process /proc/pid/stat)
+bucket_cpu_us := sum of present_profile CPU buckets for profiles[1:]
+  (windows completed between first and last dump) = 2_803_500 µs
+
+  P = 100 × 3993 / (100 × 40.541) = 98.494 %onecpu
+  B = 100 × 2803500 / (1e6 × 40.541) = 6.915 %onecpu
+  S = 98.494 %onecpu
+  G = P − S ≈ 0
+  U = P − B = 91.579 %onecpu   ← uninstrumented process CPU (not "87-hole")
+
+per-tid (first→last j, HZ=100):
+  tid=13645  dj=3416  85.5% of dJ   84.26 %onecpu   comm=misterplexd
+  tid=13774  dj=303    7.6%          7.47 %onecpu   comm=misterplexd
+  tid=13642  dj=150    3.8%          3.70 %onecpu   comm=misterplexd
+  tid=13777  dj=83     2.1%          2.05 %onecpu   comm=misterplexd
+  tid=13636  dj=25     0.6%          0.62 %onecpu   comm=misterplexd  **main**
+  tid=13643  dj=15     0.4%          0.37 %onecpu
+  tid=13646  dj=1      0.0%          0.02 %onecpu
+  tid=13644  dj=0      0.0%          0.00 %onecpu
+
+Evidence main=13636: profile1_capture PORT_UP line
+  "13636 root …/misterplexd …" and Linux tid==pid for main thread.
+  SUPERVISE_CHILD pid=13636 matches.
+
+Frozen scorer output: v9_capture/SCORE_OUT.txt
+  R1 numeric CONFIRMED (top≥40); R2 FALSIFIED (no dead-tid gap); R5 CONFIRMED
+
+==============================================================================
+2) WHAT IS tid=13645? — NAME: INSUFFICIENT
+==============================================================================
+Capture records comm="misterplexd" for every tid (pthread default). No stacks.
+A tid alone is not an attribution.
+
+LIFETIME / CREATION EVIDENCE (what we CAN say):
+  - 13645 j0=21034 at first profile sample. At HZ=100 that is ≥210 s of CPU
+    already charged before/during early play. Process pid=13636 lived
+    ~09:36:40→09:41:09 (~269 s wall per supervise log). So 13645 burned
+    CPU across essentially the whole process lifetime — including idle
+    before playMedia — not only the PROFILE=1 play window.
+  - 13774 j0=82 and 13777 j0=20: late-created, low absolute j → play-session
+    threads (MediaPlayer::thr_ / audioThr_ / streamThr_ class).
+  - play() starts thr_ then threadMain starts audioThr_; STREAM=0 so no
+    streamThr_. Those two map to {13774, 13777} by lifetime, not to 13645.
+
+THEREFORE:
+  tid=13645 is NOT audioThr_ and NOT thr_ (media).
+  It is a long-lived boot-era thread among:
+    {osdThr_, inputThr_, idleThr_ if still up, gdmThr_, httpThr_,
+     pms timeline worker_}
+  Exact member: INSUFFICIENT without comm names or stacks.
+
+EXTRA FIELD THAT WOULD NAME IT (requested):
+  1) pthread/prctl name in /proc/self/task/<tid>/comm  (shipped now:
+     mplex-main|idle|osd|input|media|audio|stream|gdm|http|httpw|pms-tl)
+  2) or one-line stack /proc/<pid>/task/<tid>/stack at sample time
+  3) or creation log "spawn role=… tid=…"
+
+==============================================================================
+3) R1–R5 vs PREREGISTER_V9_THREAD.txt (honest)
+==============================================================================
+R1 audioThr_ 45–70 of residual (~87 framing retracted; plurality of process):
+  PREDICT: audio holds plurality.
+  ACTUAL: plurality is tid=13645 at 84%onecpu, and 13645 is NOT audio
+          (lifetime evidence above). Play-scoped audio is ≤7.47%onecpu
+          (13774) or 2.05% (13777).
+  VERDICT: **MISS — fourth prediction FALSIFIED** (audio is not the burner).
+  Scorer "R1 CONFIRMED" is numeric-only (top tid ≥40); role≠audio.
+
+R2 ephemeral HTTP workers 10–25:
+  PREDICT: dead-tid gap or short-lived workers.
+  ACTUAL: same 8 tids all 5 samples; G≈0; ephemeral_pct=0.
+  VERDICT: **FALSIFIED** as residual owner (no gap for dead workers).
+  Note: vacuous pre-test HTTP flood does not revive R2 here — this capture
+  has companion up (PORT_UP=1) and still no ephemeral CPU trail.
+
+R3 media unbucketed 5–15 on thr_:
+  PREDICT: thr_ ≫ PROFILE B.
+  ACTUAL: B=6.92; largest play-scoped tid 7.47 — consistent with media≈B
+          band, not a secret 80-pt media path.
+  VERDICT: **FALSIFIED** as residual owner (residual is 13645, not thr_).
+
+R4 osd/input/SPI 0–10:
+  PREDICT: small.
+  ACTUAL: unknown which of 13642/43/45 is osd/input; 13645 if osd would be
+          a SURPRISE (osd loop sleeps 100ms — quoted below). Cannot confirm
+          without name.
+  VERDICT: **INSUFFICIENT** for identity; **FALSIFIED** as "small residual"
+          only if 13645 turns out to be osd/input (then R4 claim of smallness
+          is MISS). Pending name.
+
+R5 main/gdm/tl <5:
+  main 13636 = 0.62% — CONFIRMED small for main.
+  gdm/tl may be 13645 — if so R5 claim FALSIFIED for that role.
+  VERDICT: **PARTIAL** — main OK; gdm/tl unknown pending name.
+
+==============================================================================
+4) MECHANISM — cannot quote THE loop until named
+==============================================================================
+Status: **LEAD not FINDING.** Named thread + quoted loop required for fix.
+
+What the CODE shows for candidates (none proven to be 13645):
+
+A) audioPump (NOT 13645 — play-scoped only) — still document for completeness:
+   media_player.cpp audioPump: write() MrAudio per chunk; sleep_until only if
+   audioDue > now; if behind <1s runs flat-out (no sleep); queue open/read/close
+   every 4 chunks. Would explain high CPU IF it were the hot tid — it is not.
+
+B) Long-lived loops that *should* sleep (if one is stuck without sleep, bug):
+   - httpLoop: select 200ms then accept; workers detached (would show as
+     ephemeral tids — not seen).
+   - gdmLoop: select 200ms.
+   - osdThr_: sleep 100ms (mailbox) or 250ms playing SPI fallback.
+   - inputThr_: sleep 50ms.
+   - timeline workerLoop: cv.wait until queue non-empty.
+   - idleThr_: sleep 200ms / 100ms screensaver / 30s static — and stopIdle()
+     on play() so should be absent during PROFILE=1 samples.
+
+None of B's sleep-based loops are expected to hold 84 %onecpu without a
+pathological spin or a mis-parse. **Mechanism for 13645: UNKNOWN** until
+comm/stack names it. Check that would settle: named capture or
+`cat /proc/<pid>/task/13645/stack` on next window.
+
+==============================================================================
+5) TESTSRC WEAKENING
+==============================================================================
+- Synthetic lavfi video + sine audio; no PMS HTTP timeline storm from real app.
+- Audio path still MrAudio @48k (log: "MrAudio open — software-paced") so audio
+  CPU class is present — and still only ≤7.5%onecpu. That *strengthens* the
+  R1 miss: even with continuous sine PCM, audio is not the 84% thread.
+- Boot-era 13645 burn is independent of testsrc vs real media (pre-play j).
+- Real-media confirmation: **required before a fix** aimed at a named subsystem,
+  but NOT required to reject audio-as-plurality. Prefer one PROFILE=1 window
+  with pthread names + real PMS key after names land.
+
+==============================================================================
+6) FIX STATUS
+==============================================================================
+**No CPU fix written.** Block remains until 13645 is named and loop quoted.
+Shipped instead: prctl thread names (mplex-*) so next capture's thread_cpu
+comm= field is evidence-grade. One-shot at thread entry — not per-frame.
+
+==============================================================================
+7) PREDICTION SCORECARD (day total)
+==============================================================================
+1 doorbell was memcpy not SPI          MISS (SPI was tax) — fixed anyway
+2 exit was clean/kill not mmap UAF     MISS
+3 residual = reader/pacing             MISS
+4 residual plurality = audioThr_       **MISS** (this card)
+HIT count on subsystem guesses: 0/4. Numbers still trustworthy when surprising.
+
+END
