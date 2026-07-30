@@ -73,17 +73,64 @@ if [[ ! -f "$BIN" ]]; then
   exit 1
 fi
 
+# Atomic on-device backup + staged install (see scripts/lib_misterplexd_fs.sh).
+# Old path: cp→prev, kill -9, rm live, scp — a failed scp left NO binary.
+# New path: backup live→prev-c2 (+ timestamped pair), soft-stop, scp to .new, mv.
+TAG="before-$(date -u +%Y%m%dT%H%M%SZ)"
 sshpass -p "$PASS" ssh -o StrictHostKeyChecking=no "$USER@$HOST" \
-  'mkdir -p /media/fat/misterplex/bin /media/fat/misterplex/scripts
-   if [ -f /media/fat/misterplex/bin/misterplexd ]; then
-     cp -f /media/fat/misterplex/bin/misterplexd /media/fat/misterplex/bin/misterplexd.prev-c2
-   fi
-   for p in $(pidof misterplexd 2>/dev/null) $(pidof ffmpeg 2>/dev/null); do
-     kill -9 "$p" 2>/dev/null || true
-   done
-   sleep 0.4
-   rm -f /media/fat/misterplex/bin/misterplexd'
-sshpass -p "$PASS" scp -o StrictHostKeyChecking=no "$BIN" "$USER@$HOST:/media/fat/misterplex/bin/misterplexd"
+  "TAG='$TAG' bash -s" <<'REMOTE_PRE'
+set -euo pipefail
+BIN=/media/fat/misterplex/bin/misterplexd
+PREV=/media/fat/misterplex/bin/misterplexd.prev-c2
+CONF=/media/fat/misterplex/misterplex.conf
+BDIR=/media/fat/misterplex/backup
+mkdir -p /media/fat/misterplex/bin /media/fat/misterplex/scripts "$BDIR"
+if [[ -f "$BIN" ]]; then
+  tmp="${PREV}.new.$$"
+  cp -f "$BIN" "$tmp"
+  sync "$tmp" 2>/dev/null || sync || true
+  mv -f "$tmp" "$PREV"
+  echo "prev_c2_backup_ok md5=$(md5sum "$PREV" | awk '{print $1}')"
+  # Timestamped pair so named restore survives a later deploy overwriting prev-c2.
+  bt="$BDIR/misterplexd.${TAG}"
+  btmp="${bt}.new.$$"
+  cp -f "$BIN" "$btmp"
+  sync "$btmp" 2>/dev/null || sync || true
+  mv -f "$btmp" "$bt"
+  if [[ -f "$CONF" ]]; then
+    ct="$BDIR/misterplex.conf.${TAG}"
+    ctmp="${ct}.new.$$"
+    cp -f "$CONF" "$ctmp"
+    sync "$ctmp" 2>/dev/null || sync || true
+    mv -f "$ctmp" "$ct"
+    echo "snapshot_conf=$ct"
+  fi
+  echo "snapshot_bin=$bt md5=$(md5sum "$bt" | awk '{print $1}')"
+else
+  echo "prev_c2_backup_skip: no live binary"
+fi
+# Soft stop first; -9 only if still up.
+if pidof misterplexd >/dev/null 2>&1 || pidof ffmpeg >/dev/null 2>&1; then
+  kill $(pidof misterplexd ffmpeg 2>/dev/null) 2>/dev/null || true
+  sleep 0.4
+fi
+for p in $(pidof misterplexd 2>/dev/null) $(pidof ffmpeg 2>/dev/null); do
+  kill -9 "$p" 2>/dev/null || true
+done
+sleep 0.2
+# Do NOT rm live before new binary arrives — mid-scp hole is unrecoverable
+# without prev. Staged install happens after scp of .new file.
+REMOTE_PRE
+STAGE_REMOTE="/media/fat/misterplex/bin/misterplexd.new"
+sshpass -p "$PASS" scp -o StrictHostKeyChecking=no "$BIN" "$USER@$HOST:${STAGE_REMOTE}"
+sshpass -p "$PASS" ssh -o StrictHostKeyChecking=no "$USER@$HOST" \
+  'set -e
+   STAGE=/media/fat/misterplex/bin/misterplexd.new
+   DEST=/media/fat/misterplex/bin/misterplexd
+   chmod +x "$STAGE"
+   sync "$STAGE" 2>/dev/null || sync || true
+   mv -f "$STAGE" "$DEST"
+   echo "install_staged_ok md5=$(md5sum "$DEST" | awk "{print \$1}")"'
 # On-device browse / menu (Phase 4 UX)
 if [[ -f "$ROOT/scripts/plex_browse.sh" ]]; then
   sshpass -p "$PASS" scp -o StrictHostKeyChecking=no \

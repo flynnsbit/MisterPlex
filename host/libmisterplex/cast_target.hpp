@@ -81,11 +81,13 @@ inline std::string headerValueCI(const std::string& req, const char* name) {
     const std::string want = asciiLower(name);
     size_t line = 0;
     while (line < req.size()) {
+        // Incomplete trailing line (no CRLF yet) must not be treated as a
+        // finished header — TCP can split mid-value ("misterplex-" | "dev").
         auto eol = req.find("\r\n", line);
         if (eol == std::string::npos)
-            eol = req.size();
-        if (eol == line)
             break;
+        if (eol == line)
+            break; // empty line → end of headers
         std::string h = req.substr(line, eol - line);
         auto colon = h.find(':');
         if (colon != std::string::npos) {
@@ -94,8 +96,6 @@ inline std::string headerValueCI(const std::string& req, const char* name) {
                 return h.substr(colon + 1);
             }
         }
-        if (eol >= req.size())
-            break;
         line = eol + 2;
     }
     return {};

@@ -322,27 +322,44 @@ pidof misterplexd          # expect ≥1 PID
 wget -qO- http://127.0.0.1:3005/resources | head -c 200
 ```
 
-### On-device backups (lab 2026-07-29 ship)
+### On-device backups (lab 2026-07-29+)
 
 | Path | What |
 |------|------|
 | `/media/fat/_Utility/Plex.226e6a0f.bak.rbf` | Pre-stable overnight core (integ-fit3 / Phase-3; unattributable to fleet until traced) |
 | `/media/fat/_Utility/Plex.rbf.bak` | Single-generation bak (same content at ship time) |
-| `/media/fat/misterplex/bin/misterplexd.prev-c2` | Daemon displaced by last `deploy_misterplexd.sh` (480p-line at ship) |
-| `/media/fat/misterplex/bin/misterplexd.prev-before-v030` | Extra copy of that 480p-line daemon (`ca0b0e9c…`) |
+| `/media/fat/misterplex/bin/misterplexd.prev-c2` | Daemon displaced by **last** `deploy_misterplexd.sh` (atomic cp→tmp→mv before install) |
+| `/media/fat/misterplex/backup/misterplexd.before-<UTC>` | Timestamped binary snapshot (deploy auto + `snapshot_misterplexd_backup.sh`) |
+| `/media/fat/misterplex/backup/misterplex.conf.before-<UTC>` | Matching conf snapshot |
+| `/media/fat/misterplex/backup/misterplexd.before-20260730T013548Z` | **Current live** at last pre-candidate snapshot (`f230f95b…` from `5a633b5`) |
+| `/media/fat/misterplex/backup/misterplexd.before-20260729T181129` | **Older** pre-`5a633b5` binary (`06c5735a…`) — NOT today's live |
 
-### Rollback (pair — do not mix)
+**Do not assume** a `before-*` name equals live — always `md5sum` first.
+
+### Rollback (daemon — scripted)
+
+`deploy_misterplexd.sh` **does** create a rollback path: atomic `prev-c2` + timestamped
+pair **before** staged install (`scp` to `.new` then `mv`). It does **not** auto-rollback
+on failure; operator runs restore.
 
 ```bash
-# Daemon only (restores prev-c2, restarts process — disrupts a live session):
+# Default: restore last prev-c2, restart --id misterplex-dev (~2–5s device-side)
 ./scripts/restore_misterplexd_prev.sh
-# Then restore matching core, or you reintroduce the bank-address mismatch:
-scp /media/fat/_Utility/Plex.226e6a0f.bak.rbf ...   # only if you intend that core
-DEPLOY_LOAD=menu ./scripts/deploy_plex_core.sh path/to/chosen.rbf
+
+# Named snapshot (e.g. pre-candidate live f230f95b…):
+PREV_BIN=/media/fat/misterplex/backup/misterplexd.before-20260730T013548Z \
+PREV_CONF=/media/fat/misterplex/backup/misterplex.conf.before-20260730T013548Z \
+  ./scripts/restore_misterplexd_prev.sh
+
+# Pre-deploy snapshot without stopping the daemon:
+./scripts/snapshot_misterplexd_backup.sh
 ```
 
-`restore_misterplexd_prev.sh` **does not** touch the RBF. Restoring the old
-daemon while leaving the v0.3.0 core loaded is the mismatch this card forbids.
+Local proof (no device): `bash tests/unit/test_deploy_rollback.sh` — backup→install→restore
+byte-identical, mid-copy abort leaves live intact, hole (missing BIN) recovers from prev.
+
+`restore_misterplexd_prev.sh` **does not** touch the RBF. Restoring an old
+daemon while leaving a mismatched core loaded is the geometry hazard this card forbids.
 
 ## Smoke tests
 
