@@ -1,6 +1,6 @@
 # Identity-scale skip + sws_flags — pre-registration (host lane)
 
-**SOURCE_SHA (host commit):** `d81db7f8` (`git rev-parse HEAD` at measure may advance)  
+**SOURCE_SHA (host commit):** `4eaccba1` (measure-time HEAD may advance)  
 **Date (host work):** 2026-07-30  
 **Lane:** w-arm (no device access)  
 **Shipping default:** unchanged — `FFMPEG_SCALE=always`, empty `FFMPEG_SWS_FLAGS`, 240p default tier, `kPlex480pWeakBitrateKbps=2000` untouched.
