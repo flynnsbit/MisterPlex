@@ -84,8 +84,11 @@ sshpass -p "$PASS" ssh -o StrictHostKeyChecking=no "$USER@$HOST" \
      cat >'$REMOTE_ROOT/misterplex.conf' <<'CONF'
 # MiSTerPlex v0.3.0 fallback — side-by-side with /media/fat/misterplex/
 # Set PLEX_BASE / PLEX_TOKEN for your server (not committed).
+# PRESENT=fb0 is the v0.3.0 lab-stable cast path (daemon default). Do not
+# change to fpga to "fix" the current-daemon fb0 freeze trap — that trap is
+# HEAD-only; this binary is the v0.3.0-era daemon.
 DECODE=320x240
-PRESENT=fpga
+PRESENT=fb0
 STREAM=0
 MATCH_SOURCE_HZ=off
 IDLE_SCREEN=logo
@@ -100,7 +103,7 @@ CONF
 # PLEX_BASE=http://YOUR-PLEX-SERVER:32400
 # PLEX_TOKEN=
 DECODE=320x240
-PRESENT=fpga
+PRESENT=fb0
 STREAM=0
 MATCH_SOURCE_HZ=off
 IDLE_SCREEN=logo
@@ -128,4 +131,6 @@ fi
 echo "install_plex_v3_fallback: DONE"
 echo "Verify greps (parent on device after switch + core load):"
 echo "  ssh root@$HOST 'md5sum /media/fat/_Utility/Plex_v3.rbf /media/fat/misterplex_v3/bin/misterplexd'"
-echo "  ssh root@$HOST 'grep -E \"FPGA frame path OK|GDM: listening|companion: GDM|DDR YUV\" /media/fat/misterplex_v3/misterplexd.log | tail -20'"
+echo "  ssh root@$HOST 'grep -E \"^PRESENT=|^DECODE=\" /media/fat/misterplex_v3/misterplex.conf'"
+echo "  ssh root@$HOST 'grep -E \"media: fb |GDM: listening|companion: GDM|DDR YUV\" /media/fat/misterplex_v3/misterplexd.log | tail -20'"
+echo "  healthy: media: fb ... decode=320x240   fail: DDR YUV420p (wrong daemon)"

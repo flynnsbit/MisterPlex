@@ -24,5 +24,7 @@ fi
 
 bash "$V3_ROOT/scripts/run_misterplexd_v3.sh"
 echo "switch_to_v3: DONE — load core /media/fat/_Utility/Plex_v3.rbf from OSD if not already loaded"
+echo "switch_to_v3: conf should be PRESENT=fb0 (v0.3.0 fb0 cast path)"
 echo "switch_to_v3: healthy log greps:"
-echo "  grep -E 'FPGA frame path OK|GDM: listening|companion: GDM' $V3_ROOT/misterplexd.log | tail"
+echo "  grep -E 'media: fb |GDM: listening|companion: GDM|DDR YUV' $V3_ROOT/misterplexd.log | tail"
+echo "  expect: media: fb ... decode=320x240   reject: DDR YUV420p"

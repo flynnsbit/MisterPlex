@@ -8,6 +8,8 @@ Pairing
   (= release_artifacts/v0.3.0/Plex.rbf)
 - Daemon: misterplexd built from tag v0.3.0 (cacd8717) plus optional
   present-path-neutral GDM idle-CPU back-port (see docs/v3-fallback.md).
+- Exact lab-stable daemon SHA 06c5735a is LOST (rebase); v0.3.0 is the proxy.
+- Conf: PRESENT=fb0 (v0.3.0 default / "fb0 cast path") — NOT PRESENT=fpga.
 
 Install location (side-by-side; never overwrites dev)
 ----------------------------------------------------

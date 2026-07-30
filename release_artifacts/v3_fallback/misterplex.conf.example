@@ -5,10 +5,12 @@
 # Set your Plex Media Server (no secrets committed here):
 # PLEX_BASE=http://YOUR-PLEX-SERVER:32400
 # PLEX_TOKEN=
-
-# v0.3.0 core frame_store is 320x240 RGB (SPI ingest + stretch).
+#
+# PRESENT=fb0 is intentional for the v0.3.0-era daemon (default in main.cpp;
+# lab-stable pair was "fb0 cast path"). Do NOT "fix" this to PRESENT=fpga —
+# that trap is for the CURRENT daemon only (see docs/v3-fallback.md).
 DECODE=320x240
-PRESENT=fpga
+PRESENT=fb0
 STREAM=0
 MATCH_SOURCE_HZ=off
 IDLE_SCREEN=logo
