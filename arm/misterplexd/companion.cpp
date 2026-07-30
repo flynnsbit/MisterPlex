@@ -888,6 +888,12 @@ void Companion::httpServeClient(int c) {
             PlayRequest pr = parsePlayRequest(req);
             if (pr.key.empty())
                 pr.key = "(no-key)";
+            std::string body;
+            int64_t ackOff = 0;
+            {
+#ifndef CAST_CTRL_FAULT_NO_SERIALIZE
+                std::lock_guard<std::mutex> ctrl(ctrlMu_);
+#endif
             {
                 std::lock_guard<std::mutex> lock(mu_);
                 wantPlay_ = true;
@@ -929,15 +935,11 @@ void Companion::httpServeClient(int c) {
                     serverMachineId_ = pr.serverMachineId;
             }
             auto cid = queryParam(req, "commandID");
-            int64_t ackOff = 0;
             {
                 std::lock_guard<std::mutex> lock(mu_);
                 ackOff = timeMs_;
             }
-            auto body = timelineXml(cid);
-            sendHttp(c, 200, "application/xml", body);
-            log("HTTP OUT 200 playMedia " + timelineBrief(body));
-            log("playMedia ACK key=" + pr.key + " offMs=" + std::to_string(ackOff));
+            body = timelineXml(cid);
             // Invalidate in-flight resolve *before* spawning onPlay_ so a
             // concurrent doPlay cannot bind/setState over this plant while
             // the new play thread is still scheduling (P4-SCRUB cast race).
@@ -948,6 +950,11 @@ void Companion::httpServeClient(int c) {
                     log("playQueued handler exception");
                 }
             }
+            } // ctrlMu_
+            sendHttp(c, 200, "application/xml", body);
+            log("HTTP OUT 200 playMedia " + timelineBrief(body));
+            log("playMedia ACK key=" + pr.key + " offMs=" + std::to_string(ackOff));
+            // Async demux outside ctrlMu_ — must not hold control lock across resolve.
             if (onPlay_) {
                 std::thread([this, pr]() {
                     try {
@@ -961,38 +968,54 @@ void Companion::httpServeClient(int c) {
         }
 
         if (isPause) {
-            int64_t t = 0, d = 0;
-            bool active = false;
+            // ctrlMu_: timeline plant + onPause_ (SIGSTOP) must be one unit.
+            // HTTP send stays outside so a slow client cannot hold the control lock.
+            std::string body;
             {
-                std::lock_guard<std::mutex> lock(mu_);
-                t = timeMs_;
-                d = durationMs_;
-                active = wantPlay_;
+#ifndef CAST_CTRL_FAULT_NO_SERIALIZE
+                std::lock_guard<std::mutex> ctrl(ctrlMu_);
+#endif
+                int64_t t = 0, d = 0;
+                bool active = false;
+                {
+                    std::lock_guard<std::mutex> lock(mu_);
+                    t = timeMs_;
+                    d = durationMs_;
+                    active = wantPlay_;
+                }
+                // Idle/stopped: ACK only — setState("paused") would re-arm wantPlay_
+                // and fullScreenVideo without a media key (scrubber ghost after stop).
+                if (active)
+                    setState("paused", t, d);
+                if (active && onPause_)
+                    onPause_();
+                body = timelineXml(queryParam(req, "commandID"));
             }
-            // Idle/stopped: ACK only — setState("paused") would re-arm wantPlay_
-            // and fullScreenVideo without a media key (scrubber ghost after stop).
-            if (active)
-                setState("paused", t, d);
-            sendHttp(c, 200, "application/xml", timelineXml(queryParam(req, "commandID")));
-            if (active && onPause_)
-                onPause_();
+            sendHttp(c, 200, "application/xml", body);
             return;
         }
         if (isResumePlay) {
-            int64_t t = 0, d = 0;
-            bool active = false;
+            std::string body;
             {
-                std::lock_guard<std::mutex> lock(mu_);
-                t = timeMs_;
-                d = durationMs_;
-                active = wantPlay_;
+#ifndef CAST_CTRL_FAULT_NO_SERIALIZE
+                std::lock_guard<std::mutex> ctrl(ctrlMu_);
+#endif
+                int64_t t = 0, d = 0;
+                bool active = false;
+                {
+                    std::lock_guard<std::mutex> lock(mu_);
+                    t = timeMs_;
+                    d = durationMs_;
+                    active = wantPlay_;
+                }
+                // Idle: ACK only — do not re-arm wantPlay via setState("playing").
+                if (active)
+                    setState("playing", t, d);
+                if (active && onResume_)
+                    onResume_();
+                body = timelineXml(queryParam(req, "commandID"));
             }
-            // Idle: ACK only — do not re-arm wantPlay via setState("playing").
-            if (active)
-                setState("playing", t, d);
-            sendHttp(c, 200, "application/xml", timelineXml(queryParam(req, "commandID")));
-            if (active && onResume_)
-                onResume_();
+            sendHttp(c, 200, "application/xml", body);
             return;
         }
         if (isStop) {
@@ -1000,10 +1023,17 @@ void Companion::httpServeClient(int c) {
             // (video/stopped+key idles Web and freezes scrubber / Resume dialog).
             // clearMedia before player.stop so late progress cannot re-arm wantPlay
             // (setState ignores progress while prePlayHold && !wantPlay).
-            clearMedia();
-            if (onStop_)
-                onStop_();
-            sendHttp(c, 200, "application/xml", timelineXml(queryParam(req, "commandID")));
+            std::string body;
+            {
+#ifndef CAST_CTRL_FAULT_NO_SERIALIZE
+                std::lock_guard<std::mutex> ctrl(ctrlMu_);
+#endif
+                clearMedia();
+                if (onStop_)
+                    onStop_();
+                body = timelineXml(queryParam(req, "commandID"));
+            }
+            sendHttp(c, 200, "application/xml", body);
             return;
         }
         if (isSeek) {
@@ -1029,22 +1059,29 @@ void Companion::httpServeClient(int c) {
             // Same position after clamp: ACK only — avoid demux restart thrash
             // (Web sometimes re-sends the current scrubber thumb position).
             const bool moved = present && (ms != curT);
-            if (active && moved) {
-                // Atomic plant: scrub target + time under one lock so demux
-                // progress cannot interleave a stale pin between assign/setState.
-                {
-                    std::lock_guard<std::mutex> lock(mu_);
-                    scrubTargetMs_ = ms;
-                    timeMs_ = ms;
-                    if (d > 0)
-                        durationMs_ = d;
-                    state_ = "buffering";
-                    wantPlay_ = true;
+            std::string body;
+            {
+#ifndef CAST_CTRL_FAULT_NO_SERIALIZE
+                std::lock_guard<std::mutex> ctrl(ctrlMu_);
+#endif
+                if (active && moved) {
+                    // Atomic plant: scrub target + time under one lock so demux
+                    // progress cannot interleave a stale pin between assign/setState.
+                    {
+                        std::lock_guard<std::mutex> lock(mu_);
+                        scrubTargetMs_ = ms;
+                        timeMs_ = ms;
+                        if (d > 0)
+                            durationMs_ = d;
+                        state_ = "buffering";
+                        wantPlay_ = true;
+                    }
+                    if (onSeek_)
+                        onSeek_(ms); // async seek launch — returns quickly
                 }
+                body = timelineXml(queryParam(req, "commandID"));
             }
-            sendHttp(c, 200, "application/xml", timelineXml(queryParam(req, "commandID")));
-            if (active && moved && onSeek_)
-                onSeek_(ms);
+            sendHttp(c, 200, "application/xml", body);
             return;
         }
         if (isStepForward || isStepBack) {
@@ -1087,59 +1124,80 @@ void Companion::httpServeClient(int c) {
                     wantPlay_ = true;
                 }
             }
-            sendHttp(c, 200, "application/xml", timelineXml(queryParam(req, "commandID")));
-            // Prefer absolute seek when available so player lands on clamped target
-            // even if positionMs lags companion timeMs_ (progress race).
-            if (active && applied != 0) {
-                if (onSeek_)
-                    onSeek_(target);
-                else if (onStep_)
-                    onStep_(applied);
+            std::string body;
+            {
+#ifndef CAST_CTRL_FAULT_NO_SERIALIZE
+                std::lock_guard<std::mutex> ctrl(ctrlMu_);
+#endif
+                // Prefer absolute seek when available so player lands on clamped target
+                // even if positionMs lags companion timeMs_ (progress race).
+                if (active && applied != 0) {
+                    if (onSeek_)
+                        onSeek_(target);
+                    else if (onStep_)
+                        onStep_(applied);
+                }
+                body = timelineXml(queryParam(req, "commandID"));
             }
+            sendHttp(c, 200, "application/xml", body);
             return;
         }
         if (isSkipNext) {
             bool active = false;
+            std::string body;
             {
-                std::lock_guard<std::mutex> lock(mu_);
-                active = wantPlay_;
+#ifndef CAST_CTRL_FAULT_NO_SERIALIZE
+                std::lock_guard<std::mutex> ctrl(ctrlMu_);
+#endif
+                {
+                    std::lock_guard<std::mutex> lock(mu_);
+                    active = wantPlay_;
+                }
+                // Empty session / unbound queue: ACK only (tryAutoNext no-ops).
+                if (active && onSkipNext_)
+                    onSkipNext_();
+                body = timelineXml(queryParam(req, "commandID"));
             }
-            sendHttp(c, 200, "application/xml", timelineXml(queryParam(req, "commandID")));
-            // Empty session / unbound queue: ACK only (tryAutoNext no-ops).
-            if (active && onSkipNext_)
-                onSkipNext_();
+            sendHttp(c, 200, "application/xml", body);
             return;
         }
         if (isSkipPrevious) {
-            int64_t d = 0;
-            int64_t t = 0;
-            bool active = false;
+            std::string body;
             {
-                std::lock_guard<std::mutex> lock(mu_);
-                d = durationMs_;
-                t = timeMs_;
-                active = wantPlay_;
-            }
-            // Idle: ACK only (no re-arm). Active: fire handler *before* zeroing
-            // timeMs_ so main can Plex-style branch on scrub position
-            // (t>3s → restart@0; t≤3s → queue previous / no-op at 0).
-            if (active) {
-                if (onSkipPrevious_)
-                    onSkipPrevious_();
-                else if (onSeek_ && t != 0)
-                    onSeek_(0);
-                // Optimistic scrubber plant after branch (queue-prev rebind overwrites).
-                if (t != 0) {
+#ifndef CAST_CTRL_FAULT_NO_SERIALIZE
+                std::lock_guard<std::mutex> ctrl(ctrlMu_);
+#endif
+                int64_t d = 0;
+                int64_t t = 0;
+                bool active = false;
+                {
                     std::lock_guard<std::mutex> lock(mu_);
-                    scrubTargetMs_ = 0;
-                    timeMs_ = 0;
-                    if (d > 0)
-                        durationMs_ = d;
-                    state_ = "buffering";
-                    wantPlay_ = true;
+                    d = durationMs_;
+                    t = timeMs_;
+                    active = wantPlay_;
                 }
+                // Idle: ACK only (no re-arm). Active: fire handler *before* zeroing
+                // timeMs_ so main can Plex-style branch on scrub position
+                // (t>3s → restart@0; t≤3s → queue previous / no-op at 0).
+                if (active) {
+                    if (onSkipPrevious_)
+                        onSkipPrevious_();
+                    else if (onSeek_ && t != 0)
+                        onSeek_(0);
+                    // Optimistic scrubber plant after branch (queue-prev rebind overwrites).
+                    if (t != 0) {
+                        std::lock_guard<std::mutex> lock(mu_);
+                        scrubTargetMs_ = 0;
+                        timeMs_ = 0;
+                        if (d > 0)
+                            durationMs_ = d;
+                        state_ = "buffering";
+                        wantPlay_ = true;
+                    }
+                }
+                body = timelineXml(queryParam(req, "commandID"));
             }
-            sendHttp(c, 200, "application/xml", timelineXml(queryParam(req, "commandID")));
+            sendHttp(c, 200, "application/xml", body);
             return;
         }
 

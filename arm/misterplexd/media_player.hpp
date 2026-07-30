@@ -306,6 +306,7 @@ private:
     std::thread streamThr_;
     std::atomic<bool> stop_{false};
     std::atomic<bool> playing_{false};
+    std::mutex transportMu_;
     std::atomic<bool> paused_{false};
     std::atomic<bool> audioActive_{false};
     std::atomic<bool> streamActive_{false};
