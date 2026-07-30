@@ -1,5 +1,6 @@
 #include "fpga_spi.hpp"
 
+#include "death_breadcrumb.hpp"
 #include "libmisterplex/status_telemetry.hpp"
 #include "libmisterplex/pixel_format.hpp"
 
@@ -362,12 +363,14 @@ void FpgaSpi::resumeStrandedMain() {
 
 namespace {
 
-// async-signal-safe enough: kill()/open()/read()/close() are all on the safe
-// list, and we re-raise with the default handler so the crash still surfaces.
+// async-signal-safe enough: kill()/open()/read()/close()/write() are on the
+// safe list; re-raise with the default handler so the crash still surfaces.
+// deathBreadcrumbOnSignal is open/write/close only (no heap).
 void crashGuardHandler(int sig) {
     mainPauseDepth().store(0);
     for (pid_t p : findMisterPids())
         kill(p, SIGCONT);
+    misterplex::deathBreadcrumbOnSignal(sig);
     std::signal(sig, SIG_DFL);
     ::raise(sig);
 }

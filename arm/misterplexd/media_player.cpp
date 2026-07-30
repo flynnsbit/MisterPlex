@@ -1,4 +1,5 @@
 #include "media_player.hpp"
+#include "death_breadcrumb.hpp"
 #include "log_redact.hpp"
 
 #include "libmisterplex/av_clock.hpp"
@@ -938,6 +939,8 @@ void MediaPlayer::shutdown() {
 void MediaPlayer::stop() {
     // Only join thr_ here. threadMain owns audioThr_/streamThr_ joins at session end.
     // Joining helpers from both thr_ and stop() races and can hang the companion HTTP thread.
+    deathBreadcrumbUpdate(DeathState::Stopping, 0, presentCount_, positionMs_.load(),
+                          /*force=*/true);
     std::lock_guard<std::mutex> life(lifeMu_);
     stop_.store(true);
     killChildren();
@@ -977,6 +980,7 @@ void MediaPlayer::stop() {
     paintIdle();
     startIdle();
     startOsdPoll();
+    deathBreadcrumbUpdate(DeathState::Idle, 0, presentCount_, 0, /*force=*/true);
 }
 
 void MediaPlayer::pause() {
@@ -986,6 +990,8 @@ void MediaPlayer::pause() {
     std::lock_guard<std::mutex> transport(transportMu_);
     paused_.store(true);
     signalChildren(SIGSTOP);
+    deathBreadcrumbUpdate(DeathState::Paused, 0, presentCount_, positionMs_.load(),
+                          /*force=*/true);
     showPlaybackOverlay(PlaybackOverlayState::Paused, positionMs_.load(), durationMs());
     if (onProgress_)
         onProgress_("paused", positionMs_.load(), durationMs_);
@@ -2126,6 +2132,7 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                              int64_t durationMs) {
     playing_.store(true);
     positionMs_.store(startMs);
+    deathBreadcrumbUpdate(DeathState::Playing, 0, presentCount_, startMs, /*force=*/true);
     if (onProgress_)
         onProgress_("buffering", startMs, durationMs);
 
@@ -3400,6 +3407,8 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
     }
     startIdle();
 
+    deathBreadcrumbUpdate(DeathState::Idle, frameIndex, presentCount_, positionMs_.load(),
+                          /*force=*/true);
     log("media: session end frames=" + std::to_string(frameIndex) +
         " recon=" + std::to_string(reconFrames_.load()) +
         " cabac=" + (cabacSkip_.load() ? "1" : "0") +

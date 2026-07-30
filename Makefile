@@ -233,13 +233,15 @@ h264-golden-tools: $(ROOT)/build/extract_h264_golden $(ROOT)/build/score_h264_na
 
 $(ROOT)/build/test_status_telemetry: $(ROOT)/tests/unit/test_status_telemetry.cpp \
 		$(ROOT)/arm/misterplexd/fpga_spi.cpp $(ROOT)/arm/misterplexd/fpga_spi.hpp \
+		$(ROOT)/arm/misterplexd/death_breadcrumb.cpp $(ROOT)/arm/misterplexd/death_breadcrumb.hpp \
 		$(ROOT)/host/libmisterplex/ddr_bitstream_ring.hpp \
 		$(ROOT)/host/libmisterplex/status_telemetry.hpp \
 		$(ROOT)/host/libmisterplex/h264_residual_gold.hpp \
 		$(ROOT)/host/libmisterplex/pixel_format.hpp
 	@mkdir -p $(ROOT)/build
 	$(CXX) $(CXXFLAGS) -I$(ROOT)/arm/misterplexd -pthread -o $@ \
-		$(ROOT)/tests/unit/test_status_telemetry.cpp $(ROOT)/arm/misterplexd/fpga_spi.cpp
+		$(ROOT)/tests/unit/test_status_telemetry.cpp $(ROOT)/arm/misterplexd/fpga_spi.cpp \
+		$(ROOT)/arm/misterplexd/death_breadcrumb.cpp
 
 $(ROOT)/build/test_idct_quant: $(ROOT)/tests/unit/test_idct_quant.cpp \
 		$(ROOT)/host/libmisterplex/h264_cavlc.hpp $(ROOT)/host/libmisterplex/h264_nal.hpp \
@@ -385,10 +387,12 @@ $(ROOT)/build/test_avclock: $(ROOT)/tests/unit/test_avclock.cpp \
 
 $(ROOT)/build/test_main_guard: $(ROOT)/tests/unit/test_main_guard.cpp \
 		$(ROOT)/arm/misterplexd/fpga_spi.cpp $(ROOT)/arm/misterplexd/fpga_spi.hpp \
+		$(ROOT)/arm/misterplexd/death_breadcrumb.cpp $(ROOT)/arm/misterplexd/death_breadcrumb.hpp \
 		$(ROOT)/host/libmisterplex/pixel_format.hpp
 	@mkdir -p $(ROOT)/build
 	$(CXX) $(CXXFLAGS) -I$(ROOT)/arm/misterplexd -pthread -o $@ \
-		$(ROOT)/tests/unit/test_main_guard.cpp $(ROOT)/arm/misterplexd/fpga_spi.cpp
+		$(ROOT)/tests/unit/test_main_guard.cpp $(ROOT)/arm/misterplexd/fpga_spi.cpp \
+		$(ROOT)/arm/misterplexd/death_breadcrumb.cpp
 
 $(ROOT)/build/test_mraudio_status: $(ROOT)/tests/unit/test_mraudio_status.cpp \
 		$(ROOT)/host/libmisterplex/mraudio_status.hpp
@@ -514,7 +518,8 @@ MPLEX_SRC := \
 	$(ROOT)/arm/misterplexd/media_player.cpp \
 	$(ROOT)/arm/misterplexd/pms_timeline.cpp \
 	$(ROOT)/arm/misterplexd/plex_resolve.cpp \
-	$(ROOT)/arm/misterplexd/fpga_spi.cpp
+	$(ROOT)/arm/misterplexd/fpga_spi.cpp \
+	$(ROOT)/arm/misterplexd/death_breadcrumb.cpp
 MPLEX_INC := -I$(ROOT)/arm/misterplexd -I$(ROOT)/host
 # Host recon headers (Phase 3.3i STREAM path)
 MPLEX_HDR := \
@@ -538,6 +543,7 @@ $(ROOT)/build/misterplexd: $(MPLEX_SRC) \
 		$(ROOT)/arm/misterplexd/plex_resolve.hpp \
 		$(ROOT)/arm/misterplexd/fb_present.hpp \
 		$(ROOT)/arm/misterplexd/fpga_spi.hpp \
+		$(ROOT)/arm/misterplexd/death_breadcrumb.hpp \
 		$(MPLEX_HDR)
 	@mkdir -p $(ROOT)/build
 	$(CXX) $(CXXFLAGS) $(MPLEX_INC) -pthread -o $@ $(MPLEX_SRC)
@@ -546,10 +552,12 @@ plexd: $(ROOT)/build/misterplexd
 
 # Standalone: push one RGB565 file to Plex frame_store via SPI ioctl
 $(ROOT)/build/push_frame: $(ROOT)/arm/misterplexd/fpga_spi.cpp \
+		$(ROOT)/arm/misterplexd/death_breadcrumb.cpp \
 		$(ROOT)/tools/push_frame.cpp $(ROOT)/arm/misterplexd/fpga_spi.hpp
 	@mkdir -p $(ROOT)/build
 	$(CXX) $(CXXFLAGS) -I$(ROOT)/arm/misterplexd -I$(ROOT)/host -o $@ \
-		$(ROOT)/tools/push_frame.cpp $(ROOT)/arm/misterplexd/fpga_spi.cpp
+		$(ROOT)/tools/push_frame.cpp $(ROOT)/arm/misterplexd/fpga_spi.cpp \
+		$(ROOT)/arm/misterplexd/death_breadcrumb.cpp
 
 push-frame: $(ROOT)/build/push_frame
 
@@ -608,10 +616,12 @@ arm-plexd: $(MPLEX_HDR) arm-ddr-bench
 	$(ARM_CXX) -std=c++17 -O2 -Wall -I$(ROOT)/arm/misterplexd -I$(ROOT)/host \
 		-o $(ROOT)/build/arm/push_frame \
 		$(ROOT)/tools/push_frame.cpp $(ROOT)/arm/misterplexd/fpga_spi.cpp \
+		$(ROOT)/arm/misterplexd/death_breadcrumb.cpp \
 		-static
 	$(ARM_CXX) -std=c++17 -O2 -Wall -I$(ROOT)/arm/misterplexd -I$(ROOT)/host \
 		-o $(ROOT)/build/arm/set_status \
 		$(ROOT)/tools/set_status.cpp $(ROOT)/arm/misterplexd/fpga_spi.cpp \
+		$(ROOT)/arm/misterplexd/death_breadcrumb.cpp \
 		-static
 	$(ARM_CXX) -std=c++17 -O2 -Wall -I$(ROOT)/host \
 		-o $(ROOT)/build/arm/input_mailbox_probe \

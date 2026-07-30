@@ -150,6 +150,18 @@ from a build before this redaction, rotate the Plex token:**
 
 Restart after edits: `killall misterplexd` then re-run deploy or the startup line.
 
+### Daemon death capture (no conf keys)
+
+When `misterplexd` exits under `scripts/misterplexd_supervise.sh`, look at:
+
+| Artifact | Path (next to conf) | Meaning |
+|----------|---------------------|---------|
+| Supervise log | `/media/fat/misterplex/misterplexd_supervise.log` | `SUPERVISE_EXIT` with `wait_rc`, `WIFSIGNALED`, `signal` / `exit_status`, and (improved script) `signal_name` + breadcrumb snapshot |
+| Last state | `misterplexd.last` | Coarse state (`idle`/`playing`/…), frames, presents, pos, uptime — **transition-only** writes (not per-frame) |
+| Death note | `misterplexd.death` | Orderly: `exit_code` + `why=`; fatal catchable signal: `death signal=N` (async-signal-safe) |
+
+**Recognition matrix:** SIGTERM handled by the daemon → `exit_status=0` + `why=signal-g_stop` (not `signal=15`). SIGSEGV/ABRT/BUS/FPE → `signal=N` + `.death` line. **SIGKILL and OOM cannot be caught** → `signal=9`, `.death` stale/absent; OOM needs kernel `dmesg` on-device. Shell `wait` cannot report core-dump → `core_dump=UNKNOWN`.
+
 ### PRESENT / STREAM modes
 
 | PRESENT | STREAM | Behavior |

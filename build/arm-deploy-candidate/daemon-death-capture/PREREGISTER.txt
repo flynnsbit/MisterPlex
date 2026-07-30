@@ -1,0 +1,42 @@
+PREREGISTER — daemon death capture host kill matrix
+Date: 2026-07-30
+Lane: w-arm-hybrid
+Constraint: host-only; do not re-reproduce field death (B3 already MISS).
+
+================================================================
+0. What already exists (bounce2 — DO NOT DUPLICATE)
+================================================================
+scripts/misterplexd_supervise.sh (bounce2 tree, live on box) already logs:
+  SUPERVISE_EXIT pid=… wait_rc=… WIFSIGNALED=0|1 signal=N|(exit_status=N)
+  RESPAWN backoff=…
+Evidence: w-bounce2/scripts/misterplexd_supervise.sh lines 43-50.
+Uses shell wait 128+N convention. Does NOT name the signal.
+Does NOT snapshot misterplexd.last / .death (those files did not exist).
+core_dump: not available from shell wait.
+
+This lane adds:
+  1) daemon breadcrumb + async-safe .death on catchable fatals
+  2) improved supervise script (signal_name= + breadcrumb snapshot) in OUR tree
+     for bounce2 to pick up — we do not edit bounce2 worktree
+
+================================================================
+1. Distinguishability (pre-register BEFORE host kills)
+================================================================
+| Cause              | SUPERVISE_EXIT expect          | misterplexd.death expect              | .last expect        |
+|--------------------|--------------------------------|----------------------------------------|---------------------|
+| clean exit / TERM→g_stop | WIFSIGNALED=0 exit_status=0 | exit_code=0 why=signal-g_stop|lab-… | state=idle (forced) |
+| SIGTERM handled    | SAME as clean exit (exit 0)  | same orderly exit line                 | idle after stop     |
+| SIGSEGV            | WIFSIGNALED=1 signal=11      | "death signal=11 state=N"              | last transition     |
+| SIGABRT            | signal=6                     | death signal=6                         | last transition     |
+| SIGBUS             | signal=7                     | death signal=7                         | last transition     |
+| SIGFPE             | signal=8                     | death signal=8                         | last transition     |
+| SIGKILL            | signal=9                     | STALE or absent (handler never runs)   | last transition     |
+| OOM kill           | usually signal=9             | STALE; kernel oom log (device dmesg)   | last transition     |
+
+INDISTINGUISHABLE pairs (pre-registered):
+  - SIGTERM-handled vs clean main return: both exit_status=0 + why may differ if
+    deathBreadcrumbExit why= string is present (HIT if why distinguishes).
+  - SIGKILL vs OOM: both often signal=9; OOM needs dmesg (device) — host test
+    cannot produce OOM; mark OOM as INSUFFICIENT on host.
+
+EXPECT each deliberate host kill below to MATCH its row (HIT/MISS published).

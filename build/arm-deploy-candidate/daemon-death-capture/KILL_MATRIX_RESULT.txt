@@ -1,0 +1,48 @@
+=== host kill matrix start 2026-07-30T10:49:39Z ===
+BIN=/home/flynnsbit/Projects/MisterPlex/.worktrees/w-arm-hybrid/build/misterplexd
+WORKDIR=/home/flynnsbit/Projects/MisterPlex/.worktrees/w-arm-hybrid/build/arm-deploy-candidate/daemon-death-capture/run_1681618
+
+=== SUPLOG ===
+CHILD pid=1681636 label=TERM
+SUPERVISE_EXIT label=TERM wait_rc=0 WIFSIGNALED=0 exit_status=0
+---LAST label=TERM---
+ts=2026-07-30T10:49:40Z state=idle frames=0 presents=0 pos_ms=0 uptime_s=0 pid=1681636
+---DEATH label=TERM---
+ts=2026-07-30T10:49:40Z exit_code=0 why=signal-g_stop state=idle frames=0 presents=0 pos_ms=0 uptime_s=0 pid=1681636
+CHILD pid=1681650 label=SEGV
+SUPERVISE_EXIT label=SEGV wait_rc=139 WIFSIGNALED=1 signal=11 signal_name=SIGSEGV
+---LAST label=SEGV---
+ts=2026-07-30T10:49:40Z state=idle frames=0 presents=0 pos_ms=0 uptime_s=0 pid=1681650
+---DEATH label=SEGV---
+death signal=11 state=1
+CHILD pid=1681671 label=KILL
+SUPERVISE_EXIT label=KILL wait_rc=137 WIFSIGNALED=1 signal=9 signal_name=SIGKILL
+---LAST label=KILL---
+ts=2026-07-30T10:49:40Z state=idle frames=0 presents=0 pos_ms=0 uptime_s=0 pid=1681671
+---DEATH label=KILL---
+(none)
+CHILD pid=1681683 label=CLEAN
+SUPERVISE_EXIT label=CLEAN wait_rc=0 WIFSIGNALED=0 exit_status=0
+---LAST label=CLEAN---
+ts=2026-07-30T10:49:41Z state=idle frames=0 presents=0 pos_ms=0 uptime_s=0 pid=1681683
+---DEATH label=CLEAN---
+ts=2026-07-30T10:49:41Z exit_code=0 why=signal-g_stop state=idle frames=0 presents=0 pos_ms=0 uptime_s=0 pid=1681683
+
+=== VERDICT vs PREREGISTER ===
+HIT TERM: SUPERVISE_EXIT label=TERM wait_rc=0 WIFSIGNALED=0 exit_status=0
+HIT SEGV: SUPERVISE_EXIT label=SEGV wait_rc=139 WIFSIGNALED=1 signal=11 signal_name=SIGSEGV
+HIT KILL: SUPERVISE_EXIT label=KILL wait_rc=137 WIFSIGNALED=1 signal=9 signal_name=SIGKILL
+HIT CLEAN: SUPERVISE_EXIT label=CLEAN wait_rc=0 WIFSIGNALED=0 exit_status=0
+
+DEATH file checks:
+SEGV_DEATH=death signal=11 state=1
+KILL_DEATH=(none)
+TERM_DEATH=ts=2026-07-30T10:49:40Z exit_code=0 why=signal-g_stop state=idle frames=0 presents=0 pos_ms=0 uptime_s=0 pid=1681636
+CLEAN_DEATH=ts=2026-07-30T10:49:41Z exit_code=0 why=signal-g_stop state=idle frames=0 presents=0 pos_ms=0 uptime_s=0 pid=1681683
+
+HIT SEGV_DEATH contains signal=11: death signal=11 state=1
+HIT KILL_DEATH no handler write (none/stale): (none)
+HIT TERM_DEATH orderly: ts=2026-07-30T10:49:40Z exit_code=0 why=signal-g_stop state=idle frames=0 presents=0 pos_ms=0 uptime_s=0 pid=1681636
+
+INDISTINGUISHABLE confirmed if TERM and CLEAN both exit_status=0 (expected).
+OOM: INSUFFICIENT on host (no dmesg path).

@@ -3,6 +3,7 @@
 // Phase 4: multi-server conf, auto next-episode, optional subtitle burn-in.
 
 #include "companion.hpp"
+#include "death_breadcrumb.hpp"
 #include "libmisterplex/coded_size.hpp"
 #include "libmisterplex/osd_menu.hpp"
 #include "log_redact.hpp"
@@ -425,6 +426,21 @@ int main(int argc, char** argv) {
     misterplex::FpgaSpi::resumeStrandedMain();
     misterplex::FpgaSpi::installCrashGuard();
 
+    // Death breadcrumb: confDir/misterplexd.{last,death}. Transition-only disk
+    // writes (not per-frame). Fatal handlers write .death async-signal-safely.
+    {
+        std::string confDir = confPath;
+        const auto slash = confDir.find_last_of('/');
+        if (slash == std::string::npos)
+            confDir = ".";
+        else if (slash == 0)
+            confDir = "/";
+        else
+            confDir.resize(slash);
+        misterplex::deathBreadcrumbInit(confDir);
+        misterplex::deathBreadcrumbUpdate(misterplex::DeathState::Idle, 0, 0, 0, /*force=*/true);
+    }
+
     misterplex::MediaPlayer player;
     player.setFfmpegPath(ffmpeg);
     player.setDecodeSize(decodeSize);
@@ -596,6 +612,7 @@ int main(int argc, char** argv) {
                      static_cast<long long>(summary.presentedFrames),
                      static_cast<long long>(summary.reconFrames),
                      static_cast<long long>(summary.totalBytes));
+        misterplex::deathBreadcrumbExit(0, "lab-play-file-done");
         return 0;
     }
 
@@ -1232,5 +1249,6 @@ int main(int argc, char** argv) {
     // Last chance on the way out: a window leaked during teardown would
     // otherwise outlive us.
     misterplex::FpgaSpi::resumeStrandedMain();
+    misterplex::deathBreadcrumbExit(0, "signal-g_stop");
     return 0;
 }

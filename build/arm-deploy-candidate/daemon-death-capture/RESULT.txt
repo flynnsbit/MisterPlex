@@ -1,0 +1,90 @@
+DAEMON DEATH CAPTURE — w-arm-hybrid RESULT
+Date: 2026-07-30
+Constraint: host-only; no device; no field re-repro (B3 already MISS).
+
+================================================================
+1. INVENTORY — what already existed (do not duplicate)
+================================================================
+bounce2 (`.worktrees/w-bounce2/scripts/misterplexd_supervise.sh`) already
+installs a supervise loop with backoff and logs:
+
+  SUPERVISE_EXIT pid=$child wait_rc=$st WIFSIGNALED=1 signal=$sig (128+N)
+  SUPERVISE_EXIT pid=$child wait_rc=$st WIFSIGNALED=0 exit_status=$st
+
+Evidence: quoted from bounce2 script lines 43–50 (read-only).
+AFTER_V8_RESULT also observed exit_status=0 on soft kill + respawn.
+
+Gaps vs parent ask:
+  - signal number yes; signal **name** no
+  - core-dump flag: **not available** from shell wait (UNKNOWN forever under this design)
+  - no daemon breadcrumb (.last / .death)
+  - installCrashGuard only SIGCONT Main then re-raise — no log line
+
+Startup hook in *this* tree (`install_misterplex_startup_hook_remote.sh`) is still
+one-shot background start — supervise lives on-device via bounce2 install.
+
+================================================================
+2. WHAT THIS LANE ADDED (minimal)
+================================================================
+A) arm/misterplexd/death_breadcrumb.{hpp,cpp}
+   - misterplexd.last  — state/frames/presents/pos/uptime/pid; force on
+     play/stop/session-end/pause; else ≥5s throttle (NOT per-frame)
+   - misterplexd.death — orderly exit_code+why OR async-safe "death signal=N"
+   - crashGuardHandler → deathBreadcrumbOnSignal before re-raise
+   - main: init next to conf; exit why=signal-g_stop / lab-play-file-done
+
+B) scripts/misterplexd_supervise.sh (OUR tree — bounce2 can pick up)
+   - signal_name= table (SEGV/KILL/TERM/…)
+   - core_dump=UNKNOWN explicit
+   - snapshots last= / death= into SUPERVISE_EXIT line
+
+C) docs/release.md — death capture recognition matrix (no new conf keys;
+   PRESENT/DECODE/STREAM/OSD defaults untouched)
+
+D) Host kill matrix: build/.../daemon-death-capture/host_kill_matrix.sh
+   + PREREGISTER.txt + KILL_MATRIX_RESULT.txt
+
+================================================================
+3. PREREGISTER vs ACTUAL (host kill matrix)
+================================================================
+Pre-registered HITs expected for TERM/SEGV/KILL/CLEAN; OOM INSUFFICIENT.
+
+| Case  | Expect                         | Actual                                              | Score |
+|-------|--------------------------------|-----------------------------------------------------|-------|
+| TERM  | exit_status=0                  | wait_rc=0 WIFSIGNALED=0 exit_status=0               | HIT   |
+| SEGV  | signal=11 + death signal=11    | wait_rc=139 signal=11; death="death signal=11 state=1" | HIT |
+| KILL  | signal=9; death none/stale     | wait_rc=137 signal=9; death=(none)                  | HIT   |
+| CLEAN | exit_status=0 + orderly death  | exit_status=0; why=signal-g_stop                    | HIT   |
+| OOM   | need dmesg                     | not host-testable                                   | INSUFFICIENT |
+
+INDISTINGUISHABLE (confirmed): TERM vs CLEAN both exit_status=0 and same
+why=signal-g_stop when both use SIGTERM→g_stop path (CLEAN test also TERM'd).
+True clean return without signal is the lab --play-file path (why=lab-play-file-done)
+— not exercised in this matrix; UNKNOWN whether field deaths used that path.
+
+Quoted SEGV death line:
+  death signal=11 state=1
+Quoted TERM death line:
+  ts=2026-07-30T10:49:40Z exit_code=0 why=signal-g_stop state=idle ...
+
+================================================================
+4. make unit
+================================================================
+  make unit; echo "true rc=$?"
+  true rc=0
+  : OK count ≈79 (EXPECTED_RED FAIL lines normal)
+
+================================================================
+5. NOT DONE (binding)
+================================================================
+- No 87-pt CPU fix (still blocked on bounce2 v9 thread_cpu data)
+- No device access / no deploy
+- Field death signal still UNCAPTURED until next real death under supervise
+  (this work makes that death diagnosable; it does not claim the cause)
+
+================================================================
+6. Bounce2 handoff
+================================================================
+Replace on-box supervise with scripts/misterplexd_supervise.sh from this tree
+(signal_name + breadcrumb snapshot) when parent schedules a bounce window.
+Daemon binary must include death_breadcrumb for .last/.death to populate.
