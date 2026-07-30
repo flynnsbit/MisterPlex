@@ -1,0 +1,21 @@
+try1 http=200 t=0.010401
+true rc=0
+try2 http=200 t=0.009920
+true rc=0
+try3 http=200 t=0.008731
+true rc=0
+try4 http=200 t=0.009611
+true rc=0
+try5 http=200 t=0.012913
+true rc=0
+CORENAME=Plex
+md5_r=14eaeff3
+md5_d=fb9f7619
+n_d=1 n_s=1 n_ff=0
+raw: 00 40 01 00 00 00 00 00 00 c0 00 00 00 00 00 00
+osd lo=0x4000 tv=NTSC fps_sel=0(24) pat=0(none) audio=Off force_bars=0 T10=0 T11=0 R0=0 AR_bits=0
+PLEX_BASE=http://192.168.1.41:32400
+DECODE=320x240
+OSD_CONTROL=1
+PRESENT_PROFILE=0
+<?xml version="1.0" encoding="UTF-8"?><MediaContainer machineIdentifier="misterplex-dev" size="1" commandID="left" location="navigation"><Timeline type="video" state="buffering" time="0" duration="0" volume="100" mute="0" controllable="playPause,stop,volume,audioStream,subtitleStream,seekTo,skipPrevious,skipNext,stepBack,stepForward" location="navigation" mediaIndex="0" partIndex="0" machineIdentifier="misterplex-dev" /></MediaContainer>

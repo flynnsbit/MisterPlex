@@ -1,0 +1,90 @@
+=== media GET first 2k with ffmpeg-like headers (no Range) ===
+http=200 size=6062812 ctype=video/MP2T
+true rc=0
+HTTP/1.1 200 OK
+X-Plex-Protocol: 1.0
+Content-Type: video/MP2T
+Accept-Ranges: none
+Connection: close
+Transfer-Encoding: chunked
+Cache-Control: no-cache
+Date: Thu, 30 Jul 2026 17:41:42 GMT
+
+/tmp/m.bin: data
+000000 47 40 11 10 00 42 f0 25 00 01 c1 00 00 ff 01 ff  >G@...B.%........<
+000010 00 01 fc 80 14 48 12 01 06 46 46 6d 70 65 67 09  >.....H...FFmpeg.<
+000020
+=== decision ===
+http=400
+true rc=0
+<html><head><title>Bad Request</title></head><body><h1>400 Bad Request</h1></body></html>
+=== progress check ===
+<?xml version="1.0" encoding="UTF-8"?><MediaContainer machineIdentifier="misterplex-dev" size="1" commandID="pg1" location="fullScreenVideo"><Timeline type="video" state="playing" time="37231" duration="360021" seekRange="0-360021" volume="100" mute="0" controllable="playPause,stop,volume,audioStream,subtitleStream,seekTo,skipPrevious,skipNext,stepBack,stepForward" location="fullScreenVideo" mediaIndex="0" partIndex="0" machineIdentifier="4edd44aac1de0b731553a3a187104ecd175571a0" protocol="http" address="192.168.1.41" port="32400" providerIdentifier="com.plexapp.plugins.library" key="/library/metadata/12" ratingKey="12" playQueueItemID="12" /></MediaContainer>
+<?xml version="1.0" encoding="UTF-8"?><MediaContainer machineIdentifier="misterplex-dev" size="1" commandID="pg2" location="fullScreenVideo"><Timeline type="video" state="playing" time="39734" duration="360021" seekRange="0-360021" volume="100" mute="0" controllable="playPause,stop,volume,audioStream,subtitleStream,seekTo,skipPrevious,skipNext,stepBack,stepForward" location="fullScreenVideo" mediaIndex="0" partIndex="0" machineIdentifier="4edd44aac1de0b731553a3a187104ecd175571a0" protocol="http" address="192.168.1.41" port="32400" providerIdentifier="com.plexapp.plugins.library" key="/library/metadata/12" ratingKey="12" playQueueItemID="12" /></MediaContainer>
+<?xml version="1.0" encoding="UTF-8"?><MediaContainer machineIdentifier="misterplex-dev" size="1" commandID="pg3" location="fullScreenVideo"><Timeline type="video" state="playing" time="41628" duration="360021" seekRange="0-360021" volume="100" mute="0" controllable="playPause,stop,volume,audioStream,subtitleStream,seekTo,skipPrevious,skipNext,stepBack,stepForward" location="fullScreenVideo" mediaIndex="0" partIndex="0" machineIdentifier="4edd44aac1de0b731553a3a187104ecd175571a0" protocol="http" address="192.168.1.41" port="32400" providerIdentifier="com.plexapp.plugins.library" key="/library/metadata/12" ratingKey="12" playQueueItemID="12" /></MediaContainer>
+=== after stop ===
+<?xml version="1.0" encoding="UTF-8"?><MediaContainer machineIdentifier="misterplex-dev" size="1" commandID="poststop" location="navigation"><Timeline type="video" state="buffering" time="0" duration="0" volume="100" mute="0" controllable="playPause,stop,volume,audioStream,subtitleStream,seekTo,skipPrevious,skipNext,stepBack,stepForward" location="navigation" mediaIndex="0" partIndex="0" machineIdentifier="misterplex-dev" /></MediaContainer>
+0
+=== .41 /clients ===
+<?xml version="1.0" encoding="UTF-8"?>
+<MediaContainer size="1">
+<Server name="MiSTerPlex" host="192.168.1.183" address="192.168.1.183" port="3005" machineIdentifier="misterplex-dev" version="0.2.0" protocol="plex" product="MiSTerPlex" deviceClass="stb" protocolVersion="1" protocolCapabilities="timeline,playback,navigation,mirror,playqueues" />
+</MediaContainer>
+
+true rc=0
+=== player /resources (what Web discovers) ===
+<?xml version="1.0" encoding="UTF-8"?><MediaContainer><Player title="MiSTerPlex" product="MiSTerPlex" protocol="plex" protocolVersion="1" protocolCapabilities="timeline,playback,navigation,mirror,playqueues" deviceClass="stb" machineIdentifier="misterplex-dev" version="0.2.0"/></MediaContainer>
+<?xml version="1.0" encoding="UTF-8"?><MediaContainer><Player title="MiSTerPlex" product="MiSTerPlex" protocol="plex" protocolVersion="1" protocolCapabilities="timeline,playback,navigation,mirror,playqueues" deviceClass="stb" machineIdentifier="misterplex-dev" version="0.2.0"/></MediaContainer>
+=== recent playMedia from logs (last 30) ===
+HTTP IN GET /player/playback/playMedia?key=%2Flibrary%2Fmetadata%2F6&offset=0&commandID=real-cast-v10&protocol=http&address=192.168.1.41&port=32400&machineIdentifier=4edd44aac1de0b731553a3a187104ecd175571a0&X-Plex-Token=REDACTED HTTP/1.1
+HTTP IN GET /player/playback/playMedia?key=%2Flibrary%2Fmetadata%2F6&offset=0&commandID=real-cast-v10&protocol=http&address=192.168.1.41&port=32400&machineIdentifier=4edd44aac1de0b731553a3a187104ecd175571a0&X-Plex-Token=REDACTED HTTP/1.1
+HTTP IN GET /player/playback/playMedia?key=%2Flibrary%2Fmetadata%2F12&offset=0&commandID=p480-bit4_0&protocol=http&address=192.168.1.41&port=32400&machineIdentifier=4edd44aac1de0b731553a3a187104ecd175571a0&X-Plex-Token=REDACTED HTTP/1.1
+HTTP IN GET /player/playback/playMedia?key=%2Flibrary%2Fmetadata%2F12&offset=0&commandID=p480-bit4_1&protocol=http&address=192.168.1.41&port=32400&machineIdentifier=4edd44aac1de0b731553a3a187104ecd175571a0&X-Plex-Token=REDACTED HTTP/1.1
+HTTP IN GET /player/playback/playMedia?key=%2Flibrary%2Fmetadata%2F12&offset=0&commandID=p480-restored_0&protocol=http&address=192.168.1.41&port=32400&machineIdentifier=4edd44aac1de0b731553a3a187104ecd175571a0&X-Plex-Token=REDACTED HTTP/1.1
+HTTP IN GET /player/playback/playMedia?key=%2Flibrary%2Fmetadata%2F12&offset=0&commandID=p480ab-240p HTTP/1.1
+HTTP IN GET /player/playback/playMedia?key=%2Flibrary%2Fmetadata%2F12&offset=0&commandID=p480ab-480p HTTP/1.1
+HTTP IN GET /player/playback/playMedia?key=/library/metadata/6&offset=0&commandID=hdmi-probe&protocol=http&address=192.168.1.41&port=32400&machineIdentifier=4edd44aac1de0b731553a3a187104ecd175571a0&X-Plex-Token=REDACTED HTTP/1.1
+HTTP IN GET /player/playback/playMedia?key=%2Flibrary%2Fmetadata%2F12&offset=0&commandID=headroom-480&protocol=http&address=192.168.1.41&port=32400&machineIdentifier=4edd44aac1de0b731553a3a187104ecd175571a0&X-Plex-Token=REDACTED HTTP/1.1
+HTTP IN GET /player/playback/playMedia?address=75-30-183-153%2E97f3493ee5664b189b604e11500b0a5e%2Eplex%2Edirect&commandID=1&containerKey=%2FplayQueues%2F144481%3Fown%3D1&key=%2Flibrary%2Fmetadata%2F40868&machineIdentifier=1cdd1b7f718cb9f111a2a92abcdd50c7733d14fe&offset=0&port=32400&protocol=https&providerIdentifier=com%2Eplexapp%2Eplugins%2Elibrary&token=REDACTED&type=video HTTP/1.1
+HTTP IN GET /player/playback/playMedia?address=75-30-183-153%2E97f3493ee5664b189b604e11500b0a5e%2Eplex%2Edirect&commandID=1&containerKey=%2FplayQueues%2F144482%3Fown%3D1&key=%2Flibrary%2Fmetadata%2F40868&machineIdentifier=1cdd1b7f718cb9f111a2a92abcdd50c7733d14fe&offset=497000&port=32400&protocol=https&providerIdentifier=com%2Eplexapp%2Eplugins%2Elibrary&token=REDACTED&type=video HTTP/1.1
+HTTP IN GET /player/playback/playMedia?key=%2Flibrary%2Fmetadata%2F12&offset=0&commandID=cast41-1&protocol=http&address=192.168.1.41&port=32400&machineIdentifier=4edd44aac1de0b731553a3a187104ecd175571a0&token=REDACTED&type=video HTTP/1.1
+=== conf token valid on .41? ===
+<?xml version="1.0" encoding="UTF-8"?>
+<MediaContainer size="2" allowSync="0" title1="Plex Library">
+<Directory allowSync="1" filters="1" refreshing="0" key="1" type="movie" title="Movies" agent="tv.plex.agents.movie" scanner="Plex Movie" language="en-US" metadataAgentProviderGroupId="1" uuid="7c4be
+=== playMedia WITHOUT address (conf fallback) ===
+<?xml version="1.0" encoding="UTF-8"?><MediaContainer machineIdentifier="misterplex-dev" size="1" commandID="cast41-noaddr" location="fullScreenVideo"><Timeline type="video" state="buffering" time="0" duration="0" volume="100" mute="0" controllable="playPause,stop,volume,audioStream,subtitleStream,seekTo,skipPrevious,skipNext,stepBack,stepForward" location="fullScreenVideo" mediaIndex="0" partIndex="0" machineIdentifier="4edd44aac1de0b731553a3a187104ecd175571a0" protocol="http" address="192.168.1.41" port="32400" providerIdentifier="com.plexapp.plugins.library" key="/library/metadata/12" ratingKey="12" playQueueItemID="12" /></MediaContainer>http=200
+true rc=0
+<?xml version="1.0" encoding="UTF-8"?><MediaContainer machineIdentifier="misterplex-dev" size="1" commandID="na1" location="fullScreenVideo"><Timeline type="video" state="playing" time="2203" duration="360021" seekRange="0-360021" volume="100" mute="0" controllable="playPause,stop,volume,audioStream,subtitleStream,seekTo,skipPrevious,skipNext,stepBack,stepForward" location="fullScreenVideo" mediaIndex="0" partIndex="0" machineIdentifier="plex-server" protocol="http" address="192.168.1.41" port="32400" providerIdentifier="com.plexapp.plugins.library" key="/library/metadata/12" ratingKey="12" playQueueItemID="12" /></MediaContainer>
+1
+HTTP IN GET /player/playback/playMedia?key=%2Flibrary%2Fmetadata%2F12&offset=0&commandID=cast41-noaddr&type=video HTTP/1.1
+HTTP OUT 200 playMedia <Timeline type="video" state="buffering" time="0" duration="0" volume="100" mute="0" controllable="playPause,stop,volume,audioStream,subtitleStream,seekTo,skipPrevious,skipNext,stepBack,stepForward" location="fullScreenVideo" mediaIndex="0"
+playMedia ACK key=/library/metadata/12 offMs=0
+HTTP IN GET /player/timeline/poll?commandID=4&wait=1 HTTP/1.1
+misterplexd: content resolution=320x240 source=OSD O[4] status_word=0x4000 weak=320x240 bitrate=1000
+misterplexd: resolved PMS universal 480p 320x240 /library/metadata/12 title=Sync 24000 Long Blip dur=360021 transcode=1 base=http://192.168.1.41:32400
+misterplexd: resolved PMS universal 480p 320x240 /library/metadata/12 title=Sync 24000 Long Blip dur=360021 transcode=1 base=http://192.168.1.41:32400
+misterplexd: PLAY http://192.168.1.41:32400/video/:/transcode/universal/start.mp4?hasMDE=1&path=%2Flibrary%2Fmetadata%2F12&mediaIndex=0&partIndex=0&protocol=http&fastSeek=1&directPlay=0&directStream=0&subtitleSize=100&audioBoost=100&location=lan&copyts=1&session=mplex-3c6ef362&videoQuality=60&videoResolution=320x240&maxVideoBitrate=1000&videoCodec=h264&audioCodec=aac&videoProfile=baseline&videoLevel=30&X-Plex-Token=REDACTED off=0 dur=360021
+misterplexd: resolved PMS universal 480p 624x480 /library/metadata/12 title=Sync 24000 Long Blip dur=360021 transcode=1 base=http://192.168.1.41:32400
+misterplexd: PLAY http://192.168.1.41:32400/video/:/transcode/universal/start.mp4?hasMDE=1&path=%2Flibrary%2Fmetadata%2F12&mediaIndex=0&partIndex=0&protocol=http&fastSeek=1&directPlay=0&directStream=0&subtitleSize=100&audioBoost=100&location=lan&copyts=1&session=mplex-daa66d13&videoQuality=60&videoResolution=624x480&maxVideoBitrate=2000&videoCodec=h264&audioCodec=aac&videoProfile=baseline&videoLevel=30&X-Plex-Token=REDACTED off=0 dur=360021
+misterplexd: resolved PMS universal 480p 320x240 /library/metadata/12 title=Sync 24000 Long Blip dur=360021 transcode=1 base=http://192.168.1.41:32400
+misterplexd: PLAY http://192.168.1.41:32400/video/:/transcode/universal/start.mp4?hasMDE=1&path=%2Flibrary%2Fmetadata%2F12&mediaIndex=0&partIndex=0&protocol=http&fastSeek=1&directPlay=0&directStream=0&subtitleSize=100&audioBoost=100&location=lan&copyts=1&session=mplex-78dde6c4&videoQuality=60&videoResolution=320x240&maxVideoBitrate=1000&videoCodec=h264&audioCodec=aac&videoProfile=baseline&videoLevel=30&X-Plex-Token=REDACTED off=0 dur=360021
+misterplexd: resolved PMS universal 480p 320x240 /library/metadata/12 title=Sync 24000 Long Blip dur=360021 transcode=1 base=http://192.168.1.41:32400
+misterplexd: PLAY http://192.168.1.41:32400/video/:/transcode/universal/start.mp4?hasMDE=1&path=%2Flibrary%2Fmetadata%2F12&mediaIndex=0&partIndex=0&protocol=http&fastSeek=1&directPlay=0&directStream=0&subtitleSize=100&audioBoost=100&location=lan&copyts=1&session=mplex-9e3779b1&videoQuality=60&videoResolution=320x240&maxVideoBitrate=1000&videoCodec=h264&audioCodec=aac&videoProfile=baseline&videoLevel=30&X-Plex-Token=REDACTED off=0 dur=360021
+misterplexd: resolved PMS universal 480p 624x480 /library/metadata/12 title=Sync 24000 Long Blip dur=360021 transcode=1 base=http://192.168.1.41:32400
+misterplexd: PLAY http://192.168.1.41:32400/video/:/transcode/universal/start.mp4?hasMDE=1&path=%2Flibrary%2Fmetadata%2F12&mediaIndex=0&partIndex=0&protocol=http&fastSeek=1&directPlay=0&directStream=0&subtitleSize=100&audioBoost=100&location=lan&copyts=1&session=mplex-9e3779b1&videoQuality=60&videoResolution=624x480&maxVideoBitrate=2000&videoCodec=h264&audioCodec=aac&videoProfile=baseline&videoLevel=30&X-Plex-Token=REDACTED off=0 dur=360021
+misterplexd: resolved PMS universal 480p 320x240 /library/metadata/6 title=Sync 24fps Blip dur=30021 transcode=1 base=http://192.168.1.41:32400
+misterplexd: PLAY http://192.168.1.41:32400/video/:/transcode/universal/start.mp4?hasMDE=1&path=%2Flibrary%2Fmetadata%2F6&mediaIndex=0&partIndex=0&protocol=http&fastSeek=1&directPlay=0&directStream=0&subtitleSize=100&audioBoost=100&location=lan&copyts=1&session=mplex-9e3779b1&videoQuality=60&videoResolution=320x240&maxVideoBitrate=1000&videoCodec=h264&audioCodec=aac&videoProfile=baseline&videoLevel=30&X-Plex-Token=REDACTED off=0 dur=30021
+misterplexd: resolved PMS universal 480p 624x480 /library/metadata/12 title=Sync 24000 Long Blip dur=360021 transcode=1 base=http://192.168.1.41:32400
+misterplexd: PLAY http://192.168.1.41:32400/video/:/transcode/universal/start.mp4?hasMDE=1&path=%2Flibrary%2Fmetadata%2F12&mediaIndex=0&partIndex=0&protocol=http&fastSeek=1&directPlay=0&directStream=0&subtitleSize=100&audioBoost=100&location=lan&copyts=1&session=mplex-9e3779b1&videoQuality=60&videoResolution=624x480&maxVideoBitrate=2000&videoCodec=h264&audioCodec=aac&videoProfile=baseline&videoLevel=30&X-Plex-Token=REDACTED off=0 dur=360021
+misterplexd: resolved PMS universal 480p 320x240 /library/metadata/40868 title=Encounter at Farpoint dur=5484416 transcode=1 base=https://75-30-183-153.97f3493ee5664b189b604e11500b0a5e.plex.direct:32400
+misterplexd: PLAY https://75-30-183-153.97f3493ee5664b189b604e11500b0a5e.plex.direct:32400/video/:/transcode/universal/start.mp4?hasMDE=1&path=%2Flibrary%2Fmetadata%2F40868&mediaIndex=0&partIndex=0&protocol=http&fastSeek=1&directPlay=0&directStream=0&subtitleSize=100&audioBoost=100&location=lan&copyts=1&session=mplex-3c6ef362&videoQuality=60&videoResolution=320x240&maxVideoBitrate=1000&videoCodec=h264&audioCodec=aac&videoProfile=baseline&videoLevel=30&X-Plex-Token=REDACTED off=0 dur=5484416
+misterplexd: resolved PMS universal 480p 320x240 /library/metadata/40868 title=Encounter at Farpoint dur=5484416 transcode=1 base=https://75-30-183-153.97f3493ee5664b189b604e11500b0a5e.plex.direct:32400
+misterplexd: PLAY https://75-30-183-153.97f3493ee5664b189b604e11500b0a5e.plex.direct:32400/video/:/transcode/universal/start.mp4?hasMDE=1&path=%2Flibrary%2Fmetadata%2F40868&mediaIndex=0&partIndex=0&protocol=http&fastSeek=1&directPlay=0&directStream=0&subtitleSize=100&audioBoost=100&location=lan&copyts=1&session=mplex-daa66d13&videoQuality=60&videoResolution=320x240&maxVideoBitrate=1000&videoCodec=h264&audioCodec=aac&videoProfile=baseline&videoLevel=30&offset=497&X-Plex-Token=REDACTED off=497000 dur=5484416
+misterplexd: resolved PMS universal 480p 320x240 /library/metadata/40868 title=Encounter at Farpoint dur=5484416 transcode=1 base=https://75-30-183-153.97f3493ee5664b189b604e11500b0a5e.plex.direct:32400
+misterplexd: PLAY https://75-30-183-153.97f3493ee5664b189b604e11500b0a5e.plex.direct:32400/video/:/transcode/universal/start.mp4?hasMDE=1&path=%2Flibrary%2Fmetadata%2F40868&mediaIndex=0&partIndex=0&protocol=http&fastSeek=1&directPlay=0&directStream=0&subtitleSize=100&audioBoost=100&location=lan&copyts=1&session=mplex-78dde6c4&videoQuality=60&videoResolution=320x240&maxVideoBitrate=1000&videoCodec=h264&audioCodec=aac&videoProfile=baseline&videoLevel=30&offset=1087&X-Plex-Token=REDACTED off=1087000 dur=5484416
+misterplexd: resolved PMS universal 480p 320x240 /library/metadata/12 title=Sync 24000 Long Blip dur=360021 transcode=1 base=http://192.168.1.41:32400
+misterplexd: PLAY http://192.168.1.41:32400/video/:/transcode/universal/start.mp4?hasMDE=1&path=%2Flibrary%2Fmetadata%2F12&mediaIndex=0&partIndex=0&protocol=http&fastSeek=1&directPlay=0&directStream=0&subtitleSize=100&audioBoost=100&location=lan&copyts=1&session=mplex-17156075&videoQuality=60&videoResolution=320x240&maxVideoBitrate=1000&videoCodec=h264&audioCodec=aac&videoProfile=baseline&videoLevel=30&X-Plex-Token=REDACTED off=0 dur=360021
+HTTP IN GET /player/playback/playMedia?key=%2Flibrary%2Fmetadata%2F12&offset=0&commandID=cast41-noaddr&type=video HTTP/1.1
+misterplexd: resolved PMS universal 480p 320x240 /library/metadata/12 title=Sync 24000 Long Blip dur=360021 transcode=1 base=http://192.168.1.41:32400
+misterplexd: PLAY http://192.168.1.41:32400/video/:/transcode/universal/start.mp4?hasMDE=1&path=%2Flibrary%2Fmetadata%2F12&mediaIndex=0&partIndex=0&protocol=http&fastSeek=1&directPlay=0&directStream=0&subtitleSize=100&audioBoost=100&location=lan&copyts=1&session=mplex-b54cda26&videoQuality=60&videoResolution=320x240&maxVideoBitrate=1000&videoCodec=h264&audioCodec=aac&videoProfile=baseline&videoLevel=30&X-Plex-Token=REDACTED off=0 dur=360021

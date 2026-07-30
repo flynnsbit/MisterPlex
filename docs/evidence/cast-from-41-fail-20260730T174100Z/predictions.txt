@@ -1,0 +1,7 @@
+PREDICTIONS cast-from-41 (before measure):
+P1: playMedia to misterplex with protocol=http address=192.168.1.41 machineIdentifier=4edd44aa is received (HTTP 200 ACK).
+P2: Daemon resolves a playable URL under http://192.168.1.41:32400 (not plex.direct).
+P3: Media/transcode URL with conf token returns HTTP 200 and ffmpeg starts — OR fails with 401/404/empty and nothing plays.
+P4: If nothing plays, first divergence vs plex.direct path is either resolve fail, media HTTP non-2xx, or ffmpeg exit before first frame.
+P5: Media fetch path may be status-blind like timeline (!body.empty / curl without -f).
+SERVER UNDER TEST: .41 machineIdentifier=4edd44aac1de0b731553a3a187104ecd175571a0 ONLY.
