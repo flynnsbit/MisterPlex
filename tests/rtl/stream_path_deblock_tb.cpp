@@ -266,7 +266,13 @@ int main(int argc, char** argv) {
         if (int(dut.nalu_count) != expectNalCount || int(dut.idr_count) < expectIdrCount || int(dut.slice_count) < expectNonIdrCount) throw std::runtime_error("stream_path counts do not match nal_sequence.v1 expectations");
         if (placePulses < 1) throw std::runtime_error("expected IDR residual place pulse");
         if (!sawExpectedCsum || reconSig3bCycles == 0) throw std::runtime_error("stream_path handoff did not preserve residual into recon");
-        if ((dut.recon_dbg & 0x79) != 0x79) throw std::runtime_error("recon debug bits do not show coeff/dequant/idct/recon/valid path");
+        // Residual path bits are latched at IDR paint; subsequent P paints clear lat_coeff
+        // and overlay inter status. Require residual path on any decoded frame event.
+        bool sawResidualPathDbg = false;
+        for (int dbg : frameDbg) {
+            if ((dbg & 0x79) == 0x79) sawResidualPathDbg = true;
+        }
+        if (!sawResidualPathDbg) throw std::runtime_error("recon debug bits do not show coeff/dequant/idct/recon/valid path");
         if (residualQp != goldenQp) throw std::runtime_error("stream residual QP differs from mb_golden QP");
         if (int(dut.disable_deblocking_filter_idc) != 0 || sign5(dut.slice_alpha_c0_offset_div2) != 0 ||
             sign5(dut.slice_beta_offset_div2) != 0 || sign5(dut.slice_alpha_c0_offset) != 0 ||

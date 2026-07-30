@@ -24,7 +24,9 @@ elif [[ "$VERILATOR_RC" -ne 0 ]]; then
 fi
 
 QIP="$ROOT/fpga/Plex_MiSTer/files.qip"
-for src in rtl/stream_path.sv rtl/h264_deblock.sv rtl/h264_hybrid_mb_own.sv rtl/decode_stub.sv rtl/slice_hdr_parser.sv; do
+for src in rtl/stream_path.sv rtl/h264_deblock.sv rtl/h264_hybrid_mb_own.sv rtl/decode_stub.sv \
+  rtl/h264_recon_export.sv \
+  rtl/h264_p_mb_traverse.sv rtl/h264_cavlc_residual.sv rtl/slice_hdr_parser.sv; do
   if ! grep -q "$src" "$QIP"; then
     echo "RTL SIM ERROR: files.qip does not list product $src" >&2
     exit 2
@@ -50,9 +52,12 @@ RTL=(
   "$ROOT/fpga/Plex_MiSTer/rtl/h264_deblock.sv"
   "$ROOT/fpga/Plex_MiSTer/rtl/h264_inter_pred.sv"
   "$ROOT/fpga/Plex_MiSTer/rtl/h264_dpb.sv"
-  "$ROOT/fpga/Plex_MiSTer/rtl/h264_hybrid_mb_own.sv" \
-  "$ROOT/fpga/Plex_MiSTer/rtl/decode_stub.sv" \
-  "$ROOT/fpga/Plex_MiSTer/rtl/h264_deblock_mb.sv" \
+  "$ROOT/fpga/Plex_MiSTer/rtl/h264_hybrid_mb_own.sv"
+  "$ROOT/fpga/Plex_MiSTer/rtl/decode_stub.sv"
+  "$ROOT/fpga/Plex_MiSTer/rtl/h264_recon_export.sv"
+  "$ROOT/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv"
+  "$ROOT/fpga/Plex_MiSTer/rtl/h264_cavlc_residual.sv"
+  "$ROOT/fpga/Plex_MiSTer/rtl/h264_deblock_mb.sv"
   "$ROOT/fpga/Plex_MiSTer/rtl/h264_dpb_ref_commit.sv"
   "$ROOT/fpga/Plex_MiSTer/rtl/stream_path.sv"
 )

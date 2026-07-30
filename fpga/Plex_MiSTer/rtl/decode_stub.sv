@@ -39,6 +39,22 @@ module decode_stub #(
 	// Parsed first-MB mvd_l0 se(v) from slice_hdr_parser (qpel).
 	input  wire signed [15:0] first_mb_mvd_x,
 	input  wire signed [15:0] first_mb_mvd_y,
+
+	// Full P-slice MB traversal events (h264_p_mb_traverse via stream_path hold).
+	input  wire        trav_mb_valid,
+	output wire        trav_mb_ready,
+	input  wire [15:0] trav_mb_addr,
+	input  wire [7:0]  trav_mb_x,
+	input  wire [7:0]  trav_mb_y,
+	input  wire        trav_mb_skip,
+	input  wire [2:0]  trav_part_mode,
+	input  wire [2:0]  trav_part_count,
+	input  wire        trav_uses_sub_mb,
+	input  wire        trav_intra,
+	input  wire signed [15:0] trav_mvd_x,
+	input  wire signed [15:0] trav_mvd_y,
+	input  wire        trav_mvd_valid,
+	input  wire        trav_slice_done,
 	// P3-3l5: PPS entropy + first I mb_type for hybrid ownership
 	input  wire        entropy_cabac,
 	input  wire [7:0]  first_mb_type_i, // I-slice mb_type when has_mb_type
@@ -67,6 +83,15 @@ module decode_stub #(
 	output reg  signed [15:0] product_fetch_mv_y,
 	output wire signed [15:0] product_luma_origin_x,
 	output wire signed [15:0] product_luma_origin_y,
+
+
+	// P3-3l5 recon export tap → h264_recon_export
+	output wire        exp_sample_valid,
+	output wire [31:0] exp_sample_off,
+	output wire [7:0]  exp_sample_data,
+	output wire        exp_frame_start,
+	output wire        exp_frame_done,
+	output wire        exp_frame_abort,
 
 	output reg         wr_en,
 	output reg  [15:0] wr_pixel,
@@ -133,6 +158,14 @@ module decode_stub #(
 	reg signed [15:0] lat_mvd_y;
 	reg signed [15:0] pending_mvd_x;
 	reg signed [15:0] pending_mvd_y;
+
+	// Walker slice lifetime (sv-traverse owns MB sequence).
+	reg            trav_slice_pending;
+	reg            trav_active_slice;
+	reg            trav_got_mb;
+	reg            p_commit_deblock_done; // sticky: deblock_mb_done is 1-cycle
+	reg [15:0]     mvd_parsed_mb_count;
+	reg [15:0]     mvd_nonzero_mb_count;
 	// Launch-cycle neighbour snapshot (A/B/C/D) for median MVP 8.4.1.3.
 	localparam int MV_NB_MAX = 40;
 	reg signed [15:0] mv_left_x, mv_left_y;
@@ -524,6 +557,17 @@ module decode_stub #(
 	                                       (first_mb_part_mode == 3'd4));
 	wire              p_fetch_edge = p_fetch_candidate && !p_candidate_seen;
 
+	// Walker owns type-1 P MB sequence when live.
+	wire              use_trav = trav_active_slice || trav_slice_pending || trav_mb_valid;
+	// Accept walker beats in IDLE, between FETCHes, or at end of product P-MB commit.
+	wire              trav_can_accept =
+		(phase == PH_IDLE) ||
+		(phase == PH_FETCH && !p_fetch_launch_pending && (dpb_fetch_done || !dpb_fetch_busy)) ||
+		(phase == PH_DPB_FILL && recon_p_mb_commit &&
+		 (dpb_fill_sample_idx == 9'd384) &&
+		 (ref_commit_deblock_mb_done || p_commit_deblock_done));
+	assign trav_mb_ready = trav_mb_valid && trav_can_accept;
+
 	// Product MVP + mvd → final qpel MV for DPB fetch (replaces hardwired 0).
 	// MV neighbour array is MV_NB_MAX entries; index with clog2 width.
 	localparam int MV_NB_AW = $clog2(MV_NB_MAX);
@@ -584,6 +628,19 @@ module decode_stub #(
 		if (dpb_mem_we && dpb_mem_waddr < DPB_MEM_BYTES[31:0])
 			dpb_mem[dpb_mem_waddr[17:0]] <= dpb_mem_wdata;
 	end
+
+
+	// Recon export tap: current-frame DPB writes only.
+	wire [31:0] exp_cur_base = dpb_current_base;
+	wire [31:0] exp_off_raw = dpb_mem_waddr - exp_cur_base;
+	assign exp_sample_valid = dpb_mem_we &&
+	                          (dpb_mem_waddr >= exp_cur_base) &&
+	                          (exp_off_raw < DPB_FRAME_BYTES[31:0]);
+	assign exp_sample_off = exp_off_raw;
+	assign exp_sample_data = dpb_mem_wdata;
+	assign exp_frame_start = dpb_idr_start;
+	assign exp_frame_done = ENABLE_DPB_REF_SEAM ? deblock_ref_ready_pulse : dpb_frame_done_pulse;
+	assign exp_frame_abort = reset | deblock_commit_order_error;
 
 	// DPB read port (for MC reference fetch) — 1-cycle latency
 	assign dpb_mem_rdata = (dpb_mem_raddr_q < DPB_MEM_BYTES[31:0]) ?
@@ -902,6 +959,12 @@ module decode_stub #(
 			lat_mvd_y <= 16'sd0;
 			pending_mvd_x <= 16'sd0;
 			pending_mvd_y <= 16'sd0;
+			trav_slice_pending <= 1'b0;
+			trav_active_slice <= 1'b0;
+			trav_got_mb <= 1'b0;
+			p_commit_deblock_done <= 1'b0;
+			mvd_parsed_mb_count <= 16'd0;
+			mvd_nonzero_mb_count <= 16'd0;
 			mv_left_x <= 16'sd0;
 			mv_left_y <= 16'sd0;
 			mv_left_v <= 1'b0;
@@ -976,7 +1039,14 @@ module decode_stub #(
 				if (hy_host || entropy_cabac)
 					lat_hybrid_host <= 1'b1;
 			end
-			if (p_fetch_edge) begin
+			// Walker slice lifetime (sticky done until P commit drains).
+			if (trav_mb_ready)
+				trav_active_slice <= 1'b1;
+			if (trav_slice_done) begin
+				trav_slice_pending <= 1'b1;
+				trav_active_slice <= 1'b0;
+			end
+			if (p_fetch_edge && !use_trav) begin
 				pending_p_fetch <= 1'b1;
 				pending_p_skip <= first_mb_p_skip;
 				pending_p_mb_x <= p_req_mb_x;
@@ -993,8 +1063,8 @@ module decode_stub #(
 			else if (p_fetch_candidate)
 				p_candidate_seen <= 1'b1;
 			if (phase == PH_IDLE) begin
-			// Idle: on VCL wait for this NAL's place-time residual pulse.
-			if (vcl_pulse) begin
+			// Idle: IDR/I wait for residual; type-1 P is walker-owned (no WAIT).
+			if (vcl_pulse && (last_nal_type[4:0] != 5'd1)) begin
 				phase    <= PH_WAIT;
 				busy     <= 1'b1;
 				wait_cnt <= WAIT_MAX[11:0];
@@ -1022,7 +1092,79 @@ module decode_stub #(
 				product_recon_ok <= 1'b0;
 				hybrid_host_required <= 1'b0;
 				hybrid_fpga_owned <= 1'b0;
-			end else if (pending_p_fetch && dpb_ref_ready) begin
+			end else if (vcl_pulse && (last_nal_type[4:0] == 5'd1)) begin
+				// Remember P VCL; FETCH starts on trav_mb_ready or first-MB fallback.
+				lat_type <= last_nal_type;
+				lat_nalu <= nalu_count;
+				lat_idr  <= idr_count;
+				lat_p_inter <= 1'b0;
+				lat_inter_recon_ok <= 1'b0;
+				recon_slice_start_r <= 1'b1;
+				lat_cabac <= entropy_cabac;
+				lat_hybrid_host <= 1'b0;
+				lat_hybrid_fpga <= 1'b0;
+				product_recon_ok <= 1'b0;
+				hybrid_host_required <= 1'b0;
+				hybrid_fpga_owned <= 1'b0;
+			end else if (trav_mb_ready && trav_intra) begin
+				trav_got_mb <= 1'b0;
+			end else if (trav_mb_ready) begin
+				phase <= PH_FETCH;
+				busy <= 1'b1;
+				lat_type <= 8'd1;
+				lat_nalu <= nalu_count;
+				lat_idr <= idr_count;
+				is_idr_frame <= 1'b0;
+				is_i_frame <= 1'b0;
+				lat_sps <= sps_valid;
+				lat_mb_w <= (mb_w == 0) ? 8'd20 : mb_w;
+				lat_mb_h <= (mb_h == 0) ? 8'd15 : mb_h;
+				lat_res_ok <= 1'b0;
+				lat_res_tc <= 5'd0;
+				lat_res_dc <= 8'sd0;
+				lat_qp <= slice_qp;
+				lat_wait_res <= 1'b0;
+				lat_p_inter <= 1'b1;
+				lat_p_skip <= trav_mb_skip;
+				lat_p_mb_x <= trav_mb_x;
+				lat_p_mb_y <= trav_mb_y;
+				lat_p_mb_addr <= trav_mb_addr;
+				lat_p_part_mode <= trav_part_mode;
+				lat_p_part_count <= trav_part_count;
+				lat_p_uses_sub_mb <= trav_uses_sub_mb;
+				lat_p_intra <= 1'b0;
+				lat_mvd_x <= trav_mvd_valid ? trav_mvd_x : 16'sd0;
+				lat_mvd_y <= trav_mvd_valid ? trav_mvd_y : 16'sd0;
+				if (trav_mvd_valid) begin
+					mvd_parsed_mb_count <= mvd_parsed_mb_count + 16'd1;
+					if ((trav_mvd_x != 16'sd0) || (trav_mvd_y != 16'sd0))
+						mvd_nonzero_mb_count <= mvd_nonzero_mb_count + 16'd1;
+				end
+				mv_d_v <= (trav_mb_x != 8'd0) && (trav_mb_y != 8'd0) && mv_col_al_v;
+				mv_d_x <= mv_col_al_x;
+				mv_d_y <= mv_col_al_y;
+				if ((trav_mb_y != 8'd0) && (trav_mb_x < MV_NB_MAX[7:0])) begin
+					mv_col_al_v <= mv_above_v[trav_mb_x[MV_NB_AW-1:0]];
+					mv_col_al_x <= mv_above_x[trav_mb_x[MV_NB_AW-1:0]];
+					mv_col_al_y <= mv_above_y[trav_mb_x[MV_NB_AW-1:0]];
+				end else begin
+					mv_col_al_v <= 1'b0;
+					mv_col_al_x <= 16'sd0;
+					mv_col_al_y <= 16'sd0;
+				end
+				trav_got_mb <= 1'b1;
+				lat_hybrid_host <= 1'b1;
+				lat_hybrid_fpga <= 1'b0;
+				lat_hybrid_code <= 3'd1;
+				lat_hybrid_reason <= 4'd5;
+				product_recon_ok <= 1'b0;
+				recon_valid <= 1'b0;
+				recon_dbg_valid <= 1'b0;
+				for (coeff_i = 0; coeff_i < 16; coeff_i = coeff_i + 1)
+					lat_coeff[coeff_i] <= 16'sd0;
+				dpb_fetch_start <= 1'b1;
+				p_fetch_launch_pending <= 1'b1;
+			end else if (pending_p_fetch && dpb_ref_ready && !use_trav) begin
 				phase <= PH_FETCH;
 				busy <= 1'b1;
 				lat_type <= 8'd1;
@@ -1144,14 +1286,14 @@ module decode_stub #(
 				inter_res_load_pending <= residual_ok && !first_mb_p_skip;
 				recon_valid  <= 1'b0;
 				recon_dbg_valid <= 1'b0;
-				if (p_fetch_candidate && dpb_ref_ready) begin
+				if (p_fetch_candidate && dpb_ref_ready && !use_trav) begin
 					phase <= PH_FETCH;
 					dpb_fetch_start <= 1'b1;
 					p_fetch_launch_pending <= 1'b1;
 					pending_p_fetch <= 1'b0;
 				end
 			end
-			end else if (p_fetch_advance) begin
+			end else if (p_fetch_advance && !use_trav) begin
 				lat_p_mb_addr <= lat_p_next_mb_addr;
 				lat_p_mb_x <= lat_p_next_mb_x;
 				lat_p_mb_y <= lat_p_next_mb_y;
@@ -1236,23 +1378,77 @@ module decode_stub #(
 				dpb_fill_sample_idx <= dpb_fill_sample_idx + 9'd1;
 			end else if (dpb_fill_sample_idx == 9'd384) begin
 				// Wait for in-loop deblock MB completion before next MB / promote.
-				if (ref_commit_deblock_mb_done) begin
+				// mb_done is a 1-cycle pulse — latch so trav-wait cannot miss it.
+				if (ref_commit_deblock_mb_done)
+					p_commit_deblock_done <= 1'b1;
+				if (ref_commit_deblock_mb_done || p_commit_deblock_done) begin
 					if (recon_p_mb_commit) begin
-						// Single P-MB commit complete.
-						recon_p_mb_commit <= 1'b0;
-						if (lat_p_inter && (lat_p_next_mb_addr <= DPB_LAST_MB_ADDR)) begin
+						// Single P-MB commit complete — next trav MB, slice end, or fallback.
+						trav_got_mb <= 1'b0;
+						if (trav_mb_ready && !trav_intra) begin
+							recon_p_mb_commit <= 1'b0;
+							p_commit_deblock_done <= 1'b0;
+							phase <= PH_FETCH;
+							lat_p_skip <= trav_mb_skip;
+							lat_p_mb_x <= trav_mb_x;
+							lat_p_mb_y <= trav_mb_y;
+							lat_p_mb_addr <= trav_mb_addr;
+							lat_p_part_mode <= trav_part_mode;
+							lat_p_part_count <= trav_part_count;
+							lat_p_uses_sub_mb <= trav_uses_sub_mb;
+							lat_p_intra <= 1'b0;
+							lat_mvd_x <= trav_mvd_valid ? trav_mvd_x : 16'sd0;
+							lat_mvd_y <= trav_mvd_valid ? trav_mvd_y : 16'sd0;
+							if (trav_mvd_valid) begin
+								mvd_parsed_mb_count <= mvd_parsed_mb_count + 16'd1;
+								if ((trav_mvd_x != 16'sd0) || (trav_mvd_y != 16'sd0))
+									mvd_nonzero_mb_count <= mvd_nonzero_mb_count + 16'd1;
+							end
+							mv_d_v <= (trav_mb_x != 8'd0) && (trav_mb_y != 8'd0) && mv_col_al_v;
+							mv_d_x <= mv_col_al_x;
+							mv_d_y <= mv_col_al_y;
+							if ((trav_mb_y != 8'd0) && (trav_mb_x < MV_NB_MAX[7:0])) begin
+								mv_col_al_v <= mv_above_v[trav_mb_x[MV_NB_AW-1:0]];
+								mv_col_al_x <= mv_above_x[trav_mb_x[MV_NB_AW-1:0]];
+								mv_col_al_y <= mv_above_y[trav_mb_x[MV_NB_AW-1:0]];
+							end else begin
+								mv_col_al_v <= 1'b0;
+								mv_col_al_x <= 16'sd0;
+								mv_col_al_y <= 16'sd0;
+							end
+							trav_got_mb <= 1'b1;
+							dpb_fetch_start <= 1'b1;
+							p_fetch_launch_pending <= 1'b1;
+						end else if (trav_mb_ready && trav_intra) begin
+							// consume intra-in-P beat; stay armed for next
+							trav_got_mb <= 1'b0;
+						end else if (trav_slice_pending || trav_slice_done) begin
+							recon_p_mb_commit <= 1'b0;
+							p_commit_deblock_done <= 1'b0;
+							trav_slice_pending <= 1'b0;
+							trav_active_slice <= 1'b0;
+							recon_frame_done_r <= 1'b1;
+							dpb_fill_sample_idx <= 9'd385;
+						end else if (use_trav) begin
+							// Wait for next walker beat; keep recon_p_mb_commit + sticky done.
+						end else if (lat_p_inter && (lat_p_next_mb_addr <= DPB_LAST_MB_ADDR)) begin
+							recon_p_mb_commit <= 1'b0;
+							p_commit_deblock_done <= 1'b0;
 							phase <= PH_FETCH;
 							p_fetch_advance <= 1'b1;
 						end else begin
-							// Last P MB: mark frame_done first; boundary is next cycle
-							// so writeback_ctrl can latch ref_pending before promote.
+							// Last P MB (fallback path): frame_done then boundary.
+							recon_p_mb_commit <= 1'b0;
+							p_commit_deblock_done <= 1'b0;
 							recon_frame_done_r <= 1'b1;
 							dpb_fill_sample_idx <= 9'd385;
 						end
 					end else if (dpb_fill_mb_addr == DPB_LAST_MB_ADDR) begin
+						p_commit_deblock_done <= 1'b0;
 						recon_frame_done_r <= 1'b1;
 						dpb_fill_sample_idx <= 9'd385;
 					end else begin
+						p_commit_deblock_done <= 1'b0;
 						dpb_fill_mb_addr <= dpb_fill_mb_addr + 1'b1;
 						dpb_fill_sample_idx <= 9'd0;
 					end

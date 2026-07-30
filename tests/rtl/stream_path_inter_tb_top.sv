@@ -52,7 +52,14 @@ module stream_path_inter_tb #(
 	output wire        fs_wr_en,
 	output wire [15:0] fs_wr_pixel,
 	output wire        fs_wr_reset,
-	output wire        fs_swap
+	output wire        fs_swap,
+	output wire [15:0] p_mb_count,
+	output wire        p_slice_done,
+	output wire        p_traverse_busy,
+	output wire        product_recon_ok,
+	output wire        hybrid_host_required,
+	output wire signed [15:0] product_fetch_mv_x,
+	output wire signed [15:0] product_fetch_mv_y
 );
 	wire signed [15:0] residual_coeff [0:15];
 	wire [15:0] fs_wr_pixel_raw;
@@ -69,8 +76,6 @@ module stream_path_inter_tb #(
 	wire [15:0] stream_ddr_underruns, stream_ddr_overruns;
 
 	wire        hybrid_fpga_owned_w;
-	wire        hybrid_host_required_w;
-	wire        product_recon_ok_w;
 	wire signed [15:0] first_mb_mvd_x_w, first_mb_mvd_y_w;
 	wire signed [15:0] product_fetch_mv_x_w, product_fetch_mv_y_w;
 	wire signed [15:0] product_luma_origin_x_w, product_luma_origin_y_w;
@@ -133,9 +138,26 @@ module stream_path_inter_tb #(
 		.first_mb_type(first_mb_type),
 		.has_mb_type(has_mb_type),
 				.first_mb_mvd_x(first_mb_mvd_x_w),
+		
+		.p_mb_valid(),
+		.p_mb_addr(),
+		.p_mb_x(),
+		.p_mb_y(),
+		.p_mb_skip(),
+		.p_mb_part_mode(),
+		.p_mb_part_count(),
+		.p_mb_uses_sub_mb(),
+		.p_mb_intra(),
+		.p_mb_mvd_x(),
+		.p_mb_mvd_y(),
+		.p_mb_mvd_valid(),
+		.p_mb_count(p_mb_count),
+		.p_slice_done(p_slice_done),
+		.p_traverse_busy(p_traverse_busy),
+
 		.first_mb_mvd_y(first_mb_mvd_y_w),
-		.product_fetch_mv_x(product_fetch_mv_x_w),
-		.product_fetch_mv_y(product_fetch_mv_y_w),
+		.product_fetch_mv_x(product_fetch_mv_x),
+		.product_fetch_mv_y(product_fetch_mv_y),
 		.product_luma_origin_x(product_luma_origin_x_w),
 		.product_luma_origin_y(product_luma_origin_y_w),
 		.slice_qp(slice_qp),
@@ -151,8 +173,8 @@ module stream_path_inter_tb #(
 		.recon_dbg_valid(recon_dbg_valid),
 		.recon_valid(recon_valid),
 			.hybrid_fpga_owned(hybrid_fpga_owned_w),
-	.hybrid_host_required(hybrid_host_required_w),
-	.product_recon_ok(product_recon_ok_w),
+	.hybrid_host_required(hybrid_host_required),
+	.product_recon_ok(product_recon_ok),
 	.hybrid_own_code(hybrid_own_code_w),
 	.hybrid_own_reason(hybrid_own_reason_w),
 	.entropy_cabac(entropy_cabac_w),

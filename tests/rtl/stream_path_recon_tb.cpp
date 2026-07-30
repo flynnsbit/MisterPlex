@@ -47,6 +47,9 @@ int main(int argc, char** argv) {
         return 2;
     }
     try {
+        // Product IDR ENABLE_DPB_REF_SEAM fills every MB (384 samples + deblock) before paint.
+        // Measured ~430k cycles/frame @320x240; keep headroom for two fixture pushes.
+        constexpr int kWaitForFrameCycles = 1200000;
         const auto data = readFile(argv[1]);
         Verilated::commandArgs(argc, argv);
         Vstream_path_recon_tb dut;
@@ -102,7 +105,7 @@ int main(int argc, char** argv) {
         };
 
         auto waitForFrame = [&](int pass, uint16_t previous_frames) -> bool {
-            for (int i = 0; i < 300000; ++i) {
+            for (int i = 0; i < kWaitForFrameCycles; ++i) {
                 tick(dut, cyc);
                 observe();
                 if (dut.stub_frames != previous_frames) {

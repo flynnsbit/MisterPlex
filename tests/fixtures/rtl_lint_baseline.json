@@ -24,6 +24,7 @@
     "fpga/Plex_MiSTer/rtl/h264_inter_pred.sv",
     "fpga/Plex_MiSTer/rtl/h264_intra_pred.sv",
     "fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv",
+    "fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv",
     "fpga/Plex_MiSTer/rtl/h264_p_slice_modes.sv",
     "fpga/Plex_MiSTer/rtl/h264_syntax_primitives.sv",
     "fpga/Plex_MiSTer/rtl/line_buf_ram.sv",
@@ -204,6 +205,50 @@
       "WIDTHTRUNC:72: /home/flynnsbit/Projects/mp-wt-ctl/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:72:9: Operator ASSIGN expects 3 bits on the Assign RHS, but Assign RHS's MODDIV generates 32 or 6 bits.",
       "WIDTHTRUNC:73: /home/flynnsbit/Projects/mp-wt-ctl/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:73:9: Operator ASSIGN expects 4 bits on the Assign RHS, but Assign RHS's DIV generates 32 or 6 bits."
     ],
+    "fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv": [
+      "WIDTHEXPAND:1047: /home/flynnsbit/Projects/MisterPlex/.worktrees/integ-rtl-consol/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:1047:24: Operator MODDIV expects 5 bits on the RHS, but RHS's CONST '2'h3' generates 2 bits.",
+      "WIDTHEXPAND:1174: /home/flynnsbit/Projects/MisterPlex/.worktrees/integ-rtl-consol/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:1174:36: Operator ADD expects 32 bits on the LHS, but LHS's REPLICATE generates 16 bits.",
+      "WIDTHEXPAND:1174: /home/flynnsbit/Projects/MisterPlex/.worktrees/integ-rtl-consol/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:1174:36: Operator ADD expects 32 bits on the RHS, but RHS's SEL generates 16 bits.",
+      "WIDTHEXPAND:1224: /home/flynnsbit/Projects/MisterPlex/.worktrees/integ-rtl-consol/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:1224:33: Operator AND expects 5 bits on the RHS, but RHS's CONST '2'h3' generates 2 bits.",
+      "WIDTHEXPAND:1232: /home/flynnsbit/Projects/MisterPlex/.worktrees/integ-rtl-consol/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:1232:32: Operator AND expects 5 bits on the RHS, but RHS's CONST '2'h3' generates 2 bits.",
+      "WIDTHEXPAND:187: /home/flynnsbit/Projects/MisterPlex/.worktrees/integ-rtl-consol/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:187:17: Operator SHIFTR expects 32 bits on the LHS, but LHS's VARREF 'idx' generates 16 bits.",
+      "WIDTHEXPAND:188: /home/flynnsbit/Projects/MisterPlex/.worktrees/integ-rtl-consol/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:188:21: Operator AND expects 32 bits on the LHS, but LHS's VARREF 'idx' generates 16 bits.",
+      "WIDTHEXPAND:188: /home/flynnsbit/Projects/MisterPlex/.worktrees/integ-rtl-consol/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:188:21: Operator AND expects 32 bits on the RHS, but RHS's CONST '16'h7' generates 16 bits.",
+      "WIDTHEXPAND:344: /home/flynnsbit/Projects/MisterPlex/.worktrees/integ-rtl-consol/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:344:38: Operator LT expects 32 bits on the LHS, but LHS's VARREF 'abs_x' generates 16 bits.",
+      "WIDTHEXPAND:380: /home/flynnsbit/Projects/MisterPlex/.worktrees/integ-rtl-consol/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:380:14: Operator LT expects 32 bits on the LHS, but LHS's VARREF 'abs_x' generates 16 bits.",
+      "WIDTHEXPAND:421: /home/flynnsbit/Projects/MisterPlex/.worktrees/integ-rtl-consol/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:421:17: Operator LT expects 32 bits on the LHS, but LHS's VARREF 'abs_x' generates 16 bits.",
+      "WIDTHEXPAND:423: /home/flynnsbit/Projects/MisterPlex/.worktrees/integ-rtl-consol/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:423:38: Operator LT expects 32 bits on the LHS, but LHS's VARREF 'abs_x' generates 16 bits.",
+      "WIDTHEXPAND:532: /home/flynnsbit/Projects/MisterPlex/.worktrees/integ-rtl-consol/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:532:20: Operator SHIFTR expects 32 bits on the LHS, but LHS's VARREF 'abs_bit' generates 16 bits.",
+      "WIDTHEXPAND:642: /home/flynnsbit/Projects/MisterPlex/.worktrees/integ-rtl-consol/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:642:14: Operator LT expects 32 bits on the LHS, but LHS's VARREF 'abs_x' generates 16 bits.",
+      "WIDTHEXPAND:661: /home/flynnsbit/Projects/MisterPlex/.worktrees/integ-rtl-consol/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:661:14: Operator LT expects 32 bits on the LHS, but LHS's VARREF 'abs_x' generates 16 bits.",
+      "WIDTHEXPAND:678: /home/flynnsbit/Projects/MisterPlex/.worktrees/integ-rtl-consol/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:678:16: Operator LT expects 32 bits on the LHS, but LHS's VARREF 'abs_x' generates 16 bits.",
+      "WIDTHEXPAND:980: /home/flynnsbit/Projects/MisterPlex/.worktrees/integ-rtl-consol/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:980:36: Operator ADD expects 32 bits on the LHS, but LHS's REPLICATE generates 16 bits.",
+      "WIDTHEXPAND:980: /home/flynnsbit/Projects/MisterPlex/.worktrees/integ-rtl-consol/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:980:36: Operator ADD expects 32 bits on the RHS, but RHS's SEL generates 16 bits.",
+      "WIDTHTRUNC:1047: /home/flynnsbit/Projects/MisterPlex/.worktrees/integ-rtl-consol/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:1047:11: Operator ASSIGN expects 2 bits on the Assign RHS, but Assign RHS's MODDIV generates 5 bits.",
+      "WIDTHTRUNC:1175: /home/flynnsbit/Projects/MisterPlex/.worktrees/integ-rtl-consol/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:1175:16: Bit extraction of array[255:0] requires 8 bit index, not 16 bits.",
+      "WIDTHTRUNC:1176: /home/flynnsbit/Projects/MisterPlex/.worktrees/integ-rtl-consol/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:1176:18: Bit extraction of array[255:0] requires 8 bit index, not 16 bits.",
+      "WIDTHTRUNC:1222: /home/flynnsbit/Projects/MisterPlex/.worktrees/integ-rtl-consol/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:1222:10: Operator TASKREF 'commit_tc_after_chr' expects 2 bits on the Function Argument, but Function Argument's AND generates 5 bits.",
+      "WIDTHTRUNC:1230: /home/flynnsbit/Projects/MisterPlex/.worktrees/integ-rtl-consol/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:1230:9: Operator TASKREF 'commit_tc_after_chr' expects 2 bits on the Function Argument, but Function Argument's AND generates 5 bits.",
+      "WIDTHTRUNC:345: /home/flynnsbit/Projects/MisterPlex/.worktrees/integ-rtl-consol/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:345:18: Bit extraction of array[255:0] requires 8 bit index, not 16 bits.",
+      "WIDTHTRUNC:345: /home/flynnsbit/Projects/MisterPlex/.worktrees/integ-rtl-consol/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:345:34: Bit extraction of array[255:0] requires 8 bit index, not 16 bits.",
+      "WIDTHTRUNC:380: /home/flynnsbit/Projects/MisterPlex/.worktrees/integ-rtl-consol/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:380:38: Bit extraction of array[255:0] requires 8 bit index, not 16 bits.",
+      "WIDTHTRUNC:381: /home/flynnsbit/Projects/MisterPlex/.worktrees/integ-rtl-consol/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:381:26: Bit extraction of array[255:0] requires 8 bit index, not 16 bits.",
+      "WIDTHTRUNC:421: /home/flynnsbit/Projects/MisterPlex/.worktrees/integ-rtl-consol/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:421:48: Bit extraction of array[127:0] requires 7 bit index, not 16 bits.",
+      "WIDTHTRUNC:422: /home/flynnsbit/Projects/MisterPlex/.worktrees/integ-rtl-consol/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:422:19: Bit extraction of array[127:0] requires 7 bit index, not 16 bits.",
+      "WIDTHTRUNC:424: /home/flynnsbit/Projects/MisterPlex/.worktrees/integ-rtl-consol/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:424:25: Bit extraction of array[127:0] requires 7 bit index, not 16 bits.",
+      "WIDTHTRUNC:424: /home/flynnsbit/Projects/MisterPlex/.worktrees/integ-rtl-consol/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:424:48: Bit extraction of array[127:0] requires 7 bit index, not 16 bits.",
+      "WIDTHTRUNC:602: /home/flynnsbit/Projects/MisterPlex/.worktrees/integ-rtl-consol/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:602:12: Operator ASSIGN expects 3 bits on the Assign RHS, but Assign RHS's SUB generates 5 bits.",
+      "WIDTHTRUNC:618: /home/flynnsbit/Projects/MisterPlex/.worktrees/integ-rtl-consol/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:618:11: Operator ASSIGN expects 3 bits on the Assign RHS, but Assign RHS's SUB generates 5 bits.",
+      "WIDTHTRUNC:643: /home/flynnsbit/Projects/MisterPlex/.worktrees/integ-rtl-consol/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:643:11: Bit extraction of array[255:0] requires 8 bit index, not 16 bits.",
+      "WIDTHTRUNC:644: /home/flynnsbit/Projects/MisterPlex/.worktrees/integ-rtl-consol/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:644:13: Bit extraction of array[255:0] requires 8 bit index, not 16 bits.",
+      "WIDTHTRUNC:662: /home/flynnsbit/Projects/MisterPlex/.worktrees/integ-rtl-consol/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:662:18: Bit extraction of array[127:0] requires 7 bit index, not 16 bits.",
+      "WIDTHTRUNC:663: /home/flynnsbit/Projects/MisterPlex/.worktrees/integ-rtl-consol/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:663:20: Bit extraction of array[127:0] requires 7 bit index, not 16 bits.",
+      "WIDTHTRUNC:679: /home/flynnsbit/Projects/MisterPlex/.worktrees/integ-rtl-consol/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:679:20: Bit extraction of array[127:0] requires 7 bit index, not 16 bits.",
+      "WIDTHTRUNC:680: /home/flynnsbit/Projects/MisterPlex/.worktrees/integ-rtl-consol/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:680:22: Bit extraction of array[127:0] requires 7 bit index, not 16 bits.",
+      "WIDTHTRUNC:766: /home/flynnsbit/Projects/MisterPlex/.worktrees/integ-rtl-consol/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:766:9: Bit extraction of array[8191:0] requires 13 bit index, not 16 bits.",
+      "WIDTHTRUNC:981: /home/flynnsbit/Projects/MisterPlex/.worktrees/integ-rtl-consol/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:981:16: Bit extraction of array[255:0] requires 8 bit index, not 16 bits.",
+      "WIDTHTRUNC:982: /home/flynnsbit/Projects/MisterPlex/.worktrees/integ-rtl-consol/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:982:18: Bit extraction of array[255:0] requires 8 bit index, not 16 bits."
+    ],
     "fpga/Plex_MiSTer/rtl/present_cadence.sv": [
       "WIDTHEXPAND:26: /home/flynnsbit/Projects/mp-wt-ctl/fpga/Plex_MiSTer/rtl/present_cadence.sv:26:26: Operator DIV expects 32 bits on the RHS, but RHS's VARREF 'dh' generates 8 bits."
     ],
@@ -232,6 +277,10 @@
     "fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv": {
       "WIDTHEXPAND": 33,
       "WIDTHTRUNC": 2
+    },
+    "fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv": {
+      "WIDTHEXPAND": 18,
+      "WIDTHTRUNC": 24
     },
     "fpga/Plex_MiSTer/rtl/present_cadence.sv": {
       "WIDTHEXPAND": 1

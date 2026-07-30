@@ -32,6 +32,8 @@ PRESENT=fb0
 # STREAM_SKIP_RGB=auto  # skip heavy RGB only when PRESENT=fpga (audio + recon from start)
 # STREAM_SKIP_RGB=0     # always FFmpeg RGB (CABAC fallback / PRESENT=both keeps RGB anyway)
 # PRESENT=both always keeps FFmpeg RGB for continuous fb0 regardless of STREAM_SKIP_RGB.
+# HYBRID_PRESENT=0      # default OFF — daily-driver untouched
+# HYBRID_PRESENT=1      # P3-3l5: STREAM=1 FPGA intra / host inter compose into F1 (fail-closed)
 
 # --- Phase 4 UX ---
 # AUTO_NEXT=1  # on media EOF, play next playQueue item when bound (default on)

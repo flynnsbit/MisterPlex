@@ -101,6 +101,21 @@ public:
     bool sendYuv420pFrameDdr(const uint8_t* yuv420p, size_t len, int width, int height,
                              int bank = 0);
     bool publishDdrFrame(const DdrPublishFrame& frame, int bank = 0);
+
+    // P3-3l5 hybrid: capture FPGA reconstructed I420 from the dedicated export
+    // window (mailbox_abi::kReconExportPhysBase / PLXO). NEVER reads present
+    // banks @ kDdrFrameBase — that would return ARM's own last write.
+    //
+    // Fail closed when:
+    //   - mmap unavailable
+    //   - PLXO magic mismatch / ready=0 / torn=1
+    //   - geometry bytes do not fit destination or bank stride
+    //   - seq unchanged since last successful capture (optional stale guard)
+    // On success: memcpy I420 from the published bank into dst.
+    static constexpr const char* kNoReconReadbackReason =
+        "FPGA recon I420 not ready (PLXO ready=0/torn/missing)";
+    bool tryCaptureReconI420(uint8_t* dst, size_t dst_n, int width, int height);
+
     // DDR frame mmap policy. Default true keeps the proven strongly-ordered/device
     // mapping; false is a lab knob for write-combine/cacheable /dev/mem tests.
     // If a lab proves the no-sync mapping is cacheable, enable flush so the FPGA
@@ -331,6 +346,8 @@ private:
     bool plxdLivenessProven_ = false; // true once frames_done has advanced at least once
     bool ensureDdrMap();
     void releaseDdrMap();
+    bool ensureReconExportMap();
+    void releaseReconExportMap();
     bool ensureBitstreamDdrMap();
     void releaseBitstreamDdrMap();
     bool readBitstreamFpgaCount(uint32_t& readCount);
@@ -358,6 +375,13 @@ private:
     static constexpr uint32_t SSPI_FPGA_EN = (1u << 18);
     static constexpr uint32_t SSPI_IO_EN = (1u << 20);
     static constexpr uint32_t SSPI_STROBE = (1u << 17);
+
+    // Dedicated recon export window (PLXO / kReconExportPhysBase) — not present banks.
+    int reconMemFd_ = -1;
+    uint8_t* reconMap_ = nullptr;
+    size_t reconMapLen_ = 0;
+    uint16_t lastReconSeq_ = 0;
+    bool lastReconSeqValid_ = false;
 
     int bitstreamMemFd_ = -1;
     uint8_t* bitstreamMap_ = nullptr;

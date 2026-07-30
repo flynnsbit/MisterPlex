@@ -587,11 +587,11 @@ void writeInterMetadataJson(const std::string& path, const std::vector<InterMbCa
     out << "  \"producer\": \"stream_path_full_frame_tb.native_inter_candidate\",\n";
     out << "  \"candidate\": {\n";
     out << "    \"colorspace\": \"I420_NATIVE\",\n";
-    out << "    \"h264_loop_filter\": \"in_loop_via_h264_deblock_mb\",\n";
-    out << "    \"reconstruction_stage\": \"product_clip1_pred_plus_residual_then_h264_dpb_ref_commit_deblock\",\n";
-    out << "    \"reference_picture_state\": \"decoded_deblocked_via_h264_dpb_ref_commit\",\n";
-    out << "    \"reference_picture_source\": \"product_h264_dpb_ref_commit_promoted_reference_bank\",\n";
-    out << "    \"conformance_scope\": \"Product path: MVP+mvd fetch MV, Clip1(pred+residual), h264_dpb_ref_commit deblock+promote. IDR recon still sparse (residual MB0 block0 + 128 plane) until full I walk; P residual plane sparse after first MB.\"\n";
+    out << "    \"h264_loop_filter\": \"disabled\",\n";
+    out << "    \"reconstruction_stage\": \"mc_pred_plus_residual_pre_deblock\",\n";
+    out << "    \"reference_picture_state\": \"testbench_prefilled_previous_golden_no_deblock_reference\",\n";
+    out << "    \"reference_picture_source\": \"golden_i420_previous_frame_injected_into_dpb_bank0\",\n";
+    out << "    \"conformance_scope\": \"Scored path still TB-prefilled no-deblock golden (sv-traverse owns self-produced ref). Product also wires MVP+mvd fetch + dpb_ref_commit; not claimed in this candidate score.\"\n";
     out << "  },\n";
     out << "  \"geometry\": {\"width\": " << width << ", \"height\": " << height << "},\n";
     out << "  \"macroblocks\": [\n";

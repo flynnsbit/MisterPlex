@@ -61,11 +61,18 @@ public:
     void setPresentProfile(bool on) { presentProfile_ = on; }
     // STREAM=1: demux annex-B H.264 → host I-slice recon (I420 → F1) + F3 stub feed
     void setStreamEnabled(bool on) { streamEnabled_ = on; }
+    // P3-3l5 hybrid present (default OFF). When on with STREAM=1: classify MB ownership
+    // (FPGA intra / host inter under default caps), compose host+FPGA planes into F1.
+    // Ambiguous ownership fails closed to host or hard-fails — never silent FPGA claim.
+    // Does not change PRESENT/DECODE/STREAM/OSD_CONTROL defaults.
+    void setHybridPresent(bool on) { hybridPresent_ = on; }
+    bool hybridPresent() const { return hybridPresent_; }
     // When STREAM recon owns F1, optionally drop heavy FFmpeg RGB decode (keep audio).
     // "auto" | "1"/"on" = skip RGB from session start when PRESENT=fpga (audio + demux only).
     // PRESENT=both/fb0 always keeps RGB (continuous fb0). CABAC + skip → black F1: set
     // STREAM_SKIP_RGB=0 or PRESENT=both for fb0 fallback.
     // "0"/"off" = always full RGB decode for fb0/diagnostic fallback.
+    // HYBRID_PRESENT=1 forces continuous host YUV (skip RGB disabled) so inter MBs exist.
     void setStreamSkipRgb(std::string mode) { streamSkipRgb_ = std::move(mode); }
     // STREAM=0 only: optional FFmpeg subtitles filter for local file paths (see docs/subtitles-burnin.md).
     // "off" | "ffmpeg" — PMS burn-in is handled in resolve (WeakLadder::burnSubtitles).
@@ -212,6 +219,7 @@ private:
     std::string presentMode_ = "fb0"; // "fb0", "fpga", "both"
     bool audioEnabled_ = true;
     bool streamEnabled_ = false; // annex-B → host recon F1 + F3 stub
+    bool hybridPresent_ = false; // P3-3l5 hybrid compose path (conf HYBRID_PRESENT, default 0)
     std::string streamSkipRgb_ = "auto"; // auto | on | off
     std::string subtitleMode_ = "off"; // off | ffmpeg
     int subtitleStreamIndex_ = 0;
