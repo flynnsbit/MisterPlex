@@ -1,0 +1,132 @@
+IDLE SPIN — NAME + LOOP + FIX (w-arm-hybrid) 2026-07-30
+==============================================================================
+DEVICE EVIDENCE (w-bounce2 read-only; no deploy by this lane)
+==============================================================================
+Source: .worktrees/w-bounce2/build/arm-idle-tid-sample/{RESULT,idle_raw,hot_detail}.txt
+md5 live e9c5e5a1…  PROFILE=0  true idle (no ffmpeg, idle=1)
+
+Creation order (starttime asc; main=ord0):
+  ord  tid    wchan/syscall           role (source map)
+  0    22177  nanosleep               main          main.cpp process
+  1    22180  nanosleep               mplex-idle    media_player.cpp:698 startIdle
+  2    22181  nanosleep               mplex-osd     media_player.cpp:475 startOsdPoll
+  3    22182  nanosleep (high vol)    mplex-input   media_player.cpp:545 startInputPoll
+  4    22183  futex j≡0               mplex-pms-tl  pms_timeline.cpp:78 ctor worker
+  5    22184  R/running **HOT 98.1%** mplex-gdm     companion.cpp:624 gdmThr_ → gdmLoop
+  6    22185  do_select               mplex-http    companion.cpp:625 httpThr_ → httpLoop
+
+NAME: **mplex-gdm / Companion::gdmLoop** (creation order 5).
+Cross-check: ord6 alone sits in do_select → http; ord5 is the prior companion
+thread (gdm spawned immediately before http). Cohort starttime=3081794 matches
+early workers, not play threads.
+
+Hot signature (tid role, not number): 98.144 %onecpu, d_vol=0, d_nonvol=7027,
+wchan=0 ×6, syscall=running ×5, stime≫utime → runnable recv/send storm, not sleep.
+
+==============================================================================
+QUOTED LOOP (pre-fix) — companion.cpp gdmLoop
+==============================================================================
+  while (running_.load()) {
+      … select(fd+1, …, tv{0,200000});
+      if (r > 0 && FD_ISSET(fd, &rfds)) {
+          n = recvfrom(...);
+          if (n > 0) {
+              buf[n] = 0;
+              // *** STORM SITE ***
+              if (std::strstr(buf, "M-SEARCH") || std::strstr(buf, "plex")) {
+                  payload = gdmPayload();   // contains "Protocol: plex" etc.
+                  sendto(fd, payload, … peer …);
+              }
+          }
+      }
+      if (now - lastAdv > 5s) {
+          sendto(fd, gdmPayload(), … INADDR_BROADCAST:32412 …);  // own socket receives this
+      }
+  }
+
+gdmPayload() embeds substring "plex" (Content-Type: plex/media-player, Protocol: plex).
+Linux delivers our UDP broadcast to 32412 back to the bound socket. Bare
+strstr(..., "plex") treats the reply as a probe → sendto reply → recv → …
+never drains, select never blocks, 98%onecpu at idle. Discovery still "works"
+(storm of valid replies) which is why the cast target never disappeared.
+
+Finding = named thread + quoted loop. Not a missing sleep on select (tv=200ms
+confirmed in v9 binary constant pool at gdmLoop+0x354: tv_sec=0 tv_usec=200000).
+
+==============================================================================
+FIX (minimal)
+==============================================================================
+1. gdmIsDiscoveryProbe(buf): reject HTTP/ replies and Content-Type:
+   plex/media-player; still accept M-SEARCH and non-reply "plex" probes.
+2. gdmLoop uses that predicate; select r<0 (non-EINTR) sleeps 200ms so an
+   error path cannot busy-spin.
+
+No subsystem restructure. Product conf untouched. PRESENT/DECODE/STREAM/OSD
+defaults unchanged.
+
+==============================================================================
+HOST VERIFICATION (no device)
+==============================================================================
+Python twin of gdmIsDiscoveryProbe + mutation (buggy M-SEARCH||plex):
+  own_reply_not_probe              HIT
+  msearch_is_probe                 HIT
+  client_plex_is_probe             HIT
+  noise_not_probe                  HIT
+  mutation_buggy_own_reply_is_probe HIT  (proves old predicate storms)
+  mutation_fix_differs_on_reply   HIT
+  probe_twin true rc=0
+
+==============================================================================
+PRE-REGISTER POST-FIX CPU (5th prediction) — score before device measure
+==============================================================================
+Band A — true idle, no session (process %onecpu over ≥15s wall):
+  EXPECT: **P_idle ∈ [0, 8]**  (was ~100; healthy threads were ≤1.1 each)
+  Primary: hot gdm tid ≤ 2 %onecpu (select 200ms + rare advertise)
+  FALSIFY if P_idle ≥ 40 after fix binary (storm not killed) OR P_idle < 0.
+
+Band B — playback (testsrc or real; process %onecpu):
+  EXPECT: **P_play drops by ≥60 points vs pre-fix same method** (spin was ~84–98
+  of process). Absolute play band depends on media; do not claim a single number.
+  FALSIFY if play process %onecpu within 10 points of pre-fix window on same
+  source after fix is live.
+
+==============================================================================
+FALSIFIERS — behaviour the spin was (brokenly) providing
+==============================================================================
+Function of gdmLoop: Plex GDM listen 32412 + reply to probes + 5s broadcast
+advertise so controllers find the cast target.
+
+After fix MUST still:
+  1. Log "GDM: listening UDP 32412" (or broadcast-only) at start
+  2. Answer real M-SEARCH / client probes (cast target appears in Plex)
+  3. HTTP :3005 /resources still 200 (unchanged path)
+  4. Idle screen still paints (idle thread, not gdm)
+  5. Playback still starts from cast
+
+FAIL the fix if: cast target vanishes from Plex discovery, OR idle HDMI freezes,
+OR playback won't start — even if CPU drops.
+
+SIGKILL/OOM N/A here.
+
+==============================================================================
+SPAWN TABLE (file:line) — checkable
+==============================================================================
+ord  thread       spawn site
+0    main         process entry
+1    mplex-idle   media_player.cpp startIdle ~698
+2    mplex-osd    media_player.cpp startOsdPoll ~475  (if OSD_CONTROL)
+3    mplex-input  media_player.cpp startInputPoll ~545
+4    mplex-pms-tl pms_timeline.cpp ctor ~78
+5    mplex-gdm    companion.cpp start ~624  ← IDLE HOT
+6    mplex-http   companion.cpp start ~625
+play mplex-media  media_player.cpp play ~1116
+play mplex-audio  media_player.cpp ~2281/2562
+
+main.cpp boot order: startIdle/Osd/Input ~568-570; PmsTimelineReporter ~627;
+comp.start() ~1199.
+
+==============================================================================
+CONSTRAINTS HONOURED
+==============================================================================
+No device access, no deploy, no RBF/Quartus/RTL. Token not printed.
+Fix block lifted for this thread only after loop quoted.
