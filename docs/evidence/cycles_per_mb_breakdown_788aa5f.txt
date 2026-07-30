@@ -1,0 +1,137 @@
+CYCLES / MACROBLOCK — measured + analytical breakdown
+=====================================================
+Lane: sv-traverse
+SHA:  788aa5f (RTL) / f82400a (evidence tip)
+Clip: plex_inter_p16_baseline_320x240_12f  frame=0  (300 MB)
+Clock budget cited by parent: ~2000 cy/MB @ 50 MHz for 320×240 ~23 fps
+  (docs/cycle-iterative-traverse-area.md historical; generous one serialisation ago)
+
+---------------------------------------------------------------------
+1. MEASURED TOTAL (product path, REAL_REF, SOURCE_SHA=788aa5f)
+---------------------------------------------------------------------
+From STAGE_CYCLES frame=0 in docs/evidence/plane_m10k_clip1_788aa5f.log:
+  parse_cycles = 289
+  paint_cycles = 1_211_072
+  paint_per_mb = 4036.907     << HEADLINE MEASURED
+  parse_per_mb = 0.963        (VCL already buffered; parse stage almost empty)
+
+clip2 624×480 frame0 (plane_m10k_clip2_788aa5f.log):
+  paint_per_mb = 3977.876
+
+VERDICT vs ~2000 budget:  OVER by ~2.02×  (4037 / 2000)
+  Status: THROUGHPUT_OVER_BUDGET — not comfortable, not marginal.
+
+TB definition (tests/rtl/stream_path_full_frame_tb.cpp):
+  paint_cycles = paint_end - paint_start for the frame
+  paint_per_mb = paint_cycles / mb_count
+So this is wall-clock of the decode/paint phase, not a soft estimate.
+
+---------------------------------------------------------------------
+2. ANALYTICAL BREAKDOWN (sink + traverse serial phases)
+---------------------------------------------------------------------
+Assumptions (stated; where uncertain marked UNCERTAIN):
+  A1. Registered M10K read = 3 cy/sample (ISSUE/WAIT/CAPT) — quoted sink FSM.
+  A2. Serial dequant h264_dequant4x4_serial ≈ 16 mul cy + 1 done ≈ 17 cy/block
+      (module comment: "16 cycles"; done NBA-safe next).
+  A3. Serial I16 pred = 256 cy (1 px/cy) + 1 start gap.
+  A4. Serial I16 DC Hadamard ≈ 16..20 cy (order of 16; exact latency UNCERTAIN ±4).
+  A5. RBSP residual window load = 64 issue + 2 capture skew ≈ 66 cy per reload.
+  A6. Frame-0 mix: many I_4x4 and I_16x16 MBs; residual density high
+      (I_RECON_DONE blk_applied=5020 over 300 MB ≈ 16.7 blk/MB average).
+  A7. "paint_per_mb" includes sink FSM + traverse residual path + handshakes +
+      writeback wait; analytical lines are lower bounds for those phases only.
+
+Per-phase (I_4x4 MB, 16 luma residual blocks, interior neighbours available):
+
+  phase                    formula                         cy/MB
+  -----------------------  ------------------------------  ------
+  MB_INIT plane clear      256 w                           256
+  I4 neighbour fetch       ~13 rd × 3 cy × 16 blk         ~624   (worst; edge less)
+  serial dequant           17 × 16 blk                     272
+  I4 APPLY write           16 px × 16 blk                  256
+  MB_DUMP plane→wb         256 × 3 + TL rd 3 + top wr 16  ~787
+  RBSP window reloads      66 × ~N_win   N_win UNCERTAIN   66..400
+  CAVLC bit engine         variable (parse-bound)          UNCERTAIN
+  handshake / idle bubbles res_blk_ready gating            UNCERTAIN
+  -----------------------  ------------------------------  ------
+  I4 sink subtotal (no win/CAVLC)                          ~2195
+
+Per-phase (I_16x16 MB, DC + 16 AC, interior):
+
+  phase                    formula                         cy/MB
+  -----------------------  ------------------------------  ------
+  MB_INIT                  256                             256
+  I16_NB top_row fetch     16 × 3                           48
+  I16_START gap            1                                 1
+  serial I16 pred          256                             256
+  HAD_WAIT (serial had)    ~17                              17
+  HAD_PAINT RMW            256 × 3                         768
+  IQ AC ×16                17 × 16                         272
+  APPLY AC RMW ×16         16 × 3 × 16                     768
+  MB_DUMP                  ~787                            787
+  RBSP windows             66 × N_win                      66..400
+  -----------------------  ------------------------------  ------
+  I16 sink subtotal (no win/CAVLC)                         ~3173
+
+Parent template filled (order-of-magnitude, typical mixed MB ≈ measured mean):
+
+  RBSP window load      66 cy  × ~2..6 reloads/MB     ≈  130..400   UNCERTAIN count
+  serial dequant        17 cy  × ~16.7 blk/MB         ≈  284        (from blk_applied/300)
+  serial I16 pred      256 cy  × f_I16                ≈  0..256     f_I16 = fraction I16
+  HAD paint RMW        768 cy  × f_I16                ≈  0..768
+  neighbour fetch      ~40 cy  × n_blk or 48 I16      ≈  400..650
+  APPLY / paint path   16..48 cy × n_blk              ≈  300..800
+  MB_INIT + MB_DUMP    256 + 787                      ≈ 1043        every MB
+  ---------------------------------------------------------------
+  analytical sink floor (mixed, rough)                ≈  2800..3800
+  MEASURED paint_per_mb                               =  4036.9
+  residual (handshake, CAVLC wait, write_busy, bubbles) ≈  200..1200  UNCERTAIN
+
+---------------------------------------------------------------------
+3. WHERE UNCERTAIN
+---------------------------------------------------------------------
+  U1. Exact f_I16 / f_I4 on frame0 — TRAV_RES_LAUNCH log is truncated early;
+      used blk_applied=5020 aggregate instead of per-mode census.
+  U2. Window reload count per MB — depends on bit_pos span vs 64B window;
+      not instrumented per-MB.
+  U3. write_busy / res_blk_ready backpressure — can stretch paint without
+      adding "useful" FSM work.
+  U4. Serial hadamard exact latency — ±4 cy immaterial vs 4k total.
+  U5. P-frames later in clip paint_per_mb collapses to 256 (ref path) —
+      frame0 IDR is the worst-case I-slice budget that matters for fit-time FPS.
+
+To close U1–U3: add per-state cycle accumulators in sink (optional follow-up);
+  not blocking this report — measured total already decides the verdict.
+
+---------------------------------------------------------------------
+4. VERDICT (plain)
+---------------------------------------------------------------------
+  MEASURED: ~4037 cy/MB frame0 @ 320×240  vs  budget ~2000  →  OVER ~2.0×
+
+  Trading area for throughput is REAL and visible now.
+  Further serialisation (traverse tc_top/i4_mode_top nC) adds little cy/MB
+  if it stays combinational→RAM on the parse side (CAVLC already sequential);
+  neighbour-side serialisation already dominates sink.
+
+  Headroom for MORE sink serialisation: NEGATIVE vs 2k budget.
+  Headroom for traverse fabric→RAM (no extra sequential loops on paint): OK
+  if it does not add per-pixel RMW.
+
+  If product needs 23 fps @ 50 MHz on 320×240 I-frames, either:
+    (a) raise clock / accept lower FPS on IDR, or
+    (b) re-parallelise selected paint paths after ALM fit is won, or
+    (c) overlap traverse parse with sink paint more aggressively
+        (today res_blk_ready = ST_IDLE only — no block pipelining).
+
+  Option (c) is the highest-leverage throughput recovery that does NOT add DSP
+  and may even hide some of the 4k by dual-buffering one MB plane.
+
+---------------------------------------------------------------------
+5. MAP / AREA INTERACTION
+---------------------------------------------------------------------
+  Do NOT ask for more serial paint loops until map of 788aa5f returns.
+  Traverse phase-2 (tc_top / i4_mode_top) is fabric→memory / nC register
+  staging — primarily ALM, not another 256-cy paint tax.
+
+Published: docs/evidence/cycles_per_mb_breakdown_788aa5f.txt
+Logs:      plane_m10k_clip1_788aa5f.log  STAGE_CYCLES frame=0 paint_per_mb=4036.907
