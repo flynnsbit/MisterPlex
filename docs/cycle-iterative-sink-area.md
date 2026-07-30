@@ -187,3 +187,17 @@ Integrate publishes HIT/MISS from one `quartus_map` on the freeze SHA.
 - Deblock: **fourth** until traverse+sink maps clear  
 
 **Honest line:** sink is **~1× device ALMs and illegal on DSP** until IQ is serial and planes are memories with FSMs; chroma leaves are not the problem.
+
+---
+
+## Measured dequant DSP baseline (2026-07-30)
+
+Isolated `h264_dequant4x4` map (`dequant-dsp-probe`, `true rc=0`):
+
+- **DSP = 17** (pre-reg 16 — near-HIT): 16× two-indep 18×18 + 1 extra
+- **ALMs needed = 240**
+- `q/6` and `q%6` → soft `lpm_divide` (**0 DSP**)
+
+**One parallel dequant already exceeds the whole sink ≤12 DSP target.**  
+Serial `dequant_one` (16 cycles, one mul) remains mandatory.  
+Evidence: `docs/m10k-inference-boundary.md` §Dequant; `.agent-work/integ-wiring/dequant_dsp.map.summary`.

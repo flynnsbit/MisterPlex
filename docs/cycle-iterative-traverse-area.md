@@ -18,6 +18,11 @@ Saying “traverse is 1.18M ALMs” is imprecise; say **1.18M comb ALUTs**, chip
 
 **Worked example:** serial `h264_mc_luma_qpel.sv` — combo path **~318k area class → ~484 ALMs (~650×)** by killing runtime-indexed fabric arrays and sharing one datapath.
 
+**MEASURED (2026-07-30 m10k-infer micro-probe):** textbook 1R1W registered **DOES infer** M10K
+(65,536 bits, 29 ALMs, `true rc=0`). Async read and 64-wide dynamic window **do not**
+(0 bits, ~46k ALMs). Dual registered reads infer but **replicate** (131,072 bits).
+Full rule: `docs/m10k-inference-boundary.md`. Plan assumption **HOLDS** — implement access A, not attrs-only.
+
 **TRAP — `(* ramstyle="M10K" *)` alone does NOT work.**  
 coord-map2b already added M10K attributes on `rbsp` / `i4_mode_top` / `tc_top` (absent from byte-exact `6dc5993`); Quartus still **uninferred** those arrays and the **1.18M ALUT bomb remained**.  
 **Restructure the access pattern first** (≤1 read port, 1 access/cycle, registered addr, no 64-wide dynamic fan-out), **then** measure. Re-annotating and re-mapping will waste a day.

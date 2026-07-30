@@ -1,0 +1,57 @@
+M10K INFERENCE MICRO-PROBE — PRE-REGISTER (before any quartus_map)
+================================================================
+Date: 2026-07-30
+Owner: sv-integrate
+Device: Cyclone V 5CSEBA6U23I7 (M10K = 10240 bits each; 553 total)
+Tool: quartus_map ONLY via ghcr.io/raetro/quartus:mister — NO fit
+
+PURPOSE
+  Answer: will the cycle-iterative RBSP access pattern actually infer M10K?
+  Prior negative data point: ramstyle attrs on multi-port dynamic rbsp did NOT infer.
+  This probe isolates access pattern with NO H.264 dependence.
+
+VARIANTS (same 8192×8 array depth/width as traverse RBSP)
+  A textbook : 1R1W, registered addr, 1 access/cycle, ramstyle M10K no_rw_check
+  B dualrd   : 2 independent registered read ports + 1 write (true dual-port shape)
+  C combo    : combinational/async read (addr not registered into memory)
+  D wide64   : 64 parallel dynamic reads in one cycle (traverse load_res_window shape)
+
+PREDICTIONS (state BEFORE measure)
+---------------------------------
+A textbook:
+  M10K inferred: YES
+  Block memory bits: 65536 (8192*8)
+  M10K blocks: 7  (ceil(65536/10240)=7)
+  ALMs needed (whole tiny top): ≤ 80
+  comb ALUTs in mem module: ≤ 50
+
+B dualrd:
+  M10K inferred: YES (Cyclone V M10K is true dual-port capable)
+  Block memory bits: 65536
+  M10K blocks: 7–14 (may replicate if tool cannot share)
+  ALMs: ≤ 120
+
+C combo (async read):
+  M10K inferred: NO  (Info 276007 class — async read)
+  Block memory bits: 0
+  ALMs / comb: HIGH — thousands to tens of k (full 8192:1 mux fabric)
+  Note: recon_frame_store already showed this uninfer reason on map2c.
+
+D wide64 (64 parallel dynamic reads):
+  M10K inferred: NO
+  Block memory bits: 0
+  comb ALUTs: order 100k–1M (same class as traverse bomb; may be lower than
+  1.18M because no surrounding CAVLC/state, but still catastrophic)
+  ALMs needed: >> device if scaled to full; expect >>10k at minimum
+
+FALSIFIER OF CYCLE-ITERATIVE PLAN
+  If A textbook reports Block memory bits = 0 (or M10K blocks = 0) with
+  successful map rc=0, then the serial-RBSP redesign assumption is FALSE and
+  sv-traverse must stop and re-plan (programme-level finding).
+
+PASS OF PLAN ASSUMPTION
+  A: bits=65536 (or ≥65536 with packing), M10K>0, ALMs tiny.
+  Boundary rule expected: registered single-port OK; async NO; wide multi-read NO;
+  dual-port TBD (prediction YES).
+
+Do not infer "M10K worked" from low ALMs alone — read RAM Summary / block memory bits.

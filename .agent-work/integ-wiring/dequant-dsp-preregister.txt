@@ -1,0 +1,27 @@
+DEQUANT DSP ISOLATION — PRE-REGISTER (before quartus_map)
+=========================================================
+Target: h264_dequant4x4 alone (from h264_iq_idct_4x4.sv)
+Device: 5CSEBA6U23I7 (112 DSP)
+Source of "m15+m16 mul farm": 16 parallel assign dequant[i]=dequant_one(...) always elaborated
+  (max_coeff only zeros outputs; does not remove multipliers).
+
+Each dequant_one contains:
+  - norm_adjust(qmod,mi)*16  (likely shift/const — 0 DSP hoped)
+  - signed coeff * qmul       (variable×variable → 1 DSP expected)
+  - q%6 and q/6               (lpm_divide — 0 DSP, soft IP)
+
+PREDICTION
+  DSP blocks: 16  (one mul per coefficient lane)
+  ALMs needed: 400–2500 (div/mod + routing; not the bomb)
+  Block memory: 0
+
+SECONDARY FEAR
+  If both (norm*16) and (c*qmul) map to DSP → 32 DSP for one 4x4 dequant.
+  If tool builds two farms (m15 skip_dc style fully unrolled twice) → 32.
+
+FALSIFIER FOR serial-IQ ≤12 DSP SINK TARGET FEASIBILITY
+  If isolated dequant4x4 alone uses >12 DSP, serialisation is mandatory
+  (already planned) and the serial target of 0–2 DSP for dequant remains the gate;
+  this measurement sizes the parallel farm we must destroy.
+
+PASS hope: DSP=16 exactly → serial cuts to ~1 DSP/lane shared = ≤2.

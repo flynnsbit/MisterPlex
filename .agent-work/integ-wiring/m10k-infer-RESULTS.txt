@@ -1,0 +1,15 @@
+M10K INFER PROBE + DEQUANT DSP — RESULTS
+========================================
+All maps true rc=0. Pre-registers written before maps.
+
+A textbook: bits=65536 ALMs=29  M10K=YES  HIT (plan HOLDS)
+B dualrd:   bits=131072 ALMs=55 M10K=YES replicated 2x  PARTIAL MISS vs shared
+C combo:    bits=0 ALMs=45229 M10K=NO 276007 async  HIT
+D wide64:   bits=0 ALMs=45982 M10K=NO 65568 regs   HIT no-M10K; ALM pred high MISS
+
+Falsifier (textbook bits=0): DID NOT FIRE.
+
+dequant4x4 alone: DSP=17 ALMs=240  (pre-reg DSP=16 near-HIT)
+  → parallel dequant alone > sink ≤12 DSP budget; serial IQ mandatory.
+
+Doc: docs/m10k-inference-boundary.md
