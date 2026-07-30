@@ -100,6 +100,32 @@ module h264_i_res_recon_sink #(
 		end
 	endfunction
 
+	// Inverse of blk4_x/y: 4x4 block coords → residual/scan index 0..15.
+	function automatic [3:0] blk4_idx;
+		input [1:0] bx;
+		input [1:0] by;
+		begin
+			case ({by, bx})
+			4'b0000: blk4_idx = 4'd0;
+			4'b0001: blk4_idx = 4'd1;
+			4'b0100: blk4_idx = 4'd2;
+			4'b0101: blk4_idx = 4'd3;
+			4'b0010: blk4_idx = 4'd4;
+			4'b0011: blk4_idx = 4'd5;
+			4'b0110: blk4_idx = 4'd6;
+			4'b0111: blk4_idx = 4'd7;
+			4'b1000: blk4_idx = 4'd8;
+			4'b1001: blk4_idx = 4'd9;
+			4'b1100: blk4_idx = 4'd10;
+			4'b1101: blk4_idx = 4'd11;
+			4'b1010: blk4_idx = 4'd12;
+			4'b1011: blk4_idx = 4'd13;
+			4'b1110: blk4_idx = 4'd14;
+			default: blk4_idx = 4'd15;
+			endcase
+		end
+	endfunction
+
 	function automatic [7:0] clip_u8;
 		input signed [17:0] v;
 		begin
@@ -143,7 +169,12 @@ module h264_i_res_recon_sink #(
 			i4_ha = 1'b1;
 			for (t = 0; t < 4; t = t + 1)
 				i4_above[t] = plane_y[(i4_y0 - 5'd1) * 16 + (i4_x0 + t[4:0])];
-			if (i4_x0 + 5'd4 < 5'd16) begin
+			// H.264 8.3.1.2: p[x,-1] x=4..7 unavailable → substitute p[3,-1].
+			// Scan order leaves above-right 4x4 undecoded for some blocks (e.g.
+			// scan3 needs scan4). Reading plane_y there yields the 128 init and
+			// corrupts modes 3/7. Only sample plane when that 4x4 is already done.
+			if (i4_bx != 2'd3 &&
+			    (blk4_idx(i4_bx + 2'd1, i4_by - 2'd1) < lat_idx[3:0])) begin
 				for (t = 0; t < 4; t = t + 1)
 					i4_above[4 + t] = plane_y[(i4_y0 - 5'd1) * 16 + (i4_x0 + 5'd4 + t[4:0])];
 			end else begin

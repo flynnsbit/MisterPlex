@@ -551,12 +551,13 @@ REAL_COMPARE="$REAL_REF_DIR/frame_planes_compare.json"
 #   HEADLINE score_i420_candidate mb_exact requires Y+U+V → expect intra=0/300
 #     inter=0/3300 while U/V=128 (quoted: tools/score_i420_candidate.py mb_exact).
 #   LUMA progress (tools/score_i420_luma_progress.py): Y-only gradient.
-#     PRE: intra_y_mb≈80..120/300, intra_y_px≈25k..40k/76800 (prior 94/300, 29589).
+#     PRE: intra_y_mb≈200..230/300, intra_y_px≈55k..62k/76800 (post I4 above-right pad
+#     + I16 edge mode=2 commit; prior 94 then 214). HEADLINE stays 0 while chroma=128.
 # Do not tune toward historical fake inter=1606.
 SRC_SHA="$(git -C "$ROOT" rev-parse HEAD 2>/dev/null || echo unknown)"
 echo "REAL_REF_MEASURE source_sha=$SRC_SHA" >&2
 echo "REAL_REF_MEASURE pre-register HEADLINE: intra=0/300 inter=0/3300 (chroma stub floors Y+U+V mb_exact)" >&2
-echo "REAL_REF_MEASURE pre-register LUMA: intra_y_mb=80..120/300 intra_y_px=25000..40000/76800" >&2
+echo "REAL_REF_MEASURE pre-register LUMA: intra_y_mb=200..230/300 intra_y_px=55000..62000/76800" >&2
 
 "$RUN_VERILATOR" --cc --exe --build \
   --Mdir "$BUILD_REAL" \
@@ -682,7 +683,7 @@ import json, sys
 j = json.load(open(sys.argv[1]))
 si, sp = j["summary"]["intra"], j["summary"]["inter"]
 print(
-    f"REAL_REF_LUMA_vs_PREREGISTER pre_y_mb=80..120/300 pre_y_px=25000..40000/76800 "
+    f"REAL_REF_LUMA_vs_PREREGISTER pre_y_mb=200..230/300 pre_y_px=55000..62000/76800 "
     f"actual_y_mb={si['y_mb_exact']}/{si['y_mb_total']} "
     f"actual_y_px={si['y_pixel_exact']}/{si['y_pixel_total']} "
     f"y_blk4={si['y_blk4_exact']}/{si['y_blk4_total']} y_mae={si['y_mae_mean']:.4f}"

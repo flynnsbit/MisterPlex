@@ -1,0 +1,55 @@
+{
+  "branch": "rtl/real-ref-measure",
+  "fixes": [
+    "h264_i_res_recon_sink: I4 above-right pad when 4x4 not yet reconstructed (H.264 8.3.1.2)",
+    "h264_p_mb_traverse: I16 commits edge i4 modes as 2 for MPM (match host)"
+  ],
+  "pre_register": {
+    "headline_intra": "0/300",
+    "headline_inter": "0/3300",
+    "luma_intra_y_mb": "200..230/300",
+    "note": "after fix; prior baseline was 94"
+  },
+  "actual": {
+    "headline_intra": {
+      "frames": 1,
+      "mb_exact": 0,
+      "mb_total": 300
+    },
+    "headline_inter": {
+      "frames": 11,
+      "mb_exact": 0,
+      "mb_total": 3300
+    },
+    "luma_intra": {
+      "frames": 1,
+      "y_mb_exact": 214,
+      "y_mb_total": 300,
+      "y_blk4_exact": 3717,
+      "y_blk4_total": 4800,
+      "y_pixel_exact": 59556,
+      "y_pixel_total": 76800,
+      "y_mae_mean": 15.584713541666666
+    },
+    "luma_inter": {
+      "frames": 11,
+      "y_mb_exact": 1681,
+      "y_mb_total": 3300,
+      "y_blk4_exact": 32197,
+      "y_blk4_total": 52800,
+      "y_pixel_exact": 524401,
+      "y_pixel_total": 844800,
+      "y_mae_mean": 22.11629734848485
+    },
+    "buckets_after": {
+      "I16_m0_*": 37,
+      "I_NxN": 44,
+      "other_I16": 5,
+      "cold128": 0
+    },
+    "seed_fail_count": 6
+  },
+  "prior_luma_intra_y_mb": 94,
+  "chroma": "deferred flat 128; unowned product unlock for nonzero headline",
+  "area": "cycle-iterative I sink unchanged; no new parallel arithmetic; ALM cost via coordinated quartus_map not run this lane"
+}

@@ -1449,20 +1449,29 @@ module h264_p_mb_traverse #(
 						if (is_i_slice_r) begin
 							res_mb_end <= 1'b1;
 							res_mb_end_addr <= curr_mb;
-							// Commit I4 right/bottom edge modes for next MBs
-							if (!is_i16_r) begin : commit_i4_modes
+							// Commit right/bottom edge modes for next MBs.
+							// I_NxN: real modes. I16/other: host treats neighbour as
+							// mode 2 (DC) for MPM (h264_recon.hpp i4mode=2).
+							begin : commit_i4_edge_modes
 								integer ei;
-								reg [1:0] bx, by;
 								reg [15:0] ax;
 								for (ei = 0; ei < 4; ei = ei + 1) begin
-									// right edge bx=3, by=ei
-									i4_mode_left[ei] <= i4_mode_spat[{ei[1:0], 2'd3}];
-									i4_mode_left_v[ei] <= i4_mode_spat_v[{ei[1:0], 2'd3}];
-									// bottom edge by=3, bx=ei
+									if (!is_i16_r) begin
+										i4_mode_left[ei] <= i4_mode_spat[{ei[1:0], 2'd3}];
+										i4_mode_left_v[ei] <= i4_mode_spat_v[{ei[1:0], 2'd3}];
+									end else begin
+										i4_mode_left[ei] <= 4'd2;
+										i4_mode_left_v[ei] <= 1'b1;
+									end
 									ax = {curr_x[13:0], 2'b00} + ei[15:0];
 									if (ax < 16'd256) begin
-										i4_mode_top[ax[7:0]] <= i4_mode_spat[{2'd3, ei[1:0]}];
-										i4_mode_top_v[ax[7:0]] <= i4_mode_spat_v[{2'd3, ei[1:0]}];
+										if (!is_i16_r) begin
+											i4_mode_top[ax[7:0]] <= i4_mode_spat[{2'd3, ei[1:0]}];
+											i4_mode_top_v[ax[7:0]] <= i4_mode_spat_v[{2'd3, ei[1:0]}];
+										end else begin
+											i4_mode_top[ax[7:0]] <= 4'd2;
+											i4_mode_top_v[ax[7:0]] <= 1'b1;
+										end
 									end
 								end
 							end
