@@ -104,6 +104,8 @@ void sendHttp(int fd, int code, const char* ctype, const std::string& body) {
         status = "Payload Too Large";
     else if (code == 400)
         status = "Bad Request";
+    else if (code == 503)
+        status = "Service Unavailable";
     else if (code != 200)
         status = "Error";
     std::snprintf(hdr, sizeof(hdr),
@@ -698,6 +700,457 @@ void Companion::gdmLoop() {
     close(fd);
 }
 
+void Companion::httpServeClient(int c) {
+    // Per-connection work. Must not run on the accept thread: header read can
+    // block up to the timeout and would stall every other client (audit: valid
+    // /resources delayed ~4.8s behind one incomplete connection).
+    // Caller owns close(c).
+    setCloexec(c);
+    // Full header block before any parse/gate (see recvHttpHeaders).
+    std::string req;
+    const HttpHeaderRead hr = recvHttpHeaders(c, req, 16384, 5000);
+    if (hr != HttpHeaderRead::Ok) {
+        if (hr == HttpHeaderRead::Timeout) {
+            log("HTTP: header read timeout (incomplete request)");
+            sendHttp(c, 408, "text/plain", "header timeout\n");
+        } else if (hr == HttpHeaderRead::TooLarge) {
+            log("HTTP: header block exceeds cap");
+            sendHttp(c, 413, "text/plain", "headers too large\n");
+        } else if (hr == HttpHeaderRead::Closed) {
+            // Peer closed mid-headers — no response required.
+        } else {
+            log("HTTP: header read error");
+        }
+        return;
+    }
+    if (req.find("/player/") != std::string::npos || req.find("/resources") != std::string::npos)
+        // Request line may carry ?X-Plex-Token=...; Companion::log redacts at sink.
+        log("HTTP IN " + requestLine(req));
+
+    if (req.find("OPTIONS") == 0) {
+        sendHttp(c, 200, "text/plain", "");
+        return;
+    }
+
+    // /resources and /identity must stay open without a target header — that is
+    // how controllers discover machineIdentifier after GDM. Player commands that
+    // name a *different* target are the vanish path and must not be silent.
+    if (req.find("GET /resources") != std::string::npos ||
+        req.find("GET /identity") != std::string::npos) {
+        sendHttp(c, 200, "application/xml", resourcesXml());
+        return;
+    }
+
+    // Cast / timeline / playback target gate.
+    //
+    // Breadth is deliberate: every /player/* path that names a target id is
+    // checked together — playMedia, playback controls, AND timeline
+    // subscribe/poll/unsubscribe. A mid-session mismatch means the controller
+    // is addressing a different clientIdentifier. Answering timeline for the
+    // wrong id while we still demux would keep a split-brain "session alive"
+    // (wrong machine reports playing; this one still burns the stream). Prefer
+    // one loud 409 that stops the whole control surface over "video randomly
+    // stopped" with half the protocol still 200. /resources stays open above
+    // so GDM discovery is unaffected.
+    //
+    // Pre-fix accepted every /player/* with 200 and no diagnostic — GDM
+    // still showed the player, then the session vanished.
+    if (req.find("/player/") != std::string::npos || req.find("playMedia") != std::string::npos ||
+        req.find("/timeline") != std::string::npos) {
+        std::string gotTarget;
+        if (!castTargetAccepted(req, machineId_, &gotTarget)) {
+            const std::string body =
+                std::string("CAST_TARGET_MISMATCH expected=") + machineId_ + " got=" + gotTarget +
+                "\n";
+            log(std::string("ERROR CAST_TARGET_MISMATCH expected=") + machineId_ +
+                " got=" + gotTarget + " — refusing cast/timeline (picker may vanish)");
+            sendHttp(c, 409, "text/plain", body);
+            return;
+        }
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(mu_);
+        if (req.find("/player/") != std::string::npos || req.find("/resources") != std::string::npos)
+            castBound_ = true;
+    }
+
+    // Unsubscribe: drop cast-bound hold so idle polls can go pure stopped.
+    if (req.find("/player/timeline/unsubscribe") != std::string::npos) {
+        {
+            std::lock_guard<std::mutex> lock(mu_);
+            castBound_ = false;
+            if (!wantPlay_)
+                prePlayHold_ = false;
+        }
+        auto cid = queryParam(req, "commandID");
+        if (cid.empty())
+            cid = "0";
+        sendHttp(c, 200, "application/xml", timelineXml(cid));
+        return;
+    }
+
+    // Timeline poll / subscribe / proxy alias — never auto-start media from poll.
+    if (req.find("/player/timeline/poll") != std::string::npos ||
+        req.find("/player/timeline/subscribe") != std::string::npos ||
+        req.find("/player/proxy/timeline") != std::string::npos ||
+        (req.find("/timeline") != std::string::npos && req.find("playMedia") == std::string::npos &&
+         req.find("mirror") == std::string::npos && req.find("unsubscribe") == std::string::npos)) {
+        {
+            std::lock_guard<std::mutex> lock(mu_);
+            castBound_ = true;
+            // Live poller ⇒ Web still has us as cast target; hold for Resume dialog.
+            if (!wantPlay_ && !prePlayHold_)
+                prePlayHold_ = true;
+        }
+        auto cid = queryParam(req, "commandID");
+        if (cid.empty())
+            cid = "0";
+        if (queryParam(req, "wait") == "1")
+            std::this_thread::sleep_for(std::chrono::milliseconds(400));
+        auto body = timelineXml(cid);
+        sendHttp(c, 200, "application/xml", body);
+        log("HTTP OUT 200 timeline " + timelineBrief(body));
+        return;
+    }
+
+    // Mirror: stage identity + prePlayHold (no media start). Do not demote live cast.
+    if (req.find("mirror") != std::string::npos && req.find("playMedia") == std::string::npos) {
+        PlayRequest pr = parsePlayRequest(req);
+        {
+            std::lock_guard<std::mutex> lock(mu_);
+            const bool keepActive =
+                wantPlay_ && (state_ == "playing" || state_ == "buffering" || state_ == "paused");
+            if (!keepActive) {
+                // Remember key for following playMedia; wire omits media bind
+                // while wantPlay_ is false (buffering@navigation hold).
+                if (!pr.key.empty())
+                    pendingKey_ = pr.key;
+                if (!pr.ratingKey.empty())
+                    pendingRatingKey_ = pr.ratingKey;
+                if (!pr.address.empty())
+                    serverHost_ = pr.address;
+                if (!pr.protocol.empty())
+                    serverProto_ = pr.protocol;
+                if (!pr.port.empty())
+                    serverPort_ = pr.port;
+                if (!pr.serverMachineId.empty())
+                    serverMachineId_ = pr.serverMachineId;
+                // Drop stale queue so hold never looks like a live session if
+                // wantPlay latches incorrectly; restage only valid play-queue.
+                pendingPlayQueueId_.clear();
+                pendingPlayQueueItemId_.clear();
+                pendingContainerKey_.clear();
+                if (!pr.playQueueId.empty())
+                    pendingPlayQueueId_ = pr.playQueueId;
+                if (!pr.playQueueItemId.empty())
+                    pendingPlayQueueItemId_ = pr.playQueueItemId;
+                if (!pr.containerKey.empty() &&
+                    pr.containerKey.find("/playQueues/") != std::string::npos)
+                    pendingContainerKey_ = pr.containerKey;
+                durationMs_ = 0;
+                prePlayHold_ = true;
+                wantPlay_ = false;
+                state_ = "stopped"; // wire shows buffering via prePlayHold_
+                castBound_ = true;
+            }
+            // else: leave live timeline alone (Web mirror after playMedia must not idle)
+        }
+        sendHttp(c, 200, "application/xml", timelineXml(queryParam(req, "commandID")));
+        log("mirror staged key=" + pr.key);
+        return;
+    }
+
+    if (req.find("playMedia") != std::string::npos ||
+        req.find("/player/playback/") != std::string::npos) {
+        const bool isPlayMedia = req.find("playMedia") != std::string::npos;
+        const bool isPause = req.find("/pause") != std::string::npos ||
+                             req.find("playback/pause") != std::string::npos;
+        const bool isStop = req.find("/stop") != std::string::npos ||
+                            req.find("playback/stop") != std::string::npos;
+        const bool isSeek = req.find("seekTo") != std::string::npos ||
+                            (req.find("/seek") != std::string::npos &&
+                             req.find("seekTo") == std::string::npos &&
+                             req.find("step") == std::string::npos);
+        // Relative scrubber steps (Web remote / keyboard)
+        const bool isStepForward = req.find("stepForward") != std::string::npos;
+        const bool isStepBack = req.find("stepBack") != std::string::npos;
+        const bool isSkipNext = req.find("skipNext") != std::string::npos;
+        const bool isSkipPrevious = req.find("skipPrevious") != std::string::npos;
+        const bool isResumePlay =
+            !isPlayMedia && !isPause && !isStop && !isSeek && !isStepForward &&
+            !isStepBack && !isSkipNext && !isSkipPrevious &&
+            (req.find("/player/playback/play") != std::string::npos ||
+             req.find("playback/play?") != std::string::npos ||
+             req.find("playback/play ") != std::string::npos);
+
+        if (isPlayMedia) {
+            PlayRequest pr = parsePlayRequest(req);
+            if (pr.key.empty())
+                pr.key = "(no-key)";
+            {
+                std::lock_guard<std::mutex> lock(mu_);
+                wantPlay_ = true;
+                prePlayHold_ = false;
+                castBound_ = true;
+                state_ = "buffering";
+                // Never plant negative scrubber time (Web/browse edge).
+                int64_t off = pr.offsetMs < 0 ? 0 : pr.offsetMs;
+                // Drop prior title duration on every fresh cast. A shorter leftover
+                // duration (e.g. testsrc 120s) must not clamp a legitimate continue-
+                // watching offset on a longer next title. bindMedia re-supplies
+                // duration after resolve and clamps timeMs_ then.
+                durationMs_ = 0;
+                timeMs_ = off;
+                scrubTargetMs_ = off; // hold until bind/demux
+                pendingKey_ = pr.key;
+                pendingContainerKey_ = pr.containerKey;
+                pendingPlayQueueId_ = pr.playQueueId;
+                pendingPlayQueueItemId_ = pr.playQueueItemId;
+                pendingPlayQueueVersion_ =
+                    pr.playQueueVersion.empty() ? "1" : pr.playQueueVersion;
+                // Synthetic containerKey when only playQueueID was supplied so
+                // auto-next / skipNext lastPlay.containerKey paths stay queue-shaped.
+                if (pendingContainerKey_.empty() && !pendingPlayQueueId_.empty())
+                    pendingContainerKey_ = "/playQueues/" + pendingPlayQueueId_ + "?own=1";
+                // Mirror onto PlayRequest so async onPlay_/lastPlay see the queue bind
+                // (pending* alone is display-only until bindMedia).
+                if (pr.containerKey.empty() && !pr.playQueueId.empty())
+                    pr.containerKey = "/playQueues/" + pr.playQueueId + "?own=1";
+                if (!pr.ratingKey.empty())
+                    pendingRatingKey_ = pr.ratingKey;
+                if (!pr.address.empty())
+                    serverHost_ = pr.address;
+                if (!pr.protocol.empty())
+                    serverProto_ = pr.protocol;
+                if (!pr.port.empty())
+                    serverPort_ = pr.port;
+                if (!pr.serverMachineId.empty())
+                    serverMachineId_ = pr.serverMachineId;
+            }
+            auto cid = queryParam(req, "commandID");
+            int64_t ackOff = 0;
+            {
+                std::lock_guard<std::mutex> lock(mu_);
+                ackOff = timeMs_;
+            }
+            auto body = timelineXml(cid);
+            sendHttp(c, 200, "application/xml", body);
+            log("HTTP OUT 200 playMedia " + timelineBrief(body));
+            log("playMedia ACK key=" + pr.key + " offMs=" + std::to_string(ackOff));
+            // Invalidate in-flight resolve *before* spawning onPlay_ so a
+            // concurrent doPlay cannot bind/setState over this plant while
+            // the new play thread is still scheduling (P4-SCRUB cast race).
+            if (onPlayQueued_) {
+                try {
+                    onPlayQueued_();
+                } catch (...) {
+                    log("playQueued handler exception");
+                }
+            }
+            if (onPlay_) {
+                std::thread([this, pr]() {
+                    try {
+                        onPlay_(pr);
+                    } catch (...) {
+                        log("playMedia handler exception");
+                    }
+                }).detach();
+            }
+            return;
+        }
+
+        if (isPause) {
+            int64_t t = 0, d = 0;
+            bool active = false;
+            {
+                std::lock_guard<std::mutex> lock(mu_);
+                t = timeMs_;
+                d = durationMs_;
+                active = wantPlay_;
+            }
+            // Idle/stopped: ACK only — setState("paused") would re-arm wantPlay_
+            // and fullScreenVideo without a media key (scrubber ghost after stop).
+            if (active)
+                setState("paused", t, d);
+            sendHttp(c, 200, "application/xml", timelineXml(queryParam(req, "commandID")));
+            if (active && onPause_)
+                onPause_();
+            return;
+        }
+        if (isResumePlay) {
+            int64_t t = 0, d = 0;
+            bool active = false;
+            {
+                std::lock_guard<std::mutex> lock(mu_);
+                t = timeMs_;
+                d = durationMs_;
+                active = wantPlay_;
+            }
+            // Idle: ACK only — do not re-arm wantPlay via setState("playing").
+            if (active)
+                setState("playing", t, d);
+            sendHttp(c, 200, "application/xml", timelineXml(queryParam(req, "commandID")));
+            if (active && onResume_)
+                onResume_();
+            return;
+        }
+        if (isStop) {
+            // Drop bind first so stop ACK is buffering@navigation without keys
+            // (video/stopped+key idles Web and freezes scrubber / Resume dialog).
+            // clearMedia before player.stop so late progress cannot re-arm wantPlay
+            // (setState ignores progress while prePlayHold && !wantPlay).
+            clearMedia();
+            if (onStop_)
+                onStop_();
+            sendHttp(c, 200, "application/xml", timelineXml(queryParam(req, "commandID")));
+            return;
+        }
+        if (isSeek) {
+            bool present = false;
+            int64_t ms = parseOffsetMs(req, &present);
+            if (ms < 0)
+                ms = 0;
+            int64_t d = 0;
+            int64_t curT = 0;
+            bool active = false;
+            {
+                std::lock_guard<std::mutex> lock(mu_);
+                d = durationMs_;
+                curT = timeMs_;
+                active = wantPlay_;
+                // Clamp seek into known duration so scrubber cannot overshoot.
+                if (d > 0 && ms > d)
+                    ms = d;
+            }
+            // No offset=/viewOffset=/time=: ACK only (do not jump to 0 unintentionally).
+            // Idle after stop: ACK only — do not re-arm player via onSeek
+            // (stop leaves last URL; seekMs would restart without scrubber bind).
+            // Same position after clamp: ACK only — avoid demux restart thrash
+            // (Web sometimes re-sends the current scrubber thumb position).
+            const bool moved = present && (ms != curT);
+            if (active && moved) {
+                // Atomic plant: scrub target + time under one lock so demux
+                // progress cannot interleave a stale pin between assign/setState.
+                {
+                    std::lock_guard<std::mutex> lock(mu_);
+                    scrubTargetMs_ = ms;
+                    timeMs_ = ms;
+                    if (d > 0)
+                        durationMs_ = d;
+                    state_ = "buffering";
+                    wantPlay_ = true;
+                }
+            }
+            sendHttp(c, 200, "application/xml", timelineXml(queryParam(req, "commandID")));
+            if (active && moved && onSeek_)
+                onSeek_(ms);
+            return;
+        }
+        if (isStepForward || isStepBack) {
+            // Default ±10s; optional offset= is relative step size in ms (cap 120s).
+            // offset=0 → keep default (not a zero-step no-op). Negative sizes use abs.
+            int64_t step = 10000;
+            auto off = queryParam(req, "offset");
+            if (!off.empty()) {
+                int64_t v = std::atoll(off.c_str());
+                if (v < 0)
+                    v = -v;
+                // Non-zero only; clamp huge values (Web may send large step sizes).
+                if (v > 0)
+                    step = (v > 120000) ? 120000 : v;
+            }
+            if (isStepBack)
+                step = -step;
+            int64_t t = 0, d = 0;
+            bool active = false;
+            int64_t target = 0;
+            int64_t applied = 0;
+            {
+                std::lock_guard<std::mutex> lock(mu_);
+                t = timeMs_;
+                d = durationMs_;
+                active = wantPlay_;
+                target = t + step;
+                if (target < 0)
+                    target = 0;
+                if (d > 0 && target > d)
+                    target = d;
+                applied = target - t;
+                // applied==0 at bounds: ACK only — no buffering thrash / player restart.
+                if (active && applied != 0) {
+                    scrubTargetMs_ = target;
+                    timeMs_ = target;
+                    if (d > 0)
+                        durationMs_ = d;
+                    state_ = "buffering";
+                    wantPlay_ = true;
+                }
+            }
+            sendHttp(c, 200, "application/xml", timelineXml(queryParam(req, "commandID")));
+            // Prefer absolute seek when available so player lands on clamped target
+            // even if positionMs lags companion timeMs_ (progress race).
+            if (active && applied != 0) {
+                if (onSeek_)
+                    onSeek_(target);
+                else if (onStep_)
+                    onStep_(applied);
+            }
+            return;
+        }
+        if (isSkipNext) {
+            bool active = false;
+            {
+                std::lock_guard<std::mutex> lock(mu_);
+                active = wantPlay_;
+            }
+            sendHttp(c, 200, "application/xml", timelineXml(queryParam(req, "commandID")));
+            // Empty session / unbound queue: ACK only (tryAutoNext no-ops).
+            if (active && onSkipNext_)
+                onSkipNext_();
+            return;
+        }
+        if (isSkipPrevious) {
+            int64_t d = 0;
+            int64_t t = 0;
+            bool active = false;
+            {
+                std::lock_guard<std::mutex> lock(mu_);
+                d = durationMs_;
+                t = timeMs_;
+                active = wantPlay_;
+            }
+            // Idle: ACK only (no re-arm). Active: fire handler *before* zeroing
+            // timeMs_ so main can Plex-style branch on scrub position
+            // (t>3s → restart@0; t≤3s → queue previous / no-op at 0).
+            if (active) {
+                if (onSkipPrevious_)
+                    onSkipPrevious_();
+                else if (onSeek_ && t != 0)
+                    onSeek_(0);
+                // Optimistic scrubber plant after branch (queue-prev rebind overwrites).
+                if (t != 0) {
+                    std::lock_guard<std::mutex> lock(mu_);
+                    scrubTargetMs_ = 0;
+                    timeMs_ = 0;
+                    if (d > 0)
+                        durationMs_ = d;
+                    state_ = "buffering";
+                    wantPlay_ = true;
+                }
+            }
+            sendHttp(c, 200, "application/xml", timelineXml(queryParam(req, "commandID")));
+            return;
+        }
+
+        sendHttp(c, 200, "application/xml", timelineXml(queryParam(req, "commandID")));
+        return;
+    }
+
+    sendHttp(c, 404, "text/plain", "not found");
+    
+}
+
 void Companion::httpLoop() {
     int fd = ::socket(AF_INET, SOCK_STREAM, 0);
     if (fd < 0) {
@@ -718,6 +1171,9 @@ void Companion::httpLoop() {
     listen(fd, 16);
     log("HTTP: companion on :" + std::to_string(port_) + " ip≈" + lanIp());
 
+    // Accept loop never blocks on client I/O. Bounded workers: one trickle or
+    // abandoned Wi-Fi handshake must not delay discovery/controls for others.
+    constexpr int kMaxHttpWorkers = 24;
     while (running_.load()) {
         fd_set rfds;
         FD_ZERO(&rfds);
@@ -728,467 +1184,31 @@ void Companion::httpLoop() {
         int c = accept(fd, nullptr, nullptr);
         if (c < 0)
             continue;
-        // Full header block before any parse/gate (see recvHttpHeaders).
-        std::string req;
-        const HttpHeaderRead hr = recvHttpHeaders(c, req, 16384, 5000);
-        if (hr != HttpHeaderRead::Ok) {
-            if (hr == HttpHeaderRead::Timeout) {
-                log("HTTP: header read timeout (incomplete request)");
-                sendHttp(c, 408, "text/plain", "header timeout\n");
-            } else if (hr == HttpHeaderRead::TooLarge) {
-                log("HTTP: header block exceeds cap");
-                sendHttp(c, 413, "text/plain", "headers too large\n");
-            } else if (hr == HttpHeaderRead::Closed) {
-                // Peer closed mid-headers — no response required.
-            } else {
-                log("HTTP: header read error");
-            }
+        if (httpWorkers_.load(std::memory_order_relaxed) >= kMaxHttpWorkers) {
+            sendHttp(c, 503, "text/plain", "too many connections\n");
             close(c);
             continue;
         }
-        if (req.find("/player/") != std::string::npos || req.find("/resources") != std::string::npos)
-            // Request line may carry ?X-Plex-Token=...; Companion::log redacts at sink.
-            log("HTTP IN " + requestLine(req));
-
-        if (req.find("OPTIONS") == 0) {
-            sendHttp(c, 200, "text/plain", "");
-            close(c);
-            continue;
-        }
-
-        // /resources and /identity must stay open without a target header — that is
-        // how controllers discover machineIdentifier after GDM. Player commands that
-        // name a *different* target are the vanish path and must not be silent.
-        if (req.find("GET /resources") != std::string::npos ||
-            req.find("GET /identity") != std::string::npos) {
-            sendHttp(c, 200, "application/xml", resourcesXml());
-            close(c);
-            continue;
-        }
-
-        // Cast / timeline / playback target gate.
-        //
-        // Breadth is deliberate: every /player/* path that names a target id is
-        // checked together — playMedia, playback controls, AND timeline
-        // subscribe/poll/unsubscribe. A mid-session mismatch means the controller
-        // is addressing a different clientIdentifier. Answering timeline for the
-        // wrong id while we still demux would keep a split-brain "session alive"
-        // (wrong machine reports playing; this one still burns the stream). Prefer
-        // one loud 409 that stops the whole control surface over "video randomly
-        // stopped" with half the protocol still 200. /resources stays open above
-        // so GDM discovery is unaffected.
-        //
-        // Pre-fix accepted every /player/* with 200 and no diagnostic — GDM
-        // still showed the player, then the session vanished.
-        if (req.find("/player/") != std::string::npos || req.find("playMedia") != std::string::npos ||
-            req.find("/timeline") != std::string::npos) {
-            std::string gotTarget;
-            if (!castTargetAccepted(req, machineId_, &gotTarget)) {
-                const std::string body =
-                    std::string("CAST_TARGET_MISMATCH expected=") + machineId_ + " got=" + gotTarget +
-                    "\n";
-                log(std::string("ERROR CAST_TARGET_MISMATCH expected=") + machineId_ +
-                    " got=" + gotTarget + " — refusing cast/timeline (picker may vanish)");
-                sendHttp(c, 409, "text/plain", body);
-                close(c);
-                continue;
+        httpWorkers_.fetch_add(1, std::memory_order_relaxed);
+        std::thread([this, c]() {
+            struct WorkerDone {
+                Companion* self;
+                int fd;
+                ~WorkerDone() {
+                    if (fd >= 0)
+                        ::close(fd);
+                    self->httpWorkers_.fetch_sub(1, std::memory_order_relaxed);
+                }
+            } done{this, c};
+            try {
+                httpServeClient(c);
+            } catch (...) {
+                log("HTTP: client handler exception");
             }
-        }
-
-        {
-            std::lock_guard<std::mutex> lock(mu_);
-            if (req.find("/player/") != std::string::npos || req.find("/resources") != std::string::npos)
-                castBound_ = true;
-        }
-
-        // Unsubscribe: drop cast-bound hold so idle polls can go pure stopped.
-        if (req.find("/player/timeline/unsubscribe") != std::string::npos) {
-            {
-                std::lock_guard<std::mutex> lock(mu_);
-                castBound_ = false;
-                if (!wantPlay_)
-                    prePlayHold_ = false;
-            }
-            auto cid = queryParam(req, "commandID");
-            if (cid.empty())
-                cid = "0";
-            sendHttp(c, 200, "application/xml", timelineXml(cid));
-            close(c);
-            continue;
-        }
-
-        // Timeline poll / subscribe / proxy alias — never auto-start media from poll.
-        if (req.find("/player/timeline/poll") != std::string::npos ||
-            req.find("/player/timeline/subscribe") != std::string::npos ||
-            req.find("/player/proxy/timeline") != std::string::npos ||
-            (req.find("/timeline") != std::string::npos && req.find("playMedia") == std::string::npos &&
-             req.find("mirror") == std::string::npos && req.find("unsubscribe") == std::string::npos)) {
-            {
-                std::lock_guard<std::mutex> lock(mu_);
-                castBound_ = true;
-                // Live poller ⇒ Web still has us as cast target; hold for Resume dialog.
-                if (!wantPlay_ && !prePlayHold_)
-                    prePlayHold_ = true;
-            }
-            auto cid = queryParam(req, "commandID");
-            if (cid.empty())
-                cid = "0";
-            if (queryParam(req, "wait") == "1")
-                std::this_thread::sleep_for(std::chrono::milliseconds(400));
-            auto body = timelineXml(cid);
-            sendHttp(c, 200, "application/xml", body);
-            log("HTTP OUT 200 timeline " + timelineBrief(body));
-            close(c);
-            continue;
-        }
-
-        // Mirror: stage identity + prePlayHold (no media start). Do not demote live cast.
-        if (req.find("mirror") != std::string::npos && req.find("playMedia") == std::string::npos) {
-            PlayRequest pr = parsePlayRequest(req);
-            {
-                std::lock_guard<std::mutex> lock(mu_);
-                const bool keepActive =
-                    wantPlay_ && (state_ == "playing" || state_ == "buffering" || state_ == "paused");
-                if (!keepActive) {
-                    // Remember key for following playMedia; wire omits media bind
-                    // while wantPlay_ is false (buffering@navigation hold).
-                    if (!pr.key.empty())
-                        pendingKey_ = pr.key;
-                    if (!pr.ratingKey.empty())
-                        pendingRatingKey_ = pr.ratingKey;
-                    if (!pr.address.empty())
-                        serverHost_ = pr.address;
-                    if (!pr.protocol.empty())
-                        serverProto_ = pr.protocol;
-                    if (!pr.port.empty())
-                        serverPort_ = pr.port;
-                    if (!pr.serverMachineId.empty())
-                        serverMachineId_ = pr.serverMachineId;
-                    // Drop stale queue so hold never looks like a live session if
-                    // wantPlay latches incorrectly; restage only valid play-queue.
-                    pendingPlayQueueId_.clear();
-                    pendingPlayQueueItemId_.clear();
-                    pendingContainerKey_.clear();
-                    if (!pr.playQueueId.empty())
-                        pendingPlayQueueId_ = pr.playQueueId;
-                    if (!pr.playQueueItemId.empty())
-                        pendingPlayQueueItemId_ = pr.playQueueItemId;
-                    if (!pr.containerKey.empty() &&
-                        pr.containerKey.find("/playQueues/") != std::string::npos)
-                        pendingContainerKey_ = pr.containerKey;
-                    durationMs_ = 0;
-                    prePlayHold_ = true;
-                    wantPlay_ = false;
-                    state_ = "stopped"; // wire shows buffering via prePlayHold_
-                    castBound_ = true;
-                }
-                // else: leave live timeline alone (Web mirror after playMedia must not idle)
-            }
-            sendHttp(c, 200, "application/xml", timelineXml(queryParam(req, "commandID")));
-            log("mirror staged key=" + pr.key);
-            close(c);
-            continue;
-        }
-
-        if (req.find("playMedia") != std::string::npos ||
-            req.find("/player/playback/") != std::string::npos) {
-            const bool isPlayMedia = req.find("playMedia") != std::string::npos;
-            const bool isPause = req.find("/pause") != std::string::npos ||
-                                 req.find("playback/pause") != std::string::npos;
-            const bool isStop = req.find("/stop") != std::string::npos ||
-                                req.find("playback/stop") != std::string::npos;
-            const bool isSeek = req.find("seekTo") != std::string::npos ||
-                                (req.find("/seek") != std::string::npos &&
-                                 req.find("seekTo") == std::string::npos &&
-                                 req.find("step") == std::string::npos);
-            // Relative scrubber steps (Web remote / keyboard)
-            const bool isStepForward = req.find("stepForward") != std::string::npos;
-            const bool isStepBack = req.find("stepBack") != std::string::npos;
-            const bool isSkipNext = req.find("skipNext") != std::string::npos;
-            const bool isSkipPrevious = req.find("skipPrevious") != std::string::npos;
-            const bool isResumePlay =
-                !isPlayMedia && !isPause && !isStop && !isSeek && !isStepForward &&
-                !isStepBack && !isSkipNext && !isSkipPrevious &&
-                (req.find("/player/playback/play") != std::string::npos ||
-                 req.find("playback/play?") != std::string::npos ||
-                 req.find("playback/play ") != std::string::npos);
-
-            if (isPlayMedia) {
-                PlayRequest pr = parsePlayRequest(req);
-                if (pr.key.empty())
-                    pr.key = "(no-key)";
-                {
-                    std::lock_guard<std::mutex> lock(mu_);
-                    wantPlay_ = true;
-                    prePlayHold_ = false;
-                    castBound_ = true;
-                    state_ = "buffering";
-                    // Never plant negative scrubber time (Web/browse edge).
-                    int64_t off = pr.offsetMs < 0 ? 0 : pr.offsetMs;
-                    // Drop prior title duration on every fresh cast. A shorter leftover
-                    // duration (e.g. testsrc 120s) must not clamp a legitimate continue-
-                    // watching offset on a longer next title. bindMedia re-supplies
-                    // duration after resolve and clamps timeMs_ then.
-                    durationMs_ = 0;
-                    timeMs_ = off;
-                    scrubTargetMs_ = off; // hold until bind/demux
-                    pendingKey_ = pr.key;
-                    pendingContainerKey_ = pr.containerKey;
-                    pendingPlayQueueId_ = pr.playQueueId;
-                    pendingPlayQueueItemId_ = pr.playQueueItemId;
-                    pendingPlayQueueVersion_ =
-                        pr.playQueueVersion.empty() ? "1" : pr.playQueueVersion;
-                    // Synthetic containerKey when only playQueueID was supplied so
-                    // auto-next / skipNext lastPlay.containerKey paths stay queue-shaped.
-                    if (pendingContainerKey_.empty() && !pendingPlayQueueId_.empty())
-                        pendingContainerKey_ = "/playQueues/" + pendingPlayQueueId_ + "?own=1";
-                    // Mirror onto PlayRequest so async onPlay_/lastPlay see the queue bind
-                    // (pending* alone is display-only until bindMedia).
-                    if (pr.containerKey.empty() && !pr.playQueueId.empty())
-                        pr.containerKey = "/playQueues/" + pr.playQueueId + "?own=1";
-                    if (!pr.ratingKey.empty())
-                        pendingRatingKey_ = pr.ratingKey;
-                    if (!pr.address.empty())
-                        serverHost_ = pr.address;
-                    if (!pr.protocol.empty())
-                        serverProto_ = pr.protocol;
-                    if (!pr.port.empty())
-                        serverPort_ = pr.port;
-                    if (!pr.serverMachineId.empty())
-                        serverMachineId_ = pr.serverMachineId;
-                }
-                auto cid = queryParam(req, "commandID");
-                int64_t ackOff = 0;
-                {
-                    std::lock_guard<std::mutex> lock(mu_);
-                    ackOff = timeMs_;
-                }
-                auto body = timelineXml(cid);
-                sendHttp(c, 200, "application/xml", body);
-                close(c);
-                log("HTTP OUT 200 playMedia " + timelineBrief(body));
-                log("playMedia ACK key=" + pr.key + " offMs=" + std::to_string(ackOff));
-                // Invalidate in-flight resolve *before* spawning onPlay_ so a
-                // concurrent doPlay cannot bind/setState over this plant while
-                // the new play thread is still scheduling (P4-SCRUB cast race).
-                if (onPlayQueued_) {
-                    try {
-                        onPlayQueued_();
-                    } catch (...) {
-                        log("playQueued handler exception");
-                    }
-                }
-                if (onPlay_) {
-                    std::thread([this, pr]() {
-                        try {
-                            onPlay_(pr);
-                        } catch (...) {
-                            log("playMedia handler exception");
-                        }
-                    }).detach();
-                }
-                continue;
-            }
-
-            if (isPause) {
-                int64_t t = 0, d = 0;
-                bool active = false;
-                {
-                    std::lock_guard<std::mutex> lock(mu_);
-                    t = timeMs_;
-                    d = durationMs_;
-                    active = wantPlay_;
-                }
-                // Idle/stopped: ACK only — setState("paused") would re-arm wantPlay_
-                // and fullScreenVideo without a media key (scrubber ghost after stop).
-                if (active)
-                    setState("paused", t, d);
-                sendHttp(c, 200, "application/xml", timelineXml(queryParam(req, "commandID")));
-                if (active && onPause_)
-                    onPause_();
-                close(c);
-                continue;
-            }
-            if (isResumePlay) {
-                int64_t t = 0, d = 0;
-                bool active = false;
-                {
-                    std::lock_guard<std::mutex> lock(mu_);
-                    t = timeMs_;
-                    d = durationMs_;
-                    active = wantPlay_;
-                }
-                // Idle: ACK only — do not re-arm wantPlay via setState("playing").
-                if (active)
-                    setState("playing", t, d);
-                sendHttp(c, 200, "application/xml", timelineXml(queryParam(req, "commandID")));
-                if (active && onResume_)
-                    onResume_();
-                close(c);
-                continue;
-            }
-            if (isStop) {
-                // Drop bind first so stop ACK is buffering@navigation without keys
-                // (video/stopped+key idles Web and freezes scrubber / Resume dialog).
-                // clearMedia before player.stop so late progress cannot re-arm wantPlay
-                // (setState ignores progress while prePlayHold && !wantPlay).
-                clearMedia();
-                if (onStop_)
-                    onStop_();
-                sendHttp(c, 200, "application/xml", timelineXml(queryParam(req, "commandID")));
-                close(c);
-                continue;
-            }
-            if (isSeek) {
-                bool present = false;
-                int64_t ms = parseOffsetMs(req, &present);
-                if (ms < 0)
-                    ms = 0;
-                int64_t d = 0;
-                int64_t curT = 0;
-                bool active = false;
-                {
-                    std::lock_guard<std::mutex> lock(mu_);
-                    d = durationMs_;
-                    curT = timeMs_;
-                    active = wantPlay_;
-                    // Clamp seek into known duration so scrubber cannot overshoot.
-                    if (d > 0 && ms > d)
-                        ms = d;
-                }
-                // No offset=/viewOffset=/time=: ACK only (do not jump to 0 unintentionally).
-                // Idle after stop: ACK only — do not re-arm player via onSeek
-                // (stop leaves last URL; seekMs would restart without scrubber bind).
-                // Same position after clamp: ACK only — avoid demux restart thrash
-                // (Web sometimes re-sends the current scrubber thumb position).
-                const bool moved = present && (ms != curT);
-                if (active && moved) {
-                    // Atomic plant: scrub target + time under one lock so demux
-                    // progress cannot interleave a stale pin between assign/setState.
-                    {
-                        std::lock_guard<std::mutex> lock(mu_);
-                        scrubTargetMs_ = ms;
-                        timeMs_ = ms;
-                        if (d > 0)
-                            durationMs_ = d;
-                        state_ = "buffering";
-                        wantPlay_ = true;
-                    }
-                }
-                sendHttp(c, 200, "application/xml", timelineXml(queryParam(req, "commandID")));
-                if (active && moved && onSeek_)
-                    onSeek_(ms);
-                close(c);
-                continue;
-            }
-            if (isStepForward || isStepBack) {
-                // Default ±10s; optional offset= is relative step size in ms (cap 120s).
-                // offset=0 → keep default (not a zero-step no-op). Negative sizes use abs.
-                int64_t step = 10000;
-                auto off = queryParam(req, "offset");
-                if (!off.empty()) {
-                    int64_t v = std::atoll(off.c_str());
-                    if (v < 0)
-                        v = -v;
-                    // Non-zero only; clamp huge values (Web may send large step sizes).
-                    if (v > 0)
-                        step = (v > 120000) ? 120000 : v;
-                }
-                if (isStepBack)
-                    step = -step;
-                int64_t t = 0, d = 0;
-                bool active = false;
-                int64_t target = 0;
-                int64_t applied = 0;
-                {
-                    std::lock_guard<std::mutex> lock(mu_);
-                    t = timeMs_;
-                    d = durationMs_;
-                    active = wantPlay_;
-                    target = t + step;
-                    if (target < 0)
-                        target = 0;
-                    if (d > 0 && target > d)
-                        target = d;
-                    applied = target - t;
-                    // applied==0 at bounds: ACK only — no buffering thrash / player restart.
-                    if (active && applied != 0) {
-                        scrubTargetMs_ = target;
-                        timeMs_ = target;
-                        if (d > 0)
-                            durationMs_ = d;
-                        state_ = "buffering";
-                        wantPlay_ = true;
-                    }
-                }
-                sendHttp(c, 200, "application/xml", timelineXml(queryParam(req, "commandID")));
-                // Prefer absolute seek when available so player lands on clamped target
-                // even if positionMs lags companion timeMs_ (progress race).
-                if (active && applied != 0) {
-                    if (onSeek_)
-                        onSeek_(target);
-                    else if (onStep_)
-                        onStep_(applied);
-                }
-                close(c);
-                continue;
-            }
-            if (isSkipNext) {
-                bool active = false;
-                {
-                    std::lock_guard<std::mutex> lock(mu_);
-                    active = wantPlay_;
-                }
-                sendHttp(c, 200, "application/xml", timelineXml(queryParam(req, "commandID")));
-                // Empty session / unbound queue: ACK only (tryAutoNext no-ops).
-                if (active && onSkipNext_)
-                    onSkipNext_();
-                close(c);
-                continue;
-            }
-            if (isSkipPrevious) {
-                int64_t d = 0;
-                int64_t t = 0;
-                bool active = false;
-                {
-                    std::lock_guard<std::mutex> lock(mu_);
-                    d = durationMs_;
-                    t = timeMs_;
-                    active = wantPlay_;
-                }
-                // Idle: ACK only (no re-arm). Active: fire handler *before* zeroing
-                // timeMs_ so main can Plex-style branch on scrub position
-                // (t>3s → restart@0; t≤3s → queue previous / no-op at 0).
-                if (active) {
-                    if (onSkipPrevious_)
-                        onSkipPrevious_();
-                    else if (onSeek_ && t != 0)
-                        onSeek_(0);
-                    // Optimistic scrubber plant after branch (queue-prev rebind overwrites).
-                    if (t != 0) {
-                        std::lock_guard<std::mutex> lock(mu_);
-                        scrubTargetMs_ = 0;
-                        timeMs_ = 0;
-                        if (d > 0)
-                            durationMs_ = d;
-                        state_ = "buffering";
-                        wantPlay_ = true;
-                    }
-                }
-                sendHttp(c, 200, "application/xml", timelineXml(queryParam(req, "commandID")));
-                close(c);
-                continue;
-            }
-
-            sendHttp(c, 200, "application/xml", timelineXml(queryParam(req, "commandID")));
-            close(c);
-            continue;
-        }
-
-        sendHttp(c, 404, "text/plain", "not found");
-        close(c);
+        }).detach();
     }
     close(fd);
 }
+
 
 } // namespace misterplex

@@ -320,4 +320,74 @@ if [[ "$code" != "408" ]]; then
 fi
 echo "PASS incomplete headers → 408 (no hang, no false 409)"
 
-echo "OK cast target mismatch gate (pure + HTTP harness + red twin + TCP-split)"
+# Concurrent: incomplete connection held open must NOT stall a valid /resources.
+# Pre-fix (sync accept loop): /resources delayed ~4.8s behind one incomplete client.
+# Post-fix: worker-per-connection → /resources promptly while incomplete still open.
+conc=$(PORT="$PORT" python3 - <<'PY'
+import os, socket, time, sys
+port = int(os.environ["PORT"])
+# Hold incomplete connection open (do not finish headers).
+slow = socket.create_connection(("127.0.0.1", port), 3)
+slow.sendall(b"GET /player/timeline/poll HTTP/1.1\r\nX-Plex-Target-Client-Identifier: misterplex-")
+time.sleep(0.05)  # ensure accept thread handed off to worker
+t0 = time.perf_counter()
+fast = socket.create_connection(("127.0.0.1", port), 3)
+fast.sendall(
+    b"GET /resources HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n"
+)
+fast.settimeout(2.0)
+data = b""
+try:
+    while True:
+        c = fast.recv(4096)
+        if not c:
+            break
+        data += c
+except socket.timeout:
+    pass
+fast.close()
+ms = (time.perf_counter() - t0) * 1000.0
+line = data.split(b"\r\n", 1)[0].decode("latin1", "replace") if data else ""
+code = line.split(" ", 2)[1] if line.startswith("HTTP/") else "000"
+# cleanup slow (may get 408 later)
+try:
+    slow.close()
+except Exception:
+    pass
+print(f"http={code} ms={ms:.1f}")
+# Fail if delayed like the audit (~4800ms) or not 200
+if code != "200":
+    sys.exit(2)
+if ms > 500:  # soft bound; audit was ~4800; healthy is typically <50ms
+    sys.exit(3)
+sys.exit(0)
+PY
+); conc_rc=$?
+echo "concurrent_resources_during_incomplete $conc"
+if [[ "$conc_rc" -eq 2 ]]; then
+  echo "FAIL: concurrent /resources not 200 while incomplete open" >&2
+  exit 1
+fi
+if [[ "$conc_rc" -eq 3 ]]; then
+  echo "FAIL: concurrent /resources too slow (still blocked by incomplete client?)" >&2
+  exit 1
+fi
+if [[ "$conc_rc" -ne 0 ]]; then
+  echo "FAIL: concurrent probe rc=$conc_rc" >&2
+  exit 1
+fi
+# Sub-100ms is the parent bar when healthy; report actual ms.
+ms_val=$(sed -n 's/.*ms=\([0-9.]*\).*/\1/p' <<<"$conc")
+python3 - <<PY
+ms=float("${ms_val}")
+print(f"concurrent_ms={ms:.1f}")
+raise SystemExit(0 if ms < 100.0 else 4)
+PY
+conc_fast=$?
+if [[ "$conc_fast" -ne 0 ]]; then
+  echo "FAIL: concurrent /resources ms=${ms_val} want <100 (parent bar)" >&2
+  exit 1
+fi
+echo "PASS concurrent /resources <100ms while incomplete client open"
+
+echo "OK cast target mismatch gate (pure + HTTP harness + red twin + TCP-split + concurrent)"
