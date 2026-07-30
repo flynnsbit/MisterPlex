@@ -8,7 +8,7 @@ plex.direct: machineIdentifier=1cdd1b7f718cb9f111a2a92abcdd50c7733d14fe
 version=1.0
 version=1.43.3.10828-00f62d37d
 === conf ===
-PLEX_BASE=http://192.168.1.41:32400
+PLEX_BASE=http://YOUR-PLEX-SERVER:32400
 PLEX_HOST=192.168.1.41
 DECODE=320x240
 PRESENT_PROFILE=0

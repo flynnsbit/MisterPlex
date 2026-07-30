@@ -23,7 +23,7 @@ Daemon uses **HTTP GET** via `plexHttpGetNoBody` → `httpGet` (`curl -sS -g -k`
 |------|-------|----------|
 | Does reporter run? | **Yes** | 59 lines `pms timeline: update ok` for 40868; **0** `update failed` in full log |
 | Host for user Web cast | **`https://75-30-183-153.97f3493ee5664b189b604e11500b0a5e.plex.direct:32400`** | all 59 URLs |
-| Conf `PLEX_BASE` | `http://192.168.1.41:32400` | `misterplex.conf` |
+| Conf `PLEX_BASE` | `http://YOUR-PLEX-SERVER:32400` | `misterplex.conf` |
 | Lab API casts (earlier) | `.41` timeline URLs | 87 historical ok lines to `.41` |
 
 **playMedia (Web)** (token redacted in log):
@@ -66,7 +66,7 @@ False-OK on 401 is a **code fact** (`!body.empty()`), highly relevant to silent 
 
 | Source | machineIdentifier | Reachability from MiSTer |
 |--------|-------------------|---------------------------|
-| conf `PLEX_BASE=http://192.168.1.41:32400` | **`4edd44aa…175571a0`** (`/identity`) | OK when measured (also saw brief `No route to host` earlier — intermittent) |
+| conf `PLEX_BASE=http://YOUR-PLEX-SERVER:32400` | **`4edd44aa…175571a0`** (`/identity`) | OK when measured (also saw brief `No route to host` earlier — intermittent) |
 | Live Web cast / timeline host `*.plex.direct:32400` | **`1cdd1b7f…733d14fe`** (`/identity`) | OK |
 | rk=`40868` on `.41` | — | **HTTP 404** |
 

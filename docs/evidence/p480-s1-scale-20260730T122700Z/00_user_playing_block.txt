@@ -23,7 +23,7 @@ X-Plex-Token: REDACTED
 raw: 00 40 01 00 00 00 00 00 00 c0 00 00 00 00 00 00
 osd lo=0x4000 tv=NTSC fps_sel=0(24) pat=0(none) audio=Off force_bars=0 T10=0 T11=0 R0=0 AR_bits=0
 === conf ===
-PLEX_BASE=http://192.168.1.41:32400
+PLEX_BASE=http://YOUR-PLEX-SERVER:32400
 DECODE=320x240
 OSD_CONTROL=1
 PRESENT_PROFILE=0

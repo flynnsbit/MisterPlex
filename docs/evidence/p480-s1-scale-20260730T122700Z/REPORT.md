@@ -24,7 +24,7 @@
    `fps=24000/1001,scale=320:240:force_original_aspect_ratio=decrease,pad=320:240:(ow-iw)/2:(oh-ih)/2`  
    Artifact: `00_user_playing_block.txt` ffmpeg cmdline.
 2. **Prior soak library source** for rk=12 is **320×240** (XML evidence in p480-verify `11b_recent.xml` / p720-scope REPORT) — **not** a substitute for live bitstream geometry after PMS.
-3. **Host cannot reach** `192.168.1.41:32400` from this machine right now (`curl` fail); device reaches PMS via `*.plex.direct` in the live URL.
+3. **Host cannot reach** `YOUR-PLEX-SERVER:32400` from this machine right now (`curl` fail); device reaches PMS via `*.plex.direct` in the live URL.
 4. **w-arm gated scale-skip / sws_flags build:** not present in tree as a deployable flag yet (no `SCALE_SKIP` / `sws_flags` implementation hit in arm/ beyond always-append scale). S2 product path waits on their build; manual ffmpeg A/B would need idle device.
 
 ## Pre-registered (unchanged; not yet tested)

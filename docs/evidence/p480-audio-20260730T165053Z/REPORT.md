@@ -83,3 +83,5 @@ API/`playMedia` path: proven working (prior p480-verify + these soaks).
 | P4 HDMI may unscored | **HIT** (black grabber) |
 | P5 UI handoff | **HIT** (handoff written) |
 | P6 supervise race | mitigated (stopped for run; restored) |
+
+Note: `hdmi_luma_probe.jpg` removed from the tree (binary evidence breaks UTF-8 source audits in unit).

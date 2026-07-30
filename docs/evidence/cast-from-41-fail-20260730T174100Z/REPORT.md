@@ -1,14 +1,14 @@
 # Cast from `.41` (4edd44aa) — reproduce user “nothing plays”
 
 **TS:** 2026-07-30T17:41Z · **Daemon** `fb9f7619` · **RBF** `14eaeff3` · **CORENAME** Plex  
-**SERVER UNDER TEST:** `http://192.168.1.41:32400` · machineIdentifier **`4edd44aac1de0b731553a3a187104ecd175571a0`**  
+**SERVER UNDER TEST:** `http://YOUR-PLEX-SERVER:32400` · machineIdentifier **`4edd44aac1de0b731553a3a187104ecd175571a0`**  
 **Not this report:** plex.direct / `1cdd1b7f…` (user’s earlier long title rk=40868)
 
 ## Media-URL HTTP status (lead fact)
 
 | Probe | HTTP | Notes |
 |-------|------|-------|
-| **Live ffmpeg `-i` URL** `http://192.168.1.41:32400/video/:/transcode/universal/start.mp4?…path=/library/metadata/12…` with conf token + player headers | **`200`** | `Content-Type: video/MP2T`, body starts `47 40…` (MPEG-TS sync) |
+| **Live ffmpeg `-i` URL** `http://YOUR-PLEX-SERVER:32400/video/:/transcode/universal/start.mp4?…path=/library/metadata/12…` with conf token + player headers | **`200`** | `Content-Type: video/MP2T`, body starts `47 40…` (MPEG-TS sync) |
 | Same URL + `Range: bytes=0-1023` | **400** HTML | **instrument footgun** — not the player path |
 | `/decision` sibling URL (ad-hoc) | **400** | not what ffmpeg fetches |
 
@@ -19,8 +19,8 @@
 | Step | Result |
 |------|--------|
 | `playMedia` … `address=192.168.1.41` `machineIdentifier=4edd44aa…` rk=12 | **HTTP 200** ACK |
-| Daemon receives | **Yes** — log `playMedia ACK` + `resolved PMS … base=http://192.168.1.41:32400` |
-| ffmpeg starts | **Yes** — `-i http://192.168.1.41:32400/.../start.mp4` |
+| Daemon receives | **Yes** — log `playMedia ACK` + `resolved PMS … base=http://YOUR-PLEX-SERVER:32400` |
+| ffmpeg starts | **Yes** — `-i http://YOUR-PLEX-SERVER:32400/.../start.mp4` |
 | Frames / time | **Yes** — `state=playing` `time` 0 → **41s+** in ~few seconds; `media: frames=15…` |
 | Conf-only playMedia (no address) | Also plays; base falls back to conf `.41` |
 
@@ -66,11 +66,11 @@ On this `.41` success path, media GET is real **200 MP2T**. Status-blind timelin
 
 ```
 resolved PMS universal 480p 320x240 /library/metadata/12 title=Sync 24000 Long Blip
-  dur=360021 transcode=1 base=http://192.168.1.41:32400
-PLAY http://192.168.1.41:32400/video/:/transcode/universal/start.mp4?...&X-Plex-Token=REDACTED
+  dur=360021 transcode=1 base=http://YOUR-PLEX-SERVER:32400
+PLAY http://YOUR-PLEX-SERVER:32400/video/:/transcode/universal/start.mp4?...&X-Plex-Token=REDACTED
 ```
 
-Conf: `PLEX_BASE=http://192.168.1.41:32400`. Token used = conf token (works on `.41`).
+Conf: `PLEX_BASE=http://YOUR-PLEX-SERVER:32400`. Token used = conf token (works on `.41`).
 
 ## What we still do **not** have
 
