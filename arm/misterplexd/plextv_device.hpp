@@ -5,11 +5,14 @@
 // plex.tv device list (provides containing "player"). GDM alone is not enough
 // when the browsing PMS never probes the LAN.
 //
-// Registration mechanism (current plex.tv):
+// Registration mechanism (current plex.tv) — MEASURED 2026-07-30:
 //   Authenticated GET https://plex.tv/api/v2/resources?includeHttps=1 carrying
-//   the full X-Plex-* identity header set. plex.tv upserts a device record
-//   keyed by X-Plex-Client-Identifier as a side effect of that call.
-//   Legacy POST https://plex.tv/devices.xml returns 404 and must not be used.
+//   the full X-Plex-* identity header set. HTTP often returns 200, but that is
+//   NOT proof of device upsert: parent verified the same account's resources
+//   list after a daemon "200" and MiSTerPlex was absent (self_in_body=0).
+//   Valid registration evidence is ONLY clientIdentifier present in the
+//   resources body. The true upsert mechanism is unknown; do not claim GET
+//   side-effect registration. Legacy POST devices.xml returns 404 — unused.
 //
 // Collision safety:
 //   plex.tv device records are keyed by clientIdentifier. A non-unique or
@@ -98,7 +101,7 @@ public:
     static constexpr std::chrono::seconds kInitialBackoff{30};
     static constexpr std::chrono::seconds kMaxBackoff{900}; // 15 minutes
 
-    // Live endpoint parent measured as HTTP 200; registration is a side effect.
+    // Live resources endpoint (GET). 200 alone ≠ registered — need self_in_body.
     static constexpr const char* kRegisterUrl =
         "https://plex.tv/api/v2/resources?includeHttps=1";
 

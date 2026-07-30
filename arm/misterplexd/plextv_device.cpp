@@ -350,7 +350,9 @@ void PlexTvDeviceAnnouncer::attemptOnce(bool startup) {
     const bool httpOk = (status >= 200 && status < 300);
     const bool seenSelf = plexTvResourcesBodyMentionsClient(body, id.clientIdentifier);
 
-    if (httpOk) {
+    // Measured 2026-07-30: HTTP 200 does NOT upsert a device. Only
+    // clientIdentifier appearing in the resources body is success.
+    if (httpOk && seenSelf) {
         {
             std::lock_guard<std::mutex> lock(mu_);
             consecutiveFailures_ = 0;
@@ -361,13 +363,7 @@ void PlexTvDeviceAnnouncer::attemptOnce(bool startup) {
             << " clientIdentifier=" << id.clientIdentifier
             << " deviceName=" << id.deviceName
             << " provides=" << id.provides
-            << " self_in_body=" << (seenSelf ? "1" : "0");
-        if (!seenSelf) {
-            // 2xx without our id in the body is still treated as success of the
-            // identity call (parent observed registration as a side effect of
-            // 200), but log it so operators can spot odd account state.
-            msg << " warn=clientIdentifier_not_listed_in_resources_body";
-        }
+            << " self_in_body=1";
         if (startup)
             msg << " (startup)";
         logLine(msg.str());
@@ -382,15 +378,25 @@ void PlexTvDeviceAnnouncer::attemptOnce(bool startup) {
     }
     // Rate-limit failure logs: always emit startup + first fail, then every 10th
     // or when backoff is capped. Endpoint replacement is a separate research lane;
-    // do not spam the device log or burn journal CPU on a sticky 404.
+    // do not spam the device log or burn journal CPU on a sticky 404/no-op.
     const bool logThis = startup || failures == 1 || (failures % 10) == 0 || failures >= 9;
     if (!logThis)
         return;
     std::ostringstream msg;
-    msg << "plextv: registration failed http_status=" << status
-        << " endpoint=api/v2/resources"
-        << " clientIdentifier=" << id.clientIdentifier
-        << " consecutive=" << failures;
+    if (httpOk && !seenSelf) {
+        // No-op: GET accepted but device not in body — not a registration.
+        msg << "plextv: registration no-op http_status=" << status
+            << " endpoint=api/v2/resources"
+            << " clientIdentifier=" << id.clientIdentifier
+            << " self_in_body=0"
+            << " reason=clientIdentifier_not_in_resources_body"
+            << " consecutive=" << failures;
+    } else {
+        msg << "plextv: registration failed http_status=" << status
+            << " endpoint=api/v2/resources"
+            << " clientIdentifier=" << id.clientIdentifier
+            << " consecutive=" << failures;
+    }
     if (startup)
         msg << " (startup)";
     if (failures > 1 && (failures % 10) == 0)
