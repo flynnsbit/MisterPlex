@@ -1,7 +1,7 @@
 {
   "lane": "sv-traverse",
   "change": "RMW A+B: skip HAD_PAINT (DC in i16_dc, fold at dump if cbp_l=0); pipeline MB_DUMP plane reads",
-  "source_sha": "86da3a8a6351795f91a919ffa441d185b23f5e85",
+  "source_sha": "f5cafa7e04ab7d0d036ccc9abe51cd58fa3578f0",
   "source_sha_docs_tip_pre_rtl": "172d0514a1277b7c4e23989d3cd6efb0d65b0cce",
   "sink_rtl_sha256_pre_commit": "cb2bcd4751d1ba53010bac5f385afa25300286a87c61a0576a0c2bb9e8396e78",
   "baseline_paint_per_mb_frame0": 4036.907,
