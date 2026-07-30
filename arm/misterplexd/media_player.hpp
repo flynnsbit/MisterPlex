@@ -199,6 +199,10 @@ private:
     std::thread idleThr_;
     std::atomic<bool> idleWarned_{false};
     std::atomic<bool> idleLogged_{false};
+    // False until a successful non-LastFrame idle paint lands. Drives a short
+    // retry interval so a failed post-stop paint cannot leave the last video
+    // frame latched for the full 30s static sweep.
+    std::atomic<bool> idlePaintOk_{false};
     std::mutex idleMu_;
     std::mutex osdMu_; // same for osdThr_ // serialises idleThr_ create/join (play thread vs companion)
     std::mutex presentMu_;

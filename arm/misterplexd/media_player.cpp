@@ -227,8 +227,11 @@ void MediaPlayer::applyOsd(uint16_t word) {
 
 void MediaPlayer::paintIdle() {
     const IdleMode m = idleMode();
-    if (m == IdleMode::LastFrame)
+    if (m == IdleMode::LastFrame) {
+        // Intentional: leave the latched video frame alone.
+        idlePaintOk_.store(true);
         return;
+    }
     const int w = 320;
     const int h = 240;
     std::vector<uint8_t> buf(static_cast<size_t>(w) * h * 3);
@@ -238,28 +241,49 @@ void MediaPlayer::paintIdle() {
     if (fb_.ok())
         fb_.blitRgb24(buf.data(), w, h);
     // F1 latches the last frame written, so the frame store must be repainted too —
-    // clearing only fb0 leaves the stale frame visible when PRESENT=fpga. Use the
-    // same DDR-bulk-then-SPI ladder as the present loop; the SPI path alone does
-    // not reliably land a frame on a core that has been running the DDR path.
+    // clearing only fb0 leaves the stale frame visible when PRESENT=fpga.
+    //
+    // Always try DDR first for idle, even when the present loop cleared
+    // useDdrF1_ after a transient fail. SPI F1 alone does not reliably overwrite
+    // a frame store that has been running the DDR path — that is the sticky
+    // last-frame-after-stop failure mode. Re-probe a latched DDR kick failure so
+    // a boot-time "not in user mode yet" miss can recover on session end.
     if (fpga_.ok()) {
         bool ok = false;
-        if (useDdrF1_) {
-            ok = fpga_.sendRgb24FrameDdr(buf.data(), w, h, ddrBank_);
+        std::string path;
+        fpga_.reprobeDdrKickIfFailed();
+        ok = fpga_.sendRgb24FrameDdr(buf.data(), w, h, ddrBank_);
+        if (ok) {
             ddrBank_ ^= 1;
-        }
-        if (!ok)
-            ok = fpga_.sendRgb24Frame(buf.data(), w, h, /*F1*/ 1);
-        if (!ok) {
-            if (!idleWarned_.exchange(true))
-                log("media: idle paint failed (will retry): " + fpga_.lastError());
+            useDdrF1_ = true; // re-arm present path after a proven idle DDR paint
+            path = "DDR";
         } else {
-            // Arm the warning again so a later failure is not swallowed — the core
-            // is briefly out of user mode right after a heal/reload and the first
-            // paint legitimately fails.
-            idleWarned_.store(false);
-            if (!idleLogged_.exchange(true))
-                log("media: idle screen painted (mode=" + std::to_string(static_cast<int>(m)) + ")");
+            const std::string ddrErr = fpga_.lastError();
+            if (fpga_.sendRgb24Frame(buf.data(), w, h, /*F1*/ 1)) {
+                ok = true;
+                path = "SPI";
+            } else if (!idleWarned_.exchange(true)) {
+                log("media: idle paint failed (will retry): DDR=[" + ddrErr + "] SPI=[" +
+                    fpga_.lastError() + "]");
+            }
         }
+        if (ok) {
+            idleWarned_.store(false);
+            idlePaintOk_.store(true);
+            // Log first success and every recovery after a failure (idleLogged_
+            // is cleared on stop/session-end so post-playback paint is greppable).
+            if (!idleLogged_.exchange(true))
+                log("media: idle screen painted (mode=" + std::to_string(static_cast<int>(m)) +
+                    " via=" + path + ")");
+        } else {
+            idlePaintOk_.store(false);
+        }
+    } else if (fb_.ok()) {
+        // fb0-only present: blit above is enough.
+        idlePaintOk_.store(true);
+        if (!idleLogged_.exchange(true))
+            log("media: idle screen painted (mode=" + std::to_string(static_cast<int>(m)) +
+                " via=fb0)");
     }
 }
 
@@ -282,14 +306,14 @@ void MediaPlayer::startIdle() {
             const bool moving = idleMode() == IdleMode::Screensaver;
             if (moving)
                 idlePhase_.fetch_add(1);
-            // A static idle screen is already latched in the frame store, so
-            // repainting it buys nothing except another SIGSTOP of Main every
-            // couple of seconds — forever, with no heal to follow. applyOsd()
-            // and the session-end path repaint on the transitions that matter;
-            // this slow sweep is only a safety net for a core reload underneath
-            // us. The screensaver still moves at ~10 fps because the user asked
-            // for motion.
-            const int stepMs = moving ? 100 : 30000;
+            // Static idle that already landed: slow safety-net sweep only (core
+            // reload underneath). Failed paint or screensaver: retry quickly so
+            // a post-stop miss cannot leave the last video frame up for 30s.
+            int stepMs = 30000;
+            if (moving)
+                stepMs = 100;
+            else if (!idlePaintOk_.load())
+                stepMs = 500;
             for (int slept = 0; slept < stepMs && idleRun_.load(); slept += 50)
                 std::this_thread::sleep_for(std::chrono::milliseconds(50));
         }
@@ -498,6 +522,9 @@ void MediaPlayer::stop() {
     // found it, and the frame path never touches SPI at all, so Main is still
     // servicing F12/OSD/MiSTer_cmd. Do NOT unlink /tmp/misterplex_spi.lock here —
     // recreating that inode would put concurrent tools on a different lock.
+    // Force a greppable post-stop paint line even if boot already logged once.
+    idleLogged_.store(false);
+    idlePaintOk_.store(false);
     paintIdle();
     startIdle();
     startOsdPoll();
@@ -1943,6 +1970,8 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
     }
     // The frame store latches the last frame written; without this the final frame
     // of the video stays on screen until something else paints over it.
+    idleLogged_.store(false);
+    idlePaintOk_.store(false);
     paintIdle();
     startIdle();
 

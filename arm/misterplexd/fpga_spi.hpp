@@ -90,6 +90,13 @@ public:
     // Frame must be 320×240×2 = 153600 B. bank 0 → 0x30000000, bank 1 → 0x30040000.
     bool sendRgb565FrameDdr(const uint8_t* rgb565le, size_t len, int bank = 0);
     bool sendRgb24FrameDdr(const uint8_t* rgb, int w, int h, int bank = 0);
+    // After a permanent first-kick fail, ddrKickMode_ latches to -1 and every
+    // later sendRgb*FrameDdr returns "previously unavailable". Idle paint must
+    // be allowed to re-probe once the core is in user mode (boot race / heal).
+    void reprobeDdrKickIfFailed() {
+        if (ddrKickMode_ < 0)
+            ddrKickMode_ = 0;
+    }
     // Physical base used by core ddram_frame_rd (must match RTL PHYS_BASE).
     static constexpr uint32_t kDdrFrameBase = 0x30000000u;
     static constexpr uint32_t kDdrFrameStride = 0x40000u; // 256 KiB
