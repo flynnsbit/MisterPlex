@@ -40,6 +40,9 @@ BASE_CORE_MD5=dfebf2bfd08dd70b473b587dd7e81848
 #             Verified by sending SIGSEGV: FATAL block written, supervisor still saw
 #             rc=139, daemon respawned. Decode frames with:
 #               llvm-addr2line -e <matching unstripped binary> -f -C -a 0xPC ...
+#   48a60809  hybrid + modern plex.tv GET api/v2/resources registration
+#             (plextv_device backport). Live registration http_status=200.
+#             ACCEPTED hybrid pin (live /proc/<pid>/exe as of 2026-07-30 w-armdeploy).
 #   fed70681  hybrid + reliable idle paint after stop (always DDR for idle, re-probe
 #             latched kick fail, 500ms retry until land, greppable post-stop log).
 #             ACCEPTED hybrid pin (live /proc/<pid>/exe as of 2026-07-30 w-armdeploy).
@@ -55,7 +58,7 @@ BASE_CORE_MD5=dfebf2bfd08dd70b473b587dd7e81848
 # does not touch the present path. A video difference between them is a real
 # regression and must fail.
 BASE_DAEMON_MD5=7cd10b4d438c714a9b8c4766dc982d59
-HYBRID_DAEMON_MD5=fed706818135d4a5a1a48dc167fca94b
+HYBRID_DAEMON_MD5=48a60809e5fa97b5653bf564d2aff57f
 
 # Test clip: the 240p burned-in-telemetry ladder entry. Its overlay text makes
 # left-edge clipping obvious to the eye as well as to the measurement.
