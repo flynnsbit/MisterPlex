@@ -40,10 +40,14 @@ BASE_CORE_MD5=dfebf2bfd08dd70b473b587dd7e81848
 #             Verified by sending SIGSEGV: FATAL block written, supervisor still saw
 #             rc=139, daemon respawned. Decode frames with:
 #               llvm-addr2line -e <matching unstripped binary> -f -C -a 0xPC ...
+#             ACCEPTED hybrid pin (live /proc/<pid>/exe as of 2026-07-30 w-armdeploy).
 #   ed6af644  hybrid/v0.2.0-timeline: v0.2.0's 320x240 SPI present path plus the
 #             PMS timeline reporter and the gdmIsDiscoveryProbe filter. Measured
 #             on hardware: timeline advances 0 -> 8511 -> 17874 -> 26637 ms,
 #             idle 1 %onecpu, edge fingerprint LEFT spread 0 / RIGHT spread 0.
+#   56a53f77  REJECTED — same as de173a59 plus advertise-only
+#             Protocol-Capabilities ...,provider-playback. No provider-playback
+#             handlers exist; did not fix the cast picker. Reverted; do not pin.
 #
 # Both must produce the SAME video fingerprint, because the hybrid deliberately
 # does not touch the present path. A video difference between them is a real
