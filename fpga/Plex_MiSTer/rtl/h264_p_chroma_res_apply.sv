@@ -1,8 +1,9 @@
 // h264_p_chroma_res_apply.sv — cycle-iterative P-slice chroma residual (8.5.5)
 // Consumes traverse residual export for chroma slots only; writes signed
 // residual planes for Clip1(pred_mc + res). One 4×4 (or 2×2 DC) per accept.
-// Area: serial dequant (h264_dequant4x4_serial) + IDCT + 2×2 DC Hadamard.
-// NEVER instantiate parallel h264_dequant4x4 here.
+// HARD GATE: NO private dequant instance. Product shares ONE
+// h264_dequant4x4_serial via ext_dq_* (docs/serial-iq-sink-contract.md).
+// NEVER instantiate parallel h264_dequant4x4 or a second serial mul here.
 `default_nettype none
 
 module h264_p_chroma_res_apply #(
@@ -29,6 +30,15 @@ module h264_p_chroma_res_apply #(
 	output reg         mb_res_done,        // pulse: chroma residual complete for MB
 	output reg  [15:0] mb_res_done_addr,
 	output wire        busy,               // apply in-flight; do not accept next MB
+
+	// Shared serial dequant (product owns the single multiplier).
+	output wire        ext_dq_start,
+	output wire signed [15:0] ext_dq_coeff [0:15],
+	output wire [5:0]  ext_dq_qp,
+	output wire [4:0]  ext_dq_max_coeff,
+	input  wire        ext_dq_busy,
+	input  wire        ext_dq_done,
+	input  wire signed [28:0] ext_dq_dequant [0:15],
 
 	output reg signed [15:0] res_u [0:63],
 	output reg signed [15:0] res_v [0:63]
@@ -67,9 +77,11 @@ module h264_p_chroma_res_apply #(
 	reg        apply_is_dc_only;
 
 	reg        dq_start;
-	wire       dq_busy, dq_done;
+	wire       dq_busy = ext_dq_busy;
+	wire       dq_done = ext_dq_done;
 
 	assign res_blk_ready = enable && (st == ST_IDLE);
+	assign ext_dq_start = dq_start;
 
 	function automatic is_chr_dc;
 		input i16; input [4:0] idx;
@@ -117,18 +129,20 @@ module h264_p_chroma_res_apply #(
 	reg use_inj;
 	reg signed [15:0] inj_dc;
 	integer ci;
-	wire signed [28:0] dq_raw [0:15];
 	wire signed [28:0] idct_r [0:15];
 	wire signed [28:0] dq_idct [0:15];
 	genvar gi;
 	generate
 		for (gi = 0; gi < 16; gi = gi + 1) begin : g_dq
 			if (gi == 0)
-				assign dq_idct[0] = use_inj ? {{13{inj_dc[15]}}, inj_dc} : dq_raw[0];
+				assign dq_idct[0] = use_inj ? {{13{inj_dc[15]}}, inj_dc} : ext_dq_dequant[0];
 			else
-				assign dq_idct[gi] = dq_raw[gi];
+				assign dq_idct[gi] = ext_dq_dequant[gi];
+			assign ext_dq_coeff[gi] = coeff_iq[gi];
 		end
 	endgenerate
+	assign ext_dq_qp = qp_iq;
+	assign ext_dq_max_coeff = max_iq;
 
 	always @(*) begin
 		for (ci = 0; ci < 16; ci = ci + 1) coeff_iq[ci] = lat_coeff[ci];
@@ -156,15 +170,6 @@ module h264_p_chroma_res_apply #(
 		end
 	end
 
-	h264_dequant4x4_serial u_dq (
-		.clk(clk), .reset(reset),
-		.start(dq_start),
-		.coeff(coeff_iq),
-		.qp(qp_iq),
-		.max_coeff(max_iq),
-		.busy(dq_busy), .done(dq_done),
-		.dequant(dq_raw)
-	);
 	h264_idct4x4 u_idct (.dequant(dq_idct), .residual(idct_r));
 
 	integer k;

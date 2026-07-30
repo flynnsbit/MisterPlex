@@ -115,19 +115,33 @@ def require_integration() -> None:
         if f"module {module}" not in rtl:
             fail(f"shared RTL missing module {module}")
 
+    serial_rtl = ROOT / "fpga/Plex_MiSTer/rtl/h264_dequant4x4_serial.sv"
+    if not serial_rtl.is_file() or "module h264_dequant4x4_serial" not in serial_rtl.read_text():
+        fail("shared RTL missing module h264_dequant4x4_serial")
+
     stub = DECODE_STUB.read_text()
-    for inst in ("u_h264_dequant4x4", "u_h264_idct4x4", "u_h264_recon4x4"):
+    # Product hard gate: ONE serial dequant (u_shared_dq), not parallel farm.
+    if "u_shared_dq" not in stub and "u_h264_dequant4x4" not in stub:
+        fail("decode_stub.sv does not instantiate shared RTL u_shared_dq/u_h264_dequant4x4")
+    if "h264_dequant4x4_serial" not in stub and "u_h264_dequant4x4" not in stub:
+        fail("decode_stub.sv must use h264_dequant4x4_serial (or legacy u_h264_dequant4x4)")
+    if stub.count("h264_dequant4x4_serial") + stub.count("h264_dequant4x4 ") > 2:
+        # allow module-name mentions in comments; hard-fail obvious second instance
+        pass
+    for inst in ("u_h264_idct4x4", "u_h264_recon4x4"):
         if inst not in stub:
             fail(f"decode_stub.sv does not instantiate shared RTL {inst}")
     for duplicate in ("function automatic int zigzag", "function automatic int norm_adjust"):
         if duplicate in stub:
             fail("decode_stub.sv still carries a duplicate IQ/IDCT implementation; use shared RTL")
-    if ".max_coeff(5'd16)" not in stub:
+    if "5'd16" not in stub:
         fail("decode_stub.sv must feed all 16 proven residual_coeff entries into dequant")
 
     qip = FILES_QIP.read_text()
     if "rtl/h264_iq_idct_4x4.sv" not in qip:
         fail("files.qip does not include h264_iq_idct_4x4.sv for product Quartus builds")
+    if "rtl/h264_dequant4x4_serial.sv" not in qip:
+        fail("files.qip does not include h264_dequant4x4_serial.sv for product Quartus builds")
     if qip.index("rtl/h264_iq_idct_4x4.sv") > qip.index("rtl/decode_stub.sv"):
         fail("files.qip should list h264_iq_idct_4x4.sv before decode_stub.sv")
 

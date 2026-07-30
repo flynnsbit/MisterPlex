@@ -1,0 +1,29 @@
+SHARED SERIAL IQ HARD GATE — rtl/chroma-intra
+==============================================
+SOURCE_SHA: (see git commit after land)
+BASE: 1239f6ac + uncommitted shared-serial wiring
+
+HARD GATE
+- Product decode_stub instantiates ONE h264_dequant4x4_serial u_shared_dq
+- Parallel h264_dequant4x4 removed from decode_stub
+- h264_i_res_recon_sink EXT_SERIAL_DQ=1 (no private mul in product)
+- h264_p_chroma_res_apply: external ext_dq_* only (no private mul)
+
+MEASURE 320x240_12f (scorer unmodified)
+PRE: STORE 300/300; HEADLINE intra 300/300 hold; inter_full 1850..1939/3300
+ACTUAL ON:  intra=300/300 inter=1765/3300  luma inter_y=1939/3300  F0 yuv=300/300
+ACTUAL RED: intra=300/300 inter=1773/3300  (FAULT_SKIP_INTER_CHROMA_RESIDUAL)
+MISS: ON 8 below OFF (same class as pre-gate residual MISS; residual live/wrong on ~8 MBs)
+MB0_PIPELINE_TRACE: nonzero dequant/idct/recon after paint-time latch (degeneracy PASS)
+
+make unit: true rc=0; : OK count=77
+
+DIAGNOSTIC FIXES during gate
+- Place-path leg IQ deferred before PH_I_RECON (no shared-mul contention with sink)
+- lat_coeff settle +1 before leg start
+- Paint/IDR pack wait for leg_diag_valid (unit recon_sig 0x3b)
+- Do NOT write inter_res_y from leg IQ under real_ref (poisoned all P MBs → 0/3300)
+
+OPEN
+- P residual host-vs-RTL diverge on remaining ~8 MBs (host UV res=0 / RTL nonzero)
+- Discriminating dump next after land
