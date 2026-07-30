@@ -1,0 +1,88 @@
+AFTER_V10_RESULT — GDM self-reply fix on device
+================================================
+Date: 2026-07-30 (lab)
+Binary: v9 e9c5e5a1 + 90a82208 gdmIsDiscoveryProbe
+Freeze md5: fb9f76192a8f7d248411c2ab2b332542
+Live leave: fb9f76192a8f7d248411c2ab2b332542
+id=misterplex-dev  CORENAME=Plex  PROFILE=0  n_d=1
+RBF 14eaeff3 untouched. conf/token/bootcore untouched. No reboot.
+
+PRE-REGISTER (scripts/DEPLOY_V10_PREREGISTER.txt)
+-------------------------------------------------
+1) idle P ∈ [0, 8] %onecpu; gdm role not always-R
+2) HARD: real M-SEARCH reply shape stable vs v9 (Resource-Identifier misterplex-dev)
+3) playback drop ≥60 vs pre-fix ~95 play misterplexd
+4) soak: resources + GDM still answer
+
+HOST GATES (pre-deploy)
+-----------------------
+make unit true rc=0
+test_no_private_data true rc=0 (lab PMS IP redacted from run_v9*)
+cast_ctrl / cast_seek true rc=0
+gdmIsDiscoveryProbe python twin 6/6 HIT (startswith HTTP/ only)
+
+INSTALL
+-------
+Claim bounce2-v10 visible Menu→Plex; md5 refuse path exercised OK on stage.
+Parser bug first pass: awk '/live_md5=/' matched ps cmdline BIN= path → false rc=4
+after successful swap. Binary WAS installed (md5 live=fb9f7619). Fixed to
+grep '^live_md5='. Second claim bounce2-v10b SKIP_INSTALL=1 verify-only.
+
+GATE RESULTS (evidence)
+-----------------------
+GATE1 IDLE  HIT
+  IDLE_WALL_S=20.053  IDLE_DJ=38  IDLE_P_ONECPU=1.895  band=[0,8]
+  All tids state=S (none R). Hot=ord2 0.898% nanosleep.
+  ord=5 tid=26044 wchan=do_select sc=335 rate=0.050 d_vol=102 d_nonvol=0
+  → mplex-gdm role quiet; vol≫nonvol (was d_vol=0 d_nonvol=7027 pre-fix).
+  Artifact: build/arm-deploy-v10-window/gate1_idle.txt
+
+GATE2 GDM HARD  HIT  gate2_script true rc=0
+  M-SEARCH / msearch2 / bare_plex → reply len=283 missing=[]
+  Content matches v9 baseline:
+    HTTP/1.0 200 OK
+    Content-Type: plex/media-player
+    Name: MiSTerPlex  Port: 3005  Product: MiSTerPlex
+    Protocol: plex  Resource-Identifier: misterplex-dev
+  OWN_REPLY_STIMULUS_TIMEOUT (no reply to forged HTTP/ self-reply) — filter live.
+  Artifact: build/arm-deploy-v10-window/gate2_gdm.txt
+
+GATE3 PLAY  HIT
+  testsrc (PMS key path unavailable) frames=1440 vfps=29.7 pfps=29.7
+  PLAY_WALL_S=45.322 PLAY_DJ=611 PLAY_P_ONECPU=13.481
+  drop_vs_prefix_play95 = 81.519 (≥60)
+  PLAY_HYB_200DJ=26.963 (method note: wall P preferred; hybrid 200*dj formula
+  is not identical to prior dc_cpu_all share — do not mix without same method)
+  Artifact: gate3_play_start.txt gate3_play_cpu.txt
+
+GATE4 SOAK  HIT
+  /resources 200 machineIdentifier=misterplex-dev
+  GATE4_REPROBE=HIT len=283 same payload
+  leave: CORENAME=Plex live_md5=fb9f7619 n_d=1 PROFILE=0
+
+NOTE — CORENAME=MENU flash during playMedia start log lines is from the claim
+bounce race (daemon started while menu still settling). Playback still produced
+frames; leave CORENAME=Plex. Not a product regression of the GDM fix.
+
+RCA STATUS (unchanged from parent instruction)
+----------------------------------------------
+Daemon deaths remain UNEXPLAINED. Race fix (presentMu_/stopIdle) is hardening
+only; terminating signal never waitpid-captured. B3 reproduction MISS stands.
+This v10 ship is the GDM self-reply idle CPU defect only.
+
+HANDOFF
+-------
+Artifacts: build/arm-deploy-v10-window/
+Hand to w-hybrid-arm OFFLINE — no device access transferred.
+Rollback still armed: e9c5e5a1 → 4cbee6ff → 703b2fd4; never 06c5735a.
+
+USER IMPACT (plain)
+-------------------
+Idle daemon CPU ~98% → ~1.9%. Cast discovery still answers with unchanged
+payload and misterplex-dev id. Largest user-visible win of the day if it holds.
+
+POST-CLEANUP DEDUPE
+-------------------
+ensure_daemon on release_cleanup started a second daemon while supervise still
+held one → n_d=2 briefly. Remote soft-stop script (no -9) left n_d=1 n_s=1
+id=misterplex-dev md5=fb9f7619 CORENAME=Plex PROFILE=0 GDM HIT len=283.
