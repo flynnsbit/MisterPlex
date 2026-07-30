@@ -3,6 +3,7 @@
 // Phase 4: multi-server conf, auto next-episode, optional subtitle burn-in.
 
 #include "companion.hpp"
+#include "crash_dump.hpp"
 #include "media_player.hpp"
 #include "pms_timeline.hpp"
 #include "plex_resolve.hpp"
@@ -264,6 +265,10 @@ int main(int argc, char** argv) {
     // misterplexd died inside that window, Main is still stopped right now and
     // F12/OSD/MiSTer_cmd are all dead — resume it before we do anything else,
     // then arm the crash guard so we cannot strand it again.
+    // crashDumpInit dups stderr (supervisor redirects it to the daemon log) and
+    // captures load_base for offline addr2line after a static-link bare backtrace.
+    misterplex::crashDumpInit(STDERR_FILENO);
+    misterplex::crashDumpNote("startup");
     misterplex::FpgaSpi::resumeStrandedMain();
     misterplex::FpgaSpi::installCrashGuard();
 
@@ -595,6 +600,9 @@ int main(int argc, char** argv) {
         timelineSession.deviceName = name;
         pmsTimeline.beginSession(timelineSession, startAt, resolved.durationMs);
 
+        // Fixed plain-buffer breadcrumb for the fatal-signal handler (no heap).
+        misterplex::crashDumpNoteKey(bound.key.c_str(), bound.ratingKey.c_str());
+
         std::fprintf(stderr, "misterplexd: PLAY %s off=%lld dur=%lld\n",
                      redactSensitive(resolved.playable).c_str(),
                      static_cast<long long>(startAt), static_cast<long long>(resolved.durationMs));
@@ -670,6 +678,7 @@ int main(int argc, char** argv) {
 
     player.setProgress([&](const std::string& st, int64_t t, int64_t d) {
         if (st == "ended") {
+            misterplex::crashDumpNote("progress=ended");
             pmsTimeline.endSession(t, d);
             // Must not call player.play() on the media thread (join self). Schedule async.
             if (autoNextInFlight.exchange(true)) {
@@ -691,10 +700,12 @@ int main(int argc, char** argv) {
             }).detach();
             return;
         }
-        if (st == "stopped")
+        if (st == "stopped") {
+            misterplex::crashDumpNote("progress=stopped");
             pmsTimeline.endSession(t, d);
-        else
+        } else {
             pmsTimeline.reportState(st, t, d);
+        }
         comp.setState(st, t, d);
     });
 
@@ -726,6 +737,7 @@ int main(int argc, char** argv) {
         // Invalidate in-flight doPlay (resolve/bind/player.play) so a late
         // playMedia cannot restart demux after stop. clearMedia already cleared
         // wantPlay_; bindMedia and wantPlay re-checks will also abort.
+        misterplex::crashDumpNote("ctrl=stop");
         ++playGen;
         player.stop();
         // Drop session bind so a post-stop skip cannot fetch the old play-queue.

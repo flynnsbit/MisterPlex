@@ -59,10 +59,11 @@ public:
     // slow watchdog (repairs a hang inside the critical section).
     static void resumeStrandedMain();
 
-    // installCrashGuard(): resume Main from fatal-signal handlers, then re-raise
-    // with the default disposition so the crash is still reported normally.
+    // installCrashGuard(): install crashDumpInstall() handlers that write a
+    // backtrace, resume Main if it was SIGSTOPped for SPI, then re-raise with
+    // the default disposition so the crash is still reported normally (rc=139).
     // Covers everything except SIGKILL, which resumeStrandedMain() mops up on the
-    // next start.
+    // next start. Call crashDumpInit() first so the log fd / load base are ready.
     static void installCrashGuard();
 
     // True while this process holds Main stopped for an SPI critical section.

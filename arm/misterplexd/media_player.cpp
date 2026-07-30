@@ -506,15 +506,25 @@ void MediaPlayer::stop() {
 void MediaPlayer::pause() {
     paused_.store(true);
     signalChildren(SIGSTOP);
+    int64_t dur = 0;
+    {
+        std::lock_guard<std::mutex> lock(mu_);
+        dur = durationMs_;
+    }
     if (onProgress_)
-        onProgress_("paused", positionMs_.load(), durationMs_);
+        onProgress_("paused", positionMs_.load(), dur);
 }
 
 void MediaPlayer::resume() {
     paused_.store(false);
     signalChildren(SIGCONT);
+    int64_t dur = 0;
+    {
+        std::lock_guard<std::mutex> lock(mu_);
+        dur = durationMs_;
+    }
     if (onProgress_)
-        onProgress_("playing", positionMs_.load(), durationMs_);
+        onProgress_("playing", positionMs_.load(), dur);
 }
 
 void MediaPlayer::seekMs(int64_t ms) {
@@ -1420,7 +1430,15 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
             ::close(spipe[1]);
             if (spid > 0) {
                 streamPid_.store(spid);
-                streamThr_ = std::thread([this, sfd = spipe[0]] { streamPump(sfd); });
+                streamThr_ = std::thread([this, sfd = spipe[0]] {
+                    try {
+                        streamPump(sfd);
+                    } catch (const std::exception& ex) {
+                        log(std::string("media: streamPump exception: ") + ex.what());
+                    } catch (...) {
+                        log("media: streamPump unknown exception");
+                    }
+                });
                 if (looksElementaryH264(url))
                     log("media: STREAM demux elementary H.264 (no mp4toannexb)");
                 else
@@ -1468,7 +1486,15 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
             ::close(apipe[1]);
             if (pid > 0) {
                 childPid_.store(pid);
-                audioThr_ = std::thread([this, afd = apipe[0]] { audioPump(afd); });
+                audioThr_ = std::thread([this, afd = apipe[0]] {
+                    try {
+                        audioPump(afd);
+                    } catch (const std::exception& ex) {
+                        log(std::string("media: audioPump exception: ") + ex.what());
+                    } catch (...) {
+                        log("media: audioPump unknown exception");
+                    }
+                });
             } else {
                 ::close(apipe[0]);
                 log("media: audio-only fork failed");
@@ -1706,7 +1732,15 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
         rfd = vpipe[0];
 
         if (apipe[0] >= 0) {
-            audioThr_ = std::thread([this, afd = apipe[0]] { audioPump(afd); });
+            audioThr_ = std::thread([this, afd = apipe[0]] {
+                try {
+                    audioPump(afd);
+                } catch (const std::exception& ex) {
+                    log(std::string("media: audioPump exception: ") + ex.what());
+                } catch (...) {
+                    log("media: audioPump unknown exception");
+                }
+            });
         }
 
         const size_t frameBytes = static_cast<size_t>(outW_) * static_cast<size_t>(outH_) * 3;

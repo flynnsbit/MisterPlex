@@ -19,12 +19,13 @@ test: unit
 
 UNIT_ANNEXB := $(ROOT)/build/plex_real_baseline.h264
 
-unit: $(ROOT)/build/test_cadence $(ROOT)/build/test_avclock $(ROOT)/build/test_mraudio_status $(ROOT)/build/test_osd_menu $(ROOT)/build/test_main_guard $(ROOT)/build/test_resolve $(ROOT)/build/test_pms_timeline $(ROOT)/build/test_companion_eof $(ROOT)/build/test_frame_store_math $(ROOT)/build/test_annexb_count $(ROOT)/build/test_sps_parse $(ROOT)/build/test_slice_hdr $(ROOT)/build/test_cavlc_dc $(ROOT)/build/test_idct_quant
+unit: $(ROOT)/build/test_cadence $(ROOT)/build/test_avclock $(ROOT)/build/test_mraudio_status $(ROOT)/build/test_osd_menu $(ROOT)/build/test_main_guard $(ROOT)/build/test_crash_dump $(ROOT)/build/test_resolve $(ROOT)/build/test_pms_timeline $(ROOT)/build/test_companion_eof $(ROOT)/build/test_frame_store_math $(ROOT)/build/test_annexb_count $(ROOT)/build/test_sps_parse $(ROOT)/build/test_slice_hdr $(ROOT)/build/test_cavlc_dc $(ROOT)/build/test_idct_quant
 	$(ROOT)/build/test_cadence
 	$(ROOT)/build/test_avclock
 	$(ROOT)/build/test_mraudio_status
 	$(ROOT)/build/test_osd_menu
 	$(ROOT)/build/test_main_guard
+	$(ROOT)/build/test_crash_dump
 	$(ROOT)/build/test_resolve
 	$(ROOT)/build/test_pms_timeline
 	$(ROOT)/build/test_companion_eof
@@ -80,10 +81,18 @@ $(ROOT)/build/test_avclock: $(ROOT)/tests/unit/test_avclock.cpp \
 	$(CXX) $(CXXFLAGS) -o $@ $(ROOT)/tests/unit/test_avclock.cpp
 
 $(ROOT)/build/test_main_guard: $(ROOT)/tests/unit/test_main_guard.cpp \
-		$(ROOT)/arm/misterplexd/fpga_spi.cpp $(ROOT)/arm/misterplexd/fpga_spi.hpp
+		$(ROOT)/arm/misterplexd/fpga_spi.cpp $(ROOT)/arm/misterplexd/fpga_spi.hpp \
+		$(ROOT)/arm/misterplexd/crash_dump.cpp $(ROOT)/arm/misterplexd/crash_dump.hpp
 	@mkdir -p $(ROOT)/build
 	$(CXX) $(CXXFLAGS) -I$(ROOT)/arm/misterplexd -pthread -o $@ \
-		$(ROOT)/tests/unit/test_main_guard.cpp $(ROOT)/arm/misterplexd/fpga_spi.cpp
+		$(ROOT)/tests/unit/test_main_guard.cpp $(ROOT)/arm/misterplexd/fpga_spi.cpp \
+		$(ROOT)/arm/misterplexd/crash_dump.cpp
+
+$(ROOT)/build/test_crash_dump: $(ROOT)/tests/unit/test_crash_dump.cpp \
+		$(ROOT)/arm/misterplexd/crash_dump.cpp $(ROOT)/arm/misterplexd/crash_dump.hpp
+	@mkdir -p $(ROOT)/build
+	$(CXX) $(CXXFLAGS) -I$(ROOT)/arm/misterplexd -o $@ \
+		$(ROOT)/tests/unit/test_crash_dump.cpp $(ROOT)/arm/misterplexd/crash_dump.cpp
 
 $(ROOT)/build/test_mraudio_status: $(ROOT)/tests/unit/test_mraudio_status.cpp \
 		$(ROOT)/host/libmisterplex/mraudio_status.hpp
@@ -124,6 +133,7 @@ $(ROOT)/build/test_companion_eof: $(ROOT)/tests/unit/test_companion_eof.cpp \
 MPLEX_SRC := \
 	$(ROOT)/arm/misterplexd/main.cpp \
 	$(ROOT)/arm/misterplexd/companion.cpp \
+	$(ROOT)/arm/misterplexd/crash_dump.cpp \
 	$(ROOT)/arm/misterplexd/fb_present.cpp \
 	$(ROOT)/arm/misterplexd/media_player.cpp \
 	$(ROOT)/arm/misterplexd/pms_timeline.cpp \
@@ -145,9 +155,10 @@ $(ROOT)/build/misterplexd: $(MPLEX_SRC) \
 		$(ROOT)/arm/misterplexd/plex_resolve.hpp \
 		$(ROOT)/arm/misterplexd/fb_present.hpp \
 		$(ROOT)/arm/misterplexd/fpga_spi.hpp \
+		$(ROOT)/arm/misterplexd/crash_dump.hpp \
 		$(MPLEX_HDR)
 	@mkdir -p $(ROOT)/build
-	$(CXX) $(CXXFLAGS) $(MPLEX_INC) -pthread -o $@ $(MPLEX_SRC)
+	$(CXX) $(CXXFLAGS) -g $(MPLEX_INC) -pthread -o $@ $(MPLEX_SRC)
 
 plexd: $(ROOT)/build/misterplexd
 
@@ -166,19 +177,22 @@ ARM_CXX ?= $(shell command -v arm-none-linux-gnueabihf-g++ 2>/dev/null || comman
 
 # Fully static: MiSTer glibc is 2.31; modern toolchains need 2.32+ for dynamic.
 # whole-archive pthread required for std::thread under -static.
+# -g -fno-omit-frame-pointer -funwind-tables: usable backtrace + addr2line after SIGSEGV.
 arm-plexd: $(MPLEX_HDR)
 	@if [ -z "$(ARM_CXX)" ]; then echo "No armhf g++ found"; exit 1; fi
 	@mkdir -p $(ROOT)/build/arm
-	$(ARM_CXX) -std=c++17 -O2 -Wall $(MPLEX_INC) \
+	$(ARM_CXX) -std=c++17 -O2 -g -fno-omit-frame-pointer -funwind-tables -Wall $(MPLEX_INC) \
 		-o $(ROOT)/build/arm/misterplexd $(MPLEX_SRC) \
 		-static -Wl,--whole-archive -lpthread -Wl,--no-whole-archive
-	$(ARM_CXX) -std=c++17 -O2 -Wall -I$(ROOT)/arm/misterplexd \
+	$(ARM_CXX) -std=c++17 -O2 -g -Wall -I$(ROOT)/arm/misterplexd \
 		-o $(ROOT)/build/arm/push_frame \
-		$(ROOT)/tools/push_frame.cpp $(ROOT)/arm/misterplexd/fpga_spi.cpp \
+		$(ROOT)/tools/push_frame.cpp \
+		$(ROOT)/arm/misterplexd/fpga_spi.cpp $(ROOT)/arm/misterplexd/crash_dump.cpp \
 		-static
-	$(ARM_CXX) -std=c++17 -O2 -Wall -I$(ROOT)/arm/misterplexd \
+	$(ARM_CXX) -std=c++17 -O2 -g -Wall -I$(ROOT)/arm/misterplexd \
 		-o $(ROOT)/build/arm/set_status \
-		$(ROOT)/tools/set_status.cpp $(ROOT)/arm/misterplexd/fpga_spi.cpp \
+		$(ROOT)/tools/set_status.cpp \
+		$(ROOT)/arm/misterplexd/fpga_spi.cpp $(ROOT)/arm/misterplexd/crash_dump.cpp \
 		-static
 	@file $(ROOT)/build/arm/misterplexd $(ROOT)/build/arm/push_frame $(ROOT)/build/arm/set_status
 	@echo "Built $(ROOT)/build/arm/misterplexd + push_frame + set_status"
