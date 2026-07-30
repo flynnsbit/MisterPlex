@@ -1,0 +1,24 @@
+SOURCE_SHA=92b8278c
+kDdrFrameStrideAlign=0x40000 (262144 B)
+kDdrFramePhysBase=0x30000000
+kPlex480pYuv420pBankStride=0x80000
+mailbox_page=0x3007F000
+bitstream_data=0x30100000 bitstream_ctrl=0x30140000
+
+240p: 320x240 frame_bytes=115200 bank_stride=0x40000 map=0x80000 doorbell=0x3007f000
+  bank0_end=0x3001c200 collides_mbox=False collides_ring=False
+480p: 624x480 frame_bytes=449280 bank_stride=0x80000 map=0x100000 doorbell=0x300ff000
+  bank0_end=0x3006db00 collides_mbox=False collides_ring=False
+720p: 1280x720 frame_bytes=1382400 bank_stride=0x180000 map=0x300000 doorbell=0x302ff000
+  bank0_end=0x30151800 collides_mbox=True collides_ring=True
+
+max_frame_bytes_before_mbox 520192
+720p_needs_frame_bytes 1382400
+candidate_base_after_ring 0x30180000
+
+proj_copy_ms_at_59.5MiBps 22.157300420168067
+proj_frame_tx_from_9.5ms_480p 29.230769230769234
+frame_budget_24fps_ms 41.666666666666664
+cpu_power_law_720p 49.57676630203388
+cpu_affine_720p 64.88275862068964
+cpu_linear_from_480p 78.46153846153847
