@@ -108,6 +108,9 @@ public:
     // v3 bit layout (see libmisterplex/osd_menu.hpp) — the old layout puts Pattern
     // and Content FPS on the same bits, which would be read as an A/V offset.
     void setOsdControl(bool on) { osdControl_ = on; }
+    // Opt-in: SIGSTOP /media/fat/MiSTer for the whole playback session (default off).
+    // See FpgaSpi::setSuspendMainDuringPlay. Conf SUSPEND_MAIN_DURING_PLAY.
+    void setSuspendMainDuringPlay(bool on) { FpgaSpi::setSuspendMainDuringPlay(on); }
     void startOsdPoll();
     void stopOsdPoll();
     uint16_t lastOsdWord() const { return lastOsd_.load(); }

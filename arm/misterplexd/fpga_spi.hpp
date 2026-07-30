@@ -54,17 +54,37 @@ public:
     // sends SIGCONT and Main is left stopped forever.
     //
     // resumeStrandedMain(): SIGCONT any MiSTer left in state T while we hold no
-    // window of our own. Safe to call from anywhere — it only reads /proc and
-    // never touches SPI. Call at startup (repairs a previous death) and from a
-    // slow watchdog (repairs a hang inside the critical section).
+    // window of our own AND no session-level playback suspend. Safe to call from
+    // anywhere — it only reads /proc and never touches SPI. Call at startup
+    // (repairs a previous death) and from a slow watchdog (repairs a hang inside
+    // the critical section). Does not fight an intentional SUSPEND_MAIN_DURING_PLAY hold.
     static void resumeStrandedMain();
 
     // installCrashGuard(): install crashDumpInstall() handlers that write a
-    // backtrace, resume Main if it was SIGSTOPped for SPI, then re-raise with
-    // the default disposition so the crash is still reported normally (rc=139).
-    // Covers everything except SIGKILL, which resumeStrandedMain() mops up on the
-    // next start. Call crashDumpInit() first so the log fd / load base are ready.
+    // backtrace, resume Main if it was SIGSTOPped for SPI or session playback,
+    // then re-raise with the default disposition so the crash is still reported
+    // normally (rc=139). Also registers atexit resume. Covers everything except
+    // SIGKILL — that path is the supervisor watchdog (resume before respawn) plus
+    // resumeStrandedMain() on the next daemon start. Call crashDumpInit() first.
     static void installCrashGuard();
+
+    // --- Session-level Main suspend (opt-in SUSPEND_MAIN_DURING_PLAY) ----------
+    // Stock Main burns ~100% of one core even on menu.rbf (parent A/B 2026-07-30).
+    // When enabled, SIGSTOP Main once at playback start and SIGCONT once at stop
+    // so decode can use that core. Default OFF. Not per-frame.
+    //
+    // While held: F12/OSD, /dev/MiSTer_cmd, load_core, and Main input are dead.
+    // HDMI scanout + DDR doorbell present do not need Main (FPGA-side). SPI F1
+    // still works because MainSafeWindow will not SIGCONT a session-held Main.
+    static void setSuspendMainDuringPlay(bool enabled);
+    static bool suspendMainDuringPlayEnabled();
+    // Acquire: locate /media/fat/MiSTer via /proc cmdline, SIGSTOP once if GPO idle.
+    // Idempotent. Returns true if Main is held (or already held).
+    static bool suspendMainForPlayback();
+    // Release: SIGCONT once. Idempotent. Always safe to call on stop/shutdown.
+    static void resumeMainAfterPlayback();
+    // True while this process intentionally holds Main stopped for playback.
+    static bool mainSuspendedForPlayback();
 
     // True while this process holds Main stopped for an SPI critical section.
     static bool mainPaused();

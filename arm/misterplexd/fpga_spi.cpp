@@ -3,6 +3,7 @@
 
 #include <atomic>
 #include <cerrno>
+#include <cstdlib>
 #include <csignal>
 #include <chrono>
 #include <cstdio>
@@ -42,7 +43,8 @@ std::recursive_mutex& spiMutex() {
 }
 
 // Main_MiSTer owns the same SPI; STOP it for exclusive status/file ops.
-// Matches /media/fat/MiSTer and MiSTer_groovy-style host binaries.
+// Prefer argv0 == /media/fat/MiSTer (product path); also basename MiSTer /
+// MiSTer_groovy for fixtures and groovy builds. Never bare pidof.
 // IMPORTANT: no system()/fork here — multi-threaded misterplexd (F1+F2+F3) must
 // not call system() under load (glibc fork+malloc deadlock → silent process death).
 std::vector<pid_t> findMisterPids() {
@@ -67,14 +69,26 @@ std::vector<pid_t> findMisterPids() {
         const char* argv0 = buf;
         if (std::strstr(argv0, "misterplex") != nullptr)
             continue;
-        // Exact basename match for main host binaries only (avoid "mister*" false positives)
         const char* base = std::strrchr(argv0, '/');
         base = base ? base + 1 : argv0;
-        if (std::strcmp(base, "MiSTer") == 0 || std::strcmp(base, "MiSTer_groovy") == 0)
+        const bool productPath = (std::strcmp(argv0, "/media/fat/MiSTer") == 0);
+        const bool baseOk =
+            (std::strcmp(base, "MiSTer") == 0 || std::strcmp(base, "MiSTer_groovy") == 0);
+        if (productPath || baseOk)
             out.push_back(static_cast<pid_t>(std::atoi(e->d_name)));
     }
     closedir(d);
     return out;
+}
+
+// Opt-in session hold: Main stopped for whole playback (not per SPI txn).
+std::atomic<bool>& suspendMainDuringPlayEnabledFlag() {
+    static std::atomic<bool> en{false};
+    return en;
+}
+std::atomic<bool>& sessionMainHeldFlag() {
+    static std::atomic<bool> h{false};
+    return h;
 }
 
 // Bits Main sets in GPO while it owns a SPI transaction (spi.cpp EnableFpga/
@@ -191,9 +205,20 @@ struct MainSafeWindow {
         return false;
     }
 
+    bool sessionHeldMode = false;
+
     MainSafeWindow(volatile uint32_t* m, int attempts, bool enable) : map(m), enabled(enable) {
         if (!enabled)
             return;
+        // Playback already holds Main stopped for the session: drive SPI without
+        // SIGCONT on release (that would wake Main mid-decode and defeat the hold).
+        if (sessionMainHeldFlag().load()) {
+            sessionHeldMode = true;
+            if (map)
+                savedGpo = *gpoReg(map);
+            safe = true;
+            return;
+        }
         mainPauseDepth().fetch_add(1);
         for (int attempt = 0; attempt < attempts && !safe; ++attempt) {
             pids = findMisterPids();
@@ -230,6 +255,12 @@ struct MainSafeWindow {
     ~MainSafeWindow() {
         if (!enabled)
             return;
+        if (sessionHeldMode) {
+            // Session owner resumes Main at playback stop — not per SPI frame.
+            if (safe && map)
+                *gpoReg(map) = savedGpo;
+            return;
+        }
         if (safe && map)
             *gpoReg(map) = savedGpo;
         auto now = findMisterPids();
@@ -320,9 +351,124 @@ bool FpgaSpi::mainPaused() { return mainPauseDepth().load() > 0; }
 
 bool FpgaSpi::mainAlive() { return !findMisterPids().empty(); }
 
+void FpgaSpi::setSuspendMainDuringPlay(bool enabled) {
+    suspendMainDuringPlayEnabledFlag().store(enabled);
+}
+
+bool FpgaSpi::suspendMainDuringPlayEnabled() {
+    return suspendMainDuringPlayEnabledFlag().load();
+}
+
+bool FpgaSpi::mainSuspendedForPlayback() { return sessionMainHeldFlag().load(); }
+
+bool FpgaSpi::suspendMainForPlayback() {
+    if (!suspendMainDuringPlayEnabledFlag().load())
+        return false;
+    if (sessionMainHeldFlag().load())
+        return true;
+
+    // Sample GPO via /dev/mem (same manager page Main uses). Fail open if absent.
+    int memFd = ::open("/dev/mem", O_RDWR | O_SYNC | O_CLOEXEC);
+    void* mapRaw = MAP_FAILED;
+    volatile uint32_t* map = nullptr;
+    if (memFd >= 0) {
+        mapRaw = ::mmap(nullptr, 0x1000, PROT_READ | PROT_WRITE, MAP_SHARED, memFd, 0xFF706000);
+        if (mapRaw != MAP_FAILED) {
+            // gpoReg() expects map base 0xFF000000; build a fake base so offset math works.
+            // Simpler: read GPO at offset 0x10 within the 0xFF706000 page directly.
+            map = static_cast<volatile uint32_t*>(mapRaw);
+        }
+    }
+
+    bool held = false;
+    std::vector<pid_t> pids;
+    for (int attempt = 0; attempt < 8 && !held; ++attempt) {
+        pids = findMisterPids();
+        if (pids.empty()) {
+            std::fprintf(stderr, "main: SUSPEND_MAIN_DURING_PLAY skip (no /media/fat/MiSTer)\n");
+            break;
+        }
+        for (pid_t p : pids)
+            kill(p, SIGSTOP);
+        bool allT = false;
+        for (int waited = 0; waited <= 50000; waited += 200) {
+            allT = true;
+            for (pid_t p : pids) {
+                char dir[64];
+                std::snprintf(dir, sizeof(dir), "/proc/%d/task", static_cast<int>(p));
+                DIR* d = opendir(dir);
+                if (!d) {
+                    allT = false;
+                    break;
+                }
+                while (dirent* e = readdir(d)) {
+                    if (e->d_name[0] < '1' || e->d_name[0] > '9')
+                        continue;
+                    char tpath[128];
+                    std::snprintf(tpath, sizeof(tpath), "%.48s/%.16s/stat", dir, e->d_name);
+                    const char st = procStateFile(tpath);
+                    if (st != 'T' && st != 0) {
+                        allT = false;
+                        break;
+                    }
+                }
+                closedir(d);
+                if (!allT)
+                    break;
+            }
+            if (allT)
+                break;
+            usleep(200);
+        }
+        uint32_t gpo = 0;
+        bool gpoOk = true;
+        if (map) {
+            gpo = map[0x10 / 4]; // GPO at 0xFF706010
+            gpoOk = (gpo & kMainBusyMask) == 0;
+        }
+        if (allT && gpoOk) {
+            sessionMainHeldFlag().store(true);
+            held = true;
+            for (pid_t p : pids)
+                std::fprintf(stderr,
+                             "main: SUSPEND_MAIN_DURING_PLAY stop pid=%d gpo=0x%08x\n",
+                             static_cast<int>(p), static_cast<unsigned>(gpo));
+            break;
+        }
+        for (pid_t p : pids)
+            kill(p, SIGCONT);
+        usleep(500 + static_cast<unsigned>(attempt) * 500);
+    }
+
+    if (mapRaw != MAP_FAILED)
+        ::munmap(mapRaw, 0x1000);
+    if (memFd >= 0)
+        ::close(memFd);
+
+    if (!held && !pids.empty())
+        std::fprintf(stderr, "main: SUSPEND_MAIN_DURING_PLAY failed (Main busy on SPI)\n");
+    return held;
+}
+
+void FpgaSpi::resumeMainAfterPlayback() {
+    const bool was = sessionMainHeldFlag().exchange(false);
+    auto pids = findMisterPids();
+    for (pid_t p : pids) {
+        if (was || misterProcState(p) == 'T') {
+            kill(p, SIGCONT);
+            if (was)
+                std::fprintf(stderr, "main: SUSPEND_MAIN_DURING_PLAY cont pid=%d\n",
+                             static_cast<int>(p));
+        }
+    }
+}
+
 void FpgaSpi::resumeStrandedMain() {
-    // Never fight a pause we are legitimately holding right now.
+    // Never fight a pause we are legitimately holding right now (SPI window or
+    // intentional playback suspend).
     if (mainPauseDepth().load() > 0)
+        return;
+    if (sessionMainHeldFlag().load())
         return;
     for (pid_t p : findMisterPids()) {
         if (misterProcState(p) == 'T')
@@ -336,6 +482,14 @@ namespace {
 // async-signal-safe: only atomics, kill(), open/read/close via findMisterPids.
 void crashGuardBeforeReraise(int /*sig*/) {
     mainPauseDepth().store(0);
+    sessionMainHeldFlag().store(false);
+    for (pid_t p : findMisterPids())
+        kill(p, SIGCONT);
+}
+
+void atexitResumeMain() {
+    sessionMainHeldFlag().store(false);
+    mainPauseDepth().store(0);
     for (pid_t p : findMisterPids())
         kill(p, SIGCONT);
 }
@@ -343,10 +497,12 @@ void crashGuardBeforeReraise(int /*sig*/) {
 } // namespace
 
 void FpgaSpi::installCrashGuard() {
-    // SIGKILL cannot be caught — resumeStrandedMain() at startup covers it.
-    // crashDumpInstall writes a backtrace then invokes crashGuardBeforeReraise
-    // and re-raises so the supervisor still sees rc=139 (SIGSEGV) etc.
+    // SIGKILL cannot be caught — supervisor resume-before-respawn + startup
+    // resumeStrandedMain() cover it. crashDumpInstall writes a backtrace then
+    // invokes crashGuardBeforeReraise and re-raises so the supervisor still sees
+    // rc=139 (SIGSEGV) etc. atexit covers clean/exit_group paths.
     crashDumpInstall(crashGuardBeforeReraise);
+    std::atexit(atexitResumeMain);
 }
 
 void FpgaSpi::setErr(std::string msg) {

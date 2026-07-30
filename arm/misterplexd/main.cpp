@@ -340,6 +340,13 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "misterplexd: OSD_CONTROL=%s\n", osdControl ? "1" : "0");
         std::fprintf(stderr, "misterplexd: IDLE_SCREEN=%s AV_OFFSET_MS=%d\n",
                      idle.empty() ? "logo(default)" : idle.c_str(), player.avOffsetMs());
+        // Opt-in: SIGSTOP Main for whole playback session to reclaim ~1 core.
+        // Default OFF — parent enables for measurement. kill -9 covered by supervisor.
+        const bool suspendMain =
+            confTruthy(loadConf(confPath, "SUSPEND_MAIN_DURING_PLAY"));
+        player.setSuspendMainDuringPlay(suspendMain);
+        std::fprintf(stderr, "misterplexd: SUSPEND_MAIN_DURING_PLAY=%s\n",
+                     suspendMain ? "1" : "0");
     }
     player.setLog([](const std::string& s) { std::fprintf(stderr, "%s\n", s.c_str()); });
     if (streamEnabled) {

@@ -480,6 +480,8 @@ void MediaPlayer::shutdown() {
         playing_.store(false);
         paused_.store(false);
     }
+    // Belt-and-suspenders: thr_ end already resumed; ensure Main is up for F12.
+    FpgaSpi::resumeMainAfterPlayback();
     stopOsdPoll();
     stopIdle();
 }
@@ -500,6 +502,8 @@ void MediaPlayer::stop() {
     }
     playing_.store(false);
     paused_.store(false);
+    // Resume Main before idle/OSD so F12 works again after cast stop.
+    FpgaSpi::resumeMainAfterPlayback();
     if (onProgress_)
         onProgress_("stopped", finalPos, finalDur);
     {
@@ -613,6 +617,10 @@ bool MediaPlayer::play(const std::string& urlOrPath, int64_t startOffsetMs,
         // poll playing() cannot race stop() before threadMain runs and wipe the
         // session at frames=0 / audio_s=0.
         playing_.store(true);
+        // Session-level Main suspend (once per play, not per frame). Resume is in
+        // stop()/shutdown()/threadMain end + crash/atexit/supervisor watchdogs.
+        if (FpgaSpi::suspendMainDuringPlayEnabled())
+            FpgaSpi::suspendMainForPlayback();
         thr_ = std::thread([this, urlOrPath, startOffsetMs, httpHeaders, durationMs] {
             try {
                 threadMain(urlOrPath, startOffsetMs, httpHeaders, durationMs);
@@ -623,6 +631,7 @@ bool MediaPlayer::play(const std::string& urlOrPath, int64_t startOffsetMs,
                 log("media: threadMain unknown exception");
                 playing_.store(false);
             }
+            FpgaSpi::resumeMainAfterPlayback();
         });
     }
     return true;
@@ -1959,6 +1968,8 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
         streamThr_.join();
 
     playing_.store(false);
+    // Natural EOF: resume Main before idle paint / auto-next (F12 must work).
+    FpgaSpi::resumeMainAfterPlayback();
     // Natural EOF (not user stop / seek restart) → "ended" so main can auto-next.
     if (!stop_.load() && onProgress_) {
         const bool hadContent = usedRgb ? (frameIndex > 0) : (reconFrames_.load() > 0 ||
