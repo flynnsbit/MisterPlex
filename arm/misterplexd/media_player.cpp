@@ -2284,6 +2284,10 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                 "same frame");
         usedRawVideo = true;
         presentCount_ = 0;
+        // Consecutive F1 publish failures (DDR fail or hybrid hold-last). Loud after
+        // ~3s @24fps so a frozen scanout + live audio cannot look "healthy".
+        int consecutivePresentFail = 0;
+        bool presentStallLogged = false;
         audioBytes_.store(0);
         std::vector<std::string> args;
         args.push_back(ffmpeg_);
@@ -2732,6 +2736,8 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                             (d.fail_reason ? d.fail_reason : "?") +
                             " — refusing F1 present (no silent FPGA/host claim)");
                         publishF1 = false;
+                        // Hold-last must not mask a dead/hybrid-broken stream forever:
+                        // counted toward consecutivePresentFail below when countPresent.
                     } else {
                         if ((frameIndex % 30) == 0)
                             log(std::string("media: ") + d.log_line);
@@ -2788,10 +2794,14 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                         "YUV420p");
                 }
                 if (!ok) {
-                    if (countPresent && (frameIndex % 30) == 0)
-                        log("media: fpga frame_tx: " +
-                            (ddrErr.empty() ? fpga_.lastError() : ddrErr));
+                    if (countPresent) {
+                        ++consecutivePresentFail;
+                        if ((frameIndex % 30) == 0)
+                            log("media: fpga frame_tx: " +
+                                (ddrErr.empty() ? fpga_.lastError() : ddrErr));
+                    }
                 } else if (countPresent) {
+                    consecutivePresentFail = 0;
                     ++presentCount_;
                     if (profilePresent)
                         ++prof.presented;
@@ -2803,6 +2813,18 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                             " ms=" + std::to_string(static_cast<int>(fpga_.lastPushMs())));
                     }
                 }
+            } else if (countPresent && wantFpgaFrameStore) {
+                // Hybrid hard-fail / recon-owns path skipped F1: hold last good frame.
+                ++consecutivePresentFail;
+            }
+            if (countPresent && wantFpgaFrameStore && !presentStallLogged &&
+                consecutivePresentFail >= 72) {
+                presentStallLogged = true;
+                log("ERROR media: present stall — " + std::to_string(consecutivePresentFail) +
+                    " consecutive F1 publish failures (decoded frames=" +
+                    std::to_string(frameIndex) + " presents=" + std::to_string(presentCount_) +
+                    "); scanout may be frozen while audio continues. Check DDR/PLXD or hybrid "
+                    "ownership; hold-last must not look like healthy playback.");
             }
 
             restoreOverlayDirty(cleanFrame, dirty);
