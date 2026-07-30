@@ -206,31 +206,40 @@ int main(int argc, char** argv) {
                 idHdr.push_back({"X-Plex-Token", confToken});
             const auto idProbe = misterplex::plexHttpGetBodyResult(
                 misterplex::normalizePlexBase(defaultPms) + "/identity", idHdr, 6, true);
+            auto xmlAttr = [](const std::string& body, const char* name) -> std::string {
+                const std::string key = std::string(name) + "=\"";
+                auto p = body.find(key);
+                if (p == std::string::npos)
+                    return {};
+                p += key.size();
+                auto e = body.find('"', p);
+                if (e == std::string::npos || e <= p)
+                    return {};
+                return body.substr(p, e - p);
+            };
             if (!idProbe.ok) {
+                // Unmissable: dead PLEX_BASE used to look healthy (servers=1, false update ok).
                 std::fprintf(stderr,
-                             "misterplexd: PLEX_BASE_UNREACHABLE base=%s http=%d — conf PMS "
-                             "does not answer /identity. Idle screen still runs; cast from a "
-                             "live server still works with cast token. Fix PLEX_BASE/PLEX_HOST "
-                             "in misterplex.conf.\n",
-                             defaultPms.c_str(), idProbe.httpStatus);
+                             "misterplexd: *** PLEX_BASE_UNREACHABLE *** base=%s http=%d "
+                             "servers=%zu — conf PMS does not answer /identity. Idle screen "
+                             "still runs; cast from a live (incl. shared) server still works "
+                             "with the cast token. Fix PLEX_BASE/PLEX_HOST in misterplex.conf.\n",
+                             defaultPms.c_str(), idProbe.httpStatus, servers.size());
             } else {
-                const std::string key = "machineIdentifier=\"";
-                auto p = idProbe.body.find(key);
-                if (p != std::string::npos) {
-                    p += key.size();
-                    auto e = idProbe.body.find('"', p);
-                    if (e != std::string::npos && e > p)
-                        confMachineId = idProbe.body.substr(p, e - p);
-                }
+                confMachineId = xmlAttr(idProbe.body, "machineIdentifier");
+                const std::string friendly = xmlAttr(idProbe.body, "friendlyName");
                 if (!confMachineId.empty())
                     std::fprintf(stderr,
-                                 "misterplexd: conf PMS OK machineIdentifier=%s base=%s\n",
-                                 confMachineId.c_str(), defaultPms.c_str());
+                                 "misterplexd: conf PMS OK name=%s machineIdentifier=%s "
+                                 "base=%s servers=%zu http=%d\n",
+                                 friendly.empty() ? "-" : friendly.c_str(),
+                                 confMachineId.c_str(), defaultPms.c_str(), servers.size(),
+                                 idProbe.httpStatus);
                 else
                     std::fprintf(stderr,
                                  "misterplexd: conf PMS http=%d but no machineIdentifier in "
-                                 "/identity body base=%s\n",
-                                 idProbe.httpStatus, defaultPms.c_str());
+                                 "/identity body base=%s servers=%zu\n",
+                                 idProbe.httpStatus, defaultPms.c_str(), servers.size());
             }
         } else {
             std::fprintf(stderr,
