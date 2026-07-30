@@ -87,23 +87,68 @@ module h264_dequant4x4 (
 		end
 	endfunction
 
-	// row-major output: dequant[zigzag(scan)] receives coeff[scan]
-	assign dequant[0]  = (max_coeff > 5'd0)  ? dequant_one(coeff[0],  qp, 5'd0,  1'b0) : 29'sd0;
-	assign dequant[1]  = (max_coeff > 5'd1)  ? dequant_one(coeff[1],  qp, 5'd1,  1'b0) : 29'sd0;
-	assign dequant[2]  = (max_coeff > 5'd5)  ? dequant_one(coeff[5],  qp, 5'd5,  1'b0) : 29'sd0;
-	assign dequant[3]  = (max_coeff > 5'd6)  ? dequant_one(coeff[6],  qp, 5'd6,  1'b0) : 29'sd0;
-	assign dequant[4]  = (max_coeff > 5'd2)  ? dequant_one(coeff[2],  qp, 5'd2,  1'b0) : 29'sd0;
-	assign dequant[5]  = (max_coeff > 5'd4)  ? dequant_one(coeff[4],  qp, 5'd4,  1'b0) : 29'sd0;
-	assign dequant[6]  = (max_coeff > 5'd7)  ? dequant_one(coeff[7],  qp, 5'd7,  1'b0) : 29'sd0;
-	assign dequant[7]  = (max_coeff > 5'd12) ? dequant_one(coeff[12], qp, 5'd12, 1'b0) : 29'sd0;
-	assign dequant[8]  = (max_coeff > 5'd3)  ? dequant_one(coeff[3],  qp, 5'd3,  1'b0) : 29'sd0;
-	assign dequant[9]  = (max_coeff > 5'd8)  ? dequant_one(coeff[8],  qp, 5'd8,  1'b0) : 29'sd0;
-	assign dequant[10] = (max_coeff > 5'd11) ? dequant_one(coeff[11], qp, 5'd11, 1'b0) : 29'sd0;
-	assign dequant[11] = (max_coeff > 5'd13) ? dequant_one(coeff[13], qp, 5'd13, 1'b0) : 29'sd0;
-	assign dequant[12] = (max_coeff > 5'd9)  ? dequant_one(coeff[9],  qp, 5'd9,  1'b0) : 29'sd0;
-	assign dequant[13] = (max_coeff > 5'd10) ? dequant_one(coeff[10], qp, 5'd10, 1'b0) : 29'sd0;
-	assign dequant[14] = (max_coeff > 5'd14) ? dequant_one(coeff[14], qp, 5'd14, 1'b0) : 29'sd0;
-	assign dequant[15] = (max_coeff > 5'd15) ? dequant_one(coeff[15], qp, 5'd15, 1'b0) : 29'sd0;
+	// Host dequant4x4 (h264_recon.hpp): when maxCoeff==15 (I16 AC / chroma AC),
+	// coeff[k] maps to kZigzag[k+1] and spatial DC stays 0 for the AC path.
+	// maxCoeff==16 uses kZigzag[k] including DC (I4 / ordinary residual).
+	wire skip_dc = (max_coeff == 5'd15);
+
+	// Explicit inverse-zigzag placement.
+	// max16: dequant[zigzag(k)] = deq(coeff[k]); max15: dequant[zigzag(k+1)] = deq(coeff[k]), DC=0
+	//
+	// Spatial ← scan (max16): zz0←s0 1←s1 2←s5 3←s6 4←s2 5←s4 6←s7 7←s12
+	//                          8←s3 9←s8 10←s11 11←s13 12←s9 13←s10 14←s14 15←s15
+	// max15 shifts each scan up one zigzag slot (s0→zz1 … s14→zz15).
+
+	wire signed [28:0] m16_0  = (max_coeff > 5'd0)  ? dequant_one(coeff[0],  qp, 5'd0,  1'b0) : 29'sd0;
+	wire signed [28:0] m16_1  = (max_coeff > 5'd1)  ? dequant_one(coeff[1],  qp, 5'd1,  1'b0) : 29'sd0;
+	wire signed [28:0] m16_2  = (max_coeff > 5'd2)  ? dequant_one(coeff[2],  qp, 5'd2,  1'b0) : 29'sd0;
+	wire signed [28:0] m16_3  = (max_coeff > 5'd3)  ? dequant_one(coeff[3],  qp, 5'd3,  1'b0) : 29'sd0;
+	wire signed [28:0] m16_4  = (max_coeff > 5'd4)  ? dequant_one(coeff[4],  qp, 5'd4,  1'b0) : 29'sd0;
+	wire signed [28:0] m16_5  = (max_coeff > 5'd5)  ? dequant_one(coeff[5],  qp, 5'd5,  1'b0) : 29'sd0;
+	wire signed [28:0] m16_6  = (max_coeff > 5'd6)  ? dequant_one(coeff[6],  qp, 5'd6,  1'b0) : 29'sd0;
+	wire signed [28:0] m16_7  = (max_coeff > 5'd7)  ? dequant_one(coeff[7],  qp, 5'd7,  1'b0) : 29'sd0;
+	wire signed [28:0] m16_8  = (max_coeff > 5'd8)  ? dequant_one(coeff[8],  qp, 5'd8,  1'b0) : 29'sd0;
+	wire signed [28:0] m16_9  = (max_coeff > 5'd9)  ? dequant_one(coeff[9],  qp, 5'd9,  1'b0) : 29'sd0;
+	wire signed [28:0] m16_10 = (max_coeff > 5'd10) ? dequant_one(coeff[10], qp, 5'd10, 1'b0) : 29'sd0;
+	wire signed [28:0] m16_11 = (max_coeff > 5'd11) ? dequant_one(coeff[11], qp, 5'd11, 1'b0) : 29'sd0;
+	wire signed [28:0] m16_12 = (max_coeff > 5'd12) ? dequant_one(coeff[12], qp, 5'd12, 1'b0) : 29'sd0;
+	wire signed [28:0] m16_13 = (max_coeff > 5'd13) ? dequant_one(coeff[13], qp, 5'd13, 1'b0) : 29'sd0;
+	wire signed [28:0] m16_14 = (max_coeff > 5'd14) ? dequant_one(coeff[14], qp, 5'd14, 1'b0) : 29'sd0;
+	wire signed [28:0] m16_15 = (max_coeff > 5'd15) ? dequant_one(coeff[15], qp, 5'd15, 1'b0) : 29'sd0;
+
+	// max15: mi from dest spatial (=zigzag[k+1]) via skip_dc=1 in dequant_one
+	wire signed [28:0] m15_s0  = (max_coeff > 5'd0)  ? dequant_one(coeff[0],  qp, 5'd0,  1'b1) : 29'sd0; // →zz1
+	wire signed [28:0] m15_s1  = (max_coeff > 5'd1)  ? dequant_one(coeff[1],  qp, 5'd1,  1'b1) : 29'sd0; // →zz4
+	wire signed [28:0] m15_s2  = (max_coeff > 5'd2)  ? dequant_one(coeff[2],  qp, 5'd2,  1'b1) : 29'sd0; // →zz8
+	wire signed [28:0] m15_s3  = (max_coeff > 5'd3)  ? dequant_one(coeff[3],  qp, 5'd3,  1'b1) : 29'sd0; // →zz5
+	wire signed [28:0] m15_s4  = (max_coeff > 5'd4)  ? dequant_one(coeff[4],  qp, 5'd4,  1'b1) : 29'sd0; // →zz2
+	wire signed [28:0] m15_s5  = (max_coeff > 5'd5)  ? dequant_one(coeff[5],  qp, 5'd5,  1'b1) : 29'sd0; // →zz3
+	wire signed [28:0] m15_s6  = (max_coeff > 5'd6)  ? dequant_one(coeff[6],  qp, 5'd6,  1'b1) : 29'sd0; // →zz6
+	wire signed [28:0] m15_s7  = (max_coeff > 5'd7)  ? dequant_one(coeff[7],  qp, 5'd7,  1'b1) : 29'sd0; // →zz9
+	wire signed [28:0] m15_s8  = (max_coeff > 5'd8)  ? dequant_one(coeff[8],  qp, 5'd8,  1'b1) : 29'sd0; // →zz12
+	wire signed [28:0] m15_s9  = (max_coeff > 5'd9)  ? dequant_one(coeff[9],  qp, 5'd9,  1'b1) : 29'sd0; // →zz13
+	wire signed [28:0] m15_s10 = (max_coeff > 5'd10) ? dequant_one(coeff[10], qp, 5'd10, 1'b1) : 29'sd0; // →zz10
+	wire signed [28:0] m15_s11 = (max_coeff > 5'd11) ? dequant_one(coeff[11], qp, 5'd11, 1'b1) : 29'sd0; // →zz7
+	wire signed [28:0] m15_s12 = (max_coeff > 5'd12) ? dequant_one(coeff[12], qp, 5'd12, 1'b1) : 29'sd0; // →zz11
+	wire signed [28:0] m15_s13 = (max_coeff > 5'd13) ? dequant_one(coeff[13], qp, 5'd13, 1'b1) : 29'sd0; // →zz14
+	wire signed [28:0] m15_s14 = (max_coeff > 5'd14) ? dequant_one(coeff[14], qp, 5'd14, 1'b1) : 29'sd0; // →zz15
+
+	assign dequant[0]  = skip_dc ? 29'sd0  : m16_0;   // zz0 ← s0 (max16 only)
+	assign dequant[1]  = skip_dc ? m15_s0  : m16_1;   // zz1 ← s0 / s1
+	assign dequant[4]  = skip_dc ? m15_s1  : m16_2;   // zz4 ← s1 / s2
+	assign dequant[8]  = skip_dc ? m15_s2  : m16_3;   // zz8 ← s2 / s3
+	assign dequant[5]  = skip_dc ? m15_s3  : m16_4;   // zz5 ← s3 / s4
+	assign dequant[2]  = skip_dc ? m15_s4  : m16_5;   // zz2 ← s4 / s5
+	assign dequant[3]  = skip_dc ? m15_s5  : m16_6;   // zz3 ← s5 / s6
+	assign dequant[6]  = skip_dc ? m15_s6  : m16_7;   // zz6 ← s6 / s7
+	assign dequant[9]  = skip_dc ? m15_s7  : m16_8;   // zz9 ← s7 / s8
+	assign dequant[12] = skip_dc ? m15_s8  : m16_9;   // zz12← s8 / s9
+	assign dequant[13] = skip_dc ? m15_s9  : m16_10;  // zz13← s9 / s10
+	assign dequant[10] = skip_dc ? m15_s10 : m16_11;  // zz10← s10/ s11
+	assign dequant[7]  = skip_dc ? m15_s11 : m16_12;  // zz7 ← s11/ s12
+	assign dequant[11] = skip_dc ? m15_s12 : m16_13;  // zz11← s12/ s13
+	assign dequant[14] = skip_dc ? m15_s13 : m16_14;  // zz14← s13/ s14
+	assign dequant[15] = skip_dc ? m15_s14 : m16_15;  // zz15← s14/ s15
 endmodule
 
 module h264_idct4x4 (

@@ -297,6 +297,34 @@ module h264_i_res_recon_sink #(
 			max_for_iq = 5'd15;
 	end
 
+	// I16 AC: inject Hadamard DC at dequant[0] before IDCT (host idct4x4_add).
+	// Split pixel-DC + AC-idct loses combined >>6 rounding (off-by-one).
+	reg use_i16_dc_inject;
+	reg signed [15:0] i16_inject_dc;
+	wire signed [28:0] dq_for_idct [0:15];
+	genvar gi;
+	generate
+		for (gi = 0; gi < 16; gi = gi + 1) begin : gen_dq_mux
+			if (gi == 0)
+				assign dq_for_idct[0] = use_i16_dc_inject ?
+					{{13{i16_inject_dc[15]}}, i16_inject_dc} : dq_raw[0];
+			else
+				assign dq_for_idct[gi] = dq_raw[gi];
+		end
+	endgenerate
+
+	wire [3:0] i16_ac_scan = lat_idx[3:0] - 4'd1;
+	wire [3:0] i16_ac_spat = {blk4_y(i16_ac_scan), blk4_x(i16_ac_scan)};
+
+	always @(*) begin
+		use_i16_dc_inject = 1'b0;
+		i16_inject_dc = 16'sd0;
+		if (lat_is_i16 && lat_is_luma && lat_idx >= 5'd1 && lat_idx <= 5'd16 && i16_dc_valid) begin
+			use_i16_dc_inject = 1'b1;
+			i16_inject_dc = i16_dc[i16_ac_spat];
+		end
+	end
+
 	h264_dequant4x4 u_dq (
 		.coeff(coeff_for_iq),
 		.qp(lat_qp),
@@ -304,7 +332,7 @@ module h264_i_res_recon_sink #(
 		.dequant(dq_raw)
 	);
 	h264_idct4x4 u_idct (
-		.dequant(dq_raw),
+		.dequant(dq_for_idct),
 		.residual(idct_r)
 	);
 	h264_recon4x4 u_recon (
@@ -475,18 +503,21 @@ module h264_i_res_recon_sink #(
 						i16_dc_valid <= 1'b1;
 						dbg_blk_applied <= dbg_blk_applied + 32'd1;
 					end else if (lat_is_i16 && lat_idx >= 5'd1 && lat_idx <= 5'd16) begin
+						// Host: dequant AC max15, blk[0][0]=dc, one idct4x4_add.
+						// idx0 painted (dc+32)>>6; when AC nz replace with combined residual.
 						bx = blk4_x(lat_idx[3:0] - 4'd1);
 						by = blk4_y(lat_idx[3:0] - 4'd1);
 						any_nz = 1'b0;
 						for (k = 0; k < 16; k = k + 1)
 							if (lat_coeff[k] != 16'sd0) any_nz = 1'b1;
-						// Zero AC: DC already painted — skip zero-idct (+32 bias).
 						if (any_nz) begin
 							for (y = 0; y < 4; y = y + 1)
 								for (x = 0; x < 4; x = x + 1) begin
 									addr = (by * 4 + y) * 16 + (bx * 4 + x);
-									plane_y[addr] <= add_res(plane_y[addr],
-										idct_r[{y[1:0], x[1:0]}]);
+									tsum = $signed({10'd0, plane_y[addr]})
+										- (($signed(i16_dc[{by, bx}]) + 18'sd32) >>> 6)
+										+ idct_r[{y[1:0], x[1:0]}];
+									plane_y[addr] <= clip_u8(tsum);
 								end
 						end
 						dbg_blk_applied <= dbg_blk_applied + 32'd1;
