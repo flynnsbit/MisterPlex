@@ -1024,6 +1024,11 @@ module h264_p_mb_traverse #(
 			if (mb_valid && mb_ready) begin
 				mb_valid <= 1'b0;
 				mb_hold <= 1'b0;
+`ifdef VERILATOR
+				if (is_intra_r && curr_mb >= 16'd44 && curr_mb <= 16'd53)
+					$display("TRAV_ACCEPT mb=%0d cbp=%0h hold_clr=1 st=%0d",
+						curr_mb, cbp_r, st);
+`endif
 			end
 			if (res_blk_valid && res_blk_ready)
 				res_blk_valid <= 1'b0;
@@ -1056,10 +1061,14 @@ module h264_p_mb_traverse #(
 				bit_byte_v <= 1'b1;
 			end
 
-			// Stall FSM while an MB beat is outstanding and not taken,
-			// or while residual export is waiting for consumer ready.
-			if (mb_hold && !(mb_valid && mb_ready) && busy) begin
-				// hold state
+			// Stall FSM while an MB beat is outstanding.
+			// IMPORTANT: also stall on the accept cycle itself. Previously
+			// `mb_hold && !(valid&&ready)` fell through on accept, so
+			// ST_RES_SETUP ran the same cycle decode_stub latched got_mb
+			// (NBA still 0) → i_sink_enable=0 → luma ready default-1 DROPPED
+			// residual and res_mb_end was lost (Intra-in-P cbp=0 hang).
+			if (mb_hold && busy) begin
+				// hold state (accept clears mb_hold above; residual next cy)
 			end else if (res_blk_valid && !res_blk_ready && busy) begin
 				// residual hold (ST_RES_HOLD also waits explicitly)
 			end else if (!busy && start) begin
@@ -1557,8 +1566,8 @@ module h264_p_mb_traverse #(
 					emit_mb(1'b0);
 					res_luma_mask <= cbp_r[3:0];
 					res_chroma <= cbp_r[5:4];
-					if (!is_i16_r && cbp_r == 6'd0) begin
-						// inter/I_NxN with no residual; zero tc neighbours
+					if (!is_i16_r && cbp_r == 6'd0 && !is_intra_r) begin
+						// inter with no residual; zero tc neighbours
 						for (ti = 0; ti < 4; ti = ti + 1) begin
 							tc_left[ti] <= 5'd0;
 							tc_left_v[ti] <= 1'b1;
@@ -1578,12 +1587,18 @@ module h264_p_mb_traverse #(
 						res_mb_chroma_mode <= chr_mode_r;
 						st <= ST_RES_MB_END;
 					end else begin
-						// I_16x16 always enters residual (DC); inter if cbp!=0
+						// I_16x16 / Intra-in-P / inter-with-cbp: residual export
+						// (zero-coeff blocks still emitted for intra so sink preds).
 						res_block_i <= 5'd0;
 						st <= ST_RES_SETUP;
 					end
 				end
 				ST_RES_SETUP: begin
+`ifdef VERILATOR
+					if (is_intra_r && curr_mb >= 16'd44 && curr_mb <= 16'd53 && res_block_i == 5'd0)
+						$display("TRAV_RES_SETUP mb=%0d hold=%0d ready=%0d cbp=%0h i16=%0d",
+							curr_mb, mb_hold, mb_ready, cbp_r, is_i16_r);
+`endif
 					// I_16x16: 0..26 (DC+16AC+2DC+8AC); else 0..25
 					if ((!is_i16_r && res_block_i >= 5'd26) ||
 					    (is_i16_r && res_block_i >= 5'd27)) begin
@@ -1594,10 +1609,10 @@ module h264_p_mb_traverse #(
 						res_mb_end <= 1'b1;
 						res_mb_end_addr <= curr_mb;
 						res_mb_chroma_mode <= chr_mode_r;
-						// Commit right/bottom edge modes for next MBs (I only).
-						// I_NxN: real modes. I16/other: host treats neighbour as
-						// mode 2 (DC) for MPM (h264_recon.hpp i4mode=2).
-						if (is_i_slice_r) begin : commit_i4_edge_modes
+						// Commit right/bottom edge modes for next MBs (I-slice
+						// and Intra-in-P). I_NxN: real modes. I16/other: host
+						// treats neighbour as mode 2 (DC) for MPM.
+						if (is_i_slice_r || is_intra_r) begin : commit_i4_edge_modes
 							integer ei;
 							reg [15:0] ax;
 							for (ei = 0; ei < 4; ei = ei + 1) begin
@@ -1628,9 +1643,9 @@ module h264_p_mb_traverse #(
 						end else if (res_block_i < 5'd16) begin
 							commit_tc_after_luma(res_block_i[3:0], 5'd0);
 						end
-						// I-slice: still export zero-coeff luma so sink runs pred
-						// (uncoded residual ≠ skip prediction / neighbour write).
-						if (is_i_slice_r &&
+						// I-slice and Intra-in-P: still export zero-coeff luma so
+						// sink runs pred (uncoded residual ≠ skip prediction).
+						if ((is_i_slice_r || is_intra_r) &&
 						    ((!is_i16_r && res_block_i < 5'd16) ||
 						     (is_i16_r && res_block_i <= 5'd16))) begin
 							begin : exp_zero
@@ -1727,9 +1742,9 @@ module h264_p_mb_traverse #(
 								res_hold_y <= curr_y[7:0];
 								for (ci = 0; ci < 16; ci = ci + 1)
 									res_hold_coeff[ci] <= cavlc_coeff[ci];
-								// I: export all slots (luma+chroma). P: export chroma only
-								// (P luma residual still MC-path; closes UV gap).
-								if (is_i_slice_r || !is_luma_slot) begin
+								// I-slice and Intra-in-P: export all slots (luma+chroma).
+								// Inter P: chroma only (P luma residual still MC-path).
+								if (is_i_slice_r || is_intra_r || !is_luma_slot) begin
 									res_blk_valid <= 1'b1;
 									res_blk_mb_addr <= curr_mb;
 									res_blk_mb_x <= curr_x[7:0];
@@ -1792,6 +1807,11 @@ module h264_p_mb_traverse #(
 				end
 				ST_RES_MB_END: begin
 					// one-cycle gap after res_mb_end pulse
+`ifdef VERILATOR
+					if (curr_mb >= 16'd21 && curr_mb <= 16'd53)
+						$display("TRAV_RES_END mb=%0d intra=%0d i16=%0d cbp=%0h",
+							curr_mb, is_intra_r, is_i16_r, cbp_r);
+`endif
 					st <= ST_NEXT_MB;
 				end
 				ST_NEXT_MB: begin

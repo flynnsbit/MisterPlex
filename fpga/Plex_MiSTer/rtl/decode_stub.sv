@@ -161,6 +161,8 @@ module decode_stub #(
 	reg [15:0]     lat_p_mb_addr;
 	reg            inter_capture_valid;
 	reg            p_fetch_launch_pending;
+	reg            p_fetch_armed;       // start issued for current trav_got_mb
+	reg            p_fetch_seen_busy;   // DPB accepted this arm (busy rose)
 	reg            p_candidate_seen;
 	reg            pending_p_fetch;
 	reg            pending_p_skip;
@@ -174,6 +176,8 @@ module decode_stub #(
 	reg            trav_active_slice;
 	reg            trav_got_mb;
 	reg            recon_store_pending;
+	reg            recon_store_seen_busy; // write accepted (busy rose) for this pending
+	reg            recon_store_done_sticky; // latch one-cycle write_done
 	reg            idr_recon_pack_pending;
 	integer        coeff_i;
 	integer        idr_pack_i;
@@ -198,22 +202,14 @@ module decode_stub #(
 	reg [15:0]     store_slice_expected;
 `endif
 	// Accept a traversal MB when idle-ready for fetch or actively fetching next.
-	// Intra-in-P is accepted (no MC) so the walker never stalls on those MBs.
+	// Intra-in-P enters FETCH with lat_p_intra (real I-sink recon, no MC).
 	// While parking Clip1 samples into the recon store, do not ACK the walker
 	// except on the store-done cycle (pending still 1 under NBA that cycle).
-	// Product same-cycle FETCH accept (no store drain) is still lossless under
-	// unconditional hold backpressure — it only avoids a bubble, never drops.
 	// Serial residual-then-fetch: p_chr_wait means MC fetch not started yet.
 	// Do not accept next MB until current store drained (existing pending gate).
-	wire           trav_can_accept = (phase == PH_IDLE && (dpb_ref_ready || trav_intra)) ||
-	                                 (phase == PH_FETCH && !p_fetch_launch_pending && dpb_fetch_done &&
-	                                  !recon_store_pending && !p_chr_wait && !p_chr_busy && !USE_REAL_REF_COMMIT) ||
-	                                 (phase == PH_FETCH && !trav_got_mb && !p_fetch_launch_pending && !dpb_fetch_busy &&
-	                                  (!recon_store_pending || recon_store_done) && !p_chr_wait && !p_chr_busy) ||
-	                                 (phase == PH_IDLE && trav_intra) ||
-	                                 // I-slice residual walk: drain MB events unconditionally so the walker
-	                                 // is not stuck on mb_hold while residual export runs.
-	                                 (phase == PH_I_RECON);
+	// Sticky dpb_fetch_done must not free-accept during lat_p_intra (no MC).
+	// Declared later once dpb_ref_ready / sink busy exist — see trav_can_accept below.
+	wire           trav_can_accept;
 	assign trav_mb_ready = trav_mb_valid && trav_can_accept;
 	// First-MB mvd latched for the opening P MB; cleared on multi-MB advance
 	// so later stub-walk MBs use MVP-only (mvd=0) until full syntax lands.
@@ -862,14 +858,52 @@ module decode_stub #(
 	wire [7:0]  i_sink_u [0:63];
 	wire [7:0]  i_sink_v [0:63];
 	wire [31:0] i_sink_dbg_blk, i_sink_dbg_mb, i_sink_dbg_nz;
-	wire        i_sink_clear = vcl_pulse && (last_nal_type[4:0] == 5'd5);
+	// Clear I-sink on IDR VCL only (safe). P-picture neighbour wipe is done
+	// via i_sink_nb_pic_clear at first P FETCH accept — not on VCL pulse
+	// (P NAL can arrive while IDR I_RECON still runs).
+	wire        i_sink_clear = (vcl_pulse && (last_nal_type[4:0] == 5'd5)) ||
+	                           i_sink_nb_pic_clear;
 
 	wire [31:0] i_sink_dbg_chr;
 	wire        i_sink_drain_idle;
 	wire        i_sink_ready_w;
-	// P owns residual bus in FETCH; I sink only during PH_I_RECON.
-	wire        p_chr_enable = (phase == PH_FETCH) && use_real_ref;
-	wire        i_sink_enable = (phase == PH_I_RECON);
+	wire        i_sink_nb_busy;
+	// P-inter → I-sink neighbour seed (for later Intra-in-P).
+	reg         i_sink_nb_commit;
+	reg         i_sink_nb_pic_clear; // one-cycle clear at first P MB of a picture
+	reg         i_sink_nb_pend;      // hold seed until sink drain_idle
+	reg         i_sink_nb_cap_vld;   // edges captured from last inter recon
+	// Hold Intra-in-P res_mb_end until sink consumes (pulse can be missed while
+	// sink is in NB_SEED / not enabled for a cycle).
+	reg         i_sink_intra_end_hold;
+	reg  [15:0] i_sink_intra_end_addr;
+	reg  [1:0]  i_sink_intra_end_chr;
+	// Latch sink write_req (1-cycle) until recon_store accepts it.
+	reg         i_sink_wr_hold;
+	reg  [15:0] i_sink_wr_hold_mb;
+	reg  [7:0]  i_sink_nb_mb_x, i_sink_nb_mb_y;
+	reg  [7:0]  i_sink_nb_y_right [0:15];
+	reg  [7:0]  i_sink_nb_y_bot   [0:15];
+	reg  [7:0]  i_sink_nb_u_right [0:7];
+	reg  [7:0]  i_sink_nb_u_bot   [0:7];
+	reg  [7:0]  i_sink_nb_v_right [0:7];
+	reg  [7:0]  i_sink_nb_v_bot   [0:7];
+	// Intra-in-P: real I recon via sink (not MC). Inter P: chroma residual apply.
+	// Require trav_got_mb so the post-store gap (got=0, lat_p_intra still 1
+	// until next accept) cannot feed the next MB's residual into I-sink.
+	// Include accept-cycle (trav_mb_ready&&trav_intra): got/lat update is NBA
+	// and residual must not see enable=0 that cycle (drop path).
+	wire        p_intra_accept_cy = (phase == PH_FETCH) && use_real_ref &&
+	                                trav_mb_ready && trav_intra;
+	wire        p_intra_active = (phase == PH_FETCH) && use_real_ref &&
+	                            ((lat_p_intra && trav_got_mb) || p_intra_accept_cy);
+	wire        p_chr_enable = (phase == PH_FETCH) && use_real_ref && !lat_p_intra &&
+	                            trav_got_mb && !p_intra_accept_cy;
+	wire        i_sink_enable = (phase == PH_I_RECON) || p_intra_active;
+	// Stall residual while FETCH has no current MB context (gap after store).
+	// Accept-cycle is not a gap (p_intra_accept_cy covers enable).
+	wire        p_res_gap = (phase == PH_FETCH) && use_real_ref && !trav_got_mb &&
+	                        !p_intra_accept_cy;
 	wire        p_chr_ready_w;
 	wire        p_chr_mb_done;
 	wire [15:0] p_chr_mb_done_addr;
@@ -879,6 +913,45 @@ module decode_stub #(
 	// launched MC; blocking ready then deadlocks the walker (FETCH_HANG).
 	wire p_chr_mb_match = p_chr_enable && (i_res_blk_mb_addr == lat_p_mb_addr);
 	wire p_chr_end_match = p_chr_enable && (i_res_mb_end_addr == lat_p_mb_addr);
+
+	// Block next accept while neighbour seed or Intra-in-P store is in flight.
+	wire        trav_nb_block = i_sink_nb_busy ||
+	                            (i_sink_nb_pend && trav_mb_valid && trav_intra) ||
+	                            i_sink_wr_hold ||
+	                            (recon_store_pending && recon_store_i_sink_pending);
+	assign trav_can_accept = (phase == PH_IDLE && (dpb_ref_ready || trav_intra)) ||
+	                         (phase == PH_FETCH && !lat_p_intra && !p_fetch_armed && dpb_fetch_done &&
+	                          !recon_store_pending && !p_chr_wait && !p_chr_busy && !USE_REAL_REF_COMMIT) ||
+	                         (phase == PH_FETCH && !trav_got_mb && !p_fetch_armed && !dpb_fetch_busy &&
+	                          (!recon_store_pending || (recon_store_done_sticky && recon_store_seen_busy)) &&
+	                          !p_chr_wait && !p_chr_busy && !trav_nb_block) ||
+	                         (phase == PH_IDLE && trav_intra) ||
+	                         (phase == PH_I_RECON);
+// Optional Intra-in-P stall RCA: +define+DECODE_STUB_DBG_INTRA_P (Verilator only).
+`ifdef VERILATOR
+`ifdef DECODE_STUB_DBG_INTRA_P
+	reg [15:0] dbg_p_stall_cy;
+	always @(posedge clk) begin
+		if (reset) begin
+			dbg_p_stall_cy <= 16'd0;
+		end else if (frames_out >= 16'd1 && trav_mb_valid && !trav_can_accept) begin
+			dbg_p_stall_cy <= dbg_p_stall_cy + 16'd1;
+			// Print every 1000 stalled cycles (re-arm) so post-Intra-in-P hangs show.
+			if (dbg_p_stall_cy == 16'd1000) begin
+				dbg_p_stall_cy <= 16'd0;
+				$display("P_STALL ph=%0d dpb_rdy=%0d intra=%0d got=%0d armed=%0d fbusy=%0d fdone=%0d store_p=%0d store_busy=%0d store_seen=%0d store_dstick=%0d store_start=%0d i_sink_wreq=%0d isink_p=%0d wr_h=%0d chr_w=%0d chr_b=%0d nb_b=%0d nb_p=%0d drain=%0d lat_intra=%0d mb=%0d",
+					phase, dpb_ref_ready, trav_intra, trav_got_mb, p_fetch_armed,
+					dpb_fetch_busy, dpb_fetch_done, recon_store_pending, recon_store_busy,
+					recon_store_seen_busy, recon_store_done_sticky, recon_store_write_start,
+					i_sink_write_req, recon_store_i_sink_pending, i_sink_wr_hold,
+					p_chr_wait, p_chr_busy,
+					i_sink_nb_busy, i_sink_nb_pend, i_sink_drain_idle, lat_p_intra, trav_mb_addr);
+			end
+		end else if (trav_mb_ready)
+			dbg_p_stall_cy <= 16'd0;
+	end
+`endif
+`endif
 
 	wire        i_sink_dq_start;
 	wire signed [15:0] i_sink_dq_coeff [0:15];
@@ -951,9 +1024,9 @@ module decode_stub #(
 		.res_blk_max_coeff(i_res_blk_max_coeff),
 		.res_blk_pred_mode(i_res_blk_pred_mode),
 		.res_blk_coeff(i_res_blk_coeff),
-		.res_mb_end(i_res_mb_end && i_sink_enable),
-		.res_mb_end_addr(i_res_mb_end_addr),
-		.res_mb_chroma_mode(i_res_mb_chroma_mode),
+		.res_mb_end((i_res_mb_end || i_sink_intra_end_hold) && i_sink_enable),
+		.res_mb_end_addr(i_sink_intra_end_hold ? i_sink_intra_end_addr : i_res_mb_end_addr),
+		.res_mb_chroma_mode(i_sink_intra_end_hold ? i_sink_intra_end_chr : i_res_mb_chroma_mode),
 		.chroma_qp_index_offset(pps_chroma_qp_index_offset),
 		.ext_dq_start(i_sink_dq_start),
 		.ext_dq_coeff(i_sink_dq_coeff),
@@ -967,12 +1040,23 @@ module decode_stub #(
 		.write_y(i_sink_y),
 		.write_u(i_sink_u),
 		.write_v(i_sink_v),
-		.write_busy(recon_store_busy | recon_store_pending),
+		// Block sink ready while a write is in flight or a req is latched/this-cycle.
+		.write_busy(recon_store_busy | recon_store_pending | i_sink_wr_hold | i_sink_write_req),
 		.dbg_blk_applied(i_sink_dbg_blk),
 		.dbg_mb_written(i_sink_dbg_mb),
 		.dbg_luma_nz(i_sink_dbg_nz),
 		.dbg_chr_applied(i_sink_dbg_chr),
-		.drain_idle(i_sink_drain_idle)
+		.drain_idle(i_sink_drain_idle),
+		.nb_commit(i_sink_nb_commit),
+		.nb_mb_x(i_sink_nb_mb_x),
+		.nb_mb_y(i_sink_nb_mb_y),
+		.nb_y_right(i_sink_nb_y_right),
+		.nb_y_bot(i_sink_nb_y_bot),
+		.nb_u_right(i_sink_nb_u_right),
+		.nb_u_bot(i_sink_nb_u_bot),
+		.nb_v_right(i_sink_nb_v_right),
+		.nb_v_bot(i_sink_nb_v_bot),
+		.nb_commit_busy(i_sink_nb_busy)
 	);
 
 `ifdef DECODE_STUB_FAULT_SKIP_INTER_CHROMA_RESIDUAL
@@ -1013,32 +1097,38 @@ module decode_stub #(
 	);
 
 	// Residual ready mux:
-	//  I_RECON → I sink
-	//  FETCH + chroma → P apply only when p_chr_mb_match (accepted MB)
+	//  I_RECON or Intra-in-P (p_intra_active) → I sink (luma+chroma)
+	//  FETCH inter + chroma → P apply only when p_chr_mb_match
 	//  real-ref IDLE/FETCH chroma otherwise → stall (do NOT drop)
-	//  default → drop (legacy place-path / P luma)
-	assign i_res_blk_ready = i_sink_enable ? i_sink_ready_w :
+	//  default → drop (legacy place-path / P inter luma)
+	assign i_res_blk_ready = p_res_gap ? 1'b0 :
+	                         i_sink_enable ? i_sink_ready_w :
 	                         (p_chr_enable && !i_res_blk_is_luma) ?
 	                             (p_chr_ready_w && p_chr_mb_match) :
 	                         (use_real_ref && !i_res_blk_is_luma &&
 	                          (phase == PH_IDLE || phase == PH_FETCH)) ? 1'b0 :
 	                         1'b1;
 
+	// Combinational sink-select: i_sink_pending is NBA on the write_start
+	// cycle, so include this-cycle write_req / wr_hold or the store latches
+	// inter_recon_* garbage instead of sink planes.
+	wire recon_store_use_sink_px = recon_store_i_sink_pending | i_sink_wr_hold |
+	                               i_sink_write_req;
 	genvar rmi;
 	generate
 		for (rmi = 0; rmi < 256; rmi = rmi + 1) begin : gen_store_y_mux
 			assign recon_store_y_mux[rmi] =
-				recon_store_i_sink_pending ? i_sink_y[rmi] :
+				recon_store_use_sink_px ? i_sink_y[rmi] :
 				recon_store_idr_mb0_pending ? idr_mb0_y[rmi] :
 				inter_recon_y[rmi];
 		end
 		for (rmi = 0; rmi < 64; rmi = rmi + 1) begin : gen_store_c_mux
 			assign recon_store_u_mux[rmi] =
-				recon_store_i_sink_pending ? i_sink_u[rmi] :
+				recon_store_use_sink_px ? i_sink_u[rmi] :
 				recon_store_idr_mb0_pending ? idr_mb0_u[rmi] :
 				inter_recon_u[rmi];
 			assign recon_store_v_mux[rmi] =
-				recon_store_i_sink_pending ? i_sink_v[rmi] :
+				recon_store_use_sink_px ? i_sink_v[rmi] :
 				recon_store_idr_mb0_pending ? idr_mb0_v[rmi] :
 				inter_recon_v[rmi];
 		end
@@ -1163,6 +1253,15 @@ module decode_stub #(
 			lat_p_uses_sub_mb <= 0;
 			lat_p_intra   <= 0;
 			lat_p_cbp     <= 6'd0;
+			i_sink_nb_commit <= 1'b0;
+			i_sink_nb_pic_clear <= 1'b0;
+			i_sink_nb_pend <= 1'b0;
+			i_sink_nb_cap_vld <= 1'b0;
+			i_sink_intra_end_hold <= 1'b0;
+			i_sink_wr_hold <= 1'b0;
+			i_sink_wr_hold_mb <= 16'd0;
+			i_sink_nb_mb_x <= 8'd0;
+			i_sink_nb_mb_y <= 8'd0;
 			p_chr_wait    <= 1'b0;
 			p_fetch_done_hold <= 1'b0;
 			p_chr_done_latched <= 1'b0;
@@ -1178,6 +1277,8 @@ module decode_stub #(
 			lat_p_mb_addr <= 0;
 			inter_capture_valid <= 0;
 			p_fetch_launch_pending <= 0;
+			p_fetch_armed <= 1'b0;
+			p_fetch_seen_busy <= 1'b0;
 			p_candidate_seen <= 0;
 			pending_p_fetch <= 0;
 			pending_p_skip <= 0;
@@ -1193,6 +1294,8 @@ module decode_stub #(
 			recon_store_write_start <= 1'b0;
 			recon_store_write_mb <= 16'd0;
 			recon_store_pending <= 1'b0;
+			recon_store_seen_busy <= 1'b0;
+			recon_store_done_sticky <= 1'b0;
 			recon_store_idr_mb0_pending <= 1'b0;
 			recon_store_i_sink_pending <= 1'b0;
 			idr_recon_pack_pending <= 1'b0;
@@ -1251,21 +1354,104 @@ module decode_stub #(
 				trav_slice_pending <= 1'b1;
 				trav_active_slice <= 1'b0;
 			end
-			// I-sink → recon_store (shared arbiter with P/IDR place paths)
-			if (i_sink_write_req && !recon_store_busy && !recon_store_pending) begin
+			// Latch write_done (1-cycle pulse). Re-pulse start ONLY if the store
+			// never accepted this pending (seen_busy=0). Re-pulsing on the done
+			// cycle (!busy && pending) starts a ghost write, clears pending while
+			// the ghost runs, and can leave busy=1 with sticky never matching.
+			if (recon_store_done)
+				recon_store_done_sticky <= 1'b1;
+			if (recon_store_pending && !recon_store_busy && !recon_store_done_sticky &&
+			    !recon_store_seen_busy)
 				recon_store_write_start <= 1'b1;
-				recon_store_write_mb <= i_sink_write_mb;
+			if (recon_store_busy)
+				recon_store_seen_busy <= 1'b1;
+			// Unified pending clear (I-sink + P/IDR) — do not require phase==FETCH.
+			// Require seen_busy so a stale sticky cannot retire an unstarted write.
+			if (recon_store_pending && recon_store_done_sticky && recon_store_seen_busy) begin
+				recon_store_pending <= 1'b0;
+				recon_store_seen_busy <= 1'b0;
+				recon_store_done_sticky <= 1'b0;
+				if (recon_store_i_sink_pending && phase == PH_FETCH && lat_p_intra) begin
+					trav_got_mb <= 1'b0;
+					lat_inter_recon_ok <= 1'b1;
+					if (lat_p_mb_x < MV_NB_MAX[7:0])
+						mv_above_v[lat_mb_x_i] <= 1'b0;
+					mv_left_v <= 1'b0;
+					mv_left_x <= 16'sd0;
+					mv_left_y <= 16'sd0;
+				end
+				recon_store_i_sink_pending <= 1'b0;
+				recon_store_idr_mb0_pending <= 1'b0;
+			end
+			// Default one-cycle pulses LOW first; setters below must win (NBA last).
+			i_sink_nb_commit <= 1'b0;
+			i_sink_nb_pic_clear <= 1'b0;
+			// Hold nb_commit until sink enters ST_NB_SEED (nb_busy). Do not drop
+			// pend on the pulse alone — sink may still see write_busy that cycle.
+			if (i_sink_nb_pend && i_sink_nb_cap_vld && !recon_store_pending &&
+			    !recon_store_busy) begin
+				if (i_sink_nb_busy)
+					i_sink_nb_pend <= 1'b0;
+				else if (i_sink_drain_idle)
+					i_sink_nb_commit <= 1'b1;
+			end
+			// Latch sink write_req until store accepts (sink pulses 1 cycle only).
+			// Priority: new write_req overwrites hold; else drain hold into store.
+			// Do not clear hold in the same arm that also sees a new write_req.
+			if (i_sink_write_req) begin
+				i_sink_wr_hold <= 1'b1;
+				i_sink_wr_hold_mb <= i_sink_write_mb;
+				if (!recon_store_busy && !recon_store_pending && !recon_store_done_sticky) begin
+					// Accept immediately from this-cycle pulse (hold still set if
+					// store blocks next cycle — but pending blocks re-accept).
+					recon_store_write_start <= 1'b1;
+					recon_store_write_mb <= i_sink_write_mb;
+					recon_store_pending <= 1'b1;
+					recon_store_seen_busy <= 1'b0;
+					recon_store_done_sticky <= 1'b0;
+					recon_store_i_sink_pending <= 1'b1;
+					recon_store_idr_mb0_pending <= 1'b0;
+					i_sink_wr_hold <= 1'b0;
+`ifdef VERILATOR
+					dbg_store_wr_total <= dbg_store_wr_total + 1;
+					dbg_store_wr_idr <= dbg_store_wr_idr + 1;
+					if (i_sink_write_mb < 16'd1200) begin
+						if (store_mb_bits[i_sink_write_mb[10:0]])
+							store_dup <= store_dup + 16'd1;
+						else begin
+							store_mb_bits[i_sink_write_mb[10:0]] <= 1'b1;
+							store_unique <= store_unique + 16'd1;
+						end
+					end else
+						store_oob <= store_oob + 16'd1;
+					if (FAULT_DUP_STORE) begin
+						store_dup <= store_dup + 16'd1;
+						dbg_store_wr_total <= dbg_store_wr_total + 1;
+					end
+`ifdef DECODE_STUB_DBG_INTRA_P
+					if (phase == PH_FETCH)
+						$display("P_INTRA_WR_ACCEPT mb=%0d", i_sink_write_mb);
+`endif
+`endif
+				end
+			end else if (i_sink_wr_hold && !recon_store_busy && !recon_store_pending &&
+			             !recon_store_done_sticky) begin
+				recon_store_write_start <= 1'b1;
+				recon_store_write_mb <= i_sink_wr_hold_mb;
 				recon_store_pending <= 1'b1;
+				recon_store_seen_busy <= 1'b0;
+				recon_store_done_sticky <= 1'b0;
 				recon_store_i_sink_pending <= 1'b1;
 				recon_store_idr_mb0_pending <= 1'b0;
+				i_sink_wr_hold <= 1'b0;
 `ifdef VERILATOR
 				dbg_store_wr_total <= dbg_store_wr_total + 1;
 				dbg_store_wr_idr <= dbg_store_wr_idr + 1;
-				if (i_sink_write_mb < 16'd1200) begin
-					if (store_mb_bits[i_sink_write_mb[10:0]])
+				if (i_sink_wr_hold_mb < 16'd1200) begin
+					if (store_mb_bits[i_sink_wr_hold_mb[10:0]])
 						store_dup <= store_dup + 16'd1;
 					else begin
-						store_mb_bits[i_sink_write_mb[10:0]] <= 1'b1;
+						store_mb_bits[i_sink_wr_hold_mb[10:0]] <= 1'b1;
 						store_unique <= store_unique + 16'd1;
 					end
 				end else
@@ -1274,11 +1460,43 @@ module decode_stub #(
 					store_dup <= store_dup + 16'd1;
 					dbg_store_wr_total <= dbg_store_wr_total + 1;
 				end
+`ifdef DECODE_STUB_DBG_INTRA_P
+				if (phase == PH_FETCH)
+					$display("P_INTRA_WR_ACCEPT mb=%0d", i_sink_wr_hold_mb);
 `endif
-			end else if (recon_store_pending && recon_store_done && recon_store_i_sink_pending) begin
-				recon_store_pending <= 1'b0;
-				recon_store_i_sink_pending <= 1'b0;
+`endif
 			end
+			// Capture Intra-in-P mb_end only in FETCH (not I_RECON — lat_p_intra
+			// may be stale from first_mb_intra and must not stick end into I path).
+			// Present at most one enabled cycle: multi-cycle hold re-arms sink
+			// pend_mb_end after ST_MB_FIN (have_mb=0) → gray write_req for old MB.
+			if (p_intra_active && i_res_mb_end) begin
+				i_sink_intra_end_hold <= 1'b1;
+				i_sink_intra_end_addr <= i_res_mb_end_addr;
+				i_sink_intra_end_chr <= i_res_mb_chroma_mode;
+`ifdef VERILATOR
+`ifdef DECODE_STUB_DBG_INTRA_P
+				$display("P_INTRA_END_PULSE mb=%0d chr=%0d", i_res_mb_end_addr, i_res_mb_chroma_mode);
+`endif
+`endif
+			end else if (i_sink_intra_end_hold && i_sink_enable) begin
+				// Cleared after one enabled present cycle (sink samples every cy).
+				i_sink_intra_end_hold <= 1'b0;
+			end else if (!p_intra_active) begin
+				i_sink_intra_end_hold <= 1'b0;
+			end
+`ifdef VERILATOR
+`ifdef DECODE_STUB_DBG_INTRA_P
+			if (phase == PH_FETCH && trav_mb_ready && trav_intra)
+				$display("P_INTRA_ACCEPT mb=%0d cbp=%0h", trav_mb_addr, trav_cbp);
+			if (p_intra_active && i_res_blk_valid && i_res_blk_ready &&
+			    i_res_blk_mb_addr >= 16'd21 && i_res_blk_mb_addr <= 16'd26)
+				$display("P_INTRA_RES mb=%0d idx=%0d i16=%0d luma=%0d",
+					i_res_blk_mb_addr, i_res_blk_idx, i_res_blk_is_i16, i_res_blk_is_luma);
+			if (i_sink_write_req && phase == PH_FETCH)
+				$display("P_INTRA_WR_REQ mb=%0d", i_sink_write_mb);
+`endif
+`endif
 			// Shared serial DQ ownership (sticky until done).
 			leg_dq_start <= 1'b0;
 			// Place-path diagnostic IQ: start one cycle after lat_coeff latch.
@@ -1361,12 +1579,8 @@ module decode_stub #(
 				lat_idr  <= idr_count;
 				lat_p_inter <= 1'b0;
 				lat_inter_recon_ok <= 1'b0;
-			end else if (trav_mb_ready && trav_intra) begin
-				// Intra-in-P: accept beat, no MC (other lanes own intra recon)
-				lat_p_intra <= 1'b1;
-				trav_got_mb <= 1'b0;
 			end else if (trav_mb_ready) begin
-				// Start / continue P slice from walker event
+				// Start / continue P slice from walker event (inter or Intra-in-P)
 				phase <= PH_FETCH;
 				busy <= 1'b1;
 				lat_type <= 8'd1;
@@ -1400,13 +1614,21 @@ module decode_stub #(
 				lat_p_part_mode <= trav_part_mode;
 				lat_p_part_count <= trav_part_count;
 				lat_p_uses_sub_mb <= trav_uses_sub_mb;
-				lat_p_intra <= 1'b0;
+				lat_p_intra <= trav_intra && use_real_ref;
 				lat_p_cbp <= trav_cbp;
-				// Residual-before-fetch: hold MC until chroma residual done.
-				p_chr_wait <= use_real_ref && (trav_cbp[5:4] != 2'd0);
+				// Wipe IDR neighbour leakage into this P picture (once).
+				// Same-picture intra only — previous-picture edges are unavailable.
+				if (!trav_active_slice) begin
+					i_sink_nb_pic_clear <= 1'b1;
+					i_sink_nb_pend <= 1'b0;
+					i_sink_nb_cap_vld <= 1'b0;
+				end
+				// Intra-in-P: I-sink owns residual (no p_chr_wait / no MC).
+				// Inter: residual-before-fetch when chroma CBP nonzero.
+				p_chr_wait <= use_real_ref && !trav_intra && (trav_cbp[5:4] != 2'd0);
 				p_fetch_done_hold <= 1'b0;
 				p_chr_done_latched <= 1'b0;
-				p_chr_clear_mb <= use_real_ref;
+				p_chr_clear_mb <= use_real_ref && !trav_intra;
 				p_chr_snap_vld <= 1'b0;
 				// Opening MB of the slice: use parsed first_mb mvd; later MBs clear.
 				lat_mvd_x <= (!trav_active_slice) ? first_mb_mvd_x : 16'sd0;
@@ -1417,9 +1639,12 @@ module decode_stub #(
 				recon_dbg_valid <= 1'b0;
 				for (coeff_i = 0; coeff_i < 16; coeff_i = coeff_i + 1)
 					lat_coeff[coeff_i] <= 16'sd0;
-				if (!(use_real_ref && (trav_cbp[5:4] != 2'd0))) begin
+				p_fetch_armed <= 1'b0;
+				p_fetch_seen_busy <= 1'b0;
+				if (!(use_real_ref && trav_intra) &&
+				    !(use_real_ref && (trav_cbp[5:4] != 2'd0))) begin
 					dpb_fetch_start <= 1'b1;
-					p_fetch_launch_pending <= 1'b1;
+					p_fetch_armed <= 1'b1;
 				end
 			end else if (trav_slice_pending && !trav_active_slice) begin
 				// Walker finished with no more MBs — commit/paint if we reconstructed any
@@ -1464,7 +1689,7 @@ module decode_stub #(
 				lat_p_part_mode <= pending_p_part_mode;
 				lat_p_part_count <= pending_p_part_count;
 				lat_p_uses_sub_mb <= pending_p_uses_sub_mb;
-				lat_p_intra <= pending_p_intra;
+				lat_p_intra <= pending_p_intra && use_real_ref;
 				lat_p_cbp <= 6'd0;
 				p_chr_wait <= 1'b0;
 				p_fetch_done_hold <= 1'b0;
@@ -1497,7 +1722,8 @@ module decode_stub #(
 				for (coeff_i = 0; coeff_i < 16; coeff_i = coeff_i + 1)
 					lat_coeff[coeff_i] <= 16'sd0;
 				dpb_fetch_start <= 1'b1;
-				p_fetch_launch_pending <= 1'b1;
+				p_fetch_armed <= 1'b1;
+				p_fetch_seen_busy <= 1'b0;
 			end
 			end else if (phase == PH_WAIT) begin
 			if (wait_cnt != 12'd0)
@@ -1546,7 +1772,7 @@ module decode_stub #(
 				lat_p_part_mode <= first_mb_part_mode;
 				lat_p_part_count <= first_mb_part_count;
 				lat_p_uses_sub_mb <= first_mb_uses_sub_mb;
-				lat_p_intra  <= first_mb_intra;
+				lat_p_intra <= first_mb_intra && use_real_ref;
 				lat_mvd_x    <= first_mb_mvd_x;
 				lat_mvd_y    <= first_mb_mvd_y;
 				mv_d_v <= (p_req_mb_x != 8'd0) && (p_req_mb_y != 8'd0) && mv_col_al_v;
@@ -1678,6 +1904,8 @@ if (trav_slice_pending && !recon_store_pending && !i_sink_write_req &&
 				recon_store_write_mb <= 16'd0;
 				recon_store_write_start <= 1'b1;
 				recon_store_pending <= 1'b1;
+				recon_store_seen_busy <= 1'b0;
+				recon_store_done_sticky <= 1'b0;
 				recon_store_idr_mb0_pending <= 1'b1;
 `ifdef VERILATOR
 				dbg_idr_mb0_store_enqueues <= dbg_idr_mb0_store_enqueues + 1;
@@ -1696,10 +1924,8 @@ if (trav_slice_pending && !recon_store_pending && !i_sink_write_req &&
 					dbg_store_wr_total <= dbg_store_wr_total + 1;
 				end
 `endif
-			end else if (recon_store_pending) begin
-				if (recon_store_done) begin
-					recon_store_pending <= 1'b0;
-					recon_store_idr_mb0_pending <= 1'b0;
+			end else if (recon_store_pending && recon_store_done_sticky &&
+			            recon_store_seen_busy) begin
 					// Drop IDR residual from the inter plane so the first P MB
 					// does not inherit the IDR blk0 residual as a fake P residual.
 					for (coeff_i = 0; coeff_i < 256; coeff_i = coeff_i + 1)
@@ -1716,7 +1942,6 @@ if (trav_slice_pending && !recon_store_pending && !i_sink_write_req &&
 					dbg_store_wr_total <= dbg_store_wr_total + 1;
 					dbg_store_wr_idr <= dbg_store_wr_idr + 1;
 `endif
-				end
 			end else begin
 				// No write queued (should not happen) — still fill.
 				phase <= PH_DPB_FILL;
@@ -1744,20 +1969,25 @@ if (trav_slice_pending && !recon_store_pending && !i_sink_write_req &&
 					p_chr_done_latched <= 1'b1;
 					p_chr_wait_cy <= 16'd0;
 					dpb_fetch_start <= 1'b1;
-					p_fetch_launch_pending <= 1'b1;
+					p_fetch_armed <= 1'b1;
+					p_fetch_seen_busy <= 1'b0;
 				end
 			end
-			if (p_fetch_launch_pending && !dpb_fetch_done) begin
-				p_fetch_launch_pending <= 1'b0;
-			end else if (recon_store_pending) begin
-				// Drain recon store write before next MB / frame commit.
-				if (recon_store_done) begin
-					recon_store_pending <= 1'b0;
-					recon_store_idr_mb0_pending <= 1'b0;
-					recon_store_i_sink_pending <= 1'b0;
+			// MC arm: keep start high until busy; complete on done after seen busy.
+			if (p_fetch_armed && !lat_p_intra) begin
+				if (!p_fetch_seen_busy) begin
+					dpb_fetch_start <= 1'b1;
+					if (dpb_fetch_busy)
+						p_fetch_seen_busy <= 1'b1;
+				end
+			end
+			// Store pending clear is unified above; here only advance walker/paint.
+			if (recon_store_pending && recon_store_done_sticky && recon_store_seen_busy) begin
 					trav_got_mb <= 1'b0;
+					p_fetch_armed <= 1'b0;
+					p_fetch_seen_busy <= 1'b0;
 					fetch_hang_cy <= 20'd0;
-					if (trav_mb_ready && !p_chr_busy) begin
+					if (trav_mb_ready && !p_chr_busy && !trav_nb_block) begin
 						lat_p_skip <= trav_mb_skip;
 						lat_p_mb_x <= trav_mb_x;
 						lat_p_mb_y <= trav_mb_y;
@@ -1765,22 +1995,25 @@ if (trav_slice_pending && !recon_store_pending && !i_sink_write_req &&
 						lat_p_part_mode <= trav_part_mode;
 						lat_p_part_count <= trav_part_count;
 						lat_p_uses_sub_mb <= trav_uses_sub_mb;
-						lat_p_intra <= trav_intra;
+						lat_p_intra <= trav_intra && use_real_ref;
 						lat_p_cbp <= trav_cbp;
-						// Wait residual for any non-skip chroma CBP, including Intra-in-P (I_16x16).
-					p_chr_wait <= use_real_ref && (trav_cbp[5:4] != 2'd0);
+						// Inter chroma wait only; Intra-in-P residual goes to I-sink.
+						p_chr_wait <= use_real_ref && !trav_intra && (trav_cbp[5:4] != 2'd0);
 						p_fetch_done_hold <= 1'b0;
 						p_chr_done_latched <= 1'b0;
-						p_chr_clear_mb <= use_real_ref;
+						p_chr_clear_mb <= use_real_ref && !trav_intra;
 						p_chr_snap_vld <= 1'b0;
 						// Later MBs: no per-MB mvd yet → MVP only until walker carries mvd.
 						lat_mvd_x <= 16'sd0;
 						lat_mvd_y <= 16'sd0;
 						trav_got_mb <= 1'b1;
-						if (!(use_real_ref && (trav_cbp[5:4] != 2'd0))) begin
-							dpb_fetch_start <= 1'b1;
-							p_fetch_launch_pending <= 1'b1;
-						end
+						p_fetch_armed <= 1'b0;
+						p_fetch_seen_busy <= 1'b0;
+						if (!(use_real_ref && trav_intra) &&
+				    !(use_real_ref && (trav_cbp[5:4] != 2'd0))) begin
+					dpb_fetch_start <= 1'b1;
+					p_fetch_armed <= 1'b1;
+				end
 					end else if ((trav_slice_pending || trav_slice_done) &&
 					             !p_chr_wait && !p_fetch_done_hold) begin
 						trav_slice_pending <= 1'b0;
@@ -1809,13 +2042,14 @@ if (trav_slice_pending && !recon_store_pending && !i_sink_write_req &&
 						x <= 0;
 						y <= 0;
 					end
-				end
-			// trav_got_mb gates sticky fetch_done: without it the handler re-fires
-			// every cycle after the first complete (fetch_done stays high until the
-			// next fetch_start) and either spams store writes or starves the walker.
-			end else if (!p_chr_wait && !p_fetch_launch_pending && dpb_fetch_done && trav_got_mb) begin
+			// Complete only after this arm saw busy then done (not sticky prior done).
+			end else if (!lat_p_intra && !p_chr_wait && p_fetch_armed &&
+			            p_fetch_seen_busy && dpb_fetch_done && trav_got_mb) begin
+				// Inter only — Intra-in-P completes via I-sink store path.
 				// Capture Clip1(pred+residual) via inter_recon_* (TB taps these).
 				// p_chr_wait blocks stale sticky fetch_done while residual runs first.
+				p_fetch_armed <= 1'b0;
+				p_fetch_seen_busy <= 1'b0;
 				inter_capture_valid <= dpb_inter_ok;
 				lat_inter_recon_ok <= lat_inter_recon_ok | dpb_inter_ok;
 				// Publish product MV actually consumed by this fetch.
@@ -1846,7 +2080,29 @@ if (trav_slice_pending && !recon_store_pending && !i_sink_write_req &&
 					recon_store_write_mb <= lat_p_mb_addr;
 					recon_store_write_start <= 1'b1;
 					recon_store_pending <= 1'b1;
+					recon_store_seen_busy <= 1'b0;
+					recon_store_done_sticky <= 1'b0;
 					recon_store_idr_mb0_pending <= 1'b0;
+					recon_store_i_sink_pending <= 1'b0;
+					// Capture right/bot edges for I-sink neighbour seed (Intra-in-P).
+					// Layout: Y raster row-major 16x16; U/V 8x8.
+					begin : cap_inter_nb
+						integer ni;
+						i_sink_nb_mb_x <= lat_p_mb_x;
+						i_sink_nb_mb_y <= lat_p_mb_y;
+						for (ni = 0; ni < 16; ni = ni + 1) begin
+							i_sink_nb_y_right[ni] <= inter_recon_y[ni * 16 + 15];
+							i_sink_nb_y_bot[ni]   <= inter_recon_y[15 * 16 + ni];
+						end
+						for (ni = 0; ni < 8; ni = ni + 1) begin
+							i_sink_nb_u_right[ni] <= inter_recon_u[ni * 8 + 7];
+							i_sink_nb_u_bot[ni]   <= inter_recon_u[7 * 8 + ni];
+							i_sink_nb_v_right[ni] <= inter_recon_v[ni * 8 + 7];
+							i_sink_nb_v_bot[ni]   <= inter_recon_v[7 * 8 + ni];
+						end
+						i_sink_nb_cap_vld <= 1'b1;
+						i_sink_nb_pend <= 1'b1; // hold accept until seed commits
+					end
 `ifdef VERILATOR
 					dbg_store_wr_total <= dbg_store_wr_total + 1;
 					dbg_store_wr_p <= dbg_store_wr_p + 1;
@@ -1878,14 +2134,18 @@ if (trav_slice_pending && !recon_store_pending && !i_sink_write_req &&
 						lat_p_part_mode <= trav_part_mode;
 						lat_p_part_count <= trav_part_count;
 						lat_p_uses_sub_mb <= trav_uses_sub_mb;
-						lat_p_intra <= trav_intra;
+						lat_p_intra <= trav_intra && use_real_ref;
 						lat_p_cbp <= trav_cbp;
 						p_chr_wait <= 1'b0;
 						p_fetch_done_hold <= 1'b0;
 						p_chr_done_latched <= 1'b0;
 						trav_got_mb <= 1'b1;
-						dpb_fetch_start <= 1'b1;
-						p_fetch_launch_pending <= 1'b1;
+						p_fetch_armed <= 1'b0;
+						p_fetch_seen_busy <= 1'b0;
+						if (!(use_real_ref && trav_intra)) begin
+							dpb_fetch_start <= 1'b1;
+							p_fetch_armed <= 1'b1;
+						end
 					end else if (trav_slice_pending || trav_slice_done) begin
 						trav_slice_pending <= 1'b0;
 						trav_active_slice <= 1'b0;
@@ -1904,8 +2164,8 @@ if (trav_slice_pending && !recon_store_pending && !i_sink_write_req &&
 					end
 				end
 				// else: stay in FETCH waiting for next trav_mb_valid
-			end else if (!p_fetch_launch_pending && !dpb_fetch_busy && !trav_got_mb &&
-			            !recon_store_pending && !p_chr_wait) begin
+			end else if (!p_fetch_armed && !dpb_fetch_busy && !trav_got_mb &&
+			            !recon_store_pending && !p_chr_wait && !trav_nb_block) begin
 				// Idle in FETCH waiting for next event
 				if (trav_mb_ready && !p_chr_busy) begin
 					lat_p_skip <= trav_mb_skip;
@@ -1915,21 +2175,24 @@ if (trav_slice_pending && !recon_store_pending && !i_sink_write_req &&
 					lat_p_part_mode <= trav_part_mode;
 					lat_p_part_count <= trav_part_count;
 					lat_p_uses_sub_mb <= trav_uses_sub_mb;
-					lat_p_intra <= trav_intra;
+					lat_p_intra <= trav_intra && use_real_ref;
 					lat_p_cbp <= trav_cbp;
-					// Wait residual for any non-skip chroma CBP, including Intra-in-P (I_16x16).
-					p_chr_wait <= use_real_ref && (trav_cbp[5:4] != 2'd0);
+					// Inter chroma wait only; Intra-in-P residual goes to I-sink.
+					p_chr_wait <= use_real_ref && !trav_intra && (trav_cbp[5:4] != 2'd0);
 					p_fetch_done_hold <= 1'b0;
 					p_chr_done_latched <= 1'b0;
-					p_chr_clear_mb <= use_real_ref;
+					p_chr_clear_mb <= use_real_ref && !trav_intra;
 					p_chr_snap_vld <= 1'b0;
 					lat_mvd_x <= 16'sd0;
 					lat_mvd_y <= 16'sd0;
 					trav_got_mb <= 1'b1;
-					if (!(use_real_ref && (trav_cbp[5:4] != 2'd0))) begin
-						dpb_fetch_start <= 1'b1;
-						p_fetch_launch_pending <= 1'b1;
-					end
+					p_fetch_armed <= 1'b0;
+					p_fetch_seen_busy <= 1'b0;
+					if (!(use_real_ref && trav_intra) &&
+				    !(use_real_ref && (trav_cbp[5:4] != 2'd0))) begin
+					dpb_fetch_start <= 1'b1;
+					p_fetch_armed <= 1'b1;
+				end
 				end else if ((trav_slice_pending || trav_slice_done) && !p_chr_wait) begin
 					trav_slice_pending <= 1'b0;
 					trav_active_slice <= 1'b0;
@@ -1966,9 +2229,11 @@ if (trav_slice_pending && !recon_store_pending && !i_sink_write_req &&
 				wr_reset_ptr <= 1'b1;
 			end
 			end else begin
-			// Paint full frame
+			// Paint full frame.
 			// Hold first paint pixel until place-path shared serial IQ latched
 			// (MB0 diagnostic + unit TB recon_sig). Combo dequant is gone.
+			// Inter TB post-final busy was leftover skid hold (stream_path
+			// hold_v clear on trav_slice_done) — not this IQ hold.
 			if (lat_res_ok && !leg_diag_valid && !first_mb_p_skip) begin
 				wr_en <= 1'b0;
 			end else begin

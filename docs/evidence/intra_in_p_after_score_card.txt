@@ -1,0 +1,5 @@
+SOURCE_SHA=6d5478eb-dirty (post Intra-in-P + paint hold restore + skid hold_v clear)
+ON:  HEADLINE intra=300/300 inter=1962/3300  true_rc=0  log=docs/evidence/_local_logs/intra_in_p_after_on14.log
+OFF: HEADLINE intra=300/300 inter=1960/3300 true_rc=0  log=docs/evidence/_local_logs/intra_in_p_after_off14.log
+BASELINE residual ON 1765 OFF 1773; PREREG LO1800 HI2100 ceiling1939; MISS ON=1962>ceiling
+UNIT: idct rc=0 recon_sig=0x3b; inter rc=0; multinal rc=0

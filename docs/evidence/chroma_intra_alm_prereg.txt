@@ -1,0 +1,43 @@
+# ALM prereg — rtl/chroma-intra on 788aa5f base (sim-only; no Quartus this lane)
+
+SOURCE_SHA_base=788aa5f (sink phase-2: serial I16 + plane_y/top_row M10K)
+SOURCE_SHA_lane=dirty rtl/chroma-intra (Intra-in-P fix + residual acc gate)
+
+## Measured functional (after Intra-in-P fix)
+BEFORE residual headline (parent baseline): ON 1765 / OFF 1773, gap -8
+PREREG AFTER residual: LO=1800 HI=2100 (ceiling luma-exact 1939); intra 300/300 hold
+AFTER ON:  HEADLINE intra=300/300 inter=1962/3300  (true rc=0)  **MISS above HI/ceiling**
+AFTER OFF: HEADLINE intra=300/300 inter=1960/3300 (true rc=0)
+Delta ON vs baseline: +197 MB exact (>>8 local Intra-in-P MBs → cascade cleared)
+Intra hold: 300/300
+
+## DSP / serial IQ gate (code-quoted, no fit)
+- Exactly ONE h264_dequant4x4_serial u_shared_dq in decode_stub.sv
+- sink + p_chr EXT_SERIAL_DQ=1; no private chroma multiplier
+- Design hold target: 111/112 DSP (one spare)
+
+## Pre-registered ALM estimate (mapping lane owns fit)
+Base (788aa5f measured elsewhere): whole ALMs 41,666; DSP 111; M10K free ~46%
+
+Chroma tree delta vs 788aa5f (this lane, no fit — estimate only):
+| Item | Mechanism | Est ALM delta |
+|------|-----------|---------------|
+| Intra-in-P control (lat_p_intra, p_intra_active, wr_hold, nb seed) | FSM/ctrl | +200 .. +500 |
+| stream_path acc_v residual gate + hold_v slice clear | small skid | +20 .. +80 |
+| p_chr residual apply (already serial + shared DQ) | hold | 0 .. +200 |
+| Chroma plane / neighbour rows → M10K (h264_byte_ram_sp pattern) | ALM→RAM | -2k .. -8k (if applied) |
+| Serial chroma pred ~1 px/cy (same as luma I16) | comb collapse | -1k .. -4k (if applied) |
+
+PREREG whole-device after chroma ship (if M10K+serial applied fully):
+  ALMs: 38k .. 43k  (mid ~40.5k) on 788aa5f composition
+  If only control fix without chroma M10K/serial: +200..+800 → ~42.0k .. 42.5k
+
+Caveat: 41,910 ALM gate under independent audit (may be whole-device not decoder allocation).
+Do not over-fit to a single headroom number; lean on principle.
+A published miss after map is valued; unmeasured merge is not.
+
+## Unit gates (this lane, direct rc)
+idct/decode_stub recon: rc=0  recon_sig=0x3b
+inter stream_path RTL: rc=0
+multinal: rc=0
+make unit: env noise (log_redact/pms/geometry) separate from RTL lane

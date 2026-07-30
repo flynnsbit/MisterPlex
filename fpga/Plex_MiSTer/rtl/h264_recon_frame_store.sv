@@ -71,6 +71,10 @@ module h264_recon_frame_store #(
 	assign read_sample = (rd_addr < TOTAL[31:0]) ? mem[rd_addr] : 8'd128;
 
 	integer ci;
+`ifdef VERILATOR
+	reg [15:0] dbg_wr_start_cy;
+	reg        dbg_wr_stuck_printed;
+`endif
 	always @(posedge clk) begin
 		wr_done_r <= 1'b0;
 		if (reset) begin
@@ -79,6 +83,10 @@ module h264_recon_frame_store #(
 			wr_idx <= 9'd0;
 			clr_active <= 1'b0;
 			clr_idx <= 32'd0;
+`ifdef VERILATOR
+			dbg_wr_start_cy <= 16'd0;
+			dbg_wr_stuck_printed <= 1'b0;
+`endif
 		end else begin
 			if (clear && !clr_active && !wr_active) begin
 				clr_active <= 1'b1;
@@ -103,7 +111,18 @@ module h264_recon_frame_store #(
 					wr_u[ci] <= write_u[ci];
 					wr_v[ci] <= write_v[ci];
 				end
+`ifdef VERILATOR
+				dbg_wr_start_cy <= 16'd0;
+`endif
 			end else if (wr_active) begin
+`ifdef VERILATOR
+				dbg_wr_start_cy <= dbg_wr_start_cy + 16'd1;
+				if (!dbg_wr_stuck_printed && dbg_wr_start_cy == 16'd500) begin
+					dbg_wr_stuck_printed <= 1'b1;
+					$display("STORE_STUCK mb=%0d idx=%0d start=%0d clr=%0d",
+						wr_mb, wr_idx, write_start, clr_active);
+				end
+`endif
 				if (wr_idx < 9'd256)
 					mem[wr_base + {23'd0, wr_idx}] <= wr_y[wr_idx[7:0]];
 				else if (wr_idx < 9'd320)

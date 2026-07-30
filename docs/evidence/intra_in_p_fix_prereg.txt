@@ -1,0 +1,32 @@
+SOURCE_SHA=6d5478eb+dirty (Intra-in-P real recon WIP)
+BASELINE_COMMIT=6d5478eb / evidence@5e7c387-class
+BASELINE_ON=1765/3300 residual (MC+P-chroma; Intra-in-P orphaned)
+BASELINE_OFF=1773/3300 residual (FAULT_SKIP_INTER_CHROMA_RESIDUAL)
+BASELINE_GAP=-8
+BASELINE_INTRA=300/300
+BASELINE_INTER_Y=1939/3300 (from prior lane notes; reconfirm if scored)
+
+DEFECT: Intra-in-P (I_16x16 in P, mb_type 6..29) took MC path / skip wait;
+  chroma residual orphaned (STORE before SNAP). f1 mb 21,22,26,42,44,53,224,225.
+
+FIX (this dirty tree):
+  1. Intra-in-P → PH_FETCH + lat_p_intra; NO dpb_fetch / NO p_chr_wait
+  2. i_sink_enable when lat_p_intra (real I pred+res+store)
+  3. p_chr_enable only when !lat_p_intra
+  4. Store handshake: re-pulse start only if !seen_busy (no ghost write)
+  5. nb_commit after inter store → seed sink left/top for Intra-in-P
+  6. traverse: zero-export uncoded luma for is_intra_r; i4 edge modes for Intra-in-P
+  7. Dropping !trav_intra alone is NOT enough — must change prediction source
+
+PRE residual AFTER band (MISS if outside):
+  LO=1800  HI=2100
+  Prefer ON >= OFF (1773). If local 8 + cascade 9 clear → gap may close by >8.
+PRE intra AFTER: 300/300 hard
+PRE DSP: ONE u_shared_dq; EXT_SERIAL_DQ=1; no private chroma mul
+PRE ALM (chroma tree, pre-map estimate — publish miss later):
+  Already on 788aa5f phase-2 base (sink plane/top M10K + serial I16).
+  This delta: ST_NB_SEED (~35cy ctrl) + nb edge regs + FETCH arming.
+  EST_DELTA_ALM = +200..+800 (control + small regs; no new parallel pred farm)
+  EST_NOT including full chroma-from-scratch (already merged at 6d5478eb).
+
+MEASURE: docs/evidence/run_real_ref_chroma_measure.sh + _red.sh + make unit

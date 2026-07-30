@@ -359,7 +359,8 @@ module stream_path #(
 	wire       trav_w_valid;
 	reg         hold_v;
 	wire        trav_mb_ready; // from stub
-	// Lossless: walker advances only when hold can take the beat.
+	// Lossless skid: walker may fill empty hold without stub ready.
+	// Residual is gated separately (acc_v) so export cannot run ahead of stub accept.
 	// FAULT_DROP_TRAV_MB: always-ready + skip load when full → drop (RED twin).
 	wire       trav_w_ready = FAULT_DROP_TRAV_MB ? 1'b1 : (!hold_v || trav_mb_ready);
 	wire [15:0] trav_w_addr;
@@ -375,7 +376,8 @@ module stream_path #(
 	wire        trav_slice_done, trav_busy, trav_err, trav_unsup;
 	// I residual export → decode_stub sink
 	wire        trav_res_blk_valid;
-	wire        trav_res_blk_ready;
+	wire        trav_res_blk_ready; // gated toward walker (see acc_v below)
+	wire        stub_res_blk_ready; // raw from decode_stub
 	wire [15:0] trav_res_blk_mb_addr;
 	wire [7:0]  trav_res_blk_mb_x, trav_res_blk_mb_y;
 	wire [4:0]  trav_res_blk_idx;
@@ -387,6 +389,23 @@ module stream_path #(
 	wire        trav_res_mb_end;
 	wire [15:0] trav_res_mb_end_addr;
 	wire [1:0]  trav_res_mb_chroma_mode;
+	// Stub-accepted MB (hold pop). Residual may not flow until addr matches —
+	// prevents skid-ahead residual from hitting stub with got_mb still 0.
+	reg         acc_v;
+	reg [15:0]  acc_mb;
+	reg         res_end_hold;
+	reg [15:0]  res_end_hold_addr;
+	reg [1:0]   res_end_hold_chr;
+	wire        res_addr_ok = acc_v && (trav_res_blk_mb_addr == acc_mb);
+	wire        res_end_raw_ok = acc_v && (trav_res_mb_end_addr == acc_mb);
+	wire        res_end_hold_ok = acc_v && res_end_hold && (res_end_hold_addr == acc_mb);
+	wire        stub_res_blk_valid = trav_res_blk_valid && res_addr_ok;
+	wire        stub_res_mb_end = (trav_res_mb_end && res_end_raw_ok) || res_end_hold_ok;
+	wire [15:0] stub_res_mb_end_addr = res_end_hold_ok ? res_end_hold_addr : trav_res_mb_end_addr;
+	wire [1:0]  stub_res_mb_chroma_mode = res_end_hold_ok ? res_end_hold_chr : trav_res_mb_chroma_mode;
+	// Walker residual ready: block while ahead of stub accept; else pass stub ready.
+	assign trav_res_blk_ready = stub_res_blk_ready &&
+	                            (!trav_res_blk_valid || res_addr_ok);
 
 	wire trav_loading = (trav_ld_st == 2'd2);
 	wire trav_in_valid = trav_loading && (trav_load_idx < trav_buf_len) && trav_in_ready;
@@ -511,7 +530,7 @@ module stream_path #(
 		.cbp(trav_w_cbp), .mb_qp(trav_w_mb_qp),
 		.residual_bit_offset(trav_w_res_off),
 		.res_blk_valid(trav_res_blk_valid),
-		.res_blk_ready(trav_res_blk_ready),
+		.res_blk_ready(trav_res_blk_ready), // gated: blocks export ahead of stub accept
 		.res_blk_mb_addr(trav_res_blk_mb_addr),
 		.res_blk_mb_x(trav_res_blk_mb_x),
 		.res_blk_mb_y(trav_res_blk_mb_y),
@@ -562,6 +581,11 @@ module stream_path #(
 	always @(posedge clk) begin
 		if (reset | flush) begin
 			hold_v <= 1'b0;
+			acc_v <= 1'b0;
+			acc_mb <= 16'd0;
+			res_end_hold <= 1'b0;
+			res_end_hold_addr <= 16'd0;
+			res_end_hold_chr <= 2'd0;
 `ifdef VERILATOR
 			deliv_mb_bits <= '0;
 			deliv_unique <= 16'd0;
@@ -577,10 +601,29 @@ module stream_path #(
 				deliv_dup <= 16'd0;
 				deliv_oob <= 16'd0;
 				deliv_expected <= 16'({8'd0, trav_lat_mb_w}) * 16'({8'd0, trav_lat_mb_h});
+				acc_v <= 1'b0;
+				res_end_hold <= 1'b0;
 			end
 `endif
-			if (hold_v && trav_mb_ready)
+			// Latch residual end if it arrives before stub accept for that MB.
+			if (trav_res_mb_end && !(acc_v && (trav_res_mb_end_addr == acc_mb))) begin
+				res_end_hold <= 1'b1;
+				res_end_hold_addr <= trav_res_mb_end_addr;
+				res_end_hold_chr <= trav_res_mb_chroma_mode;
+			end else if (res_end_hold_ok)
+				res_end_hold <= 1'b0;
+			if (hold_v && trav_mb_ready) begin
 				hold_v <= 1'b0;
+				// Stub accepted this hold beat — open residual gate for addr.
+				acc_v <= 1'b1;
+				acc_mb <= hold_addr;
+			end
+			// Drop any leftover skid beat when the walker retires the slice so
+			// post-paint IDLE cannot re-accept a stale MB and re-assert busy
+			// (stream_path_inter_tb: "stub did not return idle after final VCL").
+			if (trav_slice_done) begin
+				hold_v <= 1'b0;
+			end
 			// Load when empty or same-cycle consumer take.
 			// Count unique MB addresses at hold *load* (not stub accept) so the
 			// last beat is recorded even if slice_done races ahead of drain.
@@ -698,9 +741,9 @@ module stream_path #(
 		.trav_intra(trav_intra),
 		.trav_cbp(trav_cbp),
 		.trav_slice_done(trav_slice_retire),
-		// I residual stream (real-ref I-slice recon sink)
-		.i_res_blk_valid(trav_res_blk_valid),
-		.i_res_blk_ready(trav_res_blk_ready),
+		// I residual stream — gated so export cannot lead stub accept (acc_v).
+		.i_res_blk_valid(stub_res_blk_valid),
+		.i_res_blk_ready(stub_res_blk_ready),
 		.i_res_blk_mb_addr(trav_res_blk_mb_addr),
 		.i_res_blk_mb_x(trav_res_blk_mb_x),
 		.i_res_blk_mb_y(trav_res_blk_mb_y),
@@ -711,9 +754,9 @@ module stream_path #(
 		.i_res_blk_max_coeff(trav_res_blk_max),
 		.i_res_blk_pred_mode(trav_res_blk_pred_mode),
 		.i_res_blk_coeff(trav_res_blk_coeff),
-		.i_res_mb_end(trav_res_mb_end),
-		.i_res_mb_end_addr(trav_res_mb_end_addr),
-		.i_res_mb_chroma_mode(trav_res_mb_chroma_mode),
+		.i_res_mb_end(stub_res_mb_end),
+		.i_res_mb_end_addr(stub_res_mb_end_addr),
+		.i_res_mb_chroma_mode(stub_res_mb_chroma_mode),
 		.pps_chroma_qp_index_offset(pps_chroma_qp_off),
 		.first_mb_mvd_x(first_mb_mvd_x),
 		.first_mb_mvd_y(first_mb_mvd_y),

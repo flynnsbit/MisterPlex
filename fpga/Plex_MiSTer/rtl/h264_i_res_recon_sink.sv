@@ -64,7 +64,21 @@ module h264_i_res_recon_sink #(
 	output reg  [31:0] dbg_mb_written,
 	output reg  [31:0] dbg_luma_nz,
 	output reg  [31:0] dbg_chr_applied,
-	output wire        drain_idle
+	output wire        drain_idle,
+
+	// Seed neighbours from P-inter reconstruction so Intra-in-P has correct
+	// A/B samples (constrained_intra_pred_flag=0 on product clips).
+	// Pulse nb_commit when drain_idle; samples = right col + bottom row.
+	input  wire        nb_commit,
+	input  wire [7:0]  nb_mb_x,
+	input  wire [7:0]  nb_mb_y,
+	input  wire [7:0]  nb_y_right [0:15],
+	input  wire [7:0]  nb_y_bot   [0:15],
+	input  wire [7:0]  nb_u_right [0:7],
+	input  wire [7:0]  nb_u_bot   [0:7],
+	input  wire [7:0]  nb_v_right [0:7],
+	input  wire [7:0]  nb_v_bot   [0:7],
+	output wire        nb_commit_busy
 );
 	localparam int MAX_PIC_CW = MAX_PIC_W / 2;
 	localparam int TOP_AW = (MAX_PIC_W  <= 1) ? 1 : $clog2(MAX_PIC_W);
@@ -91,7 +105,8 @@ module h264_i_res_recon_sink #(
 		ST_CHR_START   = 5'd16,
 		ST_CHR_WAIT    = 5'd17,
 		ST_CHR_PAINT   = 5'd18,
-		ST_CHR_DC_ONLY = 5'd19;
+		ST_CHR_DC_ONLY = 5'd19,
+		ST_NB_SEED     = 5'd20;
 
 	// I4_NB subphases
 	localparam [2:0]
@@ -225,6 +240,7 @@ module h264_i_res_recon_sink #(
 
 	assign res_blk_ready = (st == ST_IDLE) && !write_busy && !pend_mb_end;
 	assign drain_idle    = (st == ST_IDLE) && !pend_mb_end && !have_mb;
+	assign nb_commit_busy = (st == ST_NB_SEED);
 
 	// ---------------- utility functions ----------------
 
@@ -668,7 +684,26 @@ module h264_i_res_recon_sink #(
 			case (st)
 			//============================================================
 			ST_IDLE: begin
-				if (res_blk_valid && res_blk_ready) begin
+				// P-inter neighbour seed (right/bot edges) before any Intra-in-P.
+				if (nb_commit && !have_mb && !pend_mb_end && !write_busy) begin
+					cur_mb_x <= nb_mb_x;
+					cur_mb_y <= nb_mb_y;
+					for (ci = 0; ci < 16; ci = ci + 1) begin
+						left_col[ci] <= nb_y_right[ci];
+						bot_row[ci]  <= nb_y_bot[ci];
+					end
+					for (ci = 0; ci < 8; ci = ci + 1) begin
+						left_u[ci]    <= nb_u_right[ci];
+						left_v[ci]    <= nb_v_right[ci];
+						bot_row_u[ci] <= nb_u_bot[ci];
+						bot_row_v[ci] <= nb_v_bot[ci];
+					end
+					left_col_v <= 1'b1;
+					left_chr_v <= 1'b1;
+					cnt <= 9'd0;
+					rd_ph <= RD_ISSUE;
+					st <= ST_NB_SEED;
+				end else if (res_blk_valid && res_blk_ready) begin
 					if (!have_mb || (res_blk_mb_addr != cur_mb)) begin
 						have_mb <= 1'b1;
 						cur_mb <= res_blk_mb_addr;
@@ -1583,6 +1618,93 @@ module h264_i_res_recon_sink #(
 				chr_mode_valid <= 1'b0;
 				chr_dc_only_active <= 1'b0;
 				st <= ST_IDLE;
+			end
+
+			// Seed top_row/top_u/top_v from P-inter bottom edges (M10K write).
+			// left_* already loaded on entry. Snapshot TL-for-right like MB_DUMP.
+			ST_NB_SEED: begin
+				if (cnt == 9'd0) begin
+					// Snapshot top_row[mbx*16+15] BEFORE overwrite as TL for right.
+					if (cur_mb_y != 8'd0 &&
+					    (({8'd0, cur_mb_x} * 16 + 16'd15) < MAX_PIC_W[15:0])) begin
+						if (rd_ph == RD_ISSUE) begin
+							tr_raddr <= TOP_AW'(({8'd0, cur_mb_x} * 16 + 16'd15));
+							rd_ph <= RD_WAIT;
+						end else if (rd_ph == RD_WAIT) begin
+							rd_ph <= RD_CAPT;
+						end else begin
+							tl_for_right_mb <= tr_q;
+							rd_ph <= RD_ISSUE;
+							cnt <= 9'd1;
+						end
+					end else begin
+						tl_for_right_mb <= 8'd128;
+						rd_ph <= RD_ISSUE;
+						cnt <= 9'd1;
+					end
+				end else if (cnt < 9'd17) begin
+					// cnt 1..16 → write 16 top_row bytes
+					tr_we <= 1'b1;
+					tr_waddr <= TOP_AW'(({8'd0, cur_mb_x} * 16 + 16'(cnt - 9'd1)));
+					tr_wdata <= bot_row[4'(cnt - 9'd1)];
+					cnt <= cnt + 9'd1;
+				end else if (cnt == 9'd17) begin
+					if (cur_mb_y != 8'd0 &&
+					    (({8'd0, cur_mb_x} * 8 + 16'd7) < MAX_PIC_CW[15:0])) begin
+						if (rd_ph == RD_ISSUE) begin
+							tu_raddr <= TCW_AW'(({8'd0, cur_mb_x} * 8 + 16'd7));
+							rd_ph <= RD_WAIT;
+						end else if (rd_ph == RD_WAIT) begin
+							rd_ph <= RD_CAPT;
+						end else begin
+							tl_u_for_right_mb <= tu_q;
+							rd_ph <= RD_ISSUE;
+							cnt <= 9'd18;
+						end
+					end else begin
+						tl_u_for_right_mb <= 8'd128;
+						rd_ph <= RD_ISSUE;
+						cnt <= 9'd18;
+					end
+				end else if (cnt < 9'd26) begin
+					// cnt 18..25 → write 8 top_u
+					if ((({8'd0, cur_mb_x} * 8 + 16'(cnt - 9'd18))) < MAX_PIC_CW[15:0]) begin
+						tu_we <= 1'b1;
+						tu_waddr <= TCW_AW'(({8'd0, cur_mb_x} * 8 + 16'(cnt - 9'd18)));
+						tu_wdata <= bot_row_u[3'(cnt - 9'd18)];
+					end
+					cnt <= cnt + 9'd1;
+				end else if (cnt == 9'd26) begin
+					if (cur_mb_y != 8'd0 &&
+					    (({8'd0, cur_mb_x} * 8 + 16'd7) < MAX_PIC_CW[15:0])) begin
+						if (rd_ph == RD_ISSUE) begin
+							tv_raddr <= TCW_AW'(({8'd0, cur_mb_x} * 8 + 16'd7));
+							rd_ph <= RD_WAIT;
+						end else if (rd_ph == RD_WAIT) begin
+							rd_ph <= RD_CAPT;
+						end else begin
+							tl_v_for_right_mb <= tv_q;
+							rd_ph <= RD_ISSUE;
+							cnt <= 9'd27;
+						end
+					end else begin
+						tl_v_for_right_mb <= 8'd128;
+						rd_ph <= RD_ISSUE;
+						cnt <= 9'd27;
+					end
+				end else if (cnt < 9'd35) begin
+					// cnt 27..34 → write 8 top_v
+					if ((({8'd0, cur_mb_x} * 8 + 16'(cnt - 9'd27))) < MAX_PIC_CW[15:0]) begin
+						tv_we <= 1'b1;
+						tv_waddr <= TCW_AW'(({8'd0, cur_mb_x} * 8 + 16'(cnt - 9'd27)));
+						tv_wdata <= bot_row_v[3'(cnt - 9'd27)];
+					end
+					cnt <= cnt + 9'd1;
+				end else begin
+					cnt <= 9'd0;
+					rd_ph <= RD_ISSUE;
+					st <= ST_IDLE;
+				end
 			end
 
 			default: st <= ST_IDLE;
