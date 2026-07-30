@@ -1,0 +1,7 @@
+HOLD — parent 2026-07-29: do not deploy until v5 authorised after narrow audit.
+Live NOW (measured): onbox_md5=cd4f422945f50b0267a11290ec9e9adc (v4 already shipped)
+  --id=misterplex-dev CORENAME=Plex rbf=14eaeff3 prev_c2=f230f95b
+v5 candidate (hybrid, NOT deployed): tip 5d6b985 ARM a56bbc3c04863079ac0b29f81c45ceba HAS aa9a21f
+On v5 auth: same sequence as v4 — claim+bounce, daemon only, verify md5+id,
+  R1-R5 (R5=presents must keep advancing), rollback before-20260730T013548Z OR
+  before-v4 snap if rolling back from v5 to v4 intentionally — parent decides target.

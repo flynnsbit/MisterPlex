@@ -28,6 +28,7 @@ Rollback triggers → immediate restore (no debate):
   R2 ERROR present path failed | ERROR FPGA SPI unavailable
   R3 frames/presents not advancing under CORENAME=Plex
   R4 cast entry vanishes from Plex after select
+  R5 presents stop advancing under CORENAME=Plex (baseline presents advanced — do not trade away)
 Command:
   PREV_BIN=/media/fat/misterplex/backup/misterplexd.before-20260730T013548Z \
   PREV_CONF=/media/fat/misterplex/backup/misterplex.conf.before-20260730T013548Z \

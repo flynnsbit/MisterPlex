@@ -15,6 +15,8 @@
 #   R2 log: ERROR present path failed | ERROR FPGA SPI unavailable
 #   R3 cast frames/presents not advancing when CORENAME=Plex
 #   R4 cast entry disappears from Plex after select
+#   R5 presents stop advancing under CORENAME=Plex after deploy
+#      (baseline live: presents advanced 48→672; do not trade away)
 # Rollback target ONLY:
 #   PREV_BIN=.../backup/misterplexd.before-20260730T013548Z  (f230f95b)
 #   NEVER before-20260729T181129 (06c5735a older idle-break)
