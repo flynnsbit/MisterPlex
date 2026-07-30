@@ -1,0 +1,6 @@
+PREDICTIONS (before measure):
+1) clean exit 0  → WIFEXITED=1 WEXITSTATUS=0; death file why=clean-exit; death_freshness=n/a
+2) SIGTERM path  → victim handles SIGTERM → WIFEXITED=1 WEXITSTATUS=0 why=signal-g_stop; NOT WTERMSIG=15
+3) SIGSEGV       → WIFSIGNALED=1 WTERMSIG=11; death has si_code/si_addr; death_freshness=present
+4) SIGKILL       → WIFSIGNALED=1 WTERMSIG=9; death ABSENT or stale (handler never ran);
+                   death_freshness=stale_or_absent_expected; last proc sample present

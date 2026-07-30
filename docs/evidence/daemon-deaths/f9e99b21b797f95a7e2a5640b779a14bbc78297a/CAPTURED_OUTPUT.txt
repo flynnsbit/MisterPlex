@@ -1,0 +1,53 @@
+===== CASE clean_exit =====
+supervisor_true_rc=0
+--- SUPERVISE_EXIT line ---
+2026-07-30T17:42:06Z SUPERVISE_EXIT label=clean_exit pid=2193365 wait_status=0x0 WIFEXITED=1 WEXITSTATUS=0 WIFSIGNALED=0 WTERMSIG=-1 signal_name=n/a WCOREDUMP=0 WIFSTOPPED=0 uptime_s=0.051 oom_score=0 oom_score_adj=0 VmRSS_kB=4 VmHWM_kB=4 proc_sample_ts=2026-07-30T17:42:06Z death_freshness=n/a last={ts=victim state=exit frames=0 presents=0 pos_ms=0 uptime_s=0 pid=2193365} death={ts=victim exit_code=0 why=clean-exit state=idle pid=2193365} log_tail={(log-empty)}
+--- death file ---
+ts=victim exit_code=0 why=clean-exit state=idle pid=2193365
+--- last file ---
+ts=victim state=exit frames=0 presents=0 pos_ms=0 uptime_s=0 pid=2193365
+--- proc_sample.last ---
+ts=2026-07-30T17:42:06Z pid=2193365 valid=1 oom_score=0 oom_score_adj=0 VmRSS_kB=4 VmHWM_kB=4
+--- jsonl ---
+{"ts":"2026-07-30T17:42:06Z","label":"clean_exit","pid":2193365,"wait_status":0,"WIFEXITED":true,"WEXITSTATUS":0,"WIFSIGNALED":false,"WTERMSIG":-1,"signal_name":"n/a","WCOREDUMP":false,"uptime_s":0.051,"oom_score":0,"oom_score_adj":0,"VmRSS_kB":4,"VmHWM_kB":4,"proc_sample_ts":"2026-07-30T17:42:06Z","death_freshness":"n/a","last":"ts=victim state=exit frames=0 presents=0 pos_ms=0 uptime_s=0 pid=2193365","death":"ts=victim exit_code=0 why=clean-exit state=idle pid=2193365","log_tail":"(log-empty)"}
+
+===== CASE sigterm =====
+supervisor_true_rc=0
+--- SUPERVISE_EXIT line ---
+2026-07-30T17:42:06Z SUPERVISE_EXIT label=sigterm pid=2193394 wait_status=0x0 WIFEXITED=1 WEXITSTATUS=0 WIFSIGNALED=0 WTERMSIG=-1 signal_name=n/a WCOREDUMP=0 WIFSTOPPED=0 uptime_s=0.050 oom_score=0 oom_score_adj=0 VmRSS_kB=4 VmHWM_kB=4 proc_sample_ts=2026-07-30T17:42:06Z death_freshness=n/a last={ts=victim state=term frames=0 presents=0 pos_ms=0 uptime_s=0 pid=2193394} death={ts=victim exit_code=0 why=signal-g_stop si_signo=15 si_code=-6 si_pid=2193394 state=idle pid=2193394} log_tail={(log-empty)}
+--- death file ---
+ts=victim exit_code=0 why=signal-g_stop si_signo=15 si_code=-6 si_pid=2193394 state=idle pid=2193394
+--- last file ---
+ts=victim state=term frames=0 presents=0 pos_ms=0 uptime_s=0 pid=2193394
+--- proc_sample.last ---
+ts=2026-07-30T17:42:06Z pid=2193394 valid=1 oom_score=0 oom_score_adj=0 VmRSS_kB=4 VmHWM_kB=4
+--- jsonl ---
+{"ts":"2026-07-30T17:42:06Z","label":"sigterm","pid":2193394,"wait_status":0,"WIFEXITED":true,"WEXITSTATUS":0,"WIFSIGNALED":false,"WTERMSIG":-1,"signal_name":"n/a","WCOREDUMP":false,"uptime_s":0.050,"oom_score":0,"oom_score_adj":0,"VmRSS_kB":4,"VmHWM_kB":4,"proc_sample_ts":"2026-07-30T17:42:06Z","death_freshness":"n/a","last":"ts=victim state=term frames=0 presents=0 pos_ms=0 uptime_s=0 pid=2193394","death":"ts=victim exit_code=0 why=signal-g_stop si_signo=15 si_code=-6 si_pid=2193394 state=idle pid=2193394","log_tail":"(log-empty)"}
+
+===== CASE sigsegv =====
+supervisor_true_rc=139
+--- SUPERVISE_EXIT line ---
+2026-07-30T17:42:06Z SUPERVISE_EXIT label=sigsegv pid=2193423 wait_status=0x8b WIFEXITED=0 WEXITSTATUS=-1 WIFSIGNALED=1 WTERMSIG=11 signal_name=SIGSEGV WCOREDUMP=1 WIFSTOPPED=0 uptime_s=0.101 oom_score=0 oom_score_adj=0 VmRSS_kB=1852 VmHWM_kB=1852 proc_sample_ts=2026-07-30T17:42:06Z death_freshness=present last={ts=victim state=segv frames=0 presents=0 pos_ms=0 uptime_s=0 pid=2193423} death={death signal=11 si_code=1 si_pid=0 si_addr=0x0 state=1 pid=2193423} log_tail={(log-empty)}
+--- death file ---
+death signal=11 si_code=1 si_pid=0 si_addr=0x0 state=1 pid=2193423
+--- last file ---
+ts=victim state=segv frames=0 presents=0 pos_ms=0 uptime_s=0 pid=2193423
+--- proc_sample.last ---
+ts=2026-07-30T17:42:06Z pid=2193423 valid=1 oom_score=0 oom_score_adj=0 VmRSS_kB=1852 VmHWM_kB=1852
+--- jsonl ---
+{"ts":"2026-07-30T17:42:06Z","label":"sigsegv","pid":2193423,"wait_status":139,"WIFEXITED":false,"WEXITSTATUS":-1,"WIFSIGNALED":true,"WTERMSIG":11,"signal_name":"SIGSEGV","WCOREDUMP":true,"uptime_s":0.101,"oom_score":0,"oom_score_adj":0,"VmRSS_kB":1852,"VmHWM_kB":1852,"proc_sample_ts":"2026-07-30T17:42:06Z","death_freshness":"present","last":"ts=victim state=segv frames=0 presents=0 pos_ms=0 uptime_s=0 pid=2193423","death":"death signal=11 si_code=1 si_pid=0 si_addr=0x0 state=1 pid=2193423","log_tail":"(log-empty)"}
+
+===== CASE sigkill =====
+sigkill_target_child_pid=2193462
+supervisor_true_rc=137
+--- SUPERVISE_EXIT line ---
+2026-07-30T17:42:06Z SUPERVISE_EXIT label=sigkill pid=2193462 wait_status=0x9 WIFEXITED=0 WEXITSTATUS=-1 WIFSIGNALED=1 WTERMSIG=9 signal_name=SIGKILL WCOREDUMP=0 WIFSTOPPED=0 uptime_s=0.050 oom_score=0 oom_score_adj=0 VmRSS_kB=4 VmHWM_kB=4 proc_sample_ts=2026-07-30T17:42:06Z death_freshness=stale_or_absent_expected last={ts=victim state=sleep frames=0 presents=0 pos_ms=0 uptime_s=0 pid=2193462} death={(absent)} log_tail={(log-empty)}
+--- death file ---
+(absent)
+--- last file ---
+ts=victim state=sleep frames=0 presents=0 pos_ms=0 uptime_s=0 pid=2193462
+--- proc_sample.last ---
+ts=2026-07-30T17:42:06Z pid=2193462 valid=1 oom_score=0 oom_score_adj=0 VmRSS_kB=4 VmHWM_kB=4
+--- jsonl ---
+{"ts":"2026-07-30T17:42:06Z","label":"sigkill","pid":2193462,"wait_status":9,"WIFEXITED":false,"WEXITSTATUS":-1,"WIFSIGNALED":true,"WTERMSIG":9,"signal_name":"SIGKILL","WCOREDUMP":false,"uptime_s":0.050,"oom_score":0,"oom_score_adj":0,"VmRSS_kB":4,"VmHWM_kB":4,"proc_sample_ts":"2026-07-30T17:42:06Z","death_freshness":"stale_or_absent_expected","last":"ts=victim state=sleep frames=0 presents=0 pos_ms=0 uptime_s=0 pid=2193462","death":"(absent)","log_tail":"(log-empty)"}
+

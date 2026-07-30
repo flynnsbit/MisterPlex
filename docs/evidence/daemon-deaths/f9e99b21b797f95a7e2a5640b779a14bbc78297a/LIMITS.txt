@@ -1,0 +1,7 @@
+HARD LIMITS (not defects of the harness):
+- SIGKILL: no handler runs → misterplexd.death will not show signal=9 from the victim.
+  Parent waitpid still reports WIFSIGNALED=1 WTERMSIG=9. death_freshness=stale_or_absent_expected.
+- OOM killer: equivalent to SIGKILL from the kernel. Parent sees signal=9.
+  Correlate with dmesg: grep -iE 'killed process|out of memory|oom-kill'
+  Positive: "Out of memory: Killed process <pid> (misterplexd)"
+- Shell wait path (no cap binary): WIF* is approximate (rc>=128 ⇒ signal rc-128); WCOREDUMP unknown.
