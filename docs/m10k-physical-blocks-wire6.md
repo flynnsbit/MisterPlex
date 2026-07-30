@@ -159,4 +159,6 @@ Retired line from 788aa5f write-up: “free 2,589,235 (~46%)” as M10K headroom
 | `docs/coord-map-product-4f281e6-ALMS.txt` | product map; no block total |
 | This file | block-unit report |
 
+**Follow-on scope (line-buf 6× waste + serial qpel):** `docs/linebuf-repack-and-qpel-scope.md`.
+
 **No FIT authorised. No RBF. No deploy.**
