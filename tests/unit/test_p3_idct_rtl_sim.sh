@@ -36,6 +36,9 @@ RTL_INTRA="$ROOT/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv"
 RTL_INTER="$ROOT/fpga/Plex_MiSTer/rtl/h264_inter_pred.sv"
 RTL_DEBLOCK="$ROOT/fpga/Plex_MiSTer/rtl/h264_deblock.sv"
 RTL_DPB="$ROOT/fpga/Plex_MiSTer/rtl/h264_dpb.sv"
+RTL_CHR_QP="$ROOT/fpga/Plex_MiSTer/rtl/h264_chroma_qp.sv"
+RTL_CHR_DC="$ROOT/fpga/Plex_MiSTer/rtl/h264_chroma_dc_hadamard_inv.sv"
+RTL_P_CHR_APPLY="$ROOT/fpga/Plex_MiSTer/rtl/h264_p_chroma_res_apply.sv"
 QIP="$ROOT/fpga/Plex_MiSTer/files.qip"
 TB_IQ="$ROOT/tests/rtl/h264_iq_idct_4x4_tb.cpp"
 TOP_IQ="$ROOT/tests/rtl/h264_iq_idct_4x4_tb_top.sv"
@@ -72,14 +75,14 @@ echo "RTL SIM: using $VERILATOR_VERSION" >&2
   --Mdir "$BUILD_DECODE" \
   --top-module decode_stub_recon_tb -Wno-fatal \
   -CFLAGS "-std=c++17 -O2" \
-  "$TOP_DECODE" "$RTL_IQ" "$RTL_INTER" "$RTL_DEBLOCK" "$RTL_DPB" "$RTL_DECODE" "$RTL_I16_DC" "$RTL_I16_DCS" "$RTL_DQS" "$RTL_BYTE_RAM" "$RTL_I_SINK" "$RTL_INTRA" "$RTL_RECON_STORE" "$TB_DECODE"
+  "$TOP_DECODE" "$RTL_IQ" "$RTL_INTER" "$RTL_DEBLOCK" "$RTL_DPB" "$RTL_DECODE" "$RTL_I16_DC" "$RTL_I16_DCS" "$RTL_DQS" "$RTL_BYTE_RAM" "$RTL_I_SINK" "$RTL_INTRA" "$RTL_CHR_QP" "$RTL_CHR_DC" "$RTL_P_CHR_APPLY" "$RTL_RECON_STORE" "$TB_DECODE"
 "$BUILD_DECODE/Vdecode_stub_recon_tb" "$FIXTURE"
 
 "$RUN_VERILATOR" --cc --exe --build \
   --Mdir "$BUILD_DECODE_FAULT" \
   --top-module decode_stub_recon_tb -GFAULT_PRED_ONLY=1 -Wno-fatal \
   -CFLAGS "-std=c++17 -O2" \
-  "$TOP_DECODE" "$RTL_IQ" "$RTL_INTER" "$RTL_DEBLOCK" "$RTL_DPB" "$RTL_DECODE" "$RTL_I16_DC" "$RTL_I16_DCS" "$RTL_DQS" "$RTL_BYTE_RAM" "$RTL_I_SINK" "$RTL_INTRA" "$RTL_RECON_STORE" "$TB_DECODE"
+  "$TOP_DECODE" "$RTL_IQ" "$RTL_INTER" "$RTL_DEBLOCK" "$RTL_DPB" "$RTL_DECODE" "$RTL_I16_DC" "$RTL_I16_DCS" "$RTL_DQS" "$RTL_BYTE_RAM" "$RTL_I_SINK" "$RTL_INTRA" "$RTL_CHR_QP" "$RTL_CHR_DC" "$RTL_P_CHR_APPLY" "$RTL_RECON_STORE" "$TB_DECODE"
 set +e
 FAULT_OUT="$($BUILD_DECODE_FAULT/Vdecode_stub_recon_tb "$FIXTURE" 2>&1)"
 FAULT_RC=$?

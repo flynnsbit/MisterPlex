@@ -56,6 +56,7 @@ module decode_stub #(
 	input  wire [2:0]  trav_part_count,
 	input  wire        trav_uses_sub_mb,
 	input  wire        trav_intra,
+	input  wire [5:0]  trav_cbp,
 	input  wire        trav_slice_done,
 	// I-slice residual export from h264_p_mb_traverse (real-ref I recon)
 	input  wire        i_res_blk_valid,
@@ -72,6 +73,9 @@ module decode_stub #(
 	input  wire signed [15:0] i_res_blk_coeff [0:15],
 	input  wire        i_res_mb_end,
 	input  wire [15:0] i_res_mb_end_addr,
+	input  wire [1:0]  i_res_mb_chroma_mode,
+	// PPS chroma_qp_index_offset se(v); drives QPc for chroma residual (8.5.5).
+	input  wire signed [4:0] pps_chroma_qp_index_offset,
 	// Parsed first-MB mvd_l0 se(v) from slice_hdr_parser (qpel).
 	input  wire signed [15:0] first_mb_mvd_x,
 	input  wire signed [15:0] first_mb_mvd_y,
@@ -146,6 +150,13 @@ module decode_stub #(
 	reg [2:0]      lat_p_part_count;
 	reg            lat_p_uses_sub_mb;
 	reg            lat_p_intra;
+	reg [5:0]      lat_p_cbp;
+	reg            p_chr_wait;          // chroma residual required before MC fetch
+	reg            p_fetch_done_hold;   // legacy (unused in residual-before-fetch)
+	reg            p_chr_done_latched;  // residual done for current MB
+	reg            p_chr_clear_mb;      // 1-cycle clear pulse on P MB accept
+	reg [15:0]     p_chr_wait_cy;      // cycles waiting for residual (hang detect)
+	reg [19:0]     fetch_hang_cy;      // cycles in FETCH without store progress
 	reg            lat_inter_recon_ok;
 	reg [15:0]     lat_p_mb_addr;
 	reg            inter_capture_valid;
@@ -192,11 +203,13 @@ module decode_stub #(
 	// except on the store-done cycle (pending still 1 under NBA that cycle).
 	// Product same-cycle FETCH accept (no store drain) is still lossless under
 	// unconditional hold backpressure — it only avoids a bubble, never drops.
+	// Serial residual-then-fetch: p_chr_wait means MC fetch not started yet.
+	// Do not accept next MB until current store drained (existing pending gate).
 	wire           trav_can_accept = (phase == PH_IDLE && (dpb_ref_ready || trav_intra)) ||
 	                                 (phase == PH_FETCH && !p_fetch_launch_pending && dpb_fetch_done &&
-	                                  !recon_store_pending && !USE_REAL_REF_COMMIT) ||
+	                                  !recon_store_pending && !p_chr_wait && !p_chr_busy && !USE_REAL_REF_COMMIT) ||
 	                                 (phase == PH_FETCH && !trav_got_mb && !p_fetch_launch_pending && !dpb_fetch_busy &&
-	                                  (!recon_store_pending || recon_store_done)) ||
+	                                  (!recon_store_pending || recon_store_done) && !p_chr_wait && !p_chr_busy) ||
 	                                 (phase == PH_IDLE && trav_intra) ||
 	                                 // I-slice residual walk: drain MB events unconditionally so the walker
 	                                 // is not stuck on mb_hold while residual export runs.
@@ -278,12 +291,29 @@ module decode_stub #(
 		end
 	endgenerate
 
-	h264_dequant4x4 u_h264_dequant4x4 (
-		.coeff(lat_coeff),
-		.qp(lat_qp),
-		.max_coeff(5'd16),
-		.dequant(idct_dequant)
-	);
+	// HARD GATE: parallel h264_dequant4x4 removed (DSP farm).
+	// Legacy residual path samples the ONE shared serial dequant (see u_shared_dq).
+	wire shared_dq_busy, shared_dq_done;
+	wire signed [28:0] shared_dq_dequant [0:15];
+	reg         leg_dq_start;
+	reg         leg_dq_active;
+	reg         pending_i_recon; // real-ref: finish leg diagnostic IQ before PH_I_RECON
+	reg         leg_diag_valid;  // latched place-path IQ for paint-time MB0 trace
+	reg signed [28:0] leg_dq_latched [0:15];
+	reg signed [28:0] leg_idct_latched [0:15];
+	reg [7:0]   leg_recon_latched [0:15];
+	reg         sink_dq_wait;
+	reg         pchr_dq_wait;
+	genvar leg_i;
+	generate
+		// Live shared while place-path IQ runs; else hold latched so paint-time
+		// MB0_PIPELINE_TRACE still sees nonzero residual after sink reuses mul.
+		for (leg_i = 0; leg_i < 16; leg_i = leg_i + 1) begin : gen_idct_dequant
+			assign idct_dequant[leg_i] =
+				(leg_dq_start || leg_dq_active) ? shared_dq_dequant[leg_i] :
+				(leg_diag_valid ? leg_dq_latched[leg_i] : shared_dq_dequant[leg_i]);
+		end
+	endgenerate
 
 	h264_idct4x4 u_h264_idct4x4 (
 		.dequant(idct_dequant),
@@ -748,6 +778,13 @@ module decode_stub #(
 `endif
 		end
 	endfunction
+	// Forward decl — driven by u_p_chr_res below.
+	wire signed [15:0] p_chr_res_u [0:63];
+	wire signed [15:0] p_chr_res_v [0:63];
+	// Snapshot at mb_res_done — live planes can be cleared/overwritten before store.
+	reg signed [15:0] p_chr_snap_u [0:63];
+	reg signed [15:0] p_chr_snap_v [0:63];
+	reg               p_chr_snap_vld;
 `ifdef DECODE_STUB_FAULT_DROP_INTER_RESIDUAL
 	wire signed [15:0] inter_res_y_term [0:255];
 	wire signed [15:0] inter_res_u_term [0:63];
@@ -772,13 +809,14 @@ module decode_stub #(
 			assign inter_res_y_term[irk] = inter_res_y[irk];
 		end
 		for (irk = 0; irk < 64; irk = irk + 1) begin : gen_res_c
-`ifdef DECODE_STUB_FAULT_SKIP_INTER_CHROMA_RESIDUAL
-			assign inter_res_u_term[irk] = 16'sd0;
-			assign inter_res_v_term[irk] = 16'sd0;
-`else
-			assign inter_res_u_term[irk] = inter_res_u[irk];
-			assign inter_res_v_term[irk] = inter_res_v[irk];
-`endif
+			// Product P chroma residual: snapshotted at mb_res_done, gated by cbp_c.
+			// Live p_chr_res_* can be cleared when the next MB accepts before store.
+			assign inter_res_u_term[irk] = use_real_ref ?
+				((lat_p_cbp[5:4] != 2'd0 && p_chr_snap_vld) ? p_chr_snap_u[irk] : 16'sd0) :
+				inter_res_u[irk];
+			assign inter_res_v_term[irk] = use_real_ref ?
+				((lat_p_cbp[5:4] != 2'd0 && p_chr_snap_vld) ? p_chr_snap_v[irk] : 16'sd0) :
+				inter_res_v[irk];
 		end
 	endgenerate
 `endif
@@ -826,14 +864,83 @@ module decode_stub #(
 	wire [31:0] i_sink_dbg_blk, i_sink_dbg_mb, i_sink_dbg_nz;
 	wire        i_sink_clear = vcl_pulse && (last_nal_type[4:0] == 5'd5);
 
+	wire [31:0] i_sink_dbg_chr;
+	wire        i_sink_drain_idle;
+	wire        i_sink_ready_w;
+	// P owns residual bus in FETCH; I sink only during PH_I_RECON.
+	wire        p_chr_enable = (phase == PH_FETCH) && use_real_ref;
+	wire        i_sink_enable = (phase == PH_I_RECON);
+	wire        p_chr_ready_w;
+	wire        p_chr_mb_done;
+	wire [15:0] p_chr_mb_done_addr;
+	wire        p_chr_busy;
+	// Gate residual to latched MB address only. Do not require got/wait — residual
+	// can still be draining after residual-before-fetch has cleared wait and
+	// launched MC; blocking ready then deadlocks the walker (FETCH_HANG).
+	wire p_chr_mb_match = p_chr_enable && (i_res_blk_mb_addr == lat_p_mb_addr);
+	wire p_chr_end_match = p_chr_enable && (i_res_mb_end_addr == lat_p_mb_addr);
+
+	wire        i_sink_dq_start;
+	wire signed [15:0] i_sink_dq_coeff [0:15];
+	wire [5:0]  i_sink_dq_qp;
+	wire [4:0]  i_sink_dq_max;
+	wire        p_chr_dq_start;
+	wire signed [15:0] p_chr_dq_coeff [0:15];
+	wire [5:0]  p_chr_dq_qp;
+	wire [4:0]  p_chr_dq_max;
+
+	// ONE product serial dequant — shared by I sink + P chroma (+ legacy residual).
+	// HARD GATE: never a second dequant instance (parallel or serial sibling).
+	wire        shared_dq_start;
+	wire signed [15:0] shared_dq_coeff [0:15];
+	wire [5:0]  shared_dq_qp;
+	wire [4:0]  shared_dq_max;
+	// Prefer I-sink, then P-chroma, then legacy place-path.
+	wire        sink_owns_dq = i_sink_dq_start || (i_sink_enable && shared_dq_busy && !leg_dq_active && !p_chr_dq_start);
+	wire        pchr_owns_dq = p_chr_dq_start || (p_chr_enable && shared_dq_busy && !leg_dq_active && !i_sink_dq_start);
+	assign shared_dq_start = i_sink_dq_start | p_chr_dq_start | leg_dq_start;
+	assign shared_dq_qp =
+		i_sink_dq_start ? i_sink_dq_qp :
+		p_chr_dq_start  ? p_chr_dq_qp  :
+		leg_dq_start    ? lat_qp       :
+		(i_sink_enable  ? i_sink_dq_qp :
+		 (p_chr_enable  ? p_chr_dq_qp  : lat_qp));
+	assign shared_dq_max =
+		i_sink_dq_start ? i_sink_dq_max :
+		p_chr_dq_start  ? p_chr_dq_max  :
+		leg_dq_start    ? 5'd16         :
+		(i_sink_enable  ? i_sink_dq_max :
+		 (p_chr_enable  ? p_chr_dq_max  : 5'd16));
+	genvar sdi;
+	generate
+		for (sdi = 0; sdi < 16; sdi = sdi + 1) begin : gen_shared_dq_coeff
+			assign shared_dq_coeff[sdi] =
+				i_sink_dq_start ? i_sink_dq_coeff[sdi] :
+				p_chr_dq_start  ? p_chr_dq_coeff[sdi]  :
+				leg_dq_start    ? lat_coeff[sdi]       :
+				(i_sink_enable  ? i_sink_dq_coeff[sdi] :
+				 (p_chr_enable  ? p_chr_dq_coeff[sdi]  : lat_coeff[sdi]));
+		end
+	endgenerate
+	h264_dequant4x4_serial #(.FAULT_FORCE_ZERO(FAULT_SERIAL_IQ_ZERO)) u_shared_dq (
+		.clk(clk), .reset(reset),
+		.start(shared_dq_start),
+		.coeff(shared_dq_coeff),
+		.qp(shared_dq_qp),
+		.max_coeff(shared_dq_max),
+		.busy(shared_dq_busy), .done(shared_dq_done),
+		.dequant(shared_dq_dequant)
+	);
+
 	h264_i_res_recon_sink #(
 		.FAULT_SERIAL_IQ_ZERO(FAULT_SERIAL_IQ_ZERO),
 		.FAULT_SERIAL_I16_PRED_128(FAULT_SERIAL_I16_PRED_128),
-		.FAULT_SKIP_PLANE_NB(FAULT_SKIP_PLANE_NB)
+		.FAULT_SKIP_PLANE_NB(FAULT_SKIP_PLANE_NB),
+		.EXT_SERIAL_DQ(1'b1)
 	) u_i_res_sink (
 		.clk(clk), .reset(reset), .clear(i_sink_clear),
-		.res_blk_valid(i_res_blk_valid),
-		.res_blk_ready(i_res_blk_ready),
+		.res_blk_valid(i_res_blk_valid && i_sink_enable),
+		.res_blk_ready(i_sink_ready_w),
 		.res_blk_mb_addr(i_res_blk_mb_addr),
 		.res_blk_mb_x(i_res_blk_mb_x),
 		.res_blk_mb_y(i_res_blk_mb_y),
@@ -844,8 +951,17 @@ module decode_stub #(
 		.res_blk_max_coeff(i_res_blk_max_coeff),
 		.res_blk_pred_mode(i_res_blk_pred_mode),
 		.res_blk_coeff(i_res_blk_coeff),
-		.res_mb_end(i_res_mb_end),
+		.res_mb_end(i_res_mb_end && i_sink_enable),
 		.res_mb_end_addr(i_res_mb_end_addr),
+		.res_mb_chroma_mode(i_res_mb_chroma_mode),
+		.chroma_qp_index_offset(pps_chroma_qp_index_offset),
+		.ext_dq_start(i_sink_dq_start),
+		.ext_dq_coeff(i_sink_dq_coeff),
+		.ext_dq_qp(i_sink_dq_qp),
+		.ext_dq_max_coeff(i_sink_dq_max),
+		.ext_dq_busy(shared_dq_busy),
+		.ext_dq_done(shared_dq_done && sink_dq_wait),
+		.ext_dq_dequant(shared_dq_dequant),
 		.write_req(i_sink_write_req),
 		.write_mb_addr(i_sink_write_mb),
 		.write_y(i_sink_y),
@@ -854,12 +970,59 @@ module decode_stub #(
 		.write_busy(recon_store_busy | recon_store_pending),
 		.dbg_blk_applied(i_sink_dbg_blk),
 		.dbg_mb_written(i_sink_dbg_mb),
-		.dbg_luma_nz(i_sink_dbg_nz)
+		.dbg_luma_nz(i_sink_dbg_nz),
+		.dbg_chr_applied(i_sink_dbg_chr),
+		.drain_idle(i_sink_drain_idle)
 	);
 
-	// Tie-off residual ready when not using sink export (always-on ready if
-	// USE_REAL_REF is 0 still needed so unused ports don't X).
-	// i_res_blk_ready comes from sink.
+`ifdef DECODE_STUB_FAULT_SKIP_INTER_CHROMA_RESIDUAL
+	localparam bit P_CHR_FAULT_SKIP = 1'b1;
+`else
+	localparam bit P_CHR_FAULT_SKIP = 1'b0;
+`endif
+	h264_p_chroma_res_apply #(
+		.FAULT_SKIP(P_CHR_FAULT_SKIP)
+	) u_p_chr_res (
+		.clk(clk), .reset(reset),
+		.clear_mb(p_chr_clear_mb),
+		.enable(p_chr_enable),
+		.res_blk_valid(i_res_blk_valid && p_chr_enable && !i_res_blk_is_luma && p_chr_mb_match),
+		.res_blk_ready(p_chr_ready_w),
+		.res_blk_mb_addr(i_res_blk_mb_addr),
+		.res_blk_idx(i_res_blk_idx),
+		.res_blk_is_i16(i_res_blk_is_i16),
+		.res_blk_is_luma(i_res_blk_is_luma),
+		.res_blk_qp(i_res_blk_qp),
+		.res_blk_max_coeff(i_res_blk_max_coeff),
+		.res_blk_coeff(i_res_blk_coeff),
+		.chroma_qp_index_offset(pps_chroma_qp_index_offset),
+		.res_mb_end(i_res_mb_end && p_chr_enable && p_chr_end_match),
+		.res_mb_end_addr(i_res_mb_end_addr),
+		.mb_res_done(p_chr_mb_done),
+		.mb_res_done_addr(p_chr_mb_done_addr),
+		.busy(p_chr_busy),
+		.ext_dq_start(p_chr_dq_start),
+		.ext_dq_coeff(p_chr_dq_coeff),
+		.ext_dq_qp(p_chr_dq_qp),
+		.ext_dq_max_coeff(p_chr_dq_max),
+		.ext_dq_busy(shared_dq_busy),
+		.ext_dq_done(shared_dq_done && pchr_dq_wait),
+		.ext_dq_dequant(shared_dq_dequant),
+		.res_u(p_chr_res_u),
+		.res_v(p_chr_res_v)
+	);
+
+	// Residual ready mux:
+	//  I_RECON → I sink
+	//  FETCH + chroma → P apply only when p_chr_mb_match (accepted MB)
+	//  real-ref IDLE/FETCH chroma otherwise → stall (do NOT drop)
+	//  default → drop (legacy place-path / P luma)
+	assign i_res_blk_ready = i_sink_enable ? i_sink_ready_w :
+	                         (p_chr_enable && !i_res_blk_is_luma) ?
+	                             (p_chr_ready_w && p_chr_mb_match) :
+	                         (use_real_ref && !i_res_blk_is_luma &&
+	                          (phase == PH_IDLE || phase == PH_FETCH)) ? 1'b0 :
+	                         1'b1;
 
 	genvar rmi;
 	generate
@@ -924,6 +1087,7 @@ module decode_stub #(
 		dpb_frame_done_pulse <= 1'b0;
 		inter_capture_valid <= 1'b0;
 		recon_store_write_start <= 1'b0;
+		p_chr_clear_mb <= 1'b0;
 		// Read data is combinational off the registered address, so rvalid must
 		// lag mem_rd by exactly one cycle to stay aligned with h264_dpb's
 		// pending_valid_d1 capture window.
@@ -972,6 +1136,17 @@ module decode_stub #(
 				inter_res_v[coeff_i] <= 16'sd0;
 			end
 			inter_res_load_pending <= 1'b0;
+			leg_dq_start <= 1'b0;
+			leg_dq_active <= 1'b0;
+			pending_i_recon <= 1'b0;
+			leg_diag_valid <= 1'b0;
+			sink_dq_wait <= 1'b0;
+			pchr_dq_wait <= 1'b0;
+			for (coeff_i = 0; coeff_i < 16; coeff_i = coeff_i + 1) begin
+				leg_dq_latched[coeff_i] <= 29'sd0;
+				leg_idct_latched[coeff_i] <= 29'sd0;
+				leg_recon_latched[coeff_i] <= 8'd128;
+			end
 			recon_sig     <= 0;
 			recon_dbg     <= 0;
 			recon_dbg_valid <= 0;
@@ -987,6 +1162,18 @@ module decode_stub #(
 			lat_p_part_count <= 0;
 			lat_p_uses_sub_mb <= 0;
 			lat_p_intra   <= 0;
+			lat_p_cbp     <= 6'd0;
+			p_chr_wait    <= 1'b0;
+			p_fetch_done_hold <= 1'b0;
+			p_chr_done_latched <= 1'b0;
+			p_chr_clear_mb <= 1'b0;
+			p_chr_wait_cy <= 16'd0;
+			p_chr_snap_vld <= 1'b0;
+			for (coeff_i = 0; coeff_i < 64; coeff_i = coeff_i + 1) begin
+				p_chr_snap_u[coeff_i] <= 16'sd0;
+				p_chr_snap_v[coeff_i] <= 16'sd0;
+			end
+			fetch_hang_cy <= 20'd0;
 			lat_inter_recon_ok <= 0;
 			lat_p_mb_addr <= 0;
 			inter_capture_valid <= 0;
@@ -1092,14 +1279,41 @@ module decode_stub #(
 				recon_store_pending <= 1'b0;
 				recon_store_i_sink_pending <= 1'b0;
 			end
-			// One-cycle delayed residual plane load (lat_coeff → IQ/IDCT settled).
-			if (inter_res_load_pending) begin
+			// Shared serial DQ ownership (sticky until done).
+			leg_dq_start <= 1'b0;
+			// Place-path diagnostic IQ: start one cycle after lat_coeff latch.
+			if (inter_res_load_pending && !leg_dq_active && !sink_dq_wait && !pchr_dq_wait) begin
+				leg_dq_start <= 1'b1;
+				leg_dq_active <= 1'b1;
+			end
+			if (i_sink_dq_start)
+				sink_dq_wait <= 1'b1;
+			else if (shared_dq_done && sink_dq_wait)
+				sink_dq_wait <= 1'b0;
+			if (p_chr_dq_start)
+				pchr_dq_wait <= 1'b1;
+			else if (shared_dq_done && pchr_dq_wait)
+				pchr_dq_wait <= 1'b0;
+			// Legacy place-path residual: wait shared serial done (no parallel IQ).
+			if (leg_dq_active && shared_dq_done) begin
+				leg_dq_active <= 1'b0;
 				inter_res_load_pending <= 1'b0;
-				// First residual 4×4 → Y block0 raster positions.
+				leg_diag_valid <= 1'b1;
 				for (coeff_i = 0; coeff_i < 16; coeff_i = coeff_i + 1) begin
-					// Explicit 8-bit Y-plane index (avoids WIDTHEXPAND on 6-bit concat).
-					inter_res_y[{2'b00, coeff_i[3:2], 2'b00, coeff_i[1:0]}] <=
-						idct_residual[coeff_i][15:0];
+					// Diagnostic latch only under real_ref — do NOT poison
+					// inter_res_y (P MBs would inherit IDR blk0 residual).
+					if (!use_real_ref) begin
+						inter_res_y[{2'b00, coeff_i[3:2], 2'b00, coeff_i[1:0]}] <=
+							idct_residual[coeff_i][15:0];
+					end
+					leg_dq_latched[coeff_i] <= shared_dq_dequant[coeff_i];
+					leg_idct_latched[coeff_i] <= idct_residual[coeff_i];
+					leg_recon_latched[coeff_i] <= recon_px[coeff_i];
+				end
+				if (pending_i_recon) begin
+					pending_i_recon <= 1'b0;
+					phase <= PH_I_RECON;
+					busy <= 1'b1;
 				end
 			end
 			// first-MB-only FETCH fallback when walker is not driving (unit TBs
@@ -1187,6 +1401,13 @@ module decode_stub #(
 				lat_p_part_count <= trav_part_count;
 				lat_p_uses_sub_mb <= trav_uses_sub_mb;
 				lat_p_intra <= 1'b0;
+				lat_p_cbp <= trav_cbp;
+				// Residual-before-fetch: hold MC until chroma residual done.
+				p_chr_wait <= use_real_ref && (trav_cbp[5:4] != 2'd0);
+				p_fetch_done_hold <= 1'b0;
+				p_chr_done_latched <= 1'b0;
+				p_chr_clear_mb <= use_real_ref;
+				p_chr_snap_vld <= 1'b0;
 				// Opening MB of the slice: use parsed first_mb mvd; later MBs clear.
 				lat_mvd_x <= (!trav_active_slice) ? first_mb_mvd_x : 16'sd0;
 				lat_mvd_y <= (!trav_active_slice) ? first_mb_mvd_y : 16'sd0;
@@ -1196,8 +1417,10 @@ module decode_stub #(
 				recon_dbg_valid <= 1'b0;
 				for (coeff_i = 0; coeff_i < 16; coeff_i = coeff_i + 1)
 					lat_coeff[coeff_i] <= 16'sd0;
-				dpb_fetch_start <= 1'b1;
-				p_fetch_launch_pending <= 1'b1;
+				if (!(use_real_ref && (trav_cbp[5:4] != 2'd0))) begin
+					dpb_fetch_start <= 1'b1;
+					p_fetch_launch_pending <= 1'b1;
+				end
 			end else if (trav_slice_pending && !trav_active_slice) begin
 				// Walker finished with no more MBs — commit/paint if we reconstructed any
 				trav_slice_pending <= 1'b0;
@@ -1242,6 +1465,12 @@ module decode_stub #(
 				lat_p_part_count <= pending_p_part_count;
 				lat_p_uses_sub_mb <= pending_p_uses_sub_mb;
 				lat_p_intra <= pending_p_intra;
+				lat_p_cbp <= 6'd0;
+				p_chr_wait <= 1'b0;
+				p_fetch_done_hold <= 1'b0;
+				p_chr_done_latched <= 1'b0;
+				p_chr_clear_mb <= use_real_ref;
+				p_chr_snap_vld <= 1'b0;
 				lat_mvd_x <= pending_mvd_x;
 				lat_mvd_y <= pending_mvd_y;
 				// D = sliding above-left; then capture above[x] for next D.
@@ -1259,9 +1488,9 @@ module decode_stub #(
 				end
 				lat_inter_recon_ok <= 1'b0;
 				pending_p_fetch <= 1'b0;
-				// Must match walker path: PH_FETCH completion is gated on
-				// trav_got_mb. Clearing it here leaves busy stuck after
-				// dpb_fetch_done (first-MB unit TBs with trav tied off).
+				// Same gate as walker path: fetch_done handler requires trav_got_mb
+				// so product_fetch_mv_* publish and !use_trav → PH_PAINT can fire.
+				// (Was 0 after 18b3fce8 trav_got_mb guard; broke first-MB unit TB.)
 				trav_got_mb <= 1'b1;
 				recon_valid <= 1'b0;
 				recon_dbg_valid <= 1'b0;
@@ -1273,10 +1502,19 @@ module decode_stub #(
 			end else if (phase == PH_WAIT) begin
 			if (wait_cnt != 12'd0)
 				wait_cnt <= wait_cnt - 12'd1;
-			if (wait_done) begin
+			// Hold PH_WAIT while place-path shared serial IQ runs (diagnostic).
+			// wait_done stays sticky via residual_valid; must not re-latch.
+			if (pending_i_recon || leg_dq_active) begin
+				// completion: leg_dq_active&&shared_dq_done → PH_I_RECON
+			end else if (wait_done) begin
 				// Default: IDR → DPB fill; other non-P → paint; P handled below
 				// (must NOT paint P here — walker owns P frames).
-				if ((lat_type[4:0] == 5'd5) && ENABLE_DPB_REF_SEAM)
+				// Real-ref IDR with residual defers to pending_i_recon (below)
+				// and must remain PH_WAIT until shared serial diagnostic IQ done.
+				if ((lat_type[4:0] == 5'd5) && ENABLE_DPB_REF_SEAM && use_real_ref &&
+				    residual_ok && !first_mb_p_skip)
+					phase <= PH_WAIT;
+				else if ((lat_type[4:0] == 5'd5) && ENABLE_DPB_REF_SEAM)
 					phase <= PH_DPB_FILL;
 				else if (lat_type[4:0] == 5'd1)
 					phase <= PH_IDLE;
@@ -1337,16 +1575,28 @@ module decode_stub #(
 					inter_res_u[coeff_i] <= 16'sd0;
 					inter_res_v[coeff_i] <= 16'sd0;
 				end
+				// Arm place-path shared serial IQ one cycle later (lat_coeff settle).
+				// Real-ref defers PH_I_RECON until done so sink does not contend.
 				inter_res_load_pending <= residual_ok && !first_mb_p_skip;
+				leg_dq_start <= 1'b0;
+				if (!(residual_ok && !first_mb_p_skip))
+					leg_dq_active <= 1'b0;
 				recon_valid  <= 1'b0;
 				recon_dbg_valid <= 1'b0;
 				// Real-ref: I-slice residual walk fills recon_store for all MBs
 				// before DPB fill. Place-path residual is NOT used for store
 				// (blk0-only); sink owns multi-MB recon (pred=128 + residual).
 				if ((lat_type[4:0] == 5'd5) && ENABLE_DPB_REF_SEAM && use_real_ref) begin
-					phase <= PH_I_RECON;
-					busy <= 1'b1;
-					inter_res_load_pending <= 1'b0;
+					// Defer I_RECON until leg diagnostic IQ completes (shared mul).
+					if (residual_ok && !first_mb_p_skip) begin
+						pending_i_recon <= 1'b1;
+						busy <= 1'b1;
+					end else begin
+						phase <= PH_I_RECON;
+						busy <= 1'b1;
+						pending_i_recon <= 1'b0;
+					end
+					inter_res_load_pending <= residual_ok && !first_mb_p_skip;
 `ifdef VERILATOR
 					dbg_i_recon_cycles <= 32'd0;
 					store_mb_bits <= '0;
@@ -1382,12 +1632,14 @@ module decode_stub #(
 			// i_sink_write_req accepted below (shared with other phases).
 			if (trav_slice_done)
 				trav_slice_pending <= 1'b1;
-// Complete when walker finished and last store drained (mb_written
-			// may be 0 if walk failed — still fill rather than hang).
-			if (trav_slice_pending && !recon_store_pending && !i_sink_write_req) begin
-				trav_slice_pending <= 1'b0;
-				trav_active_slice <= 1'b0;
-				phase <= PH_DPB_FILL;
+// Complete when walker finished, sink fully drained (no have_mb /
+// pend_mb_end mid-chroma), and last store drained. Without
+// drain_idle, I_RECON could exit one MB early (mb_written=299).
+if (trav_slice_pending && !recon_store_pending && !i_sink_write_req &&
+    i_sink_drain_idle) begin
+	trav_slice_pending <= 1'b0;
+	trav_active_slice <= 1'b0;
+	phase <= PH_DPB_FILL;
 				dpb_fill_mb_addr <= '0;
 				dpb_fill_sample_idx <= 9'd0;
 `ifdef VERILATOR
@@ -1401,9 +1653,13 @@ module decode_stub #(
 `endif
 			end
 			end else if (phase == PH_IDR_STORE) begin
-			// One-cycle delayed pack (lat_coeff → IQ/IDCT/recon_px settled),
-			// then drain recon_store write before PH_DPB_FILL.
-			if (idr_recon_pack_pending) begin
+			// Wait shared serial place-path IQ (lat_coeff settle + 16cyc) before pack.
+			// Combo dequant no longer exists — packing early yields recon_sig=0.
+			if (idr_recon_pack_pending &&
+			    (inter_res_load_pending || leg_dq_active ||
+			     (lat_res_ok && !leg_diag_valid && !first_mb_p_skip))) begin
+				// hold pack
+			end else if (idr_recon_pack_pending) begin
 				idr_recon_pack_pending <= 1'b0;
 				// MB0 Y: first 4×4 from shared recon_px; remainder DC fallback
 				// (same policy as the RGB paint path for eyes-on diagnostics).
@@ -1468,6 +1724,29 @@ module decode_stub #(
 				dpb_fill_sample_idx <= 9'd0;
 			end
 			end else if (phase == PH_FETCH) begin
+			// Residual-before-fetch: when chroma residual completes, launch MC.
+			if (p_chr_wait) begin
+				p_chr_wait_cy <= p_chr_wait_cy + 16'd1;
+			end else
+				p_chr_wait_cy <= 16'd0;
+			if (p_chr_mb_done && (p_chr_mb_done_addr == lat_p_mb_addr)) begin
+				// Freeze residual planes for this MB before any later clear_mb.
+				begin : p_chr_snap_cap
+					integer szi;
+					for (szi = 0; szi < 64; szi = szi + 1) begin
+						p_chr_snap_u[szi] <= p_chr_res_u[szi];
+						p_chr_snap_v[szi] <= p_chr_res_v[szi];
+					end
+				end
+				p_chr_snap_vld <= 1'b1;
+				if (p_chr_wait) begin
+					p_chr_wait <= 1'b0;
+					p_chr_done_latched <= 1'b1;
+					p_chr_wait_cy <= 16'd0;
+					dpb_fetch_start <= 1'b1;
+					p_fetch_launch_pending <= 1'b1;
+				end
+			end
 			if (p_fetch_launch_pending && !dpb_fetch_done) begin
 				p_fetch_launch_pending <= 1'b0;
 			end else if (recon_store_pending) begin
@@ -1477,7 +1756,8 @@ module decode_stub #(
 					recon_store_idr_mb0_pending <= 1'b0;
 					recon_store_i_sink_pending <= 1'b0;
 					trav_got_mb <= 1'b0;
-					if (trav_mb_ready) begin
+					fetch_hang_cy <= 20'd0;
+					if (trav_mb_ready && !p_chr_busy) begin
 						lat_p_skip <= trav_mb_skip;
 						lat_p_mb_x <= trav_mb_x;
 						lat_p_mb_y <= trav_mb_y;
@@ -1486,13 +1766,23 @@ module decode_stub #(
 						lat_p_part_count <= trav_part_count;
 						lat_p_uses_sub_mb <= trav_uses_sub_mb;
 						lat_p_intra <= trav_intra;
+						lat_p_cbp <= trav_cbp;
+						// Wait residual for any non-skip chroma CBP, including Intra-in-P (I_16x16).
+					p_chr_wait <= use_real_ref && (trav_cbp[5:4] != 2'd0);
+						p_fetch_done_hold <= 1'b0;
+						p_chr_done_latched <= 1'b0;
+						p_chr_clear_mb <= use_real_ref;
+						p_chr_snap_vld <= 1'b0;
 						// Later MBs: no per-MB mvd yet → MVP only until walker carries mvd.
 						lat_mvd_x <= 16'sd0;
 						lat_mvd_y <= 16'sd0;
 						trav_got_mb <= 1'b1;
-						dpb_fetch_start <= 1'b1;
-						p_fetch_launch_pending <= 1'b1;
-					end else if (trav_slice_pending || trav_slice_done) begin
+						if (!(use_real_ref && (trav_cbp[5:4] != 2'd0))) begin
+							dpb_fetch_start <= 1'b1;
+							p_fetch_launch_pending <= 1'b1;
+						end
+					end else if ((trav_slice_pending || trav_slice_done) &&
+					             !p_chr_wait && !p_fetch_done_hold) begin
 						trav_slice_pending <= 1'b0;
 						trav_active_slice <= 1'b0;
 						if (use_real_ref && ENABLE_DPB_REF_SEAM) begin
@@ -1523,8 +1813,9 @@ module decode_stub #(
 			// trav_got_mb gates sticky fetch_done: without it the handler re-fires
 			// every cycle after the first complete (fetch_done stays high until the
 			// next fetch_start) and either spams store writes or starves the walker.
-			end else if (!p_fetch_launch_pending && dpb_fetch_done && trav_got_mb) begin
+			end else if (!p_chr_wait && !p_fetch_launch_pending && dpb_fetch_done && trav_got_mb) begin
 				// Capture Clip1(pred+residual) via inter_recon_* (TB taps these).
+				// p_chr_wait blocks stale sticky fetch_done while residual runs first.
 				inter_capture_valid <= dpb_inter_ok;
 				lat_inter_recon_ok <= lat_inter_recon_ok | dpb_inter_ok;
 				// Publish product MV actually consumed by this fetch.
@@ -1547,10 +1838,11 @@ module decode_stub #(
 				end
 				// Consume this fetch result (sticky fetch_done stays high).
 				trav_got_mb <= 1'b0;
-				// Self-produced ref: park Clip1 samples for EVERY fetched MB.
-				// Previously gated on dpb_inter_ok — that skipped store writes when
-				// pred_y_valid[0] was low, leaving cold-128 holes in the reference.
+				// Residual already applied (or none); store Clip1 immediately.
 				if (use_real_ref) begin
+					p_chr_wait <= 1'b0;
+					p_fetch_done_hold <= 1'b0;
+					p_chr_done_latched <= 1'b0;
 					recon_store_write_mb <= lat_p_mb_addr;
 					recon_store_write_start <= 1'b1;
 					recon_store_pending <= 1'b1;
@@ -1587,6 +1879,10 @@ module decode_stub #(
 						lat_p_part_count <= trav_part_count;
 						lat_p_uses_sub_mb <= trav_uses_sub_mb;
 						lat_p_intra <= trav_intra;
+						lat_p_cbp <= trav_cbp;
+						p_chr_wait <= 1'b0;
+						p_fetch_done_hold <= 1'b0;
+						p_chr_done_latched <= 1'b0;
 						trav_got_mb <= 1'b1;
 						dpb_fetch_start <= 1'b1;
 						p_fetch_launch_pending <= 1'b1;
@@ -1608,9 +1904,10 @@ module decode_stub #(
 					end
 				end
 				// else: stay in FETCH waiting for next trav_mb_valid
-			end else if (!p_fetch_launch_pending && !dpb_fetch_busy && !trav_got_mb && !recon_store_pending) begin
+			end else if (!p_fetch_launch_pending && !dpb_fetch_busy && !trav_got_mb &&
+			            !recon_store_pending && !p_chr_wait) begin
 				// Idle in FETCH waiting for next event
-				if (trav_mb_ready) begin
+				if (trav_mb_ready && !p_chr_busy) begin
 					lat_p_skip <= trav_mb_skip;
 					lat_p_mb_x <= trav_mb_x;
 					lat_p_mb_y <= trav_mb_y;
@@ -1619,12 +1916,21 @@ module decode_stub #(
 					lat_p_part_count <= trav_part_count;
 					lat_p_uses_sub_mb <= trav_uses_sub_mb;
 					lat_p_intra <= trav_intra;
+					lat_p_cbp <= trav_cbp;
+					// Wait residual for any non-skip chroma CBP, including Intra-in-P (I_16x16).
+					p_chr_wait <= use_real_ref && (trav_cbp[5:4] != 2'd0);
+					p_fetch_done_hold <= 1'b0;
+					p_chr_done_latched <= 1'b0;
+					p_chr_clear_mb <= use_real_ref;
+					p_chr_snap_vld <= 1'b0;
 					lat_mvd_x <= 16'sd0;
 					lat_mvd_y <= 16'sd0;
 					trav_got_mb <= 1'b1;
-					dpb_fetch_start <= 1'b1;
-					p_fetch_launch_pending <= 1'b1;
-				end else if (trav_slice_pending || trav_slice_done) begin
+					if (!(use_real_ref && (trav_cbp[5:4] != 2'd0))) begin
+						dpb_fetch_start <= 1'b1;
+						p_fetch_launch_pending <= 1'b1;
+					end
+				end else if ((trav_slice_pending || trav_slice_done) && !p_chr_wait) begin
 					trav_slice_pending <= 1'b0;
 					trav_active_slice <= 1'b0;
 					if (use_real_ref && ENABLE_DPB_REF_SEAM) begin
@@ -1661,6 +1967,11 @@ module decode_stub #(
 			end
 			end else begin
 			// Paint full frame
+			// Hold first paint pixel until place-path shared serial IQ latched
+			// (MB0 diagnostic + unit TB recon_sig). Combo dequant is gone.
+			if (lat_res_ok && !leg_diag_valid && !first_mb_p_skip) begin
+				wr_en <= 1'b0;
+			end else begin
 			wr_en    <= 1'b1;
 			wr_pixel <= px_comb;
 			if (pix_i == 0) begin
@@ -1706,6 +2017,7 @@ module decode_stub #(
 				end else
 					x <= x + 1'd1;
 			end
+			end // paint after leg IQ hold
 		end
 		end
 	end

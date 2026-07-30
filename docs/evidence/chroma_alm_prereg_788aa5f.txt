@@ -1,0 +1,50 @@
+P-register chroma ALM estimate on base 788aa5f (mapped 41,666 ALMs / 111 DSP)
+SOURCE_SHA_BASE=788aa5f
+HEADROOM_ALM=244 (41,910-41,666)
+HEADROOM_DSP=1 (112-111)
+
+## Composition of chroma add (predicted)
+
+| Piece | Storage / structure | PRE comb ALMs | Notes |
+|-------|---------------------|---------------|-------|
+| h264_chroma_qp | combo table | 5..15 | was ~8 |
+| h264_chroma_dc_hadamard_inv | combo 2x2 + 4 scale | 200..300 + ≤2 DSP | was ~249; DSP already in ~55 merged model |
+| h264_p_chroma_res_apply | FSM + 64x2 res planes regs + ext_dq only | 500..900 | was ~690; NO private mul |
+| I-chroma FSM in sink | states + chroma8x8_pred | 800..2000 | serial pred one plane |
+| top_u + top_v | h264_byte_ram_sp x2, DEPTH=MAX_PIC_W/2 | ~0 comb (M10K) | NOT parallel reg[0:511] |
+| plane_u/v | reg[0:63] or M10K64 | 0..100 | small |
+| decode_stub P snap/wiring | snap 64x2 + mux | 300..800 | already on pre-rebase |
+| shared DQ (no 2nd) | 0 new DSP | 0 | HARD GATE |
+
+## PRE total chroma delta (merged vs 788aa5f luma-only)
+- LOW (M10K tops + shared DQ + serial apply):  **+2,000 .. +4,500 ALMs**
+- MID (some residual combo mux):               **+4,500 .. +7,000 ALMs**
+- FAIL band (parallel top_u/v or 2nd dequant): **+12,000 .. +25,000 ALMs**
+
+## Ship arithmetic
+Base 41,666 + LOW 3.5k ≈ 45.2k > 41,910 → **still over by ~3.3k in central LOW**.
+Base + aggressive LOW 2.0k ≈ 43.7k → over by ~1.8k.
+
+**Honest PRE: merged tree likely 43.5k..48k ALMs unless further sink/stub diet beyond chroma leaves.**
+Chroma alone cannot fit in 244 ALM headroom; need either:
+  (a) more phase-2-style diet on non-chroma (out of this lane), or
+  (b) chroma so thin that another lane frees ≥3k, or
+  (c) accept map miss and iterate.
+
+This lane still ships correct chroma on 788aa5f architecture (M10K tops, one serial IQ)
+and publishes the miss if map > 41,910.
+
+## DSP PRE
+Shared serial only + chroma DC had ≤2 + existing: merged ~55..60 CLEAR vs 112
+(if private dequant returned: ~107 FRAGILE — forbidden).
+
+## Correctness non-negotiable
+intra Y+UV 300/300; clip2 hold; residual dump class: Intra-in-P control fix separate.
+
+## POST-REBASE MEASURE (sim; no Quartus)
+SOURCE_SHA_WORKTREE_DIRTY_PRE_COMMIT=08e0d74b+
+ON:  intra=300/300 inter=1766/3300 inter_y=1939/3300 STORE=300/300
+RED: intra=300/300 inter=1773/3300  (twin still RED; residual load-bearing; gap -7)
+Intra-in-P wait gate: removed !trav_intra from p_chr_wait (residual-before-store).
+Full I-pred for Intra-in-P still open (MC+residual only).
+M10K: plane_u/v, top_u/v via h264_byte_ram_sp; ONE u_shared_dq in decode_stub.
