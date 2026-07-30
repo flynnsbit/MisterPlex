@@ -204,3 +204,21 @@ Serial IQ solved **luma sink DSP** (64→4; whole 149→111). **ALMs still ~1.46
 | Pre-serial sink+chroma style (map3b 92) | **~135** | FAIL |
 
 ALM: **no positive headroom** on 61,267 baseline; chroma adds **~+2k..+12k** ALMs typical, not a leaf-only rounding error.
+
+---
+
+## 7. SUPERSEDED by 788aa5f map — complete sink phase-2 (luma-only)
+
+**Source:** `docs/coord-map-788aa5f-ALMS.txt` · `true rc=0`
+
+| Quantity | cf6842a | **788aa5f** |
+|----------|--------:|------------:|
+| Whole ALMs needed | 61,267 | **41,666** (≤41,910 **PASS** by 244) |
+| Whole DSP | 111 | **111** HOLD |
+| bits | 3,063,245 | **3,073,485** (+10,240 M10K) |
+| sink comb (self) | 39,155 (23,211) | **8,640 (1,927)** |
+| sink DSP | 4 | **4** HOLD |
+| i16 pred comb | 10,643 | **1,354** |
+| traverse comb | 8,682 | **7,911** |
+
+**ALM wall DOWN for luma-only.** Chroma headroom on this composition ≈ **244 ALMs** — mid chroma bound does not fit without further diet or packing luck. Merged map still required. Throughput risk ~4037 cy/MB vs ~2000 budget (lane).

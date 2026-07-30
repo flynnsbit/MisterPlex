@@ -1,10 +1,11 @@
 # Cycle-iterative sink redesign brief (implementable)
 
-> **STATUS 2026-07-30 (coord-map-cf6842a, PROVISIONAL):** serial IQ **mapped**.  
-> sink **DSP 4 ≤ 12 PASS** · sink **comb 39,155 (self 23,211) ALM-GATE MISS** · whole **61,267 ALMs / 111 DSP / 3,063,245 bits**.  
-> Serial dequant/had **not pruned** (u_dq DSP=2, u_had DSP=2). Planes/top_row still **0 M10K bits**.  
-> ALM remaining wall: sink self + intra16 pred (10,643 comb) — not the mul farm.  
-> Full table: `docs/coord-map-cf6842a-ALMS.txt`. Correctness@cf6842a still owed by implementer.
+> **STATUS 2026-07-30 (coord-map-788aa5f, LUMA-ONLY):** complete phase-2 mapped.  
+> whole **41,666 ALMs / 111 DSP / 3,073,485 bits** — ALMs **under** 41,910 by 244.  
+> sink **8,640 comb (self 1,927) / DSP 4** · i16 pred **1,354** · plane_y+top_row M10K (276029).  
+> **Not ship-fit** (chroma out; headroom ~244 ALMs on this composition). Throughput ~4037 cy/MB.  
+> Full: `docs/coord-map-788aa5f-ALMS.txt`.
+
 
 
 **Module:** `h264_i_res_recon_sink.sv` (+ shared `h264_iq_idct_4x4.sv`, pred units)  

@@ -1,0 +1,118 @@
+COORD-MAP 788aa5f — complete sink phase-2 · **LUMA-ONLY**
+=========================================================
+Freeze: 788aa5f6 on rtl/sink-contract-phase2
+  = f91fbe3 serial I16 pred + 788aa5f plane_y/top_row M10K + serial nb
+  on cf6842a serial IQ + M10K RBSP traverse
+Correctness: f82400a5 — clip1 300/300 y_px exact, clip2 1170/1170, source_sha=788aa5f
+Map tree: product wire6 + map_decode_area_probe (same as cf6842a)
+  overlay byte-exact: sink, intra_pred, byte_ram_sp @ 788aa5f6
+Build: /home/flynnsbit/mplex-builds/coord-map-788aa5f/Plex_MiSTer
+Log:   .agent-work/integ-wiring/quartus_map_788aa5f.log
+Tool:  docker ghcr.io/raetro/quartus:mister · quartus_map only · NO FIT
+true rc=0  (captured directly)
+
+**LUMA-ONLY.** Chroma not included. Even under 41,910 this is **not a ship-fit claim.**
+Chroma bound still docs/chroma-merge-area-bound.md. Next ship-relevant map = merged rebase.
+
+PRE-REGISTER → OUTCOME
+----------------------
+whole ALMs 34k..50k (pt ~41k)     → **HIT  41,666**  (≤41,910 by 244)
+whole DSP  108..115 (pt ~111)     → **HIT  111**     (hold; no regression)
+sink DSP hold 4..6                → **HIT  4**
+sink comb 5k..18k (pt ~10k)       → **HIT  8,640** (self 1,927)
+i16 pred  200..2500               → **HIT  1,354** (was 10,643)
+M10K plane+top +2048..+10240      → **HIT  +10,240** bits; Info 276029 both
+falsify ≥55k ALMs / sink DSP≥8    → cleared
+
+WHOLE DESIGN
+------------
+  ALMs needed     **41,666**   vs device 41,910  = **0.994×**  UNDER by 244
+  DSP Blocks         **111**   vs device    112  = under by 1 (HOLD vs cf6842a)
+  block memory  **3,073,485**  vs 5,662,720      = 54.3%  (+10,240 vs cf6842a)
+  registers       48,487
+
+Progression (same probe method, luma-only):
+  map2d bomb     1,241,952 ALMs ·  ~30×
+  d57f002        63,199 · 1.51×   (M10K RBSP)
+  cf6842a        61,267 · 1.46×   (serial IQ)
+  **788aa5f      41,666 · 0.994×  (serial I16 + plane/top M10K)**  ← ALM wall DOWN
+
+ENTITY (comb ALUTs total (self) · regs · bits · DSP)
+----------------------------------------------------
+map_decode_area_probe          26,818 (35)     26,109    75,776    37
+  probe parallel u_had          1,557 (1,497)       0         0    32
+  **h264_i_res_recon_sink**     **8,640 (1,927)** 4,971   **10,240** **4**
+    u_plane_y byte_ram              0 (0)           0     2,048     0
+    u_top_row byte_ram              0 (0)           0     8,192     0
+    dequant4x4_serial             290 (231)       689         0     2
+    i16_dc_hadamard_serial      1,441 (1,382)     525         0     2
+    idct4x4                     1,898 (1,898)       0         0     0
+    **intra16x16_pred**         **1,354 (1,354)** 335         0     0
+    intra4x4_pred               1,314 (1,314)       0         0     0
+    recon4x4                      416 (416)         0         0     0
+  **h264_p_mb_traverse**        **7,911 (5,787)** 6,573    65,536     1
+    u_rbsp_ram                      0               0    65,536     0
+    cavlc                       1,960 (1,960)     713         0     0
+  h264_recon_frame_store        8,461 (8,461)  14,358         0     0
+  h264_recon_export               214 (214)       188         0     0
+stub parallel dequant             584 / DSP 32  (still product path)
+
+PER-MODULE DELTA vs cf6842a
+---------------------------
+  sink total comb   39,155 → **8,640**   (−30,515, ~4.5×)
+  sink self comb    23,211 → **1,927**   (−21,284)
+  sink DSP               4 → **4**       HOLD
+  i16 pred comb     10,643 → **1,354**   (−9,289, ~7.9×)
+  traverse comb      8,682 → **7,911**   (−771)
+  whole ALMs        61,267 → **41,666**  (−19,601)
+  whole DSP            111 → **111**     HOLD
+  bits         3,063,245 → **3,073,485** (+10,240)
+
+M10K — quoted inference (not from low ALM)
+------------------------------------------
+  Info (276029) … u_sink|h264_byte_ram_sp:u_plane_y|mem_rtl_0  → 2,048 bits
+  Info (276029) … u_sink|h264_byte_ram_sp:u_top_row|mem_rtl_0   → 8,192 bits
+  Info (276029) … u_trav|h264_byte_ram_sp:u_rbsp_ram|mem_rtl_0 → 65,536 bits
+  Entity bits match: plane 2048 + top 8192 + rbsp 65536 = 75,776 in probe mem column.
+  Headroom: 5,662,720 − 3,073,485 = **2,589,235 bits free (~45.7%)**.
+  +RFS 921,600 → ~70% — still not the wall.
+
+DSP
+---
+  sink 4 = u_dq 2 + u_had 2 — serial IQ intact, **no new mult from plane pred**.
+  Whole 111 holds cf6842a. Gate 112 PASS by 1.
+  A DSP regression here would have been worse than an ALM miss — **did not happen**.
+
+GATES
+-----
+  whole ALMs ≤41,910     **PASS** (41666) — luma-only map composition
+  whole DSP ≤112         **PASS** (111)
+  sink DSP ≤12           **PASS** (4)
+  sink ALM ≤4000         no entity ALMs; self comb 1927 — much closer; total comb 8640
+  traverse ≤3000 ALM     still no entity ALMs; self comb 5787 — still MISS if gate is ALM
+  plane/top M10K         **PASS** (276029 + bits)
+  correctness@788aa5f    lane attested (f82400a5)
+  **ship-fit**           **NO** — luma-only; chroma unbound on this tree
+
+CHROMA HEADROOM (input to sv-mvd merge)
+---------------------------------------
+  Device − this whole = 41,910 − 41,666 = **244 ALMs** on probe-style composition.
+  Prior chroma bound +2k..+5k low / +5k..+12k mid **exceeds 244**.
+  So: **luma ALM wall is down, but this map leaves essentially no spare ALMs for
+  chroma on the same composition.** Product-without-probe is smaller in absolute
+  terms (map1 21,645 product-only) yet still hosts the same sink/traverse entities;
+  do not invent a large chroma cushion without a merged map.
+  Merged map remains mandatory before any ship-fit sentence.
+
+THROUGHPUT (lane-measured, not this map)
+----------------------------------------
+  paint_per_mb frame0: clip1 **4036.9**, clip2 **3977.9** vs budget ~2000 cy/MB
+  → **THROUGHPUT_RISK ~2× OVER** (stacked serial RBSP + IQ + I16 + nb + RMW).
+  Area win traded cycles. Re-check before fit; may need clock/parallel slice later.
+
+HONEST FRAMING
+--------------
+This morning: ~30× oversized, DSP-blocked.
+Now (luma-only, complete phase-2): **~1.00× ALMs (under by 244), DSP 111/112,
+M10K inferred for RBSP+plane_y+top_row, bit-exact on two clips.**
+Chroma still out; throughput ~2× budget; ship-fit only after merged map.
