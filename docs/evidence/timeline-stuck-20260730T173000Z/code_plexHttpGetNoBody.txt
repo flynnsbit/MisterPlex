@@ -1,0 +1,7 @@
+bool plexHttpGetNoBody(const std::string& url,
+                       const std::vector<std::pair<std::string, std::string>>& headers,
+                       int timeoutSec) {
+    const bool defaultIdentity = !hasHeader(headers, "X-Plex-Client-Identifier");
+    const std::string body = httpGet(url, timeoutSec, curlHeaderArgs(headers), defaultIdentity);
+    return !body.empty();
+}

@@ -1,0 +1,84 @@
+TS=2026-07-30T173310Z
+=== identities ===
+.41:  machineIdentifier=
+machineIdentifier=4edd44aac1de0b731553a3a187104ecd175571a0
+version=1.0
+version=1.43.3.10828-00f62d37d
+plex.direct: machineIdentifier=1cdd1b7f718cb9f111a2a92abcdd50c7733d14fe
+version=1.0
+version=1.43.3.10828-00f62d37d
+=== conf ===
+PLEX_BASE=http://192.168.1.41:32400
+PLEX_HOST=192.168.1.41
+DECODE=320x240
+PRESENT_PROFILE=0
+=== 401 empty-body test ===
+http=401 bytes=91
+true rc=0
+body_empty=NO
+<html><head><title>Unauthorized</title></head><body><h1>401 Unauthorized</h1></body></html>
+=== .41 timeline conf token HTTP ===
+http=200
+true rc=0
+<?xml version="1.0" encoding="UTF-8"?>
+<MediaContainer size="0" playbackState="progress" skipCount="0" viewCount="0" viewOffset="-1">
+</MediaContainer>
+
+=== rk40868 on .41 ===
+<html><head><title>Not Found</title></head><body><h1>404 Not Found</h1></body></html>http=404
+
+=== playMedia line for user cast (plex.direct) ===
+61:HTTP IN GET /player/playback/playMedia?key=%2Flibrary%2Fmetadata%2F6&offset=0&commandID=real-cast-v10&protocol=http&address=192.168.1.41&port=32400&machineIdentifier=4edd44aac1de0b731553a3a187104ecd175571a0&X-Plex-Token=REDACTED HTTP/1.1
+62:HTTP OUT 200 playMedia <Timeline type="video" state="buffering" time="0" duration="0" volume="100" mute="0" controllable="playPause,stop,volume,audioStream,subtitleStream,seekTo,skipPrevious,skipNext,stepBack,stepForward" location="fullScreenVideo" mediaIndex="0"
+63:playMedia ACK key=/library/metadata/6 offMs=0
+180:HTTP IN GET /player/playback/playMedia?key=%2Flibrary%2Fmetadata%2F6&offset=0&commandID=real-cast-v10&protocol=http&address=192.168.1.41&port=32400&machineIdentifier=4edd44aac1de0b731553a3a187104ecd175571a0&X-Plex-Token=REDACTED HTTP/1.1
+181:HTTP OUT 200 playMedia <Timeline type="video" state="buffering" time="0" duration="0" volume="100" mute="0" controllable="playPause,stop,volume,audioStream,subtitleStream,seekTo,skipPrevious,skipNext,stepBack,stepForward" location="fullScreenVideo" mediaIndex="0"
+182:playMedia ACK key=/library/metadata/6 offMs=0
+263:HTTP IN GET /player/playback/playMedia?key=%2Flibrary%2Fmetadata%2F12&offset=0&commandID=p480-bit4_0&protocol=http&address=192.168.1.41&port=32400&machineIdentifier=4edd44aac1de0b731553a3a187104ecd175571a0&X-Plex-Token=REDACTED HTTP/1.1
+264:HTTP OUT 200 playMedia <Timeline type="video" state="buffering" time="0" duration="0" volume="100" mute="0" controllable="playPause,stop,volume,audioStream,subtitleStream,seekTo,skipPrevious,skipNext,stepBack,stepForward" location="fullScreenVideo" mediaIndex="0"
+265:playMedia ACK key=/library/metadata/12 offMs=0
+328:HTTP IN GET /player/playback/playMedia?key=%2Flibrary%2Fmetadata%2F12&offset=0&commandID=p480-bit4_1&protocol=http&address=192.168.1.41&port=32400&machineIdentifier=4edd44aac1de0b731553a3a187104ecd175571a0&X-Plex-Token=REDACTED HTTP/1.1
+329:HTTP OUT 200 playMedia <Timeline type="video" state="buffering" time="0" duration="0" volume="100" mute="0" controllable="playPause,stop,volume,audioStream,subtitleStream,seekTo,skipPrevious,skipNext,stepBack,stepForward" location="fullScreenVideo" mediaIndex="0"
+330:playMedia ACK key=/library/metadata/12 offMs=0
+397:HTTP IN GET /player/playback/playMedia?key=%2Flibrary%2Fmetadata%2F12&offset=0&commandID=p480-restored_0&protocol=http&address=192.168.1.41&port=32400&machineIdentifier=4edd44aac1de0b731553a3a187104ecd175571a0&X-Plex-Token=REDACTED HTTP/1.1
+398:HTTP OUT 200 playMedia <Timeline type="video" state="buffering" time="0" duration="0" volume="100" mute="0" controllable="playPause,stop,volume,audioStream,subtitleStream,seekTo,skipPrevious,skipNext,stepBack,stepForward" location="fullScreenVideo" mediaIndex="0"
+399:playMedia ACK key=/library/metadata/12 offMs=0
+495:HTTP IN GET /player/playback/playMedia?key=%2Flibrary%2Fmetadata%2F12&offset=0&commandID=p480ab-240p HTTP/1.1
+496:HTTP OUT 200 playMedia <Timeline type="video" state="buffering" time="0" duration="0" volume="100" mute="0" controllable="playPause,stop,volume,audioStream,subtitleStream,seekTo,skipPrevious,skipNext,stepBack,stepForward" location="fullScreenVideo" mediaIndex="0"
+497:playMedia ACK key=/library/metadata/12 offMs=0
+988:HTTP IN GET /player/playback/playMedia?key=%2Flibrary%2Fmetadata%2F12&offset=0&commandID=p480ab-480p HTTP/1.1
+989:HTTP OUT 200 playMedia <Timeline type="video" state="buffering" time="0" duration="0" volume="100" mute="0" controllable="playPause,stop,volume,audioStream,subtitleStream,seekTo,skipPrevious,skipNext,stepBack,stepForward" location="fullScreenVideo" mediaIndex="0"
+=== timeline host counts 40868 ===
+59
+0
+146
+=== sample pms timeline times (40868) ===
+0
+81259
+182671
+284086
+385497
+487394
+1098866
+0
+0
+10521
+1087000
+1097425
+1098866
+=== HTTP OUT timeline times early/mid ===
+HTTP OUT 200 timeline <Timeline type="video" state="playing" time="0" duration="5484416" seekRange="0-5484416" volume="100" mute="0" controllable="playPause,stop,volume,audioStream,subtitleStream,seekTo,skipPrevious,skipNext,stepBack,stepForward" location="fullS
+HTTP OUT 200 timeline <Timeline type="video" state="playing" time="0" duration="5484416" seekRange="0-5484416" volume="100" mute="0" controllable="playPause,stop,volume,audioStream,subtitleStream,seekTo,skipPrevious,skipNext,stepBack,stepForward" location="fullS
+HTTP OUT 200 timeline <Timeline type="video" state="playing" time="0" duration="5484416" seekRange="0-5484416" volume="100" mute="0" controllable="playPause,stop,volume,audioStream,subtitleStream,seekTo,skipPrevious,skipNext,stepBack,stepForward" location="fullS
+HTTP OUT 200 timeline <Timeline type="video" state="playing" time="1097425" duration="5484416" seekRange="0-5484416" volume="100" mute="0" controllable="playPause,stop,volume,audioStream,subtitleStream,seekTo,skipPrevious,skipNext,stepBack,stepForward" location=
+HTTP OUT 200 timeline <Timeline type="video" state="playing" time="1098044" duration="5484416" seekRange="0-5484416" volume="100" mute="0" controllable="playPause,stop,volume,audioStream,subtitleStream,seekTo,skipPrevious,skipNext,stepBack,stepForward" location=
+HTTP OUT 200 timeline <Timeline type="video" state="playing" time="1098044" duration="5484416" seekRange="0-5484416" volume="100" mute="0" controllable="playPause,stop,volume,audioStream,subtitleStream,seekTo,skipPrevious,skipNext,stepBack,stepForward" location=
+HTTP IN GET /player/playback/playMedia?address=75-30-183-153%2E97f3493ee5664b189b604e11500b0a5e%2Eplex%2Edirect&commandID=1&containerKey=%2FplayQueues%2F144481%3Fown%3D1&key=%2Flibrary%2Fmetadata%2F40868&machineIdentifier=1cdd1b7f718cb9f111a2a92abcdd50c7733d14fe&offset=0&port=32400&protocol=https&providerIdentifier=com%2Eplexapp%2Eplugins%2Elibrary&token=REDACTED&type=video HTTP/1.1
+playMedia ACK key=/library/metadata/40868 offMs=0
+HTTP IN GET /player/playback/playMedia?address=75-30-183-153%2E97f3493ee5664b189b604e11500b0a5e%2Eplex%2Edirect&commandID=1&containerKey=%2FplayQueues%2F144482%3Fown%3D1&key=%2Flibrary%2Fmetadata%2F40868&machineIdentifier=1cdd1b7f718cb9f111a2a92abcdd50c7733d14fe&offset=497000&port=32400&protocol=https&providerIdentifier=com%2Eplexapp%2Eplugins%2Elibrary&token=REDACTED&type=video HTTP/1.1
+playMedia ACK key=/library/metadata/40868 offMs=497000
+HTTP IN GET /player/playback/playMedia?key=%2Flibrary%2Fmetadata%2F12&offset=0&commandID=p480ab-480p HTTP/1.1
+HTTP IN GET /player/playback/playMedia?key=/library/metadata/6&offset=0&commandID=hdmi-probe&protocol=http&address=192.168.1.41&port=32400&machineIdentifier=4edd44aac1de0b731553a3a187104ecd175571a0&X-Plex-Token=REDACTED HTTP/1.1
+HTTP IN GET /player/playback/playMedia?key=%2Flibrary%2Fmetadata%2F12&offset=0&commandID=headroom-480&protocol=http&address=192.168.1.41&port=32400&machineIdentifier=4edd44aac1de0b731553a3a187104ecd175571a0&X-Plex-Token=REDACTED HTTP/1.1
+HTTP IN GET /player/playback/playMedia?address=75-30-183-153%2E97f3493ee5664b189b604e11500b0a5e%2Eplex%2Edirect&commandID=1&containerKey=%2FplayQueues%2F144481%3Fown%3D1&key=%2Flibrary%2Fmetadata%2F40868&machineIdentifier=1cdd1b7f718cb9f111a2a92abcdd50c7733d14fe&offset=0&port=32400&protocol=https&providerIdentifier=com%2Eplexapp%2Eplugins%2Elibrary&token=REDACTED&type=video HTTP/1.1
+HTTP IN GET /player/playback/playMedia?address=75-30-183-153%2E97f3493ee5664b189b604e11500b0a5e%2Eplex%2Edirect&commandID=1&containerKey=%2FplayQueues%2F144482%3Fown%3D1&key=%2Flibrary%2Fmetadata%2F40868&machineIdentifier=1cdd1b7f718cb9f111a2a92abcdd50c7733d14fe&offset=497000&port=32400&protocol=https&providerIdentifier=com%2Eplexapp%2Eplugins%2Elibrary&token=REDACTED&type=video HTTP/1.1
