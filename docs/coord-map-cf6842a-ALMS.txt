@@ -1,0 +1,135 @@
+COORD-MAP cf6842a — serial-IQ sink + win_k fix (PROVISIONAL)
+============================================================
+Freeze: cf6842a on rtl/i-slice-luma
+  = 34d55ac (serial IQ sink) + win_k Error 10232 fix (RBSP_AW'(win_k))
+Map tree: product wire6 + map_decode_area_probe (same anti-prune as d57f002)
+  overlay byte-exact: sink, dequant4x4_serial, i16_dc_hadamard_serial,
+  p_mb_traverse, byte_ram_sp from cf6842a
+  files.qip = d57f002 base + serial entries (cf6842a files.qip broke mc_block bind)
+  probe: res_blk_coeff = trav_coeff (sink owns serial had; u_had kept live)
+Build: /home/flynnsbit/mplex-builds/coord-map-cf6842a/Plex_MiSTer
+Log:   .agent-work/integ-wiring/quartus_map_cf6842a.log
+Tool:  docker ghcr.io/raetro/quartus:mister · quartus_map only · NO FIT
+true rc=0  (captured directly)
+
+PROVISIONAL — correctness package for cf6842a itself (both clips + RED
+FAULT_SERIAL_IQ_ZERO at this SHA) not yet attested by integrate. Area alone
+must not be quoted as a product win. 34d55ac claimed 300/300 + 1170/1170 + RED;
+win_k fix re-scored at cf6842a; serial-IQ+win_k together need one more score pass.
+
+PRE-REGISTER (before map) → OUTCOME
+-----------------------------------
+sink comb ALUTs  3,000..12,000 (pt ~6k)     → MISS  39,155 total / 23,211 self
+sink DSP         2..10 (pt ~4), gate ≤12    → HIT   4 DSP
+whole ALMs       28k..45k (pt ~35k)         → MISS  61,267 needed
+whole DSP        78..95 (pt ~85), gate 112  → thin  111 (includes probe parallel had 32
+                                                    + stub parallel dequant 32)
+serial dequant shared not pruned            → YES   u_dq DSP=2, ALUT 299, not 0
+M10K rbsp still inferred                    → YES   Info 276029 + 65536 bits
+
+WHOLE DESIGN (map summary)
+--------------------------
+  ALMs needed     61,267   vs device 41,910  = 1.46×  (d57f002 was 63,199 / 1.51×)
+  DSP Blocks         111   vs device    112  = under by 1
+  block memory 3,063,245   vs 5,662,720      = 54.1%  (unchanged vs d57f002)
+  registers       60,086
+
+d57f002 → cf6842a delta (same probe method):
+  ALMs needed  63,199 → 61,267   (−1,932)
+  DSP             149 →    111   (−38)
+  bits      3,063,245 → 3,063,245 (0)
+
+ENTITY TABLE (comb ALUTs total (self) · regs · bits · DSP)
+----------------------------------------------------------
+map_decode_area_probe          56,055 (35)     37,711    65,536    37
+  h264_i16_dc_hadamard u_had    1,557 (1,497)       0         0    32  ← PROBE ONLY parallel
+  h264_i_res_recon_sink u_sink 39,155 (23,211) 16,573         0     4
+    h264_dequant4x4_serial        299 (239)       689         0     2
+    h264_i16_dc_hadamard_serial 1,442 (1,383)     525         0     2
+    h264_idct4x4                1,898 (1,898)       0         0     0
+    h264_intra16x16_pred       10,643 (10,643)  2,285         0     0
+    h264_intra4x4_pred          1,246 (1,246)       0         0     0
+    h264_recon4x4                 416 (416)         0         0     0
+  h264_p_mb_traverse            8,682 (6,574)   6,573    65,536     1
+    h264_byte_ram_sp                0 (0)           0    65,536     0
+    h264_cavlc_residual_block   1,944 (1,944)     713         0     0
+  h264_recon_frame_store        6,413 (6,413)  14,358         0     0
+  h264_recon_export               213 (213)       188         0     0
+
+decode_stub path (still live product parallel dequant):
+  h264_dequant4x4               584 (525) · DSP 32
+
+SINK GATES
+----------
+  DSP  4 ≤ 12                    → DSP-PASS (serial IQ did the job)
+  ALM  no per-entity ALMs at map → not ALM-PASS
+       self comb 23,211 >> 4,000 → ALM-GATE MISS (same discipline as traverse)
+  comb total 39,155 vs d57f002 38,687 → essentially flat (serial IQ ≠ ALM diet)
+
+SERIAL IQ — not pruned (quoted, not inferred from low count)
+-----------------------------------------------------------
+  u_dq  h264_dequant4x4_serial : DSP Blocks = 2, comb 299, regs 689
+  u_had h264_i16_dc_hadamard_serial : DSP Blocks = 2, comb 1,442, regs 525
+  Both have live lpm_divide children (qp path), non-zero DSP → multipliers present
+  and shared, not a zero-DSP prune. Hierarchy under u_sink, not elided.
+
+M10K
+----
+  h264_byte_ram_sp: Info (276029) Inferred altsyncram … u_rbsp_ram|mem_rtl_0
+  Entity bits 65,536 · Simple Dual Port 8192×8 (same as d57f002)
+  sink plane_y/u/v + top_row: Block Memory Bits = 0 (uninferred regs; self 13,074 regs)
+  RFS still 0 M10K bits / 6,413 comb / 14,358 regs (async-uninfer pattern)
+
+M10K HEADROOM
+-------------
+  used now     3,063,245 / 5,662,720  (54.1%)  free 2,599,475
+  + sink small arrays if inferred (~11 Kibit) → negligible
+  + RFS product 300 MB × 384 B = 921,600 bits → total ~3.98M (~70%) free ~1.68M
+  Memory is NOT the wall after ALM/DSP solve. Dual-read replication still a risk.
+
+FIT ARITHMETIC (verify parent ~29k / ~97 DSP)
+--------------------------------------------
+Parent hoped: sink at ≤4k ALM + ≤12 DSP → ~29k ALMs and ~97 DSP.
+
+ALMs — REJECT ~29k as achieved:
+  Whole ALMs needed measured 61,267. Sink comb barely moved (−0 from ~38.7k).
+  Cannot subtract comb ALUTs from whole ALMs. Sink diet did NOT deliver ALMs.
+  Remaining sink bomb is NOT the mul farm — it is:
+    self logic 23,211 + i16 pred 10,643 + idct 1,898 + i4 1,246 + …
+  i16 pred alone is ~10.6k comb. Serial IQ was necessary and insufficient for ALMs.
+
+DSP — parent ~97 directionally right for product-intent if stub drops parallel dequant:
+  whole map DSP 111 includes:
+    probe parallel had 32 + sink serial 4 + traverse 1 + stub parallel dequant 32 + rest
+  probe total DSP 37 → product-without-probe proxy 111−37 = 74 (matches old product ~74)
+  replace stub parallel dequant 32 with serial sink 4: 74−32+4 = 46 DSP  << 112
+  So DSP is solved for product-intent once parallel stub dequant is retired.
+  Map whole 111 is already ≤112 only because serial sink replaced the probe-side
+  64-DSP farm; removing probe had would drop further.
+
+  dequant_one baseline: retrospective. Isolate was DSP 17; serial u_dq measures 2.
+  Skip further baseline ceremony (parent instruction).
+
+HONEST FRAMING (update)
+-----------------------
+After traverse M10K restructure the design went 29.6× → 1.51×. Serial IQ sink
+moves DSP 149 → 111 (under device by 1) and sink DSP 64 → 4 (≤12 PASS), but
+ALMs needed only 63,199 → 61,267. The decoder is still ~1.46× oversized on ALMs.
+The remaining wall is sink fabric (self + intra16 pred + idct planes as regs),
+not the multiplier farm. DSP is no longer the binding constraint for a product
+that retires parallel dequant; ALMs are.
+
+GATES SUMMARY
+-------------
+  sink DSP ≤12          PASS (4)
+  sink ALM ≤4000        MISS (no entity ALMs; self comb 23211)
+  traverse ≤3000 ALM    still MISS (self comb 6574; phase-2 nC open)
+  whole ALMs ≤41910     MISS (61267)
+  whole DSP ≤112        PASS on this map (111) — fragile; probe/stub composition matters
+  M10K rbsp inferred    PASS (276029, 65536 bits)
+  correctness@cf6842a   UNKNOWN / provisional until lane score+RED package
+
+SUPERSEDES
+----------
+  d57f002 sink 38,687 comb / 64 DSP is STALE for serial-IQ claims.
+  d57f002 whole 63,199 ALMs / 149 DSP superseded by this map for freeze cf6842a.

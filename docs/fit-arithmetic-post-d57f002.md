@@ -148,3 +148,48 @@ Parent “~29k ALMs if sink hits 4k” is only valid as a **multi-target composi
 
 sv-integrate holds the next **one** `quartus_map` for the sink freeze SHA from `sv-traverse`.  
 No competing Quartus. No fit/RBF/deploy.
+
+---
+
+## 6. SUPERSEDED by cf6842a map (2026-07-30) — measured serial-IQ
+
+**Source:** `docs/coord-map-cf6842a-ALMS.txt` · `true rc=0` · **PROVISIONAL** until cf6842a score+RED.
+
+| Quantity | d57f002 | **cf6842a** | Unit |
+|----------|--------:|------------:|------|
+| Whole ALMs needed | 63,199 | **61,267** | map ALMs |
+| Ratio vs 41,910 | 1.51× | **1.46×** | |
+| Whole DSP | 149 | **111** | DSP |
+| Whole bits | 3,063,245 | **3,063,245** | bits |
+| sink comb (self) | 38,687 (22,064) | **39,155 (23,211)** | comb ALUTs |
+| sink DSP | 64 | **4** | DSP |
+| traverse comb (self) | 9,167 (7,079) | **8,682 (6,574)** | comb ALUTs |
+| serial dequant DSP | n/a | **2** | DSP |
+| serial had DSP | n/a | **2** | DSP |
+| i16 pred in sink | ~9–10k | **10,643** | comb ALUTs |
+
+### Parent ~29k ALMs after serial-IQ — still REJECT as achieved
+
+Serial IQ **did not** move sink comb (~39k flat). Whole ALMs **61,267** still **1.46×** device.  
+~29k required an ALM diet that **did not happen**. Remaining wall: sink self + `h264_intra16x16_pred` (10,643) + idct/planes as regs (bits=0).
+
+### Parent ~97 DSP — directionally confirmed; product-intent better
+
+```
+whole map DSP                         111   (≤112 PASS on this composition)
+  of which probe total                 37   (parallel had 32 + sink 4 + trav 1)
+product-without-probe proxy       111−37 = 74
+retire stub parallel dequant (−32) + serial sink already in probe path:
+  cleaner product-intent when stub drops parallel dequant ≈ 46 DSP  << 112
+```
+
+**sink DSP 4 ≤ 12: PASS.** dequant isolate baseline (17) is **retrospective** — skip further ceremony.
+
+### M10K headroom (unchanged)
+
+3,063,245 / 5,662,720 used (54%). +RFS 921,600 → ~70%. Sink arrays still **uninferred** (0 bits). Not the wall.
+
+### Honest sentence (post-cf6842a)
+
+Bit-exact I-decoder (lane scores on ancestors) + traverse M10K took the design **29.6× → ~1.5×**.  
+Serial IQ solved **DSP** (sink 64→4; whole 149→111). **ALMs still ~1.46×** — one module (sink fabric/pred/planes), not the mul farm, still blocks fit.
