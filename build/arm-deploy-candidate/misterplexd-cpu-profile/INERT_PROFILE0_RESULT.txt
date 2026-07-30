@@ -1,0 +1,15 @@
+PRESENT_PROFILE=0 INERTNESS RESULT
+prereg: PREREGISTER_PROFILE0_INERT.txt
+base: 568a2c70 md5 see misterplexd-v8-base
+cand: HEAD+8edc5ff md5 see misterplexd-v9-profile0
+base_%onecpu=0.7993 dj=12 du=15.013860
+cand_%onecpu=0.6660 dj=10 du=15.014988
+delta_points=-0.1333
+N1_abs_le_0.5=PASS
+N3_no_profile_lines=PASS
+thread_cpu_lines_cand=0
+present_profile_lines_cand=0
+PROFILE1_sanity_thread_cpu_lines=see v9p1.log
+INERT_VERDICT=PASS
+CODE: thread_cpu only inside logProfile after if (!profilePresent) return;
+      logProfile() only called under if (profilePresent)

@@ -1,0 +1,18 @@
+PRESENT_PROFILE=0 INERTNESS — PRE-REGISTER before A/B measure 2026-07-30
+Baseline binary: 568a2c70 (post-join stopIdle fix, NO thread_cpu dump)
+Candidate binary: HEAD with 8edc5ff thread_cpu (same tree otherwise)
+Conditions: host PRESENT=none PRESENT_PROFILE=0 --play-file clip30s --play-seconds 18
+            same --ffmpeg host binary, no companion flood
+
+NOISE BAND (commit before measure):
+  N1 Absolute: |Δ %onecpu| ≤ 0.5 points  (host path is ~1.2% total; 0.5 is large relative)
+  N2 Relative jiffies: |dm_cand - dm_base| / max(dm_base,1) ≤ 25% over same wall
+     (small absolute jiffies on host make relative noisy; N1 primary)
+  N3 Log: candidate PROFILE=0 log must contain ZERO lines matching
+     "thread_cpu" OR "present_profile"
+  N4 strace-class: not available without extra deps; N3 is the functional proxy
+     that no /proc/task dump path ran (dump only lives inside logProfile which
+     only runs when profilePresent).
+
+PASS inert: N3 AND N1
+FAIL: any thread_cpu/present_profile line at PROFILE=0, or |Δ| > 0.5 %onecpu
