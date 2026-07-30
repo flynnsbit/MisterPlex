@@ -66,6 +66,62 @@ int main() {
         CHECK(!castTargetAccepted(req, self));
     }
 
+    // Trailing OWS on header value must still accept (HTTP field OWS both sides).
+    // Audit probe: "X-Plex-Target-Client-Identifier: misterplex-dev   " was 409.
+    {
+        const std::string req =
+            "GET /player/timeline/subscribe HTTP/1.1\r\n"
+            "X-Plex-Target-Client-Identifier: misterplex-dev   \r\n"
+            "\r\n";
+        std::string got;
+        CHECK(castTargetAccepted(req, self, &got));
+        CHECK(got == "misterplex-dev");
+    }
+    // Leading + trailing OWS.
+    {
+        const std::string req =
+            "GET /player/timeline/poll HTTP/1.1\r\n"
+            "X-Plex-Target-Client-Identifier: \tmisterplex-dev \t\r\n"
+            "\r\n";
+        CHECK(castTargetAccepted(req, self));
+    }
+
+    // Percent-encoded query form must accept (misterplex%2Ddev == misterplex-dev).
+    // Audit probe: raw substring compare rejected legal encoding with 409.
+    {
+        const std::string req =
+            "GET /player/timeline/subscribe?X-Plex-Target-Client-Identifier="
+            "misterplex%2Ddev&commandID=1 HTTP/1.1\r\n\r\n";
+        std::string got;
+        CHECK(castTargetAccepted(req, self, &got));
+        CHECK(got == "misterplex-dev");
+    }
+    // Percent-encoded wrong id still rejects.
+    {
+        const std::string req =
+            "GET /player/timeline/subscribe?X-Plex-Target-Client-Identifier="
+            "misterplex%2D1 HTTP/1.1\r\n\r\n";
+        CHECK(!castTargetAccepted(req, self));
+    }
+
+    // Header wins over query when both present (documented precedence).
+    {
+        const std::string req =
+            "GET /player/timeline/poll?X-Plex-Target-Client-Identifier=misterplex-1 "
+            "HTTP/1.1\r\n"
+            "X-Plex-Target-Client-Identifier: misterplex-dev\r\n"
+            "\r\n";
+        CHECK(castTargetAccepted(req, self));
+    }
+    {
+        const std::string req =
+            "GET /player/timeline/poll?X-Plex-Target-Client-Identifier=misterplex-dev "
+            "HTTP/1.1\r\n"
+            "X-Plex-Target-Client-Identifier: misterplex-1\r\n"
+            "\r\n";
+        CHECK(!castTargetAccepted(req, self));
+    }
+
     if (fails) {
         std::fprintf(stderr, "test_cast_target: %d failure(s)\n", fails);
         return 1;

@@ -146,4 +146,62 @@ if [[ "$NOTARGET" != "200" ]]; then
 fi
 echo "PASS no-target poll still 200"
 
+# Audit probes: trailing OWS and percent-encoded query must ACCEPT (were 409).
+set +e
+# curl trims header values in some builds — send raw request via python.
+TRAIL=$(python3 - <<PY
+import socket
+req = (
+    "GET /player/timeline/subscribe?commandID=4 HTTP/1.1\r\n"
+    "Host: 127.0.0.1:${PORT}\r\n"
+    "X-Plex-Target-Client-Identifier: misterplex-dev   \r\n"
+    "Connection: close\r\n"
+    "\r\n"
+)
+s = socket.create_connection(("127.0.0.1", int("${PORT}")), 3)
+s.sendall(req.encode())
+data = b""
+while True:
+    chunk = s.recv(4096)
+    if not chunk:
+        break
+    data += chunk
+s.close()
+line = data.split(b"\r\n", 1)[0].decode("latin1", "replace")
+print(line.split(" ", 2)[1] if line.startswith("HTTP/") else "000")
+PY
+)
+set -e
+echo "subscribe_trailing_ows http=$TRAIL"
+if [[ "$TRAIL" != "200" ]]; then
+  echo "FAIL: trailing OWS target want 200 got $TRAIL (still over-strict?)" >&2
+  exit 1
+fi
+echo "PASS trailing OWS on target header → 200"
+
+set +e
+PCT=$(curl -sS -o "$WORK/pct.body" -w "%{http_code}" \
+  "http://127.0.0.1:${PORT}/player/timeline/subscribe?commandID=5&X-Plex-Target-Client-Identifier=misterplex%2Ddev")
+set -e
+echo "subscribe_pct_query http=$PCT"
+if [[ "$PCT" != "200" ]]; then
+  echo "FAIL: percent-encoded query target want 200 got $PCT" >&2
+  cat "$WORK/pct.body" >&2 || true
+  exit 1
+fi
+echo "PASS percent-encoded query target → 200"
+
+# Wrong target on /resources must still 200 (discovery open).
+set +e
+RESBAD=$(curl -sS -o "$WORK/resbad.body" -w "%{http_code}" \
+  -H "X-Plex-Target-Client-Identifier: misterplex-1" \
+  "http://127.0.0.1:${PORT}/resources")
+set -e
+echo "resources_mismatch http=$RESBAD"
+if [[ "$RESBAD" != "200" ]]; then
+  echo "FAIL: /resources with wrong target want 200 got $RESBAD" >&2
+  exit 1
+fi
+echo "PASS /resources stays open with wrong target header"
+
 echo "OK cast target mismatch gate (pure + HTTP harness + red twin)"

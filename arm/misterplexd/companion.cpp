@@ -689,9 +689,20 @@ void Companion::httpLoop() {
             continue;
         }
 
-        // Cast / timeline / playback: if the controller named a target id and it is
-        // not us, refuse loudly. Pre-fix accepted every /player/* with 200 and no
-        // diagnostic — GDM still showed the player, then the session vanished.
+        // Cast / timeline / playback target gate.
+        //
+        // Breadth is deliberate: every /player/* path that names a target id is
+        // checked together — playMedia, playback controls, AND timeline
+        // subscribe/poll/unsubscribe. A mid-session mismatch means the controller
+        // is addressing a different clientIdentifier. Answering timeline for the
+        // wrong id while we still demux would keep a split-brain "session alive"
+        // (wrong machine reports playing; this one still burns the stream). Prefer
+        // one loud 409 that stops the whole control surface over "video randomly
+        // stopped" with half the protocol still 200. /resources stays open above
+        // so GDM discovery is unaffected.
+        //
+        // Pre-fix accepted every /player/* with 200 and no diagnostic — GDM
+        // still showed the player, then the session vanished.
         if (req.find("/player/") != std::string::npos || req.find("playMedia") != std::string::npos ||
             req.find("/timeline") != std::string::npos) {
             std::string gotTarget;
