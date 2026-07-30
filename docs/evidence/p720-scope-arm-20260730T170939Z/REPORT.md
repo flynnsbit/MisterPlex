@@ -2,127 +2,169 @@
 
 | Field | Value |
 |---|---|
-| **TS_UTC** | 2026-07-30T17:09:39Z (v1) · **CPU correction 2026-07-30T17:14Z (v2)** |
-| **SOURCE_SHA** | scope commit base `92b8278c` · 480p soak evidence `b807d088`/`92b8278c` |
-| **Branch** | `w-arm-p720-scope` |
+| **TS_UTC** | 2026-07-30T17:09:39Z (v1) · CPU v2 17:14Z · **scale separation v3 17:25Z** |
+| **SOURCE_SHA** | worktree `w-arm-p720-scope` (see git log) |
 | **Lane** | host/ARM only — **no** ssh/deploy/Quartus/RBF |
-| **480p gate** | **ARM-side PASS** (180s soak: drops bounded, av-lock slope ~0) — see `docs/evidence/p480-audio-20260730T165053Z/REPORT.md` |
+| **480p gate** | **ARM-side PASS** — `docs/evidence/p480-audio-20260730T165053Z/` |
+| **Headroom** | `docs/evidence/p480-headroom-20260730T170938Z/` (MiSTer tax + vf threads) |
 
 ---
 
-## 0. CORRECTION — binding constraint is CPU, not “sub-linear headroom”
+## 0. LEAD — scale is the bill, not H.264 decode (v3)
 
-### 0.1 Retracted input (do not use)
+### 0.1 What stands / what is retracted
 
-Earlier 15s window **misterplexd-only** figures (11.4% / 25.5% onecpu) and the claim “2.2× CPU for 3.9× pixels = sub-linear” are **invalid for 720p projection**. They omitted **ffmpeg**, which does the H.264 decode + scale.
-
-### 0.2 Corrected anchors (180s A/B, real media)
-
-Source: `docs/evidence/p480-audio-20260730T165053Z/REPORT.md` + `*_cpu.json`  
-Formula: `P=100*dticks/(HZ*dwall)`, no fps scaling.
-
-| Tier | coded px | mplex % | ffmpeg % | **total %onecpu** | artifact |
-|---|---:|---:|---:|---:|---|
-| 240p | 76 800 | 8.461 | 13.764 | **22.225** | `p480_ab_240p_*_cpu.json` |
-| 480p | 299 520 | 20.79 | 69.022 | **89.812** | `p480_ab_480p_*_cpu.json` |
-
-| Ratio | Value |
-|---|---:|
-| px 480/240 | **3.900** |
-| total CPU 480/240 | **4.041** |
-| (CPU ratio) / (px ratio) | **1.036** |
-
-**Across the two real points, total playback CPU is essentially LINEAR in coded pixels** (slightly super-linear). The prior “sub-linear” reading is retracted.
-
-### 0.3 720p CPU extrapolation (**not a measurement**)
-
-| Method | Math | 720p @ **24 fps** %onecpu |
-|---|---|---:|
-| **Linear from 480p** (preferred; matches 2-pt slope) | `89.812 × (921600/299520)` = `89.812 × 3.0769` | **≈ 276%** |
-| Power law 2-pt | \(e=\ln(4.041)/\ln(3.9)\approx 1.026\) | **≈ 285%** |
-| Affine 2-pt | `a + b·px` | **≈ 279%** |
-
-Dual-A9 hard ceiling = **200 %onecpu** (both cores fully busy, nothing else).
-
-| Projection | vs 200% ceiling |
+| Prior claim | Status |
 |---|---|
-| **~276% @ 24 fps** | **over by ~76 %onecpu (~38% over dual-core capacity)** |
+| mplex-only “sub-linear” 11.4→25.5 | **RETRACTED** (v2) |
+| Totals 22.2→89.8 ~linear in **coded output** pixels | **Arithmetic correct for those totals** |
+| Linear totals → 720p24 ≈ **276%** > 200% → “impossible” | **METHOD INVALIDATED for product verdict** if most of the 480p bill is **scale**, not decode |
+| ffmpeg already multi-threaded; more `-threads` won’t 3× | **STANDS** |
+| vf ~50% / h264 ~6% of ffmpeg @480p | **STANDS** (headroom + soak JSON) |
 
-**Pre-registered prediction for this correction pass:**
+**Parent correction (quoted evidence):** `headroom_play480.json` / analysis — ffmpeg 69.1% = **`vf#0:0` ~50%** + h264 ~6% + mux ~6%.
 
-| ID | Prediction | Result |
-|---|---|---|
-| C1 | Corrected 2-pt slope is ~linear (ratio within 5% of px ratio) | **HIT** (1.036) |
-| C2 | Linear 720p24 total ≥ 200% onecpu | **HIT** (≈276%) |
-| C3 | ffmpeg invocation passes explicit `-threads` | **MISS** — no `-threads`; auto multi-thread still active (see §0.4) |
-| C4 | 480p ffmpeg cost is mostly `av:h264:*` decode threads | **MISS** — dominated by **`vf#0:0` scale threads** |
+### 0.2 Requested PMS profile vs library source geometry
 
-### 0.4 Is ffmpeg already multi-threaded? (code + 480p thread sample)
-
-**Invocation** (`media_player.cpp` rawvideo path, quoted from 480p soak log):
+**Requested (480p soak log, product STREAM=0 path):**
 
 ```text
-ffmpeg ... -i <universal start.mp4 videoResolution=624x480> \
-  -map 0:v:0 -an -f rawvideo -pix_fmt yuv420p \
-  -vf fps=24/1,scale=624:480:force_original_aspect_ratio=decrease,pad=624:480:(ow-iw)/2:(oh-ih)/2 \
-  pipe:1  ...audio...
+resolved PMS universal 480p 624x480  bitrate=2000  transcode=1
+.../video/:/transcode/universal/start.mp4?...&videoResolution=624x480&maxVideoBitrate=2000
+  &videoCodec=h264&videoProfile=baseline&videoLevel=30...
 ```
 
-- **No** `-threads` / `-filter_threads` in `media_player.cpp` (rg: no matches).
-- FFmpeg still spawns multiple threads by default.
+**Filter graph always constructed** (`media_player.cpp` ~1954–1972), even when coded==display:
 
-**480p thread breakdown** (`p480_ab_480p_*_cpu.json`, %onecpu):
+```text
+fps=24/1,scale=624:480:force_original_aspect_ratio=decrease,pad=624:480:(ow-iw)/2:(oh-ih)/2
+```
 
-| Role (comm) | Σ %onecpu (approx) | Notes |
-|---|---:|---|
-| **`vf#0:0` (scale/filter)** | **~50.4** | 3 hot threads ~16.8+14.7+14.6 |
-| `av:h264:df*` + `dec0:0:h264` | **~5.8** | decode already split across df0/1/2 |
-| `mux0:rawvideo` | **~5.9** | |
-| other ffmpeg (audio/demux/…) | **~6.9** | |
-| **ffmpeg process total** | **69.0** | thread_sum 69.0 ≈ process (accounting OK) |
-| misterplexd present-ish | **~17** main tid + rest → **20.8** | |
+- No `sws_flags=` / `flags=fast_bilinear|neighbor|bicubic`.
+- `-pix_fmt yuv420p` + `-f rawvideo` (format convert may still run inside scale).
+- **No** `-threads`.
 
-**Finding:** at 480p, ffmpeg is **not** a single saturated 100% thread. It is **already parallel** on the dual-A9. The bill is dominated by **libswscale (`vf`)**, not by a single-thread H.264 ceiling. Turning on more `-threads` is **unlikely** to create a 720p miracle: the machine already spreads work, and **aggregate** cost is what hits 200%.
+**Library source for the soak clip** (`docs/evidence/p480-verify-20260730T163848Z/11b_recent.xml`):
 
-Component linear sketch to 720p24 (extrapolation):
+```xml
+title="Sync 24000 Long Blip" ... 
+<Media ... width="320" height="240" ... videoResolution="sd" ... videoFrameRate="24p"
+  file=".../sync_24000_long_blip.mp4" />
+```
 
-| Piece @480p | ×3.08 → @720p24 |
-|---:|---:|
-| vf ~50.4% | **~155%** |
-| h264 ~5.8% | **~18%** |
-| mux ~5.9% | **~18%** |
-| mplex ~20.8% | **~64%** |
-| other ff ~6.9% | **~21%** |
-| **sum** | **~276%** |
+**Actual ffmpeg input WxH (bitstream after PMS):** **NOT measured in-session.**  
+`-loglevel error` suppresses stream dump; no `ffprobe` artifact in evidence.  
+**Rule 0:** only proven facts are **source file 320×240** and **request target 624×480**.
 
-### 0.5 What could change the answer (product options, with numbers)
+### 0.3 What `vf#0:0` is doing (code)
 
-All rows = **linear extrapolation from 89.8% @480p24 × 3.08 × (fps/24)**. Label: **not measured**.
+| Stage | Role |
+|---|---|
+| `fps=N/D` | CFR gate to content rate |
+| `scale=W:H:force_original_aspect_ratio=decrease` | **resample** to fit box (default swscale = bicubic-class) |
+| `pad=W:H:...` | letterbox/pillar into coded bank |
+| `-pix_fmt yuv420p` | ensure I420 for rawvideo pipe |
 
-| Option | Projected total %onecpu | vs 200% ceiling | Notes |
-|---|---:|---|---|
-| 720p **24** fps (film) | **~276** | **FAIL** over by ~76 | User’s quality target |
-| 720p **20** fps | **~230** | **FAIL** | still over |
-| 720p **15** fps | **~173** | tight (~27 headroom) | may work if little else runs; **unproven** |
-| 720p **12** fps | **~138** | possible (~62 headroom) | slideshow-ish for film |
-| 720p **10** fps | **~115** | more room | poor motion |
-| Lower bitrate only | **unknown** | — | vf is pixel-bound; bitrate helps decode (~6% today) **marginally** |
-| Skip identity `scale` when PMS size matches | **unknown** | — | vf is 50% @480p; worth a **lab A/B**, not a claim |
-| FPGA absorb decode | **unavailable** | — | FPGA path ~2966 cy/MB vs 2667 budget **at 240p**; not 480p/720p |
-| STREAM skip-RGB + host recon | different product | — | not interactive every-frame cast path |
+When `display != coded` (true `plex480p` crop path), scale goes to **display** then pad into **coded** with crop offsets. Soak harness used **identity 624×480** (`decode=coded=display=624x480`), so the else-branch full coded scale+center pad ran.
 
-**Legitimate product statement:** full-rate **720p24 ARM decode is not feasible** on the dual-A9 under linear scaling from measured 480p totals. A **reduced-fps 720p** tier (≤12–15 fps) is the only ARM-shaped option that stays under 200% **in projection** — and even 15 fps is tight and must be measured. Prefer saying “720p not reachable at content rate on ARM” over shipping a bad 12 fps mode without user intent.
+**There is no path that omits scale** when dimensions already match input.
 
-### 0.6 Binding-constraint order (updated verdict)
+### 0.4 Why 240p vf is tiny and 480p vf is ~50% (evidence-bound inference)
 
-| Rank | Constraint | 720p24 status |
+| Tier | target scale | source library | vf (soak / headroom) | h264 |
+|---|---|---|---:|---:|
+| 240p | 320×240 | **320×240** | **~2.3%** (of ~13.8 ff) | small |
+| 480p | 624×480 | **320×240** | **~50%** | **~6%** |
+
+PMS limitations use **upperBound** on width/height (`plex_resolve.cpp` `plexClientProfileExtra`). With client profile name `MiSTerPlex`, Profile-Extra is **not** sent (server XML profile). URL still carries `videoResolution=624x480`.
+
+**PMS commonly does not upscale** below-cap sources — it keeps ≤ requested size.  
+**Pre-registered (not yet measured):**
+
+| ID | Prediction | Settled by |
+|---|---|---|
+| **S1** | Live universal **video stream is 320×240** (or ≤320) at 480p tier on this clip | ffprobe on start.mp4 URL during play |
+| **S2** | If S1 HIT → ARM **upscales 320→624** and that **is** the ~50% vf bill | compare S1 + vf |
+| **S3** | If S1 MISS (input already 624×480) → identity/near-identity scale still costs ~50% (generic sws path) | same probe |
+| **S4** | Omitting scale+pad when in_w/h == coded (and pix_fmt already yuv420p) recovers **most of ~50%** at 480p on this clip if S1 HIT | A/B harness |
+| **S5** | `sws_flags=fast_bilinear` or `neighbor` cuts vf by ≥2× if scale must remain | A/B harness |
+
+**Honest status:** S1 is the single highest-value measurement. Without it, “PMS already delivers 624×480” is **unknown**. Source XML + vf discontinuity **strongly motivates S1=HIT**, but is **not** a substitute for stream probe.
+
+### 0.5 Pre-registered savings (before any device A/B)
+
+| Lever | Expected save @480p on blip clip | Risk |
+|---|---|---|
+| **(a)** PMS delivers true target **or** ARM skips scale when in==out | **~40–50 %onecpu** if S1 HIT and scale dropped; **unknown** if S1 MISS | must still pad/crop for pillar geometry when display≠coded |
+| **(b)** `scale=WxH:flags=fast_bilinear` (or neighbor) | **~2–4× vf reduction** if geometry change remains (class-A9 folklore; **unmeasured here**) | quality on CRT/HDMI |
+| Force PMS **upscale** to tier (server pays) | moves cost off dual-A9; ARM decode grows with delivered MBs | server load; need profile that **targets** size not only upperBound |
+| Lower bitrate | helps h264 (~6%) **marginally**; not vf | — |
+
+### 0.6 720p projection — **decode + scale + push + daemon separated**
+
+Anchors @480p24 (180s): mplex **20.8**, ffmpeg **69.0** (vf **~50.4**, h264 **~5.8**, mux **~5.9**, other_ff **~6.9**).  
+px ratio 720/480 coded = **3.0769**.  
+**All 720p rows are extrapolations, not measurements.**
+
+#### Scenario A — same as today: PMS keeps ~320 source, ARM scales to tier
+
+| Term | 480p meas. | →720p24 method | Proj. % |
+|---|---:|---|---:|
+| h264 decode | 5.8 | ~same delivered MBs if still 320 | **~6** |
+| vf scale | 50.4 | × (921600/299520) out-linear upscale | **~155** |
+| mux rawvideo | 5.9 | ×3.08 (bytes out) | **~18** |
+| other ffmpeg | 6.9 | flat-ish | **~7** |
+| mplex (incl push) | 20.8 | ×3.08 bytes (upper) | **~64** |
+| **stream total** | 89.8 | | **~250** |
+
+**Still fails hard** if we keep ARM upscale-to-720p from SD source.
+
+#### Scenario B — PMS delivers true tier geometry; scale eliminated or ~identity cheap
+
+| Term | Method | Proj. % @720p24 |
+|---|---|---:|
+| h264 | 5.8 × 3.08 (MBs ~linear in coded area of **delivered** stream) | **~18** |
+| vf | residual fps + optional cheap flags / skip | **~2–5** |
+| mux | ×1.5–3.08 (bytes; partial if pipe-bound) | **~9–18** |
+| other ff | ~7 | **~7** |
+| mplex | push ms 8.5→~29 (×3.4) on copy path; not full ×3.08 on whole daemon | **~35–70** |
+| **stream total** | | **~70–120** |
+
+**Dual-A9 ceiling 200%.** Headroom report: during 480p play **MiSTer ≈ 75%**, machine_busy **174%**, idle_rem **~26%**.  
+Even with stream **~100%**, machine can fit if MiSTer shares (~75+100=175 < 200).  
+**If scale-fixed path lands in ~70–120% stream, 720p24 becomes plausible on CPU** — reverse of v2 “impossible.”
+
+#### Scenario C — real 1080p library → PMS downscale to 720p (product case)
+
+Not measured. Expected: server does heavy scale; ARM receives ~1280×720; same as B if ARM scale skipped. **Blip 320 source is the worst ARM-upscale case and must not be the only 720p proof clip.**
+
+### 0.7 480p headroom if vf recoverable
+
+| Metric | Today @480p | If vf ~50 → ~3 (scale skip) |
+|---|---:|---:|
+| ffmpeg | 69 | **~22** |
+| stream (ff+mp) | ~90 | **~43** |
+| machine_busy (headroom) | 174 | **~proj 127** (174 − 50) |
+| idle_rem to 200 | 26 | **~proj 73** |
+
+**480p looks expensive mostly because of avoidable scale work on SD source (if S1 HIT).** Fixing scale improves every tier.
+
+### 0.8 Binding order (v3)
+
+| Rank | Constraint | 720p24 |
 |---:|---|---|
-| **1 (binds first)** | **ARM total CPU (mplex+ffmpeg)** | **Projected FAIL** (~276% > 200%) |
-| 2 | DDR address ABI / aperture | Hard block at `0x30000000` without remap (still true; secondary if CPU kills product) |
-| 3 | DDR push bandwidth | Marginal but under frame budget at 24 fps (~29 ms / 42 ms) — **not** the killer |
-| 4 | FPGA decode offload | Not available for 720p on current trajectory |
+| **1a** | **ARM scale policy + actual input geometry** | **Open — may unlock or kill** |
+| **1b** | **Stream total after scale fix** | Proj **~70–120%** if B; **~250%** if A |
+| **1c** | **MiSTer always-on tax (~75–99%)** | Eats one core; must be in any machine budget |
+| **2** | DDR ABI / remap | Hard block at `0x30000000` without remap — **still required for product** |
+| **3** | DDR push ~29 ms / 42 ms | Marginal; measure after CPU path exists |
+| **4** | FPGA decode | Unavailable for 720p now |
 
-**Honest overall:** **720p24 on ARM is likely not feasible.** DDR aperture work remains on record for remap / future FPGA-present paths. Do **not** schedule a 720p tier implement expecting ARM ffmpeg to carry 24 fps.
+**Verdict v3:** Do **not** ship “720p impossible.”  
+**v2 linear-total impossibility assumed scale cost scales with tier pixels forever.**  
+**If S1 HIT and scale is skipped or moved to PMS, 720p24 host CPU is plausibly inside 200%** (extrapolation).  
+**If S1 MISS and identity scale stays ~50%×3, still dead.**  
+**Next gate is w-device measurement (§7), not an RBF.**
 
 ---
 
@@ -297,18 +339,15 @@ Honest label: **plausibly deliverable at 24 fps on push alone; not proven; not c
 
 ---
 
-## 3. ARM decode CPU projection — **SUPERSEDED by §0**
+## 3. ARM CPU projection — **see §0 (v3 scale separation)**
 
-Section 3 in v1 used **misterplexd-only** 11.4/25.5% and claimed sub-linear ~50% @720p. **Retracted.**
+| Generation | Error | Use |
+|---|---|---|
+| v1 | mplex-only sub-linear | **discard** |
+| v2 | linear totals → 276% “impossible” | **arithmetic OK; product method wrong if scale≠decode** |
+| **v3** | decode vs scale vs push separated; source 320×240 | **current** |
 
-Use **§0** exclusively:
-
-- Anchors: **22.2% / 89.8%** total (mplex+ffmpeg), 180s soak  
-- Slope: **~linear** (4.04× CPU vs 3.90× px)  
-- 720p24 projection: **~276 %onecpu > 200% ceiling**  
-- ffmpeg already multi-threaded; **vf/scale** dominates 480p cost  
-
-H.264 ladder note (still valid): 1280×720 = **3600 MBs/frame** needs **Level 3.1** (level 3.0 max frame 1620 MBs). Host ladder must raise `h264Level` if a 720p tier ever exists.
+H.264 ladder note: 1280×720 = **3600 MBs/frame** needs **Level 3.1** (level 3.0 max 1620 MBs).
 
 ---
 
@@ -369,37 +408,77 @@ Add `PresentedMistake`-class guard only if a distinct presented size is introduc
 
 ---
 
-## 6. What `w-device` must measure before commit
+## 6. What `w-device` must measure (priority order)
 
-**Pre-register device predictions (for the device lane to hit/miss):**
+### 6.1 HIGHEST PRIORITY — live input geometry (settles S1)
+
+**Do not start 720p hardware work until S1 is HIT or MISS.**
+
+During **480p** play of `/library/metadata/12` (Sync 24000 Long Blip), while ffmpeg is up:
+
+```bash
+# 1) Grab the live universal URL from misterplexd log (videoResolution=624x480)
+# 2) Probe the *transcode output* ffmpeg is reading (same headers/token as daemon):
+ffprobe -v error -select_streams v:0 \
+  -show_entries stream=width,height,codec_name,pix_fmt,avg_frame_rate \
+  -of csv=p=0 \
+  -headers "X-Plex-Token: <token>
+" \
+  "<same start.mp4 URL misterplexd uses>"
+# Capture: true rc, stdout width/height. Also optional:
+# ffmpeg -hide_banner -i URL -t 1 -f null - 2>&1 | tee probe_ff.txt
+# Look for "Stream #0:0" Video: ... WxH
+```
+
+| ID | Pre-register | HIT means |
+|---|---|---|
+| **S1** | width×height is **320×240** (or ≤352×288) | PMS did **not** upscale; ARM scale=624:480 **is the upscale** |
+| **S1b** | width×height is **624×480** | PMS delivered target; vf cost is identity/near-identity sws |
+
+Also dump PMS decision if available:
+
+```bash
+# decision endpoint (same session) — look for videoResolution / width in XML
+curl -sS -H "X-Plex-Token: $TOKEN" \
+  "$PMS/video/:/transcode/universal/decision?<same query as start.mp4>" \
+  | tee decision_480p.xml
+```
+
+### 6.2 Scale A/B (after S1 known) — recover 480p headroom
+
+**Pre-register:**
 
 | ID | Prediction |
 |---|---|
-| D1 | Pure DDR fill 1280×720 O_SYNC ∈ **20–26 ms** (~53–66 MiB/s) |
-| D2 | Product `ddr_copy_us` scales within 10% of byte ratio vs 624×480 |
-| D3 | Product `lastPushMs` @ 720p on 24 fps media ∈ **28–36 ms** |
-| D4 | PLAY_P_ONECPU @ 720p ∈ **45–75%** |
-| D5 | mmap 3 MiB at `0x30180000` succeeds; write does not corrupt PLXB at `0x30140000` (readback probe) |
-| D6 | Current base `0x30000000` 720p write **does** corrupt PLXS/PLXB (negative control) |
+| S4 | On blip@480p, vf-omit (or `scale=flags=neighbor` no-op path) cuts ffmpeg by **≥35 %onecpu** if S1 HIT |
+| S5 | `scale=624:480:flags=fast_bilinear` cuts vf by **≥2×** vs default if geometry change remains |
+| S6 | 480p stream total drops toward **~40–50%** if scale skipped (S1 HIT) |
 
-**Exact recipes (device lane owns hardware):**
+Recipe sketch (device owns edit/deploy of **lab-only** daemon flag; **do not change shipping default**):
 
 ```bash
-# A) Pure fill both tiers (existing bench path)
-WIDTH=624 HEIGHT=480 GEOMETRY=plex480p LOOPS=1000 ./scripts/run_c2_ddr_bench.sh
-# After lab binary knows 1280x720 layout (not shipped default):
-WIDTH=1280 HEIGHT=720 LOOPS=1000 ./scripts/run_c2_ddr_bench.sh   # expect fail or collision on stock ABI
-
-# B) Aperture probe (read-only + careful write of non-product region)
-#  - parse /proc/iomem for 0x30000000 vicinity
-#  - mmap proposed bases; verify PLXB magic at 0x30140000 before/after bank0 paint
-
-# C) Product present_profile (only after experimental daemon+RBF map)
-#  capture: ddr_copy_us_p, ddr_total_us_p, ddr_plxd_used_x100_p, f1ms/lastPushMs,
-#           PLAY_P_ONECPU, pfps, drops, av_drift_ms, SOURCE_SHA, RBF md5
+# Baseline: existing headroom_sample.py window @480p → headroom_play480.json
+# Lab A: MISTERPLEX_VF=fps_only (or conf) — fps=N/D only, no scale/pad
+#        ONLY valid when probe proves in_w/h == out; else frames wrong size → hard fail
+# Lab B: append :flags=fast_bilinear to scale=
+# Compare ffmpeg % and top vf threads; capture SOURCE_SHA, true rc.
 ```
 
-**Do not** treat soft-skip 77 / UNSCORED as PASS.
+### 6.3 DDR (still required before product 720p; secondary to S1)
+
+| ID | Prediction |
+|---|---|
+| D1 | Pure DDR fill 1280×720 O_SYNC ∈ **20–26 ms** |
+| D2 | Product `lastPushMs` @720p24 ∈ **28–36 ms** |
+| D5 | mmap 3 MiB at `0x30180000` OK; PLXB `0x30140000` intact after bank0 paint |
+| D6 | Base `0x30000000` 720p write **corrupts** mbox/ring (negative control) |
+
+```bash
+WIDTH=624 HEIGHT=480 GEOMETRY=plex480p LOOPS=1000 ./scripts/run_c2_ddr_bench.sh
+# 720p bench only after lab layout exists — stock ABI should refuse/collide
+```
+
+**Soft-skip 77 / UNSCORED ≠ PASS.**
 
 ---
 
@@ -420,22 +499,26 @@ WIDTH=1280 HEIGHT=720 LOOPS=1000 ./scripts/run_c2_ddr_bench.sh   # expect fail o
 
 ---
 
-## 8. Verdict (v2 — CPU correction)
+## 8. Verdict (v3 — scale separation)
 
 | Question | Answer |
 |---|---|
-| **Does CPU bind before DDR?** | **YES (projection)** — ~**276 %onecpu** @720p24 vs **200%** dual-A9 ceiling |
-| Is 720p24 ARM ffmpeg feasible? | **Likely NO** — linear from measured 22.2→89.8 totals; already multi-threaded |
-| Reduced-fps 720p on ARM? | Only **≤~12–15 fps** stays under 200% in projection; **unmeasured**; product-questionable |
-| DDR aperture at `0x30000000`? | Still **hard block** without remap (mailboxes + bitstream) — keep on record |
-| Push bandwidth @24 fps? | Marginal (~29 ms / 42 ms) — **not** the first killer |
-| FPGA decode offload? | **Not available** (240p budget already missed) |
-| 480p gate? | **PASS** on ARM soak — 720p question is pure reachability |
-| Ship 720p now? | **NO** |
+| **What binds first?** | **Unknown until S1** — either **avoidable ARM scale** (likely on SD blip) or true decode+push |
+| Is H.264 decode the 480p cost? | **NO** — h264 ~**6%**; **vf ~50%** (measured) |
+| Library source of soak clip | **320×240** (`11b_recent.xml`) vs request **624×480** |
+| Live ffmpeg input WxH | **Not measured** — w-device §6.1 |
+| 720p24 if ARM keeps upscaling SD | **FAIL** proj ~**250%** stream (Scenario A) |
+| 720p24 if PMS delivers tier + scale skip | **Plausible** proj ~**70–120%** stream (Scenario B) — **extrapolation** |
+| Machine budget | dual-A9 **200%**; MiSTer tax **~75% play / ~99% idle** (headroom) |
+| DDR `0x30000000` | Still **hard block** without remap — required for product banks |
+| Push @24 fps | Marginal ~29/42 ms — not first if scale fixed |
+| FPGA decode | Not available for 720p |
+| 480p gate | **PASS** (ARM) |
+| Ship 720p now? | **NO** — need S1 + scale A/B + map co-design; default stays 240p |
 
 ### One-line decision aid
 
-> **Binding constraint: ARM CPU. Corrected totals are linear in pixels; 720p24 projects to ~276% onecpu on a 200% dual-A9. Do not implement a 720p tier for content-rate playback on ARM. Keep DDR remap notes for any future path; do not expect FPGA decode to absorb 720p on the current trajectory.**
+> **Do not ship “720p impossible.” Decode is ~6% at 480p; scale is ~50%. Source library is 320×240 while we always `scale=` to tier. Prove live input WxH (S1). If ARM is upscaling, fix PMS target or skip identity scale — 720p24 may fit; if identity scale is still 50%, it remains dead. DDR remap still required for product.**
 
 ---
 
@@ -443,8 +526,10 @@ WIDTH=1280 HEIGHT=720 LOOPS=1000 ./scripts/run_c2_ddr_bench.sh   # expect fail o
 
 | Path | Role |
 |---|---|
-| this file | scoping report |
-| `docs/evidence/p480-verify-20260730T163848Z/REPORT.md` | live 240/480 CPU + frame_tx |
+| this file | scoping report (v3) |
+| `docs/evidence/p480-audio-20260730T165053Z/` | 180s totals 22.2 / 89.8 |
+| `docs/evidence/p480-headroom-20260730T170938Z/` | vf threads + MiSTer tax |
+| `docs/evidence/p480-verify-20260730T163848Z/11b_recent.xml` | source **320×240** |
 | `docs/evidence/p480/p480-bandwidth.md` | DDR fill MiB/s archive |
 | `host/libmisterplex/ddr_frame_layout.hpp` | contract |
 | `host/libmisterplex/mailbox_abi_spec.hpp` | fixed mailbox page |

@@ -38,3 +38,20 @@ proj_720p12 138.17230769230773 under200 True
 vf480_sum 50.412
 h264_480_sum 5.814
 RETRACTED_v1_mplex_only_sublinear
+
+=== v3 scale separation (2026-07-30) ===
+Source library Sync 24000 Long Blip: 320x240 (11b_recent.xml)
+Request 480p: videoResolution=624x480
+vf filter always: fps=N/D,scale=W:H:force_original_aspect_ratio=decrease,pad=...
+No sws_flags. No -threads.
+
+480p pieces: vf~50.4 h264~5.8 mux~5.9 other_ff~6.9 mplex~20.8 total~89.8
+px720/480 = 3.0769
+
+Scenario A ARM upscale 320->720 out-linear vf:
+  vf=50.4*3.0769=155.1  h264~6  mux~18  mplex~64  other~7  SUM~250 stream
+
+Scenario B PMS delivers 720 + scale ~3%:
+  h264=5.8*3.0769=17.8  vf=3  mux=9..18  mplex=35..70  other~7  SUM~70..120 stream
+
+480p scale-elim stream ~ mplex+h264+mux+other+2 = 20.8+5.8+5.9+6.9+2 = 41.4
