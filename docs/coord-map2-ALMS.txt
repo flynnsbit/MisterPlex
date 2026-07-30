@@ -102,3 +102,7 @@ sv-integrate: owns next map; no fit/RBF/deploy without parent SHA authorise.
 
 fits ≠ decodes; map-ALMs ≠ product decode quality.
 wire6 shipped 14eaeff3 still identity-deblock, intra=0 product path.
+
+## Area redesign guides (2026-07-30)
+- `docs/cycle-iterative-traverse-area.md` — traverse 1.18M → serial RBSP/M10K plan for sv-traverse
+- `docs/cycle-iterative-sink-area.md` — sink 40k+64 DSP serial/IQ share plan
