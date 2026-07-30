@@ -1,0 +1,18 @@
+CORENAME=Plex
+md5_d=fb9f76192a8f7d248411c2ab2b332542
+md5_r=14eaeff3270a6f59a434e0f777ed823d
+n_d=1
+nproc=2
+processor	: 0
+model name	: ARMv7 Processor rev 0 (v7l)
+CPU part	: 0xc09
+processor	: 1
+model name	: ARMv7 Processor rev 0 (v7l)
+CPU part	: 0xc09
+Hardware	: Altera SOCFPGA
+=== thermal ===
+
+
+DECODE=320x240
+OSD_CONTROL=1
+PRESENT_PROFILE=0

@@ -1,0 +1,29 @@
+
+### headroom_idle.json  dwall=10.623s  formula=P=100*dticks/(HZ*dwall)
+ncpu=2  machine_busy=107.859  machine_idle=92.141  headroom_to_200=92.141
+procs: MiSTer=99.219  ffmpeg=0.000  misterplexd=1.883  stream(ff+mp)=1.883
+misterplexd: TOP_thread=1.035%  SUM=2.070
+
+### headroom_play480.json  dwall=46.844s  formula=P=100*dticks/(HZ*dwall)
+ncpu=2  machine_busy=173.615  machine_idle=26.385  headroom_to_200=26.385
+procs: MiSTer=74.908  ffmpeg=69.102  misterplexd=24.977  stream(ff+mp)=94.079
+ffmpeg: n_threads_sampled=16  TOP_thread=16.544% tid=3586 comm='vf#0:0'  SUM_threads=68.930
+  top5 ffmpeg threads:
+     16.544%  vf#0:0
+     14.602%  vf#0:0
+     14.452%  vf#0:0
+      6.212%  mux0:rawvideo
+      2.732%  dec0:1:aac
+misterplexd: TOP_thread=16.993%  SUM=24.785
+
+### headroom_idle_post.json  dwall=10.619s  formula=P=100*dticks/(HZ*dwall)
+ncpu=2  machine_busy=108.192  machine_idle=91.808  headroom_to_200=91.808
+procs: MiSTer=99.441  ffmpeg=0.000  misterplexd=1.883  stream(ff+mp)=1.883
+misterplexd: TOP_thread=0.942%  SUM=1.790
+
+# PREDICTION CHECK (vs predictions.txt pre-registered)
+P1 nproc=2 → HIT
+P2 ffmpeg multi-thread top<100% sum≈proc → HIT (top=16.544% sum=68.93 proc=69.10)
+P3 stream dominates; idle=200-userspace → PARTIAL (stream 94% but MiSTer 75% single-proc tax; idle_rem=26.4% not ~106%)
+P4 thermal sensors absent → HIT skip
+Extra: stream ff+mp=94.08 ≈ prior harness ~89.8 (close)
