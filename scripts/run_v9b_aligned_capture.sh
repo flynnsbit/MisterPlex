@@ -85,7 +85,7 @@ set -eu
 CONF=/media/fat/misterplex/misterplex.conf
 TOKEN=$(grep -E '^[[:space:]]*PLEX_TOKEN=' "$CONF" | head -1 | sed 's/^[^=]*=//' | tr -d '\r')
 BASE=$(grep -E '^[[:space:]]*PLEX_BASE=' "$CONF" | head -1 | sed 's/^[^=]*=//' | tr -d '\r')
-BASE=${BASE:-http://192.168.1.41:32400}
+BASE=${BASE:-http://YOUR-PLEX-SERVER:32400}
 hp=${BASE#http://}; hp=${hp#https://}; hp=${hp%%/*}
 ADDR=${hp%%:*}; PORT=${hp##*:}; [ "$PORT" = "$hp" ] && PORT=32400
 if wget -q -O /dev/null --timeout=3 "${BASE}/identity" 2>/dev/null; then

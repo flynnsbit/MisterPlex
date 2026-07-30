@@ -139,7 +139,7 @@ CONF=/media/fat/misterplex/misterplex.conf
 # parse conf without echo token
 TOKEN=$(grep -E "^[[:space:]]*PLEX_TOKEN=" "$CONF" | head -1 | sed "s/^[^=]*=//" | tr -d "\r")
 BASE=$(grep -E "^[[:space:]]*PLEX_BASE=" "$CONF" | head -1 | sed "s/^[^=]*=//" | tr -d "\r")
-BASE=${BASE:-http://192.168.1.41:32400}
+BASE=${BASE:-http://YOUR-PLEX-SERVER:32400}
 # strip scheme for address/port
 hp=${BASE#http://}; hp=${hp#https://}; hp=${hp%%/*}
 ADDR=${hp%%:*}; PORT=${hp##*:}; [ "$PORT" = "$hp" ] && PORT=32400
@@ -218,7 +218,7 @@ log "profile0_inert_check"
 CONF=/media/fat/misterplex/misterplex.conf
 TOKEN=$(grep -E "^[[:space:]]*PLEX_TOKEN=" "$CONF" | head -1 | sed "s/^[^=]*=//" | tr -d "\r")
 BASE=$(grep -E "^[[:space:]]*PLEX_BASE=" "$CONF" | head -1 | sed "s/^[^=]*=//" | tr -d "\r")
-BASE=${BASE:-http://192.168.1.41:32400}
+BASE=${BASE:-http://YOUR-PLEX-SERVER:32400}
 hp=${BASE#http://}; hp=${hp#https://}; hp=${hp%%/*}
 ADDR=${hp%%:*}; PORT=${hp##*:}; [ "$PORT" = "$hp" ] && PORT=32400
 ENC_KEY="%2Flibrary%2Fmetadata%2F11"
@@ -239,7 +239,7 @@ log "cpu_jiffies_45"
 CONF=/media/fat/misterplex/misterplex.conf
 TOKEN=$(grep -E "^[[:space:]]*PLEX_TOKEN=" "$CONF" | head -1 | sed "s/^[^=]*=//" | tr -d "\r")
 BASE=$(grep -E "^[[:space:]]*PLEX_BASE=" "$CONF" | head -1 | sed "s/^[^=]*=//" | tr -d "\r")
-BASE=${BASE:-http://192.168.1.41:32400}
+BASE=${BASE:-http://YOUR-PLEX-SERVER:32400}
 hp=${BASE#http://}; hp=${hp#https://}; hp=${hp%%/*}
 ADDR=${hp%%:*}; PORT=${hp##*:}; [ "$PORT" = "$hp" ] && PORT=32400
 ENC_KEY="%2Flibrary%2Fmetadata%2F11"
@@ -314,7 +314,7 @@ echo wrong_target_http=$code
 CONF=/media/fat/misterplex/misterplex.conf
 TOKEN=$(grep -E "^[[:space:]]*PLEX_TOKEN=" "$CONF" | head -1 | sed "s/^[^=]*=//" | tr -d "\r")
 BASE=$(grep -E "^[[:space:]]*PLEX_BASE=" "$CONF" | head -1 | sed "s/^[^=]*=//" | tr -d "\r")
-BASE=${BASE:-http://192.168.1.41:32400}
+BASE=${BASE:-http://YOUR-PLEX-SERVER:32400}
 hp=${BASE#http://}; hp=${hp#https://}; hp=${hp%%/*}
 ADDR=${hp%%:*}; PORT=${hp##*:}; [ "$PORT" = "$hp" ] && PORT=32400
 ENC_KEY="%2Flibrary%2Fmetadata%2F11"

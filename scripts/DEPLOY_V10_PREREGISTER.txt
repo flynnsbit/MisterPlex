@@ -1,0 +1,27 @@
+DEPLOY v10 PRE-REGISTER — GDM self-reply fix
+=============================================
+Binary: v9 e9c5e5a1 + 90a82208 gdmIsDiscoveryProbe
+Freeze md5 (pre-transfer): fb9f76192a8f7d248411c2ab2b332542
+Rollback: v9 e9c5e5a1 (then v8b 4cbee6ff, v7 703b2fd4; never 06c5735a)
+RBF/conf/token/bootcore untouched. PROFILE=0 leave. Visible bounce.
+
+GATES (order; step 2 blocks ship)
+---------------------------------
+1) IDLE CPU  EXPECT P ∈ [0, 8] %onecpu (wall 100*dm/(HZ*du), ~18–24s true idle)
+   FAIL if P > 8 OR hot cohort thread still always-R / wchan=0 / d_nonvol≫d_vol
+   EXPECT hot role (creation ord≈5 / mplex-gdm) quiet: rate <2 %onecpu, wchan
+   blocked (select/nanosleep), voluntary switches appear.
+
+2) CAST DISCOVERY (HARD GATE)  Real M-SEARCH / GDM probe from network → reply
+   EXPECT: UDP reply on 32412 with Content-Type plex/media-player and
+   machineIdentifier=misterplex-dev (same shape as v9 product reply).
+   FAIL if no reply OR empty OR missing id → **IMMEDIATE ROLLBACK to e9c5e5a1**
+   Do not tune filter on device.
+
+3) PLAYBACK  playMedia (key=; testsrc OK if PMS down) → frames present pfps≈vfps
+   EXPECT playback process P drops ≥60 points vs pre-fix idle-storm baseline
+   (~98 idle / ~95 play misterplexd). Soft bar if only testsrc.
+
+4) IDLE SCREEN  after a few minutes idle=1 still paints; GDM still answers probe.
+
+NO force-claim thrash. One deploy. md5 refuse on mismatch.
