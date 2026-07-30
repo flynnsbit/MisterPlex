@@ -19,7 +19,7 @@ test: unit
 
 UNIT_ANNEXB := $(ROOT)/build/plex_real_baseline.h264
 
-unit: $(ROOT)/build/test_cadence $(ROOT)/build/test_avclock $(ROOT)/build/test_mraudio_status $(ROOT)/build/test_osd_menu $(ROOT)/build/test_main_guard $(ROOT)/build/test_crash_dump $(ROOT)/build/test_resolve $(ROOT)/build/test_pms_timeline $(ROOT)/build/test_companion_eof $(ROOT)/build/test_frame_store_math $(ROOT)/build/test_annexb_count $(ROOT)/build/test_sps_parse $(ROOT)/build/test_slice_hdr $(ROOT)/build/test_cavlc_dc $(ROOT)/build/test_idct_quant
+unit: $(ROOT)/build/test_cadence $(ROOT)/build/test_avclock $(ROOT)/build/test_mraudio_status $(ROOT)/build/test_osd_menu $(ROOT)/build/test_main_guard $(ROOT)/build/test_crash_dump $(ROOT)/build/test_resolve $(ROOT)/build/test_pms_timeline $(ROOT)/build/test_plextv_device $(ROOT)/build/test_companion_eof $(ROOT)/build/test_frame_store_math $(ROOT)/build/test_annexb_count $(ROOT)/build/test_sps_parse $(ROOT)/build/test_slice_hdr $(ROOT)/build/test_cavlc_dc $(ROOT)/build/test_idct_quant
 	$(ROOT)/build/test_cadence
 	$(ROOT)/build/test_avclock
 	$(ROOT)/build/test_mraudio_status
@@ -28,6 +28,7 @@ unit: $(ROOT)/build/test_cadence $(ROOT)/build/test_avclock $(ROOT)/build/test_m
 	$(ROOT)/build/test_crash_dump
 	$(ROOT)/build/test_resolve
 	$(ROOT)/build/test_pms_timeline
+	$(ROOT)/build/test_plextv_device
 	$(ROOT)/build/test_companion_eof
 	$(ROOT)/build/test_frame_store_math
 	$(ROOT)/build/test_annexb_count
@@ -122,6 +123,15 @@ $(ROOT)/build/test_pms_timeline: $(ROOT)/tests/unit/test_pms_timeline.cpp \
 		$(ROOT)/tests/unit/test_pms_timeline.cpp \
 		$(ROOT)/arm/misterplexd/pms_timeline.cpp $(ROOT)/arm/misterplexd/plex_resolve.cpp
 
+$(ROOT)/build/test_plextv_device: $(ROOT)/tests/unit/test_plextv_device.cpp \
+		$(ROOT)/arm/misterplexd/plextv_device.cpp \
+		$(ROOT)/arm/misterplexd/plextv_device.hpp \
+		$(ROOT)/arm/misterplexd/log_redact.hpp
+	@mkdir -p $(ROOT)/build
+	$(CXX) $(CXXFLAGS) -I$(ROOT)/arm/misterplexd -pthread -o $@ \
+		$(ROOT)/tests/unit/test_plextv_device.cpp \
+		$(ROOT)/arm/misterplexd/plextv_device.cpp
+
 $(ROOT)/build/test_companion_eof: $(ROOT)/tests/unit/test_companion_eof.cpp \
 		$(ROOT)/arm/misterplexd/companion.cpp \
 		$(ROOT)/arm/misterplexd/companion.hpp
@@ -137,6 +147,7 @@ MPLEX_SRC := \
 	$(ROOT)/arm/misterplexd/fb_present.cpp \
 	$(ROOT)/arm/misterplexd/media_player.cpp \
 	$(ROOT)/arm/misterplexd/pms_timeline.cpp \
+	$(ROOT)/arm/misterplexd/plextv_device.cpp \
 	$(ROOT)/arm/misterplexd/plex_resolve.cpp \
 	$(ROOT)/arm/misterplexd/fpga_spi.cpp
 MPLEX_INC := -I$(ROOT)/arm/misterplexd -I$(ROOT)/host
@@ -152,6 +163,8 @@ $(ROOT)/build/misterplexd: $(MPLEX_SRC) \
 		$(ROOT)/arm/misterplexd/companion.hpp \
 		$(ROOT)/arm/misterplexd/media_player.hpp \
 		$(ROOT)/arm/misterplexd/pms_timeline.hpp \
+		$(ROOT)/arm/misterplexd/plextv_device.hpp \
+		$(ROOT)/arm/misterplexd/log_redact.hpp \
 		$(ROOT)/arm/misterplexd/plex_resolve.hpp \
 		$(ROOT)/arm/misterplexd/fb_present.hpp \
 		$(ROOT)/arm/misterplexd/fpga_spi.hpp \
