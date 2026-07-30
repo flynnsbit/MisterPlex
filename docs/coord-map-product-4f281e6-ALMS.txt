@@ -12,6 +12,10 @@ QSF geometry: FRAME_W=640 FRAME_H=480 (Plex.qsf:83-84) → DPB_MB_COUNT=40×30=1
 
 **NOT ship-fit.** Product-only whole is ~9× device. Chroma unbound.
 
+Physical M10K **blocks**: this run is **map-only** — no `Total RAM Blocks` line.
+Shipping fit (wire6, not this tree): **465/553 (84%)**, **88 free** — see
+`docs/m10k-physical-blocks-wire6.md`. Do not use bit-% free as block headroom.
+
 ======================================================================
 ATTEMPT 1 — virgin product RFS @ SOURCE_SHA (no overlay)
 ======================================================================

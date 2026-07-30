@@ -24,7 +24,8 @@
 | coord-map3b + chroma/sink | **48,436** | **154** | 2,997,709 | sink+chroma kept; no traverse |
 | wire6 post-fit | 21,021 | 74 | (fit rpt) | BUILD_OK historical |
 
-Map1/3 report **~64 ALTSYNCRAM “M10K block” lines** in the megafunction list (not 1:1 with physical blocks — packing merges). **Bits are the planning unit;** physical M10K ≈ ceil(bits/10240) as a lower bound, higher if shallow/wide ports pack poorly.
+Map1/3 report **~64 ALTSYNCRAM “M10K block” lines** in the megafunction list (not 1:1 with physical blocks — packing merges).  
+**Bits alone are not sufficient for packing decisions.** Post-fit **physical** M10K is binding: wire6 fit **465/553 (84%)** with only **88 blocks free** while bits are 53% (`docs/m10k-physical-blocks-wire6.md`). Use `ceil(bits/10240)` only as a **lower bound**; shallow/wide ports pack far worse (wire6 `ddr_frame_store` line_buf: 96 blocks for 160k bits ≈ 16% efficiency).
 
 **Product memory already:** 2,997,709 / 5,662,720 ≈ **52.9%** of bit budget **before** decode RBSP/RFS/neighbors.
 

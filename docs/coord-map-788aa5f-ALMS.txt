@@ -74,8 +74,10 @@ M10K — quoted inference (not from low ALM)
   Info (276029) … u_sink|h264_byte_ram_sp:u_top_row|mem_rtl_0   → 8,192 bits
   Info (276029) … u_trav|h264_byte_ram_sp:u_rbsp_ram|mem_rtl_0 → 65,536 bits
   Entity bits match: plane 2048 + top 8192 + rbsp 65536 = 75,776 in probe mem column.
-  Headroom: 5,662,720 − 3,073,485 = **2,589,235 bits free (~45.7%)**.
-  +RFS 921,600 → ~70% — still not the wall.
+  Bit arithmetic only: 5,662,720 − 3,073,485 = 2,589,235 bits (~45.7% bit capacity).
+  **RETIRED as block headroom:** map does not report physical M10K blocks; shipping
+  post-fit wire6 is **465/553 blocks (84%)** — only **88 free**. See
+  `docs/m10k-physical-blocks-wire6.md`. Do not plan packing from bit-% free.
 
 DSP
 ---
