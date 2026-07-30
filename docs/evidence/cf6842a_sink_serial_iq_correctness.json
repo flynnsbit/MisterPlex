@@ -1,0 +1,42 @@
+{
+  "SOURCE_SHA": "cf6842a48b8f58b45c7fdebab369f947ac8ea182",
+  "SOURCE_SHA_note": "clean tip: serial IQ sink (34d55ac3) + win_k RBSP_AW cast",
+  "pre_reg": {
+    "clip1_320_intra_y_mb": "300/300 px exact",
+    "clip2_624_intra_y_mb": "1170/1170 px exact",
+    "RED_FAULT_SERIAL_IQ_ZERO": "intra_y_mb near 0/300 discriminates"
+  },
+  "measured": {
+    "clip1_320": {
+      "source_sha_line": "cf6842a48b8f58b45c7fdebab369f947ac8ea182",
+      "intra_y_mb": "300/300",
+      "intra_y_px": "76800/76800",
+      "verdict": "HIT_ABOVE vs legacy 260..295 band",
+      "true_rc": 0,
+      "log": "docs/evidence/cf6842a_sink_320_run.log"
+    },
+    "clip2_624": {
+      "source_sha_line": "cf6842a48b8f58b45c7fdebab369f947ac8ea182",
+      "intra_y_mb": "1170/1170",
+      "intra_y_px": "299520/299520",
+      "verdict": "HIT",
+      "true_rc": 0,
+      "log": "docs/evidence/cf6842a_sink_624_run.log"
+    },
+    "RED_FAULT_SERIAL_IQ_ZERO": {
+      "mechanism": "h264_dequant4x4_serial.FAULT_FORCE_ZERO via stream_path FAULT_SERIAL_IQ_ZERO",
+      "intra_y_mb": "0/300",
+      "intra_y_px": "5/76800",
+      "discriminates": true,
+      "true_rc_sim": 0,
+      "log": "docs/evidence/cf6842a_sink_red_run.log",
+      "note": "Proves serial dequant is load-bearing; score collapses when mul path forced zero — not pruned empty path"
+    }
+  },
+  "area_pre_reg": {
+    "ALM": "2500..4000",
+    "DSP": "6..12",
+    "status": "UNKNOWN until sv-integrate map of cf6842a"
+  },
+  "width_sweep_note": "deferred: three width defects pattern (WIDTHEXPAND fleet, win_k, bit_pos 624); start after area settles"
+}
