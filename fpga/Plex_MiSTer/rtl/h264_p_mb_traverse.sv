@@ -75,6 +75,9 @@ module h264_p_mb_traverse #(
 	output reg  [5:0]  res_blk_qp,
 	output reg  [4:0]  res_blk_max_coeff,  // 16 / 15 / 4
 	output reg signed [15:0] res_blk_coeff [0:15],
+	// Intra pred mode for this block (I4: 0..8; I16 DC slot carries 0..3).
+	// Sink uses one shared 4x4 pred unit per cycle (area-safe).
+	output reg  [3:0]  res_blk_pred_mode,
 	output reg         res_mb_end,         // pulse: residual schedule done for MB
 	output reg  [15:0] res_mb_end_addr,
 
@@ -164,11 +167,23 @@ module h264_p_mb_traverse #(
 	reg is_i16_r;              // I_16x16: luma DC first, AC max=15
 	reg is_i_slice_r;          // slice_type 2 or 7 (I/SI all-I coding)
 	reg [4:0] i4_idx;
+	reg [1:0] i16_mode_r;      // I_16x16 pred mode 0..3 from mb_type
+	// I4 modes in residual/scan order index 0..15 (same as blk4_x/y).
+	// Also spatial maps for MPM: mode_spat[by*4+bx].
+	reg [3:0] i4_mode_scan [0:15];
+	reg [3:0] i4_mode_spat [0:15];
+	reg       i4_mode_spat_v [0:15]; // valid for MPM within MB
+	// Left MB right-edge modes (4 rows) + top MB bottom-edge modes
+	reg [3:0] i4_mode_left [0:3];
+	reg       i4_mode_left_v [0:3];
+	reg [3:0] i4_mode_top [0:64*4-1];
+	reg       i4_mode_top_v [0:64*4-1];
 	reg [7:0] slice_type_r;
 	// Residual export hold (copy of last CAVLC result while waiting ready)
 	reg [4:0] res_hold_idx;
 	reg       res_hold_is_i16;
 	reg       res_hold_is_luma;
+	reg       res_hold_from_cavlc; // 0 = zero-export (no bit_pos/tc update)
 	reg [5:0] res_hold_qp;
 	reg [4:0] res_hold_max;
 	reg signed [15:0] res_hold_coeff [0:15];
@@ -348,6 +363,58 @@ module h264_p_mb_traverse #(
 			else if (nC < 6'd4) nc_table = 3'd1;
 			else if (nC < 6'd8) nc_table = 3'd2;
 			else nc_table = 3'd3;
+		end
+	endfunction
+
+	// Intra4x4 MostProbableMode (ITU 8.3.1.1). scan_i uses residual order.
+	function automatic [3:0] i4_mpm;
+		input [3:0] scan_i;
+		reg [1:0] bx, by;
+		reg signed [4:0] modeA, modeB;
+		reg [15:0] abs_x;
+		begin
+			bx = blk4_x(scan_i);
+			by = blk4_y(scan_i);
+			// Left
+			if (bx != 2'd0) begin
+				if (i4_mode_spat_v[{by, bx - 2'd1}])
+					modeA = {1'b0, i4_mode_spat[{by, bx - 2'd1}]};
+				else
+					modeA = -5'sd1;
+			end else if (curr_x != 16'd0 && i4_mode_left_v[by])
+				modeA = {1'b0, i4_mode_left[by]};
+			else
+				modeA = -5'sd1;
+			// Above
+			abs_x = {curr_x[13:0], 2'b00} + {14'd0, bx};
+			if (by != 2'd0) begin
+				if (i4_mode_spat_v[{by - 2'd1, bx}])
+					modeB = {1'b0, i4_mode_spat[{by - 2'd1, bx}]};
+				else
+					modeB = -5'sd1;
+			end else if (curr_y != 16'd0 && abs_x < 16'd256 && i4_mode_top_v[abs_x[7:0]])
+				modeB = {1'b0, i4_mode_top[abs_x[7:0]]};
+			else
+				modeB = -5'sd1;
+			if (modeA < 0 || modeB < 0)
+				i4_mpm = 4'd2; // DC
+			else if (modeA[3:0] < modeB[3:0])
+				i4_mpm = modeA[3:0];
+			else
+				i4_mpm = modeB[3:0];
+		end
+	endfunction
+
+	function automatic [3:0] i4_mode_from_rem;
+		input [3:0] mpm;
+		input [2:0] rem;
+		reg [3:0] m;
+		begin
+			m = {1'b0, rem};
+			if (m < mpm)
+				i4_mode_from_rem = m;
+			else
+				i4_mode_from_rem = m + 4'd1;
 		end
 	endfunction
 
@@ -809,8 +876,23 @@ module h264_p_mb_traverse #(
 			res_blk_is_luma <= 1'b1;
 			res_blk_qp <= 6'd0;
 			res_blk_max_coeff <= 5'd16;
-			for (ti = 0; ti < 16; ti = ti + 1)
+			res_blk_pred_mode <= 4'd2;
+			i16_mode_r <= 2'd0;
+			res_hold_from_cavlc <= 1'b0;
+			for (ti = 0; ti < 16; ti = ti + 1) begin
 				res_blk_coeff[ti] <= 16'sd0;
+				i4_mode_scan[ti] <= 4'd2;
+				i4_mode_spat[ti] <= 4'd2;
+				i4_mode_spat_v[ti] <= 1'b0;
+			end
+			for (ti = 0; ti < 4; ti = ti + 1) begin
+				i4_mode_left[ti] <= 4'd2;
+				i4_mode_left_v[ti] <= 1'b0;
+			end
+			for (ti = 0; ti < 64*4; ti = ti + 1) begin
+				i4_mode_top[ti] <= 4'd2;
+				i4_mode_top_v[ti] <= 1'b0;
+			end
 			for (ti = 0; ti < MAX_MB_W*4; ti = ti + 1) begin
 				tc_top[ti] <= 5'd0;
 				tc_top_v[ti] <= 1'b0;
@@ -1112,6 +1194,11 @@ module h264_p_mb_traverse #(
 							part_mode_r <= PART_INTRA;
 							part_count_r <= 3'd0;
 							i4_idx <= 5'd0;
+							begin : clr_i4_spat
+								integer zi;
+								for (zi = 0; zi < 16; zi = zi + 1)
+									i4_mode_spat_v[zi] <= 1'b0;
+							end
 							start_bits(8'd1, ST_I4_FLAG);
 						end else if (ue_value >= 32'd1 && ue_value <= 32'd24) begin
 							is_intra_r <= 1'b1;
@@ -1125,6 +1212,7 @@ module h264_p_mb_traverse #(
 								x = ue_value[4:0] - 5'd1; // 0..23
 								cc = (x / 5'd4) % 2'd3;
 								cbp_r <= {cc, (x >= 5'd12) ? 4'hF : 4'h0};
+								i16_mode_r <= x[1:0]; // pred_mode = x % 4
 							end
 							start_ue(ST_CHR_UE);
 						end else begin
@@ -1247,6 +1335,18 @@ module h264_p_mb_traverse #(
 				end
 				ST_I4_FLAG: begin
 					if (fixed_acc[0]) begin
+						// prev_intra4x4_pred_mode_flag=1 → use MPM
+						begin : i4_mpm_store
+							reg [3:0] m, si;
+							reg [1:0] bx, by;
+							si = i4_idx[3:0];
+							m = i4_mpm(si);
+							bx = blk4_x(si);
+							by = blk4_y(si);
+							i4_mode_scan[si] <= m;
+							i4_mode_spat[{by, bx}] <= m;
+							i4_mode_spat_v[{by, bx}] <= 1'b1;
+						end
 						if (i4_idx == 5'd15)
 							start_ue(ST_CHR_UE);
 						else begin
@@ -1258,6 +1358,18 @@ module h264_p_mb_traverse #(
 					end
 				end
 				ST_I4_REM: begin
+					begin : i4_rem_store
+						reg [3:0] m, si, mpm;
+						reg [1:0] bx, by;
+						si = i4_idx[3:0];
+						mpm = i4_mpm(si);
+						m = i4_mode_from_rem(mpm, fixed_acc[2:0]);
+						bx = blk4_x(si);
+						by = blk4_y(si);
+						i4_mode_scan[si] <= m;
+						i4_mode_spat[{by, bx}] <= m;
+						i4_mode_spat_v[{by, bx}] <= 1'b1;
+					end
 					if (i4_idx == 5'd15)
 						start_ue(ST_CHR_UE);
 					else begin
@@ -1337,6 +1449,23 @@ module h264_p_mb_traverse #(
 						if (is_i_slice_r) begin
 							res_mb_end <= 1'b1;
 							res_mb_end_addr <= curr_mb;
+							// Commit I4 right/bottom edge modes for next MBs
+							if (!is_i16_r) begin : commit_i4_modes
+								integer ei;
+								reg [1:0] bx, by;
+								reg [15:0] ax;
+								for (ei = 0; ei < 4; ei = ei + 1) begin
+									// right edge bx=3, by=ei
+									i4_mode_left[ei] <= i4_mode_spat[{ei[1:0], 2'd3}];
+									i4_mode_left_v[ei] <= i4_mode_spat_v[{ei[1:0], 2'd3}];
+									// bottom edge by=3, bx=ei
+									ax = {curr_x[13:0], 2'b00} + ei[15:0];
+									if (ax < 16'd256) begin
+										i4_mode_top[ax[7:0]] <= i4_mode_spat[{2'd3, ei[1:0]}];
+										i4_mode_top_v[ax[7:0]] <= i4_mode_spat_v[{2'd3, ei[1:0]}];
+									end
+								end
+							end
 							st <= ST_RES_MB_END;
 						end else
 							st <= ST_NEXT_MB;
@@ -1347,7 +1476,39 @@ module h264_p_mb_traverse #(
 						end else if (res_block_i < 5'd16) begin
 							commit_tc_after_luma(res_block_i[3:0], 5'd0);
 						end
-						res_block_i <= res_block_i + 5'd1;
+						// I-slice: still export zero-coeff luma so sink runs pred
+						// (uncoded residual ≠ skip prediction / neighbour write).
+						if (is_i_slice_r &&
+						    ((!is_i16_r && res_block_i < 5'd16) ||
+						     (is_i16_r && res_block_i <= 5'd16))) begin
+							begin : exp_zero
+								integer ci;
+								res_blk_valid <= 1'b1;
+								res_blk_mb_addr <= curr_mb;
+								res_blk_mb_x <= curr_x[7:0];
+								res_blk_mb_y <= curr_y[7:0];
+								res_blk_idx <= res_block_i;
+								res_blk_is_i16 <= is_i16_r;
+								res_blk_is_luma <= 1'b1;
+								res_blk_qp <= qp_r[5:0];
+								res_blk_max_coeff <= is_i16_r ?
+									((res_block_i == 5'd0) ? 5'd16 : 5'd15) : 5'd16;
+								if (is_i16_r && res_block_i == 5'd0)
+									res_blk_pred_mode <= {2'd0, i16_mode_r};
+								else if (!is_i16_r)
+									res_blk_pred_mode <= i4_mode_scan[res_block_i[3:0]];
+								else
+									res_blk_pred_mode <= 4'd0;
+								for (ci = 0; ci < 16; ci = ci + 1)
+									res_blk_coeff[ci] <= 16'sd0;
+								res_hold_idx <= res_block_i;
+								res_hold_is_i16 <= is_i16_r;
+								res_hold_is_luma <= 1'b1;
+								res_hold_from_cavlc <= 1'b0;
+							end
+							st <= ST_RES_HOLD;
+						end else
+							res_block_i <= res_block_i + 5'd1;
 					end else begin
 						launch_cavlc_for_slot(res_block_i);
 						st <= ST_RES_WAIT;
@@ -1366,6 +1527,7 @@ module h264_p_mb_traverse #(
 							// Stash for HOLD commit (always).
 							res_hold_idx <= res_block_i;
 							res_hold_is_i16 <= is_i16_r;
+							res_hold_from_cavlc <= 1'b1;
 							begin : exp_res
 								integer ci;
 								reg is_luma_slot;
@@ -1404,6 +1566,12 @@ module h264_p_mb_traverse #(
 									res_blk_is_luma <= is_luma_slot;
 									res_blk_qp <= qp_r[5:0];
 									res_blk_max_coeff <= maxc;
+									if (is_i16_r && res_block_i == 5'd0)
+										res_blk_pred_mode <= {2'd0, i16_mode_r};
+									else if (!is_i16_r && res_block_i < 5'd16)
+										res_blk_pred_mode <= i4_mode_scan[res_block_i[3:0]];
+									else
+										res_blk_pred_mode <= 4'd0;
 									for (ci = 0; ci < 16; ci = ci + 1)
 										res_blk_coeff[ci] <= cavlc_coeff[ci];
 								end
@@ -1415,31 +1583,33 @@ module h264_p_mb_traverse #(
 				ST_RES_HOLD: begin
 					// I export: wait ready. P: res_blk_valid stays 0 → advance now.
 					if (!res_blk_valid || res_blk_ready) begin
+						if (res_hold_from_cavlc) begin
 `ifdef VERILATOR
-						if (is_i_slice_r && curr_mb < 16'd6)
-							$display("TRAV_RES_OK mb=%0d res_i=%0d i16=%0d tc=%0d t1=%0d tz=%0d bit0=%0d bit_end_abs=%0d table=%0d max=%0d",
-								curr_mb, res_hold_idx, res_hold_is_i16, cavlc_tc, cavlc_t1, cavlc_tz,
-								res_win_bit0 + {6'd0, cavlc_bit0_r},
-								res_win_bit0 + {6'd0, cavlc_bit_end},
-								cavlc_table_r, cavlc_max_r);
+							if (is_i_slice_r && curr_mb < 16'd6)
+								$display("TRAV_RES_OK mb=%0d res_i=%0d i16=%0d tc=%0d t1=%0d tz=%0d bit0=%0d bit_end_abs=%0d table=%0d max=%0d",
+									curr_mb, res_hold_idx, res_hold_is_i16, cavlc_tc, cavlc_t1, cavlc_tz,
+									res_win_bit0 + {6'd0, cavlc_bit0_r},
+									res_win_bit0 + {6'd0, cavlc_bit_end},
+									cavlc_table_r, cavlc_max_r);
 `endif
-						bit_pos <= res_win_bit0 + {6'd0, cavlc_bit_end};
-						if (res_hold_is_i16) begin
-							if (res_hold_idx >= 5'd1 && res_hold_idx <= 5'd16)
-								commit_tc_after_luma(res_hold_idx[3:0] - 4'd1, cavlc_tc);
-							else if (res_hold_idx >= 5'd19) begin
+							bit_pos <= res_win_bit0 + {6'd0, cavlc_bit_end};
+							if (res_hold_is_i16) begin
+								if (res_hold_idx >= 5'd1 && res_hold_idx <= 5'd16)
+									commit_tc_after_luma(res_hold_idx[3:0] - 4'd1, cavlc_tc);
+								else if (res_hold_idx >= 5'd19) begin
+									commit_tc_after_chr(
+										(res_hold_idx - 5'd19) >= 5'd4,
+										(res_hold_idx - 5'd19) & 2'd3,
+										cavlc_tc);
+								end
+							end else if (res_hold_idx < 5'd16) begin
+								commit_tc_after_luma(res_hold_idx[3:0], cavlc_tc);
+							end else if (res_hold_idx >= 5'd18) begin
 								commit_tc_after_chr(
-									(res_hold_idx - 5'd19) >= 5'd4,
-									(res_hold_idx - 5'd19) & 2'd3,
+									(res_hold_idx - 5'd18) >= 5'd4,
+									(res_hold_idx - 5'd18) & 2'd3,
 									cavlc_tc);
 							end
-						end else if (res_hold_idx < 5'd16) begin
-							commit_tc_after_luma(res_hold_idx[3:0], cavlc_tc);
-						end else if (res_hold_idx >= 5'd18) begin
-							commit_tc_after_chr(
-								(res_hold_idx - 5'd18) >= 5'd4,
-								(res_hold_idx - 5'd18) & 2'd3,
-								cavlc_tc);
 						end
 						res_block_i <= res_hold_idx + 5'd1;
 						st <= ST_RES_SETUP;

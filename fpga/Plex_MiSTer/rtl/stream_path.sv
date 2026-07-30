@@ -368,6 +368,7 @@ module stream_path #(
 	wire        trav_res_blk_is_i16, trav_res_blk_is_luma;
 	wire [5:0]  trav_res_blk_qp;
 	wire [4:0]  trav_res_blk_max;
+	wire [3:0]  trav_res_blk_pred_mode;
 	wire signed [15:0] trav_res_blk_coeff [0:15];
 	wire        trav_res_mb_end;
 	wire [15:0] trav_res_mb_end_addr;
@@ -502,6 +503,7 @@ module stream_path #(
 		.res_blk_is_luma(trav_res_blk_is_luma),
 		.res_blk_qp(trav_res_blk_qp),
 		.res_blk_max_coeff(trav_res_blk_max),
+		.res_blk_pred_mode(trav_res_blk_pred_mode),
 		.res_blk_coeff(trav_res_blk_coeff),
 		.res_mb_end(trav_res_mb_end),
 		.res_mb_end_addr(trav_res_mb_end_addr),
@@ -632,6 +634,7 @@ module stream_path #(
 		.i_res_blk_is_luma(trav_res_blk_is_luma),
 		.i_res_blk_qp(trav_res_blk_qp),
 		.i_res_blk_max_coeff(trav_res_blk_max),
+		.i_res_blk_pred_mode(trav_res_blk_pred_mode),
 		.i_res_blk_coeff(trav_res_blk_coeff),
 		.i_res_mb_end(trav_res_mb_end),
 		.i_res_mb_end_addr(trav_res_mb_end_addr),

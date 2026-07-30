@@ -50,6 +50,7 @@ PRODUCT_RTL=(
   h264_p_mb_traverse.sv
   h264_i16_dc_hadamard.sv
   h264_i_res_recon_sink.sv
+  h264_intra_pred.sv
   h264_cavlc_residual.sv
 )
 

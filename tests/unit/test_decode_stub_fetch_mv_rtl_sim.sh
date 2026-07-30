@@ -38,6 +38,7 @@ PRODUCT_RTL=(
   decode_stub.sv
   h264_i16_dc_hadamard.sv
   h264_i_res_recon_sink.sv
+  h264_intra_pred.sv
   h264_recon_frame_store.sv
 )
 
