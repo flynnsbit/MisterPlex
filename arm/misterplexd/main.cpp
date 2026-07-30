@@ -7,6 +7,7 @@
 #include "libmisterplex/osd_menu.hpp"
 #include "log_redact.hpp"
 #include "media_player.hpp"
+#include "plextv_device.hpp"
 #include "pms_timeline.hpp"
 #include "plex_resolve.hpp"
 
@@ -105,6 +106,8 @@ int main(int argc, char** argv) {
     std::string ffmpeg = defaultFfmpegPath();
     std::string confPath = "/media/fat/misterplex/misterplex.conf";
     std::string confToken;
+    // plex.tv player registration: off by default (PLEXTV_ANNOUNCE=1 to enable).
+    bool plexTvAnnounce = false;
     misterplex::CodedSize decodeSize = misterplex::kDefaultCodedDecodeSize;
     bool decodeAllowLab480p = false;
     std::string decodeSizeRawCli; // applied after conf so DECODE_ALLOW_LAB_480P is visible
@@ -205,6 +208,11 @@ int main(int argc, char** argv) {
         }
 
         confToken = loadConf(confPath, "PLEX_TOKEN");
+        {
+            auto ann = loadConf(confPath, "PLEXTV_ANNOUNCE");
+            if (!ann.empty())
+                plexTvAnnounce = confTruthy(ann);
+        }
         auto profile = loadConf(confPath, "TRANSCODE_PROFILE");
         if (profile.empty())
             profile = loadConf(confPath, "WEAK_PROFILE");
@@ -581,6 +589,23 @@ int main(int argc, char** argv) {
 
     misterplex::PmsTimelineReporter pmsTimeline;
     pmsTimeline.setLog([](const std::string& s) { logDaemon(s); });
+
+    // plex.tv cast-target registration (opt-in). Uses the same client identifier
+    // as GDM Resource-Identifier / --id so the account device list matches LAN.
+    misterplex::PlexTvDeviceAnnouncer plexTv;
+    plexTv.setLog([](const std::string& s) { logDaemon(s); });
+    {
+        misterplex::PlexTvDeviceIdentity plexId;
+        plexId.clientIdentifier = machineId;
+        plexId.product = "MiSTerPlex";
+        plexId.version = "0.2.0";
+        plexId.platform = "Linux";
+        plexId.device = "MiSTer";
+        plexId.deviceName = name;
+        plexId.provides = "player";
+        plexId.port = static_cast<uint16_t>(port);
+        plexTv.configure(std::move(plexId), confToken, plexTvAnnounce);
+    }
 
     // Session context for multi-base resolve + auto-next.
     std::mutex sessionMu;
@@ -1082,6 +1107,9 @@ int main(int argc, char** argv) {
         return 1;
     }
 
+    // Fail-soft: logs skip/success/failure; never blocks companion or playback.
+    plexTv.start();
+
     if (defaultPms.empty()) {
         std::fprintf(stderr,
                      "misterplexd: no default Plex server configured; set PLEX_BASE in %s "
@@ -1119,6 +1147,7 @@ int main(int argc, char** argv) {
 
     player.stop();
     pmsTimeline.stopAndFlush();
+    plexTv.stop();
     comp.stop();
     // Last chance on the way out: a window leaked during teardown would
     // otherwise outlive us.

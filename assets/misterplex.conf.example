@@ -11,6 +11,15 @@
 # PLEX_HOST=YOUR-PLEX-SERVER
 # Optional static token (cast often supplies transient X-Plex-Token)
 # PLEX_TOKEN=
+#
+# plex.tv player registration (cast target in Plex Web / modern clients).
+# Off by default. When enabled, misterplexd POSTs this player to plex.tv using
+# PLEX_TOKEN and the same client identifier as GDM (--id / Resource-Identifier,
+# typically misterplex-dev) so it appears under provides=player. Refreshes every
+# 5 minutes; fail-soft if plex.tv is unreachable or the token is missing.
+# Requires PLEX_TOKEN. Restart misterplexd after changing.
+# PLEXTV_ANNOUNCE=0
+# PLEXTV_ANNOUNCE=1
 
 # --- Decode / present (Phase 2 transitional ARM path) ---
 # Static ARM ffmpeg. Default probes bin/ffmpeg here, then mistercast-linux.
