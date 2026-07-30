@@ -176,6 +176,22 @@ HttpHeaderRead recvHttpHeaders(int fd, std::string& out, size_t maxBytes = 16384
     return HttpHeaderRead::Ok;
 }
 
+// True when a UDP datagram on 32412 is a discovery *probe* we should answer.
+// GDM replies embed the substring "plex" (Protocol / Content-Type). We also
+// broadcast those replies to 32412, and Linux delivers them back to this
+// socket. Matching bare "plex" then re-emits a reply forever: creation-order 5
+// (mplex-gdm) measured 98%onecpu at true idle, d_vol=0, always R/running.
+// Replies are never probes; M-SEARCH and non-reply "plex" probes still match.
+inline bool gdmIsDiscoveryProbe(const char* buf) {
+    if (!buf || !*buf)
+        return false;
+    if (std::strncmp(buf, "HTTP/", 5) == 0)
+        return false;
+    if (std::strstr(buf, "Content-Type: plex/media-player") != nullptr)
+        return false;
+    return std::strstr(buf, "M-SEARCH") != nullptr || std::strstr(buf, "plex") != nullptr;
+}
+
 // Companion offset/viewOffset are milliseconds (PMS universal offset= is seconds).
 int64_t parseOffsetMs(const std::string& req, bool* present) {
     if (present)
@@ -669,6 +685,11 @@ void Companion::gdmLoop() {
         FD_SET(fd, &rfds);
         timeval tv{0, 200000};
         int r = select(fd + 1, &rfds, nullptr, nullptr, &tv);
+        if (r < 0) {
+            if (errno != EINTR)
+                std::this_thread::sleep_for(std::chrono::milliseconds(200));
+            continue;
+        }
         if (r > 0 && FD_ISSET(fd, &rfds)) {
             char buf[2048];
             sockaddr_in peer{};
@@ -676,7 +697,7 @@ void Companion::gdmLoop() {
             ssize_t n = recvfrom(fd, buf, sizeof(buf) - 1, 0, reinterpret_cast<sockaddr*>(&peer), &plen);
             if (n > 0) {
                 buf[n] = 0;
-                if (std::strstr(buf, "M-SEARCH") || std::strstr(buf, "plex")) {
+                if (gdmIsDiscoveryProbe(buf)) {
                     auto payload = gdmPayload();
                     sendto(fd, payload.data(), payload.size(), 0, reinterpret_cast<sockaddr*>(&peer),
                            plen);
