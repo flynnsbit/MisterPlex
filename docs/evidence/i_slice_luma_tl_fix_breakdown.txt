@@ -1,0 +1,11 @@
+{
+  "intra_y_mb_ok": 229,
+  "intra_y_mb_fail": 71,
+  "actual_buckets": {
+    "I16_m0_*": 36,
+    "I_NxN": 32,
+    "other_I16": 3,
+    "cold128": 0
+  },
+  "seed_fail_count": 3
+}

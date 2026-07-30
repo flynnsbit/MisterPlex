@@ -1,0 +1,32 @@
+{
+  "source_sha_base": "2c163ab",
+  "fix": "tl_for_right_mb snapshot before top_row overwrite on MB end",
+  "root_cause": "left MB end overwrote top_row[mbx*16+15] which is p[-1,-1] for next MB; (8,3) mode6 used tl=153 not 210",
+  "pre_register_luma_intra_y_mb": "250..285/300",
+  "actual_luma_intra_y_mb": "229/300",
+  "pre_register_hit": false,
+  "note": "band overshot: only (8,3) of 4 seeds was pure TL; remaining seeds show ~4x residual not TL",
+  "headline": "0/300",
+  "luma": {
+    "intra_y_mb": 229,
+    "intra_y_px": 61044,
+    "intra_y_blk4": 3815,
+    "inter_y_mb": 1681
+  },
+  "seeds_after": {
+    "(8,3)": "EXACT (TL fix)",
+    "(13,6)": "FAIL first blk scale~4 residual with exact external nb",
+    "(12,10)": "FAIL residual scale~3-4 with exact external nb",
+    "(4,10)": "FAIL I16 DC-only residual exactly 4x (-56 vs -14)"
+  },
+  "cascade": {
+    "seed_fail_count": 3,
+    "buckets": {
+      "I16_m0": 36,
+      "I_NxN": 32,
+      "other_I16": 3
+    }
+  },
+  "store": "300/300 expected (not re-asserted this run in card)",
+  "alm_dsp": "UNKNOWN"
+}

@@ -60,6 +60,10 @@ module h264_i_res_recon_sink #(
 	reg [7:0] top_row [0:MAX_PIC_W-1];
 	reg [7:0] left_col [0:15];
 	reg [7:0] tl_mb;
+	// top_row[mb_x*16+15] is TL for the MB to the right (prev-row BR).
+	// Finishing the left MB overwrites that entry with its own bottom row, so
+	// snapshot it here before the top_row update (H.264 neighbour p[-1,-1]).
+	reg [7:0] tl_for_right_mb;
 	reg       left_col_v;
 
 	reg        lat_is_i16;
@@ -373,6 +377,7 @@ module h264_i_res_recon_sink #(
 			lat_mode <= 4'd2;
 			left_col_v <= 1'b0;
 			tl_mb <= 8'd128;
+			tl_for_right_mb <= 8'd128;
 			dbg_blk_applied <= 32'd0;
 			dbg_mb_written <= 32'd0;
 			dbg_luma_nz <= 32'd0;
@@ -418,8 +423,10 @@ module h264_i_res_recon_sink #(
 						i16_pred_done <= 1'b0;
 						if (res_blk_mb_x == 8'd0)
 							left_col_v <= 1'b0;
+						// Use snapshot from left MB end — top_row[x*16-1] is already
+						// the left MB bottom-right by the time this MB starts.
 						if (res_blk_mb_x != 8'd0 && res_blk_mb_y != 8'd0)
-							tl_mb <= top_row[{8'd0, res_blk_mb_x} * 16 - 16'd1];
+							tl_mb <= tl_for_right_mb;
 						else
 							tl_mb <= 8'd128;
 					end
@@ -443,6 +450,13 @@ module h264_i_res_recon_sink #(
 						for (yi = 0; yi < 16; yi = yi + 1)
 							left_col[yi] <= plane_y[yi * 16 + 15];
 						left_col_v <= 1'b1;
+						// Preserve prev-row BR before top_row overwrite; next MB TL.
+						if (cur_mb_y != 8'd0 &&
+						    (({8'd0, cur_mb_x} * 16 + 16'd15) < MAX_PIC_W[15:0]))
+							tl_for_right_mb <=
+								top_row[{8'd0, cur_mb_x} * 16 + 16'd15];
+						else
+							tl_for_right_mb <= 8'd128;
 						for (yi = 0; yi < 16; yi = yi + 1) begin
 							if (({8'd0, cur_mb_x} * 16 + yi) < MAX_PIC_W)
 								top_row[{8'd0, cur_mb_x} * 16 + yi] <=
