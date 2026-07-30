@@ -37,6 +37,7 @@ opening the hardware grabber.
 | `test_single_process.sh` | one FFmpeg demux for A/V |
 | `test_seek_kill.sh` | seek + kill/restart recovery |
 | `test_soak.sh` | multi-title play/stop soak (Phase 5: auto conf + PMS discover) |
+| `test_p480_ab_harness.sh` | 240p vs lab 480p coded A/B: mandatory one-window CPU, frames, av_drift; `--self-test` host-only |
 
 ```bash
 ./scripts/deploy_misterplexd.sh

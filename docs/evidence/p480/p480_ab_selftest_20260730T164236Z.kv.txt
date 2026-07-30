@@ -1,0 +1,5 @@
+P480_AB_RESULT=SELF_TEST_OK
+SOURCE_SHA=58de897f9fbfe536f0f6654250cd4d6242261983
+tier=480p
+coded_wxh=624x480
+record=/home/flynnsbit/Projects/MisterPlex/build/p480/p480_ab_selftest_20260730T164236Z.json

@@ -9,9 +9,9 @@
 150:misterplexd: OSD_CONTROL=1
 151:misterplexd: OSD_CONTROL=1 — IDLE_SCREEN conf is pre-OSD fallback; first OSD word applies Main's persisted F12 Idle Screen (config/Plex_v7.CFG), then live menu changes.
 === DECODE_ALLOW ===
-18:misterplexd: running name=MiSTerPlex id=misterplex-dev port=3005 pms=http://192.168.1.41:32400 servers=1 decode=320x240 decode_source=conf:/media/fat/misterplex/misterplex.conf weak=480p/624x480@2000k h264=baseline@L30 present=fpga auto_next=1 subs=off
-46:misterplexd: running name=MiSTerPlex id=misterplex-dev port=3005 pms=http://192.168.1.41:32400 servers=1 decode=320x240 decode_source=conf:/media/fat/misterplex/misterplex.conf weak=480p/624x480@2000k h264=baseline@L30 present=fpga auto_next=1 subs=off
-163:misterplexd: running name=MiSTerPlex id=misterplex-dev port=3005 pms=http://192.168.1.41:32400 servers=1 decode=320x240 decode_source=conf:/media/fat/misterplex/misterplex.conf weak=480p/624x480@2000k h264=baseline@L30 present=fpga auto_next=1 subs=off
+18:misterplexd: running name=MiSTerPlex id=misterplex-dev port=3005 pms=http://YOUR-PLEX-SERVER:32400 servers=1 decode=320x240 decode_source=conf:/media/fat/misterplex/misterplex.conf weak=480p/624x480@2000k h264=baseline@L30 present=fpga auto_next=1 subs=off
+46:misterplexd: running name=MiSTerPlex id=misterplex-dev port=3005 pms=http://YOUR-PLEX-SERVER:32400 servers=1 decode=320x240 decode_source=conf:/media/fat/misterplex/misterplex.conf weak=480p/624x480@2000k h264=baseline@L30 present=fpga auto_next=1 subs=off
+163:misterplexd: running name=MiSTerPlex id=misterplex-dev port=3005 pms=http://YOUR-PLEX-SERVER:32400 servers=1 decode=320x240 decode_source=conf:/media/fat/misterplex/misterplex.conf weak=480p/624x480@2000k h264=baseline@L30 present=fpga auto_next=1 subs=off
 === conf keys ===
 PRESENT=fpga
 DECODE=320x240

@@ -1,0 +1,10 @@
+=== p480-ab human table ===
+SOURCE_SHA 58de897f tier=480p coded=624x480 bytes=449280
+clip offset_ms=0 settle_s=20.0 window_s=60.0
+CPU misterplexd_pct_onecpu=13.5 ffmpeg_pct_onecpu=40.2 HZ=100 dwall_s=2.0
+CPU threads (tid name pct nvcsw nivcsw):
+  1 misterplexd pct=10.0 nvcsw_d=12 nivcsw_d=3
+frames vfps_mean=24.0 pfps_mean=23.900000000000002 drops_delta=1 drift_mean=-10.0 drift_late-early=None
+ddr_push_ms={'first': 7, 'last': 7, 'max': 7, 'mean': 7.0, 'min': 7, 'n': 1} decode=624x480 content_fps=24000/1001
+present_profile ddr_copy_us_p=7200 ddr_total_us_p=10400 ddr_plxd_used_x100_p=100 frame_bytes=449280
+record=/home/flynnsbit/Projects/MisterPlex/build/p480/p480_ab_selftest_20260730T164236Z.json

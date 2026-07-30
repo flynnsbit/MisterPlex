@@ -1,0 +1,112 @@
+{
+  "SOURCE_SHA": "58de897f9fbfe536f0f6654250cd4d6242261983",
+  "SOURCE_SHA_SHORT": "58de897f",
+  "clip_key": "/library/metadata/REDACTED",
+  "coded_wxh": "624x480",
+  "cpu": {
+    "dwall_s": 2.0,
+    "ffmpeg_pct_onecpu": 40.2,
+    "hz": 100,
+    "misterplexd_pct_onecpu": 13.5,
+    "threads": [
+      {
+        "comm": "misterplexd",
+        "nivcsw_delta": 3,
+        "nvcsw_delta": 12,
+        "pct_onecpu": 10.0,
+        "tid": 1
+      }
+    ]
+  },
+  "cpu_method": "P=100*dticks/(HZ*dwall) per-thread /proc/pid/task/*/stat; mid-window exits kept; nvcsw/nivcsw",
+  "frame_bytes_i420": 449280,
+  "frames": {
+    "av_drift_late_minus_early_ms": null,
+    "av_drift_ms": {
+      "first": -12.0,
+      "last": -8.0,
+      "max": -8.0,
+      "mean": -10.0,
+      "min": -12.0,
+      "n": 3
+    },
+    "content_fps": "24000/1001",
+    "ddr_push_ms": {
+      "first": 7,
+      "last": 7,
+      "max": 7,
+      "mean": 7.0,
+      "min": 7,
+      "n": 1
+    },
+    "ddr_push_ms_samples": [
+      7
+    ],
+    "decode": "624x480",
+    "drops": {
+      "first": 1,
+      "last": 2,
+      "max": 2,
+      "mean": 1.6666666666666667,
+      "min": 1,
+      "n": 3
+    },
+    "drops_delta": 1,
+    "fps_label": "24000/1001",
+    "frame_lines": 3,
+    "frames": {
+      "first": 100,
+      "last": 300,
+      "max": 300,
+      "mean": 200.0,
+      "min": 100,
+      "n": 3
+    },
+    "pfps": {
+      "first": 23.8,
+      "last": 24.0,
+      "max": 24.0,
+      "mean": 23.900000000000002,
+      "min": 23.8,
+      "n": 3
+    },
+    "present_profile_last": {
+      "ddr_copy_us_p": "7200",
+      "ddr_plxd_used_x100_p": "100",
+      "ddr_total_us_p": "10400",
+      "drops": "2",
+      "frame_bytes": "449280",
+      "frames": "300",
+      "presented": "298"
+    },
+    "present_profile_n": 1,
+    "recon": {
+      "content_resolution": "624x480",
+      "recon_fail": 0,
+      "recon_ok": 0
+    },
+    "vfps": {
+      "first": 23.9,
+      "last": 24.1,
+      "max": 24.1,
+      "mean": 24.0,
+      "min": 23.9,
+      "n": 3
+    }
+  },
+  "hdmi_avsync": null,
+  "host": "192.168.1.183",
+  "notes": [
+    "shipping default remains 240p; 480p is lab/OSD option",
+    "do not treat soft-skip 77 as pass",
+    "bitrate floor kPlex480pWeakBitrateKbps=2000 not modified by this harness",
+    "GDM storm fixed v10 \u2014 prior decode-margin claims may be stale"
+  ],
+  "offset_ms": 0,
+  "rbf_md5": "selftest",
+  "record": "p480_ab",
+  "settle_s": 20.0,
+  "stamp_utc": "20260730T164236Z",
+  "tier": "480p",
+  "window_s": 60.0
+}

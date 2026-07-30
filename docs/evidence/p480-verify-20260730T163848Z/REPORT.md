@@ -13,8 +13,8 @@
 | Check | Result | Artifact |
 |---|---|---|
 | Local PMS `127.0.0.1:32400` | **UP** HTTP 200, machineId `bf36a3ad…` | `02_pms_identity.xml` |
-| Conf PMS `192.168.1.41:32400` (from live conf) | **UP** HTTP 200, machineId `4edd44aa…` (matches user-stated server) | `14_real_cast_window.out` R0 |
-| Live conf `PLEX_BASE` | `http://192.168.1.41:32400` | `00_device_snapshot.txt` |
+| Conf PMS `YOUR-PLEX-SERVER:32400` (from live conf) | **UP** HTTP 200, machineId `4edd44aa…` (matches user-stated server) | `14_real_cast_window.out` R0 |
+| Live conf `PLEX_BASE` | `http://YOUR-PLEX-SERVER:32400` | `00_device_snapshot.txt` |
 | Local library | empty (size=0) | `08_local_lib_all.xml` |
 | Conf PMS library | Movies=7 items (sync blips) + TV | `11_movies_sample.xml` |
 | GDM UDP 32412 | **HIT** len=283 `Resource-Identifier: misterplex-dev` | `10_gdm_probe.txt` |

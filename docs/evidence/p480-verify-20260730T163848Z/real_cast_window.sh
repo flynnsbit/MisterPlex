@@ -7,7 +7,7 @@ CONF=/media/fat/misterplex/misterplex.conf
 LOG=/media/fat/misterplex/misterplexd.log
 TOKEN=$(grep -E "^[[:space:]]*PLEX_TOKEN=" "$CONF" | head -1 | sed "s/^[^=]*=//" | tr -d "\r")
 BASE=$(grep -E "^[[:space:]]*PLEX_BASE=" "$CONF" | head -1 | sed "s/^[^=]*=//" | tr -d "\r")
-BASE=${BASE:-http://192.168.1.41:32400}
+BASE=${BASE:-http://YOUR-PLEX-SERVER:32400}
 hp=${BASE#http://}; hp=${hp#https://}; hp=${hp%%/*}
 ADDR=${hp%%:*}; PORT=${hp##*:}; [ "$PORT" = "$hp" ] && PORT=32400
 echo "BASE=$BASE ADDR=$ADDR PORT=$PORT token_len=${#TOKEN}"

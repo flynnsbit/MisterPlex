@@ -56,7 +56,7 @@ FAIL full-frame strict: stream_path pixels differ from reference decoder at fram
 
 ## Playback evidence (not decode quality)
 
-- Cast PMS `192.168.1.41:32400` → HTTP 200  
+- Cast PMS `YOUR-PLEX-SERVER:32400` → HTTP 200  
 - `fpga frame_tx ok via DDR`, `frames≈717 vfps=23.0 clock=av-lock`  
 - This proves **present path liveness** with the new bitstream; it does **not** prove FPGA H.264 pixels are correct (ARM may supply present frames; no pixel readback).
 

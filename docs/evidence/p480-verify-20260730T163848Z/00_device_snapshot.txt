@@ -11,8 +11,8 @@ n_supervise=1
 PROFILE_hint=
 conf_path=/media/fat/misterplex/misterplex.conf
 PLEX_TOKEN=<redacted>
-PLEX_BASE=http://192.168.1.41:32400
-PLEX_HOST=192.168.1.41
+PLEX_BASE=http://YOUR-PLEX-SERVER:32400
+PLEX_HOST=YOUR-PLEX-SERVER
 # v0.3.0 lab-stable pair: 320x240 core 41adb98c + daemon 06c5735a (fb0 cast path)
 PRESENT=fpga
 STREAM=0

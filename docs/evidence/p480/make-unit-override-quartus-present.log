@@ -1,0 +1,66 @@
+SOURCE excerpt from MISTERPLEX_ALLOW_LOW_MEMORY_TESTS=1 make unit
+nlines_full=2256
+resource-preflight: waiting for exclusive heavy-validation slot: /home/flynnsbit/Projects/MisterPlex/build/resource-preflight.lock
+resource-preflight: acquired slot for: python3 /home/flynnsbit/Projects/MisterPlex/scripts/run_with_skip_summary.py --label make-unit -- make unit-rollcall unit-unlocked
+Local Quartus processes detected:
+    pid=2073923 rss=3348344KB quartus_map
+PREFLIGHT REFUSED: a local Quartus fit is running (fits are remote-only: scripts/build_rbf_remote.sh slotN)
+  Results produced under this condition are not trustworthy.
+  Fix the cause, or set MISTERPLEX_ALLOW_LOW_MEMORY_TESTS=1 to override.
+  OVERRIDE ACTIVE: continuing anyway. Any red from this run is SUSPECT.
+resource-preflight: preflight OK on attempt 1; running command
+make[1]: Entering directory '/home/flynnsbit/Projects/MisterPlex'
+python3 /home/flynnsbit/Projects/MisterPlex/tests/unit/test_unit_rollcall.py
+UNIT_ROLLCALL_OK actual_prereqs=35 expected_prereqs=35 actual_commands=98 protected_commands=95 expected_commands=95 actual_ignored_commands=3 expected_ignored_commands=3 makefile=/home/flynnsbit/Projects/MisterPlex/Makefile
+Local Quartus processes detected:
+    pid=2073923 rss=3348344KB quartus_map
+PREFLIGHT REFUSED: a local Quartus fit is running (fits are remote-only: scripts/build_rbf_remote.sh slotN)
+...
+  OVERRIDE ACTIVE: continuing anyway. Any red from this run is SUSPECT.
+  OVERRIDE ACTIVE: continuing anyway. Any red from this run is SUSPECT.
+test_osd_menu: OK
+/home/flynnsbit/Projects/MisterPlex/build/test_coded_size_adopt
+test_coded_size_adopt: OK
+test_coded_size_adopt: OK
+GREEN OK: test_coded_size_adopt compiles and passes (rc=0)
+/home/flynnsbit/Projects/MisterPlex/tests/unit/test_no_private_data.sh
+test_no_private_data: OK
+/home/flynnsbit/Projects/MisterPlex/tests/unit/test_capture_rig.sh
+/home/flynnsbit/Projects/MisterPlex/tests/unit/test_resource_preflight.sh
+  OVERRIDE ACTIVE: continuing anyway. Any red from this run is SUSPECT.
+  OVERRIDE ACTIVE: continuing anyway. Any red from this run is SUSPECT.
+  OVERRIDE ACTIVE: continuing anyway. Any red from this run is SUSPECT.
+FAIL preflight swap-exhausted fixture: got rc=0 want rc=3
+make[1]: *** [Makefile:120: unit-unlocked] Error 1
+GATE_SKIP_SUMMARY_BEGIN
+GATE_SKIP_SUMMARY total=2 critical=1 high=1 advisory=0
+GATE_SKIP CRITICAL live-pms-baseline-profile: reason=missing MISTERPLEX_BASELINE_KEY; would_catch=PMS drift away from the FPGA decoder contract: Baseline profile_idc=66, CAVLC, ref=1, no B-slices, coded 624x480/display 618x480; source=make-unit coverage inventory
+GATE_SKIP HIGH skip-not-pass: reason=OK red-check: live PMS wrapper missing deps return SKIP-NOT-PASS rc=77; would_catch=a named non-pass gate condition; source=log
+GATE_SKIP_SUMMARY_END
+make: *** [Makefile:46: unit] Error 2
+...
+  Fix the cause, or set MISTERPLEX_ALLOW_LOW_MEMORY_TESTS=1 to override.
+  OVERRIDE ACTIVE: continuing anyway. Any red from this run is SUSPECT.
+PASS preflight accepts synthetic high-headroom host
+Local Quartus processes detected:
+    pid=2073923 rss=3348344KB quartus_map
+PREFLIGHT REFUSED: a local Quartus fit is running (fits are remote-only: scripts/build_rbf_remote.sh slotN)
+  Results produced under this condition are not trustworthy.
+  Fix the cause, or set MISTERPLEX_ALLOW_LOW_MEMORY_TESTS=1 to override.
+  OVERRIDE ACTIVE: continuing anyway. Any red from this run is SUSPECT.
+PASS preflight accepts synthetic 6269MB steady-state host with swap slack
+Local Quartus processes detected:
+    pid=2073923 rss=3348344KB quartus_map
+PREFLIGHT REFUSED: a local Quartus fit is running (fits are remote-only: scripts/build_rbf_remote.sh slotN)
+  Results produced under this condition are not trustworthy.
+  Fix the cause, or set MISTERPLEX_ALLOW_LOW_MEMORY_TESTS=1 to override.
+  OVERRIDE ACTIVE: continuing anyway. Any red from this run is SUSPECT.
+FAIL preflight swap-exhausted fixture: got rc=0 want rc=3
+make[1]: *** [Makefile:120: unit-unlocked] Error 1
+make[1]: Leaving directory '/home/flynnsbit/Projects/MisterPlex'
+GATE_SKIP_SUMMARY_BEGIN
+GATE_SKIP_SUMMARY total=2 critical=1 high=1 advisory=0
+GATE_SKIP CRITICAL live-pms-baseline-profile: reason=missing MISTERPLEX_BASELINE_KEY; would_catch=PMS drift away from the FPGA decoder contract: Baseline profile_idc=66, CAVLC, ref=1, no B-slices, coded 624x480/display 618x480; source=make-unit coverage inventory
+GATE_SKIP HIGH skip-not-pass: reason=OK red-check: live PMS wrapper missing deps return SKIP-NOT-PASS rc=77; would_catch=a named non-pass gate condition; source=log
+GATE_SKIP_SUMMARY_END
+make: *** [Makefile:46: unit] Error 2
