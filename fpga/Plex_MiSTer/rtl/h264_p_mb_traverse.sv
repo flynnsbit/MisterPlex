@@ -1034,9 +1034,11 @@ module h264_p_mb_traverse #(
 			// Default read address: residual window loader or current bit byte.
 			// Window: issue raddr=base+k for k=0..63; capture byte k at win_k=k+2
 			// (registered M10K read = 1 cycle addr→q).
+			// win_k is [7:0]; must zero-extend to RBSP_AW (not win_k[RBSP_AW-1:0]
+			// which is Quartus Error 10232 when RBSP_AW > 8).
 			if (st == ST_RES_WIN_LOAD) begin
 				if (win_k <= 8'd63)
-					rbsp_raddr <= win_base + win_k[RBSP_AW-1:0];
+					rbsp_raddr <= win_base + RBSP_AW'(win_k);
 			end else
 				rbsp_raddr <= bit_need_addr;
 
