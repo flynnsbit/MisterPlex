@@ -1510,13 +1510,34 @@ bool FpgaSpi::sendDdrFrame(const DdrPublishFrame& frame, const DdrPublishPlan& p
         return std::string(": ") + frameStoreStatusUnavailableDescription() + ": " + lastError();
     };
 
-    // Prefer mmap doorbell (no SPI on hot path). Fall back to SPI kick.
+    // Prefer mmap doorbell (no SPI on hot path). Fall back to SPI kick only for
+    // bring-up or if doorbell write fails.
+    //
+    // Measured 2026-07-30 on a56bbc3c @320x240 PRESENT_PROFILE=1: when mode stuck
+    // at SPI (2), ddr_doorbell_us_p≈13–14ms and ddr_cpu_us_p≈11.4ms while
+    // ddr_copy_us_p≈1.24ms — i.e. the kick path dominated CPU, not the memcpy.
+    // Root cause: mode==2 skipped doorbell forever and SIGSTOP'd Main via
+    // SpiExclusive every frame. After a successful SPI bring-up, promote to
+    // doorbell-only steady state (same as mode 1).
     bool kicked = false;
     auto tKick0 = std::chrono::steady_clock::now();
-    if (ddrKickMode_ == 1 || ddrKickMode_ == 0) {
+    if (ddrKickMode_ >= 0) {
         if (kickDdrDoorbell(bank)) {
-            kicked = true;
-            if (first) {
+            if (ddrKickMode_ == 1) {
+                kicked = true;
+            } else if (ddrKickMode_ == 2 && !first) {
+                // Prior frames already proven via SPI; doorbell is enough now.
+                kicked = true;
+                ddrKickMode_ = 1;
+                static bool loggedPromote = false;
+                if (!loggedPromote) {
+                    loggedPromote = true;
+                    std::fprintf(stderr,
+                                 "misterplexd: DDR kick steady-state promoted SPI→doorbell "
+                                 "(avoid per-frame SpiExclusive/SIGSTOP Main)\n");
+                }
+            } else if (first) {
+                kicked = true;
                 // Give poller time to see seq; expect busy / pending / has_frame.
                 usleep(3000);
                 for (int i = 0; i < 40; ++i) {
@@ -1538,9 +1559,14 @@ bool FpgaSpi::sendDdrFrame(const DdrPublishFrame& frame, const DdrPublishPlan& p
                     usleep(500);
                 }
                 if (!(saw_busy || saw_frame || saw_kick)) {
-                    kicked = false; // fall through to SPI
+                    kicked = false; // fall through to SPI bring-up
                 } else {
                     ddrKickMode_ = 1;
+                    static bool loggedDoorbell = false;
+                    if (!loggedDoorbell) {
+                        loggedDoorbell = true;
+                        std::fprintf(stderr, "misterplexd: DDR kick mode=doorbell\n");
+                    }
                 }
             }
         }
@@ -1560,6 +1586,15 @@ bool FpgaSpi::sendDdrFrame(const DdrPublishFrame& frame, const DdrPublishPlan& p
                 return false;
             }
             ddrKickMode_ = 2;
+            static bool loggedSpi = false;
+            if (!loggedSpi) {
+                loggedSpi = true;
+                std::fprintf(stderr,
+                             "misterplexd: DDR kick mode=spi (bring-up); will promote to "
+                             "doorbell on next frame\n");
+            }
+        } else if (ddrKickMode_ == 2) {
+            // Steady SPI only if doorbell write failed above.
         }
     }
     auto tKick1 = std::chrono::steady_clock::now();
