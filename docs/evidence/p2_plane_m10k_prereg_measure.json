@@ -11,6 +11,7 @@
     "RED_FAULT_SKIP_PLANE_NB": "intra_y << 300 discriminates",
     "cycles_per_mb_est": "2700..3000 (pre-impl; may exceed ~2000 budget)"
   },
+  "commit_sha": "788aa5f68fcd8fa83ccbeec909ea6efdc037681f",
   "measured_functional": {
     "clip1_320": {
       "intra_y_mb": "300/300",
@@ -18,8 +19,8 @@
       "y_blk4": "4800/4800",
       "paint_per_mb_frame0": 4036.907,
       "true_rc_luma_score": 0,
-      "log": "docs/evidence/plane_m10k_clip1_final.log",
-      "note": "scored dirty tree after width-cast lint fix; re-score at commit SHA if tip moves"
+      "source_sha": "788aa5f68fcd8fa83ccbeec909ea6efdc037681f",
+      "log": "docs/evidence/plane_m10k_clip1_788aa5f.log"
     },
     "clip2_624": {
       "intra_y_mb": "1170/1170",
@@ -27,7 +28,8 @@
       "y_blk4": "18720/18720",
       "paint_per_mb_frame0": 3977.876,
       "true_rc_luma_score": 0,
-      "log": "docs/evidence/plane_m10k_clip2_final.log"
+      "source_sha": "788aa5f68fcd8fa83ccbeec909ea6efdc037681f",
+      "log": "docs/evidence/plane_m10k_clip2_788aa5f.log"
     },
     "RED_SKIP_PLANE_NB": {
       "build": "-GFAULT_SKIP_PLANE_NB=1",
