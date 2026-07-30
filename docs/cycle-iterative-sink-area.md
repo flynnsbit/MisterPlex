@@ -1,145 +1,185 @@
-# Cycle-iterative area review: `h264_i_res_recon_sink`
+# Cycle-iterative sink redesign brief (implementable)
 
-**Owner of RTL:** `sv-traverse` (sink + I path). Chroma pieces also touched by `sv-mvd`.  
-**Integrate role:** measurement + architecture only.  
-**Evidence (coord-map2d):** sink **40,439 comb ALUTs**, **15,343 regs**, **64 DSP** ·  
-children: `h264_intra16x16_pred` **10,805** comb · `h264_intra4x4_pred` **1,490** ·  
-device DSP budget **112** — sink alone uses **64 (~57%)**.
-
-Sink is ~**1× the entire ALM device** if packed poorly, and **already illegal on DSP** if nothing else used DSPs. Product map already burns **74 DSP**; sink’s 64 cannot stack.
+**Module:** `h264_i_res_recon_sink.sv` (+ shared `h264_iq_idct_4x4.sv`, pred units)  
+**Evidence:** map2d sink **40,439 comb / 64 DSP** · map3b sink **40,456 comb / 92 DSP** ·  
+I16 pred **~9k** · dequant child **52 DSP** · hadamard **32 DSP** · chroma8x8 in-sink **3,859**.  
+**Device:** 41,910 ALMs · **112 DSP** · product already **74 DSP**.  
+**Targets after redesign:** **≤ 4,000 ALMs · ≤ 12 DSP** · M10K tops/plane as below.
 
 ---
 
-## 1. What the map attributed
+## 0. Ownership recommendation (for parent assignment)
 
-| Hierarchy | Comb | Regs | DSP |
-|-----------|------|------|-----|
-| `h264_i_res_recon_sink` | 40,439 | 15,343 | 64 |
-| `h264_intra16x16_pred` | 10,805 | 2,285 | 0 |
-| `h264_intra4x4_pred` | 1,490 | 0 | 0 |
-| (rest: IQ/IDCT/recon/neighbor/planes) | ~28k | ~13k | 64 |
+| Role | Who | Why |
+|------|-----|-----|
+| **Implement sink.sv crash-diet** | **`sv-traverse`** | Owns the file, I-luma 300/300, `res_blk_*` contract with traverse, plane writeback |
+| **Chroma behaviour / ports** | **`sv-mvd` via labelled patch only** | Leaves are already cheap; must not dual-edit sink during diet. Patch notes for TL snapshot / chroma mode only |
+| **Serial IQ primitive** | **`sv-integrate` specifies here; traverse lands (or apply integrate patch)** | IQ is shared infrastructure; one serial unit must replace parallel mul trees for product stub and sink |
+| **Map / ALM-DSP-M10K gate** | **`sv-integrate` only** | No competing Quartus |
+| **Not** | two lanes in one file | Parent assigns one implementer after this brief |
 
-IQ/IDCT path is the DSP hog (parallel 4×4 dequant × coeffs).
+**One line:** assign **sink implementation to `sv-traverse`**; **serial IQ design + map gate to `sv-integrate`**; **`sv-mvd` stays off `h264_i_res_recon_sink.sv`** except a patch file if chroma ports need tweaks after diet.
 
 ---
 
-## 2. Structural cost centers (from RTL shape)
+## 1. Why DSP is the real gate (front and centre)
 
-### 2.1 Combo neighbor gather (`always @*`)
+```
+product DSP     74
+sink path DSP   92   (map3b entity column)
+stacked        166  >  112 device
+```
+
+Even a **0 ALM traverse** cannot ship if sink keeps parallel IQ.
+
+**Quoted cause in `h264_dequant4x4`:** combinational **16+15 parallel** `dequant_one()` paths (max16 and max15 both fully built), each `coeff * qmul` → DSP.  
+**Hadamard:** wide mul plane → **32 DSP** in map3b.  
+**Drift 64→92:** more of that tree kept when chroma/had/keep change — **do not plan on the transient number; plan on serial ≤12.**
+
+ALMs can wait on cycles. **DSP cannot.**
+
+---
+
+## 2. Serial IQ — concrete design (the DSP fix)
+
+### 2.1 Replace parallel dequant with one lane
+
+**Suggested module:** `h264_dequant4x4_serial` (new file; keeps old combo module for sim golden until swapped).
+
+```text
+inputs:  clk, reset, start, qp, max_coeff, coeff[0:15] (capture on start)
+outputs: busy, done, dequant[0:15] (regs filled over 16 cycles)
+
+cycle k = 0..15:
+  dequant_q[zigzag_dest(k, max_coeff)] <= dequant_one(coeff[k], qp, ...)
+cycle 16: done=1
+```
+
+- **One** multiplier (or shift-add for `norm_adjust*16 << qdiv`).  
+- Target **0–2 DSP** for dequant.  
+- max15 vs max16 = **mux on destination index**, not a second mul farm.
+
+### 2.2 IDCT
+
+`h264_idct4x4` ~1.9k comb, **0 DSP** — keep 4×4 combo or 8-cycle row/col if ALMs bite. **DSP priority is dequant+had.**
+
+### 2.3 Hadamard DSP cut
+
+| Unit | Now | Target |
+|------|-----|--------|
+| `h264_i16_dc_hadamard` | ~1.5k + **32 DSP** | butterflies + one scale lane, **≤ 2 DSP**, or shift-add |
+| `h264_chroma_dc_hadamard_inv` | 249 + **8 DSP** | 2×2 + scale; **≤ 1 DSP** or shift-add |
+
+### 2.4 Single shared IQ in sink
+
+```text
+ST_IQ:   start dequant_serial; wait done
+ST_IDCT: residual_q[0:15] <= idct(dequant_q)
+ST_RECON: for pi=0..15: plane[addr(pi)] <= Clip1(pred_q[pi]+residual_q[pi])  // 16 cy
+```
+
+No separate luma/chroma dequant instances.
+
+### 2.5 Product stub
+
+Product maps **~32 DSP** on parallel dequant today. When sink is real:
+
+1. Stub shares the **same serial IQ**, or  
+2. Stub drops IQ once sink feeds recon.
+
+Stacked DSP must map **≤ 100** whole chip.
+
+### 2.6 Cycle cost
+
+Dequant 16 + IDCT 1–8 + recon 16 ≈ **33–40 cy / 4×4**.  
+Full I-MB still **≪ 2000 cy** (320×240 @ 50 MHz budget).
+
+---
+
+## 3. ALM crash-diet (planes / neighbors / pred)
+
+### 3.1 Forbidden pattern
 
 ```systemverilog
-// plane_y[0:255] and top_row[0:MAX_PIC_W-1] read with runtime indices
-i4_above[t] = plane_y[(i4_y0 - 1)*16 + (i4_x0 + t)];
-i16_above[t] = top_row[mb_x*16 + t];
+always @(*) begin
+  i4_above[t] = plane_y[(y0-1)*16 + (x0+t)];
+  i16_above[t] = top_row[mb_x*16 + t];
+end
 ```
 
-- `plane_y`: 256-entry runtime mux nets, many ports (i4 above/left/tl).  
-- `top_row`: **MAX_PIC_W=1024** by default — 1024:1 byte muxes × 16 for I16 above.  
-Same disease as RBSP/qpel window.
+### 3.2 Required
 
-### 2.2 Parallel 4×4 IQ / IDCT / recon
-
-```systemverilog
-h264_dequant4x4 u_dq (...);  // 16 coeffs wide
-h264_idct4x4   u_idct (...);
-h264_recon4x4  u_recon (...);
-h264_i16_dc_hadamard u_had (...); // also 16-wide + DSP in map
+```text
+ST_NB_FETCH: t=0..N-1: addr<=...; next cy above[t]<=ram_q
 ```
 
-One block per cycle is fine **algorithmically**, but a fully parallel dequant of 16 lanes × multipliers explains **tens of DSPs**. Product already has serial MC using few DSPs; sink must not assume 64 free.
+| Array | Implementation |
+|-------|----------------|
+| `top_row` | M10K, **MAX_PIC_W=320** in product |
+| `top_u/v` | M10K, depth 160 |
+| `plane_*` | single-port M10K or regs; no combo multi-index |
+| `write_*` | serial fill on mb_end |
 
-### 2.3 `h264_intra16x16_pred` at 10.8k comb
+### 3.3 I16 pred (~9k comb)
 
-I16 pred outputs `pred[0:255]` — if the module builds all 256 predictors with parallel plane/mode logic, that alone is a quarter of the device. Prefer:
+Do not emit combo `pred[0:255]` into recon.  
+**One pixel or one row per cycle** into plane RAM (DC/H/V/Plane).
 
-- shared row/column accumulator for DC/horizontal/vertical  
-- **one pixel or one 4×4 per cycle** written into `plane_y` M10K  
-- Plane mode: serial dot-product, not 256 parallel
+I4 at ~1.4k may stay if NB fetch is registered.
 
-### 2.4 Plane storage as regs
+### 3.4 Chroma pred
 
-`plane_y[0:255]`, `plane_u/v[0:63]`, `write_*` mirrors — OK as small regs **if** not multi-ported combinationally. Better: **one M10K plane** with x,y address, serial apply of recon pixels.
-
-### 2.5 Chroma at `1e1fbe1` (added cost on top of map2d sink)
-
-`1e1fbe1` sink adds:
-
-- `h264_chroma8x8_pred`  
-- `h264_chroma_qp` (tiny LUT — OK combo)  
-- `h264_chroma_dc_hadamard_inv` (2×2 + scale — small, a few DSP if mapped as mul)  
-- `top_u/v`, `left_u/v`, plane chroma paths  
-
-Integrate runs a **chroma-focused map** (coord-map3); treat chroma pred like I16: **no 64-wide combo pred port array**.
+In-sink **3,859** ALMs — OK as **one** instance (leaf-only was 690).  
+Neighbors registered; tops width 320.
 
 ---
 
-## 3. Cycle-iterative target design
+## 4. State machine sketch
 
-### 3.1 Pixel / coeff granularity
+```text
+ST_IDLE → ST_NB_FETCH → ST_PRED → ST_IQ → ST_IDCT → ST_RECON_PX → ST_IDLE
+res_mb_end → ST_WB_TOPS → write_req
+```
 
-| Stage | Current | Target |
-|-------|---------|--------|
-| Neighbor sample fetch | combo multi-tap from plane/top | 1–8 reads/cycle from M10K into small regs |
-| I4 pred | 16 preds combo | keep small I4 unit (1.5k OK) or 1 px/cycle |
-| I16 pred | 256 preds | **serial**: ≤16 cy/mode setup + 256 cy write, or 16×16 cy |
-| Dequant | 16-lane | **1–4 lanes** time-mux; DSP target **≤ 8** total for sink |
-| IDCT | 16-lane full | row-column serial 4×4 (classic) or 1D×2 passes |
-| Recon Clip1 | 16-lane | match IDCT cadence |
-| Plane write | block parallel for | 1–16 writes/cycle max |
-
-### 3.2 DSP budget (hard)
-
-| Consumer | Cap |
-|----------|-----|
-| Whole device | 112 |
-| Product wire6 map | 74 already |
-| **Sink + chroma residual** | **≤ 12 DSP** preferred, **≤ 20 hard** |
-| Hadamard / chroma DC scale | shift-add where possible (qpel lesson: filters without DSP) |
-
-If dequant needs mults, **one** shared multiplier + coeff index 0..15 over 16 cycles beats 16 mults.
-
-### 3.3 ALM pre-register (next map after redesign)
-
-| Piece | Target ALMs |
-|-------|-------------|
-| sink control + plane M10K glue | ≤ 800 |
-| I4 pred | ≤ 1,500 (current OK-ish) |
-| I16 pred serial | ≤ 1,000 |
-| IQ/IDCT/recon serial | ≤ 1,200 |
-| chroma pred + DC | ≤ 800 |
-| **sink total** | **≤ 4,000 ALMs, ≤ 12 DSP** |
-
-map2d **40,439 → ≤4,000** is a **~10×** cut (easier than traverse’s 650× if IQ is shared).
-
-### 3.4 Cycle budget
-
-Per 4×4 residual block: **32–128 cycles** OK.  
-Per I-MB (16 luma 4×4 + chroma): **&lt; 2000 cycles** aligns with traverse §4.
+`res_blk_ready` low when not IDLE (existing backpressure).
 
 ---
 
-## 4. Checklist
+## 5. Targets and gates
 
-1. `top_row` / chroma tops: M10K, `MAX_PIC_W` for product = **320** (not 1024) unless needed.  
-2. Kill `always @*` gathers over `plane_y`/`top_row`; use registered fetch states.  
-3. Serialise IQ/IDCT to one shared unit; publish DSP count.  
-4. I16 pred: do not emit `wire [7:0] pred [0:255]` into a sea of combo — write plane serially.  
-5. Chroma: same rules; `h264_chroma_qp` may stay combo LUT.  
-6. Freeze SHA → integrate map; no competing Quartus.  
-7. Functional gate remains scorer/fixtures owned by traverse/mvd — area gate is separate.
+| Metric | map3b now | Gate |
+|--------|-----------|------|
+| Sink comb | 40,456 | **≤ 4,000** |
+| Sink DSP | 92 | **≤ 12** |
+| Chip DSP w/ product | 154 | **≤ 100** |
+| MAX_PIC_W product | 1024 default | **320** |
+| Functional | 300/300 class | **no regress** |
+| Tops+plane M10K add | — | **≤ ~20k bits** |
+
+Pre-register next sink map: **2.5–4.0k ALMs**, **6–12 DSP**.  
+Integrate publishes HIT/MISS from one `quartus_map` on the freeze SHA.
 
 ---
 
-## 5. Fit math (still unsoftened)
+## 6. Implementer checklist (`sv-traverse`)
 
-```
-product        21,645
-traverse     1,180,271   (blocker #1)
-sink            40,439   (blocker #2, also DSP)
-deblock         25,433   (blocker #3)
-chroma           TBD
------------------------
-CANNOT FIT
-```
+1. No new parallelism to “save cycles.”  
+2. Serial dequant; delete parallel m15/m16 mul farms.  
+3. Hadamard ≤2 DSP.  
+4. Registered NB fetch; M10K tops @ 320.  
+5. Serial I16 pred into plane.  
+6. One chroma8x8 instance.  
+7. Keep `res_blk_*` / `write_*` / `drain_idle`.  
+8. Freeze SHA → integrate map; own tree only.  
+9. `sv-mvd` changes → **patch file only**.  
+10. Area “done” only after integrate map gate.
 
-Even **after** traverse→3k: `21645+3000+40439+25433 ≫ 41910` — **sink and deblock must both crash-diet** before a real loop filter returns to the chip. Identity deblock stays until then.
+---
+
+## 7. Pointers
+
+- Full ALM+DSP+M10K budget: `docs/fit-budget-alm-dsp-m10k.md`  
+- Traverse bomb: `docs/cycle-iterative-traverse-area.md`  
+- Deblock: **fourth** until traverse+sink maps clear  
+
+**Honest line:** sink is **~1× device ALMs and illegal on DSP** until IQ is serial and planes are memories with FSMs; chroma leaves are not the problem.

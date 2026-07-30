@@ -69,3 +69,6 @@ sim remains real; silicon still blocked on traverse then sink.
 
 coord-map3a note: first map pruned sink to 79 comb (weak keep) — discarded.
 coord-map3b: noprune + free-running stim; sink retained.
+
+Full budget (ALM+DSP+M10K): docs/fit-budget-alm-dsp-m10k.md
+Sink implementable brief: docs/cycle-iterative-sink-area.md (ownership: sv-traverse implements; integrate maps).
