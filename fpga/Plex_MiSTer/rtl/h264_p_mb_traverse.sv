@@ -145,7 +145,10 @@ module h264_p_mb_traverse #(
 
 	reg [7:0] rbsp [0:MAX_RBSP_BYTES-1];
 	reg [15:0] rbsp_len;
-	reg [15:0] bit_pos;
+	// Must hold MAX_RBSP_BYTES*8 (16384*8=131072 → 18 bits). 16-bit bit_pos
+	// wrapped at 65536 and ended the 624x480 IDR walk at ~250/1170 MBs.
+	reg [17:0] bit_pos;
+	wire [31:0] rbsp_bit_total = {16'd0, rbsp_len} << 3;
 	reg [7:0] st, ret_st;
 	reg [7:0] fixed_left;
 	reg [31:0] fixed_acc;
@@ -202,7 +205,7 @@ module h264_p_mb_traverse #(
 	reg [4:0] res_blocks_total;
 	reg [3:0] res_luma_mask;     // which 8x8 luma groups coded
 	reg [1:0] res_chroma;        // 0 none, 1 DC, 2 DC+AC
-	reg [15:0] res_win_bit0;     // absolute bit pos of window base (must be 16b for multi-kB slices)
+	reg [17:0] res_win_bit0;     // absolute bit pos of window base (byte-aligned)
 	reg [7:0] res_win [0:63];
 	reg       cavlc_start_r;
 
@@ -229,11 +232,11 @@ module h264_p_mb_traverse #(
 	assign in_ready = !busy && (rbsp_len < MAX_RBSP_BYTES[15:0]);
 
 	function automatic bit rbsp_bit_at;
-		input [15:0] idx;
+		input [17:0] idx;
 		integer byte_i, bit_i;
 		begin
 			byte_i = idx >> 3;
-			bit_i = 7 - (idx & 16'd7);
+			bit_i = 7 - (idx[2:0]);
 			if (byte_i >= rbsp_len)
 				rbsp_bit_at = 1'b0;
 			else
@@ -601,7 +604,7 @@ module h264_p_mb_traverse #(
 		begin
 `ifdef VERILATOR
 			$display("TRAV_FAIL_NOW mb=%0d st=%0d bit_pos=%0d rbsp_bits=%0d res_i=%0d i_slice=%0d i16=%0d cbp=%0h unsup=%0d",
-				curr_mb, st, bit_pos, (rbsp_len * 16'd8), res_block_i,
+				curr_mb, st, bit_pos, rbsp_bit_total, res_block_i,
 				is_i_slice_r, is_i16_r, cbp_r, unsupported);
 `endif
 			// Retire immediately: prior pattern set busy=0 + ST_FAIL, but the
@@ -634,7 +637,7 @@ module h264_p_mb_traverse #(
 				is_intra <= skipped ? 1'b0 : is_intra_r;
 				cbp <= skipped ? 6'd0 : cbp_r;
 				mb_qp <= qp_r;
-				residual_bit_offset <= bit_pos;
+				residual_bit_offset <= bit_pos[15:0];
 				mb_count <= mb_count + 16'd1;
 			end
 		end
@@ -671,12 +674,12 @@ module h264_p_mb_traverse #(
 
 	integer wi, ti;
 	task automatic load_res_window;
-		input [15:0] abs_bit;
+		input [17:0] abs_bit;
 		integer bbase, k;
 		begin
 			bbase = abs_bit >> 3;
 			// Byte-aligned absolute base; CAVLC sees only in-window offsets.
-			res_win_bit0 <= {abs_bit[15:3], 3'b000};
+			res_win_bit0 <= {abs_bit[17:3], 3'b000};
 			for (k = 0; k < 64; k = k + 1) begin
 				if ((bbase + k) < rbsp_len)
 					res_win[k] <= rbsp[bbase + k];
@@ -732,7 +735,7 @@ module h264_p_mb_traverse #(
 		input [4:0] idx;
 		reg [5:0] nCv;
 		reg [4:0] maxv;
-		reg [15:0] abs_bit;
+		reg [17:0] abs_bit;
 		reg [3:0] ac_i;
 		reg [2:0] chr_i; // 0..7 across planes
 		reg p;
@@ -860,7 +863,7 @@ module h264_p_mb_traverse #(
 	always @(posedge clk) begin
 		if (reset || clear) begin
 			rbsp_len <= 16'd0;
-			bit_pos <= 16'd0;
+			bit_pos <= 18'd0;
 			busy <= 1'b0;
 			st <= ST_IDLE;
 			ret_st <= ST_IDLE;
@@ -984,7 +987,7 @@ module h264_p_mb_traverse #(
 				unsupported <= 1'b0;
 				mb_count <= 16'd0;
 				pic_mbs <= pic_mbs32[15:0];
-				bit_pos <= 16'd0;
+				bit_pos <= 18'd0;
 				log2_fn_r <= (log2_max_frame_num == 5'd0) ? 5'd4 : log2_max_frame_num;
 				db_lat <= pps_deblock_ctrl;
 				idr_lat <= is_idr_nal;
@@ -1017,22 +1020,22 @@ module h264_p_mb_traverse #(
 				case (st)
 				ST_BITS: begin
 					if (fixed_left == 8'd0) st <= ret_st;
-					else if (bit_pos >= (rbsp_len * 16'd8)) fail();
+					else if (bit_pos >= rbsp_bit_total) fail();
 					else begin
 						fixed_acc <= (fixed_acc << 1) | {31'd0, rbsp_bit_at(bit_pos)};
-						bit_pos <= bit_pos + 16'd1;
+						bit_pos <= bit_pos + 18'd1;
 						fixed_left <= fixed_left - 8'd1;
 						if (fixed_left == 8'd1) st <= ret_st;
 					end
 				end
 				ST_UE_ZERO: begin
-					if (bit_pos >= (rbsp_len * 16'd8)) fail();
+					if (bit_pos >= rbsp_bit_total) fail();
 					else if (!rbsp_bit_at(bit_pos)) begin
-						bit_pos <= bit_pos + 16'd1;
+						bit_pos <= bit_pos + 18'd1;
 						if (ue_zero >= 8'd24) fail();
 						else ue_zero <= ue_zero + 8'd1;
 					end else begin
-						bit_pos <= bit_pos + 16'd1;
+						bit_pos <= bit_pos + 18'd1;
 						if (ue_zero == 8'd0) begin
 							ue_value <= 32'd0;
 							st <= ret_st;
@@ -1044,7 +1047,7 @@ module h264_p_mb_traverse #(
 					end
 				end
 				ST_UE_SUFFIX: begin
-					if (bit_pos >= (rbsp_len * 16'd8)) fail();
+					if (bit_pos >= rbsp_bit_total) fail();
 					else begin
 						// NBA-correct: old ue_suffix in RHS yields final suffix value.
 						ue_suffix <= (ue_suffix << 1) | {31'd0, rbsp_bit_at(bit_pos)};
@@ -1053,7 +1056,7 @@ module h264_p_mb_traverse #(
 							            ((ue_suffix << 1) | {31'd0, rbsp_bit_at(bit_pos)});
 							st <= ret_st;
 						end
-						bit_pos <= bit_pos + 16'd1;
+						bit_pos <= bit_pos + 18'd1;
 						ue_suffix_left <= ue_suffix_left - 8'd1;
 					end
 				end
@@ -1213,7 +1216,7 @@ module h264_p_mb_traverse #(
 					end else begin
 						// After a skip run, a coded MB follows while bits remain.
 						// Do not require 8 spare bits — skip_run/mb_type ue can be 1 bit.
-						if (bit_pos >= (rbsp_len * 16'd8))
+						if (bit_pos >= rbsp_bit_total)
 							st <= ST_DONE;
 						else
 							start_ue(ST_TYPE_UE);
@@ -1362,7 +1365,7 @@ module h264_p_mb_traverse #(
 						if (cbp_inter_map(ue_value[5:0]) != 6'd0)
 							start_ue(ST_QP_UE);
 						else begin
-							residual_bit_offset <= bit_pos;
+							residual_bit_offset <= bit_pos[15:0];
 							st <= ST_EMIT_CODED;
 						end
 					end
@@ -1370,7 +1373,7 @@ module h264_p_mb_traverse #(
 				ST_QP_UE: begin
 					// mb_qp_delta: mod-52 wrap (H.264 8.5.1 / host wrapQpY)
 					qp_r <= wrap_qp_y(qp_r, se8_from_ue(ue_value));
-					residual_bit_offset <= bit_pos;
+					residual_bit_offset <= bit_pos[15:0];
 					st <= ST_EMIT_CODED;
 				end
 				ST_I4_FLAG: begin
@@ -1436,7 +1439,7 @@ module h264_p_mb_traverse #(
 						if (cbp_intra_map(ue_value[5:0]) != 6'd0)
 							start_ue(ST_QP_UE);
 						else begin
-							residual_bit_offset <= bit_pos;
+							residual_bit_offset <= bit_pos[15:0];
 							st <= ST_EMIT_CODED;
 						end
 					end
@@ -1667,7 +1670,7 @@ module h264_p_mb_traverse #(
 					curr_mb <= curr_mb + 16'd1;
 					if ((curr_mb + 16'd1) >= pic_mbs)
 						st <= ST_DONE;
-					else if (bit_pos >= (rbsp_len * 16'd8))
+					else if (bit_pos >= rbsp_bit_total)
 						st <= ST_DONE;
 					else if (is_i_slice_r)
 						start_ue(ST_TYPE_UE);

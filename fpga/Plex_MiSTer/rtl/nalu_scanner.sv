@@ -8,7 +8,8 @@
 // a late cap_end parse.
 
 module nalu_scanner #(
-	parameter int MAX_SLICE_RBSP = 8192
+	// 624x480 IDR RBSP ≈11KB; keep headroom for larger I-slices.
+	parameter int MAX_SLICE_RBSP = 16384
 ) (
 	input  wire        clk,
 	input  wire        reset,
@@ -53,7 +54,7 @@ module nalu_scanner #(
 	reg       data_valid;
 	reg [1:0] cap_tgt; // 0 none, 1 sps, 2 pps, 3 slice
 	reg [1:0] epb_z;
-	reg [13:0] cap_len;
+	reg [15:0] cap_len;
 	reg       sl_idr_r;
 	reg       sl_ref_r;
 	reg       sl_hdr_ended; // sl_cap_end already issued for this slice
@@ -63,11 +64,12 @@ module nalu_scanner #(
 
 	wire [4:0] nal_t = rd_data[4:0];
 	// Full RBSP up to MAX for both IDR and non-IDR VCL (I residual walk needs IDR).
-	wire [13:0] sl_store_limit = MAX_SLICE_RBSP[13:0];
+	// Do NOT slice MAX to [13:0]: 16384 = 1<<14 would truncate to 0.
+	wire [15:0] sl_store_limit = MAX_SLICE_RBSP[15:0];
 	wire       can_store = (cap_tgt != 2'd0) && !sl_done &&
 	                       !(cap_tgt == 2'd3 && cap_len >= sl_store_limit);
 	// open_cap for EOF: VCL still filling past hdr end counts as open
-	wire       open_cap = (cap_tgt == 2'd3) && !sl_done && (cap_len != 14'd0);
+	wire       open_cap = (cap_tgt == 2'd3) && !sl_done && (cap_len != 16'd0);
 
 	always @(posedge clk) begin
 		if (reset) begin
@@ -200,7 +202,7 @@ module nalu_scanner #(
 								sl_hdr_ended <= 1'b1;
 							end
 							// Hard cap (IDR + type-1)
-							if ((cap_len + 14'd1) >= MAX_SLICE_RBSP[13:0]) begin
+							if ((cap_len + 16'd1) >= sl_store_limit) begin
 								sl_rbsp_eop <= 1'b1;
 								sl_done <= 1'b1;
 							end
@@ -250,7 +252,7 @@ module nalu_scanner #(
 									sl_nal_ref_idc_nonzero <= sl_ref_r;
 									sl_hdr_ended <= 1'b1;
 								end
-								if ((cap_len + 14'd1) >= MAX_SLICE_RBSP[13:0]) begin
+								if ((cap_len + 16'd1) >= sl_store_limit) begin
 									sl_rbsp_eop <= 1'b1;
 									sl_done <= 1'b1;
 								end

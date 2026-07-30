@@ -1,0 +1,12 @@
+SECOND CLIP VALIDATION — pre-register BEFORE measure
+CLIP: plex_inter_p16_baseline_624x480_12f.264
+  geom 624x480 mb=39x30=1170 (vs 320x240=300)
+  I4=167 I16=1003 (vs 79/221) — different mode mix
+  wrap_events=6 (vs 1) — exercises QP_Y mod-52 more
+  qp_range [1,35] mean 13.5 (vs [1,34] mean 16.4)
+  rbsp_bytes=10891 (requires TRAV_BUF/MAX_RBSP 16384)
+PRE_REGISTER HEADLINE: 0/1170 / 0/12870 (chroma stub)
+PRE_REGISTER LUMA intra_y_mb: 1100..1170/1170
+PRE_REGISTER LUMA intra_y_px: 270000..299520/299520
+RATIONALE: same Baseline CAVLC I path that hit 300/300 on 320; if overfit expect <<1100
+BUFFER_FIX: stream_path TRAV_BUF_MAX/MAX_RBSP_BYTES 8192→16384 (IDR ~11KB)

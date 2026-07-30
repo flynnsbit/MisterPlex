@@ -1,0 +1,1243 @@
+{
+  "title": "frame1 refOK-fail characterisation after I-luma 300/300",
+  "caveat": "refOK proxy = co-located IDR Y-exact. With IDR 300/300 all coloc refs are OK. Real MVs may point elsewhere.",
+  "prior_taxonomy_note": "Earlier fail\u2227refOK=48 was under imperfect IDR; now fail\u2227refOK=86 with perfect IDR.",
+  "frame1_y_mb": {
+    "exact": 214,
+    "fail": 86,
+    "total": 300
+  },
+  "all_fail_eq_coloc_ref0": true,
+  "split": {
+    "nonzero_gold_mv": 63,
+    "zero_gold_mv": 23
+  },
+  "ownership": {
+    "sv-mvd": "63/86 fails have nonzero gold motion while cand equals coloc ref0 \u2014 MC still (0,0); MV parse/pred is sv-mvd",
+    "sv-traverse_or_shared": "23/86 gold MV=0 but cand==ref0 \u2260 gold \u2014 P residual add missing or wrong (decode_stub: P residual stays 0 until walker lands)",
+    "evidence_quote": "decode_stub.sv:~498 stay 0 until a full P residual walker lands"
+  },
+  "fails": [
+    {
+      "mx": 0,
+      "my": 0,
+      "mae": 1,
+      "eq_coloc_ref0": true,
+      "gold_motion": [
+        [
+          0,
+          0
+        ]
+      ],
+      "gold_motion_nonzero": false,
+      "part_count": 1,
+      "ownership": "sv-traverse/P-residual or skip-pred (gold MV=0; cand==ref0 \u21d2 residual not applied or zero)"
+    },
+    {
+      "mx": 1,
+      "my": 0,
+      "mae": 3,
+      "eq_coloc_ref0": true,
+      "gold_motion": [
+        [
+          0,
+          0
+        ]
+      ],
+      "gold_motion_nonzero": false,
+      "part_count": 1,
+      "ownership": "sv-traverse/P-residual or skip-pred (gold MV=0; cand==ref0 \u21d2 residual not applied or zero)"
+    },
+    {
+      "mx": 2,
+      "my": 0,
+      "mae": 1,
+      "eq_coloc_ref0": true,
+      "gold_motion": [
+        [
+          0,
+          0
+        ]
+      ],
+      "gold_motion_nonzero": false,
+      "part_count": 1,
+      "ownership": "sv-traverse/P-residual or skip-pred (gold MV=0; cand==ref0 \u21d2 residual not applied or zero)"
+    },
+    {
+      "mx": 5,
+      "my": 0,
+      "mae": 28,
+      "eq_coloc_ref0": true,
+      "gold_motion": [
+        [
+          1,
+          0
+        ]
+      ],
+      "gold_motion_nonzero": true,
+      "part_count": 1,
+      "ownership": "sv-mvd (nonzero gold MV; RTL MV still 0,0)"
+    },
+    {
+      "mx": 6,
+      "my": 0,
+      "mae": 6,
+      "eq_coloc_ref0": true,
+      "gold_motion": [
+        [
+          0,
+          0
+        ]
+      ],
+      "gold_motion_nonzero": false,
+      "part_count": 1,
+      "ownership": "sv-traverse/P-residual or skip-pred (gold MV=0; cand==ref0 \u21d2 residual not applied or zero)"
+    },
+    {
+      "mx": 11,
+      "my": 0,
+      "mae": 3,
+      "eq_coloc_ref0": true,
+      "gold_motion": [
+        [
+          0,
+          0
+        ]
+      ],
+      "gold_motion_nonzero": false,
+      "part_count": 1,
+      "ownership": "sv-traverse/P-residual or skip-pred (gold MV=0; cand==ref0 \u21d2 residual not applied or zero)"
+    },
+    {
+      "mx": 12,
+      "my": 0,
+      "mae": 13,
+      "eq_coloc_ref0": true,
+      "gold_motion": [
+        [
+          -16,
+          0
+        ]
+      ],
+      "gold_motion_nonzero": true,
+      "part_count": 1,
+      "ownership": "sv-mvd (nonzero gold MV; RTL MV still 0,0)"
+    },
+    {
+      "mx": 0,
+      "my": 1,
+      "mae": 0,
+      "eq_coloc_ref0": true,
+      "gold_motion": [
+        [
+          0,
+          0
+        ]
+      ],
+      "gold_motion_nonzero": false,
+      "part_count": 1,
+      "ownership": "sv-traverse/P-residual or skip-pred (gold MV=0; cand==ref0 \u21d2 residual not applied or zero)"
+    },
+    {
+      "mx": 1,
+      "my": 1,
+      "mae": 5,
+      "eq_coloc_ref0": true,
+      "gold_motion": [],
+      "gold_motion_nonzero": false,
+      "part_count": 0,
+      "ownership": "sv-traverse/P-residual or skip-pred (gold MV=0; cand==ref0 \u21d2 residual not applied or zero)"
+    },
+    {
+      "mx": 2,
+      "my": 1,
+      "mae": 8,
+      "eq_coloc_ref0": true,
+      "gold_motion": [],
+      "gold_motion_nonzero": false,
+      "part_count": 0,
+      "ownership": "sv-traverse/P-residual or skip-pred (gold MV=0; cand==ref0 \u21d2 residual not applied or zero)"
+    },
+    {
+      "mx": 3,
+      "my": 1,
+      "mae": 7,
+      "eq_coloc_ref0": true,
+      "gold_motion": [
+        [
+          55,
+          0
+        ]
+      ],
+      "gold_motion_nonzero": true,
+      "part_count": 1,
+      "ownership": "sv-mvd (nonzero gold MV; RTL MV still 0,0)"
+    },
+    {
+      "mx": 4,
+      "my": 1,
+      "mae": 3,
+      "eq_coloc_ref0": true,
+      "gold_motion": [
+        [
+          48,
+          0
+        ]
+      ],
+      "gold_motion_nonzero": true,
+      "part_count": 1,
+      "ownership": "sv-mvd (nonzero gold MV; RTL MV still 0,0)"
+    },
+    {
+      "mx": 5,
+      "my": 1,
+      "mae": 9,
+      "eq_coloc_ref0": true,
+      "gold_motion": [
+        [
+          -11,
+          0
+        ]
+      ],
+      "gold_motion_nonzero": true,
+      "part_count": 1,
+      "ownership": "sv-mvd (nonzero gold MV; RTL MV still 0,0)"
+    },
+    {
+      "mx": 6,
+      "my": 1,
+      "mae": 11,
+      "eq_coloc_ref0": true,
+      "gold_motion": [],
+      "gold_motion_nonzero": false,
+      "part_count": 0,
+      "ownership": "sv-traverse/P-residual or skip-pred (gold MV=0; cand==ref0 \u21d2 residual not applied or zero)"
+    },
+    {
+      "mx": 12,
+      "my": 1,
+      "mae": 3,
+      "eq_coloc_ref0": true,
+      "gold_motion": [
+        [
+          0,
+          0
+        ]
+      ],
+      "gold_motion_nonzero": false,
+      "part_count": 1,
+      "ownership": "sv-traverse/P-residual or skip-pred (gold MV=0; cand==ref0 \u21d2 residual not applied or zero)"
+    },
+    {
+      "mx": 13,
+      "my": 1,
+      "mae": 13,
+      "eq_coloc_ref0": true,
+      "gold_motion": [
+        [
+          0,
+          0
+        ]
+      ],
+      "gold_motion_nonzero": false,
+      "part_count": 1,
+      "ownership": "sv-traverse/P-residual or skip-pred (gold MV=0; cand==ref0 \u21d2 residual not applied or zero)"
+    },
+    {
+      "mx": 2,
+      "my": 2,
+      "mae": 5,
+      "eq_coloc_ref0": true,
+      "gold_motion": [],
+      "gold_motion_nonzero": false,
+      "part_count": 0,
+      "ownership": "sv-traverse/P-residual or skip-pred (gold MV=0; cand==ref0 \u21d2 residual not applied or zero)"
+    },
+    {
+      "mx": 3,
+      "my": 2,
+      "mae": 21,
+      "eq_coloc_ref0": true,
+      "gold_motion": [
+        [
+          48,
+          0
+        ]
+      ],
+      "gold_motion_nonzero": true,
+      "part_count": 1,
+      "ownership": "sv-mvd (nonzero gold MV; RTL MV still 0,0)"
+    },
+    {
+      "mx": 4,
+      "my": 2,
+      "mae": 13,
+      "eq_coloc_ref0": true,
+      "gold_motion": [],
+      "gold_motion_nonzero": false,
+      "part_count": 0,
+      "ownership": "sv-traverse/P-residual or skip-pred (gold MV=0; cand==ref0 \u21d2 residual not applied or zero)"
+    },
+    {
+      "mx": 5,
+      "my": 2,
+      "mae": 3,
+      "eq_coloc_ref0": true,
+      "gold_motion": [
+        [
+          10,
+          0
+        ]
+      ],
+      "gold_motion_nonzero": true,
+      "part_count": 1,
+      "ownership": "sv-mvd (nonzero gold MV; RTL MV still 0,0)"
+    },
+    {
+      "mx": 6,
+      "my": 2,
+      "mae": 5,
+      "eq_coloc_ref0": true,
+      "gold_motion": [
+        [
+          0,
+          0
+        ]
+      ],
+      "gold_motion_nonzero": false,
+      "part_count": 1,
+      "ownership": "sv-traverse/P-residual or skip-pred (gold MV=0; cand==ref0 \u21d2 residual not applied or zero)"
+    },
+    {
+      "mx": 7,
+      "my": 2,
+      "mae": 10,
+      "eq_coloc_ref0": true,
+      "gold_motion": [],
+      "gold_motion_nonzero": false,
+      "part_count": 0,
+      "ownership": "sv-traverse/P-residual or skip-pred (gold MV=0; cand==ref0 \u21d2 residual not applied or zero)"
+    },
+    {
+      "mx": 13,
+      "my": 2,
+      "mae": 6,
+      "eq_coloc_ref0": true,
+      "gold_motion": [],
+      "gold_motion_nonzero": false,
+      "part_count": 0,
+      "ownership": "sv-traverse/P-residual or skip-pred (gold MV=0; cand==ref0 \u21d2 residual not applied or zero)"
+    },
+    {
+      "mx": 14,
+      "my": 2,
+      "mae": 1,
+      "eq_coloc_ref0": true,
+      "gold_motion": [
+        [
+          -7,
+          0
+        ]
+      ],
+      "gold_motion_nonzero": true,
+      "part_count": 1,
+      "ownership": "sv-mvd (nonzero gold MV; RTL MV still 0,0)"
+    },
+    {
+      "mx": 4,
+      "my": 3,
+      "mae": 1,
+      "eq_coloc_ref0": true,
+      "gold_motion": [
+        [
+          8,
+          -16
+        ]
+      ],
+      "gold_motion_nonzero": true,
+      "part_count": 1,
+      "ownership": "sv-mvd (nonzero gold MV; RTL MV still 0,0)"
+    },
+    {
+      "mx": 5,
+      "my": 3,
+      "mae": 6,
+      "eq_coloc_ref0": true,
+      "gold_motion": [
+        [
+          8,
+          -16
+        ]
+      ],
+      "gold_motion_nonzero": true,
+      "part_count": 1,
+      "ownership": "sv-mvd (nonzero gold MV; RTL MV still 0,0)"
+    },
+    {
+      "mx": 6,
+      "my": 3,
+      "mae": 5,
+      "eq_coloc_ref0": true,
+      "gold_motion": [
+        [
+          0,
+          -16
+        ]
+      ],
+      "gold_motion_nonzero": true,
+      "part_count": 1,
+      "ownership": "sv-mvd (nonzero gold MV; RTL MV still 0,0)"
+    },
+    {
+      "mx": 7,
+      "my": 3,
+      "mae": 19,
+      "eq_coloc_ref0": true,
+      "gold_motion": [
+        [
+          8,
+          -16
+        ]
+      ],
+      "gold_motion_nonzero": true,
+      "part_count": 1,
+      "ownership": "sv-mvd (nonzero gold MV; RTL MV still 0,0)"
+    },
+    {
+      "mx": 8,
+      "my": 3,
+      "mae": 16,
+      "eq_coloc_ref0": true,
+      "gold_motion": [
+        [
+          8,
+          -16
+        ]
+      ],
+      "gold_motion_nonzero": true,
+      "part_count": 1,
+      "ownership": "sv-mvd (nonzero gold MV; RTL MV still 0,0)"
+    },
+    {
+      "mx": 9,
+      "my": 3,
+      "mae": 15,
+      "eq_coloc_ref0": true,
+      "gold_motion": [
+        [
+          -32,
+          -32
+        ]
+      ],
+      "gold_motion_nonzero": true,
+      "part_count": 1,
+      "ownership": "sv-mvd (nonzero gold MV; RTL MV still 0,0)"
+    },
+    {
+      "mx": 10,
+      "my": 3,
+      "mae": 9,
+      "eq_coloc_ref0": true,
+      "gold_motion": [],
+      "gold_motion_nonzero": false,
+      "part_count": 0,
+      "ownership": "sv-traverse/P-residual or skip-pred (gold MV=0; cand==ref0 \u21d2 residual not applied or zero)"
+    },
+    {
+      "mx": 14,
+      "my": 3,
+      "mae": 4,
+      "eq_coloc_ref0": true,
+      "gold_motion": [
+        [
+          -7,
+          0
+        ]
+      ],
+      "gold_motion_nonzero": true,
+      "part_count": 1,
+      "ownership": "sv-mvd (nonzero gold MV; RTL MV still 0,0)"
+    },
+    {
+      "mx": 6,
+      "my": 4,
+      "mae": 0,
+      "eq_coloc_ref0": true,
+      "gold_motion": [
+        [
+          0,
+          -4
+        ]
+      ],
+      "gold_motion_nonzero": true,
+      "part_count": 1,
+      "ownership": "sv-mvd (nonzero gold MV; RTL MV still 0,0)"
+    },
+    {
+      "mx": 7,
+      "my": 4,
+      "mae": 8,
+      "eq_coloc_ref0": true,
+      "gold_motion": [
+        [
+          8,
+          -16
+        ]
+      ],
+      "gold_motion_nonzero": true,
+      "part_count": 1,
+      "ownership": "sv-mvd (nonzero gold MV; RTL MV still 0,0)"
+    },
+    {
+      "mx": 8,
+      "my": 4,
+      "mae": 16,
+      "eq_coloc_ref0": true,
+      "gold_motion": [
+        [
+          8,
+          -16
+        ]
+      ],
+      "gold_motion_nonzero": true,
+      "part_count": 1,
+      "ownership": "sv-mvd (nonzero gold MV; RTL MV still 0,0)"
+    },
+    {
+      "mx": 9,
+      "my": 4,
+      "mae": 15,
+      "eq_coloc_ref0": true,
+      "gold_motion": [
+        [
+          8,
+          -16
+        ]
+      ],
+      "gold_motion_nonzero": true,
+      "part_count": 1,
+      "ownership": "sv-mvd (nonzero gold MV; RTL MV still 0,0)"
+    },
+    {
+      "mx": 10,
+      "my": 4,
+      "mae": 37,
+      "eq_coloc_ref0": true,
+      "gold_motion": [
+        [
+          8,
+          -16
+        ]
+      ],
+      "gold_motion_nonzero": true,
+      "part_count": 1,
+      "ownership": "sv-mvd (nonzero gold MV; RTL MV still 0,0)"
+    },
+    {
+      "mx": 11,
+      "my": 4,
+      "mae": 25,
+      "eq_coloc_ref0": true,
+      "gold_motion": [
+        [
+          8,
+          -16
+        ]
+      ],
+      "gold_motion_nonzero": true,
+      "part_count": 1,
+      "ownership": "sv-mvd (nonzero gold MV; RTL MV still 0,0)"
+    },
+    {
+      "mx": 12,
+      "my": 4,
+      "mae": 10,
+      "eq_coloc_ref0": true,
+      "gold_motion": [
+        [
+          16,
+          -16
+        ]
+      ],
+      "gold_motion_nonzero": true,
+      "part_count": 1,
+      "ownership": "sv-mvd (nonzero gold MV; RTL MV still 0,0)"
+    },
+    {
+      "mx": 13,
+      "my": 4,
+      "mae": 0,
+      "eq_coloc_ref0": true,
+      "gold_motion": [],
+      "gold_motion_nonzero": false,
+      "part_count": 0,
+      "ownership": "sv-traverse/P-residual or skip-pred (gold MV=0; cand==ref0 \u21d2 residual not applied or zero)"
+    },
+    {
+      "mx": 6,
+      "my": 5,
+      "mae": 0,
+      "eq_coloc_ref0": true,
+      "gold_motion": [],
+      "gold_motion_nonzero": false,
+      "part_count": 0,
+      "ownership": "sv-traverse/P-residual or skip-pred (gold MV=0; cand==ref0 \u21d2 residual not applied or zero)"
+    },
+    {
+      "mx": 10,
+      "my": 5,
+      "mae": 25,
+      "eq_coloc_ref0": true,
+      "gold_motion": [
+        [
+          8,
+          -16
+        ]
+      ],
+      "gold_motion_nonzero": true,
+      "part_count": 1,
+      "ownership": "sv-mvd (nonzero gold MV; RTL MV still 0,0)"
+    },
+    {
+      "mx": 11,
+      "my": 5,
+      "mae": 23,
+      "eq_coloc_ref0": true,
+      "gold_motion": [
+        [
+          8,
+          -16
+        ]
+      ],
+      "gold_motion_nonzero": true,
+      "part_count": 1,
+      "ownership": "sv-mvd (nonzero gold MV; RTL MV still 0,0)"
+    },
+    {
+      "mx": 12,
+      "my": 5,
+      "mae": 13,
+      "eq_coloc_ref0": true,
+      "gold_motion": [
+        [
+          8,
+          -16
+        ]
+      ],
+      "gold_motion_nonzero": true,
+      "part_count": 1,
+      "ownership": "sv-mvd (nonzero gold MV; RTL MV still 0,0)"
+    },
+    {
+      "mx": 13,
+      "my": 5,
+      "mae": 14,
+      "eq_coloc_ref0": true,
+      "gold_motion": [
+        [
+          8,
+          -16
+        ]
+      ],
+      "gold_motion_nonzero": true,
+      "part_count": 1,
+      "ownership": "sv-mvd (nonzero gold MV; RTL MV still 0,0)"
+    },
+    {
+      "mx": 14,
+      "my": 5,
+      "mae": 14,
+      "eq_coloc_ref0": true,
+      "gold_motion": [
+        [
+          8,
+          -16
+        ]
+      ],
+      "gold_motion_nonzero": true,
+      "part_count": 1,
+      "ownership": "sv-mvd (nonzero gold MV; RTL MV still 0,0)"
+    },
+    {
+      "mx": 15,
+      "my": 5,
+      "mae": 5,
+      "eq_coloc_ref0": true,
+      "gold_motion": [],
+      "gold_motion_nonzero": false,
+      "part_count": 0,
+      "ownership": "sv-traverse/P-residual or skip-pred (gold MV=0; cand==ref0 \u21d2 residual not applied or zero)"
+    },
+    {
+      "mx": 12,
+      "my": 6,
+      "mae": 1,
+      "eq_coloc_ref0": true,
+      "gold_motion": [
+        [
+          8,
+          -16
+        ]
+      ],
+      "gold_motion_nonzero": true,
+      "part_count": 1,
+      "ownership": "sv-mvd (nonzero gold MV; RTL MV still 0,0)"
+    },
+    {
+      "mx": 13,
+      "my": 6,
+      "mae": 12,
+      "eq_coloc_ref0": true,
+      "gold_motion": [
+        [
+          0,
+          -16
+        ]
+      ],
+      "gold_motion_nonzero": true,
+      "part_count": 1,
+      "ownership": "sv-mvd (nonzero gold MV; RTL MV still 0,0)"
+    },
+    {
+      "mx": 14,
+      "my": 6,
+      "mae": 14,
+      "eq_coloc_ref0": true,
+      "gold_motion": [
+        [
+          8,
+          -16
+        ]
+      ],
+      "gold_motion_nonzero": true,
+      "part_count": 1,
+      "ownership": "sv-mvd (nonzero gold MV; RTL MV still 0,0)"
+    },
+    {
+      "mx": 15,
+      "my": 6,
+      "mae": 8,
+      "eq_coloc_ref0": true,
+      "gold_motion": [
+        [
+          8,
+          -16
+        ]
+      ],
+      "gold_motion_nonzero": true,
+      "part_count": 1,
+      "ownership": "sv-mvd (nonzero gold MV; RTL MV still 0,0)"
+    },
+    {
+      "mx": 16,
+      "my": 6,
+      "mae": 5,
+      "eq_coloc_ref0": true,
+      "gold_motion": [
+        [
+          0,
+          -16
+        ]
+      ],
+      "gold_motion_nonzero": true,
+      "part_count": 1,
+      "ownership": "sv-mvd (nonzero gold MV; RTL MV still 0,0)"
+    },
+    {
+      "mx": 17,
+      "my": 6,
+      "mae": 22,
+      "eq_coloc_ref0": true,
+      "gold_motion": [
+        [
+          16,
+          -16
+        ]
+      ],
+      "gold_motion_nonzero": true,
+      "part_count": 1,
+      "ownership": "sv-mvd (nonzero gold MV; RTL MV still 0,0)"
+    },
+    {
+      "mx": 18,
+      "my": 6,
+      "mae": 6,
+      "eq_coloc_ref0": true,
+      "gold_motion": [],
+      "gold_motion_nonzero": false,
+      "part_count": 0,
+      "ownership": "sv-traverse/P-residual or skip-pred (gold MV=0; cand==ref0 \u21d2 residual not applied or zero)"
+    },
+    {
+      "mx": 15,
+      "my": 7,
+      "mae": 2,
+      "eq_coloc_ref0": true,
+      "gold_motion": [
+        [
+          8,
+          -16
+        ]
+      ],
+      "gold_motion_nonzero": true,
+      "part_count": 1,
+      "ownership": "sv-mvd (nonzero gold MV; RTL MV still 0,0)"
+    },
+    {
+      "mx": 16,
+      "my": 7,
+      "mae": 5,
+      "eq_coloc_ref0": true,
+      "gold_motion": [
+        [
+          0,
+          -16
+        ]
+      ],
+      "gold_motion_nonzero": true,
+      "part_count": 1,
+      "ownership": "sv-mvd (nonzero gold MV; RTL MV still 0,0)"
+    },
+    {
+      "mx": 17,
+      "my": 7,
+      "mae": 23,
+      "eq_coloc_ref0": true,
+      "gold_motion": [
+        [
+          8,
+          -16
+        ]
+      ],
+      "gold_motion_nonzero": true,
+      "part_count": 1,
+      "ownership": "sv-mvd (nonzero gold MV; RTL MV still 0,0)"
+    },
+    {
+      "mx": 18,
+      "my": 7,
+      "mae": 24,
+      "eq_coloc_ref0": true,
+      "gold_motion": [
+        [
+          8,
+          -16
+        ]
+      ],
+      "gold_motion_nonzero": true,
+      "part_count": 1,
+      "ownership": "sv-mvd (nonzero gold MV; RTL MV still 0,0)"
+    },
+    {
+      "mx": 19,
+      "my": 7,
+      "mae": 26,
+      "eq_coloc_ref0": true,
+      "gold_motion": [
+        [
+          8,
+          -16
+        ]
+      ],
+      "gold_motion_nonzero": true,
+      "part_count": 1,
+      "ownership": "sv-mvd (nonzero gold MV; RTL MV still 0,0)"
+    },
+    {
+      "mx": 18,
+      "my": 8,
+      "mae": 18,
+      "eq_coloc_ref0": true,
+      "gold_motion": [
+        [
+          8,
+          -16
+        ]
+      ],
+      "gold_motion_nonzero": true,
+      "part_count": 1,
+      "ownership": "sv-mvd (nonzero gold MV; RTL MV still 0,0)"
+    },
+    {
+      "mx": 19,
+      "my": 8,
+      "mae": 27,
+      "eq_coloc_ref0": true,
+      "gold_motion": [
+        [
+          8,
+          -16
+        ]
+      ],
+      "gold_motion_nonzero": true,
+      "part_count": 1,
+      "ownership": "sv-mvd (nonzero gold MV; RTL MV still 0,0)"
+    },
+    {
+      "mx": 13,
+      "my": 9,
+      "mae": 4,
+      "eq_coloc_ref0": true,
+      "gold_motion": [
+        [
+          0,
+          -2
+        ]
+      ],
+      "gold_motion_nonzero": true,
+      "part_count": 1,
+      "ownership": "sv-mvd (nonzero gold MV; RTL MV still 0,0)"
+    },
+    {
+      "mx": 14,
+      "my": 9,
+      "mae": 4,
+      "eq_coloc_ref0": true,
+      "gold_motion": [
+        [
+          1,
+          -1
+        ]
+      ],
+      "gold_motion_nonzero": true,
+      "part_count": 1,
+      "ownership": "sv-mvd (nonzero gold MV; RTL MV still 0,0)"
+    },
+    {
+      "mx": 15,
+      "my": 9,
+      "mae": 4,
+      "eq_coloc_ref0": true,
+      "gold_motion": [
+        [
+          0,
+          -1
+        ]
+      ],
+      "gold_motion_nonzero": true,
+      "part_count": 1,
+      "ownership": "sv-mvd (nonzero gold MV; RTL MV still 0,0)"
+    },
+    {
+      "mx": 16,
+      "my": 9,
+      "mae": 3,
+      "eq_coloc_ref0": true,
+      "gold_motion": [
+        [
+          0,
+          -1
+        ]
+      ],
+      "gold_motion_nonzero": true,
+      "part_count": 1,
+      "ownership": "sv-mvd (nonzero gold MV; RTL MV still 0,0)"
+    },
+    {
+      "mx": 4,
+      "my": 10,
+      "mae": 2,
+      "eq_coloc_ref0": true,
+      "gold_motion": [
+        [
+          17,
+          0
+        ]
+      ],
+      "gold_motion_nonzero": true,
+      "part_count": 1,
+      "ownership": "sv-mvd (nonzero gold MV; RTL MV still 0,0)"
+    },
+    {
+      "mx": 5,
+      "my": 10,
+      "mae": 1,
+      "eq_coloc_ref0": true,
+      "gold_motion": [
+        [
+          -17,
+          0
+        ]
+      ],
+      "gold_motion_nonzero": true,
+      "part_count": 1,
+      "ownership": "sv-mvd (nonzero gold MV; RTL MV still 0,0)"
+    },
+    {
+      "mx": 12,
+      "my": 10,
+      "mae": 11,
+      "eq_coloc_ref0": true,
+      "gold_motion": [
+        [
+          -1,
+          1
+        ]
+      ],
+      "gold_motion_nonzero": true,
+      "part_count": 1,
+      "ownership": "sv-mvd (nonzero gold MV; RTL MV still 0,0)"
+    },
+    {
+      "mx": 13,
+      "my": 10,
+      "mae": 12,
+      "eq_coloc_ref0": true,
+      "gold_motion": [
+        [
+          0,
+          -1
+        ]
+      ],
+      "gold_motion_nonzero": true,
+      "part_count": 1,
+      "ownership": "sv-mvd (nonzero gold MV; RTL MV still 0,0)"
+    },
+    {
+      "mx": 14,
+      "my": 10,
+      "mae": 6,
+      "eq_coloc_ref0": true,
+      "gold_motion": [
+        [
+          0,
+          -1
+        ]
+      ],
+      "gold_motion_nonzero": true,
+      "part_count": 1,
+      "ownership": "sv-mvd (nonzero gold MV; RTL MV still 0,0)"
+    },
+    {
+      "mx": 15,
+      "my": 10,
+      "mae": 5,
+      "eq_coloc_ref0": true,
+      "gold_motion": [
+        [
+          0,
+          -1
+        ]
+      ],
+      "gold_motion_nonzero": true,
+      "part_count": 1,
+      "ownership": "sv-mvd (nonzero gold MV; RTL MV still 0,0)"
+    },
+    {
+      "mx": 16,
+      "my": 10,
+      "mae": 5,
+      "eq_coloc_ref0": true,
+      "gold_motion": [
+        [
+          0,
+          -1
+        ]
+      ],
+      "gold_motion_nonzero": true,
+      "part_count": 1,
+      "ownership": "sv-mvd (nonzero gold MV; RTL MV still 0,0)"
+    },
+    {
+      "mx": 17,
+      "my": 10,
+      "mae": 0,
+      "eq_coloc_ref0": true,
+      "gold_motion": [
+        [
+          2,
+          -1
+        ]
+      ],
+      "gold_motion_nonzero": true,
+      "part_count": 1,
+      "ownership": "sv-mvd (nonzero gold MV; RTL MV still 0,0)"
+    },
+    {
+      "mx": 4,
+      "my": 11,
+      "mae": 6,
+      "eq_coloc_ref0": true,
+      "gold_motion": [],
+      "gold_motion_nonzero": false,
+      "part_count": 0,
+      "ownership": "sv-traverse/P-residual or skip-pred (gold MV=0; cand==ref0 \u21d2 residual not applied or zero)"
+    },
+    {
+      "mx": 5,
+      "my": 11,
+      "mae": 6,
+      "eq_coloc_ref0": true,
+      "gold_motion": [],
+      "gold_motion_nonzero": false,
+      "part_count": 0,
+      "ownership": "sv-traverse/P-residual or skip-pred (gold MV=0; cand==ref0 \u21d2 residual not applied or zero)"
+    },
+    {
+      "mx": 12,
+      "my": 11,
+      "mae": 8,
+      "eq_coloc_ref0": true,
+      "gold_motion": [
+        [
+          -1,
+          1
+        ]
+      ],
+      "gold_motion_nonzero": true,
+      "part_count": 1,
+      "ownership": "sv-mvd (nonzero gold MV; RTL MV still 0,0)"
+    },
+    {
+      "mx": 13,
+      "my": 11,
+      "mae": 11,
+      "eq_coloc_ref0": true,
+      "gold_motion": [
+        [
+          1,
+          1
+        ]
+      ],
+      "gold_motion_nonzero": true,
+      "part_count": 1,
+      "ownership": "sv-mvd (nonzero gold MV; RTL MV still 0,0)"
+    },
+    {
+      "mx": 14,
+      "my": 11,
+      "mae": 7,
+      "eq_coloc_ref0": true,
+      "gold_motion": [
+        [
+          1,
+          2
+        ]
+      ],
+      "gold_motion_nonzero": true,
+      "part_count": 1,
+      "ownership": "sv-mvd (nonzero gold MV; RTL MV still 0,0)"
+    },
+    {
+      "mx": 15,
+      "my": 11,
+      "mae": 6,
+      "eq_coloc_ref0": true,
+      "gold_motion": [
+        [
+          -1,
+          -1
+        ]
+      ],
+      "gold_motion_nonzero": true,
+      "part_count": 1,
+      "ownership": "sv-mvd (nonzero gold MV; RTL MV still 0,0)"
+    },
+    {
+      "mx": 16,
+      "my": 11,
+      "mae": 5,
+      "eq_coloc_ref0": true,
+      "gold_motion": [
+        [
+          0,
+          -1
+        ]
+      ],
+      "gold_motion_nonzero": true,
+      "part_count": 1,
+      "ownership": "sv-mvd (nonzero gold MV; RTL MV still 0,0)"
+    },
+    {
+      "mx": 17,
+      "my": 11,
+      "mae": 0,
+      "eq_coloc_ref0": true,
+      "gold_motion": [
+        [
+          2,
+          1
+        ]
+      ],
+      "gold_motion_nonzero": true,
+      "part_count": 1,
+      "ownership": "sv-mvd (nonzero gold MV; RTL MV still 0,0)"
+    },
+    {
+      "mx": 13,
+      "my": 12,
+      "mae": 2,
+      "eq_coloc_ref0": true,
+      "gold_motion": [
+        [
+          0,
+          1
+        ]
+      ],
+      "gold_motion_nonzero": true,
+      "part_count": 1,
+      "ownership": "sv-mvd (nonzero gold MV; RTL MV still 0,0)"
+    },
+    {
+      "mx": 14,
+      "my": 12,
+      "mae": 3,
+      "eq_coloc_ref0": true,
+      "gold_motion": [
+        [
+          0,
+          3
+        ]
+      ],
+      "gold_motion_nonzero": true,
+      "part_count": 1,
+      "ownership": "sv-mvd (nonzero gold MV; RTL MV still 0,0)"
+    },
+    {
+      "mx": 15,
+      "my": 12,
+      "mae": 3,
+      "eq_coloc_ref0": true,
+      "gold_motion": [
+        [
+          -2,
+          1
+        ]
+      ],
+      "gold_motion_nonzero": true,
+      "part_count": 1,
+      "ownership": "sv-mvd (nonzero gold MV; RTL MV still 0,0)"
+    },
+    {
+      "mx": 16,
+      "my": 12,
+      "mae": 3,
+      "eq_coloc_ref0": true,
+      "gold_motion": [
+        [
+          0,
+          1
+        ]
+      ],
+      "gold_motion_nonzero": true,
+      "part_count": 1,
+      "ownership": "sv-mvd (nonzero gold MV; RTL MV still 0,0)"
+    },
+    {
+      "mx": 17,
+      "my": 12,
+      "mae": 0,
+      "eq_coloc_ref0": true,
+      "gold_motion": [
+        [
+          2,
+          1
+        ]
+      ],
+      "gold_motion_nonzero": true,
+      "part_count": 1,
+      "ownership": "sv-mvd (nonzero gold MV; RTL MV still 0,0)"
+    }
+  ],
+  "recommendation": "Do not open broad inter in traverse lane. Assign nonzero-MV majority to sv-mvd; schedule P residual apply as separate residual task (may be traverse)."
+}

@@ -326,7 +326,8 @@ module stream_path #(
 	// 1-deep hold feeds stub. Lossless backpressure is UNCONDITIONAL for product
 	// and real-ref (do not gate behind USE_REAL_REF_COMMIT — that divergence
 	// made p=300 real-ref-only while product dropped hold beats).
-	localparam int TRAV_BUF_MAX = 8192;
+	// 624x480 IDR RBSP ≈11KB; 320x240 ≈3KB. Keep headroom for larger I-slices.
+	localparam int TRAV_BUF_MAX = 16384;
 	// Under real-ref, capture IDR so I residual can fill recon_store before P.
 	wire trav_cap_ok = USE_REAL_REF_COMMIT ? 1'b1 : !sl_is_idr;
 	reg [7:0]  trav_buf [0:TRAV_BUF_MAX-1];
@@ -380,7 +381,7 @@ module stream_path #(
 
 	wire trav_loading = (trav_ld_st == 2'd2);
 	wire trav_in_valid = trav_loading && (trav_load_idx < trav_buf_len) && trav_in_ready;
-	wire [7:0] trav_in_byte = trav_buf[trav_load_idx[12:0]];
+	wire [7:0] trav_in_byte = trav_buf[trav_load_idx[13:0]];
 
 	always @(posedge clk) begin
 		if (reset | flush) begin
@@ -418,7 +419,7 @@ module stream_path #(
 			end
 			if (trav_buf_active && sl_cap_en && trav_cap_ok) begin
 				if (trav_buf_len < TRAV_BUF_MAX[15:0]) begin
-					trav_buf[trav_buf_len[12:0]] <= sl_cap_data;
+					trav_buf[trav_buf_len[13:0]] <= sl_cap_data;
 					trav_buf_len <= trav_buf_len + 16'd1;
 				end
 			end
@@ -477,7 +478,7 @@ module stream_path #(
 	end
 
 	h264_p_mb_traverse #(
-		.MAX_RBSP_BYTES(8192),
+		.MAX_RBSP_BYTES(16384),
 		.FAULT_NO_QP_WRAP(FAULT_NO_QP_WRAP)
 	) u_p_traverse (
 		.clk(clk), .reset(reset | flush), .clear(trav_clear_r | reset | flush),
