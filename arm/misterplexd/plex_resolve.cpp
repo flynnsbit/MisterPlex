@@ -708,6 +708,40 @@ ResolveResult resolvePlayTarget(const std::string& rawKeyOrPath, const std::stri
         }
         r.sourceFpsHint = contentFpsHint(r.videoFrameRate, r.frameRate);
         parseExactFps(r.videoFrameRate, r.frameRate, r.fpsNum, r.fpsDen);
+        // Source asset geometry (library), for direct-play identity-scale + GEOM logs.
+        {
+            auto mw = attr(xml, "Media", "width");
+            auto mh = attr(xml, "Media", "height");
+            if (!mw.empty() && !mh.empty()) {
+                r.mediaWidth = std::atoi(mw.c_str());
+                r.mediaHeight = std::atoi(mh.c_str());
+            }
+            if (r.mediaWidth <= 0 || r.mediaHeight <= 0) {
+                size_t sp = 0;
+                while ((sp = xml.find("<Stream", sp)) != std::string::npos) {
+                    auto end = xml.find('>', sp);
+                    if (end == std::string::npos)
+                        break;
+                    const std::string slice = xml.substr(sp, end - sp);
+                    const bool isVideo = slice.find("streamType=\"1\"") != std::string::npos ||
+                                         slice.find("type=\"video\"") != std::string::npos;
+                    if (isVideo) {
+                        auto sw = attrIn(slice, "width");
+                        auto sh = attrIn(slice, "height");
+                        if (!sw.empty() && !sh.empty()) {
+                            r.mediaWidth = std::atoi(sw.c_str());
+                            r.mediaHeight = std::atoi(sh.c_str());
+                        }
+                        break;
+                    }
+                    sp = end + 1;
+                }
+            }
+            if (r.mediaWidth < 0)
+                r.mediaWidth = 0;
+            if (r.mediaHeight < 0)
+                r.mediaHeight = 0;
+        }
     }
 
     // STREAM product path: prefer direct H.264 Part (elementary after demux) so host

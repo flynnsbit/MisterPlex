@@ -27,6 +27,11 @@ struct ResolveResult {
     // Drives A/V pacing; must NOT be bucketed (23.976 vs 24 = ~1 ms/s of lipsync drift).
     int fpsNum = 0;
     int fpsDen = 0;
+    // Library Media/Stream geometry from PMS metadata (0 = unknown). This is the
+    // *source* asset size, not the universal-transcode delivery size. Used for
+    // direct-play identity-scale decisions and GEOM logs only.
+    int mediaWidth = 0;
+    int mediaHeight = 0;
 };
 
 struct QueueItem {

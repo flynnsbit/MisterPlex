@@ -2020,17 +2020,18 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
     vfReq.assume_source_matches_coded = ffmpegScaleAssumeMatch_;
     const FfmpegVfPlan vfPlan = buildFfmpegVideoFilter(vfReq);
     std::string vf = vfPlan.vf;
-    log(std::string("media: vf_plan reason=") + vfPlan.reason +
-        " scale_applied=" + (vfPlan.scale_applied ? "1" : "0") +
+    // Actual scale decision (parent greps arm_rescale= here and on misterplexd: GEOM).
+    const std::string srcStr =
+        (ffmpegScaleSourceW_ > 0 && ffmpegScaleSourceH_ > 0)
+            ? (std::to_string(ffmpegScaleSourceW_) + "x" + std::to_string(ffmpegScaleSourceH_))
+            : "unknown";
+    const std::string codedStr = std::to_string(rawW) + "x" + std::to_string(rawH);
+    log(std::string("media: GEOM expected_delivery=") + srcStr + " decode_target=" + codedStr +
+        " arm_rescale=" + (vfPlan.scale_applied ? "1" : "0") + " reason=" + vfPlan.reason +
         " identity_skip=" + (vfPlan.identity_skip ? "1" : "0") +
         " mode=" + ffmpegScaleModeName(vfReq.scale_mode) +
         " sws_flags=" + (ffmpegSwsFlags_.empty() ? "(default)" : ffmpegSwsFlags_) +
         " assume_match=" + (ffmpegScaleAssumeMatch_ ? "1" : "0") +
-        " src=" +
-        (ffmpegScaleSourceW_ > 0 && ffmpegScaleSourceH_ > 0
-             ? (std::to_string(ffmpegScaleSourceW_) + "x" + std::to_string(ffmpegScaleSourceH_))
-             : "unknown") +
-        " coded=" + std::to_string(rawW) + "x" + std::to_string(rawH) +
         " display=" + std::to_string(rawDisplayW) + "x" + std::to_string(rawDisplayH) +
         " vf=" + (vf.empty() ? "(none)" : vf));
 

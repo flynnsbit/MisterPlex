@@ -92,6 +92,25 @@ int main() {
     CHECK(byRes.profileName == "480p");
     checkProfileMatchesContentResolution("resolution alias 480p", byRes, osd480);
 
+    // Content-tier full re-apply (doPlay weakForContentResolution contract): an
+    // explicit 480p conf ladder must not leave quality/name sticky when OSD/DECODE
+    // is 240p — only videoResolution was overwritten before this fix.
+    {
+        WeakLadder sticky480;
+        CHECK(applyPlexTranscodeProfile("480p", sticky480));
+        CHECK(sticky480.videoQuality == 60);
+        WeakLadder play240 = sticky480;
+        CHECK(applyPlexTranscodeProfile(osd240.label, play240));
+        CHECK(play240.profileName == "240p");
+        CHECK(play240.videoQuality == 40);
+        checkProfileMatchesContentResolution("content-tier reapply 240p", play240, osd240);
+        WeakLadder play480 = play240;
+        CHECK(applyPlexTranscodeProfile(osd480.label, play480));
+        CHECK(play480.profileName == "480p");
+        CHECK(play480.videoQuality == 60);
+        checkProfileMatchesContentResolution("content-tier reapply 480p", play480, osd480);
+    }
+
     const auto start480 =
         buildUniversalTranscodeUrl("http://pms.example:32400", "/library/metadata/3", "tok",
                                    "sess480", 1500, w480);

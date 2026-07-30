@@ -71,10 +71,12 @@ public:
     // "off" | "ffmpeg" — PMS burn-in is handled in resolve (WeakLadder::burnSubtitles).
     void setSubtitleMode(std::string mode) { subtitleMode_ = std::move(mode); }
     void setSubtitleStreamIndex(int idx) { subtitleStreamIndex_ = idx; }
-    // STREAM=0 -vf scale policy (shipping default "always" = unconditional scale+pad).
+    // STREAM=0 -vf scale policy (product default "skip_identity": omit scale+pad
+    // only when expected delivery WxH is known and equals coded; unknown still scales).
     // Conf FFMPEG_SCALE=always|skip_identity|off. See libmisterplex/ffmpeg_vf.hpp.
     void setFfmpegScaleMode(std::string mode);
-    // Optional scale flags= token (empty = ffmpeg default algo — shipping). Conf FFMPEG_SWS_FLAGS.
+    // scale flags= token. Product main defaults to fast_bilinear for residual
+    // scales; empty here = ffmpeg default algo. Conf FFMPEG_SWS_FLAGS.
     void setFfmpegSwsFlags(std::string flags);
     // When scale mode is skip_identity and source dims are unknown, assume PMS already
     // delivered coded WxH (lab only). Conf FFMPEG_SCALE_ASSUME_MATCH=1.
@@ -228,9 +230,10 @@ private:
     std::string streamSkipRgb_ = "auto"; // auto | on | off
     std::string subtitleMode_ = "off"; // off | ffmpeg
     int subtitleStreamIndex_ = 0;
-    // FFmpeg -vf scale policy (default always = shipping unconditional scale+pad).
-    std::string ffmpegScaleMode_ = "always";
-    std::string ffmpegSwsFlags_; // empty = no :flags= (ffmpeg default)
+    // FFmpeg -vf scale policy (product default skip_identity — see setFfmpegScaleMode).
+    std::string ffmpegScaleMode_ = "skip_identity";
+    // Product main sets fast_bilinear; empty = no :flags= (ffmpeg default algo).
+    std::string ffmpegSwsFlags_;
     bool ffmpegScaleAssumeMatch_ = false;
     int ffmpegScaleSourceW_ = 0;
     int ffmpegScaleSourceH_ = 0;

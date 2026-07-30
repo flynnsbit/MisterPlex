@@ -72,13 +72,25 @@ void logDaemon(const std::string& s) {
     std::fprintf(stderr, "%s\n", misterplex::redactSensitive(s).c_str());
 }
 
+// Content tier (OSD O[4] / DECODE) is the product source of truth for the PMS
+// ladder on each play. Re-apply the full named profile so profileName, quality,
+// bitrate and H.264 caps track the tier — not only videoResolution.
 misterplex::WeakLadder weakForContentResolution(const misterplex::WeakLadder& base,
                                                 const misterplex::ContentResolution& res,
                                                 bool bitrateExplicit) {
     misterplex::WeakLadder weak = base;
-    weak.videoResolution = res.label;
-    if (!bitrateExplicit)
-        weak.maxVideoBitrateKbps = res.weakBitrateKbps;
+    const int keepBitrate = base.maxVideoBitrateKbps;
+    if (!misterplex::applyPlexTranscodeProfile(res.label, weak)) {
+        weak.profileName = "custom";
+        weak.videoResolution = res.label;
+        if (!bitrateExplicit)
+            weak.maxVideoBitrateKbps = res.weakBitrateKbps;
+    } else if (bitrateExplicit) {
+        weak.maxVideoBitrateKbps = keepBitrate;
+    }
+    weak.burnSubtitles = base.burnSubtitles;
+    weak.subtitleStreamId = base.subtitleStreamId;
+    weak.clientProfileName = base.clientProfileName;
     return weak;
 }
 
@@ -122,10 +134,14 @@ int main(int argc, char** argv) {
     bool presentProfile = false;
     bool streamEnabled = false;
     std::string streamSkipRgb = "auto"; // auto | on | off — skip heavy RGB when PRESENT=fpga
-    // STREAM=0 -vf scale policy. Shipping default "always" = unconditional scale+pad.
-    // Lab: skip_identity (+ ASSUME_MATCH) or off. See libmisterplex/ffmpeg_vf.hpp.
-    std::string ffmpegScaleMode = "always";
-    std::string ffmpegSwsFlags; // empty = ffmpeg default algo
+    // STREAM=0 -vf scale: skip_identity omits scale+pad only when expected
+    // delivery WxH is known and equals the coded bank (or ASSUME_MATCH).
+    // Unknown delivery → still scales (safety net when PMS ignores the request).
+    std::string ffmpegScaleMode = "skip_identity";
+    // Residual scale uses the cheapest quality sws flag. Bicubic (ffmpeg default)
+    // is wasteful when this path is only a geometry safety net after PMS already
+    // targeted the coded bank. Algo choice only — not a measured % claim.
+    std::string ffmpegSwsFlags = "fast_bilinear";
     bool ffmpegScaleAssumeMatch = false;
     bool autoNext = true;
     std::string subtitleMode = "off"; // off | burn | ffmpeg
@@ -303,10 +319,11 @@ int main(int argc, char** argv) {
         v = loadConf(confPath, "STREAM_SKIP_RGB");
         if (!v.empty())
             streamSkipRgb = v;
-        // Opt-in scale policy — default always keeps shipping -vf behaviour.
+        // Scale policy: default skip_identity (omit only when expected delivery==coded).
         v = loadConf(confPath, "FFMPEG_SCALE");
         if (!v.empty())
             ffmpegScaleMode = v;
+        // Explicit conf wins. Omit the key for product fast_bilinear default.
         v = loadConf(confPath, "FFMPEG_SWS_FLAGS");
         if (!v.empty())
             ffmpegSwsFlags = v;
@@ -369,21 +386,49 @@ int main(int argc, char** argv) {
             std::fprintf(stderr, "misterplexd: unknown --transcode-profile=%s (keeping %s)\n",
                          cliTranscodeProfile.c_str(), weak.profileName.c_str());
     }
-    // Align PMS ladder with decode size only when the operator did not choose a
-    // transcode profile/resolution explicitly. This is the fallback path when
-    // OSD_CONTROL=0 or no Plex core is loaded; with OSD_CONTROL=1 the OSD status
-    // word (O[4]) is the content-resolution source of truth.
-    if (!transcodeProfileExplicit && !weakResExplicit &&
-        weak.videoResolution == "320x240" && decodeSize != misterplex::kDefaultCodedDecodeSize) {
+    // Content/decode bank is the product source of truth for the PMS ladder.
+    // - Implicit profile: lift 240p default up to DECODE when DECODE is non-default.
+    // - Explicit TRANSCODE_PROFILE/WEAK_RES that disagrees with DECODE: reconcile
+    //   to DECODE so we never ask PMS for a larger ladder than the bank
+    //   (e.g. TRANSCODE_PROFILE=480p + DECODE=320x240 → redundant ARM downscale).
+    // With OSD_CONTROL=1, each play still re-applies the ladder from O[4].
+    {
         const std::string decodeRes = decodeSize.wxh();
-        if (!misterplex::applyPlexTranscodeProfile(decodeRes, weak)) {
-            weak.profileName = "custom";
-            weak.videoResolution = decodeRes;
-            if (!weakBitrateExplicit) {
-                weak.maxVideoBitrateKbps =
-                    misterplex::weakBitrateKbpsForCodedSize(decodeSize.width, decodeSize.height);
+        const bool ladderMismatch = (weak.videoResolution != decodeRes);
+        if (ladderMismatch && (transcodeProfileExplicit || weakResExplicit)) {
+            std::fprintf(stderr,
+                         "misterplexd: WARN DECODE=%s disagrees with TRANSCODE_PROFILE/WEAK "
+                         "ladder %s (%s) — reconciling ladder to DECODE (content bank wins)\n",
+                         decodeRes.c_str(), weak.profileName.c_str(),
+                         weak.videoResolution.c_str());
+            if (!misterplex::applyPlexTranscodeProfile(decodeRes, weak)) {
+                weak.profileName = "custom";
+                weak.videoResolution = decodeRes;
+                if (!weakBitrateExplicit) {
+                    weak.maxVideoBitrateKbps = misterplex::weakBitrateKbpsForCodedSize(
+                        decodeSize.width, decodeSize.height);
+                }
+            }
+        } else if (!transcodeProfileExplicit && !weakResExplicit &&
+                   weak.videoResolution == "320x240" &&
+                   decodeSize != misterplex::kDefaultCodedDecodeSize) {
+            if (!misterplex::applyPlexTranscodeProfile(decodeRes, weak)) {
+                weak.profileName = "custom";
+                weak.videoResolution = decodeRes;
+                if (!weakBitrateExplicit) {
+                    weak.maxVideoBitrateKbps = misterplex::weakBitrateKbpsForCodedSize(
+                        decodeSize.width, decodeSize.height);
+                }
             }
         }
+        std::fprintf(stderr,
+                     "misterplexd: ladder profile=%s videoResolution=%s bitrate=%d "
+                     "DECODE=%s TRANSCODE_explicit=%d scale_mode=%s sws=%s\n",
+                     weak.profileName.c_str(), weak.videoResolution.c_str(),
+                     weak.maxVideoBitrateKbps, decodeRes.c_str(),
+                     (transcodeProfileExplicit || weakResExplicit) ? 1 : 0,
+                     ffmpegScaleMode.c_str(),
+                     ffmpegSwsFlags.empty() ? "(default)" : ffmpegSwsFlags.c_str());
     }
     std::string weakWhy;
     if (!misterplex::validateWeakLadder(weak, &weakWhy)) {
@@ -692,12 +737,73 @@ int main(int argc, char** argv) {
             resolved.sourceFpsHint = 30; // testsrc default
             resolved.fpsNum = 30;
             resolved.fpsDen = 1;
+            resolved.mediaWidth = 0;
+            resolved.mediaHeight = 0;
+            resolved.transcoded = false;
         } else {
             std::fprintf(stderr, "misterplexd: resolved %s title=%s dur=%lld transcode=%d base=%s\n",
                          resolved.detail.c_str(), resolved.title.c_str(),
                          static_cast<long long>(resolved.durationMs),
                          resolved.transcoded ? 1 : 0, base.c_str());
         }
+
+        // Expected delivery geometry for identity-scale decisions:
+        // - universal transcode: PMS was asked for weakForPlay.videoResolution
+        //   (not library Media WxH — that is the source asset, often 1080p).
+        // - direct play: library Media/Stream WxH when known.
+        // - unknown: leave 0 so skip_identity still emits scale (safe).
+        // Always re-set each play so a prior session cannot leak source dims.
+        int expectW = 0, expectH = 0;
+        const char* deliveryBasis = "unknown";
+        if (resolved.transcoded) {
+            if (std::sscanf(weakForPlay.videoResolution.c_str(), "%dx%d", &expectW, &expectH) ==
+                    2 &&
+                expectW > 0 && expectH > 0) {
+                deliveryBasis = "transcode_request";
+            } else {
+                expectW = expectH = 0;
+            }
+        } else if (resolved.mediaWidth > 0 && resolved.mediaHeight > 0) {
+            expectW = resolved.mediaWidth;
+            expectH = resolved.mediaHeight;
+            deliveryBasis = "library_media";
+        }
+        player.setFfmpegScaleSourceSize(expectW, expectH);
+
+        const std::string decodeTarget = std::string(contentRes.label);
+        const std::string requestedPms = weakForPlay.videoResolution;
+        const std::string expectStr =
+            (expectW > 0 && expectH > 0)
+                ? (std::to_string(expectW) + "x" + std::to_string(expectH))
+                : "unknown";
+        // Predict ARM rescale from the same policy media_player will apply.
+        const auto scaleMode = misterplex::parseFfmpegScaleMode(ffmpegScaleMode);
+        int armRescale = 1;
+        if (scaleMode == misterplex::FfmpegScaleMode::Off) {
+            armRescale = 0;
+        } else if (scaleMode == misterplex::FfmpegScaleMode::SkipIdentity) {
+            const bool knownMatch =
+                expectW > 0 && expectH > 0 && expectW == contentRes.width.get() &&
+                expectH == contentRes.height.get();
+            const bool assumeMatch =
+                ffmpegScaleAssumeMatch && !(expectW > 0 && expectH > 0);
+            armRescale = (knownMatch || assumeMatch) ? 0 : 1;
+        }
+        // Greppable single-line geometry contract for parent device logs.
+        // Keys: requested_pms expected_delivery decode_target arm_rescale
+        const std::string libraryStr =
+            (resolved.mediaWidth > 0 && resolved.mediaHeight > 0)
+                ? (std::to_string(resolved.mediaWidth) + "x" +
+                   std::to_string(resolved.mediaHeight))
+                : "unknown";
+        std::fprintf(stderr,
+                     "misterplexd: GEOM requested_pms=%s expected_delivery=%s "
+                     "delivery_basis=%s decode_target=%s arm_rescale=%d "
+                     "transcoded=%d sws=%s scale_mode=%s library_media=%s\n",
+                     requestedPms.c_str(), expectStr.c_str(), deliveryBasis,
+                     decodeTarget.c_str(), armRescale, resolved.transcoded ? 1 : 0,
+                     ffmpegSwsFlags.empty() ? "(default)" : ffmpegSwsFlags.c_str(),
+                     misterplex::ffmpegScaleModeName(scaleMode), libraryStr.c_str());
 
         // Wire SOURCE_FPS / MATCH_SOURCE_HZ into play path (software Content FPS hint).
         {

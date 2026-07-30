@@ -1,10 +1,11 @@
 // FFmpeg -vf construction for misterplexd STREAM=0 rawvideo path.
 // Pure header (no I/O): unit-tested so filter policy cannot drift silently.
 //
-// Shipping default is ScaleMode::Always with empty sws_flags — identical to the
-// historical unconditional scale=W:H:force_original_aspect_ratio=decrease,pad=...
-// graph. Opt-in modes exist so w-device can A/B identity-scale skip and
-// fast_bilinear without changing product behaviour until measured.
+// Product daemon default is SkipIdentity with fast_bilinear sws_flags: omit
+// scale+pad only when expected delivery WxH is known and equals the coded bank
+// (or ASSUME_MATCH). Unknown delivery still emits the historical
+// scale=W:H:force_original_aspect_ratio=decrease,pad=... graph. parseFfmpegScaleMode
+// empty/unknown → Always (safe for callers that omit conf).
 #pragma once
 
 #include <string>
@@ -12,11 +13,12 @@
 namespace misterplex {
 
 // How the scale/pad stage is chosen.
-//   Always        — always emit scale+pad (shipping default).
+//   Always        — always emit scale+pad.
 //   SkipIdentity  — omit scale+pad when source WxH equals coded WxH (or when
 //                   assume_source_matches_coded is set and source is unknown).
 //                   Display-crop geometry is then handled by clearYuv420pCropPadding
 //                   on the present path, not by a 624→618→624 swscale round-trip.
+//                   Product misterplexd default when conf omits FFMPEG_SCALE.
 //   Off           — never emit scale+pad (lab only; wrong if sizes mismatch).
 enum class FfmpegScaleMode { Always, SkipIdentity, Off };
 
@@ -32,7 +34,8 @@ inline const char* ffmpegScaleModeName(FfmpegScaleMode m) {
     return "always";
 }
 
-// Parse conf token. Unknown → Always (safe shipping default).
+// Parse conf token. Empty/unknown → Always (conservative for bare callers).
+// misterplexd itself defaults conf to skip_identity before calling this.
 inline FfmpegScaleMode parseFfmpegScaleMode(const std::string& raw) {
     if (raw.empty())
         return FfmpegScaleMode::Always;
