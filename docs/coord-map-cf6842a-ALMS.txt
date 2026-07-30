@@ -1,4 +1,4 @@
-COORD-MAP cf6842a — serial-IQ sink + win_k fix (PROVISIONAL)
+COORD-MAP cf6842a — serial-IQ sink + win_k fix · **LUMA-ONLY**
 ============================================================
 Freeze: cf6842a on rtl/i-slice-luma
   = 34d55ac (serial IQ sink) + win_k Error 10232 fix (RBSP_AW'(win_k))
@@ -12,10 +12,16 @@ Log:   .agent-work/integ-wiring/quartus_map_cf6842a.log
 Tool:  docker ghcr.io/raetro/quartus:mister · quartus_map only · NO FIT
 true rc=0  (captured directly)
 
-PROVISIONAL — correctness package for cf6842a itself (both clips + RED
-FAULT_SERIAL_IQ_ZERO at this SHA) not yet attested by integrate. Area alone
-must not be quoted as a product win. 34d55ac claimed 300/300 + 1170/1170 + RED;
-win_k fix re-scored at cf6842a; serial-IQ+win_k together need one more score pass.
+**LUMA-ONLY.** Not in this tree: chroma sink path, h264_p_chroma_res_apply,
+chroma_qp / chroma_dc_hadamard_inv as kept ship path. **Do not declare ship-fit.**
+Chroma bound: docs/chroma-merge-area-bound.md. Next map = merged rebase freeze only.
+
+CORRECTNESS @ cf6842a (lane 1c7c5305) — no longer area-provisional on IQ:
+  clip1 300/300 y_px 76800/76800 true_rc=0
+  clip2 1170/1170 y_px exact true_rc=0
+  RED FAULT_SERIAL_IQ_ZERO: 0/300 y_mb, 5/76800 px — discriminates (load-bearing)
+  JSON: docs/evidence/cf6842a_sink_serial_iq_correctness.json (on rtl/chroma-intra tip)
+ALM gate still MISS; ship claim still blocked on ALMs + missing chroma.
 
 PRE-REGISTER (before map) → OUTCOME
 -----------------------------------

@@ -191,5 +191,16 @@ retire stub parallel dequant (−32) + serial sink already in probe path:
 
 ### Honest sentence (post-cf6842a)
 
-Bit-exact I-decoder (lane scores on ancestors) + traverse M10K took the design **29.6× → ~1.5×**.  
-Serial IQ solved **DSP** (sink 64→4; whole 149→111). **ALMs still ~1.46×** — one module (sink fabric/pred/planes), not the mul farm, still blocks fit.
+**Luma-only** bit-exact I-decoder (cf6842a: 300/300 + 1170/1170 + RED serial IQ) + traverse M10K took the design **29.6× → ~1.46×**.  
+Serial IQ solved **luma sink DSP** (64→4; whole 149→111). **ALMs still ~1.46×**.  
+**Chroma is not in this number** — see `docs/chroma-merge-area-bound.md`. Merged-tree map is the only ship-relevant area figure still owed.
+
+### Chroma DSP (merged) — short form
+
+| Merge quality | Product-intent DSP est. | vs 112 |
+|---------------|------------------------:|-------:|
+| Serial IQ shared + chroma DC had (+8) only | **~55** | CLEAR |
+| + `p_chroma_res_apply` keeps parallel `h264_dequant4x4` (~52) | **~107** | FRAGILE |
+| Pre-serial sink+chroma style (map3b 92) | **~135** | FAIL |
+
+ALM: **no positive headroom** on 61,267 baseline; chroma adds **~+2k..+12k** ALMs typical, not a leaf-only rounding error.
