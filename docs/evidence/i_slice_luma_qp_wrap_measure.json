@@ -34,5 +34,8 @@
     "do_not_merge_chroma_from_this_lane": true
   },
   "inter_note": "inter_y_mb 1681\u21921939; remaining mostly ref cascade; frame1 refOK-48 still deferred ownership",
-  "alm_dsp": "UNKNOWN \u2014 coordinate sv-integrate single map"
+  "alm_dsp": "UNKNOWN \u2014 coordinate sv-integrate single map",
+  "source_sha": "6dc5993330b3a140046b5f1a5cb443a0a60afdcf",
+  "clean_remeasure_log": "docs/evidence/i_slice_luma_qp_wrap_run_clean.log",
+  "prereg_line": "LUMA_vs_PREREGISTER pre=260..295 actual=300 HIT_ABOVE"
 }
