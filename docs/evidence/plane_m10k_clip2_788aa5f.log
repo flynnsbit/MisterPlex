@@ -1,0 +1,595 @@
+REAL_REF_MEASURE source_sha=788aa5f68fcd8fa83ccbeec909ea6efdc037681f
+REAL_REF_MEASURE CLIP=624x480 second-clip validation (not 320x240)
+REAL_REF_MEASURE clip_stats: I4=167 I16=1003 wrap_events=6 qp[1,35] mb=1170 (vs 320: I4=79 I16=221 wrap=1)
+REAL_REF_MEASURE pre-register HEADLINE: intra=0/1170 inter=0/12870 (chroma stub floors Y+U+V mb_exact)
+REAL_REF_MEASURE pre-register LUMA: intra_y_mb=1100..1170/1170 intra_y_px=270000..299520/299520 (generalize 6dc5993; HIT_ABOVE if 1170)
+make: Entering directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/build/verilator/stream_path_full_frame_real_ref_624'
+make: Nothing to be done for 'default'.
+make: Leaving directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/build/verilator/stream_path_full_frame_real_ref_624'
+- V e r i l a t i o n   R e p o r t: Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
+- Verilator: Built from 0.000 MB sources in 0 modules, into 0.000 MB in 0 C++ files needing 0.000 MB
+- Verilator: Walltime 0.011 s (elab=0.000, cvt=0.000, bld=0.010); cpu 0.001 s on 1 threads; allocated 20.324 MB
+SOURCE_SHA=788aa5f68fcd8fa83ccbeec909ea6efdc037681f
+REAL_REF_MODE no_golden_prefill USE_REAL_REF_COMMIT=1
+TRAV_CAP_START idr=1
+I_RECON_ENTER trav_pend=0 store_pend=0
+TRAV_CAP_EOP idr=1 len=10891 mb_w=39 mb_h=30
+TRAV_START idr=1 len=10891
+TRAV_HDR_OK i_slice=1 bit_pos=24 qp=26 pic_mbs=1170 type=7
+TRAV_RES_LAUNCH mb=0 res_i=0 i16=0 nC=0 max=16 abs_bit=77
+TRAV_RES_OK mb=0 res_i=0 i16=0 tc=8 t1=3 tz=5 bit0=77 bit_end_abs=143 table=0 max=16
+TRAV_RES_LAUNCH mb=0 res_i=1 i16=0 nC=8 max=16 abs_bit=143
+TRAV_RES_OK mb=0 res_i=1 i16=0 tc=0 t1=0 tz=0 bit0=143 bit_end_abs=149 table=3 max=16
+TRAV_RES_LAUNCH mb=0 res_i=2 i16=0 nC=8 max=16 abs_bit=149
+TRAV_RES_OK mb=0 res_i=2 i16=0 tc=0 t1=0 tz=0 bit0=149 bit_end_abs=155 table=3 max=16
+TRAV_RES_LAUNCH mb=0 res_i=3 i16=0 nC=0 max=16 abs_bit=155
+TRAV_RES_OK mb=0 res_i=3 i16=0 tc=15 t1=0 tz=1 bit0=155 bit_end_abs=244 table=0 max=16
+TRAV_RES_LAUNCH mb=0 res_i=4 i16=0 nC=0 max=16 abs_bit=244
+TRAV_RES_OK mb=0 res_i=4 i16=0 tc=2 t1=2 tz=1 bit0=244 bit_end_abs=253 table=0 max=16
+TRAV_RES_LAUNCH mb=0 res_i=5 i16=0 nC=2 max=16 abs_bit=253
+TRAV_RES_OK mb=0 res_i=5 i16=0 tc=0 t1=0 tz=0 bit0=253 bit_end_abs=255 table=1 max=16
+TRAV_RES_LAUNCH mb=0 res_i=6 i16=0 nC=9 max=16 abs_bit=255
+TRAV_RES_OK mb=0 res_i=6 i16=0 tc=15 t1=1 tz=1 bit0=255 bit_end_abs=322 table=3 max=16
+TRAV_RES_LAUNCH mb=0 res_i=7 i16=0 nC=8 max=16 abs_bit=322
+TRAV_RES_OK mb=0 res_i=7 i16=0 tc=15 t1=0 tz=1 bit0=322 bit_end_abs=401 table=3 max=16
+TRAV_RES_LAUNCH mb=0 res_i=8 i16=0 nC=0 max=16 abs_bit=401
+TRAV_RES_OK mb=0 res_i=8 i16=0 tc=2 t1=2 tz=0 bit0=401 bit_end_abs=409 table=0 max=16
+TRAV_RES_LAUNCH mb=0 res_i=9 i16=0 nC=9 max=16 abs_bit=409
+TRAV_RES_OK mb=0 res_i=9 i16=0 tc=13 t1=1 tz=2 bit0=409 bit_end_abs=474 table=3 max=16
+TRAV_RES_LAUNCH mb=0 res_i=10 i16=0 nC=2 max=16 abs_bit=474
+TRAV_RES_OK mb=0 res_i=10 i16=0 tc=0 t1=0 tz=0 bit0=474 bit_end_abs=476 table=1 max=16
+TRAV_RES_LAUNCH mb=0 res_i=11 i16=0 nC=7 max=16 abs_bit=476
+TRAV_RES_OK mb=0 res_i=11 i16=0 tc=12 t1=0 tz=3 bit0=476 bit_end_abs=549 table=2 max=16
+TRAV_RES_LAUNCH mb=0 res_i=12 i16=0 nC=14 max=16 abs_bit=549
+TRAV_RES_OK mb=0 res_i=12 i16=0 tc=12 t1=2 tz=4 bit0=549 bit_end_abs=616 table=3 max=16
+TRAV_RES_LAUNCH mb=0 res_i=13 i16=0 nC=14 max=16 abs_bit=616
+TRAV_RES_OK mb=0 res_i=13 i16=0 tc=12 t1=2 tz=4 bit0=616 bit_end_abs=682 table=3 max=16
+TRAV_RES_LAUNCH mb=0 res_i=14 i16=0 nC=12 max=16 abs_bit=682
+TRAV_RES_OK mb=0 res_i=14 i16=0 tc=10 t1=0 tz=5 bit0=682 bit_end_abs=756 table=3 max=16
+TRAV_RES_LAUNCH mb=0 res_i=15 i16=0 nC=11 max=16 abs_bit=756
+TRAV_RES_OK mb=0 res_i=15 i16=0 tc=11 t1=0 tz=4 bit0=756 bit_end_abs=826 table=3 max=16
+TRAV_RES_LAUNCH mb=0 res_i=16 i16=0 nC=0 max=4 abs_bit=826
+TRAV_RES_OK mb=0 res_i=16 i16=0 tc=4 t1=0 tz=0 bit0=826 bit_end_abs=878 table=4 max=4
+TRAV_RES_LAUNCH mb=0 res_i=17 i16=0 nC=0 max=4 abs_bit=878
+TRAV_RES_OK mb=0 res_i=17 i16=0 tc=4 t1=0 tz=0 bit0=878 bit_end_abs=935 table=4 max=4
+TRAV_RES_LAUNCH mb=0 res_i=18 i16=0 nC=0 max=15 abs_bit=935
+TRAV_RES_OK mb=0 res_i=18 i16=0 tc=13 t1=2 tz=2 bit0=935 bit_end_abs=1009 table=0 max=15
+TRAV_RES_LAUNCH mb=0 res_i=19 i16=0 nC=13 max=15 abs_bit=1009
+TRAV_RES_OK mb=0 res_i=19 i16=0 tc=6 t1=2 tz=8 bit0=1009 bit_end_abs=1046 table=3 max=15
+TRAV_RES_LAUNCH mb=0 res_i=20 i16=0 nC=13 max=15 abs_bit=1046
+TRAV_RES_OK mb=0 res_i=20 i16=0 tc=11 t1=0 tz=4 bit0=1046 bit_end_abs=1109 table=3 max=15
+TRAV_RES_LAUNCH mb=0 res_i=21 i16=0 nC=9 max=15 abs_bit=1109
+TRAV_RES_OK mb=0 res_i=21 i16=0 tc=7 t1=0 tz=7 bit0=1109 bit_end_abs=1161 table=3 max=15
+TRAV_RES_LAUNCH mb=0 res_i=22 i16=0 nC=0 max=15 abs_bit=1161
+TRAV_RES_OK mb=0 res_i=22 i16=0 tc=10 t1=2 tz=4 bit0=1161 bit_end_abs=1205 table=0 max=15
+TRAV_RES_LAUNCH mb=0 res_i=23 i16=0 nC=10 max=15 abs_bit=1205
+TRAV_RES_OK mb=0 res_i=23 i16=0 tc=6 t1=1 tz=5 bit0=1205 bit_end_abs=1247 table=3 max=15
+TRAV_RES_LAUNCH mb=0 res_i=24 i16=0 nC=10 max=15 abs_bit=1247
+TRAV_RES_OK mb=0 res_i=24 i16=0 tc=11 t1=3 tz=4 bit0=1247 bit_end_abs=1306 table=3 max=15
+TRAV_RES_LAUNCH mb=0 res_i=25 i16=0 nC=9 max=15 abs_bit=1306
+TRAV_RES_OK mb=0 res_i=25 i16=0 tc=6 t1=0 tz=8 bit0=1306 bit_end_abs=1349 table=3 max=15
+TRAV_RES_LAUNCH mb=1 res_i=0 i16=0 nC=0 max=16 abs_bit=1405
+TRAV_RES_OK mb=1 res_i=0 i16=0 tc=0 t1=0 tz=0 bit0=1405 bit_end_abs=1406 table=0 max=16
+TRAV_RES_LAUNCH mb=1 res_i=1 i16=0 nC=0 max=16 abs_bit=1406
+TRAV_RES_OK mb=1 res_i=1 i16=0 tc=0 t1=0 tz=0 bit0=1406 bit_end_abs=1407 table=0 max=16
+TRAV_RES_LAUNCH mb=1 res_i=2 i16=0 nC=8 max=16 abs_bit=1407
+TRAV_RES_OK mb=1 res_i=2 i16=0 tc=15 t1=0 tz=1 bit0=1407 bit_end_abs=1476 table=3 max=16
+TRAV_RES_LAUNCH mb=1 res_i=3 i16=0 nC=8 max=16 abs_bit=1476
+TRAV_RES_OK mb=1 res_i=3 i16=0 tc=0 t1=0 tz=0 bit0=1476 bit_end_abs=1482 table=3 max=16
+TRAV_RES_LAUNCH mb=1 res_i=4 i16=0 nC=0 max=16 abs_bit=1482
+TRAV_RES_OK mb=1 res_i=4 i16=0 tc=0 t1=0 tz=0 bit0=1482 bit_end_abs=1483 table=0 max=16
+TRAV_RES_LAUNCH mb=1 res_i=5 i16=0 nC=0 max=16 abs_bit=1483
+TRAV_RES_OK mb=1 res_i=5 i16=0 tc=0 t1=0 tz=0 bit0=1483 bit_end_abs=1484 table=0 max=16
+TRAV_RES_LAUNCH mb=1 res_i=6 i16=0 nC=0 max=16 abs_bit=1484
+TRAV_RES_OK mb=1 res_i=6 i16=0 tc=0 t1=0 tz=0 bit0=1484 bit_end_abs=1485 table=0 max=16
+TRAV_RES_LAUNCH mb=1 res_i=7 i16=0 nC=0 max=16 abs_bit=1485
+TRAV_RES_OK mb=1 res_i=7 i16=0 tc=15 t1=0 tz=1 bit0=1485 bit_end_abs=1575 table=0 max=16
+TRAV_RES_LAUNCH mb=1 res_i=8 i16=0 nC=14 max=16 abs_bit=1575
+TRAV_RES_OK mb=1 res_i=8 i16=0 tc=12 t1=2 tz=4 bit0=1575 bit_end_abs=1642 table=3 max=16
+TRAV_RES_LAUNCH mb=1 res_i=9 i16=0 nC=6 max=16 abs_bit=1642
+TRAV_RES_OK mb=1 res_i=9 i16=0 tc=12 t1=2 tz=4 bit0=1642 bit_end_abs=1709 table=2 max=16
+TRAV_RES_LAUNCH mb=1 res_i=10 i16=0 nC=12 max=16 abs_bit=1709
+TRAV_RES_OK mb=1 res_i=10 i16=0 tc=12 t1=0 tz=3 bit0=1709 bit_end_abs=1778 table=3 max=16
+TRAV_RES_LAUNCH mb=1 res_i=11 i16=0 nC=12 max=16 abs_bit=1778
+TRAV_RES_OK mb=1 res_i=11 i16=0 tc=8 t1=0 tz=6 bit0=1778 bit_end_abs=1833 table=3 max=16
+TRAV_RES_LAUNCH mb=1 res_i=12 i16=0 nC=6 max=16 abs_bit=1833
+TRAV_RES_OK mb=1 res_i=12 i16=0 tc=15 t1=2 tz=1 bit0=1833 bit_end_abs=1890 table=2 max=16
+TRAV_RES_LAUNCH mb=1 res_i=13 i16=0 nC=15 max=16 abs_bit=1890
+TRAV_RES_OK mb=1 res_i=13 i16=0 tc=15 t1=2 tz=1 bit0=1890 bit_end_abs=1954 table=3 max=16
+TRAV_RES_LAUNCH mb=1 res_i=14 i16=0 nC=12 max=16 abs_bit=1954
+TRAV_RES_OK mb=1 res_i=14 i16=0 tc=8 t1=0 tz=6 bit0=1954 bit_end_abs=2011 table=3 max=16
+TRAV_RES_LAUNCH mb=1 res_i=15 i16=0 nC=12 max=16 abs_bit=2011
+TRAV_RES_OK mb=1 res_i=15 i16=0 tc=11 t1=0 tz=4 bit0=2011 bit_end_abs=2074 table=3 max=16
+TRAV_RES_LAUNCH mb=1 res_i=16 i16=0 nC=0 max=4 abs_bit=2074
+TRAV_RES_OK mb=1 res_i=16 i16=0 tc=2 t1=0 tz=1 bit0=2074 bit_end_abs=2094 table=4 max=4
+TRAV_RES_LAUNCH mb=1 res_i=17 i16=0 nC=0 max=4 abs_bit=2094
+TRAV_RES_OK mb=1 res_i=17 i16=0 tc=2 t1=2 tz=1 bit0=2094 bit_end_abs=2102 table=4 max=4
+TRAV_RES_LAUNCH mb=1 res_i=18 i16=0 nC=6 max=15 abs_bit=2102
+TRAV_RES_OK mb=1 res_i=18 i16=0 tc=10 t1=3 tz=1 bit0=2102 bit_end_abs=2145 table=2 max=15
+TRAV_RES_LAUNCH mb=1 res_i=19 i16=0 nC=10 max=15 abs_bit=2145
+TRAV_RES_OK mb=1 res_i=19 i16=0 tc=10 t1=3 tz=1 bit0=2145 bit_end_abs=2186 table=3 max=15
+TRAV_RES_LAUNCH mb=1 res_i=20 i16=0 nC=9 max=15 abs_bit=2186
+TRAV_RES_OK mb=1 res_i=20 i16=0 tc=13 t1=0 tz=2 bit0=2186 bit_end_abs=2248 table=3 max=15
+TRAV_RES_LAUNCH mb=1 res_i=21 i16=0 nC=12 max=15 abs_bit=2248
+TRAV_RES_OK mb=1 res_i=21 i16=0 tc=12 t1=0 tz=3 bit0=2248 bit_end_abs=2312 table=3 max=15
+TRAV_RES_LAUNCH mb=1 res_i=22 i16=0 nC=6 max=15 abs_bit=2312
+TRAV_RES_OK mb=1 res_i=22 i16=0 tc=7 t1=1 tz=3 bit0=2312 bit_end_abs=2358 table=2 max=15
+TRAV_RES_LAUNCH mb=1 res_i=23 i16=0 nC=7 max=15 abs_bit=2358
+TRAV_RES_OK mb=1 res_i=23 i16=0 tc=7 t1=1 tz=3 bit0=2358 bit_end_abs=2404 table=2 max=15
+TRAV_RES_LAUNCH mb=1 res_i=24 i16=0 nC=7 max=15 abs_bit=2404
+TRAV_RES_OK mb=1 res_i=24 i16=0 tc=11 t1=0 tz=4 bit0=2404 bit_end_abs=2464 table=2 max=15
+TRAV_RES_LAUNCH mb=1 res_i=25 i16=0 nC=9 max=15 abs_bit=2464
+TRAV_RES_OK mb=1 res_i=25 i16=0 tc=12 t1=3 tz=3 bit0=2464 bit_end_abs=2516 table=3 max=15
+TRAV_RES_LAUNCH mb=2 res_i=0 i16=0 nC=0 max=16 abs_bit=2574
+TRAV_RES_OK mb=2 res_i=0 i16=0 tc=0 t1=0 tz=0 bit0=2574 bit_end_abs=2575 table=0 max=16
+TRAV_RES_LAUNCH mb=2 res_i=1 i16=0 nC=0 max=16 abs_bit=2575
+TRAV_RES_OK mb=2 res_i=1 i16=0 tc=0 t1=0 tz=0 bit0=2575 bit_end_abs=2576 table=0 max=16
+TRAV_RES_LAUNCH mb=2 res_i=2 i16=0 nC=8 max=16 abs_bit=2576
+TRAV_RES_OK mb=2 res_i=2 i16=0 tc=16 t1=0 tz=0 bit0=2576 bit_end_abs=2636 table=3 max=16
+TRAV_RES_LAUNCH mb=2 res_i=3 i16=0 nC=8 max=16 abs_bit=2636
+TRAV_RES_OK mb=2 res_i=3 i16=0 tc=15 t1=0 tz=1 bit0=2636 bit_end_abs=2716 table=3 max=16
+TRAV_RES_LAUNCH mb=2 res_i=4 i16=0 nC=0 max=16 abs_bit=2716
+TRAV_RES_OK mb=2 res_i=4 i16=0 tc=0 t1=0 tz=0 bit0=2716 bit_end_abs=2717 table=0 max=16
+TRAV_RES_LAUNCH mb=2 res_i=5 i16=0 nC=0 max=16 abs_bit=2717
+TRAV_RES_OK mb=2 res_i=5 i16=0 tc=0 t1=0 tz=0 bit0=2717 bit_end_abs=2718 table=0 max=16
+TRAV_RES_LAUNCH mb=2 res_i=6 i16=0 nC=8 max=16 abs_bit=2718
+TRAV_RES_OK mb=2 res_i=6 i16=0 tc=16 t1=1 tz=0 bit0=2718 bit_end_abs=2776 table=3 max=16
+TRAV_RES_LAUNCH mb=2 res_i=7 i16=0 nC=8 max=16 abs_bit=2776
+TRAV_RES_OK mb=2 res_i=7 i16=0 tc=0 t1=0 tz=0 bit0=2776 bit_end_abs=2782 table=3 max=16
+TRAV_RES_LAUNCH mb=2 res_i=8 i16=0 nC=16 max=16 abs_bit=2782
+TRAV_RES_OK mb=2 res_i=8 i16=0 tc=12 t1=2 tz=4 bit0=2782 bit_end_abs=2849 table=3 max=16
+TRAV_RES_LAUNCH mb=2 res_i=9 i16=0 nC=14 max=16 abs_bit=2849
+TRAV_RES_OK mb=2 res_i=9 i16=0 tc=14 t1=2 tz=1 bit0=2849 bit_end_abs=2915 table=3 max=16
+TRAV_RES_LAUNCH mb=2 res_i=10 i16=0 nC=12 max=16 abs_bit=2915
+TRAV_RES_OK mb=2 res_i=10 i16=0 tc=11 t1=0 tz=4 bit0=2915 bit_end_abs=2983 table=3 max=16
+TRAV_RES_LAUNCH mb=2 res_i=11 i16=0 nC=13 max=16 abs_bit=2983
+TRAV_RES_OK mb=2 res_i=11 i16=0 tc=13 t1=0 tz=2 bit0=2983 bit_end_abs=3056 table=3 max=16
+TRAV_RES_LAUNCH mb=2 res_i=12 i16=0 nC=15 max=16 abs_bit=3056
+TRAV_RES_OK mb=2 res_i=12 i16=0 tc=12 t1=2 tz=4 bit0=3056 bit_end_abs=3124 table=3 max=16
+TRAV_RES_LAUNCH mb=2 res_i=13 i16=0 nC=6 max=16 abs_bit=3124
+TRAV_RES_OK mb=2 res_i=13 i16=0 tc=12 t1=2 tz=4 bit0=3124 bit_end_abs=3190 table=2 max=16
+TRAV_RES_LAUNCH mb=2 res_i=14 i16=0 nC=13 max=16 abs_bit=3190
+TRAV_RES_OK mb=2 res_i=14 i16=0 tc=11 t1=0 tz=4 bit0=3190 bit_end_abs=3261 table=3 max=16
+TRAV_RES_LAUNCH mb=2 res_i=15 i16=0 nC=12 max=16 abs_bit=3261
+TRAV_RES_OK mb=2 res_i=15 i16=0 tc=8 t1=0 tz=6 bit0=3261 bit_end_abs=3318 table=3 max=16
+TRAV_RES_LAUNCH mb=2 res_i=16 i16=0 nC=0 max=4 abs_bit=3318
+TRAV_RES_OK mb=2 res_i=16 i16=0 tc=4 t1=0 tz=0 bit0=3318 bit_end_abs=3340 table=4 max=4
+TRAV_RES_LAUNCH mb=2 res_i=17 i16=0 nC=0 max=4 abs_bit=3340
+TRAV_RES_OK mb=2 res_i=17 i16=0 tc=4 t1=1 tz=0 bit0=3340 bit_end_abs=3363 table=4 max=4
+TRAV_RES_LAUNCH mb=2 res_i=18 i16=0 nC=10 max=15 abs_bit=3363
+TRAV_RES_OK mb=2 res_i=18 i16=0 tc=6 t1=1 tz=8 bit0=3363 bit_end_abs=3398 table=3 max=15
+TRAV_RES_LAUNCH mb=2 res_i=19 i16=0 nC=6 max=15 abs_bit=3398
+TRAV_RES_OK mb=2 res_i=19 i16=0 tc=10 t1=3 tz=1 bit0=3398 bit_end_abs=3441 table=2 max=15
+TRAV_RES_LAUNCH mb=2 res_i=20 i16=0 nC=9 max=15 abs_bit=3441
+TRAV_RES_OK mb=2 res_i=20 i16=0 tc=7 t1=0 tz=7 bit0=3441 bit_end_abs=3498 table=3 max=15
+TRAV_RES_LAUNCH mb=2 res_i=21 i16=0 nC=9 max=15 abs_bit=3498
+TRAV_RES_OK mb=2 res_i=21 i16=0 tc=15 t1=0 tz=0 bit0=3498 bit_end_abs=3558 table=3 max=15
+TRAV_RES_LAUNCH mb=2 res_i=22 i16=0 nC=7 max=15 abs_bit=3558
+TRAV_RES_OK mb=2 res_i=22 i16=0 tc=3 t1=3 tz=8 bit0=3558 bit_end_abs=3574 table=2 max=15
+TRAV_RES_LAUNCH mb=2 res_i=23 i16=0 nC=3 max=15 abs_bit=3574
+TRAV_RES_OK mb=2 res_i=23 i16=0 tc=5 t1=3 tz=3 bit0=3574 bit_end_abs=3590 table=1 max=15
+TRAV_RES_LAUNCH mb=2 res_i=24 i16=0 nC=8 max=15 abs_bit=3590
+TRAV_RES_OK mb=2 res_i=24 i16=0 tc=7 t1=0 tz=7 bit0=3590 bit_end_abs=3638 table=3 max=15
+TRAV_RES_LAUNCH mb=2 res_i=25 i16=0 nC=6 max=15 abs_bit=3638
+TRAV_RES_OK mb=2 res_i=25 i16=0 tc=14 t1=3 tz=1 bit0=3638 bit_end_abs=3700 table=2 max=15
+TRAV_RES_LAUNCH mb=3 res_i=0 i16=0 nC=0 max=16 abs_bit=3752
+TRAV_RES_OK mb=3 res_i=0 i16=0 tc=0 t1=0 tz=0 bit0=3752 bit_end_abs=3753 table=0 max=16
+TRAV_RES_LAUNCH mb=3 res_i=1 i16=0 nC=0 max=16 abs_bit=3753
+TRAV_RES_OK mb=3 res_i=1 i16=0 tc=0 t1=0 tz=0 bit0=3753 bit_end_abs=3754 table=0 max=16
+TRAV_RES_LAUNCH mb=3 res_i=2 i16=0 nC=0 max=16 abs_bit=3754
+TRAV_RES_OK mb=3 res_i=2 i16=0 tc=0 t1=0 tz=0 bit0=3754 bit_end_abs=3755 table=0 max=16
+TRAV_RES_LAUNCH mb=3 res_i=3 i16=0 nC=0 max=16 abs_bit=3755
+TRAV_RES_OK mb=3 res_i=3 i16=0 tc=15 t1=0 tz=1 bit0=3755 bit_end_abs=3845 table=0 max=16
+TRAV_RES_LAUNCH mb=3 res_i=4 i16=0 nC=0 max=16 abs_bit=3845
+TRAV_RES_OK mb=3 res_i=4 i16=0 tc=0 t1=0 tz=0 bit0=3845 bit_end_abs=3846 table=0 max=16
+TRAV_RES_LAUNCH mb=3 res_i=5 i16=0 nC=0 max=16 abs_bit=3846
+TRAV_RES_OK mb=3 res_i=5 i16=0 tc=0 t1=0 tz=0 bit0=3846 bit_end_abs=3847 table=0 max=16
+TRAV_RES_LAUNCH mb=3 res_i=6 i16=0 nC=8 max=16 abs_bit=3847
+TRAV_RES_OK mb=3 res_i=6 i16=0 tc=16 t1=0 tz=0 bit0=3847 bit_end_abs=3907 table=3 max=16
+TRAV_RES_LAUNCH mb=3 res_i=7 i16=0 nC=8 max=16 abs_bit=3907
+TRAV_RES_OK mb=3 res_i=7 i16=0 tc=15 t1=0 tz=1 bit0=3907 bit_end_abs=3987 table=3 max=16
+TRAV_RES_LAUNCH mb=3 res_i=8 i16=0 nC=6 max=16 abs_bit=3987
+TRAV_RES_OK mb=3 res_i=8 i16=0 tc=15 t1=2 tz=1 bit0=3987 bit_end_abs=4044 table=2 max=16
+TRAV_RES_LAUNCH mb=3 res_i=9 i16=0 nC=15 max=16 abs_bit=4044
+TRAV_RES_OK mb=3 res_i=9 i16=0 tc=14 t1=2 tz=1 bit0=4044 bit_end_abs=4111 table=3 max=16
+TRAV_RES_LAUNCH mb=3 res_i=10 i16=0 nC=12 max=16 abs_bit=4111
+TRAV_RES_OK mb=3 res_i=10 i16=0 tc=8 t1=0 tz=6 bit0=4111 bit_end_abs=4168 table=3 max=16
+TRAV_RES_LAUNCH mb=3 res_i=11 i16=0 nC=11 max=16 abs_bit=4168
+TRAV_RES_OK mb=3 res_i=11 i16=0 tc=12 t1=0 tz=3 bit0=4168 bit_end_abs=4238 table=3 max=16
+TRAV_RES_LAUNCH mb=3 res_i=12 i16=0 nC=15 max=16 abs_bit=4238
+TRAV_RES_OK mb=3 res_i=12 i16=0 tc=12 t1=2 tz=4 bit0=4238 bit_end_abs=4306 table=3 max=16
+TRAV_RES_LAUNCH mb=3 res_i=13 i16=0 nC=14 max=16 abs_bit=4306
+TRAV_RES_OK mb=3 res_i=13 i16=0 tc=12 t1=2 tz=4 bit0=4306 bit_end_abs=4373 table=3 max=16
+TRAV_RES_LAUNCH mb=3 res_i=14 i16=0 nC=12 max=16 abs_bit=4373
+TRAV_RES_OK mb=3 res_i=14 i16=0 tc=10 t1=0 tz=5 bit0=4373 bit_end_abs=4450 table=3 max=16
+TRAV_RES_LAUNCH mb=3 res_i=15 i16=0 nC=11 max=16 abs_bit=4450
+TRAV_RES_OK mb=3 res_i=15 i16=0 tc=11 t1=0 tz=4 bit0=4450 bit_end_abs=4522 table=3 max=16
+TRAV_RES_LAUNCH mb=3 res_i=16 i16=0 nC=0 max=4 abs_bit=4522
+TRAV_RES_OK mb=3 res_i=16 i16=0 tc=4 t1=0 tz=0 bit0=4522 bit_end_abs=4546 table=4 max=4
+TRAV_RES_LAUNCH mb=3 res_i=17 i16=0 nC=0 max=4 abs_bit=4546
+TRAV_RES_OK mb=3 res_i=17 i16=0 tc=4 t1=2 tz=0 bit0=4546 bit_end_abs=4564 table=4 max=4
+TRAV_RES_LAUNCH mb=3 res_i=18 i16=0 nC=10 max=15 abs_bit=4564
+TRAV_RES_OK mb=3 res_i=18 i16=0 tc=10 t1=3 tz=1 bit0=4564 bit_end_abs=4601 table=3 max=15
+TRAV_RES_LAUNCH mb=3 res_i=19 i16=0 nC=10 max=15 abs_bit=4601
+TRAV_RES_OK mb=3 res_i=19 i16=0 tc=7 t1=2 tz=7 bit0=4601 bit_end_abs=4640 table=3 max=15
+TRAV_RES_LAUNCH mb=3 res_i=20 i16=0 nC=13 max=15 abs_bit=4640
+TRAV_RES_OK mb=3 res_i=20 i16=0 tc=15 t1=0 tz=0 bit0=4640 bit_end_abs=4698 table=3 max=15
+TRAV_RES_LAUNCH mb=3 res_i=21 i16=0 nC=11 max=15 abs_bit=4698
+TRAV_RES_OK mb=3 res_i=21 i16=0 tc=7 t1=0 tz=7 bit0=4698 bit_end_abs=4754 table=3 max=15
+TRAV_RES_LAUNCH mb=3 res_i=22 i16=0 nC=5 max=15 abs_bit=4754
+TRAV_RES_OK mb=3 res_i=22 i16=0 tc=6 t1=3 tz=3 bit0=4754 bit_end_abs=4773 table=2 max=15
+TRAV_RES_LAUNCH mb=3 res_i=23 i16=0 nC=6 max=15 abs_bit=4773
+TRAV_RES_OK mb=3 res_i=23 i16=0 tc=5 t1=3 tz=6 bit0=4773 bit_end_abs=4797 table=2 max=15
+TRAV_RES_LAUNCH mb=3 res_i=24 i16=0 nC=10 max=15 abs_bit=4797
+TRAV_RES_OK mb=3 res_i=24 i16=0 tc=13 t1=3 tz=2 bit0=4797 bit_end_abs=4847 table=3 max=15
+TRAV_RES_LAUNCH mb=3 res_i=25 i16=0 nC=9 max=15 abs_bit=4847
+TRAV_RES_OK mb=3 res_i=25 i16=0 tc=6 t1=0 tz=8 bit0=4847 bit_end_abs=4893 table=3 max=15
+TRAV_RES_LAUNCH mb=4 res_i=0 i16=0 nC=0 max=16 abs_bit=4946
+TRAV_RES_OK mb=4 res_i=0 i16=0 tc=0 t1=0 tz=0 bit0=4946 bit_end_abs=4947 table=0 max=16
+TRAV_RES_LAUNCH mb=4 res_i=1 i16=0 nC=0 max=16 abs_bit=4947
+TRAV_RES_OK mb=4 res_i=1 i16=0 tc=0 t1=0 tz=0 bit0=4947 bit_end_abs=4948 table=0 max=16
+TRAV_RES_LAUNCH mb=4 res_i=2 i16=0 nC=8 max=16 abs_bit=4948
+TRAV_RES_OK mb=4 res_i=2 i16=0 tc=16 t1=3 tz=0 bit0=4948 bit_end_abs=5001 table=3 max=16
+TRAV_RES_LAUNCH mb=4 res_i=3 i16=0 nC=8 max=16 abs_bit=5001
+TRAV_RES_OK mb=4 res_i=3 i16=0 tc=0 t1=0 tz=0 bit0=5001 bit_end_abs=5007 table=3 max=16
+TRAV_RES_LAUNCH mb=4 res_i=4 i16=0 nC=0 max=16 abs_bit=5007
+TRAV_RES_OK mb=4 res_i=4 i16=0 tc=0 t1=0 tz=0 bit0=5007 bit_end_abs=5008 table=0 max=16
+TRAV_RES_LAUNCH mb=4 res_i=5 i16=0 nC=0 max=16 abs_bit=5008
+TRAV_RES_OK mb=4 res_i=5 i16=0 tc=0 t1=0 tz=0 bit0=5008 bit_end_abs=5009 table=0 max=16
+TRAV_RES_LAUNCH mb=4 res_i=6 i16=0 nC=0 max=16 abs_bit=5009
+TRAV_RES_OK mb=4 res_i=6 i16=0 tc=0 t1=0 tz=0 bit0=5009 bit_end_abs=5010 table=0 max=16
+TRAV_RES_LAUNCH mb=4 res_i=7 i16=0 nC=0 max=16 abs_bit=5010
+TRAV_RES_OK mb=4 res_i=7 i16=0 tc=15 t1=1 tz=1 bit0=5010 bit_end_abs=5092 table=0 max=16
+TRAV_RES_LAUNCH mb=4 res_i=8 i16=0 nC=14 max=16 abs_bit=5092
+TRAV_RES_OK mb=4 res_i=8 i16=0 tc=12 t1=2 tz=4 bit0=5092 bit_end_abs=5157 table=3 max=16
+TRAV_RES_LAUNCH mb=4 res_i=9 i16=0 nC=6 max=16 abs_bit=5157
+TRAV_RES_OK mb=4 res_i=9 i16=0 tc=0 t1=0 tz=0 bit0=5157 bit_end_abs=5161 table=2 max=16
+TRAV_RES_LAUNCH mb=4 res_i=10 i16=0 nC=12 max=16 abs_bit=5161
+TRAV_RES_OK mb=4 res_i=10 i16=0 tc=10 t1=0 tz=5 bit0=5161 bit_end_abs=5231 table=3 max=16
+TRAV_RES_LAUNCH mb=4 res_i=11 i16=0 nC=5 max=16 abs_bit=5231
+TRAV_RES_OK mb=4 res_i=11 i16=0 tc=12 t1=2 tz=4 bit0=5231 bit_end_abs=5293 table=2 max=16
+TRAV_RES_LAUNCH mb=4 res_i=12 i16=0 nC=0 max=16 abs_bit=5293
+TRAV_RES_OK mb=4 res_i=12 i16=0 tc=0 t1=0 tz=0 bit0=5293 bit_end_abs=5294 table=0 max=16
+TRAV_RES_LAUNCH mb=4 res_i=13 i16=0 nC=8 max=16 abs_bit=5294
+TRAV_RES_OK mb=4 res_i=13 i16=0 tc=12 t1=1 tz=3 bit0=5294 bit_end_abs=5356 table=3 max=16
+TRAV_RES_LAUNCH mb=4 res_i=14 i16=0 nC=6 max=16 abs_bit=5356
+TRAV_RES_OK mb=4 res_i=14 i16=0 tc=11 t1=1 tz=4 bit0=5356 bit_end_abs=5405 table=2 max=16
+TRAV_RES_LAUNCH mb=4 res_i=15 i16=0 nC=12 max=16 abs_bit=5405
+TRAV_RES_OK mb=4 res_i=15 i16=0 tc=11 t1=0 tz=4 bit0=5405 bit_end_abs=5466 table=3 max=16
+TRAV_RES_LAUNCH mb=4 res_i=16 i16=0 nC=0 max=4 abs_bit=5466
+TRAV_RES_OK mb=4 res_i=16 i16=0 tc=2 t1=0 tz=1 bit0=5466 bit_end_abs=5480 table=4 max=4
+TRAV_RES_LAUNCH mb=4 res_i=17 i16=0 nC=0 max=4 abs_bit=5480
+TRAV_RES_OK mb=4 res_i=17 i16=0 tc=2 t1=0 tz=1 bit0=5480 bit_end_abs=5493 table=4 max=4
+TRAV_RES_LAUNCH mb=4 res_i=18 i16=0 nC=7 max=15 abs_bit=5493
+TRAV_RES_OK mb=4 res_i=18 i16=0 tc=9 t1=3 tz=1 bit0=5493 bit_end_abs=5527 table=2 max=15
+TRAV_RES_LAUNCH mb=4 res_i=19 i16=0 nC=9 max=15 abs_bit=5527
+TRAV_RES_OK mb=4 res_i=19 i16=0 tc=9 t1=3 tz=1 bit0=5527 bit_end_abs=5561 table=3 max=15
+TRAV_RES_LAUNCH mb=4 res_i=20 i16=0 nC=8 max=15 abs_bit=5561
+TRAV_RES_OK mb=4 res_i=20 i16=0 tc=15 t1=1 tz=0 bit0=5561 bit_end_abs=5614 table=3 max=15
+TRAV_RES_LAUNCH mb=4 res_i=21 i16=0 nC=12 max=15 abs_bit=5614
+TRAV_RES_OK mb=4 res_i=21 i16=0 tc=15 t1=1 tz=0 bit0=5614 bit_end_abs=5667 table=3 max=15
+TRAV_RES_LAUNCH mb=4 res_i=22 i16=0 nC=5 max=15 abs_bit=5667
+TRAV_RES_OK mb=4 res_i=22 i16=0 tc=5 t1=3 tz=3 bit0=5667 bit_end_abs=5684 table=2 max=15
+TRAV_RES_LAUNCH mb=4 res_i=23 i16=0 nC=5 max=15 abs_bit=5684
+TRAV_RES_OK mb=4 res_i=23 i16=0 tc=5 t1=3 tz=3 bit0=5684 bit_end_abs=5701 table=2 max=15
+TRAV_RES_LAUNCH mb=4 res_i=24 i16=0 nC=6 max=15 abs_bit=5701
+TRAV_RES_OK mb=4 res_i=24 i16=0 tc=12 t1=3 tz=3 bit0=5701 bit_end_abs=5748 table=2 max=15
+TRAV_RES_LAUNCH mb=4 res_i=25 i16=0 nC=9 max=15 abs_bit=5748
+TRAV_RES_OK mb=4 res_i=25 i16=0 tc=12 t1=3 tz=3 bit0=5748 bit_end_abs=5793 table=3 max=15
+TRAV_RES_LAUNCH mb=5 res_i=0 i16=1 nC=0 max=16 abs_bit=5812
+TRAV_RES_OK mb=5 res_i=0 i16=1 tc=4 t1=1 tz=6 bit0=5812 bit_end_abs=5851 table=0 max=16
+TRAV_RES_LAUNCH mb=5 res_i=1 i16=1 nC=0 max=15 abs_bit=5851
+TRAV_RES_OK mb=5 res_i=1 i16=1 tc=2 t1=1 tz=7 bit0=5851 bit_end_abs=5868 table=0 max=15
+TRAV_RES_LAUNCH mb=5 res_i=2 i16=1 nC=2 max=15 abs_bit=5868
+TRAV_RES_OK mb=5 res_i=2 i16=1 tc=2 t1=1 tz=7 bit0=5868 bit_end_abs=5884 table=1 max=15
+TRAV_RES_LAUNCH mb=5 res_i=3 i16=1 nC=9 max=15 abs_bit=5884
+TRAV_RES_OK mb=5 res_i=3 i16=1 tc=13 t1=3 tz=2 bit0=5884 bit_end_abs=5936 table=3 max=15
+TRAV_RES_LAUNCH mb=5 res_i=4 i16=1 nC=8 max=15 abs_bit=5936
+TRAV_RES_OK mb=5 res_i=4 i16=1 tc=13 t1=3 tz=2 bit0=5936 bit_end_abs=5988 table=3 max=15
+TRAV_RES_LAUNCH mb=5 res_i=5 i16=1 nC=2 max=15 abs_bit=5988
+TRAV_RES_OK mb=5 res_i=5 i16=1 tc=2 t1=1 tz=7 bit0=5988 bit_end_abs=6004 table=1 max=15
+TRAV_RES_LAUNCH mb=5 res_i=6 i16=1 nC=2 max=15 abs_bit=6004
+TRAV_RES_OK mb=5 res_i=6 i16=1 tc=2 t1=1 tz=7 bit0=6004 bit_end_abs=6020 table=1 max=15
+TRAV_RES_LAUNCH mb=5 res_i=7 i16=1 nC=8 max=15 abs_bit=6020
+TRAV_RES_OK mb=5 res_i=7 i16=1 tc=13 t1=3 tz=2 bit0=6020 bit_end_abs=6072 table=3 max=15
+TRAV_RES_LAUNCH mb=5 res_i=8 i16=1 nC=8 max=15 abs_bit=6072
+TRAV_RES_OK mb=5 res_i=8 i16=1 tc=13 t1=3 tz=2 bit0=6072 bit_end_abs=6124 table=3 max=15
+TRAV_RES_LAUNCH mb=5 res_i=9 i16=1 nC=13 max=15 abs_bit=6124
+TRAV_RES_OK mb=5 res_i=9 i16=1 tc=10 t1=3 tz=4 bit0=6124 bit_end_abs=6169 table=3 max=15
+TRAV_RES_LAUNCH mb=5 res_i=10 i16=1 nC=12 max=15 abs_bit=6169
+TRAV_RES_OK mb=5 res_i=10 i16=1 tc=9 t1=3 tz=3 bit0=6169 bit_end_abs=6212 table=3 max=15
+TRAV_RES_LAUNCH mb=5 res_i=11 i16=1 nC=11 max=15 abs_bit=6212
+TRAV_RES_OK mb=5 res_i=11 i16=1 tc=9 t1=0 tz=5 bit0=6212 bit_end_abs=6261 table=3 max=15
+TRAV_RES_LAUNCH mb=5 res_i=12 i16=1 nC=9 max=15 abs_bit=6261
+TRAV_RES_OK mb=5 res_i=12 i16=1 tc=10 t1=0 tz=4 bit0=6261 bit_end_abs=6313 table=3 max=15
+TRAV_RES_LAUNCH mb=5 res_i=13 i16=1 nC=11 max=15 abs_bit=6313
+TRAV_RES_OK mb=5 res_i=13 i16=1 tc=9 t1=3 tz=3 bit0=6313 bit_end_abs=6356 table=3 max=15
+TRAV_RES_LAUNCH mb=5 res_i=14 i16=1 nC=11 max=15 abs_bit=6356
+TRAV_RES_OK mb=5 res_i=14 i16=1 tc=9 t1=3 tz=3 bit0=6356 bit_end_abs=6399 table=3 max=15
+TRAV_RES_LAUNCH mb=5 res_i=15 i16=1 nC=10 max=15 abs_bit=6399
+TRAV_RES_OK mb=5 res_i=15 i16=1 tc=10 t1=0 tz=4 bit0=6399 bit_end_abs=6451 table=3 max=15
+TRAV_RES_LAUNCH mb=5 res_i=16 i16=1 nC=10 max=15 abs_bit=6451
+TRAV_RES_OK mb=5 res_i=16 i16=1 tc=10 t1=0 tz=4 bit0=6451 bit_end_abs=6503 table=3 max=15
+TRAV_RES_LAUNCH mb=5 res_i=17 i16=1 nC=0 max=4 abs_bit=6503
+TRAV_RES_OK mb=5 res_i=17 i16=1 tc=2 t1=0 tz=1 bit0=6503 bit_end_abs=6520 table=4 max=4
+TRAV_RES_LAUNCH mb=5 res_i=18 i16=1 nC=0 max=4 abs_bit=6520
+TRAV_RES_OK mb=5 res_i=18 i16=1 tc=2 t1=0 tz=1 bit0=6520 bit_end_abs=6533 table=4 max=4
+TRAV_RES_LAUNCH mb=5 res_i=19 i16=1 nC=9 max=15 abs_bit=6533
+TRAV_RES_OK mb=5 res_i=19 i16=1 tc=4 t1=3 tz=7 bit0=6533 bit_end_abs=6555 table=3 max=15
+TRAV_RES_LAUNCH mb=5 res_i=20 i16=1 nC=4 max=15 abs_bit=6555
+TRAV_RES_OK mb=5 res_i=20 i16=1 tc=4 t1=3 tz=7 bit0=6555 bit_end_abs=6575 table=2 max=15
+TRAV_RES_LAUNCH mb=5 res_i=21 i16=1 nC=10 max=15 abs_bit=6575
+TRAV_RES_OK mb=5 res_i=21 i16=1 tc=7 t1=0 tz=7 bit0=6575 bit_end_abs=6618 table=3 max=15
+TRAV_RES_LAUNCH mb=5 res_i=22 i16=1 nC=6 max=15 abs_bit=6618
+TRAV_RES_OK mb=5 res_i=22 i16=1 tc=7 t1=0 tz=7 bit0=6618 bit_end_abs=6662 table=2 max=15
+TRAV_RES_LAUNCH mb=5 res_i=23 i16=1 nC=5 max=15 abs_bit=6662
+TRAV_RES_OK mb=5 res_i=23 i16=1 tc=0 t1=0 tz=0 bit0=6662 bit_end_abs=6666 table=2 max=15
+TRAV_RES_LAUNCH mb=5 res_i=24 i16=1 nC=0 max=15 abs_bit=6666
+TRAV_RES_OK mb=5 res_i=24 i16=1 tc=0 t1=0 tz=0 bit0=6666 bit_end_abs=6667 table=0 max=15
+TRAV_RES_LAUNCH mb=5 res_i=25 i16=1 nC=6 max=15 abs_bit=6667
+TRAV_RES_OK mb=5 res_i=25 i16=1 tc=6 t1=3 tz=8 bit0=6667 bit_end_abs=6698 table=2 max=15
+TRAV_RES_LAUNCH mb=5 res_i=26 i16=1 nC=3 max=15 abs_bit=6698
+TRAV_RES_OK mb=5 res_i=26 i16=1 tc=6 t1=3 tz=8 bit0=6698 bit_end_abs=6731 table=1 max=15
+TRAV_DONE mb_count=1170 err=0 unsup=0
+DELIVERED_MB_BITMAP unique=1170 dup=0 oob=0 expected=1170 fault_drop=0 real_ref=1
+I_RECON_DONE mb_written=1169 blk_applied=19722 luma_nz_peak=944
+STORE_MB_BITMAP unique=1169 dup=0 oob=0 expected=1170 fault_dup=0
+RECON_STORE_COUNTS frame_paint=1 total=1170 idr=1170 p=0 p_inter_ok=0 p_inter_fail=0 idr_mb0_store_enqueues=0
+STORE_MB_BITMAP unique=1170 dup=0 oob=0 expected=1170 fault_dup=0
+TRAV_CAP_START idr=0
+TRAV_CAP_EOP idr=0 len=5337 mb_w=39 mb_h=30
+TRAV_START idr=0 len=5337
+TRAV_HDR_OK i_slice=0 bit_pos=24 qp=27 pic_mbs=1170 type=5
+TRAV_DONE mb_count=1170 err=0 unsup=0
+DELIVERED_MB_BITMAP unique=1170 dup=0 oob=0 expected=1170 fault_drop=0 real_ref=1
+RECON_STORE_COUNTS frame_paint=2 total=2340 idr=1170 p=1170 p_inter_ok=1170 p_inter_fail=0 idr_mb0_store_enqueues=0
+STORE_MB_BITMAP unique=1170 dup=0 oob=0 expected=1170 fault_dup=0
+TRAV_CAP_START idr=0
+TRAV_CAP_EOP idr=0 len=6201 mb_w=39 mb_h=30
+TRAV_START idr=0 len=6201
+TRAV_HDR_OK i_slice=0 bit_pos=24 qp=27 pic_mbs=1170 type=5
+TRAV_DONE mb_count=1170 err=0 unsup=0
+DELIVERED_MB_BITMAP unique=1170 dup=0 oob=0 expected=1170 fault_drop=0 real_ref=1
+RECON_STORE_COUNTS frame_paint=3 total=3510 idr=1170 p=2340 p_inter_ok=2340 p_inter_fail=0 idr_mb0_store_enqueues=0
+STORE_MB_BITMAP unique=1170 dup=0 oob=0 expected=1170 fault_dup=0
+TRAV_CAP_START idr=0
+TRAV_CAP_EOP idr=0 len=5012 mb_w=39 mb_h=30
+TRAV_START idr=0 len=5012
+TRAV_HDR_OK i_slice=0 bit_pos=24 qp=27 pic_mbs=1170 type=5
+TRAV_DONE mb_count=1170 err=0 unsup=0
+DELIVERED_MB_BITMAP unique=1170 dup=0 oob=0 expected=1170 fault_drop=0 real_ref=1
+RECON_STORE_COUNTS frame_paint=4 total=4680 idr=1170 p=3510 p_inter_ok=3510 p_inter_fail=0 idr_mb0_store_enqueues=0
+STORE_MB_BITMAP unique=1170 dup=0 oob=0 expected=1170 fault_dup=0
+TRAV_CAP_START idr=0
+TRAV_CAP_EOP idr=0 len=5111 mb_w=39 mb_h=30
+TRAV_START idr=0 len=5111
+TRAV_HDR_OK i_slice=0 bit_pos=24 qp=27 pic_mbs=1170 type=5
+TRAV_DONE mb_count=1170 err=0 unsup=0
+DELIVERED_MB_BITMAP unique=1170 dup=0 oob=0 expected=1170 fault_drop=0 real_ref=1
+RECON_STORE_COUNTS frame_paint=5 total=5850 idr=1170 p=4680 p_inter_ok=4680 p_inter_fail=0 idr_mb0_store_enqueues=0
+STORE_MB_BITMAP unique=1170 dup=0 oob=0 expected=1170 fault_dup=0
+TRAV_CAP_START idr=0
+TRAV_CAP_EOP idr=0 len=5992 mb_w=39 mb_h=30
+TRAV_START idr=0 len=5992
+TRAV_HDR_OK i_slice=0 bit_pos=24 qp=28 pic_mbs=1170 type=5
+TRAV_DONE mb_count=1170 err=0 unsup=0
+DELIVERED_MB_BITMAP unique=1170 dup=0 oob=0 expected=1170 fault_drop=0 real_ref=1
+RECON_STORE_COUNTS frame_paint=6 total=7020 idr=1170 p=5850 p_inter_ok=5850 p_inter_fail=0 idr_mb0_store_enqueues=0
+STORE_MB_BITMAP unique=1170 dup=0 oob=0 expected=1170 fault_dup=0
+TRAV_CAP_START idr=0
+TRAV_CAP_EOP idr=0 len=5068 mb_w=39 mb_h=30
+TRAV_START idr=0 len=5068
+TRAV_HDR_OK i_slice=0 bit_pos=24 qp=28 pic_mbs=1170 type=5
+TRAV_DONE mb_count=1170 err=0 unsup=0
+DELIVERED_MB_BITMAP unique=1170 dup=0 oob=0 expected=1170 fault_drop=0 real_ref=1
+RECON_STORE_COUNTS frame_paint=7 total=8190 idr=1170 p=7020 p_inter_ok=7020 p_inter_fail=0 idr_mb0_store_enqueues=0
+STORE_MB_BITMAP unique=1170 dup=0 oob=0 expected=1170 fault_dup=0
+TRAV_CAP_START idr=0
+TRAV_CAP_EOP idr=0 len=5036 mb_w=39 mb_h=30
+TRAV_START idr=0 len=5036
+TRAV_HDR_OK i_slice=0 bit_pos=24 qp=29 pic_mbs=1170 type=5
+TRAV_DONE mb_count=1170 err=0 unsup=0
+DELIVERED_MB_BITMAP unique=1170 dup=0 oob=0 expected=1170 fault_drop=0 real_ref=1
+RECON_STORE_COUNTS frame_paint=8 total=9360 idr=1170 p=8190 p_inter_ok=8190 p_inter_fail=0 idr_mb0_store_enqueues=0
+STORE_MB_BITMAP unique=1170 dup=0 oob=0 expected=1170 fault_dup=0
+TRAV_CAP_START idr=0
+TRAV_CAP_EOP idr=0 len=6137 mb_w=39 mb_h=30
+TRAV_START idr=0 len=6137
+TRAV_HDR_OK i_slice=0 bit_pos=24 qp=29 pic_mbs=1170 type=5
+TRAV_DONE mb_count=1170 err=0 unsup=0
+DELIVERED_MB_BITMAP unique=1170 dup=0 oob=0 expected=1170 fault_drop=0 real_ref=1
+RECON_STORE_COUNTS frame_paint=9 total=10530 idr=1170 p=9360 p_inter_ok=9360 p_inter_fail=0 idr_mb0_store_enqueues=0
+STORE_MB_BITMAP unique=1170 dup=0 oob=0 expected=1170 fault_dup=0
+TRAV_CAP_START idr=0
+TRAV_CAP_EOP idr=0 len=4893 mb_w=39 mb_h=30
+TRAV_START idr=0 len=4893
+TRAV_HDR_OK i_slice=0 bit_pos=24 qp=30 pic_mbs=1170 type=5
+TRAV_DONE mb_count=1170 err=0 unsup=0
+DELIVERED_MB_BITMAP unique=1170 dup=0 oob=0 expected=1170 fault_drop=0 real_ref=1
+RECON_STORE_COUNTS frame_paint=10 total=11700 idr=1170 p=10530 p_inter_ok=10530 p_inter_fail=0 idr_mb0_store_enqueues=0
+STORE_MB_BITMAP unique=1170 dup=0 oob=0 expected=1170 fault_dup=0
+TRAV_CAP_START idr=0
+TRAV_CAP_EOP idr=0 len=4957 mb_w=39 mb_h=30
+TRAV_START idr=0 len=4957
+TRAV_HDR_OK i_slice=0 bit_pos=26 qp=31 pic_mbs=1170 type=5
+TRAV_DONE mb_count=1170 err=0 unsup=0
+DELIVERED_MB_BITMAP unique=1170 dup=0 oob=0 expected=1170 fault_drop=0 real_ref=1
+RECON_STORE_COUNTS frame_paint=11 total=12870 idr=1170 p=11700 p_inter_ok=11700 p_inter_fail=0 idr_mb0_store_enqueues=0
+STORE_MB_BITMAP unique=1170 dup=0 oob=0 expected=1170 fault_dup=0
+TRAV_CAP_START idr=0
+TRAV_CAP_EOP idr=0 len=4995 mb_w=39 mb_h=30
+TRAV_START idr=0 len=4995
+TRAV_HDR_OK i_slice=0 bit_pos=26 qp=33 pic_mbs=1170 type=5
+TRAV_DONE mb_count=1170 err=0 unsup=0
+DELIVERED_MB_BITMAP unique=1170 dup=0 oob=0 expected=1170 fault_drop=0 real_ref=1
+RECON_STORE_COUNTS frame_paint=12 total=14040 idr=1170 p=12870 p_inter_ok=12870 p_inter_fail=0 idr_mb0_store_enqueues=0
+STORE_MB_BITMAP unique=1170 dup=0 oob=0 expected=1170 fault_dup=0
+MB0_PIPELINE_TRACE cycle=4356986 qp=26 total_coeff=8 trailing_ones=3 residual_dc=-20 residual_csum=0x11 coeff=[-20,3,3,0,-3,0,-1,0,0,-1,1,0,1,0,0,0] dequant=[-4160,768,0,-256,768,-960,0,320,0,0,0,0,-256,320,0,0] idct=[-55,-56,-54,-55,-56,-54,-56,-54,-54,-56,-94,-96,-55,-54,-96,-95] recon=[73,72,74,73,72,74,72,74,74,72,34,32,73,74,32,33]
+FULL_FRAME_COMPARE raw frame=0 colorspace=I420_FROM_RGB565 plane=Y exact=236 pixels=299520 mae=80.154531 max_abs=194
+FULL_FRAME_COMPARE first_bad frame=0 colorspace=I420_FROM_RGB565 plane=Y x=1 y=0 mb_x=0 mb_y=0 pixel_in_mb_x=1 pixel_in_mb_y=0 got=73 ref=72 abs=1
+FULL_FRAME_COMPARE raw frame=0 colorspace=I420_FROM_RGB565 plane=U exact=37 pixels=74880 mae=90.861685 max_abs=225
+FULL_FRAME_COMPARE first_bad frame=0 colorspace=I420_FROM_RGB565 plane=U x=0 y=0 mb_x=0 mb_y=0 pixel_in_mb_x=0 pixel_in_mb_y=0 got=128 ref=219 abs=91
+FULL_FRAME_COMPARE raw frame=0 colorspace=I420_FROM_RGB565 plane=V exact=340 pixels=74880 mae=76.733253 max_abs=210
+FULL_FRAME_COMPARE first_bad frame=0 colorspace=I420_FROM_RGB565 plane=V x=0 y=0 mb_x=0 mb_y=0 pixel_in_mb_x=0 pixel_in_mb_y=0 got=128 ref=164 abs=36
+FULL_FRAME_COMPARE mb frame=0 exact=0 total=1170
+FULL_FRAME_COMPARE raw frame=1 colorspace=I420_FROM_RGB565 plane=Y exact=909 pixels=299520 mae=81.517692 max_abs=204
+FULL_FRAME_COMPARE first_bad frame=1 colorspace=I420_FROM_RGB565 plane=Y x=0 y=0 mb_x=0 mb_y=0 pixel_in_mb_x=0 pixel_in_mb_y=0 got=145 ref=77 abs=68
+FULL_FRAME_COMPARE raw frame=1 colorspace=I420_FROM_RGB565 plane=U exact=32 pixels=74880 mae=91.380369 max_abs=225
+FULL_FRAME_COMPARE first_bad frame=1 colorspace=I420_FROM_RGB565 plane=U x=0 y=0 mb_x=0 mb_y=0 pixel_in_mb_x=0 pixel_in_mb_y=0 got=176 ref=90 abs=86
+FULL_FRAME_COMPARE raw frame=1 colorspace=I420_FROM_RGB565 plane=V exact=57 pixels=74880 mae=74.059642 max_abs=210
+FULL_FRAME_COMPARE first_bad frame=1 colorspace=I420_FROM_RGB565 plane=V x=0 y=0 mb_x=0 mb_y=0 pixel_in_mb_x=0 pixel_in_mb_y=0 got=36 ref=238 abs=202
+FULL_FRAME_COMPARE mb frame=1 exact=0 total=1170
+FULL_FRAME_COMPARE raw frame=2 colorspace=I420_FROM_RGB565 plane=Y exact=1069 pixels=299520 mae=81.687079 max_abs=204
+FULL_FRAME_COMPARE first_bad frame=2 colorspace=I420_FROM_RGB565 plane=Y x=0 y=0 mb_x=0 mb_y=0 pixel_in_mb_x=0 pixel_in_mb_y=0 got=145 ref=77 abs=68
+FULL_FRAME_COMPARE raw frame=2 colorspace=I420_FROM_RGB565 plane=U exact=42 pixels=74880 mae=91.976763 max_abs=225
+FULL_FRAME_COMPARE first_bad frame=2 colorspace=I420_FROM_RGB565 plane=U x=0 y=0 mb_x=0 mb_y=0 pixel_in_mb_x=0 pixel_in_mb_y=0 got=176 ref=90 abs=86
+FULL_FRAME_COMPARE raw frame=2 colorspace=I420_FROM_RGB565 plane=V exact=88 pixels=74880 mae=73.941146 max_abs=210
+FULL_FRAME_COMPARE first_bad frame=2 colorspace=I420_FROM_RGB565 plane=V x=0 y=0 mb_x=0 mb_y=0 pixel_in_mb_x=0 pixel_in_mb_y=0 got=36 ref=239 abs=203
+FULL_FRAME_COMPARE mb frame=2 exact=0 total=1170
+FULL_FRAME_COMPARE raw frame=3 colorspace=I420_FROM_RGB565 plane=Y exact=1701 pixels=299520 mae=81.779297 max_abs=204
+FULL_FRAME_COMPARE first_bad frame=3 colorspace=I420_FROM_RGB565 plane=Y x=0 y=0 mb_x=0 mb_y=0 pixel_in_mb_x=0 pixel_in_mb_y=0 got=145 ref=77 abs=68
+FULL_FRAME_COMPARE raw frame=3 colorspace=I420_FROM_RGB565 plane=U exact=22 pixels=74880 mae=92.466894 max_abs=225
+FULL_FRAME_COMPARE first_bad frame=3 colorspace=I420_FROM_RGB565 plane=U x=0 y=0 mb_x=0 mb_y=0 pixel_in_mb_x=0 pixel_in_mb_y=0 got=176 ref=90 abs=86
+FULL_FRAME_COMPARE raw frame=3 colorspace=I420_FROM_RGB565 plane=V exact=173 pixels=74880 mae=73.810270 max_abs=210
+FULL_FRAME_COMPARE first_bad frame=3 colorspace=I420_FROM_RGB565 plane=V x=0 y=0 mb_x=0 mb_y=0 pixel_in_mb_x=0 pixel_in_mb_y=0 got=36 ref=239 abs=203
+FULL_FRAME_COMPARE mb frame=3 exact=0 total=1170
+FULL_FRAME_COMPARE raw frame=4 colorspace=I420_FROM_RGB565 plane=Y exact=2256 pixels=299520 mae=81.940431 max_abs=204
+FULL_FRAME_COMPARE first_bad frame=4 colorspace=I420_FROM_RGB565 plane=Y x=0 y=0 mb_x=0 mb_y=0 pixel_in_mb_x=0 pixel_in_mb_y=0 got=145 ref=77 abs=68
+FULL_FRAME_COMPARE raw frame=4 colorspace=I420_FROM_RGB565 plane=U exact=16 pixels=74880 mae=92.813341 max_abs=225
+FULL_FRAME_COMPARE first_bad frame=4 colorspace=I420_FROM_RGB565 plane=U x=0 y=0 mb_x=0 mb_y=0 pixel_in_mb_x=0 pixel_in_mb_y=0 got=176 ref=90 abs=86
+FULL_FRAME_COMPARE raw frame=4 colorspace=I420_FROM_RGB565 plane=V exact=361 pixels=74880 mae=73.714156 max_abs=213
+FULL_FRAME_COMPARE first_bad frame=4 colorspace=I420_FROM_RGB565 plane=V x=0 y=0 mb_x=0 mb_y=0 pixel_in_mb_x=0 pixel_in_mb_y=0 got=36 ref=239 abs=203
+FULL_FRAME_COMPARE mb frame=4 exact=0 total=1170
+FULL_FRAME_COMPARE raw frame=5 colorspace=I420_FROM_RGB565 plane=Y exact=2624 pixels=299520 mae=82.108076 max_abs=204
+FULL_FRAME_COMPARE first_bad frame=5 colorspace=I420_FROM_RGB565 plane=Y x=0 y=0 mb_x=0 mb_y=0 pixel_in_mb_x=0 pixel_in_mb_y=0 got=145 ref=77 abs=68
+FULL_FRAME_COMPARE raw frame=5 colorspace=I420_FROM_RGB565 plane=U exact=24 pixels=74880 mae=93.071408 max_abs=225
+FULL_FRAME_COMPARE first_bad frame=5 colorspace=I420_FROM_RGB565 plane=U x=0 y=0 mb_x=0 mb_y=0 pixel_in_mb_x=0 pixel_in_mb_y=0 got=176 ref=90 abs=86
+FULL_FRAME_COMPARE raw frame=5 colorspace=I420_FROM_RGB565 plane=V exact=485 pixels=74880 mae=73.590598 max_abs=209
+FULL_FRAME_COMPARE first_bad frame=5 colorspace=I420_FROM_RGB565 plane=V x=0 y=0 mb_x=0 mb_y=0 pixel_in_mb_x=0 pixel_in_mb_y=0 got=36 ref=239 abs=203
+FULL_FRAME_COMPARE mb frame=5 exact=0 total=1170
+FULL_FRAME_COMPARE raw frame=6 colorspace=I420_FROM_RGB565 plane=Y exact=2848 pixels=299520 mae=82.286852 max_abs=204
+FULL_FRAME_COMPARE first_bad frame=6 colorspace=I420_FROM_RGB565 plane=Y x=0 y=0 mb_x=0 mb_y=0 pixel_in_mb_x=0 pixel_in_mb_y=0 got=145 ref=77 abs=68
+FULL_FRAME_COMPARE raw frame=6 colorspace=I420_FROM_RGB565 plane=U exact=34 pixels=74880 mae=93.197676 max_abs=225
+FULL_FRAME_COMPARE first_bad frame=6 colorspace=I420_FROM_RGB565 plane=U x=0 y=0 mb_x=0 mb_y=0 pixel_in_mb_x=0 pixel_in_mb_y=0 got=176 ref=90 abs=86
+FULL_FRAME_COMPARE raw frame=6 colorspace=I420_FROM_RGB565 plane=V exact=667 pixels=74880 mae=73.510136 max_abs=209
+FULL_FRAME_COMPARE first_bad frame=6 colorspace=I420_FROM_RGB565 plane=V x=0 y=0 mb_x=0 mb_y=0 pixel_in_mb_x=0 pixel_in_mb_y=0 got=36 ref=239 abs=203
+FULL_FRAME_COMPARE mb frame=6 exact=0 total=1170
+FULL_FRAME_COMPARE raw frame=7 colorspace=I420_FROM_RGB565 plane=Y exact=2886 pixels=299520 mae=82.510634 max_abs=204
+FULL_FRAME_COMPARE first_bad frame=7 colorspace=I420_FROM_RGB565 plane=Y x=0 y=0 mb_x=0 mb_y=0 pixel_in_mb_x=0 pixel_in_mb_y=0 got=145 ref=77 abs=68
+FULL_FRAME_COMPARE raw frame=7 colorspace=I420_FROM_RGB565 plane=U exact=31 pixels=74880 mae=93.173478 max_abs=226
+FULL_FRAME_COMPARE first_bad frame=7 colorspace=I420_FROM_RGB565 plane=U x=0 y=0 mb_x=0 mb_y=0 pixel_in_mb_x=0 pixel_in_mb_y=0 got=176 ref=90 abs=86
+FULL_FRAME_COMPARE raw frame=7 colorspace=I420_FROM_RGB565 plane=V exact=750 pixels=74880 mae=73.440198 max_abs=211
+FULL_FRAME_COMPARE first_bad frame=7 colorspace=I420_FROM_RGB565 plane=V x=0 y=0 mb_x=0 mb_y=0 pixel_in_mb_x=0 pixel_in_mb_y=0 got=36 ref=239 abs=203
+FULL_FRAME_COMPARE mb frame=7 exact=0 total=1170
+FULL_FRAME_COMPARE raw frame=8 colorspace=I420_FROM_RGB565 plane=Y exact=3125 pixels=299520 mae=82.769942 max_abs=204
+FULL_FRAME_COMPARE first_bad frame=8 colorspace=I420_FROM_RGB565 plane=Y x=0 y=0 mb_x=0 mb_y=0 pixel_in_mb_x=0 pixel_in_mb_y=0 got=145 ref=77 abs=68
+FULL_FRAME_COMPARE raw frame=8 colorspace=I420_FROM_RGB565 plane=U exact=36 pixels=74880 mae=93.037220 max_abs=228
+FULL_FRAME_COMPARE first_bad frame=8 colorspace=I420_FROM_RGB565 plane=U x=0 y=0 mb_x=0 mb_y=0 pixel_in_mb_x=0 pixel_in_mb_y=0 got=176 ref=90 abs=86
+FULL_FRAME_COMPARE raw frame=8 colorspace=I420_FROM_RGB565 plane=V exact=845 pixels=74880 mae=73.369217 max_abs=209
+FULL_FRAME_COMPARE first_bad frame=8 colorspace=I420_FROM_RGB565 plane=V x=0 y=0 mb_x=0 mb_y=0 pixel_in_mb_x=0 pixel_in_mb_y=0 got=36 ref=239 abs=203
+FULL_FRAME_COMPARE mb frame=8 exact=0 total=1170
+FULL_FRAME_COMPARE raw frame=9 colorspace=I420_FROM_RGB565 plane=Y exact=3121 pixels=299520 mae=83.026953 max_abs=204
+FULL_FRAME_COMPARE first_bad frame=9 colorspace=I420_FROM_RGB565 plane=Y x=0 y=0 mb_x=0 mb_y=0 pixel_in_mb_x=0 pixel_in_mb_y=0 got=145 ref=77 abs=68
+FULL_FRAME_COMPARE raw frame=9 colorspace=I420_FROM_RGB565 plane=U exact=46 pixels=74880 mae=92.749546 max_abs=227
+FULL_FRAME_COMPARE first_bad frame=9 colorspace=I420_FROM_RGB565 plane=U x=0 y=0 mb_x=0 mb_y=0 pixel_in_mb_x=0 pixel_in_mb_y=0 got=176 ref=90 abs=86
+FULL_FRAME_COMPARE raw frame=9 colorspace=I420_FROM_RGB565 plane=V exact=876 pixels=74880 mae=73.289410 max_abs=211
+FULL_FRAME_COMPARE first_bad frame=9 colorspace=I420_FROM_RGB565 plane=V x=0 y=0 mb_x=0 mb_y=0 pixel_in_mb_x=0 pixel_in_mb_y=0 got=36 ref=239 abs=203
+FULL_FRAME_COMPARE mb frame=9 exact=0 total=1170
+FULL_FRAME_COMPARE raw frame=10 colorspace=I420_FROM_RGB565 plane=Y exact=3082 pixels=299520 mae=83.330025 max_abs=204
+FULL_FRAME_COMPARE first_bad frame=10 colorspace=I420_FROM_RGB565 plane=Y x=0 y=0 mb_x=0 mb_y=0 pixel_in_mb_x=0 pixel_in_mb_y=0 got=145 ref=77 abs=68
+FULL_FRAME_COMPARE raw frame=10 colorspace=I420_FROM_RGB565 plane=U exact=56 pixels=74880 mae=92.296928 max_abs=232
+FULL_FRAME_COMPARE first_bad frame=10 colorspace=I420_FROM_RGB565 plane=U x=0 y=0 mb_x=0 mb_y=0 pixel_in_mb_x=0 pixel_in_mb_y=0 got=176 ref=90 abs=86
+FULL_FRAME_COMPARE raw frame=10 colorspace=I420_FROM_RGB565 plane=V exact=894 pixels=74880 mae=73.184402 max_abs=209
+FULL_FRAME_COMPARE first_bad frame=10 colorspace=I420_FROM_RGB565 plane=V x=0 y=0 mb_x=0 mb_y=0 pixel_in_mb_x=0 pixel_in_mb_y=0 got=36 ref=239 abs=203
+FULL_FRAME_COMPARE mb frame=10 exact=0 total=1170
+FULL_FRAME_COMPARE raw frame=11 colorspace=I420_FROM_RGB565 plane=Y exact=3076 pixels=299520 mae=83.554601 max_abs=204
+FULL_FRAME_COMPARE first_bad frame=11 colorspace=I420_FROM_RGB565 plane=Y x=0 y=0 mb_x=0 mb_y=0 pixel_in_mb_x=0 pixel_in_mb_y=0 got=145 ref=77 abs=68
+FULL_FRAME_COMPARE raw frame=11 colorspace=I420_FROM_RGB565 plane=U exact=81 pixels=74880 mae=91.809682 max_abs=235
+FULL_FRAME_COMPARE first_bad frame=11 colorspace=I420_FROM_RGB565 plane=U x=0 y=0 mb_x=0 mb_y=0 pixel_in_mb_x=0 pixel_in_mb_y=0 got=176 ref=90 abs=86
+FULL_FRAME_COMPARE raw frame=11 colorspace=I420_FROM_RGB565 plane=V exact=954 pixels=74880 mae=73.099639 max_abs=209
+FULL_FRAME_COMPARE first_bad frame=11 colorspace=I420_FROM_RGB565 plane=V x=0 y=0 mb_x=0 mb_y=0 pixel_in_mb_x=0 pixel_in_mb_y=0 got=36 ref=239 abs=203
+FULL_FRAME_COMPARE mb frame=11 exact=0 total=1170
+DEGENERACY_WARNING inter_captures_constant_y=9328/12870 (partial DPB corruption)
+STAGE_CYCLES frame=0 parse_cycles=287 paint_cycles=4654115 parse_per_mb=0.245 paint_per_mb=3977.876
+STAGE_CYCLES frame=1 parse_cycles=1728669 paint_cycles=299520 parse_per_mb=1477.495 paint_per_mb=256.000
+STAGE_CYCLES frame=2 parse_cycles=1732423 paint_cycles=299520 parse_per_mb=1480.703 paint_per_mb=256.000
+STAGE_CYCLES frame=3 parse_cycles=1713610 paint_cycles=299520 parse_per_mb=1464.624 paint_per_mb=256.000
+STAGE_CYCLES frame=4 parse_cycles=1713568 paint_cycles=299520 parse_per_mb=1464.588 paint_per_mb=256.000
+STAGE_CYCLES frame=5 parse_cycles=1718475 paint_cycles=299520 parse_per_mb=1468.782 paint_per_mb=256.000
+STAGE_CYCLES frame=6 parse_cycles=1708446 paint_cycles=299520 parse_per_mb=1460.210 paint_per_mb=256.000
+STAGE_CYCLES frame=7 parse_cycles=1711557 paint_cycles=299520 parse_per_mb=1462.869 paint_per_mb=256.000
+STAGE_CYCLES frame=8 parse_cycles=1725087 paint_cycles=299520 parse_per_mb=1474.433 paint_per_mb=256.000
+STAGE_CYCLES frame=9 parse_cycles=1714494 paint_cycles=299520 parse_per_mb=1465.379 paint_per_mb=256.000
+STAGE_CYCLES frame=10 parse_cycles=1715230 paint_cycles=299520 parse_per_mb=1466.009 paint_per_mb=256.000
+STAGE_CYCLES frame=11 parse_cycles=1708933 paint_cycles=299520 parse_per_mb=1460.626 paint_per_mb=256.000
+STAGE_CYCLES_TOTAL frames=12 parse_total=18890779 paint_total=7948835 injection_total=140696 nonvcl_idle_total=768 reset_total=12 parse_per_mb=1345.497 paint_per_mb=566.156 injection_per_mb=10.021
+FULL_FRAME_COMPARE summary width=624 height=480 frames=12 nals=15 idr=1 p=11 bytes=70348 p_mb_count_max=1170 p_slice_done_pulses=12 traversed/total=1170/1170 native_inter_mb_captures=12870 native_inter_ignored=0 native_i420_dpb_writes=5391360 cycles=27019077 first_bad_frame=0 strict_pass=0 mode=expect-red
+OK full-frame expected-red: strict reference comparison diverged at frame 0
+========================================================================
+INTER RCA: first divergent macroblock in raster order
+========================================================================
+  frame=1 mb_index=0 mb=(0,0) plane=Y
+  first_bad_pixel=(0,0) got=81 ref=77 abs=4
+  mb_type=?
+  error_decomposition=unavailable (no predicted_block metadata)
+  >> Supply --mb-metadata with pred_y/pred_u/pred_v to enable prediction vs residual RCA.
+========================================================================
+I420_CANDIDATE_SCORE raw frame=0 slice=I plane=Y exact=299520 pixels=299520 mae=0.000000 max_abs=0
+I420_CANDIDATE_SCORE raw frame=0 slice=I plane=U exact=19 pixels=74880 mae=72.621928 max_abs=126
+I420_CANDIDATE_SCORE raw frame=0 slice=I plane=V exact=25 pixels=74880 mae=72.423224 max_abs=127
+I420_CANDIDATE_SCORE raw frame=1 slice=P plane=Y exact=155479 pixels=299520 mae=24.013231 max_abs=169
+I420_CANDIDATE_SCORE raw frame=1 slice=P plane=U exact=113 pixels=74880 mae=71.948371 max_abs=199
+I420_CANDIDATE_SCORE raw frame=1 slice=P plane=V exact=126 pixels=74880 mae=74.573277 max_abs=204
+I420_CANDIDATE_SCORE raw frame=2 slice=P plane=Y exact=151797 pixels=299520 mae=24.450324 max_abs=169
+I420_CANDIDATE_SCORE raw frame=2 slice=P plane=U exact=190 pixels=74880 mae=71.861351 max_abs=199
+I420_CANDIDATE_SCORE raw frame=2 slice=P plane=V exact=232 pixels=74880 mae=74.426429 max_abs=194
+I420_CANDIDATE_SCORE raw frame=3 slice=P plane=Y exact=149985 pixels=299520 mae=24.655118 max_abs=169
+I420_CANDIDATE_SCORE raw frame=3 slice=P plane=U exact=263 pixels=74880 mae=71.808347 max_abs=202
+I420_CANDIDATE_SCORE raw frame=3 slice=P plane=V exact=330 pixels=74880 mae=74.262380 max_abs=194
+I420_CANDIDATE_SCORE raw frame=4 slice=P plane=Y exact=148377 pixels=299520 mae=24.868683 max_abs=169
+I420_CANDIDATE_SCORE raw frame=4 slice=P plane=U exact=350 pixels=74880 mae=71.712487 max_abs=199
+I420_CANDIDATE_SCORE raw frame=4 slice=P plane=V exact=388 pixels=74880 mae=74.170740 max_abs=194
+I420_CANDIDATE_SCORE raw frame=5 slice=P plane=Y exact=147283 pixels=299520 mae=24.975574 max_abs=169
+I420_CANDIDATE_SCORE raw frame=5 slice=P plane=U exact=403 pixels=74880 mae=71.645913 max_abs=199
+I420_CANDIDATE_SCORE raw frame=5 slice=P plane=V exact=457 pixels=74880 mae=74.033186 max_abs=194
+I420_CANDIDATE_SCORE raw frame=6 slice=P plane=Y exact=146080 pixels=299520 mae=25.184492 max_abs=169
+I420_CANDIDATE_SCORE raw frame=6 slice=P plane=U exact=504 pixels=74880 mae=71.588622 max_abs=199
+I420_CANDIDATE_SCORE raw frame=6 slice=P plane=V exact=536 pixels=74880 mae=73.964997 max_abs=194
+I420_CANDIDATE_SCORE raw frame=7 slice=P plane=Y exact=145402 pixels=299520 mae=25.418316 max_abs=169
+I420_CANDIDATE_SCORE raw frame=7 slice=P plane=U exact=564 pixels=74880 mae=71.508654 max_abs=199
+I420_CANDIDATE_SCORE raw frame=7 slice=P plane=V exact=601 pixels=74880 mae=73.889650 max_abs=194
+I420_CANDIDATE_SCORE raw frame=8 slice=P plane=Y exact=144408 pixels=299520 mae=25.684308 max_abs=169
+I420_CANDIDATE_SCORE raw frame=8 slice=P plane=U exact=653 pixels=74880 mae=71.429981 max_abs=199
+I420_CANDIDATE_SCORE raw frame=8 slice=P plane=V exact=690 pixels=74880 mae=73.823237 max_abs=194
+I420_CANDIDATE_SCORE raw frame=9 slice=P plane=Y exact=143876 pixels=299520 mae=25.959762 max_abs=169
+I420_CANDIDATE_SCORE raw frame=9 slice=P plane=U exact=731 pixels=74880 mae=71.345486 max_abs=199
+I420_CANDIDATE_SCORE raw frame=9 slice=P plane=V exact=788 pixels=74880 mae=73.735377 max_abs=194
+I420_CANDIDATE_SCORE raw frame=10 slice=P plane=Y exact=143142 pixels=299520 mae=26.029841 max_abs=169
+I420_CANDIDATE_SCORE raw frame=10 slice=P plane=U exact=838 pixels=74880 mae=71.260323 max_abs=199
+I420_CANDIDATE_SCORE raw frame=10 slice=P plane=V exact=878 pixels=74880 mae=73.701910 max_abs=194
+I420_CANDIDATE_SCORE raw frame=11 slice=P plane=Y exact=142575 pixels=299520 mae=25.923461 max_abs=169
+I420_CANDIDATE_SCORE raw frame=11 slice=P plane=U exact=903 pixels=74880 mae=71.182812 max_abs=199
+I420_CANDIDATE_SCORE raw frame=11 slice=P plane=V exact=909 pixels=74880 mae=73.770259 max_abs=194
+I420_CANDIDATE_SCORE summary intra=0/1170 inter=0/12870 strict_pass=0
+score_i420_candidate: OK expected-red candidate diverged from golden
+headline_score_true_rc=0
+HEADLINE intra=0/1170 inter=0/12870
+LUMA_PROGRESS intra_y_mb=1170/1170 intra_y_blk4=18720/18720 intra_y_px=299520/299520 intra_y_mae=0.000000
+LUMA_PROGRESS inter_y_mb=5036/12870 inter_y_blk4=98214/205920 inter_y_px=1618404/3294720 inter_y_mae=25.196646
+LUMA_PROGRESS frame0 y_mb=1170/1170 y_blk4=18720/18720 y_px=299520/299520 y_mae=0.000000
+luma_score_true_rc=0
+LUMA intra_y_mb=1170/1170 y_px=299520/299520 y_blk4=18720/18720
+LUMA inter_y_mb=5036/12870
+LUMA_vs_PREREGISTER pre=1100..1170 actual=1170 HIT
+{
+  "intra_y_mb_ok": 300,
+  "intra_y_mb_fail": 0,
+  "actual_buckets": {
+    "I16_m0_*": 0,
+    "I_NxN": 0,
+    "other_I16": 0,
+    "cold128": 0
+  },
+  "seed_fail_count": 0
+}
+DONE measure

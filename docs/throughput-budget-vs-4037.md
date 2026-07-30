@@ -183,3 +183,80 @@ Parent: sink+traverse comb ≈ 16.5k of 41.7k ALMs — remainder?
 4. **4037 vs budget:** **FAIL ~1.45–1.8×** on 320; **~5.8×** on 624@25. Real risk at 20 MHz.  
 5. **“~2000 @ 50 MHz”:** **underived / wrong clock** — do not de-serialise against it.  
 6. **Other ALMs:** probe ~27k comb tax; then **RFS ~8.5k**, stub ~10.5k, present path ~12k; **deblock only ~1.1k**.
+
+---
+
+## 8. MAP/INTEGRATION independent re-check (2026-07-30)
+
+**Lane:** MAP · **No new map** (788aa5f map artifact reused) · **NO FIT**
+
+### 8.1 Primary quotes (not memory)
+
+| Fact | Quote |
+|------|-------|
+| Decode clock | `fpga/Plex_MiSTer/rtl/pll/pll_0002.v:46` `.output_clock_frequency0("20.000000 MHz")` → `Plex.sv:215` `.outclk_0(clk_sys)` |
+| Board osc only | `sys/sys_top.sdc:2–4` `create_clock -period "50.0 MHz"` on `FPGA_CLK*_50` |
+| Product DECODE default | `assets/misterplex.conf.example:18–19` `DECODE=320x240` / “240p is the current RTL/ARM product path” |
+| OSD second tier | `Plex.sv:63` `"O[4],Content resolution,320x240,640x480;"` |
+| QSF compile geometry | `Plex.qsf:83–84` `FRAME_W=640` `FRAME_H=480` (frame-store build macros; **not** `clk_sys`) |
+| Profile ceiling | `docs/phase3-decode.md:14` `≤ 720p30 or 480p60 (raise after timing)` |
+| Device ALM/DSP caps | `docs/fit-budget-alm-dsp-m10k.md:8–9` ALMs **41,910** · DSP **112** = **device totals** |
+| paint_per_mb frame0 | `docs/evidence/plane_m10k_clip1_788aa5f.log`: `paint_cycles=1211072 paint_per_mb=4036.907` |
+| paint_per_mb 624 frame0 | `docs/evidence/plane_m10k_clip2_788aa5f.log`: `paint_per_mb=3977.876` |
+| Map whole | `Plex.map.rpt` @788aa5f: `Estimate of Logic utilization (ALMs needed) ; 41666` · `Total DSP Blocks ; 111` |
+
+### 8.2 Arithmetic (re-derived)
+
+```
+cy/MB = f_clk / (MB_per_frame × fps)
+320×240 → 20×15 = 300 MB
+624×480 → 39×30 = 1170 MB   (coded PMS; not 640×480 display)
+
+320@25@20MHz: 20e6/(300×25) = 2666.667
+320@30@20MHz: 20e6/(300×30) = 2222.222
+624@25@20MHz: 20e6/(1170×25) = 683.761
+624@30@20MHz: 20e6/(1170×30) = 570.000   (c0314dc7 worst-case note)
+
+Parent hypothesis 50e6/(300×30)≈5555 → WRONG CLOCK (board osc, not clk_sys).
+```
+
+### 8.3 Score 4037 (and composition caveat)
+
+| Case | Budget | Measured | Result |
+|------|-------:|---------:|--------|
+| 320@25@20 | 2666.7 | 4036.9 | **FAIL 1.51×** |
+| 320@30@20 | 2222.2 | 4036.9 | **FAIL 1.82×** |
+| 624@25@20 | 683.8 | 3977.9 | **FAIL 5.82×** |
+| 624@30@20 | 570.0 | 3977.9 | **FAIL 6.98×** |
+| 320@30@50 (invalid) | ~5555 | 4036.9 | would “pass” — **do not use** |
+
+**Composition (from `throughput_budget_defense_33904df` + stub TB defs):** frame0 `paint_*` window is wr_reset→fs_swap and includes **I_RECON + DPB_FILL + diagnostic PH_PAINT**, not sink-only. Split estimate: diag 76800 + DPB≈115500 → i_recon≈1,018,772 → **~3396 cy/MB** still **FAIL vs 2667 (1.27×)**. P-frames show `paint_per_mb=256` (diag only); P cost sits in `parse_per_mb≈1484` (clip1 f1–11) — **PASS 2667 alone**, but that is not full product MC+deblock+DDR.
+
+### 8.4 Gate audit note (encountered while mapping)
+
+**41,910 and 112 are whole-device caps**, not a decoder-only allocation (`fit-budget-alm-dsp-m10k.md` table).  
+788aa5f map “PASS by 244” is **probe-inclusive whole chip** vs device. Historical **product-only** map1 = **21,645 ALMs / 74 DSP**. Framework+present+ascal are inside the 41,666. Treating 244 as chroma cushion on a decoder envelope would be a **category error**.
+
+### 8.5 ALM composition (map.rpt entity table, comb ALUTs)
+
+| Node | Comb (self) | DSP | Role |
+|------|------------:|----:|------|
+| map_decode_area_probe | 26818 (35) | 37 | **measure tax — not ship** |
+| decode_stub | 10482 (2036) | 33 | product path; parallel DQ still |
+| sink | 8640 (1927) | 4 | phase-2 |
+| RFS | 8461 (8461) | 0 | **0 M10K bits** |
+| traverse | 7911 (5787) | 1 | |
+| present_core | 4652 (24) | 7 | |
+| ddr_frame_store | 4480 (4118) | 6 | |
+| slice_hdr_parser | 3123 (3123) | 0 | |
+| ascal | 2906 (2900) | 23 | |
+| **deblock_mb** | **1093 (1093)** | **0** | **not the wall** |
+
+M10K (Info 276029, map log): `u_plane_y` 2048 · `u_top_row` 8192 · `u_rbsp_ram` 65536 bits.
+
+### 8.6 Agreement / disagreement surface
+
+- **Agree with** `docs/decode-throughput.md` + prior integrate note: clock **20 MHz**; “~2000@50MHz” **retired**; 4037 is a **real** over-budget signal at 20 MHz.  
+- **Destroy parent 5555 hypothesis:** right formula, **wrong f_clk**.  
+- **Do not de-serialise to chase 2000.** If chasing throughput, chase **2667/684** (or 570 @30/624) with eyes on **244 ALM device headroom** and probe tax.  
+- **Merged-tree map still mandatory** before ship-fit (luma-only).
