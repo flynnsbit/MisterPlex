@@ -1,6 +1,6 @@
-// Session-level Main suspend (SUSPEND_MAIN_DURING_PLAY): once per playback,
-// not per SPI frame. Pins locate-by-cmdline, STOP/CONT, and that
-// resumeStrandedMain() does not fight an intentional hold.
+// Session-level Main suspend (SUSPEND_MAIN_DURING_PLAY).
+// Product locator requires argv[0] == "/media/fat/MiSTer" exactly.
+// Multi-match refuses; vanishing /proc entries are skipped (no abort).
 
 #include "fpga_spi.hpp"
 
@@ -19,16 +19,6 @@ using misterplex::FpgaSpi;
 static void die(const char* msg) {
     std::fprintf(stderr, "FAIL: %s\n", msg);
     std::exit(1);
-}
-
-static std::string makeFakeMain(const char* dir) {
-    ::mkdir(dir, 0777);
-    std::string path = std::string(dir) + "/MiSTer";
-    ::unlink(path.c_str());
-    const char* target = ::access("/bin/sleep", X_OK) == 0 ? "/bin/sleep" : "/usr/bin/sleep";
-    if (::symlink(target, path.c_str()) != 0)
-        die("cannot symlink fake MiSTer");
-    return path;
 }
 
 static char procState(pid_t p) {
@@ -60,98 +50,135 @@ static bool waitForState(pid_t p, char want, int tries) {
     return false;
 }
 
-int main() {
-    if (FpgaSpi::mainAlive())
-        die("a process named MiSTer is already running — cannot test cleanly");
-
-    const char* dir = "build/mplex_session_suspend_fixture";
-    std::string fake = makeFakeMain(dir);
+// Craft argv0 without needing the path to exist on disk.
+static pid_t spawnArgv0(const char* argv0) {
     pid_t pid = fork();
     if (pid < 0)
         die("fork");
     if (pid == 0) {
-        execl(fake.c_str(), fake.c_str(), "3600", static_cast<char*>(nullptr));
+        const char* sleepBin =
+            ::access("/bin/sleep", X_OK) == 0 ? "/bin/sleep" : "/usr/bin/sleep";
+        execl(sleepBin, argv0, "3600", static_cast<char*>(nullptr));
         _exit(127);
     }
+    return pid;
+}
 
-    for (int i = 0; i < 40 && !FpgaSpi::mainAlive(); ++i)
-        usleep(50000);
-    if (!FpgaSpi::mainAlive()) {
-        kill(pid, SIGKILL);
-        waitpid(pid, nullptr, 0);
-        die("mainAlive did not see fake MiSTer");
-    }
-
-    // Default OFF: suspend is a no-op.
-    FpgaSpi::setSuspendMainDuringPlay(false);
-    if (FpgaSpi::suspendMainForPlayback()) {
-        kill(pid, SIGKILL);
-        waitpid(pid, nullptr, 0);
-        die("suspend with flag off should return false");
-    }
-    if (procState(pid) == 'T') {
+static void reap(pid_t pid) {
+    if (pid > 0) {
         kill(pid, SIGCONT);
         kill(pid, SIGKILL);
         waitpid(pid, nullptr, 0);
-        die("flag off must not STOP Main");
+    }
+}
+
+int main() {
+    FpgaSpi::setSuspendMainDuringPlay(false);
+
+    // --- 1) flag off: no-op ---
+    pid_t one = spawnArgv0("/media/fat/MiSTer");
+    usleep(100000);
+    if (FpgaSpi::suspendMainForPlayback()) {
+        reap(one);
+        die("suspend with flag off must return false");
+    }
+    if (procState(one) == 'T') {
+        reap(one);
+        die("flag off must not STOP");
     }
 
+    // --- 2) unique product Main: suspend + resume ---
     FpgaSpi::setSuspendMainDuringPlay(true);
     if (!FpgaSpi::suspendMainForPlayback()) {
-        // On host without /dev/mem GPO sample still succeeds (gpoOk default true).
-        kill(pid, SIGKILL);
-        waitpid(pid, nullptr, 0);
-        die("suspendMainForPlayback failed with flag on");
+        reap(one);
+        die("unique product Main should suspend");
     }
-    if (!waitForState(pid, 'T', 40)) {
+    if (!waitForState(one, 'T', 40)) {
         FpgaSpi::resumeMainAfterPlayback();
-        kill(pid, SIGKILL);
-        waitpid(pid, nullptr, 0);
-        die("Main not in state T after suspend");
+        reap(one);
+        die("Main not T after suspend");
     }
     if (!FpgaSpi::mainSuspendedForPlayback()) {
         FpgaSpi::resumeMainAfterPlayback();
-        kill(pid, SIGKILL);
-        waitpid(pid, nullptr, 0);
-        die("mainSuspendedForPlayback false while held");
+        reap(one);
+        die("held flag false");
     }
-
-    // Watchdog must not CONT an intentional session hold.
-    FpgaSpi::resumeStrandedMain();
-    if (procState(pid) != 'T') {
-        kill(pid, SIGKILL);
-        waitpid(pid, nullptr, 0);
+    FpgaSpi::resumeStrandedMain(); // must not fight hold
+    if (procState(one) != 'T') {
+        reap(one);
         die("resumeStrandedMain fought session hold");
     }
-
-    // Idempotent second suspend.
+    // Idempotent second suspend stays held.
     if (!FpgaSpi::suspendMainForPlayback()) {
         FpgaSpi::resumeMainAfterPlayback();
-        kill(pid, SIGKILL);
-        waitpid(pid, nullptr, 0);
+        reap(one);
         die("second suspend should stay held");
     }
-
     FpgaSpi::resumeMainAfterPlayback();
-    if (!waitForState(pid, 'S', 40) && procState(pid) == 'T') {
-        kill(pid, SIGCONT);
-        kill(pid, SIGKILL);
-        waitpid(pid, nullptr, 0);
-        die("resumeMainAfterPlayback left Main stopped");
+    if (!waitForState(one, 'S', 40) && procState(one) == 'T') {
+        reap(one);
+        die("resume left Main stopped");
     }
     if (FpgaSpi::mainSuspendedForPlayback()) {
-        kill(pid, SIGKILL);
-        waitpid(pid, nullptr, 0);
+        reap(one);
         die("flag still held after resume");
     }
+    FpgaSpi::resumeMainAfterPlayback(); // idempotent
+    reap(one);
+    one = -1;
 
-    // Idempotent resume.
+    // --- 3) multi-match: refuse, leave both running (not T) ---
+    pid_t a = spawnArgv0("/media/fat/MiSTer");
+    pid_t b = spawnArgv0("/media/fat/MiSTer");
+    usleep(150000);
+    FpgaSpi::setSuspendMainDuringPlay(true);
+    if (FpgaSpi::suspendMainForPlayback()) {
+        reap(a);
+        reap(b);
+        die("multi-match must refuse suspend");
+    }
+    if (FpgaSpi::mainSuspendedForPlayback()) {
+        reap(a);
+        reap(b);
+        die("multi-match must not set held flag");
+    }
+    if (procState(a) == 'T' || procState(b) == 'T') {
+        reap(a);
+        reap(b);
+        die("multi-match must not SIGSTOP either pid");
+    }
+    reap(a);
+    reap(b);
+
+    // --- 4) basename-only argv0 is ignored by product suspend locator ---
+    pid_t baseOnly = spawnArgv0("MiSTer");
+    usleep(100000);
+    FpgaSpi::setSuspendMainDuringPlay(true);
+    if (FpgaSpi::suspendMainForPlayback()) {
+        reap(baseOnly);
+        die("basename-only argv0 must not suspend");
+    }
+    if (procState(baseOnly) == 'T') {
+        reap(baseOnly);
+        die("basename-only must not be stopped by product locator");
+    }
+    // mainAlive still sees basename fixtures (SPI path).
+    if (!FpgaSpi::mainAlive()) {
+        reap(baseOnly);
+        die("mainAlive should still see basename MiSTer");
+    }
+    reap(baseOnly);
+
+    // --- 5) vanishing pid: kill before suspend — skip, no abort ---
+    pid_t vanish = spawnArgv0("/media/fat/MiSTer");
+    usleep(50000);
+    kill(vanish, SIGKILL);
+    waitpid(vanish, nullptr, 0);
+    FpgaSpi::setSuspendMainDuringPlay(true);
+    if (FpgaSpi::suspendMainForPlayback())
+        die("vanished Main must not report held");
     FpgaSpi::resumeMainAfterPlayback();
 
-    kill(pid, SIGKILL);
-    waitpid(pid, nullptr, 0);
-    ::unlink(fake.c_str());
-    ::rmdir(dir);
     std::printf("test_main_session_suspend: OK\n");
     return 0;
 }
