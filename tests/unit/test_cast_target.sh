@@ -204,4 +204,120 @@ if [[ "$RESBAD" != "200" ]]; then
 fi
 echo "PASS /resources stays open with wrong target header"
 
-echo "OK cast target mismatch gate (pure + HTTP harness + red twin)"
+# --- TCP fragmentation: split target header at every byte of the id value ---
+# Reviewer probe: write "misterplex-" then "dev..." → was 409 CAST_TARGET_MISMATCH
+# got=misterplex-. Full header block buffering must accept all splits → 200.
+TARGET_ID="misterplex-dev"
+# One Python process: split target value at every byte index (reviewer recommendation).
+split_report=$(TARGET_ID="$TARGET_ID" PORT="$PORT" python3 - <<'PY'
+import os, socket, time, sys
+port = int(os.environ["PORT"])
+tid = os.environ["TARGET_ID"].encode()
+ok = fail = 0
+for split in range(0, len(tid) + 1):
+    left, right = tid[:split], tid[split:]
+    pre = (
+        b"GET /player/timeline/subscribe?commandID=9 HTTP/1.1\r\n"
+        b"Host: 127.0.0.1\r\n"
+        b"X-Plex-Target-Client-Identifier: "
+    )
+    post = b"\r\nConnection: close\r\n\r\n"
+    s = socket.create_connection(("127.0.0.1", port), 3)
+    s.sendall(pre + left)
+    time.sleep(0.015)
+    s.sendall(right + post)
+    s.settimeout(3.0)
+    data = b""
+    try:
+        while True:
+            chunk = s.recv(4096)
+            if not chunk:
+                break
+            data += chunk
+    except socket.timeout:
+        pass
+    s.close()
+    line = data.split(b"\r\n", 1)[0].decode("latin1", "replace") if data else ""
+    code = line.split(" ", 2)[1] if line.startswith("HTTP/") else "000"
+    if code != "200":
+        fail += 1
+        print(f"FAIL split@{split} left={left!r} right={right!r} http={code}", file=sys.stderr)
+    else:
+        ok += 1
+print(f"ok={ok} fail={fail} n={len(tid)+1}")
+sys.exit(1 if fail else 0)
+PY
+); split_rc=$?
+echo "split_target_scans $split_report"
+if [[ "$split_rc" -ne 0 ]]; then
+  echo "FAIL: TCP-split target header still rejected" >&2
+  grep -E 'CAST_TARGET|header read' "$LOG" | tail -20 >&2 || true
+  exit 1
+fi
+echo "PASS TCP-split target value at every byte → 200"
+
+# Extra: multi-chunk entire request (3 writes) still 200
+code=$(python3 - <<PY
+import socket, time
+port = int("${PORT}")
+parts = [
+    b"GET /player/timeline/subscribe?commandID=10 HTTP/1.1\r\nHost: 127.0.0.1\r\n",
+    b"X-Plex-Target-Client-Identifier: misterplex-",
+    b"dev\r\nConnection: close\r\n\r\n",
+]
+s = socket.create_connection(("127.0.0.1", port), 3)
+for p in parts:
+    s.sendall(p)
+    time.sleep(0.015)
+s.settimeout(3.0)
+data = b""
+try:
+    while True:
+        c = s.recv(4096)
+        if not c:
+            break
+        data += c
+except socket.timeout:
+    pass
+s.close()
+line = data.split(b"\r\n", 1)[0].decode("latin1", "replace") if data else ""
+print(line.split(" ", 2)[1] if line.startswith("HTTP/") else "000")
+PY
+)
+echo "split_reviewer_shape http=$code"
+if [[ "$code" != "200" ]]; then
+  echo "FAIL: reviewer-shape split (misterplex-|dev) want 200 got $code" >&2
+  exit 1
+fi
+echo "PASS reviewer-shape mid-id TCP split → 200"
+
+# Incomplete headers that never finish should not hang forever (timeout → 408).
+code=$(python3 - <<PY
+import socket
+port = int("${PORT}")
+s = socket.create_connection(("127.0.0.1", port), 3)
+s.sendall(b"GET /player/timeline/poll HTTP/1.1\r\nX-Plex-Target-Client-Identifier: misterplex-")
+# never send rest; daemon must time out
+s.settimeout(8.0)
+data = b""
+try:
+    while True:
+        c = s.recv(4096)
+        if not c:
+            break
+        data += c
+except socket.timeout:
+    pass
+s.close()
+line = data.split(b"\r\n", 1)[0].decode("latin1", "replace") if data else ""
+print(line.split(" ", 2)[1] if line.startswith("HTTP/") else "000")
+PY
+)
+echo "incomplete_headers http=$code"
+if [[ "$code" != "408" ]]; then
+  echo "FAIL: incomplete headers want 408 got $code" >&2
+  exit 1
+fi
+echo "PASS incomplete headers → 408 (no hang, no false 409)"
+
+echo "OK cast target mismatch gate (pure + HTTP harness + red twin + TCP-split)"

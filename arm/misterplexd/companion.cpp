@@ -4,10 +4,12 @@
 
 #include <arpa/inet.h>
 #include <cctype>
+#include <cerrno>
 #include <cstdlib>
 #include <cstring>
 #include <fcntl.h>
 #include <netinet/in.h>
+#include <sys/select.h>
 #include <sys/socket.h>
 #include <unistd.h>
 
@@ -68,8 +70,12 @@ std::string headerValue(const std::string& req, const char* name) {
     pos += key.size();
     while (pos < req.size() && (req[pos] == ' ' || req[pos] == '\t'))
         ++pos;
+    // Require CRLF — a missing terminator means the value is still incomplete
+    // (TCP split). Do not treat the remainder of the buffer as the full value.
     auto end = req.find("\r\n", pos);
-    return req.substr(pos, end == std::string::npos ? std::string::npos : end - pos);
+    if (end == std::string::npos)
+        return {};
+    return req.substr(pos, end - pos);
 }
 
 std::string requestLine(const std::string& req) {
@@ -92,6 +98,12 @@ void sendHttp(int fd, int code, const char* ctype, const std::string& body) {
         status = "Not Found";
     else if (code == 409)
         status = "Conflict";
+    else if (code == 408)
+        status = "Request Timeout";
+    else if (code == 413)
+        status = "Payload Too Large";
+    else if (code == 400)
+        status = "Bad Request";
     else if (code != 200)
         status = "Error";
     std::snprintf(hdr, sizeof(hdr),
@@ -105,6 +117,61 @@ void sendHttp(int fd, int code, const char* ctype, const std::string& body) {
     (void)::send(fd, hdr, std::strlen(hdr), MSG_NOSIGNAL);
     if (!body.empty())
         (void)::send(fd, body.data(), body.size(), MSG_NOSIGNAL);
+}
+
+// Buffer until the full HTTP header block (\r\n\r\n) is present.
+// A single recv() is not a request: Wi-Fi/LAN routinely splits mid-header, and
+// treating a partial value as complete caused CAST_TARGET_MISMATCH on a valid
+// "misterplex-dev" that arrived as "misterplex-" then "dev".
+// Caps: maxBytes (413), timeoutMs wall-clock (408). Never parse before complete.
+enum class HttpHeaderRead : int { Ok = 0, Timeout = 1, TooLarge = 2, Closed = 3, Error = 4 };
+
+HttpHeaderRead recvHttpHeaders(int fd, std::string& out, size_t maxBytes = 16384,
+                               int timeoutMs = 5000) {
+    out.clear();
+    char chunk[2048];
+    const auto deadline =
+        std::chrono::steady_clock::now() + std::chrono::milliseconds(timeoutMs);
+    while (out.find("\r\n\r\n") == std::string::npos) {
+        if (out.size() >= maxBytes)
+            return HttpHeaderRead::TooLarge;
+        const auto now = std::chrono::steady_clock::now();
+        if (now >= deadline)
+            return HttpHeaderRead::Timeout;
+        auto remainUs =
+            std::chrono::duration_cast<std::chrono::microseconds>(deadline - now).count();
+        if (remainUs < 0)
+            remainUs = 0;
+        fd_set rfds;
+        FD_ZERO(&rfds);
+        FD_SET(fd, &rfds);
+        timeval tv{};
+        tv.tv_sec = static_cast<time_t>(remainUs / 1000000);
+        tv.tv_usec = static_cast<suseconds_t>(remainUs % 1000000);
+        const int sel = ::select(fd + 1, &rfds, nullptr, nullptr, &tv);
+        if (sel == 0)
+            return HttpHeaderRead::Timeout;
+        if (sel < 0) {
+            if (errno == EINTR)
+                continue;
+            return HttpHeaderRead::Error;
+        }
+        const size_t space = maxBytes - out.size();
+        const size_t want = space < sizeof(chunk) ? space : sizeof(chunk);
+        if (want == 0)
+            return HttpHeaderRead::TooLarge;
+        const ssize_t n = ::recv(fd, chunk, want, 0);
+        if (n < 0) {
+            if (errno == EINTR)
+                continue;
+            return HttpHeaderRead::Error;
+        }
+        if (n == 0)
+            return out.find("\r\n\r\n") == std::string::npos ? HttpHeaderRead::Closed
+                                                             : HttpHeaderRead::Ok;
+        out.append(chunk, static_cast<size_t>(n));
+    }
+    return HttpHeaderRead::Ok;
 }
 
 // Companion offset/viewOffset are milliseconds (PMS universal offset= is seconds).
@@ -661,14 +728,24 @@ void Companion::httpLoop() {
         int c = accept(fd, nullptr, nullptr);
         if (c < 0)
             continue;
-        char buf[16384];
-        ssize_t n = recv(c, buf, sizeof(buf) - 1, 0);
-        if (n <= 0) {
+        // Full header block before any parse/gate (see recvHttpHeaders).
+        std::string req;
+        const HttpHeaderRead hr = recvHttpHeaders(c, req, 16384, 5000);
+        if (hr != HttpHeaderRead::Ok) {
+            if (hr == HttpHeaderRead::Timeout) {
+                log("HTTP: header read timeout (incomplete request)");
+                sendHttp(c, 408, "text/plain", "header timeout\n");
+            } else if (hr == HttpHeaderRead::TooLarge) {
+                log("HTTP: header block exceeds cap");
+                sendHttp(c, 413, "text/plain", "headers too large\n");
+            } else if (hr == HttpHeaderRead::Closed) {
+                // Peer closed mid-headers — no response required.
+            } else {
+                log("HTTP: header read error");
+            }
             close(c);
             continue;
         }
-        buf[n] = 0;
-        std::string req(buf, static_cast<size_t>(n));
         if (req.find("/player/") != std::string::npos || req.find("/resources") != std::string::npos)
             // Request line may carry ?X-Plex-Token=...; Companion::log redacts at sink.
             log("HTTP IN " + requestLine(req));
