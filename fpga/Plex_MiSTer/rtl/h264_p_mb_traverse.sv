@@ -188,6 +188,8 @@ module h264_p_mb_traverse #(
 	// Serial residual window load (one byte/cycle from rbsp_q)
 	reg [RBSP_AW-1:0] win_base;
 	reg [7:0]  win_k;
+	// 1 = res_win[] holds bytes at res_win_bit0..+511; may skip reload.
+	reg        win_valid;
 
 	h264_byte_ram_sp #(.DEPTH(MAX_RBSP_BYTES), .AW(RBSP_AW)) u_rbsp_ram (
 		.clk(clk),
@@ -764,26 +766,20 @@ module h264_p_mb_traverse #(
 		end
 	endfunction
 
-	task automatic launch_cavlc_for_slot;
+	// Table/max only — window base set by caller (reload vs reuse).
+	task automatic launch_cavlc_meta;
 		input [4:0] idx;
 		reg [5:0] nCv;
 		reg [4:0] maxv;
-		reg [17:0] abs_bit;
 		reg [3:0] ac_i;
-		reg [2:0] chr_i; // 0..7 across planes
+		reg [2:0] chr_i;
 		reg p;
 		reg [1:0] bi;
 		begin
-			abs_bit = bit_pos;
 			nCv = 6'd0;
 			maxv = 5'd16;
-			// Window filled later in ST_RES_WIN_LOAD (serial M10K read).
-			res_win_bit0 <= {abs_bit[17:3], 3'b000};
-			win_base <= abs_bit[3 +: RBSP_AW];
-			win_k <= 8'd0;
 			if (is_i16_r) begin
 				if (idx == 5'd0) begin
-					// I_16x16 DC nC from left/up MB edge (block 0 neighbours)
 					nCv = luma_nC(4'd0);
 					maxv = 5'd16;
 					cavlc_table_r <= nc_table(nCv);
@@ -800,7 +796,6 @@ module h264_p_mb_traverse #(
 					cavlc_table_r <= 3'd4;
 					cavlc_max_r <= maxv;
 				end else begin
-					// 19..26: plane-major, 4 blocks each (U then V)
 					chr_i = idx - 5'd19;
 					p = chr_i[2];
 					bi = chr_i[1:0];
@@ -820,7 +815,6 @@ module h264_p_mb_traverse #(
 				cavlc_table_r <= 3'd4;
 				cavlc_max_r <= maxv;
 			end else begin
-				// 18..25: plane-major, 4 blocks each
 				chr_i = idx - 5'd18;
 				p = chr_i[2];
 				bi = chr_i[1:0];
@@ -829,16 +823,59 @@ module h264_p_mb_traverse #(
 				cavlc_table_r <= nc_table(nCv);
 				cavlc_max_r <= maxv;
 			end
-			cavlc_bit0_r <= {7'd0, abs_bit[2:0]};
-			cavlc_bitlen_r <= 10'd512;
-			// cavlc_start_r pulsed after ST_RES_WIN_LOAD completes
 `ifdef VERILATOR
 			if (is_i_slice_r && curr_mb < 16'd6)
 				$display("TRAV_RES_LAUNCH mb=%0d res_i=%0d i16=%0d nC=%0d max=%0d abs_bit=%0d",
-					curr_mb, idx, is_i16_r, nCv, maxv, abs_bit);
+					curr_mb, idx, is_i16_r, nCv, maxv, bit_pos);
 `endif
 		end
 	endtask
+
+	// Full window rebase (then ST_RES_WIN_LOAD fills res_win).
+	task automatic launch_cavlc_for_slot;
+		input [4:0] idx;
+		reg [17:0] abs_bit;
+		begin
+			abs_bit = bit_pos;
+			launch_cavlc_meta(idx);
+			res_win_bit0 <= {abs_bit[17:3], 3'b000};
+			win_base <= abs_bit[3 +: RBSP_AW];
+			win_k <= 8'd0;
+			win_valid <= 1'b0;
+			cavlc_bit0_r <= {7'd0, abs_bit[2:0]};
+			// bit_len is absolute end of window bits (CAVLC: bit_pos >= bit_len fails)
+			cavlc_bitlen_r <= 10'd512;
+		end
+	endtask
+
+	// Keep res_win; CAVLC bit_offset_start = abs offset in window.
+	task automatic launch_cavlc_reuse;
+		input [4:0] idx;
+		reg [17:0] abs_bit;
+		reg [17:0] off;
+		begin
+			abs_bit = bit_pos;
+			off = abs_bit - res_win_bit0;
+			launch_cavlc_meta(idx);
+			cavlc_bit0_r <= off[9:0];
+			cavlc_bitlen_r <= 10'd512;
+		end
+	endtask
+
+	// Reuse res_win when bit_pos still inside with >=256 bits headroom.
+	function automatic bit win_reuse_ok;
+		input [17:0] abs_bit;
+		reg [17:0] off;
+		begin
+			win_reuse_ok = 1'b0;
+			if (win_valid && abs_bit >= res_win_bit0) begin
+				off = abs_bit - res_win_bit0;
+				// off<=256 → at least 256 bits (32B) remain in 512-bit window
+				if (off <= 18'd256)
+					win_reuse_ok = 1'b1;
+			end
+		end
+	endfunction
 
 	task automatic advance_mb_xy;
 		begin
@@ -915,7 +952,28 @@ module h264_p_mb_traverse #(
 		end
 	endtask
 
+`ifdef VERILATOR
+	// idle_ready RCA: where traverse spends time vs sink starve
+	reg [63:0] tcy_win, tcy_wait, tcy_hold, tcy_setup, tcy_other, tcy_total;
+	reg [31:0] t_win_loads, t_win_reuse, t_zero_exp, t_cavlc_ok;
+`endif
+
 	always @(posedge clk) begin
+`ifdef VERILATOR
+		if (reset || clear) begin
+			tcy_win <= 64'd0; tcy_wait <= 64'd0; tcy_hold <= 64'd0;
+			tcy_setup <= 64'd0; tcy_other <= 64'd0; tcy_total <= 64'd0;
+			t_win_loads <= 32'd0; t_win_reuse <= 32'd0;
+			t_zero_exp <= 32'd0; t_cavlc_ok <= 32'd0;
+		end else if (busy) begin
+			tcy_total <= tcy_total + 64'd1;
+			if (st == ST_RES_WIN_LOAD) tcy_win <= tcy_win + 64'd1;
+			else if (st == ST_RES_WAIT) tcy_wait <= tcy_wait + 64'd1;
+			else if (st == ST_RES_HOLD) tcy_hold <= tcy_hold + 64'd1;
+			else if (st == ST_RES_SETUP) tcy_setup <= tcy_setup + 64'd1;
+			else tcy_other <= tcy_other + 64'd1;
+		end
+`endif
 		if (reset || clear) begin
 			rbsp_len <= 16'd0;
 			bit_pos <= 18'd0;
@@ -928,6 +986,7 @@ module h264_p_mb_traverse #(
 			bit_byte_v <= 1'b0;
 			win_base <= '0;
 			win_k <= 8'd0;
+			win_valid <= 1'b0;
 			curr_x_r <= 8'd0;
 			curr_y_r <= 8'd0;
 			xy_rem <= 16'd0;
@@ -1092,6 +1151,8 @@ module h264_p_mb_traverse #(
 				pic_mbs <= pic_mbs32[15:0];
 				bit_pos <= 18'd0;
 				bit_byte_v <= 1'b0;
+				win_valid <= 1'b0;
+				win_k <= 8'd0;
 				curr_x_r <= 8'd0;
 				curr_y_r <= 8'd0;
 				log2_fn_r <= (log2_max_frame_num == 5'd0) ? 5'd4 : log2_max_frame_num;
@@ -1704,9 +1765,20 @@ module h264_p_mb_traverse #(
 								res_hold_is_luma <= 1'b1;
 								res_hold_from_cavlc <= 1'b0;
 							end
+`ifdef VERILATOR
+							t_zero_exp <= t_zero_exp + 32'd1;
+`endif
 							st <= ST_RES_HOLD;
 						end else
 							res_block_i <= res_block_i + 5'd1;
+					end else if (win_reuse_ok(bit_pos)) begin
+						// Keep res_win; only retarget CAVLC bit_offset_start.
+						launch_cavlc_reuse(res_block_i);
+						cavlc_start_r <= 1'b1;
+						st <= ST_RES_WAIT;
+`ifdef VERILATOR
+						t_win_reuse <= t_win_reuse + 32'd1;
+`endif
 					end else begin
 						launch_cavlc_for_slot(res_block_i);
 						st <= ST_RES_WIN_LOAD;
@@ -1717,7 +1789,11 @@ module h264_p_mb_traverse #(
 					// Latency: raddr@C → q@C+1 visible to FSM @C+2 (NBA + mem).
 					if (FAULT_SKIP_WIN_LOAD) begin
 						cavlc_start_r <= 1'b1;
+						win_valid <= 1'b0;
 						st <= ST_RES_WAIT;
+`ifdef VERILATOR
+						t_win_loads <= t_win_loads + 32'd1;
+`endif
 					end else begin
 						if (win_k >= 8'd2) begin
 							if (({18'd0, win_base} + {10'd0, win_k} - 18'd2) < {2'd0, rbsp_len})
@@ -1727,8 +1803,12 @@ module h264_p_mb_traverse #(
 						end
 						if (win_k == 8'd65) begin
 							cavlc_start_r <= 1'b1;
+							win_valid <= 1'b1;
 							st <= ST_RES_WAIT;
 							win_k <= 8'd0;
+`ifdef VERILATOR
+							t_win_loads <= t_win_loads + 32'd1;
+`endif
 						end else
 							win_k <= win_k + 8'd1;
 					end
@@ -1963,6 +2043,9 @@ module h264_p_mb_traverse #(
 `ifdef VERILATOR
 					$display("TRAV_DONE mb_count=%0d err=%0d unsup=%0d",
 						mb_count, error, unsupported);
+					$display("TRAV_CY_BREAKDOWN total=%0d win=%0d wait=%0d hold=%0d setup=%0d other=%0d win_loads=%0d win_reuse=%0d zero_exp=%0d",
+						tcy_total, tcy_win, tcy_wait, tcy_hold, tcy_setup, tcy_other,
+						t_win_loads, t_win_reuse, t_zero_exp);
 `endif
 				end
 				ST_FAIL: begin

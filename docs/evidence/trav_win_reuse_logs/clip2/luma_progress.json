@@ -1,0 +1,253 @@
+{
+  "format": "misterplex.p3.luma_progress.v1",
+  "note": "Companion to score_i420_candidate.py. Headline MB-exact stays Y+U+V; this metric is Y-only so chroma-stubbed decodes show real luma progress.",
+  "geometry": {
+    "width": 624,
+    "height": 480,
+    "frames": 12
+  },
+  "summary": {
+    "intra": {
+      "frames": 1,
+      "y_mb_exact": 1170,
+      "y_mb_total": 1170,
+      "y_blk4_exact": 18720,
+      "y_blk4_total": 18720,
+      "y_pixel_exact": 299520,
+      "y_pixel_total": 299520,
+      "y_mae_mean": 0.0
+    },
+    "inter": {
+      "frames": 11,
+      "y_mb_exact": 5036,
+      "y_mb_total": 12870,
+      "y_blk4_exact": 98214,
+      "y_blk4_total": 205920,
+      "y_pixel_exact": 1618404,
+      "y_pixel_total": 3294720,
+      "y_mae_mean": 25.196646452505828
+    },
+    "all": {
+      "frames": 12,
+      "y_mb_exact": 6206,
+      "y_mb_total": 14040,
+      "y_blk4_exact": 116934,
+      "y_blk4_total": 224640,
+      "y_pixel_exact": 1917924,
+      "y_pixel_total": 3594240,
+      "y_mae_mean": 23.09692591479701
+    }
+  },
+  "frames": [
+    {
+      "frame_index": 0,
+      "y_mb_exact": 1170,
+      "y_mb_total": 1170,
+      "y_blk4_exact": 18720,
+      "y_blk4_total": 18720,
+      "y_pixel_exact": 299520,
+      "y_pixel_total": 299520,
+      "y_mae": 0.0,
+      "y_max_abs": 0,
+      "y_first_bad": null
+    },
+    {
+      "frame_index": 1,
+      "y_mb_exact": 487,
+      "y_mb_total": 1170,
+      "y_blk4_exact": 9404,
+      "y_blk4_total": 18720,
+      "y_pixel_exact": 155479,
+      "y_pixel_total": 299520,
+      "y_mae": 24.013231169871794,
+      "y_max_abs": 169,
+      "y_first_bad": {
+        "x": 0,
+        "y": 0,
+        "got": 81,
+        "ref": 77,
+        "abs": 4
+      }
+    },
+    {
+      "frame_index": 2,
+      "y_mb_exact": 480,
+      "y_mb_total": 1170,
+      "y_blk4_exact": 9223,
+      "y_blk4_total": 18720,
+      "y_pixel_exact": 151797,
+      "y_pixel_total": 299520,
+      "y_mae": 24.450323851495728,
+      "y_max_abs": 169,
+      "y_first_bad": {
+        "x": 0,
+        "y": 0,
+        "got": 81,
+        "ref": 77,
+        "abs": 4
+      }
+    },
+    {
+      "frame_index": 3,
+      "y_mb_exact": 472,
+      "y_mb_total": 1170,
+      "y_blk4_exact": 9109,
+      "y_blk4_total": 18720,
+      "y_pixel_exact": 149985,
+      "y_pixel_total": 299520,
+      "y_mae": 24.655118189102563,
+      "y_max_abs": 169,
+      "y_first_bad": {
+        "x": 0,
+        "y": 0,
+        "got": 81,
+        "ref": 77,
+        "abs": 4
+      }
+    },
+    {
+      "frame_index": 4,
+      "y_mb_exact": 465,
+      "y_mb_total": 1170,
+      "y_blk4_exact": 9000,
+      "y_blk4_total": 18720,
+      "y_pixel_exact": 148377,
+      "y_pixel_total": 299520,
+      "y_mae": 24.868683226495726,
+      "y_max_abs": 169,
+      "y_first_bad": {
+        "x": 0,
+        "y": 0,
+        "got": 81,
+        "ref": 77,
+        "abs": 4
+      }
+    },
+    {
+      "frame_index": 5,
+      "y_mb_exact": 462,
+      "y_mb_total": 1170,
+      "y_blk4_exact": 8926,
+      "y_blk4_total": 18720,
+      "y_pixel_exact": 147283,
+      "y_pixel_total": 299520,
+      "y_mae": 24.975574252136752,
+      "y_max_abs": 169,
+      "y_first_bad": {
+        "x": 0,
+        "y": 0,
+        "got": 81,
+        "ref": 77,
+        "abs": 4
+      }
+    },
+    {
+      "frame_index": 6,
+      "y_mb_exact": 451,
+      "y_mb_total": 1170,
+      "y_blk4_exact": 8852,
+      "y_blk4_total": 18720,
+      "y_pixel_exact": 146080,
+      "y_pixel_total": 299520,
+      "y_mae": 25.18449185363248,
+      "y_max_abs": 169,
+      "y_first_bad": {
+        "x": 0,
+        "y": 0,
+        "got": 81,
+        "ref": 77,
+        "abs": 4
+      }
+    },
+    {
+      "frame_index": 7,
+      "y_mb_exact": 449,
+      "y_mb_total": 1170,
+      "y_blk4_exact": 8836,
+      "y_blk4_total": 18720,
+      "y_pixel_exact": 145402,
+      "y_pixel_total": 299520,
+      "y_mae": 25.41831597222222,
+      "y_max_abs": 169,
+      "y_first_bad": {
+        "x": 0,
+        "y": 0,
+        "got": 81,
+        "ref": 77,
+        "abs": 4
+      }
+    },
+    {
+      "frame_index": 8,
+      "y_mb_exact": 446,
+      "y_mb_total": 1170,
+      "y_blk4_exact": 8778,
+      "y_blk4_total": 18720,
+      "y_pixel_exact": 144408,
+      "y_pixel_total": 299520,
+      "y_mae": 25.684308226495727,
+      "y_max_abs": 169,
+      "y_first_bad": {
+        "x": 0,
+        "y": 0,
+        "got": 81,
+        "ref": 77,
+        "abs": 4
+      }
+    },
+    {
+      "frame_index": 9,
+      "y_mb_exact": 445,
+      "y_mb_total": 1170,
+      "y_blk4_exact": 8718,
+      "y_blk4_total": 18720,
+      "y_pixel_exact": 143876,
+      "y_pixel_total": 299520,
+      "y_mae": 25.959762286324786,
+      "y_max_abs": 169,
+      "y_first_bad": {
+        "x": 0,
+        "y": 0,
+        "got": 81,
+        "ref": 77,
+        "abs": 4
+      }
+    },
+    {
+      "frame_index": 10,
+      "y_mb_exact": 442,
+      "y_mb_total": 1170,
+      "y_blk4_exact": 8704,
+      "y_blk4_total": 18720,
+      "y_pixel_exact": 143142,
+      "y_pixel_total": 299520,
+      "y_mae": 26.02984107905983,
+      "y_max_abs": 169,
+      "y_first_bad": {
+        "x": 0,
+        "y": 0,
+        "got": 81,
+        "ref": 77,
+        "abs": 4
+      }
+    },
+    {
+      "frame_index": 11,
+      "y_mb_exact": 437,
+      "y_mb_total": 1170,
+      "y_blk4_exact": 8664,
+      "y_blk4_total": 18720,
+      "y_pixel_exact": 142575,
+      "y_pixel_total": 299520,
+      "y_mae": 25.923460870726494,
+      "y_max_abs": 169,
+      "y_first_bad": {
+        "x": 0,
+        "y": 0,
+        "got": 81,
+        "ref": 77,
+        "abs": 4
+      }
+    }
+  ]
+}
