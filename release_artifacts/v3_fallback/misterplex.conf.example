@@ -1,0 +1,14 @@
+# MiSTerPlex v0.3.0 fallback conf (for Plex_v3.rbf + this bundle's daemon).
+# Installed to /media/fat/misterplex_v3/misterplex.conf — does NOT touch
+# /media/fat/misterplex/misterplex.conf (dev install).
+#
+# Set your Plex Media Server (no secrets committed here):
+# PLEX_BASE=http://YOUR-PLEX-SERVER:32400
+# PLEX_TOKEN=
+
+# v0.3.0 core frame_store is 320x240 RGB (SPI ingest + stretch).
+DECODE=320x240
+PRESENT=fpga
+STREAM=0
+MATCH_SOURCE_HZ=off
+IDLE_SCREEN=logo
