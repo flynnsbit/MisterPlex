@@ -74,165 +74,62 @@ module h264_deblock_mb #(
 
 );
 	// ------------------------------------------------------------------
-	// PRODUCT / QUARTUS PATH: M10K identity streamer.
-	// The multi-port fabric window engine is sim-only — it costs ~34k ALMs
-	// (product-wire4 fit: deblock_mb alone 34465 ALMs → design 129%).
-	// Identity still honours the PRE/POST handshake so ref_commit + DPB
-	// promote stay wired; loop-filter quality is deferred to a serial M10K
-	// filter (not this fit). Verilator/unit keep the full engine below.
+	// PRODUCT / QUARTUS PATH: serial M10K deblock (h264_deblock_mb_serial).
+	// Multi-port sim engine below is VERILATOR-only (~34k ALMs if mapped).
+	// Pre-registered serial target ≤2500 ALMs (wire6 identity was ~960).
 	// ------------------------------------------------------------------
-`ifndef VERILATOR  // product/Quartus: M10K identity (area)
-	localparam int MB_IDX_W = (MB_W <= 1) ? 1 : $clog2(MB_W);
-	localparam int LBY_AW = $clog2(MB_W * 64);
-	localparam int LBC_AW = $clog2(MB_W * 32);
-
-	localparam [2:0] S_IDLE  = 3'd0;
-	localparam [2:0] S_RECV  = 3'd1;
-	localparam [2:0] S_EMIT  = 3'd2;
-	localparam [2:0] S_STORE = 3'd3;
-	localparam [2:0] S_DONE  = 3'd4;
-
-	reg [2:0] state;
-	(* ramstyle = "M10K, no_rw_check" *) reg [7:0] wy [0:255];
-	(* ramstyle = "M10K, no_rw_check" *) reg [7:0] wu [0:63];
-	(* ramstyle = "M10K, no_rw_check" *) reg [7:0] wv [0:63];
-	(* ramstyle = "M10K, no_rw_check" *) reg [7:0] lb_y [0:(MB_W*64)-1];
-	(* ramstyle = "M10K, no_rw_check" *) reg [7:0] lb_u [0:(MB_W*32)-1];
-	(* ramstyle = "M10K, no_rw_check" *) reg [7:0] lb_v [0:(MB_W*32)-1];
-
-	reg [7:0] mbx_r, mby_r;
-	reg [9:0] emit_idx;
-	reg [6:0] seq_idx;
-	reg       emit_pend;
-	reg [1:0] e_plane_d;
-	reg [15:0] e_x_d, e_y_d;
-	reg [7:0] rd_q;
-	reg [7:0] rd_a;
-	reg [1:0] rd_plane; // 0=Y 1=U 2=V during emit
-
-	wire [MB_IDX_W-1:0] mbx_idx = mbx_r[MB_IDX_W-1:0];
-	wire [15:0] lb_base_y = {8'd0, mbx_idx} * 16'd64;
-	wire [15:0] lb_base_c = {8'd0, mbx_idx} * 16'd32;
-	wire [15:0] blx = {4'd0, mbx_r, 4'd0};
-	wire [15:0] bly = {4'd0, mby_r, 4'd0};
-	wire [15:0] bcx = {5'd0, mbx_r, 3'd0};
-	wire [15:0] bcy = {5'd0, mby_r, 3'd0};
-
-	assign busy = (state != S_IDLE);
-
-	// Emit only the 384-sample MB body (identity). Neighbour strips omitted
-	// (no filter → no left/top rewrite). Downstream DPB writes are absolute.
-	wire [9:0] em = emit_idx;
-	wire [9:0] em_u = em - 10'd256;
-	wire [9:0] em_v = em - 10'd320;
-	reg [1:0] e_plane;
-	reg [15:0] e_x, e_y;
-	reg [7:0] e_addr;
+`ifndef VERILATOR  // product/Quartus: serial M10K deblock (area-safe)
+	// Real in-loop filter, cycle-iterative. See h264_deblock_mb_serial.sv
+	// Pre-registered ALM target ≤2500 (wire6 identity baseline ~960).
+	wire        s_out_valid;
+	wire [1:0]  s_out_plane;
+	wire [15:0] s_out_x, s_out_y;
+	wire [7:0]  s_out_data;
+	wire        s_busy;
+	wire        s_mb_done;
+	h264_deblock_mb_serial #(
+		.FRAME_W(FRAME_W),
+		.FRAME_H(FRAME_H),
+		.MB_W(MB_W),
+		.MB_H(MB_H)
+	) u_serial (
+		.clk(clk),
+		.reset(reset),
+		.slice_start(slice_start),
+		.disable_deblocking(disable_deblocking),
+		.slice_alpha_c0_offset(slice_alpha_c0_offset),
+		.slice_beta_offset(slice_beta_offset),
+		.mb_start(mb_start),
+		.mb_x(mb_x),
+		.mb_y(mb_y),
+		.mb_is_intra(mb_is_intra),
+		.mb_qp_y(mb_qp_y),
+		.mb_qp_c(mb_qp_c),
+		.mb_nz_luma(mb_nz_luma),
+		.mb_mv_x(mb_mv_x),
+		.mb_mv_y(mb_mv_y),
+		.mb_ref_idx(mb_ref_idx),
+		.smp_valid(smp_valid),
+		.smp_idx(smp_idx),
+		.smp_data(smp_data),
+		.smp_done(smp_done),
+		.out_valid(s_out_valid),
+		.out_plane(s_out_plane),
+		.out_x(s_out_x),
+		.out_y(s_out_y),
+		.out_data(s_out_data),
+		.busy(s_busy),
+		.mb_done(s_mb_done)
+	);
+	assign busy = s_busy;
 	always @* begin
-		e_plane = 2'd0; e_x = 16'd0; e_y = 16'd0; e_addr = 8'd0;
-		if (em < 10'd256) begin
-			e_plane = 2'd0;
-			e_x = blx + {12'd0, em[3:0]};
-			e_y = bly + {12'd0, em[7:4]};
-			e_addr = em[7:0];
-		end else if (em < 10'd320) begin
-			e_plane = 2'd1;
-			e_x = bcx + {13'd0, em_u[2:0]};
-			e_y = bcy + {13'd0, em_u[5:3]};
-			e_addr = em_u[5:0];
-		end else begin
-			e_plane = 2'd2;
-			e_x = bcx + {13'd0, em_v[2:0]};
-			e_y = bcy + {13'd0, em_v[5:3]};
-			e_addr = em_v[5:0];
-		end
+		out_valid = s_out_valid;
+		out_plane = s_out_plane;
+		out_x = s_out_x;
+		out_y = s_out_y;
+		out_data = s_out_data;
+		mb_done = s_mb_done;
 	end
-
-	always @(posedge clk) begin
-		if (e_plane == 2'd0) rd_q <= wy[e_addr];
-		else if (e_plane == 2'd1) rd_q <= wu[e_addr[5:0]];
-		else rd_q <= wv[e_addr[5:0]];
-	end
-
-	integer i;
-	always @(posedge clk) begin
-		if (reset) begin
-			state <= S_IDLE;
-			out_valid <= 1'b0;
-			mb_done <= 1'b0;
-			emit_pend <= 1'b0;
-			emit_idx <= 10'd0;
-			seq_idx <= 7'd0;
-		end else begin
-			out_valid <= 1'b0;
-			mb_done <= 1'b0;
-			if (emit_pend) begin
-				out_valid <= 1'b1;
-				out_plane <= e_plane_d;
-				out_x <= e_x_d;
-				out_y <= e_y_d;
-				out_data <= rd_q;
-			end
-			emit_pend <= 1'b0;
-
-			// RECV writes
-			if (state == S_RECV && smp_valid) begin
-				if (smp_idx < 9'd256) wy[smp_idx[7:0]] <= smp_data;
-				else if (smp_idx < 9'd320) wu[smp_idx[5:0]] <= smp_data;
-				else wv[smp_idx[5:0]] <= smp_data;
-			end
-
-			case (state)
-			S_IDLE: if (mb_start) begin
-				mbx_r <= mb_x;
-				mby_r <= mb_y;
-				state <= S_RECV;
-			end
-			S_RECV: if (smp_done) begin
-				emit_idx <= 10'd0;
-				state <= S_EMIT;
-			end
-			S_EMIT: begin
-				emit_pend <= 1'b1;
-				e_plane_d <= e_plane;
-				e_x_d <= e_x;
-				e_y_d <= e_y;
-				if (emit_idx == 10'd383) state <= S_STORE;
-				else emit_idx <= emit_idx + 10'd1;
-			end
-			S_STORE: begin
-				// drain last emit; publish bottom rows into line buffers (unfiltered)
-				if (emit_pend) begin
-					// last sample out this cycle via emit_pend block; hold one more
-					seq_idx <= 7'd0;
-				end else if (seq_idx < 7'd64) begin
-					// write bottom 4 luma rows into lb
-					lb_y[lb_base_y[LBY_AW-1:0] + seq_idx[5:0]] <=
-						wy[{2'b11, seq_idx[5:4], seq_idx[3:0]}];
-					if (seq_idx < 7'd32) begin
-						lb_u[lb_base_c[LBC_AW-1:0] + seq_idx[4:0]] <=
-							wu[{1'b1, seq_idx[4:3], seq_idx[2:0]}];
-						lb_v[lb_base_c[LBC_AW-1:0] + seq_idx[4:0]] <=
-							wv[{1'b1, seq_idx[4:3], seq_idx[2:0]}];
-					end
-					seq_idx <= seq_idx + 7'd1;
-				end else begin
-					state <= S_DONE;
-				end
-			end
-			S_DONE: begin
-				mb_done <= 1'b1;
-				state <= S_IDLE;
-			end
-			default: state <= S_IDLE;
-			endcase
-		end
-	end
-
-	// Silence unused ports in identity path
-	wire _unused = slice_start | disable_deblocking | mb_is_intra | (|mb_qp_y) | (|mb_qp_c)
-		| (|mb_nz_luma) | (|mb_mv_x) | (|mb_mv_y) | (|mb_ref_idx)
-		| (|slice_alpha_c0_offset) | (|slice_beta_offset);
 
 `else // VERILATOR: full multi-port engine for unit sims
 

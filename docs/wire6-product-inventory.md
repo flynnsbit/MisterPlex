@@ -14,7 +14,7 @@
 | Serial MC | **Yes** | `h264_mc_{block,luma_qpel,chroma_epel}`: one 6-tap / epel datapath, M10K windows, multi-cycle | MC block ~520 (luma ~350 + chroma ~168) |
 | Clip1(pred+residual) | **Yes** | Sample-serial `inter_clip_u8(pred + residual)` into recon stream | (in stub) |
 | `h264_dpb_ref_commit` | **Yes (product)** | Instantiated outside TB-only; owns deblock→DPB→promote + fetch | ~1287 |
-| Deblock (Quartus) | **Identity only** | `h264_deblock_mb` under `ifndef VERILATOR`: M10K recv/emit/store, **no edge filter**, no neighbour rewrite | ~960 |
+| Deblock (Quartus) | **Identity in deployed 14eaeff3**; **serial filter WIP** | Deployed RBF: M10K identity (~960 ALMs). WIP on `feat/disp-fix` after `db01a42`: `h264_deblock_mb_serial` (cycle-iterative, one `h264_deblock_edge`, M10K windows) wired under `ifndef VERILATOR`. **Map area not yet measured.** Pre-register ≤2500 ALMs. | wire6 ~960; serial TBD |
 | Deblock (Verilator) | Full multi-port | `ramstyle=logic` windows + `always @*` 4-lane gather; unit-sim only | would be ~34k (wire4) |
 | IQ/IDCT/recon4x4 | **Yes** | Existing decode_core path | idct ~897 |
 | CAVLC / slice parse | **Partial** | Existing path; first-MB / limited P walk (traverse lane not merged) | — |
