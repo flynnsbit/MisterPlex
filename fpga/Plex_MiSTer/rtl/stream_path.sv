@@ -190,7 +190,7 @@ module stream_path #(
 		.FRAME_W(FRAME_W),
 		.FRAME_H(FRAME_H),
 		.PHYS_BASE(32'h3020_0000),
-		.BANK_STRIDE(32'h0004_0000),
+		.BANK_STRIDE(32'h0008_0000),
 		.MAILBOX_PHYS(32'h3007_F130),
 		.MAGIC(32'h504C_584F)
 	) recon_export (

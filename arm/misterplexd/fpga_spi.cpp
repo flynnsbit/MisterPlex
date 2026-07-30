@@ -1893,7 +1893,8 @@ bool FpgaSpi::tryCaptureReconI420(uint8_t* dst, size_t dst_n, int width, int hei
         setErr(kNoReconReadbackReason);
         return false;
     }
-    // Optional: allow same seq re-read (compose may sample twice); do not require advance.
+    // Same-seq re-read is allowed only if post-copy PLXO still matches (below).
+    // 16-bit seq wrap is identity for stability, not a strict +1 requirement.
 
     const size_t bankOff =
         static_cast<size_t>(bank) * static_cast<size_t>(mailbox_abi::kReconExportBankStride);
@@ -1901,8 +1902,19 @@ bool FpgaSpi::tryCaptureReconI420(uint8_t* dst, size_t dst_n, int width, int hei
         setErr("tryCaptureReconI420: bank out of recon map");
         return false;
     }
-    // Copy from dedicated recon window only.
+    // Copy from dedicated recon pixel window only (not present scanout banks).
     std::memcpy(dst, reconMap_ + bankOff, need);
+
+#ifndef HYBRID_FAULT_SKIP_POST_COPY_PLXO
+    // Close the copy race: if FPGA republished (seq/bank moved) mid-memcpy,
+    // this frame is torn under the reader — fail closed, never silently plausible.
+    uint32_t lo2 = mw[0];
+    uint32_t hi2 = mw[1];
+    if (!mailbox_abi::plxoPostCopyStable(lo0, hi0, lo2, hi2)) {
+        setErr("tryCaptureReconI420: PLXO changed during copy (torn under reader)");
+        return false;
+    }
+#endif
     lastReconSeq_ = seq;
     lastReconSeqValid_ = true;
     clearErr();

@@ -35,7 +35,7 @@ module h264_recon_export_tb_top #(
 	output wire [1:0]  dbg_state
 );
 	localparam [31:0] PHYS_BASE = 32'h3020_0000;
-	localparam [31:0] BANK_STRIDE = 32'h0004_0000;
+	localparam [31:0] BANK_STRIDE = 32'h0008_0000;
 	localparam [31:0] MAILBOX_PHYS = 32'h3007_F130;
 	localparam [31:0] MAGIC = 32'h504C_584F;
 

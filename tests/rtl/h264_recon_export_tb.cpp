@@ -1,14 +1,15 @@
 // h264_recon_export TB — prove pipe + handshake (not product scorer).
 //
 // Pre-register:
-//   A) Feed real host-decoded I420 bytes (fixture prefix) as DPB commits →
-//      published bank bit-identical to committed plane.
+//   A) Real host-decoded I420 prefix → published bank packing-identical at MB scale.
 //   B) Mid-fill PLXO must not present ready on the bank being written.
 //   C) frame_abort → torn or !ready; never a plausible complete frame.
 //   D) Two frames → published banks alternate; reader never handed wr bank.
+//   E) Short frame_done (sample_count < FRAME_BYTES) → !ready or torn (DEFECT 3).
+//   F) frame_start while mailbox still issuing → no wr/pub bank overlap (DEFECT 2).
 //   Mutation FAULT_EARLY_READY forges mid-fill ready → must go RED.
 //
-// Geometry 16x16 keeps sim short; content bytes come from real 320x240 golden.
+// Geometry 16x16 keeps sim short; packing proven at MB scale (384 B), not full-frame.
 
 #include "Vh264_recon_export_tb_top.h"
 #include "verilated.h"
@@ -29,7 +30,7 @@ constexpr size_t kFrameBytes =
     static_cast<size_t>(kW) * static_cast<size_t>(kH) +
     2u * (static_cast<size_t>(kW / 2) * static_cast<size_t>(kH / 2));
 constexpr uint32_t kPhysBase = 0x30200000u;
-constexpr uint32_t kBankStride = 0x00040000u;
+constexpr uint32_t kBankStride = 0x00080000u; // matches product ABI (512 KiB)
 constexpr uint32_t kMboxPhys = 0x3007F130u;
 constexpr uint32_t kMagic = 0x504C584Fu;
 
@@ -96,7 +97,7 @@ static void tick(Vh264_recon_export_tb_top& dut, DdrModel& ddr) {
     dut.clk = 0;
     dut.eval();
     dut.clk = 1;
-    dut.eval();  // posedge NBA: ddr_we/addr/din settle
+    dut.eval();
     ddr.apply(dut.ddr_we, static_cast<uint32_t>(dut.ddr_addr),
               static_cast<uint64_t>(dut.ddr_din), static_cast<uint8_t>(dut.ddr_be));
 }
@@ -119,6 +120,15 @@ static bool loadRealDecodedPrefix(const char* path, std::vector<uint8_t>& out) {
     return static_cast<size_t>(f.gcount()) == kFrameBytes;
 }
 
+static void drain(Vh264_recon_export_tb_top& dut, DdrModel& ddr) {
+    for (int guard = 0; guard < 100000; ++guard) {
+        tick(dut, ddr);
+        if (!dut.busy && !dut.ddr_want)
+            break;
+    }
+}
+
+// Full plane commit; optional mid-fill PLXO check.
 static void commitPlane(Vh264_recon_export_tb_top& dut, DdrModel& ddr,
                         const std::vector<uint8_t>& plane, bool abort_mid,
                         size_t abort_after, bool* mid_ready_on_wr_bank) {
@@ -142,14 +152,12 @@ static void commitPlane(Vh264_recon_export_tb_top& dut, DdrModel& ddr,
         dut.sample_valid = 0;
 
         if (mid_ready_on_wr_bank && i == plane.size() / 2) {
-            // Drain a few cycles so any forged mbox write lands.
             idle(dut, ddr, 4);
             const Plxo m = ddr.readPlxo();
             const int wr = dut.dbg_wr_bank ? 1 : 0;
             if (m.magic == kMagic && m.ready && !m.torn && m.bank == wr)
                 *mid_ready_on_wr_bank = true;
         }
-        // Occasional idle to let DDR drain pending beats under backpressure=0
         if ((i & 7u) == 7u)
             idle(dut, ddr, 1);
     }
@@ -157,13 +165,94 @@ static void commitPlane(Vh264_recon_export_tb_top& dut, DdrModel& ddr,
     dut.frame_done = 1;
     tick(dut, ddr);
     dut.frame_done = 0;
+    drain(dut, ddr);
+}
 
-    // Drain flush + mailbox
-    for (int guard = 0; guard < 100000; ++guard) {
+// Short write: fewer samples than FRAME_BYTES then frame_done.
+static void commitShort(Vh264_recon_export_tb_top& dut, DdrModel& ddr,
+                        const std::vector<uint8_t>& plane, size_t n_samples) {
+    dut.frame_start = 1;
+    tick(dut, ddr);
+    dut.frame_start = 0;
+    const size_t n = n_samples < plane.size() ? n_samples : plane.size();
+    for (size_t i = 0; i < n; ++i) {
+        dut.sample_valid = 1;
+        dut.sample_off = static_cast<uint32_t>(i);
+        dut.sample_data = plane[i];
         tick(dut, ddr);
-        if (!dut.busy && !dut.ddr_want)
+        dut.sample_valid = 0;
+        if ((i & 7u) == 7u)
+            idle(dut, ddr, 1);
+    }
+    dut.frame_done = 1;
+    tick(dut, ddr);
+    dut.frame_done = 0;
+    drain(dut, ddr);
+}
+
+// After a full frame is in ST_MBOX (cmd pending), pulse frame_start before drain.
+// Product must never leave wr_bank == pub_bank after settle.
+static void commitWithMidIssueStart(Vh264_recon_export_tb_top& dut, DdrModel& ddr,
+                                    const std::vector<uint8_t>& plane,
+                                    bool* saw_overlap) {
+    if (saw_overlap)
+        *saw_overlap = false;
+
+    dut.frame_start = 1;
+    tick(dut, ddr);
+    dut.frame_start = 0;
+    for (size_t i = 0; i < plane.size(); ++i) {
+        dut.sample_valid = 1;
+        dut.sample_off = static_cast<uint32_t>(i);
+        dut.sample_data = plane[i];
+        tick(dut, ddr);
+        dut.sample_valid = 0;
+        if ((i & 7u) == 7u)
+            idle(dut, ddr, 1);
+    }
+    dut.frame_done = 1;
+    tick(dut, ddr);
+    dut.frame_done = 0;
+
+    // Stall DDR so mailbox command sits in cmd_valid without issuing.
+    dut.ddr_busy = 1;
+    for (int g = 0; g < 5000; ++g) {
+        tick(dut, ddr);
+        // ST_MBOX = 3
+        if (static_cast<int>(dut.dbg_state) == 3 && dut.ddr_want)
             break;
     }
+    // Mid-issue start (or while not idle).
+    dut.frame_start = 1;
+    tick(dut, ddr);
+    dut.frame_start = 0;
+    // Release DDR so prior mailbox can publish; pending_start then accepts.
+    dut.ddr_busy = 0;
+    for (int g = 0; g < 5000; ++g) {
+        tick(dut, ddr);
+        if (static_cast<int>(dut.dbg_state) == 1) // pending start took FILL
+            break;
+    }
+    // Complete the second frame; flag wr==pub while filling (DEFECT 2).
+    for (size_t i = 0; i < plane.size(); ++i) {
+        dut.sample_valid = 1;
+        dut.sample_off = static_cast<uint32_t>(i);
+        dut.sample_data = plane[i];
+        tick(dut, ddr);
+        dut.sample_valid = 0;
+        const int wr = dut.dbg_wr_bank ? 1 : 0;
+        const int pub = dut.dbg_pub_bank ? 1 : 0;
+        if (static_cast<int>(dut.dbg_state) == 1 && wr == pub) {
+            if (saw_overlap)
+                *saw_overlap = true;
+        }
+        if ((i & 7u) == 7u)
+            idle(dut, ddr, 1);
+    }
+    dut.frame_done = 1;
+    tick(dut, ddr);
+    dut.frame_done = 0;
+    drain(dut, ddr);
 }
 
 }  // namespace
@@ -185,7 +274,6 @@ int main(int argc, char** argv) {
                   << "\n";
         return 2;
     }
-    // Second frame: invert luma-ish bytes so bank contents differ (still real-derived).
     std::vector<uint8_t> plane2 = plane;
     for (size_t i = 0; i < plane2.size(); ++i)
         plane2[i] = static_cast<uint8_t>(plane2[i] ^ 0x5Au);
@@ -207,7 +295,6 @@ int main(int argc, char** argv) {
         ++failures;
     };
 
-    // --- A + B: commit real decoded bytes; mid-fill must not ready wr bank ---
     bool mid_bad = false;
     commitPlane(dut, ddr, plane, /*abort_mid=*/false, 0, &mid_bad);
     if (mid_bad)
@@ -232,9 +319,7 @@ int main(int argc, char** argv) {
     if (dut.frames_exported < 1)
         fail("frames_exported not advanced");
 
-    // --- D start: second frame must use the other bank; mid-fill keeps pub bank ---
     mid_bad = false;
-    const int wr_before = dut.dbg_wr_bank ? 1 : 0;
     commitPlane(dut, ddr, plane2, /*abort_mid=*/false, 0, &mid_bad);
     if (mid_bad)
         fail("frame1 mid-fill PLXO ready on wr bank");
@@ -249,20 +334,16 @@ int main(int argc, char** argv) {
     if (!ddr.readBank(m1.bank, got.data(), got.size()) ||
         std::memcmp(got.data(), plane2.data(), kFrameBytes) != 0)
         fail("frame1 bank != committed plane2");
-    // Old bank must still hold plane0 (not overwritten while writing plane2)
     if (!ddr.readBank(bank0, got.data(), got.size()) ||
         std::memcmp(got.data(), plane.data(), kFrameBytes) != 0)
         fail("previous bank corrupted during alternate fill");
-    (void)wr_before;
 
-    // --- C: abort mid-frame must not publish a plausible complete frame ---
+    // C: abort
     ddr.clear();
-    // Re-init mailbox empty after clear — reset DUT lightly via abort path only
     bool mid_unused = false;
     commitPlane(dut, ddr, plane, /*abort_mid=*/true, kFrameBytes / 4, &mid_unused);
     Plxo ma = ddr.readPlxo();
     if (ma.magic == kMagic && ma.ready && !ma.torn) {
-        // If ready, bank must NOT be bit-identical to full plane (would be silent-wrong).
         if (ddr.readBank(ma.bank, got.data(), got.size()) &&
             std::memcmp(got.data(), plane.data(), kFrameBytes) == 0) {
             fail("abort path published ready complete frame (silent wrong)");
@@ -270,27 +351,44 @@ int main(int argc, char** argv) {
             fail("abort path published ready=1 torn=0 (reader could accept torn frame)");
         }
     }
-    // Product expectation: torn sticky publish or !ready
-    if (ma.magic == kMagic && ma.ready && !ma.torn)
-        ; // already failed
-    else if (ma.magic == kMagic && ma.torn && ma.ready)
+    if (ma.magic == kMagic && ma.torn && ma.ready)
         fail("abort: torn=1 must not set ready=1");
-    // Acceptable: magic missing, or ready=0, or torn=1 && ready=0
-    if (ma.magic == kMagic && !ma.ready && ma.torn) {
-        // good
-    } else if (ma.magic != kMagic) {
-        // good — never published
-    } else if (ma.magic == kMagic && !ma.ready) {
-        // good
-    }
+
+    // E: short write must not publish ready complete
+    dut.reset = 1;
+    idle(dut, ddr, 4);
+    dut.reset = 0;
+    idle(dut, ddr, 4);
+    ddr.clear();
+    commitShort(dut, ddr, plane, kFrameBytes / 2);
+    Plxo ms = ddr.readPlxo();
+    if (ms.magic == kMagic && ms.ready && !ms.torn)
+        fail("short write published ready=1 torn=0 (incomplete frame)");
+    if (ms.magic == kMagic && ms.ready && ms.torn)
+        fail("short write: torn must not set ready");
+
+    // F: frame_start mid mailbox issue — no wr/pub overlap while filling
+    dut.reset = 1;
+    idle(dut, ddr, 4);
+    dut.reset = 0;
+    idle(dut, ddr, 4);
+    ddr.clear();
+    // Seed frame so pub_bank is defined
+    commitPlane(dut, ddr, plane, false, 0, nullptr);
+    bool overlap = false;
+    commitWithMidIssueStart(dut, ddr, plane2, &overlap);
+    if (overlap)
+        fail("frame_start mid-issue produced wr_bank==pub_bank during fill");
 
     if (failures) {
         std::cerr << "FAIL h264_recon_export: " << failures << " check(s)\n";
         return 1;
     }
-    std::cout << "OK h264_recon_export: bit_identical_real_decoded=1 "
+    std::cout << "OK h264_recon_export: packing_mb_scale_real_decoded=1 "
               << "mid_fill_guard=1 bank_alt=1 abort_fail_closed=1 "
+              << "short_write_fail_closed=1 mid_issue_start_no_overlap=1 "
               << "bytes=" << kFrameBytes << " bank0=" << bank0 << " bank1=" << m1.bank
-              << " seq=" << seq0 << "->" << m1.seq << "\n";
+              << " seq=" << seq0 << "->" << m1.seq << " stride=0x" << std::hex << kBankStride
+              << std::dec << "\n";
     return 0;
 }
