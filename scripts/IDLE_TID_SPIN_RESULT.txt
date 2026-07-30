@@ -1,0 +1,89 @@
+IDLE TID CPU SAMPLE — read-only /proc — w-bounce2 2026-07-30
+==============================================================================
+CONSTRAINTS HONOURED
+==============================================================================
+NO deploy, NO bounce, NO restart, NO conf change.
+md5 e9c5e5a1… PROFILE=0 RBF 14eaeff3… unchanged.
+true idle: ffmpeg=no; log idle=1; no playMedia issued.
+
+==============================================================================
+PRE-REGISTER vs OUTCOME
+==============================================================================
+PRIMARY EXPECT: hot role burns >5 %onecpu at true idle.
+ACTUAL: tid=22184 rate = **98.144 %onecpu** over du=24.240s (dJ=2379).
+SCORE: **HIT — idle-time spin confirmed.**
+
+ALTERNATE (playback-coupled only): FALSIFIED for this device state.
+
+Daemon restarted since v9 capture windows (mpid was 13636/17112/20725;
+now **mpid=22177**). Match by role/creation order, not number 13645.
+
+==============================================================================
+PROCESS / WINDOW
+==============================================================================
+mpid=22177  n_threads=7  HZ=100  du=24.240s (T0→T1 includes ~6s wchan series + 18s sleep)
+total_dJ=2434  P_process≈100.4 %onecpu (essentially one full core at idle)
+PLAYBACK=no_ffmpeg  CORENAME=Plex  PRESENT_PROFILE=0
+
+==============================================================================
+PER-TID RATES (idle)
+==============================================================================
+tid    dJ    %onecpu   d_vol   d_nonvol   state/wchan pattern
+22184  2379  **98.144**  0     **7027**    R / wchan=0 / syscall=running  ← HOT
+22181    26    1.073    530      65        S / hrtimer_nanosleep
+22177    16    0.660    121      19        S / hrtimer_nanosleep (main, earliest starttime)
+22182     8    0.330   2396       0        S / hrtimer_nanosleep
+22180     4    0.165    489       2        S / hrtimer_nanosleep
+22185     1    0.041    121       0        S / do_select (likely HTTP accept)
+22183     0    0.000      0       0        S / futex_wait_queue_me
+
+==============================================================================
+HOT TID DIAGNOSTICS (22184) — decisive spin signature
+==============================================================================
+comm:     misterplexd
+state:    R (running) consistently
+wchan:    **0** on every sample (i=0..5 over 5s and recheck)
+syscall:  **running** on every sample (5× 0.5s apart) — never in a syscall
+stack:    empty / unavailable on this kernel (no frames exported)
+ctxt:     voluntary_ctxt_switches=29 cumulative
+          nonvoluntary_ctxt_switches=**196137** cumulative
+          over idle window: d_vol=**0**  d_nonvol=**7027**
+          → overwhelmingly preemption of a runnable loop, not blocking work.
+
+j_cum at sample: j0=59962 → j1=62341 (already huge before this window;
+rate now proves **current** burn, not just history).
+
+==============================================================================
+CREATION ORDER (starttime ascending)
+==============================================================================
+ord  starttime  tid    j_cum@sample  notes
+0    3081789    22177     ~424       main (mpid); nanosleep
+1    3081794    22180      ~86       worker cohort
+2    3081794    22181     ~657       worker
+3    3081794    22182     ~243       worker
+4    3081794    22183       0       futex wait
+5    3081794    22184   **64802**    **HOT — 6th thread, same cohort tick as 1–4,6**
+6    3081794    22185      ~16       select (HTTP)
+
+Hot thread is among the earliest worker cohort (not a late play-thread).
+Maps to prior capture roles: 13645 / 17119 / 20732 (always ~85% during play;
+now shown ~98% at idle alone).
+
+==============================================================================
+SEVERITY (evidence-bound; no fix attempted)
+==============================================================================
+Daemon burns ≈1 full core while idle on the user's daily driver with no cast
+session. Larger user-visible cost than the doorbell win while the box sits
+unused. Fix out of scope this window — sample only.
+
+==============================================================================
+ARTIFACTS
+==============================================================================
+build/arm-idle-tid-sample/
+  PREREGISTER.txt
+  idle_raw.txt
+  hot_detail.txt
+  RESULT.txt
+
+Hand to w-hybrid-arm offline for source mapping of creation-order slot 5
+(worker cohort index). No device access transferred.

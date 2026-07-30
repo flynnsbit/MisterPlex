@@ -1,0 +1,16 @@
+PRE-REGISTER — idle tid CPU rate (read-only /proc)
+=================================================
+EXPECT (primary): the historically-hot role (long-lived non-main worker,
+creation-order peer of prior tid 13645 / 17119 / 20732 — match by role not
+number) shows a **non-trivial current rate at true idle** (dJ over ~18s
+⇒ >5 %onecpu on that tid alone). Mechanism candidate: idle paint / present
+loop spinning outside playback.
+  FAIL this expectation if all tids dJ≈0 over 18s (rate <1 %onecpu each).
+
+ALTERNATE (if primary fails): burn is playback-coupled; j0=21034 was
+accumulated history only; idle is quiet.
+
+Also expect: ctxt_switches on hot tid if spinning → nonvoluntary >> voluntary;
+if blocked in work → voluntary dominant or wchan non-empty consistently.
+
+NO deploy / bounce / restart / conf change. PROFILE=0 stays. md5 e9c5e5a1.
