@@ -144,5 +144,9 @@ WIDTH=624 HEIGHT=480 GEOMETRY=plex480p LOOPS=1000 ./scripts/run_c2_ddr_bench.sh
 | Are 194–220 ms still the per-frame push? | **No** — SPI RGB565 whole-frame lab, retired path |
 | Real product push cost today? | **Unknown on live post-GDM device this lane**; best archive: **~7.2 ms** memcpy 480p I420, **~10.4 ms** product present total |
 | 480p bus-bound below realtime? | **Not by archived DDR fill** (~139 fps cap copy-only) |
-| Decode-bound? | **Unknown post-GDM** — needs A/B harness on device |
-| Change 2000 kbps floor? | **No** — wait for harness |
+| Decode-bound? | Live harness A/B (parent): 480p **89.8 %onecpu** total — CPU-bound class |
+| Change 2000 kbps floor? | **No** — see `p720-bus-and-bitrate-margin.md` |
+
+## 8. Follow-on (720p bus + bitrate)
+
+See **`p720-bus-and-bitrate-margin.md`**: 720p I420 copy **22.1 ms** @ 59.521 MiB/s (bus not blocker @24/30); product store **rejects** 1280×720; keep 2000 kbps.
