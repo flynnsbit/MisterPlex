@@ -2,22 +2,127 @@
 
 | Field | Value |
 |---|---|
-| **TS_UTC** | 2026-07-30T17:09:39Z |
-| **SOURCE_SHA** | `92b8278c219aacc1d01e96b0b18343bd77190b9f` |
+| **TS_UTC** | 2026-07-30T17:09:39Z (v1) · **CPU correction 2026-07-30T17:14Z (v2)** |
+| **SOURCE_SHA** | scope commit base `92b8278c` · 480p soak evidence `b807d088`/`92b8278c` |
 | **Branch** | `w-arm-p720-scope` |
 | **Lane** | host/ARM only — **no** ssh/deploy/Quartus/RBF |
-| **Gate** | 720p product work remains gated on 480p A/V soak PASS (not claimed here) |
+| **480p gate** | **ARM-side PASS** (180s soak: drops bounded, av-lock slope ~0) — see `docs/evidence/p480-audio-20260730T165053Z/REPORT.md` |
 
-## Pre-registered predictions (before measurement / layout math)
+---
+
+## 0. CORRECTION — binding constraint is CPU, not “sub-linear headroom”
+
+### 0.1 Retracted input (do not use)
+
+Earlier 15s window **misterplexd-only** figures (11.4% / 25.5% onecpu) and the claim “2.2× CPU for 3.9× pixels = sub-linear” are **invalid for 720p projection**. They omitted **ffmpeg**, which does the H.264 decode + scale.
+
+### 0.2 Corrected anchors (180s A/B, real media)
+
+Source: `docs/evidence/p480-audio-20260730T165053Z/REPORT.md` + `*_cpu.json`  
+Formula: `P=100*dticks/(HZ*dwall)`, no fps scaling.
+
+| Tier | coded px | mplex % | ffmpeg % | **total %onecpu** | artifact |
+|---|---:|---:|---:|---:|---|
+| 240p | 76 800 | 8.461 | 13.764 | **22.225** | `p480_ab_240p_*_cpu.json` |
+| 480p | 299 520 | 20.79 | 69.022 | **89.812** | `p480_ab_480p_*_cpu.json` |
+
+| Ratio | Value |
+|---|---:|
+| px 480/240 | **3.900** |
+| total CPU 480/240 | **4.041** |
+| (CPU ratio) / (px ratio) | **1.036** |
+
+**Across the two real points, total playback CPU is essentially LINEAR in coded pixels** (slightly super-linear). The prior “sub-linear” reading is retracted.
+
+### 0.3 720p CPU extrapolation (**not a measurement**)
+
+| Method | Math | 720p @ **24 fps** %onecpu |
+|---|---|---:|
+| **Linear from 480p** (preferred; matches 2-pt slope) | `89.812 × (921600/299520)` = `89.812 × 3.0769` | **≈ 276%** |
+| Power law 2-pt | \(e=\ln(4.041)/\ln(3.9)\approx 1.026\) | **≈ 285%** |
+| Affine 2-pt | `a + b·px` | **≈ 279%** |
+
+Dual-A9 hard ceiling = **200 %onecpu** (both cores fully busy, nothing else).
+
+| Projection | vs 200% ceiling |
+|---|---|
+| **~276% @ 24 fps** | **over by ~76 %onecpu (~38% over dual-core capacity)** |
+
+**Pre-registered prediction for this correction pass:**
 
 | ID | Prediction | Result |
 |---|---|---|
-| P1 | `kPlex480pYuv420pBankStride` is 512 KiB from `alignUp(449280, 0x40000)` | **HIT** — quoted below |
-| P2 | Two 1.32 MiB banks **cannot** land at `phys_base=0x30000000` without stomping fixed mailboxes and/or bitstream ring | **HIT** — layout math |
-| P3 | Pure DDR fill @ archived ~59 MiB/s → 720p copy ≈ 23–24 ms | **HIT** (extrapolation from archive; not new device measure) |
-| P4 | Product `frame_tx` @ 24 fps is comfortable (<25 ms) | **MISS** — projection 29–34 ms vs 41.7 ms budget → **marginal** |
-| P5 | CPU power-law projection lands under 40% onecpu | **MISS** — projection ≈ **50%** (affine ≈ 65%; linear-from-480p ≈ 78%) |
-| P6 | 1280×720 is MB-aligned; coded can equal presented (no 640-for-624 repeat) | **HIT** |
+| C1 | Corrected 2-pt slope is ~linear (ratio within 5% of px ratio) | **HIT** (1.036) |
+| C2 | Linear 720p24 total ≥ 200% onecpu | **HIT** (≈276%) |
+| C3 | ffmpeg invocation passes explicit `-threads` | **MISS** — no `-threads`; auto multi-thread still active (see §0.4) |
+| C4 | 480p ffmpeg cost is mostly `av:h264:*` decode threads | **MISS** — dominated by **`vf#0:0` scale threads** |
+
+### 0.4 Is ffmpeg already multi-threaded? (code + 480p thread sample)
+
+**Invocation** (`media_player.cpp` rawvideo path, quoted from 480p soak log):
+
+```text
+ffmpeg ... -i <universal start.mp4 videoResolution=624x480> \
+  -map 0:v:0 -an -f rawvideo -pix_fmt yuv420p \
+  -vf fps=24/1,scale=624:480:force_original_aspect_ratio=decrease,pad=624:480:(ow-iw)/2:(oh-ih)/2 \
+  pipe:1  ...audio...
+```
+
+- **No** `-threads` / `-filter_threads` in `media_player.cpp` (rg: no matches).
+- FFmpeg still spawns multiple threads by default.
+
+**480p thread breakdown** (`p480_ab_480p_*_cpu.json`, %onecpu):
+
+| Role (comm) | Σ %onecpu (approx) | Notes |
+|---|---:|---|
+| **`vf#0:0` (scale/filter)** | **~50.4** | 3 hot threads ~16.8+14.7+14.6 |
+| `av:h264:df*` + `dec0:0:h264` | **~5.8** | decode already split across df0/1/2 |
+| `mux0:rawvideo` | **~5.9** | |
+| other ffmpeg (audio/demux/…) | **~6.9** | |
+| **ffmpeg process total** | **69.0** | thread_sum 69.0 ≈ process (accounting OK) |
+| misterplexd present-ish | **~17** main tid + rest → **20.8** | |
+
+**Finding:** at 480p, ffmpeg is **not** a single saturated 100% thread. It is **already parallel** on the dual-A9. The bill is dominated by **libswscale (`vf`)**, not by a single-thread H.264 ceiling. Turning on more `-threads` is **unlikely** to create a 720p miracle: the machine already spreads work, and **aggregate** cost is what hits 200%.
+
+Component linear sketch to 720p24 (extrapolation):
+
+| Piece @480p | ×3.08 → @720p24 |
+|---:|---:|
+| vf ~50.4% | **~155%** |
+| h264 ~5.8% | **~18%** |
+| mux ~5.9% | **~18%** |
+| mplex ~20.8% | **~64%** |
+| other ff ~6.9% | **~21%** |
+| **sum** | **~276%** |
+
+### 0.5 What could change the answer (product options, with numbers)
+
+All rows = **linear extrapolation from 89.8% @480p24 × 3.08 × (fps/24)**. Label: **not measured**.
+
+| Option | Projected total %onecpu | vs 200% ceiling | Notes |
+|---|---:|---|---|
+| 720p **24** fps (film) | **~276** | **FAIL** over by ~76 | User’s quality target |
+| 720p **20** fps | **~230** | **FAIL** | still over |
+| 720p **15** fps | **~173** | tight (~27 headroom) | may work if little else runs; **unproven** |
+| 720p **12** fps | **~138** | possible (~62 headroom) | slideshow-ish for film |
+| 720p **10** fps | **~115** | more room | poor motion |
+| Lower bitrate only | **unknown** | — | vf is pixel-bound; bitrate helps decode (~6% today) **marginally** |
+| Skip identity `scale` when PMS size matches | **unknown** | — | vf is 50% @480p; worth a **lab A/B**, not a claim |
+| FPGA absorb decode | **unavailable** | — | FPGA path ~2966 cy/MB vs 2667 budget **at 240p**; not 480p/720p |
+| STREAM skip-RGB + host recon | different product | — | not interactive every-frame cast path |
+
+**Legitimate product statement:** full-rate **720p24 ARM decode is not feasible** on the dual-A9 under linear scaling from measured 480p totals. A **reduced-fps 720p** tier (≤12–15 fps) is the only ARM-shaped option that stays under 200% **in projection** — and even 15 fps is tight and must be measured. Prefer saying “720p not reachable at content rate on ARM” over shipping a bad 12 fps mode without user intent.
+
+### 0.6 Binding-constraint order (updated verdict)
+
+| Rank | Constraint | 720p24 status |
+|---:|---|---|
+| **1 (binds first)** | **ARM total CPU (mplex+ffmpeg)** | **Projected FAIL** (~276% > 200%) |
+| 2 | DDR address ABI / aperture | Hard block at `0x30000000` without remap (still true; secondary if CPU kills product) |
+| 3 | DDR push bandwidth | Marginal but under frame budget at 24 fps (~29 ms / 42 ms) — **not** the killer |
+| 4 | FPGA decode offload | Not available for 720p on current trajectory |
+
+**Honest overall:** **720p24 on ARM is likely not feasible.** DDR aperture work remains on record for remap / future FPGA-present paths. Do **not** schedule a 720p tier implement expecting ARM ffmpeg to carry 24 fps.
 
 ---
 
@@ -192,31 +297,18 @@ Honest label: **plausibly deliverable at 24 fps on push alone; not proven; not c
 
 ---
 
-## 3. ARM decode CPU projection (**extrapolation, not measurement**)
+## 3. ARM decode CPU projection — **SUPERSEDED by §0**
 
-### 3.1 Measured anchors (p480-verify, real media, ~15 s)
+Section 3 in v1 used **misterplexd-only** 11.4/25.5% and claimed sub-linear ~50% @720p. **Retracted.**
 
-| Tier | coded px | PLAY_P_ONECPU | ratio vs 240p px | ratio vs 240p CPU |
-|---|---:|---:|---:|---:|
-| 240p | 76800 | **11.4%** | 1.00× | 1.00× |
-| 480p | 299520 | **25.5%** | **3.90×** | **2.24×** |
-| 720p | 921600 | ? | **12.00×** / **3.08× vs 480p** | ? |
+Use **§0** exclusively:
 
-Observed: **sub-linear** in pixels (3.9× px → 2.24× CPU).
+- Anchors: **22.2% / 89.8%** total (mplex+ffmpeg), 180s soak  
+- Slope: **~linear** (4.04× CPU vs 3.90× px)  
+- 720p24 projection: **~276 %onecpu > 200% ceiling**  
+- ffmpeg already multi-threaded; **vf/scale** dominates 480p cost  
 
-### 3.2 Methods
-
-| Method | Formula | 720p %onecpu |
-|---|---|---:|
-| Power law through two points | \(e=\ln(25.5/11.4)/\ln(3.9)\approx 0.592\); \(c\cdot px^{e}\) | **≈ 49.6%** |
-| Affine `a + b·px` fit | solve two points | **≈ 64.9%** |
-| Linear scale from 480p only | `25.5 × (921600/299520)` | **≈ 78.5%** |
-
-**Preferred stated projection:** power-law **~50% of one A9 core** decode+present path share, with **uncertainty band ~50–80%** until measured.  
-Dual-A9: one core at 50–80% leaves the sibling for GDM/companion/audio — **plausible if GDM stays fixed** (idle storm was the prior killer). **Not** a measurement.
-
-H.264 ladder today forces **Baseline level 3.0** (`plex_resolve` / profiles).  
-1280×720 = **3600 macroblocks/frame**; Level 3.0 max frame size is **1620 MBs** → **Level 3.1 required** (3600 MBs). Host ladder must raise `h264Level` for a 720p tier (PMS will otherwise refuse or downscale unpredictably).
+H.264 ladder note (still valid): 1280×720 = **3600 MBs/frame** needs **Level 3.1** (level 3.0 max frame 1620 MBs). Host ladder must raise `h264Level` if a 720p tier ever exists.
 
 ---
 
@@ -328,21 +420,22 @@ WIDTH=1280 HEIGHT=720 LOOPS=1000 ./scripts/run_c2_ddr_bench.sh   # expect fail o
 
 ---
 
-## 8. Verdict
+## 8. Verdict (v2 — CPU correction)
 
 | Question | Answer |
 |---|---|
-| Is 720p feasible **host-side alone** on current ABI? | **NO** — bank0 payload collides fixed mailboxes + bitstream ring |
-| Is 720p killed by **physical DRAM size**? | **No evidence it is** — 2×1.5 MiB banks are small; **address map** is the wall |
-| Is push bandwidth a hard kill at 24 fps? | **No (projection)** — marginal ~29–32 ms of ~42 ms |
-| Is CPU a hard kill? | **Unknown** — extrapolate ~50% (band 50–80%) onecpu; measure required |
-| FPGA/RBF required? | **YES** — geometry, stride, base, mailbox ABI, CONF_STR, scanout |
-| Ship 720p now? | **NO** — gated on 480p soak + map redesign + device measures |
-| Honest overall | **Feasible only after memory-map co-design; throughput/CPU look marginal-but-plausible at 24 fps, not free** |
+| **Does CPU bind before DDR?** | **YES (projection)** — ~**276 %onecpu** @720p24 vs **200%** dual-A9 ceiling |
+| Is 720p24 ARM ffmpeg feasible? | **Likely NO** — linear from measured 22.2→89.8 totals; already multi-threaded |
+| Reduced-fps 720p on ARM? | Only **≤~12–15 fps** stays under 200% in projection; **unmeasured**; product-questionable |
+| DDR aperture at `0x30000000`? | Still **hard block** without remap (mailboxes + bitstream) — keep on record |
+| Push bandwidth @24 fps? | Marginal (~29 ms / 42 ms) — **not** the first killer |
+| FPGA decode offload? | **Not available** (240p budget already missed) |
+| 480p gate? | **PASS** on ARM soak — 720p question is pure reachability |
+| Ship 720p now? | **NO** |
 
 ### One-line decision aid
 
-> **Do not schedule a 720p tier implement until (1) 480p soak PASS, (2) parent accepts a new DDR map (e.g. frame base ≥ `0x30180000` or equivalent), (3) w-device publishes D1–D4 numbers. Host ladder/OSD work is straightforward once those land; the aperture collision is the showstopper under today’s contract.**
+> **Binding constraint: ARM CPU. Corrected totals are linear in pixels; 720p24 projects to ~276% onecpu on a 200% dual-A9. Do not implement a 720p tier for content-rate playback on ARM. Keep DDR remap notes for any future path; do not expect FPGA decode to absorb 720p on the current trajectory.**
 
 ---
 
