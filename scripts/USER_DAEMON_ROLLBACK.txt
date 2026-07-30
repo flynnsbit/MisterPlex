@@ -1,0 +1,51 @@
+MiSTerPlex daemon emergency rollback (copy-paste)
+================================================
+Host: machine that can SSH to the MiSTer (default 192.168.1.183, pass 1).
+Does NOT change the FPGA core (RBF). Restores daemon binary (+ optional conf).
+
+PRE-REGISTERED TIME: ~5–15 seconds wall-clock after you hit Enter
+  (SSH + stop process + copy ~12MB + restart + id check).
+
+--- A) One-command restore to last deploy backup (prev-c2) ---
+cd /path/to/MisterPlex
+./scripts/restore_misterplexd_prev.sh
+# Expect on success:
+#   restored_md5=<same as prev>
+#   daemon_id_ok=misterplex-dev
+#   true rc=0
+
+--- B) Restore known-good pre-candidate live (f230f95b from 5a633b5) ---
+# Use this if a bad deploy already overwrote prev-c2.
+PREV_BIN=/media/fat/misterplex/backup/misterplexd.before-20260730T013548Z \
+PREV_CONF=/media/fat/misterplex/backup/misterplex.conf.before-20260730T013548Z \
+  ./scripts/restore_misterplexd_prev.sh
+# Expect: restored_md5=f230f95b5cd1300d6e7fb9776dde93fa
+#         daemon_id_ok=misterplex-dev
+
+--- C) Manual SSH if scripts unavailable ---
+ssh root@192.168.1.183
+# soft-stop
+kill $(pidof misterplexd ffmpeg) 2>/dev/null; sleep 1
+# pick ONE source (prefer B snapshot if unsure):
+SRC=/media/fat/misterplex/bin/misterplexd.prev-c2
+# SRC=/media/fat/misterplex/backup/misterplexd.before-20260730T013548Z
+cp -f "$SRC" /media/fat/misterplex/bin/misterplexd
+chmod +x /media/fat/misterplex/bin/misterplexd
+md5sum /media/fat/misterplex/bin/misterplexd "$SRC"   # must match
+cd /media/fat/misterplex && nohup ./bin/misterplexd \
+  --name MiSTerPlex --id misterplex-dev --port 3005 \
+  --conf /media/fat/misterplex/misterplex.conf \
+  >>/media/fat/misterplex/misterplexd.log 2>&1 &
+sleep 1
+ps w | grep '[m]isterplexd'    # must show --id misterplex-dev
+md5sum /media/fat/misterplex/bin/misterplexd
+# expect f230f95b… if restored from before-20260730T013548Z
+
+DO NOT use backup/misterplexd.before-20260729T181129 — that is OLDER
+daemon 06c5735a (pre idle-screen fix), NOT today's live.
+
+Fail-closed codes from restore_misterplexd_prev.sh:
+  rc=1  missing backup / missing PREV_CONF
+  rc=2  md5 mismatch after copy
+  rc=6  daemon did not start
+  rc=7  running --id != misterplex-dev

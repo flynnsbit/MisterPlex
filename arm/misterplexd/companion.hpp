@@ -92,6 +92,7 @@ public:
 private:
     void gdmLoop();
     void httpLoop();
+    void httpServeClient(int c);
     std::string gdmPayload() const;
     std::string resourcesXml() const;
     std::string timelineXml(const std::string& commandId) const;
@@ -117,6 +118,7 @@ private:
     CtrlFn onSkipPrevious_;
 
     std::atomic<bool> running_{false};
+    std::atomic<int> httpWorkers_{0};
     std::thread gdmThr_;
     std::thread httpThr_;
 
