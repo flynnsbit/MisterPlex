@@ -37,7 +37,7 @@ BAK _user-startup.sh.bak-before-default-20260729-154024 (excerpt):
   nohup /media/fat/misterplex/bin/misterplexd \
     --name MiSTerPlex --id misterplex-183 --port 3005 \
     --conf /media/fat/misterplex/misterplex.conf \
-    --pms http://192.168.1.41:32400 \
+    --pms http://YOUR-PLEX-SERVER:32400 \
     >>/media/fat/misterplex/misterplexd.log 2>&1 &
 
 MiSTer.ini:
