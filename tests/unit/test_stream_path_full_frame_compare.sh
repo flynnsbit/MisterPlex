@@ -547,12 +547,16 @@ REAL_META="$REAL_REF_DIR/native_inter_metadata.json"
 REAL_CAND="$REAL_REF_DIR/native_inter_candidate.i420"
 REAL_SCORE="$REAL_REF_DIR/native_inter_candidate_score.json"
 REAL_COMPARE="$REAL_REF_DIR/frame_planes_compare.json"
-# Pre-register (I-slice walk + real I4/I16 luma pred + residual; chroma deferred 128):
-# Expect some MB-exact if modes+nb correct; chroma still kills many MBs.
-# Do not tune toward historical fake 1606.
+# Pre-register TWO metrics (scorer unmodified; chroma still stub 128):
+#   HEADLINE score_i420_candidate mb_exact requires Y+U+V → expect intra=0/300
+#     inter=0/3300 while U/V=128 (quoted: tools/score_i420_candidate.py mb_exact).
+#   LUMA progress (tools/score_i420_luma_progress.py): Y-only gradient.
+#     PRE: intra_y_mb≈80..120/300, intra_y_px≈25k..40k/76800 (prior 94/300, 29589).
+# Do not tune toward historical fake inter=1606.
 SRC_SHA="$(git -C "$ROOT" rev-parse HEAD 2>/dev/null || echo unknown)"
 echo "REAL_REF_MEASURE source_sha=$SRC_SHA" >&2
-echo "REAL_REF_MEASURE pre-register: intra=1..120/300 inter=0..50/3300 (real I pred; chroma deferred 128)" >&2
+echo "REAL_REF_MEASURE pre-register HEADLINE: intra=0/300 inter=0/3300 (chroma stub floors Y+U+V mb_exact)" >&2
+echo "REAL_REF_MEASURE pre-register LUMA: intra_y_mb=80..120/300 intra_y_px=25000..40000/76800" >&2
 
 "$RUN_VERILATOR" --cc --exe --build \
   --Mdir "$BUILD_REAL" \
@@ -656,13 +660,41 @@ print(
     f"inter={inter['mb_exact']}/{inter['mb_total']} strict_pass={score.get('strict_pass')}"
 )
 print(
-    f"REAL_REF_vs_PREREGISTER pre=intra0/300 inter<=400/3300 "
+    f"REAL_REF_vs_PREREGISTER HEADLINE pre=intra0/300 inter0/3300 "
     f"actual=intra{intra['mb_exact']}/{intra['mb_total']} "
     f"inter{inter['mb_exact']}/{inter['mb_total']}"
 )
 if "testbench_prefilled" in json.dumps(score):
     raise SystemExit("FAIL real-ref score blob mentions testbench_prefilled")
 print("OK real-ref score recorded (honest self-produced reference)")
+PY
+
+# Luma-only progress (scorer untouched). Chroma=128 floors headline mb_exact.
+REAL_LUMA="$REAL_REF_DIR/native_inter_luma_progress.json"
+"$ROOT/tools/score_i420_luma_progress.py" \
+  --golden-planes "$GOLDEN_PLANES" \
+  --candidate-planes "$REAL_CAND" \
+  --width "$WIDTH" --height "$HEIGHT" \
+  --i-frames 1 \
+  --output "$REAL_LUMA"
+python3 - "$REAL_LUMA" <<'PY'
+import json, sys
+j = json.load(open(sys.argv[1]))
+si, sp = j["summary"]["intra"], j["summary"]["inter"]
+print(
+    f"REAL_REF_LUMA_vs_PREREGISTER pre_y_mb=80..120/300 pre_y_px=25000..40000/76800 "
+    f"actual_y_mb={si['y_mb_exact']}/{si['y_mb_total']} "
+    f"actual_y_px={si['y_pixel_exact']}/{si['y_pixel_total']} "
+    f"y_blk4={si['y_blk4_exact']}/{si['y_blk4_total']} y_mae={si['y_mae_mean']:.4f}"
+)
+print(
+    f"REAL_REF_LUMA inter_y_mb={sp['y_mb_exact']}/{sp['y_mb_total']} "
+    f"inter_y_px={sp['y_pixel_exact']}/{sp['y_pixel_total']}"
+)
+# Sanity: if Y is all-128 cold store, y_mb_exact must be 0 — refuse silent floor.
+if si["y_pixel_exact"] == 0 and si["y_pixel_total"] > 0:
+    raise SystemExit("FAIL luma progress: zero Y pixels exact (cold/flat candidate?)")
+print("OK real-ref luma progress recorded (Y-only gradient; headline scorer unmodified)")
 PY
 
 # Mutation twin: FAULT_REAL_REF_XOR_FILL must change the native candidate.
