@@ -1,0 +1,21 @@
+HOLD — parent auth required. Do NOT deploy v7 until PARENT_AUTHORIZE_DEPLOY=YES DEPLOY_EXECUTE=1.
+
+Live NOW (untouched this prep):
+  onbox_md5=a56bbc3c04863079ac0b29f81c45ceba  (v5)
+  --id=misterplex-dev CORENAME=Plex rbf=14eaeff3
+  startup hook: --id misterplex-dev (restored); bootcore still OFF
+
+v7 candidate (hybrid 07ff76a4 — NOT deployed):
+  tip:   07ff76a4 = b6071fa (SPI→doorbell steady) + CORENAME warn (ff72293)
+  ARM:   703b2fd410dd0098089b565e7b9b5167
+  freeze: build/arm-deploy-v7-freeze/misterplexd
+  x86:   ba1636a0… NEVER scp
+  supersedes v6-only 87e8500a (doorbell without CORENAME)
+
+Full preregister: scripts/DEPLOY_V7_PREREGISTER.txt
+  wall 40–90s · rollback prev-c2 a56bbc3c · R1–R7
+  CPU predict: fpga combined 131.4 → ≤120.5 stretch / ≤126 hard; doorbell ≪1ms
+  MENU warn: fire on MENU; SILENT on Plex (R6 false-positive gate)
+
+On YES: visible bounce → daemon-only 703b2fd4 → verify → FREE → hybrid AFTER.
+REBOOT_TEST_E1_E6.sh ready (user window). No device touch until auth.

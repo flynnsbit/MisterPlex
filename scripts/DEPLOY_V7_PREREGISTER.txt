@@ -1,0 +1,131 @@
+DEPLOY V7 — PRE-REGISTER (DO NOT EXECUTE until parent YES)
+lane=w-bounce2  prepared ≈2026-07-30T05:00Z  device NOT touched this prep
+
+========================================================================
+IDENTITY
+========================================================================
+tip (hybrid):     07ff76a4  = b6071fa (doorbell promote) + ff72293/07ff76a4 (CORENAME warn)
+ARM freeze:       build/arm-deploy-v7-freeze/misterplexd
+EXPECT_ARM_MD5:   703b2fd410dd0098089b565e7b9b5167
+x86 lab:          ba1636a0… / any non-ARM — NEVER scp
+live now:         a56bbc3c… (v5) --id misterplex-dev CORENAME=Plex rbf=14eaeff3
+supersedes:       v6-only 87e8500a (doorbell without CORENAME) — do not ship v6 alone
+includes:         v4 cast stack + v5 seekGen + v6 SPI→doorbell + CORENAME loud warn
+
+========================================================================
+1) DEPLOY SEQUENCE (one visible bounce, daemon only)
+========================================================================
+PREDICTED wall: **40–90s** (v4=44s v5=36s hook=40s; claim+bounce dominates)
+  claim acquire + Menu→Plex bounce ~15–25s
+  atomic .new+mv + soft restart ~10–20s
+  verify md5+id+CORENAME ~5s
+  release cleanup bounce ~15–25s
+
+Exact steps:
+  0) Dry-run: PARENT_AUTHORIZE_DEPLOY=NO ./scripts/DEPLOY_V7_RUNBOOK.sh  → rc=0
+  1) LIVE only: PARENT_AUTHORIZE_DEPLOY=YES DEPLOY_EXECUTE=1 ./scripts/DEPLOY_V7_RUNBOOK.sh
+  2) no-force claim + **visible** bounce (user sees Menu→Plex)
+  3) daemon ONLY — conf UNTOUCHED (token), RBF UNTOUCHED (14eaeff3), no bootcore
+  4) ship freeze ARM **703b2fd4…** only
+  5) on-box verify md5 + --id misterplex-dev + CORENAME=Plex
+  6) claim FREE; hand w-hybrid-arm AFTER-v7 (real-PMS + CPU A/B + profile)
+
+Rollback target (act immediately, no deliberation):
+  PRIMARY:  prev-c2 written at install → expect **a56bbc3c…** (v5 live today)
+  ALT snap: before-v7-* timestamped bak created at install
+  ALT ok:   before-v4-… / cd4f4229 (v4) if prev-c2 wrong — still known-good cast
+  NEVER:    before-20260729T181129 / 06c5735a
+
+R1 --id ≠ misterplex-dev
+R2 ERROR present path failed | ERROR FPGA SPI unavailable (on Plex)
+R3 frames/presents flat under CORENAME=Plex during cast
+R4 cast entry disappears from Plex
+R5 presents stop advancing (baseline AFTER-v5 presents→1728 pfps≈vfps=23.8)
+R6 (new) CORENAME warn fires while CORENAME=Plex after settle (false positive)
+R7 (new) CPU combined fpga **worse** than baseline 131% onecpu by >5 pts (unexpected regress)
+
+========================================================================
+2) AFTER-v7 MEASUREMENTS — PREDICT BEFORE MEASURE
+========================================================================
+Baselines (quoted evidence, live a56bbc3c / hybrid):
+  CPU A/B: fpga combined **131.4** %onecpu · fb0 121.8 · none 115.5
+           fpga−none = **+15.9** · misterplexd-alone fpga 113.3 / none 90.9 (Δ+22.4)
+  Profile: ddr_copy≈1.24ms · ddr_cpu≈**11.4ms** · ddr_doorbell wall≈**13.5ms**
+  Cast:    frames≈1732 presents≈1728 vfps=pfps≈23.8 drops=2 av-lock
+           wrong-target **409** · C2 stick ≥45s · seek+stop frames flat
+
+PREDICTIONS (publish misses after measure):
+
+| ID | metric | predict | pass threshold | fail / rollback |
+|----|--------|---------|----------------|-----------------|
+| C1 | onbox md5 | 703b2fd4… | exact match | abort/rollback |
+| C2 | --id | misterplex-dev | argv + /resources | R1 |
+| C3 | CORENAME left | Plex | Plex | restore bounce |
+| P1 | presents climb | ≥1500 in ~50s class | pfps within 5% of vfps; presents advance | R5 |
+| P2 | drops | ≤4 on ~50–70s (was 2) | ≤ ~0.5% frames or ≤10 abs | investigate; R5 if presents die |
+| P3 | wrong-target | 409 | 409 | gate regress — rollback |
+| P4 | stick | ≥45s metadata/11 | ≥45s continuous playing | rollback if <30s |
+| P5 | seek+stop | frames flat ≤2s after stop | flat | rollback |
+| U1 | ddr_doorbell_us_p (PROFILE=1) | **≪1 ms** (was 13.5) | median < 2.0 ms | miss — root cause reopen |
+| U2 | ddr_cpu_us_p | **≈1.2–3.0 ms** (was 11.4) | median < 5.0 ms | miss |
+| U3 | ddr_copy_us_p | ~1.2 ms unchanged | 0.8–2.0 ms | note only |
+| U4 | CPU combined fpga | **≤120.5** %onecpu (≤ none+5) stretch | **≤126** hard (cut ≥5 pts from 131.4) | if ≥131.4 no gain — report; if ≥136 R7 |
+| U5 | CPU fpga−none Δ | **≤ +5** stretch / **≤ +10** hard (was +15.9) | Δ ≤ +10 | miss if Δ ≥ +14 |
+| U6 | freed onecpu (ddr path) | **~20–27 pts** of thread CPU @24fps | ≥12 pts reduction in misterplexd-alone vs baseline 113.3 | miss if <5 |
+
+Headline payoff sentence to score after measure:
+  "doorbell promote cut per-present kick from ~13.5ms wall / ~11.4ms cpu toward doorbell~μs + copy~1.2ms;
+   combined fpga %onecpu 131.4 → X (predict X≤120.5)."
+
+========================================================================
+3) MENU-WARNING VERIFICATION (must not false-positive on healthy Plex)
+========================================================================
+Ordering risk (duck-sol): daemon may start from hook before Main writes /tmp/CORENAME.
+
+Protocol AFTER deploy (under claim; restore Plex; conf profile only if needed):
+
+A) HEALTHY SILENCE (must pass — false-positive gate)
+   A1 CORENAME=Plex (already after bounce)
+   A2 soft-restart daemon once; wait 2s
+   A3 log must NOT contain:
+        "ERROR Plex core NOT loaded"
+      within first 5s after start
+   A4 /resources id=misterplex-dev
+   PASS: zero CORENAME ERROR lines while CORENAME=Plex
+   FAIL R6: any such line → rollback or patch (empty CORENAME should warn; Plex must not)
+
+B) MENU FIRE (must pass — detector works)
+   B1 load_core menu → CORENAME=MENU
+   B2 soft-restart daemon; wait 2s
+   B3 log MUST contain:
+        "ERROR Plex core NOT loaded (CORENAME=MENU)"
+      at startup and/or after-initPresent
+   B4 /resources still 200 + misterplex-dev (target still appears — warn is the fix, not hide)
+   B5 restore load_core Plex; soft-restart; re-run A (silence)
+
+C) EMPTY CORENAME (ordering / race)
+   C1 If /tmp/CORENAME missing at read: code treats as empty → ERROR "(empty/missing)"
+   C2 PREDICT: on slow Main, first read at "startup" may empty-warn once even if Plex loads ms later
+   C3 MEASURE: count ERROR lines in first 3s on normal bounce-to-Plex path
+      PREDICT: 0 after bounce settle (Main writes CORENAME before our ensure_daemon)
+      If ≥1 on healthy Plex path → document as known startup race; fix = re-read after short delay
+        or suppress empty for first N ms (NOT implemented until audit demands)
+
+Static code contract (ff72293/07ff76a4):
+  warn only if presentMode in {fpga,both} AND core != "Plex"
+  empty ≠ Plex → warns (intentional loud; may need debounce if audit finds FP)
+
+========================================================================
+4) REBOOT E2E
+========================================================================
+scripts/REBOOT_TEST_E1_E6.sh still ready — user window only.
+After v7 ship, E1 expects daemon auto-start; E3 still MENU until user loads core;
+B-protocol above covers MENU warn without full power-cycle.
+
+========================================================================
+5) OUT OF SCOPE / HOLD
+========================================================================
+- No execute until PARENT_AUTHORIZE_DEPLOY=YES DEPLOY_EXECUTE=1
+- No v6-only ship
+- No RBF / Quartus / bootcore / conf rewrite / token print
+- No device touch during this prep
