@@ -104,11 +104,14 @@ CHROMA HEADROOM (input to sv-mvd merge)
   do not invent a large chroma cushion without a merged map.
   Merged map remains mandatory before any ship-fit sentence.
 
-THROUGHPUT (lane-measured, not this map)
+THROUGHPUT (see docs/throughput-budget-vs-4037.md — do not use “~2000@50MHz”)
 ----------------------------------------
-  paint_per_mb frame0: clip1 **4036.9**, clip2 **3977.9** vs budget ~2000 cy/MB
-  → **THROUGHPUT_RISK ~2× OVER** (stacked serial RBSP + IQ + I16 + nb + RMW).
-  Area win traded cycles. Re-check before fit; may need clock/parallel slice later.
+  paint_per_mb frame0: clip1 **4036.9**, clip2 **3977.9**
+  Decode clock **20 MHz** (pll outclk_0), not 50 MHz board osc.
+  Derived budget 320@25: **2666.7 cy/MB** → 4037 is **FAIL ~1.51× over** (real).
+  Derived budget 624@25: **683.8 cy/MB** → 3978 is **FAIL ~5.8× over**.
+  “~2000 @ 50 MHz” = underived brief assumption — **retired as a gate**.
+  Full product-path cycles at 788aa5f still UNKNOWN (paint ≠ P+deblock+DDR).
 
 HONEST FRAMING
 --------------

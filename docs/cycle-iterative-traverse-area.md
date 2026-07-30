@@ -204,7 +204,12 @@ Fine as lpm_divide once per MB, or maintain `mb_x/mb_y` counters on `ST_NEXT_MB`
 | fps | 23 → ~13 ms/frame → ~**43 µs/MB** |
 | clk (example 50–100 MHz sys) | 50 MHz → **~2160 cycles/MB**; 100 MHz → **~4320 cycles/MB** |
 
-**Suggested budget allocation (50 MHz, ~2000 cy/MB headroom):**
+**RETIRED working assumption:** “~2000 cy/MB @ 50 MHz” was never derived from the
+PLL. Decode is **`clk_sys` = 20 MHz** (`pll_0002` outclk_0). Real budgets:
+**2667 cy/MB** (320×240@25) / **684 cy/MB** (624×480@25) — see
+`docs/decode-throughput.md` and `docs/throughput-budget-vs-4037.md`.
+
+**Historical suggested allocation (wrong clock — do not use as gate):**
 
 | Phase | Cycles (budget) | Notes |
 |-------|-----------------|-------|

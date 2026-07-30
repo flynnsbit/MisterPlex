@@ -104,7 +104,9 @@ Stacked DSP must map **≤ 100** whole chip.
 ### 2.6 Cycle cost
 
 Dequant 16 + IDCT 1–8 + recon 16 ≈ **33–40 cy / 4×4**.  
-Full I-MB still **≪ 2000 cy** (320×240 @ 50 MHz budget).
+Full I-MB cycle target: use **20 MHz** budgets in `docs/decode-throughput.md`
+(**2667 cy/MB** @ 320×240/25), not the retired “≪2000 @ 50 MHz” line. Phase-2
+`paint_per_mb` ≈ **4037** **FAILS** that budget (~1.5×) — `docs/throughput-budget-vs-4037.md`.
 
 ---
 
