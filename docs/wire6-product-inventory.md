@@ -65,17 +65,26 @@ FAIL full-frame strict: stream_path pixels differ from reference decoder at fram
 `stub_allow = ~host_owns_fs & ~ingest_dl & ~ddr_busy & product_recon_ok_w`  
 Because `product_recon_ok` is I-only, FPGA stub reconstruction should **not** present on pure inter streams — host/ARM present remains the live picture path for typical cast content.
 
-## Serial real deblock — pre-registered area target
+## Serial real deblock — pre-register vs measure
 
-| Metric | Pre-register (before measure) |
-|--------|-------------------------------|
-| `h264_deblock_mb` product ALMs | **≤ 2,500** (wire6 identity baseline 960) |
-| Soft concern | > 3,000 |
-| Hard redesign trigger | > 4,000 or design ALMs > 60% |
-| Method | cycle-iterative: M10K windows, single `h264_deblock_edge`, multi-cycle gather/scatter (no `always @*` multi-port) |
-| Measure tool | `quartus_map` only until parent authorizes fit |
-| Owner coord | design here; area ownership shared with `sv-mvd` on ref_commit/deblock |
+| Metric | Pre-register | Measured (`quartus_map` sha `0114826`) |
+|--------|--------------|----------------------------------------|
+| `h264_deblock_mb_serial` ALMs | **≤ 2,500** | **25,433** — **MISS (10.2×)** |
+| Soft concern | > 3,000 | tripped |
+| Hard redesign | > 4,000 | tripped |
+| Whole design map estimate | — | **51,294 ALMs** (device 41,910) |
+| `h264_deblock_edge` alone | — | 2,715 |
+| wire6 identity baseline | 960 | (deployed 14eaeff3 still identity) |
+
+Log: `.agent-work/integ-wiring/quartus_map_serial_deblock1.log`  
+ALM card: `.agent-work/integ-wiring/serial-deblock-map1-ALMS.txt`
+
+### Redesign direction (next)
+1. **Single-lane** edge filter (not 4-wide `h264_deblock_edge`) — 4× less parallel mux.
+2. **Linear M10K only** — no `ly[]`/`ty[]` variable-index register files; one address register + one rdata.
+3. **Address ROM / counter** for gather sequence — kill large signed `always @*` coord mux trees.
+4. Re-map before any fit. Deployed device stays wire6 until authorize.
 
 ### Why not “unroll edges”
 wire3 taught combo 16×16 qpel = 318k ALMs. wire4 taught multi-port deblock windows = ~34k.  
-Real deblock must follow the same rule as serial MC: **one filter datapath, RAM storage, many cycles**.
+v1 serial still 25k — better than 34k but **not shippable**.
