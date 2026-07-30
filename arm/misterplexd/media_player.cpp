@@ -2,6 +2,7 @@
 #include "log_redact.hpp"
 
 #include "libmisterplex/av_clock.hpp"
+#include "libmisterplex/ffmpeg_vf.hpp"
 #include "libmisterplex/idle_screen.hpp"
 #include "libmisterplex/last_frame_latch.hpp"
 #include "libmisterplex/osd_menu.hpp"
@@ -448,6 +449,22 @@ void MediaPlayer::setContentFpsRational(int num, int den) {
     }
     fpsNum_ = num;
     fpsDen_ = den;
+}
+
+void MediaPlayer::setFfmpegScaleMode(std::string mode) {
+    // Unknown tokens collapse to "always" inside parseFfmpegScaleMode — keep raw for logs.
+    if (mode.empty())
+        mode = "always";
+    ffmpegScaleMode_ = std::move(mode);
+}
+
+void MediaPlayer::setFfmpegSwsFlags(std::string flags) {
+    if (!flags.empty() && !swsFlagsTokenOk(flags)) {
+        log("media: FFMPEG_SWS_FLAGS rejected (charset); keeping empty/default");
+        ffmpegSwsFlags_.clear();
+        return;
+    }
+    ffmpegSwsFlags_ = std::move(flags);
 }
 
 std::string MediaPlayer::hex16(uint16_t v) {
@@ -1950,26 +1967,38 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
     const int rawDisplayH = ddrGeometry.display_height.get();
     LastFrameLatch lastFrameLatch;
 
-    char scale[64];
-    std::snprintf(scale, sizeof(scale), "%d:%d", rawW, rawH);
-    std::string vf;
     // Force CFR at the exact content rate FIRST in the chain: frameIndex ↔ content
     // time then holds by construction (even if PMS emits a different rate than its
     // metadata claims), and frames dropped by the fps filter are never scaled.
-    if (fpsNum_ > 0 && fpsDen_ > 0) {
-        vf = "fps=" + std::to_string(fpsNum_) + "/" + std::to_string(fpsDen_) + ",";
-    }
-    if (rawDisplayW != rawW || rawDisplayH != rawH) {
-        char displayScale[64];
-        std::snprintf(displayScale, sizeof(displayScale), "%d:%d", rawDisplayW, rawDisplayH);
-        vf += std::string("scale=") + displayScale +
-              ":force_original_aspect_ratio=decrease,pad=" + scale + ":" +
-              std::to_string(ddrGeometry.crop_left) + ":" +
-              std::to_string(ddrGeometry.crop_top) + ":color=black";
-    } else {
-        vf += std::string("scale=") + scale +
-              ":force_original_aspect_ratio=decrease,pad=" + scale + ":(ow-iw)/2:(oh-ih)/2";
-    }
+    FfmpegVfRequest vfReq;
+    vfReq.coded_w = rawW;
+    vfReq.coded_h = rawH;
+    vfReq.display_w = rawDisplayW;
+    vfReq.display_h = rawDisplayH;
+    vfReq.crop_left = ddrGeometry.crop_left;
+    vfReq.crop_top = ddrGeometry.crop_top;
+    if (fpsNum_ > 0 && fpsDen_ > 0)
+        vfReq.fps_filter = "fps=" + std::to_string(fpsNum_) + "/" + std::to_string(fpsDen_);
+    vfReq.scale_mode = parseFfmpegScaleMode(ffmpegScaleMode_);
+    vfReq.sws_flags = ffmpegSwsFlags_;
+    vfReq.source_w = ffmpegScaleSourceW_;
+    vfReq.source_h = ffmpegScaleSourceH_;
+    vfReq.assume_source_matches_coded = ffmpegScaleAssumeMatch_;
+    const FfmpegVfPlan vfPlan = buildFfmpegVideoFilter(vfReq);
+    std::string vf = vfPlan.vf;
+    log(std::string("media: vf_plan reason=") + vfPlan.reason +
+        " scale_applied=" + (vfPlan.scale_applied ? "1" : "0") +
+        " identity_skip=" + (vfPlan.identity_skip ? "1" : "0") +
+        " mode=" + ffmpegScaleModeName(vfReq.scale_mode) +
+        " sws_flags=" + (ffmpegSwsFlags_.empty() ? "(default)" : ffmpegSwsFlags_) +
+        " assume_match=" + (ffmpegScaleAssumeMatch_ ? "1" : "0") +
+        " src=" +
+        (ffmpegScaleSourceW_ > 0 && ffmpegScaleSourceH_ > 0
+             ? (std::to_string(ffmpegScaleSourceW_) + "x" + std::to_string(ffmpegScaleSourceH_))
+             : "unknown") +
+        " coded=" + std::to_string(rawW) + "x" + std::to_string(rawH) +
+        " display=" + std::to_string(rawDisplayW) + "x" + std::to_string(rawDisplayH) +
+        " vf=" + (vf.empty() ? "(none)" : vf));
 
     const bool testPattern = (url == "testsrc" || url.rfind("lavfi", 0) == 0);
     // STREAM=0 + local file: optional FFmpeg subtitles filter (burn-in). Network/PMS
@@ -1984,7 +2013,9 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                 esc.push_back('\\');
             esc.push_back(c);
         }
-        vf += ",subtitles=" + esc + ":si=" + std::to_string(std::max(0, subtitleStreamIndex_));
+        if (!vf.empty())
+            vf.push_back(',');
+        vf += "subtitles=" + esc + ":si=" + std::to_string(std::max(0, subtitleStreamIndex_));
         log("media: FFmpeg subtitles burn-in si=" + std::to_string(subtitleStreamIndex_));
     }
     const bool wantMr = audioEnabled_ && (::access(audioDev_.c_str(), W_OK) == 0);

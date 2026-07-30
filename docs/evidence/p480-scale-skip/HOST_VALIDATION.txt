@@ -1,0 +1,18 @@
+HOST VALIDATION — scale skip (w-arm)
+====================================
+test_ffmpeg_vf: PASS rc=0
+unit rollcall: PASS rc=0
+present geometry/stride freeze: PASS rc=0
+ddr frame layout contract: PASS rc=0
+make arm-plexd: PASS rc=0 (build/arm/misterplexd ELF ARM static)
+
+make unit: FAIL rc=2 — NOT treated as pass.
+  Pre-existing / other-lane reds observed in log (not introduced by scale-skip):
+  - test_osd_menu (dirty branch OSD tier edits unstaged)
+  - test_last_frame_latch, test_log_redact
+  - live PMS baseline profile drift
+  - RTL dpb/decode sims
+  - test_no_private_data (docs/evidence/timeline-stuck-* lab IPs — w-guard territory)
+  Own addition test_ffmpeg_vf: PASS inside the same run.
+
+Shipping defaults unchanged: FFMPEG_SCALE=always, empty SWS flags, 240p default, bitrate 2000.

@@ -71,6 +71,19 @@ public:
     // "off" | "ffmpeg" — PMS burn-in is handled in resolve (WeakLadder::burnSubtitles).
     void setSubtitleMode(std::string mode) { subtitleMode_ = std::move(mode); }
     void setSubtitleStreamIndex(int idx) { subtitleStreamIndex_ = idx; }
+    // STREAM=0 -vf scale policy (shipping default "always" = unconditional scale+pad).
+    // Conf FFMPEG_SCALE=always|skip_identity|off. See libmisterplex/ffmpeg_vf.hpp.
+    void setFfmpegScaleMode(std::string mode);
+    // Optional scale flags= token (empty = ffmpeg default algo — shipping). Conf FFMPEG_SWS_FLAGS.
+    void setFfmpegSwsFlags(std::string flags);
+    // When scale mode is skip_identity and source dims are unknown, assume PMS already
+    // delivered coded WxH (lab only). Conf FFMPEG_SCALE_ASSUME_MATCH=1.
+    void setFfmpegScaleAssumeMatch(bool on) { ffmpegScaleAssumeMatch_ = on; }
+    // Optional known decoded source geometry for skip_identity (0 = unknown).
+    void setFfmpegScaleSourceSize(int w, int h) {
+        ffmpegScaleSourceW_ = w > 0 ? w : 0;
+        ffmpegScaleSourceH_ = h > 0 ? h : 0;
+    }
     // Intentional A/V lead compensation via FFmpeg adelay (ms). Default 0.
     // Prefer contentFps wall/audio pacing first; use adelay only for small residual.
     void setAudioDelayMs(int ms) { audioDelayMs_ = ms < 0 ? 0 : ms; }
@@ -215,6 +228,12 @@ private:
     std::string streamSkipRgb_ = "auto"; // auto | on | off
     std::string subtitleMode_ = "off"; // off | ffmpeg
     int subtitleStreamIndex_ = 0;
+    // FFmpeg -vf scale policy (default always = shipping unconditional scale+pad).
+    std::string ffmpegScaleMode_ = "always";
+    std::string ffmpegSwsFlags_; // empty = no :flags= (ffmpeg default)
+    bool ffmpegScaleAssumeMatch_ = false;
+    int ffmpegScaleSourceW_ = 0;
+    int ffmpegScaleSourceH_ = 0;
     // Conf AUDIO_DELAY_MS — default 0. Applied as FFmpeg adelay on product path.
     int audioDelayMs_ = 0;
     // Starting point for the feed-rate servo, and the open-loop rate if the ring

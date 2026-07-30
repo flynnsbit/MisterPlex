@@ -40,6 +40,9 @@ DDR_FRAME_LAYOUT_HPP = Path(
 MEDIA_PLAYER_CPP = Path(
     os.environ.get("MEDIA_PLAYER_CPP", ROOT / "arm/misterplexd/media_player.cpp")
 )
+FFMPEG_VF_HPP = Path(
+    os.environ.get("FFMPEG_VF_HPP", ROOT / "host/libmisterplex/ffmpeg_vf.hpp")
+)
 FB_PRESENT_CPP = Path(os.environ.get("FB_PRESENT_CPP", ROOT / "arm/misterplexd/fb_present.cpp"))
 MISTERPLEXD_MAIN_CPP = Path(
     os.environ.get("MISTERPLEXD_MAIN_CPP", ROOT / "arm/misterplexd/main.cpp")
@@ -1450,6 +1453,7 @@ def check_present_geometry_stride_contract() -> None:
     host = strip_comments(read(DDR_FRAME_LAYOUT_HPP))
     layout = strip_comments(read(DDR_FRAME_LAYOUT_SVH))
     media = strip_comments(read(MEDIA_PLAYER_CPP))
+    ffmpeg_vf = strip_comments(read(FFMPEG_VF_HPP))
     fb_present = strip_comments(read(FB_PRESENT_CPP))
     frame_store = sv_module_text(
         select_default_sv_fault_branches(strip_comments(read(DDR_FRAME_STORE))),
@@ -1460,6 +1464,7 @@ def check_present_geometry_stride_contract() -> None:
 
     host_nt = norm(host)
     media_nt = norm(media)
+    ffmpeg_vf_nt = norm(ffmpeg_vf)
     fb_nt = norm(fb_present)
     frame_nt = norm(frame_store)
     present_nt = norm(present_core)
@@ -1492,7 +1497,9 @@ def check_present_geometry_stride_contract() -> None:
         "stride/offset change before grading distorted-video reports.",
     )
 
-    def missing_stride_requirements(host_norm: str, media_norm: str, frame_norm: str) -> list[str]:
+    def missing_stride_requirements(
+        host_norm: str, media_norm: str, frame_norm: str, vf_norm: str
+    ) -> list[str]:
         required = [
             (
                 host_norm,
@@ -1526,7 +1533,12 @@ def check_present_geometry_stride_contract() -> None:
             ),
             (
                 media_norm,
-                'vf+=std::string("scale=")+displayScale+":force_original_aspect_ratio=decrease,pad="+scale+":"+std::to_string(ddrGeometry.crop_left)+":"+std::to_string(ddrGeometry.crop_top)+":color=black";',
+                "constFfmpegVfPlanvfPlan=buildFfmpegVideoFilter(vfReq);",
+                "FFmpeg -vf must be built via buildFfmpegVideoFilter (scale policy lives in ffmpeg_vf.hpp)",
+            ),
+            (
+                vf_norm,
+                'returnscaleFilterGeom(displayScale,sws_flags)+":force_original_aspect_ratio=decrease,pad="+scale+":"+std::to_string(crop_left)+":"+std::to_string(crop_top)+":color=black";',
                 "FFmpeg must scale into display geometry then pad once into the coded 624-pixel stride",
             ),
             (
@@ -1577,7 +1589,7 @@ def check_present_geometry_stride_contract() -> None:
         ]
         return [msg for haystack, needle, msg in required if needle not in haystack]
 
-    missing = missing_stride_requirements(host_nt, media_nt, frame_nt)
+    missing = missing_stride_requirements(host_nt, media_nt, frame_nt, ffmpeg_vf_nt)
     if missing:
         fail(f"present geometry/stride contract: {missing[0]}")
 
@@ -1611,16 +1623,16 @@ def check_present_geometry_stride_contract() -> None:
         "constuint64_tlineBytes=static_cast<uint64_t>(geom.coded_width.get())",
         "constuint64_tlineBytes=static_cast<uint64_t>(geom.presented_width.get())",
     )
-    if not missing_stride_requirements(bad_host_presented_stride, media_nt, frame_nt):
+    if not missing_stride_requirements(bad_host_presented_stride, media_nt, frame_nt, ffmpeg_vf_nt):
         fail("deliberately changed ARM luma stride 624→640 did not make the geometry gate red")
     bad_media_display_stride = media_nt.replace(
         "constintrawW=ddrGeometry.coded_width.get();",
         "constintrawW=ddrGeometry.display_width.get();",
     )
-    if not missing_stride_requirements(host_nt, bad_media_display_stride, frame_nt):
+    if not missing_stride_requirements(host_nt, bad_media_display_stride, frame_nt, ffmpeg_vf_nt):
         fail("deliberately changed FFmpeg raw stride 624→618 did not make the geometry gate red")
     bad_chroma_stride = frame_nt.replace("C_LINE_QWORDS=CODED_W/16", "C_LINE_QWORDS=FRAME_W/16")
-    if not missing_stride_requirements(host_nt, media_nt, bad_chroma_stride):
+    if not missing_stride_requirements(host_nt, media_nt, bad_chroma_stride, ffmpeg_vf_nt):
         fail("deliberately changed RTL chroma stride 312→320 did not make the geometry gate red")
 
     print(

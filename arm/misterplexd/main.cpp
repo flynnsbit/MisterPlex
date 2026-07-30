@@ -116,6 +116,11 @@ int main(int argc, char** argv) {
     bool presentProfile = false;
     bool streamEnabled = false;
     std::string streamSkipRgb = "auto"; // auto | on | off — skip heavy RGB when PRESENT=fpga
+    // STREAM=0 -vf scale policy. Shipping default "always" = unconditional scale+pad.
+    // Lab: skip_identity (+ ASSUME_MATCH) or off. See libmisterplex/ffmpeg_vf.hpp.
+    std::string ffmpegScaleMode = "always";
+    std::string ffmpegSwsFlags; // empty = ffmpeg default algo
+    bool ffmpegScaleAssumeMatch = false;
     bool autoNext = true;
     std::string subtitleMode = "off"; // off | burn | ffmpeg
     int subtitleStreamId = -1;
@@ -287,6 +292,16 @@ int main(int argc, char** argv) {
         v = loadConf(confPath, "STREAM_SKIP_RGB");
         if (!v.empty())
             streamSkipRgb = v;
+        // Opt-in scale policy — default always keeps shipping -vf behaviour.
+        v = loadConf(confPath, "FFMPEG_SCALE");
+        if (!v.empty())
+            ffmpegScaleMode = v;
+        v = loadConf(confPath, "FFMPEG_SWS_FLAGS");
+        if (!v.empty())
+            ffmpegSwsFlags = v;
+        v = loadConf(confPath, "FFMPEG_SCALE_ASSUME_MATCH");
+        if (!v.empty())
+            ffmpegScaleAssumeMatch = confTruthy(v);
         v = loadConf(confPath, "AUTO_NEXT");
         if (!v.empty())
             autoNext = confTruthy(v);
@@ -394,6 +409,9 @@ int main(int argc, char** argv) {
     player.setPresentProfile(presentProfile);
     player.setStreamEnabled(streamEnabled);
     player.setStreamSkipRgb(streamSkipRgb);
+    player.setFfmpegScaleMode(ffmpegScaleMode);
+    player.setFfmpegSwsFlags(ffmpegSwsFlags);
+    player.setFfmpegScaleAssumeMatch(ffmpegScaleAssumeMatch);
     player.setSkipDeltasMs(skipForwardMs, skipBackMs);
     std::fprintf(stderr, "misterplexd: SKIP_FORWARD_MS=%lld SKIP_BACK_MS=%lld\n",
                  static_cast<long long>(skipForwardMs), static_cast<long long>(skipBackMs));
@@ -469,6 +487,12 @@ int main(int argc, char** argv) {
                  ddrMemSync ? "1" : "0", ddrMemFlush ? "1" : "0");
     std::fprintf(stderr, "misterplexd: DDR_FRAME_FORMAT=yuv420p\n");
     std::fprintf(stderr, "misterplexd: PRESENT_PROFILE=%s\n", presentProfile ? "1" : "0");
+    std::fprintf(stderr,
+                 "misterplexd: FFMPEG_SCALE=%s FFMPEG_SWS_FLAGS=%s "
+                 "FFMPEG_SCALE_ASSUME_MATCH=%s\n",
+                 ffmpegScaleMode.c_str(),
+                 ffmpegSwsFlags.empty() ? "(default)" : ffmpegSwsFlags.c_str(),
+                 ffmpegScaleAssumeMatch ? "1" : "0");
     if (weak.burnSubtitles)
         std::fprintf(stderr, "misterplexd: SUBTITLES=burn (PMS universal)\n");
     else if (subtitleMode == "ffmpeg")

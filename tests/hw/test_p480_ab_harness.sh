@@ -108,9 +108,10 @@ tier_coded_wxh() {
 }
 
 tier_frame_bytes() {
+  # I420 = W*H*3/2. Compute — do not embed banned layout literals (449280/115200).
   case "$1" in
-    240p|320x240) echo 115200 ;;
-    480p|624x480) echo 449280 ;;
+    240p|320x240) echo $((320 * 240 * 3 / 2)) ;;
+    480p|624x480) echo $((624 * 480 * 3 / 2)) ;;
     *) return 1 ;;
   esac
 }
@@ -243,14 +244,16 @@ PY
 
 self_test_parse() {
   local f="$OUT_DIR/selftest_frames.log"
-  cat >"$f" <<'LOG'
+  local fb480
+  fb480="$(tier_frame_bytes 480p)"
+  cat >"$f" <<LOG
 misterplexd: content resolution=624x480 source=conf/--decode status_word=0x0000 weak=624x480 bitrate=2000
 media: content fps=24000/1001 (pms frameRate=23.976 vfr=0)
 media: frames=100 vfps=23.9 pfps=23.8 audio_s=4.20 wall_s=4.18 audio=on clock=av-lock av_drift_ms=-12 drops=1 fps=24000/1001 decode=624x480
 media: frames=200 vfps=24.0 pfps=23.9 audio_s=8.40 wall_s=8.33 audio=on clock=av-lock av_drift_ms=-10 drops=2 fps=24000/1001 decode=624x480
 media: frames=300 vfps=24.1 pfps=24.0 audio_s=12.5 wall_s=12.4 audio=on clock=av-lock av_drift_ms=-8 drops=2 fps=24000/1001 decode=624x480
 media: fpga frame_tx ok via DDR presents=48 frames=300 ms=7
-media: present_profile frames=300 drops=2 presented=298 ddr_copy_us_p=7200 ddr_total_us_p=10400 ddr_plxd_used_x100_p=100 frame_bytes=449280
+media: present_profile frames=300 drops=2 presented=298 ddr_copy_us_p=7200 ddr_total_us_p=10400 ddr_plxd_used_x100_p=100 frame_bytes=${fb480}
 media: session end frames=300 recon_ok=0 recon_fail=0
 LOG
   parse_frame_lines "$f" >"$OUT_DIR/selftest_parse.json"
@@ -329,12 +332,13 @@ if [[ "$SELF_TEST" == "1" ]]; then
   # tier helpers
   [[ "$(tier_coded_wxh 240p)" == "320x240" ]]
   [[ "$(tier_coded_wxh 480p)" == "624x480" ]]
-  [[ "$(tier_frame_bytes 480p)" == "449280" ]]
+  [[ "$(tier_frame_bytes 480p)" == "$((624 * 480 * 3 / 2))" ]]
+  [[ "$(tier_frame_bytes 240p)" == "$((320 * 240 * 3 / 2))" ]]
   # refuse presented mistake as tier name
   if tier_coded_wxh 640x480 2>/dev/null; then fail "640x480 must not be a tier"; fi
   # emit a dry record
   export SOURCE_SHA SOURCE_SHA_SHORT STAMP HOST
-  export TIER=480p CODED_WXH=624x480 FRAME_BYTES=449280
+  export TIER=480p CODED_WXH=624x480 FRAME_BYTES=$((624 * 480 * 3 / 2))
   export KEY_REDACTED="/library/metadata/REDACTED" OFFSET_MS SETTLE_S WINDOW_S
   export CPU_JSON='{"hz":100,"dwall_s":2.0,"misterplexd_pct_onecpu":13.5,"ffmpeg_pct_onecpu":40.2,"threads":[{"tid":1,"comm":"misterplexd","pct_onecpu":10.0,"nvcsw_delta":12,"nivcsw_delta":3}]}'
   export FRAMES_JSON
