@@ -4,6 +4,7 @@
 
 #include "companion.hpp"
 #include "libmisterplex/coded_size.hpp"
+#include "libmisterplex/ffmpeg_vf.hpp"
 #include "libmisterplex/osd_menu.hpp"
 #include "log_redact.hpp"
 #include "media_player.hpp"
