@@ -60,5 +60,6 @@
     "m10k_new": 0
   },
   "chroma_pad_cy": 192.93,
-  "lever_E_named_not_done": "NB fetch pipe tens/MB \u2014 not spent yet"
+  "lever_E_named_not_done": "NB fetch pipe tens/MB \u2014 not spent yet",
+  "source_sha": "664e13c211b86096ad118b073e701d9cffea199a"
 }
