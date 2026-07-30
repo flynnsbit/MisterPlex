@@ -22,7 +22,11 @@ else:
 PY
 )
 echo "test_companion_http: using PORT=$PORT"
-"$BIN" --name MiSTerPlexTest --port "$PORT" &
+# Force an unreachable PMS so async resolve fails fast and falls through to the
+# local testsrc path (durationMs=120000). The host default PMS (192.168.1.41)
+# connect-times-out for ~15s, which exceeds this script's ~4s duration wait and
+# yields a false "duration never bound" failure on lab machines without PMS.
+"$BIN" --name MiSTerPlexTest --port "$PORT" --pms "http://127.0.0.1:1" &
 PID=$!
 cleanup() { kill "$PID" 2>/dev/null || true; wait "$PID" 2>/dev/null || true; }
 trap cleanup EXIT
