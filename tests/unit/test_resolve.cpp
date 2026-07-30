@@ -150,6 +150,20 @@ int main() {
     CHECK(normalizePlexBase("  https://pms.lan:32400  ") == "https://pms.lan:32400");
     CHECK(normalizePlexBase("").empty());
 
+    // Conf token pairing: same host OK; foreign plex.direct without machine match NOT OK.
+    CHECK(plexHttpHostOnly("http://pms.lan:32400") == "pms.lan");
+    CHECK(plexHttpHostOnly("https://a.b.plex.direct:32400") == "a.b.plex.direct");
+    CHECK(confTokenAllowedForCast("", "32400", "http", "http://pms.lan:32400", false));
+    CHECK(confTokenAllowedForCast("pms.lan", "32400", "http", "http://pms.lan:32400", false));
+    CHECK(!confTokenAllowedForCast("other.plex.direct", "32400", "https", "http://pms.lan:32400",
+                                   false));
+    // Same PMS via different hostname when machineIdentifier matches.
+    CHECK(confTokenAllowedForCast("other.plex.direct", "32400", "https", "http://pms.lan:32400",
+                                  true));
+    CHECK(plexHttpStatusOk(200));
+    CHECK(!plexHttpStatusOk(401));
+    CHECK(parseCurlHttpCode("401") == 401);
+
     auto list = parsePlexServerList("http://a:32400,http://b:32400; http://c:32400");
     CHECK(list.size() == 3);
     CHECK(list[0] == "http://a:32400");

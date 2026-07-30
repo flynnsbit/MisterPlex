@@ -105,6 +105,7 @@ int main(int argc, char** argv) {
     std::string ffmpeg = defaultFfmpegPath();
     std::string confPath = "/media/fat/misterplex/misterplex.conf";
     std::string confToken;
+    std::string confMachineId; // from conf PMS /identity (may be empty)
     misterplex::CodedSize decodeSize = misterplex::kDefaultCodedDecodeSize;
     bool decodeAllowLab480p = false;
     std::string decodeSizeRawCli; // applied after conf so DECODE_ALLOW_LAB_480P is visible
@@ -197,6 +198,19 @@ int main(int argc, char** argv) {
         }
 
         confToken = loadConf(confPath, "PLEX_TOKEN");
+        // Cache conf PMS machineIdentifier so cast host (plex.direct vs LAN IP) can
+        // still share conf token when it is the same server — not a foreign PMS.
+        if (!defaultPms.empty()) {
+            confMachineId = misterplex::fetchPlexMachineIdentifier(defaultPms, confToken);
+            if (!confMachineId.empty())
+                std::fprintf(stderr, "misterplexd: conf PMS machineIdentifier=%s base=%s\n",
+                             confMachineId.c_str(), defaultPms.c_str());
+            else
+                std::fprintf(stderr,
+                             "misterplexd: conf PMS /identity unavailable (base=%s) — "
+                             "cast/conf token pairing uses host match only\n",
+                             defaultPms.c_str());
+        }
         auto profile = loadConf(confPath, "TRANSCODE_PROFILE");
         if (profile.empty())
             profile = loadConf(confPath, "WEAK_PROFILE");
@@ -556,17 +570,36 @@ int main(int argc, char** argv) {
                                      const std::string& preferredBase, int64_t off,
                                      const misterplex::WeakLadder& weakForPlay)
         -> std::pair<misterplex::ResolveResult, std::string> {
-        // Cast-pinned host must not authenticate with conf token (different PMS).
+        // Same rule as timeline: fetch from the server that issued playMedia, with
+        // that request's token. Conf token is allowed only for the conf PMS (empty
+        // cast address, matching machineIdentifier, or matching host) — never for a
+        // foreign plex.direct host (docs/evidence/timeline-stuck-20260730T173000Z).
+        const bool machineMatch =
+            !confMachineId.empty() && !req.serverMachineId.empty() &&
+            confMachineId == req.serverMachineId;
         std::string token;
-        if (!req.token.empty())
+        const char* tokenSrc = "none";
+        if (!req.token.empty()) {
             token = req.token;
-        else if (req.address.empty())
+            tokenSrc = "cast";
+        } else if (!confToken.empty() &&
+                   misterplex::confTokenAllowedForCast(req.address, req.port, req.protocol,
+                                                      defaultPms, machineMatch)) {
             token = confToken;
+            tokenSrc = machineMatch ? "conf_machine" : "conf";
+        }
         // Cast-selected base wins when address present.
         std::string selected =
             misterplex::buildPlexBase(req.protocol, req.address, req.port, preferredBase);
         if (selected.empty())
             selected = preferredBase.empty() ? defaultPms : preferredBase;
+
+        std::fprintf(stderr,
+                     "misterplexd: resolve begin base=%s token_src=%s key=%s "
+                     "cast_machine=%s conf_machine=%s\n",
+                     selected.c_str(), tokenSrc, req.key.c_str(),
+                     req.serverMachineId.empty() ? "-" : req.serverMachineId.c_str(),
+                     confMachineId.empty() ? "-" : confMachineId.c_str());
 
         auto tryBase = [&](const std::string& base) -> misterplex::ResolveResult {
             // STREAM=1: prefer direct H.264 Part for CAVLC host recon; still weakAlways for
@@ -581,8 +614,12 @@ int main(int argc, char** argv) {
             return {resolved, selected};
 
         // Multi-server fallback only when cast did not pin an address.
-        if (!req.address.empty())
+        if (!req.address.empty()) {
+            std::fprintf(stderr,
+                         "misterplexd: resolve pinned-host failed base=%s token_src=%s detail=%s\n",
+                         selected.c_str(), tokenSrc, resolved.detail.c_str());
             return {resolved, selected};
+        }
 
         for (const auto& s : servers) {
             if (s == selected)
@@ -618,8 +655,13 @@ int main(int argc, char** argv) {
         }
 
         if (!resolved.ok) {
-            std::fprintf(stderr, "misterplexd: resolve failed: %s — test pattern\n",
-                         resolved.detail.c_str());
+            // Loud failure: cast media path used to look healthy while handing ffmpeg
+            // nothing useful (or a later silent testsrc). Keep testsrc so lab/companion
+            // stubs still move pixels, but never call it a successful resolve.
+            std::fprintf(stderr,
+                         "misterplexd: RESOLVE_FAIL detail=%s base=%s key=%s — falling back to "
+                         "test pattern (cast media did NOT resolve)\n",
+                         resolved.detail.c_str(), base.c_str(), req.key.c_str());
             resolved.playable = "testsrc";
             resolved.ok = true;
             resolved.durationMs = 120000;
@@ -756,6 +798,26 @@ int main(int argc, char** argv) {
             return;
         }
 
+        // Timeline must target the server that issued playMedia, with THAT request's
+        // credentials. Mixing cast host (e.g. *.plex.direct, machine 1cdd…) with
+        // conf PLEX_TOKEN (node-worker1 / .41, machine 4edd…) yields HTTP 401 while
+        // the old !body.empty() sink still logged "update ok"
+        // (docs/evidence/timeline-stuck-20260730T173000Z).
+        const bool timelineMachineMatch =
+            !confMachineId.empty() && !bound.serverMachineId.empty() &&
+            confMachineId == bound.serverMachineId;
+        std::string timelineToken;
+        const char* tokenSrc = "none";
+        if (!bound.token.empty()) {
+            timelineToken = bound.token;
+            tokenSrc = "cast";
+        } else if (!confToken.empty() &&
+                   misterplex::confTokenAllowedForCast(bound.address, bound.port, bound.protocol,
+                                                      defaultPms, timelineMachineMatch)) {
+            timelineToken = confToken;
+            tokenSrc = timelineMachineMatch ? "conf_machine" : "conf";
+        }
+
         // Commit session context only when we are about to start demux. Writing
         // lastPlay earlier can resurrect a queue bind if stop cleared it mid-flight.
         // setPlay already planted a provisional lastPlay for skip-during-resolve.
@@ -772,25 +834,10 @@ int main(int argc, char** argv) {
             lastBase = base;
             if (!bound.token.empty())
                 lastToken = bound.token;
-            else if (req.address.empty() && !confToken.empty())
-                lastToken = confToken;
+            else if (!timelineToken.empty())
+                lastToken = timelineToken;
         }
 
-        // Timeline must target the server that issued playMedia, with THAT request's
-        // credentials. Mixing cast host (e.g. *.plex.direct, machine 1cdd…) with
-        // conf PLEX_TOKEN (node-worker1 / .41, machine 4edd…) yields HTTP 401 while
-        // the old !body.empty() sink still logged "update ok"
-        // (docs/evidence/timeline-stuck-20260730T173000Z).
-        std::string timelineToken;
-        const char* tokenSrc = "none";
-        if (!bound.token.empty()) {
-            timelineToken = bound.token;
-            tokenSrc = "cast";
-        } else if (req.address.empty() && !confToken.empty()) {
-            // Conf token only when cast did not pin a foreign host.
-            timelineToken = confToken;
-            tokenSrc = "conf";
-        }
         misterplex::PmsTimelineSession timelineSession;
         timelineSession.baseUrl = base;
         timelineSession.token = timelineToken;

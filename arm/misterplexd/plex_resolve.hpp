@@ -155,11 +155,28 @@ struct PlexHttpNoBodyResult {
     int httpStatus = 0; // 0 = transport/parse failure; otherwise curl %{http_code}
 };
 
+// Body + status for resolve/decision/queue GETs. Never treat body non-empty as success.
+struct PlexHttpBodyResult {
+    std::string body;
+    int httpStatus = 0; // 0 = transport/parse failure
+    bool ok = false;    // true iff 2xx
+};
+
 // True iff status is an HTTP success (2xx). status<=0 is never ok.
 bool plexHttpStatusOk(int httpStatus);
 
 // Parse curl -w '%{http_code}' output (trims whitespace). Returns 0 if not a 3-digit code.
 int parseCurlHttpCode(const std::string& curlWriteOut);
+
+// Hostname (no scheme/port/path) for PMS base comparison.
+std::string plexHttpHostOnly(const std::string& hostOrUrl);
+
+// Conf token may authenticate a cast host only when the cast did not pin a foreign
+// server. Cast token always wins when present.
+// machineIdMatch: playMedia machineIdentifier equals conf /identity machineIdentifier.
+bool confTokenAllowedForCast(const std::string& castAddress, const std::string& castPort,
+                             const std::string& castProtocol, const std::string& confBase,
+                             bool machineIdMatch);
 
 PlexHttpNoBodyResult plexHttpGetNoBodyResult(
     const std::string& url, const std::vector<std::pair<std::string, std::string>>& headers = {},
@@ -168,6 +185,14 @@ PlexHttpNoBodyResult plexHttpGetNoBodyResult(
 bool plexHttpGetNoBody(const std::string& url,
                        const std::vector<std::pair<std::string, std::string>>& headers = {},
                        int timeoutSec = 4);
+
+// GET with body retained + HTTP status (metadata, decision, playQueues).
+PlexHttpBodyResult plexHttpGetBodyResult(
+    const std::string& url, const std::vector<std::pair<std::string, std::string>>& headers = {},
+    int timeoutSec = 15, bool defaultIdentity = true);
+
+// Best-effort GET /identity → machineIdentifier (empty on failure).
+std::string fetchPlexMachineIdentifier(const std::string& plexBase, const std::string& token);
 
 // Call /universal/decision before start.mp4 (PMS 1.43+).
 bool ensureUniversalDecision(const std::string& startUrl, const std::string& sessionId,

@@ -13,6 +13,11 @@
 #include <vector>
 
 namespace misterplex {
+
+// Defined below; used by anonymous-namespace HTTP helpers.
+bool plexHttpStatusOk(int httpStatus);
+int parseCurlHttpCode(const std::string& curlWriteOut);
+
 namespace {
 
 std::string shellQuote(const std::string& s) {
@@ -27,9 +32,15 @@ std::string shellQuote(const std::string& s) {
     return o;
 }
 
-std::string httpGet(const std::string& url, int timeoutSec = 15,
-                    const std::string& extraHeaders = {}, bool defaultIdentity = true) {
+// Body then trailing ASCII FS (0x1c) + %{http_code}. FS is not used in PMS XML bodies.
+constexpr char kHttpStatusSep = '\x1c';
+
+PlexHttpBodyResult httpGetResult(const std::string& url, int timeoutSec = 15,
+                                 const std::string& extraHeaders = {},
+                                 bool defaultIdentity = true) {
     // Prefer curl (present on MiSTer); -k for plex.direct certs.
+    // Always capture HTTP status — 401 HTML is non-empty and must not look like metadata.
+    PlexHttpBodyResult r;
     std::ostringstream cmd;
     cmd << "curl -sS -g -k -L --http1.1 --connect-timeout 6 --max-time " << timeoutSec
         << " -H 'Accept: application/xml'";
@@ -47,16 +58,24 @@ std::string httpGet(const std::string& url, int timeoutSec = 15,
     }
     if (!extraHeaders.empty())
         cmd << extraHeaders;
-    cmd << " " << shellQuote(url) << " 2>/dev/null";
+    cmd << " -w '" << kHttpStatusSep << "%{http_code}' " << shellQuote(url) << " 2>/dev/null";
     FILE* p = popen(cmd.str().c_str(), "r");
     if (!p)
-        return {};
+        return r;
     std::string out;
     char buf[4096];
     while (fgets(buf, sizeof(buf), p))
         out += buf;
-    pclose(p);
-    return out;
+    (void)pclose(p);
+    auto sep = out.rfind(kHttpStatusSep);
+    if (sep == std::string::npos) {
+        r.body = std::move(out);
+        return r;
+    }
+    r.body = out.substr(0, sep);
+    r.httpStatus = parseCurlHttpCode(out.substr(sep + 1));
+    r.ok = plexHttpStatusOk(r.httpStatus);
+    return r;
 }
 
 std::string curlHeaderArgs(const std::vector<std::pair<std::string, std::string>>& headers) {
@@ -454,6 +473,53 @@ std::string plexFfmpegHeaders(const std::string& sessionId, const std::string& t
     return o.str();
 }
 
+std::string plexHttpHostOnly(const std::string& hostOrUrl) { return hostOnly(hostOrUrl); }
+
+bool confTokenAllowedForCast(const std::string& castAddress, const std::string& castPort,
+                             const std::string& castProtocol, const std::string& confBase,
+                             bool machineIdMatch) {
+    if (castAddress.empty())
+        return true;
+    if (machineIdMatch)
+        return true;
+    const std::string confHost = hostOnly(confBase);
+    if (confHost.empty())
+        return false;
+    const std::string castBase = buildPlexBase(castProtocol, castAddress, castPort, {});
+    if (castBase.empty())
+        return false;
+    return hostOnly(castBase) == confHost;
+}
+
+std::string fetchPlexMachineIdentifier(const std::string& plexBase, const std::string& token) {
+    const std::string base = normalizePlexBase(plexBase);
+    if (base.empty())
+        return {};
+    std::string url = base + "/identity";
+    std::vector<std::pair<std::string, std::string>> headers;
+    if (!token.empty())
+        headers.push_back({"X-Plex-Token", token});
+    const auto r = plexHttpGetBodyResult(url, headers, 6, true);
+    if (!r.ok)
+        return {};
+    // MediaContainer machineIdentifier="..." or attribute on root.
+    const std::string key = "machineIdentifier=\"";
+    auto p = r.body.find(key);
+    if (p == std::string::npos)
+        return {};
+    p += key.size();
+    auto e = r.body.find('"', p);
+    if (e == std::string::npos || e <= p)
+        return {};
+    return r.body.substr(p, e - p);
+}
+
+PlexHttpBodyResult plexHttpGetBodyResult(
+    const std::string& url, const std::vector<std::pair<std::string, std::string>>& headers,
+    int timeoutSec, bool defaultIdentity) {
+    return httpGetResult(url, timeoutSec, curlHeaderArgs(headers), defaultIdentity);
+}
+
 bool plexHttpStatusOk(int httpStatus) {
     return httpStatus >= 200 && httpStatus < 300;
 }
@@ -624,13 +690,15 @@ bool ensureUniversalDecision(const std::string& startUrl, const std::string& ses
     }
     std::ostringstream sessHdr;
     sessHdr << curlHeaderArgs(decisionHeaders);
-    const std::string body = httpGet(decisionUrl.str(), 20, sessHdr.str());
-    if (body.empty())
+    const auto got = httpGetResult(decisionUrl.str(), 20, sessHdr.str());
+    if (!got.ok) {
+        // Non-2xx (incl. 401 HTML) is failure — never treat body size as success.
         return false;
-    if (body.find("unable to find a matching profile") != std::string::npos)
+    }
+    if (got.body.find("unable to find a matching profile") != std::string::npos)
         return false;
-    return body.find("MediaContainer") != std::string::npos ||
-           body.find("transcodeDecisionCode") != std::string::npos;
+    return got.body.find("MediaContainer") != std::string::npos ||
+           got.body.find("transcodeDecisionCode") != std::string::npos;
 }
 
 bool mediaVideoIsH264(const std::string& plexMetadataXml) {
@@ -713,14 +781,22 @@ ResolveResult resolvePlayTarget(const std::string& rawKeyOrPath, const std::stri
         metaUrl += "&";
     if (!token.empty())
         metaUrl += "X-Plex-Token=" + urlEncodeQuery(token);
-    const std::string xml = httpGet(metaUrl, 12);
+    const auto metaHttp = httpGetResult(metaUrl, 12);
+    const std::string& xml = metaHttp.body;
     // A 404 or 401 from PMS still returns a BODY (an HTML error page), so
-    // "response is not empty" does not mean "item exists". Without this check a
-    // ratingKey that was deleted or renumbered by a library re-scan sails
-    // through every branch below, finds no Part, and lands on the test pattern —
-    // which looks like a playback bug instead of a missing item, and silently
-    // invalidates any measurement taken against it.
-    const bool metaFound = xml.find("<MediaContainer") != std::string::npos;
+    // "response is not empty" does not mean "item exists". Status must be 2xx and
+    // the body must contain MediaContainer — otherwise ffmpeg would get an error
+    // page URL path and "nothing plays" while logs looked clean.
+    if (!metaHttp.ok && metaHttp.httpStatus > 0) {
+        r.detail = "metadata http=" + std::to_string(metaHttp.httpStatus) + " for " + key +
+                   " base=" + plexBase +
+                   (metaHttp.httpStatus == 401 || metaHttp.httpStatus == 403
+                        ? " (auth rejected — cast token/host mismatch or expired token)"
+                        : metaHttp.httpStatus == 404 ? " (item not on this PMS)"
+                                                     : "");
+        return r;
+    }
+    const bool metaFound = metaHttp.ok && xml.find("<MediaContainer") != std::string::npos;
     if (metaFound) {
         r.title = attr(xml, "Video", "title");
         if (r.title.empty())
@@ -925,9 +1001,11 @@ PlayQueue fetchPlayQueue(const std::string& queueIdOrContainerKey, const std::st
     if (!token.empty())
         url += "X-Plex-Token=" + urlEncodeQuery(token);
 
-    const std::string xml = httpGet(url, 20);
-    if (xml.empty() || xml.find("MediaContainer") == std::string::npos) {
-        q.detail = "play queue fetch failed id=" + id + " bytes=" + std::to_string(xml.size());
+    const auto got = httpGetResult(url, 20);
+    const std::string& xml = got.body;
+    if (!got.ok || xml.find("MediaContainer") == std::string::npos) {
+        q.detail = "play queue fetch failed id=" + id + " http=" +
+                   std::to_string(got.httpStatus) + " bytes=" + std::to_string(xml.size());
         return q;
     }
 
