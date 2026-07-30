@@ -44,6 +44,35 @@ std::string loadConf(const std::string& path, const char* key) {
     return {};
 }
 
+// MiSTer Main writes the loaded core name here. Empty/missing ⇒ unknown.
+std::string readCoreName() {
+    std::ifstream in("/tmp/CORENAME");
+    if (!in)
+        return {};
+    std::string s;
+    std::getline(in, s);
+    while (!s.empty() && (s.back() == '\n' || s.back() == '\r' || s.back() == ' '))
+        s.pop_back();
+    return s;
+}
+
+// Loud, unmistakable when cast target is up but Plex.rbf is not loaded (MENU cold boot).
+void warnIfPlexCoreMissing(const std::string& presentMode, const char* where) {
+    if (presentMode != "fpga" && presentMode != "both")
+        return;
+    const std::string core = readCoreName();
+    if (core == "Plex")
+        return;
+    const char* shown = core.empty() ? "(empty/missing)" : core.c_str();
+    std::fprintf(stderr,
+                 "misterplexd: ERROR Plex core NOT loaded (CORENAME=%s) at %s — "
+                 "PRESENT=%s so /resources still advertises this player but HDMI/"
+                 "presents cannot work. Load _Utility/Plex.rbf from the OSD (F12), "
+                 "or set bootcore only if the user wants autoload. "
+                 "Casting now will look like it 'doesn't stick'.\n",
+                 shown, where, presentMode.c_str());
+}
+
 // Collect every KEY= value (for multi-line PLEX_BASE=).
 std::vector<std::string> loadConfAll(const std::string& path, const char* key) {
     std::vector<std::string> out;
@@ -494,6 +523,8 @@ int main(int argc, char** argv) {
     std::fprintf(stderr, "misterplexd: PRESENT=%s (fpga required for core HDMI idle/OSD; "
                          "fb0 alone does not repaint the Plex frame store)\n",
                  presentMode.c_str());
+    // Cold boot: hook starts daemon on MENU before user loads Plex — never silent.
+    warnIfPlexCoreMissing(presentMode, "startup");
     if (!player.initPresent()) {
         std::fprintf(stderr,
                      "misterplexd: ERROR present path failed (PRESENT=%s) — "
@@ -501,11 +532,14 @@ int main(int argc, char** argv) {
                      "Need a loaded Plex.rbf + working FPGA SPI, or set PRESENT=none "
                      "for decode-only lab.\n",
                      presentMode.c_str());
+        warnIfPlexCoreMissing(presentMode, "initPresent-failed");
     } else {
         // Paint the idle screen at boot so the core never shows a stale frame store.
         player.startIdle();
         player.startOsdPoll();
         player.startInputPoll();
+        // initPresent can still "OK" on MENU (SPI open) while idle paint fails — recheck.
+        warnIfPlexCoreMissing(presentMode, "after-initPresent");
     }
 
     // Lab A/V sync: play local file and exit (no companion / GDM).
@@ -800,6 +834,8 @@ int main(int argc, char** argv) {
         logDaemon("misterplexd: PLAY " + misterplex::redactSensitive(resolved.playable) +
                   " off=" + std::to_string(startAt) +
                   " dur=" + std::to_string(resolved.durationMs));
+        // MENU + cast: target appears in Plex but core not loaded — loud every play.
+        warnIfPlexCoreMissing(presentMode, "playMedia");
         // PRESENT=fpga with no FPGA returns false here — must never look like a
         // successful cast (timeline stuck "buffering" with zero frames).
         if (!player.play(resolved.playable, startAt, resolved.httpHeaders, resolved.durationMs)) {

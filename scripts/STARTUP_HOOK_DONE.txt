@@ -1,0 +1,59 @@
+STARTUP HOOK RESTORE — DONE (no reboot, no bootcore, no RBF, conf untouched)
+lane=w-bounce2  wall_hook≈40s  wall_menu_measure≈56s
+
+HOOK INSTALLED (both files, identical start line):
+  /media/fat/linux/_user-startup.sh
+  /media/fat/linux/user-startup.sh
+  bak: *.bak-before-misterplex-hook-20260730T044730Z
+  line:
+    /media/fat/misterplex/bin/misterplexd --name MiSTerPlex --id misterplex-dev \
+      --port 3005 --conf /media/fat/misterplex/misterplex.conf >>…log 2>&1 &
+  idempotent second pass: hook_ok_noop (single line)
+  NEVER misterplex-183
+  bootcore still commented (;bootcore=lastcore)
+
+LIVE LEFT:
+  CORENAME=Plex  md5=a56bbc3c…  --id=misterplex-dev
+  PRESENT=fpga STREAM=0 DECODE=320x240 OSD_CONTROL=1
+  claim FREE  v6 HOLD
+
+========================================================================
+MENU + DAEMON MEASURE (measured, not guessed)  MARK=20260730T044817Z
+========================================================================
+Setup: load_core menu → CORENAME=MENU → soft-restart daemon PRESENT=fpga
+
+| observation | evidence |
+|-------------|----------|
+| Cast target APPEARS | /resources → machineIdentifier="misterplex-dev" RESOURCES_ID_OK |
+| CORENAME read by daemon? | LOG_MENTIONS_CORENAME=no; repo arm/ had zero CORENAME refs |
+| initPresent | log: "media: FPGA frame path OK (PRESENT=fpga → DDR YUV420p)" — looks healthy |
+| Idle paint | "idle paint DDR failed … PLXF mailbox absent/unwritten" |
+| Loud "Plex core not loaded"? | NO — only mailbox/idle failure, easy to miss |
+| User-visible class | Target in Plex + no HDMI path ≈ "shows but doesn't stick" |
+
+VERDICT: **DEFECT confirmed** — silent-ish void present on MENU.
+Code fix landed in worktree only (not shipped; needs next ARM deploy auth):
+  arm/misterplexd/main.cpp — warnIfPlexCoreMissing() at startup / after initPresent / playMedia
+  reads /tmp/CORENAME; ERROR line names CORENAME and tells user to load Plex.rbf
+
+On Plex restore after measure:
+  CORENAME=Plex; FPGA path OK; md5 a56bbc3c; daemon --id misterplex-dev
+
+========================================================================
+E1–E6 REBOOT TEST (copy-paste when user grants window)
+========================================================================
+  build/REBOOT_TEST_E1_E6.sh
+  PRE:  ./build/REBOOT_TEST_E1_E6.sh
+  REBOOT only: USER_AUTHORIZE_REBOOT=YES EXECUTE_REBOOT=1 ./build/REBOOT_TEST_E1_E6.sh
+  or manual reboot then: POST_ONLY=1 ./build/REBOOT_TEST_E1_E6.sh
+
+EXPECTED after hook (bootcore OFF):
+  E1 daemon running --id misterplex-dev --port 3005 --conf absolute
+  E2 /resources id=misterplex-dev
+  E3 CORENAME=MENU until user loads Plex
+  E4 conf product keys + token key intact
+  E5 bin md5 a56bbc3c… (until next ship)
+  E6 after OSD load Plex.rbf → cast/presents usable
+     (note: shipped a56bbc3c still lacks loud CORENAME ERROR; next ship adds it)
+
+v6 still HOLD (87e8500a / b6071fa) — independent audit.
