@@ -1,0 +1,52 @@
+AFTER-v7 RESULT — w-bounce2
+FIRST LINE: OK onbox_md5=703b2fd410dd0098089b565e7b9b5167 --id=misterplex-dev CORENAME=Plex
+  doorbell 13.5ms→2µs HIT · ddr_cpu 11.4ms→~1.5ms HIT · MENU warn FIRE/SILENT HIT · 409 HIT
+  presents pfps≈vfps HIT · seek+stop flat HIT · NO ROLLBACK
+
+IDENTITY
+  tip tree 029f453 / functional 07ff76a4
+  transfer_md5@scp = 703b2fd410dd0098089b565e7b9b5167 (refused if mismatch)
+  onbox_md5=703b2fd410dd0098089b565e7b9b5167
+  prev-c2=a56bbc3c04863079ac0b29f81c45ceba (rollback armed, unused)
+  snap=misterplexd.before-v7-20260730T072120Z
+  --id=misterplex-dev  CORENAME=Plex  rbf=14eaeff3 untouched
+  conf: PRESENT=fpga DECODE=320x240 STREAM=0 OSD_CONTROL=1 PRESENT_PROFILE restored 0/absent
+  deploy wall ~52s; install script rc=7 resources race then verified OK (published miss)
+
+PRE-REGISTER SCORECARD
+| ID | predict | actual | score |
+|----|---------|--------|-------|
+| C1 md5 | 703b2fd4 | 703b2fd4 | HIT |
+| C2 --id | misterplex-dev | misterplex-dev | HIT |
+| C3 CORENAME left | Plex | Plex | HIT |
+| P1 presents/pfps≈vfps | advance ~50s | t=45s frames=1434 vfps=29.3 pfps=29.2 drops=2 av-lock | HIT |
+| P2 drops | ≤~0.5% | drops=2 on ~1434 frames (~0.14%) | HIT |
+| P3 wrong-target | 409 | 409 | HIT |
+| P4 stick ≥45s | ≥45s | continuous to t=45s+ playing | HIT |
+| P5 seek+stop flat | flat | frames 210→210 after seek+stop | HIT |
+| U1 ddr_doorbell | ≪1ms fail≥2ms | steady **2 µs** (was 13229–14037); first window 141µs | HIT |
+| U2 ddr_cpu | 1.2–3ms fail≥5ms | steady **1414–1659 µs** (was ~11400) | HIT |
+| U3 ddr_copy | ~1.2ms | 1161–1266 µs | HIT |
+| U4 combined CPU ≤120.5/≤126 | jiffies A/B | **NOT same method this run** — top %CPU misterplexd ~33–52% during cast (busybox); profile implies ~23–26 pts onecpu saved on ddr path alone. Full jiffies A/B → hybrid or follow-up. Soft: projection direction HIT; hard combined bar **UNSCORED** (not fail) |
+| U5 fpga−none Δ | ≤+10 hard | UNSCORED (no none A/B this pass) |
+| U6 freed onecpu | ~20–27 | ddr_cpu 11.4→1.5ms @~30fps ≈ **~30 pts thread** calc; aligns with ~24% projection | HIT (profile-derived) |
+| A healthy silence | 0 CORENAME ERROR on Plex | CORENAME_WARN_COUNT=0 | HIT |
+| B MENU fire | ≥1 on MENU | count=2 (startup + after-initPresent) CORENAME=MENU | HIT |
+| C empty race | predict 0 after settle | 0 on healthy Plex restart | HIT (no published miss) |
+| doorbell promote log | SPI→doorbell | "promoted SPI→doorbell" observed | HIT |
+
+MISSES / NOTES
+  1) DEPLOY_V7_RUNBOOK install returned rc=7 DEPLOY_FAIL resources id immediately after start
+     while ps already had --id misterplex-dev and onbox_md5 correct — **race** (sleep too short).
+     Cleanup bounce re-ensured daemon; post-probe RESOURCES_ID_OK. **Not rolled back.**
+  2) Combined %onecpu 131.4→X hard bar: need jiffies A/B like advantage-compare (not top %).
+     Profile hard bars (doorbell/cpu) are the mechanism proof and both clear by >5×.
+  3) make unit critical skip live-PMS: not re-cited as full coverage.
+
+NO ROLLBACK (R1–R6 green; R7 unscored not failed).
+
+DEVICE LEFT
+  CORENAME=Plex md5=703b2fd4 --id=misterplex-dev claim FREE PROFILE off
+  user can play; startup hook still misterplex-dev; bootcore still off
+
+Evidence on device: /media/fat/misterplex/backup/v7_cast_cpu_20260730T072543Z.txt
