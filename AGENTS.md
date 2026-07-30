@@ -49,6 +49,31 @@ Host: `MISTER_HOST` (default `192.168.1.183`), `MISTER_PASS` (default `1`).
 | `/tmp/misterplex-agent-<ID>.txt` | Worker evidence |
 | `/tmp/plex_quartus_*.log` | Sole build logs |
 
+## Who tests
+
+**The parent orchestrator performs ALL hardware testing itself.** The parent owns the
+HDMI-to-USB capture (`/dev/video0`, MacroSilicon `534d:2109`) and full Plex Web UI access,
+so it is the only role that can observe what the MiSTer actually renders and what Plex
+actually sees.
+
+- **Agents build and code. Agents do not test on the device.** No agent drives casts,
+  captures HDMI, bounces the daemon, or mutates `/media/fat/misterplex/`.
+- Agents produce a change plus the exact command the parent should run to verify it.
+- The parent runs it, captures the artifact (frame, log, exit code), and reports the
+  result back into the thread and to the user.
+- Device-observed claims are only valid when the **parent** captured them. An agent
+  asserting a hardware result is a rule-0 violation.
+
+Capture the idle/playback screen with:
+
+```bash
+ffmpeg -v error -f v4l2 -input_format mjpeg -video_size 1920x1080 \
+  -i /dev/video0 -frames:v 1 -y /tmp/live.png
+```
+
+`/dev/video0` is exclusive — a desktop app (OBS, `xdg-open`, nautilus preview) holding it
+makes capture fail with `Device or resource busy`. Check with `fuser -v /dev/video0`.
+
 ## Hard rules (lab)
 
 0. **NO GUESSING — this rule outranks every other rule here.** Never state a cause,
