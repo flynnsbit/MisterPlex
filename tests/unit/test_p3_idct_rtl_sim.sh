@@ -17,7 +17,8 @@ SKIP
     echo "A skipped RTL gate is NOT a pass. Set ALLOW_MISSING_VERILATOR=1 only if you accept that RTL was never verified." >&2
     exit 3
   fi
-  exit 0
+  echo "SKIP-NOT-PASS: Verilator missing; soft-skip≠PASS" >&2
+  exit 77
 elif [[ "$VERILATOR_RC" -ne 0 ]]; then
   echo "RTL SIM ERROR: Verilator probe failed:" >&2
   printf '%s\n' "$VERILATOR_VERSION" >&2
@@ -60,19 +61,36 @@ fi
 mkdir -p "$BUILD_IQ" "$BUILD_DECODE" "$BUILD_DECODE_FAULT"
 echo "RTL SIM: using $VERILATOR_VERSION" >&2
 
+# shellcheck source=tests/unit/lib_rtl_sim_gate.sh
+source "$ROOT/tests/unit/lib_rtl_sim_gate.sh"
+
 "$RUN_VERILATOR" --cc --exe --build \
   --Mdir "$BUILD_IQ" \
   --top-module h264_iq_idct_4x4 -Wno-fatal \
   -CFLAGS "-std=c++17 -O2" \
   "$TOP_IQ" "$RTL_IQ" "$TB_IQ"
-"$BUILD_IQ/Vh264_iq_idct_4x4" "$FIXTURE"
+set +e
+IQ_OUT="$("$BUILD_IQ/Vh264_iq_idct_4x4" "$FIXTURE" 2>&1)"
+IQ_RC=$?
+set -e
+printf '%s\n' "$IQ_OUT"
+echo "idct_iq_sim true rc=$IQ_RC"
+[[ "$IQ_RC" -eq 0 ]] || exit "$IQ_RC"
+assert_sim_executed "h264_iq_idct_4x4" "$IQ_OUT" "OK real RTL sim"
 
 "$RUN_VERILATOR" --cc --exe --build \
   --Mdir "$BUILD_DECODE" \
   --top-module decode_stub_recon_tb -Wno-fatal \
   -CFLAGS "-std=c++17 -O2" \
   "$TOP_DECODE" "$RTL_IQ" "$RTL_INTER" "$RTL_DEBLOCK" "$RTL_DEBLOCK_MB" "$RTL_DPB" "$RTL_MC_LUMA" "$RTL_MC_CHROMA" "$RTL_MC_BLOCK" "$RTL_REF_COMMIT" "$RTL_HYBRID" "$RTL_DECODE" "$TB_DECODE"
-"$BUILD_DECODE/Vdecode_stub_recon_tb" "$FIXTURE"
+set +e
+DEC_OUT="$("$BUILD_DECODE/Vdecode_stub_recon_tb" "$FIXTURE" 2>&1)"
+DEC_RC=$?
+set -e
+printf '%s\n' "$DEC_OUT"
+echo "decode_stub_recon_sim true rc=$DEC_RC"
+[[ "$DEC_RC" -eq 0 ]] || exit "$DEC_RC"
+assert_sim_executed "decode_stub_recon" "$DEC_OUT" "OK"
 
 "$RUN_VERILATOR" --cc --exe --build \
   --Mdir "$BUILD_DECODE_FAULT" \

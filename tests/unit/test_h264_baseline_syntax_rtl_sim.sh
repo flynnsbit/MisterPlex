@@ -11,7 +11,8 @@ if [[ "$VERILATOR_RC" -eq 127 ]]; then
 SKIP RTL SIM: Verilator not found; h264_baseline_syntax real RTL simulation was NOT run.
 Install oss-cad-suite under ~/.local/oss-cad-suite or run with VERILATOR=/path/to/verilator.
 SKIP
-  exit 0
+  echo "SKIP-NOT-PASS: Verilator missing; soft-skip≠PASS" >&2
+  exit 77
 elif [[ "$VERILATOR_RC" -ne 0 ]]; then
   echo "RTL SIM ERROR: Verilator probe failed:" >&2
   printf '%s\n' "$VERILATOR_VERSION" >&2

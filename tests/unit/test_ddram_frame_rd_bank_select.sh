@@ -16,7 +16,8 @@ SKIP
     echo "A skipped RTL gate is NOT a pass. Set ALLOW_MISSING_VERILATOR=1 only if you accept that RTL was never verified." >&2
     exit 3
   fi
-  exit 0
+  echo "SKIP-NOT-PASS: Verilator missing; soft-skip≠PASS" >&2
+  exit 77
 elif [[ "$VERILATOR_RC" -ne 0 ]]; then
   echo "RTL SIM ERROR: Verilator probe failed:" >&2
   printf '%s\n' "$VERILATOR_VERSION" >&2
@@ -41,4 +42,13 @@ mkdir -p "$BUILD"
   --Mdir "$BUILD" \
   "$ROOT/fpga/Plex_MiSTer/rtl/ddram_frame_rd.sv" \
   "$ROOT/tests/rtl/ddram_frame_rd_bank_tb.cpp"
-"$BUILD/Vddram_frame_rd"
+# shellcheck source=tests/unit/lib_rtl_sim_gate.sh
+source "$ROOT/tests/unit/lib_rtl_sim_gate.sh"
+set +e
+DDRAM_OUT="$("$BUILD/Vddram_frame_rd" 2>&1)"
+DDRAM_RC=$?
+set -e
+printf '%s\n' "$DDRAM_OUT"
+echo "ddram_frame_rd_bank_sim true rc=$DDRAM_RC"
+[[ "$DDRAM_RC" -eq 0 ]] || exit "$DDRAM_RC"
+assert_sim_executed "ddram_frame_rd_bank" "$DDRAM_OUT" "OK ddram_frame_rd bank select"

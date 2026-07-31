@@ -93,6 +93,11 @@ for f in "${scan_files[@]}"; do
   [[ -f "$f" ]] && files+=("$f")
 done
 
+# Empty scan is a false-green: refuse PASS without inspecting anything.
+if [[ "${#files[@]}" -eq 0 ]]; then
+  report "scan file list is empty — refusing PASS (gate would not inspect any content)"
+fi
+
 # 1. Private-range PMS addresses. Loopback is fine (test servers), and the
 #    documented MiSTer host default is not a Plex credential.
 hits="$(grep -a -nE '(10\.[0-9]+\.[0-9]+\.[0-9]+|192\.168\.[0-9]+\.[0-9]+|172\.(1[6-9]|2[0-9]|3[01])\.[0-9]+\.[0-9]+):32400' "${files[@]}" 2>/dev/null || true)"
@@ -108,6 +113,18 @@ if [[ -n "$tok" ]]; then
   report "literal X-Plex-Token found"
   printf '%s\n' "$tok" >&2
 fi
+
+# 3. Env-style PLEX_TOKEN / Plex-Token assignments with long secrets (Playwright, dotenv).
+#    Allow empty, placeholders, and shell/env expansions.
+env_tok="$(grep -a -nE '(^|[^A-Za-z0-9_])(PLEX_TOKEN|PLEXTOKEN|X_PLEX_TOKEN)[[:space:]]*=[[:space:]]*['\''\"]?[A-Za-z0-9_-]{16,}' "${files[@]}" 2>/dev/null \
+  | grep -viE 'REDACTED|YOUR[_-]?PLEX|PLACEHOLDER|<[^>]*>|\$\{|\$[A-Za-z_]|xxxx|\.\.\.|example|test.?token|dummy' || true)"
+if [[ -n "$env_tok" ]]; then
+  report "literal PLEX_TOKEN assignment found (Playwright/dotenv risk)"
+  printf '%s\n' "$env_tok" >&2
+fi
+
+# 4. Self-check: this gate must not soft-skip. Print proof-of-scan marker.
+echo "test_no_private_data: SCANNED_FILES=${#files[@]} REQUIRE_ARTIFACT=${REQUIRE_ARTIFACT:-0} SCAN_ARTIFACTS=${scan_all}"
 
 if [[ $status -eq 0 ]]; then
   echo "test_no_private_data: OK"

@@ -124,6 +124,7 @@ unit-unlocked: unit-rollcall preflight $(ROOT)/build/test_cadence $(ROOT)/build/
 	$(ROOT)/tests/unit/test_plex_browse.sh
 	$(ROOT)/tests/unit/test_play_file_delivery.sh
 	$(ROOT)/tests/unit/test_no_private_data.sh
+	python3 $(ROOT)/tests/unit/test_gate_false_green_guard.py
 	$(ROOT)/tests/unit/test_capture_rig.sh
 	$(ROOT)/tests/unit/test_resource_preflight.sh
 	$(ROOT)/tests/unit/test_mister_soft_bounce_lock.sh
@@ -154,6 +155,8 @@ unit-unlocked: unit-rollcall preflight $(ROOT)/build/test_cadence $(ROOT)/build/
 	$(ROOT)/tests/unit/test_ddr_frame_store_scanout_shear.sh
 	$(ROOT)/tests/unit/test_ddr_frame_store_scanout_freeze.sh
 	$(ROOT)/tests/unit/test_ddr_frame_store_scanout_sustained.sh
+	$(ROOT)/tests/unit/test_ddr_frame_store_scanout_sustained.sh
+	$(ROOT)/tests/unit/test_ddr_frame_store_plxd_handshake.sh
 	$(ROOT)/tests/unit/test_ddr_frame_store_scanout_colour.sh
 	$(ROOT)/scripts/rtl_lint.py
 	$(ROOT)/tests/unit/test_h264_syntax_primitives_rtl_sim.sh
@@ -175,6 +178,8 @@ rtl-sim-unlocked:
 	$(ROOT)/tests/unit/test_ddr_frame_store_scanout_shear.sh
 	$(ROOT)/tests/unit/test_ddr_frame_store_scanout_freeze.sh
 	$(ROOT)/tests/unit/test_ddr_frame_store_scanout_sustained.sh
+	$(ROOT)/tests/unit/test_ddr_frame_store_scanout_sustained.sh
+	$(ROOT)/tests/unit/test_ddr_frame_store_plxd_handshake.sh
 	$(ROOT)/tests/unit/test_ddr_frame_store_scanout_colour.sh
 	$(ROOT)/tests/unit/test_stream_path_recon_integration.sh
 	$(ROOT)/tests/unit/test_stream_path_full_frame_compare.sh

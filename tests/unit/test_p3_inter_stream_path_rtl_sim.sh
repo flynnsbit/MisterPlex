@@ -17,7 +17,8 @@ SKIP
     echo "A skipped RTL gate is NOT a pass. Set ALLOW_MISSING_VERILATOR=1 only if you accept that RTL was never verified." >&2
     exit 3
   fi
-  exit 0
+  echo "SKIP-NOT-PASS: Verilator missing; soft-skip≠PASS" >&2
+  exit 77
 elif [[ "$VERILATOR_RC" -ne 0 ]]; then
   echo "RTL SIM ERROR: Verilator probe failed:" >&2
   printf '%s\n' "$VERILATOR_VERSION" >&2
@@ -75,13 +76,29 @@ done
 
 mkdir -p "$BUILD" "$BUILD_FAULT"
 echo "RTL SIM: using $VERILATOR_VERSION" >&2
+# shellcheck source=tests/unit/lib_rtl_sim_gate.sh
+source "$ROOT/tests/unit/lib_rtl_sim_gate.sh"
 "$RUN_VERILATOR" --cc --exe --build \
   --Mdir "$BUILD" \
   --top-module stream_path_inter_tb -Wno-fatal \
   -CFLAGS "-std=c++17 -O2" \
   "$TOP" "${RTL_ARGS[@]}" "$TB"
-"$BUILD/Vstream_path_inter_tb" "$IDR_FIXTURE"
-"$BUILD/Vstream_path_inter_tb" "$INTER_FIXTURE"
+set +e
+IDR_OUT="$("$BUILD/Vstream_path_inter_tb" "$IDR_FIXTURE" 2>&1)"
+IDR_RC=$?
+set -e
+printf '%s\n' "$IDR_OUT"
+echo "stream_path_inter_idr true rc=$IDR_RC"
+[[ "$IDR_RC" -eq 0 ]] || exit "$IDR_RC"
+assert_sim_executed "stream_path_inter_idr" "$IDR_OUT" "OK real RTL sim"
+set +e
+INTER_OUT="$("$BUILD/Vstream_path_inter_tb" "$INTER_FIXTURE" 2>&1)"
+INTER_RC=$?
+set -e
+printf '%s\n' "$INTER_OUT"
+echo "stream_path_inter_p true rc=$INTER_RC"
+[[ "$INTER_RC" -eq 0 ]] || exit "$INTER_RC"
+assert_sim_executed "stream_path_inter_p" "$INTER_OUT" "OK real RTL sim"
 
 "$RUN_VERILATOR" --cc --exe --build \
   --Mdir "$BUILD_FAULT" \

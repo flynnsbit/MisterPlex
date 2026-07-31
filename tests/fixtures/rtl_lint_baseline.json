@@ -47,8 +47,10 @@
     "fpga/Plex_MiSTer/rtl/stream_ingest.sv",
     "fpga/Plex_MiSTer/rtl/stream_path.sv"
   ],
+  "justified_waivers": {},
   "project": "fpga/Plex_MiSTer/Plex.qsf",
-  "schema": "misterplex.rtl_lint_baseline.v1",
+  "schema": "misterplex.rtl_lint_baseline.v2",
+  "waiver_policy": "Never silence a Verilator WIDTH*/UNSIGNED/IMPLICIT warning without a justified_waivers entry quoting the site and why the truncated/expanded bits cannot affect product behaviour. Prefer explicit casts in RTL. Empty justified_waivers + empty warnings = clean lint.",
   "warning_classes": [
     "WIDTHTRUNC",
     "WIDTHEXPAND",

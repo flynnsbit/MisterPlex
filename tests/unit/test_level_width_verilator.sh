@@ -29,5 +29,16 @@ OSS_CAD_SUITE="$OSS_CAD_SUITE" "$RUN_VERILATOR" --cc --exe --build \
   -CFLAGS "-std=c++17 -O2" \
   "$RTL" "$TOP" "$TB"
 
+# shellcheck source=tests/unit/lib_rtl_sim_gate.sh
+source "$ROOT/tests/unit/lib_rtl_sim_gate.sh"
 EXE="$BUILD_DIR/Vlevel_width_tb_top"
-"$EXE"
+set +e
+LEVEL_OUT="$("$EXE" 2>&1)"
+LEVEL_RC=$?
+set -e
+printf '%s\n' "$LEVEL_OUT"
+echo "level_width_sim true rc=$LEVEL_RC"
+if [[ "$LEVEL_RC" -ne 0 ]]; then
+  exit "$LEVEL_RC"
+fi
+assert_sim_executed "level_width" "$LEVEL_OUT" "level_width_tb: PASS"

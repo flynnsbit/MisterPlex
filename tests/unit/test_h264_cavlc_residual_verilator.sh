@@ -21,7 +21,8 @@ SKIP
     echo "A skipped RTL gate is NOT a pass. Set ALLOW_MISSING_VERILATOR=1 only if you accept that RTL was never verified." >&2
     exit 3
   fi
-  exit 0
+  echo "SKIP-NOT-PASS: Verilator missing; soft-skip≠PASS" >&2
+  exit 77
 elif [[ "$VERILATOR_RC" -ne 0 ]]; then
   echo "RTL SIM ERROR: Verilator probe failed:" >&2
   printf '%s\n' "$VERILATOR_VERSION" >&2
@@ -58,4 +59,15 @@ sed -n '1,5p' "$ROOT/build/h264_cavlc_residual_negative.log" >&2
 
 build_one h264_cavlc_residual_pos ''
 POS_EXE="$ROOT/build/verilator/h264_cavlc_residual_pos/Vh264_cavlc_residual_tb_top"
-"$POS_EXE"
+# shellcheck source=tests/unit/lib_rtl_sim_gate.sh
+source "$ROOT/tests/unit/lib_rtl_sim_gate.sh"
+set +e
+POS_OUT="$("$POS_EXE" 2>&1)"
+POS_RC=$?
+set -e
+printf '%s\n' "$POS_OUT"
+echo "cavlc_residual_pos true rc=$POS_RC"
+if [[ "$POS_RC" -ne 0 ]]; then
+  exit "$POS_RC"
+fi
+assert_sim_executed "h264_cavlc_residual_pos" "$POS_OUT" "Verilator PASS"

@@ -16,7 +16,8 @@ SKIP
     echo "A skipped RTL gate is NOT a pass. Set ALLOW_MISSING_VERILATOR=1 only if you accept that RTL was never verified." >&2
     exit 3
   fi
-  exit 0
+  echo "SKIP-NOT-PASS: Verilator missing; soft-skip≠PASS" >&2
+  exit 77
 elif [[ "$VERILATOR_RC" -ne 0 ]]; then
   echo "RTL SIM ERROR: Verilator probe failed:" >&2
   printf '%s\n' "$VERILATOR_VERSION" >&2
@@ -52,12 +53,21 @@ mkdir -p "$BUILD" "$(dirname "$GOLDEN")"
 make -s -C "$ROOT" h264-golden-tools
 "$ROOT/build/extract_h264_golden" --input "$ANNEXB" --mb 0 --output "$GOLDEN" --verify-mb0-reference "$MB0_REF" >/dev/null
 echo "RTL SIM: using $VERILATOR_VERSION" >&2
+# shellcheck source=tests/unit/lib_rtl_sim_gate.sh
+source "$ROOT/tests/unit/lib_rtl_sim_gate.sh"
 "$RUN_VERILATOR" --cc --exe --build \
   --Mdir "$BUILD" \
   --top-module h264_deblock_tb -Wno-fatal \
   -CFLAGS "-std=c++17 -O2" \
   "$TOP" "$RTL" "$TB"
-"$BUILD/Vh264_deblock_tb" --mb-golden "$GOLDEN" --nal-sequence "$SEQUENCE"
+set +e
+DEBLOCK_OUT="$("$BUILD/Vh264_deblock_tb" --mb-golden "$GOLDEN" --nal-sequence "$SEQUENCE" 2>&1)"
+DEBLOCK_RC=$?
+set -e
+printf '%s\n' "$DEBLOCK_OUT"
+echo "deblock_green_sim true rc=$DEBLOCK_RC"
+[[ "$DEBLOCK_RC" -eq 0 ]] || exit "$DEBLOCK_RC"
+assert_sim_executed "h264_deblock_green" "$DEBLOCK_OUT" "OK h264_deblock RTL sim"
 
 set +e
 FAULT_OUT="$($BUILD/Vh264_deblock_tb --mb-golden "$GOLDEN" --nal-sequence "$SEQUENCE" --fault-horizontal-first 2>&1)"

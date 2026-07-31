@@ -223,23 +223,62 @@ def reportable_errors(output: str, reportable: set[str]) -> tuple[list[str], lis
     return owned, ignored
 
 
-def load_baseline(path: Path) -> tuple[dict[str, dict[str, int]], dict[str, list[str]]]:
+def load_baseline(path: Path) -> tuple[dict[str, dict[str, int]], dict[str, list[str]], dict[str, str]]:
     data = json.loads(path.read_text())
     counts = {str(f): {str(k): int(v) for k, v in kinds.items()} for f, kinds in data.get("warnings", {}).items()}
     details = {str(f): [str(item) for item in items] for f, items in data.get("warning_details", {}).items()}
-    return counts, details
+    waivers = {str(k): str(v) for k, v in data.get("justified_waivers", {}).items()}
+    return counts, details, waivers
+
+
+def unjustified_baseline_warnings(
+    baseline_counts: dict[str, dict[str, int]], waivers: dict[str, str]
+) -> list[str]:
+    """Baseline entries with count>0 must carry a written justified_waivers reason.
+
+    Mirrors timing_exclusion_baseline: an exception is only acceptable with a
+    quoted justification. Empty warnings + empty waivers is the clean state.
+    """
+    missing: list[str] = []
+    for file_name, kinds in sorted(baseline_counts.items()):
+        for kind, count in sorted(kinds.items()):
+            if int(count) <= 0:
+                continue
+            key = f"{file_name}:{kind}"
+            # Accept exact key or any waiver key prefixed by file:kind
+            if key in waivers and waivers[key].strip():
+                continue
+            if any(wk.startswith(key) and waivers[wk].strip() for wk in waivers):
+                continue
+            missing.append(
+                f"{key} baseline count={count} lacks justified_waivers reason "
+                f"(timing_exclusion bar: do not silence without written why)"
+            )
+    return missing
 
 
 def write_baseline(path: Path, warnings: dict[str, dict[str, int]], details: dict[str, list[str]], files: set[str]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
+    prior: dict = {}
+    if path.exists():
+        try:
+            prior = json.loads(path.read_text())
+        except json.JSONDecodeError:
+            prior = {}
     data = {
-        "schema": "misterplex.rtl_lint_baseline.v1",
+        "schema": "misterplex.rtl_lint_baseline.v2",
         "project": "fpga/Plex_MiSTer/Plex.qsf",
         "warning_classes": ["WIDTHTRUNC", "WIDTHEXPAND", "WIDTH", "UNSIGNED", "IMPLICIT*"],
         "excluded_prefixes": ["fpga/Plex_MiSTer/sys/", "fpga/Plex_MiSTer/rtl/pll/"],
         "files": sorted(files),
         "warnings": warnings,
         "warning_details": details,
+        # Waivers require written justification (timing_exclusion bar). Prefer RTL casts.
+        "justified_waivers": prior.get("justified_waivers", {}),
+        "waiver_policy": prior.get(
+            "waiver_policy",
+            "Never silence WIDTH*/UNSIGNED without justified_waivers reason; prefer explicit RTL casts.",
+        ),
     }
     path.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n")
 
@@ -357,7 +396,13 @@ def main() -> int:
     if not args.baseline.exists():
         print(f"RTL LINT ERROR: missing baseline {args.baseline}; run --write-baseline intentionally", file=sys.stderr)
         return 2
-    baseline_counts, baseline_details = load_baseline(args.baseline)
+    baseline_counts, baseline_details, baseline_waivers = load_baseline(args.baseline)
+    unjustified = unjustified_baseline_warnings(baseline_counts, baseline_waivers)
+    if unjustified:
+        print("RTL LINT ERROR: baseline warnings without justified_waivers:", file=sys.stderr)
+        for item in unjustified:
+            print(f"  {item}", file=sys.stderr)
+        return 1
     regressions = compare_to_baseline(current, baseline_counts, current_details, baseline_details)
     if regressions:
         print("RTL LINT REGRESSION above checked-in baseline:", file=sys.stderr)
