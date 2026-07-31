@@ -49,7 +49,7 @@ int main() {
     const std::string death_sig = slurp(death);
     CHECK(death_sig.find("death signal=11") != std::string::npos);
 
-    // siginfo path
+    // siginfo path — SEGV with non-user code
     siginfo_t info{};
     info.si_signo = SIGSEGV;
     info.si_code = 1; // SEGV_MAPERR on Linux
@@ -59,7 +59,22 @@ int main() {
     const std::string death_info = slurp(death);
     CHECK(death_info.find("death signal=11") != std::string::npos);
     CHECK(death_info.find("si_code=1") != std::string::npos);
+    CHECK(death_info.find("si_code_name=OTHER") != std::string::npos);
     CHECK(death_info.find("si_addr=0x10") != std::string::npos);
+
+    // SI_USER (kill from a process) — highest-value race-free discriminator
+    siginfo_t user{};
+    user.si_signo = SIGTERM;
+    user.si_code = 0; // SI_USER
+    user.si_pid = 4242;
+    user.si_uid = 0;
+    misterplex::deathBreadcrumbOnSigInfo(&user);
+    const std::string death_user = slurp(death);
+    CHECK(death_user.find("death signal=15") != std::string::npos);
+    CHECK(death_user.find("si_code=0") != std::string::npos);
+    CHECK(death_user.find("si_code_name=SI_USER") != std::string::npos);
+    CHECK(death_user.find("si_pid=4242") != std::string::npos);
+    CHECK(death_user.find("si_uid=0") != std::string::npos);
 
     if (fails) {
         std::fprintf(stderr, "test_death_breadcrumb: %d FAIL(s)\n", fails);

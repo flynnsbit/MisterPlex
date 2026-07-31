@@ -200,13 +200,43 @@ while true; do
   [ -f "\$ROOT/misterplexd.death" ] && death_snap=\$(tr '\\n' ' ' <"\$ROOT/misterplexd.death" | sed 's/[[:space:]]\\+/ /g')
   last_snap="(absent)"
   [ -f "\$ROOT/misterplexd.last" ] && last_snap=\$(tr '\\n' ' ' <"\$ROOT/misterplexd.last" | sed 's/[[:space:]]\\+/ /g')
+  # Snapshot sender AT DETECTION TIME (not later). si_pid alone is often /bin/sh
+  # (kill is a shell builtin) and may be recycled before a human reads the file.
+  # Handler already wrote si_code (SI_USER vs SI_KERNEL) async-signal-safely.
+  sender_cmd="(gone)"
+  sender_ppid="?"
+  sender_chain="?"
+  si_pid=\$(printf '%s' "\$death_snap" | sed -n 's/.*si_pid=\([-0-9][0-9]*\).*/\1/p' | head -n1)
+  si_code=\$(printf '%s' "\$death_snap" | sed -n 's/.*si_code=\([-0-9][0-9]*\).*/\1/p' | head -n1)
+  si_code_name=\$(printf '%s' "\$death_snap" | sed -n 's/.*si_code_name=\([^ ]*\).*/\1/p' | head -n1)
+  if [ -n "\$si_pid" ] && [ "\$si_pid" -gt 0 ] 2>/dev/null && [ -r "/proc/\$si_pid/cmdline" ]; then
+    sender_cmd=\$(tr '\\0' ' ' <"/proc/\$si_pid/cmdline" 2>/dev/null | sed 's/[[:space:]]\\+/ /g')
+    sender_ppid=\$(awk '{print \$4}' "/proc/\$si_pid/stat" 2>/dev/null || echo '?')
+    chain="\$si_pid"
+    walk=\$sender_ppid
+    i=0
+    while [ -n "\$walk" ] && [ "\$walk" != "0" ] && [ "\$walk" != "1" ] && [ "\$i" -lt 6 ]; do
+      if [ -r "/proc/\$walk/cmdline" ]; then
+        c=\$(tr '\\0' ' ' <"/proc/\$walk/cmdline" 2>/dev/null | sed 's/[[:space:]]\\+/ /g' | cut -c1-80)
+        chain="\$chain <- \$walk:\$c"
+        walk=\$(awk '{print \$4}' "/proc/\$walk/stat" 2>/dev/null || echo 0)
+      else
+        chain="\$chain <- \$walk:(gone)"
+        break
+      fi
+      i=\$((i + 1))
+    done
+    sender_chain="\$chain"
+  elif [ -n "\$si_pid" ]; then
+    sender_cmd="(pid_gone si_pid=\$si_pid)"
+  fi
   if [ "\$ran_s" -ge "\$HEALTHY_SECS" ]; then
     if [ "\$backoff" -ne 2 ]; then
       echo "\$(ts) BACKOFF_RESET after healthy run_s=\$ran_s (was \${backoff}s → 2s)" >>"\$SUPLOG"
     fi
     backoff=2
   fi
-  echo "\$(ts) SUPERVISE_EXIT pid=\$child wait_st=\$st \$how run_s=\$ran_s death=[\$death_snap] last=[\$last_snap] — respawn in \${backoff}s" >>"\$SUPLOG"
+  echo "\$(ts) SUPERVISE_EXIT pid=\$child wait_st=\$st \$how run_s=\$ran_s death=[\$death_snap] last=[\$last_snap] si_code=\${si_code:-?} si_code_name=\${si_code_name:-?} si_pid=\${si_pid:-?} sender_cmd=[\$sender_cmd] sender_ppid=\$sender_ppid sender_chain=[\$sender_chain] — respawn in \${backoff}s" >>"\$SUPLOG"
   resume_stopped_main
   sleep "\$backoff"
   # Grow backoff only after short (unhealthy) runs — not after a reset-worthy life.

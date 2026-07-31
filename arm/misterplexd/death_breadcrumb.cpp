@@ -140,14 +140,24 @@ void writeDeathSigInfoSafe(const siginfo_t* info) {
     const int fd =
         ::open(g_deathPathC, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644);
     if (fd < 0) return;
-    char buf[256];
+    char buf[320];
     size_t o = 0;
     asAppend(buf, sizeof(buf), &o, "death signal=");
     asAppendInt(buf, sizeof(buf), &o, info->si_signo);
     asAppend(buf, sizeof(buf), &o, " si_code=");
     asAppendInt(buf, sizeof(buf), &o, info->si_code);
+    // Linux: SI_USER=0 (kill/raise), SI_KERNEL=0x80. Highest-value race-free bit.
+    asAppend(buf, sizeof(buf), &o, " si_code_name=");
+    if (info->si_code == 0)
+        asAppend(buf, sizeof(buf), &o, "SI_USER");
+    else if (info->si_code == 0x80)
+        asAppend(buf, sizeof(buf), &o, "SI_KERNEL");
+    else
+        asAppend(buf, sizeof(buf), &o, "OTHER");
     asAppend(buf, sizeof(buf), &o, " si_pid=");
     asAppendInt(buf, sizeof(buf), &o, static_cast<long>(info->si_pid));
+    asAppend(buf, sizeof(buf), &o, " si_uid=");
+    asAppendInt(buf, sizeof(buf), &o, static_cast<long>(info->si_uid));
     asAppend(buf, sizeof(buf), &o, " si_addr=");
     asAppendHexPtr(buf, sizeof(buf), &o,
                    static_cast<unsigned long>(reinterpret_cast<uintptr_t>(info->si_addr)));
