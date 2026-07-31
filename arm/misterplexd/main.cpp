@@ -481,8 +481,8 @@ int main(int argc, char** argv) {
         player.setSubtitleMode("ffmpeg");
     if (subtitleStreamId >= 0)
         player.setSubtitleStreamIndex(subtitleStreamId);
-    bool osdControl = false;
     {
+
         auto audio = loadConf(confPath, "AUDIO");
         if (!audio.empty())
             player.setAudioEnabled(confTruthy(audio));
@@ -529,22 +529,35 @@ int main(int argc, char** argv) {
             im = misterplex::IdleMode::Screensaver;
         else if (idle == "last" || idle == "off")
             im = misterplex::IdleMode::LastFrame;
+        // Anything else (empty, "logo", typos like "lastframe") → Logo default.
         player.setIdleMode(im);
-        // OSD_CONTROL requires the v7 CONF_STR layout; on an older core the same
-        // bits mean Pattern/Content FPS and would decode as a bogus A/V offset.
-        osdControl = confTruthy(loadConf(confPath, "OSD_CONTROL"));
-        player.setOsdControl(osdControl);
-        std::fprintf(stderr, "misterplexd: OSD_CONTROL=%s\n", osdControl ? "1" : "0");
-        if (!osdControl) {
+        // OSD_CONTROL: auto|on|off (default auto). Auto applies F12 bits only when
+        // the core's PLXS DDR mailbox is LIVE (magic + advancing seq). Never uses
+        // CORENAME/RBF filename. Forced on keeps SPI fallback (operator risk on
+        // pre-v3). Forced off matches the old OSD_CONTROL=0 footgun intentionally.
+        const auto osdRaw = loadConf(confPath, "OSD_CONTROL");
+        const auto osdMode = misterplex::parseOsdControlMode(osdRaw);
+        player.setOsdControlMode(osdMode);
+        std::fprintf(stderr,
+                     "misterplexd: OSD_CONTROL=%s (conf=%s) — auto applies only when "
+                     "PLXS mailbox LIVE; on=force; off=F12 inert\n",
+                     misterplex::osdControlModeName(osdMode),
+                     osdRaw.empty() ? "(default auto)" : osdRaw.c_str());
+        if (osdMode == misterplex::OsdControlMode::ForcedOff) {
             std::fprintf(stderr,
-                         "misterplexd: OSD_CONTROL=0 — F12 menu Idle Screen is inert; "
-                         "only IDLE_SCREEN conf applies. Set OSD_CONTROL=1 with a v3+ "
-                         "Plex.rbf for live + persisted menu rotation.\n");
+                         "misterplexd: OSD_CONTROL=off — F12 menu Idle Screen is inert; "
+                         "only IDLE_SCREEN conf applies. Use OSD_CONTROL=auto on a core "
+                         "that publishes PLXS, or on to force.\n");
+        } else if (osdMode == misterplex::OsdControlMode::ForcedOn) {
+            std::fprintf(stderr,
+                         "misterplexd: OSD_CONTROL=on — IDLE_SCREEN conf is pre-OSD "
+                         "fallback; applies mailbox or SPI status bits (unsafe on "
+                         "pre-v3 CONF_STR).\n");
         } else {
             std::fprintf(stderr,
-                         "misterplexd: OSD_CONTROL=1 — IDLE_SCREEN conf is pre-OSD "
-                         "fallback; first OSD word applies Main's persisted F12 Idle "
-                         "Screen (config/Plex_v*.CFG), then live menu changes.\n");
+                         "misterplexd: OSD_CONTROL=auto — probing PLXS mailbox; F12 Idle "
+                         "stays inert until LIVE (fail closed). HDMI shows a short "
+                         "notice if the probe finds no mailbox.\n");
         }
         std::fprintf(stderr, "misterplexd: IDLE_SCREEN=%s AV_OFFSET_MS=%d\n",
                      idle.empty() ? "logo(default)" : idle.c_str(), player.avOffsetMs());
@@ -669,7 +682,8 @@ int main(int argc, char** argv) {
     std::atomic<uint64_t> playGen{0};
 
     auto contentResolutionForNextPlay = [&]() -> misterplex::ContentResolution {
-        if (osdControl)
+        // Re-read apply gate each play: Auto may flip to LIVE after boot probe.
+        if (player.osdApplyActive())
             return misterplex::contentResolutionFromOsdWord(player.lastOsdWord());
         return misterplex::contentResolutionFromCodedSize(decodeSize.width, decodeSize.height);
     };
@@ -723,7 +737,7 @@ int main(int argc, char** argv) {
         std::fprintf(stderr,
                      "misterplexd: content resolution=%s source=%s status_word=0x%04x "
                      "weak=%s bitrate=%d\n",
-                     contentRes.label, osdControl ? "OSD O[4]" : "conf/--decode",
+                     contentRes.label, player.osdApplyActive() ? "OSD O[4]" : "conf/--decode",
                      player.lastOsdWord(), weakForPlay.videoResolution.c_str(),
                      weakForPlay.maxVideoBitrateKbps);
         auto [resolved, base] = resolveAgainstServers(req, defaultPms, off, weakForPlay);

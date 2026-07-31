@@ -144,19 +144,16 @@ AUDIO_CLOCK_PPM=-638
 
 # --- OSD menu controls (Plex core CONF_STR v3) --------------------------------
 #
-# OSD_CONTROL: let the core's OSD menu (F12) drive playback settings live. The
-# daemon polls status[15:0] ~4x/s and applies A/V offset, auto-resync, audio
-# clock trim and the idle screen without a restart or a conf edit.
-#
-# The daemon NEVER writes these bits. Main_MiSTer owns the OSD word and persists
-# it to /media/fat/config/Plex_v3.CFG; a daemon-side write fights Main's shadow
-# copy and makes the value flap. Read-only polling is the whole contract.
-#
-# REQUIRES a v3 or newer Plex.rbf (check with `set_status --confstr`). On an
-# older core those same bits mean Pattern / Audio tone / Force bars, so enabling
-# this would decode a stale "Force bars=Yes" as a bogus A/V offset. Set to 0 if
-# you are running a pre-v3 core.
-OSD_CONTROL=1
+# OSD_CONTROL: how the daemon treats F12 menu bits (status[15:0]).
+#   auto  (default) — probe the core's PLXS DDR mailbox (magic + advancing seq).
+#                     Apply F12 Idle / A/V / content tier ONLY when the mailbox is
+#                     LIVE. Pre-v3 / pre-mailbox cores fail closed (F12 inert).
+#                     Does NOT use CORENAME or RBF filenames (all say "Plex").
+#   on / 1          — always apply (mailbox preferred, SPI fallback). Unsafe on
+#                     pre-v3 CONF_STR where the same bits mean Pattern/Content FPS.
+#   off / 0         — never apply; F12 Idle Screen is inert; IDLE_SCREEN conf only.
+# When F12 is inert the daemon flashes "F12 Idle: use conf" on the idle HDMI frame.
+OSD_CONTROL=auto
 #
 # AV_OFFSET_MS: constant audio-vs-video trim applied inside the pacing loop (NOT
 # an ffmpeg adelay), so the OSD can change it mid-playback. Positive = present
@@ -164,11 +161,11 @@ OSD_CONTROL=1
 # steps; this conf value is the power-on default and is not limited to that grid.
 # AV_OFFSET_MS=0
 #
-# IDLE_SCREEN: what to show when nothing is playing. The FPGA frame store and
-# /dev/fb0 both latch the LAST frame written, so without this the final frame of
-# the previous video stays on screen forever (a CRT burn-in risk).
-#   logo        centred Plex-style chevron on a near-black field (default)
-#   black       flat black
-#   screensaver chevron drifting slowly to avoid burn-in
-#   lastframe   legacy behaviour — leave the last video frame up
-# IDLE_SCREEN=logo
+# IDLE_SCREEN: what to show when nothing is playing (and the only control when
+# F12 OSD is inert). Accepted values (main.cpp):
+#   logo         centred Plex-style chevron on a near-black field (default)
+#   black        flat black
+#   screensaver  chevron drifting slowly to avoid burn-in
+#   last | off   leave the last video frame up (legacy; CRT burn-in risk)
+# Unknown tokens (including "lastframe") fall through to logo.
+IDLE_SCREEN=logo

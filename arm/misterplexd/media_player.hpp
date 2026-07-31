@@ -8,6 +8,7 @@
 #include "libmisterplex/idle_screen.hpp"
 #include "libmisterplex/coded_size.hpp"
 #include "libmisterplex/mraudio_status.hpp"
+#include "libmisterplex/osd_control.hpp"
 #include "libmisterplex/osd_menu.hpp"
 #include "libmisterplex/playback_overlay.hpp"
 
@@ -144,10 +145,20 @@ public:
     void startIdle();
     void stopIdle();
 
-    // Live OSD menu control. Only enable against a core whose CONF_STR uses the
-    // v7 bit layout (see libmisterplex/osd_menu.hpp) — older layouts put Pattern
-    // and Content FPS on the same bits, which would be read as an A/V offset.
-    void setOsdControl(bool on) { osdControl_ = on; }
+    // Live OSD menu control. Default Auto: apply only when PLXS mailbox is LIVE
+    // (see libmisterplex/osd_control.hpp). ForcedOn risks pre-v3 bit layouts.
+    void setOsdControlMode(misterplex::OsdControlMode mode);
+    // Legacy bool: true→ForcedOn, false→ForcedOff (no Auto).
+    void setOsdControl(bool on) {
+        setOsdControlMode(on ? misterplex::OsdControlMode::ForcedOn
+                             : misterplex::OsdControlMode::ForcedOff);
+    }
+    misterplex::OsdControlMode osdControlMode() const { return osdMode_; }
+    misterplex::OsdCapability osdCapability() const {
+        return static_cast<misterplex::OsdCapability>(osdCapability_.load());
+    }
+    // True when decoded OSD bits may drive idle / A/V / content tier.
+    bool osdApplyActive() const;
     void startOsdPoll();
     void stopOsdPoll();
     void setSkipDeltasMs(int64_t forwardMs, int64_t backMs);
@@ -273,7 +284,9 @@ private:
 
     static std::string hex16(uint16_t v);
 
-    bool osdControl_ = false;
+    misterplex::OsdControlMode osdMode_ = misterplex::OsdControlMode::Auto;
+    std::atomic<int> osdCapability_{static_cast<int>(misterplex::OsdCapability::Unknown)};
+    std::atomic<bool> osdInertNotified_{false};
     std::atomic<bool> osdRun_{false};
     std::atomic<uint16_t> lastOsd_{0};
     std::atomic<bool> osdSeen_{false};

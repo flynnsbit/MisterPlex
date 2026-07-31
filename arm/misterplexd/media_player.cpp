@@ -477,14 +477,41 @@ std::string MediaPlayer::hex16(uint16_t v) {
     return out;
 }
 
+void MediaPlayer::setOsdControlMode(OsdControlMode mode) { osdMode_ = mode; }
+
+bool MediaPlayer::osdApplyActive() const {
+    return osdApplyWanted(osdMode_,
+                          static_cast<OsdCapability>(osdCapability_.load()));
+}
+
 void MediaPlayer::startOsdPoll() {
     std::lock_guard<std::mutex> lk(osdMu_);
-    if (shuttingDown_.load() || !osdControl_ || osdRun_.exchange(true))
+    if (shuttingDown_.load())
+        return;
+    // ForcedOff: never probe, but still surface the inert state on HDMI once.
+    if (!osdPollWanted(osdMode_)) {
+        osdCapability_.store(static_cast<int>(OsdCapability::Absent));
+        if (!osdInertNotified_.exchange(true)) {
+            log("media: OSD F12 inert mode=off capability=absent — Idle Screen menu "
+                "does nothing; use IDLE_SCREEN conf");
+            overlay_.flashNotice(osdInertUserNotice());
+            if (!playing_.load())
+                paintIdle();
+        }
+        return;
+    }
+    // Auto/On: start so Auto can detect PLXS LIVE.
+    if (osdRun_.exchange(true))
         return;
     if (osdThr_.joinable())
         osdThr_.join();
+    osdCapability_.store(static_cast<int>(OsdCapability::Unknown));
+    osdInertNotified_.store(false);
     osdThr_ = std::thread([this] {
         bool mailboxLogged = false;
+        const auto t0 = std::chrono::steady_clock::now();
+        const double startMs =
+            std::chrono::duration<double, std::milli>(t0.time_since_epoch()).count();
         while (osdRun_.load()) {
             uint16_t word = 0;
             bool got = false;
@@ -493,13 +520,14 @@ void MediaPlayer::startOsdPoll() {
                 std::lock_guard<std::mutex> lk(presentMu_);
                 // Preferred path: the core publishes the OSD word into HPS DDR,
                 // so reading it is a plain memory load that Main never sees.
+                // LIVE mailbox (magic + advancing seq) is the Auto capability proof.
                 if (fpga_.readOsdMailbox(word)) {
                     got = true;
                     viaMailbox = true;
-                } else if (fpga_.ok()) {
-                    // Pre-mailbox RBF: fall back to UIO_GET_STATUS over SPI.
-                    // status[15:0] is the only slice the core echoes back;
-                    // everything above it is telemetry that Main overwrites.
+                    osdCapability_.store(static_cast<int>(OsdCapability::LiveMailbox));
+                } else if (osdSpiFallbackWanted(osdMode_) && fpga_.ok()) {
+                    // ForcedOn only: pre-mailbox RBF SPI path. Auto must NOT use
+                    // SPI status bits — pre-v3 Pattern/Content-FPS share those bits.
                     uint8_t raw[16]{};
                     if (fpga_.getCoreStatus(raw)) {
                         word = static_cast<uint16_t>(raw[0] | (raw[1] << 8));
@@ -507,11 +535,38 @@ void MediaPlayer::startOsdPoll() {
                     }
                 }
             }
+            // Auto: fail closed when probe window elapses without LIVE mailbox.
+            if (osdMode_ == OsdControlMode::Auto) {
+                const double nowMs = std::chrono::duration<double, std::milli>(
+                                         std::chrono::steady_clock::now().time_since_epoch())
+                                         .count();
+                const auto cur = static_cast<OsdCapability>(osdCapability_.load());
+                const auto settled = osdAutoSettle(cur, startMs, nowMs);
+                if (settled != cur)
+                    osdCapability_.store(static_cast<int>(settled));
+            }
+
             if (got && viaMailbox && !mailboxLogged) {
                 mailboxLogged = true;
-                log("media: OSD via DDR mailbox (no SPI)");
+                log("media: OSD via DDR mailbox (no SPI) capability=live_mailbox");
             }
-            if (got) {
+
+            // One-shot user-visible notice when F12 cannot drive the daemon.
+            if (!osdApplyActive() &&
+                (osdMode_ == OsdControlMode::ForcedOff ||
+                 static_cast<OsdCapability>(osdCapability_.load()) == OsdCapability::Absent) &&
+                !osdInertNotified_.exchange(true)) {
+                log(std::string("media: OSD F12 inert mode=") + osdControlModeName(osdMode_) +
+                    " capability=" +
+                    osdCapabilityName(static_cast<OsdCapability>(osdCapability_.load())) +
+                    " — Idle Screen menu does nothing; use IDLE_SCREEN conf");
+                overlay_.flashNotice(osdInertUserNotice());
+                // Repaint idle so HDMI shows the banner without a play session.
+                if (!playing_.load())
+                    paintIdle();
+            }
+
+            if (got && osdApplyActive()) {
                 const uint16_t prev = lastOsd_.load();
                 const bool seenBefore = osdSeen_.exchange(true);
                 if (!seenBefore || osdChanged(prev, word)) {
@@ -635,6 +690,8 @@ void MediaPlayer::paintIdle() {
     const int h = 240;
     std::vector<uint8_t> buf(static_cast<size_t>(w) * h * 3);
     renderIdleRgb24(buf.data(), w, h, m, idlePhase_.load());
+    // Composite F12-inert / transport notice onto idle RGB (HDMI-visible without logs).
+    overlay_.renderRgb24(buf.data(), w, h);
 
     std::lock_guard<std::mutex> lk(presentMu_);
     if (fb_.ok() && !fb_.blitRgb24(buf.data(), w, h))
@@ -658,12 +715,55 @@ void MediaPlayer::paintIdle() {
         std::string ddrErr;
         if (useDdrF1_) {
             const DdrFrameGeometry g = plex480pDdrFrameGeometry();
+            const int cw = g.coded_width.get();
+            const int ch = g.coded_height.get();
             const DdrFrameLayout layout =
                 makeDdrFrameLayout(g, kDdrFramePhysBase, kDdrFrameStrideAlign,
                                    DdrFrameFormat::Yuv420p);
             std::vector<uint8_t> yuv(layout.frame_bytes);
-            if (renderIdleYuv420p(yuv.data(), g.coded_width.get(), g.coded_height.get(), m,
-                                  idlePhase_.load())) {
+            bool haveYuv = false;
+            // When a notice banner is up, render idle+overlay at coded size in RGB
+            // then convert so HDMI (DDR path) shows the same banner as fb0.
+            if (overlay_.visible()) {
+                std::vector<uint8_t> rgb(static_cast<size_t>(cw) * ch * 3);
+                renderIdleRgb24(rgb.data(), cw, ch, m, idlePhase_.load());
+                overlay_.renderRgb24(rgb.data(), cw, ch);
+                // RGB24 → planar YUV420 using the same coeffs as idle_screen.
+                uint8_t* yPlane = yuv.data();
+                uint8_t* uPlane = yPlane + static_cast<size_t>(cw) * ch;
+                uint8_t* vPlane = uPlane + static_cast<size_t>(cw / 2) * (ch / 2);
+                for (int y = 0; y < ch; ++y) {
+                    for (int x = 0; x < cw; ++x) {
+                        const size_t i = (static_cast<size_t>(y) * cw + x) * 3;
+                        yPlane[static_cast<size_t>(y) * cw + x] =
+                            idleRgbToY(rgb[i], rgb[i + 1], rgb[i + 2]);
+                    }
+                }
+                for (int cy = 0; cy < ch / 2; ++cy) {
+                    for (int cx = 0; cx < cw / 2; ++cx) {
+                        int rSum = 0, gSum = 0, bSum = 0;
+                        for (int dy = 0; dy < 2; ++dy) {
+                            for (int dx = 0; dx < 2; ++dx) {
+                                const size_t i =
+                                    (static_cast<size_t>(cy * 2 + dy) * cw + (cx * 2 + dx)) * 3;
+                                rSum += rgb[i];
+                                gSum += rgb[i + 1];
+                                bSum += rgb[i + 2];
+                            }
+                        }
+                        const int r = (rSum + 2) / 4;
+                        const int g = (gSum + 2) / 4;
+                        const int b = (bSum + 2) / 4;
+                        const size_t ci = static_cast<size_t>(cy) * (cw / 2) + cx;
+                        uPlane[ci] = idleRgbToU(r, g, b);
+                        vPlane[ci] = idleRgbToV(r, g, b);
+                    }
+                }
+                haveYuv = true;
+            } else {
+                haveYuv = renderIdleYuv420p(yuv.data(), cw, ch, m, idlePhase_.load());
+            }
+            if (haveYuv) {
                 DdrPublishFrame frame{yuv.data(), yuv.size(), g, DdrFrameFormat::Yuv420p};
                 ok = publishDdrFrame(frame, "idle DDR", &ddrErr);
             }
@@ -814,8 +914,9 @@ bool MediaPlayer::initPresent() {
             // Legacy (pre-v3) core only: park the debug bits so a stale saved OSD
             // cannot steal cast frames. On a v3 core those same bits ARE the A/V
             // offset menu item, so zeroing them would silently reset the user's
-            // setting on every startup.
-            if (!osdControl_) {
+            // setting on every startup. Only park when OSD apply is forced off —
+            // Auto still probing must not touch A/V offset bits on a live v3 core.
+            if (osdMode_ == OsdControlMode::ForcedOff) {
                 const int park[] = {6, 0, 7, 0, 8, 0, 9, 0};
                 if (!fpga_.setStatusBits(park, 4))
                     log("media: park OSD (None/tone-off): " + fpga_.lastError());
