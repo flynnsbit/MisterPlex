@@ -3,6 +3,7 @@
 
 #include "libmisterplex/av_clock.hpp"
 #include "libmisterplex/ffmpeg_vf.hpp"
+#include "libmisterplex/frame_ledger.hpp"
 #include "libmisterplex/idle_screen.hpp"
 #include "libmisterplex/last_frame_latch.hpp"
 #include "libmisterplex/osd_menu.hpp"
@@ -3677,13 +3678,34 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
     }
     startIdle();
 
+    // Lifetime + append-only ledger BEFORE session counters are discarded.
+    // presentCount_/droppedFrames_ reset on the next play; ledger does not.
+    const int64_t sessFrames = usedRawVideo ? frameIndex : reconFrames_.load();
+    const int64_t sessPresents = presentCount_;
+    const int64_t sessDrops = droppedFrames_.load();
+    lifetimeFrames_.fetch_add(sessFrames, std::memory_order_relaxed);
+    lifetimePresents_.fetch_add(sessPresents, std::memory_order_relaxed);
+    lifetimeDrops_.fetch_add(sessDrops, std::memory_order_relaxed);
+    const uint64_t sid = sessionSeq_.fetch_add(1, std::memory_order_relaxed) + 1;
+    const char* endReason = stop_.load() ? "stop_or_seek" : "natural_eof";
+    frameLedgerSessionEnd(sid, sessFrames, sessPresents, sessDrops, endReason);
+
     log("media: session end frames=" + std::to_string(frameIndex) +
+        " presents=" + std::to_string(sessPresents) +
+        " drops=" + std::to_string(sessDrops) +
+        " residual=" +
+        std::to_string(frameLedgerResidual(sessFrames, sessPresents, sessDrops)) +
+        " session=" + std::to_string(sid) +
+        " lifetime_frames=" + std::to_string(lifetimeFrames_.load()) +
+        " lifetime_presents=" + std::to_string(lifetimePresents_.load()) +
+        " lifetime_drops=" + std::to_string(lifetimeDrops_.load()) +
         " recon=" + std::to_string(reconFrames_.load()) +
         " cabac=" + (cabacSkip_.load() ? "1" : "0") +
         " stream=" + (streamEnabled_ ? "on" : "off") +
         " rawvideo=" + (usedRawVideo ? "on" : "off") +
         " present=" + presentMode_ +
-        " skip_rgb=" + (skipRgb ? "1" : "0"));
+        " skip_rgb=" + (skipRgb ? "1" : "0") +
+        " reason=" + endReason);
 }
 
 } // namespace misterplex
