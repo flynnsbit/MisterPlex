@@ -3,7 +3,7 @@
 
 ## 1. Branch / SHA / ancestors
 - Branch: integ/thruput-on-warm
-- Tip: 6ea25544934bf66f03c2d49f102c7652fc414624 (6ea25544)
+- Tip: 259a7434a85be1fba278e3a7e24b705e96f9dd2b (259a7434)  [FIT THIS]
 - Worktree: .worktrees/w-thruput-on-warm
 - RTL hybrid+thruput+area core: 9d9dadbd (ancestor)
 - w-area dequant 809a8197 IS ancestor: YES (merge-base --is-ancestor rc=0)
@@ -67,7 +67,7 @@ FULL_FRAME_BITSTREAM=$PWD/tests/fixtures/p3_inter_pred/plex_inter_p16_baseline_3
   bash tests/unit/test_stream_path_full_frame_compare.sh
 # expect paint_per_mb=2239.647 and LUMA frame0 300/300
 ```
-When slot granted: ONE fit of tip 84d6790e only; do not mid-fit edit sources.
+When slot granted: ONE fit of tip 259a7434 only; do not mid-fit edit sources.
 
 ## 9. Logs
 - docs/evidence/w_thruput_on_warm/gates/{define_parity,quartus_sv_subset,make_unit2,dequant}.log
