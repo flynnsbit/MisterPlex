@@ -5,6 +5,12 @@ PREFLIGHT="$ROOT/scripts/test_resource_preflight.sh"
 FIX="$ROOT/tests/fixtures/preflight"
 
 run_preflight() {
+  # Skip live Quartus probe: fixtures inject meminfo/vmstat only. A concurrent
+  # w-fit exclusive must not turn synthetic swap/headroom cases red/green.
+  # Force ALLOW=0 so a parent `make unit` override cannot make fail() exit 0
+  # and green-wash the swap-exhausted fixture (want rc=3).
+  MISTERPLEX_ALLOW_LOW_MEMORY_TESTS=0 \
+  MISTERPLEX_PREFLIGHT_SKIP_LOCAL_QUARTUS=1 \
   MISTERPLEX_PREFLIGHT_SAMPLE_SECONDS=1 \
   MISTERPLEX_PREFLIGHT_VMSTAT="$FIX/vmstat_quiet" \
   MISTERPLEX_PREFLIGHT_MEMINFO="$1" \
