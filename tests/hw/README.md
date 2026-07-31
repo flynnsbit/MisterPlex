@@ -27,6 +27,21 @@ the marker push, then `--previous` for the graded capture). Its `--source file`
 and `--source synthetic` modes exercise the same grading/staleness logic without
 opening the hardware grabber.
 
+## Plex Web cast picker (Playwright)
+
+End-to-end UI gate: Select Player must list **MiSTerPlex**, companion server must
+match `PLEX_BASE`, then cast/play/stop. API-only checks do not satisfy this.
+See [`e2e/README.md`](e2e/README.md).
+
+```bash
+PLEX_BASE=http://YOUR-PLEX-SERVER:32400 PLEX_TOKEN=… \
+  ./tests/hw/e2e/run_cast_picker.sh
+# or: make e2e-cast-picker
+```
+
+If the picker is empty while PMS `/clients` still lists MiSTerPlex, read
+[`docs/select-player-runbook.md`](../docs/select-player-runbook.md).
+
 ## Phase 1 / 2 (misterplexd)
 
 | Script | What |
@@ -38,6 +53,7 @@ opening the hardware grabber.
 | `test_seek_kill.sh` | seek + kill/restart recovery |
 | `test_soak.sh` | multi-title play/stop soak (Phase 5: auto conf + PMS discover) |
 | `test_p480_ab_harness.sh` | 240p vs lab 480p coded A/B: mandatory one-window CPU, frames, av_drift; `--self-test` host-only |
+| `e2e/run_cast_picker.sh` | Playwright: Select Player + companion + cast playback (PLEX_BASE/TOKEN) |
 
 ```bash
 ./scripts/deploy_misterplexd.sh

@@ -1,0 +1,9 @@
+{
+  "name": "misterplex-plex-web-e2e",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Playwright suite: Plex Web Select Player + cast to MiSTerPlex",
+  "dependencies": {
+    "playwright": "1.49.1"
+  }
+}

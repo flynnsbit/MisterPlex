@@ -35,3 +35,7 @@ artifacts/local/
 !release_artifacts/
 !release_artifacts/**
 tests/unit/test_input_mailbox
+
+# Playwright e2e (local install + runtime artifacts)
+tests/hw/e2e/node_modules/
+build/e2e-artifacts/

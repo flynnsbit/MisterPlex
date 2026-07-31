@@ -5,7 +5,7 @@ CXXFLAGS ?= -std=c++17 -O2 -Wall -Wextra -I$(ROOT)/host
 FFMPEG_CFLAGS := $(shell pkg-config --cflags libavformat libavcodec libavutil 2>/dev/null)
 FFMPEG_LIBS   := $(shell pkg-config --libs libavformat libavcodec libavutil 2>/dev/null)
 
-.PHONY: all preflight unit unit-unlocked unit-rollcall rtl-sim rtl-sim-unlocked rtl-lint verilator-elab quartus-sv-subset define-parity pre-synth-gates post-fit-hierarchy post-fit-timing post-fit-timing-margin timing-exclusion pms-baseline-check pms-baseline-live pms-nal-stats arm-plexd arm-ddr-bench arm-profile-tools ddr-bench profile-tools present-harness clean help plexd package h264-golden-tools check-core-conf-geometry
+.PHONY: all preflight unit unit-unlocked unit-rollcall rtl-sim rtl-sim-unlocked rtl-lint verilator-elab quartus-sv-subset define-parity pre-synth-gates post-fit-hierarchy post-fit-timing post-fit-timing-margin timing-exclusion pms-baseline-check pms-baseline-live pms-nal-stats arm-plexd arm-ddr-bench arm-profile-tools ddr-bench profile-tools present-harness clean help plexd package h264-golden-tools check-core-conf-geometry e2e-cast-picker
 
 all: unit
 
@@ -35,7 +35,14 @@ help:
 	@echo "  make arm-profile-tools - cross-build ARM decode/profile probes"
 	@echo "  make present-harness - build offline present-loop pipe/copy harness"
 
+	@echo "  make e2e-cast-picker - Playwright: Plex Web Select Player + cast to MiSTerPlex (needs PLEX_BASE/TOKEN)"
+
 test: unit
+
+# Plex Web cast-picker e2e (Playwright). Requires PLEX_BASE + PLEX_TOKEN.
+# Exit 0 PASS | 1 FAIL | 77 SKIP-NOT-PASS (never treat 77 as green).
+e2e-cast-picker:
+	@bash $(ROOT)/tests/hw/e2e/run_cast_picker.sh
 
 UNIT_ANNEXB := $(ROOT)/build/plex_real_baseline.264
 
