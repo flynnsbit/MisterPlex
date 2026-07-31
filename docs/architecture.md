@@ -58,10 +58,14 @@ FFmpeg video → RGB24 320×240    FFmpeg audio → s16le 48k stereo
 - Timeline reports scrubber-friendly play-queue fields when media is bound.
 - **Not yet native present:** ARM still owns decode; FPGA owns scanout + MrAudio consumer.
 - Next (Phase 3): elementary H.264 into FPGA FIFO; present-domain audio FIFO for lip-sync without dual FFmpeg.
-- **Select Player / cast target:** Plex Web lists LAN players from the **selected PMS**
-  `/clients` (+ `/neighborhood/devices`), via GDM — not from plex.tv `provides=player`.
-  Multi-PMS accounts can poll a server that never discovers the player; see
-  [v2-video-baseline.md](v2-video-baseline.md#cast-target-missing-in-select-player-which-pms-web-polls-2026-07-30).
+- **Select Player / cast target:** Plex Web polls **`companionServer`**
+  `/clients` + `/neighborhood/devices` (not "the browsed library server").
+  `CompanionServerManager` picks the first owned private PMS in **FriendlyName**
+  A→Z order. Blank/duplicate names can make Web ask a PMS with empty `/clients`
+  (e.g. Android/SHIELD) while another PMS already lists MiSTerPlex. Remedy:
+  distinct FriendlyName on the cast-from PMS — not plex.tv registration, not
+  removing other servers. See
+  [v2-video-baseline.md](v2-video-baseline.md#cast-target-missing-in-select-player-companionserver--friendlyname-2026-07-30).
 
 ## Memory map (evolving)
 

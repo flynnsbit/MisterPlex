@@ -132,102 +132,125 @@ probe arrive from the device's unicast address while the conntrack entry has the
 broadcast destination, so they are classed NEW. Probing from the MiSTer itself
 avoids this.
 
-## Cast target missing in Select Player: which PMS Web polls (2026-07-30)
+## Cast target missing in Select Player: companionServer + FriendlyName (2026-07-30)
 
 **Acceptance for "no cast option" is the Plex Web "Select Player" UI**, not an
 HTTP status on plex.tv and not "device appears in some `/clients` somewhere."
 
-### How the LAN picker is fed
+> **Superseded (b24f9557):** an earlier write-up of this section claimed the
+> remedy was to remove/stop/sign-out the SHIELD PMS so Web would stop preferring
+> it. **That was wrong.** Parent later proved the SHIELD can stay running; the
+> fix is a **distinct FriendlyName on the user's own PMS** so
+> `CompanionServerManager` picks that server as `companionServer`. Do not
+> resurrect "dismantle the SHIELD" as the product or operator fix.
 
-Plex Web builds the LAN player list from the **PMS it has selected as local**,
-not from a global device registry:
+### How the LAN picker is fed (Plex Web 4.160.0, cited)
 
-1. `GET {that-pms}/clients`
-2. `GET {that-pms}/neighborhood/devices`
+Source bundle (served from the local PMS web UI):
 
-(OSS reverse-engineering of the same path: plex-mpv-shim needs **no plex.tv
-login**; the MPV Shim Local Connection userscript injects players into
-`/clients` and only touches `api/v2/resources` to fake a *local server* so Web
-bothers to ask for clients at all.)
+`http://192.168.1.24:32400/web/js/main-8792-5e6a05fd7fbc07797f88-plex-4.160.0-75ddd7b.js`
+(Plex Web **4.160.0**)
 
-**plex.tv `provides=player` is neither necessary nor sufficient** for this
-picker:
+The picker does **not** poll "the server you are browsing." It polls a dedicated
+**`companionServer`**:
 
-- Necessary? No — plex-mpv-shim appears via GDM → PMS `/clients` with zero
-  plex.tv registration.
-- Sufficient? No — a SHIELD Android TV row can sit on the account with
-  `provides` containing `player` and still be absent from Select Player while
-  Web is asking a different server for `/clients`.
-
-Daemon `PLEXTV_ANNOUNCE` GETs `https://plex.tv/api/v2/resources` as a **list
-check only**. HTTP 200 with `self_in_body=0` correctly logs
-`registration no-op` (commit `2f81e96b`); that GET does **not** create a
-device. Do not reopen a lane to invent a plex.tv upsert for this complaint.
-
-### Multi-PMS trap (measured)
-
-Lab had two owned Plex Media Servers on the account. Opening Select Player
-(Playwright, context-level request capture — **not** `page.on('request')`,
-which captured 0 and must not be trusted) issued:
-
-```
-GET https://192-168-1-122.<hash>.plex.direct:32400/clients
-GET https://192-168-1-122.<hash>.plex.direct:32400/neighborhood/devices
+```js
+[oe](e){const t=e.get("companionServer"); t&&(t.get("desktop").get("players").fetch(), t.get("desktop").get("neighborhoodDevices").fetch()); ...}
 ```
 
-| Server | Role | `/clients` when Web polled |
-|--------|------|----------------------------|
-| `192.168.1.122` SHIELD PMS | What Web asked | **size="0"** (and `/neighborhood/devices` size="0") |
-| User workstation PMS (e.g. `.24`, docker `net=host`) | Never asked in that session | **size="1"** — `MiSTerPlex` / `misterplex-dev` |
+That issues:
 
-So the picker was empty **even though** MiSTerPlex GDM, player HTTP `:3005`
-`/resources`, and the workstation PMS `/clients` entry were all healthy. Web
-simply never consulted the server that knew about the player.
+1. `GET {companionServer}/clients`
+2. `GET {companionServer}/neighborhood/devices`
 
-Additional measured fact: an **Android/SHIELD PMS emitted zero GDM discovery
-probes in a 40 s sniff**, so it will not learn LAN players the way a desktop
-PMS does. If Web prefers that PMS for `/clients`, the picker stays empty
-regardless of MiSTerPlex behavior.
+`companionServer` is chosen by `CompanionServerManager`:
 
-### Decisive intervention (cause by experiment, not inference)
-
-Blocking the SHIELD only by IPv4 was **insufficient** — Web still reached it
-over **IPv6 via the same `plex.direct` hash**. Blocking the `plex.direct` host
-hash (all address families) forced fallback:
-
-```
-http://127.0.0.1:32400/clients
-http://127.0.0.1:32400/neighborhood/devices
-MISTERPLEX_IN_PICKER: true
+```js
+_pickCompanionServer(){ ... this.companionServer = this.servers.find(Ac) || this.servers.find(vc) ... }
 ```
 
-Screenshot captured by parent: **MiSTerPlex appeared in Select Player.** No
-daemon or GDM change was required.
+```js
+function vc(e){return!!(function(e){return!(!e||e.get("isCloud")||"iOS"===e.get("platform"))}(e)&&(t=e.get("activeConnection"),t&&t.get("isPrivate")&&t.get("isConnected")));var t}
+function Ac(e){return!(!vc(e)||e.get("isShared"))}
+```
 
-### Remedy class
+`Array.prototype.find` returns the **first** match in `ServerCollection` order.
+That order is alphabetical by lowercased friendly name (owned first; cloud last):
 
-| Item | Owner |
-|------|--------|
-| GDM reply, companion `/resources`, workstation PMS `/clients` listing MiSTerPlex | Product — already correct when healthy |
-| plex.tv player upsert for this complaint | **Do not implement** — not required; not sufficient |
-| Remove / sign out / stop the unwanted SHIELD (or other) PMS so Web stops preferring an empty `/clients` | **User / account action** — not a MiSTerPlex code fix |
-| Firewall dropping GDM to the PMS Web actually uses | Host network — see section above |
+```js
+comparator(e){const t=e.get("isShared"),r=e.get("friendlyName")||"",n=e.get("sourceTitle")||"",i=t?n+r:r;return e.get("isCloud")?"9":(t?"1":"0")+i.toLowerCase()}
+```
 
-Do **not** add CI tests that encode one household's multi-PMS topology or the
-existence of a SHIELD. That would be a flaky gate on accident, not product
-behavior.
+So: first owned, non-cloud, non-iOS server with a private connected connection,
+in **friendlyName A→Z order**, becomes `companionServer` and alone feeds the
+player picker.
+
+(OSS context still useful: plex-mpv-shim needs no plex.tv login; LAN listing is
+GDM → PMS `/clients`. That path only helps once Web is asking the PMS that
+actually discovered the player.)
+
+### Root cause in this lab (measured)
+
+| Fact | Evidence |
+|------|----------|
+| User workstation PMS `/clients` already listed MiSTerPlex | Parent: size="1", `machineIdentifier=misterplex-dev` |
+| SHIELD Android PMS `/clients` empty | Parent: size="0"; `/neighborhood/devices` size="0" |
+| Android/SHIELD PMS sends no GDM probes | Parent: 40 s sniff, zero probes |
+| Web polled SHIELD (`192.168.1.122` via `plex.direct`), not workstation | Playwright **context** request log (not `page.on` — that captured 0) |
+| Local PMS had **blank FriendlyName** → fell back to hostname `node-worker1` | Same string as SHIELD PMS friendly name |
+| Sort keys both `0node-worker1`; SHIELD won `find` | Bundle `comparator` + identical names |
+| MiSTer GDM + `:3005/resources` healthy | Parent — not the defect |
+
+### Fix (configuration on the user's own PMS — SHIELD untouched)
+
+Give every owned PMS a **distinct** `FriendlyName`, and ensure the PMS that
+should feed Select Player sorts **first** alphabetically among eligible owned
+servers (see `comparator` / `Ac` / `vc` above).
+
+Parent applied locally (SHIELD left running):
+
+```bash
+curl -X PUT "http://192.168.1.24:32400/:/prefs?FriendlyName=MiSTerPlex%20Studio&X-Plex-Token=…"
+# → HTTP 200
+```
+
+New sort keys (owned, lowercased): `0misterplex studio` < `0node-worker1` <
+`0studio`. Playwright re-run: discovery went to
+`http://127.0.0.1:32400/clients` and `/neighborhood/devices`,
+`POLLED_122_SHIELD=false`, picker contents `Cast... | MiSTerPlex | MiSTerPlex`
+(screenshot `/tmp/local_D_picker.png`). **No MiSTerPlex daemon change.**
+
+### What is NOT the fix
+
+| Claim | Status |
+|-------|--------|
+| Remove/stop/sign-out the SHIELD PMS | **Superseded / wrong** as the remedy (see callout above). SHIELD can remain; name the local PMS distinctly. |
+| Implement plex.tv player registration / upsert | **Do not implement.** Parent registered a device with `provides=player` and re-ran the picker — **MiSTerPlex still did not appear.** plex.tv `provides=player` is **neither necessary nor sufficient**. |
+| Daemon `PLEXTV_ANNOUNCE` GET `api/v2/resources` creates a device | **False.** 200 + `self_in_body=0` is a list no-op (`2f81e96b`). |
+| MiSTerPlex GDM / companion broken when workstation `/clients` already lists it | **False** for this complaint. |
+
+### Debugging notes (keep; not remedies)
+
+- **IPv4-only block of a PMS is insufficient for isolation tests.** The same
+  `*.plex.direct` hash also resolves over **IPv6**; parent had to block the
+  hash (all address families) before Web stopped using SHIELD. That proved
+  "wrong companionServer" by forced fallback; it is **not** the user-facing fix.
+- Prefer Playwright **`context.on('request')`**; `page.on('request')` missed the
+  `/clients` traffic entirely in an earlier run.
+- Do **not** add CI tests that encode one household's multi-PMS topology or a
+  SHIELD existing — flaky gate on accident, not product behavior.
 
 ### Operator checklist (parent / user)
 
-1. Confirm player: `GET http://<mister>:3005/resources` → 200 Player XML.
-2. Confirm **each** owned PMS: `GET http://<pms>:32400/clients?X-Plex-Token=…`
-   — which ones list `MiSTerPlex`?
-3. In browser devtools (or Playwright **context** request log), open Select
-   Player and note **which host** serves `/clients` and `/neighborhood/devices`.
-4. If that host's `/clients` is empty, fix account/server selection (stop or
-   remove the empty PMS) — do not chase plex.tv registration or rewrite GDM.
-5. When blocking a PMS for a test, block its **`*.plex.direct` name**, not only
-   one IPv4 — IPv6 via the same hash will otherwise keep it alive.
+1. Player alive: `GET http://<mister>:3005/resources` → 200 Player XML.
+2. Each owned PMS: `GET http://<pms>:32400/clients?X-Plex-Token=…` — which list
+   `MiSTerPlex`?
+3. Open Select Player; note which host serves `/clients` and
+   `/neighborhood/devices` (that host **is** `companionServer`).
+4. If the wrong PMS is companionServer: set a distinct FriendlyName on the PMS
+   you want (Settings → General, or `PUT /:/prefs?FriendlyName=…`) so it sorts
+   first among owned private servers. **Do not** require removing other PMSes.
+5. Do not chase plex.tv registration for this symptom.
 
 ## Switching bundles
 
