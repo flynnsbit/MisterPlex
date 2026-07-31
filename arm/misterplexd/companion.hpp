@@ -3,6 +3,8 @@
 // Lessons from mistercast-linux: prePlayHold, castBound, play-queue bind,
 // async playMedia ACK, viewOffset ms, resume-dialog hold after stop.
 
+#include "player_identity.hpp"
+
 #include <atomic>
 #include <cstdint>
 #include <functional>
@@ -102,9 +104,9 @@ private:
                         bool terminalSession);
     static std::string xmlEsc(const std::string& s);
 
-    std::string name_ = "MiSTerPlex";
-    std::string machineId_ = "misterplex-1";
-    uint16_t port_ = 3005;
+    std::string name_ = kPlayerDefaultName;
+    std::string machineId_ = kPlayerDefaultMachineId;
+    uint16_t port_ = kPlayerDefaultPort;
     LogFn log_;
     PlayFn onPlay_;
     CtrlFn onPlayQueued_;

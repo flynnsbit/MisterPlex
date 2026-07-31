@@ -112,9 +112,9 @@ std::string defaultFfmpegPath() {
 } // namespace
 
 int main(int argc, char** argv) {
-    std::string name = "MiSTerPlex";
-    std::string machineId = "misterplex-1";
-    int port = 3005;
+    std::string name = misterplex::kPlayerDefaultName;
+    std::string machineId = misterplex::kPlayerDefaultMachineId;
+    int port = misterplex::kPlayerDefaultPort;
     std::string ffmpeg = defaultFfmpegPath();
     std::string confPath = "/media/fat/misterplex/misterplex.conf";
     std::string confToken;
@@ -661,8 +661,8 @@ int main(int argc, char** argv) {
     {
         misterplex::PlexTvDeviceIdentity plexId;
         plexId.clientIdentifier = machineId;
-        plexId.product = "MiSTerPlex";
-        plexId.version = "0.2.0";
+        plexId.product = misterplex::kPlayerProduct;
+        plexId.version = misterplex::kPlayerVersion;
         plexId.platform = "Linux";
         plexId.device = "MiSTer";
         plexId.deviceName = name;
@@ -978,8 +978,8 @@ int main(int argc, char** argv) {
         timelineSession.playQueueItemId = bound.playQueueItemId;
         timelineSession.containerKey = bound.containerKey;
         timelineSession.clientIdentifier = machineId;
-        timelineSession.product = "MiSTerPlex";
-        timelineSession.version = "0.2.0";
+        timelineSession.product = misterplex::kPlayerProduct;
+        timelineSession.version = misterplex::kPlayerVersion;
         timelineSession.deviceName = name;
         pmsTimeline.beginSession(timelineSession, startAt, resolved.durationMs);
 

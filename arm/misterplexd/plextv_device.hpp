@@ -18,6 +18,8 @@
 //
 // Fail-soft. Never blocks the playback path.
 
+#include "player_identity.hpp"
+
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
@@ -36,16 +38,16 @@ namespace misterplex {
 // is the primary collision guard.
 inline constexpr const char kPlexTvClientIdPrefix[] = "misterplex-";
 
-// Product identity for plex.tv — keep aligned with Companion GDM /resources.
+// Product identity for plex.tv — defaults from player_identity.hpp (GDM /resources).
 struct PlexTvDeviceIdentity {
     std::string clientIdentifier; // Resource-Identifier / --id (e.g. misterplex-dev)
-    std::string product = "MiSTerPlex";
-    std::string version = "0.2.0";
+    std::string product = kPlayerProduct;
+    std::string version = kPlayerVersion;
     std::string platform = "Linux";
     std::string device = "MiSTer";
-    std::string deviceName = "MiSTerPlex";
+    std::string deviceName = kPlayerDefaultName;
     std::string provides = "player";
-    uint16_t port = 3005;
+    uint16_t port = kPlayerDefaultPort;
 };
 
 struct PlexTvHttpRequest {

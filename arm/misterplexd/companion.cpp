@@ -1,5 +1,6 @@
 #include "companion.hpp"
 #include "log_redact.hpp"
+#include "player_identity.hpp"
 
 #include <arpa/inet.h>
 #include <cctype>
@@ -170,25 +171,6 @@ PlayRequest parsePlayRequest(const std::string& req) {
     return pr;
 }
 
-// PMS GDM discovery probes both 32412 and 32414 (broadcast M-SEARCH).
-constexpr uint16_t kGdmListenPorts[] = {32412, 32414};
-
-// True when a UDP datagram is a discovery *probe* we should answer.
-// GDM replies embed the substring "plex" (Protocol / Content-Type). We also
-// broadcast those replies to 32412, and Linux delivers them back to this
-// socket. Matching bare "plex" then re-emits a reply forever: creation-order 5
-// (mplex-gdm) measured 98%onecpu at true idle, d_vol=0, always R/running.
-// Replies are never probes; M-SEARCH and non-reply "plex" probes still match.
-inline bool gdmIsDiscoveryProbe(const char* buf) {
-    if (!buf || !*buf)
-        return false;
-    if (std::strncmp(buf, "HTTP/", 5) == 0)
-        return false;
-    if (std::strstr(buf, "Content-Type: plex/media-player") != nullptr)
-        return false;
-    return std::strstr(buf, "M-SEARCH") != nullptr || std::strstr(buf, "plex") != nullptr;
-}
-
 // Bind one GDM UDP listen socket (SO_REUSEADDR + SO_BROADCAST + CLOEXEC).
 // Returns fd on success, -1 on failure (err filled when non-null).
 int openGdmListenFd(uint16_t port, std::string* err) {
@@ -278,33 +260,19 @@ std::string Companion::lanIp() const {
 }
 
 std::string Companion::gdmPayload() const {
-    std::ostringstream o;
-    o << "HTTP/1.0 200 OK\r\n"
-      << "Content-Type: plex/media-player\r\n"
-      << "Name: " << name_ << "\r\n"
-      << "Port: " << port_ << "\r\n"
-      << "Product: MiSTerPlex\r\n"
-      << "Version: 0.2.0\r\n"
-      << "Protocol: plex\r\n"
-      << "Protocol-Version: 1\r\n"
-      << "Protocol-Capabilities: timeline,playback,navigation,mirror,playqueues\r\n"
-      << "Device-Class: stb\r\n"
-      << "Resource-Identifier: " << machineId_ << "\r\n"
-      << "\r\n";
-    return o.str();
+    PlayerAdvertisement a;
+    a.name = name_;
+    a.machineId = machineId_;
+    a.port = port_;
+    return buildGdmPayload(a);
 }
 
 std::string Companion::resourcesXml() const {
-    std::ostringstream o;
-    o << "<?xml version=\"1.0\" encoding=\"UTF-8\"?>"
-      << "<MediaContainer>"
-      << "<Player title=\"" << xmlEsc(name_) << "\" product=\"MiSTerPlex\" "
-      << "protocol=\"plex\" protocolVersion=\"1\" "
-      << "protocolCapabilities=\"timeline,playback,navigation,mirror,playqueues\" "
-      << "deviceClass=\"stb\" machineIdentifier=\"" << xmlEsc(machineId_) << "\" "
-      << "version=\"0.2.0\"/>"
-      << "</MediaContainer>";
-    return o.str();
+    PlayerAdvertisement a;
+    a.name = name_;
+    a.machineId = machineId_;
+    a.port = port_;
+    return buildResourcesXml(a);
 }
 
 std::string Companion::timelineXml(const std::string& commandId) const {
