@@ -1,7 +1,7 @@
 # w-lint GATE INTEGRITY REPORT
 
 - branch: `w-lint-gate-integrity`
-- sha: (see git log; running-core commit)
+- sha: `128735787041a7d664a1db05c94c5516cfa84aea`
 - base: `w-fit-integ-c5382bee-dequant-swap` @ `a5d14f74`
 - date: 2026-07-31
 - scope: host/source only (no Quartus, no deploy, no ssh device ops)
