@@ -1,6 +1,6 @@
 w-geom P5 frame ledger — FINAL
 branch: w-instr-motion-counter
-(sha filled after commit)
+sha: 2e05d80cabf7236ac32139d2711bf134f6ffddf4
 
 # binary
 path: /home/flynnsbit/Projects/MisterPlex/build/arm/misterplexd
