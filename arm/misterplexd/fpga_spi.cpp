@@ -1,4 +1,5 @@
 #include "fpga_spi.hpp"
+#include "crash_dump.hpp"
 
 #include "libmisterplex/status_telemetry.hpp"
 #include "libmisterplex/pixel_format.hpp"
@@ -362,22 +363,21 @@ void FpgaSpi::resumeStrandedMain() {
 
 namespace {
 
-// async-signal-safe enough: kill()/open()/read()/close() are all on the safe
-// list, and we re-raise with the default handler so the crash still surfaces.
-void crashGuardHandler(int sig) {
+// Resume stranded Main after the crash dump has been written. Must stay
+// async-signal-safe: atomics + kill() only (findMisterPids uses open/read/close).
+void crashGuardBeforeReraise(int /*sig*/) {
     mainPauseDepth().store(0);
     for (pid_t p : findMisterPids())
         kill(p, SIGCONT);
-    std::signal(sig, SIG_DFL);
-    ::raise(sig);
 }
 
 } // namespace
 
 void FpgaSpi::installCrashGuard() {
     // SIGKILL cannot be caught — resumeStrandedMain() at startup covers it.
-    for (int sig : {SIGSEGV, SIGABRT, SIGBUS, SIGILL, SIGFPE, SIGQUIT})
-        std::signal(sig, crashGuardHandler);
+    // crashDumpInstall writes backtrace + persistent crash file, then invokes
+    // crashGuardBeforeReraise and re-raises so the supervisor still sees rc=139.
+    crashDumpInstall(crashGuardBeforeReraise);
 }
 
 void FpgaSpi::setErr(std::string msg) {
