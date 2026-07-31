@@ -182,6 +182,9 @@ LIVE_EXE=/media/fat/misterplex_v2/bin/misterplexd
 LIVE_MD5=edc3a46b9d1c6b86337deb90f896eb0f
 LIVE_CONF=/media/fat/misterplex_v2/misterplex.conf
 LIVE_ROOT=/media/fat/misterplex_v2
+PLXS_MAGIC=0x504C5853
+PLXS_SEQ=10
+PLXS_SEQ2=11
 BLOB
 printf '%s\n' "$v1_hook" >"$WORK/bad.hook"
 printf '%s\n' "# inert" >"$WORK/inert.decoy"

@@ -348,9 +348,40 @@ verify_live() {
         echo "FAIL live-conf-profile"
         rc=3
       fi
-    elif [ "${PROMOTE_REQUIRE_CONF_KEYS:-1}" = "1" ] && [ "${PROMOTE_CONF_PROFILE:-ddr}" = "ddr" ]; then
-      echo "NOTE conf-keys not injected — parent must verify DDR_YUV_FORCE_SCALE=1 FFMPEG_SWS_FLAGS=fast_bilinear on device"
-      echo "     (set PROMOTE_CONF_BLOB or PROMOTE_CONF_PATH for hard gate)"
+    elif [ "${PROMOTE_REQUIRE_CONF_KEYS:-1}" = "1" ]; then
+      # Hard default: a key named REQUIRE must not soft-NOTE. Parent 2026-07-31:
+      # green run never gated DDR_YUV_FORCE_SCALE / FFMPEG_SWS_FLAGS.
+      conf_body=""
+      if [ -n "${PROMOTE_CONF_BLOB:-}" ] || [ -n "${PROMOTE_CONF_PATH:-}" ]; then
+        :
+      elif [ -z "${PROMOTE_GATE_BLOB:-}" ]; then
+        set +e
+        conf_body=$(run_ssh "if [ -f $(printf '%q' "$conf") ]; then cat $(printf '%q' "$conf"); else echo MISSING; fi")
+        crc=$?
+        set -e
+        if [ "$crc" -eq 5 ]; then echo "true rc=5"; return 5; fi
+        if [ -z "$conf_body" ] || [ "$conf_body" = "MISSING" ]; then
+          echo "FAIL conf-keys cannot read live conf path=$conf"
+          rc=3
+        else
+          conf_tmp="$ROOT/build/promote-live-conf.$$.txt"
+          mkdir -p "$(dirname "$conf_tmp")"
+          printf '%s
+' "$conf_body" >"$conf_tmp"
+          set +e
+          pair_policy_check_conf "${PROMOTE_CONF_PROFILE:-ddr}" "$conf_tmp"
+          crc=$?
+          set -e
+          rm -f "$conf_tmp"
+          if [ "$crc" -ne 0 ]; then
+            echo "FAIL live-conf-profile (keys required)"
+            rc=3
+          fi
+        fi
+      else
+        echo "FAIL conf-keys not injected (PROMOTE_REQUIRE_CONF_KEYS=1; set PROMOTE_CONF_BLOB)"
+        rc=3
+      fi
     fi
   fi
 
@@ -380,6 +411,104 @@ verify_live() {
       rc=3
     else
       echo "OK live-pair-compatibility"
+    fi
+  fi
+
+  # Running bitstream proof: PLXS mailbox magic (only ddr_frame_store publishes).
+  # Parent: RBF md5 + daemon md5 pass while CORENAME=MENU. Disk ≠ executing core.
+  # FpgaSpi::readOsdMailbox requires magic + mbox_seq advance; gate requires magic
+  # at product phys (and optional seq delta when two samples available).
+  if [ "${PROMOTE_SKIP_PLXS:-0}" != "1" ]; then
+    plxs="${PROMOTE_PLXS_MAGIC:-}"
+    plxs2="${PROMOTE_PLXS_MAGIC2:-}"
+    seq1="${PROMOTE_PLXS_SEQ:-}"
+    seq2="${PROMOTE_PLXS_SEQ2:-}"
+    if [ -z "$plxs" ] && [ -n "$blob" ]; then
+      plxs=$(gate_field "$blob" PLXS_MAGIC)
+      plxs2=$(gate_field "$blob" PLXS_MAGIC2)
+      seq1=$(gate_field "$blob" PLXS_SEQ)
+      seq2=$(gate_field "$blob" PLXS_SEQ2)
+    fi
+    if [ -z "$plxs" ] && [ -z "${PROMOTE_GATE_BLOB:-}" ]; then
+      set +e
+      plxs_blob=$(run_ssh "$(cat <<'REMOTE'
+set +e
+# Product DDR layout (480p bank geometry): PLXS at 0x300FF100
+# Also probe 0x3007F100 (320x240-era) for older pins.
+read_u32() {
+  addr="$1"
+  if command -v devmem >/dev/null 2>&1; then
+    devmem "$addr" 32 2>/dev/null || echo MISSING
+  elif [ -r /dev/mem ]; then
+    # best-effort hexdump
+    echo MISSING
+  else
+    echo MISSING
+  fi
+}
+m1=$(read_u32 0x300FF100)
+m1b=$(read_u32 0x300FF104)
+sleep 0.05
+m2=$(read_u32 0x300FF100)
+m2b=$(read_u32 0x300FF104)
+echo "PLXS_MAGIC=$m1"
+echo "PLXS_HI=$m1b"
+echo "PLXS_MAGIC2=$m2"
+echo "PLXS_HI2=$m2b"
+m3=$(read_u32 0x3007F100)
+echo "PLXS_MAGIC_ALT=$m3"
+REMOTE
+)")
+      prc=$?
+      set -e
+      if [ "$prc" -eq 5 ]; then echo "true rc=5"; return 5; fi
+      plxs=$(gate_field "$plxs_blob" PLXS_MAGIC)
+      plxs2=$(gate_field "$plxs_blob" PLXS_MAGIC2)
+      hi1=$(gate_field "$plxs_blob" PLXS_HI)
+      hi2=$(gate_field "$plxs_blob" PLXS_HI2)
+      alt=$(gate_field "$plxs_blob" PLXS_MAGIC_ALT)
+      printf '%s\n' "$plxs_blob" | sed 's/^/  [plxs] /'
+      # seq in upper 16 of hi word (fpga_spi readOsdMailbox)
+      if [ -n "$hi1" ] && [ "$hi1" != "MISSING" ]; then
+        _h=${hi1#0x}; _h=${_h#0X}
+        seq1=$(( 16#${_h} >> 16 & 65535 )) || seq1=""
+      fi
+      if [ -n "$hi2" ] && [ "$hi2" != "MISSING" ]; then
+        _h=${hi2#0x}; _h=${_h#0X}
+        seq2=$(( 16#${_h} >> 16 & 65535 )) || seq2=""
+      fi
+      if [ -z "$plxs" ] || [ "$plxs" = "MISSING" ] || [ "$plxs" = "0x00000000" ] || [ "$plxs" = "0x0" ]; then
+        if [ -n "$alt" ] && [ "$alt" != "MISSING" ]; then plxs="$alt"; fi
+      fi
+    fi
+    # Normalize
+    plxs_n=$(printf '%s' "$plxs" | tr 'A-F' 'a-f')
+    want_plxs="0x504c5853"
+    if [ -z "$plxs" ] || [ "$plxs" = "MISSING" ]; then
+      if [ "${PROMOTE_REQUIRE_PLXS:-1}" = "1" ]; then
+        echo "FAIL PLXS mailbox unread (cannot prove executing bitstream is Plex ddr_frame_store)"
+        echo "     inject PROMOTE_PLXS_MAGIC=0x504C5853 for unit tests; live uses devmem 0x300FF100"
+        rc=3
+      else
+        echo "NOTE PLXS not checked (PROMOTE_REQUIRE_PLXS=0)"
+      fi
+    else
+      case "$plxs_n" in
+        0x504c5853|504c5853) echo "OK PLXS_MAGIC=$plxs (executing core publishes ddr mailbox)" ;;
+        *)
+          echo "FAIL PLXS_MAGIC got=$plxs want=0x504C5853 (MENU/other core or stale/absent mailbox)"
+          rc=3
+          ;;
+      esac
+      if [ -n "$seq1" ] && [ -n "$seq2" ] && [ "$seq1" = "$seq2" ]; then
+        echo "NOTE PLXS_SEQ unchanged across samples seq=$seq1 (stale leftover possible; prefer seq advance)"
+        if [ "${PROMOTE_REQUIRE_PLXS_SEQ_ADVANCE:-0}" = "1" ]; then
+          echo "FAIL PLXS_SEQ did not advance"
+          rc=3
+        fi
+      elif [ -n "$seq1" ] && [ -n "$seq2" ] && [ "$seq1" != "$seq2" ]; then
+        echo "OK PLXS_SEQ advanced $seq1 -> $seq2"
+      fi
     fi
   fi
 
@@ -514,26 +643,48 @@ verify_live() {
     fi
   fi
 
-  # Visual is HARD for claim success and ALWAYS RUNS (aggregate, never fail-fast-skip).
-  # Parent 2026-07-31: skipping visual because an earlier check failed loses the only
-  # evidence that can confirm the running bitstream (CORENAME is always "Plex").
-  # Prefer PROMOTE_VISUAL_CMD; else idle PNG; else PROMOTE_MOTION_CMD / capture dir.
-  # motion rc=77 UNSCORED is HARD FAIL (never soft).
+  # Visual ALWAYS RUNS (aggregate). Parent 2026-07-31:
+  # 1) auto-idle elif hid motion — motion unreachable when grabber present (backwards).
+  # 2) idle luma envelope passed MiSTer MENU while CORENAME=MENU / Plex not loaded.
+  # Require positive chevron idle AND motion when grabber present (or both injected).
   vrc=8
   prior_rc=$rc
   motion_cmd="${PROMOTE_MOTION_CMD:-}"
   if [ -z "$motion_cmd" ] && [ -n "${PROMOTE_MOTION_CAPTURE_DIR:-}" ]; then
     motion_cmd="python3 $(printf '%q' "$ROOT/tools/hdmi_motion_instrument.py") $(printf '%q' "$PROMOTE_MOTION_CAPTURE_DIR")"
   fi
-  # Idle visual owns HDMI capture (warm-up baked into hdmi_capture_idle.sh).
-  # Parent 2026-07-31: recipe with -frames:v 1 alone → false RED (uniform 7,7,7).
-  # Auto-capture when /dev/video0 exists so verify-live needs no human warm-up lore.
   hdmi_dev="${HDMI_DEV:-/dev/video0}"
-  auto_idle=0
+  auto_cap=0
   if [ "${PROMOTE_AUTO_CAPTURE:-1}" = "1" ] && [ -z "${PROMOTE_GATE_BLOB:-}" ]; then
-    # Never auto-open the grabber during injected unit blobs.
-    if [ -e "$hdmi_dev" ]; then auto_idle=1; fi
+    if [ -e "$hdmi_dev" ]; then auto_cap=1; fi
   fi
+
+  run_idle_visual() {
+    set +e
+    "$ROOT/scripts/pair_visual_gate.sh" idle
+    local irc=$?
+    set -e
+    echo "visual_idle true rc=$irc"
+    return "$irc"
+  }
+  run_motion_visual() {
+    set +e
+    # shellcheck disable=SC2086
+    eval $motion_cmd
+    local mrc=$?
+    set -e
+    echo "motion_hook true rc=$mrc cmd=$motion_cmd"
+    if [ "$mrc" -eq 77 ]; then
+      echo "FAIL motion UNSCORED rc=77 is HARD FAIL for promotion (not inconclusive)"
+      return 8
+    fi
+    if [ "$mrc" -ne 0 ]; then
+      echo "FAIL motion instrument hard fail rc=$mrc (0=OK 1=FREEZE 2=COLOR_FAIL)"
+      return 8
+    fi
+    return 0
+  }
+
   if [ -n "${PROMOTE_VISUAL_CMD:-}" ]; then
     set +e
     # shellcheck disable=SC2086
@@ -541,38 +692,71 @@ verify_live() {
     vrc=$?
     set -e
     echo "visual_hook true rc=$vrc"
-  elif [ -n "${PAIR_IDLE_PNG:-}" ] || [ -n "${PAIR_CAPTURE_CMD:-}" ]        || [ "${PROMOTE_VISUAL_IDLE:-0}" = "1" ] || [ "$auto_idle" = "1" ]; then
-    if [ "$auto_idle" = "1" ] && [ -z "${PAIR_IDLE_PNG:-}" ] && [ -z "${PAIR_CAPTURE_CMD:-}" ]; then
-      echo "visual_idle: auto-capture via scripts/hdmi_capture_idle.sh (warm-up baked in)"
-    fi
-    set +e
-    "$ROOT/scripts/pair_visual_gate.sh" idle
-    vrc=$?
-    set -e
-    echo "visual_idle true rc=$vrc"
-  elif [ -n "$motion_cmd" ]; then
-    set +e
-    # shellcheck disable=SC2086
-    eval $motion_cmd
-    vrc=$?
-    set -e
-    echo "motion_hook true rc=$vrc cmd=$motion_cmd"
-    if [ "$vrc" -eq 77 ]; then
-      echo "FAIL motion UNSCORED rc=77 is HARD FAIL for promotion (not inconclusive)"
-      echo "     (parent: broken green burst once reported VERDICT=UNSCORED despite GREEN_CAST_FAIL)"
-      vrc=8
-    elif [ "$vrc" -ne 0 ]; then
-      echo "FAIL motion instrument hard fail rc=$vrc (0=OK 1=FREEZE 2=COLOR_FAIL)"
-      vrc=8
-    fi
   else
-    echo "VISUAL_REQUIRED: unset PROMOTE_VISUAL_CMD / PAIR_IDLE_PNG / PROMOTE_MOTION_CMD / PROMOTE_MOTION_CAPTURE_DIR"
-    echo "  and no HDMI device at ${hdmi_dev} for auto-capture."
-    echo "  Telemetry-only is insufficient (green screen still returns /resources 200)."
-    echo "  Blessed idle: scripts/hdmi_capture_idle.sh   # NEVER ffmpeg -frames:v 1 alone"
-    echo "  Playback:     PROMOTE_MOTION_CAPTURE_DIR=/path/to/pngs"
-    vrc=8
+    want_idle=0
+    want_motion=0
+    if [ -n "${PAIR_IDLE_PNG:-}" ] || [ -n "${PAIR_CAPTURE_CMD:-}" ] || [ "${PROMOTE_VISUAL_IDLE:-0}" = "1" ] || [ "$auto_cap" = "1" ]; then
+      want_idle=1
+    fi
+    if [ -n "$motion_cmd" ]; then
+      want_motion=1
+    fi
+    # Motion must not lose to auto-idle. When grabber present, require BOTH unless
+    # operator explicitly allows idle-only (incomplete promote).
+    if [ "$auto_cap" = "1" ]; then
+      want_idle=1
+      if [ "${PROMOTE_ALLOW_IDLE_ONLY:-0}" != "1" ]; then
+        want_motion=1
+      fi
+    fi
+    # Unit inject: if only motion_cmd set, run motion; if only idle, idle.
+    # If both flags set, run both and require both pass.
+    irc=0
+    mrc=0
+    ran=0
+    if [ "$want_idle" = "1" ]; then
+      if [ "$auto_cap" = "1" ] && [ -z "${PAIR_IDLE_PNG:-}" ] && [ -z "${PAIR_CAPTURE_CMD:-}" ]; then
+        echo "visual_idle: auto-capture via scripts/hdmi_capture_idle.sh (warm-up baked in)"
+      fi
+      set +e
+      run_idle_visual
+      irc=$?
+      set -e
+      ran=1
+    fi
+    if [ "$want_motion" = "1" ]; then
+      if [ -z "$motion_cmd" ]; then
+        echo "FAIL motion observation required when grabber present (set PROMOTE_MOTION_CAPTURE_DIR or PROMOTE_MOTION_CMD)"
+        echo "     idle-only is not a promotion gate (parent: PROMOTE_GATES_OK never saw playback)"
+        mrc=8
+      else
+        set +e
+        run_motion_visual
+        mrc=$?
+        set -e
+      fi
+      ran=1
+    fi
+    if [ "$ran" -eq 0 ]; then
+      echo "VISUAL_REQUIRED: need idle chevron ID and/or motion observation"
+      echo "  Idle:   PAIR_IDLE_PNG=... or auto /dev/video0 via hdmi_capture_idle.sh"
+      echo "  Motion: PROMOTE_MOTION_CAPTURE_DIR=... (beats idle-only; required with grabber)"
+      vrc=8
+    elif [ "$want_idle" = "1" ] && [ "$want_motion" = "1" ]; then
+      if [ "$irc" -eq 0 ] && [ "$mrc" -eq 0 ]; then
+        echo "OK visual-idle+motion (both observed)"
+        vrc=0
+      else
+        echo "FAIL visual combined idle_rc=$irc motion_rc=$mrc (both required)"
+        vrc=8
+      fi
+    elif [ "$want_idle" = "1" ]; then
+      vrc=$irc
+    else
+      vrc=$mrc
+    fi
   fi
+
   if [ "$vrc" -eq 0 ]; then
     echo "OK visual-or-motion-gate"
     if [ "$prior_rc" -ne 0 ]; then

@@ -4,10 +4,11 @@
 # Telemetry-only checks are insufficient: parent 2026-07-31 saw /resources=200 +
 # n_daemon=1 + correct core md5 on a SOLID GREEN mixed-pair screen.
 #
-# Good idle (orange Plex chevron): mean luma ~38.5, std ~18
-# Broken mixed pair (uniform green): mean luma ~128.4
-# Grabber cold frame (NOT a device fault): uniform grey mean≈7 std=0
-#   Parent recipe with -frames:v 1 produced false RED; warm-up fixes it.
+# POSITIVE ID of Plex idle chevron (amber logo structure) — NOT a luma band.
+# Parent 2026-07-31: MiSTer MENU frame (CORENAME=MENU) scored mean=25.87 std=24.03
+# and PASSED the old envelope while Plex was NOT loaded. Envelope is insufficient.
+# Good idle: orange_frac>~0.004, centroid mid-right, mean~38–39.
+# Reject: MENU/colour-bars, magenta cast, solid green, cold grabber grey.
 #
 # Usage:
 #   scripts/pair_visual_gate.sh idle                  # auto-capture via hdmi_capture_idle.sh
@@ -27,6 +28,10 @@ source "$ROOT/scripts/pair_ship_policy.sh"
 
 MODE="${1:-idle}"
 PNG="${2:-${PAIR_IDLE_PNG:-}}"
+# 1 if caller supplied a fixed PNG (fixture/injection). Do not replace with live HDMI
+# unless PAIR_CAPTURE_CMD or PAIR_VISUAL_ALLOW_HDMI_RETRY=1 is set.
+PNG_INJECTED=0
+if [ -n "${PAIR_IDLE_PNG:-}" ] || [ -n "${2:-}" ]; then PNG_INJECTED=1; fi
 OUT_DIR="${PAIR_VISUAL_OUT_DIR:-$ROOT/build/pair-visual}"
 mkdir -p "$OUT_DIR"
 CAPTURE_HELPER="$ROOT/scripts/hdmi_capture_idle.sh"
@@ -51,6 +56,11 @@ run_blessed_capture() {
 }
 
 can_capture() {
+  # Injected fixture PNG: never pull live HDMI unless explicitly allowed.
+  if [ "${PNG_INJECTED:-0}" = "1" ] && [ -z "${PAIR_CAPTURE_CMD:-}" ] \
+     && [ "${PAIR_VISUAL_ALLOW_HDMI_RETRY:-0}" != "1" ]; then
+    return 1
+  fi
   if [ "${PAIR_VISUAL_NO_RECAPTURE:-0}" = "1" ]; then
     return 1
   fi
@@ -107,7 +117,9 @@ except ImportError:
     print("CLASS=need_pil")
     sys.exit(9)
 im = Image.open(path).convert("RGB")
-im = im.resize((320, 180))
+# Work at modest resolution for speed; identity uses structure not full-res.
+w, h = 160, 90
+im = im.resize((w, h), Image.Resampling.BILINEAR)
 px = list(im.getdata())
 n = len(px)
 if n == 0:
@@ -118,7 +130,12 @@ sY = sR = sG = sB = 0.0
 sY2 = 0.0
 mn_c = 255
 mx_c = 0
-for r, g, b in px:
+orange_n = 0
+magenta_n = 0
+green_n = 0
+orange_xs = 0.0
+orange_ys = 0.0
+for i, (r, g, b) in enumerate(px):
     y = 0.299 * r + 0.587 * g + 0.114 * b
     sY += y
     sY2 += y * y
@@ -131,29 +148,56 @@ for r, g, b in px:
         mn_c = lo
     if hi > mx_c:
         mx_c = hi
+    # Plex idle chevron: amber/orange body (parent measured mean~38–39 with orange logo)
+    if r >= 140 and r > g + 25 and r > b + 25 and g >= 50 and b < r - 10:
+        orange_n += 1
+        orange_xs += (i % w)
+        orange_ys += (i // w)
+    # Magenta/pink cast (desync class): R and B high, G depressed
+    if r >= 100 and b >= 100 and g < min(r, b) - 25:
+        magenta_n += 1
+    if g > r + 25 and g > b + 25 and g >= 80:
+        green_n += 1
 mean = sY / n
 var = max(0.0, sY2 / n - mean * mean)
 std = var ** 0.5
 mean_r, mean_g, mean_b = sR / n, sG / n, sB / n
 chan_spread = max(mean_r, mean_g, mean_b) - min(mean_r, mean_g, mean_b)
-mn = float(os.environ.get("PAIR_IDLE_MEAN_MIN") or "15")
-mx = float(os.environ.get("PAIR_IDLE_MEAN_MAX") or "70")
-g_reject = float(os.environ.get("PAIR_IDLE_GREEN_MEAN_REJECT") or "100")
+orange_frac = orange_n / n
+magenta_frac = magenta_n / n
+green_frac = green_n / n
+orange_cx = (orange_xs / orange_n / w) if orange_n else -1.0
+orange_cy = (orange_ys / orange_n / h) if orange_n else -1.0
 print(f"mean_luma={mean:.2f}")
 print(f"std_luma={std:.2f}")
 print(f"mean_rgb={mean_r:.1f},{mean_g:.1f},{mean_b:.1f}")
 print(f"minmax_rgb={mn_c},{mx_c}")
+print(f"orange_frac={orange_frac:.5f}")
+print(f"magenta_frac={magenta_frac:.5f}")
+print(f"green_frac={green_frac:.5f}")
+print(f"orange_cx={orange_cx:.3f}")
+print(f"orange_cy={orange_cy:.3f}")
 print(f"path={path}")
 
-# Flatness is luma-std only. Do NOT require minmax_rgb<=2: a uniform
-# (40,38,36) field has std_luma=0 but channel span 4 (parent false-pass class).
 is_flat = std < 2.0
 is_greyish = chan_spread < 8.0
 is_greenish = mean_g > mean_r + 15 and mean_g > mean_b + 15
+is_magentaish = (
+    magenta_frac >= 0.15
+    or (mean_r >= 80 and mean_b >= 80 and mean_g < min(mean_r, mean_b) - 20)
+    or (is_flat and mean_r >= 80 and mean_b >= 80 and mean_g < 40)
+)
 
+# --- ordered rejects (positive ID last) ---
 if is_flat and is_greenish and mean >= 40:
     print("FAIL class=solid_green_screen")
     print("CLASS=solid_green_screen")
+    sys.exit(8)
+
+# Magenta before uniform/grey so solid magenta is not misfiled as uniform_frame
+if is_magentaish:
+    print("FAIL class=magenta_cast (not Plex idle chevron)")
+    print("CLASS=magenta_cast")
     sys.exit(8)
 
 if is_flat and is_greyish:
@@ -171,7 +215,7 @@ if is_flat:
     print("CLASS=uniform_frame")
     sys.exit(8)
 
-if mean >= g_reject and std < 25.0 and mean_g > mean_r + 15 and mean_g > mean_b + 15:
+if mean >= 100 and std < 25.0 and mean_g > mean_r + 15 and mean_g > mean_b + 15:
     print("FAIL class=solid_green_screen")
     print("CLASS=solid_green_screen")
     sys.exit(8)
@@ -179,8 +223,40 @@ if mean_g > mean_r + 40 and mean_g > mean_b + 40 and mean >= 90:
     print("FAIL class=green_cast_idle")
     print("CLASS=green_cast_idle")
     sys.exit(8)
+
+# POSITIVE ID: amber Plex chevron structure (not a luma band).
+# Parent proved MiSTer MENU (CORENAME=MENU, colour bars) scores mean~25.9 std~24
+# inside the old [15,70] envelope with orange_frac=0 — must REJECT.
+# Real chevron (idle_warm): orange_frac~0.017, centroid mid-right.
+o_min = float(os.environ.get("PAIR_IDLE_ORANGE_FRAC_MIN") or "0.004")
+o_max = float(os.environ.get("PAIR_IDLE_ORANGE_FRAC_MAX") or "0.12")
+if orange_frac < o_min:
+    print(
+        "FAIL class=not_plex_idle_chevron orange_frac=%.5f want>=%.4f "
+        "(MENU/colour-bar/other non-Plex screens can pass a luma envelope — rejected)"
+        % (orange_frac, o_min)
+    )
+    print("CLASS=not_plex_idle_chevron")
+    sys.exit(8)
+if orange_frac > o_max:
+    print("FAIL class=orange_frac_too_high orange_frac=%.5f" % orange_frac)
+    print("CLASS=orange_frac_too_high")
+    sys.exit(8)
+# Chevron sits roughly mid-frame, not a thin edge glitch
+if not (0.25 <= orange_cy <= 0.80 and 0.35 <= orange_cx <= 0.95):
+    print(
+        "FAIL class=orange_centroid_out_of_range cx=%.3f cy=%.3f "
+        "(expected Plex chevron body, not scatter)"
+        % (orange_cx, orange_cy)
+    )
+    print("CLASS=orange_centroid_out_of_range")
+    sys.exit(8)
+
+# Soft luma sanity AFTER identity (not the primary gate)
+mn = float(os.environ.get("PAIR_IDLE_MEAN_MIN") or "12")
+mx = float(os.environ.get("PAIR_IDLE_MEAN_MAX") or "80")
 if mean < mn or mean > mx:
-    print(f"FAIL class=idle_mean_out_of_range want=[{mn},{mx}]")
+    print(f"FAIL class=idle_mean_out_of_range want=[{mn},{mx}] (after chevron id)")
     print("CLASS=idle_mean_out_of_range")
     sys.exit(8)
 if mean < 5.0 and std < 8.0:
@@ -188,9 +264,10 @@ if mean < 5.0 and std < 8.0:
     print("CLASS=black_screen")
     sys.exit(8)
 
-print("OK class=idle_envelope")
-print("CLASS=idle_envelope")
+print("OK class=plex_idle_chevron")
+print("CLASS=plex_idle_chevron")
 sys.exit(0)
+
 PY
 }
 

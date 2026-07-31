@@ -227,43 +227,51 @@ device verdict; thresholds are never loosened.
 
 #### Single command (preferred — no warm-up lore)
 
+When `/dev/video0` is free the gate **requires BOTH** positive Plex idle
+chevron ID **and** motion (`PROMOTE_MOTION_CAPTURE_DIR` or
+`PROMOTE_MOTION_CMD`). Idle-only is incomplete (`PROMOTE_ALLOW_IDLE_ONLY=1`
+escape only). Conf keys and PLXS mailbox magic are hard-required.
+
 ```bash
-# Host has /dev/video0 free; device already on coherent DDR pair + v2 boot hook.
-scripts/promotion_gate_check.sh verify-live
+# Host has /dev/video0 free; device on coherent DDR pair + real S99user hook.
+# Parent: cast a short TREK24 (or feed motion burst dir) so motion can score.
+PROMOTE_MOTION_CAPTURE_DIR=/path/to/png-burst \
+  scripts/promotion_gate_check.sh verify-live
 echo "true rc=$?"
-# expect: auto-capture via hdmi_capture_idle.sh (warm-up baked in)
-# expect: OK product-core / OK v2-rollback-core / OK n_daemon=1
-# expect: OK live-exe-md5 edc3a46b… / OK boot-hook / PAIR_OK bank1=0x30080000
-# expect: OK class=idle_envelope  (NOT grabber_not_ready_exhausted)
-# expect: PROMOTE_GATES_OK
-# expect: true rc=0
-# judge pixels yourself: amber chevron on dark grey — gate cannot replace eyes
-# ABORT if true rc≠0 OR pixels wrong
+# expect: OK product-core c5382bee… / OK v2-rollback-core dfebf2bf…
+# expect: OK live-exe-md5 edc3a46b… (from readlink -f /proc/PID/exe)
+# expect: OK conf-profile=ddr (DDR_YUV_FORCE_SCALE + FFMPEG_SWS_FLAGS)
+# expect: OK PLXS_MAGIC=0x504C5853 (executing ddr_frame_store mailbox)
+# expect: OK boot-hook-path-from-init USER_SCRIPT=.../user-startup.sh
+# expect: OK class=plex_idle_chevron  (MENU/magenta/green → rc=8)
+# expect: OK visual-idle+motion (both observed)
+# expect: PROMOTE_GATES_OK / true rc=0
+# ABORT if true rc≠0 OR viewed pixels wrong
 ```
 
-Optional explicit capture (same helper the gate uses):
+Idle-only (incomplete — not a full promote claim):
+
+```bash
+PROMOTE_ALLOW_IDLE_ONLY=1 scripts/promotion_gate_check.sh verify-live
+echo "true rc=$?"
+```
+
+Optional explicit idle capture (same helper the gate uses):
 
 ```bash
 scripts/hdmi_capture_idle.sh build/pair-visual/idle.png
 echo "true rc=$?"   # expect 0
 PAIR_IDLE_PNG=$PWD/build/pair-visual/idle.png \
+  PROMOTE_MOTION_CAPTURE_DIR=/path/to/png-burst \
   scripts/promotion_gate_check.sh verify-live
 echo "true rc=$?"
 ```
 
-```bash
-# Playback (240p or 480p burst dir — motion instrument already skips warm-up frames):
-PROMOTE_MOTION_CAPTURE_DIR=/path/to/png-burst \
-  scripts/promotion_gate_check.sh verify-live
-echo "true rc=$?"
-# expect motion instrument: VERDICT=MOTION_OK true rc=0 → gate true rc=0
-# HARD FAIL: rc=1 FREEZE, rc=2 COLOR_FAIL, rc=77 UNSCORED → gate true rc=8
-```
-
-**Honesty:** until w-fit-1 core-identity register exists, on-disk RBF md5 +
-`/tmp/CORENAME=Plex` cannot prove the *running* bitstream. **Viewed pixels
-are the claim.** `video_regression.sh` still cannot see mixed DDR-daemon+SPI-core
-as broken (w-lint/w-fit-1); do not treat it as promotion safety alone.
+**Honesty:** disk RBF md5 alone cannot prove the *running* bitstream (parent
+captured MENU colour bars while gate still saw product md5). Gate now requires
+**PLXS** magic at `0x300FF100` (only `ddr_frame_store` publishes) plus positive
+idle chevron structure (rejects MENU fixture) plus motion. Still **view the
+pixels** — gate cannot replace eyes.
 
 ### 7) Atomic SPI rollback (if promote wrong)
 
@@ -535,10 +543,10 @@ If SSH is dead: serial console / physical SD — restore
 ### Gate that would have caught the session-long defect
 
 ```bash
-# FAILS when hook root != live daemon root
-PROMOTE_HOOK_BLOB=<(ssh root@$HOST cat /media/fat/linux/_user-startup.sh) \
-  scripts/promotion_gate_check.sh verify-live
-# or after pair restore: verify includes boot-hook gate automatically
+# Path MUST come from S99user (not the _user-startup.sh decoy).
+# FAILS when REAL hook root != live daemon root
+scripts/promotion_gate_check.sh verify-live
+echo "true rc=$?"
 ```
 
 ## Same-family audit (unstated preconditions)
@@ -549,7 +557,9 @@ PROMOTE_HOOK_BLOB=<(ssh root@$HOST cat /media/fat/linux/_user-startup.sh) \
 | HDMI idle frame usable | human must know `-frames:v 1` is wrong | `hdmi_capture_idle.sh` warm-up + `GRABBER_NOT_READY` retry |
 | Motion burst not cold | easy to feed 1 junk frame | `hdmi_motion_instrument.py` DEFAULT_WARMUP_SKIP=15 already |
 | `/dev/video0` exclusive | busy → mysterious fail | helper runs `fuser` and fails with holders |
-| Visual optional | skip → false green | unset visual → hard rc=8; always-run aggregate |
+| Visual optional / idle-only | auto-idle hid motion; MENU passed luma band | dual idle+motion; `plex_idle_chevron` positive ID; MENU fixture rc=8 |
+| Conf keys REQUIRE | soft NOTE when unset | hard FAIL (`PROMOTE_REQUIRE_CONF_KEYS=1` default) |
+| Executing bitstream | disk RBF md5 only | PLXS magic `0x504C5853` at `0x300FF100` |
 | Conf path | assume misterplex/ | resolve from `/proc/pid/cmdline --conf` |
 | n_daemon | cmdline substring | `/proc/pid/exe` basename only |
 
@@ -594,6 +604,9 @@ echo "true rc=$?"
 | Live daemon binary | on-disk path | `readlink -f /proc/PID/exe` md5 | `pair_live_probe.inc.sh` |
 | Live conf | assumed `misterplex.conf` | `/proc/PID/cmdline --conf` | same |
 | n_daemon | cmdline substring | exe basename `misterplexd` only | same |
-| Product core loaded | `/tmp/CORENAME` / disk md5 | still **UNVERIFIED** bitstream (w-fit-1); visual required | gate honesty |
+| Product core loaded | `/tmp/CORENAME` / disk md5 | PLXS mailbox magic (+ optional seq advance); MENU frame rejected by chevron ID | `promotion_gate_check.sh`, `pair_visual_gate.sh` |
+| Idle identity | luma band [15,70] (passed MENU) | amber chevron structure `plex_idle_chevron` | `pair_visual_gate.sh` |
 | HDMI frame | parent `-frames:v 1` recipe | `hdmi_capture_idle.sh` warm-up | `pair_visual_gate.sh` |
+| Conf keys | soft NOTE | hard fail closed | `promotion_gate_check.sh` |
+| Motion vs idle order | auto-idle elif hid motion | both required when grabber present | `promotion_gate_check.sh` |
 

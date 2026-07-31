@@ -135,6 +135,9 @@ LIVE_EXE=/media/fat/misterplex_v2/bin/misterplexd
 LIVE_MD5=$EDC_LIVE
 LIVE_CONF=/media/fat/misterplex_v2/misterplex.conf
 LIVE_ROOT=/media/fat/misterplex_v2
+PLXS_MAGIC=0x504C5853
+PLXS_SEQ=10
+PLXS_SEQ2=11
 BLOB
 cat >"$WORK/conf_ddr.txt" <<'CONF'
 DECODE=320x240
@@ -154,6 +157,8 @@ set +e
 out=$(
   PROMOTE_GATE_BLOB="$WORK/live_ok.blob" \
   PROMOTE_HTTP="$WORK/fake_http.sh" \
+  PROMOTE_CONF_BLOB="$WORK/conf_ddr.txt" \
+  PROMOTE_CONF_PROFILE=ddr \
   env -u PROMOTE_VISUAL_CMD -u PROMOTE_MOTION_CMD -u PAIR_IDLE_PNG \
   "$GATES" verify-live 2>&1
 )
@@ -221,6 +226,8 @@ out=$(
   PROMOTE_GATE_BLOB="$WORK/live_dual.blob" \
   PROMOTE_HTTP="$WORK/fake_http.sh" \
   PROMOTE_VISUAL_CMD="$WORK/visual_ok.sh" \
+  PROMOTE_CONF_BLOB="$WORK/conf_ddr.txt" \
+  PROMOTE_CONF_PROFILE=ddr \
   "$GATES" verify-live 2>&1
 )
 rc=$?
@@ -253,6 +260,8 @@ out=$(
   PROMOTE_GATE_BLOB="$WORK/live_nov2.blob" \
   PROMOTE_HTTP="$WORK/fake_http.sh" \
   PROMOTE_VISUAL_CMD="$WORK/visual_ok.sh" \
+  PROMOTE_CONF_BLOB="$WORK/conf_ddr.txt" \
+  PROMOTE_CONF_PROFILE=ddr \
   "$GATES" verify-live 2>&1
 )
 rc=$?
@@ -275,6 +284,9 @@ LIVE_EXE=/media/fat/misterplex_v2/bin/misterplexd
 LIVE_MD5=e9f79de217982aff44207664fdb945c5
 LIVE_CONF=/media/fat/misterplex_v2/misterplex.conf
 LIVE_ROOT=/media/fat/misterplex_v2
+PLXS_MAGIC=0x504C5853
+PLXS_SEQ=10
+PLXS_SEQ2=11
 BLOB
 set +e
 out=$(
@@ -283,6 +295,8 @@ out=$(
   PROMOTE_VISUAL_CMD="$WORK/visual_ok.sh" \
   PROMOTE_EXPECT_CORE_MD5=dfebf2bfd08dd70b473b587dd7e81848 \
   PROMOTE_EXPECT_DAEMON_MD5=e9f79de217982aff44207664fdb945c5 \
+  PROMOTE_CONF_BLOB="$WORK/conf_ddr.txt" \
+  PROMOTE_CONF_PROFILE=ddr \
   "$GATES" verify-live 2>&1
 )
 rc=$?
@@ -336,6 +350,8 @@ set +e
 out=$(
   PROMOTE_GATE_BLOB="$WORK/live_ok.blob" \
   PROMOTE_HTTP="$WORK/fake_http.sh" \
+  PROMOTE_CONF_BLOB="$WORK/conf_ddr.txt" \
+  PROMOTE_CONF_PROFILE=ddr \
   env -u PROMOTE_VISUAL_CMD -u PAIR_IDLE_PNG \
   PROMOTE_MOTION_CMD="$WORK/motion77.sh" \
   "$GATES" verify-live 2>&1
@@ -359,6 +375,8 @@ set +e
 out=$(
   PROMOTE_GATE_BLOB="$WORK/live_ok.blob" \
   PROMOTE_HTTP="$WORK/fake_http.sh" \
+  PROMOTE_CONF_BLOB="$WORK/conf_ddr.txt" \
+  PROMOTE_CONF_PROFILE=ddr \
   env -u PROMOTE_VISUAL_CMD -u PAIR_IDLE_PNG \
   PROMOTE_MOTION_CMD="$WORK/motion0.sh" \
   "$GATES" verify-live 2>&1
@@ -379,6 +397,8 @@ set +e
 out=$(
   PROMOTE_GATE_BLOB="$WORK/live_ok.blob" \
   PROMOTE_HTTP="$WORK/fake_http.sh" \
+  PROMOTE_CONF_BLOB="$WORK/conf_ddr.txt" \
+  PROMOTE_CONF_PROFILE=ddr \
   env -u PROMOTE_VISUAL_CMD -u PAIR_IDLE_PNG \
   PROMOTE_MOTION_CMD="$WORK/motion2.sh" \
   "$GATES" verify-live 2>&1
@@ -479,6 +499,9 @@ LIVE_EXE=/media/fat/misterplex_v2/bin/misterplexd
 LIVE_MD5=edc3a46b9d1c6b86337deb90f896eb0f
 LIVE_CONF=/media/fat/misterplex_v2/misterplex.conf
 LIVE_ROOT=/media/fat/misterplex_v2
+PLXS_MAGIC=0x504C5853
+PLXS_SEQ=10
+PLXS_SEQ2=11
 BLOB
 set +e
 out=$(
@@ -531,6 +554,97 @@ out=$(bash -c 'source '"$ROOT"'/scripts/pair_ship_policy.sh; pair_policy_lookup 
 echo "$out" | grep -q 'PAIR_BANK1=0x30080000' && ok "bank1-ddr-480p" || bad "bank1-ddr-480p"
 out=$(bash -c 'source '"$ROOT"'/scripts/pair_ship_policy.sh; pair_policy_check c5382bee edc3a46b')
 echo "$out" | grep -q 'bank1=0x30080000' && ok "bank1-on-pair-ok" || bad "bank1-on-pair-ok"
+
+echo "=== conf keys REQUIRED but not injected → HARD rc=3 (not NOTE) ==="
+set +e
+out=$(
+  PROMOTE_GATE_BLOB="$WORK/live_ok.blob" \
+  PROMOTE_HTTP="$WORK/fake_http.sh" \
+  PROMOTE_VISUAL_CMD="$WORK/visual_ok.sh" \
+  PROMOTE_CONF_PROFILE=ddr \
+  PROMOTE_REQUIRE_CONF_KEYS=1 \
+  env -u PROMOTE_CONF_BLOB -u PROMOTE_CONF_PATH \
+  "$GATES" verify-live 2>&1
+)
+rc=$?
+set -e
+echo "$out" | sed 's/^/  /' | grep -E 'conf|FAIL|NOTE|true rc' || true
+echo "  true rc=$rc"
+[ "$rc" -eq 3 ] && ok "conf-keys-hard-fail" || bad "conf-keys-hard-fail want 3 got $rc"
+echo "$out" | grep -qi 'NOTE conf-keys not injected' && bad "conf-must-not-soft-note" || ok "conf-no-soft-note"
+echo "$out" | grep -qi 'FAIL conf-keys' && ok "conf-fail-msg" || bad "conf-fail-msg"
+
+echo "=== PLXS wrong magic → rc=3 ==="
+sed 's/PLXS_MAGIC=0x504C5853/PLXS_MAGIC=0x00000000/' "$WORK/live_ok.blob" >"$WORK/live_noplxs.blob"
+set +e
+out=$(
+  PROMOTE_GATE_BLOB="$WORK/live_noplxs.blob" \
+  PROMOTE_HTTP="$WORK/fake_http.sh" \
+  PROMOTE_VISUAL_CMD="$WORK/visual_ok.sh" \
+  PROMOTE_CONF_BLOB="$WORK/conf_ddr.txt" \
+  PROMOTE_CONF_PROFILE=ddr \
+  "$GATES" verify-live 2>&1
+)
+rc=$?
+set -e
+echo "  true rc=$rc"
+[ "$rc" -eq 3 ] && ok "plxs-wrong-magic" || bad "plxs-wrong-magic rc=$rc"
+echo "$out" | grep -qi 'PLXS' && ok "plxs-msg" || bad "plxs-msg"
+
+echo "=== fixture MENU postboot idle → visual rc=8 (parent proved envelope false green) ==="
+set +e
+out=$(
+  PAIR_VISUAL_NO_RECAPTURE=1 \
+  PAIR_IDLE_PNG="$ROOT/tests/fixtures/promote/mister_menu_postboot.png" \
+  "$ROOT/scripts/pair_visual_gate.sh" idle 2>&1
+)
+rc=$?
+set -e
+echo "$out" | sed 's/^/  [menu] /' | tail -12
+echo "  menu true rc=$rc"
+[ "$rc" -eq 8 ] && ok "menu-fixture-reject" || bad "menu-fixture-reject rc=$rc"
+echo "$out" | grep -q 'not_plex_idle_chevron' && ok "menu-class" || bad "menu-class"
+
+echo "=== fixture solid magenta → rc=8 magenta_cast ==="
+set +e
+out=$(
+  PAIR_VISUAL_NO_RECAPTURE=1 \
+  PAIR_IDLE_PNG="$ROOT/tests/fixtures/promote/solid_magenta.png" \
+  "$ROOT/scripts/pair_visual_gate.sh" idle 2>&1
+)
+rc=$?
+set -e
+echo "  magenta true rc=$rc"
+[ "$rc" -eq 8 ] && ok "magenta-fixture-reject" || bad "magenta-fixture-reject rc=$rc"
+echo "$out" | grep -q 'magenta_cast' && ok "magenta-class" || bad "magenta-class got: $(echo "$out" | grep CLASS=)"
+
+echo "=== fixture chevron idle → rc=0 plex_idle_chevron ==="
+set +e
+out=$(
+  PAIR_VISUAL_NO_RECAPTURE=1 \
+  PAIR_IDLE_PNG="$ROOT/tests/fixtures/promote/plex_idle_chevron.png" \
+  "$ROOT/scripts/pair_visual_gate.sh" idle 2>&1
+)
+rc=$?
+set -e
+echo "  chevron true rc=$rc"
+[ "$rc" -eq 0 ] && ok "chevron-fixture-pass" || bad "chevron-fixture-pass rc=$rc"
+echo "$out" | grep -q 'plex_idle_chevron' && ok "chevron-class" || bad "chevron-class"
+
+echo "=== fixture cold grey → grabber_not_ready then rc=8 (no live HDMI) ==="
+set +e
+out=$(
+  PAIR_VISUAL_NO_RECAPTURE=1 \
+  PAIR_IDLE_PNG="$ROOT/tests/fixtures/promote/cold_grabber_grey.png" \
+  "$ROOT/scripts/pair_visual_gate.sh" idle 2>&1
+)
+rc=$?
+set -e
+echo "$out" | sed 's/^/  [coldfix] /' | tail -15
+echo "  coldfix true rc=$rc"
+[ "$rc" -eq 8 ] && ok "cold-fixture-hard" || bad "cold-fixture-hard rc=$rc"
+echo "$out" | grep -q 'grabber_not_ready' && ok "cold-class" || bad "cold-class"
+
 
 echo "=== summary pass=$pass fail=$fail ==="
 if [ "$fail" -ne 0 ]; then

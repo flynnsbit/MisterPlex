@@ -230,10 +230,11 @@ except ImportError:
     raise SystemExit(0)
 d = Path("$WORK")
 d.mkdir(parents=True, exist_ok=True)
-# Structured idle: dark field + bright orange chevron (std_luma >> 8, mean ~30-50)
-img = Image.new("RGB", (128, 128), (12, 10, 18))
+# Structured idle: dark field + small amber chevron (match real orange_frac~0.017)
+# Large synthetic chevrons trip orange_frac_too_high (>0.12) under positive ID.
+img = Image.new("RGB", (320, 240), (18, 16, 22))
 dr = ImageDraw.Draw(img)
-dr.polygon([(20, 100), (64, 20), (108, 100)], fill=(220, 110, 20))
+dr.polygon([(250, 90), (290, 120), (250, 150), (235, 120)], fill=(200, 120, 30))
 img.save(d / "idle_ok.png")
 # solid green (uniform + green cast)
 Image.new("RGB", (64, 64), (0, 180, 0)).save(d / "idle_green.png")
@@ -576,7 +577,7 @@ if [ -f "$WORK/idle_cold_grabber.png" ]; then
   echo "OK cold-grabber-class"
 fi
 
-echo "=== REGRESSION: cold→warm retry yields idle_envelope ==="
+echo "=== REGRESSION: cold→warm retry yields plex_idle_chevron ==="
 if [ -f "$WORK/idle_cold_grabber.png" ] && [ -f "$WORK/idle_ok.png" ]; then
   # Initial PNG is cold; recapture cmd returns warmed structured idle.
   cat >"$WORK/capture_warm.sh" <<'CAP'
@@ -601,7 +602,7 @@ CAP
   echo "  retry true rc=$rc"
   [ "$rc" -eq 0 ] || { echo "FAIL retry want 0 got $rc"; exit 1; }
   echo "$out" | grep -q 'GRABBER_NOT_READY' || { echo "FAIL no grabber note on retry path"; exit 1; }
-  echo "$out" | grep -q 'idle_envelope' || { echo "FAIL no idle_envelope after warm"; exit 1; }
+  echo "$out" | grep -q 'plex_idle_chevron' || { echo "FAIL no plex_idle_chevron after warm"; exit 1; }
   echo "OK cold-to-warm-retry"
 fi
 

@@ -137,6 +137,8 @@ unit-unlocked: unit-rollcall preflight $(ROOT)/build/test_cadence $(ROOT)/build/
 	$(ROOT)/tests/unit/test_rollback_honest.sh
 	$(ROOT)/tests/unit/test_deploy_misterplexd.sh
 	$(ROOT)/tests/unit/test_promotion_gates.sh
+	$(ROOT)/tests/unit/test_promotion_redteam.sh
+	$(ROOT)/tests/unit/test_boot_hook_policy.sh
 	$(ROOT)/tests/unit/test_timing_margin_gate.sh
 	$(ROOT)/tests/unit/test_release_rbf_hash.sh
 	$(ROOT)/tests/unit/test_sdram_startup_verilator.sh
