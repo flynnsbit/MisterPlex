@@ -38,8 +38,10 @@ DAEMON_PIN_V2_RELEASE_FULL=7cd10b4d438c714a9b8c4766dc982d59
 # Historical DDR daemon (pre-480p fix); still a matched pair with c5382bee but
 # NOT the primary promote target after w-geom 480p FORCE_SCALE land.
 DAEMON_PIN_DDR_E9F79DE2_FULL=e9f79de217982aff44207664fdb945c5
-# Primary live DDR daemon (parent 2026-07-31 viewed pixels + 480p MOTION_OK).
-# Full md5 measured from live /proc/<pid>/exe on device (edc3a46b9d1c…).
+# Primary live DDR daemon — prefer artifacts/validated-pair/CURRENT (pair_pin_update).
+# Parent 2026-07-31 live /proc/PID/exe prefix 865d4c8a (w-geom breadcrumb); prior edc3a46b.
+# Do NOT hand-edit per deploy; run: scripts/pair_pin_update.sh --daemon-md5 <full>
+DAEMON_PIN_DDR_CURRENT_PREFIX8=865d4c8a
 DAEMON_PIN_DDR_EDC3_PREFIX8=edc3a46b
 DAEMON_PIN_DDR_EDC3_FULL="${DAEMON_PIN_DDR_EDC3_FULL:-edc3a46b9d1c6b86337deb90f896eb0f}"
 # Back-compat alias: "candidate" == current primary DDR daemon pin.
@@ -74,7 +76,41 @@ rbf_policy_normalize_md5() {
 
 # Resolve full md5 for current DDR daemon from pin file / env / prefix.
 rbf_policy_resolve_ddr_daemon_full() {
-  local root pin m
+  local root pin m cur pfx full
+  root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+  # 1) validated-pair CURRENT (pair_pin_update) — tracks live without hand-edit.
+  cur="$root/artifacts/validated-pair/CURRENT"
+  if [ -f "$cur" ]; then
+    full=""; pfx=""
+    while IFS= read -r line || [ -n "$line" ]; do
+      case "$line" in ''|\#*) continue ;; esac
+      case "$line" in
+        DAEMON_MD5=*) full=$(rbf_policy_normalize_md5 "${line#DAEMON_MD5=}") ;;
+        DAEMON_PREFIX8=*) pfx=$(rbf_policy_normalize_md5 "${line#DAEMON_PREFIX8=}") ;;
+      esac
+    done <"$cur"
+    if [ -n "$full" ] && [ "${#full}" -ge 32 ]; then
+      printf '%s' "${full:0:32}"
+      return 0
+    fi
+    if [ -n "$pfx" ] && [ "${#pfx}" -ge 8 ]; then
+      # Prefer pin file for full hash when only prefix in CURRENT.
+      for pin in \
+        "$root/artifacts/daemon-pins/misterplexd.${pfx:0:8}" \
+        "/home/flynnsbit/Projects/MisterPlex/artifacts/daemon-pins/misterplexd.${pfx:0:8}"
+      do
+        [ -f "$pin" ] || continue
+        m=$(md5sum "$pin" | awk '{print $1}')
+        if [ "${m:0:8}" = "${pfx:0:8}" ]; then
+          printf '%s' "$m"
+          return 0
+        fi
+      done
+      printf '%s' "${pfx:0:8}"
+      return 0
+    fi
+  fi
+  # 2) env override full pins
   if [ -n "${DAEMON_PIN_DDR_EDC3_FULL:-}" ] && [ "${#DAEMON_PIN_DDR_EDC3_FULL}" -ge 32 ]; then
     printf '%s' "$(rbf_policy_normalize_md5 "$DAEMON_PIN_DDR_EDC3_FULL")"
     return 0
@@ -83,20 +119,22 @@ rbf_policy_resolve_ddr_daemon_full() {
     printf '%s' "$(rbf_policy_normalize_md5 "$DAEMON_PIN_DDR_CANDIDATE_FULL")"
     return 0
   fi
-  root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-  for pin in \
-    "$root/artifacts/daemon-pins/misterplexd.${DAEMON_PIN_DDR_EDC3_PREFIX8}" \
-    "/home/flynnsbit/Projects/MisterPlex/artifacts/daemon-pins/misterplexd.${DAEMON_PIN_DDR_EDC3_PREFIX8}"
-  do
-    [ -f "$pin" ] || continue
-    m=$(md5sum "$pin" | awk '{print $1}')
-    if [ "${m:0:8}" = "$DAEMON_PIN_DDR_EDC3_PREFIX8" ]; then
-      printf '%s' "$m"
-      return 0
-    fi
+  # 3) pin files for CURRENT prefix then edc3 hist
+  for pfx in "${DAEMON_PIN_DDR_CURRENT_PREFIX8:-865d4c8a}" "$DAEMON_PIN_DDR_EDC3_PREFIX8"; do
+    for pin in \
+      "$root/artifacts/daemon-pins/misterplexd.${pfx}" \
+      "/home/flynnsbit/Projects/MisterPlex/artifacts/daemon-pins/misterplexd.${pfx}"
+    do
+      [ -f "$pin" ] || continue
+      m=$(md5sum "$pin" | awk '{print $1}')
+      if [ "${m:0:8}" = "$pfx" ]; then
+        printf '%s' "$m"
+        return 0
+      fi
+    done
   done
   # Prefix-only identity until parent fetches the pin (not a guess of full hash).
-  printf '%s' "$DAEMON_PIN_DDR_EDC3_PREFIX8"
+  printf '%s' "${DAEMON_PIN_DDR_CURRENT_PREFIX8:-865d4c8a}"
   return 0
 }
 

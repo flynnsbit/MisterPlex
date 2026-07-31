@@ -1,26 +1,34 @@
-w-lint GATE-INTEGRITY status
+lane: w-lint (GATE-INTEGRITY)
 branch: w-lint-gate-integrity
-focus: BLOCKER deploy decoy + S99user resolve + bundle mismatch + fail-loud
+focus: (deleted) pattern-match blindness + validated-pair pin track + plexctl exe stop
 
-DONE
-- boot_hook_policy: resolve USER_SCRIPT from S99user (not hardcode)
-  boot_hook_assert_bundle_match (hook root vs live root)
-- deploy_misterplexd: writes LIVE path from S99; refuse underscore decoy;
-  idempotence both roots; target_root from live /proc
-- promotion_gate_check: resolve S99 → cat LIVE; bundle match FAIL
-- rollback_v2: resolve S99 on install_pair_boot_path
-- quarantine_stale_daemon_tree.sh (54f1d916 rename fail-loud) — parent apply
-- misterplexd verifyBootHookSelf at startup (log + BOOT_HOOK_MISMATCH marker)
-- identity-not-pose: pair_visual documents no centroid gate; static guard
-- RBG: bak.20260731T204811Z bundle RED; S99 resolve GREEN; deploy no decoy
+DONE this tick:
+1. scripts/lib/live_daemon_enum.sh — strip " (deleted)", basename==misterplexd, n=0+http200=matcher-blind FAIL
+2. pair_live_probe.inc.sh — NO LONGER skips (deleted); uses live_daemon_remote_snippet
+3. deploy_misterplexd.sh / rollback_v2.sh stop / fetch_daemon_pins.sh — exe basename after strip deleted
+4. video_regression observe_daemon_once — exe deleted-tolerant (not argv0-only)
+5. plexctl.sh pids_daemon_exe + stop_all/status — no cmdline-only daemon kill
+6. artifacts/validated-pair/{CURRENT,ACCEPTED_DAEMONS,README} — CURRENT=865d4c8a
+7. pair_pin_resolve.inc.sh + pair_pin_update.sh — pin track without hand-edit scripts
+8. rbf_ship_policy / pair_ship_policy / video_regression / promotion_gate — CURRENT + PREV edc3 + hist e9f
+9. pair matrix rows: ddr-c5382bee (CURRENT), ddr-c5382bee-edc3a46b, ddr-c5382bee-e9f79de2
+10. tests: test_live_daemon_enum.sh RBG; static guard bans */misterplexd); Makefile + rollcall 121
 
-MEASURED true rc (direct)
-  boothook=0 pass=30 static=0 live=0 promo=0 deploy=0 rollback=0 rollcall=0 (119)
+MEASURED (true rc direct):
+  test_live_daemon_enum.sh          true rc=0
+  test_live_object_static_guard.py  true rc=0
+  test_live_state_identity_audit.py true rc=0
+  test_boot_hook_policy.sh          true rc=0 (30)
+  test_live_object_integrity.sh     true rc=0 (26)
+  test_promotion_gates.sh           true rc=0 (66)
+  test_deploy_misterplexd.sh        true rc=0 (29)
+  test_video_regression_liveness.sh true rc=0
+  test_rollback_honest.sh           true rc=0
+  test_unit_rollcall.py             true rc=0 expected_commands=121
 
-PARENT DEVICE
+PARENT device (do not run here):
   QUARANTINE_EXECUTE=1 scripts/quarantine_stale_daemon_tree.sh apply
-  ensure LIVE user-startup.sh is v2; do not trust underscore file
-  merge before DDR promote
+  After validate full daemon md5: scripts/pair_pin_update.sh --daemon-md5 <32hex from /proc/PID/exe>
+  Merge w-lint-gate-integrity before DDR promote (main still has decoy deploy)
 
-docs: docs/evidence/w_lint_BOOT_HOOK_RESOLVE.md
-land_sha: 8b6a5e63
+NO Quartus / NO device SSH this lane.

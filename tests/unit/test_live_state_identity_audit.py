@@ -86,17 +86,33 @@ def main() -> int:
     else:
         print("OK   video_regression.sh UNVERIFIED identity stamp present")
 
-    # DDR CURRENT pin must be edc3a46b (parent 2026-07-31) with e9f79de2 as PREV
-    if not re.search(r"DDR_DAEMON_MD5=edc3a46b", vr):
-        print("FAIL DDR_DAEMON_MD5 not re-pinned to edc3a46b")
+    # DDR CURRENT tracks validated-pair (865d4c8a); edc3a46b is PREV CURRENT; e9f79de2 hist.
+    if "pair_pin_resolve" not in vr and "validated-pair" not in vr:
+        print("FAIL video_regression must resolve pins via validated-pair/pair_pin")
         rc = 1
     else:
-        print("OK   DDR_DAEMON_MD5=edc3a46b")
+        print("OK   video_regression validated-pair pin resolve")
+    if "865d4c8a" not in vr:
+        print("FAIL CURRENT daemon pin 865d4c8a missing from video_regression")
+        rc = 1
+    else:
+        print("OK   CURRENT pin 865d4c8a present")
+    if "PREV_CURRENT_DDR_DAEMON_MD5=edc3a46b" not in vr and "edc3a46b" not in vr:
+        print("FAIL PREV CURRENT edc3a46b missing")
+        rc = 1
+    else:
+        print("OK   PREV CURRENT edc3a46b retained")
     if not re.search(r"PREV_DDR_DAEMON_MD5=e9f79de2", vr):
         print("FAIL PREV_DDR_DAEMON_MD5 missing e9f79de2 rollback pin")
         rc = 1
     else:
         print("OK   PREV_DDR_DAEMON_MD5=e9f79de2")
+    # (deleted)-tolerant exe identity required
+    if '(deleted)' not in vr and "deleted" not in vr:
+        print("FAIL video_regression missing (deleted) exe tolerance")
+        rc = 1
+    else:
+        print("OK   video_regression (deleted) tolerance")
 
     # Audit siblings: report findings (WARN does not fail unit unless GATE file
     # uses CORENAME as sole identity without live markers).

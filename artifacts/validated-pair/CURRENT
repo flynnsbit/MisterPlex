@@ -1,0 +1,8 @@
+# Last parent-validated pair (2026-07-31)
+# daemon 865d4c8a = w-geom breadcrumb build (live /proc/PID/exe)
+CORE_MD5=c5382bee73cecdee8220b811e529c297
+DAEMON_MD5=
+DAEMON_PREFIX8=865d4c8a
+PAIR_ID=ddr-c5382bee
+UPDATED_UTC=2026-07-31T23:00:00Z
+NOTE=w-geom breadcrumb; full md5 filled by pair_pin_update or fetch

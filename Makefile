@@ -145,6 +145,8 @@ unit-unlocked: unit-rollcall preflight $(ROOT)/build/test_cadence $(ROOT)/build/
 	python3 $(ROOT)/tests/unit/test_harness_capture_integrity.py
 	$(ROOT)/tests/unit/test_live_object_integrity.sh
 	python3 $(ROOT)/tests/unit/test_live_object_static_guard.py
+	$(ROOT)/tests/unit/test_live_daemon_enum.sh
+	$(ROOT)/tests/unit/test_boot_hook_policy.sh
 	$(ROOT)/tests/unit/test_timing_margin_gate.sh
 	$(ROOT)/tests/unit/test_release_rbf_hash.sh
 	$(ROOT)/tests/unit/test_sdram_startup_verilator.sh

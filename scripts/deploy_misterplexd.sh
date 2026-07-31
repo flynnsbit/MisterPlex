@@ -118,14 +118,13 @@ for d in /proc/[0-9]*; do
   case "$cmd" in
     *plexctl.sh*|*plexctl_supervise*|*misterplexd_supervise*|*dedupe_daemon*) continue ;;
   esac
-  case "$cmd" in
-    */misterplexd\ *|*/misterplexd) ;;
-    *) continue ;;
-  esac
+  # Identity: /proc/PID/exe basename after strip " (deleted)" — never cmdline alone.
   p=${d#/proc/}
-  n=$((n + 1))
-  # Prefer the kernel's view of the running image (parent-measured truth).
   exe=$(readlink -f "/proc/$p/exe" 2>/dev/null || true)
+  exe_clean=${exe% (deleted)}
+  base=$(basename "$exe_clean" 2>/dev/null || true)
+  [ "$base" = "misterplexd" ] || continue
+  n=$((n + 1))
   if [ -n "$exe" ]; then
     root=$(dirname "$(dirname "$exe")")
   else
@@ -287,7 +286,8 @@ disk_rc=$?
 set -e
 report_rc "disk_md5_probe" "$disk_rc" || die "disk md5 probe failed"
 DISK_MD5="${DISK_MD5_RAW%% *}"
-DISK_MD5="${DISK_MD5//$''/}"
+DISK_MD5="${DISK_MD5//$'
+'/}"
 echo "deploy: disk_md5=$DISK_MD5"
 if [[ -z "$DISK_MD5" ]]; then
   die "NO-DATA disk md5 empty (SSH drop — not a mismatch)"
@@ -381,11 +381,14 @@ for d in /proc/[0-9]*; do
   [ -r "$d/cmdline" ] || continue
   cmd=$(tr "\0" " " < "$d/cmdline" 2>/dev/null) || continue
   case "$cmd" in *plexctl.sh*|*supervise*|*dedupe_daemon*) continue ;; esac
-  case "$cmd" in */misterplexd\ *|*/misterplexd) ;; *) continue ;; esac
   p=${d#/proc/}
+  live_exe=$(readlink -f "/proc/$p/exe" 2>/dev/null || true)
+  live_clean=${live_exe% (deleted)}
+  base=$(basename "$live_clean" 2>/dev/null || true)
+  [ "$base" = "misterplexd" ] || continue
   n=$((n + 1))
   pids="$pids $p"
-  live_exe=$(readlink -f "/proc/$p/exe" 2>/dev/null || true)
+  live_exe=$live_clean
   live_md5=$(md5sum "/proc/$p/exe" 2>/dev/null | awk '{print $1}')
   set -- $cmd
   while [ $# -gt 0 ]; do

@@ -101,6 +101,44 @@ def main() -> int:
     if "misterplex_v2/bin/misterplexd" not in dep and "misterplexd_supervise" not in dep:
         errs.append("deploy_misterplexd: idempotence must cover v2 supervise path")
 
+    # Pattern-match blindness: active case */misterplexd) on exe paths is banned
+    banned_trailing = re.compile(
+        r'case\s+"\$[^"]+"\s+in\s+[^\n]*\*/misterplexd\)'
+    )
+    for rel in (
+        "scripts/deploy_misterplexd.sh",
+        "scripts/rollback_v2.sh",
+        "scripts/fetch_daemon_pins.sh",
+        "scripts/pair_live_probe.inc.sh",
+        "scripts/video_regression.sh",
+        "scripts/plexctl.sh",
+    ):
+        t = (ROOT / rel).read_text(errors="ignore")
+        # Ignore comment lines
+        code = "\n".join(
+            ln for ln in t.splitlines() if not ln.lstrip().startswith("#")
+        )
+        if banned_trailing.search(code):
+            errs.append(f"{rel}: banned trailing */misterplexd) case (misses (deleted))")
+        if rel in ("scripts/pair_live_probe.inc.sh", "scripts/video_regression.sh", "scripts/plexctl.sh"):
+            if "(deleted)" not in t and "deleted" not in t:
+                errs.append(f"{rel}: must tolerate exe ' (deleted)' suffix")
+
+    enum_lib = ROOT / "scripts" / "lib" / "live_daemon_enum.sh"
+    if not enum_lib.is_file():
+        errs.append("missing scripts/lib/live_daemon_enum.sh")
+    else:
+        et = enum_lib.read_text(errors="ignore")
+        if "live_daemon_strip_deleted" not in et:
+            errs.append("live_daemon_enum: missing strip_deleted")
+        if "matcher blind" not in et:
+            errs.append("live_daemon_enum: missing matcher-blind classify")
+
+    if not (ROOT / "artifacts" / "validated-pair" / "CURRENT").is_file():
+        errs.append("missing artifacts/validated-pair/CURRENT")
+    if not (ROOT / "scripts" / "pair_pin_resolve.inc.sh").is_file():
+        errs.append("missing scripts/pair_pin_resolve.inc.sh")
+
     if errs:
         print(f"LIVE_OBJECT_STATIC findings={len(errs)}")
         for e in errs:

@@ -73,8 +73,10 @@ for d in /proc/[0-9]*; do
   [ -r "\$d/cmdline" ] || continue
   cmd=\$(tr '\\0' ' ' <"\$d/cmdline" 2>/dev/null) || continue
   case "\$cmd" in *plexctl*) continue ;; esac
-  case "\$cmd" in */misterplexd\\ *|*/misterplexd) ;; *) continue ;; esac
   exe=\$(readlink -f "\$d/exe" 2>/dev/null) || continue
+  exe_c=\${exe% (deleted)}
+  base=\$(basename "\$exe_c" 2>/dev/null) || continue
+  [ "\$base" = "misterplexd" ] || continue
   [ -f "\$exe" ] || continue
   m=\$(md5sum "\$exe" 2>/dev/null | awk '{print \$1}')
   if [ -n "\$m" ]; then

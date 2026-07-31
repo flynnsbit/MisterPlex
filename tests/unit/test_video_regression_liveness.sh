@@ -14,11 +14,10 @@ SCRIPT="$ROOT/scripts/video_regression.sh"
 WORK="$ROOT/build/video-regression-liveness"
 BASE_CORE_MD5=dfebf2bfd08dd70b473b587dd7e81848
 BASE_DAEMON_MD5=7cd10b4d438c714a9b8c4766dc982d59
-# Match scripts/video_regression.sh pin table (post 2026-07-31 promote):
-#   HYBRID_DAEMON_MD5 = CURRENT product = DDR edc3a46b
-#   PREV_HYBRID       = SPI 50f4eb92 (accepted rollback)
-#   OLDER_HYBRID      = SPI 3e2cbb98 (accepted rollback)
-#   PREV_DDR / HIST   = e9f79de2
+# Match scripts/video_regression.sh pin table:
+#   CURRENT product DDR = 865d4c8a (validated-pair); edc3a46b = PREV CURRENT
+#   PREV_HYBRID SPI = 50f4eb92; OLDER SPI = 3e2cbb98; HIST DDR = e9f79de2
+CURRENT_DDR_PREFIX=865d4c8a
 HYBRID_DAEMON_MD5=edc3a46b9d1c6b86337deb90f896eb0f
 PREV_HYBRID_DAEMON_MD5=50f4eb925de10e29172999a565c87684
 OLDER_HYBRID_DAEMON_MD5=3e2cbb9881b2f54b0e4cb60238655fa7
@@ -363,7 +362,7 @@ expect_grep "new-live-conf" "OK   daemon-conf $V2_CONF"
 expect_grep "new-live-unverified" 'GATE_CORE_IDENTITY=UNVERIFIED'
 expect_grep "new-live-unverified-note" 'NOT silicon proof'
 
-echo "=== NEW gate: coherent DDR pair (c5382bee + edc3a46b CURRENT) PASSes ==="
+echo "=== NEW gate: coherent DDR pair (c5382bee + edc3a46b PREV CURRENT) PASSes ==="
 write_scenario <<EOF
 core_md5=$DDR_CORE_MD5
 disk_md5=$DDR_DAEMON_MD5
@@ -388,6 +387,31 @@ expect_rc "ddr-pair" 0
 expect_grep "ddr-pair-core" "OK   core-running $DDR_CORE_MD5"
 expect_grep "ddr-pair-ok" 'OK   pair-coherent'
 expect_grep "ddr-family" 'family=ddr'
+
+echo "=== NEW gate: CURRENT pin prefix 865d4c8a + DDR core PASSes ==="
+write_scenario <<EOF
+core_md5=$DDR_CORE_MD5
+disk_md5=${CURRENT_DDR_PREFIX}ffffffffffffffffffffffffffffffff
+live_md5=${CURRENT_DDR_PREFIX}ffffffffffffffffffffffffffffffff
+n_match=1
+appear_after=0
+http_code=200
+live_port=3005
+live_conf=$V2_CONF
+claim_present=1
+claim_md5=$DDR_CORE_MD5
+claim_path_field=/media/fat/_Utility/Plex.rbf
+claim_rbfname_mtime=1000
+claim_source=test
+rbfname_mtime=1000
+dev_core_md5=$DDR_CORE_MD5
+corename=Plex
+rbfname=Plex
+EOF
+run_new_verify "ddr-current-865d"
+expect_rc "ddr-current-865d" 0
+expect_grep "ddr-865d-ok" 'OK   pair-coherent'
+expect_grep "ddr-865d-live" "OK   daemon-live ${CURRENT_DDR_PREFIX}"
 
 echo "=== NEW gate: PREV DDR rollback pin e9f79de2 still accepted ==="
 write_scenario <<EOF

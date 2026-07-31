@@ -12,13 +12,13 @@
 #   PRESENT=fpga   (fb0 decodes but never reaches HDMI: pfps stays 0.00)
 #
 # LIVENESS (verify must not pass on a dead daemon):
-#   Authority is the RUNNING process: exact argv0 match via /proc/*/cmdline
-#   (first NUL token only — never $ -anchor basename grep; real cmdlines carry
-#   --name/--id/--port/--conf args), then md5sum /proc/<pid>/exe, plus an HTTP
-#   probe of /resources on the port from that cmdline. On-disk md5 is kept only
-#   as a secondary ETXTBSY signal (disk≠live → FAIL).
-#   Conf path, if needed, comes from the live process --conf arg — never hardcode
-#   which of /media/fat/misterplex{,_v2}/misterplex.conf is active.
+#   Authority is the RUNNING process via /proc/<pid>/exe: strip kernel
+#   " (deleted)" suffix, require basename == misterplexd, then md5sum that
+#   /proc/<pid>/exe (works mid-rename). Never cmdline-substring alone (flock);
+#   never trailing glob */misterplexd) (misses deleted). Empty = NO-DATA.
+#   Cross-check HTTP /resources when n=0 (matcher-blind deploy FAIL).
+#   On-disk md5 is secondary ETXTBSY signal (disk≠live → FAIL).
+#   Conf from live --conf arg — never hardcode misterplex vs misterplex_v2.
 #
 # RUNNING CORE (verify must not pass on a mixed SPI-core + DDR-daemon pair):
 #   /tmp/CORENAME and /tmp/RBFNAME are vacuous (always "Plex"). On-disk RBF md5
@@ -83,20 +83,32 @@ BASE_CORE_MD5=dfebf2bfd08dd70b473b587dd7e81848
 # does not touch the present path. A video difference between them is a real
 # regression and must fail.
 BASE_DAEMON_MD5=7cd10b4d438c714a9b8c4766dc982d59
-# Daemon pin chain (do NOT weaken — unknown md5 still FAILs):
-#   edc3a46b  CURRENT — DDR pair with c5382bee (w-geom 7554d6b2). Parent HW
-#             2026-07-31: 240p + native 480p MOTION_OK with conf
-#             DDR_YUV_FORCE_SCALE=1 FFMPEG_SWS_FLAGS=fast_bilinear.
-#             Full md5 from live /proc/<pid>/exe (do not weaken gate).
+# Daemon pin chain (do NOT weaken — unknown md5 still FAILs).
+# Prefer artifacts/validated-pair/CURRENT via pair_pin_resolve (no hand-edit per deploy).
+#   865d4c8a  CURRENT — w-geom breadcrumb live /proc/PID/exe (parent 2026-07-31).
+#   edc3a46b  PREV CURRENT — DDR pair with c5382bee (still accepted rollback).
 #   50f4eb92  PREV hybrid — SPI 320x240 clamp path (accepted rollback).
 #   e9f79de2  DDR hist — first silicon-correct DDR daemon (accepted rollback).
 #   3e2cbb98  older hybrid (accepted rollback).
 #   7cd10b4d  BASE release (above).
-HYBRID_DAEMON_PREFIX8=edc3a46b
-HYBRID_DAEMON_MD5_DEFAULT=edc3a46b9d1c6b86337deb90f896eb0f
-if [ -f "${REPO:-$(cd "$(dirname "$0")/.." && pwd)}/artifacts/daemon-pins/misterplexd.${HYBRID_DAEMON_PREFIX8}" ]; then
-  HYBRID_DAEMON_MD5=$(md5sum "${REPO:-$(cd "$(dirname "$0")/.." && pwd)}/artifacts/daemon-pins/misterplexd.${HYBRID_DAEMON_PREFIX8}" | awk '{print $1}')
-  # Pin file must match measured identity — refuse silent wrong binary.
+# shellcheck source=pair_pin_resolve.inc.sh
+if [ -f "${REPO:-$(cd "$(dirname "$0")/.." && pwd)}/scripts/pair_pin_resolve.inc.sh" ]; then
+  # shellcheck disable=SC1091
+  source "${REPO:-$(cd "$(dirname "$0")/.." && pwd)}/scripts/pair_pin_resolve.inc.sh"
+fi
+HYBRID_DAEMON_PREFIX8=865d4c8a
+if declare -F pair_pin_read_current >/dev/null 2>&1 && pair_pin_read_current >/dev/null 2>&1; then
+  if [ -n "${CURRENT_DAEMON_PREFIX8:-}" ]; then
+    HYBRID_DAEMON_PREFIX8="$CURRENT_DAEMON_PREFIX8"
+  fi
+fi
+# Prefix-only until pair_pin_update / pin file supplies full 32. Never invent full.
+HYBRID_DAEMON_MD5_DEFAULT="${HYBRID_DAEMON_PREFIX8:-865d4c8a}"
+if declare -F pair_pin_read_current >/dev/null 2>&1 && [ -n "${CURRENT_DAEMON_MD5:-}" ] && [ "${#CURRENT_DAEMON_MD5}" -ge 32 ]; then
+  HYBRID_DAEMON_MD5_DEFAULT="${CURRENT_DAEMON_MD5:0:32}"
+fi
+if [ -f "${REPO}/artifacts/daemon-pins/misterplexd.${HYBRID_DAEMON_PREFIX8}" ]; then
+  HYBRID_DAEMON_MD5=$(md5sum "${REPO}/artifacts/daemon-pins/misterplexd.${HYBRID_DAEMON_PREFIX8}" | awk '{print $1}')
   if [ "${HYBRID_DAEMON_MD5:0:8}" != "$HYBRID_DAEMON_PREFIX8" ]; then
     echo "FAIL pin-file md5='$HYBRID_DAEMON_MD5' not prefix $HYBRID_DAEMON_PREFIX8" >&2
     HYBRID_DAEMON_MD5="$HYBRID_DAEMON_MD5_DEFAULT"
@@ -109,17 +121,15 @@ DDR_HIST_DAEMON_MD5=e9f79de217982aff44207664fdb945c5
 OLDER_HYBRID_DAEMON_MD5=3e2cbb9881b2f54b0e4cb60238655fa7
 
 # DDR product pair (parent silicon 2026-07-31):
-#   core prefix c5382bee + daemon edc3a46b — 240p AND native 480p on viewed pixels.
-# Full digests registered when available; md5_match accepts unique prefix ≥8 hex.
+#   core prefix c5382bee + CURRENT daemon (validated-pair) — 240p AND native 480p.
+# Full digests when available; md5_match accepts unique prefix ≥8 hex.
 # NEVER weaken pins to skip — demote previous CURRENT into PREV_* on advance.
 DDR_CORE_MD5_PREFIX=c5382bee
-# Full digest when known (geometry map + pair); prefix match still accepted.
 DDR_CORE_MD5=c5382bee73cecdee8220b811e529c297
-# CURRENT DDR companion (parent-verified with c5382bee) — prefix ≥8 via md5_match.
-DDR_DAEMON_MD5=edc3a46b
-# PRIOR DDR companion full digest (device bak misterplexd.bak.e9f79de2).
+DDR_DAEMON_MD5="${HYBRID_DAEMON_MD5:-${HYBRID_DAEMON_PREFIX8:-865d4c8a}}"
+PREV_CURRENT_DDR_DAEMON_MD5=edc3a46b9d1c6b86337deb90f896eb0f
 PREV_DDR_DAEMON_MD5=e9f79de217982aff44207664fdb945c5
-DDR_DAEMON_MD5_PREFIX="$DDR_DAEMON_MD5"
+DDR_DAEMON_MD5_PREFIX="${DDR_DAEMON_MD5:0:8}"
 
 # Claim file written by plexctl load_core / deploy after RBFNAME mtime advances.
 RUNNING_CORE_CLAIM="${RUNNING_CORE_CLAIM:-/media/fat/misterplex/.running_core_claim}"
@@ -174,25 +184,6 @@ sshm() {
   return 5
 }
 
-# Empty string is NO-DATA, never a mismatch against a want hash.
-classify_obs_hash() {
-  local label="$1" got="$2"
-  shift 2
-  if [ -z "$got" ]; then
-    echo "NO-DATA $label got='' (empty — not a mismatch; SSH drop or remote produced no hash)"
-    return 4
-  fi
-  local w
-  for w in "$@"; do
-    if [ "$got" = "$w" ]; then
-      echo "OK   $label $got"
-      return 0
-    fi
-  done
-  echo "FAIL $label got='$got' want=$*"
-  return 1
-}
-
 # HTTP probe transport. Host tests inject VIDREG_HTTP (cmd receiving URL).
 http_probe() {
   local url="$1"
@@ -218,16 +209,33 @@ spi_daemon_md5_accepted() {
 }
 
 ddr_daemon_md5_accepted() {
-  # CURRENT product (HYBRID_DAEMON_MD5 / DDR_DAEMON_MD5) + PREV DDR hist.
+  # CURRENT product + ACCEPTED_DAEMONS + built-in hist. Never invent full from prefix.
   local d="${1:-}"
   [ -n "$d" ] || return 1
+  if declare -F pair_pin_daemon_accepted >/dev/null 2>&1; then
+    if pair_pin_daemon_accepted "$d"; then
+      # pair_pin includes SPI pins too — exclude pure SPI from DDR family.
+      if spi_daemon_md5_accepted "$d"; then
+        :
+      else
+        # Accept if not exclusively SPI base/hybrid/older.
+        case "${d:0:8}" in
+          7cd10b4d|50f4eb92|3e2cbb98) ;;
+          *) return 0 ;;
+        esac
+      fi
+    fi
+  fi
   if [ -n "${HYBRID_DAEMON_MD5:-}" ] && md5_match "$HYBRID_DAEMON_MD5" "$d"; then return 0; fi
   if [ -n "${DDR_DAEMON_MD5:-}" ] && md5_match "$DDR_DAEMON_MD5" "$d"; then return 0; fi
+  if [ -n "${PREV_CURRENT_DDR_DAEMON_MD5:-}" ] && md5_match "$PREV_CURRENT_DDR_DAEMON_MD5" "$d"; then return 0; fi
   if [ -n "${PREV_DDR_DAEMON_MD5:-}" ] && md5_match "$PREV_DDR_DAEMON_MD5" "$d"; then return 0; fi
   if [ -n "${DDR_HIST_DAEMON_MD5:-}" ] && md5_match "$DDR_HIST_DAEMON_MD5" "$d"; then return 0; fi
-  # Prefix8 of CURRENT product when only short pin is configured.
   local p8="${d:0:8}"
   if [ -n "${HYBRID_DAEMON_PREFIX8:-}" ] && [ "$p8" = "$HYBRID_DAEMON_PREFIX8" ]; then return 0; fi
+  case "$p8" in
+    865d4c8a|edc3a46b|e9f79de2) return 0 ;;
+  esac
   return 1
 }
 
@@ -499,11 +507,13 @@ resolve_running_core() {
 #   LIVE_CONF=<path|empty>
 #   LIVE_NOTE=<text>
 observe_daemon_once() {
+  # Identity via /proc/PID/exe basename after strip " (deleted)" — never cmdline-only.
+  # Optional bin: disk md5 + prefer matching cleaned exe path; still count all misterplexd.
   local bin="$1"
   sshm "bin=$(printf '%q' "$bin"); $(cat <<'REMOTE'
 set +e
 disk=""
-if [ -f "$bin" ]; then
+if [ -n "$bin" ] && [ -f "$bin" ]; then
   disk=$(md5sum "$bin" 2>/dev/null | awk '{print $1}')
 fi
 echo "DISK_MD5=${disk}"
@@ -511,65 +521,67 @@ pids=""
 n=0
 port=""
 conf=""
+live=""
+note="none"
+deleted=0
 for d in /proc/[0-9]*; do
-  [ -d "$d" ] || continue
-  [ -r "$d/cmdline" ] || continue
-  # Portable NUL→newline argv (BusyBox ash has no mapfile). Match argv0
-  # EXACTLY to bin path. Do not $ -anchor basename; real cmdlines carry args.
-  cmd_nl=$(tr "\0" "\n" <"$d/cmdline" 2>/dev/null) || continue
-  a0=$(printf "%s\n" "$cmd_nl" | head -n1)
-  [ -n "$a0" ] || continue
-  [ "$a0" = "$bin" ] || continue
+  [ -e "$d/exe" ] || continue
   p=${d#/proc/}
-  [ -d "/proc/$p" ] || continue
+  x_raw=$(readlink -f "$d/exe" 2>/dev/null) || continue
+  [ -n "$x_raw" ] || continue
+  x=$x_raw
+  case "$x" in
+    *" (deleted)") x=${x%" (deleted)"}; deleted=1 ;;
+  esac
+  base=$(basename "$x" 2>/dev/null) || continue
+  [ "$base" = "misterplexd" ] || continue
+  # When bin is set, accept exact cleaned path OR any misterplexd (deploy may rename).
+  if [ -n "$bin" ] && [ "$x" != "$bin" ]; then
+    # Still count: argv0 path match is insufficient during (deleted) rename races;
+    # basename already proves identity. Keep all misterplexd for n_match.
+    :
+  fi
   pids="${pids}${pids:+ }$p"
   n=$((n + 1))
-  # Capture --port / --conf from THIS match (last wins if multi; multi fails later).
   port=""; conf=""; prev=""
-  while IFS= read -r tok; do
-    [ -n "$tok" ] || continue
-    case "$prev" in
-      --port) port="$tok"; prev=""; continue ;;
-      --conf) conf="$tok"; prev=""; continue ;;
-    esac
-    case "$tok" in
-      --port) prev=--port ;;
-      --port=*) port="${tok#--port=}"; prev="" ;;
-      --conf) prev=--conf ;;
-      --conf=*) conf="${tok#--conf=}"; prev="" ;;
-      *) prev="" ;;
-    esac
-  done <<TOKENS
+  if [ -r "$d/cmdline" ]; then
+    cmd_nl=$(tr "\0" "\n" <"$d/cmdline" 2>/dev/null) || cmd_nl=""
+    while IFS= read -r tok; do
+      [ -n "$tok" ] || continue
+      case "$prev" in
+        --port) port="$tok"; prev=""; continue ;;
+        --conf) conf="$tok"; prev=""; continue ;;
+      esac
+      case "$tok" in
+        --port) prev=--port ;;
+        --port=*) port="${tok#--port=}"; prev="" ;;
+        --conf) prev=--conf ;;
+        --conf=*) conf="${tok#--conf=}"; prev="" ;;
+        *) prev="" ;;
+      esac
+    done <<TOKENS
 $cmd_nl
 TOKENS
+  fi
+  live=$(md5sum "$d/exe" 2>/dev/null | awk '{print $1}')
 done
 echo "N_MATCH=$n"
 echo "PIDS=$pids"
-live=""
-note="none"
 if [ "$n" -eq 0 ]; then
   note="no_process"
-  port=""; conf=""
+  port=""; conf=""; live=""
 elif [ "$n" -gt 1 ]; then
   note="multi_match"
+elif [ -z "$live" ]; then
+  note="exe_unreadable"
 else
-  pid=$pids
-  if [ ! -e "/proc/$pid/exe" ]; then
-    note="exe_vanished"
-    port=""; conf=""
-  else
-    live=$(md5sum "/proc/$pid/exe" 2>/dev/null | awk '{print $1}')
-    if [ -z "$live" ]; then
-      note="exe_unreadable"
-    else
-      note="ok"
-    fi
-  fi
+  note="ok"
 fi
 echo "LIVE_MD5=${live}"
 echo "LIVE_PORT=${port}"
 echo "LIVE_CONF=${conf}"
 echo "LIVE_NOTE=${note}"
+echo "DELETED=${deleted}"
 REMOTE
 )"
 }
@@ -700,7 +712,8 @@ verify_baseline() {
     classify_obs_hash "daemon-disk" "$got_disk" \
       "$BASE_DAEMON_MD5" "$HYBRID_DAEMON_MD5" "$PREV_HYBRID_DAEMON_MD5" \
       "$OLDER_HYBRID_DAEMON_MD5" "$DDR_HIST_DAEMON_MD5" \
-      "$DDR_DAEMON_MD5" "$PREV_DDR_DAEMON_MD5"
+      "$DDR_DAEMON_MD5" "$PREV_DDR_DAEMON_MD5" \
+      "${PREV_CURRENT_DDR_DAEMON_MD5:-}"
     step_rc=$?
     set -e
     if [ "$step_rc" -eq 4 ]; then
@@ -710,7 +723,7 @@ verify_baseline() {
     fi
   fi
 
-  echo "== verifying RUNNING baseline daemon (/proc argv0 + /proc/PID/exe + HTTP) =="
+  echo "== verifying RUNNING baseline daemon (/proc/PID/exe deleted-tolerant + HTTP) =="
   set +e
   wait_out=$(wait_for_live_daemon "$BASE_DAEMON_BIN")
   wait_rc=$?

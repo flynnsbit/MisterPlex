@@ -1,0 +1,16 @@
+# Accepted daemon pins (full 32 or prefix8). One per line.
+# CURRENT live (parent 2026-07-31)
+865d4c8a
+# Prior CURRENT DDR (edc3a46b) — keep as rollback
+edc3a46b9d1c6b86337deb90f896eb0f
+edc3a46b
+# Hist DDR
+e9f79de217982aff44207664fdb945c5
+e9f79de2
+# SPI hybrids / release
+50f4eb925de10e29172999a565c87684
+50f4eb92
+7cd10b4d438c714a9b8c4766dc982d59
+7cd10b4d
+3e2cbb9881b2f54b0e4cb60238655fa7
+3e2cbb98

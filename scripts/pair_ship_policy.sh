@@ -30,17 +30,18 @@ fi
 #   DDR 480p-capable YUV layout → 0x30080000
 # A mixed pair is a silent geometry mismatch (release.md lab stable pair).
 #
-# PRIMARY promote target (parent 2026-07-31 viewed pixels + native 480p):
-#   ddr-c5382bee = core c5382bee + daemon edc3a46b + conf ddr + bank1 0x30080000
-# Historical DDR (pre-480p FORCE_SCALE land) kept as explicit rollback id:
-#   ddr-c5382bee-e9f79de2
+# PRIMARY promote target tracks artifacts/validated-pair/CURRENT (pair_pin_update).
+#   ddr-c5382bee = core c5382bee + CURRENT daemon (865d4c8a …) + conf ddr + bank1
+# PREV CURRENT (edc3a46b) and hist (e9f79de2) remain explicit matched rows.
 PAIR_BANK1_SPI=0x30040000
 PAIR_BANK1_DDR=0x30080000
 _PAIR_DDR_DAEMON="$(rbf_policy_resolve_ddr_daemon_full)"
+_PAIR_DDR_PREV_EDC3="${DAEMON_PIN_DDR_EDC3_FULL:-edc3a46b9d1c6b86337deb90f896eb0f}"
 PAIR_MATRIX_ROWS=(
   "${RBF_PIN_V2_DAILY_FULL}|${DAEMON_PIN_V2_HYBRID_FULL}|${DEVICE_CORE_V2_DAILY}|spi|spi-v2-hybrid|spi|${PAIR_BANK1_SPI}"
   "${RBF_PIN_V2_DAILY_FULL}|${DAEMON_PIN_V2_RELEASE_FULL}|${DEVICE_CORE_V2_DAILY}|spi|spi-v2-release|spi|${PAIR_BANK1_SPI}"
   "${RBF_PIN_DDR_CANDIDATE_FULL}|${_PAIR_DDR_DAEMON}|${DEVICE_CORE_PRODUCT}|ddr|ddr-c5382bee|ddr|${PAIR_BANK1_DDR}"
+  "${RBF_PIN_DDR_CANDIDATE_FULL}|${_PAIR_DDR_PREV_EDC3}|${DEVICE_CORE_PRODUCT}|ddr|ddr-c5382bee-edc3a46b|ddr|${PAIR_BANK1_DDR}"
   "${RBF_PIN_DDR_CANDIDATE_FULL}|${DAEMON_PIN_DDR_E9F79DE2_FULL}|${DEVICE_CORE_PRODUCT}|ddr|ddr-c5382bee-e9f79de2|ddr|${PAIR_BANK1_DDR}"
 )
 

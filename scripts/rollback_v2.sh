@@ -276,9 +276,12 @@ stop_remote_daemon() {
     return 0
   fi
   run_ssh 'for d in /proc/[0-9]*; do
-    [ -r "$d/cmdline" ] || continue
-    a0=$(tr "\0" "\n" <"$d/cmdline" 2>/dev/null | head -n1)
-    case "$a0" in */misterplexd) kill "${d#/proc/}" 2>/dev/null || true ;; esac
+    [ -e "$d/exe" ] || continue
+    x=$(readlink -f "$d/exe" 2>/dev/null) || continue
+    x=${x% (deleted)}
+    base=$(basename "$x" 2>/dev/null) || continue
+    [ "$base" = "misterplexd" ] || continue
+    kill "${d#/proc/}" 2>/dev/null || true
   done
   for d in /proc/[0-9]*; do
     [ -r "$d/cmdline" ] || continue

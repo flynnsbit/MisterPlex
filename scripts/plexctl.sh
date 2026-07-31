@@ -114,10 +114,9 @@ load_core() {
 SUPERVISORS='plexctl_supervise.sh misterplexd_supervise.sh dedupe_daemon.sh'
 DAEMON='/bin/misterplexd'
 
-# Match by /proc cmdline, NOT pidof. pidof only matches the executable, so a
-# script started as "/bin/sh /tmp/plexctl_supervise.sh" is invisible to it.
-# Observed on hardware: a stale supervisor survived `pidof plexctl_supervise.sh`
-# and silently respawned a second daemon after a stop.
+# Supervisors: cmdline path substring (scripts are /bin/sh + script path).
+# Daemon: NEVER cmdline substring alone (flock trap → false CPU/kill). Use
+# /proc/PID/exe basename after strip " (deleted)" == misterplexd.
 pids_matching() {
   pat="$1"
   for d in /proc/[0-9]*; do
@@ -126,8 +125,6 @@ pids_matching() {
     if [ "$p" = "$$" ]; then continue; fi
     [ -r "$d/cmdline" ] || continue
     cmd=$( (tr '\0' ' ' < "$d/cmdline") 2>/dev/null ) || continue
-    # Never match this controller or its own forked subshells, which inherit
-    # the parent cmdline and would otherwise look like a target process.
     case "$cmd" in
       *plexctl.sh*) continue ;;
     esac
@@ -137,30 +134,56 @@ pids_matching() {
   done
 }
 
+# Live misterplexd PIDs via exe (deleted-tolerant). Empty print = none found.
+pids_daemon_exe() {
+  for d in /proc/[0-9]*; do
+    [ -e "$d/exe" ] || continue
+    p=${d#/proc/}
+    if [ "$p" = "$$" ]; then continue; fi
+    x=$(readlink -f "$d/exe" 2>/dev/null) || continue
+    [ -n "$x" ] || continue
+    case "$x" in
+      *" (deleted)") x=${x%" (deleted)"} ;;
+    esac
+    base=$(basename "$x" 2>/dev/null) || continue
+    [ "$base" = "misterplexd" ] || continue
+    echo "$p"
+  done
+}
+
 any_running() {
-  for pat in $SUPERVISORS $DAEMON; do
+  for pat in $SUPERVISORS; do
     if [ -n "$(pids_matching "$pat")" ]; then return 0; fi
   done
+  if [ -n "$(pids_daemon_exe)" ]; then return 0; fi
   return 1
 }
 
 stop_all() {
-  for pat in $SUPERVISORS $DAEMON; do
+  for pat in $SUPERVISORS; do
     for p in $(pids_matching "$pat"); do
       kill "$p" 2>/dev/null || true
     done
+  done
+  for p in $(pids_daemon_exe); do
+    kill "$p" 2>/dev/null || true
   done
   i=0
   while any_running; do
     i=$((i + 1))
     if [ "$i" -gt 60 ]; then
       echo "STOP_FAILED still running; refusing kill -9"
-      for pat in $SUPERVISORS $DAEMON; do
+      for pat in $SUPERVISORS; do
         for p in $(pids_matching "$pat"); do
           printf 'STILL_UP pid=%s ' "$p"
           tr '\0' ' ' < "/proc/$p/cmdline" 2>/dev/null
           echo
         done
+      done
+      for p in $(pids_daemon_exe); do
+        printf 'STILL_UP daemon pid=%s exe=' "$p"
+        readlink -f "/proc/$p/exe" 2>/dev/null || true
+        echo
       done
       return 9
     fi
@@ -170,7 +193,7 @@ stop_all() {
 }
 
 status() {
-  echo "n_daemon=$(pids_matching "$DAEMON" | wc -w)"
+  echo "n_daemon=$(pids_daemon_exe | wc -w)"
   n_sup=0
   for pat in $SUPERVISORS; do
     n_sup=$((n_sup + $(pids_matching "$pat" | wc -w)))
@@ -178,8 +201,10 @@ status() {
   echo "n_supervise=$n_sup"
   ps | grep -E "[m]isterplexd|[p]lexctl_supervise|[d]edupe_daemon" | head -10 || true
   netstat -lnp 2>/dev/null | grep -E ":$PORT|:32412" || true
-  for p in $(pids_matching "$DAEMON"); do
-    printf 'cmdline: '
+  for p in $(pids_daemon_exe); do
+    printf 'exe: '
+    readlink -f "/proc/$p/exe" 2>/dev/null || true
+    printf ' cmdline: '
     tr '\0' ' ' < "/proc/$p/cmdline" 2>/dev/null
     echo
   done

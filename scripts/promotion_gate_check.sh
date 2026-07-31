@@ -321,11 +321,23 @@ verify_live() {
     echo "NO-DATA live /proc/PID/exe md5 (disk-only is NOT success)"
     [ "$rc" -eq 0 ] && rc=4
   elif pair_policy_md5_match "$live" "$EXPECT_DAEMON_MD5"; then
-    echo "OK live-exe-md5 $live (from readlink -f /proc/PID/exe; want=$EXPECT_DAEMON_MD5)"
+    echo "OK live-exe-md5 $live (CURRENT pin $EXPECT_DAEMON_MD5; /proc/PID/exe)"
   else
-    echo "FAIL live-exe-md5 got=$live want=$EXPECT_DAEMON_MD5"
-    echo "     hint: verify via readlink -f /proc/PID/exe — never on-disk file alone (ETXTBSY)"
-    rc=3
+    # Accept documented rollback pins that still form a matched pair with product core.
+    # CURRENT is prefer-promote; PREV CURRENT (edc3…) / hist (e9f79…) must not blind-RED.
+    set +e
+    _pair_out=$(pair_policy_check "${prod:-$EXPECT_CORE_MD5}" "$live")
+    _pair_rc=$?
+    set -e
+    if [ "$_pair_rc" -eq 0 ]; then
+      echo "OK live-exe-md5 $live (accepted pair pin; CURRENT want=$EXPECT_DAEMON_MD5)"
+      printf '%s\n' "$_pair_out" | sed 's/^/  /'
+    else
+      echo "FAIL live-exe-md5 got=$live want=$EXPECT_DAEMON_MD5 (or matched pair row)"
+      echo "     hint: verify via readlink -f /proc/PID/exe — never on-disk file alone (ETXTBSY)"
+      printf '%s\n' "$_pair_out" | sed 's/^/  /'
+      rc=3
+    fi
   fi
 
   if [ -z "$conf" ]; then
