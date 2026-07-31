@@ -2259,9 +2259,24 @@ def check_yuv_ddr_writer_contract() -> None:
     )
 
     compact_media = norm(media)
-    check(
+    # Two product shapes are valid:
+    #  1) Direct YUV idle renderer (renderIdleYuv420p) then publishDdrFrame("idle DDR")
+    #  2) OSD-hires: author RGB at coded canvas (renderIdleRgb24 + overlay) then RGB→I420
+    #     into the same Yuv420p publish. Hard-coded black I420 remains forbidden.
+    idle_publish_ok = (
+        "DdrPublishFrameframe{yuv.data(),yuv.size(),g,DdrFrameFormat::Yuv420p};"
+        "ok=publishDdrFrame(frame,\"idleDDR\",&ddrErr)" in compact_media
+    )
+    idle_renderer_ok = (
         "renderIdleYuv420p" in media
-        and "DdrPublishFrameframe{yuv.data(),yuv.size(),g,DdrFrameFormat::Yuv420p};ok=publishDdrFrame(frame,\"idleDDR\",&ddrErr)" in compact_media,
+        or (
+            "renderIdleRgb24" in media
+            and "idleRgbToY" in media
+            and "DdrFrameFormat::Yuv420p" in media
+        )
+    )
+    check(
+        idle_renderer_ok and idle_publish_ok,
         "MediaPlayer::paintIdle must send the rendered logo/screensaver through the YUV420p "
         "DDR path. A hard-coded black I420 payload clears stale video but makes the selectable "
         "FPGA idle logo/screensaver disappear under PRESENT=fpga.",
