@@ -1,0 +1,80 @@
+# w-thruput rebaseline — product budgets vs measured paint (2026-07-31)
+
+Branch: integ/thruput-on-warm
+SHA: (see git rev-parse HEAD at commit time)
+Mode: source + Verilator only. No fit, no deploy, no ssh.
+
+## Retired numbers (do not plan against)
+| Number | Why invalid |
+|--------|-------------|
+| SPI sendFileTx 194–220 ms/frame (fpga_spi.cpp lab) | RGB565 SPI path, not product DDR present |
+| ~2000 cy/MB @ 50 MHz | 50 MHz is board osc, not clk_sys |
+| 100 MHz decode budget | SDRAM clock confusion; decode is clk_sys |
+
+## Clock (quoted)
+pll_0002.v: .output_clock_frequency0("20.000000 MHz") → Plex.sv .outclk_0(clk_sys)
+outclk_2 = 90.000000 MHz → clk_ddr (f2sdram), not decode.
+
+## PRE-REG vs MEASURED
+| Claim | PRE-REG | Measured | Result |
+|-------|---------|----------|--------|
+| paint_320 f0 | 2239.647 | 2239.647 | HIT exact |
+| paint_624 f0 | 2102.850 | 2102.850 | HIT exact |
+| luma 300/300 | mae=0 | 300/300 mae=0 | HIT |
+| luma 1170/1170 | mae=0 | 1170/1170 mae=0 | HIT |
+| RK3 240p@24 HIT | yes pad~538 | pad=+538.131 | HIT |
+| RK4 240p@30 MISS | ~17 cy | pad=-17.425 | HIT (miss predicted) |
+| RK5 240p@60 MISS | ~2.0x | ratio=2.016x | HIT |
+| RK6 480p@24 MISS | ~3.0x | ratio=2.952x | HIT |
+| gate rc | 0 | 0 | HIT |
+| rollcall | 0 | 0 expected_commands=106 | HIT |
+
+## Tier table (FPGA decode paint_per_mb IDR f0 @ 20 MHz)
+  RK3  320x240@24  budget=2777.778 paint=2239.647  0.806x  HIT pad +538
+  @25  320x240@25  budget=2666.667 paint=2239.647  HIT pad +427
+  RK4  320x240@30  budget=2222.222 paint=2239.647  1.008x  MISS −17
+  RK5  320x240@60  budget=1111.111 paint=2239.647  2.016x  MISS
+  RK6  624x480@24  budget=712.251  paint=2102.850  2.952x  MISS
+  RK6@25           budget=683.761  paint=2102.850  3.075x  MISS
+
+## Two pipelines (do not conflate)
+1) **Product silicon today (parent-verified):** ARM software decode + DDR I420 present.
+   - frame_tx ~4 ms @240p (parent log ms=4; w-bw model 4.06 ms).
+   - Frame period @24 fps = 41.67 ms → present uses ~10% of period.
+   - DDR need 2.76 MB/s vs peak ~720 MB/s @64b/90 MHz → bandwidth NOT binding.
+2) **FPGA H.264 decode path (Verilator paint_per_mb):** meets 240p@24/25; not yet
+   30/60 or 480p. Not what is driving the current cast playback vfps.
+
+## drops=3 over ~700 frames @24 fps
+**Evidence class: ARM A/V resync, not RTL scanout.**
+- host/libmisterplex/av_clock.hpp: AvAction::Drop when driftMs > dropMs
+- media_player.hpp: resyncDropMs_=80, presentLeadMs_=40
+- media_player.cpp: !present → ++prof.drops + "A/V resync drop" log
+- maxDropRun default 1 → sparse single-frame drops, matches small non-zero count
+- Check that would prove RTL involvement: HDMI freeze / stuck bank while drops
+  increment with av_drift_ms≈0 and no "A/V resync drop" lines. Parent freeze is
+  owned by w-fit/w-geom; this lane does not claim freeze RCA.
+
+## Sink critical path (FPGA decode, clip1 real_ref f0 total=480177)
+iq 18.3% · apply 17.5% · dump 17.4% · idle_ready 14.0% · i16pred 11.9%
+Next FPGA thruput work for RK4 (−17 cy) or RK6 (~3×): shorten iq/apply/dump or
+idle_ready starve — coordinate with w-area (no RAM growth; 465/553).
+
+## Gate (executes)
+python3 tests/unit/test_thruput_budget_rebaseline.py
+- Parses pll_0002 20 MHz; rejects ≠20 as product decode clock
+- RK3 HIT / RK4–RK6 MISS locked; RED: 2× paint MISS
+- Source-guards AvAction::Drop path
+Makefile + rollcall registered (expected_commands=106)
+
+## RTL change this task
+None. Analysis + executable gate only. No fit requested.
+
+## Parent verify
+```bash
+cd .worktrees/w-thruput-on-warm
+python3 tests/unit/test_thruput_budget_rebaseline.py; echo "true rc=$?"
+python3 tests/unit/test_unit_rollcall.py; echo "true rc=$?"
+# optional full sim:
+# build/verilator/stream_path_full_frame_real_ref/Vstream_path_full_frame_tb ... → paint_per_mb=2239.647
+```

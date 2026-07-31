@@ -1,0 +1,9 @@
+PRE-REG 2026-07-31 thruput rebaseline (before measure)
+1. paint_per_mb clip1 f0 real_ref: 2239.647 (same as tip fb706895 era; no RTL thruput change expected)
+2. Budget 240p@24 @20MHz: 2777.778 cy/MB  → expect HIT with pad ~538
+3. Budget 240p@25: 2666.667 → HIT pad ~427
+4. Budget 240p@30: 2222.222 → MISS (2239.6 > 2222) by ~17 cy/MB
+5. Budget 240p@60: 1111.111 → MISS by ~2.0x
+6. Budget 480p@24: 712.25 → MISS by ~3.0x (using clip2 paint 2102.85)
+7. DDR present 240p ~4ms vs period 41.67ms → NOT the constraint (parent silicon)
+8. drops=3: PREDICT ARM A/V resync Drop path only; no RTL cause without freeze lane evidence

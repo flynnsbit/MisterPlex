@@ -1,75 +1,80 @@
-# w-thruput SLOT-GRANT EVIDENCE — integ/thruput-on-warm
-# Written BEFORE any Quartus fit. Parent owns fit/deploy/HDMI.
+# w-thruput rebaseline — product budgets vs measured paint (2026-07-31)
 
-## 1. Branch / SHA / ancestors
-- Branch: integ/thruput-on-warm
-- Tip: 259a7434a85be1fba278e3a7e24b705e96f9dd2b (259a7434)  [FIT THIS]
-- Worktree: .worktrees/w-thruput-on-warm
-- RTL hybrid+thruput+area core: 9d9dadbd (ancestor)
-- w-area dequant 809a8197 IS ancestor: YES (merge-base --is-ancestor rc=0)
-  809a8197 integ(rtl): w-area comb shift-add dequant on thruput tip
-- w-arm-p720-scope tip ee842f2e IS ancestor: YES
-- w-fit tip 5b4dc082 IS ancestor: YES
-- Confirmed shift-add present: h264_iq_idct_4x4.sv mul_norm_adjust + qp_div6 tables
-- Also landed: src_y_line want_y (geom WIP) so warm tip gates pass; WANT_Y_FORCE_TOP freeze class NOT restored
+Branch: integ/thruput-on-warm
+SHA: (see git rev-parse HEAD at commit time)
+Mode: source + Verilator only. No fit, no deploy, no ssh.
 
-## 2. Clock / budget (verified)
-- Decode domain pll_0002 outclk_0 = 20 MHz
-- Budget 320x240@25: 20e6/(300*25) = 2666.667 cy/MB
+## Retired numbers (do not plan against)
+| Number | Why invalid |
+|--------|-------------|
+| SPI sendFileTx 194–220 ms/frame (fpga_spi.cpp lab) | RGB565 SPI path, not product DDR present |
+| ~2000 cy/MB @ 50 MHz | 50 MHz is board osc, not clk_sys |
+| 100 MHz decode budget | SDRAM clock confusion; decode is clk_sys |
 
-## 3. PRE-REG (written before this remeasure; see prereg_post_warm_merge.txt)
-| Metric | PRE-REG | MEASURED | Result |
-|--------|---------|----------|--------|
-| paint_per_mb f0 clip1 320 | 2239.647 | 2239.647 | HIT exact |
-| paint_per_mb f0 clip2 624 | 2102.850 | 2102.850 | HIT exact |
-| vs standing baseline 2965.8 | — | 2239.647 | 0.755x of baseline; pad vs 2667 ≈ 427 cy/MB |
-| LUMA frame0 320 | 300/300 mae=0 | 300/300 mae=0.000000 | HIT |
-| LUMA frame0 624 | 1170/1170 mae=0 | 1170/1170 mae=0.000000 | HIT |
-| real-ref XOR twin 320 | candidates differ | OK real-ref XOR twin | HIT |
-| dequant QP sweep | miss=0 | 1205/1205 PASS | HIT |
-| define-parity | 0 | true rc=0 | HIT |
-| quartus-sv-subset | 0 | true rc=0 | HIT |
-| make unit | 0 | true rc=0 | HIT |
-| unit rollcall expected_commands | 105 (branch; not 99/101 main) | 105 rc=0 | HIT |
+## Clock (quoted)
+pll_0002.v: .output_clock_frequency0("20.000000 MHz") → Plex.sv .outclk_0(clk_sys)
+outclk_2 = 90.000000 MHz → clk_ddr (f2sdram), not decode.
 
-## 4. SINK_CY_BREAKDOWN (clip1 real_ref f0)
-total=480177 idle_wb=38674 idle_pend=300 idle_ready=67227 init=0 settle=5917
-i16nb=10176 i16pred=57239 had=4199 i4nb=41029 iq=87664 apply=83872 dump=83659
+## PRE-REG vs MEASURED
+| Claim | PRE-REG | Measured | Result |
+|-------|---------|----------|--------|
+| paint_320 f0 | 2239.647 | 2239.647 | HIT exact |
+| paint_624 f0 | 2102.850 | 2102.850 | HIT exact |
+| luma 300/300 | mae=0 | 300/300 mae=0 | HIT |
+| luma 1170/1170 | mae=0 | 1170/1170 mae=0 | HIT |
+| RK3 240p@24 HIT | yes pad~538 | pad=+538.131 | HIT |
+| RK4 240p@30 MISS | ~17 cy | pad=-17.425 | HIT (miss predicted) |
+| RK5 240p@60 MISS | ~2.0x | ratio=2.016x | HIT |
+| RK6 480p@24 MISS | ~3.0x | ratio=2.952x | HIT |
+| gate rc | 0 | 0 | HIT |
+| rollcall | 0 | 0 expected_commands=106 | HIT |
 
-## 5. Bit-exact quotes
-clip1: LUMA_PROGRESS frame0 y_mb=300/300 y_mae=0.000000
-clip2: LUMA_PROGRESS frame0 y_mb=1170/1170 y_px=299520/299520 y_mae=0.000000
-dequant: DEQUANT QP SWEEP PASS: 1205 tests across QP 0–51, all patterns exact
-score_i420_candidate.py: NEVER modified
+## Tier table (FPGA decode paint_per_mb IDR f0 @ 20 MHz)
+  RK3  320x240@24  budget=2777.778 paint=2239.647  0.806x  HIT pad +538
+  @25  320x240@25  budget=2666.667 paint=2239.647  HIT pad +427
+  RK4  320x240@30  budget=2222.222 paint=2239.647  1.008x  MISS −17
+  RK5  320x240@60  budget=1111.111 paint=2239.647  2.016x  MISS
+  RK6  624x480@24  budget=712.251  paint=2102.850  2.952x  MISS
+  RK6@25           budget=683.761  paint=2102.850  3.075x  MISS
 
-## 6. FIT PRE-REG (BEFORE fit — vs w-fit baseline ALM 21023 DSP 74 RAM 465 setup +0.502 ns)
-- ALM: 21100–21450 (hybrid control + thruput glue + src_y_line comb; small)
-- DSP: 42 (74−32 w-area shift-add; UNMEASURED until this fit — that is the slot purpose)
-- RAM blocks: 465 (no new M10K in thruput RMW / hybrid / src_y_line). Margin 88 blocks — do not convert arrays.
-- Worst setup slack: +0.20 to +0.50 ns RISK (baseline +0.502; dequant combo may help DSP pressure, not WNS)
-- Hold: expect still positive (~0.24 ns class)
-- Negative STA slack = HARD FAIL
+## Two pipelines (do not conflate)
+1) **Product silicon today (parent-verified):** ARM software decode + DDR I420 present.
+   - frame_tx ~4 ms @240p (parent log ms=4; w-bw model 4.06 ms).
+   - Frame period @24 fps = 41.67 ms → present uses ~10% of period.
+   - DDR need 2.76 MB/s vs peak ~720 MB/s @64b/90 MHz → bandwidth NOT binding.
+2) **FPGA H.264 decode path (Verilator paint_per_mb):** meets 240p@24/25; not yet
+   30/60 or 480p. Not what is driving the current cast playback vfps.
 
-## 7. Silicon-ready statement
-- SIM-READY YES: thruput budget HIT, bit-exact 300+1170, dequant 0-miss, three static gates rc=0, dequant ancestor proven.
-- NOT silicon-proven until parent fits, deploys ONE menu, and requires distinct HDMI md5 @ frames 30/38/45.
-- Daemon telemetry alone is INVALID evidence (w-fit freeze lesson).
+## drops=3 over ~700 frames @24 fps
+**Evidence class: ARM A/V resync, not RTL scanout.**
+- host/libmisterplex/av_clock.hpp: AvAction::Drop when driftMs > dropMs
+- media_player.hpp: resyncDropMs_=80, presentLeadMs_=40
+- media_player.cpp: !present → ++prof.drops + "A/V resync drop" log
+- maxDropRun default 1 → sparse single-frame drops, matches small non-zero count
+- Check that would prove RTL involvement: HDMI freeze / stuck bank while drops
+  increment with av_drift_ms≈0 and no "A/V resync drop" lines. Parent freeze is
+  owned by w-fit/w-geom; this lane does not claim freeze RCA.
 
-## 8. Parent verify (no fit yet)
+## Sink critical path (FPGA decode, clip1 real_ref f0 total=480177)
+iq 18.3% · apply 17.5% · dump 17.4% · idle_ready 14.0% · i16pred 11.9%
+Next FPGA thruput work for RK4 (−17 cy) or RK6 (~3×): shorten iq/apply/dump or
+idle_ready starve — coordinate with w-area (no RAM growth; 465/553).
+
+## Gate (executes)
+python3 tests/unit/test_thruput_budget_rebaseline.py
+- Parses pll_0002 20 MHz; rejects ≠20 as product decode clock
+- RK3 HIT / RK4–RK6 MISS locked; RED: 2× paint MISS
+- Source-guards AvAction::Drop path
+Makefile + rollcall registered (expected_commands=106)
+
+## RTL change this task
+None. Analysis + executable gate only. No fit requested.
+
+## Parent verify
 ```bash
 cd .worktrees/w-thruput-on-warm
-git rev-parse HEAD   # expect 84d6790e…
-git merge-base --is-ancestor 809a8197 HEAD; echo rc=$?   # expect 0
-make define-parity; echo "true rc=$?"
-make quartus-sv-subset; echo "true rc=$?"
-make unit; echo "true rc=$?"
-FULL_FRAME_BITSTREAM=$PWD/tests/fixtures/p3_inter_pred/plex_inter_p16_baseline_320x240_12f.264 \
-  bash tests/unit/test_stream_path_full_frame_compare.sh
-# expect paint_per_mb=2239.647 and LUMA frame0 300/300
+python3 tests/unit/test_thruput_budget_rebaseline.py; echo "true rc=$?"
+python3 tests/unit/test_unit_rollcall.py; echo "true rc=$?"
+# optional full sim:
+# build/verilator/stream_path_full_frame_real_ref/Vstream_path_full_frame_tb ... → paint_per_mb=2239.647
 ```
-When slot granted: ONE fit of tip 259a7434 only; do not mid-fit edit sources.
-
-## 9. Logs
-- docs/evidence/w_thruput_on_warm/gates/{define_parity,quartus_sv_subset,make_unit2,dequant}.log
-- docs/evidence/w_thruput_on_warm/clip1_post_merge.log
-- docs/evidence/w_thruput_on_warm/clip2_real_ref/{sim.log,luma_score.out}
