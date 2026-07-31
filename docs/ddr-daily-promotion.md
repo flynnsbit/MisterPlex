@@ -215,27 +215,44 @@ grep -E 'DDR_YUV_FORCE_SCALE|FFMPEG_SWS_FLAGS' $(... --conf path...)
 ### 6) Visual / motion verify (claim success ONLY here)
 
 Visual **always runs** even if an earlier check failed (aggregate; never
-"skip visual — prior failed"). Parent live green path (device + HDMI):
+"skip visual — prior failed").
+
+**Grabber warm-up is owned by the gate** (parent 2026-07-31): MacroSilicon
+`/dev/video0` emits ~11–15 uniform junk frames. A bare
+`ffmpeg -frames:v 1` produced `mean_rgb=7,7,7 std=0` and a **false RED**
+while the device was showing a correct chevron. The blessed helper is
+`scripts/hdmi_capture_idle.sh` (`select=gte(n,20)`). The idle gate classifies
+that junk as `GRABBER_NOT_READY` and **retries a warmed capture** before any
+device verdict; thresholds are never loosened.
+
+#### Single command (preferred — no warm-up lore)
 
 ```bash
-# Idle (device already on coherent DDR pair + v2 boot hook):
-mkdir -p build/pair-visual
-ffmpeg -v error -f v4l2 -input_format mjpeg -video_size 1920x1080 \
-  -i /dev/video0 -frames:v 1 -y build/pair-visual/idle.png
-# Capture true rc DIRECTLY:
+# Host has /dev/video0 free; device already on coherent DDR pair + v2 boot hook.
+scripts/promotion_gate_check.sh verify-live
+echo "true rc=$?"
+# expect: auto-capture via hdmi_capture_idle.sh (warm-up baked in)
+# expect: OK product-core / OK v2-rollback-core / OK n_daemon=1
+# expect: OK live-exe-md5 edc3a46b… / OK boot-hook / PAIR_OK bank1=0x30080000
+# expect: OK class=idle_envelope  (NOT grabber_not_ready_exhausted)
+# expect: PROMOTE_GATES_OK
+# expect: true rc=0
+# judge pixels yourself: amber chevron on dark grey — gate cannot replace eyes
+# ABORT if true rc≠0 OR pixels wrong
+```
+
+Optional explicit capture (same helper the gate uses):
+
+```bash
+scripts/hdmi_capture_idle.sh build/pair-visual/idle.png
+echo "true rc=$?"   # expect 0
 PAIR_IDLE_PNG=$PWD/build/pair-visual/idle.png \
   scripts/promotion_gate_check.sh verify-live
 echo "true rc=$?"
-# expect probe: PRODUCT_MD5=c5382bee…  V2_MD5=dfebf2bf… (pure 32 hex, no glue)
-# expect: OK product-core / OK v2-rollback-core / OK n_daemon=1
-# expect: OK live-exe-md5 edc3a46b… / OK boot-hook / PAIR_OK bank1=0x30080000
-# expect: visual_idle true rc=0
-# expect: PROMOTE_GATES_OK
-# expect: true rc=0
-# judge pixels: orange chevron mean~38.5, NOT uniform green mean~128
-# ABORT if true rc≠0 OR pixels wrong — do not claim promote
+```
 
-# Playback (240p or 480p burst dir):
+```bash
+# Playback (240p or 480p burst dir — motion instrument already skips warm-up frames):
 PROMOTE_MOTION_CAPTURE_DIR=/path/to/png-burst \
   scripts/promotion_gate_check.sh verify-live
 echo "true rc=$?"
@@ -523,3 +540,16 @@ PROMOTE_HOOK_BLOB=<(ssh root@$HOST cat /media/fat/linux/_user-startup.sh) \
   scripts/promotion_gate_check.sh verify-live
 # or after pair restore: verify includes boot-hook gate automatically
 ```
+
+## Same-family audit (unstated preconditions)
+
+| Precondition | Was | Now |
+|--------------|-----|-----|
+| Probe md5 capture pure 32 hex | human/SSH quoting lore | `gate_join_remote_parts` + shape assert |
+| HDMI idle frame usable | human must know `-frames:v 1` is wrong | `hdmi_capture_idle.sh` warm-up + `GRABBER_NOT_READY` retry |
+| Motion burst not cold | easy to feed 1 junk frame | `hdmi_motion_instrument.py` DEFAULT_WARMUP_SKIP=15 already |
+| `/dev/video0` exclusive | busy → mysterious fail | helper runs `fuser` and fails with holders |
+| Visual optional | skip → false green | unset visual → hard rc=8; always-run aggregate |
+| Conf path | assume misterplex/ | resolve from `/proc/pid/cmdline --conf` |
+| n_daemon | cmdline substring | `/proc/pid/exe` basename only |
+

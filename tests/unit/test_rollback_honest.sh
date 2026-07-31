@@ -227,6 +227,10 @@ img.save(d / "idle_ok.png")
 Image.new("RGB", (64, 64), (0, 180, 0)).save(d / "idle_green.png")
 # near-uniform dark (mean ok-ish but flat — must FAIL uniformity)
 Image.new("RGB", (64, 64), (40, 38, 36)).save(d / "idle_flat.png")
+# Parent cold grabber frame: uniform 7,7,7 std=0 (MacroSilicon warm-up junk)
+Image.new("RGB", (64, 64), (7, 7, 7)).save(d / "idle_cold_grabber.png")
+# Pure black (also grabber-class until warmed retry exhausts)
+Image.new("RGB", (64, 64), (0, 0, 0)).save(d / "idle_black.png")
 PY
 
 PIN_SPI="$ROOT/artifacts/daemon-pins/misterplexd.50f4eb92"
@@ -524,7 +528,7 @@ fi
 echo "=== visual gate rejects solid green PNG ==="
 if [ -f "$WORK/idle_green.png" ]; then
   set +e
-  out=$(PAIR_IDLE_PNG="$WORK/idle_green.png" "$ROOT/scripts/pair_visual_gate.sh" idle 2>&1)
+  out=$(PAIR_VISUAL_NO_RECAPTURE=1 PAIR_IDLE_PNG="$WORK/idle_green.png" "$ROOT/scripts/pair_visual_gate.sh" idle 2>&1)
   rc=$?
   set -e
   echo "  green true rc=$rc"
@@ -536,13 +540,93 @@ fi
 echo "=== visual gate rejects flat uniform frame ==="
 if [ -f "$WORK/idle_flat.png" ]; then
   set +e
-  out=$(PAIR_IDLE_PNG="$WORK/idle_flat.png" "$ROOT/scripts/pair_visual_gate.sh" idle 2>&1)
+  out=$(PAIR_VISUAL_NO_RECAPTURE=1 PAIR_IDLE_PNG="$WORK/idle_flat.png" "$ROOT/scripts/pair_visual_gate.sh" idle 2>&1)
   rc=$?
   set -e
   echo "  flat true rc=$rc"
   [ "$rc" -eq 8 ] || { echo "FAIL flat want 8 got $rc"; exit 1; }
+  echo "$out" | grep -qiE 'uniform|flat|grabber_not_ready' || { echo "FAIL flat class msg"; exit 1; }
   echo "OK visual-flat-reject rc=8"
 fi
+
+echo "=== REGRESSION: cold grabber 7,7,7 → GRABBER_NOT_READY (not device black) ==="
+if [ -f "$WORK/idle_cold_grabber.png" ]; then
+  set +e
+  out=$(PAIR_VISUAL_NO_RECAPTURE=1 PAIR_IDLE_PNG="$WORK/idle_cold_grabber.png" \
+    "$ROOT/scripts/pair_visual_gate.sh" idle 2>&1)
+  rc=$?
+  set -e
+  echo "$out" | sed 's/^/  [cold] /'
+  echo "  cold true rc=$rc"
+  [ "$rc" -eq 8 ] || { echo "FAIL cold want 8 got $rc"; exit 1; }
+  echo "$out" | grep -q 'grabber_not_ready' || { echo "FAIL missing GRABBER_NOT_READY class"; exit 1; }
+  echo "$out" | grep -qi 'black_screen' && { echo "FAIL cold misclassed as black_screen"; exit 1; } || true
+  echo "OK cold-grabber-class"
+fi
+
+echo "=== REGRESSION: cold→warm retry yields idle_envelope ==="
+if [ -f "$WORK/idle_cold_grabber.png" ] && [ -f "$WORK/idle_ok.png" ]; then
+  # Initial PNG is cold; recapture cmd returns warmed structured idle.
+  cat >"$WORK/capture_warm.sh" <<'CAP'
+#!/usr/bin/env bash
+set -euo pipefail
+dest="${PAIR_CAPTURE_OUT:-${1:?}}"
+cp -f "$PAIR_TEST_WARM" "$dest"
+CAP
+  chmod +x "$WORK/capture_warm.sh"
+  set +e
+  out=$(
+    PAIR_VISUAL_OUT_DIR="$WORK" \
+    PAIR_TEST_WARM="$WORK/idle_ok.png" \
+    PAIR_IDLE_PNG="$WORK/idle_cold_grabber.png" \
+    PAIR_CAPTURE_CMD="$WORK/capture_warm.sh" \
+    PAIR_VISUAL_GRABBER_RETRIES=2 \
+    "$ROOT/scripts/pair_visual_gate.sh" idle 2>&1
+  )
+  rc=$?
+  set -e
+  echo "$out" | sed 's/^/  [retry] /' | tail -25
+  echo "  retry true rc=$rc"
+  [ "$rc" -eq 0 ] || { echo "FAIL retry want 0 got $rc"; exit 1; }
+  echo "$out" | grep -q 'GRABBER_NOT_READY' || { echo "FAIL no grabber note on retry path"; exit 1; }
+  echo "$out" | grep -q 'idle_envelope' || { echo "FAIL no idle_envelope after warm"; exit 1; }
+  echo "OK cold-to-warm-retry"
+fi
+
+echo "=== REGRESSION: warmed still-uniform hard-fails (no threshold loosen) ==="
+if [ -f "$WORK/idle_cold_grabber.png" ]; then
+  cat >"$WORK/capture_always_cold.sh" <<'CAP'
+#!/usr/bin/env bash
+cp -f "$PAIR_TEST_COLD" "${PAIR_CAPTURE_OUT:-$1}"
+CAP
+  chmod +x "$WORK/capture_always_cold.sh"
+  set +e
+  out=$(
+    PAIR_VISUAL_OUT_DIR="$WORK" \
+    PAIR_TEST_COLD="$WORK/idle_cold_grabber.png" \
+    PAIR_IDLE_PNG="$WORK/idle_cold_grabber.png" \
+    PAIR_CAPTURE_CMD="$WORK/capture_always_cold.sh" \
+    PAIR_VISUAL_GRABBER_RETRIES=1 \
+    "$ROOT/scripts/pair_visual_gate.sh" idle 2>&1
+  )
+  rc=$?
+  set -e
+  echo "  exhaust true rc=$rc"
+  [ "$rc" -eq 8 ] || { echo "FAIL exhaust want 8 got $rc"; exit 1; }
+  echo "$out" | grep -qiE 'grabber_not_ready_exhausted|still uniform' \
+    || { echo "FAIL exhaust msg"; echo "$out"; exit 1; }
+  echo "OK grabber-exhaust-hard-fail"
+fi
+
+echo "=== blessed helper refuses -frames:v 1 lore; embeds warmup ==="
+grep -q 'select=gte' "$ROOT/scripts/hdmi_capture_idle.sh" || { echo "FAIL helper missing select=gte"; exit 1; }
+grep -q 'HDMI_WARMUP_FRAMES' "$ROOT/scripts/hdmi_capture_idle.sh" || { echo "FAIL helper missing WARMUP"; exit 1; }
+# Must NOT document bare -frames:v 1 as the recipe in the helper
+if grep -v '^#' "$ROOT/scripts/hdmi_capture_idle.sh" | grep -qE 'frames:v 1[^\"]*$'; then
+  # the helper uses -frames:v 1 AFTER select=gte — that is correct; ensure select precedes
+  grep -n 'frames:v\|select=gte' "$ROOT/scripts/hdmi_capture_idle.sh" | sed 's/^/  /'
+fi
+echo "OK helper-warmup-baked"
 
 echo "=== find-daemon e9f79de2 with pin present ==="
 if [ -f "$PIN_DDR" ]; then

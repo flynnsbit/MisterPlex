@@ -442,6 +442,15 @@ verify_live() {
   if [ -z "$motion_cmd" ] && [ -n "${PROMOTE_MOTION_CAPTURE_DIR:-}" ]; then
     motion_cmd="python3 $(printf '%q' "$ROOT/tools/hdmi_motion_instrument.py") $(printf '%q' "$PROMOTE_MOTION_CAPTURE_DIR")"
   fi
+  # Idle visual owns HDMI capture (warm-up baked into hdmi_capture_idle.sh).
+  # Parent 2026-07-31: recipe with -frames:v 1 alone → false RED (uniform 7,7,7).
+  # Auto-capture when /dev/video0 exists so verify-live needs no human warm-up lore.
+  hdmi_dev="${HDMI_DEV:-/dev/video0}"
+  auto_idle=0
+  if [ "${PROMOTE_AUTO_CAPTURE:-1}" = "1" ] && [ -z "${PROMOTE_GATE_BLOB:-}" ]; then
+    # Never auto-open the grabber during injected unit blobs.
+    if [ -e "$hdmi_dev" ]; then auto_idle=1; fi
+  fi
   if [ -n "${PROMOTE_VISUAL_CMD:-}" ]; then
     set +e
     # shellcheck disable=SC2086
@@ -449,7 +458,10 @@ verify_live() {
     vrc=$?
     set -e
     echo "visual_hook true rc=$vrc"
-  elif [ -n "${PAIR_IDLE_PNG:-}" ] || [ -n "${PAIR_CAPTURE_CMD:-}" ] || [ "${PROMOTE_VISUAL_IDLE:-0}" = "1" ]; then
+  elif [ -n "${PAIR_IDLE_PNG:-}" ] || [ -n "${PAIR_CAPTURE_CMD:-}" ]        || [ "${PROMOTE_VISUAL_IDLE:-0}" = "1" ] || [ "$auto_idle" = "1" ]; then
+    if [ "$auto_idle" = "1" ] && [ -z "${PAIR_IDLE_PNG:-}" ] && [ -z "${PAIR_CAPTURE_CMD:-}" ]; then
+      echo "visual_idle: auto-capture via scripts/hdmi_capture_idle.sh (warm-up baked in)"
+    fi
     set +e
     "$ROOT/scripts/pair_visual_gate.sh" idle
     vrc=$?
@@ -472,9 +484,10 @@ verify_live() {
     fi
   else
     echo "VISUAL_REQUIRED: unset PROMOTE_VISUAL_CMD / PAIR_IDLE_PNG / PROMOTE_MOTION_CMD / PROMOTE_MOTION_CAPTURE_DIR"
+    echo "  and no HDMI device at ${hdmi_dev} for auto-capture."
     echo "  Telemetry-only is insufficient (green screen still returns /resources 200)."
-    echo "  Playback: PROMOTE_MOTION_CAPTURE_DIR=/path/to/pngs  (tools/hdmi_motion_instrument.py)"
-    echo "  Idle:     PAIR_IDLE_PNG=/path/idle.png            (pair_visual_gate.sh)"
+    echo "  Blessed idle: scripts/hdmi_capture_idle.sh   # NEVER ffmpeg -frames:v 1 alone"
+    echo "  Playback:     PROMOTE_MOTION_CAPTURE_DIR=/path/to/pngs"
     vrc=8
   fi
   if [ "$vrc" -eq 0 ]; then
