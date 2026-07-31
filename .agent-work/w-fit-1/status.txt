@@ -1,0 +1,76 @@
+# w-fit-1 status — P5 frame ledger + P6 drift + V_STORE=480 analysis
+# Updated: 2026-07-31 (lane w-fit)
+
+BRANCH=w-fit-integ-c5382bee-dequant-swap
+SHA=5e0b43a0fd758c3ac12209edb48380a216441bdd
+WORKTREE=/home/flynnsbit/Projects/MisterPlex/.worktrees/w-fit-integ
+BASE_WORKING_PAIR=c5382bee + edc3a46b
+NO_FIT_REQUESTED=1
+NO_DEVICE_ACCESS=1
+
+## Deliverables
+
+### P5 — cross-restart frame ledger (COMPLETE)
+- Merged w-geom 8f144ea1 (death breadcrumb + file ledger) into tip; extended residual with present_fails.
+- Identity: frames - presents - drops - present_fails == residual (assert 0 over soak sum of session_end).
+- Events: process_start / session_end / process_exit — restarts visible as rows, not hidden by counter reset.
+- Path: <confDir>/misterplexd.frame_ledger (append-only).
+- Windowed vfps/pfps (dframes/dwall) primary; vfps_avg/pfps_avg cumulative; formatFps3 (%.3f).
+- 1 Hz also logs residual/closed/present_fails + hold_edge_ms.
+
+ON-DEVICE (parent after daemon deploy):
+  LEDGER=/media/fat/misterplex/misterplexd.frame_ledger bash scripts/print_frame_ledger.sh
+  # or: scripts/assert_frame_ledger.sh /media/fat/misterplex/misterplexd.frame_ledger
+  # exit: 0 closed · 1 open/missing · 3 closed but RESTART_VISIBLE
+
+RED-before-GREEN (host sample, this lane):
+  print open residual=16     true rc=1
+  print closed residual=0    true rc=0
+  assert open                true rc=1
+  assert closed              true rc=0
+  assert --self-test         true rc=0  (open RED / closed GREEN / multi rc=3)
+
+### P6 — drift falsifier decisiveness (COMPLETE)
+- Doc: .agent-work/w-fit-1/P6_AV_DRIFT_DECISIVENESS.md
+- Verdict: AV_PRESENT_LEAD_MS=20 ALONE is only PARTIALLY decisive.
+  - Band moves with confirmed lead_ms=20 → metric is setpoint readout (clear).
+  - Band does NOT move with confirmed lead → NOT proof of accurate clock
+    (other clamp / wrong path / sampling bias still possible) → UNSCORED.
+- Decisive recipe: control lead=40 → A lead=20 → optional B lead=10, each requiring
+  lead_ms= and hold_edge_ms= on the 1 Hz line before interpreting drift_ms.
+- Pre-reg: lead=40 band ~[-40,0]; lead=20 ~[-20,0] IF readout.
+- vfps: cumulative + substr(0,4) NOT usable for health; windowed rates are.
+
+### V_STORE=480 impact (ANALYSIS ONLY — no fit)
+- Doc: .agent-work/w-fit-1/V_STORE_480_IMPACT.md
+- Today: V_STORE=240, STORE_Y_SCALE=(FRAME_H*65536)/240 → with FRAME_H=480 scale=2.0
+  → even store_y only; half of 480-row store discarded; DE 529x240 → ascal.
+- V_STORE=480 alone insufficient: colorbars/timing still 240-line py (scandouble halves vc).
+- Need 480 active lines into ascal + scale 1.0.
+- BW: ~27–37 MB/s vs ~720 peak — not the killer.
+- Prereg vs baseline ALM 21095 / DSP 74 / RAM 465/553 / setup +0.165 / hold +0.245:
+  ALM +55..+300 · DSP 0 · RAM +0..+5 (store already 480) · setup risk thin.
+- No fit ask until RED→GREEN TB with execution proven.
+
+### Inherited (already on branch)
+- video_regression dual SPI/DDR pairs; GATE_CORE_IDENTITY=UNVERIFIED fail-closed.
+- core_geometry_map: dfebf2bf + c5382bee mapped.
+- Bundle shelved (PLXC + 907e + dequant) — still not worth exclusive alone.
+
+## true rc= (captured DIRECTLY)
+
+build/test_frame_ledger              true rc=0
+build/test_death_breadcrumb          true rc=0
+scripts/assert_frame_ledger.sh --self-test  true rc=0
+make unit                            true rc=0
+  (includes freeze/shear/colour/sustained TB executed PASS paths;
+   GATE_SKIP live-pms-baseline only — not a pass claim)
+
+## Commits (tip chain)
+825d205d fix(arm): self-report daemon exits + cross-restart frame ledger
+dec1bb1d fix(arm): explicit soak frame ledger + lead deadband tests (P5/P6)
+aa10c570 integ(bundle): pin edc3a46b + fail-closed PLXC + dequant TB signed
+
+## Fit recommendation
+STILL NO EXCLUSIVE. P5/P6 are ARM/host. V_STORE=480 is user-visible but needs
+timing design + RED→GREEN sim first. c5382bee+edc3a46b already paints 240p+480p.
