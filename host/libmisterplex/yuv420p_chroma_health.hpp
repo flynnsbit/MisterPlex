@@ -121,16 +121,13 @@ inline FfmpegScaleMode ffmpegScaleModeForDdrYuvPresent(FfmpegScaleMode confMode,
     return confMode;
 }
 
-// PMS universal URL videoResolution is a REQUEST. Client profile only adds
-// upperBound(width/height) — not an exact-size force. Never treat the request
-// string as verified delivery geometry (main.cpp delivery_basis=transcode_request).
+// PMS universal URL videoResolution is a REQUEST (upperBound only).
+// library_media is PMS *scanner display metadata* — a claim, not a measurement
+// (parent B4: hole on direct-play). Only a runtime-measured basis qualifies.
 inline bool deliveryGeometryVerifiedFromBasis(const char* deliveryBasis) {
     if (!deliveryBasis)
         return false;
-    // Direct-play library Media/Stream WxH is the best pre-ffmpeg claim we have.
-    // "measured" reserved for a future ffprobe path.
-    return std::string(deliveryBasis) == "library_media" ||
-           std::string(deliveryBasis) == "measured";
+    return std::string(deliveryBasis) == "measured";
 }
 
 } // namespace misterplex

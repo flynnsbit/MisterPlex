@@ -34,8 +34,12 @@ struct PlaybackSummary {
     bool skipRgb = false;
     bool shortRead = false;
     bool videoEof = false;
+    bool pipeDesync = false;
+    bool pipeByteMisaligned = false;
     size_t shortReadGot = 0;
     size_t shortReadWant = 0;
+    int measuredW = 0;
+    int measuredH = 0;
 
     int64_t deliveredFrames() const {
         return rawFrames > 0 ? rawFrames : (reconFrames > 0 ? reconFrames : presentedFrames);
@@ -231,7 +235,10 @@ private:
     bool wantSkipRgbVideo() const;
     bool publishDdrFrame(const DdrPublishFrame& frame, const char* context,
                          std::string* err = nullptr);
-    pid_t spawnFfmpeg(const std::vector<std::string>& args, int vWriteFd, int aWriteFd);
+    // errWriteFd: optional pipe for ffmpeg stderr (geometry banners). -1 → lab file//null.
+    pid_t spawnFfmpeg(const std::vector<std::string>& args, int vWriteFd, int aWriteFd,
+                      int errWriteFd = -1);
+    void ffmpegStderrPump(int errReadFd, size_t codedFrameBytes, bool identitySkip);
     pid_t spawnStreamDemux(const std::string& url, const std::string& headers, int64_t startMs,
                            int writeFd);
     pid_t spawnAudioOnly(const std::string& url, const std::string& headers, int64_t startMs,
@@ -257,6 +264,10 @@ private:
     bool deliveryGeometryVerified_ = false;
     int ffmpegScaleSourceW_ = 0;
     int ffmpegScaleSourceH_ = 0;
+    // Runtime-measured input geometry from ffmpeg stderr (B2). 0 = not seen yet.
+    std::atomic<int> measuredDeliveryW_{0};
+    std::atomic<int> measuredDeliveryH_{0};
+    std::atomic<bool> pipeDesyncRisk_{false};
     // Conf AUDIO_DELAY_MS — default 0. Applied as FFmpeg adelay on product path.
     int audioDelayMs_ = 0;
     // Starting point for the feed-rate servo, and the open-loop rate if the ring

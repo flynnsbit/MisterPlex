@@ -164,33 +164,68 @@ int main() {
                     on.reason.c_str(), off.reason.c_str());
     }
 
-    // --- F1b) delivery basis trust helper ---
+    // --- F1b) delivery basis trust helper (B4: only measured) ---
     {
         expect(!deliveryGeometryVerifiedFromBasis("transcode_request"),
                "PMS request is NOT verified");
         expect(!deliveryGeometryVerifiedFromBasis("unknown"), "unknown not verified");
-        expect(deliveryGeometryVerifiedFromBasis("library_media"), "library is verified");
+        expect(!deliveryGeometryVerifiedFromBasis("library_media"),
+               "library_media is PMS claim NOT verified");
         expect(deliveryGeometryVerifiedFromBasis("measured"), "measured is verified");
     }
 
-    // --- F1c) DESYNC model: producer 640x480 I420 vs reader 624x480 coded ---
-    // PMS classic 480p ladder is 640x480; we request 624x480. Delta proves pipe phase.
+    // --- F1c) DESYNC class model (B1: 640 was WRONG as the N=2 silicon story) ---
+    // Capture evidence (cap480a f_020 vs cap480b f_049):
+    //   - N=2 TREK24 copies in one raster → S ≈ 449280/2 = 224640 = 624x240 I420 EXACT
+    //   - upright FLASH split L/R → horizontal component ⇒ producer width ≠ pure
+    //     624 vertical-only stack alone (624x240 sim stacks two complete FLASH)
+    //   - 640x480 = 460800 > 449280 cannot place two full frames in one raster
+    // True single producer size is NOT uniquely pinned from stills; B2 measures it.
+    // Gate keeps the CLASS (any S≠R under fixed reader) + N=2 candidate + risk API.
     {
         const size_t coded = yuv420pCodedFrameBytes(
             makeDdrFrameGeometry(kPlex480pCodedWidth.get(), kPlex480pCodedHeight.get()));
-        const size_t pms640 = static_cast<size_t>(640) * 480 * 3 / 2; // 460800
+        const size_t s624x240 = yuv420pFrameBytesWH(624, 240); // 224640
+        const size_t s320x240 = yuv420pFrameBytesWH(320, 240); // 115200
+        const size_t s640x480 = yuv420pFrameBytesWH(640, 480); // 460800
         expect(coded == 449280u, "coded I420 bytes");
-        expect(pms640 == 460800u, "640x480 I420 bytes");
-        expect(rawPipePhaseOffset(pms640, coded, 0) == 0u, "frame0 aligned");
-        expect(rawPipeDesynced(pms640, coded, 1), "frame1 desynced");
-        expect(rawPipePhaseOffset(pms640, coded, 1) == 449280u % 460800u, "phase after 1");
-        // Same size → never desync.
+        expect(s624x240 == 224640u, "624x240 I420 (N=2 candidate)");
+        expect(coded % s624x240 == 0u, "N=2 exact divide");
+        expect(coded / s624x240 == 2u, "exactly two 624x240 per coded");
+        // 640x480 cannot explain N=2 full frames in one reader raster.
+        expect(s640x480 > coded, "640x480 larger than reader — not N=2 packing");
+        expect(rawPipeDesynced(s624x240, coded, 0) == false, "aligned at 0");
+        // After 1 reader frame of a smaller producer, phase may return 0 when
+        // reader is an integer multiple — still two producer frames per raster.
+        expect(rawPipePhaseOffset(s624x240, coded, 1) == 0u, "2x multiple realigns");
+        expect(rawPipeDesynced(s320x240, coded, 1), "320x240 desyncs");
+        expect(rawPipeDesynced(s640x480, coded, 1), "640x480 desyncs (class)");
         expect(!rawPipeDesynced(coded, coded, 100), "matched sizes stay synced");
-        // RED: old policy would identity-skip on unverified 624 claim while PMS
-        // may emit 640 — gate documents the desync class.
-        expect(rawPipeDesynced(pms640, coded, 40), "desync accumulates");
-        std::printf("GREEN_DESYNC coded=%zu pms640=%zu phase1=%zu\n", coded, pms640,
-                    rawPipePhaseOffset(pms640, coded, 1));
+        // Risk API: identity_skip + mismatch = risk; scale path = no risk flag.
+        expect(pipeDesyncRisk(s640x480, coded, true), "RED risk identity+mismatch");
+        expect(pipeDesyncRisk(s624x240, coded, true), "RED risk 624x240 identity");
+        expect(!pipeDesyncRisk(s640x480, coded, false), "GREEN no risk when scaling");
+        expect(!pipeDesyncRisk(coded, coded, true), "GREEN match+identity");
+        expect(rawPipeByteAligned(coded * 10, coded), "GREEN byte align");
+        expect(!rawPipeByteAligned(coded * 10 + 100, coded), "RED byte misalign");
+        std::printf("GREEN_DESYNC coded=%zu s624x240=%zu s640x480=%zu (640 NOT N=2)\n",
+                    coded, s624x240, s640x480);
+    }
+
+    // --- F1d) ffmpeg geometry line parser (B2) ---
+    {
+        const auto in = parseFfmpegGeometryLine(
+            "  Stream #0:0: Video: h264 (High), yuv420p(progressive), 640x480, 24 fps");
+        expect(in.ok && in.w == 640 && in.h == 480, "parse input 640x480");
+        const auto in2 = parseFfmpegGeometryLine(
+            "  Stream #0:0: Video: h264, yuv420p, 624x480 [SAR 1:1 DAR 13:10]");
+        expect(in2.ok && in2.w == 624 && in2.h == 480, "parse 624x480 with SAR");
+        const auto out = parseFfmpegGeometryLine(
+            "  Stream #0:0: Video: rawvideo (I420 / 0x30323449), yuv420p, 624x480");
+        expect(out.ok && out.w == 624 && out.h == 480, "parse rawvideo out");
+        const auto bad = parseFfmpegGeometryLine("frame= 123 fps=24 q=-0.0 size= 1024kB");
+        expect(!bad.ok, "progress line not geometry");
+        std::printf("GREEN_PARSE measured_parser ok\n");
     }
 
     // --- F2) 240p source vs 624 coded: force flag is a no-op (already scales) ---

@@ -1235,7 +1235,8 @@ bool MediaPlayer::play(const std::string& urlOrPath, int64_t startOffsetMs,
     return true;
 }
 
-pid_t MediaPlayer::spawnFfmpeg(const std::vector<std::string>& args, int vWriteFd, int aWriteFd) {
+pid_t MediaPlayer::spawnFfmpeg(const std::vector<std::string>& args, int vWriteFd, int aWriteFd,
+                               int errWriteFd) {
     pid_t pid = fork();
     if (pid < 0)
         return -1;
@@ -1257,13 +1258,17 @@ pid_t MediaPlayer::spawnFfmpeg(const std::vector<std::string>& args, int vWriteF
         if (vWriteFd >= 0 && vWriteFd != STDOUT_FILENO && vWriteFd != 3)
             ::close(vWriteFd);
 
-        // Lab: capture FFmpeg errors on USB (tmpfs /tmp is tiny). Product: /dev/null.
-        int errfd = ::open("/media/usb0/misterplex-lab/logs/ffmpeg.err",
+        // Prefer caller stderr pipe (geometry banners). Else lab USB file /dev/null.
+        int errfd = errWriteFd;
+        if (errfd < 0) {
+            errfd = ::open("/media/usb0/misterplex-lab/logs/ffmpeg.err",
                            O_WRONLY | O_CREAT | O_TRUNC, 0644);
-        if (errfd < 0)
-            errfd = ::open("/dev/null", O_WRONLY);
+            if (errfd < 0)
+                errfd = ::open("/dev/null", O_WRONLY);
+        }
         if (errfd >= 0) {
-            dup2(errfd, STDERR_FILENO);
+            if (errfd != STDERR_FILENO)
+                dup2(errfd, STDERR_FILENO);
             if (errfd != STDERR_FILENO && errfd != 3 && errfd != STDOUT_FILENO)
                 ::close(errfd);
         }
@@ -1281,6 +1286,86 @@ pid_t MediaPlayer::spawnFfmpeg(const std::vector<std::string>& args, int vWriteF
     }
     setpgid(pid, pid);
     return pid;
+}
+
+void MediaPlayer::ffmpegStderrPump(int errReadFd, size_t codedFrameBytes, bool identitySkip) {
+    if (errReadFd < 0)
+        return;
+    std::string acc;
+    char buf[512];
+    int lastInW = 0, lastInH = 0;
+    int lastOutW = 0, lastOutH = 0;
+    for (;;) {
+        const ssize_t n = ::read(errReadFd, buf, sizeof(buf));
+        if (n < 0) {
+            if (errno == EINTR)
+                continue;
+            break;
+        }
+        if (n == 0)
+            break;
+        acc.append(buf, static_cast<size_t>(n));
+        for (;;) {
+            const auto nl = acc.find('\n');
+            if (nl == std::string::npos)
+                break;
+            std::string line = acc.substr(0, nl);
+            acc.erase(0, nl + 1);
+            // Drop progress noise if any slipped past -nostats.
+            if (line.rfind("frame=", 0) == 0 || line.find("fps=") != std::string::npos)
+                continue;
+            const auto g = parseFfmpegGeometryLine(line);
+            if (!g.ok)
+                continue;
+            // Classify: lines under Output # are post-filter; Input/Stream Video
+            // without Output are pre-filter delivery.
+            const bool outish =
+                g.is_output || line.find("Output") != std::string::npos ||
+                line.find("rawvideo") != std::string::npos;
+            if (outish) {
+                if (g.w == lastOutW && g.h == lastOutH)
+                    continue;
+                lastOutW = g.w;
+                lastOutH = g.h;
+                log("media: MEASURED_OUTPUT " + std::to_string(g.w) + "x" +
+                    std::to_string(g.h) + " (post-vf rawvideo)");
+                continue;
+            }
+            // Input / decoded delivery geometry — the B2 permanent observable.
+            if (g.w == lastInW && g.h == lastInH)
+                continue;
+            const bool changed = (lastInW > 0 || lastInH > 0);
+            lastInW = g.w;
+            lastInH = g.h;
+            measuredDeliveryW_.store(g.w);
+            measuredDeliveryH_.store(g.h);
+            deliveryGeometryVerified_ = true;
+            ffmpegScaleSourceW_ = g.w;
+            ffmpegScaleSourceH_ = g.h;
+            const size_t prodBytes = yuv420pFrameBytesWH(g.w, g.h);
+            const bool risk = pipeDesyncRisk(prodBytes, codedFrameBytes, identitySkip);
+            if (risk)
+                pipeDesyncRisk_.store(true);
+            log(std::string("media: MEASURED_DELIVERY ") + std::to_string(g.w) + "x" +
+                std::to_string(g.h) + " bytes=" + std::to_string(prodBytes) +
+                " coded_bytes=" + std::to_string(codedFrameBytes) +
+                " identity_skip=" + (identitySkip ? "1" : "0") +
+                " desync_risk=" + (risk ? "1" : "0") +
+                (changed ? " MID_STREAM_CHANGE=1" : " MID_STREAM_CHANGE=0") +
+                (changed ? " — size changed after play start" : ""));
+            if (risk) {
+                log("ERROR media: PIPE_DESYNC_RISK measured=" + std::to_string(g.w) + "x" +
+                    std::to_string(g.h) + " producer_bytes=" + std::to_string(prodBytes) +
+                    " reader_bytes=" + std::to_string(codedFrameBytes) +
+                    " identity_skip=1 — raw pipe will phase-walk; force scale");
+            }
+            if (changed) {
+                log("ERROR media: MEASURED_DELIVERY mid-stream change — play-time "
+                    "geometry guard cannot see this; investigate PMS/decoder");
+            }
+        }
+    }
+    ::close(errReadFd);
 }
 
 pid_t MediaPlayer::spawnStreamDemux(const std::string& url, const std::string& headers,
@@ -2431,11 +2516,16 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
         usedRawVideo = true;
         presentCount_ = 0;
         audioBytes_.store(0);
+        measuredDeliveryW_.store(0);
+        measuredDeliveryH_.store(0);
+        pipeDesyncRisk_.store(false);
         std::vector<std::string> args;
         args.push_back(ffmpeg_);
         args.push_back("-hide_banner");
+        // info + nostats: Stream # Video WxH banners without frame= spam (B2).
+        args.push_back("-nostats");
         args.push_back("-loglevel");
-        args.push_back("error");
+        args.push_back("info");
         args.push_back("-nostdin");
 
         if (testPattern) {
@@ -2554,6 +2644,7 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
 
         int vpipe[2] = {-1, -1};
         int apipe[2] = {-1, -1};
+        int epipe[2] = {-1, -1};
         if (pipe(vpipe) != 0) {
             log("media: video pipe failed");
             playing_.store(false);
@@ -2565,6 +2656,10 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
         if (wantAudio && pipe(apipe) != 0) {
             log("media: audio pipe failed — video only");
             apipe[0] = apipe[1] = -1;
+        }
+        if (pipe(epipe) != 0) {
+            log("media: ffmpeg stderr pipe failed — measured geometry unavailable");
+            epipe[0] = epipe[1] = -1;
         }
 
         {
@@ -2581,14 +2676,32 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
             log(joined);
         }
 
-        pid_t pid = spawnFfmpeg(args, vpipe[1], apipe[1] >= 0 ? apipe[1] : -1);
+        // frameBytes MUST track coded bank (rawW/rawH), never display 618 or
+        // DECODE tier alone — under-read would leave chroma at init value and
+        // desync the pipe (parent defect A/B hypothesis). Product: 624*480*3/2.
+        const size_t frameBytes = rawVideoFrameBytes(videoFmt, rawW, rawH);
+
+        pid_t pid =
+            spawnFfmpeg(args, vpipe[1], apipe[1] >= 0 ? apipe[1] : -1, epipe[1]);
         ::close(vpipe[1]);
         if (apipe[1] >= 0)
             ::close(apipe[1]);
+        if (epipe[1] >= 0)
+            ::close(epipe[1]);
+        std::thread errThr;
+        if (pid >= 0 && epipe[0] >= 0) {
+            errThr = std::thread([this, efd = epipe[0], frameBytes, idSkip = vfPlan.identity_skip] {
+                ffmpegStderrPump(efd, frameBytes, idSkip);
+            });
+        } else if (epipe[0] >= 0) {
+            ::close(epipe[0]);
+        }
         if (pid < 0) {
             ::close(vpipe[0]);
             if (apipe[0] >= 0)
                 ::close(apipe[0]);
+            if (errThr.joinable())
+                errThr.join();
             log("media: fork failed");
             playing_.store(false);
             killChildren();
@@ -2605,11 +2718,6 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
         if (apipe[0] >= 0) {
             audioThr_ = std::thread([this, afd = apipe[0]] { audioPump(afd); });
         }
-
-        // frameBytes MUST track coded bank (rawW/rawH), never display 618 or
-        // DECODE tier alone — under-read would leave chroma at init value and
-        // desync the pipe (parent defect A/B hypothesis). Product: 624*480*3/2.
-        const size_t frameBytes = rawVideoFrameBytes(videoFmt, rawW, rawH);
         std::vector<uint8_t> frame(frameBytes);
         // Zero-init → green-cast under any underfill (U=V=0). Studio black
         // (Y=16,U=V=128) is greyscale-safe if a short frame is ever presented.
@@ -3210,6 +3318,8 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                               : 0.0;
                 const int64_t abytes = audioBytes_.load();
                 const double a_sec = static_cast<double>(abytes) / (48000.0 * 4.0);
+                const int mw = measuredDeliveryW_.load();
+                const int mh = measuredDeliveryH_.load();
                 log("media: frames=" + std::to_string(frameIndex) +
                     " vfps=" + std::to_string(vfps).substr(0, 4) +
                     " pfps=" + std::to_string(pfps).substr(0, 4) +
@@ -3220,7 +3330,25 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                     " av_drift_ms=" + std::to_string(avDriftMs_.load()) +
                     " drops=" + std::to_string(droppedFrames_.load()) +
                     " fps=" + std::to_string(fpsNum) + "/" + std::to_string(fpsDen) +
-                    " decode=" + std::to_string(outW_) + "x" + std::to_string(outH_));
+                    " decode=" + std::to_string(outW_) + "x" + std::to_string(outH_) +
+                    " measured=" +
+                    (mw > 0 ? (std::to_string(mw) + "x" + std::to_string(mh)) : "pending") +
+                    " desync_risk=" + (pipeDesyncRisk_.load() ? "1" : "0"));
+            }
+            // Periodic hard check (B5): measured size vs reader under identity_skip.
+            if (vfPlan.identity_skip && (frameIndex % 120) == 0) {
+                const int mw = measuredDeliveryW_.load();
+                const int mh = measuredDeliveryH_.load();
+                if (mw > 0 && mh > 0) {
+                    const size_t pb = yuv420pFrameBytesWH(mw, mh);
+                    if (pipeDesyncRisk(pb, frameBytes, true)) {
+                        pipeDesyncRisk_.store(true);
+                        log("ERROR media: PIPE_DESYNC_RISK periodic measured=" +
+                            std::to_string(mw) + "x" + std::to_string(mh) +
+                            " producer_bytes=" + std::to_string(pb) +
+                            " reader_bytes=" + std::to_string(frameBytes));
+                    }
+                }
             }
 
             {
@@ -3238,6 +3366,50 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
             logProfile();
         if (rfd >= 0)
             ::close(rfd);
+        // Close video first so ffmpeg can exit and EOF stderr for the pump join.
+        killChildren();
+        if (errThr.joinable())
+            errThr.join();
+
+        // B5: byte-align + measured desync risk (remainder alone cannot see
+        // producer≠reader while the read loop still fills frameBytes each time).
+        const bool byteAligned = rawPipeByteAligned(totalBytes, frameBytes);
+        const int mw = measuredDeliveryW_.load();
+        const int mh = measuredDeliveryH_.load();
+        const size_t prodBytes = (mw > 0 && mh > 0) ? yuv420pFrameBytesWH(mw, mh) : 0;
+        const bool risk = pipeDesyncRisk_.load() ||
+                          pipeDesyncRisk(prodBytes, frameBytes, vfPlan.identity_skip);
+        if (!byteAligned) {
+            log("ERROR media: PIPE_BYTE_MISALIGN totalBytes=" + std::to_string(totalBytes) +
+                " frameBytes=" + std::to_string(frameBytes) +
+                " remainder=" + std::to_string(frameBytes ? totalBytes % frameBytes : 0) +
+                " shortRead=" + (shortRead ? "1" : "0"));
+        } else if (totalBytes > 0) {
+            log("media: pipe_align ok totalBytes=" + std::to_string(totalBytes) +
+                " frameBytes=" + std::to_string(frameBytes) +
+                " frames=" + std::to_string(frameIndex));
+        }
+        if (mw > 0 && mh > 0) {
+            log("media: MEASURED_DELIVERY_FINAL " + std::to_string(mw) + "x" +
+                std::to_string(mh) + " producer_bytes=" + std::to_string(prodBytes) +
+                " reader_bytes=" + std::to_string(frameBytes) +
+                " identity_skip=" + (vfPlan.identity_skip ? "1" : "0") +
+                " desync_risk=" + (risk ? "1" : "0"));
+        } else if (usedRawVideo) {
+            log("media: MEASURED_DELIVERY_FINAL none — ffmpeg banner not parsed "
+                "(check -loglevel info / stderr pipe)");
+        }
+        if (risk) {
+            log("ERROR media: PIPE_DESYNC session had producer/reader size mismatch "
+                "under identity_skip (or measured risk flag)");
+        }
+        {
+            std::lock_guard<std::mutex> lock(summaryMu_);
+            lastSummary_.pipeDesync = risk;
+            lastSummary_.pipeByteMisaligned = !byteAligned;
+            lastSummary_.measuredW = mw;
+            lastSummary_.measuredH = mh;
+        }
     }
 
     killChildren();
@@ -3286,6 +3458,14 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
         lastSummary_.videoEof = videoEof;
         lastSummary_.shortReadGot = shortReadGot;
         lastSummary_.shortReadWant = shortReadWant;
+        // pipeDesync / measured* may already be set from the rawvideo epilogue;
+        // only fill measured from atomics if still zero.
+        if (lastSummary_.measuredW == 0) {
+            lastSummary_.measuredW = measuredDeliveryW_.load();
+            lastSummary_.measuredH = measuredDeliveryH_.load();
+        }
+        if (!lastSummary_.pipeDesync)
+            lastSummary_.pipeDesync = pipeDesyncRisk_.load();
     }
     // Natural EOF (not user stop / seek restart) → "ended" so main can auto-next.
     if (!stop_.load() && onProgress_) {

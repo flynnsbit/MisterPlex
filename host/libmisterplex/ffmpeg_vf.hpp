@@ -10,6 +10,8 @@
 // Always (safe for callers that omit conf).
 #pragma once
 
+#include <cctype>
+#include <cstdio>
 #include <string>
 
 namespace misterplex {
@@ -180,6 +182,81 @@ inline bool rawPipeDesynced(size_t producer_frame_bytes, size_t reader_frame_byt
         return false;
     return rawPipePhaseOffset(producer_frame_bytes, reader_frame_bytes, frame_index) != 0 ||
            frame_index > 0;
+}
+
+// Runtime risk: identity_skip (or any path that reads fixed reader_bytes) while the
+// producer frame size differs. The STREAM=0 loop always reads exactly reader_bytes
+// per frame, so totalBytes % reader_bytes stays 0 even while the pipe desyncs —
+// remainder checks alone cannot see this class. Compare measured producer size.
+inline bool pipeDesyncRisk(size_t producer_frame_bytes, size_t reader_frame_bytes,
+                           bool identity_skip) {
+    if (producer_frame_bytes == 0 || reader_frame_bytes == 0)
+        return false;
+    if (producer_frame_bytes == reader_frame_bytes)
+        return false;
+    return identity_skip;
+}
+
+// I420 packed size (same as ddr_frame_layout yuv420pFrameBytes but local for
+// ffmpeg_vf tests that do not include ddr headers).
+inline size_t yuv420pFrameBytesWH(int w, int h) {
+    if (w <= 0 || h <= 0 || (w & 1) || (h & 1))
+        return 0;
+    return static_cast<size_t>(w) * static_cast<size_t>(h) * 3u / 2u;
+}
+
+// Parse one ffmpeg stderr/info line for a video WxH.
+// Matches Input/Output "Stream #... Video: ... 640x480" style banners.
+// Returns true and sets out_w/out_h on the first WxH after "Video:".
+struct FfmpegGeometryLine {
+    bool ok = false;
+    int w = 0;
+    int h = 0;
+    bool is_input = false;
+    bool is_output = false;
+    bool is_video = false;
+};
+
+inline FfmpegGeometryLine parseFfmpegGeometryLine(const std::string& line) {
+    FfmpegGeometryLine g;
+    if (line.find("Video:") == std::string::npos && line.find("video:") == std::string::npos)
+        return g;
+    g.is_video = true;
+    if (line.find("Input #") != std::string::npos || line.find("Stream #0:") != std::string::npos)
+        g.is_input = (line.find("Output") == std::string::npos);
+    if (line.find("Output #") != std::string::npos)
+        g.is_output = true;
+    // Prefer the first NNNNxNNNN token (coded dimensions). Ignore SAR like 1:1.
+    for (size_t i = 0; i + 3 < line.size(); ++i) {
+        if (!std::isdigit(static_cast<unsigned char>(line[i])))
+            continue;
+        int w = 0, h = 0, n = 0;
+        if (std::sscanf(line.c_str() + i, "%dx%d%n", &w, &h, &n) == 2 && w >= 16 && h >= 16 &&
+            w <= 7680 && h <= 4320) {
+            // Reject obvious fps-like 24x1 or bitrates; require even YUV dims.
+            if ((w & 1) == 0 && (h & 1) == 0) {
+                g.ok = true;
+                g.w = w;
+                g.h = h;
+                // Input vs output: Output section lines often contain "Output #0"
+                // earlier in the buffer; per-line, " -> " maps are not geometry.
+                if (line.find("Output") != std::string::npos)
+                    g.is_output = true;
+                return g;
+            }
+            i += static_cast<size_t>(n > 0 ? n : 1);
+        }
+    }
+    return g;
+}
+
+// Session-end align check. Complete frames always yield remainder 0 by construction
+// of the read loop; a non-zero remainder means EOF mid-frame (shortRead) OR a bug
+// that counted bytes outside the frame loop. Still useful as a hard assert.
+inline bool rawPipeByteAligned(size_t total_bytes, size_t reader_frame_bytes) {
+    if (reader_frame_bytes == 0)
+        return true;
+    return (total_bytes % reader_frame_bytes) == 0;
 }
 
 // Pixel-format conversion is NOT expressed here — misterplexd uses -pix_fmt on the
