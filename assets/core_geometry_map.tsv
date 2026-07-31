@@ -3,4 +3,13 @@
 # Columns (TAB-separated): md5_hex  geometry  note
 # Unknown md5 MUST soft-skip (rc=77), never silent-pass.
 # bank1 yuv420p/rgb565 @ 0x40000 align: 320x240→0x30040000; 624/640x480→0x30080000
+#
+# Geometry is the daemon DECODE tier (misterplexd running decode=WxH), NOT the
+# silicon coded canvas. Product DDR silicon is always coded 624x480
+# (fpga/.../ddr_frame_layout_params.svh DDR_FRAME_CODED_WIDTH=624); ARM center-
+# pads DECODE content into that canvas (ddr_frame_layout.hpp
+# productDdrFrameStoreGeometry + center-copy). Default DECODE is
+# host/libmisterplex/coded_size.hpp kDefaultCodedDecodeSize = 320x240.
 41adb98c7a630b541091c22ce291be68	320x240	v0.3.0 product (release_artifacts/v0.3.0/Plex.rbf)
+dfebf2bfd08dd70b473b587dd7e81848	320x240	SPI daily Plex_v2; present_core.sv FRAME_W=320 default; docs/v2-video-baseline.md H_STORE=320
+c5382bee73cecdee8220b811e529c297	320x240	DDR product leftedge3; DECODE default 320x240 into silicon 624 coded (ddr_frame_layout_params.svh); parent soak decode=320x240

@@ -103,6 +103,58 @@ grep -q "$KNOWN_MD5" "$MAP" || {
   exit 1
 }
 
+# SPI daily + DDR product cores must be mapped (soft-skip is NOT deploy evidence).
+SPI_MD5=dfebf2bfd08dd70b473b587dd7e81848
+DDR_MD5=c5382bee73cecdee8220b811e529c297
+for m in "$SPI_MD5" "$DDR_MD5"; do
+  g=$(awk -v m="$m" 'BEGIN{IGNORECASE=1} $1==m {print $2; exit}' "$MAP")
+  if [[ "$g" != "320x240" ]]; then
+    echo "FAIL: map must list $m → 320x240 (got '${g:-missing}')" >&2
+    exit 1
+  fi
+done
+echo "OK map lists SPI dfebf2bf + DDR c5382bee → 320x240"
+
+# Direct PASS on newly mapped cores (not only v0.3.0).
+for m in "$SPI_MD5" "$DDR_MD5"; do
+  set +e
+  mapped_out=$(CORE_MD5="$m" ADOPTED_LOG="$WORK/match/misterplexd.log" "$GATE" 2>&1)
+  mapped_rc=$?
+  set -e
+  if [[ "$mapped_rc" -ne 0 ]]; then
+    echo "FAIL mapped core $m with decode=320x240 rc=$mapped_rc" >&2
+    printf '%s\n' "$mapped_out" >&2
+    exit 1
+  fi
+  echo "OK mapped core $m PASS rc=0"
+done
+
+# RED: mapped SPI/DDR core + wrong adopted decode must FAIL (not skip).
+printf '%s\n' "$SPI_MD5" >"$WORK/mismatch/core.md5"
+set +e
+spi_mm=$(FIXTURE_DIR="$WORK/mismatch" CORE_GEOMETRY_MAP="$MAP" "$GATE" 2>&1)
+spi_mm_rc=$?
+set -e
+if [[ "$spi_mm_rc" -ne 1 ]]; then
+  echo "FAIL SPI mapped mismatch want rc=1 got $spi_mm_rc" >&2
+  printf '%s\n' "$spi_mm" >&2
+  exit 1
+fi
+echo "OK SPI mapped mismatch rc=1 (red-before-green)"
+printf '%s\n' "$DDR_MD5" >"$WORK/mismatch/core.md5"
+set +e
+ddr_mm=$(FIXTURE_DIR="$WORK/mismatch" CORE_GEOMETRY_MAP="$MAP" "$GATE" 2>&1)
+ddr_mm_rc=$?
+set -e
+if [[ "$ddr_mm_rc" -ne 1 ]]; then
+  echo "FAIL DDR mapped mismatch want rc=1 got $ddr_mm_rc" >&2
+  printf '%s\n' "$ddr_mm" >&2
+  exit 1
+fi
+echo "OK DDR mapped mismatch rc=1 (red-before-green)"
+# restore unknown for cleanliness
+printf '%s\n' "$UNKNOWN_MD5" >"$WORK/unknown/core.md5"
+
 # Direct argv form (deploy hooks use this)
 set +e
 direct_out=$(CORE_MD5="$KNOWN_MD5" ADOPTED_LOG="$WORK/match/misterplexd.log" "$GATE" 2>&1)

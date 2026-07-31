@@ -2,26 +2,44 @@
 # Host-only mutation test for scripts/video_regression.sh liveness gate.
 # Proves the OLD on-disk-only check PASSes while the daemon is dead (defect),
 # and the NEW /proc argv0 + /proc/PID/exe + HTTP gate FAILs that case and
-# PASSes the live cases. Never touches the real device — injects VIDREG_SSHM
-# and VIDREG_HTTP.
+# PASSes the live cases for BOTH known-good pairs:
+#   SPI: core dfebf2bf + daemon 50f4eb92 (PREV 3e2cbb98 still accepted)
+#   DDR: core c5382bee + daemon e9f79de2 (rollback core-v2 must stay intact)
+# Red-before-green is proven in BOTH directions (wrong SPI, wrong DDR).
+# Never touches the real device — injects VIDREG_SSHM and VIDREG_HTTP.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 SCRIPT="$ROOT/scripts/video_regression.sh"
 WORK="$ROOT/build/video-regression-liveness"
+# Keep in lockstep with scripts/video_regression.sh pins.
 BASE_CORE_MD5=dfebf2bfd08dd70b473b587dd7e81848
+DDR_CORE_MD5=c5382bee73cecdee8220b811e529c297
 BASE_DAEMON_MD5=7cd10b4d438c714a9b8c4766dc982d59
-# Keep in lockstep with scripts/video_regression.sh pins (a79cc2e7 + liveness).
 HYBRID_DAEMON_MD5=50f4eb925de10e29172999a565c87684
 PREV_HYBRID_DAEMON_MD5=3e2cbb9881b2f54b0e4cb60238655fa7
+DDR_DAEMON_MD5=e9f79de217982aff44207664fdb945c5
 BIN_PATH=/media/fat/misterplex_v2/bin/misterplexd
 CORE_PATH=/media/fat/_Utility/Plex_v2.rbf
 V2_CONF=/media/fat/misterplex_v2/misterplex.conf
+UNKNOWN_MD5=0123456789abcdef0123456789abcdef
 
 rm -rf "$WORK"
 mkdir -p "$WORK"
 chmod +x "$SCRIPT"
 bash -n "$SCRIPT"
+
+# Pin lockstep: test constants must match the script under test.
+for name in BASE_CORE_MD5 DDR_CORE_MD5 BASE_DAEMON_MD5 HYBRID_DAEMON_MD5 \
+            PREV_HYBRID_DAEMON_MD5 DDR_DAEMON_MD5; do
+  script_val=$(sed -n "s/^${name}=//p" "$SCRIPT" | head -1)
+  test_val=${!name}
+  if [[ "$script_val" != "$test_val" ]]; then
+    echo "FAIL pin lockstep: $name script='$script_val' test='$test_val'" >&2
+    exit 1
+  fi
+done
+echo "OK pin lockstep with video_regression.sh"
 
 # --- OLD defective check (quoted from pre-fix video_regression.sh) -------------
 # This is the behaviour that certified a dead daemon. Kept inline so the RED
@@ -44,7 +62,8 @@ old_verify_disk_only() {
 # --- Mock remote layer ----------------------------------------------------------
 # Scenario file controls what the fake device reports.
 #   disk_md5=...
-#   core_md5=...
+#   core_md5=...          (Plex_v2.rbf rollback slot)
+#   core_ddr_md5=...      (Plex.rbf product slot; empty = absent)
 #   live_md5=...          (empty = dead)
 #   n_match=0|1|2
 #   appear_after=N        (attempt number when live process appears; 0 = immediate)
@@ -66,8 +85,13 @@ cmd="${1:-}"
 attempt_file="${VIDREG_ATTEMPT_FILE:?}"
 
 # Core / on-disk hash queries (remote snippet includes `| cut -d' ' -f1`).
+# Prefer Plex_v2 before bare Plex.rbf (v2 path contains the substring Plex).
 if [[ "$cmd" == md5sum*Plex_v2.rbf* ]]; then
   echo "${core_md5:-}"
+  exit 0
+fi
+if [[ "$cmd" == md5sum*Plex.rbf* ]]; then
+  echo "${core_ddr_md5:-}"
   exit 0
 fi
 if [[ "$cmd" == md5sum*misterplexd* ]]; then
@@ -187,6 +211,7 @@ make_sshm
 echo "=== RED direction: OLD on-disk-only check PASSes while daemon is DEAD ==="
 write_scenario <<EOF
 core_md5=$BASE_CORE_MD5
+core_ddr_md5=
 disk_md5=$HYBRID_DAEMON_MD5
 live_md5=
 n_match=0
@@ -219,9 +244,10 @@ expect_rc "new-dead" 1
 expect_grep "new-dead-msg" 'FAIL daemon-live n_daemon=0'
 
 # ===========================================================================
-echo "=== NEW gate: live accepted hybrid md5 + HTTP 200 PASSes ==="
+echo "=== NEW gate: SPI pair (dfebf2bf + 50f4eb92) + HTTP 200 PASSes ==="
 write_scenario <<EOF
 core_md5=$BASE_CORE_MD5
+core_ddr_md5=
 disk_md5=$HYBRID_DAEMON_MD5
 live_md5=$HYBRID_DAEMON_MD5
 n_match=1
@@ -230,16 +256,18 @@ http_code=200
 live_port=3005
 live_conf=$V2_CONF
 EOF
-run_new_verify "new-live"
-expect_rc "new-live" 0
-expect_grep "new-live-ok" 'OK   daemon-live '"$HYBRID_DAEMON_MD5"
-expect_grep "new-live-http" 'OK   daemon-http'
-expect_grep "new-live-conf" 'OK   daemon-conf '"$V2_CONF"
+run_new_verify "spi-live"
+expect_rc "spi-live" 0
+expect_grep "spi-live-ok" 'OK   daemon-live '"$HYBRID_DAEMON_MD5"
+expect_grep "spi-live-http" 'OK   daemon-http'
+expect_grep "spi-live-conf" 'OK   daemon-conf '"$V2_CONF"
+expect_grep "spi-live-pair" 'OK   pair SPI'
 
 # ===========================================================================
-echo "=== NEW gate: PREV hybrid pin still accepted ==="
+echo "=== NEW gate: PREV hybrid pin still accepted (SPI pair) ==="
 write_scenario <<EOF
 core_md5=$BASE_CORE_MD5
+core_ddr_md5=
 disk_md5=$PREV_HYBRID_DAEMON_MD5
 live_md5=$PREV_HYBRID_DAEMON_MD5
 n_match=1
@@ -248,14 +276,105 @@ http_code=200
 live_port=3005
 live_conf=$V2_CONF
 EOF
-run_new_verify "new-prev"
-expect_rc "new-prev" 0
-expect_grep "new-prev-ok" 'OK   daemon-live '"$PREV_HYBRID_DAEMON_MD5"
+run_new_verify "spi-prev"
+expect_rc "spi-prev" 0
+expect_grep "spi-prev-ok" 'OK   daemon-live '"$PREV_HYBRID_DAEMON_MD5"
+expect_grep "spi-prev-pair" 'OK   pair SPI'
+
+# ===========================================================================
+echo "=== NEW gate: DDR pair (c5382bee + e9f79de2) + rollback intact PASSes ==="
+write_scenario <<EOF
+core_md5=$BASE_CORE_MD5
+core_ddr_md5=$DDR_CORE_MD5
+disk_md5=$DDR_DAEMON_MD5
+live_md5=$DDR_DAEMON_MD5
+n_match=1
+appear_after=0
+http_code=200
+live_port=3005
+live_conf=$V2_CONF
+EOF
+run_new_verify "ddr-live"
+expect_rc "ddr-live" 0
+expect_grep "ddr-live-ok" 'OK   daemon-live '"$DDR_DAEMON_MD5"
+expect_grep "ddr-live-pair" 'OK   pair DDR'
+expect_grep "ddr-live-v2" 'OK   core-v2 \(rollback\) '"$BASE_CORE_MD5"
+expect_grep "ddr-live-product" 'OK   core-ddr \(product\) '"$DDR_CORE_MD5"
+
+# ===========================================================================
+echo "=== RED: DDR daemon without product core must FAIL (not silent SPI) ==="
+write_scenario <<EOF
+core_md5=$BASE_CORE_MD5
+core_ddr_md5=
+disk_md5=$DDR_DAEMON_MD5
+live_md5=$DDR_DAEMON_MD5
+n_match=1
+appear_after=0
+http_code=200
+live_port=3005
+live_conf=$V2_CONF
+EOF
+run_new_verify "ddr-no-product"
+expect_rc "ddr-no-product" 1
+expect_grep "ddr-no-product-msg" 'FAIL pair DDR'
+
+# ===========================================================================
+echo "=== RED: SPI daemon with wrong rollback core must FAIL ==="
+write_scenario <<EOF
+core_md5=$UNKNOWN_MD5
+core_ddr_md5=
+disk_md5=$HYBRID_DAEMON_MD5
+live_md5=$HYBRID_DAEMON_MD5
+n_match=1
+appear_after=0
+http_code=200
+live_port=3005
+live_conf=$V2_CONF
+EOF
+run_new_verify "spi-bad-core"
+expect_rc "spi-bad-core" 1
+expect_grep "spi-bad-core-msg" 'FAIL core-v2'
+
+# ===========================================================================
+echo "=== RED: unknown product core md5 must FAIL (not accept as DDR) ==="
+write_scenario <<EOF
+core_md5=$BASE_CORE_MD5
+core_ddr_md5=$UNKNOWN_MD5
+disk_md5=$DDR_DAEMON_MD5
+live_md5=$DDR_DAEMON_MD5
+n_match=1
+appear_after=0
+http_code=200
+live_port=3005
+live_conf=$V2_CONF
+EOF
+run_new_verify "ddr-bad-product"
+expect_rc "ddr-bad-product" 1
+expect_grep "ddr-bad-product-core" 'FAIL core-ddr'
+expect_grep "ddr-bad-product-pair" 'FAIL pair DDR'
+
+# ===========================================================================
+echo "=== RED: unknown daemon md5 must FAIL both directions ==="
+write_scenario <<EOF
+core_md5=$BASE_CORE_MD5
+core_ddr_md5=$DDR_CORE_MD5
+disk_md5=$UNKNOWN_MD5
+live_md5=$UNKNOWN_MD5
+n_match=1
+appear_after=0
+http_code=200
+live_port=3005
+live_conf=$V2_CONF
+EOF
+run_new_verify "unknown-daemon"
+expect_rc "unknown-daemon" 1
+expect_grep "unknown-daemon-msg" 'FAIL daemon-live md5='
 
 # ===========================================================================
 echo "=== NEW gate: process up but HTTP dead → FAIL ==="
 write_scenario <<EOF
 core_md5=$BASE_CORE_MD5
+core_ddr_md5=
 disk_md5=$HYBRID_DAEMON_MD5
 live_md5=$HYBRID_DAEMON_MD5
 n_match=1
@@ -272,6 +391,7 @@ expect_grep "new-http-dead-msg" 'FAIL daemon-http'
 echo "=== NEW gate: ETXTBSY — disk new, live old → FAIL with explicit hint ==="
 write_scenario <<EOF
 core_md5=$BASE_CORE_MD5
+core_ddr_md5=
 disk_md5=$HYBRID_DAEMON_MD5
 live_md5=$BASE_DAEMON_MD5
 n_match=1
@@ -289,6 +409,7 @@ expect_grep "new-etxtbsy-hint" 'ETXTBSY'
 echo "=== NEW gate: multi-match refuses ==="
 write_scenario <<EOF
 core_md5=$BASE_CORE_MD5
+core_ddr_md5=
 disk_md5=$HYBRID_DAEMON_MD5
 live_md5=$HYBRID_DAEMON_MD5
 n_match=2
@@ -305,6 +426,7 @@ expect_grep "new-multi-msg" 'multi-match'
 echo "=== NEW gate: brief down then respawn within wait → PASS with note ==="
 write_scenario <<EOF
 core_md5=$BASE_CORE_MD5
+core_ddr_md5=
 disk_md5=$HYBRID_DAEMON_MD5
 live_md5=$HYBRID_DAEMON_MD5
 n_match=1
@@ -321,6 +443,7 @@ expect_grep "new-respawn-note" 'respawned during wait'
 echo "=== NEW gate: never comes back within wait → FAIL ==="
 write_scenario <<EOF
 core_md5=$BASE_CORE_MD5
+core_ddr_md5=
 disk_md5=$HYBRID_DAEMON_MD5
 live_md5=
 n_match=0

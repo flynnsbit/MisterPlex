@@ -6,10 +6,17 @@
 # render playback without the left-edge defect. Any new core/daemon must be
 # measured against it, not against a previous broken build.
 #
-# BASELINE (do not change without new hardware evidence + updating these hashes):
-#   core   /media/fat/_Utility/Plex_v2.rbf              dfebf2bfd08dd70b473b587dd7e81848
-#   daemon /media/fat/misterplex_v2/bin/misterplexd     7cd10b4d438c714a9b8c4766dc982d59
+# KNOWN-GOOD PAIRS (do not change without new hardware evidence + updating hashes):
+#   SPI daily (rollback slot):
+#     core   /media/fat/_Utility/Plex_v2.rbf            dfebf2bfd08dd70b473b587dd7e81848
+#     daemon /media/fat/misterplex_v2/bin/misterplexd   50f4eb925de10e29172999a565c87684
+#            (also accepts release 7cd10b4d… and PREV_HYBRID 3e2cbb98…)
+#   DDR product (first correct silicon DDR path — parent-viewed pixels + 295s soak):
+#     core   /media/fat/_Utility/Plex.rbf               c5382bee73cecdee8220b811e529c297
+#     daemon live /proc/<pid>/exe                       e9f79de217982aff44207664fdb945c5
 #   PRESENT=fpga   (fb0 decodes but never reaches HDMI: pfps stays 0.00)
+#   Rollback slot Plex_v2.rbf must stay dfebf2bf even when product is DDR so
+#   restore never gate-reds. verify PASSes when EITHER pair is fully live.
 #
 # LIVENESS (verify must not pass on a dead daemon):
 #   Authority is the RUNNING process: exact argv0 match via /proc/*/cmdline
@@ -37,9 +44,12 @@ OUT="${OUT_DIR:-/tmp/vidreg}"
 FRAMES="${FRAMES:-45}"
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
+# SPI rollback core (Plex_v2.rbf slot). Always required intact.
 BASE_CORE_MD5=dfebf2bfd08dd70b473b587dd7e81848
+# DDR product core (Plex.rbf slot). Parent BUILD_OK leftedge3 + silicon soak.
+DDR_CORE_MD5=c5382bee73cecdee8220b811e529c297
 
-# Accepted daemon binaries for the baseline bundle.
+# Accepted daemon binaries.
 #
 #   7cd10b4d  the pristine v0.2.0 release asset. Good video, but it also ships
 #             two defects measured on hardware: the Plex Web timeline is frozen
@@ -67,17 +77,23 @@ BASE_CORE_MD5=dfebf2bfd08dd70b473b587dd7e81848
 #             Protocol-Capabilities ...,provider-playback. No provider-playback
 #             handlers exist; did not fix the cast picker. Reverted; do not pin.
 #
-# Both must produce the SAME video fingerprint, because the hybrid deliberately
-# does not touch the present path. A video difference between them is a real
-# regression and must fail.
+# SPI hybrid pins must produce the SAME video fingerprint (hybrid does not touch
+# the present path). DDR pin is a different path (yuv420p DDR) and is paired
+# with DDR_CORE_MD5 only.
 BASE_DAEMON_MD5=7cd10b4d438c714a9b8c4766dc982d59
-# 50f4eb92  CURRENT — clamps DECODE to the 320x240 RGB565 frame store instead of
-#           silently skipping FPGA present (pfps was 0.00 at 624x480), opt-in
-#           PRESENT_SCALE_TO_STORE, and supervisor backoff reset after a healthy
-#           run. Parent-verified on hardware: 240p unchanged (pfps 23.2, av-lock,
-#           3 distinct HDMI md5s); 624x480 clamps and presents (pfps 23.6).
+# 50f4eb92  CURRENT SPI hybrid — clamps DECODE to the 320x240 RGB565 frame store
+#           instead of silently skipping FPGA present (pfps was 0.00 at 624x480),
+#           opt-in PRESENT_SCALE_TO_STORE, supervisor backoff reset after healthy
+#           run. Parent-verified: 240p pfps 23.2 av-lock; 624x480 clamps pfps 23.6.
 HYBRID_DAEMON_MD5=50f4eb925de10e29172999a565c87684
+# PREV_* kept so a rollback binary never gate-reds after a pin advance.
 PREV_HYBRID_DAEMON_MD5=3e2cbb9881b2f54b0e4cb60238655fa7
+# e9f79de2  CURRENT DDR companion — PLXD doorbell-relative (98a7f186). Parent
+#           HW with c5382bee: correct idle + playback, 295s soak drops=2 flat.
+DDR_DAEMON_MD5=e9f79de217982aff44207664fdb945c5
+# No prior DDR pin yet; slot reserved so the next DDR advance can demote
+# e9f79de2 here without rewriting acceptance logic.
+PREV_DDR_DAEMON_MD5=
 
 # Test clip: the 240p burned-in-telemetry ladder entry. Its overlay text makes
 # left-edge clipping obvious to the eye as well as to the measurement.
@@ -110,12 +126,33 @@ http_probe() {
 
 BASE_DAEMON_BIN=/media/fat/misterplex_v2/bin/misterplexd
 DEV_DAEMON_BIN=/media/fat/misterplex/bin/misterplexd
+BASE_CORE_PATH=/media/fat/_Utility/Plex_v2.rbf
+DDR_CORE_PATH=/media/fat/_Utility/Plex.rbf
 
-daemon_md5_accepted() {
+# SPI hybrid/release pins (pair with BASE_CORE_MD5 on Plex_v2.rbf).
+spi_daemon_md5_accepted() {
   case "$1" in
     "$BASE_DAEMON_MD5"|"$HYBRID_DAEMON_MD5"|"$PREV_HYBRID_DAEMON_MD5") return 0 ;;
     *) return 1 ;;
   esac
+}
+
+# DDR companion pins (pair with DDR_CORE_MD5 on Plex.rbf).
+ddr_daemon_md5_accepted() {
+  case "$1" in
+    "$DDR_DAEMON_MD5") return 0 ;;
+    "$PREV_DDR_DAEMON_MD5")
+      # Empty PREV is not a pin.
+      [ -n "$PREV_DDR_DAEMON_MD5" ] && return 0
+      return 1
+      ;;
+    *) return 1 ;;
+  esac
+}
+
+# Any accepted known-good daemon (SPI or DDR). Pairing is enforced in verify.
+daemon_md5_accepted() {
+  spi_daemon_md5_accepted "$1" || ddr_daemon_md5_accepted "$1"
 }
 
 # Remote (or injected) one-shot observation of on-disk + running daemon state.
@@ -273,33 +310,52 @@ probe_http_liveness() {
 }
 
 verify_baseline() {
-  echo "== verifying baseline hashes on device =="
-  local got_core got_disk rc=0
+  echo "== verifying known-good pair hashes on device =="
+  local got_core_v2 got_core_ddr got_disk rc=0
   local wait_out wait_rc disk live n note pids port conf
   local http_out http_rc
+  local daemon_bin pair="" live_ok=0
+  local spi_disk_ok=0 ddr_disk_ok=0
 
-  got_core=$(sshm "md5sum /media/fat/_Utility/Plex_v2.rbf 2>/dev/null | cut -d' ' -f1" || true)
-  if [ "$got_core" = "$BASE_CORE_MD5" ]; then
-    echo "OK   core   $got_core"
+  # Rollback slot must always stay the SPI daily driver so restore never gate-reds.
+  got_core_v2=$(sshm "md5sum $BASE_CORE_PATH 2>/dev/null | cut -d' ' -f1" || true)
+  if [ "$got_core_v2" = "$BASE_CORE_MD5" ]; then
+    echo "OK   core-v2 (rollback) $got_core_v2"
   else
-    echo "FAIL core   got='$got_core' want='$BASE_CORE_MD5'"
+    echo "FAIL core-v2 (rollback) got='$got_core_v2' want='$BASE_CORE_MD5'"
     rc=1
   fi
 
-  # On-disk check remains as an *additional* signal (ETXTBSY detection needs it).
-  got_disk=$(sshm "md5sum $BASE_DAEMON_BIN 2>/dev/null | cut -d' ' -f1" || true)
-  if daemon_md5_accepted "$got_disk"; then
-    echo "OK   daemon-disk $got_disk"
+  # Product slot: optional until DDR is promoted; when present must be the
+  # known-good DDR core (or empty/absent is fine for pure-SPI daily).
+  got_core_ddr=$(sshm "md5sum $DDR_CORE_PATH 2>/dev/null | cut -d' ' -f1" || true)
+  if [ -z "$got_core_ddr" ]; then
+    echo "NOTE core-ddr (product) absent/unreadable — SPI-only layout OK"
+  elif [ "$got_core_ddr" = "$DDR_CORE_MD5" ]; then
+    echo "OK   core-ddr (product) $got_core_ddr"
   else
-    echo "FAIL daemon-disk got='$got_disk' want='$BASE_DAEMON_MD5' or '$HYBRID_DAEMON_MD5' or '$PREV_HYBRID_DAEMON_MD5'"
+    echo "FAIL core-ddr (product) got='$got_core_ddr' want='$DDR_CORE_MD5' or absent"
     rc=1
   fi
 
-  echo "== verifying RUNNING baseline daemon (/proc argv0 + /proc/PID/exe + HTTP) =="
+  # Prefer the live daemon path: try v2 root first (daily), then dev root.
+  # DDR hand-installs often land on the v2 path; SPI daily always does.
+  # Do not fall through on multi-match (rc=3) — that is already a hard FAIL.
+  echo "== verifying RUNNING known-good daemon (/proc argv0 + /proc/PID/exe + HTTP) =="
+  daemon_bin="$BASE_DAEMON_BIN"
   set +e
   wait_out=$(wait_for_live_daemon "$BASE_DAEMON_BIN")
   wait_rc=$?
   set -e
+  n=$(printf '%s\n' "$wait_out" | sed -n 's/^N_MATCH=//p' | tail -1)
+  n=${n:-0}
+  if [ "$wait_rc" -ne 3 ] && { [ "$wait_rc" -ne 0 ] || [ "$n" -eq 0 ]; }; then
+    set +e
+    wait_out=$(wait_for_live_daemon "$DEV_DAEMON_BIN")
+    wait_rc=$?
+    set -e
+    daemon_bin="$DEV_DAEMON_BIN"
+  fi
   printf '%s\n' "$wait_out"
 
   disk=$(printf '%s\n' "$wait_out" | sed -n 's/^DISK_MD5=//p' | tail -1)
@@ -311,27 +367,60 @@ verify_baseline() {
   conf=$(printf '%s\n' "$wait_out" | sed -n 's/^LIVE_CONF=//p' | tail -1)
   n=${n:-0}
   port=${port:-3005}
+  got_disk=$disk
+
+  # On-disk secondary signal (ETXTBSY). Accept either pin family on disk.
+  if [ -n "$got_disk" ] && daemon_md5_accepted "$got_disk"; then
+    echo "OK   daemon-disk $got_disk"
+    spi_daemon_md5_accepted "$got_disk" && spi_disk_ok=1
+    ddr_daemon_md5_accepted "$got_disk" && ddr_disk_ok=1
+  elif [ -n "$got_disk" ]; then
+    echo "FAIL daemon-disk got='$got_disk' want SPI{$BASE_DAEMON_MD5,$HYBRID_DAEMON_MD5,$PREV_HYBRID_DAEMON_MD5} or DDR{$DDR_DAEMON_MD5${PREV_DDR_DAEMON_MD5:+,$PREV_DDR_DAEMON_MD5}}"
+    rc=1
+  else
+    echo "NOTE daemon-disk empty (process root may differ from probed bin)"
+  fi
 
   if [ "$wait_rc" -eq 3 ] || [ "$n" -gt 1 ]; then
     echo "FAIL daemon-live multi-match n=$n pids='$pids' (refuse ambiguous bundle)"
     rc=1
   elif [ "$wait_rc" -ne 0 ] || [ "$n" -eq 0 ] || [ -z "$live" ]; then
-    echo "FAIL daemon-live n_daemon=0 (no running process with argv0=$BASE_DAEMON_BIN after wait)"
+    echo "FAIL daemon-live n_daemon=0 (no running process with argv0 in {$BASE_DAEMON_BIN,$DEV_DAEMON_BIN} after wait)"
     echo "     supervisor may be in backoff, but it never came back — hard FAIL"
     rc=1
   elif ! daemon_md5_accepted "$live"; then
-    echo "FAIL daemon-live md5='$live' not in accepted {$BASE_DAEMON_MD5,$HYBRID_DAEMON_MD5,$PREV_HYBRID_DAEMON_MD5} pid='$pids'"
+    echo "FAIL daemon-live md5='$live' not in accepted SPI{$BASE_DAEMON_MD5,$HYBRID_DAEMON_MD5,$PREV_HYBRID_DAEMON_MD5} or DDR{$DDR_DAEMON_MD5${PREV_DDR_DAEMON_MD5:+,$PREV_DDR_DAEMON_MD5}} pid='$pids'"
     rc=1
   else
+    live_ok=1
     if printf '%s\n' "$wait_out" | grep -q 'LIVE_WAIT_RESULT=respawned'; then
-      echo "OK   daemon-live $live pid=$pids conf='${conf}' (respawned during wait — supervisor backoff observed)"
+      echo "OK   daemon-live $live pid=$pids conf='${conf}' bin=$daemon_bin (respawned during wait — supervisor backoff observed)"
     else
-      echo "OK   daemon-live $live pid=$pids conf='${conf}'"
+      echo "OK   daemon-live $live pid=$pids conf='${conf}' bin=$daemon_bin"
     fi
     if [ -n "$conf" ]; then
       echo "OK   daemon-conf $conf (from live --conf; not hardcoded)"
     else
       echo "NOTE daemon-conf empty (process had no --conf arg)"
+    fi
+
+    # Pairing: SPI daemon requires rollback core; DDR daemon requires product core.
+    if spi_daemon_md5_accepted "$live"; then
+      if [ "$got_core_v2" = "$BASE_CORE_MD5" ]; then
+        pair=spi
+        echo "OK   pair SPI core-v2=$got_core_v2 daemon=$live"
+      else
+        echo "FAIL pair SPI daemon=$live but core-v2='$got_core_v2' want='$BASE_CORE_MD5'"
+        rc=1
+      fi
+    elif ddr_daemon_md5_accepted "$live"; then
+      if [ "$got_core_ddr" = "$DDR_CORE_MD5" ] && [ "$got_core_v2" = "$BASE_CORE_MD5" ]; then
+        pair=ddr
+        echo "OK   pair DDR core-ddr=$got_core_ddr daemon=$live (rollback core-v2 intact)"
+      else
+        echo "FAIL pair DDR daemon=$live requires core-ddr='$DDR_CORE_MD5' (got '$got_core_ddr') and core-v2='$BASE_CORE_MD5' (got '$got_core_v2')"
+        rc=1
+      fi
     fi
 
     # Real liveness signal: HTTP must answer. A process that exists but is
@@ -355,6 +444,10 @@ verify_baseline() {
     echo "     hint: cp over a RUNNING binary fails ETXTBSY and leaves the old"
     echo "     image executing — stop first, then verify /proc/PID/exe (not disk alone)"
     rc=1
+  fi
+
+  if [ "$rc" -eq 0 ] && [ "$live_ok" -eq 1 ]; then
+    echo "OK   known-good pair=$pair"
   fi
 
   return $rc
