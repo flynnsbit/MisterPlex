@@ -214,6 +214,14 @@ public:
     void seekMs(int64_t ms);
 
     bool playing() const { return playing_.load(); }
+    bool paused() const { return paused_.load(); }
+    // Cross-session (in-process) totals — never reset by demux restart.
+    // Pair with confDir/misterplexd.frame_ledger for cross-restart soak audits.
+    int64_t lifetimeFrames() const { return lifetimeFrames_.load(); }
+    int64_t lifetimePresents() const { return lifetimePresents_.load(); }
+    int64_t lifetimeDrops() const { return lifetimeDrops_.load(); }
+    int64_t lifetimePresentFails() const { return lifetimePresentFails_.load(); }
+    uint64_t sessionSeq() const { return sessionSeq_.load(); }
     bool audioActive() const { return audioActive_.load(); }
     int64_t positionMs() const { return positionMs_.load(); }
     int64_t durationMs() const {
@@ -331,11 +339,16 @@ private:
     std::atomic<int64_t> avDriftMs_{0};
     std::atomic<int64_t> droppedFrames_{0};   // pacer drops only
     std::atomic<int64_t> presentFailCount_{0};
-    // Monotonic: bumps on every counter zero so mid-soak daemon/play restart
-    // cannot be mistaken for one continuous ledger (w-geom owns exit RCA).
+    // Lifetime (process) totals — soak-auditable across stream resets / restarts
+    // via confDir/misterplexd.frame_ledger (see frame_ledger.hpp).
+    std::atomic<int64_t> lifetimeFrames_{0};
+    std::atomic<int64_t> lifetimePresents_{0};
+    std::atomic<int64_t> lifetimeDrops_{0};
+    std::atomic<int64_t> lifetimePresentFails_{0};
+    std::atomic<uint64_t> sessionSeq_{0};
     std::atomic<uint64_t> ledgerSessionId_{0};
     std::atomic<int32_t> ledgerPid_{0};
-    // FPGA presents this ledger session (successful countPresent only)
+    // FPGA presents this session (successful countPresent only)
     int64_t presentCount_ = 0;
     mutable std::mutex mu_;
     mutable std::mutex summaryMu_;

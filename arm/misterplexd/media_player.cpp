@@ -4,6 +4,7 @@
 #include "libmisterplex/av_clock.hpp"
 #include "libmisterplex/frame_ledger.hpp"
 #include "libmisterplex/ffmpeg_vf.hpp"
+#include "libmisterplex/frame_ledger.hpp"
 #include "libmisterplex/idle_screen.hpp"
 #include "libmisterplex/last_frame_latch.hpp"
 #include "libmisterplex/osd_menu.hpp"
@@ -2278,6 +2279,8 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
     int64_t frameIndex = 0;
     auto t0 = std::chrono::steady_clock::now();
     auto lastLog = t0;
+    int64_t lastLogFrameIndex = 0;
+    int64_t lastLogPresentCount = 0;
     size_t totalBytes = 0;
 
     bool usedRawVideo = false;
@@ -2297,17 +2300,14 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
     droppedFrames_.store(0);
     presentFailCount_.store(0);
     presentCount_ = 0;
-    {
-        // New ledger session on every play/threadMain entry. Daemon respawn gets a
-        // new pid; in-process play/seek restart bumps session_id without hiding it.
-        const uint64_t sid = ledgerSessionId_.fetch_add(1) + 1;
-        const int32_t pid = static_cast<int32_t>(::getpid());
-        ledgerPid_.store(pid);
-        FrameLedgerSnapshot snap;
-        snap.session_id = sid;
-        snap.pid = pid;
-        log(formatFrameLedgerLine(snap, "ledger_reset") + " reason=stream_start");
-    }
+    ledgerPid_.store(static_cast<int32_t>(::getpid()));
+    // Per-session counters zero here; file ledger (misterplexd.frame_ledger) is
+    // append-only across process lives — process_start/exit are written by main.
+    log("media: ledger_session_counters_reset pid=" + std::to_string(::getpid()) +
+        " lifetime_frames=" + std::to_string(lifetimeFrames_.load()) +
+        " lifetime_presents=" + std::to_string(lifetimePresents_.load()) +
+        " lifetime_drops=" + std::to_string(lifetimeDrops_.load()) +
+        " lifetime_present_fails=" + std::to_string(lifetimePresentFails_.load()));
     if (fpsNum_ <= 0)
         log("media: content fps UNKNOWN — pacing at " + std::to_string(kDefaultFpsNum) + "/" +
             std::to_string(kDefaultFpsDen) + " and relying on drift correction");
@@ -3181,40 +3181,51 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                                       now - t0)
                                       .count();
             if (now - lastLog > std::chrono::seconds(1)) {
+                const int64_t dWallMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                            now - lastLog)
+                                            .count();
+                const int64_t dFrames = frameIndex - lastLogFrameIndex;
+                const int64_t dPresents = presentCount_ - lastLogPresentCount;
                 lastLog = now;
-                const double vfps =
+                lastLogFrameIndex = frameIndex;
+                lastLogPresentCount = presentCount_;
+                // Windowed rates (this ~1 s), not cumulative session averages.
+                const double vfps_win = windowRateFps(dFrames, dWallMs);
+                const double pfps_win = windowRateFps(dPresents, dWallMs);
+                // Cumulative kept as vfps_avg/pfps_avg for long-run soak math only.
+                const double vfps_avg =
                     wall2 > 0 ? (1000.0 * static_cast<double>(frameIndex) /
                                  static_cast<double>(wall2))
                               : 0.0;
-                const double pfps =
+                const double pfps_avg =
                     wall2 > 0 ? (1000.0 * static_cast<double>(presentCount_) /
                                  static_cast<double>(wall2))
                               : 0.0;
                 const int64_t abytes = audioBytes_.load();
                 const double a_sec = static_cast<double>(abytes) / (48000.0 * 4.0);
-                FrameLedgerSnapshot tick;
-                tick.session_id = ledgerSessionId_.load();
-                tick.pid = ledgerPid_.load();
-                tick.decoded = frameIndex;
-                tick.presented = presentCount_;
-                tick.pacer_drops = droppedFrames_.load();
-                tick.present_fails = presentFailCount_.load();
+                const int64_t drops = droppedFrames_.load();
+                const int64_t fails = presentFailCount_.load();
+                const int64_t residual =
+                    frameLedgerResidual(frameIndex, presentCount_, drops, fails);
                 log("media: frames=" + std::to_string(frameIndex) +
-                    " vfps=" + std::to_string(vfps).substr(0, 4) +
-                    " pfps=" + std::to_string(pfps).substr(0, 4) +
+                    " vfps=" + formatFps3(vfps_win) +
+                    " pfps=" + formatFps3(pfps_win) +
+                    " vfps_avg=" + formatFps3(vfps_avg) +
+                    " pfps_avg=" + formatFps3(pfps_avg) +
+                    " dframes=" + std::to_string(dFrames) +
+                    " dpresents=" + std::to_string(dPresents) +
+                    " dwall_ms=" + std::to_string(dWallMs) +
                     " audio_s=" + std::to_string(a_sec).substr(0, 5) +
                     " wall_s=" + std::to_string(wall2 / 1000.0).substr(0, 5) +
                     " audio=" + (audioActive_.load() ? "on" : "off") +
                     " clock=av-lock" +
                     " av_drift_ms=" + std::to_string(avDriftMs_.load()) +
-                    " drops=" + std::to_string(droppedFrames_.load()) +
-                    " present_fails=" + std::to_string(tick.present_fails) +
-                    " unaccounted=" + std::to_string(frameLedgerUnaccounted(tick)) +
-                    " session_id=" + std::to_string(tick.session_id) +
+                    " drops=" + std::to_string(drops) +
+                    " present_fails=" + std::to_string(fails) +
+                    " residual=" + std::to_string(residual) +
+                    " closed=" + std::to_string(residual == 0 ? 1 : 0) +
                     " fps=" + std::to_string(fpsNum) + "/" + std::to_string(fpsDen) +
                     " decode=" + std::to_string(outW_) + "x" + std::to_string(outH_));
-                // Explicit ledger line for soak parsers (stable keys).
-                log(formatFrameLedgerLine(tick, "ledger_tick"));
             }
 
             {
@@ -3268,40 +3279,28 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
 
     playing_.store(false);
     {
-        FrameLedgerSnapshot end;
-        end.session_id = ledgerSessionId_.load();
-        end.pid = ledgerPid_.load();
-        end.decoded = frameIndex;
-        end.presented = presentCount_;
-        end.pacer_drops = droppedFrames_.load();
-        end.present_fails = presentFailCount_.load();
-        const int64_t unacct = frameLedgerUnaccounted(end);
-        const bool closed = frameLedgerClosed(end);
-        {
-            std::lock_guard<std::mutex> lock(summaryMu_);
-            lastSummary_.rawFrames = frameIndex;
-            lastSummary_.presentedFrames = presentCount_;
-            lastSummary_.pacerDrops = end.pacer_drops;
-            lastSummary_.presentFails = end.present_fails;
-            lastSummary_.unaccounted = unacct;
-            lastSummary_.ledgerSessionId = end.session_id;
-            lastSummary_.ledgerPid = end.pid;
-            lastSummary_.ledgerClosed = closed;
-            lastSummary_.reconFrames = reconFrames_.load();
-            lastSummary_.totalBytes = static_cast<int64_t>(totalBytes);
-            lastSummary_.usedRawVideo = usedRawVideo;
-            lastSummary_.streamEnabled = streamEnabled_;
-            lastSummary_.skipRgb = skipRgb;
-            lastSummary_.shortRead = shortRead;
-            lastSummary_.videoEof = videoEof;
-            lastSummary_.shortReadGot = shortReadGot;
-            lastSummary_.shortReadWant = shortReadWant;
-        }
-        log(formatFrameLedgerLine(end, "ledger_end"));
-        if (!closed && frameIndex > 0)
-            log("ERROR media: ledger OPEN unaccounted=" + std::to_string(unacct) +
-                " (decoded != presented + pacer_drops + present_fails) — soak must not "
-                "treat drops= alone as complete accounting");
+        const int64_t drops = droppedFrames_.load();
+        const int64_t fails = presentFailCount_.load();
+        const int64_t residual =
+            frameLedgerResidual(frameIndex, presentCount_, drops, fails);
+        std::lock_guard<std::mutex> lock(summaryMu_);
+        lastSummary_.rawFrames = frameIndex;
+        lastSummary_.presentedFrames = presentCount_;
+        lastSummary_.pacerDrops = drops;
+        lastSummary_.presentFails = fails;
+        lastSummary_.unaccounted = residual;
+        lastSummary_.ledgerSessionId = sessionSeq_.load();
+        lastSummary_.ledgerPid = ledgerPid_.load();
+        lastSummary_.ledgerClosed = (residual == 0);
+        lastSummary_.reconFrames = reconFrames_.load();
+        lastSummary_.totalBytes = static_cast<int64_t>(totalBytes);
+        lastSummary_.usedRawVideo = usedRawVideo;
+        lastSummary_.streamEnabled = streamEnabled_;
+        lastSummary_.skipRgb = skipRgb;
+        lastSummary_.shortRead = shortRead;
+        lastSummary_.videoEof = videoEof;
+        lastSummary_.shortReadGot = shortReadGot;
+        lastSummary_.shortReadWant = shortReadWant;
     }
     // Natural EOF (not user stop / seek restart) → "ended" so main can auto-next.
     if (!stop_.load() && onProgress_) {
@@ -3341,16 +3340,43 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
     }
     startIdle();
 
+    // Lifetime + append-only ledger BEFORE session counters are discarded.
+    // presentCount_/droppedFrames_ reset on the next play; file ledger does not.
+    const int64_t sessFrames = usedRawVideo ? frameIndex : reconFrames_.load();
+    const int64_t sessPresents = presentCount_;
+    const int64_t sessDrops = droppedFrames_.load();
+    const int64_t sessFails = presentFailCount_.load();
+    lifetimeFrames_.fetch_add(sessFrames, std::memory_order_relaxed);
+    lifetimePresents_.fetch_add(sessPresents, std::memory_order_relaxed);
+    lifetimeDrops_.fetch_add(sessDrops, std::memory_order_relaxed);
+    lifetimePresentFails_.fetch_add(sessFails, std::memory_order_relaxed);
+    const uint64_t sid = sessionSeq_.fetch_add(1, std::memory_order_relaxed) + 1;
+    ledgerSessionId_.store(sid);
+    const char* endReason = stop_.load() ? "stop_or_seek" : "natural_eof";
+    frameLedgerSessionEnd(sid, sessFrames, sessPresents, sessDrops, sessFails, endReason);
+
+    const int64_t residual = frameLedgerResidual(sessFrames, sessPresents, sessDrops, sessFails);
     log("media: session end frames=" + std::to_string(frameIndex) +
+        " presents=" + std::to_string(sessPresents) +
+        " drops=" + std::to_string(sessDrops) +
+        " present_fails=" + std::to_string(sessFails) +
+        " residual=" + std::to_string(residual) +
+        " closed=" + std::to_string(residual == 0 ? 1 : 0) +
+        " session=" + std::to_string(sid) +
+        " lifetime_frames=" + std::to_string(lifetimeFrames_.load()) +
+        " lifetime_presents=" + std::to_string(lifetimePresents_.load()) +
+        " lifetime_drops=" + std::to_string(lifetimeDrops_.load()) +
+        " lifetime_present_fails=" + std::to_string(lifetimePresentFails_.load()) +
         " recon=" + std::to_string(reconFrames_.load()) +
         " cabac=" + (cabacSkip_.load() ? "1" : "0") +
         " stream=" + (streamEnabled_ ? "on" : "off") +
         " rawvideo=" + (usedRawVideo ? "on" : "off") +
         " present=" + presentMode_ +
         " skip_rgb=" + (skipRgb ? "1" : "0") +
-        " session_id=" + std::to_string(ledgerSessionId_.load()) +
-        " pacer_drops=" + std::to_string(droppedFrames_.load()) +
-        " present_fails=" + std::to_string(presentFailCount_.load()));
+        " reason=" + endReason);
+    if (residual != 0 && sessFrames > 0)
+        log("ERROR media: ledger OPEN residual=" + std::to_string(residual) +
+            " (decoded != presented + pacer_drops + present_fails)");
 }
 
 } // namespace misterplex

@@ -3,9 +3,11 @@
 // Phase 4: multi-server conf, auto next-episode, optional subtitle burn-in.
 
 #include "companion.hpp"
+#include "death_breadcrumb.hpp"
 #include "libmisterplex/coded_size.hpp"
 #include "libmisterplex/conf_keys.hpp"
 #include "libmisterplex/ffmpeg_vf.hpp"
+#include "libmisterplex/frame_ledger.hpp"
 #include "libmisterplex/osd_menu.hpp"
 #include "log_redact.hpp"
 #include "media_player.hpp"
@@ -17,6 +19,7 @@
 #include <atomic>
 #include <chrono>
 #include <csignal>
+#include <signal.h>
 #include <unistd.h>
 #include <cstdio>
 #include <cstdlib>
@@ -29,8 +32,56 @@
 
 namespace {
 
+// Product main loop exits ONLY when g_stop is set. The only writers are the
+// SIGINT/SIGTERM handlers below (lab --help / --play-file return earlier).
+// Handled signals yield process exit status 0 (WIFEXITED), NOT WIFSIGNALED —
+// that is why a "clean rc=0" can still be an external SIGTERM. Capture si_*.
 std::atomic<bool> g_stop{false};
-void on_signal(int) { g_stop.store(true); }
+std::atomic<int> g_stopSig{0};
+std::atomic<int> g_stopSiCode{0};
+std::atomic<int> g_stopSiPid{0};
+
+void on_signal_info(int sig, siginfo_t* info, void*) {
+    g_stopSig.store(sig, std::memory_order_relaxed);
+    if (info) {
+        g_stopSiCode.store(info->si_code, std::memory_order_relaxed);
+        g_stopSiPid.store(static_cast<int>(info->si_pid), std::memory_order_relaxed);
+    }
+    // Orderly path: do NOT write death-as-crash here; main choke-points EXIT_REASON.
+    g_stop.store(true, std::memory_order_release);
+}
+
+// conf dirname for breadcrumb + frame ledger files beside misterplex.conf.
+std::string confDirFromPath(const std::string& confPath) {
+    std::string confDir = confPath;
+    const auto slash = confDir.find_last_of('/');
+    if (slash == std::string::npos)
+        return ".";
+    if (slash == 0)
+        return "/";
+    confDir.resize(slash);
+    return confDir;
+}
+
+// Single choke point for every normal termination. Logs reason + site + uptime
+// via deathBreadcrumbExit (stderr + misterplexd.death) and frame ledger exit row.
+// Call AFTER teardown (player.stop / companion.stop). Returns `code` for main.
+int exitReported(int code, const char* siteWhy, misterplex::MediaPlayer* player = nullptr,
+                 int64_t uptimeS = 0) {
+    int64_t lf = 0, lp = 0, ld = 0, lpf = 0, pos = 0;
+    if (player) {
+        lf = player->lifetimeFrames();
+        lp = player->lifetimePresents();
+        ld = player->lifetimeDrops();
+        lpf = player->lifetimePresentFails();
+        pos = player->positionMs();
+        misterplex::deathBreadcrumbUpdate(misterplex::DeathState::Stopping, lf, lp, pos,
+                                          /*force=*/true);
+    }
+    misterplex::frameLedgerProcessExit(code, siteWhy, lf, lp, ld, lpf, uptimeS);
+    misterplex::deathBreadcrumbExit(code, siteWhy);
+    return code;
+}
 
 std::string loadConf(const std::string& path, const char* key) {
     std::ifstream in(path);
@@ -188,6 +239,8 @@ int main(int argc, char** argv) {
             std::printf("misterplexd [--name N] [--id ID] [--port N] [--ffmpeg PATH] [--pms URL] "
                         "[--conf PATH] [--decode WxH] [--decode-allow-lab-480p] [--transcode-profile 240p|480p] "
                         "[--play-file PATH] [--play-seconds N]\n");
+            // Pre-init help: no confDir yet — still choke-point log to stderr.
+            misterplex::deathBreadcrumbExit(0, "site=main.cpp:--help");
             return 0;
         }
     }
@@ -443,8 +496,15 @@ int main(int argc, char** argv) {
         misterplex::applyPlexTranscodeProfile("240p", weak);
     }
 
-    std::signal(SIGINT, on_signal);
-    std::signal(SIGTERM, on_signal);
+    // SA_SIGINFO so si_pid/si_code survive into EXIT_REASON (who sent the kill).
+    {
+        struct sigaction sa {};
+        sa.sa_sigaction = on_signal_info;
+        sigemptyset(&sa.sa_mask);
+        sa.sa_flags = SA_SIGINFO;
+        sigaction(SIGINT, &sa, nullptr);
+        sigaction(SIGTERM, &sa, nullptr);
+    }
     std::signal(SIGCHLD, SIG_DFL);
     // Session handoff (seek / new playMedia) calls killChildren() while the audio
     // and STREAM pump threads may still be writing to the ffmpeg pipes. The default
@@ -460,6 +520,15 @@ int main(int argc, char** argv) {
     // then arm the crash guard so we cannot strand it again.
     misterplex::FpgaSpi::resumeStrandedMain();
     misterplex::FpgaSpi::installCrashGuard();
+
+    // Death breadcrumb + frame ledger live beside conf (survives restarts).
+    {
+        const std::string confDir = confDirFromPath(confPath);
+        misterplex::deathBreadcrumbInit(confDir);
+        misterplex::deathBreadcrumbUpdate(misterplex::DeathState::Boot, 0, 0, 0, /*force=*/true);
+        misterplex::frameLedgerInit(confDir);
+        misterplex::frameLedgerProcessStart(0, 0, 0);
+    }
 
     misterplex::MediaPlayer player;
     player.setFfmpegPath(ffmpeg);
@@ -606,7 +675,8 @@ int main(int argc, char** argv) {
                      playSeconds);
         if (!player.play(playFile, 0, {}, playSeconds * 1000LL)) {
             std::fprintf(stderr, "misterplexd: play-file failed\n");
-            return 1;
+            player.stop();
+            return exitReported(1, "site=main.cpp:lab-play-file-failed", &player);
         }
         // Wait up to playSeconds; exit early only after we have observed playing
         // then see it clear (natural EOF). Do not treat the pre-thread window as done.
@@ -633,7 +703,7 @@ int main(int argc, char** argv) {
                          static_cast<long long>(summary.totalBytes), summary.shortRead ? 1 : 0,
                          summary.shortReadGot, summary.shortReadWant, summary.videoEof ? 1 : 0,
                          summary.streamEnabled ? 1 : 0, summary.skipRgb ? 1 : 0);
-            return 2;
+            return exitReported(2, "site=main.cpp:lab-play-file-zero-frames", &player);
         }
         std::fprintf(stderr,
                      "misterplexd: LAB play-file done frames=%lld presented=%lld recon=%lld "
@@ -642,7 +712,7 @@ int main(int argc, char** argv) {
                      static_cast<long long>(summary.presentedFrames),
                      static_cast<long long>(summary.reconFrames),
                      static_cast<long long>(summary.totalBytes));
-        return 0;
+        return exitReported(0, "site=main.cpp:lab-play-file-done", &player);
     }
 
     misterplex::Companion comp;
@@ -1246,8 +1316,10 @@ int main(int argc, char** argv) {
 
     if (!comp.start()) {
         std::fprintf(stderr, "misterplexd: companion start failed\n");
-        return 1;
+        return exitReported(1, "site=main.cpp:companion-start-failed", &player);
     }
+
+    misterplex::deathBreadcrumbUpdate(misterplex::DeathState::Idle, 0, 0, 0, /*force=*/true);
 
     // Fail-soft: logs skip/success/failure; never blocks companion or playback.
     plexTv.start();
@@ -1284,12 +1356,38 @@ int main(int argc, char** argv) {
     // things worse. This only ever sends SIGCONT: misterplexd does not start,
     // stop, or reload Main.
     unsigned tick = 0;
-    while (!g_stop.load()) {
+    while (!g_stop.load(std::memory_order_acquire)) {
         std::this_thread::sleep_for(std::chrono::milliseconds(200));
         if (++tick % 3 != 0)
             continue;
         misterplex::FpgaSpi::resumeStrandedMain();
+        // Throttled heartbeat so misterplexd.last is never hours-stale after a kill.
+        if ((tick % 25) == 0) {
+            misterplex::deathBreadcrumbUpdate(
+                player.playing() ? (player.paused() ? misterplex::DeathState::Paused
+                                                    : misterplex::DeathState::Playing)
+                                 : misterplex::DeathState::Idle,
+                player.lifetimeFrames(), player.lifetimePresents(), player.positionMs(),
+                /*force=*/false);
+        }
     }
+
+    // g_stop is set only by SIGINT/SIGTERM handlers → orderly return 0.
+    // rc=0 is therefore NOT proof of "voluntary idle exit"; it is the handled-signal path.
+    const int stopSig = g_stopSig.load(std::memory_order_relaxed);
+    const int stopCode = g_stopSiCode.load(std::memory_order_relaxed);
+    const int stopPid = g_stopSiPid.load(std::memory_order_relaxed);
+    char why[192];
+    std::snprintf(why, sizeof(why),
+                  "site=main.cpp:main_loop_g_stop sig=%d si_code=%d si_pid=%d "
+                  "(handled→WIFEXITED 0; not WIFSIGNALED)",
+                  stopSig, stopCode, stopPid);
+    std::fprintf(stderr,
+                 "misterplexd: main_loop exit pending — %s lifetime_frames=%lld "
+                 "lifetime_presents=%lld lifetime_drops=%lld\n",
+                 why, static_cast<long long>(player.lifetimeFrames()),
+                 static_cast<long long>(player.lifetimePresents()),
+                 static_cast<long long>(player.lifetimeDrops()));
 
     player.stop();
     pmsTimeline.stopAndFlush();
@@ -1298,5 +1396,5 @@ int main(int argc, char** argv) {
     // Last chance on the way out: a window leaked during teardown would
     // otherwise outlive us.
     misterplex::FpgaSpi::resumeStrandedMain();
-    return 0;
+    return exitReported(0, why, &player);
 }
