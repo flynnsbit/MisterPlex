@@ -500,7 +500,7 @@ void MediaPlayer::startOsdPoll() {
         }
         return;
     }
-    // Auto/On: start so Auto can detect PLXS LIVE.
+    // Auto/On: probe live CONF_STR (generation) then poll status word.
     if (osdRun_.exchange(true))
         return;
     if (osdThr_.joinable())
@@ -508,26 +508,59 @@ void MediaPlayer::startOsdPoll() {
     osdCapability_.store(static_cast<int>(OsdCapability::Unknown));
     osdInertNotified_.store(false);
     osdThr_ = std::thread([this] {
-        bool mailboxLogged = false;
+        bool confstrLogged = false;
+        bool transportLogged = false;
+        bool applyLogged = false;
         const auto t0 = std::chrono::steady_clock::now();
         const double startMs =
             std::chrono::duration<double, std::milli>(t0.time_since_epoch()).count();
         while (osdRun_.load()) {
+            // 1) Generation proof: UIO_GET_STRING CONF_STR (once classified, stick).
+            //    Auto apply is gated on V3Idle only — never on PLXS alone.
+            {
+                const auto cur = static_cast<OsdCapability>(osdCapability_.load());
+                if (cur == OsdCapability::Unknown) {
+                    std::string confstr;
+                    bool gotStr = false;
+                    {
+                        std::lock_guard<std::mutex> lk(presentMu_);
+                        if (fpga_.ok())
+                            gotStr = fpga_.getConfigString(confstr);
+                    }
+                    if (gotStr) {
+                        const auto gen = classifyOsdConfStr(confstr);
+                        osdCapability_.store(static_cast<int>(gen));
+                        if (!confstrLogged) {
+                            confstrLogged = true;
+                            std::string detail;
+                            if (gen == OsdCapability::V3Idle) {
+                                detail = std::string("marker=") + kOsdIdleScreenConfMarker;
+                            } else if (confStrHasPreV3Markers(confstr)) {
+                                detail = "pre_v3_markers=Pattern|ContentFPS";
+                            } else {
+                                detail = "no_idle_screen_marker";
+                            }
+                            log(std::string("media: OSD confstr gen=") + osdCapabilityName(gen) +
+                                " " + detail);
+                        }
+                    }
+                }
+            }
+
+            const auto cap = static_cast<OsdCapability>(osdCapability_.load());
+
+            // 2) Status word transport: mailbox preferred; SPI only when allowed.
             uint16_t word = 0;
             bool got = false;
             bool viaMailbox = false;
             {
                 std::lock_guard<std::mutex> lk(presentMu_);
-                // Preferred path: the core publishes the OSD word into HPS DDR,
-                // so reading it is a plain memory load that Main never sees.
-                // LIVE mailbox (magic + advancing seq) is the Auto capability proof.
                 if (fpga_.readOsdMailbox(word)) {
                     got = true;
                     viaMailbox = true;
-                    osdCapability_.store(static_cast<int>(OsdCapability::LiveMailbox));
-                } else if (osdSpiFallbackWanted(osdMode_) && fpga_.ok()) {
-                    // ForcedOn only: pre-mailbox RBF SPI path. Auto must NOT use
-                    // SPI status bits — pre-v3 Pattern/Content-FPS share those bits.
+                } else if (osdSpiStatusWanted(osdMode_, cap) && fpga_.ok()) {
+                    // SPI status is safe once CONF_STR proved V3Idle, or ForcedOn.
+                    // Auto+PreV3 must never read/apply these bits via SPI.
                     uint8_t raw[16]{};
                     if (fpga_.getCoreStatus(raw)) {
                         word = static_cast<uint16_t>(raw[0] | (raw[1] << 8));
@@ -535,38 +568,56 @@ void MediaPlayer::startOsdPoll() {
                     }
                 }
             }
-            // Auto: fail closed when probe window elapses without LIVE mailbox.
+
+            // Auto: fail closed when probe window elapses without confstr class.
             if (osdMode_ == OsdControlMode::Auto) {
                 const double nowMs = std::chrono::duration<double, std::milli>(
                                          std::chrono::steady_clock::now().time_since_epoch())
                                          .count();
                 const auto cur = static_cast<OsdCapability>(osdCapability_.load());
                 const auto settled = osdAutoSettle(cur, startMs, nowMs);
-                if (settled != cur)
+                if (settled != cur) {
                     osdCapability_.store(static_cast<int>(settled));
+                    if (settled == OsdCapability::Absent && !confstrLogged) {
+                        confstrLogged = true;
+                        log("media: OSD confstr gen=absent — UIO_GET_STRING not readable "
+                            "within probe window; F12 Idle stays disabled (fail closed)");
+                    }
+                }
             }
 
-            if (got && viaMailbox && !mailboxLogged) {
-                mailboxLogged = true;
-                log("media: OSD via DDR mailbox (no SPI) capability=live_mailbox");
+            if (got && !transportLogged) {
+                transportLogged = true;
+                log(std::string("media: OSD status via=") + (viaMailbox ? "mailbox" : "spi") +
+                    " capability=" +
+                    osdCapabilityName(static_cast<OsdCapability>(osdCapability_.load())));
             }
 
             // One-shot user-visible notice when F12 cannot drive the daemon.
-            if (!osdApplyActive() &&
-                (osdMode_ == OsdControlMode::ForcedOff ||
-                 static_cast<OsdCapability>(osdCapability_.load()) == OsdCapability::Absent) &&
-                !osdInertNotified_.exchange(true)) {
-                log(std::string("media: OSD F12 inert mode=") + osdControlModeName(osdMode_) +
-                    " capability=" +
-                    osdCapabilityName(static_cast<OsdCapability>(osdCapability_.load())) +
-                    " — Idle Screen menu does nothing; use IDLE_SCREEN conf");
-                overlay_.flashNotice(osdInertUserNotice());
-                // Repaint idle so HDMI shows the banner without a play session.
-                if (!playing_.load())
-                    paintIdle();
+            {
+                const auto c = static_cast<OsdCapability>(osdCapability_.load());
+                const bool settledInert =
+                    !osdApplyActive() &&
+                    (osdMode_ == OsdControlMode::ForcedOff || c == OsdCapability::Absent ||
+                     c == OsdCapability::PreV3);
+                if (settledInert && !osdInertNotified_.exchange(true)) {
+                    log(std::string("media: OSD F12 inert mode=") + osdControlModeName(osdMode_) +
+                        " capability=" + osdCapabilityName(c) +
+                        " — Idle Screen menu does nothing; use IDLE_SCREEN conf");
+                    overlay_.flashNotice(osdInertUserNotice());
+                    if (!playing_.load())
+                        paintIdle();
+                }
             }
 
             if (got && osdApplyActive()) {
+                if (!applyLogged) {
+                    applyLogged = true;
+                    log(std::string("media: OSD apply enabled mode=") +
+                        osdControlModeName(osdMode_) + " capability=" +
+                        osdCapabilityName(static_cast<OsdCapability>(osdCapability_.load())) +
+                        " via=" + (viaMailbox ? "mailbox" : "spi"));
+                }
                 const uint16_t prev = lastOsd_.load();
                 const bool seenBefore = osdSeen_.exchange(true);
                 if (!seenBefore || osdChanged(prev, word)) {
@@ -576,8 +627,7 @@ void MediaPlayer::startOsdPoll() {
                     applyOsd(word, shouldApplyOsdIdle(seenBefore, prev, word));
                 }
             }
-            // The mailbox is free to poll. The SPI fallback is not: it has to
-            // park Main for the critical section, so keep that path slow.
+            // Mailbox is free to poll. SPI parks Main — keep that path slow.
             const int quietMs = viaMailbox ? 100 : (playing_.load() ? 250 : 1000);
             for (int slept = 0; slept < quietMs && osdRun_.load(); slept += 50)
                 std::this_thread::sleep_for(std::chrono::milliseconds(50));

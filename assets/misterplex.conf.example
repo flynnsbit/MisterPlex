@@ -142,10 +142,11 @@ AUDIO_CLOCK_PPM=-638
 # --- OSD menu controls (Plex core CONF_STR v3) --------------------------------
 #
 # OSD_CONTROL: how the daemon treats F12 menu bits (status[15:0]).
-#   auto  (default) — probe the core's PLXS DDR mailbox (magic + advancing seq).
-#                     Apply F12 Idle / A/V / content tier ONLY when the mailbox is
-#                     LIVE. Pre-v3 / pre-mailbox cores fail closed (F12 inert).
-#                     Does NOT use CORENAME or RBF filenames (all say "Plex").
+#   auto  (default) — read live CONF_STR via UIO_GET_STRING. Apply F12 Idle / A/V /
+#                     content tier ONLY when confstr contains "O[15:14],Idle screen"
+#                     (Plex.sv product marker). Pre-v3 cores (Pattern/Content FPS on
+#                     those bits) fail closed. PLXS mailbox is transport only — not
+#                     a generation proof. Does NOT use CORENAME/RBF filenames.
 #   on / 1          — always apply (mailbox preferred, SPI fallback). Unsafe on
 #                     pre-v3 CONF_STR where the same bits mean Pattern/Content FPS.
 #   off / 0         — never apply; F12 Idle Screen is inert; IDLE_SCREEN conf only.

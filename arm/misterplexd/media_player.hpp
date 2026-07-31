@@ -145,8 +145,8 @@ public:
     void startIdle();
     void stopIdle();
 
-    // Live OSD menu control. Default Auto: apply only when PLXS mailbox is LIVE
-    // (see libmisterplex/osd_control.hpp). ForcedOn risks pre-v3 bit layouts.
+    // Live OSD menu control. Default Auto: apply only when live CONF_STR proves
+    // O[15:14],Idle screen (see libmisterplex/osd_control.hpp). ForcedOn risks pre-v3.
     void setOsdControlMode(misterplex::OsdControlMode mode);
     // Legacy bool: true→ForcedOn, false→ForcedOff (no Auto).
     void setOsdControl(bool on) {
