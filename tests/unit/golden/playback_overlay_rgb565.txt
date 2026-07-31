@@ -1,14 +1,10 @@
-fnv64 0x141456a4afc33de5
-dirty 10 170 300 60
-pixel 0 0 0x0000
-pixel 9 169 0x6c15
-pixel 10 170 0x3a29
-pixel 32 190 0xfd84
-pixel 56 181 0xef7e
-pixel 26 212 0xfd84
-pixel 31 212 0xef7e
-pixel 32 214 0xef7e
-pixel 160 214 0x31e8
-pixel 294 214 0x30a1
-pixel 309 229 0x3a09
-pixel 319 239 0x6fe2
+fnv64 0xc9d73fecfe7a35da
+dirty 8 172 304 60
+pixel 12 176 0x3263
+pixel 160 184 0x28c3
+pixel 30 190 0x02a1
+pixel 48 182 0x0845
+pixel 22 220 0xfd84
+pixel 160 222 0x1269
+pixel 292 202 0x19c2
+pixel 38 206 0x2a66

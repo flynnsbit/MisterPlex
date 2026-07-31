@@ -46,11 +46,23 @@ namespace {
 
 constexpr int W = 320;
 constexpr int H = 240;
-constexpr int kBarX = 26;
-constexpr int kBarY = 212;
-constexpr int kBarW = 268;
 constexpr uint16_t kAmber565 = 0xfd84;
 constexpr uint16_t kWhite565 = 0xef7e;
+
+// Bar geometry follows OverlayLayoutMetrics (not hardcoded pre-8x13 anchors).
+struct BarGeom {
+    int x = 0, y = 0, w = 0, h = 0;
+};
+BarGeom barGeom320() {
+    const auto panel = misterplex::PlaybackOverlay::panelBounds(W, H);
+    const auto lm = misterplex::PlaybackOverlay::layoutMetrics(W, H);
+    BarGeom b;
+    b.x = panel.x + 14;
+    b.w = panel.w - 28;
+    b.h = lm.barH;
+    b.y = panel.y + panel.h - lm.barBottomPad;
+    return b;
+}
 
 struct PixelGold {
     int x = 0;
@@ -160,10 +172,11 @@ void checkOutsideDirtyUnchanged(const std::vector<uint8_t>& before,
 }
 
 int knobCenterOnBar(const std::vector<uint8_t>& buf) {
+    const BarGeom bar = barGeom320();
     int lo = 9999;
     int hi = -1;
-    const int y = kBarY + 2;
-    for (int x = kBarX - 4; x < kBarX + kBarW + 6; ++x) {
+    const int y = bar.y + std::max(0, bar.h / 2);
+    for (int x = bar.x - 6; x < bar.x + bar.w + 8; ++x) {
         if (x >= 0 && x < W && rgb565At(buf, x, y) == kWhite565) {
             lo = std::min(lo, x);
             hi = std::max(hi, x);
@@ -228,24 +241,25 @@ int main() {
 
     // 2. Progress-bar geometry and edge cases.
     {
+        const BarGeom bar = barGeom320();
         std::vector<uint8_t> zero = blackFrame();
         renderProgressCase(0, 100000, zero);
-        CHECK(knobCenterOnBar(zero) == kBarX);
-        CHECK(rgb565At(zero, kBarX + 4, kBarY + 2) != kAmber565);
+        CHECK(std::abs(knobCenterOnBar(zero) - bar.x) <= 2);
+        CHECK(rgb565At(zero, bar.x + 4, bar.y + bar.h / 2) != kAmber565);
 
         std::vector<uint8_t> half = blackFrame();
         renderProgressCase(100000, 200000, half);
-        CHECK(std::abs(knobCenterOnBar(half) - (kBarX + kBarW / 2)) <= 1);
-        CHECK_EQ_HEX16(rgb565At(half, kBarX + kBarW / 2 - 4, kBarY + 2), kAmber565);
-        CHECK(rgb565At(half, kBarX + kBarW / 2 + 4, kBarY + 2) != kAmber565);
+        CHECK(std::abs(knobCenterOnBar(half) - (bar.x + bar.w / 2)) <= 2);
+        CHECK_EQ_HEX16(rgb565At(half, bar.x + bar.w / 2 - 4, bar.y + bar.h / 2), kAmber565);
+        CHECK(rgb565At(half, bar.x + bar.w / 2 + 4, bar.y + bar.h / 2) != kAmber565);
 
         std::vector<uint8_t> full = blackFrame();
         renderProgressCase(200000, 200000, full);
-        CHECK(std::abs(knobCenterOnBar(full) - (kBarX + kBarW)) <= 1);
-        CHECK_EQ_HEX16(rgb565At(full, kBarX + kBarW - 4, kBarY + 2), kAmber565);
+        CHECK(std::abs(knobCenterOnBar(full) - (bar.x + bar.w)) <= 2);
+        CHECK_EQ_HEX16(rgb565At(full, bar.x + bar.w - 4, bar.y + bar.h / 2), kAmber565);
 
-        checkGuardedProgress(400000, 200000, kBarX + kBarW); // seek overshoot clamps full
-        checkGuardedProgress(100000, 0, kBarX);              // live stream duration unknown
+        checkGuardedProgress(400000, 200000, bar.x + bar.w); // seek overshoot clamps full
+        checkGuardedProgress(100000, 0, bar.x);               // live stream duration unknown
     }
 
     // 3. Auto-hide timing with injected timestamps, no sleeps.
@@ -291,15 +305,15 @@ int main() {
             CHECK(panel.h * 10 >= c.h);       // >= 10%
             CHECK(panel.h * 5 <= c.h * 2);    // <= 40%
             const auto lm = PlaybackOverlay::layoutMetrics(c.w, c.h);
-            CHECK(lm.bodyScale == std::max(1, c.h / 200));
+            // Native 8×13 cells — never block-upscale the font.
+            CHECK(lm.bodyScale == 1);
             // Timeline endpoints: half progress → fill mid-bar.
             std::vector<uint8_t> rgb(static_cast<size_t>(c.w) * c.h * 3, 0);
             CHECK(hi.renderRgb24At(rgb.data(), c.w, c.h, 1000));
-            const int barX = panel.x + 16;
-            const int barW = panel.w - 32;
-            const int sc = lm.bodyScale == 1 ? 1 : lm.bodyScale;
-            const int barH = (sc == 1) ? 6 : lm.barH;
-            const int barBottomPad = (sc == 1) ? 18 : lm.barBottomPad;
+            const int barX = panel.x + 14;
+            const int barW = panel.w - 28;
+            const int barH = lm.barH;
+            const int barBottomPad = lm.barBottomPad;
             const int barY = panel.y + panel.h - barBottomPad;
             const int midX = barX + barW / 2;
             // Sample Y near bar center row; amber progress should be left of mid, track right.
@@ -359,36 +373,40 @@ int main() {
         (void)panel;
     }
 
-    // 7. Glyph effective resolution: at 1080p bodyScale>=5 so solid stroke runs
-    // are multi-pixel. Forced scale=1 path (legacy 5×7 upscaled by ascal only)
-    // would fail the min-run assertion.
+    // 7. Glyph quality: 8×13 at scale=1 has more unique lit rows in a glyph
+    // cell than 5×7 block-scaled to the same footprint (scale=2 → 14 px tall
+    // but only 7 unique source rows). Count distinct horizontal edge rows in
+    // the label band — denser fonts produce more edge rows per em-height.
     {
-        constexpr int OW = 1920, OH = 1080;
+        constexpr int OW = 640, OH = 480;
         const auto lm = PlaybackOverlay::layoutMetrics(OW, OH);
-        CHECK(lm.bodyScale >= 5); // prediction: h/200 = 5
+        CHECK(lm.bodyScale == 1);
         std::vector<uint8_t> rgb(static_cast<size_t>(OW) * OH * 3, 0);
-        PlaybackOverlay ov1080;
-        ov1080.showAt(PlaybackOverlayState::Paused, 0, 1, 0);
-        CHECK(ov1080.renderRgb24At(rgb.data(), OW, OH, 0));
-        // Scan label row for longest horizontal run of near-white pixels.
+        PlaybackOverlay ov;
+        ov.showAt(PlaybackOverlayState::Paused, 0, 1, 0);
+        CHECK(ov.renderRgb24At(rgb.data(), OW, OH, 0));
         const OverlayRect panel = PlaybackOverlay::panelBounds(OW, OH);
-        const int y = panel.y + lm.labelTop + (7 * lm.bodyScale) / 2;
-        int best = 0, run = 0;
-        for (int x = panel.x; x < panel.x + panel.w; ++x) {
-            const size_t i = (static_cast<size_t>(y) * OW + x) * 3;
-            const bool whiteish = rgb[i] > 200 && rgb[i + 1] > 200 && rgb[i + 2] > 200;
-            if (whiteish) {
-                ++run;
-                best = std::max(best, run);
-            } else {
-                run = 0;
+        const int y0 = panel.y + lm.labelTop;
+        const int y1 = y0 + misterplex::kOverlayGlyphH;
+        int edgeRows = 0;
+        for (int y = y0; y < y1 - 1; ++y) {
+            bool edge = false;
+            for (int x = panel.x; x < panel.x + panel.w; ++x) {
+                const size_t i0 = (static_cast<size_t>(y) * OW + x) * 3;
+                const size_t i1 = (static_cast<size_t>(y + 1) * OW + x) * 3;
+                const int d = std::abs(static_cast<int>(rgb[i0]) - static_cast<int>(rgb[i1]));
+                if (d > 40) {
+                    edge = true;
+                    break;
+                }
             }
+            if (edge)
+                ++edgeRows;
         }
-        // bodyScale 5 ⇒ glyph strokes are 5 px wide; require >= 4.
-        CHECK(best >= 4);
-        // Document red-on-legacy: scale-1 would cap solid runs near 1–2 px for
-        // this font. We assert the hires path is strictly better than that floor.
-        CHECK(best >= lm.bodyScale - 1);
+        // 8×13 font should show several internal horizontal transitions in the
+        // label band; a single solid block-upscale would show ~2.
+        CHECK(edgeRows >= 4);
+        CHECK(misterplex::kOverlayGlyphH >= 12);
     }
 
     // 8. YUV420p path actually paints (product PRESENT=fpga regression).

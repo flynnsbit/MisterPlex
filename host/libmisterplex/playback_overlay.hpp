@@ -44,48 +44,57 @@ struct OverlayRect {
     bool empty() const { return w <= 0 || h <= 0; }
 };
 
-// Resolution-scaled chrome metrics. Derived only from buffer W×H.
+// Font cell (native pixels). Prefer a taller bitmap at scale=1 over 5×7
+// upscaled with fillRect blocks — block scale only grows jaggies; a denser
+// glyph improves shape inside the same footprint (and after DE even-row
+// subsample, more of the shape still lands on fetched rows).
+static constexpr int kOverlayGlyphW = 8;
+static constexpr int kOverlayGlyphH = 13;
+static constexpr int kOverlayGlyphAdvance = 9; // 8 + 1 px gap
+
+// Resolution-scaled chrome metrics. Derived only from buffer W×H (present
+// canvas). Text/icon use native glyph cells (bodyScale=1); panel geometry
+// scales with the raster so 240p stays legible and larger canvases gain margin.
 struct OverlayLayoutMetrics {
     int margin = 8;
-    int panelH = 60;
-    int bodyScale = 1;  // 5×7 glyph cell scale for body/time text
-    int titleScale = 1; // skip/notice banner text
-    int iconScale = 1;
+    int panelH = 64;
+    int bodyScale = 1;  // always 1 — never block-upscale the bitmap font
+    int titleScale = 1;
+    int iconScale = 1;  // 1 = 16px icon art; 2 only on very tall canvases
     int barH = 6;
-    int barBottomPad = 18;
-    int labelTop = 10;
-    int iconCy = 20;
-    int timeTop = 34;
+    int barBottomPad = 16;
+    int labelTop = 8;
+    int iconCy = 18;
+    int timeTop = 32;
     int skipBoxH = 28;
     int noticeBoxH = 28;
 
-    // bodyScale = max(1, h/200): 240→1 (golden), 480→2, 600→3, 1080→5.
     static OverlayLayoutMetrics compute(int w, int h) {
         OverlayLayoutMetrics m;
         if (w <= 0 || h <= 0)
             return m;
-        m.margin = std::max(8, w / 32);
-        // 320×240 golden: min(max(72,48), max(54,60)) = min(72,60) = 60.
-        m.panelH = std::min(std::max(72, h / 5), std::max(54, h / 4));
+        m.margin = std::max(6, w / 40);
+        // Panel ~18–28% of height, clamped for short rasters (240p DE world).
+        m.panelH = std::max(56, std::min(h / 4, std::max(64, h / 5)));
         if (m.panelH > h - 2 * m.margin)
-            m.panelH = std::max(24, h - 2 * m.margin);
-        m.bodyScale = std::max(1, h / 200);
-        m.titleScale = m.bodyScale;
-        m.iconScale = m.bodyScale;
-        m.barH = std::max(4, 6 * m.bodyScale);
-        m.barBottomPad = 12 + m.barH;
-        m.labelTop = std::max(6, 10 * m.bodyScale);
-        m.iconCy = std::max(12, 20 * m.iconScale);
-        m.timeTop = std::max(m.labelTop + 7 * m.bodyScale + 2, 34 * m.bodyScale);
-        if (m.timeTop + 7 * m.bodyScale + m.barBottomPad > m.panelH) {
-            // Compact vertical stack on short panels (240p golden path).
-            m.labelTop = 10;
-            m.iconCy = 20;
-            m.timeTop = 34;
-            m.barBottomPad = 18;
-            m.barH = 6;
+            m.panelH = std::max(40, h - 2 * m.margin);
+        // Native cells only — raising scale makes bigger blocks, not sharper type.
+        m.bodyScale = 1;
+        m.titleScale = 1;
+        m.iconScale = (h >= 720) ? 2 : 1;
+        m.barH = std::max(4, m.panelH / 12);
+        m.barBottomPad = 10 + m.barH;
+        m.labelTop = 8;
+        m.iconCy = 8 + 10 * m.iconScale;
+        m.timeTop = m.labelTop + kOverlayGlyphH + 4;
+        if (m.timeTop + kOverlayGlyphH + m.barBottomPad > m.panelH) {
+            m.labelTop = 6;
+            m.iconCy = 14;
+            m.timeTop = 24;
+            m.barBottomPad = 12;
+            m.barH = 5;
         }
-        m.skipBoxH = std::max(28, 14 * m.titleScale);
+        m.skipBoxH = std::max(24, kOverlayGlyphH + 12);
         m.noticeBoxH = m.skipBoxH;
         return m;
     }
@@ -485,35 +494,85 @@ private:
         fillRect(t, x + ww - 1, y, 1, hh, c, alpha);
     }
 
+    // 8×13 bitmaps, MSB = left column. Rows are unique pixels (scale=1).
     static const uint8_t* glyph(char ch) {
-        static constexpr uint8_t space[7] = {0, 0, 0, 0, 0, 0, 0};
-        static constexpr uint8_t d0[7] = {0x0e, 0x11, 0x13, 0x15, 0x19, 0x11, 0x0e};
-        static constexpr uint8_t d1[7] = {0x04, 0x0c, 0x04, 0x04, 0x04, 0x04, 0x0e};
-        static constexpr uint8_t d2[7] = {0x0e, 0x11, 0x01, 0x02, 0x04, 0x08, 0x1f};
-        static constexpr uint8_t d3[7] = {0x1e, 0x01, 0x01, 0x0e, 0x01, 0x01, 0x1e};
-        static constexpr uint8_t d4[7] = {0x02, 0x06, 0x0a, 0x12, 0x1f, 0x02, 0x02};
-        static constexpr uint8_t d5[7] = {0x1f, 0x10, 0x1e, 0x01, 0x01, 0x11, 0x0e};
-        static constexpr uint8_t d6[7] = {0x06, 0x08, 0x10, 0x1e, 0x11, 0x11, 0x0e};
-        static constexpr uint8_t d7[7] = {0x1f, 0x01, 0x02, 0x04, 0x08, 0x08, 0x08};
-        static constexpr uint8_t d8[7] = {0x0e, 0x11, 0x11, 0x0e, 0x11, 0x11, 0x0e};
-        static constexpr uint8_t d9[7] = {0x0e, 0x11, 0x11, 0x0f, 0x01, 0x02, 0x0c};
-        static constexpr uint8_t colon[7] = {0x00, 0x04, 0x04, 0x00, 0x04, 0x04, 0x00};
-        static constexpr uint8_t lt[7] = {0x02, 0x04, 0x08, 0x10, 0x08, 0x04, 0x02};
-        static constexpr uint8_t gt[7] = {0x08, 0x04, 0x02, 0x01, 0x02, 0x04, 0x08};
-        static constexpr uint8_t minus[7] = {0, 0, 0, 0x1f, 0, 0, 0};
-        static constexpr uint8_t a[7] = {0x0e, 0x11, 0x11, 0x1f, 0x11, 0x11, 0x11};
-        static constexpr uint8_t d[7] = {0x1e, 0x11, 0x11, 0x11, 0x11, 0x11, 0x1e};
-        static constexpr uint8_t e[7] = {0x1f, 0x10, 0x10, 0x1e, 0x10, 0x10, 0x1f};
-        static constexpr uint8_t g[7] = {0x0e, 0x11, 0x10, 0x17, 0x11, 0x11, 0x0f};
-        static constexpr uint8_t i[7] = {0x0e, 0x04, 0x04, 0x04, 0x04, 0x04, 0x0e};
-        static constexpr uint8_t l[7] = {0x10, 0x10, 0x10, 0x10, 0x10, 0x10, 0x1f};
-        static constexpr uint8_t n[7] = {0x11, 0x19, 0x15, 0x13, 0x11, 0x11, 0x11};
-        static constexpr uint8_t o[7] = {0x0e, 0x11, 0x11, 0x11, 0x11, 0x11, 0x0e};
-        static constexpr uint8_t p[7] = {0x1e, 0x11, 0x11, 0x1e, 0x10, 0x10, 0x10};
-        static constexpr uint8_t s[7] = {0x0f, 0x10, 0x10, 0x0e, 0x01, 0x01, 0x1e};
-        static constexpr uint8_t t[7] = {0x1f, 0x04, 0x04, 0x04, 0x04, 0x04, 0x04};
-        static constexpr uint8_t u[7] = {0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x0e};
-        static constexpr uint8_t y[7] = {0x11, 0x11, 0x0a, 0x04, 0x04, 0x04, 0x04};
+        static constexpr uint8_t space[13] = {};
+        // Digits and letters needed for transport chrome.
+        static constexpr uint8_t d0[13] = {0x00, 0x3C, 0x66, 0xC3, 0xC3, 0xC3, 0xC3,
+                                          0xC3, 0xC3, 0x66, 0x3C, 0x00, 0x00};
+        static constexpr uint8_t d1[13] = {0x00, 0x18, 0x38, 0x18, 0x18, 0x18, 0x18,
+                                          0x18, 0x18, 0x18, 0x7E, 0x00, 0x00};
+        static constexpr uint8_t d2[13] = {0x00, 0x3C, 0x66, 0x06, 0x0C, 0x18, 0x30,
+                                          0x60, 0xC0, 0xC0, 0xFE, 0x00, 0x00};
+        static constexpr uint8_t d3[13] = {0x00, 0x3C, 0x66, 0x06, 0x06, 0x1C, 0x06,
+                                          0x06, 0x06, 0x66, 0x3C, 0x00, 0x00};
+        static constexpr uint8_t d4[13] = {0x00, 0x0C, 0x1C, 0x3C, 0x6C, 0xCC, 0xFE,
+                                          0x0C, 0x0C, 0x0C, 0x0C, 0x00, 0x00};
+        static constexpr uint8_t d5[13] = {0x00, 0x7E, 0x60, 0x60, 0x7C, 0x06, 0x06,
+                                          0x06, 0x06, 0x66, 0x3C, 0x00, 0x00};
+        static constexpr uint8_t d6[13] = {0x00, 0x1C, 0x30, 0x60, 0x60, 0x7C, 0x66,
+                                          0x66, 0x66, 0x66, 0x3C, 0x00, 0x00};
+        static constexpr uint8_t d7[13] = {0x00, 0xFE, 0x06, 0x0C, 0x0C, 0x18, 0x18,
+                                          0x30, 0x30, 0x30, 0x30, 0x00, 0x00};
+        static constexpr uint8_t d8[13] = {0x00, 0x3C, 0x66, 0x66, 0x66, 0x3C, 0x66,
+                                          0x66, 0x66, 0x66, 0x3C, 0x00, 0x00};
+        static constexpr uint8_t d9[13] = {0x00, 0x3C, 0x66, 0x66, 0x66, 0x3E, 0x06,
+                                          0x06, 0x06, 0x0C, 0x38, 0x00, 0x00};
+        static constexpr uint8_t colon[13] = {0x00, 0x00, 0x18, 0x18, 0x00, 0x00, 0x00,
+                                             0x18, 0x18, 0x00, 0x00, 0x00, 0x00};
+        static constexpr uint8_t lt[13] = {0x00, 0x06, 0x0C, 0x18, 0x30, 0x60, 0xC0,
+                                          0x60, 0x30, 0x18, 0x0C, 0x06, 0x00};
+        static constexpr uint8_t gt[13] = {0x00, 0xC0, 0x60, 0x30, 0x18, 0x0C, 0x06,
+                                          0x0C, 0x18, 0x30, 0x60, 0xC0, 0x00};
+        static constexpr uint8_t minus[13] = {0x00, 0x00, 0x00, 0x00, 0x00, 0x7E, 0x7E,
+                                             0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
+        static constexpr uint8_t a[13] = {0x00, 0x3C, 0x66, 0x66, 0x66, 0x7E, 0x66,
+                                         0x66, 0x66, 0x66, 0x66, 0x00, 0x00};
+        static constexpr uint8_t d[13] = {0x00, 0x78, 0x6C, 0x66, 0x66, 0x66, 0x66,
+                                         0x66, 0x66, 0x6C, 0x78, 0x00, 0x00};
+        static constexpr uint8_t e[13] = {0x00, 0x7E, 0x60, 0x60, 0x60, 0x7C, 0x60,
+                                         0x60, 0x60, 0x60, 0x7E, 0x00, 0x00};
+        static constexpr uint8_t g[13] = {0x00, 0x3C, 0x66, 0xC0, 0xC0, 0xDE, 0xC6,
+                                         0xC6, 0xC6, 0x66, 0x3C, 0x00, 0x00};
+        static constexpr uint8_t i[13] = {0x00, 0x3C, 0x18, 0x18, 0x18, 0x18, 0x18,
+                                         0x18, 0x18, 0x18, 0x3C, 0x00, 0x00};
+        static constexpr uint8_t l[13] = {0x00, 0x60, 0x60, 0x60, 0x60, 0x60, 0x60,
+                                         0x60, 0x60, 0x60, 0x7E, 0x00, 0x00};
+        static constexpr uint8_t n[13] = {0x00, 0x66, 0x76, 0x7E, 0x7E, 0x6E, 0x66,
+                                         0x66, 0x66, 0x66, 0x66, 0x00, 0x00};
+        static constexpr uint8_t o[13] = {0x00, 0x3C, 0x66, 0xC3, 0xC3, 0xC3, 0xC3,
+                                         0xC3, 0xC3, 0x66, 0x3C, 0x00, 0x00};
+        static constexpr uint8_t p[13] = {0x00, 0x7C, 0x66, 0x66, 0x66, 0x7C, 0x60,
+                                         0x60, 0x60, 0x60, 0x60, 0x00, 0x00};
+        static constexpr uint8_t s[13] = {0x00, 0x3C, 0x66, 0x60, 0x60, 0x3C, 0x06,
+                                         0x06, 0x06, 0x66, 0x3C, 0x00, 0x00};
+        static constexpr uint8_t t[13] = {0x00, 0xFF, 0x18, 0x18, 0x18, 0x18, 0x18,
+                                         0x18, 0x18, 0x18, 0x18, 0x00, 0x00};
+        static constexpr uint8_t u[13] = {0x00, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66,
+                                         0x66, 0x66, 0x66, 0x3C, 0x00, 0x00};
+        static constexpr uint8_t y[13] = {0x00, 0x66, 0x66, 0x66, 0x3C, 0x18, 0x18,
+                                         0x18, 0x18, 0x18, 0x18, 0x00, 0x00};
+        // Extra chars used in skip/notice strings.
+        static constexpr uint8_t f[13] = {0x00, 0x7E, 0x60, 0x60, 0x60, 0x7C, 0x60,
+                                         0x60, 0x60, 0x60, 0x60, 0x00, 0x00};
+        static constexpr uint8_t r[13] = {0x00, 0x7C, 0x66, 0x66, 0x66, 0x7C, 0x6C,
+                                         0x66, 0x66, 0x66, 0x66, 0x00, 0x00};
+        static constexpr uint8_t c[13] = {0x00, 0x3C, 0x66, 0xC0, 0xC0, 0xC0, 0xC0,
+                                         0xC0, 0xC0, 0x66, 0x3C, 0x00, 0x00};
+        static constexpr uint8_t m[13] = {0x00, 0xC3, 0xE7, 0xFF, 0xDB, 0xC3, 0xC3,
+                                         0xC3, 0xC3, 0xC3, 0xC3, 0x00, 0x00};
+        static constexpr uint8_t w[13] = {0x00, 0xC3, 0xC3, 0xC3, 0xC3, 0xC3, 0xDB,
+                                         0xFF, 0xE7, 0xC3, 0xC3, 0x00, 0x00};
+        static constexpr uint8_t h[13] = {0x00, 0x66, 0x66, 0x66, 0x66, 0x7E, 0x66,
+                                         0x66, 0x66, 0x66, 0x66, 0x00, 0x00};
+        static constexpr uint8_t k[13] = {0x00, 0x66, 0x6C, 0x78, 0x70, 0x70, 0x78,
+                                         0x6C, 0x66, 0x66, 0x66, 0x00, 0x00};
+        static constexpr uint8_t b[13] = {0x00, 0x7C, 0x66, 0x66, 0x66, 0x7C, 0x66,
+                                         0x66, 0x66, 0x66, 0x7C, 0x00, 0x00};
+        static constexpr uint8_t v[13] = {0x00, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66,
+                                         0x66, 0x3C, 0x18, 0x18, 0x00, 0x00};
+        static constexpr uint8_t slash[13] = {0x00, 0x06, 0x06, 0x0C, 0x0C, 0x18, 0x18,
+                                             0x30, 0x30, 0x60, 0x60, 0x00, 0x00};
         switch (ch) {
         case '0': return d0;
         case '1': return d1;
@@ -529,18 +588,28 @@ private:
         case '<': return lt;
         case '>': return gt;
         case '-': return minus;
+        case '/': return slash;
         case 'A': return a;
+        case 'B': return b;
+        case 'C': return c;
         case 'D': return d;
         case 'E': return e;
+        case 'F': return f;
         case 'G': return g;
+        case 'H': return h;
         case 'I': return i;
+        case 'K': return k;
         case 'L': return l;
+        case 'M': return m;
         case 'N': return n;
         case 'O': return o;
         case 'P': return p;
+        case 'R': return r;
         case 'S': return s;
         case 'T': return t;
         case 'U': return u;
+        case 'V': return v;
+        case 'W': return w;
         case 'Y': return y;
         default: return space;
         }
@@ -552,7 +621,7 @@ private:
         const int n = static_cast<int>(std::strlen(text));
         if (n <= 0)
             return 0;
-        return n * 6 * scale - scale;
+        return n * kOverlayGlyphAdvance * scale - scale; // last gap optional
     }
 
     template <typename Target>
@@ -562,14 +631,18 @@ private:
             return;
         for (const char* p = text; *p; ++p) {
             const uint8_t* g = glyph(*p);
-            for (int row = 0; row < 7; ++row) {
-                for (int col = 0; col < 5; ++col) {
-                    if ((g[row] & (1u << (4 - col))) == 0)
+            for (int row = 0; row < kOverlayGlyphH; ++row) {
+                const uint8_t bits = g[row];
+                for (int col = 0; col < kOverlayGlyphW; ++col) {
+                    if ((bits & (1u << (7 - col))) == 0)
                         continue;
-                    fillRect(t, x + col * scale, y + row * scale, scale, scale, c, alpha);
+                    if (scale == 1)
+                        blendPixel(t, x + col, y + row, c, alpha);
+                    else
+                        fillRect(t, x + col * scale, y + row * scale, scale, scale, c, alpha);
                 }
             }
-            x += 6 * scale;
+            x += kOverlayGlyphAdvance * scale;
         }
     }
 
@@ -593,15 +666,19 @@ private:
         constexpr Color amber{255, 178, 32};
         const int s = std::max(1, iconScale);
         if (state == PlaybackOverlayState::Playing) {
-            for (int x = 0; x < 16; ++x) {
-                const int half = x / 2;
-                fillRect(t, cx - 5 * s + x * s, cy - half * s, s, half * 2 * s + s, amber, alpha);
+            // Filled play triangle (base 14×s, height 16×s) — not a 5×7 stair.
+            for (int row = 0; row < 16 * s; ++row) {
+                const int half = (row * 7 * s) / (16 * s);
+                const int x0 = cx - 6 * s;
+                fillRect(t, x0, cy - 8 * s + row, half * 2 + s, s, amber, alpha);
             }
         } else if (state == PlaybackOverlayState::Paused) {
-            fillRect(t, cx - 9 * s, cy - 10 * s, 6 * s, 20 * s, amber, alpha);
-            fillRect(t, cx + 3 * s, cy - 10 * s, 6 * s, 20 * s, amber, alpha);
+            // Two bars, 5×16 cells with 4px gap at s=1.
+            fillRect(t, cx - 8 * s, cy - 8 * s, 5 * s, 16 * s, amber, alpha);
+            fillRect(t, cx + 3 * s, cy - 8 * s, 5 * s, 16 * s, amber, alpha);
         } else {
-            fillRect(t, cx - 9 * s, cy - 9 * s, 18 * s, 18 * s, amber, alpha);
+            // Stop square.
+            fillRect(t, cx - 7 * s, cy - 7 * s, 14 * s, 14 * s, amber, alpha);
         }
     }
 
@@ -629,29 +706,28 @@ private:
             fillRect(t, p.x, p.y, p.w, p.h, black, (170 * alpha) / 255);
             strokeRect(t, p.x, p.y, p.w, p.h, panelEdge, (150 * alpha) / 255);
 
-            const int sc = m.bodyScale;
-            // 240p (sc==1): exact golden anchors from the pre-hires renderer.
-            const int iconXFinal = (sc == 1) ? (p.x + 22) : (p.x + 18 * sc);
-            const int labelY = (sc == 1) ? (p.y + 10) : (p.y + m.labelTop);
-            const int iconCy = (sc == 1) ? (p.y + 20) : (p.y + m.iconCy);
+            const int sc = m.bodyScale; // always 1 by policy
+            const int iconXFinal = p.x + 18;
+            const int labelY = p.y + m.labelTop;
+            const int iconCy = p.y + m.iconCy;
             drawIcon(t, s.state, iconXFinal, iconCy, alpha, m.iconScale);
-            drawText(t, iconXFinal + ((sc == 1) ? 24 : 14 * sc), labelY, stateLabel(s.state), sc,
-                     white, alpha);
+            drawText(t, iconXFinal + 14 + 8 * m.iconScale, labelY, stateLabel(s.state), sc, white,
+                     alpha);
 
             char elapsed[32];
             char total[32];
             formatTime(s.positionMs, elapsed);
             formatTime(s.durationMs, total);
-            const int timeY = (sc == 1) ? (p.y + 34) : (p.y + m.timeTop);
-            drawText(t, p.x + 16, timeY, elapsed, sc, white, alpha);
+            const int timeY = p.y + m.timeTop;
+            drawText(t, p.x + 14, timeY, elapsed, sc, white, alpha);
             const int totalW = textWidth(total, sc);
-            drawText(t, p.x + p.w - 16 - totalW, timeY, total, sc, muted, alpha);
+            drawText(t, p.x + p.w - 14 - totalW, timeY, total, sc, muted, alpha);
 
-            const int barX = p.x + 16;
-            const int barH = (sc == 1) ? 6 : m.barH;
-            const int barBottomPad = (sc == 1) ? 18 : m.barBottomPad;
+            const int barX = p.x + 14;
+            const int barH = m.barH;
+            const int barBottomPad = m.barBottomPad;
             const int barY = p.y + p.h - barBottomPad;
-            const int barW = p.w - 32;
+            const int barW = p.w - 28;
             fillRect(t, barX, barY, barW, barH, Color{58, 63, 72}, (220 * alpha) / 255);
             int fillW = 0;
             if (s.durationMs > 0)
@@ -662,8 +738,8 @@ private:
             if (fillW > 0)
                 fillRect(t, barX, barY, fillW, barH, amber, alpha);
             const int knobX = barX + fillW;
-            const int knobW = (sc == 1) ? 5 : std::max(5, 3 * sc);
-            const int knobH = (sc == 1) ? 10 : std::max(10, barH + 4);
+            const int knobW = std::max(5, m.barH);
+            const int knobH = std::max(10, barH + 4);
             fillRect(t, knobX - knobW / 2, barY - (knobH - barH) / 2, knobW, knobH, white, alpha);
         }
 
@@ -684,7 +760,7 @@ private:
             const int boxY = std::max(8, h / 2 - boxH - 2);
             fillRect(t, boxX, boxY, boxW, boxH, black, (190 * skipAlpha) / 255);
             strokeRect(t, boxX, boxY, boxW, boxH, amber, skipAlpha);
-            const int textY = boxY + std::max(4, (boxH - 7 * tsc) / 2);
+            const int textY = boxY + std::max(4, (boxH - kOverlayGlyphH * tsc) / 2);
             drawText(t, boxX + (boxW - tw) / 2, textY, text, tsc, white, skipAlpha);
         }
 
@@ -698,7 +774,7 @@ private:
             const int boxY = std::max(8, h / 5);
             fillRect(t, boxX, boxY, boxW, boxH, black, (200 * noticeAlpha) / 255);
             strokeRect(t, boxX, boxY, boxW, boxH, amber, noticeAlpha);
-            const int textY = boxY + std::max(4, (boxH - 7 * tsc) / 2);
+            const int textY = boxY + std::max(4, (boxH - kOverlayGlyphH * tsc) / 2);
             drawText(t, boxX + (boxW - tw) / 2, textY, s.noticeText, tsc, white, noticeAlpha);
         }
     }
