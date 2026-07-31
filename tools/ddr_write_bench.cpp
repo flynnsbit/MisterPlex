@@ -141,13 +141,15 @@ void printSmapsFor(const void* addr, size_t len, const char* tag) {
 
 void usage(const char* argv0) {
     std::printf(
-        "Usage: %s [--sync|--no-sync] [--flush] [--host-copy] [--fb-copy]\n"
+        "Usage: %s [--sync|--no-sync] [--flush] [--read] [--host-copy] [--fb-copy]\n"
         "          [--no-smaps] [--format yuv420p] [--geometry auto|exact|plex480p]\n"
         "          [--width W --height H | --len BYTES]\n"
         "          [--loops N] [--bank 0|1]\n"
         "\n"
         "Product path: mmap /dev/mem @ 0x30000000 (same class as misterplexd ensureDdrMap).\n"
-        "Writes bank payload only — no doorbell kick, no SPI.\n"
+        "Default: sequential WRITE into bank payload — no doorbell kick, no SPI.\n"
+        "--read: sequential READ from bank payload into a local buffer (ARM read BW).\n"
+        "  Note: FPGA scanout uses the DDRAM bridge @ clk_ddr, NOT this ARM path.\n"
         "--fb-copy: sequential write into /dev/fb0 driver map (CONTROL; not frame store).\n"
         "--host-copy: anonymous RAM memcpy (build-host sanity only).\n"
         "Prints MiBps= and smaps VmFlags= for parent cache-policy scoring.\n",
@@ -160,25 +162,39 @@ struct BenchOut {
     uint64_t checksum = 0;
 };
 
-BenchOut runMemcpyLoops(uint8_t* dst, uint8_t* src, size_t len, int loops, bool flush) {
+// dirWrite=true: src -> dst (product push). dirWrite=false: src is mapped bank, dst local.
+BenchOut runMemcpyLoops(uint8_t* dst, uint8_t* src, size_t len, int loops, bool flush,
+                        bool dirWrite) {
     BenchOut o{};
-    std::memcpy(dst, src, len);
-    __sync_synchronize();
-    if (flush)
-        (void)cleanDcacheRange(dst, len);
+    if (dirWrite) {
+        std::memcpy(dst, src, len);
+        __sync_synchronize();
+        if (flush)
+            (void)cleanDcacheRange(dst, len);
+    } else {
+        std::memcpy(dst, src, len);
+        __sync_synchronize();
+    }
 
     const double t0 = nowSec();
     const double c0 = threadCpuSec();
     for (int i = 0; i < loops; ++i) {
-        src[static_cast<size_t>(i) % len] ^= static_cast<uint8_t>(i);
-        std::memcpy(dst, src, len);
-        __sync_synchronize();
-        if (flush && !cleanDcacheRange(dst, len)) {
-            std::perror("cacheflush");
-            o.wallSec = -1;
-            return o;
+        if (dirWrite) {
+            src[static_cast<size_t>(i) % len] ^= static_cast<uint8_t>(i);
+            std::memcpy(dst, src, len);
+            __sync_synchronize();
+            if (flush && !cleanDcacheRange(dst, len)) {
+                std::perror("cacheflush");
+                o.wallSec = -1;
+                return o;
+            }
+            o.checksum += dst[(static_cast<size_t>(i) * 257) % len];
+        } else {
+            std::memcpy(dst, src, len);
+            __sync_synchronize();
+            o.checksum += dst[(static_cast<size_t>(i) * 257) % len];
+            dst[static_cast<size_t>(i) % len] ^= static_cast<uint8_t>(i);
         }
-        o.checksum += dst[(static_cast<size_t>(i) * 257) % len];
     }
     __sync_synchronize();
     const double c1 = threadCpuSec();
@@ -190,7 +206,7 @@ BenchOut runMemcpyLoops(uint8_t* dst, uint8_t* src, size_t len, int loops, bool 
 
 void printResult(const char* pathTag, bool hostCopy, bool useSync, bool flush, int loops,
                  size_t len, int bank, const misterplex::DdrFrameLayout& layout, double wallSec,
-                 double cpuSec, uint64_t checksum) {
+                 double cpuSec, uint64_t checksum, const char* rw) {
     if (wallSec < 0) {
         std::printf("ddr_write_bench path=%s status=fail\n", pathTag);
         return;
@@ -200,14 +216,14 @@ void printResult(const char* pathTag, bool hostCopy, bool useSync, bool flush, i
     const double frameMs = (wallSec * 1000.0) / static_cast<double>(loops);
     const double frameCpuMs = (cpuSec * 1000.0) / static_cast<double>(loops);
     std::printf(
-        "ddr_write_bench path=%s host_copy=%d sync=%d flush=%d loops=%d len=%zu bank=%d "
+        "ddr_write_bench path=%s rw=%s host_copy=%d sync=%d flush=%d loops=%d len=%zu bank=%d "
         "format=%s coded=%dx%d display=%dx%d presented=%dx%d "
         "present_x=%d present_y=%d line_bytes=%d line_qwords=%d "
         "chroma_line_bytes=%d chroma_line_qwords=%d bank_stride=0x%X "
         "map_bytes=0x%X phys_base=0x%X seconds=%.6f cpu_seconds=%.6f "
         "MiB=%.3f MiBps=%.3f MBps=%.3f frame_ms=%.3f frame_cpu_ms=%.3f "
         "fps30_budget_pct=%.1f fps60_budget_pct=%.1f checksum=%llu\n",
-        pathTag, hostCopy ? 1 : 0, useSync ? 1 : 0, flush ? 1 : 0, loops, len, bank,
+        pathTag, rw, hostCopy ? 1 : 0, useSync ? 1 : 0, flush ? 1 : 0, loops, len, bank,
         formatName(layout.format), layout.coded_width.get(), layout.coded_height.get(),
         layout.display_width.get(), layout.display_height.get(), layout.presented_width.get(),
         layout.presented_height.get(), layout.present_x, layout.present_y, layout.line_bytes,
@@ -224,6 +240,7 @@ int main(int argc, char** argv) {
     bool flush = false;
     bool hostCopy = false;
     bool fbCopy = false;
+    bool doRead = false;
     bool dumpSmaps = true;
     int loops = 1000;
     size_t len = kDefaultFrameBytes;
@@ -242,6 +259,8 @@ int main(int argc, char** argv) {
             useSync = false;
         } else if (a == "--flush") {
             flush = true;
+        } else if (a == "--read") {
+            doRead = true;
         } else if (a == "--host-copy") {
             hostCopy = true;
         } else if (a == "--fb-copy") {
@@ -291,14 +310,21 @@ int main(int argc, char** argv) {
         }
     }
 
+    if (fbCopy && doRead) {
+        std::fprintf(stderr, "--fb-copy and --read are mutually exclusive in this build\n");
+        return 2;
+    }
+
     std::printf(
-        "ddr_write_bench_meta method=sequential_memcpy_into_mapped_bank "
+        "ddr_write_bench_meta method=%s "
         "product_path=/dev/mem@0x%08X yuv420p_not_bgra "
         "prereg_devmem_mibps_lo=50 prereg_devmem_mibps_hi=70 "
         "prereg_writethrough_mibps_lo=800 "
         "prereg_source=W-FEED-arm-profile-ORIGINAL_624x480 "
         "misterfin_claim_uncached_mbs=60 misterfin_claim_fb_wt_gbs=1.5 "
-        "misterfin_claim_NOT_ours=1\n",
+        "misterfin_claim_NOT_ours=1 "
+        "NOTE_fpga_scanout_uses_ddram_bridge_not_this_arm_path=1\n",
+        doRead ? "sequential_memcpy_from_mapped_bank" : "sequential_memcpy_into_mapped_bank",
         kDdrFrameBase);
 
     const bool plex480pGeometry =
@@ -357,9 +383,9 @@ int main(int argc, char** argv) {
             return 1;
         }
         uint8_t* dst = static_cast<uint8_t*>(dstRaw);
-        auto o = runMemcpyLoops(dst, src, len, loops, /*flush=*/false);
+        auto o = runMemcpyLoops(dst, src, len, loops, /*flush=*/false, /*dirWrite=*/true);
         printResult("host_anon", true, false, false, loops, len, bank, layout, o.wallSec,
-                    o.cpuSec, o.checksum);
+                    o.cpuSec, o.checksum, "write");
         std::free(dstRaw);
         std::free(srcRaw);
         return o.wallSec < 0 ? 1 : 0;
@@ -400,10 +426,11 @@ int main(int argc, char** argv) {
                     finfo.line_length, kDdrFrameBase);
         if (dumpSmaps)
             printSmapsFor(map, len, "fb0");
-        auto o = runMemcpyLoops(static_cast<uint8_t*>(map), src, len, loops, /*flush=*/false);
+        auto o = runMemcpyLoops(static_cast<uint8_t*>(map), src, len, loops, /*flush=*/false,
+                                /*dirWrite=*/true);
         std::memset(map, 0, len > 4096 ? 4096 : len);
         printResult("fb0", false, false, false, loops, len, 0, layout, o.wallSec, o.cpuSec,
-                    o.checksum);
+                    o.checksum, "write");
         munmap(map, mapLen);
         ::close(fd);
         std::free(srcRaw);
@@ -434,13 +461,25 @@ int main(int argc, char** argv) {
                 kDdrFrameBase, layout.map_bytes, flags, useSync ? 1 : 0, map, bank,
                 static_cast<size_t>(bank) * layout.bank_stride);
 
-    uint8_t* dst = static_cast<uint8_t*>(map) + static_cast<size_t>(bank) * layout.bank_stride;
+    uint8_t* bankPtr =
+        static_cast<uint8_t*>(map) + static_cast<size_t>(bank) * layout.bank_stride;
     if (dumpSmaps)
-        printSmapsFor(dst, len, useSync ? "devmem_sync" : "devmem_nosync");
+        printSmapsFor(bankPtr, len, useSync ? "devmem_sync" : "devmem_nosync");
 
-    auto o = runMemcpyLoops(dst, src, len, loops, flush);
-    printResult(useSync ? "devmem_sync" : (flush ? "devmem_nosync_flush" : "devmem_nosync"), false,
-                useSync, flush, loops, len, bank, layout, o.wallSec, o.cpuSec, o.checksum);
+    BenchOut o{};
+    const char* pathTag =
+        useSync ? "devmem_sync" : (flush ? "devmem_nosync_flush" : "devmem_nosync");
+    if (doRead) {
+        // Read mapped bank → local buffer. Does not modify the bank (except via
+        // local dst mutation for checksum entropy). Safe on a live frame store.
+        o = runMemcpyLoops(src, bankPtr, len, loops, /*flush=*/false, /*dirWrite=*/false);
+        printResult(pathTag, false, useSync, false, loops, len, bank, layout, o.wallSec, o.cpuSec,
+                    o.checksum, "read");
+    } else {
+        o = runMemcpyLoops(bankPtr, src, len, loops, flush, /*dirWrite=*/true);
+        printResult(pathTag, false, useSync, flush, loops, len, bank, layout, o.wallSec, o.cpuSec,
+                    o.checksum, "write");
+    }
 
     munmap(map, layout.map_bytes);
     ::close(fd);

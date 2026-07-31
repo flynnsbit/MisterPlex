@@ -75,3 +75,22 @@ ddr_write_bench path=devmem_sync ... MiBps=NNN.NNN MBps=... frame_ms=...
 4. Compare fb0 `smem_start` to `0x30000000` — if unequal, fb route cannot replace frame-store map without a new driver.
 
 Paste full logs back to w-bw for hit/miss publish.
+
+## F) ARM read bandwidth (NEW)
+
+```bash
+$B --read --sync --format yuv420p --width 320 --height 240 --loops 1000 --bank 0
+echo "true rc=$?"
+$B --read --sync --format yuv420p --geometry plex480p --width 624 --height 480 --loops 1000 --bank 0
+echo "true rc=$?"
+```
+
+Look for `rw=read` and `MiBps=`. Pre-reg same 50–70 class unless proven otherwise.
+
+## G) Scanout budget (host, no device)
+
+```bash
+python3 tests/unit/test_ddr_scanout_budget.py; echo "true rc=$?"
+```
+
+Must print `VERDICT: ... COMFORTABLY MET`.
