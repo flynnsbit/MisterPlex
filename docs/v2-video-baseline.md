@@ -134,6 +134,9 @@ avoids this.
 
 ## Cast target missing in Select Player: companionServer + FriendlyName (2026-07-30)
 
+**Operator runbook (symptom → diagnose → rename → booby-trap warning):**
+[select-player-runbook.md](select-player-runbook.md).
+
 **Acceptance for "no cast option" is the Plex Web "Select Player" UI**, not an
 HTTP status on plex.tv and not "device appears in some `/clients` somewhere."
 

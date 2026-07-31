@@ -61,10 +61,9 @@ FFmpeg video → RGB24 320×240    FFmpeg audio → s16le 48k stereo
 - **Select Player / cast target:** Plex Web polls **`companionServer`**
   `/clients` + `/neighborhood/devices` (not "the browsed library server").
   `CompanionServerManager` picks the first owned private PMS in **FriendlyName**
-  A→Z order. Blank/duplicate names can make Web ask a PMS with empty `/clients`
-  (e.g. Android/SHIELD) while another PMS already lists MiSTerPlex. Remedy:
-  distinct FriendlyName on the cast-from PMS — not plex.tv registration, not
-  removing other servers. See
+  A→Z order — **undocumented, only lever; renaming/adding a server can break
+  casting silently.** Runbook:
+  [select-player-runbook.md](select-player-runbook.md). Mechanism citations:
   [v2-video-baseline.md](v2-video-baseline.md#cast-target-missing-in-select-player-companionserver--friendlyname-2026-07-30).
 
 ## Memory map (evolving)
