@@ -2601,8 +2601,15 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
             audioThr_ = std::thread([this, afd = apipe[0]] { audioPump(afd); });
         }
 
+        // frameBytes MUST track coded bank (rawW/rawH), never display 618 or
+        // DECODE tier alone — under-read would leave chroma at init value and
+        // desync the pipe (parent defect A/B hypothesis). Product: 624*480*3/2.
         const size_t frameBytes = rawVideoFrameBytes(videoFmt, rawW, rawH);
         std::vector<uint8_t> frame(frameBytes);
+        // Zero-init → green-cast under any underfill (U=V=0). Studio black
+        // (Y=16,U=V=128) is greyscale-safe if a short frame is ever presented.
+        if (videoFmt == RawVideoFormat::Yuv420p)
+            fillYuv420pStudioBlack(frame.data(), rawW, rawH);
         std::vector<uint8_t> fbOverlayBackup;
 
         struct PresentProfileAccum {

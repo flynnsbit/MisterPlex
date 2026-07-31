@@ -170,6 +170,64 @@ int main() {
         expect(!repairDeadYuv420pChroma(red.data(), w, h), "no repair on padded red");
     }
 
+    // --- H) KILL under-read-from-display: reader uses CODED bytes, not 618 ---
+    {
+        const auto g = plex480pDdrFrameGeometry();
+        const size_t codedBytes = yuv420pCodedFrameBytes(g);
+        const size_t displayBytes =
+            yuv420pFrameBytes(g.display_width.get(), g.display_height.get());
+        const size_t decode240Bytes = yuv420pFrameBytes(320, 240);
+        expect(codedBytes == frameBytes, "coded frame bytes == 449280");
+        expect(g.display_width.get() == 618, "product display 618");
+        expect(displayBytes != codedBytes, "display I420 != coded I420");
+        expect(displayBytes == static_cast<size_t>(618 * 480 * 3 / 2), "618*480*3/2");
+        expect(decode240Bytes != codedBytes, "320x240 I420 != coded");
+        // Reader must NOT use display or 240p size (would leave chroma at init).
+        expect(codedBytes > displayBytes, "coded larger than display (6-col pad)");
+        std::printf("KILL_UNDERREAD coded=%zu display618=%zu decode240=%zu\n", codedBytes,
+                    displayBytes, decode240Bytes);
+    }
+
+    // --- I) Studio-black init is NOT dead_chroma (zero-init IS) ---
+    {
+        std::vector<uint8_t> zero(frameBytes, 0);
+        expect(inspectYuv420pChroma(zero.data(), w, h).dead_chroma,
+               "zero-init buffer is dead_chroma (green class)");
+        std::vector<uint8_t> studio(frameBytes);
+        expect(fillYuv420pStudioBlack(studio.data(), w, h), "studio fill ok");
+        const auto hth = inspectYuv420pChroma(studio.data(), w, h);
+        expect(hth.valid && !hth.dead_chroma, "studio black not dead_chroma");
+        expect(hth.mean_u > 127.0 && hth.mean_u < 129.0, "studio U=128");
+        expect(hth.mean_v > 127.0 && hth.mean_v < 129.0, "studio V=128");
+        std::printf("GREEN_INIT studio mean_u=%.2f mean_v=%.2f (zero was dead)\n", hth.mean_u,
+                    hth.mean_v);
+    }
+
+    // --- J) Assembly path: healthy pipe I420 survives coded-size buffer + pad ---
+    // Simulates: ffmpeg wrote full 449280 with red chroma; reader filled frameBytes;
+    // clearYuv pad only; buffer handed to sendDdrFrame must keep U/V expected.
+    {
+        auto pipe = makeFrame(w, h, 81, 90, 240);
+        // Product crop_right=6 → chroma right pad 3 samples @128 (clearYuv class).
+        const size_t yb = static_cast<size_t>(w) * static_cast<size_t>(h);
+        const size_t cb = yb / 4u;
+        uint8_t* u = pipe.data() + yb;
+        uint8_t* v = pipe.data() + yb + cb;
+        const int cuw = w / 2;
+        const int cuh = h / 2;
+        for (int y = 0; y < cuh; ++y) {
+            std::memset(u + static_cast<size_t>(y) * cuw + (cuw - 3), kYuv420BlackU, 3);
+            std::memset(v + static_cast<size_t>(y) * cuw + (cuw - 3), kYuv420BlackV, 3);
+        }
+        const auto hth = inspectYuv420pChroma(pipe.data(), w, h);
+        expect(hth.valid && !hth.dead_chroma, "publish buffer not dead");
+        // Content region (not pad) should stay near red chroma.
+        expect(hth.mean_u > 85.0 && hth.mean_u < 95.0, "publish U still red-ish");
+        expect(hth.mean_v > 230.0 && hth.mean_v < 241.0, "publish V still red-ish");
+        std::printf("GREEN_ASSEMBLY publish mean_u=%.2f mean_v=%.2f (pipe chroma kept)\n",
+                    hth.mean_u, hth.mean_v);
+    }
+
     if (g_fails) {
         std::fprintf(stderr, "test_yuv420p_chroma_480p: %d failure(s)\n", g_fails);
         return 1;

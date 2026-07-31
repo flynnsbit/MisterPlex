@@ -2,19 +2,22 @@
 //
 // Silicon (RBF c5382bee + daemon e9f79de2): DECODE=624x480 with identity_skip
 // produced a full green field with intact luma (U/V ~ 0, not neutral 128).
-// DECODE=320x240 on the same core+daemon is colour-correct because that path
-// always runs scale_pad_crop (arm_rescale=1) and regenerates I420 chroma.
+// DECODE=320x240 on the same core+daemon is colour-correct (scale_pad_crop).
 //
-// STREAM=0 has no per-plane copy — publish is a whole-frame memcpy of the
-// rawvideo buffer. A zero-initialised frame vector whose chroma region was
-// never populated therefore rings the doorbell with U=V=0 at the correct
-// plane offsets (len still equals frame_bytes=449280).
+// RCA notes (source, parent-narrowed):
+//   - clearYuv420pCropPadding is NOT the cause (border-only, U/V=128).
+//   - frameBytes is coded 624x480 (449280), NOT display 618 or DECODE 320 —
+//     under-read-from-display hypothesis is KILLED (media_player uses rawW/rawH
+//     = ddrGeometry.coded_*).
+//   - short-read always terminal (rawVideoTerminalSignal shortRead=true).
+//   - std::vector frame(frameBytes) zero-inits → underfill shows as green.
+//   - STREAM=0 publish is whole-frame memcpy; no per-plane 320-gate on tip.
 //
 // This header:
 //   1) Detects the green-cast chroma fingerprint (near-zero U/V).
-//   2) Repairs it to studio-neutral chroma (U=V=128) so scanout is greyscale
-//      rather than green when the source region is dead.
-//   3) Exposes the YUV-DDR scale policy: never SkipIdentity on that path.
+//   2) Fills a canvas with studio black (Y=16,U=V=128) instead of zeros.
+//   3) Repairs dead chroma to U=V=128 (greyscale, not green).
+//   4) YUV-DDR scale policy: never SkipIdentity on that path (match 240p).
 #pragma once
 
 #include "libmisterplex/ddr_frame_layout.hpp"
@@ -36,6 +39,24 @@ struct Yuv420pChromaHealth {
     size_t y_bytes = 0;
     size_t c_bytes = 0;
 };
+
+// Studio black I420 canvas (not RGB-zero). Under-fill then reads as greyscale
+// black rather than BT.601 green-cast.
+inline bool fillYuv420pStudioBlack(uint8_t* yuv, int w, int h) {
+    if (!yuv || w <= 0 || h <= 0 || (w & 1) || (h & 1))
+        return false;
+    const size_t yBytes = static_cast<size_t>(w) * static_cast<size_t>(h);
+    const size_t cBytes = yBytes / 4u;
+    std::memset(yuv, kYuv420BlackY, yBytes);
+    std::memset(yuv + yBytes, kYuv420BlackU, cBytes);
+    std::memset(yuv + yBytes + cBytes, kYuv420BlackV, cBytes);
+    return true;
+}
+
+// Coded-bank frame byte count used by the STREAM=0 reader (NOT display WxH).
+inline size_t yuv420pCodedFrameBytes(const DdrFrameGeometry& g) {
+    return yuv420pFrameBytes(g.coded_width.get(), g.coded_height.get());
+}
 
 // Dead-chroma thresholds: nearly all samples ≤ max_abs and mean ≤ max_mean.
 // Tuned to catch U=V=0 and pre-PLXD bank0 residue 0x04/0x19 without flagging
