@@ -1,7 +1,7 @@
 # w-thruput rebaseline — product budgets vs measured paint (2026-07-31)
 
 Branch: integ/thruput-on-warm
-SHA: (see git rev-parse HEAD at commit time)
+SHA: a975e8b7
 Mode: source + Verilator only. No fit, no deploy, no ssh.
 
 ## Retired numbers (do not plan against)
