@@ -31,8 +31,21 @@ if src.count("nextDdrPresentBank(") != 1:
 if "lastPublishedBank()" not in src:
     fail("publishDdrFrame must advance ddrBank_ from lastPublishedBank() (PLXD may override hint)")
 
+# Product cast path (STREAM=0): FFmpeg rawvideo → "playback DDR" every frame.
+# Must not be gated behind STREAM=1 host recon only.
+if 'log("media: STREAM=0 rawvideo("' not in src and "media: STREAM=0 rawvideo(" not in src:
+    fail("STREAM=0 path must log rawvideo→F1 (cast product present path)")
+if "const bool reconOwnsF1 = streamEnabled_ && reconPresentOk_.load();" not in src:
+    fail("playback DDR must be gated by reconOwnsF1 so STREAM=0 always presents")
+if "packYuv420pCenteredIntoCodedBank" not in src:
+    fail("recon DDR path must center-pack into silicon coded bank")
+# STREAM=1 skip-RGB: no "playback DDR" frames; F1 only via recon (keyframe rate).
+if "wantSkipRgbVideo" not in src:
+    fail("STREAM_SKIP_RGB path must exist (skip RGB → recon-only F1)")
+
 print(
     "test_ddr_publish_path_static: OK "
     f"publish_call_sites={len(contexts)} contexts={','.join(contexts)} "
-    "use centralized publishDdrFrame + lastPublishedBank"
+    "use centralized publishDdrFrame + lastPublishedBank; "
+    "STREAM0=playback DDR STREAM1=recon DDR idle=idle DDR"
 )
