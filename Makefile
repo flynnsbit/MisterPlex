@@ -48,7 +48,7 @@ unit:
 unit-rollcall:
 	python3 $(ROOT)/tests/unit/test_unit_rollcall.py
 
-unit-unlocked: unit-rollcall preflight $(ROOT)/build/test_cadence $(ROOT)/build/test_avclock $(ROOT)/build/test_mraudio_status $(ROOT)/build/test_osd_menu $(ROOT)/build/test_osd_control $(ROOT)/build/test_last_frame_latch $(ROOT)/build/test_playback_overlay $(ROOT)/build/test_input_mailbox $(ROOT)/build/test_pixel_format $(ROOT)/build/test_main_guard $(ROOT)/build/test_status_telemetry $(ROOT)/build/test_resolve $(ROOT)/build/test_log_redact $(ROOT)/build/test_pms_timeline $(ROOT)/build/test_plextv_device $(ROOT)/build/test_companion_eof $(ROOT)/build/test_companion_plant_seek $(ROOT)/build/pms_baseline_probe $(ROOT)/build/test_h264_bitstream_source $(ROOT)/build/test_bitstream_ring_lifecycle $(ROOT)/build/test_frame_store_math $(ROOT)/build/test_coded_size_adopt $(ROOT)/build/test_ffmpeg_vf $(ROOT)/build/test_frame_store_sdram_sim $(ROOT)/build/test_frame_store_ddr_prefetch_sim $(ROOT)/build/test_ddr_want_y_hblank_thrash $(ROOT)/build/test_ddr_scanout_multiframe $(ROOT)/build/test_sdram_memtest_sim $(ROOT)/build/test_sdram_mailbox $(ROOT)/build/test_annexb_count $(ROOT)/build/test_sps_parse $(ROOT)/build/test_slice_hdr $(ROOT)/build/test_cavlc_dc $(ROOT)/build/test_idct_quant $(ROOT)/build/test_p3_host_recon_vectors $(ROOT)/build/test_p3_idct_reference_model $(ROOT)/build/test_p3_inter_pred_vectors $(ROOT)/build/extract_h264_golden
+unit-unlocked: unit-rollcall preflight $(ROOT)/build/test_cadence $(ROOT)/build/test_avclock $(ROOT)/build/test_mraudio_status $(ROOT)/build/test_osd_menu $(ROOT)/build/test_osd_control $(ROOT)/build/test_last_frame_latch $(ROOT)/build/test_playback_overlay $(ROOT)/build/test_input_mailbox $(ROOT)/build/test_pixel_format $(ROOT)/build/test_main_guard $(ROOT)/build/test_crash_dump $(ROOT)/build/test_status_telemetry $(ROOT)/build/test_resolve $(ROOT)/build/test_log_redact $(ROOT)/build/test_pms_timeline $(ROOT)/build/test_plextv_device $(ROOT)/build/test_companion_eof $(ROOT)/build/test_companion_plant_seek $(ROOT)/build/pms_baseline_probe $(ROOT)/build/test_h264_bitstream_source $(ROOT)/build/test_bitstream_ring_lifecycle $(ROOT)/build/test_frame_store_math $(ROOT)/build/test_coded_size_adopt $(ROOT)/build/test_ffmpeg_vf $(ROOT)/build/test_frame_store_sdram_sim $(ROOT)/build/test_frame_store_ddr_prefetch_sim $(ROOT)/build/test_ddr_want_y_hblank_thrash $(ROOT)/build/test_ddr_scanout_multiframe $(ROOT)/build/test_sdram_memtest_sim $(ROOT)/build/test_sdram_mailbox $(ROOT)/build/test_annexb_count $(ROOT)/build/test_sps_parse $(ROOT)/build/test_slice_hdr $(ROOT)/build/test_cavlc_dc $(ROOT)/build/test_idct_quant $(ROOT)/build/test_p3_host_recon_vectors $(ROOT)/build/test_p3_idct_reference_model $(ROOT)/build/test_p3_inter_pred_vectors $(ROOT)/build/extract_h264_golden
 	$(ROOT)/build/test_cadence
 	$(ROOT)/build/test_avclock
 	$(ROOT)/build/test_mraudio_status
@@ -62,6 +62,7 @@ unit-unlocked: unit-rollcall preflight $(ROOT)/build/test_cadence $(ROOT)/build/
 	$(ROOT)/build/test_input_mailbox
 	$(ROOT)/build/test_pixel_format
 	$(ROOT)/build/test_main_guard
+	$(ROOT)/build/test_crash_dump
 	$(ROOT)/build/test_status_telemetry
 	$(ROOT)/build/test_resolve
 	$(ROOT)/build/test_log_redact
@@ -233,13 +234,17 @@ h264-golden-tools: $(ROOT)/build/extract_h264_golden $(ROOT)/build/score_h264_na
 
 $(ROOT)/build/test_status_telemetry: $(ROOT)/tests/unit/test_status_telemetry.cpp \
 		$(ROOT)/arm/misterplexd/fpga_spi.cpp $(ROOT)/arm/misterplexd/fpga_spi.hpp \
+		$(ROOT)/arm/misterplexd/crash_dump.cpp $(ROOT)/arm/misterplexd/crash_dump.hpp \
 		$(ROOT)/host/libmisterplex/ddr_bitstream_ring.hpp \
 		$(ROOT)/host/libmisterplex/status_telemetry.hpp \
 		$(ROOT)/host/libmisterplex/h264_residual_gold.hpp \
 		$(ROOT)/host/libmisterplex/pixel_format.hpp
 	@mkdir -p $(ROOT)/build
 	$(CXX) $(CXXFLAGS) -I$(ROOT)/arm/misterplexd -pthread -o $@ \
-		$(ROOT)/tests/unit/test_status_telemetry.cpp $(ROOT)/arm/misterplexd/fpga_spi.cpp
+		$(ROOT)/tests/unit/test_status_telemetry.cpp \
+		$(ROOT)/arm/misterplexd/fpga_spi.cpp \
+		$(ROOT)/arm/misterplexd/crash_dump.cpp \
+		$(MPLEX_CRASH_CFLAGS) $(MPLEX_BUILD_CFLAGS)
 
 $(ROOT)/build/test_idct_quant: $(ROOT)/tests/unit/test_idct_quant.cpp \
 		$(ROOT)/host/libmisterplex/h264_cavlc.hpp $(ROOT)/host/libmisterplex/h264_nal.hpp \
@@ -383,10 +388,19 @@ $(ROOT)/build/test_avclock: $(ROOT)/tests/unit/test_avclock.cpp \
 
 $(ROOT)/build/test_main_guard: $(ROOT)/tests/unit/test_main_guard.cpp \
 		$(ROOT)/arm/misterplexd/fpga_spi.cpp $(ROOT)/arm/misterplexd/fpga_spi.hpp \
+		$(ROOT)/arm/misterplexd/crash_dump.cpp $(ROOT)/arm/misterplexd/crash_dump.hpp \
 		$(ROOT)/host/libmisterplex/pixel_format.hpp
 	@mkdir -p $(ROOT)/build
 	$(CXX) $(CXXFLAGS) -I$(ROOT)/arm/misterplexd -pthread -o $@ \
-		$(ROOT)/tests/unit/test_main_guard.cpp $(ROOT)/arm/misterplexd/fpga_spi.cpp
+		$(ROOT)/tests/unit/test_main_guard.cpp $(ROOT)/arm/misterplexd/fpga_spi.cpp \
+		$(ROOT)/arm/misterplexd/crash_dump.cpp
+
+$(ROOT)/build/test_crash_dump: $(ROOT)/tests/unit/test_crash_dump.cpp \
+		$(ROOT)/arm/misterplexd/crash_dump.cpp $(ROOT)/arm/misterplexd/crash_dump.hpp
+	@mkdir -p $(ROOT)/build
+	$(CXX) $(CXXFLAGS) -g -fno-omit-frame-pointer -I$(ROOT)/arm/misterplexd -o $@ \
+		$(ROOT)/tests/unit/test_crash_dump.cpp $(ROOT)/arm/misterplexd/crash_dump.cpp \
+		-DMISTERPLEXD_BUILD_ID=\"unit\"
 
 $(ROOT)/build/test_mraudio_status: $(ROOT)/tests/unit/test_mraudio_status.cpp \
 		$(ROOT)/host/libmisterplex/mraudio_status.hpp
@@ -527,6 +541,7 @@ $(ROOT)/build/test_bitstream_ring_lifecycle: $(ROOT)/tests/unit/test_bitstream_r
 MPLEX_SRC := \
 	$(ROOT)/arm/misterplexd/main.cpp \
 	$(ROOT)/arm/misterplexd/companion.cpp \
+	$(ROOT)/arm/misterplexd/crash_dump.cpp \
 	$(ROOT)/arm/misterplexd/fb_present.cpp \
 	$(ROOT)/arm/misterplexd/media_player.cpp \
 	$(ROOT)/arm/misterplexd/pms_timeline.cpp \
@@ -548,6 +563,12 @@ MPLEX_HDR := \
 	$(ROOT)/host/libmisterplex/playback_overlay.hpp \
 	$(ROOT)/host/libmisterplex/pixel_format.hpp
 
+# Embed short git SHA (or "unknown") so crash dumps identify the binary.
+MPLEX_BUILD_ID ?= $(shell git -C $(ROOT) rev-parse --short=12 HEAD 2>/dev/null || echo unknown)
+MPLEX_BUILD_CFLAGS := -DMISTERPLEXD_BUILD_ID=\"$(MPLEX_BUILD_ID)\"
+# Frame pointers + unwind tables keep backtrace()/addr2line useful after SIGSEGV.
+MPLEX_CRASH_CFLAGS := -g -fno-omit-frame-pointer -funwind-tables
+
 $(ROOT)/build/misterplexd: $(MPLEX_SRC) \
 		$(ROOT)/arm/misterplexd/companion.hpp \
 		$(ROOT)/arm/misterplexd/media_player.hpp \
@@ -556,18 +577,22 @@ $(ROOT)/build/misterplexd: $(MPLEX_SRC) \
 		$(ROOT)/arm/misterplexd/plex_resolve.hpp \
 		$(ROOT)/arm/misterplexd/fb_present.hpp \
 		$(ROOT)/arm/misterplexd/fpga_spi.hpp \
+		$(ROOT)/arm/misterplexd/crash_dump.hpp \
 		$(MPLEX_HDR)
 	@mkdir -p $(ROOT)/build
-	$(CXX) $(CXXFLAGS) $(MPLEX_INC) -pthread -o $@ $(MPLEX_SRC)
+	$(CXX) $(CXXFLAGS) $(MPLEX_CRASH_CFLAGS) $(MPLEX_BUILD_CFLAGS) $(MPLEX_INC) -pthread -o $@ $(MPLEX_SRC)
 
 plexd: $(ROOT)/build/misterplexd
 
 # Standalone: push one RGB565 file to Plex frame_store via SPI ioctl
 $(ROOT)/build/push_frame: $(ROOT)/arm/misterplexd/fpga_spi.cpp \
-		$(ROOT)/tools/push_frame.cpp $(ROOT)/arm/misterplexd/fpga_spi.hpp
+		$(ROOT)/arm/misterplexd/crash_dump.cpp \
+		$(ROOT)/tools/push_frame.cpp $(ROOT)/arm/misterplexd/fpga_spi.hpp \
+		$(ROOT)/arm/misterplexd/crash_dump.hpp
 	@mkdir -p $(ROOT)/build
 	$(CXX) $(CXXFLAGS) -I$(ROOT)/arm/misterplexd -I$(ROOT)/host -o $@ \
-		$(ROOT)/tools/push_frame.cpp $(ROOT)/arm/misterplexd/fpga_spi.cpp
+		$(ROOT)/tools/push_frame.cpp $(ROOT)/arm/misterplexd/fpga_spi.cpp \
+		$(ROOT)/arm/misterplexd/crash_dump.cpp
 
 push-frame: $(ROOT)/build/push_frame
 
@@ -617,26 +642,31 @@ arm-profile-tools: arm-ddr-bench
 		-static
 	@file $(ROOT)/build/arm/ffmpeg_cpu_probe $(ROOT)/build/arm/present_loop_harness
 
+# -g -fno-omit-frame-pointer -funwind-tables: usable backtrace + addr2line after SIGSEGV.
+# Do not strip; crash dumps need symbols (or at least raw PCs + matching unstripped binary).
 arm-plexd: $(MPLEX_HDR) arm-ddr-bench
 	@if [ -z "$(ARM_CXX)" ]; then echo "No armhf g++ found"; exit 1; fi
 	@mkdir -p $(ROOT)/build/arm
-	$(ARM_CXX) -std=c++17 -O2 -Wall $(MPLEX_INC) \
+	@echo "arm-plexd flags: -std=c++17 -O2 $(MPLEX_CRASH_CFLAGS) $(MPLEX_BUILD_CFLAGS) -static"
+	$(ARM_CXX) -std=c++17 -O2 $(MPLEX_CRASH_CFLAGS) $(MPLEX_BUILD_CFLAGS) -Wall $(MPLEX_INC) \
 		-o $(ROOT)/build/arm/misterplexd $(MPLEX_SRC) \
 		-static -Wl,--whole-archive -lpthread -Wl,--no-whole-archive
-	$(ARM_CXX) -std=c++17 -O2 -Wall -I$(ROOT)/arm/misterplexd -I$(ROOT)/host \
+	$(ARM_CXX) -std=c++17 -O2 -g -Wall -I$(ROOT)/arm/misterplexd -I$(ROOT)/host \
 		-o $(ROOT)/build/arm/push_frame \
-		$(ROOT)/tools/push_frame.cpp $(ROOT)/arm/misterplexd/fpga_spi.cpp \
+		$(ROOT)/tools/push_frame.cpp \
+		$(ROOT)/arm/misterplexd/fpga_spi.cpp $(ROOT)/arm/misterplexd/crash_dump.cpp \
 		-static
-	$(ARM_CXX) -std=c++17 -O2 -Wall -I$(ROOT)/arm/misterplexd -I$(ROOT)/host \
+	$(ARM_CXX) -std=c++17 -O2 -g -Wall -I$(ROOT)/arm/misterplexd -I$(ROOT)/host \
 		-o $(ROOT)/build/arm/set_status \
-		$(ROOT)/tools/set_status.cpp $(ROOT)/arm/misterplexd/fpga_spi.cpp \
+		$(ROOT)/tools/set_status.cpp \
+		$(ROOT)/arm/misterplexd/fpga_spi.cpp $(ROOT)/arm/misterplexd/crash_dump.cpp \
 		-static
 	$(ARM_CXX) -std=c++17 -O2 -Wall -I$(ROOT)/host \
 		-o $(ROOT)/build/arm/input_mailbox_probe \
 		$(ROOT)/tools/input_mailbox_probe.cpp \
 		-static
 	@file $(ROOT)/build/arm/misterplexd $(ROOT)/build/arm/push_frame $(ROOT)/build/arm/set_status $(ROOT)/build/arm/input_mailbox_probe
-	@echo "Built $(ROOT)/build/arm/misterplexd + push_frame + set_status + input_mailbox_probe"
+	@echo "Built $(ROOT)/build/arm/misterplexd build_id=$(MPLEX_BUILD_ID) + push_frame + set_status + input_mailbox_probe"
 
 $(ROOT)/build/arm/input_mailbox_probe: $(ROOT)/tools/input_mailbox_probe.cpp \
 		$(ROOT)/host/libmisterplex/input_mailbox.hpp
