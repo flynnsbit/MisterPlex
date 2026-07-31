@@ -98,6 +98,50 @@ int main() {
     CHECK(queryParams(sent[4].url)["state"] == "stopped");
     CHECK(queryParams(sent[4].url)["time"] == "45000");
 
+    // Explicit progression for Playwright foundation: successive PMS /:/timeline
+    // updates must carry strictly increasing time= and a bound duration, with the
+    // full buffering -> playing -> paused -> playing -> stopped state chain.
+    {
+        const char* states[] = {"buffering", "playing", "paused", "playing", "stopped"};
+        const int64_t times[] = {1000, 2000, 3000, 3500, 45000};
+        CHECK(sent.size() == 5);
+        for (size_t i = 0; i < 5; ++i) {
+            auto q = queryParams(sent[i].url);
+            CHECK(q["state"] == states[i]);
+            CHECK(std::stoll(q["time"]) == times[i]);
+            CHECK(q["duration"] == "90000");
+            if (i > 0)
+                CHECK(std::stoll(q["time"]) > std::stoll(queryParams(sent[i - 1].url)["time"]));
+        }
+    }
+
+    // Cast identity path (MiSTerPlex product) used when main wires machineId/name.
+    {
+        sent.clear();
+        PmsTimelineSession cast = s;
+        cast.clientIdentifier = "misterplex-dev";
+        cast.product = "MiSTerPlex";
+        cast.version = "0.2.0";
+        cast.deviceName = "MiSTerPlex";
+        reporter.beginSession(cast, 0, 30000);
+        CHECK(sent.size() == 1);
+        CHECK(header(sent[0], "X-Plex-Client-Identifier") == "misterplex-dev");
+        CHECK(header(sent[0], "X-Plex-Product") == "MiSTerPlex");
+        CHECK(header(sent[0], "X-Plex-Device-Name") == "MiSTerPlex");
+        CHECK(queryParams(sent[0].url)["state"] == "buffering");
+        CHECK(queryParams(sent[0].url)["duration"] == "30000");
+        reporter.reportState("playing", 4000, 30000);
+        reporter.reportState("playing", 4500, 30000); // cadence skip
+        reporter.endSession(12000, 30000);
+        CHECK(sent.size() == 3);
+        CHECK(queryParams(sent[1].url)["state"] == "playing");
+        CHECK(queryParams(sent[1].url)["time"] == "4000");
+        CHECK(queryParams(sent[2].url)["state"] == "stopped");
+        CHECK(queryParams(sent[2].url)["time"] == "12000");
+        CHECK(std::stoll(queryParams(sent[2].url)["time"]) >
+              std::stoll(queryParams(sent[1].url)["time"]));
+    }
+
     sent.clear();
     reporter.beginSession(s, 0, 0);
     CHECK(sent.size() == 1);
