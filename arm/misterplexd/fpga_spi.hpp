@@ -9,6 +9,7 @@
 
 #include "libmisterplex/ddr_frame_layout.hpp"
 #include "libmisterplex/ddr_bitstream_ring.hpp"
+#include "libmisterplex/ddr_bank_release_select.hpp"
 #include "libmisterplex/ddr_present_bank.hpp"
 #include "libmisterplex/input_mailbox.hpp"
 
@@ -324,6 +325,7 @@ private:
     uint32_t doorbellSeq_ = 0;
     double lastDdrBankDoorbellMs_[2] = {-1.0, -1.0};
     int lastPublishedBank_ = 0;
+    DdrBankSelectState ddrBankSelect_{};
     bool mboxInit_ = false;
     bool mboxAlive_ = false;
     uint16_t mboxSeq_ = 0;
@@ -332,6 +334,9 @@ private:
     int ddrKickMode_ = 0; // 0=unknown, 1=doorbell, 2=SPI kick, -1=fail
     double ddrKickFailMs_ = -1.0; // steady_clock timestamp of last ddrKickMode_ = -1
     // PLXD liveness: detect stale/residue mailbox by checking frames_done advances.
+    // NOTE: product RTL c5382bee packs bank_vsync_count into this field — vsync
+    // keeps "live" even when swaps stick. Bank identity (free/disp) is authoritative;
+    // frames_done is a secondary residue detector only.
     uint16_t plxdLastFramesDone_ = 0;
     int plxdStaleCount_ = 0;       // consecutive reads with no frames_done advance
     bool plxdLivenessProven_ = false; // true once frames_done has advanced at least once

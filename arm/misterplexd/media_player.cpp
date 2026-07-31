@@ -1561,15 +1561,18 @@ void MediaPlayer::streamPump(int sfd) {
                     const DdrFrameLayout layout = makeDdrFrameLayout(
                         g, kDdrFramePhysBase, kDdrFrameStrideAlign, DdrFrameFormat::Yuv420p);
                     ensureYuv420p();
-                    std::vector<uint8_t> bank(layout.frame_bytes);
-                    if (!packYuv420pCenteredIntoCodedBank(yuv420p.data(), rec.width, rec.height,
-                                                          bank.data(), g)) {
-                        log("media: recon YUV420 pack into silicon canvas failed " +
-                            std::to_string(rec.width) + "x" + std::to_string(rec.height));
-                    } else {
-                        clearYuv420pCropPadding(bank.data(), g);
-                        DdrPublishFrame frame{bank.data(), bank.size(), g,
-                                              DdrFrameFormat::Yuv420p};
+                    // Pack-direct into DDR after bank-select: skips host bank alloc +
+                    // full-frame memcpy. packYuv420pCenteredIntoCodedBank black-fills
+                    // the whole coded canvas first, so clearYuv420pCropPadding is a no-op.
+                    DdrPublishFrame frame;
+                    frame.payload = nullptr;
+                    frame.len = layout.frame_bytes;
+                    frame.geometry = g;
+                    frame.format = DdrFrameFormat::Yuv420p;
+                    frame.pack_src = yuv420p.data();
+                    frame.pack_w = rec.width;
+                    frame.pack_h = rec.height;
+                    {
                         std::string ddrErr;
                         std::lock_guard<std::mutex> lk(presentMu_);
                         ok = publishDdrFrame(frame, "recon DDR", &ddrErr);
@@ -3053,7 +3056,11 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
             lastCompleteVideoFrame = std::chrono::steady_clock::now();
             got = 0;
 
-            if (videoFmt == RawVideoFormat::Yuv420p) {
+            // Crop columns beyond DISPLAY_W must stay black. When FFmpeg already
+            // built scale+pad=black to the full coded canvas (scale_applied), that
+            // pad painted crop_right — clearYuv420pCropPadding is a pure no-op walk.
+            // Identity-skip deliveries still need the clear (no pad filter ran).
+            if (videoFmt == RawVideoFormat::Yuv420p && !vfPlan.scale_applied) {
                 if (profilePresent) {
                     const auto pix0 = std::chrono::steady_clock::now();
                     const int64_t pixCpu0 = threadCpuMicros();

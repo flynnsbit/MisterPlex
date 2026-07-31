@@ -17,11 +17,25 @@ inline int nextDdrPresentBank(int currentBank, bool sendOk) {
     return sendOk ? (currentBank ^ 1) : currentBank;
 }
 
+// One coded-bank publish.
+//
+// Two fill modes (exactly one):
+//   A) payload  — full coded I420 already assembled (playback FFmpeg path).
+//   B) pack_src — tightly packed pack_w×pack_h I420; sendDdrFrame center-packs
+//                 into the bank AFTER bank-select, so the intermediate host bank
+//                 + full-frame memcpy is not paid. Idle/recon use this when the
+//                 source is smaller than the silicon canvas.
+// len is always the coded bank byte count (layout.frame_bytes).
 struct DdrPublishFrame {
     const uint8_t* payload = nullptr;
     size_t len = 0;
     DdrFrameGeometry geometry{};
     DdrFrameFormat format = DdrFrameFormat::Yuv420p;
+    const uint8_t* pack_src = nullptr;
+    int pack_w = 0;
+    int pack_h = 0;
+
+    bool wantsPack() const { return pack_src != nullptr; }
 };
 
 struct DdrPublishPlan {
@@ -33,10 +47,23 @@ struct DdrPublishPlan {
 
 inline bool makeDdrPublishPlan(const DdrPublishFrame& frame, int bank, DdrPublishPlan& out,
                                std::string* err = nullptr) {
-    if (!frame.payload) {
+    const bool pack = frame.wantsPack();
+    if (!pack && !frame.payload) {
         if (err)
             *err = "publishDdrFrame: null frame payload";
         return false;
+    }
+    if (pack) {
+        if (frame.pack_w <= 0 || frame.pack_h <= 0 || (frame.pack_w & 1) || (frame.pack_h & 1)) {
+            if (err)
+                *err = "publishDdrFrame: pack source geometry invalid";
+            return false;
+        }
+        if (!frame.pack_src) {
+            if (err)
+                *err = "publishDdrFrame: null pack_src";
+            return false;
+        }
     }
     if (bank < 0 || bank > 1) {
         if (err)
@@ -54,6 +81,13 @@ inline bool makeDdrPublishPlan(const DdrPublishFrame& frame, int bank, DdrPublis
         if (err)
             *err = "publishDdrFrame: frame size does not match derived DDR geometry";
         return false;
+    }
+    if (pack) {
+        if (frame.pack_w > layout.coded_width.get() || frame.pack_h > layout.coded_height.get()) {
+            if (err)
+                *err = "publishDdrFrame: pack source larger than coded bank";
+            return false;
+        }
     }
     const size_t bankOff = static_cast<size_t>(bank) * layout.bank_stride;
     if (bankOff + frame.len > layout.map_bytes || layout.phys_base + bankOff < layout.phys_base) {

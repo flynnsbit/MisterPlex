@@ -37,8 +37,12 @@ if 'log("media: STREAM=0 rawvideo("' not in src and "media: STREAM=0 rawvideo(" 
     fail("STREAM=0 path must log rawvideo→F1 (cast product present path)")
 if "const bool reconOwnsF1 = streamEnabled_ && reconPresentOk_.load();" not in src:
     fail("playback DDR must be gated by reconOwnsF1 so STREAM=0 always presents")
-if "packYuv420pCenteredIntoCodedBank" not in src:
-    fail("recon DDR path must center-pack into silicon coded bank")
+# Recon center-pack is either host-side packYuv... or pack-direct via pack_src
+# (sendDdrFrame packs after bank-select — same helper, no intermediate bank).
+if "pack_src" not in src and "packYuv420pCenteredIntoCodedBank" not in src:
+    fail("recon DDR path must center-pack into silicon coded bank (pack_src or packYuv)")
+if "pack_src" in src and "pack_w" not in src:
+    fail("pack-direct publish must set pack_w/pack_h")
 # STREAM=1 skip-RGB: no "playback DDR" frames; F1 only via recon (keyframe rate).
 if "wantSkipRgbVideo" not in src:
     fail("STREAM_SKIP_RGB path must exist (skip RGB → recon-only F1)")

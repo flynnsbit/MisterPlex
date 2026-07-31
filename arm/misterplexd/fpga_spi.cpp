@@ -1323,10 +1323,14 @@ bool FpgaSpi::sendDdrFrame(const DdrPublishFrame& frame, const DdrPublishPlan& p
     const uint8_t* payload = frame.payload;
     const size_t len = frame.len;
     int bank = plan.bank;
-    if (!payload || len != plan.layout.frame_bytes || plan.layout.bank_stride != ddrLayout_.bank_stride ||
+    if (len != plan.layout.frame_bytes || plan.layout.bank_stride != ddrLayout_.bank_stride ||
         plan.layout.doorbell_phys != ddrLayout_.doorbell_phys ||
         plan.layout.frame_bytes != ddrLayout_.frame_bytes) {
         setErr("sendDdrFrame: publish plan does not match active DDR layout");
+        return false;
+    }
+    if (!frame.wantsPack() && !payload) {
+        setErr("sendDdrFrame: null payload");
         return false;
     }
     if (ddrKickMode_ < 0) {
@@ -1414,39 +1418,60 @@ bool FpgaSpi::sendDdrFrame(const DdrPublishFrame& frame, const DdrPublishPlan& p
                 goto plxd_absent_fallback;
             }
 
-            // PLXD present and live — use it for bank selection. Do not also
-            // apply kDdrBankReuseMinUs here; the mailbox is the release proof.
-            if (brs.anyFree()) {
-                bank = brs.freeBank();
-                plxdUsed = true;
-            } else {
-                // Both banks in use (swap pending). Poll until free or timeout.
-                for (int i = 0; i < kPlxdPollMaxIters; ++i) {
+            // PLXD present — bank identity is authoritative (free/disp). Do not
+            // freeBank() blindly: after a swap, a *stale* free_mask still names
+            // the bank that just became display (mailbox write lags vsync under
+            // DDR line-fill load). That is the playback-only freeze class on
+            // c5382bee (idle slow enough that PLXD is always fresh).
+            //
+            // Protocol (ddr_bank_release_select.hpp):
+            //   - refuse free==disp (stale/residue)
+            //   - refuse free==last_published until disp_bank has acked it
+            //   - on timeout DROP the frame — never force-write disp^1
+            {
+                DdrBankSelectResult sel = selectDdrWriteBank(brs, ddrBankSelect_,
+                                                            kPlxdPollMaxIters);
+                while (sel.action == DdrBankSelectAction::Wait) {
                     usleep(1000);
                     ++plxdIters;
-                    if (readBankRelease(brs) && brs.anyFree()) {
-                        bank = brs.freeBank();
-                        plxdUsed = true;
+                    if (!readBankRelease(brs))
                         break;
+                    // Keep frames_done liveness tracker warm during poll.
+                    if (brs.frames_done != plxdLastFramesDone_) {
+                        plxdLivenessProven_ = true;
+                        plxdStaleCount_ = 0;
+                        plxdLastFramesDone_ = brs.frames_done;
                     }
+                    sel = selectDdrWriteBank(brs, ddrBankSelect_, kPlxdPollMaxIters);
                 }
-                if (!plxdUsed) {
-                    // LOUD timeout — never silently fall back to the timed
-                    // interlock after PLXD was accepted as live.
+                if (sel.action == DdrBankSelectAction::Write) {
+                    bank = sel.bank & 1;
+                    plxdUsed = true;
+                } else {
+                    // Drop or lost mailbox mid-poll — do NOT force-write.
                     fprintf(stderr,
-                            "[STALL] sendDdrFrame: PLXD bank-release timeout after %d ms "
-                            "(free_bank_mask=0, frames_done=%u disp_bank=%u swap_pending=%d)\n",
-                            plxdIters, static_cast<unsigned>(brs.frames_done),
+                            "[STALL] sendDdrFrame: PLXD bank-select %s after %d ms "
+                            "(free_mask=%u frames_done=%u disp=%u swap=%d last_pub=%d "
+                            "seen_disp=%d) — dropping frame (no force-write)\n",
+                            sel.reason ? sel.reason : "drop", plxdIters,
+                            static_cast<unsigned>(brs.free_bank_mask),
+                            static_cast<unsigned>(brs.frames_done),
                             static_cast<unsigned>(brs.disp_bank),
-                            static_cast<int>(brs.swap_pending));
-                    // Use the opposite of disp_bank as a best-effort guess.
-                    bank = brs.disp_bank ^ 1;
+                            static_cast<int>(brs.swap_pending),
+                            lastPublishedBank_,
+                            ddrBankSelect_.last_publish_seen_on_display ? 1 : 0);
+                    timing.plxa_poll_us = elapsedUs(tPrep0, std::chrono::steady_clock::now());
+                    timing.plxa_poll_iters = plxdIters;
+                    timing.plxa_used = true;
+                    setErr(std::string("sendDdrFrame: PLXD bank-select drop (") +
+                           (sel.reason ? sel.reason : "drop") + ")");
+                    return false;
                 }
             }
             auto tPlxd1 = std::chrono::steady_clock::now();
             timing.plxa_poll_us = elapsedUs(tPrep0, tPlxd1);
             timing.plxa_poll_iters = plxdIters;
-            timing.plxa_used = plxdUsed || (!plxdUsed && plxdIters > 0);
+            timing.plxa_used = plxdUsed;
         } else {
             plxd_absent_fallback:
             // PLXD absent — pre-PLXD RBF, mailbox not yet written, or stale residue.
@@ -1478,11 +1503,22 @@ bool FpgaSpi::sendDdrFrame(const DdrPublishFrame& frame, const DdrPublishPlan& p
     auto tPrep1 = std::chrono::steady_clock::now();
     timing.prep_wait_us = elapsedUs(tPrep0, tPrep1);
 
-    // Copy frame into bank (persistent map).
+    // Fill bank (persistent map). Pack-direct writes the coded canvas in place
+    // after bank-select so recon/idle skip host bank + full-frame memcpy.
     const size_t bankOff = static_cast<size_t>(bank) * plan.layout.bank_stride;
     auto tCopy0 = std::chrono::steady_clock::now();
-    std::memcpy(ddrMap_ + bankOff, payload, len);
-    __sync_synchronize();
+    if (frame.wantsPack()) {
+        if (!packYuv420pCenteredIntoCodedBank(frame.pack_src, frame.pack_w, frame.pack_h,
+                                              ddrMap_ + bankOff, frame.geometry)) {
+            setErr("sendDdrFrame: pack into coded bank failed");
+            return false;
+        }
+        __sync_synchronize();
+    } else {
+        // Keep memcpy+fence adjacent: tests/unit/test_rtl_invariants.py pins this pair.
+        std::memcpy(ddrMap_ + bankOff, payload, len);
+        __sync_synchronize();
+    }
     auto tCopy1 = std::chrono::steady_clock::now();
     timing.copy_us = elapsedUs(tCopy0, tCopy1);
     if (!ddrMemSync_ && ddrMemFlush_) {
@@ -1610,6 +1646,7 @@ bool FpgaSpi::sendDdrFrame(const DdrPublishFrame& frame, const DdrPublishPlan& p
     timing.total_us = elapsedUs(t0, t1);
     lastDdrTiming_ = timing;
     lastPublishedBank_ = bank & 1;
+    noteDdrBankPublished(ddrBankSelect_, bank);
     clearErr();
     return true;
 }
