@@ -567,7 +567,7 @@ echo "true rc=$?"
 | Live conf | assumed `misterplex.conf` | `/proc/PID/cmdline --conf` | same |
 | n_daemon | cmdline substring | exe basename `misterplexd` only | same |
 | Product core loaded | `/tmp/CORENAME` / disk md5 | PLXS mailbox magic (+ optional seq advance); MENU frame rejected by chevron ID | `promotion_gate_check.sh`, `pair_visual_gate.sh` |
-| Idle identity | luma band [15,70] (passed MENU) | amber chevron structure `plex_idle_chevron` | `pair_visual_gate.sh` |
+| Idle identity | luma band; then centroid bounds (20% false RED on screensaver) | CC geometry (dominance/aspect/fill) — **no position** | `pair_visual_gate.sh` |
 | HDMI frame | parent `-frames:v 1` recipe | `hdmi_capture_idle.sh` warm-up | `pair_visual_gate.sh` |
 | Conf keys | soft NOTE | hard fail closed | `promotion_gate_check.sh` |
 | Motion vs idle order | auto-idle elif hid motion | both required when grabber present | `promotion_gate_check.sh` |
@@ -597,3 +597,13 @@ echo "true rc=$?"
 `PROMOTE_REQUIRE_PLXS_SEQ_ADVANCE` defaults to **1**. Stuck seq + valid magic =
 hung/leftover core class. File md5 is still useful as a pin check on the
 rollback/product slots; it is never execution evidence.
+
+## Idle chevron ID is translation-invariant (screensaver)
+
+`IDLE_SCREEN=screensaver` (mode=2) bounces the logo. Centroid bounds caused a
+**20% false RED** on healthy frames (cy up to 0.806). Identity is now one
+dominant orange connected component with chevron-like `dom_frac`, `aspect`,
+and bbox `fill` (~0.28 notched). Position is diagnostic only.
+
+STOPPED transport overlay over the chevron is **accepted** by the idle stage
+(logo still present). OSD-absent is a separate concern for w-osd-hires.

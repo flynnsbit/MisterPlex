@@ -135,6 +135,7 @@ magenta_n = 0
 green_n = 0
 orange_xs = 0.0
 orange_ys = 0.0
+orange_coords = []  # (y, x) for connected-component geometry
 for i, (r, g, b) in enumerate(px):
     y = 0.299 * r + 0.587 * g + 0.114 * b
     sY += y
@@ -148,9 +149,10 @@ for i, (r, g, b) in enumerate(px):
         mn_c = lo
     if hi > mx_c:
         mx_c = hi
-    # Plex idle chevron: amber/orange body (parent measured mean~38–39 with orange logo)
+    # Plex idle chevron: amber/orange body
     if r >= 140 and r > g + 25 and r > b + 25 and g >= 50 and b < r - 10:
         orange_n += 1
+        orange_coords.append((i // w, i % w))
         orange_xs += (i % w)
         orange_ys += (i // w)
     # Magenta/pink cast (desync class): R and B high, G depressed
@@ -168,6 +170,63 @@ magenta_frac = magenta_n / n
 green_frac = green_n / n
 orange_cx = (orange_xs / orange_n / w) if orange_n else -1.0
 orange_cy = (orange_ys / orange_n / h) if orange_n else -1.0
+
+# --- translation-invariant geometry via connected components ---
+# IDLE_SCREEN=screensaver (mode=2) BOUNCES the logo; centroid is NOT identity.
+# Parent 2026-07-31: 5/25 healthy frames had cy>0.80 → false RED on position bound.
+def orange_cc_geometry(coords, width, height):
+    if not coords:
+        return {
+            "n_cc": 0, "dom_area": 0, "dom_frac": 0.0, "dominance": 0.0,
+            "aspect": 0.0, "fill": 0.0, "bb_w": 0, "bb_h": 0,
+        }
+    # Downsample coords for speed on 1080p (keep geometry ratios).
+    step = 2 if (width * height) > (900 * 500) else 1
+    cell = set()
+    for yy, xx in coords:
+        cell.add((yy // step, xx // step))
+    ww = (width + step - 1) // step
+    hh = (height + step - 1) // step
+    seen = set()
+    comps = []
+    for seed in list(cell):
+        if seed in seen:
+            continue
+        stack = [seed]
+        seen.add(seed)
+        comp = []
+        while stack:
+            cy, cx = stack.pop()
+            comp.append((cy, cx))
+            for dy, dx in ((0, 1), (0, -1), (1, 0), (-1, 0)):
+                ny, nx = cy + dy, cx + dx
+                if (ny, nx) in cell and (ny, nx) not in seen:
+                    seen.add((ny, nx))
+                    stack.append((ny, nx))
+        comps.append(comp)
+    comps.sort(key=len, reverse=True)
+    dom = comps[0]
+    area = len(dom)
+    ys = [p[0] for p in dom]
+    xs = [p[1] for p in dom]
+    y0, y1 = min(ys), max(ys)
+    x0, x1 = min(xs), max(xs)
+    bw = x1 - x0 + 1
+    bh = y1 - y0 + 1
+    bb_area = max(bw * bh, 1)
+    total_o = max(len(cell), 1)
+    return {
+        "n_cc": len(comps),
+        "dom_area": area * step * step,  # approx full-res area
+        "dom_frac": (area * step * step) / float(width * height),
+        "dominance": area / float(total_o),
+        "aspect": bw / float(max(bh, 1)),
+        "fill": area / float(bb_area),
+        "bb_w": bw * step,
+        "bb_h": bh * step,
+    }
+
+cc = orange_cc_geometry(orange_coords, w, h)
 print(f"mean_luma={mean:.2f}")
 print(f"std_luma={std:.2f}")
 print(f"mean_rgb={mean_r:.1f},{mean_g:.1f},{mean_b:.1f}")
@@ -175,8 +234,14 @@ print(f"minmax_rgb={mn_c},{mx_c}")
 print(f"orange_frac={orange_frac:.5f}")
 print(f"magenta_frac={magenta_frac:.5f}")
 print(f"green_frac={green_frac:.5f}")
-print(f"orange_cx={orange_cx:.3f}")
-print(f"orange_cy={orange_cy:.3f}")
+print(f"orange_cx={orange_cx:.3f}")  # diagnostic only — NOT a pass criterion
+print(f"orange_cy={orange_cy:.3f}")  # diagnostic only — screensaver bounces
+print(f"orange_n_cc={cc['n_cc']}")
+print(f"orange_dominance={cc['dominance']:.3f}")
+print(f"orange_dom_frac={cc['dom_frac']:.5f}")
+print(f"orange_aspect={cc['aspect']:.3f}")
+print(f"orange_fill={cc['fill']:.3f}")
+print(f"orange_bb={cc['bb_w']}x{cc['bb_h']}")
 print(f"path={path}")
 
 is_flat = std < 2.0
@@ -224,16 +289,33 @@ if mean_g > mean_r + 40 and mean_g > mean_b + 40 and mean >= 90:
     print("CLASS=green_cast_idle")
     sys.exit(8)
 
-# POSITIVE ID: amber Plex chevron structure (not a luma band).
-# Parent proved MiSTer MENU (CORENAME=MENU, colour bars) scores mean~25.9 std~24
-# inside the old [15,70] envelope with orange_frac=0 — must REJECT.
-# Real chevron (idle_warm): orange_frac~0.017, centroid mid-right.
-o_min = float(os.environ.get("PAIR_IDLE_ORANGE_FRAC_MIN") or "0.004")
-o_max = float(os.environ.get("PAIR_IDLE_ORANGE_FRAC_MAX") or "0.12")
+# POSITIVE ID: amber Plex chevron by SHAPE geometry (translation-invariant).
+# Parent proved MENU false-green closed via orange_frac=0.
+# Parent also proved centroid bounds FALSE-RED 20% of healthy screensaver
+# frames (IDLE_SCREEN=screensaver mode=2 bounces logo; cy up to 0.806).
+# DO NOT use position. Identify one dominant orange connected component with
+# chevron-like area fraction, aspect ratio, and bbox fill (compactness).
+#
+# Measured on 28 healthy stopcap frames (s_023..s_050):
+#   orange_frac 0.0101..0.0165  dominance 0.80..1.0
+#   aspect 0.91..1.83           fill 0.283..0.297  (notch → not a solid rect)
+# Overlay STOPPED (s_023) still has the chevron — ACCEPT deliberately
+# (idle stage is "is the Plex idle logo present", not "OSD absent").
+
+o_min = float(os.environ.get("PAIR_IDLE_ORANGE_FRAC_MIN") or "0.006")
+o_max = float(os.environ.get("PAIR_IDLE_ORANGE_FRAC_MAX") or "0.08")
+dom_min = float(os.environ.get("PAIR_IDLE_ORANGE_DOMINANCE_MIN") or "0.72")
+dom_frac_min = float(os.environ.get("PAIR_IDLE_ORANGE_DOM_FRAC_MIN") or "0.005")
+dom_frac_max = float(os.environ.get("PAIR_IDLE_ORANGE_DOM_FRAC_MAX") or "0.06")
+asp_min = float(os.environ.get("PAIR_IDLE_ORANGE_ASPECT_MIN") or "0.55")
+asp_max = float(os.environ.get("PAIR_IDLE_ORANGE_ASPECT_MAX") or "2.80")
+fill_min = float(os.environ.get("PAIR_IDLE_ORANGE_FILL_MIN") or "0.18")
+fill_max = float(os.environ.get("PAIR_IDLE_ORANGE_FILL_MAX") or "0.55")
+
 if orange_frac < o_min:
     print(
         "FAIL class=not_plex_idle_chevron orange_frac=%.5f want>=%.4f "
-        "(MENU/colour-bar/other non-Plex screens can pass a luma envelope — rejected)"
+        "(MENU/colour-bar/other non-Plex screens — rejected)"
         % (orange_frac, o_min)
     )
     print("CLASS=not_plex_idle_chevron")
@@ -242,14 +324,37 @@ if orange_frac > o_max:
     print("FAIL class=orange_frac_too_high orange_frac=%.5f" % orange_frac)
     print("CLASS=orange_frac_too_high")
     sys.exit(8)
-# Chevron sits roughly mid-frame, not a thin edge glitch
-if not (0.25 <= orange_cy <= 0.80 and 0.35 <= orange_cx <= 0.95):
+
+# Shape gates (no cx/cy)
+if cc["n_cc"] < 1 or cc["dominance"] < dom_min:
     print(
-        "FAIL class=orange_centroid_out_of_range cx=%.3f cy=%.3f "
-        "(expected Plex chevron body, not scatter)"
-        % (orange_cx, orange_cy)
+        "FAIL class=orange_scatter n_cc=%d dominance=%.3f want_dominance>=%.2f "
+        "(orange not one dominant component — noise/scatter)"
+        % (cc["n_cc"], cc["dominance"], dom_min)
     )
-    print("CLASS=orange_centroid_out_of_range")
+    print("CLASS=orange_scatter")
+    sys.exit(8)
+if not (dom_frac_min <= cc["dom_frac"] <= dom_frac_max):
+    print(
+        "FAIL class=orange_dom_frac_out_of_range dom_frac=%.5f want=[%.4f,%.4f]"
+        % (cc["dom_frac"], dom_frac_min, dom_frac_max)
+    )
+    print("CLASS=orange_dom_frac_out_of_range")
+    sys.exit(8)
+if not (asp_min <= cc["aspect"] <= asp_max):
+    print(
+        "FAIL class=orange_aspect_out_of_range aspect=%.3f want=[%.2f,%.2f]"
+        % (cc["aspect"], asp_min, asp_max)
+    )
+    print("CLASS=orange_aspect_out_of_range")
+    sys.exit(8)
+if not (fill_min <= cc["fill"] <= fill_max):
+    print(
+        "FAIL class=orange_fill_out_of_range fill=%.3f want=[%.2f,%.2f] "
+        "(chevron is notched ~0.28 fill; solid blob or hollow ring rejected)"
+        % (cc["fill"], fill_min, fill_max)
+    )
+    print("CLASS=orange_fill_out_of_range")
     sys.exit(8)
 
 # Soft luma sanity AFTER identity (not the primary gate)
@@ -266,6 +371,7 @@ if mean < 5.0 and std < 8.0:
 
 print("OK class=plex_idle_chevron")
 print("CLASS=plex_idle_chevron")
+print("NOTE centroid cx=%.3f cy=%.3f is diagnostic only (screensaver may bounce)" % (orange_cx, orange_cy))
 sys.exit(0)
 
 PY

@@ -1,52 +1,17 @@
-# w-promote status — 2026-07-31T22:20Z
+# w-promote status — 2026-07-31T22:40Z
 branch: fix/rollback-honest
 worktree: /home/flynnsbit/Projects/MisterPlex/.worktrees/rollback-honest
-HEAD_prev: 7dd2070a (MENU false-green fix)
-HEAD: 88f55ec7860d79012dd28dc167aaebd06f312440
 
-## Parent ask (this turn)
-1. P2 atomic pair promote/rollback + power-cycle rehearsal (detached on-device)
-2. PLXS_SEQ_ADVANCE default 1; document product-core-disk md5 limits
-3. Decoy/hook vs live root red-before-green (archive v1 RED, current GREEN)
+## This turn
+Idle classifier: removed centroid bounds; CC geometry (dominance/aspect/fill).
+Parent stopcap s_026..s_050: 25/25 GREEN. s_037/s_041 (old false RED) GREEN.
+MENU/magenta/green still RED. STOPPED overlay s_023 deliberately ACCEPT.
 
-## Done
-- PROMOTE_REQUIRE_PLXS_SEQ_ADVANCE default **1** (stuck seq → rc=3; missing samples → rc=3)
-- product-core OK renamed **product-core-disk**; docs table: file md5 ≠ execution
-- conf apply: user-owned — byte backup first; merge pair keys only; PAIR_CONF_RESTORE_FILE for exact restore; DECODE/IDLE preserved
-- scripts/on_device_pair_boot_check.sh — detached postboot/rehearse-hook (S99user REAL hook)
-- scripts/power_cycle_pair_rehearsal.sh plan|host-preflight
-- restore_misterplexd_prev still DISABLED rc=10
-- redteam: stuck PLXS seq rc=3; archived v1 hook body rc=3
-- docs power-cycle rewritten (no decoy-as-boot; warm-up via hdmi_capture_idle)
+## Host evidence
+- test_idle_chevron_geometry.sh true rc=0 (incl stopcap-25-of-25)
+- test_promotion_gates true rc=0
+- test_promotion_redteam true rc=0
+- test_rollback_honest true rc=0
 
-## Host evidence (true rc direct)
-- power_cycle_pair_rehearsal.sh host-preflight → true rc=0
-- test_promotion_gates.sh → true rc=0 (81 pass)
-- test_promotion_redteam.sh → true rc=0 (26 pass)
-- test_boot_hook_policy.sh → true rc=0 (44 pass)
-- test_rollback_honest.sh → true rc=0
-- restore_misterplexd_prev.sh → true rc=10
-
-## Parent single commands (no agent device access)
-```bash
-cd /home/flynnsbit/Projects/MisterPlex/.worktrees/rollback-honest
-scripts/power_cycle_pair_rehearsal.sh plan
-scripts/power_cycle_pair_rehearsal.sh host-preflight; echo "true rc=$?"
-
-# Live gate (warm-up owned; motion required with grabber):
-PROMOTE_MOTION_CAPTURE_DIR=/path/to/trek24-burst \
-  scripts/promotion_gate_check.sh verify-live
-echo "true rc=$?"
-# expect: OK product-core-disk …; OK PLXS_MAGIC; OK PLXS_SEQ advanced;
-#         OK class=plex_idle_chevron; OK visual-idle+motion; PROMOTE_GATES_OK; true rc=0
-```
-
-## Atomic pair
-- promote/rollback path: core + daemon + conf + REAL boot hook (S99user)
-- never restore_misterplexd_prev (half)
-- conf: PAIR_CONF_RESTORE_FILE=... for byte-faithful undo of user conf
-
-## Open / parent-owned
-- Real power-cycle on daily driver
-- Live verify-live rc after this SHA
-- Optional: CORENAME/register still not a full bitstream id beyond PLXS
+## Prior work still in branch
+88f55ec7 PLXS seq-advance default, atomic conf, power-cycle rehearsal
