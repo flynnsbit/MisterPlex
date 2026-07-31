@@ -1,7 +1,7 @@
 # w-lint GATE INTEGRITY REPORT
 
 - branch: `w-lint-gate-integrity`
-- sha: (post-commit)
+- sha: `5ab9cb04e67fa185531bb0f37b05a382a198f450`
 - date: 2026-07-31
 - scope: host/source only
 
