@@ -140,6 +140,7 @@ unit-unlocked: unit-rollcall preflight $(ROOT)/build/test_cadence $(ROOT)/build/
 	$(ROOT)/tests/unit/test_promotion_redteam.sh
 	$(ROOT)/tests/unit/test_boot_hook_policy.sh
 	$(ROOT)/tests/unit/test_idle_chevron_geometry.sh
+	$(ROOT)/tests/unit/test_conf_user_owned.sh
 	$(ROOT)/scripts/power_cycle_pair_rehearsal.sh host-preflight
 	$(ROOT)/tests/unit/test_timing_margin_gate.sh
 	$(ROOT)/tests/unit/test_release_rbf_hash.sh

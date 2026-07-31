@@ -1,17 +1,51 @@
-# w-promote status — 2026-07-31T22:40Z
+# w-promote status — 2026-07-31T23:05Z
 branch: fix/rollback-honest
 worktree: /home/flynnsbit/Projects/MisterPlex/.worktrees/rollback-honest
+# USE THIS WORKTREE. Parent measured 961dc724 which PREDATES glue+centroid fixes.
 
-## This turn
-Idle classifier: removed centroid bounds; CC geometry (dominance/aspect/fill).
-Parent stopcap s_026..s_050: 25/25 GREEN. s_037/s_041 (old false RED) GREEN.
-MENU/magenta/green still RED. STOPPED overlay s_023 deliberately ACCEPT.
+## Defect 1 (V2_MD5…set +e blind-RED) — FIXED since 92d4434f
+- Root: bash $(…) strips trailing newlines → echo V2_MD5=… glued to set +e
+- Fix: gate_join_remote_parts + gate_assert_md5_shape (exactly 32 hex; refuse trim)
+- Redteam: V2_MD5 contam → rc=3; control green → rc=0
+- Parent must NOT run 961dc724; run HEAD below
 
-## Host evidence
-- test_idle_chevron_geometry.sh true rc=0 (incl stopcap-25-of-25)
-- test_promotion_gates true rc=0
-- test_promotion_redteam true rc=0
-- test_rollback_honest true rc=0
+## Defect 2 (centroid 20% false RED) — FIXED since aa1233ac
+- Root: asserting screen position of bouncing screensaver logo
+- Fix: CC geometry dominance/aspect/fill; cx/cy diagnostic only
+- stopcap s_026..s_050: 25/25 GREEN; MENU postboot RED
 
-## Prior work still in branch
-88f55ec7 PLXS seq-advance default, atomic conf, power-cycle rehearsal
+## MENU false-green CLOSED (keep fixture)
+- tests/fixtures/promote/postboot.png
+- tests/fixtures/promote/mister_menu_postboot.png
+
+## Atomic pair + boot (already on branch)
+- deploy_misterplexd: LIVE root from /proc exe+cmdline --conf; DEPLOY_REBUILD=0 default;
+  boot hook from S99user USER_SCRIPT; decoy inert; both roots grepped
+- rollback_v2: core+daemon+conf+boot; restore_misterplexd_prev rc=10
+- conf user-owned: DECODE=624x480 + DECODE_ALLOW_LAB_480P survive merge
+- power_cycle_pair_rehearsal.sh + on_device_pair_boot_check.sh
+
+## Host evidence this turn
+- test_conf_user_owned.sh true rc=0
+- test_promotion_redteam.sh true rc=0 (29 pass, incl v2-md5-contam)
+- test_idle_chevron_geometry.sh true rc=0 (stopcap 25/25)
+- test_promotion_gates.sh true rc=0 (81 pass)
+
+## Parent commands (worktree)
+```bash
+cd /home/flynnsbit/Projects/MisterPlex/.worktrees/rollback-honest
+git rev-parse --short HEAD   # expect aa1233ac or later
+
+# Defect1 green path (needs device; expect pure 32-hex V2_MD5, true rc=0 if healthy):
+PROMOTE_MOTION_CAPTURE_DIR=/path/to/burst scripts/promotion_gate_check.sh verify-live
+echo "true rc=$?"
+
+# Defect2 fixtures host-only:
+PAIR_VISUAL_NO_RECAPTURE=1 PAIR_IDLE_PNG=tests/fixtures/promote/postboot.png \
+  scripts/pair_visual_gate.sh idle; echo "true rc=$?"   # expect 8
+PAIR_VISUAL_NO_RECAPTURE=1 PAIR_IDLE_PNG=tests/fixtures/promote/plex_idle_chevron.png \
+  scripts/pair_visual_gate.sh idle; echo "true rc=$?"   # expect 0
+
+scripts/power_cycle_pair_rehearsal.sh plan
+scripts/power_cycle_pair_rehearsal.sh host-preflight; echo "true rc=$?"
+```

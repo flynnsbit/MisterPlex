@@ -262,6 +262,19 @@ echo "  true rc=$rc"
 [ "$rc" -eq 3 ] && ok "archive-v1-hook-3" || bad "archive-v1-hook-3 got $rc"
 echo "$out" | grep -qi 'boot-hook' && ok "archive-v1-hook-msg" || bad "archive-v1-hook-msg"
 
+
+echo "=== redteam: V2_MD5 contaminated (…set +e glue class) → rc=3 ==="
+sed "s/V2_MD5=$V2/V2_MD5=${V2}set +e/" "$WORK/base.blob" >"$WORK/v2contam.blob"
+set +e
+out=$(run_gate "$WORK/v2contam.blob")
+rc=$?
+set -e
+echo "  true rc=$rc"
+[ "$rc" -eq 3 ] && ok "v2-md5-contam-3" || bad "v2-md5-contam-3 got $rc"
+echo "$out" | grep -qi 'shape\|contaminat' && ok "v2-contam-msg" || bad "v2-contam-msg"
+# Must NOT fuzzy-match by trimming set +e
+echo "$out" | grep -q 'OK v2-rollback-core' && bad "v2-contam-false-ok" || ok "v2-contam-no-false-ok"
+
 echo "=== summary pass=$pass fail=$fail ==="
 if [ "$fail" -ne 0 ]; then
   echo "test_promotion_redteam: FAIL"

@@ -7,7 +7,7 @@
 # POSITIVE ID of Plex idle chevron (amber logo structure) — NOT a luma band.
 # Parent 2026-07-31: MiSTer MENU frame (CORENAME=MENU) scored mean=25.87 std=24.03
 # and PASSED the old envelope while Plex was NOT loaded. Envelope is insufficient.
-# Good idle: orange_frac>~0.004, centroid mid-right, mean~38–39.
+# Good idle: orange_frac>~0.004, CC geometry (dominance/fill/aspect); mean~38–39.
 # Reject: MENU/colour-bars, magenta cast, solid green, cold grabber grey.
 #
 # Usage:
