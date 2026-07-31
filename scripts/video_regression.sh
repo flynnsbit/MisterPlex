@@ -89,11 +89,17 @@ BASE_DAEMON_MD5=7cd10b4d438c714a9b8c4766dc982d59
 HYBRID_DAEMON_MD5=50f4eb925de10e29172999a565c87684
 PREV_HYBRID_DAEMON_MD5=3e2cbb9881b2f54b0e4cb60238655fa7
 
-# DDR product pair (parent silicon: freeze-fixed core + PLXD-relative daemon).
-# Full RBF md5 not yet in-tree as a release artifact — 8-hex prefix accepted
-# until parent registers the full digest (md5_match allows prefix ≥8).
+# DDR product pair (parent silicon 2026-07-31):
+#   core prefix c5382bee + daemon edc3a46b — 240p AND native 480p on viewed pixels.
+# Full digests registered when available; md5_match accepts unique prefix ≥8 hex.
+# NEVER weaken pins to skip — demote previous CURRENT into PREV_* on advance.
 DDR_CORE_MD5_PREFIX=c5382bee
-DDR_DAEMON_MD5_PREFIX=e9f79de2
+# CURRENT DDR companion (parent-verified with c5382bee).
+DDR_DAEMON_MD5=edc3a46b
+# PRIOR DDR companion kept as accepted rollback (was CURRENT before edc3a46b).
+PREV_DDR_DAEMON_MD5=e9f79de2
+# Back-compat alias used in older messages / pair helpers.
+DDR_DAEMON_MD5_PREFIX="$DDR_DAEMON_MD5"
 
 # Claim file written by plexctl load_core / deploy after RBFNAME mtime advances.
 RUNNING_CORE_CLAIM="${RUNNING_CORE_CLAIM:-/media/fat/misterplex/.running_core_claim}"
@@ -132,15 +138,22 @@ http_probe() {
 BASE_DAEMON_BIN=/media/fat/misterplex_v2/bin/misterplexd
 DEV_DAEMON_BIN=/media/fat/misterplex/bin/misterplexd
 
-daemon_md5_accepted() {
+spi_daemon_md5_accepted() {
   case "$1" in
     "$BASE_DAEMON_MD5"|"$HYBRID_DAEMON_MD5"|"$PREV_HYBRID_DAEMON_MD5") return 0 ;;
-    *)
-      # DDR daemon pin (prefix or full).
-      if md5_match "$DDR_DAEMON_MD5_PREFIX" "$1"; then return 0; fi
-      return 1
-      ;;
+    *) return 1 ;;
   esac
+}
+
+ddr_daemon_md5_accepted() {
+  # CURRENT + PREV rollback pins (prefix or full via md5_match).
+  if [ -n "${DDR_DAEMON_MD5:-}" ] && md5_match "$DDR_DAEMON_MD5" "$1"; then return 0; fi
+  if [ -n "${PREV_DDR_DAEMON_MD5:-}" ] && md5_match "$PREV_DDR_DAEMON_MD5" "$1"; then return 0; fi
+  return 1
+}
+
+daemon_md5_accepted() {
+  spi_daemon_md5_accepted "$1" || ddr_daemon_md5_accepted "$1"
 }
 
 # md5_match PIN GOT — full equality, or PIN is unique prefix (≥8 hex) of GOT.
@@ -154,6 +167,27 @@ md5_match() {
       "$pin"*) return 0 ;;
     esac
   fi
+  return 1
+}
+
+# Empty string is NO-DATA / probe error — never a hash MISMATCH.
+# Returns: 0=OK match, 1=FAIL wrong hash, 4=NO-DATA empty.
+classify_obs_hash() {
+  local label="$1" got="$2"
+  shift 2
+  if [ -z "$got" ]; then
+    echo "NO-DATA $label got='' (empty — not a mismatch; SSH drop or remote produced no hash)"
+    return 4
+  fi
+  local w
+  for w in "$@"; do
+    [ -n "$w" ] || continue
+    if [ "$got" = "$w" ] || md5_match "$w" "$got"; then
+      echo "OK   $label $got"
+      return 0
+    fi
+  done
+  echo "FAIL $label got='$got' want=$*"
   return 1
 }
 
@@ -171,10 +205,10 @@ core_family() {
 
 daemon_family() {
   local d="$1"
-  if [ "$d" = "$BASE_DAEMON_MD5" ] || [ "$d" = "$HYBRID_DAEMON_MD5" ]      || [ "$d" = "$PREV_HYBRID_DAEMON_MD5" ]; then
+  if spi_daemon_md5_accepted "$d"; then
     echo spi; return 0
   fi
-  if md5_match "$DDR_DAEMON_MD5_PREFIX" "$d"; then
+  if ddr_daemon_md5_accepted "$d"; then
     echo ddr; return 0
   fi
   echo unknown
@@ -350,6 +384,22 @@ resolve_running_core() {
   echo "RUNNING_CORE_MD5=$cmd5"
   echo "RUNNING_CORE_PATH=${cpath}"
   echo "RUNNING_CORE_VIA=claim"
+
+  # PLXC fabric identity (magic 0x504C5843) — not in shipping RTL yet.
+  # Claim+mtime is interim only: always stamp UNVERIFIED unless PLXC proves it.
+  local plxc_norm identity
+  plxc_norm=$(printf '%s' "$plxc" | tr 'A-F' 'a-f' | tr -d 'x')
+  case "$plxc_norm" in
+    *504c5843*|*0x504c5843*) identity=VERIFIED_PLXC ;;
+    *) identity=UNVERIFIED ;;
+  esac
+  echo "RUNNING_CORE_IDENTITY=$identity"
+  if [ "$identity" = UNVERIFIED ]; then
+    echo "NOTE running-core identity is claim+RBFNAME-mtime only — PLXC fabric register absent."
+    echo "     GREEN here is NOT silicon proof of bitstream content hash."
+  else
+    echo "OK   running-core identity VERIFIED via PLXC mailbox"
+  fi
   return 0
 }
 
@@ -551,13 +601,27 @@ verify_baseline() {
     fi
   fi
 
-  # On-disk check remains as an *additional* signal (ETXTBSY detection needs it).
-  got_disk=$(sshm "md5sum $BASE_DAEMON_BIN 2>/dev/null | cut -d' ' -f1" || true)
-  if daemon_md5_accepted "$got_disk"; then
-    echo "OK   daemon-disk $got_disk"
+  # On-disk check is *additional* ETXTBSY signal only — empty is NO-DATA, not FAIL.
+  set +e
+  # No local pipeline: capture full md5sum line then strip first field in-shell.
+  got_disk_raw=$(sshm "md5sum $BASE_DAEMON_BIN 2>/dev/null")
+  ssh_rc=$?
+  set -e
+  got_disk=${got_disk_raw%% *}
+  got_disk=${got_disk//$'\r'/}
+  if [ "$ssh_rc" -ne 0 ] && [ -z "$got_disk" ]; then
+    echo "NO-DATA daemon-disk (ssh rc=$ssh_rc empty — not a mismatch)"
+    [ "$rc" -eq 0 ] && rc=4
   else
-    echo "FAIL daemon-disk got='$got_disk' want='$BASE_DAEMON_MD5' or '$HYBRID_DAEMON_MD5' or '$PREV_HYBRID_DAEMON_MD5' or ddr:$DDR_DAEMON_MD5_PREFIX"
-    rc=1
+    set +e
+    classify_obs_hash "daemon-disk" "$got_disk"       "$BASE_DAEMON_MD5" "$HYBRID_DAEMON_MD5" "$PREV_HYBRID_DAEMON_MD5"       "$DDR_DAEMON_MD5" "$PREV_DDR_DAEMON_MD5"
+    step_rc=$?
+    set -e
+    if [ "$step_rc" -eq 4 ]; then
+      [ "$rc" -eq 0 ] && rc=4
+    elif [ "$step_rc" -ne 0 ]; then
+      rc=1
+    fi
   fi
 
   echo "== verifying RUNNING baseline daemon (/proc argv0 + /proc/PID/exe + HTTP) =="
@@ -613,11 +677,14 @@ verify_baseline() {
   fi
 
   # ETXTBSY / silent failed deploy: disk says new, running says old (or other).
+  # Both sides must be non-empty — empty is NO-DATA, never a mismatch.
   if [ -n "$got_disk" ] && [ -n "$live" ] && [ "$got_disk" != "$live" ]; then
     echo "FAIL daemon-disk/live mismatch disk='$got_disk' live='$live'"
     echo "     hint: cp over a RUNNING binary fails ETXTBSY and leaves the old"
     echo "     image executing — stop first, then verify /proc/PID/exe (not disk alone)"
     rc=1
+  elif [ -z "$got_disk" ] || [ -z "$live" ]; then
+    echo "NOTE daemon-disk/live ETXTBSY check skipped (NO-DATA on one side)"
   fi
 
   # PAIR COHERENCE — the mixed-state killer (SPI core + DDR daemon etc.).
@@ -640,6 +707,18 @@ verify_baseline() {
   else
     echo "FAIL pair-coherent skipped — running core or live daemon unresolved"
     rc=1
+  fi
+
+  # Loud identity stamp — claim path is interim; do not over-read GREEN.
+  ident=$(printf '%s\n' "$resolve_out" | sed -n 's/^RUNNING_CORE_IDENTITY=//p' | tail -1)
+  ident=${ident:-UNKNOWN}
+  echo "GATE_CORE_IDENTITY=$ident"
+  if [ "$ident" = UNVERIFIED ]; then
+    echo "NOTE GATE_CORE_IDENTITY=UNVERIFIED — pair/liveness may PASS; fabric hash not silicon-proven (no PLXC)."
+  elif [ "$ident" = VERIFIED_PLXC ]; then
+    echo "OK   GATE_CORE_IDENTITY=VERIFIED_PLXC"
+  elif [ -n "$run_core" ]; then
+    echo "NOTE GATE_CORE_IDENTITY=$ident"
   fi
 
   return $rc

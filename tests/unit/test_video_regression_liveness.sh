@@ -17,9 +17,11 @@ BASE_DAEMON_MD5=7cd10b4d438c714a9b8c4766dc982d59
 HYBRID_DAEMON_MD5=50f4eb925de10e29172999a565c87684
 PREV_HYBRID_DAEMON_MD5=3e2cbb9881b2f54b0e4cb60238655fa7
 DDR_CORE_PREFIX=c5382bee
-DDR_DAEMON_PREFIX=e9f79de2
+DDR_DAEMON_PREFIX=edc3a46b
+PREV_DDR_DAEMON_PREFIX=e9f79de2
 DDR_CORE_MD5="${DDR_CORE_PREFIX}aaaaaaaaaaaaaaaaaaaaaaaa"
 DDR_DAEMON_MD5="${DDR_DAEMON_PREFIX}bbbbbbbbbbbbbbbbbbbbbbbb"
+PREV_DDR_DAEMON_MD5="${PREV_DDR_DAEMON_PREFIX}cccccccccccccccccccccccc"
 BIN_PATH=/media/fat/misterplex_v2/bin/misterplexd
 CORE_PATH=/media/fat/_Utility/Plex_v2.rbf
 V2_CONF=/media/fat/misterplex_v2/misterplex.conf
@@ -349,8 +351,10 @@ expect_grep "new-live-ok" "OK   daemon-live $HYBRID_DAEMON_MD5"
 expect_grep "new-live-http" 'OK   daemon-http'
 expect_grep "new-live-pair" 'OK   pair-coherent'
 expect_grep "new-live-conf" "OK   daemon-conf $V2_CONF"
+expect_grep "new-live-unverified" 'GATE_CORE_IDENTITY=UNVERIFIED'
+expect_grep "new-live-unverified-note" 'NOT silicon proof'
 
-echo "=== NEW gate: coherent DDR pair (c5382bee + e9f79de2) PASSes ==="
+echo "=== NEW gate: coherent DDR pair (c5382bee + edc3a46b CURRENT) PASSes ==="
 write_scenario <<EOF
 core_md5=$DDR_CORE_MD5
 disk_md5=$DDR_DAEMON_MD5
@@ -375,6 +379,54 @@ expect_rc "ddr-pair" 0
 expect_grep "ddr-pair-core" "OK   core-running $DDR_CORE_MD5"
 expect_grep "ddr-pair-ok" 'OK   pair-coherent'
 expect_grep "ddr-family" 'family=ddr'
+
+echo "=== NEW gate: PREV DDR rollback pin e9f79de2 still accepted ==="
+write_scenario <<EOF
+core_md5=$DDR_CORE_MD5
+disk_md5=$PREV_DDR_DAEMON_MD5
+live_md5=$PREV_DDR_DAEMON_MD5
+n_match=1
+appear_after=0
+http_code=200
+live_port=3005
+live_conf=$V2_CONF
+claim_present=1
+claim_md5=$DDR_CORE_MD5
+claim_path_field=/media/fat/_Utility/Plex.rbf
+claim_rbfname_mtime=1000
+claim_source=test
+rbfname_mtime=1000
+dev_core_md5=$DDR_CORE_MD5
+corename=Plex
+rbfname=Plex
+EOF
+run_new_verify "ddr-prev"
+expect_rc "ddr-prev" 0
+expect_grep "ddr-prev-ok" 'OK   pair-coherent'
+expect_grep "ddr-prev-daemon" "OK   daemon-live $PREV_DDR_DAEMON_MD5"
+
+echo "=== NEW gate: empty daemon-disk probe is NO-DATA (rc=4), not FAIL mismatch ==="
+write_scenario <<EOF
+core_md5=$BASE_CORE_MD5
+disk_md5=
+live_md5=$HYBRID_DAEMON_MD5
+n_match=1
+appear_after=0
+http_code=200
+live_port=3005
+live_conf=$V2_CONF
+$(spi_claim_ok)
+EOF
+run_new_verify "nodata-disk"
+# Aggregate rc=4 NO-DATA (empty disk) while live+pair OK — not rc=1 FAIL mismatch
+expect_rc "nodata-disk" 4
+expect_grep "nodata-disk-msg" "NO-DATA daemon-disk"
+# Must NOT say FAIL daemon-disk got=''
+if grep -qE "FAIL daemon-disk got=''" <<<"$LAST_OUT"; then
+  echo "FAIL nodata-disk: empty reported as FAIL mismatch" >&2
+  exit 1
+fi
+echo "OK nodata-disk not reported as FAIL mismatch"
 
 echo "=== NEW gate: PREV hybrid pin still accepted (coherent SPI) ==="
 write_scenario <<EOF
@@ -453,7 +505,8 @@ live_port=3005
 live_conf=$V2_CONF
 $(spi_claim_ok)
 EOF
-run_new_verify "new-respawn"
+# Integer-second deadline is coarse; give headroom so appear_after=3 can fire.
+LIVE_WAIT_SEC=5 LIVE_POLL_SEC=0.05 run_new_verify "new-respawn"
 expect_rc "new-respawn" 0
 expect_grep "new-respawn-note" 'respawned during wait'
 

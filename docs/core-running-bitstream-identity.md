@@ -104,7 +104,7 @@ PLXC reuses the already-proven DDR mailbox path (`devmem` / daemon map).
 | family | core pin | daemon pin | role |
 |---|---|---|---|
 | spi | `dfebf2bfd08dd70b473b587dd7e81848` | `7cd10b4d…` / `50f4eb92…` / `3e2cbb98…` | daily SPI baseline |
-| ddr | prefix `c5382bee` (full md5 TBD parent) | prefix `e9f79de2` | DDR product pair |
+| ddr | prefix `c5382bee` (full md5 TBD parent) | **CURRENT** `edc3a46b` · PREV rollback `e9f79de2` | DDR product pair (parent 2026-07-31 240p+480p pixels) |
 
 Prefix match (≥8 hex) allowed only when full md5 not yet registered; prefer full.
 
