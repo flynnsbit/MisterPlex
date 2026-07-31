@@ -240,6 +240,28 @@ set -e
 echo "  true rc=$rc"
 [ "$rc" -eq 3 ] && ok "plxs-missing-3" || bad "plxs-missing-3 got $rc"
 
+
+echo "=== redteam: PLXS magic OK but seq stuck → rc=3 (default advance required) ==="
+sed -e 's/PLXS_SEQ=10/PLXS_SEQ=7/' -e 's/PLXS_SEQ2=11/PLXS_SEQ2=7/' "$WORK/base.blob" >"$WORK/stuckseq.blob"
+set +e
+out=$(run_gate "$WORK/stuckseq.blob")
+rc=$?
+set -e
+echo "  true rc=$rc"
+[ "$rc" -eq 3 ] && ok "plxs-stuck-seq-3" || bad "plxs-stuck-seq-3 got $rc"
+echo "$out" | grep -qi 'did not advance\|PLXS_SEQ' && ok "plxs-stuck-msg" || bad "plxs-stuck-msg"
+
+echo "=== redteam: archived v1 REAL-hook body vs v2 live root → rc=3 ==="
+# Content of device bak class: _user-startup / real hook with v1 only
+printf '%s\n' 'nohup /media/fat/misterplex/bin/misterplexd_supervise.sh >>/media/fat/misterplex/misterplexd_supervise.log 2>&1 &' >"$WORK/hook_v1_archive.txt"
+set +e
+out=$(run_gate "$WORK/base.blob" "$WORK/hook_v1_archive.txt")
+rc=$?
+set -e
+echo "  true rc=$rc"
+[ "$rc" -eq 3 ] && ok "archive-v1-hook-3" || bad "archive-v1-hook-3 got $rc"
+echo "$out" | grep -qi 'boot-hook' && ok "archive-v1-hook-msg" || bad "archive-v1-hook-msg"
+
 echo "=== summary pass=$pass fail=$fail ==="
 if [ "$fail" -ne 0 ]; then
   echo "test_promotion_redteam: FAIL"

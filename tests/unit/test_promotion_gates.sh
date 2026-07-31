@@ -198,6 +198,7 @@ echo "  true rc=$rc"
 echo "$out" | sed 's/^/  /' | tail -15
 [ "$rc" -eq 0 ] && ok "verify-with-visual" || bad "verify-with-visual rc=$rc"
 echo "$out" | grep -q 'PROMOTE_GATES_OK' && ok "gates-ok" || bad "gates-ok"
+echo "$out" | grep -q 'PLXS_SEQ advanced' && ok "plxs-seq-advance" || bad "plxs-seq-advance"
 echo "$out" | grep -q 'OK conf-profile=ddr' && ok "conf-ddr-ok" || bad "conf-ddr-ok"
 
 echo "=== verify-live RED when DDR conf keys missing ==="

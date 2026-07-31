@@ -385,38 +385,52 @@ resolve_live_conf_path() {
   printf '%s' "$V2_CONF_DEFAULT"
 }
 
-# Atomic conf half of the pair: backup current, render profile, install.
-# Never leaves foreign DDR keys on an SPI restore (parent requirement).
+# Atomic conf half of the pair.
+# Parent 2026-07-31: device conf is USER-OWNED state. Never silently replace with a
+# "validated default". Always byte-backup first; merge only the pair-required keys
+# (ddr) or strip pair-forbidden keys (spi); all other lines stay untouched.
+# PAIR_CONF_RESTORE_FILE=hostpath → install those exact bytes (true rollback of conf).
 apply_pair_conf() {
-  local profile="${1:-$PAIR_CONF_PROFILE}" conf_path staged body rc host_tmp remote_bak
+  local profile="${1:-$PAIR_CONF_PROFILE}" conf_path staged body rc host_tmp remote_bak mode
   conf_path=$(resolve_live_conf_path)
-  log "apply conf profile=$profile path=$conf_path (atomic with pair binaries)"
-
-  set +e
-  body=$(run_ssh "if [ -f $(printf '%q' "$conf_path") ]; then cat $(printf '%q' "$conf_path"); else echo ''; fi")
-  rc=$?
-  set -e
-  if [ "$rc" -eq 5 ]; then return 5; fi
+  mode="${PAIR_CONF_MODE:-merge-keys}"
+  log "apply conf mode=$mode profile=$profile path=$conf_path (user-owned; byte backup first)"
 
   host_tmp="$ROOT/build/pair-conf-${PAIR_ID}.$$.conf"
   mkdir -p "$(dirname "$host_tmp")"
-  printf '%s\n' "$body" >"$host_tmp.src"
-  pair_policy_render_conf "$profile" "$host_tmp.src" >"$host_tmp"
-  rm -f "$host_tmp.src"
 
-  # Verify rendered conf matches profile before touching device.
-  set +e
-  pair_policy_check_conf "$profile" "$host_tmp"
-  rc=$?
-  set -e
-  if [ "$rc" -ne 0 ]; then
-    echo "REFUSE conf render failed profile=$profile true rc=$rc"
-    rm -f "$host_tmp"
-    return 10
+  if [ -n "${PAIR_CONF_RESTORE_FILE:-}" ] && [ -f "${PAIR_CONF_RESTORE_FILE}" ]; then
+    mode="restore-file"
+    cp -f "$PAIR_CONF_RESTORE_FILE" "$host_tmp"
+    echo "conf-source=PAIR_CONF_RESTORE_FILE path=$PAIR_CONF_RESTORE_FILE (byte-faithful)"
+  else
+    set +e
+    body=$(run_ssh "if [ -f $(printf '%q' "$conf_path") ]; then cat $(printf '%q' "$conf_path"); else echo ''; fi")
+    rc=$?
+    set -e
+    if [ "$rc" -eq 5 ]; then return 5; fi
+    printf '%s\n' "$body" >"$host_tmp.src"
+    # merge-keys: only touch pair keys; never rewrite DECODE/IDLE/etc.
+    pair_policy_render_conf "$profile" "$host_tmp.src" >"$host_tmp"
+    rm -f "$host_tmp.src"
   fi
 
-  staged="/tmp/misterplex.conf.pair.$$"
-  remote_bak="${conf_path}.bak.pre-${PAIR_ID}"
+  # Profile check only when merging keys (restore-file is exact user bytes).
+  if [ "$mode" != "restore-file" ] && [ "$profile" != "none" ]; then
+    set +e
+    pair_policy_check_conf "$profile" "$host_tmp"
+    rc=$?
+    set -e
+    if [ "$rc" -ne 0 ]; then
+      echo "REFUSE conf merge failed profile=$profile true rc=$rc"
+      rm -f "$host_tmp"
+      return 10
+    fi
+  fi
+
+  # Stage on device under pair root (not a shared name); backup then atomic mv.
+  staged="${conf_path}.pair-stage.$$"
+  remote_bak="${conf_path}.bak.pre-${PAIR_ID}.$(date -u +%Y%m%dT%H%M%SZ)"
   set +e
   run_scp "$host_tmp" "$staged"
   rc=$?
@@ -429,13 +443,19 @@ apply_pair_conf() {
     staged=$(printf '%q' "$staged")
     bak=$(printf '%q' "$remote_bak")
     mkdir -p \"\$(dirname \"\$conf\")\"
-    if [ -f \"\$conf\" ]; then cp -f \"\$conf\" \"\$bak\"; fi
+    if [ -f \"\$conf\" ]; then
+      cp -f \"\$conf\" \"\$bak\"
+      echo CONF_BAK_MD5=\$(md5sum \"\$bak\" | awk '{print \$1}')
+    else
+      echo CONF_BAK=none
+    fi
     mv -f \"\$staged\" \"\$conf\"
     sync
     echo CONF_INSTALLED=\$conf
     echo CONF_BAK=\$bak
+    echo CONF_NEW_MD5=\$(md5sum \"\$conf\" | awk '{print \$1}')
   "
-  echo "OK conf-applied profile=$profile path=$conf_path"
+  echo "OK conf-applied mode=$mode profile=$profile path=$conf_path bak=$remote_bak"
   return 0
 }
 
@@ -1027,7 +1047,7 @@ Sequence (all-or-nothing; abort leaves prior half uncommitted when possible):
   0) preflight: pair matrix OK + BOTH halves available (else rc=10 device untouched)
   1) STOP daemon (avoid ETXTBSY on cp over running binary)
   2) install daemon bytes if disk pin wrong (from host pin or on-device .bak)
-  3) apply conf profile ($PAIR_CONF_PROFILE) atomically with backup
+  3) conf: byte-backup user conf, then merge pair keys only (or PAIR_CONF_RESTORE_FILE exact bytes)
   3b) install $PAIR_BOOT_ROOT/bin/misterplexd_supervise.sh + rewrite REAL user-startup.sh (from S99user USER_SCRIPT)
       (strip ALL misterplex autostart lines both roots; append exactly one v2 line)
   4) ONE menu bounce → load $PAIR_CORE_PATH

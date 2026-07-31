@@ -274,7 +274,7 @@ verify_live() {
     echo "MISSING product core $PRODUCT_CORE_PATH"
     rc=2
   elif [ "$prod" != "$EXPECT_CORE_MD5" ]; then
-    echo "FAIL product-core got=$prod want=$EXPECT_CORE_MD5"
+    echo "FAIL product-core-disk got=$prod want=$EXPECT_CORE_MD5"
     # also refuse if product pin is banned
     set +e
     out=$(rbf_policy_check_md5 "$prod")
@@ -288,7 +288,7 @@ verify_live() {
     prc=$?
     set -e
     printf '%s\n' "$out"
-    if [ "$prc" -ne 0 ]; then rc=$prc; else echo "OK product-core $prod"; fi
+    if [ "$prc" -ne 0 ]; then rc=$prc; else echo "OK product-core-disk $prod"; fi
   fi
 
   # V2 rollback slot must remain intact
@@ -414,6 +414,8 @@ verify_live() {
     fi
   fi
 
+  # product-core-disk md5 proves the ON-DISK RBF file only — not that the FPGA is
+# executing it (CORENAME=MENU still possible). Executing proof = PLXS magic+seq.
   # Running bitstream proof: PLXS mailbox magic (only ddr_frame_store publishes).
   # Parent: RBF md5 + daemon md5 pass while CORENAME=MENU. Disk ≠ executing core.
   # FpgaSpi::readOsdMailbox requires magic + mbox_seq advance; gate requires magic
@@ -500,14 +502,25 @@ REMOTE
           rc=3
           ;;
       esac
-      if [ -n "$seq1" ] && [ -n "$seq2" ] && [ "$seq1" = "$seq2" ]; then
-        echo "NOTE PLXS_SEQ unchanged across samples seq=$seq1 (stale leftover possible; prefer seq advance)"
-        if [ "${PROMOTE_REQUIRE_PLXS_SEQ_ADVANCE:-0}" = "1" ]; then
-          echo "FAIL PLXS_SEQ did not advance"
+      # Parent: magic alone can be leftover from a previous core; advancing
+      # mbox_seq proves the fabric is executing. Default REQUIRE=1.
+      if [ "${PROMOTE_REQUIRE_PLXS_SEQ_ADVANCE:-1}" = "1" ]; then
+        if [ -z "$seq1" ] || [ -z "$seq2" ]; then
+          echo "FAIL PLXS_SEQ samples missing (need two reads to prove mbox_seq advance; hung/stale magic possible)"
+          echo "     inject PLXS_SEQ + PLXS_SEQ2 (differing) for unit tests"
           rc=3
+        elif [ "$seq1" = "$seq2" ]; then
+          echo "FAIL PLXS_SEQ did not advance seq=$seq1 (stuck mailbox = hung core / leftover magic)"
+          rc=3
+        else
+          echo "OK PLXS_SEQ advanced $seq1 -> $seq2 (fabric executing)"
         fi
-      elif [ -n "$seq1" ] && [ -n "$seq2" ] && [ "$seq1" != "$seq2" ]; then
-        echo "OK PLXS_SEQ advanced $seq1 -> $seq2"
+      else
+        if [ -n "$seq1" ] && [ -n "$seq2" ] && [ "$seq1" = "$seq2" ]; then
+          echo "NOTE PLXS_SEQ unchanged seq=$seq1 (PROMOTE_REQUIRE_PLXS_SEQ_ADVANCE=0)"
+        elif [ -n "$seq1" ] && [ -n "$seq2" ] && [ "$seq1" != "$seq2" ]; then
+          echo "OK PLXS_SEQ advanced $seq1 -> $seq2"
+        fi
       fi
     fi
   fi

@@ -148,6 +148,7 @@ EXPECTED_COMMANDS = [
     "$(ROOT)/tests/unit/test_promotion_gates.sh",
     "$(ROOT)/tests/unit/test_promotion_redteam.sh",
     "$(ROOT)/tests/unit/test_boot_hook_policy.sh",
+    "$(ROOT)/scripts/power_cycle_pair_rehearsal.sh host-preflight",
     "$(ROOT)/tests/unit/test_timing_margin_gate.sh",
     "$(ROOT)/tests/unit/test_release_rbf_hash.sh",
     "$(ROOT)/tests/unit/test_sdram_startup_verilator.sh",

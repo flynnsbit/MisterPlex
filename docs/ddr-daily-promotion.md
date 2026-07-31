@@ -238,10 +238,11 @@ escape only). Conf keys and PLXS mailbox magic are hard-required.
 PROMOTE_MOTION_CAPTURE_DIR=/path/to/png-burst \
   scripts/promotion_gate_check.sh verify-live
 echo "true rc=$?"
-# expect: OK product-core c5382bee… / OK v2-rollback-core dfebf2bf…
+# expect: OK product-core-disk c5382bee… (ON-DISK only) / OK v2-rollback-core …
 # expect: OK live-exe-md5 edc3a46b… (from readlink -f /proc/PID/exe)
 # expect: OK conf-profile=ddr (DDR_YUV_FORCE_SCALE + FFMPEG_SWS_FLAGS)
-# expect: OK PLXS_MAGIC=0x504C5853 (executing ddr_frame_store mailbox)
+# expect: OK PLXS_MAGIC=0x504C5853 + OK PLXS_SEQ advanced (fabric executing)
+#          (magic alone can be leftover; seq advance is required by default)
 # expect: OK boot-hook-path-from-init USER_SCRIPT=.../user-startup.sh
 # expect: OK class=plex_idle_chevron  (MENU/magenta/green → rc=8)
 # expect: OK visual-idle+motion (both observed)
@@ -437,114 +438,74 @@ shows the old SPI bitstream (or vice versa) — trust path md5 **and** pixels.
 ## Power-cycle rehearsal (parent; daily driver)
 
 A hook-execution rehearsal is necessary but not sufficient — a real cold boot
-is the complete proof. Recoverability over SSH is required.
+is the complete proof. Recoverability over SSH is required. **SSH to the daily
+driver can return rc=255 mid-flight** — every mutating step must be launchable
+detached on-device.
 
-### Pre-flight (before reboot)
-
-```bash
-# On lab host — capture undo artifacts
-ssh root@$MISTER_HOST 'md5sum /media/fat/_Utility/Plex.rbf /media/fat/_Utility/Plex_v2.rbf \
-  /media/fat/misterplex_v2/bin/misterplexd \
-  /media/fat/misterplex_v2/bin/misterplexd_supervise.sh; \
-  grep -n misterplex /media/fat/linux/_user-startup.sh; \
-  cp -a /media/fat/linux/_user-startup.sh /media/fat/linux/_user-startup.sh.bak.pre-reboot'
-# PASS: single line with misterplex_v2/bin/misterplexd_supervise.sh
-# PASS: daemon md5 edc3a46b9d1c… ; Plex_v2 still dfebf2bf
-# ABORT if hook has misterplex/bin (v1) or multiple supervise lines
-```
-
-### Hook-only rehearsal (no reboot) — parent already did this once
+### Generated runbook (preferred)
 
 ```bash
-# stop supervisor+daemon, run hook exactly as boot does, measure
-ssh root@$HOST 'bash -s' <<'EOS'
-set -e
-# stop
-for d in /proc/[0-9]*; do
-  x=$(readlink -f "$d/exe" 2>/dev/null) || continue
-  b=$(basename "$x")
-  case "$b" in misterplexd) kill ${d#/proc/} 2>/dev/null || true ;; esac
-done
-pkill -f misterplexd_supervise.sh 2>/dev/null || true
-sleep 1
-pre=$(for d in /proc/[0-9]*; do
-  x=$(readlink -f "$d/exe" 2>/dev/null) || continue
-  [ "$(basename "$x")" = misterplexd ] && echo 1
-done | wc -l)
-echo pre_hook_n_daemon=$pre
-# run hook (same as boot)
-bash /media/fat/linux/_user-startup.sh
-sleep 5
-# count via /proc/exe ONLY
-post=0; pid=""; md5=""; cmd=""
-for d in /proc/[0-9]*; do
-  x=$(readlink -f "$d/exe" 2>/dev/null) || continue
-  [ "$(basename "$x")" = misterplexd ] || continue
-  post=$((post+1)); pid=${d#/proc/}
-  md5=$(md5sum "$d/exe" | awk '{print $1}')
-  cmd=$(tr '\0' ' ' </proc/$pid/cmdline)
-done
-echo post_hook_n_daemon=$post
-echo pid=$pid md5=$md5
-echo cmdline=$cmd
-wget -qO- http://127.0.0.1:3005/resources | head -c 80; echo
-EOS
-# PASS: pre=0 post=1 md5=edc3a46b… conf=…/misterplex_v2/misterplex.conf resources=200
-# FAIL → do NOT reboot; fix hook; SPI atomic undo if needed
+scripts/power_cycle_pair_rehearsal.sh plan          # full procedure + exact ssh/scp
+scripts/power_cycle_pair_rehearsal.sh host-preflight
+echo "true rc=$?"   # expect 0 before any reboot
 ```
 
-### Real cold boot
-
-1. Confirm SSH still works after boot (`ssh root@$HOST true; echo true rc=$?`).
-2. Immediately:
+On-device check (S99user-derived REAL hook, decoy inert, n_daemon via exe,
+conf from cmdline, optional PLXS):
 
 ```bash
-ssh root@$HOST 'bash -s' <<'EOS'
-set +e
-echo "=== hook lines ==="
-grep -n misterplex /media/fat/linux/_user-startup.sh
-echo "=== n_daemon via exe ==="
-n=0
-for d in /proc/[0-9]*; do
-  x=$(readlink -f "$d/exe" 2>/dev/null) || continue
-  [ "$(basename "$x")" = misterplexd ] || continue
-  n=$((n+1))
-  echo pid=${d#/proc/} md5=$(md5sum "$d/exe" | awk '{print $1}') exe=$x
-  echo cmdline=$(tr "\0" " " < "$d/cmdline")
-done
-echo n_daemon=$n
-wget -q -O /dev/null -S http://127.0.0.1:3005/resources 2>&1 | awk "/HTTP\//{print; exit}"
-EOS
+scp scripts/on_device_pair_boot_check.sh root@$HOST:/media/fat/misterplex_v2/bin/
+ssh root@$HOST 'chmod +x /media/fat/misterplex_v2/bin/on_device_pair_boot_check.sh
+  nohup /media/fat/misterplex_v2/bin/on_device_pair_boot_check.sh rehearse-hook     >/media/fat/misterplex_v2/boot-check.nohup.out 2>&1 &'
+# later:
+ssh root@$HOST 'cat /media/fat/misterplex_v2/boot-check-report.txt
+  echo true rc=$(cat /media/fat/misterplex_v2/boot-check-report.txt.rc)'
 ```
 
-**PASS:** `n_daemon=1`, md5 `edc3a46b9d1c…`, exe under `misterplex_v2`,
-`--conf …/misterplex_v2/misterplex.conf`, hook has **exactly one**
-`misterplex_v2/bin/misterplexd_supervise.sh` line, `/resources` 200, idle
-chevron on HDMI (viewed pixels).
+**PASS rehearse/postboot:** `n_daemon=1`, live md5 `edc3a46b…`, conf under
+`misterplex_v2` from cmdline `--conf`, REAL hook **exactly one**
+`misterplex_v2` supervise line, decoy `_user-startup.sh` **inert**,
+`/resources` 200, PLXS magic when `devmem` present.
 
-**IMMEDIATE ROLLBACK (SSH):**
+**Host visual (warm-up owned by helper — never bare `-frames:v 1`):**
 
 ```bash
-# 1) stop everything
-ssh root@$HOST 'pkill -f misterplexd_supervise; pkill -x misterplexd; sleep 1'
-# 2) restore hook bak if needed
-ssh root@$HOST 'cp -a /media/fat/linux/_user-startup.sh.bak.pre-reboot \
-  /media/fat/linux/_user-startup.sh'
-# 3) atomic SPI or DDR pair restore from lab host
-PAIR_ID=ddr-c5382bee PAIR_IDLE_PNG=… scripts/rollback_v2.sh restore
-# or SPI:
-PAIR_ID=spi-v2-hybrid ROLLBACK_DAEMON=artifacts/daemon-pins/misterplexd.50f4eb92 \
-  PAIR_IDLE_PNG=… scripts/rollback_v2.sh restore
+scripts/hdmi_capture_idle.sh build/pair-visual/idle.png
+echo "true rc=$?"
+PAIR_IDLE_PNG=$PWD/build/pair-visual/idle.png PAIR_VISUAL_NO_RECAPTURE=1 \
+  scripts/pair_visual_gate.sh idle
+echo "true rc=$?"   # expect OK class=plex_idle_chevron
 ```
 
-If SSH is dead: serial console / physical SD — restore
-`_user-startup.sh.bak.*` and `Plex_v2.rbf` boot path manually.
+### IMMEDIATE ROLLBACK if postboot FAIL (SSH alive)
+
+```bash
+# 1) stop daemons via /proc/exe (not cmdline substring)
+# 2) restore REAL hook + conf from pre-reboot snapshot (byte-faithful)
+# 3) atomic pair:
+PAIR_ID=ddr-c5382bee \
+  PAIR_CONF_RESTORE_FILE=build/conf-restore/misterplex.conf.bak \
+  PAIR_IDLE_PNG=build/pair-visual/idle.png \
+  scripts/rollback_v2.sh restore
+echo "true rc=$?"
+# SPI undo:
+# PAIR_ID=spi-v2-hybrid ROLLBACK_DAEMON=artifacts/daemon-pins/misterplexd.50f4eb92 \
+#   PAIR_IDLE_PNG=... scripts/rollback_v2.sh restore
+```
+
+`scripts/restore_misterplexd_prev.sh` remains **DISABLED** (`true rc=10`) —
+half-restore of daemon without core is an unpaired black screen
+(bank1 `0x30040000` vs `0x30080000`).
+
+If SSH is dead: serial/SD — restore `user-startup.sh` bak (path from S99user),
+conf bak, and menu-load `Plex_v2.rbf` if needed.
 
 ### Gate that would have caught the session-long defect
 
 ```bash
 # Path MUST come from S99user (not the _user-startup.sh decoy).
 # FAILS when REAL hook root != live daemon root
+# Red: archived v1 hook body  Green: current v2 hook body
 scripts/promotion_gate_check.sh verify-live
 echo "true rc=$?"
 ```
@@ -584,7 +545,8 @@ REAL=$(sed -n 's/^[[:space:]]*USER_SCRIPT=//p' /etc/init.d/S99user | tail -1 | t
 echo "REAL=$REAL"
 grep -n misterplex "$REAL" || true
 echo "--- decoy (must be inert) ---"
-grep -n misterplex /media/fat/linux/_user-startup.sh || echo DECOY_INERT
+REAL=$(sed -n 's/^[[:space:]]*USER_SCRIPT=//p' /etc/init.d/S99user | tail -1 | tr -d '"')
+grep -n misterplex "$REAL" || echo DECOY_INERT
 
 # Host gate (single command; auto visual if /dev/video0 free):
 scripts/promotion_gate_check.sh verify-live
@@ -610,3 +572,28 @@ echo "true rc=$?"
 | Conf keys | soft NOTE | hard fail closed | `promotion_gate_check.sh` |
 | Motion vs idle order | auto-idle elif hid motion | both required when grabber present | `promotion_gate_check.sh` |
 
+
+
+## What product-core-disk md5 proves (and does not)
+
+| Claim | True? |
+|-------|-------|
+| `/media/fat/_Utility/Plex.rbf` bytes match pin | YES — that is all file md5 proves |
+| FPGA is executing that bitstream | **NO** — MENU can be loaded while file is correct |
+| Execution proof | PLXS `0x504C5853` @ `0x300FF100` **and** advancing `mbox_seq` (default required) |
+| Identity on HDMI | `plex_idle_chevron` + motion instrument |
+
+`PROMOTE_REQUIRE_PLXS_SEQ_ADVANCE` defaults to **1**. Stuck seq + valid magic = hung/leftover core class.
+
+## What product-core-disk md5 proves (and does not)
+
+| Claim | True? |
+|-------|-------|
+| `/media/fat/_Utility/Plex.rbf` bytes match pin | YES — that is all file md5 proves |
+| FPGA is executing that bitstream | **NO** — MENU can still be loaded while the file is correct |
+| Execution proof | PLXS `0x504C5853` @ `0x300FF100` **and** advancing `mbox_seq` (default required) |
+| Identity on HDMI | `plex_idle_chevron` + motion instrument |
+
+`PROMOTE_REQUIRE_PLXS_SEQ_ADVANCE` defaults to **1**. Stuck seq + valid magic =
+hung/leftover core class. File md5 is still useful as a pin check on the
+rollback/product slots; it is never execution evidence.
