@@ -98,6 +98,28 @@ int main() {
     CHECK(queryParams(sent[4].url)["state"] == "stopped");
     CHECK(queryParams(sent[4].url)["time"] == "45000");
 
+    // Explicit progression: successive PMS updates must carry strictly increasing
+    // time= values across the session (not merely "a timeline was emitted").
+    {
+        const int64_t times[] = {
+            std::stoll(queryParams(sent[0].url)["time"]), // buffering @ begin
+            std::stoll(queryParams(sent[1].url)["time"]), // playing
+            std::stoll(queryParams(sent[2].url)["time"]), // paused
+            std::stoll(queryParams(sent[3].url)["time"]), // playing again
+            std::stoll(queryParams(sent[4].url)["time"]), // stopped @ endSession
+        };
+        CHECK(times[0] == 1000);
+        CHECK(times[1] == 2000);
+        CHECK(times[2] == 3000);
+        CHECK(times[3] == 3500);
+        CHECK(times[4] == 45000);
+        for (size_t i = 1; i < sizeof(times) / sizeof(times[0]); ++i)
+            CHECK(times[i] > times[i - 1]);
+        // duration stays bound for the whole progressive session
+        for (size_t i = 0; i < sent.size(); ++i)
+            CHECK(queryParams(sent[i].url)["duration"] == "90000");
+    }
+
     sent.clear();
     reporter.beginSession(s, 0, 0);
     CHECK(sent.size() == 1);
