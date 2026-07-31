@@ -125,6 +125,14 @@ module stream_path #(
 	output wire        recon_dbg_valid,
 	output wire        recon_valid,
 
+	// P3-3l5 hybrid product handoff
+	output wire        hybrid_fpga_owned,
+	output wire        hybrid_host_required,
+	output wire        product_recon_ok,
+	output wire [2:0]  hybrid_own_code,
+	output wire [3:0]  hybrid_own_reason,
+	output wire        entropy_cabac,
+
 	output wire        fs_wr_en,
 	output wire [15:0] fs_wr_pixel,
 	output wire        fs_wr_reset,
@@ -323,6 +331,7 @@ module stream_path #(
 	assign slice_beta_offset = sl_beta_off;
 	assign residual_tc   = sl_rtc;
 	assign residual_t1   = sl_rt1;
+	assign entropy_cabac = pps_cabac;
 	assign residual_ok   = sl_res_ok;
 	assign residual_dc   = sl_rdc;
 
@@ -719,6 +728,13 @@ module stream_path #(
 		.recon_dbg(recon_dbg),
 		.recon_dbg_valid(recon_dbg_valid),
 		.recon_valid(recon_valid),
+		.entropy_cabac(pps_cabac),
+		.first_mb_type_i(sl_mbt),
+		.hybrid_fpga_owned(hybrid_fpga_owned),
+		.hybrid_host_required(hybrid_host_required),
+		.product_recon_ok(product_recon_ok),
+		.hybrid_own_code(hybrid_own_code),
+		.hybrid_own_reason(hybrid_own_reason),
 		.product_fetch_mv_x(product_fetch_mv_x),
 		.product_fetch_mv_y(product_fetch_mv_y),
 		.product_luma_origin_x(product_luma_origin_x),
@@ -738,6 +754,7 @@ module stream_path #(
 	             pps_busy | sl_busy | |pps_id_w | |pps_qp | pps_cabac | |sl_first |
 	             |sl_fn | |sl_qpd | pps_deblock | |residual_csum | residual_place_pulse |
 	             recon_valid | recon_dbg_valid | |recon_sig | |recon_dbg |
+	             hybrid_host_required | product_recon_ok | hybrid_fpga_owned |
 	             sl_place_ok | |sl_place_tc | |sl_place_t1 | |sl_place_qp |
 	             residual_coeff[0][0] | residual_coeff[1][0] |
 	             residual_coeff[15][0] | sl_place_coeff[0][0] | sl_place_coeff[15][0] |

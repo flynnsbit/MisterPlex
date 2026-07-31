@@ -1,0 +1,71 @@
+# w-thruput REPORT — integ/thruput-on-warm (post hybrid port)
+
+## Branch
+- Branch: integ/thruput-on-warm @ 528176e6
+- Base: w-arm-p720-scope + thruput/area merge + hybrid ownership wiring
+
+## Clock / budget (verified earlier; unchanged)
+- pll_0002 outclk_0 = 20 MHz decode domain
+- Budget 320x240@25: 20e6/(300*25) = 2666.667 cy/MB
+
+## PRE-REG vs MEASURED (post hybrid)
+| Metric | PRE-REG | MEASURED | Result |
+|--------|---------|----------|--------|
+| paint_per_mb f0 clip1 | 2239.647 | 2239.647 | HIT exact |
+| LUMA frame0 | 300/300 mae=0 | 300/300 mae=0.000000 | HIT |
+| real-ref XOR twin | candidates differ | OK real-ref XOR twin: candidates differ | HIT |
+| dequant QP sweep | miss=0 | 1205/1205 PASS | HIT |
+| define-parity | 0 | 0 | HIT |
+| quartus-sv-subset | 0 | 0 | HIT |
+| make unit | 0 | 0 (with MISTERPLEX_ALLOW_LOW_MEMORY_TESTS=1 while w-fit exclusive live) | HIT |
+
+## SINK_CY_BREAKDOWN (real_ref frame0 path)
+total=480177 idle_wb=38674 idle_pend=300 idle_ready=67227 init=0 settle=5917
+i16nb=10176 i16pred=57239 had=4199 i4nb=41029 iq=87664 apply=83872 dump=83659
+
+## What changed this resume
+1. Ported P3-3l5 hybrid ownership into thruput decode_stub + stream_path (entropy_cabac, u_hybrid_mb, product_recon_ok).
+2. Wired hybrid pins on all stream_path/decode_stub TB tops; added h264_hybrid_mb_own.sv to Verilator filelists.
+3. Fixed Plex.sv duplicate stream_path port connections.
+4. Restored expected_red id h264_baseline_syntax_sign_flip_mvd (union with thruput traverse/fetch_mv ids).
+5. Redacted lab PMS IP in docs/v2-video-baseline.md (test_no_private_data).
+6. UTF-8 fixed slot11 fit.rpt; untracked binary .i420 evidence (invariants docs/ scan).
+7. test_resource_preflight fixtures: SKIP_QUARTUS + clear ALLOW so fixture red twin stays rc=3 under live fit + operator override.
+
+## Fit pre-reg (UNMEASURED — do not fit until parent grants slot)
+- Baseline last clean fit: ALM 21078 / DSP 74 / RAM 465
+- Predict DSP ~42 (74−32 from w-area shift-add; never mapped)
+- Predict RAM blocks 465 (no new RAMs in thruput RMW/hybrid control)
+- Predict ALM 21100–21400 (+0..300 hybrid + thruput glue)
+- Timing: RISK at 0.136 ns WNS — hybrid is small control; dequant is combo shift-add
+
+## Silicon-ready?
+**YES for simulation gates** (thruput budget HIT with pad ~427 cy/MB; bit-exact Y 300/300; unit/define/sv green).
+**NOT yet silicon-proven** — parent must fit+deploy and require distinct HDMI md5 @ frames 30/38/45. Daemon telemetry alone is invalid.
+
+## Parent verify commands
+```bash
+cd .worktrees/w-thruput-on-warm
+make define-parity; echo rc=$?
+make quartus-sv-subset; echo rc=$?
+MISTERPLEX_ALLOW_LOW_MEMORY_TESTS=1 make unit; echo rc=$?   # if w-fit still exclusive
+FULL_FRAME_BITSTREAM=$PWD/tests/fixtures/p3_inter_pred/plex_inter_p16_baseline_320x240_12f.264 \
+  bash tests/unit/test_stream_path_full_frame_compare.sh
+# expect STAGE_CYCLES frame=0 ... paint_per_mb=2239.647
+# expect LUMA_PROGRESS frame0 y_mb=300/300 y_mae=0.000000
+```
+
+## Commit
+SHA: 528176e671e342e4e5c2343dbfbc83a5080c01cd
+Worktree: .worktrees/w-thruput-on-warm
+
+## Gate true rcs (final)
+define-parity true rc=0
+quartus-sv-subset true rc=0
+make unit true rc=0  (MISTERPLEX_ALLOW_LOW_MEMORY_TESTS=1; w-fit exclusive live)
+dequant qp sweep true rc=0 (1205/1205)
+hybrid_gate true rc=0
+full_frame clip1 true rc=0
+
+## Silicon-ready
+SIM-READY YES. FIT not granted. Parent owns deploy/HDMI md5@30/38/45.

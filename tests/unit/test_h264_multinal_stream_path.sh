@@ -46,6 +46,7 @@ echo "RTL SIM: using $VERILATOR_VERSION" >&2
   fpga/Plex_MiSTer/rtl/h264_deblock.sv \
   fpga/Plex_MiSTer/rtl/h264_dpb.sv \
   fpga/Plex_MiSTer/rtl/decode_stub.sv \
+  fpga/Plex_MiSTer/rtl/h264_hybrid_mb_own.sv \
   fpga/Plex_MiSTer/rtl/h264_recon_frame_store.sv \
   fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv fpga/Plex_MiSTer/rtl/h264_byte_ram_sp.sv \
   fpga/Plex_MiSTer/rtl/h264_i16_dc_hadamard.sv fpga/Plex_MiSTer/rtl/h264_i16_dc_hadamard_serial.sv fpga/Plex_MiSTer/rtl/h264_dequant4x4_serial.sv \
@@ -87,6 +88,7 @@ echo "test_h264_multinal_stream_path: OK refuses implicit unproven defaults rc=$
   fpga/Plex_MiSTer/rtl/h264_deblock.sv \
   fpga/Plex_MiSTer/rtl/h264_dpb.sv \
   fpga/Plex_MiSTer/rtl/decode_stub.sv \
+  fpga/Plex_MiSTer/rtl/h264_hybrid_mb_own.sv \
   fpga/Plex_MiSTer/rtl/h264_recon_frame_store.sv \
   fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv fpga/Plex_MiSTer/rtl/h264_byte_ram_sp.sv \
   fpga/Plex_MiSTer/rtl/h264_i16_dc_hadamard.sv fpga/Plex_MiSTer/rtl/h264_i16_dc_hadamard_serial.sv fpga/Plex_MiSTer/rtl/h264_dequant4x4_serial.sv \

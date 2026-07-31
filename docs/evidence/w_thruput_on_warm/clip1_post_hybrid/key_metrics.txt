@@ -1,0 +1,4 @@
+607:SINK_CY_BREAKDOWN total=480177 idle_wb=38674 idle_pend=300 idle_ready=67227 init=0 settle=5917 i16nb=10176 i16pred=57239 had=4199 i4nb=41029 iq=87664 apply=83872 dump=83659
+795:STAGE_CYCLES frame=0 parse_cycles=289 paint_cycles=671894 parse_per_mb=0.963 paint_per_mb=2239.647
+872:LUMA_PROGRESS frame0 y_mb=300/300 y_blk4=4800/4800 y_px=76800/76800 y_mae=0.000000
+882:OK real-ref XOR twin: candidates differ (clean=1382400 xor=1382400)

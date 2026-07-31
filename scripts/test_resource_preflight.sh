@@ -54,12 +54,16 @@ fail() {
 
 # --- 1. local Quartus ---------------------------------------------------------
 # Match the binaries, not a shell pattern that would also match this script.
-quartus_procs="$(ps -eo pid,rss,comm 2>/dev/null \
-  | awk '$3 ~ /^quartus_(fit|sh|sta|map|asm)$/ {printf "    pid=%s rss=%sKB %s\n", $1, $2, $3}')"
-if [[ -n "$quartus_procs" ]]; then
-  echo "Local Quartus processes detected:" >&2
-  echo "$quartus_procs" >&2
-  fail "a local Quartus fit is running (fits are remote-only: scripts/build_rbf_remote.sh slotN)"
+# Fixture unit tests set MISTERPLEX_PREFLIGHT_SKIP_QUARTUS=1 so synthetic meminfo
+# cases are not contaminated by an unrelated live fit on the shared lab host.
+if [[ "${MISTERPLEX_PREFLIGHT_SKIP_QUARTUS:-0}" != "1" ]]; then
+  quartus_procs="$(ps -eo pid,rss,comm 2>/dev/null \
+    | awk '$3 ~ /^quartus_(fit|sh|sta|map|asm)$/ {printf "    pid=%s rss=%sKB %s\n", $1, $2, $3}')"
+  if [[ -n "$quartus_procs" ]]; then
+    echo "Local Quartus processes detected:" >&2
+    echo "$quartus_procs" >&2
+    fail "a local Quartus fit is running (fits are remote-only: scripts/build_rbf_remote.sh slotN)"
+  fi
 fi
 
 # --- 2. paging rate -----------------------------------------------------------

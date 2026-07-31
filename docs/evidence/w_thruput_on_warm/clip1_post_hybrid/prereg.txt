@@ -1,0 +1,1 @@
+PRE-REG paint_per_mb_f0=2239.647 luma=300/300 RED=0/300

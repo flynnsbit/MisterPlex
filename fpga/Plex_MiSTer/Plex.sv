@@ -684,13 +684,6 @@ stream_path #(
 	.p_mb_count(),
 	.p_slice_done(),
 	.p_traverse_busy(),
-.first_mb_mvd_x(),
-	.first_mb_mvd_y(),
-	.product_fetch_mv_x(),
-	.product_fetch_mv_y(),
-	.product_luma_origin_x(),
-	.product_luma_origin_y(),
-
 	.fs_swap(stub_swap)
 );
 

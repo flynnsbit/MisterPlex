@@ -249,6 +249,14 @@
       "required_substrings": [
         "FAIL h264_inter_nb_mvd: c_fallback avail got a=1 b=1 c=0 d=0"
       ]
+    },
+    {
+      "id": "h264_baseline_syntax_sign_flip_mvd",
+      "owner": "tests/unit/test_h264_baseline_syntax_rtl_sim.sh",
+      "why": "Sign-flipping decoded mvd_l0 se(v) must fail the synthetic P16x16 non-zero MVD golden.",
+      "required_substrings": [
+        "P16x16 mvd_l0 se(v) decode mismatch"
+      ]
     }
   ]
 }

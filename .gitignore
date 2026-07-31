@@ -35,3 +35,7 @@ artifacts/local/
 !release_artifacts/
 !release_artifacts/**
 tests/unit/test_input_mailbox
+
+# Binary plane dumps under evidence (invariants scans docs/ as text)
+docs/evidence/**/*.i420
+docs/evidence/**/*.yuv

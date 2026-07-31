@@ -75,6 +75,9 @@ module decode_stub #(
 	// Parsed first-MB mvd_l0 se(v) from slice_hdr_parser (qpel).
 	input  wire signed [15:0] first_mb_mvd_x,
 	input  wire signed [15:0] first_mb_mvd_y,
+	// P3-3l5: PPS entropy + first I mb_type for hybrid ownership
+	input  wire        entropy_cabac,
+	input  wire [7:0]  first_mb_type_i, // I-slice mb_type when has_mb_type
 	// 3.3g/j/k: first-MB residual cue for eyes-on recon stub
 	input  wire        residual_ok,
 	input  wire [4:0]  residual_tc,
@@ -87,6 +90,13 @@ module decode_stub #(
 	output reg  [7:0]  recon_dbg,
 	output reg         recon_dbg_valid,
 	output reg         recon_valid,
+
+	// P3-3l5 hybrid product handoff (see h264_hybrid_mb_own.sv)
+	output reg         hybrid_fpga_owned,
+	output reg         hybrid_host_required,
+	output reg         product_recon_ok,
+	output reg  [2:0]  hybrid_own_code,
+	output reg  [3:0]  hybrid_own_reason,
 
 	// Product MV actually driven into h264_dpb_one_ref (post MVP+mvd).
 	output reg  signed [15:0] product_fetch_mv_x,
@@ -117,6 +127,43 @@ module decode_stub #(
 	localparam [2:0] PH_PAINT = 3'd2;
 	localparam [2:0] PH_FETCH = 3'd3;
 	localparam [2:0] PH_DPB_FILL = 3'd4;
+
+	// P3-3l5 hybrid latches
+	reg            lat_cabac;
+	reg            lat_hybrid_host;
+	reg            lat_hybrid_fpga;
+	reg [2:0]      lat_hybrid_code;
+	reg [3:0]      lat_hybrid_reason;
+
+	wire        hy_fpga;
+	wire        hy_host;
+	wire        hy_product_mb;
+	wire [2:0]  hy_code;
+	wire [3:0]  hy_reason;
+	wire        hy_is_p = slice_valid && !slice_is_i;
+	wire        hy_p_inter = hy_is_p && has_mb_type && !first_mb_intra &&
+	                         (first_mb_p_skip || (first_mb_part_mode <= 3'd4));
+	h264_hybrid_mb_own u_hybrid_mb (
+		.slice_is_i(slice_is_i || (last_nal_type[4:0] == 5'd5)),
+		.entropy_cabac(entropy_cabac),
+		.fail_mb(1'b0),
+		.mb_valid(slice_valid && has_mb_type),
+		.mb_type(first_mb_type_i),
+		.is_p_slice_mb(hy_is_p),
+		.p_skipped(first_mb_p_skip),
+		.p_is_intra(first_mb_intra),
+		.p_is_inter(hy_p_inter),
+		.p_uses_sub_mb(first_mb_uses_sub_mb),
+		.p_part_mode(first_mb_part_mode),
+		.p_unsupported(hy_is_p && has_mb_type && !first_mb_intra && !hy_p_inter && !first_mb_p_skip),
+		.fpga_owned(hy_fpga),
+		.host_required(hy_host),
+		.product_mb_ok(hy_product_mb),
+		.own_code(hy_code),
+		.own_reason(hy_reason)
+	);
+	wire _hy_keep = hy_product_mb;
+
 	// Park first-MB IDR recon into recon_store before DPB fill (legacy place path).
 	localparam [2:0] PH_IDR_STORE = 3'd5;
 	// Real-ref I-slice: wait for residual walk + multi-MB store, then DPB fill.
@@ -951,6 +998,16 @@ module decode_stub #(
 			x             <= 0;
 			y             <= 0;
 			frames_out    <= 0;
+			lat_cabac <= 0;
+			lat_hybrid_host <= 0;
+			lat_hybrid_fpga <= 0;
+			lat_hybrid_code <= 0;
+			lat_hybrid_reason <= 0;
+			hybrid_fpga_owned <= 0;
+			hybrid_host_required <= 0;
+			product_recon_ok <= 0;
+			hybrid_own_code <= 0;
+			hybrid_own_reason <= 0;
 			is_idr_frame  <= 0;
 			is_i_frame    <= 0;
 			lat_type      <= 0;
@@ -1105,6 +1162,16 @@ module decode_stub #(
 			// first-MB-only FETCH fallback when walker is not driving (unit TBs
 			// that tie trav_mb_valid=0). Product path disables via
 			// ENABLE_FIRST_MB_P_FETCH=0. Cancel if walker produces an MB.
+			// Sticky OR host_required while slice is live (never silent FPGA claim).
+			if (entropy_cabac)
+				lat_cabac <= 1'b1;
+			if (slice_valid && has_mb_type) begin
+				lat_hybrid_fpga <= hy_fpga;
+				lat_hybrid_code <= hy_code;
+				lat_hybrid_reason <= hy_reason;
+				if (hy_host || entropy_cabac)
+					lat_hybrid_host <= 1'b1;
+			end
 			if (ENABLE_FIRST_MB_P_FETCH && p_fetch_edge && !use_trav) begin
 				pending_p_skip <= first_mb_p_skip;
 				pending_p_mb_x <= p_req_mb_x;
@@ -1139,6 +1206,15 @@ module decode_stub #(
 				lat_idr  <= idr_count;
 				lat_p_inter <= 1'b0;
 				lat_inter_recon_ok <= 1'b0;
+				// Clear hybrid stickies for new VCL
+				lat_cabac <= entropy_cabac;
+				lat_hybrid_host <= 1'b0;
+				lat_hybrid_fpga <= 1'b0;
+				lat_hybrid_code <= 3'd0;
+				lat_hybrid_reason <= 4'd0;
+				product_recon_ok <= 1'b0;
+				hybrid_host_required <= 1'b0;
+				hybrid_fpga_owned <= 1'b0;
 			end else if (vcl_pulse && (last_nal_type[4:0] == 5'd1) &&
 			             !use_trav && !trav_mb_valid) begin
 				// Remember P VCL identity; FETCH starts on trav_mb_ready.
@@ -1147,6 +1223,12 @@ module decode_stub #(
 				lat_idr  <= idr_count;
 				lat_p_inter <= 1'b0;
 				lat_inter_recon_ok <= 1'b0;
+				lat_cabac <= entropy_cabac;
+				lat_hybrid_host <= 1'b0;
+				lat_hybrid_fpga <= 1'b0;
+				product_recon_ok <= 1'b0;
+				hybrid_host_required <= 1'b0;
+				hybrid_fpga_owned <= 1'b0;
 			end else if (trav_mb_ready && trav_intra) begin
 				// Intra-in-P: accept beat, no MC (other lanes own intra recon)
 				lat_p_intra <= 1'b1;
@@ -1155,6 +1237,12 @@ module decode_stub #(
 				// Start / continue P slice from walker event
 				phase <= PH_FETCH;
 				busy <= 1'b1;
+				// P-fetch path is host-required under default CAP_INTER_*=0.
+				lat_hybrid_host <= 1'b1;
+				lat_hybrid_fpga <= 1'b0;
+				lat_hybrid_code <= 3'd1; // OWN_HOST_INTER
+				lat_hybrid_reason <= 4'd5; // RSN_INTER
+				product_recon_ok <= 1'b0;
 				lat_type <= 8'd1;
 				lat_nalu <= nalu_count;
 				lat_idr <= idr_count;
@@ -1673,6 +1761,13 @@ module decode_stub #(
 				               {1'b0, lat_inter_recon_ok, lat_p_inter, dpb_ref_ready, 4'd0};
 				recon_dbg_valid <= 1'b1;
 				recon_valid <= lat_res_ok | lat_inter_recon_ok;
+				hybrid_fpga_owned <= lat_hybrid_fpga && !lat_hybrid_host && !lat_cabac;
+				hybrid_host_required <= lat_hybrid_host | lat_cabac | lat_p_inter;
+				hybrid_own_code <= lat_hybrid_code;
+				hybrid_own_reason <= lat_hybrid_reason;
+				// Doc §3.3l-5: product sticky only for pure FPGA-owned I path.
+				product_recon_ok <= is_i_frame && lat_res_ok && lat_hybrid_fpga &&
+				                    !lat_hybrid_host && !lat_cabac && !lat_p_inter;
 `ifdef VERILATOR
 				// Cumulative store-write localisation (last paint line is final).
 				// dbg_store_wr_* = enqueues; STORE_MB_BITMAP = unique addresses.

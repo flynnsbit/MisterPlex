@@ -5,9 +5,12 @@ PREFLIGHT="$ROOT/scripts/test_resource_preflight.sh"
 FIX="$ROOT/tests/fixtures/preflight"
 
 run_preflight() {
+  # Fixtures prove refusal shapes; never inherit live ALLOW override or live Quartus.
+  MISTERPLEX_ALLOW_LOW_MEMORY_TESTS=0 \
   MISTERPLEX_PREFLIGHT_SAMPLE_SECONDS=1 \
   MISTERPLEX_PREFLIGHT_VMSTAT="$FIX/vmstat_quiet" \
   MISTERPLEX_PREFLIGHT_MEMINFO="$1" \
+  MISTERPLEX_PREFLIGHT_SKIP_QUARTUS=1 \
   "$PREFLIGHT"
 }
 

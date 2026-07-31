@@ -6655,8 +6655,8 @@ Note: Fitter may spread logical memories into multiple blocks to improve timing.
 ; Setting                   ; Value  ;
 +---------------------------+--------+
 ; Nominal Core Voltage      ; 1.10 V ;
-; Low Junction Temperature  ; -40 °C ;
-; High Junction Temperature ; 100 °C ;
+; Low Junction Temperature  ; -40 Â°C ;
+; High Junction Temperature ; 100 Â°C ;
 +---------------------------+--------+
 
 
