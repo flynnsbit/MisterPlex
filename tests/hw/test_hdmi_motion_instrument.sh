@@ -6,13 +6,18 @@
 # negative (one real frame duplicated N times).
 #
 # RED-before-GREEN contract:
-#   known-good bursts → MOTION_OK (rc=0)
-#   duplicated-frame  → FREEZE    (rc=1)
-#   empty/missing     → UNSCORED  (rc=77)  — never a pass
+#   known-good bursts → MOTION_OK  (rc=0)
+#   duplicated-frame  → FREEZE     (rc=1)
+#   green-cast field  → COLOR_FAIL (rc=2)  — hard FAIL even with decodes=0
+#   empty/missing     → UNSCORED   (rc=77) — never a pass; never a measured failure
+#
+# Severity: any positively-detected failure outranks UNSCORED. COLOR_FAIL beats
+# FREEZE when both apply (report keeps motion= dimension for RCA).
 #
 # Usage:
 #   ./tests/hw/test_hdmi_motion_instrument.sh
 #   LONG_DIR=/path/to/f_*.png ./tests/hw/test_hdmi_motion_instrument.sh
+#   GOOD_240P_DIR=... GREEN_CAST_DIR=...  # optional parent hardware captures
 #
 set -euo pipefail
 
@@ -29,6 +34,10 @@ LONG_DIR="${LONG_DIR:-/tmp/long}"
 RK3_FRAME="${RK3_FRAME:-/tmp/rk3_1/f_038.png}"
 SOAK_DIRS="${SOAK_DIRS:-/tmp/soak1 /tmp/soak2 /tmp/soak3 /tmp/soak4}"
 CC_DIRS="${CC_DIRS:-/tmp/cc1 /tmp/cc2 /tmp/cc3}"
+# Parent hardware captures (known-good 240p / broken native-480p full green).
+# Override if paths move; empty string disables.
+GOOD_240P_DIR="${GOOD_240P_DIR:-/tmp/p240v}"
+GREEN_CAST_DIR="${GREEN_CAST_DIR:-/tmp/p480}"
 
 # Scratch under the repo (agent rule: never write /tmp for our own artifacts).
 WORK="$ROOT/.agent-work/hdmi-motion-instrument-$$"
@@ -163,6 +172,54 @@ if [[ "$rc" -eq 77 ]]; then
 else
   echo "  FAIL empty-UNSCORED true_rc=$rc"
   fail=$((fail + 1))
+fi
+
+# 6. COLOR_FAIL hard path — synthetic full-green field (parent 480p class).
+#    decodes=0 is expected (no yellow overlay); must still be rc=2, NOT 77.
+GDIR="$WORK/green_cast_synth"
+mkdir -p "$GDIR"
+python3 - <<'PY' "$GDIR"
+import sys
+from pathlib import Path
+import numpy as np
+from PIL import Image
+out = Path(sys.argv[1])
+# mean_rgb ~41.7, green_frac=1.0 → green_cast True (U,V~0 full-green class)
+arr = np.zeros((180, 320, 3), dtype=np.uint8)
+arr[:, :] = (20, 90, 15)
+for i in range(12):
+    Image.fromarray(arr).save(out / f"f_{i:03d}.png")
+PY
+run_case "synth-green-COLOR_FAIL" 2 "$GDIR"
+
+# 7. FREEZE + green-cast → COLOR_FAIL wins (rc=2); colour outranks freeze.
+FGDIR="$WORK/freeze_green_synth"
+mkdir -p "$FGDIR"
+python3 - <<'PY' "$FGDIR"
+import sys
+from pathlib import Path
+import numpy as np
+from PIL import Image
+out = Path(sys.argv[1])
+arr = np.zeros((180, 320, 3), dtype=np.uint8)
+arr[:, :] = (25, 88, 18)
+for i in range(12):
+    Image.fromarray(arr).save(out / f"f_{i:03d}.png")
+PY
+run_case "synth-freeze-green-COLOR_FAIL" 2 "$FGDIR"
+
+# 8. Optional parent hardware dirs (if provided / present)
+if [[ -n "$GOOD_240P_DIR" && -d "$GOOD_240P_DIR" ]] && compgen -G "$GOOD_240P_DIR/f_*.png" >/dev/null; then
+  run_case "parent-good-240p-MOTION_OK" 0 "$GOOD_240P_DIR"
+else
+  echo "SKIP parent-good-240p (set GOOD_240P_DIR=... to include)"
+  skip=$((skip + 1))
+fi
+if [[ -n "$GREEN_CAST_DIR" && -d "$GREEN_CAST_DIR" ]] && compgen -G "$GREEN_CAST_DIR/f_*.png" >/dev/null; then
+  run_case "parent-green-cast-COLOR_FAIL" 2 "$GREEN_CAST_DIR"
+else
+  echo "SKIP parent-green-cast (set GREEN_CAST_DIR=... to include)"
+  skip=$((skip + 1))
 fi
 
 echo "=== SUMMARY pass=$pass fail=$fail skip=$skip ==="

@@ -14,10 +14,30 @@ from a directory of HDMI PNGs and emits a hard verdict.
 
 Verdicts / exit codes
 ---------------------
-  MOTION_OK   rc=0   counter strictly advances across the burst
-  FREEZE      rc=1   counter pinned (same n, enough confident reads)
-  COLOR_FAIL  rc=2   green-cast fingerprint of broken c5382bee+old-daemon pair
-  UNSCORED    rc=77  not enough decodes / overlay invisible — NEVER a pass
+  MOTION_OK   rc=0   counter strictly advances across the burst (colour OK)
+  FREEZE      rc=1   counter pinned (same n, enough confident reads); colour OK
+  COLOR_FAIL  rc=2   green-cast fingerprint positively measured (hard FAIL)
+  UNSCORED    rc=77  no positive failure AND no positive pass — NEVER a pass
+
+Severity resolution (highest wins — explicit, non-negotiable)
+-------------------------------------------------------------
+  1. COLOR_FAIL  — any positively detected green-cast (enough frames) hard-fails
+                   at rc=2, **regardless of whether the counter could be OCR'd**.
+                   Colour is independent evidence; motion need not be scorable.
+                   A green field often *prevents* overlay OCR (yellow-on-green),
+                   so "decodes=0" and "colour broken" are correlated — colour
+                   must be allowed to decide alone. (Parent RCA: native 480p
+                   DECODE=624x480 full green field was flagged GREEN_CAST_FAIL
+                   then wrongly reported UNSCORED rc=77; that leak is closed.)
+  2. FREEZE      — counter pinned with colour OK. Hard fail rc=1.
+  3. MOTION_OK   — counter advances with colour OK. Pass rc=0.
+  4. UNSCORED    — no overlay/counter AND no colour verdict. Soft-skip rc=77.
+                   Soft-skip is never a pass AND must never report a condition
+                   we have positively measured to be a failure.
+
+  FREEZE + green-cast → COLOR_FAIL (rc=2). Both are hard fails; colour wins
+  because it is the more specific actionable RCA class (UV plane / chroma path)
+  and remains visible in the report as motion=FREEZE color=GREEN_CAST_FAIL.
 
 Grabber warm-up
 ---------------
@@ -26,6 +46,10 @@ MacroSilicon 534d:2109 emits ~11-15 uniform junk frames (and a single
 discarded and never scored as FREEZE. Frames where the yellow overlay is not
 visible are also not scored as FREEZE (black content / flash without a clean
 overlay read → contribute nothing, not a pin).
+
+Bright-frame OCR (yellow on white flash) is best-effort only. Template tier-6
+reads never enter the burst motion sequence alone — only OCR tier>=7 (or the
+overlay-bitmap secondary signal) can produce MOTION_OK / FREEZE.
 
 Usage
 -----
@@ -70,8 +94,11 @@ RC_UNSCORED = 77
 DEFAULT_WARMUP_SKIP = 15
 DEFAULT_MIN_READS = 3
 # Broken c5382bee + old-daemon green-cast fingerprint (parent-measured).
+# Also matches native-480p full-green fields (U,V~0): high green_frac, mid mean.
 GREEN_MEAN_LO, GREEN_MEAN_HI = 55.0, 95.0
 GREEN_FRAC_HARD = 0.85
+# Minimum positively-flagged frames before colour alone hard-fails the burst.
+GREEN_CAST_MIN_FRAMES = 3
 
 
 # ---------------------------------------------------------------------------
@@ -665,9 +692,10 @@ def score_burst(
         usable.append(r)
 
     ok_reads = [r for r in usable if r["status"] == "ok" and r["n"] is not None]
-    # Prefer high-tier reads for the sequence; fall back to all ok.
+    # Burst motion sequence uses OCR-grade reads only (tier >= 7).
+    # Template tier-6 (flash best-effort) must never manufacture MOTION_OK alone.
     strong = [r for r in ok_reads if int(r.get("tier") or 0) >= 7]
-    seq_src = strong if len(strong) >= min_reads else ok_reads
+    seq_src = strong
     ns_raw = [int(r["n"]) for r in seq_src]
     ns = _filter_counter_outliers(ns_raw)
 
@@ -681,7 +709,14 @@ def score_burst(
     ]
     unique_fps = sorted(set(dark_fps))
 
-    green_hits = [r for r in results if r.get("green_cast")]
+    # Colour is scored on every non-warmup frame (including those with no overlay).
+    green_hits = [
+        r
+        for r in results
+        if r.get("green_cast") and r.get("status") != "warmup"
+    ]
+    color_fail = len(green_hits) >= GREEN_CAST_MIN_FRAMES
+    color = "GREEN_CAST_FAIL" if color_fail else "COLOR_OK"
 
     motion = "UNSCORED"
     reason = ""
@@ -743,14 +778,19 @@ def score_burst(
                 f"med={first_med}->{last_med} mode_frac={mode_frac:.2f}"
             )
 
-    color = "GREEN_CAST_FAIL" if green_hits else "COLOR_OK"
-
-    if green_hits and motion == "MOTION_OK":
+    # --- Severity resolution (see module docstring). Positive failure wins. ---
+    if color_fail:
+        # Colour defect alone is a hard FAIL even when motion is UNSCORED
+        # (green-on-green overlay is often unreadable — that is a symptom).
         final, rc = "COLOR_FAIL", RC_COLOR_FAIL
-    elif motion == "MOTION_OK":
-        final, rc = "MOTION_OK", RC_MOTION_OK
+        reason = (
+            f"green_cast_frames={len(green_hits)}>={GREEN_CAST_MIN_FRAMES} "
+            f"(hard FAIL independent of motion={motion}); {reason}"
+        )
     elif motion == "FREEZE":
         final, rc = "FREEZE", RC_FREEZE
+    elif motion == "MOTION_OK":
+        final, rc = "MOTION_OK", RC_MOTION_OK
     else:
         final, rc = "UNSCORED", RC_UNSCORED
 
@@ -809,6 +849,8 @@ def _print_human(report: dict[str, Any], src: str) -> None:
 
 def _self_test() -> int:
     """Lightweight pure checks (no capture dir required)."""
+    import tempfile
+
     # Uniform frame → warmup
     uni = np.full((108, 192, 3), 7, dtype=np.uint8)
     b, roi, st = find_overlay(uni)
@@ -820,7 +862,7 @@ def _self_test() -> int:
     b, roi, st = find_overlay(dark)
     assert st == "ok" and b is not None and roi is not None, (st, roi)
 
-    # Green-cast fingerprint
+    # Green-cast fingerprint (parent 480p full-green / old-daemon class)
     garbage = np.zeros((100, 100, 3), dtype=np.uint8)
     garbage[:, :] = (20, 90, 15)
     gc = green_cast_metrics(garbage)
@@ -835,6 +877,37 @@ def _self_test() -> int:
     assert _parse_counter("NTSC2397 n=166") == (166, 10)
     assert _parse_counter("n=42")[0] == 42
     assert _parse_counter("nope")[0] is None
+
+    # Severity: green-cast with no overlay → COLOR_FAIL rc=2, NOT UNSCORED 77.
+    with tempfile.TemporaryDirectory(prefix="hdmi_motion_st_") as td:
+        tdp = Path(td)
+        for i in range(8):
+            arr = np.zeros((120, 160, 3), dtype=np.uint8)
+            arr[:, :] = (20, 90, 15)  # full green field, no yellow overlay
+            Image.fromarray(arr).save(tdp / f"f_{i:03d}.png")
+        frames = sorted(str(p) for p in tdp.glob("f_*.png"))
+        rep = score_burst(frames, warmup_skip=0, min_reads=3)
+        assert rep["color"] == "GREEN_CAST_FAIL", rep
+        assert rep["green_cast_frames"] >= GREEN_CAST_MIN_FRAMES, rep
+        assert rep["motion"] == "UNSCORED", rep
+        assert rep["verdict"] == "COLOR_FAIL", rep
+        assert rep["rc"] == RC_COLOR_FAIL, rep
+
+        # FREEZE + green-cast → COLOR_FAIL wins (more specific RCA); motion kept.
+        # Build by painting green over identical frames (no counter → bitmap freeze
+        # path may UNSCORE; force colour path still COLOR_FAIL).
+        gdir = tdp / "freeze_green"
+        gdir.mkdir()
+        base = np.zeros((120, 160, 3), dtype=np.uint8)
+        base[:, :] = (25, 88, 18)
+        for i in range(8):
+            Image.fromarray(base).save(gdir / f"f_{i:03d}.png")
+        rep2 = score_burst(
+            sorted(str(p) for p in gdir.glob("f_*.png")),
+            warmup_skip=0,
+            min_reads=3,
+        )
+        assert rep2["rc"] == RC_COLOR_FAIL and rep2["verdict"] == "COLOR_FAIL", rep2
 
     print("SELF_TEST_OK")
     return 0
