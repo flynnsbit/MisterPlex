@@ -23,4 +23,5 @@ PARENT
 - merge before DDR promote over SPI daily
 - device: LIVE user-startup.sh must be v2 (underscore alone is green-blind trap)
 - no Quartus this lane
-land_sha: d708eb25
+land_sha: 7bbb0815
+docs_tip=5b8d49b8

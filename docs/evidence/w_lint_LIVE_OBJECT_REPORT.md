@@ -2,7 +2,7 @@
 
 **Branch:** `w-lint-gate-integrity`  
 **Base before this land:** `7acfbe54`
-**Land SHA:** `d708eb25`  
+**Land SHA:** `7bbb0815`
 **Lane:** GATE-INTEGRITY (w-lint)  
 **Scope:** host/static only — no device, no Quartus  
 
