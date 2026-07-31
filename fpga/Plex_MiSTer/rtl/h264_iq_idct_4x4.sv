@@ -56,6 +56,67 @@ module h264_dequant4x4 (
 		end
 	endfunction
 
+// QP/6 without vendor divide IP (wire6 burned ~60 ALMs on Div0+Mod0).
+	function automatic [2:0] qp_mod6;
+		input [5:0] q;
+		begin
+			case (q)
+			6'd0, 6'd6, 6'd12, 6'd18, 6'd24, 6'd30, 6'd36, 6'd42, 6'd48: qp_mod6 = 3'd0;
+			6'd1, 6'd7, 6'd13, 6'd19, 6'd25, 6'd31, 6'd37, 6'd43, 6'd49: qp_mod6 = 3'd1;
+			6'd2, 6'd8, 6'd14, 6'd20, 6'd26, 6'd32, 6'd38, 6'd44, 6'd50: qp_mod6 = 3'd2;
+			6'd3, 6'd9, 6'd15, 6'd21, 6'd27, 6'd33, 6'd39, 6'd45, 6'd51: qp_mod6 = 3'd3;
+			6'd4, 6'd10, 6'd16, 6'd22, 6'd28, 6'd34, 6'd40, 6'd46:       qp_mod6 = 3'd4;
+			default:                                                     qp_mod6 = 3'd5; // 5,11,...,47
+			endcase
+		end
+	endfunction
+
+	function automatic [3:0] qp_div6;
+		input [5:0] q;
+		begin
+			case (q)
+			6'd0,  6'd1,  6'd2,  6'd3,  6'd4,  6'd5:  qp_div6 = 4'd0;
+			6'd6,  6'd7,  6'd8,  6'd9,  6'd10, 6'd11: qp_div6 = 4'd1;
+			6'd12, 6'd13, 6'd14, 6'd15, 6'd16, 6'd17: qp_div6 = 4'd2;
+			6'd18, 6'd19, 6'd20, 6'd21, 6'd22, 6'd23: qp_div6 = 4'd3;
+			6'd24, 6'd25, 6'd26, 6'd27, 6'd28, 6'd29: qp_div6 = 4'd4;
+			6'd30, 6'd31, 6'd32, 6'd33, 6'd34, 6'd35: qp_div6 = 4'd5;
+			6'd36, 6'd37, 6'd38, 6'd39, 6'd40, 6'd41: qp_div6 = 4'd6;
+			6'd42, 6'd43, 6'd44, 6'd45, 6'd46, 6'd47: qp_div6 = 4'd7;
+			default:                                   qp_div6 = 4'd8; // 48..51
+			endcase
+		end
+	endfunction
+
+	// c * norm_adjust via shift-add. norm_adjust ∈ {10,11,13,14,16,18,20,23,25,29}.
+	// Replaces two DSP mults per coeff (norm*16 and c*qmul) — wire6: 32 DSP on this module.
+	function automatic signed [31:0] mul_norm_adjust;
+		input signed [15:0] c;
+		input [4:0] n;
+		reg signed [31:0] x;
+		begin
+			// Explicit sext avoids WIDTHEXPAND on 16→32 assign (lint baseline).
+			x = {{16{c[15]}}, c};
+			case (n)
+			5'd10: mul_norm_adjust = (x <<< 3) + (x <<< 1);                         // 8+2
+			5'd11: mul_norm_adjust = (x <<< 3) + (x <<< 1) + x;                     // 8+2+1
+			5'd13: mul_norm_adjust = (x <<< 3) + (x <<< 2) + x;                     // 8+4+1
+			5'd14: mul_norm_adjust = (x <<< 3) + (x <<< 2) + (x <<< 1);             // 8+4+2
+			5'd16: mul_norm_adjust = (x <<< 4);                                     // 16
+			5'd18: mul_norm_adjust = (x <<< 4) + (x <<< 1);                         // 16+2
+			5'd20: mul_norm_adjust = (x <<< 4) + (x <<< 2);                         // 16+4
+			5'd23: mul_norm_adjust = (x <<< 4) + (x <<< 2) + (x <<< 1) + x;         // 16+4+2+1
+			5'd25: mul_norm_adjust = (x <<< 4) + (x <<< 3) + x;                     // 16+8+1
+			default: mul_norm_adjust = (x <<< 4) + (x <<< 3) + (x <<< 2) + x;       // 29 = 16+8+4+1
+			endcase
+		end
+	endfunction
+
+	// Bit-exact with host h264_recon.hpp / prior RTL (32-bit int path):
+	//   qmul = (norm_adjust * 16) << (qdiv+2) = norm_adjust << (qdiv+6)
+	//   v    = (c * qmul + 32) >> 6
+	// Equiv: ((c * na) << (qdiv+6) + 32) >> 6 with 32-bit wrap.
+	// w-area: comb shift-add; keeps 0-cycle latency. TIP assign wiring preserved.
 	function automatic signed [28:0] dequant_one;
 		input signed [15:0] c;
 		input [5:0] q;
@@ -65,7 +126,8 @@ module h264_dequant4x4 (
 		reg [1:0] mi;
 		reg [2:0] qmod;
 		reg [3:0] qdiv;
-		reg signed [31:0] qmul;
+		reg [4:0] na;
+		reg signed [31:0] prod;
 		reg signed [31:0] v;
 		begin
 			if (skip_dc)
@@ -78,15 +140,15 @@ module h264_dequant4x4 (
 				mi = 2'd1;
 			else
 				mi = 2'd2;
-			// q is [5:0] (0..51); q%6 fits 3 bits, q/6 fits 4 bits (0..8).
-			qmod = 3'(q % 6'd6);
-			qdiv = 4'(q / 6'd6);
-			qmul = $signed({1'b0, norm_adjust(qmod, mi)}) * 32'sd16;
-			qmul = qmul <<< (qdiv + 4'd2);
-			v = ($signed(c) * qmul + 32'sd32) >>> 6;
+			qmod = qp_mod6(q);
+			qdiv = qp_div6(q);
+			na = norm_adjust(qmod, mi);
+			prod = mul_norm_adjust(c, na);
+			v = ((prod <<< (qdiv + 4'd6)) + 32'sd32) >>> 6;
 			dequant_one = v[28:0];
 		end
 	endfunction
+
 
 	// row-major output: dequant[zigzag(scan)] receives coeff[scan]
 	assign dequant[0]  = (max_coeff > 5'd0)  ? dequant_one(coeff[0],  qp, 5'd0,  1'b0) : 29'sd0;
