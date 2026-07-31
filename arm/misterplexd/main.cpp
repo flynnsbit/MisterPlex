@@ -292,9 +292,10 @@ int main(int argc, char** argv) {
     player.setPresentMode(presentMode);
     player.setPresentScaleToStore(presentScaleToStore);
     player.setDecodeSize(decodeW, decodeH);
-    std::fprintf(stderr, "misterplexd: PRESENT=%s PRESENT_SCALE_TO_STORE=%s decode=%dx%d\n",
-                 presentMode.c_str(), presentScaleToStore ? "1" : "0",
-                 player.decodeW(), player.decodeH());
+    // conf decodeW/H stay as requested; all telemetry uses effective via player.
+    const std::string decodeLabel = player.decodeGeometryLabel();
+    std::fprintf(stderr, "misterplexd: PRESENT=%s PRESENT_SCALE_TO_STORE=%s decode=%s\n",
+                 presentMode.c_str(), presentScaleToStore ? "1" : "0", decodeLabel.c_str());
     // Keep PMS weak ladder aligned with effective (possibly clamped) decode.
     {
         const int ew = player.decodeW();
@@ -933,13 +934,15 @@ int main(int argc, char** argv) {
     // Fail-soft: logs skip/success/failure; never blocks companion or playback.
     plexTv.start();
 
+    // Effective geometry only — conf DECODE=624x480 must not appear as the live size
+    // after hybrid store clamp (parent-measured lie 2026-07-30).
     std::fprintf(stderr,
-                 "misterplexd: running name=%s id=%s port=%d pms=%s servers=%zu decode=%dx%d "
+                 "misterplexd: running name=%s id=%s port=%d pms=%s servers=%zu decode=%s "
                  "weak=%s@%dk present=%s auto_next=%d subs=%s plextv=%d\n",
                  name.c_str(), machineId.c_str(), port, defaultPms.c_str(), servers.size(),
-                 decodeW, decodeH, weak.videoResolution.c_str(), weak.maxVideoBitrateKbps,
-                 presentMode.c_str(), autoNext ? 1 : 0, subtitleMode.c_str(),
-                 plexTvAnnounce ? 1 : 0);
+                 player.decodeGeometryLabel().c_str(), weak.videoResolution.c_str(),
+                 weak.maxVideoBitrateKbps, presentMode.c_str(), autoNext ? 1 : 0,
+                 subtitleMode.c_str(), plexTvAnnounce ? 1 : 0);
     for (size_t i = 0; i < servers.size(); ++i)
         std::fprintf(stderr, "misterplexd:   server[%zu]=%s%s\n", i, servers[i].c_str(),
                      i == 0 ? " (default)" : "");

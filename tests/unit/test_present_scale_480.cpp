@@ -90,6 +90,31 @@ int main() {
     CHECK(planDecodeForHybridStore(624, 480, true, false).will_scale_at_present == false);
     CHECK(planDecodeForHybridStore(624, 480, true, false).clamped == true);
 
+    // --- Banner / status label: EFFECTIVE geometry, not conf request ---
+    // Parent-measured defect: running banner printed decode=624x480 after clamp.
+    {
+        const DecodeStorePlan p = planDecodeForHybridStore(624, 480, true, false);
+        CHECK(p.clamped == true);
+        CHECK(p.decode_w == 320 && p.decode_h == 240);
+        const std::string label =
+            formatDecodeGeometryLabel(p.decode_w, p.decode_h, 624, 480, p.clamped);
+        // Must lead with effective size
+        CHECK(label.rfind("320x240", 0) == 0);
+        CHECK(label.find("clamped from 624x480") != std::string::npos);
+        // Must NOT report requested as the bare primary value
+        CHECK(label.rfind("624x480", 0) != 0);
+        // Unclamped path: bare effective, no annotation
+        const std::string plain =
+            formatDecodeGeometryLabel(320, 240, 320, 240, /*clamped*/ false);
+        CHECK(plain == "320x240");
+        // Scale opt-in keeps 624 as effective (not clamped)
+        const DecodeStorePlan ps = planDecodeForHybridStore(624, 480, true, true);
+        const std::string scaleLabel =
+            formatDecodeGeometryLabel(ps.decode_w, ps.decode_h, 624, 480, ps.clamped);
+        CHECK(scaleLabel == "624x480");
+        CHECK(scaleLabel.find("clamped") == std::string::npos);
+    }
+
     if (fails) {
         std::fprintf(stderr, "test_present_scale_480: %d fails\n", fails);
         return 1;

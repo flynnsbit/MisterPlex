@@ -346,20 +346,26 @@ void MediaPlayer::setDecodeSize(int w, int h) {
     // PRESENT_SCALE_TO_STORE=1 keeps oversized decode and scales at present.
     const bool presentFpga =
         (presentMode_ == "fpga" || presentMode_ == "both");
-    const int reqW = w;
-    const int reqH = h;
+    reqW_ = w;
+    reqH_ = h;
+    decodeWasClamped_ = false;
     const DecodeStorePlan plan =
-        planDecodeForHybridStore(reqW, reqH, presentFpga, presentScaleToStore_);
+        planDecodeForHybridStore(reqW_, reqH_, presentFpga, presentScaleToStore_);
     if (plan.clamped) {
         w = plan.decode_w;
         h = plan.decode_h;
+        decodeWasClamped_ = true;
         if (!decodeClampLogged_) {
             decodeClampLogged_ = true;
-            log(formatDecodeClampLog(reqW, reqH, plan));
+            log(formatDecodeClampLog(reqW_, reqH_, plan));
         }
     }
     outW_ = w;
     outH_ = h;
+}
+
+std::string MediaPlayer::decodeGeometryLabel() const {
+    return formatDecodeGeometryLabel(outW_, outH_, reqW_, reqH_, decodeWasClamped_);
 }
 
 std::string MediaPlayer::lastError() const {

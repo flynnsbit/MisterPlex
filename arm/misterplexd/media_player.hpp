@@ -153,6 +153,12 @@ public:
     }
     int decodeW() const { return outW_; }
     int decodeH() const { return outH_; }
+    // Conf/request size before hybrid store clamp (may equal effective).
+    int requestedDecodeW() const { return reqW_; }
+    int requestedDecodeH() const { return reqH_; }
+    bool decodeWasClamped() const { return decodeWasClamped_; }
+    // Effective geometry for banner/status; annotates clamp when it applied.
+    std::string decodeGeometryLabel() const;
     std::string lastError() const;
     std::string currentUrl() const;
 
@@ -275,6 +281,9 @@ private:
     int64_t durationMs_ = 0;
     int outW_ = 320;
     int outH_ = 240;
+    int reqW_ = 320;
+    int reqH_ = 240;
+    bool decodeWasClamped_ = false;
 };
 
 } // namespace misterplex

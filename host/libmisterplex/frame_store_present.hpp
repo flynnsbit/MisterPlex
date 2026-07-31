@@ -105,6 +105,19 @@ inline std::string formatDecodeClampLog(int requestedW, int requestedH, const De
            std::to_string(p.decode_h);
 }
 
+// Banner / status field: always the EFFECTIVE geometry. When clamped, annotate
+// the conf request so telemetry cannot lie (measured 2026-07-30: banner said
+// decode=624x480 while player ran 320x240).
+inline std::string formatDecodeGeometryLabel(int effectiveW, int effectiveH, int requestedW,
+                                             int requestedH, bool clamped) {
+    std::string s = std::to_string(effectiveW) + "x" + std::to_string(effectiveH);
+    if (clamped && (requestedW != effectiveW || requestedH != effectiveH)) {
+        s += " (clamped from " + std::to_string(requestedW) + "x" +
+             std::to_string(requestedH) + ")";
+    }
+    return s;
+}
+
 // Letterbox/pillarbox nearest-neighbor scale of RGB24 into the 320×240 store.
 // dst must hold kRgb24FrameStoreBytes. Opt-in path only (PRESENT_SCALE_TO_STORE=1).
 inline bool scaleRgb24ToFrameStore(const uint8_t* src, int sw, int sh, uint8_t* dst) {
