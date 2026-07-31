@@ -307,6 +307,36 @@ esac
 
 echo "Done."
 
+# Write running-core claim when we actually loaded (not DEPLOY_LOAD=none).
+# CORENAME is vacuous; claim + RBFNAME mtime is what video_regression trusts.
+case "$DEPLOY_LOAD" in
+  menu|bounce|core|plex|1)
+    if [ -n "${LOCAL_MD5:-}" ]; then
+      set +e
+      "${SSH[@]}" "bash -s" <<CLAIM
+set +e
+core=/media/fat/_Utility/Plex.rbf
+claim=/media/fat/misterplex/.running_core_claim
+mt=\$(stat -c %Y /tmp/RBFNAME 2>/dev/null || echo "")
+if [ -z "\$mt" ]; then
+  echo "CORE_CLAIM_WARN no RBFNAME mtime — gate will FAIL until claim written" >&2
+  exit 0
+fi
+mkdir -p /media/fat/misterplex
+{
+  echo "version=1"
+  echo "md5=$LOCAL_MD5"
+  echo "path=\$core"
+  echo "rbfname_mtime=\$mt"
+  echo "source=deploy_plex_core"
+} >"\$claim"
+echo "CORE_CLAIM_OK md5=$LOCAL_MD5 rbfname_mtime=\$mt claim=\$claim"
+CLAIM
+      set -e
+    fi
+    ;;
+esac
+
 # Triple check: resident core geometry vs daemon-adopted decode=WxH.
 # Read-only. Soft-skip (77) when daemon log/core map unavailable — never treat as PASS.
 # Mismatch (1) fails the deploy so a 480p conf cannot ride out with a 320x240 core.

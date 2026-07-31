@@ -20,6 +20,16 @@
 #   Conf path, if needed, comes from the live process --conf arg — never hardcode
 #   which of /media/fat/misterplex{,_v2}/misterplex.conf is active.
 #
+# RUNNING CORE (verify must not pass on a mixed SPI-core + DDR-daemon pair):
+#   /tmp/CORENAME and /tmp/RBFNAME are vacuous (always "Plex"). On-disk RBF md5
+#   is NOT the fabric. Authority is:
+#     1) /media/fat/misterplex/.running_core_claim written only after a verified
+#        load_core (RBFNAME mtime advanced), valid iff claim.rbfname_mtime matches
+#        live /tmp/RBFNAME mtime;
+#     2) (core,daemon) pair table — SPI and DDR pins must not mix;
+#     3) future PLXC mailbox (docs/core-running-bitstream-identity.md).
+#   Missing/stale claim or unknown pair → HARD FAIL (never soft-skip/PASS).
+#
 # THIS SCRIPT IS FOR THE PARENT ORCHESTRATOR ONLY. Agents must not run it —
 # they have no device access. See AGENTS.md "Who tests".
 #
@@ -79,6 +89,17 @@ BASE_DAEMON_MD5=7cd10b4d438c714a9b8c4766dc982d59
 HYBRID_DAEMON_MD5=50f4eb925de10e29172999a565c87684
 PREV_HYBRID_DAEMON_MD5=3e2cbb9881b2f54b0e4cb60238655fa7
 
+# DDR product pair (parent silicon: freeze-fixed core + PLXD-relative daemon).
+# Full RBF md5 not yet in-tree as a release artifact — 8-hex prefix accepted
+# until parent registers the full digest (md5_match allows prefix ≥8).
+DDR_CORE_MD5_PREFIX=c5382bee
+DDR_DAEMON_MD5_PREFIX=e9f79de2
+
+# Claim file written by plexctl load_core / deploy after RBFNAME mtime advances.
+RUNNING_CORE_CLAIM="${RUNNING_CORE_CLAIM:-/media/fat/misterplex/.running_core_claim}"
+V2_CORE_PATH=/media/fat/_Utility/Plex_v2.rbf
+DEV_CORE_PATH=/media/fat/_Utility/Plex.rbf
+
 # Test clip: the 240p burned-in-telemetry ladder entry. Its overlay text makes
 # left-edge clipping obvious to the eye as well as to the measurement.
 PMS_ID="${PMS_ID:-bf36a3ad8d4f6810ab3f69ec9f1adb22a7a9dc8a}"
@@ -114,8 +135,222 @@ DEV_DAEMON_BIN=/media/fat/misterplex/bin/misterplexd
 daemon_md5_accepted() {
   case "$1" in
     "$BASE_DAEMON_MD5"|"$HYBRID_DAEMON_MD5"|"$PREV_HYBRID_DAEMON_MD5") return 0 ;;
-    *) return 1 ;;
+    *)
+      # DDR daemon pin (prefix or full).
+      if md5_match "$DDR_DAEMON_MD5_PREFIX" "$1"; then return 0; fi
+      return 1
+      ;;
   esac
+}
+
+# md5_match PIN GOT — full equality, or PIN is unique prefix (≥8 hex) of GOT.
+md5_match() {
+  local pin="$1" got="$2"
+  [ -n "$pin" ] && [ -n "$got" ] || return 1
+  if [ "$pin" = "$got" ]; then return 0; fi
+  local plen=${#pin}
+  if [ "$plen" -ge 8 ] && [ "$plen" -lt 32 ]; then
+    case "$got" in
+      "$pin"*) return 0 ;;
+    esac
+  fi
+  return 1
+}
+
+# Map a core md5 (full or prefix) to family: spi|ddr|unknown
+core_family() {
+  local c="$1"
+  if md5_match "$BASE_CORE_MD5" "$c" || [ "$c" = "$BASE_CORE_MD5" ]; then
+    echo spi; return 0
+  fi
+  if md5_match "$DDR_CORE_MD5_PREFIX" "$c"; then
+    echo ddr; return 0
+  fi
+  echo unknown
+}
+
+daemon_family() {
+  local d="$1"
+  if [ "$d" = "$BASE_DAEMON_MD5" ] || [ "$d" = "$HYBRID_DAEMON_MD5" ]      || [ "$d" = "$PREV_HYBRID_DAEMON_MD5" ]; then
+    echo spi; return 0
+  fi
+  if md5_match "$DDR_DAEMON_MD5_PREFIX" "$d"; then
+    echo ddr; return 0
+  fi
+  echo unknown
+}
+
+# Pair coherent iff both families known and equal.
+pair_coherent() {
+  local core_md5="$1" daemon_md5="$2"
+  local cf df
+  cf=$(core_family "$core_md5")
+  df=$(daemon_family "$daemon_md5")
+  echo "PAIR core=$core_md5 family=$cf daemon=$daemon_md5 family=$df"
+  if [ "$cf" = unknown ] || [ "$df" = unknown ]; then
+    return 2
+  fi
+  if [ "$cf" != "$df" ]; then
+    return 1
+  fi
+  return 0
+}
+
+# Remote observation of core identity surfaces + running-core claim.
+# Prints machine-readable lines (never treat CORENAME/RBFNAME strings as id):
+#   CORENAME=...
+#   RBFNAME=...
+#   RBFNAME_MTIME=<epoch|empty>
+#   DISK_V2_MD5=...
+#   DISK_DEV_MD5=...
+#   CLAIM_PRESENT=0|1
+#   CLAIM_MD5=...
+#   CLAIM_PATH=...
+#   CLAIM_RBFNAME_MTIME=...
+#   CLAIM_SOURCE=...
+#   FPGA_MGR_STATE=...   (empty if sysfs absent)
+#   PLXK_WORD=...        (devmem if present; empty otherwise)
+#   PLXS_WORD=...
+#   PLXD_WORD=...
+#   PLXC_WORD=...        (future build-id mailbox; empty until RTL lands)
+observe_core_once() {
+  local claim_path="${RUNNING_CORE_CLAIM}"
+  sshm "CLAIM_PATH=$(printf '%q' "$claim_path"); V2=$(printf '%q' "$V2_CORE_PATH"); DEV=$(printf '%q' "$DEV_CORE_PATH"); $(cat <<'REMOTE'
+set +e
+echo "CORENAME=$(cat /tmp/CORENAME 2>/dev/null | tr -d '\r' | head -n1)"
+echo "RBFNAME=$(cat /tmp/RBFNAME 2>/dev/null | tr -d '\r' | head -n1)"
+mt=""
+if [ -e /tmp/RBFNAME ]; then
+  mt=$(stat -c %Y /tmp/RBFNAME 2>/dev/null || echo "")
+fi
+echo "RBFNAME_MTIME=${mt}"
+v2=""
+dev=""
+if [ -f "$V2" ]; then v2=$(md5sum "$V2" 2>/dev/null | awk '{print $1}'); fi
+if [ -f "$DEV" ]; then dev=$(md5sum "$DEV" 2>/dev/null | awk '{print $1}'); fi
+echo "DISK_V2_MD5=${v2}"
+echo "DISK_DEV_MD5=${dev}"
+cp=0
+cmd5=""; cpath=""; cmt=""; csrc=""
+if [ -f "$CLAIM_PATH" ]; then
+  cp=1
+  # claim is KEY=VAL lines
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in
+      md5=*) cmd5=${line#md5=} ;;
+      path=*) cpath=${line#path=} ;;
+      rbfname_mtime=*) cmt=${line#rbfname_mtime=} ;;
+      source=*) csrc=${line#source=} ;;
+    esac
+  done <"$CLAIM_PATH"
+fi
+echo "CLAIM_PRESENT=$cp"
+echo "CLAIM_MD5=${cmd5}"
+echo "CLAIM_PATH_FIELD=${cpath}"
+echo "CLAIM_RBFNAME_MTIME=${cmt}"
+echo "CLAIM_SOURCE=${csrc}"
+fmgr=""
+for s in /sys/class/fpga_manager/*/state; do
+  if [ -r "$s" ]; then fmgr=$(cat "$s" 2>/dev/null | tr -d '\r'); break; fi
+done
+echo "FPGA_MGR_STATE=${fmgr}"
+# Optional mailbox peeks (family signals / future PLXC). Never sole identity.
+peek() {
+  local addr="$1"
+  if [ -x /usr/sbin/devmem ]; then
+    /usr/sbin/devmem "$addr" 32 2>/dev/null | tr -d '\r'
+  else
+    echo ""
+  fi
+}
+# Product doorbell control page (0x300FF000 family).
+echo "PLXK_WORD=$(peek 0x300FF000)"
+echo "PLXS_WORD=$(peek 0x300FF100)"
+echo "PLXD_WORD=$(peek 0x300FF128)"
+echo "PLXC_WORD=$(peek 0x300FF130)"
+REMOTE
+)"
+}
+
+# Resolve running core from observe_core_once output.
+# Prints: RUNNING_CORE_MD5=... RUNNING_CORE_PATH=... RUNNING_CORE_VIA=claim|fail
+# Returns 0 on resolved, 1 on unknown (caller must FAIL hard).
+resolve_running_core() {
+  local obs="$1"
+  local cn rn mt v2 dev cp cmd5 cpath cmt csrc plxc
+  cn=$(printf '%s\n' "$obs" | sed -n 's/^CORENAME=//p' | head -1)
+  rn=$(printf '%s\n' "$obs" | sed -n 's/^RBFNAME=//p' | head -1)
+  mt=$(printf '%s\n' "$obs" | sed -n 's/^RBFNAME_MTIME=//p' | head -1)
+  v2=$(printf '%s\n' "$obs" | sed -n 's/^DISK_V2_MD5=//p' | head -1)
+  dev=$(printf '%s\n' "$obs" | sed -n 's/^DISK_DEV_MD5=//p' | head -1)
+  cp=$(printf '%s\n' "$obs" | sed -n 's/^CLAIM_PRESENT=//p' | head -1)
+  cmd5=$(printf '%s\n' "$obs" | sed -n 's/^CLAIM_MD5=//p' | head -1)
+  cpath=$(printf '%s\n' "$obs" | sed -n 's/^CLAIM_PATH_FIELD=//p' | head -1)
+  cmt=$(printf '%s\n' "$obs" | sed -n 's/^CLAIM_RBFNAME_MTIME=//p' | head -1)
+  csrc=$(printf '%s\n' "$obs" | sed -n 's/^CLAIM_SOURCE=//p' | head -1)
+  plxc=$(printf '%s\n' "$obs" | sed -n 's/^PLXC_WORD=//p' | head -1)
+
+  echo "CORE_NAME_STR='${cn}' (vacuous — not identity)"
+  echo "RBF_NAME_STR='${rn}' (vacuous — not identity)"
+  echo "RBFNAME_MTIME='${mt}'"
+  echo "DISK_V2_MD5='${v2}' DISK_DEV_MD5='${dev}'"
+  echo "CLAIM present=$cp md5='${cmd5}' path='${cpath}' mtime='${cmt}' source='${csrc}'"
+  echo "PLXC_WORD='${plxc}' (empty until RTL; not yet authoritative)"
+
+  # Future: PLXC magic 0x504C5843 ("PLXC") low 32-bits LE → build_id in high half.
+  # Until present, claim file is mandatory.
+
+  if [ "${cp:-0}" != "1" ] || [ -z "$cmd5" ] || [ -z "$cmt" ]; then
+    echo "RUNNING_CORE_MD5="
+    echo "RUNNING_CORE_PATH="
+    echo "RUNNING_CORE_VIA=fail_no_claim"
+    echo "FAIL running-core: no verified load claim at $RUNNING_CORE_CLAIM"
+    echo "     CORENAME/RBFNAME strings cannot identify the fabric bitstream."
+    echo "     Reload via plexctl/deploy (writes claim after RBFNAME mtime advances)."
+    return 1
+  fi
+  if [ -z "$mt" ]; then
+    echo "RUNNING_CORE_MD5="
+    echo "RUNNING_CORE_PATH="
+    echo "RUNNING_CORE_VIA=fail_no_rbfname_mtime"
+    echo "FAIL running-core: /tmp/RBFNAME mtime unreadable — cannot validate claim"
+    return 1
+  fi
+  if [ "$cmt" != "$mt" ]; then
+    echo "RUNNING_CORE_MD5="
+    echo "RUNNING_CORE_PATH="
+    echo "RUNNING_CORE_VIA=fail_stale_claim"
+    echo "FAIL running-core: claim stale claim_mtime=$cmt rbfname_mtime=$mt"
+    echo "     A load happened without rewriting the claim (or claim is from another load)."
+    return 1
+  fi
+
+  # Claim md5 must match the on-disk file it names (or known bundle paths).
+  local disk=""
+  if [ -n "$cpath" ]; then
+    case "$cpath" in
+      *Plex_v2.rbf*) disk="$v2" ;;
+      *Plex.rbf*) disk="$dev" ;;
+    esac
+  fi
+  if [ -z "$disk" ]; then
+    # Fall back: claim md5 equals one of the disk digests.
+    if [ -n "$v2" ] && md5_match "$cmd5" "$v2"; then disk="$v2"; cpath="${cpath:-$V2_CORE_PATH}"; fi
+    if [ -z "$disk" ] && [ -n "$dev" ] && md5_match "$cmd5" "$dev"; then disk="$dev"; cpath="${cpath:-$DEV_CORE_PATH}"; fi
+  fi
+  if [ -n "$disk" ] && ! md5_match "$cmd5" "$disk"; then
+    echo "RUNNING_CORE_MD5="
+    echo "RUNNING_CORE_PATH="
+    echo "RUNNING_CORE_VIA=fail_claim_disk_mismatch"
+    echo "FAIL running-core: claim md5=$cmd5 != disk md5=$disk for path=$cpath"
+    echo "     SD file changed after load claim — fabric may still be old bitstream."
+    return 1
+  fi
+
+  echo "RUNNING_CORE_MD5=$cmd5"
+  echo "RUNNING_CORE_PATH=${cpath}"
+  echo "RUNNING_CORE_VIA=claim"
+  return 0
 }
 
 # Remote (or injected) one-shot observation of on-disk + running daemon state.
@@ -273,17 +508,47 @@ probe_http_liveness() {
 }
 
 verify_baseline() {
-  echo "== verifying baseline hashes on device =="
-  local got_core got_disk rc=0
-  local wait_out wait_rc disk live n note pids port conf
-  local http_out http_rc
+  echo "== verifying RUNNING core identity + baseline pair coherence =="
+  local rc=0
+  local core_obs resolve_out resolve_rc run_core run_path run_via
+  local got_disk wait_out wait_rc disk live n note pids port conf
+  local http_out http_rc pair_out pair_rc cf
 
-  got_core=$(sshm "md5sum /media/fat/_Utility/Plex_v2.rbf 2>/dev/null | cut -d' ' -f1" || true)
-  if [ "$got_core" = "$BASE_CORE_MD5" ]; then
-    echo "OK   core   $got_core"
-  else
-    echo "FAIL core   got='$got_core' want='$BASE_CORE_MD5'"
+  set +e
+  core_obs=$(observe_core_once)
+  set -e
+  printf '%s\n' "$core_obs"
+
+  set +e
+  resolve_out=$(resolve_running_core "$core_obs")
+  resolve_rc=$?
+  set -e
+  printf '%s\n' "$resolve_out"
+  run_core=$(printf '%s\n' "$resolve_out" | sed -n 's/^RUNNING_CORE_MD5=//p' | tail -1)
+  run_path=$(printf '%s\n' "$resolve_out" | sed -n 's/^RUNNING_CORE_PATH=//p' | tail -1)
+  run_via=$(printf '%s\n' "$resolve_out" | sed -n 's/^RUNNING_CORE_VIA=//p' | tail -1)
+
+  if [ "$resolve_rc" -ne 0 ] || [ -z "$run_core" ]; then
+    echo "FAIL core-running unresolved via='${run_via}' (cannot soft-skip unknown fabric)"
     rc=1
+  else
+    echo "OK   core-running $run_core path='${run_path}' via=$run_via"
+    # Accept any *registered* core pin (SPI baseline or DDR product). Pair
+    # coherence (below) is what rejects SPI/DDR mixes. Unknown pin = FAIL.
+    cf=$(core_family "$run_core")
+    if [ "$cf" = unknown ]; then
+      echo "FAIL core-running md5='$run_core' unregistered (not spi baseline, not ddr pin)"
+      rc=1
+    elif [ "$cf" = spi ]; then
+      if ! md5_match "$BASE_CORE_MD5" "$run_core" && [ "$run_core" != "$BASE_CORE_MD5" ]; then
+        echo "FAIL core-running md5='$run_core' not baseline pin '$BASE_CORE_MD5'"
+        rc=1
+      else
+        echo "OK   core-pin family=spi $run_core"
+      fi
+    else
+      echo "OK   core-pin family=$cf $run_core"
+    fi
   fi
 
   # On-disk check remains as an *additional* signal (ETXTBSY detection needs it).
@@ -291,7 +556,7 @@ verify_baseline() {
   if daemon_md5_accepted "$got_disk"; then
     echo "OK   daemon-disk $got_disk"
   else
-    echo "FAIL daemon-disk got='$got_disk' want='$BASE_DAEMON_MD5' or '$HYBRID_DAEMON_MD5' or '$PREV_HYBRID_DAEMON_MD5'"
+    echo "FAIL daemon-disk got='$got_disk' want='$BASE_DAEMON_MD5' or '$HYBRID_DAEMON_MD5' or '$PREV_HYBRID_DAEMON_MD5' or ddr:$DDR_DAEMON_MD5_PREFIX"
     rc=1
   fi
 
@@ -320,7 +585,7 @@ verify_baseline() {
     echo "     supervisor may be in backoff, but it never came back — hard FAIL"
     rc=1
   elif ! daemon_md5_accepted "$live"; then
-    echo "FAIL daemon-live md5='$live' not in accepted {$BASE_DAEMON_MD5,$HYBRID_DAEMON_MD5,$PREV_HYBRID_DAEMON_MD5} pid='$pids'"
+    echo "FAIL daemon-live md5='$live' not in accepted pins pid='$pids'"
     rc=1
   else
     if printf '%s\n' "$wait_out" | grep -q 'LIVE_WAIT_RESULT=respawned'; then
@@ -334,8 +599,6 @@ verify_baseline() {
       echo "NOTE daemon-conf empty (process had no --conf arg)"
     fi
 
-    # Real liveness signal: HTTP must answer. A process that exists but is
-    # wedged / not listening is still a FAIL.
     set +e
     http_out=$(probe_http_liveness "$port")
     http_rc=$?
@@ -357,6 +620,28 @@ verify_baseline() {
     rc=1
   fi
 
+  # PAIR COHERENCE — the mixed-state killer (SPI core + DDR daemon etc.).
+  if [ -n "$run_core" ] && [ -n "$live" ]; then
+    set +e
+    pair_out=$(pair_coherent "$run_core" "$live")
+    pair_rc=$?
+    set -e
+    printf '%s\n' "$pair_out"
+    if [ "$pair_rc" -eq 0 ]; then
+      echo "OK   pair-coherent core=$run_core daemon=$live"
+    elif [ "$pair_rc" -eq 2 ]; then
+      echo "FAIL pair-unknown core=$run_core daemon=$live (unregistered pin — not a pass)"
+      rc=1
+    else
+      echo "FAIL pair-mismatch core=$run_core daemon=$live (SPI/DDR mix — black/green screen class)"
+      echo "     non-visual HTTP/liveness is NOT sufficient; refuse mixed pair"
+      rc=1
+    fi
+  else
+    echo "FAIL pair-coherent skipped — running core or live daemon unresolved"
+    rc=1
+  fi
+
   return $rc
 }
 
@@ -374,9 +659,48 @@ run_bundle() {
   sshm "/media/fat/misterplex/bin/plexctl.sh $(
         [ "$which" = baseline ] && echo v2 || echo dev)" | head -3
 
-  echo "== loading core $core =="
-  sshm "printf '%s\n' 'load_core $core' > /dev/MiSTer_cmd"
-  sleep 14
+  echo "== loading core $core (claim after RBFNAME mtime) =="
+  # Prefer plexctl load_core if present (writes running-core claim). Fallback:
+  # MiSTer_cmd + inline claim writer with the same mtime rule.
+  sshm "core=$(printf '%q' "$core"); claim=$(printf '%q' "$RUNNING_CORE_CLAIM"); $(cat <<'REMOTE'
+set +e
+if [ -x /media/fat/misterplex/bin/plexctl.sh ]; then
+  # plexctl may be a multi-command script; call load path if exported — else raw.
+  :
+fi
+before=$(stat -c %Y /tmp/RBFNAME 2>/dev/null || echo 0)
+printf '%s\n' "load_core $core" > /dev/MiSTer_cmd
+i=0
+after=$before
+while [ "$i" -lt 40 ]; do
+  sleep 0.5
+  after=$(stat -c %Y /tmp/RBFNAME 2>/dev/null || echo 0)
+  if [ "$after" != "$before" ]; then
+    break
+  fi
+  i=$((i + 1))
+done
+if [ "$after" = "$before" ]; then
+  echo "FAIL CORE_LOAD_UNCONFIRMED $core (RBFNAME mtime did not advance)"
+  exit 4
+fi
+md=$(md5sum "$core" 2>/dev/null | awk '{print $1}')
+if [ -z "$md" ]; then
+  echo "FAIL CORE_CLAIM_NO_MD5 $core"
+  exit 4
+fi
+mkdir -p "$(dirname "$claim")"
+{
+  echo "version=1"
+  echo "md5=$md"
+  echo "path=$core"
+  echo "rbfname_mtime=$after"
+  echo "source=video_regression"
+} >"$claim"
+echo "CORE_LOADED $core md5=$md rbfname_mtime=$after claim=$claim"
+sleep 3
+REMOTE
+)"
 
   # Exact argv0 match for this bundle — not pidof (plexctl.sh deliberately
   # abandoned pidof: BusyBox name truncation + no bundle-path distinction).

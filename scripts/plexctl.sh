@@ -43,6 +43,30 @@ V3_CORE=/media/fat/_Utility/Plex_v3.rbf
 # that as the "the core really reloaded" signal. Confirming *which* core is live
 # requires an HDMI capture fingerprint (tools/measure_edges.py) and is the
 # caller's job, not this function's.
+# Running-core claim: the only host-side record of *which* RBF was loaded.
+# /tmp/CORENAME and /tmp/RBFNAME content are always "Plex" — not identity.
+RUNNING_CORE_CLAIM="${RUNNING_CORE_CLAIM:-/media/fat/misterplex/.running_core_claim}"
+
+write_running_core_claim() {
+  core="$1"
+  mtime="$2"
+  md=$(md5sum "$core" 2>/dev/null | awk '{print $1}')
+  if [ -z "$md" ] || [ -z "$mtime" ]; then
+    echo "$(ts) CORE_CLAIM_FAIL core=$core md5='${md}' mtime='${mtime}'"
+    return 4
+  fi
+  mkdir -p "$(dirname "$RUNNING_CORE_CLAIM")"
+  {
+    echo "version=1"
+    echo "md5=$md"
+    echo "path=$core"
+    echo "rbfname_mtime=$mtime"
+    echo "source=plexctl"
+  } >"$RUNNING_CORE_CLAIM"
+  echo "$(ts) CORE_CLAIM_OK md5=$md path=$core rbfname_mtime=$mtime claim=$RUNNING_CORE_CLAIM"
+  return 0
+}
+
 load_core() {
   core="$1"
   [ -f "$core" ] || { echo "ERROR no core at $core"; return 2; }
@@ -54,12 +78,14 @@ load_core() {
     after=$(stat -c %Y /tmp/RBFNAME 2>/dev/null || echo 0)
     if [ "$after" != "$before" ]; then
       echo "$(ts) CORE_LOADED $core (RBFNAME mtime $before -> $after)"
+      write_running_core_claim "$core" "$after" || return $?
       sleep 3
       return 0
     fi
     i=$((i + 1))
   done
   echo "CORE_LOAD_UNCONFIRMED $core (RBFNAME mtime did not advance from $before)"
+  # Do NOT leave a stale claim pretending this load succeeded.
   return 4
 }
 
