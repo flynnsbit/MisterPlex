@@ -1,76 +1,89 @@
-# w-fit-1 status — P5 frame ledger + P6 drift + V_STORE=480 analysis
-# Updated: 2026-07-31 (lane w-fit)
+# w-fit-1 status — parent re-scope 2026-07-31 (RTL ceiling)
+# NO EXCLUSIVE FIT · NO DEVICE ACCESS
 
 BRANCH=w-fit-integ-c5382bee-dequant-swap
-SHA=825d205d547ea13716ac5d7c4d442f80b563d0ee  # ledger code tip; docs trail
+TIP_SHA=994877113c8ef91ff9e705d7e720388ba99e901d
+LEDGER_CODE_SHA=825d205d547ea13716ac5d7c4d442f80b563d0ee
 WORKTREE=/home/flynnsbit/Projects/MisterPlex/.worktrees/w-fit-integ
-BASE_WORKING_PAIR=c5382bee + edc3a46b
-NO_FIT_REQUESTED=1
-NO_DEVICE_ACCESS=1
+SHIPPING_CORE=c5382bee
+WORKING_PAIR=c5382bee + edc3a46b (parent silicon; 240p + native 480p)
+NO_FIT_GRANTED=1
 
-## Deliverables
+## 1. Gate true rc= (this lane; captured DIRECTLY)
 
-### P5 — cross-restart frame ledger (COMPLETE)
-- Merged w-geom 8f144ea1 (death breadcrumb + file ledger) into tip; extended residual with present_fails.
-- Identity: frames - presents - drops - present_fails == residual (assert 0 over soak sum of session_end).
-- Events: process_start / session_end / process_exit — restarts visible as rows, not hidden by counter reset.
-- Path: <confDir>/misterplexd.frame_ledger (append-only).
-- Windowed vfps/pfps (dframes/dwall) primary; vfps_avg/pfps_avg cumulative; formatFps3 (%.3f).
-- 1 Hz also logs residual/closed/present_fails + hold_edge_ms.
+| Gate | true rc |
+|------|--------:|
+| build/test_frame_ledger | 0 |
+| build/test_death_breadcrumb | 0 |
+| scripts/assert_frame_ledger.sh --self-test | 0 |
+| make unit (prior full run on integ tip) | 0 |
+| print_frame_ledger open residual=16 (sample) | 1 |
+| print_frame_ledger closed (sample) | 0 |
+| assert open sample | 1 |
+| assert closed sample | 0 |
 
-ON-DEVICE (parent after daemon deploy):
-  LEDGER=/media/fat/misterplex/misterplexd.frame_ledger bash scripts/print_frame_ledger.sh
-  # or: scripts/assert_frame_ledger.sh /media/fat/misterplex/misterplexd.frame_ledger
-  # exit: 0 closed · 1 open/missing · 3 closed but RESTART_VISIBLE
+Reconfirmed this turn:
+  test_frame_ledger true rc=0
+  assert_frame_ledger --self-test true rc=0
 
-RED-before-GREEN (host sample, this lane):
-  print open residual=16     true rc=1
-  print closed residual=0    true rc=0
-  assert open                true rc=1
-  assert closed              true rc=0
-  assert --self-test         true rc=0  (open RED / closed GREEN / multi rc=3)
+Not re-run this turn (prior evidence on same branch tip chain): define-parity, quartus-sv-subset,
+freeze/shear/colour/sustained sims inside make unit=0.
 
-### P6 — drift falsifier decisiveness (COMPLETE)
-- Doc: .agent-work/w-fit-1/P6_AV_DRIFT_DECISIVENESS.md
-- Verdict: AV_PRESENT_LEAD_MS=20 ALONE is only PARTIALLY decisive.
-  - Band moves with confirmed lead_ms=20 → metric is setpoint readout (clear).
-  - Band does NOT move with confirmed lead → NOT proof of accurate clock
-    (other clamp / wrong path / sampling bias still possible) → UNSCORED.
-- Decisive recipe: control lead=40 → A lead=20 → optional B lead=10, each requiring
-  lead_ms= and hold_edge_ms= on the 1 Hz line before interpreting drift_ms.
-- Pre-reg: lead=40 band ~[-40,0]; lead=20 ~[-20,0] IF readout.
-- vfps: cumulative + substr(0,4) NOT usable for health; windowed rates are.
+## 2. Integration branch contents (held; NOT requesting fit)
 
-### V_STORE=480 impact (ANALYSIS ONLY — no fit)
-- Doc: .agent-work/w-fit-1/V_STORE_480_IMPACT.md
-- Today: V_STORE=240, STORE_Y_SCALE=(FRAME_H*65536)/240 → with FRAME_H=480 scale=2.0
-  → even store_y only; half of 480-row store discarded; DE 529x240 → ascal.
-- V_STORE=480 alone insufficient: colorbars/timing still 240-line py (scandouble halves vc).
-- Need 480 active lines into ascal + scale 1.0.
-- BW: ~27–37 MB/s vs ~720 peak — not the killer.
-- Prereg vs baseline ALM 21095 / DSP 74 / RAM 465/553 / setup +0.165 / hold +0.245:
-  ALM +55..+300 · DSP 0 · RAM +0..+5 (store already 480) · setup risk thin.
-- No fit ask until RED→GREEN TB with execution proven.
+Shelved free-riders on tip chain (aa10c570 / 44b4d597 / 825d205d):
+  - PLXC identity mailbox doorbell+0x130 (build stamp + CAP_DDR)
+  - 907e5950 swap_pending hold across same-cycle vsync+doorbell
+  - w-area comb shift-add dequant (−32 DSP bit-exact, UNMEASURED on silicon)
+  - P5 cross-restart file frame ledger + death breadcrumb (w-geom merge)
+  - P6 drift decisiveness docs; windowed vfps/pfps
+  - video_regression dual SPI/DDR pairs; GATE_CORE_IDENTITY=UNVERIFIED fail-closed
+  - core_geometry_map dfebf2bf + c5382bee
 
-### Inherited (already on branch)
-- video_regression dual SPI/DDR pairs; GATE_CORE_IDENTITY=UNVERIFIED fail-closed.
-- core_geometry_map: dfebf2bf + c5382bee mapped.
-- Bundle shelved (PLXC + 907e + dequant) — still not worth exclusive alone.
+### Bundle prereg vs baseline ALM 21095 · DSP 74 · RAM 465/553 · setup +0.165 · hold +0.245
+| Metric | Predict (bundle PLXC+907e+dequant) |
+|--------|-------------------------------------|
+| ALM    | 21120 … 21250 (+25…+155) |
+| DSP    | 42 (−32 HARD expect; miss = finding) |
+| RAM    | 465 (0) |
+| setup  | +0.10 … +0.165 |
+| hold   | ≥ +0.20 |
 
-## true rc= (captured DIRECTLY)
+Baseline note: parent also cites fit 9eb1431a metrics as the predict baseline;
+shipping product core is c5382bee (NOT do-not-ship). Do-not-ship remains
+9eb1431a, ff2e3ca3, f0d3a385, 2890baac + banned set.
 
-build/test_frame_ledger              true rc=0
-build/test_death_breadcrumb          true rc=0
-scripts/assert_frame_ledger.sh --self-test  true rc=0
-make unit                            true rc=0
-  (includes freeze/shear/colour/sustained TB executed PASS paths;
-   GATE_SKIP live-pms-baseline only — not a pass claim)
+FIT JUDGEMENT: still NOT worth exclusive. Product paints correctly without it.
+Bar for any future fit: RED→GREEN sim with TB execution proven (PINNOTFOUND→rc=2).
 
-## Commits (tip chain)
-825d205d fix(arm): self-report daemon exits + cross-restart frame ledger
-dec1bb1d fix(arm): explicit soak frame ledger + lead deadband tests (P5/P6)
-aa10c570 integ(bundle): pin edc3a46b + fail-closed PLXC + dequant TB signed
+## 3. RTL ceiling (this assignment) — written analysis
 
-## Fit recommendation
-STILL NO EXCLUSIVE. P5/P6 are ARM/host. V_STORE=480 is user-visible but needs
-timing design + RED→GREEN sim first. c5382bee+edc3a46b already paints 240p+480p.
+Doc: .agent-work/w-fit-1/RTL_CEILING_DIRECT_PLAY.md
+(also prior .agent-work/w-fit/DIRECT_PLAY_FEASIBILITY.md)
+
+### Executive
+- Full-library DP (High/CABAC/B/HD): NOT REACHABLE @ 20 MHz + 88 M10K free.
+- CB ≤480p@25 original: NOT near-term; 2965.8 / 684 ≈ 4.34× thruput fail; CAP_INTER=0.
+- CB ≤240p@25: only non-fantasy tier; still inter-red + 2965.8/2667 ≈ 1.11× over.
+- Ship path ARM+DDR present is correct ceiling for now.
+- Fabric decode motivation = direct play ONLY; CPU relief DEAD; scale-vs-decode UNRESOLVED.
+
+### Key numbers (tags in full doc)
+| Item | Value | Tag |
+|------|------:|-----|
+| clk_sys | 20.000 MHz | measured pll_0002 |
+| budget 320×240@25 | 2667 cy/MB | derived |
+| budget 624×480@25 | 684 cy/MB | derived |
+| paint after RMW | 2965.8 cy/MB | measured (parent) |
+| paint @788aa5f | 4036.9 / 3977.9 | measured evidence logs |
+| ALM/DSP/RAM | 21095 / 74 / 465 of 41910/112/553 | measured baseline |
+| M10K free | 88 | derived |
+| setup/hold | +0.165 / +0.245 | measured |
+
+### Also on branch (prior)
+- P5 ledger on-device: LEDGER=/media/fat/misterplex/misterplexd.frame_ledger bash scripts/print_frame_ledger.sh
+- P6: lead=20 alone PARTIALLY decisive — see P6_AV_DRIFT_DECISIVENESS.md
+- V_STORE=480 impact: V_STORE_480_IMPACT.md (analysis only)
+
+## 4. Fit recommendation
+NO SLOT. Ceiling analysis does not unlock a fit. Keep accumulating free-riders only.
