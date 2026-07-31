@@ -127,47 +127,40 @@ local RBF            = ${rbf:-"(missing)"}
 local daemon         = ${daemon:-"(missing)"}
 daemon expect md5    = $EXPECT_DAEMON_MD5
 
-Steps when PROMOTE_EXECUTE=1:
-  1) policy-local gates (banned/do-not-ship + pin match + product path)
-  2) verify V2 rollback pin still on device (abort if missing/wrong)
-  3) DEPLOY_LOAD=none ./scripts/deploy_plex_core.sh "\$RBF"
-       → writes ONLY $DEVICE_CORE_PRODUCT (not Plex_v2.rbf)
-  4) ./scripts/deploy_misterplexd.sh "\$DAEMON"
-       → live root from readlink -f /proc/PID/exe; live exe md5 + n_daemon==1
-  5) ONE menu bounce only:
-       DEPLOY_LOAD=menu DEPLOY_SKIP_COPY=1 ./scripts/deploy_plex_core.sh
-       (loads menu.rbf then $DEVICE_CORE_PRODUCT — never thrash load_core)
-  6) scripts/promotion_gate_check.sh verify-live  (HARD visual)
-       Playback: PROMOTE_MOTION_CAPTURE_DIR=/path/pngs
-         → tools/hdmi_motion_instrument.py  (rc=0 MOTION_OK only;
-            rc=77 UNSCORED is HARD FAIL — never inconclusive-carry-on)
-       Idle:     PAIR_IDLE_PNG=/path/idle.png  (mean+uniformity; reject flat green)
+ATOMIC sequence when PROMOTE_EXECUTE=1 (core+daemon+conf as ONE unit):
+  1) policy-local (banned/do-not-ship + pin match + pair matrix)
+  2) confirm Plex_v2.rbf still SPI pin (NEVER overwrite) — one-step undo core
+  3) DEPLOY_LOAD=none deploy_plex_core.sh "\$RBF"
+       → disk only: $DEVICE_CORE_PRODUCT = c5382bee (not loaded yet)
+  4) PAIR_ID=ddr-c5382bee ROLLBACK_DAEMON="\$DAEMON" \\
+       scripts/rollback_v2.sh restore
+       → STOP → daemon install → conf DDR keys → ONE menu → start → visual
+       → n_daemon via /proc/PID/exe basename==misterplexd (not cmdline/flock)
+  5) claim success ONLY if visual/motion rc=0 (77 UNSCORED = hard fail)
+
+Power-cycle worst moments (see: PAIR_ID=ddr-c5382bee scripts/rollback_v2.sh plan):
+  - After step 3 only: product file is DDR; live FPGA/daemon still prior pair until 4
+  - Mid step 4 after daemon write, before core load: daemon STOPPED (no autostart)
+  - Plex_v2.rbf SPI pin always intact as disk undo core
 
 Daemon pins (gitignored — fetch first if missing):
   scripts/fetch_daemon_pins.sh both
-  artifacts/daemon-pins/misterplexd.edc3a46b  (DDR PRIMARY)
+  artifacts/daemon-pins/misterplexd.edc3a46b  (DDR PRIMARY edc3a46b9d1c…)
   artifacts/daemon-pins/misterplexd.e9f79de2  (DDR hist)
   artifacts/daemon-pins/misterplexd.50f4eb92  (SPI)
 
-Atomic restore of LIVE DDR pair (PRIMARY recovery):
-  PAIR_ID=ddr-c5382bee PAIR_IDLE_PNG=/path/idle.png \\
-    scripts/rollback_v2.sh restore
-  → preflight → stop → install edc3a46b if needed → conf ddr keys → menu → Plex.rbf → visual
-
-SPI rollback (secondary daily undo):
+SPI atomic undo:
   PAIR_ID=spi-v2-hybrid ROLLBACK_DAEMON=artifacts/daemon-pins/misterplexd.50f4eb92 \\
     PAIR_IDLE_PNG=/path/idle.png scripts/rollback_v2.sh restore
-  → also STRIPS DDR_YUV_FORCE_SCALE=1 (conf half of pair)
-  Without daemon pin: rc=10 device UNTOUCHED
 
 DO NOT:
-  - run plexctl reload-v2 on the lab host (false MISSING catastrophe; use rollback_v2.sh)
+  - scripts/restore_misterplexd_prev.sh (DISABLED B8 — half daemon restore)
+  - deploy_misterplexd.sh untrusted rebuild path for promote (use named pin + rollback_v2)
+  - plexctl reload-v2 on lab host (false MISSING; NOT_ON_DEVICE)
   - confuse Plex.rbf with Plex_v2.rbf
-  - restore core without matching daemon (SPI+DDR daemon = solid green screen)
-  - claim success on telemetry alone (/resources 200 is not pixels)
-  - ship banned prefixes: ${RBF_BANNED_PREFIX8[*]}
-  - ship do-not-ship: ${RBF_DO_NOT_SHIP_PREFIX8[*]}
-  - kill -9 storms / multi menu luck thrash
+  - claim success on /resources 200 alone (mixed pair is black/green + HTTP 200)
+  - ship banned: ${RBF_BANNED_PREFIX8[*]}  do-not-ship: ${RBF_DO_NOT_SHIP_PREFIX8[*]}
+  - kill -9 storms / multi menu thrash
 EOF
 }
 
@@ -202,23 +195,19 @@ cmd_stage() {
   fi
 
   if require_execute; then
-    log "would: DEPLOY_LOAD=none deploy_plex_core.sh $rbf"
-    log "would: deploy_misterplexd.sh $daemon (no menu bounce in stage)"
+    log "would: DEPLOY_LOAD=none deploy_plex_core.sh $rbf  (product slot only)"
+    log "would: NOT install daemon alone (half-state refuse) — activate uses atomic restore"
     return 0
   fi
 
+  # Stage copies CORE only. Daemon is installed only inside atomic restore
+  # so we never leave DDR daemon on disk with SPI core loaded.
   log "stage: copy RBF only (DEPLOY_LOAD=none) → product slot"
   DEPLOY_LOAD=none "$ROOT/scripts/deploy_plex_core.sh" "$rbf"
   local drc=$?
   echo "deploy_plex_core true rc=$drc"
-  [ "$drc" -eq 0 ] || { echo "true rc=$drc"; return "$drc"; }
-
-  log "stage: deploy named daemon (live root / live exe md5)"
-  DEPLOY_EXPECT_MD5="$EXPECT_DAEMON_MD5" "$ROOT/scripts/deploy_misterplexd.sh" "$daemon"
-  local arc=$?
-  echo "deploy_misterplexd true rc=$arc"
-  echo "true rc=$arc"
-  return "$arc"
+  echo "true rc=$drc"
+  return "$drc"
 }
 
 cmd_activate() {
@@ -226,40 +215,47 @@ cmd_activate() {
   rbf="${rbf:-$(default_rbf || true)}"
   daemon="${daemon:-$(default_daemon || true)}"
 
+  print_plan "$rbf" "$daemon"
   set +e
-  cmd_stage "$rbf" "$daemon"
-  local src=$?
+  "$ROOT/scripts/promotion_gate_check.sh" policy-local "$rbf" "$daemon"
+  local prc=$?
   set -e
-  # dry-run stage returns 0 without execute
+  if [ "$prc" -ne 0 ]; then
+    echo "REFUSE activate: policy-local true rc=$prc"
+    echo "true rc=$prc"
+    return "$prc"
+  fi
+
   if [ "$EXECUTE" != "1" ]; then
-    log "DRY-RUN activate: would ONE menu bounce DEPLOY_LOAD=menu DEPLOY_SKIP_COPY=1"
-    log "DRY-RUN activate: would promotion_gate_check.sh verify-live"
+    log "DRY-RUN activate:"
+    log "  1) DEPLOY_LOAD=none deploy_plex_core.sh $rbf"
+    log "  2) PAIR_ID=ddr-c5382bee ROLLBACK_DAEMON=$daemon scripts/rollback_v2.sh restore"
+    log "     (STOP→daemon→conf→ONE menu→start→visual; n_daemon via /proc/exe)"
+    PAIR_ID=ddr-c5382bee "$ROOT/scripts/rollback_v2.sh" plan
     echo "true rc=0"
     return 0
   fi
-  if [ "$src" -ne 0 ]; then
-    echo "REFUSE activate: stage failed true rc=$src"
-    echo "true rc=$src"
-    return "$src"
+
+  log "activate step1: stage product core only (Plex_v2 untouched)"
+  DEPLOY_LOAD=none "$ROOT/scripts/deploy_plex_core.sh" "$rbf"
+  local drc=$?
+  echo "deploy_plex_core true rc=$drc"
+  if [ "$drc" -ne 0 ]; then
+    echo "true rc=$drc"
+    return "$drc"
   fi
 
-  log "activate: ONE menu bounce (DEPLOY_SKIP_COPY=1 — will not flash a different RBF)"
-  DEPLOY_LOAD=menu DEPLOY_SKIP_COPY=1 "$ROOT/scripts/deploy_plex_core.sh"
-  local mrc=$?
-  echo "menu_bounce true rc=$mrc"
-  if [ "$mrc" -ne 0 ]; then
-    echo "MENU bounce failed — consider scripts/rollback_v2.sh restore"
-    echo "true rc=$mrc"
-    return "$mrc"
-  fi
-
+  log "activate step2: ATOMIC pair restore (daemon+conf+load+start) — never half"
   set +e
-  "$ROOT/scripts/promotion_gate_check.sh" verify-live
-  local vrc=$?
+  PAIR_ID=ddr-c5382bee \
+    ROLLBACK_DAEMON="$daemon" \
+    ROLLBACK_EXECUTE=1 \
+    "$ROOT/scripts/rollback_v2.sh" restore
+  local rrc=$?
   set -e
-  echo "verify-live true rc=$vrc"
-  echo "true rc=$vrc"
-  return "$vrc"
+  echo "atomic_pair_restore true rc=$rrc"
+  echo "true rc=$rrc"
+  return "$rrc"
 }
 
 cmd_verify() {

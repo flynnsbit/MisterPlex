@@ -78,6 +78,31 @@ DEPLOY_LOAD=none|menu ./scripts/deploy_plex_core.sh path/to/Plex.rbf
   (named artifact; live root from `readlink -f /proc/PID/exe`; disk **and**
   live exe md5; `n_daemon==1`)
 
+## B8 — atomic pair only (power-cycle honesty)
+
+`scripts/restore_misterplexd_prev.sh` is **DISABLED** (`true rc=10`). It restored
+daemon-only and left core/geometry mismatched (SPI bank1 `0x30040000` vs DDR
+`0x30080000` → black/green screen; HTTP still 200).
+
+| Pair id | core | daemon | bank1 | conf |
+|---------|------|--------|-------|------|
+| **ddr-c5382bee** (PRIMARY) | c5382bee → `Plex.rbf` | edc3a46b9d1c… | 0x30080000 | DDR keys |
+| spi-v2-hybrid (undo) | dfebf2bf → `Plex_v2.rbf` | 50f4eb92 | 0x30040000 | strip DDR keys |
+
+`n_daemon` is counted only when `basename(readlink -f /proc/PID/exe)==misterplexd`
+(not cmdline — `flock` embeds the path and lied as ERROR 14).
+
+Running bitstream identity is **UNVERIFIED** until w-fit-1 PLXC @ DOORBELL+0x130.
+`/tmp/CORENAME=Plex` for every Plex*.rbf. Coordinate with w-lint: video_regression
+must report that, not GREEN on mixed pairs.
+
+Dry-run power-cycle table (no device):
+
+```bash
+PAIR_ID=ddr-c5382bee scripts/rollback_v2.sh plan
+# expect: POWER-CYCLE states A–E, true rc=0
+```
+
 ## Numbered parent runbook (exact commands)
 
 **Pair = ONE unit:** core `c5382bee` + daemon `edc3a46b` + conf

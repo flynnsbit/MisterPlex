@@ -43,6 +43,8 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 # shellcheck source=pair_ship_policy.sh
 source "$ROOT/scripts/pair_ship_policy.sh"
+# shellcheck source=pair_live_probe.inc.sh
+source "$ROOT/scripts/pair_live_probe.inc.sh"
 
 HOST="${MISTER_HOST:-192.168.1.183}"
 PASS="${MISTER_PASS:-1}"
@@ -65,6 +67,7 @@ PAIR_BLOB="$(pair_policy_lookup "$PAIR_ID")" || {
   exit 10
 }
 PAIR_CONF_PROFILE=none
+PAIR_BANK1=unknown
 while IFS= read -r line; do
   case "$line" in
     PAIR_ID=*) PAIR_ID="${line#PAIR_ID=}" ;;
@@ -73,6 +76,7 @@ while IFS= read -r line; do
     PAIR_DAEMON_MD5=*) DAEMON_MD5="${line#PAIR_DAEMON_MD5=}" ;;
     PAIR_CORE_PATH=*) PAIR_CORE_PATH="${line#PAIR_CORE_PATH=}" ;;
     PAIR_CONF_PROFILE=*) PAIR_CONF_PROFILE="${line#PAIR_CONF_PROFILE=}" ;;
+    PAIR_BANK1=*) PAIR_BANK1="${line#PAIR_BANK1=}" ;;
   esac
 done <<<"$PAIR_BLOB"
 V2_ROOT="${ROLLBACK_ROOT:-/media/fat/misterplex_v2}"
@@ -195,52 +199,8 @@ remote_file_md5() {
 }
 
 remote_live_any_daemon() {
-  run_ssh "$(cat <<'REMOTE'
-set +e
-n=0
-pids=""
-live=""
-conf=""
-port=""
-exe=""
-root=""
-for d in /proc/[0-9]*; do
-  [ -r "$d/cmdline" ] || continue
-  cmd=$(tr '\0' ' ' <"$d/cmdline" 2>/dev/null) || continue
-  case "$cmd" in *plexctl.sh*|*plexctl_supervise*|*misterplexd_supervise*|*dedupe_daemon*) continue ;; esac
-  case "$cmd" in */misterplexd\ *|*/misterplexd) ;; *) continue ;; esac
-  p=${d#/proc/}
-  n=$((n + 1))
-  pids="${pids}${pids:+ }$p"
-  exe=$(readlink -f "/proc/$p/exe" 2>/dev/null || true)
-  if [ -n "$exe" ]; then
-    live=$(md5sum "$exe" 2>/dev/null | awk '{print $1}')
-    root=$(dirname "$(dirname "$exe")")
-  fi
-  conf=""; port=""; prev=""
-  for tok in $cmd; do
-    case "$prev" in
-      --port) port="$tok"; prev=""; continue ;;
-      --conf) conf="$tok"; prev=""; continue ;;
-    esac
-    case "$tok" in
-      --port) prev=--port ;;
-      --port=*) port="${tok#--port=}"; prev="" ;;
-      --conf) prev=--conf ;;
-      --conf=*) conf="${tok#--conf=}"; prev="" ;;
-      *) prev="" ;;
-    esac
-  done
-done
-echo "N_DAEMON=$n"
-echo "PIDS=$pids"
-echo "LIVE_MD5=${live}"
-echo "LIVE_EXE=${exe}"
-echo "LIVE_PORT=${port}"
-echo "LIVE_CONF=${conf}"
-echo "LIVE_ROOT=${root}"
-REMOTE
-)"
+  # Count by /proc/PID/exe basename==misterplexd only (not cmdline; flock trap).
+  run_ssh "$(pair_remote_live_daemon_snippet)"
 }
 
 remote_find_daemon_pin() {
@@ -819,8 +779,61 @@ restore_and_verify() {
   verify_pair 1
 }
 
+print_pair_plan() {
+  cat <<EOF
+=== ATOMIC PAIR PLAN id=$PAIR_ID ===
+mode=$PAIR_MODE bank1=$PAIR_BANK1 conf_profile=$PAIR_CONF_PROFILE
+core_path=$PAIR_CORE_PATH  core_md5=$CORE_MD5
+daemon_path=$V2_DAEMON     daemon_md5=$DAEMON_MD5
+SPI undo core (NEVER overwrite)=$DEVICE_CORE_V2_DAILY pin=$RBF_PIN_V2_DAILY_FULL
+product core slot=$DEVICE_CORE_PRODUCT
+
+n_daemon count rule: basename(readlink -f /proc/PID/exe)==misterplexd
+  (NOT cmdline — flock argv contains misterplexd and lies)
+
+Sequence (all-or-nothing; abort leaves prior half uncommitted when possible):
+  0) preflight: pair matrix OK + BOTH halves available (else rc=10 device untouched)
+  1) STOP daemon (avoid ETXTBSY on cp over running binary)
+  2) install daemon bytes if disk pin wrong (from host pin or on-device .bak)
+  3) apply conf profile ($PAIR_CONF_PROFILE) atomically with backup
+  4) ONE menu bounce → load $PAIR_CORE_PATH
+  5) start exactly one daemon; verify n_daemon==1 via /proc/exe md5
+  6) HARD visual (PAIR_IDLE_PNG / motion); unset → rc=8; motion 77 → rc=8
+
+POWER-CYCLE / worst-moment disk states (honesty; no core-identity register yet):
+  A after preflight only:
+      disk unchanged; boot = prior running pair (safe if was coherent)
+  B after stop, before install:
+      disk binaries unchanged; daemon down; boot → menu/last core, no daemon until start
+      SAFE if operator does not auto-start a foreign daemon
+  C after daemon+conf install, before core load:
+      disk daemon+conf = TARGET; FPGA bitstream still OLD until step 4
+      power loss here: on-disk TARGET daemon with OLD loaded core if autostart → MIXED
+      MITIGATION: daemon is STOPPED; do not enable autostart mid-flight; Plex_v2.rbf
+      SPI pin remains intact as undo core file
+  D after core load, before start:
+      FPGA = TARGET core; disk = TARGET daemon+conf; daemon still down
+      power loss: next boot depends on MiSTer last-core; files on disk are COHERENT pair
+  E after start+verify:
+      live pair coherent; claim success only if visual gate rc=0
+
+UNDO without identity RBF:
+  PAIR_ID=spi-v2-hybrid ROLLBACK_DAEMON=artifacts/daemon-pins/misterplexd.50f4eb92 \\
+    PAIR_IDLE_PNG=... $0 restore
+  NEVER scripts/restore_misterplexd_prev.sh (disabled; half-restore → black screen)
+
+Running-core identity: UNVERIFIED until w-fit-1 PLXC @ DOORBELL+0x130 lands.
+  /tmp/CORENAME=Plex for every Plex*.rbf — do not trust CORENAME as pair proof.
+EOF
+}
+
 cmd="${1:-restore}"
 case "$cmd" in
+  plan|dry-run)
+    print_pair_plan
+    echo "true rc=0"
+    exit 0
+    ;;
   verify)
     verify_pair "${ROLLBACK_REQUIRE_VISUAL:-0}"
     ;;
@@ -833,10 +846,17 @@ case "$cmd" in
     exit "$rc"
     ;;
   restore)
+    # Allow explicit dry-run even on restore verb.
+    if [ "${ROLLBACK_EXECUTE:-1}" = "0" ]; then
+      print_pair_plan
+      echo "DRY-RUN restore (ROLLBACK_EXECUTE=0) — device untouched"
+      echo "true rc=0"
+      exit 0
+    fi
     restore_and_verify
     ;;
   *)
-    echo "usage: $0 {verify|restore|preflight}" >&2
+    echo "usage: $0 {plan|preflight|verify|restore}" >&2
     echo "true rc=9"
     exit 9
     ;;

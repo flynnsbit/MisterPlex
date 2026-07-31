@@ -23,19 +23,25 @@ if [ -z "${RBF_PIN_V2_DAILY_FULL:-}" ]; then
 fi
 
 # Canonical pair IDs. Design for "last verified-good pair", not only v2.
-# core_md5|daemon_md5_or_prefix|core_device_path|mode|label|conf_profile
+# core_md5|daemon_md5_or_prefix|core_device_path|mode|label|conf_profile|bank1
 # conf_profile: ddr | spi | none
+# bank1: DDR frame-store bank1 phys (geometry half of the pair)
+#   SPI 320x240 → 0x30040000
+#   DDR 480p-capable YUV layout → 0x30080000
+# A mixed pair is a silent geometry mismatch (release.md lab stable pair).
 #
 # PRIMARY promote target (parent 2026-07-31 viewed pixels + native 480p):
-#   ddr-c5382bee = core c5382bee + daemon edc3a46b + conf ddr
+#   ddr-c5382bee = core c5382bee + daemon edc3a46b + conf ddr + bank1 0x30080000
 # Historical DDR (pre-480p FORCE_SCALE land) kept as explicit rollback id:
 #   ddr-c5382bee-e9f79de2
+PAIR_BANK1_SPI=0x30040000
+PAIR_BANK1_DDR=0x30080000
 _PAIR_DDR_DAEMON="$(rbf_policy_resolve_ddr_daemon_full)"
 PAIR_MATRIX_ROWS=(
-  "${RBF_PIN_V2_DAILY_FULL}|${DAEMON_PIN_V2_HYBRID_FULL}|${DEVICE_CORE_V2_DAILY}|spi|spi-v2-hybrid|spi"
-  "${RBF_PIN_V2_DAILY_FULL}|${DAEMON_PIN_V2_RELEASE_FULL}|${DEVICE_CORE_V2_DAILY}|spi|spi-v2-release|spi"
-  "${RBF_PIN_DDR_CANDIDATE_FULL}|${_PAIR_DDR_DAEMON}|${DEVICE_CORE_PRODUCT}|ddr|ddr-c5382bee|ddr"
-  "${RBF_PIN_DDR_CANDIDATE_FULL}|${DAEMON_PIN_DDR_E9F79DE2_FULL}|${DEVICE_CORE_PRODUCT}|ddr|ddr-c5382bee-e9f79de2|ddr"
+  "${RBF_PIN_V2_DAILY_FULL}|${DAEMON_PIN_V2_HYBRID_FULL}|${DEVICE_CORE_V2_DAILY}|spi|spi-v2-hybrid|spi|${PAIR_BANK1_SPI}"
+  "${RBF_PIN_V2_DAILY_FULL}|${DAEMON_PIN_V2_RELEASE_FULL}|${DEVICE_CORE_V2_DAILY}|spi|spi-v2-release|spi|${PAIR_BANK1_SPI}"
+  "${RBF_PIN_DDR_CANDIDATE_FULL}|${_PAIR_DDR_DAEMON}|${DEVICE_CORE_PRODUCT}|ddr|ddr-c5382bee|ddr|${PAIR_BANK1_DDR}"
+  "${RBF_PIN_DDR_CANDIDATE_FULL}|${DAEMON_PIN_DDR_E9F79DE2_FULL}|${DEVICE_CORE_PRODUCT}|ddr|ddr-c5382bee-e9f79de2|ddr|${PAIR_BANK1_DDR}"
 )
 
 # Default rollback target pair id. Prefer SPI hybrid as the named "daily" undo
@@ -69,10 +75,10 @@ pair_policy_md5_match() {
   [ "${a:0:8}" = "${b:0:8}" ]
 }
 
-# Print: PAIR_OK id=... mode=... core=... daemon=... path=... conf=...
+# Print: PAIR_OK id=... mode=... core=... daemon=... path=... conf=... bank1=...
 # or PAIR_REFUSE reason=...
 pair_policy_check() {
-  local core daemon c d row pc pd path mode label confp
+  local core daemon c d row pc pd path mode label confp bank1
   core=$(pair_policy_normalize_md5 "${1:-}")
   daemon=$(pair_policy_normalize_md5 "${2:-}")
   if [ "${#core}" -lt 8 ] || [ "${#daemon}" -lt 8 ]; then
@@ -82,9 +88,9 @@ pair_policy_check() {
   c="${core:0:8}"
   d="${daemon:0:8}"
   for row in "${PAIR_MATRIX_ROWS[@]}"; do
-    IFS='|' read -r pc pd path mode label confp <<<"$row"
+    IFS='|' read -r pc pd path mode label confp bank1 <<<"$row"
     if pair_policy_md5_match "$core" "$pc" && pair_policy_md5_match "$daemon" "$pd"; then
-      echo "PAIR_OK id=$label mode=$mode core=$pc daemon=$pd path=$path conf=$confp"
+      echo "PAIR_OK id=$label mode=$mode core=$pc daemon=$pd path=$path conf=$confp bank1=${bank1:-unknown}"
       return 0
     fi
   done
@@ -110,10 +116,10 @@ pair_policy_check() {
 
 # Lookup pair by id. Prints KEY=value lines.
 pair_policy_lookup() {
-  local want="${1:-}" row pc pd path mode label confp
+  local want="${1:-}" row pc pd path mode label confp bank1
   [ -n "$want" ] || { echo "PAIR_REFUSE reason=empty_pair_id"; return 3; }
   for row in "${PAIR_MATRIX_ROWS[@]}"; do
-    IFS='|' read -r pc pd path mode label confp <<<"$row"
+    IFS='|' read -r pc pd path mode label confp bank1 <<<"$row"
     if [ "$label" = "$want" ]; then
       # Re-resolve current DDR daemon if matrix still has prefix-only.
       if [ "$label" = "ddr-c5382bee" ]; then
@@ -125,6 +131,7 @@ pair_policy_lookup() {
       echo "PAIR_DAEMON_MD5=$pd"
       echo "PAIR_CORE_PATH=$path"
       echo "PAIR_CONF_PROFILE=${confp:-none}"
+      echo "PAIR_BANK1=${bank1:-unknown}"
       return 0
     fi
   done
@@ -133,12 +140,12 @@ pair_policy_lookup() {
 }
 
 pair_policy_list() {
-  local row pc pd path mode label confp
+  local row pc pd path mode label confp bank1
   echo "PAIR_DEFAULT_ROLLBACK=$PAIR_DEFAULT_ROLLBACK"
   echo "PAIR_DEFAULT_PROMOTE=$PAIR_DEFAULT_PROMOTE"
   for row in "${PAIR_MATRIX_ROWS[@]}"; do
-    IFS='|' read -r pc pd path mode label confp <<<"$row"
-    echo "PAIR id=$label mode=$mode core=${pc:0:8} daemon=${pd:0:8} conf=$confp path=$path"
+    IFS='|' read -r pc pd path mode label confp bank1 <<<"$row"
+    echo "PAIR id=$label mode=$mode core=${pc:0:8} daemon=${pd:0:8} conf=$confp bank1=${bank1:-?} path=$path"
   done
 }
 

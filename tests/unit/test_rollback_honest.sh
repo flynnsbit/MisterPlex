@@ -538,5 +538,56 @@ if [ -f "$PIN_DDR" ]; then
   echo "OK find-daemon-ddr"
 fi
 
+echo "=== B8: restore_misterplexd_prev HARD REFUSE half-restore ==="
+set +e
+out=$(bash "$ROOT/scripts/restore_misterplexd_prev.sh" 2>&1)
+rc=$?
+set -e
+echo "$out" | sed 's/^/  [half] /' | head -20
+echo "  [half] true rc=$rc"
+[ "$rc" -eq 10 ] || { echo "FAIL half-restore want rc=10 got $rc"; exit 1; }
+echo "$out" | grep -qi 'HALF_RESTORE\|REFUSE' || { echo "FAIL half msg"; exit 1; }
+echo "$out" | grep -qi 'rollback_v2' || { echo "FAIL half redirect"; exit 1; }
+echo "OK half-restore-refuse rc=10"
+
+echo "=== pair matrix includes bank1 geometry ==="
+out=$(cd "$ROOT" && bash -c 'source scripts/pair_ship_policy.sh; pair_policy_lookup ddr-c5382bee')
+echo "$out" | sed 's/^/  /'
+echo "$out" | grep -q 'PAIR_BANK1=0x30080000' || { echo "FAIL ddr bank1"; exit 1; }
+out=$(cd "$ROOT" && bash -c 'source scripts/pair_ship_policy.sh; pair_policy_lookup spi-v2-hybrid')
+echo "$out" | grep -q 'PAIR_BANK1=0x30040000' || { echo "FAIL spi bank1"; exit 1; }
+echo "OK bank1-geometry"
+
+echo "=== live probe counts by /proc/exe not cmdline (flock-safe) ==="
+src=$(cat "$ROOT/scripts/pair_live_probe.inc.sh")
+echo "$src" | grep -q 'basename' || { echo "FAIL probe missing basename"; exit 1; }
+echo "$src" | grep -q 'readlink -f' || { echo "FAIL probe missing readlink"; exit 1; }
+if echo "$src" | grep -q 'case "$cmd" in \*/misterplexd'; then
+  echo "FAIL probe still cmdline-primary"
+  exit 1
+fi
+echo "OK probe-exe-contract"
+
+echo "=== rollback plan dry-run (no device) ==="
+set +e
+out=$(cd "$ROOT" && PAIR_ID=ddr-c5382bee bash scripts/rollback_v2.sh plan 2>&1)
+rc=$?
+set -e
+echo "$out" | sed 's/^/  [plan] /' | head -25
+echo "  [plan] true rc=$rc"
+[ "$rc" -eq 0 ] || { echo "FAIL plan rc=$rc"; exit 1; }
+echo "$out" | grep -qi 'POWER-CYCLE' || { echo "FAIL plan power-cycle section"; exit 1; }
+echo "$out" | grep -q '0x30080000' || { echo "FAIL plan bank1"; exit 1; }
+echo "OK plan-dry-run"
+
+echo "=== ROLLBACK_EXECUTE=0 restore is dry-run ==="
+set +e
+out=$(cd "$ROOT" && PAIR_ID=ddr-c5382bee ROLLBACK_EXECUTE=0 bash scripts/rollback_v2.sh restore 2>&1)
+rc=$?
+set -e
+[ "$rc" -eq 0 ] || { echo "FAIL dry restore rc=$rc"; exit 1; }
+echo "$out" | grep -qi 'DRY-RUN' || { echo "FAIL dry restore msg"; exit 1; }
+echo "OK restore-dry-run"
+
 echo "ALL test_rollback_honest checks passed"
 exit 0

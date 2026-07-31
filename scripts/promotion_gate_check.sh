@@ -30,6 +30,8 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 source "$ROOT/scripts/rbf_ship_policy.sh"
 # shellcheck source=pair_ship_policy.sh
 source "$ROOT/scripts/pair_ship_policy.sh"
+# shellcheck source=pair_live_probe.inc.sh
+source "$ROOT/scripts/pair_live_probe.inc.sh"
 
 HOST="${MISTER_HOST:-192.168.1.183}"
 USER="${MISTER_USER:-root}"
@@ -147,13 +149,15 @@ policy_local() {
   return 0
 }
 
-# Remote probe: product core, v2 core, live daemon via /proc.
+# Remote probe: product core, v2 core, live daemon via /proc/exe (not cmdline).
 remote_live_blob() {
   if [ -n "${PROMOTE_GATE_BLOB:-}" ]; then
     cat "$PROMOTE_GATE_BLOB"
     return 0
   fi
-  run_ssh "PRODUCT=$(printf '%q' "$PRODUCT_CORE_PATH"); V2=$(printf '%q' "$V2_CORE_PATH"); $(cat <<'REMOTE'
+  local remote
+  remote="PRODUCT=$(printf '%q' "$PRODUCT_CORE_PATH"); V2=$(printf '%q' "$V2_CORE_PATH"); "
+  remote+="$(cat <<'REMOTE'
 set +e
 prod_md5=""; v2_md5=""
 if [ ! -f "$PRODUCT" ]; then prod_md5=MISSING; else prod_md5=$(md5sum "$PRODUCT" | awk '{print $1}'); fi
@@ -162,47 +166,10 @@ echo "PRODUCT_CORE=$PRODUCT"
 echo "PRODUCT_MD5=$prod_md5"
 echo "V2_CORE=$V2"
 echo "V2_MD5=$v2_md5"
-n=0
-pids=""
-live_md5=""
-live_exe=""
-live_conf=""
-live_root=""
-for d in /proc/[0-9]*; do
-  [ -r "$d/cmdline" ] || continue
-  cmd=$(tr '\0' ' ' <"$d/cmdline" 2>/dev/null) || continue
-  case "$cmd" in *plexctl.sh*|*plexctl_supervise*|*misterplexd_supervise*|*dedupe_daemon*) continue ;; esac
-  case "$cmd" in */misterplexd\ *|*/misterplexd) ;; *) continue ;; esac
-  p=${d#/proc/}
-  n=$((n + 1))
-  pids="${pids}${pids:+ }$p"
-  exe=$(readlink -f "/proc/$p/exe" 2>/dev/null || true)
-  live_exe=$exe
-  if [ -n "$exe" ]; then
-    live_md5=$(md5sum "$exe" 2>/dev/null | awk '{print $1}')
-    live_root=$(dirname "$(dirname "$exe")")
-  fi
-  conf=""; prev=""
-  for tok in $cmd; do
-    case "$prev" in
-      --conf) conf="$tok"; prev=""; continue ;;
-    esac
-    case "$tok" in
-      --conf) prev=--conf ;;
-      --conf=*) conf="${tok#--conf=}"; prev="" ;;
-      *) prev="" ;;
-    esac
-  done
-  live_conf=$conf
-done
-echo "N_DAEMON=$n"
-echo "PIDS=$pids"
-echo "LIVE_EXE=$live_exe"
-echo "LIVE_MD5=$live_md5"
-echo "LIVE_CONF=$live_conf"
-echo "LIVE_ROOT=$live_root"
 REMOTE
 )"
+  remote+="$(pair_remote_live_daemon_snippet)"
+  run_ssh "$remote"
 }
 
 verify_live() {
