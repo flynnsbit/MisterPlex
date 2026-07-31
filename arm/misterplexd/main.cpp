@@ -7,6 +7,7 @@
 #include "libmisterplex/conf_keys.hpp"
 #include "libmisterplex/ffmpeg_vf.hpp"
 #include "libmisterplex/osd_menu.hpp"
+#include "libmisterplex/yuv420p_chroma_health.hpp"
 #include "log_redact.hpp"
 #include "media_player.hpp"
 #include "plextv_device.hpp"
@@ -138,6 +139,8 @@ int main(int argc, char** argv) {
     // WxH is known and equals the coded bank (or ASSUME_MATCH). Unknown delivery
     // still scales. Shipping path with matching PMS videoResolution is a no-op
     // omit — do not ship a cosmetic sws default for a filter that is skipped.
+    // Defect A: YUV DDR present forces SkipIdentity→Always (see
+    // ffmpegScaleModeForDdrYuvPresent) so native 480p never identity-skips.
     std::string ffmpegScaleMode = "skip_identity";
     std::string ffmpegSwsFlags; // empty = ffmpeg default when residual scale runs
     bool ffmpegScaleAssumeMatch = false;
@@ -801,9 +804,14 @@ int main(int argc, char** argv) {
         // 624x480 for PRESENT=fpga|both), NOT to contentRes/DECODE (320x240).
         // Comparing to contentRes here falsely predicted arm_rescale=0 for the
         // shipping 320 path and hid the required scale+pad into the canvas.
-        const auto scaleMode = misterplex::parseFfmpegScaleMode(ffmpegScaleMode);
+        // Defect A: YUV DDR present forces SkipIdentity → Always (see
+        // ffmpegScaleModeForDdrYuvPresent) so 480p never identity-skips.
+        const auto confScaleMode = misterplex::parseFfmpegScaleMode(ffmpegScaleMode);
         const bool wantFpgaDdrCanvas =
             (presentMode == "fpga" || presentMode == "both");
+        const auto scaleMode =
+            wantFpgaDdrCanvas ? misterplex::ffmpegScaleModeForDdrYuvPresent(confScaleMode)
+                              : confScaleMode;
         const auto codedGeom =
             wantFpgaDdrCanvas
                 ? misterplex::ddrFrameGeometryForFpgaPresent(contentRes.width,

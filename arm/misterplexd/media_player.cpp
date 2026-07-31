@@ -8,7 +8,9 @@
 #include "libmisterplex/osd_menu.hpp"
 #include "libmisterplex/h264_nal_dispatch.hpp"
 #include "libmisterplex/h264_recon.hpp"
+#include "libmisterplex/yuv420p_chroma_health.hpp"
 #include <algorithm>
+#include <atomic>
 #include <cctype>
 #include <cerrno>
 #include <cstdio>
@@ -2178,7 +2180,15 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
     vfReq.crop_top = ddrGeometry.crop_top;
     if (fpsNum_ > 0 && fpsDen_ > 0)
         vfReq.fps_filter = "fps=" + std::to_string(fpsNum_) + "/" + std::to_string(fpsDen_);
-    vfReq.scale_mode = parseFfmpegScaleMode(ffmpegScaleMode_);
+    // Defect A (silicon): SkipIdentity at DECODE=624x480 left U/V ~0 (full green)
+    // while the same core+daemon at 320x240 (always scale_pad_crop) is colour-OK.
+    // YUV DDR present never identity-skips — force Always so swscale materialises
+    // I420 chroma the same way the proven 240p path does. Conf Off stays Off.
+    const FfmpegScaleMode confScaleMode = parseFfmpegScaleMode(ffmpegScaleMode_);
+    const bool yuvDdrPresent =
+        wantFpgaDdrCanvas && ddrFrameFormat_ == DdrFrameFormat::Yuv420p;
+    vfReq.scale_mode =
+        yuvDdrPresent ? ffmpegScaleModeForDdrYuvPresent(confScaleMode) : confScaleMode;
     vfReq.sws_flags = ffmpegSwsFlags_;
     vfReq.source_w = ffmpegScaleSourceW_;
     vfReq.source_h = ffmpegScaleSourceH_;
@@ -2195,6 +2205,10 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
         " arm_rescale=" + (vfPlan.scale_applied ? "1" : "0") + " reason=" + vfPlan.reason +
         " identity_skip=" + (vfPlan.identity_skip ? "1" : "0") +
         " mode=" + ffmpegScaleModeName(vfReq.scale_mode) +
+        " conf_mode=" + ffmpegScaleModeName(confScaleMode) +
+        " yuv_ddr_force_scale=" + (yuvDdrPresent && confScaleMode == FfmpegScaleMode::SkipIdentity
+                                       ? "1"
+                                       : "0") +
         " sws_flags=" + (ffmpegSwsFlags_.empty() ? "(default)" : ffmpegSwsFlags_) +
         " assume_match=" + (ffmpegScaleAssumeMatch_ ? "1" : "0") +
         " display=" + std::to_string(rawDisplayW) + "x" + std::to_string(rawDisplayH) +
@@ -3058,12 +3072,31 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                     const auto pix0 = std::chrono::steady_clock::now();
                     const int64_t pixCpu0 = threadCpuMicros();
                     clearYuv420pCropPadding(frame.data(), ddrGeometry);
+                    // Safety net for defect A: if U/V stayed near 0 (green-cast
+                    // class), force studio-neutral chroma so scanout is greyscale
+                    // rather than full green. Y untouched. Logs once per session.
+                    if (repairDeadYuv420pChroma(frame.data(), rawW, rawH)) {
+                        static std::atomic<bool> chromaRepairLogged{false};
+                        if (!chromaRepairLogged.exchange(true))
+                            log("media: WARN repaired dead YUV420p chroma (U/V~0 → 128) "
+                                "at " +
+                                std::to_string(rawW) + "x" + std::to_string(rawH) +
+                                " — green-cast class; check identity_skip / PMS delivery");
+                    }
                     const int64_t pixCpu1 = threadCpuMicros();
                     const auto pix1 = std::chrono::steady_clock::now();
                     prof.pixelUs += microsBetween(pix0, pix1);
                     prof.pixelCpuUs += pixCpu1 - pixCpu0;
                 } else {
                     clearYuv420pCropPadding(frame.data(), ddrGeometry);
+                    if (repairDeadYuv420pChroma(frame.data(), rawW, rawH)) {
+                        static std::atomic<bool> chromaRepairLogged{false};
+                        if (!chromaRepairLogged.exchange(true))
+                            log("media: WARN repaired dead YUV420p chroma (U/V~0 → 128) "
+                                "at " +
+                                std::to_string(rawW) + "x" + std::to_string(rawH) +
+                                " — green-cast class; check identity_skip / PMS delivery");
+                    }
                 }
             }
 
