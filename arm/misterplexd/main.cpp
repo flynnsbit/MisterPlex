@@ -532,22 +532,22 @@ int main(int argc, char** argv) {
         // Anything else (empty, "logo", typos like "lastframe") → Logo default.
         player.setIdleMode(im);
         // OSD_CONTROL: auto|on|off (default auto). Auto applies F12 bits only when
-        // the core's PLXS DDR mailbox is LIVE (magic + advancing seq). Never uses
-        // CORENAME/RBF filename. Forced on keeps SPI fallback (operator risk on
-        // pre-v3). Forced off matches the old OSD_CONTROL=0 footgun intentionally.
+        // live CONF_STR (UIO_GET_STRING) contains "O[15:14],Idle screen". Never uses
+        // CORENAME/RBF filename. PLXS is transport only. Forced on is operator risk
+        // on pre-v3. Forced off matches the old OSD_CONTROL=0 footgun intentionally.
         const auto osdRaw = loadConf(confPath, "OSD_CONTROL");
         const auto osdMode = misterplex::parseOsdControlMode(osdRaw);
         player.setOsdControlMode(osdMode);
         std::fprintf(stderr,
                      "misterplexd: OSD_CONTROL=%s (conf=%s) — auto applies only when "
-                     "PLXS mailbox LIVE; on=force; off=F12 inert\n",
+                     "CONF_STR has O[15:14],Idle screen; on=force; off=F12 inert\n",
                      misterplex::osdControlModeName(osdMode),
                      osdRaw.empty() ? "(default auto)" : osdRaw.c_str());
         if (osdMode == misterplex::OsdControlMode::ForcedOff) {
             std::fprintf(stderr,
                          "misterplexd: OSD_CONTROL=off — F12 menu Idle Screen is inert; "
-                         "only IDLE_SCREEN conf applies. Use OSD_CONTROL=auto on a core "
-                         "that publishes PLXS, or on to force.\n");
+                         "only IDLE_SCREEN conf applies. Use OSD_CONTROL=auto on a v3+ "
+                         "Idle-screen core, or on to force.\n");
         } else if (osdMode == misterplex::OsdControlMode::ForcedOn) {
             std::fprintf(stderr,
                          "misterplexd: OSD_CONTROL=on — IDLE_SCREEN conf is pre-OSD "
@@ -555,9 +555,9 @@ int main(int argc, char** argv) {
                          "pre-v3 CONF_STR).\n");
         } else {
             std::fprintf(stderr,
-                         "misterplexd: OSD_CONTROL=auto — probing PLXS mailbox; F12 Idle "
-                         "stays inert until LIVE (fail closed). HDMI shows a short "
-                         "notice if the probe finds no mailbox.\n");
+                         "misterplexd: OSD_CONTROL=auto — probing live CONF_STR via "
+                         "UIO_GET_STRING; F12 Idle stays inert until Idle-screen marker "
+                         "(fail closed). HDMI notice if pre-v3/absent.\n");
         }
         std::fprintf(stderr, "misterplexd: IDLE_SCREEN=%s AV_OFFSET_MS=%d\n",
                      idle.empty() ? "logo(default)" : idle.c_str(), player.avOffsetMs());

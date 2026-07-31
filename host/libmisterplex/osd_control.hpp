@@ -1,9 +1,21 @@
-// OSD_CONTROL policy: auto-detect capability from the core mailbox, not filenames.
+// OSD_CONTROL policy: detect core generation from live CONF_STR, not filenames.
 //
-// Safety: on Auto, apply decoded OSD bits ONLY when the PLXS DDR mailbox is LIVE
-// (magic + advancing seq). Pre-v3 / pre-mailbox cores never publish a live PLXS
-// heartbeat, so Auto fails closed and never reinterprets Pattern/Content-FPS bits
-// as A/V offset / Idle screen. Filenames and CORENAME are not used (all say "Plex").
+// Safety property (fail closed):
+//   Auto enables Idle/A/V bit decode ONLY when UIO_GET_STRING returns a CONF_STR
+//   that contains the product Idle-screen menu marker:
+//       "O[15:14],Idle screen"
+//   (see fpga/Plex_MiSTer/Plex.sv CONF_STR and docs/release.md).
+//
+//   Pre-v3 cores use those same status bits for Pattern / Content FPS. Applying
+//   the v3 decoder on them corrupts settings. Filenames and CORENAME are useless
+//   (every build reports CORENAME=Plex).
+//
+// PLXS DDR mailbox (magic 0x504C5853 at 0x3007F100) is TRANSPORT only — it
+// carries status[15:0] without SPI. It is NOT a generation proof by itself:
+// a mismatched or hand-rolled bitstream could publish PLXS while still using
+// pre-v3 bit meanings. Auto therefore never enables apply from mailbox liveness
+// alone. Once CONF_STR proves V3 Idle semantics, mailbox is preferred and SPI
+// status is an allowed fallback (bits are known Idle/A/V).
 //
 // Pure header — unit-tested without FPGA.
 #pragma once
@@ -15,17 +27,29 @@ namespace misterplex {
 
 // Conf / operator override. Default product mode is Auto.
 enum class OsdControlMode : uint8_t {
-    Auto = 0,      // probe PLXS; apply only when LIVE
-    ForcedOn = 1,  // always apply (mailbox preferred; SPI fallback) — operator risk
+    Auto = 0,      // probe live CONF_STR; apply only when V3 Idle proven
+    ForcedOn = 1,  // always apply (operator accepts pre-v3 risk)
     ForcedOff = 2, // never poll / never apply
 };
 
-// Observed core capability (never guessed from RBF path or CORENAME).
+// Settled core generation / capability for apply decisions.
+// Named for logs: greppable capability=v3_idle|pre_v3|absent|unknown
 enum class OsdCapability : uint8_t {
-    Unknown = 0,     // not yet proven
-    LiveMailbox = 1, // PLXS magic + advancing seq (v3+ mailbox path)
-    Absent = 2,      // probe window elapsed without LIVE mailbox
+    Unknown = 0, // confstr not yet classified
+    PreV3 = 1,   // confstr readable and lacks Idle-screen marker (or has Pattern)
+    V3Idle = 2,  // confstr contains O[15:14],Idle screen — safe Idle/A/V decode
+    Absent = 3,  // probe window elapsed without a readable confstr
 };
+
+// Exact product marker from Plex.sv CONF_STR (Idle screen menu, v3+).
+// Do not loosen to a bare "Idle" substring — keep the bit field + label.
+inline constexpr const char kOsdIdleScreenConfMarker[] = "O[15:14],Idle screen";
+
+// Positive pre-v3 markers from the CONF_STR replaced by commit 363183d8
+// (A/V lipsync fix, OSD menu v3 + idle screen). Presence of either without the
+// Idle-screen marker is definitive pre-v3 bit layout.
+inline constexpr const char kOsdPreV3PatternMarker[] = "O[7:6],Pattern";
+inline constexpr const char kOsdPreV3ContentFpsMarker[] = "O[5:4],Content FPS";
 
 inline const char* osdControlModeName(OsdControlMode m) {
     switch (m) {
@@ -43,19 +67,37 @@ inline const char* osdCapabilityName(OsdCapability c) {
     switch (c) {
     case OsdCapability::Unknown:
         return "unknown";
-    case OsdCapability::LiveMailbox:
-        return "live_mailbox";
+    case OsdCapability::PreV3:
+        return "pre_v3";
+    case OsdCapability::V3Idle:
+        return "v3_idle";
     case OsdCapability::Absent:
         return "absent";
     }
     return "unknown";
 }
 
+// Classify a live CONF_STR blob from FpgaSpi::getConfigString / UIO_GET_STRING.
+// Empty → Unknown (caller keeps probing). Never guesses from RBF path.
+inline OsdCapability classifyOsdConfStr(const std::string& confstr) {
+    if (confstr.empty())
+        return OsdCapability::Unknown;
+    if (confstr.find(kOsdIdleScreenConfMarker) != std::string::npos)
+        return OsdCapability::V3Idle;
+    // Readable string without Idle-screen menu → pre-v3 bit layout (fail closed).
+    return OsdCapability::PreV3;
+}
+
+// True when confstr text itself is positive pre-v3 evidence (for log detail).
+inline bool confStrHasPreV3Markers(const std::string& confstr) {
+    return confstr.find(kOsdPreV3PatternMarker) != std::string::npos ||
+           confstr.find(kOsdPreV3ContentFpsMarker) != std::string::npos;
+}
+
 // Parse conf token. Empty / "auto" → Auto (smart default).
 // 1/true/yes/on → ForcedOn. 0/false/no/off → ForcedOff.
 // Unknown non-empty tokens → ForcedOff (fail closed; never silently enable).
 inline OsdControlMode parseOsdControlMode(std::string raw) {
-    // trim CR/space (conf files may be CRLF)
     while (!raw.empty() &&
            (raw.back() == ' ' || raw.back() == '\t' || raw.back() == '\r' || raw.back() == '\n'))
         raw.pop_back();
@@ -80,32 +122,38 @@ inline bool osdPollWanted(OsdControlMode mode) {
 }
 
 // May apply decoded status[15:0] to idle / A/V / content tier?
-// Auto requires LiveMailbox — SPI-only words are never applied under Auto.
+// Auto requires V3Idle from CONF_STR — never from mailbox alone.
 inline bool osdApplyWanted(OsdControlMode mode, OsdCapability cap) {
     if (mode == OsdControlMode::ForcedOff)
         return false;
     if (mode == OsdControlMode::ForcedOn)
         return true;
-    return cap == OsdCapability::LiveMailbox;
+    return cap == OsdCapability::V3Idle;
 }
 
-// SPI fallback (pre-mailbox getCoreStatus) is only for ForcedOn.
-// Auto must not use SPI status bits — that is the pre-v3 footgun.
+// SPI UIO_GET_STATUS for the OSD word: allowed once bit semantics are proven
+// V3Idle (Auto) or when the operator ForcedOn. Never under ForcedOff / Auto+pre_v3.
+inline bool osdSpiStatusWanted(OsdControlMode mode, OsdCapability cap) {
+    if (mode == OsdControlMode::ForcedOff)
+        return false;
+    if (mode == OsdControlMode::ForcedOn)
+        return true;
+    return cap == OsdCapability::V3Idle;
+}
+
+// Back-compat name: SPI without confstr proof is ForcedOn-only (pre-v3 footgun).
 inline bool osdSpiFallbackWanted(OsdControlMode mode) {
     return mode == OsdControlMode::ForcedOn;
 }
 
 // Mirror of FpgaSpi::readOsdMailbox liveness (seq must advance; stale freezes → dead).
-// Unit tests pin the contract so host and SPI code cannot drift silently.
+// Transport health only — does not authorize apply under Auto.
 struct OsdMailboxLiveness {
     bool seen = false;
     uint16_t last_seq = 0;
     double last_change_ms = 0.0;
     bool alive = false;
 
-    // magic_ok: lo word == "PLXS". seq: hi[31:16]. now_ms: monotonic ms.
-    // stale_ms: no seq change → declare not alive (default 2000 matches fpga_spi.cpp).
-    // Returns true only when the sample is trusted LIVE for apply.
     bool observe(bool magic_ok, uint16_t seq, double now_ms, double stale_ms = 2000.0) {
         if (!magic_ok) {
             alive = false;
@@ -130,17 +178,15 @@ struct OsdMailboxLiveness {
     }
 };
 
-// Auto probe window: if no LIVE mailbox within this many ms after poll start,
-// capability → Absent (fail closed). Matches "heartbeat is ms; two seconds frozen
-// means nothing is publishing" class of timeout used by the mailbox reader.
+// Auto probe window for UIO_GET_STRING. SPI may skip while Main is busy; retry
+// until this budget elapses, then settle Absent (fail closed).
 constexpr double kOsdAutoProbeMs = 2500.0;
 
-// After start_ms, with still-Unknown capability and no LIVE sample, settle Absent.
+// After start_ms, still-Unknown capability → Absent. PreV3/V3Idle stick.
 inline OsdCapability osdAutoSettle(OsdCapability current, double start_ms, double now_ms,
                                    double probe_ms = kOsdAutoProbeMs) {
-    if (current == OsdCapability::LiveMailbox)
-        return current;
-    if (current == OsdCapability::Absent)
+    if (current == OsdCapability::V3Idle || current == OsdCapability::PreV3 ||
+        current == OsdCapability::Absent)
         return current;
     if (now_ms - start_ms >= probe_ms)
         return OsdCapability::Absent;

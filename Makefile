@@ -16,7 +16,7 @@ help:
 	@echo "  make rtl-lint   - run Verilator parse/lint width/implicit regression gate (not Quartus synthesis)"
 	@echo "  make verilator-elab - run fast Verilator elaboration guard for synthesis-fatal owned RTL errors"
 	@echo "  make quartus-sv-subset - curated Quartus SV subset guard plus fast Verilator elaboration"
-	@echo "  make define-parity - verify Quartus product macros match Verilator/lint macros"
+	@echo "  make define-parity - Quartus↔Verilator macros + host/RTL DDR geometry constants"
 	@echo "  make pre-synth-gates - run define parity + fast pre-Quartus RTL buildability gates"
 	@echo "  make post-fit-hierarchy FIT_RPT=... [MAP_RPT=...] [COMPILE_LOG=...] - critical fitted-module guard"
 	@echo "  make post-fit-timing STA_RPT=... - fail negative Quartus timing slack"
@@ -134,6 +134,7 @@ unit-unlocked: unit-rollcall preflight $(ROOT)/build/test_cadence $(ROOT)/build/
 	$(ROOT)/tests/unit/test_mister_ini_plex_guard.sh
 	$(ROOT)/tests/unit/test_confstr_guard.sh
 	$(ROOT)/tests/unit/test_core_conf_geometry_gate.sh
+	$(ROOT)/tests/unit/test_video_regression_liveness.sh
 	$(ROOT)/tests/unit/test_timing_margin_gate.sh
 	$(ROOT)/tests/unit/test_release_rbf_hash.sh
 	$(ROOT)/tests/unit/test_sdram_startup_verilator.sh
