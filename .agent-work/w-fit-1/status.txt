@@ -2,7 +2,7 @@
 # NO EXCLUSIVE FIT · NO DEVICE ACCESS
 
 BRANCH=w-fit-integ-c5382bee-dequant-swap
-TIP_SHA=994877113c8ef91ff9e705d7e720388ba99e901d
+TIP_SHA=4d9f5864698529b699dde60d78aff86415e0aeb6
 LEDGER_CODE_SHA=825d205d547ea13716ac5d7c4d442f80b563d0ee
 WORKTREE=/home/flynnsbit/Projects/MisterPlex/.worktrees/w-fit-integ
 SHIPPING_CORE=c5382bee
