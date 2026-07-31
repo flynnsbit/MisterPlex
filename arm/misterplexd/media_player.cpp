@@ -2180,10 +2180,10 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
     vfReq.crop_top = ddrGeometry.crop_top;
     if (fpsNum_ > 0 && fpsDen_ > 0)
         vfReq.fps_filter = "fps=" + std::to_string(fpsNum_) + "/" + std::to_string(fpsDen_);
-    // Defect A: defensive studio-black init + dead-chroma repair always on.
-    // Optional lab force-scale (DDR_YUV_FORCE_SCALE=1, default OFF): SkipIdentity
-    // → Always on YUV DDR. At 240p this is a no-op (320≠624 already scales).
-    // At 480p it ADDS a full-frame resample — may worsen defect B throughput.
+    // Defect A/B silicon: YUV DDR force-scale DEFAULT ON (pins output to coded
+    // store). Escape DDR_YUV_FORCE_SCALE=0 still cannot identity-skip on an
+    // unverified PMS request (delivery_geometry_verified guard).
+    // Hygiene: studio-black init + dead-chroma repair always on.
     const FfmpegScaleMode confScaleMode = parseFfmpegScaleMode(ffmpegScaleMode_);
     const bool yuvDdrPresent =
         wantFpgaDdrCanvas && ddrFrameFormat_ == DdrFrameFormat::Yuv420p;
@@ -2193,6 +2193,7 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
     vfReq.source_w = ffmpegScaleSourceW_;
     vfReq.source_h = ffmpegScaleSourceH_;
     vfReq.assume_source_matches_coded = ffmpegScaleAssumeMatch_;
+    vfReq.delivery_geometry_verified = deliveryGeometryVerified_;
     const FfmpegVfPlan vfPlan = buildFfmpegVideoFilter(vfReq);
     std::string vf = vfPlan.vf;
     // Actual scale decision (parent greps arm_rescale= here and on misterplexd: GEOM).
@@ -2201,12 +2202,18 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
             ? (std::to_string(ffmpegScaleSourceW_) + "x" + std::to_string(ffmpegScaleSourceH_))
             : "unknown";
     const std::string codedStr = std::to_string(rawW) + "x" + std::to_string(rawH);
+    if (vfPlan.reason.find("unverified_delivery") != std::string::npos) {
+        log(std::string("media: GEOM_GUARD refused identity_skip — delivery not verified "
+                        "(PMS request ≠ measured size); forcing scale. reason=") +
+            vfPlan.reason + " claimed=" + srcStr + " coded=" + codedStr);
+    }
     log(std::string("media: GEOM expected_delivery=") + srcStr + " decode_target=" + codedStr +
         " arm_rescale=" + (vfPlan.scale_applied ? "1" : "0") + " reason=" + vfPlan.reason +
         " identity_skip=" + (vfPlan.identity_skip ? "1" : "0") +
         " mode=" + ffmpegScaleModeName(vfReq.scale_mode) +
         " conf_mode=" + ffmpegScaleModeName(confScaleMode) +
         " yuv_ddr_force_scale=" + (forceScale ? "1" : "0") +
+        " delivery_verified=" + (deliveryGeometryVerified_ ? "1" : "0") +
         " sws_flags=" + (ffmpegSwsFlags_.empty() ? "(default)" : ffmpegSwsFlags_) +
         " assume_match=" + (ffmpegScaleAssumeMatch_ ? "1" : "0") +
         " display=" + std::to_string(rawDisplayW) + "x" + std::to_string(rawDisplayH) +

@@ -139,12 +139,13 @@ int main(int argc, char** argv) {
     // WxH is known and equals the coded bank (or ASSUME_MATCH). Unknown delivery
     // still scales. Shipping path with matching PMS videoResolution is a no-op
     // omit — do not ship a cosmetic sws default for a filter that is skipped.
-    // Defect A lab A/B: DDR_YUV_FORCE_SCALE=1 forces SkipIdentity→Always on the
-    // YUV DDR path (default OFF — force-scale adds resample cost at native 480p).
+    // YUV DDR force-scale DEFAULT ON (silicon: only FORCE=1 fixed native 480p
+    // colour+throughput). Escape hatch: DDR_YUV_FORCE_SCALE=0 (guard still
+    // blocks identity_skip on unverified PMS request geometry).
     std::string ffmpegScaleMode = "skip_identity";
     std::string ffmpegSwsFlags; // empty = ffmpeg default when residual scale runs
     bool ffmpegScaleAssumeMatch = false;
-    bool ddrYuvForceScale = false; // conf DDR_YUV_FORCE_SCALE; default OFF
+    bool ddrYuvForceScale = true; // conf DDR_YUV_FORCE_SCALE; default ON
     bool autoNext = true;
     std::string subtitleMode = "off"; // off | burn | ffmpeg
     int subtitleStreamId = -1;
@@ -332,7 +333,7 @@ int main(int argc, char** argv) {
         v = loadConf(confPath, "FFMPEG_SCALE_ASSUME_MATCH");
         if (!v.empty())
             ffmpegScaleAssumeMatch = confTruthy(v);
-        // Lab A/B for defect A: force Always scale on YUV DDR (default OFF).
+        // YUV DDR force-scale (default ON). Explicit 0/false disables.
         v = loadConf(confPath, "DDR_YUV_FORCE_SCALE");
         if (!v.empty())
             ddrYuvForceScale = confTruthy(v);
@@ -778,9 +779,10 @@ int main(int argc, char** argv) {
         }
 
         // Expected delivery geometry for identity-scale decisions:
-        // - universal transcode: PMS was asked for weakForPlay.videoResolution
-        //   (not library Media WxH — that is the source asset, often 1080p).
-        // - direct play: library Media/Stream WxH when known.
+        // - universal transcode: we *request* weakForPlay.videoResolution — NOT
+        //   verified delivery. PMS client profile only sets upperBound(w/h)
+        //   (plex_resolve.cpp plexClientProfileExtra). delivery_verified=0.
+        // - direct play: library Media/Stream WxH when known → verified.
         // - unknown: leave 0 so skip_identity still emits scale (safe).
         // Always re-set each play so a prior session cannot leak source dims.
         int expectW = 0, expectH = 0;
@@ -799,6 +801,9 @@ int main(int argc, char** argv) {
             deliveryBasis = "library_media";
         }
         player.setFfmpegScaleSourceSize(expectW, expectH);
+        const bool deliveryVerified =
+            misterplex::deliveryGeometryVerifiedFromBasis(deliveryBasis);
+        player.setDeliveryGeometryVerified(deliveryVerified);
 
         const std::string decodeTarget = std::string(contentRes.label);
         const std::string requestedPms = weakForPlay.videoResolution;
@@ -811,7 +816,7 @@ int main(int argc, char** argv) {
         // 624x480 for PRESENT=fpga|both), NOT to contentRes/DECODE (320x240).
         // Comparing to contentRes here falsely predicted arm_rescale=0 for the
         // shipping 320 path and hid the required scale+pad into the canvas.
-        // Defect A force-scale is conf-gated OFF by default (DDR_YUV_FORCE_SCALE).
+        // YUV DDR force-scale default ON; identity_skip also needs verified delivery.
         const auto confScaleMode = misterplex::parseFfmpegScaleMode(ffmpegScaleMode);
         const bool wantFpgaDdrCanvas =
             (presentMode == "fpga" || presentMode == "both");
@@ -829,11 +834,15 @@ int main(int argc, char** argv) {
         if (scaleMode == misterplex::FfmpegScaleMode::Off) {
             armRescale = 0;
         } else if (scaleMode == misterplex::FfmpegScaleMode::SkipIdentity) {
-            const bool knownMatch =
-                expectW > 0 && expectH > 0 && expectW == codedW && expectH == codedH;
-            const bool assumeMatch =
-                ffmpegScaleAssumeMatch && !(expectW > 0 && expectH > 0);
-            armRescale = (knownMatch || assumeMatch) ? 0 : 1;
+            misterplex::FfmpegVfRequest pred;
+            pred.coded_w = codedW;
+            pred.coded_h = codedH;
+            pred.scale_mode = scaleMode;
+            pred.source_w = expectW;
+            pred.source_h = expectH;
+            pred.assume_source_matches_coded = ffmpegScaleAssumeMatch;
+            pred.delivery_geometry_verified = deliveryVerified;
+            armRescale = misterplex::sourceMatchesCoded(pred) ? 0 : 1;
         }
         // Greppable single-line geometry contract for parent device logs.
         // Keys: requested_pms expected_delivery decode_target arm_rescale
@@ -847,11 +856,12 @@ int main(int argc, char** argv) {
             std::to_string(codedW) + "x" + std::to_string(codedH);
         std::fprintf(stderr,
                      "misterplexd: GEOM requested_pms=%s expected_delivery=%s "
-                     "delivery_basis=%s decode_target=%s content_tier=%s arm_rescale=%d "
+                     "delivery_basis=%s delivery_verified=%d decode_target=%s "
+                     "content_tier=%s arm_rescale=%d yuv_ddr_force_scale=%d "
                      "transcoded=%d sws=%s scale_mode=%s library_media=%s\n",
                      requestedPms.c_str(), expectStr.c_str(), deliveryBasis,
-                     codedTarget.c_str(), decodeTarget.c_str(), armRescale,
-                     resolved.transcoded ? 1 : 0,
+                     deliveryVerified ? 1 : 0, codedTarget.c_str(), decodeTarget.c_str(),
+                     armRescale, forceScale ? 1 : 0, resolved.transcoded ? 1 : 0,
                      ffmpegSwsFlags.empty() ? "(ffmpeg_default)" : ffmpegSwsFlags.c_str(),
                      misterplex::ffmpegScaleModeName(scaleMode), libraryStr.c_str());
 

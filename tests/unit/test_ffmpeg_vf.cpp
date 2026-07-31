@@ -126,7 +126,7 @@ int main() {
         expect_eq(p.reason, "scale_pad_center_flags", "reason flags");
     }
 
-    // --- SkipIdentity when source == coded (even with crop geometry) ---
+    // --- SkipIdentity when VERIFIED source == coded (even with crop geometry) ---
     {
         FfmpegVfRequest r;
         r.coded_w = 624;
@@ -137,11 +137,29 @@ int main() {
         r.scale_mode = FfmpegScaleMode::SkipIdentity;
         r.source_w = 624;
         r.source_h = 480;
+        r.delivery_geometry_verified = true;
         const auto p = buildFfmpegVideoFilter(r);
         expect(!p.scale_applied, "identity skip no scale");
         expect(p.identity_skip, "identity_skip flag");
         expect(p.vf.empty(), "vf empty without fps");
         expect_eq(p.reason, "identity_skip_crop_pad_clear", "crop clear reason");
+    }
+
+    // --- RED class: numeric match WITHOUT verification must NOT identity-skip ---
+    {
+        FfmpegVfRequest r;
+        r.coded_w = 624;
+        r.coded_h = 480;
+        r.display_w = 618;
+        r.display_h = 480;
+        r.crop_left = 0;
+        r.scale_mode = FfmpegScaleMode::SkipIdentity;
+        r.source_w = 624;
+        r.source_h = 480;
+        r.delivery_geometry_verified = false; // PMS transcode_request class
+        const auto p = buildFfmpegVideoFilter(r);
+        expect(p.scale_applied && !p.identity_skip, "unverified 624 must scale");
+        expect_eq(p.reason, "scale_pad_crop_unverified_delivery", "unverified reason");
     }
 
     // --- SkipIdentity unknown source → still scales (safe) ---

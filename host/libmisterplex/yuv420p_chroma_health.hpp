@@ -26,6 +26,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <string>
 
 namespace misterplex {
 
@@ -108,16 +109,28 @@ inline bool repairDeadYuv420pChroma(uint8_t* yuv, int w, int h) {
     return true;
 }
 
-// Optional lab override: force Always over SkipIdentity on the YUV DDR path.
-// DEFAULT OFF — forcing scale at native 480p adds a full-frame resample while
-// defect B is already a throughput collapse (parent: pfps 10.5 vs vfps 17.9).
-// Conf: DDR_YUV_FORCE_SCALE=1. Conf Off stays Off. Always stays Always.
-// At 240p this is a no-op either way: source 320≠coded 624 already scale_pad_crops.
+// YUV DDR present: force Always over SkipIdentity by DEFAULT.
+// Silicon (parent viewed pixels): FORCE_SCALE=0 → magenta wrap + desync + defect B;
+// FORCE_SCALE=1 → COLOR_OK + pfps 23.2. Escape hatch: conf DDR_YUV_FORCE_SCALE=0
+// still hits the delivery_geometry_verified guard in buildFfmpegVideoFilter.
+// Conf Off stays Off. Always stays Always. At 240p force is a no-op (320≠624).
 inline FfmpegScaleMode ffmpegScaleModeForDdrYuvPresent(FfmpegScaleMode confMode,
-                                                       bool forceScale = false) {
+                                                       bool forceScale = true) {
     if (forceScale && confMode == FfmpegScaleMode::SkipIdentity)
         return FfmpegScaleMode::Always;
     return confMode;
+}
+
+// PMS universal URL videoResolution is a REQUEST. Client profile only adds
+// upperBound(width/height) — not an exact-size force. Never treat the request
+// string as verified delivery geometry (main.cpp delivery_basis=transcode_request).
+inline bool deliveryGeometryVerifiedFromBasis(const char* deliveryBasis) {
+    if (!deliveryBasis)
+        return false;
+    // Direct-play library Media/Stream WxH is the best pre-ffmpeg claim we have.
+    // "measured" reserved for a future ffprobe path.
+    return std::string(deliveryBasis) == "library_media" ||
+           std::string(deliveryBasis) == "measured";
 }
 
 } // namespace misterplex

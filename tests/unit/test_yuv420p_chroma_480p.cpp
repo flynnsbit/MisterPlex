@@ -109,17 +109,17 @@ int main() {
         expect(repairDeadYuv420pChroma(res.data(), w, h), "residue repaired");
     }
 
-    // --- E) YUV-DDR scale policy: default OFF; force=1 maps SkipIdentity→Always ---
+    // --- E) YUV-DDR scale policy: default ON maps SkipIdentity→Always ---
     {
         expect(ffmpegScaleModeForDdrYuvPresent(FfmpegScaleMode::SkipIdentity) ==
-                   FfmpegScaleMode::SkipIdentity,
-               "default force=0 leaves SkipIdentity");
-        expect(ffmpegScaleModeForDdrYuvPresent(FfmpegScaleMode::SkipIdentity, false) ==
-                   FfmpegScaleMode::SkipIdentity,
-               "explicit force=0 leaves SkipIdentity");
+                   FfmpegScaleMode::Always,
+               "default force=1 maps SkipIdentity→Always");
         expect(ffmpegScaleModeForDdrYuvPresent(FfmpegScaleMode::SkipIdentity, true) ==
                    FfmpegScaleMode::Always,
-               "force=1 maps SkipIdentity→Always");
+               "explicit force=1 maps SkipIdentity→Always");
+        expect(ffmpegScaleModeForDdrYuvPresent(FfmpegScaleMode::SkipIdentity, false) ==
+                   FfmpegScaleMode::SkipIdentity,
+               "escape force=0 leaves SkipIdentity");
         expect(ffmpegScaleModeForDdrYuvPresent(FfmpegScaleMode::Always, true) ==
                    FfmpegScaleMode::Always,
                "Always stays Always");
@@ -127,7 +127,7 @@ int main() {
                "Off stays Off (lab)");
     }
 
-    // --- F) force=1 at 624x480 yields scale_pad_crop; force=0 identity-skips ---
+    // --- F) default force ON scales; escape force=0 + unverified still scales ---
     {
         FfmpegVfRequest r;
         r.coded_w = w;
@@ -139,24 +139,58 @@ int main() {
         r.fps_filter = "fps=24/1";
         r.source_w = w;
         r.source_h = h;
-        // Default product SkipIdentity identity-skips at native 480p.
-        r.scale_mode = FfmpegScaleMode::SkipIdentity;
-        const auto def = buildFfmpegVideoFilter(r);
-        expect(def.identity_skip, "default SkipIdentity skips at 624");
-        expect_eq_str(def.reason, "identity_skip_crop_pad_clear", "default reason");
+        r.delivery_geometry_verified = false; // PMS transcode_request
 
-        r.scale_mode = ffmpegScaleModeForDdrYuvPresent(FfmpegScaleMode::SkipIdentity, false);
-        const auto off = buildFfmpegVideoFilter(r);
-        expect(off.identity_skip, "force=0 still identity-skips");
-
-        r.scale_mode = ffmpegScaleModeForDdrYuvPresent(FfmpegScaleMode::SkipIdentity, true);
+        // Default DDR policy force ON → Always → scale_pad_crop.
+        r.scale_mode = ffmpegScaleModeForDdrYuvPresent(FfmpegScaleMode::SkipIdentity);
         const auto on = buildFfmpegVideoFilter(r);
-        expect(on.scale_applied && !on.identity_skip, "force=1 scales at 624");
-        expect_eq_str(on.reason, "scale_pad_crop", "force=1 reason");
+        expect(on.scale_applied && !on.identity_skip, "default force scales at 624");
+        expect_eq_str(on.reason, "scale_pad_crop", "default force reason");
         expect(on.vf.find("scale=618:480") != std::string::npos, "scale to display");
         expect(on.vf.find("pad=624:480") != std::string::npos, "pad to coded");
-        std::printf("GREEN_POLICY force0_skip=1 force1_reason=%s vf=%s\n", on.reason.c_str(),
-                    on.vf.c_str());
+
+        // Escape force=0: SkipIdentity but unverified → still must NOT skip.
+        r.scale_mode = ffmpegScaleModeForDdrYuvPresent(FfmpegScaleMode::SkipIdentity, false);
+        const auto off = buildFfmpegVideoFilter(r);
+        expect(off.scale_applied && !off.identity_skip, "escape+unverified still scales");
+        expect_eq_str(off.reason, "scale_pad_crop_unverified_delivery", "escape guard reason");
+
+        // Escape force=0 + VERIFIED match → may identity-skip (lab/direct-play).
+        r.delivery_geometry_verified = true;
+        const auto ver = buildFfmpegVideoFilter(r);
+        expect(ver.identity_skip && !ver.scale_applied, "escape+verified may skip");
+        expect_eq_str(ver.reason, "identity_skip_crop_pad_clear", "verified skip reason");
+        std::printf("GREEN_POLICY force_default_reason=%s escape_unverified=%s\n",
+                    on.reason.c_str(), off.reason.c_str());
+    }
+
+    // --- F1b) delivery basis trust helper ---
+    {
+        expect(!deliveryGeometryVerifiedFromBasis("transcode_request"),
+               "PMS request is NOT verified");
+        expect(!deliveryGeometryVerifiedFromBasis("unknown"), "unknown not verified");
+        expect(deliveryGeometryVerifiedFromBasis("library_media"), "library is verified");
+        expect(deliveryGeometryVerifiedFromBasis("measured"), "measured is verified");
+    }
+
+    // --- F1c) DESYNC model: producer 640x480 I420 vs reader 624x480 coded ---
+    // PMS classic 480p ladder is 640x480; we request 624x480. Delta proves pipe phase.
+    {
+        const size_t coded = yuv420pCodedFrameBytes(
+            makeDdrFrameGeometry(kPlex480pCodedWidth.get(), kPlex480pCodedHeight.get()));
+        const size_t pms640 = static_cast<size_t>(640) * 480 * 3 / 2; // 460800
+        expect(coded == 449280u, "coded I420 bytes");
+        expect(pms640 == 460800u, "640x480 I420 bytes");
+        expect(rawPipePhaseOffset(pms640, coded, 0) == 0u, "frame0 aligned");
+        expect(rawPipeDesynced(pms640, coded, 1), "frame1 desynced");
+        expect(rawPipePhaseOffset(pms640, coded, 1) == 449280u % 460800u, "phase after 1");
+        // Same size → never desync.
+        expect(!rawPipeDesynced(coded, coded, 100), "matched sizes stay synced");
+        // RED: old policy would identity-skip on unverified 624 claim while PMS
+        // may emit 640 — gate documents the desync class.
+        expect(rawPipeDesynced(pms640, coded, 40), "desync accumulates");
+        std::printf("GREEN_DESYNC coded=%zu pms640=%zu phase1=%zu\n", coded, pms640,
+                    rawPipePhaseOffset(pms640, coded, 1));
     }
 
     // --- F2) 240p source vs 624 coded: force flag is a no-op (already scales) ---

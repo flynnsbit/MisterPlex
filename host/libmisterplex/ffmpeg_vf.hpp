@@ -1,11 +1,13 @@
 // FFmpeg -vf construction for misterplexd STREAM=0 rawvideo path.
 // Pure header (no I/O): unit-tested so filter policy cannot drift silently.
 //
-// Product daemon default is SkipIdentity with empty sws_flags: omit scale+pad
-// when expected delivery WxH is known and equals the coded bank (or ASSUME_MATCH).
-// Matching PMS videoResolution → no residual scale on the shipping path.
-// Unknown delivery still emits historical scale+pad. parseFfmpegScaleMode
-// empty/unknown → Always (safe for callers that omit conf).
+// SkipIdentity may omit scale+pad ONLY when delivery geometry is VERIFIED equal
+// to the coded bank (or lab ASSUME_MATCH). A bare PMS videoResolution *request*
+// is NOT verification — PMS upperBound limits are ceilings, not exact sizes.
+// Silicon (c5382bee): identity_skip at DECODE=624x480 with delivery_basis=
+// transcode_request desynced the raw pipe (wrap + magenta + defect B). Force
+// scale fixed both colour and throughput. parseFfmpegScaleMode empty/unknown →
+// Always (safe for callers that omit conf).
 #pragma once
 
 #include <string>
@@ -14,11 +16,10 @@ namespace misterplex {
 
 // How the scale/pad stage is chosen.
 //   Always        — always emit scale+pad.
-//   SkipIdentity  — omit scale+pad when source WxH equals coded WxH (or when
-//                   assume_source_matches_coded is set and source is unknown).
+//   SkipIdentity  — omit scale+pad only when source WxH equals coded WxH AND
+//                   delivery_geometry_verified (or assume_source_matches_coded).
 //                   Display-crop geometry is then handled by clearYuv420pCropPadding
 //                   on the present path, not by a 624→618→624 swscale round-trip.
-//                   Product misterplexd default when conf omits FFMPEG_SCALE.
 //   Off           — never emit scale+pad (lab only; wrong if sizes mismatch).
 enum class FfmpegScaleMode { Always, SkipIdentity, Off };
 
@@ -83,6 +84,10 @@ struct FfmpegVfRequest {
     // When source is unknown, SkipIdentity may still omit scale if this is true
     // (lab: trust PMS ladder delivered the coded tier). Default false = safe.
     bool assume_source_matches_coded = false;
+    // True only when source_w/h are VERIFIED delivered geometry (library Media
+    // WxH on direct play, or a measured probe). False for PMS transcode_request
+    // (what we asked for) — numeric equality alone must not identity-skip.
+    bool delivery_geometry_verified = false;
 };
 
 struct FfmpegVfPlan {
@@ -141,12 +146,40 @@ inline std::string buildScalePadCentered(int coded_w, int coded_h,
            ":force_original_aspect_ratio=decrease,pad=" + scale + ":(ow-iw)/2:(oh-ih)/2";
 }
 
+// Numeric WxH match is necessary but not sufficient for identity_skip.
+// Unverified "we requested 624x480" must NOT skip — PMS may deliver 640x480
+// (or any ≤ upperBound), and the raw reader then desyncs at coded frameBytes.
 inline bool sourceMatchesCoded(const FfmpegVfRequest& req) {
     if (req.coded_w <= 0 || req.coded_h <= 0)
         return false;
-    if (req.source_w > 0 && req.source_h > 0)
-        return req.source_w == req.coded_w && req.source_h == req.coded_h;
-    return req.assume_source_matches_coded;
+    if (req.assume_source_matches_coded && !(req.source_w > 0 && req.source_h > 0))
+        return true; // lab: unknown dims + explicit assume
+    if (req.source_w <= 0 || req.source_h <= 0)
+        return false;
+    if (req.source_w != req.coded_w || req.source_h != req.coded_h)
+        return false;
+    // Exact numbers only count when delivery was verified (or lab assume).
+    return req.delivery_geometry_verified || req.assume_source_matches_coded;
+}
+
+// Byte-phase model for a fixed-size rawvideo reader against a producer whose
+// per-frame size differs. After frame_index completed reads of reader_bytes from
+// a stream of producer_bytes frames, returns the byte offset into the current
+// producer frame (0 = still aligned). Used by the desync gate.
+inline size_t rawPipePhaseOffset(size_t producer_frame_bytes, size_t reader_frame_bytes,
+                                 size_t frame_index) {
+    if (producer_frame_bytes == 0)
+        return 0;
+    const size_t consumed = frame_index * reader_frame_bytes;
+    return consumed % producer_frame_bytes;
+}
+
+inline bool rawPipeDesynced(size_t producer_frame_bytes, size_t reader_frame_bytes,
+                            size_t frame_index) {
+    if (producer_frame_bytes == reader_frame_bytes)
+        return false;
+    return rawPipePhaseOffset(producer_frame_bytes, reader_frame_bytes, frame_index) != 0 ||
+           frame_index > 0;
 }
 
 // Pixel-format conversion is NOT expressed here — misterplexd uses -pix_fmt on the
@@ -181,21 +214,35 @@ inline FfmpegVfPlan buildFfmpegVideoFilter(const FfmpegVfRequest& req) {
     if (req.scale_mode == FfmpegScaleMode::Off)
         return finish(false, false, "scale_off");
 
-    // SkipIdentity: omit scale+pad when source already equals coded geometry.
-    // Even when display crop is non-zero (624 coded / 618 display), identity skip
-    // is intentional — present-path clearYuv420pCropPadding blackens the pad
-    // columns without a full-frame swscale pass. Quality A/B is w-device's job.
+    // SkipIdentity: omit scale+pad only when verified delivery equals coded.
+    // Even when display crop is non-zero (624 coded / 618 display), a *verified*
+    // identity skip is intentional — clearYuv420pCropPadding blackens pad cols.
     if (req.scale_mode == FfmpegScaleMode::SkipIdentity && sourceMatchesCoded(req))
         return finish(false, true, hasCrop ? "identity_skip_crop_pad_clear" : "identity_skip");
 
-    // Always, or SkipIdentity with mismatched/unknown source: emit scale+pad.
+    // Loud reason when numbers matched but delivery was not verified — the
+    // silicon desync class (parent: wrap + magenta at force_scale=0).
+    const bool numericMatchUnverified =
+        req.scale_mode == FfmpegScaleMode::SkipIdentity && req.source_w > 0 &&
+        req.source_h > 0 && req.source_w == req.coded_w && req.source_h == req.coded_h &&
+        !req.delivery_geometry_verified && !req.assume_source_matches_coded;
+
+    // Always, or SkipIdentity with mismatched/unknown/unverified source: scale+pad.
     const std::string flags = swsFlagsTokenOk(req.sws_flags) ? req.sws_flags : std::string();
     if (hasCrop) {
         append(buildScalePadCropped(dispW, dispH, req.coded_w, req.coded_h, req.crop_left,
                                     req.crop_top, flags));
+        if (numericMatchUnverified)
+            return finish(true, false,
+                          flags.empty() ? "scale_pad_crop_unverified_delivery"
+                                        : "scale_pad_crop_unverified_delivery_flags");
         return finish(true, false, flags.empty() ? "scale_pad_crop" : "scale_pad_crop_flags");
     }
     append(buildScalePadCentered(req.coded_w, req.coded_h, flags));
+    if (numericMatchUnverified)
+        return finish(true, false,
+                      flags.empty() ? "scale_pad_center_unverified_delivery"
+                                    : "scale_pad_center_unverified_delivery_flags");
     return finish(true, false, flags.empty() ? "scale_pad_center" : "scale_pad_center_flags");
 }
 
