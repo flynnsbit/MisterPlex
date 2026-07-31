@@ -62,7 +62,13 @@ BASE_CORE_MD5=dfebf2bfd08dd70b473b587dd7e81848
 # does not touch the present path. A video difference between them is a real
 # regression and must fail.
 BASE_DAEMON_MD5=7cd10b4d438c714a9b8c4766dc982d59
-HYBRID_DAEMON_MD5=3e2cbb9881b2f54b0e4cb60238655fa7
+# 50f4eb92  CURRENT — clamps DECODE to the 320x240 RGB565 frame store instead of
+#           silently skipping FPGA present (pfps was 0.00 at 624x480), opt-in
+#           PRESENT_SCALE_TO_STORE, and supervisor backoff reset after a healthy
+#           run. Parent-verified on hardware: 240p unchanged (pfps 23.2, av-lock,
+#           3 distinct HDMI md5s); 624x480 clamps and presents (pfps 23.6).
+HYBRID_DAEMON_MD5=50f4eb925de10e29172999a565c87684
+PREV_HYBRID_DAEMON_MD5=3e2cbb9881b2f54b0e4cb60238655fa7
 
 # Test clip: the 240p burned-in-telemetry ladder entry. Its overlay text makes
 # left-edge clipping obvious to the eye as well as to the measurement.
@@ -82,6 +88,7 @@ verify_baseline() {
     && echo "OK   core   $got_core" \
     || { echo "FAIL core   got='$got_core' want='$BASE_CORE_MD5'"; rc=1; }
   [ "$got_daemon" = "$BASE_DAEMON_MD5" ] || [ "$got_daemon" = "$HYBRID_DAEMON_MD5" ] \
+    || [ "$got_daemon" = "$PREV_HYBRID_DAEMON_MD5" ] \
     && echo "OK   daemon $got_daemon" \
     || { echo "FAIL daemon got='$got_daemon' want='$BASE_DAEMON_MD5' or '$HYBRID_DAEMON_MD5'"; rc=1; }
   return $rc
