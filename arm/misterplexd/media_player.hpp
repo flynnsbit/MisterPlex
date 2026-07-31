@@ -27,6 +27,12 @@ namespace misterplex {
 struct PlaybackSummary {
     int64_t rawFrames = 0;
     int64_t presentedFrames = 0;
+    int64_t pacerDrops = 0;     // avDecide Drop only (legacy "drops=")
+    int64_t presentFails = 0;   // present attempted, FPGA/DDR tx failed
+    int64_t unaccounted = 0;    // raw - presented - pacerDrops - presentFails
+    uint64_t ledgerSessionId = 0;
+    int32_t ledgerPid = 0;
+    bool ledgerClosed = false;
     int64_t reconFrames = 0;
     int64_t totalBytes = 0;
     bool usedRawVideo = false;
@@ -167,10 +173,15 @@ public:
     uint16_t lastOsdWord() const { return lastOsd_.load(); }
     // Paint one idle frame right now (used at session end).
     void paintIdle();
-    // Live A/V drift: audio clock − content time of the last presented frame.
-    // Negative = video ahead of audio (audio sounds late).
+    // Live A/V drift: audio clock − content time of the last paced sample.
+    // Negative = video ahead of audio (audio sounds late). Bounded by the
+    // present-lead deadband by construction when the pacer is in steady state
+    // (see avDecide + AV_PRESENT_LEAD_MS) — do not cite alone as sync proof.
     int64_t avDriftMs() const { return avDriftMs_.load(); }
+    // Deliberate A/V-pacer skips only (avDecide Drop). NOT total lost frames.
     int64_t droppedFrames() const { return droppedFrames_.load(); }
+    int64_t presentFailFrames() const { return presentFailCount_.load(); }
+    uint64_t ledgerSessionId() const { return ledgerSessionId_.load(); }
     // Coded payload only. Bare ints / PresentedWidth do not bind (conf seal).
     // Proofs: geometry_type_mismatch_set_decode_*.cpp + MediaPlayer mutant in
     // test_geometry_type_safety.sh. Conf/argv must use adoptExternalCodedSize.
@@ -316,10 +327,15 @@ private:
     // yet played. -1 = unknown (kernel without the status line) and the clock
     // falls back to counting submitted bytes. See libmisterplex/mraudio_status.hpp.
     std::atomic<int64_t> audioQueuedBytes_{-1};
-    // Live A/V drift + resync counters (per play/seek session)
+    // Live A/V drift + resync counters (per play/seek / ledger session)
     std::atomic<int64_t> avDriftMs_{0};
-    std::atomic<int64_t> droppedFrames_{0};
-    // FPGA presents this session (wall-clock capped)
+    std::atomic<int64_t> droppedFrames_{0};   // pacer drops only
+    std::atomic<int64_t> presentFailCount_{0};
+    // Monotonic: bumps on every counter zero so mid-soak daemon/play restart
+    // cannot be mistaken for one continuous ledger (w-geom owns exit RCA).
+    std::atomic<uint64_t> ledgerSessionId_{0};
+    std::atomic<int32_t> ledgerPid_{0};
+    // FPGA presents this ledger session (successful countPresent only)
     int64_t presentCount_ = 0;
     mutable std::mutex mu_;
     mutable std::mutex summaryMu_;

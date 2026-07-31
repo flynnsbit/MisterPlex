@@ -21,6 +21,7 @@ EXPECTED_PREREQS = [
     "preflight",
     "$(ROOT)/build/test_cadence",
     "$(ROOT)/build/test_avclock",
+    "$(ROOT)/build/test_frame_ledger",
     "$(ROOT)/build/test_mraudio_status",
     "$(ROOT)/build/test_osd_menu",
     "$(ROOT)/build/test_osd_control",
@@ -66,6 +67,7 @@ EXPECTED_PREREQS = [
 EXPECTED_COMMANDS = [
     "$(ROOT)/build/test_cadence",
     "$(ROOT)/build/test_avclock",
+    "$(ROOT)/build/test_frame_ledger",
     "$(ROOT)/build/test_mraudio_status",
     "$(ROOT)/build/test_osd_menu",
     "$(ROOT)/build/test_osd_control",

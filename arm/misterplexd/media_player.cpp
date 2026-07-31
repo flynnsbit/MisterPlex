@@ -2,6 +2,7 @@
 #include "log_redact.hpp"
 
 #include "libmisterplex/av_clock.hpp"
+#include "libmisterplex/frame_ledger.hpp"
 #include "libmisterplex/ffmpeg_vf.hpp"
 #include "libmisterplex/idle_screen.hpp"
 #include "libmisterplex/last_frame_latch.hpp"
@@ -2294,12 +2295,26 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
     int dropRun = 0;
     avDriftMs_.store(0);
     droppedFrames_.store(0);
+    presentFailCount_.store(0);
+    presentCount_ = 0;
+    {
+        // New ledger session on every play/threadMain entry. Daemon respawn gets a
+        // new pid; in-process play/seek restart bumps session_id without hiding it.
+        const uint64_t sid = ledgerSessionId_.fetch_add(1) + 1;
+        const int32_t pid = static_cast<int32_t>(::getpid());
+        ledgerPid_.store(pid);
+        FrameLedgerSnapshot snap;
+        snap.session_id = sid;
+        snap.pid = pid;
+        log(formatFrameLedgerLine(snap, "ledger_reset") + " reason=stream_start");
+    }
     if (fpsNum_ <= 0)
         log("media: content fps UNKNOWN — pacing at " + std::to_string(kDefaultFpsNum) + "/" +
             std::to_string(kDefaultFpsDen) + " and relying on drift correction");
     else
         log("media: content fps=" + std::to_string(fpsNum) + "/" + std::to_string(fpsDen) +
-            " lead_ms=" + std::to_string(leadMs) + " resync_drop_ms=" + std::to_string(dropMs));
+            " lead_ms=" + std::to_string(leadMs) + " resync_drop_ms=" + std::to_string(dropMs) +
+            " hold_edge_ms=" + std::to_string(avPresentHoldEdgeMs(leadMs)));
 
     if (skipRgb) {
         // Audio-only FFmpeg + wall-clock position. Host recon owns F1.
@@ -2413,7 +2428,7 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
             log("media: PRESENT=both uses yuv420p DDR frame-store path; fb0 blit converts the "
                 "same frame");
         usedRawVideo = true;
-        presentCount_ = 0;
+        // presentCount_ already zeroed at ledger_reset (threadMain entry).
         audioBytes_.store(0);
         std::vector<std::string> args;
         args.push_back(ffmpeg_);
@@ -2848,9 +2863,14 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                         "YUV420p");
                 }
                 if (!ok) {
-                    if (countPresent && (frameIndex % 30) == 0)
-                        log("media: fpga frame_tx: " +
-                            (ddrErr.empty() ? fpga_.lastError() : ddrErr));
+                    if (countPresent) {
+                        presentFailCount_.fetch_add(1);
+                        // Exact log shape required by test_rtl_invariants present-path
+                        // degradation contract (frame_status=absent / 0xE1).
+                        if (countPresent && (frameIndex % 30) == 0)
+                            log("media: fpga frame_tx: " +
+                                (ddrErr.empty() ? fpga_.lastError() : ddrErr));
+                    }
                 } else if (countPresent) {
                     ++presentCount_;
                     if (profilePresent)
@@ -3172,6 +3192,13 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                               : 0.0;
                 const int64_t abytes = audioBytes_.load();
                 const double a_sec = static_cast<double>(abytes) / (48000.0 * 4.0);
+                FrameLedgerSnapshot tick;
+                tick.session_id = ledgerSessionId_.load();
+                tick.pid = ledgerPid_.load();
+                tick.decoded = frameIndex;
+                tick.presented = presentCount_;
+                tick.pacer_drops = droppedFrames_.load();
+                tick.present_fails = presentFailCount_.load();
                 log("media: frames=" + std::to_string(frameIndex) +
                     " vfps=" + std::to_string(vfps).substr(0, 4) +
                     " pfps=" + std::to_string(pfps).substr(0, 4) +
@@ -3181,8 +3208,13 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                     " clock=av-lock" +
                     " av_drift_ms=" + std::to_string(avDriftMs_.load()) +
                     " drops=" + std::to_string(droppedFrames_.load()) +
+                    " present_fails=" + std::to_string(tick.present_fails) +
+                    " unaccounted=" + std::to_string(frameLedgerUnaccounted(tick)) +
+                    " session_id=" + std::to_string(tick.session_id) +
                     " fps=" + std::to_string(fpsNum) + "/" + std::to_string(fpsDen) +
                     " decode=" + std::to_string(outW_) + "x" + std::to_string(outH_));
+                // Explicit ledger line for soak parsers (stable keys).
+                log(formatFrameLedgerLine(tick, "ledger_tick"));
             }
 
             {
@@ -3236,18 +3268,40 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
 
     playing_.store(false);
     {
-        std::lock_guard<std::mutex> lock(summaryMu_);
-        lastSummary_.rawFrames = frameIndex;
-        lastSummary_.presentedFrames = presentCount_;
-        lastSummary_.reconFrames = reconFrames_.load();
-        lastSummary_.totalBytes = static_cast<int64_t>(totalBytes);
-        lastSummary_.usedRawVideo = usedRawVideo;
-        lastSummary_.streamEnabled = streamEnabled_;
-        lastSummary_.skipRgb = skipRgb;
-        lastSummary_.shortRead = shortRead;
-        lastSummary_.videoEof = videoEof;
-        lastSummary_.shortReadGot = shortReadGot;
-        lastSummary_.shortReadWant = shortReadWant;
+        FrameLedgerSnapshot end;
+        end.session_id = ledgerSessionId_.load();
+        end.pid = ledgerPid_.load();
+        end.decoded = frameIndex;
+        end.presented = presentCount_;
+        end.pacer_drops = droppedFrames_.load();
+        end.present_fails = presentFailCount_.load();
+        const int64_t unacct = frameLedgerUnaccounted(end);
+        const bool closed = frameLedgerClosed(end);
+        {
+            std::lock_guard<std::mutex> lock(summaryMu_);
+            lastSummary_.rawFrames = frameIndex;
+            lastSummary_.presentedFrames = presentCount_;
+            lastSummary_.pacerDrops = end.pacer_drops;
+            lastSummary_.presentFails = end.present_fails;
+            lastSummary_.unaccounted = unacct;
+            lastSummary_.ledgerSessionId = end.session_id;
+            lastSummary_.ledgerPid = end.pid;
+            lastSummary_.ledgerClosed = closed;
+            lastSummary_.reconFrames = reconFrames_.load();
+            lastSummary_.totalBytes = static_cast<int64_t>(totalBytes);
+            lastSummary_.usedRawVideo = usedRawVideo;
+            lastSummary_.streamEnabled = streamEnabled_;
+            lastSummary_.skipRgb = skipRgb;
+            lastSummary_.shortRead = shortRead;
+            lastSummary_.videoEof = videoEof;
+            lastSummary_.shortReadGot = shortReadGot;
+            lastSummary_.shortReadWant = shortReadWant;
+        }
+        log(formatFrameLedgerLine(end, "ledger_end"));
+        if (!closed && frameIndex > 0)
+            log("ERROR media: ledger OPEN unaccounted=" + std::to_string(unacct) +
+                " (decoded != presented + pacer_drops + present_fails) — soak must not "
+                "treat drops= alone as complete accounting");
     }
     // Natural EOF (not user stop / seek restart) → "ended" so main can auto-next.
     if (!stop_.load() && onProgress_) {
@@ -3293,7 +3347,10 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
         " stream=" + (streamEnabled_ ? "on" : "off") +
         " rawvideo=" + (usedRawVideo ? "on" : "off") +
         " present=" + presentMode_ +
-        " skip_rgb=" + (skipRgb ? "1" : "0"));
+        " skip_rgb=" + (skipRgb ? "1" : "0") +
+        " session_id=" + std::to_string(ledgerSessionId_.load()) +
+        " pacer_drops=" + std::to_string(droppedFrames_.load()) +
+        " present_fails=" + std::to_string(presentFailCount_.load()));
 }
 
 } // namespace misterplex
