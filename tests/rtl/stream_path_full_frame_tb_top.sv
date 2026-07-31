@@ -77,10 +77,6 @@ module stream_path_full_frame_tb #(
 	output wire [7:0]  native_inter_mb_y,
 	output wire        native_inter_p_skip,
 	output wire [2:0]  native_inter_part_mode,
-	output wire signed [15:0] native_inter_mv_x,
-	output wire signed [15:0] native_inter_mv_y,
-	output wire signed [15:0] native_inter_mvd_x,
-	output wire signed [15:0] native_inter_mvd_y,
 	output wire [7:0]  native_inter_pred_y [0:255],
 	output wire [7:0]  native_inter_pred_u [0:63],
 	output wire [7:0]  native_inter_pred_v [0:63],
@@ -128,16 +124,6 @@ module stream_path_full_frame_tb #(
 	wire p_mb_valid_w;
 	wire [15:0] p_mb_count_w;
 	wire p_slice_done_w;
-
-	wire        hybrid_fpga_owned_w;
-	wire        hybrid_host_required_w;
-	wire        product_recon_ok_w;
-	wire signed [15:0] first_mb_mvd_x_w, first_mb_mvd_y_w;
-	wire signed [15:0] product_fetch_mv_x_w, product_fetch_mv_y_w;
-	wire signed [15:0] product_luma_origin_x_w, product_luma_origin_y_w;
-	wire [2:0]  hybrid_own_code_w;
-	wire [3:0]  hybrid_own_reason_w;
-	wire        entropy_cabac_w;
 
 	stream_path #(
 		.FRAME_W(FRAME_W),
@@ -209,12 +195,6 @@ module stream_path_full_frame_tb #(
 		.first_mb_part_count(first_mb_part_count_w),
 		.first_mb_uses_sub_mb(first_mb_uses_sub_mb_w),
 		.first_mb_intra(first_mb_intra_w),
-		.first_mb_mvd_x(first_mb_mvd_x_w),
-		.first_mb_mvd_y(first_mb_mvd_y_w),
-		.product_fetch_mv_x(product_fetch_mv_x_w),
-		.product_fetch_mv_y(product_fetch_mv_y_w),
-		.product_luma_origin_x(product_luma_origin_x_w),
-		.product_luma_origin_y(product_luma_origin_y_w),
 		.slice_qp(slice_qp),
 		.disable_deblocking_filter_idc(disable_deblocking_filter_idc),
 		.slice_alpha_c0_offset_div2(slice_alpha_c0_offset_div2),
@@ -232,13 +212,7 @@ module stream_path_full_frame_tb #(
 		.recon_dbg(recon_dbg),
 		.recon_dbg_valid(recon_dbg_valid),
 		.recon_valid(recon_valid),
-			.hybrid_fpga_owned(hybrid_fpga_owned_w),
-	.hybrid_host_required(hybrid_host_required_w),
-	.product_recon_ok(product_recon_ok_w),
-	.hybrid_own_code(hybrid_own_code_w),
-	.hybrid_own_reason(hybrid_own_reason_w),
-	.entropy_cabac(entropy_cabac_w),
-	.fs_wr_en(fs_wr_en),
+		.fs_wr_en(fs_wr_en),
 		.fs_wr_pixel(fs_wr_pixel_dut),
 		.fs_wr_reset(fs_wr_reset),
 		.p_mb_valid(p_mb_valid_w),
@@ -278,10 +252,6 @@ module stream_path_full_frame_tb #(
 	assign native_inter_mb_y = dut.stub.lat_p_mb_y;
 	assign native_inter_p_skip = dut.stub.lat_p_skip;
 	assign native_inter_part_mode = dut.stub.lat_p_part_mode;
-	assign native_inter_mv_x = product_fetch_mv_x_w;
-	assign native_inter_mv_y = product_fetch_mv_y_w;
-	assign native_inter_mvd_x = dut.stub.lat_mvd_x;
-	assign native_inter_mvd_y = dut.stub.lat_mvd_y;
 	genvar trace_i;
 	generate
 		for (trace_i = 0; trace_i < 16; trace_i = trace_i + 1) begin : gen_trace
