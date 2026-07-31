@@ -1,101 +1,96 @@
-# misterplexd rc=0 exit investigation (w-geom)
+# Daemon exit RCA + harden — parent brief
 
-Branch: `w-instr-motion-counter`  
-SHA: `8f144ea17548406841413473a2d8577aa8210063`  
-ARM binary: `build/arm/misterplexd`  
-md5: `13a505d372f45b004fdc9812b16eb149`  
-ELF: 32-bit ARM static  
+**Branch:** `w-instr-motion-counter`  
+**SHA:** `bb0fb5bb128d8383363e169c429e657789ee7e82`  
+**ARM binary:** `build/arm/misterplexd`  
+**md5:** `865d4c8ac246e827bfd524f76af3e18d` (ELF 32-bit ARM static)
 
-Parent path note: `/tmp/misterplex-agent-w-geom.txt` is blocked in this agent runtime; this file is the progress report.
+## 1) Unit gate ownership (install blocker)
 
-## 1. Exit path enumeration (source)
+| Commit / tree | `fpga_spi.*` | rtl `selectDdrWriteBank` | notes |
+|---|---|---|---|
+| merge-base `77e1e78d` | n/a | PASS | worktree run true rc=0 |
+| parent `2bbdffd4` | (pre-exit) | **FAIL** | red before exit work |
+| exit commit `8f144ea1` | **0 bytes changed** (`git diff --stat 8f144ea1^..8f144ea1 -- arm/misterplexd/fpga_spi.*` empty) | still FAIL on tip-before-fix | death/ledger only |
+| tip `bb0fb5bb` | ported bank select | PASS | **`make unit` true rc=0** |
 
-Product path after companion start is **only**:
+**Verdict:** red was pre-existing on the branch (present at `2bbdffd4`), not introduced by the exit breadcrumb commit. Owned fix lands in `bb0fb5bb`.
 
-```cpp
-// main.cpp — while (!g_stop) { sleep 200ms; resumeStrandedMain; }
-// then player.stop(); …; return exitReported(0, why, &player);
+## 2) Exit path (source)
+
+Product main loop: `while (!g_stop) sleep` then `return 0`.  
+`g_stop` set only from SIGINT/SIGTERM handlers (`main.cpp`).  
+Handled SIGTERM ⇒ process exits with **WIFEXITED status 0** (not WIFSIGNALED).  
+Variable run_s (1543/196/514) ⇒ **not** a fixed idle timeout (none in source).  
+Somebody is sending SIGTERM (or the supervisor is TERM'd and kills the child).
+
+## 3) Breadcrumb safety
+
+| Path | Mechanism | Survives |
+|---|---|---|
+| Signal handler | `open`/`write`/`close` on pre-baked `g_deathPathC` only — **no** `fprintf`/`malloc` | SIGTERM/SIGINT |
+| Orderly `exitReported` | `deathBreadcrumbExit` + stderr EXIT_REASON + uptime | normal return |
+| Supervisor | `SUPERVISE_EXIT` with WIFEXITED/WIFSIGNALED/WTERMSIG | **SIGKILL** (handler cannot run) |
+
+Death file: **`<confDir>/misterplexd.death`** from `--conf` (e.g. `/media/fat/misterplex_v2/misterplexd.death`), not `/tmp`.
+
+Local proof (`tests/unit/test_supervise_exit_classify.sh` true rc=0):
+- default SIGTERM → WIFSIGNALED 15, shell rc=143  
+- SIGKILL → WIFSIGNALED 9, shell rc=137  
+- handled SIGTERM → WIFEXITED 0, shell rc=0  
+
+## 4) Signal-sender table
+
+Full table: `.agent-work/w-geom/SIGNAL_SENDERS.md`
+
+Highest value for rc=0 (handled TERM):
+1. `scripts/plexctl.sh` `stop_all` — cmdline substring match `*"/bin/misterplexd"*`
+2. `scripts/deploy_plex_core.sh` / `mister_soft_bounce.sh` — `killall misterplexd`
+3. Supervisor trap if supervisor itself gets TERM
+
+`kill -9` deploy paths ⇒ WIFSIGNALED 9, **not** your measured rc=0.
+
+## 5) Hand-install + verify (parent)
+
+```bash
+ROOT=/media/fat/misterplex_v2
+# copy build/arm/misterplexd → $ROOT/bin/misterplexd (your usual one-daemon restart)
+PID=$(pidof misterplexd | awk '{print $1}')
+md5sum $(readlink -f /proc/$PID/exe)
+# expect: 865d4c8ac246e827bfd524f76af3e18d
+n_daemon=$(pidof misterplexd | wc -w)   # must be 1
 ```
 
-| Site | Code | When |
-|------|------|------|
-| `main.cpp` `--help` | 0 | CLI help only |
-| `main.cpp` lab play-file fail | 1 | `--play-file` play failed |
-| `main.cpp` lab zero frames | 2 | lab delivery empty |
-| `main.cpp` lab done | 0 | lab success |
-| `main.cpp` companion start fail | 1 | bind/listen fail |
-| **`main.cpp` main_loop_g_stop** | **0** | **`g_stop` after SIGINT/SIGTERM** |
-| `media_player.cpp` child `_exit(127)` | n/a | **ffmpeg fork child only**, not daemon |
-| No idle timeout / watchdog exit | — | main loop has **no** timer that returns |
-| Companion stop/endMedia | — | stops playback **only**, does not exit process |
+After next death:
 
-**Ranking vs run_s=1543 / 196 / 514:**
-
-- A **fixed timeout inside misterplexd does not exist** in source → poor fit for variable run lengths.
-- **Best fit from source:** external **SIGINT/SIGTERM** delivered to the daemon. Handlers set `g_stop`; teardown returns **0**. That is **WIFEXITED(status=0)**, not WIFSIGNALED — so supervisor `rc=0` is **exactly** what handled SIGTERM looks like.
-- Who sends the signal is **unknown from source alone** (plexctl stop, second launcher, human, cron, etc.). `si_pid` / `si_code` on the new build settle it.
-
-Evidence boundary (Rule 0): parent’s log grep missing `shutdown|SIGTERM` is only “strings absent from log”, not “no signal”. Old binary logged **nothing** on this path.
-
-## 2. Self-reporting (delivered)
-
-- `death_breadcrumb.*` — `EXIT_REASON` always on **stderr** + `misterplexd.death` beside conf.
-- SA_SIGINFO on SIGINT/SIGTERM → `sig=` / `si_code=` / `si_pid=` in why string.
-- `exitReported()` choke point on every normal `main` return after init.
-- Files under conf dir (e.g. `/media/fat/misterplex_v2/`):
-  - `misterplexd.death`
-  - `misterplexd.last` (throttled heartbeat)
-  - `misterplexd.frame_ledger`
-
-## 3. Supervisor WIF* (delivered)
-
-`scripts/plexctl.sh` `write_supervisor` now logs:
-
-```
-SUPERVISE_EXIT pid=… wait_st=… WIFEXITED_approx exit_status=0|WIFSIGNALED_approx signal=N
-  run_s=… death=[…] last=[…]
+```bash
+grep EXIT_REASON $ROOT/misterplexd.log | tail -5
+cat $ROOT/misterplexd.death          # includes si_pid when SA_SIGINFO fires
+tail -30 $ROOT/misterplexd_supervise.log | grep SUPERVISE_EXIT
+# if si_pid still alive: tr '\0' ' ' < /proc/<si_pid>/cmdline
 ```
 
-Shell `wait` is not full waitpid; classification is the portable approx (st≥128 → signal).  
-Also built: `build/arm/death_capture_supervisor` (real waitpid WIF*).
+## 6) Frame ledger residual (soak-wide)
 
-## 4. Cause / fix
-
-**Cause of rc=0:** established as **handled stop signal → return 0**.  
-**Sender:** unknown until silicon shows `si_pid` on `EXIT_REASON` / `.death`.
-
-**Do not “fix” by ignoring SIGTERM.** Real fix is stop the external sender once identified.
-
-### Parent device commands (you run)
-
-```sh
-# install binary by hand (do NOT use deploy_misterplexd.sh)
-md5sum /path/to/build/arm/misterplexd   # expect 13a505d372f45b004fdc9812b16eb149
-# after next mysterious exit:
-grep EXIT_REASON /media/fat/misterplex_v2/misterplexd.log | tail -5
-cat /media/fat/misterplex_v2/misterplexd.death
-tail -20 /media/fat/misterplex_v2/misterplexd_supervise.log
-# if si_pid set: tr '\0' ' ' < /proc/<si_pid>/cmdline  (if still alive) or audit who had that pid
+```bash
+LEDGER=/media/fat/misterplex_v2/misterplexd.frame_ledger
+awk '
+  /session_end|daemon_exit|restart/ { print }
+  {
+    for(i=1;i<=NF;i++){
+      if($i ~ /^frames=/){split($i,a,"=");f+=a[2]}
+      if($i ~ /^presents=/){split($i,a,"=");p+=a[2]}
+      if($i ~ /^drops=/){split($i,a,"=");d+=a[2]}
+    }
+  }
+  END{ print "SUM f="f" p="p" d="d" residual="(f-p-d) }
+' "$LEDGER"
 ```
 
-## 5. Frame ledger (delivered)
+Restart rows must appear in the ledger; residual `frames-presents-drops` is soak-assertable.
 
-Append-only `misterplexd.frame_ledger`:
+## 7) Real fix status
 
-- `process_start` / `session_end` / `process_exit`
-- session_end: `frames presents drops residual=frames-presents-drops`
-- lifetime counters in-process never reset by demux; ledger survives restarts
-
-Unit: `test_frame_ledger` true rc=0.
-
-## 6. Tests
-
-| Gate | true rc |
-|------|---------|
-| `test_death_breadcrumb` | 0 |
-| `test_frame_ledger` | 0 |
-| `make unit` | **2** — pre-existing `test_rtl_invariants`: `sendDdrFrame must use selectDdrWriteBank` (fpga_spi untouched by this work; lives in w-fit-integ stash). Not introduced here. |
-
-## 1+2 hygiene (480p) — parent asked earlier
-
-Keep neutral-chroma init + dead-chroma repair as cheap defence; force-scale remains the product fix. Unchanged this task.
+**Cause of rc=0:** handled SIGTERM (established from source).  
+**Sender:** unknown until `si_pid` / SUPERVISE_EXIT on device — candidates ranked above.  
+Do not "fix" a sender without that evidence. Next silicon step is install breadcrumb binary and wait for one death.

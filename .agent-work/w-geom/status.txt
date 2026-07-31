@@ -1,98 +1,64 @@
-w-geom daemon-exit harden — status
+w-geom daemon-exit harden — FINAL
 branch: w-instr-motion-counter
-ARM md5: 865d4c8ac246e827bfd524f76af3e18d
-death_capture_supervisor md5: 5b183219f4dc6b55a011f36c8dd44175
-make unit: true rc=0
-supervise classify: true rc=0
-signal senders: .agent-work/w-geom/SIGNAL_SENDERS.md
+sha: bb0fb5bb128d8383363e169c429e657789ee7e82
+short: bb0fb5bb
 
-## make unit proof (blocking)
+# unit gate ownership (blocking install question)
+exit_commit: 8f144ea1  (death breadcrumb + frame ledger)
+  git diff --stat 8f144ea1^..8f144ea1 -- arm/misterplexd/fpga_spi.*  => EMPTY (0 bytes)
+rtl_invariants selectDdrWriteBank:
+  merge-base 77e1e78d : PASS (no FAIL line) — worktree true rc=0
+  parent     2bbdffd4 : FAIL sendDdrFrame must use selectDdrWriteBank
+  tip pre-fix 8f144ea1 : FAIL same (not introduced by exit commit)
+  tip post-fix bb0fb5bb : PASS; make unit true rc=0
+owned_fix: port selectDdrWriteBank + drop-on-timeout (no force-write) + npz text-suffix skip
 
-| Commit / tree | test_rtl_invariants true rc | notes |
-|---|---|---|
-| merge-base main `77e1e78d` | **0** GREEN | no `selectDdrWriteBank` check yet |
-| parent of exit work `2bbdffd4` | **1** RED | check present, no impl; fpga_spi untouched by exit commit |
-| tip before bank fix `8f144ea1` | **1** RED | same FAIL string; `git show --name-only 8f144ea1` has NO fpga_spi |
-| tip after bank+npz skip (this work) | **0** GREEN | ported `selectDdrWriteBank`; skip .npz in text sweep |
-| **make unit** tip | **0** GREEN | `.agent-work/w-geom/make-unit-after-harden.out` |
+# binary (32-bit ARM static ELF) — parent hand-installs
+path: /home/flynnsbit/Projects/MisterPlex/build/arm/misterplexd
+md5: 865d4c8ac246e827bfd524f76af3e18d
+file: ELF 32-bit LSB executable, ARM, EABI5, statically linked
+death_capture_supervisor: build/death_capture_supervisor md5 5b183219f4dc6b55a011f36c8dd44175
 
-Proof fpga_spi not in exit commit:
-  `git show --name-only 8f144ea1 | rg fpga_spi` → empty
-  `git diff 2bbdffd4..8f144ea1 -- arm/misterplexd/fpga_spi.*` → 0 bytes
+# gates
+make unit @ bb0fb5bb: true rc=0  (log: .agent-work/w-geom/make-unit-bb0fb5bb.out)
+test_rtl_invariants: true rc=0
+test_death_breadcrumb: true rc=0
+test_supervise_exit_classify: true rc=0
+  SIGTERM default → WIFSIGNALED WTERMSIG=15 shell rc=143
+  SIGKILL         → WIFSIGNALED WTERMSIG=9  shell rc=137
+  handled SIGTERM → WIFEXITED exit_status=0 shell rc=0  (matches product rc=0 mystery)
 
-Parent criterion "green merge-base + red tip = yours": branch inherited red before exit work (parent 2bbdffd4 red). Still owned the fix so tip is installable.
+# death breadcrumb (async-signal-safe handler path)
+handler: open/write/close only on precomputed g_deathPathC (no fprintf/malloc in handler)
+orderly: deathBreadcrumbExit may fprintf after teardown
+path: <confDir>/misterplexd.death  e.g. /media/fat/misterplex_v2/misterplexd.death
+SIGKILL: handler cannot run — supervisor SUPERVISE_EXIT is second witness
 
-## Breadcrumb harden
+# signal senders
+doc: .agent-work/w-geom/SIGNAL_SENDERS.md
+top suspects for handled-SIGTERM rc=0:
+  scripts/plexctl.sh stop_all via cmdline substring *"/bin/misterplexd"*
+  scripts/deploy_plex_core.sh killall misterplexd
+  scripts/mister_soft_bounce.sh killall misterplexd
+kill -9 paths would be WIFSIGNALED 9 not rc=0
 
-- Handler path: `deathBreadcrumbOnSigInfo` → open/write/close only (async-signal-safe). NO fprintf/malloc in handler.
-- Orderly path: `deathBreadcrumbExit` uses fprintf AFTER main loop (not in handler).
-- Path: confDir from `--conf` dirname (e.g. `/media/fat/misterplex_v2/misterplexd.death`) — NOT /tmp.
-- SIGKILL: handler cannot run; supervisor SUPERVISE_EXIT is sole witness.
-
-## Supervisor classify proof (host)
-
-`tests/unit/test_supervise_exit_classify.sh` true rc=0:
-- default SIGTERM → WIFSIGNALED WTERMSIG=15 (shell rc=143)
-- SIGKILL → WIFSIGNALED WTERMSIG=9 (shell rc=137), death_freshness=stale_or_absent_expected
-- handled SIGTERM → WIFEXITED exit_status=0 (shell rc=0) ← misterplexd product path
-
-## ARM binary (hand-install)
-
-path: build/arm/misterplexd
-md5: (see `md5sum build/arm/misterplexd` after arm-plexd)
-also: build/arm/death_capture_supervisor
-
-## Ledger residual (on-device)
-
-```sh
+# hand-install (parent only; do NOT use deploy_misterplexd.sh)
 ROOT=/media/fat/misterplex_v2
-LED=$ROOT/misterplexd.frame_ledger
-echo "=== ledger path ==="; ls -la "$LED"
-echo "=== last 30 events ==="; tail -30 "$LED"
-echo "=== residual identity over ALL session_end rows ==="
-awk '
-  /event=session_end/ {
-    f=0;p=0;d=0;r=0
-    for(i=1;i<=NF;i++){
-      split($i,a,"=")
-      if(a[1]=="frames")f=a[2]+0
-      if(a[1]=="presents")p=a[2]+0
-      if(a[1]=="drops")d=a[2]+0
-      if(a[1]=="residual")r=a[2]+0
-    }
-    sf+=f; sp+=p; sd+=d; sr+=r; n++
-    if (r != f-p-d) bad++
-  }
-  /event=process_start/ { starts++ }
-  /event=process_exit/  { exits++ }
-  END {
-    print "sessions=" n " process_starts=" starts+0 " process_exits=" exits+0
-    print "sum_frames=" sf " sum_presents=" sp " sum_drops=" sd " sum_residual=" sr
-    print "identity_check sum(frames-presents-drops)=" (sf-sp-sd) " vs sum(residual)=" sr
-    print "row_bad_residual=" bad+0
-    if (n==0) { print "EMPTY_LEDGER"; exit 2 }
-    if (bad>0 || (sf-sp-sd)!=sr) { print "RESIDUAL_FAIL"; exit 1 }
-    print "RESIDUAL_OK"
-  }
-' "$LED"; echo "true rc=$?"
-echo "=== restarts visible ==="; grep -c event=process_start "$LED"; grep event=process_exit "$LED" | tail -5
-```
+# 1) stop via plexctl if used, copy binary, restart ONE supervisor
+# 2) verify LIVE exe not on-disk alone:
+# PID=$(pidof misterplexd | awk '{print $1}')
+# md5sum $(readlink -f /proc/$PID/exe)
+# expect 865d4c8ac246e827bfd524f76af3e18d
+# 3) after unexplained exit:
+# grep EXIT_REASON $ROOT/misterplexd.log | tail -5
+# cat $ROOT/misterplexd.death
+# si_pid=N → tr '\0' ' ' < /proc/N/cmdline  (if still live)
+# tail -20 $ROOT/misterplexd_supervise.log   # SUPERVISE_EXIT WIF*
 
-## Hand-install (parent)
+# frame ledger residual (whole soak, restarts visible as rows)
+# LEDGER=$ROOT/misterplexd.frame_ledger
+# awk '...'  see DAEMON_EXIT_REPORT.md §6
 
-```sh
-HOST_BIN=.../build/arm/misterplexd   # md5 from report
-ROOT=/media/fat/misterplex_v2
-# stop cleanly via plexctl if available, else:
-#   kill supervisors + daemon by EXACT paths, not cmdline substring of foreign procs
-cp -f "$HOST_BIN" $ROOT/bin/misterplexd.new
-chmod +x $ROOT/bin/misterplexd.new
-mv -f $ROOT/bin/misterplexd.new $ROOT/bin/misterplexd
-# start via your supervisor
-sleep 2
-PID=$(pidof misterplexd | awk '{print $1}')
-echo "pid=$PID"
-readlink -f /proc/$PID/exe
-md5sum "$(readlink -f /proc/$PID/exe)"
-# must match host md5 of the binary you copied
-```
+# docs
+.agent-work/w-geom/DAEMON_EXIT_REPORT.md
+.agent-work/w-geom/SIGNAL_SENDERS.md
