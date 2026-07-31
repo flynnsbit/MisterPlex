@@ -5,7 +5,7 @@ CXXFLAGS ?= -std=c++17 -O2 -Wall -Wextra -I$(ROOT)/host
 FFMPEG_CFLAGS := $(shell pkg-config --cflags libavformat libavcodec libavutil 2>/dev/null)
 FFMPEG_LIBS   := $(shell pkg-config --libs libavformat libavcodec libavutil 2>/dev/null)
 
-.PHONY: all preflight unit unit-unlocked unit-rollcall rtl-sim rtl-sim-unlocked rtl-lint verilator-elab quartus-sv-subset define-parity pre-synth-gates post-fit-hierarchy post-fit-timing post-fit-timing-margin timing-exclusion pms-baseline-check pms-baseline-live pms-nal-stats arm-plexd arm-ddr-bench arm-profile-tools ddr-bench profile-tools present-harness clean help plexd package h264-golden-tools check-core-conf-geometry e2e-cast-picker
+.PHONY: all preflight unit unit-unlocked unit-rollcall rtl-sim rtl-sim-unlocked rtl-lint verilator-elab quartus-sv-subset define-parity pre-synth-gates post-fit-hierarchy post-fit-timing post-fit-timing-margin timing-exclusion pms-baseline-check pms-baseline-live pms-nal-stats arm-plexd arm-ddr-bench arm-profile-tools ddr-bench profile-tools present-harness clean help plexd package h264-golden-tools check-core-conf-geometry e2e-cast-picker e2e-real-content
 
 all: unit
 
@@ -43,6 +43,10 @@ test: unit
 # Exit 0 PASS | 1 FAIL | 77 SKIP-NOT-PASS (never treat 77 as green).
 e2e-cast-picker:
 	@bash $(ROOT)/tests/hw/e2e/run_cast_picker.sh
+
+# P7 real library title cast (no fixture fallback). LOCAL PMS only.
+e2e-real-content:
+	@bash $(ROOT)/tests/hw/e2e/run_real_content.sh
 
 UNIT_ANNEXB := $(ROOT)/build/plex_real_baseline.264
 

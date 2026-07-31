@@ -272,3 +272,44 @@ scans the tree. Use env or a gitignored conf file.
 - `docs/select-player-runbook.md` — companionServer / FriendlyName diagnosis
 - `docs/v2-video-baseline.md` — Plex Web picker mechanism (bundle citations)
 - `tools/hdmi_motion_instrument.py` — burned-in counter / green-cast scorer
+
+
+## P7 — Real library content cast (`make e2e-real-content`)
+
+Pixel-verifies a **genuine** (non-fixture) title on the **LOCAL** PMS only.
+Ignores SHIELD / `plex.nevertrustaf.art`. **Never** falls back to
+`MiSTerPlex Tests` avsync fixtures.
+
+```bash
+# Discover + cast + hold (default hold 45s). Parent captures HDMI during HOLD.
+E2E_TIER=480p E2E_DAEMON_DECODE=624x480 \
+PLEX_BASE=http://YOUR-LOCAL-PMS:32400 PLEX_TOKEN=… PLEX_WEB_USER=… \
+MISTER_HOST=… E2E_REAL_HOLD_SEC=45 \
+./tests/hw/e2e/run_real_content.sh
+echo "true rc=$?"
+
+# Or pin a known real rating key (still rejects fixtures):
+PLEX_RATING_KEY=42 ./tests/hw/e2e/run_real_content.sh; echo "true rc=$?"
+```
+
+If the library has no suitable non-fixture title → **FAIL**
+`real_content_library_empty` (not skip, not fixture).
+
+### Parent HDMI recipe (falsifiable)
+
+Suite logs `PARENT_RECIPE` including `CAST_CORRELATION_ID`, geometry chain, and:
+
+| Fail signature | What you see |
+|----------------|--------------|
+| WRAP | horizontal wrap / mirrored edge columns |
+| H_DUP | side-by-side duplicated panels |
+| CHROMA_MAGENTA | magenta/green UV corruption or solid green cast |
+| PILLAR_WRONG | active width ~half / wrong AR vs `library_media` |
+| FULLWIDTH_CORRUPT | smashed full-bleed AR |
+| FREEZE | identical frames while timeline `time` advances |
+
+Pass: recognizable motion/detail; AR consistent with `library_media` fitted into
+the decode bank without the signatures above. Counter `MOTION_OK` does **not**
+apply (no TREK overlay).
+
+Correlate daemon: grep `GEOM` / ratingKey near `CAST_CORRELATION_ID` wall time.
