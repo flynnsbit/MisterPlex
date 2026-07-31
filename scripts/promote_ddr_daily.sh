@@ -122,13 +122,17 @@ Steps when PROMOTE_EXECUTE=1:
   6) scripts/promotion_gate_check.sh verify-live
        (+ optional PROMOTE_MOTION_CMD for w-instr TREK24 counter; unset = rc=77 incomplete)
 
-Rollback anytime:
-  scripts/rollback_v2.sh restore
-  → menu → $DEVICE_CORE_V2_DAILY → plexctl v2
+Rollback anytime (ATOMIC pair — core+daemon; never core alone):
+  ROLLBACK_DAEMON=/path/to/50f4eb92-misterplexd scripts/rollback_v2.sh restore
+  → preflight daemon artifact → stop → install daemon → menu → pair core → verify + VISUAL
+  Without daemon pin: rc=10 device UNTOUCHED (avoids solid green mixed pair)
+  PAIR_ID=ddr-c5382bee restores the DDR pair itself (last verified-good design)
 
 DO NOT:
   - run plexctl reload-v2 on the lab host (false MISSING catastrophe; use rollback_v2.sh)
   - confuse Plex.rbf with Plex_v2.rbf
+  - restore core without matching daemon (SPI+DDR daemon = solid green screen)
+  - claim success on telemetry alone (/resources 200 is not pixels)
   - ship banned prefixes: ${RBF_BANNED_PREFIX8[*]}
   - ship do-not-ship: ${RBF_DO_NOT_SHIP_PREFIX8[*]}
   - kill -9 storms / multi menu luck thrash

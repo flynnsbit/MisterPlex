@@ -241,10 +241,24 @@ report_rc "stop_all" "$stop_rc" || die "stop failed (rc=$stop_rc)"
 
 # --- install exact bytes ------------------------------------------------------
 echo "deploy: install host_md5=$HOST_MD5 -> $REMOTE_BIN"
+# Content-addressed archive of outgoing daemon so atomic pair rollback can find
+# the previous pin (parent 2026-07-31: SPI rollback needed 50f4eb92 after DDR
+# overwrite; without bak, restore cannot be atomic and must refuse).
 set +e
 ssh_m "echo DEPLOY_INSTALL_PREP root='$TARGET_ROOT'
 mkdir -p '$TARGET_ROOT/bin' '$TARGET_ROOT/scripts'
-if [ -f '$REMOTE_BIN' ]; then cp -f '$REMOTE_BIN' '$REMOTE_BIN.prev-deploy'; fi
+if [ -f '$REMOTE_BIN' ]; then
+  om=\$(md5sum '$REMOTE_BIN' 2>/dev/null | awk '{print \$1}')
+  cp -f '$REMOTE_BIN' '$REMOTE_BIN.prev-deploy' || true
+  if [ -n \"\$om\" ]; then
+    arch='$REMOTE_BIN.'.\${om:0:8}.bak
+    if [ ! -f \"\$arch\" ]; then
+      cp -f '$REMOTE_BIN' \"\$arch\" && echo \"ARCHIVED_DAEMON \$arch\" || echo ARCHIVE_DAEMON_WARN
+    else
+      echo \"ARCHIVE_DAEMON_SKIP \$arch\"
+    fi
+  fi
+fi
 rm -f '$REMOTE_BIN'"
 prep_rc=$?
 set -e

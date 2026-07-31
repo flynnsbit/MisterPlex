@@ -1,45 +1,47 @@
 #!/usr/bin/env bash
-# rollback_v2.sh — HOST-SIDE restore of the known-good v0.2.0 daily driver.
+# rollback_v2.sh — HOST-SIDE ATOMIC restore of a matched (core, daemon) pair.
 #
-# Why this exists: scripts/plexctl.sh reload-v2 is ON-DEVICE only. Running it on
-# the lab host evaluates device paths with the host's [ -f ], which falsely
-# reported "ERROR no core at /media/fat/_Utility/Plex_v2.rbf" three times while
-# the file existed on the MiSTer (parent-measured 2026-07-31). A rollback tool
-# that lies about the daily driver being destroyed is dangerous.
+# CRITICAL (parent HW 2026-07-31): restoring the SPI core alone while leaving
+# the DDR daemon live produces a SOLID GREEN SCREEN. /resources=200, n_daemon=1,
+# and core md5 all still pass. Partial rollback is worse than no rollback.
 #
-# This script always talks to the device over SSH (with retry/backoff for the
-# lab's flaky "No route to host" drops). It never tests /media/fat paths on the
-# local host.
+# This tool is ATOMIC over the pair:
+#   spi-v2-hybrid:  core dfebf2bf + daemon 50f4eb92  (default)
+#   spi-v2-release: core dfebf2bf + daemon 7cd10b4d
+#   ddr-c5382bee:   core c5382bee + daemon e9f79de2  (restore last DDR pair)
 #
-# Known-good pin (parent 2026-07-31):
-#   core   /media/fat/_Utility/Plex_v2.rbf          md5 dfebf2bfd08dd70b473b587dd7e81848
-#   daemon /media/fat/misterplex_v2/bin/misterplexd md5 50f4eb925de10e29172999a565c87684
-#   CORENAME=Plex (not distinctive — all Plex RBFs report this)
-#   HTTP GET :3005/resources → 200
+# Sequence for restore:
+#   0) resolve PAIR_ID + require daemon artifact (host or on-device .bak) UP FRONT
+#   1) stop daemon (no writers; avoid ETXTBSY)
+#   2) install matching daemon bytes if disk pin wrong
+#   3) ONE menu bounce → pair core path
+#   4) start bundle
+#   5) verify pair (core path md5 + live /proc/exe md5 + n_daemon==1 + HTTP)
+#   6) HARD visual gate (idle capture) — unset = rc=8, never claim success
 #
-# Restore sequence (matches parent manual reference):
-#   1) stop daemon (so binary replace is not ETXTBSY; no writers during reconfig)
-#   2) menu.rbf bounce then load Plex_v2.rbf
-#   3) start v2 bundle via on-device plexctl
-#   4) verify LIVE /proc/<pid>/exe md5 + HTTP — never disk alone
+# Exit codes (last line always "true rc=N"):
+#   0  OK — pair matched AND visual gate passed
+#   2  MISSING — proven absent on device
+#   3  MISMATCH — hash wrong / pair refuse
+#   4  NO-DATA
+#   5  NETWORK
+#   8  VISUAL_REQUIRED / VISUAL_FAIL
+#   9  HARD sequence failure
+#  10  REFUSE — cannot achieve atomic pair (no daemon artifact); device untouched
 #
-# Exit codes (printed as "true rc=N" on the last line):
-#   0  OK — live daemon matches pin and HTTP is healthy
-#   2  MISSING — on-device check proved a required file is absent
-#   3  MISMATCH — hash present but wrong
-#   4  NO-DATA / CANNOT_CHECK — empty result after successful transport, or
-#      ambiguous state (never report this as MISSING)
-#   5  NETWORK — SSH failed after retries
-#   9  HARD — stop/start/load sequence failed for a stated reason
+# Usage (parent only — agents must not SSH):
+#   scripts/rollback_v2.sh verify
+#   scripts/rollback_v2.sh restore
+#   PAIR_ID=ddr-c5382bee scripts/rollback_v2.sh restore
+#   ROLLBACK_DAEMON=/path/to/50f4eb92-misterplexd scripts/rollback_v2.sh restore
 #
-# Usage (parent only — agents must not SSH to the device):
-#   scripts/rollback_v2.sh              # full restore + verify
-#   scripts/rollback_v2.sh verify       # check only
-#   scripts/rollback_v2.sh restore      # restore + verify
-#
-# Test inject: ROLLBACK_SSH / ROLLBACK_HTTP override transports (no real device).
+# Test inject: ROLLBACK_SSH / ROLLBACK_HTTP / ROLLBACK_SCP / PAIR_IDLE_PNG
 
 set -euo pipefail
+
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck source=pair_ship_policy.sh
+source "$ROOT/scripts/pair_ship_policy.sh"
 
 HOST="${MISTER_HOST:-192.168.1.183}"
 PASS="${MISTER_PASS:-1}"
@@ -47,34 +49,38 @@ USER="${MISTER_USER:-root}"
 SSH_TRIES="${ROLLBACK_SSH_TRIES:-6}"
 SSH_BACKOFF_S="${ROLLBACK_SSH_BACKOFF_S:-1}"
 
-V2_CORE=/media/fat/_Utility/Plex_v2.rbf
-V2_DAEMON=/media/fat/misterplex_v2/bin/misterplexd
-V2_ROOT=/media/fat/misterplex_v2
-MENU_CORE=/media/fat/menu.rbf
+PAIR_ID="${PAIR_ID:-$PAIR_DEFAULT_ROLLBACK}"
+MENU_CORE="${DEVICE_CORE_MENU}"
 PLEXCTL_CANDIDATES="/media/fat/misterplex/bin/plexctl.sh /media/fat/misterplex_v2/bin/plexctl.sh /media/fat/Scripts/plexctl.sh"
-
-CORE_MD5=dfebf2bfd08dd70b473b587dd7e81848
-# Hybrid pin parent named as known-good for daily driver (50f4eb92).
-DAEMON_MD5=50f4eb925de10e29172999a565c87684
-# Also accept pristine v0.2.0 release asset if still on disk.
-DAEMON_MD5_RELEASE=7cd10b4d438c714a9b8c4766dc982d59
-
 PORT="${ROLLBACK_PORT:-3005}"
+ROLLBACK_REQUIRE_VISUAL="${ROLLBACK_REQUIRE_VISUAL:-}"
 
 ts() { date -u +%Y-%m-%dT%H:%M:%SZ; }
-
 log() { printf '%s %s\n' "$(ts)" "$*" >&2; }
 
-# Capture rc WITHOUT a pipe (pipeline rc is the last command — trap that bit
-# the parent three times). Caller:  out=$(run_ssh ...); rc=$?
+PAIR_BLOB="$(pair_policy_lookup "$PAIR_ID")" || {
+  printf '%s\n' "$PAIR_BLOB"
+  echo "true rc=10"
+  exit 10
+}
+while IFS= read -r line; do
+  case "$line" in
+    PAIR_ID=*) PAIR_ID="${line#PAIR_ID=}" ;;
+    PAIR_MODE=*) PAIR_MODE="${line#PAIR_MODE=}" ;;
+    PAIR_CORE_MD5=*) CORE_MD5="${line#PAIR_CORE_MD5=}" ;;
+    PAIR_DAEMON_MD5=*) DAEMON_MD5="${line#PAIR_DAEMON_MD5=}" ;;
+    PAIR_CORE_PATH=*) PAIR_CORE_PATH="${line#PAIR_CORE_PATH=}" ;;
+  esac
+done <<<"$PAIR_BLOB"
+V2_ROOT="${ROLLBACK_ROOT:-/media/fat/misterplex_v2}"
+V2_DAEMON="$V2_ROOT/bin/misterplexd"
+V2_CORE="$PAIR_CORE_PATH"
+
 run_ssh() {
   local remote="$1"
   local attempt=0 delay="$SSH_BACKOFF_S" out rc errf
-  errf="${ROLLBACK_ERRFILE:-}"
-  if [ -z "$errf" ]; then
-    errf="$(pwd)/build/rollback-ssh.err"
-    mkdir -p "$(dirname "$errf")"
-  fi
+  errf="${ROLLBACK_ERRFILE:-$ROOT/build/rollback-ssh.err}"
+  mkdir -p "$(dirname "$errf")"
   while [ "$attempt" -lt "$SSH_TRIES" ]; do
     attempt=$((attempt + 1))
     : >"$errf"
@@ -102,8 +108,24 @@ run_ssh() {
     delay=$((delay * 2))
     [ "$delay" -gt 16 ] && delay=16
   done
-  log "ssh-FAILED after ${SSH_TRIES} attempts (NETWORK) last_err=$(tr '\n' ' ' <"$errf" | head -c 200)"
+  log "ssh-FAILED after ${SSH_TRIES} attempts (NETWORK)"
   return 5
+}
+
+run_scp() {
+  local src="$1" dst="$2" rc
+  set +e
+  if [ -n "${ROLLBACK_SCP:-}" ]; then
+    # shellcheck disable=SC2086
+    $ROLLBACK_SCP "$src" "$dst"
+    rc=$?
+  else
+    sshpass -p "$PASS" scp -o StrictHostKeyChecking=no -o ConnectTimeout=8 \
+      "$src" "$USER@$HOST:$dst"
+    rc=$?
+  fi
+  set -e
+  return "$rc"
 }
 
 http_code() {
@@ -126,7 +148,6 @@ http_code() {
       printf '%s' "$code"
       return 0
     fi
-    log "http-retry attempt=$attempt code='${code}' rc=$rc"
     sleep "$delay"
     delay=$((delay * 2))
   done
@@ -134,13 +155,11 @@ http_code() {
   return 5
 }
 
-# Classify a hash observation. Empty = NO-DATA (never MISSING/MISMATCH).
-# Prints: OK|NO-DATA|MISSING|MISMATCH and returns 0|4|2|3.
 classify_hash() {
   local label="$1" got="$2" want="$3"
   local alt="${4:-}"
   if [ -z "$got" ]; then
-    echo "NO-DATA $label got='' (empty observation — not a mismatch; transport or remote cmd produced no hash)"
+    echo "NO-DATA $label got='' (empty observation — not a mismatch)"
     return 4
   fi
   case "$got" in
@@ -157,35 +176,36 @@ classify_hash() {
   return 3
 }
 
-# Remote one-shot: disk md5 or MISSING; never silent empty on proven path check.
 remote_file_md5() {
   local path="$1"
-  # shellcheck disable=SC2016
   run_ssh "if [ ! -e $(printf '%q' "$path") ]; then echo MISSING; elif [ ! -f $(printf '%q' "$path") ]; then echo MISSING; else md5sum $(printf '%q' "$path") | awk '{print \$1}'; fi"
 }
 
-# Live daemon: exact argv0 = V2_DAEMON, md5 /proc/PID/exe, conf, port.
-remote_live_daemon() {
-  run_ssh "bin=$(printf '%q' "$V2_DAEMON"); $(cat <<'REMOTE'
+remote_live_any_daemon() {
+  run_ssh "$(cat <<'REMOTE'
 set +e
 n=0
 pids=""
 live=""
 conf=""
 port=""
+exe=""
+root=""
 for d in /proc/[0-9]*; do
-  [ -d "$d" ] || continue
   [ -r "$d/cmdline" ] || continue
-  cmd_nl=$(tr '\0' '\n' <"$d/cmdline" 2>/dev/null) || continue
-  a0=$(printf '%s\n' "$cmd_nl" | head -n1)
-  [ "$a0" = "$bin" ] || continue
+  cmd=$(tr '\0' ' ' <"$d/cmdline" 2>/dev/null) || continue
+  case "$cmd" in *plexctl.sh*|*plexctl_supervise*|*misterplexd_supervise*|*dedupe_daemon*) continue ;; esac
+  case "$cmd" in */misterplexd\ *|*/misterplexd) ;; *) continue ;; esac
   p=${d#/proc/}
-  [ -d "/proc/$p" ] || continue
-  pids="${pids}${pids:+ }$p"
   n=$((n + 1))
+  pids="${pids}${pids:+ }$p"
+  exe=$(readlink -f "/proc/$p/exe" 2>/dev/null || true)
+  if [ -n "$exe" ]; then
+    live=$(md5sum "$exe" 2>/dev/null | awk '{print $1}')
+    root=$(dirname "$(dirname "$exe")")
+  fi
   conf=""; port=""; prev=""
-  while IFS= read -r tok; do
-    [ -n "$tok" ] || continue
+  for tok in $cmd; do
     case "$prev" in
       --port) port="$tok"; prev=""; continue ;;
       --conf) conf="$tok"; prev=""; continue ;;
@@ -197,96 +217,281 @@ for d in /proc/[0-9]*; do
       --conf=*) conf="${tok#--conf=}"; prev="" ;;
       *) prev="" ;;
     esac
-  done <<TOKENS
-$cmd_nl
-TOKENS
+  done
 done
-echo "N_MATCH=$n"
+echo "N_DAEMON=$n"
 echo "PIDS=$pids"
-if [ "$n" -eq 1 ]; then
-  pid=$pids
-  if [ -e "/proc/$pid/exe" ]; then
-    live=$(md5sum "/proc/$pid/exe" 2>/dev/null | awk '{print $1}')
-  fi
-fi
 echo "LIVE_MD5=${live}"
+echo "LIVE_EXE=${exe}"
 echo "LIVE_PORT=${port}"
 echo "LIVE_CONF=${conf}"
+echo "LIVE_ROOT=${root}"
+REMOTE
+)"
+}
+
+remote_find_daemon_pin() {
+  local want="$1"
+  run_ssh "want=$(printf '%q' "$want"); $(cat <<'REMOTE'
+set +e
+cands="
+/media/fat/misterplex_v2/bin/misterplexd
+/media/fat/misterplex/bin/misterplexd
+/media/fat/misterplex_v2/bin/misterplexd.prev-deploy
+/media/fat/misterplex/bin/misterplexd.prev-deploy
+"
+for b in /media/fat/misterplex_v2/bin/misterplexd.*.bak \
+         /media/fat/misterplex/bin/misterplexd.*.bak \
+         /media/fat/_Utility/misterplexd.* \
+         /media/fat/misterplex_v2/bin/misterplexd.50f4eb92 \
+         /media/fat/misterplex_v2/bin/misterplexd.7cd10b4d; do
+  [ -f "$b" ] || continue
+  cands="$cands
+$b"
+done
+found=""
+for p in $cands; do
+  [ -f "$p" ] || continue
+  m=$(md5sum "$p" 2>/dev/null | awk '{print $1}')
+  [ -n "$m" ] || continue
+  if [ "$m" = "$want" ]; then
+    echo "FOUND_PATH=$p"; echo "FOUND_MD5=$m"; found=1; break
+  fi
+  w8=$(printf '%s' "$want" | cut -c1-8)
+  m8=$(printf '%s' "$m" | cut -c1-8)
+  if [ "${#want}" -eq 8 ] && [ "$m8" = "$want" ]; then
+    echo "FOUND_PATH=$p"; echo "FOUND_MD5=$m"; found=1; break
+  fi
+done
+if [ -z "$found" ]; then
+  echo "FOUND_PATH="
+  echo "FOUND_MD5="
+fi
 REMOTE
 )"
 }
 
 stop_remote_daemon() {
-  log "stop remote daemon via plexctl (best effort)"
-  local pc
+  log "stop remote daemon (pair atomic — stop before core/daemon mutate)"
+  local pc rc
   set +e
   pc=$(run_ssh "for p in $PLEXCTL_CANDIDATES; do [ -x \"\$p\" ] && echo \"\$p\" && break; done")
-  local rc=$?
+  rc=$?
   set -e
   if [ "$rc" -eq 5 ]; then return 5; fi
-  if [ -z "$pc" ]; then
-    log "NOTE no plexctl on device — killing misterplexd by argv0 match"
-    run_ssh 'for d in /proc/[0-9]*; do
-      [ -r "$d/cmdline" ] || continue
-      a0=$(tr "\0" "\n" <"$d/cmdline" 2>/dev/null | head -n1)
-      case "$a0" in
-        */misterplexd) kill "${d#/proc/}" 2>/dev/null || true ;;
-      esac
-    done; sleep 1; echo stopped_by_argv0'
+  if [ -n "$pc" ]; then
+    run_ssh "$pc stop; echo stop_rc=\$?"
     return 0
   fi
-  run_ssh "$pc stop; echo stop_rc=\$?"
+  run_ssh 'for d in /proc/[0-9]*; do
+    [ -r "$d/cmdline" ] || continue
+    a0=$(tr "\0" "\n" <"$d/cmdline" 2>/dev/null | head -n1)
+    case "$a0" in */misterplexd) kill "${d#/proc/}" 2>/dev/null || true ;; esac
+  done
+  for d in /proc/[0-9]*; do
+    [ -r "$d/cmdline" ] || continue
+    cmd=$(tr "\0" " " <"$d/cmdline" 2>/dev/null) || continue
+    case "$cmd" in *plexctl_supervise*|*misterplexd_supervise*|*dedupe_daemon*)
+      kill "${d#/proc/}" 2>/dev/null || true ;;
+    esac
+  done
+  sleep 1; echo stopped_by_argv0'
 }
 
-load_v2_core_remote() {
-  # Parent reference: menu bounce then Plex_v2. Never host-side [ -f ].
-  log "load core: menu bounce then $V2_CORE"
+install_daemon_bytes() {
+  local spec="$1" host_md5 staged remote_md5 src
+  log "install daemon for pair $PAIR_ID want=$DAEMON_MD5 from $spec"
+  if [[ "$spec" == device:* ]]; then
+    local devpath="${spec#device:}"
+    run_ssh "set -e
+      src=$(printf '%q' "$devpath")
+      dst=$(printf '%q' "$V2_DAEMON")
+      mkdir -p \"\$(dirname \"\$dst\")\"
+      if [ \"\$src\" != \"\$dst\" ]; then
+        cp -f \"\$src\" \"\$dst\"
+      fi
+      chmod 755 \"\$dst\"
+      sync
+      md5sum \"\$dst\"
+    "
+    return 0
+  fi
+  [ -f "$spec" ] || { echo "MISSING host daemon artifact $spec"; return 2; }
+  host_md5=$(md5sum "$spec" | awk '{print $1}')
+  if [ "$host_md5" != "$DAEMON_MD5" ]; then
+    echo "REFUSE host daemon md5 $host_md5 != pair pin $DAEMON_MD5"
+    return 10
+  fi
+  staged="/tmp/misterplexd.pair.$$"
+  set +e
+  run_scp "$spec" "$staged"
+  src=$?
+  set -e
+  [ "$src" -eq 0 ] || return 5
+  remote_md5=$(run_ssh "set -e
+    dst=$(printf '%q' "$V2_DAEMON")
+    staged=$(printf '%q' "$staged")
+    mkdir -p \"\$(dirname \"\$dst\")\"
+    if [ -f \"\$dst\" ]; then
+      om=\$(md5sum \"\$dst\" | awk '{print \$1}')
+      arch=\"\${dst}.\${om:0:8}.bak\"
+      if [ ! -f \"\$arch\" ]; then cp -f \"\$dst\" \"\$arch\" || true; fi
+    fi
+    mv -f \"\$staged\" \"\$dst\"
+    chmod 755 \"\$dst\"
+    sync
+    md5sum \"\$dst\" | awk '{print \$1}'
+  ")
+  if [ "$remote_md5" != "$DAEMON_MD5" ]; then
+    echo "FAIL installed disk md5 '$remote_md5' != want $DAEMON_MD5"
+    return 3
+  fi
+  echo "OK daemon-installed disk=$remote_md5"
+  return 0
+}
+
+load_pair_core_remote() {
+  log "load core: ONE menu bounce then $V2_CORE (pair $PAIR_ID mode=$PAIR_MODE)"
   run_ssh "set -e
     if [ ! -e /dev/MiSTer_cmd ]; then echo 'NO-DATA missing /dev/MiSTer_cmd'; exit 4; fi
     if [ ! -f $(printf '%q' "$V2_CORE") ]; then echo 'MISSING $V2_CORE'; exit 2; fi
+    cm=\$(md5sum $(printf '%q' "$V2_CORE") | awk '{print \$1}')
+    if [ \"\$cm\" != $(printf '%q' "$CORE_MD5") ]; then
+      echo \"MISMATCH core-disk got=\$cm want=$CORE_MD5 — refusing load\"
+      exit 3
+    fi
     if [ -f $(printf '%q' "$MENU_CORE") ]; then
       printf '%s\n' 'load_core $(printf '%s' "$MENU_CORE")' > /dev/MiSTer_cmd
       sleep 6
     else
-      echo 'NOTE menu.rbf absent — loading V2 core directly'
+      echo 'NOTE menu.rbf absent — loading pair core directly'
     fi
     printf '%s\n' 'load_core $(printf '%s' "$V2_CORE")' > /dev/MiSTer_cmd
     sleep 8
     echo CORE_LOAD_ISSUED
+    echo CORE_MD5=\$cm
     if [ -f /tmp/CORENAME ]; then echo CORENAME=\$(cat /tmp/CORENAME); fi
-    if [ -f /tmp/RBFNAME ]; then echo RBFNAME=\$(cat /tmp/RBFNAME); fi
   "
 }
 
-start_v2_bundle() {
-  log "start v2 bundle"
-  local pc
+start_pair_bundle() {
+  log "start bundle for root $V2_ROOT"
+  local pc rc
   set +e
   pc=$(run_ssh "for p in $PLEXCTL_CANDIDATES; do [ -x \"\$p\" ] && echo \"\$p\" && break; done")
-  local rc=$?
+  rc=$?
   set -e
   if [ "$rc" -eq 5 ]; then return 5; fi
   if [ -z "$pc" ]; then
-    log "ERROR no plexctl on device — CANNOT start bundle cleanly"
+    log "ERROR no plexctl on device"
     return 9
   fi
   run_ssh "$pc v2; echo start_rc=\$?"
 }
 
-verify_only() {
-  local rc=0 step_rc got_core got_disk live_blob live n pids port conf code
+run_visual_gate() {
+  log "visual gate (HARD for claim success — green screen class)"
+  set +e
+  "$ROOT/scripts/pair_visual_gate.sh" idle
+  local vrc=$?
+  set -e
+  echo "visual_gate true rc=$vrc"
+  return "$vrc"
+}
 
-  log "== verify known-good v2 pins (honest empty=NO-DATA) =="
+preflight_atomic() {
+  local got_core disk_daemon host_daemon dev_find need_install=0 step_rc hrc drc prc out dev_path
+  log "== preflight ATOMIC pair id=$PAIR_ID core=${CORE_MD5:0:8} daemon=${DAEMON_MD5:0:8} =="
+
+  set +e
+  out=$(pair_policy_check "$CORE_MD5" "$DAEMON_MD5")
+  prc=$?
+  set -e
+  printf '%s\n' "$out"
+  if [ "$prc" -ne 0 ]; then
+    echo "REFUSE pair_policy_check true rc=$prc"
+    return 10
+  fi
 
   set +e
   got_core=$(remote_file_md5 "$V2_CORE")
   step_rc=$?
   set -e
-  if [ "$step_rc" -eq 5 ]; then
-    echo "NETWORK core-md5"
-    echo "true rc=5"
-    return 5
+  if [ "$step_rc" -eq 5 ]; then return 5; fi
+  set +e
+  classify_hash "preflight-core-disk" "$got_core" "$CORE_MD5"
+  step_rc=$?
+  set -e
+  if [ "$step_rc" -ne 0 ]; then
+    echo "REFUSE: pair core at $V2_CORE not at pin $CORE_MD5 (got='$got_core')"
+    echo "REFUSE: will not load a mismatched core; fix core file first"
+    return 10
   fi
+
+  set +e
+  disk_daemon=$(remote_file_md5 "$V2_DAEMON")
+  step_rc=$?
+  set -e
+  if [ "$step_rc" -eq 5 ]; then return 5; fi
+  echo "preflight disk-daemon at $V2_DAEMON got='${disk_daemon}'"
+
+  DAEMON_SOURCE=""
+  if [ "$disk_daemon" = "$DAEMON_MD5" ]; then
+    echo "OK preflight disk-daemon already at pair pin — no install needed"
+    DAEMON_SOURCE="device:$V2_DAEMON"
+    need_install=0
+  else
+    need_install=1
+    set +e
+    host_daemon=$(pair_policy_find_daemon_artifact "$DAEMON_MD5")
+    hrc=$?
+    set -e
+    if [ "$hrc" -eq 0 ]; then
+      echo "OK preflight host daemon artifact $host_daemon"
+      DAEMON_SOURCE="$host_daemon"
+    else
+      set +e
+      dev_find=$(remote_find_daemon_pin "$DAEMON_MD5")
+      drc=$?
+      set -e
+      if [ "$drc" -eq 5 ]; then return 5; fi
+      printf '%s\n' "$dev_find"
+      dev_path=$(printf '%s\n' "$dev_find" | sed -n 's/^FOUND_PATH=//p' | head -1)
+      if [ -n "$dev_path" ]; then
+        echo "OK preflight on-device pin backup $dev_path"
+        DAEMON_SOURCE="device:$dev_path"
+      else
+        cat <<EOF
+REFUSE ATOMIC_ROLLBACK: cannot restore pair $PAIR_ID without daemon pin ${DAEMON_MD5:0:8}.
+  core half is available at $V2_CORE ($CORE_MD5)
+  daemon half is NOT available:
+    - disk $V2_DAEMON is '${disk_daemon}'
+    - no host artifact (set ROLLBACK_DAEMON= or place artifacts/daemon-pins/misterplexd.${DAEMON_MD5:0:8})
+    - no on-device misterplexd.${DAEMON_MD5:0:8}.bak backup
+  Restoring the core ALONE leaves a mixed pair → solid green screen (parent 2026-07-31).
+  Device left UNTOUCHED.
+EOF
+        return 10
+      fi
+    fi
+  fi
+  export DAEMON_SOURCE
+  export DAEMON_NEED_INSTALL="$need_install"
+  echo "PREFLIGHT_OK pair=$PAIR_ID daemon_source=$DAEMON_SOURCE need_install=$need_install"
+  return 0
+}
+
+verify_pair() {
+  local rc=0 step_rc got_core got_disk live_blob live n conf code pair_out require_visual prc vrc
+  require_visual="${1:-${ROLLBACK_REQUIRE_VISUAL:-1}}"
+
+  log "== verify ATOMIC pair id=$PAIR_ID =="
+
+  set +e
+  got_core=$(remote_file_md5 "$V2_CORE")
+  step_rc=$?
+  set -e
+  if [ "$step_rc" -eq 5 ]; then echo "true rc=5"; return 5; fi
   set +e
   classify_hash "core-disk" "$got_core" "$CORE_MD5"
   step_rc=$?
@@ -297,126 +502,189 @@ verify_only() {
   got_disk=$(remote_file_md5 "$V2_DAEMON")
   step_rc=$?
   set -e
-  if [ "$step_rc" -eq 5 ]; then
-    echo "NETWORK daemon-disk-md5"
-    echo "true rc=5"
-    return 5
-  fi
+  if [ "$step_rc" -eq 5 ]; then echo "true rc=5"; return 5; fi
   set +e
-  classify_hash "daemon-disk" "$got_disk" "$DAEMON_MD5" "$DAEMON_MD5_RELEASE"
+  classify_hash "daemon-disk" "$got_disk" "$DAEMON_MD5"
   step_rc=$?
   set -e
-  # disk is secondary; keep worst rc but do not let disk NO-DATA alone skip live
-  if [ "$step_rc" -ne 0 ] && [ "$rc" -eq 0 ]; then rc=$step_rc; fi
-  if [ "$step_rc" -eq 2 ] || [ "$step_rc" -eq 3 ]; then rc=$step_rc; fi
+  if [ "$step_rc" -ne 0 ]; then rc=$step_rc; fi
 
   set +e
-  live_blob=$(remote_live_daemon)
+  live_blob=$(remote_live_any_daemon)
   step_rc=$?
   set -e
-  if [ "$step_rc" -eq 5 ]; then
-    echo "NETWORK live-daemon-probe"
-    echo "true rc=5"
-    return 5
-  fi
+  if [ "$step_rc" -eq 5 ]; then echo "true rc=5"; return 5; fi
   printf '%s\n' "$live_blob"
-  n=$(printf '%s\n' "$live_blob" | sed -n 's/^N_MATCH=//p' | head -1)
+  n=$(printf '%s\n' "$live_blob" | sed -n 's/^N_DAEMON=//p' | head -1)
   live=$(printf '%s\n' "$live_blob" | sed -n 's/^LIVE_MD5=//p' | head -1)
-  pids=$(printf '%s\n' "$live_blob" | sed -n 's/^PIDS=//p' | head -1)
-  port=$(printf '%s\n' "$live_blob" | sed -n 's/^LIVE_PORT=//p' | head -1)
   conf=$(printf '%s\n' "$live_blob" | sed -n 's/^LIVE_CONF=//p' | head -1)
-  n=${n:-}
+
   if [ -z "$n" ]; then
-    echo "NO-DATA live-daemon (empty N_MATCH — transport/partial output, not n_daemon=0)"
+    echo "NO-DATA n_daemon"
     rc=4
-  elif [ "$n" = "0" ]; then
-    echo "FAIL live-daemon n_daemon=0 (no process with argv0=$V2_DAEMON)"
-    rc=9
   elif [ "$n" != "1" ]; then
-    echo "FAIL live-daemon multi-match n=$n pids='$pids'"
+    echo "FAIL n_daemon=$n want=1"
     rc=9
   else
+    echo "OK n_daemon=1"
+  fi
+
+  if [ -z "$live" ]; then
+    echo "NO-DATA live-exe-md5"
+    [ "$rc" -eq 0 ] && rc=4
+  else
     set +e
-    classify_hash "daemon-live" "$live" "$DAEMON_MD5" "$DAEMON_MD5_RELEASE"
+    classify_hash "daemon-live" "$live" "$DAEMON_MD5"
     step_rc=$?
     set -e
-    if [ "$step_rc" -ne 0 ]; then rc=$step_rc; fi
-    if [ -n "$conf" ]; then
-      echo "OK daemon-conf $conf (from live --conf)"
-    else
-      echo "NOTE daemon-conf empty"
-    fi
-    # ETXTBSY: only when BOTH sides non-empty and differ
-    if [ -n "$got_disk" ] && [ "$got_disk" != "MISSING" ] && [ -n "$live" ] && [ "$got_disk" != "$live" ]; then
-      echo "FAIL daemon-disk/live mismatch disk='$got_disk' live='$live'"
-      echo "     hint: cp over RUNNING binary fails ETXTBSY — stop, replace, restart, re-check /proc/PID/exe"
+    [ "$step_rc" -eq 0 ] || rc=$step_rc
+  fi
+
+  if [ -n "$got_core" ] && [ "$got_core" != "MISSING" ] && [ -n "$live" ]; then
+    set +e
+    pair_out=$(pair_policy_check "$got_core" "$live")
+    prc=$?
+    set -e
+    printf '%s\n' "$pair_out"
+    if [ "$prc" -ne 0 ]; then
+      echo "FAIL pair-compatibility true rc=$prc"
       rc=3
+    else
+      echo "OK pair-compatibility"
     fi
   fi
 
-  port=${port:-$PORT}
+  if [ -n "$conf" ]; then
+    echo "OK daemon-conf $conf (from live --conf)"
+  else
+    echo "NOTE daemon-conf empty"
+  fi
+
+  if [ -n "$got_disk" ] && [ "$got_disk" != "MISSING" ] && [ -n "$live" ] && [ "$got_disk" != "$live" ]; then
+    echo "FAIL daemon-disk/live mismatch disk='$got_disk' live='$live' (ETXTBSY class)"
+    rc=3
+  fi
+
   set +e
-  code=$(http_code "http://${HOST}:${port}/resources")
+  code=$(http_code "http://${HOST}:${PORT}/resources")
   step_rc=$?
   set -e
   if [ -z "$code" ]; then
-    echo "NO-DATA http /resources (empty code)"
+    echo "NO-DATA http /resources"
     [ "$rc" -eq 0 ] && rc=4
   elif [ "$code" = "200" ] || [ "$code" = "204" ]; then
-    echo "OK http /resources code=$code port=$port"
-  elif [ "$step_rc" -eq 5 ]; then
-    echo "NETWORK http /resources code='$code'"
-    [ "$rc" -eq 0 ] && rc=5
+    echo "OK http /resources code=$code"
   else
-    echo "FAIL http /resources code=$code port=$port"
+    echo "FAIL http /resources code=$code"
     rc=9
   fi
 
+  if [ "$require_visual" = "1" ]; then
+    if [ "$rc" -eq 0 ]; then
+      set +e
+      run_visual_gate
+      vrc=$?
+      set -e
+      if [ "$vrc" -ne 0 ]; then
+        echo "FAIL visual required for pair success (telemetry is not enough)"
+        rc=8
+      fi
+    else
+      echo "NOTE skip visual — telemetry already failed rc=$rc"
+    fi
+  else
+    echo "NOTE visual not required (ROLLBACK_REQUIRE_VISUAL=0) — telemetry only; NOT a claim of pixel OK"
+  fi
+
+  if [ "$rc" -eq 0 ]; then
+    echo "PAIR_RESTORE_OK id=$PAIR_ID core=${CORE_MD5:0:8} daemon=${DAEMON_MD5:0:8}"
+  fi
   echo "true rc=$rc"
   return "$rc"
 }
 
 restore_and_verify() {
   local rc
+  ROLLBACK_REQUIRE_VISUAL="${ROLLBACK_REQUIRE_VISUAL:-1}"
+
+  set +e
+  preflight_atomic
+  rc=$?
+  set -e
+  if [ "$rc" -ne 0 ]; then
+    echo "true rc=$rc"
+    return "$rc"
+  fi
+
   set +e
   stop_remote_daemon
   rc=$?
   set -e
   if [ "$rc" -eq 5 ]; then echo "true rc=5"; return 5; fi
 
+  if [ "${DAEMON_NEED_INSTALL:-1}" = "1" ] || [ "${DAEMON_SOURCE:-}" != "device:$V2_DAEMON" ]; then
+    # Always re-copy when source is a bak path different from live, or host path.
+    if [ "${DAEMON_SOURCE:-}" != "device:$V2_DAEMON" ]; then
+      set +e
+      install_daemon_bytes "$DAEMON_SOURCE"
+      rc=$?
+      set -e
+      if [ "$rc" -ne 0 ]; then
+        echo "ERROR daemon install rc=$rc — core NOT loaded (atomic refuse mid-flight)"
+        echo "true rc=$rc"
+        return "$rc"
+      fi
+    else
+      log "daemon disk already at pin — skip install"
+    fi
+  else
+    log "daemon disk already at pin — skip install"
+  fi
+
   set +e
-  load_v2_core_remote
+  load_pair_core_remote
   rc=$?
   set -e
   if [ "$rc" -eq 5 ]; then echo "true rc=5"; return 5; fi
   if [ "$rc" -ne 0 ]; then
-    echo "ERROR core load sequence rc=$rc"
+    echo "ERROR core load rc=$rc"
     echo "true rc=9"
     return 9
   fi
 
   set +e
-  start_v2_bundle
+  start_pair_bundle
   rc=$?
   set -e
   if [ "$rc" -eq 5 ]; then echo "true rc=5"; return 5; fi
   if [ "$rc" -ne 0 ]; then
-    echo "ERROR start v2 bundle rc=$rc"
+    echo "ERROR start bundle rc=$rc"
     echo "true rc=9"
     return 9
   fi
 
-  # Give supervisor a moment; verify_only polls HTTP with its own retry.
   sleep "${ROLLBACK_POST_START_SLEEP:-4}"
-  verify_only
+  verify_pair 1
 }
 
 cmd="${1:-restore}"
 case "$cmd" in
-  verify)  verify_only ;;
-  restore) restore_and_verify ;;
+  verify)
+    verify_pair "${ROLLBACK_REQUIRE_VISUAL:-0}"
+    ;;
+  preflight)
+    set +e
+    preflight_atomic
+    rc=$?
+    set -e
+    echo "true rc=$rc"
+    exit "$rc"
+    ;;
+  restore)
+    restore_and_verify
+    ;;
   *)
-    echo "usage: $0 {verify|restore}" >&2
+    echo "usage: $0 {verify|restore|preflight}" >&2
     echo "true rc=9"
     exit 9
     ;;

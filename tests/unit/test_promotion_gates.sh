@@ -28,6 +28,20 @@ ok() { echo "PASS $1"; pass=$((pass + 1)); }
 bad() { echo "FAIL $1" >&2; fail=$((fail + 1)); }
 
 # --- policy -----------------------------------------------------------------
+
+echo "=== pair_ship_policy DDR pair OK / mixed REFUSE ==="
+set +e
+out=$("$ROOT/scripts/pair_ship_policy.sh" check c5382bee73cecdee8220b811e529c297 e9f79de217982aff44207664fdb945c5 2>&1)
+rc=$?
+set -e
+[ "$rc" -eq 0 ] && ok "pair-ddr-ok" || bad "pair-ddr-ok rc=$rc"
+set +e
+out=$("$ROOT/scripts/pair_ship_policy.sh" check dfebf2bfd08dd70b473b587dd7e81848 e9f79de217982aff44207664fdb945c5 2>&1)
+rc=$?
+set -e
+[ "$rc" -eq 1 ] && ok "pair-mixed-refuse" || bad "pair-mixed-refuse rc=$rc"
+echo "$out" | grep -qi solid_green && ok "pair-green-msg" || bad "pair-green-msg"
+
 echo "=== policy: banned prefix ==="
 set +e
 out=$("$POLICY" check 8832824eaaaaaaaaaaaaaaaaaaaaaaaa 2>&1)
@@ -85,6 +99,7 @@ set +e
 out=$(
   PROMOTE_EXPECT_CORE_MD5="$RBF_MD5" \
   PROMOTE_EXPECT_DAEMON_MD5="$DAE_MD5" \
+  PROMOTE_PAIR_CHECK=0 \
   "$GATES" policy-local "$WORK/fake.rbf" "$WORK/fake.daemon" 2>&1
 )
 rc=$?
@@ -98,6 +113,7 @@ set +e
 out=$(
   PROMOTE_EXPECT_CORE_MD5="$RBF_MD5" \
   PROMOTE_EXPECT_DAEMON_MD5=deadbeefdeadbeefdeadbeefdeadbeef \
+  PROMOTE_PAIR_CHECK=0 \
   "$GATES" policy-local "$WORK/fake.rbf" "$WORK/fake.daemon" 2>&1
 )
 rc=$?
@@ -125,44 +141,46 @@ echo 200
 HTTP
 chmod +x "$WORK/fake_http.sh"
 
-echo "=== verify-live green except motion skip 77 ==="
+echo "=== verify-live green telemetry but NO visual → HARD rc=8 ==="
 set +e
 out=$(
   PROMOTE_GATE_BLOB="$WORK/live_ok.blob" \
   PROMOTE_HTTP="$WORK/fake_http.sh" \
+  env -u PROMOTE_VISUAL_CMD -u PROMOTE_MOTION_CMD -u PAIR_IDLE_PNG \
   "$GATES" verify-live 2>&1
 )
 rc=$?
 set -e
 echo "$out" | sed 's/^/  /'
 echo "  true rc=$rc"
-# Without motion hook, incomplete → 77
-[ "$rc" -eq 77 ] && ok "verify-live-motion-skip-77" || bad "verify-live-motion-skip want 77 got $rc"
+# Parent: unset visual is HARD failure for claim success (not soft 77)
+[ "$rc" -eq 8 ] && ok "verify-live-visual-required-8" || bad "verify-live-visual-required want 8 got $rc"
 echo "$out" | grep -q 'OK product-core' && ok "verify-product" || bad "verify-product"
 echo "$out" | grep -q 'OK v2-rollback-core' && ok "verify-v2" || bad "verify-v2"
 echo "$out" | grep -q 'OK live-exe-md5' && ok "verify-live-exe" || bad "verify-live-exe"
 echo "$out" | grep -q 'OK live-conf' && ok "verify-conf" || bad "verify-conf"
 echo "$out" | grep -q 'OK n_daemon=1' && ok "verify-n1" || bad "verify-n1"
-# must NOT claim PROMOTE_GATES_OK without motion
-if echo "$out" | grep -q 'PROMOTE_GATES_OK'; then bad "gates-ok-without-motion"; else ok "no-false-gates-ok"; fi
+echo "$out" | grep -q 'OK live-pair-compatibility' && ok "verify-pair" || bad "verify-pair"
+if echo "$out" | grep -q 'PROMOTE_GATES_OK'; then bad "gates-ok-without-visual"; else ok "no-false-gates-ok"; fi
+echo "$out" | grep -qi 'VISUAL_REQUIRED' && ok "visual-required-msg" || bad "visual-required-msg"
 
-echo "=== verify-live with motion hook PASS → overall 0 ==="
-cat >"$WORK/motion_ok.sh" <<'M'
+echo "=== verify-live with visual hook PASS → overall 0 ==="
+cat >"$WORK/visual_ok.sh" <<'M'
 #!/usr/bin/env bash
 exit 0
 M
-chmod +x "$WORK/motion_ok.sh"
+chmod +x "$WORK/visual_ok.sh"
 set +e
 out=$(
   PROMOTE_GATE_BLOB="$WORK/live_ok.blob" \
   PROMOTE_HTTP="$WORK/fake_http.sh" \
-  PROMOTE_MOTION_CMD="$WORK/motion_ok.sh" \
+  PROMOTE_VISUAL_CMD="$WORK/visual_ok.sh" \
   "$GATES" verify-live 2>&1
 )
 rc=$?
 set -e
 echo "  true rc=$rc"
-[ "$rc" -eq 0 ] && ok "verify-with-motion" || bad "verify-with-motion rc=$rc"
+[ "$rc" -eq 0 ] && ok "verify-with-visual" || bad "verify-with-visual rc=$rc"
 echo "$out" | grep -q 'PROMOTE_GATES_OK' && ok "gates-ok" || bad "gates-ok"
 
 echo "=== verify-live red: n_daemon=2 ==="
@@ -171,7 +189,7 @@ set +e
 out=$(
   PROMOTE_GATE_BLOB="$WORK/live_dual.blob" \
   PROMOTE_HTTP="$WORK/fake_http.sh" \
-  PROMOTE_MOTION_CMD="$WORK/motion_ok.sh" \
+  PROMOTE_VISUAL_CMD="$WORK/visual_ok.sh" \
   "$GATES" verify-live 2>&1
 )
 rc=$?
@@ -186,7 +204,7 @@ set +e
 out=$(
   PROMOTE_GATE_BLOB="$WORK/live_stale.blob" \
   PROMOTE_HTTP="$WORK/fake_http.sh" \
-  PROMOTE_MOTION_CMD="$WORK/motion_ok.sh" \
+  PROMOTE_VISUAL_CMD="$WORK/visual_ok.sh" \
   "$GATES" verify-live 2>&1
 )
 rc=$?
@@ -202,7 +220,7 @@ set +e
 out=$(
   PROMOTE_GATE_BLOB="$WORK/live_nov2.blob" \
   PROMOTE_HTTP="$WORK/fake_http.sh" \
-  PROMOTE_MOTION_CMD="$WORK/motion_ok.sh" \
+  PROMOTE_VISUAL_CMD="$WORK/visual_ok.sh" \
   "$GATES" verify-live 2>&1
 )
 rc=$?
@@ -211,12 +229,45 @@ echo "  true rc=$rc"
 [ "$rc" -eq 2 ] && ok "v2-missing" || bad "v2-missing rc=$rc"
 
 # --- promote dry-run --------------------------------------------------------
+echo "=== verify-live RED mixed pair SPI core path + DDR daemon ==="
+# product md5 is DDR but wait — product is c5382; craft SPI product wrong:
+# Use blob where PRODUCT is dfebf2 and LIVE is e9f79de2
+cat >"$WORK/live_mixed.blob" <<BLOB
+PRODUCT_CORE=/media/fat/_Utility/Plex.rbf
+PRODUCT_MD5=dfebf2bfd08dd70b473b587dd7e81848
+V2_CORE=/media/fat/_Utility/Plex_v2.rbf
+V2_MD5=dfebf2bfd08dd70b473b587dd7e81848
+N_DAEMON=1
+PIDS=4242
+LIVE_EXE=/media/fat/misterplex_v2/bin/misterplexd
+LIVE_MD5=e9f79de217982aff44207664fdb945c5
+LIVE_CONF=/media/fat/misterplex_v2/misterplex.conf
+LIVE_ROOT=/media/fat/misterplex_v2
+BLOB
+set +e
+out=$(
+  PROMOTE_GATE_BLOB="$WORK/live_mixed.blob" \
+  PROMOTE_HTTP="$WORK/fake_http.sh" \
+  PROMOTE_VISUAL_CMD="$WORK/visual_ok.sh" \
+  PROMOTE_EXPECT_CORE_MD5=dfebf2bfd08dd70b473b587dd7e81848 \
+  PROMOTE_EXPECT_DAEMON_MD5=e9f79de217982aff44207664fdb945c5 \
+  "$GATES" verify-live 2>&1
+)
+rc=$?
+set -e
+echo "  true rc=$rc"
+echo "$out" | sed 's/^/  /' | head -30
+# expect pair refuse (rc=3) — visual not reached or after pair fail
+[ "$rc" -eq 3 ] && ok "mixed-pair-rc3" || bad "mixed-pair want 3 got $rc"
+echo "$out" | grep -qi 'PAIR_REFUSE\|pair-compatibility\|spi_core_plus_ddr' && ok "mixed-pair-msg" || bad "mixed-pair-msg"
+
 echo "=== promote_ddr_daily plan dry-run ==="
 set +e
 out=$(
   PROMOTE_EXECUTE=0 \
   PROMOTE_EXPECT_CORE_MD5="$RBF_MD5" \
   PROMOTE_EXPECT_DAEMON_MD5="$DAE_MD5" \
+  PROMOTE_PAIR_CHECK=0 \
   "$PROMOTE" plan "$WORK/fake.rbf" "$WORK/fake.daemon" 2>&1
 )
 rc=$?
@@ -233,6 +284,7 @@ out=$(
   PROMOTE_EXECUTE=0 \
   PROMOTE_EXPECT_CORE_MD5="$RBF_MD5" \
   PROMOTE_EXPECT_DAEMON_MD5="$DAE_MD5" \
+  PROMOTE_PAIR_CHECK=0 \
   "$PROMOTE" activate "$WORK/fake.rbf" "$WORK/fake.daemon" 2>&1
 )
 rc=$?

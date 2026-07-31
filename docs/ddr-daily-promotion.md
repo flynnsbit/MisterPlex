@@ -96,16 +96,34 @@ scripts/promote_ddr_daily.sh verify
 scripts/promotion_gate_check.sh verify-live
 ```
 
-Optional motion (**w-instr** owns burned-in `TREK24 n=NNN` counter automation —
-do not duplicate that OCR/counter path):
+### Visual is HARD (not optional soft-skip)
+
+Telemetry alone is insufficient (green screen still returns `/resources` 200).
+Unset visual on a would-be-green path → **`true rc=8` VISUAL_REQUIRED**.
 
 ```bash
+# Idle static gate (orange chevron mean ~38.5 vs green mean ~128):
+PAIR_IDLE_PNG=/path/to/hdmi-idle.png \
+  scripts/promotion_gate_check.sh verify-live
+
+# Or w-instr TREK24 playback counter (do not duplicate that OCR path):
 PROMOTE_MOTION_CMD='<w-instr trek24 motion command>' \
+  scripts/promotion_gate_check.sh verify-live
+
+# Or any command that exits 0 only on viewed-pixel OK:
+PROMOTE_VISUAL_CMD='test -f /path/PASS.stamp' \
   scripts/promotion_gate_check.sh verify-live
 ```
 
-If `PROMOTE_MOTION_CMD` is unset, verify prints `MOTION_SKIP true rc=77`.
-**Soft-skip is not a pass.** Promotion is incomplete until motion is scored.
+Matched pairs (executable: `scripts/pair_ship_policy.sh list`):
+
+| id | core | daemon | mode |
+|----|------|--------|------|
+| spi-v2-hybrid | dfebf2bf | 50f4eb92 | spi |
+| spi-v2-release | dfebf2bf | 7cd10b4d | spi |
+| ddr-c5382bee | c5382bee | e9f79de2 | ddr |
+
+Any unlisted mix is **REFUSE** before device mutation.
 
 ### Gate checklist (executable)
 
@@ -121,16 +139,35 @@ If `PROMOTE_MOTION_CMD` is unset, verify prints `MOTION_SKIP true rc=77`.
 
 Every script prints `true rc=N` captured **directly** (never through a pipe).
 
-## One-step rollback
+## One-step ATOMIC rollback (core + daemon pair)
+
+**Parent HW 2026-07-31 defect:** restoring SPI core `dfebf2bf` while leaving DDR
+daemon `e9f79de2` live produced a **solid green screen**. `/resources`=200,
+`n_daemon=1`, core md5 OK — every non-visual check passed. Partial rollback is
+worse than none.
 
 ```bash
-PROMOTE_EXECUTE=1 scripts/promote_ddr_daily.sh rollback
-# equivalent:
-scripts/rollback_v2.sh restore
+# Requires SPI daemon artifact (host or on-device .bak). Without it: REFUSE rc=10,
+# device untouched.
+ROLLBACK_DAEMON=/path/to/misterplexd-50f4eb92 \
+  PROMOTE_EXECUTE=1 scripts/rollback_v2.sh restore
+
+# Or restore the DDR pair itself (last verified-good):
+PAIR_ID=ddr-c5382bee PAIR_IDLE_PNG=/path/idle.png \
+  scripts/rollback_v2.sh restore
 ```
 
-Sequence: stop daemon → `load_core menu.rbf` → sleep → `load_core Plex_v2.rbf`
-→ `plexctl v2` → verify live exe md5 + HTTP.
+Sequence (atomic):
+1. **preflight** — pair matrix + core pin + daemon artifact available, else exit 10
+2. stop daemon
+3. install matching daemon if disk pin wrong
+4. ONE menu bounce → pair core path
+5. start bundle
+6. verify pair (core + live exe + n_daemon + HTTP + pair matrix)
+7. **HARD visual gate** (idle PNG / w-instr motion) — unset = rc=8
+
+Place pins at `artifacts/daemon-pins/misterplexd.50f4eb92` (see README there).
+`deploy_misterplexd.sh` archives outgoing binaries as `misterplexd.<prefix8>.bak`.
 
 ## Pre-registered observations (parent HW)
 

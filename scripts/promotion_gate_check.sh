@@ -28,6 +28,8 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 # shellcheck source=rbf_ship_policy.sh
 source "$ROOT/scripts/rbf_ship_policy.sh"
+# shellcheck source=pair_ship_policy.sh
+source "$ROOT/scripts/pair_ship_policy.sh"
 
 HOST="${MISTER_HOST:-192.168.1.183}"
 USER="${MISTER_USER:-root}"
@@ -123,6 +125,23 @@ policy_local() {
     return 3
   fi
   echo "OK host-daemon-pin $dmd"
+  # Pair matrix: refuse SPI/DDR mixes and unknown combos before any device touch.
+  # Unit tests with synthetic bytes set PROMOTE_PAIR_CHECK=0; production default is 1.
+  if [ "${PROMOTE_PAIR_CHECK:-1}" = "1" ]; then
+    set +e
+    out=$(pair_policy_check "$md" "$dmd")
+    rc=$?
+    set -e
+    printf '%s\n' "$out"
+    if [ "$rc" -ne 0 ]; then
+      echo "REFUSE host core+daemon are not a listed matched pair"
+      echo "true rc=3"
+      return 3
+    fi
+    echo "OK host-pair-compatibility"
+  else
+    echo "NOTE PROMOTE_PAIR_CHECK=0 — pair matrix not applied (test/explicit only)"
+  fi
   echo "PROMOTE_POLICY_LOCAL_OK"
   echo "true rc=0"
   return 0
@@ -296,31 +315,63 @@ verify_live() {
     rc=9
   fi
 
-  # Motion: never auto-PASS. Unset = SKIP 77 (not gate success).
-  if [ -n "${PROMOTE_MOTION_CMD:-}" ]; then
+  # Pair matrix on live observations (catches SPI core + DDR daemon green-screen).
+  if [ -n "$prod" ] && [ "$prod" != "MISSING" ] && [ -n "$live" ]; then
     set +e
-    # shellcheck disable=SC2086
-    eval $PROMOTE_MOTION_CMD
-    mrc=$?
+    out=$(pair_policy_check "$prod" "$live")
+    prc=$?
     set -e
-    echo "motion_hook true rc=$mrc"
-    if [ "$mrc" -eq 0 ]; then
-      echo "OK motion-hook"
-    elif [ "$mrc" -eq 77 ]; then
-      echo "MOTION_SKIP rc=77 (soft-skip ≠ PASS) — promotion gates incomplete"
-      [ "$rc" -eq 0 ] && rc=77
+    printf '%s\n' "$out"
+    if [ "$prc" -ne 0 ]; then
+      echo "FAIL live pair-compatibility (mixed pair → solid green screen class)"
+      rc=3
     else
-      echo "FAIL motion-hook rc=$mrc"
-      rc=9
+      echo "OK live-pair-compatibility"
+    fi
+  fi
+
+  # Visual is HARD for claim success. Parent 2026-07-31: telemetry passed on green screen.
+  # Prefer PROMOTE_VISUAL_CMD; else pair_visual_gate.sh idle; else PROMOTE_MOTION_CMD (w-instr).
+  # Unset visual on a path that would otherwise be OK → rc=8 VISUAL_REQUIRED (not soft 77).
+  if [ "$rc" -eq 0 ]; then
+    vrc=8
+    if [ -n "${PROMOTE_VISUAL_CMD:-}" ]; then
+      set +e
+      # shellcheck disable=SC2086
+      eval $PROMOTE_VISUAL_CMD
+      vrc=$?
+      set -e
+      echo "visual_hook true rc=$vrc"
+    elif [ -n "${PAIR_IDLE_PNG:-}" ] || [ -n "${PAIR_CAPTURE_CMD:-}" ] || [ "${PROMOTE_VISUAL_IDLE:-0}" = "1" ]; then
+      set +e
+      "$ROOT/scripts/pair_visual_gate.sh" idle
+      vrc=$?
+      set -e
+      echo "visual_idle true rc=$vrc"
+    elif [ -n "${PROMOTE_MOTION_CMD:-}" ]; then
+      set +e
+      # shellcheck disable=SC2086
+      eval $PROMOTE_MOTION_CMD
+      vrc=$?
+      set -e
+      echo "motion_hook true rc=$vrc"
+    else
+      echo "VISUAL_REQUIRED: unset PROMOTE_VISUAL_CMD / PAIR_IDLE_PNG / PROMOTE_MOTION_CMD"
+      echo "  Telemetry-only is insufficient (green screen still returns /resources 200)."
+      echo "  Coordinate w-instr TREK24 for playback; idle uses pair_visual_gate.sh + HDMI PNG."
+      vrc=8
+    fi
+    if [ "$vrc" -eq 0 ]; then
+      echo "OK visual-or-motion-gate"
+    elif [ "$vrc" -eq 77 ] && [ "${PROMOTE_ALLOW_VISUAL_SOFT_SKIP:-0}" = "1" ]; then
+      echo "VISUAL_SOFT_SKIP rc=77 (explicit PROMOTE_ALLOW_VISUAL_SOFT_SKIP=1 only)"
+      rc=77
+    else
+      echo "FAIL visual/motion gate rc=$vrc (hard — cannot claim pair success)"
+      rc=8
     fi
   else
-    echo "MOTION_SKIP unset PROMOTE_MOTION_CMD (w-instr TREK24 counter) — soft-skip ≠ PASS"
-    echo "motion_hook true rc=77"
-    # Do not flip overall to 77 if already hard-failed; if clean so far, mark incomplete.
-    if [ "$rc" -eq 0 ]; then
-      echo "PROMOTE_GATES_INCOMPLETE_NO_MOTION"
-      rc=77
-    fi
+    echo "NOTE skip visual — prior gate already failed rc=$rc"
   fi
 
   if [ "$rc" -eq 0 ]; then
