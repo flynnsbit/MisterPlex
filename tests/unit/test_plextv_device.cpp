@@ -316,6 +316,38 @@ static void test_http_404_logs_failure() {
     EXPECT_TRUE(saw);
 }
 
+// GET resources 200 without our id is a list no-op, not registration success.
+static void test_http_200_without_self_is_noop() {
+    std::mutex logMu;
+    std::vector<std::string> logs;
+    PlexTvDeviceAnnouncer a(
+        [&](const PlexTvHttpRequest&, std::string* body) {
+            if (body)
+                *body = R"([{"clientIdentifier":"someone-else","provides":"server"}])";
+            return 200;
+        },
+        /*async=*/false);
+    a.setLog([&](const std::string& s) {
+        std::lock_guard<std::mutex> lock(logMu);
+        logs.push_back(s);
+    });
+    a.configure(sampleId(), "unit-test-token", /*enabled=*/true);
+    a.start();
+    a.stop();
+    bool sawNoop = false;
+    bool sawSuccess = false;
+    for (const auto& l : logs) {
+        if (l.find("registration no-op") != std::string::npos &&
+            l.find("self_in_body=0") != std::string::npos &&
+            l.find("clientIdentifier_not_in_resources_body") != std::string::npos)
+            sawNoop = true;
+        if (l.find("registration succeeded") != std::string::npos)
+            sawSuccess = true;
+    }
+    EXPECT_TRUE(sawNoop);
+    EXPECT_TRUE(!sawSuccess);
+}
+
 static void test_token_not_echoed_in_logs() {
     std::mutex logMu;
     std::vector<std::string> logs;
@@ -356,6 +388,7 @@ int main() {
     test_unsafe_id_refuses_network();
     test_success_logs_startup();
     test_http_404_logs_failure();
+    test_http_200_without_self_is_noop();
     test_token_not_echoed_in_logs();
 
     if (g_fails != 0) {

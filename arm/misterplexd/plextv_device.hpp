@@ -1,24 +1,22 @@
 #pragma once
-// plex.tv player device registration for MiSTerPlex.
+// plex.tv player device presence check / announce helper for MiSTerPlex.
 //
-// Modern Plex clients populate the cast/player picker from the account's
-// plex.tv device list (provides containing "player"). GDM alone is not enough
-// when the browsing PMS never probes the LAN.
-//
-// Registration mechanism (current plex.tv):
-//   Authenticated GET https://plex.tv/api/v2/resources?includeHttps=1 carrying
-//   the full X-Plex-* identity header set. plex.tv upserts a device record
-//   keyed by X-Plex-Client-Identifier as a side effect of that call.
+// IMPORTANT (2026-07-30 research — see .agent-work/plextv-register/evidence.txt):
+//   GET https://plex.tv/api/v2/resources is a DEVICE LIST, not a create/upsert.
+//   HTTP 200 with self_in_body=0 means "listed others; we are not registered".
 //   Legacy POST https://plex.tv/devices.xml returns 404 and must not be used.
+//   Cloud device rows are created by sign-in/PIN device binding (device token),
+//   not by GETting resources with a borrowed owner token.
+//   LAN Select Player is driven primarily by PMS /clients (GDM), which is a
+//   separate path from this module (Companion GDM + /resources).
 //
-// Collision safety:
-//   plex.tv device records are keyed by clientIdentifier. A non-unique or
-//   empty identifier can merge player attributes onto another device (e.g. a
-//   PMS). This module refuses empty, defaulted, weak, or denylisted IDs and
-//   requires the "misterplex-" prefix so player IDs cannot equal typical PMS
-//   machineIdentifiers (hex UUIDs).
+// This module only:
+//   - Optionally GETs resources with identity headers (opt-in PLEXTV_ANNOUNCE=1)
+//   - Logs succeeded only when clientIdentifier appears in the body
+//   - Logs no-op when 2xx but self absent; failed on non-2xx
+//   - Refuses empty/defaulted/weak clientIdentifiers (collision guard)
 //
-// Fail-soft and opt-in (PLEXTV_ANNOUNCE=1). Never blocks the playback path.
+// Fail-soft. Never blocks the playback path.
 
 #include <atomic>
 #include <chrono>

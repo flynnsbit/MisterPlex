@@ -28,8 +28,8 @@ std::string shellQuote(const std::string& s) {
 
 void appendIdentityHeaders(std::vector<std::pair<std::string, std::string>>& headers,
                            const PlexTvDeviceIdentity& id, const std::string& token) {
-    // Full identity set — parent confirmed these headers cause plex.tv to upsert
-    // a provides=player device record keyed by X-Plex-Client-Identifier.
+    // Full identity set used on the resources list GET. Listing does not create
+    // a device; success requires clientIdentifier present in the response body.
     headers.push_back({"X-Plex-Client-Identifier", id.clientIdentifier});
     headers.push_back({"X-Plex-Product", id.product});
     headers.push_back({"X-Plex-Version", id.version});
@@ -350,7 +350,10 @@ void PlexTvDeviceAnnouncer::attemptOnce(bool startup) {
     const bool httpOk = (status >= 200 && status < 300);
     const bool seenSelf = plexTvResourcesBodyMentionsClient(body, id.clientIdentifier);
 
-    if (httpOk) {
+    // GET /api/v2/resources is a list endpoint. Only self_in_body=1 is presence.
+    // 2xx without self is a no-op (not registration success). See research note
+    // in plextv_device.hpp — do not claim upsert from a list response.
+    if (httpOk && seenSelf) {
         {
             std::lock_guard<std::mutex> lock(mu_);
             consecutiveFailures_ = 0;
@@ -361,13 +364,27 @@ void PlexTvDeviceAnnouncer::attemptOnce(bool startup) {
             << " clientIdentifier=" << id.clientIdentifier
             << " deviceName=" << id.deviceName
             << " provides=" << id.provides
-            << " self_in_body=" << (seenSelf ? "1" : "0");
-        if (!seenSelf) {
-            // 2xx without our id in the body is still treated as success of the
-            // identity call (parent observed registration as a side effect of
-            // 200), but log it so operators can spot odd account state.
-            msg << " warn=clientIdentifier_not_listed_in_resources_body";
+            << " self_in_body=1";
+        if (startup)
+            msg << " (startup)";
+        logLine(msg.str());
+        return;
+    }
+
+    if (httpOk && !seenSelf) {
+        int failures = 0;
+        {
+            std::lock_guard<std::mutex> lock(mu_);
+            ++consecutiveFailures_;
+            failures = consecutiveFailures_;
         }
+        std::ostringstream msg;
+        msg << "plextv: registration no-op http_status=" << status
+            << " endpoint=api/v2/resources"
+            << " clientIdentifier=" << id.clientIdentifier
+            << " self_in_body=0"
+            << " reason=clientIdentifier_not_in_resources_body"
+            << " consecutive=" << failures;
         if (startup)
             msg << " (startup)";
         logLine(msg.str());
