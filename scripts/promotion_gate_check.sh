@@ -331,10 +331,16 @@ verify_live() {
   fi
 
   # Visual is HARD for claim success. Parent 2026-07-31: telemetry passed on green screen.
-  # Prefer PROMOTE_VISUAL_CMD; else pair_visual_gate.sh idle; else PROMOTE_MOTION_CMD (w-instr).
-  # Unset visual on a path that would otherwise be OK → rc=8 VISUAL_REQUIRED (not soft 77).
+  # Prefer PROMOTE_VISUAL_CMD; else idle PNG gate; else PROMOTE_MOTION_CMD / capture dir.
+  # Default motion instrument: tools/hdmi_motion_instrument.py (w-instr).
+  # CRITICAL: motion rc=77 UNSCORED is HARD FAIL here (parent: green_cast leaked as 77).
+  # Never treat 77 as inconclusive-carry-on for promotion claim success.
   if [ "$rc" -eq 0 ]; then
     vrc=8
+    motion_cmd="${PROMOTE_MOTION_CMD:-}"
+    if [ -z "$motion_cmd" ] && [ -n "${PROMOTE_MOTION_CAPTURE_DIR:-}" ]; then
+      motion_cmd="python3 $(printf '%q' "$ROOT/tools/hdmi_motion_instrument.py") $(printf '%q' "$PROMOTE_MOTION_CAPTURE_DIR")"
+    fi
     if [ -n "${PROMOTE_VISUAL_CMD:-}" ]; then
       set +e
       # shellcheck disable=SC2086
@@ -348,25 +354,36 @@ verify_live() {
       vrc=$?
       set -e
       echo "visual_idle true rc=$vrc"
-    elif [ -n "${PROMOTE_MOTION_CMD:-}" ]; then
+    elif [ -n "$motion_cmd" ]; then
       set +e
       # shellcheck disable=SC2086
-      eval $PROMOTE_MOTION_CMD
+      eval $motion_cmd
       vrc=$?
       set -e
-      echo "motion_hook true rc=$vrc"
+      echo "motion_hook true rc=$vrc cmd=$motion_cmd"
+      # Map instrument contract → promotion claim:
+      #   0 MOTION_OK → pass
+      #   1 FREEZE / 2 COLOR_FAIL → hard fail
+      #   77 UNSCORED → HARD FAIL (never soft; green-cast leak class until w-instr lands rc=2)
+      if [ "$vrc" -eq 77 ]; then
+        echo "FAIL motion UNSCORED rc=77 is HARD FAIL for promotion (not inconclusive)"
+        echo "     (parent: broken green burst once reported VERDICT=UNSCORED despite GREEN_CAST_FAIL)"
+        vrc=8
+      elif [ "$vrc" -ne 0 ]; then
+        echo "FAIL motion instrument hard fail rc=$vrc (0=OK 1=FREEZE 2=COLOR_FAIL)"
+        vrc=8
+      fi
     else
-      echo "VISUAL_REQUIRED: unset PROMOTE_VISUAL_CMD / PAIR_IDLE_PNG / PROMOTE_MOTION_CMD"
+      echo "VISUAL_REQUIRED: unset PROMOTE_VISUAL_CMD / PAIR_IDLE_PNG / PROMOTE_MOTION_CMD / PROMOTE_MOTION_CAPTURE_DIR"
       echo "  Telemetry-only is insufficient (green screen still returns /resources 200)."
-      echo "  Coordinate w-instr TREK24 for playback; idle uses pair_visual_gate.sh + HDMI PNG."
+      echo "  Playback: PROMOTE_MOTION_CAPTURE_DIR=/path/to/pngs  (tools/hdmi_motion_instrument.py)"
+      echo "  Idle:     PAIR_IDLE_PNG=/path/idle.png            (pair_visual_gate.sh)"
       vrc=8
     fi
     if [ "$vrc" -eq 0 ]; then
       echo "OK visual-or-motion-gate"
-    elif [ "$vrc" -eq 77 ] && [ "${PROMOTE_ALLOW_VISUAL_SOFT_SKIP:-0}" = "1" ]; then
-      echo "VISUAL_SOFT_SKIP rc=77 (explicit PROMOTE_ALLOW_VISUAL_SOFT_SKIP=1 only)"
-      rc=77
     else
+      # No soft-skip path for claim success. (PROMOTE_ALLOW_VISUAL_SOFT_SKIP removed.)
       echo "FAIL visual/motion gate rc=$vrc (hard — cannot claim pair success)"
       rc=8
     fi

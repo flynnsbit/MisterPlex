@@ -75,10 +75,21 @@ default_daemon() {
     printf '%s' "$PROMOTE_DAEMON"
     return 0
   fi
-  if [ -f "$ROOT/build/arm/misterplexd" ]; then
-    printf '%s' "$ROOT/build/arm/misterplexd"
-    return 0
-  fi
+  # Prefer content-addressed pin matching EXPECT_DAEMON_MD5 (gitignored ARM ELF).
+  local pin want m
+  want=$(printf '%s' "$EXPECT_DAEMON_MD5" | tr -d '[:space:]' | tr 'A-F' 'a-f')
+  for pin in \
+    "$ROOT/artifacts/daemon-pins/misterplexd.${want:0:8}" \
+    "$ROOT/artifacts/daemon-pins/misterplexd.e9f79de2" \
+    "$ROOT/build/arm/misterplexd"
+  do
+    [ -f "$pin" ] || continue
+    m=$(md5sum "$pin" | awk '{print $1}')
+    if [ -z "$want" ] || [ "$m" = "$want" ] || [ "${m:0:8}" = "${want:0:8}" ]; then
+      printf '%s' "$pin"
+      return 0
+    fi
+  done
   printf ''
   return 1
 }
@@ -119,14 +130,26 @@ Steps when PROMOTE_EXECUTE=1:
   5) ONE menu bounce only:
        DEPLOY_LOAD=menu DEPLOY_SKIP_COPY=1 ./scripts/deploy_plex_core.sh
        (loads menu.rbf then $DEVICE_CORE_PRODUCT — never thrash load_core)
-  6) scripts/promotion_gate_check.sh verify-live
-       (+ optional PROMOTE_MOTION_CMD for w-instr TREK24 counter; unset = rc=77 incomplete)
+  6) scripts/promotion_gate_check.sh verify-live  (HARD visual)
+       Playback: PROMOTE_MOTION_CAPTURE_DIR=/path/pngs
+         → tools/hdmi_motion_instrument.py  (rc=0 MOTION_OK only;
+            rc=77 UNSCORED is HARD FAIL — never inconclusive-carry-on)
+       Idle:     PAIR_IDLE_PNG=/path/idle.png  (mean+uniformity; reject flat green)
 
-Rollback anytime (ATOMIC pair — core+daemon; never core alone):
-  ROLLBACK_DAEMON=/path/to/50f4eb92-misterplexd scripts/rollback_v2.sh restore
-  → preflight daemon artifact → stop → install daemon → menu → pair core → verify + VISUAL
-  Without daemon pin: rc=10 device UNTOUCHED (avoids solid green mixed pair)
-  PAIR_ID=ddr-c5382bee restores the DDR pair itself (last verified-good design)
+Daemon pins (gitignored — fetch first if missing):
+  scripts/fetch_daemon_pins.sh both
+  artifacts/daemon-pins/misterplexd.50f4eb92  (SPI)
+  artifacts/daemon-pins/misterplexd.e9f79de2  (DDR)
+
+Atomic restore of LIVE DDR pair (primary recovery — device often already here):
+  PAIR_ID=ddr-c5382bee PAIR_IDLE_PNG=/path/idle.png \\
+    scripts/rollback_v2.sh restore
+  → preflight pins → stop → install e9f79de2 if needed → menu → Plex.rbf → visual
+
+SPI rollback (secondary):
+  PAIR_ID=spi-v2-hybrid ROLLBACK_DAEMON=artifacts/daemon-pins/misterplexd.50f4eb92 \\
+    PAIR_IDLE_PNG=/path/idle.png scripts/rollback_v2.sh restore
+  Without daemon pin: rc=10 device UNTOUCHED
 
 DO NOT:
   - run plexctl reload-v2 on the lab host (false MISSING catastrophe; use rollback_v2.sh)

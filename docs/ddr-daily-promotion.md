@@ -101,14 +101,23 @@ scripts/promotion_gate_check.sh verify-live
 Telemetry alone is insufficient (green screen still returns `/resources` 200).
 Unset visual on a would-be-green path → **`true rc=8` VISUAL_REQUIRED**.
 
+**Motion `rc=77` (UNSCORED) is also a HARD FAIL** for promotion claim success —
+never treat it as inconclusive-carry-on. Parent measured a broken green burst
+that still reported `VERDICT=UNSCORED` while `green_cast_frames>0`. Until
+w-instr always maps colour fail → `rc=2`, the gate maps `77 → 8`.
+
 ```bash
-# Idle static gate (orange chevron mean ~38.5 vs green mean ~128):
+# Idle static gate (mean + uniformity; reject flat green):
+#   good orange chevron: mean ~38.5, structured
+#   broken mixed pair:   mean ~128.4, uniform green
 PAIR_IDLE_PNG=/path/to/hdmi-idle.png \
   scripts/promotion_gate_check.sh verify-live
 
-# Or w-instr TREK24 playback counter (do not duplicate that OCR path):
-PROMOTE_MOTION_CMD='<w-instr trek24 motion command>' \
+# Playback motion (w-instr TREK24 instrument — do not duplicate OCR):
+PROMOTE_MOTION_CAPTURE_DIR=/path/to/png-burst \
   scripts/promotion_gate_check.sh verify-live
+# → python3 tools/hdmi_motion_instrument.py <dir>
+#    rc=0 MOTION_OK only; rc=1 FREEZE / 2 COLOR_FAIL / 77 UNSCORED → claim fail
 
 # Or any command that exits 0 only on viewed-pixel OK:
 PROMOTE_VISUAL_CMD='test -f /path/PASS.stamp' \
@@ -135,9 +144,22 @@ Any unlisted mix is **REFUSE** before device mutation.
 | 4 | Single daemon | `n_daemon==1` |
 | 5 | Live conf | `--conf` from `/proc/<pid>/cmdline` |
 | 6 | Companion up | `GET :3005/resources` → 200 |
-| 7 | Motion | counter-verified HDMI (w-bw); unset = 77 incomplete |
+| 7 | Visual / motion | idle PNG or `PROMOTE_MOTION_CAPTURE_DIR`; unset/`rc=77` → **hard rc=8** |
 
 Every script prints `true rc=N` captured **directly** (never through a pipe).
+
+## Daemon pins (gitignored)
+
+Decision: **do not commit** the ~MB ARM ELFs. README tracked; binaries ignored.
+
+```bash
+scripts/fetch_daemon_pins.sh both   # parent only
+scripts/pair_ship_policy.sh find-daemon e9f79de2   # true rc=0
+scripts/pair_ship_policy.sh find-daemon 50f4eb92
+```
+
+Missing pin → restore **refuses** with fetch instructions (`true rc=10`), device
+untouched. See `artifacts/daemon-pins/README.md`.
 
 ## One-step ATOMIC rollback (core + daemon pair)
 
@@ -146,14 +168,18 @@ daemon `e9f79de2` live produced a **solid green screen**. `/resources`=200,
 `n_daemon=1`, core md5 OK — every non-visual check passed. Partial rollback is
 worse than none.
 
-```bash
-# Requires SPI daemon artifact (host or on-device .bak). Without it: REFUSE rc=10,
-# device untouched.
-ROLLBACK_DAEMON=/path/to/misterplexd-50f4eb92 \
-  PROMOTE_EXECUTE=1 scripts/rollback_v2.sh restore
+**Live device is often already on the DDR pair** (ad-hoc testing). Primary
+recovery is restore of that pair, not only SPI:
 
-# Or restore the DDR pair itself (last verified-good):
+```bash
+# PRIMARY — restore last verified-good DDR pair (product Plex.rbf + e9f79de2):
 PAIR_ID=ddr-c5382bee PAIR_IDLE_PNG=/path/idle.png \
+  scripts/rollback_v2.sh restore
+
+# SECONDARY — SPI hybrid (requires pin 50f4eb92 on host or device .bak):
+PAIR_ID=spi-v2-hybrid \
+  ROLLBACK_DAEMON=artifacts/daemon-pins/misterplexd.50f4eb92 \
+  PAIR_IDLE_PNG=/path/idle.png \
   scripts/rollback_v2.sh restore
 ```
 
@@ -161,12 +187,11 @@ Sequence (atomic):
 1. **preflight** — pair matrix + core pin + daemon artifact available, else exit 10
 2. stop daemon
 3. install matching daemon if disk pin wrong
-4. ONE menu bounce → pair core path
+4. ONE menu bounce → pair core path (`Plex.rbf` or `Plex_v2.rbf` per PAIR_ID)
 5. start bundle
 6. verify pair (core + live exe + n_daemon + HTTP + pair matrix)
-7. **HARD visual gate** (idle PNG / w-instr motion) — unset = rc=8
+7. **HARD visual gate** (idle PNG / motion) — unset or motion `rc=77` → rc=8
 
-Place pins at `artifacts/daemon-pins/misterplexd.50f4eb92` (see README there).
 `deploy_misterplexd.sh` archives outgoing binaries as `misterplexd.<prefix8>.bak`.
 
 ## Pre-registered observations (parent HW)

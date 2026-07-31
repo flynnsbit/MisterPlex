@@ -391,10 +391,44 @@ start_pair_bundle() {
 
 run_visual_gate() {
   log "visual gate (HARD for claim success — green screen class)"
-  set +e
-  "$ROOT/scripts/pair_visual_gate.sh" idle
-  local vrc=$?
-  set -e
+  local vrc=8
+  # Prefer explicit visual cmd, then idle PNG, then motion capture dir / cmd.
+  if [ -n "${PROMOTE_VISUAL_CMD:-}" ]; then
+    set +e
+    # shellcheck disable=SC2086
+    eval $PROMOTE_VISUAL_CMD
+    vrc=$?
+    set -e
+    echo "visual_hook true rc=$vrc"
+  elif [ -n "${PAIR_IDLE_PNG:-}" ] || [ -n "${PAIR_CAPTURE_CMD:-}" ]; then
+    set +e
+    "$ROOT/scripts/pair_visual_gate.sh" idle
+    vrc=$?
+    set -e
+    echo "visual_idle true rc=$vrc"
+  elif [ -n "${PROMOTE_MOTION_CMD:-}" ] || [ -n "${PROMOTE_MOTION_CAPTURE_DIR:-}" ]; then
+    local mcmd="${PROMOTE_MOTION_CMD:-}"
+    if [ -z "$mcmd" ]; then
+      mcmd="python3 $(printf '%q' "$ROOT/tools/hdmi_motion_instrument.py") $(printf '%q' "$PROMOTE_MOTION_CAPTURE_DIR")"
+    fi
+    set +e
+    # shellcheck disable=SC2086
+    eval $mcmd
+    vrc=$?
+    set -e
+    echo "motion_hook true rc=$vrc"
+    # rc=77 UNSCORED is HARD FAIL for pair claim (green-cast leak class).
+    if [ "$vrc" -eq 77 ]; then
+      echo "FAIL motion UNSCORED rc=77 is HARD FAIL (not inconclusive)"
+      vrc=8
+    elif [ "$vrc" -ne 0 ]; then
+      vrc=8
+    fi
+  else
+    echo "VISUAL_REQUIRED for pair claim success"
+    echo "  PAIR_IDLE_PNG=...  or  PROMOTE_MOTION_CAPTURE_DIR=...  or  PROMOTE_VISUAL_CMD=..."
+    vrc=8
+  fi
   echo "visual_gate true rc=$vrc"
   return "$vrc"
 }
@@ -466,11 +500,12 @@ REFUSE ATOMIC_ROLLBACK: cannot restore pair $PAIR_ID without daemon pin ${DAEMON
   core half is available at $V2_CORE ($CORE_MD5)
   daemon half is NOT available:
     - disk $V2_DAEMON is '${disk_daemon}'
-    - no host artifact (set ROLLBACK_DAEMON= or place artifacts/daemon-pins/misterplexd.${DAEMON_MD5:0:8})
+    - no host artifact under artifacts/daemon-pins/ (pins are gitignored)
     - no on-device misterplexd.${DAEMON_MD5:0:8}.bak backup
   Restoring the core ALONE leaves a mixed pair → solid green screen (parent 2026-07-31).
   Device left UNTOUCHED.
 EOF
+        pair_policy_missing_daemon_help "$DAEMON_MD5"
         return 10
       fi
     fi

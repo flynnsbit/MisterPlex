@@ -111,9 +111,18 @@ print(f"mean_luma={mean:.2f}")
 print(f"std_luma={std:.2f}")
 print(f"mean_rgb={mean_r:.1f},{mean_g:.1f},{mean_b:.1f}")
 print(f"path={path}")
+# Uniformity: a correct idle screen is never near-byte-identical flat field.
+# Parent: broken mixed-pair was uniform green, byte-identical across frames.
+# Mean alone is blind (correct starfield mean 0.2 vs garbage 66).
+if std < 8.0:
+    print("FAIL class=uniform_frame std_luma=%.2f (correct idle is never flat)" % std)
+    sys.exit(8)
 # Uniform green screen class: high mean, low structure, G dominates
 if mean >= g_reject and std < 25.0 and mean_g > mean_r + 15 and mean_g > mean_b + 15:
     print("FAIL class=solid_green_screen")
+    sys.exit(8)
+if mean_g > mean_r + 40 and mean_g > mean_b + 40 and mean >= 90:
+    print("FAIL class=green_cast_idle")
     sys.exit(8)
 if mean < mn or mean > mx:
     print(f"FAIL class=idle_mean_out_of_range want=[{mn},{mx}]")

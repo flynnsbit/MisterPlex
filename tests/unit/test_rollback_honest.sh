@@ -171,21 +171,28 @@ exit 0
 SCP
 chmod +x "$WORK/fake_scp.sh"
 
-# synthetic idle PNG via python (good mean ~40)
-python3 - <<'PY'
+# synthetic idle PNGs (structured orange ~mean 40; solid green fail class)
+python3 - <<PY
 from pathlib import Path
 try:
-    from PIL import Image
+    from PIL import Image, ImageDraw
 except ImportError:
     raise SystemExit(0)
-# orange-ish chevron-ish field mean ~40
-img = Image.new("RGB", (64, 64), (80, 40, 10))
-Path("/home/flynnsbit/Projects/MisterPlex/.worktrees/rollback-honest/build/rollback-honest-test/idle_ok.png").parent.mkdir(parents=True, exist_ok=True)
-img.save("/home/flynnsbit/Projects/MisterPlex/.worktrees/rollback-honest/build/rollback-honest-test/idle_ok.png")
-# solid green
-img2 = Image.new("RGB", (64, 64), (0, 180, 0))
-img2.save("/home/flynnsbit/Projects/MisterPlex/.worktrees/rollback-honest/build/rollback-honest-test/idle_green.png")
+d = Path("$WORK")
+d.mkdir(parents=True, exist_ok=True)
+# Structured idle: dark field + bright orange chevron (std_luma >> 8, mean ~30-50)
+img = Image.new("RGB", (128, 128), (12, 10, 18))
+dr = ImageDraw.Draw(img)
+dr.polygon([(20, 100), (64, 20), (108, 100)], fill=(220, 110, 20))
+img.save(d / "idle_ok.png")
+# solid green (uniform + green cast)
+Image.new("RGB", (64, 64), (0, 180, 0)).save(d / "idle_green.png")
+# near-uniform dark (mean ok-ish but flat — must FAIL uniformity)
+Image.new("RGB", (64, 64), (40, 38, 36)).save(d / "idle_flat.png")
 PY
+
+PIN_SPI="$ROOT/artifacts/daemon-pins/misterplexd.50f4eb92"
+PIN_DDR="$ROOT/artifacts/daemon-pins/misterplexd.e9f79de2"
 
 run_rb() {
   local label="$1"; shift
@@ -202,6 +209,11 @@ run_rb() {
     ROLLBACK_POST_START_SLEEP=0 \
     ROLLBACK_ERRFILE="$WORK/ssh.err" \
     PAIR_IDLE_PNG="${PAIR_IDLE_PNG:-$WORK/idle_ok.png}" \
+    ROLLBACK_DAEMON="${ROLLBACK_DAEMON-}" \
+    PAIR_DAEMON_ARTIFACT="${PAIR_DAEMON_ARTIFACT-}" \
+    PAIR_POLICY_DISABLE_DEFAULT_ROOTS="${PAIR_POLICY_DISABLE_DEFAULT_ROOTS-}" \
+    PAIR_POLICY_SEARCH_ROOTS="${PAIR_POLICY_SEARCH_ROOTS-}" \
+    PAIR_ID="${PAIR_ID:-spi-v2-hybrid}" \
     bash "$ROLLBACK" "$@" 2>&1
   )
   rc=$?
@@ -222,13 +234,13 @@ live_md5=$DDR_DAEMON
 n_daemon=1
 http_code=200
 SCEN
-# ensure no host pin
-rm -f "$ROOT/artifacts/daemon-pins/misterplexd.50f4eb92"
-unset ROLLBACK_DAEMON || true
-run_rb refuse-no-daemon preflight
+# Isolate finder from lab pins (main checkout + worktree) without deleting them.
+unset ROLLBACK_DAEMON PAIR_DAEMON_ARTIFACT PROMOTE_DAEMON || true
+PAIR_POLICY_DISABLE_DEFAULT_ROOTS=1 PAIR_POLICY_SEARCH_ROOTS="$WORK/empty-pins" \
+  run_rb refuse-no-daemon preflight
 [ "$LAST_RC" -eq 10 ] || { echo "FAIL refuse want 10 got $LAST_RC"; exit 1; }
-echo "$LAST_OUT" | grep -q 'ATOMIC_ROLLBACK\|Device left UNTOUCHED\|daemon half is NOT' || {
-  echo "FAIL need atomic refuse message"; exit 1
+echo "$LAST_OUT" | grep -qE 'ATOMIC_ROLLBACK|Device left UNTOUCHED|daemon half is NOT|MISSING_DAEMON_PIN|fetch_daemon_pins' || {
+  echo "FAIL need atomic refuse / fetch help"; exit 1
 }
 echo "OK preflight-refuse-no-daemon rc=10"
 
@@ -323,12 +335,127 @@ live_md5=$DDR_DAEMON
 n_daemon=1
 http_code=200
 SCEN
-run_rb restore-refuse restore
+unset ROLLBACK_DAEMON PAIR_DAEMON_ARTIFACT || true
+PAIR_POLICY_DISABLE_DEFAULT_ROOTS=1 PAIR_POLICY_SEARCH_ROOTS="$WORK/empty-pins" \
+  run_rb restore-refuse restore
 [ "$LAST_RC" -eq 10 ] || { echo "FAIL restore-refuse want 10 got $LAST_RC"; exit 1; }
-echo "$LAST_OUT" | grep -q 'UNTOUCHED\|ATOMIC_ROLLBACK' || {
+echo "$LAST_OUT" | grep -qE 'UNTOUCHED|ATOMIC_ROLLBACK|MISSING_DAEMON_PIN' || {
   echo "FAIL need untouched"; exit 1
 }
 echo "OK restore-refuse-atomic rc=10"
+
+# --- PAIR_ID=ddr-c5382bee (primary recovery) red-before-green ---------------
+DDR_CORE=c5382bee73cecdee8220b811e529c297
+echo "=== DDR pair lookup OK ==="
+set +e
+out=$("$ROOT/scripts/pair_ship_policy.sh" lookup ddr-c5382bee 2>&1)
+rc=$?
+set -e
+[ "$rc" -eq 0 ] || { echo "FAIL ddr lookup rc=$rc"; exit 1; }
+echo "$out" | grep -q "$DDR_CORE" || { echo "FAIL ddr core pin"; exit 1; }
+echo "$out" | grep -q "$DDR_DAEMON" || { echo "FAIL ddr daemon pin"; exit 1; }
+echo "OK ddr-lookup"
+
+echo "=== DDR preflight REFUSE without e9f79de2 pin (red) ==="
+write_scen <<SCEN
+product_md5=$DDR_CORE
+core_md5=$DDR_CORE
+disk_md5=$DAEMON_MD5
+live_md5=$DAEMON_MD5
+n_daemon=1
+http_code=200
+SCEN
+# disk is SPI daemon while pair wants DDR — needs install; isolate pins
+unset ROLLBACK_DAEMON PAIR_DAEMON_ARTIFACT || true
+PAIR_ID=ddr-c5382bee PAIR_POLICY_DISABLE_DEFAULT_ROOTS=1 \
+  PAIR_POLICY_SEARCH_ROOTS="$WORK/empty-pins" \
+  run_rb ddr-refuse preflight
+[ "$LAST_RC" -eq 10 ] || { echo "FAIL ddr-refuse want 10 got $LAST_RC"; exit 1; }
+echo "$LAST_OUT" | grep -qE 'MISSING_DAEMON_PIN|fetch_daemon_pins|ATOMIC_ROLLBACK|UNTOUCHED' || {
+  echo "FAIL ddr-refuse help text"; exit 1
+}
+echo "OK ddr-preflight-refuse-no-pin rc=10"
+
+echo "=== DDR preflight OK with pin present (green) ==="
+if [ -f "$PIN_DDR" ]; then
+  write_scen <<SCEN
+product_md5=$DDR_CORE
+core_md5=$DDR_CORE
+disk_md5=$DDR_DAEMON
+live_md5=$DDR_DAEMON
+n_daemon=1
+http_code=200
+SCEN
+  PAIR_ID=ddr-c5382bee ROLLBACK_DAEMON="$PIN_DDR" run_rb ddr-pre-ok preflight
+  [ "$LAST_RC" -eq 0 ] || { echo "FAIL ddr-pre-ok want 0 got $LAST_RC"; exit 1; }
+  echo "$LAST_OUT" | grep -q PREFLIGHT_OK || { echo "FAIL PREFLIGHT_OK ddr"; exit 1; }
+  echo "OK ddr-preflight-with-pin rc=0"
+
+  echo "=== DDR verify happy + visual (green) ==="
+  write_scen <<SCEN
+product_md5=$DDR_CORE
+core_md5=$DDR_CORE
+disk_md5=$DDR_DAEMON
+live_md5=$DDR_DAEMON
+n_daemon=1
+http_code=200
+SCEN
+  PAIR_ID=ddr-c5382bee PAIR_IDLE_PNG="$WORK/idle_ok.png" ROLLBACK_REQUIRE_VISUAL=1 \
+    run_rb ddr-vis verify
+  [ "$LAST_RC" -eq 0 ] || { echo "FAIL ddr-vis want 0 got $LAST_RC"; exit 1; }
+  echo "$LAST_OUT" | grep -q 'OK pair-compatibility' || { echo "FAIL ddr pair ok"; exit 1; }
+  echo "OK ddr-verify-visual rc=0"
+
+  echo "=== DDR verify mixed SPI-daemon live REFUSE (red) ==="
+  write_scen <<SCEN
+product_md5=$DDR_CORE
+core_md5=$DDR_CORE
+disk_md5=$DAEMON_MD5
+live_md5=$DAEMON_MD5
+n_daemon=1
+http_code=200
+SCEN
+  PAIR_ID=ddr-c5382bee ROLLBACK_REQUIRE_VISUAL=0 run_rb ddr-mixed verify
+  [ "$LAST_RC" -eq 3 ] || { echo "FAIL ddr-mixed want 3 got $LAST_RC"; exit 1; }
+  echo "OK ddr-mixed-verify rc=3"
+else
+  echo "SKIP ddr green paths (no $PIN_DDR — run scripts/fetch_daemon_pins.sh ddr)"
+fi
+
+echo "=== visual gate rejects solid green PNG ==="
+if [ -f "$WORK/idle_green.png" ]; then
+  set +e
+  out=$(PAIR_IDLE_PNG="$WORK/idle_green.png" "$ROOT/scripts/pair_visual_gate.sh" idle 2>&1)
+  rc=$?
+  set -e
+  echo "  green true rc=$rc"
+  [ "$rc" -eq 8 ] || { echo "FAIL green want 8 got $rc"; exit 1; }
+  echo "$out" | grep -qiE 'green|uniform' || { echo "FAIL green class msg"; exit 1; }
+  echo "OK visual-green-reject rc=8"
+fi
+
+echo "=== visual gate rejects flat uniform frame ==="
+if [ -f "$WORK/idle_flat.png" ]; then
+  set +e
+  out=$(PAIR_IDLE_PNG="$WORK/idle_flat.png" "$ROOT/scripts/pair_visual_gate.sh" idle 2>&1)
+  rc=$?
+  set -e
+  echo "  flat true rc=$rc"
+  [ "$rc" -eq 8 ] || { echo "FAIL flat want 8 got $rc"; exit 1; }
+  echo "OK visual-flat-reject rc=8"
+fi
+
+echo "=== find-daemon e9f79de2 with pin present ==="
+if [ -f "$PIN_DDR" ]; then
+  set +e
+  out=$("$ROOT/scripts/pair_ship_policy.sh" find-daemon e9f79de2 2>&1)
+  rc=$?
+  set -e
+  echo "  true rc=$rc"
+  [ "$rc" -eq 0 ] || { echo "FAIL find e9f79de2"; exit 1; }
+  echo "$out" | grep -q FOUND || { echo "FAIL FOUND"; exit 1; }
+  echo "OK find-daemon-ddr"
+fi
 
 echo "ALL test_rollback_honest checks passed"
 exit 0

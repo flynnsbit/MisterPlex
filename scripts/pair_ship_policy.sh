@@ -118,34 +118,76 @@ pair_policy_list() {
 # Host-side search for a daemon binary matching want md5 (full or prefix8+).
 # Prints path on stdout; rc 0 if found.
 pair_policy_find_daemon_artifact() {
-  local want root cand m
+  local want root cand m tops tl base
   want=$(pair_policy_normalize_md5 "${1:-}")
   [ "${#want}" -ge 8 ] || return 1
   root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+  # Explicit path overrides always win (and are the only search if set alone).
   for cand in \
     "${ROLLBACK_DAEMON:-}" \
     "${PAIR_DAEMON_ARTIFACT:-}" \
-    "$root/artifacts/daemon-pins/misterplexd.${want:0:8}" \
-    "$root/artifacts/daemon-pins/misterplexd" \
-    "$root/release_artifacts/daemon-pins/misterplexd.${want:0:8}" \
     "${PROMOTE_DAEMON:-}"
   do
     [ -n "$cand" ] || continue
     [ -f "$cand" ] || continue
     m=$(md5sum "$cand" | awk '{print $1}')
-    case "$m" in
-      "$want"*|"$want") echo "$cand"; return 0 ;;
-    esac
+    if [ "$m" = "$want" ]; then echo "$cand"; return 0; fi
     if [ "${#want}" -eq 8 ] && [ "${m:0:8}" = "$want" ]; then
-      echo "$cand"
-      return 0
-    fi
-    if [ "${#want}" -ge 32 ] && [ "$m" = "$want" ]; then
-      echo "$cand"
-      return 0
+      echo "$cand"; return 0
     fi
   done
+  # PAIR_POLICY_SEARCH_ROOTS=dir[:dir...] — unit tests isolate pins (no main leak).
+  # PAIR_POLICY_DISABLE_DEFAULT_ROOTS=1 — only explicit overrides + SEARCH_ROOTS.
+  tops=()
+  if [ -n "${PAIR_POLICY_SEARCH_ROOTS:-}" ]; then
+    IFS=':' read -r -a tops <<<"$PAIR_POLICY_SEARCH_ROOTS"
+  elif [ "${PAIR_POLICY_DISABLE_DEFAULT_ROOTS:-0}" = "1" ]; then
+    tops=()
+  else
+    tops=("$root")
+    if command -v git >/dev/null 2>&1; then
+      tl=$(git -C "$root" rev-parse --show-toplevel 2>/dev/null || true)
+      [ -n "$tl" ] && tops+=("$tl")
+      tops+=("/home/flynnsbit/Projects/MisterPlex")
+    fi
+  fi
+  for base in "${tops[@]}"; do
+    [ -n "$base" ] || continue
+    for cand in \
+      "$base/artifacts/daemon-pins/misterplexd.${want:0:8}" \
+      "$base/artifacts/daemon-pins/misterplexd" \
+      "$base/release_artifacts/daemon-pins/misterplexd.${want:0:8}" \
+      "$base/misterplexd.${want:0:8}" \
+      "$base/misterplexd"
+    do
+      [ -f "$cand" ] || continue
+      m=$(md5sum "$cand" | awk '{print $1}')
+      if [ "$m" = "$want" ]; then echo "$cand"; return 0; fi
+      if [ "${#want}" -eq 8 ] && [ "${m:0:8}" = "$want" ]; then
+        echo "$cand"; return 0
+      fi
+    done
+  done
   return 1
+}
+
+# Print actionable fetch instructions when a pin is missing (never bare NOT_FOUND alone).
+pair_policy_missing_daemon_help() {
+  local want pfx
+  want=$(pair_policy_normalize_md5 "${1:-}")
+  pfx="${want:0:8}"
+  cat <<HELP
+MISSING_DAEMON_PIN want=${want:-empty} prefix8=$pfx
+  Pins are gitignored ARM ELFs under artifacts/daemon-pins/ (not in git).
+  Fetch from the MiSTer (parent only):
+    scripts/fetch_daemon_pins.sh both
+    # or: scripts/fetch_daemon_pins.sh spi   # 50f4eb92
+    # or: scripts/fetch_daemon_pins.sh ddr   # e9f79de2
+  Then re-run:
+    scripts/pair_ship_policy.sh find-daemon $pfx
+  Override:
+    ROLLBACK_DAEMON=/path/to/misterplexd.$pfx
+HELP
 }
 
 # CLI
@@ -181,6 +223,7 @@ if [ "${BASH_SOURCE[0]-}" = "${0:-}" ]; then
         md5sum "$path"
       else
         echo "NOT_FOUND want=${2:-}"
+        pair_policy_missing_daemon_help "${2:-}"
       fi
       echo "true rc=$rc"
       exit "$rc"

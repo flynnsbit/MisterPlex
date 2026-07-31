@@ -1,42 +1,57 @@
-# Daemon pin artifacts (matched pairs)
+# Daemon pin artifacts (matched pairs) — **gitignored binaries**
 
-Promotion/rollback is **atomic over (core, daemon) pairs**. Mixing is a
-silently dead display:
+Decision (2026-07-31): **do not commit** the ~MB ARM ELFs. Keep this README
+tracked; fetch pins onto the host with the script below. Rollback/promote
+**refuse** (`true rc=10`) rather than half-apply when a pin is missing.
 
-| Pair | Core md5 | Daemon md5 | Notes |
-|------|----------|------------|-------|
-| spi-v2-hybrid | `dfebf2bf…` | `50f4eb92…` | SPI daily / rollback |
-| spi-v2-release | `dfebf2bf…` | `7cd10b4d…` | pristine v0.2.0 |
-| ddr-c5382bee | `c5382bee…` | `e9f79de2…` | DDR product (viewed OK) |
+| File (gitignored) | md5 | Pair |
+|-------------------|-----|------|
+| `misterplexd.50f4eb92` | `50f4eb925de10e29172999a565c87684` | spi-v2-hybrid (SPI core `dfebf2bf`) |
+| `misterplexd.e9f79de2` | `e9f79de217982aff44207664fdb945c5` | ddr-c5382bee (DDR core `c5382bee`) |
 
-## Required files for SPI rollback
-
-Place the SPI daemon binary here so `scripts/rollback_v2.sh` can install it:
-
-```text
-artifacts/daemon-pins/misterplexd.50f4eb92
-# optional:
-artifacts/daemon-pins/misterplexd.7cd10b4d
-```
-
-Or pass explicitly:
+## Fetch (parent only — agents must not SSH)
 
 ```bash
-ROLLBACK_DAEMON=/path/to/misterplexd-50f4eb92 \
-  PROMOTE_EXECUTE=1 scripts/rollback_v2.sh restore
+# Both pins from the live MiSTer (searches content-addressed .bak + known paths)
+scripts/fetch_daemon_pins.sh both
+# true rc=0 when host md5 matches
+
+scripts/fetch_daemon_pins.sh spi   # SPI only
+scripts/fetch_daemon_pins.sh ddr   # DDR only
 ```
 
-Without a matching daemon artifact (host **or** content-addressed on-device
-backup from `deploy_misterplexd.sh`), rollback **refuses to touch the device**.
-Restoring the SPI core alone while a DDR daemon stays live produces a solid
-green screen that still returns `/resources` 200.
+Manual equivalent:
 
-## On-device backups
+```bash
+mkdir -p artifacts/daemon-pins
+# example paths parent already used:
+#   /media/fat/misterplex_v2/bin/misterplexd.bak.pre-plxd  -> 50f4eb92
+#   live /media/fat/misterplex_v2/bin/misterplexd          -> e9f79de2 (when DDR is live)
+sshpass -p "${MISTER_PASS:-1}" scp -o StrictHostKeyChecking=no \
+  root@${MISTER_HOST:-192.168.1.183}:/media/fat/misterplex_v2/bin/misterplexd.bak.pre-plxd \
+  artifacts/daemon-pins/misterplexd.50f4eb92
+md5sum artifacts/daemon-pins/misterplexd.50f4eb92
+# expect: 50f4eb925de10e29172999a565c87684
+```
 
-`deploy_misterplexd.sh` archives the outgoing binary as:
+Verify:
+
+```bash
+scripts/pair_ship_policy.sh find-daemon 50f4eb92
+scripts/pair_ship_policy.sh find-daemon e9f79de2
+# FOUND ... true rc=0
+```
+
+## Why not git
+
+- ~30MB static ARM ELFs per pin; bloats clone for every worker.
+- Pins are **lab-measured** artifacts; device is source of truth after a good soak.
+- `deploy_misterplexd.sh` also writes on-device `misterplexd.<prefix8>.bak` so a
+  future fetch can recover without git history.
+
+## Atomic rollback without a pin
 
 ```text
-$ROOT/bin/misterplexd.<prefix8>.bak
+REFUSE ATOMIC_ROLLBACK ... Device left UNTOUCHED.
+  run: scripts/fetch_daemon_pins.sh spi   # or ddr
 ```
-
-Rollback searches those before demanding a host file.

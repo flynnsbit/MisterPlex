@@ -293,6 +293,69 @@ echo "  true rc=$rc"
 [ "$rc" -eq 0 ] && ok "activate-dry" || bad "activate-dry rc=$rc"
 echo "$out" | grep -q 'DRY-RUN' && ok "activate-dry-marker" || bad "activate-dry-marker"
 
+echo "=== motion rc=77 UNSCORED is HARD FAIL (not soft) ==="
+cat >"$WORK/motion77.sh" <<'M'
+#!/usr/bin/env bash
+echo "VERDICT=UNSCORED green_cast_frames=74"
+exit 77
+M
+chmod +x "$WORK/motion77.sh"
+set +e
+out=$(
+  PROMOTE_GATE_BLOB="$WORK/live_ok.blob" \
+  PROMOTE_HTTP="$WORK/fake_http.sh" \
+  env -u PROMOTE_VISUAL_CMD -u PAIR_IDLE_PNG \
+  PROMOTE_MOTION_CMD="$WORK/motion77.sh" \
+  "$GATES" verify-live 2>&1
+)
+rc=$?
+set -e
+echo "$out" | sed 's/^/  /' | tail -20
+echo "  true rc=$rc"
+[ "$rc" -eq 8 ] && ok "motion-77-hard-8" || bad "motion-77-hard want 8 got $rc"
+echo "$out" | grep -qi 'UNSCORED\|HARD FAIL' && ok "motion-77-msg" || bad "motion-77-msg"
+if echo "$out" | grep -q 'PROMOTE_GATES_OK'; then bad "gates-ok-on-77"; else ok "no-gates-ok-on-77"; fi
+
+echo "=== motion rc=0 PASS ==="
+cat >"$WORK/motion0.sh" <<'M'
+#!/usr/bin/env bash
+echo "VERDICT=MOTION_OK"
+exit 0
+M
+chmod +x "$WORK/motion0.sh"
+set +e
+out=$(
+  PROMOTE_GATE_BLOB="$WORK/live_ok.blob" \
+  PROMOTE_HTTP="$WORK/fake_http.sh" \
+  env -u PROMOTE_VISUAL_CMD -u PAIR_IDLE_PNG \
+  PROMOTE_MOTION_CMD="$WORK/motion0.sh" \
+  "$GATES" verify-live 2>&1
+)
+rc=$?
+set -e
+echo "  true rc=$rc"
+[ "$rc" -eq 0 ] && ok "motion-0-pass" || bad "motion-0-pass rc=$rc"
+
+echo "=== motion rc=2 COLOR_FAIL hard ==="
+cat >"$WORK/motion2.sh" <<'M'
+#!/usr/bin/env bash
+echo "VERDICT=COLOR_FAIL"
+exit 2
+M
+chmod +x "$WORK/motion2.sh"
+set +e
+out=$(
+  PROMOTE_GATE_BLOB="$WORK/live_ok.blob" \
+  PROMOTE_HTTP="$WORK/fake_http.sh" \
+  env -u PROMOTE_VISUAL_CMD -u PAIR_IDLE_PNG \
+  PROMOTE_MOTION_CMD="$WORK/motion2.sh" \
+  "$GATES" verify-live 2>&1
+)
+rc=$?
+set -e
+echo "  true rc=$rc"
+[ "$rc" -eq 8 ] && ok "motion-2-hard" || bad "motion-2-hard rc=$rc"
+
 # --- deploy_plex_core naming trap (no SSH) ----------------------------------
 echo "=== deploy_plex_core refuses source basename Plex_v2.rbf ==="
 printf 'not-a-real-rbf\n' >"$WORK/Plex_v2.rbf"
