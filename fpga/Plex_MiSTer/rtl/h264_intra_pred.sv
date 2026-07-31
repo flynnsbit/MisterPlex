@@ -23,6 +23,14 @@ module h264_intra4x4_pred (
 		end
 	endfunction
 
+	// Pixel → integer (explicit; kills WIDTHEXPAND on 8→32 assigns/adds).
+	function automatic integer px;
+		input [7:0] p;
+		begin
+			px = integer'(p);
+		end
+	endfunction
+
 	task automatic put;
 		input int x;
 		input int y;
@@ -36,6 +44,7 @@ module h264_intra4x4_pred (
 	reg [3:0] m;
 	integer t0, t1, t2, t3, t4, t5, t6, t7;
 	integer l0, l1, l2, l3;
+	integer tl;
 	integer dc_sum;
 	reg [7:0] dc_v;
 	always @* begin
@@ -48,9 +57,10 @@ module h264_intra4x4_pred (
 		if ((!has_above || !has_left) && (mode == 4'd4 || mode == 4'd5 || mode == 4'd6)) m = 4'd2;
 		used_mode = m;
 
-		t0 = above[0]; t1 = above[1]; t2 = above[2]; t3 = above[3];
-		t4 = above[4]; t5 = above[5]; t6 = above[6]; t7 = above[7];
-		l0 = left[0];  l1 = left[1];  l2 = left[2];  l3 = left[3];
+		t0 = px(above[0]); t1 = px(above[1]); t2 = px(above[2]); t3 = px(above[3]);
+		t4 = px(above[4]); t5 = px(above[5]); t6 = px(above[6]); t7 = px(above[7]);
+		l0 = px(left[0]);  l1 = px(left[1]);  l2 = px(left[2]);  l3 = px(left[3]);
+		tl = px(top_left);
 
 		case (m)
 		4'd0: begin // Vertical
@@ -63,14 +73,14 @@ module h264_intra4x4_pred (
 		end
 		4'd2: begin // DC
 			if (has_above && has_left) begin
-				dc_sum = t0 + t1 + t2 + t3 + l0 + l1 + l2 + l3 + 10'd4;
-				dc_v = dc_sum >>> 3;
+				dc_sum = t0 + t1 + t2 + t3 + l0 + l1 + l2 + l3 + 4;
+				dc_v = 8'(dc_sum >>> 3);
 			end else if (has_above) begin
-				dc_sum = t0 + t1 + t2 + t3 + 10'd2;
-				dc_v = dc_sum >>> 2;
+				dc_sum = t0 + t1 + t2 + t3 + 2;
+				dc_v = 8'(dc_sum >>> 2);
 			end else if (has_left) begin
-				dc_sum = l0 + l1 + l2 + l3 + 10'd2;
-				dc_v = dc_sum >>> 2;
+				dc_sum = l0 + l1 + l2 + l3 + 2;
+				dc_v = 8'(dc_sum >>> 2);
 			end else begin
 				dc_v = 8'd128;
 			end
@@ -88,29 +98,29 @@ module h264_intra4x4_pred (
 		4'd4: begin // Diagonal Down-Right
 			put(0, 3, (l3 + 2 * l2 + l1 + 2) >>> 2);
 			put(0, 2, (l2 + 2 * l1 + l0 + 2) >>> 2); put(1, 3, (l2 + 2 * l1 + l0 + 2) >>> 2);
-			put(0, 1, (l1 + 2 * l0 + top_left + 2) >>> 2); put(1, 2, (l1 + 2 * l0 + top_left + 2) >>> 2); put(2, 3, (l1 + 2 * l0 + top_left + 2) >>> 2);
-			put(0, 0, (l0 + 2 * top_left + t0 + 2) >>> 2); put(1, 1, (l0 + 2 * top_left + t0 + 2) >>> 2); put(2, 2, (l0 + 2 * top_left + t0 + 2) >>> 2); put(3, 3, (l0 + 2 * top_left + t0 + 2) >>> 2);
-			put(1, 0, (top_left + 2 * t0 + t1 + 2) >>> 2); put(2, 1, (top_left + 2 * t0 + t1 + 2) >>> 2); put(3, 2, (top_left + 2 * t0 + t1 + 2) >>> 2);
+			put(0, 1, (l1 + 2 * l0 + tl + 2) >>> 2); put(1, 2, (l1 + 2 * l0 + tl + 2) >>> 2); put(2, 3, (l1 + 2 * l0 + tl + 2) >>> 2);
+			put(0, 0, (l0 + 2 * tl + t0 + 2) >>> 2); put(1, 1, (l0 + 2 * tl + t0 + 2) >>> 2); put(2, 2, (l0 + 2 * tl + t0 + 2) >>> 2); put(3, 3, (l0 + 2 * tl + t0 + 2) >>> 2);
+			put(1, 0, (tl + 2 * t0 + t1 + 2) >>> 2); put(2, 1, (tl + 2 * t0 + t1 + 2) >>> 2); put(3, 2, (tl + 2 * t0 + t1 + 2) >>> 2);
 			put(2, 0, (t0 + 2 * t1 + t2 + 2) >>> 2); put(3, 1, (t0 + 2 * t1 + t2 + 2) >>> 2);
 			put(3, 0, (t1 + 2 * t2 + t3 + 2) >>> 2);
 		end
 		4'd5: begin // Vertical-Right
-			put(0, 0, (top_left + t0 + 1) >>> 1); put(1, 2, (top_left + t0 + 1) >>> 1);
+			put(0, 0, (tl + t0 + 1) >>> 1); put(1, 2, (tl + t0 + 1) >>> 1);
 			put(1, 0, (t0 + t1 + 1) >>> 1); put(2, 2, (t0 + t1 + 1) >>> 1);
 			put(2, 0, (t1 + t2 + 1) >>> 1); put(3, 2, (t1 + t2 + 1) >>> 1);
 			put(3, 0, (t2 + t3 + 1) >>> 1);
-			put(0, 1, (l0 + 2 * top_left + t0 + 2) >>> 2); put(1, 3, (l0 + 2 * top_left + t0 + 2) >>> 2);
-			put(1, 1, (top_left + 2 * t0 + t1 + 2) >>> 2); put(2, 3, (top_left + 2 * t0 + t1 + 2) >>> 2);
+			put(0, 1, (l0 + 2 * tl + t0 + 2) >>> 2); put(1, 3, (l0 + 2 * tl + t0 + 2) >>> 2);
+			put(1, 1, (tl + 2 * t0 + t1 + 2) >>> 2); put(2, 3, (tl + 2 * t0 + t1 + 2) >>> 2);
 			put(2, 1, (t0 + 2 * t1 + t2 + 2) >>> 2); put(3, 3, (t0 + 2 * t1 + t2 + 2) >>> 2);
 			put(3, 1, (t1 + 2 * t2 + t3 + 2) >>> 2);
-			put(0, 2, (top_left + 2 * l0 + l1 + 2) >>> 2); put(0, 3, (l0 + 2 * l1 + l2 + 2) >>> 2);
+			put(0, 2, (tl + 2 * l0 + l1 + 2) >>> 2); put(0, 3, (l0 + 2 * l1 + l2 + 2) >>> 2);
 		end
 		4'd6: begin // Horizontal-Down
-			put(0, 0, (top_left + l0 + 1) >>> 1); put(2, 1, (top_left + l0 + 1) >>> 1);
-			put(1, 0, (l0 + 2 * top_left + t0 + 2) >>> 2); put(3, 1, (l0 + 2 * top_left + t0 + 2) >>> 2);
-			put(2, 0, (top_left + 2 * t0 + t1 + 2) >>> 2); put(3, 0, (t0 + 2 * t1 + t2 + 2) >>> 2);
+			put(0, 0, (tl + l0 + 1) >>> 1); put(2, 1, (tl + l0 + 1) >>> 1);
+			put(1, 0, (l0 + 2 * tl + t0 + 2) >>> 2); put(3, 1, (l0 + 2 * tl + t0 + 2) >>> 2);
+			put(2, 0, (tl + 2 * t0 + t1 + 2) >>> 2); put(3, 0, (t0 + 2 * t1 + t2 + 2) >>> 2);
 			put(0, 1, (l0 + l1 + 1) >>> 1); put(2, 2, (l0 + l1 + 1) >>> 1);
-			put(1, 1, (top_left + 2 * l0 + l1 + 2) >>> 2); put(3, 2, (top_left + 2 * l0 + l1 + 2) >>> 2);
+			put(1, 1, (tl + 2 * l0 + l1 + 2) >>> 2); put(3, 2, (tl + 2 * l0 + l1 + 2) >>> 2);
 			put(0, 2, (l1 + l2 + 1) >>> 1); put(2, 3, (l1 + l2 + 1) >>> 1);
 			put(1, 2, (l0 + 2 * l1 + l2 + 2) >>> 2); put(3, 3, (l0 + 2 * l1 + l2 + 2) >>> 2);
 			put(0, 3, (l2 + l3 + 1) >>> 1); put(1, 3, (l1 + 2 * l2 + l3 + 2) >>> 2);
@@ -169,6 +179,14 @@ module h264_intra16x16_pred (
 		end
 	endfunction
 
+	// Pixel → integer (explicit; kills WIDTHEXPAND on 8→32 adds).
+	function automatic integer px;
+		input [7:0] p;
+		begin
+			px = integer'(p);
+		end
+	endfunction
+
 	// Pipeline phase: 0 = idle, 1 = Plane cycle 2 pending
 	reg phase = 1'b0;
 
@@ -185,14 +203,15 @@ module h264_intra16x16_pred (
 	integer vt [0:7];
 	always @* begin
 		// Compute individual gradient terms (clause 8.3.3.4)
+		// px() widens 8→32 before signed sub (same numeric range 0..255).
 		for (gi = 0; gi < 8; gi = gi + 1) begin
-			ht[gi] = (gi + 1) * ($signed({1'b0, above[8 + gi]}) - ((gi == 7) ? $signed({1'b0, top_left}) : $signed({1'b0, above[6 - gi]})));
-			vt[gi] = (gi + 1) * ($signed({1'b0, left[8 + gi]})  - ((gi == 7) ? $signed({1'b0, top_left}) : $signed({1'b0, left[6 - gi]})));
+			ht[gi] = (gi + 1) * (px(above[8 + gi]) - ((gi == 7) ? px(top_left) : px(above[6 - gi])));
+			vt[gi] = (gi + 1) * (px(left[8 + gi])  - ((gi == 7) ? px(top_left) : px(left[6 - gi])));
 		end
 		// Balanced tree reduction: 3 add levels instead of 7 in linear chain
 		hgrad_c = ((ht[0]+ht[1]) + (ht[2]+ht[3])) + ((ht[4]+ht[5]) + (ht[6]+ht[7]));
 		vgrad_c = ((vt[0]+vt[1]) + (vt[2]+vt[3])) + ((vt[4]+vt[5]) + (vt[6]+vt[7]));
-		a_c = 16 * ($signed({1'b0, above[15]}) + $signed({1'b0, left[15]}));
+		a_c = 16 * (px(above[15]) + px(left[15]));
 		b_c = (5 * hgrad_c + 32) >>> 6;
 		c_c = (5 * vgrad_c + 32) >>> 6;
 	end
@@ -209,7 +228,8 @@ module h264_intra16x16_pred (
 			// Plane cycle 2: evaluate 256 pixels from 32 registered products
 			for (y = 0; y < 16; y = y + 1)
 				for (x = 0; x < 16; x = x + 1) begin
-					val = ($signed(a_r) + $signed(bx_r[x]) + $signed(cy_r[y]) + 16) >>> 5;
+					// Widen signed 16→32 before add (values already fit 16-bit plane scale).
+					val = (integer'(a_r) + integer'(bx_r[x]) + integer'(cy_r[y]) + 16) >>> 5;
 					pred[y * 16 + x] <= clip8(val);
 				end
 			valid <= 1'b1;
@@ -221,8 +241,9 @@ module h264_intra16x16_pred (
 					// Plane cycle 1: register a and 32 pre-computed products
 					a_r <= a_c[15:0];
 					for (i = 0; i < 16; i = i + 1) begin
-						bx_r[i] <= b_c * (i - 7);
-						cy_r[i] <= c_c * (i - 7);
+						// b_c/c_c * (i-7) fit signed 16 after H.264 plane scale.
+						bx_r[i] <= 16'(b_c * (i - 7));
+						cy_r[i] <= 16'(c_c * (i - 7));
 					end
 					phase <= 1'b1;
 				end else begin
@@ -239,20 +260,20 @@ module h264_intra16x16_pred (
 				valid <= 1'b1;
 			end else begin
 				// Balanced tree: 5 add levels guaranteed vs up to 32 in linear chain
-				sa_lo = ((above[0]+above[1]) + (above[2]+above[3]))
-				      + ((above[4]+above[5]) + (above[6]+above[7]));
-				sa_hi = ((above[8]+above[9]) + (above[10]+above[11]))
-				      + ((above[12]+above[13]) + (above[14]+above[15]));
-				sl_lo = ((left[0]+left[1]) + (left[2]+left[3]))
-				      + ((left[4]+left[5]) + (left[6]+left[7]));
-				sl_hi = ((left[8]+left[9]) + (left[10]+left[11]))
-				      + ((left[12]+left[13]) + (left[14]+left[15]));
+				sa_lo = ((px(above[0])+px(above[1])) + (px(above[2])+px(above[3])))
+				      + ((px(above[4])+px(above[5])) + (px(above[6])+px(above[7])));
+				sa_hi = ((px(above[8])+px(above[9])) + (px(above[10])+px(above[11])))
+				      + ((px(above[12])+px(above[13])) + (px(above[14])+px(above[15])));
+				sl_lo = ((px(left[0])+px(left[1])) + (px(left[2])+px(left[3])))
+				      + ((px(left[4])+px(left[5])) + (px(left[6])+px(left[7])));
+				sl_hi = ((px(left[8])+px(left[9])) + (px(left[10])+px(left[11])))
+				      + ((px(left[12])+px(left[13])) + (px(left[14])+px(left[15])));
 				if (has_above && has_left) sum = (sa_lo + sa_hi) + (sl_lo + sl_hi);
 				else if (has_above) sum = sa_lo + sa_hi;
 				else if (has_left) sum = sl_lo + sl_hi;
 				else sum = 0;
-				if (has_above && has_left) dc_v = (sum + 16) >>> 5;
-				else if (has_above || has_left) dc_v = (sum + 8) >>> 4;
+				if (has_above && has_left) dc_v = 8'((sum + 16) >>> 5);
+				else if (has_above || has_left) dc_v = 8'((sum + 8) >>> 4);
 				else dc_v = 8'd128;
 				for (i = 0; i < 256; i = i + 1) pred[i] <= dc_v;
 				valid <= 1'b1;
@@ -287,6 +308,13 @@ module h264_chroma8x8_pred (
 		end
 	endfunction
 
+	function automatic integer px;
+		input [7:0] p;
+		begin
+			px = integer'(p);
+		end
+	endfunction
+
 	// Pipeline phase: 0 = idle, 1 = Plane cycle 2 pending
 	reg phase = 1'b0;
 
@@ -302,10 +330,10 @@ module h264_chroma8x8_pred (
 		hgrad_c = 0;
 		vgrad_c = 0;
 		for (gi = 0; gi < 4; gi = gi + 1) begin
-			hgrad_c = hgrad_c + (gi + 1) * ($signed({1'b0, above[4 + gi]}) - ((gi == 3) ? $signed({1'b0, top_left}) : $signed({1'b0, above[2 - gi]})));
-			vgrad_c = vgrad_c + (gi + 1) * ($signed({1'b0, left[4 + gi]})  - ((gi == 3) ? $signed({1'b0, top_left}) : $signed({1'b0, left[2 - gi]})));
+			hgrad_c = hgrad_c + (gi + 1) * (px(above[4 + gi]) - ((gi == 3) ? px(top_left) : px(above[2 - gi])));
+			vgrad_c = vgrad_c + (gi + 1) * (px(left[4 + gi])  - ((gi == 3) ? px(top_left) : px(left[2 - gi])));
 		end
-		a_c = 16 * ($signed({1'b0, above[7]}) + $signed({1'b0, left[7]}));
+		a_c = 16 * (px(above[7]) + px(left[7]));
 		b_c = (17 * hgrad_c + 16) >>> 5;
 		c_c = (17 * vgrad_c + 16) >>> 5;
 	end
@@ -322,7 +350,7 @@ module h264_chroma8x8_pred (
 			// Plane cycle 2: evaluate 64 pixels from 16 registered products
 			for (y = 0; y < 8; y = y + 1)
 				for (x = 0; x < 8; x = x + 1) begin
-					val = ($signed(a_r) + $signed(bx_r[x]) + $signed(cy_r[y]) + 16) >>> 5;
+					val = (integer'(a_r) + integer'(bx_r[x]) + integer'(cy_r[y]) + 16) >>> 5;
 					pred[y * 8 + x] <= clip8(val);
 				end
 			valid <= 1'b1;
@@ -333,8 +361,8 @@ module h264_chroma8x8_pred (
 					// Plane cycle 1: register a and 16 pre-computed products
 					a_r <= a_c[15:0];
 					for (i = 0; i < 8; i = i + 1) begin
-						bx_r[i] <= b_c * (i - 3);
-						cy_r[i] <= c_c * (i - 3);
+						bx_r[i] <= 16'(b_c * (i - 3));
+						cy_r[i] <= 16'(c_c * (i - 3));
 					end
 					phase <= 1'b1;
 				end else begin
@@ -343,10 +371,10 @@ module h264_chroma8x8_pred (
 				end
 			end else if (mode == 2'd0) begin
 				// DC with 4 quadrant sub-averages (clause 8.3.4.1)
-				sum_a0 = (above[0]+above[1]) + (above[2]+above[3]);
-				sum_a1 = (above[4]+above[5]) + (above[6]+above[7]);
-				sum_l0 = (left[0]+left[1]) + (left[2]+left[3]);
-				sum_l1 = (left[4]+left[5]) + (left[6]+left[7]);
+				sum_a0 = (px(above[0])+px(above[1])) + (px(above[2])+px(above[3]));
+				sum_a1 = (px(above[4])+px(above[5])) + (px(above[6])+px(above[7]));
+				sum_l0 = (px(left[0])+px(left[1])) + (px(left[2])+px(left[3]));
+				sum_l1 = (px(left[4])+px(left[5])) + (px(left[6])+px(left[7]));
 				if (has_above && has_left) begin
 					dc_tl = clip8((sum_a0 + sum_l0 + 4) >>> 3);
 					dc_tr = clip8((sum_a1 + 2) >>> 2);

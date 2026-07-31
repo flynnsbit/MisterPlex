@@ -126,9 +126,12 @@ module colorbars (
 	// Color bars fill the full DE window (hc 0..H_DE-1). Stretch 7 bars.
 	wire [9:0] px = hc;
 	wire [9:0] py = scandouble ? (vc >> 1) : vc;
-	// Integer scale: 7 equal slices over DE width 529 (hc=528 → 3696/529=6)
+	// Integer scale: 7 equal slices over DE width 529 (hc=528 → 3696/529=6).
+	// bar_prod is 13-bit (max 528*7=3696); widen H_DE to match DIV, then
+	// take low 3 bits — quotient is only 0..6.
 	wire [12:0] bar_prod = hc * 4'd7; // 0 .. 3696
-	wire [2:0]  bar      = bar_prod / H_DE; // 0..6
+	wire [12:0] bar_full = bar_prod / {3'd0, H_DE};
+	wire [2:0]  bar      = bar_full[2:0];
 	wire in_content = (hc < H_DE) &&
 	                  (py < 10'd240) &&
 	                  ~HBlank && ~VBlank;

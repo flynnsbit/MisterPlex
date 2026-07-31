@@ -170,9 +170,12 @@ module slice_hdr_parser (
 		input [15:0] code;
 		reg signed [15:0] mask;
 		reg signed [15:0] t;
+		reg signed [16:0] t17;
 		begin
 			mask = code[0] ? -16'sd1 : 16'sd0;
-			t = ($signed({1'b0, code}) + 17'sd2) >>> 1;
+			// 17-bit path: (code+2)>>1 then fold to signed 16 (decoder levels fit).
+			t17 = ($signed({1'b0, code}) + 17'sd2) >>> 1;
+			t = t17[15:0];
 			lev_of = (t ^ mask) - mask;
 		end
 	endfunction

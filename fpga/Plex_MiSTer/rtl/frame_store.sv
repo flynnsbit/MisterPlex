@@ -307,9 +307,10 @@ module frame_store #(
 	reg [Y_W-1:0]    desired_y_r [0:MAX_LINES-1];
 
 	function automatic [Y_W-1:0] clamp_ahead(input [Y_W-1:0] base, input integer ahead);
+		// integer sum is 32-bit; zero-extend base explicitly (Y_W is $clog2(FRAME_H)).
 		integer sum;
 		begin
-			sum = base;
+			sum = integer'(base);
 			sum = sum + ahead;
 			clamp_ahead = (sum >= FRAME_H) ? LAST_Y : sum[Y_W-1:0];
 		end
