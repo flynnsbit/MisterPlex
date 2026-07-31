@@ -1,93 +1,125 @@
-# w-bw — MiSTerFin mmap / PMS scale audit (host static + archive)
+# w-bw — MiSTerFin mmap bandwidth + PMS scale audit
 
 **Lane:** w-bw  
-**SOURCE_SHA tip at write:** see git log on branch `w-bw`  
-**Date:** 2026-07-30  
-**Device access:** none (parent owns hardware)  
-**Quartus:** none  
+**Branch:** `w-bw` (worktree `.worktrees/w-bw`)  
+**Licence note:** MiSTerFin (`puddingstudio/MiSTerFin` @ `20b71d56…`) is **not** copied into this tree. Their `vo_fbdev.c` claim is cited as **third-party measured text only**. Do not treat their MB/s as ours until parent remeasures.
 
-Related prior evidence (do not re-invent):
-- `docs/evidence/p480/p480-bandwidth.md`
-- `docs/evidence/p480/p720-bus-and-bitrate-margin.md`
-- archive: `build/arm-sleep-evidence/W-FEED-arm-profile-ORIGINAL.txt`
+---
 
-## Licence
+## 1. Product mmap (quoted)
 
-No MiSTerFin source was copied. MiSTerFin licence is not in this tree; treat as
-external/GPL-family until parent verifies upstream.
+`arm/misterplexd/fpga_spi.cpp` `FpgaSpi::ensureDdrMap`:
 
-## Finding A — `/dev/mem` cache class
-
-Product path (`FpgaSpi::ensureDdrMap`):
-- `open("/dev/mem", O_RDWR|O_CLOEXEC|O_SYNC)` when `ddrMemSync_=true` (default)
-- `mmap(..., PROT_READ|PROT_WRITE, MAP_SHARED, ...)`
-
-**Kernel pgprot for this MiSTer kernel:** not read → UNKNOWN from kernel source.
-
-**Archive measure (device, not re-run here)** 624×480 I420 449280 B:
-| mode | frame_ms | MiBps |
-|------|---------:|------:|
-| O_SYNC | 7.378 | 58.074 |
-| no O_SYNC | 7.199 | 59.521 |
-| no O_SYNC + cacheflush | 13.246 | 32.348 |
-
-MiSTerFin's claimed ~1.5 GB/s write-through via fb driver mapping is **not**
-reproduced on our `/dev/mem` frame window. O_SYNC≈no-sync (~2.5%).
-
-## Bandwidth table (YUV420p = 1.5·W·H)
-
-| tier | bytes | @30 fps MiB/s | ms @60 MiB/s | fatal @60 MiB/s? |
-|------|------:|--------------:|-------------:|------------------|
-| 320×240 | 115200 | 3.30 | 1.83 | no |
-| 624×480 | 449280 | 12.85 | 7.14 | no @30; tight only if full stack eats rest |
-| 1280×720 | 1382400 | 39.55 | 21.97 | no @24/30 pure-fill; **yes @60** (need ~79 MiB/s) |
-
-Product store still **rejects** 1280×720 coded (`kDdrFrameStoreMaxWidth=640`).
-
-## Finding B — PMS scale vs ARM scale
-
-Code asks PMS:
-`/video/:/transcode/universal/start.mp4?...&directPlay=0&directStream=0&videoResolution=<weak>`
-
-| tier | PMS request | silicon coded (PRESENT=fpga) | residual ARM scale (`skip_identity`) |
-|------|-------------|------------------------------|--------------------------------------|
-| DECODE 320×240 | 320×240 @1000k | **624×480** | **always** (320≠624) |
-| DECODE/lab 624×480 | 624×480 @2000k | 624×480 | skip if delivery matches |
-
-Default: `FFMPEG_SCALE=skip_identity`, `FFMPEG_SWS_FLAGS` empty.
-`FFMPEG_SCALE_ASSUME_MATCH` lab-only; unsafe on 320 ship path.
-
-**PMS honor of videoResolution:** UNKNOWN without device stream probe.
-
-## Doorbell order
-
-`kickDdrDoorbell`: `dw[1]=hi` → `__sync_synchronize` → `dw[0]=PLXK` → barrier.
-Payload: `memcpy` → `__sync_synchronize` → kick. **OK.**
-
-## Process group
-
-`setpgid` + `kill(-pid, ...)`. **OK.**
-
-## Bench (parent runs on device)
-
-```bash
-make arm-ddr-bench
-# scp build/arm/ddr_write_bench → device
-/media/fat/misterplex/bin/ddr_write_bench --sync --geometry plex480p \
-  --width 624 --height 480 --loops 1000 --bank 0
-# expect MiBps line ~58 class if archive still holds
+```cpp
+int flags = O_RDWR | O_CLOEXEC;
+if (ddrMemSync_)
+    flags |= O_SYNC;
+ddrMemFd_ = ::open("/dev/mem", flags);
+void* p = mmap(nullptr, kLen, PROT_READ | PROT_WRITE, MAP_SHARED, ddrMemFd_,
+               static_cast<off_t>(ddrLayout_.phys_base));
 ```
 
-Or: `WIDTH=624 HEIGHT=480 GEOMETRY=plex480p LOOPS=1000 ./scripts/run_c2_ddr_bench.sh`
+- **fd:** `/dev/mem`
+- **phys:** `ddrLayout_.phys_base` ← `kDdrFramePhysBase = 0x30000000` (`ddr_frame_layout.hpp`)
+- **prot:** `PROT_READ|PROT_WRITE`, **map flags:** `MAP_SHARED` only (no `MAP_LOCKED` etc.)
+- **O_SYNC:** default **on** — `fpga_spi.hpp` `ddrMemSync_ = true`
 
-## Ranked wins
+Hot push (`sendDdrFrame`): `memcpy(ddrMap_ + bankOff, …); __sync_synchronize();` then doorbell.
 
-1. Bus alone does **not** explain ~90% CPU @480p (copy ~22% of 30 fps budget).
-2. Ship 240p pays mandatory 320→624 swscale — magnitude unmeasured.
-3. Flipping `DDR_MEM_SYNC=0` is **not** an evidenced 25× win.
-4. Doorbell / pgkill already correct.
+**fb0 path (NOT frame store):** `fb_present.cpp` mmaps `/dev/fb0` at offset 0; phys is `finfo.smem_start` (device-specific), **not** `0x30000000`.
 
-## Gate added
+### Cache policy — what is *known* vs *unknown*
 
-`tests/unit/test_ddr_bw_contracts.py` — freezes mmap O_SYNC default, doorbell
-order, kill(-pid), universal URL flags, YUV byte arithmetic.
+| Claim | Status |
+|-------|--------|
+| Mapping is via `/dev/mem` + default `O_SYNC` | **EVIDENCED** (code quote) |
+| Resulting PTE is uncached / device / WC / WT | **UNKNOWN until parent smaps + bench** |
+| MiSTerFin “/dev/mem ~60 MB/s, fb WT ~1.5 GB/s” | **THEIR** measurement on **their** mapping — **NOT ours** |
+| Archive W-FEED 624×480 O_SYNC **58.074 MiB/s** | Prior device artifact (class ~60); needs fresh parent confirm |
+
+Kernel policy for `/dev/mem` on this DE10 image is **not** asserted here without `VmFlags` from a live map. Bench prints `/proc/self/smaps` for the mapping; look for `VmFlags` token **`dc`** (don't cache) as a **hint**, not a sole verdict. Bandwidth class is the primary measurement.
+
+---
+
+## 2. Bandwidth arithmetic (YUV420p = 1.5·W·H)
+
+| WxH | bytes/frame | @60 MB/s | @1.5 GB/s | @30 fps need | uncached fatal? |
+|-----|------------:|---------:|----------:|-------------:|-----------------|
+| 320×240 | 115200 | ~1.92 ms | ~0.077 ms | 3.46 MB/s | **No** (≪ budget) |
+| 624×480 | 449280 | ~7.49 ms | ~0.30 ms | 13.48 MB/s | **Tight** at 60 fps (~45%); OK at 30 |
+| 1280×720 | 1382400 | ~23.0 ms | ~0.92 ms | 41.47 MB/s | **Yes @30fps** (~69% of frame); **fatal @60** |
+
+Parent table used RGB565 153600 for 320×240 — **that is not** the C3 YUV420p product path byte count.
+
+---
+
+## 3. Microbenchmark
+
+**Source:** `tools/ddr_write_bench.cpp`  
+**Build:** `make arm-ddr-bench` → `build/arm/ddr_write_bench` (static armhf)  
+**Parent recipe:** `docs/evidence/w-bw-misterfin-mmap-20260730/PARENT_RUN.md`  
+**Helper (parent only):** `scripts/parent_ddr_cache_probe.sh`
+
+### Pre-registration (printed by binary before timed work)
+
+```
+prereg_devmem_mibps_lo=50 prereg_devmem_mibps_hi=70
+prereg_writethrough_mibps_lo=800
+prereg_source=W-FEED-arm-profile-ORIGINAL_624x480
+misterfin_claim_NOT_ours=1
+```
+
+**HIT uncached-class:** measured MiBps ∈ [50, 70] on product path.  
+**HIT WT-class surprise:** MiBps ≥ 800.  
+**MISS:** publish actual vs band.
+
+Host-only smoke (`--host-copy`) exercises printing only — **not** a device result.
+
+---
+
+## 4. Write-through feasibility (static)
+
+- Userspace **cannot** call kernel `memremap(..., MEMREMAP_WT)`.
+- Product HDMI path is **PRESENT=fpga** → DDR at `0x30000000`, **not** fb0 scanout of decoded frames.
+- fb0 `mmap` is a **different physical region** (`smem_start`). Even if fb0 is WT, that does **not** make the frame-store map WT.
+- Achieving WT/WC on `0x30000000` would need a **kernel driver** that maps that CMA/reserved range with the desired `pgprot_*`. **No such driver exists in this tree** (static search / product path is `/dev/mem` only).
+- Dropping `O_SYNC` alone: archive showed ~same MiBps as O_SYNC (~58–60) — **not** a 25× win in that artifact. Fresh A/B still required.
+
+---
+
+## 5. PMS / ffmpeg scale (definitive from code)
+
+- Universal URL sets `videoResolution=<weak profile>` (`plex_resolve.cpp` `buildUniversalTranscodeUrl`).
+- `ddrFrameGeometryForFpgaPresent` always returns silicon **624×480** for PRESENT=fpga.
+- With live `DECODE=320x240` (effective), arm residual scale **always on** (`FFMPEG_SCALE=skip_identity` still builds scale when coded ≠ canvas).
+- **Whether PMS honors `videoResolution` and delivers 320-coded bitstream:** **UNKNOWN** without device HTTP/ffmpeg log probe (parent).
+- Knobs from code: `FFMPEG_SCALE`, `FFMPEG_SWS_FLAGS`, `FFMPEG_SCALE_ASSUME_MATCH`, `DECODE`, weak profile — see contracts test.
+
+---
+
+## 6. Doorbell ordering
+
+`kickDdrDoorbell`: write **hi (word1)** → `__sync_synchronize()` → write **PLXK magic (word0)** → barrier. Matches “metadata before counter/magic latch” intent. (Correctness audit only.)
+
+## 7. ffmpeg process group
+
+`setpgid` + `kill(-pid, …)` — process group kill **present** in media_player path.
+
+---
+
+## Ranked expected wins (pending parent measure)
+
+1. **If** parent MiBps ≥800 on `/dev/mem` — transport not the 320 ceiling; look elsewhere.  
+2. **If** MiBps ~50–70 — uncached-class confirmed; **720p push is transport-bound**; 320 still not explained by push alone (~2 ms). Biggest win would be a **kernel WT/WC map of 0x30000000**, not userspace O_SYNC flip (archive).  
+3. **PMS true source geometry** — if server sends large coded + we scale, that is likely larger CPU than push; parent must log ffmpeg GEOM / probe URL.  
+4. Doorbell / pgkill — correctness, not thruput.
+
+---
+
+## Gates (worker)
+
+```
+python3 tests/unit/test_ddr_bw_contracts.py; echo "true rc=$?"
+python3 tests/unit/test_unit_rollcall.py; echo "true rc=$?"
+make arm-ddr-bench; echo "true rc=$?"
+```
