@@ -1,9 +1,16 @@
 #!/usr/bin/env python3
-"""Run a gate command and print a non-failing skipped-coverage summary.
+"""Run a gate command and print a skipped-coverage summary + GATE_RESULT.
 
-The wrapped command's exit code is preserved exactly. This tool only makes
-soft skips visible at the end of long logs so a green exit cannot be mistaken
-for full coverage.
+The wrapped command's exit code is preserved for FAIL paths. Soft-skip (rc=77)
+and CRITICAL coverage holes are NEVER reported as PASS:
+
+  GATE_RESULT=PASS                  rc==0 and critical_skips==0
+  GATE_RESULT=PASS_INCOMPLETE       rc==0 and critical_skips>0  (UNSCORED gaps)
+  GATE_RESULT=SKIP_NOT_PASS         rc==77
+  GATE_RESULT=FAIL                  any other non-zero rc
+
+Aggregates must key off GATE_RESULT, never assume rc==0 means full coverage.
+Exit 77 is not success. UNSCORED is not success. Soft-skip ≠ PASS.
 """
 from __future__ import annotations
 
@@ -126,7 +133,7 @@ def classify_skip_line(line: str) -> SkipRecord | None:
     return SkipRecord("soft-skip", "ADVISORY", line.strip(), "a skipped optional or environment-dependent check", "log")
 
 
-def summarize(records: list[SkipRecord]) -> str:
+def summarize(records: list[SkipRecord], wrapped_rc: int | None = None) -> str:
     dedup: dict[tuple[str, str, str], SkipRecord] = {}
     for rec in records:
         dedup.setdefault((rec.name, rec.severity, rec.source), rec)
@@ -146,7 +153,33 @@ def summarize(records: list[SkipRecord]) -> str:
     if not ordered:
         lines.append("GATE_SKIP_NONE all registered critical/soft-skip checks covered or not emitted")
     lines.append("GATE_SKIP_SUMMARY_END")
+    if wrapped_rc is not None:
+        lines.append(gate_result_line(wrapped_rc, counts["CRITICAL"]))
     return "\n".join(lines)
+
+
+def gate_result_line(wrapped_rc: int, critical_count: int) -> str:
+    """Map rc + critical skips to a single aggregate-facing token.
+
+    Contract (do not weaken):
+      - rc==77 => SKIP_NOT_PASS (never PASS)
+      - rc==0 and critical>0 => PASS_INCOMPLETE (UNSCORED gaps; never plain PASS)
+      - rc==0 and critical==0 => PASS
+      - else => FAIL
+    """
+    if wrapped_rc == 77:
+        return (
+            f"GATE_RESULT=SKIP_NOT_PASS wrapped_rc={wrapped_rc} critical_skips={critical_count} "
+            f"(exit 77 is not success; soft-skip≠PASS)"
+        )
+    if wrapped_rc == 0 and critical_count > 0:
+        return (
+            f"GATE_RESULT=PASS_INCOMPLETE wrapped_rc={wrapped_rc} critical_skips={critical_count} "
+            f"(CRITICAL coverage holes remain UNSCORED; not a full pass)"
+        )
+    if wrapped_rc == 0:
+        return f"GATE_RESULT=PASS wrapped_rc={wrapped_rc} critical_skips=0"
+    return f"GATE_RESULT=FAIL wrapped_rc={wrapped_rc} critical_skips={critical_count}"
 
 
 def run_wrapped(label: str, cmd: list[str]) -> int:
@@ -174,7 +207,7 @@ def run_wrapped(label: str, cmd: list[str]) -> int:
             if rec:
                 records.append(rec)
         rc = proc.wait()
-        summary = summarize(records) + "\n"
+        summary = summarize(records, wrapped_rc=rc) + "\n"
         sys.stdout.write(summary)
         log.write(summary)
     return rc
@@ -187,19 +220,39 @@ def self_test() -> int:
                 "SKIP-NOT-PASS test_pms_baseline_profile: set PLEX_BASE, PLEX_TOKEN, "
                 "and MISTERPLEX_BASELINE_KEY for the live PMS Baseline check."
             )
-        ]  # type: ignore[list-item]
+        ],  # type: ignore[list-item]
+        wrapped_rc=0,
     )
     if "total=1 critical=1" not in red or "live-pms-baseline-profile" not in red:
         print(red)
         return 1
-    green = summarize([])
+    if "GATE_RESULT=PASS_INCOMPLETE" not in red:
+        print("missing PASS_INCOMPLETE for critical skip + rc0:\n", red)
+        return 1
+    green = summarize([], wrapped_rc=0)
     if "total=0 critical=0 high=0 advisory=0" not in green or "GATE_SKIP_NONE" not in green:
         print(green)
         return 1
+    if "GATE_RESULT=PASS " not in green:
+        print("missing PASS for clean rc0:\n", green)
+        return 1
+    skip77 = summarize([], wrapped_rc=77)
+    if "GATE_RESULT=SKIP_NOT_PASS" not in skip77:
+        print("missing SKIP_NOT_PASS for rc77:\n", skip77)
+        return 1
+    # rc=77 must never be called PASS even with empty skip list
+    if "GATE_RESULT=PASS" in skip77.split("GATE_RESULT=")[-1]:
+        # the token after GATE_RESULT= should be SKIP_NOT_PASS
+        token = skip77.split("GATE_RESULT=", 1)[1].split()[0]
+        if token == "PASS":
+            print(skip77)
+            return 1
     print("SELFTEST_RED_SUMMARY")
     print(red)
     print("SELFTEST_GREEN_SUMMARY")
     print(green)
+    print("SELFTEST_SKIP77_SUMMARY")
+    print(skip77)
     return 0
 
 

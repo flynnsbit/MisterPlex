@@ -329,8 +329,16 @@ read_corename() {
     echo "mister_soft_bounce: REFUSED MISTER_CLAIM_FAKE_CORENAME on live bounce (SKIP_BOUNCE=0)" >&2
     return 4
   fi
-  local raw
-  raw="$(ssh_clean 'cat /tmp/CORENAME 2>/dev/null' | tr -d '\r' | tail -n 1)" || return $?
+  local raw rc
+  # Capture ssh rc DIRECTLY (never through a pipe). Strip CR offline.
+  set +e
+  raw="$(ssh_clean 'cat /tmp/CORENAME 2>/dev/null')"
+  rc=$?
+  set -e
+  if [[ "$rc" -ne 0 ]]; then
+    return "$rc"
+  fi
+  raw="$(printf '%s' "$raw" | tr -d '\r' | tail -n 1)"
   printf '%s\n' "$raw"
 }
 

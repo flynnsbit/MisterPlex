@@ -31,11 +31,17 @@ GLOBS = (
 
 # False-green patterns (multiline-ish via window).
 # 1) After "Verilator not found", an exit 0 without exit 77 nearby is banned.
-MISSING_VL = re.compile(r"Verilator not found", re.I)
+# Match "Verilator not found", "Verilator runner not found", etc.
+MISSING_VL = re.compile(r"Verilator(?:\s+runner)?\s+not\s+found", re.I)
 EXIT0 = re.compile(r"\bexit\s+0\b")
 EXIT77 = re.compile(r"\bexit\s+77\b")
+EXIT3 = re.compile(r"\bexit\s+3\b")
 ALLOW = re.compile(r"ALLOW_MISSING_VERILATOR")
 SKIP_NOT_PASS = re.compile(r"SKIP-NOT-PASS")
+BARE_VERILATOR_FALLBACK = re.compile(
+    r"""command\s+-v\s+verilator|oss-cad-suite[^\n]*bin/verilator""",
+    re.I,
+)
 
 
 def collect_scripts() -> list[Path]:
@@ -88,6 +94,43 @@ def audit_script(path: Path) -> list[str]:
                     f"(skip summary cannot classify coverage holes)"
                 )
 
+    # Bare `command -v verilator` / pinned oss-cad path bypasses run_verilator.sh
+    # PINNOTFOUND→rc=2. Prefer the wrapper exclusively.
+    if BARE_VERILATOR_FALLBACK.search(text) and "run_verilator.sh" in text:
+        # Allowed only if the bare path is unreachable dead code after wrapper; still flag.
+        if re.search(r"elif\s+command\s+-v\s+verilator|elif\s+\[\[\s+-x\s+\"\$HOME/.local/oss-cad", text):
+            errs.append(
+                f"{rel}: bare verilator/oss-cad fallback after run_verilator.sh "
+                f"(PINNOTFOUND guard bypass — use wrapper only)"
+            )
+
+    # Any SKIP path that exits 0 is a false green (covers wording variants).
+    if re.search(r"^[^#\n]*\bSKIP\b", text, re.M | re.I):
+        lines = text.splitlines()
+        for i, line in enumerate(lines):
+            if line.lstrip().startswith("#"):
+                continue
+            if not re.search(r"\bSKIP\b", line, re.I):
+                continue
+            if "SKIP-NOT-PASS" in line:
+                # look ahead for exit
+                window = "\n".join(lines[i : min(len(lines), i + 12)])
+            else:
+                window = "\n".join(lines[i : min(len(lines), i + 12)])
+            if EXIT0.search(window) and not (EXIT77.search(window) or EXIT3.search(window)):
+                # success path later in file may contain exit 0; require exit 0 within 8 lines
+                near = "\n".join(lines[i : min(len(lines), i + 8)])
+                if EXIT0.search(near) and not EXIT77.search(near) and not EXIT3.search(near):
+                    # ignore end-of-file success `exit 0` far from SKIP
+                    if re.search(r"exit\s+0", near):
+                        # If this SKIP block's near window has exit 0 as the only exit, flag.
+                        exits = re.findall(r"\bexit\s+(\d+)\b", near)
+                        if exits and exits[0] == "0":
+                            errs.append(
+                                f"{rel}:{i+1}: SKIP path exits 0 (must be 77 SKIP-NOT-PASS or 3 refuse)"
+                            )
+
+    # Scripts that build/run a Verilator TB must prove the TB executed.
     # Scripts that build/run a Verilator TB must prove the TB executed.
     runs_tb = bool(
         re.search(r"run_verilator\.sh|--cc\s+--exe|--exe\s+--build", text)

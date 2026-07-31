@@ -2,14 +2,12 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+# Prefer run_verilator.sh exclusively — bare verilator bypasses PINNOTFOUND→rc=2.
+RUN_VERILATOR="${RUN_VERILATOR:-$ROOT/scripts/run_verilator.sh}"
 VERILATOR_BIN="${VERILATOR:-}"
 if [[ -z "$VERILATOR_BIN" ]]; then
-  if [[ -x "$ROOT/scripts/run_verilator.sh" ]]; then
-    VERILATOR_BIN="$ROOT/scripts/run_verilator.sh"
-  elif command -v verilator >/dev/null 2>&1; then
-    VERILATOR_BIN="$(command -v verilator)"
-  elif [[ -x "$HOME/.local/oss-cad-suite-20260726/bin/verilator" ]]; then
-    VERILATOR_BIN="$HOME/.local/oss-cad-suite-20260726/bin/verilator"
+  if [[ -x "$RUN_VERILATOR" ]]; then
+    VERILATOR_BIN="$RUN_VERILATOR"
   fi
 fi
 
@@ -17,13 +15,34 @@ if [[ -z "$VERILATOR_BIN" || ! -x "$VERILATOR_BIN" ]]; then
   echo "SKIP: Verilator not found; SDRAM startup command-bus co-sim was not run." >&2
   echo "SKIP: set VERILATOR=/path/to/verilator or install oss-cad-suite under ~/.local." >&2
   echo "SKIP-NOT-PASS: Verilator missing; soft-skip≠PASS" >&2
-  exit 77
+  if [[ "${ALLOW_MISSING_VERILATOR:-0}" == "1" ]]; then
+    exit 77
+  fi
+  echo "RTL SIM ERROR: Verilator not found; refusing PASS without simulation." >&2
+  exit 3
 fi
 
 OUT="$ROOT/build/verilator_sdram_startup"
 mkdir -p "$OUT"
 
-"$VERILATOR_BIN" --version
+set +e
+VL_VER="$("$VERILATOR_BIN" --version 2>&1)"
+VL_RC=$?
+set -e
+if [[ "$VL_RC" -eq 127 ]]; then
+  echo "SKIP-NOT-PASS: Verilator not found; SDRAM startup co-sim was NOT run." >&2
+  if [[ "${ALLOW_MISSING_VERILATOR:-0}" == "1" ]]; then
+    exit 77
+  fi
+  echo "RTL SIM ERROR: Verilator not found; refusing PASS without simulation." >&2
+  exit 3
+fi
+if [[ "$VL_RC" -ne 0 ]]; then
+  echo "RTL SIM ERROR: Verilator probe failed (rc=$VL_RC):" >&2
+  printf '%s\n' "$VL_VER" >&2
+  exit "$VL_RC"
+fi
+printf '%s\n' "$VL_VER"
 
 build_variant() {
   local freq="$1"

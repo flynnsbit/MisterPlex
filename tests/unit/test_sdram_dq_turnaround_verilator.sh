@@ -2,24 +2,47 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+# Always prefer scripts/run_verilator.sh so PINNOTFOUND/%Error become rc=2 HARD FAIL
+# (bare `verilator -Wno-fatal` can green a compile that never linked pins).
+RUN_VERILATOR="${RUN_VERILATOR:-$ROOT/scripts/run_verilator.sh}"
 VERILATOR_BIN="${VERILATOR:-}"
 if [[ -z "$VERILATOR_BIN" ]]; then
-  if [[ -x "$ROOT/scripts/run_verilator.sh" ]]; then
-    VERILATOR_BIN="$ROOT/scripts/run_verilator.sh"
-  elif command -v verilator >/dev/null 2>&1; then
-    VERILATOR_BIN="$(command -v verilator)"
+  if [[ -x "$RUN_VERILATOR" ]]; then
+    VERILATOR_BIN="$RUN_VERILATOR"
   fi
 fi
 
-if [[ -z "$VERILATOR_BIN" ]]; then
+if [[ -z "$VERILATOR_BIN" || ! -x "$VERILATOR_BIN" ]]; then
   echo "SKIP: Verilator runner not found; SDRAM DQ turnaround co-sim was not run." >&2
-  exit 0
+  echo "SKIP-NOT-PASS: Verilator missing; soft-skip≠PASS" >&2
+  if [[ "${ALLOW_MISSING_VERILATOR:-0}" == "1" ]]; then
+    exit 77
+  fi
+  echo "RTL SIM ERROR: Verilator not found; refusing PASS without simulation." >&2
+  exit 3
 fi
 
 OUT="$ROOT/build/verilator_sdram_dq"
 mkdir -p "$OUT"
 
-"$VERILATOR_BIN" --version
+set +e
+VL_VER="$("$VERILATOR_BIN" --version 2>&1)"
+VL_RC=$?
+set -e
+if [[ "$VL_RC" -eq 127 ]]; then
+  echo "SKIP-NOT-PASS: Verilator not found; SDRAM DQ turnaround co-sim was NOT run." >&2
+  if [[ "${ALLOW_MISSING_VERILATOR:-0}" == "1" ]]; then
+    exit 77
+  fi
+  echo "RTL SIM ERROR: Verilator not found; refusing PASS without simulation." >&2
+  exit 3
+fi
+if [[ "$VL_RC" -ne 0 ]]; then
+  echo "RTL SIM ERROR: Verilator probe failed (rc=$VL_RC):" >&2
+  printf '%s\n' "$VL_VER" >&2
+  exit "$VL_RC"
+fi
+printf '%s\n' "$VL_VER"
 
 build_variant() {
   local name="$1"

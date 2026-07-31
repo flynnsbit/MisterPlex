@@ -5,9 +5,31 @@ This catches the dangerous class where a unit test is removed from the
 unit-unlocked recipe or build prerequisite list and the suite silently stays
 empty/green for that check. Runtime announcement is still owned by each test;
 this guard verifies the suite remains registered to run every expected test.
+
+COUNT IS DERIVED FROM REALITY, NOT A MAGIC NUMBER
+-------------------------------------------------
+`len(EXPECTED_COMMANDS)` must equal the number of non-ignored recipe lines in
+the Makefile `unit-unlocked` target. Branches that hand-edit only the count
+(or only the Makefile) produce UNREGISTERED_COMMAND / MISSING_COMMAND and
+turn `make unit` RED. That is intentional.
+
+On mismatch this tool prints:
+  - UNIT_ROLLCALL_FAIL + counts (actual vs expected)
+  - every MISSING_* / UNREGISTERED_* line
+  - UNIT_ROLLCALL_MERGE_HINT with the exact sync command
+
+To re-sync the registration list FROM the Makefile (after an intentional
+recipe change on THIS branch):
+
+  python3 tests/unit/test_unit_rollcall.py --write-expected
+
+Never copy a count from another branch. Never invent a number. The set is
+the source of truth; the integer is just len(set).
 """
 from __future__ import annotations
 
+import argparse
+import hashlib
 import os
 import re
 import sys
@@ -15,6 +37,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 MAKEFILE = Path(os.environ.get("UNIT_ROLLCALL_MAKEFILE", ROOT / "Makefile"))
+THIS_FILE = Path(__file__).resolve()
 
 EXPECTED_PREREQS = [
     "unit-rollcall",
@@ -147,6 +170,7 @@ EXPECTED_COMMANDS = [
     "$(ROOT)/tests/unit/test_confstr_guard.sh",
     "$(ROOT)/tests/unit/test_core_conf_geometry_gate.sh",
     "$(ROOT)/tests/unit/test_video_regression_liveness.sh",
+    "python3 $(ROOT)/tests/unit/test_pipe_rc_trap.py",
     "$(ROOT)/tests/unit/test_timing_margin_gate.sh",
     "$(ROOT)/tests/unit/test_release_rbf_hash.sh",
     "$(ROOT)/tests/unit/test_sdram_startup_verilator.sh",
@@ -216,11 +240,108 @@ def parse_unit_unlocked(makefile: Path) -> tuple[list[str], list[str]]:
     return prereqs, commands
 
 
-def main() -> int:
+def set_fingerprint(items: list[str]) -> str:
+    blob = "\n".join(items).encode()
+    return hashlib.sha256(blob).hexdigest()[:16]
+
+
+def print_merge_hint(
+    *,
+    protected_commands: list[str],
+    missing_commands: list[str],
+    unregistered_commands: list[str],
+) -> None:
+    print("UNIT_ROLLCALL_MERGE_HINT")
+    print(
+        "  Makefile unit-unlocked recipe and EXPECTED_COMMANDS disagree. "
+        "This is the usual merge collision across lanes (counts 99/101/107/111…)."
+    )
+    print("  DO NOT hand-edit only a count integer. The full command SET must match.")
+    print("  After an intentional recipe change on THIS branch, re-derive the list:")
+    print("    python3 tests/unit/test_unit_rollcall.py --write-expected")
+    print("  Then re-run: python3 tests/unit/test_unit_rollcall.py")
+    print(
+        f"  derived_protected_count={len(protected_commands)} "
+        f"derived_protected_sha256_16={set_fingerprint(protected_commands)} "
+        f"registered_sha256_16={set_fingerprint(list(EXPECTED_COMMANDS))}"
+    )
+    if unregistered_commands:
+        print("  UNREGISTERED (in Makefile, not in EXPECTED_COMMANDS) — sibling lane added a test:")
+        for item in unregistered_commands:
+            print(f"    + {item}")
+    if missing_commands:
+        print("  MISSING (in EXPECTED_COMMANDS, not in Makefile) — this branch is stale vs recipe:")
+        for item in missing_commands:
+            print(f"    - {item}")
+
+
+def write_expected(makefile: Path) -> int:
+    """Rewrite EXPECTED_PREREQS/EXPECTED_COMMANDS from Makefile reality."""
+    prereqs, commands = parse_unit_unlocked(makefile)
+    ignored = set(IGNORED_COMMANDS)
+    protected = [c for c in commands if c not in ignored]
+    text = THIS_FILE.read_text(encoding="utf-8")
+
+    def render_list(name: str, items: list[str]) -> str:
+        body = ",\n".join(f'    "{item}"' for item in items)
+        return f"{name} = [\n{body},\n]\n"
+
+    def replace_assign(src: str, name: str, items: list[str]) -> str:
+        pattern = re.compile(
+            rf"^{re.escape(name)} = \[.*?^\]\n",
+            re.M | re.S,
+        )
+        repl = render_list(name, items)
+        new_src, n = pattern.subn(repl, src, count=1)
+        if n != 1:
+            raise SystemExit(f"failed to rewrite {name}: matches={n}")
+        return new_src
+
+    text = replace_assign(text, "EXPECTED_PREREQS", prereqs)
+    text = replace_assign(text, "EXPECTED_COMMANDS", protected)
+    THIS_FILE.write_text(text, encoding="utf-8")
+    print(
+        "UNIT_ROLLCALL_WROTE "
+        f"prereqs={len(prereqs)} protected_commands={len(protected)} "
+        f"ignored={len(ignored)} "
+        f"protected_sha256_16={set_fingerprint(protected)} "
+        f"path={THIS_FILE}"
+    )
+    return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument(
+        "--write-expected",
+        action="store_true",
+        help="Rewrite EXPECTED_* lists from the Makefile unit-unlocked recipe (derive from reality).",
+    )
+    ap.add_argument(
+        "--dump-actual",
+        action="store_true",
+        help="Print the Makefile-derived protected command list and exit 0.",
+    )
+    args = ap.parse_args(argv)
+
+    if args.write_expected:
+        return write_expected(MAKEFILE)
+
     prereqs, commands = parse_unit_unlocked(MAKEFILE)
     ignored_command_set = set(IGNORED_COMMANDS)
     ignored_commands = [c for c in commands if c in ignored_command_set]
     protected_commands = [c for c in commands if c not in ignored_command_set]
+
+    if args.dump_actual:
+        print(f"DERIVED_PROTECTED_COUNT={len(protected_commands)}")
+        print(f"DERIVED_PROTECTED_SHA256_16={set_fingerprint(protected_commands)}")
+        for c in protected_commands:
+            print(c)
+        return 0
+
+    dup_expected = sorted({c for c in EXPECTED_COMMANDS if EXPECTED_COMMANDS.count(c) > 1})
+    dup_protected = sorted({c for c in protected_commands if protected_commands.count(c) > 1})
+
     missing_prereqs = [p for p in EXPECTED_PREREQS if p not in prereqs]
     unregistered_prereqs = [p for p in prereqs if p not in EXPECTED_PREREQS]
     missing_commands = [c for c in EXPECTED_COMMANDS if c not in protected_commands]
@@ -233,6 +354,8 @@ def main() -> int:
         or missing_commands
         or unregistered_commands
         or missing_ignored_commands
+        or dup_expected
+        or dup_protected
     ):
         print("UNIT_ROLLCALL_FAIL")
         print(
@@ -241,7 +364,9 @@ def main() -> int:
             f"actual_commands={len(commands)} protected_commands={len(protected_commands)} "
             f"expected_commands={len(EXPECTED_COMMANDS)} "
             f"actual_ignored_commands={len(ignored_commands)} "
-            f"expected_ignored_commands={len(IGNORED_COMMANDS)}"
+            f"expected_ignored_commands={len(IGNORED_COMMANDS)} "
+            f"derived_protected_sha256_16={set_fingerprint(protected_commands)} "
+            f"registered_sha256_16={set_fingerprint(list(EXPECTED_COMMANDS))}"
         )
         for item in missing_prereqs:
             print(f"MISSING_PREREQ {item}")
@@ -253,6 +378,15 @@ def main() -> int:
             print(f"UNREGISTERED_COMMAND {item} -- register this unit-unlocked command")
         for item in missing_ignored_commands:
             print(f"MISSING_IGNORED_COMMAND {item}")
+        for item in dup_expected:
+            print(f"DUPLICATE_EXPECTED_COMMAND {item}")
+        for item in dup_protected:
+            print(f"DUPLICATE_MAKEFILE_COMMAND {item}")
+        print_merge_hint(
+            protected_commands=protected_commands,
+            missing_commands=missing_commands,
+            unregistered_commands=unregistered_commands,
+        )
         return 1
 
     print(
@@ -260,8 +394,10 @@ def main() -> int:
         f"actual_prereqs={len(prereqs)} expected_prereqs={len(EXPECTED_PREREQS)} "
         f"actual_commands={len(commands)} protected_commands={len(protected_commands)} "
         f"expected_commands={len(EXPECTED_COMMANDS)} "
+        f"derived_count={len(protected_commands)} "
         f"actual_ignored_commands={len(ignored_commands)} "
         f"expected_ignored_commands={len(IGNORED_COMMANDS)} "
+        f"derived_protected_sha256_16={set_fingerprint(protected_commands)} "
         f"makefile={MAKEFILE}"
     )
     return 0

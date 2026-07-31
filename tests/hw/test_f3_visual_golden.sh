@@ -302,7 +302,7 @@ PY
     --noise-report "$OUT/noise.json" \
     --report "$OUT/compare_bad_expected_fail.json" \
     --diff "$OUT/diff_bad_expected_fail.png" | tee "$OUT/compare_bad_expected_fail.txt"
-  rc=$?
+  rc=${PIPESTATUS[0]}
   set -e
   if [[ "$rc" -eq 0 ]]; then
     echo "FAIL: VISUAL_FAULT_DEMO did not go red" >&2
