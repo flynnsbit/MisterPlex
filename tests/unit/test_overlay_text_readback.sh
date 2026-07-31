@@ -1,33 +1,43 @@
 #!/usr/bin/env bash
-# String read-back acceptance for playback overlay (parent correction).
-# Lattice pitch is NOT the gate. Exact string recovery is.
+# String read-back acceptance for playback overlay.
+# Gate specification = real HDMI pair (same device + grabber):
+#   RED  tests/unit/fixtures/overlay_readback/overlay_lowres_evidence.png
+#   GREEN tests/unit/fixtures/overlay_readback/overlay_FIXED_db3d9367_stopped.png
+# Synthetic green alone is NOT sufficient (parent rule: red-before-green is half).
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$ROOT"
 TOOL=tools/readback_overlay_text.py
-EVIDENCE=.agent-work/osd-hires/overlay_lowres_evidence.png
 
-echo "== selftest-red (evidence must NOT recover STOPPED) =="
-python3 "$TOOL" --selftest-red --expect STOPPED
-rc_red=$?
-echo "selftest-red captured rc=$rc_red"
+echo "== selftest-pair (RED mush + GREEN silicon FIXED) =="
+python3 "$TOOL" --selftest-pair
+rc_pair=$?
+echo "selftest-pair captured rc=$rc_pair"
 
-echo "== selftest-green (scale>=2 even-y after DE cull) =="
-python3 "$TOOL" --selftest-green --expect STOPPED
-rc_green=$?
-echo "selftest-green captured rc=$rc_green"
+echo "== direct FIXED image (must PASS) =="
+python3 "$TOOL" --image tests/unit/fixtures/overlay_readback/overlay_FIXED_db3d9367_stopped.png --expect STOPPED
+rc_fix=$?
+echo "fixed captured rc=$rc_fix"
 
-if [[ ! -f "$EVIDENCE" ]]; then
-  echo "WARN missing $EVIDENCE"
-fi
+echo "== direct OLD evidence (must FAIL measured) =="
+set +e
+python3 "$TOOL" --image tests/unit/fixtures/overlay_readback/overlay_lowres_evidence.png --expect STOPPED
+rc_old=$?
+set -e
+echo "old captured rc=$rc_old"
 
-if [[ "$rc_red" -ne 0 ]]; then
-  echo "FAIL: evidence selftest-red"
+if [[ "$rc_pair" -ne 0 ]]; then
+  echo "FAIL: selftest-pair"
   echo "true rc=1"
   exit 1
 fi
-if [[ "$rc_green" -ne 0 ]]; then
-  echo "FAIL: synthetic selftest-green"
+if [[ "$rc_fix" -ne 0 ]]; then
+  echo "FAIL: FIXED image not GREEN"
+  echo "true rc=1"
+  exit 1
+fi
+if [[ "$rc_old" -ne 1 ]]; then
+  echo "FAIL: OLD evidence must be measured FAIL rc=1 (got $rc_old)"
   echo "true rc=1"
   exit 1
 fi
