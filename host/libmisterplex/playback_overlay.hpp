@@ -10,9 +10,9 @@
 //     overlay timeout. Transport dispatch owns the actual seek/skip.
 //
 // Layout is resolution-independent: metrics are fractions of the *buffer*
-// (present canvas / output) size, snapped to integer pixels. Callers must pass
-// the present canvas size — never a separate decode-tier size — so geometry is
-// independent of streaming content resolution. See docs/osd-hires.md.
+// (present canvas / coded) size. bodyScale is always >= 2 so glyph rows survive
+// present_core's even-row scanout cull; text y is snapped even. Callers must
+// pass the present/coded canvas size — never decode-tier alone. See docs/osd-hires.md.
 //
 // The renderer is buffer-format agnostic (RGB24, RGB565LE, BGRA32, YUV420p) and
 // only touches the overlay dirty region; when hidden, render*() returns false
@@ -44,10 +44,12 @@ struct OverlayRect {
     bool empty() const { return w <= 0 || h <= 0; }
 };
 
-// Font cells (native pixels, always drawn at scale=1). Hand-authored geometric
-// bitmaps for MiSTerPlex (CC0-1.0) — not a copy of any proprietary font file.
-// Two sizes: 8×13 for short rasters (≤360 lines / 240p-class), 12×16 for 480+
-// line canvases. Prefer denser glyphs over 5×7 fillRect block-upscale.
+// Font cells (CC0 hand-authored geometric bitmaps for MiSTerPlex).
+// HARD CONSTRAINT from present_core.sv: scanout fetches only even store rows
+// (STORE_Y_SCALE=2.0 with FRAME_H=480). Drawing a glyph row as a single content
+// row (scale=1) deletes every other glyph row → silent character corruption
+// (e.g. 8→0, 6→C). bodyScale must be >= 2 so each glyph row occupies ≥2 content
+// rows and one always survives. Text y-origins are snapped to even rows.
 enum class OverlayFontId : uint8_t { Small8x13 = 0, Large12x16 = 1 };
 
 static constexpr int kOverlayFontSmallW = 8;
@@ -56,16 +58,15 @@ static constexpr int kOverlayFontSmallAdvance = 9;
 static constexpr int kOverlayFontLargeW = 12;
 static constexpr int kOverlayFontLargeH = 16;
 static constexpr int kOverlayFontLargeAdvance = 13;
+static constexpr int kOverlayMinScale = 2; // vertical (and default body) floor
 
-// Resolution-scaled chrome metrics. Derived only from buffer W×H (present
-// canvas). Text/icon use native glyph cells (bodyScale=1); panel geometry
-// scales with the raster so 240p stays legible and larger canvases gain margin.
+// Resolution-scaled chrome metrics from buffer W×H (present/coded canvas).
 struct OverlayLayoutMetrics {
     int margin = 8;
     int panelH = 64;
-    int bodyScale = 1;  // always 1 — never block-upscale the bitmap font
-    int titleScale = 1;
-    int iconScale = 1;  // 1 = compact icon; 2 on tall canvases
+    int bodyScale = kOverlayMinScale; // >=2 — odd-row cull survival
+    int titleScale = kOverlayMinScale;
+    int iconScale = kOverlayMinScale;
     OverlayFontId fontId = OverlayFontId::Small8x13;
     int glyphW = kOverlayFontSmallW;
     int glyphH = kOverlayFontSmallH;
@@ -78,19 +79,20 @@ struct OverlayLayoutMetrics {
     int skipBoxH = 28;
     int noticeBoxH = 28;
 
+    int textCellH() const { return glyphH * bodyScale; }
+    int textCellW() const { return glyphW * bodyScale; }
+
     static OverlayLayoutMetrics compute(int w, int h) {
         OverlayLayoutMetrics m;
         if (w <= 0 || h <= 0)
             return m;
         m.margin = std::max(6, w / 40);
-        // Panel ~18–28% of height, clamped for short rasters (240p DE world).
-        m.panelH = std::max(56, std::min(h / 4, std::max(64, h / 5)));
-        if (m.panelH > h - 2 * m.margin)
-            m.panelH = std::max(40, h - 2 * m.margin);
-        m.bodyScale = 1;
-        m.titleScale = 1;
-        // 12×16 on 480-line product canvas and above; 8×13 on 240p-class.
-        if (h >= 360) {
+        // Scale floor 2 (even-row cull). Taller canvases may use 3.
+        m.bodyScale = std::max(kOverlayMinScale, h >= 720 ? 3 : 2);
+        m.titleScale = m.bodyScale;
+        m.iconScale = std::max(kOverlayMinScale, h >= 720 ? 3 : 2);
+        // Prefer denser 8×13; 12×16 only when panel has room after scale≥2.
+        if (h >= 480 && m.bodyScale == 2) {
             m.fontId = OverlayFontId::Large12x16;
             m.glyphW = kOverlayFontLargeW;
             m.glyphH = kOverlayFontLargeH;
@@ -101,23 +103,22 @@ struct OverlayLayoutMetrics {
             m.glyphH = kOverlayFontSmallH;
             m.glyphAdvance = kOverlayFontSmallAdvance;
         }
-        m.iconScale = (h >= 720) ? 2 : 1;
+        const int textH = m.glyphH * m.bodyScale;
+        // Panel must fit label + time + bar with scaled text.
+        const int need = 8 + textH + 4 + textH + 12 + std::max(4, 6);
+        m.panelH = std::max(need, std::min(h / 3, std::max(64, h / 4)));
+        if (m.panelH > h - 2 * m.margin)
+            m.panelH = std::max(need, h - 2 * m.margin);
         m.barH = std::max(4, m.panelH / 12);
         m.barBottomPad = 10 + m.barH;
-        m.labelTop = 8;
-        m.iconCy = 8 + std::max(10, m.glyphH / 2 + 2) * m.iconScale;
-        m.timeTop = m.labelTop + m.glyphH + 4;
-        if (m.timeTop + m.glyphH + m.barBottomPad > m.panelH) {
-            m.labelTop = 4;
-            m.iconCy = 4 + m.glyphH / 2;
-            m.timeTop = m.labelTop + m.glyphH + 2;
-            m.barBottomPad = 8 + m.barH;
-            if (m.timeTop + m.glyphH + m.barBottomPad > m.panelH) {
-                m.panelH = std::min(h - 2 * m.margin,
-                                    m.timeTop + m.glyphH + m.barBottomPad + 4);
-            }
-        }
-        m.skipBoxH = std::max(24, m.glyphH + 12);
+        m.labelTop = 6;
+        // Snap offsets so panel.y + offset is even when panel.y is even (panel
+        // y is h - panelH - margin; we also snap at draw time).
+        m.labelTop &= ~1;
+        m.iconCy = m.labelTop + textH / 2;
+        m.timeTop = m.labelTop + textH + 4;
+        m.timeTop &= ~1;
+        m.skipBoxH = std::max(28, textH + 12);
         m.noticeBoxH = m.skipBoxH;
         return m;
     }
@@ -259,7 +260,13 @@ public:
 
     static OverlayRect panelBounds(int w, int h) {
         const OverlayLayoutMetrics m = OverlayLayoutMetrics::compute(w, h);
-        return OverlayRect{m.margin, h - m.panelH - m.margin, w - m.margin * 2, m.panelH};
+        // Even top edge so labelTop offsets keep text on a deterministic phase.
+        int py = h - m.panelH - m.margin;
+        py &= ~1;
+        int ph = m.panelH;
+        if (py + ph > h)
+            ph = h - py;
+        return OverlayRect{m.margin, py, w - m.margin * 2, ph};
     }
 
 private:
@@ -517,7 +524,7 @@ private:
         fillRect(t, x + ww - 1, y, 1, hh, c, alpha);
     }
 
-    // 8×13 bitmaps, MSB = left column. Rows are unique pixels (scale=1).
+    // 8×13 bitmaps, MSB = left column. Drawn with bodyScale>=2 (odd-row cull).
     static const uint8_t* glyph(char ch) {
         static constexpr uint8_t space[13] = {};
         // Digits and letters needed for transport chrome.
@@ -639,12 +646,12 @@ private:
     }
 
     static int textWidth(const char* text, const OverlayLayoutMetrics& m) {
-        if (!text || m.bodyScale <= 0)
+        if (!text)
             return 0;
         const int n = static_cast<int>(std::strlen(text));
         if (n <= 0)
             return 0;
-        const int sc = m.bodyScale;
+        const int sc = std::max(kOverlayMinScale, m.bodyScale);
         return n * m.glyphAdvance * sc - sc;
     }
 
@@ -782,19 +789,21 @@ private:
     template <typename Target>
     static void drawText(Target& t, int x, int y, const char* text, const OverlayLayoutMetrics& m,
                          Color c, int alpha) {
-        if (!text || m.bodyScale <= 0)
+        if (!text)
             return;
-        const int sc = m.bodyScale; // policy: 1
+        // Enforce vertical scale >= 2 so each glyph row survives even-row cull.
+        const int sc = std::max(kOverlayMinScale, m.bodyScale);
+        // Snap origin to even content row — surviving phase is deterministic.
+        y &= ~1;
         for (const char* p = text; *p; ++p) {
             if (m.fontId == OverlayFontId::Large12x16) {
                 const uint16_t* g = glyph12(*p);
                 for (int row = 0; row < m.glyphH; ++row) {
                     const uint16_t bits = g[row];
                     for (int col = 0; col < m.glyphW; ++col) {
-                        // MSB of the top 12 bits is left column.
                         if ((bits & (1u << (15 - col))) == 0)
                             continue;
-                        blendPixel(t, x + col, y + row, c, alpha);
+                        fillRect(t, x + col * sc, y + row * sc, sc, sc, c, alpha);
                     }
                 }
             } else {
@@ -804,7 +813,7 @@ private:
                     for (int col = 0; col < m.glyphW; ++col) {
                         if ((bits & (1u << (7 - col))) == 0)
                             continue;
-                        blendPixel(t, x + col, y + row, c, alpha);
+                        fillRect(t, x + col * sc, y + row * sc, sc, sc, c, alpha);
                     }
                 }
             }
@@ -830,7 +839,7 @@ private:
     static void drawIcon(Target& t, PlaybackOverlayState state, int cx, int cy, int alpha,
                          int iconScale) {
         constexpr Color amber{255, 178, 32};
-        const int s = std::max(1, iconScale);
+        const int s = std::max(kOverlayMinScale, iconScale);
         if (state == PlaybackOverlayState::Playing) {
             // Filled play triangle (base 14×s, height 16×s) — not a 5×7 stair.
             for (int row = 0; row < 16 * s; ++row) {
@@ -873,17 +882,18 @@ private:
             strokeRect(t, p.x, p.y, p.w, p.h, panelEdge, (150 * alpha) / 255);
 
             const int iconXFinal = p.x + 18;
-            const int labelY = p.y + m.labelTop;
-            const int iconCy = p.y + m.iconCy;
-            drawIcon(t, s.state, iconXFinal, iconCy, alpha, m.iconScale);
-            drawText(t, iconXFinal + 14 + 8 * m.iconScale, labelY, stateLabel(s.state), m, white,
-                     alpha);
+            // Even y-origins: present_core drops odd store rows.
+            const int labelY = (p.y + m.labelTop) & ~1;
+            const int iconCy = (p.y + m.iconCy) & ~1;
+            drawIcon(t, s.state, iconXFinal, iconCy, alpha, std::max(kOverlayMinScale, m.iconScale));
+            drawText(t, iconXFinal + 14 + 8 * std::max(kOverlayMinScale, m.iconScale), labelY,
+                     stateLabel(s.state), m, white, alpha);
 
             char elapsed[32];
             char total[32];
             formatTime(s.positionMs, elapsed);
             formatTime(s.durationMs, total);
-            const int timeY = p.y + m.timeTop;
+            const int timeY = (p.y + m.timeTop) & ~1;
             drawText(t, p.x + 14, timeY, elapsed, m, white, alpha);
             const int totalW = textWidth(total, m);
             drawText(t, p.x + p.w - 14 - totalW, timeY, total, m, muted, alpha);
@@ -924,7 +934,7 @@ private:
             const int boxY = std::max(8, h / 2 - boxH - 2);
             fillRect(t, boxX, boxY, boxW, boxH, black, (190 * skipAlpha) / 255);
             strokeRect(t, boxX, boxY, boxW, boxH, amber, skipAlpha);
-            const int textY = boxY + std::max(4, (boxH - m.glyphH) / 2);
+            const int textY = (boxY + std::max(4, (boxH - m.textCellH()) / 2)) & ~1;
             drawText(t, boxX + (boxW - tw) / 2, textY, text, m, white, skipAlpha);
         }
 
@@ -937,7 +947,7 @@ private:
             const int boxY = std::max(8, h / 5);
             fillRect(t, boxX, boxY, boxW, boxH, black, (200 * noticeAlpha) / 255);
             strokeRect(t, boxX, boxY, boxW, boxH, amber, noticeAlpha);
-            const int textY = boxY + std::max(4, (boxH - m.glyphH) / 2);
+            const int textY = (boxY + std::max(4, (boxH - m.textCellH()) / 2)) & ~1;
             drawText(t, boxX + (boxW - tw) / 2, textY, s.noticeText, m, white, noticeAlpha);
         }
     }

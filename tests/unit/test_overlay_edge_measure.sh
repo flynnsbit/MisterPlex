@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
-# Unit gate for tools/measure_overlay_edge.py (w-osd-hires parent criterion).
+# OPTIONAL / DEMOTED: lattice edge pitch (parent withdrew this as acceptance).
+# Primary gate is tools/readback_overlay_text.py (string read-back).
+# Kept so the edge tool still has a smoke path; do not treat PASS here as chrome OK.
 #
 # Must:
 #   1) selftest: native 1080p chevron PASS, bilinear-upscaled 640→1080 FAIL

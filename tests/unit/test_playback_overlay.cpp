@@ -305,8 +305,8 @@ int main() {
             CHECK(panel.h * 10 >= c.h);       // >= 10%
             CHECK(panel.h * 5 <= c.h * 2);    // <= 40%
             const auto lm = PlaybackOverlay::layoutMetrics(c.w, c.h);
-            // Native 8×13 cells — never block-upscale the font.
-            CHECK(lm.bodyScale == 1);
+            // present_core odd-row cull requires vertical scale >= 2.
+            CHECK(lm.bodyScale >= 2);
             // Timeline endpoints: half progress → fill mid-bar.
             std::vector<uint8_t> rgb(static_cast<size_t>(c.w) * c.h * 3, 0);
             CHECK(hi.renderRgb24At(rgb.data(), c.w, c.h, 1000));
@@ -373,40 +373,164 @@ int main() {
         (void)panel;
     }
 
-    // 7. Glyph quality: 8×13 at scale=1 has more unique lit rows in a glyph
-    // cell than 5×7 block-scaled to the same footprint (scale=2 → 14 px tall
-    // but only 7 unique source rows). Count distinct horizontal edge rows in
-    // the label band — denser fonts produce more edge rows per em-height.
+    // 7. Even-row cull survival + string read-back of "STOPPED".
+    // present_core fetches only even store rows (STORE_Y_SCALE=2). scale=1
+    // destroys alternate glyph rows (8→0 etc). bodyScale>=2 + even y keeps
+    // every glyph feature on a surviving row. Recover label by template match
+    // on the even-row raster (DE-class), not edge sharpness.
     {
-        constexpr int OW = 640, OH = 480;
+        constexpr int OW = 624, OH = 480;
         const auto lm = PlaybackOverlay::layoutMetrics(OW, OH);
-        CHECK(lm.bodyScale == 1);
-        std::vector<uint8_t> rgb(static_cast<size_t>(OW) * OH * 3, 0);
+        CHECK(lm.bodyScale >= 2);
+        CHECK((PlaybackOverlay::panelBounds(OW, OH).y & 1) == 0);
+
+        std::vector<uint8_t> rgb(static_cast<size_t>(OW) * OH * 3, 20);
         PlaybackOverlay ov;
-        ov.showAt(PlaybackOverlayState::Paused, 0, 1, 0);
+        ov.showAt(PlaybackOverlayState::Stopped, 0, 0, 0);
         CHECK(ov.renderRgb24At(rgb.data(), OW, OH, 0));
+
+        std::vector<uint8_t> evenY(static_cast<size_t>(OW) * (OH / 2));
+        for (int y = 0; y < OH; y += 2) {
+            for (int x = 0; x < OW; ++x) {
+                const size_t i = (static_cast<size_t>(y) * OW + x) * 3;
+                const int Y = (77 * rgb[i] + 150 * rgb[i + 1] + 29 * rgb[i + 2]) >> 8;
+                evenY[static_cast<size_t>(y / 2) * OW + x] = static_cast<uint8_t>(Y);
+            }
+        }
+
+        const int sc = lm.bodyScale;
+        CHECK(sc >= 2);
+        const bool large = (lm.fontId == misterplex::OverlayFontId::Large12x16);
+
+        // STOPPED templates — must match playback_overlay.hpp glyph tables.
+        auto onAt = [&](char ch, int row, int col) -> bool {
+            if (large) {
+                static constexpr uint16_t S[16] = {
+                    0x0000, 0x1F00, 0x30C0, 0x3000, 0x3000, 0x1F00, 0x00C0, 0x0060,
+                    0x0060, 0x0060, 0x30C0, 0x1F00, 0x0000, 0x0000, 0x0000, 0x0000};
+                static constexpr uint16_t T[16] = {
+                    0x0000, 0x3FC0, 0x0C00, 0x0C00, 0x0C00, 0x0C00, 0x0C00, 0x0C00,
+                    0x0C00, 0x0C00, 0x0C00, 0x0C00, 0x0C00, 0x0000, 0x0000, 0x0000};
+                static constexpr uint16_t O[16] = {
+                    0x0000, 0x1F00, 0x30C0, 0x6060, 0x6060, 0x6060, 0x6060, 0x6060,
+                    0x6060, 0x6060, 0x6060, 0x30C0, 0x1F00, 0x0000, 0x0000, 0x0000};
+                static constexpr uint16_t P[16] = {
+                    0x0000, 0x3F00, 0x30C0, 0x3060, 0x3060, 0x30C0, 0x3F00, 0x3000,
+                    0x3000, 0x3000, 0x3000, 0x3000, 0x3000, 0x0000, 0x0000, 0x0000};
+                static constexpr uint16_t E[16] = {
+                    0x0000, 0x3FC0, 0x3000, 0x3000, 0x3000, 0x3000, 0x3F00, 0x3000,
+                    0x3000, 0x3000, 0x3000, 0x3000, 0x3FC0, 0x0000, 0x0000, 0x0000};
+                static constexpr uint16_t D[16] = {
+                    0x0000, 0x3E00, 0x3180, 0x30C0, 0x3060, 0x3060, 0x3060, 0x3060,
+                    0x3060, 0x3060, 0x30C0, 0x3180, 0x3E00, 0x0000, 0x0000, 0x0000};
+                const uint16_t* g = S;
+                switch (ch) {
+                case 'S': g = S; break;
+                case 'T': g = T; break;
+                case 'O': g = O; break;
+                case 'P': g = P; break;
+                case 'E': g = E; break;
+                case 'D': g = D; break;
+                default: break;
+                }
+                if (row < 0 || row >= 16 || col < 0 || col >= 12)
+                    return false;
+                return (g[row] & (1u << (15 - col))) != 0;
+            }
+            static constexpr uint8_t S[13] = {0x00, 0x3C, 0x66, 0x60, 0x60, 0x3C, 0x06,
+                                             0x06, 0x06, 0x66, 0x3C, 0x00, 0x00};
+            static constexpr uint8_t T[13] = {0x00, 0xFF, 0x18, 0x18, 0x18, 0x18, 0x18,
+                                             0x18, 0x18, 0x18, 0x18, 0x00, 0x00};
+            static constexpr uint8_t O[13] = {0x00, 0x3C, 0x66, 0xC3, 0xC3, 0xC3, 0xC3,
+                                             0xC3, 0xC3, 0x66, 0x3C, 0x00, 0x00};
+            static constexpr uint8_t P[13] = {0x00, 0x7C, 0x66, 0x66, 0x66, 0x7C, 0x60,
+                                             0x60, 0x60, 0x60, 0x60, 0x00, 0x00};
+            static constexpr uint8_t E[13] = {0x00, 0x7E, 0x60, 0x60, 0x60, 0x7C, 0x60,
+                                             0x60, 0x60, 0x60, 0x7E, 0x00, 0x00};
+            static constexpr uint8_t D[13] = {0x00, 0x78, 0x6C, 0x66, 0x66, 0x66, 0x66,
+                                             0x66, 0x66, 0x6C, 0x78, 0x00, 0x00};
+            const uint8_t* g = S;
+            switch (ch) {
+            case 'S': g = S; break;
+            case 'T': g = T; break;
+            case 'O': g = O; break;
+            case 'P': g = P; break;
+            case 'E': g = E; break;
+            case 'D': g = D; break;
+            default: break;
+            }
+            if (row < 0 || row >= 13 || col < 0 || col >= 8)
+                return false;
+            return (g[row] & (1u << (7 - col))) != 0;
+        };
+
+        const int gH = lm.glyphH;
+        const int gW = lm.glyphW;
+        const int adv = lm.glyphAdvance * sc;
         const OverlayRect panel = PlaybackOverlay::panelBounds(OW, OH);
-        const int y0 = panel.y + lm.labelTop;
-        const int y1 = y0 + lm.glyphH;
-        int edgeRows = 0;
-        for (int y = y0; y < y1 - 1; ++y) {
-            bool edge = false;
-            for (int x = panel.x; x < panel.x + panel.w; ++x) {
-                const size_t i0 = (static_cast<size_t>(y) * OW + x) * 3;
-                const size_t i1 = (static_cast<size_t>(y + 1) * OW + x) * 3;
-                const int d = std::abs(static_cast<int>(rgb[i0]) - static_cast<int>(rgb[i1]));
-                if (d > 40) {
-                    edge = true;
-                    break;
+        const int labelY = (panel.y + lm.labelTop) & ~1;
+        const int evenLabelY = labelY / 2;
+        const char* want = "STOPPED";
+        const int nch = 7;
+        const int wordW = nch * adv - sc;
+        int bestScore = -1;
+        int bestX = -1;
+        int bestTotal = 1;
+        for (int x0 = panel.x; x0 + wordW < panel.x + panel.w; ++x0) {
+            int score = 0;
+            int total = 0;
+            for (int ci = 0; ci < nch; ++ci) {
+                const int gx = x0 + ci * adv;
+                for (int row = 0; row < gH; ++row) {
+                    for (int col = 0; col < gW; ++col) {
+                        const bool on = onAt(want[ci], row, col);
+                        const int cy = evenLabelY + (row * sc + sc / 2) / 2;
+                        const int cx = gx + col * sc + sc / 2;
+                        if (cy < 0 || cy >= OH / 2 || cx < 0 || cx >= OW)
+                            continue;
+                        const uint8_t Y = evenY[static_cast<size_t>(cy) * OW + cx];
+                        const bool bright = Y > 120;
+                        ++total;
+                        if (on == bright)
+                            ++score;
+                    }
                 }
             }
-            if (edge)
-                ++edgeRows;
+            if (total > 0 && score > bestScore) {
+                bestScore = score;
+                bestTotal = total;
+                bestX = x0;
+            }
         }
-        // 8×13 font should show several internal horizontal transitions in the
-        // label band; a single solid block-upscale would show ~2.
-        CHECK(edgeRows >= 4);
-        CHECK(lm.glyphH >= 12);
+        const double frac = bestScore / static_cast<double>(bestTotal);
+        std::printf("even-row STOPPED readback: font=%s sc=%d bestX=%d score=%d/%d frac=%.3f\n",
+                    large ? "12x16" : "8x13", sc, bestX, bestScore, bestTotal, frac);
+        CHECK(frac >= 0.85);
+        CHECK(bestX >= 0);
+
+        // Structural proof: scale=1 drops middle bar of classic 5×7 '8'.
+        {
+            const uint8_t g8[7] = {0x0e, 0x11, 0x11, 0x0e, 0x11, 0x11, 0x0e};
+            bool midSurvivesScale1 = false;
+            bool midSurvivesScale2 = false;
+            for (int r = 0; r < 7; ++r) {
+                if ((r % 2) != 0)
+                    continue;
+                if (r == 3 && (g8[r] & 0x0e))
+                    midSurvivesScale1 = true;
+            }
+            for (int r = 0; r < 7; ++r) {
+                for (int vr = 0; vr < 2; ++vr) {
+                    const int cr = r * 2 + vr;
+                    if ((cr % 2) != 0)
+                        continue;
+                    if (r == 3 && (g8[r] & 0x0e))
+                        midSurvivesScale2 = true;
+                }
+            }
+            CHECK(!midSurvivesScale1);
+            CHECK(midSurvivesScale2);
+        }
     }
 
     // 8. YUV420p path actually paints (product PRESENT=fpga regression).
