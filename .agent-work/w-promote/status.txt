@@ -2,7 +2,7 @@
 branch: fix/rollback-honest
 worktree: /home/flynnsbit/Projects/MisterPlex/.worktrees/rollback-honest
 HEAD_prev: 7dd2070a (MENU false-green fix)
-HEAD: 7d8fe55703c19a0136985a41d81ce71877e71580
+HEAD: 88f55ec7860d79012dd28dc167aaebd06f312440
 
 ## Parent ask (this turn)
 1. P2 atomic pair promote/rollback + power-cycle rehearsal (detached on-device)
