@@ -169,7 +169,17 @@ GREEN_CAST_MIN_FRAMES = 3  # design
 # Global channel-mean spread (max-min of per-channel means). Correct frames are
 # near-neutral (~0–6). Parent broken 480p desync measured ~200 (magenta) and
 # ~90 (green). Threshold sits far above good and far below broken.
+# Catches magenta / blue / any sustained single-axis cast — not green-only.
 CHROMA_SPREAD_FAIL = 25.0  # design bound from parent measurements
+# Near-zero chroma on a lit active region (U=V=128 greyscale / chroma killed).
+GREYSCALE_CHROMA_MAX = 3.0  # design: mean per-pixel channel-range on active
+GREYSCALE_ACTIVE_FRAC_MIN = 0.08  # design: enough lit picture to judge
+GREYSCALE_LUMA_LO, GREYSCALE_LUMA_HI = 25.0, 220.0  # design: lit, not crushed
+# UV-swap among saturated active pixels (lab flash/red-bar fixtures).
+UV_SWAP_CYAN_MIN = 0.55  # design
+UV_SWAP_RED_MAX = 0.18  # design
+UV_SWAP_BLUE_MIN = 0.35  # design
+UV_SWAP_SAT_FRAC_MIN = 0.02  # design: need enough saturated samples
 # Minimum frames with a structural flag before structure alone hard-fails.
 STRUCT_MIN_FRAMES = 3  # design
 
@@ -198,27 +208,57 @@ def _chroma_yellow_mask(rgb: np.ndarray) -> np.ndarray:
     return ((r + g) / 2 - b) > 40
 
 
+def _rgb_to_ycbcr_planes(rgb: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """BT.601-style Y/Cb/Cr planes (float)."""
+    r = rgb[:, :, 0].astype(np.float32)
+    g = rgb[:, :, 1].astype(np.float32)
+    b = rgb[:, :, 2].astype(np.float32)
+    y = 0.299 * r + 0.587 * g + 0.114 * b
+    cb = 128.0 + (-0.168736 * r - 0.331264 * g + 0.5 * b)
+    cr = 128.0 + (0.5 * r - 0.418688 * g - 0.081312 * b)
+    return y, cb, cr
+
+
 def green_cast_metrics(rgb: np.ndarray) -> dict[str, Any]:
-    """Colour integrity: classic green-cast + global channel-spread cast.
+    """Colour integrity — not green-only.
 
-    Green-cast: parent c5382bee+old-daemon fingerprint (mean_rgb~72, green_frac
-    ~0.97) and native-480p U,V~0 full-green fields.
+    Fail classes (any one → color_fail):
+      1. green_cast     — classic green-dominance fingerprint (U,V~0 / old daemon)
+      2. chroma_cast    — global channel-mean spread (magenta/blue/any axis cast)
+      3. greyscale_flat — lit active region with near-zero chroma variance
+      4. uv_swap        — saturated-pixel primary inversion (cyan/blue vs red)
 
-    Channel spread: max(mean_R,mean_G,mean_B) - min(...). Correct lab frames are
-    near-neutral (spread ~0–6). Desync that parks luma-magnitude bytes into
-    chroma planes produces magenta/green global casts with spread ~64–200.
-    This generalises beyond green so a magenta field cannot slip through.
+    Letterbox black and mostly-black clips do not trip greyscale/uv_swap.
     """
+    empty = {
+        "mean_rgb": float(rgb.mean()) if rgb.size else 0.0,
+        "green_frac": 0.0,
+        "green_cast": False,
+        "channel_spread": 0.0,
+        "channel_means": [float(rgb.mean())] * 3 if rgb.size else [0.0, 0.0, 0.0],
+        "chroma_cast": False,
+        "greyscale_flat": False,
+        "uv_swap": False,
+        "active_frac": 0.0,
+        "active_chroma_mean": 0.0,
+        "sat_frac": 0.0,
+        "red_dom": 0.0,
+        "blue_dom": 0.0,
+        "cyan_dom": 0.0,
+        "color_fail": False,
+    }
     if _is_uniform(rgb):
-        return {
-            "mean_rgb": float(rgb.mean()),
-            "green_frac": 0.0,
-            "green_cast": False,
-            "channel_spread": 0.0,
-            "channel_means": [float(rgb.mean())] * 3,
-            "chroma_cast": False,
-            "color_fail": False,
-        }
+        # Near-black uniform = grabber junk. Lit uniform grey = dead chroma defect.
+        m = float(rgb.mean())
+        if GREYSCALE_LUMA_LO <= m <= GREYSCALE_LUMA_HI:
+            empty["mean_rgb"] = m
+            empty["channel_means"] = [m, m, m]
+            empty["greyscale_flat"] = True
+            empty["active_frac"] = 1.0
+            empty["active_chroma_mean"] = 0.0
+            empty["color_fail"] = True
+        return empty
+
     pix = rgb.reshape(-1, 3).astype(np.float32)
     mean_rgb = float(pix.mean())
     means = [float(pix[:, i].mean()) for i in range(3)]
@@ -233,14 +273,59 @@ def green_cast_metrics(rgb: np.ndarray) -> dict[str, Any]:
         GREEN_MEAN_LO <= mean_rgb <= GREEN_MEAN_HI and green_frac >= GREEN_FRAC_HARD
     ) or (green_frac >= 0.90 and mean_rgb >= 40.0)
     chroma_cast = channel_spread >= CHROMA_SPREAD_FAIL
-    color_fail = bool(green_cast or chroma_cast)
+
+    luma = pix.mean(axis=1)
+    per_chroma = pix.max(axis=1) - pix.min(axis=1)
+    active = (luma >= GREYSCALE_LUMA_LO) & (luma <= GREYSCALE_LUMA_HI)
+    active_frac = float(active.mean())
+    active_chroma_mean = float(per_chroma[active].mean()) if active.any() else 0.0
+    greyscale_flat = (
+        active_frac >= GREYSCALE_ACTIVE_FRAC_MIN
+        and active_chroma_mean <= GREYSCALE_CHROMA_MAX
+    )
+
+    y_pl, cb_pl, cr_pl = _rgb_to_ycbcr_planes(rgb)
+    cb_f = cb_pl.reshape(-1)
+    cr_f = cr_pl.reshape(-1)
+    sat = np.hypot(cb_f - 128.0, cr_f - 128.0) >= 15.0
+    msk = active & sat
+    sat_frac = float(msk.mean())
+    red_dom = blue_dom = cyan_dom = 0.0
+    mean_cb = mean_cr = 0.0
+    uv_swap = False
+    if sat_frac >= UV_SWAP_SAT_FRAC_MIN and int(msk.sum()) >= 200:
+        mp = pix[msk]
+        red_dom = float(((mp[:, 0] > mp[:, 1] + 15) & (mp[:, 0] > mp[:, 2] + 15)).mean())
+        blue_dom = float(((mp[:, 2] > mp[:, 1] + 15) & (mp[:, 2] > mp[:, 0] + 15)).mean())
+        cyan_dom = float(((mp[:, 1] > mp[:, 0] + 10) & (mp[:, 2] > mp[:, 0] + 10)).mean())
+        mean_cb = float((cb_f[msk] - 128.0).mean())
+        mean_cr = float((cr_f[msk] - 128.0).mean())
+        uv_swap = (
+            cyan_dom >= UV_SWAP_CYAN_MIN
+            and red_dom <= UV_SWAP_RED_MAX
+            and blue_dom >= UV_SWAP_BLUE_MIN
+            and mean_cr < -10.0
+            and mean_cb > 10.0
+        )
+
+    color_fail = bool(green_cast or chroma_cast or greyscale_flat or uv_swap)
     return {
         "mean_rgb": round(mean_rgb, 3),
         "green_frac": round(green_frac, 4),
         "green_cast": bool(green_cast),
         "channel_spread": round(channel_spread, 2),
-        "channel_means": [round(m, 1) for m in means],
+        "channel_means": [round(x, 1) for x in means],
         "chroma_cast": bool(chroma_cast),
+        "greyscale_flat": bool(greyscale_flat),
+        "uv_swap": bool(uv_swap),
+        "active_frac": round(active_frac, 4),
+        "active_chroma_mean": round(active_chroma_mean, 3),
+        "sat_frac": round(sat_frac, 4),
+        "red_dom": round(red_dom, 4),
+        "blue_dom": round(blue_dom, 4),
+        "cyan_dom": round(cyan_dom, 4),
+        "mean_cb": round(mean_cb, 2),
+        "mean_cr": round(mean_cr, 2),
         "color_fail": color_fail,
     }
 
@@ -429,7 +514,10 @@ def find_overlay(
     """
     h, w = rgb.shape[:2]
     if _is_uniform(rgb):
-        return None, None, "warmup"
+        # Near-black uniform = grabber warm-up. Lit uniform grey stays scorable.
+        if float(rgb.mean()) < 15.0:
+            return None, None, "warmup"
+        return None, None, "no_overlay"
 
     mean_luma = float(rgb.mean())
     # Flash frames: prefer chroma mask; dark frames: plain yellow.
@@ -1264,18 +1352,33 @@ def score_burst(
         for r in results
         if r.get("chroma_cast") and r.get("status") != "warmup"
     ]
+    grey_hits = [
+        r
+        for r in results
+        if r.get("greyscale_flat") and r.get("status") != "warmup"
+    ]
+    uv_hits = [
+        r
+        for r in results
+        if r.get("uv_swap") and r.get("status") != "warmup"
+    ]
     color_hits = [
         r
         for r in results
         if r.get("color_fail") and r.get("status") != "warmup"
     ]
     color_fail = len(color_hits) >= GREEN_CAST_MIN_FRAMES
-    if len(green_hits) >= GREEN_CAST_MIN_FRAMES and len(chroma_hits) >= GREEN_CAST_MIN_FRAMES:
-        color = "GREEN+CHROMA_CAST_FAIL"
-    elif len(green_hits) >= GREEN_CAST_MIN_FRAMES:
-        color = "GREEN_CAST_FAIL"
-    elif len(chroma_hits) >= GREEN_CAST_MIN_FRAMES:
-        color = "CHROMA_CAST_FAIL"
+    color_flags: list[str] = []
+    if len(green_hits) >= GREEN_CAST_MIN_FRAMES:
+        color_flags.append("GREEN")
+    if len(chroma_hits) >= GREEN_CAST_MIN_FRAMES:
+        color_flags.append("CHROMA")
+    if len(grey_hits) >= GREEN_CAST_MIN_FRAMES:
+        color_flags.append("GREYSCALE")
+    if len(uv_hits) >= GREEN_CAST_MIN_FRAMES:
+        color_flags.append("UV_SWAP")
+    if color_flags:
+        color = "+".join(color_flags) + "_CAST_FAIL"
     else:
         color = "COLOR_OK"
 
@@ -1440,6 +1543,8 @@ def score_burst(
         "unique_overlay_fp": len(unique_fps),
         "green_cast_frames": len(green_hits),
         "chroma_cast_frames": len(chroma_hits),
+        "greyscale_frames": len(grey_hits),
+        "uv_swap_frames": len(uv_hits),
         "color_fail_frames": len(color_hits),
         "vertical_dup_frames": len(vdup_hits),
         "horiz_wrap_frames": len(wrap_hits),
@@ -1496,6 +1601,8 @@ def _print_human(report: dict[str, Any], src: str) -> None:
         f"unique_fp={report['unique_overlay_fp']} "
         f"green_cast_frames={report['green_cast_frames']} "
         f"chroma_cast_frames={report.get('chroma_cast_frames', 0)} "
+        f"greyscale_frames={report.get('greyscale_frames', 0)} "
+        f"uv_swap_frames={report.get('uv_swap_frames', 0)} "
         f"vdup_frames={report.get('vertical_dup_frames', 0)} "
         f"wrap_frames={report.get('horiz_wrap_frames', 0)}"
     )
@@ -1562,9 +1669,21 @@ def _self_test() -> int:
     assert gc_m["chroma_cast"] is True and gc_m["channel_spread"] >= CHROMA_SPREAD_FAIL, gc_m
     assert gc_m["color_fail"] is True, gc_m
 
-    # Clean black / dark+yellow overlay is not a cast.
+    # Blue cast — channel-spread any direction.
+    blue = np.zeros((100, 100, 3), dtype=np.uint8)
+    blue[:, :] = (20, 30, 180)
+    gc_b = green_cast_metrics(blue)
+    assert gc_b["chroma_cast"] is True and gc_b["color_fail"] is True, gc_b
+
+    # Mid greyscale field (dead chroma on lit picture).
+    grey = np.full((120, 160, 3), 80, dtype=np.uint8)
+    gc_g = green_cast_metrics(grey)
+    assert gc_g["greyscale_flat"] is True and gc_g["color_fail"] is True, gc_g
+
+    # Clean black / dark+yellow overlay is not a cast / not greyscale-fail.
     gc2 = green_cast_metrics(dark)
     assert gc2["green_cast"] is False and gc2["chroma_cast"] is False, gc2
+    assert gc2["greyscale_flat"] is False, gc2
 
     # Neutral near-white flash is not a cast (spread small).
     flash = np.full((100, 100, 3), 220, dtype=np.uint8)
@@ -1572,6 +1691,17 @@ def _self_test() -> int:
     flash[70:80, 20:80] = (200, 30, 30)  # red bar
     gc_f = green_cast_metrics(flash)
     assert gc_f["color_fail"] is False, gc_f
+    assert gc_f["uv_swap"] is False, gc_f
+
+    # UV-swap of flash+red-bar must hard-fail colour.
+    y_pl, cb_pl, cr_pl = _rgb_to_ycbcr_planes(flash)
+    r_s = y_pl + 1.402 * (cb_pl - 128.0)
+    g_s = y_pl - 0.344136 * (cr_pl - 128.0) - 0.714136 * (cb_pl - 128.0)
+    b_s = y_pl + 1.772 * (cr_pl - 128.0)
+    flash_uv = np.clip(np.stack([r_s, g_s, b_s], axis=-1), 0, 255).astype(np.uint8)
+    gc_uv = green_cast_metrics(flash_uv)
+    assert gc_uv["uv_swap"] is True or gc_uv["chroma_cast"] is True, gc_uv
+    assert gc_uv["color_fail"] is True, gc_uv
 
     # Parse tiers
     assert _parse_counter("TREK24 n=336") == (336, 10)
@@ -1642,6 +1772,35 @@ def _self_test() -> int:
         assert rep3["chroma_cast_frames"] >= GREEN_CAST_MIN_FRAMES, rep3
         assert rep3["rc"] in (RC_COLOR_FAIL, RC_STRUCTURE_FAIL), rep3
         assert rep3["rc"] != RC_UNSCORED, rep3
+
+        # Greyscale lit field → COLOR_FAIL (dead chroma).
+        gydir = tdp / "grey"
+        gydir.mkdir()
+        gy = np.full((120, 160, 3), 90, dtype=np.uint8)
+        for i in range(8):
+            Image.fromarray(gy).save(gydir / f"f_{i:03d}.png")
+        rep_gy = score_burst(
+            sorted(str(p) for p in gydir.glob("f_*.png")),
+            warmup_skip=0,
+            min_reads=3,
+        )
+        assert rep_gy["greyscale_frames"] >= GREEN_CAST_MIN_FRAMES, rep_gy
+        assert rep_gy["rc"] == RC_COLOR_FAIL, rep_gy
+        assert "GREYSCALE" in rep_gy["color"], rep_gy
+
+        # UV-swapped flash burst → COLOR_FAIL.
+        uvdir = tdp / "uvswap"
+        uvdir.mkdir()
+        for i in range(8):
+            Image.fromarray(flash_uv).save(uvdir / f"f_{i:03d}.png")
+        rep_uv = score_burst(
+            sorted(str(p) for p in uvdir.glob("f_*.png")),
+            warmup_skip=0,
+            min_reads=3,
+        )
+        assert rep_uv["color_fail_frames"] >= GREEN_CAST_MIN_FRAMES, rep_uv
+        assert rep_uv["rc"] == RC_COLOR_FAIL, rep_uv
+        assert rep_uv["rc"] != RC_UNSCORED, rep_uv
 
         # Synthetic wrap burst → STRUCTURE_FAIL rc=3 independent of motion.
         wdir = tdp / "wrap"

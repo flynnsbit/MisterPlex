@@ -337,6 +337,76 @@ for i in range(12):
 PY
 run_case "synth-magenta-COLOR_FAIL" 2 "$MDIR"
 
+# 10b. Blue cast → COLOR_FAIL (any-direction channel spread).
+BDIR="$WORK/blue_cast_synth"
+mkdir -p "$BDIR"
+python3 - <<'PY' "$BDIR"
+import sys
+from pathlib import Path
+import numpy as np
+from PIL import Image
+out = Path(sys.argv[1])
+arr = np.zeros((180, 320, 3), dtype=np.uint8)
+arr[:, :] = (20, 30, 180)
+for i in range(12):
+    Image.fromarray(arr).save(out / f"f_{i:03d}.png")
+PY
+run_case "synth-blue-COLOR_FAIL" 2 "$BDIR"
+
+# 10c. Greyscale lit field → COLOR_FAIL (dead chroma).
+GYDIR="$WORK/grey_cast_synth"
+mkdir -p "$GYDIR"
+python3 - <<'PY' "$GYDIR"
+import sys
+from pathlib import Path
+import numpy as np
+from PIL import Image
+out = Path(sys.argv[1])
+arr = np.full((180, 320, 3), 90, dtype=np.uint8)
+for i in range(12):
+    Image.fromarray(arr).save(out / f"f_{i:03d}.png")
+PY
+run_case "synth-greyscale-COLOR_FAIL" 2 "$GYDIR"
+
+# 10d. UV-swap of flash+red-bar → COLOR_FAIL.
+UVDIR="$WORK/uv_swap_synth"
+mkdir -p "$UVDIR"
+python3 - <<'PY' "$UVDIR"
+import sys
+from pathlib import Path
+import numpy as np
+from PIL import Image
+out = Path(sys.argv[1])
+flash = np.full((120, 160, 3), 220, dtype=np.uint8)
+flash[40:60, 30:70] = (10, 10, 10)
+flash[70:80, 20:80] = (200, 30, 30)
+r = flash[:,:,0].astype(np.float32)
+g = flash[:,:,1].astype(np.float32)
+b = flash[:,:,2].astype(np.float32)
+y = 0.299*r+0.587*g+0.114*b
+cb = 128 + (-0.168736*r - 0.331264*g + 0.5*b)
+cr = 128 + (0.5*r - 0.418688*g - 0.081312*b)
+rs = y + 1.402*(cb-128)
+gs = y - 0.344136*(cr-128) - 0.714136*(cb-128)
+bs = y + 1.772*(cr-128)
+sw = np.clip(np.stack([rs,gs,bs],-1),0,255).astype(np.uint8)
+for i in range(12):
+    Image.fromarray(sw).save(out / f"f_{i:03d}.png")
+PY
+run_case "synth-uvswap-COLOR_FAIL" 2 "$UVDIR"
+
+# 10e. Transport overlay still (no TREK counter) → UNSCORED rc=77.
+OV_PNG="${OVERLAY_EVIDENCE_PNG:-/home/flynnsbit/.copilot/session-state/1b1fb4ae-c05c-44bc-883d-5af91466e181/files/overlay_lowres_evidence.png}"
+if [[ -f "$OV_PNG" ]]; then
+  OVDIR="$WORK/overlay_evidence"
+  mkdir -p "$OVDIR"
+  cp "$OV_PNG" "$OVDIR/f_000.png"
+  run_case "overlay-evidence-UNSCORED" 77 "$OVDIR"
+else
+  echo "SKIP overlay-evidence (set OVERLAY_EVIDENCE_PNG=...)"
+  skip=$((skip + 1))
+fi
+
 # 11. Synth horizontal wrap → STRUCTURE_FAIL rc=3.
 WDIR="$WORK/wrap_synth"
 mkdir -p "$WDIR"

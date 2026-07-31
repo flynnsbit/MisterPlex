@@ -1,0 +1,75 @@
+w-instr status — HDMI motion instrument
+=====================================
+Updated: 2026-07-31 (agent)
+Branch: w-instr-motion-counter (commit pending at write time)
+
+1) span_rate contradiction (RULE 0 — resolved with code evidence)
+----------------------------------------------------------------
+Same /tmp/capboot, unique_ratio stable 0.8191, span_rate 0.7982 → 0.5321.
+
+CAUSE (intentional but wrong estimator, not src_fps alone):
+  Commit 48e9f2fd introduced analyze_counter_rate preferring:
+    ctr_span = last_third_median(ns) - first_third_median(ns)
+  On a linear ramp that equals (5/6 - 1/6) = 2/3 of true endpoint span.
+  0.5321/0.7982 = 0.6666 exactly.
+
+BEFORE (48e9f2fd / 2675c2b4 era):
+  ctr_span_med = last_med - first_med
+  if ctr_span_med > 0: ctr_span = ctr_span_med   # won on good ramps
+  span_rate = ctr_span / cap_span
+
+AFTER (2bbdffd4 + current):
+  ctr_span = ns[-1] - ns[0]   # endpoints after outlier filter
+  endpoint_rate = ctr_span / cap_span
+  # never max-min (OCR dip inflate); never third-medians (2/3 bias)
+
+src_fps 23.976→24.000 only moves expected 0.7992→0.8000; it does NOT
+explain a 33% drop in the measured span. The formula change does.
+
+2) Comparable metrics (printed together)
+----------------------------------------
+  unique_ratio  ≈ expected (= src_fps/cap_fps)   PRIMARY gate  [measured from OCR]
+  endpoint_rate ≈ expected (ctr_span/cap_span)   SECONDARY     [measured from OCR]
+  expected      = src/cap                         [caller or DEFAULT_ASSUMED]
+  src=caller|DEFAULT_ASSUMED  cap=caller|DEFAULT_ASSUMED
+  span_rate kept as deprecated alias of endpoint_rate only.
+
+3) Rate RED proof (pre-registered HIT)
+--------------------------------------
+  PREDICTION: duplicate each /tmp/capboot frame → half rate → RATE_FAIL rc=4
+  RESULT: unique_ratio=0.4096 endpoint_rate=0.3973 expected=0.8 max_plateau=4/3
+          VERDICT=RATE_FAIL true rc=4
+  GREEN: /tmp/capboot endpoint_rate=0.7982 expected=0.8 VERDICT=MOTION_OK true rc=0
+
+4) Colour beyond green (B7 hole)
+--------------------------------
+  green_cast     — green-dominance fingerprint (kept)
+  chroma_cast    — channel-mean spread ≥25 (magenta/blue/any axis)
+  greyscale_flat — lit active region mean chroma ≤3 (dead U=V=128)
+  uv_swap        — sat pixels cyan/blue-dom + inverted mean_cr/mean_cb
+  RED: magenta rc=2, blue rc=2, greyscale rc=2, uv_swap rc=2
+  GREEN: good bursts COLOR_OK; flash+red-bar synthetic COLOR_OK
+
+5) Overlay evidence fixture
+---------------------------
+  path: session-state/.../files/overlay_lowres_evidence.png
+  --one: status=no_overlay, color_fail=false, true rc=77
+  as dir: VERDICT=UNSCORED true rc=77
+  Correct: transport overlay is not playback counter; decline to score.
+
+6) Six-dir table (@ --source-fps 24 --capture-fps 30)
+----------------------------------------------------
+  /tmp/cap480a  STRUCTURE_FAIL  rc=3
+  /tmp/cap480b  MOTION_OK       rc=0  unique=0.8154 endpoint=0.8000 expected=0.8
+  /tmp/cap240fs MOTION_OK       rc=0  unique=0.8254 endpoint=0.7973 expected=0.8
+  /tmp/cap480q  MOTION_OK       rc=0  unique=0.7846 endpoint=0.8000 expected=0.8
+  /tmp/capboot  MOTION_OK       rc=0  unique=0.8191 endpoint=0.7982 expected=0.8
+  /tmp/cap480n  UNSCORED        rc=77
+
+7) Suite
+--------
+  ./tests/hw/test_hdmi_motion_instrument.sh → pass=30 fail=0  true rc=0
+
+Severity ladder (unchanged):
+  STRUCTURE(3) > COLOR(2) > RATE(4) > FREEZE(1) > MOTION_OK(0) > UNSCORED(77)
+  Measured failure never decays to rc=77.
