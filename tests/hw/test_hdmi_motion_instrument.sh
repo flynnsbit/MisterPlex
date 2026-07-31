@@ -356,7 +356,30 @@ for i in range(12):
 PY
 run_case "synth-wrap-STRUCTURE_FAIL" 3 "$WDIR"
 
-# 12. Rate unit checks via analyze_counter_rate (no device).
+# 12. Synthetic half-rate from real good frames → RATE_FAIL rc=4 (gate can go RED).
+# Duplicate each frame once: counter advances at ~half capture rate.
+if [[ -n "$CAPBOOT_DIR" && -d "$CAPBOOT_DIR" ]] && compgen -G "$CAPBOOT_DIR/f_*.png" >/dev/null; then
+  HALF="$WORK/half_rate_synth"
+  mkdir -p "$HALF"
+  python3 - <<PY "$CAPBOOT_DIR" "$HALF"
+import sys, shutil
+from pathlib import Path
+src = sorted(Path(sys.argv[1]).glob("f_*.png"))
+out = Path(sys.argv[2])
+k = 0
+for p in src:
+    for _ in range(2):
+        shutil.copy(p, out / f"f_{k:03d}.png")
+        k += 1
+print(f"half-rate frames={k}")
+PY
+  run_case "synth-half-rate-RATE_FAIL" 4 "$HALF" "${FPS_ARGS[@]}"
+else
+  echo "SKIP half-rate-synth (need CAPBOOT_DIR)"
+  skip=$((skip + 1))
+fi
+
+# 13. Rate unit checks via analyze_counter_rate (no device).
 python3 - <<PY
 import sys
 sys.path.insert(0, "$ROOT/tools")
@@ -439,7 +462,28 @@ ri=analyze_counter_rate(
     capture_fps=30.0,
     source_fps_src=PROVENANCE_CALLER,
 )
-fail += expect("fast-4x", ri["rate_fail"] is True and ri["span_rate"]>1.5, ri)
+fail += expect(
+    "fast-4x",
+    ri["rate_fail"] is True and ri.get("endpoint_rate", 0) > 1.5,
+    ri,
+)
+
+# endpoint_rate must track full endpoints, not third-median ~2/3 bias
+ns=[]; n=200
+for i in range(60):
+    if i>0 and i%5!=0: n+=1
+    ns.append(n)
+ri=analyze_counter_rate(
+    list(enumerate(ns)),
+    source_fps=24.0,
+    capture_fps=30.0,
+    source_fps_src=PROVENANCE_CALLER,
+)
+fail += expect(
+    "endpoint-not-third-median",
+    ri.get("endpoint_rate") is not None and ri["endpoint_rate"] > 0.65,
+    ri,
+)
 
 # ping-pong revisits
 ping=[100+(i%2) for i in range(60)]

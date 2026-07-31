@@ -1027,7 +1027,8 @@ def analyze_counter_rate(
         "rate": "RATE_UNSCORED",
         "rate_fail": False,
         "unique_ratio": None,
-        "span_rate": None,
+        "endpoint_rate": None,
+        "span_rate": None,  # deprecated alias of endpoint_rate
         "expected_ratio": None,
         "max_plateau": None,
         "max_plateau_allowed": None,
@@ -1065,23 +1066,36 @@ def analyze_counter_rate(
     plateau_hist = dict(Counter(plateaus))
     unique_ratio = unique_states / len(ns)
 
-    # Span rate against capture index span (not decode-only gaps).
-    # Prefer last-third median − first-third median (robust to residual OCR
-    # dips like 1207 amid 1262..1324). Fall back to endpoints, never raw
-    # max−min (that path false-failed known-good soak2 at span_rate=1.5).
+    # --- endpoint_rate: counter advance per capture-index step ---
+    # Definition (comparable to expected = src_fps/cap_fps on monotonic play):
+    #   endpoint_rate = (n_last - n_first) / (cap_idx_last - cap_idx_first)
+    # after outlier filtering. This is counter-delta per capture frame.
+    #
+    # HISTORY / PARENT RULE-0 FINDING:
+    #   A prior revision preferred (last_third_median - first_third_median) /
+    #   cap_span to dodge max−min OCR dips. On a linear ramp that estimator
+    #   is systematically ~2/3 of the true endpoint span
+    #   ((5/6 − 1/6) = 2/3 of full range), so known-good bursts printed
+    #   endpoint-like values of ~0.53 next to expected=0.80 and still PASSED.
+    #   That made the rate gate decorative. Parent called it on capboot
+    #   (0.7982 → 0.5321 with stable unique_ratio=0.8191).
+    #
+    # NEVER use max(ns)−min(ns): a single interior OCR dip (1207 amid
+    # 1262..1324) inflates the span into a false RATE_FAIL.
+    # NEVER use first/last-third medians as the gated span: biased low.
     cap_span = max(1, idxs[-1] - idxs[0])
-    k = max(1, len(ns) // 3)
-    first_med = _median_int(ns[:k])
-    last_med = _median_int(ns[-k:])
-    ctr_span_med = last_med - first_med
     ctr_span_end = ns[-1] - ns[0]
-    if ctr_span_med > 0:
-        ctr_span = ctr_span_med
-    elif ctr_span_end > 0:
+    if ctr_span_end > 0:
         ctr_span = ctr_span_end
+    elif ctr_span_end < 0:
+        # Endpoints inverted (OCR mess at edge) — refuse to invent a rate.
+        ctr_span = 0
     else:
         ctr_span = 0
-    span_rate = ctr_span / cap_span
+    endpoint_rate = ctr_span / cap_span
+    # Keep span_rate as a deprecated alias of endpoint_rate for one release
+    # so older parsers do not break; print path uses the honest name.
+    span_rate = endpoint_rate
 
     # Non-adjacent revisits on RLE values (any value that reappears after
     # another value intervened). Adjacent equals are already collapsed.
@@ -1100,7 +1114,9 @@ def analyze_counter_rate(
             f"(ceil(cap/src)+1)"
         )
 
-    # --- Unique ratio vs expected source/capture ---
+    # --- unique_ratio vs expected (PRIMARY comparable pair) ---
+    # Parent calibration: unique_states/frames = 84/105 = 0.800 = src/cap.
+    # This is the quantity legitimately compared to expected.
     # Slow crawl: too few distinct states (parent pfps 10.9 → ~0.36).
     # Bounds from good corpus (0.77–0.83) with slack; never weaken for RED.
     ratio_lo = expected * 0.60  # ~0.48 at 24/30
@@ -1110,19 +1126,21 @@ def analyze_counter_rate(
             f"unique_ratio={unique_ratio:.3f}<{ratio_lo:.3f} "
             f"(expected≈{expected:.3f})"
         )
-    # unique_ratio cannot diagnose 4x race (saturates at 1.0) — span_rate does.
+    # unique_ratio saturates at 1.0 — cannot alone catch a 4x race.
 
-    # --- Span rate (counter delta per capture frame) ---
+    # --- endpoint_rate vs expected (SECOND comparable pair) ---
+    # Same units as expected: counter frames advanced per capture frame.
+    # Half-rate → ~0.40; double/race → >1.2. Bounds unchanged (not loosened).
     span_lo = expected * 0.55
     span_hi = expected * 1.55
-    if span_rate < span_lo:
+    if endpoint_rate < span_lo:
         reasons.append(
-            f"span_rate={span_rate:.3f}<{span_lo:.3f} "
+            f"endpoint_rate={endpoint_rate:.3f}<{span_lo:.3f} "
             f"(ctr_span={ctr_span}/cap_span={cap_span}, expected≈{expected:.3f})"
         )
-    if span_rate > span_hi:
+    if endpoint_rate > span_hi:
         reasons.append(
-            f"span_rate={span_rate:.3f}>{span_hi:.3f} "
+            f"endpoint_rate={endpoint_rate:.3f}>{span_hi:.3f} "
             f"(ctr_span={ctr_span}/cap_span={cap_span}, expected≈{expected:.3f})"
         )
 
@@ -1158,9 +1176,12 @@ def analyze_counter_rate(
     return {
         "rate": "RATE_FAIL" if rate_fail else "RATE_OK",
         "rate_fail": rate_fail,
+        # Comparable to expected (= src_fps/cap_fps):
         "unique_ratio": round(unique_ratio, 4),
-        "span_rate": round(span_rate, 4),
+        "endpoint_rate": round(endpoint_rate, 4),
         "expected_ratio": round(expected, 4),
+        # Deprecated alias of endpoint_rate (same value); do not reinterpret.
+        "span_rate": round(span_rate, 4),
         "max_plateau": int(max_plateau),
         "max_plateau_allowed": max_plat_allowed,
         "plateau_hist": {str(k): int(v) for k, v in sorted(plateau_hist.items())},
@@ -1168,6 +1189,8 @@ def analyze_counter_rate(
         "n_samples": len(ns),
         "cap_span": int(cap_span),
         "ctr_span": int(ctr_span),
+        "n_first": int(ns[0]),
+        "n_last": int(ns[-1]),
         "non_adjacent_revisits": int(revisits),
         "revisit_fail": bool(revisit_fail),
         "rate_reasons": reasons,
@@ -1391,7 +1414,7 @@ def score_burst(
         reason = (
             f"rate={rate_label} "
             f"unique_ratio={rate_info.get('unique_ratio')} "
-            f"span_rate={rate_info.get('span_rate')} "
+            f"endpoint_rate={rate_info.get('endpoint_rate')} "
             f"expected={rate_info.get('expected_ratio')} "
             f"max_plateau={rate_info.get('max_plateau')}/"
             f"{rate_info.get('max_plateau_allowed')} "
@@ -1426,12 +1449,15 @@ def score_burst(
         "structure": structure,
         "rate": rate_label,
         "unique_ratio": rate_info.get("unique_ratio"),
-        "span_rate": rate_info.get("span_rate"),
+        "endpoint_rate": rate_info.get("endpoint_rate"),
+        "span_rate": rate_info.get("span_rate"),  # alias of endpoint_rate
         "expected_ratio": rate_info.get("expected_ratio"),
         "max_plateau": rate_info.get("max_plateau"),
         "max_plateau_allowed": rate_info.get("max_plateau_allowed"),
         "plateau_hist": rate_info.get("plateau_hist"),
         "non_adjacent_revisits": rate_info.get("non_adjacent_revisits"),
+        "cap_span": rate_info.get("cap_span"),
+        "ctr_span": rate_info.get("ctr_span"),
         "source_fps": rate_info.get("source_fps"),
         "capture_fps": rate_info.get("capture_fps"),
         "source_fps_src": rate_info.get("source_fps_src"),
@@ -1484,14 +1510,20 @@ def _print_human(report: dict[str, Any], src: str) -> None:
         f"rate={report.get('rate', 'RATE_UNSCORED')}"
     )
     if report.get("unique_ratio") is not None or report.get("source_fps") is not None:
+        # Print comparable pairs together; never mix incomparable quantities.
+        # unique_ratio  ≈ expected  (= src_fps/cap_fps)   — primary gate
+        # endpoint_rate ≈ expected  (ctr_span/cap_span)   — secondary gate
         print(
-            f"rate_metrics unique_ratio={report.get('unique_ratio')} "
-            f"span_rate={report.get('span_rate')} "
+            f"rate_metrics "
+            f"unique_ratio={report.get('unique_ratio')} "
+            f"endpoint_rate={report.get('endpoint_rate')} "
             f"expected={report.get('expected_ratio')} "
+            f"(unique_ratio and endpoint_rate are both comparable to expected) "
             f"max_plateau={report.get('max_plateau')}/"
             f"{report.get('max_plateau_allowed')} "
             f"plateau_hist={report.get('plateau_hist')} "
             f"revisits={report.get('non_adjacent_revisits')} "
+            f"ctr_span={report.get('ctr_span')} cap_span={report.get('cap_span')} "
             f"src_fps={report.get('source_fps')} "
             f"src={report.get('source_fps_src', PROVENANCE_DEFAULT_ASSUMED)} "
             f"cap_fps={report.get('capture_fps')} "
@@ -1712,7 +1744,17 @@ def _self_test() -> int:
         source_fps_src=PROVENANCE_CALLER,
     )
     assert ri_fast["rate_fail"] is True, ri_fast
-    assert ri_fast["span_rate"] is not None and ri_fast["span_rate"] > 1.5, ri_fast
+    assert ri_fast["endpoint_rate"] is not None and ri_fast["endpoint_rate"] > 1.5, ri_fast
+    # Endpoint rate on linear ramp equals full span / cap_span (not ~2/3).
+    good_end = analyze_counter_rate(
+        list(enumerate(good_ns)),
+        source_fps=24.0,
+        capture_fps=30.0,
+        source_fps_src=PROVENANCE_CALLER,
+    )
+    assert good_end["endpoint_rate"] is not None
+    assert good_end["endpoint_rate"] > 0.65, good_end  # must not be ~0.53 third-median bias
+    assert abs(good_end["endpoint_rate"] - good_end["span_rate"]) < 1e-9, good_end
 
     # Bank-swap ping-pong: non-adjacent revisits.
     ping = []
