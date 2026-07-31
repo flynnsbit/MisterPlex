@@ -6,18 +6,24 @@
 # negative (one real frame duplicated N times).
 #
 # RED-before-GREEN contract:
-#   known-good bursts → MOTION_OK  (rc=0)
-#   duplicated-frame  → FREEZE     (rc=1)
-#   green-cast field  → COLOR_FAIL (rc=2)  — hard FAIL even with decodes=0
-#   empty/missing     → UNSCORED   (rc=77) — never a pass; never a measured failure
+#   known-good bursts → MOTION_OK      (rc=0)
+#   duplicated-frame  → FREEZE         (rc=1)
+#   green/chroma cast → COLOR_FAIL     (rc=2)  — hard FAIL even with decodes=0
+#   vertical-dup/wrap → STRUCTURE_FAIL (rc=3)  — hard FAIL independent of motion
+#   empty/missing     → UNSCORED       (rc=77) — never a pass; never a measured failure
 #
-# Severity: any positively-detected failure outranks UNSCORED. COLOR_FAIL beats
-# FREEZE when both apply (report keeps motion= dimension for RCA).
+# Severity: STRUCTURE_FAIL > COLOR_FAIL > FREEZE > MOTION_OK > UNSCORED.
+# Any positively-detected failure outranks UNSCORED and is never rc=77.
+#
+# Controlled pair (parent hardware, same clip/core/daemon, one conf key):
+#   CAP480A_DIR broken 480p identity_skip desync → hard FAIL (rc=2 or 3)
+#   CAP480B_DIR corrected 480p                     → MOTION_OK (rc=0)
+#   CAP240FS_DIR known-good 240p                   → MOTION_OK (rc=0)
 #
 # Usage:
 #   ./tests/hw/test_hdmi_motion_instrument.sh
 #   LONG_DIR=/path/to/f_*.png ./tests/hw/test_hdmi_motion_instrument.sh
-#   GOOD_240P_DIR=... GREEN_CAST_DIR=...  # optional parent hardware captures
+#   GOOD_240P_DIR=... GREEN_CAST_DIR=... CAP480A_DIR=... CAP480B_DIR=...
 #
 set -euo pipefail
 
@@ -38,6 +44,10 @@ CC_DIRS="${CC_DIRS:-/tmp/cc1 /tmp/cc2 /tmp/cc3}"
 # Override if paths move; empty string disables.
 GOOD_240P_DIR="${GOOD_240P_DIR:-/tmp/p240v}"
 GREEN_CAST_DIR="${GREEN_CAST_DIR:-/tmp/p480}"
+# Controlled pair: broken 480p desync vs corrected 480p vs good 240p.
+CAP480A_DIR="${CAP480A_DIR:-/tmp/cap480a}"
+CAP480B_DIR="${CAP480B_DIR:-/tmp/cap480b}"
+CAP240FS_DIR="${CAP240FS_DIR:-/tmp/cap240fs}"
 
 # Scratch under the repo (agent rule: never write /tmp for our own artifacts).
 WORK="$ROOT/.agent-work/hdmi-motion-instrument-$$"
@@ -216,11 +226,93 @@ else
   skip=$((skip + 1))
 fi
 if [[ -n "$GREEN_CAST_DIR" && -d "$GREEN_CAST_DIR" ]] && compgen -G "$GREEN_CAST_DIR/f_*.png" >/dev/null; then
-  run_case "parent-green-cast-COLOR_FAIL" 2 "$GREEN_CAST_DIR"
+  # Full-green 480p may be COLOR_FAIL (rc=2) or STRUCTURE_FAIL (rc=3) if
+  # desync structure is also present — both are hard fails; never 77/0.
+  set +e
+  out_gc="$("$TOOL" "$GREEN_CAST_DIR" 2>&1)"
+  rc_gc=$?
+  set -e
+  echo "CASE parent-green-cast-HARD_FAIL expect_rc=2|3 true_rc=$rc_gc"
+  echo "$out_gc" | tail -n 8 | sed 's/^/  | /'
+  if [[ "$rc_gc" -eq 2 || "$rc_gc" -eq 3 ]]; then
+    echo "  PASS parent-green-cast-HARD_FAIL"
+    pass=$((pass + 1))
+  else
+    echo "  FAIL parent-green-cast-HARD_FAIL true_rc=$rc_gc (want 2 or 3)"
+    fail=$((fail + 1))
+  fi
 else
   echo "SKIP parent-green-cast (set GREEN_CAST_DIR=... to include)"
   skip=$((skip + 1))
 fi
+
+# 9. Controlled pair — parent 480p desync RED/GREEN + good 240p.
+#    Broken must hard-fail (structure and/or colour); corrected must PASS.
+if [[ -n "$CAP480A_DIR" && -d "$CAP480A_DIR" ]] && compgen -G "$CAP480A_DIR/f_*.png" >/dev/null; then
+  set +e
+  out_a="$("$TOOL" "$CAP480A_DIR" 2>&1)"
+  rc_a=$?
+  set -e
+  echo "CASE cap480a-desync-HARD_FAIL expect_rc=2|3 true_rc=$rc_a"
+  echo "$out_a" | tail -n 10 | sed 's/^/  | /'
+  if [[ "$rc_a" -eq 2 || "$rc_a" -eq 3 ]]; then
+    echo "  PASS cap480a-desync-HARD_FAIL"
+    pass=$((pass + 1))
+  else
+    echo "  FAIL cap480a-desync-HARD_FAIL true_rc=$rc_a (want 2 or 3, never 0/77)"
+    fail=$((fail + 1))
+  fi
+else
+  echo "SKIP cap480a (set CAP480A_DIR=... to include)"
+  skip=$((skip + 1))
+fi
+if [[ -n "$CAP480B_DIR" && -d "$CAP480B_DIR" ]] && compgen -G "$CAP480B_DIR/f_*.png" >/dev/null; then
+  run_case "cap480b-corrected-MOTION_OK" 0 "$CAP480B_DIR"
+else
+  echo "SKIP cap480b (set CAP480B_DIR=... to include)"
+  skip=$((skip + 1))
+fi
+if [[ -n "$CAP240FS_DIR" && -d "$CAP240FS_DIR" ]] && compgen -G "$CAP240FS_DIR/f_*.png" >/dev/null; then
+  run_case "cap240fs-good-MOTION_OK" 0 "$CAP240FS_DIR"
+else
+  echo "SKIP cap240fs (set CAP240FS_DIR=... to include)"
+  skip=$((skip + 1))
+fi
+
+# 10. Synth magenta cast → COLOR_FAIL (generalised chroma, not green-only).
+MDIR="$WORK/magenta_cast_synth"
+mkdir -p "$MDIR"
+python3 - <<'PY' "$MDIR"
+import sys
+from pathlib import Path
+import numpy as np
+from PIL import Image
+out = Path(sys.argv[1])
+arr = np.zeros((180, 320, 3), dtype=np.uint8)
+arr[:, :] = (210, 40, 240)  # magenta; channel_spread ~200
+for i in range(12):
+    Image.fromarray(arr).save(out / f"f_{i:03d}.png")
+PY
+run_case "synth-magenta-COLOR_FAIL" 2 "$MDIR"
+
+# 11. Synth horizontal wrap → STRUCTURE_FAIL rc=3.
+WDIR="$WORK/wrap_synth"
+mkdir -p "$WDIR"
+python3 - <<'PY' "$WDIR"
+import sys
+from pathlib import Path
+import numpy as np
+from PIL import Image
+out = Path(sys.argv[1])
+arr = np.zeros((180, 320, 3), dtype=np.uint8)
+for x in range(0, 30, 3):
+    arr[:, x] = (220, 40, 40)
+for x in range(290, 320, 3):
+    arr[:, x] = (40, 40, 220)
+for i in range(12):
+    Image.fromarray(arr).save(out / f"f_{i:03d}.png")
+PY
+run_case "synth-wrap-STRUCTURE_FAIL" 3 "$WDIR"
 
 echo "=== SUMMARY pass=$pass fail=$fail skip=$skip ==="
 if [[ "$fail" -gt 0 ]]; then

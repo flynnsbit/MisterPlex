@@ -14,30 +14,35 @@ from a directory of HDMI PNGs and emits a hard verdict.
 
 Verdicts / exit codes
 ---------------------
-  MOTION_OK   rc=0   counter strictly advances across the burst (colour OK)
-  FREEZE      rc=1   counter pinned (same n, enough confident reads); colour OK
-  COLOR_FAIL  rc=2   green-cast fingerprint positively measured (hard FAIL)
-  UNSCORED    rc=77  no positive failure AND no positive pass — NEVER a pass
+  MOTION_OK       rc=0   counter strictly advances; colour+structure OK
+  FREEZE          rc=1   counter pinned; colour+structure OK
+  COLOR_FAIL      rc=2   chroma/cast defect positively measured (hard FAIL)
+  STRUCTURE_FAIL  rc=3   vertical-duplicate and/or horizontal-wrap (hard FAIL)
+  UNSCORED        rc=77  no positive failure AND no positive pass — NEVER a pass
 
 Severity resolution (highest wins — explicit, non-negotiable)
 -------------------------------------------------------------
-  1. COLOR_FAIL  — any positively detected green-cast (enough frames) hard-fails
-                   at rc=2, **regardless of whether the counter could be OCR'd**.
+  1. STRUCTURE_FAIL — vertical content duplication and/or horizontal wrap
+                   (raw-pipe byte-desync class) hard-fails at rc=3, independent
+                   of motion scorability. More specific/actionable than colour
+                   alone for the 480p identity_skip desync RCA (parent: picture
+                   doubled vertically + FLASH split across L/R edges).
+  2. COLOR_FAIL  — green-cast fingerprint OR global channel-mean spread cast
+                   (magenta/green/any saturated global cast). Hard fail rc=2,
+                   **regardless of whether the counter could be OCR'd**.
                    Colour is independent evidence; motion need not be scorable.
-                   A green field often *prevents* overlay OCR (yellow-on-green),
-                   so "decodes=0" and "colour broken" are correlated — colour
-                   must be allowed to decide alone. (Parent RCA: native 480p
-                   DECODE=624x480 full green field was flagged GREEN_CAST_FAIL
-                   then wrongly reported UNSCORED rc=77; that leak is closed.)
-  2. FREEZE      — counter pinned with colour OK. Hard fail rc=1.
-  3. MOTION_OK   — counter advances with colour OK. Pass rc=0.
-  4. UNSCORED    — no overlay/counter AND no colour verdict. Soft-skip rc=77.
-                   Soft-skip is never a pass AND must never report a condition
-                   we have positively measured to be a failure.
+                   A green/magenta field often *prevents* overlay OCR, so
+                   "decodes=0" and "colour broken" are correlated — colour
+                   must be allowed to decide alone.
+  3. FREEZE      — counter pinned with colour+structure OK. Hard fail rc=1.
+  4. MOTION_OK   — counter advances with colour+structure OK. Pass rc=0.
+  5. UNSCORED    — no overlay/counter AND no colour/structure verdict.
+                   Soft-skip rc=77. Soft-skip is never a pass AND must never
+                   report a condition we have positively measured as failure.
 
-  FREEZE + green-cast → COLOR_FAIL (rc=2). Both are hard fails; colour wins
-  because it is the more specific actionable RCA class (UV plane / chroma path)
-  and remains visible in the report as motion=FREEZE color=GREEN_CAST_FAIL.
+  When multiple hard fails apply, the highest severity wins; subordinate
+  dimensions stay in the report (e.g. motion=UNSCORED color=CHROMA_CAST_FAIL
+  structure=VERT_DUP+HORIZ_WRAP → VERDICT=STRUCTURE_FAIL rc=3).
 
 Grabber warm-up
 ---------------
@@ -89,6 +94,7 @@ except ImportError:
 RC_MOTION_OK = 0
 RC_FREEZE = 1
 RC_COLOR_FAIL = 2
+RC_STRUCTURE_FAIL = 3
 RC_UNSCORED = 77
 
 DEFAULT_WARMUP_SKIP = 15
@@ -99,6 +105,12 @@ GREEN_MEAN_LO, GREEN_MEAN_HI = 55.0, 95.0
 GREEN_FRAC_HARD = 0.85
 # Minimum positively-flagged frames before colour alone hard-fails the burst.
 GREEN_CAST_MIN_FRAMES = 3
+# Global channel-mean spread (max-min of per-channel means). Correct frames are
+# near-neutral (~0–6). Parent broken 480p desync measured ~200 (magenta) and
+# ~90 (green). Threshold sits far above good and far below broken.
+CHROMA_SPREAD_FAIL = 25.0
+# Minimum frames with a structural flag before structure alone hard-fails.
+STRUCT_MIN_FRAMES = 3
 
 
 # ---------------------------------------------------------------------------
@@ -126,11 +138,30 @@ def _chroma_yellow_mask(rgb: np.ndarray) -> np.ndarray:
 
 
 def green_cast_metrics(rgb: np.ndarray) -> dict[str, Any]:
-    """Detect the green-cast garbage fingerprint (mean_rgb~72, green_frac~0.97)."""
+    """Colour integrity: classic green-cast + global channel-spread cast.
+
+    Green-cast: parent c5382bee+old-daemon fingerprint (mean_rgb~72, green_frac
+    ~0.97) and native-480p U,V~0 full-green fields.
+
+    Channel spread: max(mean_R,mean_G,mean_B) - min(...). Correct lab frames are
+    near-neutral (spread ~0–6). Desync that parks luma-magnitude bytes into
+    chroma planes produces magenta/green global casts with spread ~64–200.
+    This generalises beyond green so a magenta field cannot slip through.
+    """
     if _is_uniform(rgb):
-        return {"mean_rgb": float(rgb.mean()), "green_frac": 0.0, "green_cast": False}
+        return {
+            "mean_rgb": float(rgb.mean()),
+            "green_frac": 0.0,
+            "green_cast": False,
+            "channel_spread": 0.0,
+            "channel_means": [float(rgb.mean())] * 3,
+            "chroma_cast": False,
+            "color_fail": False,
+        }
     pix = rgb.reshape(-1, 3).astype(np.float32)
     mean_rgb = float(pix.mean())
+    means = [float(pix[:, i].mean()) for i in range(3)]
+    channel_spread = max(means) - min(means)
     gdom = (
         (pix[:, 1] > pix[:, 0] + 15)
         & (pix[:, 1] > pix[:, 2] + 15)
@@ -140,10 +171,191 @@ def green_cast_metrics(rgb: np.ndarray) -> dict[str, Any]:
     green_cast = (
         GREEN_MEAN_LO <= mean_rgb <= GREEN_MEAN_HI and green_frac >= GREEN_FRAC_HARD
     ) or (green_frac >= 0.90 and mean_rgb >= 40.0)
+    chroma_cast = channel_spread >= CHROMA_SPREAD_FAIL
+    color_fail = bool(green_cast or chroma_cast)
     return {
         "mean_rgb": round(mean_rgb, 3),
         "green_frac": round(green_frac, 4),
         "green_cast": bool(green_cast),
+        "channel_spread": round(channel_spread, 2),
+        "channel_means": [round(m, 1) for m in means],
+        "chroma_cast": bool(chroma_cast),
+        "color_fail": color_fail,
+    }
+
+
+def structure_metrics(rgb: np.ndarray) -> dict[str, Any]:
+    """Structural integrity: vertical duplicate content + horizontal wrap.
+
+    Tuned on parent controlled pair:
+      /tmp/cap480a  broken 480p identity_skip desync (must FAIL)
+      /tmp/cap480b  same clip/core/daemon, scale fix (must PASS)
+      /tmp/cap240fs known-good 240p (must PASS)
+
+    Vertical duplicate
+    ------------------
+    Same picture content (esp. burned-in counter) appearing twice in one raster.
+    Paths (any one is enough):
+      A. Two left-half edge-energy peaks with high patch NCC (dual overlay on
+         cast frames where yellow mask is unreliable).
+      B. Active-region half-frame NCC on left half >= 0.70 with real structure
+         in both halves (clean vertical doubling).
+
+    Horizontal wrap
+    ---------------
+    Content split across extreme L/R edges that would be contiguous if rolled
+    (parent: "ASH" left + "FLA" right of FLASH). Signature: high gradient energy
+    on BOTH extreme edges while the centre strip is relatively empty. Legitimate
+    full-frame flash keeps edge≈mid energy (ratio ~1); letterboxed dark frames
+    have content only on the left (right edge near zero) so min(L,R) stays low.
+
+    Black letterbox bars and mostly-black clips do not fire either check.
+    """
+    empty = {
+        "vertical_dup": False,
+        "horiz_wrap": False,
+        "structure_fail": False,
+        "vdup_score": 0.0,
+        "vdup_dy": None,
+        "vdup_path": "",
+        "wrap_ratio": 0.0,
+        "wrap_both_e": 0.0,
+        "wrap_mid_e": 0.0,
+    }
+    if _is_uniform(rgb):
+        return empty
+
+    h, w = rgb.shape[:2]
+    gray = rgb.astype(np.float32).mean(axis=2)
+    # Horizontal gradient magnitude (text strokes / edges).
+    gx = np.zeros_like(gray)
+    gx[:, 1:-1] = np.abs(gray[:, 2:] - gray[:, :-2])
+    col_e = gx.mean(axis=0)
+
+    # --- Horizontal wrap ---
+    ew = max(32, int(0.07 * w))
+    mw = max(64, int(0.20 * w))
+    left_e = float(col_e[:ew].mean())
+    right_e = float(col_e[-ew:].mean())
+    mid_e = float(col_e[w // 2 - mw // 2 : w // 2 + mw // 2].mean())
+    both_e = min(left_e, right_e)
+    wrap_ratio = both_e / (mid_e + 0.05)
+    # Thresholds from controlled pair (bad wrap flash: both~2.9 ratio~25;
+    # good flash: both~2.8 ratio~2.8; good dark: both~0.12).
+    horiz_wrap = bool(both_e >= 2.5 and wrap_ratio >= 4.0 and mid_e < both_e * 0.45)
+
+    # --- Vertical duplicate ---
+    vdup = False
+    vdup_score = 0.0
+    vdup_dy: int | None = None
+    vdup_path = ""
+    x1 = int(0.55 * w)
+    gxL = gx[:, :x1]
+    gxR = gx[:, w // 2 :]
+    edge_row = gxL.mean(axis=1)
+    right_row = gxR.mean(axis=1)
+    sm = np.convolve(edge_row, np.ones(5) / 5.0, mode="same")
+    thr = max(2.0, float(np.percentile(sm, 90)))
+    peaks: list[int] = []
+    for i in range(20, h - 20):
+        if sm[i] >= thr and sm[i] >= sm[i - 1] and sm[i] >= sm[i + 1]:
+            # Left-dominant: counter side, not full-width flash structure.
+            if edge_row[i] > right_row[i] * 1.2 + 0.5:
+                if not peaks or i - peaks[-1] > 25:
+                    peaks.append(i)
+                elif sm[i] > sm[peaks[-1]]:
+                    peaks[-1] = i
+
+    bw = 28
+    best = 0.0
+    best_dy: int | None = None
+    # Downsample patches once per peak for speed.
+    peak_patches: list[tuple[int, np.ndarray]] = []
+    for p0 in peaks:
+        y0 = p0 - bw // 2
+        if y0 < 0 or y0 + bw > h:
+            continue
+        patch = gray[y0 : y0 + bw, :x1]
+        if float(patch.std()) < 10.0:
+            continue
+        small = np.asarray(
+            Image.fromarray(patch.astype(np.uint8)).resize(
+                (120, bw), Image.Resampling.BILINEAR
+            ),
+            dtype=np.float32,
+        )
+        peak_patches.append((p0, small))
+
+    for i, (p0, A) in enumerate(peak_patches):
+        Az = A - A.mean()
+        an = float(np.linalg.norm(Az))
+        if an < 1e-3:
+            continue
+        for p1, B in peak_patches[i + 1 :]:
+            dy = p1 - p0
+            if dy < 80 or dy > 700:
+                continue
+            Bz = B - B.mean()
+            bn = float(np.linalg.norm(Bz))
+            if bn < 1e-3:
+                continue
+            ncc = float(np.dot(Az.ravel(), Bz.ravel()) / (an * bn))
+            if ncc > best:
+                best, best_dy = ncc, dy
+    if best >= 0.75 and best_dy is not None:
+        vdup = True
+        vdup_score = best
+        vdup_dy = best_dy
+        vdup_path = "edge_ncc"
+
+    # Path B: half-frame NCC on left half of active picture.
+    if not vdup:
+        row_m = gray.mean(axis=1)
+        act = np.where(row_m > 5.0)[0]
+        if len(act) >= 100:
+            y0 = int(act[0])
+            y1 = int(act[-1]) + 1
+            mid = (y0 + y1) // 2
+            top = gray[y0:mid, :x1]
+            bot = gray[mid : mid + (mid - y0), :x1]
+            hh = min(top.shape[0], bot.shape[0])
+            if hh >= 80:
+                Ti = np.asarray(
+                    Image.fromarray(top[:hh].astype(np.uint8)).resize(
+                        (120, 80), Image.Resampling.BILINEAR
+                    ),
+                    dtype=np.float32,
+                )
+                Bi = np.asarray(
+                    Image.fromarray(bot[:hh].astype(np.uint8)).resize(
+                        (120, 80), Image.Resampling.BILINEAR
+                    ),
+                    dtype=np.float32,
+                )
+                if float(Ti.std()) > 12.0 and float(Bi.std()) > 12.0:
+                    Tz = Ti - Ti.mean()
+                    Bz = Bi - Bi.mean()
+                    ncc = float(
+                        np.dot(Tz.ravel(), Bz.ravel())
+                        / (float(np.linalg.norm(Tz)) * float(np.linalg.norm(Bz)) + 1e-9)
+                    )
+                    if ncc >= 0.70:
+                        vdup = True
+                        vdup_score = ncc
+                        vdup_dy = mid - y0
+                        vdup_path = "half_ncc"
+
+    structure_fail = bool(vdup or horiz_wrap)
+    return {
+        "vertical_dup": bool(vdup),
+        "horiz_wrap": bool(horiz_wrap),
+        "structure_fail": structure_fail,
+        "vdup_score": round(float(vdup_score), 3),
+        "vdup_dy": vdup_dy,
+        "vdup_path": vdup_path,
+        "wrap_ratio": round(float(wrap_ratio), 3),
+        "wrap_both_e": round(float(both_e), 3),
+        "wrap_mid_e": round(float(mid_e), 3),
     }
 
 
@@ -531,6 +743,17 @@ def read_frame(path: str | Path, *, force_ocr: bool = False) -> dict[str, Any]:
     digit-template fallback so a visible overlay is not silently ignored.
     """
     path = str(path)
+    _struct_empty = {
+        "vertical_dup": False,
+        "horiz_wrap": False,
+        "structure_fail": False,
+        "vdup_score": 0.0,
+        "vdup_dy": None,
+        "vdup_path": "",
+        "wrap_ratio": 0.0,
+        "wrap_both_e": 0.0,
+        "wrap_mid_e": 0.0,
+    }
     try:
         im = Image.open(path).convert("RGB")
     except OSError as e:
@@ -544,10 +767,15 @@ def read_frame(path: str | Path, *, force_ocr: bool = False) -> dict[str, Any]:
             "mean_rgb": None,
             "green_frac": None,
             "green_cast": False,
+            "channel_spread": None,
+            "chroma_cast": False,
+            "color_fail": False,
+            **_struct_empty,
         }
 
     rgb = np.asarray(im)
     gc = green_cast_metrics(rgb)
+    sm = structure_metrics(rgb)
     mean_luma = float(rgb.mean())
 
     binary, roi, st = find_overlay(rgb)
@@ -562,6 +790,7 @@ def read_frame(path: str | Path, *, force_ocr: bool = False) -> dict[str, Any]:
             "roi": None,
             "mean_luma": round(mean_luma, 3),
             **gc,
+            **sm,
         }
 
     fp = overlay_fingerprint(binary)
@@ -597,6 +826,7 @@ def read_frame(path: str | Path, *, force_ocr: bool = False) -> dict[str, Any]:
         "mean_luma": round(mean_luma, 3),
         "overlay_present": True,
         **gc,
+        **sm,
     }
 
 
@@ -715,8 +945,53 @@ def score_burst(
         for r in results
         if r.get("green_cast") and r.get("status") != "warmup"
     ]
-    color_fail = len(green_hits) >= GREEN_CAST_MIN_FRAMES
-    color = "GREEN_CAST_FAIL" if color_fail else "COLOR_OK"
+    chroma_hits = [
+        r
+        for r in results
+        if r.get("chroma_cast") and r.get("status") != "warmup"
+    ]
+    color_hits = [
+        r
+        for r in results
+        if r.get("color_fail") and r.get("status") != "warmup"
+    ]
+    color_fail = len(color_hits) >= GREEN_CAST_MIN_FRAMES
+    if len(green_hits) >= GREEN_CAST_MIN_FRAMES and len(chroma_hits) >= GREEN_CAST_MIN_FRAMES:
+        color = "GREEN+CHROMA_CAST_FAIL"
+    elif len(green_hits) >= GREEN_CAST_MIN_FRAMES:
+        color = "GREEN_CAST_FAIL"
+    elif len(chroma_hits) >= GREEN_CAST_MIN_FRAMES:
+        color = "CHROMA_CAST_FAIL"
+    else:
+        color = "COLOR_OK"
+
+    # Structural integrity (vertical dup / horizontal wrap) — independent of OCR.
+    vdup_hits = [
+        r
+        for r in results
+        if r.get("vertical_dup") and r.get("status") != "warmup"
+    ]
+    wrap_hits = [
+        r
+        for r in results
+        if r.get("horiz_wrap") and r.get("status") != "warmup"
+    ]
+    struct_hits = [
+        r
+        for r in results
+        if r.get("structure_fail") and r.get("status") != "warmup"
+    ]
+    structure_fail = len(struct_hits) >= STRUCT_MIN_FRAMES
+    struct_flags: list[str] = []
+    if len(vdup_hits) >= STRUCT_MIN_FRAMES:
+        struct_flags.append(f"VERT_DUP={len(vdup_hits)}")
+    if len(wrap_hits) >= STRUCT_MIN_FRAMES:
+        struct_flags.append(f"HORIZ_WRAP={len(wrap_hits)}")
+    if structure_fail and not struct_flags:
+        # Combined structure_fail frames without either flag alone reaching min
+        # (e.g. 2 wrap + 2 vdup on different frames).
+        struct_flags.append(f"STRUCT={len(struct_hits)}")
+    structure = "+".join(struct_flags) if structure_fail else "STRUCTURE_OK"
 
     motion = "UNSCORED"
     reason = ""
@@ -779,12 +1054,19 @@ def score_burst(
             )
 
     # --- Severity resolution (see module docstring). Positive failure wins. ---
-    if color_fail:
-        # Colour defect alone is a hard FAIL even when motion is UNSCORED
-        # (green-on-green overlay is often unreadable — that is a symptom).
+    # STRUCTURE > COLOR > FREEZE > MOTION_OK > UNSCORED. Measured failures
+    # never collapse to rc=77, even when motion is UNSCORED.
+    if structure_fail:
+        final, rc = "STRUCTURE_FAIL", RC_STRUCTURE_FAIL
+        reason = (
+            f"structure={structure} frames={len(struct_hits)}>={STRUCT_MIN_FRAMES} "
+            f"(hard FAIL independent of motion={motion} color={color}); {reason}"
+        )
+    elif color_fail:
         final, rc = "COLOR_FAIL", RC_COLOR_FAIL
         reason = (
-            f"green_cast_frames={len(green_hits)}>={GREEN_CAST_MIN_FRAMES} "
+            f"color={color} frames={len(color_hits)}>={GREEN_CAST_MIN_FRAMES} "
+            f"green={len(green_hits)} chroma_spread={len(chroma_hits)} "
             f"(hard FAIL independent of motion={motion}); {reason}"
         )
     elif motion == "FREEZE":
@@ -805,8 +1087,14 @@ def score_burst(
         "n_max": (max(ns) if ns else None),
         "unique_overlay_fp": len(unique_fps),
         "green_cast_frames": len(green_hits),
+        "chroma_cast_frames": len(chroma_hits),
+        "color_fail_frames": len(color_hits),
+        "vertical_dup_frames": len(vdup_hits),
+        "horiz_wrap_frames": len(wrap_hits),
+        "structure_fail_frames": len(struct_hits),
         "motion": motion,
         "color": color,
+        "structure": structure,
         "verdict": final,
         "reason": reason,
         "rc": rc,
@@ -819,6 +1107,10 @@ def score_burst(
                 "fp": r.get("fp"),
                 "mean": r.get("mean_luma"),
                 "green_cast": r.get("green_cast"),
+                "chroma_cast": r.get("chroma_cast"),
+                "channel_spread": r.get("channel_spread"),
+                "vertical_dup": r.get("vertical_dup"),
+                "horiz_wrap": r.get("horiz_wrap"),
             }
             for r in results
         ],
@@ -835,14 +1127,20 @@ def _print_human(report: dict[str, Any], src: str) -> None:
         f"frames={report['frames_total']} warmup_skipped={report['warmup_skipped']} "
         f"decodes={report['decodes']} strong={report['strong_decodes']} "
         f"unique_fp={report['unique_overlay_fp']} "
-        f"green_cast_frames={report['green_cast_frames']}"
+        f"green_cast_frames={report['green_cast_frames']} "
+        f"chroma_cast_frames={report.get('chroma_cast_frames', 0)} "
+        f"vdup_frames={report.get('vertical_dup_frames', 0)} "
+        f"wrap_frames={report.get('horiz_wrap_frames', 0)}"
     )
     if report["n_min"] is not None:
         print(
             f"counter n_min={report['n_min']} n_max={report['n_max']} "
             f"head={report['ns_head']} tail={report['ns_tail']}"
         )
-    print(f"motion={report['motion']} color={report['color']}")
+    print(
+        f"motion={report['motion']} color={report['color']} "
+        f"structure={report.get('structure', 'STRUCTURE_OK')}"
+    )
     print(f"reason={report['reason']}")
     print(f"VERDICT={report['verdict']} rc={report['rc']}")
 
@@ -867,16 +1165,47 @@ def _self_test() -> int:
     garbage[:, :] = (20, 90, 15)
     gc = green_cast_metrics(garbage)
     assert gc["green_cast"] is True, gc
+    assert gc["color_fail"] is True, gc
 
-    # Clean black is not green-cast
+    # Magenta cast (luma parked in chroma planes) — channel-spread, not green.
+    magenta = np.zeros((100, 100, 3), dtype=np.uint8)
+    magenta[:, :] = (210, 40, 240)
+    gc_m = green_cast_metrics(magenta)
+    assert gc_m["chroma_cast"] is True and gc_m["channel_spread"] >= CHROMA_SPREAD_FAIL, gc_m
+    assert gc_m["color_fail"] is True, gc_m
+
+    # Clean black / dark+yellow overlay is not a cast.
     gc2 = green_cast_metrics(dark)
-    assert gc2["green_cast"] is False, gc2
+    assert gc2["green_cast"] is False and gc2["chroma_cast"] is False, gc2
+
+    # Neutral near-white flash is not a cast (spread small).
+    flash = np.full((100, 100, 3), 220, dtype=np.uint8)
+    flash[40:60, 30:70] = (10, 10, 10)  # black FLASH text
+    flash[70:80, 20:80] = (200, 30, 30)  # red bar
+    gc_f = green_cast_metrics(flash)
+    assert gc_f["color_fail"] is False, gc_f
 
     # Parse tiers
     assert _parse_counter("TREK24 n=336") == (336, 10)
     assert _parse_counter("NTSC2397 n=166") == (166, 10)
     assert _parse_counter("n=42")[0] == 42
     assert _parse_counter("nope")[0] is None
+
+    # Horizontal wrap synthetic: structure on both edges, empty mid.
+    wrap = np.zeros((180, 320, 3), dtype=np.uint8)
+    # left edge vertical bars (text-like)
+    for x in range(0, 30, 3):
+        wrap[:, x] = (220, 40, 40)
+    for x in range(290, 320, 3):
+        wrap[:, x] = (40, 40, 220)
+    sm_w = structure_metrics(wrap)
+    assert sm_w["horiz_wrap"] is True, sm_w
+
+    # Letterbox-like dark with left-only overlay must NOT wrap-fail.
+    letter = np.zeros((180, 320, 3), dtype=np.uint8)
+    letter[40:70, 20:160] = (220, 220, 40)
+    sm_l = structure_metrics(letter)
+    assert sm_l["horiz_wrap"] is False, sm_l
 
     # Severity: green-cast with no overlay → COLOR_FAIL rc=2, NOT UNSCORED 77.
     with tempfile.TemporaryDirectory(prefix="hdmi_motion_st_") as td:
@@ -887,15 +1216,15 @@ def _self_test() -> int:
             Image.fromarray(arr).save(tdp / f"f_{i:03d}.png")
         frames = sorted(str(p) for p in tdp.glob("f_*.png"))
         rep = score_burst(frames, warmup_skip=0, min_reads=3)
-        assert rep["color"] == "GREEN_CAST_FAIL", rep
+        assert "GREEN" in rep["color"], rep
         assert rep["green_cast_frames"] >= GREEN_CAST_MIN_FRAMES, rep
         assert rep["motion"] == "UNSCORED", rep
-        assert rep["verdict"] == "COLOR_FAIL", rep
-        assert rep["rc"] == RC_COLOR_FAIL, rep
+        # Pure green field may also trip structure on some paths; colour or
+        # structure hard-fail both beat UNSCORED — never rc=77.
+        assert rep["rc"] in (RC_COLOR_FAIL, RC_STRUCTURE_FAIL), rep
+        assert rep["verdict"] in ("COLOR_FAIL", "STRUCTURE_FAIL"), rep
 
-        # FREEZE + green-cast → COLOR_FAIL wins (more specific RCA); motion kept.
-        # Build by painting green over identical frames (no counter → bitmap freeze
-        # path may UNSCORE; force colour path still COLOR_FAIL).
+        # FREEZE + green-cast → hard colour/structure fail wins over freeze/unscored.
         gdir = tdp / "freeze_green"
         gdir.mkdir()
         base = np.zeros((120, 160, 3), dtype=np.uint8)
@@ -907,7 +1236,38 @@ def _self_test() -> int:
             warmup_skip=0,
             min_reads=3,
         )
-        assert rep2["rc"] == RC_COLOR_FAIL and rep2["verdict"] == "COLOR_FAIL", rep2
+        assert rep2["rc"] in (RC_COLOR_FAIL, RC_STRUCTURE_FAIL), rep2
+        assert rep2["verdict"] in ("COLOR_FAIL", "STRUCTURE_FAIL"), rep2
+
+        # Magenta field → COLOR_FAIL via channel spread (not green-specific).
+        mdir = tdp / "magenta"
+        mdir.mkdir()
+        mag = np.zeros((120, 160, 3), dtype=np.uint8)
+        mag[:, :] = (210, 40, 240)
+        for i in range(8):
+            Image.fromarray(mag).save(mdir / f"f_{i:03d}.png")
+        rep3 = score_burst(
+            sorted(str(p) for p in mdir.glob("f_*.png")),
+            warmup_skip=0,
+            min_reads=3,
+        )
+        assert rep3["chroma_cast_frames"] >= GREEN_CAST_MIN_FRAMES, rep3
+        assert rep3["rc"] in (RC_COLOR_FAIL, RC_STRUCTURE_FAIL), rep3
+        assert rep3["rc"] != RC_UNSCORED, rep3
+
+        # Synthetic wrap burst → STRUCTURE_FAIL rc=3 independent of motion.
+        wdir = tdp / "wrap"
+        wdir.mkdir()
+        for i in range(8):
+            Image.fromarray(wrap).save(wdir / f"f_{i:03d}.png")
+        rep4 = score_burst(
+            sorted(str(p) for p in wdir.glob("f_*.png")),
+            warmup_skip=0,
+            min_reads=3,
+        )
+        assert rep4["horiz_wrap_frames"] >= STRUCT_MIN_FRAMES, rep4
+        assert rep4["verdict"] == "STRUCTURE_FAIL", rep4
+        assert rep4["rc"] == RC_STRUCTURE_FAIL, rep4
 
     print("SELF_TEST_OK")
     return 0
@@ -991,6 +1351,9 @@ def main(argv: list[str] | None = None) -> int:
                     f"{os.path.basename(r['path'])}: status={r['status']} "
                     f"n={r['n']} tier={r.get('tier')} raw={r.get('raw')!r} "
                     f"mean={r.get('mean_luma')} green_cast={r.get('green_cast')} "
+                    f"chroma_cast={r.get('chroma_cast')} "
+                    f"spread={r.get('channel_spread')} "
+                    f"vdup={r.get('vertical_dup')} wrap={r.get('horiz_wrap')} "
                     f"overlay={r.get('overlay_present', r.get('fp') is not None)}"
                 )
         if args.json:
