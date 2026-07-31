@@ -1056,7 +1056,7 @@ async function waitTimelineState(wantStates, maxMs = 12000, label = 'wait_state'
     last = { state, time: t, xml };
     log(`  ${label} state=${state || '?'} time=${xmlAttr(xml, 'time') || '?'}`);
     if (want.has(state)) return { ok: true, ...last };
-    await sleep(500);
+    await sleep(400);
   }
   return { ok: false, ...last };
 }
@@ -1073,21 +1073,134 @@ async function waitTimelineNear(targetMs, tolMs = 2500, maxMs = 15000) {
     if (t >= 0 && Math.abs(t - targetMs) <= tolMs) {
       return { ok: true, ...last };
     }
-    // Also accept overshoot past target while playing (demux lag).
-    if (t >= targetMs - tolMs && state === 'playing') {
+    if (t >= targetMs - tolMs && (state === 'playing' || state === 'buffering')) {
       return { ok: true, ...last };
     }
-    await sleep(500);
+    await sleep(400);
   }
   return { ok: false, ...last };
 }
 
-/**
- * Transition coverage: pause/resume, seek, stop+recast, play→idle→play.
- * Each step asserts timeline; leaves session playing for optional HDMI or final stop.
- */
+/** Sample companion timeline N times. HTTP 200 alone is never enough. */
+async function sampleTimeline(n = 6, intervalMs = 450, label = 'sample') {
+  const samples = [];
+  for (let i = 0; i < n; i++) {
+    const xml = await pollDaemonTimeline(nextSuiteCmd());
+    const state = xmlAttr(xml, 'state') || '';
+    const time = parseInt(xmlAttr(xml, 'time') || '-1', 10);
+    const duration = parseInt(xmlAttr(xml, 'duration') || '0', 10);
+    samples.push({ state, time, duration, i });
+    log(`  ${label}[${i}] state=${state || '?'} time=${time}`);
+    if (i + 1 < n) await sleep(intervalMs);
+  }
+  return samples;
+}
+
+function timesOf(samples, pred) {
+  return samples.filter(pred).map((s) => s.time).filter((t) => t >= 0);
+}
+
+/** Position must NOT advance (paused / held). */
+function assertTimeFrozen(samples, tag, maxDriftMs = 700) {
+  const playingish = samples.filter((s) => s.state === 'playing');
+  if (playingish.length >= Math.ceil(samples.length / 2)) {
+    return {
+      ok: false,
+      detail: `${tag}: majority still state=playing (HTTP pause accepted but not effective)`,
+    };
+  }
+  const paused = samples.filter((s) => s.state === 'paused');
+  if (paused.length < 2) {
+    return {
+      ok: false,
+      detail: `${tag}: need ≥2 paused samples; got states=${samples.map((s) => s.state).join(',')}`,
+    };
+  }
+  const ts = paused.map((s) => s.time).filter((t) => t >= 0);
+  if (ts.length < 2) {
+    return { ok: false, detail: `${tag}: paused samples lack time attrs` };
+  }
+  const drift = Math.max(...ts) - Math.min(...ts);
+  if (drift > maxDriftMs) {
+    return {
+      ok: false,
+      detail: `${tag}: paused time advanced drift=${drift}ms > ${maxDriftMs}ms (times=${ts.join(',')})`,
+    };
+  }
+  return { ok: true, drift, time: ts[ts.length - 1], state: 'paused' };
+}
+
+/** Position must advance while playing. */
+function assertTimeAdvancing(samples, tag, minAdvanceMs = 400) {
+  const playing = samples.filter((s) => s.state === 'playing' && s.time >= 0);
+  if (playing.length < 2) {
+    return {
+      ok: false,
+      detail: `${tag}: need ≥2 playing samples with time; got states=${samples
+        .map((s) => s.state)
+        .join(',')}`,
+    };
+  }
+  let advance = 0;
+  for (let i = 1; i < playing.length; i++) {
+    const d = playing[i].time - playing[i - 1].time;
+    if (d > 0) advance += d;
+  }
+  const span = playing[playing.length - 1].time - playing[0].time;
+  if (advance < minAdvanceMs && span < minAdvanceMs) {
+    return {
+      ok: false,
+      detail:
+        `${tag}: playing but time did not advance ` +
+        `(advance=${advance}ms span=${span}ms min=${minAdvanceMs}; ` +
+        `times=${playing.map((s) => s.time).join(',')})`,
+    };
+  }
+  return {
+    ok: true,
+    advance: Math.max(advance, span),
+    time: playing[playing.length - 1].time,
+    state: 'playing',
+  };
+}
+
+/** After suite stop: not playing/paused with an active advancing session. */
+function assertStoppedOrIdle(samples, tag) {
+  const bad = samples.filter((s) => s.state === 'playing' || s.state === 'paused');
+  if (bad.length === 0) {
+    return { ok: true, state: samples[samples.length - 1]?.state || 'idle' };
+  }
+  // Tolerate a single stale sample then idle.
+  const tail = samples.slice(-3);
+  if (tail.every((s) => s.state !== 'playing' && s.state !== 'paused')) {
+    return { ok: true, state: tail[tail.length - 1].state };
+  }
+  // buffering@0 / stopped@0 is idle-shaped.
+  const idleShaped = samples.filter(
+    (s) =>
+      s.state === 'stopped' ||
+      s.state === '' ||
+      (s.state === 'buffering' && (s.time === 0 || s.duration === 0))
+  );
+  if (idleShaped.length >= Math.ceil(samples.length / 2) && bad.length <= 1) {
+    return { ok: true, state: idleShaped[idleShaped.length - 1].state || 'buffering' };
+  }
+  return {
+    ok: false,
+    detail: `${tag}: expected stopped/idle after stop; samples=${samples
+      .map((s) => `${s.state}@${s.time}`)
+      .join(' ')}`,
+  };
+}
+
+function cycleFail(cycle, total, transition, reason, detail) {
+  fail(
+    `transition_cycle_${cycle}_${transition}`,
+    `CYCLE ${cycle}/${total} FAILED at transition=${transition} reason=${reason}\n${detail || ''}`
+  );
+}
+
 async function dismissFullPlayerOverlay(page) {
-  // After companion stop, Plex Web may keep FullPlayer chrome that intercepts clicks.
   for (const sel of [
     'button[aria-label="Close"]',
     'button[aria-label="Close Player"]',
@@ -1107,7 +1220,6 @@ async function dismissFullPlayerOverlay(page) {
       /* next */
     }
   }
-  // Escape often collapses full player chrome.
   try {
     await page.keyboard.press('Escape');
     await sleep(300);
@@ -1118,18 +1230,13 @@ async function dismissFullPlayerOverlay(page) {
 }
 
 async function gotoDetailsClean(page, detailsUrl, itemTitle) {
-  // Hard navigation clears FullPlayer intercept layers more reliably than in-place stop.
   await page.goto(detailsUrl, { waitUntil: 'domcontentloaded', timeout: cfg.timeoutMs });
   await dismissUserPicker(page, cfg.webUser);
   await dismissFullPlayerOverlay(page);
-  // If still in a player route, bounce via library hash then details again.
-  const url = page.url();
-  if (/player|playback|#!/i.test(url) && /player/i.test(url)) {
-    log(`details_still_playerish url=${url}`);
-  }
   const ready = await waitForDetailsReady(page, itemTitle, Math.max(cfg.timeoutMs, 60000));
-  // Wait for intercepting full-player top controls to detach if present.
-  const intercept = page.locator('[class*="FullPlayerTopControls"], [class*="PlayerContainer-container"]').first();
+  const intercept = page
+    .locator('[class*="FullPlayerTopControls"], [class*="PlayerContainer-container"]')
+    .first();
   try {
     await intercept.waitFor({ state: 'hidden', timeout: 8000 });
     log('full_player_overlay hidden');
@@ -1140,14 +1247,12 @@ async function gotoDetailsClean(page, detailsUrl, itemTitle) {
   return ready;
 }
 
-async function ensureExactCastSelected(page, itemTitle) {
-  // Same discipline as the main arm: wait for control, BEFORE snapshot, open, DIFF.
+async function ensureExactCastSelected(page, _itemTitle) {
   await dismissFullPlayerOverlay(page);
-  // Give full-player chrome time to unmount after Close Player.
   for (let i = 0; i < 20; i++) {
-    const intercept = page.locator(
-      '[class*="FullPlayerTopControls"], [class*="PlayerContainer-container"]'
-    ).first();
+    const intercept = page
+      .locator('[class*="FullPlayerTopControls"], [class*="PlayerContainer-container"]')
+      .first();
     const vis = await intercept.isVisible().catch(() => false);
     if (!vis) break;
     await sleep(250);
@@ -1200,7 +1305,6 @@ async function playFromDetails(page, itemTitle, playSelPrefer, label) {
     : await waitForDetailsReady(page, itemTitle, Math.max(cfg.timeoutMs, 60000));
   const played = await clickPlay(page, ready.playSel);
   if (!played) {
-    // One more details-ready + play attempt after overlay dismiss.
     await dismissFullPlayerOverlay(page);
     const ready2 = await waitForDetailsReady(page, itemTitle, 30000);
     const played2 = await clickPlay(page, ready2.playSel);
@@ -1214,162 +1318,26 @@ async function playFromDetails(page, itemTitle, playSelPrefer, label) {
   return played;
 }
 
-async function runTransitionScenarios(page, itemTitle, detailsUrl, _castAlreadySelected) {
-  if (!cfg.transitions) {
-    log('TRANSITIONS=off (E2E_TRANSITIONS=0)');
-    return { enabled: false };
-  }
-  log('TRANSITIONS=on');
-
-  // ── pause / resume (companion HTTP — stable while cast session active) ──
-  // A permanent user Plex Web tab on the LAN can stop/steal the session; if pause
-  // lands on buffering@0, re-establish cast play once then retry pause.
-  async function pauseWithRetry() {
-    await companionPlayback('pause', 'transition_pause');
-    let st = await waitTimelineState(['paused'], 8000, 'pause');
-    if (st.ok) return st;
-    if (st.state === 'playing') {
-      await clickPauseOrPlayToggle(page);
-      st = await waitTimelineState(['paused'], 6000, 'pause_ui');
-      if (st.ok) return st;
-      await companionPlayback('pause', 'transition_pause2');
-      st = await waitTimelineState(['paused'], 6000, 'pause2');
-      if (st.ok) return st;
-    }
-    // Session dropped under us (external controller / stop race).
-    if (st.state === 'buffering' || st.state === 'stopped' || st.state === '') {
-      log(
-        `transition_pause_session_dropped state=${st.state} time=${st.time} — recast once then pause`
-      );
-      await gotoDetailsClean(page, detailsUrl, itemTitle);
-      await ensureExactCastSelected(page, itemTitle);
-      const ready = await waitForDetailsReady(page, itemTitle, 60000);
-      await playFromDetails(page, itemTitle, ready.playSel, 'transition_pause_reseed');
-      const prog = await waitPlayingOnDaemon(Math.min(cfg.playWaitSec, 12));
-      if (prog.playing < 2) {
-        fail(
-          'transition_pause_reseed_failed',
-          `Could not re-establish playing before pause (samples=${prog.playing})`
-        );
-      }
-      await companionPlayback('pause', 'transition_pause_after_reseed');
-      st = await waitTimelineState(['paused'], 10000, 'pause_reseed');
-      if (st.ok) return st;
-    }
-    return st;
-  }
-
-  let st = await pauseWithRetry();
-  if (!st.ok) {
-    fail(
-      'transition_pause_failed',
-      `Expected state=paused after pause; got state=${st.state} time=${st.time}`
-    );
-  }
-  log(`transition_pause_ok time=${st.time}`);
-
-  await companionPlayback('play', 'transition_resume');
-  st = await waitTimelineState(['playing'], 12000, 'resume');
-  if (!st.ok) {
-    // One UI toggle resume attempt.
-    await clickPauseOrPlayToggle(page);
-    st = await waitTimelineState(['playing'], 8000, 'resume_ui');
-  }
-  if (!st.ok) {
-    fail(
-      'transition_resume_failed',
-      `Expected state=playing after resume; got state=${st.state} time=${st.time}`
-    );
-  }
-  log(`transition_resume_ok time=${st.time}`);
-
-  // ── seek ───────────────────────────────────────────────────────────────
-  const seekTo = 8000;
-  await companionPlayback(`seekTo?offset=${seekTo}`, 'transition_seek');
-  st = await waitTimelineNear(seekTo, 3500, 15000);
-  if (!st.ok) {
-    fail(
-      'transition_seek_failed',
-      `Expected timeline near offset=${seekTo}ms; got state=${st.state} time=${st.time}`
-    );
-  }
-  log(`transition_seek_ok target=${seekTo} time=${st.time}`);
-
-  st = await waitTimelineState(['playing', 'buffering'], 8000, 'post_seek');
-  if (st.state === 'buffering') {
-    st = await waitTimelineState(['playing'], 10000, 'post_seek_play');
-  }
-  if (!st.ok && st.state !== 'playing') {
-    fail('transition_seek_not_playing', `After seek expected playing; got ${st.state}`);
-  }
-
-  // ── stop + re-cast ─────────────────────────────────────────────────────
-  await forceStopDaemon('transition_stop');
-  await sleep(1000);
-  st = await waitTimelineState(['stopped', 'buffering', ''], 8000, 'after_stop');
-  if (st.state === 'playing' || st.state === 'paused') {
-    log(`transition_stop_note external_or_sticky state=${st.state}`);
-    await forceStopDaemon('transition_stop2');
-    await sleep(800);
-  }
-  log('transition_stop_ok (suite stop issued)');
-
-  log(`transition_recast goto details (clean)`);
-  let ready = await gotoDetailsClean(page, detailsUrl, itemTitle);
-  // Close Player clears cast target — always re-select exact MiSTerPlex (no sticky assume).
+async function ensurePlayingSession(page, itemTitle, detailsUrl, label, waitSec) {
+  let samples = await sampleTimeline(5, 400, `${label}_pre`);
+  let adv = assertTimeAdvancing(samples, label, 300);
+  if (adv.ok) return adv;
+  log(`${label}: not advancing (state may be idle) — recast+play`);
+  await forceStopDaemon(`${label}_clear`).catch(() => false);
+  await sleep(600);
+  const ready = await gotoDetailsClean(page, detailsUrl, itemTitle);
   await ensureExactCastSelected(page, itemTitle);
-  ready = await waitForDetailsReady(page, itemTitle, 60000);
-  await playFromDetails(page, itemTitle, ready.playSel, 'transition_recast');
-  let prog = await waitPlayingOnDaemon(Math.min(cfg.playWaitSec, 15));
+  const ready2 = await waitForDetailsReady(page, itemTitle, 60000);
+  await playFromDetails(page, itemTitle, ready2.playSel || ready.playSel, label);
+  const prog = await waitPlayingOnDaemon(waitSec || Math.min(cfg.playWaitSec, 12));
   if (prog.playing < 2) {
-    log('transition_recast play weak — one more exact cast + play');
-    await ensureExactCastSelected(page, itemTitle);
-    ready = await waitForDetailsReady(page, itemTitle, 60000);
-    await playFromDetails(page, itemTitle, ready.playSel, 'transition_recast2');
-    prog = await waitPlayingOnDaemon(Math.min(cfg.playWaitSec, 15));
+    return {
+      ok: false,
+      detail: `${label}: could not reach playing (samples=${prog.playing} buffering=${prog.buffering || 0})`,
+    };
   }
-  if (prog.playing < 2) {
-    fail(
-      'transition_recast_not_playing',
-      `stop+recast did not reach playing (samples=${prog.playing} buffering=${prog.buffering || 0})`
-    );
-  }
-  log(`transition_recast_ok samples=${prog.playing} time_max_ms=${prog.maxT}`);
-
-  // ── play → idle → play ─────────────────────────────────────────────────
-  await forceStopDaemon('transition_idle');
-  await sleep(1200);
-  await dismissFullPlayerOverlay(page);
-  log('transition_idle_ok (stopped via suite)');
-
-  ready = await gotoDetailsClean(page, detailsUrl, itemTitle);
-  await ensureExactCastSelected(page, itemTitle);
-  ready = await waitForDetailsReady(page, itemTitle, 60000);
-  await playFromDetails(page, itemTitle, ready.playSel, 'transition_replay');
-  let prog2 = await waitPlayingOnDaemon(Math.min(cfg.playWaitSec, 15));
-  if (prog2.playing < 2) {
-    log('transition_replay play weak — re-select exact cast');
-    await ensureExactCastSelected(page, itemTitle);
-    ready = await waitForDetailsReady(page, itemTitle, 60000);
-    await playFromDetails(page, itemTitle, ready.playSel, 'transition_replay2');
-    prog2 = await waitPlayingOnDaemon(Math.min(cfg.playWaitSec, 15));
-  }
-  if (prog2.playing < 2) {
-    fail(
-      'transition_replay_not_playing',
-      `play→idle→play did not reach playing (samples=${prog2.playing} buffering=${prog2.buffering || 0})`
-    );
-  }
-  log(`transition_replay_ok samples=${prog2.playing} time_max_ms=${prog2.maxT}`);
-  log('TRANSITIONS_OK pause resume seek stop_recast play_idle_play');
-  return {
-    enabled: true,
-    pause: true,
-    resume: true,
-    seek: true,
-    stopRecast: true,
-    playIdlePlay: true,
-  };
+  samples = await sampleTimeline(6, 400, `${label}_post`);
+  return assertTimeAdvancing(samples, label, 400);
 }
 
 function countPngs(dir) {
@@ -1381,46 +1349,159 @@ function countPngs(dir) {
   }
 }
 
-function parentHdmiCaptureCmd(cfg) {
-  const dir = cfg.hdmiCaptureDir;
-  // Parent-owned MacroSilicon path. Suite never opens this device.
-  // Warm-up: instrument discards first --warmup-skip frames; capture enough extras.
+function parentHdmiCaptureCmd(cfg, capDir) {
+  const dir = capDir || cfg.hdmiCaptureDir;
   const n = Math.max(40, cfg.hdmiWarmupSkip + 30);
   return (
-    `mkdir -p ${JSON.stringify(dir)} && ` +
+    `mkdir -p ${JSON.stringify(dir)} && rm -f ${JSON.stringify(dir)}/f_*.png && ` +
     `ffmpeg -y -v error -f v4l2 -input_format mjpeg -video_size 1920x1080 ` +
     `-i ${cfg.hdmiVideoDev} -frames:v ${n} ${JSON.stringify(path.join(dir, 'f_%04d.png'))}`
   );
 }
 
-function parentHdmiScoreCmd(cfg) {
+function parentHdmiScoreCmd(cfg, capDir) {
   const tool = path.join(ROOT, 'tools', 'hdmi_motion_instrument.py');
+  const dir = capDir || cfg.hdmiCaptureDir;
   return (
-    `python3 ${JSON.stringify(tool)} ${JSON.stringify(cfg.hdmiCaptureDir)} ` +
-    `--warmup-skip ${cfg.hdmiWarmupSkip} --json; echo "true rc=$?"`
+    `python3 ${JSON.stringify(tool)} ${JSON.stringify(dir)} ` +
+    `--warmup-skip ${cfg.hdmiWarmupSkip} ` +
+    `--source-fps ${cfg.hdmiSourceFps} --capture-fps ${cfg.hdmiCaptureFps} ` +
+    `--json; echo "true rc=$?"`
   );
 }
 
 /**
- * Optional conf-gated HDMI motion stage.
- * - Never opens /dev/video0 (parent owns capture).
- * - Prints exact parent capture + score commands.
- * - Holds playback so parent can capture during E2E_HDMI_HOLD_SEC.
- * - If capture dir already has PNGs, runs the instrument and asserts:
- *     rc=0 MOTION_OK required
- *     rc=77 UNSCORED → hard FAIL (not inconclusive)
- *     rc=1 FREEZE / rc=2 COLOR_FAIL → hard FAIL
+ * Score parent-filled capture dir. Never opens /dev/video0.
+ * synthetic/motion mode: rc=0 MOTION_OK required; 77 hard FAIL
+ * real/color_structure: COLOR_FAIL(2)/STRUCTURE_FAIL(3)/FREEZE(1) fail;
+ *   UNSCORED(77) allowed only when assert mode is color_structure (no counter)
+ *   BUT STRUCTURE/COLOR still hard-fail. If rc=77 and mode=motion → FAIL.
  */
-async function optionalHdmiMotionStage() {
+function scoreHdmiCaptureDir(capDir, cycleTag) {
+  const tool = path.join(ROOT, 'tools', 'hdmi_motion_instrument.py');
+  if (!fs.existsSync(tool)) {
+    fail(
+      'hdmi_motion_instrument_missing',
+      `Missing ${tool}. Land tools/hdmi_motion_instrument.py before E2E_HDMI_MOTION.`
+    );
+  }
+  const nPng = countPngs(capDir);
+  log(`hdmi_capture_png_count=${nPng} dir=${capDir} tag=${cycleTag || '-'}`);
+  if (nPng < 3) {
+    fail(
+      'hdmi_motion_no_frames',
+      `${cycleTag || 'hdmi'}: E2E_HDMI_MOTION=1 but capture dir has ${nPng} PNGs (need ≥3).\n` +
+        'Parent must run PARENT_HDMI_CAPTURE_CMD during HDMI_HOLD (suite never opens /dev/video0).\n' +
+        `CAPTURE: ${parentHdmiCaptureCmd(cfg, capDir)}\n` +
+        `SCORE:   ${parentHdmiScoreCmd(cfg, capDir)}`
+    );
+  }
+  log(`hdmi_score spawning instrument on ${capDir}`);
+  const res = spawnSync(
+    'python3',
+    [
+      tool,
+      capDir,
+      '--warmup-skip',
+      String(cfg.hdmiWarmupSkip),
+      '--source-fps',
+      String(cfg.hdmiSourceFps),
+      '--capture-fps',
+      String(cfg.hdmiCaptureFps),
+      '--json',
+    ],
+    { encoding: 'utf8', timeout: 300000 }
+  );
+  const out = `${res.stdout || ''}${res.stderr || ''}`;
+  for (const line of out.split('\n').filter(Boolean).slice(-40)) {
+    log(`  instrument: ${line.slice(0, 280)}`);
+  }
+  const rc = typeof res.status === 'number' ? res.status : 99;
+  log(`hdmi_instrument true rc=${rc} tag=${cycleTag || '-'}`);
+
+  // STRUCTURE_FAIL is the strongest structural RCA class.
+  if (rc === 3) {
+    fail(
+      'hdmi_motion_structure_fail',
+      `${cycleTag || 'hdmi'}: instrument STRUCTURE_FAIL rc=3\n${out.slice(-600)}`
+    );
+  }
+  if (rc === 2) {
+    fail(
+      'hdmi_motion_color_fail',
+      `${cycleTag || 'hdmi'}: instrument COLOR_FAIL rc=2\n${out.slice(-600)}`
+    );
+  }
+  if (rc === 1) {
+    fail(
+      'hdmi_motion_freeze',
+      `${cycleTag || 'hdmi'}: instrument FREEZE rc=1\n${out.slice(-600)}`
+    );
+  }
+  if (rc === 77) {
+    if (cfg.hdmiAssertMode === 'color_structure' || cfg.isRealContent) {
+      // Real titles lack TREK24 overlay — UNSCORED motion is expected.
+      // Color/structure already handled above (would be rc=2/3).
+      log(
+        `HDMI_REAL_CONTENT_UNSCORED_OK tag=${cycleTag || '-'} ` +
+          '(no burned-in counter; timeline asserts carry motion proof; parent may view frames)'
+      );
+      return { enabled: true, rc: 77, mode: 'color_structure', pngs: nPng, unscoredOk: true };
+    }
+    fail(
+      'hdmi_motion_unscored',
+      `${cycleTag || 'hdmi'}: instrument rc=77 UNSCORED — hard FAIL in synthetic/motion gate ` +
+        '(soft-skip is never a pass). Re-capture / confirm TREK24 overlay.\n' +
+        out.slice(-400)
+    );
+  }
+  if (rc !== 0) {
+    fail(
+      'hdmi_motion_instrument_failed',
+      `${cycleTag || 'hdmi'}: instrument unexpected rc=${rc}\n${out.slice(-500)}`
+    );
+  }
+  log(`HDMI_MOTION_OK instrument rc=0 tag=${cycleTag || '-'}`);
+  return { enabled: true, rc: 0, mode: cfg.hdmiAssertMode, pngs: nPng };
+}
+
+/**
+ * Hold playing and optionally score parent capture for one cycle.
+ */
+async function optionalHdmiMotionStage(cycle, totalCycles) {
   if (!cfg.hdmiMotion) {
-    log('HDMI_MOTION=off (set E2E_HDMI_MOTION=1 to enable parent-scored pixel gate)');
+    if (cycle === 1) {
+      log('HDMI_MOTION=off (set E2E_HDMI_MOTION=1 to enable parent-scored pixel gate)');
+    }
     return { enabled: false };
   }
 
-  const capDir = cfg.hdmiCaptureDir;
-  const captureCmd = parentHdmiCaptureCmd(cfg);
-  const scoreCmd = parentHdmiScoreCmd(cfg);
-  log('HDMI_MOTION=on');
+  const every = cfg.hdmiEveryCycle;
+  const isLast = cycle === totalCycles;
+  if (!every && !isLast && cycle !== 1) {
+    log(`HDMI_MOTION skip cycle=${cycle} (E2E_HDMI_EVERY_CYCLE=0; scoring first+last only)`);
+    if (cycle !== 1) return { enabled: false, skipped: true };
+  }
+  // When every-cycle off: score cycle 1 and last only.
+  if (!every && cycle !== 1 && !isLast) {
+    return { enabled: false, skipped: true };
+  }
+
+  const base = String(cfg.hdmiCaptureDir).replace(/\/$/, '');
+  const capDir =
+    totalCycles > 1 || every
+      ? path.join(base, `cycle_${String(cycle).padStart(2, '0')}`)
+      : base;
+  try {
+    fs.mkdirSync(capDir, { recursive: true });
+  } catch (_) {
+    /* ignore */
+  }
+
+  const tag = `cycle_${cycle}_of_${totalCycles}`;
+  const captureCmd = parentHdmiCaptureCmd(cfg, capDir);
+  const scoreCmd = parentHdmiScoreCmd(cfg, capDir);
+  log(`HDMI_MOTION=on tag=${tag} assert_mode=${cfg.hdmiAssertMode} content=${cfg.contentMode}`);
   log(`HDMI_CAPTURE_DIR=${capDir}`);
   log(`PARENT_HDMI_CAPTURE_CMD=${captureCmd}`);
   log(`PARENT_HDMI_SCORE_CMD=${scoreCmd}`);
@@ -1428,80 +1509,279 @@ async function optionalHdmiMotionStage() {
     `HDMI_HOLD_SEC=${cfg.hdmiHoldSec} — parent should run PARENT_HDMI_CAPTURE_CMD now while playback holds`
   );
 
-  // Hold playing so parent can grab a burst. Suite does NOT touch the grabber.
   const holdMs = Math.max(0, cfg.hdmiHoldSec) * 1000;
   const holdEnd = Date.now() + holdMs;
-  let cmd = 8500;
   while (Date.now() < holdEnd) {
-    const xml = await pollDaemonTimeline(cmd++);
-    log(`  hdmi_hold state=${xmlAttr(xml, 'state') || '?'} time=${xmlAttr(xml, 'time') || '?'}`);
+    const xml = await pollDaemonTimeline(nextSuiteCmd());
+    log(
+      `  hdmi_hold tag=${tag} state=${xmlAttr(xml, 'state') || '?'} time=${xmlAttr(xml, 'time') || '?'}`
+    );
     await sleep(1000);
   }
 
-  const nPng = countPngs(capDir);
-  log(`hdmi_capture_png_count=${nPng} dir=${capDir}`);
-  if (nPng < 3) {
-    fail(
-      'hdmi_motion_no_frames',
-      `E2E_HDMI_MOTION=1 but capture dir has ${nPng} PNGs (need ≥3).\n` +
-        'Parent must run PARENT_HDMI_CAPTURE_CMD during HDMI_HOLD (suite never opens /dev/video0).\n' +
-        `CAPTURE: ${captureCmd}\n` +
-        `SCORE:   ${scoreCmd}`
+  return scoreHdmiCaptureDir(capDir, tag);
+}
+
+/**
+ * One stress cycle: pause/resume/seek/stop-idle-play with EFFECT asserts + optional HDMI.
+ */
+async function runOneTransitionCycle(page, itemTitle, detailsUrl, cycle, total) {
+  const ctag = `c${cycle}`;
+  const waitSec = Math.min(cfg.playWaitSec, 12);
+
+  // ── baseline playing + advancing ───────────────────────────────────────
+  let adv = await ensurePlayingSession(page, itemTitle, detailsUrl, `${ctag}_base`, waitSec);
+  if (!adv.ok) cycleFail(cycle, total, 'baseline_play', 'not_advancing', adv.detail);
+
+  // ── pause: state=paused AND time frozen ────────────────────────────────
+  await companionPlayback('pause', `${ctag}_pause`);
+  let st = await waitTimelineState(['paused'], 8000, `${ctag}_pause`);
+  if (!st.ok && st.state === 'playing') {
+    await clickPauseOrPlayToggle(page);
+    st = await waitTimelineState(['paused'], 6000, `${ctag}_pause_ui`);
+  }
+  if (!st.ok && (st.state === 'buffering' || st.state === 'stopped' || st.state === '')) {
+    log(`${ctag}_pause session_dropped — reseed`);
+    adv = await ensurePlayingSession(page, itemTitle, detailsUrl, `${ctag}_pause_reseed`, waitSec);
+    if (!adv.ok) cycleFail(cycle, total, 'pause_reseed', 'not_playing', adv.detail);
+    await companionPlayback('pause', `${ctag}_pause2`);
+    st = await waitTimelineState(['paused'], 8000, `${ctag}_pause2`);
+  }
+  if (!st.ok) {
+    cycleFail(
+      cycle,
+      total,
+      'pause',
+      'state_not_paused',
+      `Expected state=paused; got state=${st.state} time=${st.time}`
     );
   }
+  let samples = await sampleTimeline(6, 400, `${ctag}_paused`);
+  let fr = assertTimeFrozen(samples, `${ctag}_pause`);
+  if (!fr.ok) cycleFail(cycle, total, 'pause', 'time_still_advancing', fr.detail);
+  log(`transition_pause_ok cycle=${cycle}/${total} time=${fr.time} drift_ms=${fr.drift}`);
 
-  const tool = path.join(ROOT, 'tools', 'hdmi_motion_instrument.py');
-  if (!fs.existsSync(tool)) {
-    fail(
-      'hdmi_motion_instrument_missing',
-      `Missing ${tool}. Land tools/hdmi_motion_instrument.py on this tree before enabling E2E_HDMI_MOTION.`
+  // ── resume: playing AND advancing ──────────────────────────────────────
+  const pausedTime = fr.time;
+  await companionPlayback('play', `${ctag}_resume`);
+  st = await waitTimelineState(['playing'], 12000, `${ctag}_resume`);
+  if (!st.ok) {
+    await clickPauseOrPlayToggle(page);
+    st = await waitTimelineState(['playing'], 8000, `${ctag}_resume_ui`);
+  }
+  if (!st.ok) {
+    cycleFail(
+      cycle,
+      total,
+      'resume',
+      'state_not_playing',
+      `Expected playing after resume; got state=${st.state} time=${st.time}`
     );
   }
+  samples = await sampleTimeline(7, 400, `${ctag}_resumed`);
+  adv = assertTimeAdvancing(samples, `${ctag}_resume`, 400);
+  if (!adv.ok) cycleFail(cycle, total, 'resume', 'time_not_advancing', adv.detail);
+  // Soft check: time should move past paused anchor (allow small equality if sample early).
+  if (pausedTime >= 0 && adv.time + 50 < pausedTime) {
+    cycleFail(
+      cycle,
+      total,
+      'resume',
+      'time_regressed',
+      `resume time=${adv.time} < paused time=${pausedTime}`
+    );
+  }
+  log(`transition_resume_ok cycle=${cycle}/${total} time=${adv.time} advance_ms=${adv.advance}`);
 
-  log(`hdmi_score spawning instrument on ${capDir}`);
-  const res = spawnSync(
-    'python3',
-    [tool, capDir, '--warmup-skip', String(cfg.hdmiWarmupSkip), '--json'],
-    { encoding: 'utf8', timeout: 300000 }
+  // ── seek: land near target THEN advance ────────────────────────────────
+  // Short synthetic fixtures (~30s) and external controllers can drop the
+  // session between resume and seek (buffering@0). Reseed if needed so seek
+  // is tested on a live wantPlay session — HTTP 200 on a dead session is a false pass.
+  {
+    const preSeek = await sampleTimeline(3, 300, `${ctag}_pre_seek`);
+    const alive = preSeek.some((s) => s.state === 'playing' || s.state === 'paused');
+    if (!alive) {
+      log(`${ctag}_seek session_not_alive before seek — reseed play`);
+      adv = await ensurePlayingSession(page, itemTitle, detailsUrl, `${ctag}_seek_reseed`, waitSec);
+      if (!adv.ok) cycleFail(cycle, total, 'seek_reseed', 'not_playing', adv.detail);
+    }
+  }
+  const seekTo = 8000;
+  await companionPlayback(`seekTo?offset=${seekTo}`, `${ctag}_seek`);
+  st = await waitTimelineNear(seekTo, 3500, 15000);
+  if (!st.ok) {
+    // One reseed+retry (session may have died mid-seek).
+    log(`${ctag}_seek land miss state=${st.state} time=${st.time} — reseed+retry once`);
+    adv = await ensurePlayingSession(page, itemTitle, detailsUrl, `${ctag}_seek_retry`, waitSec);
+    if (!adv.ok) {
+      cycleFail(
+        cycle,
+        total,
+        'seek',
+        'did_not_land',
+        `Expected timeline near offset=${seekTo}ms; got state=${st.state} time=${st.time}; reseed failed`
+      );
+    }
+    await companionPlayback(`seekTo?offset=${seekTo}`, `${ctag}_seek2`);
+    st = await waitTimelineNear(seekTo, 3500, 15000);
+  }
+  if (!st.ok) {
+    cycleFail(
+      cycle,
+      total,
+      'seek',
+      'did_not_land',
+      `Expected timeline near offset=${seekTo}ms; got state=${st.state} time=${st.time}`
+    );
+  }
+  log(`transition_seek_land_ok cycle=${cycle}/${total} target=${seekTo} time=${st.time}`);
+  // Wait until playing after possible buffering.
+  st = await waitTimelineState(['playing'], 12000, `${ctag}_post_seek`);
+  if (!st.ok) {
+    cycleFail(
+      cycle,
+      total,
+      'seek',
+      'not_playing_after_land',
+      `After seek land expected playing; got ${st.state}@${st.time}`
+    );
+  }
+  samples = await sampleTimeline(7, 400, `${ctag}_seek_adv`);
+  adv = assertTimeAdvancing(samples, `${ctag}_seek`, 300);
+  if (!adv.ok) cycleFail(cycle, total, 'seek', 'time_not_advancing_after_seek', adv.detail);
+  log(`transition_seek_ok cycle=${cycle}/${total} target=${seekTo} time=${adv.time}`);
+
+  // ── stop → idle (not playing) ──────────────────────────────────────────
+  await forceStopDaemon(`${ctag}_stop`);
+  await sleep(900);
+  samples = await sampleTimeline(5, 350, `${ctag}_stopped`);
+  let idle = assertStoppedOrIdle(samples, `${ctag}_stop`);
+  if (!idle.ok) {
+    await forceStopDaemon(`${ctag}_stop2`);
+    await sleep(700);
+    samples = await sampleTimeline(5, 350, `${ctag}_stopped2`);
+    idle = assertStoppedOrIdle(samples, `${ctag}_stop2`);
+  }
+  if (!idle.ok) cycleFail(cycle, total, 'stop', 'not_idle', idle.detail);
+  log(`transition_stop_ok cycle=${cycle}/${total} state=${idle.state}`);
+
+  // ── idle → play (recast exact target) ──────────────────────────────────
+  await dismissFullPlayerOverlay(page);
+  let ready = await gotoDetailsClean(page, detailsUrl, itemTitle);
+  await ensureExactCastSelected(page, itemTitle);
+  ready = await waitForDetailsReady(page, itemTitle, 60000);
+  await playFromDetails(page, itemTitle, ready.playSel, `${ctag}_replay`);
+  let prog = await waitPlayingOnDaemon(waitSec);
+  if (prog.playing < 2) {
+    await ensureExactCastSelected(page, itemTitle);
+    ready = await waitForDetailsReady(page, itemTitle, 60000);
+    await playFromDetails(page, itemTitle, ready.playSel, `${ctag}_replay2`);
+    prog = await waitPlayingOnDaemon(waitSec);
+  }
+  if (prog.playing < 2) {
+    cycleFail(
+      cycle,
+      total,
+      'play_idle_play',
+      'not_playing',
+      `samples=${prog.playing} buffering=${prog.buffering || 0}`
+    );
+  }
+  samples = await sampleTimeline(6, 400, `${ctag}_replay_adv`);
+  adv = assertTimeAdvancing(samples, `${ctag}_replay`, 400);
+  if (!adv.ok) cycleFail(cycle, total, 'play_idle_play', 'time_not_advancing', adv.detail);
+  log(
+    `transition_replay_ok cycle=${cycle}/${total} samples=${prog.playing} time_max_ms=${prog.maxT} advance_ms=${adv.advance}`
   );
-  const out = `${res.stdout || ''}${res.stderr || ''}`;
-  for (const line of out.split('\n').filter(Boolean).slice(-30)) {
-    log(`  instrument: ${line.slice(0, 240)}`);
-  }
-  // Capture true rc directly (spawnSync status) — never through a pipe.
-  const rc = typeof res.status === 'number' ? res.status : 99;
-  log(`hdmi_instrument true rc=${rc}`);
 
-  if (rc === 77) {
-    fail(
-      'hdmi_motion_unscored',
-      'hdmi_motion_instrument.py returned rc=77 UNSCORED — treated as hard FAIL in this gate ' +
-        '(soft-skip is never a pass). Re-capture with a longer burst / confirm TREK24 overlay.'
-    );
+  // ── optional HDMI at defined point: mid-cycle while playing after replay ─
+  const hdmi = await optionalHdmiMotionStage(cycle, total);
+  return { cycle, ok: true, hdmi };
+}
+
+/**
+ * Multi-cycle transition stress. Default E2E_TRANSITION_CYCLES=10.
+ * One flake in N is a FAILURE with cycle+transition named.
+ */
+async function runTransitionScenarios(page, itemTitle, detailsUrl, _castAlreadySelected) {
+  if (!cfg.transitions) {
+    log('TRANSITIONS=off (E2E_TRANSITIONS=0)');
+    return { enabled: false, cycles: 0, passed: 0 };
   }
-  if (rc === 1) {
-    fail('hdmi_motion_freeze', `instrument FREEZE rc=1\n${out.slice(-500)}`);
+  const total = Math.max(1, cfg.transitionCycles || 10);
+  log(
+    `TRANSITIONS=on cycles=${total} content=${cfg.contentMode} hdmi=${cfg.hdmiMotion ? 1 : 0} ` +
+      `hdmi_every=${cfg.hdmiEveryCycle ? 1 : 0} hdmi_assert=${cfg.hdmiAssertMode}`
+  );
+  if (cfg.liveConf) log(`E2E_LIVE_CONF=${cfg.liveConf}`);
+  if (cfg.liveDaemonId) log(`E2E_LIVE_DAEMON_ID=${cfg.liveDaemonId}`);
+  log(
+    'LIVE_DAEMON_NOTE: suite does not ssh; parent should resolve live binary/conf via ' +
+      '/proc/$(pidof misterplexd)/cmdline --conf (two install roots on device).'
+  );
+
+  const results = [];
+  for (let c = 1; c <= total; c++) {
+    log(`════════ TRANSITION_CYCLE ${c}/${total} ════════`);
+    try {
+      const r = await runOneTransitionCycle(page, itemTitle, detailsUrl, c, total);
+      results.push(r);
+      log(`TRANSITION_CYCLE_OK ${c}/${total}`);
+    } catch (e) {
+      if (e instanceof FailError) {
+        // Annotate summary before rethrow
+        log(
+          `TRANSITION_CYCLE_FAIL ${c}/${total} reason=${e.reason} ` +
+            `passed_before=${results.length}`
+        );
+        log(
+          `TRANSITIONS_SUMMARY cycles=${total} pass=${results.length} fail=1 ` +
+            `failed_cycle=${c} failed_transition=${e.reason}`
+        );
+      }
+      throw e;
+    }
   }
-  if (rc === 2) {
-    fail('hdmi_motion_color_fail', `instrument COLOR_FAIL rc=2\n${out.slice(-500)}`);
-  }
-  if (rc !== 0) {
-    fail(
-      'hdmi_motion_instrument_failed',
-      `instrument unexpected rc=${rc}\n${out.slice(-500)}`
-    );
-  }
-  log('HDMI_MOTION_OK instrument rc=0');
-  return { enabled: true, rc: 0, pngs: nPng };
+
+  const hdmiOk = results.filter((r) => r.hdmi && r.hdmi.enabled && !r.hdmi.skipped).length;
+  log(
+    `TRANSITIONS_OK cycles=${total}/${total} pause resume seek stop play_idle_play ` +
+      `hdmi_scored=${hdmiOk}`
+  );
+  log(`TRANSITIONS_SUMMARY cycles=${total} pass=${total} fail=0`);
+  return {
+    enabled: true,
+    cycles: total,
+    passed: total,
+    failed: 0,
+    results,
+  };
 }
 
 (async () => {
   log('test_cast_picker_playwright: BEGIN');
   log(`conf=${cfg.confPath} library=${cfg.libraryName} cast=${cfg.castName}`);
-  log(`tiers=${(cfg.tiers || []).map((t) => t.name).join(',') || '(none)'} transitions=${cfg.transitions ? 1 : 0} hdmi=${cfg.hdmiMotion ? 1 : 0}`);
+  log(`tiers=${(cfg.tiers || []).map((t) => t.name).join(',') || '(none)'} content=${cfg.contentMode} transitions=${cfg.transitions ? 1 : 0} cycles=${cfg.transitionCycles} hdmi=${cfg.hdmiMotion ? 1 : 0}`);
 
   if (cfg.tierResolveError) {
     fail('bad_e2e_tier', cfg.tierResolveError);
+  }
+  if (cfg.isRealContent) {
+    const hasItem =
+      !!(process.env.PLEX_RATING_KEY || process.env.PLEX_KEY || process.env.PLEX_ITEM_TITLE);
+    if (!hasItem) {
+      fail(
+        'real_content_item_unspecified',
+        'E2E_CONTENT=real requires PLEX_RATING_KEY and/or PLEX_ITEM_TITLE ' +
+          '(and usually PLEX_LIBRARY_NAME) pointing at a non-synthetic library item. ' +
+          'Counter-based HDMI MOTION_OK is not required; timeline effect asserts apply.'
+      );
+    }
+    log(
+      'CONTENT=real — HDMI assert_mode=' +
+        cfg.hdmiAssertMode +
+        ' (counter MOTION_OK not required; COLOR/STRUCTURE still hard-fail)'
+    );
   }
   if (!cfg.tiers || !cfg.tiers.length) {
     fail('bad_e2e_tier', 'No tiers resolved — set E2E_TIER=240p|480p|all');
@@ -1846,15 +2126,20 @@ async function optionalHdmiMotionStage() {
       log(`playing_ok samples=${prog.playing} advance=${prog.advance} time_max_ms=${prog.maxT}`);
 
       // ── 4b. Transitions (pause/resume, seek, stop+recast, play→idle→play) ─
-      const tr = await runTransitionScenarios(page, itemTitle, detailsUrl, true);
-
-      // ── 4c. Optional HDMI motion (parent capture; suite never opens video0) ─
-      // Per-tier capture dir suffix so 240p/480p frames do not mix when E2E_TIER=all.
+      // Per-tier capture base so 240p/480p frames do not mix when E2E_TIER=all.
       const hdmiDirBase = cfg.hdmiCaptureDir;
       if (cfg.hdmiMotion && cfg.tiers.length > 1) {
         cfg.hdmiCaptureDir = `${String(hdmiDirBase).replace(/\/$/, '')}_${tier.name}`;
       }
-      const hdmi = await optionalHdmiMotionStage();
+      // Transitions include multi-cycle stress + per-cycle HDMI (when enabled).
+      const tr = await runTransitionScenarios(page, itemTitle, detailsUrl, true);
+      // If transitions off, still allow a single HDMI stage on the playing session.
+      let hdmi = { enabled: false };
+      if (!tr.enabled && cfg.hdmiMotion) {
+        hdmi = await optionalHdmiMotionStage(1, 1);
+      } else if (tr.enabled) {
+        hdmi = { enabled: !!(tr.results || []).some((r) => r.hdmi && r.hdmi.enabled) };
+      }
       cfg.hdmiCaptureDir = hdmiDirBase;
 
       // ── 5. Final stop for this tier (UI best-effort + HTTP) ───────────────
@@ -1880,7 +2165,10 @@ async function optionalHdmiMotionStage() {
 
       summaryBits.push(
         `tier=${tier.name}/rk=${ratingKey}/play=ok` +
-          `/tr=${tr.enabled ? 'ok' : 'off'}/hdmi=${hdmi.enabled ? 'ok' : 'off'}` +
+          `/tr=${tr.enabled ? 'ok' : 'off'}` +
+          `/cycles=${tr.cycles || 0}/${tr.passed || 0}` +
+          `/hdmi=${hdmi.enabled ? 'ok' : 'off'}` +
+          `/content=${cfg.contentMode}` +
           `/companion=${(companion.matched || companion.hosts || []).join(',') || 'ok'}`
       );
       log(`TIER_OK ${tier.name} ${summaryBits[summaryBits.length - 1]}`);

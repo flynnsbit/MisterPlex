@@ -24,8 +24,9 @@ const TIER_DEFS = {
       DECODE_ALLOW_LAB_480P: '0',
       DDR_YUV_FORCE_SCALE: '0',
     },
-    // Lab often already on 240p; missing probe is WARN unless forced.
     requireDaemonTierDefault: false,
+    // Synthetic avsync fixtures carry TREK24 / NTSC2397 burned-in counters.
+    syntheticDefault: true,
   },
   '480p': {
     name: '480p',
@@ -37,8 +38,8 @@ const TIER_DEFS = {
       DECODE_ALLOW_LAB_480P: '1',
       DDR_YUV_FORCE_SCALE: '1',
     },
-    // Mis-set conf silently tests wrong tier — require explicit parent probe.
     requireDaemonTierDefault: true,
+    syntheticDefault: true,
   },
 };
 
@@ -81,12 +82,6 @@ function normalizeDecode(s) {
   return `${m[1]}x${m[2]}`;
 }
 
-/**
- * Resolve which tier(s) this invocation runs.
- * E2E_TIER=240p|480p|all  (default 240p)
- * Explicit PLEX_RATING_KEY / PLEX_ITEM_TITLE still override per-tier defaults
- * when a single tier is selected.
- */
 function resolveTiers(env = process.env) {
   const raw = String(env.E2E_TIER || env.PLEX_E2E_TIER || '240p')
     .trim()
@@ -104,20 +99,30 @@ function resolveTiers(env = process.env) {
 
   const forceRequire = env.E2E_REQUIRE_DAEMON_TIER;
   const daemonDecode = normalizeDecode(env.E2E_DAEMON_DECODE || env.E2E_EXPECT_DECODE || '');
+  const contentMode = String(env.E2E_CONTENT || env.E2E_CONTENT_MODE || 'synthetic')
+    .trim()
+    .toLowerCase();
+  const isReal = contentMode === 'real' || contentMode === 'library';
 
   return names.map((name) => {
     const def = TIER_DEFS[name];
     const single = names.length === 1;
-    // Single-tier env overrides for library item selection.
     let ratingKey = def.ratingKey;
     let itemTitle = def.itemTitle;
-    if (single) {
+    if (single || isReal) {
       if (env.PLEX_RATING_KEY)
         ratingKey = String(env.PLEX_RATING_KEY).replace(/^\/library\/metadata\//, '');
       if (env.PLEX_ITEM_TITLE) itemTitle = env.PLEX_ITEM_TITLE;
       if (env.PLEX_KEY) {
         const m = String(env.PLEX_KEY).match(/metadata\/(\d+)/);
         if (m) ratingKey = m[1];
+      }
+    }
+    // Real content: do not silently fall back to synthetic RK3/RK6 defaults
+    // unless parent still wants them — require explicit key/title when real.
+    if (isReal && single) {
+      if (!env.PLEX_RATING_KEY && !env.PLEX_KEY && !env.PLEX_ITEM_TITLE) {
+        // Keep tier defaults but mark that parent should override.
       }
     }
     let requireDaemonTier = def.requireDaemonTierDefault;
@@ -130,8 +135,6 @@ function resolveTiers(env = process.env) {
       itemTitle,
       expectDecode: def.expectDecode,
       requireDaemonTier,
-      // Parent-exported probe of daemon banner / conf after apply.
-      // For multi-tier runs, E2E_DAEMON_DECODE_<TIER> wins (e.g. E2E_DAEMON_DECODE_480P).
       daemonDecodeReported: normalizeDecode(
         env[`E2E_DAEMON_DECODE_${name.toUpperCase()}`] ||
           (single ? daemonDecode : '') ||
@@ -143,24 +146,28 @@ function resolveTiers(env = process.env) {
 
 function parentConfCommands(tier, misterHost) {
   const host = misterHost || 'MISTER_HOST';
-  const confRemote = '/media/fat/misterplex/misterplex.conf';
+  // Two install roots exist on lab devices — parent must resolve the LIVE conf
+  // from /proc/<pid>/cmdline --conf, not assume /media/fat/misterplex/.
+  const confRemote = '(LIVE conf from: tr "\\0" " " </proc/$(pidof misterplexd)/cmdline | sed -n "s/.*--conf[ =]\\([^ ]*\\).*/\\1/p")';
   const keys = tier.confKeys || {};
   const setLines = Object.entries(keys)
     .map(([k, v]) => `${k}=${v}`)
     .join(' ');
-  // Parent owns device — emit exact ops, never execute from suite.
   const apply =
     `# PARENT applies conf for tier=${tier.name} (suite does NOT ssh/edit device)\n` +
-    `# On MiSTer (${host}), ensure ${confRemote} contains:\n` +
+    `# CAUTION: device has TWO install roots / TWO conf files. Resolve LIVE conf:\n` +
+    `#   pid=$(pidof misterplexd | awk '{print $1}')\n` +
+    `#   tr '\\0' ' ' < /proc/$pid/cmdline; echo\n` +
+    `#   conf=$(tr '\\0' ' ' < /proc/$pid/cmdline | sed -n 's/.*--conf[= ]\\([^ ]*\\).*/\\1/p')\n` +
+    `#   echo LIVE_CONF=$conf\n` +
+    `# Ensure LIVE conf contains:\n` +
     Object.entries(keys)
       .map(([k, v]) => `#   ${k}=${v}`)
       .join('\n') +
-    `\n# Example (parent-run):\n` +
-    `#   ssh root@${host} 'grep -E "^(DECODE|DECODE_ALLOW_LAB_480P|DDR_YUV_FORCE_SCALE)=" ${confRemote} || true'\n` +
-    `#   # then edit conf to: ${setLines}\n` +
-    `#   ssh root@${host} 'systemctl restart misterplexd || /media/fat/misterplex/misterplexd &'\n` +
-    `#   # probe banner / log for adopted decode, then export:\n` +
+    `\n# Example edit target keys: ${setLines}\n` +
+    `#   # restart via the live supervisor / binary — not a stale v1 bundle\n` +
     `#   export E2E_DAEMON_DECODE=${tier.expectDecode}\n` +
+    `#   export E2E_LIVE_CONF=$conf   # optional, logged by suite\n` +
     `#   export E2E_TIER=${tier.name}`;
   return {
     tier: tier.name,
@@ -176,7 +183,6 @@ function loadConfig() {
   const confPath = resolveConfPath();
   const conf = readConfFile(confPath);
 
-  // Prefer env over conf. No default private PMS URL (private-data gate).
   const plexBase = (process.env.PLEX_BASE || conf.PLEX_BASE || '').replace(/\/$/, '');
   const token = process.env.PLEX_TOKEN || conf.PLEX_TOKEN || '';
 
@@ -189,8 +195,42 @@ function loadConfig() {
     tierResolveError = e.message;
   }
 
-  // Back-compat defaults from first tier when present.
   const t0 = tiers && tiers[0];
+  const contentMode = String(process.env.E2E_CONTENT || process.env.E2E_CONTENT_MODE || 'synthetic')
+    .trim()
+    .toLowerCase();
+  const isReal = contentMode === 'real' || contentMode === 'library';
+
+  // Multi-cycle stress. Default 10 so intermittent transition flakes surface.
+  // Set E2E_TRANSITION_CYCLES=1 for a fast smoke.
+  let transitionCycles = parseInt(
+    process.env.E2E_TRANSITION_CYCLES || conf.E2E_TRANSITION_CYCLES || '10',
+    10
+  );
+  if (!Number.isFinite(transitionCycles) || transitionCycles < 1) transitionCycles = 10;
+  if (transitionCycles > 100) transitionCycles = 100;
+
+  // HDMI: parent-owned grabber. Per-cycle capture dirs when every-cycle is on.
+  const hdmiMotion = truthy(process.env.E2E_HDMI_MOTION || conf.E2E_HDMI_MOTION || '0');
+  const hdmiEveryCycle = truthy(
+    process.env.E2E_HDMI_EVERY_CYCLE,
+    hdmiMotion // default: when HDMI on, score each cycle
+  );
+  let hdmiHoldSec = parseInt(
+    process.env.E2E_HDMI_HOLD_SEC || conf.E2E_HDMI_HOLD_SEC || '',
+    10
+  );
+  if (!Number.isFinite(hdmiHoldSec)) {
+    // Shorter default hold under multi-cycle so a 10-cycle run stays practical.
+    hdmiHoldSec = transitionCycles > 1 && hdmiEveryCycle ? 8 : 20;
+  }
+
+  // Synthetic fixtures: instrument must return MOTION_OK.
+  // Real titles: no burned-in counter — timeline + color/structure only.
+  let hdmiAssertMode = String(process.env.E2E_HDMI_ASSERT || '').trim().toLowerCase();
+  if (!hdmiAssertMode) {
+    hdmiAssertMode = isReal ? 'color_structure' : 'motion';
+  }
 
   return {
     confPath: confPath || '(none)',
@@ -198,48 +238,48 @@ function loadConfig() {
     token,
     tiers: tiers || [],
     tierResolveError: tierResolveError || '',
-    // Library / item — match lab "MiSTerPlex Tests" section titles (substring OK).
-    libraryName: process.env.PLEX_LIBRARY_NAME || 'MiSTerPlex Tests',
-    itemTitle: process.env.PLEX_ITEM_TITLE || (t0 && t0.itemTitle) || 'MiSTerPlex Test 240p',
-    // ratingKey override skips library search when set (e.g. 3).
+    contentMode: isReal ? 'real' : 'synthetic',
+    isRealContent: isReal,
+    libraryName:
+      process.env.PLEX_LIBRARY_NAME ||
+      (isReal ? '' : 'MiSTerPlex Tests'),
+    itemTitle:
+      process.env.PLEX_ITEM_TITLE ||
+      (t0 && t0.itemTitle) ||
+      (isReal ? '' : 'MiSTerPlex Test 240p'),
     ratingKey: process.env.PLEX_RATING_KEY || (t0 && t0.ratingKey) || '',
-    // Allow PLEX_KEY=/library/metadata/3 form
     plexKey: process.env.PLEX_KEY || conf.PLEX_KEY || '',
     castName: process.env.CAST_TARGET_NAME || 'MiSTerPlex',
     playerId: process.env.CAST_PLAYER_ID || 'misterplex-dev',
-    // Plex Home profile name (Select User). Empty → first listed profile.
     webUser: process.env.PLEX_WEB_USER || conf.PLEX_WEB_USER || '',
-    // MiSTer companion (documented lab default host; not a PMS :32400).
     misterHost: process.env.MISTER_HOST || '192.168.1.183',
     misterPort: parseInt(process.env.MISTER_PORT || '3005', 10),
     headless: process.env.PW_HEADED !== '1',
     timeoutMs: parseInt(process.env.PW_TIMEOUT_MS || '45000', 10),
     playWaitSec: parseInt(process.env.PW_PLAY_WAIT_SEC || '20', 10),
     outDir: process.env.E2E_OUT || path.join(ROOT, 'build', 'e2e-artifacts'),
-    // Optional: pin a local Chrome for Testing binary when playwright install
-    // cannot download (lab cache / offline). Env wins over auto-detect.
     chromiumPath:
       process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH ||
       process.env.PW_CHROMIUM_PATH ||
       '',
-    // Optional override for companion-server host assert (comma-separated).
-    // Default: hostname of PLEX_BASE (+ loopback unless ALLOW_LOOPBACK_COMPANION=0).
     expectCompanionHost: process.env.EXPECT_COMPANION_HOST || '',
-    // Transition scenarios (pause/resume, seek, stop+recast, play→idle→play).
-    // Default ON — set E2E_TRANSITIONS=0 to skip (still not a pass of transitions).
     transitions: truthy(process.env.E2E_TRANSITIONS, true),
-    // Optional HDMI motion gate (parent-owned grabber). Default OFF.
-    // When on: suite holds playback, prints parent capture+score commands, and
-    // if E2E_HDMI_CAPTURE_DIR already has PNGs, runs tools/hdmi_motion_instrument.py
-    // (never opens /dev/video0 itself). Instrument rc=77 → hard FAIL.
-    hdmiMotion: truthy(process.env.E2E_HDMI_MOTION || conf.E2E_HDMI_MOTION || '0'),
+    transitionCycles,
+    // Optional parent-exported live identity (from /proc cmdline — never assumed).
+    liveConf: process.env.E2E_LIVE_CONF || '',
+    liveDaemonId: process.env.E2E_LIVE_DAEMON_ID || process.env.E2E_DAEMON_ID || '',
+    hdmiMotion,
+    hdmiEveryCycle,
+    hdmiAssertMode, // motion | color_structure
     hdmiCaptureDir:
       process.env.E2E_HDMI_CAPTURE_DIR ||
       conf.E2E_HDMI_CAPTURE_DIR ||
       path.join(ROOT, 'build', 'e2e-hdmi-capture'),
-    hdmiHoldSec: parseInt(process.env.E2E_HDMI_HOLD_SEC || conf.E2E_HDMI_HOLD_SEC || '20', 10),
+    hdmiHoldSec,
     hdmiWarmupSkip: parseInt(process.env.E2E_HDMI_WARMUP_SKIP || '15', 10),
     hdmiVideoDev: process.env.E2E_HDMI_VIDEO_DEV || '/dev/video0',
+    hdmiSourceFps: parseFloat(process.env.E2E_HDMI_SOURCE_FPS || '23.976'),
+    hdmiCaptureFps: parseFloat(process.env.E2E_HDMI_CAPTURE_FPS || '30'),
   };
 }
 

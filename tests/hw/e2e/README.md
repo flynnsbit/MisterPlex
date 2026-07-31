@@ -20,8 +20,15 @@ API-only checks do **not** satisfy this suite — Playwright is mandatory.
    regression gate.
 7. Select **exact** `MiSTerPlex` (ghost labels like `MiSTerPlexTest` are logged and
    **rejected**), start Play, confirm companion timeline `state=playing`.
-8. **Transitions** (default on): pause/resume, seek, stop+re-cast, play→idle→play.
-9. Optional **HDMI motion** stage (`E2E_HDMI_MOTION=1`) — parent captures; suite scores.
+8. **Multi-cycle transitions** (`E2E_TRANSITION_CYCLES`, default **10**): each cycle
+   asserts pause (time **frozen**), resume (time **advances**), seek (lands near
+   target then advances), stop→idle, idle→play. HTTP 200 alone is never enough.
+   Failure names `transition_cycle_<N>_<transition>`.
+9. Optional **HDMI motion** (`E2E_HDMI_MOTION=1`) — parent captures `/dev/video0`;
+   suite scores with `tools/hdmi_motion_instrument.py` (MOTION_OK / FREEZE /
+   COLOR_FAIL / **STRUCTURE_FAIL rc=3** / UNSCORED). Default: **per-cycle** capture
+   dir + hold. Suite **never** opens the grabber. `rc=77` is hard FAIL for synthetic
+   fixtures; real content uses timeline + color/structure only.
 10. **Hard teardown** — blank page, close page/context/browser, suite stop +
     unsubscribe. Asserts **this suite’s controller is gone** (`TEARDOWN_OK`). Does
     **not** require a globally idle daemon (a permanent user Plex Web tab may remain).
@@ -40,11 +47,13 @@ Failure messages distinguish:
 | `select_player_control_not_found` | UI layout/selector drift |
 | `daemon_tier_unprobed` | Tier requires parent conf probe (`E2E_DAEMON_DECODE`) — not applied |
 | `daemon_tier_mismatch` | Parent conf/decode does not match `E2E_TIER` |
-| `transition_*` | Pause/resume/seek/recast/replay timeline failure |
+| `transition_cycle_N_*` | Cycle N failed at named transition (pause/resume/seek/stop/play_idle_play) |
+| `transition_*` | Pause/resume/seek effect failure (time still advancing / not advancing) |
 | `teardown_controller_not_closed` | Suite browser/context failed to close |
+| `real_content_item_unspecified` | `E2E_CONTENT=real` without PLEX_RATING_KEY / title |
 | `hdmi_motion_no_frames` | HDMI stage on but capture dir empty (parent must grab) |
-| `hdmi_motion_unscored` | Instrument rc=77 — hard FAIL in this gate |
-| `hdmi_motion_freeze` / `hdmi_motion_color_fail` | Instrument rc=1 / rc=2 |
+| `hdmi_motion_unscored` | Instrument rc=77 — hard FAIL for synthetic/motion mode |
+| `hdmi_motion_freeze` / `hdmi_motion_color_fail` / `hdmi_motion_structure_fail` | rc=1 / rc=2 / rc=3 |
 
 ## Prerequisites
 
@@ -108,7 +117,15 @@ Optional overrides:
 | `E2E_DAEMON_DECODE` | (none) | Parent probe of daemon decode (`320x240` / `624x480`) |
 | `E2E_DAEMON_DECODE_240P` / `_480P` | (none) | Per-tier probes when `E2E_TIER=all` |
 | `E2E_REQUIRE_DAEMON_TIER` | tier default | `1` = always require probe |
-| `E2E_TRANSITIONS` | `1` | `0` = skip pause/seek/recast/replay block |
+| `E2E_TRANSITIONS` | `1` | `0` = skip transition stress block |
+| `E2E_TRANSITION_CYCLES` | `10` | Repeat pause/resume/seek/stop-idle-play this many times (1 = smoke) |
+| `E2E_CONTENT` | `synthetic` | `real` = non-fixture library item (requires RK/title); HDMI counter optional |
+| `E2E_HDMI_EVERY_CYCLE` | `1` if HDMI on | `0` = score first+last cycle only |
+| `E2E_HDMI_ASSERT` | auto | `motion` (synthetic) or `color_structure` (real) |
+| `E2E_HDMI_SOURCE_FPS` | `23.976` | Passed to instrument rate check |
+| `E2E_HDMI_CAPTURE_FPS` | `30` | Passed to instrument rate check |
+| `E2E_LIVE_CONF` | (none) | Parent-exported live `--conf` path from `/proc/<pid>/cmdline` |
+| `E2E_LIVE_DAEMON_ID` | (none) | Parent-exported live daemon id/sha (logged only) |
 | `PLEX_LIBRARY_NAME` | `MiSTerPlex Tests` | Section title substring |
 | `PLEX_ITEM_TITLE` | tier default | Item title substring (single-tier override) |
 | `PLEX_RATING_KEY` | tier default | Skip library search (single-tier override) |
@@ -182,6 +199,62 @@ ffmpeg -y -v error -f v4l2 -input_format mjpeg -video_size 1920x1080 \
 ```
 
 If the capture dir is empty at score time → `hdmi_motion_no_frames` (FAIL, not skip).
+
+Instrument exit codes (suite mapping):
+
+| instrument rc | meaning | suite |
+|---------------|---------|--------|
+| 0 | MOTION_OK | PASS (synthetic requires this) |
+| 1 | FREEZE | FAIL |
+| 2 | COLOR_FAIL | FAIL |
+| 3 | STRUCTURE_FAIL | FAIL |
+| 77 | UNSCORED | FAIL if `E2E_HDMI_ASSERT=motion`; allowed for `real`/`color_structure` when color/structure clean |
+
+Per-cycle dirs: `E2E_HDMI_CAPTURE_DIR/cycle_01` … `cycle_N` when multi-cycle + HDMI on.
+
+### Real content (`E2E_CONTENT=real`)
+
+Synthetic avsync fixtures carry burned-in `TREK24`/`NTSC2397` counters. Real titles do not.
+For real content the suite asserts:
+
+- Picker / companion / exact cast / play start (same as synthetic)
+- **Timeline effect** on every transition cycle (freeze / advance / seek land / stop idle)
+- HDMI (if enabled): COLOR_FAIL + STRUCTURE_FAIL still hard-fail; missing counter → UNSCORED is OK
+- Parent may still view a frame by eye from the capture dir
+
+```bash
+E2E_CONTENT=real E2E_TIER=240p E2E_DAEMON_DECODE=320x240 \
+  PLEX_RATING_KEY=<real> PLEX_LIBRARY_NAME='Your Library' \
+  E2E_TRANSITION_CYCLES=10 E2E_HDMI_MOTION=0 \
+  PLEX_BASE=… PLEX_TOKEN=… PLEX_WEB_USER=… \
+  ./tests/hw/e2e/run_cast_picker.sh
+echo "true rc=$?"
+```
+
+### Live daemon / conf (two install roots)
+
+This device has had **two** install roots and **two** conf files. The suite never ssh’s
+and never assumes `/media/fat/misterplex/`. Parent should resolve the live process:
+
+```bash
+pid=$(pidof misterplexd | awk '{print $1}')
+tr '\0' ' ' < /proc/$pid/cmdline; echo
+conf=$(tr '\0' ' ' < /proc/$pid/cmdline | sed -n 's/.*--conf[= ]\([^ ]*\).*/\1/p')
+export E2E_LIVE_CONF=$conf
+export E2E_DAEMON_DECODE=…   # from that conf / banner
+```
+
+### Multi-cycle stress (default 10)
+
+```bash
+E2E_TRANSITION_CYCLES=10 E2E_TIER=240p E2E_DAEMON_DECODE=320x240 \
+  PLEX_BASE=… PLEX_TOKEN=… PLEX_WEB_USER=… MISTER_HOST=… \
+  ./tests/hw/e2e/run_cast_picker.sh
+echo "true rc=$?"
+# Look for TRANSITIONS_SUMMARY cycles=10 pass=10 fail=0
+```
+
+A single cycle failure prints `CYCLE N/10 FAILED at transition=…` and fails the run.
 
 ## Topology note
 
