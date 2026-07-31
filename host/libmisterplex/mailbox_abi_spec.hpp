@@ -33,8 +33,37 @@ struct MailboxEntry {
 };
 
 // ---- Core frame-store mailboxes (ddram_frame_rd / ddr_frame_store) ----
+//
+// RTL places the control page relative to DOORBELL_PHYS:
+//   PLXK +0x000, PLXS +0x100, PLXI +0x108, PLXM +0x110,
+//   PLXF +0x118, DIAG +0x120, PLXD +0x128
+// Product 480p YUV doorbell is 0x300FF000 → PLXD live at 0x300FF128.
+// The 0x3007F000 family below is the *legacy example base* (older packed-320
+// map). Consumers MUST resolve via frameStoreMailboxPhys(doorbell, offset),
+// never hard-read the legacy absolute PLXD/PLXF addresses against a product
+// doorbell — that reads bank0 padding / boot residue and desyncs bank select
+// (parent bank0 U≈0x04/0x19 green-cast class on c5382bee).
 
-// PLXK — Doorbell (ARM→FPGA). ARM writes bank|format|seq to trigger a frame swap.
+// Byte offsets from DOORBELL_PHYS (single source for ARM + invariant gates).
+constexpr uint32_t kPlxkOffset = 0x000u;
+constexpr uint32_t kPlxsOffset = 0x100u;
+constexpr uint32_t kPlxiOffset = 0x108u;
+constexpr uint32_t kPlxmOffset = 0x110u;
+constexpr uint32_t kPlxfOffset = 0x118u;
+constexpr uint32_t kSdramDiagOffset = 0x120u;
+constexpr uint32_t kPlxdOffset = 0x128u;
+
+// Legacy example doorbell base (historical 0x3007F000 control page).
+constexpr uint32_t kLegacyFrameStoreDoorbellPhys = 0x3007F000u;
+
+inline constexpr uint32_t frameStoreMailboxPhys(uint32_t doorbell_phys, uint32_t offset) {
+    return doorbell_phys + offset;
+}
+
+// Absolute addresses for the legacy example base — table/collision gates only.
+// Literals (not base+offset expressions) so static parsers in test_rtl_invariants
+// can resolve them. Must equal kLegacyFrameStoreDoorbellPhys + k*Offset.
+// Runtime ARM paths must use frameStoreMailboxPhys(ddrLayout_.doorbell_phys, …).
 constexpr uint32_t kPlxkAddr  = 0x3007F000u;
 constexpr uint32_t kPlxkMagic = 0x504C584Bu; // "PLXK"
 
@@ -71,6 +100,7 @@ constexpr uint32_t kSdramDiagAddr = 0x3007F120u;
 //   !swap_pending → free_bank_mask = disp_bank ? 0b01 : 0b10
 //   swap_pending  → free_bank_mask = 0b00 (both banks in use)
 //   On vsync swap: old disp_bank becomes free, frames_done++
+// Legacy absolute (example base only) — product live addr is doorbell+0x128:
 constexpr uint32_t kPlxdAddr  = 0x3007F128u;
 constexpr uint32_t kPlxdMagic = 0x504C5844u; // "PLXD"
 // Bit-field positions (in the upper 32 bits, i.e. offset from bit 32):

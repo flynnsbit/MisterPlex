@@ -26,11 +26,13 @@ want_contexts = ["idle DDR", "recon DDR", "playback DDR"]
 if contexts != want_contexts:
     fail(f"expected publish contexts {want_contexts}, saw {contexts}")
 
-if src.count("nextDdrPresentBank(ddrBank_, ok)") != 1:
+if src.count("nextDdrPresentBank(") != 1:
     fail("central publish helper must be the only place that advances ddrBank_")
+if "lastPublishedBank()" not in src:
+    fail("publishDdrFrame must advance ddrBank_ from lastPublishedBank() (PLXD may override hint)")
 
 print(
     "test_ddr_publish_path_static: OK "
     f"publish_call_sites={len(contexts)} contexts={','.join(contexts)} "
-    "use centralized publishDdrFrame"
+    "use centralized publishDdrFrame + lastPublishedBank"
 )

@@ -726,7 +726,9 @@ bool MediaPlayer::publishDdrFrame(const DdrPublishFrame& frame, const char* cont
         return false;
     }
     const bool ok = fpga_.publishDdrFrame(frame, ddrBank_);
-    ddrBank_ = nextDdrPresentBank(ddrBank_, ok);
+    // Advance from the bank actually written (PLXD may override the hint).
+    if (ok)
+        ddrBank_ = nextDdrPresentBank(fpga_.lastPublishedBank(), true);
     if (!ok && err)
         *err = fpga_.lastError();
     return ok;

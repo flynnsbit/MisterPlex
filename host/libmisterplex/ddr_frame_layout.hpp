@@ -78,8 +78,11 @@ enum class DdrFramePlacement {
 //
 // Doorbell address family (geometry-derived):
 //   doorbell_phys = phys_base + bank_stride * 2 - 0x1000
-// Fixed mailbox control page (NOT geometry-derived; live silicon ABI):
-//   PLXS 0x3007F100, PLXF 0x3007F118, PLXD 0x3007F128 — do not "unify" with doorbell.
+// Frame-store control page is DOORBELL-RELATIVE (RTL: DOORBELL_PHYS + offset):
+//   PLXS +0x100, PLXF +0x118, PLXD +0x128. Product doorbell 0x300FF000 →
+//   PLXD 0x300FF128. Legacy example base 0x3007F000 still appears in
+//   mailbox_abi_spec as documentation — never hard-read those absolutes against
+//   a product doorbell (bank0 padding / residue → false PLXD → bank desync).
 enum class DdrFrameFormat {
     Yuv420p,
 };

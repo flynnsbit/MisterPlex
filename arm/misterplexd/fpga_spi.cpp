@@ -1396,15 +1396,21 @@ bool FpgaSpi::sendDdrFrame(const DdrPublishFrame& frame, const DdrPublishPlan& p
                 ++plxdStaleCount_;
             }
             plxdLastFramesDone_ = brs.frames_done;
+            // Residue at a wrong absolute address can prove live once (noise /
+            // one-shot change) then stick forever. Re-arm fallback even after
+            // proven if frames_done stops advancing.
             constexpr int kPlxdStaleLimitFrames = 10;
-            if (!plxdLivenessProven_ && plxdStaleCount_ >= kPlxdStaleLimitFrames) {
-                // frames_done has not advanced in 10 consecutive reads.
-                // This is almost certainly boot residue, not a live mailbox.
+            constexpr int kPlxdStaleLimitAfterProven = 60; // ~1–2s at 30–60fps
+            const int staleLimit =
+                plxdLivenessProven_ ? kPlxdStaleLimitAfterProven : kPlxdStaleLimitFrames;
+            if (plxdStaleCount_ >= staleLimit) {
                 fprintf(stderr,
                         "[STALE] sendDdrFrame: PLXD mailbox frames_done stuck at %u for "
-                        "%d frames — treating as boot residue, falling back to timed delay\n",
-                        static_cast<unsigned>(brs.frames_done), plxdStaleCount_);
-                // Fall through to timed delay below.
+                        "%d frames (proven=%d) — treating as residue, timed-delay fallback\n",
+                        static_cast<unsigned>(brs.frames_done), plxdStaleCount_,
+                        plxdLivenessProven_ ? 1 : 0);
+                plxdLivenessProven_ = false;
+                plxdStaleCount_ = 0;
                 goto plxd_absent_fallback;
             }
 
@@ -1603,6 +1609,7 @@ bool FpgaSpi::sendDdrFrame(const DdrPublishFrame& frame, const DdrPublishPlan& p
     lastPushMs_ = std::chrono::duration<double, std::milli>(t1 - t0).count();
     timing.total_us = elapsedUs(t0, t1);
     lastDdrTiming_ = timing;
+    lastPublishedBank_ = bank & 1;
     clearErr();
     return true;
 }
@@ -1612,11 +1619,13 @@ bool FpgaSpi::readFrameStoreStatus(FrameStoreStatus& out) {
         return false;
     if (!ensureDdrMap())
         return false;
-    if (kUnderrunMailboxPhys < ddrLayout_.phys_base) {
+    // PLXF is doorbell-relative (product: 0x300FF118), not legacy 0x3007F118.
+    const uint32_t plxfPhys = underrunMailboxPhys(ddrLayout_.doorbell_phys);
+    if (plxfPhys < ddrLayout_.phys_base) {
         setErr("readFrameStoreStatus: PLXF mailbox is outside DDR frame window");
         return false;
     }
-    const size_t off = static_cast<size_t>(kUnderrunMailboxPhys - ddrLayout_.phys_base);
+    const size_t off = static_cast<size_t>(plxfPhys - ddrLayout_.phys_base);
     if (off + 8 > ddrMapLen_) {
         setErr("readFrameStoreStatus: PLXF mailbox is outside mapped DDR frame window");
         return false;
@@ -1658,11 +1667,16 @@ bool FpgaSpi::readBankRelease(BankReleaseStatus& out) {
         return false;
     if (!ensureDdrMap())
         return false;
-    if (kBankReleaseMailboxPhys < ddrLayout_.phys_base) {
+    // PLXD is doorbell-relative. Product YUV doorbell 0x300FF000 → 0x300FF128.
+    // Hardcoded legacy 0x3007F128 sits in bank0 stride padding past frame_bytes
+    // and can hold boot residue — free_bank_mask from residue desyncs writes
+    // (parent: bank0 U≈0x04/0x19 green-cast while bank1 U≈0x82).
+    const uint32_t plxdPhys = bankReleaseMailboxPhys(ddrLayout_.doorbell_phys);
+    if (plxdPhys < ddrLayout_.phys_base) {
         setErr("readBankRelease: PLXD mailbox is outside DDR frame window");
         return false;
     }
-    const size_t off = static_cast<size_t>(kBankReleaseMailboxPhys - ddrLayout_.phys_base);
+    const size_t off = static_cast<size_t>(plxdPhys - ddrLayout_.phys_base);
     if (off + 8 > ddrMapLen_) {
         setErr("readBankRelease: PLXD mailbox is outside mapped DDR frame window");
         return false;
@@ -1688,9 +1702,10 @@ FpgaSpi::PlxdDiag FpgaSpi::diagnosePlxdProvenance() {
     PlxdDiag d{};
     if ((!ok() && !open()) || !ensureDdrMap())
         return d; // Absent
-    if (kBankReleaseMailboxPhys < ddrLayout_.phys_base)
+    const uint32_t plxdPhys = bankReleaseMailboxPhys(ddrLayout_.doorbell_phys);
+    if (plxdPhys < ddrLayout_.phys_base)
         return d;
-    const size_t off = static_cast<size_t>(kBankReleaseMailboxPhys - ddrLayout_.phys_base);
+    const size_t off = static_cast<size_t>(plxdPhys - ddrLayout_.phys_base);
     if (off + 8 > ddrMapLen_)
         return d;
 

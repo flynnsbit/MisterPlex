@@ -100,7 +100,10 @@ public:
                              const DdrFrameGeometry& geometry, int bank = 0);
     bool sendYuv420pFrameDdr(const uint8_t* yuv420p, size_t len, int width, int height,
                              int bank = 0);
+    // bank is a hint; PLXD may select the free bank. lastPublishedBank() is the
+    // bank that was actually written + doorbelled on the last successful publish.
     bool publishDdrFrame(const DdrPublishFrame& frame, int bank = 0);
+    int lastPublishedBank() const { return lastPublishedBank_; }
     // DDR frame mmap policy. Default true keeps the proven strongly-ordered/device
     // mapping; false is a lab knob for write-combine/cacheable /dev/mem tests.
     // If a lab proves the no-sync mapping is cacheable, enable flush so the FPGA
@@ -320,6 +323,7 @@ private:
     DdrFrameLayout ddrLayout_ = makeDdrFrameLayout(productDdrFrameStoreGeometry());
     uint32_t doorbellSeq_ = 0;
     double lastDdrBankDoorbellMs_[2] = {-1.0, -1.0};
+    int lastPublishedBank_ = 0;
     bool mboxInit_ = false;
     bool mboxAlive_ = false;
     uint16_t mboxSeq_ = 0;

@@ -840,12 +840,28 @@ def check_mailboxes() -> None:
     )
 
     # --- Cross-check PLXD bank-release against spec ---
+    # Legacy example absolute (doorbell base 0x3007F000) still equals 0x3007F128.
+    # Product doorbell is 0x300FF000 → live PLXD is 0x300FF128 via offset 0x128.
     plxd_addr = cpp_const(host, "kBankReleaseMailboxPhys")
     plxd_magic = cpp_const(host, "kBankReleaseMailboxMagic")
     check(plxd_addr == 0x3007F128,
-          f"PLXD bank-release address must be 0x3007F128 (got 0x{plxd_addr:08X})")
+          f"legacy example PLXD address must be 0x3007F128 (got 0x{plxd_addr:08X})")
     check(plxd_magic == 0x504C5844,
           f"PLXD bank-release magic must be 0x504C5844 'PLXD' (got 0x{plxd_magic:08X})")
+    plxd_off = cpp_const(spec_text, "kPlxdOffset")
+    check(plxd_off == 0x128,
+          f"kPlxdOffset must be 0x128 (got 0x{plxd_off:X})")
+    product_doorbell = 0x300FF000
+    product_plxd = product_doorbell + plxd_off
+    check(product_plxd == 0x300FF128,
+          f"product PLXD must be 0x300FF128 (got 0x{product_plxd:08X})")
+    check(product_plxd != 0x3007F128,
+          "product PLXD must not collapse to legacy absolute 0x3007F128")
+    spi = (ROOT / "arm" / "misterplexd" / "fpga_spi.cpp").read_text()
+    check("bankReleaseMailboxPhys(ddrLayout_.doorbell_phys)" in spi,
+          "fpga_spi readBankRelease must use bankReleaseMailboxPhys(doorbell)")
+    check("kBankReleaseMailboxPhys - ddrLayout_.phys_base" not in spi,
+          "fpga_spi must not map PLXD via legacy absolute kBankReleaseMailboxPhys")
 
     # Verify PLXD bit-field positions in the spec are what the RTL packs.
     check(cpp_const(spec_text, "kPlxdFreeBankMaskBit") == 0,
