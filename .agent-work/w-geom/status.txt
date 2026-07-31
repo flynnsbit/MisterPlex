@@ -1,6 +1,6 @@
 w-geom P5 residual + death sender + force-scale harden — FINAL
 branch: w-instr-motion-counter
-(sha after commit)
+sha: a07163699ab8b7db9763fd7469fe66b9cae1b4b6
 
 # LOUD: P5 residual was ALREADY wired at 2e05d80c / prior binary 63094a7e
 # Live device line without residual = OLD binary still installed (865d4c8a era).
