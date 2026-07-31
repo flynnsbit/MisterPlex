@@ -443,15 +443,16 @@ echo "deploy: summary host_md5=$HOST_MD5 target_root=$TARGET_ROOT remote_bin=$RE
 echo "deploy: summary LIVE process md5 verified equal to host (not disk alone)"
 report_rc "deploy_overall" 0
 
-# --- boot path: durable supervisor + _user-startup.sh (parent cold-boot defect) ---
+# --- boot path: durable supervisor + user-startup from S99user (P0 decoy fix) ---
 # Old deploy wrote v1 bare misterplexd and grepped only 'misterplex/bin/misterplexd',
-# which cannot match misterplex_v2 → v1+v2 double-daemon on boot.
+# which cannot match misterplex_v2. Also wrote _user-startup.sh DECOY — MiSTer runs
+# USER_SCRIPT from /etc/init.d/S99user (user-startup.sh, no underscore).
 if [[ "${DEPLOY_SKIP_BOOT_HOOK:-0}" != "1" ]]; then
   # shellcheck source=boot_hook_policy.sh
   source "$ROOT/scripts/boot_hook_policy.sh"
   SUP_SRC="$ROOT/scripts/misterplexd_supervise.sh"
   [[ -f "$SUP_SRC" ]] || die "missing $SUP_SRC"
-  echo "deploy: install supervisor + boot hook for root=$TARGET_ROOT"
+  echo "deploy: install supervisor + boot hook for root=$TARGET_ROOT (path from S99user)"
   set +e
   scp_to "$SUP_SRC" "/tmp/misterplexd_supervise.deploy.$$"
   scp_rc=$?
@@ -463,28 +464,46 @@ if [[ "${DEPLOY_SKIP_BOOT_HOOK:-0}" != "1" ]]; then
     mkdir -p \"\$root/bin\"
     mv -f /tmp/misterplexd_supervise.deploy.$$ \"\$root/bin/misterplexd_supervise.sh\"
     chmod +x \"\$root/bin/misterplexd_supervise.sh\"
-    hook=/media/fat/linux/_user-startup.sh
-    mkdir -p /media/fat/linux
+    INIT=/etc/init.d/S99user
+    DECOY=/media/fat/linux/_user-startup.sh
+    if [ ! -f \"\$INIT\" ]; then echo FAIL_NO_S99user; exit 8; fi
+    line=\$(grep -E '^[[:space:]]*USER_SCRIPT=' \"\$INIT\" | tail -1)
+    val=\${line#USER_SCRIPT=}
+    val=\$(printf '%s' \"\$val\" | sed 's/^[[:space:]]*//;s/[[:space:]]*\$//')
+    val=\$(printf '%s' \"\$val\" | sed 's/^\"//;s/\"\$//')
+    if [ -z \"\$val\" ] || [ \"\${val#/}\" = \"\$val\" ]; then echo FAIL_USER_SCRIPT_UNPARSEABLE; exit 8; fi
+    hook=\$val
+    echo HOOK_FROM_INIT=\$hook
+    mkdir -p \"\$(dirname \"\$hook\")\"
     touch \"\$hook\"
     bak=\${hook}.bak.\$(date -u +%Y%m%dT%H%M%SZ)
     cp -f \"\$hook\" \"\$bak\"
-    # Strip ALL MiSTerPlex autostart lines (both roots + bare + supervise).
     tmp=\$(mktemp)
     grep -vE 'misterplexd_supervise\\.sh|/misterplex/bin/misterplexd|/misterplex_v2/bin/misterplexd' \"\$hook\" >\"\$tmp\" || true
-    # Drop stale markers
-    grep -vE '^# MiSTerPlex (pair autostart|companion)' \"\$tmp\" >\"\$tmp.2\" || true
+    grep -vE '^# MiSTerPlex (pair autostart|companion|DECOY)' \"\$tmp\" >\"\$tmp.2\" || true
     mv -f \"\$tmp.2\" \"\$tmp\"
     printf '\\n# MiSTerPlex pair autostart (atomic with core+daemon+conf; do not hand-edit)\\n' >>\"\$tmp\"
     printf 'nohup %s/bin/misterplexd_supervise.sh >>%s/misterplexd_supervise.log 2>&1 &\\n' \"\$root\" \"\$root\" >>\"\$tmp\"
     mv -f \"\$tmp\" \"\$hook\"
+    if [ -f \"\$DECOY\" ]; then
+      dtmp=\$(mktemp)
+      grep -vE 'misterplexd_supervise\\.sh|/misterplex/bin/misterplexd|/misterplex_v2/bin/misterplexd' \"\$DECOY\" >\"\$dtmp\" || true
+      grep -vE '^# MiSTerPlex (pair autostart|companion|DECOY)' \"\$dtmp\" >\"\$dtmp.2\" || true
+      printf '\\n# MiSTerPlex DECOY: underscore file is NOT run by S99user.\\n' >>\"\$dtmp.2\"
+      mv -f \"\$dtmp.2\" \"\$DECOY\"
+      rm -f \"\$dtmp\"
+      echo DECOY_INERT=\$DECOY
+    fi
     sync
     echo HOOK_BAK=\$bak
     echo HOOK_LINE=\$(grep misterplexd_supervise.sh \"\$hook\" | head -1)
-    # Refuse if more than one supervise line or v1 still present when root is v2
     n=\$(grep -c misterplexd_supervise.sh \"\$hook\" || true)
     if [ \"\$n\" -ne 1 ]; then echo FAIL_HOOK_N=\$n; exit 8; fi
     if [ \"\$root\" = /media/fat/misterplex_v2 ] && grep -q '/misterplex/bin/misterplexd' \"\$hook\"; then
       echo FAIL_HOOK_V1_STILL_PRESENT; exit 8
+    fi
+    if [ -f \"\$DECOY\" ] && grep -qE 'misterplexd_supervise|/misterplex.*/bin/misterplexd' \"\$DECOY\"; then
+      echo FAIL_DECOY_STILL_ARMED; exit 8
     fi
     echo BOOT_HOOK_OK
   "

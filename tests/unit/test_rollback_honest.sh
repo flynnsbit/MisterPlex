@@ -171,16 +171,28 @@ if [[ "$cmd" == *plexctl* ]] || [[ "$cmd" == *stop* ]] || [[ "$cmd" == *load_cor
   exit 0
 fi
 
-# boot hook body
-if [[ "$cmd" == *"_user-startup.sh"* ]] || [[ "$cmd" == *"user-startup"* ]]; then
+# S99user — source of truth for USER_SCRIPT path
+if [[ "$cmd" == *"S99user"* ]]; then
+  echo '#!/bin/sh'
+  echo 'USER_SCRIPT="/media/fat/linux/user-startup.sh"'
+  exit 0
+fi
+# REAL boot hook body (no underscore) — what S99user runs
+if [[ "$cmd" == *"/user-startup.sh"* ]] && [[ "$cmd" != *"_user-startup.sh"* ]]; then
   if [[ -n "${hook_body:-}" ]]; then printf '%s\n' "$hook_body"; exit 0; fi
-  # default v2 supervise line (matches live root)
   echo "nohup /media/fat/misterplex_v2/bin/misterplexd_supervise.sh >>/media/fat/misterplex_v2/misterplexd_supervise.log 2>&1 &"
   exit 0
 fi
-if [[ "$cmd" == *"misterplexd_supervise"* ]] || [[ "$cmd" == *"SUPERVISE_"* ]] || [[ "$cmd" == *"HOOK_"* ]]; then
+# DECOY underscore file — must be inert by default
+if [[ "$cmd" == *"_user-startup.sh"* ]]; then
+  if [[ -n "${decoy_body:-}" ]]; then printf '%s\n' "$decoy_body"; exit 0; fi
+  echo "# inert decoy"
+  exit 0
+fi
+if [[ "$cmd" == *"misterplexd_supervise"* ]] || [[ "$cmd" == *"SUPERVISE_"* ]] || [[ "$cmd" == *"HOOK_"* ]] || [[ "$cmd" == *"DECOY_"* ]]; then
   echo "SUPERVISE_OK"
-  echo "HOOK_INSTALLED=/media/fat/linux/_user-startup.sh"
+  echo "HOOK_INSTALLED=/media/fat/linux/user-startup.sh"
+  echo "DECOY_INERT=/media/fat/linux/_user-startup.sh"
   exit 0
 fi
 if [[ "$cmd" == *"test -x"* ]]; then

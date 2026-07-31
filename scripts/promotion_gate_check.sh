@@ -384,49 +384,132 @@ verify_live() {
   fi
 
   # Boot hook must match live pair root (parent cold-boot defect 2026-07-31).
+  # P0 2026-07-31: path MUST come from /etc/init.d/S99user USER_SCRIPT= — never
+  # hardcode _user-startup.sh (decoy). Gate green-on-decoy nearly stranded daily driver.
   if [ "${PROMOTE_SKIP_BOOT_HOOK:-0}" != "1" ]; then
     hook_body=""
-    if [ -n "${PROMOTE_HOOK_BLOB:-}" ] && [ -f "${PROMOTE_HOOK_BLOB}" ]; then
-      hook_body=$(cat "$PROMOTE_HOOK_BLOB")
-    elif [ -n "${PROMOTE_GATE_BLOB:-}" ]; then
-      # optional HOOK_BODY=... multiline not in blob; allow PROMOTE_HOOK_BODY env
-      hook_body="${PROMOTE_HOOK_BODY:-}"
-    fi
-    if [ -z "$hook_body" ] && [ -z "${PROMOTE_GATE_BLOB:-}" ]; then
+    decoy_body=""
+    s99_body=""
+    resolved_hook_path=""
+    expect_root="${PROMOTE_BOOT_ROOT:-$BOOT_HOOK_DEFAULT_ROOT}"
+    if [ -n "$root" ]; then expect_root="$root"; fi
+
+    # --- resolve path from init (observe what the system consults) ---
+    if [ -n "${PROMOTE_S99_BLOB:-}" ] && [ -f "${PROMOTE_S99_BLOB}" ]; then
+      s99_body=$(cat "$PROMOTE_S99_BLOB")
+    elif [ -n "${PROMOTE_S99_BODY:-}" ]; then
+      s99_body="${PROMOTE_S99_BODY}"
+    elif [ -z "${PROMOTE_GATE_BLOB:-}" ]; then
       set +e
-      hook_body=$(run_ssh "if [ -f /media/fat/linux/_user-startup.sh ]; then cat /media/fat/linux/_user-startup.sh; else echo MISSING; fi")
+      s99_body=$(run_ssh "if [ -f /etc/init.d/S99user ]; then cat /etc/init.d/S99user; else echo MISSING; fi")
       hrc=$?
       set -e
       if [ "$hrc" -eq 5 ]; then echo "true rc=5"; return 5; fi
     fi
-    expect_root="${PROMOTE_BOOT_ROOT:-$BOOT_HOOK_DEFAULT_ROOT}"
-    if [ -n "$root" ]; then expect_root="$root"; fi
+
+    if [ -n "$s99_body" ]; then
+      set +e
+      resolved_hook_path=$(boot_hook_parse_user_script "$s99_body" 2>/dev/null)
+      rrc=$?
+      set -e
+      if [ "$rrc" -ne 0 ] || [ -z "$resolved_hook_path" ]; then
+        echo "FAIL boot-hook path not derived from S99user (no guess fallback)"
+        boot_hook_parse_user_script "$s99_body" 2>&1 | sed 's/^/  /' || true
+        rc=3
+      else
+        echo "OK boot-hook-path-from-init USER_SCRIPT=$resolved_hook_path"
+        BOOT_HOOK_DEVICE_PATH="$resolved_hook_path"
+      fi
+    elif [ -n "${PROMOTE_HOOK_PATH:-}" ]; then
+      resolved_hook_path="${PROMOTE_HOOK_PATH}"
+      echo "NOTE boot-hook path from PROMOTE_HOOK_PATH=$resolved_hook_path (init not injected)"
+    elif [ -n "${PROMOTE_GATE_BLOB:-}" ] && [ -z "${PROMOTE_HOOK_BLOB:-}" ] && [ -z "${PROMOTE_HOOK_BODY:-}" ] \
+         && [ "${PROMOTE_REQUIRE_BOOT_HOOK:-0}" != "1" ]; then
+      echo "NOTE boot-hook not in gate blob — set PROMOTE_S99_BLOB + PROMOTE_HOOK_BLOB"
+    elif [ "${PROMOTE_REQUIRE_BOOT_HOOK:-1}" = "1" ] && [ -z "${PROMOTE_GATE_BLOB:-}" ]; then
+      echo "FAIL boot-hook S99user body unavailable — cannot derive USER_SCRIPT"
+      rc=3
+    fi
+
+    if [ -n "$resolved_hook_path" ] && [ "$resolved_hook_path" = "$BOOT_HOOK_LEGACY_DECOY_PATH" ]; then
+      echo "WARN USER_SCRIPT points at legacy decoy name $resolved_hook_path"
+    fi
+
+    # --- load REAL hook body ---
+    if [ -n "${PROMOTE_HOOK_BLOB:-}" ] && [ -f "${PROMOTE_HOOK_BLOB}" ]; then
+      hook_body=$(cat "$PROMOTE_HOOK_BLOB")
+    elif [ -n "${PROMOTE_HOOK_BODY:-}" ]; then
+      hook_body="${PROMOTE_HOOK_BODY}"
+    elif [ -n "$resolved_hook_path" ] && [ -z "${PROMOTE_GATE_BLOB:-}" ]; then
+      set +e
+      hook_body=$(run_ssh "if [ -f $(printf '%q' "$resolved_hook_path") ]; then cat $(printf '%q' "$resolved_hook_path"); else echo MISSING; fi")
+      hrc=$?
+      set -e
+      if [ "$hrc" -eq 5 ]; then echo "true rc=5"; return 5; fi
+    fi
+
+    # --- load DECOY body (must be inert) ---
+    if [ -n "${PROMOTE_DECOY_HOOK_BLOB:-}" ] && [ -f "${PROMOTE_DECOY_HOOK_BLOB}" ]; then
+      decoy_body=$(cat "$PROMOTE_DECOY_HOOK_BLOB")
+    elif [ -n "${PROMOTE_DECOY_HOOK_BODY:-}" ]; then
+      decoy_body="${PROMOTE_DECOY_HOOK_BODY}"
+    elif [ -z "${PROMOTE_GATE_BLOB:-}" ]; then
+      set +e
+      decoy_body=$(run_ssh "if [ -f /media/fat/linux/_user-startup.sh ]; then cat /media/fat/linux/_user-startup.sh; else echo ABSENT; fi")
+      hrc=$?
+      set -e
+      if [ "$hrc" -eq 5 ]; then echo "true rc=5"; return 5; fi
+    fi
+
     if [ -z "$hook_body" ] || [ "$hook_body" = "MISSING" ]; then
-      # Unit inject path: PROMOTE_GATE_BLOB without PROMOTE_HOOK_* → NOTE only.
-      # Live device (no gate blob): default REQUIRE=1 fails closed.
       if [ -n "${PROMOTE_GATE_BLOB:-}" ] && [ -z "${PROMOTE_HOOK_BLOB:-}" ] && [ -z "${PROMOTE_HOOK_BODY:-}" ] \
          && [ "${PROMOTE_REQUIRE_BOOT_HOOK:-0}" != "1" ]; then
-        echo "NOTE boot-hook not in gate blob — set PROMOTE_HOOK_BLOB for cold-boot gate"
+        echo "NOTE boot-hook body not injected"
       elif [ "${PROMOTE_REQUIRE_BOOT_HOOK:-1}" = "1" ]; then
-        echo "FAIL boot-hook missing or not injected (cold-boot path unproven)"
+        echo "FAIL boot-hook REAL body missing (path=${resolved_hook_path:-unresolved})"
         rc=3
       else
         echo "NOTE boot-hook not checked"
       fi
     else
+      if [ -n "$resolved_hook_path" ]; then
+        echo "boot-hook-real-path=$resolved_hook_path"
+      elif [ "${PROMOTE_REQUIRE_S99:-1}" = "1" ] && [ -n "${PROMOTE_HOOK_BLOB:-}${PROMOTE_HOOK_BODY:-}" ]; then
+        # Injected hook without S99 is incomplete for claim success when required.
+        if [ -n "${PROMOTE_S99_BLOB:-}${PROMOTE_S99_BODY:-}" ] || [ -z "${PROMOTE_GATE_BLOB:-}" ]; then
+          :
+        elif [ "${PROMOTE_REQUIRE_BOOT_HOOK:-0}" = "1" ]; then
+          echo "FAIL boot-hook injected without S99user derivation (decoy class)"
+          rc=3
+        fi
+      fi
       set +e
       boot_hook_check_body "$hook_body" "$expect_root"
       hrc=$?
       set -e
       if [ "$hrc" -ne 0 ]; then
-        echo "FAIL boot-hook vs pair root expect=$expect_root"
+        echo "FAIL boot-hook vs pair root expect=$expect_root path=${resolved_hook_path:-unknown}"
         rc=3
       else
-        echo "OK boot-hook matches root=$expect_root"
+        echo "OK boot-hook matches root=$expect_root path=${resolved_hook_path:-injected}"
         if [ -n "$root" ] && [ "$root" != "$expect_root" ]; then
           echo "FAIL live-root $root != boot expect $expect_root"
           rc=3
         fi
+      fi
+    fi
+
+    # Decoy inertness
+    if [ -n "$decoy_body" ]; then
+      set +e
+      boot_hook_check_decoy_body "$decoy_body"
+      drc=$?
+      set -e
+      if [ "$drc" -ne 0 ]; then
+        echo "FAIL boot-hook decoy _user-startup.sh is not inert (underscore file is NOT executed)"
+        rc=3
+      else
+        echo "OK boot-hook decoy inert"
       fi
     fi
   fi

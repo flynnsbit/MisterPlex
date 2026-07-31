@@ -114,8 +114,63 @@ echo "$src" | grep -q 'HEALTHY_SECS' && ok "sup-healthy" || bad "sup-healthy"
 echo "$src" | grep -q '/media/fat/MiSTer' && ok "sup-mister-argv0" || bad "sup-mister-argv0"
 echo "$src" | grep -q 'misterplex.conf' && ok "sup-conf" || bad "sup-conf"
 
-echo "=== promotion gate fails on v1 hook blob ==="
-# minimal live blob + bad hook
+echo "=== P0: parse USER_SCRIPT from S99user (real path, not decoy) ==="
+cat >"$WORK/s99.real" <<'S99'
+#!/bin/sh
+# MiSTer user script launcher
+USER_SCRIPT="/media/fat/linux/user-startup.sh"
+S99
+set +e
+path=$(boot_hook_parse_user_script "$(cat "$WORK/s99.real")")
+rc=$?
+set -e
+echo "  USER_SCRIPT=$path true rc=$rc"
+[ "$rc" -eq 0 ] && ok "parse-s99-rc0" || bad "parse-s99-rc0"
+[ "$path" = "/media/fat/linux/user-startup.sh" ] && ok "parse-s99-path" || bad "parse-s99-path got=$path"
+[ "$path" != "/media/fat/linux/_user-startup.sh" ] && ok "parse-not-decoy" || bad "parse-not-decoy"
+
+echo "=== P0: missing/unparseable S99 is hard FAIL (no guess) ==="
+set +e
+boot_hook_parse_user_script "MISSING" >/dev/null 2>&1
+rc=$?
+set -e
+[ "$rc" -ne 0 ] && ok "s99-missing-fail" || bad "s99-missing-fail"
+set +e
+boot_hook_parse_user_script "# no assignment here" >/dev/null 2>&1
+rc=$?
+set -e
+[ "$rc" -ne 0 ] && ok "s99-unparseable-fail" || bad "s99-unparseable-fail"
+
+echo "=== P0: decoy with v1 supervise is FAIL (inert policy) ==="
+decoy_v1="nohup ${V1}/bin/misterplexd_supervise.sh >>${V1}/misterplexd_supervise.log 2>&1 &
+"
+set +e
+out=$(boot_hook_check_decoy_body "$decoy_v1" 2>&1)
+rc=$?
+set -e
+echo "$out" | sed 's/^/  /'
+echo "  decoy-v1 true rc=$rc"
+[ "$rc" -ne 0 ] && ok "decoy-armed-fail" || bad "decoy-armed-fail"
+echo "$out" | grep -qi 'decoy_has_misterplex' && ok "decoy-armed-msg" || bad "decoy-armed-msg"
+
+echo "=== P0: inert decoy OK ==="
+set +e
+out=$(boot_hook_check_decoy_body "# wifi only" 2>&1)
+rc=$?
+set -e
+[ "$rc" -eq 0 ] && ok "decoy-inert-ok" || bad "decoy-inert-ok"
+set +e
+out=$(boot_hook_check_decoy_body "ABSENT" 2>&1)
+rc=$?
+set -e
+[ "$rc" -eq 0 ] && ok "decoy-absent-ok" || bad "decoy-absent-ok"
+
+echo "=== P0: render_inert_decoy strips misterplex ==="
+rendered_d=$(boot_hook_render_inert_decoy "$decoy_v1"$'\n'"other=1")
+echo "$rendered_d" | grep -q misterplexd && bad "render-decoy-left-mp" || ok "render-decoy-stripped"
+echo "$rendered_d" | grep -q 'DECOY' && ok "render-decoy-marker" || bad "render-decoy-marker"
+
+echo "=== promotion gate fails on v1 REAL hook (with S99 derivation) ==="
 cat >"$WORK/live.blob" <<BLOB
 PRODUCT_CORE=/media/fat/_Utility/Plex.rbf
 PRODUCT_MD5=c5382bee73cecdee8220b811e529c297
@@ -129,6 +184,7 @@ LIVE_CONF=/media/fat/misterplex_v2/misterplex.conf
 LIVE_ROOT=/media/fat/misterplex_v2
 BLOB
 printf '%s\n' "$v1_hook" >"$WORK/bad.hook"
+printf '%s\n' "# inert" >"$WORK/inert.decoy"
 cat >"$WORK/http.sh" <<'H'
 #!/usr/bin/env bash
 echo 200
@@ -148,7 +204,9 @@ out=$(
   PROMOTE_GATE_BLOB="$WORK/live.blob" \
   PROMOTE_HTTP="$WORK/http.sh" \
   PROMOTE_VISUAL_CMD="$WORK/vis.sh" \
+  PROMOTE_S99_BLOB="$WORK/s99.real" \
   PROMOTE_HOOK_BLOB="$WORK/bad.hook" \
+  PROMOTE_DECOY_HOOK_BLOB="$WORK/inert.decoy" \
   PROMOTE_CONF_BLOB="$WORK/conf_ddr.txt" \
   PROMOTE_CONF_PROFILE=ddr \
   "$ROOT/scripts/promotion_gate_check.sh" verify-live 2>&1
@@ -159,15 +217,41 @@ echo "$out" | sed 's/^/  [gate] /' | tail -20
 echo "  [gate] true rc=$rc"
 [ "$rc" -ne 0 ] && ok "gate-v1-hook-fail" || bad "gate-v1-hook-fail should not pass"
 echo "$out" | grep -qi 'boot-hook' && ok "gate-boot-msg" || bad "gate-boot-msg"
+echo "$out" | grep -q 'USER_SCRIPT=/media/fat/linux/user-startup.sh' && ok "gate-derived-path" || bad "gate-derived-path"
 
-echo "=== promotion gate GREEN with matching v2 hook ==="
+echo "=== P0 REGRESSION: good REAL v2 hook but ARMED decoy → FAIL (was blind-green) ==="
 printf '%s\n' "$good" >"$WORK/good.hook"
+printf '%s\n' "$decoy_v1" >"$WORK/armed.decoy"
 set +e
 out=$(
   PROMOTE_GATE_BLOB="$WORK/live.blob" \
   PROMOTE_HTTP="$WORK/http.sh" \
   PROMOTE_VISUAL_CMD="$WORK/vis.sh" \
+  PROMOTE_S99_BLOB="$WORK/s99.real" \
   PROMOTE_HOOK_BLOB="$WORK/good.hook" \
+  PROMOTE_DECOY_HOOK_BLOB="$WORK/armed.decoy" \
+  PROMOTE_CONF_BLOB="$WORK/conf_ddr.txt" \
+  PROMOTE_CONF_PROFILE=ddr \
+  "$ROOT/scripts/promotion_gate_check.sh" verify-live 2>&1
+)
+rc=$?
+set -e
+echo "$out" | sed 's/^/  [armed-decoy] /' | tail -15
+echo "  [armed-decoy] true rc=$rc"
+[ "$rc" -ne 0 ] && ok "gate-armed-decoy-fail" || bad "gate-armed-decoy-fail"
+echo "$out" | grep -qi 'decoy' && ok "gate-armed-decoy-msg" || bad "gate-armed-decoy-msg"
+# Must NOT claim PROMOTE_GATES_OK
+echo "$out" | grep -q 'PROMOTE_GATES_OK' && bad "gate-armed-decoy-false-ok" || ok "gate-armed-decoy-no-ok"
+
+echo "=== promotion gate GREEN: S99-derived path + v2 REAL hook + inert decoy ==="
+set +e
+out=$(
+  PROMOTE_GATE_BLOB="$WORK/live.blob" \
+  PROMOTE_HTTP="$WORK/http.sh" \
+  PROMOTE_VISUAL_CMD="$WORK/vis.sh" \
+  PROMOTE_S99_BLOB="$WORK/s99.real" \
+  PROMOTE_HOOK_BLOB="$WORK/good.hook" \
+  PROMOTE_DECOY_HOOK_BLOB="$WORK/inert.decoy" \
   PROMOTE_CONF_BLOB="$WORK/conf_ddr.txt" \
   PROMOTE_CONF_PROFILE=ddr \
   "$ROOT/scripts/promotion_gate_check.sh" verify-live 2>&1
@@ -175,10 +259,31 @@ out=$(
 rc=$?
 set -e
 echo "  [gate-ok] true rc=$rc"
-echo "$out" | sed 's/^/  [gate-ok] /' | tail -12
+echo "$out" | sed 's/^/  [gate-ok] /' | tail -16
 [ "$rc" -eq 0 ] && ok "gate-v2-hook-ok" || bad "gate-v2-hook-ok rc=$rc"
+echo "$out" | grep -q 'boot-hook-path-from-init' && ok "gate-ok-from-init" || bad "gate-ok-from-init"
+echo "$out" | grep -q 'OK boot-hook decoy inert' && ok "gate-ok-decoy-inert" || bad "gate-ok-decoy-inert"
+echo "$out" | grep -q 'user-startup.sh' && ok "gate-ok-real-name" || bad "gate-ok-real-name"
+# Must not only mention underscore decoy as the checked path without real
+echo "$out" | grep -q 'boot-hook-real-path=/media/fat/linux/user-startup.sh' && ok "gate-ok-real-path-line" || bad "gate-ok-real-path-line"
+
+echo "=== REGRESSION: gate source must not hardcode decoy as sole boot path ==="
+set +e
+out=$(boot_hook_audit_source_hardcodes "$ROOT" 2>&1)
+rc=$?
+set -e
+echo "$out" | sed 's/^/  [audit] /'
+echo "  audit true rc=$rc"
+[ "$rc" -eq 0 ] && ok "source-audit-ok" || bad "source-audit-ok"
+# Explicit: promotion_gate_check live fetch must reference S99user
+grep -q 'S99user' "$ROOT/scripts/promotion_gate_check.sh" && ok "gate-refs-s99" || bad "gate-refs-s99"
+grep -q 'boot_hook_parse_user_script' "$ROOT/scripts/promotion_gate_check.sh" && ok "gate-uses-parse" || bad "gate-uses-parse"
+# rollback resolve
+grep -q 'resolve_boot_hook_path' "$ROOT/scripts/rollback_v2.sh" && ok "rollback-resolve" || bad "rollback-resolve"
+grep -q 'S99user' "$ROOT/scripts/deploy_misterplexd.sh" && ok "deploy-s99" || bad "deploy-s99"
 
 echo "=== summary pass=$pass fail=$fail ==="
 [ "$fail" -eq 0 ] || exit 1
 echo "ALL test_boot_hook_policy checks passed"
+echo "true rc=0"
 exit 0

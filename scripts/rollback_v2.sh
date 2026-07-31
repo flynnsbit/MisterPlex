@@ -86,8 +86,11 @@ V2_DAEMON="$V2_ROOT/bin/misterplexd"
 V2_CORE="$PAIR_CORE_PATH"
 V2_CONF_DEFAULT="$V2_ROOT/misterplex.conf"
 # Boot path is half of the pair (parent 2026-07-31 cold-boot defect).
+# Path is derived from /etc/init.d/S99user USER_SCRIPT= — never hardcode
+# _user-startup.sh (decoy; parent P0 green-on-decoy).
 PAIR_BOOT_ROOT="${PAIR_BOOT_ROOT:-$V2_ROOT}"
-BOOT_HOOK_PATH="${BOOT_HOOK_PATH:-$BOOT_HOOK_DEVICE_PATH}"
+BOOT_HOOK_PATH="${BOOT_HOOK_PATH:-}"  # filled by resolve_boot_hook_path
+BOOT_HOOK_DECOY_PATH="${BOOT_HOOK_DECOY_PATH:-/media/fat/linux/_user-startup.sh}"
 HOST_SUPERVISE_SRC="$ROOT/scripts/misterplexd_supervise.sh"
 
 run_ssh() {
@@ -564,11 +567,48 @@ EOF
 }
 
 
-# Install durable supervisor + rewrite _user-startup.sh for PAIR_BOOT_ROOT.
+# Resolve REAL boot hook path from S99user (observe what init runs).
+resolve_boot_hook_path() {
+  local body path rc
+  if [ -n "${BOOT_HOOK_PATH:-}" ]; then
+    echo "boot-hook-path-override BOOT_HOOK_PATH=$BOOT_HOOK_PATH"
+    return 0
+  fi
+  if [ -n "${PROMOTE_S99_BODY:-}" ]; then
+    body="${PROMOTE_S99_BODY}"
+  elif [ -n "${PROMOTE_S99_BLOB:-}" ] && [ -f "${PROMOTE_S99_BLOB}" ]; then
+    body=$(cat "$PROMOTE_S99_BLOB")
+  else
+    set +e
+    body=$(run_ssh "if [ -f /etc/init.d/S99user ]; then cat /etc/init.d/S99user; else echo MISSING; fi")
+    rc=$?
+    set -e
+    if [ "$rc" -eq 5 ]; then return 5; fi
+  fi
+  set +e
+  path=$(boot_hook_parse_user_script "$body" 2>/dev/null)
+  rc=$?
+  set -e
+  if [ "$rc" -ne 0 ] || [ -z "$path" ]; then
+    echo "REFUSE boot-hook path not derived from S99user (no guess to _user-startup.sh)"
+    boot_hook_parse_user_script "$body" 2>&1 || true
+    return 10
+  fi
+  BOOT_HOOK_PATH="$path"
+  echo "OK boot-hook-path-from-init USER_SCRIPT=$BOOT_HOOK_PATH"
+  return 0
+}
+
+# Install durable supervisor + rewrite REAL user-startup.sh (from S99user USER_SCRIPT) for PAIR_BOOT_ROOT.
 # Fourth half of the atomic pair (core, daemon, conf, BOOT).
 install_pair_boot_path() {
-  local root="${1:-$PAIR_BOOT_ROOT}" hook_body rendered host_tmp staged rc bak_ts
-  log "install boot path root=$root hook=$BOOT_HOOK_PATH"
+  local root="${1:-$PAIR_BOOT_ROOT}" hook_body rendered host_tmp staged rc bak_ts decoy_body decoy_tmp
+  set +e
+  resolve_boot_hook_path
+  rc=$?
+  set -e
+  if [ "$rc" -ne 0 ]; then return "$rc"; fi
+  log "install boot path root=$root hook=$BOOT_HOOK_PATH (decoy=$BOOT_HOOK_DECOY_PATH must become inert)"
 
   if [ ! -f "$HOST_SUPERVISE_SRC" ]; then
     echo "REFUSE missing host supervisor source $HOST_SUPERVISE_SRC"
@@ -586,7 +626,6 @@ install_pair_boot_path() {
     root=$(printf '%q' "$root")
     staged=$(printf '%q' "$staged")
     mkdir -p \"\$root/bin\"
-    # archive previous supervisor if present
     if [ -f \"\$root/bin/misterplexd_supervise.sh\" ]; then
       cp -f \"\$root/bin/misterplexd_supervise.sh\" \"\$root/bin/misterplexd_supervise.sh.bak.pre-pair\" || true
     fi
@@ -636,12 +675,43 @@ install_pair_boot_path() {
     sync
     echo HOOK_INSTALLED=\$hook
   "
-  echo "OK boot-path root=$root hook=$BOOT_HOOK_PATH"
+
+  # Make underscore decoy INERT (not executed by S99user).
+  set +e
+  decoy_body=$(run_ssh "if [ -f $(printf '%q' "$BOOT_HOOK_DECOY_PATH") ]; then cat $(printf '%q' "$BOOT_HOOK_DECOY_PATH"); else echo ABSENT; fi")
+  rc=$?
+  set -e
+  if [ "$rc" -eq 5 ]; then return 5; fi
+  if [ "$decoy_body" != "ABSENT" ]; then
+    decoy_tmp="$ROOT/build/pair-boot-decoy-${PAIR_ID}.$$.sh"
+    boot_hook_render_inert_decoy "$decoy_body" >"$decoy_tmp"
+    staged="/tmp/user-startup-decoy.pair.$$"
+    set +e
+    run_scp "$decoy_tmp" "$staged"
+    rc=$?
+    set -e
+    rm -f "$decoy_tmp"
+    if [ "$rc" -ne 0 ]; then return 5; fi
+    run_ssh "set -e
+      decoy=$(printf '%q' "$BOOT_HOOK_DECOY_PATH")
+      staged=$(printf '%q' "$staged")
+      if [ -f \"\$decoy\" ]; then cp -f \"\$decoy\" \"\${decoy}.bak.inert.${bak_ts}\" || true; fi
+      mv -f \"\$staged\" \"\$decoy\"
+      sync
+      echo DECOY_INERT=\$decoy
+    "
+  fi
+  echo "OK boot-path root=$root hook=$BOOT_HOOK_PATH decoy_inert=$BOOT_HOOK_DECOY_PATH"
   return 0
 }
 
 verify_boot_hook_live() {
-  local root="${1:-$PAIR_BOOT_ROOT}" body live_root rc scan
+  local root="${1:-$PAIR_BOOT_ROOT}" body live_root rc scan decoy_body
+  set +e
+  resolve_boot_hook_path
+  rc=$?
+  set -e
+  if [ "$rc" -ne 0 ]; then return "$rc"; fi
   set +e
   body=$(run_ssh "if [ -f $(printf '%q' "$BOOT_HOOK_PATH") ]; then cat $(printf '%q' "$BOOT_HOOK_PATH"); else echo MISSING; fi")
   rc=$?
@@ -656,7 +726,20 @@ verify_boot_hook_live() {
   rc=$?
   set -e
   if [ "$rc" -ne 0 ]; then
-    echo "FAIL boot-hook does not match pair root $root"
+    echo "FAIL boot-hook does not match pair root $root path=$BOOT_HOOK_PATH"
+    return 3
+  fi
+  set +e
+  decoy_body=$(run_ssh "if [ -f $(printf '%q' "$BOOT_HOOK_DECOY_PATH") ]; then cat $(printf '%q' "$BOOT_HOOK_DECOY_PATH"); else echo ABSENT; fi")
+  rc=$?
+  set -e
+  if [ "$rc" -eq 5 ]; then return 5; fi
+  set +e
+  boot_hook_check_decoy_body "$decoy_body"
+  rc=$?
+  set -e
+  if [ "$rc" -ne 0 ]; then
+    echo "FAIL boot-hook decoy not inert path=$BOOT_HOOK_DECOY_PATH"
     return 3
   fi
   # Live daemon root must match hook root (the session-long undetected defect).
@@ -671,15 +754,15 @@ verify_boot_hook_live() {
     echo "FAIL detail=cold_boot_would_start_different_bundle_than_live_session"
     return 3
   fi
-  # Supervisor file must exist on disk under root.
   set +e
   run_ssh "test -x $(printf '%q' "$root/bin/misterplexd_supervise.sh") && echo SUPERVISE_OK || echo SUPERVISE_MISSING"
   rc=$?
   set -e
   if [ "$rc" -eq 5 ]; then return 5; fi
-  echo "OK boot-hook+live-root root=$root"
+  echo "OK boot-hook+live-root root=$root path=$BOOT_HOOK_PATH"
   return 0
 }
+
 
 verify_pair() {
   local rc=0 step_rc got_core got_disk live_blob live n conf code pair_out require_visual prc vrc
@@ -889,7 +972,7 @@ restore_and_verify() {
     fi
   fi
 
-  # Boot path (supervisor + _user-startup.sh) — parent cold-boot defect class.
+  # Boot path (supervisor + REAL user-startup.sh (S99user)) — parent cold-boot defect class.
   if [ "${ROLLBACK_SKIP_BOOT:-0}" != "1" ]; then
     set +e
     install_pair_boot_path "$PAIR_BOOT_ROOT"
@@ -945,7 +1028,7 @@ Sequence (all-or-nothing; abort leaves prior half uncommitted when possible):
   1) STOP daemon (avoid ETXTBSY on cp over running binary)
   2) install daemon bytes if disk pin wrong (from host pin or on-device .bak)
   3) apply conf profile ($PAIR_CONF_PROFILE) atomically with backup
-  3b) install $PAIR_BOOT_ROOT/bin/misterplexd_supervise.sh + rewrite _user-startup.sh
+  3b) install $PAIR_BOOT_ROOT/bin/misterplexd_supervise.sh + rewrite REAL user-startup.sh (from S99user USER_SCRIPT)
       (strip ALL misterplex autostart lines both roots; append exactly one v2 line)
   4) ONE menu bounce → load $PAIR_CORE_PATH
   5) start exactly one daemon; verify n_daemon==1 via /proc/exe md5
@@ -953,9 +1036,11 @@ Sequence (all-or-nothing; abort leaves prior half uncommitted when possible):
   7) HARD visual (PAIR_IDLE_PNG / motion); unset → rc=8; motion 77 → rc=8
 
 BOOT path (fourth half of the pair):
-  hook=$BOOT_HOOK_PATH
+  hook=$BOOT_HOOK_PATH   # derived from /etc/init.d/S99user USER_SCRIPT= (not hardcoded)
+  decoy=$BOOT_HOOK_DECOY_PATH  # underscore file; must be INERT (not executed)
   supervise=$PAIR_BOOT_ROOT/bin/misterplexd_supervise.sh
-  NEVER leave hook on v1 while live is v2 (cold-boot → stale 54f1d916 class)
+  NEVER leave REAL hook on v1 while live is v2 (cold-boot → stale 54f1d916 class)
+  NEVER treat _user-startup.sh as the boot file (decoy; parent P0 blind-green)
   NEVER rely on /tmp/plexctl_supervise.sh (does not survive reboot)
 
 POWER-CYCLE / worst-moment disk states (honesty; no core-identity register yet):

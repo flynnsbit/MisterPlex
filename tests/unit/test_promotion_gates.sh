@@ -502,6 +502,8 @@ echo "$out" | grep -q 'skip visual' && bad "glue-no-skip-visual" || ok "glue-no-
 echo "=== GREEN path still returns true rc=0 (success path is tested) ==="
 printf 'nohup /media/fat/misterplex_v2/bin/misterplexd_supervise.sh >>/media/fat/misterplex_v2/misterplexd_supervise.log 2>&1 &\n' \
   >"$WORK/good_hook.txt"
+printf '#!/bin/sh\nUSER_SCRIPT="/media/fat/linux/user-startup.sh"\n' >"$WORK/s99.real"
+printf '# inert decoy\n' >"$WORK/inert.decoy"
 set +e
 out=$(
   PROMOTE_GATE_BLOB="$WORK/live_ok.blob" \
@@ -509,17 +511,20 @@ out=$(
   PROMOTE_VISUAL_CMD="$WORK/visual_ok.sh" \
   PROMOTE_CONF_BLOB="$WORK/conf_ddr.txt" \
   PROMOTE_CONF_PROFILE=ddr \
+  PROMOTE_S99_BLOB="$WORK/s99.real" \
   PROMOTE_HOOK_BLOB="$WORK/good_hook.txt" \
+  PROMOTE_DECOY_HOOK_BLOB="$WORK/inert.decoy" \
   "$GATES" verify-live 2>&1
 )
 rc=$?
 set -e
-echo "$out" | sed 's/^/  [green] /' | tail -20
+echo "$out" | sed 's/^/  [green] /' | tail -22
 echo "  [green] true rc=$rc"
 [ "$rc" -eq 0 ] && ok "full-green-rc0" || bad "full-green-rc0 got $rc"
 echo "$out" | grep -q 'PROMOTE_GATES_OK' && ok "full-green-ok-marker" || bad "full-green-ok-marker"
 echo "$out" | grep -q 'OK v2-rollback-core' && ok "full-green-v2" || bad "full-green-v2"
 echo "$out" | grep -q 'visual_hook true rc=0' && ok "full-green-visual" || bad "full-green-visual"
+echo "$out" | grep -q 'USER_SCRIPT=/media/fat/linux/user-startup.sh' && ok "full-green-s99-path" || bad "full-green-s99-path"
 
 echo "=== bank1 for shipping DDR pair is 0x30080000 (624x480 synthesis-fixed) ==="
 out=$(bash -c 'source '"$ROOT"'/scripts/pair_ship_policy.sh; pair_policy_lookup ddr-c5382bee')

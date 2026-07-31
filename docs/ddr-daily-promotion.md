@@ -553,3 +553,47 @@ PROMOTE_HOOK_BLOB=<(ssh root@$HOST cat /media/fat/linux/_user-startup.sh) \
 | Conf path | assume misterplex/ | resolve from `/proc/pid/cmdline --conf` |
 | n_daemon | cmdline substring | `/proc/pid/exe` basename only |
 
+
+## P0 — boot hook path is derived from S99user (2026-07-31)
+
+MiSTer init `/etc/init.d/S99user` sets `USER_SCRIPT="/media/fat/linux/user-startup.sh"`.
+The underscore file `_user-startup.sh` is a **decoy** — not executed. The gate once
+returned `BOOT_HOOK_OK` against the decoy while the real file still had v1 supervise
+(stale `54f1d916`). Nearly stranded the daily driver on reboot.
+
+**Policy**
+1. Resolve path from `USER_SCRIPT=` in S99user only. Missing/unparseable → hard FAIL (no guess).
+2. Decoy `_user-startup.sh` must be **inert** (zero misterplexd autostart lines).
+3. Promote/rollback install writes the REAL path and strips the decoy.
+
+**Parent live check after reboot**
+```bash
+# On device or via ssh — observe what init actually names:
+grep -E '^[[:space:]]*USER_SCRIPT=' /etc/init.d/S99user
+REAL=$(sed -n 's/^[[:space:]]*USER_SCRIPT=//p' /etc/init.d/S99user | tail -1 | tr -d '"')
+echo "REAL=$REAL"
+grep -n misterplex "$REAL" || true
+echo "--- decoy (must be inert) ---"
+grep -n misterplex /media/fat/linux/_user-startup.sh || echo DECOY_INERT
+
+# Host gate (single command; auto visual if /dev/video0 free):
+scripts/promotion_gate_check.sh verify-live
+echo "true rc=$?"
+# expect: OK boot-hook-path-from-init USER_SCRIPT=/media/fat/linux/user-startup.sh
+# expect: OK boot-hook matches root=... path=/media/fat/linux/user-startup.sh
+# expect: OK boot-hook decoy inert
+# expect: PROMOTE_GATES_OK  true rc=0
+```
+
+### Observation audit (path-trust vs system-consulted)
+
+| Check | Was (trust) | Now (observe) | file |
+|-------|-------------|---------------|------|
+| Boot hook path | hardcoded `_user-startup.sh` | `USER_SCRIPT` from `/etc/init.d/S99user` | `boot_hook_policy.sh`, `promotion_gate_check.sh`, `rollback_v2.sh`, `deploy_misterplexd.sh` |
+| Decoy `_user-startup.sh` | ignored / treated as real | must be inert | same |
+| Live daemon binary | on-disk path | `readlink -f /proc/PID/exe` md5 | `pair_live_probe.inc.sh` |
+| Live conf | assumed `misterplex.conf` | `/proc/PID/cmdline --conf` | same |
+| n_daemon | cmdline substring | exe basename `misterplexd` only | same |
+| Product core loaded | `/tmp/CORENAME` / disk md5 | still **UNVERIFIED** bitstream (w-fit-1); visual required | gate honesty |
+| HDMI frame | parent `-frames:v 1` recipe | `hdmi_capture_idle.sh` warm-up | `pair_visual_gate.sh` |
+
