@@ -10,15 +10,19 @@
 #   duplicated-frame  → FREEZE         (rc=1)
 #   green/chroma cast → COLOR_FAIL     (rc=2)  — hard FAIL even with decodes=0
 #   vertical-dup/wrap → STRUCTURE_FAIL (rc=3)  — hard FAIL independent of motion
-#   empty/missing     → UNSCORED       (rc=77) — never a pass; never a measured failure
+#   wrong rate/revisit→ RATE_FAIL      (rc=4)  — advances but not at source rate
+#   empty/idle/no OCR → UNSCORED       (rc=77) — never a pass; never a measured failure
 #
-# Severity: STRUCTURE_FAIL > COLOR_FAIL > FREEZE > MOTION_OK > UNSCORED.
+# Severity: STRUCTURE > COLOR > RATE > FREEZE > MOTION_OK > UNSCORED.
 # Any positively-detected failure outranks UNSCORED and is never rc=77.
+# rc=77 stays meaningful: idle screensaver / pre-play with nothing to read.
 #
-# Controlled pair (parent hardware, same clip/core/daemon, one conf key):
+# Controlled pair + shipping corpus (parent hardware):
 #   CAP480A_DIR broken 480p identity_skip desync → hard FAIL (rc=2 or 3)
 #   CAP480B_DIR corrected 480p                     → MOTION_OK (rc=0)
 #   CAP240FS_DIR known-good 240p                   → MOTION_OK (rc=0)
+#   CAP480Q_DIR correct native 480p (counter 170→286) → MOTION_OK (rc=0)
+#   CAP480N_DIR idle screensaver (no counter)      → UNSCORED (rc=77)
 #
 # Usage:
 #   ./tests/hw/test_hdmi_motion_instrument.sh
@@ -48,6 +52,8 @@ GREEN_CAST_DIR="${GREEN_CAST_DIR:-/tmp/p480}"
 CAP480A_DIR="${CAP480A_DIR:-/tmp/cap480a}"
 CAP480B_DIR="${CAP480B_DIR:-/tmp/cap480b}"
 CAP240FS_DIR="${CAP240FS_DIR:-/tmp/cap240fs}"
+CAP480Q_DIR="${CAP480Q_DIR:-/tmp/cap480q}"
+CAP480N_DIR="${CAP480N_DIR:-/tmp/cap480n}"
 
 # Scratch under the repo (agent rule: never write /tmp for our own artifacts).
 WORK="$ROOT/.agent-work/hdmi-motion-instrument-$$"
@@ -278,6 +284,19 @@ else
   echo "SKIP cap240fs (set CAP240FS_DIR=... to include)"
   skip=$((skip + 1))
 fi
+if [[ -n "$CAP480Q_DIR" && -d "$CAP480Q_DIR" ]] && compgen -G "$CAP480Q_DIR/f_*.png" >/dev/null; then
+  run_case "cap480q-native480-MOTION_OK" 0 "$CAP480Q_DIR"
+else
+  echo "SKIP cap480q (set CAP480Q_DIR=... to include)"
+  skip=$((skip + 1))
+fi
+if [[ -n "$CAP480N_DIR" && -d "$CAP480N_DIR" ]] && compgen -G "$CAP480N_DIR/f_*.png" >/dev/null; then
+  # Idle screensaver: no burned-in counter. UNSCORED is correct — not a pass.
+  run_case "cap480n-idle-UNSCORED" 77 "$CAP480N_DIR"
+else
+  echo "SKIP cap480n (set CAP480N_DIR=... to include)"
+  skip=$((skip + 1))
+fi
 
 # 10. Synth magenta cast → COLOR_FAIL (generalised chroma, not green-only).
 MDIR="$WORK/magenta_cast_synth"
@@ -313,6 +332,57 @@ for i in range(12):
     Image.fromarray(arr).save(out / f"f_{i:03d}.png")
 PY
 run_case "synth-wrap-STRUCTURE_FAIL" 3 "$WDIR"
+
+# 12. Rate unit checks via analyze_counter_rate (no device).
+python3 - <<PY
+import sys
+sys.path.insert(0, "$ROOT/tools")
+from hdmi_motion_instrument import analyze_counter_rate
+
+def expect(name, cond, detail):
+    if cond:
+        print(f"CASE rate-unit-{name} PASS")
+        return 0
+    print(f"CASE rate-unit-{name} FAIL {detail}")
+    return 1
+
+fail = 0
+# good 24/30
+ns=[]; n=200
+for i in range(60):
+    if i>0 and i%5!=0: n+=1
+    ns.append(n)
+ri=analyze_counter_rate(list(enumerate(ns)), source_fps=24.0, capture_fps=30.0)
+fail += expect("good24on30", ri["rate"]=="RATE_OK" and ri["non_adjacent_revisits"]==0, ri)
+
+# slow crawl
+ns=[]; n=100
+for i in range(60):
+    if i>0 and i%4==0: n+=1
+    ns.append(n)
+ri=analyze_counter_rate(list(enumerate(ns)), source_fps=24.0, capture_fps=30.0)
+fail += expect("slow-crawl", ri["rate_fail"] is True, ri)
+
+# 4x race
+ri=analyze_counter_rate([(i, 100+i*4) for i in range(60)], source_fps=24.0, capture_fps=30.0)
+fail += expect("fast-4x", ri["rate_fail"] is True and ri["span_rate"]>1.5, ri)
+
+# ping-pong revisits
+ping=[100+(i%2) for i in range(60)]
+ri=analyze_counter_rate(list(enumerate(ping)), source_fps=24.0, capture_fps=30.0)
+fail += expect("pingpong-revisit", ri["revisit_fail"] is True and ri["non_adjacent_revisits"]>=2, ri)
+
+sys.exit(1 if fail else 0)
+PY
+rate_rc=$?
+echo "CASE rate-unit-block expect_rc=0 true_rc=$rate_rc"
+if [[ "$rate_rc" -eq 0 ]]; then
+  echo "  PASS rate-unit-block"
+  pass=$((pass + 1))
+else
+  echo "  FAIL rate-unit-block"
+  fail=$((fail + 1))
+fi
 
 echo "=== SUMMARY pass=$pass fail=$fail skip=$skip ==="
 if [[ "$fail" -gt 0 ]]; then

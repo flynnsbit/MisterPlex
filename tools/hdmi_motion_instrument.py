@@ -14,11 +14,16 @@ from a directory of HDMI PNGs and emits a hard verdict.
 
 Verdicts / exit codes
 ---------------------
-  MOTION_OK       rc=0   counter strictly advances; colour+structure OK
+  MOTION_OK       rc=0   counter advances at source rate; colour+structure OK
   FREEZE          rc=1   counter pinned; colour+structure OK
   COLOR_FAIL      rc=2   chroma/cast defect positively measured (hard FAIL)
   STRUCTURE_FAIL  rc=3   vertical-duplicate and/or horizontal-wrap (hard FAIL)
+  RATE_FAIL       rc=4   wrong advance rate and/or non-adjacent counter revisits
   UNSCORED        rc=77  no positive failure AND no positive pass — NEVER a pass
+
+  rc=77 is reserved for genuinely insufficient data (idle screensaver, pre-play
+  window, no overlay). It must never report a positively measured defect, and
+  must never be "fixed" into a pass when there is simply nothing to score.
 
 Severity resolution (highest wins — explicit, non-negotiable)
 -------------------------------------------------------------
@@ -34,15 +39,34 @@ Severity resolution (highest wins — explicit, non-negotiable)
                    A green/magenta field often *prevents* overlay OCR, so
                    "decodes=0" and "colour broken" are correlated — colour
                    must be allowed to decide alone.
-  3. FREEZE      — counter pinned with colour+structure OK. Hard fail rc=1.
-  4. MOTION_OK   — counter advances with colour+structure OK. Pass rc=0.
-  5. UNSCORED    — no overlay/counter AND no colour/structure verdict.
+  3. RATE_FAIL   — counter advances (so not FREEZE) but at the wrong rate
+                   relative to source/capture FPS, or non-adjacent counter
+                   revisits (stale-bank ping-pong). Hard fail rc=4.
+                   Monotonic advance alone is NOT sufficient (pfps collapse
+                   to 10.9 on a 23.976 source still advances and would pass a
+                   pure order check).
+  4. FREEZE      — counter pinned with colour+structure OK. Hard fail rc=1.
+  5. MOTION_OK   — counter advances at plausible source rate, no revisits,
+                   colour+structure OK. Pass rc=0.
+  6. UNSCORED    — no overlay/counter AND no colour/structure/rate verdict.
                    Soft-skip rc=77. Soft-skip is never a pass AND must never
                    report a condition we have positively measured as failure.
 
   When multiple hard fails apply, the highest severity wins; subordinate
   dimensions stay in the report (e.g. motion=UNSCORED color=CHROMA_CAST_FAIL
   structure=VERT_DUP+HORIZ_WRAP → VERDICT=STRUCTURE_FAIL rc=3).
+
+Rate / revisit model (parent calibration)
+-----------------------------------------
+  Capture FPS (MacroSilicon MJPEG burst) and source FPS are independent.
+  Default source = 24000/1001 (≈23.976); default capture = 30.
+  Healthy 24fps-on-30-capture (parent hand measure, 105-frame burst):
+    84 distinct counter states, 84 runs, max plateau 2, plateau hist {1,2},
+    zero non-adjacent revisits, unique/frames = 84/105 = 0.800 = 24/30.
+  Expected counter delta per capture frame ≈ source_fps/capture_fps.
+  Max plateau allowed = ceil(capture_fps/source_fps)+1  (default 3).
+  Non-adjacent revisit = a counter value reappears after a different value
+  intervened (RLE run sequence); bank-swap ping-pong signature.
 
 Grabber warm-up
 ---------------
@@ -72,6 +96,7 @@ import argparse
 import hashlib
 import io
 import json
+import math
 import os
 import re
 import subprocess
@@ -95,10 +120,16 @@ RC_MOTION_OK = 0
 RC_FREEZE = 1
 RC_COLOR_FAIL = 2
 RC_STRUCTURE_FAIL = 3
+RC_RATE_FAIL = 4
 RC_UNSCORED = 77
 
 DEFAULT_WARMUP_SKIP = 15
 DEFAULT_MIN_READS = 3
+# Source vs capture rates (independent clocks). Parent calibration: 24/30=0.800.
+DEFAULT_SOURCE_FPS = 24000.0 / 1001.0  # ≈23.976
+DEFAULT_CAPTURE_FPS = 30.0
+# Minimum strong counter samples before rate/revisit can hard-fail.
+RATE_MIN_SAMPLES = 12
 # Broken c5382bee + old-daemon green-cast fingerprint (parent-measured).
 # Also matches native-480p full-green fields (U,V~0): high green_frac, mid mean.
 GREEN_MEAN_LO, GREEN_MEAN_HI = 55.0, 95.0
@@ -893,11 +924,205 @@ def _filter_counter_outliers(ns: list[int]) -> list[int]:
     return filtered if len(filtered) >= 3 else by_len
 
 
+def _filter_counter_pairs(
+    pairs: list[tuple[int, int]],
+) -> list[tuple[int, int]]:
+    """Filter (capture_idx, n) pairs with the same outlier rules as ns-only."""
+    if len(pairs) < 3:
+        return list(pairs)
+    ns = [n for _, n in pairs]
+    lengths = Counter(len(str(n)) for n in ns)
+    mode_len, mode_c = lengths.most_common(1)[0]
+    if mode_c >= max(3, len(ns) // 3):
+        by_len = [(i, n) for i, n in pairs if len(str(n)) == mode_len]
+    else:
+        by_len = list(pairs)
+    if len(by_len) < 3:
+        by_len = list(pairs)
+    med = _median_int([n for _, n in by_len])
+    abs_dev = sorted(abs(n - med) for _, n in by_len)
+    mad = abs_dev[len(abs_dev) // 2] if abs_dev else 0
+    radius = max(80, 6 * mad if mad > 0 else 80)
+    filtered = [(i, n) for i, n in by_len if abs(n - med) <= radius]
+    if len(filtered) >= 3:
+        out: list[tuple[int, int]] = [filtered[0]]
+        level = float(filtered[0][1])
+        for i, n in filtered[1:]:
+            if abs(n - level) <= radius * 1.5:
+                out.append((i, n))
+                level = 0.7 * level + 0.3 * float(n)
+        filtered = out if len(out) >= 3 else filtered
+    return filtered if len(filtered) >= 3 else by_len
+
+
+def _rle_runs(ns: list[int]) -> list[tuple[int, int]]:
+    """Run-length encode counter sequence → [(value, plateau_len), ...]."""
+    if not ns:
+        return []
+    runs: list[tuple[int, int]] = []
+    cur, cnt = ns[0], 1
+    for x in ns[1:]:
+        if x == cur:
+            cnt += 1
+        else:
+            runs.append((cur, cnt))
+            cur, cnt = x, 1
+    runs.append((cur, cnt))
+    return runs
+
+
+def analyze_counter_rate(
+    pairs: list[tuple[int, int]],
+    *,
+    source_fps: float = DEFAULT_SOURCE_FPS,
+    capture_fps: float = DEFAULT_CAPTURE_FPS,
+) -> dict[str, Any]:
+    """Rate + revisit integrity on filtered (capture_idx, n) pairs.
+
+    Parent known-good calibration (24fps source, 30fps capture, 105 frames):
+      84 distinct states, max plateau 2, plateau hist {1,2}, 0 non-adjacent
+      revisits, unique/frames = 0.800 = source/capture.
+
+    Returns rate dimension RATE_OK | RATE_FAIL | RATE_UNSCORED plus metrics.
+    RATE_UNSCORED means insufficient samples — not a pass and not a measured fail.
+    """
+    empty = {
+        "rate": "RATE_UNSCORED",
+        "rate_fail": False,
+        "unique_ratio": None,
+        "span_rate": None,
+        "expected_ratio": None,
+        "max_plateau": None,
+        "max_plateau_allowed": None,
+        "plateau_hist": {},
+        "unique_states": 0,
+        "n_samples": 0,
+        "non_adjacent_revisits": 0,
+        "revisit_fail": False,
+        "rate_reasons": [],
+        "source_fps": source_fps,
+        "capture_fps": capture_fps,
+    }
+    if source_fps <= 0 or capture_fps <= 0:
+        empty["rate_reasons"] = ["invalid_fps"]
+        return empty
+
+    expected = source_fps / capture_fps
+    max_plat_allowed = int(math.ceil(capture_fps / source_fps)) + 1
+    empty["expected_ratio"] = round(expected, 4)
+    empty["max_plateau_allowed"] = max_plat_allowed
+
+    if len(pairs) < RATE_MIN_SAMPLES:
+        empty["n_samples"] = len(pairs)
+        empty["rate_reasons"] = [f"insufficient_samples={len(pairs)} need>={RATE_MIN_SAMPLES}"]
+        return empty
+
+    idxs = [i for i, _ in pairs]
+    ns = [n for _, n in pairs]
+    runs = _rle_runs(ns)
+    plateaus = [c for _, c in runs]
+    unique_states = len(runs)
+    max_plateau = max(plateaus) if plateaus else 0
+    plateau_hist = dict(Counter(plateaus))
+    unique_ratio = unique_states / len(ns)
+
+    # Span rate against capture index span (not decode-only gaps).
+    # Prefer last-third median − first-third median (robust to residual OCR
+    # dips like 1207 amid 1262..1324). Fall back to endpoints, never raw
+    # max−min (that path false-failed known-good soak2 at span_rate=1.5).
+    cap_span = max(1, idxs[-1] - idxs[0])
+    k = max(1, len(ns) // 3)
+    first_med = _median_int(ns[:k])
+    last_med = _median_int(ns[-k:])
+    ctr_span_med = last_med - first_med
+    ctr_span_end = ns[-1] - ns[0]
+    if ctr_span_med > 0:
+        ctr_span = ctr_span_med
+    elif ctr_span_end > 0:
+        ctr_span = ctr_span_end
+    else:
+        ctr_span = 0
+    span_rate = ctr_span / cap_span
+
+    # Non-adjacent revisits on RLE values (any value that reappears after
+    # another value intervened). Adjacent equals are already collapsed.
+    seen: dict[int, int] = {}
+    revisits = 0
+    for ri, (v, _c) in enumerate(runs):
+        if v in seen:
+            revisits += 1
+        seen[v] = ri
+
+    reasons: list[str] = []
+    # --- Plateau gate (slow / stuck stretches) ---
+    if max_plateau > max_plat_allowed:
+        reasons.append(
+            f"max_plateau={max_plateau}>{max_plat_allowed} "
+            f"(ceil(cap/src)+1)"
+        )
+
+    # --- Unique ratio vs expected source/capture ---
+    # Slow crawl: too few distinct states (parent pfps 10.9 → ~0.36).
+    # Bounds from good corpus (0.77–0.83) with slack; never weaken for RED.
+    ratio_lo = expected * 0.60  # ~0.48 at 24/30
+    ratio_hi = min(1.0, expected * 1.25 + 0.05)  # ~1.0 ceiling
+    if unique_ratio < ratio_lo:
+        reasons.append(
+            f"unique_ratio={unique_ratio:.3f}<{ratio_lo:.3f} "
+            f"(expected≈{expected:.3f})"
+        )
+    # unique_ratio cannot diagnose 4x race (saturates at 1.0) — span_rate does.
+
+    # --- Span rate (counter delta per capture frame) ---
+    span_lo = expected * 0.55
+    span_hi = expected * 1.55
+    if span_rate < span_lo:
+        reasons.append(
+            f"span_rate={span_rate:.3f}<{span_lo:.3f} "
+            f"(ctr_span={ctr_span}/cap_span={cap_span}, expected≈{expected:.3f})"
+        )
+    if span_rate > span_hi:
+        reasons.append(
+            f"span_rate={span_rate:.3f}>{span_hi:.3f} "
+            f"(ctr_span={ctr_span}/cap_span={cap_span}, expected≈{expected:.3f})"
+        )
+
+    # --- Revisit gate (stale-bank ping-pong) ---
+    # Healthy parent measure: 0. Single OCR blip after filtering is tolerated
+    # once; >=2 non-adjacent revisits is a measured integrity failure.
+    revisit_fail = revisits >= 2
+    if revisit_fail:
+        reasons.append(f"non_adjacent_revisits={revisits}>=2 (bank-swap/ping-pong)")
+
+    rate_fail = bool(reasons)
+    return {
+        "rate": "RATE_FAIL" if rate_fail else "RATE_OK",
+        "rate_fail": rate_fail,
+        "unique_ratio": round(unique_ratio, 4),
+        "span_rate": round(span_rate, 4),
+        "expected_ratio": round(expected, 4),
+        "max_plateau": int(max_plateau),
+        "max_plateau_allowed": max_plat_allowed,
+        "plateau_hist": {str(k): int(v) for k, v in sorted(plateau_hist.items())},
+        "unique_states": int(unique_states),
+        "n_samples": len(ns),
+        "cap_span": int(cap_span),
+        "ctr_span": int(ctr_span),
+        "non_adjacent_revisits": int(revisits),
+        "revisit_fail": bool(revisit_fail),
+        "rate_reasons": reasons,
+        "source_fps": source_fps,
+        "capture_fps": capture_fps,
+    }
+
+
 def score_burst(
     frames: list[str],
     *,
     warmup_skip: int = DEFAULT_WARMUP_SKIP,
     min_reads: int = DEFAULT_MIN_READS,
+    source_fps: float = DEFAULT_SOURCE_FPS,
+    capture_fps: float = DEFAULT_CAPTURE_FPS,
     progress: bool = False,
 ) -> dict[str, Any]:
     """Score a capture burst. See module docstring for verdicts."""
@@ -926,8 +1151,10 @@ def score_burst(
     # Template tier-6 (flash best-effort) must never manufacture MOTION_OK alone.
     strong = [r for r in ok_reads if int(r.get("tier") or 0) >= 7]
     seq_src = strong
-    ns_raw = [int(r["n"]) for r in seq_src]
-    ns = _filter_counter_outliers(ns_raw)
+    pairs_raw = [(int(r["idx"]), int(r["n"])) for r in seq_src]
+    pairs = _filter_counter_pairs(pairs_raw)
+    ns_raw = [n for _, n in pairs_raw]
+    ns = [n for _, n in pairs]
 
     # Secondary motion signal: distinct overlay fingerprints on DARK usable frames.
     dark_fps = [
@@ -995,8 +1222,12 @@ def score_burst(
 
     motion = "UNSCORED"
     reason = ""
+    rate_info = analyze_counter_rate(
+        pairs, source_fps=source_fps, capture_fps=capture_fps
+    )
     if len(ns) < min_reads:
         # Secondary: overlay bitmap motion without OCR.
+        # Bitmap path has no counter rate → rate stays UNSCORED (not a pass).
         if len(dark_fps) >= min_reads and len(unique_fps) >= 2:
             motion = "MOTION_OK"
             reason = (
@@ -1053,20 +1284,50 @@ def score_burst(
                 f"med={first_med}->{last_med} mode_frac={mode_frac:.2f}"
             )
 
+    # Rate/revisit only hard-fails when we actually have a counter sequence.
+    # FREEZE is already a measured motion fail (rate=0) — do not double-count
+    # as RATE_FAIL. Bitmap-only MOTION_OK cannot claim RATE_OK.
+    rate_fail = bool(rate_info.get("rate_fail")) and motion != "FREEZE"
+    rate_label = str(rate_info.get("rate") or "RATE_UNSCORED")
+    if motion == "FREEZE":
+        rate_label = "RATE_PINNED"
+    elif motion == "MOTION_OK" and rate_label == "RATE_UNSCORED" and len(ns) < RATE_MIN_SAMPLES:
+        # Order-OK but too few samples for rate — keep motion, rate unscored.
+        pass
+    elif motion == "MOTION_OK" and rate_fail:
+        # Order looked fine; rate/revisit proves it is not.
+        reason = (
+            f"rate_fail [{'; '.join(rate_info.get('rate_reasons') or [])}] "
+            f"on top of {reason}"
+        )
+
     # --- Severity resolution (see module docstring). Positive failure wins. ---
-    # STRUCTURE > COLOR > FREEZE > MOTION_OK > UNSCORED. Measured failures
-    # never collapse to rc=77, even when motion is UNSCORED.
+    # STRUCTURE > COLOR > RATE > FREEZE > MOTION_OK > UNSCORED.
+    # Measured failures never collapse to rc=77, even when motion is UNSCORED.
     if structure_fail:
         final, rc = "STRUCTURE_FAIL", RC_STRUCTURE_FAIL
         reason = (
             f"structure={structure} frames={len(struct_hits)}>={STRUCT_MIN_FRAMES} "
-            f"(hard FAIL independent of motion={motion} color={color}); {reason}"
+            f"(hard FAIL independent of motion={motion} color={color} "
+            f"rate={rate_label}); {reason}"
         )
     elif color_fail:
         final, rc = "COLOR_FAIL", RC_COLOR_FAIL
         reason = (
             f"color={color} frames={len(color_hits)}>={GREEN_CAST_MIN_FRAMES} "
             f"green={len(green_hits)} chroma_spread={len(chroma_hits)} "
+            f"(hard FAIL independent of motion={motion} rate={rate_label}); {reason}"
+        )
+    elif rate_fail:
+        final, rc = "RATE_FAIL", RC_RATE_FAIL
+        reason = (
+            f"rate={rate_label} "
+            f"unique_ratio={rate_info.get('unique_ratio')} "
+            f"span_rate={rate_info.get('span_rate')} "
+            f"expected={rate_info.get('expected_ratio')} "
+            f"max_plateau={rate_info.get('max_plateau')}/"
+            f"{rate_info.get('max_plateau_allowed')} "
+            f"revisits={rate_info.get('non_adjacent_revisits')} "
             f"(hard FAIL independent of motion={motion}); {reason}"
         )
     elif motion == "FREEZE":
@@ -1095,6 +1356,16 @@ def score_burst(
         "motion": motion,
         "color": color,
         "structure": structure,
+        "rate": rate_label,
+        "unique_ratio": rate_info.get("unique_ratio"),
+        "span_rate": rate_info.get("span_rate"),
+        "expected_ratio": rate_info.get("expected_ratio"),
+        "max_plateau": rate_info.get("max_plateau"),
+        "max_plateau_allowed": rate_info.get("max_plateau_allowed"),
+        "plateau_hist": rate_info.get("plateau_hist"),
+        "non_adjacent_revisits": rate_info.get("non_adjacent_revisits"),
+        "source_fps": rate_info.get("source_fps"),
+        "capture_fps": rate_info.get("capture_fps"),
         "verdict": final,
         "reason": reason,
         "rc": rc,
@@ -1139,8 +1410,20 @@ def _print_human(report: dict[str, Any], src: str) -> None:
         )
     print(
         f"motion={report['motion']} color={report['color']} "
-        f"structure={report.get('structure', 'STRUCTURE_OK')}"
+        f"structure={report.get('structure', 'STRUCTURE_OK')} "
+        f"rate={report.get('rate', 'RATE_UNSCORED')}"
     )
+    if report.get("unique_ratio") is not None:
+        print(
+            f"rate_metrics unique_ratio={report.get('unique_ratio')} "
+            f"span_rate={report.get('span_rate')} "
+            f"expected={report.get('expected_ratio')} "
+            f"max_plateau={report.get('max_plateau')}/"
+            f"{report.get('max_plateau_allowed')} "
+            f"plateau_hist={report.get('plateau_hist')} "
+            f"revisits={report.get('non_adjacent_revisits')} "
+            f"src_fps={report.get('source_fps')} cap_fps={report.get('capture_fps')}"
+        )
     print(f"reason={report['reason']}")
     print(f"VERDICT={report['verdict']} rc={report['rc']}")
 
@@ -1269,6 +1552,54 @@ def _self_test() -> int:
         assert rep4["verdict"] == "STRUCTURE_FAIL", rep4
         assert rep4["rc"] == RC_STRUCTURE_FAIL, rep4
 
+    # --- Rate / revisit unit checks (no PNG OCR required) ---
+    # Healthy 24-on-30: hold every 5th capture → unique_ratio ≈ 0.8, max plateau 2.
+    good_ns = []
+    src_n = 200
+    for cap_i in range(60):
+        if cap_i > 0 and (cap_i % 5) != 0:
+            src_n += 1
+        good_ns.append(src_n)
+    ri = analyze_counter_rate(list(enumerate(good_ns)), source_fps=24.0, capture_fps=30.0)
+    assert ri["rate"] == "RATE_OK", ri
+    assert ri["rate_fail"] is False, ri
+    assert ri["max_plateau"] <= ri["max_plateau_allowed"], ri
+    assert ri["non_adjacent_revisits"] == 0, ri
+    assert ri["unique_ratio"] is not None and 0.70 <= ri["unique_ratio"] <= 0.90, ri
+
+    # Slow crawl: long plateaus (pfps collapse class) — unique_ratio low.
+    slow_ns = []
+    src_n = 100
+    for cap_i in range(60):
+        if cap_i > 0 and cap_i % 4 == 0:  # advance only every 4 capture frames → ~0.25
+            src_n += 1
+        slow_ns.append(src_n)
+    ri_slow = analyze_counter_rate(list(enumerate(slow_ns)), source_fps=24.0, capture_fps=30.0)
+    assert ri_slow["rate_fail"] is True, ri_slow
+    assert ri_slow["max_plateau"] > ri_slow["max_plateau_allowed"] or (
+        ri_slow["unique_ratio"] is not None and ri_slow["unique_ratio"] < 0.5
+    ), ri_slow
+
+    # 4x race: counter jumps by ~4 per capture frame.
+    fast_ns = [100 + i * 4 for i in range(60)]
+    ri_fast = analyze_counter_rate(list(enumerate(fast_ns)), source_fps=24.0, capture_fps=30.0)
+    assert ri_fast["rate_fail"] is True, ri_fast
+    assert ri_fast["span_rate"] is not None and ri_fast["span_rate"] > 1.5, ri_fast
+
+    # Bank-swap ping-pong: non-adjacent revisits.
+    ping = []
+    for i in range(30):
+        ping.append(100 + (i % 2))  # 100,101,100,101,...
+    # expand with indices
+    ri_ping = analyze_counter_rate(list(enumerate(ping * 2)), source_fps=24.0, capture_fps=30.0)
+    assert ri_ping["rate_fail"] is True, ri_ping
+    assert ri_ping["revisit_fail"] is True, ri_ping
+    assert ri_ping["non_adjacent_revisits"] >= 2, ri_ping
+
+    # Too few samples → RATE_UNSCORED (not a fail).
+    ri_few = analyze_counter_rate([(0, 1), (1, 2), (2, 3)], source_fps=24.0, capture_fps=30.0)
+    assert ri_few["rate"] == "RATE_UNSCORED" and ri_few["rate_fail"] is False, ri_few
+
     print("SELF_TEST_OK")
     return 0
 
@@ -1294,6 +1625,24 @@ def main(argv: list[str] | None = None) -> int:
         type=int,
         default=DEFAULT_MIN_READS,
         help=f"minimum confident counter reads for a hard verdict (default {DEFAULT_MIN_READS})",
+    )
+    ap.add_argument(
+        "--source-fps",
+        type=float,
+        default=DEFAULT_SOURCE_FPS,
+        help=(
+            "source content frame rate (default 24000/1001 ≈ 23.976). "
+            "Counter increments once per source frame."
+        ),
+    )
+    ap.add_argument(
+        "--capture-fps",
+        type=float,
+        default=DEFAULT_CAPTURE_FPS,
+        help=(
+            "HDMI grabber capture rate for the burst (default 30). "
+            "Independent of source_fps; healthy unique_ratio ≈ source/capture."
+        ),
     )
     ap.add_argument("--json", action="store_true", help="machine-readable report")
     ap.add_argument(
@@ -1365,6 +1714,8 @@ def main(argv: list[str] | None = None) -> int:
         frames,
         warmup_skip=args.warmup_skip,
         min_reads=args.min_reads,
+        source_fps=args.source_fps,
+        capture_fps=args.capture_fps,
         progress=args.progress,
     )
     report["src"] = src_label
