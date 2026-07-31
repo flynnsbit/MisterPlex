@@ -1,7 +1,7 @@
 # w-lint PROMOTE BLOCKER REPORT
 
 - branch: `w-lint-gate-integrity`
-- HEAD: (stamp after commit)
+- HEAD: `408a166f68fb008e21addcd4e498887905f6fa41`
 - date: 2026-07-31
 - scope: host/static only
 
