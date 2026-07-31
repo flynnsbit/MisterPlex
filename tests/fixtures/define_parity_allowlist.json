@@ -36,6 +36,7 @@
     "LAST_FRAME_LATCH_FAULT_BANK_BASE": "Injected LastFrame expected-red fault: latch computes bank base from the wrong geometry stride.",
     "LAST_FRAME_LATCH_FAULT_IDLE_GEOMETRY": "Injected LastFrame expected-red fault: latch publishes idle/default geometry instead of playback geometry.",
     "LOG_REDACT_FAULT_IDENTITY": "Injected log-redact expected-red fault: redactSensitive becomes a no-op so cleartext tokens would pass.",
+    "MISTERPLEXD_BUILD_ID": "Host/ARM misterplexd crash-dump build stamp (short git SHA); Makefile -D only, not an FPGA product macro.",
     "OSD_MENU_FAULT_APPLY_INITIAL_IDLE": "Injected OSD idle initial-snapshot expected-red fault.",
     "OSD_MENU_FAULT_FALLBACK_624_BITRATE": "Injected OSD/fallback 624x480 bitrate mismatch expected-red fault.",
     "OSD_MENU_FAULT_SKIP_INITIAL_IDLE": "Injected OSD expected-red fault: skip first idle paint so DDR idle screen never appears.",
