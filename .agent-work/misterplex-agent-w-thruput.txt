@@ -1,7 +1,7 @@
 # w-thruput REPORT — integ/thruput-on-warm (post hybrid port)
 
 ## Branch
-- Branch: integ/thruput-on-warm @ 528176e6
+- Branch: integ/thruput-on-warm @ 9d9dadbd
 - Base: w-arm-p720-scope + thruput/area merge + hybrid ownership wiring
 
 ## Clock / budget (verified earlier; unchanged)
@@ -56,7 +56,7 @@ FULL_FRAME_BITSTREAM=$PWD/tests/fixtures/p3_inter_pred/plex_inter_p16_baseline_3
 ```
 
 ## Commit
-SHA: 528176e671e342e4e5c2343dbfbc83a5080c01cd
+SHA: 9d9dadbd71e342e4e5c2343dbfbc83a5080c01cd
 Worktree: .worktrees/w-thruput-on-warm
 
 ## Gate true rcs (final)
