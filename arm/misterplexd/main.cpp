@@ -40,6 +40,7 @@ std::string loadConf(const std::string& path, const char* key) {
     const std::string p = std::string(key) + "=";
     std::string line;
     while (std::getline(in, line)) {
+        line = misterplex::trimConfLineLead(line);
         if (line.empty() || line[0] == '#')
             continue;
         if (line.rfind(p, 0) == 0)
@@ -57,6 +58,7 @@ std::vector<std::string> loadConfAll(const std::string& path, const char* key) {
     const std::string p = std::string(key) + "=";
     std::string line;
     while (std::getline(in, line)) {
+        line = misterplex::trimConfLineLead(line);
         if (line.empty() || line[0] == '#')
             continue;
         if (line.rfind(p, 0) == 0)
@@ -125,6 +127,8 @@ int main(int argc, char** argv) {
     bool decodeAllowLab480p = false;
     std::string decodeSizeRawCli; // applied after conf so DECODE_ALLOW_LAB_480P is visible
     std::string decodeSizeSource = "default";
+    std::string decodeRequestedRaw; // conf/cli DECODE text when present (even if rejected)
+    bool decodeConfRejected = false;
     // Product default: FPGA DDR frame store is what the Plex core scans to HDMI.
     // PRESENT=fb0 alone used to skip fpga_.open() and freeze the idle screen
     // (user-reported twice). Conf PRESENT= still overrides.
@@ -243,41 +247,61 @@ int main(int argc, char** argv) {
         v = loadConf(confPath, "DECODE_ALLOW_LAB_480P");
         if (!v.empty())
             decodeAllowLab480p = decodeAllowLab480p || confTruthy(v);
+        std::fprintf(stderr,
+                     "misterplexd: conf path=%s DECODE_ALLOW_LAB_480P=%d\n",
+                     confPath.c_str(), decodeAllowLab480p ? 1 : 0);
         v = loadConf(confPath, "DECODE");
         if (!v.empty()) {
             // Typed adoption only — bare sscanf into int is the hole that let a
             // stale DECODE=624x480 ship against a 320x240 core.
+            decodeRequestedRaw = v;
             const auto adopted = misterplex::adoptExternalCodedSize(v, decodeAllowLab480p);
             if (adopted.ok()) {
                 decodeSize = adopted.size;
                 decodeSizeSource = "conf:" + confPath;
+                decodeConfRejected = false;
                 std::fprintf(stderr,
                              "misterplexd: DECODE adopted coded %s from conf %s\n",
                              decodeSize.wxh().c_str(), confPath.c_str());
             } else {
+                // Keep product default bank, but never leave decode_source=default
+                // when conf DECODE was present — that lied as "no conf".
+                decodeConfRejected = true;
+                decodeSizeSource =
+                    std::string("conf-rejected:") +
+                    misterplex::codedSizeParseStatusName(adopted.status);
                 std::fprintf(stderr,
                              "misterplexd: REJECTED DECODE=%s from conf (%s/%s) — keeping "
-                             "coded %s\n",
+                             "coded %s allow_lab_480p=%d conf=%s\n",
                              v.c_str(), misterplex::codedSizeParseStatusName(adopted.status),
-                             adopted.reason, decodeSize.wxh().c_str());
+                             adopted.reason, decodeSize.wxh().c_str(),
+                             decodeAllowLab480p ? 1 : 0, confPath.c_str());
             }
         }
         // CLI --decode wins over conf when both are present, still typed+policy.
         if (!decodeSizeRawCli.empty()) {
+            decodeRequestedRaw = decodeSizeRawCli;
             const auto adopted =
                 misterplex::adoptExternalCodedSize(decodeSizeRawCli, decodeAllowLab480p);
             if (adopted.ok()) {
                 decodeSize = adopted.size;
                 decodeSizeSource = "cli:--decode";
+                decodeConfRejected = false;
                 std::fprintf(stderr,
                              "misterplexd: DECODE adopted coded %s from --decode\n",
                              decodeSize.wxh().c_str());
             } else {
+                decodeConfRejected = true;
+                decodeSizeSource =
+                    std::string("cli-rejected:") +
+                    misterplex::codedSizeParseStatusName(adopted.status);
                 std::fprintf(stderr,
-                             "misterplexd: REJECTED --decode=%s (%s/%s) — keeping coded %s\n",
+                             "misterplexd: REJECTED --decode=%s (%s/%s) — keeping coded %s "
+                             "allow_lab_480p=%d\n",
                              decodeSizeRawCli.c_str(),
                              misterplex::codedSizeParseStatusName(adopted.status),
-                             adopted.reason, decodeSize.wxh().c_str());
+                             adopted.reason, decodeSize.wxh().c_str(),
+                             decodeAllowLab480p ? 1 : 0);
             }
         }
         v = loadConf(confPath, "WEAK_RES");
@@ -424,13 +448,16 @@ int main(int argc, char** argv) {
         }
         // Greppable GEOMETRY line: what PMS will be asked for at play (subject to
         // OSD O[4] override) vs the coded decode bank. profile_name is the ladder
-        // label only — not a second geometry.
+        // label only — not a second geometry. decode= uses the same effective
+        // label as the running banner (annotate rejected conf DECODE).
+        const std::string geomDecodeLabel = misterplex::formatDecodeBankLabel(
+            decodeRes, decodeRequestedRaw, decodeConfRejected);
         std::fprintf(stderr,
-                     "misterplexd: GEOMETRY decode_bank=%s decode_source=%s "
+                     "misterplexd: GEOMETRY decode=%s decode_bank=%s decode_source=%s "
                      "pms_request_geometry=%s pms_bitrate_kbps=%d profile_name=%s "
                      "TRANSCODE_explicit=%d scale_mode=%s sws_flags=%s "
                      "(play may override via OSD O[4]; profile_name≠delivered WxH)\n",
-                     decodeRes.c_str(), decodeSizeSource.c_str(),
+                     geomDecodeLabel.c_str(), decodeRes.c_str(), decodeSizeSource.c_str(),
                      weak.videoResolution.c_str(), weak.maxVideoBitrateKbps,
                      weak.profileName.c_str(),
                      (transcodeProfileExplicit || weakResExplicit) ? 1 : 0,
@@ -1285,19 +1312,23 @@ int main(int argc, char** argv) {
                      "select a server per play.\n",
                      confPath.c_str());
     }
-    // Banner: never print profile_name as if it were a second geometry next to
-    // decode_bank (that read as "weak=480p/624x480" vs "decode=320x240").
+    // Banner: EFFECTIVE coded bank only. If conf DECODE was rejected, annotate
+    // so a bare decode_bank=320x240 + decode_source=default cannot hide a failed
+    // 624x480 adopt (p720 equivalent of hybrid 5b61453a clamp label).
+    const std::string decodeBankLabel = misterplex::formatDecodeBankLabel(
+        decodeSize.wxh(), decodeRequestedRaw, decodeConfRejected);
     std::fprintf(stderr,
                  "misterplexd: running name=%s id=%s port=%d pms=%s servers=%zu "
-                 "decode_bank=%s decode_source=%s pms_request_geometry=%s "
+                 "decode=%s decode_bank=%s decode_source=%s pms_request_geometry=%s "
                  "pms_bitrate_kbps=%d profile_name=%s h264=%s@L%d present=%s "
                  "auto_next=%d subs=%s\n",
                  name.c_str(), machineId.c_str(), port,
                  defaultPms.empty() ? "(unset)" : defaultPms.c_str(), servers.size(),
-                 decodeSize.wxh().c_str(), decodeSizeSource.c_str(),
-                 weak.videoResolution.c_str(), weak.maxVideoBitrateKbps,
-                 weak.profileName.c_str(), weak.h264Profile.c_str(), weak.h264Level,
-                 presentMode.c_str(), autoNext ? 1 : 0, subtitleMode.c_str());
+                 decodeBankLabel.c_str(), decodeSize.wxh().c_str(),
+                 decodeSizeSource.c_str(), weak.videoResolution.c_str(),
+                 weak.maxVideoBitrateKbps, weak.profileName.c_str(),
+                 weak.h264Profile.c_str(), weak.h264Level, presentMode.c_str(),
+                 autoNext ? 1 : 0, subtitleMode.c_str());
     for (size_t i = 0; i < servers.size(); ++i)
         std::fprintf(stderr, "misterplexd:   server[%zu]=%s%s\n", i, servers[i].c_str(),
                      i == 0 ? " (default)" : "");

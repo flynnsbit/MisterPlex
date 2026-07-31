@@ -134,8 +134,45 @@ int main() {
     // confTruthy trim contract (loadConf path uses the same helper).
     CHECK(confTruthy("1\r"));
     CHECK(confTruthy(" true "));
+    CHECK(confTruthy("\"1\""));
     CHECK(!confTruthy("1x"));
     CHECK(trimConfValue(" 624x480\r") == "624x480");
+    CHECK(trimConfValue("\"624x480\"") == "624x480");
+
+    // Indented keys + quoted allow (parent hole: column-0-only match → silent miss).
+    {
+        const char* t =
+            "  DECODE=624x480\n"
+            "  DECODE_ALLOW_LAB_480P=\"1\"\n";
+        auto a = adoptDecodeFromConfText(t);
+        CHECK(a.allow_lab_480p);
+        CHECK(a.decode_key_present);
+        CHECK_ST(a.result, CodedSizeParseStatus::Ok);
+        CHECK(a.result.size == plex480pCodedDecodeSize());
+    }
+    // Indented DECODE without allow still blocked.
+    {
+        const char* t = "\tDECODE=624x480\n";
+        auto a = adoptDecodeFromConfText(t);
+        CHECK(!a.allow_lab_480p);
+        CHECK_ST(a.result, CodedSizeParseStatus::Lab480pBlocked);
+    }
+
+    // Banner label: effective geometry; rejected conf must not look bare-default.
+    {
+        const std::string labBlocked =
+            formatDecodeBankLabel("320x240", "624x480", /*confRejected*/ true);
+        CHECK(labBlocked.rfind("320x240", 0) == 0);
+        CHECK(labBlocked.find("rejected conf DECODE=624x480") != std::string::npos);
+        CHECK(labBlocked.rfind("624x480", 0) != 0); // must not lead with request
+        const std::string plain =
+            formatDecodeBankLabel("320x240", "320x240", /*confRejected*/ false);
+        CHECK(plain == "320x240");
+        const std::string adopted =
+            formatDecodeBankLabel("624x480", "624x480", /*confRejected*/ false);
+        CHECK(adopted == "624x480");
+        CHECK(adopted.find("rejected") == std::string::npos);
+    }
 
     // CodedSize is not brace-constructible from two bare ints (tag required).
     static_assert(!std::is_constructible<CodedSize, int, int>::value,
