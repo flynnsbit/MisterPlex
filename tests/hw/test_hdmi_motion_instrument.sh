@@ -497,22 +497,38 @@ fail += expect(
     ri,
 )
 
-# DEFAULT_ASSUMED + inconsistent unique_ratio (~1.0) → loud RATE_FAIL
+# DEFAULT_ASSUMED → RATE_UNSCORED never RATE_OK (ERROR 17 class / parent attack 2)
 full=[100+i for i in range(60)]
 ri=analyze_counter_rate(
     list(enumerate(full)),
     source_fps=24.0,
     capture_fps=30.0,
     source_fps_src=PROVENANCE_DEFAULT_ASSUMED,
+    capture_fps_src=PROVENANCE_DEFAULT_ASSUMED,
 )
 fail += expect(
-    "assumed-inconsistent",
-    ri["rate_fail"] is True
-    and any("assumed_src_fps_inconsistent" in x for x in ri["rate_reasons"]),
+    "assumed-never-rate-ok",
+    ri["rate"] == "RATE_UNSCORED"
+    and ri["rate_fail"] is False
+    and ri["fps_authoritative"] is False,
     ri,
 )
 
-# slow crawl
+# Healthy pattern under DEFAULT_ASSUMED is still RATE_UNSCORED (not green on a guess)
+ri=analyze_counter_rate(
+    list(enumerate(ns)),
+    source_fps=24.0,
+    capture_fps=30.0,
+    source_fps_src=PROVENANCE_DEFAULT_ASSUMED,
+    capture_fps_src=PROVENANCE_DEFAULT_ASSUMED,
+)
+fail += expect(
+    "assumed-healthy-unscored",
+    ri["rate"] == "RATE_UNSCORED" and ri["rate_fail"] is False,
+    ri,
+)
+
+# slow crawl — both fps caller-supplied → RATE_FAIL
 ns=[]; n=100
 for i in range(60):
     if i>0 and i%4==0: n+=1
@@ -522,6 +538,7 @@ ri=analyze_counter_rate(
     source_fps=24.0,
     capture_fps=30.0,
     source_fps_src=PROVENANCE_CALLER,
+    capture_fps_src=PROVENANCE_CALLER,
 )
 fail += expect("slow-crawl", ri["rate_fail"] is True, ri)
 
@@ -531,6 +548,7 @@ ri=analyze_counter_rate(
     source_fps=24.0,
     capture_fps=30.0,
     source_fps_src=PROVENANCE_CALLER,
+    capture_fps_src=PROVENANCE_CALLER,
 )
 fail += expect(
     "fast-4x",
@@ -548,6 +566,7 @@ ri=analyze_counter_rate(
     source_fps=24.0,
     capture_fps=30.0,
     source_fps_src=PROVENANCE_CALLER,
+    capture_fps_src=PROVENANCE_CALLER,
 )
 fail += expect(
     "endpoint-not-third-median",
@@ -555,13 +574,34 @@ fail += expect(
     ri,
 )
 
-# ping-pong revisits
+# plateau at bound → PASS + plateau_warn (not silent green)
+bound=list(ns)
+if len(bound) > 12:
+    bound[10]=bound[9]; bound[11]=bound[9]
+ri=analyze_counter_rate(
+    list(enumerate(bound)),
+    source_fps=24.0,
+    capture_fps=30.0,
+    source_fps_src=PROVENANCE_CALLER,
+    capture_fps_src=PROVENANCE_CALLER,
+)
+if ri.get("max_plateau") == ri.get("max_plateau_allowed"):
+    fail += expect(
+        "plateau-bound-warn",
+        ri.get("plateau_warn") is True and ri["rate"] == "RATE_OK",
+        ri,
+    )
+else:
+    print("CASE rate-unit-plateau-bound-warn SKIP max_plateau!=allowed")
+
+# ping-pong revisits (fps-independent hard fail)
 ping=[100+(i%2) for i in range(60)]
 ri=analyze_counter_rate(
     list(enumerate(ping)),
     source_fps=24.0,
     capture_fps=30.0,
     source_fps_src=PROVENANCE_CALLER,
+    capture_fps_src=PROVENANCE_CALLER,
 )
 fail += expect("pingpong-revisit", ri["revisit_fail"] is True and ri["non_adjacent_revisits"]>=2, ri)
 
@@ -575,6 +615,62 @@ if [[ "$rate_rc" -eq 0 ]]; then
 else
   echo "  FAIL rate-unit-block"
   fail=$((fail + 1))
+fi
+
+# 14. Overlay STRING READ-BACK (user #1 open bug acceptance criterion).
+# Lattice-pitch is dead; exact glyph recovery is the gate.
+OVL_TOOL="$ROOT/tools/overlay_string_readback.py"
+OVL_EVIDENCE="${OVL_EVIDENCE:-/home/flynnsbit/.copilot/session-state/1b1fb4ae-c05c-44bc-883d-5af91466e181/files/overlay_lowres_evidence.png}"
+run_ovl_case() {
+  local name="$1" expect_rc="$2"
+  shift 2
+  local out rc
+  set +e
+  out="$(python3 "$OVL_TOOL" "$@" 2>&1)"
+  rc=$?
+  set -e
+  echo "CASE $name expect_rc=$expect_rc true_rc=$rc"
+  echo "$out" | tail -n 6 | sed 's/^/  | /'
+  if [[ "$rc" -eq "$expect_rc" ]]; then
+    echo "  PASS $name"
+    pass=$((pass + 1))
+  else
+    echo "  FAIL $name expect_rc=$expect_rc true_rc=$rc"
+    fail=$((fail + 1))
+  fi
+}
+if [[ -f "$OVL_TOOL" ]]; then
+  run_ovl_case "overlay-readback-self-test" 0 --self-test
+  run_ovl_case "overlay-readback-synth-clean-OK" 0 --synth-clean --expect STOPPED
+  # RED: STORE_Y_SCALE=2 row-delete corrupts scale=1 glyphs (8→0 class).
+  run_ovl_case "overlay-readback-synth-rowdelete-FAIL" 1 --synth-row-delete --expect STOPPED
+  if [[ -f "$OVL_EVIDENCE" ]]; then
+    # Real silicon low-res overlay must NOT exact-recover STOPPED.
+    run_ovl_case "overlay-readback-evidence-FAIL" 1 "$OVL_EVIDENCE" --expect STOPPED
+  else
+    echo "SKIP overlay-evidence-readback: $OVL_EVIDENCE missing"
+    skip=$((skip + 1))
+  fi
+else
+  echo "SKIP overlay-readback: $OVL_TOOL missing"
+  skip=$((skip + 1))
+fi
+
+# 15. RATE_UNSCORED when fps assumed on a known-good dir (not RATE_OK).
+if [[ -d "$CAPBOOT_DIR" ]] && compgen -G "$CAPBOOT_DIR/f_*.png" >/dev/null; then
+  set +e
+  out="$("$TOOL" "$CAPBOOT_DIR" 2>&1)"
+  rc=$?
+  set -e
+  echo "CASE capboot-assumed-rate-unscored expect_motion_ok_rate_unscored true_rc=$rc"
+  echo "$out" | tail -n 6 | sed 's/^/  | /'
+  if [[ "$rc" -eq 0 ]] && echo "$out" | grep -q 'rate=RATE_UNSCORED' && echo "$out" | grep -q 'src=DEFAULT_ASSUMED'; then
+    echo "  PASS capboot-assumed-rate-unscored"
+    pass=$((pass + 1))
+  else
+    echo "  FAIL capboot-assumed-rate-unscored (need MOTION_OK rc=0 + rate=RATE_UNSCORED + DEFAULT_ASSUMED)"
+    fail=$((fail + 1))
+  fi
 fi
 
 echo "=== SUMMARY pass=$pass fail=$fail skip=$skip ==="

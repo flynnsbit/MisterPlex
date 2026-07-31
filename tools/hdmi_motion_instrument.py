@@ -40,15 +40,17 @@ Severity resolution (highest wins — explicit, non-negotiable)
                    "decodes=0" and "colour broken" are correlated — colour
                    must be allowed to decide alone.
   3. RATE_FAIL   — counter advances (so not FREEZE) but at the wrong rate
-                   relative to source/capture FPS, or non-adjacent counter
-                   revisits (stale-bank ping-pong), or DEFAULT_ASSUMED source
-                   rate inconsistent with observed plateau pattern.
+                   relative to **caller-supplied** source/capture FPS, or
+                   non-adjacent counter revisits (stale-bank ping-pong).
                    Hard fail rc=4. Monotonic advance alone is NOT sufficient
                    (pfps collapse to 10.9 on a 24.000 source still advances
                    and would pass a pure order check).
+                   **RATE_OK is never emitted when src_fps or cap_fps is
+                   DEFAULT_ASSUMED** — that is RATE_UNSCORED (honest). A green
+                   rate built on a guess is ERROR 17 class even when labelled.
   4. FREEZE      — counter pinned with colour+structure OK. Hard fail rc=1.
-  5. MOTION_OK   — counter advances at plausible source rate, no revisits,
-                   colour+structure OK. Pass rc=0.
+  5. MOTION_OK   — counter advances (order OK); colour+structure OK. Pass rc=0.
+                   Rate may still be RATE_UNSCORED if fps were assumed.
   6. UNSCORED    — no overlay/counter AND no colour/structure/rate verdict.
                    Soft-skip rc=77. Soft-skip is never a pass AND must never
                    report a condition we have positively measured as failure.
@@ -61,20 +63,24 @@ Rate / revisit model (parent calibration)
 -----------------------------------------
   Capture FPS (MacroSilicon MJPEG burst) and source FPS are independent.
   **Neither rate is measured by this instrument.** Pass both explicitly when
-  known. Provenance is always printed:
+  known (daemon telemetry `fps=24/1` → `--source-fps 24` / `--src-fps 24/1`).
+  Provenance is always printed:
     src_fps=24.000 src=caller          # caller supplied --source-fps
     src_fps=24.000 src=DEFAULT_ASSUMED # fell back to library default
   Library assets (Plex metadata frameRate="24.000" / videoFrameRate="24p")
   are genuinely 24.000 — NOT NTSC 24000/1001. PARENT ERROR 17: a printed
   23.976 default was mistaken for a measurement and published as a defect.
   Default assumed source = 24.000; default assumed capture = 30.0.
-  When rate is DEFAULT_ASSUMED and the observed plateau/unique pattern is
-  inconsistent with that assumption, RATE_FAIL loudly (never silent mis-score).
+  **When either fps is DEFAULT_ASSUMED the rate dimension is RATE_UNSCORED,
+  never RATE_OK.** Ratio/endpoint/plateau gates only fire when BOTH fps are
+  caller-supplied. Revisit (bank-swap) still hard-fails without fps — it is
+  a pure measured sequence property.
   Healthy 24fps-on-30-capture (parent hand measure, 105-frame burst):
     84 distinct counter states, 84 runs, max plateau 2, plateau hist {1,2},
     zero non-adjacent revisits, unique/frames = 84/105 = 0.800 = 24/30.
   Expected counter delta per capture frame ≈ source_fps/capture_fps.
   Max plateau allowed = ceil(capture_fps/source_fps)+1  (default 3).
+  max_plateau == allowed is a PASS with plateau_warn (bound-riding is visible).
   Non-adjacent revisit = a counter value reappears after a different value
   intervened (RLE run sequence); bank-swap ping-pong signature.
 
@@ -158,6 +164,88 @@ DEFAULT_SOURCE_FPS = DEFAULT_ASSUMED_SOURCE_FPS
 DEFAULT_CAPTURE_FPS = DEFAULT_ASSUMED_CAPTURE_FPS
 PROVENANCE_CALLER = "caller"
 PROVENANCE_DEFAULT_ASSUMED = "DEFAULT_ASSUMED"
+# Provenance for rates read from a capture container (ffprobe), not assumed.
+PROVENANCE_CONTAINER = "container"
+
+
+def parse_fps_token(token: str | float | int | None) -> float | None:
+    """Parse daemon/ffprobe fps tokens: '24/1', '24000/1001', '24', 24.0.
+
+    Returns None if token is None/empty. Raises ValueError on garbage.
+    """
+    if token is None:
+        return None
+    if isinstance(token, (int, float)):
+        v = float(token)
+        if v <= 0:
+            raise ValueError(f"fps must be > 0, got {token!r}")
+        return v
+    s = str(token).strip()
+    if not s:
+        return None
+    if "/" in s:
+        a, b = s.split("/", 1)
+        num = float(a.strip())
+        den = float(b.strip())
+        if den == 0:
+            raise ValueError(f"fps denominator 0 in {token!r}")
+        v = num / den
+    else:
+        v = float(s)
+    if v <= 0:
+        raise ValueError(f"fps must be > 0, got {token!r}")
+    return v
+
+
+def try_probe_capture_fps(path: str | Path) -> tuple[float | None, str]:
+    """Best-effort capture fps from a video container via ffprobe.
+
+    PNG burst directories cannot yield fps (no container timeline). Returns
+    (None, reason) when unreadable — caller keeps DEFAULT_ASSUMED.
+    """
+    p = Path(path)
+    if p.is_dir():
+        return None, "png_dir_has_no_container_fps"
+    if not p.is_file():
+        return None, "not_a_file"
+    # Still images are not timed.
+    if p.suffix.lower() in {".png", ".jpg", ".jpeg", ".bmp", ".webp"}:
+        return None, "still_image_no_fps"
+    import shutil
+    import subprocess
+
+    if not shutil.which("ffprobe"):
+        return None, "ffprobe_missing"
+    try:
+        out = subprocess.check_output(
+            [
+                "ffprobe",
+                "-v",
+                "error",
+                "-select_streams",
+                "v:0",
+                "-show_entries",
+                "stream=r_frame_rate,avg_frame_rate",
+                "-of",
+                "default=noprint_wrappers=1:nokey=1",
+                str(p),
+            ],
+            text=True,
+            timeout=10,
+        )
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError) as e:
+        return None, f"ffprobe_failed:{e}"
+    lines = [ln.strip() for ln in out.splitlines() if ln.strip()]
+    for ln in lines:
+        try:
+            v = parse_fps_token(ln)
+        except ValueError:
+            continue
+        if v is not None and 1.0 <= v <= 240.0:
+            return v, PROVENANCE_CONTAINER
+    return None, f"ffprobe_no_rate lines={lines!r}"
+
+
 # Minimum strong counter samples before rate/revisit can hard-fail.
 RATE_MIN_SAMPLES = 12  # design
 # Broken c5382bee + old-daemon green-cast fingerprint (parent-measured).
@@ -1104,13 +1192,15 @@ def analyze_counter_rate(
       revisits, unique/frames = 0.800 = source/capture.
 
     source_fps / capture_fps are NEVER measured here — provenance must be
-    caller or DEFAULT_ASSUMED (ERROR 17). When DEFAULT_ASSUMED and the observed
-    plateau/unique pattern is inconsistent with that assumption, RATE_FAIL
-    loudly rather than silently certifying a mis-scored rate.
+    caller or DEFAULT_ASSUMED (ERROR 17). RATE_OK requires BOTH fps
+    caller-supplied. DEFAULT_ASSUMED → RATE_UNSCORED (never RATE_OK).
 
     Returns rate dimension RATE_OK | RATE_FAIL | RATE_UNSCORED plus metrics.
-    RATE_UNSCORED means insufficient samples — not a pass and not a measured fail.
+    RATE_UNSCORED = insufficient samples OR fps assumed — not a pass.
     """
+    src_ok = source_fps_src == PROVENANCE_CALLER
+    cap_ok = capture_fps_src in (PROVENANCE_CALLER, PROVENANCE_CONTAINER)
+    fps_auth = bool(src_ok and cap_ok)
     empty = {
         "rate": "RATE_UNSCORED",
         "rate_fail": False,
@@ -1120,12 +1210,15 @@ def analyze_counter_rate(
         "expected_ratio": None,
         "max_plateau": None,
         "max_plateau_allowed": None,
+        "plateau_warn": False,
         "plateau_hist": {},
         "unique_states": 0,
         "n_samples": 0,
         "non_adjacent_revisits": 0,
         "revisit_fail": False,
         "rate_reasons": [],
+        "rate_notes": [],
+        "fps_authoritative": fps_auth,
         "source_fps": source_fps,
         "capture_fps": capture_fps,
         "source_fps_src": source_fps_src,
@@ -1133,12 +1226,19 @@ def analyze_counter_rate(
     }
     if source_fps <= 0 or capture_fps <= 0:
         empty["rate_reasons"] = ["invalid_fps"]
+        empty["fps_authoritative"] = False
         return empty
 
     expected = source_fps / capture_fps
     max_plat_allowed = int(math.ceil(capture_fps / source_fps)) + 1
     empty["expected_ratio"] = round(expected, 4)
     empty["max_plateau_allowed"] = max_plat_allowed
+    if not fps_auth:
+        empty["rate_notes"] = [
+            "rate_unscored_fps_assumed "
+            f"src={source_fps_src} cap={capture_fps_src} "
+            "(pass --source-fps/--capture-fps from daemon fps= token for RATE_OK)"
+        ]
 
     if len(pairs) < RATE_MIN_SAMPLES:
         empty["n_samples"] = len(pairs)
@@ -1195,76 +1295,92 @@ def analyze_counter_rate(
         seen[v] = ri
 
     reasons: list[str] = []
-    # --- Plateau gate (slow / stuck stretches) ---
-    if max_plateau > max_plat_allowed:
-        reasons.append(
-            f"max_plateau={max_plateau}>{max_plat_allowed} "
-            f"(ceil(cap/src)+1)"
-        )
+    notes: list[str] = []
+    # Authoritative rate gates need BOTH fps from the caller. Anything else
+    # is a guess printed next to real numbers (ERROR 17 class). Metrics are
+    # still computed under the assumed pair for visibility, but they cannot
+    # mint RATE_OK and cannot mint RATE_FAIL on ratio/endpoint/plateau.
+    # Source must be caller-supplied (daemon fps=). Capture may be caller or
+    # container-probed (ffprobe). DEFAULT_ASSUMED on either side → not authoritative.
+    # (fps_auth already computed at top of function for empty-path consistency.)
+    fps_authoritative = fps_auth
 
-    # --- unique_ratio vs expected (PRIMARY comparable pair) ---
-    # Parent calibration: unique_states/frames = 84/105 = 0.800 = src/cap.
-    # This is the quantity legitimately compared to expected.
-    # Slow crawl: too few distinct states (parent pfps 10.9 → ~0.36).
-    # Bounds from good corpus (0.77–0.83) with slack; never weaken for RED.
-    ratio_lo = expected * 0.60  # ~0.48 at 24/30
-    ratio_hi = min(1.0, expected * 1.25 + 0.05)  # ~1.0 ceiling
-    if unique_ratio < ratio_lo:
-        reasons.append(
-            f"unique_ratio={unique_ratio:.3f}<{ratio_lo:.3f} "
-            f"(expected≈{expected:.3f})"
-        )
-    # unique_ratio saturates at 1.0 — cannot alone catch a 4x race.
-
-    # --- endpoint_rate vs expected (SECOND comparable pair) ---
-    # Same units as expected: counter frames advanced per capture frame.
-    # Half-rate → ~0.40; double/race → >1.2. Bounds unchanged (not loosened).
-    span_lo = expected * 0.55
-    span_hi = expected * 1.55
-    if endpoint_rate < span_lo:
-        reasons.append(
-            f"endpoint_rate={endpoint_rate:.3f}<{span_lo:.3f} "
-            f"(ctr_span={ctr_span}/cap_span={cap_span}, expected≈{expected:.3f})"
-        )
-    if endpoint_rate > span_hi:
-        reasons.append(
-            f"endpoint_rate={endpoint_rate:.3f}>{span_hi:.3f} "
-            f"(ctr_span={ctr_span}/cap_span={cap_span}, expected≈{expected:.3f})"
-        )
-
-    # --- Revisit gate (stale-bank ping-pong) ---
+    # --- Revisit gate (stale-bank ping-pong) — fps-independent ---
     # Healthy parent measure: 0. Single OCR blip after filtering is tolerated
     # once; >=2 non-adjacent revisits is a measured integrity failure.
     revisit_fail = revisits >= 2
     if revisit_fail:
         reasons.append(f"non_adjacent_revisits={revisits}>=2 (bank-swap/ping-pong)")
 
-    # --- Assumed-rate consistency (ERROR 17 class) ---
-    # When the caller did not supply source_fps, do not silently certify a rate
-    # that contradicts the assumption. If the observed unique_ratio is far from
-    # expected under DEFAULT_ASSUMED, hard-fail with an explicit provenance tag
-    # even if other gates were soft. Prefer another common rate only as a hint.
-    assumed_src = source_fps_src == PROVENANCE_DEFAULT_ASSUMED
-    if assumed_src and not reasons:
-        # Tighter consistency window when rate is assumed (not caller-measured).
-        assume_lo = expected * 0.70  # ~0.56 at 24/30
-        assume_hi = min(1.05, expected * 1.20)  # ~0.96 at 24/30
-        if unique_ratio < assume_lo or unique_ratio > assume_hi:
-            # Hint nearest common content rate for the operator (not auto-used).
-            common = (23.976, 24.0, 25.0, 29.97, 30.0, 50.0, 59.94, 60.0)
-            hint = min(common, key=lambda f: abs((f / capture_fps) - unique_ratio))
+    # --- Plateau / unique_ratio / endpoint_rate: only gate when authoritative ---
+    # Form: max_plateau_allowed = ceil(cap/src)+1. At 24/30 that is 3.
+    # Parent healthy calibration maxed at 2; 3/3 is one unlucky sample from
+    # fail — still PASS (strict fail is only > allowed) but plateau_warn=1 so
+    # bound-riding is never silent green.
+    plateau_warn = bool(max_plateau == max_plat_allowed)
+    if fps_authoritative:
+        if max_plateau > max_plat_allowed:
             reasons.append(
-                f"assumed_src_fps_inconsistent unique_ratio={unique_ratio:.3f} "
-                f"not in [{assume_lo:.3f},{assume_hi:.3f}] for "
-                f"DEFAULT_ASSUMED src_fps={source_fps} "
-                f"(hint_nearest_common_src≈{hint}; pass --source-fps explicitly)"
+                f"max_plateau={max_plateau}>{max_plat_allowed} "
+                f"(ceil(cap/src)+1)"
+            )
+        elif plateau_warn:
+            notes.append(
+                f"plateau_warn max_plateau={max_plateau}==allowed "
+                f"(bound-riding; healthy cal maxed at 2 for 24/30)"
+            )
+
+        # unique_ratio vs expected (PRIMARY comparable pair)
+        # Parent calibration: unique_states/frames = 84/105 = 0.800 = src/cap.
+        ratio_lo = expected * 0.60  # ~0.48 at 24/30
+        if unique_ratio < ratio_lo:
+            reasons.append(
+                f"unique_ratio={unique_ratio:.3f}<{ratio_lo:.3f} "
+                f"(expected≈{expected:.3f})"
+            )
+
+        # endpoint_rate vs expected (SECOND comparable pair)
+        span_lo = expected * 0.55
+        span_hi = expected * 1.55
+        if endpoint_rate < span_lo:
+            reasons.append(
+                f"endpoint_rate={endpoint_rate:.3f}<{span_lo:.3f} "
+                f"(ctr_span={ctr_span}/cap_span={cap_span}, expected≈{expected:.3f})"
+            )
+        if endpoint_rate > span_hi:
+            reasons.append(
+                f"endpoint_rate={endpoint_rate:.3f}>{span_hi:.3f} "
+                f"(ctr_span={ctr_span}/cap_span={cap_span}, expected≈{expected:.3f})"
+            )
+    else:
+        notes.append(
+            "rate_unscored_fps_assumed "
+            f"src={source_fps_src} cap={capture_fps_src} "
+            "(pass --source-fps/--capture-fps from daemon fps= token for RATE_OK)"
+        )
+        # Informational only under assumed fps — never fail on the guess.
+        if max_plateau > max_plat_allowed:
+            notes.append(
+                f"info_max_plateau={max_plateau}>{max_plat_allowed}_under_assumed_fps"
+            )
+        if plateau_warn:
+            notes.append(
+                f"info_plateau_at_bound={max_plateau} under assumed fps"
             )
 
     rate_fail = bool(reasons)
+    if rate_fail:
+        rate_label = "RATE_FAIL"
+    elif not fps_authoritative:
+        # Never RATE_OK on DEFAULT_ASSUMED (parent attack 2 / ERROR 17 class).
+        rate_label = "RATE_UNSCORED"
+    else:
+        rate_label = "RATE_OK"
+
     return {
-        "rate": "RATE_FAIL" if rate_fail else "RATE_OK",
+        "rate": rate_label,
         "rate_fail": rate_fail,
-        # Comparable to expected (= src_fps/cap_fps):
+        # Comparable to expected (= src_fps/cap_fps) only when fps_authoritative:
         "unique_ratio": round(unique_ratio, 4),
         "endpoint_rate": round(endpoint_rate, 4),
         "expected_ratio": round(expected, 4),
@@ -1272,6 +1388,7 @@ def analyze_counter_rate(
         "span_rate": round(span_rate, 4),
         "max_plateau": int(max_plateau),
         "max_plateau_allowed": max_plat_allowed,
+        "plateau_warn": bool(plateau_warn),
         "plateau_hist": {str(k): int(v) for k, v in sorted(plateau_hist.items())},
         "unique_states": int(unique_states),
         "n_samples": len(ns),
@@ -1282,6 +1399,8 @@ def analyze_counter_rate(
         "non_adjacent_revisits": int(revisits),
         "revisit_fail": bool(revisit_fail),
         "rate_reasons": reasons,
+        "rate_notes": notes,
+        "fps_authoritative": bool(fps_authoritative),
         "source_fps": source_fps,
         "capture_fps": capture_fps,
         "source_fps_src": source_fps_src,
@@ -1559,10 +1678,13 @@ def score_burst(
         "expected_ratio": rate_info.get("expected_ratio"),
         "max_plateau": rate_info.get("max_plateau"),
         "max_plateau_allowed": rate_info.get("max_plateau_allowed"),
+        "plateau_warn": rate_info.get("plateau_warn"),
         "plateau_hist": rate_info.get("plateau_hist"),
         "non_adjacent_revisits": rate_info.get("non_adjacent_revisits"),
         "cap_span": rate_info.get("cap_span"),
         "ctr_span": rate_info.get("ctr_span"),
+        "fps_authoritative": rate_info.get("fps_authoritative"),
+        "rate_notes": rate_info.get("rate_notes"),
         "source_fps": rate_info.get("source_fps"),
         "capture_fps": rate_info.get("capture_fps"),
         "source_fps_src": rate_info.get("source_fps_src"),
@@ -1620,22 +1742,31 @@ def _print_human(report: dict[str, Any], src: str) -> None:
         # Print comparable pairs together; never mix incomparable quantities.
         # unique_ratio  ≈ expected  (= src_fps/cap_fps)   — primary gate
         # endpoint_rate ≈ expected  (ctr_span/cap_span)   — secondary gate
+        pw = report.get("plateau_warn")
+        pw_s = " plateau_warn=1" if pw else ""
+        auth = report.get("fps_authoritative")
+        auth_s = "fps_authoritative=1" if auth else "fps_authoritative=0"
         print(
             f"rate_metrics "
             f"unique_ratio={report.get('unique_ratio')} "
             f"endpoint_rate={report.get('endpoint_rate')} "
             f"expected={report.get('expected_ratio')} "
-            f"(unique_ratio and endpoint_rate are both comparable to expected) "
+            f"(unique_ratio and endpoint_rate comparable to expected only when "
+            f"fps_authoritative) "
             f"max_plateau={report.get('max_plateau')}/"
-            f"{report.get('max_plateau_allowed')} "
+            f"{report.get('max_plateau_allowed')}{pw_s} "
             f"plateau_hist={report.get('plateau_hist')} "
             f"revisits={report.get('non_adjacent_revisits')} "
             f"ctr_span={report.get('ctr_span')} cap_span={report.get('cap_span')} "
             f"src_fps={report.get('source_fps')} "
             f"src={report.get('source_fps_src', PROVENANCE_DEFAULT_ASSUMED)} "
             f"cap_fps={report.get('capture_fps')} "
-            f"cap={report.get('capture_fps_src', PROVENANCE_DEFAULT_ASSUMED)}"
+            f"cap={report.get('capture_fps_src', PROVENANCE_DEFAULT_ASSUMED)} "
+            f"{auth_s}"
         )
+        notes = report.get("rate_notes") or []
+        if notes:
+            print(f"rate_notes={' | '.join(str(n) for n in notes)}")
     print(f"reason={report['reason']}")
     print(f"VERDICT={report['verdict']} rc={report['rc']}")
 
@@ -1839,7 +1970,7 @@ def _self_test() -> int:
     assert ri["source_fps_src"] == PROVENANCE_CALLER, ri
     assert abs(float(ri["expected_ratio"]) - 0.8) < 1e-6, ri
 
-    # DEFAULT_ASSUMED on healthy 24/30 pattern still RATE_OK (labelled assumed).
+    # DEFAULT_ASSUMED on healthy pattern → RATE_UNSCORED (never RATE_OK on a guess).
     ri_assumed = analyze_counter_rate(
         list(enumerate(good_ns)),
         source_fps=DEFAULT_ASSUMED_SOURCE_FPS,
@@ -1847,12 +1978,39 @@ def _self_test() -> int:
         source_fps_src=PROVENANCE_DEFAULT_ASSUMED,
         capture_fps_src=PROVENANCE_DEFAULT_ASSUMED,
     )
-    assert ri_assumed["rate"] == "RATE_OK", ri_assumed
+    assert ri_assumed["rate"] == "RATE_UNSCORED", ri_assumed
+    assert ri_assumed["rate_fail"] is False, ri_assumed
+    assert ri_assumed["fps_authoritative"] is False, ri_assumed
+
+    # Bound-riding plateau (== allowed) is PASS + plateau_warn, not RATE_FAIL.
+    # ceil(30/24)+1 = 3; force a single run of length 3 in an otherwise healthy seq.
+    bound_ns = list(good_ns)
+    # Overwrite a stretch to three identical counters without breaking overall rate badly.
+    bound_ns[10] = bound_ns[9]
+    bound_ns[11] = bound_ns[9]
+    ri_bound = analyze_counter_rate(
+        list(enumerate(bound_ns)),
+        source_fps=24.0,
+        capture_fps=30.0,
+        source_fps_src=PROVENANCE_CALLER,
+        capture_fps_src=PROVENANCE_CALLER,
+    )
+    if ri_bound["max_plateau"] == ri_bound["max_plateau_allowed"]:
+        assert ri_bound["plateau_warn"] is True, ri_bound
+        # warn must be set; fail only if > allowed (not ==).
+        assert not any(
+            "max_plateau=" in r and ">" in r for r in ri_bound["rate_reasons"]
+        ), ri_bound
     assert ri_assumed["source_fps_src"] == PROVENANCE_DEFAULT_ASSUMED, ri_assumed
 
-    # DEFAULT_ASSUMED + pattern inconsistent with 24/30 → loud RATE_FAIL.
-    # unique_ratio ≈ 1.0 (advance every capture) is not 24-on-30.
+    # parse_fps_token accepts daemon fps=24/1 form.
+    assert abs(parse_fps_token("24/1") - 24.0) < 1e-9
+    assert abs(parse_fps_token("24000/1001") - (24000.0 / 1001.0)) < 1e-9
+    assert parse_fps_token(None) is None
+
     full_rate_ns = [100 + i for i in range(60)]
+    # Under DEFAULT_ASSUMED, a full-rate sequence is RATE_UNSCORED (not FAIL, not OK).
+    # Ratio/endpoint gates do not fire on a guess; caller must supply fps.
     ri_bad_assume = analyze_counter_rate(
         list(enumerate(full_rate_ns)),
         source_fps=DEFAULT_ASSUMED_SOURCE_FPS,
@@ -1860,10 +2018,9 @@ def _self_test() -> int:
         source_fps_src=PROVENANCE_DEFAULT_ASSUMED,
         capture_fps_src=PROVENANCE_DEFAULT_ASSUMED,
     )
-    assert ri_bad_assume["rate_fail"] is True, ri_bad_assume
-    assert any("assumed_src_fps_inconsistent" in r for r in ri_bad_assume["rate_reasons"]), (
-        ri_bad_assume
-    )
+    assert ri_bad_assume["rate"] == "RATE_UNSCORED", ri_bad_assume
+    assert ri_bad_assume["rate_fail"] is False, ri_bad_assume
+    assert ri_bad_assume["fps_authoritative"] is False, ri_bad_assume
 
     # Same full-rate sequence with caller-supplied 30fps source is RATE_OK.
     ri_30 = analyze_counter_rate(
@@ -1888,6 +2045,7 @@ def _self_test() -> int:
         source_fps=24.0,
         capture_fps=30.0,
         source_fps_src=PROVENANCE_CALLER,
+        capture_fps_src=PROVENANCE_CALLER,
     )
     assert ri_slow["rate_fail"] is True, ri_slow
     assert ri_slow["max_plateau"] > ri_slow["max_plateau_allowed"] or (
@@ -1901,6 +2059,7 @@ def _self_test() -> int:
         source_fps=24.0,
         capture_fps=30.0,
         source_fps_src=PROVENANCE_CALLER,
+        capture_fps_src=PROVENANCE_CALLER,
     )
     assert ri_fast["rate_fail"] is True, ri_fast
     assert ri_fast["endpoint_rate"] is not None and ri_fast["endpoint_rate"] > 1.5, ri_fast
@@ -1910,6 +2069,7 @@ def _self_test() -> int:
         source_fps=24.0,
         capture_fps=30.0,
         source_fps_src=PROVENANCE_CALLER,
+        capture_fps_src=PROVENANCE_CALLER,
     )
     assert good_end["endpoint_rate"] is not None
     assert good_end["endpoint_rate"] > 0.65, good_end  # must not be ~0.53 third-median bias
@@ -1924,6 +2084,7 @@ def _self_test() -> int:
         source_fps=24.0,
         capture_fps=30.0,
         source_fps_src=PROVENANCE_CALLER,
+        capture_fps_src=PROVENANCE_CALLER,
     )
     assert ri_ping["rate_fail"] is True, ri_ping
     assert ri_ping["revisit_fail"] is True, ri_ping
@@ -1935,8 +2096,20 @@ def _self_test() -> int:
         source_fps=24.0,
         capture_fps=30.0,
         source_fps_src=PROVENANCE_CALLER,
+        capture_fps_src=PROVENANCE_CALLER,
     )
     assert ri_few["rate"] == "RATE_UNSCORED" and ri_few["rate_fail"] is False, ri_few
+
+    # Source caller + capture assumed → still RATE_UNSCORED (both required).
+    ri_half_auth = analyze_counter_rate(
+        list(enumerate(good_ns)),
+        source_fps=24.0,
+        capture_fps=30.0,
+        source_fps_src=PROVENANCE_CALLER,
+        capture_fps_src=PROVENANCE_DEFAULT_ASSUMED,
+    )
+    assert ri_half_auth["rate"] == "RATE_UNSCORED", ri_half_auth
+    assert ri_half_auth["fps_authoritative"] is False, ri_half_auth
 
     # Default assumed source is 24.000, never 23.976 (ERROR 17).
     assert DEFAULT_ASSUMED_SOURCE_FPS == 24.0, DEFAULT_ASSUMED_SOURCE_FPS
@@ -1970,23 +2143,37 @@ def main(argv: list[str] | None = None) -> int:
     )
     ap.add_argument(
         "--source-fps",
-        type=float,
+        "--src-fps",
+        dest="source_fps",
+        type=str,
         default=None,
         help=(
-            "source content frame rate (REQUIRED for authoritative rate scoring). "
-            "Library 24p clips are 24.000 — NOT 23.976. If omitted, falls back to "
-            f"DEFAULT_ASSUMED={DEFAULT_ASSUMED_SOURCE_FPS} and labels src=DEFAULT_ASSUMED; "
-            "inconsistent plateau patterns then hard-fail rather than silent mis-score."
+            "source content frame rate (REQUIRED for RATE_OK). Accepts float or "
+            "daemon token '24/1'. Library 24p clips are 24.000 — NOT 23.976. "
+            "If omitted, DEFAULT_ASSUMED="
+            f"{DEFAULT_ASSUMED_SOURCE_FPS} and rate dimension is RATE_UNSCORED "
+            "(never RATE_OK on a guess — ERROR 17 class)."
         ),
     )
     ap.add_argument(
         "--capture-fps",
-        type=float,
+        "--cap-fps",
+        dest="capture_fps",
+        type=str,
         default=None,
         help=(
-            "HDMI grabber capture rate for the burst. If omitted, falls back to "
-            f"DEFAULT_ASSUMED={DEFAULT_ASSUMED_CAPTURE_FPS} labelled cap=DEFAULT_ASSUMED. "
-            "Independent of source_fps; healthy unique_ratio ≈ source/capture."
+            "HDMI grabber capture rate for the burst (float or '30/1'). "
+            "PNG dirs have no container fps — pass explicitly. "
+            f"If omitted, DEFAULT_ASSUMED={DEFAULT_ASSUMED_CAPTURE_FPS} and "
+            "rate stays RATE_UNSCORED unless both fps are caller-supplied."
+        ),
+    )
+    ap.add_argument(
+        "--probe-capture",
+        default=None,
+        help=(
+            "optional video container path; if --capture-fps omitted, try "
+            "ffprobe r_frame_rate and label cap=container on success"
         ),
     )
     ap.add_argument("--json", action="store_true", help="machine-readable report")
@@ -2056,18 +2243,41 @@ def main(argv: list[str] | None = None) -> int:
         return RC_MOTION_OK if any_ok else RC_UNSCORED
 
     # Provenance: anything not supplied on the CLI is DEFAULT_ASSUMED (ERROR 17).
-    if args.source_fps is None:
+    # RATE_OK requires BOTH caller-supplied (or container-probed capture).
+    try:
+        src_parsed = parse_fps_token(args.source_fps)
+    except ValueError as e:
+        print(f"ERROR: --source-fps: {e}", file=sys.stderr)
+        return RC_UNSCORED
+    if src_parsed is None:
         source_fps = DEFAULT_ASSUMED_SOURCE_FPS
         source_fps_src = PROVENANCE_DEFAULT_ASSUMED
     else:
-        source_fps = float(args.source_fps)
+        source_fps = src_parsed
         source_fps_src = PROVENANCE_CALLER
-    if args.capture_fps is None:
+
+    try:
+        cap_parsed = parse_fps_token(args.capture_fps)
+    except ValueError as e:
+        print(f"ERROR: --capture-fps: {e}", file=sys.stderr)
+        return RC_UNSCORED
+    if cap_parsed is not None:
+        capture_fps = cap_parsed
+        capture_fps_src = PROVENANCE_CALLER
+    else:
         capture_fps = DEFAULT_ASSUMED_CAPTURE_FPS
         capture_fps_src = PROVENANCE_DEFAULT_ASSUMED
-    else:
-        capture_fps = float(args.capture_fps)
-        capture_fps_src = PROVENANCE_CALLER
+        if args.probe_capture:
+            probed, how = try_probe_capture_fps(args.probe_capture)
+            if probed is not None:
+                capture_fps = probed
+                capture_fps_src = PROVENANCE_CONTAINER
+            else:
+                print(
+                    f"WARN: --probe-capture failed ({how}); "
+                    f"cap_fps stays DEFAULT_ASSUMED={capture_fps}",
+                    file=sys.stderr,
+                )
 
     report = score_burst(
         frames,
