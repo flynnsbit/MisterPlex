@@ -76,30 +76,31 @@ void frameLedgerProcessStart(int64_t lifetimeFrames, int64_t lifetimePresents,
 }
 
 void frameLedgerSessionEnd(uint64_t sessionId, int64_t frames, int64_t presents, int64_t drops,
-                           const char* reason) {
+                           const char* reason, int64_t publishMisses) {
     std::lock_guard<std::mutex> lk(g_mu);
     if (!g_inited || g_path.empty())
         return;
     const int64_t residual = frameLedgerResidual(frames, presents, drops);
     char ts[32];
     wallTs(ts, sizeof(ts));
-    char line[640];
+    char line[768];
     const int n = std::snprintf(
         line, sizeof(line),
         "ts=%s event=session_end pid=%d session=%llu frames=%lld presents=%lld drops=%lld "
-        "residual=%lld reason=%s\n",
+        "publish_misses=%lld residual=%lld reason=%s\n",
         ts, static_cast<int>(::getpid()), static_cast<unsigned long long>(sessionId),
         static_cast<long long>(frames), static_cast<long long>(presents),
-        static_cast<long long>(drops), static_cast<long long>(residual),
-        reason ? reason : "?");
+        static_cast<long long>(drops), static_cast<long long>(publishMisses),
+        static_cast<long long>(residual), reason ? reason : "?");
     if (n > 0)
         appendLine(line, static_cast<size_t>(n));
     std::fprintf(stderr,
                  "misterplexd: FRAME_LEDGER event=session_end session=%llu frames=%lld "
-                 "presents=%lld drops=%lld residual=%lld reason=%s\n",
+                 "presents=%lld drops=%lld publish_misses=%lld residual=%lld reason=%s\n",
                  static_cast<unsigned long long>(sessionId), static_cast<long long>(frames),
                  static_cast<long long>(presents), static_cast<long long>(drops),
-                 static_cast<long long>(residual), reason ? reason : "?");
+                 static_cast<long long>(publishMisses), static_cast<long long>(residual),
+                 reason ? reason : "?");
 }
 
 void frameLedgerProcessExit(int code, const char* why, int64_t lifetimeFrames,
@@ -146,6 +147,7 @@ bool frameLedgerSumFile(const std::string& path, FrameLedgerTotals* out) {
             out->frames += grab("frames");
             out->presents += grab("presents");
             out->drops += grab("drops");
+            out->publish_misses += grab("publish_misses");
             out->residual += grab("residual");
         }
     }

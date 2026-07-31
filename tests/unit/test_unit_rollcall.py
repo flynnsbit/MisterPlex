@@ -81,6 +81,8 @@ EXPECTED_COMMANDS = [
     "$(ROOT)/build/test_main_guard",
     "$(ROOT)/build/test_death_breadcrumb",
     "$(ROOT)/build/test_frame_ledger",
+    "bash $(ROOT)/tests/unit/test_live_daemon_enum.sh",
+    "bash $(ROOT)/tests/unit/test_supervise_exit_classify.sh",
     "$(ROOT)/build/test_status_telemetry",
     "$(ROOT)/build/test_resolve",
     "$(ROOT)/build/test_log_redact",
