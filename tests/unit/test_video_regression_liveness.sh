@@ -19,9 +19,9 @@ PREV_HYBRID_DAEMON_MD5=3e2cbb9881b2f54b0e4cb60238655fa7
 DDR_CORE_PREFIX=c5382bee
 DDR_DAEMON_PREFIX=edc3a46b
 PREV_DDR_DAEMON_PREFIX=e9f79de2
-DDR_CORE_MD5="${DDR_CORE_PREFIX}aaaaaaaaaaaaaaaaaaaaaaaa"
+DDR_CORE_MD5=c5382bee73cecdee8220b811e529c297
 DDR_DAEMON_MD5="${DDR_DAEMON_PREFIX}bbbbbbbbbbbbbbbbbbbbbbbb"
-PREV_DDR_DAEMON_MD5="${PREV_DDR_DAEMON_PREFIX}cccccccccccccccccccccccc"
+PREV_DDR_DAEMON_MD5=e9f79de217982aff44207664fdb945c5
 BIN_PATH=/media/fat/misterplex_v2/bin/misterplexd
 CORE_PATH=/media/fat/_Utility/Plex_v2.rbf
 V2_CONF=/media/fat/misterplex_v2/misterplex.conf
@@ -165,6 +165,8 @@ run_new_verify() {
     VIDREG_HTTP="$WORK/fake_http.sh" \
     VIDREG_SCENARIO="$WORK/scenario.env" \
     VIDREG_ATTEMPT_FILE="$WORK/attempt" \
+    VIDREG_CORE_ID="${VIDREG_CORE_ID-}" \
+    VIDREG_REQUIRE_CORE_ID="${VIDREG_REQUIRE_CORE_ID:-0}" \
     LIVE_WAIT_SEC="${LIVE_WAIT_SEC:-1}" \
     LIVE_POLL_SEC="${LIVE_POLL_SEC:-0.05}" \
     bash "$SCRIPT" verify 2>&1
@@ -525,6 +527,88 @@ EOF
 LIVE_WAIT_SEC=0 LIVE_POLL_SEC=0 run_new_verify "new-timeout"
 expect_rc "new-timeout" 1
 expect_grep "new-timeout-msg" 'n_daemon=0'
+
+echo "=== NEW gate: core-id RED SPI daemon + live CAP_DDR (mixed black-screen) ==="
+write_scenario <<EOF
+core_md5=$BASE_CORE_MD5
+disk_md5=$HYBRID_DAEMON_MD5
+live_md5=$HYBRID_DAEMON_MD5
+n_match=1
+appear_after=0
+http_code=200
+live_port=3005
+live_conf=$V2_CONF
+$(spi_claim_ok)
+EOF
+VIDREG_CORE_ID=ddr run_new_verify "coreid-spi-on-ddr"
+expect_rc "coreid-spi-on-ddr" 1
+expect_grep "coreid-spi-on-ddr-msg" 'RED_SPI_DAEMON_DDR_CORE'
+
+echo "=== NEW gate: core-id GREEN SPI daemon + absent PLXC ==="
+write_scenario <<EOF
+core_md5=$BASE_CORE_MD5
+disk_md5=$HYBRID_DAEMON_MD5
+live_md5=$HYBRID_DAEMON_MD5
+n_match=1
+appear_after=0
+http_code=200
+live_port=3005
+live_conf=$V2_CONF
+$(spi_claim_ok)
+EOF
+VIDREG_CORE_ID=absent run_new_verify "coreid-spi-absent"
+expect_rc "coreid-spi-absent" 0
+expect_grep "coreid-spi-absent-ok" 'compatible with SPI pair'
+expect_grep "coreid-spi-absent-unv" 'GATE_CORE_IDENTITY=UNVERIFIED'
+
+echo "=== NEW gate: core-id GREEN DDR daemon + CAP_DDR ==="
+write_scenario <<EOF
+core_md5=$DDR_CORE_MD5
+disk_md5=$DDR_DAEMON_MD5
+live_md5=$DDR_DAEMON_MD5
+n_match=1
+appear_after=0
+http_code=200
+live_port=3005
+live_conf=$V2_CONF
+claim_present=1
+claim_md5=$DDR_CORE_MD5
+claim_path_field=/media/fat/_Utility/Plex.rbf
+claim_rbfname_mtime=1000
+claim_source=test
+rbfname_mtime=1000
+dev_core_md5=$DDR_CORE_MD5
+corename=Plex
+rbfname=Plex
+EOF
+VIDREG_CORE_ID=ddr run_new_verify "coreid-ddr-ok"
+expect_rc "coreid-ddr-ok" 0
+expect_grep "coreid-ddr-ok-msg" 'path=ddr compatible with DDR pair'
+expect_grep "coreid-ddr-ok-verified" 'GATE_CORE_IDENTITY=VERIFIED_PLXC'
+
+echo "=== NEW gate: core-id RED DDR + require identity but absent ==="
+write_scenario <<EOF
+core_md5=$DDR_CORE_MD5
+disk_md5=$DDR_DAEMON_MD5
+live_md5=$DDR_DAEMON_MD5
+n_match=1
+appear_after=0
+http_code=200
+live_port=3005
+live_conf=$V2_CONF
+claim_present=1
+claim_md5=$DDR_CORE_MD5
+claim_path_field=/media/fat/_Utility/Plex.rbf
+claim_rbfname_mtime=1000
+claim_source=test
+rbfname_mtime=1000
+dev_core_md5=$DDR_CORE_MD5
+corename=Plex
+rbfname=Plex
+EOF
+VIDREG_CORE_ID=absent VIDREG_REQUIRE_CORE_ID=1 run_new_verify "coreid-ddr-require"
+expect_rc "coreid-ddr-require" 1
+expect_grep "coreid-ddr-require-msg" 'VIDREG_REQUIRE_CORE_ID=1'
 
 echo "ALL test_video_regression_liveness checks passed"
 exit 0

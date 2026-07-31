@@ -74,7 +74,13 @@ def main() -> int:
     else:
         print("OK   video_regression.sh NO-DATA contract present")
 
-    if "GATE_CORE_IDENTITY=UNVERIFIED" not in vr and "RUNNING_CORE_IDENTITY=$identity" not in vr:
+    if "VIDREG_REQUIRE_CORE_ID" not in vr or "RED_SPI_DAEMON_DDR_CORE" not in vr:
+        print("FAIL video_regression.sh missing VIDREG_CORE_ID / RED_SPI_DAEMON_DDR_CORE contract")
+        rc = 1
+    else:
+        print("OK   video_regression.sh VIDREG_CORE_ID contract present")
+
+    if "GATE_CORE_IDENTITY=UNVERIFIED" not in vr and "RUNNING_CORE_IDENTITY" not in vr:
         print("FAIL video_regression.sh missing UNVERIFIED identity stamp")
         rc = 1
     else:

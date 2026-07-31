@@ -128,5 +128,23 @@ if [[ "$conf_rc" -ne 0 ]]; then
 fi
 echo "OK conf-file lie ignored (adopted log wins) rc=0"
 
-echo "test_core_conf_geometry_gate: OK (match=0 mismatch=1 unknown/absent=77; adopted-log SoT)"
+# Mapped SPI daily + DDR product cores must be COVERED (not 77).
+SPI_MD5=dfebf2bfd08dd70b473b587dd7e81848
+DDR_MD5=c5382bee73cecdee8220b811e529c297
+for pair in "spi:$SPI_MD5" "ddr:$DDR_MD5"; do
+  label=${pair%%:*}; md=${pair#*:}
+  mkdir -p "$WORK/map_$label"
+  printf '%s\n' "$md" >"$WORK/map_$label/core.md5"
+  cat >"$WORK/map_$label/misterplexd.log" <<LOG
+misterplexd: running name=MiSTerPlex id=x port=3005 pms=(unset) servers=0 decode=320x240 weak=320x240@1000k present=fpga auto_next=1 subs=off
+LOG
+  run_case "map_$label" 0 "$WORK/map_$label"
+done
+grep -q "$SPI_MD5" "$MAP" && grep -q "$DDR_MD5" "$MAP" || {
+  echo "FAIL: geometry map missing dfebf2bf/c5382bee full digests" >&2
+  exit 1
+}
+echo "OK geometry map covers SPI daily + DDR product cores"
+
+echo "test_core_conf_geometry_gate: OK (match=0 mismatch=1 unknown/absent=77; adopted-log SoT; mapped cores covered)"
 exit 0

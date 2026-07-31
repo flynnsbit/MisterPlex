@@ -29,6 +29,8 @@
 #     2) (core,daemon) pair table — SPI and DDR pins must not mix;
 #     3) future PLXC mailbox (docs/core-running-bitstream-identity.md).
 #   Missing/stale claim or unknown pair → HARD FAIL (never soft-skip/PASS).
+#   Parent may inject VIDREG_CORE_ID=absent|ddr|spi from live PLXC read;
+#   VIDREG_REQUIRE_CORE_ID=1 after first identity-bearing RBF (c5382bee is pre-id).
 #
 # THIS SCRIPT IS FOR THE PARENT ORCHESTRATOR ONLY. Agents must not run it —
 # they have no device access. See AGENTS.md "Who tests".
@@ -94,11 +96,12 @@ PREV_HYBRID_DAEMON_MD5=3e2cbb9881b2f54b0e4cb60238655fa7
 # Full digests registered when available; md5_match accepts unique prefix ≥8 hex.
 # NEVER weaken pins to skip — demote previous CURRENT into PREV_* on advance.
 DDR_CORE_MD5_PREFIX=c5382bee
-# CURRENT DDR companion (parent-verified with c5382bee).
+# Full digest when known (geometry map + pair); prefix match still accepted.
+DDR_CORE_MD5=c5382bee73cecdee8220b811e529c297
+# CURRENT DDR companion (parent-verified with c5382bee) — prefix ≥8 via md5_match.
 DDR_DAEMON_MD5=edc3a46b
-# PRIOR DDR companion kept as accepted rollback (was CURRENT before edc3a46b).
-PREV_DDR_DAEMON_MD5=e9f79de2
-# Back-compat alias used in older messages / pair helpers.
+# PRIOR DDR companion full digest (device bak misterplexd.bak.e9f79de2).
+PREV_DDR_DAEMON_MD5=e9f79de217982aff44207664fdb945c5
 DDR_DAEMON_MD5_PREFIX="$DDR_DAEMON_MD5"
 
 # Claim file written by plexctl load_core / deploy after RBFNAME mtime advances.
@@ -196,6 +199,9 @@ core_family() {
   local c="$1"
   if md5_match "$BASE_CORE_MD5" "$c" || [ "$c" = "$BASE_CORE_MD5" ]; then
     echo spi; return 0
+  fi
+  if [ -n "${DDR_CORE_MD5:-}" ] && md5_match "$DDR_CORE_MD5" "$c"; then
+    echo ddr; return 0
   fi
   if md5_match "$DDR_CORE_MD5_PREFIX" "$c"; then
     echo ddr; return 0
@@ -709,16 +715,81 @@ verify_baseline() {
     rc=1
   fi
 
-  # Loud identity stamp — claim path is interim; do not over-read GREEN.
-  ident=$(printf '%s\n' "$resolve_out" | sed -n 's/^RUNNING_CORE_IDENTITY=//p' | tail -1)
-  ident=${ident:-UNKNOWN}
-  echo "GATE_CORE_IDENTITY=$ident"
-  if [ "$ident" = UNVERIFIED ]; then
-    echo "NOTE GATE_CORE_IDENTITY=UNVERIFIED — pair/liveness may PASS; fabric hash not silicon-proven (no PLXC)."
-  elif [ "$ident" = VERIFIED_PLXC ]; then
+  # --- PLXC / VIDREG_CORE_ID (w-fit W_LINT_CONTRACT) ---
+  # Parent injects VIDREG_CORE_ID=absent|ddr|spi[,prov=0x....] from a live
+  # doorbell+0x130 read. Default GATE_CORE_IDENTITY=UNVERIFIED — pair/liveness
+  # GREEN is NOT silicon proof. VIDREG_REQUIRE_CORE_ID=1 after first identity RBF.
+  # c5382bee is pre-identity: path=absent allowed until REQUIRE=1.
+  pair_fam=""
+  if [ -n "$run_core" ] && [ -n "$live" ]; then
+    pair_fam=$(core_family "$run_core")
+    # Prefer daemon family if core resolved but families already matched
+    df=$(daemon_family "$live")
+    if [ "$pair_fam" = "$df" ]; then
+      :
+    fi
+  fi
+  gate_core_identity=UNVERIFIED
+  claim_ident=$(printf '%s\n' "$resolve_out" | sed -n 's/^RUNNING_CORE_IDENTITY=//p' | tail -1)
+  # Start from claim resolution stamp (UNVERIFIED unless PLXC word already seen).
+  if [ "$claim_ident" = VERIFIED_PLXC ]; then
+    gate_core_identity=VERIFIED_PLXC
+  fi
+
+  if [ -n "${VIDREG_CORE_ID:-}" ]; then
+    id_path="${VIDREG_CORE_ID%%,*}"
+    id_prov=""
+    case ",${VIDREG_CORE_ID}," in
+      *,prov=*) id_prov="${VIDREG_CORE_ID#*prov=}"; id_prov="${id_prov%%,*}" ;;
+    esac
+    echo "NOTE core-id inject path='$id_path' prov='${id_prov:-none}'"
+    # Key off LIVE DAEMON family (contract): SPI daemon + CAP_DDR fabric = black screen.
+    if [ -n "$live" ] && spi_daemon_md5_accepted "$live"; then
+      if [ "$id_path" = "ddr" ]; then
+        echo "FAIL core-id RED_SPI_DAEMON_DDR_CORE (running PLXC CAP_DDR with SPI daemon — mixed black-screen class)"
+        rc=1
+      else
+        echo "OK   core-id path=$id_path compatible with SPI pair"
+        if [ "$id_path" = "spi" ]; then
+          gate_core_identity=VERIFIED_PLXC
+        fi
+      fi
+    elif [ -n "$live" ] && ddr_daemon_md5_accepted "$live"; then
+      if [ "$id_path" = "spi" ]; then
+        echo "FAIL core-id RED_DDR_DAEMON_NON_DDR_CORE (SPI stamp with DDR daemon)"
+        rc=1
+      elif [ "$id_path" = "ddr" ]; then
+        echo "OK   core-id path=ddr compatible with DDR pair"
+        gate_core_identity=VERIFIED_PLXC
+      elif [ "$id_path" = "absent" ]; then
+        if [ "${VIDREG_REQUIRE_CORE_ID:-0}" = "1" ]; then
+          echo "FAIL core-id absent but VIDREG_REQUIRE_CORE_ID=1 (identity RBF required)"
+          rc=1
+        else
+          echo "OK   core-id absent allowed for pre-identity DDR core (set VIDREG_REQUIRE_CORE_ID=1 after first PLXC RBF)"
+        fi
+        gate_core_identity=UNVERIFIED
+      else
+        echo "FAIL core-id path='$id_path' invalid (want absent|ddr|spi)"
+        rc=1
+      fi
+    else
+      echo "NOTE core-id inject with unresolved pair family='${pair_fam:-empty}'"
+    fi
+  elif [ "${VIDREG_REQUIRE_CORE_ID:-0}" = "1" ]; then
+    echo "FAIL core-id missing inject (VIDREG_REQUIRE_CORE_ID=1)"
+    rc=1
+    gate_core_identity=UNVERIFIED
+  else
+    echo "NOTE core-id not injected (VIDREG_CORE_ID unset) — claim/pair only; running-core identity UNVERIFIED"
+    gate_core_identity=UNVERIFIED
+  fi
+
+  echo "GATE_CORE_IDENTITY=$gate_core_identity"
+  if [ "$gate_core_identity" = UNVERIFIED ]; then
+    echo "NOTE GATE_CORE_IDENTITY=UNVERIFIED — pair/liveness may PASS; fabric hash not silicon-proven (no PLXC). NOT silicon proof of bitstream content hash."
+  elif [ "$gate_core_identity" = VERIFIED_PLXC ]; then
     echo "OK   GATE_CORE_IDENTITY=VERIFIED_PLXC"
-  elif [ -n "$run_core" ]; then
-    echo "NOTE GATE_CORE_IDENTITY=$ident"
   fi
 
   return $rc
