@@ -9,9 +9,14 @@
 //     Show transient skip feedback ("30s >>" or "<< 30s") and refresh the
 //     overlay timeout. Transport dispatch owns the actual seek/skip.
 //
-// The renderer is deliberately buffer-format agnostic. It can draw into RGB24
-// or packed little-endian RGB565 and only touches the overlay dirty region; when
-// hidden, render*() returns false without scanning the frame.
+// Layout is resolution-independent: metrics are fractions of the *buffer*
+// (present canvas / output) size, snapped to integer pixels. Callers must pass
+// the present canvas size — never a separate decode-tier size — so geometry is
+// independent of streaming content resolution. See docs/osd-hires.md.
+//
+// The renderer is buffer-format agnostic (RGB24, RGB565LE, BGRA32, YUV420p) and
+// only touches the overlay dirty region; when hidden, render*() returns false
+// without scanning the frame.
 
 #include <algorithm>
 #include <chrono>
@@ -37,6 +42,53 @@ struct OverlayRect {
     int h = 0;
 
     bool empty() const { return w <= 0 || h <= 0; }
+};
+
+// Resolution-scaled chrome metrics. Derived only from buffer W×H.
+struct OverlayLayoutMetrics {
+    int margin = 8;
+    int panelH = 60;
+    int bodyScale = 1;  // 5×7 glyph cell scale for body/time text
+    int titleScale = 1; // skip/notice banner text
+    int iconScale = 1;
+    int barH = 6;
+    int barBottomPad = 18;
+    int labelTop = 10;
+    int iconCy = 20;
+    int timeTop = 34;
+    int skipBoxH = 28;
+    int noticeBoxH = 28;
+
+    // bodyScale = max(1, h/200): 240→1 (golden), 480→2, 600→3, 1080→5.
+    static OverlayLayoutMetrics compute(int w, int h) {
+        OverlayLayoutMetrics m;
+        if (w <= 0 || h <= 0)
+            return m;
+        m.margin = std::max(8, w / 32);
+        // 320×240 golden: min(max(72,48), max(54,60)) = min(72,60) = 60.
+        m.panelH = std::min(std::max(72, h / 5), std::max(54, h / 4));
+        if (m.panelH > h - 2 * m.margin)
+            m.panelH = std::max(24, h - 2 * m.margin);
+        m.bodyScale = std::max(1, h / 200);
+        m.titleScale = m.bodyScale;
+        m.iconScale = m.bodyScale;
+        m.barH = std::max(4, 6 * m.bodyScale);
+        m.barBottomPad = 12 + m.barH;
+        m.labelTop = std::max(6, 10 * m.bodyScale);
+        m.iconCy = std::max(12, 20 * m.iconScale);
+        m.timeTop = std::max(m.labelTop + 7 * m.bodyScale + 2, 34 * m.bodyScale);
+        if (m.timeTop + 7 * m.bodyScale + m.barBottomPad > m.panelH) {
+            // Compact vertical stack on short panels (240p golden path).
+            m.labelTop = 10;
+            m.iconCy = 20;
+            m.timeTop = 34;
+            m.barBottomPad = 18;
+            m.barH = 6;
+        }
+        m.skipBoxH = std::max(28, 14 * m.titleScale);
+        m.noticeBoxH = m.skipBoxH;
+        return m;
+    }
 };
 
 class PlaybackOverlay {
@@ -77,8 +129,6 @@ public:
         shownAtMs_ = nowMs;
     }
 
-    // Short centered banner (idle / F12-inert notice). ASCII, max 31 chars.
-    // Visible longer than skip flash so a user glancing at HDMI can read it.
     static constexpr int64_t kNoticeVisibleMs = 8000;
 
     void flashNotice(const char* text) { flashNoticeAt(text, monotonicMs()); }
@@ -105,6 +155,10 @@ public:
     OverlayRect dirtyBoundsAt(int w, int h, int64_t nowMs) const {
         Snapshot s = snapshot();
         return dirtyBoundsFor(s, w, h, nowMs);
+    }
+
+    static OverlayLayoutMetrics layoutMetrics(int w, int h) {
+        return OverlayLayoutMetrics::compute(w, h);
     }
 
     bool renderRgb24(uint8_t* rgb, int w, int h) const {
@@ -153,6 +207,27 @@ public:
         Bgra32Target target{bgra, w, h};
         render(target, s, w, h, nowMs);
         return true;
+    }
+
+    bool renderYuv420p(uint8_t* yuv, int w, int h) const {
+        return renderYuv420pAt(yuv, w, h, monotonicMs());
+    }
+
+    bool renderYuv420pAt(uint8_t* yuv, int w, int h, int64_t nowMs) const {
+        if (!yuv || w <= 0 || h <= 0 || (w & 1) || (h & 1))
+            return false;
+        Snapshot s = snapshot();
+        const OverlayRect dirty = dirtyBoundsFor(s, w, h, nowMs);
+        if (dirty.empty())
+            return false;
+        Yuv420pTarget target{yuv, w, h};
+        render(target, s, w, h, nowMs);
+        return true;
+    }
+
+    static OverlayRect panelBounds(int w, int h) {
+        const OverlayLayoutMetrics m = OverlayLayoutMetrics::compute(w, h);
+        return OverlayRect{m.margin, h - m.panelH - m.margin, w - m.margin * 2, m.panelH};
     }
 
 private:
@@ -235,6 +310,54 @@ private:
         }
     };
 
+    struct Yuv420pTarget {
+        uint8_t* p;
+        int w;
+        int h;
+
+        uint8_t* yPlane() const { return p; }
+        uint8_t* uPlane() const { return p + static_cast<size_t>(w) * static_cast<size_t>(h); }
+        uint8_t* vPlane() const {
+            return uPlane() + static_cast<size_t>(w / 2) * static_cast<size_t>(h / 2);
+        }
+
+        static uint8_t clamp8(int v) {
+            return static_cast<uint8_t>(v < 0 ? 0 : (v > 255 ? 255 : v));
+        }
+        static uint8_t rgbToY(int r, int g, int b) {
+            return clamp8(((66 * r + 129 * g + 25 * b + 128) >> 8) + 16);
+        }
+        static uint8_t rgbToU(int r, int g, int b) {
+            return clamp8(((-38 * r - 74 * g + 112 * b + 128) >> 8) + 128);
+        }
+        static uint8_t rgbToV(int r, int g, int b) {
+            return clamp8(((112 * r - 94 * g - 18 * b + 128) >> 8) + 128);
+        }
+        static void yuvToRgb(uint8_t y, uint8_t u, uint8_t v, uint8_t& r, uint8_t& g, uint8_t& b) {
+            const int uu = static_cast<int>(u) - 128;
+            const int vv = static_cast<int>(v) - 128;
+            r = clamp8((static_cast<int>(y) * 256 + 359 * vv) >> 8);
+            g = clamp8((static_cast<int>(y) * 256 - 88 * uu - 183 * vv) >> 8);
+            b = clamp8((static_cast<int>(y) * 256 + 454 * uu) >> 8);
+        }
+
+        Color get(int x, int y) const {
+            const uint8_t Y = yPlane()[static_cast<size_t>(y) * w + x];
+            const uint8_t U = uPlane()[static_cast<size_t>(y / 2) * (w / 2) + (x / 2)];
+            const uint8_t V = vPlane()[static_cast<size_t>(y / 2) * (w / 2) + (x / 2)];
+            Color c{};
+            yuvToRgb(Y, U, V, c.r, c.g, c.b);
+            return c;
+        }
+
+        void set(int x, int y, Color c) {
+            yPlane()[static_cast<size_t>(y) * w + x] = rgbToY(c.r, c.g, c.b);
+            const size_t ci = static_cast<size_t>(y / 2) * (w / 2) + (x / 2);
+            uPlane()[ci] = rgbToU(c.r, c.g, c.b);
+            vPlane()[ci] = rgbToV(c.r, c.g, c.b);
+        }
+    };
+
     static int64_t clampNonNegative(int64_t v) { return v < 0 ? 0 : v; }
 
     static int64_t monotonicMs() {
@@ -279,30 +402,39 @@ private:
         return std::max<int>(1, static_cast<int>(((kNoticeVisibleMs - age) * 255) / kFadeMs));
     }
 
-    static OverlayRect panelBounds(int w, int h) {
-        const int margin = std::max(8, w / 32);
-        const int ph = std::min(72, std::max(54, h / 4));
-        return OverlayRect{margin, h - ph - margin, w - margin * 2, ph};
-    }
-
     static OverlayRect dirtyBoundsFor(const Snapshot& s, int w, int h, int64_t nowMs) {
         if (w <= 0 || h <= 0)
             return {};
+        const OverlayLayoutMetrics m = OverlayLayoutMetrics::compute(w, h);
         OverlayRect out{};
         if (alphaFor(s, nowMs) > 0)
             out = panelBounds(w, h);
         if (skipAlphaFor(s, nowMs) > 0) {
-            const int sw = std::min(w - 16, 116);
-            const int sh = 28;
-            OverlayRect skip{(w - sw) / 2, std::max(8, h / 2 - 30), sw, sh};
+            const int sw = std::min(w - 16, std::max(116, 40 * m.titleScale + 76));
+            OverlayRect skip{(w - sw) / 2, std::max(8, h / 2 - m.skipBoxH - 2), sw, m.skipBoxH};
             out = unionRect(out, skip);
         }
         if (noticeAlphaFor(s, nowMs) > 0) {
-            const int tw = textWidth(s.noticeText, 2);
+            const int tw = textWidth(s.noticeText, m.titleScale);
             const int boxW = std::min(w - 16, std::max(76, tw + 24));
-            const int sh = 28;
-            OverlayRect notice{(w - boxW) / 2, std::max(8, h / 5), boxW, sh};
+            OverlayRect notice{(w - boxW) / 2, std::max(8, h / 5), boxW, m.noticeBoxH};
             out = unionRect(out, notice);
+        }
+        if (!out.empty()) {
+            if (out.x < 0) {
+                out.w += out.x;
+                out.x = 0;
+            }
+            if (out.y < 0) {
+                out.h += out.y;
+                out.y = 0;
+            }
+            if (out.x + out.w > w)
+                out.w = w - out.x;
+            if (out.y + out.h > h)
+                out.h = h - out.y;
+            if (out.w <= 0 || out.h <= 0)
+                return {};
         }
         return out;
     }
@@ -335,22 +467,22 @@ private:
     }
 
     template <typename Target>
-    static void fillRect(Target& t, int x, int y, int w, int h, Color c, int alpha) {
+    static void fillRect(Target& t, int x, int y, int ww, int hh, Color c, int alpha) {
         const int x0 = std::max(0, x);
         const int y0 = std::max(0, y);
-        const int x1 = std::min(t.w, x + w);
-        const int y1 = std::min(t.h, y + h);
+        const int x1 = std::min(t.w, x + ww);
+        const int y1 = std::min(t.h, y + hh);
         for (int yy = y0; yy < y1; ++yy)
             for (int xx = x0; xx < x1; ++xx)
                 blendPixel(t, xx, yy, c, alpha);
     }
 
     template <typename Target>
-    static void strokeRect(Target& t, int x, int y, int w, int h, Color c, int alpha) {
-        fillRect(t, x, y, w, 1, c, alpha);
-        fillRect(t, x, y + h - 1, w, 1, c, alpha);
-        fillRect(t, x, y, 1, h, c, alpha);
-        fillRect(t, x + w - 1, y, 1, h, c, alpha);
+    static void strokeRect(Target& t, int x, int y, int ww, int hh, Color c, int alpha) {
+        fillRect(t, x, y, ww, 1, c, alpha);
+        fillRect(t, x, y + hh - 1, ww, 1, c, alpha);
+        fillRect(t, x, y, 1, hh, c, alpha);
+        fillRect(t, x + ww - 1, y, 1, hh, c, alpha);
     }
 
     static const uint8_t* glyph(char ch) {
@@ -415,12 +547,19 @@ private:
     }
 
     static int textWidth(const char* text, int scale) {
-        return static_cast<int>(std::strlen(text)) * 6 * scale - scale;
+        if (!text || scale <= 0)
+            return 0;
+        const int n = static_cast<int>(std::strlen(text));
+        if (n <= 0)
+            return 0;
+        return n * 6 * scale - scale;
     }
 
     template <typename Target>
     static void drawText(Target& t, int x, int y, const char* text, int scale, Color c,
                          int alpha) {
+        if (scale <= 0)
+            return;
         for (const char* p = text; *p; ++p) {
             const uint8_t* g = glyph(*p);
             for (int row = 0; row < 7; ++row) {
@@ -436,31 +575,33 @@ private:
 
     static void formatTime(int64_t ms, char (&out)[32]) {
         int64_t sec = ms / 1000;
-        const int64_t h = sec / 3600;
+        const int64_t hh = sec / 3600;
         sec %= 3600;
-        const int64_t m = sec / 60;
-        const int64_t s = sec % 60;
-        if (h > 0)
-            std::snprintf(out, 32, "%lld:%02lld:%02lld", static_cast<long long>(h),
-                          static_cast<long long>(m), static_cast<long long>(s));
+        const int64_t mm = sec / 60;
+        const int64_t ss = sec % 60;
+        if (hh > 0)
+            std::snprintf(out, 32, "%lld:%02lld:%02lld", static_cast<long long>(hh),
+                          static_cast<long long>(mm), static_cast<long long>(ss));
         else
-            std::snprintf(out, 32, "%lld:%02lld", static_cast<long long>(m),
-                          static_cast<long long>(s));
+            std::snprintf(out, 32, "%lld:%02lld", static_cast<long long>(mm),
+                          static_cast<long long>(ss));
     }
 
     template <typename Target>
-    static void drawIcon(Target& t, PlaybackOverlayState state, int cx, int cy, int alpha) {
+    static void drawIcon(Target& t, PlaybackOverlayState state, int cx, int cy, int alpha,
+                         int iconScale) {
         constexpr Color amber{255, 178, 32};
+        const int s = std::max(1, iconScale);
         if (state == PlaybackOverlayState::Playing) {
             for (int x = 0; x < 16; ++x) {
                 const int half = x / 2;
-                fillRect(t, cx - 5 + x, cy - half, 1, half * 2 + 1, amber, alpha);
+                fillRect(t, cx - 5 * s + x * s, cy - half * s, s, half * 2 * s + s, amber, alpha);
             }
         } else if (state == PlaybackOverlayState::Paused) {
-            fillRect(t, cx - 9, cy - 10, 6, 20, amber, alpha);
-            fillRect(t, cx + 3, cy - 10, 6, 20, amber, alpha);
+            fillRect(t, cx - 9 * s, cy - 10 * s, 6 * s, 20 * s, amber, alpha);
+            fillRect(t, cx + 3 * s, cy - 10 * s, 6 * s, 20 * s, amber, alpha);
         } else {
-            fillRect(t, cx - 9, cy - 9, 18, 18, amber, alpha);
+            fillRect(t, cx - 9 * s, cy - 9 * s, 18 * s, 18 * s, amber, alpha);
         }
     }
 
@@ -476,6 +617,7 @@ private:
     template <typename Target>
     static void render(Target& t, const Snapshot& s, int w, int h, int64_t nowMs) {
         const int alpha = alphaFor(s, nowMs);
+        const OverlayLayoutMetrics m = OverlayLayoutMetrics::compute(w, h);
         constexpr Color black{0, 0, 0};
         constexpr Color panelEdge{70, 74, 82};
         constexpr Color white{235, 238, 244};
@@ -487,23 +629,30 @@ private:
             fillRect(t, p.x, p.y, p.w, p.h, black, (170 * alpha) / 255);
             strokeRect(t, p.x, p.y, p.w, p.h, panelEdge, (150 * alpha) / 255);
 
-            const int iconX = p.x + 22;
-            const int labelY = p.y + 10;
-            drawIcon(t, s.state, iconX, p.y + 20, alpha);
-            drawText(t, iconX + 24, labelY, stateLabel(s.state), 1, white, alpha);
+            const int sc = m.bodyScale;
+            // 240p (sc==1): exact golden anchors from the pre-hires renderer.
+            const int iconXFinal = (sc == 1) ? (p.x + 22) : (p.x + 18 * sc);
+            const int labelY = (sc == 1) ? (p.y + 10) : (p.y + m.labelTop);
+            const int iconCy = (sc == 1) ? (p.y + 20) : (p.y + m.iconCy);
+            drawIcon(t, s.state, iconXFinal, iconCy, alpha, m.iconScale);
+            drawText(t, iconXFinal + ((sc == 1) ? 24 : 14 * sc), labelY, stateLabel(s.state), sc,
+                     white, alpha);
 
             char elapsed[32];
             char total[32];
             formatTime(s.positionMs, elapsed);
             formatTime(s.durationMs, total);
-            drawText(t, p.x + 16, p.y + 34, elapsed, 1, white, alpha);
-            const int totalW = textWidth(total, 1);
-            drawText(t, p.x + p.w - 16 - totalW, p.y + 34, total, 1, muted, alpha);
+            const int timeY = (sc == 1) ? (p.y + 34) : (p.y + m.timeTop);
+            drawText(t, p.x + 16, timeY, elapsed, sc, white, alpha);
+            const int totalW = textWidth(total, sc);
+            drawText(t, p.x + p.w - 16 - totalW, timeY, total, sc, muted, alpha);
 
             const int barX = p.x + 16;
-            const int barY = p.y + p.h - 18;
+            const int barH = (sc == 1) ? 6 : m.barH;
+            const int barBottomPad = (sc == 1) ? 18 : m.barBottomPad;
+            const int barY = p.y + p.h - barBottomPad;
             const int barW = p.w - 32;
-            fillRect(t, barX, barY, barW, 6, Color{58, 63, 72}, (220 * alpha) / 255);
+            fillRect(t, barX, barY, barW, barH, Color{58, 63, 72}, (220 * alpha) / 255);
             int fillW = 0;
             if (s.durationMs > 0)
                 fillW = static_cast<int>((static_cast<long long>(barW) *
@@ -511,9 +660,11 @@ private:
                                          s.durationMs);
             fillW = std::max(0, std::min(barW, fillW));
             if (fillW > 0)
-                fillRect(t, barX, barY, fillW, 6, amber, alpha);
+                fillRect(t, barX, barY, fillW, barH, amber, alpha);
             const int knobX = barX + fillW;
-            fillRect(t, knobX - 2, barY - 2, 5, 10, white, alpha);
+            const int knobW = (sc == 1) ? 5 : std::max(5, 3 * sc);
+            const int knobH = (sc == 1) ? 10 : std::max(10, barH + 4);
+            fillRect(t, knobX - knobW / 2, barY - (knobH - barH) / 2, knobW, knobH, white, alpha);
         }
 
         const int skipAlpha = skipAlphaFor(s, nowMs);
@@ -525,24 +676,30 @@ private:
                 std::snprintf(text, sizeof(text), "%lldS >>", static_cast<long long>(sec));
             else
                 std::snprintf(text, sizeof(text), "<< %lldS", static_cast<long long>(sec));
-            const int tw = textWidth(text, 2);
+            const int tsc = m.titleScale;
+            const int tw = textWidth(text, tsc);
             const int boxW = std::min(w - 16, std::max(76, tw + 24));
             const int boxX = (w - boxW) / 2;
-            const int boxY = std::max(8, h / 2 - 30);
-            fillRect(t, boxX, boxY, boxW, 28, black, (190 * skipAlpha) / 255);
-            strokeRect(t, boxX, boxY, boxW, 28, amber, skipAlpha);
-            drawText(t, boxX + (boxW - tw) / 2, boxY + 7, text, 2, white, skipAlpha);
+            const int boxH = m.skipBoxH;
+            const int boxY = std::max(8, h / 2 - boxH - 2);
+            fillRect(t, boxX, boxY, boxW, boxH, black, (190 * skipAlpha) / 255);
+            strokeRect(t, boxX, boxY, boxW, boxH, amber, skipAlpha);
+            const int textY = boxY + std::max(4, (boxH - 7 * tsc) / 2);
+            drawText(t, boxX + (boxW - tw) / 2, textY, text, tsc, white, skipAlpha);
         }
 
         const int noticeAlpha = noticeAlphaFor(s, nowMs);
         if (noticeAlpha > 0 && s.noticeText[0] != '\0') {
-            const int tw = textWidth(s.noticeText, 2);
+            const int tsc = m.titleScale;
+            const int tw = textWidth(s.noticeText, tsc);
             const int boxW = std::min(w - 16, std::max(76, tw + 24));
             const int boxX = (w - boxW) / 2;
+            const int boxH = m.noticeBoxH;
             const int boxY = std::max(8, h / 5);
-            fillRect(t, boxX, boxY, boxW, 28, black, (200 * noticeAlpha) / 255);
-            strokeRect(t, boxX, boxY, boxW, 28, amber, noticeAlpha);
-            drawText(t, boxX + (boxW - tw) / 2, boxY + 7, s.noticeText, 2, white, noticeAlpha);
+            fillRect(t, boxX, boxY, boxW, boxH, black, (200 * noticeAlpha) / 255);
+            strokeRect(t, boxX, boxY, boxW, boxH, amber, noticeAlpha);
+            const int textY = boxY + std::max(4, (boxH - 7 * tsc) / 2);
+            drawText(t, boxX + (boxW - tw) / 2, textY, s.noticeText, tsc, white, noticeAlpha);
         }
     }
 

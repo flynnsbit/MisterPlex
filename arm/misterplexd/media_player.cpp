@@ -2850,6 +2850,8 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
         };
 
         auto renderOverlay = [&](uint8_t* data) {
+            // Composite after FFmpeg scale-to-canvas: rawW/rawH is the present
+            // canvas (product coded bank), not a separate decode-tier size.
             switch (videoFmt) {
             case RawVideoFormat::Rgb565Le:
                 overlay_.renderRgb565Le(data, rawW, rawH);
@@ -2858,6 +2860,7 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                 overlay_.renderBgra32(data, rawW, rawH);
                 break;
             case RawVideoFormat::Yuv420p:
+                overlay_.renderYuv420p(data, rawW, rawH);
                 break;
             case RawVideoFormat::Rgb24:
             default:
@@ -2868,8 +2871,59 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
 
         auto backupOverlayDirty = [&](uint8_t* cleanFrame, const OverlayRect& dirty) {
             fbOverlayBackup.clear();
-            if (dirty.empty())
+            if (dirty.empty() || !cleanFrame)
                 return;
+            if (videoFmt == RawVideoFormat::Yuv420p) {
+                // Plane-strided I420 backup (Y full rect + U/V 2×2-aligned).
+                const int x0 = dirty.x & ~1;
+                const int y0 = dirty.y & ~1;
+                const int x1 = std::min(rawW, (dirty.x + dirty.w + 1) & ~1);
+                const int y1 = std::min(rawH, (dirty.y + dirty.h + 1) & ~1);
+                const int bw = x1 - x0;
+                const int bh = y1 - y0;
+                if (bw <= 0 || bh <= 0)
+                    return;
+                const size_t yBytes = static_cast<size_t>(bw) * static_cast<size_t>(bh);
+                const size_t cBytes =
+                    static_cast<size_t>(bw / 2) * static_cast<size_t>(bh / 2);
+                // Prefix 16 bytes: x0,y0,bw,bh little-endian int32.
+                fbOverlayBackup.resize(16 + yBytes + 2 * cBytes);
+                auto putI32 = [&](size_t off, int v) {
+                    const uint32_t u = static_cast<uint32_t>(v);
+                    fbOverlayBackup[off + 0] = static_cast<uint8_t>(u & 0xff);
+                    fbOverlayBackup[off + 1] = static_cast<uint8_t>((u >> 8) & 0xff);
+                    fbOverlayBackup[off + 2] = static_cast<uint8_t>((u >> 16) & 0xff);
+                    fbOverlayBackup[off + 3] = static_cast<uint8_t>((u >> 24) & 0xff);
+                };
+                putI32(0, x0);
+                putI32(4, y0);
+                putI32(8, bw);
+                putI32(12, bh);
+                uint8_t* yDst = fbOverlayBackup.data() + 16;
+                uint8_t* uDst = yDst + yBytes;
+                uint8_t* vDst = uDst + cBytes;
+                const uint8_t* ySrc = cleanFrame;
+                const uint8_t* uSrc =
+                    cleanFrame + static_cast<size_t>(rawW) * static_cast<size_t>(rawH);
+                const uint8_t* vSrc =
+                    uSrc + static_cast<size_t>(rawW / 2) * static_cast<size_t>(rawH / 2);
+                for (int yy = 0; yy < bh; ++yy) {
+                    std::memcpy(yDst + static_cast<size_t>(yy) * bw,
+                                ySrc + static_cast<size_t>(y0 + yy) * rawW + x0,
+                                static_cast<size_t>(bw));
+                }
+                for (int yy = 0; yy < bh / 2; ++yy) {
+                    std::memcpy(uDst + static_cast<size_t>(yy) * (bw / 2),
+                                uSrc + static_cast<size_t>((y0 / 2) + yy) * (rawW / 2) +
+                                    (x0 / 2),
+                                static_cast<size_t>(bw / 2));
+                    std::memcpy(vDst + static_cast<size_t>(yy) * (bw / 2),
+                                vSrc + static_cast<size_t>((y0 / 2) + yy) * (rawW / 2) +
+                                    (x0 / 2),
+                                static_cast<size_t>(bw / 2));
+                }
+                return;
+            }
             const size_t bpp = rawVideoPackedBytesPerPixel(videoFmt);
             if (bpp == 0)
                 return;
@@ -2884,8 +2938,55 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
         };
 
         auto restoreOverlayDirty = [&](uint8_t* cleanFrame, const OverlayRect& dirty) {
-            if (dirty.empty() || fbOverlayBackup.empty())
+            if (dirty.empty() || fbOverlayBackup.empty() || !cleanFrame)
                 return;
+            if (videoFmt == RawVideoFormat::Yuv420p) {
+                if (fbOverlayBackup.size() < 16)
+                    return;
+                auto getI32 = [&](size_t off) -> int {
+                    const uint32_t u =
+                        static_cast<uint32_t>(fbOverlayBackup[off + 0]) |
+                        (static_cast<uint32_t>(fbOverlayBackup[off + 1]) << 8) |
+                        (static_cast<uint32_t>(fbOverlayBackup[off + 2]) << 16) |
+                        (static_cast<uint32_t>(fbOverlayBackup[off + 3]) << 24);
+                    return static_cast<int>(u);
+                };
+                const int x0 = getI32(0);
+                const int y0 = getI32(4);
+                const int bw = getI32(8);
+                const int bh = getI32(12);
+                if (bw <= 0 || bh <= 0)
+                    return;
+                const size_t yBytes = static_cast<size_t>(bw) * static_cast<size_t>(bh);
+                const size_t cBytes =
+                    static_cast<size_t>(bw / 2) * static_cast<size_t>(bh / 2);
+                if (fbOverlayBackup.size() < 16 + yBytes + 2 * cBytes)
+                    return;
+                const uint8_t* ySrc = fbOverlayBackup.data() + 16;
+                const uint8_t* uSrc = ySrc + yBytes;
+                const uint8_t* vSrc = uSrc + cBytes;
+                uint8_t* yDst = cleanFrame;
+                uint8_t* uDst =
+                    cleanFrame + static_cast<size_t>(rawW) * static_cast<size_t>(rawH);
+                uint8_t* vDst =
+                    uDst + static_cast<size_t>(rawW / 2) * static_cast<size_t>(rawH / 2);
+                for (int yy = 0; yy < bh; ++yy) {
+                    std::memcpy(yDst + static_cast<size_t>(y0 + yy) * rawW + x0,
+                                ySrc + static_cast<size_t>(yy) * bw,
+                                static_cast<size_t>(bw));
+                }
+                for (int yy = 0; yy < bh / 2; ++yy) {
+                    std::memcpy(uDst + static_cast<size_t>((y0 / 2) + yy) * (rawW / 2) +
+                                    (x0 / 2),
+                                uSrc + static_cast<size_t>(yy) * (bw / 2),
+                                static_cast<size_t>(bw / 2));
+                    std::memcpy(vDst + static_cast<size_t>((y0 / 2) + yy) * (rawW / 2) +
+                                    (x0 / 2),
+                                vSrc + static_cast<size_t>(yy) * (bw / 2),
+                                static_cast<size_t>(bw / 2));
+                }
+                return;
+            }
             const size_t bpp = rawVideoPackedBytesPerPixel(videoFmt);
             if (bpp == 0)
                 return;

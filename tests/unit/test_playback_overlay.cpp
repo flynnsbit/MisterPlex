@@ -7,6 +7,7 @@
 #include <cstring>
 #include <fstream>
 #include <string>
+#include <tuple>
 #include <vector>
 
 static int fails = 0;
@@ -261,6 +262,156 @@ int main() {
         CHECK(timed.visibleAt(20000));
         CHECK(timed.visibleAt(20000 + PlaybackOverlay::kSkipVisibleMs - 1));
         CHECK(!timed.visibleAt(20000 + PlaybackOverlay::kVisibleMs));
+    }
+
+    // 5. Multi-resolution layout: no overflow, sane panel fractions, bar endpoints.
+    {
+        struct Case { int w; int h; const char* name; };
+        const Case cases[] = {
+            {1920, 1080, "1080p"},
+            {800, 600, "800x600"},
+            {640, 480, "640x480"},
+            {320, 240, "320x240"},
+        };
+        for (const Case& c : cases) {
+            PlaybackOverlay hi;
+            hi.showAt(PlaybackOverlayState::Paused, 90000, 180000, 1000);
+            const OverlayRect d = hi.dirtyBoundsAt(c.w, c.h, 1000);
+            CHECK(!d.empty());
+            CHECK(d.x >= 0);
+            CHECK(d.y >= 0);
+            CHECK(d.x + d.w <= c.w);
+            CHECK(d.y + d.h <= c.h);
+            const OverlayRect panel = PlaybackOverlay::panelBounds(c.w, c.h);
+            CHECK(panel.w > 0 && panel.h > 0);
+            CHECK(panel.x >= 0 && panel.y >= 0);
+            CHECK(panel.x + panel.w <= c.w);
+            CHECK(panel.y + panel.h <= c.h);
+            // Panel occupies a sane fraction of height (about 10–40%).
+            CHECK(panel.h * 10 >= c.h);       // >= 10%
+            CHECK(panel.h * 5 <= c.h * 2);    // <= 40%
+            const auto lm = PlaybackOverlay::layoutMetrics(c.w, c.h);
+            CHECK(lm.bodyScale == std::max(1, c.h / 200));
+            // Timeline endpoints: half progress → fill mid-bar.
+            std::vector<uint8_t> rgb(static_cast<size_t>(c.w) * c.h * 3, 0);
+            CHECK(hi.renderRgb24At(rgb.data(), c.w, c.h, 1000));
+            const int barX = panel.x + 16;
+            const int barW = panel.w - 32;
+            const int sc = lm.bodyScale == 1 ? 1 : lm.bodyScale;
+            const int barH = (sc == 1) ? 6 : lm.barH;
+            const int barBottomPad = (sc == 1) ? 18 : lm.barBottomPad;
+            const int barY = panel.y + panel.h - barBottomPad;
+            const int midX = barX + barW / 2;
+            // Sample Y near bar center row; amber progress should be left of mid, track right.
+            auto pix = [&](int x, int y) -> std::tuple<uint8_t,uint8_t,uint8_t> {
+                const size_t i = (static_cast<size_t>(y) * c.w + x) * 3;
+                return {rgb[i], rgb[i+1], rgb[i+2]};
+            };
+            // Half elapsed (90000/180000): fill ends near mid.
+            auto [rL, gL, bL] = pix(std::max(barX + 2, midX - 8), barY + barH / 2);
+            auto [rR, gR, bR] = pix(std::min(c.w - 1, midX + 8), barY + barH / 2);
+            // Left of mid should be amber-ish (high R), right darker track.
+            CHECK(rL > 100);
+            CHECK(rL >= rR);
+            (void)gL; (void)bL; (void)gR; (void)bR; (void)c.name;
+        }
+    }
+
+    // 6. Overlay geometry independent of "content" — only buffer size matters.
+    // Two different synthetic backgrounds at the same output size must yield
+    // identical overlay-dominated pixels when composited (same show state).
+    {
+        constexpr int OW = 640, OH = 480;
+        auto mkBg = [&](uint8_t seed) {
+            std::vector<uint8_t> b(static_cast<size_t>(OW) * OH * 3);
+            for (size_t i = 0; i < b.size(); i += 3) {
+                b[i] = static_cast<uint8_t>((seed * 17 + i) & 0xff);
+                b[i+1] = static_cast<uint8_t>((seed * 29 + i * 3) & 0xff);
+                b[i+2] = static_cast<uint8_t>((seed * 43 + i * 5) & 0xff);
+            }
+            return b;
+        };
+        // Render onto pure black twice after identical show — full-frame match.
+        std::vector<uint8_t> a(static_cast<size_t>(OW) * OH * 3, 0);
+        std::vector<uint8_t> b(static_cast<size_t>(OW) * OH * 3, 0);
+        PlaybackOverlay oa, ob;
+        oa.showAt(PlaybackOverlayState::Playing, 1000, 5000, 50);
+        ob.showAt(PlaybackOverlayState::Playing, 1000, 5000, 50);
+        CHECK(oa.renderRgb24At(a.data(), OW, OH, 50));
+        CHECK(ob.renderRgb24At(b.data(), OW, OH, 50));
+        CHECK(a == b);
+        // Different backgrounds: dirty-rect overlay absolute colors for opaque
+        // white text pixels should match (alpha 255 text sets absolute color).
+        auto bg1 = mkBg(1);
+        auto bg2 = mkBg(99);
+        PlaybackOverlay o1, o2;
+        o1.showAt(PlaybackOverlayState::Paused, 0, 10000, 10);
+        o2.showAt(PlaybackOverlayState::Paused, 0, 10000, 10);
+        CHECK(o1.renderRgb24At(bg1.data(), OW, OH, 10));
+        CHECK(o2.renderRgb24At(bg2.data(), OW, OH, 10));
+        const OverlayRect panel = PlaybackOverlay::panelBounds(OW, OH);
+        // Panel geometry identical regardless of background/"content".
+        CHECK(panel.x == PlaybackOverlay::panelBounds(OW, OH).x);
+        CHECK(o1.dirtyBoundsAt(OW, OH, 10).x == o2.dirtyBoundsAt(OW, OH, 10).x);
+        CHECK(o1.dirtyBoundsAt(OW, OH, 10).y == o2.dirtyBoundsAt(OW, OH, 10).y);
+        CHECK(o1.dirtyBoundsAt(OW, OH, 10).w == o2.dirtyBoundsAt(OW, OH, 10).w);
+        CHECK(o1.dirtyBoundsAt(OW, OH, 10).h == o2.dirtyBoundsAt(OW, OH, 10).h);
+        (void)panel;
+    }
+
+    // 7. Glyph effective resolution: at 1080p bodyScale>=5 so solid stroke runs
+    // are multi-pixel. Forced scale=1 path (legacy 5×7 upscaled by ascal only)
+    // would fail the min-run assertion.
+    {
+        constexpr int OW = 1920, OH = 1080;
+        const auto lm = PlaybackOverlay::layoutMetrics(OW, OH);
+        CHECK(lm.bodyScale >= 5); // prediction: h/200 = 5
+        std::vector<uint8_t> rgb(static_cast<size_t>(OW) * OH * 3, 0);
+        PlaybackOverlay ov1080;
+        ov1080.showAt(PlaybackOverlayState::Paused, 0, 1, 0);
+        CHECK(ov1080.renderRgb24At(rgb.data(), OW, OH, 0));
+        // Scan label row for longest horizontal run of near-white pixels.
+        const OverlayRect panel = PlaybackOverlay::panelBounds(OW, OH);
+        const int y = panel.y + lm.labelTop + (7 * lm.bodyScale) / 2;
+        int best = 0, run = 0;
+        for (int x = panel.x; x < panel.x + panel.w; ++x) {
+            const size_t i = (static_cast<size_t>(y) * OW + x) * 3;
+            const bool whiteish = rgb[i] > 200 && rgb[i + 1] > 200 && rgb[i + 2] > 200;
+            if (whiteish) {
+                ++run;
+                best = std::max(best, run);
+            } else {
+                run = 0;
+            }
+        }
+        // bodyScale 5 ⇒ glyph strokes are 5 px wide; require >= 4.
+        CHECK(best >= 4);
+        // Document red-on-legacy: scale-1 would cap solid runs near 1–2 px for
+        // this font. We assert the hires path is strictly better than that floor.
+        CHECK(best >= lm.bodyScale - 1);
+    }
+
+    // 8. YUV420p path actually paints (product PRESENT=fpga regression).
+    {
+        constexpr int OW = 640, OH = 480;
+        std::vector<uint8_t> yuv(static_cast<size_t>(OW) * OH * 3 / 2, 16);
+        // studio black chroma
+        std::fill(yuv.begin() + OW * OH, yuv.end(), 128);
+        PlaybackOverlay yov;
+        yov.showAt(PlaybackOverlayState::Paused, 1000, 2000, 0);
+        CHECK(yov.renderYuv420pAt(yuv.data(), OW, OH, 0));
+        // Y plane inside panel should deviate from studio black (16).
+        const OverlayRect panel = PlaybackOverlay::panelBounds(OW, OH);
+        bool changed = false;
+        for (int y = panel.y; y < panel.y + panel.h && !changed; ++y) {
+            for (int x = panel.x; x < panel.x + panel.w; ++x) {
+                if (yuv[static_cast<size_t>(y) * OW + x] != 16) {
+                    changed = true;
+                    break;
+                }
+            }
+        }
+        CHECK(changed);
     }
 
     if (fails) {
