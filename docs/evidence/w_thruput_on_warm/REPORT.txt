@@ -3,7 +3,7 @@
 
 ## 1. Branch / SHA / ancestors
 - Branch: integ/thruput-on-warm
-- Tip: 84d6790e2d526c752bafda3e4db9834ad53b6442 (84d6790e)
+- Tip: 6ea25544934bf66f03c2d49f102c7652fc414624 (6ea25544)
 - Worktree: .worktrees/w-thruput-on-warm
 - RTL hybrid+thruput+area core: 9d9dadbd (ancestor)
 - w-area dequant 809a8197 IS ancestor: YES (merge-base --is-ancestor rc=0)
