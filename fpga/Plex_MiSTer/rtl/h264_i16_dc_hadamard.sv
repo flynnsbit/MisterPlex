@@ -46,10 +46,63 @@ module h264_i16_dc_hadamard (
 		end
 	endfunction
 
-	// qmul = (mf0[qp%6] * 16) << (qp/6 + 2)
-	wire [2:0] qmod = qp % 6;
-	wire [3:0] qdiv = qp / 6;
-	wire [31:0] qmul = ({27'd0, mf0(qmod)} * 32'd16) << (qdiv + 4'd2);
+	function automatic [2:0] qp_mod6;
+		input [5:0] q;
+		begin
+			case (q)
+			6'd0, 6'd6, 6'd12, 6'd18, 6'd24, 6'd30, 6'd36, 6'd42, 6'd48: qp_mod6 = 3'd0;
+			6'd1, 6'd7, 6'd13, 6'd19, 6'd25, 6'd31, 6'd37, 6'd43, 6'd49: qp_mod6 = 3'd1;
+			6'd2, 6'd8, 6'd14, 6'd20, 6'd26, 6'd32, 6'd38, 6'd44, 6'd50: qp_mod6 = 3'd2;
+			6'd3, 6'd9, 6'd15, 6'd21, 6'd27, 6'd33, 6'd39, 6'd45, 6'd51: qp_mod6 = 3'd3;
+			6'd4, 6'd10, 6'd16, 6'd22, 6'd28, 6'd34, 6'd40, 6'd46:       qp_mod6 = 3'd4;
+			default:                                                     qp_mod6 = 3'd5;
+			endcase
+		end
+	endfunction
+
+	function automatic [3:0] qp_div6;
+		input [5:0] q;
+		begin
+			case (q)
+			6'd0,  6'd1,  6'd2,  6'd3,  6'd4,  6'd5:  qp_div6 = 4'd0;
+			6'd6,  6'd7,  6'd8,  6'd9,  6'd10, 6'd11: qp_div6 = 4'd1;
+			6'd12, 6'd13, 6'd14, 6'd15, 6'd16, 6'd17: qp_div6 = 4'd2;
+			6'd18, 6'd19, 6'd20, 6'd21, 6'd22, 6'd23: qp_div6 = 4'd3;
+			6'd24, 6'd25, 6'd26, 6'd27, 6'd28, 6'd29: qp_div6 = 4'd4;
+			6'd30, 6'd31, 6'd32, 6'd33, 6'd34, 6'd35: qp_div6 = 4'd5;
+			6'd36, 6'd37, 6'd38, 6'd39, 6'd40, 6'd41: qp_div6 = 4'd6;
+			6'd42, 6'd43, 6'd44, 6'd45, 6'd46, 6'd47: qp_div6 = 4'd7;
+			default:                                   qp_div6 = 4'd8;
+			endcase
+		end
+	endfunction
+
+	// Host: qmul=(mf0*16)<<(qdiv+2); dc=((z*qmul)+128)>>8
+	// Shift-add: ((z*mf0)<<(qdiv+6)+128)>>8 — 0 DSP (was 16 parallel mults).
+	function automatic signed [31:0] scale_dc;
+		input signed [31:0] z;
+		input [2:0] qmod;
+		input [3:0] qdiv;
+		reg signed [63:0] x;
+		reg signed [63:0] prod;
+		reg [4:0] n;
+		begin
+			n = mf0(qmod);
+			x = {{32{z[31]}}, z};
+			case (n)
+			5'd10: prod = (x <<< 3) + (x <<< 1);
+			5'd11: prod = (x <<< 3) + (x <<< 1) + x;
+			5'd13: prod = (x <<< 3) + (x <<< 2) + x;
+			5'd14: prod = (x <<< 3) + (x <<< 2) + (x <<< 1);
+			5'd16: prod = (x <<< 4);
+			default: prod = (x <<< 4) + (x <<< 1); // 18
+			endcase
+			scale_dc = ((prod <<< (qdiv + 4'd6)) + 64'sd128) >>> 8;
+		end
+	endfunction
+
+	wire [2:0] qmod = qp_mod6(qp);
+	wire [3:0] qdiv = qp_div6(qp);
 
 	reg signed [31:0] input_cm [0:15];
 	reg signed [31:0] temp [0:15];
@@ -76,21 +129,16 @@ module h264_i16_dc_hadamard (
 			temp[4*i+2] = z1 - z2;
 			temp[4*i+3] = z1 + z2;
 		end
-		// second stage + qmul; dc_out[i][0..3] with i = row of 4x4s
-		// Host: dcOut[i][0] = ((z0+z3)*qmul+128)>>8  where i is column index in second loop
-		// Host loop: for i in 0..3: uses temp[4*row+i] — i is column of temp.
-		// dcOut[i][lx] with i as first index = row of 4x4 blocks? Host recon uses dc[ly][lx]
-		// and second loop sets dcOut[i][0..3] with i from 0..3 = first index.
+		// second stage + scale; dc_out row-major by*4+bx
 		for (i = 0; i < 4; i = i + 1) begin
 			z0 = temp[4*0+i] + temp[4*2+i];
 			z1 = temp[4*0+i] - temp[4*2+i];
 			z2 = temp[4*1+i] - temp[4*3+i];
 			z3 = temp[4*1+i] + temp[4*3+i];
-			// row-major out: by=i, bx=0..3 → idx = i*4+bx
-			dc_raw[i*4+0] = ((z0 + z3) * qmul + 32'sd128) >>> 8;
-			dc_raw[i*4+1] = ((z1 + z2) * qmul + 32'sd128) >>> 8;
-			dc_raw[i*4+2] = ((z1 - z2) * qmul + 32'sd128) >>> 8;
-			dc_raw[i*4+3] = ((z0 - z3) * qmul + 32'sd128) >>> 8;
+			dc_raw[i*4+0] = scale_dc(z0 + z3, qmod, qdiv);
+			dc_raw[i*4+1] = scale_dc(z1 + z2, qmod, qdiv);
+			dc_raw[i*4+2] = scale_dc(z1 - z2, qmod, qdiv);
+			dc_raw[i*4+3] = scale_dc(z0 - z3, qmod, qdiv);
 		end
 	end
 
