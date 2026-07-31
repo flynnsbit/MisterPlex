@@ -333,5 +333,28 @@ LIVE_WAIT_SEC=0 LIVE_POLL_SEC=0 run_new_verify "new-timeout"
 expect_rc "new-timeout" 1
 expect_grep "new-timeout-msg" 'n_daemon=0'
 
+
+# ===========================================================================
+echo "=== NEW gate: empty disk hash is NO-DATA, not FAIL mismatch ==="
+write_scenario <<EOF
+core_md5=
+disk_md5=
+live_md5=$HYBRID_DAEMON_MD5
+n_match=1
+appear_after=0
+http_code=200
+live_port=3005
+live_conf=$V2_CONF
+EOF
+run_new_verify "new-nodata"
+# rc may be 4 (NO-DATA) — must NOT say FAIL daemon-disk got=''
+expect_rc "new-nodata" 4
+expect_grep "new-nodata-msg" 'NO-DATA'
+if grep -qE "FAIL daemon-disk got=''" <<<"$LAST_OUT"; then
+  echo "FAIL new-nodata: empty must not be reported as FAIL mismatch" >&2
+  exit 1
+fi
+echo "OK new-nodata no false mismatch"
+
 echo "ALL test_video_regression_liveness checks passed"
 exit 0

@@ -71,13 +71,26 @@ BASE_CORE_MD5=dfebf2bfd08dd70b473b587dd7e81848
 # does not touch the present path. A video difference between them is a real
 # regression and must fail.
 BASE_DAEMON_MD5=7cd10b4d438c714a9b8c4766dc982d59
-# 50f4eb92  CURRENT — clamps DECODE to the 320x240 RGB565 frame store instead of
-#           silently skipping FPGA present (pfps was 0.00 at 624x480), opt-in
-#           PRESENT_SCALE_TO_STORE, and supervisor backoff reset after a healthy
-#           run. Parent-verified on hardware: 240p unchanged (pfps 23.2, av-lock,
-#           3 distinct HDMI md5s); 624x480 clamps and presents (pfps 23.6).
-HYBRID_DAEMON_MD5=50f4eb925de10e29172999a565c87684
-PREV_HYBRID_DAEMON_MD5=3e2cbb9881b2f54b0e4cb60238655fa7
+# Daemon pin chain (do NOT weaken — unknown md5 still FAILs):
+#   edc3a46b  CURRENT — DDR pair with c5382bee (w-geom 7554d6b2). Parent HW
+#             2026-07-31: 240p + native 480p MOTION_OK with conf
+#             DDR_YUV_FORCE_SCALE=1 FFMPEG_SWS_FLAGS=fast_bilinear.
+#             Full md5 resolved from artifacts/daemon-pins/misterplexd.edc3a46b
+#             when present; prefix8 identity is authoritative until fetch.
+#   50f4eb92  PREV hybrid — SPI 320x240 clamp path (accepted rollback).
+#   e9f79de2  DDR hist — first silicon-correct DDR daemon (accepted rollback).
+#   3e2cbb98  older hybrid (accepted rollback).
+#   7cd10b4d  BASE release (above).
+HYBRID_DAEMON_PREFIX8=edc3a46b
+if [ -f "${REPO:-$(cd "$(dirname "$0")/.." && pwd)}/artifacts/daemon-pins/misterplexd.${HYBRID_DAEMON_PREFIX8}" ]; then
+  HYBRID_DAEMON_MD5=$(md5sum "${REPO:-$(cd "$(dirname "$0")/.." && pwd)}/artifacts/daemon-pins/misterplexd.${HYBRID_DAEMON_PREFIX8}" | awk '{print $1}')
+else
+  # Prefix-only until parent: scripts/fetch_daemon_pins.sh ddr
+  HYBRID_DAEMON_MD5="${HYBRID_DAEMON_MD5:-$HYBRID_DAEMON_PREFIX8}"
+fi
+PREV_HYBRID_DAEMON_MD5=50f4eb925de10e29172999a565c87684
+DDR_HIST_DAEMON_MD5=e9f79de217982aff44207664fdb945c5
+OLDER_HYBRID_DAEMON_MD5=3e2cbb9881b2f54b0e4cb60238655fa7
 
 # Test clip: the 240p burned-in-telemetry ladder entry. Its overlay text makes
 # left-edge clipping obvious to the eye as well as to the measurement.
@@ -88,13 +101,62 @@ TOKEN_FILE="${TOKEN_FILE:-/tmp/.tok}"
 
 # Device transport. Host unit tests inject VIDREG_SSHM (command that receives
 # the remote shell snippet as a single argument) so we never need the live box.
-sshm() {
+# Lab SSH drops ~1/3 ("No route to host"); retry with backoff. Never treat an
+# empty observation after a failed transport as a hash MISMATCH.
+VIDREG_SSH_TRIES="${VIDREG_SSH_TRIES:-5}"
+VIDREG_SSH_BACKOFF_S="${VIDREG_SSH_BACKOFF_S:-1}"
+
+sshm_once() {
   if [ -n "${VIDREG_SSHM:-}" ]; then
     # shellcheck disable=SC2086
     $VIDREG_SSHM "$@"
     return $?
   fi
-  sshpass -p "$PASS" ssh -o StrictHostKeyChecking=no "root@$HOST" "$@"
+  sshpass -p "$PASS" ssh     -o StrictHostKeyChecking=no     -o ConnectTimeout=8     -o ServerAliveInterval=2     -o ServerAliveCountMax=2     "root@$HOST" "$@"
+}
+
+# Print stdout on success. On exhausted retries return 5 (NETWORK) with no stdout.
+sshm() {
+  local attempt=0 delay="${VIDREG_SSH_BACKOFF_S}" out rc
+  local errf="${VIDREG_SSH_ERRFILE:-$REPO/build/vidreg-ssh.err}"
+  mkdir -p "$(dirname "$errf")"
+  while [ "$attempt" -lt "$VIDREG_SSH_TRIES" ]; do
+    attempt=$((attempt + 1))
+    : >"$errf"
+    set +e
+    out=$(sshm_once "$@" 2>"$errf")
+    rc=$?
+    set -e
+    if [ "$rc" -eq 0 ]; then
+      printf '%s' "$out"
+      return 0
+    fi
+    echo "sshm-retry attempt=$attempt/${VIDREG_SSH_TRIES} rc=$rc err=$(tr '\n' ' ' <"$errf" | head -c 120)" >&2
+    sleep "$delay"
+    delay=$((delay * 2))
+    [ "$delay" -gt 16 ] && delay=16
+  done
+  echo "sshm-FAILED NETWORK after ${VIDREG_SSH_TRIES} attempts" >&2
+  return 5
+}
+
+# Empty string is NO-DATA, never a mismatch against a want hash.
+classify_obs_hash() {
+  local label="$1" got="$2"
+  shift 2
+  if [ -z "$got" ]; then
+    echo "NO-DATA $label got='' (empty — not a mismatch; SSH drop or remote produced no hash)"
+    return 4
+  fi
+  local w
+  for w in "$@"; do
+    if [ "$got" = "$w" ]; then
+      echo "OK   $label $got"
+      return 0
+    fi
+  done
+  echo "FAIL $label got='$got' want=$*"
+  return 1
 }
 
 # HTTP probe transport. Host tests inject VIDREG_HTTP (cmd receiving URL).
@@ -112,10 +174,23 @@ BASE_DAEMON_BIN=/media/fat/misterplex_v2/bin/misterplexd
 DEV_DAEMON_BIN=/media/fat/misterplex/bin/misterplexd
 
 daemon_md5_accepted() {
-  case "$1" in
-    "$BASE_DAEMON_MD5"|"$HYBRID_DAEMON_MD5"|"$PREV_HYBRID_DAEMON_MD5") return 0 ;;
-    *) return 1 ;;
+  local m="${1:-}" p8
+  [ -n "$m" ] || return 1
+  case "$m" in
+    "$BASE_DAEMON_MD5"|"$HYBRID_DAEMON_MD5"|"$PREV_HYBRID_DAEMON_MD5"|"$DDR_HIST_DAEMON_MD5"|"$OLDER_HYBRID_DAEMON_MD5")
+      return 0
+      ;;
   esac
+  # Prefix match only for the CURRENT hybrid when full pin not yet fetched
+  # (HYBRID_DAEMON_MD5 is prefix8). Never accepts arbitrary prefixes.
+  p8="${m:0:8}"
+  if [ "${#HYBRID_DAEMON_MD5}" -eq 8 ] && [ "$p8" = "$HYBRID_DAEMON_MD5" ]; then
+    return 0
+  fi
+  if [ "$p8" = "$HYBRID_DAEMON_PREFIX8" ] && [ "${HYBRID_DAEMON_MD5:0:8}" = "$HYBRID_DAEMON_PREFIX8" ]; then
+    return 0
+  fi
+  return 1
 }
 
 # Remote (or injected) one-shot observation of on-disk + running daemon state.
@@ -278,20 +353,38 @@ verify_baseline() {
   local wait_out wait_rc disk live n note pids port conf
   local http_out http_rc
 
-  got_core=$(sshm "md5sum /media/fat/_Utility/Plex_v2.rbf 2>/dev/null | cut -d' ' -f1" || true)
-  if [ "$got_core" = "$BASE_CORE_MD5" ]; then
-    echo "OK   core   $got_core"
+  # Capture ssh rc DIRECTLY (never through a pipe). Empty stdout after rc=0 is
+  # NO-DATA; rc=5 is NETWORK. Never report empty as FAIL mismatch.
+  set +e
+  got_core=$(sshm "md5sum /media/fat/_Utility/Plex_v2.rbf 2>/dev/null | cut -d' ' -f1")
+  ssh_rc=$?
+  set -e
+  if [ "$ssh_rc" -eq 5 ]; then
+    echo "NETWORK core-disk (SSH failed after retries)"
+    rc=5
   else
-    echo "FAIL core   got='$got_core' want='$BASE_CORE_MD5'"
-    rc=1
+    set +e
+    classify_obs_hash "core" "$got_core" "$BASE_CORE_MD5"
+    step_rc=$?
+    set -e
+    if [ "$step_rc" -eq 4 ]; then rc=4; elif [ "$step_rc" -ne 0 ]; then rc=1; fi
   fi
 
   # On-disk check remains as an *additional* signal (ETXTBSY detection needs it).
-  got_disk=$(sshm "md5sum $BASE_DAEMON_BIN 2>/dev/null | cut -d' ' -f1" || true)
-  if daemon_md5_accepted "$got_disk"; then
+  set +e
+  got_disk=$(sshm "md5sum $BASE_DAEMON_BIN 2>/dev/null | cut -d' ' -f1")
+  ssh_rc=$?
+  set -e
+  if [ "$ssh_rc" -eq 5 ]; then
+    echo "NETWORK daemon-disk (SSH failed after retries)"
+    [ "$rc" -eq 0 ] && rc=5
+  elif [ -z "$got_disk" ]; then
+    echo "NO-DATA daemon-disk got='' (empty — not a mismatch; SSH drop or remote produced no hash)"
+    [ "$rc" -eq 0 ] && rc=4
+  elif daemon_md5_accepted "$got_disk"; then
     echo "OK   daemon-disk $got_disk"
   else
-    echo "FAIL daemon-disk got='$got_disk' want='$BASE_DAEMON_MD5' or '$HYBRID_DAEMON_MD5' or '$PREV_HYBRID_DAEMON_MD5'"
+    echo "FAIL daemon-disk got='$got_disk' want=accepted{$BASE_DAEMON_MD5,$HYBRID_DAEMON_MD5,$PREV_HYBRID_DAEMON_MD5,$DDR_HIST_DAEMON_MD5,$OLDER_HYBRID_DAEMON_MD5}"
     rc=1
   fi
 
@@ -320,7 +413,7 @@ verify_baseline() {
     echo "     supervisor may be in backoff, but it never came back — hard FAIL"
     rc=1
   elif ! daemon_md5_accepted "$live"; then
-    echo "FAIL daemon-live md5='$live' not in accepted {$BASE_DAEMON_MD5,$HYBRID_DAEMON_MD5,$PREV_HYBRID_DAEMON_MD5} pid='$pids'"
+    echo "FAIL daemon-live md5='$live' not in accepted {$BASE_DAEMON_MD5,$HYBRID_DAEMON_MD5,$PREV_HYBRID_DAEMON_MD5,$DDR_HIST_DAEMON_MD5,$OLDER_HYBRID_DAEMON_MD5} pid='$pids'"
     rc=1
   else
     if printf '%s\n' "$wait_out" | grep -q 'LIVE_WAIT_RESULT=respawned'; then
@@ -350,6 +443,7 @@ verify_baseline() {
   fi
 
   # ETXTBSY / silent failed deploy: disk says new, running says old (or other).
+  # Both sides must be non-empty — empty is NO-DATA, never a mismatch.
   if [ -n "$got_disk" ] && [ -n "$live" ] && [ "$got_disk" != "$live" ]; then
     echo "FAIL daemon-disk/live mismatch disk='$got_disk' live='$live'"
     echo "     hint: cp over a RUNNING binary fails ETXTBSY and leaves the old"

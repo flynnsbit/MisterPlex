@@ -40,7 +40,7 @@ out=$("$ROOT/scripts/pair_ship_policy.sh" check dfebf2bfd08dd70b473b587dd7e81848
 rc=$?
 set -e
 [ "$rc" -eq 1 ] && ok "pair-mixed-refuse" || bad "pair-mixed-refuse rc=$rc"
-echo "$out" | grep -qi solid_green && ok "pair-green-msg" || bad "pair-green-msg"
+echo "$out" | grep -qiE 'solid_green|black_or_green|spi_core_plus_ddr' && ok "pair-green-msg" || bad "pair-green-msg"
 
 echo "=== policy: banned prefix ==="
 set +e
@@ -122,6 +122,8 @@ echo "  true rc=$rc"
 [ "$rc" -eq 3 ] && ok "policy-local-daemon-mismatch" || bad "policy-local-daemon-mismatch rc=$rc"
 
 # --- verify-live via blob inject --------------------------------------------
+# Primary DDR daemon pin is edc3a46b (prefix; full filled after fetch).
+EDC_LIVE=edc3a46b9d1c6b86337deb90f896eb0f
 cat >"$WORK/live_ok.blob" <<BLOB
 PRODUCT_CORE=/media/fat/_Utility/Plex.rbf
 PRODUCT_MD5=c5382bee73cecdee8220b811e529c297
@@ -130,10 +132,16 @@ V2_MD5=dfebf2bfd08dd70b473b587dd7e81848
 N_DAEMON=1
 PIDS=4242
 LIVE_EXE=/media/fat/misterplex_v2/bin/misterplexd
-LIVE_MD5=e9f79de217982aff44207664fdb945c5
+LIVE_MD5=$EDC_LIVE
 LIVE_CONF=/media/fat/misterplex_v2/misterplex.conf
 LIVE_ROOT=/media/fat/misterplex_v2
 BLOB
+cat >"$WORK/conf_ddr.txt" <<'CONF'
+DECODE=320x240
+PRESENT=fpga
+DDR_YUV_FORCE_SCALE=1
+FFMPEG_SWS_FLAGS=fast_bilinear
+CONF
 
 cat >"$WORK/fake_http.sh" <<'HTTP'
 #!/usr/bin/env bash
@@ -175,13 +183,36 @@ out=$(
   PROMOTE_GATE_BLOB="$WORK/live_ok.blob" \
   PROMOTE_HTTP="$WORK/fake_http.sh" \
   PROMOTE_VISUAL_CMD="$WORK/visual_ok.sh" \
+  PROMOTE_CONF_BLOB="$WORK/conf_ddr.txt" \
+  PROMOTE_CONF_PROFILE=ddr \
   "$GATES" verify-live 2>&1
 )
 rc=$?
 set -e
 echo "  true rc=$rc"
+echo "$out" | sed 's/^/  /' | tail -15
 [ "$rc" -eq 0 ] && ok "verify-with-visual" || bad "verify-with-visual rc=$rc"
 echo "$out" | grep -q 'PROMOTE_GATES_OK' && ok "gates-ok" || bad "gates-ok"
+echo "$out" | grep -q 'OK conf-profile=ddr' && ok "conf-ddr-ok" || bad "conf-ddr-ok"
+
+echo "=== verify-live RED when DDR conf keys missing ==="
+cat >"$WORK/conf_spi.txt" <<'CONF'
+DECODE=320x240
+PRESENT=fpga
+CONF
+set +e
+out=$(
+  PROMOTE_GATE_BLOB="$WORK/live_ok.blob" \
+  PROMOTE_HTTP="$WORK/fake_http.sh" \
+  PROMOTE_VISUAL_CMD="$WORK/visual_ok.sh" \
+  PROMOTE_CONF_BLOB="$WORK/conf_spi.txt" \
+  PROMOTE_CONF_PROFILE=ddr \
+  "$GATES" verify-live 2>&1
+)
+rc=$?
+set -e
+echo "  true rc=$rc"
+[ "$rc" -eq 3 ] && ok "conf-missing-keys-rc3" || bad "conf-missing-keys want 3 got $rc"
 
 echo "=== verify-live red: n_daemon=2 ==="
 sed 's/N_DAEMON=1/N_DAEMON=2/' "$WORK/live_ok.blob" >"$WORK/live_dual.blob"
@@ -198,13 +229,14 @@ echo "  true rc=$rc"
 [ "$rc" -eq 9 ] && ok "dual-daemon-rc9" || bad "dual-daemon rc=$rc"
 
 echo "=== verify-live red: live md5 stale (disk-only class) ==="
-sed 's/LIVE_MD5=e9f79de217982aff44207664fdb945c5/LIVE_MD5=50f4eb925de10e29172999a565c87684/' \
+sed "s/LIVE_MD5=$EDC_LIVE/LIVE_MD5=50f4eb925de10e29172999a565c87684/" \
   "$WORK/live_ok.blob" >"$WORK/live_stale.blob"
 set +e
 out=$(
   PROMOTE_GATE_BLOB="$WORK/live_stale.blob" \
   PROMOTE_HTTP="$WORK/fake_http.sh" \
   PROMOTE_VISUAL_CMD="$WORK/visual_ok.sh" \
+  PROMOTE_CONF_BLOB="$WORK/conf_ddr.txt" \
   "$GATES" verify-live 2>&1
 )
 rc=$?

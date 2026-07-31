@@ -282,12 +282,12 @@ verify_live() {
   if [ -z "$live" ]; then
     echo "NO-DATA live /proc/PID/exe md5 (disk-only is NOT success)"
     [ "$rc" -eq 0 ] && rc=4
-  elif [ "$live" != "$EXPECT_DAEMON_MD5" ]; then
+  elif pair_policy_md5_match "$live" "$EXPECT_DAEMON_MD5"; then
+    echo "OK live-exe-md5 $live (from readlink -f /proc/PID/exe; want=$EXPECT_DAEMON_MD5)"
+  else
     echo "FAIL live-exe-md5 got=$live want=$EXPECT_DAEMON_MD5"
     echo "     hint: verify via readlink -f /proc/PID/exe — never on-disk file alone (ETXTBSY)"
     rc=3
-  else
-    echo "OK live-exe-md5 $live (from readlink -f /proc/PID/exe)"
   fi
 
   if [ -z "$conf" ]; then
@@ -298,6 +298,21 @@ verify_live() {
     # conf should live under live root when root known
     if [ -n "$root" ] && [ "$conf" != "$root/misterplex.conf" ]; then
       echo "NOTE conf $conf vs root $root/misterplex.conf — operator must confirm"
+    fi
+    # Conf keys are part of the DDR pair (FORCE_SCALE + SWS flags).
+    if [ -n "${PROMOTE_CONF_BLOB:-}" ] || [ -n "${PROMOTE_CONF_PATH:-}" ]; then
+      conf_src="${PROMOTE_CONF_BLOB:-$PROMOTE_CONF_PATH}"
+      set +e
+      pair_policy_check_conf "${PROMOTE_CONF_PROFILE:-ddr}" "$conf_src"
+      crc=$?
+      set -e
+      if [ "$crc" -ne 0 ]; then
+        echo "FAIL live-conf-profile"
+        rc=3
+      fi
+    elif [ "${PROMOTE_REQUIRE_CONF_KEYS:-1}" = "1" ] && [ "${PROMOTE_CONF_PROFILE:-ddr}" = "ddr" ]; then
+      echo "NOTE conf-keys not injected — parent must verify DDR_YUV_FORCE_SCALE=1 FFMPEG_SWS_FLAGS=fast_bilinear on device"
+      echo "     (set PROMOTE_CONF_BLOB or PROMOTE_CONF_PATH for hard gate)"
     fi
   fi
 

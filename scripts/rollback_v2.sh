@@ -6,9 +6,10 @@
 # and core md5 all still pass. Partial rollback is worse than no rollback.
 #
 # This tool is ATOMIC over the pair:
-#   spi-v2-hybrid:  core dfebf2bf + daemon 50f4eb92  (default)
-#   spi-v2-release: core dfebf2bf + daemon 7cd10b4d
-#   ddr-c5382bee:   core c5382bee + daemon e9f79de2  (restore last DDR pair)
+#   spi-v2-hybrid:           core dfebf2bf + daemon 50f4eb92 + conf spi
+#   spi-v2-release:          core dfebf2bf + daemon 7cd10b4d + conf spi
+#   ddr-c5382bee:            core c5382bee + daemon edc3a46b + conf ddr  (PRIMARY)
+#   ddr-c5382bee-e9f79de2:   core c5382bee + daemon e9f79de2 + conf ddr  (hist)
 #
 # Sequence for restore:
 #   0) resolve PAIR_ID + require daemon artifact (host or on-device .bak) UP FRONT
@@ -63,6 +64,7 @@ PAIR_BLOB="$(pair_policy_lookup "$PAIR_ID")" || {
   echo "true rc=10"
   exit 10
 }
+PAIR_CONF_PROFILE=none
 while IFS= read -r line; do
   case "$line" in
     PAIR_ID=*) PAIR_ID="${line#PAIR_ID=}" ;;
@@ -70,11 +72,13 @@ while IFS= read -r line; do
     PAIR_CORE_MD5=*) CORE_MD5="${line#PAIR_CORE_MD5=}" ;;
     PAIR_DAEMON_MD5=*) DAEMON_MD5="${line#PAIR_DAEMON_MD5=}" ;;
     PAIR_CORE_PATH=*) PAIR_CORE_PATH="${line#PAIR_CORE_PATH=}" ;;
+    PAIR_CONF_PROFILE=*) PAIR_CONF_PROFILE="${line#PAIR_CONF_PROFILE=}" ;;
   esac
 done <<<"$PAIR_BLOB"
 V2_ROOT="${ROLLBACK_ROOT:-/media/fat/misterplex_v2}"
 V2_DAEMON="$V2_ROOT/bin/misterplexd"
 V2_CORE="$PAIR_CORE_PATH"
+V2_CONF_DEFAULT="$V2_ROOT/misterplex.conf"
 
 run_ssh() {
   local remote="$1"
@@ -170,6 +174,15 @@ classify_hash() {
   esac
   if [ "$got" = "$want" ] || { [ -n "$alt" ] && [ "$got" = "$alt" ]; }; then
     echo "OK $label $got"
+    return 0
+  fi
+  # Prefix8 match when want is prefix-only (full pin not yet fetched).
+  if pair_policy_md5_match "$got" "$want"; then
+    echo "OK $label $got (prefix-match want=$want)"
+    return 0
+  fi
+  if [ -n "$alt" ] && pair_policy_md5_match "$got" "$alt"; then
+    echo "OK $label $got (prefix-match alt=$alt)"
     return 0
   fi
   echo "MISMATCH $label got='$got' want='$want'${alt:+ or '$alt'}"
@@ -389,6 +402,74 @@ start_pair_bundle() {
   run_ssh "$pc v2; echo start_rc=\$?"
 }
 
+# Resolve live conf path from running daemon cmdline; fall back to pair root.
+resolve_live_conf_path() {
+  local blob conf
+  set +e
+  blob=$(remote_live_any_daemon)
+  set -e
+  conf=$(printf '%s\n' "$blob" | sed -n 's/^LIVE_CONF=//p' | head -1)
+  if [ -n "$conf" ]; then
+    printf '%s' "$conf"
+    return 0
+  fi
+  printf '%s' "$V2_CONF_DEFAULT"
+}
+
+# Atomic conf half of the pair: backup current, render profile, install.
+# Never leaves foreign DDR keys on an SPI restore (parent requirement).
+apply_pair_conf() {
+  local profile="${1:-$PAIR_CONF_PROFILE}" conf_path staged body rc host_tmp remote_bak
+  conf_path=$(resolve_live_conf_path)
+  log "apply conf profile=$profile path=$conf_path (atomic with pair binaries)"
+
+  set +e
+  body=$(run_ssh "if [ -f $(printf '%q' "$conf_path") ]; then cat $(printf '%q' "$conf_path"); else echo ''; fi")
+  rc=$?
+  set -e
+  if [ "$rc" -eq 5 ]; then return 5; fi
+
+  host_tmp="$ROOT/build/pair-conf-${PAIR_ID}.$$.conf"
+  mkdir -p "$(dirname "$host_tmp")"
+  printf '%s\n' "$body" >"$host_tmp.src"
+  pair_policy_render_conf "$profile" "$host_tmp.src" >"$host_tmp"
+  rm -f "$host_tmp.src"
+
+  # Verify rendered conf matches profile before touching device.
+  set +e
+  pair_policy_check_conf "$profile" "$host_tmp"
+  rc=$?
+  set -e
+  if [ "$rc" -ne 0 ]; then
+    echo "REFUSE conf render failed profile=$profile true rc=$rc"
+    rm -f "$host_tmp"
+    return 10
+  fi
+
+  staged="/tmp/misterplex.conf.pair.$$"
+  remote_bak="${conf_path}.bak.pre-${PAIR_ID}"
+  set +e
+  run_scp "$host_tmp" "$staged"
+  rc=$?
+  set -e
+  rm -f "$host_tmp"
+  if [ "$rc" -ne 0 ]; then return 5; fi
+
+  run_ssh "set -e
+    conf=$(printf '%q' "$conf_path")
+    staged=$(printf '%q' "$staged")
+    bak=$(printf '%q' "$remote_bak")
+    mkdir -p \"\$(dirname \"\$conf\")\"
+    if [ -f \"\$conf\" ]; then cp -f \"\$conf\" \"\$bak\"; fi
+    mv -f \"\$staged\" \"\$conf\"
+    sync
+    echo CONF_INSTALLED=\$conf
+    echo CONF_BAK=\$bak
+  "
+  echo "OK conf-applied profile=$profile path=$conf_path"
+  return 0
+}
+
 run_visual_gate() {
   log "visual gate (HARD for claim success — green screen class)"
   local vrc=8
@@ -470,8 +551,8 @@ preflight_atomic() {
   echo "preflight disk-daemon at $V2_DAEMON got='${disk_daemon}'"
 
   DAEMON_SOURCE=""
-  if [ "$disk_daemon" = "$DAEMON_MD5" ]; then
-    echo "OK preflight disk-daemon already at pair pin — no install needed"
+  if pair_policy_md5_match "$disk_daemon" "$DAEMON_MD5"; then
+    echo "OK preflight disk-daemon already at pair pin — no install needed (got=$disk_daemon want=$DAEMON_MD5)"
     DAEMON_SOURCE="device:$V2_DAEMON"
     need_install=0
   else
@@ -591,8 +672,31 @@ verify_pair() {
 
   if [ -n "$conf" ]; then
     echo "OK daemon-conf $conf (from live --conf)"
+    # Pull conf body and check pair profile (DDR keys required / SPI forbidden).
+    set +e
+    conf_body=$(run_ssh "if [ -f $(printf '%q' "$conf") ]; then cat $(printf '%q' "$conf"); else echo MISSING; fi")
+    step_rc=$?
+    set -e
+    if [ "$step_rc" -eq 5 ]; then echo "true rc=5"; return 5; fi
+    if [ "$conf_body" = "MISSING" ] || [ -z "$conf_body" ]; then
+      echo "FAIL conf-body missing at $conf"
+      rc=3
+    else
+      set +e
+      pair_policy_check_conf "${PAIR_CONF_PROFILE:-none}" "$conf_body"
+      step_rc=$?
+      set -e
+      if [ "$step_rc" -ne 0 ]; then
+        echo "FAIL conf-profile pair=$PAIR_ID profile=$PAIR_CONF_PROFILE"
+        rc=3
+      fi
+    fi
   else
-    echo "NOTE daemon-conf empty"
+    echo "NOTE daemon-conf empty — cannot verify conf half of pair"
+    if [ "${PAIR_CONF_PROFILE:-none}" != "none" ]; then
+      echo "FAIL conf required for profile=$PAIR_CONF_PROFILE but live --conf empty"
+      rc=3
+    fi
   fi
 
   if [ -n "$got_disk" ] && [ "$got_disk" != "MISSING" ] && [ -n "$live" ] && [ "$got_disk" != "$live" ]; then
@@ -674,6 +778,19 @@ restore_and_verify() {
     fi
   else
     log "daemon disk already at pin — skip install"
+  fi
+
+  # Conf half BEFORE core load / start — pair is (core, daemon, conf).
+  if [ "${PAIR_CONF_PROFILE:-none}" != "none" ] && [ "${ROLLBACK_SKIP_CONF:-0}" != "1" ]; then
+    set +e
+    apply_pair_conf "$PAIR_CONF_PROFILE"
+    rc=$?
+    set -e
+    if [ "$rc" -ne 0 ]; then
+      echo "ERROR conf apply rc=$rc — core NOT loaded (atomic refuse mid-flight)"
+      echo "true rc=$rc"
+      return "$rc"
+    fi
   fi
 
   set +e

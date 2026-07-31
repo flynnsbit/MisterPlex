@@ -5,12 +5,14 @@ Parent-owned device work only. Agents produce artifacts and commands; they must
 
 ## Why this document exists
 
-The FPGA DDR path first rendered correct colour/geometry on silicon with:
+The FPGA DDR path renders correct colour/geometry on silicon (240p + native 480p):
 
 | Piece | md5 | Role |
 |-------|-----|------|
-| RBF | `c5382bee73cecdee8220b811e529c297` | product DDR scanout |
-| daemon | `e9f79de217982aff44207664fdb945c5` | paired ARM companion |
+| RBF | `c5382bee73cecdee8220b811e529c297` | product DDR scanout (**not** do-not-ship) |
+| daemon | `edc3a46b…` (w-geom `7554d6b2`) | primary ARM companion |
+| conf | `DDR_YUV_FORCE_SCALE=1` + `FFMPEG_SWS_FLAGS=fast_bilinear` | pair half (480p correctness) |
+| hist daemon | `e9f79de217982aff44207664fdb945c5` | previous DDR pin (on-device `.bak`) |
 
 The **previous daily driver** is the v0.2.0 SPI pair (no `ddr_frame_store`):
 
@@ -76,24 +78,155 @@ DEPLOY_LOAD=none|menu ./scripts/deploy_plex_core.sh path/to/Plex.rbf
   (named artifact; live root from `readlink -f /proc/PID/exe`; disk **and**
   live exe md5; `n_daemon==1`)
 
-## Promotion commands (parent)
+## Numbered parent runbook (exact commands)
+
+**Pair = ONE unit:** core `c5382bee` + daemon `edc3a46b` + conf
+`DDR_YUV_FORCE_SCALE=1` `FFMPEG_SWS_FLAGS=fast_bilinear`. Half-state
+(DDR daemon + SPI core, or binaries without conf) = black/green screen that
+can still return `/resources` 200. **Abort on any non-zero `true rc=`.**
+
+Device is already often on this pair ad-hoc — promotion makes it *reversible*
+and conf-complete, not a wild install.
+
+### 0) Fetch pins (host; once)
+
+```bash
+cd /home/flynnsbit/Projects/MisterPlex/.worktrees/rollback-honest   # or main
+scripts/fetch_daemon_pins.sh both
+# expect: true rc=0
+# expect: artifacts/daemon-pins/misterplexd.edc3a46b  prefix edc3a46b
+# expect: artifacts/daemon-pins/misterplexd.50f4eb92  full 50f4eb92…
+md5sum artifacts/daemon-pins/misterplexd.edc3a46b
+scripts/pair_ship_policy.sh find-daemon edc3a46b   # true rc=0
+```
+
+**Abort:** `true rc≠0` or md5 prefix ≠ `edc3a46b`.
+
+### 1) Plan dry-run (no device)
+
+```bash
+RBF=/home/flynnsbit/Projects/MisterPlex/.agent-work/w-fit/leftedge3-proj/remote_out/w-fit-leftedge3/Plex.rbf
+DAE=artifacts/daemon-pins/misterplexd.edc3a46b
+md5sum "$RBF"   # expect c5382bee73cecdee8220b811e529c297
+PROMOTE_EXECUTE=0 scripts/promote_ddr_daily.sh plan "$RBF" "$DAE"
+# expect: PROMOTE_POLICY_LOCAL_OK  true rc=0
+# expect: PAIR_OK id=ddr-c5382bee
+```
+
+**Abort:** policy refuse, banned prefix, wrong pin.
+
+### 2) Preflight atomic restore path (must be green before mutate)
+
+```bash
+PAIR_ID=ddr-c5382bee scripts/rollback_v2.sh preflight
+# expect: PREFLIGHT_OK … true rc=0
+# (daemon pin present on host or already on disk)
+```
+
+**Abort:** `true rc=10` (missing pin — device untouched; fetch and retry).
+
+### 3) Snapshot SPI undo path (optional but recommended)
+
+Confirm `Plex_v2.rbf` still `dfebf2bf` and SPI pin available:
+
+```bash
+# on device (parent SSH):
+md5sum /media/fat/_Utility/Plex_v2.rbf
+# expect dfebf2bfd08dd70b473b587dd7e81848
+```
+
+### 4) Activate promote (device; ONE path only)
+
+**Do not use** untrusted `deploy_misterplexd` rebuild paths. Prefer atomic pair
+restore of the already-verified live pair (conf+daemon+core), or promote script:
+
+```bash
+# A) If device already coherent DDR (common): re-assert pair + conf only
+PAIR_ID=ddr-c5382bee PAIR_IDLE_PNG=/path/idle.png \
+  scripts/rollback_v2.sh restore
+# sequence: stop → daemon if needed → conf ddr keys → ONE menu → Plex.rbf → start → verify+visual
+# expect: PAIR_RESTORE_OK id=ddr-c5382bee  true rc=0
+
+# B) Formal promote from host artifacts:
+PROMOTE_EXECUTE=1 scripts/promote_ddr_daily.sh activate "$RBF" "$DAE"
+# then apply conf (if activate does not yet push conf, restore does):
+PAIR_ID=ddr-c5382bee scripts/rollback_v2.sh restore
+```
+
+**Abort mid-flight:** any install/load `true rc≠0` — do **not** load core if
+daemon/conf half failed. Run SPI rollback (step 7).
+
+### 5) Telemetry verify (necessary, not sufficient)
+
+```bash
+scripts/promotion_gate_check.sh verify-live
+# without visual → expect true rc=8 VISUAL_REQUIRED (correct fail-closed)
+```
+
+On device, parent should also see:
+
+```text
+n_daemon=1
+md5sum $(readlink -f /proc/<pid>/exe)   # edc3a46b…
+grep -E 'DDR_YUV_FORCE_SCALE|FFMPEG_SWS_FLAGS' $(... --conf path...)
+# DDR_YUV_FORCE_SCALE=1
+# FFMPEG_SWS_FLAGS=fast_bilinear
+```
+
+### 6) Visual / motion verify (claim success ONLY here)
+
+```bash
+# Idle:
+ffmpeg -v error -f v4l2 -input_format mjpeg -video_size 1920x1080 \
+  -i /dev/video0 -frames:v 1 -y build/pair-visual/idle.png
+PAIR_IDLE_PNG=$PWD/build/pair-visual/idle.png \
+  scripts/promotion_gate_check.sh verify-live
+# expect: PROMOTE_GATES_OK  true rc=0
+# judge pixels: orange chevron, NOT uniform green
+
+# Playback (240p or 480p burst dir):
+PROMOTE_MOTION_CAPTURE_DIR=/path/to/png-burst \
+  scripts/promotion_gate_check.sh verify-live
+# expect motion instrument: VERDICT=MOTION_OK true rc=0
+# HARD FAIL: rc=1 FREEZE, rc=2 COLOR_FAIL, rc=77 UNSCORED → gate true rc=8
+```
+
+**Honesty:** until w-fit-1 core-identity register exists, on-disk RBF md5 +
+`/tmp/CORENAME=Plex` cannot prove the *running* bitstream. **Viewed pixels
+are the claim.** `video_regression.sh` still cannot see mixed DDR-daemon+SPI-core
+as broken (w-lint/w-fit-1); do not treat it as promotion safety alone.
+
+### 7) Atomic SPI rollback (if promote wrong)
+
+```bash
+PAIR_ID=spi-v2-hybrid \
+  ROLLBACK_DAEMON=artifacts/daemon-pins/misterplexd.50f4eb92 \
+  PAIR_IDLE_PNG=/path/idle.png \
+  scripts/rollback_v2.sh restore
+# expect: strips DDR_YUV_FORCE_SCALE=1, loads Plex_v2.rbf, daemon 50f4eb92
+# expect: PAIR_RESTORE_OK  true rc=0
+# abort if true rc=10 (missing pin) — device left UNTOUCHED
+```
+
+### Host unit evidence (agent-run, no device)
+
+| Test | true rc |
+|------|---------|
+| `tests/unit/test_rollback_honest.sh` | 0 |
+| `tests/unit/test_promotion_gates.sh` | 0 |
+| `tests/unit/test_video_regression_liveness.sh` | 0 |
+
+Red-before-green covered: mixed pair rc=3, missing pin rc=10, missing conf rc=3,
+missing visual rc=8, motion 77→8.
+
+## Promotion commands (short)
 
 Default is **dry-run**. Nothing touches the device until `PROMOTE_EXECUTE=1`.
 
 ```bash
-# 0) Plan + local pin/policy (no SSH required if artifacts local)
-scripts/promote_ddr_daily.sh plan /path/to/c5382bee.rbf /path/to/e9f79de2-misterplexd
-
-# 1) Stage copies only (parent)
-PROMOTE_EXECUTE=1 scripts/promote_ddr_daily.sh stage /path/to/RBF /path/to/daemon
-
-# 2) Stage + ONE menu bounce + verify-live gates (parent)
-PROMOTE_EXECUTE=1 scripts/promote_ddr_daily.sh activate /path/to/RBF /path/to/daemon
-
-# 3) Re-check anytime
-scripts/promote_ddr_daily.sh verify
-# or:
-scripts/promotion_gate_check.sh verify-live
+scripts/promote_ddr_daily.sh plan "$RBF" "$DAE"
+PROMOTE_EXECUTE=1 scripts/promote_ddr_daily.sh activate "$RBF" "$DAE"
+PAIR_ID=ddr-c5382bee PAIR_IDLE_PNG=... scripts/rollback_v2.sh restore
 ```
 
 ### Visual is HARD (not optional soft-skip)
@@ -126,13 +259,16 @@ PROMOTE_VISUAL_CMD='test -f /path/PASS.stamp' \
 
 Matched pairs (executable: `scripts/pair_ship_policy.sh list`):
 
-| id | core | daemon | mode |
-|----|------|--------|------|
-| spi-v2-hybrid | dfebf2bf | 50f4eb92 | spi |
-| spi-v2-release | dfebf2bf | 7cd10b4d | spi |
-| ddr-c5382bee | c5382bee | e9f79de2 | ddr |
+| id | core | daemon | conf | mode |
+|----|------|--------|------|------|
+| **ddr-c5382bee** | c5382bee | **edc3a46b** | ddr keys | **PRIMARY promote** |
+| ddr-c5382bee-e9f79de2 | c5382bee | e9f79de2 | ddr keys | hist |
+| spi-v2-hybrid | dfebf2bf | 50f4eb92 | strip ddr keys | SPI undo |
+| spi-v2-release | dfebf2bf | 7cd10b4d | strip ddr keys | SPI release |
 
-Any unlisted mix is **REFUSE** before device mutation.
+Any unlisted mix is **REFUSE** before device mutation. Conf is part of the pair:
+restoring binaries without conf keys (or leaving `DDR_YUV_FORCE_SCALE=1` on SPI)
+is a half-state.
 
 ### Gate checklist (executable)
 

@@ -6,18 +6,20 @@ tracked; fetch pins onto the host with the script below. Rollback/promote
 
 | File (gitignored) | md5 | Pair |
 |-------------------|-----|------|
-| `misterplexd.50f4eb92` | `50f4eb925de10e29172999a565c87684` | spi-v2-hybrid (SPI core `dfebf2bf`) |
-| `misterplexd.e9f79de2` | `e9f79de217982aff44207664fdb945c5` | ddr-c5382bee (DDR core `c5382bee`) |
+| `misterplexd.edc3a46b` | `edc3a46b…` (full after fetch) | **PRIMARY** `ddr-c5382bee` + conf `DDR_YUV_FORCE_SCALE=1` `FFMPEG_SWS_FLAGS=fast_bilinear` |
+| `misterplexd.e9f79de2` | `e9f79de217982aff44207664fdb945c5` | hist `ddr-c5382bee-e9f79de2` (pre-480p) |
+| `misterplexd.50f4eb92` | `50f4eb925de10e29172999a565c87684` | `spi-v2-hybrid` (SPI core `dfebf2bf`) |
 
 ## Fetch (parent only — agents must not SSH)
 
 ```bash
-# Both pins from the live MiSTer (searches content-addressed .bak + known paths)
+# Primary DDR live + SPI + hist from the MiSTer (live /proc/exe preferred)
 scripts/fetch_daemon_pins.sh both
 # true rc=0 when host md5 matches
 
-scripts/fetch_daemon_pins.sh spi   # SPI only
-scripts/fetch_daemon_pins.sh ddr   # DDR only
+scripts/fetch_daemon_pins.sh ddr        # edc3a46b PRIMARY (live process)
+scripts/fetch_daemon_pins.sh hist       # e9f79de2
+scripts/fetch_daemon_pins.sh spi        # 50f4eb92
 ```
 
 Manual equivalent:

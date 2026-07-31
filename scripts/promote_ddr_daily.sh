@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
 # promote_ddr_daily.sh — SAFE promotion of the working DDR pair to product daily.
 #
-# Parent-measured working pair (2026-07-31 viewed pixels):
+# Parent-measured working pair (2026-07-31 viewed pixels + native 480p):
 #   RBF    md5 c5382bee73cecdee8220b811e529c297  → device PRODUCT slot
 #          /media/fat/_Utility/Plex.rbf
-#   daemon md5 e9f79de217982aff44207664fdb945c5
+#   daemon md5 edc3a46b… (w-geom 7554d6b2) — full from pin file after fetch
 #          live root from readlink -f /proc/PID/exe (usually misterplex_v2)
+#   conf   DDR_YUV_FORCE_SCALE=1 FFMPEG_SWS_FLAGS=fast_bilinear
+#          (resolved live --conf from /proc/PID/cmdline — never assume path)
 #
 # CRITICAL naming trap:
 #   deploy_plex_core.sh writes  /media/fat/_Utility/Plex.rbf     ← PRODUCT
@@ -80,12 +82,17 @@ default_daemon() {
   want=$(printf '%s' "$EXPECT_DAEMON_MD5" | tr -d '[:space:]' | tr 'A-F' 'a-f')
   for pin in \
     "$ROOT/artifacts/daemon-pins/misterplexd.${want:0:8}" \
+    "$ROOT/artifacts/daemon-pins/misterplexd.edc3a46b" \
     "$ROOT/artifacts/daemon-pins/misterplexd.e9f79de2" \
     "$ROOT/build/arm/misterplexd"
   do
     [ -f "$pin" ] || continue
     m=$(md5sum "$pin" | awk '{print $1}')
     if [ -z "$want" ] || [ "$m" = "$want" ] || [ "${m:0:8}" = "${want:0:8}" ]; then
+      # Prefer current DDR prefix over historical pins / unrelated build trees.
+      if [ "${want:0:8}" = "edc3a46b" ] && [ "${m:0:8}" != "edc3a46b" ]; then
+        continue
+      fi
       printf '%s' "$pin"
       return 0
     fi
@@ -138,17 +145,19 @@ Steps when PROMOTE_EXECUTE=1:
 
 Daemon pins (gitignored — fetch first if missing):
   scripts/fetch_daemon_pins.sh both
+  artifacts/daemon-pins/misterplexd.edc3a46b  (DDR PRIMARY)
+  artifacts/daemon-pins/misterplexd.e9f79de2  (DDR hist)
   artifacts/daemon-pins/misterplexd.50f4eb92  (SPI)
-  artifacts/daemon-pins/misterplexd.e9f79de2  (DDR)
 
-Atomic restore of LIVE DDR pair (primary recovery — device often already here):
+Atomic restore of LIVE DDR pair (PRIMARY recovery):
   PAIR_ID=ddr-c5382bee PAIR_IDLE_PNG=/path/idle.png \\
     scripts/rollback_v2.sh restore
-  → preflight pins → stop → install e9f79de2 if needed → menu → Plex.rbf → visual
+  → preflight → stop → install edc3a46b if needed → conf ddr keys → menu → Plex.rbf → visual
 
-SPI rollback (secondary):
+SPI rollback (secondary daily undo):
   PAIR_ID=spi-v2-hybrid ROLLBACK_DAEMON=artifacts/daemon-pins/misterplexd.50f4eb92 \\
     PAIR_IDLE_PNG=/path/idle.png scripts/rollback_v2.sh restore
+  → also STRIPS DDR_YUV_FORCE_SCALE=1 (conf half of pair)
   Without daemon pin: rc=10 device UNTOUCHED
 
 DO NOT:

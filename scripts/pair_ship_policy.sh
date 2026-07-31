@@ -23,18 +23,29 @@ if [ -z "${RBF_PIN_V2_DAILY_FULL:-}" ]; then
 fi
 
 # Canonical pair IDs. Design for "last verified-good pair", not only v2.
-# core_md5|daemon_md5|core_device_path|mode|label
+# core_md5|daemon_md5_or_prefix|core_device_path|mode|label|conf_profile
+# conf_profile: ddr | spi | none
+#
+# PRIMARY promote target (parent 2026-07-31 viewed pixels + native 480p):
+#   ddr-c5382bee = core c5382bee + daemon edc3a46b + conf ddr
+# Historical DDR (pre-480p FORCE_SCALE land) kept as explicit rollback id:
+#   ddr-c5382bee-e9f79de2
+_PAIR_DDR_DAEMON="$(rbf_policy_resolve_ddr_daemon_full)"
 PAIR_MATRIX_ROWS=(
-  "${RBF_PIN_V2_DAILY_FULL}|${DAEMON_PIN_V2_HYBRID_FULL}|${DEVICE_CORE_V2_DAILY}|spi|spi-v2-hybrid"
-  "${RBF_PIN_V2_DAILY_FULL}|${DAEMON_PIN_V2_RELEASE_FULL}|${DEVICE_CORE_V2_DAILY}|spi|spi-v2-release"
-  "${RBF_PIN_DDR_CANDIDATE_FULL}|${DAEMON_PIN_DDR_CANDIDATE_FULL}|${DEVICE_CORE_PRODUCT}|ddr|ddr-c5382bee"
+  "${RBF_PIN_V2_DAILY_FULL}|${DAEMON_PIN_V2_HYBRID_FULL}|${DEVICE_CORE_V2_DAILY}|spi|spi-v2-hybrid|spi"
+  "${RBF_PIN_V2_DAILY_FULL}|${DAEMON_PIN_V2_RELEASE_FULL}|${DEVICE_CORE_V2_DAILY}|spi|spi-v2-release|spi"
+  "${RBF_PIN_DDR_CANDIDATE_FULL}|${_PAIR_DDR_DAEMON}|${DEVICE_CORE_PRODUCT}|ddr|ddr-c5382bee|ddr"
+  "${RBF_PIN_DDR_CANDIDATE_FULL}|${DAEMON_PIN_DDR_E9F79DE2_FULL}|${DEVICE_CORE_PRODUCT}|ddr|ddr-c5382bee-e9f79de2|ddr"
 )
 
-# Default rollback target pair id (SPI hybrid). Override with PAIR_ID=...
+# Default rollback target pair id. Prefer SPI hybrid as the named "daily" undo
+# unless operator sets PAIR_ID=ddr-c5382bee (primary recovery when DDR is live).
 PAIR_ID_SPI_HYBRID=spi-v2-hybrid
 PAIR_ID_SPI_RELEASE=spi-v2-release
 PAIR_ID_DDR_C5382=ddr-c5382bee
+PAIR_ID_DDR_HIST=ddr-c5382bee-e9f79de2
 PAIR_DEFAULT_ROLLBACK="${PAIR_DEFAULT_ROLLBACK:-$PAIR_ID_SPI_HYBRID}"
+PAIR_DEFAULT_PROMOTE="${PAIR_DEFAULT_PROMOTE:-$PAIR_ID_DDR_C5382}"
 
 # Idle visual envelopes (parent HDMI, 2026-07-31):
 #   good orange Plex chevron idle: mean ~38.5
@@ -47,10 +58,21 @@ pair_policy_normalize_md5() {
   rbf_policy_normalize_md5 "${1:-}"
 }
 
-# Print: PAIR_OK id=... mode=... core=... daemon=... path=...
+# Prefix-aware md5 equality: full==full, or either side prefix8 of the other.
+pair_policy_md5_match() {
+  local a b
+  a=$(pair_policy_normalize_md5 "${1:-}")
+  b=$(pair_policy_normalize_md5 "${2:-}")
+  [ "${#a}" -ge 8 ] && [ "${#b}" -ge 8 ] || return 1
+  if [ "$a" = "$b" ]; then return 0; fi
+  if [ "${#a}" -ge 32 ] && [ "${#b}" -ge 32 ]; then return 1; fi
+  [ "${a:0:8}" = "${b:0:8}" ]
+}
+
+# Print: PAIR_OK id=... mode=... core=... daemon=... path=... conf=...
 # or PAIR_REFUSE reason=...
 pair_policy_check() {
-  local core daemon c d row pc pd path mode label
+  local core daemon c d row pc pd path mode label confp
   core=$(pair_policy_normalize_md5 "${1:-}")
   daemon=$(pair_policy_normalize_md5 "${2:-}")
   if [ "${#core}" -lt 8 ] || [ "${#daemon}" -lt 8 ]; then
@@ -60,26 +82,25 @@ pair_policy_check() {
   c="${core:0:8}"
   d="${daemon:0:8}"
   for row in "${PAIR_MATRIX_ROWS[@]}"; do
-    IFS='|' read -r pc pd path mode label <<<"$row"
-    if [ "${pc:0:8}" = "$c" ] && [ "${pd:0:8}" = "$d" ]; then
-      # full-length match when both sides are full md5s
-      if [ "${#core}" -ge 32 ] && [ "$core" != "$pc" ]; then
-        continue
-      fi
-      if [ "${#daemon}" -ge 32 ] && [ "$daemon" != "$pd" ]; then
-        continue
-      fi
-      echo "PAIR_OK id=$label mode=$mode core=$pc daemon=$pd path=$path"
+    IFS='|' read -r pc pd path mode label confp <<<"$row"
+    if pair_policy_md5_match "$core" "$pc" && pair_policy_md5_match "$daemon" "$pd"; then
+      echo "PAIR_OK id=$label mode=$mode core=$pc daemon=$pd path=$path conf=$confp"
       return 0
     fi
   done
-  # Explicit known-bad mix called out for operators
-  if [ "$c" = "${RBF_PIN_V2_DAILY_FULL:0:8}" ] && [ "$d" = "${DAEMON_PIN_DDR_CANDIDATE_FULL:0:8}" ]; then
+  # Explicit known-bad mixes (black/green screen classes)
+  if [ "$c" = "${RBF_PIN_V2_DAILY_FULL:0:8}" ] && {
+       [ "$d" = "${DAEMON_PIN_DDR_EDC3_PREFIX8}" ] ||
+       [ "$d" = "${DAEMON_PIN_DDR_E9F79DE2_FULL:0:8}" ]
+     }; then
     echo "PAIR_REFUSE reason=spi_core_plus_ddr_daemon core=$c daemon=$d"
-    echo "PAIR_REFUSE detail=solid_green_screen_parent_2026-07-31 (SPI core has no ddr_frame_store)"
+    echo "PAIR_REFUSE detail=black_or_green_screen (SPI core has no ddr_frame_store; telemetry can still pass)"
     return 1
   fi
-  if [ "$c" = "${RBF_PIN_DDR_CANDIDATE_FULL:0:8}" ] && { [ "$d" = "${DAEMON_PIN_V2_HYBRID_FULL:0:8}" ] || [ "$d" = "${DAEMON_PIN_V2_RELEASE_FULL:0:8}" ]; }; then
+  if [ "$c" = "${RBF_PIN_DDR_CANDIDATE_FULL:0:8}" ] && {
+       [ "$d" = "${DAEMON_PIN_V2_HYBRID_FULL:0:8}" ] ||
+       [ "$d" = "${DAEMON_PIN_V2_RELEASE_FULL:0:8}" ]
+     }; then
     echo "PAIR_REFUSE reason=ddr_core_plus_spi_daemon core=$c daemon=$d"
     return 1
   fi
@@ -89,16 +110,21 @@ pair_policy_check() {
 
 # Lookup pair by id. Prints KEY=value lines.
 pair_policy_lookup() {
-  local want="${1:-}" row pc pd path mode label
+  local want="${1:-}" row pc pd path mode label confp
   [ -n "$want" ] || { echo "PAIR_REFUSE reason=empty_pair_id"; return 3; }
   for row in "${PAIR_MATRIX_ROWS[@]}"; do
-    IFS='|' read -r pc pd path mode label <<<"$row"
+    IFS='|' read -r pc pd path mode label confp <<<"$row"
     if [ "$label" = "$want" ]; then
+      # Re-resolve current DDR daemon if matrix still has prefix-only.
+      if [ "$label" = "ddr-c5382bee" ]; then
+        pd="$(rbf_policy_resolve_ddr_daemon_full)"
+      fi
       echo "PAIR_ID=$label"
       echo "PAIR_MODE=$mode"
       echo "PAIR_CORE_MD5=$pc"
       echo "PAIR_DAEMON_MD5=$pd"
       echo "PAIR_CORE_PATH=$path"
+      echo "PAIR_CONF_PROFILE=${confp:-none}"
       return 0
     fi
   done
@@ -107,12 +133,92 @@ pair_policy_lookup() {
 }
 
 pair_policy_list() {
-  local row pc pd path mode label
+  local row pc pd path mode label confp
   echo "PAIR_DEFAULT_ROLLBACK=$PAIR_DEFAULT_ROLLBACK"
+  echo "PAIR_DEFAULT_PROMOTE=$PAIR_DEFAULT_PROMOTE"
   for row in "${PAIR_MATRIX_ROWS[@]}"; do
-    IFS='|' read -r pc pd path mode label <<<"$row"
-    echo "PAIR id=$label mode=$mode core=${pc:0:8} daemon=${pd:0:8} path=$path"
+    IFS='|' read -r pc pd path mode label confp <<<"$row"
+    echo "PAIR id=$label mode=$mode core=${pc:0:8} daemon=${pd:0:8} conf=$confp path=$path"
   done
+}
+
+# Verify conf text (or file) matches pair profile. rc 0 OK, 3 mismatch, 8 missing.
+pair_policy_check_conf() {
+  local profile="${1:-}" conf_src="${2:-}" body key k v
+  if [ -z "$profile" ] || [ "$profile" = "none" ]; then
+    echo "OK conf-profile=none (no conf keys required)"
+    return 0
+  fi
+  if [ -z "$conf_src" ]; then
+    echo "FAIL conf-missing profile=$profile (no conf path or body)"
+    return 8
+  fi
+  if [ -f "$conf_src" ]; then
+    body=$(cat "$conf_src")
+  else
+    body="$conf_src"
+  fi
+  case "$profile" in
+    ddr)
+      for key in "${PAIR_CONF_DDR_KEYS[@]}"; do
+        k="${key%%=*}"
+        v="${key#*=}"
+        if ! printf '%s\n' "$body" | grep -E "^[[:space:]]*${k}=${v}([[:space:]]|#|$)" >/dev/null 2>&1 \
+           && ! printf '%s\n' "$body" | grep -E "^[[:space:]]*${k}=${v}$" >/dev/null 2>&1; then
+          # also accept bare KEY=val anywhere on its own line
+          if ! printf '%s\n' "$body" | grep -E "^${k}=${v}$" >/dev/null 2>&1; then
+            echo "FAIL conf-missing-key want=$key profile=ddr"
+            return 3
+          fi
+        fi
+        echo "OK conf-key $key"
+      done
+      echo "OK conf-profile=ddr"
+      return 0
+      ;;
+    spi)
+      for key in "${PAIR_CONF_SPI_FORBIDDEN_KEYS[@]}"; do
+        k="${key%%=*}"
+        v="${key#*=}"
+        if printf '%s\n' "$body" | grep -E "^[[:space:]]*${k}=${v}([[:space:]]|#|$)" >/dev/null 2>&1 \
+           || printf '%s\n' "$body" | grep -E "^${k}=${v}$" >/dev/null 2>&1; then
+          echo "FAIL conf-forbidden-key $key still present (SPI rollback must not keep DDR conf)"
+          return 3
+        fi
+      done
+      echo "OK conf-profile=spi (DDR force keys absent)"
+      return 0
+      ;;
+    *)
+      echo "FAIL conf-unknown-profile $profile"
+      return 3
+      ;;
+  esac
+}
+
+# Apply conf profile to a conf file body on stdout (host-side transform).
+pair_policy_render_conf() {
+  local profile="${1:-}" src="${2:-}"
+  local body line k v
+  if [ -f "$src" ]; then body=$(cat "$src"); else body="$src"; fi
+  case "$profile" in
+    ddr)
+      body=$(printf '%s\n' "$body" | grep -v -E '^[[:space:]]*DDR_YUV_FORCE_SCALE=' || true)
+      body=$(printf '%s\n' "$body" | grep -v -E '^[[:space:]]*FFMPEG_SWS_FLAGS=' || true)
+      printf '%s\n' "$body"
+      printf '%s\n' "DDR_YUV_FORCE_SCALE=1"
+      printf '%s\n' "FFMPEG_SWS_FLAGS=fast_bilinear"
+      ;;
+    spi)
+      # Strip DDR pair keys; leave the rest intact.
+      printf '%s\n' "$body" \
+        | grep -v -E '^[[:space:]]*DDR_YUV_FORCE_SCALE=' \
+        | grep -v -E '^[[:space:]]*FFMPEG_SWS_FLAGS=' || true
+      ;;
+    *)
+      printf '%s\n' "$body"
+      ;;
+  esac
 }
 
 # Host-side search for a daemon binary matching want md5 (full or prefix8+).
@@ -181,8 +287,9 @@ MISSING_DAEMON_PIN want=${want:-empty} prefix8=$pfx
   Pins are gitignored ARM ELFs under artifacts/daemon-pins/ (not in git).
   Fetch from the MiSTer (parent only):
     scripts/fetch_daemon_pins.sh both
-    # or: scripts/fetch_daemon_pins.sh spi   # 50f4eb92
-    # or: scripts/fetch_daemon_pins.sh ddr   # e9f79de2
+    # or: scripts/fetch_daemon_pins.sh spi    # 50f4eb92
+    # or: scripts/fetch_daemon_pins.sh ddr    # edc3a46b (primary) + e9f79de2 hist
+    # or: scripts/fetch_daemon_pins.sh edc3a46b
   Then re-run:
     scripts/pair_ship_policy.sh find-daemon $pfx
   Override:

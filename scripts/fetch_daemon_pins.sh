@@ -31,21 +31,32 @@ scp_from() {
   sshpass -p "$PASS" scp -o StrictHostKeyChecking=no -o ConnectTimeout=12 "$USER@$HOST:$1" "$2"
 }
 
-# Device candidates per pin (content-addressed backups first).
+# Pins by prefix8 (full md5 verified after fetch). Primary DDR = edc3a46b.
 # shellcheck disable=SC2034
 SPI_MD5=50f4eb925de10e29172999a565c87684
-DDR_MD5=e9f79de217982aff44207664fdb945c5
+SPI_PFX=50f4eb92
+DDR_HIST_MD5=e9f79de217982aff44207664fdb945c5
+DDR_HIST_PFX=e9f79de2
+DDR_LIVE_PFX=edc3a46b   # full filled after fetch; live process is source of truth
 
 fetch_one() {
-  local label="$1" want_md5="$2" out_name="$3"
-  local out="$OUT/$out_name" found="" remote_list rc host_md5
+  local label="$1" want_spec="$2" out_name="$3"
+  # want_spec: full md5 OR prefix8 (length 8)
+  local out="$OUT/$out_name" found="" remote_list rc host_md5 want_pfx
+  want_spec=$(printf '%s' "$want_spec" | tr 'A-F' 'a-f' | tr -cd '0-9a-f')
+  want_pfx="${want_spec:0:8}"
 
-  echo "fetch: want $label md5=$want_md5 -> $out"
+  echo "fetch: want $label spec=$want_spec -> $out"
 
   if [ -f "$out" ]; then
     host_md5=$(md5sum "$out" | awk '{print $1}')
-    if [ "$host_md5" = "$want_md5" ]; then
+    if [ "${#want_spec}" -ge 32 ] && [ "$host_md5" = "$want_spec" ]; then
       echo "OK host-cache $out md5=$host_md5"
+      echo "fetch_$label true rc=0"
+      return 0
+    fi
+    if [ "${#want_spec}" -eq 8 ] && [ "${host_md5:0:8}" = "$want_spec" ]; then
+      echo "OK host-cache $out md5=$host_md5 (prefix8 match)"
       echo "fetch_$label true rc=0"
       return 0
     fi
@@ -55,21 +66,42 @@ fetch_one() {
   set +e
   remote_list=$(ssh_m "bash -s" <<EOS
 set +e
-want=$want_md5
+want=$want_spec
+wp=${want_pfx}
+# Prefer live /proc exe when prefix matches (ETXTBSY-safe identity).
+for d in /proc/[0-9]*; do
+  [ -r "\$d/cmdline" ] || continue
+  cmd=\$(tr '\\0' ' ' <"\$d/cmdline" 2>/dev/null) || continue
+  case "\$cmd" in *plexctl*) continue ;; esac
+  case "\$cmd" in */misterplexd\\ *|*/misterplexd) ;; *) continue ;; esac
+  exe=\$(readlink -f "\$d/exe" 2>/dev/null) || continue
+  [ -f "\$exe" ] || continue
+  m=\$(md5sum "\$exe" 2>/dev/null | awk '{print \$1}')
+  if [ -n "\$m" ]; then
+    if [ "\${#want}" -ge 32 ] && [ "\$m" = "\$want" ]; then echo "\$exe"; exit 0; fi
+    if [ "\${m:0:8}" = "\$wp" ]; then echo "\$exe"; exit 0; fi
+  fi
+done
 for p in \\
-  /media/fat/misterplex_v2/bin/misterplexd.\\${want:0:8}.bak \\
+  /media/fat/misterplex_v2/bin/misterplexd.\\${want_pfx}.bak \\
+  /media/fat/misterplex_v2/bin/misterplexd.bak.\\${want_pfx} \\
   /media/fat/misterplex_v2/bin/misterplexd.bak.pre-plxd \\
   /media/fat/misterplex_v2/bin/misterplexd.prev-deploy \\
   /media/fat/misterplex_v2/bin/misterplexd \\
-  /media/fat/misterplex/bin/misterplexd.\\${want:0:8}.bak \\
+  /media/fat/misterplex/bin/misterplexd.\\${want_pfx}.bak \\
   /media/fat/misterplex/bin/misterplexd.prev-deploy \\
   /media/fat/misterplex/bin/misterplexd \\
-  /media/fat/_Utility/misterplexd.\\${want:0:8} \\
+  /media/fat/_Utility/misterplexd.\\${want_pfx} \\
   /media/fat/_Utility/misterplexd.$label
 do
   [ -f "\$p" ] || continue
   m=\$(md5sum "\$p" 2>/dev/null | awk '{print \$1}')
-  [ "\$m" = "\$want" ] || continue
+  [ -n "\$m" ] || continue
+  if [ "\${#want}" -ge 32 ]; then
+    [ "\$m" = "\$want" ] || continue
+  else
+    [ "\${m:0:8}" = "\$wp" ] || continue
+  fi
   echo "\$p"
   break
 done
@@ -84,7 +116,7 @@ EOS
   fi
   found=$(printf '%s\n' "$remote_list" | head -1 | tr -d '\r')
   if [ -z "$found" ]; then
-    echo "FAIL no on-device file with md5=$want_md5"
+    echo "FAIL no on-device file matching $want_spec"
     echo "fetch_$label true rc=2"
     return 2
   fi
@@ -100,12 +132,21 @@ EOS
   fi
   chmod +x "$out" || true
   host_md5=$(md5sum "$out" | awk '{print $1}')
-  if [ "$host_md5" != "$want_md5" ]; then
-    echo "FAIL host md5 $host_md5 != want $want_md5"
+  if [ "${#want_spec}" -ge 32 ] && [ "$host_md5" != "$want_spec" ]; then
+    echo "FAIL host md5 $host_md5 != want $want_spec"
+    echo "fetch_$label true rc=3"
+    return 3
+  fi
+  if [ "${#want_spec}" -eq 8 ] && [ "${host_md5:0:8}" != "$want_spec" ]; then
+    echo "FAIL host md5 $host_md5 prefix != want $want_spec"
     echo "fetch_$label true rc=3"
     return 3
   fi
   echo "OK fetched $out md5=$host_md5"
+  # content-address rename if we only had prefix
+  if [ "${out_name}" = "misterplexd.${host_md5:0:8}" ] || true; then
+    :
+  fi
   file "$out" || true
   echo "fetch_$label true rc=0"
   return 0
@@ -116,19 +157,19 @@ case "$WANT" in
   spi|50f4eb92)
     fetch_one spi "$SPI_MD5" misterplexd.50f4eb92 || rc=$?
     ;;
-  ddr|e9f79de2)
-    fetch_one ddr "$DDR_MD5" misterplexd.e9f79de2 || rc=$?
+  hist|e9f79de2|ddr-hist)
+    fetch_one ddr_hist "$DDR_HIST_MD5" misterplexd.e9f79de2 || rc=$?
+    ;;
+  ddr|edc3a46b|live)
+    fetch_one ddr_live "$DDR_LIVE_PFX" misterplexd.edc3a46b || rc=$?
     ;;
   both|all|"")
     fetch_one spi "$SPI_MD5" misterplexd.50f4eb92 || rc=$?
-    if [ "$rc" -eq 0 ]; then
-      fetch_one ddr "$DDR_MD5" misterplexd.e9f79de2 || rc=$?
-    else
-      fetch_one ddr "$DDR_MD5" misterplexd.e9f79de2 || true
-    fi
+    fetch_one ddr_live "$DDR_LIVE_PFX" misterplexd.edc3a46b || rc=$?
+    fetch_one ddr_hist "$DDR_HIST_MD5" misterplexd.e9f79de2 || true
     ;;
   *)
-    echo "usage: $0 {both|spi|ddr}" >&2
+    echo "usage: $0 {both|spi|ddr|edc3a46b|hist|e9f79de2}" >&2
     echo "true rc=9"
     exit 9
     ;;

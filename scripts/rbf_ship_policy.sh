@@ -35,13 +35,67 @@ RBF_PIN_V2_DAILY_FULL=dfebf2bfd08dd70b473b587dd7e81848
 RBF_PIN_DDR_CANDIDATE_FULL=c5382bee73cecdee8220b811e529c297
 DAEMON_PIN_V2_HYBRID_FULL=50f4eb925de10e29172999a565c87684
 DAEMON_PIN_V2_RELEASE_FULL=7cd10b4d438c714a9b8c4766dc982d59
-DAEMON_PIN_DDR_CANDIDATE_FULL=e9f79de217982aff44207664fdb945c5
+# Historical DDR daemon (pre-480p fix); still a matched pair with c5382bee but
+# NOT the primary promote target after w-geom 480p FORCE_SCALE land.
+DAEMON_PIN_DDR_E9F79DE2_FULL=e9f79de217982aff44207664fdb945c5
+# Primary live DDR daemon (parent 2026-07-31 viewed pixels + 480p MOTION_OK).
+# Full md5 is resolved from artifacts/daemon-pins/misterplexd.edc3a46b when
+# present (gitignored; parent fetch). Prefix8 is authoritative identity.
+DAEMON_PIN_DDR_EDC3_PREFIX8=edc3a46b
+DAEMON_PIN_DDR_EDC3_FULL="${DAEMON_PIN_DDR_EDC3_FULL:-}"  # optional override
+# Back-compat alias: "candidate" == current primary DDR daemon pin.
+DAEMON_PIN_DDR_CANDIDATE_FULL="${DAEMON_PIN_DDR_CANDIDATE_FULL:-}"
+DAEMON_PIN_DDR_HIST_FULL="$DAEMON_PIN_DDR_E9F79DE2_FULL"
 
 # Device path contract — never confuse these two files.
 DEVICE_CORE_PRODUCT=/media/fat/_Utility/Plex.rbf          # deploy_plex_core.sh target
 DEVICE_CORE_V2_DAILY=/media/fat/_Utility/Plex_v2.rbf      # known-good SPI daily / rollback
 DEVICE_CORE_V3=/media/fat/_Utility/Plex_v3.rbf
 DEVICE_CORE_MENU=/media/fat/menu.rbf
+DEVICE_CONF_V2=/media/fat/misterplex_v2/misterplex.conf   # usual live; ALWAYS confirm via cmdline
+DEVICE_CONF_V1=/media/fat/misterplex/misterplex.conf      # NOT automatically live
+
+# Conf keys that are part of the DDR pair (parent HW: 480p needs FORCE_SCALE=1;
+# FFMPEG_SWS_FLAGS=fast_bilinear is the measured cheap swscale path).
+PAIR_CONF_DDR_KEYS=(
+  "DDR_YUV_FORCE_SCALE=1"
+  "FFMPEG_SWS_FLAGS=fast_bilinear"
+)
+# SPI pair must not keep DDR force-scale (foreign conf is not a rollback).
+PAIR_CONF_SPI_FORBIDDEN_KEYS=(
+  "DDR_YUV_FORCE_SCALE=1"
+)
+
+# Resolve full md5 for current DDR daemon from pin file / env / prefix.
+rbf_policy_resolve_ddr_daemon_full() {
+  local root pin m
+  if [ -n "${DAEMON_PIN_DDR_EDC3_FULL:-}" ] && [ "${#DAEMON_PIN_DDR_EDC3_FULL}" -ge 32 ]; then
+    printf '%s' "$(rbf_policy_normalize_md5 "$DAEMON_PIN_DDR_EDC3_FULL")"
+    return 0
+  fi
+  if [ -n "${DAEMON_PIN_DDR_CANDIDATE_FULL:-}" ] && [ "${#DAEMON_PIN_DDR_CANDIDATE_FULL}" -ge 32 ]; then
+    printf '%s' "$(rbf_policy_normalize_md5 "$DAEMON_PIN_DDR_CANDIDATE_FULL")"
+    return 0
+  fi
+  root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+  for pin in \
+    "$root/artifacts/daemon-pins/misterplexd.${DAEMON_PIN_DDR_EDC3_PREFIX8}" \
+    "/home/flynnsbit/Projects/MisterPlex/artifacts/daemon-pins/misterplexd.${DAEMON_PIN_DDR_EDC3_PREFIX8}"
+  do
+    [ -f "$pin" ] || continue
+    m=$(md5sum "$pin" | awk '{print $1}')
+    if [ "${m:0:8}" = "$DAEMON_PIN_DDR_EDC3_PREFIX8" ]; then
+      printf '%s' "$m"
+      return 0
+    fi
+  done
+  # Prefix-only identity until parent fetches the pin (not a guess of full hash).
+  printf '%s' "$DAEMON_PIN_DDR_EDC3_PREFIX8"
+  return 0
+}
+
+# Populate DAEMON_PIN_DDR_CANDIDATE_FULL for callers that still read the alias.
+DAEMON_PIN_DDR_CANDIDATE_FULL="$(rbf_policy_resolve_ddr_daemon_full)"
 
 rbf_policy_normalize_md5() {
   # lowercase hex only; accept full or prefix (>=8).

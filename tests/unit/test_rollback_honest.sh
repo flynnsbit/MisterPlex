@@ -130,6 +130,27 @@ if [[ "$cmd" == *"N_DAEMON="* ]] || [[ "$cmd" == *"for d in /proc/"* ]]; then
   exit 0
 fi
 
+# conf body cat (pair conf profile verify)
+if [[ "$cmd" == *"cat "* && "$cmd" == *"misterplex.conf"* ]] || [[ "$cmd" == *"cat"* && "$cmd" == *".conf"* ]]; then
+  if [[ "${conf_body:-}" == "MISSING" ]]; then echo MISSING; exit 0; fi
+  if [[ -n "${conf_body:-}" ]]; then printf '%s\n' "$conf_body"; exit 0; fi
+  # default SPI-clean conf (no DDR force keys)
+  if [[ "${conf_profile:-spi}" == "ddr" ]]; then
+    cat <<'CONF'
+DECODE=320x240
+PRESENT=fpga
+DDR_YUV_FORCE_SCALE=1
+FFMPEG_SWS_FLAGS=fast_bilinear
+CONF
+  else
+    cat <<'CONF'
+DECODE=320x240
+PRESENT=fpga
+CONF
+  fi
+  exit 0
+fi
+
 # actions
 if [[ "$cmd" == *plexctl* ]] || [[ "$cmd" == *stop* ]] || [[ "$cmd" == *load_core* ]] \
    || [[ "$cmd" == *CORE_LOAD* ]] || [[ "$cmd" == *for\ p\ in* ]] || [[ "$cmd" == *"MiSTer_cmd"* ]] \
@@ -279,6 +300,7 @@ disk_md5=$DAEMON_MD5
 live_md5=$DAEMON_MD5
 n_daemon=1
 http_code=200
+conf_profile=spi
 SCEN
 if [ -f "$WORK/idle_ok.png" ]; then
   PAIR_IDLE_PNG="$WORK/idle_ok.png" ROLLBACK_REQUIRE_VISUAL=1 run_rb happy-vis verify
@@ -288,6 +310,22 @@ if [ -f "$WORK/idle_ok.png" ]; then
 else
   echo "SKIP happy-visual (no Pillow)"
 fi
+
+echo "=== SPI verify FAILS when DDR conf keys left behind (half-state conf) ==="
+write_scen <<SCEN
+core_md5=$CORE_MD5
+disk_md5=$DAEMON_MD5
+live_md5=$DAEMON_MD5
+n_daemon=1
+http_code=200
+conf_profile=ddr
+SCEN
+ROLLBACK_REQUIRE_VISUAL=0 run_rb spi-bad-conf verify
+[ "$LAST_RC" -eq 3 ] || { echo "FAIL spi-bad-conf want 3 got $LAST_RC"; exit 1; }
+echo "$LAST_OUT" | grep -qi 'conf-forbidden\|FAIL conf' || {
+  echo "FAIL need conf refuse"; exit 1
+}
+echo "OK spi-conf-halfstate-refuse rc=3"
 
 echo "=== verify without visual when required → rc=8 ==="
 write_scen <<SCEN
@@ -346,15 +384,23 @@ echo "OK restore-refuse-atomic rc=10"
 
 # --- PAIR_ID=ddr-c5382bee (primary recovery) red-before-green ---------------
 DDR_CORE=c5382bee73cecdee8220b811e529c297
-echo "=== DDR pair lookup OK ==="
+echo "=== DDR pair lookup OK (primary=edc3a46b) ==="
 set +e
 out=$("$ROOT/scripts/pair_ship_policy.sh" lookup ddr-c5382bee 2>&1)
 rc=$?
 set -e
 [ "$rc" -eq 0 ] || { echo "FAIL ddr lookup rc=$rc"; exit 1; }
 echo "$out" | grep -q "$DDR_CORE" || { echo "FAIL ddr core pin"; exit 1; }
-echo "$out" | grep -q "$DDR_DAEMON" || { echo "FAIL ddr daemon pin"; exit 1; }
+echo "$out" | grep -qiE 'edc3a46b|PAIR_DAEMON_MD5=edc3' || { echo "FAIL ddr daemon pin edc3a46b: $out"; exit 1; }
+echo "$out" | grep -q 'PAIR_CONF_PROFILE=ddr' || { echo "FAIL conf profile"; exit 1; }
 echo "OK ddr-lookup"
+set +e
+out=$("$ROOT/scripts/pair_ship_policy.sh" lookup ddr-c5382bee-e9f79de2 2>&1)
+rc=$?
+set -e
+[ "$rc" -eq 0 ] || { echo "FAIL hist lookup rc=$rc"; exit 1; }
+echo "$out" | grep -q "$DDR_DAEMON" || { echo "FAIL hist daemon pin"; exit 1; }
+echo "OK ddr-hist-lookup"
 
 echo "=== DDR preflight REFUSE without e9f79de2 pin (red) ==="
 write_scen <<SCEN
@@ -376,50 +422,85 @@ echo "$LAST_OUT" | grep -qE 'MISSING_DAEMON_PIN|fetch_daemon_pins|ATOMIC_ROLLBAC
 }
 echo "OK ddr-preflight-refuse-no-pin rc=10"
 
-echo "=== DDR preflight OK with pin present (green) ==="
-if [ -f "$PIN_DDR" ]; then
-  write_scen <<SCEN
+EDC_FULL=edc3a46b000000000000000000000001
+
+echo "=== DDR primary preflight OK when disk already edc3a46b (green) ==="
+write_scen <<SCEN
 product_md5=$DDR_CORE
 core_md5=$DDR_CORE
-disk_md5=$DDR_DAEMON
-live_md5=$DDR_DAEMON
+disk_md5=$EDC_FULL
+live_md5=$EDC_FULL
 n_daemon=1
 http_code=200
 SCEN
-  PAIR_ID=ddr-c5382bee ROLLBACK_DAEMON="$PIN_DDR" run_rb ddr-pre-ok preflight
-  [ "$LAST_RC" -eq 0 ] || { echo "FAIL ddr-pre-ok want 0 got $LAST_RC"; exit 1; }
-  echo "$LAST_OUT" | grep -q PREFLIGHT_OK || { echo "FAIL PREFLIGHT_OK ddr"; exit 1; }
-  echo "OK ddr-preflight-with-pin rc=0"
+PAIR_ID=ddr-c5382bee run_rb ddr-pre-ok preflight
+[ "$LAST_RC" -eq 0 ] || { echo "FAIL ddr-pre-ok want 0 got $LAST_RC"; exit 1; }
+echo "$LAST_OUT" | grep -q PREFLIGHT_OK || { echo "FAIL PREFLIGHT_OK ddr"; exit 1; }
+echo "OK ddr-preflight-disk-pin rc=0"
 
-  echo "=== DDR verify happy + visual (green) ==="
-  write_scen <<SCEN
+echo "=== DDR primary verify happy + visual + conf (green) ==="
+write_scen <<SCEN
 product_md5=$DDR_CORE
 core_md5=$DDR_CORE
-disk_md5=$DDR_DAEMON
-live_md5=$DDR_DAEMON
+disk_md5=$EDC_FULL
+live_md5=$EDC_FULL
 n_daemon=1
 http_code=200
+conf_profile=ddr
 SCEN
-  PAIR_ID=ddr-c5382bee PAIR_IDLE_PNG="$WORK/idle_ok.png" ROLLBACK_REQUIRE_VISUAL=1 \
-    run_rb ddr-vis verify
-  [ "$LAST_RC" -eq 0 ] || { echo "FAIL ddr-vis want 0 got $LAST_RC"; exit 1; }
-  echo "$LAST_OUT" | grep -q 'OK pair-compatibility' || { echo "FAIL ddr pair ok"; exit 1; }
-  echo "OK ddr-verify-visual rc=0"
+PAIR_ID=ddr-c5382bee PAIR_IDLE_PNG="$WORK/idle_ok.png" ROLLBACK_REQUIRE_VISUAL=1 \
+  run_rb ddr-edc-vis verify
+[ "$LAST_RC" -eq 0 ] || { echo "FAIL ddr-edc-vis want 0 got $LAST_RC"; exit 1; }
+echo "$LAST_OUT" | grep -q 'OK pair-compatibility' || { echo "FAIL edc pair"; exit 1; }
+echo "$LAST_OUT" | grep -q 'OK conf-profile=ddr' || { echo "FAIL ddr conf profile"; exit 1; }
+echo "OK ddr-edc3a46b-verify rc=0"
 
-  echo "=== DDR verify mixed SPI-daemon live REFUSE (red) ==="
-  write_scen <<SCEN
+echo "=== DDR verify FAILS without conf keys (half-state conf) ==="
+write_scen <<SCEN
+product_md5=$DDR_CORE
+core_md5=$DDR_CORE
+disk_md5=$EDC_FULL
+live_md5=$EDC_FULL
+n_daemon=1
+http_code=200
+conf_profile=spi
+SCEN
+PAIR_ID=ddr-c5382bee ROLLBACK_REQUIRE_VISUAL=0 run_rb ddr-noconf verify
+[ "$LAST_RC" -eq 3 ] || { echo "FAIL ddr-noconf want 3 got $LAST_RC"; exit 1; }
+echo "OK ddr-conf-halfstate-refuse rc=3"
+
+echo "=== DDR verify mixed SPI-daemon live REFUSE (red) ==="
+write_scen <<SCEN
 product_md5=$DDR_CORE
 core_md5=$DDR_CORE
 disk_md5=$DAEMON_MD5
 live_md5=$DAEMON_MD5
 n_daemon=1
 http_code=200
+conf_profile=ddr
 SCEN
-  PAIR_ID=ddr-c5382bee ROLLBACK_REQUIRE_VISUAL=0 run_rb ddr-mixed verify
-  [ "$LAST_RC" -eq 3 ] || { echo "FAIL ddr-mixed want 3 got $LAST_RC"; exit 1; }
-  echo "OK ddr-mixed-verify rc=3"
+PAIR_ID=ddr-c5382bee ROLLBACK_REQUIRE_VISUAL=0 run_rb ddr-mixed verify
+[ "$LAST_RC" -eq 3 ] || { echo "FAIL ddr-mixed want 3 got $LAST_RC"; exit 1; }
+echo "OK ddr-mixed-verify rc=3"
+
+if [ -f "$PIN_DDR" ]; then
+  echo "=== DDR hist pair (e9f79de2) verify happy + visual + conf (green) ==="
+  write_scen <<SCEN
+product_md5=$DDR_CORE
+core_md5=$DDR_CORE
+disk_md5=$DDR_DAEMON
+live_md5=$DDR_DAEMON
+n_daemon=1
+http_code=200
+conf_profile=ddr
+SCEN
+  PAIR_ID=ddr-c5382bee-e9f79de2 PAIR_IDLE_PNG="$WORK/idle_ok.png" ROLLBACK_REQUIRE_VISUAL=1 \
+    run_rb ddr-hist-vis verify
+  [ "$LAST_RC" -eq 0 ] || { echo "FAIL ddr-hist-vis want 0 got $LAST_RC"; exit 1; }
+  echo "$LAST_OUT" | grep -q 'OK conf-profile=ddr' || { echo "FAIL hist conf"; exit 1; }
+  echo "OK ddr-hist-verify-visual-conf rc=0"
 else
-  echo "SKIP ddr green paths (no $PIN_DDR — run scripts/fetch_daemon_pins.sh ddr)"
+  echo "SKIP ddr-hist-verify (no $PIN_DDR)"
 fi
 
 echo "=== visual gate rejects solid green PNG ==="
