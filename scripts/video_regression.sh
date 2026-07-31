@@ -71,13 +71,15 @@ BASE_CORE_MD5=dfebf2bfd08dd70b473b587dd7e81848
 # does not touch the present path. A video difference between them is a real
 # regression and must fail.
 BASE_DAEMON_MD5=7cd10b4d438c714a9b8c4766dc982d59
-# 50f4eb92  CURRENT — clamps DECODE to the 320x240 RGB565 frame store instead of
-#           silently skipping FPGA present (pfps was 0.00 at 624x480), opt-in
-#           PRESENT_SCALE_TO_STORE, and supervisor backoff reset after a healthy
-#           run. Parent-verified on hardware: 240p unchanged (pfps 23.2, av-lock,
-#           3 distinct HDMI md5s); 624x480 clamps and presents (pfps 23.6).
-HYBRID_DAEMON_MD5=50f4eb925de10e29172999a565c87684
-PREV_HYBRID_DAEMON_MD5=3e2cbb9881b2f54b0e4cb60238655fa7
+# cf4f5d7a  CURRENT — p720-scope ARM: effective decode banner label when conf
+#           DECODE is rejected (decode=320x240 (rejected conf DECODE=624x480),
+#           decode_source=conf-rejected:…), indented conf key trim, crash
+#           backtrace handler, define-parity BUILD_ID allowlist. Host md5 of
+#           build/arm/misterplexd after commits 10ace19f+6a64588d. Parent must
+#           re-verify on device after deploy (daemon telemetry ≠ video correct).
+# 50f4eb92  PREV — hybrid clamp/present path last parent-verified on hardware.
+HYBRID_DAEMON_MD5=cf4f5d7aef058bfe7411ad892d4c45d8
+PREV_HYBRID_DAEMON_MD5=50f4eb925de10e29172999a565c87684
 
 # Test clip: the 240p burned-in-telemetry ladder entry. Its overlay text makes
 # left-edge clipping obvious to the eye as well as to the measurement.
