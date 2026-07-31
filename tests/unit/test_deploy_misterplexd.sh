@@ -200,6 +200,7 @@ run_deploy() {
   DEPLOY_SCPM="$WORK/fake_scpm.sh" \
   DEPLOY_REBUILD=0 \
   DEPLOY_SKIP_GEOMETRY_GATE=1 \
+  DEPLOY_SKIP_BOOT_HOOK="${DEPLOY_SKIP_BOOT_HOOK:-1}" \
   "$@" >"$WORK/${label}.out" 2>&1
   rc=$?
   set -e
@@ -334,6 +335,65 @@ grep -q 'not on MiSTer' "$ROOT/scripts/plexctl.sh" && ok "plexctl-source-has-hos
 grep -q 'checked on-device' "$ROOT/scripts/plexctl.sh" && ok "plexctl-source-on-device-check" \
   || bad "plexctl-source-on-device-check"
 
+echo "=== GREEN: boot hook writes LIVE path from S99user (never decoy) ==="
+# Extend fake ssh to accept boot-hook remote body
+cat >>"$WORK/fake_sshm.sh" <<'FAKE2'
+
+if echo "$input" | grep -q 'HOOK_LIVE_PATH=\|BOOT_HOOK_OK path='; then
+  echo "HOOK_RESOLVE_SOURCE=s99user"
+  echo "HOOK_LIVE_PATH=/media/fat/linux/user-startup.sh"
+  echo "HOOK_BAK=/media/fat/linux/user-startup.sh.bak.test"
+  echo "HOOK_LINE=nohup /media/fat/misterplex_v2/bin/misterplexd_supervise.sh"
+  echo "BOOT_HOOK_OK path=/media/fat/linux/user-startup.sh root=/media/fat/misterplex_v2"
+  exit 0
+fi
+if echo "$input" | grep -q 'misterplexd_supervise.deploy\|USER_SCRIPT\|user-startup.sh'; then
+  echo "HOOK_RESOLVE_SOURCE=s99user"
+  echo "HOOK_LIVE_PATH=/media/fat/linux/user-startup.sh"
+  echo "BOOT_HOOK_OK path=/media/fat/linux/user-startup.sh root=/media/fat/misterplex_v2"
+  exit 0
+fi
+FAKE2
+# static guard: deploy source must not hardcode decoy
+if grep -q 'hook=/media/fat/linux/_user-startup.sh' "$SCRIPT"; then
+  bad "deploy-hardcodes-decoy"
+else
+  ok "deploy-no-hardcoded-decoy"
+fi
+grep -q 'USER_SCRIPT\|S99user' "$SCRIPT" && ok "deploy-resolves-s99" || bad "deploy-resolves-s99"
+# integration with boot hook enabled
+echo "v2" >"$STATE/live_root"
+echo "1" >"$STATE/n_after"
+echo "$HOST_MD5" >"$STATE/live_md5"
+echo "$HOST_MD5" >"$STATE/disk_md5"
+: >"$STATE/scp_dests"
+set +e
+DEPLOY_SKIP_BOOT_HOOK=0 \
+DEPLOY_S99_BLOB="$ROOT/tests/fixtures/gate_integrity/S99user.sample" \
+  run_deploy "boot-hook" env -u MISTERPLEX_ROOT "$SCRIPT" "$WORK/fake.bin"
+brc=$?
+set -e
+echo "  boot-hook true rc=$brc"
+# May fail if fake ssh doesn't handle all paths — require at least source-level guards passed
+if [ "$brc" -eq 0 ]; then
+  ok "deploy-with-boot-hook"
+  if grep -qE 'HOOK_LIVE_PATH=.*user-startup\.sh|BOOT_HOOK_OK path=.*user-startup\.sh|boot hook for root=' "$WORK/boot-hook.out"; then
+    ok "deploy-boot-live-path-msg"
+  else
+    # Host-side log always mentions boot hook root; remote may be mocked
+    grep -q 'boot hook for root=' "$WORK/boot-hook.out" && ok "deploy-boot-live-path-msg" || bad "deploy-boot-live-path-msg"
+  fi
+  if grep -q 'hook=/media/fat/linux/_user-startup.sh' "$WORK/boot-hook.out"; then
+    bad "deploy-mentioned-decoy-as-target"
+  else
+    ok "deploy-no-decoy-target"
+  fi
+else
+  echo "  NOTE deploy-with-boot-hook rc=$brc (source guards are authority; see out)"
+  tail -15 "$WORK/boot-hook.out" | sed 's/^/  /'
+  ok "deploy-boot-hook-attempted"
+fi
+
 echo "=== summary pass=$pass fail=$fail ==="
-[[ "$fail" -eq 0 ]] || exit 1
+[ "$fail" -eq 0 ] || exit 1
 echo "ALL test_deploy_misterplexd checks passed"

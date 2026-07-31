@@ -178,6 +178,69 @@ echo "  [gate-ok] true rc=$rc"
 echo "$out" | sed 's/^/  [gate-ok] /' | tail -12
 [ "$rc" -eq 0 ] && ok "gate-v2-hook-ok" || bad "gate-v2-hook-ok rc=$rc"
 
+echo "=== S99user USER_SCRIPT resolver (never hardcode) ==="
+S99="$ROOT/tests/fixtures/gate_integrity/S99user.sample"
+set +e
+out=$("$ROOT/scripts/boot_hook_policy.sh" resolve-s99 "$S99" 2>&1)
+rc=$?
+set -e
+echo "$out" | sed 's/^/  /'
+echo "  true rc=$rc"
+[ "$rc" -eq 0 ] && ok "resolve-s99-rc0" || bad "resolve-s99-rc0 rc=$rc"
+echo "$out" | grep -q 'BOOT_HOOK_LIVE_PATH=/media/fat/linux/user-startup.sh' && ok "resolve-live-no-underscore" || bad "resolve-live-no-underscore"
+echo "$out" | grep -q 'BOOT_HOOK_DECOY_PATH=/media/fat/linux/_user-startup.sh' && ok "resolve-decoy-sibling" || bad "resolve-decoy-sibling"
+echo "$out" | grep -q 'BOOT_HOOK_RESOLVE_SOURCE=s99user' && ok "resolve-source-s99" || bad "resolve-source-s99"
+# Must refuse decoy as USER_SCRIPT value
+set +e
+out=$(boot_hook_resolve_from_s99_body 'USER_SCRIPT="/media/fat/linux/_user-startup.sh"' 0 2>&1)
+# parse succeeds but consumers refuse underscore basename — path resolves; check basename
+live=$(printf '%s\n' "$out" | sed -n 's/^BOOT_HOOK_LIVE_PATH=//p')
+set -e
+case "$(basename "$live")" in
+  _*) ok "s99-decoy-path-detectable" ;;
+  *) bad "s99-decoy-path-detectable got=$live" ;;
+esac
+
+echo "=== RED bundle mismatch: bak v1 hook vs live v2 (archived cold-boot) ==="
+BAK="$ROOT/tests/fixtures/gate_integrity/boot/_user-startup.sh.bak.20260731T204811Z"
+# bak is decoy filename but body is v1 — also test LIVE fixture body
+LIVE_BAD="$ROOT/tests/fixtures/gate_integrity/boot/user-startup.sh.LIVE"
+# If LIVE fixture is v2, use bak body as hook body with live_root=v2
+hook_v1=$(cat "$BAK" 2>/dev/null || cat "$LIVE_BAD")
+# Force v1 body
+hook_v1="nohup ${V1}/bin/misterplexd_supervise.sh >>${V1}/misterplexd_supervise.log 2>&1 &"
+set +e
+out=$(boot_hook_assert_bundle_match "$hook_v1" "$V2" 2>&1)
+rc=$?
+set -e
+echo "$out" | sed 's/^/  /'
+echo "  true rc=$rc"
+[ "$rc" -eq 1 ] && ok "bundle-mismatch-red" || bad "bundle-mismatch-red rc=$rc"
+echo "$out" | grep -q 'hook_live_root_mismatch' && ok "bundle-mismatch-msg" || bad "bundle-mismatch-msg"
+
+echo "=== GREEN bundle match: v2 hook + live v2 ==="
+hook_v2=$(boot_hook_line_for_root "$V2")
+set +e
+out=$(boot_hook_assert_bundle_match "$hook_v2" "$V2" 2>&1)
+rc=$?
+set -e
+echo "  true rc=$rc"
+[ "$rc" -eq 0 ] && ok "bundle-match-green" || bad "bundle-match-green rc=$rc"
+echo "$out" | grep -q 'BOOT_HOOK_BUNDLE_OK' && ok "bundle-ok-msg" || bad "bundle-ok-msg"
+
+echo "=== archived bak.20260731T204811Z body is RED vs v2 live ==="
+if [ -f "$BAK" ]; then
+  body=$(cat "$BAK")
+  set +e
+  out=$(boot_hook_assert_bundle_match "$body" "$V2" 2>&1)
+  rc=$?
+  set -e
+  echo "  bak true rc=$rc"
+  [ "$rc" -ne 0 ] && ok "archived-bak-red-vs-v2" || bad "archived-bak-red-vs-v2 should fail"
+else
+  bad "archived-bak-missing"
+fi
+
 echo "=== summary pass=$pass fail=$fail ==="
 [ "$fail" -eq 0 ] || exit 1
 echo "ALL test_boot_hook_policy checks passed"

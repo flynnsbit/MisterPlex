@@ -7,6 +7,11 @@
 # Good idle (orange Plex chevron): mean luma ~38.5
 # Broken mixed pair (uniform green): mean luma ~128.4
 #
+# IDENTITY-NOT-POSE (parent 2026-07-31): do NOT gate on logo centroid position
+# (orange_cx/cy). IDLE_SCREEN=screensaver deliberately moves the logo; a
+# 0.25<=cy<=0.80 bound false-REDs healthy frames. Identity = color/structure
+# envelope + menu_color_bars reject, never pose.
+#
 # Usage:
 #   PAIR_IDLE_PNG=/path/capture.png scripts/pair_visual_gate.sh idle
 #   PAIR_CAPTURE_CMD='ffmpeg ...' scripts/pair_visual_gate.sh idle

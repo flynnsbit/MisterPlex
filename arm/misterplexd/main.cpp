@@ -72,6 +72,105 @@ void logDaemon(const std::string& s) {
     std::fprintf(stderr, "%s\n", misterplex::redactSensitive(s).c_str());
 }
 
+// Boot-hook self-verify (parent 2026-07-31 fail-loud design):
+// Read /etc/init.d/S99user for USER_SCRIPT=, read that LIVE file (never the
+// underscore decoy), and confirm it autostarts this conf's install root.
+// Mismatch → loud log + BOOT_HOOK_MISMATCH=1 marker file under conf root so
+// operators/OSD see a silent cold-boot regression instead of a green boot.
+// Does not abort startup (device must stay reachable); converts quiet to loud.
+void verifyBootHookSelf(const std::string& confPath) {
+    auto dirnameOf = [](const std::string& p) -> std::string {
+        const auto slash = p.find_last_of('/');
+        if (slash == std::string::npos)
+            return ".";
+        if (slash == 0)
+            return "/";
+        return p.substr(0, slash);
+    };
+    const std::string liveRoot = dirnameOf(confPath);
+    const char* s99path = "/etc/init.d/S99user";
+    std::ifstream s99(s99path);
+    if (!s99) {
+        logDaemon(std::string("misterplexd: BOOT_HOOK_SELF_VERIFY skip — missing ") + s99path);
+        return;
+    }
+    std::string line;
+    std::string userScript;
+    while (std::getline(s99, line)) {
+        if (line.empty() || line[0] == '#')
+            continue;
+        const auto pos = line.find("USER_SCRIPT=");
+        if (pos == std::string::npos)
+            continue;
+        userScript = line.substr(pos + std::strlen("USER_SCRIPT="));
+        // strip quotes / trailing comment
+        while (!userScript.empty() && (userScript.front() == ' ' || userScript.front() == '\t'))
+            userScript.erase(userScript.begin());
+        if (!userScript.empty() && (userScript.front() == '"' || userScript.front() == '\'')) {
+            const char q = userScript.front();
+            userScript.erase(userScript.begin());
+            const auto end = userScript.find(q);
+            if (end != std::string::npos)
+                userScript = userScript.substr(0, end);
+        } else {
+            const auto hash = userScript.find('#');
+            if (hash != std::string::npos)
+                userScript = userScript.substr(0, hash);
+            while (!userScript.empty() && (userScript.back() == ' ' || userScript.back() == '\t' ||
+                                           userScript.back() == '\r'))
+                userScript.pop_back();
+        }
+        break;
+    }
+    if (userScript.empty()) {
+        logDaemon("misterplexd: BOOT_HOOK_SELF_VERIFY FAIL — S99user has no USER_SCRIPT=");
+        return;
+    }
+    // Underscore decoy basename is never authority.
+    const auto baseSlash = userScript.find_last_of('/');
+    const std::string base =
+        baseSlash == std::string::npos ? userScript : userScript.substr(baseSlash + 1);
+    if (!base.empty() && base[0] == '_') {
+        logDaemon("misterplexd: BOOT_HOOK_SELF_VERIFY FAIL — USER_SCRIPT points at DECOY path " +
+                  userScript + " (S99user must not use underscore file)");
+        return;
+    }
+    std::ifstream hook(userScript);
+    if (!hook) {
+        logDaemon("misterplexd: BOOT_HOOK_SELF_VERIFY FAIL — LIVE hook missing path=" + userScript +
+                  " live_root=" + liveRoot);
+        const std::string marker = liveRoot + "/BOOT_HOOK_MISMATCH";
+        std::ofstream m(marker);
+        if (m)
+            m << "missing_hook path=" << userScript << " live_root=" << liveRoot << "\n";
+        return;
+    }
+    bool found = false;
+    const std::string want = liveRoot + "/bin/misterplexd_supervise.sh";
+    const std::string wantBare = liveRoot + "/bin/misterplexd";
+    while (std::getline(hook, line)) {
+        if (line.find(want) != std::string::npos || line.find(wantBare) != std::string::npos) {
+            found = true;
+            break;
+        }
+    }
+    if (found) {
+        logDaemon("misterplexd: BOOT_HOOK_SELF_VERIFY OK path=" + userScript +
+                  " live_root=" + liveRoot);
+        // Clear prior mismatch marker if present.
+        const std::string marker = liveRoot + "/BOOT_HOOK_MISMATCH";
+        std::remove(marker.c_str());
+        return;
+    }
+    logDaemon("misterplexd: BOOT_HOOK_SELF_VERIFY FAIL — LIVE hook " + userScript +
+              " does not autostart live_root=" + liveRoot +
+              " (cold-boot will start a different bundle; parent decoy/v1 class)");
+    const std::string marker = liveRoot + "/BOOT_HOOK_MISMATCH";
+    std::ofstream m(marker);
+    if (m)
+        m << "hook=" << userScript << " live_root=" << liveRoot << " want=" << want << "\n";
+}
+
 // Content tier (OSD O[4] / DECODE) is the product source of truth for the PMS
 // ladder on each play. Re-apply the full named profile so profileName, quality,
 // bitrate and H.264 caps track the tier — not only videoResolution.
@@ -563,6 +662,8 @@ int main(int argc, char** argv) {
                      idle.empty() ? "logo(default)" : idle.c_str(), player.avOffsetMs());
     }
     player.setLog([](const std::string& s) { logDaemon(s); });
+    // Convert silent wrong-hook boots into a loud, greppable failure class.
+    verifyBootHookSelf(confPath);
     if (streamEnabled) {
         std::fprintf(stderr,
                      "misterplexd: STREAM=1 (annex-B → host I-recon F1 + F3; preferDirectH264; "

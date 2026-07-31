@@ -1,0 +1,6 @@
+#!/bin/sh
+# MiSTer image S99user (excerpt) — USER_SCRIPT is the LIVE hook path.
+USER_SCRIPT="/media/fat/linux/user-startup.sh"
+if [ -f "$USER_SCRIPT" ]; then
+  "$USER_SCRIPT" &
+fi

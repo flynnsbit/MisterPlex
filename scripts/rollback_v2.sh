@@ -89,7 +89,18 @@ V2_CORE="$PAIR_CORE_PATH"
 V2_CONF_DEFAULT="$V2_ROOT/misterplex.conf"
 # Boot path is half of the pair (parent 2026-07-31 cold-boot defect).
 PAIR_BOOT_ROOT="${PAIR_BOOT_ROOT:-$V2_ROOT}"
-BOOT_HOOK_PATH="${BOOT_HOOK_PATH:-$BOOT_HOOK_DEVICE_PATH}"
+# LIVE hook path: prefer explicit inject, else resolve from S99user USER_SCRIPT=
+# (hardcoding underscore decoy is the parent BLOCKER class).
+if [ -n "${BOOT_HOOK_PATH:-}" ]; then
+  :
+elif [ -n "${ROLLBACK_S99_BLOB:-}" ] && [ -f "${ROLLBACK_S99_BLOB}" ]; then
+  # shellcheck disable=SC1091
+  _rb_s99=$(boot_hook_resolve_from_s99_file "$ROLLBACK_S99_BLOB" 1)
+  printf '%s\n' "$_rb_s99" | sed 's/^/rollback: /' >&2 || true
+  BOOT_HOOK_PATH="$BOOT_HOOK_DEVICE_PATH"
+else
+  BOOT_HOOK_PATH="${BOOT_HOOK_DEVICE_PATH}"
+fi
 HOST_SUPERVISE_SRC="$ROOT/scripts/misterplexd_supervise.sh"
 
 run_ssh() {
@@ -577,8 +588,33 @@ EOF
 # Install durable supervisor + rewrite LIVE user-startup.sh for PAIR_BOOT_ROOT.
 # Fourth half of the atomic pair (core, daemon, conf, BOOT).
 install_pair_boot_path() {
-  local root="${1:-$PAIR_BOOT_ROOT}" hook_body rendered host_tmp staged rc bak_ts
-  log "install boot path root=$root hook=$BOOT_HOOK_PATH"
+  local root="${1:-$PAIR_BOOT_ROOT}" hook_body rendered host_tmp staged rc bak_ts live_path s99_body
+  # Resolve LIVE path from device S99user USER_SCRIPT= (never hardcode decoy).
+  if [ -z "${BOOT_HOOK_PATH_LOCKED:-}" ]; then
+    set +e
+    s99_body=$(run_ssh "if [ -f /etc/init.d/S99user ]; then cat /etc/init.d/S99user; else echo MISSING; fi")
+    rc=$?
+    set -e
+    if [ "$rc" -eq 5 ]; then return 5; fi
+    if [ "$s99_body" != "MISSING" ] && [ -n "$s99_body" ]; then
+      set +e
+      boot_hook_resolve_from_s99_body "$s99_body" 0 >/dev/null
+      rc=$?
+      set -e
+      if [ "$rc" -eq 0 ]; then
+        BOOT_HOOK_PATH="$BOOT_HOOK_DEVICE_PATH"
+        echo "BOOT_HOOK_RESOLVED path=$BOOT_HOOK_PATH source=s99user"
+      fi
+    fi
+  fi
+  live_path="${BOOT_HOOK_PATH:-$BOOT_HOOK_DEVICE_PATH}"
+  case "$(basename "$live_path")" in
+    _*)
+      echo "REFUSE boot hook path is decoy (underscore): $live_path"
+      return 10
+      ;;
+  esac
+  log "install boot path root=$root hook=$live_path"
 
   if [ ! -f "$HOST_SUPERVISE_SRC" ]; then
     echo "REFUSE missing host supervisor source $HOST_SUPERVISE_SRC"
@@ -607,7 +643,7 @@ install_pair_boot_path() {
   "
 
   set +e
-  hook_body=$(run_ssh "if [ -f $(printf '%q' "$BOOT_HOOK_PATH") ]; then cat $(printf '%q' "$BOOT_HOOK_PATH"); else echo ''; fi")
+  hook_body=$(run_ssh "if [ -f $(printf '%q' "$live_path") ]; then cat $(printf '%q' "$live_path"); else echo ''; fi")
   rc=$?
   set -e
   if [ "$rc" -eq 5 ]; then return 5; fi
@@ -636,7 +672,7 @@ install_pair_boot_path() {
   if [ "$rc" -ne 0 ]; then return 5; fi
 
   run_ssh "set -e
-    hook=$(printf '%q' "$BOOT_HOOK_PATH")
+    hook=$(printf '%q' "$live_path")
     staged=$(printf '%q' "$staged")
     bak=\${hook}.bak.${bak_ts}
     mkdir -p \"\$(dirname \"\$hook\")\"
@@ -646,7 +682,7 @@ install_pair_boot_path() {
     sync
     echo HOOK_INSTALLED=\$hook
   "
-  echo "OK boot-path root=$root hook=$BOOT_HOOK_PATH"
+  echo "OK boot-path root=$root hook=$live_path"
   return 0
 }
 

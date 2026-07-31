@@ -461,35 +461,68 @@ echo "deploy: summary host_md5=$HOST_MD5 target_root=$TARGET_ROOT remote_bin=$RE
 echo "deploy: summary LIVE process md5 verified equal to host (not disk alone)"
 report_rc "deploy_overall" 0
 
-# --- boot path: durable supervisor + _user-startup.sh (parent cold-boot defect) ---
-# Old deploy wrote v1 bare misterplexd and grepped only 'misterplex/bin/misterplexd',
-# which cannot match misterplex_v2 → v1+v2 double-daemon on boot.
+# --- boot path: durable supervisor + LIVE USER_SCRIPT (never decoy) -------------
+# Parent BLOCKER 2026-07-31: main wrote HOOK=/media/fat/linux/_user-startup.sh
+# (never executed by S99user) + v1 root. Resolve LIVE path from S99user
+# USER_SCRIPT= — hardcoding either path is the defect class.
 if [[ "${DEPLOY_SKIP_BOOT_HOOK:-0}" != "1" ]]; then
   # shellcheck source=boot_hook_policy.sh
   source "$ROOT/scripts/boot_hook_policy.sh"
   SUP_SRC="$ROOT/scripts/misterplexd_supervise.sh"
   [[ -f "$SUP_SRC" ]] || die "missing $SUP_SRC"
-  echo "deploy: install supervisor + boot hook for root=$TARGET_ROOT"
+  echo "deploy: install supervisor + boot hook for root=$TARGET_ROOT (path from S99user USER_SCRIPT)"
   set +e
   scp_to "$SUP_SRC" "/tmp/misterplexd_supervise.deploy.$$"
   scp_rc=$?
   set -e
   report_rc "scp_supervise" "$scp_rc" || die "scp supervisor failed"
+  # Optional host inject of S99 body for unit tests (DEPLOY_S99_BLOB).
+  s99_b64=""
+  if [[ -n "${DEPLOY_S99_BLOB:-}" && -f "${DEPLOY_S99_BLOB}" ]]; then
+    s99_b64=$(base64 -w0 <"$DEPLOY_S99_BLOB" 2>/dev/null || base64 <"$DEPLOY_S99_BLOB" | tr -d '\n')
+  fi
   set +e
   ssh_m "set -e
     root='$TARGET_ROOT'
+    s99_b64='$s99_b64'
     mkdir -p \"\$root/bin\"
     mv -f /tmp/misterplexd_supervise.deploy.$$ \"\$root/bin/misterplexd_supervise.sh\"
     chmod +x \"\$root/bin/misterplexd_supervise.sh\"
-    hook=/media/fat/linux/user-startup.sh
-    mkdir -p /media/fat/linux
+    # Resolve LIVE hook path from S99user USER_SCRIPT= (never hardcode underscore decoy).
+    s99_body=''
+    if [ -n \"\$s99_b64\" ]; then
+      s99_body=\$(printf '%s' \"\$s99_b64\" | base64 -d 2>/dev/null || true)
+    elif [ -f /etc/init.d/S99user ]; then
+      s99_body=\$(cat /etc/init.d/S99user)
+    fi
+    hook=''
+    if [ -n \"\$s99_body\" ]; then
+      hook=\$(printf '%s\n' \"\$s99_body\" | sed -n 's/.*USER_SCRIPT=//p' | head -1 | sed 's/[\"'\'']//g' | sed 's/[[:space:]]*#.*//' | sed 's/^[[:space:]]*//;s/[[:space:]]*\$//')
+    fi
+    if [ -z \"\$hook\" ]; then
+      hook=/media/fat/linux/user-startup.sh
+      echo HOOK_RESOLVE_SOURCE=fallback_default
+    else
+      echo HOOK_RESOLVE_SOURCE=s99user
+    fi
+    case \"\$hook\" in
+      /*) ;;
+      *) echo FAIL_HOOK_NOT_ABSOLUTE got=\"\$hook\"; exit 8 ;;
+    esac
+    # Refuse writing the underscore decoy even if S99 were wrong.
+    base=\$(basename \"\$hook\")
+    case \"\$base\" in
+      _*) echo FAIL_HOOK_IS_DECOY path=\"\$hook\" detail=S99user_must_not_point_at_underscore; exit 8 ;;
+    esac
+    echo HOOK_LIVE_PATH=\$hook
+    mkdir -p \"\$(dirname \"\$hook\")\"
     touch \"\$hook\"
     bak=\${hook}.bak.\$(date -u +%Y%m%dT%H%M%SZ)
     cp -f \"\$hook\" \"\$bak\"
     # Strip ALL MiSTerPlex autostart lines (both roots + bare + supervise).
+    # Idempotence must match v1 AND v2 (old bug grepped only misterplex/bin).
     tmp=\$(mktemp)
     grep -vE 'misterplexd_supervise\\.sh|/misterplex/bin/misterplexd|/misterplex_v2/bin/misterplexd' \"\$hook\" >\"\$tmp\" || true
-    # Drop stale markers
     grep -vE '^# MiSTerPlex (pair autostart|companion)' \"\$tmp\" >\"\$tmp.2\" || true
     mv -f \"\$tmp.2\" \"\$tmp\"
     printf '\\n# MiSTerPlex pair autostart (atomic with core+daemon+conf; do not hand-edit)\\n' >>\"\$tmp\"
@@ -498,13 +531,16 @@ if [[ "${DEPLOY_SKIP_BOOT_HOOK:-0}" != "1" ]]; then
     sync
     echo HOOK_BAK=\$bak
     echo HOOK_LINE=\$(grep misterplexd_supervise.sh \"\$hook\" | head -1)
-    # Refuse if more than one supervise line or v1 still present when root is v2
     n=\$(grep -c misterplexd_supervise.sh \"\$hook\" || true)
     if [ \"\$n\" -ne 1 ]; then echo FAIL_HOOK_N=\$n; exit 8; fi
-    if [ \"\$root\" = /media/fat/misterplex_v2 ] && grep -q '/misterplex/bin/misterplexd' \"\$hook\"; then
+    if [ \"\$root\" = /media/fat/misterplex_v2 ] && grep -qE '/misterplex/bin/misterplexd([^_]|\$)' \"\$hook\"; then
       echo FAIL_HOOK_V1_STILL_PRESENT; exit 8
     fi
-    echo BOOT_HOOK_OK
+    # Bundle match: hook root must equal deploy target root.
+    if ! grep -qF \"\$root/bin/misterplexd_supervise.sh\" \"\$hook\"; then
+      echo FAIL_HOOK_ROOT_MISMATCH expect=\$root; exit 8
+    fi
+    echo BOOT_HOOK_OK path=\$hook root=\$root
   "
   hook_rc=$?
   set -e

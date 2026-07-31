@@ -1,27 +1,26 @@
 w-lint GATE-INTEGRITY status
 branch: w-lint-gate-integrity
-prior_HEAD: 7acfbe54
-focus: live-object / decoy boot / unreachable motion / conf-keys FAIL / MENU bars
+focus: BLOCKER deploy decoy + S99user resolve + bundle mismatch + fail-loud
 
 DONE
-- boot_hook_policy LIVE=/media/fat/linux/user-startup.sh DECOY=_user-startup.sh
-  boot_hook_check_live_and_decoy → decoy_ok_live_bad RED
-- promotion_gate_check: conf-keys FAIL rc=3 (not NOTE); motion aggregate (not elif);
-  LIVE boot fetch; visual always runs after cheap checks
-- pair_visual_gate: menu_color_bars reject (MENU postboot)
-- live_object.inc.sh reusable refuse helpers
-- fixtures tests/fixtures/gate_integrity/{boot,postboot_menu.png}
-- tests: live_object integrity pass=26; static_guard; boothook; promo pass=66
-- rollcall expected_commands=119 sha16=2101f067229ea747
-- report: docs/evidence/w_lint_LIVE_OBJECT_REPORT.md
+- boot_hook_policy: resolve USER_SCRIPT from S99user (not hardcode)
+  boot_hook_assert_bundle_match (hook root vs live root)
+- deploy_misterplexd: writes LIVE path from S99; refuse underscore decoy;
+  idempotence both roots; target_root from live /proc
+- promotion_gate_check: resolve S99 → cat LIVE; bundle match FAIL
+- rollback_v2: resolve S99 on install_pair_boot_path
+- quarantine_stale_daemon_tree.sh (54f1d916 rename fail-loud) — parent apply
+- misterplexd verifyBootHookSelf at startup (log + BOOT_HOOK_MISMATCH marker)
+- identity-not-pose: pair_visual documents no centroid gate; static guard
+- RBG: bak.20260731T204811Z bundle RED; S99 resolve GREEN; deploy no decoy
 
 MEASURED true rc (direct)
-  live_object=0 static=0 boothook=0 promo=0 rollback=0
-  harness_capture=0 pipe_rc=0 false_green=0 rollcall=0
+  boothook=0 pass=30 static=0 live=0 promo=0 deploy=0 rollback=0 rollcall=0 (119)
 
-PARENT
-- merge before DDR promote over SPI daily
-- device: LIVE user-startup.sh must be v2 (underscore alone is green-blind trap)
-- no Quartus this lane
-land_sha: 7bbb0815
-docs_tip=5b8d49b8
+PARENT DEVICE
+  QUARANTINE_EXECUTE=1 scripts/quarantine_stale_daemon_tree.sh apply
+  ensure LIVE user-startup.sh is v2; do not trust underscore file
+  merge before DDR promote
+
+docs: docs/evidence/w_lint_BOOT_HOOK_RESOLVE.md
+land_sha: 8b6a5e63
