@@ -13,15 +13,20 @@
 #   wrong rate/revisit→ RATE_FAIL      (rc=4)  — advances but not at source rate
 #   empty/idle/no OCR → UNSCORED       (rc=77) — never a pass; never a measured failure
 #
-# Severity: STRUCTURE > COLOR > RATE > FREEZE > MOTION_OK > UNSCORED.
+# Severity: STRUCTURE(3) > COLOR(2) > RATE(4) > FREEZE(1) > MOTION_OK(0) > UNSCORED(77).
 # Any positively-detected failure outranks UNSCORED and is never rc=77.
 # rc=77 stays meaningful: idle screensaver / pre-play with nothing to read.
+#
+# Source/capture FPS are NOT measured by the instrument (PARENT ERROR 17).
+# Suite passes --source-fps 24 --capture-fps 30 (library 24.000 / grabber 30)
+# so rate provenance prints src=caller. Default-without-flag is DEFAULT_ASSUMED.
 #
 # Controlled pair + shipping corpus (parent hardware):
 #   CAP480A_DIR broken 480p identity_skip desync → hard FAIL (rc=2 or 3)
 #   CAP480B_DIR corrected 480p                     → MOTION_OK (rc=0)
 #   CAP240FS_DIR known-good 240p                   → MOTION_OK (rc=0)
 #   CAP480Q_DIR correct native 480p (counter 170→286) → MOTION_OK (rc=0)
+#   CAPBOOT_DIR correct 240p fixed boot (counter 12→99) → MOTION_OK (rc=0)
 #   CAP480N_DIR idle screensaver (no counter)      → UNSCORED (rc=77)
 #
 # Usage:
@@ -54,6 +59,12 @@ CAP480B_DIR="${CAP480B_DIR:-/tmp/cap480b}"
 CAP240FS_DIR="${CAP240FS_DIR:-/tmp/cap240fs}"
 CAP480Q_DIR="${CAP480Q_DIR:-/tmp/cap480q}"
 CAP480N_DIR="${CAP480N_DIR:-/tmp/cap480n}"
+CAPBOOT_DIR="${CAPBOOT_DIR:-/tmp/capboot}"
+# Library assets are frameRate=24.000 (not 23.976). Grabber burst ≈30fps.
+SOURCE_FPS="${SOURCE_FPS:-24}"
+CAPTURE_FPS="${CAPTURE_FPS:-30}"
+# Authoritative rate args for known-good motion cases (src=caller provenance).
+FPS_ARGS=(--source-fps "$SOURCE_FPS" --capture-fps "$CAPTURE_FPS")
 
 # Scratch under the repo (agent rule: never write /tmp for our own artifacts).
 WORK="$ROOT/.agent-work/hdmi-motion-instrument-$$"
@@ -85,6 +96,12 @@ run_case() {
   fi
 }
 
+# Motion-OK cases: always pass explicit library/grabber rates (ERROR 17).
+run_motion_ok() {
+  local name="$1" dir="$2"
+  run_case "$name" 0 "$dir" "${FPS_ARGS[@]}"
+}
+
 echo "=== hdmi_motion_instrument host validation ==="
 echo "TOOL=$TOOL"
 echo "ROOT=$ROOT"
@@ -96,7 +113,7 @@ run_case "self-test" 0 --self-test
 if [[ -d "$LONG_DIR" ]] && compgen -G "$LONG_DIR/f_*.png" >/dev/null; then
   n_png=$(find "$LONG_DIR" -maxdepth 1 -name 'f_*.png' | wc -l)
   echo "LONG_DIR=$LONG_DIR n_png=$n_png"
-  run_case "long-MOTION_OK" 0 "$LONG_DIR"
+  run_motion_ok "long-MOTION_OK" "$LONG_DIR"
 else
   echo "SKIP long: $LONG_DIR missing"
   skip=$((skip + 1))
@@ -144,7 +161,7 @@ fi
 # 3. soak / cc known-good dirs (any present)
 for d in $SOAK_DIRS $CC_DIRS; do
   if [[ -d "$d" ]] && compgen -G "$d/f_*.png" >/dev/null; then
-    run_case "$(basename "$d")-MOTION_OK" 0 "$d"
+    run_motion_ok "$(basename "$d")-MOTION_OK" "$d"
   else
     echo "SKIP missing $d"
     skip=$((skip + 1))
@@ -226,7 +243,7 @@ run_case "synth-freeze-green-COLOR_FAIL" 2 "$FGDIR"
 
 # 8. Optional parent hardware dirs (if provided / present)
 if [[ -n "$GOOD_240P_DIR" && -d "$GOOD_240P_DIR" ]] && compgen -G "$GOOD_240P_DIR/f_*.png" >/dev/null; then
-  run_case "parent-good-240p-MOTION_OK" 0 "$GOOD_240P_DIR"
+  run_motion_ok "parent-good-240p-MOTION_OK" "$GOOD_240P_DIR"
 else
   echo "SKIP parent-good-240p (set GOOD_240P_DIR=... to include)"
   skip=$((skip + 1))
@@ -273,21 +290,27 @@ else
   skip=$((skip + 1))
 fi
 if [[ -n "$CAP480B_DIR" && -d "$CAP480B_DIR" ]] && compgen -G "$CAP480B_DIR/f_*.png" >/dev/null; then
-  run_case "cap480b-corrected-MOTION_OK" 0 "$CAP480B_DIR"
+  run_motion_ok "cap480b-corrected-MOTION_OK" "$CAP480B_DIR"
 else
   echo "SKIP cap480b (set CAP480B_DIR=... to include)"
   skip=$((skip + 1))
 fi
 if [[ -n "$CAP240FS_DIR" && -d "$CAP240FS_DIR" ]] && compgen -G "$CAP240FS_DIR/f_*.png" >/dev/null; then
-  run_case "cap240fs-good-MOTION_OK" 0 "$CAP240FS_DIR"
+  run_motion_ok "cap240fs-good-MOTION_OK" "$CAP240FS_DIR"
 else
   echo "SKIP cap240fs (set CAP240FS_DIR=... to include)"
   skip=$((skip + 1))
 fi
 if [[ -n "$CAP480Q_DIR" && -d "$CAP480Q_DIR" ]] && compgen -G "$CAP480Q_DIR/f_*.png" >/dev/null; then
-  run_case "cap480q-native480-MOTION_OK" 0 "$CAP480Q_DIR"
+  run_motion_ok "cap480q-native480-MOTION_OK" "$CAP480Q_DIR"
 else
   echo "SKIP cap480q (set CAP480Q_DIR=... to include)"
+  skip=$((skip + 1))
+fi
+if [[ -n "$CAPBOOT_DIR" && -d "$CAPBOOT_DIR" ]] && compgen -G "$CAPBOOT_DIR/f_*.png" >/dev/null; then
+  run_motion_ok "capboot-fixed-boot-MOTION_OK" "$CAPBOOT_DIR"
+else
+  echo "SKIP capboot (set CAPBOOT_DIR=... to include)"
   skip=$((skip + 1))
 fi
 if [[ -n "$CAP480N_DIR" && -d "$CAP480N_DIR" ]] && compgen -G "$CAP480N_DIR/f_*.png" >/dev/null; then
@@ -337,7 +360,12 @@ run_case "synth-wrap-STRUCTURE_FAIL" 3 "$WDIR"
 python3 - <<PY
 import sys
 sys.path.insert(0, "$ROOT/tools")
-from hdmi_motion_instrument import analyze_counter_rate
+from hdmi_motion_instrument import (
+    analyze_counter_rate,
+    DEFAULT_ASSUMED_SOURCE_FPS,
+    PROVENANCE_CALLER,
+    PROVENANCE_DEFAULT_ASSUMED,
+)
 
 def expect(name, cond, detail):
     if cond:
@@ -347,29 +375,80 @@ def expect(name, cond, detail):
     return 1
 
 fail = 0
-# good 24/30
+# ERROR 17: default assumed source is 24.000, never 23.976
+fail += expect(
+    "default-is-24",
+    DEFAULT_ASSUMED_SOURCE_FPS == 24.0
+    and abs(DEFAULT_ASSUMED_SOURCE_FPS - (24000.0 / 1001.0)) > 0.01,
+    DEFAULT_ASSUMED_SOURCE_FPS,
+)
+
+# good 24/30 with caller provenance
 ns=[]; n=200
 for i in range(60):
     if i>0 and i%5!=0: n+=1
     ns.append(n)
-ri=analyze_counter_rate(list(enumerate(ns)), source_fps=24.0, capture_fps=30.0)
-fail += expect("good24on30", ri["rate"]=="RATE_OK" and ri["non_adjacent_revisits"]==0, ri)
+ri=analyze_counter_rate(
+    list(enumerate(ns)),
+    source_fps=24.0,
+    capture_fps=30.0,
+    source_fps_src=PROVENANCE_CALLER,
+    capture_fps_src=PROVENANCE_CALLER,
+)
+fail += expect(
+    "good24on30",
+    ri["rate"]=="RATE_OK"
+    and ri["non_adjacent_revisits"]==0
+    and abs(float(ri["expected_ratio"]) - 0.8) < 1e-6
+    and ri["source_fps_src"] == PROVENANCE_CALLER,
+    ri,
+)
+
+# DEFAULT_ASSUMED + inconsistent unique_ratio (~1.0) → loud RATE_FAIL
+full=[100+i for i in range(60)]
+ri=analyze_counter_rate(
+    list(enumerate(full)),
+    source_fps=24.0,
+    capture_fps=30.0,
+    source_fps_src=PROVENANCE_DEFAULT_ASSUMED,
+)
+fail += expect(
+    "assumed-inconsistent",
+    ri["rate_fail"] is True
+    and any("assumed_src_fps_inconsistent" in x for x in ri["rate_reasons"]),
+    ri,
+)
 
 # slow crawl
 ns=[]; n=100
 for i in range(60):
     if i>0 and i%4==0: n+=1
     ns.append(n)
-ri=analyze_counter_rate(list(enumerate(ns)), source_fps=24.0, capture_fps=30.0)
+ri=analyze_counter_rate(
+    list(enumerate(ns)),
+    source_fps=24.0,
+    capture_fps=30.0,
+    source_fps_src=PROVENANCE_CALLER,
+)
 fail += expect("slow-crawl", ri["rate_fail"] is True, ri)
 
 # 4x race
-ri=analyze_counter_rate([(i, 100+i*4) for i in range(60)], source_fps=24.0, capture_fps=30.0)
+ri=analyze_counter_rate(
+    [(i, 100+i*4) for i in range(60)],
+    source_fps=24.0,
+    capture_fps=30.0,
+    source_fps_src=PROVENANCE_CALLER,
+)
 fail += expect("fast-4x", ri["rate_fail"] is True and ri["span_rate"]>1.5, ri)
 
 # ping-pong revisits
 ping=[100+(i%2) for i in range(60)]
-ri=analyze_counter_rate(list(enumerate(ping)), source_fps=24.0, capture_fps=30.0)
+ri=analyze_counter_rate(
+    list(enumerate(ping)),
+    source_fps=24.0,
+    capture_fps=30.0,
+    source_fps_src=PROVENANCE_CALLER,
+)
 fail += expect("pingpong-revisit", ri["revisit_fail"] is True and ri["non_adjacent_revisits"]>=2, ri)
 
 sys.exit(1 if fail else 0)

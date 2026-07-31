@@ -41,10 +41,11 @@ Severity resolution (highest wins — explicit, non-negotiable)
                    must be allowed to decide alone.
   3. RATE_FAIL   — counter advances (so not FREEZE) but at the wrong rate
                    relative to source/capture FPS, or non-adjacent counter
-                   revisits (stale-bank ping-pong). Hard fail rc=4.
-                   Monotonic advance alone is NOT sufficient (pfps collapse
-                   to 10.9 on a 23.976 source still advances and would pass a
-                   pure order check).
+                   revisits (stale-bank ping-pong), or DEFAULT_ASSUMED source
+                   rate inconsistent with observed plateau pattern.
+                   Hard fail rc=4. Monotonic advance alone is NOT sufficient
+                   (pfps collapse to 10.9 on a 24.000 source still advances
+                   and would pass a pure order check).
   4. FREEZE      — counter pinned with colour+structure OK. Hard fail rc=1.
   5. MOTION_OK   — counter advances at plausible source rate, no revisits,
                    colour+structure OK. Pass rc=0.
@@ -59,7 +60,16 @@ Severity resolution (highest wins — explicit, non-negotiable)
 Rate / revisit model (parent calibration)
 -----------------------------------------
   Capture FPS (MacroSilicon MJPEG burst) and source FPS are independent.
-  Default source = 24000/1001 (≈23.976); default capture = 30.
+  **Neither rate is measured by this instrument.** Pass both explicitly when
+  known. Provenance is always printed:
+    src_fps=24.000 src=caller          # caller supplied --source-fps
+    src_fps=24.000 src=DEFAULT_ASSUMED # fell back to library default
+  Library assets (Plex metadata frameRate="24.000" / videoFrameRate="24p")
+  are genuinely 24.000 — NOT NTSC 24000/1001. PARENT ERROR 17: a printed
+  23.976 default was mistaken for a measurement and published as a defect.
+  Default assumed source = 24.000; default assumed capture = 30.0.
+  When rate is DEFAULT_ASSUMED and the observed plateau/unique pattern is
+  inconsistent with that assumption, RATE_FAIL loudly (never silent mis-score).
   Healthy 24fps-on-30-capture (parent hand measure, 105-frame burst):
     84 distinct counter states, 84 runs, max plateau 2, plateau hist {1,2},
     zero non-adjacent revisits, unique/frames = 84/105 = 0.800 = 24/30.
@@ -67,6 +77,19 @@ Rate / revisit model (parent calibration)
   Max plateau allowed = ceil(capture_fps/source_fps)+1  (default 3).
   Non-adjacent revisit = a counter value reappears after a different value
   intervened (RLE run sequence); bank-swap ping-pong signature.
+
+Hardcoded constants — provenance (measured | supplied | assumed | design)
+-------------------------------------------------------------------------
+  DEFAULT_ASSUMED_SOURCE_FPS=24.0   assumed (Plex library 24p; NOT measured)
+  DEFAULT_ASSUMED_CAPTURE_FPS=30.0  assumed (MacroSilicon MJPEG lab default)
+  DEFAULT_WARMUP_SKIP=15            measured (grabber junk; parent lab)
+  GREEN_MEAN_*/GREEN_FRAC_HARD      measured (parent green-cast fingerprint)
+  CHROMA_SPREAD_FAIL=25.0           design bound (good ~0–6; broken ~64–200)
+  GREEN_CAST_MIN_FRAMES=3           design (positive colour evidence floor)
+  STRUCT_MIN_FRAMES=3               design (positive structure evidence floor)
+  RATE_MIN_SAMPLES=12               design (rate/revisit sample floor)
+  Anything not measured is labelled assumed/design in the report so it can
+  never again be mistaken for evidence (ERROR 17 class).
 
 Grabber warm-up
 ---------------
@@ -123,25 +146,32 @@ RC_STRUCTURE_FAIL = 3
 RC_RATE_FAIL = 4
 RC_UNSCORED = 77
 
-DEFAULT_WARMUP_SKIP = 15
-DEFAULT_MIN_READS = 3
-# Source vs capture rates (independent clocks). Parent calibration: 24/30=0.800.
-DEFAULT_SOURCE_FPS = 24000.0 / 1001.0  # ≈23.976
-DEFAULT_CAPTURE_FPS = 30.0
+DEFAULT_WARMUP_SKIP = 15  # measured: MacroSilicon warm-up junk length
+DEFAULT_MIN_READS = 3  # design: minimum OCR reads for motion verdict
+# Source vs capture rates are NOT measured here. Defaults are ASSUMED and must
+# be labelled in every report (PARENT ERROR 17: 23.976 printed as if measured).
+# Plex library clips are frameRate="24.000" / videoFrameRate="24p" — true 24.000.
+DEFAULT_ASSUMED_SOURCE_FPS = 24.0
+DEFAULT_ASSUMED_CAPTURE_FPS = 30.0
+# Back-compat aliases (same values; prefer DEFAULT_ASSUMED_* in new code).
+DEFAULT_SOURCE_FPS = DEFAULT_ASSUMED_SOURCE_FPS
+DEFAULT_CAPTURE_FPS = DEFAULT_ASSUMED_CAPTURE_FPS
+PROVENANCE_CALLER = "caller"
+PROVENANCE_DEFAULT_ASSUMED = "DEFAULT_ASSUMED"
 # Minimum strong counter samples before rate/revisit can hard-fail.
-RATE_MIN_SAMPLES = 12
+RATE_MIN_SAMPLES = 12  # design
 # Broken c5382bee + old-daemon green-cast fingerprint (parent-measured).
 # Also matches native-480p full-green fields (U,V~0): high green_frac, mid mean.
-GREEN_MEAN_LO, GREEN_MEAN_HI = 55.0, 95.0
-GREEN_FRAC_HARD = 0.85
+GREEN_MEAN_LO, GREEN_MEAN_HI = 55.0, 95.0  # measured fingerprint band
+GREEN_FRAC_HARD = 0.85  # measured fingerprint band
 # Minimum positively-flagged frames before colour alone hard-fails the burst.
-GREEN_CAST_MIN_FRAMES = 3
+GREEN_CAST_MIN_FRAMES = 3  # design
 # Global channel-mean spread (max-min of per-channel means). Correct frames are
 # near-neutral (~0–6). Parent broken 480p desync measured ~200 (magenta) and
 # ~90 (green). Threshold sits far above good and far below broken.
-CHROMA_SPREAD_FAIL = 25.0
+CHROMA_SPREAD_FAIL = 25.0  # design bound from parent measurements
 # Minimum frames with a structural flag before structure alone hard-fails.
-STRUCT_MIN_FRAMES = 3
+STRUCT_MIN_FRAMES = 3  # design
 
 
 # ---------------------------------------------------------------------------
@@ -974,14 +1004,21 @@ def _rle_runs(ns: list[int]) -> list[tuple[int, int]]:
 def analyze_counter_rate(
     pairs: list[tuple[int, int]],
     *,
-    source_fps: float = DEFAULT_SOURCE_FPS,
-    capture_fps: float = DEFAULT_CAPTURE_FPS,
+    source_fps: float = DEFAULT_ASSUMED_SOURCE_FPS,
+    capture_fps: float = DEFAULT_ASSUMED_CAPTURE_FPS,
+    source_fps_src: str = PROVENANCE_DEFAULT_ASSUMED,
+    capture_fps_src: str = PROVENANCE_DEFAULT_ASSUMED,
 ) -> dict[str, Any]:
     """Rate + revisit integrity on filtered (capture_idx, n) pairs.
 
-    Parent known-good calibration (24fps source, 30fps capture, 105 frames):
+    Parent known-good calibration (24.000 fps source, 30 fps capture, 105 frames):
       84 distinct states, max plateau 2, plateau hist {1,2}, 0 non-adjacent
       revisits, unique/frames = 0.800 = source/capture.
+
+    source_fps / capture_fps are NEVER measured here — provenance must be
+    caller or DEFAULT_ASSUMED (ERROR 17). When DEFAULT_ASSUMED and the observed
+    plateau/unique pattern is inconsistent with that assumption, RATE_FAIL
+    loudly rather than silently certifying a mis-scored rate.
 
     Returns rate dimension RATE_OK | RATE_FAIL | RATE_UNSCORED plus metrics.
     RATE_UNSCORED means insufficient samples — not a pass and not a measured fail.
@@ -1002,6 +1039,8 @@ def analyze_counter_rate(
         "rate_reasons": [],
         "source_fps": source_fps,
         "capture_fps": capture_fps,
+        "source_fps_src": source_fps_src,
+        "capture_fps_src": capture_fps_src,
     }
     if source_fps <= 0 or capture_fps <= 0:
         empty["rate_reasons"] = ["invalid_fps"]
@@ -1094,6 +1133,27 @@ def analyze_counter_rate(
     if revisit_fail:
         reasons.append(f"non_adjacent_revisits={revisits}>=2 (bank-swap/ping-pong)")
 
+    # --- Assumed-rate consistency (ERROR 17 class) ---
+    # When the caller did not supply source_fps, do not silently certify a rate
+    # that contradicts the assumption. If the observed unique_ratio is far from
+    # expected under DEFAULT_ASSUMED, hard-fail with an explicit provenance tag
+    # even if other gates were soft. Prefer another common rate only as a hint.
+    assumed_src = source_fps_src == PROVENANCE_DEFAULT_ASSUMED
+    if assumed_src and not reasons:
+        # Tighter consistency window when rate is assumed (not caller-measured).
+        assume_lo = expected * 0.70  # ~0.56 at 24/30
+        assume_hi = min(1.05, expected * 1.20)  # ~0.96 at 24/30
+        if unique_ratio < assume_lo or unique_ratio > assume_hi:
+            # Hint nearest common content rate for the operator (not auto-used).
+            common = (23.976, 24.0, 25.0, 29.97, 30.0, 50.0, 59.94, 60.0)
+            hint = min(common, key=lambda f: abs((f / capture_fps) - unique_ratio))
+            reasons.append(
+                f"assumed_src_fps_inconsistent unique_ratio={unique_ratio:.3f} "
+                f"not in [{assume_lo:.3f},{assume_hi:.3f}] for "
+                f"DEFAULT_ASSUMED src_fps={source_fps} "
+                f"(hint_nearest_common_src≈{hint}; pass --source-fps explicitly)"
+            )
+
     rate_fail = bool(reasons)
     return {
         "rate": "RATE_FAIL" if rate_fail else "RATE_OK",
@@ -1113,6 +1173,8 @@ def analyze_counter_rate(
         "rate_reasons": reasons,
         "source_fps": source_fps,
         "capture_fps": capture_fps,
+        "source_fps_src": source_fps_src,
+        "capture_fps_src": capture_fps_src,
     }
 
 
@@ -1121,8 +1183,10 @@ def score_burst(
     *,
     warmup_skip: int = DEFAULT_WARMUP_SKIP,
     min_reads: int = DEFAULT_MIN_READS,
-    source_fps: float = DEFAULT_SOURCE_FPS,
-    capture_fps: float = DEFAULT_CAPTURE_FPS,
+    source_fps: float = DEFAULT_ASSUMED_SOURCE_FPS,
+    capture_fps: float = DEFAULT_ASSUMED_CAPTURE_FPS,
+    source_fps_src: str = PROVENANCE_DEFAULT_ASSUMED,
+    capture_fps_src: str = PROVENANCE_DEFAULT_ASSUMED,
     progress: bool = False,
 ) -> dict[str, Any]:
     """Score a capture burst. See module docstring for verdicts."""
@@ -1223,7 +1287,11 @@ def score_burst(
     motion = "UNSCORED"
     reason = ""
     rate_info = analyze_counter_rate(
-        pairs, source_fps=source_fps, capture_fps=capture_fps
+        pairs,
+        source_fps=source_fps,
+        capture_fps=capture_fps,
+        source_fps_src=source_fps_src,
+        capture_fps_src=capture_fps_src,
     )
     if len(ns) < min_reads:
         # Secondary: overlay bitmap motion without OCR.
@@ -1366,6 +1434,8 @@ def score_burst(
         "non_adjacent_revisits": rate_info.get("non_adjacent_revisits"),
         "source_fps": rate_info.get("source_fps"),
         "capture_fps": rate_info.get("capture_fps"),
+        "source_fps_src": rate_info.get("source_fps_src"),
+        "capture_fps_src": rate_info.get("capture_fps_src"),
         "verdict": final,
         "reason": reason,
         "rc": rc,
@@ -1413,7 +1483,7 @@ def _print_human(report: dict[str, Any], src: str) -> None:
         f"structure={report.get('structure', 'STRUCTURE_OK')} "
         f"rate={report.get('rate', 'RATE_UNSCORED')}"
     )
-    if report.get("unique_ratio") is not None:
+    if report.get("unique_ratio") is not None or report.get("source_fps") is not None:
         print(
             f"rate_metrics unique_ratio={report.get('unique_ratio')} "
             f"span_rate={report.get('span_rate')} "
@@ -1422,7 +1492,10 @@ def _print_human(report: dict[str, Any], src: str) -> None:
             f"{report.get('max_plateau_allowed')} "
             f"plateau_hist={report.get('plateau_hist')} "
             f"revisits={report.get('non_adjacent_revisits')} "
-            f"src_fps={report.get('source_fps')} cap_fps={report.get('capture_fps')}"
+            f"src_fps={report.get('source_fps')} "
+            f"src={report.get('source_fps_src', PROVENANCE_DEFAULT_ASSUMED)} "
+            f"cap_fps={report.get('capture_fps')} "
+            f"cap={report.get('capture_fps_src', PROVENANCE_DEFAULT_ASSUMED)}"
         )
     print(f"reason={report['reason']}")
     print(f"VERDICT={report['verdict']} rc={report['rc']}")
@@ -1560,12 +1633,57 @@ def _self_test() -> int:
         if cap_i > 0 and (cap_i % 5) != 0:
             src_n += 1
         good_ns.append(src_n)
-    ri = analyze_counter_rate(list(enumerate(good_ns)), source_fps=24.0, capture_fps=30.0)
+    ri = analyze_counter_rate(
+        list(enumerate(good_ns)),
+        source_fps=24.0,
+        capture_fps=30.0,
+        source_fps_src=PROVENANCE_CALLER,
+        capture_fps_src=PROVENANCE_CALLER,
+    )
     assert ri["rate"] == "RATE_OK", ri
     assert ri["rate_fail"] is False, ri
     assert ri["max_plateau"] <= ri["max_plateau_allowed"], ri
     assert ri["non_adjacent_revisits"] == 0, ri
     assert ri["unique_ratio"] is not None and 0.70 <= ri["unique_ratio"] <= 0.90, ri
+    assert ri["source_fps_src"] == PROVENANCE_CALLER, ri
+    assert abs(float(ri["expected_ratio"]) - 0.8) < 1e-6, ri
+
+    # DEFAULT_ASSUMED on healthy 24/30 pattern still RATE_OK (labelled assumed).
+    ri_assumed = analyze_counter_rate(
+        list(enumerate(good_ns)),
+        source_fps=DEFAULT_ASSUMED_SOURCE_FPS,
+        capture_fps=DEFAULT_ASSUMED_CAPTURE_FPS,
+        source_fps_src=PROVENANCE_DEFAULT_ASSUMED,
+        capture_fps_src=PROVENANCE_DEFAULT_ASSUMED,
+    )
+    assert ri_assumed["rate"] == "RATE_OK", ri_assumed
+    assert ri_assumed["source_fps_src"] == PROVENANCE_DEFAULT_ASSUMED, ri_assumed
+
+    # DEFAULT_ASSUMED + pattern inconsistent with 24/30 → loud RATE_FAIL.
+    # unique_ratio ≈ 1.0 (advance every capture) is not 24-on-30.
+    full_rate_ns = [100 + i for i in range(60)]
+    ri_bad_assume = analyze_counter_rate(
+        list(enumerate(full_rate_ns)),
+        source_fps=DEFAULT_ASSUMED_SOURCE_FPS,
+        capture_fps=DEFAULT_ASSUMED_CAPTURE_FPS,
+        source_fps_src=PROVENANCE_DEFAULT_ASSUMED,
+        capture_fps_src=PROVENANCE_DEFAULT_ASSUMED,
+    )
+    assert ri_bad_assume["rate_fail"] is True, ri_bad_assume
+    assert any("assumed_src_fps_inconsistent" in r for r in ri_bad_assume["rate_reasons"]), (
+        ri_bad_assume
+    )
+
+    # Same full-rate sequence with caller-supplied 30fps source is RATE_OK.
+    ri_30 = analyze_counter_rate(
+        list(enumerate(full_rate_ns)),
+        source_fps=30.0,
+        capture_fps=30.0,
+        source_fps_src=PROVENANCE_CALLER,
+        capture_fps_src=PROVENANCE_CALLER,
+    )
+    assert ri_30["rate"] == "RATE_OK", ri_30
+    assert abs(float(ri_30["expected_ratio"]) - 1.0) < 1e-6, ri_30
 
     # Slow crawl: long plateaus (pfps collapse class) — unique_ratio low.
     slow_ns = []
@@ -1574,7 +1692,12 @@ def _self_test() -> int:
         if cap_i > 0 and cap_i % 4 == 0:  # advance only every 4 capture frames → ~0.25
             src_n += 1
         slow_ns.append(src_n)
-    ri_slow = analyze_counter_rate(list(enumerate(slow_ns)), source_fps=24.0, capture_fps=30.0)
+    ri_slow = analyze_counter_rate(
+        list(enumerate(slow_ns)),
+        source_fps=24.0,
+        capture_fps=30.0,
+        source_fps_src=PROVENANCE_CALLER,
+    )
     assert ri_slow["rate_fail"] is True, ri_slow
     assert ri_slow["max_plateau"] > ri_slow["max_plateau_allowed"] or (
         ri_slow["unique_ratio"] is not None and ri_slow["unique_ratio"] < 0.5
@@ -1582,7 +1705,12 @@ def _self_test() -> int:
 
     # 4x race: counter jumps by ~4 per capture frame.
     fast_ns = [100 + i * 4 for i in range(60)]
-    ri_fast = analyze_counter_rate(list(enumerate(fast_ns)), source_fps=24.0, capture_fps=30.0)
+    ri_fast = analyze_counter_rate(
+        list(enumerate(fast_ns)),
+        source_fps=24.0,
+        capture_fps=30.0,
+        source_fps_src=PROVENANCE_CALLER,
+    )
     assert ri_fast["rate_fail"] is True, ri_fast
     assert ri_fast["span_rate"] is not None and ri_fast["span_rate"] > 1.5, ri_fast
 
@@ -1590,15 +1718,28 @@ def _self_test() -> int:
     ping = []
     for i in range(30):
         ping.append(100 + (i % 2))  # 100,101,100,101,...
-    # expand with indices
-    ri_ping = analyze_counter_rate(list(enumerate(ping * 2)), source_fps=24.0, capture_fps=30.0)
+    ri_ping = analyze_counter_rate(
+        list(enumerate(ping * 2)),
+        source_fps=24.0,
+        capture_fps=30.0,
+        source_fps_src=PROVENANCE_CALLER,
+    )
     assert ri_ping["rate_fail"] is True, ri_ping
     assert ri_ping["revisit_fail"] is True, ri_ping
     assert ri_ping["non_adjacent_revisits"] >= 2, ri_ping
 
     # Too few samples → RATE_UNSCORED (not a fail).
-    ri_few = analyze_counter_rate([(0, 1), (1, 2), (2, 3)], source_fps=24.0, capture_fps=30.0)
+    ri_few = analyze_counter_rate(
+        [(0, 1), (1, 2), (2, 3)],
+        source_fps=24.0,
+        capture_fps=30.0,
+        source_fps_src=PROVENANCE_CALLER,
+    )
     assert ri_few["rate"] == "RATE_UNSCORED" and ri_few["rate_fail"] is False, ri_few
+
+    # Default assumed source is 24.000, never 23.976 (ERROR 17).
+    assert DEFAULT_ASSUMED_SOURCE_FPS == 24.0, DEFAULT_ASSUMED_SOURCE_FPS
+    assert abs(DEFAULT_ASSUMED_SOURCE_FPS - (24000.0 / 1001.0)) > 0.01
 
     print("SELF_TEST_OK")
     return 0
@@ -1629,18 +1770,21 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument(
         "--source-fps",
         type=float,
-        default=DEFAULT_SOURCE_FPS,
+        default=None,
         help=(
-            "source content frame rate (default 24000/1001 ≈ 23.976). "
-            "Counter increments once per source frame."
+            "source content frame rate (REQUIRED for authoritative rate scoring). "
+            "Library 24p clips are 24.000 — NOT 23.976. If omitted, falls back to "
+            f"DEFAULT_ASSUMED={DEFAULT_ASSUMED_SOURCE_FPS} and labels src=DEFAULT_ASSUMED; "
+            "inconsistent plateau patterns then hard-fail rather than silent mis-score."
         ),
     )
     ap.add_argument(
         "--capture-fps",
         type=float,
-        default=DEFAULT_CAPTURE_FPS,
+        default=None,
         help=(
-            "HDMI grabber capture rate for the burst (default 30). "
+            "HDMI grabber capture rate for the burst. If omitted, falls back to "
+            f"DEFAULT_ASSUMED={DEFAULT_ASSUMED_CAPTURE_FPS} labelled cap=DEFAULT_ASSUMED. "
             "Independent of source_fps; healthy unique_ratio ≈ source/capture."
         ),
     )
@@ -1710,12 +1854,28 @@ def main(argv: list[str] | None = None) -> int:
         # Single-frame: ok decode → 0; undecoded → 77; never claim FREEZE from 1 frame.
         return RC_MOTION_OK if any_ok else RC_UNSCORED
 
+    # Provenance: anything not supplied on the CLI is DEFAULT_ASSUMED (ERROR 17).
+    if args.source_fps is None:
+        source_fps = DEFAULT_ASSUMED_SOURCE_FPS
+        source_fps_src = PROVENANCE_DEFAULT_ASSUMED
+    else:
+        source_fps = float(args.source_fps)
+        source_fps_src = PROVENANCE_CALLER
+    if args.capture_fps is None:
+        capture_fps = DEFAULT_ASSUMED_CAPTURE_FPS
+        capture_fps_src = PROVENANCE_DEFAULT_ASSUMED
+    else:
+        capture_fps = float(args.capture_fps)
+        capture_fps_src = PROVENANCE_CALLER
+
     report = score_burst(
         frames,
         warmup_skip=args.warmup_skip,
         min_reads=args.min_reads,
-        source_fps=args.source_fps,
-        capture_fps=args.capture_fps,
+        source_fps=source_fps,
+        capture_fps=capture_fps,
+        source_fps_src=source_fps_src,
+        capture_fps_src=capture_fps_src,
         progress=args.progress,
     )
     report["src"] = src_label
