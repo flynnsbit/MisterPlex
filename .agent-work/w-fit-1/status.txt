@@ -2,7 +2,7 @@
 # Updated: 2026-07-31 (lane w-fit)
 
 BRANCH=w-fit-integ-c5382bee-dequant-swap
-SHA=5e0b43a0fd758c3ac12209edb48380a216441bdd
+SHA=825d205d547ea13716ac5d7c4d442f80b563d0ee  # ledger code tip; docs trail
 WORKTREE=/home/flynnsbit/Projects/MisterPlex/.worktrees/w-fit-integ
 BASE_WORKING_PAIR=c5382bee + edc3a46b
 NO_FIT_REQUESTED=1
