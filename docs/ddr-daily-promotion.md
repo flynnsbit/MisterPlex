@@ -423,8 +423,8 @@ is the complete proof. Recoverability over SSH is required.
 ssh root@$MISTER_HOST 'md5sum /media/fat/_Utility/Plex.rbf /media/fat/_Utility/Plex_v2.rbf \
   /media/fat/misterplex_v2/bin/misterplexd \
   /media/fat/misterplex_v2/bin/misterplexd_supervise.sh; \
-  grep -n misterplex /media/fat/linux/_user-startup.sh; \
-  cp -a /media/fat/linux/_user-startup.sh /media/fat/linux/_user-startup.sh.bak.pre-reboot'
+  grep -n misterplex /media/fat/linux/user-startup.sh; \
+  cp -a /media/fat/linux/user-startup.sh /media/fat/linux/user-startup.sh.bak.pre-reboot'
 # PASS: single line with misterplex_v2/bin/misterplexd_supervise.sh
 # PASS: daemon md5 edc3a46b9d1c… ; Plex_v2 still dfebf2bf
 # ABORT if hook has misterplex/bin (v1) or multiple supervise lines
@@ -450,7 +450,7 @@ pre=$(for d in /proc/[0-9]*; do
 done | wc -l)
 echo pre_hook_n_daemon=$pre
 # run hook (same as boot)
-bash /media/fat/linux/_user-startup.sh
+bash /media/fat/linux/user-startup.sh
 sleep 5
 # count via /proc/exe ONLY
 post=0; pid=""; md5=""; cmd=""
@@ -479,7 +479,7 @@ EOS
 ssh root@$HOST 'bash -s' <<'EOS'
 set +e
 echo "=== hook lines ==="
-grep -n misterplex /media/fat/linux/_user-startup.sh
+grep -n misterplex /media/fat/linux/user-startup.sh
 echo "=== n_daemon via exe ==="
 n=0
 for d in /proc/[0-9]*; do
@@ -505,8 +505,8 @@ chevron on HDMI (viewed pixels).
 # 1) stop everything
 ssh root@$HOST 'pkill -f misterplexd_supervise; pkill -x misterplexd; sleep 1'
 # 2) restore hook bak if needed
-ssh root@$HOST 'cp -a /media/fat/linux/_user-startup.sh.bak.pre-reboot \
-  /media/fat/linux/_user-startup.sh'
+ssh root@$HOST 'cp -a /media/fat/linux/user-startup.sh.bak.pre-reboot \
+  /media/fat/linux/user-startup.sh'
 # 3) atomic SPI or DDR pair restore from lab host
 PAIR_ID=ddr-c5382bee PAIR_IDLE_PNG=… scripts/rollback_v2.sh restore
 # or SPI:
@@ -521,7 +521,7 @@ If SSH is dead: serial console / physical SD — restore
 
 ```bash
 # FAILS when hook root != live daemon root
-PROMOTE_HOOK_BLOB=<(ssh root@$HOST cat /media/fat/linux/_user-startup.sh) \
+PROMOTE_HOOK_BLOB=<(ssh root@$HOST cat /media/fat/linux/user-startup.sh) \
   scripts/promotion_gate_check.sh verify-live
 # or after pair restore: verify includes boot-hook gate automatically
 ```

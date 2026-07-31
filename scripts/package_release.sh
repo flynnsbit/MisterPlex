@@ -172,7 +172,7 @@ Install on MiSTer SD
   /media/fat/misterplex/bin/misterplexd
   /media/fat/misterplex/bin/ffmpeg        # bundled static armhf FFmpeg (GPLv3)
   /media/fat/misterplex/misterplex.conf   # copy from conf example; set PLEX_* / DECODE / PRESENT
-  /media/fat/linux/_user-startup.sh      # start daemon (see scripts/deploy_misterplexd.sh)
+  /media/fat/linux/user-startup.sh      # start daemon (see scripts/deploy_misterplexd.sh)
   /media/fat/_Utility/Plex.rbf           # verified v0.3.0 core; md5 41adb98c7a630b541091c22ce291be68
 
 Configure Plex server and credentials
@@ -188,7 +188,7 @@ Configure Plex server and credentials
 
 Start on boot
 -------------
-  Append this to /media/fat/linux/_user-startup.sh:
+  Append this to /media/fat/linux/user-startup.sh:
 
     /media/fat/misterplex/bin/misterplexd \\
       --name MiSTerPlex --id misterplex --port 3005 \\

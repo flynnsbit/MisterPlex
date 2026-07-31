@@ -349,8 +349,11 @@ verify_live() {
         rc=3
       fi
     elif [ "${PROMOTE_REQUIRE_CONF_KEYS:-1}" = "1" ] && [ "${PROMOTE_CONF_PROFILE:-ddr}" = "ddr" ]; then
-      echo "NOTE conf-keys not injected — parent must verify DDR_YUV_FORCE_SCALE=1 FFMPEG_SWS_FLAGS=fast_bilinear on device"
-      echo "     (set PROMOTE_CONF_BLOB or PROMOTE_CONF_PATH for hard gate)"
+      # Parent 2026-07-31: a NOTE that never touches rc is a check that cannot fail.
+      echo "FAIL conf-keys not injected — cannot verify DDR_YUV_FORCE_SCALE=1 FFMPEG_SWS_FLAGS=fast_bilinear"
+      echo "     set PROMOTE_CONF_BLOB or PROMOTE_CONF_PATH (live conf content) for hard gate"
+      echo "     or PROMOTE_REQUIRE_CONF_KEYS=0 only for explicit host unit inject"
+      rc=3
     fi
   fi
 
@@ -383,46 +386,54 @@ verify_live() {
     fi
   fi
 
-  # Boot hook must match live pair root (parent cold-boot defect 2026-07-31).
+  # Boot hook must match live pair root.
+  # LIVE path = /media/fat/linux/user-startup.sh (S99user USER_SCRIPT).
+  # Underscore _user-startup.sh is DECOY — never executed (parent 2026-07-31).
   if [ "${PROMOTE_SKIP_BOOT_HOOK:-0}" != "1" ]; then
     hook_body=""
+    decoy_body="${PROMOTE_HOOK_DECOY_BODY:-}"
     if [ -n "${PROMOTE_HOOK_BLOB:-}" ] && [ -f "${PROMOTE_HOOK_BLOB}" ]; then
       hook_body=$(cat "$PROMOTE_HOOK_BLOB")
     elif [ -n "${PROMOTE_GATE_BLOB:-}" ]; then
-      # optional HOOK_BODY=... multiline not in blob; allow PROMOTE_HOOK_BODY env
       hook_body="${PROMOTE_HOOK_BODY:-}"
+    fi
+    if [ -z "$decoy_body" ] && [ -n "${PROMOTE_HOOK_DECOY_BLOB:-}" ] && [ -f "${PROMOTE_HOOK_DECOY_BLOB}" ]; then
+      decoy_body=$(cat "$PROMOTE_HOOK_DECOY_BLOB")
     fi
     if [ -z "$hook_body" ] && [ -z "${PROMOTE_GATE_BLOB:-}" ]; then
       set +e
-      hook_body=$(run_ssh "if [ -f /media/fat/linux/_user-startup.sh ]; then cat /media/fat/linux/_user-startup.sh; else echo MISSING; fi")
+      hook_body=$(run_ssh "if [ -f /media/fat/linux/user-startup.sh ]; then cat /media/fat/linux/user-startup.sh; else echo MISSING; fi")
       hrc=$?
       set -e
       if [ "$hrc" -eq 5 ]; then echo "true rc=5"; return 5; fi
+      set +e
+      decoy_body=$(run_ssh "if [ -f /media/fat/linux/_user-startup.sh ]; then cat /media/fat/linux/_user-startup.sh; else echo MISSING; fi")
+      set -e
     fi
     expect_root="${PROMOTE_BOOT_ROOT:-$BOOT_HOOK_DEFAULT_ROOT}"
     if [ -n "$root" ]; then expect_root="$root"; fi
     if [ -z "$hook_body" ] || [ "$hook_body" = "MISSING" ]; then
-      # Unit inject path: PROMOTE_GATE_BLOB without PROMOTE_HOOK_* → NOTE only.
-      # Live device (no gate blob): default REQUIRE=1 fails closed.
       if [ -n "${PROMOTE_GATE_BLOB:-}" ] && [ -z "${PROMOTE_HOOK_BLOB:-}" ] && [ -z "${PROMOTE_HOOK_BODY:-}" ] \
          && [ "${PROMOTE_REQUIRE_BOOT_HOOK:-0}" != "1" ]; then
-        echo "NOTE boot-hook not in gate blob — set PROMOTE_HOOK_BLOB for cold-boot gate"
+        echo "FAIL boot-hook not in gate blob — LIVE user-startup.sh unproven (set PROMOTE_HOOK_BLOB)"
+        echo "     (underscore _user-startup.sh is DECOY — not executed by S99user)"
+        rc=3
       elif [ "${PROMOTE_REQUIRE_BOOT_HOOK:-1}" = "1" ]; then
-        echo "FAIL boot-hook missing or not injected (cold-boot path unproven)"
+        echo "FAIL boot-hook LIVE missing path=/media/fat/linux/user-startup.sh (cold-boot unproven)"
         rc=3
       else
-        echo "NOTE boot-hook not checked"
+        echo "NOTE boot-hook not checked (PROMOTE_REQUIRE_BOOT_HOOK=0)"
       fi
     else
       set +e
-      boot_hook_check_body "$hook_body" "$expect_root"
+      boot_hook_check_live_and_decoy "$hook_body" "${decoy_body:-}" "$expect_root"
       hrc=$?
       set -e
       if [ "$hrc" -ne 0 ]; then
-        echo "FAIL boot-hook vs pair root expect=$expect_root"
+        echo "FAIL boot-hook LIVE vs pair root expect=$expect_root path=$BOOT_HOOK_DEVICE_PATH"
         rc=3
       else
-        echo "OK boot-hook matches root=$expect_root"
+        echo "OK boot-hook LIVE matches root=$expect_root path=$BOOT_HOOK_DEVICE_PATH"
         if [ -n "$root" ] && [ "$root" != "$expect_root" ]; then
           echo "FAIL live-root $root != boot expect $expect_root"
           rc=3
@@ -432,50 +443,87 @@ verify_live() {
   fi
 
   # Visual is HARD for claim success and ALWAYS RUNS (aggregate, never fail-fast-skip).
-  # Parent 2026-07-31: skipping visual because an earlier check failed loses the only
-  # evidence that can confirm the running bitstream (CORENAME is always "Plex").
-  # Prefer PROMOTE_VISUAL_CMD; else idle PNG; else PROMOTE_MOTION_CMD / capture dir.
-  # motion rc=77 UNSCORED is HARD FAIL (never soft).
+  # Parent 2026-07-31 INSTANCE 2 — UNREACHABLE BRANCH:
+  #   motion sat in `elif` after idle; with idle PNG present the idle branch always
+  #   won and motion was dead code. First PROMOTE_GATES_OK never played a frame.
+  # Fix: run EVERY requested visual check (not exclusive elif). Motion is never
+  # shadowed by idle. PROMOTE_REQUIRE_MOTION=1 forces motion even if idle passes.
   vrc=8
   prior_rc=$rc
   motion_cmd="${PROMOTE_MOTION_CMD:-}"
   if [ -z "$motion_cmd" ] && [ -n "${PROMOTE_MOTION_CAPTURE_DIR:-}" ]; then
     motion_cmd="python3 $(printf '%q' "$ROOT/tools/hdmi_motion_instrument.py") $(printf '%q' "$PROMOTE_MOTION_CAPTURE_DIR")"
   fi
+  auto_cap="${PROMOTE_AUTO_CAPTURE:-0}"
+  ran_any=0
+  vrc_agg=0
+
   if [ -n "${PROMOTE_VISUAL_CMD:-}" ]; then
     set +e
     # shellcheck disable=SC2086
     eval $PROMOTE_VISUAL_CMD
-    vrc=$?
+    vr=$?
     set -e
-    echo "visual_hook true rc=$vrc"
-  elif [ -n "${PAIR_IDLE_PNG:-}" ] || [ -n "${PAIR_CAPTURE_CMD:-}" ] || [ "${PROMOTE_VISUAL_IDLE:-0}" = "1" ]; then
-    set +e
-    "$ROOT/scripts/pair_visual_gate.sh" idle
-    vrc=$?
-    set -e
-    echo "visual_idle true rc=$vrc"
-  elif [ -n "$motion_cmd" ]; then
+    echo "visual_hook true rc=$vr"
+    ran_any=1
+    [ "$vr" -ne 0 ] && vrc_agg=8
+  fi
+
+  # MOTION runs whenever requested — never elif-behind idle.
+  if [ -n "$motion_cmd" ]; then
     set +e
     # shellcheck disable=SC2086
     eval $motion_cmd
-    vrc=$?
+    vr=$?
     set -e
-    echo "motion_hook true rc=$vrc cmd=$motion_cmd"
-    if [ "$vrc" -eq 77 ]; then
+    echo "motion_hook true rc=$vr cmd=$motion_cmd"
+    ran_any=1
+    if [ "$vr" -eq 77 ]; then
       echo "FAIL motion UNSCORED rc=77 is HARD FAIL for promotion (not inconclusive)"
       echo "     (parent: broken green burst once reported VERDICT=UNSCORED despite GREEN_CAST_FAIL)"
-      vrc=8
-    elif [ "$vrc" -ne 0 ]; then
-      echo "FAIL motion instrument hard fail rc=$vrc (0=OK 1=FREEZE 2=COLOR_FAIL)"
-      vrc=8
+      vrc_agg=8
+    elif [ "$vr" -ne 0 ]; then
+      echo "FAIL motion instrument hard fail rc=$vr (0=OK 1=FREEZE 2=COLOR_FAIL)"
+      vrc_agg=8
     fi
-  else
+  elif [ "${PROMOTE_REQUIRE_MOTION:-0}" = "1" ]; then
+    echo "FAIL PROMOTE_REQUIRE_MOTION=1 but no PROMOTE_MOTION_CMD / PROMOTE_MOTION_CAPTURE_DIR"
+    ran_any=1
+    vrc_agg=8
+  fi
+
+  want_idle=0
+  if [ -n "${PAIR_IDLE_PNG:-}" ] || [ -n "${PAIR_CAPTURE_CMD:-}" ] || [ "${PROMOTE_VISUAL_IDLE:-0}" = "1" ]; then
+    want_idle=1
+  fi
+  # AUTO_CAPTURE only supplies idle when motion was NOT requested.
+  if [ "$auto_cap" = "1" ] && [ -z "$motion_cmd" ] && [ "$want_idle" -eq 0 ]; then
+    if [ -e /dev/video0 ]; then
+      want_idle=1
+      export PAIR_CAPTURE_CMD="${PAIR_CAPTURE_CMD:-$ROOT/scripts/capture_hdmi_frame.sh $ROOT/build/pair-visual/auto-idle.png}"
+      export PAIR_CAPTURE_OUT="${PAIR_CAPTURE_OUT:-$ROOT/build/pair-visual/auto-idle.png}"
+      echo "NOTE PROMOTE_AUTO_CAPTURE=1 → idle capture via capture_hdmi_frame (warm-up)"
+    fi
+  fi
+  if [ "$want_idle" -eq 1 ]; then
+    set +e
+    "$ROOT/scripts/pair_visual_gate.sh" idle
+    vr=$?
+    set -e
+    echo "visual_idle true rc=$vr"
+    ran_any=1
+    [ "$vr" -ne 0 ] && vrc_agg=8
+  fi
+
+  if [ "$ran_any" -eq 0 ]; then
     echo "VISUAL_REQUIRED: unset PROMOTE_VISUAL_CMD / PAIR_IDLE_PNG / PROMOTE_MOTION_CMD / PROMOTE_MOTION_CAPTURE_DIR"
     echo "  Telemetry-only is insufficient (green screen still returns /resources 200)."
     echo "  Playback: PROMOTE_MOTION_CAPTURE_DIR=/path/to/pngs  (tools/hdmi_motion_instrument.py)"
     echo "  Idle:     PAIR_IDLE_PNG=/path/idle.png            (pair_visual_gate.sh)"
+    echo "  Do NOT rely on PROMOTE_AUTO_CAPTURE alone for promote claim of motion."
     vrc=8
+  else
+    vrc=$vrc_agg
   fi
   if [ "$vrc" -eq 0 ]; then
     echo "OK visual-or-motion-gate"
@@ -486,7 +534,6 @@ verify_live() {
     echo "FAIL visual/motion gate rc=$vrc (hard — cannot claim pair success)"
     if [ "$prior_rc" -ne 0 ]; then
       echo "NOTE visual also failed; keeping earlier rc=$prior_rc (not overwriting with visual-only 8)"
-      # keep prior_rc (telemetry/boot more specific); visual failure still reported
       rc=$prior_rc
     else
       rc=8

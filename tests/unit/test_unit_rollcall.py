@@ -176,6 +176,8 @@ EXPECTED_COMMANDS = [
     "$(ROOT)/tests/unit/test_deploy_misterplexd.sh",
     "$(ROOT)/tests/unit/test_promotion_gates.sh",
     "python3 $(ROOT)/tests/unit/test_harness_capture_integrity.py",
+    "$(ROOT)/tests/unit/test_live_object_integrity.sh",
+    "python3 $(ROOT)/tests/unit/test_live_object_static_guard.py",
     "$(ROOT)/tests/unit/test_timing_margin_gate.sh",
     "$(ROOT)/tests/unit/test_release_rbf_hash.sh",
     "$(ROOT)/tests/unit/test_sdram_startup_verilator.sh",

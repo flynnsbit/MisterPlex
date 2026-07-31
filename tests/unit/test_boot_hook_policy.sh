@@ -158,7 +158,7 @@ set -e
 echo "$out" | sed 's/^/  [gate] /' | tail -20
 echo "  [gate] true rc=$rc"
 [ "$rc" -ne 0 ] && ok "gate-v1-hook-fail" || bad "gate-v1-hook-fail should not pass"
-echo "$out" | grep -qi 'boot-hook' && ok "gate-boot-msg" || bad "gate-boot-msg"
+echo "$out" | grep -qiE 'boot-hook|BOOT_HOOK' && ok "gate-boot-msg" || bad "gate-boot-msg"
 
 echo "=== promotion gate GREEN with matching v2 hook ==="
 printf '%s\n' "$good" >"$WORK/good.hook"

@@ -481,7 +481,7 @@ if [[ "${DEPLOY_SKIP_BOOT_HOOK:-0}" != "1" ]]; then
     mkdir -p \"\$root/bin\"
     mv -f /tmp/misterplexd_supervise.deploy.$$ \"\$root/bin/misterplexd_supervise.sh\"
     chmod +x \"\$root/bin/misterplexd_supervise.sh\"
-    hook=/media/fat/linux/_user-startup.sh
+    hook=/media/fat/linux/user-startup.sh
     mkdir -p /media/fat/linux
     touch \"\$hook\"
     bak=\${hook}.bak.\$(date -u +%Y%m%dT%H%M%SZ)

@@ -12,6 +12,14 @@ PLEXCTL="$ROOT/scripts/plexctl.sh"
 
 rm -rf "$WORK"
 mkdir -p "$WORK"
+cat >"$WORK/conf_ddr.txt" <<'CONF'
+DECODE=320x240
+PRESENT=fpga
+DDR_YUV_FORCE_SCALE=1
+FFMPEG_SWS_FLAGS=fast_bilinear
+CONF
+printf '%s\n' 'nohup /media/fat/misterplex_v2/bin/misterplexd_supervise.sh >>/media/fat/misterplex_v2/misterplexd_supervise.log 2>&1 &' >"$WORK/good.hook"
+export PROMOTE_HOOK_BLOB="${PROMOTE_HOOK_BLOB:-$WORK/good.hook}"
 chmod +x "$POLICY" "$GATES" "$PROMOTE" "$PLEXCTL" \
   "$ROOT/scripts/rollback_v2.sh" \
   "$ROOT/scripts/deploy_misterplexd.sh" 2>/dev/null || true
@@ -26,6 +34,10 @@ pass=0
 fail=0
 ok() { echo "PASS $1"; pass=$((pass + 1)); }
 bad() { echo "FAIL $1" >&2; fail=$((fail + 1)); }
+
+# Default conf inject for verify-live (conf-keys fail-closed). Override per-test.
+export PROMOTE_CONF_BLOB="${PROMOTE_CONF_BLOB:-$WORK/conf_ddr.txt}"
+export PROMOTE_CONF_PROFILE="${PROMOTE_CONF_PROFILE:-ddr}"
 
 # --- policy -----------------------------------------------------------------
 

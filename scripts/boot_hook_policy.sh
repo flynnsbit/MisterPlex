@@ -1,23 +1,33 @@
 #!/usr/bin/env bash
-# boot_hook_policy.sh — pure policy for MiSTer _user-startup.sh + pair root.
+# boot_hook_policy.sh — pure policy for the MiSTer boot hook the init system RUNS.
 #
-# Parent 2026-07-31 measured cold-boot defect:
-#   hook pointed at v1 /media/fat/misterplex/bin/misterplexd_supervise.sh
-#   with stale daemon 54f1d916 and untuned conf, while live validated pair
-#   was misterplex_v2 + edc3a46b. /tmp/plexctl_supervise.sh does not survive reboot.
+# LIVE path (parent HW 2026-07-31 INSTANCE 1 — THE DECOY FILE):
+#   /etc/init.d/S99user sets USER_SCRIPT="/media/fat/linux/user-startup.sh"
+#   That path (NO leading underscore) is what the system actually executes.
+#   /media/fat/linux/_user-startup.sh (leading underscore) is a DECOY — never
+#   executed by S99user. Gating BOOT_HOOK_OK on the decoy while the live file
+#   still pointed at v1 + stale pre-PLXD daemon 54f1d916 produced a green gate
+#   on a broken boot.
 #
-# Idempotence trap: grepping only 'misterplex/bin/misterplexd' does NOT match
-# 'misterplex_v2/bin/misterplexd', so v1+v2 lines can coexist → TWO daemons
-# both binding :3005 and driving DDR banks.
+# Always resolve BOOT_HOOK_DEVICE_PATH → user-startup.sh (no underscore).
+# When both files exist, check LIVE body; if decoy diverges, FAIL decoy class.
+#
+# Other cold-boot defects:
+#   hook pointed at v1 while live pair is misterplex_v2 + edc3a46b
+#   grepping only misterplex/bin/misterplexd misses misterplex_v2 → double daemon
 #
 # Source or run:
 #   source scripts/boot_hook_policy.sh
 #   boot_hook_check_body <hook_text> <expect_root>
+#   boot_hook_check_live_and_decoy <live_body> <decoy_body|empty> <expect_root>
 #   boot_hook_render_body <expect_root> <old_hook_text>
 #
 # Exit codes: 0 OK, 1 mismatch/refuse, 3 bad args
 
-BOOT_HOOK_DEVICE_PATH="${BOOT_HOOK_DEVICE_PATH:-/media/fat/linux/_user-startup.sh}"
+# REAL file executed by S99user (no underscore).
+BOOT_HOOK_DEVICE_PATH="${BOOT_HOOK_DEVICE_PATH:-/media/fat/linux/user-startup.sh}"
+# Decoy — never executed; gates must not treat this as success alone.
+BOOT_HOOK_DECOY_PATH="${BOOT_HOOK_DECOY_PATH:-/media/fat/linux/_user-startup.sh}"
 BOOT_HOOK_V1_ROOT="${BOOT_HOOK_V1_ROOT:-/media/fat/misterplex}"
 BOOT_HOOK_V2_ROOT="${BOOT_HOOK_V2_ROOT:-/media/fat/misterplex_v2}"
 # Default daily-driver pair root (DDR + SPI hybrid on this lab both use v2).
@@ -127,6 +137,53 @@ boot_hook_check_body() {
   return 0
 }
 
+# Compare LIVE body (must pass) vs optional DECOY body.
+# Decoy-only green while live is bad → BOOT_HOOK_FAIL reason=decoy_not_live.
+boot_hook_check_live_and_decoy() {
+  local live="${1:-}" decoy="${2:-}" expect="${3:-$BOOT_HOOK_DEFAULT_ROOT}"
+  local rc=0 out
+  echo "BOOT_HOOK_LIVE_PATH=$BOOT_HOOK_DEVICE_PATH"
+  echo "BOOT_HOOK_DECOY_PATH=$BOOT_HOOK_DECOY_PATH"
+  if [ -z "$live" ] || [ "$live" = "MISSING" ]; then
+    echo "BOOT_HOOK_FAIL reason=live_user_startup_missing path=$BOOT_HOOK_DEVICE_PATH"
+    echo "BOOT_HOOK_FAIL detail=S99user_USER_SCRIPT_points_here_not_underscore_decoy"
+    return 1
+  fi
+  set +e
+  out=$(boot_hook_check_body "$live" "$expect")
+  rc=$?
+  set -e
+  printf '%s\n' "$out"
+  if [ "$rc" -ne 0 ]; then
+    # If decoy alone would pass, call out the decoy class explicitly.
+    if [ -n "$decoy" ] && [ "$decoy" != "MISSING" ]; then
+      set +e
+      boot_hook_check_body "$decoy" "$expect" >/dev/null 2>&1
+      drc=$?
+      set -e
+      if [ "$drc" -eq 0 ]; then
+        echo "BOOT_HOOK_FAIL reason=decoy_ok_live_bad"
+        echo "BOOT_HOOK_FAIL detail=underscore__user-startup.sh_is_not_executed_by_S99user"
+      fi
+    fi
+    return 1
+  fi
+  # Live OK — still refuse if decoy diverges in a way that confuses operators.
+  if [ -n "$decoy" ] && [ "$decoy" != "MISSING" ] && [ "$decoy" != "$live" ]; then
+    set +e
+    boot_hook_check_body "$decoy" "$expect" >/dev/null 2>&1
+    drc=$?
+    set -e
+    if [ "$drc" -ne 0 ]; then
+      echo "BOOT_HOOK_NOTE decoy_diverges path=$BOOT_HOOK_DECOY_PATH (live OK; decoy not executed)"
+    else
+      echo "BOOT_HOOK_NOTE decoy_also_ok path=$BOOT_HOOK_DECOY_PATH (not executed; live is authority)"
+    fi
+  fi
+  echo "BOOT_HOOK_LIVE_OK path=$BOOT_HOOK_DEVICE_PATH expect_root=$expect"
+  return 0
+}
+
 # Render new hook body: strip all MiSTerPlex autostart lines, append exactly one.
 boot_hook_render_body() {
   local expect="${1:-$BOOT_HOOK_DEFAULT_ROOT}" old="${2:-}" line
@@ -183,6 +240,19 @@ if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
       echo "true rc=$rc"
       exit "$rc"
       ;;
+    check-live-decoy)
+      live="${2:-}"
+      decoy="${3:-}"
+      expect="${4:-$BOOT_HOOK_DEFAULT_ROOT}"
+      if [ -f "$live" ]; then live=$(cat "$live"); fi
+      if [ -f "$decoy" ]; then decoy=$(cat "$decoy"); fi
+      set +e
+      boot_hook_check_live_and_decoy "$live" "$decoy" "$expect"
+      rc=$?
+      set -e
+      echo "true rc=$rc"
+      exit "$rc"
+      ;;
     render)
       expect="${2:-$BOOT_HOOK_DEFAULT_ROOT}"
       old="${3:-}"
@@ -196,7 +266,7 @@ if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
       exit 0
       ;;
     *)
-      echo "usage: $0 {check|render|line} ..." >&2
+      echo "usage: $0 {check|check-live-decoy|render|line} ..." >&2
       echo "true rc=9"
       exit 9
       ;;

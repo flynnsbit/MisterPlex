@@ -127,6 +127,34 @@ if mean_g > mean_r + 40 and mean_g > mean_b + 40 and mean >= 90:
 if mean < mn or mean > mx:
     print(f"FAIL class=idle_mean_out_of_range want=[{mn},{mx}]")
     sys.exit(8)
+# MENU / color-bar class (parent postboot.png CORENAME=MENU):
+# horizontal stripes → each row nearly uniform, row-means vary a lot.
+# Correct Plex idle (orange chevron on dark) has 2D structure, not pure bands.
+w, h = im.size
+arr = list(im.getdata())
+# rebuild row luma means + within-row std
+import statistics
+row_means = []
+row_stds = []
+for y in range(h):
+    ys = []
+    for x in range(w):
+        r, g, b = arr[y * w + x]
+        ys.append(0.299 * r + 0.587 * g + 0.114 * b)
+    row_means.append(sum(ys) / len(ys))
+    if len(ys) > 1:
+        mu = row_means[-1]
+        row_stds.append((sum((v - mu) ** 2 for v in ys) / len(ys)) ** 0.5)
+    else:
+        row_stds.append(0.0)
+mean_row_std = sum(row_stds) / max(1, len(row_stds))
+row_mean_spread = (sum((v - mean) ** 2 for v in row_means) / max(1, len(row_means))) ** 0.5
+print(f"mean_within_row_std={mean_row_std:.2f}")
+print(f"row_mean_spread={row_mean_spread:.2f}")
+# Color bars: very low horizontal structure, high vertical banding.
+if mean_row_std < 12.0 and row_mean_spread > 18.0:
+    print("FAIL class=menu_color_bars (horizontal stripes — CORENAME=MENU class, not Plex idle)")
+    sys.exit(8)
 print("OK class=idle_envelope")
 sys.exit(0)
 PY

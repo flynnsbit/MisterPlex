@@ -574,7 +574,7 @@ EOF
 }
 
 
-# Install durable supervisor + rewrite _user-startup.sh for PAIR_BOOT_ROOT.
+# Install durable supervisor + rewrite LIVE user-startup.sh for PAIR_BOOT_ROOT.
 # Fourth half of the atomic pair (core, daemon, conf, BOOT).
 install_pair_boot_path() {
   local root="${1:-$PAIR_BOOT_ROOT}" hook_body rendered host_tmp staged rc bak_ts
@@ -904,7 +904,7 @@ restore_and_verify() {
     fi
   fi
 
-  # Boot path (supervisor + _user-startup.sh) — parent cold-boot defect class.
+  # Boot path (supervisor + LIVE user-startup.sh) — parent cold-boot defect class.
   if [ "${ROLLBACK_SKIP_BOOT:-0}" != "1" ]; then
     set +e
     install_pair_boot_path "$PAIR_BOOT_ROOT"
@@ -960,8 +960,8 @@ Sequence (all-or-nothing; abort leaves prior half uncommitted when possible):
   1) STOP daemon (avoid ETXTBSY on cp over running binary)
   2) install daemon bytes if disk pin wrong (from host pin or on-device .bak)
   3) apply conf profile ($PAIR_CONF_PROFILE) atomically with backup
-  3b) install $PAIR_BOOT_ROOT/bin/misterplexd_supervise.sh + rewrite _user-startup.sh
-      (strip ALL misterplex autostart lines both roots; append exactly one v2 line)
+  3b) install $PAIR_BOOT_ROOT/bin/misterplexd_supervise.sh + rewrite LIVE user-startup.sh
+      (S99user USER_SCRIPT; underscore _user-startup.sh is DECOY — never executed)
   4) ONE menu bounce → load $PAIR_CORE_PATH
   5) start exactly one daemon; verify n_daemon==1 via /proc/exe md5
   6) boot-hook gate: hook root == live root (FAIL if v1 hook + v2 live)

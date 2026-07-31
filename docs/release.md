@@ -22,7 +22,7 @@ Typical tarball `dist/misterplex-<git-desc>.tar.gz` expands to `misterplex-<git-
 ```text
 /media/fat/misterplex/bin/misterplexd
 /media/fat/misterplex/misterplex.conf          # copy from example; edit keys
-/media/fat/linux/_user-startup.sh             # start daemon on boot
+/media/fat/linux/user-startup.sh             # start daemon on boot
 /media/fat/_Utility/Plex.rbf                  # lab canonical (deploy_plex_core.sh / HW tests)
 # alternate OSD paths: /media/fat/_Arcade/Plex.rbf or games/Plex/Plex.rbf
 ```

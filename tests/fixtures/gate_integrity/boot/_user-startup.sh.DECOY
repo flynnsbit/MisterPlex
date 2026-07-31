@@ -1,0 +1,2 @@
+# DECOY underscore file — NEVER executed by S99user, but gates were reading it.
+nohup /media/fat/misterplex_v2/bin/misterplexd_supervise.sh >>/media/fat/misterplex_v2/misterplexd_supervise.log 2>&1 &
