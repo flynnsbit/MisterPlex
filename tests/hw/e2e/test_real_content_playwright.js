@@ -21,7 +21,13 @@ const path = require('path');
 const { spawnSync } = require('child_process');
 const { loadConfig, daemonBase, redact, ROOT, parentConfCommands, normalizeDecode } =
   require('./conf');
-const { discoverRealTitle, geometryChain, isFixtureMeta, mediaInfo } = require('./discover_real');
+const {
+  discoverRealTitle,
+  geometryChain,
+  isFixtureMeta,
+  isBankGeometry,
+  mediaInfo,
+} = require('./discover_real');
 
 const EXIT_PASS = 0;
 const EXIT_FAIL = 1;
@@ -231,6 +237,21 @@ async function resolveExplicitRealItem(ratingKey) {
     );
   }
   const mi = mediaInfo(m);
+  const allowBank = /^(1|true|yes|on)$/i.test(String(process.env.E2E_REAL_ALLOW_BANK_GEOM || ''));
+  if (!allowBank && isBankGeometry(mi.width, mi.height)) {
+    fail(
+      'real_content_bank_geometry',
+      `ratingKey=${rk} title=${JSON.stringify(m.title)} library_media=${mi.width}x${mi.height} ` +
+        'is bank-sized (320x240 or 624x480). P7 requires non-bank geometry so scale/AR paths run. ' +
+        'Override only with E2E_REAL_ALLOW_BANK_GEOM=1.'
+    );
+  }
+  if (!allowBank && (!mi.width || !mi.height)) {
+    fail(
+      'real_content_unknown_geometry',
+      `ratingKey=${rk} has no library_media width/height — cannot prove non-bank geometry.`
+    );
+  }
   return {
     ratingKey: rk,
     title: String(m.title || ''),
@@ -481,7 +502,116 @@ function parentHdmiCaptureCmd(dir) {
   );
 }
 
-function printParentRecipe(item, geom, correlationId, holdSec) {
+function sessionWallThresholdMs() {
+  const v = parseInt(process.env.E2E_SESSION_WALL_MS || process.env.E2E_SESSION_TIME_MS || '3000', 10);
+  return Number.isFinite(v) && v > 0 ? v : 3000;
+}
+
+/**
+ * Wait until daemon session is established enough for a non-idle capture.
+ * Uses timeline time (proxy for wall_s without SSH). Failures are RED, not skip.
+ */
+async function waitSessionEstablished(thresholdMs, timeoutSec) {
+  const deadline = Date.now() + Math.max(5, timeoutSec) * 1000;
+  let maxT = 0;
+  let playingHits = 0;
+  let lastState = '';
+  while (Date.now() < deadline) {
+    const xml = await pollDaemonTimeline(nextSuiteCmd());
+    const state = xmlAttr(xml, 'state') || '';
+    const t = parseInt(xmlAttr(xml, 'time') || '-1', 10);
+    lastState = state;
+    if (state === 'playing') playingHits++;
+    if (t > maxT) maxT = t;
+    log(
+      `  session_probe state=${state || '?'} time=${xmlAttr(xml, 'time') || '?'} ` +
+        `threshold_ms=${thresholdMs} max_t=${maxT}`
+    );
+    if (state === 'playing' && t >= thresholdMs) {
+      return { ok: true, timeMs: t, playingHits, maxT, state };
+    }
+    await sleep(1000);
+  }
+  return { ok: false, timeMs: maxT, playingHits, maxT, state: lastState };
+}
+
+/** Parse parent-provided daemon log for DELIVERED_GEOM / Stream banners / GEOM. */
+function parseDeliveredFromLogText(text, correlationId, ratingKey) {
+  const lines = String(text || '').split(/\r?\n/);
+  const hits = {
+    delivered: null,
+    geom: null,
+    stream: null,
+    wall: null,
+    correlLines: [],
+  };
+  const delivRe = /DELIVERED_GEOM\s+stream=(\d+x\d+)/i;
+  const geomRe =
+    /GEOM\s+.*?(?:expected_delivery|library_media)=([0-9]+x[0-9]+|[a-zA-Z0-9_]+)/i;
+  const geomFullRe =
+    /(?:misterplexd: )?GEOM\s+(.+)/i;
+  const streamRe = /Stream\s+#0:0[^\n]*?(\d{2,5})x(\d{2,5})/i;
+  const wallRe = /wall_s=([0-9.]+)/i;
+  for (const line of lines) {
+    if (correlationId && line.includes(correlationId)) hits.correlLines.push(line.slice(0, 240));
+    if (ratingKey && line.includes(String(ratingKey)) && /GEOM|playMedia|DELIVERED/i.test(line)) {
+      hits.correlLines.push(line.slice(0, 240));
+    }
+    let m = line.match(delivRe);
+    if (m) hits.delivered = m[1];
+    m = line.match(streamRe);
+    if (m) hits.stream = `${m[1]}x${m[2]}`;
+    m = line.match(wallRe);
+    if (m) hits.wall = m[1];
+    if (geomFullRe.test(line)) hits.geom = line.trim().slice(0, 400);
+  }
+  return hits;
+}
+
+function resolveDeliveredGeometry(correlationId, ratingKey) {
+  // Priority: explicit env measurement > daemon log file parent cleared/copied.
+  const envGeom = String(process.env.E2E_DELIVERED_GEOM || '').trim();
+  if (envGeom) {
+    log(`DELIVERED_GEOM_SOURCE=env E2E_DELIVERED_GEOM=${envGeom}`);
+    return { ok: true, stream: envGeom, source: 'env' };
+  }
+  const logPath = process.env.E2E_DAEMON_LOG || process.env.E2E_DAEMON_LOG_SNIPPET || '';
+  if (logPath && fs.existsSync(logPath)) {
+    const text = fs.readFileSync(logPath, 'utf8');
+    const hits = parseDeliveredFromLogText(text, correlationId, ratingKey);
+    log(
+      `DELIVERED_GEOM_LOG path=${logPath} delivered=${hits.delivered || '-'} ` +
+        `stream=${hits.stream || '-'} wall_s=${hits.wall || '-'} correl_hits=${hits.correlLines.length}`
+    );
+    if (hits.geom) log(`DELIVERED_GEOM_LOG_GEOM_LINE ${hits.geom}`);
+    for (const c of hits.correlLines.slice(0, 5)) log(`  correl_line: ${c}`);
+    const stream = hits.delivered || hits.stream;
+    if (stream) return { ok: true, stream, source: 'daemon_log', hits };
+    return { ok: false, stream: '', source: 'daemon_log_empty', hits };
+  }
+  return { ok: false, stream: '', source: 'unprobed' };
+}
+
+function printParentLogClearRecipe(correlationId) {
+  log('──────── PARENT_LOG_CORRELATE (do before/while cast) ────────');
+  log(`CAST_CORRELATION_ID=${correlationId}`);
+  log('PARENT_LOG_CLEAR_CMD=# on MiSTer — clear BEFORE suite play so GEOM lines are ours:');
+  log('#   pid=$(pidof misterplexd | awk "{print \\$1}")');
+  log('#   conf=$(tr "\\0" " " < /proc/$pid/cmdline | sed -n "s/.*--conf[= ]\\([^ ]*\\).*/\\1/p")');
+  log('#   # Prefer truncating the live log the supervisor uses, e.g.:');
+  log('#   : > /media/fat/misterplex/misterplexd.log   # or journal path parent uses');
+  log('#   : > /media/usb0/misterplex-lab/logs/ffmpeg.err');
+  log('#   date -Is > /tmp/p7-cast-window-start.txt');
+  log('# After HOLD, copy log slice for suite assert:');
+  log('#   grep -E "GEOM|DELIVERED_GEOM|playMedia|wall_s" /path/to/misterplexd.log | tail -80 \\');
+  log('#     > /path/on/host/p7_daemon_snip.txt');
+  log('#   export E2E_DAEMON_LOG=/path/on/host/p7_daemon_snip.txt');
+  log('#   # or export E2E_DELIVERED_GEOM=1440x1080 after reading media: DELIVERED_GEOM stream=');
+  log('NOTE: user long-lived Plex Web tab may also cast — cleared log + correlation ID required.');
+  log('──────────────────────────────────────────────────────────');
+}
+
+function printParentRecipe(item, geom, correlationId, holdSec, session) {
   const capDir = path.join(String(cfg.hdmiCaptureDir).replace(/\/$/, ''), 'real_p7');
   log('──────── PARENT_RECIPE P7 real-content pixel gate ────────');
   log(`CAST_CORRELATION_ID=${correlationId}`);
@@ -489,17 +619,31 @@ function printParentRecipe(item, geom, correlationId, holdSec) {
   log(`CAST_RATING_KEY=${item.ratingKey}`);
   log(`CAST_LIBRARY_MEDIA=${geom.library_media}`);
   log(`CAST_EXPECT_DECODE_BANK=${geom.expect_decode_bank}`);
-  log(`CAST_EXPECTED_DELIVERY=${geom.expected_delivery}`);
+  log(`CAST_EXPECTED_DELIVERY=${geom.expected_delivery}  # REQUEST only — not measured`);
   log(`CAST_PATH_GUESS=${geom.path_guess}`);
   log(`CAST_ARM_RESCALE_EXPECTED=${geom.arm_rescale_expected}`);
-  log(`HOLD_SEC=${holdSec} — playback held for HDMI grab`);
+  log(
+    `SESSION_ESTABLISHED time_ms=${session.timeMs} playing_hits=${session.playingHits} ` +
+      `threshold_ms=${sessionWallThresholdMs()}`
+  );
+  log(`HOLD_SEC=${holdSec} — playback held for HDMI grab (session already established)`);
+  log(
+    'CAPTURE_GATE=ARMED — only capture NOW (not before session). ' +
+      'rc=77 UNSCORED from racing idle/pre-play is a parent process error, not a product pass.'
+  );
   log(`PARENT_HDMI_CAPTURE_CMD=${parentHdmiCaptureCmd(capDir)}`);
   log(
-    `PARENT_DAEMON_GEOM_GREP=# on MiSTer, after cast window — correlate by time + title/key:\n` +
-      `#   grep -E "GEOM|playMedia|${item.ratingKey}|library_media|expected_delivery" ` +
-      `/path/to/misterplexd.log | tail -40\n` +
-      `# Expect a media: GEOM line with expected_delivery≈${geom.expected_delivery} ` +
-      `decode_target=${geom.expect_decode_bank} shortly after CAST_CORRELATION_ID timestamp.`
+    `PARENT_HDMI_SCORE_CMD=python3 tools/hdmi_motion_instrument.py ${JSON.stringify(capDir)} ` +
+      `--warmup-skip ${cfg.hdmiWarmupSkip} --source-fps ${cfg.hdmiSourceFps} ` +
+      `--capture-fps ${cfg.hdmiCaptureFps} --json; echo "true rc=$?"`
+  );
+  log(
+    `PARENT_DAEMON_GEOM_GREP=# correlate ONLY lines after CAST window / cleared log:\n` +
+      `#   grep -E "GEOM|DELIVERED_GEOM|playMedia|${item.ratingKey}|wall_s" LIVE_LOG | tail -40\n` +
+      `# Expect soon after PLAY_ISSUED:\n` +
+      `#   misterplexd: GEOM ... library_media=${geom.library_media} ...\n` +
+      `#   media: DELIVERED_GEOM stream=WxH source=ffmpeg.err  (measured; requires daemon with -loglevel info)\n` +
+      `#   media: frames=... wall_s=>${(sessionWallThresholdMs() / 1000).toFixed(1)} ...`
   );
   log('FALSIFIABLE_PIXEL_CRITERIA (any one = FAIL):');
   log('  1. WRAP: left/right edges show mirrored or wrapped columns (horizontal wrap)');
@@ -512,7 +656,9 @@ function printParentRecipe(item, geom, correlationId, holdSec) {
   log(`  library_media=${geom.library_media} letterboxed/pillarboxed into the bank`);
   log(`  decode=${geom.expect_decode_bank} without wrap/dup/chroma fail signatures above.`);
   log('NOTE: tools/hdmi_motion_instrument.py counter MOTION_OK will not apply (no TREK overlay).');
-  log('  Use COLOR_FAIL/STRUCTURE_FAIL if you still score a burst; else eye + GEOM correlate.');
+  log('  COLOR_FAIL rc=2 / STRUCTURE_FAIL rc=3 / FREEZE rc=1 = hard FAIL.');
+  log('  rc=77 UNSCORED on real content = hard FAIL if this gate expected a scored burst');
+  log('  (idle/chevron race) — re-capture only after SESSION_ESTABLISHED.');
   log('──────────────────────────────────────────────────────────');
 }
 
@@ -639,6 +785,9 @@ async function probeDirectPlayDecision(item) {
 
   const correlationId = `p7-${Date.now()}-rk${item.ratingKey}`;
   log(`CAST_CORRELATION_ID=${correlationId} (mark daemon log window)`);
+  printParentLogClearRecipe(correlationId);
+  const tWallStart = Date.now();
+  log(`CAST_WINDOW_START_UNIX_MS=${tWallStart} iso=${new Date(tWallStart).toISOString()}`);
 
   const baseTl = await pollDaemonTimeline(nextSuiteCmd());
   const daemonUp = baseTl.includes('Timeline') || baseTl.includes('MediaContainer');
@@ -772,22 +921,95 @@ async function probeDirectPlayDecision(item) {
         `correlation=${correlationId}`
     );
 
-    printParentRecipe(item, geom, correlationId, holdSec);
+    // Gate capture on established session (timeline time ≥ threshold). Prevents
+    // parent HDMI grabs that race idle chevron / pre-play (rc=77 UNSCORED).
+    const thr = sessionWallThresholdMs();
+    const sessTimeout = Math.max(cfg.playWaitSec, 25);
+    log(`SESSION_GATE begin threshold_ms=${thr} timeout_s=${sessTimeout}`);
+    const session = await waitSessionEstablished(thr, sessTimeout);
+    if (!session.ok) {
+      await shot(page, 'real_fail_session_not_established');
+      fail(
+        'session_not_established',
+        `Daemon never reached playing with time>=${thr}ms ` +
+          `(max_t=${session.maxT} state=${session.state} playing_hits=${session.playingHits}). ` +
+          `Do NOT capture HDMI yet — would race idle. correlation=${correlationId}`
+      );
+    }
+    log(
+      `SESSION_ESTABLISHED time_ms=${session.timeMs} max_t=${session.maxT} ` +
+        `correlation=${correlationId}`
+    );
+
+    // Emit capture recipe ONLY after session is established.
+    printParentRecipe(item, geom, correlationId, holdSec, session);
+
+    // Optional: parent-fed delivered geometry (cleared log / E2E_DELIVERED_GEOM).
+    // expected_delivery is a REQUEST — assert measured when provided.
+    const requireDelivered = /^(1|true|yes|on)$/i.test(
+      String(process.env.E2E_REQUIRE_DELIVERED_GEOM || '0')
+    );
+    let delivered = resolveDeliveredGeometry(correlationId, item.ratingKey);
+    if (!delivered.ok && requireDelivered) {
+      fail(
+        'delivered_geom_unprobed',
+        'E2E_REQUIRE_DELIVERED_GEOM=1 but neither E2E_DELIVERED_GEOM nor a parseable ' +
+          'E2E_DAEMON_LOG with media: DELIVERED_GEOM / Stream #0:0 WxH was provided. ' +
+          'Clear log before cast, copy snip after PLAY, re-export path.'
+      );
+    }
+    if (delivered.ok) {
+      log(`DELIVERED_GEOM_MEASURED stream=${delivered.stream} source=${delivered.source}`);
+      log(
+        `GEOM_CHAIN_MEASURED library_media=${geom.library_media} ` +
+          `expected_delivery_request=${geom.expected_delivery} ` +
+          `delivered_stream=${delivered.stream} decode_bank=${geom.expect_decode_bank}`
+      );
+    } else {
+      log(
+        `DELIVERED_GEOM_PENDING source=${delivered.source} — parent should export ` +
+          `E2E_DELIVERED_GEOM or E2E_DAEMON_LOG after reading media: DELIVERED_GEOM ` +
+          `(daemon needs -loglevel info rebuild). Not a silent pass of delivery size.`
+      );
+    }
 
     // Hold for parent capture — do not open /dev/video0.
     log(`REAL_CONTENT_HOLD_BEGIN sec=${holdSec} correlation=${correlationId}`);
     const holdEnd = Date.now() + Math.max(5, holdSec) * 1000;
     while (Date.now() < holdEnd) {
       const xml = await pollDaemonTimeline(nextSuiteCmd());
+      const tHold = parseInt(xmlAttr(xml, 'time') || '-1', 10);
       log(
         `  hold state=${xmlAttr(xml, 'state') || '?'} time=${xmlAttr(xml, 'time') || '?'} ` +
           `correlation=${correlationId}`
       );
+      if (!delivered.ok) {
+        const again = resolveDeliveredGeometry(correlationId, item.ratingKey);
+        if (again.ok) {
+          delivered = again;
+          log(`DELIVERED_GEOM_MEASURED_LATE stream=${delivered.stream} source=${delivered.source}`);
+        }
+      }
+      if (xmlAttr(xml, 'state') !== 'playing' && tHold >= 0 && tHold < thr) {
+        log('WARN hold saw non-playing / low time — capture may race idle');
+      }
       await sleep(2000);
     }
     log(`REAL_CONTENT_HOLD_END correlation=${correlationId}`);
+    log(`CAST_WINDOW_END_UNIX_MS=${Date.now()} iso=${new Date().toISOString()}`);
 
-    // Optional: if parent already dropped PNGs, score color/structure only.
+    if (requireDelivered) {
+      delivered = resolveDeliveredGeometry(correlationId, item.ratingKey);
+      if (!delivered.ok) {
+        fail(
+          'delivered_geom_missing_after_hold',
+          'Session held but delivered geometry still unmeasured. ' +
+            'Deploy daemon with media -loglevel info + DELIVERED_GEOM, clear log, re-run.'
+        );
+      }
+    }
+
+    // Optional: parent dropped PNGs during HOLD. Real content: rc=77 is hard FAIL.
     if (cfg.hdmiMotion) {
       const capDir = path.join(String(cfg.hdmiCaptureDir).replace(/\/$/, ''), 'real_p7');
       const n = fs.existsSync(capDir)
@@ -820,19 +1042,30 @@ async function probeDirectPlayDecision(item) {
         if (rc === 3) fail('hdmi_motion_structure_fail', out.slice(-400));
         if (rc === 2) fail('hdmi_motion_color_fail', out.slice(-400));
         if (rc === 1) fail('hdmi_motion_freeze', out.slice(-400));
-        // rc=77 expected without counter — OK for real content if no color/structure fail
-        if (rc === 0) log('HDMI_MOTION_OK (unexpected counter on real title — still PASS)');
-        else if (rc === 77) log('HDMI_REAL_UNSCORED_OK (no counter; color/structure clean)');
-        else if (rc !== 77) fail('hdmi_motion_instrument_failed', `rc=${rc}`);
+        if (rc === 77) {
+          fail(
+            'hdmi_motion_unscored',
+            'instrument rc=77 UNSCORED after SESSION_ESTABLISHED — hard FAIL ' +
+              '(likely idle/chevron or warm-up). Re-capture during HOLD only.\n' +
+              out.slice(-400)
+          );
+        }
+        if (rc === 0) log('HDMI_MOTION_OK (counter present on real title — unexpected but PASS)');
+        else if (rc !== 0) fail('hdmi_motion_instrument_failed', `rc=${rc}\n${out.slice(-400)}`);
       } else {
-        log('HDMI_MOTION=on but no PNGs yet — parent must capture during HOLD (not a suite grab)');
+        log(
+          'HDMI_MOTION=on but no PNGs in cap dir yet — parent must run PARENT_HDMI_CAPTURE_CMD ' +
+            'during HOLD after SESSION_ESTABLISHED (suite never opens /dev/video0)'
+        );
       }
     }
 
     suitePassed = true;
     log(
       `REAL_CONTENT_E2E_RESULT=PASS ratingKey=${item.ratingKey} library_media=${geom.library_media} ` +
-        `tier=${geom.requested_tier} correlation=${correlationId}`
+        `delivered=${delivered.ok ? delivered.stream : 'unprobed'} ` +
+        `tier=${geom.requested_tier} correlation=${correlationId} ` +
+        `session_time_ms=${session.timeMs}`
     );
   } catch (e) {
     suitePassed = false;

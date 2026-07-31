@@ -39,6 +39,12 @@ const https = require('https');
 const path = require('path');
 const { spawnSync } = require('child_process');
 const { loadConfig, daemonBase, redact, ROOT, parentConfCommands, normalizeDecode } = require('./conf');
+const {
+  discoverRealTitle,
+  isFixtureMeta,
+  isBankGeometry,
+  mediaInfo,
+} = require('./discover_real');
 
 const EXIT_PASS = 0;
 const EXIT_FAIL = 1;
@@ -1009,12 +1015,68 @@ function assertDaemonTier(tier) {
 
 /**
  * Resolve PMS item for a tier (ratingKey preferred).
+ * E2E_CONTENT=real: discover non-fixture non-bank geometry; never silent fixture fallback.
  */
 async function resolveItemForTier(tier) {
   const headers = {
     'X-Plex-Token': cfg.token,
     Accept: 'application/json',
   };
+
+  if (cfg.isRealContent) {
+    // Explicit RK via env only (tier default RK3/RK6 must not silently select fixtures).
+    let ratingKey = String(process.env.PLEX_RATING_KEY || process.env.PLEX_KEY || '')
+      .replace(/^\/library\/metadata\//, '');
+    if (ratingKey) {
+      const meta = await httpGet(`${cfg.plexBase}/library/metadata/${ratingKey}`, headers);
+      if (meta.status !== 200) {
+        fail('real_content_rating_key_unreachable', `HTTP ${meta.status} metadata/${ratingKey}`);
+      }
+      let m;
+      try {
+        m = (JSON.parse(meta.body).MediaContainer?.Metadata || [])[0];
+      } catch (_) {
+        fail('real_content_metadata_bad_json', ratingKey);
+      }
+      if (!m) fail('real_content_metadata_empty', ratingKey);
+      const sectionTitle = m.librarySectionTitle || '';
+      if (isFixtureMeta(m, sectionTitle)) {
+        fail(
+          'real_content_is_fixture',
+          `ratingKey=${ratingKey} title=${JSON.stringify(m.title)} is a lab fixture — no fallback`
+        );
+      }
+      const mi = mediaInfo(m);
+      const allowBank = /^(1|true|yes|on)$/i.test(String(process.env.E2E_REAL_ALLOW_BANK_GEOM || ''));
+      if (!allowBank && isBankGeometry(mi.width, mi.height)) {
+        fail(
+          'real_content_bank_geometry',
+          `library_media=${mi.width}x${mi.height} is bank-sized; P7 needs non-bank geometry`
+        );
+      }
+      log(
+        `resolved REAL ratingKey=${ratingKey} title=${m.title} library_media=${mi.width}x${mi.height}`
+      );
+      return {
+        ratingKey: String(ratingKey),
+        title: String(m.title || ''),
+        tier: tier.name,
+        ...mi,
+      };
+    }
+    // Runtime discovery — no fixture / bank fallback.
+    log('CONTENT=real discover_real (no explicit PLEX_RATING_KEY)');
+    const disc = await discoverRealTitle(cfg, { expectDecode: tier.expectDecode });
+    if (!disc.ok) {
+      fail(disc.reason || 'real_content_library_empty', disc.detail || '');
+    }
+    log(
+      `discover_ok rk=${disc.item.ratingKey} title=${JSON.stringify(disc.item.title)} ` +
+        `library_media=${disc.item.width}x${disc.item.height} score=${disc.item.score}`
+    );
+    return { ...disc.item, tier: tier.name };
+  }
+
   let ratingKey = String(tier.ratingKey || '').replace(/^\/library\/metadata\//, '');
   if (ratingKey) {
     const meta = await httpGet(`${cfg.plexBase}/library/metadata/${ratingKey}`, headers);
@@ -1439,19 +1501,12 @@ function scoreHdmiCaptureDir(capDir, cycleTag) {
     );
   }
   if (rc === 77) {
-    if (cfg.hdmiAssertMode === 'color_structure' || cfg.isRealContent) {
-      // Real titles lack TREK24 overlay — UNSCORED motion is expected.
-      // Color/structure already handled above (would be rc=2/3).
-      log(
-        `HDMI_REAL_CONTENT_UNSCORED_OK tag=${cycleTag || '-'} ` +
-          '(no burned-in counter; timeline asserts carry motion proof; parent may view frames)'
-      );
-      return { enabled: true, rc: 77, mode: 'color_structure', pngs: nPng, unscoredOk: true };
-    }
+    // rc=77 is NEVER a pass (idle race, warm-up, missing counter, pre-session grab).
     fail(
       'hdmi_motion_unscored',
-      `${cycleTag || 'hdmi'}: instrument rc=77 UNSCORED — hard FAIL in synthetic/motion gate ` +
-        '(soft-skip is never a pass). Re-capture / confirm TREK24 overlay.\n' +
+      `${cycleTag || 'hdmi'}: instrument rc=77 UNSCORED — hard FAIL ` +
+        '(soft-skip is never a pass). Capture only after session established; ' +
+        'synthetic needs TREK overlay; real content prefer eye+timeline unless instrument MOTION_OK.\n' +
         out.slice(-400)
     );
   }
@@ -1767,20 +1822,10 @@ async function runTransitionScenarios(page, itemTitle, detailsUrl, _castAlreadyS
     fail('bad_e2e_tier', cfg.tierResolveError);
   }
   if (cfg.isRealContent) {
-    const hasItem =
-      !!(process.env.PLEX_RATING_KEY || process.env.PLEX_KEY || process.env.PLEX_ITEM_TITLE);
-    if (!hasItem) {
-      fail(
-        'real_content_item_unspecified',
-        'E2E_CONTENT=real requires PLEX_RATING_KEY and/or PLEX_ITEM_TITLE ' +
-          '(and usually PLEX_LIBRARY_NAME) pointing at a non-synthetic library item. ' +
-          'Counter-based HDMI MOTION_OK is not required; timeline effect asserts apply.'
-      );
-    }
     log(
-      'CONTENT=real — HDMI assert_mode=' +
-        cfg.hdmiAssertMode +
-        ' (counter MOTION_OK not required; COLOR/STRUCTURE still hard-fail)'
+      'CONTENT=real — discover non-fixture non-bank library_media at runtime ' +
+        '(or PLEX_RATING_KEY). Never silent fixture fallback. ' +
+        `HDMI assert_mode=${cfg.hdmiAssertMode}; rc=77 UNSCORED is hard FAIL when HDMI on.`
     );
   }
   if (!cfg.tiers || !cfg.tiers.length) {

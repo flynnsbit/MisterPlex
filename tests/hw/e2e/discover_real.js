@@ -16,6 +16,24 @@ const FIXTURE_TITLE_RE =
 const FIXTURE_SECTION_RE = /^misterplex\s*tests$/i;
 const FIXTURE_PATH_RE = /gen_avsync|avsync_blip|misterplex\s*test|misterplex\s*soak/i;
 
+/** Coded-bank sizes used by lab fixtures / DECODE tiers — NOT general-case geometry. */
+const BANK_GEOMS = new Set(['320x240', '624x480']);
+
+function geomKey(w, h) {
+  const wi = parseInt(w, 10) || 0;
+  const hi = parseInt(h, 10) || 0;
+  if (!wi || !hi) return '';
+  return `${wi}x${hi}`;
+}
+
+function isBankGeometry(w, h) {
+  return BANK_GEOMS.has(geomKey(w, h));
+}
+
+function allowBankGeometry() {
+  return /^(1|true|yes|on)$/i.test(String(process.env.E2E_REAL_ALLOW_BANK_GEOM || ''));
+}
+
 function httpGet(url, headers = {}, timeoutMs = 12000) {
   return new Promise((resolve) => {
     const lib = url.startsWith('https') ? https : http;
@@ -91,10 +109,10 @@ function scoreCandidate(c, tierExpectDecode) {
   else if (w >= 720 || h >= 480) s += 25;
   else if (w > 0 && h > 0) s += 5;
 
-  // Deprioritize already-at-bank geometry (fixture-like).
+  // Deprioritize / exclude already-at-bank geometry (fixture-like / trivial scale).
   const bank = String(tierExpectDecode || '').toLowerCase();
   if (bank && w && h && `${w}x${h}` === bank) s -= 50;
-  if ((w === 320 && h === 240) || (w === 624 && h === 480)) s -= 30;
+  if (isBankGeometry(w, h)) s -= 80;
 
   if (c.bitrate >= 2000) s += 20;
   else if (c.bitrate >= 500) s += 10;
@@ -115,6 +133,12 @@ async function discoverRealTitle(cfg, opts = {}) {
   const tierDecode = (opts.expectDecode || cfg.tiers?.[0]?.expectDecode || '').toLowerCase();
   const minDurationMs = parseInt(opts.minDurationMs || process.env.E2E_REAL_MIN_DURATION_MS || '20000', 10);
   const preferSection = process.env.E2E_REAL_LIBRARY_NAME || cfg.libraryName || '';
+  // P7: library_media must NOT be 320x240 or 624x480 unless explicitly allowed.
+  // Bank-sized sources only prove "fixture at bank size", not general scale/AR paths.
+  const requireNonBank =
+    opts.requireNonBank !== undefined
+      ? !!opts.requireNonBank
+      : !allowBankGeometry();
 
   const sec = await httpGet(`${cfg.plexBase}/library/sections`, headers);
   if (sec.status !== 200) {
@@ -134,6 +158,8 @@ async function discoverRealTitle(cfg, opts = {}) {
   const dirs = sections.MediaContainer?.Directory || [];
   const candidates = [];
   const rejectedFixtures = [];
+  const rejectedBankGeom = [];
+  const rejectedShort = [];
   let scanned = 0;
 
   for (const d of dirs) {
@@ -165,7 +191,32 @@ async function discoverRealTitle(cfg, opts = {}) {
         continue;
       }
       const mi = mediaInfo(m);
-      if (mi.durationMs > 0 && mi.durationMs < minDurationMs) continue;
+      if (mi.durationMs > 0 && mi.durationMs < minDurationMs) {
+        rejectedShort.push({
+          ratingKey: String(m.ratingKey || ''),
+          title: String(m.title || ''),
+          durationMs: mi.durationMs,
+        });
+        continue;
+      }
+      if (requireNonBank && isBankGeometry(mi.width, mi.height)) {
+        rejectedBankGeom.push({
+          ratingKey: String(m.ratingKey || ''),
+          title: String(m.title || ''),
+          library_media: geomKey(mi.width, mi.height),
+        });
+        continue;
+      }
+      // Unknown geometry (0x0) is not proof of non-bank — reject for P7.
+      if (requireNonBank && (!mi.width || !mi.height)) {
+        rejectedBankGeom.push({
+          ratingKey: String(m.ratingKey || ''),
+          title: String(m.title || ''),
+          library_media: 'unknown',
+          note: 'missing_library_media_dims',
+        });
+        continue;
+      }
       const item = {
         ratingKey: String(m.ratingKey || ''),
         title: String(m.title || ''),
@@ -182,18 +233,32 @@ async function discoverRealTitle(cfg, opts = {}) {
   candidates.sort((a, b) => b.score - a.score || b.durationMs - a.durationMs);
 
   if (!candidates.length) {
+    const bankNote = requireNonBank
+      ? ` Also rejected ${rejectedBankGeom.length} non-fixture item(s) with bank-sized ` +
+        `library_media in {320x240,624x480} (or unknown dims) — P7 requires real geometry ` +
+        `(e.g. 1440x1080, 720x480, 640x480, 624x352). Override only with E2E_REAL_ALLOW_BANK_GEOM=1.`
+      : '';
+    const reason =
+      rejectedBankGeom.length > 0 && rejectedFixtures.length + rejectedShort.length < scanned
+        ? 'real_content_no_nonbank_geometry'
+        : 'real_content_library_empty';
     return {
       ok: false,
-      reason: 'real_content_library_empty',
+      reason,
       detail:
         `Scanned ${scanned} items across ${dirs.length} sections; ` +
-        `${rejectedFixtures.length} rejected as lab fixtures. ` +
-        `No non-fixture title met min_duration_ms=${minDurationMs}. ` +
-        `Add a real movie/clip to a non-"MiSTerPlex Tests" library on the LOCAL PMS ` +
-        `(e.g. section "Other Videos") — do not point at SHIELD/remote. ` +
-        `Fixture fallback is intentionally DISABLED.`,
+        `${rejectedFixtures.length} rejected as lab fixtures` +
+        (rejectedShort.length ? `; ${rejectedShort.length} too short (<${minDurationMs}ms)` : '') +
+        `. No suitable non-fixture title met P7 rules (min_duration_ms=${minDurationMs}` +
+        (requireNonBank ? ', require_nonbank_library_media=1' : '') +
+        `). ` +
+        `Add a real movie/clip whose library_media is NOT 320x240/624x480 to a non-` +
+        `"MiSTerPlex Tests" library on the LOCAL PMS (e.g. section "Other Videos") — ` +
+        `do not point at SHIELD/remote. Fixture fallback is intentionally DISABLED.` +
+        bankNote,
       scanned,
       rejectedFixtures: rejectedFixtures.slice(0, 12),
+      rejectedBankGeom: rejectedBankGeom.slice(0, 12),
       sections: dirs.map((d) => ({ key: d.key, title: d.title })),
     };
   }
@@ -204,6 +269,8 @@ async function discoverRealTitle(cfg, opts = {}) {
     alternates: candidates.slice(1, 6),
     scanned,
     rejectedFixtures: rejectedFixtures.length,
+    rejectedBankGeom: rejectedBankGeom.length,
+    requireNonBank,
   };
 }
 
@@ -243,6 +310,8 @@ module.exports = {
   discoverRealTitle,
   geometryChain,
   isFixtureMeta,
+  isBankGeometry,
   mediaInfo,
   FIXTURE_TITLE_RE,
+  BANK_GEOMS,
 };

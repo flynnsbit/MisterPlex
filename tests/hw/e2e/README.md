@@ -276,28 +276,58 @@ scans the tree. Use env or a gitignored conf file.
 
 ## P7 — Real library content cast (`make e2e-real-content`)
 
-Pixel-verifies a **genuine** (non-fixture) title on the **LOCAL** PMS only.
-Ignores SHIELD / `plex.nevertrustaf.art`. **Never** falls back to
-`MiSTerPlex Tests` avsync fixtures.
+Pixel-verifies a **genuine** (non-fixture, **non-bank-geometry**) title on the
+**LOCAL** PMS only. Ignores SHIELD / `plex.nevertrustaf.art`. **Never** falls
+back to `MiSTerPlex Tests` avsync fixtures or to `library_media` of `320x240` /
+`624x480` (those only prove "fixture at bank size").
 
 ```bash
-# Discover + cast + hold (default hold 45s). Parent captures HDMI during HOLD.
-E2E_TIER=480p E2E_DAEMON_DECODE=624x480 \
+# 1) Parent: apply 480p conf from LIVE --conf (two install roots — resolve via /proc)
+# 2) Parent: CLEAR daemon log + ffmpeg.err BEFORE play (correlation)
+# 3) Discover + cast + hold (capture recipe prints ONLY after SESSION_ESTABLISHED)
+cd .worktrees/w-plextv-e2e-fix   # or repo root with this branch
+E2E_TIER=480p E2E_DAEMON_DECODE=624x480 E2E_REAL_HOLD_SEC=45 \
+E2E_SESSION_WALL_MS=3000 \
 PLEX_BASE=http://YOUR-LOCAL-PMS:32400 PLEX_TOKEN=… PLEX_WEB_USER=… \
-MISTER_HOST=… E2E_REAL_HOLD_SEC=45 \
-./tests/hw/e2e/run_real_content.sh
-echo "true rc=$?"
+MISTER_HOST=… \
+./tests/hw/e2e/run_real_content.sh; echo "true rc=$?"
 
-# Or pin a known real rating key (still rejects fixtures):
-PLEX_RATING_KEY=42 ./tests/hw/e2e/run_real_content.sh; echo "true rc=$?"
+# Multi-cycle transitions on synthetic (default N=10):
+E2E_TIER=240p E2E_DAEMON_DECODE=320x240 E2E_TRANSITION_CYCLES=10 \
+PLEX_BASE=… PLEX_TOKEN=… PLEX_WEB_USER=… MISTER_HOST=… \
+./tests/hw/e2e/run_cast_picker.sh; echo "true rc=$?"
 ```
 
-If the library has no suitable non-fixture title → **FAIL**
-`real_content_library_empty` (not skip, not fixture).
+### Fail-loud discovery
+
+| Reason | Meaning |
+|--------|---------|
+| `real_content_library_empty` | No non-fixture titles |
+| `real_content_no_nonbank_geometry` | Only bank-sized non-fixtures |
+| `real_content_is_fixture` | Explicit RK is lab fixture |
+| `real_content_bank_geometry` | Explicit RK is 320x240/624x480 |
+| `session_not_established` | Timeline never reached threshold — **do not capture** |
+
+### Delivered geometry (measurement, not request)
+
+Daemon change: rawvideo ffmpeg spawn uses `-loglevel info` and re-logs
+`media: DELIVERED_GEOM stream=WxH source=ffmpeg.err` (Stream #0:0 banner).
+
+```bash
+# After PLAY, on device:
+grep -E 'DELIVERED_GEOM|GEOM |wall_s=' LIVE_LOG | tail -40
+export E2E_DELIVERED_GEOM=1440x1080   # or
+export E2E_DAEMON_LOG=/path/to/cleared_snip.txt
+export E2E_REQUIRE_DELIVERED_GEOM=1   # hard-fail if unmeasured
+```
+
+`expected_delivery` in GEOM_CHAIN is a **request**. PMS upperBound is a ceiling.
 
 ### Parent HDMI recipe (falsifiable)
 
-Suite logs `PARENT_RECIPE` including `CAST_CORRELATION_ID`, geometry chain, and:
+Suite logs `PARENT_HDMI_CAPTURE_CMD` **only after** `SESSION_ESTABLISHED`
+(timeline `time >= E2E_SESSION_WALL_MS`, default 3000). Capturing earlier caused
+`rc=77 UNSCORED` on idle/chevron — that is **never** a pass.
 
 | Fail signature | What you see |
 |----------------|--------------|
@@ -310,6 +340,15 @@ Suite logs `PARENT_RECIPE` including `CAST_CORRELATION_ID`, geometry chain, and:
 
 Pass: recognizable motion/detail; AR consistent with `library_media` fitted into
 the decode bank without the signatures above. Counter `MOTION_OK` does **not**
-apply (no TREK overlay).
+apply without TREK overlay. Instrument `rc=77` is hard FAIL when `E2E_HDMI_MOTION=1`.
 
-Correlate daemon: grep `GEOM` / ratingKey near `CAST_CORRELATION_ID` wall time.
+### Teardown / concurrency
+
+- Closes **our** Playwright controller only; does not require global controller-free
+  (user's long-lived Plex Web tab must not fail the suite).
+- **Do not run during soak/CPU windows** — cast interferes with concurrent playback.
+
+### Transitions N-cycle
+
+`E2E_TRANSITION_CYCLES` default **10**. Per-cycle pause/resume/seek/stop/replay
+with timeline **effect** asserts. Failure names `transition_cycle_K_<transition>`.

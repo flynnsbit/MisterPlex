@@ -15,6 +15,9 @@
 #include <cstring>
 #include <chrono>
 #include <exception>
+#include <fstream>
+#include <iterator>
+#include <regex>
 #include <signal.h>
 #include <time.h>
 #include <vector>
@@ -2415,8 +2418,11 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
         std::vector<std::string> args;
         args.push_back(ffmpeg_);
         args.push_back("-hide_banner");
+        // info (not error): emit Stream #0:0 … WxH so delivered geometry is measurable.
+        // expected_delivery is a request; PMS upperBound is a ceiling. Parent greps
+        // media: DELIVERED_GEOM / ffmpeg.err Stream banners after each play.
         args.push_back("-loglevel");
-        args.push_back("error");
+        args.push_back("info");
         args.push_back("-nostdin");
 
         if (testPattern) {
@@ -2578,6 +2584,36 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
             return;
         }
         childPid_.store(pid);
+        // Re-emit ffmpeg Stream banner into misterplexd log (lab err file is O_TRUNC each spawn).
+        // Detached: must not block the frame pump. Correlation via wall clock + GEOM lines.
+        std::thread([this]() {
+            const char* errPath = "/media/usb0/misterplex-lab/logs/ffmpeg.err";
+            std::string found;
+            for (int attempt = 0; attempt < 50 && playing_.load(); ++attempt) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                std::ifstream in(errPath);
+                if (!in)
+                    continue;
+                std::string content((std::istreambuf_iterator<char>(in)),
+                                    std::istreambuf_iterator<char>());
+                // Prefer video stream line: "Stream #0:0(...): Video: ... 1440x1080"
+                static const std::regex kStreamRe(
+                    R"(Stream\s+#0:0[^\n]*?(\d{2,5})x(\d{2,5}))",
+                    std::regex::icase);
+                std::smatch m;
+                if (std::regex_search(content, m, kStreamRe) && m.size() >= 3) {
+                    found = m[1].str() + "x" + m[2].str();
+                    break;
+                }
+            }
+            if (!found.empty()) {
+                log(std::string("media: DELIVERED_GEOM stream=") + found +
+                    " source=ffmpeg.err note=measured_input_not_request");
+            } else {
+                log("media: DELIVERED_GEOM stream=unknown source=ffmpeg.err "
+                    "(no Stream #0:0 WxH yet — check -loglevel info / lab path)");
+            }
+        }).detach();
         rfd = vpipe[0];
         const int rflags = fcntl(rfd, F_GETFL, 0);
         if (rflags >= 0)
