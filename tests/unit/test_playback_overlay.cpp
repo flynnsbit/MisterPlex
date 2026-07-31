@@ -387,7 +387,7 @@ int main() {
         CHECK(ov.renderRgb24At(rgb.data(), OW, OH, 0));
         const OverlayRect panel = PlaybackOverlay::panelBounds(OW, OH);
         const int y0 = panel.y + lm.labelTop;
-        const int y1 = y0 + misterplex::kOverlayGlyphH;
+        const int y1 = y0 + lm.glyphH;
         int edgeRows = 0;
         for (int y = y0; y < y1 - 1; ++y) {
             bool edge = false;
@@ -406,7 +406,7 @@ int main() {
         // 8×13 font should show several internal horizontal transitions in the
         // label band; a single solid block-upscale would show ~2.
         CHECK(edgeRows >= 4);
-        CHECK(misterplex::kOverlayGlyphH >= 12);
+        CHECK(lm.glyphH >= 12);
     }
 
     // 8. YUV420p path actually paints (product PRESENT=fpga regression).

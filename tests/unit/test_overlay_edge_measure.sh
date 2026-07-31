@@ -29,6 +29,8 @@ echo "$OUT" | grep -q 'SELFTEST PASS' || {
 # Optional archive (copied into worktree by the worker; not required in CI).
 ARCHIVE=""
 for cand in \
+  "$ROOT/.agent-work/osd-hires/overlay_lowres_evidence.png" \
+  "/home/flynnsbit/.copilot/session-state/1b1fb4ae-c05c-44bc-883d-5af91466e181/files/overlay_lowres_evidence.png" \
   "$ROOT/.agent-work/osd-hires/idle_warm.png" \
   "$ROOT/../rollback-honest/build/pair-visual/idle_warm.png" \
   "/home/flynnsbit/Projects/MisterPlex/.worktrees/rollback-honest/build/pair-visual/idle_warm.png"

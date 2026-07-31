@@ -44,13 +44,18 @@ struct OverlayRect {
     bool empty() const { return w <= 0 || h <= 0; }
 };
 
-// Font cell (native pixels). Prefer a taller bitmap at scale=1 over 5×7
-// upscaled with fillRect blocks — block scale only grows jaggies; a denser
-// glyph improves shape inside the same footprint (and after DE even-row
-// subsample, more of the shape still lands on fetched rows).
-static constexpr int kOverlayGlyphW = 8;
-static constexpr int kOverlayGlyphH = 13;
-static constexpr int kOverlayGlyphAdvance = 9; // 8 + 1 px gap
+// Font cells (native pixels, always drawn at scale=1). Hand-authored geometric
+// bitmaps for MiSTerPlex (CC0-1.0) — not a copy of any proprietary font file.
+// Two sizes: 8×13 for short rasters (≤360 lines / 240p-class), 12×16 for 480+
+// line canvases. Prefer denser glyphs over 5×7 fillRect block-upscale.
+enum class OverlayFontId : uint8_t { Small8x13 = 0, Large12x16 = 1 };
+
+static constexpr int kOverlayFontSmallW = 8;
+static constexpr int kOverlayFontSmallH = 13;
+static constexpr int kOverlayFontSmallAdvance = 9;
+static constexpr int kOverlayFontLargeW = 12;
+static constexpr int kOverlayFontLargeH = 16;
+static constexpr int kOverlayFontLargeAdvance = 13;
 
 // Resolution-scaled chrome metrics. Derived only from buffer W×H (present
 // canvas). Text/icon use native glyph cells (bodyScale=1); panel geometry
@@ -60,7 +65,11 @@ struct OverlayLayoutMetrics {
     int panelH = 64;
     int bodyScale = 1;  // always 1 — never block-upscale the bitmap font
     int titleScale = 1;
-    int iconScale = 1;  // 1 = 16px icon art; 2 only on very tall canvases
+    int iconScale = 1;  // 1 = compact icon; 2 on tall canvases
+    OverlayFontId fontId = OverlayFontId::Small8x13;
+    int glyphW = kOverlayFontSmallW;
+    int glyphH = kOverlayFontSmallH;
+    int glyphAdvance = kOverlayFontSmallAdvance;
     int barH = 6;
     int barBottomPad = 16;
     int labelTop = 8;
@@ -78,23 +87,37 @@ struct OverlayLayoutMetrics {
         m.panelH = std::max(56, std::min(h / 4, std::max(64, h / 5)));
         if (m.panelH > h - 2 * m.margin)
             m.panelH = std::max(40, h - 2 * m.margin);
-        // Native cells only — raising scale makes bigger blocks, not sharper type.
         m.bodyScale = 1;
         m.titleScale = 1;
+        // 12×16 on 480-line product canvas and above; 8×13 on 240p-class.
+        if (h >= 360) {
+            m.fontId = OverlayFontId::Large12x16;
+            m.glyphW = kOverlayFontLargeW;
+            m.glyphH = kOverlayFontLargeH;
+            m.glyphAdvance = kOverlayFontLargeAdvance;
+        } else {
+            m.fontId = OverlayFontId::Small8x13;
+            m.glyphW = kOverlayFontSmallW;
+            m.glyphH = kOverlayFontSmallH;
+            m.glyphAdvance = kOverlayFontSmallAdvance;
+        }
         m.iconScale = (h >= 720) ? 2 : 1;
         m.barH = std::max(4, m.panelH / 12);
         m.barBottomPad = 10 + m.barH;
         m.labelTop = 8;
-        m.iconCy = 8 + 10 * m.iconScale;
-        m.timeTop = m.labelTop + kOverlayGlyphH + 4;
-        if (m.timeTop + kOverlayGlyphH + m.barBottomPad > m.panelH) {
-            m.labelTop = 6;
-            m.iconCy = 14;
-            m.timeTop = 24;
-            m.barBottomPad = 12;
-            m.barH = 5;
+        m.iconCy = 8 + std::max(10, m.glyphH / 2 + 2) * m.iconScale;
+        m.timeTop = m.labelTop + m.glyphH + 4;
+        if (m.timeTop + m.glyphH + m.barBottomPad > m.panelH) {
+            m.labelTop = 4;
+            m.iconCy = 4 + m.glyphH / 2;
+            m.timeTop = m.labelTop + m.glyphH + 2;
+            m.barBottomPad = 8 + m.barH;
+            if (m.timeTop + m.glyphH + m.barBottomPad > m.panelH) {
+                m.panelH = std::min(h - 2 * m.margin,
+                                    m.timeTop + m.glyphH + m.barBottomPad + 4);
+            }
         }
-        m.skipBoxH = std::max(24, kOverlayGlyphH + 12);
+        m.skipBoxH = std::max(24, m.glyphH + 12);
         m.noticeBoxH = m.skipBoxH;
         return m;
     }
@@ -424,7 +447,7 @@ private:
             out = unionRect(out, skip);
         }
         if (noticeAlphaFor(s, nowMs) > 0) {
-            const int tw = textWidth(s.noticeText, m.titleScale);
+            const int tw = textWidth(s.noticeText, m);
             const int boxW = std::min(w - 16, std::max(76, tw + 24));
             OverlayRect notice{(w - boxW) / 2, std::max(8, h / 5), boxW, m.noticeBoxH};
             out = unionRect(out, notice);
@@ -615,34 +638,177 @@ private:
         }
     }
 
-    static int textWidth(const char* text, int scale) {
-        if (!text || scale <= 0)
+    static int textWidth(const char* text, const OverlayLayoutMetrics& m) {
+        if (!text || m.bodyScale <= 0)
             return 0;
         const int n = static_cast<int>(std::strlen(text));
         if (n <= 0)
             return 0;
-        return n * kOverlayGlyphAdvance * scale - scale; // last gap optional
+        const int sc = m.bodyScale;
+        return n * m.glyphAdvance * sc - sc;
+    }
+
+    // 12×16 bitmaps: each row is 12 bits in the high 12 of a uint16_t (MSB = left).
+    // Hand-authored geometric glyphs (CC0-1.0).
+    static const uint16_t* glyph12(char ch) {
+        static constexpr uint16_t space[16] = {};
+        static constexpr uint16_t d0[16] = {
+            0x0000, 0x1F80, 0x30C0, 0x6060, 0x6060, 0x6060, 0x6060, 0x6060,
+            0x6060, 0x6060, 0x6060, 0x6060, 0x30C0, 0x1F80, 0x0000, 0x0000};
+        static constexpr uint16_t d1[16] = {
+            0x0000, 0x0C00, 0x1C00, 0x0C00, 0x0C00, 0x0C00, 0x0C00, 0x0C00,
+            0x0C00, 0x0C00, 0x0C00, 0x0C00, 0x0C00, 0x3F00, 0x0000, 0x0000};
+        static constexpr uint16_t d2[16] = {
+            0x0000, 0x1F00, 0x30C0, 0x0060, 0x0060, 0x00C0, 0x0180, 0x0300,
+            0x0600, 0x0C00, 0x1800, 0x3000, 0x3000, 0x3FC0, 0x0000, 0x0000};
+        static constexpr uint16_t d3[16] = {
+            0x0000, 0x1F00, 0x30C0, 0x0060, 0x0060, 0x00C0, 0x0F00, 0x00C0,
+            0x0060, 0x0060, 0x0060, 0x30C0, 0x1F00, 0x0000, 0x0000, 0x0000};
+        static constexpr uint16_t d4[16] = {
+            0x0000, 0x0180, 0x0380, 0x0780, 0x0D80, 0x1980, 0x3180, 0x3FC0,
+            0x0180, 0x0180, 0x0180, 0x0180, 0x0180, 0x0180, 0x0000, 0x0000};
+        static constexpr uint16_t d5[16] = {
+            0x0000, 0x3FC0, 0x3000, 0x3000, 0x3000, 0x3F00, 0x30C0, 0x0060,
+            0x0060, 0x0060, 0x0060, 0x30C0, 0x1F00, 0x0000, 0x0000, 0x0000};
+        static constexpr uint16_t d6[16] = {
+            0x0000, 0x0F00, 0x1800, 0x3000, 0x3000, 0x3F00, 0x30C0, 0x3060,
+            0x3060, 0x3060, 0x3060, 0x30C0, 0x1F00, 0x0000, 0x0000, 0x0000};
+        static constexpr uint16_t d7[16] = {
+            0x0000, 0x3FC0, 0x0060, 0x00C0, 0x00C0, 0x0180, 0x0180, 0x0300,
+            0x0300, 0x0600, 0x0600, 0x0600, 0x0600, 0x0600, 0x0000, 0x0000};
+        static constexpr uint16_t d8[16] = {
+            0x0000, 0x1F00, 0x30C0, 0x3060, 0x3060, 0x30C0, 0x1F00, 0x30C0,
+            0x3060, 0x3060, 0x3060, 0x30C0, 0x1F00, 0x0000, 0x0000, 0x0000};
+        static constexpr uint16_t d9[16] = {
+            0x0000, 0x1F00, 0x30C0, 0x3060, 0x3060, 0x3060, 0x30C0, 0x1F60,
+            0x0060, 0x0060, 0x0060, 0x00C0, 0x1F00, 0x0000, 0x0000, 0x0000};
+        static constexpr uint16_t colon[16] = {
+            0x0000, 0x0000, 0x0C00, 0x0C00, 0x0000, 0x0000, 0x0000, 0x0000,
+            0x0000, 0x0C00, 0x0C00, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000};
+        static constexpr uint16_t lt[16] = {
+            0x0000, 0x0060, 0x00C0, 0x0180, 0x0300, 0x0600, 0x0C00, 0x1800,
+            0x0C00, 0x0600, 0x0300, 0x0180, 0x00C0, 0x0060, 0x0000, 0x0000};
+        static constexpr uint16_t gt[16] = {
+            0x0000, 0x1800, 0x0C00, 0x0600, 0x0300, 0x0180, 0x00C0, 0x0060,
+            0x00C0, 0x0180, 0x0300, 0x0600, 0x0C00, 0x1800, 0x0000, 0x0000};
+        static constexpr uint16_t minus[16] = {
+            0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x3FC0, 0x3FC0,
+            0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000};
+        static constexpr uint16_t slash[16] = {
+            0x0000, 0x0060, 0x0060, 0x00C0, 0x00C0, 0x0180, 0x0180, 0x0300,
+            0x0300, 0x0600, 0x0600, 0x0C00, 0x0C00, 0x1800, 0x0000, 0x0000};
+        // Letters used by state labels / notices (subset).
+        static constexpr uint16_t A[16] = {
+            0x0000, 0x0F00, 0x1980, 0x30C0, 0x30C0, 0x30C0, 0x3FC0, 0x30C0,
+            0x30C0, 0x30C0, 0x30C0, 0x30C0, 0x30C0, 0x30C0, 0x0000, 0x0000};
+        static constexpr uint16_t D[16] = {
+            0x0000, 0x3E00, 0x3180, 0x30C0, 0x3060, 0x3060, 0x3060, 0x3060,
+            0x3060, 0x3060, 0x30C0, 0x3180, 0x3E00, 0x0000, 0x0000, 0x0000};
+        static constexpr uint16_t E[16] = {
+            0x0000, 0x3FC0, 0x3000, 0x3000, 0x3000, 0x3000, 0x3F00, 0x3000,
+            0x3000, 0x3000, 0x3000, 0x3000, 0x3FC0, 0x0000, 0x0000, 0x0000};
+        static constexpr uint16_t G[16] = {
+            0x0000, 0x1F00, 0x30C0, 0x3000, 0x3000, 0x3000, 0x33C0, 0x3060,
+            0x3060, 0x3060, 0x3060, 0x30C0, 0x1F00, 0x0000, 0x0000, 0x0000};
+        static constexpr uint16_t I[16] = {
+            0x0000, 0x3F00, 0x0C00, 0x0C00, 0x0C00, 0x0C00, 0x0C00, 0x0C00,
+            0x0C00, 0x0C00, 0x0C00, 0x0C00, 0x3F00, 0x0000, 0x0000, 0x0000};
+        static constexpr uint16_t L[16] = {
+            0x0000, 0x3000, 0x3000, 0x3000, 0x3000, 0x3000, 0x3000, 0x3000,
+            0x3000, 0x3000, 0x3000, 0x3000, 0x3FC0, 0x0000, 0x0000, 0x0000};
+        static constexpr uint16_t N[16] = {
+            0x0000, 0x30C0, 0x38C0, 0x3CC0, 0x36C0, 0x36C0, 0x33C0, 0x31C0,
+            0x30C0, 0x30C0, 0x30C0, 0x30C0, 0x30C0, 0x0000, 0x0000, 0x0000};
+        static constexpr uint16_t O[16] = {
+            0x0000, 0x1F00, 0x30C0, 0x6060, 0x6060, 0x6060, 0x6060, 0x6060,
+            0x6060, 0x6060, 0x6060, 0x30C0, 0x1F00, 0x0000, 0x0000, 0x0000};
+        static constexpr uint16_t P[16] = {
+            0x0000, 0x3F00, 0x30C0, 0x3060, 0x3060, 0x30C0, 0x3F00, 0x3000,
+            0x3000, 0x3000, 0x3000, 0x3000, 0x3000, 0x0000, 0x0000, 0x0000};
+        static constexpr uint16_t S[16] = {
+            0x0000, 0x1F00, 0x30C0, 0x3000, 0x3000, 0x1F00, 0x00C0, 0x0060,
+            0x0060, 0x0060, 0x30C0, 0x1F00, 0x0000, 0x0000, 0x0000, 0x0000};
+        static constexpr uint16_t T[16] = {
+            0x0000, 0x3FC0, 0x0C00, 0x0C00, 0x0C00, 0x0C00, 0x0C00, 0x0C00,
+            0x0C00, 0x0C00, 0x0C00, 0x0C00, 0x0C00, 0x0000, 0x0000, 0x0000};
+        static constexpr uint16_t U[16] = {
+            0x0000, 0x30C0, 0x30C0, 0x30C0, 0x30C0, 0x30C0, 0x30C0, 0x30C0,
+            0x30C0, 0x30C0, 0x30C0, 0x30C0, 0x1F00, 0x0000, 0x0000, 0x0000};
+        static constexpr uint16_t Y[16] = {
+            0x0000, 0x30C0, 0x30C0, 0x30C0, 0x1980, 0x0F00, 0x0600, 0x0600,
+            0x0600, 0x0600, 0x0600, 0x0600, 0x0600, 0x0000, 0x0000, 0x0000};
+        static constexpr uint16_t R[16] = {
+            0x0000, 0x3F00, 0x30C0, 0x3060, 0x3060, 0x30C0, 0x3F00, 0x3300,
+            0x3180, 0x30C0, 0x3060, 0x3060, 0x3060, 0x0000, 0x0000, 0x0000};
+        static constexpr uint16_t C[16] = {
+            0x0000, 0x1F00, 0x30C0, 0x3000, 0x3000, 0x3000, 0x3000, 0x3000,
+            0x3000, 0x3000, 0x30C0, 0x1F00, 0x0000, 0x0000, 0x0000, 0x0000};
+        static constexpr uint16_t M[16] = {
+            0x0000, 0x60C0, 0x71C0, 0x7BC0, 0x6EC0, 0x64C0, 0x60C0, 0x60C0,
+            0x60C0, 0x60C0, 0x60C0, 0x60C0, 0x60C0, 0x0000, 0x0000, 0x0000};
+        static constexpr uint16_t W[16] = {
+            0x0000, 0x60C0, 0x60C0, 0x60C0, 0x60C0, 0x60C0, 0x60C0, 0x64C0,
+            0x6EC0, 0x7BC0, 0x71C0, 0x60C0, 0x60C0, 0x0000, 0x0000, 0x0000};
+        static constexpr uint16_t H[16] = {
+            0x0000, 0x30C0, 0x30C0, 0x30C0, 0x30C0, 0x30C0, 0x3FC0, 0x30C0,
+            0x30C0, 0x30C0, 0x30C0, 0x30C0, 0x30C0, 0x0000, 0x0000, 0x0000};
+        static constexpr uint16_t K[16] = {
+            0x0000, 0x3060, 0x30C0, 0x3180, 0x3300, 0x3600, 0x3C00, 0x3C00,
+            0x3600, 0x3300, 0x3180, 0x30C0, 0x3060, 0x0000, 0x0000, 0x0000};
+        static constexpr uint16_t B[16] = {
+            0x0000, 0x3F00, 0x30C0, 0x3060, 0x3060, 0x30C0, 0x3F00, 0x30C0,
+            0x3060, 0x3060, 0x3060, 0x30C0, 0x3F00, 0x0000, 0x0000, 0x0000};
+        static constexpr uint16_t V[16] = {
+            0x0000, 0x30C0, 0x30C0, 0x30C0, 0x30C0, 0x30C0, 0x30C0, 0x30C0,
+            0x1980, 0x1980, 0x0F00, 0x0F00, 0x0600, 0x0000, 0x0000, 0x0000};
+        static constexpr uint16_t F[16] = {
+            0x0000, 0x3FC0, 0x3000, 0x3000, 0x3000, 0x3000, 0x3F00, 0x3000,
+            0x3000, 0x3000, 0x3000, 0x3000, 0x3000, 0x0000, 0x0000, 0x0000};
+        switch (ch) {
+        case '0': return d0; case '1': return d1; case '2': return d2; case '3': return d3;
+        case '4': return d4; case '5': return d5; case '6': return d6; case '7': return d7;
+        case '8': return d8; case '9': return d9; case ':': return colon; case '<': return lt;
+        case '>': return gt; case '-': return minus; case '/': return slash;
+        case 'A': return A; case 'B': return B; case 'C': return C; case 'D': return D;
+        case 'E': return E; case 'F': return F; case 'G': return G; case 'H': return H;
+        case 'I': return I; case 'K': return K; case 'L': return L; case 'M': return M;
+        case 'N': return N; case 'O': return O; case 'P': return P; case 'R': return R;
+        case 'S': return S; case 'T': return T; case 'U': return U; case 'V': return V;
+        case 'W': return W; case 'Y': return Y;
+        default: return space;
+        }
     }
 
     template <typename Target>
-    static void drawText(Target& t, int x, int y, const char* text, int scale, Color c,
-                         int alpha) {
-        if (scale <= 0)
+    static void drawText(Target& t, int x, int y, const char* text, const OverlayLayoutMetrics& m,
+                         Color c, int alpha) {
+        if (!text || m.bodyScale <= 0)
             return;
+        const int sc = m.bodyScale; // policy: 1
         for (const char* p = text; *p; ++p) {
-            const uint8_t* g = glyph(*p);
-            for (int row = 0; row < kOverlayGlyphH; ++row) {
-                const uint8_t bits = g[row];
-                for (int col = 0; col < kOverlayGlyphW; ++col) {
-                    if ((bits & (1u << (7 - col))) == 0)
-                        continue;
-                    if (scale == 1)
+            if (m.fontId == OverlayFontId::Large12x16) {
+                const uint16_t* g = glyph12(*p);
+                for (int row = 0; row < m.glyphH; ++row) {
+                    const uint16_t bits = g[row];
+                    for (int col = 0; col < m.glyphW; ++col) {
+                        // MSB of the top 12 bits is left column.
+                        if ((bits & (1u << (15 - col))) == 0)
+                            continue;
                         blendPixel(t, x + col, y + row, c, alpha);
-                    else
-                        fillRect(t, x + col * scale, y + row * scale, scale, scale, c, alpha);
+                    }
+                }
+            } else {
+                const uint8_t* g = glyph(*p);
+                for (int row = 0; row < m.glyphH; ++row) {
+                    const uint8_t bits = g[row];
+                    for (int col = 0; col < m.glyphW; ++col) {
+                        if ((bits & (1u << (7 - col))) == 0)
+                            continue;
+                        blendPixel(t, x + col, y + row, c, alpha);
+                    }
                 }
             }
-            x += kOverlayGlyphAdvance * scale;
+            x += m.glyphAdvance * sc;
         }
     }
 
@@ -706,12 +872,11 @@ private:
             fillRect(t, p.x, p.y, p.w, p.h, black, (170 * alpha) / 255);
             strokeRect(t, p.x, p.y, p.w, p.h, panelEdge, (150 * alpha) / 255);
 
-            const int sc = m.bodyScale; // always 1 by policy
             const int iconXFinal = p.x + 18;
             const int labelY = p.y + m.labelTop;
             const int iconCy = p.y + m.iconCy;
             drawIcon(t, s.state, iconXFinal, iconCy, alpha, m.iconScale);
-            drawText(t, iconXFinal + 14 + 8 * m.iconScale, labelY, stateLabel(s.state), sc, white,
+            drawText(t, iconXFinal + 14 + 8 * m.iconScale, labelY, stateLabel(s.state), m, white,
                      alpha);
 
             char elapsed[32];
@@ -719,9 +884,9 @@ private:
             formatTime(s.positionMs, elapsed);
             formatTime(s.durationMs, total);
             const int timeY = p.y + m.timeTop;
-            drawText(t, p.x + 14, timeY, elapsed, sc, white, alpha);
-            const int totalW = textWidth(total, sc);
-            drawText(t, p.x + p.w - 14 - totalW, timeY, total, sc, muted, alpha);
+            drawText(t, p.x + 14, timeY, elapsed, m, white, alpha);
+            const int totalW = textWidth(total, m);
+            drawText(t, p.x + p.w - 14 - totalW, timeY, total, m, muted, alpha);
 
             const int barX = p.x + 14;
             const int barH = m.barH;
@@ -752,30 +917,28 @@ private:
                 std::snprintf(text, sizeof(text), "%lldS >>", static_cast<long long>(sec));
             else
                 std::snprintf(text, sizeof(text), "<< %lldS", static_cast<long long>(sec));
-            const int tsc = m.titleScale;
-            const int tw = textWidth(text, tsc);
+            const int tw = textWidth(text, m);
             const int boxW = std::min(w - 16, std::max(76, tw + 24));
             const int boxX = (w - boxW) / 2;
             const int boxH = m.skipBoxH;
             const int boxY = std::max(8, h / 2 - boxH - 2);
             fillRect(t, boxX, boxY, boxW, boxH, black, (190 * skipAlpha) / 255);
             strokeRect(t, boxX, boxY, boxW, boxH, amber, skipAlpha);
-            const int textY = boxY + std::max(4, (boxH - kOverlayGlyphH * tsc) / 2);
-            drawText(t, boxX + (boxW - tw) / 2, textY, text, tsc, white, skipAlpha);
+            const int textY = boxY + std::max(4, (boxH - m.glyphH) / 2);
+            drawText(t, boxX + (boxW - tw) / 2, textY, text, m, white, skipAlpha);
         }
 
         const int noticeAlpha = noticeAlphaFor(s, nowMs);
         if (noticeAlpha > 0 && s.noticeText[0] != '\0') {
-            const int tsc = m.titleScale;
-            const int tw = textWidth(s.noticeText, tsc);
+            const int tw = textWidth(s.noticeText, m);
             const int boxW = std::min(w - 16, std::max(76, tw + 24));
             const int boxX = (w - boxW) / 2;
             const int boxH = m.noticeBoxH;
             const int boxY = std::max(8, h / 5);
             fillRect(t, boxX, boxY, boxW, boxH, black, (200 * noticeAlpha) / 255);
             strokeRect(t, boxX, boxY, boxW, boxH, amber, noticeAlpha);
-            const int textY = boxY + std::max(4, (boxH - kOverlayGlyphH * tsc) / 2);
-            drawText(t, boxX + (boxW - tw) / 2, textY, s.noticeText, tsc, white, noticeAlpha);
+            const int textY = boxY + std::max(4, (boxH - m.glyphH) / 2);
+            drawText(t, boxX + (boxW - tw) / 2, textY, s.noticeText, m, white, noticeAlpha);
         }
     }
 

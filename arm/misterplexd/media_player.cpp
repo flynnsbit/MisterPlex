@@ -736,6 +736,63 @@ bool MediaPlayer::publishDdrFrame(const DdrPublishFrame& frame, const char* cont
     return ok;
 }
 
+
+void MediaPlayer::rememberPauseFrame(const uint8_t* yuv, size_t len, const DdrFrameGeometry& g) {
+    if (!yuv || len == 0)
+        return;
+    std::lock_guard<std::mutex> lk(pauseLatchMu_);
+    pauseFrameLatch_.remember(yuv, len, g);
+}
+
+bool MediaPlayer::publishPausedOverlayFrame() {
+    // Composite transport chrome onto the last held F1 YUV (or studio black) and publish.
+    // pauseLatchMu_ is separate from presentMu_ (present paths may hold presentMu_).
+    const DdrFrameGeometry g = plex480pDdrFrameGeometry();
+    const int cw = g.coded_width.get();
+    const int ch = g.coded_height.get();
+    if (cw <= 0 || ch <= 0 || (cw & 1) || (ch & 1))
+        return false;
+    const DdrFrameLayout layout =
+        makeDdrFrameLayout(g, kDdrFramePhysBase, kDdrFrameStrideAlign, DdrFrameFormat::Yuv420p);
+    if (!ddrFrameLayoutValid(layout))
+        return false;
+
+    std::vector<uint8_t> yuv(layout.frame_bytes);
+    {
+        std::lock_guard<std::mutex> lk(pauseLatchMu_);
+        if (pauseFrameLatch_.haveFrame() &&
+            pauseFrameLatch_.frame().geometry().coded_width.get() == cw &&
+            pauseFrameLatch_.frame().geometry().coded_height.get() == ch &&
+            pauseFrameLatch_.frame().size() == layout.frame_bytes) {
+            std::memcpy(yuv.data(), pauseFrameLatch_.frame().data(), layout.frame_bytes);
+        } else {
+            fillYuv420pStudioBlack(yuv.data(), cw, ch);
+        }
+    }
+
+    overlay_.renderYuv420p(yuv.data(), cw, ch);
+
+    std::lock_guard<std::mutex> lk(presentMu_);
+    if (fb_.ok())
+        (void)fb_.blitYuv420p(yuv.data(), cw, ch);
+
+    if (!fpga_.ok() && presentMode_ != "none") {
+        if (fpga_.open()) {
+            useDdrF1_ = true;
+            ddrBank_ = 0;
+        }
+    }
+    if (!fpga_.ok() || !useDdrF1_)
+        return fb_.ok();
+
+    DdrPublishFrame frame{yuv.data(), yuv.size(), g, DdrFrameFormat::Yuv420p};
+    std::string err;
+    const bool ok = publishDdrFrame(frame, "pause overlay DDR", &err);
+    if (!ok)
+        log("media: pause overlay publish failed: " + (err.empty() ? fpga_.lastError() : err));
+    return ok;
+}
+
 void MediaPlayer::paintIdle() {
     const IdleMode m = idleMode();
     if (m == IdleMode::LastFrame)
@@ -1127,8 +1184,11 @@ void MediaPlayer::stop() {
 
 void MediaPlayer::pause() {
     paused_.store(true);
-    signalChildren(SIGSTOP);
     showPlaybackOverlay(PlaybackOverlayState::Paused, positionMs_.load(), durationMs());
+    // Publish chrome onto the last held F1 frame BEFORE SIGSTOP. The play thread may be
+    // blocked in read() and cannot run its pause present loop until FFmpeg is continued.
+    (void)publishPausedOverlayFrame();
+    signalChildren(SIGSTOP);
     if (onProgress_)
         onProgress_("paused", positionMs_.load(), durationMs_);
 }
@@ -1661,12 +1721,15 @@ void MediaPlayer::streamPump(int sfd) {
                         if (!ok) {
                             log("media: recon YUV420 DDR F1 unavailable: " +
                                 (ddrErr.empty() ? fpga_.lastError() : ddrErr));
-                        } else if ((reconOk % 30) == 0) {
+                        } else {
+                            rememberPauseFrame(bank.data(), bank.size(), g);
+                            if ((reconOk % 30) == 0) {
                             log("media: recon F1 via YUV420 DDR " +
                                 std::to_string(rec.width) + "x" + std::to_string(rec.height) +
                                 "→" + std::to_string(g.coded_width.get()) + "x" +
                                 std::to_string(g.coded_height.get()) + " " +
                                 std::to_string(static_cast<int>(fpga_.lastPushMs())) + "ms");
+                            }
                         }
                     }
                 } else if (!reconDdrMismatchLogged) {
@@ -2434,7 +2497,9 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                     break;
             }
             if (paused_.load()) {
-                std::this_thread::sleep_for(std::chrono::milliseconds(20));
+                if (overlay_.visible())
+                    (void)publishPausedOverlayFrame();
+                std::this_thread::sleep_for(std::chrono::milliseconds(50));
                 continue;
             }
             // Wall-clock position (no RGB frame cadence)
@@ -2999,6 +3064,9 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
         };
 
         auto presentCleanFrame = [&](uint8_t* cleanFrame, bool countPresent) {
+            // Latch clean pixels (no chrome) for pause republish.
+            if (videoFmt == RawVideoFormat::Yuv420p)
+                rememberPauseFrame(cleanFrame, frameBytes, ddrGeometry);
             const OverlayRect dirty = overlay_.dirtyBounds(rawW, rawH);
             backupOverlayDirty(cleanFrame, dirty);
             if (!dirty.empty()) {
@@ -3140,8 +3208,13 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                     pauseStarted = std::chrono::steady_clock::now();
                 }
                 const bool overlayNow = overlay_.visible();
-                if ((overlayNow || pausedOverlayWasVisible) && frameIndex > 0) {
-                    presentCleanFrame(frame.data(), /*countPresent*/ false);
+                if (overlayNow || pausedOverlayWasVisible) {
+                    if (frameIndex > 0) {
+                        rememberPauseFrame(frame.data(), frameBytes, ddrGeometry);
+                        presentCleanFrame(frame.data(), /*countPresent*/ false);
+                    } else {
+                        (void)publishPausedOverlayFrame();
+                    }
                     pausedOverlayWasVisible = overlayNow;
                 }
                 std::this_thread::sleep_for(std::chrono::milliseconds(50));

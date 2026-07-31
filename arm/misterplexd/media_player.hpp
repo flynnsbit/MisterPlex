@@ -4,6 +4,7 @@
 // STREAM=1: annex-B demux → host I-slice recon → F1 + F3; optional RGB skip.
 
 #include "fb_present.hpp"
+#include "libmisterplex/last_frame_latch.hpp"
 #include "fpga_spi.hpp"
 #include "libmisterplex/idle_screen.hpp"
 #include "libmisterplex/coded_size.hpp"
@@ -235,6 +236,11 @@ private:
     bool wantSkipRgbVideo() const;
     bool publishDdrFrame(const DdrPublishFrame& frame, const char* context,
                          std::string* err = nullptr);
+    // Composite PlaybackOverlay onto the last held YUV F1 frame (or studio-black)
+    // and publish. Used by pause() so chrome appears even when the play thread
+    // is blocked in read() after SIGSTOP of FFmpeg, and on STREAM skip-RGB.
+    bool publishPausedOverlayFrame();
+    void rememberPauseFrame(const uint8_t* yuv, size_t len, const DdrFrameGeometry& g);
     // errWriteFd: optional pipe for ffmpeg stderr (geometry banners). -1 → lab file//null.
     pid_t spawnFfmpeg(const std::vector<std::string>& args, int vWriteFd, int aWriteFd,
                       int errWriteFd = -1);
@@ -360,6 +366,9 @@ private:
     std::atomic<int64_t> seekReqMs_{-1};
     std::atomic<int64_t> positionMs_{0};
     PlaybackOverlay overlay_;
+    // Last clean YUV F1 payload for pause/stop overlay (thread-safe via presentMu_).
+    LastFrameLatch pauseFrameLatch_;
+    std::mutex pauseLatchMu_;
     std::atomic<pid_t> childPid_{-1};
     std::atomic<pid_t> streamPid_{-1};
     std::string lastError_;

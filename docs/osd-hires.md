@@ -113,6 +113,23 @@ always-on 1080p composite rejected; dirty bursts OK; watch present deadline spik
   identical overlay), YUV path smoke, glyph quality vs 5×7-upscale
 - `tests/unit/test_overlay_edge_measure.sh` gates the tool
 
+
+## Pause / play overlay path (parent hardware proof)
+
+Parent captured STOPPED chrome on HDMI (`overlay_lowres_evidence.png`) from
+`paintIdle()` + `overlay_.renderRgb24` at coded 624×480. Pause on shipping
+silicon produced **frozen frames with no chrome** (`delta_prev=0`) because:
+
+1. YUV `renderOverlay` was a no-op (fixed: `renderYuv420p`).
+2. `pause()` SIGSTOP’d FFmpeg while the play thread could be blocked in `read()`,
+   so the in-loop pause presenter never ran.
+3. STREAM skip-RGB only slept on pause.
+
+**Fix:** `rememberPauseFrame` latches each clean YUV F1; `pause()` calls
+`publishPausedOverlayFrame()` **before** SIGSTOP; STREAM skip-RGB pause loop
+also publishes while the overlay is visible. Fonts: 8×13 when `H<360`, 12×16
+when `H≥360` (CC0 hand-authored bitmaps), always `scale=1`.
+
 ## Step 4 — Implementation map
 
 - `playback_overlay.hpp` — metrics, 8×13 font, scale=1 text/icons, `renderYuv420p*`
