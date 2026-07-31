@@ -3,7 +3,7 @@
 
 ## 1. Branch / SHA / ancestors
 - Branch: integ/thruput-on-warm
-- Tip: 6e2b2315ea724736b5a2c43a026ffd5700d32842 (6e2b2315)
+- Tip: 84d6790e2d526c752bafda3e4db9834ad53b6442 (84d6790e)
 - Worktree: .worktrees/w-thruput-on-warm
 - RTL hybrid+thruput+area core: 9d9dadbd (ancestor)
 - w-area dequant 809a8197 IS ancestor: YES (merge-base --is-ancestor rc=0)
@@ -58,7 +58,7 @@ score_i420_candidate.py: NEVER modified
 ## 8. Parent verify (no fit yet)
 ```bash
 cd .worktrees/w-thruput-on-warm
-git rev-parse HEAD   # expect 6e2b2315…
+git rev-parse HEAD   # expect 84d6790e…
 git merge-base --is-ancestor 809a8197 HEAD; echo rc=$?   # expect 0
 make define-parity; echo "true rc=$?"
 make quartus-sv-subset; echo "true rc=$?"
@@ -67,7 +67,7 @@ FULL_FRAME_BITSTREAM=$PWD/tests/fixtures/p3_inter_pred/plex_inter_p16_baseline_3
   bash tests/unit/test_stream_path_full_frame_compare.sh
 # expect paint_per_mb=2239.647 and LUMA frame0 300/300
 ```
-When slot granted: ONE fit of tip 6e2b2315 only; do not mid-fit edit sources.
+When slot granted: ONE fit of tip 84d6790e only; do not mid-fit edit sources.
 
 ## 9. Logs
 - docs/evidence/w_thruput_on_warm/gates/{define_parity,quartus_sv_subset,make_unit2,dequant}.log
