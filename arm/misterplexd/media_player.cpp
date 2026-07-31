@@ -2396,6 +2396,7 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
     int dropRun = 0;
     avDriftMs_.store(0);
     droppedFrames_.store(0);
+    publishMisses_.store(0);
     if (fpsNum_ <= 0)
         log("media: content fps UNKNOWN — pacing at " + std::to_string(kDefaultFpsNum) + "/" +
             std::to_string(kDefaultFpsDen) + " and relying on drift correction");
@@ -2980,9 +2981,21 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                         "YUV420p");
                 }
                 if (!ok) {
-                    if (countPresent && (frameIndex % 30) == 0)
-                        log("media: fpga frame_tx: " +
-                            (ddrErr.empty() ? fpga_.lastError() : ddrErr));
+                    if (countPresent) {
+                        publishMisses_.fetch_add(1, std::memory_order_relaxed);
+                        // Exact form required by rtl_invariants present-path degradation
+                        // contract (whitespace-stripped needle includes frame_status).
+                        if ((frameIndex % 30) == 0)
+                            log("media: fpga frame_tx: " +
+                                (ddrErr.empty() ? fpga_.lastError() : ddrErr));
+                        if ((publishMisses_.load() % 30) == 1)
+                            log("media: publish_misses=" +
+                                std::to_string(publishMisses_.load()) +
+                                " frames=" + std::to_string(frameIndex) +
+                                " residual=" +
+                                std::to_string(frameLedgerResidual(
+                                    frameIndex, presentCount_, droppedFrames_.load())));
+                    }
                 } else if (countPresent) {
                     ++presentCount_;
                     if (profilePresent)
@@ -3321,6 +3334,9 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                 const double a_sec = static_cast<double>(abytes) / (48000.0 * 4.0);
                 const int mw = measuredDeliveryW_.load();
                 const int mh = measuredDeliveryH_.load();
+                const auto led = frameLedgerLiveOf(frameIndex, presentCount_,
+                                                   droppedFrames_.load(),
+                                                   publishMisses_.load());
                 log("media: frames=" + std::to_string(frameIndex) +
                     " vfps=" + std::to_string(vfps).substr(0, 4) +
                     " pfps=" + std::to_string(pfps).substr(0, 4) +
@@ -3329,12 +3345,20 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                     " audio=" + (audioActive_.load() ? "on" : "off") +
                     " clock=av-lock" +
                     " av_drift_ms=" + std::to_string(avDriftMs_.load()) +
-                    " drops=" + std::to_string(droppedFrames_.load()) +
+                    " " + frameLedgerTelemetryFragment(led) +
                     " fps=" + std::to_string(fpsNum) + "/" + std::to_string(fpsDen) +
                     " decode=" + std::to_string(outW_) + "x" + std::to_string(outH_) +
                     " measured=" +
                     (mw > 0 ? (std::to_string(mw) + "x" + std::to_string(mh)) : "pending") +
-                    " desync_risk=" + (pipeDesyncRisk_.load() ? "1" : "0"));
+                    " desync_risk=" + (pipeDesyncRisk_.load() ? "1" : "0") +
+                    " lifetime_frames=" + std::to_string(lifetimeFrames_.load() + frameIndex) +
+                    " lifetime_presents=" +
+                    std::to_string(lifetimePresents_.load() + presentCount_) +
+                    " lifetime_drops=" +
+                    std::to_string(lifetimeDrops_.load() + droppedFrames_.load()) +
+                    " lifetime_publish_misses=" +
+                    std::to_string(lifetimePublishMisses_.load() + publishMisses_.load()) +
+                    " session=" + std::to_string(sessionSeq_.load() + 1));
             }
             // Periodic hard check (B5): measured size vs reader under identity_skip.
             if (vfPlan.identity_skip && (frameIndex % 120) == 0) {
@@ -3507,26 +3531,27 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
     startIdle();
 
     // Lifetime + append-only ledger BEFORE session counters are discarded.
-    // presentCount_/droppedFrames_ reset on the next play; ledger does not.
+    // presentCount_/droppedFrames_/publishMisses_ reset on the next play; ledger does not.
     const int64_t sessFrames = usedRawVideo ? frameIndex : reconFrames_.load();
     const int64_t sessPresents = presentCount_;
     const int64_t sessDrops = droppedFrames_.load();
+    const int64_t sessPubMiss = publishMisses_.load();
     lifetimeFrames_.fetch_add(sessFrames, std::memory_order_relaxed);
     lifetimePresents_.fetch_add(sessPresents, std::memory_order_relaxed);
     lifetimeDrops_.fetch_add(sessDrops, std::memory_order_relaxed);
+    lifetimePublishMisses_.fetch_add(sessPubMiss, std::memory_order_relaxed);
     const uint64_t sid = sessionSeq_.fetch_add(1, std::memory_order_relaxed) + 1;
     const char* endReason = stop_.load() ? "stop_or_seek" : "natural_eof";
-    frameLedgerSessionEnd(sid, sessFrames, sessPresents, sessDrops, endReason);
+    frameLedgerSessionEnd(sid, sessFrames, sessPresents, sessDrops, endReason, sessPubMiss);
 
+    const auto ledEnd = frameLedgerLiveOf(sessFrames, sessPresents, sessDrops, sessPubMiss);
     log("media: session end frames=" + std::to_string(frameIndex) +
-        " presents=" + std::to_string(sessPresents) +
-        " drops=" + std::to_string(sessDrops) +
-        " residual=" +
-        std::to_string(frameLedgerResidual(sessFrames, sessPresents, sessDrops)) +
+        " " + frameLedgerTelemetryFragment(ledEnd) +
         " session=" + std::to_string(sid) +
         " lifetime_frames=" + std::to_string(lifetimeFrames_.load()) +
         " lifetime_presents=" + std::to_string(lifetimePresents_.load()) +
         " lifetime_drops=" + std::to_string(lifetimeDrops_.load()) +
+        " lifetime_publish_misses=" + std::to_string(lifetimePublishMisses_.load()) +
         " recon=" + std::to_string(reconFrames_.load()) +
         " cabac=" + (cabacSkip_.load() ? "1" : "0") +
         " stream=" + (streamEnabled_ ? "on" : "off") +

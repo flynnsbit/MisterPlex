@@ -181,6 +181,10 @@ public:
     // Negative = video ahead of audio (audio sounds late).
     int64_t avDriftMs() const { return avDriftMs_.load(); }
     int64_t droppedFrames() const { return droppedFrames_.load(); }
+    // Failed DDR/FPGA publishes this stream (not A/V-pacer drops).
+    int64_t publishMisses() const { return publishMisses_.load(); }
+    // Successful FPGA presents this stream (resets every demux with drops).
+    int64_t presentCount() const { return presentCount_; }
     // Coded payload only. Bare ints / PresentedWidth do not bind (conf seal).
     // Proofs: geometry_type_mismatch_set_decode_*.cpp + MediaPlayer mutant in
     // test_geometry_type_safety.sh. Conf/argv must use adoptExternalCodedSize.
@@ -219,6 +223,7 @@ public:
     int64_t lifetimeFrames() const { return lifetimeFrames_.load(); }
     int64_t lifetimePresents() const { return lifetimePresents_.load(); }
     int64_t lifetimeDrops() const { return lifetimeDrops_.load(); }
+    int64_t lifetimePublishMisses() const { return lifetimePublishMisses_.load(); }
     uint64_t sessionSeq() const { return sessionSeq_.load(); }
     bool audioActive() const { return audioActive_.load(); }
     int64_t positionMs() const { return positionMs_.load(); }
@@ -345,11 +350,14 @@ private:
     // Live A/V drift + resync counters (per play/seek session)
     std::atomic<int64_t> avDriftMs_{0};
     std::atomic<int64_t> droppedFrames_{0};
+    // Present attempted but DDR/FPGA publish failed (per stream). NOT in drops.
+    std::atomic<int64_t> publishMisses_{0};
     // Lifetime (process) totals — soak-auditable across stream resets / restarts
     // via confDir/misterplexd.frame_ledger (see frame_ledger.hpp).
     std::atomic<int64_t> lifetimeFrames_{0};
     std::atomic<int64_t> lifetimePresents_{0};
     std::atomic<int64_t> lifetimeDrops_{0};
+    std::atomic<int64_t> lifetimePublishMisses_{0};
     std::atomic<uint64_t> sessionSeq_{0};
     // FPGA presents this session (wall-clock capped)
     int64_t presentCount_ = 0;

@@ -24,8 +24,9 @@ void frameLedgerProcessStart(int64_t lifetimeFrames, int64_t lifetimePresents,
 
 // session_end: one demux/playback finished. residual = frames - presents - drops
 // (may be non-zero when paused overlays / skip-present paths apply).
+// publishMisses: present attempted but DDR/FPGA publish failed (not A/V drops).
 void frameLedgerSessionEnd(uint64_t sessionId, int64_t frames, int64_t presents, int64_t drops,
-                           const char* reason);
+                           const char* reason, int64_t publishMisses = 0);
 
 // process_exit: orderly daemon exit (same moment as deathBreadcrumbExit).
 void frameLedgerProcessExit(int code, const char* why, int64_t lifetimeFrames,
@@ -36,6 +37,7 @@ struct FrameLedgerTotals {
     int64_t frames = 0;
     int64_t presents = 0;
     int64_t drops = 0;
+    int64_t publish_misses = 0;
     int64_t residual = 0;
     int processStarts = 0;
     int processExits = 0;
@@ -46,8 +48,52 @@ struct FrameLedgerTotals {
 bool frameLedgerSumFile(const std::string& path, FrameLedgerTotals* out);
 
 // residual identity: frames - presents - drops (clamped report, not forced 0).
+//
+// Semantics (product present loop):
+//   frames         = pipe frames fully assembled (frameIndex)
+//   presents       = successful FPGA/DDR publishes (presentCount_)
+//   drops          = deliberate A/V-pacer skips ONLY (droppedFrames_)
+//   publish_misses = present attempted, DDR/FPGA publish failed
+//
+// residual = frames - presents - drops
+//   • does NOT include av_drift_ms (drift uses frameIndex content time only)
+//   • a failed publish increments residual and publish_misses; drops stays flat
+//   • identity when every non-present is either pacedrop or publish-miss:
+//       residual == publish_misses
 inline int64_t frameLedgerResidual(int64_t frames, int64_t presents, int64_t drops) {
     return frames - presents - drops;
+}
+
+// Live snapshot fields emitted on the 1 Hz media telemetry line and at session_end.
+struct FrameLedgerLive {
+    int64_t frames = 0;
+    int64_t presents = 0;
+    int64_t drops = 0;
+    int64_t publish_misses = 0;
+    int64_t residual = 0; // frames - presents - drops
+};
+
+inline FrameLedgerLive frameLedgerLiveOf(int64_t frames, int64_t presents, int64_t drops,
+                                         int64_t publishMisses = 0) {
+    FrameLedgerLive s;
+    s.frames = frames;
+    s.presents = presents;
+    s.drops = drops;
+    s.publish_misses = publishMisses;
+    s.residual = frameLedgerResidual(frames, presents, drops);
+    return s;
+}
+
+// True when residual is fully explained by counted publish misses (no other gap).
+inline bool frameLedgerResidualExplainedByPublishMiss(const FrameLedgerLive& s) {
+    return s.residual == s.publish_misses;
+}
+
+// Compact key=value fragment for telemetry (no leading/trailing space).
+inline std::string frameLedgerTelemetryFragment(const FrameLedgerLive& s) {
+    return "presents=" + std::to_string(s.presents) + " drops=" + std::to_string(s.drops) +
+           " publish_misses=" + std::to_string(s.publish_misses) +
+           " residual=" + std::to_string(s.residual);
 }
 
 } // namespace misterplex

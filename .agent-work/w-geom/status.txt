@@ -1,64 +1,58 @@
-w-geom daemon-exit harden — FINAL
+w-geom P5 frame ledger — FINAL
 branch: w-instr-motion-counter
-sha: bb0fb5bb128d8383363e169c429e657789ee7e82
-short: bb0fb5bb
+(sha filled after commit)
 
-# unit gate ownership (blocking install question)
-exit_commit: 8f144ea1  (death breadcrumb + frame ledger)
-  git diff --stat 8f144ea1^..8f144ea1 -- arm/misterplexd/fpga_spi.*  => EMPTY (0 bytes)
-rtl_invariants selectDdrWriteBank:
-  merge-base 77e1e78d : PASS (no FAIL line) — worktree true rc=0
-  parent     2bbdffd4 : FAIL sendDdrFrame must use selectDdrWriteBank
-  tip pre-fix 8f144ea1 : FAIL same (not introduced by exit commit)
-  tip post-fix bb0fb5bb : PASS; make unit true rc=0
-owned_fix: port selectDdrWriteBank + drop-on-timeout (no force-write) + npz text-suffix skip
-
-# binary (32-bit ARM static ELF) — parent hand-installs
+# binary
 path: /home/flynnsbit/Projects/MisterPlex/build/arm/misterplexd
-md5: 865d4c8ac246e827bfd524f76af3e18d
-file: ELF 32-bit LSB executable, ARM, EABI5, statically linked
-death_capture_supervisor: build/death_capture_supervisor md5 5b183219f4dc6b55a011f36c8dd44175
-
-# gates
-make unit @ bb0fb5bb: true rc=0  (log: .agent-work/w-geom/make-unit-bb0fb5bb.out)
+md5: 63094a7e80417b33b86ceaffa9fd7493
+file: ELF 32-bit ARM static
+make unit: true rc=0
+test_frame_ledger: true rc=0
+test_live_daemon_enum: true rc=0
 test_rtl_invariants: true rc=0
-test_death_breadcrumb: true rc=0
-test_supervise_exit_classify: true rc=0
-  SIGTERM default → WIFSIGNALED WTERMSIG=15 shell rc=143
-  SIGKILL         → WIFSIGNALED WTERMSIG=9  shell rc=137
-  handled SIGTERM → WIFEXITED exit_status=0 shell rc=0  (matches product rc=0 mystery)
 
-# death breadcrumb (async-signal-safe handler path)
-handler: open/write/close only on precomputed g_deathPathC (no fprintf/malloc in handler)
-orderly: deathBreadcrumbExit may fprintf after teardown
-path: <confDir>/misterplexd.death  e.g. /media/fat/misterplex_v2/misterplexd.death
-SIGKILL: handler cannot run — supervisor SUPERVISE_EXIT is second witness
+# what landed
+residual = frames - presents - drops on EVERY 1Hz media: line
+  + presents= drops= publish_misses= residual=
+  + lifetime_frames/presents/drops/publish_misses (process-spanning)
+  + session=N
+publish_misses counted on DDR/FPGA present fail (NOT in drops)
+append-only confDir/misterplexd.frame_ledger across restarts
+  session_end includes publish_misses + residual
+deleted-exe enum helper: scripts/lib/live_daemon_enum.sh (*misterplexd*)
 
-# signal senders
-doc: .agent-work/w-geom/SIGNAL_SENDERS.md
-top suspects for handled-SIGTERM rc=0:
-  scripts/plexctl.sh stop_all via cmdline substring *"/bin/misterplexd"*
-  scripts/deploy_plex_core.sh killall misterplexd
-  scripts/mister_soft_bounce.sh killall misterplexd
-kill -9 paths would be WIFSIGNALED 9 not rc=0
+# host RBG contrast
+test_frame_ledger: 2 publish fails → residual=2 while drops=1 av_drift_ms=0
 
-# hand-install (parent only; do NOT use deploy_misterplexd.sh)
+# parent hardware commands
 ROOT=/media/fat/misterplex_v2
-# 1) stop via plexctl if used, copy binary, restart ONE supervisor
-# 2) verify LIVE exe not on-disk alone:
-# PID=$(pidof misterplexd | awk '{print $1}')
-# md5sum $(readlink -f /proc/$PID/exe)
-# expect 865d4c8ac246e827bfd524f76af3e18d
-# 3) after unexplained exit:
-# grep EXIT_REASON $ROOT/misterplexd.log | tail -5
-# cat $ROOT/misterplexd.death
-# si_pid=N → tr '\0' ' ' < /proc/N/cmdline  (if still live)
-# tail -20 $ROOT/misterplexd_supervise.log   # SUPERVISE_EXIT WIF*
+# install build/arm/misterplexd → $ROOT/bin/ (hand), restart ONE daemon
+PID=$(pidof misterplexd | awk '{print $1}')
+md5sum $(readlink -f /proc/$PID/exe)   # expect 63094a7e80417b33b86ceaffa9fd7493
 
-# frame ledger residual (whole soak, restarts visible as rows)
-# LEDGER=$ROOT/misterplexd.frame_ledger
-# awk '...'  see DAEMON_EXIT_REPORT.md §6
+# live telemetry (1 Hz during cast)
+grep 'media: frames=' $ROOT/misterplexd.log | tail -5
+# expect residual= publish_misses= presents= lifetime_*
 
-# docs
-.agent-work/w-geom/DAEMON_EXIT_REPORT.md
-.agent-work/w-geom/SIGNAL_SENDERS.md
+# soak residual across restarts
+LEDGER=$ROOT/misterplexd.frame_ledger
+awk '
+  /event=/{print}
+  {
+    for(i=1;i<=NF;i++){
+      if($i~/^frames=/){split($i,a,"=");f+=a[2]}
+      if($i~/^presents=/){split($i,a,"=");p+=a[2]}
+      if($i~/^drops=/){split($i,a,"=");d+=a[2]}
+      if($i~/^publish_misses=/){split($i,a,"=");m+=a[2]}
+      if($i~/^residual=/){split($i,a,"=");r+=a[2]}
+    }
+  }
+  END{
+    print "SUM frames="f" presents="p" drops="d" publish_misses="m" residual_field="r
+    print "COMPUTED residual frames-presents-drops="(f-p-d)
+    print "restarts visible as event=process_start count"
+  }
+' "$LEDGER"
+
+# deleted-exe safe count (host helper)
+# case "$(readlink -f /proc/$PID/exe)" in *misterplexd*) echo ours;; esac
