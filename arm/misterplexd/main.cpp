@@ -195,13 +195,16 @@ int main(int argc, char** argv) {
     // WxH is known and equals the coded bank (or ASSUME_MATCH). Unknown delivery
     // still scales. Shipping path with matching PMS videoResolution is a no-op
     // omit — do not ship a cosmetic sws default for a filter that is skipped.
-    // YUV DDR force-scale DEFAULT ON (silicon: only FORCE=1 fixed native 480p
-    // colour+throughput). Escape hatch: DDR_YUV_FORCE_SCALE=0 (guard still
-    // blocks identity_skip on unverified PMS request geometry).
+    // YUV DDR force-scale is HARD default ON in code (silicon: only FORCE=1 fixed
+    // native 480p colour+throughput). Conf DDR_YUV_FORCE_SCALE=0 alone is IGNORED
+    // and LOUD-warned — correctness must not depend on a deletable conf key.
+    // Lab-only escape: DDR_YUV_FORCE_SCALE_LAB=1 + DDR_YUV_FORCE_SCALE=0.
     std::string ffmpegScaleMode = "skip_identity";
     std::string ffmpegSwsFlags; // empty = ffmpeg default when residual scale runs
     bool ffmpegScaleAssumeMatch = false;
-    bool ddrYuvForceScale = true; // conf DDR_YUV_FORCE_SCALE; default ON
+    bool ddrYuvForceScale = true; // product always ON unless LAB escape
+    bool ddrYuvForceScaleLab = false;
+    bool ddrYuvForceScaleConfOff = false;
     bool autoNext = true;
     std::string subtitleMode = "off"; // off | burn | ffmpeg
     int subtitleStreamId = -1;
@@ -391,10 +394,26 @@ int main(int argc, char** argv) {
         v = loadConf(confPath, "FFMPEG_SCALE_ASSUME_MATCH");
         if (!v.empty())
             ffmpegScaleAssumeMatch = confTruthy(v);
-        // YUV DDR force-scale (default ON). Explicit 0/false disables.
-        v = loadConf(confPath, "DDR_YUV_FORCE_SCALE");
+        // YUV DDR force-scale: product default ON. Conf=0 only honored with LAB flag.
+        v = loadConf(confPath, "DDR_YUV_FORCE_SCALE_LAB");
         if (!v.empty())
-            ddrYuvForceScale = confTruthy(v);
+            ddrYuvForceScaleLab = confTruthy(v);
+        v = loadConf(confPath, "DDR_YUV_FORCE_SCALE");
+        if (!v.empty()) {
+            const bool want = confTruthy(v);
+            if (!want) {
+                ddrYuvForceScaleConfOff = true;
+                if (ddrYuvForceScaleLab) {
+                    ddrYuvForceScale = false;
+                } else {
+                    // Keep code default ON — conf-only Off is a silent desync footgun
+                    // (library_media 624x480 vs measured 624x350 on live PMS).
+                    ddrYuvForceScale = true;
+                }
+            } else {
+                ddrYuvForceScale = true;
+            }
+        }
         v = loadConf(confPath, "AUTO_NEXT");
         if (!v.empty())
             autoNext = confTruthy(v);
@@ -659,11 +678,27 @@ int main(int argc, char** argv) {
     std::fprintf(stderr, "misterplexd: PRESENT_PROFILE=%s\n", presentProfile ? "1" : "0");
     std::fprintf(stderr,
                  "misterplexd: FFMPEG_SCALE=%s FFMPEG_SWS_FLAGS=%s "
-                 "FFMPEG_SCALE_ASSUME_MATCH=%s DDR_YUV_FORCE_SCALE=%s\n",
+                 "FFMPEG_SCALE_ASSUME_MATCH=%s DDR_YUV_FORCE_SCALE=%s "
+                 "DDR_YUV_FORCE_SCALE_LAB=%s conf_off_requested=%s\n",
                  ffmpegScaleMode.c_str(),
                  ffmpegSwsFlags.empty() ? "(ffmpeg_default)" : ffmpegSwsFlags.c_str(),
                  ffmpegScaleAssumeMatch ? "1" : "0",
-                 ddrYuvForceScale ? "1" : "0");
+                 ddrYuvForceScale ? "1" : "0",
+                 ddrYuvForceScaleLab ? "1" : "0",
+                 ddrYuvForceScaleConfOff ? "1" : "0");
+    if (ddrYuvForceScaleConfOff && !ddrYuvForceScaleLab) {
+        std::fprintf(stderr,
+                     "misterplexd: ERROR DDR_YUV_FORCE_SCALE=0 IGNORED — product code "
+                     "default is ON. PMS library_media can claim 624x480 while delivering "
+                     "624x350; without force-scale the reader desyncs (magenta wrap, "
+                     "climbing drops). To disable for lab only set BOTH "
+                     "DDR_YUV_FORCE_SCALE_LAB=1 and DDR_YUV_FORCE_SCALE=0.\n");
+    } else if (ddrYuvForceScaleConfOff && ddrYuvForceScaleLab && !ddrYuvForceScale) {
+        std::fprintf(stderr,
+                     "misterplexd: WARN DDR_YUV_FORCE_SCALE=0 with LAB=1 — UNSAFE path "
+                     "enabled; identity_skip only if delivery_verified=measured. "
+                     "Expect desync if PMS delivers ≠ coded store.\n");
+    }
     if (weak.burnSubtitles)
         std::fprintf(stderr, "misterplexd: SUBTITLES=burn (PMS universal)\n");
     else if (subtitleMode == "ffmpeg")
@@ -857,7 +892,10 @@ int main(int argc, char** argv) {
         // - universal transcode: we *request* weakForPlay.videoResolution — NOT
         //   verified delivery. PMS client profile only sets upperBound(w/h)
         //   (plex_resolve.cpp plexClientProfileExtra). delivery_verified=0.
-        // - direct play: library Media/Stream WxH when known → verified.
+        // - direct play: library Media/Stream WxH is a CLAIM only (basis=
+        //   library_media). deliveryGeometryVerifiedFromBasis accepts ONLY
+        //   "measured" — live silicon saw library_media=624x480 with measured=
+        //   624x350 on the same asset.
         // - unknown: leave 0 so skip_identity still emits scale (safe).
         // Always re-set each play so a prior session cannot leak source dims.
         int expectW = 0, expectH = 0;
@@ -873,9 +911,12 @@ int main(int argc, char** argv) {
         } else if (resolved.mediaWidth > 0 && resolved.mediaHeight > 0) {
             expectW = resolved.mediaWidth;
             expectH = resolved.mediaHeight;
-            deliveryBasis = "library_media";
+            deliveryBasis = "library_media"; // claim — never sets delivery_verified
         }
         player.setFfmpegScaleSourceSize(expectW, expectH);
+        // Play-time basis is never "measured" (that arrives later from ffmpeg
+        // stderr). So delivery_verified stays 0 here; identity_skip needs
+        // force-scale OFF + later measured match (or stays scaled).
         const bool deliveryVerified =
             misterplex::deliveryGeometryVerifiedFromBasis(deliveryBasis);
         player.setDeliveryGeometryVerified(deliveryVerified);

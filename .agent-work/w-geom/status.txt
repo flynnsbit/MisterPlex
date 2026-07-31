@@ -1,58 +1,46 @@
-w-geom P5 frame ledger — FINAL
+w-geom P5 residual + death sender + force-scale harden — FINAL
 branch: w-instr-motion-counter
-sha: 2e05d80cabf7236ac32139d2711bf134f6ffddf4
+(sha after commit)
 
-# binary
-path: /home/flynnsbit/Projects/MisterPlex/build/arm/misterplexd
-md5: 63094a7e80417b33b86ceaffa9fd7493
-file: ELF 32-bit ARM static
+# LOUD: P5 residual was ALREADY wired at 2e05d80c / prior binary 63094a7e
+# Live device line without residual = OLD binary still installed (865d4c8a era).
+# New line includes: presents= drops= publish_misses= residual= lifetime_* session=
+
+# binary (install THIS)
+path: build/arm/misterplexd
+md5: e8f61b5a258b56883f36b7d69d33d68e
 make unit: true rc=0
+test_death_breadcrumb: true rc=0
 test_frame_ledger: true rc=0
-test_live_daemon_enum: true rc=0
-test_rtl_invariants: true rc=0
 
-# what landed
-residual = frames - presents - drops on EVERY 1Hz media: line
-  + presents= drops= publish_misses= residual=
-  + lifetime_frames/presents/drops/publish_misses (process-spanning)
-  + session=N
-publish_misses counted on DDR/FPGA present fail (NOT in drops)
-append-only confDir/misterplexd.frame_ledger across restarts
-  session_end includes publish_misses + residual
-deleted-exe enum helper: scripts/lib/live_daemon_enum.sh (*misterplexd*)
+# death breadcrumb (Addition 1)
+handler writes: si_code + si_code_name (SI_USER|SI_KERNEL|OTHER) + si_pid + si_uid
+  async-signal-safe open/write/close only
+supervisor (plexctl write_supervisor) AT DETECTION:
+  parses si_pid/si_code from death file
+  snapshots /proc/si_pid/cmdline + ppid chain into SUPERVISE_EXIT
+  (not at human read time — kills pid recycle race)
 
-# host RBG contrast
-test_frame_ledger: 2 publish fails → residual=2 while drops=1 av_drift_ms=0
+# force-scale (Addition 2)
+CODE default ON always.
+DDR_YUV_FORCE_SCALE=0 WITHOUT DDR_YUV_FORCE_SCALE_LAB=1 → IGNORED + ERROR log.
+Only LAB=1 + FORCE=0 disables (WARN).
+library_media already NOT verified (deliveryGeometryVerifiedFromBasis measured-only).
+desync_risk: set when measured producer bytes ≠ reader under identity_skip;
+  with force-scale ON identity_skip=0 so desync_risk stays 0 while scale pins pipe.
+teardown already asserts totalBytes % frameBytes via rawPipeByteAligned + ERROR.
 
-# parent hardware commands
+# parent install
 ROOT=/media/fat/misterplex_v2
-# install build/arm/misterplexd → $ROOT/bin/ (hand), restart ONE daemon
+# hand-copy build/arm/misterplexd; also refresh plexctl supervisor script if used
+# (scripts/plexctl.sh write_supervisor embeds SUPERVISE_EXIT sender snap)
 PID=$(pidof misterplexd | awk '{print $1}')
-md5sum $(readlink -f /proc/$PID/exe)   # expect 63094a7e80417b33b86ceaffa9fd7493
+md5sum $(readlink -f /proc/$PID/exe)  # expect e8f61b5a258b56883f36b7d69d33d68e
 
-# live telemetry (1 Hz during cast)
-grep 'media: frames=' $ROOT/misterplexd.log | tail -5
-# expect residual= publish_misses= presents= lifetime_*
+# residual on promote line
+grep 'media: frames=' $ROOT/misterplexd.log | tail -3
+# expect: ... av_drift_ms=N presents=P drops=D publish_misses=M residual=R ...
 
-# soak residual across restarts
-LEDGER=$ROOT/misterplexd.frame_ledger
-awk '
-  /event=/{print}
-  {
-    for(i=1;i<=NF;i++){
-      if($i~/^frames=/){split($i,a,"=");f+=a[2]}
-      if($i~/^presents=/){split($i,a,"=");p+=a[2]}
-      if($i~/^drops=/){split($i,a,"=");d+=a[2]}
-      if($i~/^publish_misses=/){split($i,a,"=");m+=a[2]}
-      if($i~/^residual=/){split($i,a,"=");r+=a[2]}
-    }
-  }
-  END{
-    print "SUM frames="f" presents="p" drops="d" publish_misses="m" residual_field="r
-    print "COMPUTED residual frames-presents-drops="(f-p-d)
-    print "restarts visible as event=process_start count"
-  }
-' "$LEDGER"
-
-# deleted-exe safe count (host helper)
-# case "$(readlink -f /proc/$PID/exe)" in *misterplexd*) echo ours;; esac
+# after death
+cat $ROOT/misterplexd.death   # si_code_name=SI_USER si_pid=...
+tail -5 $ROOT/misterplexd_supervise.log   # sender_cmd= sender_chain=
