@@ -2,21 +2,37 @@
 
 Status: design + ARM implementation (worker `w-osd-hires`).  
 Related: [`display-resolution.md`](display-resolution.md), `host/libmisterplex/playback_overlay.hpp`,
-`arm/misterplexd/media_player.cpp`.
+`host/libmisterplex/idle_screen.hpp`, `arm/misterplexd/media_player.cpp`,
+`tools/measure_overlay_edge.py`.
+
+## Parent HDMI evidence (idle, not only transport)
+
+Capture: `.worktrees/rollback-honest/build/pair-visual/idle_warm.png` (1920×1080 idle chevron).
+
+| Measurement | Value | Meaning |
+|---|---|---|
+| 10–90% luma edge ramp | ~6 samples (tool: edge_max≥5 on archive) | Soft edge from low-res source + ascal |
+| Vertical detail pitch | mode ~3 rows | ~640×480 canvas → 1080p (1920/640≈3) |
+
+**Falsifiable pass criterion (executable):**  
+`tools/measure_overlay_edge.py CAPTURE.png` → `true rc=0` only if 10–90% edge width ≤2 **and** no coarse 3/4-row diagonal stair pitch.  
+Proven **RED** on the archived capture (`true rc=1`) and on bilinear 640→1080 selftest; **GREEN** on native-1080 authored chevron (`--selftest`).
+
+Idle chevron, notice banners, and transport panel are **one problem class**: chrome authored at canvas (or worse 320×240) then ascal’d to HDMI.
 
 ## Step 1 — Real overlay path (evidence)
 
 | Path | What draws pixels | Size used | HDMI? |
 |---|---|---|---|
-| **Playback RGB/565/BGRA** | `presentCleanFrame` → `renderOverlay` → `overlay_.renderRgb*`(data, **rawW, rawH**) then `blitFrame` / (non-YUV) refused for F1 | `rawW/H` = DDR **coded** geometry (`media_player.cpp` ~2250–2251, 2852–2866, 2902–2999) | Only if something else presents; product F1 is YUV-only |
-| **Playback YUV420p (product `PRESENT=fpga`)** | `case RawVideoFormat::Yuv420p: break;` — **no overlay pixels** (`media_player.cpp` 2860–2861) | n/a | Video yes; transport overlay **was a no-op** |
-| **Pause loop** | Re-calls `presentCleanFrame` on last frame while `overlay_.visible()` (3038–3047) | same as above | same gap on YUV |
-| **Idle notice** | `paintIdle`: RGB24 overlay at 320×240 for fb0; when `overlay_.visible()`, RGB at **coded** W×H then RGB→YUV for DDR (739–820) | 320×240 or coded canvas | Yes on DDR when notice visible |
+| **Playback RGB/565/BGRA** | `presentCleanFrame` → `renderOverlay` → `overlay_.renderRgb*`(data, **rawW, rawH**) then `blitFrame` / (non-YUV) refused for F1 | `rawW/H` = DDR **coded** geometry (`media_player.cpp`) | Only if something else presents; product F1 is YUV-only |
+| **Playback YUV420p (product `PRESENT=fpga`)** | **Was** `case Yuv420p: break;` (no-op). **Now** `overlay_.renderYuv420p` + strided dirty backup | coded canvas | Video + transport on F1 |
+| **Pause loop** | Re-calls `presentCleanFrame` on last frame while `overlay_.visible()` | same | YUV path now draws |
+| **Idle chevron + notice** | `paintIdle` → `renderIdleRgb24` + `overlay_.renderRgb24` at **product coded** W×H, RGB→YUV publish (`media_player.cpp` paintIdle). **Was** fb0 hard-coded 320×240 | coded 624×480 product | Yes via DDR F1 → ascal |
 | **MiSTer F12 OSD** | Framework `sys/osd.v` (Main), not `PlaybackOverlay` | fixed OSD buffer | Separate chrome |
 
-**Contradiction vs earlier note:** on product YUV DDR, the transport panel was **not** composited into the frame at all. RGB paths *do* composite pre-ascal into the coded buffer (mechanism for “blocky when HDMI-scaled”). Idle notices *do* reach HDMI via RGB→YUV at coded size.
+**Open question resolved:** product YUV path previously skipped transport overlay (`break;`). User-visible pause chrome on pure `PRESENT=fpga` was therefore **idle notices and/or a non-YUV path**, not the broken YUV branch. Idle art always reached HDMI via `renderIdleYuv420p` / RGB→YUV at **coded** size — matching the parent’s 3-row pitch at 1080p (`presented 640` → `video_mode=8`).
 
-Compositing order today (RGB): decode/scale → **overlay into content/canvas buffer** → present → MiSTer **ascal** to `video_mode`. Overlay is enlarged with the picture.
+Compositing order: decode/scale → **chrome into coded canvas** → DDR/fb0 → core scanout → **ascal** → HDMI `video_mode`. Canvas-native chrome is sharp only when `video_mode` ≈ presented size; at 1080p ascal still softens.
 
 ## Step 2 — Where output resolution comes from
 
@@ -33,7 +49,11 @@ Compositing order today (RGB): decode/scale → **overlay into content/canvas bu
 
 **Cheapest reliable output hint (no RTL):** parse `[Plex] video_mode` from `/media/fat/MiSTer.ini` (same table as `display-resolution.md`) **or** conf `OVERLAY_OUTPUT=WxH`. That yields layout intent for tests and future post-ascal planes; it **cannot** put more pixels into the fixed DDR bank.
 
-**Hard limit:** product F1 is coded 624×480 (presented 640×480). True **HDMI-pixel-sharp** chrome needs a post-ascal plane (framework OSD or new RTL). This change makes overlay **canvas-native**, resolution-scaled, and **actually drawn on YUV**, which is the maximum quality on the current silicon path.
+**Hard limit (silicon):** product F1 is coded 624×480 (presented 640×480, `Plex.qsf` `FRAME_W=640`). True **HDMI-pixel-sharp** chrome at `video_mode=8` (1920×1080) needs either:
+1. a larger frame store / post-ascal plane (RTL / Quartus exclusive), or
+2. `video_mode` matched to the canvas (e.g. mode 6 = 640×480) so ascal scale≈1.
+
+ARM-only work cannot meet the ≤2 px edge criterion at 1080p while pixels still leave the core at 480p — the parent’s 3-row pitch is geometric. This change makes chrome **canvas-native** (not 320×240), resolution-scaled, and **actually drawn on YUV**, which is the maximum quality on the current F1 path.
 
 ## Step 3 — Design
 
@@ -100,4 +120,25 @@ Backup/restore dirty for YUV is plane-strided memcpy (not bpp=0 skip).
 
 ## Step 6 — Device verification (parent only)
 
-See agent status `PARENT_ACTION` / recipe at end of implementation. Falsifiable: on pause at `video_mode=8`, glyph stroke width in capture ≥ N HDMI pixels; panel bottom margin scales with mode; overlay geometry unchanged when switching content tier 320 vs 624 with same `video_mode`.
+Worker must not touch the device. Parent recipe:
+
+```bash
+# 1) Deploy ARM only (no core thrash):
+DEPLOY_LOAD=none ./scripts/deploy_misterplexd.sh   # or project-equivalent
+
+# 2) Capture idle at 1080p (MiSTer.ini [Plex] video_mode=8):
+ffmpeg -v error -f v4l2 -input_format mjpeg -video_size 1920x1080 \
+  -i /dev/video0 -frames:v 1 -y build/pair-visual/idle_after_osd_hires.png
+
+# 3) Score (must print true rc=):
+python3 tools/measure_overlay_edge.py build/pair-visual/idle_after_osd_hires.png
+# Expect while F1 remains 480p canvas: true rc=1 (edge_max>2) — documents silicon limit.
+# Expect after future native-1080 plane: true rc=0 (edge_max<=2, pitch_ok).
+
+# 4) Matched-mode control (video_mode=6 / 640x480). Capture may need mode-matched size:
+#    edge criterion should approach PASS if ascal scale≈1 and chrome is canvas-authored.
+
+# 5) Transport overlay: pause cast, capture, same tool on the panel edge.
+```
+
+Pass criterion (parent): 10–90% luma transition ≤2 output px; no 3–4 row diagonal stair pitch.
