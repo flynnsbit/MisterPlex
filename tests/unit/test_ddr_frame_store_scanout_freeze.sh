@@ -52,7 +52,7 @@ common_sv=(
   "$ROOT/fpga/Plex_MiSTer/rtl/async_fifo.sv"
   "$ROOT/tests/rtl/ddr_frame_store_scanout_freeze_tb.cpp"
 )
-vflags=(--cc --exe --build --top-module ddr_frame_store_scanout_freeze_tb
+vflags=(--cc --exe --build -I"$ROOT/fpga/Plex_MiSTer/rtl" --top-module ddr_frame_store_scanout_freeze_tb
   -Wno-fatal -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-SELRANGE -Wno-UNSIGNED
   -CFLAGS "-std=c++17 -O2")
 

@@ -10,6 +10,7 @@
 
 #include <cstdint>
 #include "mailbox_abi_spec.hpp"
+#include "core_identity.hpp"
 
 namespace misterplex {
 
@@ -34,6 +35,7 @@ constexpr uint32_t kInputMailboxOffset = mailbox_abi::kPlxiOffset;
 constexpr uint32_t kMemtestMailboxOffset = mailbox_abi::kPlxmOffset;
 constexpr uint32_t kUnderrunMailboxOffset = mailbox_abi::kPlxfOffset;
 constexpr uint32_t kBankReleaseMailboxOffset = mailbox_abi::kPlxdOffset;
+// kCoreIdentity* + coreIdentityMailboxPhys: see core_identity.hpp (included above).
 
 // Resolve a frame-store control mailbox against the active doorbell.
 inline constexpr uint32_t frameStoreMailboxPhys(uint32_t doorbell_phys, uint32_t offset) {

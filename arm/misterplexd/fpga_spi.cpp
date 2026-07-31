@@ -1699,6 +1699,50 @@ bool FpgaSpi::readFrameStoreStatus(FrameStoreStatus& out) {
     return false;
 }
 
+bool FpgaSpi::readCoreIdentity(CoreIdentity& out) {
+    out = CoreIdentity{};
+    if (!ok() && !open())
+        return false;
+    if (!ensureDdrMap())
+        return false;
+    // PLXC is doorbell-relative. Product YUV doorbell 0x300FF000 → 0x300FF130.
+    // Never hardcode 0x3007F130 / 0x300FF130 — same class of bug as PLXD absolute.
+    const uint32_t plxcPhys = coreIdentityMailboxPhys(ddrLayout_.doorbell_phys);
+    if (plxcPhys < ddrLayout_.phys_base) {
+        setErr("readCoreIdentity: PLXC mailbox is outside DDR frame window");
+        return false;
+    }
+    const size_t off = static_cast<size_t>(plxcPhys - ddrLayout_.phys_base);
+    if (off + 8 > ddrMapLen_) {
+        setErr("readCoreIdentity: PLXC mailbox is outside mapped DDR frame window");
+        return false;
+    }
+    volatile uint32_t* mw = reinterpret_cast<volatile uint32_t*>(ddrMap_ + off);
+    for (int attempt = 0; attempt < 4; ++attempt) {
+        const uint32_t lo0 = mw[0];
+        const uint32_t hi0 = mw[1];
+        __sync_synchronize();
+        const uint32_t lo1 = mw[0];
+        const uint32_t hi1 = mw[1];
+        if (decodeStableCoreIdentity(lo0, hi0, lo1, hi1, out)) {
+            clearErr();
+            return true;
+        }
+        // Stable non-magic → absent (SPI / pre-identity), not a transient error.
+        if (lo0 == lo1 && hi0 == hi1 && lo0 != mailbox_abi::kPlxcMagic) {
+            out = CoreIdentity{};
+            out.raw_lo = lo0;
+            out.raw_hi = hi0;
+            out.path = CorePathClass::Absent;
+            clearErr();
+            return false;
+        }
+        usleep(200);
+    }
+    setErr("readCoreIdentity: PLXC mailbox unstable");
+    return false;
+}
+
 bool FpgaSpi::readBankRelease(BankReleaseStatus& out) {
     if (!ok() && !open())
         return false;

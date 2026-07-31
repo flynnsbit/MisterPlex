@@ -11,6 +11,7 @@
 #include "libmisterplex/ddr_bitstream_ring.hpp"
 #include "libmisterplex/ddr_bank_release_select.hpp"
 #include "libmisterplex/ddr_present_bank.hpp"
+#include "libmisterplex/core_identity.hpp"
 #include "libmisterplex/input_mailbox.hpp"
 
 namespace misterplex {
@@ -132,6 +133,8 @@ public:
     bool readDdrDoorbellStatus(DdrDoorbellStatus& status);
     bool readFrameStoreStatus(FrameStoreStatus& status);
     bool readBankRelease(BankReleaseStatus& status);
+    // PLXC core identity — doorbell-relative. false = absent/unstable (SPI or pre-ID).
+    bool readCoreIdentity(CoreIdentity& out);
 
     // PLXD provenance diagnostic — classifies whether the FPGA actually wrote
     // the bank-release mailbox, without requiring valid magic.

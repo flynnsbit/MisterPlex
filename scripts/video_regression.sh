@@ -423,6 +423,51 @@ verify_baseline() {
       fi
     fi
 
+    # Running-bitstream identity (PLXC). On-disk RBF md5 is blind during mixed
+    # promotion (DDR daemon + SPI core = black screen but file gate green).
+    # Parent injects VIDREG_CORE_ID=absent|ddr|spi[,prov=0x....] from a live PLXC
+    # read (doorbell+0x130). When unset, skip with NOTE (pre-instrumentation).
+    # VIDREG_REQUIRE_CORE_ID=1 forces RED on missing inject (post identity RBF).
+    if [ -n "${VIDREG_CORE_ID:-}" ]; then
+      id_path="${VIDREG_CORE_ID%%,*}"
+      id_prov=""
+      case ",${VIDREG_CORE_ID}," in
+        *,prov=*) id_prov="${VIDREG_CORE_ID#*prov=}"; id_prov="${id_prov%%,*}" ;;
+      esac
+      echo "NOTE core-id inject path='$id_path' prov='${id_prov:-none}'"
+      if [ "$pair" = "spi" ]; then
+        if [ "$id_path" = "ddr" ]; then
+          echo "FAIL core-id RED_SPI_DAEMON_DDR_CORE (running PLXC CAP_DDR with SPI daemon — mixed black-screen class)"
+          rc=1
+        else
+          echo "OK   core-id path=$id_path compatible with SPI pair"
+        fi
+      elif [ "$pair" = "ddr" ]; then
+        if [ "$id_path" = "spi" ]; then
+          echo "FAIL core-id RED_DDR_DAEMON_NON_DDR_CORE (SPI stamp with DDR daemon)"
+          rc=1
+        elif [ "$id_path" = "ddr" ]; then
+          echo "OK   core-id path=ddr compatible with DDR pair"
+        elif [ "$id_path" = "absent" ]; then
+          # c5382bee pre-identity: allow until first PLXC-bearing RBF is daily.
+          if [ "${VIDREG_REQUIRE_CORE_ID:-0}" = "1" ]; then
+            echo "FAIL core-id absent but VIDREG_REQUIRE_CORE_ID=1 (identity RBF required)"
+            rc=1
+          else
+            echo "OK   core-id absent allowed for pre-identity DDR core (set VIDREG_REQUIRE_CORE_ID=1 after first PLXC RBF)"
+          fi
+        else
+          echo "FAIL core-id path='$id_path' invalid (want absent|ddr|spi)"
+          rc=1
+        fi
+      fi
+    elif [ "${VIDREG_REQUIRE_CORE_ID:-0}" = "1" ]; then
+      echo "FAIL core-id missing inject (VIDREG_REQUIRE_CORE_ID=1)"
+      rc=1
+    else
+      echo "NOTE core-id not injected (VIDREG_CORE_ID unset) — on-disk pair only; parent should supply live PLXC after identity RBF"
+    fi
+
     # Real liveness signal: HTTP must answer. A process that exists but is
     # wedged / not listening is still a FAIL.
     set +e

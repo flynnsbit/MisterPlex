@@ -1,0 +1,13 @@
+{
+  "magic": "0x504C5843",
+  "magic_ascii": "PLXC",
+  "offset_from_doorbell": "0x130",
+  "source_git": "194d7f6402fb5e4725abb9bd59847ce4f60e6c75",
+  "provenance_28": "0x194D7F6",
+  "cap_ddr_frame_store": 1,
+  "cap_spi_legacy": 0,
+  "abi_version": 1,
+  "hi32": "0x5194D7F6",
+  "word64": "0x5194D7F6504C5843",
+  "product_phys_example": "0x300FF130"
+}

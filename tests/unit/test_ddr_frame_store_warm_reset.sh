@@ -33,7 +33,7 @@ CHROMA_VERTICAL_FAULT_BUILD="$ROOT/build/verilator/ddr_frame_store_warm_reset_ch
 CHROMA_STRIDE_FAULT_BUILD="$ROOT/build/verilator/ddr_frame_store_warm_reset_chroma_stride_fault"
 mkdir -p "$BUILD" "$FAULT_BUILD" "$SCHED_FAULT_BUILD" "$FORMAT_FAULT_BUILD" "$BANK_FAULT_BUILD" "$UV_FAULT_BUILD" "$CHROMA_VERTICAL_FAULT_BUILD" "$CHROMA_STRIDE_FAULT_BUILD"
 echo "RTL SIM: using $VERILATOR_VERSION" >&2
-"$RUN_VERILATOR" --cc --exe --build \
+"$RUN_VERILATOR" --cc --exe --build -I"$ROOT/fpga/Plex_MiSTer/rtl" \
   --Mdir "$BUILD" \
   --top-module ddr_frame_store_warm_reset_tb -GSTALE_DOORBELL_FALLBACK_POLLS=256 -Wno-fatal -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-SELRANGE -Wno-UNSIGNED \
   -CFLAGS "-std=c++17 -O2" \
@@ -44,7 +44,7 @@ echo "RTL SIM: using $VERILATOR_VERSION" >&2
   "$ROOT/tests/rtl/ddr_frame_store_warm_reset_tb.cpp"
 "$BUILD/Vddr_frame_store_warm_reset_tb"
 
-"$RUN_VERILATOR" --cc --exe --build \
+"$RUN_VERILATOR" --cc --exe --build -I"$ROOT/fpga/Plex_MiSTer/rtl" \
   --Mdir "$FAULT_BUILD" \
   --top-module ddr_frame_store_warm_reset_tb -GIGNORE_STALE_DOORBELL_AFTER_RESET=0 -GSTALE_DOORBELL_FALLBACK_POLLS=256 -Wno-fatal -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-SELRANGE -Wno-UNSIGNED \
   -CFLAGS "-std=c++17 -O2" \
@@ -68,7 +68,7 @@ if ! grep -q 'accepted stale doorbell' <<<"$FAULT_OUT"; then
 fi
 echo "OK ddr_frame_store warm-reset red-check: stale-doorbell fault failed"
 
-"$RUN_VERILATOR" --cc --exe --build \
+"$RUN_VERILATOR" --cc --exe --build -I"$ROOT/fpga/Plex_MiSTer/rtl" \
   --Mdir "$FORMAT_FAULT_BUILD" \
   --top-module ddr_frame_store_warm_reset_tb -GSTRICT_YUV_DOORBELL=0 -GSTALE_DOORBELL_FALLBACK_POLLS=256 -Wno-fatal -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-SELRANGE -Wno-UNSIGNED \
   -CFLAGS "-std=c++17 -O2" \
@@ -92,7 +92,7 @@ if ! grep -q 'accepted non-YUV doorbell' <<<"$FORMAT_FAULT_OUT"; then
 fi
 echo "OK ddr_frame_store warm-reset red-check: non-YUV doorbell fault failed"
 
-"$RUN_VERILATOR" --cc --exe --build \
+"$RUN_VERILATOR" --cc --exe --build -I"$ROOT/fpga/Plex_MiSTer/rtl" \
   --Mdir "$BANK_FAULT_BUILD" \
   --top-module ddr_frame_store_warm_reset_tb -GSTALE_DOORBELL_FALLBACK_POLLS=256 +define+DDR_FRAME_STORE_FAULT_HOLD_DISP_BANK -Wno-fatal -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-SELRANGE -Wno-UNSIGNED \
   -CFLAGS "-std=c++17 -O2" \
@@ -116,7 +116,7 @@ if ! grep -q 'alternating bank flip' <<<"$BANK_FAULT_OUT"; then
 fi
 echo "OK ddr_frame_store warm-reset red-check: held display-bank fault failed"
 
-"$RUN_VERILATOR" --cc --exe --build \
+"$RUN_VERILATOR" --cc --exe --build -I"$ROOT/fpga/Plex_MiSTer/rtl" \
   --Mdir "$UV_FAULT_BUILD" \
   --top-module ddr_frame_store_warm_reset_tb -GSTALE_DOORBELL_FALLBACK_POLLS=256 +define+DDR_FRAME_STORE_FAULT_SWAP_UV_READ -Wno-fatal -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-SELRANGE -Wno-UNSIGNED \
   -CFLAGS "-std=c++17 -O2" \
@@ -140,7 +140,7 @@ if ! grep -q 'U/V read mapping' <<<"$UV_FAULT_OUT"; then
 fi
 echo "OK ddr_frame_store warm-reset red-check: U/V read-swap fault failed"
 
-"$RUN_VERILATOR" --cc --exe --build \
+"$RUN_VERILATOR" --cc --exe --build -I"$ROOT/fpga/Plex_MiSTer/rtl" \
   --Mdir "$CHROMA_VERTICAL_FAULT_BUILD" \
   --top-module ddr_frame_store_warm_reset_tb -GSTALE_DOORBELL_FALLBACK_POLLS=256 +define+DDR_FRAME_STORE_FAULT_CHROMA_VERTICAL_FULLRES -Wno-fatal -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-SELRANGE -Wno-UNSIGNED \
   -CFLAGS "-std=c++17 -O2" \
@@ -164,7 +164,7 @@ if ! grep -q 'chroma vertical subsampling/stride' <<<"$CHROMA_VERTICAL_FAULT_OUT
 fi
 echo "OK ddr_frame_store warm-reset red-check: chroma vertical full-res fault failed"
 
-"$RUN_VERILATOR" --cc --exe --build \
+"$RUN_VERILATOR" --cc --exe --build -I"$ROOT/fpga/Plex_MiSTer/rtl" \
   --Mdir "$CHROMA_STRIDE_FAULT_BUILD" \
   --top-module ddr_frame_store_warm_reset_tb -GSTALE_DOORBELL_FALLBACK_POLLS=256 +define+DDR_FRAME_STORE_FAULT_CHROMA_LUMA_STRIDE -Wno-fatal -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-SELRANGE -Wno-UNSIGNED \
   -CFLAGS "-std=c++17 -O2" \
@@ -188,7 +188,7 @@ if ! grep -q 'chroma vertical subsampling/stride' <<<"$CHROMA_STRIDE_FAULT_OUT";
 fi
 echo "OK ddr_frame_store warm-reset red-check: chroma luma-stride fault failed"
 
-"$RUN_VERILATOR" --cc --exe --build \
+"$RUN_VERILATOR" --cc --exe --build -I"$ROOT/fpga/Plex_MiSTer/rtl" \
   --Mdir "$SCHED_FAULT_BUILD" \
   --top-module ddr_frame_store_warm_reset_tb -GPIPELINE_REFILL_SCHEDULER=0 -GSTALE_DOORBELL_FALLBACK_POLLS=256 -Wno-fatal -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-SELRANGE -Wno-UNSIGNED \
   -CFLAGS "-std=c++17 -O2" \

@@ -177,6 +177,8 @@ run_new_verify() {
     VIDREG_ATTEMPT_FILE="$WORK/attempt" \
     LIVE_WAIT_SEC="${LIVE_WAIT_SEC:-1}" \
     LIVE_POLL_SEC="${LIVE_POLL_SEC:-0.05}" \
+    VIDREG_CORE_ID="${VIDREG_CORE_ID-}" \
+    VIDREG_REQUIRE_CORE_ID="${VIDREG_REQUIRE_CORE_ID:-0}" \
     bash "$SCRIPT" verify 2>&1
   )
   rc=$?
@@ -455,6 +457,74 @@ EOF
 LIVE_WAIT_SEC=0 LIVE_POLL_SEC=0 run_new_verify "new-timeout"
 expect_rc "new-timeout" 1
 expect_grep "new-timeout-msg" 'n_daemon=0'
+
+# ===========================================================================
+echo "=== NEW gate: core-id RED SPI daemon + live CAP_DDR (mixed black-screen) ==="
+write_scenario <<EOF
+core_md5=$BASE_CORE_MD5
+core_ddr_md5=$DDR_CORE_MD5
+disk_md5=$HYBRID_DAEMON_MD5
+live_md5=$HYBRID_DAEMON_MD5
+n_match=1
+appear_after=0
+http_code=200
+live_port=3005
+live_conf=$V2_CONF
+EOF
+VIDREG_CORE_ID=ddr run_new_verify "coreid-spi-on-ddr"
+expect_rc "coreid-spi-on-ddr" 1
+expect_grep "coreid-spi-on-ddr-msg" 'RED_SPI_DAEMON_DDR_CORE'
+
+# ===========================================================================
+echo "=== NEW gate: core-id GREEN SPI daemon + absent PLXC ==="
+write_scenario <<EOF
+core_md5=$BASE_CORE_MD5
+core_ddr_md5=
+disk_md5=$HYBRID_DAEMON_MD5
+live_md5=$HYBRID_DAEMON_MD5
+n_match=1
+appear_after=0
+http_code=200
+live_port=3005
+live_conf=$V2_CONF
+EOF
+VIDREG_CORE_ID=absent run_new_verify "coreid-spi-absent"
+expect_rc "coreid-spi-absent" 0
+expect_grep "coreid-spi-absent-ok" 'compatible with SPI pair'
+
+# ===========================================================================
+echo "=== NEW gate: core-id GREEN DDR daemon + CAP_DDR ==="
+write_scenario <<EOF
+core_md5=$BASE_CORE_MD5
+core_ddr_md5=$DDR_CORE_MD5
+disk_md5=$DDR_DAEMON_MD5
+live_md5=$DDR_DAEMON_MD5
+n_match=1
+appear_after=0
+http_code=200
+live_port=3005
+live_conf=/media/fat/misterplex/misterplex.conf
+EOF
+VIDREG_CORE_ID=ddr run_new_verify "coreid-ddr-ok"
+expect_rc "coreid-ddr-ok" 0
+expect_grep "coreid-ddr-ok-msg" 'path=ddr compatible with DDR pair'
+
+# ===========================================================================
+echo "=== NEW gate: core-id RED DDR daemon + require identity but absent ==="
+write_scenario <<EOF
+core_md5=$BASE_CORE_MD5
+core_ddr_md5=$DDR_CORE_MD5
+disk_md5=$DDR_DAEMON_MD5
+live_md5=$DDR_DAEMON_MD5
+n_match=1
+appear_after=0
+http_code=200
+live_port=3005
+live_conf=/media/fat/misterplex/misterplex.conf
+EOF
+VIDREG_CORE_ID=absent VIDREG_REQUIRE_CORE_ID=1 run_new_verify "coreid-ddr-require"
+expect_rc "coreid-ddr-require" 1
+expect_grep "coreid-ddr-require-msg" 'VIDREG_REQUIRE_CORE_ID=1'
 
 echo "ALL test_video_regression_liveness checks passed"
 exit 0

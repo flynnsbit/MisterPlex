@@ -42,7 +42,8 @@ BUILD="$ROOT/build/verilator/ddr_scanout_shear"
 mkdir -p "$BUILD"
 echo "RTL SIM: using $VERILATOR_VERSION" >&2
 
-"$RUN_VERILATOR" --cc --exe --build --top-module ddr_frame_store_scanout_shear_tb \
+"$RUN_VERILATOR" --cc --exe --build -I"$ROOT/fpga/Plex_MiSTer/rtl" \
+  --top-module ddr_frame_store_scanout_shear_tb \
   -Wno-fatal -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-SELRANGE -Wno-UNSIGNED \
   -CFLAGS "-std=c++17 -O2" \
   --Mdir "$BUILD" \

@@ -2,6 +2,7 @@
 # Build Plex.rbf using misterfpga-dev Quartus Docker image.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+python3 "$ROOT/scripts/gen_core_identity_stamp.py"
 
 # Local fits are banned: they starve this box (~4GB free vs ~85GB remote) and Verilator
 # under the resulting memory pressure returns WRONG ANSWERS rather than errors, which

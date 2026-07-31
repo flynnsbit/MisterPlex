@@ -36,11 +36,12 @@ struct MailboxEntry {
 //
 // RTL places the control page relative to DOORBELL_PHYS:
 //   PLXK +0x000, PLXS +0x100, PLXI +0x108, PLXM +0x110,
-//   PLXF +0x118, DIAG +0x120, PLXD +0x128
-// Product 480p YUV doorbell is 0x300FF000 → PLXD live at 0x300FF128.
+//   PLXF +0x118, DIAG +0x120, PLXD +0x128, PLXC +0x130
+// Product 480p YUV doorbell is 0x300FF000 → PLXD live at 0x300FF128,
+// PLXC (core identity) at 0x300FF130.
 // The 0x3007F000 family below is the *legacy example base* (older packed-320
 // map). Consumers MUST resolve via frameStoreMailboxPhys(doorbell, offset),
-// never hard-read the legacy absolute PLXD/PLXF addresses against a product
+// never hard-read the legacy absolute PLXD/PLXF/PLXC addresses against a product
 // doorbell — that reads bank0 padding / boot residue and desyncs bank select
 // (parent bank0 U≈0x04/0x19 green-cast class on c5382bee).
 
@@ -52,6 +53,7 @@ constexpr uint32_t kPlxmOffset = 0x110u;
 constexpr uint32_t kPlxfOffset = 0x118u;
 constexpr uint32_t kSdramDiagOffset = 0x120u;
 constexpr uint32_t kPlxdOffset = 0x128u;
+constexpr uint32_t kPlxcOffset = 0x130u; // core identity (build stamp + path caps)
 
 // Legacy example doorbell base (historical 0x3007F000 control page).
 constexpr uint32_t kLegacyFrameStoreDoorbellPhys = 0x3007F000u;
@@ -111,6 +113,26 @@ constexpr unsigned kPlxdSwapPendingBit = 3;   // bit [35] → bit 3 of upper wor
 constexpr unsigned kPlxdFramesDoneBit = 16;   // bits [63:48] → [31:16] of upper word
 constexpr unsigned kPlxdFramesDoneWidth = 16;
 
+// PLXC — Core identity (FPGA→ARM). Build-stamped provenance + path capability.
+// Live only on cores that instantiate ddr_frame_store (DDR product path).
+// SPI daily driver (no ddr_frame_store) never writes this slot → magic absent.
+// Layout (64-bit LE):
+//   [31:0]   magic 0x504C5843 "PLXC"
+//   [59:32]  provenance[27:0] — low 28 bits of git object name (build inject)
+//   [60]     CAP_DDR_FRAME_STORE — 1 when this writer is ddr_frame_store
+//   [61]     CAP_SPI_LEGACY — 0 on DDR writer (reserved for a future SPI stamp)
+//   [63:62]  abi_version (v1 = 01)
+// Legacy absolute example only — product live addr is doorbell+0x130:
+constexpr uint32_t kPlxcAddr  = 0x3007F130u;
+constexpr uint32_t kPlxcMagic = 0x504C5843u; // "PLXC"
+constexpr unsigned kPlxcProvenanceBit = 0;     // hi[27:0]
+constexpr unsigned kPlxcProvenanceWidth = 28;
+constexpr unsigned kPlxcCapDdrBit = 28;        // hi[28]
+constexpr unsigned kPlxcCapSpiBit = 29;        // hi[29]
+constexpr unsigned kPlxcAbiBit = 30;           // hi[31:30]
+constexpr unsigned kPlxcAbiWidth = 2;
+constexpr unsigned kPlxcAbiVersion = 1;
+
 // ---- Bitstream ring mailboxes (ddr_bitstream_reader) ----
 
 // PLXB — Ring CTRL (ARM→FPGA). Bitstream ring control word.
@@ -128,19 +150,20 @@ struct MagicEntry {
     uint32_t magic;
 };
 
-constexpr std::array<MagicEntry, 7> kAllMagics = {{
+constexpr std::array<MagicEntry, 8> kAllMagics = {{
     {"PLXK", kPlxkMagic},
     {"PLXS", kPlxsMagic},
     {"PLXI", kPlxiMagic},
     {"PLXM", kPlxmMagic},
     {"PLXF", kPlxfMagic},
     {"PLXD", kPlxdMagic},
+    {"PLXC", kPlxcMagic},
     {"PLXB", kPlxbMagic},
 }};
 
 // ---- All addressed mailboxes (for address-collision detection) ----
 // Every occupied DDR mailbox slot. Gate rejects overlapping addresses.
-constexpr std::array<MailboxEntry, 8> kAllMailboxes = {{
+constexpr std::array<MailboxEntry, 9> kAllMailboxes = {{
     {"PLXK", kPlxkAddr,     kPlxkMagic,     8, "arm_to_fpga",  true},
     {"PLXS", kPlxsAddr,     kPlxsMagic,     8, "fpga_to_arm",  true},
     {"PLXI", kPlxiAddr,     kPlxiMagic,     8, "fpga_to_arm",  true},
@@ -148,6 +171,7 @@ constexpr std::array<MailboxEntry, 8> kAllMailboxes = {{
     {"PLXF", kPlxfAddr,     kPlxfMagic,     8, "fpga_to_arm",  true},
     {"DIAG", kSdramDiagAddr, 0,             8, "fpga_to_arm",  false},
     {"PLXD", kPlxdAddr,     kPlxdMagic,     8, "fpga_to_arm",  true},
+    {"PLXC", kPlxcAddr,     kPlxcMagic,     8, "fpga_to_arm",  true},
     {"PLXB", kPlxbAddr,     kPlxbMagic,     8, "arm_to_fpga",  true},
 }};
 

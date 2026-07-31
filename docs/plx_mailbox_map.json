@@ -108,6 +108,25 @@
       "_note": "ARM constants pending w-osd commit alignment to PLXD"
     },
     {
+      "name": "PLXC",
+      "purpose": "Core identity build stamp + path capability (core\u2192HPS)",
+      "address": "0x3007F130",
+      "magic": "0x504C5843",
+      "rtl_file": "rtl/ddr_frame_store.sv",
+      "rtl_addr_param": "IDENTITY_MAILBOX_PHYS",
+      "rtl_magic_param": "MAGIC_C",
+      "arm_addr_const": "kCoreIdentityMailboxPhys",
+      "arm_magic_const": "kCoreIdentityMailboxMagic",
+      "layout": {
+        "31:0": "magic PLXC",
+        "59:32": "provenance[27:0] (git inject)",
+        "60": "CAP_DDR_FRAME_STORE",
+        "61": "CAP_SPI_LEGACY",
+        "63:62": "abi_version"
+      },
+      "_note": "DOORBELL-relative +0x130. Product live 0x300FF130. Stamp from scripts/gen_core_identity_stamp.py — never hand-edit."
+    },
+    {
       "name": "PLXK",
       "purpose": "DDR doorbell (HPS\u2192core)",
       "address": "0x300FF000",
