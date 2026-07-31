@@ -1,0 +1,54 @@
+{
+  "SOURCE_SHA_base": "d57f002070cc17acea6ef0b96d3c668137fa7de6",
+  "SOURCE_SHA_note": "branch tip IS the freeze; do not embed self-hash (chicken-egg). Use git rev-parse HEAD.",
+  "pre_reg": {
+    "ALM": "2500..4000 (integrate maps)",
+    "DSP": "6..12 (integrate maps)",
+    "functional_320": "300/300",
+    "functional_624": "1170/1170"
+  },
+  "measured": {
+    "ALM": "UNKNOWN \u2014 sv-integrate maps freeze SHA",
+    "DSP": "UNKNOWN \u2014 sv-integrate maps freeze SHA",
+    "clip1_320": {
+      "intra_y_mb": "300/300",
+      "intra_y_px": "76800/76800",
+      "inter_y_mb": "1939/3300",
+      "paint_frame0_cy": 645481,
+      "log": "docs/evidence/sink_serial_iq_320_run2.log",
+      "true_rc": 0
+    },
+    "clip2_624": {
+      "intra_y_mb": "1170/1170",
+      "intra_y_px": "299520/299520",
+      "inter_y_mb": "5036/12870",
+      "log": "docs/evidence/sink_serial_iq_624_run.log",
+      "true_rc": 0
+    },
+    "RED_FAULT_SERIAL_IQ_ZERO": {
+      "intra_y_mb": "0/300",
+      "intra_y_px": "5/76800",
+      "discriminates": true,
+      "log": "docs/evidence/sink_serial_iq_fault_red.log"
+    },
+    "serial_vs_combo_unit": {
+      "dequant_mism": 0,
+      "hadamard_mism": 0,
+      "true_rc": 0
+    },
+    "make_unit": {
+      "true_rc": 0,
+      "ok_lines": 167,
+      "log": "docs/evidence/sink_serial_iq_make_unit5.log"
+    },
+    "fetch_mv": {
+      "true_rc": 0,
+      "fix": "pending_p_fetch path set trav_got_mb=1 (was 0; PH_FETCH completion gated on trav_got_mb)",
+      "log": "docs/evidence/sink_serial_iq_fetch_mv3.log"
+    }
+  },
+  "method": "serial dequant (1 mul/16cy) + serial I16 hadamard scale; settle cycle; no M10K-attr-only trap; MAX_PIC_W=1024",
+  "tb_budget": "frameWaitCycles max(2.5e6, W*H*20) for serial path headroom",
+  "hand_to": "sv-integrate for map (ALM/DSP gate)",
+  "SOURCE_SHA": null
+}

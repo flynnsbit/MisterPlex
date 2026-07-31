@@ -1,0 +1,32 @@
+SOURCE_SHA_git=3542824b7ec20b574fafad81c81f95e615449d79
+322:I_RECON_DONE mb_written=299 blk_applied=5020 luma_nz_peak=373
+323:STORE_MB_BITMAP unique=299 dup=0 oob=0 expected=300 fault_dup=0
+325:STORE_MB_BITMAP unique=300 dup=0 oob=0 expected=300 fault_dup=0
+333:STORE_MB_BITMAP unique=300 dup=0 oob=0 expected=300 fault_dup=0
+341:STORE_MB_BITMAP unique=300 dup=0 oob=0 expected=300 fault_dup=0
+349:STORE_MB_BITMAP unique=300 dup=0 oob=0 expected=300 fault_dup=0
+357:STORE_MB_BITMAP unique=300 dup=0 oob=0 expected=300 fault_dup=0
+365:STORE_MB_BITMAP unique=300 dup=0 oob=0 expected=300 fault_dup=0
+373:STORE_MB_BITMAP unique=300 dup=0 oob=0 expected=300 fault_dup=0
+381:STORE_MB_BITMAP unique=300 dup=0 oob=0 expected=300 fault_dup=0
+389:STORE_MB_BITMAP unique=300 dup=0 oob=0 expected=300 fault_dup=0
+397:STORE_MB_BITMAP unique=300 dup=0 oob=0 expected=300 fault_dup=0
+405:STORE_MB_BITMAP unique=300 dup=0 oob=0 expected=300 fault_dup=0
+413:STORE_MB_BITMAP unique=300 dup=0 oob=0 expected=300 fault_dup=0
+500:STAGE_CYCLES frame=0 parse_cycles=289 paint_cycles=786116 parse_per_mb=0.963 paint_per_mb=2620.387
+515:sim true rc=0
+STAGE_CYCLES frame=1 parse_cycles=446224 paint_cycles=76800 parse_per_mb=1487.413 paint_per_mb=256.000
+STAGE_CYCLES frame=2 parse_cycles=444557 paint_cycles=76800 parse_per_mb=1481.857 paint_per_mb=256.000
+STAGE_CYCLES frame=3 parse_cycles=447248 paint_cycles=76800 parse_per_mb=1490.827 paint_per_mb=256.000
+STAGE_CYCLES frame=4 parse_cycles=450516 paint_cycles=76800 parse_per_mb=1501.720 paint_per_mb=256.000
+STAGE_CYCLES frame=5 parse_cycles=441649 paint_cycles=76800 parse_per_mb=1472.163 paint_per_mb=256.000
+STAGE_CYCLES frame=6 parse_cycles=446484 paint_cycles=76800 parse_per_mb=1488.280 paint_per_mb=256.000
+STAGE_CYCLES frame=7 parse_cycles=447818 paint_cycles=76800 parse_per_mb=1492.727 paint_per_mb=256.000
+STAGE_CYCLES frame=8 parse_cycles=436808 paint_cycles=76800 parse_per_mb=1456.027 paint_per_mb=256.000
+STAGE_CYCLES frame=9 parse_cycles=440712 paint_cycles=76800 parse_per_mb=1469.040 paint_per_mb=256.000
+STAGE_CYCLES frame=10 parse_cycles=441649 paint_cycles=76800 parse_per_mb=1472.163 paint_per_mb=256.000
+STAGE_CYCLES frame=11 parse_cycles=435602 paint_cycles=76800 parse_per_mb=1452.007 paint_per_mb=256.000
+STAGE_CYCLES_TOTAL frames=12 parse_total=4879556 paint_total=1630916 injection_total=55306 nonvcl_idle_total=768 reset_total=12 parse_per_mb=1355.432 paint_per_mb=453.032 injection_per_mb=15.363
+FULL_FRAME_COMPARE summary width=320 height=240 frames=12 nals=15 idr=1 p=11 bytes=27653 p_mb_count_max=300 p_slice_done_pulses=12 traversed/total=300/300 native_inter_mb_captures=3300 native_inter_ignored=0 native_i420_dpb_writes=1382400 cycles=6583676 first_bad_frame=0 strict_pass=0 mode=expect-red
+OK full-frame expected-red: strict reference comparison diverged at frame 0
+sim true rc=0

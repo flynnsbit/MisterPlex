@@ -1,0 +1,89 @@
+GOLD_HDR pic_init_qp=23 slice_qp_delta=4 slice_qp=27 bit_after_hdr_pre_db=23
+GOLD_HDR bit_at_first_mb=26
+GOLD_QP mb=0 mt=0 i16=0 cbp=0x2f qp_before=27 ue=0 se=0 qp=27 bit_after_delta=79
+GOLD_QP mb=1 mt=0 i16=0 cbp=0x2f qp_before=27 ue=0 se=0 qp=27 bit_after_delta=1354
+GOLD_QP mb=2 mt=0 i16=0 cbp=0x2f qp_before=27 ue=0 se=0 qp=27 bit_after_delta=2460
+GOLD_QP mb=3 mt=0 i16=0 cbp=0x2f qp_before=27 ue=0 se=0 qp=27 bit_after_delta=3582
+GOLD_QP mb=4 mt=0 i16=0 cbp=0x2f qp_before=27 ue=0 se=0 qp=27 bit_after_delta=4868
+GOLD_QP mb=5 mt=0 i16=0 cbp=0x2f qp_before=27 ue=11 se=6 qp=33 bit_after_delta=5924
+GOLD_QP mb=6 mt=0 i16=0 cbp=0x27 qp_before=33 ue=4 se=-2 qp=31 bit_after_delta=6796
+GOLD_QP mb=7 mt=7 i16=1 cbp=0x10 qp_before=31 ue=36 se=-18 qp=13 bit_after_delta=7411
+GOLD_QP mb=10 mt=7 i16=1 cbp=0x10 qp_before=13 ue=4 se=-2 qp=11 bit_after_delta=7485
+GOLD_QP mb=11 mt=0 i16=0 cbp=0x28 qp_before=11 ue=33 se=17 qp=28 bit_after_delta=7633
+GOLD_QP mb=12 mt=0 i16=0 cbp=0x20 qp_before=28 ue=5 se=3 qp=31 bit_after_delta=7826
+GOLD_QP mb=14 mt=7 i16=1 cbp=0x10 qp_before=31 ue=40 se=-20 qp=11 bit_after_delta=8219
+GOLD_QP mb=16 mt=0 i16=0 cbp=0x22 qp_before=11 ue=43 se=22 qp=33 bit_after_delta=8345
+GOLD_QP mb=17 mt=7 i16=1 cbp=0x10 qp_before=33 ue=40 se=-20 qp=13 bit_after_delta=8565
+GOLD_QP mb=20 mt=0 i16=0 cbp=0x23 qp_before=13 ue=25 se=13 qp=26 bit_after_delta=8684
+GOLD_QP mb=22 mt=0 i16=0 cbp=0x27 qp_before=26 ue=3 se=2 qp=28 bit_after_delta=9142
+GOLD_QP mb=24 mt=0 i16=0 cbp=0x2c qp_before=28 ue=6 se=-3 qp=25 bit_after_delta=9635
+GOLD_QP mb=25 mt=0 i16=0 cbp=0x2a qp_before=25 ue=9 se=5 qp=30 bit_after_delta=9830
+GOLD_QP mb=26 mt=0 i16=0 cbp=0x25 qp_before=30 ue=7 se=4 qp=34 bit_after_delta=10273
+GOLD_QP mb=27 mt=1 i16=1 cbp=0x0 qp_before=34 ue=42 se=-21 qp=13 bit_after_delta=10596
+GOLD_QP mb=32 mt=0 i16=0 cbp=0x22 qp_before=13 ue=29 se=15 qp=28 bit_after_delta=10677
+GOLD_QP mb=33 mt=1 i16=1 cbp=0x0 qp_before=28 ue=9 se=5 qp=33 bit_after_delta=10894
+GOLD_QP mb=34 mt=1 i16=1 cbp=0x0 qp_before=33 ue=40 se=-20 qp=13 bit_after_delta=10919
+GOLD_QP mb=40 mt=0 i16=0 cbp=0x21 qp_before=13 ue=27 se=14 qp=27 bit_after_delta=11004
+GOLD_QP mb=42 mt=22 i16=1 cbp=0x2f qp_before=27 ue=7 se=4 qp=31 bit_after_delta=11362
+GOLD_QP mb=43 mt=0 i16=0 cbp=0x23 qp_before=31 ue=3 se=2 qp=33 bit_after_delta=11480
+GOLD_QP mb=44 mt=0 i16=0 cbp=0x2f qp_before=33 ue=6 se=-3 qp=30 bit_after_delta=11898
+GOLD_QP mb=46 mt=0 i16=0 cbp=0x2d qp_before=30 ue=4 se=-2 qp=28 bit_after_delta=12506
+GOLD_QP mb=47 mt=0 i16=0 cbp=0x2c qp_before=28 ue=5 se=3 qp=31 bit_after_delta=12970
+GOLD_QP mb=48 mt=1 i16=1 cbp=0x0 qp_before=31 ue=46 se=-23 qp=8 bit_after_delta=13283
+GOLD_QP mb=53 mt=0 i16=0 cbp=0x2f qp_before=8 ue=49 se=25 qp=33 bit_after_delta=13364
+GOLD_QP mb=54 mt=0 i16=0 cbp=0x2c qp_before=33 ue=10 se=-5 qp=28 bit_after_delta=13917
+GOLD_QP mb=55 mt=1 i16=1 cbp=0x0 qp_before=28 ue=30 se=-15 qp=13 bit_after_delta=14282
+GOLD_QP mb=60 mt=5 i16=1 cbp=0x10 qp_before=13 ue=4 se=-2 qp=11 bit_after_delta=14322
+GOLD_QP mb=61 mt=1 i16=1 cbp=0x0 qp_before=11 ue=4 se=-2 qp=9 bit_after_delta=14377
+GOLD_QP mb=63 mt=0 i16=0 cbp=0x23 qp_before=9 ue=19 se=10 qp=19 bit_after_delta=14428
+GOLD_QP mb=64 mt=2 i16=1 cbp=0x0 qp_before=19 ue=26 se=-13 qp=6 bit_after_delta=14540
+GOLD_QP mb=65 mt=0 i16=0 cbp=0x22 qp_before=6 ue=37 se=19 qp=25 bit_after_delta=14595
+GOLD_QP mb=66 mt=0 i16=0 cbp=0x28 qp_before=25 ue=7 se=4 qp=29 bit_after_delta=14765
+GOLD_QP mb=69 mt=0 i16=0 cbp=0x29 qp_before=29 ue=5 se=3 qp=32 bit_after_delta=15917
+GOLD_QP mb=71 mt=1 i16=1 cbp=0x0 qp_before=32 ue=48 se=-24 qp=8 bit_after_delta=16513
+GOLD_QP mb=73 mt=0 i16=0 cbp=0x21 qp_before=8 ue=25 se=13 qp=21 bit_after_delta=16563
+GOLD_QP mb=74 mt=0 i16=0 cbp=0x23 qp_before=21 ue=15 se=8 qp=29 bit_after_delta=16807
+GOLD_QP mb=75 mt=1 i16=1 cbp=0x0 qp_before=29 ue=32 se=-16 qp=13 bit_after_delta=17191
+GOLD_QP mb=80 mt=1 i16=1 cbp=0x0 qp_before=13 ue=4 se=-2 qp=11 bit_after_delta=17229
+GOLD_QP mb=86 mt=9 i16=1 cbp=0x20 qp_before=11 ue=17 se=9 qp=20 bit_after_delta=17281
+GOLD_QP mb=87 mt=6 i16=1 cbp=0x10 qp_before=20 ue=24 se=-12 qp=8 bit_after_delta=17385
+GOLD_QP mb=88 mt=0 i16=0 cbp=0x23 qp_before=8 ue=45 se=23 qp=31 bit_after_delta=17463
+GOLD_QP mb=92 mt=0 i16=0 cbp=0x2c qp_before=31 ue=6 se=-3 qp=28 bit_after_delta=19023
+GOLD_QP mb=94 mt=6 i16=1 cbp=0x10 qp_before=28 ue=36 se=-18 qp=10 bit_after_delta=19311
+GOLD_QP mb=109 mt=2 i16=1 cbp=0x0 qp_before=10 ue=4 se=-2 qp=8 bit_after_delta=19431
+GOLD_QP mb=110 mt=0 i16=0 cbp=0x23 qp_before=8 ue=39 se=20 qp=28 bit_after_delta=19490
+GOLD_QP mb=111 mt=0 i16=0 cbp=0x23 qp_before=28 ue=3 se=2 qp=30 bit_after_delta=19805
+GOLD_QP mb=112 mt=0 i16=0 cbp=0x2c qp_before=30 ue=4 se=-2 qp=28 bit_after_delta=20124
+GOLD_QP mb=114 mt=0 i16=0 cbp=0x2d qp_before=28 ue=3 se=2 qp=30 bit_after_delta=20662
+GOLD_QP mb=115 mt=0 i16=0 cbp=0x2c qp_before=30 ue=4 se=-2 qp=28 bit_after_delta=20949
+GOLD_QP mb=116 mt=9 i16=1 cbp=0x20 qp_before=28 ue=12 se=-6 qp=22 bit_after_delta=21153
+GOLD_QP mb=117 mt=1 i16=1 cbp=0x0 qp_before=22 ue=20 se=-10 qp=12 bit_after_delta=21210
+GOLD_QP mb=125 mt=1 i16=1 cbp=0x0 qp_before=12 ue=0 se=0 qp=12 bit_before=21255 bit_after_delta=21260 bit_end=21261
+GOLD_QP mb=126 mt=1 i16=1 cbp=0x0 qp_before=12 ue=0 se=0 qp=12 bit_before=21261 bit_after_delta=21268 bit_end=21269
+GOLD_QP mb=127 mt=1 i16=1 cbp=0x0 qp_before=12 ue=0 se=0 qp=12 bit_before=21269 bit_after_delta=21276 bit_end=21277
+GOLD_QP mb=128 mt=1 i16=1 cbp=0x0 qp_before=12 ue=0 se=0 qp=12 bit_before=21277 bit_after_delta=21282 bit_end=21283
+GOLD_QP mb=129 mt=1 i16=1 cbp=0x0 qp_before=12 ue=4 se=-2 qp=10 bit_before=21283 bit_after_delta=21292 bit_end=21293
+GOLD_QP mb=130 mt=0 i16=0 cbp=0x21 qp_before=10 ue=18 se=-9 qp=1 bit_before=21293 bit_after_delta=21333 bit_end=21606
+GOLD_QP mb=131 mt=2 i16=1 cbp=0x0 qp_before=1 ue=0 se=0 qp=1 bit_before=21606 bit_after_delta=21613 bit_end=21614
+GOLD_QP mb=132 mt=2 i16=1 cbp=0x0 qp_before=1 ue=0 se=0 qp=1 bit_before=21614 bit_after_delta=21621 bit_end=21622
+GOLD_QP mb=133 mt=0 i16=0 cbp=0x23 qp_before=1 ue=44 se=-22 qp=-21 bit_before=21622 bit_after_delta=21673 bit_end=21977
+GOLD_QP mb=134 mt=0 i16=0 cbp=0x29 qp_before=-21 ue=0 se=0 qp=-21 bit_before=21977 bit_after_delta=22022 bit_end=22234
+GOLD_QP mb=135 mt=0 i16=0 cbp=0x2e qp_before=-21 ue=8 se=-4 qp=-25 bit_before=22234 bit_after_delta=22286 bit_end=22500
+GOLD_QP mb=136 mt=0 i16=0 cbp=0x2b qp_before=-25 ue=3 se=2 qp=-23 bit_before=22500 bit_after_delta=22539 bit_end=22760
+GOLD_QP mb=137 mt=0 i16=0 cbp=0x2d qp_before=-23 ue=7 se=4 qp=-19 bit_before=22760 bit_after_delta=22807 bit_end=23076
+GOLD_QP mb=138 mt=0 i16=0 cbp=0x24 qp_before=-19 ue=4 se=-2 qp=-21 bit_before=23076 bit_after_delta=23118 bit_end=23293
+GOLD_QP mb=139 mt=1 i16=1 cbp=0x0 qp_before=-21 ue=46 se=-23 qp=-44 bit_before=23293 bit_after_delta=23308 bit_end=23309
+GOLD_QP mb=140 mt=1 i16=1 cbp=0x0 qp_before=-44 ue=0 se=0 qp=-44 bit_before=23309 bit_after_delta=23314 bit_end=23315
+GOLD_QP mb=141 mt=1 i16=1 cbp=0x0 qp_before=-44 ue=0 se=0 qp=-44 bit_before=23315 bit_after_delta=23320 bit_end=23321
+GOLD_QP mb=142 mt=1 i16=1 cbp=0x0 qp_before=-44 ue=0 se=0 qp=-44 bit_before=23321 bit_after_delta=23326 bit_end=23327
+GOLD_QP mb=143 mt=1 i16=1 cbp=0x0 qp_before=-44 ue=0 se=0 qp=-44 bit_before=23327 bit_after_delta=23334 bit_end=23335
+GOLD_QP mb=144 mt=1 i16=1 cbp=0x0 qp_before=-44 ue=0 se=0 qp=-44 bit_before=23335 bit_after_delta=23340 bit_end=23341
+GOLD_QP mb=145 mt=1 i16=1 cbp=0x0 qp_before=-44 ue=0 se=0 qp=-44 bit_before=23341 bit_after_delta=23346 bit_end=23347
+GOLD_QP mb=156 mt=0 i16=0 cbp=0x22 qp_before=-44 ue=45 se=23 qp=-21 bit_after_delta=23523
+GOLD_QP mb=160 mt=1 i16=1 cbp=0x0 qp_before=-21 ue=40 se=-20 qp=-41 bit_after_delta=24927
+GOLD_QP mb=177 mt=5 i16=1 cbp=0x10 qp_before=-41 ue=8 se=-4 qp=-45 bit_after_delta=25051
+GOLD_QP mb=178 mt=0 i16=0 cbp=0x22 qp_before=-45 ue=41 se=21 qp=-24 bit_after_delta=25194
+GOLD_QP mb=179 mt=0 i16=0 cbp=0x23 qp_before=-24 ue=7 se=4 qp=-20 bit_after_delta=25433
+GOLD_QP mb=180 mt=1 i16=1 cbp=0x0 qp_before=-20 ue=42 se=-21 qp=-41 bit_after_delta=25806
+GOLD_QP mb=193 mt=0 i16=0 cbp=0x2a qp_before=-41 ue=39 se=20 qp=-21 bit_after_delta=25942
+GOLD_QP mb=197 mt=1 

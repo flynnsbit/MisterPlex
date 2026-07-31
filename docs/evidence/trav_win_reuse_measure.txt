@@ -1,0 +1,62 @@
+TRAVERSE FEED — WINDOW REUSE — MEASURE
+======================================
+Lane: sv-traverse
+Base tip (pre-commit): eb4c8b64
+PRE: docs/evidence/trav_win_reuse_prereg.txt
+
+MECHANISM (quoted design)
+-------------------------
+res_win already holds 64B after ST_RES_WIN_LOAD. When bit_pos still lies in
+[res_win_bit0, res_win_bit0+256] and win_valid, skip reload: set
+cavlc_bit0_r = bit_pos - res_win_bit0, cavlc_bitlen_r = 512 (absolute window
+end — CAVLC fails if bit_pos >= bit_len), pulse start → ST_RES_WAIT.
+win_valid set on load complete; clear on reset/clear/start and on rebase.
+
+CLIP1 320×240 I-frame (quoted)
+------------------------------
+Before (D + counters):
+  paint_per_mb f0 = 2474.070
+  TRAV win=125202 hold=317013 win_loads=1897
+  SINK idle_ready=137491 idle_wb=38737
+
+After:
+  paint_per_mb f0 = 2239.647   Δ = −234.423
+  TRAV win=8910 hold=362978 win_loads=135 win_reuse=1762  (92.9% reuse)
+  SINK idle_ready=67227 idle_wb=38674
+  TRAV_DONE err=0 unsup=0
+  LUMA intra 300/300 px 76800/76800 mae=0
+  sim true rc=0
+
+vs 2667: 0.840×  pad ≈ 427 cy/MB
+
+CLIP2 624×480
+-------------
+  paint_per_mb f0 = 2102.850
+  LUMA intra 1170/1170 px 299520/299520 mae=0
+  win_loads=319 win_reuse=4444 (I-frame)
+  sim true rc=0
+
+RED FAULT_SERIAL_IQ_ZERO
+------------------------
+  LUMA intra 0/300 px 5/76800  PASS_RED
+
+PRE VERDICT
+-----------
+  band 2200..2360     HIT (2239.6)
+  save 120..280       HIT (234.4)
+  hard ≤2667          HIT
+  bit-exact / RED     HIT
+  M10K new / DSP      0 / 0
+
+ACCOUNTING
+----------
+  Δpaint ≈ Δidle_ready (−234.2 cy/MB) — feed gap closed on critical path.
+  hold ↑: traverse finishes coded blocks faster → waits on sink more (expected).
+  wait (CAVLC) unchanged 67287 — reuse does not touch decode work.
+  Remaining idle_ready ≈ 224 cy/MB; idle_wb ≈ 129; recon_store 384 still named.
+
+NEXT (not this commit)
+----------------------
+  recon_store hide/shrink without new M10K; E only if pad thin after that.
+
+CONSTRAINTS HELD: no new mem, no mul, no de-serial IQ/I16, scorer untouched.

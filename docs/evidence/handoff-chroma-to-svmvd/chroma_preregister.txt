@@ -1,0 +1,18 @@
+PRE-REGISTER (before measure) — rtl/chroma-intra chroma decode
+baseline (measure 6b19915): luma intra_y_mb=214/300; headline intra=0/300 (UV flat 128)
+target after chroma intra pred + residual:
+  uv_mb_exact (intra): 150..214/300
+  headline_intra mb_exact: 120..200/300
+  headline_inter: still ~0/3300 until P chroma path (out of scope this commit)
+ALM target chroma modules: chroma_qp < 50 ALUT; dc_hadamard_inv < 200 ALUT;
+  sink chroma add (nb linebufs + one shared pred) < 2500 ALUT est.
+
+MEASURED (after PPS chroma_qp_index_offset se(v) wire; QPc=25 not 27):
+  ROOT CAUSE of ~1.27x residual scale: pps_parser ST_CHR was u(1) not se(v);
+  product decode_stub hardwired chroma_qp_index_offset=0; stream PPS offset=-2
+  → host QPc=25, RTL QPc=27. Fix: parse+export se offset; wire to sink.
+  SINK_CHR_DC mb0 U: qp=27 qpc=25 c=-11,16,19,11 dc=3080,-1672,-2200,-3080 (host-match)
+  f0 uv_mb_exact=224/300  (MISS high vs pre 150..214)
+  HEADLINE intra=219/300 inter=1551/3300  (MISS high vs pre 120..200 / ~0)
+  LUMA holds: intra_y_mb=227/300 y_px=61014/76800
+  score_i420_candidate expect-red true rc=0; sim true rc=0

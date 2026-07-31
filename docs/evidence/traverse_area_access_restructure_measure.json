@@ -1,0 +1,41 @@
+{
+  "title": "traverse area: access restructure (not attribute-only)",
+  "parent_corrections_acked": {
+    "units": "map2d 1,180,271 is comb ALUTs not ALMs; whole design 1,241,952 ALMs vs 41,910 device \u224829.6\u00d7",
+    "mechanism": "64 parallel dynamic RBSP reads \u2192 8k:1/16k:1 mux trees",
+    "trap": "ramstyle alone was already tried and left uninferred \u2014 must change access pattern",
+    "language": "cannot fit in current architecture (not cannot be synthesised)"
+  },
+  "implementation": {
+    "h264_byte_ram_sp.sv": "isolated single-port byte RAM: 1 we + 1 raddr \u2192 registered q (qpel pattern)",
+    "no_combo_rbsp_index": "rbsp_bit_at removed; no rbsp_mem[] in parent",
+    "ST_RES_WIN_LOAD": "serial 64B fill from rbsp_q (kills 64-wide dynamic fan-out)",
+    "bit_engine": "bit_ready/cur_bit from registered byte only",
+    "FAULT_SKIP_WIN_LOAD": "RED twin retained"
+  },
+  "pre_register": {
+    "alm_gate": "<=3000 ALMs",
+    "clip1_luma": "300/300",
+    "clip2_luma": "1170/1170"
+  },
+  "actual_functional": {
+    "clip1_320": {
+      "intra_y_mb": "300/300",
+      "y_px": "76800/76800",
+      "STORE": "300/300",
+      "HEADLINE": "0/300",
+      "log": "docs/evidence/traverse_area_ram_module_320_run.log",
+      "true_rc": 0
+    },
+    "clip2_624": {
+      "intra_y_mb": "1170/1170",
+      "y_px": "299520/299520",
+      "STORE": "1170/1170",
+      "HEADLINE": "0/1170",
+      "log": "docs/evidence/traverse_area_ram_module_624_run.log",
+      "true_rc": 0
+    }
+  },
+  "alm_actual": "UNKNOWN \u2014 sv-integrate maps freeze SHA; do not self-launch",
+  "exact_source_note": "This SHA is byte-identical to the tree that scored 300/300 and 1170/1170 \u2014 closes audit gap for map vs correctness source"
+}

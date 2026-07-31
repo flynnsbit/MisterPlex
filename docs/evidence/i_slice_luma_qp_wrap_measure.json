@@ -1,0 +1,41 @@
+{
+  "title": "mb_qp_delta mod-52 wrapQpY fixes 4x residual",
+  "source_sha_base": "a14f9fa",
+  "pre_register": {
+    "headline": "0/300 / 0/3300",
+    "intra_y_mb": "260..295/300",
+    "intra_y_px": "65000..74000/76800"
+  },
+  "actual": {
+    "headline": "0/300 / 0/3300",
+    "headline_note": "chroma stub floors Y+U+V mb_exact",
+    "intra_y_mb": "300/300",
+    "intra_y_blk4": "4800/4800",
+    "intra_y_px": "76800/76800",
+    "intra_y_mae": 0.0,
+    "inter_y_mb": "1939/3300",
+    "store": "300/300 unique dup=0",
+    "frame0_Y_exact_pixels": 76800
+  },
+  "prereg_result": "HIT_ABOVE (300 > 295 band; full I luma exact)",
+  "root_cause": {
+    "quote_host": "host/libmisterplex/h264_recon.hpp wrapQpY: v=qpy+delta; v%=52; if v<0 v+=52",
+    "bitstream_mb133": "qp_before=1 ue=44 se=-22 (gold dump + RTL TRAV agree)",
+    "host_wrap": "wrapQpY(1,-22)=31",
+    "rtl_before": "qp_r=-21; res_blk_qp=qp_r[5:0]=43 (=31+12) \u2192 qdiv+2 \u2192 4x qmul",
+    "rtl_after": "TRAV_QP_DELTA mb=133 ... qp_after=31"
+  },
+  "spec": "H.264 8.5.1 QP_Y modulo 52",
+  "mutant": "FAULT_NO_QP_WRAP parameter restores additive-only path",
+  "pollution_report": {
+    "note": "external agents re-dumped chroma into this worktree after handoff 2c163ab; cleaned before commit",
+    "handoff_dir": "docs/evidence/handoff-chroma-to-svmvd/",
+    "handoff_mtime": "2026-07-29 23:22:25",
+    "do_not_merge_chroma_from_this_lane": true
+  },
+  "inter_note": "inter_y_mb 1681\u21921939; remaining mostly ref cascade; frame1 refOK-48 still deferred ownership",
+  "alm_dsp": "UNKNOWN \u2014 coordinate sv-integrate single map",
+  "source_sha": "6dc5993330b3a140046b5f1a5cb443a0a60afdcf",
+  "clean_remeasure_log": "docs/evidence/i_slice_luma_qp_wrap_run_clean.log",
+  "prereg_line": "LUMA_vs_PREREGISTER pre=260..295 actual=300 HIT_ABOVE"
+}

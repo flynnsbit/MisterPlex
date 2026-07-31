@@ -1,0 +1,21 @@
+SINK AREA REDESIGN PRE-REG (sv-traverse)
+date: 2026-04-09
+scope: h264_i_res_recon_sink serial IQ (dequant + I16 hadamard scale)
+SOURCE freeze pending after dual-clip remeasure
+
+PRE-REG ALM (map, integrate owns): 2500..4000
+PRE-REG DSP (map, integrate owns): 6..12
+  - dequant_serial: 1 mul lane → 0..2 DSP
+  - hadamard_serial: 1 scale mul → 0..2 DSP
+  - residual parallel plane paint still present (ALM phase-2)
+
+PRE-REG functional (must not regress):
+  clip1 320x240: intra_y_mb=300/300 y_px exact
+  clip2 624x480: intra_y_mb=1170/1170 y_px exact
+  STORE unique 300/300 and 1170/1170
+
+RED twin: FAULT_SERIAL_IQ_ZERO / FAULT_FORCE_ZERO on serial dequant
+  expect: luma collapse (intra_y_mb << 300)
+
+Method: restructure access (serial engines), not M10K attributes-only.
+MAX_PIC_W remains 1024 for clip2 top_row (M10K later).

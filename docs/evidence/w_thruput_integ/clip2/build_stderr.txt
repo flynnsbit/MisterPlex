@@ -1,0 +1,696 @@
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:266:22: Operator ADD expects 32 bits on the LHS, but LHS's ARRAYSEL generates 8 bits.
+                                                                                                                                   : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i16'
+  266 |    sa_lo = ((above[0]+above[1]) + (above[2]+above[3]))
+      |                      ^
+                      ... For warning description see https://verilator.org/warn/WIDTHEXPAND?v=5.051
+                      ... Use "/* verilator lint_off WIDTHEXPAND */" and lint_on around source to disable this message.
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:266:22: Operator ADD expects 32 bits on the RHS, but RHS's ARRAYSEL generates 8 bits.
+                                                                                                                                   : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i16'
+  266 |    sa_lo = ((above[0]+above[1]) + (above[2]+above[3]))
+      |                      ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:266:44: Operator ADD expects 32 bits on the LHS, but LHS's ARRAYSEL generates 8 bits.
+                                                                                                                                   : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i16'
+  266 |    sa_lo = ((above[0]+above[1]) + (above[2]+above[3]))
+      |                                            ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:266:44: Operator ADD expects 32 bits on the RHS, but RHS's ARRAYSEL generates 8 bits.
+                                                                                                                                   : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i16'
+  266 |    sa_lo = ((above[0]+above[1]) + (above[2]+above[3]))
+      |                                            ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:267:22: Operator ADD expects 32 bits on the LHS, but LHS's ARRAYSEL generates 8 bits.
+                                                                                                                                   : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i16'
+  267 |          + ((above[4]+above[5]) + (above[6]+above[7]));
+      |                      ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:267:22: Operator ADD expects 32 bits on the RHS, but RHS's ARRAYSEL generates 8 bits.
+                                                                                                                                   : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i16'
+  267 |          + ((above[4]+above[5]) + (above[6]+above[7]));
+      |                      ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:267:44: Operator ADD expects 32 bits on the LHS, but LHS's ARRAYSEL generates 8 bits.
+                                                                                                                                   : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i16'
+  267 |          + ((above[4]+above[5]) + (above[6]+above[7]));
+      |                                            ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:267:44: Operator ADD expects 32 bits on the RHS, but RHS's ARRAYSEL generates 8 bits.
+                                                                                                                                   : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i16'
+  267 |          + ((above[4]+above[5]) + (above[6]+above[7]));
+      |                                            ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:268:22: Operator ADD expects 32 bits on the LHS, but LHS's ARRAYSEL generates 8 bits.
+                                                                                                                                   : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i16'
+  268 |    sa_hi = ((above[8]+above[9]) + (above[10]+above[11]))
+      |                      ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:268:22: Operator ADD expects 32 bits on the RHS, but RHS's ARRAYSEL generates 8 bits.
+                                                                                                                                   : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i16'
+  268 |    sa_hi = ((above[8]+above[9]) + (above[10]+above[11]))
+      |                      ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:268:45: Operator ADD expects 32 bits on the LHS, but LHS's ARRAYSEL generates 8 bits.
+                                                                                                                                   : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i16'
+  268 |    sa_hi = ((above[8]+above[9]) + (above[10]+above[11]))
+      |                                             ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:268:45: Operator ADD expects 32 bits on the RHS, but RHS's ARRAYSEL generates 8 bits.
+                                                                                                                                   : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i16'
+  268 |    sa_hi = ((above[8]+above[9]) + (above[10]+above[11]))
+      |                                             ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:269:23: Operator ADD expects 32 bits on the LHS, but LHS's ARRAYSEL generates 8 bits.
+                                                                                                                                   : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i16'
+  269 |          + ((above[12]+above[13]) + (above[14]+above[15]));
+      |                       ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:269:23: Operator ADD expects 32 bits on the RHS, but RHS's ARRAYSEL generates 8 bits.
+                                                                                                                                   : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i16'
+  269 |          + ((above[12]+above[13]) + (above[14]+above[15]));
+      |                       ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:269:47: Operator ADD expects 32 bits on the LHS, but LHS's ARRAYSEL generates 8 bits.
+                                                                                                                                   : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i16'
+  269 |          + ((above[12]+above[13]) + (above[14]+above[15]));
+      |                                               ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:269:47: Operator ADD expects 32 bits on the RHS, but RHS's ARRAYSEL generates 8 bits.
+                                                                                                                                   : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i16'
+  269 |          + ((above[12]+above[13]) + (above[14]+above[15]));
+      |                                               ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:270:21: Operator ADD expects 32 bits on the LHS, but LHS's ARRAYSEL generates 8 bits.
+                                                                                                                                   : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i16'
+  270 |    sl_lo = ((left[0]+left[1]) + (left[2]+left[3]))
+      |                     ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:270:21: Operator ADD expects 32 bits on the RHS, but RHS's ARRAYSEL generates 8 bits.
+                                                                                                                                   : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i16'
+  270 |    sl_lo = ((left[0]+left[1]) + (left[2]+left[3]))
+      |                     ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:270:41: Operator ADD expects 32 bits on the LHS, but LHS's ARRAYSEL generates 8 bits.
+                                                                                                                                   : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i16'
+  270 |    sl_lo = ((left[0]+left[1]) + (left[2]+left[3]))
+      |                                         ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:270:41: Operator ADD expects 32 bits on the RHS, but RHS's ARRAYSEL generates 8 bits.
+                                                                                                                                   : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i16'
+  270 |    sl_lo = ((left[0]+left[1]) + (left[2]+left[3]))
+      |                                         ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:271:21: Operator ADD expects 32 bits on the LHS, but LHS's ARRAYSEL generates 8 bits.
+                                                                                                                                   : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i16'
+  271 |          + ((left[4]+left[5]) + (left[6]+left[7]));
+      |                     ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:271:21: Operator ADD expects 32 bits on the RHS, but RHS's ARRAYSEL generates 8 bits.
+                                                                                                                                   : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i16'
+  271 |          + ((left[4]+left[5]) + (left[6]+left[7]));
+      |                     ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:271:41: Operator ADD expects 32 bits on the LHS, but LHS's ARRAYSEL generates 8 bits.
+                                                                                                                                   : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i16'
+  271 |          + ((left[4]+left[5]) + (left[6]+left[7]));
+      |                                         ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:271:41: Operator ADD expects 32 bits on the RHS, but RHS's ARRAYSEL generates 8 bits.
+                                                                                                                                   : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i16'
+  271 |          + ((left[4]+left[5]) + (left[6]+left[7]));
+      |                                         ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:272:21: Operator ADD expects 32 bits on the LHS, but LHS's ARRAYSEL generates 8 bits.
+                                                                                                                                   : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i16'
+  272 |    sl_hi = ((left[8]+left[9]) + (left[10]+left[11]))
+      |                     ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:272:21: Operator ADD expects 32 bits on the RHS, but RHS's ARRAYSEL generates 8 bits.
+                                                                                                                                   : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i16'
+  272 |    sl_hi = ((left[8]+left[9]) + (left[10]+left[11]))
+      |                     ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:272:42: Operator ADD expects 32 bits on the LHS, but LHS's ARRAYSEL generates 8 bits.
+                                                                                                                                   : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i16'
+  272 |    sl_hi = ((left[8]+left[9]) + (left[10]+left[11]))
+      |                                          ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:272:42: Operator ADD expects 32 bits on the RHS, but RHS's ARRAYSEL generates 8 bits.
+                                                                                                                                   : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i16'
+  272 |    sl_hi = ((left[8]+left[9]) + (left[10]+left[11]))
+      |                                          ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:273:22: Operator ADD expects 32 bits on the LHS, but LHS's ARRAYSEL generates 8 bits.
+                                                                                                                                   : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i16'
+  273 |          + ((left[12]+left[13]) + (left[14]+left[15]));
+      |                      ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:273:22: Operator ADD expects 32 bits on the RHS, but RHS's ARRAYSEL generates 8 bits.
+                                                                                                                                   : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i16'
+  273 |          + ((left[12]+left[13]) + (left[14]+left[15]));
+      |                      ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:273:44: Operator ADD expects 32 bits on the LHS, but LHS's ARRAYSEL generates 8 bits.
+                                                                                                                                   : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i16'
+  273 |          + ((left[12]+left[13]) + (left[14]+left[15]));
+      |                                            ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:273:44: Operator ADD expects 32 bits on the RHS, but RHS's ARRAYSEL generates 8 bits.
+                                                                                                                                   : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i16'
+  273 |          + ((left[12]+left[13]) + (left[14]+left[15]));
+      |                                            ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:278:36: Operator ASSIGNDLY expects 8 bits on the Assign RHS, but Assign RHS's SHIFTRS generates 32 bits.
+                                                                                                                                  : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i16'
+  278 |    if (has_above && has_left) dc_r <= (sum + 16) >>> 5;
+      |                                    ^~
+                     ... For warning description see https://verilator.org/warn/WIDTHTRUNC?v=5.051
+                     ... Use "/* verilator lint_off WIDTHTRUNC */" and lint_on around source to disable this message.
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:279:41: Operator ASSIGNDLY expects 8 bits on the Assign RHS, but Assign RHS's SHIFTRS generates 32 bits.
+                                                                                                                                  : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i16'
+  279 |    else if (has_above || has_left) dc_r <= (sum + 8) >>> 4;
+      |                                         ^~
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:285:43: Operator SUB expects 32 bits on the LHS, but LHS's SIGNED generates 9 bits.
+                                                                                                                                   : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i16'
+  285 |     diff = $signed({1'b0, above[8 + gi]}) -
+      |                                           ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:286:17: Operator COND expects 32 bits on the Conditional True, but Conditional True's SIGNED generates 9 bits.
+                                                                                                                                   : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i16'
+  286 |      ((gi == 7) ? $signed({1'b0, top_left}) : $signed({1'b0, above[6 - gi]}));
+      |                 ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:286:17: Operator COND expects 32 bits on the Conditional False, but Conditional False's SIGNED generates 9 bits.
+                                                                                                                                   : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i16'
+  286 |      ((gi == 7) ? $signed({1'b0, top_left}) : $signed({1'b0, above[6 - gi]}));
+      |                 ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:288:42: Operator SUB expects 32 bits on the LHS, but LHS's SIGNED generates 9 bits.
+                                                                                                                                   : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i16'
+  288 |     diff = $signed({1'b0, left[8 + gi]}) -
+      |                                          ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:289:17: Operator COND expects 32 bits on the Conditional True, but Conditional True's SIGNED generates 9 bits.
+                                                                                                                                   : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i16'
+  289 |      ((gi == 7) ? $signed({1'b0, top_left}) : $signed({1'b0, left[6 - gi]}));
+      |                 ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:289:17: Operator COND expects 32 bits on the Conditional False, but Conditional False's SIGNED generates 9 bits.
+                                                                                                                                   : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i16'
+  289 |      ((gi == 7) ? $signed({1'b0, top_left}) : $signed({1'b0, left[6 - gi]}));
+      |                 ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:293:38: Operator ADD expects 32 bits on the LHS, but LHS's SIGNED generates 9 bits.
+                                                                                                                                   : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i16'
+  293 |    a_c = ($signed({1'b0, above[15]}) + $signed({1'b0, left[15]})) <<< 4;
+      |                                      ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:293:38: Operator ADD expects 32 bits on the RHS, but RHS's SIGNED generates 9 bits.
+                                                                                                                                   : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i16'
+  293 |    a_c = ($signed({1'b0, above[15]}) + $signed({1'b0, left[15]})) <<< 4;
+      |                                      ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:305:7: Operator ASSIGN expects 32 bits on the Assign RHS, but Assign RHS's SEL generates 4 bits.
+                                                                                                                                  : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i16'
+  305 |     x = k[3:0];
+      |       ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:306:7: Operator ASSIGN expects 32 bits on the Assign RHS, but Assign RHS's SEL generates 4 bits.
+                                                                                                                                  : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i16'
+  306 |     y = k[7:4];
+      |       ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:51:6: Operator ASSIGN expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 8 bits.
+                                                                                                                                 : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i4'
+   51 |   t0 = above[0]; t1 = above[1]; t2 = above[2]; t3 = above[3];
+      |      ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:51:21: Operator ASSIGN expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 8 bits.
+                                                                                                                                  : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i4'
+   51 |   t0 = above[0]; t1 = above[1]; t2 = above[2]; t3 = above[3];
+      |                     ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:51:36: Operator ASSIGN expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 8 bits.
+                                                                                                                                  : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i4'
+   51 |   t0 = above[0]; t1 = above[1]; t2 = above[2]; t3 = above[3];
+      |                                    ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:51:51: Operator ASSIGN expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 8 bits.
+                                                                                                                                  : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i4'
+   51 |   t0 = above[0]; t1 = above[1]; t2 = above[2]; t3 = above[3];
+      |                                                   ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:52:6: Operator ASSIGN expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 8 bits.
+                                                                                                                                 : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i4'
+   52 |   t4 = above[4]; t5 = above[5]; t6 = above[6]; t7 = above[7];
+      |      ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:52:21: Operator ASSIGN expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 8 bits.
+                                                                                                                                  : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i4'
+   52 |   t4 = above[4]; t5 = above[5]; t6 = above[6]; t7 = above[7];
+      |                     ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:52:36: Operator ASSIGN expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 8 bits.
+                                                                                                                                  : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i4'
+   52 |   t4 = above[4]; t5 = above[5]; t6 = above[6]; t7 = above[7];
+      |                                    ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:52:51: Operator ASSIGN expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 8 bits.
+                                                                                                                                  : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i4'
+   52 |   t4 = above[4]; t5 = above[5]; t6 = above[6]; t7 = above[7];
+      |                                                   ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:53:6: Operator ASSIGN expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 8 bits.
+                                                                                                                                 : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i4'
+   53 |   l0 = left[0];  l1 = left[1];  l2 = left[2];  l3 = left[3];
+      |      ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:53:21: Operator ASSIGN expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 8 bits.
+                                                                                                                                  : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i4'
+   53 |   l0 = left[0];  l1 = left[1];  l2 = left[2];  l3 = left[3];
+      |                     ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:53:36: Operator ASSIGN expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 8 bits.
+                                                                                                                                  : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i4'
+   53 |   l0 = left[0];  l1 = left[1];  l2 = left[2];  l3 = left[3];
+      |                                    ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:53:51: Operator ASSIGN expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 8 bits.
+                                                                                                                                  : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i4'
+   53 |   l0 = left[0];  l1 = left[1];  l2 = left[2];  l3 = left[3];
+      |                                                   ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:66:52: Operator ADD expects 32 bits on the RHS, but RHS's CONST '10'h4' generates 10 bits.
+                                                                                                                                  : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i4'
+   66 |     dc_sum = t0 + t1 + t2 + t3 + l0 + l1 + l2 + l3 + 10'd4;
+      |                                                    ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:67:10: Operator ASSIGN expects 8 bits on the Assign RHS, but Assign RHS's SHIFTRS generates 32 bits.
+                                                                                                                                 : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i4'
+   67 |     dc_v = dc_sum >>> 3;
+      |          ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:69:32: Operator ADD expects 32 bits on the RHS, but RHS's CONST '10'h2' generates 10 bits.
+                                                                                                                                  : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i4'
+   69 |     dc_sum = t0 + t1 + t2 + t3 + 10'd2;
+      |                                ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:70:10: Operator ASSIGN expects 8 bits on the Assign RHS, but Assign RHS's SHIFTRS generates 32 bits.
+                                                                                                                                 : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i4'
+   70 |     dc_v = dc_sum >>> 2;
+      |          ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:72:32: Operator ADD expects 32 bits on the RHS, but RHS's CONST '10'h2' generates 10 bits.
+                                                                                                                                  : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i4'
+   72 |     dc_sum = l0 + l1 + l2 + l3 + 10'd2;
+      |                                ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:73:10: Operator ASSIGN expects 8 bits on the Assign RHS, but Assign RHS's SHIFTRS generates 32 bits.
+                                                                                                                                 : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i4'
+   73 |     dc_v = dc_sum >>> 2;
+      |          ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:91:27: Operator ADD expects 32 bits on the RHS, but RHS's VARREF 'top_left' generates 8 bits.
+                                                                                                                                  : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i4'
+   91 |    put(0, 1, (l1 + 2 * l0 + top_left + 2) >>> 2); put(1, 2, (l1 + 2 * l0 + top_left + 2) >>> 2); put(2, 3, (l1 + 2 * l0 + top_left + 2) >>> 2);
+      |                           ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:91:74: Operator ADD expects 32 bits on the RHS, but RHS's VARREF 'top_left' generates 8 bits.
+                                                                                                                                  : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i4'
+   91 |    put(0, 1, (l1 + 2 * l0 + top_left + 2) >>> 2); put(1, 2, (l1 + 2 * l0 + top_left + 2) >>> 2); put(2, 3, (l1 + 2 * l0 + top_left + 2) >>> 2);
+      |                                                                          ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:91:121: Operator ADD expects 32 bits on the RHS, but RHS's VARREF 'top_left' generates 8 bits.
+                                                                                                                                   : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i4'
+   91 |    put(0, 1, (l1 + 2 * l0 + top_left + 2) >>> 2); put(1, 2, (l1 + 2 * l0 + top_left + 2) >>> 2); put(2, 3, (l1 + 2 * l0 + top_left + 2) >>> 2);
+      |                                                                                                                         ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:93:24: Operator ADD expects 32 bits on the LHS, but LHS's VARREF 'top_left' generates 8 bits.
+                                                                                                                                  : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i4'
+   93 |    put(1, 0, (top_left + 2 * t0 + t1 + 2) >>> 2); put(2, 1, (top_left + 2 * t0 + t1 + 2) >>> 2); put(3, 2, (top_left + 2 * t0 + t1 + 2) >>> 2);
+      |                        ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:93:71: Operator ADD expects 32 bits on the LHS, but LHS's VARREF 'top_left' generates 8 bits.
+                                                                                                                                  : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i4'
+   93 |    put(1, 0, (top_left + 2 * t0 + t1 + 2) >>> 2); put(2, 1, (top_left + 2 * t0 + t1 + 2) >>> 2); put(3, 2, (top_left + 2 * t0 + t1 + 2) >>> 2);
+      |                                                                       ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:93:118: Operator ADD expects 32 bits on the LHS, but LHS's VARREF 'top_left' generates 8 bits.
+                                                                                                                                   : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i4'
+   93 |    put(1, 0, (top_left + 2 * t0 + t1 + 2) >>> 2); put(2, 1, (top_left + 2 * t0 + t1 + 2) >>> 2); put(3, 2, (top_left + 2 * t0 + t1 + 2) >>> 2);
+      |                                                                                                                      ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:98:24: Operator ADD expects 32 bits on the LHS, but LHS's VARREF 'top_left' generates 8 bits.
+                                                                                                                                  : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i4'
+   98 |    put(0, 0, (top_left + t0 + 1) >>> 1); put(1, 2, (top_left + t0 + 1) >>> 1);
+      |                        ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:98:62: Operator ADD expects 32 bits on the LHS, but LHS's VARREF 'top_left' generates 8 bits.
+                                                                                                                                  : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i4'
+   98 |    put(0, 0, (top_left + t0 + 1) >>> 1); put(1, 2, (top_left + t0 + 1) >>> 1);
+      |                                                              ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:103:24: Operator ADD expects 32 bits on the LHS, but LHS's VARREF 'top_left' generates 8 bits.
+                                                                                                                                   : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i4'
+  103 |    put(1, 1, (top_left + 2 * t0 + t1 + 2) >>> 2); put(2, 3, (top_left + 2 * t0 + t1 + 2) >>> 2);
+      |                        ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:103:71: Operator ADD expects 32 bits on the LHS, but LHS's VARREF 'top_left' generates 8 bits.
+                                                                                                                                   : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i4'
+  103 |    put(1, 1, (top_left + 2 * t0 + t1 + 2) >>> 2); put(2, 3, (top_left + 2 * t0 + t1 + 2) >>> 2);
+      |                                                                       ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:106:24: Operator ADD expects 32 bits on the LHS, but LHS's VARREF 'top_left' generates 8 bits.
+                                                                                                                                   : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i4'
+  106 |    put(0, 2, (top_left + 2 * l0 + l1 + 2) >>> 2); put(0, 3, (l0 + 2 * l1 + l2 + 2) >>> 2);
+      |                        ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:109:24: Operator ADD expects 32 bits on the LHS, but LHS's VARREF 'top_left' generates 8 bits.
+                                                                                                                                   : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i4'
+  109 |    put(0, 0, (top_left + l0 + 1) >>> 1); put(2, 1, (top_left + l0 + 1) >>> 1);
+      |                        ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:109:62: Operator ADD expects 32 bits on the LHS, but LHS's VARREF 'top_left' generates 8 bits.
+                                                                                                                                   : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i4'
+  109 |    put(0, 0, (top_left + l0 + 1) >>> 1); put(2, 1, (top_left + l0 + 1) >>> 1);
+      |                                                              ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:111:24: Operator ADD expects 32 bits on the LHS, but LHS's VARREF 'top_left' generates 8 bits.
+                                                                                                                                   : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i4'
+  111 |    put(2, 0, (top_left + 2 * t0 + t1 + 2) >>> 2); put(3, 0, (t0 + 2 * t1 + t2 + 2) >>> 2);
+      |                        ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:113:24: Operator ADD expects 32 bits on the LHS, but LHS's VARREF 'top_left' generates 8 bits.
+                                                                                                                                   : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i4'
+  113 |    put(1, 1, (top_left + 2 * l0 + l1 + 2) >>> 2); put(3, 2, (top_left + 2 * l0 + l1 + 2) >>> 2);
+      |                        ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:113:71: Operator ADD expects 32 bits on the LHS, but LHS's VARREF 'top_left' generates 8 bits.
+                                                                                                                                   : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_i4'
+  113 |    put(1, 1, (top_left + 2 * l0 + l1 + 2) >>> 2); put(3, 2, (top_left + 2 * l0 + l1 + 2) >>> 2);
+      |                                                                       ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_i16_dc_hadamard_serial.sv:65:7: Operator ASSIGN expects 32 bits on the Assign RHS, but Assign RHS's FUNCREF 'zz' generates 4 bits.
+                                                                                                                                             : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_had'
+   65 |    zi = zz(i[3:0]);
+      |       ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_i16_dc_hadamard_serial.sv:66:7: Operator ASSIGN expects 32 bits on the Assign RHS, but Assign RHS's FUNCREF 'transpose4' generates 4 bits.
+                                                                                                                                             : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_had'
+   66 |    tr = transpose4(zi[3:0]);
+      |       ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_i16_dc_hadamard_serial.sv:67:17: Operator ASSIGN expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 16 bits.
+                                                                                                                                              : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_had'
+   67 |    input_cm[tr] = c_r[i];
+      |                 ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_i16_dc_hadamard_serial.sv:91:18: Operator ASSIGNW expects 3 bits on the Assign RHS, but Assign RHS's MODDIV generates 32 or 6 bits.
+                                                                                                                                             : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_had'
+   91 |  wire [2:0] qmod = qp_r % 6;
+      |                  ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_i16_dc_hadamard_serial.sv:92:18: Operator ASSIGNW expects 4 bits on the Assign RHS, but Assign RHS's DIV generates 32 or 6 bits.
+                                                                                                                                             : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_had'
+   92 |  wire [3:0] qdiv = qp_r / 6;
+      |                  ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_i16_dc_hadamard_serial.sv:96:29: Operator ASSIGNW expects 32 bits on the Assign RHS, but Assign RHS's SHIFTRS generates 64 bits.
+                                                                                                                                             : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_had'
+   96 |  wire signed [31:0] dc_lane = (scaled_full + 64'sd128) >>> 8;
+      |                             ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:293:53: Operator ADD expects 30 bits on the LHS, but LHS's SIGNED generates 9 bits.
+                                                                                                                                    : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_recon'
+  293 |  assign recon[0]  = clip8($signed({1'b0, pred[0]})  + residual[0]);
+      |                                                     ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:294:53: Operator ADD expects 30 bits on the LHS, but LHS's SIGNED generates 9 bits.
+                                                                                                                                    : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_recon'
+  294 |  assign recon[1]  = clip8($signed({1'b0, pred[1]})  + residual[1]);
+      |                                                     ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:295:53: Operator ADD expects 30 bits on the LHS, but LHS's SIGNED generates 9 bits.
+                                                                                                                                    : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_recon'
+  295 |  assign recon[2]  = clip8($signed({1'b0, pred[2]})  + residual[2]);
+      |                                                     ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:296:53: Operator ADD expects 30 bits on the LHS, but LHS's SIGNED generates 9 bits.
+                                                                                                                                    : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_recon'
+  296 |  assign recon[3]  = clip8($signed({1'b0, pred[3]})  + residual[3]);
+      |                                                     ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:297:53: Operator ADD expects 30 bits on the LHS, but LHS's SIGNED generates 9 bits.
+                                                                                                                                    : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_recon'
+  297 |  assign recon[4]  = clip8($signed({1'b0, pred[4]})  + residual[4]);
+      |                                                     ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:298:53: Operator ADD expects 30 bits on the LHS, but LHS's SIGNED generates 9 bits.
+                                                                                                                                    : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_recon'
+  298 |  assign recon[5]  = clip8($signed({1'b0, pred[5]})  + residual[5]);
+      |                                                     ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:299:53: Operator ADD expects 30 bits on the LHS, but LHS's SIGNED generates 9 bits.
+                                                                                                                                    : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_recon'
+  299 |  assign recon[6]  = clip8($signed({1'b0, pred[6]})  + residual[6]);
+      |                                                     ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:300:53: Operator ADD expects 30 bits on the LHS, but LHS's SIGNED generates 9 bits.
+                                                                                                                                    : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_recon'
+  300 |  assign recon[7]  = clip8($signed({1'b0, pred[7]})  + residual[7]);
+      |                                                     ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:301:53: Operator ADD expects 30 bits on the LHS, but LHS's SIGNED generates 9 bits.
+                                                                                                                                    : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_recon'
+  301 |  assign recon[8]  = clip8($signed({1'b0, pred[8]})  + residual[8]);
+      |                                                     ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:302:53: Operator ADD expects 30 bits on the LHS, but LHS's SIGNED generates 9 bits.
+                                                                                                                                    : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_recon'
+  302 |  assign recon[9]  = clip8($signed({1'b0, pred[9]})  + residual[9]);
+      |                                                     ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:303:53: Operator ADD expects 30 bits on the LHS, but LHS's SIGNED generates 9 bits.
+                                                                                                                                    : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_recon'
+  303 |  assign recon[10] = clip8($signed({1'b0, pred[10]}) + residual[10]);
+      |                                                     ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:304:53: Operator ADD expects 30 bits on the LHS, but LHS's SIGNED generates 9 bits.
+                                                                                                                                    : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_recon'
+  304 |  assign recon[11] = clip8($signed({1'b0, pred[11]}) + residual[11]);
+      |                                                     ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:305:53: Operator ADD expects 30 bits on the LHS, but LHS's SIGNED generates 9 bits.
+                                                                                                                                    : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_recon'
+  305 |  assign recon[12] = clip8($signed({1'b0, pred[12]}) + residual[12]);
+      |                                                     ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:306:53: Operator ADD expects 30 bits on the LHS, but LHS's SIGNED generates 9 bits.
+                                                                                                                                    : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_recon'
+  306 |  assign recon[13] = clip8($signed({1'b0, pred[13]}) + residual[13]);
+      |                                                     ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:307:53: Operator ADD expects 30 bits on the LHS, but LHS's SIGNED generates 9 bits.
+                                                                                                                                    : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_recon'
+  307 |  assign recon[14] = clip8($signed({1'b0, pred[14]}) + residual[14]);
+      |                                                     ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:308:53: Operator ADD expects 30 bits on the LHS, but LHS's SIGNED generates 9 bits.
+                                                                                                                                    : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_recon'
+  308 |  assign recon[15] = clip8($signed({1'b0, pred[15]}) + residual[15]);
+      |                                                     ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:229:38: Operator ADD expects 32 bits on the LHS, but LHS's ARRAYSEL generates 29 bits.
+                                                                                                                                    : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_idct'
+  229 |  wire signed [31:0] b0  = dequant[0] + 29'sd32;
+      |                                      ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:229:38: Operator ADD expects 32 bits on the RHS, but RHS's CONST '29'sh20' generates 29 bits.
+                                                                                                                                    : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_idct'
+  229 |  wire signed [31:0] b0  = dequant[0] + 29'sd32;
+      |                                      ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:230:25: Operator ASSIGNW expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 29 bits.
+                                                                                                                                    : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_idct'
+  230 |  wire signed [31:0] b1  = dequant[1];
+      |                         ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:231:25: Operator ASSIGNW expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 29 bits.
+                                                                                                                                    : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_idct'
+  231 |  wire signed [31:0] b2  = dequant[2];
+      |                         ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:232:25: Operator ASSIGNW expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 29 bits.
+                                                                                                                                    : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_idct'
+  232 |  wire signed [31:0] b3  = dequant[3];
+      |                         ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:233:25: Operator ASSIGNW expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 29 bits.
+                                                                                                                                    : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_idct'
+  233 |  wire signed [31:0] b4  = dequant[4];
+      |                         ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:234:25: Operator ASSIGNW expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 29 bits.
+                                                                                                                                    : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_idct'
+  234 |  wire signed [31:0] b5  = dequant[5];
+      |                         ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:235:25: Operator ASSIGNW expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 29 bits.
+                                                                                                                                    : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_idct'
+  235 |  wire signed [31:0] b6  = dequant[6];
+      |                         ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:236:25: Operator ASSIGNW expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 29 bits.
+                                                                                                                                    : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_idct'
+  236 |  wire signed [31:0] b7  = dequant[7];
+      |                         ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:237:25: Operator ASSIGNW expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 29 bits.
+                                                                                                                                    : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_idct'
+  237 |  wire signed [31:0] b8  = dequant[8];
+      |                         ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:238:25: Operator ASSIGNW expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 29 bits.
+                                                                                                                                    : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_idct'
+  238 |  wire signed [31:0] b9  = dequant[9];
+      |                         ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:239:25: Operator ASSIGNW expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 29 bits.
+                                                                                                                                    : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_idct'
+  239 |  wire signed [31:0] b10 = dequant[10];
+      |                         ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:240:25: Operator ASSIGNW expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 29 bits.
+                                                                                                                                    : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_idct'
+  240 |  wire signed [31:0] b11 = dequant[11];
+      |                         ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:241:25: Operator ASSIGNW expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 29 bits.
+                                                                                                                                    : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_idct'
+  241 |  wire signed [31:0] b12 = dequant[12];
+      |                         ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:242:25: Operator ASSIGNW expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 29 bits.
+                                                                                                                                    : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_idct'
+  242 |  wire signed [31:0] b13 = dequant[13];
+      |                         ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:243:25: Operator ASSIGNW expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 29 bits.
+                                                                                                                                    : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_idct'
+  243 |  wire signed [31:0] b14 = dequant[14];
+      |                         ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:244:25: Operator ASSIGNW expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 29 bits.
+                                                                                                                                    : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink.u_idct'
+  244 |  wire signed [31:0] b15 = dequant[15];
+      |                         ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_i_res_recon_sink.sv:515:33: Operator ADD expects 32 bits on the RHS, but RHS's REPLICATE generates 16 bits.
+                                                                                                                                         : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink'
+  515 |      if (({8'd0, cur_mb_x} * 16 + {8'd0, cnt[7:0]}) < 32'(MAX_PIC_W))
+      |                                 ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_i_res_recon_sink.sv:593:16: Bit extraction of array[7:0] requires 3 bit index, not 2 bits.
+                                                                                                                                         : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink'
+  593 |        i4_above[cnt[1:0]] <= py_q;
+      |                ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_i_res_recon_sink.sv:610:16: Bit extraction of array[7:0] requires 3 bit index, not 2 bits.
+                                                                                                                                         : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink'
+  610 |        i4_above[cnt[1:0]] <= tr_q;
+      |                ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_i_res_recon_sink.sv:830:47: Operator ADD expects 18 bits on the LHS, but LHS's SIGNED generates 16 bits.
+                                                                                                                                         : ... note: In instance 'stream_path_full_frame_tb.dut.stub.u_i_res_sink'
+  830 |               18'(($signed(i16_dc[dump_dc_i]) + 18'sd32) >>> 6);
+      |                                               ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/decode_stub.sv:654:11: Bit extraction of array[898559:0] requires 20 bit index, not 18 bits.
+                                                                                                                               : ... note: In instance 'stream_path_full_frame_tb.dut.stub'
+  654 |    dpb_mem[dpb_mem_waddr[17:0]] <= dpb_mem_wdata;
+      |           ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/decode_stub.sv:659:32: Bit extraction of array[898559:0] requires 20 bit index, not 18 bits.
+                                                                                                                               : ... note: In instance 'stream_path_full_frame_tb.dut.stub'
+  659 |                         dpb_mem[dpb_mem_raddr_q[17:0]] : 8'h00;
+      |                                ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/decode_stub.sv:1399:31: Operator ASSIGNDLY expects 32 bits on the Assign RHS, but Assign RHS's CONST '1'h1' generates 1 bits.
+                                                                                                                                : ... note: In instance 'stream_path_full_frame_tb.dut.stub'
+ 1399 |      dbg_printed_recon_counts <= 1'b1;
+      |                               ^~
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/decode_stub.sv:1394:9: Logical operator LOGNOT expects 1 bit on the LHS, but LHS's VARREF 'dbg_printed_recon_counts' generates 32 bits.
+                                                                                                                              : ... note: In instance 'stream_path_full_frame_tb.dut.stub'
+ 1394 |     if (!dbg_printed_recon_counts) begin
+      |         ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:346:13: Operator ADD expects 16 bits on the LHS, but LHS's VARREF 'qpy' generates 8 bits.
+                                                                                                                                      : ... note: In instance 'stream_path_full_frame_tb.dut.u_p_traverse'
+  346 |     v = qpy + delta;
+      |             ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:346:13: Operator ADD expects 16 bits on the RHS, but RHS's VARREF 'delta' generates 8 bits.
+                                                                                                                                      : ... note: In instance 'stream_path_full_frame_tb.dut.u_p_traverse'
+  346 |     v = qpy + delta;
+      |             ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:349:13: Operator ADD expects 16 bits on the LHS, but LHS's VARREF 'qpy' generates 8 bits.
+                                                                                                                                      : ... note: In instance 'stream_path_full_frame_tb.dut.u_p_traverse'
+  349 |     v = qpy + delta;
+      |             ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:349:13: Operator ADD expects 16 bits on the RHS, but RHS's VARREF 'delta' generates 8 bits.
+                                                                                                                                      : ... note: In instance 'stream_path_full_frame_tb.dut.u_p_traverse'
+  349 |     v = qpy + delta;
+      |             ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:364:12: Operator ADD expects 16 bits on the LHS, but LHS's VARREF 'qpy' generates 8 bits.
+                                                                                                                                      : ... note: In instance 'stream_path_full_frame_tb.dut.u_p_traverse'
+  364 |    v = qpy + delta;
+      |            ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:364:12: Operator ADD expects 16 bits on the RHS, but RHS's VARREF 'delta' generates 8 bits.
+                                                                                                                                      : ... note: In instance 'stream_path_full_frame_tb.dut.u_p_traverse'
+  364 |    v = qpy + delta;
+      |            ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:610:17: Operator LT expects 32 bits on the LHS, but LHS's VARREF 'abs_x' generates 16 bits.
+                                                                                                                                      : ... note: In instance 'stream_path_full_frame_tb.dut.u_p_traverse'
+  610 |     nB = (abs_x < MAX_MB_W*2 && tc_chr_top_v[p][abs_x]) ?
+      |                 ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:610:48: Bit extraction of array[127:0] requires 7 bit index, not 16 bits.
+                                                                                                                                     : ... note: In instance 'stream_path_full_frame_tb.dut.u_p_traverse'
+  610 |     nB = (abs_x < MAX_MB_W*2 && tc_chr_top_v[p][abs_x]) ?
+      |                                                ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:611:19: Bit extraction of array[127:0] requires 7 bit index, not 16 bits.
+                                                                                                                                     : ... note: In instance 'stream_path_full_frame_tb.dut.u_p_traverse'
+  611 |      tc_chr_top[p][abs_x] : 5'd0;
+      |                   ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:613:25: Bit extraction of array[127:0] requires 7 bit index, not 16 bits.
+                                                                                                                                     : ... note: In instance 'stream_path_full_frame_tb.dut.u_p_traverse'
+  613 |     nB = tc_chr_top_v[p][abs_x] ? tc_chr_top[p][abs_x] : 5'd0;
+      |                         ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:613:48: Bit extraction of array[127:0] requires 7 bit index, not 16 bits.
+                                                                                                                                     : ... note: In instance 'stream_path_full_frame_tb.dut.u_p_traverse'
+  613 |     nB = tc_chr_top_v[p][abs_x] ? tc_chr_top[p][abs_x] : 5'd0;
+      |                                                ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:612:38: Operator LT expects 32 bits on the LHS, but LHS's VARREF 'abs_x' generates 16 bits.
+                                                                                                                                      : ... note: In instance 'stream_path_full_frame_tb.dut.u_p_traverse'
+  612 |    else if (curr_y != 16'd0 && abs_x < MAX_MB_W*2)
+      |                                      ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:799:12: Operator ASSIGN expects 3 bits on the Assign RHS, but Assign RHS's SUB generates 5 bits.
+                                                                                                                                     : ... note: In instance 'stream_path_full_frame_tb.dut.u_p_traverse'
+  799 |      chr_i = idx - 5'd19;
+      |            ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:818:11: Operator ASSIGN expects 3 bits on the Assign RHS, but Assign RHS's SUB generates 5 bits.
+                                                                                                                                     : ... note: In instance 'stream_path_full_frame_tb.dut.u_p_traverse'
+  818 |     chr_i = idx - 5'd18;
+      |           ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:909:28: Operator LT expects 32 bits on the LHS, but LHS's VARREF 'abs_x' generates 16 bits.
+                                                                                                                                      : ... note: In instance 'stream_path_full_frame_tb.dut.u_p_traverse'
+  909 |    if (by == 2'd3 && abs_x < NB_TOP_N) begin
+      |                            ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:930:18: Bit extraction of array[127:0] requires 7 bit index, not 16 bits.
+                                                                                                                                     : ... note: In instance 'stream_path_full_frame_tb.dut.u_p_traverse'
+  930 |     tc_chr_top[p][abs_x] <= tc;
+      |                  ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:931:20: Bit extraction of array[127:0] requires 7 bit index, not 16 bits.
+                                                                                                                                     : ... note: In instance 'stream_path_full_frame_tb.dut.u_p_traverse'
+  931 |     tc_chr_top_v[p][abs_x] <= 1'b1;
+      |                    ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:929:14: Operator LT expects 32 bits on the LHS, but LHS's VARREF 'abs_x' generates 16 bits.
+                                                                                                                                      : ... note: In instance 'stream_path_full_frame_tb.dut.u_p_traverse'
+  929 |    if (abs_x < MAX_MB_W*2) begin
+      |              ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:947:20: Bit extraction of array[127:0] requires 7 bit index, not 16 bits.
+                                                                                                                                     : ... note: In instance 'stream_path_full_frame_tb.dut.u_p_traverse'
+  947 |       tc_chr_top[p][abs_x] <= 5'd0;
+      |                    ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:948:22: Bit extraction of array[127:0] requires 7 bit index, not 16 bits.
+                                                                                                                                     : ... note: In instance 'stream_path_full_frame_tb.dut.u_p_traverse'
+  948 |       tc_chr_top_v[p][abs_x] <= 1'b1;
+      |                      ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:946:16: Operator LT expects 32 bits on the LHS, but LHS's VARREF 'abs_x' generates 16 bits.
+                                                                                                                                      : ... note: In instance 'stream_path_full_frame_tb.dut.u_p_traverse'
+  946 |      if (abs_x < MAX_MB_W*2) begin
+      |                ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:1197:23: Operator GTE expects 32 bits on the LHS, but LHS's VARREF 'bit_pos' generates 18 bits.
+                                                                                                                                       : ... note: In instance 'stream_path_full_frame_tb.dut.u_p_traverse'
+ 1197 |      else if (bit_pos >= rbsp_bit_total) fail();
+      |                       ^~
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:1208:18: Operator GTE expects 32 bits on the LHS, but LHS's VARREF 'bit_pos' generates 18 bits.
+                                                                                                                                       : ... note: In instance 'stream_path_full_frame_tb.dut.u_p_traverse'
+ 1208 |      if (bit_pos >= rbsp_bit_total) fail();
+      |                  ^~
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:1228:18: Operator GTE expects 32 bits on the LHS, but LHS's VARREF 'bit_pos' generates 18 bits.
+                                                                                                                                       : ... note: In instance 'stream_path_full_frame_tb.dut.u_p_traverse'
+ 1228 |      if (bit_pos >= rbsp_bit_total) fail();
+      |                  ^~
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:1403:19: Operator GTE expects 32 bits on the LHS, but LHS's VARREF 'bit_pos' generates 18 bits.
+                                                                                                                                       : ... note: In instance 'stream_path_full_frame_tb.dut.u_p_traverse'
+ 1403 |       if (bit_pos >= rbsp_bit_total)
+      |                   ^~
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:1446:25: Operator MODDIV expects 5 bits on the RHS, but RHS's CONST '2'h3' generates 2 bits.
+                                                                                                                                       : ... note: In instance 'stream_path_full_frame_tb.dut.u_p_traverse'
+ 1446 |         cc = (x / 5'd4) % 2'd3;
+      |                         ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:1446:12: Operator ASSIGN expects 2 bits on the Assign RHS, but Assign RHS's MODDIV generates 5 bits.
+                                                                                                                                      : ... note: In instance 'stream_path_full_frame_tb.dut.u_p_traverse'
+ 1446 |         cc = (x / 5'd4) % 2'd3;
+      |            ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:1516:24: Operator MODDIV expects 5 bits on the RHS, but RHS's CONST '2'h3' generates 2 bits.
+                                                                                                                                       : ... note: In instance 'stream_path_full_frame_tb.dut.u_p_traverse'
+ 1516 |        cc = (x / 5'd4) % 2'd3;
+      |                        ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:1516:11: Operator ASSIGN expects 2 bits on the Assign RHS, but Assign RHS's MODDIV generates 5 bits.
+                                                                                                                                      : ... note: In instance 'stream_path_full_frame_tb.dut.u_p_traverse'
+ 1516 |        cc = (x / 5'd4) % 2'd3;
+      |           ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:1800:16: Bit extraction of array[63:0] requires 6 bit index, not 8 bits.
+                                                                                                                                      : ... note: In instance 'stream_path_full_frame_tb.dut.u_p_traverse'
+ 1800 |         res_win[win_k - 8'd2] <= rbsp_q;
+      |                ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:1802:16: Bit extraction of array[63:0] requires 6 bit index, not 8 bits.
+                                                                                                                                      : ... note: In instance 'stream_path_full_frame_tb.dut.u_p_traverse'
+ 1802 |         res_win[win_k - 8'd2] <= 8'd0;
+      |                ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:1799:31: Operator ADD expects 32 bits on the RHS, but RHS's REPLICATE generates 18 bits.
+                                                                                                                                       : ... note: In instance 'stream_path_full_frame_tb.dut.u_p_traverse'
+ 1799 |        if (({18'd0, win_base} + {10'd0, win_k} - 18'd2) < {2'd0, rbsp_len})
+      |                               ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:1799:48: Operator SUB expects 32 bits on the RHS, but RHS's CONST '18'h2' generates 18 bits.
+                                                                                                                                       : ... note: In instance 'stream_path_full_frame_tb.dut.u_p_traverse'
+ 1799 |        if (({18'd0, win_base} + {10'd0, win_k} - 18'd2) < {2'd0, rbsp_len})
+      |                                                ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:1890:23: Operator ADD expects 18 bits on the RHS, but RHS's REPLICATE generates 16 bits.
+                                                                                                                                       : ... note: In instance 'stream_path_full_frame_tb.dut.u_p_traverse'
+ 1890 |          res_win_bit0 + {6'd0, cavlc_bit0_r},
+      |                       ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:1891:23: Operator ADD expects 18 bits on the RHS, but RHS's REPLICATE generates 16 bits.
+                                                                                                                                       : ... note: In instance 'stream_path_full_frame_tb.dut.u_p_traverse'
+ 1891 |          res_win_bit0 + {6'd0, cavlc_bit_end},
+      |                       ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:1894:32: Operator ADD expects 18 bits on the RHS, but RHS's REPLICATE generates 16 bits.
+                                                                                                                                       : ... note: In instance 'stream_path_full_frame_tb.dut.u_p_traverse'
+ 1894 |        bit_pos <= res_win_bit0 + {6'd0, cavlc_bit_end};
+      |                                ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:1901:34: Operator AND expects 5 bits on the RHS, but RHS's CONST '2'h3' generates 2 bits.
+                                                                                                                                       : ... note: In instance 'stream_path_full_frame_tb.dut.u_p_traverse'
+ 1901 |           (res_hold_idx - 5'd19) & 2'd3,
+      |                                  ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:1899:10: Operator TASKREF 'commit_tc_after_chr' expects 2 bits on the Function Argument, but Function Argument's AND generates 5 bits.
+                                                                                                                                      : ... note: In instance 'stream_path_full_frame_tb.dut.u_p_traverse'
+ 1899 |          commit_tc_after_chr(
+      |          ^~~~~~~~~~~~~~~~~~~
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:1909:33: Operator AND expects 5 bits on the RHS, but RHS's CONST '2'h3' generates 2 bits.
+                                                                                                                                       : ... note: In instance 'stream_path_full_frame_tb.dut.u_p_traverse'
+ 1909 |          (res_hold_idx - 5'd18) & 2'd3,
+      |                                 ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:1907:9: Operator TASKREF 'commit_tc_after_chr' expects 2 bits on the Function Argument, but Function Argument's AND generates 5 bits.
+                                                                                                                                     : ... note: In instance 'stream_path_full_frame_tb.dut.u_p_traverse'
+ 1907 |         commit_tc_after_chr(
+      |         ^~~~~~~~~~~~~~~~~~~
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:1926:23: Operator GTE expects 32 bits on the LHS, but LHS's VARREF 'bit_pos' generates 18 bits.
+                                                                                                                                       : ... note: In instance 'stream_path_full_frame_tb.dut.u_p_traverse'
+ 1926 |      else if (bit_pos >= rbsp_bit_total)
+      |                       ^~
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/slice_hdr_parser.sv:175:6: Operator ASSIGN expects 16 bits on the Assign RHS, but Assign RHS's SHIFTRS generates 17 bits.
+                                                                                                                                  : ... note: In instance 'stream_path_full_frame_tb.dut.slp'
+  175 |    t = ($signed({1'b0, code}) + 17'sd2) >>> 1;
+      |      ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/nalu_scanner.sv:198:38: Operator ADD expects 16 bits on the RHS, but RHS's CONST '14'h1' generates 14 bits.
+                                                                                                                                : ... note: In instance 'stream_path_full_frame_tb.dut.scan'
+  198 |        if (!sl_hdr_ended && (cap_len + 14'd1) >= 14'd48) begin
+      |                                      ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/nalu_scanner.sv:198:47: Operator GTE expects 16 bits on the RHS, but RHS's CONST '14'h30' generates 14 bits.
+                                                                                                                                : ... note: In instance 'stream_path_full_frame_tb.dut.scan'
+  198 |        if (!sl_hdr_ended && (cap_len + 14'd1) >= 14'd48) begin
+      |                                               ^~
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/nalu_scanner.sv:249:39: Operator ADD expects 16 bits on the RHS, but RHS's CONST '14'h1' generates 14 bits.
+                                                                                                                                : ... note: In instance 'stream_path_full_frame_tb.dut.scan'
+  249 |         if (!sl_hdr_ended && (cap_len + 14'd1) >= 14'd48) begin
+      |                                       ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/fpga/Plex_MiSTer/rtl/nalu_scanner.sv:249:48: Operator GTE expects 16 bits on the RHS, but RHS's CONST '14'h30' generates 14 bits.
+                                                                                                                                : ... note: In instance 'stream_path_full_frame_tb.dut.scan'
+  249 |         if (!sl_hdr_ended && (cap_len + 14'd1) >= 14'd48) begin
+      |                                                ^~
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/tests/rtl/stream_path_full_frame_tb_top.sv:260:35: Operator ADD expects 16 bits on the RHS, but RHS's CONST '9'sh1' generates 9 bits.
+                                                                                                                                      : ... note: In instance 'stream_path_full_frame_tb'
+  260 |      (dut.stub.lat_coeff[trace_i] + 9'sd1) : dut.stub.lat_coeff[trace_i];
+      |                                   ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/tests/rtl/stream_path_full_frame_tb_top.sv:296:20: Bit extraction of array[898559:0] requires 20 bit index, not 18 bits.
+                                                                                                                                      : ... note: In instance 'stream_path_full_frame_tb'
+  296 |    dut.stub.dpb_mem[dpb_prefill_addr[17:0]] <= dpb_prefill_data;
+      |                    ^

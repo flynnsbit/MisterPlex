@@ -1,0 +1,7 @@
+CLIP path=tests/fixtures/p3_inter_pred/plex_inter_p16_baseline_624x480_12f.264 geom=624x480 mb=39x30=1170 rbsp_bytes=10891
+MODES I4=167 I16=1003
+WRAP_EVENTS raw!=wrapQpY 6
+QP_RANGE [1,35] mean=13.52 final=11
+MT_HIST 0:167 1:907 2:29 3:23 5:14 6:3 7:7 9:7 14:1 21:6 22:1 23:5
+QP_HIST 1:11 2:4 4:19 5:60 6:15 7:56 8:79 9:19 10:15 11:419 12:24 13:252 20:2 21:1 23:1 24:2 25:9 26:18 27:9 28:21 29:24 30:36 31:19 32:36 33:6 34:12 35:1
+OK bit=87122 br_ok=1

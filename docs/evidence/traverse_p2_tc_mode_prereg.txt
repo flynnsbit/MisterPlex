@@ -1,0 +1,20 @@
+TRAVERSE PHASE-2 — tc_top / i4_mode_top → M10K  PRE-REGISTER
+==============================================================
+Branch tip parent: d4d9d80 (cycles/MB published OVER 2×)
+Base freeze: cf6842a untouched
+Method:
+  - Remove fabric tc_top[0:255] / i4_mode_top[0:255] (+ valid)
+  - h264_byte_ram_sp DEPTH=256 each (pack {v,payload})
+  - 4-entry edge cache preload at MB start (serial 3cy/entry when curr_y!=0)
+  - tc_spat[0:15] within-MB for same-MB nB (no RAM on hot path)
+  - Writes: spat + single-port RAM (bottom edge / every abs_x update)
+  - NO new multipliers / DSP
+  - FAULT_SKIP_TC_TOP_NB: force edge cache nB=0 after load (RED)
+
+PRE-REG traverse self comb ALM: 1500..3000  (close prior 7079 MISS vs ≤3000)
+PRE-REG DSP whole-design hold: no delta (0 new); sink still 4..6
+PRE-REG functional: clip1 300/300, clip2 1170/1170 px exact
+PRE-REG RED: FAULT_SKIP_TC_TOP_NB → intra_y_mb << 300
+
+cy/MB impact estimate: +0..12 cy/MB edge preload only (parse side);
+  NOT another paint serialisation. Budget already OVER on paint (~4037).

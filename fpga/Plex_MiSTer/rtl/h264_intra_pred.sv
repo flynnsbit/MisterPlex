@@ -142,8 +142,14 @@ module h264_intra4x4_pred (
 	end
 endmodule
 
-module h264_intra16x16_pred (
+// Serial I16 pred: setup 1 cycle, then 256 cycles × 1 pixel (area crash-diet).
+// No 256-wide parallel write; no DSP (plane b*(x-7) via shift-add, not *).
+// FAULT_FORCE_128: emit 128 for every pixel (RED — proves path load-bearing).
+module h264_intra16x16_pred #(
+	parameter bit FAULT_FORCE_128 = 1'b0
+) (
 	input  wire        clk,
+	input  wire        reset,
 	input  wire        start,
 	input  wire [1:0]  mode,
 	input  wire [7:0]  above [0:15],
@@ -152,13 +158,13 @@ module h264_intra16x16_pred (
 	input  wire        has_above,
 	input  wire        has_left,
 	output reg         unsupported,
-	output reg         valid,
-	output reg  [7:0]  pred [0:255]
+	output reg         busy,
+	output reg         done,       // 1-cy pulse after last pixel (NBA-safe)
+	output reg         px_valid,   // 1-cy write strobe
+	output reg  [7:0]  px_addr,    // 0..255 raster
+	output reg  [7:0]  px_data
 );
-	// 2-cycle pipeline for Plane prediction (ITU-T H.264 clause 8.3.3.4).
-	// Cycle 1: gradient accumulation → b, c → pre-compute 32 products bx[]/cy[]
-	// Cycle 2: 256 pixels from registered a + bx[x] + cy[y] → clip
-	// Modes V/H/DC: 1 cycle (register combinational result on start).
+	// ITU-T H.264 8.3.3: V/H/DC/Plane. Pixel stream replaces old pred[0:255].
 
 	function automatic [7:0] clip8;
 		input integer v;
@@ -169,96 +175,164 @@ module h264_intra16x16_pred (
 		end
 	endfunction
 
-	// Pipeline phase: 0 = idle, 1 = Plane cycle 2 pending
-	reg phase = 1'b0;
-
-	// Registered intermediates for Plane pipeline (32 products, not 256)
-	reg signed [15:0] a_r;
-	reg signed [15:0] bx_r [0:15];
-	reg signed [15:0] cy_r [0:15];
-
-	// Combinational gradient computation (feeds cycle 1 registers)
-	integer hgrad_c, vgrad_c, a_c, b_c, c_c;
-	integer gi;
-	// Individual gradient terms (computed independently, then tree-reduced)
-	integer ht [0:7];
-	integer vt [0:7];
-	always @* begin
-		// Compute individual gradient terms (clause 8.3.3.4)
-		for (gi = 0; gi < 8; gi = gi + 1) begin
-			ht[gi] = (gi + 1) * ($signed({1'b0, above[8 + gi]}) - ((gi == 7) ? $signed({1'b0, top_left}) : $signed({1'b0, above[6 - gi]})));
-			vt[gi] = (gi + 1) * ($signed({1'b0, left[8 + gi]})  - ((gi == 7) ? $signed({1'b0, top_left}) : $signed({1'b0, left[6 - gi]})));
+	// Small signed multiply by n in -7..8 without DSP (*): shift-add.
+	function automatic signed [31:0] mul_m7_p8;
+		input signed [31:0] v;
+		input integer n; // -7..8
+		reg signed [31:0] p;
+		begin
+			case (n)
+			-7: p = -((v <<< 3) - v);       // -(8v - v) = -7v
+			-6: p = -((v <<< 2) + (v <<< 1));
+			-5: p = -((v <<< 2) + v);
+			-4: p = -(v <<< 2);
+			-3: p = -((v <<< 1) + v);
+			-2: p = -(v <<< 1);
+			-1: p = -v;
+			0:  p = 0;
+			1:  p = v;
+			2:  p = v <<< 1;
+			3:  p = (v <<< 1) + v;
+			4:  p = v <<< 2;
+			5:  p = (v <<< 2) + v;
+			6:  p = (v <<< 2) + (v <<< 1);
+			7:  p = (v <<< 3) - v;
+			default: p = v <<< 3; // 8
+			endcase
+			mul_m7_p8 = p;
 		end
-		// Balanced tree reduction: 3 add levels instead of 7 in linear chain
-		hgrad_c = ((ht[0]+ht[1]) + (ht[2]+ht[3])) + ((ht[4]+ht[5]) + (ht[6]+ht[7]));
-		vgrad_c = ((vt[0]+vt[1]) + (vt[2]+vt[3])) + ((vt[4]+vt[5]) + (vt[6]+vt[7]));
-		a_c = 16 * ($signed({1'b0, above[15]}) + $signed({1'b0, left[15]}));
-		b_c = (5 * hgrad_c + 32) >>> 6;
-		c_c = (5 * vgrad_c + 32) >>> 6;
-	end
+	endfunction
 
-	integer x, y, i;
-	integer sum, sa_lo, sa_hi, sl_lo, sl_hi;
-	reg [7:0] dc_v;
-	integer val;
+	// Gradient term (gi+1)*(p[8+gi]-p[6-gi]) with gi+1 in 1..8 via shift-add.
+	function automatic signed [31:0] grad_term;
+		input integer gi;
+		input signed [31:0] diff;
+		begin
+			case (gi)
+			0: grad_term = diff;
+			1: grad_term = diff <<< 1;
+			2: grad_term = (diff <<< 1) + diff;
+			3: grad_term = diff <<< 2;
+			4: grad_term = (diff <<< 2) + diff;
+			5: grad_term = (diff <<< 2) + (diff <<< 1);
+			6: grad_term = (diff <<< 3) - diff;
+			default: grad_term = diff <<< 3; // 8
+			endcase
+		end
+	endfunction
+
+	localparam [1:0]
+		M_V  = 2'd0,
+		M_H  = 2'd1,
+		M_DC = 2'd2,
+		M_PL = 2'd3;
+
+	reg [1:0] mode_r;
+	reg       ha_r, hl_r;
+	reg [7:0] above_r [0:15];
+	reg [7:0] left_r  [0:15];
+	reg [7:0] tl_r;
+	reg [7:0] dc_r;
+	reg signed [31:0] a_r, b_r, c_r;
+	reg [8:0] k; // 0..256
+	integer i, gi;
+	integer hgrad, vgrad, a_c, b_c, c_c;
+	integer sa_lo, sa_hi, sl_lo, sl_hi, sum;
+	integer val, x, y;
+	reg signed [31:0] diff;
 
 	always @(posedge clk) begin
-		valid <= 1'b0;
-
-		if (phase) begin
-			// Plane cycle 2: evaluate 256 pixels from 32 registered products
-			for (y = 0; y < 16; y = y + 1)
-				for (x = 0; x < 16; x = x + 1) begin
-					val = ($signed(a_r) + $signed(bx_r[x]) + $signed(cy_r[y]) + 16) >>> 5;
-					pred[y * 16 + x] <= clip8(val);
-				end
-			valid <= 1'b1;
-			phase <= 1'b0;
-		end else if (start) begin
+		done <= 1'b0;
+		px_valid <= 1'b0;
+		if (reset) begin
+			busy <= 1'b0;
+			k <= 9'd0;
 			unsupported <= 1'b0;
-			if (mode == 2'd3) begin
-				if (has_above && has_left) begin
-					// Plane cycle 1: register a and 32 pre-computed products
-					a_r <= a_c[15:0];
-					for (i = 0; i < 16; i = i + 1) begin
-						bx_r[i] <= b_c * (i - 7);
-						cy_r[i] <= c_c * (i - 7);
-					end
-					phase <= 1'b1;
-				end else begin
-					for (i = 0; i < 256; i = i + 1) pred[i] <= 8'd128;
-					valid <= 1'b1;
-				end
-			end else if (mode == 2'd0 && has_above) begin
-				for (y = 0; y < 16; y = y + 1)
-					for (x = 0; x < 16; x = x + 1) pred[y * 16 + x] <= above[x];
-				valid <= 1'b1;
-			end else if (mode == 2'd1 && has_left) begin
-				for (y = 0; y < 16; y = y + 1)
-					for (x = 0; x < 16; x = x + 1) pred[y * 16 + x] <= left[y];
-				valid <= 1'b1;
+			px_addr <= 8'd0;
+			px_data <= 8'd128;
+		end else if (start && !busy) begin
+			busy <= 1'b1;
+			unsupported <= 1'b0;
+			mode_r <= mode;
+			ha_r <= has_above;
+			hl_r <= has_left;
+			tl_r <= top_left;
+			for (i = 0; i < 16; i = i + 1) begin
+				above_r[i] <= above[i];
+				left_r[i]  <= left[i];
+			end
+			k <= 9'd0;
+			// Setup DC / Plane constants on start cycle (combo into regs)
+			sa_lo = ((above[0]+above[1]) + (above[2]+above[3]))
+			      + ((above[4]+above[5]) + (above[6]+above[7]));
+			sa_hi = ((above[8]+above[9]) + (above[10]+above[11]))
+			      + ((above[12]+above[13]) + (above[14]+above[15]));
+			sl_lo = ((left[0]+left[1]) + (left[2]+left[3]))
+			      + ((left[4]+left[5]) + (left[6]+left[7]));
+			sl_hi = ((left[8]+left[9]) + (left[10]+left[11]))
+			      + ((left[12]+left[13]) + (left[14]+left[15]));
+			if (has_above && has_left) sum = (sa_lo + sa_hi) + (sl_lo + sl_hi);
+			else if (has_above) sum = sa_lo + sa_hi;
+			else if (has_left) sum = sl_lo + sl_hi;
+			else sum = 0;
+			if (has_above && has_left) dc_r <= (sum + 16) >>> 5;
+			else if (has_above || has_left) dc_r <= (sum + 8) >>> 4;
+			else dc_r <= 8'd128;
+
+			hgrad = 0;
+			vgrad = 0;
+			for (gi = 0; gi < 8; gi = gi + 1) begin
+				diff = $signed({1'b0, above[8 + gi]}) -
+					((gi == 7) ? $signed({1'b0, top_left}) : $signed({1'b0, above[6 - gi]}));
+				hgrad = hgrad + grad_term(gi, diff);
+				diff = $signed({1'b0, left[8 + gi]}) -
+					((gi == 7) ? $signed({1'b0, top_left}) : $signed({1'b0, left[6 - gi]}));
+				vgrad = vgrad + grad_term(gi, diff);
+			end
+			// 16*x and 5*x via shifts (no DSP)
+			a_c = ($signed({1'b0, above[15]}) + $signed({1'b0, left[15]})) <<< 4;
+			b_c = (((hgrad <<< 2) + hgrad) + 32) >>> 6;
+			c_c = (((vgrad <<< 2) + vgrad) + 32) >>> 6;
+			a_r <= a_c;
+			b_r <= b_c;
+			c_r <= c_c;
+		end else if (busy) begin
+			if (k >= 9'd256) begin
+				busy <= 1'b0;
+				done <= 1'b1;
+				k <= 9'd0;
 			end else begin
-				// Balanced tree: 5 add levels guaranteed vs up to 32 in linear chain
-				sa_lo = ((above[0]+above[1]) + (above[2]+above[3]))
-				      + ((above[4]+above[5]) + (above[6]+above[7]));
-				sa_hi = ((above[8]+above[9]) + (above[10]+above[11]))
-				      + ((above[12]+above[13]) + (above[14]+above[15]));
-				sl_lo = ((left[0]+left[1]) + (left[2]+left[3]))
-				      + ((left[4]+left[5]) + (left[6]+left[7]));
-				sl_hi = ((left[8]+left[9]) + (left[10]+left[11]))
-				      + ((left[12]+left[13]) + (left[14]+left[15]));
-				if (has_above && has_left) sum = (sa_lo + sa_hi) + (sl_lo + sl_hi);
-				else if (has_above) sum = sa_lo + sa_hi;
-				else if (has_left) sum = sl_lo + sl_hi;
-				else sum = 0;
-				if (has_above && has_left) dc_v = (sum + 16) >>> 5;
-				else if (has_above || has_left) dc_v = (sum + 8) >>> 4;
-				else dc_v = 8'd128;
-				for (i = 0; i < 256; i = i + 1) pred[i] <= dc_v;
-				valid <= 1'b1;
+				x = k[3:0];
+				y = k[7:4];
+				px_addr <= k[7:0];
+				px_valid <= 1'b1;
+				if (FAULT_FORCE_128) begin
+					px_data <= 8'd128;
+				end else begin
+					case (mode_r)
+					M_V: begin
+						if (ha_r) px_data <= above_r[x];
+						else px_data <= dc_r;
+					end
+					M_H: begin
+						if (hl_r) px_data <= left_r[y];
+						else px_data <= dc_r;
+					end
+					M_PL: begin
+						if (ha_r && hl_r) begin
+							val = (a_r + mul_m7_p8(b_r, x - 7) + mul_m7_p8(c_r, y - 7) + 32'sd16) >>> 5;
+							px_data <= clip8(val);
+						end else
+							px_data <= 8'd128;
+					end
+					default: px_data <= dc_r; // DC + fallbacks
+					endcase
+				end
+				k <= k + 9'd1;
 			end
 		end
 	end
+
 endmodule
 
 module h264_chroma8x8_pred (

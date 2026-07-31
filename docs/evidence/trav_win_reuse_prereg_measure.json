@@ -1,0 +1,98 @@
+{
+  "lane": "sv-traverse",
+  "change": "Window reuse: skip ST_RES_WIN_LOAD when bit_pos still in res_win with >=256-bit headroom; no new M10K/DSP",
+  "base_tip_pre_impl": "eb4c8b64b708fbabe4ebfdbc133d4deb683543cf",
+  "base_d_paint_per_mb_f0": 2474.07,
+  "budget_cy_mb_320x240_25fps_20MHz": 2667.0,
+  "prereg": {
+    "doc": "docs/evidence/trav_win_reuse_prereg.txt",
+    "cy_paint_per_mb_f0_range": [2200, 2360],
+    "paint_save_est_range": [120, 280],
+    "alm_delta_range": [20, 80],
+    "dsp_delta": 0,
+    "m10k_new": 0
+  },
+  "measured": {
+    "clip1_320": {
+      "paint_per_mb_frame0": 2239.647,
+      "delta_vs_D": 234.423,
+      "vs_budget_2667": 0.8398,
+      "pad_cy_vs_2667": 427.353,
+      "intra_y_mb": "300/300",
+      "y_px": "76800/76800",
+      "true_rc_sim": 0,
+      "true_rc_luma": 0,
+      "log": "docs/evidence/trav_win_reuse_logs/clip1/sim.log"
+    },
+    "clip2_624": {
+      "paint_per_mb_frame0": 2102.85,
+      "intra_y_mb": "1170/1170",
+      "y_px": "299520/299520",
+      "true_rc_sim": 0,
+      "true_rc_luma": 0,
+      "log": "docs/evidence/trav_win_reuse_logs/clip2/sim.log"
+    },
+    "red_fault_serial_iq_zero": {
+      "intra_y_mb": "0/300",
+      "y_px": "5/76800",
+      "verdict": "PASS_RED",
+      "true_rc_luma": 0,
+      "log": "docs/evidence/trav_win_reuse_logs/red_iq/sim.log"
+    }
+  },
+  "traverse_i_frame_clip1": {
+    "before_D_plus_counters": {
+      "win": 125202,
+      "wait": 67287,
+      "hold": 317013,
+      "win_loads": 1897,
+      "zero_exp": 4020
+    },
+    "after_reuse": {
+      "win": 8910,
+      "wait": 67287,
+      "hold": 362978,
+      "win_loads": 135,
+      "win_reuse": 1762,
+      "zero_exp": 4020,
+      "reuse_rate": 0.9288
+    }
+  },
+  "sink_i_frame_clip1": {
+    "before": {
+      "idle_ready": 137491,
+      "idle_wb": 38737,
+      "total": 550504
+    },
+    "after": {
+      "idle_ready": 67227,
+      "idle_wb": 38674,
+      "total": 480177
+    },
+    "delta_idle_ready_cy_mb": -234.213,
+    "note": "paint save ≈ idle_ready save; hold rose as traverse no longer starves sink on win load"
+  },
+  "prereg_verdict": {
+    "cy_range_2200_2360": "HIT",
+    "paint_save_120_280": "HIT",
+    "hard_budget_2667": "HIT",
+    "bitexact_clip1_300": "HIT",
+    "bitexact_clip2_1170": "HIT",
+    "red_twin": "HIT",
+    "alm": "UNKNOWN_no_self_fit",
+    "dsp": "PRE_0_mul",
+    "m10k_new": 0
+  },
+  "chroma_pad_cy": 427.353,
+  "follow_on": {
+    "idle_ready_remaining_cy_mb": 224.09,
+    "idle_wb_cy_mb": 128.91,
+    "recon_store_named": "384 cy/MB hide or shrink without new M10K",
+    "lever_E_deferred": "NB fetch pipe tens/MB"
+  },
+  "constraints_held": [
+    "no new memories",
+    "no new multipliers",
+    "no de-serial IQ/I16"
+  ]
+}

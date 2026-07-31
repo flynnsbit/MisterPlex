@@ -1,0 +1,2 @@
+clip2 sim true rc=0
+clip2 luma true rc=0

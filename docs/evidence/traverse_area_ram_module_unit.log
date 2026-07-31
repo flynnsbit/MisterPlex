@@ -1,0 +1,824 @@
+RTL SIM: using Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
+%Warning-PINMISSING: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/tests/rtl/h264_p_mb_traverse_tb_top.sv:45:4: Instance has missing pin: 'res_blk_pred_mode'
+   45 |  ) dut (
+      |    ^~~
+                     /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:88:21: ... Location of port declaration
+   88 |  output reg  [3:0]  res_blk_pred_mode,
+      |                     ^~~~~~~~~~~~~~~~~
+                     ... For warning description see https://verilator.org/warn/PINMISSING?v=5.051
+                     ... Use "/* verilator lint_off PINMISSING */" and lint_on around source to disable this message.
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:306:13: Operator ADD expects 16 bits on the LHS, but LHS's VARREF 'qpy' generates 8 bits.
+                                                                                                                                           : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+  306 |     v = qpy + delta;
+      |             ^
+                      ... For warning description see https://verilator.org/warn/WIDTHEXPAND?v=5.051
+                      ... Use "/* verilator lint_off WIDTHEXPAND */" and lint_on around source to disable this message.
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:306:13: Operator ADD expects 16 bits on the RHS, but RHS's VARREF 'delta' generates 8 bits.
+                                                                                                                                           : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+  306 |     v = qpy + delta;
+      |             ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:309:13: Operator ADD expects 16 bits on the LHS, but LHS's VARREF 'qpy' generates 8 bits.
+                                                                                                                                           : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+  309 |     v = qpy + delta;
+      |             ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:309:13: Operator ADD expects 16 bits on the RHS, but RHS's VARREF 'delta' generates 8 bits.
+                                                                                                                                           : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+  309 |     v = qpy + delta;
+      |             ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:324:12: Operator ADD expects 16 bits on the LHS, but LHS's VARREF 'qpy' generates 8 bits.
+                                                                                                                                           : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+  324 |    v = qpy + delta;
+      |            ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:324:12: Operator ADD expects 16 bits on the RHS, but RHS's VARREF 'delta' generates 8 bits.
+                                                                                                                                           : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+  324 |    v = qpy + delta;
+      |            ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:558:26: Bit extraction of array[255:0] requires 8 bit index, not 16 bits.
+                                                                                                                                          : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+  558 |     tc_top_local = tc_top[abs_x];
+      |                          ^
+                     ... For warning description see https://verilator.org/warn/WIDTHTRUNC?v=5.051
+                     ... Use "/* verilator lint_off WIDTHTRUNC */" and lint_on around source to disable this message.
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:557:14: Operator LT expects 32 bits on the LHS, but LHS's VARREF 'abs_x' generates 16 bits.
+                                                                                                                                           : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+  557 |    if (abs_x < MAX_MB_W*4 && tc_top_v[abs_x])
+      |              ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:557:38: Bit extraction of array[255:0] requires 8 bit index, not 16 bits.
+                                                                                                                                          : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+  557 |    if (abs_x < MAX_MB_W*4 && tc_top_v[abs_x])
+      |                                      ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:522:18: Bit extraction of array[255:0] requires 8 bit index, not 16 bits.
+                                                                                                                                          : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+  522 |     nB = tc_top_v[abs_x] ? tc_top[abs_x] : 5'd0;
+      |                  ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:522:34: Bit extraction of array[255:0] requires 8 bit index, not 16 bits.
+                                                                                                                                          : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+  522 |     nB = tc_top_v[abs_x] ? tc_top[abs_x] : 5'd0;
+      |                                  ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:521:38: Operator LT expects 32 bits on the LHS, but LHS's VARREF 'abs_x' generates 16 bits.
+                                                                                                                                           : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+  521 |    else if (curr_y != 16'd0 && abs_x < MAX_MB_W*4)
+      |                                      ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:598:17: Operator LT expects 32 bits on the LHS, but LHS's VARREF 'abs_x' generates 16 bits.
+                                                                                                                                           : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+  598 |     nB = (abs_x < MAX_MB_W*2 && tc_chr_top_v[p][abs_x]) ?
+      |                 ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:598:48: Bit extraction of array[127:0] requires 7 bit index, not 16 bits.
+                                                                                                                                          : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+  598 |     nB = (abs_x < MAX_MB_W*2 && tc_chr_top_v[p][abs_x]) ?
+      |                                                ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:599:19: Bit extraction of array[127:0] requires 7 bit index, not 16 bits.
+                                                                                                                                          : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+  599 |      tc_chr_top[p][abs_x] : 5'd0;
+      |                   ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:601:25: Bit extraction of array[127:0] requires 7 bit index, not 16 bits.
+                                                                                                                                          : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+  601 |     nB = tc_chr_top_v[p][abs_x] ? tc_chr_top[p][abs_x] : 5'd0;
+      |                         ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:601:48: Bit extraction of array[127:0] requires 7 bit index, not 16 bits.
+                                                                                                                                          : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+  601 |     nB = tc_chr_top_v[p][abs_x] ? tc_chr_top[p][abs_x] : 5'd0;
+      |                                                ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:600:38: Operator LT expects 32 bits on the LHS, but LHS's VARREF 'abs_x' generates 16 bits.
+                                                                                                                                           : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+  600 |    else if (curr_y != 16'd0 && abs_x < MAX_MB_W*2)
+      |                                      ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:794:12: Operator ASSIGN expects 3 bits on the Assign RHS, but Assign RHS's SUB generates 5 bits.
+                                                                                                                                          : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+  794 |      chr_i = idx - 5'd19;
+      |            ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:814:11: Operator ASSIGN expects 3 bits on the Assign RHS, but Assign RHS's SUB generates 5 bits.
+                                                                                                                                          : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+  814 |     chr_i = idx - 5'd18;
+      |           ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:859:11: Bit extraction of array[255:0] requires 8 bit index, not 16 bits.
+                                                                                                                                          : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+  859 |     tc_top[abs_x] <= tc;
+      |           ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:860:13: Bit extraction of array[255:0] requires 8 bit index, not 16 bits.
+                                                                                                                                          : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+  860 |     tc_top_v[abs_x] <= 1'b1;
+      |             ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:858:14: Operator LT expects 32 bits on the LHS, but LHS's VARREF 'abs_x' generates 16 bits.
+                                                                                                                                           : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+  858 |    if (abs_x < MAX_MB_W*4) begin
+      |              ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:878:18: Bit extraction of array[127:0] requires 7 bit index, not 16 bits.
+                                                                                                                                          : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+  878 |     tc_chr_top[p][abs_x] <= tc;
+      |                  ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:879:20: Bit extraction of array[127:0] requires 7 bit index, not 16 bits.
+                                                                                                                                          : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+  879 |     tc_chr_top_v[p][abs_x] <= 1'b1;
+      |                    ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:877:14: Operator LT expects 32 bits on the LHS, but LHS's VARREF 'abs_x' generates 16 bits.
+                                                                                                                                           : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+  877 |    if (abs_x < MAX_MB_W*2) begin
+      |              ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:895:20: Bit extraction of array[127:0] requires 7 bit index, not 16 bits.
+                                                                                                                                          : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+  895 |       tc_chr_top[p][abs_x] <= 5'd0;
+      |                    ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:896:22: Bit extraction of array[127:0] requires 7 bit index, not 16 bits.
+                                                                                                                                          : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+  896 |       tc_chr_top_v[p][abs_x] <= 1'b1;
+      |                      ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:894:16: Operator LT expects 32 bits on the LHS, but LHS's VARREF 'abs_x' generates 16 bits.
+                                                                                                                                           : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+  894 |      if (abs_x < MAX_MB_W*2) begin
+      |                ^
+%Warning-SELRANGE: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:1039:36: Extracting 10 bits from only 8 bit number
+                                                                                                                                         : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+ 1039 |      rbsp_raddr <= win_base + win_k[RBSP_AW-1:0];
+      |                                    ^
+                   ... For warning description see https://verilator.org/warn/SELRANGE?v=5.051
+                   ... Use "/* verilator lint_off SELRANGE */" and lint_on around source to disable this message.
+%Warning-SELRANGE: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:1039:36: Selection index out of range: 9:0 outside 7:0
+                                                                                                                                         : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+ 1039 |      rbsp_raddr <= win_base + win_k[RBSP_AW-1:0];
+      |                                    ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:1100:23: Operator GTE expects 32 bits on the LHS, but LHS's VARREF 'bit_pos' generates 18 bits.
+                                                                                                                                            : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+ 1100 |      else if (bit_pos >= rbsp_bit_total) fail();
+      |                       ^~
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:1111:18: Operator GTE expects 32 bits on the LHS, but LHS's VARREF 'bit_pos' generates 18 bits.
+                                                                                                                                            : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+ 1111 |      if (bit_pos >= rbsp_bit_total) fail();
+      |                  ^~
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:1131:18: Operator GTE expects 32 bits on the LHS, but LHS's VARREF 'bit_pos' generates 18 bits.
+                                                                                                                                            : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+ 1131 |      if (bit_pos >= rbsp_bit_total) fail();
+      |                  ^~
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:1301:16: Bit extraction of array[255:0] requires 8 bit index, not 16 bits.
+                                                                                                                                           : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+ 1301 |          tc_top[{curr_x[13:0], 2'b00} + sx[15:0]] <= 5'd0;
+      |                ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:1302:18: Bit extraction of array[255:0] requires 8 bit index, not 16 bits.
+                                                                                                                                           : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+ 1302 |          tc_top_v[{curr_x[13:0], 2'b00} + sx[15:0]] <= 1'b1;
+      |                  ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:1300:36: Operator ADD expects 32 bits on the LHS, but LHS's REPLICATE generates 16 bits.
+                                                                                                                                            : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+ 1300 |         if (({curr_x[13:0], 2'b00} + sx[15:0]) < MAX_MB_W*4) begin
+      |                                    ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:1300:36: Operator ADD expects 32 bits on the RHS, but RHS's SEL generates 16 bits.
+                                                                                                                                            : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+ 1300 |         if (({curr_x[13:0], 2'b00} + sx[15:0]) < MAX_MB_W*4) begin
+      |                                    ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:1315:19: Operator GTE expects 32 bits on the LHS, but LHS's VARREF 'bit_pos' generates 18 bits.
+                                                                                                                                            : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+ 1315 |       if (bit_pos >= rbsp_bit_total)
+      |                   ^~
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:1351:25: Operator MODDIV expects 5 bits on the RHS, but RHS's CONST '2'h3' generates 2 bits.
+                                                                                                                                            : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+ 1351 |         cc = (x / 5'd4) % 2'd3;
+      |                         ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:1351:12: Operator ASSIGN expects 2 bits on the Assign RHS, but Assign RHS's MODDIV generates 5 bits.
+                                                                                                                                           : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+ 1351 |         cc = (x / 5'd4) % 2'd3;
+      |            ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:1402:24: Operator MODDIV expects 5 bits on the RHS, but RHS's CONST '2'h3' generates 2 bits.
+                                                                                                                                            : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+ 1402 |        cc = (x / 5'd4) % 2'd3;
+      |                        ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:1402:11: Operator ASSIGN expects 2 bits on the Assign RHS, but Assign RHS's MODDIV generates 5 bits.
+                                                                                                                                           : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+ 1402 |        cc = (x / 5'd4) % 2'd3;
+      |           ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:1557:16: Bit extraction of array[255:0] requires 8 bit index, not 16 bits.
+                                                                                                                                           : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+ 1557 |          tc_top[{curr_x[13:0], 2'b00} + sx[15:0]] <= 5'd0;
+      |                ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:1558:18: Bit extraction of array[255:0] requires 8 bit index, not 16 bits.
+                                                                                                                                           : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+ 1558 |          tc_top_v[{curr_x[13:0], 2'b00} + sx[15:0]] <= 1'b1;
+      |                  ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:1556:36: Operator ADD expects 32 bits on the LHS, but LHS's REPLICATE generates 16 bits.
+                                                                                                                                            : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+ 1556 |         if (({curr_x[13:0], 2'b00} + sx[15:0]) < MAX_MB_W*4) begin
+      |                                    ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:1556:36: Operator ADD expects 32 bits on the RHS, but RHS's SEL generates 16 bits.
+                                                                                                                                            : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+ 1556 |         if (({curr_x[13:0], 2'b00} + sx[15:0]) < MAX_MB_W*4) begin
+      |                                    ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:1669:16: Bit extraction of array[63:0] requires 6 bit index, not 8 bits.
+                                                                                                                                           : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+ 1669 |         res_win[win_k - 8'd2] <= rbsp_q;
+      |                ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:1671:16: Bit extraction of array[63:0] requires 6 bit index, not 8 bits.
+                                                                                                                                           : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+ 1671 |         res_win[win_k - 8'd2] <= 8'd0;
+      |                ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:1668:31: Operator ADD expects 28 bits on the RHS, but RHS's REPLICATE generates 18 bits.
+                                                                                                                                            : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+ 1668 |        if (({18'd0, win_base} + {10'd0, win_k} - 18'd2) < {2'd0, rbsp_len})
+      |                               ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:1668:48: Operator SUB expects 28 bits on the RHS, but RHS's CONST '18'h2' generates 18 bits.
+                                                                                                                                            : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+ 1668 |        if (({18'd0, win_base} + {10'd0, win_k} - 18'd2) < {2'd0, rbsp_len})
+      |                                                ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:1668:57: Operator LT expects 28 bits on the RHS, but RHS's REPLICATE generates 18 bits.
+                                                                                                                                            : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+ 1668 |        if (({18'd0, win_base} + {10'd0, win_k} - 18'd2) < {2'd0, rbsp_len})
+      |                                                         ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:1755:23: Operator ADD expects 18 bits on the RHS, but RHS's REPLICATE generates 16 bits.
+                                                                                                                                            : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+ 1755 |          res_win_bit0 + {6'd0, cavlc_bit0_r},
+      |                       ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:1756:23: Operator ADD expects 18 bits on the RHS, but RHS's REPLICATE generates 16 bits.
+                                                                                                                                            : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+ 1756 |          res_win_bit0 + {6'd0, cavlc_bit_end},
+      |                       ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:1759:32: Operator ADD expects 18 bits on the RHS, but RHS's REPLICATE generates 16 bits.
+                                                                                                                                            : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+ 1759 |        bit_pos <= res_win_bit0 + {6'd0, cavlc_bit_end};
+      |                                ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:1766:34: Operator AND expects 5 bits on the RHS, but RHS's CONST '2'h3' generates 2 bits.
+                                                                                                                                            : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+ 1766 |           (res_hold_idx - 5'd19) & 2'd3,
+      |                                  ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:1764:10: Operator TASKREF 'commit_tc_after_chr' expects 2 bits on the Function Argument, but Function Argument's AND generates 5 bits.
+                                                                                                                                           : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+ 1764 |          commit_tc_after_chr(
+      |          ^~~~~~~~~~~~~~~~~~~
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:1774:33: Operator AND expects 5 bits on the RHS, but RHS's CONST '2'h3' generates 2 bits.
+                                                                                                                                            : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+ 1774 |          (res_hold_idx - 5'd18) & 2'd3,
+      |                                 ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:1772:9: Operator TASKREF 'commit_tc_after_chr' expects 2 bits on the Function Argument, but Function Argument's AND generates 5 bits.
+                                                                                                                                          : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+ 1772 |         commit_tc_after_chr(
+      |         ^~~~~~~~~~~~~~~~~~~
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:1791:23: Operator GTE expects 32 bits on the LHS, but LHS's VARREF 'bit_pos' generates 18 bits.
+                                                                                                                                            : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+ 1791 |      else if (bit_pos >= rbsp_bit_total)
+      |                       ^~
+make: Entering directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/build/verilator/h264_p_mb_traverse'
+g++  -I.  -MMD -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include/vltstd -DVERILATOR=1 -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TIMING=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -DVM_TRACE_SAIF=0 -DVM_VPI=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-int-in-bool-context -Wno-shadow -Wno-sign-compare -Wno-subobject-linkage -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -std=c++17 -O2   -Os  -c -o h264_p_mb_traverse_tb.o /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/tests/rtl/h264_p_mb_traverse_tb.cpp
+g++ -Os  -I.  -MMD -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include/vltstd -DVERILATOR=1 -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TIMING=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -DVM_TRACE_SAIF=0 -DVM_VPI=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-int-in-bool-context -Wno-shadow -Wno-sign-compare -Wno-subobject-linkage -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -std=c++17 -O2   -c -o verilated.o /home/flynnsbit/.local/oss-cad-suite/share/verilator/include/verilated.cpp
+g++ -Os  -I.  -MMD -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include/vltstd -DVERILATOR=1 -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TIMING=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -DVM_TRACE_SAIF=0 -DVM_VPI=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-int-in-bool-context -Wno-shadow -Wno-sign-compare -Wno-subobject-linkage -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -std=c++17 -O2   -c -o verilated_threads.o /home/flynnsbit/.local/oss-cad-suite/share/verilator/include/verilated_threads.cpp
+python3 /home/flynnsbit/.local/oss-cad-suite/share/verilator/bin/verilator_includer -DVL_INCLUDE_OPT=include Vh264_p_mb_traverse_tb_top.cpp Vh264_p_mb_traverse_tb_top___024root__0.cpp Vh264_p_mb_traverse_tb_top__ConstPool__0__Slow.cpp Vh264_p_mb_traverse_tb_top___024root__Slow.cpp Vh264_p_mb_traverse_tb_top___024root__0__Slow.cpp Vh264_p_mb_traverse_tb_top__Syms__Slow.cpp > Vh264_p_mb_traverse_tb_top__ALL.cpp
+g++ -Os  -I.  -MMD -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include/vltstd -DVERILATOR=1 -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TIMING=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -DVM_TRACE_SAIF=0 -DVM_VPI=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-int-in-bool-context -Wno-shadow -Wno-sign-compare -Wno-subobject-linkage -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -std=c++17 -O2   -c -o Vh264_p_mb_traverse_tb_top__ALL.o Vh264_p_mb_traverse_tb_top__ALL.cpp
+g++    h264_p_mb_traverse_tb.o verilated.o verilated_threads.o Vh264_p_mb_traverse_tb_top__ALL.a    -pthread -lpthread -latomic   -o Vh264_p_mb_traverse_tb_top
+rm Vh264_p_mb_traverse_tb_top__ALL.verilator_deplist.tmp
+make: Leaving directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/build/verilator/h264_p_mb_traverse'
+- V e r i l a t i o n   R e p o r t: Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
+- Verilator: Built from 0.415 MB sources in 7 modules, into 0.650 MB in 6 C++ files needing 0.002 MB
+- Verilator: Walltime 6.452 s (elab=0.010, cvt=0.064, bld=6.359); cpu 0.092 s on 1 threads; allocated 33.449 MB
+TRAV_HDR_OK i_slice=0 bit_pos=10 qp=26 pic_mbs=6 type=0
+TRAV_DONE mb_count=6 err=0 unsup=0
+all_skip: done=1 mb_count=6 skip=6 coded=0 err=0 addrs=0 1 2 3 4 5 
+PASS all_skip.mb_count: 6
+PASS all_skip.skip_count: 6
+PASS all_skip.done: 1
+PASS all_skip.order: 1
+traversed/total=6/6
+TRAV_HDR_OK i_slice=0 bit_pos=10 qp=26 pic_mbs=6 type=0
+TRAV_DONE mb_count=6 err=0 unsup=0
+mixed: done=1 mb_count=6 skip=5 coded=1 err=0 addrs=0s 1s 2c 3s 4s 5s 
+PASS mixed.mb_count: 6
+PASS mixed.coded_count: 1
+PASS mixed.skip_count: 5
+PASS mixed.done: 1
+traversed/total=6/6
+TRAV_HDR_OK i_slice=0 bit_pos=10 qp=26 pic_mbs=300 type=0
+TRAV_DONE mb_count=300 err=0 unsup=0
+all_skip_300: done=1 mb_count=300 skip=300 err=0 traversed/total=300/300
+PASS all_skip_300.mb_count: 300
+PASS all_skip_300.done: 1
+RESULT PASS
+%Warning-PINMISSING: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/tests/rtl/h264_p_mb_traverse_tb_top.sv:45:4: Instance has missing pin: 'res_blk_pred_mode'
+   45 |  ) dut (
+      |    ^~~
+                     /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:88:21: ... Location of port declaration
+   88 |  output reg  [3:0]  res_blk_pred_mode,
+      |                     ^~~~~~~~~~~~~~~~~
+                     ... For warning description see https://verilator.org/warn/PINMISSING?v=5.051
+                     ... Use "/* verilator lint_off PINMISSING */" and lint_on around source to disable this message.
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:306:13: Operator ADD expects 16 bits on the LHS, but LHS's VARREF 'qpy' generates 8 bits.
+                                                                                                                                           : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+  306 |     v = qpy + delta;
+      |             ^
+                      ... For warning description see https://verilator.org/warn/WIDTHEXPAND?v=5.051
+                      ... Use "/* verilator lint_off WIDTHEXPAND */" and lint_on around source to disable this message.
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:306:13: Operator ADD expects 16 bits on the RHS, but RHS's VARREF 'delta' generates 8 bits.
+                                                                                                                                           : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+  306 |     v = qpy + delta;
+      |             ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:309:13: Operator ADD expects 16 bits on the LHS, but LHS's VARREF 'qpy' generates 8 bits.
+                                                                                                                                           : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+  309 |     v = qpy + delta;
+      |             ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:309:13: Operator ADD expects 16 bits on the RHS, but RHS's VARREF 'delta' generates 8 bits.
+                                                                                                                                           : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+  309 |     v = qpy + delta;
+      |             ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:324:12: Operator ADD expects 16 bits on the LHS, but LHS's VARREF 'qpy' generates 8 bits.
+                                                                                                                                           : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+  324 |    v = qpy + delta;
+      |            ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:324:12: Operator ADD expects 16 bits on the RHS, but RHS's VARREF 'delta' generates 8 bits.
+                                                                                                                                           : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+  324 |    v = qpy + delta;
+      |            ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:558:26: Bit extraction of array[255:0] requires 8 bit index, not 16 bits.
+                                                                                                                                          : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+  558 |     tc_top_local = tc_top[abs_x];
+      |                          ^
+                     ... For warning description see https://verilator.org/warn/WIDTHTRUNC?v=5.051
+                     ... Use "/* verilator lint_off WIDTHTRUNC */" and lint_on around source to disable this message.
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:557:14: Operator LT expects 32 bits on the LHS, but LHS's VARREF 'abs_x' generates 16 bits.
+                                                                                                                                           : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+  557 |    if (abs_x < MAX_MB_W*4 && tc_top_v[abs_x])
+      |              ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:557:38: Bit extraction of array[255:0] requires 8 bit index, not 16 bits.
+                                                                                                                                          : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+  557 |    if (abs_x < MAX_MB_W*4 && tc_top_v[abs_x])
+      |                                      ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:522:18: Bit extraction of array[255:0] requires 8 bit index, not 16 bits.
+                                                                                                                                          : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+  522 |     nB = tc_top_v[abs_x] ? tc_top[abs_x] : 5'd0;
+      |                  ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:522:34: Bit extraction of array[255:0] requires 8 bit index, not 16 bits.
+                                                                                                                                          : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+  522 |     nB = tc_top_v[abs_x] ? tc_top[abs_x] : 5'd0;
+      |                                  ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:521:38: Operator LT expects 32 bits on the LHS, but LHS's VARREF 'abs_x' generates 16 bits.
+                                                                                                                                           : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+  521 |    else if (curr_y != 16'd0 && abs_x < MAX_MB_W*4)
+      |                                      ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:598:17: Operator LT expects 32 bits on the LHS, but LHS's VARREF 'abs_x' generates 16 bits.
+                                                                                                                                           : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+  598 |     nB = (abs_x < MAX_MB_W*2 && tc_chr_top_v[p][abs_x]) ?
+      |                 ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:598:48: Bit extraction of array[127:0] requires 7 bit index, not 16 bits.
+                                                                                                                                          : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+  598 |     nB = (abs_x < MAX_MB_W*2 && tc_chr_top_v[p][abs_x]) ?
+      |                                                ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:599:19: Bit extraction of array[127:0] requires 7 bit index, not 16 bits.
+                                                                                                                                          : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+  599 |      tc_chr_top[p][abs_x] : 5'd0;
+      |                   ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:601:25: Bit extraction of array[127:0] requires 7 bit index, not 16 bits.
+                                                                                                                                          : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+  601 |     nB = tc_chr_top_v[p][abs_x] ? tc_chr_top[p][abs_x] : 5'd0;
+      |                         ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:601:48: Bit extraction of array[127:0] requires 7 bit index, not 16 bits.
+                                                                                                                                          : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+  601 |     nB = tc_chr_top_v[p][abs_x] ? tc_chr_top[p][abs_x] : 5'd0;
+      |                                                ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:600:38: Operator LT expects 32 bits on the LHS, but LHS's VARREF 'abs_x' generates 16 bits.
+                                                                                                                                           : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+  600 |    else if (curr_y != 16'd0 && abs_x < MAX_MB_W*2)
+      |                                      ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:794:12: Operator ASSIGN expects 3 bits on the Assign RHS, but Assign RHS's SUB generates 5 bits.
+                                                                                                                                          : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+  794 |      chr_i = idx - 5'd19;
+      |            ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:814:11: Operator ASSIGN expects 3 bits on the Assign RHS, but Assign RHS's SUB generates 5 bits.
+                                                                                                                                          : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+  814 |     chr_i = idx - 5'd18;
+      |           ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:859:11: Bit extraction of array[255:0] requires 8 bit index, not 16 bits.
+                                                                                                                                          : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+  859 |     tc_top[abs_x] <= tc;
+      |           ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:860:13: Bit extraction of array[255:0] requires 8 bit index, not 16 bits.
+                                                                                                                                          : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+  860 |     tc_top_v[abs_x] <= 1'b1;
+      |             ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:858:14: Operator LT expects 32 bits on the LHS, but LHS's VARREF 'abs_x' generates 16 bits.
+                                                                                                                                           : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+  858 |    if (abs_x < MAX_MB_W*4) begin
+      |              ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:878:18: Bit extraction of array[127:0] requires 7 bit index, not 16 bits.
+                                                                                                                                          : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+  878 |     tc_chr_top[p][abs_x] <= tc;
+      |                  ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:879:20: Bit extraction of array[127:0] requires 7 bit index, not 16 bits.
+                                                                                                                                          : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+  879 |     tc_chr_top_v[p][abs_x] <= 1'b1;
+      |                    ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:877:14: Operator LT expects 32 bits on the LHS, but LHS's VARREF 'abs_x' generates 16 bits.
+                                                                                                                                           : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+  877 |    if (abs_x < MAX_MB_W*2) begin
+      |              ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:895:20: Bit extraction of array[127:0] requires 7 bit index, not 16 bits.
+                                                                                                                                          : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+  895 |       tc_chr_top[p][abs_x] <= 5'd0;
+      |                    ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:896:22: Bit extraction of array[127:0] requires 7 bit index, not 16 bits.
+                                                                                                                                          : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+  896 |       tc_chr_top_v[p][abs_x] <= 1'b1;
+      |                      ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:894:16: Operator LT expects 32 bits on the LHS, but LHS's VARREF 'abs_x' generates 16 bits.
+                                                                                                                                           : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+  894 |      if (abs_x < MAX_MB_W*2) begin
+      |                ^
+%Warning-SELRANGE: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:1039:36: Extracting 10 bits from only 8 bit number
+                                                                                                                                         : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+ 1039 |      rbsp_raddr <= win_base + win_k[RBSP_AW-1:0];
+      |                                    ^
+                   ... For warning description see https://verilator.org/warn/SELRANGE?v=5.051
+                   ... Use "/* verilator lint_off SELRANGE */" and lint_on around source to disable this message.
+%Warning-SELRANGE: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:1039:36: Selection index out of range: 9:0 outside 7:0
+                                                                                                                                         : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+ 1039 |      rbsp_raddr <= win_base + win_k[RBSP_AW-1:0];
+      |                                    ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:1100:23: Operator GTE expects 32 bits on the LHS, but LHS's VARREF 'bit_pos' generates 18 bits.
+                                                                                                                                            : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+ 1100 |      else if (bit_pos >= rbsp_bit_total) fail();
+      |                       ^~
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:1111:18: Operator GTE expects 32 bits on the LHS, but LHS's VARREF 'bit_pos' generates 18 bits.
+                                                                                                                                            : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+ 1111 |      if (bit_pos >= rbsp_bit_total) fail();
+      |                  ^~
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:1131:18: Operator GTE expects 32 bits on the LHS, but LHS's VARREF 'bit_pos' generates 18 bits.
+                                                                                                                                            : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+ 1131 |      if (bit_pos >= rbsp_bit_total) fail();
+      |                  ^~
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:1301:16: Bit extraction of array[255:0] requires 8 bit index, not 16 bits.
+                                                                                                                                           : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+ 1301 |          tc_top[{curr_x[13:0], 2'b00} + sx[15:0]] <= 5'd0;
+      |                ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:1302:18: Bit extraction of array[255:0] requires 8 bit index, not 16 bits.
+                                                                                                                                           : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+ 1302 |          tc_top_v[{curr_x[13:0], 2'b00} + sx[15:0]] <= 1'b1;
+      |                  ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:1300:36: Operator ADD expects 32 bits on the LHS, but LHS's REPLICATE generates 16 bits.
+                                                                                                                                            : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+ 1300 |         if (({curr_x[13:0], 2'b00} + sx[15:0]) < MAX_MB_W*4) begin
+      |                                    ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:1300:36: Operator ADD expects 32 bits on the RHS, but RHS's SEL generates 16 bits.
+                                                                                                                                            : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+ 1300 |         if (({curr_x[13:0], 2'b00} + sx[15:0]) < MAX_MB_W*4) begin
+      |                                    ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:1315:19: Operator GTE expects 32 bits on the LHS, but LHS's VARREF 'bit_pos' generates 18 bits.
+                                                                                                                                            : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+ 1315 |       if (bit_pos >= rbsp_bit_total)
+      |                   ^~
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:1351:25: Operator MODDIV expects 5 bits on the RHS, but RHS's CONST '2'h3' generates 2 bits.
+                                                                                                                                            : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+ 1351 |         cc = (x / 5'd4) % 2'd3;
+      |                         ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:1351:12: Operator ASSIGN expects 2 bits on the Assign RHS, but Assign RHS's MODDIV generates 5 bits.
+                                                                                                                                           : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+ 1351 |         cc = (x / 5'd4) % 2'd3;
+      |            ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:1402:24: Operator MODDIV expects 5 bits on the RHS, but RHS's CONST '2'h3' generates 2 bits.
+                                                                                                                                            : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+ 1402 |        cc = (x / 5'd4) % 2'd3;
+      |                        ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:1402:11: Operator ASSIGN expects 2 bits on the Assign RHS, but Assign RHS's MODDIV generates 5 bits.
+                                                                                                                                           : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+ 1402 |        cc = (x / 5'd4) % 2'd3;
+      |           ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:1557:16: Bit extraction of array[255:0] requires 8 bit index, not 16 bits.
+                                                                                                                                           : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+ 1557 |          tc_top[{curr_x[13:0], 2'b00} + sx[15:0]] <= 5'd0;
+      |                ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:1558:18: Bit extraction of array[255:0] requires 8 bit index, not 16 bits.
+                                                                                                                                           : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+ 1558 |          tc_top_v[{curr_x[13:0], 2'b00} + sx[15:0]] <= 1'b1;
+      |                  ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:1556:36: Operator ADD expects 32 bits on the LHS, but LHS's REPLICATE generates 16 bits.
+                                                                                                                                            : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+ 1556 |         if (({curr_x[13:0], 2'b00} + sx[15:0]) < MAX_MB_W*4) begin
+      |                                    ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:1556:36: Operator ADD expects 32 bits on the RHS, but RHS's SEL generates 16 bits.
+                                                                                                                                            : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+ 1556 |         if (({curr_x[13:0], 2'b00} + sx[15:0]) < MAX_MB_W*4) begin
+      |                                    ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:1669:16: Bit extraction of array[63:0] requires 6 bit index, not 8 bits.
+                                                                                                                                           : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+ 1669 |         res_win[win_k - 8'd2] <= rbsp_q;
+      |                ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:1671:16: Bit extraction of array[63:0] requires 6 bit index, not 8 bits.
+                                                                                                                                           : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+ 1671 |         res_win[win_k - 8'd2] <= 8'd0;
+      |                ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:1668:31: Operator ADD expects 28 bits on the RHS, but RHS's REPLICATE generates 18 bits.
+                                                                                                                                            : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+ 1668 |        if (({18'd0, win_base} + {10'd0, win_k} - 18'd2) < {2'd0, rbsp_len})
+      |                               ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:1668:48: Operator SUB expects 28 bits on the RHS, but RHS's CONST '18'h2' generates 18 bits.
+                                                                                                                                            : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+ 1668 |        if (({18'd0, win_base} + {10'd0, win_k} - 18'd2) < {2'd0, rbsp_len})
+      |                                                ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:1668:57: Operator LT expects 28 bits on the RHS, but RHS's REPLICATE generates 18 bits.
+                                                                                                                                            : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+ 1668 |        if (({18'd0, win_base} + {10'd0, win_k} - 18'd2) < {2'd0, rbsp_len})
+      |                                                         ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:1755:23: Operator ADD expects 18 bits on the RHS, but RHS's REPLICATE generates 16 bits.
+                                                                                                                                            : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+ 1755 |          res_win_bit0 + {6'd0, cavlc_bit0_r},
+      |                       ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:1756:23: Operator ADD expects 18 bits on the RHS, but RHS's REPLICATE generates 16 bits.
+                                                                                                                                            : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+ 1756 |          res_win_bit0 + {6'd0, cavlc_bit_end},
+      |                       ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:1759:32: Operator ADD expects 18 bits on the RHS, but RHS's REPLICATE generates 16 bits.
+                                                                                                                                            : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+ 1759 |        bit_pos <= res_win_bit0 + {6'd0, cavlc_bit_end};
+      |                                ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:1766:34: Operator AND expects 5 bits on the RHS, but RHS's CONST '2'h3' generates 2 bits.
+                                                                                                                                            : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+ 1766 |           (res_hold_idx - 5'd19) & 2'd3,
+      |                                  ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:1764:10: Operator TASKREF 'commit_tc_after_chr' expects 2 bits on the Function Argument, but Function Argument's AND generates 5 bits.
+                                                                                                                                           : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+ 1764 |          commit_tc_after_chr(
+      |          ^~~~~~~~~~~~~~~~~~~
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:1774:33: Operator AND expects 5 bits on the RHS, but RHS's CONST '2'h3' generates 2 bits.
+                                                                                                                                            : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+ 1774 |          (res_hold_idx - 5'd18) & 2'd3,
+      |                                 ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:1772:9: Operator TASKREF 'commit_tc_after_chr' expects 2 bits on the Function Argument, but Function Argument's AND generates 5 bits.
+                                                                                                                                          : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+ 1772 |         commit_tc_after_chr(
+      |         ^~~~~~~~~~~~~~~~~~~
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:1791:23: Operator GTE expects 32 bits on the LHS, but LHS's VARREF 'bit_pos' generates 18 bits.
+                                                                                                                                            : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+ 1791 |      else if (bit_pos >= rbsp_bit_total)
+      |                       ^~
+make: Entering directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/build/verilator/h264_p_mb_traverse_bad_skip'
+g++  -I.  -MMD -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include/vltstd -DVERILATOR=1 -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TIMING=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -DVM_TRACE_SAIF=0 -DVM_VPI=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-int-in-bool-context -Wno-shadow -Wno-sign-compare -Wno-subobject-linkage -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -std=c++17 -O2   -Os  -c -o h264_p_mb_traverse_tb.o /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/tests/rtl/h264_p_mb_traverse_tb.cpp
+g++ -Os  -I.  -MMD -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include/vltstd -DVERILATOR=1 -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TIMING=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -DVM_TRACE_SAIF=0 -DVM_VPI=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-int-in-bool-context -Wno-shadow -Wno-sign-compare -Wno-subobject-linkage -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -std=c++17 -O2   -c -o verilated.o /home/flynnsbit/.local/oss-cad-suite/share/verilator/include/verilated.cpp
+g++ -Os  -I.  -MMD -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include/vltstd -DVERILATOR=1 -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TIMING=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -DVM_TRACE_SAIF=0 -DVM_VPI=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-int-in-bool-context -Wno-shadow -Wno-sign-compare -Wno-subobject-linkage -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -std=c++17 -O2   -c -o verilated_threads.o /home/flynnsbit/.local/oss-cad-suite/share/verilator/include/verilated_threads.cpp
+python3 /home/flynnsbit/.local/oss-cad-suite/share/verilator/bin/verilator_includer -DVL_INCLUDE_OPT=include Vh264_p_mb_traverse_tb_top.cpp Vh264_p_mb_traverse_tb_top___024root__0.cpp Vh264_p_mb_traverse_tb_top__ConstPool__0__Slow.cpp Vh264_p_mb_traverse_tb_top___024root__Slow.cpp Vh264_p_mb_traverse_tb_top___024root__0__Slow.cpp Vh264_p_mb_traverse_tb_top__Syms__Slow.cpp > Vh264_p_mb_traverse_tb_top__ALL.cpp
+g++ -Os  -I.  -MMD -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include/vltstd -DVERILATOR=1 -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TIMING=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -DVM_TRACE_SAIF=0 -DVM_VPI=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-int-in-bool-context -Wno-shadow -Wno-sign-compare -Wno-subobject-linkage -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -std=c++17 -O2   -c -o Vh264_p_mb_traverse_tb_top__ALL.o Vh264_p_mb_traverse_tb_top__ALL.cpp
+g++    h264_p_mb_traverse_tb.o verilated.o verilated_threads.o Vh264_p_mb_traverse_tb_top__ALL.a    -pthread -lpthread -latomic   -o Vh264_p_mb_traverse_tb_top
+rm Vh264_p_mb_traverse_tb_top__ALL.verilator_deplist.tmp
+make: Leaving directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/build/verilator/h264_p_mb_traverse_bad_skip'
+- V e r i l a t i o n   R e p o r t: Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
+- Verilator: Built from 0.415 MB sources in 7 modules, into 0.649 MB in 6 C++ files needing 0.002 MB
+- Verilator: Walltime 6.237 s (elab=0.009, cvt=0.055, bld=6.150); cpu 0.085 s on 1 threads; allocated 33.453 MB
+EXPECTED_RED h264_p_mb_traverse_bad_skip: rc=1 matched 1 manifest substring(s) (tests/unit/test_h264_p_mb_traverse_rtl_sim.sh)
+%Warning-PINMISSING: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/tests/rtl/h264_p_mb_traverse_tb_top.sv:45:4: Instance has missing pin: 'res_blk_pred_mode'
+   45 |  ) dut (
+      |    ^~~
+                     /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:88:21: ... Location of port declaration
+   88 |  output reg  [3:0]  res_blk_pred_mode,
+      |                     ^~~~~~~~~~~~~~~~~
+                     ... For warning description see https://verilator.org/warn/PINMISSING?v=5.051
+                     ... Use "/* verilator lint_off PINMISSING */" and lint_on around source to disable this message.
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:306:13: Operator ADD expects 16 bits on the LHS, but LHS's VARREF 'qpy' generates 8 bits.
+                                                                                                                                           : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+  306 |     v = qpy + delta;
+      |             ^
+                      ... For warning description see https://verilator.org/warn/WIDTHEXPAND?v=5.051
+                      ... Use "/* verilator lint_off WIDTHEXPAND */" and lint_on around source to disable this message.
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:306:13: Operator ADD expects 16 bits on the RHS, but RHS's VARREF 'delta' generates 8 bits.
+                                                                                                                                           : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+  306 |     v = qpy + delta;
+      |             ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:309:13: Operator ADD expects 16 bits on the LHS, but LHS's VARREF 'qpy' generates 8 bits.
+                                                                                                                                           : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+  309 |     v = qpy + delta;
+      |             ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:309:13: Operator ADD expects 16 bits on the RHS, but RHS's VARREF 'delta' generates 8 bits.
+                                                                                                                                           : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+  309 |     v = qpy + delta;
+      |             ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:324:12: Operator ADD expects 16 bits on the LHS, but LHS's VARREF 'qpy' generates 8 bits.
+                                                                                                                                           : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+  324 |    v = qpy + delta;
+      |            ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:324:12: Operator ADD expects 16 bits on the RHS, but RHS's VARREF 'delta' generates 8 bits.
+                                                                                                                                           : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+  324 |    v = qpy + delta;
+      |            ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:558:26: Bit extraction of array[255:0] requires 8 bit index, not 16 bits.
+                                                                                                                                          : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+  558 |     tc_top_local = tc_top[abs_x];
+      |                          ^
+                     ... For warning description see https://verilator.org/warn/WIDTHTRUNC?v=5.051
+                     ... Use "/* verilator lint_off WIDTHTRUNC */" and lint_on around source to disable this message.
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:557:14: Operator LT expects 32 bits on the LHS, but LHS's VARREF 'abs_x' generates 16 bits.
+                                                                                                                                           : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+  557 |    if (abs_x < MAX_MB_W*4 && tc_top_v[abs_x])
+      |              ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:557:38: Bit extraction of array[255:0] requires 8 bit index, not 16 bits.
+                                                                                                                                          : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+  557 |    if (abs_x < MAX_MB_W*4 && tc_top_v[abs_x])
+      |                                      ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:522:18: Bit extraction of array[255:0] requires 8 bit index, not 16 bits.
+                                                                                                                                          : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+  522 |     nB = tc_top_v[abs_x] ? tc_top[abs_x] : 5'd0;
+      |                  ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:522:34: Bit extraction of array[255:0] requires 8 bit index, not 16 bits.
+                                                                                                                                          : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+  522 |     nB = tc_top_v[abs_x] ? tc_top[abs_x] : 5'd0;
+      |                                  ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:521:38: Operator LT expects 32 bits on the LHS, but LHS's VARREF 'abs_x' generates 16 bits.
+                                                                                                                                           : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+  521 |    else if (curr_y != 16'd0 && abs_x < MAX_MB_W*4)
+      |                                      ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:598:17: Operator LT expects 32 bits on the LHS, but LHS's VARREF 'abs_x' generates 16 bits.
+                                                                                                                                           : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+  598 |     nB = (abs_x < MAX_MB_W*2 && tc_chr_top_v[p][abs_x]) ?
+      |                 ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:598:48: Bit extraction of array[127:0] requires 7 bit index, not 16 bits.
+                                                                                                                                          : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+  598 |     nB = (abs_x < MAX_MB_W*2 && tc_chr_top_v[p][abs_x]) ?
+      |                                                ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:599:19: Bit extraction of array[127:0] requires 7 bit index, not 16 bits.
+                                                                                                                                          : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+  599 |      tc_chr_top[p][abs_x] : 5'd0;
+      |                   ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:601:25: Bit extraction of array[127:0] requires 7 bit index, not 16 bits.
+                                                                                                                                          : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+  601 |     nB = tc_chr_top_v[p][abs_x] ? tc_chr_top[p][abs_x] : 5'd0;
+      |                         ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:601:48: Bit extraction of array[127:0] requires 7 bit index, not 16 bits.
+                                                                                                                                          : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+  601 |     nB = tc_chr_top_v[p][abs_x] ? tc_chr_top[p][abs_x] : 5'd0;
+      |                                                ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:600:38: Operator LT expects 32 bits on the LHS, but LHS's VARREF 'abs_x' generates 16 bits.
+                                                                                                                                           : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+  600 |    else if (curr_y != 16'd0 && abs_x < MAX_MB_W*2)
+      |                                      ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:794:12: Operator ASSIGN expects 3 bits on the Assign RHS, but Assign RHS's SUB generates 5 bits.
+                                                                                                                                          : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+  794 |      chr_i = idx - 5'd19;
+      |            ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:814:11: Operator ASSIGN expects 3 bits on the Assign RHS, but Assign RHS's SUB generates 5 bits.
+                                                                                                                                          : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+  814 |     chr_i = idx - 5'd18;
+      |           ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:859:11: Bit extraction of array[255:0] requires 8 bit index, not 16 bits.
+                                                                                                                                          : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+  859 |     tc_top[abs_x] <= tc;
+      |           ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:860:13: Bit extraction of array[255:0] requires 8 bit index, not 16 bits.
+                                                                                                                                          : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+  860 |     tc_top_v[abs_x] <= 1'b1;
+      |             ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:858:14: Operator LT expects 32 bits on the LHS, but LHS's VARREF 'abs_x' generates 16 bits.
+                                                                                                                                           : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+  858 |    if (abs_x < MAX_MB_W*4) begin
+      |              ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:878:18: Bit extraction of array[127:0] requires 7 bit index, not 16 bits.
+                                                                                                                                          : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+  878 |     tc_chr_top[p][abs_x] <= tc;
+      |                  ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:879:20: Bit extraction of array[127:0] requires 7 bit index, not 16 bits.
+                                                                                                                                          : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+  879 |     tc_chr_top_v[p][abs_x] <= 1'b1;
+      |                    ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:877:14: Operator LT expects 32 bits on the LHS, but LHS's VARREF 'abs_x' generates 16 bits.
+                                                                                                                                           : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+  877 |    if (abs_x < MAX_MB_W*2) begin
+      |              ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:895:20: Bit extraction of array[127:0] requires 7 bit index, not 16 bits.
+                                                                                                                                          : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+  895 |       tc_chr_top[p][abs_x] <= 5'd0;
+      |                    ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:896:22: Bit extraction of array[127:0] requires 7 bit index, not 16 bits.
+                                                                                                                                          : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+  896 |       tc_chr_top_v[p][abs_x] <= 1'b1;
+      |                      ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:894:16: Operator LT expects 32 bits on the LHS, but LHS's VARREF 'abs_x' generates 16 bits.
+                                                                                                                                           : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+  894 |      if (abs_x < MAX_MB_W*2) begin
+      |                ^
+%Warning-SELRANGE: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:1039:36: Extracting 10 bits from only 8 bit number
+                                                                                                                                         : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+ 1039 |      rbsp_raddr <= win_base + win_k[RBSP_AW-1:0];
+      |                                    ^
+                   ... For warning description see https://verilator.org/warn/SELRANGE?v=5.051
+                   ... Use "/* verilator lint_off SELRANGE */" and lint_on around source to disable this message.
+%Warning-SELRANGE: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:1039:36: Selection index out of range: 9:0 outside 7:0
+                                                                                                                                         : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+ 1039 |      rbsp_raddr <= win_base + win_k[RBSP_AW-1:0];
+      |                                    ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:1100:23: Operator GTE expects 32 bits on the LHS, but LHS's VARREF 'bit_pos' generates 18 bits.
+                                                                                                                                            : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+ 1100 |      else if (bit_pos >= rbsp_bit_total) fail();
+      |                       ^~
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:1111:18: Operator GTE expects 32 bits on the LHS, but LHS's VARREF 'bit_pos' generates 18 bits.
+                                                                                                                                            : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+ 1111 |      if (bit_pos >= rbsp_bit_total) fail();
+      |                  ^~
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:1131:18: Operator GTE expects 32 bits on the LHS, but LHS's VARREF 'bit_pos' generates 18 bits.
+                                                                                                                                            : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+ 1131 |      if (bit_pos >= rbsp_bit_total) fail();
+      |                  ^~
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:1301:16: Bit extraction of array[255:0] requires 8 bit index, not 16 bits.
+                                                                                                                                           : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+ 1301 |          tc_top[{curr_x[13:0], 2'b00} + sx[15:0]] <= 5'd0;
+      |                ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:1302:18: Bit extraction of array[255:0] requires 8 bit index, not 16 bits.
+                                                                                                                                           : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+ 1302 |          tc_top_v[{curr_x[13:0], 2'b00} + sx[15:0]] <= 1'b1;
+      |                  ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:1300:36: Operator ADD expects 32 bits on the LHS, but LHS's REPLICATE generates 16 bits.
+                                                                                                                                            : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+ 1300 |         if (({curr_x[13:0], 2'b00} + sx[15:0]) < MAX_MB_W*4) begin
+      |                                    ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:1300:36: Operator ADD expects 32 bits on the RHS, but RHS's SEL generates 16 bits.
+                                                                                                                                            : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+ 1300 |         if (({curr_x[13:0], 2'b00} + sx[15:0]) < MAX_MB_W*4) begin
+      |                                    ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:1315:19: Operator GTE expects 32 bits on the LHS, but LHS's VARREF 'bit_pos' generates 18 bits.
+                                                                                                                                            : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+ 1315 |       if (bit_pos >= rbsp_bit_total)
+      |                   ^~
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:1351:25: Operator MODDIV expects 5 bits on the RHS, but RHS's CONST '2'h3' generates 2 bits.
+                                                                                                                                            : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+ 1351 |         cc = (x / 5'd4) % 2'd3;
+      |                         ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:1351:12: Operator ASSIGN expects 2 bits on the Assign RHS, but Assign RHS's MODDIV generates 5 bits.
+                                                                                                                                           : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+ 1351 |         cc = (x / 5'd4) % 2'd3;
+      |            ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:1402:24: Operator MODDIV expects 5 bits on the RHS, but RHS's CONST '2'h3' generates 2 bits.
+                                                                                                                                            : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+ 1402 |        cc = (x / 5'd4) % 2'd3;
+      |                        ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:1402:11: Operator ASSIGN expects 2 bits on the Assign RHS, but Assign RHS's MODDIV generates 5 bits.
+                                                                                                                                           : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+ 1402 |        cc = (x / 5'd4) % 2'd3;
+      |           ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:1557:16: Bit extraction of array[255:0] requires 8 bit index, not 16 bits.
+                                                                                                                                           : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+ 1557 |          tc_top[{curr_x[13:0], 2'b00} + sx[15:0]] <= 5'd0;
+      |                ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:1558:18: Bit extraction of array[255:0] requires 8 bit index, not 16 bits.
+                                                                                                                                           : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+ 1558 |          tc_top_v[{curr_x[13:0], 2'b00} + sx[15:0]] <= 1'b1;
+      |                  ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:1556:36: Operator ADD expects 32 bits on the LHS, but LHS's REPLICATE generates 16 bits.
+                                                                                                                                            : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+ 1556 |         if (({curr_x[13:0], 2'b00} + sx[15:0]) < MAX_MB_W*4) begin
+      |                                    ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:1556:36: Operator ADD expects 32 bits on the RHS, but RHS's SEL generates 16 bits.
+                                                                                                                                            : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+ 1556 |         if (({curr_x[13:0], 2'b00} + sx[15:0]) < MAX_MB_W*4) begin
+      |                                    ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:1669:16: Bit extraction of array[63:0] requires 6 bit index, not 8 bits.
+                                                                                                                                           : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+ 1669 |         res_win[win_k - 8'd2] <= rbsp_q;
+      |                ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:1671:16: Bit extraction of array[63:0] requires 6 bit index, not 8 bits.
+                                                                                                                                           : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+ 1671 |         res_win[win_k - 8'd2] <= 8'd0;
+      |                ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:1668:31: Operator ADD expects 28 bits on the RHS, but RHS's REPLICATE generates 18 bits.
+                                                                                                                                            : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+ 1668 |        if (({18'd0, win_base} + {10'd0, win_k} - 18'd2) < {2'd0, rbsp_len})
+      |                               ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:1668:48: Operator SUB expects 28 bits on the RHS, but RHS's CONST '18'h2' generates 18 bits.
+                                                                                                                                            : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+ 1668 |        if (({18'd0, win_base} + {10'd0, win_k} - 18'd2) < {2'd0, rbsp_len})
+      |                                                ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:1668:57: Operator LT expects 28 bits on the RHS, but RHS's REPLICATE generates 18 bits.
+                                                                                                                                            : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+ 1668 |        if (({18'd0, win_base} + {10'd0, win_k} - 18'd2) < {2'd0, rbsp_len})
+      |                                                         ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:1755:23: Operator ADD expects 18 bits on the RHS, but RHS's REPLICATE generates 16 bits.
+                                                                                                                                            : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+ 1755 |          res_win_bit0 + {6'd0, cavlc_bit0_r},
+      |                       ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:1756:23: Operator ADD expects 18 bits on the RHS, but RHS's REPLICATE generates 16 bits.
+                                                                                                                                            : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+ 1756 |          res_win_bit0 + {6'd0, cavlc_bit_end},
+      |                       ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:1759:32: Operator ADD expects 18 bits on the RHS, but RHS's REPLICATE generates 16 bits.
+                                                                                                                                            : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+ 1759 |        bit_pos <= res_win_bit0 + {6'd0, cavlc_bit_end};
+      |                                ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:1766:34: Operator AND expects 5 bits on the RHS, but RHS's CONST '2'h3' generates 2 bits.
+                                                                                                                                            : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+ 1766 |           (res_hold_idx - 5'd19) & 2'd3,
+      |                                  ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:1764:10: Operator TASKREF 'commit_tc_after_chr' expects 2 bits on the Function Argument, but Function Argument's AND generates 5 bits.
+                                                                                                                                           : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+ 1764 |          commit_tc_after_chr(
+      |          ^~~~~~~~~~~~~~~~~~~
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:1774:33: Operator AND expects 5 bits on the RHS, but RHS's CONST '2'h3' generates 2 bits.
+                                                                                                                                            : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+ 1774 |          (res_hold_idx - 5'd18) & 2'd3,
+      |                                 ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:1772:9: Operator TASKREF 'commit_tc_after_chr' expects 2 bits on the Function Argument, but Function Argument's AND generates 5 bits.
+                                                                                                                                          : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+ 1772 |         commit_tc_after_chr(
+      |         ^~~~~~~~~~~~~~~~~~~
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:1791:23: Operator GTE expects 32 bits on the LHS, but LHS's VARREF 'bit_pos' generates 18 bits.
+                                                                                                                                            : ... note: In instance 'h264_p_mb_traverse_tb_top.dut'
+ 1791 |      else if (bit_pos >= rbsp_bit_total)
+      |                       ^~
+make: Entering directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/build/verilator/h264_p_mb_traverse_drop_last'
+g++  -I.  -MMD -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include/vltstd -DVERILATOR=1 -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TIMING=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -DVM_TRACE_SAIF=0 -DVM_VPI=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-int-in-bool-context -Wno-shadow -Wno-sign-compare -Wno-subobject-linkage -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -std=c++17 -O2   -Os  -c -o h264_p_mb_traverse_tb.o /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/tests/rtl/h264_p_mb_traverse_tb.cpp
+g++ -Os  -I.  -MMD -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include/vltstd -DVERILATOR=1 -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TIMING=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -DVM_TRACE_SAIF=0 -DVM_VPI=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-int-in-bool-context -Wno-shadow -Wno-sign-compare -Wno-subobject-linkage -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -std=c++17 -O2   -c -o verilated.o /home/flynnsbit/.local/oss-cad-suite/share/verilator/include/verilated.cpp
+g++ -Os  -I.  -MMD -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include/vltstd -DVERILATOR=1 -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TIMING=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -DVM_TRACE_SAIF=0 -DVM_VPI=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-int-in-bool-context -Wno-shadow -Wno-sign-compare -Wno-subobject-linkage -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -std=c++17 -O2   -c -o verilated_threads.o /home/flynnsbit/.local/oss-cad-suite/share/verilator/include/verilated_threads.cpp
+python3 /home/flynnsbit/.local/oss-cad-suite/share/verilator/bin/verilator_includer -DVL_INCLUDE_OPT=include Vh264_p_mb_traverse_tb_top.cpp Vh264_p_mb_traverse_tb_top___024root__0.cpp Vh264_p_mb_traverse_tb_top__ConstPool__0__Slow.cpp Vh264_p_mb_traverse_tb_top___024root__Slow.cpp Vh264_p_mb_traverse_tb_top___024root__0__Slow.cpp Vh264_p_mb_traverse_tb_top__Syms__Slow.cpp > Vh264_p_mb_traverse_tb_top__ALL.cpp
+g++ -Os  -I.  -MMD -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include/vltstd -DVERILATOR=1 -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TIMING=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -DVM_TRACE_SAIF=0 -DVM_VPI=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-int-in-bool-context -Wno-shadow -Wno-sign-compare -Wno-subobject-linkage -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -std=c++17 -O2   -c -o Vh264_p_mb_traverse_tb_top__ALL.o Vh264_p_mb_traverse_tb_top__ALL.cpp
+g++    h264_p_mb_traverse_tb.o verilated.o verilated_threads.o Vh264_p_mb_traverse_tb_top__ALL.a    -pthread -lpthread -latomic   -o Vh264_p_mb_traverse_tb_top
+rm Vh264_p_mb_traverse_tb_top__ALL.verilator_deplist.tmp
+make: Leaving directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/build/verilator/h264_p_mb_traverse_drop_last'
+- V e r i l a t i o n   R e p o r t: Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
+- Verilator: Built from 0.415 MB sources in 7 modules, into 0.653 MB in 6 C++ files needing 0.002 MB
+- Verilator: Walltime 6.765 s (elab=0.012, cvt=0.068, bld=6.664); cpu 0.099 s on 1 threads; allocated 33.582 MB
+EXPECTED_RED h264_p_mb_traverse_drop_last_row: rc=1 matched 1 manifest substring(s) (tests/unit/test_h264_p_mb_traverse_rtl_sim.sh)
+OK h264_p_mb_traverse: full skip walk + mixed + 300 MB + two mutation red-checks

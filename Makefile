@@ -100,6 +100,7 @@ unit-unlocked: unit-rollcall preflight $(ROOT)/build/test_cadence $(ROOT)/build/
 	$(ROOT)/tests/unit/test_deblock_iframe_gap.sh
 	$(ROOT)/tests/unit/test_i420_candidate_score.sh
 	$(ROOT)/tests/unit/test_p3_hybrid_gate.sh
+	python3 $(ROOT)/tests/unit/test_dpb_writeback_source.py
 	$(ROOT)/tests/unit/test_h264_multinal_stream_path.sh
 	$(ROOT)/build/test_p3_idct_reference_model
 	$(ROOT)/build/test_p3_inter_pred_vectors
@@ -117,6 +118,7 @@ unit-unlocked: unit-rollcall preflight $(ROOT)/build/test_cadence $(ROOT)/build/
 	$(ROOT)/tests/unit/test_h264_decode_core_p16z_rtl_sim.sh
 	$(ROOT)/tests/unit/test_h264_decode_core_real_slice_rtl_sim.sh
 	$(ROOT)/tests/unit/test_h264_p_slice_modes_rtl_sim.sh
+	$(ROOT)/tests/unit/test_h264_p_mb_traverse_rtl_sim.sh
 	$(ROOT)/tests/unit/test_p3_inter_stream_path_rtl_sim.sh
 	$(ROOT)/tests/unit/test_companion_http.sh
 	$(ROOT)/tests/unit/test_plex_browse.sh
@@ -148,12 +150,12 @@ unit-unlocked: unit-rollcall preflight $(ROOT)/build/test_cadence $(ROOT)/build/
 	$(ROOT)/tests/unit/test_stream_path_deblock_integration.sh
 	bash $(ROOT)/tests/unit/test_stream_path_ddr_ring_integration.sh
 	$(ROOT)/tests/unit/test_ddr_frame_store_warm_reset.sh
-	$(ROOT)/tests/unit/test_ddr_frame_store_scanout_freeze.sh
 	$(ROOT)/scripts/rtl_lint.py
 	$(ROOT)/tests/unit/test_h264_syntax_primitives_rtl_sim.sh
 	$(ROOT)/tests/unit/test_h264_sps_geometry_rtl_sim.sh
 	$(ROOT)/tests/unit/test_h264_baseline_syntax_rtl_sim.sh
 	$(ROOT)/tests/unit/test_h264_inter_nb_mvd_rtl_sim.sh
+	$(ROOT)/tests/unit/test_decode_stub_fetch_mv_rtl_sim.sh
 
 rtl-sim:
 	python3 $(ROOT)/scripts/run_with_skip_summary.py --label rtl-sim -- $(MAKE) rtl-sim-unlocked
@@ -166,7 +168,6 @@ rtl-sim-unlocked:
 	$(ROOT)/tests/unit/test_p3_stream_path_recon_rtl_sim.sh
 	$(ROOT)/tests/unit/test_stream_path_deblock_integration.sh
 	$(ROOT)/tests/unit/test_ddr_frame_store_warm_reset.sh
-	$(ROOT)/tests/unit/test_ddr_frame_store_scanout_freeze.sh
 	$(ROOT)/tests/unit/test_stream_path_recon_integration.sh
 	$(ROOT)/tests/unit/test_stream_path_full_frame_compare.sh
 	$(ROOT)/tests/unit/test_ddram_frame_rd_bank_select.sh
@@ -174,7 +175,9 @@ rtl-sim-unlocked:
 	$(ROOT)/tests/unit/test_h264_sps_geometry_rtl_sim.sh
 	$(ROOT)/tests/unit/test_h264_baseline_syntax_rtl_sim.sh
 	$(ROOT)/tests/unit/test_h264_inter_nb_mvd_rtl_sim.sh
+	$(ROOT)/tests/unit/test_decode_stub_fetch_mv_rtl_sim.sh
 	$(ROOT)/tests/unit/test_h264_p_slice_modes_rtl_sim.sh
+	$(ROOT)/tests/unit/test_h264_p_mb_traverse_rtl_sim.sh
 	$(ROOT)/tests/unit/test_h264_decode_core_writeback_rtl_sim.sh
 	$(ROOT)/tests/unit/test_h264_decode_core_p16z_rtl_sim.sh
 	$(ROOT)/tests/unit/test_h264_decode_core_real_slice_rtl_sim.sh

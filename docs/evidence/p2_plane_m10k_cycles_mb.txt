@@ -1,0 +1,15 @@
+PHASE-2 plane/top M10K — cycles/MB (measured)
+=============================================
+Budget (parent): ~2000 cy/MB @50MHz for 320x240 ~23fps was "generous".
+
+Measured STAGE_CYCLES frame=0 paint_per_mb (product path, REAL_REF):
+  clip1 320x240: paint_per_mb=4036.907  (plane_m10k_clip1_final.log)
+  clip2 624x480: paint_per_mb=3977.876  (plane_m10k_clip2_final.log)
+
+VERDICT: OVER budget ~2.0x. Stacked serialisations:
+  serial RBSP window + serial IQ (16 cy) + serial I16 pred (256) +
+  serial HAD paint RMW + serial I4/I16 neighbour fetch (3 cy/sample) +
+  APPLY RMW (read-modify-write plane_y).
+
+Not absorbed silently — publish as THROUGHPUT_RISK.
+ALM win is the goal of this map; throughput is the trade to watch at fit.

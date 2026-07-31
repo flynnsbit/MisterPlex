@@ -162,7 +162,26 @@ module stream_path_recon_integration_tb_top #(
 	.fs_wr_en(fs_wr_en),
 		.fs_wr_pixel(fs_wr_pixel),
 		.fs_wr_reset(fs_wr_reset),
-		.fs_swap(fs_swap)
+				.p_mb_valid(),
+		.p_mb_addr(),
+		.p_mb_x(),
+		.p_mb_y(),
+		.p_mb_skip(),
+		.p_mb_part_mode(),
+		.p_mb_part_count(),
+		.p_mb_uses_sub_mb(),
+		.p_mb_intra(),
+		.p_mb_count(),
+		.p_slice_done(),
+		.p_traverse_busy(),
+	.first_mb_mvd_x(),
+	.first_mb_mvd_y(),
+	.product_fetch_mv_x(),
+	.product_fetch_mv_y(),
+	.product_luma_origin_x(),
+	.product_luma_origin_y(),
+
+.fs_swap(fs_swap)
 	);
 
 	assign recon_sig = FAULT_RECON_SIG_ZERO ? 8'h00 : recon_sig_dut;

@@ -1,0 +1,25 @@
+PHASE-2 plane/top M10K — PRE-REGISTER (before measure)
+======================================================
+Branch: rtl/sink-contract-phase2 (off freeze cf6842a)
+Method: plane_y + top_row -> h264_byte_ram_sp; serial nb fetch; RMW apply/paint
+NO new DSP (hold 4..6)
+
+PRE-REG ALM sink: 1500..4000 (gate <=4000)
+PRE-REG DSP sink: 4..6 (hold)
+
+PRE-REG functional: clip1 300/300, clip2 1170/1170 px exact
+PRE-REG RED: FAULT_PLANE_RAM_HOLD or skip nb fetch collapses score
+
+cycles/MB estimate (pre-impl, order-of-magnitude @ product path):
+  Prior (serial IQ+I16, fabric planes):
+    I16 MB: ~258 pred + ~17 had + ~256 paint + 16*AC*(~1 settle+~17 iq+~16 apply)
+            ≈ 531 + 16*34 ≈ 1075 cy  (+ cavlc/window ~66*17 ≈ 1122) ≈ 2200 cy/MB
+    I4  MB: 16*(nb0 + settle + iq17 + apply16) ≈ 16*34 = 544 + window ≈ 1600 cy/MB
+  After plane M10K (add serial nb + RMW):
+    I4 nb fetch ~13 reads *1.5 ≈ 20 cy/blk → +320/MB
+    APPLY RMW 2cy/px → apply 32 instead of 16 → +256/MB I4
+    HAD paint RMW 512 instead of 256 → +256 I16 once
+    MB init 256 + dump 256 + top_row wr 16 ≈ +530/MB
+  EST post: I16 ~ 2200+256+530 ≈ 3000 cy/MB; I4 ~ 1600+320+256+530 ≈ 2700 cy/MB
+  Budget ~2000 cy/MB @50MHz for 23fps 320x240 was "generous" — POST may EXCEED 2k.
+  Flag: THROUGHPUT RISK — measure paint_frame0_cy / 300 after impl.

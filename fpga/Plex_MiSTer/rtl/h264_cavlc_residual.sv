@@ -586,28 +586,45 @@ module h264_cavlc_residual_block #(
         end
     endfunction
 
+    // FFmpeg/OpenH264: suffix after first non-T1 uses
+    //   1 + (unsigned(level+3) > 6)  — NOT signed compare.
+    // Signed (lvl+3)>6 only catches lvl>=4 and misses lvl<=-4, desyncing
+    // the bitstream (measured: fixture MB0 blk11 tc=11 t1=0 level0=-4).
     function automatic [2:0] suffix_next_first(input [5:0] pfx, input [2:0] cur_suf, input signed [15:0] lvl);
+        reg signed [16:0] s;
+        reg [16:0] u;
         begin
             if (pfx > 6'd14 || (pfx == 6'd14 && cur_suf == 3'd0))
                 suffix_next_first = 3'd2;
-            else
-                suffix_next_first = 3'd1 + ((lvl + 16'sd3) > 16'sd6);
+            else begin
+                s = $signed({lvl[15], lvl}) + 17'sd3;
+                u = s[16:0]; // C++ static_cast<unsigned>(int) bit pattern
+                suffix_next_first = 3'd1 + (u > 17'd6);
+            end
         end
     endfunction
 
+    // Subsequent coeffs: FFmpeg
+    //   suffix_length += (lim[s] + unsigned(level) > 2*lim[s])
+    // unsigned(int16) via int promotion then to unsigned — negative levels
+    // become large and always trip the threshold (same as |level| large).
     function automatic [2:0] suffix_next(input [2:0] cur_suf, input signed [15:0] lvl);
-        reg [15:0] lim;
+        reg [31:0] lim;
+        reg [31:0] u_lvl;
         begin
             case (cur_suf)
-            3'd0: lim = 16'd0;
-            3'd1: lim = 16'd3;
-            3'd2: lim = 16'd6;
-            3'd3: lim = 16'd12;
-            3'd4: lim = 16'd24;
-            default: lim = 16'd48;
+            3'd0: lim = 32'd0;
+            3'd1: lim = 32'd3;
+            3'd2: lim = 32'd6;
+            3'd3: lim = 32'd12;
+            3'd4: lim = 32'd24;
+            3'd5: lim = 32'd48;
+            default: lim = 32'hffff_ffff;
             endcase
+            // Match C++ static_cast<unsigned>(int16_t): sign-extend to int, then to uint32
+            u_lvl = {{16{lvl[15]}}, lvl};
             suffix_next = cur_suf;
-            if (cur_suf < 3'd6 && (lim + lvl[15:0]) > (lim << 1))
+            if (cur_suf < 3'd6 && (lim + u_lvl) > (lim << 1))
                 suffix_next = cur_suf + 3'd1;
         end
     endfunction
@@ -892,6 +909,18 @@ module h264_cavlc_residual_block #(
 
             ST_DONE: begin
                 busy <= 1'b0;
+                done <= 1'b1;
+                st <= ST_IDLE;
+            end
+
+            ST_FAIL: begin
+`ifdef VERILATOR
+                $display("CAVLC_FAIL_ST bit_pos=%0d tc=%0d t1=%0d tz=%0d idx=%0d zl=%0d code_len=%0d place_i=%0d pref=%0d",
+                    bit_pos, tc_r, t1_r, total_zeros, idx, zeros_left, code_len, place_i, prefix);
+`endif
+                busy <= 1'b0;
+                ok <= 1'b0;
+                bit_offset_end <= bit_pos;
                 done <= 1'b1;
                 st <= ST_IDLE;
             end

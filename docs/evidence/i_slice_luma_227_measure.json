@@ -1,0 +1,59 @@
+{
+  "format": "misterplex.sv_traverse.i16_ac_seed_fix.v1",
+  "base_sha": "6b199156d5ce9360dd59ae49d6897302bd27e707",
+  "dirty_at_measure": true,
+  "pre_register": {
+    "headline_intra": "0/300",
+    "headline_inter": "0/3300",
+    "luma_intra_y_mb": "225..245/300",
+    "note": "HEADLINE chroma-floored; LUMA is steering only"
+  },
+  "actual": {
+    "headline_intra": "0/300",
+    "headline_inter": "0/3300",
+    "headline_true_rc": 0,
+    "luma_intra_y_mb": "227/300",
+    "luma_intra_y_px": "61014/76800",
+    "luma_intra_y_blk4": "3811/4800",
+    "luma_inter_y_mb": "1681/3300",
+    "luma_true_rc": 0,
+    "store_unique_idr": "300/300",
+    "vs_preregister_luma": "HIT"
+  },
+  "prior_6b19915": {
+    "luma_intra_y_mb": "214/300"
+  },
+  "delta": "+13 intra_y_mb",
+  "fixes": [
+    "h264_dequant4x4: max_coeff==15 maps coeff[k]\u2192zigzag[k+1], DC spatial=0 (host dequant4x4 maxCoeff==15)",
+    "h264_i_res_recon_sink: I16 AC injects Hadamard DC at dequant[0] then one idct; undoes split pixel-DC to match host combined >>6 rounding"
+  ],
+  "seeds_cleared": [
+    "(3,1) I16_m1 cbpL15",
+    "(2,2) I16_m1 cbpL15",
+    "(13,4) I16_m0 cbpL15"
+  ],
+  "seeds_remaining": [
+    "(8,3) I_NxN",
+    "(13,6) I_NxN",
+    "(4,10) I16_m0 cbpL0 single-blk",
+    "(12,10) I_NxN"
+  ],
+  "buckets_after": {
+    "I16_m0_*": 36,
+    "I_NxN": 34,
+    "other_I16": 3,
+    "cold128": 0,
+    "seed_fail_count": 4
+  },
+  "dequant_unit": "PASS 1205 tests incl max15 + RED twin max_coeff=16 mismatches host-max15",
+  "chroma": "NOT implemented this lane (sv-mvd); headline stays 0",
+  "alm_dsp_cost": "UNKNOWN \u2014 coordinate quartus_map with sv-integrate; no competing map",
+  "evidence_paths": [
+    "docs/evidence/i_slice_luma_227_measure.json",
+    "build/p3_full_frame_real_ref/native_inter_luma_progress.json",
+    "build/p3_full_frame_real_ref/luma_fail_breakdown.json",
+    "docs/evidence/dequant_qp_sweep_max15.log",
+    "build/p3_full_frame_real_ref/sim.log"
+  ]
+}

@@ -1,0 +1,1406 @@
+diff --git a/Makefile b/Makefile
+index 6d7759d..b390965 100644
+--- a/Makefile
++++ b/Makefile
+@@ -139,6 +139,7 @@ unit-unlocked: unit-rollcall preflight $(ROOT)/build/test_cadence $(ROOT)/build/
+ 	python3 $(ROOT)/tests/parse_res_csum_status.py --self-test
+ 	$(ROOT)/tests/unit/test_p3_idct_rtl_sim.sh
+ 	$(ROOT)/tests/unit/test_p3_deblock_rtl_sim.sh
++	$(ROOT)/tests/unit/test_p3_chroma_dc_hadamard.sh
+ 	$(ROOT)/tests/unit/test_p3_stream_path_recon_rtl_sim.sh
+ 	$(ROOT)/tests/unit/test_stream_path_deblock_integration.sh
+ 	bash $(ROOT)/tests/unit/test_stream_path_ddr_ring_integration.sh
+@@ -158,6 +159,7 @@ rtl-sim-unlocked:
+ 	$(ROOT)/tests/unit/test_p3_deblock_rtl_sim.sh
+ 	bash $(ROOT)/tests/unit/test_stream_path_ddr_ring_integration.sh
+ 	$(ROOT)/tests/unit/test_h264_cavlc_residual_verilator.sh
++	$(ROOT)/tests/unit/test_p3_chroma_dc_hadamard.sh
+ 	$(ROOT)/tests/unit/test_p3_stream_path_recon_rtl_sim.sh
+ 	$(ROOT)/tests/unit/test_stream_path_deblock_integration.sh
+ 	$(ROOT)/tests/unit/test_ddr_frame_store_warm_reset.sh
+diff --git a/fpga/Plex_MiSTer/rtl/decode_stub.sv b/fpga/Plex_MiSTer/rtl/decode_stub.sv
+index 3822579..d170892 100644
+--- a/fpga/Plex_MiSTer/rtl/decode_stub.sv
++++ b/fpga/Plex_MiSTer/rtl/decode_stub.sv
+@@ -69,6 +69,9 @@ module decode_stub #(
+ 	input  wire signed [15:0] i_res_blk_coeff [0:15],
+ 	input  wire        i_res_mb_end,
+ 	input  wire [15:0] i_res_mb_end_addr,
++	input  wire [1:0]  i_res_mb_chroma_mode,
++	// PPS chroma_qp_index_offset se(v); drives QPc for chroma residual (8.5.5).
++	input  wire signed [4:0] pps_chroma_qp_index_offset,
+ 	// Parsed first-MB mvd_l0 se(v) from slice_hdr_parser (qpel).
+ 	input  wire signed [15:0] first_mb_mvd_x,
+ 	input  wire signed [15:0] first_mb_mvd_y,
+@@ -823,6 +826,7 @@ module decode_stub #(
+ 	wire [31:0] i_sink_dbg_blk, i_sink_dbg_mb, i_sink_dbg_nz;
+ 	wire        i_sink_clear = vcl_pulse && (last_nal_type[4:0] == 5'd5);
+ 
++	wire [31:0] i_sink_dbg_chr;
+ 	h264_i_res_recon_sink u_i_res_sink (
+ 		.clk(clk), .reset(reset), .clear(i_sink_clear),
+ 		.res_blk_valid(i_res_blk_valid),
+@@ -839,6 +843,8 @@ module decode_stub #(
+ 		.res_blk_coeff(i_res_blk_coeff),
+ 		.res_mb_end(i_res_mb_end),
+ 		.res_mb_end_addr(i_res_mb_end_addr),
++		.res_mb_chroma_mode(i_res_mb_chroma_mode),
++		.chroma_qp_index_offset(pps_chroma_qp_index_offset),
+ 		.write_req(i_sink_write_req),
+ 		.write_mb_addr(i_sink_write_mb),
+ 		.write_y(i_sink_y),
+@@ -847,7 +853,8 @@ module decode_stub #(
+ 		.write_busy(recon_store_busy | recon_store_pending),
+ 		.dbg_blk_applied(i_sink_dbg_blk),
+ 		.dbg_mb_written(i_sink_dbg_mb),
+-		.dbg_luma_nz(i_sink_dbg_nz)
++		.dbg_luma_nz(i_sink_dbg_nz),
++		.dbg_chr_applied(i_sink_dbg_chr)
+ 	);
+ 
+ 	// Tie-off residual ready when not using sink export (always-on ready if
+diff --git a/fpga/Plex_MiSTer/rtl/h264_i_res_recon_sink.sv b/fpga/Plex_MiSTer/rtl/h264_i_res_recon_sink.sv
+index 842ef53..151d5c3 100644
+--- a/fpga/Plex_MiSTer/rtl/h264_i_res_recon_sink.sv
++++ b/fpga/Plex_MiSTer/rtl/h264_i_res_recon_sink.sv
+@@ -3,7 +3,7 @@
+ // Consumes h264_p_mb_traverse res_blk_* / res_mb_end stream.
+ // Cycle-iterative: one shared I4 pred + one IQ/IDCT per block (no MB-wide unroll).
+ // I16 uses h264_intra16x16_pred (1–2 cycles) then DC/AC residual onto that plane.
+-// Chroma deferred flat 128 (stated).
++// Chroma: h264_chroma8x8_pred + 2×2 DC Hadamard + shared 4×4 IQ/IDCT (8.3.4 / 8.5.11).
+ //
+ // Neighbours: top-row linebuf (frame width) + left column of current MB row.
+ // On res_mb_end, write_y/u/v are stable and write_req pulses for one cycle.
+@@ -27,11 +27,13 @@ module h264_i_res_recon_sink #(
+ 	input  wire        res_blk_is_luma,
+ 	input  wire [5:0]  res_blk_qp,
+ 	input  wire [4:0]  res_blk_max_coeff,
+-	input  wire [3:0]  res_blk_pred_mode, // I4 mode 0..8 or I16 mode 0..3 on DC
++	input  wire [3:0]  res_blk_pred_mode, // I4/I16/chroma mode
+ 	input  wire signed [15:0] res_blk_coeff [0:15],
+ 
+ 	input  wire        res_mb_end,
+ 	input  wire [15:0] res_mb_end_addr,
++	input  wire [1:0]  res_mb_chroma_mode,
++	input  wire signed [4:0] chroma_qp_index_offset,
+ 
+ 	output reg         write_req,
+ 	output reg  [15:0] write_mb_addr,
+@@ -41,15 +43,21 @@ module h264_i_res_recon_sink #(
+ 	input  wire        write_busy,
+ 	output reg  [31:0] dbg_blk_applied,
+ 	output reg  [31:0] dbg_mb_written,
+-	output reg  [31:0] dbg_luma_nz
++	output reg  [31:0] dbg_luma_nz,
++	output reg  [31:0] dbg_chr_applied
+ );
+-	localparam [2:0]
+-		ST_IDLE     = 3'd0,
+-		ST_I16_PRED = 3'd1,
+-		ST_SETTLE   = 3'd2,
+-		ST_APPLY    = 3'd3;
+-
+-	reg [2:0] st;
++	localparam int MAX_PIC_CW = MAX_PIC_W / 2;
++
++	localparam [3:0]
++		ST_IDLE          = 4'd0,
++		ST_I16_PRED      = 4'd1,
++		ST_SETTLE        = 4'd2,
++		ST_APPLY         = 4'd3,
++		ST_CHR_PRED_WAIT = 4'd4,
++		ST_CHR_FINISH    = 4'd5,
++		ST_CHR_DC_ONLY   = 4'd6;
++
++	reg [3:0] st;
+ 	reg        have_mb;
+ 	reg [15:0] cur_mb;
+ 	reg [7:0]  cur_mb_x, cur_mb_y;
+@@ -62,6 +70,13 @@ module h264_i_res_recon_sink #(
+ 	reg [7:0] tl_mb;
+ 	reg       left_col_v;
+ 
++	reg [7:0] top_u [0:MAX_PIC_CW-1];
++	reg [7:0] top_v [0:MAX_PIC_CW-1];
++	reg [7:0] left_u [0:7];
++	reg [7:0] left_v [0:7];
++	reg [7:0] tl_u, tl_v;
++	reg       left_chr_v;
++
+ 	reg        lat_is_i16;
+ 	reg        lat_is_luma;
+ 	reg [4:0]  lat_idx;
+@@ -74,6 +89,21 @@ module h264_i_res_recon_sink #(
+ 	reg        i16_pred_done;
+ 	reg        pend_mb_end;
+ 	reg [15:0] pend_mb_end_addr;
++	reg [1:0]  pend_chr_mode;
++
++	reg        chr_pred_u_done, chr_pred_v_done;
++	reg        chr_dc_u_valid, chr_dc_v_valid;
++	reg signed [15:0] chr_dc_u [0:3];
++	reg signed [15:0] chr_dc_v [0:3];
++	reg [3:0]  chr_ac_u_done;
++	reg [3:0]  chr_ac_v_done;
++	reg [1:0]  chr_mode_r;
++	reg        chr_mode_valid;
++	reg        chr_pred_sel_v;
++	reg        chr_after_pred_apply;
++	reg [1:0]  chr_dc_only_bi;
++	reg        chr_dc_only_plane;
++	reg [5:0]  chr_qp_y_hold; // last luma qp for qpc at finish
+ 
+ 	assign res_blk_ready = (st == ST_IDLE) && !write_busy && !pend_mb_end;
+ 
+@@ -99,33 +129,45 @@ module h264_i_res_recon_sink #(
+ 			endcase
+ 		end
+ 	endfunction
+-
+-	// Inverse of blk4_x/y: 4x4 block coords → residual/scan index 0..15.
+ 	function automatic [3:0] blk4_idx;
+ 		input [1:0] bx;
+ 		input [1:0] by;
+ 		begin
+ 			case ({by, bx})
+-			4'b0000: blk4_idx = 4'd0;
+-			4'b0001: blk4_idx = 4'd1;
+-			4'b0100: blk4_idx = 4'd2;
+-			4'b0101: blk4_idx = 4'd3;
+-			4'b0010: blk4_idx = 4'd4;
+-			4'b0011: blk4_idx = 4'd5;
+-			4'b0110: blk4_idx = 4'd6;
+-			4'b0111: blk4_idx = 4'd7;
+-			4'b1000: blk4_idx = 4'd8;
+-			4'b1001: blk4_idx = 4'd9;
+-			4'b1100: blk4_idx = 4'd10;
+-			4'b1101: blk4_idx = 4'd11;
+-			4'b1010: blk4_idx = 4'd12;
+-			4'b1011: blk4_idx = 4'd13;
+-			4'b1110: blk4_idx = 4'd14;
+-			default: blk4_idx = 4'd15;
++			4'b0000: blk4_idx = 4'd0; 4'b0001: blk4_idx = 4'd1;
++			4'b0100: blk4_idx = 4'd2; 4'b0101: blk4_idx = 4'd3;
++			4'b0010: blk4_idx = 4'd4; 4'b0011: blk4_idx = 4'd5;
++			4'b0110: blk4_idx = 4'd6; 4'b0111: blk4_idx = 4'd7;
++			4'b1000: blk4_idx = 4'd8; 4'b1001: blk4_idx = 4'd9;
++			4'b1100: blk4_idx = 4'd10; 4'b1101: blk4_idx = 4'd11;
++			4'b1010: blk4_idx = 4'd12; 4'b1011: blk4_idx = 4'd13;
++			4'b1110: blk4_idx = 4'd14; default: blk4_idx = 4'd15;
+ 			endcase
+ 		end
+ 	endfunction
+-
++	function automatic is_chr_dc_slot;
++		input i16; input [4:0] idx;
++		begin
++			if (i16) is_chr_dc_slot = (idx == 5'd17) || (idx == 5'd18);
++			else is_chr_dc_slot = (idx == 5'd16) || (idx == 5'd17);
++		end
++	endfunction
++	function automatic chr_is_v;
++		input i16; input [4:0] idx;
++		begin
++			if (i16) chr_is_v = (idx == 5'd18) || (idx >= 5'd23);
++			else chr_is_v = (idx == 5'd17) || (idx >= 5'd22);
++		end
++	endfunction
++	function automatic [1:0] chr_ac_bi;
++		input i16; input [4:0] idx;
++		reg [4:0] base;
++		begin
++			if (i16) base = chr_is_v(i16, idx) ? (idx - 5'd23) : (idx - 5'd19);
++			else base = chr_is_v(i16, idx) ? (idx - 5'd22) : (idx - 5'd18);
++			chr_ac_bi = base[1:0];
++		end
++	endfunction
+ 	function automatic [7:0] clip_u8;
+ 		input signed [17:0] v;
+ 		begin
+@@ -134,7 +176,6 @@ module h264_i_res_recon_sink #(
+ 			else clip_u8 = v[7:0];
+ 		end
+ 	endfunction
+-
+ 	function automatic [7:0] add_res;
+ 		input [7:0] base;
+ 		input signed [28:0] res;
+@@ -149,37 +190,26 @@ module h264_i_res_recon_sink #(
+ 	wire [1:0] i4_by = blk4_y(lat_idx[3:0]);
+ 	wire [4:0] i4_x0 = {i4_bx, 2'b00};
+ 	wire [4:0] i4_y0 = {i4_by, 2'b00};
+-
+ 	reg [7:0] i4_above [0:7];
+ 	reg [7:0] i4_left  [0:3];
+ 	reg [7:0] i4_tl;
+ 	reg       i4_ha, i4_hl;
+ 	integer t;
+-
+ 	wire [15:0] abs_x0 = {8'd0, cur_mb_x} * 16'd16 + {11'd0, i4_x0};
+ 
+ 	always @(*) begin
+-		i4_ha = 1'b0;
+-		i4_hl = 1'b0;
+-		i4_tl = 8'd128;
++		i4_ha = 1'b0; i4_hl = 1'b0; i4_tl = 8'd128;
+ 		for (t = 0; t < 8; t = t + 1) i4_above[t] = 8'd128;
+ 		for (t = 0; t < 4; t = t + 1) i4_left[t] = 8'd128;
+-
+ 		if (i4_by != 2'd0) begin
+ 			i4_ha = 1'b1;
+ 			for (t = 0; t < 4; t = t + 1)
+ 				i4_above[t] = plane_y[(i4_y0 - 5'd1) * 16 + (i4_x0 + t[4:0])];
+-			// H.264 8.3.1.2: p[x,-1] x=4..7 unavailable → substitute p[3,-1].
+-			// Scan order leaves above-right 4x4 undecoded for some blocks (e.g.
+-			// scan3 needs scan4). Reading plane_y there yields the 128 init and
+-			// corrupts modes 3/7. Only sample plane when that 4x4 is already done.
+-			if (i4_bx != 2'd3 &&
+-			    (blk4_idx(i4_bx + 2'd1, i4_by - 2'd1) < lat_idx[3:0])) begin
++			if (i4_bx != 2'd3 && (blk4_idx(i4_bx + 2'd1, i4_by - 2'd1) < lat_idx[3:0])) begin
+ 				for (t = 0; t < 4; t = t + 1)
+ 					i4_above[4 + t] = plane_y[(i4_y0 - 5'd1) * 16 + (i4_x0 + 5'd4 + t[4:0])];
+ 			end else begin
+-				for (t = 0; t < 4; t = t + 1)
+-					i4_above[4 + t] = i4_above[3];
++				for (t = 0; t < 4; t = t + 1) i4_above[4 + t] = i4_above[3];
+ 			end
+ 		end else if (cur_mb_y != 8'd0) begin
+ 			i4_ha = 1'b1;
+@@ -189,11 +219,9 @@ module h264_i_res_recon_sink #(
+ 			for (t = 0; t < 4; t = t + 1) begin
+ 				if ((abs_x0 + 16'd4 + t[15:0]) < MAX_PIC_W[15:0])
+ 					i4_above[4 + t] = top_row[abs_x0 + 16'd4 + t[15:0]];
+-				else
+-					i4_above[4 + t] = i4_above[3];
++				else i4_above[4 + t] = i4_above[3];
+ 			end
+ 		end
+-
+ 		if (i4_bx != 2'd0) begin
+ 			i4_hl = 1'b1;
+ 			for (t = 0; t < 4; t = t + 1)
+@@ -203,7 +231,6 @@ module h264_i_res_recon_sink #(
+ 			for (t = 0; t < 4; t = t + 1)
+ 				i4_left[t] = left_col[i4_y0 + t[4:0]];
+ 		end
+-
+ 		if (i4_ha && i4_hl) begin
+ 			if (i4_bx != 2'd0 && i4_by != 2'd0)
+ 				i4_tl = plane_y[(i4_y0 - 5'd1) * 16 + (i4_x0 - 5'd1)];
+@@ -211,25 +238,16 @@ module h264_i_res_recon_sink #(
+ 				i4_tl = (abs_x0 > 0) ? top_row[abs_x0 - 16'd1] : 8'd128;
+ 			else if (i4_bx == 2'd0 && i4_by != 2'd0)
+ 				i4_tl = left_col[i4_y0 - 5'd1];
+-			else
+-				i4_tl = tl_mb;
+-		end else if (i4_ha)
+-			i4_tl = i4_above[0];
+-		else if (i4_hl)
+-			i4_tl = i4_left[0];
++			else i4_tl = tl_mb;
++		end else if (i4_ha) i4_tl = i4_above[0];
++		else if (i4_hl) i4_tl = i4_left[0];
+ 	end
+ 
+ 	wire [7:0] i4_pred [0:15];
+ 	wire [3:0] i4_used_mode;
+ 	h264_intra4x4_pred u_i4 (
+-		.mode(lat_mode),
+-		.above(i4_above),
+-		.left(i4_left),
+-		.top_left(i4_tl),
+-		.has_above(i4_ha),
+-		.has_left(i4_hl),
+-		.used_mode(i4_used_mode),
+-		.pred(i4_pred)
++		.mode(lat_mode), .above(i4_above), .left(i4_left), .top_left(i4_tl),
++		.has_above(i4_ha), .has_left(i4_hl), .used_mode(i4_used_mode), .pred(i4_pred)
+ 	);
+ 
+ 	reg [7:0] i16_above [0:15];
+@@ -237,191 +255,222 @@ module h264_i_res_recon_sink #(
+ 	reg [7:0] i16_tl;
+ 	reg       i16_ha, i16_hl;
+ 	reg       i16_start;
+-	wire      i16_valid;
+-	wire      i16_unsup;
++	wire      i16_valid, i16_unsup;
+ 	wire [7:0] i16_pred [0:255];
+-
+ 	always @(*) begin
+ 		i16_ha = (cur_mb_y != 8'd0);
+ 		i16_hl = (cur_mb_x != 8'd0) && left_col_v;
+ 		i16_tl = 8'd128;
+-		for (t = 0; t < 16; t = t + 1) begin
+-			i16_above[t] = 8'd128;
+-			i16_left[t] = 8'd128;
+-		end
+-		if (i16_ha) begin
++		for (t = 0; t < 16; t = t + 1) begin i16_above[t] = 8'd128; i16_left[t] = 8'd128; end
++		if (i16_ha)
+ 			for (t = 0; t < 16; t = t + 1)
+ 				if (({8'd0, cur_mb_x} * 16 + t) < MAX_PIC_W)
+ 					i16_above[t] = top_row[{8'd0, cur_mb_x} * 16 + t];
+-		end
+-		if (i16_hl) begin
+-			for (t = 0; t < 16; t = t + 1)
+-				i16_left[t] = left_col[t];
+-		end
+-		if (i16_ha && i16_hl)
+-			i16_tl = tl_mb;
+-		else if (i16_ha)
+-			i16_tl = i16_above[0];
+-		else if (i16_hl)
+-			i16_tl = i16_left[0];
++		if (i16_hl)
++			for (t = 0; t < 16; t = t + 1) i16_left[t] = left_col[t];
++		if (i16_ha && i16_hl) i16_tl = tl_mb;
++		else if (i16_ha) i16_tl = i16_above[0];
++		else if (i16_hl) i16_tl = i16_left[0];
+ 	end
+-
+ 	h264_intra16x16_pred u_i16 (
+-		.clk(clk),
+-		.start(i16_start),
+-		.mode(lat_mode[1:0]),
+-		.above(i16_above),
+-		.left(i16_left),
+-		.top_left(i16_tl),
+-		.has_above(i16_ha),
+-		.has_left(i16_hl),
+-		.unsupported(i16_unsup),
+-		.valid(i16_valid),
+-		.pred(i16_pred)
++		.clk(clk), .start(i16_start), .mode(lat_mode[1:0]),
++		.above(i16_above), .left(i16_left), .top_left(i16_tl),
++		.has_above(i16_ha), .has_left(i16_hl),
++		.unsupported(i16_unsup), .valid(i16_valid), .pred(i16_pred)
++	);
++
++	// Chroma pred
++	reg        chr_pred_start;
++	reg [7:0]  chr_above [0:7];
++	reg [7:0]  chr_left  [0:7];
++	reg [7:0]  chr_tl;
++	reg        chr_ha, chr_hl;
++	wire       chr_pred_valid;
++	wire [7:0] chr_pred [0:63];
++	wire [15:0] chr_abs_x0 = {8'd0, cur_mb_x} * 16'd8;
++	always @(*) begin
++		chr_ha = (cur_mb_y != 8'd0);
++		chr_hl = (cur_mb_x != 8'd0) && left_chr_v;
++		chr_tl = 8'd128;
++		for (t = 0; t < 8; t = t + 1) begin chr_above[t] = 8'd128; chr_left[t] = 8'd128; end
++		if (chr_ha)
++			for (t = 0; t < 8; t = t + 1)
++				if ((chr_abs_x0 + t[15:0]) < MAX_PIC_CW[15:0])
++					chr_above[t] = chr_pred_sel_v ? top_v[chr_abs_x0 + t[15:0]]
++					                              : top_u[chr_abs_x0 + t[15:0]];
++		if (chr_hl)
++			for (t = 0; t < 8; t = t + 1)
++				chr_left[t] = chr_pred_sel_v ? left_v[t] : left_u[t];
++		if (chr_ha && chr_hl) chr_tl = chr_pred_sel_v ? tl_v : tl_u;
++		else if (chr_ha) chr_tl = chr_above[0];
++		else if (chr_hl) chr_tl = chr_left[0];
++	end
++	wire [1:0] chr_pred_mode_w = chr_mode_valid ? chr_mode_r : lat_mode[1:0];
++	h264_chroma8x8_pred u_chr_pred (
++		.clk(clk), .start(chr_pred_start), .mode(chr_pred_mode_w),
++		.above(chr_above), .left(chr_left), .top_left(chr_tl),
++		.has_above(chr_ha), .has_left(chr_hl),
++		.valid(chr_pred_valid), .pred(chr_pred)
+ 	);
+ 
+ 	wire signed [28:0] dq_raw [0:15];
+ 	wire signed [28:0] idct_r [0:15];
+ 	wire [7:0]         recon_px [0:15];
+ 	wire signed [15:0] dc_had [0:15];
+-
+ 	reg signed [15:0] coeff_for_iq [0:15];
+ 	reg [4:0]         max_for_iq;
++	reg [5:0]         qp_for_iq;
+ 	integer ci;
+ 
+-	always @(*) begin
+-		for (ci = 0; ci < 16; ci = ci + 1)
+-			coeff_for_iq[ci] = lat_coeff[ci];
+-		max_for_iq = lat_max;
+-		if (lat_is_i16 && lat_is_luma && lat_idx >= 5'd1 && lat_idx <= 5'd16)
+-			max_for_iq = 5'd15;
+-	end
++	wire [5:0] qpc_w;
++	h264_chroma_qp u_qpc (
++		.qpy((st == ST_CHR_DC_ONLY) ? chr_qp_y_hold : lat_qp),
++		.chroma_qp_index_offset(chroma_qp_index_offset),
++		.qpc(qpc_w)
++	);
++	wire signed [15:0] chr_dc_coeff_in [0:3];
++	wire signed [15:0] chr_dc_out [0:3];
++	assign chr_dc_coeff_in[0] = lat_coeff[0];
++	assign chr_dc_coeff_in[1] = lat_coeff[1];
++	assign chr_dc_coeff_in[2] = lat_coeff[2];
++	assign chr_dc_coeff_in[3] = lat_coeff[3];
++	h264_chroma_dc_hadamard_inv u_chr_dc (
++		.coeff(chr_dc_coeff_in), .qpc(qpc_w), .dc_out(chr_dc_out)
++	);
+ 
+-	// I16 AC: inject Hadamard DC at dequant[0] before IDCT (host idct4x4_add).
+-	// Split pixel-DC + AC-idct loses combined >>6 rounding (off-by-one).
+-	reg use_i16_dc_inject;
+-	reg signed [15:0] i16_inject_dc;
++	// Inject DC into dequant[0] before IDCT (host idct4x4_add path).
++	// Chroma AC and I16 luma AC both need this so (dc+AC) share one +32>>6
++	// rounding; split pixel-DC + AC-idct is off-by-one vs host.
++	reg use_dc_inject;
++	reg signed [15:0] inject_dc;
+ 	wire signed [28:0] dq_for_idct [0:15];
+ 	genvar gi;
+ 	generate
+ 		for (gi = 0; gi < 16; gi = gi + 1) begin : gen_dq_mux
+ 			if (gi == 0)
+-				assign dq_for_idct[0] = use_i16_dc_inject ?
+-					{{13{i16_inject_dc[15]}}, i16_inject_dc} : dq_raw[0];
++				assign dq_for_idct[0] = use_dc_inject ?
++					{{13{inject_dc[15]}}, inject_dc} : dq_raw[0];
+ 			else
+ 				assign dq_for_idct[gi] = dq_raw[gi];
+ 		end
+ 	endgenerate
+ 
++	// Spatial index of I16 AC block (lat_idx 1..16 → scan 0..15)
+ 	wire [3:0] i16_ac_scan = lat_idx[3:0] - 4'd1;
+ 	wire [3:0] i16_ac_spat = {blk4_y(i16_ac_scan), blk4_x(i16_ac_scan)};
+ 
+ 	always @(*) begin
+-		use_i16_dc_inject = 1'b0;
+-		i16_inject_dc = 16'sd0;
+-		if (lat_is_i16 && lat_is_luma && lat_idx >= 5'd1 && lat_idx <= 5'd16 && i16_dc_valid) begin
+-			use_i16_dc_inject = 1'b1;
+-			i16_inject_dc = i16_dc[i16_ac_spat];
++		for (ci = 0; ci < 16; ci = ci + 1) coeff_for_iq[ci] = lat_coeff[ci];
++		max_for_iq = lat_max;
++		qp_for_iq = lat_qp;
++		use_dc_inject = 1'b0;
++		inject_dc = 16'sd0;
++		if (lat_is_i16 && lat_is_luma && lat_idx >= 5'd1 && lat_idx <= 5'd16) begin
++			max_for_iq = 5'd15;
++			// Host: blkq[0][0] = dc[ly][lx] after AC dequant max15 (DC slot 0).
++			use_dc_inject = i16_dc_valid;
++			inject_dc = i16_dc[i16_ac_spat];
++		end
++		if (!lat_is_luma && st != ST_CHR_DC_ONLY && !is_chr_dc_slot(lat_is_i16, lat_idx)) begin
++			qp_for_iq = qpc_w;
++			max_for_iq = 5'd15;
++			use_dc_inject = 1'b1;
++			if (chr_is_v(lat_is_i16, lat_idx))
++				inject_dc = chr_dc_v_valid ? chr_dc_v[chr_ac_bi(lat_is_i16, lat_idx)] : 16'sd0;
++			else
++				inject_dc = chr_dc_u_valid ? chr_dc_u[chr_ac_bi(lat_is_i16, lat_idx)] : 16'sd0;
++		end
++		if (st == ST_CHR_DC_ONLY) begin
++			qp_for_iq = qpc_w;
++			max_for_iq = 5'd15;
++			use_dc_inject = 1'b1;
++			for (ci = 0; ci < 16; ci = ci + 1) coeff_for_iq[ci] = 16'sd0;
++			if (chr_dc_only_plane)
++				inject_dc = chr_dc_v_valid ? chr_dc_v[chr_dc_only_bi] : 16'sd0;
++			else
++				inject_dc = chr_dc_u_valid ? chr_dc_u[chr_dc_only_bi] : 16'sd0;
+ 		end
+ 	end
+ 
+-	h264_dequant4x4 u_dq (
+-		.coeff(coeff_for_iq),
+-		.qp(lat_qp),
+-		.max_coeff(max_for_iq),
+-		.dequant(dq_raw)
+-	);
+-	h264_idct4x4 u_idct (
+-		.dequant(dq_for_idct),
+-		.residual(idct_r)
+-	);
+-	h264_recon4x4 u_recon (
+-		.pred(i4_pred),
+-		.residual(idct_r),
+-		.recon(recon_px)
+-	);
+-	h264_i16_dc_hadamard u_had (
+-		.coeff(lat_coeff),
+-		.qp(lat_qp),
+-		.dc_out(dc_had)
+-	);
++	h264_dequant4x4 u_dq (.coeff(coeff_for_iq), .qp(qp_for_iq), .max_coeff(max_for_iq), .dequant(dq_raw));
++	h264_idct4x4 u_idct (.dequant(dq_for_idct), .residual(idct_r));
++	h264_recon4x4 u_recon (.pred(i4_pred), .residual(idct_r), .recon(recon_px));
++	h264_i16_dc_hadamard u_had (.coeff(lat_coeff), .qp(lat_qp), .dc_out(dc_had));
+ 
+ 	integer yi, ui, b, y, x, addr, k;
+ 	reg [1:0] bx, by;
+ 	reg signed [17:0] tsum;
+ 	reg any_nz;
++	reg [1:0] cbi;
++	reg cplane_v;
+ 
+ 	always @(posedge clk) begin
+ 		write_req <= 1'b0;
+ 		i16_start <= 1'b0;
++		chr_pred_start <= 1'b0;
+ 
+ 		if (reset || clear) begin
+ 			st <= ST_IDLE;
+ 			have_mb <= 1'b0;
+-			cur_mb <= 16'd0;
+-			cur_mb_x <= 8'd0;
+-			cur_mb_y <= 8'd0;
+-			i16_dc_valid <= 1'b0;
+-			i16_pred_done <= 1'b0;
+-			pend_mb_end <= 1'b0;
+-			pend_mb_end_addr <= 16'd0;
+-			lat_is_i16 <= 1'b0;
+-			lat_is_luma <= 1'b1;
+-			lat_idx <= 5'd0;
+-			lat_qp <= 6'd0;
+-			lat_max <= 5'd16;
+-			lat_mode <= 4'd2;
+-			left_col_v <= 1'b0;
+-			tl_mb <= 8'd128;
+-			dbg_blk_applied <= 32'd0;
+-			dbg_mb_written <= 32'd0;
+-			dbg_luma_nz <= 32'd0;
++			cur_mb <= 16'd0; cur_mb_x <= 8'd0; cur_mb_y <= 8'd0;
++			i16_dc_valid <= 1'b0; i16_pred_done <= 1'b0;
++			pend_mb_end <= 1'b0; pend_mb_end_addr <= 16'd0; pend_chr_mode <= 2'd0;
++			lat_is_i16 <= 1'b0; lat_is_luma <= 1'b1; lat_idx <= 5'd0;
++			lat_qp <= 6'd0; lat_max <= 5'd16; lat_mode <= 4'd2;
++			left_col_v <= 1'b0; left_chr_v <= 1'b0;
++			tl_mb <= 8'd128; tl_u <= 8'd128; tl_v <= 8'd128;
++			dbg_blk_applied <= 32'd0; dbg_mb_written <= 32'd0;
++			dbg_luma_nz <= 32'd0; dbg_chr_applied <= 32'd0;
+ 			write_mb_addr <= 16'd0;
+-			for (yi = 0; yi < 256; yi = yi + 1) begin
+-				plane_y[yi] <= 8'd128;
+-				write_y[yi] <= 8'd128;
+-			end
++			chr_pred_sel_v <= 1'b0; chr_after_pred_apply <= 1'b0;
++			chr_dc_only_bi <= 2'd0; chr_dc_only_plane <= 1'b0;
++			chr_qp_y_hold <= 6'd0;
++			chr_pred_u_done <= 1'b0; chr_pred_v_done <= 1'b0;
++			chr_dc_u_valid <= 1'b0; chr_dc_v_valid <= 1'b0;
++			chr_ac_u_done <= 4'd0; chr_ac_v_done <= 4'd0;
++			chr_mode_valid <= 1'b0; chr_mode_r <= 2'd0;
++			for (k = 0; k < 4; k = k + 1) begin chr_dc_u[k] <= 16'sd0; chr_dc_v[k] <= 16'sd0; end
++			for (yi = 0; yi < 256; yi = yi + 1) begin plane_y[yi] <= 8'd128; write_y[yi] <= 8'd128; end
+ 			for (ui = 0; ui < 64; ui = ui + 1) begin
+-				plane_u[ui] <= 8'd128;
+-				plane_v[ui] <= 8'd128;
+-				write_u[ui] <= 8'd128;
+-				write_v[ui] <= 8'd128;
++				plane_u[ui] <= 8'd128; plane_v[ui] <= 8'd128;
++				write_u[ui] <= 8'd128; write_v[ui] <= 8'd128;
+ 			end
+ 			for (ci = 0; ci < 16; ci = ci + 1) begin
+-				lat_coeff[ci] <= 16'sd0;
+-				i16_dc[ci] <= 16'sd0;
+-				left_col[ci] <= 8'd128;
++				lat_coeff[ci] <= 16'sd0; i16_dc[ci] <= 16'sd0; left_col[ci] <= 8'd128;
+ 			end
+-			for (yi = 0; yi < MAX_PIC_W; yi = yi + 1)
+-				top_row[yi] <= 8'd128;
++			for (ui = 0; ui < 8; ui = ui + 1) begin left_u[ui] <= 8'd128; left_v[ui] <= 8'd128; end
++			for (yi = 0; yi < MAX_PIC_W; yi = yi + 1) top_row[yi] <= 8'd128;
++			for (yi = 0; yi < MAX_PIC_CW; yi = yi + 1) begin top_u[yi] <= 8'd128; top_v[yi] <= 8'd128; end
+ 		end else begin
+ 			if (res_mb_end) begin
+ 				pend_mb_end <= 1'b1;
+ 				pend_mb_end_addr <= res_mb_end_addr;
++				pend_chr_mode <= res_mb_chroma_mode;
+ 			end
+ 
+ 			case (st)
+ 			ST_IDLE: begin
+ 				if (res_blk_valid && res_blk_ready) begin
+ 					if (!have_mb || (res_blk_mb_addr != cur_mb)) begin
+-						for (yi = 0; yi < 256; yi = yi + 1)
+-							plane_y[yi] <= 8'd128;
++						for (yi = 0; yi < 256; yi = yi + 1) plane_y[yi] <= 8'd128;
+ 						for (ui = 0; ui < 64; ui = ui + 1) begin
+-							plane_u[ui] <= 8'd128;
+-							plane_v[ui] <= 8'd128;
++							plane_u[ui] <= 8'd128; plane_v[ui] <= 8'd128;
+ 						end
+ 						have_mb <= 1'b1;
+ 						cur_mb <= res_blk_mb_addr;
+-						cur_mb_x <= res_blk_mb_x;
+-						cur_mb_y <= res_blk_mb_y;
+-						i16_dc_valid <= 1'b0;
+-						i16_pred_done <= 1'b0;
+-						if (res_blk_mb_x == 8'd0)
+-							left_col_v <= 1'b0;
+-						if (res_blk_mb_x != 8'd0 && res_blk_mb_y != 8'd0)
++						cur_mb_x <= res_blk_mb_x; cur_mb_y <= res_blk_mb_y;
++						i16_dc_valid <= 1'b0; i16_pred_done <= 1'b0;
++						chr_pred_u_done <= 1'b0; chr_pred_v_done <= 1'b0;
++						chr_dc_u_valid <= 1'b0; chr_dc_v_valid <= 1'b0;
++						chr_ac_u_done <= 4'd0; chr_ac_v_done <= 4'd0;
++						chr_mode_valid <= 1'b0; chr_mode_r <= 2'd0;
++						for (k = 0; k < 4; k = k + 1) begin chr_dc_u[k] <= 16'sd0; chr_dc_v[k] <= 16'sd0; end
++						if (res_blk_mb_x == 8'd0) begin left_col_v <= 1'b0; left_chr_v <= 1'b0; end
++						if (res_blk_mb_x != 8'd0 && res_blk_mb_y != 8'd0) begin
+ 							tl_mb <= top_row[{8'd0, res_blk_mb_x} * 16 - 16'd1];
+-						else
+-							tl_mb <= 8'd128;
++							tl_u  <= top_u[{8'd0, res_blk_mb_x} * 8 - 16'd1];
++							tl_v  <= top_v[{8'd0, res_blk_mb_x} * 8 - 16'd1];
++						end else begin tl_mb <= 8'd128; tl_u <= 8'd128; tl_v <= 8'd128; end
+ 					end
+ 					lat_is_i16 <= res_blk_is_i16;
+ 					lat_is_luma <= res_blk_is_luma;
+@@ -429,68 +478,141 @@ module h264_i_res_recon_sink #(
+ 					lat_qp <= res_blk_qp;
+ 					lat_max <= res_blk_max_coeff;
+ 					lat_mode <= res_blk_pred_mode;
+-					for (ci = 0; ci < 16; ci = ci + 1)
+-						lat_coeff[ci] <= res_blk_coeff[ci];
+-
+-					if (res_blk_is_luma && res_blk_is_i16 && res_blk_idx == 5'd0 &&
+-					    !i16_pred_done) begin
++					chr_qp_y_hold <= res_blk_qp;
++					for (ci = 0; ci < 16; ci = ci + 1) lat_coeff[ci] <= res_blk_coeff[ci];
++
++					if (!res_blk_is_luma) begin
++						chr_mode_r <= res_blk_pred_mode[1:0];
++						chr_mode_valid <= 1'b1;
++						cplane_v = chr_is_v(res_blk_is_i16, res_blk_idx);
++						if ((cplane_v && !chr_pred_v_done) || (!cplane_v && !chr_pred_u_done)) begin
++							chr_pred_sel_v <= cplane_v;
++							chr_after_pred_apply <= 1'b1;
++							chr_pred_start <= 1'b1;
++							st <= ST_CHR_PRED_WAIT;
++						end else st <= ST_SETTLE;
++					end else if (res_blk_is_luma && res_blk_is_i16 && res_blk_idx == 5'd0 && !i16_pred_done) begin
+ 						i16_start <= 1'b1;
+ 						st <= ST_I16_PRED;
+-					end else
+-						st <= ST_SETTLE;
++					end else st <= ST_SETTLE;
+ 				end else if (pend_mb_end && !write_busy) begin
+ 					if (have_mb && (pend_mb_end_addr == cur_mb)) begin
+-						for (yi = 0; yi < 16; yi = yi + 1)
+-							left_col[yi] <= plane_y[yi * 16 + 15];
+-						left_col_v <= 1'b1;
+-						for (yi = 0; yi < 16; yi = yi + 1) begin
+-							if (({8'd0, cur_mb_x} * 16 + yi) < MAX_PIC_W)
+-								top_row[{8'd0, cur_mb_x} * 16 + yi] <=
+-									plane_y[15 * 16 + yi];
++						if (!chr_mode_valid) begin
++							chr_mode_r <= pend_chr_mode;
++							chr_mode_valid <= 1'b1;
+ 						end
+-						write_req <= 1'b1;
+-						write_mb_addr <= cur_mb;
+-						for (yi = 0; yi < 256; yi = yi + 1)
+-							write_y[yi] <= plane_y[yi];
+-						for (ui = 0; ui < 64; ui = ui + 1) begin
+-							write_u[ui] <= plane_u[ui];
+-							write_v[ui] <= plane_v[ui];
++						if (!chr_pred_u_done || !chr_pred_v_done) begin
++							chr_pred_sel_v <= chr_pred_u_done;
++							chr_after_pred_apply <= 1'b0;
++							chr_pred_start <= 1'b1;
++							st <= ST_CHR_FINISH;
++						end else if ((chr_dc_u_valid && (chr_ac_u_done != 4'hF)) ||
++						             (chr_dc_v_valid && (chr_ac_v_done != 4'hF))) begin
++							if (chr_dc_u_valid && (chr_ac_u_done != 4'hF)) begin
++								chr_dc_only_plane <= 1'b0;
++								if (!chr_ac_u_done[0]) chr_dc_only_bi <= 2'd0;
++								else if (!chr_ac_u_done[1]) chr_dc_only_bi <= 2'd1;
++								else if (!chr_ac_u_done[2]) chr_dc_only_bi <= 2'd2;
++								else chr_dc_only_bi <= 2'd3;
++							end else begin
++								chr_dc_only_plane <= 1'b1;
++								if (!chr_ac_v_done[0]) chr_dc_only_bi <= 2'd0;
++								else if (!chr_ac_v_done[1]) chr_dc_only_bi <= 2'd1;
++								else if (!chr_ac_v_done[2]) chr_dc_only_bi <= 2'd2;
++								else chr_dc_only_bi <= 2'd3;
++							end
++							lat_is_luma <= 1'b0;
++							st <= ST_CHR_DC_ONLY;
++						end else begin
++							// commit write
++							for (yi = 0; yi < 16; yi = yi + 1)
++								left_col[yi] <= plane_y[yi * 16 + 15];
++							left_col_v <= 1'b1;
++							for (yi = 0; yi < 16; yi = yi + 1)
++								if (({8'd0, cur_mb_x} * 16 + yi) < MAX_PIC_W)
++									top_row[{8'd0, cur_mb_x} * 16 + yi] <= plane_y[15 * 16 + yi];
++							for (ui = 0; ui < 8; ui = ui + 1) begin
++								left_u[ui] <= plane_u[ui * 8 + 7];
++								left_v[ui] <= plane_v[ui * 8 + 7];
++							end
++							left_chr_v <= 1'b1;
++							for (ui = 0; ui < 8; ui = ui + 1)
++								if (({8'd0, cur_mb_x} * 8 + ui) < MAX_PIC_CW) begin
++									top_u[{8'd0, cur_mb_x} * 8 + ui] <= plane_u[7 * 8 + ui];
++									top_v[{8'd0, cur_mb_x} * 8 + ui] <= plane_v[7 * 8 + ui];
++								end
++							write_req <= 1'b1;
++							write_mb_addr <= cur_mb;
++							for (yi = 0; yi < 256; yi = yi + 1) write_y[yi] <= plane_y[yi];
++							for (ui = 0; ui < 64; ui = ui + 1) begin
++								write_u[ui] <= plane_u[ui]; write_v[ui] <= plane_v[ui];
++							end
++							dbg_mb_written <= dbg_mb_written + 32'd1;
++							have_mb <= 1'b0; i16_dc_valid <= 1'b0; i16_pred_done <= 1'b0;
++							pend_mb_end <= 1'b0;
++							chr_pred_u_done <= 1'b0; chr_pred_v_done <= 1'b0;
++							chr_dc_u_valid <= 1'b0; chr_dc_v_valid <= 1'b0;
++							chr_ac_u_done <= 4'd0; chr_ac_v_done <= 4'd0;
++							chr_mode_valid <= 1'b0;
+ 						end
+ 					end else begin
+ 						write_req <= 1'b1;
+ 						write_mb_addr <= pend_mb_end_addr;
+-						for (yi = 0; yi < 256; yi = yi + 1)
+-							write_y[yi] <= 8'd128;
++						for (yi = 0; yi < 256; yi = yi + 1) write_y[yi] <= 8'd128;
+ 						for (ui = 0; ui < 64; ui = ui + 1) begin
+-							write_u[ui] <= 8'd128;
+-							write_v[ui] <= 8'd128;
++							write_u[ui] <= 8'd128; write_v[ui] <= 8'd128;
+ 						end
++						dbg_mb_written <= dbg_mb_written + 32'd1;
++						pend_mb_end <= 1'b0;
+ 					end
+-					dbg_mb_written <= dbg_mb_written + 32'd1;
+-					have_mb <= 1'b0;
+-					i16_dc_valid <= 1'b0;
+-					i16_pred_done <= 1'b0;
+-					pend_mb_end <= 1'b0;
+ 				end
+ 			end
+ 
+ 			ST_I16_PRED: begin
+ 				if (i16_valid) begin
+-					for (yi = 0; yi < 256; yi = yi + 1)
+-						plane_y[yi] <= i16_pred[yi];
++					for (yi = 0; yi < 256; yi = yi + 1) plane_y[yi] <= i16_pred[yi];
+ 					i16_pred_done <= 1'b1;
+ 					st <= ST_SETTLE;
+ 				end
+ 			end
+ 
++			ST_CHR_PRED_WAIT: begin
++				if (chr_pred_valid) begin
++					if (chr_pred_sel_v) begin
++						for (ui = 0; ui < 64; ui = ui + 1) plane_v[ui] <= chr_pred[ui];
++						chr_pred_v_done <= 1'b1;
++					end else begin
++						for (ui = 0; ui < 64; ui = ui + 1) plane_u[ui] <= chr_pred[ui];
++						chr_pred_u_done <= 1'b1;
++					end
++					st <= chr_after_pred_apply ? ST_SETTLE : ST_IDLE;
++				end
++			end
++
++			ST_CHR_FINISH: begin
++				if (chr_pred_valid) begin
++					if (chr_pred_sel_v) begin
++						for (ui = 0; ui < 64; ui = ui + 1) plane_v[ui] <= chr_pred[ui];
++						chr_pred_v_done <= 1'b1;
++					end else begin
++						for (ui = 0; ui < 64; ui = ui + 1) plane_u[ui] <= chr_pred[ui];
++						chr_pred_u_done <= 1'b1;
++					end
++					if (!chr_pred_sel_v && !chr_pred_v_done) begin
++						chr_pred_sel_v <= 1'b1;
++						chr_pred_start <= 1'b1;
++					end else
++						st <= ST_IDLE; // re-check DC-only / write with pend still set
++				end
++			end
++
+ 			ST_SETTLE: st <= ST_APPLY;
+ 
+ 			ST_APPLY: begin
+ 				if (lat_is_luma) begin
+ 					if (lat_is_i16 && lat_idx == 5'd0) begin
+ 						for (b = 0; b < 16; b = b + 1) begin
+-							by = b[3:2];
+-							bx = b[1:0];
++							by = b[3:2]; bx = b[1:0];
+ 							for (y = 0; y < 4; y = y + 1)
+ 								for (x = 0; x < 4; x = x + 1) begin
+ 									addr = (by * 4 + y) * 16 + (bx * 4 + x);
+@@ -503,8 +625,9 @@ module h264_i_res_recon_sink #(
+ 						i16_dc_valid <= 1'b1;
+ 						dbg_blk_applied <= dbg_blk_applied + 32'd1;
+ 					end else if (lat_is_i16 && lat_idx >= 5'd1 && lat_idx <= 5'd16) begin
+-						// Host: dequant AC max15, blk[0][0]=dc, one idct4x4_add.
+-						// idx0 painted (dc+32)>>6; when AC nz replace with combined residual.
++						// Host combines DC+AC in transform domain then one idct4x4_add.
++						// idx0 already painted (dc+32)>>6; when AC nz, replace that
++						// pixel-DC with the combined residual to match host rounding.
+ 						bx = blk4_x(lat_idx[3:0] - 4'd1);
+ 						by = blk4_y(lat_idx[3:0] - 4'd1);
+ 						any_nz = 1'b0;
+@@ -514,6 +637,7 @@ module h264_i_res_recon_sink #(
+ 							for (y = 0; y < 4; y = y + 1)
+ 								for (x = 0; x < 4; x = x + 1) begin
+ 									addr = (by * 4 + y) * 16 + (bx * 4 + x);
++									// plane = pred + (dc+32)>>6; undo pixel-DC, add idct(dc+AC)
+ 									tsum = $signed({10'd0, plane_y[addr]})
+ 										- (($signed(i16_dc[{by, bx}]) + 18'sd32) >>> 6)
+ 										+ idct_r[{y[1:0], x[1:0]}];
+@@ -530,17 +654,56 @@ module h264_i_res_recon_sink #(
+ 						for (y = 0; y < 4; y = y + 1)
+ 							for (x = 0; x < 4; x = x + 1) begin
+ 								addr = (by * 4 + y) * 16 + (bx * 4 + x);
+-								if (any_nz)
+-									plane_y[addr] <= recon_px[{y[1:0], x[1:0]}];
+-								else
+-									plane_y[addr] <= i4_pred[{y[1:0], x[1:0]}];
++								if (any_nz) plane_y[addr] <= recon_px[{y[1:0], x[1:0]}];
++								else plane_y[addr] <= i4_pred[{y[1:0], x[1:0]}];
+ 							end
+ 						dbg_blk_applied <= dbg_blk_applied + 32'd1;
+ 					end
++				end else if (is_chr_dc_slot(lat_is_i16, lat_idx)) begin
++					if (chr_is_v(lat_is_i16, lat_idx)) begin
++						for (k = 0; k < 4; k = k + 1) chr_dc_v[k] <= chr_dc_out[k];
++						chr_dc_v_valid <= 1'b1;
++					end else begin
++						for (k = 0; k < 4; k = k + 1) chr_dc_u[k] <= chr_dc_out[k];
++						chr_dc_u_valid <= 1'b1;
++					end
++					dbg_chr_applied <= dbg_chr_applied + 32'd1;
++				end else begin
++					cbi = chr_ac_bi(lat_is_i16, lat_idx);
++					bx = {1'b0, cbi[0]}; by = {1'b0, cbi[1]};
++					cplane_v = chr_is_v(lat_is_i16, lat_idx);
++					for (y = 0; y < 4; y = y + 1)
++						for (x = 0; x < 4; x = x + 1) begin
++							addr = (by * 4 + y) * 8 + (bx * 4 + x);
++							if (cplane_v)
++								plane_v[addr] <= add_res(plane_v[addr], idct_r[{y[1:0], x[1:0]}]);
++							else
++								plane_u[addr] <= add_res(plane_u[addr], idct_r[{y[1:0], x[1:0]}]);
++						end
++					if (cplane_v) chr_ac_v_done[cbi] <= 1'b1;
++					else chr_ac_u_done[cbi] <= 1'b1;
++					dbg_chr_applied <= dbg_chr_applied + 32'd1;
+ 				end
+ 				st <= ST_IDLE;
+ 			end
+ 
++			ST_CHR_DC_ONLY: begin
++				bx = {1'b0, chr_dc_only_bi[0]};
++				by = {1'b0, chr_dc_only_bi[1]};
++				for (y = 0; y < 4; y = y + 1)
++					for (x = 0; x < 4; x = x + 1) begin
++						addr = (by * 4 + y) * 8 + (bx * 4 + x);
++						if (chr_dc_only_plane)
++							plane_v[addr] <= add_res(plane_v[addr], idct_r[{y[1:0], x[1:0]}]);
++						else
++							plane_u[addr] <= add_res(plane_u[addr], idct_r[{y[1:0], x[1:0]}]);
++					end
++				if (chr_dc_only_plane) chr_ac_v_done[chr_dc_only_bi] <= 1'b1;
++				else chr_ac_u_done[chr_dc_only_bi] <= 1'b1;
++				dbg_chr_applied <= dbg_chr_applied + 32'd1;
++				st <= ST_IDLE;
++			end
++
+ 			default: st <= ST_IDLE;
+ 			endcase
+ 		end
+diff --git a/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv b/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv
+index cef0c9c..2a9dfbe 100644
+--- a/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv
++++ b/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv
+@@ -80,6 +80,8 @@ module h264_p_mb_traverse #(
+ 	output reg  [3:0]  res_blk_pred_mode,
+ 	output reg         res_mb_end,         // pulse: residual schedule done for MB
+ 	output reg  [15:0] res_mb_end_addr,
++	// intra_chroma_pred_mode (0..3) latched with res_mb_end for I recon sink
++	output reg  [1:0]  res_mb_chroma_mode,
+ 
+ 	output reg  [15:0] mb_count,           // MBs emitted this slice
+ 	output reg         slice_done,         // pulse: walk finished
+@@ -168,6 +170,7 @@ module h264_p_mb_traverse #(
+ 	reg is_i_slice_r;          // slice_type 2 or 7 (I/SI all-I coding)
+ 	reg [4:0] i4_idx;
+ 	reg [1:0] i16_mode_r;      // I_16x16 pred mode 0..3 from mb_type
++	reg [1:0] chr_mode_r;      // intra_chroma_pred_mode 0..3 (ue)
+ 	// I4 modes in residual/scan order index 0..15 (same as blk4_x/y).
+ 	// Also spatial maps for MPM: mode_spat[by*4+bx].
+ 	reg [3:0] i4_mode_scan [0:15];
+@@ -868,6 +871,7 @@ module h264_p_mb_traverse #(
+ 			res_blk_valid <= 1'b0;
+ 			res_mb_end <= 1'b0;
+ 			res_mb_end_addr <= 16'd0;
++			res_mb_chroma_mode <= 2'd0;
+ 			res_blk_mb_addr <= 16'd0;
+ 			res_blk_mb_x <= 8'd0;
+ 			res_blk_mb_y <= 8'd0;
+@@ -878,6 +882,7 @@ module h264_p_mb_traverse #(
+ 			res_blk_max_coeff <= 5'd16;
+ 			res_blk_pred_mode <= 4'd2;
+ 			i16_mode_r <= 2'd0;
++			chr_mode_r <= 2'd0;
+ 			res_hold_from_cavlc <= 1'b0;
+ 			for (ti = 0; ti < 16; ti = ti + 1) begin
+ 				res_blk_coeff[ti] <= 16'sd0;
+@@ -920,6 +925,7 @@ module h264_p_mb_traverse #(
+ 			slice_done <= 1'b0;
+ 			cavlc_start_r <= 1'b0;
+ 			res_mb_end <= 1'b0;
++			// res_mb_chroma_mode held stable with last res_mb_end pulse
+ 
+ 			// Handshake: drop valid when accepted
+ 			if (mb_valid && mb_ready) begin
+@@ -1378,14 +1384,20 @@ module h264_p_mb_traverse #(
+ 					end
+ 				end
+ 				ST_CHR_UE: begin
+-					// I_NxN: cbp me next. I_16x16: always mb_qp_delta then residual
+-					// (luma DC always coded even when cbp_l=cbp_c=0).
++					// ue_value = intra_chroma_pred_mode (0..3). Next: I_NxN → cbp;
++					// I_16x16 → mb_qp_delta then residual (luma DC always coded).
+ 					// I-slice I_NxN has mb_type=0; P-slice I_NxN has mb_type=5.
+-					if ((is_i_slice_r && (mb_type_r == 8'd0)) ||
+-					    (!is_i_slice_r && (mb_type_r == 8'd5)))
+-						start_ue(ST_CBP_INTRA_UE);
+-					else
+-						start_ue(ST_QP_UE);
++					if (ue_value > 32'd3) begin
++						unsupported <= 1'b1;
++						fail();
++					end else begin
++						chr_mode_r <= ue_value[1:0];
++						if ((is_i_slice_r && (mb_type_r == 8'd0)) ||
++						    (!is_i_slice_r && (mb_type_r == 8'd5)))
++							start_ue(ST_CBP_INTRA_UE);
++						else
++							start_ue(ST_QP_UE);
++					end
+ 				end
+ 				ST_CBP_INTRA_UE: begin
+ 					if (ue_value >= 32'd48) begin
+@@ -1411,7 +1423,7 @@ module h264_p_mb_traverse #(
+ 							curr_mb, mb_type_r, is_i16_r, cbp_r, qp_r, bit_pos);
+ `endif
+ 					if (!is_i16_r && cbp_r == 6'd0) begin
+-						// inter/I_NxN with no residual; zero tc neighbours
++						// No coded residual: still zero tc neighbours.
+ 						for (ti = 0; ti < 4; ti = ti + 1) begin
+ 							tc_left[ti] <= 5'd0;
+ 							tc_left_v[ti] <= 1'b1;
+@@ -1426,10 +1438,11 @@ module h264_p_mb_traverse #(
+ 							end
+ 						end
+ 						zero_chr_tc_mb();
++						// I-slice: walk zero-export residual so sink still runs
++						// I4/chroma prediction (uncoded residual ≠ skip pred).
+ 						if (is_i_slice_r) begin
+-							res_mb_end <= 1'b1;
+-							res_mb_end_addr <= curr_mb;
+-							st <= ST_RES_MB_END;
++							res_block_i <= 5'd0;
++							st <= ST_RES_SETUP;
+ 						end else
+ 							st <= ST_NEXT_MB;
+ 					end else begin
+@@ -1449,6 +1462,7 @@ module h264_p_mb_traverse #(
+ 						if (is_i_slice_r) begin
+ 							res_mb_end <= 1'b1;
+ 							res_mb_end_addr <= curr_mb;
++							res_mb_chroma_mode <= chr_mode_r;
+ 							// Commit right/bottom edge modes for next MBs.
+ 							// I_NxN: real modes. I16/other: host treats neighbour as
+ 							// mode 2 (DC) for MPM (h264_recon.hpp i4mode=2).
+@@ -1507,7 +1521,7 @@ module h264_p_mb_traverse #(
+ 								else if (!is_i16_r)
+ 									res_blk_pred_mode <= i4_mode_scan[res_block_i[3:0]];
+ 								else
+-									res_blk_pred_mode <= 4'd0;
++									res_blk_pred_mode <= {2'd0, chr_mode_r};
+ 								for (ci = 0; ci < 16; ci = ci + 1)
+ 									res_blk_coeff[ci] <= 16'sd0;
+ 								res_hold_idx <= res_block_i;
+@@ -1579,6 +1593,8 @@ module h264_p_mb_traverse #(
+ 										res_blk_pred_mode <= {2'd0, i16_mode_r};
+ 									else if (!is_i16_r && res_block_i < 5'd16)
+ 										res_blk_pred_mode <= i4_mode_scan[res_block_i[3:0]];
++									else if (!is_luma_slot)
++										res_blk_pred_mode <= {2'd0, chr_mode_r};
+ 									else
+ 										res_blk_pred_mode <= 4'd0;
+ 									for (ci = 0; ci < 16; ci = ci + 1)
+diff --git a/fpga/Plex_MiSTer/rtl/h264_syntax_primitives.sv b/fpga/Plex_MiSTer/rtl/h264_syntax_primitives.sv
+index 0d688e8..3f27470 100644
+--- a/fpga/Plex_MiSTer/rtl/h264_syntax_primitives.sv
++++ b/fpga/Plex_MiSTer/rtl/h264_syntax_primitives.sv
+@@ -103,6 +103,7 @@ module h264_baseline_syntax_parser #(
+ 	output reg               entropy_cabac,
+ 	output reg [7:0]         num_ref_idx_l0_default_minus1,
+ 	output reg signed [7:0]  pic_init_qp,
++	output reg signed [4:0]  chroma_qp_index_offset,
+ 	output reg               deblock_ctrl,
+ 
+ 	output reg [15:0]        first_mb_in_slice,
+@@ -369,6 +370,7 @@ module h264_baseline_syntax_parser #(
+ 			entropy_cabac <= 1'b0;
+ 			num_ref_idx_l0_default_minus1 <= 8'd0;
+ 			pic_init_qp <= 8'sd26;
++			chroma_qp_index_offset <= 5'sd0;
+ 			deblock_ctrl <= 1'b0;
+ 			first_mb_in_slice <= 16'd0;
+ 			slice_type <= 8'd0;
+@@ -503,7 +505,10 @@ module h264_baseline_syntax_parser #(
+ 				ST_PPS_WEIGHTED_BI: start_ue(ST_PPS_QP);
+ 				ST_PPS_QP: begin pic_init_qp <= 8'sd26 + se8_from_ue(ue_value); start_ue(ST_PPS_QS); end
+ 				ST_PPS_QS: start_ue(ST_PPS_CHROMA);
+-				ST_PPS_CHROMA: start_bits(8'd1, ST_PPS_DEBLOCK);
++				ST_PPS_CHROMA: begin
++					chroma_qp_index_offset <= se8_from_ue(ue_value);
++					start_bits(8'd1, ST_PPS_DEBLOCK);
++				end
+ 				ST_PPS_DEBLOCK: begin deblock_ctrl <= fixed_acc[0]; start_bits(8'd1, ST_PPS_CONSTRAINED); end
+ 				ST_PPS_CONSTRAINED: start_bits(8'd1, ST_PPS_REDUNDANT);
+ 				ST_PPS_REDUNDANT: begin
+diff --git a/fpga/Plex_MiSTer/rtl/pps_parser.sv b/fpga/Plex_MiSTer/rtl/pps_parser.sv
+index cf3c8a7..98f1f93 100644
+--- a/fpga/Plex_MiSTer/rtl/pps_parser.sv
++++ b/fpga/Plex_MiSTer/rtl/pps_parser.sv
+@@ -15,6 +15,7 @@ module pps_parser (
+ 	output reg         entropy_cabac,
+ 	output reg  [7:0]  num_ref_l0,
+ 	output reg  signed [7:0] pic_init_qp,
++	output reg  signed [4:0] chroma_qp_index_offset,
+ 	output reg         deblock_ctrl,
+ 	output reg         busy
+ );
+@@ -86,6 +87,7 @@ module pps_parser (
+ 			entropy_cabac <= 0;
+ 			num_ref_l0 <= 0;
+ 			pic_init_qp <= 8'sd26;
++			chroma_qp_index_offset <= 5'sd0;
+ 			deblock_ctrl <= 0;
+ 			bbyte <= 0;
+ 			bpos <= 3'd7;
+@@ -161,7 +163,11 @@ module pps_parser (
+ 				zcnt <= 0; ue_cont <= ST_QS; st <= ST_UE_Z;
+ 			end
+ 			ST_QS: begin zcnt <= 0; ue_cont <= ST_CHR; st <= ST_UE_Z; end
+-			ST_CHR: begin nleft <= 5'd1; acc <= 0; cont <= ST_DB; st <= ST_GETBITS; end
++			// se(v) chroma_qp_index_offset (H.264 7.3.2.2) — was wrongly u(1)
++			ST_CHR: begin
++				chroma_qp_index_offset <= se_of(ue_val);
++				nleft <= 5'd1; acc <= 0; cont <= ST_DB; st <= ST_GETBITS;
++			end
+ 			ST_DB: begin
+ 				deblock_ctrl <= acc[0];
+ 				nleft <= 5'd1; acc <= 0; cont <= ST_CI; st <= ST_GETBITS;
+diff --git a/fpga/Plex_MiSTer/rtl/stream_path.sv b/fpga/Plex_MiSTer/rtl/stream_path.sv
+index 25e662f..116bc25 100644
+--- a/fpga/Plex_MiSTer/rtl/stream_path.sv
++++ b/fpga/Plex_MiSTer/rtl/stream_path.sv
+@@ -229,6 +229,7 @@ module stream_path #(
+ 	wire pps_busy, pps_cabac, pps_deblock;
+ 	wire [7:0] pps_id_w, pps_sps_id, pps_nref;
+ 	wire signed [7:0] pps_qp;
++	wire signed [4:0] pps_chroma_qp_off;
+ 
+ 	pps_parser pps (
+ 		.clk(clk), .reset(reset | flush),
+@@ -236,7 +237,8 @@ module stream_path #(
+ 		.cap_data(pps_cap_data), .cap_end(pps_cap_end),
+ 		.valid(pps_valid), .pps_id(pps_id_w), .sps_id(pps_sps_id),
+ 		.entropy_cabac(pps_cabac), .num_ref_l0(pps_nref),
+-		.pic_init_qp(pps_qp), .deblock_ctrl(pps_deblock), .busy(pps_busy)
++		.pic_init_qp(pps_qp), .chroma_qp_index_offset(pps_chroma_qp_off),
++		.deblock_ctrl(pps_deblock), .busy(pps_busy)
+ 	);
+ 
+ 	wire sl_busy, sl_is_i, sl_has_mbt, sl_res_ok;
+@@ -375,6 +377,7 @@ module stream_path #(
+ 	wire signed [15:0] trav_res_blk_coeff [0:15];
+ 	wire        trav_res_mb_end;
+ 	wire [15:0] trav_res_mb_end_addr;
++	wire [1:0]  trav_res_mb_chroma_mode;
+ 
+ 	wire trav_loading = (trav_ld_st == 2'd2);
+ 	wire trav_in_valid = trav_loading && (trav_load_idx < trav_buf_len) && trav_in_ready;
+@@ -510,6 +513,7 @@ module stream_path #(
+ 		.res_blk_coeff(trav_res_blk_coeff),
+ 		.res_mb_end(trav_res_mb_end),
+ 		.res_mb_end_addr(trav_res_mb_end_addr),
++		.res_mb_chroma_mode(trav_res_mb_chroma_mode),
+ 		.mb_count(trav_mb_count),
+ 		.slice_done(trav_slice_done),
+ 		.busy(trav_busy), .error(trav_err), .unsupported(trav_unsup)
+@@ -691,6 +695,8 @@ module stream_path #(
+ 		.i_res_blk_coeff(trav_res_blk_coeff),
+ 		.i_res_mb_end(trav_res_mb_end),
+ 		.i_res_mb_end_addr(trav_res_mb_end_addr),
++		.i_res_mb_chroma_mode(trav_res_mb_chroma_mode),
++		.pps_chroma_qp_index_offset(pps_chroma_qp_off),
+ 		.first_mb_mvd_x(first_mb_mvd_x),
+ 		.first_mb_mvd_y(first_mb_mvd_y),
+ 		.residual_ok(sl_place_ok),
+diff --git a/tests/rtl/decode_stub_fetch_mv_tb_top.sv b/tests/rtl/decode_stub_fetch_mv_tb_top.sv
+index 6268240..cd997bf 100644
+--- a/tests/rtl/decode_stub_fetch_mv_tb_top.sv
++++ b/tests/rtl/decode_stub_fetch_mv_tb_top.sv
+@@ -111,6 +111,9 @@ module decode_stub_fetch_mv_tb #(
+ 		.i_res_blk_coeff(zero_coeff),
+ 		.i_res_mb_end(1'b0),
+ 		.i_res_mb_end_addr(16'd0),
++		.i_res_blk_pred_mode(4'd0),
++		.i_res_mb_chroma_mode(2'd0),
++		.pps_chroma_qp_index_offset(5'sd0),
+ 		.first_mb_mvd_x(first_mb_mvd_x),
+ 		.first_mb_mvd_y(first_mb_mvd_y),
+ 		.residual_ok(1'b1),
+diff --git a/tests/rtl/decode_stub_recon_tb_top.sv b/tests/rtl/decode_stub_recon_tb_top.sv
+index 68f8769..7a6b90f 100644
+--- a/tests/rtl/decode_stub_recon_tb_top.sv
++++ b/tests/rtl/decode_stub_recon_tb_top.sv
+@@ -82,6 +82,9 @@ module decode_stub_recon_tb #(
+ 		.i_res_blk_coeff(coeff16),
+ 		.i_res_mb_end(1'b0),
+ 		.i_res_mb_end_addr(16'd0),
++		.i_res_blk_pred_mode(4'd0),
++		.i_res_mb_chroma_mode(2'd0),
++		.pps_chroma_qp_index_offset(5'sd0),
+ 		.first_mb_mvd_x(16'sd0),
+ 		.first_mb_mvd_y(16'sd0),
+ 		.residual_ok(residual_ok),
+diff --git a/tests/rtl/h264_baseline_syntax_tb_top.sv b/tests/rtl/h264_baseline_syntax_tb_top.sv
+index b7569a4..465fca6 100644
+--- a/tests/rtl/h264_baseline_syntax_tb_top.sv
++++ b/tests/rtl/h264_baseline_syntax_tb_top.sv
+@@ -30,6 +30,7 @@ module h264_baseline_syntax_tb_top #(
+ 	output wire              entropy_cabac,
+ 	output wire [7:0]        num_ref_idx_l0_default_minus1,
+ 	output wire signed [7:0] pic_init_qp,
++	output wire signed [4:0] chroma_qp_index_offset,
+ 	output wire              deblock_ctrl,
+ 	output wire [15:0]       first_mb_in_slice,
+ 	output wire [7:0]        slice_type,
+@@ -65,7 +66,8 @@ module h264_baseline_syntax_tb_top #(
+ 		.in_valid(in_valid), .in_byte(in_byte), .in_last(in_last), .in_ready(in_ready),
+ 		.valid(valid), .error(error), .unsupported(unsupported), .busy(busy), .rbsp_bits_consumed(rbsp_bits_consumed),
+ 		.pps_id(pps_id), .sps_id(sps_id), .entropy_cabac(entropy_cabac),
+-		.num_ref_idx_l0_default_minus1(num_ref_idx_l0_default_minus1), .pic_init_qp(pic_init_qp), .deblock_ctrl(deblock_ctrl),
++		.num_ref_idx_l0_default_minus1(num_ref_idx_l0_default_minus1), .pic_init_qp(pic_init_qp),
++		.chroma_qp_index_offset(chroma_qp_index_offset), .deblock_ctrl(deblock_ctrl),
+ 		.first_mb_in_slice(first_mb_in_slice), .slice_type(slice_type), .frame_num(frame_num),
+ 		.pic_order_cnt_lsb(pic_order_cnt_lsb), .idr_pic_id(idr_pic_id), .slice_qp_delta(slice_qp_delta), .slice_qp(slice_qp),
+ 		.disable_deblocking_idc(disable_deblocking_idc), .slice_alpha_c0_offset_div2(slice_alpha_c0_offset_div2),
+diff --git a/tests/rtl/h264_p_mb_traverse_tb_top.sv b/tests/rtl/h264_p_mb_traverse_tb_top.sv
+index 819e27b..dc8418a 100644
+--- a/tests/rtl/h264_p_mb_traverse_tb_top.sv
++++ b/tests/rtl/h264_p_mb_traverse_tb_top.sv
+@@ -84,9 +84,11 @@ module h264_p_mb_traverse_tb_top #(
+ 		.res_blk_is_luma(),
+ 		.res_blk_qp(),
+ 		.res_blk_max_coeff(),
++		.res_blk_pred_mode(),
+ 		.res_blk_coeff(),
+ 		.res_mb_end(),
+ 		.res_mb_end_addr(),
++		.res_mb_chroma_mode(),
+ 		.mb_count(mb_count),
+ 		.slice_done(slice_done),
+ 		.busy(busy),
+diff --git a/tests/unit/test_decode_stub_fetch_mv_rtl_sim.sh b/tests/unit/test_decode_stub_fetch_mv_rtl_sim.sh
+index de316a5..1c816e0 100755
+--- a/tests/unit/test_decode_stub_fetch_mv_rtl_sim.sh
++++ b/tests/unit/test_decode_stub_fetch_mv_rtl_sim.sh
+@@ -38,6 +38,8 @@ PRODUCT_RTL=(
+   decode_stub.sv
+   h264_i16_dc_hadamard.sv
+   h264_i_res_recon_sink.sv
++  h264_chroma_qp.sv
++  h264_chroma_dc_hadamard_inv.sv
+   h264_intra_pred.sv
+   h264_recon_frame_store.sv
+ )
+diff --git a/tests/unit/test_h264_multinal_stream_path.sh b/tests/unit/test_h264_multinal_stream_path.sh
+index 6cee695..0a0e82a 100755
+--- a/tests/unit/test_h264_multinal_stream_path.sh
++++ b/tests/unit/test_h264_multinal_stream_path.sh
+@@ -50,6 +50,8 @@ echo "RTL SIM: using $VERILATOR_VERSION" >&2
+   fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv \
+   fpga/Plex_MiSTer/rtl/h264_i16_dc_hadamard.sv \
+   fpga/Plex_MiSTer/rtl/h264_i_res_recon_sink.sv \
++  fpga/Plex_MiSTer/rtl/h264_chroma_qp.sv \
++  fpga/Plex_MiSTer/rtl/h264_chroma_dc_hadamard_inv.sv \
+   fpga/Plex_MiSTer/rtl/h264_intra_pred.sv \
+   fpga/Plex_MiSTer/rtl/h264_cavlc_residual.sv \
+   tests/rtl/h264_multinal_stream_path_tb.cpp
+@@ -91,6 +93,8 @@ echo "test_h264_multinal_stream_path: OK refuses implicit unproven defaults rc=$
+   fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv \
+   fpga/Plex_MiSTer/rtl/h264_i16_dc_hadamard.sv \
+   fpga/Plex_MiSTer/rtl/h264_i_res_recon_sink.sv \
++  fpga/Plex_MiSTer/rtl/h264_chroma_qp.sv \
++  fpga/Plex_MiSTer/rtl/h264_chroma_dc_hadamard_inv.sv \
+   fpga/Plex_MiSTer/rtl/h264_intra_pred.sv \
+   fpga/Plex_MiSTer/rtl/h264_cavlc_residual.sv \
+   tests/rtl/h264_multinal_stream_path_tb.cpp
+diff --git a/tests/unit/test_p3_idct_rtl_sim.sh b/tests/unit/test_p3_idct_rtl_sim.sh
+index d6ebaba..891b32d 100755
+--- a/tests/unit/test_p3_idct_rtl_sim.sh
++++ b/tests/unit/test_p3_idct_rtl_sim.sh
+@@ -29,6 +29,8 @@ RTL_DECODE="$ROOT/fpga/Plex_MiSTer/rtl/decode_stub.sv"
+ RTL_RECON_STORE="$ROOT/fpga/Plex_MiSTer/rtl/h264_recon_frame_store.sv"
+ RTL_I16_DC="$ROOT/fpga/Plex_MiSTer/rtl/h264_i16_dc_hadamard.sv"
+ RTL_I_SINK="$ROOT/fpga/Plex_MiSTer/rtl/h264_i_res_recon_sink.sv"
++RTL_CQP="$ROOT/fpga/Plex_MiSTer/rtl/h264_chroma_qp.sv"
++RTL_CDC="$ROOT/fpga/Plex_MiSTer/rtl/h264_chroma_dc_hadamard_inv.sv"
+ RTL_INTRA="$ROOT/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv"
+ RTL_INTER="$ROOT/fpga/Plex_MiSTer/rtl/h264_inter_pred.sv"
+ RTL_DEBLOCK="$ROOT/fpga/Plex_MiSTer/rtl/h264_deblock.sv"
+@@ -69,14 +71,14 @@ echo "RTL SIM: using $VERILATOR_VERSION" >&2
+   --Mdir "$BUILD_DECODE" \
+   --top-module decode_stub_recon_tb -Wno-fatal \
+   -CFLAGS "-std=c++17 -O2" \
+-  "$TOP_DECODE" "$RTL_IQ" "$RTL_INTER" "$RTL_DEBLOCK" "$RTL_DPB" "$RTL_DECODE" "$RTL_I16_DC" "$RTL_I_SINK" "$RTL_INTRA" "$RTL_RECON_STORE" "$TB_DECODE"
++  "$TOP_DECODE" "$RTL_IQ" "$RTL_INTER" "$RTL_DEBLOCK" "$RTL_DPB" "$RTL_DECODE" "$RTL_I16_DC" "$RTL_I_SINK" "$RTL_CQP" "$RTL_CDC" "$RTL_INTRA" "$RTL_RECON_STORE" "$TB_DECODE"
+ "$BUILD_DECODE/Vdecode_stub_recon_tb" "$FIXTURE"
+ 
+ "$RUN_VERILATOR" --cc --exe --build \
+   --Mdir "$BUILD_DECODE_FAULT" \
+   --top-module decode_stub_recon_tb -GFAULT_PRED_ONLY=1 -Wno-fatal \
+   -CFLAGS "-std=c++17 -O2" \
+-  "$TOP_DECODE" "$RTL_IQ" "$RTL_INTER" "$RTL_DEBLOCK" "$RTL_DPB" "$RTL_DECODE" "$RTL_I16_DC" "$RTL_I_SINK" "$RTL_INTRA" "$RTL_RECON_STORE" "$TB_DECODE"
++  "$TOP_DECODE" "$RTL_IQ" "$RTL_INTER" "$RTL_DEBLOCK" "$RTL_DPB" "$RTL_DECODE" "$RTL_I16_DC" "$RTL_I_SINK" "$RTL_CQP" "$RTL_CDC" "$RTL_INTRA" "$RTL_RECON_STORE" "$TB_DECODE"
+ set +e
+ FAULT_OUT="$($BUILD_DECODE_FAULT/Vdecode_stub_recon_tb "$FIXTURE" 2>&1)"
+ FAULT_RC=$?
+diff --git a/tests/unit/test_p3_inter_stream_path_rtl_sim.sh b/tests/unit/test_p3_inter_stream_path_rtl_sim.sh
+index f2abcac..86bed87 100755
+--- a/tests/unit/test_p3_inter_stream_path_rtl_sim.sh
++++ b/tests/unit/test_p3_inter_stream_path_rtl_sim.sh
+@@ -50,6 +50,8 @@ PRODUCT_RTL=(
+   h264_p_mb_traverse.sv
+   h264_i16_dc_hadamard.sv
+   h264_i_res_recon_sink.sv
++  h264_chroma_qp.sv
++  h264_chroma_dc_hadamard_inv.sv
+   h264_intra_pred.sv
+   h264_cavlc_residual.sv
+ )
+diff --git a/tests/unit/test_p3_stream_path_recon_rtl_sim.sh b/tests/unit/test_p3_stream_path_recon_rtl_sim.sh
+index 1408560..4b832db 100755
+--- a/tests/unit/test_p3_stream_path_recon_rtl_sim.sh
++++ b/tests/unit/test_p3_stream_path_recon_rtl_sim.sh
+@@ -47,6 +47,8 @@ echo "RTL SIM: using $VERILATOR_VERSION" >&2
+   "$ROOT/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv" \
+   "$ROOT/fpga/Plex_MiSTer/rtl/h264_i16_dc_hadamard.sv" \
+   "$ROOT/fpga/Plex_MiSTer/rtl/h264_i_res_recon_sink.sv" \
++  "$ROOT/fpga/Plex_MiSTer/rtl/h264_chroma_qp.sv" \
++  "$ROOT/fpga/Plex_MiSTer/rtl/h264_chroma_dc_hadamard_inv.sv" \
+   "$ROOT/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv" \
+   "$ROOT/fpga/Plex_MiSTer/rtl/h264_cavlc_residual.sv" \
+   "$ROOT/fpga/Plex_MiSTer/rtl/stream_path.sv" \
+diff --git a/tests/unit/test_stream_path_ddr_ring_integration.sh b/tests/unit/test_stream_path_ddr_ring_integration.sh
+index 8fdd9ad..e069efb 100755
+--- a/tests/unit/test_stream_path_ddr_ring_integration.sh
++++ b/tests/unit/test_stream_path_ddr_ring_integration.sh
+@@ -47,6 +47,8 @@ RTL=(
+   "$ROOT/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv" \
+   "$ROOT/fpga/Plex_MiSTer/rtl/h264_i16_dc_hadamard.sv" \
+   "$ROOT/fpga/Plex_MiSTer/rtl/h264_i_res_recon_sink.sv" \
++  "$ROOT/fpga/Plex_MiSTer/rtl/h264_chroma_qp.sv" \
++  "$ROOT/fpga/Plex_MiSTer/rtl/h264_chroma_dc_hadamard_inv.sv" \
+   "$ROOT/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv" \
+   "$ROOT/fpga/Plex_MiSTer/rtl/h264_cavlc_residual.sv"
+   "$ROOT/fpga/Plex_MiSTer/rtl/async_fifo.sv"
+diff --git a/tests/unit/test_stream_path_deblock_integration.sh b/tests/unit/test_stream_path_deblock_integration.sh
+index d30fb7d..8289489 100755
+--- a/tests/unit/test_stream_path_deblock_integration.sh
++++ b/tests/unit/test_stream_path_deblock_integration.sh
+@@ -55,6 +55,8 @@ RTL=(
+   "$ROOT/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv" \
+   "$ROOT/fpga/Plex_MiSTer/rtl/h264_i16_dc_hadamard.sv" \
+   "$ROOT/fpga/Plex_MiSTer/rtl/h264_i_res_recon_sink.sv" \
++  "$ROOT/fpga/Plex_MiSTer/rtl/h264_chroma_qp.sv" \
++  "$ROOT/fpga/Plex_MiSTer/rtl/h264_chroma_dc_hadamard_inv.sv" \
+   "$ROOT/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv" \
+   "$ROOT/fpga/Plex_MiSTer/rtl/h264_cavlc_residual.sv"
+   "$ROOT/fpga/Plex_MiSTer/rtl/stream_path.sv"
+diff --git a/tests/unit/test_stream_path_full_frame_compare.sh b/tests/unit/test_stream_path_full_frame_compare.sh
+index 4460f50..7922e77 100755
+--- a/tests/unit/test_stream_path_full_frame_compare.sh
++++ b/tests/unit/test_stream_path_full_frame_compare.sh
+@@ -68,6 +68,8 @@ PRODUCT_RTL=(
+   h264_p_mb_traverse.sv
+   h264_i16_dc_hadamard.sv
+   h264_i_res_recon_sink.sv
++  h264_chroma_qp.sv
++  h264_chroma_dc_hadamard_inv.sv
+   h264_intra_pred.sv
+   h264_recon_frame_store.sv
+   h264_cavlc_residual.sv
+diff --git a/tests/unit/test_stream_path_recon_integration.sh b/tests/unit/test_stream_path_recon_integration.sh
+index 5f54cd7..06cdb5b 100755
+--- a/tests/unit/test_stream_path_recon_integration.sh
++++ b/tests/unit/test_stream_path_recon_integration.sh
+@@ -38,6 +38,8 @@ RTL_RECON_STORE="$ROOT/fpga/Plex_MiSTer/rtl/h264_recon_frame_store.sv"
+ RTL_TRAV="$ROOT/fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv"
+ RTL_I16="$ROOT/fpga/Plex_MiSTer/rtl/h264_i16_dc_hadamard.sv"
+ RTL_ISINK="$ROOT/fpga/Plex_MiSTer/rtl/h264_i_res_recon_sink.sv"
++RTL_CQP="$ROOT/fpga/Plex_MiSTer/rtl/h264_chroma_qp.sv"
++RTL_CDC="$ROOT/fpga/Plex_MiSTer/rtl/h264_chroma_dc_hadamard_inv.sv"
+ RTL_INTRA="$ROOT/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv"
+ RTL_CAVLC="$ROOT/fpga/Plex_MiSTer/rtl/h264_cavlc_residual.sv"
+ RTL_IQ="$ROOT/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv"
+@@ -53,7 +55,7 @@ BUILD="$ROOT/build/verilator/stream_path_recon_integration"
+ BUILD_FAULT="$ROOT/build/verilator/stream_path_recon_integration_fault"
+ 
+ for f in "$QIP" "$RTL_STREAM" "$RTL_INGEST" "$RTL_DDR" "$RTL_FIFO" "$RTL_SCAN" "$RTL_SPS" "$RTL_PPS" \
+-         "$RTL_SLICE" "$RTL_DECODE" "$RTL_RECON_STORE" "$RTL_TRAV" "$RTL_I16" "$RTL_ISINK" "$RTL_INTRA" \
++         "$RTL_SLICE" "$RTL_DECODE" "$RTL_RECON_STORE" "$RTL_TRAV" "$RTL_I16" "$RTL_ISINK" "$RTL_CQP" "$RTL_CDC" "$RTL_INTRA" \
+          "$RTL_CAVLC" "$RTL_IQ" "$RTL_INTER" "$RTL_DEBLOCK" "$RTL_DPB" "$TOP" "$TB" "$BITSTREAM" "$REF"; do
+   if [[ ! -f "$f" ]]; then
+     echo "RTL SIM ERROR: missing required file: $f" >&2
+@@ -66,6 +68,8 @@ for rtl in rtl/stream_path.sv rtl/stream_ingest.sv rtl/ddr_bitstream_reader.sv r
+            rtl/h264_p_mb_traverse.sv \
+            rtl/h264_i16_dc_hadamard.sv \
+            rtl/h264_i_res_recon_sink.sv \
++           rtl/h264_chroma_qp.sv \
++           rtl/h264_chroma_dc_hadamard_inv.sv \
+            rtl/h264_intra_pred.sv \
+            rtl/h264_cavlc_residual.sv \
+            rtl/h264_iq_idct_4x4.sv rtl/h264_inter_pred.sv rtl/h264_deblock.sv rtl/h264_dpb.sv; do
+@@ -87,14 +91,14 @@ echo "RTL SIM: using $VERILATOR_VERSION (stream_path_recon_integration)" >&2
+   --top-module stream_path_recon_integration_tb_top -Wno-fatal \
+   -CFLAGS "-std=c++17 -O2" \
+   "$TOP" "$RTL_STREAM" "$RTL_INGEST" "$RTL_DDR" "$RTL_FIFO" "$RTL_SCAN" "$RTL_SPS" "$RTL_PPS" \
+-  "$RTL_SLICE" "$RTL_DECODE" "$RTL_RECON_STORE" "$RTL_TRAV" "$RTL_I16" "$RTL_ISINK" "$RTL_INTRA" "$RTL_CAVLC" "$RTL_IQ" "$RTL_INTER" "$RTL_DEBLOCK" "$RTL_DPB" "$TB"
++  "$RTL_SLICE" "$RTL_DECODE" "$RTL_RECON_STORE" "$RTL_TRAV" "$RTL_I16" "$RTL_ISINK" "$RTL_CQP" "$RTL_CDC" "$RTL_INTRA" "$RTL_CAVLC" "$RTL_IQ" "$RTL_INTER" "$RTL_DEBLOCK" "$RTL_DPB" "$TB"
+ 
+ "$RUN_VERILATOR" --cc --exe --build \
+   --Mdir "$BUILD_FAULT" \
+   --top-module stream_path_recon_integration_tb_top -GFAULT_RECON_SIG_ZERO=1 -Wno-fatal \
+   -CFLAGS "-std=c++17 -O2" \
+   "$TOP" "$RTL_STREAM" "$RTL_INGEST" "$RTL_DDR" "$RTL_FIFO" "$RTL_SCAN" "$RTL_SPS" "$RTL_PPS" \
+-  "$RTL_SLICE" "$RTL_DECODE" "$RTL_RECON_STORE" "$RTL_TRAV" "$RTL_I16" "$RTL_ISINK" "$RTL_INTRA" "$RTL_CAVLC" "$RTL_IQ" "$RTL_INTER" "$RTL_DEBLOCK" "$RTL_DPB" "$TB"
++  "$RTL_SLICE" "$RTL_DECODE" "$RTL_RECON_STORE" "$RTL_TRAV" "$RTL_I16" "$RTL_ISINK" "$RTL_CQP" "$RTL_CDC" "$RTL_INTRA" "$RTL_CAVLC" "$RTL_IQ" "$RTL_INTER" "$RTL_DEBLOCK" "$RTL_DPB" "$TB"
+ 
+ "$BUILD/Vstream_path_recon_integration_tb_top" normal "$BITSTREAM" "$GOLD"
+ "$BUILD/Vstream_path_recon_integration_tb_top" escape-red "$BITSTREAM" "$GOLD"
+diff --git a/tests/unit/test_unit_rollcall.py b/tests/unit/test_unit_rollcall.py
+index df5c2b1..4986d7c 100755
+--- a/tests/unit/test_unit_rollcall.py
++++ b/tests/unit/test_unit_rollcall.py
+@@ -142,6 +142,7 @@ EXPECTED_COMMANDS = [
+     "python3 $(ROOT)/tests/parse_res_csum_status.py --self-test",
+     "$(ROOT)/tests/unit/test_p3_idct_rtl_sim.sh",
+     "$(ROOT)/tests/unit/test_p3_deblock_rtl_sim.sh",
++    "$(ROOT)/tests/unit/test_p3_chroma_dc_hadamard.sh",
+     "$(ROOT)/tests/unit/test_p3_stream_path_recon_rtl_sim.sh",
+     "$(ROOT)/tests/unit/test_stream_path_deblock_integration.sh",
+     "bash $(ROOT)/tests/unit/test_stream_path_ddr_ring_integration.sh",

@@ -1,0 +1,20 @@
+{
+  "branch": "rtl/sink-contract-phase2",
+  "base_freeze": "cf6842a",
+  "pre_reg": {
+    "sink_ALM": "2000..4000",
+    "sink_DSP": "4..6 (hold; no new DSP)",
+    "clip1": "300/300 px exact",
+    "clip2": "1170/1170 px exact",
+    "RED_FAULT_SERIAL_I16_PRED_128": "intra_y << 300 discriminates"
+  },
+  "measured_functional": {
+    "clip1_320": {"intra_y_mb": "300/300", "y_px": "76800/76800", "true_rc": 0, "log": "docs/evidence/p2_i16_serial_320_run.log"},
+    "clip2_624": {"intra_y_mb": "1170/1170", "y_px": "299520/299520", "true_rc": 0, "log": "docs/evidence/p2_i16_serial_624_run.log"},
+    "RED_I16_PRED_128": {"intra_y_mb": "11/300", "y_px": "3456/76800", "discriminates": true, "log": "docs/evidence/p2_i16_serial_red_run.log"},
+    "unit_i16_plane": {"tests": 35, "true_rc": 0, "log": "docs/evidence/p2_i16_serial_unit.log"}
+  },
+  "ALM_DSP": "UNKNOWN until sv-integrate maps post-merge tip",
+  "method": "h264_intra16x16_pred streams 1 px/cy (256); plane b*(x-7) shift-add no DSP; sink ST_HAD_PAINT serial 256 cy; FAULT_SERIAL_I16_PRED_128",
+  "remaining": "plane_y/top_row -> h264_byte_ram_sp + serial nb fetch (self comb 23211 still mostly fabric arrays)"
+}

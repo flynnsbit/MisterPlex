@@ -1,0 +1,259 @@
+{
+  "format": "misterplex.p3.luma_progress.v1",
+  "note": "Companion to score_i420_candidate.py. Headline MB-exact stays Y+U+V; this metric is Y-only so chroma-stubbed decodes show real luma progress.",
+  "geometry": {
+    "width": 320,
+    "height": 240,
+    "frames": 12
+  },
+  "summary": {
+    "intra": {
+      "frames": 1,
+      "y_mb_exact": 214,
+      "y_mb_total": 300,
+      "y_blk4_exact": 3717,
+      "y_blk4_total": 4800,
+      "y_pixel_exact": 59556,
+      "y_pixel_total": 76800,
+      "y_mae_mean": 15.584713541666666
+    },
+    "inter": {
+      "frames": 11,
+      "y_mb_exact": 1681,
+      "y_mb_total": 3300,
+      "y_blk4_exact": 32197,
+      "y_blk4_total": 52800,
+      "y_pixel_exact": 524401,
+      "y_pixel_total": 844800,
+      "y_mae_mean": 22.11629734848485
+    },
+    "all": {
+      "frames": 12,
+      "y_mb_exact": 1895,
+      "y_mb_total": 3600,
+      "y_blk4_exact": 35914,
+      "y_blk4_total": 57600,
+      "y_pixel_exact": 583957,
+      "y_pixel_total": 921600,
+      "y_mae_mean": 21.571998697916666
+    }
+  },
+  "frames": [
+    {
+      "frame_index": 0,
+      "y_mb_exact": 214,
+      "y_mb_total": 300,
+      "y_blk4_exact": 3717,
+      "y_blk4_total": 4800,
+      "y_pixel_exact": 59556,
+      "y_pixel_total": 76800,
+      "y_mae": 15.584713541666666,
+      "y_max_abs": 159,
+      "y_first_bad": {
+        "x": 50,
+        "y": 16,
+        "got": 28,
+        "ref": 29,
+        "abs": 1
+      }
+    },
+    {
+      "frame_index": 1,
+      "y_mb_exact": 181,
+      "y_mb_total": 300,
+      "y_blk4_exact": 3333,
+      "y_blk4_total": 4800,
+      "y_pixel_exact": 54143,
+      "y_pixel_total": 76800,
+      "y_mae": 17.917955729166668,
+      "y_max_abs": 216,
+      "y_first_bad": {
+        "x": 0,
+        "y": 0,
+        "got": 73,
+        "ref": 80,
+        "abs": 7
+      }
+    },
+    {
+      "frame_index": 2,
+      "y_mb_exact": 178,
+      "y_mb_total": 300,
+      "y_blk4_exact": 3270,
+      "y_blk4_total": 4800,
+      "y_pixel_exact": 52969,
+      "y_pixel_total": 76800,
+      "y_mae": 19.511953125,
+      "y_max_abs": 218,
+      "y_first_bad": {
+        "x": 0,
+        "y": 0,
+        "got": 73,
+        "ref": 80,
+        "abs": 7
+      }
+    },
+    {
+      "frame_index": 3,
+      "y_mb_exact": 167,
+      "y_mb_total": 300,
+      "y_blk4_exact": 3149,
+      "y_blk4_total": 4800,
+      "y_pixel_exact": 50924,
+      "y_pixel_total": 76800,
+      "y_mae": 21.583268229166666,
+      "y_max_abs": 223,
+      "y_first_bad": {
+        "x": 0,
+        "y": 0,
+        "got": 73,
+        "ref": 80,
+        "abs": 7
+      }
+    },
+    {
+      "frame_index": 4,
+      "y_mb_exact": 164,
+      "y_mb_total": 300,
+      "y_blk4_exact": 3042,
+      "y_blk4_total": 4800,
+      "y_pixel_exact": 49259,
+      "y_pixel_total": 76800,
+      "y_mae": 22.459817708333333,
+      "y_max_abs": 220,
+      "y_first_bad": {
+        "x": 0,
+        "y": 0,
+        "got": 73,
+        "ref": 80,
+        "abs": 7
+      }
+    },
+    {
+      "frame_index": 5,
+      "y_mb_exact": 160,
+      "y_mb_total": 300,
+      "y_blk4_exact": 2984,
+      "y_blk4_total": 4800,
+      "y_pixel_exact": 48464,
+      "y_pixel_total": 76800,
+      "y_mae": 22.552786458333333,
+      "y_max_abs": 216,
+      "y_first_bad": {
+        "x": 0,
+        "y": 0,
+        "got": 73,
+        "ref": 80,
+        "abs": 7
+      }
+    },
+    {
+      "frame_index": 6,
+      "y_mb_exact": 154,
+      "y_mb_total": 300,
+      "y_blk4_exact": 2915,
+      "y_blk4_total": 4800,
+      "y_pixel_exact": 47373,
+      "y_pixel_total": 76800,
+      "y_mae": 22.735716145833333,
+      "y_max_abs": 211,
+      "y_first_bad": {
+        "x": 0,
+        "y": 0,
+        "got": 73,
+        "ref": 80,
+        "abs": 7
+      }
+    },
+    {
+      "frame_index": 7,
+      "y_mb_exact": 144,
+      "y_mb_total": 300,
+      "y_blk4_exact": 2829,
+      "y_blk4_total": 4800,
+      "y_pixel_exact": 46265,
+      "y_pixel_total": 76800,
+      "y_mae": 23.032395833333332,
+      "y_max_abs": 214,
+      "y_first_bad": {
+        "x": 0,
+        "y": 0,
+        "got": 73,
+        "ref": 80,
+        "abs": 7
+      }
+    },
+    {
+      "frame_index": 8,
+      "y_mb_exact": 140,
+      "y_mb_total": 300,
+      "y_blk4_exact": 2773,
+      "y_blk4_total": 4800,
+      "y_pixel_exact": 45382,
+      "y_pixel_total": 76800,
+      "y_mae": 23.150729166666668,
+      "y_max_abs": 217,
+      "y_first_bad": {
+        "x": 0,
+        "y": 0,
+        "got": 73,
+        "ref": 80,
+        "abs": 7
+      }
+    },
+    {
+      "frame_index": 9,
+      "y_mb_exact": 136,
+      "y_mb_total": 300,
+      "y_blk4_exact": 2692,
+      "y_blk4_total": 4800,
+      "y_pixel_exact": 44178,
+      "y_pixel_total": 76800,
+      "y_mae": 23.26364583333333,
+      "y_max_abs": 217,
+      "y_first_bad": {
+        "x": 0,
+        "y": 0,
+        "got": 73,
+        "ref": 80,
+        "abs": 7
+      }
+    },
+    {
+      "frame_index": 10,
+      "y_mb_exact": 131,
+      "y_mb_total": 300,
+      "y_blk4_exact": 2626,
+      "y_blk4_total": 4800,
+      "y_pixel_exact": 43044,
+      "y_pixel_total": 76800,
+      "y_mae": 23.484518229166667,
+      "y_max_abs": 217,
+      "y_first_bad": {
+        "x": 0,
+        "y": 0,
+        "got": 73,
+        "ref": 80,
+        "abs": 7
+      }
+    },
+    {
+      "frame_index": 11,
+      "y_mb_exact": 126,
+      "y_mb_total": 300,
+      "y_blk4_exact": 2584,
+      "y_blk4_total": 4800,
+      "y_pixel_exact": 42400,
+      "y_pixel_total": 76800,
+      "y_mae": 23.586484375,
+      "y_max_abs": 214,
+      "y_first_bad": {
+        "x": 0,
+        "y": 0,
+        "got": 73,
+        "ref": 80,
+        "abs": 7
+      }
+    }
+  ]
+}

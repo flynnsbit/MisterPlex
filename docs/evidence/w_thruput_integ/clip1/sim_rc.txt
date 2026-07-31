@@ -1,0 +1,2 @@
+sim true rc=0
+luma_score true rc=0

@@ -1,0 +1,1197 @@
+RTL SIM: using Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
+PRE-REGISTER: mvd_x=16 qpel → fetch_mv=(16,0) luma_origin_x=4; zero-MV fault RED.
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:189:56: Operator SUB expects 32 bits on the LHS, but LHS's SIGNED generates 9 bits.
+                                                                                                                                        : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i16'
+  189 |    ht[gi] = (gi + 1) * ($signed({1'b0, above[8 + gi]}) - ((gi == 7) ? $signed({1'b0, top_left}) : $signed({1'b0, above[6 - gi]})));
+      |                                                        ^
+                      ... For warning description see https://verilator.org/warn/WIDTHEXPAND?v=5.051
+                      ... Use "/* verilator lint_off WIDTHEXPAND */" and lint_on around source to disable this message.
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:189:69: Operator COND expects 32 bits on the Conditional True, but Conditional True's SIGNED generates 9 bits.
+                                                                                                                                        : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i16'
+  189 |    ht[gi] = (gi + 1) * ($signed({1'b0, above[8 + gi]}) - ((gi == 7) ? $signed({1'b0, top_left}) : $signed({1'b0, above[6 - gi]})));
+      |                                                                     ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:189:69: Operator COND expects 32 bits on the Conditional False, but Conditional False's SIGNED generates 9 bits.
+                                                                                                                                        : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i16'
+  189 |    ht[gi] = (gi + 1) * ($signed({1'b0, above[8 + gi]}) - ((gi == 7) ? $signed({1'b0, top_left}) : $signed({1'b0, above[6 - gi]})));
+      |                                                                     ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:190:56: Operator SUB expects 32 bits on the LHS, but LHS's SIGNED generates 9 bits.
+                                                                                                                                        : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i16'
+  190 |    vt[gi] = (gi + 1) * ($signed({1'b0, left[8 + gi]})  - ((gi == 7) ? $signed({1'b0, top_left}) : $signed({1'b0, left[6 - gi]})));
+      |                                                        ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:190:69: Operator COND expects 32 bits on the Conditional True, but Conditional True's SIGNED generates 9 bits.
+                                                                                                                                        : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i16'
+  190 |    vt[gi] = (gi + 1) * ($signed({1'b0, left[8 + gi]})  - ((gi == 7) ? $signed({1'b0, top_left}) : $signed({1'b0, left[6 - gi]})));
+      |                                                                     ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:190:69: Operator COND expects 32 bits on the Conditional False, but Conditional False's SIGNED generates 9 bits.
+                                                                                                                                        : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i16'
+  190 |    vt[gi] = (gi + 1) * ($signed({1'b0, left[8 + gi]})  - ((gi == 7) ? $signed({1'b0, top_left}) : $signed({1'b0, left[6 - gi]})));
+      |                                                                     ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:195:42: Operator ADD expects 32 bits on the LHS, but LHS's SIGNED generates 9 bits.
+                                                                                                                                        : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i16'
+  195 |   a_c = 16 * ($signed({1'b0, above[15]}) + $signed({1'b0, left[15]}));
+      |                                          ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:195:42: Operator ADD expects 32 bits on the RHS, but RHS's SIGNED generates 9 bits.
+                                                                                                                                        : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i16'
+  195 |   a_c = 16 * ($signed({1'b0, above[15]}) + $signed({1'b0, left[15]}));
+      |                                          ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:212:26: Operator ADD expects 32 bits on the LHS, but LHS's SIGNED generates 16 bits.
+                                                                                                                                        : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i16'
+  212 |      val = ($signed(a_r) + $signed(bx_r[x]) + $signed(cy_r[y]) + 16) >>> 5;
+      |                          ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:212:26: Operator ADD expects 32 bits on the RHS, but RHS's SIGNED generates 16 bits.
+                                                                                                                                        : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i16'
+  212 |      val = ($signed(a_r) + $signed(bx_r[x]) + $signed(cy_r[y]) + 16) >>> 5;
+      |                          ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:212:45: Operator ADD expects 32 bits on the RHS, but RHS's SIGNED generates 16 bits.
+                                                                                                                                        : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i16'
+  212 |      val = ($signed(a_r) + $signed(bx_r[x]) + $signed(cy_r[y]) + 16) >>> 5;
+      |                                             ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:224:15: Operator ASSIGNDLY expects 16 bits on the Assign RHS, but Assign RHS's MULS generates 32 bits.
+                                                                                                                                       : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i16'
+  224 |       bx_r[i] <= b_c * (i - 7);
+      |               ^~
+                     ... For warning description see https://verilator.org/warn/WIDTHTRUNC?v=5.051
+                     ... Use "/* verilator lint_off WIDTHTRUNC */" and lint_on around source to disable this message.
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:225:15: Operator ASSIGNDLY expects 16 bits on the Assign RHS, but Assign RHS's MULS generates 32 bits.
+                                                                                                                                       : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i16'
+  225 |       cy_r[i] <= c_c * (i - 7);
+      |               ^~
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:242:23: Operator ADD expects 32 bits on the LHS, but LHS's ARRAYSEL generates 8 bits.
+                                                                                                                                        : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i16'
+  242 |     sa_lo = ((above[0]+above[1]) + (above[2]+above[3]))
+      |                       ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:242:23: Operator ADD expects 32 bits on the RHS, but RHS's ARRAYSEL generates 8 bits.
+                                                                                                                                        : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i16'
+  242 |     sa_lo = ((above[0]+above[1]) + (above[2]+above[3]))
+      |                       ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:242:45: Operator ADD expects 32 bits on the LHS, but LHS's ARRAYSEL generates 8 bits.
+                                                                                                                                        : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i16'
+  242 |     sa_lo = ((above[0]+above[1]) + (above[2]+above[3]))
+      |                                             ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:242:45: Operator ADD expects 32 bits on the RHS, but RHS's ARRAYSEL generates 8 bits.
+                                                                                                                                        : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i16'
+  242 |     sa_lo = ((above[0]+above[1]) + (above[2]+above[3]))
+      |                                             ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:243:23: Operator ADD expects 32 bits on the LHS, but LHS's ARRAYSEL generates 8 bits.
+                                                                                                                                        : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i16'
+  243 |           + ((above[4]+above[5]) + (above[6]+above[7]));
+      |                       ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:243:23: Operator ADD expects 32 bits on the RHS, but RHS's ARRAYSEL generates 8 bits.
+                                                                                                                                        : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i16'
+  243 |           + ((above[4]+above[5]) + (above[6]+above[7]));
+      |                       ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:243:45: Operator ADD expects 32 bits on the LHS, but LHS's ARRAYSEL generates 8 bits.
+                                                                                                                                        : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i16'
+  243 |           + ((above[4]+above[5]) + (above[6]+above[7]));
+      |                                             ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:243:45: Operator ADD expects 32 bits on the RHS, but RHS's ARRAYSEL generates 8 bits.
+                                                                                                                                        : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i16'
+  243 |           + ((above[4]+above[5]) + (above[6]+above[7]));
+      |                                             ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:244:23: Operator ADD expects 32 bits on the LHS, but LHS's ARRAYSEL generates 8 bits.
+                                                                                                                                        : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i16'
+  244 |     sa_hi = ((above[8]+above[9]) + (above[10]+above[11]))
+      |                       ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:244:23: Operator ADD expects 32 bits on the RHS, but RHS's ARRAYSEL generates 8 bits.
+                                                                                                                                        : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i16'
+  244 |     sa_hi = ((above[8]+above[9]) + (above[10]+above[11]))
+      |                       ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:244:46: Operator ADD expects 32 bits on the LHS, but LHS's ARRAYSEL generates 8 bits.
+                                                                                                                                        : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i16'
+  244 |     sa_hi = ((above[8]+above[9]) + (above[10]+above[11]))
+      |                                              ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:244:46: Operator ADD expects 32 bits on the RHS, but RHS's ARRAYSEL generates 8 bits.
+                                                                                                                                        : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i16'
+  244 |     sa_hi = ((above[8]+above[9]) + (above[10]+above[11]))
+      |                                              ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:245:24: Operator ADD expects 32 bits on the LHS, but LHS's ARRAYSEL generates 8 bits.
+                                                                                                                                        : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i16'
+  245 |           + ((above[12]+above[13]) + (above[14]+above[15]));
+      |                        ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:245:24: Operator ADD expects 32 bits on the RHS, but RHS's ARRAYSEL generates 8 bits.
+                                                                                                                                        : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i16'
+  245 |           + ((above[12]+above[13]) + (above[14]+above[15]));
+      |                        ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:245:48: Operator ADD expects 32 bits on the LHS, but LHS's ARRAYSEL generates 8 bits.
+                                                                                                                                        : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i16'
+  245 |           + ((above[12]+above[13]) + (above[14]+above[15]));
+      |                                                ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:245:48: Operator ADD expects 32 bits on the RHS, but RHS's ARRAYSEL generates 8 bits.
+                                                                                                                                        : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i16'
+  245 |           + ((above[12]+above[13]) + (above[14]+above[15]));
+      |                                                ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:246:22: Operator ADD expects 32 bits on the LHS, but LHS's ARRAYSEL generates 8 bits.
+                                                                                                                                        : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i16'
+  246 |     sl_lo = ((left[0]+left[1]) + (left[2]+left[3]))
+      |                      ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:246:22: Operator ADD expects 32 bits on the RHS, but RHS's ARRAYSEL generates 8 bits.
+                                                                                                                                        : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i16'
+  246 |     sl_lo = ((left[0]+left[1]) + (left[2]+left[3]))
+      |                      ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:246:42: Operator ADD expects 32 bits on the LHS, but LHS's ARRAYSEL generates 8 bits.
+                                                                                                                                        : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i16'
+  246 |     sl_lo = ((left[0]+left[1]) + (left[2]+left[3]))
+      |                                          ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:246:42: Operator ADD expects 32 bits on the RHS, but RHS's ARRAYSEL generates 8 bits.
+                                                                                                                                        : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i16'
+  246 |     sl_lo = ((left[0]+left[1]) + (left[2]+left[3]))
+      |                                          ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:247:22: Operator ADD expects 32 bits on the LHS, but LHS's ARRAYSEL generates 8 bits.
+                                                                                                                                        : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i16'
+  247 |           + ((left[4]+left[5]) + (left[6]+left[7]));
+      |                      ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:247:22: Operator ADD expects 32 bits on the RHS, but RHS's ARRAYSEL generates 8 bits.
+                                                                                                                                        : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i16'
+  247 |           + ((left[4]+left[5]) + (left[6]+left[7]));
+      |                      ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:247:42: Operator ADD expects 32 bits on the LHS, but LHS's ARRAYSEL generates 8 bits.
+                                                                                                                                        : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i16'
+  247 |           + ((left[4]+left[5]) + (left[6]+left[7]));
+      |                                          ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:247:42: Operator ADD expects 32 bits on the RHS, but RHS's ARRAYSEL generates 8 bits.
+                                                                                                                                        : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i16'
+  247 |           + ((left[4]+left[5]) + (left[6]+left[7]));
+      |                                          ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:248:22: Operator ADD expects 32 bits on the LHS, but LHS's ARRAYSEL generates 8 bits.
+                                                                                                                                        : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i16'
+  248 |     sl_hi = ((left[8]+left[9]) + (left[10]+left[11]))
+      |                      ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:248:22: Operator ADD expects 32 bits on the RHS, but RHS's ARRAYSEL generates 8 bits.
+                                                                                                                                        : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i16'
+  248 |     sl_hi = ((left[8]+left[9]) + (left[10]+left[11]))
+      |                      ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:248:43: Operator ADD expects 32 bits on the LHS, but LHS's ARRAYSEL generates 8 bits.
+                                                                                                                                        : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i16'
+  248 |     sl_hi = ((left[8]+left[9]) + (left[10]+left[11]))
+      |                                           ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:248:43: Operator ADD expects 32 bits on the RHS, but RHS's ARRAYSEL generates 8 bits.
+                                                                                                                                        : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i16'
+  248 |     sl_hi = ((left[8]+left[9]) + (left[10]+left[11]))
+      |                                           ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:249:23: Operator ADD expects 32 bits on the LHS, but LHS's ARRAYSEL generates 8 bits.
+                                                                                                                                        : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i16'
+  249 |           + ((left[12]+left[13]) + (left[14]+left[15]));
+      |                       ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:249:23: Operator ADD expects 32 bits on the RHS, but RHS's ARRAYSEL generates 8 bits.
+                                                                                                                                        : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i16'
+  249 |           + ((left[12]+left[13]) + (left[14]+left[15]));
+      |                       ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:249:45: Operator ADD expects 32 bits on the LHS, but LHS's ARRAYSEL generates 8 bits.
+                                                                                                                                        : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i16'
+  249 |           + ((left[12]+left[13]) + (left[14]+left[15]));
+      |                                             ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:249:45: Operator ADD expects 32 bits on the RHS, but RHS's ARRAYSEL generates 8 bits.
+                                                                                                                                        : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i16'
+  249 |           + ((left[12]+left[13]) + (left[14]+left[15]));
+      |                                             ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:254:37: Operator ASSIGN expects 8 bits on the Assign RHS, but Assign RHS's SHIFTRS generates 32 bits.
+                                                                                                                                       : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i16'
+  254 |     if (has_above && has_left) dc_v = (sum + 16) >>> 5;
+      |                                     ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:255:42: Operator ASSIGN expects 8 bits on the Assign RHS, but Assign RHS's SHIFTRS generates 32 bits.
+                                                                                                                                       : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i16'
+  255 |     else if (has_above || has_left) dc_v = (sum + 8) >>> 4;
+      |                                          ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:51:6: Operator ASSIGN expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 8 bits.
+                                                                                                                                      : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i4'
+   51 |   t0 = above[0]; t1 = above[1]; t2 = above[2]; t3 = above[3];
+      |      ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:51:21: Operator ASSIGN expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 8 bits.
+                                                                                                                                       : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i4'
+   51 |   t0 = above[0]; t1 = above[1]; t2 = above[2]; t3 = above[3];
+      |                     ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:51:36: Operator ASSIGN expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 8 bits.
+                                                                                                                                       : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i4'
+   51 |   t0 = above[0]; t1 = above[1]; t2 = above[2]; t3 = above[3];
+      |                                    ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:51:51: Operator ASSIGN expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 8 bits.
+                                                                                                                                       : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i4'
+   51 |   t0 = above[0]; t1 = above[1]; t2 = above[2]; t3 = above[3];
+      |                                                   ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:52:6: Operator ASSIGN expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 8 bits.
+                                                                                                                                      : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i4'
+   52 |   t4 = above[4]; t5 = above[5]; t6 = above[6]; t7 = above[7];
+      |      ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:52:21: Operator ASSIGN expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 8 bits.
+                                                                                                                                       : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i4'
+   52 |   t4 = above[4]; t5 = above[5]; t6 = above[6]; t7 = above[7];
+      |                     ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:52:36: Operator ASSIGN expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 8 bits.
+                                                                                                                                       : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i4'
+   52 |   t4 = above[4]; t5 = above[5]; t6 = above[6]; t7 = above[7];
+      |                                    ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:52:51: Operator ASSIGN expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 8 bits.
+                                                                                                                                       : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i4'
+   52 |   t4 = above[4]; t5 = above[5]; t6 = above[6]; t7 = above[7];
+      |                                                   ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:53:6: Operator ASSIGN expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 8 bits.
+                                                                                                                                      : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i4'
+   53 |   l0 = left[0];  l1 = left[1];  l2 = left[2];  l3 = left[3];
+      |      ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:53:21: Operator ASSIGN expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 8 bits.
+                                                                                                                                       : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i4'
+   53 |   l0 = left[0];  l1 = left[1];  l2 = left[2];  l3 = left[3];
+      |                     ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:53:36: Operator ASSIGN expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 8 bits.
+                                                                                                                                       : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i4'
+   53 |   l0 = left[0];  l1 = left[1];  l2 = left[2];  l3 = left[3];
+      |                                    ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:53:51: Operator ASSIGN expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 8 bits.
+                                                                                                                                       : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i4'
+   53 |   l0 = left[0];  l1 = left[1];  l2 = left[2];  l3 = left[3];
+      |                                                   ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:66:52: Operator ADD expects 32 bits on the RHS, but RHS's CONST '10'h4' generates 10 bits.
+                                                                                                                                       : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i4'
+   66 |     dc_sum = t0 + t1 + t2 + t3 + l0 + l1 + l2 + l3 + 10'd4;
+      |                                                    ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:67:10: Operator ASSIGN expects 8 bits on the Assign RHS, but Assign RHS's SHIFTRS generates 32 bits.
+                                                                                                                                      : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i4'
+   67 |     dc_v = dc_sum >>> 3;
+      |          ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:69:32: Operator ADD expects 32 bits on the RHS, but RHS's CONST '10'h2' generates 10 bits.
+                                                                                                                                       : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i4'
+   69 |     dc_sum = t0 + t1 + t2 + t3 + 10'd2;
+      |                                ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:70:10: Operator ASSIGN expects 8 bits on the Assign RHS, but Assign RHS's SHIFTRS generates 32 bits.
+                                                                                                                                      : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i4'
+   70 |     dc_v = dc_sum >>> 2;
+      |          ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:72:32: Operator ADD expects 32 bits on the RHS, but RHS's CONST '10'h2' generates 10 bits.
+                                                                                                                                       : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i4'
+   72 |     dc_sum = l0 + l1 + l2 + l3 + 10'd2;
+      |                                ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:73:10: Operator ASSIGN expects 8 bits on the Assign RHS, but Assign RHS's SHIFTRS generates 32 bits.
+                                                                                                                                      : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i4'
+   73 |     dc_v = dc_sum >>> 2;
+      |          ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:91:27: Operator ADD expects 32 bits on the RHS, but RHS's VARREF 'top_left' generates 8 bits.
+                                                                                                                                       : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i4'
+   91 |    put(0, 1, (l1 + 2 * l0 + top_left + 2) >>> 2); put(1, 2, (l1 + 2 * l0 + top_left + 2) >>> 2); put(2, 3, (l1 + 2 * l0 + top_left + 2) >>> 2);
+      |                           ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:91:74: Operator ADD expects 32 bits on the RHS, but RHS's VARREF 'top_left' generates 8 bits.
+                                                                                                                                       : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i4'
+   91 |    put(0, 1, (l1 + 2 * l0 + top_left + 2) >>> 2); put(1, 2, (l1 + 2 * l0 + top_left + 2) >>> 2); put(2, 3, (l1 + 2 * l0 + top_left + 2) >>> 2);
+      |                                                                          ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:91:121: Operator ADD expects 32 bits on the RHS, but RHS's VARREF 'top_left' generates 8 bits.
+                                                                                                                                        : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i4'
+   91 |    put(0, 1, (l1 + 2 * l0 + top_left + 2) >>> 2); put(1, 2, (l1 + 2 * l0 + top_left + 2) >>> 2); put(2, 3, (l1 + 2 * l0 + top_left + 2) >>> 2);
+      |                                                                                                                         ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:93:24: Operator ADD expects 32 bits on the LHS, but LHS's VARREF 'top_left' generates 8 bits.
+                                                                                                                                       : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i4'
+   93 |    put(1, 0, (top_left + 2 * t0 + t1 + 2) >>> 2); put(2, 1, (top_left + 2 * t0 + t1 + 2) >>> 2); put(3, 2, (top_left + 2 * t0 + t1 + 2) >>> 2);
+      |                        ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:93:71: Operator ADD expects 32 bits on the LHS, but LHS's VARREF 'top_left' generates 8 bits.
+                                                                                                                                       : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i4'
+   93 |    put(1, 0, (top_left + 2 * t0 + t1 + 2) >>> 2); put(2, 1, (top_left + 2 * t0 + t1 + 2) >>> 2); put(3, 2, (top_left + 2 * t0 + t1 + 2) >>> 2);
+      |                                                                       ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:93:118: Operator ADD expects 32 bits on the LHS, but LHS's VARREF 'top_left' generates 8 bits.
+                                                                                                                                        : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i4'
+   93 |    put(1, 0, (top_left + 2 * t0 + t1 + 2) >>> 2); put(2, 1, (top_left + 2 * t0 + t1 + 2) >>> 2); put(3, 2, (top_left + 2 * t0 + t1 + 2) >>> 2);
+      |                                                                                                                      ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:98:24: Operator ADD expects 32 bits on the LHS, but LHS's VARREF 'top_left' generates 8 bits.
+                                                                                                                                       : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i4'
+   98 |    put(0, 0, (top_left + t0 + 1) >>> 1); put(1, 2, (top_left + t0 + 1) >>> 1);
+      |                        ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:98:62: Operator ADD expects 32 bits on the LHS, but LHS's VARREF 'top_left' generates 8 bits.
+                                                                                                                                       : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i4'
+   98 |    put(0, 0, (top_left + t0 + 1) >>> 1); put(1, 2, (top_left + t0 + 1) >>> 1);
+      |                                                              ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:103:24: Operator ADD expects 32 bits on the LHS, but LHS's VARREF 'top_left' generates 8 bits.
+                                                                                                                                        : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i4'
+  103 |    put(1, 1, (top_left + 2 * t0 + t1 + 2) >>> 2); put(2, 3, (top_left + 2 * t0 + t1 + 2) >>> 2);
+      |                        ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:103:71: Operator ADD expects 32 bits on the LHS, but LHS's VARREF 'top_left' generates 8 bits.
+                                                                                                                                        : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i4'
+  103 |    put(1, 1, (top_left + 2 * t0 + t1 + 2) >>> 2); put(2, 3, (top_left + 2 * t0 + t1 + 2) >>> 2);
+      |                                                                       ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:106:24: Operator ADD expects 32 bits on the LHS, but LHS's VARREF 'top_left' generates 8 bits.
+                                                                                                                                        : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i4'
+  106 |    put(0, 2, (top_left + 2 * l0 + l1 + 2) >>> 2); put(0, 3, (l0 + 2 * l1 + l2 + 2) >>> 2);
+      |                        ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:109:24: Operator ADD expects 32 bits on the LHS, but LHS's VARREF 'top_left' generates 8 bits.
+                                                                                                                                        : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i4'
+  109 |    put(0, 0, (top_left + l0 + 1) >>> 1); put(2, 1, (top_left + l0 + 1) >>> 1);
+      |                        ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:109:62: Operator ADD expects 32 bits on the LHS, but LHS's VARREF 'top_left' generates 8 bits.
+                                                                                                                                        : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i4'
+  109 |    put(0, 0, (top_left + l0 + 1) >>> 1); put(2, 1, (top_left + l0 + 1) >>> 1);
+      |                                                              ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:111:24: Operator ADD expects 32 bits on the LHS, but LHS's VARREF 'top_left' generates 8 bits.
+                                                                                                                                        : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i4'
+  111 |    put(2, 0, (top_left + 2 * t0 + t1 + 2) >>> 2); put(3, 0, (t0 + 2 * t1 + t2 + 2) >>> 2);
+      |                        ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:113:24: Operator ADD expects 32 bits on the LHS, but LHS's VARREF 'top_left' generates 8 bits.
+                                                                                                                                        : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i4'
+  113 |    put(1, 1, (top_left + 2 * l0 + l1 + 2) >>> 2); put(3, 2, (top_left + 2 * l0 + l1 + 2) >>> 2);
+      |                        ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:113:71: Operator ADD expects 32 bits on the LHS, but LHS's VARREF 'top_left' generates 8 bits.
+                                                                                                                                        : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i4'
+  113 |    put(1, 1, (top_left + 2 * l0 + l1 + 2) >>> 2); put(3, 2, (top_left + 2 * l0 + l1 + 2) >>> 2);
+      |                                                                       ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_dequant4x4_serial.sv:87:9: Operator ASSIGN expects 3 bits on the Assign RHS, but Assign RHS's MODDIV generates 32 or 6 bits.
+                                                                                                                                            : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_dq'
+   87 |    qmod = q % 6;
+      |         ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_dequant4x4_serial.sv:88:9: Operator ASSIGN expects 4 bits on the Assign RHS, but Assign RHS's DIV generates 32 or 6 bits.
+                                                                                                                                            : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_dq'
+   88 |    qdiv = q / 6;
+      |         ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_i16_dc_hadamard_serial.sv:65:7: Operator ASSIGN expects 32 bits on the Assign RHS, but Assign RHS's FUNCREF 'zz' generates 4 bits.
+                                                                                                                                                  : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_had'
+   65 |    zi = zz(i[3:0]);
+      |       ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_i16_dc_hadamard_serial.sv:66:7: Operator ASSIGN expects 32 bits on the Assign RHS, but Assign RHS's FUNCREF 'transpose4' generates 4 bits.
+                                                                                                                                                  : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_had'
+   66 |    tr = transpose4(zi[3:0]);
+      |       ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_i16_dc_hadamard_serial.sv:67:17: Operator ASSIGN expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 16 bits.
+                                                                                                                                                   : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_had'
+   67 |    input_cm[tr] = c_r[i];
+      |                 ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_i16_dc_hadamard_serial.sv:91:18: Operator ASSIGNW expects 3 bits on the Assign RHS, but Assign RHS's MODDIV generates 32 or 6 bits.
+                                                                                                                                                  : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_had'
+   91 |  wire [2:0] qmod = qp_r % 6;
+      |                  ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_i16_dc_hadamard_serial.sv:92:18: Operator ASSIGNW expects 4 bits on the Assign RHS, but Assign RHS's DIV generates 32 or 6 bits.
+                                                                                                                                                  : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_had'
+   92 |  wire [3:0] qdiv = qp_r / 6;
+      |                  ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_i16_dc_hadamard_serial.sv:96:29: Operator ASSIGNW expects 32 bits on the Assign RHS, but Assign RHS's SHIFTRS generates 64 bits.
+                                                                                                                                                  : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_had'
+   96 |  wire signed [31:0] dc_lane = (scaled_full + 64'sd128) >>> 8;
+      |                             ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:231:53: Operator ADD expects 30 bits on the LHS, but LHS's SIGNED generates 9 bits.
+                                                                                                                                         : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_recon'
+  231 |  assign recon[0]  = clip8($signed({1'b0, pred[0]})  + residual[0]);
+      |                                                     ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:232:53: Operator ADD expects 30 bits on the LHS, but LHS's SIGNED generates 9 bits.
+                                                                                                                                         : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_recon'
+  232 |  assign recon[1]  = clip8($signed({1'b0, pred[1]})  + residual[1]);
+      |                                                     ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:233:53: Operator ADD expects 30 bits on the LHS, but LHS's SIGNED generates 9 bits.
+                                                                                                                                         : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_recon'
+  233 |  assign recon[2]  = clip8($signed({1'b0, pred[2]})  + residual[2]);
+      |                                                     ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:234:53: Operator ADD expects 30 bits on the LHS, but LHS's SIGNED generates 9 bits.
+                                                                                                                                         : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_recon'
+  234 |  assign recon[3]  = clip8($signed({1'b0, pred[3]})  + residual[3]);
+      |                                                     ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:235:53: Operator ADD expects 30 bits on the LHS, but LHS's SIGNED generates 9 bits.
+                                                                                                                                         : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_recon'
+  235 |  assign recon[4]  = clip8($signed({1'b0, pred[4]})  + residual[4]);
+      |                                                     ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:236:53: Operator ADD expects 30 bits on the LHS, but LHS's SIGNED generates 9 bits.
+                                                                                                                                         : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_recon'
+  236 |  assign recon[5]  = clip8($signed({1'b0, pred[5]})  + residual[5]);
+      |                                                     ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:237:53: Operator ADD expects 30 bits on the LHS, but LHS's SIGNED generates 9 bits.
+                                                                                                                                         : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_recon'
+  237 |  assign recon[6]  = clip8($signed({1'b0, pred[6]})  + residual[6]);
+      |                                                     ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:238:53: Operator ADD expects 30 bits on the LHS, but LHS's SIGNED generates 9 bits.
+                                                                                                                                         : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_recon'
+  238 |  assign recon[7]  = clip8($signed({1'b0, pred[7]})  + residual[7]);
+      |                                                     ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:239:53: Operator ADD expects 30 bits on the LHS, but LHS's SIGNED generates 9 bits.
+                                                                                                                                         : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_recon'
+  239 |  assign recon[8]  = clip8($signed({1'b0, pred[8]})  + residual[8]);
+      |                                                     ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:240:53: Operator ADD expects 30 bits on the LHS, but LHS's SIGNED generates 9 bits.
+                                                                                                                                         : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_recon'
+  240 |  assign recon[9]  = clip8($signed({1'b0, pred[9]})  + residual[9]);
+      |                                                     ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:241:53: Operator ADD expects 30 bits on the LHS, but LHS's SIGNED generates 9 bits.
+                                                                                                                                         : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_recon'
+  241 |  assign recon[10] = clip8($signed({1'b0, pred[10]}) + residual[10]);
+      |                                                     ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:242:53: Operator ADD expects 30 bits on the LHS, but LHS's SIGNED generates 9 bits.
+                                                                                                                                         : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_recon'
+  242 |  assign recon[11] = clip8($signed({1'b0, pred[11]}) + residual[11]);
+      |                                                     ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:243:53: Operator ADD expects 30 bits on the LHS, but LHS's SIGNED generates 9 bits.
+                                                                                                                                         : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_recon'
+  243 |  assign recon[12] = clip8($signed({1'b0, pred[12]}) + residual[12]);
+      |                                                     ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:244:53: Operator ADD expects 30 bits on the LHS, but LHS's SIGNED generates 9 bits.
+                                                                                                                                         : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_recon'
+  244 |  assign recon[13] = clip8($signed({1'b0, pred[13]}) + residual[13]);
+      |                                                     ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:245:53: Operator ADD expects 30 bits on the LHS, but LHS's SIGNED generates 9 bits.
+                                                                                                                                         : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_recon'
+  245 |  assign recon[14] = clip8($signed({1'b0, pred[14]}) + residual[14]);
+      |                                                     ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:246:53: Operator ADD expects 30 bits on the LHS, but LHS's SIGNED generates 9 bits.
+                                                                                                                                         : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_recon'
+  246 |  assign recon[15] = clip8($signed({1'b0, pred[15]}) + residual[15]);
+      |                                                     ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:167:38: Operator ADD expects 32 bits on the LHS, but LHS's ARRAYSEL generates 29 bits.
+                                                                                                                                         : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_idct'
+  167 |  wire signed [31:0] b0  = dequant[0] + 29'sd32;
+      |                                      ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:167:38: Operator ADD expects 32 bits on the RHS, but RHS's CONST '29'sh20' generates 29 bits.
+                                                                                                                                         : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_idct'
+  167 |  wire signed [31:0] b0  = dequant[0] + 29'sd32;
+      |                                      ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:168:25: Operator ASSIGNW expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 29 bits.
+                                                                                                                                         : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_idct'
+  168 |  wire signed [31:0] b1  = dequant[1];
+      |                         ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:169:25: Operator ASSIGNW expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 29 bits.
+                                                                                                                                         : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_idct'
+  169 |  wire signed [31:0] b2  = dequant[2];
+      |                         ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:170:25: Operator ASSIGNW expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 29 bits.
+                                                                                                                                         : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_idct'
+  170 |  wire signed [31:0] b3  = dequant[3];
+      |                         ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:171:25: Operator ASSIGNW expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 29 bits.
+                                                                                                                                         : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_idct'
+  171 |  wire signed [31:0] b4  = dequant[4];
+      |                         ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:172:25: Operator ASSIGNW expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 29 bits.
+                                                                                                                                         : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_idct'
+  172 |  wire signed [31:0] b5  = dequant[5];
+      |                         ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:173:25: Operator ASSIGNW expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 29 bits.
+                                                                                                                                         : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_idct'
+  173 |  wire signed [31:0] b6  = dequant[6];
+      |                         ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:174:25: Operator ASSIGNW expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 29 bits.
+                                                                                                                                         : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_idct'
+  174 |  wire signed [31:0] b7  = dequant[7];
+      |                         ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:175:25: Operator ASSIGNW expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 29 bits.
+                                                                                                                                         : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_idct'
+  175 |  wire signed [31:0] b8  = dequant[8];
+      |                         ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:176:25: Operator ASSIGNW expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 29 bits.
+                                                                                                                                         : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_idct'
+  176 |  wire signed [31:0] b9  = dequant[9];
+      |                         ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:177:25: Operator ASSIGNW expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 29 bits.
+                                                                                                                                         : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_idct'
+  177 |  wire signed [31:0] b10 = dequant[10];
+      |                         ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:178:25: Operator ASSIGNW expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 29 bits.
+                                                                                                                                         : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_idct'
+  178 |  wire signed [31:0] b11 = dequant[11];
+      |                         ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:179:25: Operator ASSIGNW expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 29 bits.
+                                                                                                                                         : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_idct'
+  179 |  wire signed [31:0] b12 = dequant[12];
+      |                         ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:180:25: Operator ASSIGNW expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 29 bits.
+                                                                                                                                         : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_idct'
+  180 |  wire signed [31:0] b13 = dequant[13];
+      |                         ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:181:25: Operator ASSIGNW expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 29 bits.
+                                                                                                                                         : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_idct'
+  181 |  wire signed [31:0] b14 = dequant[14];
+      |                         ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:182:25: Operator ASSIGNW expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 29 bits.
+                                                                                                                                         : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_idct'
+  182 |  wire signed [31:0] b15 = dequant[15];
+      |                         ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_i_res_recon_sink.sv:164:19: Operator ASSIGNW expects 5 bits on the Assign RHS, but Assign RHS's REPLICATE generates 4 bits.
+                                                                                                                                              : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink'
+  164 |  wire [4:0] i4_x0 = {i4_bx, 2'b00};
+      |                   ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_i_res_recon_sink.sv:165:19: Operator ASSIGNW expects 5 bits on the Assign RHS, but Assign RHS's REPLICATE generates 4 bits.
+                                                                                                                                              : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink'
+  165 |  wire [4:0] i4_y0 = {i4_by, 2'b00};
+      |                   ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_i_res_recon_sink.sv:202:27: Bit extraction of array[1023:0] requires 10 bit index, not 16 bits.
+                                                                                                                                             : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink'
+  202 |      i4_above[t] = top_row[abs_x0 + t[15:0]];
+      |                           ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_i_res_recon_sink.sv:205:31: Bit extraction of array[1023:0] requires 10 bit index, not 16 bits.
+                                                                                                                                             : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink'
+  205 |      i4_above[4 + t] = top_row[abs_x0 + 16'd4 + t[15:0]];
+      |                               ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_i_res_recon_sink.sv:218:26: Bit extraction of array[15:0] requires 4 bit index, not 5 bits.
+                                                                                                                                             : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink'
+  218 |     i4_left[t] = left_col[i4_y0 + t[4:0]];
+      |                          ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_i_res_recon_sink.sv:225:35: Bit extraction of array[1023:0] requires 10 bit index, not 16 bits.
+                                                                                                                                             : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink'
+  225 |     i4_tl = (abs_x0 > 0) ? top_row[abs_x0 - 16'd1] : 8'd128;
+      |                                   ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_i_res_recon_sink.sv:227:21: Bit extraction of array[15:0] requires 4 bit index, not 5 bits.
+                                                                                                                                             : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink'
+  227 |     i4_tl = left_col[i4_y0 - 5'd1];
+      |                     ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_i_res_recon_sink.sv:375:38: Operator ADD expects 32 or 8 bits on the RHS, but RHS's VARREF 'apx_y' generates 2 bits.
+                                                                                                                                              : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink'
+  375 |  wire [7:0] apx_addr = (apply_by * 4 + apx_y) * 16 + (apply_bx * 4 + apx_x);
+      |                                      ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_i_res_recon_sink.sv:375:68: Operator ADD expects 32 or 8 bits on the RHS, but RHS's VARREF 'apx_x' generates 2 bits.
+                                                                                                                                              : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink'
+  375 |  wire [7:0] apx_addr = (apply_by * 4 + apx_y) * 16 + (apply_bx * 4 + apx_x);
+      |                                                                    ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_i_res_recon_sink.sv:555:31: Operator ADD expects 18 bits on the LHS, but LHS's SIGNED generates 16 bits.
+                                                                                                                                              : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink'
+  555 |          (($signed(dc_had[b]) + 18'sd32) >>> 6);
+      |                               ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_i_res_recon_sink.sv:591:8: Operator SUB expects 29 bits on the LHS, but LHS's SIGNED generates 18 bits.
+                                                                                                                                             : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink'
+  591 |        - (($signed(i16_dc[{apply_by, apply_bx}]) + 18'sd32) >>> 6)
+      |        ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_i_res_recon_sink.sv:591:50: Operator ADD expects 29 bits on the LHS, but LHS's SIGNED generates 16 bits.
+                                                                                                                                              : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink'
+  591 |        - (($signed(i16_dc[{apply_by, apply_bx}]) + 18'sd32) >>> 6)
+      |                                                  ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_i_res_recon_sink.sv:591:50: Operator ADD expects 29 bits on the RHS, but RHS's CONST '18'sh20' generates 18 bits.
+                                                                                                                                              : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink'
+  591 |        - (($signed(i16_dc[{apply_by, apply_bx}]) + 18'sd32) >>> 6)
+      |                                                  ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_i_res_recon_sink.sv:590:12: Operator ASSIGN expects 18 bits on the Assign RHS, but Assign RHS's ADD generates 29 bits.
+                                                                                                                                             : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink'
+  590 |       tsum = $signed({10'd0, plane_y[apx_addr]})
+      |            ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:81:9: Operator ASSIGN expects 3 bits on the Assign RHS, but Assign RHS's MODDIV generates 32 or 6 bits.
+                                                                                                                                      : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_h264_dequant4x4'
+   81 |    qmod = q % 6;
+      |         ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:82:9: Operator ASSIGN expects 4 bits on the Assign RHS, but Assign RHS's DIV generates 32 or 6 bits.
+                                                                                                                                      : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_h264_dequant4x4'
+   82 |    qdiv = q / 6;
+      |         ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/decode_stub.sv:652:11: Bit extraction of array[767:0] requires 10 bit index, not 18 bits.
+                                                                                                                                   : ... note: In instance 'decode_stub_fetch_mv_tb.dut'
+  652 |    dpb_mem[dpb_mem_waddr[17:0]] <= dpb_mem_wdata;
+      |           ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/decode_stub.sv:657:32: Bit extraction of array[767:0] requires 10 bit index, not 18 bits.
+                                                                                                                                   : ... note: In instance 'decode_stub_fetch_mv_tb.dut'
+  657 |                         dpb_mem[dpb_mem_raddr_q[17:0]] : 8'h00;
+      |                                ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/decode_stub.sv:1393:31: Operator ASSIGNDLY expects 32 bits on the Assign RHS, but Assign RHS's CONST '1'h1' generates 1 bits.
+                                                                                                                                     : ... note: In instance 'decode_stub_fetch_mv_tb.dut'
+ 1393 |      dbg_printed_recon_counts <= 1'b1;
+      |                               ^~
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/decode_stub.sv:1388:9: Logical operator LOGNOT expects 1 bit on the LHS, but LHS's VARREF 'dbg_printed_recon_counts' generates 32 bits.
+                                                                                                                                   : ... note: In instance 'decode_stub_fetch_mv_tb.dut'
+ 1388 |     if (!dbg_printed_recon_counts) begin
+      |         ^
+make: Entering directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/build/verilator/decode_stub_fetch_mv'
+g++  -I.  -MMD -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include/vltstd -DVERILATOR=1 -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TIMING=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -DVM_TRACE_SAIF=0 -DVM_VPI=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-int-in-bool-context -Wno-shadow -Wno-sign-compare -Wno-subobject-linkage -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -std=c++17 -O2   -Os  -c -o decode_stub_fetch_mv_tb.o /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/tests/rtl/decode_stub_fetch_mv_tb.cpp
+g++ -Os  -I.  -MMD -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include/vltstd -DVERILATOR=1 -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TIMING=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -DVM_TRACE_SAIF=0 -DVM_VPI=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-int-in-bool-context -Wno-shadow -Wno-sign-compare -Wno-subobject-linkage -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -std=c++17 -O2   -c -o verilated.o /home/flynnsbit/.local/oss-cad-suite/share/verilator/include/verilated.cpp
+g++ -Os  -I.  -MMD -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include/vltstd -DVERILATOR=1 -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TIMING=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -DVM_TRACE_SAIF=0 -DVM_VPI=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-int-in-bool-context -Wno-shadow -Wno-sign-compare -Wno-subobject-linkage -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -std=c++17 -O2   -c -o verilated_threads.o /home/flynnsbit/.local/oss-cad-suite/share/verilator/include/verilated_threads.cpp
+g++ -Os  -I.  -MMD -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include/vltstd -DVERILATOR=1 -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TIMING=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -DVM_TRACE_SAIF=0 -DVM_VPI=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-int-in-bool-context -Wno-shadow -Wno-sign-compare -Wno-subobject-linkage -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -std=c++17 -O2   -x c++-header Vdecode_stub_fetch_mv_tb__pch.h -o Vdecode_stub_fetch_mv_tb__pch.h.fast.gch
+g++ -Os  -I.  -MMD -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include/vltstd -DVERILATOR=1 -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TIMING=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -DVM_TRACE_SAIF=0 -DVM_VPI=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-int-in-bool-context -Wno-shadow -Wno-sign-compare -Wno-subobject-linkage -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -std=c++17 -O2   -include Vdecode_stub_fetch_mv_tb__pch.h.fast -c Vdecode_stub_fetch_mv_tb.cpp
+g++ -Os  -I.  -MMD -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include/vltstd -DVERILATOR=1 -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TIMING=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -DVM_TRACE_SAIF=0 -DVM_VPI=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-int-in-bool-context -Wno-shadow -Wno-sign-compare -Wno-subobject-linkage -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -std=c++17 -O2   -include Vdecode_stub_fetch_mv_tb__pch.h.fast -c Vdecode_stub_fetch_mv_tb___024root__0.cpp
+g++ -Os  -I.  -MMD -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include/vltstd -DVERILATOR=1 -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TIMING=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -DVM_TRACE_SAIF=0 -DVM_VPI=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-int-in-bool-context -Wno-shadow -Wno-sign-compare -Wno-subobject-linkage -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -std=c++17 -O2   -include Vdecode_stub_fetch_mv_tb__pch.h.fast -c Vdecode_stub_fetch_mv_tb___024root__1.cpp
+g++ -Os  -I.  -MMD -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include/vltstd -DVERILATOR=1 -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TIMING=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -DVM_TRACE_SAIF=0 -DVM_VPI=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-int-in-bool-context -Wno-shadow -Wno-sign-compare -Wno-subobject-linkage -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -std=c++17 -O2   -include Vdecode_stub_fetch_mv_tb__pch.h.fast -c Vdecode_stub_fetch_mv_tb___024root__2.cpp
+g++ -Os  -I.  -MMD -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include/vltstd -DVERILATOR=1 -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TIMING=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -DVM_TRACE_SAIF=0 -DVM_VPI=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-int-in-bool-context -Wno-shadow -Wno-sign-compare -Wno-subobject-linkage -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -std=c++17 -O2   -include Vdecode_stub_fetch_mv_tb__pch.h.fast -c Vdecode_stub_fetch_mv_tb___024root__3.cpp
+g++ -Os  -I.  -MMD -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include/vltstd -DVERILATOR=1 -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TIMING=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -DVM_TRACE_SAIF=0 -DVM_VPI=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-int-in-bool-context -Wno-shadow -Wno-sign-compare -Wno-subobject-linkage -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -std=c++17 -O2   -include Vdecode_stub_fetch_mv_tb__pch.h.fast -c Vdecode_stub_fetch_mv_tb___024root__4.cpp
+g++   -I.  -MMD -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include/vltstd -DVERILATOR=1 -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TIMING=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -DVM_TRACE_SAIF=0 -DVM_VPI=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-int-in-bool-context -Wno-shadow -Wno-sign-compare -Wno-subobject-linkage -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -std=c++17 -O2   -x c++-header Vdecode_stub_fetch_mv_tb__pch.h -o Vdecode_stub_fetch_mv_tb__pch.h.slow.gch
+g++   -I.  -MMD -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include/vltstd -DVERILATOR=1 -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TIMING=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -DVM_TRACE_SAIF=0 -DVM_VPI=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-int-in-bool-context -Wno-shadow -Wno-sign-compare -Wno-subobject-linkage -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -std=c++17 -O2   -include Vdecode_stub_fetch_mv_tb__pch.h.slow -c Vdecode_stub_fetch_mv_tb__ConstPool__0__Slow.cpp
+g++   -I.  -MMD -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include/vltstd -DVERILATOR=1 -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TIMING=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -DVM_TRACE_SAIF=0 -DVM_VPI=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-int-in-bool-context -Wno-shadow -Wno-sign-compare -Wno-subobject-linkage -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -std=c++17 -O2   -include Vdecode_stub_fetch_mv_tb__pch.h.slow -c Vdecode_stub_fetch_mv_tb___024root__Slow.cpp
+g++   -I.  -MMD -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include/vltstd -DVERILATOR=1 -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TIMING=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -DVM_TRACE_SAIF=0 -DVM_VPI=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-int-in-bool-context -Wno-shadow -Wno-sign-compare -Wno-subobject-linkage -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -std=c++17 -O2   -include Vdecode_stub_fetch_mv_tb__pch.h.slow -c Vdecode_stub_fetch_mv_tb___024root__0__Slow.cpp
+g++   -I.  -MMD -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include/vltstd -DVERILATOR=1 -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TIMING=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -DVM_TRACE_SAIF=0 -DVM_VPI=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-int-in-bool-context -Wno-shadow -Wno-sign-compare -Wno-subobject-linkage -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -std=c++17 -O2   -include Vdecode_stub_fetch_mv_tb__pch.h.slow -c Vdecode_stub_fetch_mv_tb___024root__1__Slow.cpp
+g++   -I.  -MMD -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include/vltstd -DVERILATOR=1 -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TIMING=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -DVM_TRACE_SAIF=0 -DVM_VPI=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-int-in-bool-context -Wno-shadow -Wno-sign-compare -Wno-subobject-linkage -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -std=c++17 -O2   -include Vdecode_stub_fetch_mv_tb__pch.h.slow -c Vdecode_stub_fetch_mv_tb___024root__2__Slow.cpp
+g++   -I.  -MMD -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include/vltstd -DVERILATOR=1 -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TIMING=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -DVM_TRACE_SAIF=0 -DVM_VPI=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-int-in-bool-context -Wno-shadow -Wno-sign-compare -Wno-subobject-linkage -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -std=c++17 -O2   -include Vdecode_stub_fetch_mv_tb__pch.h.slow -c Vdecode_stub_fetch_mv_tb__Syms__Slow.cpp
+g++    decode_stub_fetch_mv_tb.o verilated.o verilated_threads.o Vdecode_stub_fetch_mv_tb__ALL.a    -pthread -lpthread -latomic   -o Vdecode_stub_fetch_mv_tb
+rm Vdecode_stub_fetch_mv_tb__ALL.verilator_deplist.tmp
+make: Leaving directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/build/verilator/decode_stub_fetch_mv'
+- V e r i l a t i o n   R e p o r t: Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
+- Verilator: Built from 1.461 MB sources in 33 modules, into 8.753 MB in 12 C++ files needing 0.009 MB
+- Verilator: Walltime 25.601 s (elab=0.060, cvt=0.773, bld=24.667); cpu 0.931 s on 1 threads; allocated 81.918 MB
+OK decode_stub fetch_mv: mv=(16,0) luma_origin=(4,0) cycles=1908
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:189:56: Operator SUB expects 32 bits on the LHS, but LHS's SIGNED generates 9 bits.
+                                                                                                                                        : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i16'
+  189 |    ht[gi] = (gi + 1) * ($signed({1'b0, above[8 + gi]}) - ((gi == 7) ? $signed({1'b0, top_left}) : $signed({1'b0, above[6 - gi]})));
+      |                                                        ^
+                      ... For warning description see https://verilator.org/warn/WIDTHEXPAND?v=5.051
+                      ... Use "/* verilator lint_off WIDTHEXPAND */" and lint_on around source to disable this message.
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:189:69: Operator COND expects 32 bits on the Conditional True, but Conditional True's SIGNED generates 9 bits.
+                                                                                                                                        : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i16'
+  189 |    ht[gi] = (gi + 1) * ($signed({1'b0, above[8 + gi]}) - ((gi == 7) ? $signed({1'b0, top_left}) : $signed({1'b0, above[6 - gi]})));
+      |                                                                     ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:189:69: Operator COND expects 32 bits on the Conditional False, but Conditional False's SIGNED generates 9 bits.
+                                                                                                                                        : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i16'
+  189 |    ht[gi] = (gi + 1) * ($signed({1'b0, above[8 + gi]}) - ((gi == 7) ? $signed({1'b0, top_left}) : $signed({1'b0, above[6 - gi]})));
+      |                                                                     ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:190:56: Operator SUB expects 32 bits on the LHS, but LHS's SIGNED generates 9 bits.
+                                                                                                                                        : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i16'
+  190 |    vt[gi] = (gi + 1) * ($signed({1'b0, left[8 + gi]})  - ((gi == 7) ? $signed({1'b0, top_left}) : $signed({1'b0, left[6 - gi]})));
+      |                                                        ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:190:69: Operator COND expects 32 bits on the Conditional True, but Conditional True's SIGNED generates 9 bits.
+                                                                                                                                        : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i16'
+  190 |    vt[gi] = (gi + 1) * ($signed({1'b0, left[8 + gi]})  - ((gi == 7) ? $signed({1'b0, top_left}) : $signed({1'b0, left[6 - gi]})));
+      |                                                                     ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:190:69: Operator COND expects 32 bits on the Conditional False, but Conditional False's SIGNED generates 9 bits.
+                                                                                                                                        : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i16'
+  190 |    vt[gi] = (gi + 1) * ($signed({1'b0, left[8 + gi]})  - ((gi == 7) ? $signed({1'b0, top_left}) : $signed({1'b0, left[6 - gi]})));
+      |                                                                     ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:195:42: Operator ADD expects 32 bits on the LHS, but LHS's SIGNED generates 9 bits.
+                                                                                                                                        : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i16'
+  195 |   a_c = 16 * ($signed({1'b0, above[15]}) + $signed({1'b0, left[15]}));
+      |                                          ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:195:42: Operator ADD expects 32 bits on the RHS, but RHS's SIGNED generates 9 bits.
+                                                                                                                                        : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i16'
+  195 |   a_c = 16 * ($signed({1'b0, above[15]}) + $signed({1'b0, left[15]}));
+      |                                          ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:212:26: Operator ADD expects 32 bits on the LHS, but LHS's SIGNED generates 16 bits.
+                                                                                                                                        : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i16'
+  212 |      val = ($signed(a_r) + $signed(bx_r[x]) + $signed(cy_r[y]) + 16) >>> 5;
+      |                          ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:212:26: Operator ADD expects 32 bits on the RHS, but RHS's SIGNED generates 16 bits.
+                                                                                                                                        : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i16'
+  212 |      val = ($signed(a_r) + $signed(bx_r[x]) + $signed(cy_r[y]) + 16) >>> 5;
+      |                          ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:212:45: Operator ADD expects 32 bits on the RHS, but RHS's SIGNED generates 16 bits.
+                                                                                                                                        : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i16'
+  212 |      val = ($signed(a_r) + $signed(bx_r[x]) + $signed(cy_r[y]) + 16) >>> 5;
+      |                                             ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:224:15: Operator ASSIGNDLY expects 16 bits on the Assign RHS, but Assign RHS's MULS generates 32 bits.
+                                                                                                                                       : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i16'
+  224 |       bx_r[i] <= b_c * (i - 7);
+      |               ^~
+                     ... For warning description see https://verilator.org/warn/WIDTHTRUNC?v=5.051
+                     ... Use "/* verilator lint_off WIDTHTRUNC */" and lint_on around source to disable this message.
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:225:15: Operator ASSIGNDLY expects 16 bits on the Assign RHS, but Assign RHS's MULS generates 32 bits.
+                                                                                                                                       : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i16'
+  225 |       cy_r[i] <= c_c * (i - 7);
+      |               ^~
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:242:23: Operator ADD expects 32 bits on the LHS, but LHS's ARRAYSEL generates 8 bits.
+                                                                                                                                        : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i16'
+  242 |     sa_lo = ((above[0]+above[1]) + (above[2]+above[3]))
+      |                       ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:242:23: Operator ADD expects 32 bits on the RHS, but RHS's ARRAYSEL generates 8 bits.
+                                                                                                                                        : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i16'
+  242 |     sa_lo = ((above[0]+above[1]) + (above[2]+above[3]))
+      |                       ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:242:45: Operator ADD expects 32 bits on the LHS, but LHS's ARRAYSEL generates 8 bits.
+                                                                                                                                        : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i16'
+  242 |     sa_lo = ((above[0]+above[1]) + (above[2]+above[3]))
+      |                                             ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:242:45: Operator ADD expects 32 bits on the RHS, but RHS's ARRAYSEL generates 8 bits.
+                                                                                                                                        : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i16'
+  242 |     sa_lo = ((above[0]+above[1]) + (above[2]+above[3]))
+      |                                             ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:243:23: Operator ADD expects 32 bits on the LHS, but LHS's ARRAYSEL generates 8 bits.
+                                                                                                                                        : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i16'
+  243 |           + ((above[4]+above[5]) + (above[6]+above[7]));
+      |                       ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:243:23: Operator ADD expects 32 bits on the RHS, but RHS's ARRAYSEL generates 8 bits.
+                                                                                                                                        : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i16'
+  243 |           + ((above[4]+above[5]) + (above[6]+above[7]));
+      |                       ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:243:45: Operator ADD expects 32 bits on the LHS, but LHS's ARRAYSEL generates 8 bits.
+                                                                                                                                        : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i16'
+  243 |           + ((above[4]+above[5]) + (above[6]+above[7]));
+      |                                             ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:243:45: Operator ADD expects 32 bits on the RHS, but RHS's ARRAYSEL generates 8 bits.
+                                                                                                                                        : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i16'
+  243 |           + ((above[4]+above[5]) + (above[6]+above[7]));
+      |                                             ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:244:23: Operator ADD expects 32 bits on the LHS, but LHS's ARRAYSEL generates 8 bits.
+                                                                                                                                        : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i16'
+  244 |     sa_hi = ((above[8]+above[9]) + (above[10]+above[11]))
+      |                       ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:244:23: Operator ADD expects 32 bits on the RHS, but RHS's ARRAYSEL generates 8 bits.
+                                                                                                                                        : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i16'
+  244 |     sa_hi = ((above[8]+above[9]) + (above[10]+above[11]))
+      |                       ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:244:46: Operator ADD expects 32 bits on the LHS, but LHS's ARRAYSEL generates 8 bits.
+                                                                                                                                        : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i16'
+  244 |     sa_hi = ((above[8]+above[9]) + (above[10]+above[11]))
+      |                                              ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:244:46: Operator ADD expects 32 bits on the RHS, but RHS's ARRAYSEL generates 8 bits.
+                                                                                                                                        : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i16'
+  244 |     sa_hi = ((above[8]+above[9]) + (above[10]+above[11]))
+      |                                              ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:245:24: Operator ADD expects 32 bits on the LHS, but LHS's ARRAYSEL generates 8 bits.
+                                                                                                                                        : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i16'
+  245 |           + ((above[12]+above[13]) + (above[14]+above[15]));
+      |                        ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:245:24: Operator ADD expects 32 bits on the RHS, but RHS's ARRAYSEL generates 8 bits.
+                                                                                                                                        : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i16'
+  245 |           + ((above[12]+above[13]) + (above[14]+above[15]));
+      |                        ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:245:48: Operator ADD expects 32 bits on the LHS, but LHS's ARRAYSEL generates 8 bits.
+                                                                                                                                        : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i16'
+  245 |           + ((above[12]+above[13]) + (above[14]+above[15]));
+      |                                                ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:245:48: Operator ADD expects 32 bits on the RHS, but RHS's ARRAYSEL generates 8 bits.
+                                                                                                                                        : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i16'
+  245 |           + ((above[12]+above[13]) + (above[14]+above[15]));
+      |                                                ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:246:22: Operator ADD expects 32 bits on the LHS, but LHS's ARRAYSEL generates 8 bits.
+                                                                                                                                        : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i16'
+  246 |     sl_lo = ((left[0]+left[1]) + (left[2]+left[3]))
+      |                      ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:246:22: Operator ADD expects 32 bits on the RHS, but RHS's ARRAYSEL generates 8 bits.
+                                                                                                                                        : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i16'
+  246 |     sl_lo = ((left[0]+left[1]) + (left[2]+left[3]))
+      |                      ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:246:42: Operator ADD expects 32 bits on the LHS, but LHS's ARRAYSEL generates 8 bits.
+                                                                                                                                        : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i16'
+  246 |     sl_lo = ((left[0]+left[1]) + (left[2]+left[3]))
+      |                                          ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:246:42: Operator ADD expects 32 bits on the RHS, but RHS's ARRAYSEL generates 8 bits.
+                                                                                                                                        : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i16'
+  246 |     sl_lo = ((left[0]+left[1]) + (left[2]+left[3]))
+      |                                          ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:247:22: Operator ADD expects 32 bits on the LHS, but LHS's ARRAYSEL generates 8 bits.
+                                                                                                                                        : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i16'
+  247 |           + ((left[4]+left[5]) + (left[6]+left[7]));
+      |                      ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:247:22: Operator ADD expects 32 bits on the RHS, but RHS's ARRAYSEL generates 8 bits.
+                                                                                                                                        : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i16'
+  247 |           + ((left[4]+left[5]) + (left[6]+left[7]));
+      |                      ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:247:42: Operator ADD expects 32 bits on the LHS, but LHS's ARRAYSEL generates 8 bits.
+                                                                                                                                        : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i16'
+  247 |           + ((left[4]+left[5]) + (left[6]+left[7]));
+      |                                          ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:247:42: Operator ADD expects 32 bits on the RHS, but RHS's ARRAYSEL generates 8 bits.
+                                                                                                                                        : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i16'
+  247 |           + ((left[4]+left[5]) + (left[6]+left[7]));
+      |                                          ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:248:22: Operator ADD expects 32 bits on the LHS, but LHS's ARRAYSEL generates 8 bits.
+                                                                                                                                        : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i16'
+  248 |     sl_hi = ((left[8]+left[9]) + (left[10]+left[11]))
+      |                      ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:248:22: Operator ADD expects 32 bits on the RHS, but RHS's ARRAYSEL generates 8 bits.
+                                                                                                                                        : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i16'
+  248 |     sl_hi = ((left[8]+left[9]) + (left[10]+left[11]))
+      |                      ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:248:43: Operator ADD expects 32 bits on the LHS, but LHS's ARRAYSEL generates 8 bits.
+                                                                                                                                        : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i16'
+  248 |     sl_hi = ((left[8]+left[9]) + (left[10]+left[11]))
+      |                                           ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:248:43: Operator ADD expects 32 bits on the RHS, but RHS's ARRAYSEL generates 8 bits.
+                                                                                                                                        : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i16'
+  248 |     sl_hi = ((left[8]+left[9]) + (left[10]+left[11]))
+      |                                           ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:249:23: Operator ADD expects 32 bits on the LHS, but LHS's ARRAYSEL generates 8 bits.
+                                                                                                                                        : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i16'
+  249 |           + ((left[12]+left[13]) + (left[14]+left[15]));
+      |                       ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:249:23: Operator ADD expects 32 bits on the RHS, but RHS's ARRAYSEL generates 8 bits.
+                                                                                                                                        : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i16'
+  249 |           + ((left[12]+left[13]) + (left[14]+left[15]));
+      |                       ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:249:45: Operator ADD expects 32 bits on the LHS, but LHS's ARRAYSEL generates 8 bits.
+                                                                                                                                        : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i16'
+  249 |           + ((left[12]+left[13]) + (left[14]+left[15]));
+      |                                             ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:249:45: Operator ADD expects 32 bits on the RHS, but RHS's ARRAYSEL generates 8 bits.
+                                                                                                                                        : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i16'
+  249 |           + ((left[12]+left[13]) + (left[14]+left[15]));
+      |                                             ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:254:37: Operator ASSIGN expects 8 bits on the Assign RHS, but Assign RHS's SHIFTRS generates 32 bits.
+                                                                                                                                       : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i16'
+  254 |     if (has_above && has_left) dc_v = (sum + 16) >>> 5;
+      |                                     ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:255:42: Operator ASSIGN expects 8 bits on the Assign RHS, but Assign RHS's SHIFTRS generates 32 bits.
+                                                                                                                                       : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i16'
+  255 |     else if (has_above || has_left) dc_v = (sum + 8) >>> 4;
+      |                                          ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:51:6: Operator ASSIGN expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 8 bits.
+                                                                                                                                      : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i4'
+   51 |   t0 = above[0]; t1 = above[1]; t2 = above[2]; t3 = above[3];
+      |      ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:51:21: Operator ASSIGN expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 8 bits.
+                                                                                                                                       : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i4'
+   51 |   t0 = above[0]; t1 = above[1]; t2 = above[2]; t3 = above[3];
+      |                     ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:51:36: Operator ASSIGN expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 8 bits.
+                                                                                                                                       : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i4'
+   51 |   t0 = above[0]; t1 = above[1]; t2 = above[2]; t3 = above[3];
+      |                                    ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:51:51: Operator ASSIGN expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 8 bits.
+                                                                                                                                       : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i4'
+   51 |   t0 = above[0]; t1 = above[1]; t2 = above[2]; t3 = above[3];
+      |                                                   ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:52:6: Operator ASSIGN expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 8 bits.
+                                                                                                                                      : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i4'
+   52 |   t4 = above[4]; t5 = above[5]; t6 = above[6]; t7 = above[7];
+      |      ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:52:21: Operator ASSIGN expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 8 bits.
+                                                                                                                                       : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i4'
+   52 |   t4 = above[4]; t5 = above[5]; t6 = above[6]; t7 = above[7];
+      |                     ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:52:36: Operator ASSIGN expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 8 bits.
+                                                                                                                                       : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i4'
+   52 |   t4 = above[4]; t5 = above[5]; t6 = above[6]; t7 = above[7];
+      |                                    ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:52:51: Operator ASSIGN expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 8 bits.
+                                                                                                                                       : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i4'
+   52 |   t4 = above[4]; t5 = above[5]; t6 = above[6]; t7 = above[7];
+      |                                                   ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:53:6: Operator ASSIGN expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 8 bits.
+                                                                                                                                      : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i4'
+   53 |   l0 = left[0];  l1 = left[1];  l2 = left[2];  l3 = left[3];
+      |      ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:53:21: Operator ASSIGN expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 8 bits.
+                                                                                                                                       : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i4'
+   53 |   l0 = left[0];  l1 = left[1];  l2 = left[2];  l3 = left[3];
+      |                     ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:53:36: Operator ASSIGN expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 8 bits.
+                                                                                                                                       : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i4'
+   53 |   l0 = left[0];  l1 = left[1];  l2 = left[2];  l3 = left[3];
+      |                                    ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:53:51: Operator ASSIGN expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 8 bits.
+                                                                                                                                       : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i4'
+   53 |   l0 = left[0];  l1 = left[1];  l2 = left[2];  l3 = left[3];
+      |                                                   ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:66:52: Operator ADD expects 32 bits on the RHS, but RHS's CONST '10'h4' generates 10 bits.
+                                                                                                                                       : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i4'
+   66 |     dc_sum = t0 + t1 + t2 + t3 + l0 + l1 + l2 + l3 + 10'd4;
+      |                                                    ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:67:10: Operator ASSIGN expects 8 bits on the Assign RHS, but Assign RHS's SHIFTRS generates 32 bits.
+                                                                                                                                      : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i4'
+   67 |     dc_v = dc_sum >>> 3;
+      |          ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:69:32: Operator ADD expects 32 bits on the RHS, but RHS's CONST '10'h2' generates 10 bits.
+                                                                                                                                       : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i4'
+   69 |     dc_sum = t0 + t1 + t2 + t3 + 10'd2;
+      |                                ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:70:10: Operator ASSIGN expects 8 bits on the Assign RHS, but Assign RHS's SHIFTRS generates 32 bits.
+                                                                                                                                      : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i4'
+   70 |     dc_v = dc_sum >>> 2;
+      |          ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:72:32: Operator ADD expects 32 bits on the RHS, but RHS's CONST '10'h2' generates 10 bits.
+                                                                                                                                       : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i4'
+   72 |     dc_sum = l0 + l1 + l2 + l3 + 10'd2;
+      |                                ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:73:10: Operator ASSIGN expects 8 bits on the Assign RHS, but Assign RHS's SHIFTRS generates 32 bits.
+                                                                                                                                      : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i4'
+   73 |     dc_v = dc_sum >>> 2;
+      |          ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:91:27: Operator ADD expects 32 bits on the RHS, but RHS's VARREF 'top_left' generates 8 bits.
+                                                                                                                                       : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i4'
+   91 |    put(0, 1, (l1 + 2 * l0 + top_left + 2) >>> 2); put(1, 2, (l1 + 2 * l0 + top_left + 2) >>> 2); put(2, 3, (l1 + 2 * l0 + top_left + 2) >>> 2);
+      |                           ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:91:74: Operator ADD expects 32 bits on the RHS, but RHS's VARREF 'top_left' generates 8 bits.
+                                                                                                                                       : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i4'
+   91 |    put(0, 1, (l1 + 2 * l0 + top_left + 2) >>> 2); put(1, 2, (l1 + 2 * l0 + top_left + 2) >>> 2); put(2, 3, (l1 + 2 * l0 + top_left + 2) >>> 2);
+      |                                                                          ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:91:121: Operator ADD expects 32 bits on the RHS, but RHS's VARREF 'top_left' generates 8 bits.
+                                                                                                                                        : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i4'
+   91 |    put(0, 1, (l1 + 2 * l0 + top_left + 2) >>> 2); put(1, 2, (l1 + 2 * l0 + top_left + 2) >>> 2); put(2, 3, (l1 + 2 * l0 + top_left + 2) >>> 2);
+      |                                                                                                                         ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:93:24: Operator ADD expects 32 bits on the LHS, but LHS's VARREF 'top_left' generates 8 bits.
+                                                                                                                                       : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i4'
+   93 |    put(1, 0, (top_left + 2 * t0 + t1 + 2) >>> 2); put(2, 1, (top_left + 2 * t0 + t1 + 2) >>> 2); put(3, 2, (top_left + 2 * t0 + t1 + 2) >>> 2);
+      |                        ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:93:71: Operator ADD expects 32 bits on the LHS, but LHS's VARREF 'top_left' generates 8 bits.
+                                                                                                                                       : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i4'
+   93 |    put(1, 0, (top_left + 2 * t0 + t1 + 2) >>> 2); put(2, 1, (top_left + 2 * t0 + t1 + 2) >>> 2); put(3, 2, (top_left + 2 * t0 + t1 + 2) >>> 2);
+      |                                                                       ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:93:118: Operator ADD expects 32 bits on the LHS, but LHS's VARREF 'top_left' generates 8 bits.
+                                                                                                                                        : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i4'
+   93 |    put(1, 0, (top_left + 2 * t0 + t1 + 2) >>> 2); put(2, 1, (top_left + 2 * t0 + t1 + 2) >>> 2); put(3, 2, (top_left + 2 * t0 + t1 + 2) >>> 2);
+      |                                                                                                                      ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:98:24: Operator ADD expects 32 bits on the LHS, but LHS's VARREF 'top_left' generates 8 bits.
+                                                                                                                                       : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i4'
+   98 |    put(0, 0, (top_left + t0 + 1) >>> 1); put(1, 2, (top_left + t0 + 1) >>> 1);
+      |                        ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:98:62: Operator ADD expects 32 bits on the LHS, but LHS's VARREF 'top_left' generates 8 bits.
+                                                                                                                                       : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i4'
+   98 |    put(0, 0, (top_left + t0 + 1) >>> 1); put(1, 2, (top_left + t0 + 1) >>> 1);
+      |                                                              ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:103:24: Operator ADD expects 32 bits on the LHS, but LHS's VARREF 'top_left' generates 8 bits.
+                                                                                                                                        : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i4'
+  103 |    put(1, 1, (top_left + 2 * t0 + t1 + 2) >>> 2); put(2, 3, (top_left + 2 * t0 + t1 + 2) >>> 2);
+      |                        ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:103:71: Operator ADD expects 32 bits on the LHS, but LHS's VARREF 'top_left' generates 8 bits.
+                                                                                                                                        : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i4'
+  103 |    put(1, 1, (top_left + 2 * t0 + t1 + 2) >>> 2); put(2, 3, (top_left + 2 * t0 + t1 + 2) >>> 2);
+      |                                                                       ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:106:24: Operator ADD expects 32 bits on the LHS, but LHS's VARREF 'top_left' generates 8 bits.
+                                                                                                                                        : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i4'
+  106 |    put(0, 2, (top_left + 2 * l0 + l1 + 2) >>> 2); put(0, 3, (l0 + 2 * l1 + l2 + 2) >>> 2);
+      |                        ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:109:24: Operator ADD expects 32 bits on the LHS, but LHS's VARREF 'top_left' generates 8 bits.
+                                                                                                                                        : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i4'
+  109 |    put(0, 0, (top_left + l0 + 1) >>> 1); put(2, 1, (top_left + l0 + 1) >>> 1);
+      |                        ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:109:62: Operator ADD expects 32 bits on the LHS, but LHS's VARREF 'top_left' generates 8 bits.
+                                                                                                                                        : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i4'
+  109 |    put(0, 0, (top_left + l0 + 1) >>> 1); put(2, 1, (top_left + l0 + 1) >>> 1);
+      |                                                              ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:111:24: Operator ADD expects 32 bits on the LHS, but LHS's VARREF 'top_left' generates 8 bits.
+                                                                                                                                        : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i4'
+  111 |    put(2, 0, (top_left + 2 * t0 + t1 + 2) >>> 2); put(3, 0, (t0 + 2 * t1 + t2 + 2) >>> 2);
+      |                        ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:113:24: Operator ADD expects 32 bits on the LHS, but LHS's VARREF 'top_left' generates 8 bits.
+                                                                                                                                        : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i4'
+  113 |    put(1, 1, (top_left + 2 * l0 + l1 + 2) >>> 2); put(3, 2, (top_left + 2 * l0 + l1 + 2) >>> 2);
+      |                        ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_intra_pred.sv:113:71: Operator ADD expects 32 bits on the LHS, but LHS's VARREF 'top_left' generates 8 bits.
+                                                                                                                                        : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_i4'
+  113 |    put(1, 1, (top_left + 2 * l0 + l1 + 2) >>> 2); put(3, 2, (top_left + 2 * l0 + l1 + 2) >>> 2);
+      |                                                                       ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_dequant4x4_serial.sv:87:9: Operator ASSIGN expects 3 bits on the Assign RHS, but Assign RHS's MODDIV generates 32 or 6 bits.
+                                                                                                                                            : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_dq'
+   87 |    qmod = q % 6;
+      |         ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_dequant4x4_serial.sv:88:9: Operator ASSIGN expects 4 bits on the Assign RHS, but Assign RHS's DIV generates 32 or 6 bits.
+                                                                                                                                            : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_dq'
+   88 |    qdiv = q / 6;
+      |         ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_i16_dc_hadamard_serial.sv:65:7: Operator ASSIGN expects 32 bits on the Assign RHS, but Assign RHS's FUNCREF 'zz' generates 4 bits.
+                                                                                                                                                  : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_had'
+   65 |    zi = zz(i[3:0]);
+      |       ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_i16_dc_hadamard_serial.sv:66:7: Operator ASSIGN expects 32 bits on the Assign RHS, but Assign RHS's FUNCREF 'transpose4' generates 4 bits.
+                                                                                                                                                  : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_had'
+   66 |    tr = transpose4(zi[3:0]);
+      |       ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_i16_dc_hadamard_serial.sv:67:17: Operator ASSIGN expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 16 bits.
+                                                                                                                                                   : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_had'
+   67 |    input_cm[tr] = c_r[i];
+      |                 ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_i16_dc_hadamard_serial.sv:91:18: Operator ASSIGNW expects 3 bits on the Assign RHS, but Assign RHS's MODDIV generates 32 or 6 bits.
+                                                                                                                                                  : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_had'
+   91 |  wire [2:0] qmod = qp_r % 6;
+      |                  ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_i16_dc_hadamard_serial.sv:92:18: Operator ASSIGNW expects 4 bits on the Assign RHS, but Assign RHS's DIV generates 32 or 6 bits.
+                                                                                                                                                  : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_had'
+   92 |  wire [3:0] qdiv = qp_r / 6;
+      |                  ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_i16_dc_hadamard_serial.sv:96:29: Operator ASSIGNW expects 32 bits on the Assign RHS, but Assign RHS's SHIFTRS generates 64 bits.
+                                                                                                                                                  : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_had'
+   96 |  wire signed [31:0] dc_lane = (scaled_full + 64'sd128) >>> 8;
+      |                             ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:231:53: Operator ADD expects 30 bits on the LHS, but LHS's SIGNED generates 9 bits.
+                                                                                                                                         : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_recon'
+  231 |  assign recon[0]  = clip8($signed({1'b0, pred[0]})  + residual[0]);
+      |                                                     ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:232:53: Operator ADD expects 30 bits on the LHS, but LHS's SIGNED generates 9 bits.
+                                                                                                                                         : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_recon'
+  232 |  assign recon[1]  = clip8($signed({1'b0, pred[1]})  + residual[1]);
+      |                                                     ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:233:53: Operator ADD expects 30 bits on the LHS, but LHS's SIGNED generates 9 bits.
+                                                                                                                                         : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_recon'
+  233 |  assign recon[2]  = clip8($signed({1'b0, pred[2]})  + residual[2]);
+      |                                                     ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:234:53: Operator ADD expects 30 bits on the LHS, but LHS's SIGNED generates 9 bits.
+                                                                                                                                         : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_recon'
+  234 |  assign recon[3]  = clip8($signed({1'b0, pred[3]})  + residual[3]);
+      |                                                     ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:235:53: Operator ADD expects 30 bits on the LHS, but LHS's SIGNED generates 9 bits.
+                                                                                                                                         : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_recon'
+  235 |  assign recon[4]  = clip8($signed({1'b0, pred[4]})  + residual[4]);
+      |                                                     ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:236:53: Operator ADD expects 30 bits on the LHS, but LHS's SIGNED generates 9 bits.
+                                                                                                                                         : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_recon'
+  236 |  assign recon[5]  = clip8($signed({1'b0, pred[5]})  + residual[5]);
+      |                                                     ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:237:53: Operator ADD expects 30 bits on the LHS, but LHS's SIGNED generates 9 bits.
+                                                                                                                                         : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_recon'
+  237 |  assign recon[6]  = clip8($signed({1'b0, pred[6]})  + residual[6]);
+      |                                                     ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:238:53: Operator ADD expects 30 bits on the LHS, but LHS's SIGNED generates 9 bits.
+                                                                                                                                         : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_recon'
+  238 |  assign recon[7]  = clip8($signed({1'b0, pred[7]})  + residual[7]);
+      |                                                     ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:239:53: Operator ADD expects 30 bits on the LHS, but LHS's SIGNED generates 9 bits.
+                                                                                                                                         : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_recon'
+  239 |  assign recon[8]  = clip8($signed({1'b0, pred[8]})  + residual[8]);
+      |                                                     ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:240:53: Operator ADD expects 30 bits on the LHS, but LHS's SIGNED generates 9 bits.
+                                                                                                                                         : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_recon'
+  240 |  assign recon[9]  = clip8($signed({1'b0, pred[9]})  + residual[9]);
+      |                                                     ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:241:53: Operator ADD expects 30 bits on the LHS, but LHS's SIGNED generates 9 bits.
+                                                                                                                                         : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_recon'
+  241 |  assign recon[10] = clip8($signed({1'b0, pred[10]}) + residual[10]);
+      |                                                     ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:242:53: Operator ADD expects 30 bits on the LHS, but LHS's SIGNED generates 9 bits.
+                                                                                                                                         : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_recon'
+  242 |  assign recon[11] = clip8($signed({1'b0, pred[11]}) + residual[11]);
+      |                                                     ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:243:53: Operator ADD expects 30 bits on the LHS, but LHS's SIGNED generates 9 bits.
+                                                                                                                                         : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_recon'
+  243 |  assign recon[12] = clip8($signed({1'b0, pred[12]}) + residual[12]);
+      |                                                     ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:244:53: Operator ADD expects 30 bits on the LHS, but LHS's SIGNED generates 9 bits.
+                                                                                                                                         : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_recon'
+  244 |  assign recon[13] = clip8($signed({1'b0, pred[13]}) + residual[13]);
+      |                                                     ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:245:53: Operator ADD expects 30 bits on the LHS, but LHS's SIGNED generates 9 bits.
+                                                                                                                                         : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_recon'
+  245 |  assign recon[14] = clip8($signed({1'b0, pred[14]}) + residual[14]);
+      |                                                     ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:246:53: Operator ADD expects 30 bits on the LHS, but LHS's SIGNED generates 9 bits.
+                                                                                                                                         : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_recon'
+  246 |  assign recon[15] = clip8($signed({1'b0, pred[15]}) + residual[15]);
+      |                                                     ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:167:38: Operator ADD expects 32 bits on the LHS, but LHS's ARRAYSEL generates 29 bits.
+                                                                                                                                         : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_idct'
+  167 |  wire signed [31:0] b0  = dequant[0] + 29'sd32;
+      |                                      ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:167:38: Operator ADD expects 32 bits on the RHS, but RHS's CONST '29'sh20' generates 29 bits.
+                                                                                                                                         : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_idct'
+  167 |  wire signed [31:0] b0  = dequant[0] + 29'sd32;
+      |                                      ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:168:25: Operator ASSIGNW expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 29 bits.
+                                                                                                                                         : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_idct'
+  168 |  wire signed [31:0] b1  = dequant[1];
+      |                         ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:169:25: Operator ASSIGNW expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 29 bits.
+                                                                                                                                         : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_idct'
+  169 |  wire signed [31:0] b2  = dequant[2];
+      |                         ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:170:25: Operator ASSIGNW expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 29 bits.
+                                                                                                                                         : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_idct'
+  170 |  wire signed [31:0] b3  = dequant[3];
+      |                         ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:171:25: Operator ASSIGNW expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 29 bits.
+                                                                                                                                         : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_idct'
+  171 |  wire signed [31:0] b4  = dequant[4];
+      |                         ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:172:25: Operator ASSIGNW expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 29 bits.
+                                                                                                                                         : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_idct'
+  172 |  wire signed [31:0] b5  = dequant[5];
+      |                         ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:173:25: Operator ASSIGNW expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 29 bits.
+                                                                                                                                         : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_idct'
+  173 |  wire signed [31:0] b6  = dequant[6];
+      |                         ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:174:25: Operator ASSIGNW expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 29 bits.
+                                                                                                                                         : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_idct'
+  174 |  wire signed [31:0] b7  = dequant[7];
+      |                         ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:175:25: Operator ASSIGNW expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 29 bits.
+                                                                                                                                         : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_idct'
+  175 |  wire signed [31:0] b8  = dequant[8];
+      |                         ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:176:25: Operator ASSIGNW expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 29 bits.
+                                                                                                                                         : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_idct'
+  176 |  wire signed [31:0] b9  = dequant[9];
+      |                         ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:177:25: Operator ASSIGNW expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 29 bits.
+                                                                                                                                         : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_idct'
+  177 |  wire signed [31:0] b10 = dequant[10];
+      |                         ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:178:25: Operator ASSIGNW expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 29 bits.
+                                                                                                                                         : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_idct'
+  178 |  wire signed [31:0] b11 = dequant[11];
+      |                         ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:179:25: Operator ASSIGNW expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 29 bits.
+                                                                                                                                         : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_idct'
+  179 |  wire signed [31:0] b12 = dequant[12];
+      |                         ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:180:25: Operator ASSIGNW expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 29 bits.
+                                                                                                                                         : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_idct'
+  180 |  wire signed [31:0] b13 = dequant[13];
+      |                         ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:181:25: Operator ASSIGNW expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 29 bits.
+                                                                                                                                         : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_idct'
+  181 |  wire signed [31:0] b14 = dequant[14];
+      |                         ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:182:25: Operator ASSIGNW expects 32 bits on the Assign RHS, but Assign RHS's ARRAYSEL generates 29 bits.
+                                                                                                                                         : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink.u_idct'
+  182 |  wire signed [31:0] b15 = dequant[15];
+      |                         ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_i_res_recon_sink.sv:164:19: Operator ASSIGNW expects 5 bits on the Assign RHS, but Assign RHS's REPLICATE generates 4 bits.
+                                                                                                                                              : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink'
+  164 |  wire [4:0] i4_x0 = {i4_bx, 2'b00};
+      |                   ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_i_res_recon_sink.sv:165:19: Operator ASSIGNW expects 5 bits on the Assign RHS, but Assign RHS's REPLICATE generates 4 bits.
+                                                                                                                                              : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink'
+  165 |  wire [4:0] i4_y0 = {i4_by, 2'b00};
+      |                   ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_i_res_recon_sink.sv:202:27: Bit extraction of array[1023:0] requires 10 bit index, not 16 bits.
+                                                                                                                                             : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink'
+  202 |      i4_above[t] = top_row[abs_x0 + t[15:0]];
+      |                           ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_i_res_recon_sink.sv:205:31: Bit extraction of array[1023:0] requires 10 bit index, not 16 bits.
+                                                                                                                                             : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink'
+  205 |      i4_above[4 + t] = top_row[abs_x0 + 16'd4 + t[15:0]];
+      |                               ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_i_res_recon_sink.sv:218:26: Bit extraction of array[15:0] requires 4 bit index, not 5 bits.
+                                                                                                                                             : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink'
+  218 |     i4_left[t] = left_col[i4_y0 + t[4:0]];
+      |                          ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_i_res_recon_sink.sv:225:35: Bit extraction of array[1023:0] requires 10 bit index, not 16 bits.
+                                                                                                                                             : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink'
+  225 |     i4_tl = (abs_x0 > 0) ? top_row[abs_x0 - 16'd1] : 8'd128;
+      |                                   ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_i_res_recon_sink.sv:227:21: Bit extraction of array[15:0] requires 4 bit index, not 5 bits.
+                                                                                                                                             : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink'
+  227 |     i4_tl = left_col[i4_y0 - 5'd1];
+      |                     ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_i_res_recon_sink.sv:375:38: Operator ADD expects 32 or 8 bits on the RHS, but RHS's VARREF 'apx_y' generates 2 bits.
+                                                                                                                                              : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink'
+  375 |  wire [7:0] apx_addr = (apply_by * 4 + apx_y) * 16 + (apply_bx * 4 + apx_x);
+      |                                      ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_i_res_recon_sink.sv:375:68: Operator ADD expects 32 or 8 bits on the RHS, but RHS's VARREF 'apx_x' generates 2 bits.
+                                                                                                                                              : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink'
+  375 |  wire [7:0] apx_addr = (apply_by * 4 + apx_y) * 16 + (apply_bx * 4 + apx_x);
+      |                                                                    ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_i_res_recon_sink.sv:555:31: Operator ADD expects 18 bits on the LHS, but LHS's SIGNED generates 16 bits.
+                                                                                                                                              : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink'
+  555 |          (($signed(dc_had[b]) + 18'sd32) >>> 6);
+      |                               ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_i_res_recon_sink.sv:591:8: Operator SUB expects 29 bits on the LHS, but LHS's SIGNED generates 18 bits.
+                                                                                                                                             : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink'
+  591 |        - (($signed(i16_dc[{apply_by, apply_bx}]) + 18'sd32) >>> 6)
+      |        ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_i_res_recon_sink.sv:591:50: Operator ADD expects 29 bits on the LHS, but LHS's SIGNED generates 16 bits.
+                                                                                                                                              : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink'
+  591 |        - (($signed(i16_dc[{apply_by, apply_bx}]) + 18'sd32) >>> 6)
+      |                                                  ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_i_res_recon_sink.sv:591:50: Operator ADD expects 29 bits on the RHS, but RHS's CONST '18'sh20' generates 18 bits.
+                                                                                                                                              : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink'
+  591 |        - (($signed(i16_dc[{apply_by, apply_bx}]) + 18'sd32) >>> 6)
+      |                                                  ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_i_res_recon_sink.sv:590:12: Operator ASSIGN expects 18 bits on the Assign RHS, but Assign RHS's ADD generates 29 bits.
+                                                                                                                                             : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_i_res_sink'
+  590 |       tsum = $signed({10'd0, plane_y[apx_addr]})
+      |            ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:81:9: Operator ASSIGN expects 3 bits on the Assign RHS, but Assign RHS's MODDIV generates 32 or 6 bits.
+                                                                                                                                      : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_h264_dequant4x4'
+   81 |    qmod = q % 6;
+      |         ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv:82:9: Operator ASSIGN expects 4 bits on the Assign RHS, but Assign RHS's DIV generates 32 or 6 bits.
+                                                                                                                                      : ... note: In instance 'decode_stub_fetch_mv_tb.dut.u_h264_dequant4x4'
+   82 |    qdiv = q / 6;
+      |         ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/decode_stub.sv:652:11: Bit extraction of array[767:0] requires 10 bit index, not 18 bits.
+                                                                                                                                   : ... note: In instance 'decode_stub_fetch_mv_tb.dut'
+  652 |    dpb_mem[dpb_mem_waddr[17:0]] <= dpb_mem_wdata;
+      |           ^
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/decode_stub.sv:657:32: Bit extraction of array[767:0] requires 10 bit index, not 18 bits.
+                                                                                                                                   : ... note: In instance 'decode_stub_fetch_mv_tb.dut'
+  657 |                         dpb_mem[dpb_mem_raddr_q[17:0]] : 8'h00;
+      |                                ^
+%Warning-WIDTHEXPAND: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/decode_stub.sv:1393:31: Operator ASSIGNDLY expects 32 bits on the Assign RHS, but Assign RHS's CONST '1'h1' generates 1 bits.
+                                                                                                                                     : ... note: In instance 'decode_stub_fetch_mv_tb.dut'
+ 1393 |      dbg_printed_recon_counts <= 1'b1;
+      |                               ^~
+%Warning-WIDTHTRUNC: /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/fpga/Plex_MiSTer/rtl/decode_stub.sv:1388:9: Logical operator LOGNOT expects 1 bit on the LHS, but LHS's VARREF 'dbg_printed_recon_counts' generates 32 bits.
+                                                                                                                                   : ... note: In instance 'decode_stub_fetch_mv_tb.dut'
+ 1388 |     if (!dbg_printed_recon_counts) begin
+      |         ^
+make: Entering directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/build/verilator/decode_stub_fetch_mv_zero'
+g++  -I.  -MMD -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include/vltstd -DVERILATOR=1 -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TIMING=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -DVM_TRACE_SAIF=0 -DVM_VPI=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-int-in-bool-context -Wno-shadow -Wno-sign-compare -Wno-subobject-linkage -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -std=c++17 -O2   -Os  -c -o decode_stub_fetch_mv_tb.o /home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/tests/rtl/decode_stub_fetch_mv_tb.cpp
+g++ -Os  -I.  -MMD -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include/vltstd -DVERILATOR=1 -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TIMING=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -DVM_TRACE_SAIF=0 -DVM_VPI=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-int-in-bool-context -Wno-shadow -Wno-sign-compare -Wno-subobject-linkage -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -std=c++17 -O2   -c -o verilated.o /home/flynnsbit/.local/oss-cad-suite/share/verilator/include/verilated.cpp
+g++ -Os  -I.  -MMD -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include/vltstd -DVERILATOR=1 -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TIMING=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -DVM_TRACE_SAIF=0 -DVM_VPI=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-int-in-bool-context -Wno-shadow -Wno-sign-compare -Wno-subobject-linkage -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -std=c++17 -O2   -c -o verilated_threads.o /home/flynnsbit/.local/oss-cad-suite/share/verilator/include/verilated_threads.cpp
+g++ -Os  -I.  -MMD -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include/vltstd -DVERILATOR=1 -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TIMING=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -DVM_TRACE_SAIF=0 -DVM_VPI=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-int-in-bool-context -Wno-shadow -Wno-sign-compare -Wno-subobject-linkage -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -std=c++17 -O2   -x c++-header Vdecode_stub_fetch_mv_tb__pch.h -o Vdecode_stub_fetch_mv_tb__pch.h.fast.gch
+g++ -Os  -I.  -MMD -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include/vltstd -DVERILATOR=1 -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TIMING=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -DVM_TRACE_SAIF=0 -DVM_VPI=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-int-in-bool-context -Wno-shadow -Wno-sign-compare -Wno-subobject-linkage -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -std=c++17 -O2   -include Vdecode_stub_fetch_mv_tb__pch.h.fast -c Vdecode_stub_fetch_mv_tb.cpp
+g++ -Os  -I.  -MMD -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include/vltstd -DVERILATOR=1 -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TIMING=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -DVM_TRACE_SAIF=0 -DVM_VPI=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-int-in-bool-context -Wno-shadow -Wno-sign-compare -Wno-subobject-linkage -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -std=c++17 -O2   -include Vdecode_stub_fetch_mv_tb__pch.h.fast -c Vdecode_stub_fetch_mv_tb___024root__0.cpp
+g++ -Os  -I.  -MMD -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include/vltstd -DVERILATOR=1 -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TIMING=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -DVM_TRACE_SAIF=0 -DVM_VPI=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-int-in-bool-context -Wno-shadow -Wno-sign-compare -Wno-subobject-linkage -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -std=c++17 -O2   -include Vdecode_stub_fetch_mv_tb__pch.h.fast -c Vdecode_stub_fetch_mv_tb___024root__1.cpp
+g++ -Os  -I.  -MMD -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include/vltstd -DVERILATOR=1 -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TIMING=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -DVM_TRACE_SAIF=0 -DVM_VPI=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-int-in-bool-context -Wno-shadow -Wno-sign-compare -Wno-subobject-linkage -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -std=c++17 -O2   -include Vdecode_stub_fetch_mv_tb__pch.h.fast -c Vdecode_stub_fetch_mv_tb___024root__2.cpp
+g++ -Os  -I.  -MMD -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include/vltstd -DVERILATOR=1 -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TIMING=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -DVM_TRACE_SAIF=0 -DVM_VPI=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-int-in-bool-context -Wno-shadow -Wno-sign-compare -Wno-subobject-linkage -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -std=c++17 -O2   -include Vdecode_stub_fetch_mv_tb__pch.h.fast -c Vdecode_stub_fetch_mv_tb___024root__3.cpp
+g++ -Os  -I.  -MMD -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include/vltstd -DVERILATOR=1 -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TIMING=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -DVM_TRACE_SAIF=0 -DVM_VPI=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-int-in-bool-context -Wno-shadow -Wno-sign-compare -Wno-subobject-linkage -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -std=c++17 -O2   -include Vdecode_stub_fetch_mv_tb__pch.h.fast -c Vdecode_stub_fetch_mv_tb___024root__4.cpp
+g++   -I.  -MMD -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include/vltstd -DVERILATOR=1 -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TIMING=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -DVM_TRACE_SAIF=0 -DVM_VPI=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-int-in-bool-context -Wno-shadow -Wno-sign-compare -Wno-subobject-linkage -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -std=c++17 -O2   -x c++-header Vdecode_stub_fetch_mv_tb__pch.h -o Vdecode_stub_fetch_mv_tb__pch.h.slow.gch
+g++   -I.  -MMD -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include/vltstd -DVERILATOR=1 -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TIMING=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -DVM_TRACE_SAIF=0 -DVM_VPI=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-int-in-bool-context -Wno-shadow -Wno-sign-compare -Wno-subobject-linkage -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -std=c++17 -O2   -include Vdecode_stub_fetch_mv_tb__pch.h.slow -c Vdecode_stub_fetch_mv_tb__ConstPool__0__Slow.cpp
+g++   -I.  -MMD -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include/vltstd -DVERILATOR=1 -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TIMING=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -DVM_TRACE_SAIF=0 -DVM_VPI=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-int-in-bool-context -Wno-shadow -Wno-sign-compare -Wno-subobject-linkage -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -std=c++17 -O2   -include Vdecode_stub_fetch_mv_tb__pch.h.slow -c Vdecode_stub_fetch_mv_tb___024root__Slow.cpp
+g++   -I.  -MMD -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include/vltstd -DVERILATOR=1 -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TIMING=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -DVM_TRACE_SAIF=0 -DVM_VPI=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-int-in-bool-context -Wno-shadow -Wno-sign-compare -Wno-subobject-linkage -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -std=c++17 -O2   -include Vdecode_stub_fetch_mv_tb__pch.h.slow -c Vdecode_stub_fetch_mv_tb___024root__0__Slow.cpp
+g++   -I.  -MMD -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include/vltstd -DVERILATOR=1 -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TIMING=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -DVM_TRACE_SAIF=0 -DVM_VPI=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-int-in-bool-context -Wno-shadow -Wno-sign-compare -Wno-subobject-linkage -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -std=c++17 -O2   -include Vdecode_stub_fetch_mv_tb__pch.h.slow -c Vdecode_stub_fetch_mv_tb___024root__1__Slow.cpp
+g++   -I.  -MMD -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include/vltstd -DVERILATOR=1 -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TIMING=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -DVM_TRACE_SAIF=0 -DVM_VPI=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-int-in-bool-context -Wno-shadow -Wno-sign-compare -Wno-subobject-linkage -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -std=c++17 -O2   -include Vdecode_stub_fetch_mv_tb__pch.h.slow -c Vdecode_stub_fetch_mv_tb___024root__2__Slow.cpp
+g++   -I.  -MMD -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include -I/home/flynnsbit/.local/oss-cad-suite/share/verilator/include/vltstd -DVERILATOR=1 -DVM_COVERAGE=0 -DVM_SC=0 -DVM_TIMING=0 -DVM_TRACE=0 -DVM_TRACE_FST=0 -DVM_TRACE_VCD=0 -DVM_TRACE_SAIF=0 -DVM_VPI=0 -faligned-new -fcf-protection=none -Wno-bool-operation -Wno-int-in-bool-context -Wno-shadow -Wno-sign-compare -Wno-subobject-linkage -Wno-tautological-compare -Wno-uninitialized -Wno-unused-but-set-parameter -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-unused-variable    -std=c++17 -O2   -include Vdecode_stub_fetch_mv_tb__pch.h.slow -c Vdecode_stub_fetch_mv_tb__Syms__Slow.cpp
+g++    decode_stub_fetch_mv_tb.o verilated.o verilated_threads.o Vdecode_stub_fetch_mv_tb__ALL.a    -pthread -lpthread -latomic   -o Vdecode_stub_fetch_mv_tb
+rm Vdecode_stub_fetch_mv_tb__ALL.verilator_deplist.tmp
+make: Leaving directory '/home/flynnsbit/Projects/MisterPlex/.worktrees/rtl-real-ref-measure/build/verilator/decode_stub_fetch_mv_zero'
+- V e r i l a t i o n   R e p o r t: Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
+- Verilator: Built from 1.461 MB sources in 33 modules, into 8.752 MB in 12 C++ files needing 0.009 MB
+- Verilator: Walltime 25.938 s (elab=0.063, cvt=0.701, bld=25.069); cpu 0.860 s on 1 threads; allocated 81.906 MB
+EXPECTED_RED decode_stub_fetch_mv_zero: rc=1 matched 1 manifest substring(s) (tests/unit/test_decode_stub_fetch_mv_rtl_sim.sh)
+OK decode_stub fetch_mv RTL: nonzero mvd shifted luma origin; zero-MV twin RED

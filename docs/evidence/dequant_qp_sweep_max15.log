@@ -1,0 +1,24 @@
+OK RED max15 twin: max_coeff=16 mismatches host-max15 in 16 slots
+QP sweep summary (coefficient=1 at scan pos 0, mi=0):
+  QP= 0: host=    10 RTL=    10 OK
+  QP= 3: host=    14 RTL=    14 OK
+  QP= 6: host=    20 RTL=    20 OK
+  QP= 9: host=    28 RTL=    28 OK
+  QP=12: host=    40 RTL=    40 OK
+  QP=15: host=    56 RTL=    56 OK
+  QP=18: host=    80 RTL=    80 OK
+  QP=21: host=   112 RTL=   112 OK
+  QP=24: host=   160 RTL=   160 OK
+  QP=27: host=   224 RTL=   224 OK
+  QP=30: host=   320 RTL=   320 OK
+  QP=33: host=   448 RTL=   448 OK
+  QP=36: host=   640 RTL=   640 OK
+  QP=39: host=   896 RTL=   896 OK
+  QP=42: host=  1280 RTL=  1280 OK
+  QP=45: host=  1792 RTL=  1792 OK
+  QP=48: host=  2560 RTL=  2560 OK
+  QP=51: host=  3584 RTL=  3584 OK
+DEQUANT QP SWEEP PASS: 1205 tests across QP 0–51, all patterns exact
+
+DEQUANT QP SWEEP: PASS — RTL matches host reference for all QP 0-51
+SOURCE_SHA=6b199156d5ce9360dd59ae49d6897302bd27e707-pre-commit

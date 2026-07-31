@@ -1,0 +1,3 @@
+LUMA_PROGRESS intra_y_mb=0/300 intra_y_blk4=0/4800 intra_y_px=5/76800 intra_y_mae=80.145469
+LUMA_PROGRESS inter_y_mb=0/3300 inter_y_blk4=78/52800 inter_y_px=1694/844800 inter_y_mae=79.654143
+LUMA_PROGRESS frame0 y_mb=0/300 y_blk4=0/4800 y_px=5/76800 y_mae=80.145469

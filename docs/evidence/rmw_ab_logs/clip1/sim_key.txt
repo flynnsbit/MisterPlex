@@ -1,0 +1,60 @@
+SOURCE_SHA=172d0514a1277b7c4e23989d3cd6efb0d65b0cce
+NOTE=sim pre-commit; RTL dirty then committed with this tip
+322:I_RECON_DONE mb_written=299 blk_applied=5020 luma_nz_peak=373
+323:STORE_MB_BITMAP unique=299 dup=0 oob=0 expected=300 fault_dup=0
+325:STORE_MB_BITMAP unique=300 dup=0 oob=0 expected=300 fault_dup=0
+333:STORE_MB_BITMAP unique=300 dup=0 oob=0 expected=300 fault_dup=0
+341:STORE_MB_BITMAP unique=300 dup=0 oob=0 expected=300 fault_dup=0
+349:STORE_MB_BITMAP unique=300 dup=0 oob=0 expected=300 fault_dup=0
+357:STORE_MB_BITMAP unique=300 dup=0 oob=0 expected=300 fault_dup=0
+365:STORE_MB_BITMAP unique=300 dup=0 oob=0 expected=300 fault_dup=0
+373:STORE_MB_BITMAP unique=300 dup=0 oob=0 expected=300 fault_dup=0
+381:STORE_MB_BITMAP unique=300 dup=0 oob=0 expected=300 fault_dup=0
+389:STORE_MB_BITMAP unique=300 dup=0 oob=0 expected=300 fault_dup=0
+397:STORE_MB_BITMAP unique=300 dup=0 oob=0 expected=300 fault_dup=0
+405:STORE_MB_BITMAP unique=300 dup=0 oob=0 expected=300 fault_dup=0
+413:STORE_MB_BITMAP unique=300 dup=0 oob=0 expected=300 fault_dup=0
+500:STAGE_CYCLES frame=0 parse_cycles=289 paint_cycles=889736 parse_per_mb=0.963 paint_per_mb=2965.787
+501:STAGE_CYCLES frame=1 parse_cycles=446224 paint_cycles=76800 parse_per_mb=1487.413 paint_per_mb=256.000
+502:STAGE_CYCLES frame=2 parse_cycles=444557 paint_cycles=76800 parse_per_mb=1481.857 paint_per_mb=256.000
+503:STAGE_CYCLES frame=3 parse_cycles=447248 paint_cycles=76800 parse_per_mb=1490.827 paint_per_mb=256.000
+504:STAGE_CYCLES frame=4 parse_cycles=450516 paint_cycles=76800 parse_per_mb=1501.720 paint_per_mb=256.000
+505:STAGE_CYCLES frame=5 parse_cycles=441649 paint_cycles=76800 parse_per_mb=1472.163 paint_per_mb=256.000
+506:STAGE_CYCLES frame=6 parse_cycles=446484 paint_cycles=76800 parse_per_mb=1488.280 paint_per_mb=256.000
+507:STAGE_CYCLES frame=7 parse_cycles=447818 paint_cycles=76800 parse_per_mb=1492.727 paint_per_mb=256.000
+508:STAGE_CYCLES frame=8 parse_cycles=436808 paint_cycles=76800 parse_per_mb=1456.027 paint_per_mb=256.000
+509:STAGE_CYCLES frame=9 parse_cycles=440712 paint_cycles=76800 parse_per_mb=1469.040 paint_per_mb=256.000
+510:STAGE_CYCLES frame=10 parse_cycles=441649 paint_cycles=76800 parse_per_mb=1472.163 paint_per_mb=256.000
+511:STAGE_CYCLES frame=11 parse_cycles=435602 paint_cycles=76800 parse_per_mb=1452.007 paint_per_mb=256.000
+512:STAGE_CYCLES_TOTAL frames=12 parse_total=4879556 paint_total=1734536 injection_total=55306 nonvcl_idle_total=768 reset_total=12 parse_per_mb=1355.432 paint_per_mb=481.816 injection_per_mb=15.363
+515:true rc=0
+FULL_FRAME_COMPARE first_bad frame=10 colorspace=I420_FROM_RGB565 plane=Y x=0 y=0 mb_x=0 mb_y=0 pixel_in_mb_x=0 pixel_in_mb_y=0 got=145 ref=80 abs=65
+FULL_FRAME_COMPARE raw frame=10 colorspace=I420_FROM_RGB565 plane=U exact=125 pixels=19200 mae=81.038698 max_abs=208
+FULL_FRAME_COMPARE first_bad frame=10 colorspace=I420_FROM_RGB565 plane=U x=0 y=0 mb_x=0 mb_y=0 pixel_in_mb_x=0 pixel_in_mb_y=0 got=176 ref=91 abs=85
+FULL_FRAME_COMPARE raw frame=10 colorspace=I420_FROM_RGB565 plane=V exact=33 pixels=19200 mae=71.225885 max_abs=210
+FULL_FRAME_COMPARE first_bad frame=10 colorspace=I420_FROM_RGB565 plane=V x=0 y=0 mb_x=0 mb_y=0 pixel_in_mb_x=0 pixel_in_mb_y=0 got=36 ref=245 abs=209
+FULL_FRAME_COMPARE mb frame=10 exact=0 total=300
+FULL_FRAME_COMPARE raw frame=11 colorspace=I420_FROM_RGB565 plane=Y exact=324 pixels=76800 mae=75.846510 max_abs=204
+FULL_FRAME_COMPARE first_bad frame=11 colorspace=I420_FROM_RGB565 plane=Y x=0 y=0 mb_x=0 mb_y=0 pixel_in_mb_x=0 pixel_in_mb_y=0 got=145 ref=80 abs=65
+FULL_FRAME_COMPARE raw frame=11 colorspace=I420_FROM_RGB565 plane=U exact=99 pixels=19200 mae=82.049635 max_abs=212
+FULL_FRAME_COMPARE first_bad frame=11 colorspace=I420_FROM_RGB565 plane=U x=0 y=0 mb_x=0 mb_y=0 pixel_in_mb_x=0 pixel_in_mb_y=0 got=176 ref=91 abs=85
+FULL_FRAME_COMPARE raw frame=11 colorspace=I420_FROM_RGB565 plane=V exact=42 pixels=19200 mae=71.127865 max_abs=210
+FULL_FRAME_COMPARE first_bad frame=11 colorspace=I420_FROM_RGB565 plane=V x=0 y=0 mb_x=0 mb_y=0 pixel_in_mb_x=0 pixel_in_mb_y=0 got=36 ref=245 abs=209
+FULL_FRAME_COMPARE mb frame=11 exact=0 total=300
+DEGENERACY_WARNING inter_captures_constant_y=1969/3300 (partial DPB corruption)
+STAGE_CYCLES frame=0 parse_cycles=289 paint_cycles=889736 parse_per_mb=0.963 paint_per_mb=2965.787
+STAGE_CYCLES frame=1 parse_cycles=446224 paint_cycles=76800 parse_per_mb=1487.413 paint_per_mb=256.000
+STAGE_CYCLES frame=2 parse_cycles=444557 paint_cycles=76800 parse_per_mb=1481.857 paint_per_mb=256.000
+STAGE_CYCLES frame=3 parse_cycles=447248 paint_cycles=76800 parse_per_mb=1490.827 paint_per_mb=256.000
+STAGE_CYCLES frame=4 parse_cycles=450516 paint_cycles=76800 parse_per_mb=1501.720 paint_per_mb=256.000
+STAGE_CYCLES frame=5 parse_cycles=441649 paint_cycles=76800 parse_per_mb=1472.163 paint_per_mb=256.000
+STAGE_CYCLES frame=6 parse_cycles=446484 paint_cycles=76800 parse_per_mb=1488.280 paint_per_mb=256.000
+STAGE_CYCLES frame=7 parse_cycles=447818 paint_cycles=76800 parse_per_mb=1492.727 paint_per_mb=256.000
+STAGE_CYCLES frame=8 parse_cycles=436808 paint_cycles=76800 parse_per_mb=1456.027 paint_per_mb=256.000
+STAGE_CYCLES frame=9 parse_cycles=440712 paint_cycles=76800 parse_per_mb=1469.040 paint_per_mb=256.000
+STAGE_CYCLES frame=10 parse_cycles=441649 paint_cycles=76800 parse_per_mb=1472.163 paint_per_mb=256.000
+STAGE_CYCLES frame=11 parse_cycles=435602 paint_cycles=76800 parse_per_mb=1452.007 paint_per_mb=256.000
+STAGE_CYCLES_TOTAL frames=12 parse_total=4879556 paint_total=1734536 injection_total=55306 nonvcl_idle_total=768 reset_total=12 parse_per_mb=1355.432 paint_per_mb=481.816 injection_per_mb=15.363
+FULL_FRAME_COMPARE summary width=320 height=240 frames=12 nals=15 idr=1 p=11 bytes=27653 p_mb_count_max=300 p_slice_done_pulses=12 traversed/total=300/300 native_inter_mb_captures=3300 native_inter_ignored=0 native_i420_dpb_writes=1382400 cycles=6687296 first_bad_frame=0 strict_pass=0 mode=expect-red
+OK full-frame expected-red: strict reference comparison diverged at frame 0
+true rc=0

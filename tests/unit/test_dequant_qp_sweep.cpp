@@ -24,15 +24,15 @@ struct DequantRef {
     int32_t values[16];
 };
 
-// Host-side dequant: identical to h264_recon.hpp dequant4x4 with maxCoeff=16
-DequantRef hostDequant(const int16_t coeff[16], int qp) {
+// Host-side dequant: identical to h264_recon.hpp dequant4x4
+DequantRef hostDequant(const int16_t coeff[16], int qp, int maxCoeff = 16) {
     DequantRef out;
     std::memset(&out, 0, sizeof(out));
     int shift = qp / 6 + 2;
-    for (int k = 0; k < 16; ++k) {
+    for (int k = 0; k < maxCoeff; ++k) {
         if (!coeff[k])
             continue;
-        int zi = kZigzag[k];
+        int zi = (maxCoeff == 15) ? kZigzag[k + 1] : kZigzag[k];
         int i = zi / 4, j = zi % 4;
         int mi = ((i & 1) + (j & 1)) == 0 ? 0 : (((i & 1) + (j & 1)) == 1 ? 1 : 2);
         int qmul = (kNormAdjust[qp % 6][mi] * 16) << shift;
@@ -132,7 +132,7 @@ int main(int argc, char** argv) {
             dut->qp = static_cast<uint8_t>(qp);
             dut->max_coeff = 16;
             for (int i = 0; i < 16; ++i)
-                dut->coeff[i] = static_cast<uint16_t>(pat.coeffs[i] & 0x1FF);
+                dut->coeff[i] = pat.coeffs[i];
             dut->eval();
 
             // Compute host reference
@@ -160,6 +160,65 @@ int main(int argc, char** argv) {
         }
     }
 
+    // --- max_coeff=15 (I16 AC): coeff[k] → zigzag[k+1], spatial DC must stay 0 ---
+    {
+        int16_t ac[16] = {};
+        for (int i = 0; i < 15; ++i)
+            ac[i] = static_cast<int16_t>((i & 1) ? -3 : 5);
+        ac[15] = 99; // must be ignored when maxCoeff=15
+        for (int qp = 0; qp <= 51; qp += 7) {
+            dut->qp = static_cast<uint8_t>(qp);
+            dut->max_coeff = 15;
+            for (int i = 0; i < 16; ++i)
+                dut->coeff[i] = static_cast<int16_t>(ac[i]);
+            dut->eval();
+            DequantRef ref = hostDequant(ac, qp, 15);
+            bool ok = true;
+            for (int i = 0; i < 16; ++i) {
+                int32_t rtl_val = dut->dequant[i];
+                if (rtl_val & (1 << 28))
+                    rtl_val |= ~((1 << 29) - 1);
+                if (rtl_val != ref.values[i]) {
+                    if (ok) {
+                        fprintf(stderr, "MISMATCH max15 QP=%d:\n", qp);
+                        ok = false;
+                    }
+                    fprintf(stderr, "  pos[%d]: RTL=%d host=%d\n", i, rtl_val, ref.values[i]);
+                    ++failures;
+                }
+            }
+            if (dut->dequant[0] != 0) {
+                fprintf(stderr, "FAIL max15 QP=%d: DC slot nonzero %d\n", qp, (int)dut->dequant[0]);
+                ++failures;
+            }
+            ++tests;
+        }
+        // RED mutant twin: max_coeff forced 16 must NOT match host max15 (discriminates skip_dc)
+        {
+            dut->qp = 18;
+            dut->max_coeff = 16; // wrong on purpose
+            for (int i = 0; i < 16; ++i)
+                dut->coeff[i] = static_cast<int16_t>(ac[i]);
+            dut->eval();
+            DequantRef ref15 = hostDequant(ac, 18, 15);
+            int mismatches = 0;
+            for (int i = 0; i < 16; ++i) {
+                int32_t rtl_val = dut->dequant[i];
+                if (rtl_val & (1 << 28))
+                    rtl_val |= ~((1 << 29) - 1);
+                if (rtl_val != ref15.values[i])
+                    ++mismatches;
+            }
+            if (mismatches == 0) {
+                fprintf(stderr, "FAIL RED max15: max_coeff=16 unexpectedly matched host max15\n");
+                ++failures;
+            } else {
+                printf("OK RED max15 twin: max_coeff=16 mismatches host-max15 in %d slots\n", mismatches);
+            }
+            ++tests;
+        }
+    }
+
     // Print QP→dequant summary for spot-checking
     printf("QP sweep summary (coefficient=1 at scan pos 0, mi=0):\n");
     for (int qp = 0; qp <= 51; qp += 3) {
@@ -169,7 +228,7 @@ int main(int argc, char** argv) {
         dut->qp = static_cast<uint8_t>(qp);
         dut->max_coeff = 16;
         for (int i = 0; i < 16; ++i)
-            dut->coeff[i] = c[i] & 0x1FF;
+            dut->coeff[i] = c[i];
         dut->eval();
         int32_t rtl_val = dut->dequant[0];
         if (rtl_val & (1 << 17))

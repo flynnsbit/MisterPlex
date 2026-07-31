@@ -1,0 +1,40 @@
+TRAVERSE ALM GATE — MISS (publish both ways)
+============================================
+Freeze mapped by sv-integrate: d57f002
+Report: docs/coord-map-d57f002-ALMS.txt (f928601) / integrate true rc=0
+
+PRE-REGISTER (sv-traverse, access restructure):
+  ALM target gate: <= 3000
+  pre-reg band:    800..3000
+
+MEASURED (integrate map, Cyclone V):
+  h264_p_mb_traverse: 1,180,271 -> 9,167 comb ALUTs  (~129x)
+  self comb:          7,079 ALUTs
+  whole design ALMs:  1,241,952 -> 63,199  (29.6x -> 1.51x device)
+  traverse DSP:       1
+  M10K:               SDP 8192x8 inferred (altsyncram Info 276029) — real RAM
+
+GATE vs self comb 7,079 against <=3000: **MISS**
+  (map has no per-entity ALM; honest reading = not passed, not a favourable ALUT→ALM conversion)
+
+Reduction vs baseline still extraordinary (~129x). Phase-2 residual cost:
+  tc_top / i4_mode_top + comb nC (after win_k width fix + sink priority).
+
+win_k width (Error 10232) fixed in product tree after this miss publication;
+re-score both clips required post-fix.
+
+win_k WIDTH FIX (Error 10232) — product tree
+============================================
+Change: rbsp_raddr <= win_base + RBSP_AW'(win_k);
+  (was win_k[RBSP_AW-1:0] on reg [7:0] win_k — illegal when RBSP_AW=13)
+
+PRE-REG post-fix: clip1 300/300, clip2 1170/1170 (behaviour-preserving expected)
+
+MEASURED:
+  clip1: intra_y 300/300 y_px 76800/76800  true_rc=0  log=docs/evidence/win_k_fix_320_run.log
+  clip2: intra_y 1170/1170 y_px 299520/299520 true_rc=0 log=docs/evidence/win_k_fix_624_run.log
+  VERDICT: HIT (no regression)
+
+SINK STATUS (same tip family):
+  serial IQ freeze was 34d55ac3; this commit stacks win_k on top.
+  Sink map still owed to sv-integrate (d57f002 map showed pre-serial sink 38687 comb / 64 DSP).

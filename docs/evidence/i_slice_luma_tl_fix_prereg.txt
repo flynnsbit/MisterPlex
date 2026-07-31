@@ -1,0 +1,8 @@
+SOURCE_BASE_SHA=2c163ab
+FIX=tl_for_right_mb snapshot before top_row overwrite on MB end
+ROOT_CAUSE=left MB end overwrites top_row[mbx*16+15] which is p[-1,-1] for next MB;
+  (8,3) mode6 implied tl=153 (=left MB BR) not 210 (=above-left BR)
+PRE_REGISTER_LUMA_intra_y_mb=250..285/300
+PRE_REGISTER_HEADLINE=0/300
+PRE_REGISTER_STORE=300/300
+NOTE=(4,10) I16_m0 TL pixel coincidently same before/after overwrite; may remain
