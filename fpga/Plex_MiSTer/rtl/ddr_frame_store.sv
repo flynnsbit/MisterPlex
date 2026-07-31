@@ -522,6 +522,8 @@ module ddr_frame_store #(
 	reg [17:0] bank_mbox_hb;
 	reg [7:0] bank_mbox_seq;
 	reg [15:0] bank_vsync_count;
+	reg [15:0] frames_done_d1, frames_done_d2; // clk→clk_ddr (PLXD pack)
+	reg bank_plxd_swap_d, bank_plxd_disp_d;    // edge detect for fresher free_mask
 	reg vsync_t_d1, vsync_t_d2, vsync_t_seen;
 	reg start_d1, start_d2, start_seen;
 	reg bank_sel_d1, bank_sel_d2;
@@ -856,6 +858,10 @@ module ddr_frame_store #(
 			bank_mbox_hb <= 18'd0;
 			bank_mbox_seq <= 8'd0;
 			bank_vsync_count <= 16'd0;
+			frames_done_d1 <= 16'd0;
+			frames_done_d2 <= 16'd0;
+			bank_plxd_swap_d <= 1'b0;
+			bank_plxd_disp_d <= 1'b0;
 			vsync_t_d1 <= 1'b0;
 			vsync_t_d2 <= 1'b0;
 			vsync_t_seen <= 1'b0;
@@ -895,6 +901,8 @@ module ddr_frame_store #(
 			swap_pending_d2 <= swap_pending_d1;
 			pending_bank_d1 <= pending_bank;
 			pending_bank_d2 <= pending_bank_d1;
+			frames_done_d1 <= frames_done;
+			frames_done_d2 <= frames_done_d1;
 
 			// want_y: Gray-coded 2-FF sync (crossing #13)
 			want_y_gray_s1 <= want_y_gray;
@@ -944,6 +952,14 @@ module ddr_frame_store #(
 			if (vsync_t_d2 != vsync_t_seen) begin
 				vsync_t_seen <= vsync_t_d2;
 				bank_vsync_count <= bank_vsync_count + 16'd1;
+				bank_mbox_req <= 1'b1;
+			end
+			// Fresher free_mask: republish when swap_pending or disp_bank changes,
+			// not only on vsync/heartbeat. Closes the stale-free window that lets
+			// ARM overwrite the new display bank under playback-rate presents.
+			if ((swap_pending_d2 != bank_plxd_swap_d) || (disp_bank_d2 != bank_plxd_disp_d)) begin
+				bank_plxd_swap_d <= swap_pending_d2;
+				bank_plxd_disp_d <= disp_bank_d2;
 				bank_mbox_req <= 1'b1;
 			end
 			bank_mbox_hb <= bank_mbox_hb + 18'd1;
@@ -1017,9 +1033,14 @@ module ddr_frame_store #(
 						// PLXD bank-release: tell ARM which bank is safe to write
 						// Layout: [63:48] frames_done, [35] swap_pending,
 						//   [34] disp_bank, [33:32] free_bank_mask, [31:0] magic
+						// frames_done MUST be the real swap counter (not
+						// bank_vsync_count). Packing vsync kept PLXD "live" while
+						// swaps stuck — ARM stale detector could not fire
+						// (playback freeze class on c5382bee). ARM now also
+						// gates on free/disp identity; keep ABI honest.
 						DDRAM_ADDR <= BANK_MAILBOX_W;
 						DDRAM_BURSTCNT <= 8'd1;
-						DDRAM_DIN <= {bank_vsync_count,                    // [63:48] frames_done
+						DDRAM_DIN <= {frames_done_d2,                       // [63:48] real swaps (CDC)
 						              12'd0,                                // [47:36] reserved
 						              swap_pending_d2,                      // [35]
 						              disp_bank_d2,                         // [34]

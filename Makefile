@@ -155,7 +155,6 @@ unit-unlocked: unit-rollcall preflight $(ROOT)/build/test_cadence $(ROOT)/build/
 	$(ROOT)/tests/unit/test_ddr_frame_store_scanout_shear.sh
 	$(ROOT)/tests/unit/test_ddr_frame_store_scanout_freeze.sh
 	$(ROOT)/tests/unit/test_ddr_frame_store_scanout_sustained.sh
-	$(ROOT)/tests/unit/test_ddr_frame_store_scanout_sustained.sh
 	$(ROOT)/tests/unit/test_ddr_frame_store_plxd_handshake.sh
 	$(ROOT)/tests/unit/test_ddr_frame_store_scanout_colour.sh
 	$(ROOT)/scripts/rtl_lint.py
@@ -177,7 +176,6 @@ rtl-sim-unlocked:
 	$(ROOT)/tests/unit/test_ddr_frame_store_warm_reset.sh
 	$(ROOT)/tests/unit/test_ddr_frame_store_scanout_shear.sh
 	$(ROOT)/tests/unit/test_ddr_frame_store_scanout_freeze.sh
-	$(ROOT)/tests/unit/test_ddr_frame_store_scanout_sustained.sh
 	$(ROOT)/tests/unit/test_ddr_frame_store_scanout_sustained.sh
 	$(ROOT)/tests/unit/test_ddr_frame_store_plxd_handshake.sh
 	$(ROOT)/tests/unit/test_ddr_frame_store_scanout_colour.sh

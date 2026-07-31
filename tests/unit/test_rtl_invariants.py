@@ -876,6 +876,24 @@ def check_mailboxes() -> None:
           "PLXD frames_done starts at bit 16 of upper word (bits [63:48])")
     check(cpp_const(spec_text, "kPlxdFramesDoneWidth") == 16,
           "PLXD frames_done is 16 bits wide")
+    # c5382bee packed bank_vsync_count as frames_done — liveness never saw stuck
+    # swaps. Product must pack the CDC'd real swap counter into DDRAM_DIN.
+    plxd_din = ""
+    for chunk in ddr_fs.split("DDRAM_DIN <="):
+        if "MAGIC_D" in chunk[:400]:
+            plxd_din = chunk[:400]
+            break
+    check(plxd_din != "", "PLXD DDRAM_DIN assignment with MAGIC_D must exist")
+    check("bank_vsync_count" not in plxd_din,
+          "PLXD DIN must not pack bank_vsync_count as frames_done")
+    check("frames_done_d2" in plxd_din,
+          "PLXD DIN must pack frames_done_d2 (CDC'd real swap counter)")
+    check("selectDdrWriteBank" in spi,
+          "sendDdrFrame must use selectDdrWriteBank (display-ack / stale-free guard)")
+    check("no force-write" in spi,
+          "sendDdrFrame must log/drop on PLXD timeout (no force-write)")
+    check("bank = brs.disp_bank ^ 1" not in spi,
+          "sendDdrFrame must not force-write disp^1 on PLXD timeout")
 
     # --- Address collision detection ---
     # Reject any two mailboxes at the same physical address.
@@ -1430,6 +1448,15 @@ def check_ddr_frame_store_yuv_read_contract() -> None:
                 "if(SWAP_REQ_HOLDS_PENDING_ACROSS_VSYNC&&(swap_req_s2!=swap_req_seen))swap_pending<=1'b1;elseswap_pending<=1'b0;",
                 "vsync swap must retain swap_pending when a new swap_req collides same cycle",
             ),
+            # PLXD free_bank_mask: 00 while swap_pending else single free bit = ~disp.
+            (
+                "swap_pending_d2?2'b00:(disp_bank_d2?2'b01:2'b10)",
+                "PLXD free_bank_mask must be 00 while pending else ~disp_bank",
+            ),
+            (
+                "DDRAM_DIN<={frames_done_d2,12'd0,swap_pending_d2,disp_bank_d2,swap_pending_d2?2'b00:(disp_bank_d2?2'b01:2'b10),MAGIC_D}",
+                "PLXD pack must use real frames_done (not vsync-only) + free/disp/pending",
+            ),
             (
                 "rd_cy=src_y_line[CODED_Y_W-1:1]",
                 "chroma line lookup must halve src_y_line (same vertical beam as Y)",
@@ -1519,6 +1546,15 @@ def check_ddr_frame_store_yuv_read_contract() -> None:
         fail(
             "deliberately dropped SWAP_REQ_HOLDS_PENDING_ACROSS_VSYNC "
             "(same-cycle doorbell+vsync lost-pending class) did not make the gate red"
+        )
+    drop_plxd_free = nt.replace(
+        "swap_pending_d2?2'b00:(disp_bank_d2?2'b01:2'b10)",
+        "2'b11",
+    )
+    if not missing_requirements(drop_plxd_free):
+        fail(
+            "deliberately broken PLXD free_bank_mask packing "
+            "(always both-free) did not make the gate red"
         )
     unused_module_decoy = frame_store_source.replace(
         "localparam int C_LINE_QWORDS = CODED_W / 16;",
