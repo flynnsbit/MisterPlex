@@ -1,0 +1,8 @@
+w-lint GATE-INTEGRITY STATUS
+branch=w-lint-gate-integrity
+task=harness false-verdict family (glue/shape/grabber/fail-fast)
+HEAD=pending-commit
+harness_lint=0
+promotion_gates=0
+liveness=0
+rollcall=117

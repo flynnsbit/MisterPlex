@@ -14,13 +14,20 @@ SCRIPT="$ROOT/scripts/video_regression.sh"
 WORK="$ROOT/build/video-regression-liveness"
 BASE_CORE_MD5=dfebf2bfd08dd70b473b587dd7e81848
 BASE_DAEMON_MD5=7cd10b4d438c714a9b8c4766dc982d59
-HYBRID_DAEMON_MD5=50f4eb925de10e29172999a565c87684
-PREV_HYBRID_DAEMON_MD5=3e2cbb9881b2f54b0e4cb60238655fa7
+# Match scripts/video_regression.sh pin table (post 2026-07-31 promote):
+#   HYBRID_DAEMON_MD5 = CURRENT product = DDR edc3a46b
+#   PREV_HYBRID       = SPI 50f4eb92 (accepted rollback)
+#   OLDER_HYBRID      = SPI 3e2cbb98 (accepted rollback)
+#   PREV_DDR / HIST   = e9f79de2
+HYBRID_DAEMON_MD5=edc3a46b9d1c6b86337deb90f896eb0f
+PREV_HYBRID_DAEMON_MD5=50f4eb925de10e29172999a565c87684
+OLDER_HYBRID_DAEMON_MD5=3e2cbb9881b2f54b0e4cb60238655fa7
+SPI_HYBRID_DAEMON_MD5=$PREV_HYBRID_DAEMON_MD5
 DDR_CORE_PREFIX=c5382bee
 DDR_DAEMON_PREFIX=edc3a46b
 PREV_DDR_DAEMON_PREFIX=e9f79de2
 DDR_CORE_MD5=c5382bee73cecdee8220b811e529c297
-DDR_DAEMON_MD5="${DDR_DAEMON_PREFIX}bbbbbbbbbbbbbbbbbbbbbbbb"
+DDR_DAEMON_MD5=$HYBRID_DAEMON_MD5
 PREV_DDR_DAEMON_MD5=e9f79de217982aff44207664fdb945c5
 BIN_PATH=/media/fat/misterplex_v2/bin/misterplexd
 CORE_PATH=/media/fat/_Utility/Plex_v2.rbf
@@ -216,7 +223,7 @@ make_sshm
 echo "=== RED direction: OLD on-disk-only check PASSes while daemon is DEAD ==="
 write_scenario <<EOF
 core_md5=$BASE_CORE_MD5
-disk_md5=$HYBRID_DAEMON_MD5
+disk_md5=$SPI_HYBRID_DAEMON_MD5
 live_md5=
 n_match=0
 appear_after=0
@@ -313,8 +320,8 @@ expect_grep "mixed-hint" 'SPI/DDR mix'
 echo "=== NEW gate: DDR core claim + SPI hybrid daemon → FAIL pair-mismatch ==="
 write_scenario <<EOF
 core_md5=$DDR_CORE_MD5
-disk_md5=$HYBRID_DAEMON_MD5
-live_md5=$HYBRID_DAEMON_MD5
+disk_md5=$SPI_HYBRID_DAEMON_MD5
+live_md5=$SPI_HYBRID_DAEMON_MD5
 n_match=1
 appear_after=0
 http_code=200
@@ -337,8 +344,8 @@ expect_grep "mixed2-msg" 'FAIL pair-mismatch|FAIL core-running'
 echo "=== NEW gate: coherent SPI hybrid + claim + HTTP 200 PASSes ==="
 write_scenario <<EOF
 core_md5=$BASE_CORE_MD5
-disk_md5=$HYBRID_DAEMON_MD5
-live_md5=$HYBRID_DAEMON_MD5
+disk_md5=$SPI_HYBRID_DAEMON_MD5
+live_md5=$SPI_HYBRID_DAEMON_MD5
 n_match=1
 appear_after=0
 http_code=200
@@ -349,7 +356,7 @@ EOF
 run_new_verify "new-live"
 expect_rc "new-live" 0
 expect_grep "new-live-core" "OK   core-running $BASE_CORE_MD5"
-expect_grep "new-live-ok" "OK   daemon-live $HYBRID_DAEMON_MD5"
+expect_grep "new-live-ok" "OK   daemon-live $SPI_HYBRID_DAEMON_MD5"
 expect_grep "new-live-http" 'OK   daemon-http'
 expect_grep "new-live-pair" 'OK   pair-coherent'
 expect_grep "new-live-conf" "OK   daemon-conf $V2_CONF"
@@ -411,7 +418,7 @@ echo "=== NEW gate: empty daemon-disk probe is NO-DATA (rc=4), not FAIL mismatch
 write_scenario <<EOF
 core_md5=$BASE_CORE_MD5
 disk_md5=
-live_md5=$HYBRID_DAEMON_MD5
+live_md5=$SPI_HYBRID_DAEMON_MD5
 n_match=1
 appear_after=0
 http_code=200
@@ -449,8 +456,8 @@ expect_grep "new-prev-ok" "OK   daemon-live $PREV_HYBRID_DAEMON_MD5"
 echo "=== NEW gate: process up but HTTP dead → FAIL ==="
 write_scenario <<EOF
 core_md5=$BASE_CORE_MD5
-disk_md5=$HYBRID_DAEMON_MD5
-live_md5=$HYBRID_DAEMON_MD5
+disk_md5=$SPI_HYBRID_DAEMON_MD5
+live_md5=$SPI_HYBRID_DAEMON_MD5
 n_match=1
 appear_after=0
 http_code=000
@@ -465,7 +472,7 @@ expect_grep "new-http-dead-msg" 'FAIL daemon-http'
 echo "=== NEW gate: ETXTBSY — disk new, live old → FAIL with explicit hint ==="
 write_scenario <<EOF
 core_md5=$BASE_CORE_MD5
-disk_md5=$HYBRID_DAEMON_MD5
+disk_md5=$SPI_HYBRID_DAEMON_MD5
 live_md5=$BASE_DAEMON_MD5
 n_match=1
 appear_after=0
@@ -482,8 +489,8 @@ expect_grep "new-etxtbsy-hint" 'ETXTBSY'
 echo "=== NEW gate: multi-match refuses ==="
 write_scenario <<EOF
 core_md5=$BASE_CORE_MD5
-disk_md5=$HYBRID_DAEMON_MD5
-live_md5=$HYBRID_DAEMON_MD5
+disk_md5=$SPI_HYBRID_DAEMON_MD5
+live_md5=$SPI_HYBRID_DAEMON_MD5
 n_match=2
 appear_after=0
 http_code=200
@@ -498,8 +505,8 @@ expect_grep "new-multi-msg" 'multi-match'
 echo "=== NEW gate: brief down then respawn within wait → PASS with note ==="
 write_scenario <<EOF
 core_md5=$BASE_CORE_MD5
-disk_md5=$HYBRID_DAEMON_MD5
-live_md5=$HYBRID_DAEMON_MD5
+disk_md5=$SPI_HYBRID_DAEMON_MD5
+live_md5=$SPI_HYBRID_DAEMON_MD5
 n_match=1
 appear_after=3
 http_code=200
@@ -515,7 +522,7 @@ expect_grep "new-respawn-note" 'respawned during wait'
 echo "=== NEW gate: never comes back within wait → FAIL ==="
 write_scenario <<EOF
 core_md5=$BASE_CORE_MD5
-disk_md5=$HYBRID_DAEMON_MD5
+disk_md5=$SPI_HYBRID_DAEMON_MD5
 live_md5=
 n_match=0
 appear_after=0
@@ -531,8 +538,8 @@ expect_grep "new-timeout-msg" 'n_daemon=0'
 echo "=== NEW gate: core-id RED SPI daemon + live CAP_DDR (mixed black-screen) ==="
 write_scenario <<EOF
 core_md5=$BASE_CORE_MD5
-disk_md5=$HYBRID_DAEMON_MD5
-live_md5=$HYBRID_DAEMON_MD5
+disk_md5=$SPI_HYBRID_DAEMON_MD5
+live_md5=$SPI_HYBRID_DAEMON_MD5
 n_match=1
 appear_after=0
 http_code=200
@@ -547,8 +554,8 @@ expect_grep "coreid-spi-on-ddr-msg" 'RED_SPI_DAEMON_DDR_CORE'
 echo "=== NEW gate: core-id GREEN SPI daemon + absent PLXC ==="
 write_scenario <<EOF
 core_md5=$BASE_CORE_MD5
-disk_md5=$HYBRID_DAEMON_MD5
-live_md5=$HYBRID_DAEMON_MD5
+disk_md5=$SPI_HYBRID_DAEMON_MD5
+live_md5=$SPI_HYBRID_DAEMON_MD5
 n_match=1
 appear_after=0
 http_code=200
@@ -609,6 +616,23 @@ EOF
 VIDREG_CORE_ID=absent VIDREG_REQUIRE_CORE_ID=1 run_new_verify "coreid-ddr-require"
 expect_rc "coreid-ddr-require" 1
 expect_grep "coreid-ddr-require-msg" 'VIDREG_REQUIRE_CORE_ID=1'
+
+# OLDER SPI hybrid pin (3e2cbb98) still accepted as rollback
+echo "=== NEW gate: OLDER hybrid pin still accepted (coherent SPI) ==="
+write_scenario <<EOF
+core_md5=$BASE_CORE_MD5
+disk_md5=$OLDER_HYBRID_DAEMON_MD5
+live_md5=$OLDER_HYBRID_DAEMON_MD5
+n_match=1
+appear_after=0
+http_code=200
+live_port=3005
+live_conf=$V2_CONF
+$(spi_claim_ok)
+EOF
+run_new_verify "older-spi"
+expect_rc "older-spi" 0
+expect_grep "older-spi-ok" "OK   daemon-live $OLDER_HYBRID_DAEMON_MD5"
 
 echo "ALL test_video_regression_liveness checks passed"
 exit 0

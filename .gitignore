@@ -30,8 +30,14 @@ releases/
 remote_out/
 artifacts/local/
 
+# Matched-pair ARM daemon pins (~30MB ELF). NOT committed deliberately:
+# reproducible via scripts/fetch_daemon_pins.sh (parent/device). README stays tracked.
+artifacts/daemon-pins/misterplexd.*
+!artifacts/daemon-pins/README.md
+
 # Versioned release payloads are intentionally tracked so release packages are
 # reproducible from a fresh clone and cannot pick up stale local bitstreams.
 !release_artifacts/
 !release_artifacts/**
 tests/unit/test_input_mailbox
+.agent-work/**/*.out

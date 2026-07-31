@@ -83,13 +83,30 @@ BASE_CORE_MD5=dfebf2bfd08dd70b473b587dd7e81848
 # does not touch the present path. A video difference between them is a real
 # regression and must fail.
 BASE_DAEMON_MD5=7cd10b4d438c714a9b8c4766dc982d59
-# 50f4eb92  CURRENT — clamps DECODE to the 320x240 RGB565 frame store instead of
-#           silently skipping FPGA present (pfps was 0.00 at 624x480), opt-in
-#           PRESENT_SCALE_TO_STORE, and supervisor backoff reset after a healthy
-#           run. Parent-verified on hardware: 240p unchanged (pfps 23.2, av-lock,
-#           3 distinct HDMI md5s); 624x480 clamps and presents (pfps 23.6).
-HYBRID_DAEMON_MD5=50f4eb925de10e29172999a565c87684
-PREV_HYBRID_DAEMON_MD5=3e2cbb9881b2f54b0e4cb60238655fa7
+# Daemon pin chain (do NOT weaken — unknown md5 still FAILs):
+#   edc3a46b  CURRENT — DDR pair with c5382bee (w-geom 7554d6b2). Parent HW
+#             2026-07-31: 240p + native 480p MOTION_OK with conf
+#             DDR_YUV_FORCE_SCALE=1 FFMPEG_SWS_FLAGS=fast_bilinear.
+#             Full md5 from live /proc/<pid>/exe (do not weaken gate).
+#   50f4eb92  PREV hybrid — SPI 320x240 clamp path (accepted rollback).
+#   e9f79de2  DDR hist — first silicon-correct DDR daemon (accepted rollback).
+#   3e2cbb98  older hybrid (accepted rollback).
+#   7cd10b4d  BASE release (above).
+HYBRID_DAEMON_PREFIX8=edc3a46b
+HYBRID_DAEMON_MD5_DEFAULT=edc3a46b9d1c6b86337deb90f896eb0f
+if [ -f "${REPO:-$(cd "$(dirname "$0")/.." && pwd)}/artifacts/daemon-pins/misterplexd.${HYBRID_DAEMON_PREFIX8}" ]; then
+  HYBRID_DAEMON_MD5=$(md5sum "${REPO:-$(cd "$(dirname "$0")/.." && pwd)}/artifacts/daemon-pins/misterplexd.${HYBRID_DAEMON_PREFIX8}" | awk '{print $1}')
+  # Pin file must match measured identity — refuse silent wrong binary.
+  if [ "${HYBRID_DAEMON_MD5:0:8}" != "$HYBRID_DAEMON_PREFIX8" ]; then
+    echo "FAIL pin-file md5='$HYBRID_DAEMON_MD5' not prefix $HYBRID_DAEMON_PREFIX8" >&2
+    HYBRID_DAEMON_MD5="$HYBRID_DAEMON_MD5_DEFAULT"
+  fi
+else
+  HYBRID_DAEMON_MD5="${HYBRID_DAEMON_MD5:-$HYBRID_DAEMON_MD5_DEFAULT}"
+fi
+PREV_HYBRID_DAEMON_MD5=50f4eb925de10e29172999a565c87684
+DDR_HIST_DAEMON_MD5=e9f79de217982aff44207664fdb945c5
+OLDER_HYBRID_DAEMON_MD5=3e2cbb9881b2f54b0e4cb60238655fa7
 
 # DDR product pair (parent silicon 2026-07-31):
 #   core prefix c5382bee + daemon edc3a46b — 240p AND native 480p on viewed pixels.
@@ -118,13 +135,62 @@ TOKEN_FILE="${TOKEN_FILE:-/tmp/.tok}"
 
 # Device transport. Host unit tests inject VIDREG_SSHM (command that receives
 # the remote shell snippet as a single argument) so we never need the live box.
-sshm() {
+# Lab SSH drops ~1/3 ("No route to host"); retry with backoff. Never treat an
+# empty observation after a failed transport as a hash MISMATCH.
+VIDREG_SSH_TRIES="${VIDREG_SSH_TRIES:-5}"
+VIDREG_SSH_BACKOFF_S="${VIDREG_SSH_BACKOFF_S:-1}"
+
+sshm_once() {
   if [ -n "${VIDREG_SSHM:-}" ]; then
     # shellcheck disable=SC2086
     $VIDREG_SSHM "$@"
     return $?
   fi
-  sshpass -p "$PASS" ssh -o StrictHostKeyChecking=no "root@$HOST" "$@"
+  sshpass -p "$PASS" ssh     -o StrictHostKeyChecking=no     -o ConnectTimeout=8     -o ServerAliveInterval=2     -o ServerAliveCountMax=2     "root@$HOST" "$@"
+}
+
+# Print stdout on success. On exhausted retries return 5 (NETWORK) with no stdout.
+sshm() {
+  local attempt=0 delay="${VIDREG_SSH_BACKOFF_S}" out rc
+  local errf="${VIDREG_SSH_ERRFILE:-$REPO/build/vidreg-ssh.err}"
+  mkdir -p "$(dirname "$errf")"
+  while [ "$attempt" -lt "$VIDREG_SSH_TRIES" ]; do
+    attempt=$((attempt + 1))
+    : >"$errf"
+    set +e
+    out=$(sshm_once "$@" 2>"$errf")
+    rc=$?
+    set -e
+    if [ "$rc" -eq 0 ]; then
+      printf '%s' "$out"
+      return 0
+    fi
+    echo "sshm-retry attempt=$attempt/${VIDREG_SSH_TRIES} rc=$rc err=$(tr '\n' ' ' <"$errf" | head -c 120)" >&2
+    sleep "$delay"
+    delay=$((delay * 2))
+    [ "$delay" -gt 16 ] && delay=16
+  done
+  echo "sshm-FAILED NETWORK after ${VIDREG_SSH_TRIES} attempts" >&2
+  return 5
+}
+
+# Empty string is NO-DATA, never a mismatch against a want hash.
+classify_obs_hash() {
+  local label="$1" got="$2"
+  shift 2
+  if [ -z "$got" ]; then
+    echo "NO-DATA $label got='' (empty — not a mismatch; SSH drop or remote produced no hash)"
+    return 4
+  fi
+  local w
+  for w in "$@"; do
+    if [ "$got" = "$w" ]; then
+      echo "OK   $label $got"
+      return 0
+    fi
+  done
+  echo "FAIL $label got='$got' want=$*"
+  return 1
 }
 
 # HTTP probe transport. Host tests inject VIDREG_HTTP (cmd receiving URL).
@@ -142,22 +208,33 @@ BASE_DAEMON_BIN=/media/fat/misterplex_v2/bin/misterplexd
 DEV_DAEMON_BIN=/media/fat/misterplex/bin/misterplexd
 
 spi_daemon_md5_accepted() {
+  # SPI-only pins. HYBRID_DAEMON_MD5 is the CURRENT *product* pin and is DDR
+  # (edc3a46b) after the 2026-07-31 promote re-pin — do NOT treat it as SPI
+  # or daemon_family(edc3a46b) becomes "spi" and green DDR pairs look mixed.
   case "$1" in
-    "$BASE_DAEMON_MD5"|"$HYBRID_DAEMON_MD5"|"$PREV_HYBRID_DAEMON_MD5") return 0 ;;
+    "$BASE_DAEMON_MD5"|"$PREV_HYBRID_DAEMON_MD5"|"$OLDER_HYBRID_DAEMON_MD5") return 0 ;;
     *) return 1 ;;
   esac
 }
 
 ddr_daemon_md5_accepted() {
-  # CURRENT + PREV rollback pins (prefix or full via md5_match).
-  if [ -n "${DDR_DAEMON_MD5:-}" ] && md5_match "$DDR_DAEMON_MD5" "$1"; then return 0; fi
-  if [ -n "${PREV_DDR_DAEMON_MD5:-}" ] && md5_match "$PREV_DDR_DAEMON_MD5" "$1"; then return 0; fi
+  # CURRENT product (HYBRID_DAEMON_MD5 / DDR_DAEMON_MD5) + PREV DDR hist.
+  local d="${1:-}"
+  [ -n "$d" ] || return 1
+  if [ -n "${HYBRID_DAEMON_MD5:-}" ] && md5_match "$HYBRID_DAEMON_MD5" "$d"; then return 0; fi
+  if [ -n "${DDR_DAEMON_MD5:-}" ] && md5_match "$DDR_DAEMON_MD5" "$d"; then return 0; fi
+  if [ -n "${PREV_DDR_DAEMON_MD5:-}" ] && md5_match "$PREV_DDR_DAEMON_MD5" "$d"; then return 0; fi
+  if [ -n "${DDR_HIST_DAEMON_MD5:-}" ] && md5_match "$DDR_HIST_DAEMON_MD5" "$d"; then return 0; fi
+  # Prefix8 of CURRENT product when only short pin is configured.
+  local p8="${d:0:8}"
+  if [ -n "${HYBRID_DAEMON_PREFIX8:-}" ] && [ "$p8" = "$HYBRID_DAEMON_PREFIX8" ]; then return 0; fi
   return 1
 }
 
 daemon_md5_accepted() {
   spi_daemon_md5_accepted "$1" || ddr_daemon_md5_accepted "$1"
 }
+
 
 # md5_match PIN GOT — full equality, or PIN is unique prefix (≥8 hex) of GOT.
 md5_match() {
@@ -620,7 +697,10 @@ verify_baseline() {
     [ "$rc" -eq 0 ] && rc=4
   else
     set +e
-    classify_obs_hash "daemon-disk" "$got_disk"       "$BASE_DAEMON_MD5" "$HYBRID_DAEMON_MD5" "$PREV_HYBRID_DAEMON_MD5"       "$DDR_DAEMON_MD5" "$PREV_DDR_DAEMON_MD5"
+    classify_obs_hash "daemon-disk" "$got_disk" \
+      "$BASE_DAEMON_MD5" "$HYBRID_DAEMON_MD5" "$PREV_HYBRID_DAEMON_MD5" \
+      "$OLDER_HYBRID_DAEMON_MD5" "$DDR_HIST_DAEMON_MD5" \
+      "$DDR_DAEMON_MD5" "$PREV_DDR_DAEMON_MD5"
     step_rc=$?
     set -e
     if [ "$step_rc" -eq 4 ]; then

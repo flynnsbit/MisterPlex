@@ -45,13 +45,15 @@ capture() {
   rm -f "$dest"
   sleep 0.6
   set +e
+  # Warm-up: USB grabber frame0 is often uniform grey; keep frame >=20.
   ffmpeg -y -hide_banner -loglevel error \
     -f v4l2 -input_format mjpeg -video_size 800x600 -framerate 30 \
-    -i "$DEVICE" -frames:v 1 -update 1 -q:v 2 "$dest" 2>/dev/null
+    -i "$DEVICE" -vf 'select=gte(n\,20)' -frames:v 1 -update 1 -q:v 2 "$dest" 2>/dev/null
   local rc=$?
   if [[ "$rc" -ne 0 ]]; then
     ffmpeg -y -hide_banner -loglevel error \
-      -f v4l2 -video_size 800x600 -i "$DEVICE" -frames:v 1 -update 1 -q:v 2 "$dest" 2>/dev/null
+      -f v4l2 -video_size 800x600 -i "$DEVICE" \
+      -vf 'select=gte(n\,20)' -frames:v 1 -update 1 -q:v 2 "$dest" 2>/dev/null
     rc=$?
   fi
   set -e

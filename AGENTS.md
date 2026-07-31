@@ -64,12 +64,18 @@ actually sees.
 - Device-observed claims are only valid when the **parent** captured them. An agent
   asserting a hardware result is a rule-0 violation.
 
-Capture the idle/playback screen with:
+Capture the idle/playback screen with the **warm-up-aware** helper (preferred):
 
 ```bash
+scripts/capture_hdmi_frame.sh build/hdmi-capture/live.png
+# or equivalent:
 ffmpeg -v error -f v4l2 -input_format mjpeg -video_size 1920x1080 \
-  -i /dev/video0 -frames:v 1 -y /tmp/live.png
+  -i /dev/video0 -vf 'select=gte(n\,20)' -frames:v 1 -y build/hdmi-capture/live.png
 ```
+
+**Do NOT use bare `-frames:v 1`.** The MacroSilicon USB grabber needs ~11–15 warm-up
+frames; frame 0 is often uniform grey (`mean_rgb≈7 std=0`) while the live screen is
+fine — that false `uniform_frame` cost a real promote gate RED (2026-07-31).
 
 `/dev/video0` is exclusive — a desktop app (OBS, `xdg-open`, nautilus preview) holding it
 makes capture fail with `Device or resource busy`. Check with `fuser -v /dev/video0`.

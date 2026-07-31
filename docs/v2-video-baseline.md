@@ -16,6 +16,23 @@ the reference every future build must be measured against.
 The daemon binary is byte-identical to the one shipped in the public
 `misterplex-v0.2.0.tar.gz` release asset.
 
+## Host-side rollback (honest)
+
+`scripts/plexctl.sh reload-v2` is **on-device only**. On the lab host it must
+return `rc=4 NOT_ON_DEVICE` / NO-DATA — never `ERROR no core at …` from a local
+`[ -f /media/fat/…]` check (that false catastrophe nearly triggered an emergency
+restore when the file was present on the MiSTer).
+
+From the lab host use:
+
+```bash
+scripts/rollback_v2.sh verify    # live /proc exe md5 + HTTP; empty = NO-DATA
+scripts/rollback_v2.sh restore   # menu bounce → Plex_v2.rbf → start v2 → verify
+```
+
+Pins: core `dfebf2bf…`, daemon hybrid `50f4eb92…` (also accepts release `7cd10b4d…`).
+SSH retries with backoff; capture `true rc=` directly (never through a pipe).
+
 ## PRESENT=fpga, not fb0
 
 The v0.2.0 release notes say *"`PRESENT=fb0` is the default and the safe
@@ -272,3 +289,21 @@ printf '%s\n' 'load_core /media/fat/_Utility/Plex_v2.rbf' > /dev/MiSTer_cmd
 
 Always pair `plexctl.sh v2` with `Plex_v2.rbf`, and `plexctl.sh dev` with
 `Plex.rbf`. Mismatched pairs produce a garbage or black picture.
+
+
+## Host-side rollback (do not use plexctl reload-v2 on the lab host)
+
+`scripts/plexctl.sh reload-v2` is **on-device only**. On the lab host it must
+return `rc=4 NOT_ON_DEVICE` / cannot check a device path — never a false
+`ERROR no core at /media/fat/_Utility/Plex_v2.rbf` from host-side `[ -f ]`
+(parent-measured 2026-07-31, rc=4 ×3 while the file existed on the MiSTer).
+
+From the lab host:
+
+```bash
+scripts/rollback_v2.sh verify
+scripts/rollback_v2.sh restore
+```
+
+DDR product promotion (different file: `Plex.rbf`, not `Plex_v2.rbf`) is
+documented in [`docs/ddr-daily-promotion.md`](ddr-daily-promotion.md).

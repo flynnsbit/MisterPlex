@@ -1,57 +1,41 @@
 #!/usr/bin/env bash
-# Restore the pre-deploy daemon saved by deploy_misterplexd.sh (misterplexd.prev-c2),
-# then restart it. Does NOT restore Plex.rbf — pair core+daemon geometry yourself
-# (320x240 bank1 0x30040000 vs 480p bank1 0x30080000). See docs/release.md
-# "Lab stable pair (v0.3.0)". Optional: PREV_BIN=/path/to/backup to override prev-c2.
+# restore_misterplexd_prev.sh — HARD REFUSE (B8 blocker).
+#
+# Parent 2026-07-31: this script restored ONLY the daemon and left the core
+# alone. A DDR daemon with the SPI core (or reverse bank geometry) is a
+# BLACK/GREEN screen that still passes file-md5 gates. 320x240 bank1 is
+# 0x30040000; 480p bank1 is 0x30080000 — mismatched pairs are silent.
+#
+# DO NOT use this script. Atomic pair restore:
+#   PAIR_ID=ddr-c5382bee PAIR_IDLE_PNG=/path/idle.png \
+#     scripts/rollback_v2.sh restore
+#   PAIR_ID=spi-v2-hybrid ROLLBACK_DAEMON=artifacts/daemon-pins/misterplexd.50f4eb92 \
+#     PAIR_IDLE_PNG=/path/idle.png scripts/rollback_v2.sh restore
+#
+# Exit 10 = REFUSE half-transition; device untouched.
+
 set -euo pipefail
 
-HOST="${MISTER_HOST:-192.168.1.183}"
-USER="${MISTER_USER:-root}"
-PASS="${MISTER_PASS:-1}"
+cat <<'MSG' >&2
+REFUSE HALF_RESTORE: scripts/restore_misterplexd_prev.sh is disabled (B8).
+  It restored daemon bytes only and explicitly did NOT restore Plex.rbf.
+  Mixed core+daemon geometry → black/green screen; telemetry can still pass.
+  bank1 SPI 320x240 = 0x30040000 ; bank1 DDR 480p = 0x30080000
 
-PLAYER_ID="${MISTERPLEX_ID:-misterplex-dev}"
-PREV_BIN="${PREV_BIN:-/media/fat/misterplex/bin/misterplexd.prev-c2}"
+Use ATOMIC pair tools instead (core + daemon + conf together):
 
-sshpass -p "$PASS" ssh -o StrictHostKeyChecking=no "$USER@$HOST" bash -s -- "${PMS_URL:-}" "$PLAYER_ID" "$PREV_BIN" <<'REMOTE'
-set -euo pipefail
-PMS_URL="${1:-}"
-PLAYER_ID="${2:-misterplex-dev}"
-PREV="${3:-/media/fat/misterplex/bin/misterplexd.prev-c2}"
-BIN=/media/fat/misterplex/bin/misterplexd
-LOG=/media/fat/misterplex/misterplexd.log
+  # PRIMARY live DDR recovery (c5382bee + edc3a46b + DDR conf keys):
+  PAIR_ID=ddr-c5382bee PAIR_IDLE_PNG=/path/to/idle.png \
+    scripts/rollback_v2.sh restore
 
-if [[ ! -f "$PREV" ]]; then
-  echo "No backup at $PREV" >&2
-  exit 1
-fi
+  # SPI daily undo (dfebf2bf + 50f4eb92; strips DDR_YUV_FORCE_SCALE):
+  PAIR_ID=spi-v2-hybrid \
+    ROLLBACK_DAEMON=artifacts/daemon-pins/misterplexd.50f4eb92 \
+    PAIR_IDLE_PNG=/path/to/idle.png \
+    scripts/rollback_v2.sh restore
 
-# Soft stop first; -9 only if still up (same pattern as deploy_misterplexd.sh).
-if pidof misterplexd >/dev/null 2>&1 || pidof ffmpeg >/dev/null 2>&1; then
-  kill $(pidof misterplexd ffmpeg 2>/dev/null) 2>/dev/null || true
-  sleep 0.4
-fi
-for p in $(pidof misterplexd 2>/dev/null) $(pidof ffmpeg 2>/dev/null); do
-  kill -9 "$p" 2>/dev/null || true
-done
-sleep 0.2
-cp -f "$PREV" "$BIN"
-chmod +x "$BIN"
-: >"$LOG"
-pms_args=()
-if [[ -n "$PMS_URL" ]]; then
-  pms_args=(--pms "$PMS_URL")
-fi
-nohup "$BIN" --name MiSTerPlex --id "$PLAYER_ID" --port 3005 \
-  --conf /media/fat/misterplex/misterplex.conf \
-  "${pms_args[@]}" \
-  >>"$LOG" 2>&1 &
-sleep 0.8
-echo "restored_from=$PREV"
-md5sum "$BIN" "$PREV" || true
-echo "pidof_misterplexd=$(pidof misterplexd || true)"
-ps w | grep '[m]isterplexd' || true
-wget -qO- http://127.0.0.1:3005/resources | head -c 300
-echo
-REMOTE
-
-echo "Restored previous misterplexd on $HOST (core unchanged — pair geometry yourself)"
+  # Dry-run power-cycle table (no device mutation):
+  PAIR_ID=ddr-c5382bee scripts/rollback_v2.sh plan
+MSG
+echo "true rc=10"
+exit 10
