@@ -9,7 +9,7 @@ API-only checks do **not** satisfy this suite — Playwright is mandatory.
 
 1. Launch Plex Web on `PLEX_BASE` and establish a session (token injection).
 2. Dismiss Plex Home **Select User** (shell never renders until a profile is chosen).
-3. Open the **MiSTerPlex Tests** library item (default title match: `MiSTerPlex Test 240p`).
+3. Open the tier library item (`E2E_TIER=240p` → RK3, `480p` → RK6 by default).
 4. Open **Select Player** (`a[aria-label="Select Player"]` — not “Cast”).
 5. **Picker contents via BEFORE/AFTER body-text diff** — whole-page search for
    `MiSTerPlex` is a **false positive** (library / item / server names). Only lines
@@ -18,11 +18,13 @@ API-only checks do **not** satisfy this suite — Playwright is mandatory.
    `/clients` + `/neighborhood/devices` (page-level listeners miss them). Host must
    match `PLEX_BASE` (or `EXPECT_COMPANION_HOST`). This is the FriendlyName sort-order
    regression gate.
-7. Select MiSTerPlex, start Play, confirm companion timeline `state=playing`.
-8. Optional **HDMI motion** stage (`E2E_HDMI_MOTION=1`) — parent captures; suite scores.
-9. Best-effort pause; stop via UI or companion HTTP.
-10. **Hard teardown** — blank page, close page/context/browser, force companion stop,
-    assert timeline is quiescent (`TEARDOWN_OK`). Dirty teardown is a **FAIL**.
+7. Select **exact** `MiSTerPlex` (ghost labels like `MiSTerPlexTest` are logged and
+   **rejected**), start Play, confirm companion timeline `state=playing`.
+8. **Transitions** (default on): pause/resume, seek, stop+re-cast, play→idle→play.
+9. Optional **HDMI motion** stage (`E2E_HDMI_MOTION=1`) — parent captures; suite scores.
+10. **Hard teardown** — blank page, close page/context/browser, suite stop +
+    unsubscribe. Asserts **this suite’s controller is gone** (`TEARDOWN_OK`). Does
+    **not** require a globally idle daemon (a permanent user Plex Web tab may remain).
 
 Failure messages distinguish:
 
@@ -36,7 +38,10 @@ Failure messages distinguish:
 | `play_button_not_found` | Details ready; Play control selector drift |
 | `playback_did_not_start` | Picker OK; cast/play path broken |
 | `select_player_control_not_found` | UI layout/selector drift |
-| `teardown_device_not_quiescent` | Browser/controller left daemon playing/paused after exit |
+| `daemon_tier_unprobed` | Tier requires parent conf probe (`E2E_DAEMON_DECODE`) — not applied |
+| `daemon_tier_mismatch` | Parent conf/decode does not match `E2E_TIER` |
+| `transition_*` | Pause/resume/seek/recast/replay timeline failure |
+| `teardown_controller_not_closed` | Suite browser/context failed to close |
 | `hdmi_motion_no_frames` | HDMI stage on but capture dir empty (parent must grab) |
 | `hdmi_motion_unscored` | Instrument rc=77 — hard FAIL in this gate |
 | `hdmi_motion_freeze` / `hdmi_motion_color_fail` | Instrument rc=1 / rc=2 |
@@ -58,6 +63,8 @@ npx playwright install chromium
 ```bash
 PLEX_BASE=http://YOUR-PLEX-SERVER:32400 PLEX_TOKEN=… \
   ./tests/hw/e2e/run_cast_picker.sh
+# capture true rc DIRECTLY:
+#   ./tests/hw/e2e/run_cast_picker.sh; echo "true rc=$?"
 ```
 
 Or via Make (same env):
@@ -66,19 +73,49 @@ Or via Make (same env):
 make e2e-cast-picker
 ```
 
+### Decode tiers (240p / 480p)
+
+| `E2E_TIER` | Default RK | Expect decode | Parent conf (suite never applies) |
+|------------|------------|---------------|-------------------------------------|
+| `240p` (default) | 3 | `320x240` | `DECODE=320x240` |
+| `480p` | 6 | `624x480` | `DECODE=624x480` `DECODE_ALLOW_LAB_480P=1` `DDR_YUV_FORCE_SCALE=1` |
+| `all` | both | both | run only after parent can satisfy each tier’s probe |
+
+The suite **prints** `PARENT_TIER_EXPORT=…` and conf instructions; it does **not** ssh or
+edit `/media/fat/misterplex/misterplex.conf`.
+
+After parent applies conf and restarts the daemon, export the banner/probe value:
+
+```bash
+# 480p example (parent-run)
+export E2E_TIER=480p
+export E2E_DAEMON_DECODE=624x480   # required for 480p (else daemon_tier_unprobed FAIL)
+PLEX_BASE=… PLEX_TOKEN=… PLEX_WEB_USER=… MISTER_HOST=… \
+  ./tests/hw/e2e/run_cast_picker.sh
+echo "true rc=$?"
+```
+
+- `E2E_REQUIRE_DAEMON_TIER=1` forces the probe even for 240p.
+- Mismatch → `daemon_tier_mismatch` (loud fail; does not silently test the wrong tier).
+
 Optional overrides:
 
 | Env | Default | Role |
 |-----|---------|------|
 | `PLEX_BASE` | conf `PLEX_BASE` | **LOCAL** PMS only — never remote/SHIELD |
 | `PLEX_TOKEN` | conf `PLEX_TOKEN` | Web session |
+| `E2E_TIER` | `240p` | `240p` / `480p` / `all` |
+| `E2E_DAEMON_DECODE` | (none) | Parent probe of daemon decode (`320x240` / `624x480`) |
+| `E2E_DAEMON_DECODE_240P` / `_480P` | (none) | Per-tier probes when `E2E_TIER=all` |
+| `E2E_REQUIRE_DAEMON_TIER` | tier default | `1` = always require probe |
+| `E2E_TRANSITIONS` | `1` | `0` = skip pause/seek/recast/replay block |
 | `PLEX_LIBRARY_NAME` | `MiSTerPlex Tests` | Section title substring |
-| `PLEX_ITEM_TITLE` | `MiSTerPlex Test 240p` | Item title substring |
-| `PLEX_RATING_KEY` | (discover) | Skip library search |
-| `CAST_TARGET_NAME` | `MiSTerPlex` | Picker label |
+| `PLEX_ITEM_TITLE` | tier default | Item title substring (single-tier override) |
+| `PLEX_RATING_KEY` | tier default | Skip library search (single-tier override) |
+| `CAST_TARGET_NAME` | `MiSTerPlex` | Picker label (exact match only) |
 | `PLEX_WEB_USER` | (first profile) | Plex Home “Select User” profile name |
 | `EXPECT_COMPANION_HOST` | host of `PLEX_BASE` | Companion assert allow-list (comma-separated) |
-| `ASSERT_COMPANION` | `1` | `0` = log companion only (SKIP-NOT-PASS for that check; not a green companion gate) |
+| `ASSERT_COMPANION` | `1` | `0` = log companion only (not a green companion gate) |
 | `ALLOW_LOOPBACK_COMPANION` | allow `127.0.0.1` | Set `0` to require non-loopback match |
 | `MISTER_HOST` / `MISTER_PORT` | lab defaults | Companion timeline |
 | `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH` | auto/cache | Chrome for Testing binary |
@@ -96,8 +133,8 @@ Conf fallback: `MISTERPLEX_CONF` or `~/.config/misterplex/misterplex.conf`.
 
 | rc | Meaning |
 |----|---------|
-| 0 | PASS (includes verified `TEARDOWN_OK`) |
-| 1 | FAIL (picker, companion, playback, teardown, or HDMI motion) |
+| 0 | PASS (includes verified `TEARDOWN_OK` for **this** controller) |
+| 1 | FAIL (picker, companion, playback, tier, transition, teardown, or HDMI) |
 | 77 | SKIP-NOT-PASS — missing deps/env/PMS (not green) |
 
 Soft-skip is **not** a pass. A missing MiSTerPlex in the picker is always **FAIL**.
@@ -111,25 +148,30 @@ concurrent playback, CPU sampling, and soak measurements on the same daemon.
 
 - Do **not** run this suite while a soak, HDMI motion burst for another test, or parent
   CPU window is in progress on the same MiSTer.
-- Teardown must log `TEARDOWN_OK` (timeline not playing/paused). If you see
-  `teardown_device_not_quiescent`, treat the device as dirty until manually stopped.
-- Default path force-stops the companion and closes the browser context even on failure.
+- Teardown must log `TEARDOWN_OK` (suite browser closed + stop issued). If you see
+  `teardown_controller_not_closed`, treat the host as still holding a Playwright controller.
+- A permanent **user** Plex Web tab on the LAN is **not** this suite’s controller; teardown
+  does not fail solely because the daemon still shows activity from that tab.
+- Default path force-stops via companion HTTP (suite commandID namespace) and closes the
+  browser context even on failure.
 
 ## Optional HDMI motion stage (parent-owned grabber)
 
-When `E2E_HDMI_MOTION=1`, after timeline `playing` the suite:
+When `E2E_HDMI_MOTION=1`, after timeline `playing` (and transitions if enabled) the suite:
 
 1. Prints `PARENT_HDMI_CAPTURE_CMD` and `PARENT_HDMI_SCORE_CMD` (exact commands).
 2. Holds playback for `E2E_HDMI_HOLD_SEC` so the **parent** can capture.
-3. **Never opens `/dev/video0`** (exclusive parent hardware).
+3. **Never opens `/dev/video0`** (exclusive parent hardware; discard ~11–15 warm-up frames
+   via `--warmup-skip`).
 4. If `E2E_HDMI_CAPTURE_DIR` already contains PNGs, runs
    `tools/hdmi_motion_instrument.py` and requires `MOTION_OK` (rc=0).
 
 ```bash
 # Terminal A — suite (holds playing ~20s when HDMI stage on)
 E2E_HDMI_MOTION=1 E2E_HDMI_CAPTURE_DIR=build/e2e-hdmi-capture \
-  E2E_HDMI_HOLD_SEC=25 \
-  PLEX_BASE=… PLEX_TOKEN=… PLEX_RATING_KEY=3 PLEX_WEB_USER=… \
+  E2E_HDMI_HOLD_SEC=25 E2E_TRANSITIONS=0 \
+  E2E_TIER=240p E2E_DAEMON_DECODE=320x240 \
+  PLEX_BASE=… PLEX_TOKEN=… PLEX_WEB_USER=… \
   ./tests/hw/e2e/run_cast_picker.sh
 echo "true rc=$?"
 

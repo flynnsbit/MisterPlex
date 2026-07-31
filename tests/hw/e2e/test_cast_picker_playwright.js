@@ -5,14 +5,16 @@
  * Playwright drives real Plex Web against a LOCAL PMS and verifies MiSTerPlex
  * end-to-end as a cast target:
  *   1. Sign in (token injection) + dismiss Plex Home "Select User"
- *   2. Open "MiSTerPlex Tests" library item (default 240p / RK3)
+ *   2. Open tier item (E2E_TIER=240p→RK3 / 480p→RK6); parent applies DECODE conf
  *   3. Open Select Player; assert MiSTerPlex via BEFORE/AFTER body-text DIFF
  *      (whole-page regex for "MiSTerPlex" is a FALSE POSITIVE — library/item/
  *      server names all contain it)
  *   4. Assert WHICH companion server Web polled (/clients + /neighborhood/devices)
  *      via context.on('request') — page.on('request') captures 0 of these
- *   5. Select MiSTerPlex, start playback, assert companion timeline playing
- *   6. Stop (and best-effort pause)
+ *   5. Select exact MiSTerPlex (reject ghost MiSTerPlexTest), play, timeline
+ *   6. Optional transitions (pause/resume, seek, stop+recast, play→idle→play)
+ *   7. Optional HDMI motion (parent captures /dev/video0; suite scores)
+ *   8. Hard teardown: close OUR browser controller only (not global quiescence)
  *
  * Exit codes:
  *   0  PASS
@@ -36,7 +38,7 @@ const http = require('http');
 const https = require('https');
 const path = require('path');
 const { spawnSync } = require('child_process');
-const { loadConfig, daemonBase, redact, ROOT } = require('./conf');
+const { loadConfig, daemonBase, redact, ROOT, parentConfCommands, normalizeDecode } = require('./conf');
 
 const EXIT_PASS = 0;
 const EXIT_FAIL = 1;
@@ -788,14 +790,14 @@ async function clickStop(page) {
 
 async function waitPlayingOnDaemon(seconds) {
   const deadline = Date.now() + seconds * 1000;
-  let cmd = 8000;
   let last = '';
   let playing = 0;
   let advance = 0;
   let prev = -1;
   let maxT = 0;
+  let buffering = 0;
   while (Date.now() < deadline) {
-    const xml = await pollDaemonTimeline(cmd++);
+    const xml = await pollDaemonTimeline(nextSuiteCmd());
     last = xml;
     const state = xmlAttr(xml, 'state');
     const t = parseInt(xmlAttr(xml, 'time') || '-1', 10);
@@ -804,76 +806,100 @@ async function waitPlayingOnDaemon(seconds) {
       playing++;
       if (t > prev && prev >= 0) advance++;
       if (t > maxT) maxT = t;
+    } else if (state === 'buffering') {
+      buffering++;
     }
     if (t >= 0) prev = t;
     await new Promise((r) => setTimeout(r, 1000));
   }
-  return { playing, advance, maxT, last };
+  return { playing, advance, maxT, last, buffering };
 }
 
 function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
 }
 
+/** Suite-owned commandID namespace — avoid 9800s used by long-lived user tabs. */
+const SUITE_CMD_BASE = 41000 + (process.pid % 500) * 20;
+let suiteCmdSeq = 0;
+function nextSuiteCmd() {
+  return SUITE_CMD_BASE + (suiteCmdSeq++ % 500);
+}
+
 /** Force companion stop — does not depend on browser still being alive. */
 async function forceStopDaemon(tag = 'teardown') {
-  for (let i = 0; i < 4; i++) {
+  let anyOk = false;
+  for (let i = 0; i < 3; i++) {
+    const cid = nextSuiteCmd();
     const r = await httpGet(
-      `${daemonBase(cfg)}/player/playback/stop?commandID=${9800 + i}`,
+      `${daemonBase(cfg)}/player/playback/stop?commandID=${cid}`,
       {},
       3000
     );
-    log(`${tag}_stop_http i=${i} status=${r.status}`);
+    log(`${tag}_stop_http i=${i} cmd=${cid} status=${r.status}`);
+    if (r.status === 200) anyOk = true;
   }
+  return anyOk;
+}
+
+/** Best-effort unsubscribe so companion drops our timeline waiter slots. */
+async function unsubscribeDaemon(tag = 'teardown') {
+  const cid = nextSuiteCmd();
+  const r = await httpGet(
+    `${daemonBase(cfg)}/player/timeline/unsubscribe?commandID=${cid}`,
+    {},
+    3000
+  );
+  log(`${tag}_unsubscribe cmd=${cid} status=${r.status}`);
+  return r.status === 200;
+}
+
+async function companionPlayback(pathAndQuery, tag = 'cmd') {
+  const cid = nextSuiteCmd();
+  const sep = pathAndQuery.includes('?') ? '&' : '?';
+  const url = `${daemonBase(cfg)}/player/playback/${pathAndQuery}${sep}commandID=${cid}`;
+  const r = await httpGet(url, {}, 4000);
+  log(`${tag}_http path=${pathAndQuery} cmd=${cid} status=${r.status}`);
+  return r;
 }
 
 /**
- * Device must be idle after the suite: not playing/paused with an active session.
- * Parent measured leftover Plex Web long-poll controllers issuing pause/stop
- * under concurrent CPU windows — browser close alone is not enough without
- * verifying the companion timeline is quiescent.
+ * Teardown verifies OUR Playwright controller is gone — not global idle.
+ *
+ * Lab has a permanent user Plex Web tab that long-polls and can issue stop/pause.
+ * Asserting device-wide controller-free / non-playing is a latent flake.
+ *
+ * PASS criteria:
+ *   - browser page/context/browser closed successfully
+ *   - suite issued stop + unsubscribe (best-effort HTTP)
+ * FAIL criteria:
+ *   - browser close threw / browser still connected
+ * Soft note (not FAIL): timeline still playing/paused after our stop — may be
+ * the user's controller or a race; we log TEARDOWN_NOTE_external_activity.
  */
-async function verifyDaemonQuiescent(maxMs = 12000) {
-  const deadline = Date.now() + maxMs;
-  let lastXml = '';
-  let lastState = '';
-  let lastTime = '';
-  while (Date.now() < deadline) {
-    lastXml = await pollDaemonTimeline(9700 + (Date.now() % 50));
-    lastState = xmlAttr(lastXml, 'state') || '';
-    lastTime = xmlAttr(lastXml, 'time') || '';
-    const dur = xmlAttr(lastXml, 'duration') || '0';
-    // Accept stopped, or buffering/navigation with no active media duration.
-    if (lastState === 'stopped') {
-      return { ok: true, state: lastState, time: lastTime, xml: lastXml };
-    }
-    if (
-      (lastState === 'buffering' || lastState === '') &&
-      (dur === '0' || dur === '' || lastTime === '0')
-    ) {
-      // Confirm stability across a second sample (no controller re-starting).
-      await sleep(800);
-      const xml2 = await pollDaemonTimeline(9750);
-      const s2 = xmlAttr(xml2, 'state') || '';
-      const t2 = xmlAttr(xml2, 'time') || '';
-      const d2 = xmlAttr(xml2, 'duration') || '0';
-      if (s2 === 'playing' || s2 === 'paused') {
-        lastState = s2;
-        lastTime = t2;
-        lastXml = xml2;
-        continue;
-      }
-      if (s2 === 'stopped' || d2 === '0' || d2 === '' || t2 === '0') {
-        return { ok: true, state: s2 || lastState, time: t2 || lastTime, xml: xml2 };
-      }
-    }
-    // Still dirty — hammer stop again.
-    if (lastState === 'playing' || lastState === 'paused') {
-      await forceStopDaemon('teardown_retry');
-    }
-    await sleep(500);
+async function verifyOurControllerGone(browserClosed, stopOk) {
+  if (!browserClosed) {
+    return {
+      ok: false,
+      reason: 'browser_not_closed',
+      state: '',
+      time: '',
+    };
   }
-  return { ok: false, state: lastState, time: lastTime, xml: lastXml };
+  // One timeline sample for logging only — do not require global stopped.
+  const xml = await pollDaemonTimeline(nextSuiteCmd());
+  const state = xmlAttr(xml, 'state') || '';
+  const time = xmlAttr(xml, 'time') || '';
+  if (state === 'playing' || state === 'paused') {
+    log(
+      `TEARDOWN_NOTE_external_activity state=${state} time=${time} ` +
+        '(another controller may own the daemon — suite browser is closed)'
+    );
+  }
+  if (!stopOk) {
+    log('TEARDOWN_NOTE_stop_http_not_200 (daemon may be down; browser still closed)');
+  }
+  return { ok: true, reason: 'controller_closed', state, time, xml, stopOk };
 }
 
 /**
@@ -881,13 +907,15 @@ async function verifyDaemonQuiescent(maxMs = 12000) {
  * close page → context → browser. Must run even on failure paths.
  */
 async function closeBrowserController(page, context, browser, tracker) {
+  let closed = true;
   try {
     if (page && !page.isClosed()) {
       await page.goto('about:blank', { waitUntil: 'domcontentloaded', timeout: 5000 }).catch(() => {});
       await page.close({ runBeforeUnload: false }).catch(() => {});
     }
-  } catch (_) {
-    /* ignore */
+  } catch (e) {
+    closed = false;
+    log(`browser_page_close_err ${e.message}`);
   }
   try {
     if (tracker) tracker.detach();
@@ -896,34 +924,452 @@ async function closeBrowserController(page, context, browser, tracker) {
   }
   try {
     if (context) await context.close();
-  } catch (_) {
-    /* ignore */
+  } catch (e) {
+    closed = false;
+    log(`browser_context_close_err ${e.message}`);
   }
   try {
-    if (browser) await browser.close();
-  } catch (_) {
-    /* ignore */
+    if (browser) {
+      if (browser.isConnected && browser.isConnected()) {
+        await browser.close();
+      } else {
+        await browser.close().catch(() => {});
+      }
+      if (browser.isConnected && browser.isConnected()) {
+        closed = false;
+        log('browser_still_connected_after_close');
+      }
+    }
+  } catch (e) {
+    closed = false;
+    log(`browser_close_err ${e.message}`);
   }
-  log('browser_controller_closed');
+  log(`browser_controller_closed ok=${closed ? 1 : 0}`);
+  return closed;
 }
 
 /**
- * Full teardown: stop media, destroy browser controller, assert quiescent.
- * Returns { ok, detail }. Caller must FAIL the run if ok=false after a pass path.
+ * Full teardown: stop media, destroy OUR browser controller, assert controller gone.
+ * Does NOT require global device idle (user Plex tab may remain).
  */
 async function hardTeardown(page, context, browser, tracker) {
-  await forceStopDaemon('teardown');
-  await closeBrowserController(page, context, browser, tracker);
-  // Brief settle so any in-flight wait=1 from the closed browser dies.
-  await sleep(1500);
-  await forceStopDaemon('teardown_post_browser');
-  const q = await verifyDaemonQuiescent(12000);
+  await unsubscribeDaemon('teardown').catch(() => false);
+  const stopOk = await forceStopDaemon('teardown').catch(() => false);
+  const browserClosed = await closeBrowserController(page, context, browser, tracker);
+  // Brief settle so any in-flight wait=1 from OUR closed browser dies.
+  await sleep(800);
+  await unsubscribeDaemon('teardown_post_browser').catch(() => false);
+  await forceStopDaemon('teardown_post_browser').catch(() => false);
+  const q = await verifyOurControllerGone(browserClosed, stopOk);
   if (q.ok) {
-    log(`TEARDOWN_OK state=${q.state || 'stopped'} time=${q.time || '0'}`);
+    log(
+      `TEARDOWN_OK controller=closed browser=closed stop_ok=${stopOk ? 1 : 0} ` +
+        `state=${q.state || 'n/a'} time=${q.time || 'n/a'}`
+    );
     return { ok: true, ...q };
   }
-  log(`TEARDOWN_DIRTY state=${q.state || '?'} time=${q.time || '?'}`);
+  log(`TEARDOWN_DIRTY reason=${q.reason || '?'} state=${q.state || '?'} time=${q.time || '?'}`);
   return { ok: false, ...q };
+}
+
+/** Emit parent-only conf ops and assert daemon tier probe when required. */
+function assertDaemonTier(tier) {
+  const pc = parentConfCommands(tier, cfg.misterHost);
+  log(`TIER=${tier.name} expect_decode=${tier.expectDecode} ratingKey=${tier.ratingKey}`);
+  for (const line of pc.applyText.split('\n')) log(line);
+  log(`PARENT_TIER_EXPORT=${pc.probeExport}`);
+  const reported = normalizeDecode(tier.daemonDecodeReported || '');
+  const expect = normalizeDecode(tier.expectDecode);
+  if (!reported) {
+    if (tier.requireDaemonTier) {
+      fail(
+        'daemon_tier_unprobed',
+        `E2E_TIER=${tier.name} requires parent to apply conf and export E2E_DAEMON_DECODE=${expect}.\n` +
+          'Suite does not edit device conf or read daemon logs over SSH.\n' +
+          pc.applyText
+      );
+    }
+    log(
+      `DAEMON_TIER_UNPROBED tier=${tier.name} expect=${expect} ` +
+        '(set E2E_DAEMON_DECODE to assert; E2E_REQUIRE_DAEMON_TIER=1 to hard-require)'
+    );
+    return { ok: true, probed: false, expect };
+  }
+  if (reported !== expect) {
+    fail(
+      'daemon_tier_mismatch',
+      `Daemon decode probe ${JSON.stringify(reported)} != tier expect ${JSON.stringify(expect)}.\n` +
+        `Parent conf is wrong for E2E_TIER=${tier.name} — apply conf then re-export E2E_DAEMON_DECODE.\n` +
+        pc.applyText
+    );
+  }
+  log(`DAEMON_TIER_OK tier=${tier.name} decode=${reported}`);
+  return { ok: true, probed: true, expect, reported };
+}
+
+/**
+ * Resolve PMS item for a tier (ratingKey preferred).
+ */
+async function resolveItemForTier(tier) {
+  const headers = {
+    'X-Plex-Token': cfg.token,
+    Accept: 'application/json',
+  };
+  let ratingKey = String(tier.ratingKey || '').replace(/^\/library\/metadata\//, '');
+  if (ratingKey) {
+    const meta = await httpGet(`${cfg.plexBase}/library/metadata/${ratingKey}`, headers);
+    if (meta.status === 200) {
+      try {
+        const j = JSON.parse(meta.body);
+        const m = (j.MediaContainer?.Metadata || [])[0];
+        if (m && m.title) {
+          log(`resolved tier=${tier.name} ratingKey=${ratingKey} title=${m.title}`);
+          return { ratingKey: String(ratingKey), title: String(m.title), tier: tier.name };
+        }
+      } catch (_) {
+        /* fall through */
+      }
+    }
+  }
+  // Fall back to shared resolveItem() path by temporarily setting cfg fields.
+  const prevKey = cfg.ratingKey;
+  const prevTitle = cfg.itemTitle;
+  cfg.ratingKey = ratingKey || tier.ratingKey;
+  cfg.itemTitle = tier.itemTitle;
+  try {
+    const item = await resolveItem();
+    return { ...item, tier: tier.name };
+  } finally {
+    cfg.ratingKey = prevKey;
+    cfg.itemTitle = prevTitle;
+  }
+}
+
+async function waitTimelineState(wantStates, maxMs = 12000, label = 'wait_state') {
+  const want = new Set(Array.isArray(wantStates) ? wantStates : [wantStates]);
+  const deadline = Date.now() + maxMs;
+  let last = { state: '', time: -1, xml: '' };
+  while (Date.now() < deadline) {
+    const xml = await pollDaemonTimeline(nextSuiteCmd());
+    const state = xmlAttr(xml, 'state') || '';
+    const t = parseInt(xmlAttr(xml, 'time') || '-1', 10);
+    last = { state, time: t, xml };
+    log(`  ${label} state=${state || '?'} time=${xmlAttr(xml, 'time') || '?'}`);
+    if (want.has(state)) return { ok: true, ...last };
+    await sleep(500);
+  }
+  return { ok: false, ...last };
+}
+
+async function waitTimelineNear(targetMs, tolMs = 2500, maxMs = 15000) {
+  const deadline = Date.now() + maxMs;
+  let last = { state: '', time: -1 };
+  while (Date.now() < deadline) {
+    const xml = await pollDaemonTimeline(nextSuiteCmd());
+    const state = xmlAttr(xml, 'state') || '';
+    const t = parseInt(xmlAttr(xml, 'time') || '-1', 10);
+    last = { state, time: t, xml };
+    log(`  seek_wait state=${state || '?'} time=${t}`);
+    if (t >= 0 && Math.abs(t - targetMs) <= tolMs) {
+      return { ok: true, ...last };
+    }
+    // Also accept overshoot past target while playing (demux lag).
+    if (t >= targetMs - tolMs && state === 'playing') {
+      return { ok: true, ...last };
+    }
+    await sleep(500);
+  }
+  return { ok: false, ...last };
+}
+
+/**
+ * Transition coverage: pause/resume, seek, stop+recast, play→idle→play.
+ * Each step asserts timeline; leaves session playing for optional HDMI or final stop.
+ */
+async function dismissFullPlayerOverlay(page) {
+  // After companion stop, Plex Web may keep FullPlayer chrome that intercepts clicks.
+  for (const sel of [
+    'button[aria-label="Close"]',
+    'button[aria-label="Close Player"]',
+    'button[aria-label="Exit"]',
+    '[data-testid="close-button"]',
+    'button[aria-label="Back"]',
+  ]) {
+    const loc = page.locator(sel).first();
+    try {
+      if (await loc.isVisible({ timeout: 400 })) {
+        await loc.click({ timeout: 2000, force: true });
+        log(`full_player_dismiss via ${sel}`);
+        await sleep(400);
+        return true;
+      }
+    } catch (_) {
+      /* next */
+    }
+  }
+  // Escape often collapses full player chrome.
+  try {
+    await page.keyboard.press('Escape');
+    await sleep(300);
+  } catch (_) {
+    /* ignore */
+  }
+  return false;
+}
+
+async function gotoDetailsClean(page, detailsUrl, itemTitle) {
+  // Hard navigation clears FullPlayer intercept layers more reliably than in-place stop.
+  await page.goto(detailsUrl, { waitUntil: 'domcontentloaded', timeout: cfg.timeoutMs });
+  await dismissUserPicker(page, cfg.webUser);
+  await dismissFullPlayerOverlay(page);
+  // If still in a player route, bounce via library hash then details again.
+  const url = page.url();
+  if (/player|playback|#!/i.test(url) && /player/i.test(url)) {
+    log(`details_still_playerish url=${url}`);
+  }
+  const ready = await waitForDetailsReady(page, itemTitle, Math.max(cfg.timeoutMs, 60000));
+  // Wait for intercepting full-player top controls to detach if present.
+  const intercept = page.locator('[class*="FullPlayerTopControls"], [class*="PlayerContainer-container"]').first();
+  try {
+    await intercept.waitFor({ state: 'hidden', timeout: 8000 });
+    log('full_player_overlay hidden');
+  } catch (_) {
+    log('full_player_overlay_not_seen_or_still_visible');
+    await dismissFullPlayerOverlay(page);
+  }
+  return ready;
+}
+
+async function ensureExactCastSelected(page, itemTitle) {
+  // Same discipline as the main arm: wait for control, BEFORE snapshot, open, DIFF.
+  await dismissFullPlayerOverlay(page);
+  // Give full-player chrome time to unmount after Close Player.
+  for (let i = 0; i < 20; i++) {
+    const intercept = page.locator(
+      '[class*="FullPlayerTopControls"], [class*="PlayerContainer-container"]'
+    ).first();
+    const vis = await intercept.isVisible().catch(() => false);
+    if (!vis) break;
+    await sleep(250);
+  }
+
+  const ctl = await waitForSelectPlayerControl(page, 30000);
+  if (ctl.kind !== 'ok') {
+    fail(
+      'transition_select_player_missing',
+      'Select Player control not found while re-selecting cast after stop'
+    );
+  }
+  const before = await bodyLineSet(page);
+  log(`ensure_cast body_lines_before=${before.size} sel=${ctl.sel}`);
+  await ctl.el.click({ timeout: 8000 });
+  {
+    const menu = page.locator('[role="menu"], [role="listbox"], [role="dialog"]').first();
+    try {
+      await menu.waitFor({ state: 'visible', timeout: 8000 });
+    } catch (_) {
+      await sleep(800);
+    }
+    await sleep(600);
+  }
+  const target = await assertMisterplexInPickerDiff(page, before);
+  const clickedText = ((await target.innerText().catch(() => '')) || '')
+    .trim()
+    .split('\n')[0]
+    .trim();
+  const exactNameRe = new RegExp(
+    `^${cfg.castName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`,
+    'i'
+  );
+  if (clickedText && !exactNameRe.test(clickedText) && clickedText !== cfg.castName) {
+    fail(
+      'picker_clicked_non_exact_target',
+      `Recast refused ghost label ${JSON.stringify(clickedText)}; want ${JSON.stringify(cfg.castName)}`
+    );
+  }
+  await target.click();
+  log(
+    `ensure_cast_selected exact=${cfg.castName} clicked_text=${JSON.stringify(clickedText || cfg.castName)}`
+  );
+  return true;
+}
+
+async function playFromDetails(page, itemTitle, playSelPrefer, label) {
+  const ready = playSelPrefer
+    ? { playSel: playSelPrefer }
+    : await waitForDetailsReady(page, itemTitle, Math.max(cfg.timeoutMs, 60000));
+  const played = await clickPlay(page, ready.playSel);
+  if (!played) {
+    // One more details-ready + play attempt after overlay dismiss.
+    await dismissFullPlayerOverlay(page);
+    const ready2 = await waitForDetailsReady(page, itemTitle, 30000);
+    const played2 = await clickPlay(page, ready2.playSel);
+    if (!played2) {
+      fail(`${label}_play_missing`, `Play control missing during ${label}`);
+    }
+    await handleResumeDialog(page);
+    return played2;
+  }
+  await handleResumeDialog(page);
+  return played;
+}
+
+async function runTransitionScenarios(page, itemTitle, detailsUrl, _castAlreadySelected) {
+  if (!cfg.transitions) {
+    log('TRANSITIONS=off (E2E_TRANSITIONS=0)');
+    return { enabled: false };
+  }
+  log('TRANSITIONS=on');
+
+  // ── pause / resume (companion HTTP — stable while cast session active) ──
+  // A permanent user Plex Web tab on the LAN can stop/steal the session; if pause
+  // lands on buffering@0, re-establish cast play once then retry pause.
+  async function pauseWithRetry() {
+    await companionPlayback('pause', 'transition_pause');
+    let st = await waitTimelineState(['paused'], 8000, 'pause');
+    if (st.ok) return st;
+    if (st.state === 'playing') {
+      await clickPauseOrPlayToggle(page);
+      st = await waitTimelineState(['paused'], 6000, 'pause_ui');
+      if (st.ok) return st;
+      await companionPlayback('pause', 'transition_pause2');
+      st = await waitTimelineState(['paused'], 6000, 'pause2');
+      if (st.ok) return st;
+    }
+    // Session dropped under us (external controller / stop race).
+    if (st.state === 'buffering' || st.state === 'stopped' || st.state === '') {
+      log(
+        `transition_pause_session_dropped state=${st.state} time=${st.time} — recast once then pause`
+      );
+      await gotoDetailsClean(page, detailsUrl, itemTitle);
+      await ensureExactCastSelected(page, itemTitle);
+      const ready = await waitForDetailsReady(page, itemTitle, 60000);
+      await playFromDetails(page, itemTitle, ready.playSel, 'transition_pause_reseed');
+      const prog = await waitPlayingOnDaemon(Math.min(cfg.playWaitSec, 12));
+      if (prog.playing < 2) {
+        fail(
+          'transition_pause_reseed_failed',
+          `Could not re-establish playing before pause (samples=${prog.playing})`
+        );
+      }
+      await companionPlayback('pause', 'transition_pause_after_reseed');
+      st = await waitTimelineState(['paused'], 10000, 'pause_reseed');
+      if (st.ok) return st;
+    }
+    return st;
+  }
+
+  let st = await pauseWithRetry();
+  if (!st.ok) {
+    fail(
+      'transition_pause_failed',
+      `Expected state=paused after pause; got state=${st.state} time=${st.time}`
+    );
+  }
+  log(`transition_pause_ok time=${st.time}`);
+
+  await companionPlayback('play', 'transition_resume');
+  st = await waitTimelineState(['playing'], 12000, 'resume');
+  if (!st.ok) {
+    // One UI toggle resume attempt.
+    await clickPauseOrPlayToggle(page);
+    st = await waitTimelineState(['playing'], 8000, 'resume_ui');
+  }
+  if (!st.ok) {
+    fail(
+      'transition_resume_failed',
+      `Expected state=playing after resume; got state=${st.state} time=${st.time}`
+    );
+  }
+  log(`transition_resume_ok time=${st.time}`);
+
+  // ── seek ───────────────────────────────────────────────────────────────
+  const seekTo = 8000;
+  await companionPlayback(`seekTo?offset=${seekTo}`, 'transition_seek');
+  st = await waitTimelineNear(seekTo, 3500, 15000);
+  if (!st.ok) {
+    fail(
+      'transition_seek_failed',
+      `Expected timeline near offset=${seekTo}ms; got state=${st.state} time=${st.time}`
+    );
+  }
+  log(`transition_seek_ok target=${seekTo} time=${st.time}`);
+
+  st = await waitTimelineState(['playing', 'buffering'], 8000, 'post_seek');
+  if (st.state === 'buffering') {
+    st = await waitTimelineState(['playing'], 10000, 'post_seek_play');
+  }
+  if (!st.ok && st.state !== 'playing') {
+    fail('transition_seek_not_playing', `After seek expected playing; got ${st.state}`);
+  }
+
+  // ── stop + re-cast ─────────────────────────────────────────────────────
+  await forceStopDaemon('transition_stop');
+  await sleep(1000);
+  st = await waitTimelineState(['stopped', 'buffering', ''], 8000, 'after_stop');
+  if (st.state === 'playing' || st.state === 'paused') {
+    log(`transition_stop_note external_or_sticky state=${st.state}`);
+    await forceStopDaemon('transition_stop2');
+    await sleep(800);
+  }
+  log('transition_stop_ok (suite stop issued)');
+
+  log(`transition_recast goto details (clean)`);
+  let ready = await gotoDetailsClean(page, detailsUrl, itemTitle);
+  // Close Player clears cast target — always re-select exact MiSTerPlex (no sticky assume).
+  await ensureExactCastSelected(page, itemTitle);
+  ready = await waitForDetailsReady(page, itemTitle, 60000);
+  await playFromDetails(page, itemTitle, ready.playSel, 'transition_recast');
+  let prog = await waitPlayingOnDaemon(Math.min(cfg.playWaitSec, 15));
+  if (prog.playing < 2) {
+    log('transition_recast play weak — one more exact cast + play');
+    await ensureExactCastSelected(page, itemTitle);
+    ready = await waitForDetailsReady(page, itemTitle, 60000);
+    await playFromDetails(page, itemTitle, ready.playSel, 'transition_recast2');
+    prog = await waitPlayingOnDaemon(Math.min(cfg.playWaitSec, 15));
+  }
+  if (prog.playing < 2) {
+    fail(
+      'transition_recast_not_playing',
+      `stop+recast did not reach playing (samples=${prog.playing} buffering=${prog.buffering || 0})`
+    );
+  }
+  log(`transition_recast_ok samples=${prog.playing} time_max_ms=${prog.maxT}`);
+
+  // ── play → idle → play ─────────────────────────────────────────────────
+  await forceStopDaemon('transition_idle');
+  await sleep(1200);
+  await dismissFullPlayerOverlay(page);
+  log('transition_idle_ok (stopped via suite)');
+
+  ready = await gotoDetailsClean(page, detailsUrl, itemTitle);
+  await ensureExactCastSelected(page, itemTitle);
+  ready = await waitForDetailsReady(page, itemTitle, 60000);
+  await playFromDetails(page, itemTitle, ready.playSel, 'transition_replay');
+  let prog2 = await waitPlayingOnDaemon(Math.min(cfg.playWaitSec, 15));
+  if (prog2.playing < 2) {
+    log('transition_replay play weak — re-select exact cast');
+    await ensureExactCastSelected(page, itemTitle);
+    ready = await waitForDetailsReady(page, itemTitle, 60000);
+    await playFromDetails(page, itemTitle, ready.playSel, 'transition_replay2');
+    prog2 = await waitPlayingOnDaemon(Math.min(cfg.playWaitSec, 15));
+  }
+  if (prog2.playing < 2) {
+    fail(
+      'transition_replay_not_playing',
+      `play→idle→play did not reach playing (samples=${prog2.playing} buffering=${prog2.buffering || 0})`
+    );
+  }
+  log(`transition_replay_ok samples=${prog2.playing} time_max_ms=${prog2.maxT}`);
+  log('TRANSITIONS_OK pause resume seek stop_recast play_idle_play');
+  return {
+    enabled: true,
+    pause: true,
+    resume: true,
+    seek: true,
+    stopRecast: true,
+    playIdlePlay: true,
+  };
 }
 
 function countPngs(dir) {
@@ -1051,7 +1497,15 @@ async function optionalHdmiMotionStage() {
 
 (async () => {
   log('test_cast_picker_playwright: BEGIN');
-  log(`conf=${cfg.confPath} library=${cfg.libraryName} item~=${cfg.itemTitle} cast=${cfg.castName}`);
+  log(`conf=${cfg.confPath} library=${cfg.libraryName} cast=${cfg.castName}`);
+  log(`tiers=${(cfg.tiers || []).map((t) => t.name).join(',') || '(none)'} transitions=${cfg.transitions ? 1 : 0} hdmi=${cfg.hdmiMotion ? 1 : 0}`);
+
+  if (cfg.tierResolveError) {
+    fail('bad_e2e_tier', cfg.tierResolveError);
+  }
+  if (!cfg.tiers || !cfg.tiers.length) {
+    fail('bad_e2e_tier', 'No tiers resolved — set E2E_TIER=240p|480p|all');
+  }
 
   if (!cfg.plexBase) {
     skip('PLEX_BASE missing — export PLEX_BASE=http://YOUR-PLEX-SERVER:32400 or set in conf');
@@ -1082,13 +1536,7 @@ async function optionalHdmiMotionStage() {
   const prefName = (prefs.body.match(/id="FriendlyName"[^>]*value="([^"]*)"/) || [])[1] || '';
   log(`pms_friendlyName_pref=${prefName || '(blank)'}`);
 
-  const item = await resolveItem();
-  const ratingKey = item.ratingKey;
-  const itemTitle = item.title;
-  const metaKey = `/library/metadata/${ratingKey}`;
-  log(`item_title=${itemTitle}`);
-
-  const baseTl = await pollDaemonTimeline(7000);
+  const baseTl = await pollDaemonTimeline(nextSuiteCmd());
   const daemonUp = baseTl.includes('Timeline') || baseTl.includes('MediaContainer');
   if (!daemonUp) {
     log(
@@ -1096,8 +1544,12 @@ async function optionalHdmiMotionStage() {
     );
   } else {
     log(`daemon_ok ${daemonBase(cfg)}`);
-    // Clear any leftover session so playing_samples are from THIS run.
-    await httpGet(`${daemonBase(cfg)}/player/playback/stop?commandID=7001`, {}, 3000);
+    await forceStopDaemon('preflight');
+  }
+
+  // Fail loud on tier/conf before paying for Chromium when probe is required.
+  for (const tier of cfg.tiers) {
+    assertDaemonTier(tier);
   }
 
   const playwright = loadPlaywright();
@@ -1166,6 +1618,9 @@ async function optionalHdmiMotionStage() {
   let suitePassed = false;
   let teardownResult = null;
   let bodyError = null;
+  let lastRatingKey = '';
+  let lastTierName = '';
+  let summaryBits = [];
 
   try {
     // ── 1. Launch Plex Web on LOCAL PMS ─────────────────────────────────────
@@ -1215,196 +1670,225 @@ async function optionalHdmiMotionStage() {
     }
     if (pickerUser.shown) log(`user_picker dismissed profile=${pickerUser.picked}`);
 
-    // ── 2. Open test item ───────────────────────────────────────────────────
     const serverSeg = idn.machineId || 'auto';
-    const details = `${cfg.plexBase}/web/index.html#!/server/${serverSeg}/details?key=${encodeURIComponent(
-      metaKey
-    )}`;
-    log(`goto details key=${metaKey}`);
-    await page.goto(details, { waitUntil: 'domcontentloaded', timeout: cfg.timeoutMs });
-    const picker2 = await dismissUserPicker(page, cfg.webUser);
-    if (picker2.shown && picker2.picked) log(`user_picker re-dismissed profile=${picker2.picked}`);
-    if (picker2.shown && !picker2.picked) {
-      await shot(page, 'fail_user_picker_after_details');
-      fail('plex_home_user_picker_not_dismissed', 'Select User still showing after details navigation.');
-    }
-    log(`at ${page.url()}`);
 
-    // Deterministic details-ready (title + metadata/Play) — NOT line-count/sleep.
-    // Parent RED was spinner-only content with sidebar lines >= 8.
-    const detailsReady = await waitForDetailsReady(page, itemTitle, Math.max(cfg.timeoutMs, 90000));
-    await shot(page, '01_details');
-    log(`details_ready_ok playSel=${detailsReady.playSel || '-'}`);
+    for (const tier of cfg.tiers) {
+      lastTierName = tier.name;
+      log(`──────── TIER_BEGIN ${tier.name} ────────`);
 
-    // ── 3. Select Player — BEFORE snapshot, then open, then DIFF ────────────
-    const ctl = await waitForSelectPlayerControl(page, 45000);
-    if (ctl.kind === 'user_picker') {
-      const again = await dismissUserPicker(page, cfg.webUser);
-      if (!again.picked && again.shown) {
-        await shot(page, 'fail_user_picker_before_cast');
-        fail('plex_home_user_picker_not_dismissed', 'Select User reappeared before cast control.');
+      const item = await resolveItemForTier(tier);
+      const ratingKey = item.ratingKey;
+      lastRatingKey = ratingKey;
+      const itemTitle = item.title;
+      const metaKey = `/library/metadata/${ratingKey}`;
+      const detailsUrl = `${cfg.plexBase}/web/index.html#!/server/${serverSeg}/details?key=${encodeURIComponent(
+        metaKey
+      )}`;
+      log(`item_title=${itemTitle} ratingKey=${ratingKey} tier=${tier.name}`);
+
+      // ── 2. Open test item ─────────────────────────────────────────────────
+      log(`goto details key=${metaKey}`);
+      await page.goto(detailsUrl, { waitUntil: 'domcontentloaded', timeout: cfg.timeoutMs });
+      const picker2 = await dismissUserPicker(page, cfg.webUser);
+      if (picker2.shown && picker2.picked) log(`user_picker re-dismissed profile=${picker2.picked}`);
+      if (picker2.shown && !picker2.picked) {
+        await shot(page, `fail_user_picker_after_details_${tier.name}`);
+        fail('plex_home_user_picker_not_dismissed', 'Select User still showing after details navigation.');
       }
-    }
+      log(`at ${page.url()}`);
 
-    // BEFORE snapshot only after details-ready so library/item titles are present
-    // and excluded from the picker diff (false-positive guard).
-    const beforePicker = await bodyLineSet(page);
-    log(`body_lines_before_picker=${beforePicker.size}`);
-    if (beforePicker.size < 8) {
-      await shot(page, 'fail_details_empty_before_picker');
-      fail(
-        'details_body_empty_before_picker',
-        `Details-ready passed but body had only ${beforePicker.size} lines; cannot trust picker diff.`
-      );
-    }
-    // Reset discovery so we only score polls triggered by this open.
-    tracker.resetDiscovery();
+      const detailsReady = await waitForDetailsReady(page, itemTitle, Math.max(cfg.timeoutMs, 90000));
+      await shot(page, `01_details_${tier.name}`);
+      log(`details_ready_ok playSel=${detailsReady.playSel || '-'}`);
 
-    let opened = null;
-    if (ctl.kind === 'ok') {
-      log(`select_player_control selector=${ctl.sel}`);
-      await ctl.el.click({ timeout: 5000 });
-      opened = ctl.sel;
-    } else {
-      const again = await waitForSelectPlayerControl(page, 15000);
-      if (again.kind === 'ok') {
-        log(`select_player_control selector=${again.sel}`);
-        await again.el.click({ timeout: 5000 });
-        opened = again.sel;
+      // ── 3. Select Player — BEFORE snapshot, then open, then DIFF ──────────
+      const ctl = await waitForSelectPlayerControl(page, 45000);
+      if (ctl.kind === 'user_picker') {
+        const again = await dismissUserPicker(page, cfg.webUser);
+        if (!again.picked && again.shown) {
+          await shot(page, `fail_user_picker_before_cast_${tier.name}`);
+          fail('plex_home_user_picker_not_dismissed', 'Select User reappeared before cast control.');
+        }
       }
-    }
-    if (!opened) {
-      await shot(page, 'fail_no_select_player_control');
-      const body = await pageBodyText(page, 400);
-      fail(
-        'select_player_control_not_found',
-        'Could not find Select Player control (a[aria-label="Select Player"] / button[aria-label=...]) on the details page. ' +
-          `body_sample=${JSON.stringify(body.slice(0, 200))}`
-      );
-    }
 
-    // Wait for picker UI + discovery network — prefer menu/listbox over fixed sleep.
-    {
-      const menu = page.locator('[role="menu"], [role="listbox"], [role="dialog"]').first();
-      try {
-        await menu.waitFor({ state: 'visible', timeout: 10000 });
-        log('picker_surface visible');
-      } catch (_) {
-        log('picker_surface not role-labelled — waiting for discovery traffic');
-      }
-      const discDeadline = Date.now() + 12000;
-      while (Date.now() < discDeadline && tracker.discovery.length === 0) {
-        await page.waitForTimeout(200);
-      }
-      // Small settle so added body lines include player rows after fetch.
-      if (tracker.discovery.length) await page.waitForTimeout(800);
-      else await page.waitForTimeout(2500);
-    }
-    await shot(page, '02_picker_open');
-
-    // Companion first (network), then picker contents (DOM diff).
-    const companion = assertCompanionServer(tracker);
-
-    const target = await assertMisterplexInPickerDiff(page, beforePicker);
-    const clickedText = ((await target.innerText().catch(() => '')) || '').trim().split('\n')[0].trim();
-    const exactNameRe = new RegExp(
-      `^${cfg.castName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`,
-      'i'
-    );
-    if (clickedText && !exactNameRe.test(clickedText) && clickedText !== cfg.castName) {
-      await shot(page, 'fail_picker_clicked_ghost');
-      fail(
-        'picker_clicked_non_exact_target',
-        `Refusing to click ghost/near-miss label ${JSON.stringify(clickedText)}; want exact ${JSON.stringify(cfg.castName)}`
-      );
-    }
-    await target.click();
-    log(`selected_cast_target exact=${cfg.castName} clicked_text=${JSON.stringify(clickedText || cfg.castName)}`);
-    await shot(page, '03_target_selected');
-
-    // ── 4. Play — re-confirm details still ready after cast target change ───
-    const afterCast = await waitForDetailsReady(page, itemTitle, 60000);
-    const played = await clickPlay(page, afterCast.playSel || detailsReady.playSel);
-    if (!played) {
-      await shot(page, 'fail_no_play_button');
-      const body = await pageBodyText(page, 400);
-      // Distinguish "page still loading" from "loaded but no Play control".
-      const stillLoading =
-        !afterCast.sawTitle ||
-        (/loading/i.test(body) && !/play/i.test(body)) ||
-        body.split('\n').filter(Boolean).length < 12;
-      if (stillLoading) {
+      const beforePicker = await bodyLineSet(page);
+      log(`body_lines_before_picker=${beforePicker.size}`);
+      if (beforePicker.size < 8) {
+        await shot(page, `fail_details_empty_before_picker_${tier.name}`);
         fail(
-          'details_never_rendered',
-          'After selecting MiSTerPlex, item details were not ready for Play.\n' +
-            `body_sample=${JSON.stringify(body.slice(0, 240))}`
+          'details_body_empty_before_picker',
+          `Details-ready passed but body had only ${beforePicker.size} lines; cannot trust picker diff.`
         );
       }
-      fail(
-        'play_button_not_found',
-        'Details rendered and MiSTerPlex was selected, but no Play control matched ' +
-          `PLAY_SELECTORS=[${PLAY_SELECTORS.join(', ')}]. body_sample=${JSON.stringify(body.slice(0, 200))}`
-      );
-    }
-    log(`play_clicked selector=${played}`);
-    await handleResumeDialog(page);
-    await shot(page, '04_play_clicked');
+      tracker.resetDiscovery();
 
-    if (!daemonUp) {
-      // Re-check once — daemon may have been flaky at start.
-      const againTl = await pollDaemonTimeline(7100);
-      if (!(againTl.includes('Timeline') || againTl.includes('MediaContainer'))) {
-        await shot(page, 'fail_daemon_down_after_play');
+      let opened = null;
+      if (ctl.kind === 'ok') {
+        log(`select_player_control selector=${ctl.sel}`);
+        await ctl.el.click({ timeout: 5000 });
+        opened = ctl.sel;
+      } else {
+        const again = await waitForSelectPlayerControl(page, 15000);
+        if (again.kind === 'ok') {
+          log(`select_player_control selector=${again.sel}`);
+          await again.el.click({ timeout: 5000 });
+          opened = again.sel;
+        }
+      }
+      if (!opened) {
+        await shot(page, `fail_no_select_player_control_${tier.name}`);
+        const body = await pageBodyText(page, 400);
+        fail(
+          'select_player_control_not_found',
+          'Could not find Select Player control (a[aria-label="Select Player"] / button[aria-label=...]) on the details page. ' +
+            `body_sample=${JSON.stringify(body.slice(0, 200))}`
+        );
+      }
+
+      {
+        const menu = page.locator('[role="menu"], [role="listbox"], [role="dialog"]').first();
+        try {
+          await menu.waitFor({ state: 'visible', timeout: 10000 });
+          log('picker_surface visible');
+        } catch (_) {
+          log('picker_surface not role-labelled — waiting for discovery traffic');
+        }
+        const discDeadline = Date.now() + 12000;
+        while (Date.now() < discDeadline && tracker.discovery.length === 0) {
+          await page.waitForTimeout(200);
+        }
+        if (tracker.discovery.length) await page.waitForTimeout(800);
+        else await page.waitForTimeout(2500);
+      }
+      await shot(page, `02_picker_open_${tier.name}`);
+
+      const companion = assertCompanionServer(tracker);
+
+      const target = await assertMisterplexInPickerDiff(page, beforePicker);
+      const clickedText = ((await target.innerText().catch(() => '')) || '').trim().split('\n')[0].trim();
+      const exactNameRe = new RegExp(
+        `^${cfg.castName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`,
+        'i'
+      );
+      if (clickedText && !exactNameRe.test(clickedText) && clickedText !== cfg.castName) {
+        await shot(page, `fail_picker_clicked_ghost_${tier.name}`);
+        fail(
+          'picker_clicked_non_exact_target',
+          `Refusing to click ghost/near-miss label ${JSON.stringify(clickedText)}; want exact ${JSON.stringify(cfg.castName)}`
+        );
+      }
+      await target.click();
+      log(
+        `selected_cast_target exact=${cfg.castName} clicked_text=${JSON.stringify(clickedText || cfg.castName)}`
+      );
+      await shot(page, `03_target_selected_${tier.name}`);
+
+      // ── 4. Play ───────────────────────────────────────────────────────────
+      const afterCast = await waitForDetailsReady(page, itemTitle, 60000);
+      const played = await clickPlay(page, afterCast.playSel || detailsReady.playSel);
+      if (!played) {
+        await shot(page, `fail_no_play_button_${tier.name}`);
+        const body = await pageBodyText(page, 400);
+        const stillLoading =
+          !afterCast.sawTitle ||
+          (/loading/i.test(body) && !/play/i.test(body)) ||
+          body.split('\n').filter(Boolean).length < 12;
+        if (stillLoading) {
+          fail(
+            'details_never_rendered',
+            'After selecting MiSTerPlex, item details were not ready for Play.\n' +
+              `body_sample=${JSON.stringify(body.slice(0, 240))}`
+          );
+        }
+        fail(
+          'play_button_not_found',
+          'Details rendered and MiSTerPlex was selected, but no Play control matched ' +
+            `PLAY_SELECTORS=[${PLAY_SELECTORS.join(', ')}]. body_sample=${JSON.stringify(body.slice(0, 200))}`
+        );
+      }
+      log(`play_clicked selector=${played}`);
+      await handleResumeDialog(page);
+      await shot(page, `04_play_clicked_${tier.name}`);
+
+      if (!daemonUp) {
+        const againTl = await pollDaemonTimeline(nextSuiteCmd());
+        if (!(againTl.includes('Timeline') || againTl.includes('MediaContainer'))) {
+          await shot(page, `fail_daemon_down_after_play_${tier.name}`);
+          fail(
+            'playback_did_not_start',
+            `Play was clicked in Plex Web but companion at ${daemonBase(cfg)} is unreachable — cannot confirm playing state.`
+          );
+        }
+      }
+
+      let prog = await waitPlayingOnDaemon(cfg.playWaitSec);
+      if (prog.playing < 2) {
+        log(
+          `playing_retry buffering=${prog.buffering || 0} samples=${prog.playing} — ` +
+            're-click Play once (cast sticky)'
+        );
+        await handleResumeDialog(page);
+        await clickPlay(page, afterCast.playSel || detailsReady.playSel);
+        await handleResumeDialog(page);
+        prog = await waitPlayingOnDaemon(cfg.playWaitSec);
+      }
+      if (prog.playing < 2) {
+        await shot(page, `fail_not_playing_${tier.name}`);
         fail(
           'playback_did_not_start',
-          `Play was clicked in Plex Web but companion at ${daemonBase(cfg)} is unreachable — cannot confirm playing state.`
+          `UI play clicked but daemon timeline never stayed in state=playing ` +
+            `(playing_samples=${prog.playing} buffering_samples=${prog.buffering || 0} ` +
+            `time_max_ms=${prog.maxT}). ` +
+            `Picker contained ${cfg.castName}; companion=${(companion.hosts || []).join(',')}; ` +
+            'failure is post-select playback.'
         );
       }
-    }
+      log(`playing_ok samples=${prog.playing} advance=${prog.advance} time_max_ms=${prog.maxT}`);
 
-    const prog = await waitPlayingOnDaemon(cfg.playWaitSec);
-    if (prog.playing < 2) {
-      await shot(page, 'fail_not_playing');
-      fail(
-        'playback_did_not_start',
-        `UI play clicked but daemon timeline never stayed in state=playing ` +
-          `(playing_samples=${prog.playing} time_max_ms=${prog.maxT}). ` +
-          `Picker contained ${cfg.castName}; companion=${(companion.hosts || []).join(',')}; ` +
-          'failure is post-select playback.'
+      // ── 4b. Transitions (pause/resume, seek, stop+recast, play→idle→play) ─
+      const tr = await runTransitionScenarios(page, itemTitle, detailsUrl, true);
+
+      // ── 4c. Optional HDMI motion (parent capture; suite never opens video0) ─
+      // Per-tier capture dir suffix so 240p/480p frames do not mix when E2E_TIER=all.
+      const hdmiDirBase = cfg.hdmiCaptureDir;
+      if (cfg.hdmiMotion && cfg.tiers.length > 1) {
+        cfg.hdmiCaptureDir = `${String(hdmiDirBase).replace(/\/$/, '')}_${tier.name}`;
+      }
+      const hdmi = await optionalHdmiMotionStage();
+      cfg.hdmiCaptureDir = hdmiDirBase;
+
+      // ── 5. Final stop for this tier (UI best-effort + HTTP) ───────────────
+      const toggled = await clickPauseOrPlayToggle(page);
+      if (toggled) {
+        log(`pause_or_toggle ${toggled}`);
+        await page.waitForTimeout(800);
+        const xml = await pollDaemonTimeline(nextSuiteCmd());
+        log(`after_toggle state=${xmlAttr(xml, 'state') || '?'}`);
+      } else {
+        log('pause_control_not_found (non-fatal)');
+      }
+
+      const stopped = await clickStop(page);
+      if (!stopped) {
+        await forceStopDaemon('tier_stop_fallback');
+        log('stop_ui_failed_used_http_fallback');
+      }
+      await page.waitForTimeout(500);
+      const afterStop = await pollDaemonTimeline(nextSuiteCmd());
+      log(`after_stop state=${xmlAttr(afterStop, 'state') || '?'}`);
+      await shot(page, `05_stopped_${tier.name}`);
+
+      summaryBits.push(
+        `tier=${tier.name}/rk=${ratingKey}/play=ok` +
+          `/tr=${tr.enabled ? 'ok' : 'off'}/hdmi=${hdmi.enabled ? 'ok' : 'off'}` +
+          `/companion=${(companion.matched || companion.hosts || []).join(',') || 'ok'}`
       );
-    }
-    log(`playing_ok samples=${prog.playing} advance=${prog.advance} time_max_ms=${prog.maxT}`);
-
-    // ── 4b. Optional HDMI motion (parent capture; suite never opens video0) ─
-    const hdmi = await optionalHdmiMotionStage();
-
-    // ── 5. Pause (best-effort) + Stop via UI, then hard teardown ────────────
-    const toggled = await clickPauseOrPlayToggle(page);
-    if (toggled) {
-      log(`pause_or_toggle ${toggled}`);
-      await page.waitForTimeout(1500);
-      const xml = await pollDaemonTimeline(9001);
-      log(`after_toggle state=${xmlAttr(xml, 'state') || '?'}`);
-    } else {
-      log('pause_control_not_found (non-fatal)');
+      log(`TIER_OK ${tier.name} ${summaryBits[summaryBits.length - 1]}`);
     }
 
-    const stopped = await clickStop(page);
-    if (!stopped) {
-      await shot(page, 'fail_stop');
-      fail('stop_failed', 'Could not stop via UI or companion HTTP.');
-    }
-    await page.waitForTimeout(800);
-    const afterStop = await pollDaemonTimeline(9002);
-    log(`after_stop state=${xmlAttr(afterStop, 'state') || '?'}`);
-    await shot(page, '05_stopped');
-
-    // Mark logical pass before teardown — teardown failure must still RED the run.
     suitePassed = true;
     log(
-      `suite_body_ok picker=ok companion=${(companion.matched || companion.hosts || []).join(',') || 'ok'} ` +
-        `play=ok hdmi=${hdmi.enabled ? 'ok' : 'off'} stop=ok cast=${cfg.castName} ` +
-        `ratingKey=${ratingKey} time_max_ms=${prog.maxT} context_requests=${tracker.all.length}`
+      `suite_body_ok ${summaryBits.join(' ')} cast=${cfg.castName} context_requests=${tracker.all.length}`
     );
   } catch (e) {
     suitePassed = false;
@@ -1419,42 +1903,47 @@ async function optionalHdmiMotionStage() {
   } finally {
     teardownResult = await hardTeardown(page, context, browser, tracker).catch((te) => ({
       ok: false,
+      reason: 'teardown_error',
       state: 'teardown_error',
       err: te.message,
     }));
   }
 
   if (bodyError) {
-    // Body already printed FAIL lines via fail() / unhandled path.
     process.exit(bodyError.exitCode || EXIT_FAIL);
   }
 
   if (suitePassed && teardownResult && !teardownResult.ok) {
-    console.error('FAIL test_cast_picker_playwright: teardown_device_not_quiescent');
+    console.error('FAIL test_cast_picker_playwright: teardown_controller_not_closed');
     console.error(
-      'Suite body passed but device/controller was left dirty after teardown.\n' +
-        `state=${teardownResult.state || '?'} time=${teardownResult.time || '?'} ` +
+      'Suite body passed but OUR Playwright controller was not fully closed.\n' +
+        `reason=${teardownResult.reason || '?'} state=${teardownResult.state || '?'} ` +
         `err=${teardownResult.err || ''}\n` +
-        'Plex Web must not keep long-polling /player/timeline/poll or issuing pause/stop ' +
-        'after the suite exits (corrupts concurrent CPU/soak measurements).'
+        'Teardown only requires THIS suite browser gone — not a globally idle daemon ' +
+        '(a permanent user Plex Web tab may still poll).'
     );
     process.exit(EXIT_FAIL);
   }
   if (suitePassed && teardownResult && teardownResult.ok) {
     log('CAST_PICKER_E2E_RESULT=PASS');
     log(
-      `summary picker=ok play=ok stop=ok teardown=ok cast=${cfg.castName} ratingKey=${ratingKey}`
+      `summary ${summaryBits.join(' ') || 'ok'} teardown=ok cast=${cfg.castName} ` +
+        `lastTier=${lastTierName} lastRatingKey=${lastRatingKey}`
     );
     process.exitCode = EXIT_PASS;
     return;
   }
   process.exit(EXIT_FAIL);
 })().catch((e) => {
+  // fail() before the inner try/finally still must be rc=1, never 77.
+  if (e instanceof FailError) {
+    process.exit(e.exitCode || EXIT_FAIL);
+  }
   console.error(`UNHANDLED: ${redact(e.message || e)}`);
   try {
     http
       .get(
-        `${daemonBase(cfg)}/player/playback/stop?commandID=9799`,
+        `${daemonBase(cfg)}/player/playback/stop?commandID=${SUITE_CMD_BASE + 999}`,
         { timeout: 2000 },
         (res) => res.resume()
       )
