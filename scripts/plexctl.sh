@@ -172,17 +172,33 @@ resume_stopped_main() {
 }
 echo "\$(ts) PLEXCTL_SUPERVISE_START root=\$ROOT" >>"\$SUPLOG"
 trap 'kill \$child 2>/dev/null || true; resume_stopped_main; exit 0' TERM INT
+# After a sustained healthy run, forget prior crash-loop backoff. 120s is long
+# enough that a 1s crash-loop still doubles backoff, short enough that a late
+# intermittent SIGSEGV does not leave the daily driver dark for 64s hours later.
+HEALTHY_SECS=120
 while true; do
   resume_stopped_main
   [ -x "\$BIN" ] || { echo "\$(ts) MISSING \$BIN" >>"\$SUPLOG"; sleep 5; continue; }
   echo "\$(ts) SPAWN \$BIN" >>"\$SUPLOG"
+  spawn_ts=\$(date +%s)
   "\$BIN" --name $NAME --id $ID --port $PORT --conf "\$CONF" >>"\$LOG" 2>&1 &
   child=\$!
   wait "\$child"; st=\$?
-  echo "\$(ts) EXIT pid=\$child rc=\$st — respawn in \${backoff}s" >>"\$SUPLOG"
+  now_ts=\$(date +%s)
+  ran_s=\$((now_ts - spawn_ts))
+  if [ "\$ran_s" -ge "\$HEALTHY_SECS" ]; then
+    if [ "\$backoff" -ne 2 ]; then
+      echo "\$(ts) BACKOFF_RESET after healthy run_s=\$ran_s (was \${backoff}s → 2s)" >>"\$SUPLOG"
+    fi
+    backoff=2
+  fi
+  echo "\$(ts) EXIT pid=\$child rc=\$st run_s=\$ran_s — respawn in \${backoff}s" >>"\$SUPLOG"
   resume_stopped_main
   sleep "\$backoff"
-  [ "\$backoff" -lt 60 ] && backoff=\$((backoff * 2))
+  # Grow backoff only after short (unhealthy) runs — not after a reset-worthy life.
+  if [ "\$ran_s" -lt "\$HEALTHY_SECS" ]; then
+    [ "\$backoff" -lt 60 ] && backoff=\$((backoff * 2))
+  fi
 done
 EOF
   chmod +x /tmp/plexctl_supervise.sh
