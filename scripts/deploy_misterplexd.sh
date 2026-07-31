@@ -443,6 +443,56 @@ echo "deploy: summary host_md5=$HOST_MD5 target_root=$TARGET_ROOT remote_bin=$RE
 echo "deploy: summary LIVE process md5 verified equal to host (not disk alone)"
 report_rc "deploy_overall" 0
 
+# --- boot path: durable supervisor + _user-startup.sh (parent cold-boot defect) ---
+# Old deploy wrote v1 bare misterplexd and grepped only 'misterplex/bin/misterplexd',
+# which cannot match misterplex_v2 → v1+v2 double-daemon on boot.
+if [[ "${DEPLOY_SKIP_BOOT_HOOK:-0}" != "1" ]]; then
+  # shellcheck source=boot_hook_policy.sh
+  source "$ROOT/scripts/boot_hook_policy.sh"
+  SUP_SRC="$ROOT/scripts/misterplexd_supervise.sh"
+  [[ -f "$SUP_SRC" ]] || die "missing $SUP_SRC"
+  echo "deploy: install supervisor + boot hook for root=$TARGET_ROOT"
+  set +e
+  scp_to "$SUP_SRC" "/tmp/misterplexd_supervise.deploy.$$"
+  scp_rc=$?
+  set -e
+  report_rc "scp_supervise" "$scp_rc" || die "scp supervisor failed"
+  set +e
+  ssh_m "set -e
+    root='$TARGET_ROOT'
+    mkdir -p \"\$root/bin\"
+    mv -f /tmp/misterplexd_supervise.deploy.$$ \"\$root/bin/misterplexd_supervise.sh\"
+    chmod +x \"\$root/bin/misterplexd_supervise.sh\"
+    hook=/media/fat/linux/_user-startup.sh
+    mkdir -p /media/fat/linux
+    touch \"\$hook\"
+    bak=\${hook}.bak.\$(date -u +%Y%m%dT%H%M%SZ)
+    cp -f \"\$hook\" \"\$bak\"
+    # Strip ALL MiSTerPlex autostart lines (both roots + bare + supervise).
+    tmp=\$(mktemp)
+    grep -vE 'misterplexd_supervise\\.sh|/misterplex/bin/misterplexd|/misterplex_v2/bin/misterplexd' \"\$hook\" >\"\$tmp\" || true
+    # Drop stale markers
+    grep -vE '^# MiSTerPlex (pair autostart|companion)' \"\$tmp\" >\"\$tmp.2\" || true
+    mv -f \"\$tmp.2\" \"\$tmp\"
+    printf '\\n# MiSTerPlex pair autostart (atomic with core+daemon+conf; do not hand-edit)\\n' >>\"\$tmp\"
+    printf 'nohup %s/bin/misterplexd_supervise.sh >>%s/misterplexd_supervise.log 2>&1 &\\n' \"\$root\" \"\$root\" >>\"\$tmp\"
+    mv -f \"\$tmp\" \"\$hook\"
+    sync
+    echo HOOK_BAK=\$bak
+    echo HOOK_LINE=\$(grep misterplexd_supervise.sh \"\$hook\" | head -1)
+    # Refuse if more than one supervise line or v1 still present when root is v2
+    n=\$(grep -c misterplexd_supervise.sh \"\$hook\" || true)
+    if [ \"\$n\" -ne 1 ]; then echo FAIL_HOOK_N=\$n; exit 8; fi
+    if [ \"\$root\" = /media/fat/misterplex_v2 ] && grep -q '/misterplex/bin/misterplexd' \"\$hook\"; then
+      echo FAIL_HOOK_V1_STILL_PRESENT; exit 8
+    fi
+    echo BOOT_HOOK_OK
+  "
+  hook_rc=$?
+  set -e
+  report_rc "boot_hook" "$hook_rc" || die "boot hook install failed (rc=$hook_rc)"
+fi
+
 if [[ "$DEPLOY_SKIP_GEOMETRY_GATE" != "1" && -z "${DEPLOY_SSHM:-}" ]]; then
   set +e
   "$ROOT/scripts/check_core_conf_geometry.sh"

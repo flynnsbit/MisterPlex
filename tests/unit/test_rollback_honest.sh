@@ -171,6 +171,23 @@ if [[ "$cmd" == *plexctl* ]] || [[ "$cmd" == *stop* ]] || [[ "$cmd" == *load_cor
   exit 0
 fi
 
+# boot hook body
+if [[ "$cmd" == *"_user-startup.sh"* ]] || [[ "$cmd" == *"user-startup"* ]]; then
+  if [[ -n "${hook_body:-}" ]]; then printf '%s\n' "$hook_body"; exit 0; fi
+  # default v2 supervise line (matches live root)
+  echo "nohup /media/fat/misterplex_v2/bin/misterplexd_supervise.sh >>/media/fat/misterplex_v2/misterplexd_supervise.log 2>&1 &"
+  exit 0
+fi
+if [[ "$cmd" == *"misterplexd_supervise"* ]] || [[ "$cmd" == *"SUPERVISE_"* ]] || [[ "$cmd" == *"HOOK_"* ]]; then
+  echo "SUPERVISE_OK"
+  echo "HOOK_INSTALLED=/media/fat/linux/_user-startup.sh"
+  exit 0
+fi
+if [[ "$cmd" == *"test -x"* ]]; then
+  echo "SUPERVISE_OK"
+  exit 0
+fi
+
 echo "fake_ssh unhandled: $cmd" >&2
 exit 99
 MOCK
@@ -229,6 +246,7 @@ run_rb() {
     ROLLBACK_SSH_BACKOFF_S=0 \
     ROLLBACK_POST_START_SLEEP=0 \
     ROLLBACK_ERRFILE="$WORK/ssh.err" \
+    ROLLBACK_SKIP_BOOT="${ROLLBACK_SKIP_BOOT:-1}" \
     PAIR_IDLE_PNG="${PAIR_IDLE_PNG:-$WORK/idle_ok.png}" \
     ROLLBACK_DAEMON="${ROLLBACK_DAEMON-}" \
     PAIR_DAEMON_ARTIFACT="${PAIR_DAEMON_ARTIFACT-}" \

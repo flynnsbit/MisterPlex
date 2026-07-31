@@ -32,6 +32,8 @@ source "$ROOT/scripts/rbf_ship_policy.sh"
 source "$ROOT/scripts/pair_ship_policy.sh"
 # shellcheck source=pair_live_probe.inc.sh
 source "$ROOT/scripts/pair_live_probe.inc.sh"
+# shellcheck source=boot_hook_policy.sh
+source "$ROOT/scripts/boot_hook_policy.sh"
 
 HOST="${MISTER_HOST:-192.168.1.183}"
 USER="${MISTER_USER:-root}"
@@ -309,6 +311,54 @@ verify_live() {
       rc=3
     else
       echo "OK live-pair-compatibility"
+    fi
+  fi
+
+  # Boot hook must match live pair root (parent cold-boot defect 2026-07-31).
+  if [ "${PROMOTE_SKIP_BOOT_HOOK:-0}" != "1" ]; then
+    hook_body=""
+    if [ -n "${PROMOTE_HOOK_BLOB:-}" ] && [ -f "${PROMOTE_HOOK_BLOB}" ]; then
+      hook_body=$(cat "$PROMOTE_HOOK_BLOB")
+    elif [ -n "${PROMOTE_GATE_BLOB:-}" ]; then
+      # optional HOOK_BODY=... multiline not in blob; allow PROMOTE_HOOK_BODY env
+      hook_body="${PROMOTE_HOOK_BODY:-}"
+    fi
+    if [ -z "$hook_body" ] && [ -z "${PROMOTE_GATE_BLOB:-}" ]; then
+      set +e
+      hook_body=$(run_ssh "if [ -f /media/fat/linux/_user-startup.sh ]; then cat /media/fat/linux/_user-startup.sh; else echo MISSING; fi")
+      hrc=$?
+      set -e
+      if [ "$hrc" -eq 5 ]; then echo "true rc=5"; return 5; fi
+    fi
+    expect_root="${PROMOTE_BOOT_ROOT:-$BOOT_HOOK_DEFAULT_ROOT}"
+    if [ -n "$root" ]; then expect_root="$root"; fi
+    if [ -z "$hook_body" ] || [ "$hook_body" = "MISSING" ]; then
+      # Unit inject path: PROMOTE_GATE_BLOB without PROMOTE_HOOK_* → NOTE only.
+      # Live device (no gate blob): default REQUIRE=1 fails closed.
+      if [ -n "${PROMOTE_GATE_BLOB:-}" ] && [ -z "${PROMOTE_HOOK_BLOB:-}" ] && [ -z "${PROMOTE_HOOK_BODY:-}" ] \
+         && [ "${PROMOTE_REQUIRE_BOOT_HOOK:-0}" != "1" ]; then
+        echo "NOTE boot-hook not in gate blob — set PROMOTE_HOOK_BLOB for cold-boot gate"
+      elif [ "${PROMOTE_REQUIRE_BOOT_HOOK:-1}" = "1" ]; then
+        echo "FAIL boot-hook missing or not injected (cold-boot path unproven)"
+        rc=3
+      else
+        echo "NOTE boot-hook not checked"
+      fi
+    else
+      set +e
+      boot_hook_check_body "$hook_body" "$expect_root"
+      hrc=$?
+      set -e
+      if [ "$hrc" -ne 0 ]; then
+        echo "FAIL boot-hook vs pair root expect=$expect_root"
+        rc=3
+      else
+        echo "OK boot-hook matches root=$expect_root"
+        if [ -n "$root" ] && [ "$root" != "$expect_root" ]; then
+          echo "FAIL live-root $root != boot expect $expect_root"
+          rc=3
+        fi
+      fi
     fi
   fi
 

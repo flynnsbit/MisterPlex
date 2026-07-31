@@ -382,3 +382,118 @@ shows the old SPI bitstream (or vice versa) — trust path md5 **and** pixels.
 | `scripts/deploy_plex_core.sh` | RBF copy + optional ONE menu bounce |
 | `scripts/deploy_misterplexd.sh` | named daemon → live root + live exe md5 |
 | `scripts/plexctl.sh` | on-device only bundle control |
+
+## Power-cycle rehearsal (parent; daily driver)
+
+A hook-execution rehearsal is necessary but not sufficient — a real cold boot
+is the complete proof. Recoverability over SSH is required.
+
+### Pre-flight (before reboot)
+
+```bash
+# On lab host — capture undo artifacts
+ssh root@$MISTER_HOST 'md5sum /media/fat/_Utility/Plex.rbf /media/fat/_Utility/Plex_v2.rbf \
+  /media/fat/misterplex_v2/bin/misterplexd \
+  /media/fat/misterplex_v2/bin/misterplexd_supervise.sh; \
+  grep -n misterplex /media/fat/linux/_user-startup.sh; \
+  cp -a /media/fat/linux/_user-startup.sh /media/fat/linux/_user-startup.sh.bak.pre-reboot'
+# PASS: single line with misterplex_v2/bin/misterplexd_supervise.sh
+# PASS: daemon md5 edc3a46b9d1c… ; Plex_v2 still dfebf2bf
+# ABORT if hook has misterplex/bin (v1) or multiple supervise lines
+```
+
+### Hook-only rehearsal (no reboot) — parent already did this once
+
+```bash
+# stop supervisor+daemon, run hook exactly as boot does, measure
+ssh root@$HOST 'bash -s' <<'EOS'
+set -e
+# stop
+for d in /proc/[0-9]*; do
+  x=$(readlink -f "$d/exe" 2>/dev/null) || continue
+  b=$(basename "$x")
+  case "$b" in misterplexd) kill ${d#/proc/} 2>/dev/null || true ;; esac
+done
+pkill -f misterplexd_supervise.sh 2>/dev/null || true
+sleep 1
+pre=$(for d in /proc/[0-9]*; do
+  x=$(readlink -f "$d/exe" 2>/dev/null) || continue
+  [ "$(basename "$x")" = misterplexd ] && echo 1
+done | wc -l)
+echo pre_hook_n_daemon=$pre
+# run hook (same as boot)
+bash /media/fat/linux/_user-startup.sh
+sleep 5
+# count via /proc/exe ONLY
+post=0; pid=""; md5=""; cmd=""
+for d in /proc/[0-9]*; do
+  x=$(readlink -f "$d/exe" 2>/dev/null) || continue
+  [ "$(basename "$x")" = misterplexd ] || continue
+  post=$((post+1)); pid=${d#/proc/}
+  md5=$(md5sum "$d/exe" | awk '{print $1}')
+  cmd=$(tr '\0' ' ' </proc/$pid/cmdline)
+done
+echo post_hook_n_daemon=$post
+echo pid=$pid md5=$md5
+echo cmdline=$cmd
+wget -qO- http://127.0.0.1:3005/resources | head -c 80; echo
+EOS
+# PASS: pre=0 post=1 md5=edc3a46b… conf=…/misterplex_v2/misterplex.conf resources=200
+# FAIL → do NOT reboot; fix hook; SPI atomic undo if needed
+```
+
+### Real cold boot
+
+1. Confirm SSH still works after boot (`ssh root@$HOST true; echo true rc=$?`).
+2. Immediately:
+
+```bash
+ssh root@$HOST 'bash -s' <<'EOS'
+set +e
+echo "=== hook lines ==="
+grep -n misterplex /media/fat/linux/_user-startup.sh
+echo "=== n_daemon via exe ==="
+n=0
+for d in /proc/[0-9]*; do
+  x=$(readlink -f "$d/exe" 2>/dev/null) || continue
+  [ "$(basename "$x")" = misterplexd ] || continue
+  n=$((n+1))
+  echo pid=${d#/proc/} md5=$(md5sum "$d/exe" | awk '{print $1}') exe=$x
+  echo cmdline=$(tr "\0" " " < "$d/cmdline")
+done
+echo n_daemon=$n
+wget -q -O /dev/null -S http://127.0.0.1:3005/resources 2>&1 | awk "/HTTP\//{print; exit}"
+EOS
+```
+
+**PASS:** `n_daemon=1`, md5 `edc3a46b9d1c…`, exe under `misterplex_v2`,
+`--conf …/misterplex_v2/misterplex.conf`, hook has **exactly one**
+`misterplex_v2/bin/misterplexd_supervise.sh` line, `/resources` 200, idle
+chevron on HDMI (viewed pixels).
+
+**IMMEDIATE ROLLBACK (SSH):**
+
+```bash
+# 1) stop everything
+ssh root@$HOST 'pkill -f misterplexd_supervise; pkill -x misterplexd; sleep 1'
+# 2) restore hook bak if needed
+ssh root@$HOST 'cp -a /media/fat/linux/_user-startup.sh.bak.pre-reboot \
+  /media/fat/linux/_user-startup.sh'
+# 3) atomic SPI or DDR pair restore from lab host
+PAIR_ID=ddr-c5382bee PAIR_IDLE_PNG=… scripts/rollback_v2.sh restore
+# or SPI:
+PAIR_ID=spi-v2-hybrid ROLLBACK_DAEMON=artifacts/daemon-pins/misterplexd.50f4eb92 \
+  PAIR_IDLE_PNG=… scripts/rollback_v2.sh restore
+```
+
+If SSH is dead: serial console / physical SD — restore
+`_user-startup.sh.bak.*` and `Plex_v2.rbf` boot path manually.
+
+### Gate that would have caught the session-long defect
+
+```bash
+# FAILS when hook root != live daemon root
+PROMOTE_HOOK_BLOB=<(ssh root@$HOST cat /media/fat/linux/_user-startup.sh) \
+  scripts/promotion_gate_check.sh verify-live
+# or after pair restore: verify includes boot-hook gate automatically
+```

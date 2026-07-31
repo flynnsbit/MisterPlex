@@ -45,6 +45,8 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 source "$ROOT/scripts/pair_ship_policy.sh"
 # shellcheck source=pair_live_probe.inc.sh
 source "$ROOT/scripts/pair_live_probe.inc.sh"
+# shellcheck source=boot_hook_policy.sh
+source "$ROOT/scripts/boot_hook_policy.sh"
 
 HOST="${MISTER_HOST:-192.168.1.183}"
 PASS="${MISTER_PASS:-1}"
@@ -83,6 +85,10 @@ V2_ROOT="${ROLLBACK_ROOT:-/media/fat/misterplex_v2}"
 V2_DAEMON="$V2_ROOT/bin/misterplexd"
 V2_CORE="$PAIR_CORE_PATH"
 V2_CONF_DEFAULT="$V2_ROOT/misterplex.conf"
+# Boot path is half of the pair (parent 2026-07-31 cold-boot defect).
+PAIR_BOOT_ROOT="${PAIR_BOOT_ROOT:-$V2_ROOT}"
+BOOT_HOOK_PATH="${BOOT_HOOK_PATH:-$BOOT_HOOK_DEVICE_PATH}"
+HOST_SUPERVISE_SRC="$ROOT/scripts/misterplexd_supervise.sh"
 
 run_ssh() {
   local remote="$1"
@@ -557,6 +563,124 @@ EOF
   return 0
 }
 
+
+# Install durable supervisor + rewrite _user-startup.sh for PAIR_BOOT_ROOT.
+# Fourth half of the atomic pair (core, daemon, conf, BOOT).
+install_pair_boot_path() {
+  local root="${1:-$PAIR_BOOT_ROOT}" hook_body rendered host_tmp staged rc bak_ts
+  log "install boot path root=$root hook=$BOOT_HOOK_PATH"
+
+  if [ ! -f "$HOST_SUPERVISE_SRC" ]; then
+    echo "REFUSE missing host supervisor source $HOST_SUPERVISE_SRC"
+    return 10
+  fi
+
+  staged="/tmp/misterplexd_supervise.pair.$$"
+  set +e
+  run_scp "$HOST_SUPERVISE_SRC" "$staged"
+  rc=$?
+  set -e
+  if [ "$rc" -ne 0 ]; then return 5; fi
+
+  run_ssh "set -e
+    root=$(printf '%q' "$root")
+    staged=$(printf '%q' "$staged")
+    mkdir -p \"\$root/bin\"
+    # archive previous supervisor if present
+    if [ -f \"\$root/bin/misterplexd_supervise.sh\" ]; then
+      cp -f \"\$root/bin/misterplexd_supervise.sh\" \"\$root/bin/misterplexd_supervise.sh.bak.pre-pair\" || true
+    fi
+    mv -f \"\$staged\" \"\$root/bin/misterplexd_supervise.sh\"
+    chmod +x \"\$root/bin/misterplexd_supervise.sh\"
+    sync
+    echo SUPERVISE_INSTALLED=\$root/bin/misterplexd_supervise.sh
+  "
+
+  set +e
+  hook_body=$(run_ssh "if [ -f $(printf '%q' "$BOOT_HOOK_PATH") ]; then cat $(printf '%q' "$BOOT_HOOK_PATH"); else echo ''; fi")
+  rc=$?
+  set -e
+  if [ "$rc" -eq 5 ]; then return 5; fi
+
+  host_tmp="$ROOT/build/pair-boot-hook-${PAIR_ID}.$$.sh"
+  mkdir -p "$(dirname "$host_tmp")"
+  boot_hook_render_body "$root" "$hook_body" >"$host_tmp"
+
+  set +e
+  boot_hook_check_body "$(cat "$host_tmp")" "$root"
+  rc=$?
+  set -e
+  if [ "$rc" -ne 0 ]; then
+    echo "REFUSE rendered boot hook failed check true rc=$rc"
+    rm -f "$host_tmp"
+    return 10
+  fi
+
+  staged="/tmp/user-startup.pair.$$"
+  bak_ts=$(date -u +%Y%m%dT%H%M%SZ)
+  set +e
+  run_scp "$host_tmp" "$staged"
+  rc=$?
+  set -e
+  rm -f "$host_tmp"
+  if [ "$rc" -ne 0 ]; then return 5; fi
+
+  run_ssh "set -e
+    hook=$(printf '%q' "$BOOT_HOOK_PATH")
+    staged=$(printf '%q' "$staged")
+    bak=\${hook}.bak.${bak_ts}
+    mkdir -p \"\$(dirname \"\$hook\")\"
+    if [ -f \"\$hook\" ]; then cp -f \"\$hook\" \"\$bak\"; echo HOOK_BAK=\$bak; fi
+    mv -f \"\$staged\" \"\$hook\"
+    chmod 755 \"\$hook\" 2>/dev/null || true
+    sync
+    echo HOOK_INSTALLED=\$hook
+  "
+  echo "OK boot-path root=$root hook=$BOOT_HOOK_PATH"
+  return 0
+}
+
+verify_boot_hook_live() {
+  local root="${1:-$PAIR_BOOT_ROOT}" body live_root rc scan
+  set +e
+  body=$(run_ssh "if [ -f $(printf '%q' "$BOOT_HOOK_PATH") ]; then cat $(printf '%q' "$BOOT_HOOK_PATH"); else echo MISSING; fi")
+  rc=$?
+  set -e
+  if [ "$rc" -eq 5 ]; then return 5; fi
+  if [ "$body" = "MISSING" ]; then
+    echo "FAIL boot-hook MISSING at $BOOT_HOOK_PATH"
+    return 3
+  fi
+  set +e
+  boot_hook_check_body "$body" "$root"
+  rc=$?
+  set -e
+  if [ "$rc" -ne 0 ]; then
+    echo "FAIL boot-hook does not match pair root $root"
+    return 3
+  fi
+  # Live daemon root must match hook root (the session-long undetected defect).
+  set +e
+  scan=$(remote_live_any_daemon)
+  rc=$?
+  set -e
+  if [ "$rc" -eq 5 ]; then return 5; fi
+  live_root=$(printf '%s\n' "$scan" | sed -n 's/^LIVE_ROOT=//p' | head -1)
+  if [ -n "$live_root" ] && [ "$live_root" != "$root" ]; then
+    echo "FAIL boot-hook/live-root mismatch hook_root=$root live_root=$live_root"
+    echo "FAIL detail=cold_boot_would_start_different_bundle_than_live_session"
+    return 3
+  fi
+  # Supervisor file must exist on disk under root.
+  set +e
+  run_ssh "test -x $(printf '%q' "$root/bin/misterplexd_supervise.sh") && echo SUPERVISE_OK || echo SUPERVISE_MISSING"
+  rc=$?
+  set -e
+  if [ "$rc" -eq 5 ]; then return 5; fi
+  echo "OK boot-hook+live-root root=$root"
+  return 0
+}
+
 verify_pair() {
   local rc=0 step_rc got_core got_disk live_blob live n conf code pair_out require_visual prc vrc
   require_visual="${1:-${ROLLBACK_REQUIRE_VISUAL:-1}}"
@@ -678,6 +802,18 @@ verify_pair() {
     rc=9
   fi
 
+  if [ "${ROLLBACK_SKIP_BOOT:-0}" != "1" ]; then
+    set +e
+    verify_boot_hook_live "$PAIR_BOOT_ROOT"
+    step_rc=$?
+    set -e
+    if [ "$step_rc" -eq 5 ]; then echo "true rc=5"; return 5; fi
+    if [ "$step_rc" -ne 0 ]; then
+      echo "FAIL boot-hook gate (pair incomplete without cold-boot path)"
+      rc=3
+    fi
+  fi
+
   if [ "$require_visual" = "1" ]; then
     if [ "$rc" -eq 0 ]; then
       set +e
@@ -740,7 +876,7 @@ restore_and_verify() {
     log "daemon disk already at pin — skip install"
   fi
 
-  # Conf half BEFORE core load / start — pair is (core, daemon, conf).
+  # Conf half BEFORE core load / start — pair is (core, daemon, conf, boot).
   if [ "${PAIR_CONF_PROFILE:-none}" != "none" ] && [ "${ROLLBACK_SKIP_CONF:-0}" != "1" ]; then
     set +e
     apply_pair_conf "$PAIR_CONF_PROFILE"
@@ -748,6 +884,19 @@ restore_and_verify() {
     set -e
     if [ "$rc" -ne 0 ]; then
       echo "ERROR conf apply rc=$rc — core NOT loaded (atomic refuse mid-flight)"
+      echo "true rc=$rc"
+      return "$rc"
+    fi
+  fi
+
+  # Boot path (supervisor + _user-startup.sh) — parent cold-boot defect class.
+  if [ "${ROLLBACK_SKIP_BOOT:-0}" != "1" ]; then
+    set +e
+    install_pair_boot_path "$PAIR_BOOT_ROOT"
+    rc=$?
+    set -e
+    if [ "$rc" -ne 0 ]; then
+      echo "ERROR boot-path install rc=$rc — core NOT loaded (atomic refuse mid-flight)"
       echo "true rc=$rc"
       return "$rc"
     fi
@@ -796,9 +945,18 @@ Sequence (all-or-nothing; abort leaves prior half uncommitted when possible):
   1) STOP daemon (avoid ETXTBSY on cp over running binary)
   2) install daemon bytes if disk pin wrong (from host pin or on-device .bak)
   3) apply conf profile ($PAIR_CONF_PROFILE) atomically with backup
+  3b) install $PAIR_BOOT_ROOT/bin/misterplexd_supervise.sh + rewrite _user-startup.sh
+      (strip ALL misterplex autostart lines both roots; append exactly one v2 line)
   4) ONE menu bounce → load $PAIR_CORE_PATH
   5) start exactly one daemon; verify n_daemon==1 via /proc/exe md5
-  6) HARD visual (PAIR_IDLE_PNG / motion); unset → rc=8; motion 77 → rc=8
+  6) boot-hook gate: hook root == live root (FAIL if v1 hook + v2 live)
+  7) HARD visual (PAIR_IDLE_PNG / motion); unset → rc=8; motion 77 → rc=8
+
+BOOT path (fourth half of the pair):
+  hook=$BOOT_HOOK_PATH
+  supervise=$PAIR_BOOT_ROOT/bin/misterplexd_supervise.sh
+  NEVER leave hook on v1 while live is v2 (cold-boot → stale 54f1d916 class)
+  NEVER rely on /tmp/plexctl_supervise.sh (does not survive reboot)
 
 POWER-CYCLE / worst-moment disk states (honesty; no core-identity register yet):
   A after preflight only:
