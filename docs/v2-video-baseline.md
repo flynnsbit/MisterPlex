@@ -122,15 +122,112 @@ PY
 ```
 
 **Do not conclude from a missing plex.tv registry entry that the fault is
-plex.tv registration.** That inference was made twice here and was wrong both
-times; the real cause was the host firewall. A device can legitimately be absent
-from `plex.tv/api/resources` while local GDM discovery is what is actually
-broken.
+plex.tv registration.** That inference was made here more than once and was
+wrong; see also the multi-PMS picker case below. A device can legitimately be
+absent from `plex.tv/api/resources` while local GDM discovery is healthy (or
+broken for unrelated reasons).
 
 Note the ufw conntrack trap when probing by hand: replies to a **broadcast**
 probe arrive from the device's unicast address while the conntrack entry has the
 broadcast destination, so they are classed NEW. Probing from the MiSTer itself
 avoids this.
+
+## Cast target missing in Select Player: which PMS Web polls (2026-07-30)
+
+**Acceptance for "no cast option" is the Plex Web "Select Player" UI**, not an
+HTTP status on plex.tv and not "device appears in some `/clients` somewhere."
+
+### How the LAN picker is fed
+
+Plex Web builds the LAN player list from the **PMS it has selected as local**,
+not from a global device registry:
+
+1. `GET {that-pms}/clients`
+2. `GET {that-pms}/neighborhood/devices`
+
+(OSS reverse-engineering of the same path: plex-mpv-shim needs **no plex.tv
+login**; the MPV Shim Local Connection userscript injects players into
+`/clients` and only touches `api/v2/resources` to fake a *local server* so Web
+bothers to ask for clients at all.)
+
+**plex.tv `provides=player` is neither necessary nor sufficient** for this
+picker:
+
+- Necessary? No — plex-mpv-shim appears via GDM → PMS `/clients` with zero
+  plex.tv registration.
+- Sufficient? No — a SHIELD Android TV row can sit on the account with
+  `provides` containing `player` and still be absent from Select Player while
+  Web is asking a different server for `/clients`.
+
+Daemon `PLEXTV_ANNOUNCE` GETs `https://plex.tv/api/v2/resources` as a **list
+check only**. HTTP 200 with `self_in_body=0` correctly logs
+`registration no-op` (commit `2f81e96b`); that GET does **not** create a
+device. Do not reopen a lane to invent a plex.tv upsert for this complaint.
+
+### Multi-PMS trap (measured)
+
+Lab had two owned Plex Media Servers on the account. Opening Select Player
+(Playwright, context-level request capture — **not** `page.on('request')`,
+which captured 0 and must not be trusted) issued:
+
+```
+GET https://192-168-1-122.<hash>.plex.direct:32400/clients
+GET https://192-168-1-122.<hash>.plex.direct:32400/neighborhood/devices
+```
+
+| Server | Role | `/clients` when Web polled |
+|--------|------|----------------------------|
+| `192.168.1.122` SHIELD PMS | What Web asked | **size="0"** (and `/neighborhood/devices` size="0") |
+| User workstation PMS (e.g. `.24`, docker `net=host`) | Never asked in that session | **size="1"** — `MiSTerPlex` / `misterplex-dev` |
+
+So the picker was empty **even though** MiSTerPlex GDM, player HTTP `:3005`
+`/resources`, and the workstation PMS `/clients` entry were all healthy. Web
+simply never consulted the server that knew about the player.
+
+Additional measured fact: an **Android/SHIELD PMS emitted zero GDM discovery
+probes in a 40 s sniff**, so it will not learn LAN players the way a desktop
+PMS does. If Web prefers that PMS for `/clients`, the picker stays empty
+regardless of MiSTerPlex behavior.
+
+### Decisive intervention (cause by experiment, not inference)
+
+Blocking the SHIELD only by IPv4 was **insufficient** — Web still reached it
+over **IPv6 via the same `plex.direct` hash**. Blocking the `plex.direct` host
+hash (all address families) forced fallback:
+
+```
+http://127.0.0.1:32400/clients
+http://127.0.0.1:32400/neighborhood/devices
+MISTERPLEX_IN_PICKER: true
+```
+
+Screenshot captured by parent: **MiSTerPlex appeared in Select Player.** No
+daemon or GDM change was required.
+
+### Remedy class
+
+| Item | Owner |
+|------|--------|
+| GDM reply, companion `/resources`, workstation PMS `/clients` listing MiSTerPlex | Product — already correct when healthy |
+| plex.tv player upsert for this complaint | **Do not implement** — not required; not sufficient |
+| Remove / sign out / stop the unwanted SHIELD (or other) PMS so Web stops preferring an empty `/clients` | **User / account action** — not a MiSTerPlex code fix |
+| Firewall dropping GDM to the PMS Web actually uses | Host network — see section above |
+
+Do **not** add CI tests that encode one household's multi-PMS topology or the
+existence of a SHIELD. That would be a flaky gate on accident, not product
+behavior.
+
+### Operator checklist (parent / user)
+
+1. Confirm player: `GET http://<mister>:3005/resources` → 200 Player XML.
+2. Confirm **each** owned PMS: `GET http://<pms>:32400/clients?X-Plex-Token=…`
+   — which ones list `MiSTerPlex`?
+3. In browser devtools (or Playwright **context** request log), open Select
+   Player and note **which host** serves `/clients` and `/neighborhood/devices`.
+4. If that host's `/clients` is empty, fix account/server selection (stop or
+   remove the empty PMS) — do not chase plex.tv registration or rewrite GDM.
+5. When blocking a PMS for a test, block its **`*.plex.direct` name**, not only
+   one IPv4 — IPv6 via the same hash will otherwise keep it alive.
 
 ## Switching bundles
 
