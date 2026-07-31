@@ -113,17 +113,40 @@ function loadPlaywright() {
   }
 }
 
-async function resolveRatingKey() {
-  if (cfg.ratingKey) return String(cfg.ratingKey).replace(/^\/library\/metadata\//, '');
-  if (cfg.plexKey) {
+/**
+ * Resolve ratingKey + canonical item title from PMS.
+ * Title is required later as a deterministic details-ready signal
+ * (sidebar-only paint is NOT enough — parent fail_no_play_button.png).
+ */
+async function resolveItem() {
+  let ratingKey = '';
+  if (cfg.ratingKey) ratingKey = String(cfg.ratingKey).replace(/^\/library\/metadata\//, '');
+  else if (cfg.plexKey) {
     const m = String(cfg.plexKey).match(/metadata\/(\d+)/);
-    if (m) return m[1];
+    if (m) ratingKey = m[1];
   }
 
   const headers = {
     'X-Plex-Token': cfg.token,
     Accept: 'application/json',
   };
+
+  if (ratingKey) {
+    const meta = await httpGet(`${cfg.plexBase}/library/metadata/${ratingKey}`, headers);
+    if (meta.status === 200) {
+      try {
+        const j = JSON.parse(meta.body);
+        const m = (j.MediaContainer?.Metadata || [])[0];
+        if (m && m.title) {
+          log(`resolved ratingKey=${ratingKey} title=${m.title}`);
+          return { ratingKey: String(ratingKey), title: String(m.title) };
+        }
+      } catch (_) {
+        /* fall through to library search */
+      }
+    }
+  }
+
   const sec = await httpGet(`${cfg.plexBase}/library/sections`, headers);
   if (sec.status !== 200) {
     fail('pms_sections_unreachable', `HTTP ${sec.status} from ${cfg.plexBase}/library/sections`);
@@ -166,7 +189,7 @@ async function resolveRatingKey() {
     );
   }
   log(`resolved library=${lib.title} ratingKey=${hit.ratingKey} title=${hit.title}`);
-  return String(hit.ratingKey);
+  return { ratingKey: String(hit.ratingKey), title: String(hit.title || cfg.itemTitle) };
 }
 
 async function pmsIdentity() {
@@ -508,6 +531,10 @@ function assertCompanionServer(tracker) {
  * Library "MiSTerPlex Tests", item "MiSTerPlex Test 240p", server
  * "MiSTerPlex Studio" all produce false positives. Only NEW lines after
  * opening Select Player count.
+ *
+ * HARD TRAP 2: picker may also list a stale ghost "MiSTerPlexTest" (no space).
+ * Gate requires an EXACT line match for cfg.castName ("MiSTerPlex") and clicks
+ * only the exact-text node — loose/substring hits must not satisfy the gate.
  */
 async function assertMisterplexInPickerDiff(page, beforeSet) {
   const name = cfg.castName;
@@ -518,46 +545,52 @@ async function assertMisterplexInPickerDiff(page, beforeSet) {
     log(`  picker+ ${line}`);
   }
 
-  // Prefer an exact new line equal to cast name; also accept a line that is
-  // exactly the cast target (not library/item/server titles which were present before).
   const nameRe = new RegExp(`^${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i');
-  const hitExact = added.some((l) => nameRe.test(l));
-  // Some builds suffix status: "MiSTerPlex" on its own line is ideal; also
-  // "MiSTerPlex\nAvailable" as separate lines. Reject lines that clearly look
-  // like library/item titles if they somehow appear only after open.
-  const hitLoose = added.some(
+  const exactLines = added.filter((l) => nameRe.test(l));
+  const hitExact = exactLines.length > 0;
+  // Ghost / near-miss labels (e.g. "MiSTerPlexTest" from stale :13005 entry).
+  const ghosts = added.filter(
     (l) =>
-      nameRe.test(l) ||
-      (new RegExp(name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i').test(l) &&
-        !/tests|soak|studio|240p|480p|720p|1080p|metadata/i.test(l) &&
-        l.length <= name.length + 24)
+      !nameRe.test(l) &&
+      new RegExp(name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i').test(l) &&
+      !/tests|soak|studio|240p|480p|720p|1080p|metadata/i.test(l)
   );
+  if (ghosts.length) log(`picker_ghost_labels=${ghosts.join(' | ')}`);
 
-  const ok = hitExact || hitLoose;
-  log(`MISTERPLEX_IN_PICKER=${ok} hitExact=${hitExact} hitLoose=${hitLoose}`);
+  log(`MISTERPLEX_IN_PICKER=${hitExact} hitExact=${hitExact} exact_lines=${exactLines.join('|') || '(none)'}`);
 
-  if (!ok) {
+  if (!hitExact) {
     await shot(page, 'fail_picker_no_misterplex');
     fail(
       'picker_did_not_contain_MiSTerPlex',
-      `Select Player opened but ${JSON.stringify(name)} was not in BEFORE/AFTER body diff.\n` +
+      `Select Player opened but exact ${JSON.stringify(name)} was not in BEFORE/AFTER body diff.\n` +
         `Added lines (sample): ${added.slice(0, 40).join(' | ') || '(none)'}\n` +
-        'Whole-page search is intentionally NOT used (false positive on library/item/server names).\n' +
+        (ghosts.length
+          ? `Ghost near-misses (NOT accepted): ${ghosts.join(' | ')}\n`
+          : '') +
+        'Whole-page / substring search is intentionally NOT used.\n' +
         'See companionServer/FriendlyName runbook: docs/select-player-runbook.md'
     );
   }
 
-  // Click the cast target inside the picker — prefer role, then exact text.
+  // Click ONLY the exact cast name — never a ghost like "MiSTerPlexTest".
   const candidates = [
-    page.getByRole('menuitem', { name: nameRe }),
-    page.getByRole('option', { name: nameRe }),
-    page.getByText(name, { exact: true }),
+    { how: 'role=menuitem exact', loc: page.getByRole('menuitem', { name: nameRe }) },
+    { how: 'role=option exact', loc: page.getByRole('option', { name: nameRe }) },
+    { how: 'getByText exact', loc: page.getByText(name, { exact: true }) },
   ];
-  for (const loc of candidates) {
+  for (const c of candidates) {
     try {
-      const first = loc.first();
+      const first = c.loc.first();
       if (await first.isVisible({ timeout: 3000 }).catch(() => false)) {
-        log(`picker_click via ${await first.evaluate((el) => el.tagName).catch(() => '?')}`);
+        const txt = ((await first.innerText().catch(() => '')) || '').trim();
+        // Defend against role match that still grabbed a longer ghost label.
+        if (txt && !nameRe.test(txt.split('\n')[0].trim()) && txt !== name) {
+          log(`picker_click skip how=${c.how} text=${JSON.stringify(txt.slice(0, 40))}`);
+          continue;
+        }
+        const tag = await first.evaluate((el) => el.tagName).catch(() => '?');
+        log(`picker_click how=${c.how} tag=${tag} text=${JSON.stringify(txt.slice(0, 40) || name)}`);
         return first;
       }
     } catch (_) {
@@ -565,39 +598,135 @@ async function assertMisterplexInPickerDiff(page, beforeSet) {
     }
   }
 
-  // Last resort: any exact-text node (still exact, not substring).
-  const fallback = page.getByText(name, { exact: true }).first();
-  if (await fallback.isVisible({ timeout: 2000 }).catch(() => false)) return fallback;
-
   await shot(page, 'fail_picker_row_not_clickable');
   fail(
     'picker_row_not_clickable',
-    `${JSON.stringify(name)} appeared in picker diff but no clickable row was found.`
+    `Exact ${JSON.stringify(name)} was in picker diff but no exact clickable row was found.` +
+      (ghosts.length ? ` Ghosts present: ${ghosts.join(' | ')}` : '')
   );
 }
 
-async function clickPlay(page) {
-  const selectors = [
-    '[data-testid="preplay-play"]',
-    '[data-qa="preplayPlayButton"]',
-    'button[aria-label="Play"]',
-    '[aria-label="Play"]',
-    'button:has-text("Play")',
-    '[class*="PlayButton"]',
-  ];
-  for (const sel of selectors) {
+/** Ordered Play controls — log which matched (same discipline as Select Player). */
+const PLAY_SELECTORS = [
+  // Pre-play details (most common on /details)
+  '[data-testid="preplay-play"]',
+  '[data-qa="preplayPlayButton"]',
+  'button[data-testid="preplay-play"]',
+  // Aria (player chrome / details)
+  'button[aria-label="Play"]',
+  '[aria-label="Play"]',
+  // Visible text fallbacks
+  'button:has-text("Play")',
+  '[role="button"]:has-text("Play")',
+];
+
+/**
+ * Wait until item details have actually rendered — not just the shell/sidebar.
+ * Parent RED: fail_no_play_button.png showed spinner-only content while
+ * body_lines_before_picker=19 (sidebar). Line-count alone is insufficient.
+ *
+ * Deterministic signals (any path):
+ *   1. item title text visible
+ *   2. a Play control from PLAY_SELECTORS visible
+ * Fail distinct: details_never_rendered (timeout) vs later play_button_not_found.
+ */
+async function waitForDetailsReady(page, itemTitle, maxMs = 90000) {
+  const title = String(itemTitle || '').trim();
+  const deadline = Date.now() + maxMs;
+  let lastBody = '';
+  let sawTitle = false;
+  let playSel = null;
+
+  while (Date.now() < deadline) {
+    // Title — prefer exact, then substring (PMS titles often include year).
+    if (title) {
+      const exact = page.getByText(title, { exact: true }).first();
+      if (await exact.isVisible().catch(() => false)) sawTitle = true;
+      else {
+        const loose = page.getByText(title, { exact: false }).first();
+        if (await loose.isVisible().catch(() => false)) sawTitle = true;
+        else {
+          // cfg.itemTitle substring (e.g. "MiSTerPlex Test 240p" vs "... (2026)")
+          const short = cfg.itemTitle || '';
+          if (short && short !== title) {
+            const s = page.getByText(short, { exact: false }).first();
+            if (await s.isVisible().catch(() => false)) sawTitle = true;
+          }
+        }
+      }
+    }
+
+    for (const sel of PLAY_SELECTORS) {
+      try {
+        const el = page.locator(sel).first();
+        if (await el.isVisible().catch(() => false)) {
+          playSel = sel;
+          break;
+        }
+      } catch (_) {
+        /* next */
+      }
+    }
+
+    lastBody = await pageBodyText(page, 500);
+    const spinnerOnly =
+      /loading/i.test(lastBody) &&
+      !sawTitle &&
+      !playSel &&
+      lastBody.split('\n').filter(Boolean).length < 12;
+
+    if (sawTitle && playSel) {
+      log(`details_ready title=1 play_selector=${playSel}`);
+      return { ok: true, playSel, sawTitle: true };
+    }
+    // Title alone is enough to leave "never rendered"; Play may appear after cast select.
+    if (sawTitle && !spinnerOnly) {
+      // Prefer also seeing duration/metadata chrome common on preplay
+      if (/play|video|audio|subtitle|duration|\d+\s*min|\d+:\d+/i.test(lastBody) || playSel) {
+        log(`details_ready title=1 play_selector=${playSel || '(none-yet)'} body_hint=metadata`);
+        return { ok: true, playSel, sawTitle: true };
+      }
+    }
+
+    await page.waitForTimeout(400);
+  }
+
+  await shot(page, 'fail_details_never_rendered');
+  fail(
+    'details_never_rendered',
+    `Item details did not finish rendering within ${maxMs}ms.\n` +
+      `expected_title=${JSON.stringify(title)} sawTitle=${sawTitle} playSel=${playSel || '(none)'}\n` +
+      `body_sample=${JSON.stringify(lastBody.slice(0, 240))}\n` +
+      'This is a page-load race, not a missing Play selector — fix wait conditions, not product.'
+  );
+}
+
+/**
+ * Click Play using ordered stable selectors. Caller must have waited for
+ * details_ready first. Returns matched selector string, or null if none visible
+ * within per-selector auto-wait (no fixed sleep retry loops).
+ */
+async function clickPlay(page, preferSel) {
+  const ordered = preferSel
+    ? [preferSel, ...PLAY_SELECTORS.filter((s) => s !== preferSel)]
+    : PLAY_SELECTORS.slice();
+  for (const sel of ordered) {
     try {
       const el = page.locator(sel).first();
-      if (await el.isVisible({ timeout: 3000 }).catch(() => false)) {
-        log(`play_button selector=${sel}`);
-        await el.click({ timeout: 5000 });
-        return true;
+      // Playwright auto-wait: visible + stable, not a fixed sleep.
+      await el.waitFor({ state: 'visible', timeout: 8000 });
+      if (!(await el.isEnabled().catch(() => true))) {
+        log(`play_button skip disabled selector=${sel}`);
+        continue;
       }
+      await el.click({ timeout: 5000 });
+      log(`play_button selector=${sel}`);
+      return sel;
     } catch (_) {
-      /* next */
+      /* next candidate */
     }
   }
-  return false;
+  return null;
 }
 
 async function clickPauseOrPlayToggle(page) {
@@ -703,8 +832,11 @@ async function waitPlayingOnDaemon(seconds) {
   const prefName = (prefs.body.match(/id="FriendlyName"[^>]*value="([^"]*)"/) || [])[1] || '';
   log(`pms_friendlyName_pref=${prefName || '(blank)'}`);
 
-  const ratingKey = await resolveRatingKey();
+  const item = await resolveItem();
+  const ratingKey = item.ratingKey;
+  const itemTitle = item.title;
   const metaKey = `/library/metadata/${ratingKey}`;
+  log(`item_title=${itemTitle}`);
 
   const baseTl = await pollDaemonTimeline(7000);
   const daemonUp = baseTl.includes('Timeline') || baseTl.includes('MediaContainer');
@@ -843,7 +975,12 @@ async function waitPlayingOnDaemon(seconds) {
       fail('plex_home_user_picker_not_dismissed', 'Select User still showing after details navigation.');
     }
     log(`at ${page.url()}`);
+
+    // Deterministic details-ready (title + metadata/Play) — NOT line-count/sleep.
+    // Parent RED was spinner-only content with sidebar lines >= 8.
+    const detailsReady = await waitForDetailsReady(page, itemTitle, Math.max(cfg.timeoutMs, 90000));
     await shot(page, '01_details');
+    log(`details_ready_ok playSel=${detailsReady.playSel || '-'}`);
 
     // ── 3. Select Player — BEFORE snapshot, then open, then DIFF ────────────
     const ctl = await waitForSelectPlayerControl(page, 45000);
@@ -855,28 +992,17 @@ async function waitPlayingOnDaemon(seconds) {
       }
     }
 
-    // Capture body BEFORE opening picker (false-positive guard).
-    // Wait until details chrome is actually painted — an empty BEFORE set
-    // would make every line look "added" and defeat the whole-page FP guard.
-    {
-      const readyDeadline = Date.now() + 30000;
-      let n = 0;
-      while (Date.now() < readyDeadline) {
-        const s = await bodyLineSet(page);
-        n = s.size;
-        if (n >= 8) break;
-        await page.waitForTimeout(500);
-      }
-      if (n < 8) {
-        await shot(page, 'fail_details_empty_before_picker');
-        fail(
-          'details_body_empty_before_picker',
-          `Details page body had only ${n} lines before Select Player; cannot trust picker diff.`
-        );
-      }
-    }
+    // BEFORE snapshot only after details-ready so library/item titles are present
+    // and excluded from the picker diff (false-positive guard).
     const beforePicker = await bodyLineSet(page);
     log(`body_lines_before_picker=${beforePicker.size}`);
+    if (beforePicker.size < 8) {
+      await shot(page, 'fail_details_empty_before_picker');
+      fail(
+        'details_body_empty_before_picker',
+        `Details-ready passed but body had only ${beforePicker.size} lines; cannot trust picker diff.`
+      );
+    }
     // Reset discovery so we only score polls triggered by this open.
     tracker.resetDiscovery();
 
@@ -886,7 +1012,6 @@ async function waitPlayingOnDaemon(seconds) {
       await ctl.el.click({ timeout: 5000 });
       opened = ctl.sel;
     } else {
-      // retry locate
       const again = await waitForSelectPlayerControl(page, 15000);
       if (again.kind === 'ok') {
         log(`select_player_control selector=${again.sel}`);
@@ -899,35 +1024,75 @@ async function waitPlayingOnDaemon(seconds) {
       const body = await pageBodyText(page, 400);
       fail(
         'select_player_control_not_found',
-        'Could not find Select Player control (a[aria-label="Select Player"]) on the details page. ' +
+        'Could not find Select Player control (a[aria-label="Select Player"] / button[aria-label=...]) on the details page. ' +
           `body_sample=${JSON.stringify(body.slice(0, 200))}`
       );
     }
 
-    // Give the menu + companion fetch time to land.
-    await page.waitForTimeout(4000);
+    // Wait for picker UI + discovery network — prefer menu/listbox over fixed sleep.
+    {
+      const menu = page.locator('[role="menu"], [role="listbox"], [role="dialog"]').first();
+      try {
+        await menu.waitFor({ state: 'visible', timeout: 10000 });
+        log('picker_surface visible');
+      } catch (_) {
+        log('picker_surface not role-labelled — waiting for discovery traffic');
+      }
+      const discDeadline = Date.now() + 12000;
+      while (Date.now() < discDeadline && tracker.discovery.length === 0) {
+        await page.waitForTimeout(200);
+      }
+      // Small settle so added body lines include player rows after fetch.
+      if (tracker.discovery.length) await page.waitForTimeout(800);
+      else await page.waitForTimeout(2500);
+    }
     await shot(page, '02_picker_open');
 
     // Companion first (network), then picker contents (DOM diff).
     const companion = assertCompanionServer(tracker);
 
     const target = await assertMisterplexInPickerDiff(page, beforePicker);
+    const clickedText = ((await target.innerText().catch(() => '')) || '').trim().split('\n')[0].trim();
+    const exactNameRe = new RegExp(
+      `^${cfg.castName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`,
+      'i'
+    );
+    if (clickedText && !exactNameRe.test(clickedText) && clickedText !== cfg.castName) {
+      await shot(page, 'fail_picker_clicked_ghost');
+      fail(
+        'picker_clicked_non_exact_target',
+        `Refusing to click ghost/near-miss label ${JSON.stringify(clickedText)}; want exact ${JSON.stringify(cfg.castName)}`
+      );
+    }
     await target.click();
-    log('selected_cast_target');
-    await page.waitForTimeout(1000);
+    log(`selected_cast_target exact=${cfg.castName} clicked_text=${JSON.stringify(clickedText || cfg.castName)}`);
     await shot(page, '03_target_selected');
 
-    // ── 4. Play ─────────────────────────────────────────────────────────────
-    const played = await clickPlay(page);
+    // ── 4. Play — re-confirm details still ready after cast target change ───
+    const afterCast = await waitForDetailsReady(page, itemTitle, 60000);
+    const played = await clickPlay(page, afterCast.playSel || detailsReady.playSel);
     if (!played) {
-      log('play button not immediately visible — retry after short wait');
-      await page.waitForTimeout(1500);
-      if (!(await clickPlay(page))) {
-        await shot(page, 'fail_no_play_button');
-        fail('play_button_not_found', 'MiSTerPlex was selectable but Play control was not found.');
+      await shot(page, 'fail_no_play_button');
+      const body = await pageBodyText(page, 400);
+      // Distinguish "page still loading" from "loaded but no Play control".
+      const stillLoading =
+        !afterCast.sawTitle ||
+        (/loading/i.test(body) && !/play/i.test(body)) ||
+        body.split('\n').filter(Boolean).length < 12;
+      if (stillLoading) {
+        fail(
+          'details_never_rendered',
+          'After selecting MiSTerPlex, item details were not ready for Play.\n' +
+            `body_sample=${JSON.stringify(body.slice(0, 240))}`
+        );
       }
+      fail(
+        'play_button_not_found',
+        'Details rendered and MiSTerPlex was selected, but no Play control matched ' +
+          `PLAY_SELECTORS=[${PLAY_SELECTORS.join(', ')}]. body_sample=${JSON.stringify(body.slice(0, 200))}`
+      );
     }
-    log('play_clicked');
+    log(`play_clicked selector=${played}`);
     await handleResumeDialog(page);
     await shot(page, '04_play_clicked');
 

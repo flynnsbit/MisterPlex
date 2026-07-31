@@ -26,8 +26,11 @@ Failure messages distinguish:
 | Reason | Meaning |
 |--------|---------|
 | `picker_did_not_contain_MiSTerPlex` | Companion-server / FriendlyName issue — see `docs/select-player-runbook.md` |
+| `picker_clicked_non_exact_target` | Ghost label (e.g. `MiSTerPlexTest`) nearly matched — exact name required |
 | `wrong_companion_server` | Web polled a different owned PMS than `PLEX_BASE` (sort-order fragility) |
 | `companion_discovery_not_observed` | No `/clients` traffic on context listener after opening picker |
+| `details_never_rendered` | Item details still loading/spinner — race, not a missing Play selector |
+| `play_button_not_found` | Details ready; Play control selector drift |
 | `playback_did_not_start` | Picker OK; cast/play path broken |
 | `select_player_control_not_found` | UI layout/selector drift |
 
