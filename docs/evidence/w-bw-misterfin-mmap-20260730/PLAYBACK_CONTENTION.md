@@ -114,3 +114,13 @@ python3 tests/unit/test_ddr_scanout_budget.py; echo "true rc=$?"
 ```
 
 Device (optional, parent): confirm `DDR_MEM_SYNC` / `DDR_MEM_FLUSH` on live conf; confirm `ms=` on `frame_tx ok` stays ~4 @240p during freeze; sample `frame_underrun` mailbox before/after freeze — if underrun stays flat while HDMI frozen, BW starve further disfavored.
+
+---
+
+## Erratum (parent ERROR 13, 2026-07-31)
+
+Parent withdrew the “playback freeze” instrument: identical HDMI md5 on mostly-black
+RK clips is **expected**, not a freeze. Burned-in frame counter advanced on viewed
+pixels. **Memory-system multiport negative remains valid as a model**; it is **not**
+attached to a freeze RCA. DDR path now renders correct video on silicon
+(`c5382bee` + `e9f79de2`, parent-viewed).

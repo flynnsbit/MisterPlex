@@ -169,9 +169,21 @@ def main() -> int:
     if need_720_60 <= 60.0:
         fail("720p60 copy need must exceed 60 MiB/s")
 
+    bench = (ROOT / "tools" / "ddr_write_bench.cpp").read_text(encoding="utf-8", errors="replace")
+    if "--matrix" not in bench or "runMatrix" not in bench:
+        fail("ddr_write_bench must expose --matrix / runMatrix one-shot parent probe")
+    if "prereg_devmem_mibps_lo=50" not in bench or "prereg_writethrough_mibps_lo=800" not in bench:
+        fail("ddr_write_bench must keep pre-reg 50-70 / >=800 banners")
+    if "doorbell_NOT_written=1" not in bench and "doorbell_kick=0" not in bench:
+        fail("matrix safety must advertise no doorbell kick")
+    media = MEDIA.read_text(encoding="utf-8", errors="replace")
+    if "wantFpga" not in media or "initPresent" not in media:
+        fail("initPresent/wantFpga must remain (PRESENT=fpga|both path)")
+
     print(
         "test_ddr_bw_contracts: OK "
         "mmap_O_SYNC_default doorbell_hi_before_lo payload_fence "
+        "matrix_prereg initPresent_wantFpga "
         f"kill_pg yuv_bytes 240={b240} 480=449280 720={b720} "
         f"ms@60MiB/s 480={ms_480:.3f} 720={ms_720:.3f} "
         f"720p60_need_MiBps={need_720_60:.2f}"

@@ -89,6 +89,7 @@ unit-unlocked: unit-rollcall preflight $(ROOT)/build/test_cadence $(ROOT)/build/
 	python3 $(ROOT)/tests/unit/test_ddr_bw_contracts.py
 	python3 $(ROOT)/tests/unit/test_ddr_scanout_budget.py
 	python3 $(ROOT)/tests/unit/test_ddr_playback_contention.py
+	python3 $(ROOT)/tests/unit/test_ddr_dram_bank_map.py
 	@mkdir -p $(ROOT)/build
 	@python3 $(ROOT)/scripts/gen_test_annexb_real.py $(UNIT_ANNEXB)
 	$(ROOT)/build/test_status_telemetry $(UNIT_ANNEXB)

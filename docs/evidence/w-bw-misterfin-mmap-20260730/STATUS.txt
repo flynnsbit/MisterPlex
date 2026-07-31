@@ -1,36 +1,28 @@
-LANE: w-bw CRITICAL PATH
-BRANCH: w-bw @ .worktrees/w-bw (rebase base was 63059fa3)
-STATUS: SCANOUT_BW_VERDICT_PUBLISHED — waiting parent ARM mmap measure
+lane=w-bw
+branch=w-bw
+worktree=.worktrees/w-bw
+focus=ARM /dev/mem cacheability one-shot + P4 DRAM BA closeout
+freeze_rca=WITHDRAWN_parent_ERROR13 (memory negative still stands as model)
 
-## DECISIVE (host math + RTL quotes, gate rc=0)
-FPGA scanout pure-bandwidth budget is COMFORTABLY MET.
-  320x240@60: req=6.91 MB/s vs peak 720 MB/s; Y_fill_lat12=0.578us / line 63.8us (0.91%)
-  624x480@60: req=27.0 MB/s; Y_fill=1.00us (1.57% of line); headroom 27x
-rd_miss_now black prefix is NOT explained by bulk DDR bandwidth exhaustion.
-ARM /dev/mem write cache ≠ FPGA DDRAM read path (clk_ddr 90 MHz bridge).
+pre_reg_ON_RECORD:
+  product_devmem_write_MiBps HIT if 50..70
+  write_through_class HIT if >=800
+  MiSTerFin_claim NOT ours
 
-Redirect w-fit: stop primary-root-causing "DDR too slow for scanout supply".
-OPEN: prefetch/CDC/hit-path (max_left_miss_run=64 even rd_delay=2 in shear).
+deliverable_parent_one_shot:
+  make arm-ddr-bench && scp build/arm/ddr_write_bench ... &&
+  ssh ... 'ddr_write_bench --matrix --loops 1000 --bank 0; echo true_rc=$?'
+  see PARENT_RUN.md
 
-## 194-220 ms vs 4.1/8.5 ms
-194-220 ms = SPI sendFileTx RGB565 lab (~0.79 MB/s) — NOT product.
-Parent p480 ddr_push_ms mean 4.06 (240p) / 8.52 (480p) = product DDR. SPI number INVALID for push.
+P4_DRAM_BA:
+  software banks XOR bit19@480p / bit18@240p only
+  physical DRAM BA map UNKNOWN in-tree (DRAM_BANK_MAP.md)
+  settle via HPS DDRC address_order dump or parent A/B stress
 
-## ARM mmap (still need parent device)
-open /dev/mem O_SYNC default; mmap MAP_SHARED @ 0x30000000
-PTE class UNKNOWN until smaps+MiBps.
-PRE-REG write/read MiBps 50-70 HIT uncached-class; >=800 WT-class.
+PRESENT_note:
+  initPresent wantFpga=true for non-none; PRESENT=fpga|both requires fpgaOk
+  CACHEABILITY_AND_PRESENT.md
 
-## Gates (true rc direct)
-  python3 tests/unit/test_ddr_scanout_budget.py → true rc=0
-  python3 tests/unit/test_ddr_bw_contracts.py → true rc=0
-  python3 tests/unit/test_unit_rollcall.py → true rc=0
-  make arm-ddr-bench → true rc=0
-
-## Parent run
-  cd .worktrees/w-bw && make arm-ddr-bench
-  scp build/arm/ddr_write_bench → device
-  $B --sync ... 624x480; --no-sync ...; --read --sync 320x240; --fb-copy ...
-  docs: docs/evidence/w-bw-misterfin-mmap-20260730/SCANOUT_BUDGET.md
-
-NO device ssh / NO Quartus from this lane.
+gates_host:
+  test_ddr_bw_contracts / scanout_budget / playback_contention / dram_bank_map
+  make arm-ddr-bench
