@@ -1,7 +1,7 @@
 # w-thruput REPORT — integ/thruput-on-warm (post hybrid port)
 
 ## Branch
-- Branch: integ/thruput-on-warm @ 9d9dadbd
+- Branch: integ/thruput-on-warm @ de13391b
 - Base: w-arm-p720-scope + thruput/area merge + hybrid ownership wiring
 
 ## Clock / budget (verified earlier; unchanged)
