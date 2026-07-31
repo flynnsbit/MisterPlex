@@ -76,6 +76,7 @@ EXPECTED_COMMANDS = [
     "bash $(ROOT)/tests/unit/test_last_frame_latch_red.sh",
     "$(ROOT)/build/test_playback_overlay",
     "bash $(ROOT)/tests/unit/test_overlay_edge_measure.sh",
+    "bash $(ROOT)/tests/unit/test_overlay_text_readback.sh",
     "$(ROOT)/build/test_input_mailbox",
     "$(ROOT)/build/test_pixel_format",
     "$(ROOT)/build/test_main_guard",
