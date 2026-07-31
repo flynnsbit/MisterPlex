@@ -112,12 +112,36 @@ PRODUCT_AUDIT_ROOTS = (
 )
 DOC_AUDIT_ROOTS = ("docs",)
 
+# Binary evidence / media under docs must not be UTF-8-scanned (e.g. *.i420).
+BINARY_AUDIT_SUFFIXES = {
+    ".i420",
+    ".yuv",
+    ".y4m",
+    ".rgb",
+    ".rgb565",
+    ".png",
+    ".jpg",
+    ".jpeg",
+    ".gif",
+    ".bmp",
+    ".rbf",
+    ".sof",
+    ".pof",
+    ".jic",
+    ".bin",
+    ".a",
+    ".o",
+    ".so",
+}
+
 
 def read(path: Path) -> str:
     try:
-        return path.read_text()
+        return path.read_text(encoding="utf-8")
     except OSError as e:
         fail(f"could not read {path}: {e}")
+    except UnicodeDecodeError as e:
+        fail(f"non-UTF-8 text while auditing {path}: {e}")
 
 
 def tracked_files_under(*roots: str) -> list[Path]:
@@ -131,7 +155,15 @@ def tracked_files_under(*roots: str) -> list[Path]:
         )
     except (OSError, subprocess.CalledProcessError) as e:
         fail(f"could not enumerate tracked files with git ls-files: {e}")
-    return [ROOT / line for line in out.splitlines() if line]
+    paths: list[Path] = []
+    for line in out.splitlines():
+        if not line:
+            continue
+        p = ROOT / line
+        if p.suffix.lower() in BINARY_AUDIT_SUFFIXES:
+            continue
+        paths.append(p)
+    return paths
 
 
 def tracked_product_and_doc_files() -> list[Path]:
