@@ -2180,15 +2180,15 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
     vfReq.crop_top = ddrGeometry.crop_top;
     if (fpsNum_ > 0 && fpsDen_ > 0)
         vfReq.fps_filter = "fps=" + std::to_string(fpsNum_) + "/" + std::to_string(fpsDen_);
-    // Defect A (silicon): SkipIdentity at DECODE=624x480 left U/V ~0 (full green)
-    // while the same core+daemon at 320x240 (always scale_pad_crop) is colour-OK.
-    // YUV DDR present never identity-skips — force Always so swscale materialises
-    // I420 chroma the same way the proven 240p path does. Conf Off stays Off.
+    // Defect A: defensive studio-black init + dead-chroma repair always on.
+    // Optional lab force-scale (DDR_YUV_FORCE_SCALE=1, default OFF): SkipIdentity
+    // → Always on YUV DDR. At 240p this is a no-op (320≠624 already scales).
+    // At 480p it ADDS a full-frame resample — may worsen defect B throughput.
     const FfmpegScaleMode confScaleMode = parseFfmpegScaleMode(ffmpegScaleMode_);
     const bool yuvDdrPresent =
         wantFpgaDdrCanvas && ddrFrameFormat_ == DdrFrameFormat::Yuv420p;
-    vfReq.scale_mode =
-        yuvDdrPresent ? ffmpegScaleModeForDdrYuvPresent(confScaleMode) : confScaleMode;
+    const bool forceScale = yuvDdrPresent && ddrYuvForceScale_;
+    vfReq.scale_mode = ffmpegScaleModeForDdrYuvPresent(confScaleMode, forceScale);
     vfReq.sws_flags = ffmpegSwsFlags_;
     vfReq.source_w = ffmpegScaleSourceW_;
     vfReq.source_h = ffmpegScaleSourceH_;
@@ -2206,9 +2206,7 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
         " identity_skip=" + (vfPlan.identity_skip ? "1" : "0") +
         " mode=" + ffmpegScaleModeName(vfReq.scale_mode) +
         " conf_mode=" + ffmpegScaleModeName(confScaleMode) +
-        " yuv_ddr_force_scale=" + (yuvDdrPresent && confScaleMode == FfmpegScaleMode::SkipIdentity
-                                       ? "1"
-                                       : "0") +
+        " yuv_ddr_force_scale=" + (forceScale ? "1" : "0") +
         " sws_flags=" + (ffmpegSwsFlags_.empty() ? "(default)" : ffmpegSwsFlags_) +
         " assume_match=" + (ffmpegScaleAssumeMatch_ ? "1" : "0") +
         " display=" + std::to_string(rawDisplayW) + "x" + std::to_string(rawDisplayH) +

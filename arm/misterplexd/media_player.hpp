@@ -83,6 +83,9 @@ public:
     // When scale mode is skip_identity and source dims are unknown, assume PMS already
     // delivered coded WxH (lab only). Conf FFMPEG_SCALE_ASSUME_MATCH=1.
     void setFfmpegScaleAssumeMatch(bool on) { ffmpegScaleAssumeMatch_ = on; }
+    // Lab: force Always over SkipIdentity on YUV DDR present (defect A A/B).
+    // DEFAULT OFF — conf DDR_YUV_FORCE_SCALE=1. No-op at 240p (already scales).
+    void setDdrYuvForceScale(bool on) { ddrYuvForceScale_ = on; }
     // Optional known decoded source geometry for skip_identity (0 = unknown).
     void setFfmpegScaleSourceSize(int w, int h) {
         ffmpegScaleSourceW_ = w > 0 ? w : 0;
@@ -247,6 +250,7 @@ private:
     // Empty = no :flags= (ffmpeg default algo) when residual scale runs.
     std::string ffmpegSwsFlags_;
     bool ffmpegScaleAssumeMatch_ = false;
+    bool ddrYuvForceScale_ = false; // conf DDR_YUV_FORCE_SCALE; default OFF
     int ffmpegScaleSourceW_ = 0;
     int ffmpegScaleSourceH_ = 0;
     // Conf AUDIO_DELAY_MS — default 0. Applied as FFmpeg adelay on product path.

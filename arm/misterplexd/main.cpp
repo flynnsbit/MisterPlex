@@ -139,11 +139,12 @@ int main(int argc, char** argv) {
     // WxH is known and equals the coded bank (or ASSUME_MATCH). Unknown delivery
     // still scales. Shipping path with matching PMS videoResolution is a no-op
     // omit — do not ship a cosmetic sws default for a filter that is skipped.
-    // Defect A: YUV DDR present forces SkipIdentity→Always (see
-    // ffmpegScaleModeForDdrYuvPresent) so native 480p never identity-skips.
+    // Defect A lab A/B: DDR_YUV_FORCE_SCALE=1 forces SkipIdentity→Always on the
+    // YUV DDR path (default OFF — force-scale adds resample cost at native 480p).
     std::string ffmpegScaleMode = "skip_identity";
     std::string ffmpegSwsFlags; // empty = ffmpeg default when residual scale runs
     bool ffmpegScaleAssumeMatch = false;
+    bool ddrYuvForceScale = false; // conf DDR_YUV_FORCE_SCALE; default OFF
     bool autoNext = true;
     std::string subtitleMode = "off"; // off | burn | ffmpeg
     int subtitleStreamId = -1;
@@ -331,6 +332,10 @@ int main(int argc, char** argv) {
         v = loadConf(confPath, "FFMPEG_SCALE_ASSUME_MATCH");
         if (!v.empty())
             ffmpegScaleAssumeMatch = confTruthy(v);
+        // Lab A/B for defect A: force Always scale on YUV DDR (default OFF).
+        v = loadConf(confPath, "DDR_YUV_FORCE_SCALE");
+        if (!v.empty())
+            ddrYuvForceScale = confTruthy(v);
         v = loadConf(confPath, "AUTO_NEXT");
         if (!v.empty())
             autoNext = confTruthy(v);
@@ -477,6 +482,7 @@ int main(int argc, char** argv) {
     player.setFfmpegScaleMode(ffmpegScaleMode);
     player.setFfmpegSwsFlags(ffmpegSwsFlags);
     player.setFfmpegScaleAssumeMatch(ffmpegScaleAssumeMatch);
+    player.setDdrYuvForceScale(ddrYuvForceScale);
     player.setSkipDeltasMs(skipForwardMs, skipBackMs);
     std::fprintf(stderr, "misterplexd: SKIP_FORWARD_MS=%lld SKIP_BACK_MS=%lld\n",
                  static_cast<long long>(skipForwardMs), static_cast<long long>(skipBackMs));
@@ -578,10 +584,11 @@ int main(int argc, char** argv) {
     std::fprintf(stderr, "misterplexd: PRESENT_PROFILE=%s\n", presentProfile ? "1" : "0");
     std::fprintf(stderr,
                  "misterplexd: FFMPEG_SCALE=%s FFMPEG_SWS_FLAGS=%s "
-                 "FFMPEG_SCALE_ASSUME_MATCH=%s\n",
+                 "FFMPEG_SCALE_ASSUME_MATCH=%s DDR_YUV_FORCE_SCALE=%s\n",
                  ffmpegScaleMode.c_str(),
                  ffmpegSwsFlags.empty() ? "(ffmpeg_default)" : ffmpegSwsFlags.c_str(),
-                 ffmpegScaleAssumeMatch ? "1" : "0");
+                 ffmpegScaleAssumeMatch ? "1" : "0",
+                 ddrYuvForceScale ? "1" : "0");
     if (weak.burnSubtitles)
         std::fprintf(stderr, "misterplexd: SUBTITLES=burn (PMS universal)\n");
     else if (subtitleMode == "ffmpeg")
@@ -804,14 +811,13 @@ int main(int argc, char** argv) {
         // 624x480 for PRESENT=fpga|both), NOT to contentRes/DECODE (320x240).
         // Comparing to contentRes here falsely predicted arm_rescale=0 for the
         // shipping 320 path and hid the required scale+pad into the canvas.
-        // Defect A: YUV DDR present forces SkipIdentity → Always (see
-        // ffmpegScaleModeForDdrYuvPresent) so 480p never identity-skips.
+        // Defect A force-scale is conf-gated OFF by default (DDR_YUV_FORCE_SCALE).
         const auto confScaleMode = misterplex::parseFfmpegScaleMode(ffmpegScaleMode);
         const bool wantFpgaDdrCanvas =
             (presentMode == "fpga" || presentMode == "both");
+        const bool forceScale = wantFpgaDdrCanvas && ddrYuvForceScale;
         const auto scaleMode =
-            wantFpgaDdrCanvas ? misterplex::ffmpegScaleModeForDdrYuvPresent(confScaleMode)
-                              : confScaleMode;
+            misterplex::ffmpegScaleModeForDdrYuvPresent(confScaleMode, forceScale);
         const auto codedGeom =
             wantFpgaDdrCanvas
                 ? misterplex::ddrFrameGeometryForFpgaPresent(contentRes.width,

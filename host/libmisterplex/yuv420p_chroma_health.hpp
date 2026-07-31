@@ -108,11 +108,14 @@ inline bool repairDeadYuv420pChroma(uint8_t* yuv, int w, int h) {
     return true;
 }
 
-// Product YUV DDR present path must not SkipIdentity: that is the 480p green-cast
-// differential vs the colour-correct 240p scale_pad_crop path (parent silicon).
-// Conf Off stays Off (lab). Always stays Always. SkipIdentity → Always.
-inline FfmpegScaleMode ffmpegScaleModeForDdrYuvPresent(FfmpegScaleMode confMode) {
-    if (confMode == FfmpegScaleMode::SkipIdentity)
+// Optional lab override: force Always over SkipIdentity on the YUV DDR path.
+// DEFAULT OFF — forcing scale at native 480p adds a full-frame resample while
+// defect B is already a throughput collapse (parent: pfps 10.5 vs vfps 17.9).
+// Conf: DDR_YUV_FORCE_SCALE=1. Conf Off stays Off. Always stays Always.
+// At 240p this is a no-op either way: source 320≠coded 624 already scale_pad_crops.
+inline FfmpegScaleMode ffmpegScaleModeForDdrYuvPresent(FfmpegScaleMode confMode,
+                                                       bool forceScale = false) {
+    if (forceScale && confMode == FfmpegScaleMode::SkipIdentity)
         return FfmpegScaleMode::Always;
     return confMode;
 }

@@ -109,19 +109,25 @@ int main() {
         expect(repairDeadYuv420pChroma(res.data(), w, h), "residue repaired");
     }
 
-    // --- E) YUV-DDR scale policy: SkipIdentity must become Always ---
+    // --- E) YUV-DDR scale policy: default OFF; force=1 maps SkipIdentity→Always ---
     {
         expect(ffmpegScaleModeForDdrYuvPresent(FfmpegScaleMode::SkipIdentity) ==
+                   FfmpegScaleMode::SkipIdentity,
+               "default force=0 leaves SkipIdentity");
+        expect(ffmpegScaleModeForDdrYuvPresent(FfmpegScaleMode::SkipIdentity, false) ==
+                   FfmpegScaleMode::SkipIdentity,
+               "explicit force=0 leaves SkipIdentity");
+        expect(ffmpegScaleModeForDdrYuvPresent(FfmpegScaleMode::SkipIdentity, true) ==
                    FfmpegScaleMode::Always,
-               "YUV DDR forces Always over SkipIdentity");
-        expect(ffmpegScaleModeForDdrYuvPresent(FfmpegScaleMode::Always) ==
+               "force=1 maps SkipIdentity→Always");
+        expect(ffmpegScaleModeForDdrYuvPresent(FfmpegScaleMode::Always, true) ==
                    FfmpegScaleMode::Always,
                "Always stays Always");
-        expect(ffmpegScaleModeForDdrYuvPresent(FfmpegScaleMode::Off) == FfmpegScaleMode::Off,
+        expect(ffmpegScaleModeForDdrYuvPresent(FfmpegScaleMode::Off, true) == FfmpegScaleMode::Off,
                "Off stays Off (lab)");
     }
 
-    // --- F) Policy applied to 624x480 crop geometry yields scale_pad_crop ---
+    // --- F) force=1 at 624x480 yields scale_pad_crop; force=0 identity-skips ---
     {
         FfmpegVfRequest r;
         r.coded_w = w;
@@ -133,21 +139,47 @@ int main() {
         r.fps_filter = "fps=24/1";
         r.source_w = w;
         r.source_h = h;
-        // Conf default product SkipIdentity would identity-skip (unsafe on silicon).
+        // Default product SkipIdentity identity-skips at native 480p.
         r.scale_mode = FfmpegScaleMode::SkipIdentity;
-        const auto unsafe = buildFfmpegVideoFilter(r);
-        expect(unsafe.identity_skip, "baseline conf SkipIdentity still skips (unsafe alone)");
-        expect_eq_str(unsafe.reason, "identity_skip_crop_pad_clear", "unsafe reason");
+        const auto def = buildFfmpegVideoFilter(r);
+        expect(def.identity_skip, "default SkipIdentity skips at 624");
+        expect_eq_str(def.reason, "identity_skip_crop_pad_clear", "default reason");
 
-        // YUV DDR wrapper forces Always → scale_pad_crop (matches 240p colour path).
-        r.scale_mode = ffmpegScaleModeForDdrYuvPresent(FfmpegScaleMode::SkipIdentity);
-        const auto safe = buildFfmpegVideoFilter(r);
-        expect(safe.scale_applied && !safe.identity_skip, "DDR policy scales at 624");
-        expect_eq_str(safe.reason, "scale_pad_crop", "DDR policy reason");
-        expect(safe.vf.find("scale=618:480") != std::string::npos, "scale to display");
-        expect(safe.vf.find("pad=624:480") != std::string::npos, "pad to coded");
-        std::printf("GREEN_POLICY arm_rescale=1 reason=%s vf=%s\n", safe.reason.c_str(),
-                    safe.vf.c_str());
+        r.scale_mode = ffmpegScaleModeForDdrYuvPresent(FfmpegScaleMode::SkipIdentity, false);
+        const auto off = buildFfmpegVideoFilter(r);
+        expect(off.identity_skip, "force=0 still identity-skips");
+
+        r.scale_mode = ffmpegScaleModeForDdrYuvPresent(FfmpegScaleMode::SkipIdentity, true);
+        const auto on = buildFfmpegVideoFilter(r);
+        expect(on.scale_applied && !on.identity_skip, "force=1 scales at 624");
+        expect_eq_str(on.reason, "scale_pad_crop", "force=1 reason");
+        expect(on.vf.find("scale=618:480") != std::string::npos, "scale to display");
+        expect(on.vf.find("pad=624:480") != std::string::npos, "pad to coded");
+        std::printf("GREEN_POLICY force0_skip=1 force1_reason=%s vf=%s\n", on.reason.c_str(),
+                    on.vf.c_str());
+    }
+
+    // --- F2) 240p source vs 624 coded: force flag is a no-op (already scales) ---
+    {
+        FfmpegVfRequest r;
+        r.coded_w = w;
+        r.coded_h = h;
+        r.display_w = kPlex480pDisplayWidth.get();
+        r.display_h = h;
+        r.crop_left = 0;
+        r.crop_top = 0;
+        r.fps_filter = "fps=24/1";
+        r.source_w = 320;
+        r.source_h = 240;
+        r.scale_mode = ffmpegScaleModeForDdrYuvPresent(FfmpegScaleMode::SkipIdentity, false);
+        const auto off = buildFfmpegVideoFilter(r);
+        r.scale_mode = ffmpegScaleModeForDdrYuvPresent(FfmpegScaleMode::SkipIdentity, true);
+        const auto on = buildFfmpegVideoFilter(r);
+        expect(off.scale_applied && on.scale_applied, "240p scales with force on or off");
+        expect(!off.identity_skip && !on.identity_skip, "240p never identity-skips");
+        expect_eq_str(off.reason, on.reason, "240p force flag is no-op on reason");
+        expect_eq_str(off.vf, on.vf, "240p force flag is no-op on vf");
+        std::printf("GREEN_240P_NOOP reason=%s\n", off.reason.c_str());
     }
 
     // --- G) clearYuv crop pad must not create dead chroma on a healthy frame ---
