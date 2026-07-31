@@ -59,6 +59,11 @@ public:
     void stop();
     bool running() const { return running_.load(); }
 
+    // Bind one GDM UDP listen socket (SO_REUSEADDR + SO_BROADCAST + CLOEXEC).
+    // Used by gdmLoop for every entry in kGdmListenPorts; unit tests call it
+    // to prove 32412 and 32414 both bind. Returns fd or -1 (err filled).
+    static int openGdmListenFd(uint16_t port, std::string* err = nullptr);
+
     // Update playback clock (ms) + state for timeline polls.
     void setState(const std::string& state, int64_t timeMs, int64_t durationMs);
 

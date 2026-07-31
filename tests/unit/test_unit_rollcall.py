@@ -84,6 +84,7 @@ EXPECTED_COMMANDS = [
     "$(ROOT)/build/test_companion_eof",
     "$(ROOT)/build/test_companion_plant_seek",
     "$(ROOT)/build/test_gdm_resources_parity",
+    "bash $(ROOT)/tests/unit/test_gdm_storm_ports_static.sh",
     "$(ROOT)/tests/unit/test_pms_baseline_gate.sh",
     "$(ROOT)/tests/unit/test_pms_baseline_live_gate.sh",
     "$(ROOT)/build/test_h264_bitstream_source",

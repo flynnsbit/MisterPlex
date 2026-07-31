@@ -171,18 +171,27 @@ PlayRequest parsePlayRequest(const std::string& req) {
     return pr;
 }
 
+} // namespace
+
 // Bind one GDM UDP listen socket (SO_REUSEADDR + SO_BROADCAST + CLOEXEC).
 // Returns fd on success, -1 on failure (err filled when non-null).
-int openGdmListenFd(uint16_t port, std::string* err) {
+int Companion::openGdmListenFd(uint16_t port, std::string* err) {
     int fd = ::socket(AF_INET, SOCK_DGRAM, 0);
     if (fd < 0) {
         if (err)
             *err = "socket failed errno=" + std::to_string(errno);
         return -1;
     }
-    setReuse(fd);
-    setCloexec(fd);
     int on = 1;
+    if (setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &on, sizeof(on)) != 0) {
+        if (err)
+            *err = "SO_REUSEADDR failed errno=" + std::to_string(errno);
+        close(fd);
+        return -1;
+    }
+    int fl = fcntl(fd, F_GETFD);
+    if (fl >= 0)
+        fcntl(fd, F_SETFD, fl | FD_CLOEXEC);
     if (setsockopt(fd, SOL_SOCKET, SO_BROADCAST, &on, sizeof(on)) != 0) {
         if (err)
             *err = "SO_BROADCAST failed errno=" + std::to_string(errno);
@@ -201,8 +210,6 @@ int openGdmListenFd(uint16_t port, std::string* err) {
     }
     return fd;
 }
-
-} // namespace
 
 void Companion::log(const std::string& s) const {
     // Central sink redaction: every companion log line is scrubbed even if a

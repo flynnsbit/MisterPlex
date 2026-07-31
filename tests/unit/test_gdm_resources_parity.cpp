@@ -1,9 +1,20 @@
-// GDM UDP payload ↔ HTTP /resources Player field parity + probe storm filter.
-// No network. No lab IPs. Links Companion so production builders stay covered.
+// GDM UDP payload ↔ HTTP /resources Player field parity + probe storm filter
+// + real bind of kGdmListenPorts (32412 and 32414).
+// No lab IPs. Links Companion so production builders stay covered.
+//
+// Scope note: GDM listen/reply is correctness/robustness (PMS probes both
+// ports). It is NOT the cast-picker population path (companionServer
+// friendlyName). Do not over-claim in logs if this test fails.
 
+#include <arpa/inet.h>
 #include <cstdlib>
+#include <cstring>
 #include <iostream>
+#include <netinet/in.h>
 #include <string>
+#include <sys/socket.h>
+#include <unistd.h>
+#include <vector>
 
 #define private public
 #include "companion.hpp"
@@ -20,6 +31,19 @@ void require(bool ok, const std::string& msg) {
     }
 }
 
+// Pre-fix shape: bare substring — accepts own GDM replies (storm).
+bool bareStrstrPlexProbe(const char* buf) {
+    return buf && std::strstr(buf, "plex") != nullptr;
+}
+
+uint16_t boundPort(int fd) {
+    sockaddr_in a{};
+    socklen_t len = sizeof(a);
+    if (getsockname(fd, reinterpret_cast<sockaddr*>(&a), &len) != 0)
+        return 0;
+    return ntohs(a.sin_port);
+}
+
 } // namespace
 
 int main() {
@@ -28,6 +52,14 @@ int main() {
     // --- probe filter (merge-storm / self-reply CPU) ---
     require(gdmIsDiscoveryProbe("M-SEARCH * HTTP/1.1\r\n"), "M-SEARCH is a probe");
     require(gdmIsDiscoveryProbe("plex\r\n"), "bare plex probe still accepted");
+    const char* selfReply = "HTTP/1.0 200 OK\r\n"
+                            "Content-Type: plex/media-player\r\n"
+                            "Protocol: plex\r\n"
+                            "Name: MiSTerPlex\r\n\r\n";
+    require(bareStrstrPlexProbe(selfReply),
+            "red fixture: bare strstr MUST match self-reply (else red-check is dead)");
+    require(!gdmIsDiscoveryProbe(selfReply),
+            "gate must reject self-reply that bare strstr accepts (storm regression)");
     require(!gdmIsDiscoveryProbe("HTTP/1.0 200 OK\r\nProtocol: plex\r\n\r\n"),
             "HTTP reply must not be treated as probe");
     require(!gdmIsDiscoveryProbe("HTTP/1.0 200 OK\r\nContent-Type: plex/media-player\r\n\r\n"),
@@ -36,8 +68,28 @@ int main() {
     require(!gdmIsDiscoveryProbe(nullptr), "null is not a probe");
 
     // --- listen port set (measured PMS M-SEARCH targets only) ---
-    require(sizeof(kGdmListenPorts) / sizeof(kGdmListenPorts[0]) == 2, "two GDM listen ports");
+    constexpr size_t nPorts = sizeof(kGdmListenPorts) / sizeof(kGdmListenPorts[0]);
+    require(nPorts == 2, "two GDM listen ports");
     require(kGdmListenPorts[0] == 32412 && kGdmListenPorts[1] == 32414, "32412+32414 only");
+
+    // --- real bind: both ports must open (SO_REUSEADDR); prove via getsockname ---
+    {
+        std::vector<int> fds;
+        fds.reserve(nPorts);
+        for (size_t i = 0; i < nPorts; ++i) {
+            const uint16_t want = kGdmListenPorts[i];
+            std::string err;
+            const int fd = Companion::openGdmListenFd(want, &err);
+            require(fd >= 0, "bind UDP " + std::to_string(want) + " failed: " + err);
+            const uint16_t got = boundPort(fd);
+            require(got == want, "getsockname port " + std::to_string(got) + " != " +
+                                     std::to_string(want));
+            fds.push_back(fd);
+        }
+        require(fds.size() == 2, "must hold both 32412 and 32414 simultaneously");
+        for (int fd : fds)
+            close(fd);
+    }
 
     // --- pure builders: defaults ---
     {
