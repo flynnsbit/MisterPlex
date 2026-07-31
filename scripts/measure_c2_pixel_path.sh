@@ -63,8 +63,49 @@ redact() {
 }
 
 LOG="/media/fat/misterplex/misterplexd.log"
-START_COUNT="$(ssh_mister "grep -c 'media: frames=' '$LOG' 2>/dev/null || echo 0" | tail -n1)"
-START_END_COUNT="$(ssh_mister "grep -c 'media: session end' '$LOG' 2>/dev/null || echo 0" | tail -n1)"
+# Three-way count: missing log / grep error = NO_DATA, not measured 0.
+# Never `grep -c ... || echo 0` (absence-as-zero class, parent 2026-07-31).
+_c2_remote_count() {
+  local pat="$1"
+  ssh_mister "bash -s" <<REMOTE
+set +e
+if [ ! -r '$LOG' ]; then
+  echo MEASURE_STATUS=NO_DATA
+  echo MEASURE_REASON=log_absent
+  exit 4
+fi
+n=\$(grep -c '$pat' '$LOG' 2>/dev/null)
+rc=\$?
+if [ "\$rc" -ge 2 ] || [ -z "\$n" ]; then
+  echo MEASURE_STATUS=NO_DATA
+  echo MEASURE_REASON=grep_error
+  exit 4
+fi
+echo MEASURE_STATUS=MEASURED
+echo MEASURE_COUNT=\$n
+exit 0
+REMOTE
+}
+set +e
+_c2_frames_blob=$(_c2_remote_count 'media: frames=')
+_c2_frames_rc=$?
+_c2_end_blob=$(_c2_remote_count 'media: session end')
+_c2_end_rc=$?
+set -e
+if [ "$_c2_frames_rc" -ne 0 ]; then
+  echo "NO-DATA START_COUNT (log absent or unreadable) — not measured 0"
+  printf '%s\n' "$_c2_frames_blob" | sed 's/^/  /'
+  START_COUNT=""
+else
+  START_COUNT=$(printf '%s\n' "$_c2_frames_blob" | sed -n 's/^MEASURE_COUNT=//p' | head -1)
+fi
+if [ "$_c2_end_rc" -ne 0 ]; then
+  echo "NO-DATA START_END_COUNT (log absent or unreadable) — not measured 0"
+  START_END_COUNT=""
+else
+  START_END_COUNT=$(printf '%s\n' "$_c2_end_blob" | sed -n 's/^MEASURE_COUNT=//p' | head -1)
+fi
+echo "START_COUNT=${START_COUNT:-NO_DATA} START_END_COUNT=${START_END_COUNT:-NO_DATA}"
 
 ENC_KEY="$(urlencode "$KEY")"
 CAST_URL="http://${PLAYER}/player/playback/playMedia?key=${ENC_KEY}&offset=${OFFSET_MS}&commandID=${COMMAND_ID}"
@@ -88,7 +129,15 @@ echo "=== collecting frame health for ${DURATION_SEC}s ==="
 sleep "$DURATION_SEC"
 
 echo "=== new media frame lines ==="
-ssh_mister "grep 'media: frames=' '$LOG' | tail -n +$((START_COUNT + 1))" | redact || true
+if [ -n "${START_COUNT:-}" ]; then
+  ssh_mister "grep 'media: frames=' '$LOG' | tail -n +$((START_COUNT + 1))" | redact || true
+else
+  echo "NO-DATA new media frames (START_COUNT unknown — log was not measurable at t0)"
+fi
 
 echo "=== new session end lines ==="
-ssh_mister "grep 'media: session end' '$LOG' | tail -n +$((START_END_COUNT + 1))" | redact || true
+if [ -n "${START_END_COUNT:-}" ]; then
+  ssh_mister "grep 'media: session end' '$LOG' | tail -n +$((START_END_COUNT + 1))" | redact || true
+else
+  echo "NO-DATA new session ends (START_END_COUNT unknown)"
+fi

@@ -80,7 +80,18 @@ ORIG_CONF="$CONF"
   [ -f "$ORIG_CONF" ] && cat "$ORIG_CONF"
 } >"$RUN_CONF"
 
-for p in $(pidof misterplexd 2>/dev/null) $(pidof ffmpeg 2>/dev/null); do
+mpids=""; fpids=""
+for d in /proc/[0-9]*; do
+  [ -e "$d/exe" ] || continue
+  x=$(readlink -f "$d/exe" 2>/dev/null) || continue
+  x=${x% (deleted)}
+  b=$(basename "$x" 2>/dev/null) || continue
+  case "$b" in
+    misterplexd) mpids="$mpids ${d#/proc/}" ;;
+    ffmpeg) fpids="$fpids ${d#/proc/}" ;;
+  esac
+done
+for p in $mpids $fpids; do
   kill "$p" 2>/dev/null || true
 done
 sleep 1
@@ -109,7 +120,16 @@ if [ -r "$RUN_PID" ]; then
   p=$(cat "$RUN_PID")
   [ -n "$p" ] && kill "$p" 2>/dev/null
 fi
-for p in $(pidof ffmpeg 2>/dev/null); do
+fpids=""
+for d in /proc/[0-9]*; do
+  [ -e "$d/exe" ] || continue
+  x=$(readlink -f "$d/exe" 2>/dev/null) || continue
+  x=${x% (deleted)}
+  b=$(basename "$x" 2>/dev/null) || continue
+  [ "$b" = "ffmpeg" ] || continue
+  fpids="$fpids ${d#/proc/}"
+done
+for p in $fpids; do
   kill "$p" 2>/dev/null || true
 done
 sleep 0.5
@@ -141,8 +161,17 @@ sum_proc() {
   done
   echo "$total"
 }
-mpids=$(pidof misterplexd 2>/dev/null || true)
-fpids=$(pidof ffmpeg 2>/dev/null || true)
+mpids=""; fpids=""
+for d in /proc/[0-9]*; do
+  [ -e "$d/exe" ] || continue
+  x=$(readlink -f "$d/exe" 2>/dev/null) || continue
+  x=${x% (deleted)}
+  b=$(basename "$x" 2>/dev/null) || continue
+  case "$b" in
+    misterplexd) mpids="$mpids ${d#/proc/}" ;;
+    ffmpeg) fpids="$fpids ${d#/proc/}" ;;
+  esac
+done
 read u0 n0 s0 i0 w0 irq0 sirq0 steal0 <<EOF
 $(read_cpu)
 EOF

@@ -260,20 +260,90 @@ else
   FIT="$REMOTE_PROJECT/output_files/Plex.fit.rpt"
 fi
 
+# STA negative-slack summary: NEVER collapse absent/unreadable STA into count=0.
+# Historic class: `grep -c ... || true` reported clean timing with no report
+# (parent 2026-07-31 — exclusive Quartus fits lost to false confidence).
+# shellcheck source=lib/measure_status.inc.sh
+source "$ROOT/scripts/lib/measure_status.inc.sh"
+
 if [[ "$COPY_BACK" == "1" ]]; then
   MD5="$(md5sum "$RBF" | awk '{print $1}')"
-  NEG_SLACK_COUNT="$(grep -cE ';[[:space:]]*-[0-9]+\.[0-9]+[[:space:]]*;' "$STA" || true)"
-  LOGIC_UTILIZATION="$(grep -m1 -E '^[[:space:]]*;?[[:space:]]*Logic utilization|Logic utilization' "$FIT" || true)"
+  set +e
+  _sta_out=$(measure_sta_neg_slack "$STA")
+  _sta_rc=$?
+  set -e
+  printf '%s\n' "$_sta_out"
+  if [ "$_sta_rc" -ne 0 ]; then
+    echo "FAIL STA_ABSENT_OR_UNREADABLE path=$STA — cannot claim timing closure (absence≠zero slack)" >&2
+    echo "true rc=4"
+    exit 4
+  fi
+  NEG_SLACK_COUNT=$(printf '%s\n' "$_sta_out" | sed -n 's/^MEASURE_COUNT=//p' | head -1)
+  if [ -z "$NEG_SLACK_COUNT" ]; then
+    echo "FAIL STA_COUNT_EMPTY path=$STA" >&2
+    echo "true rc=4"
+    exit 4
+  fi
+  if [ "$NEG_SLACK_COUNT" -gt 0 ]; then
+    echo "FAIL STA_NEG_SLACK count=$NEG_SLACK_COUNT path=$STA" >&2
+    echo "true rc=1"
+    exit 1
+  fi
+  LOGIC_UTILIZATION="$(grep -m1 -E '^[[:space:]]*;?[[:space:]]*Logic utilization|Logic utilization' "$FIT" 2>/dev/null || true)"
 else
-  read -r MD5 NEG_SLACK_COUNT LOGIC_UTILIZATION < <(ssh "$HOST" bash -s -- "$RBF" "$STA" "$FIT" <<'REMOTE_SUMMARY'
+  # Remote summary must also refuse absent STA (copy-back path is not the only consumer).
+  set +e
+  _remote_sum=$(ssh "$HOST" bash -s -- "$RBF" "$STA" "$FIT" <<'REMOTE_SUMMARY'
 set -euo pipefail
 rbf="$1"; sta="$2"; fit="$3"
+if [ ! -r "$rbf" ]; then
+  echo "REMOTE_FAIL=rbf_unreadable"
+  exit 4
+fi
+if [ ! -r "$sta" ]; then
+  echo "REMOTE_FAIL=sta_absent_or_unreadable"
+  echo "STA_PATH=$sta"
+  exit 4
+fi
 md5=$(md5sum "$rbf" | awk '{print $1}')
-neg=$(grep -cE ';[[:space:]]*-[0-9]+\.[0-9]+[[:space:]]*;' "$sta" || true)
-logic=$(grep -m1 -E '^[[:space:]]*;?[[:space:]]*Logic utilization|Logic utilization' "$fit" || true)
-printf '%s %s %s\n' "$md5" "$neg" "$logic"
+set +e
+neg=$(grep -cE ';[[:space:]]*-[0-9]+\.[0-9]+[[:space:]]*;' "$sta" 2>/dev/null)
+grc=$?
+set -e
+if [ "$grc" -ge 2 ] || [ -z "$neg" ]; then
+  echo "REMOTE_FAIL=sta_grep_error grc=$grc"
+  exit 4
+fi
+case "$neg" in
+  ''|*[!0-9]*) echo "REMOTE_FAIL=sta_bad_count got=$neg"; exit 4 ;;
+esac
+logic=$(grep -m1 -E '^[[:space:]]*;?[[:space:]]*Logic utilization|Logic utilization' "$fit" 2>/dev/null || true)
+printf 'MD5=%s\n' "$md5"
+printf 'NEG_SLACK_COUNT=%s\n' "$neg"
+printf 'LOGIC_UTILIZATION=%s\n' "$logic"
 REMOTE_SUMMARY
 )
+  _remote_rc=$?
+  set -e
+  printf '%s\n' "$_remote_sum" | sed 's/^/  [remote-summary] /'
+  if [ "$_remote_rc" -ne 0 ]; then
+    echo "FAIL STA_OR_RBF_REMOTE_SUMMARY rc=$_remote_rc — absence≠zero slack" >&2
+    echo "true rc=4"
+    exit 4
+  fi
+  MD5=$(printf '%s\n' "$_remote_sum" | sed -n 's/^MD5=//p' | head -1)
+  NEG_SLACK_COUNT=$(printf '%s\n' "$_remote_sum" | sed -n 's/^NEG_SLACK_COUNT=//p' | head -1)
+  LOGIC_UTILIZATION=$(printf '%s\n' "$_remote_sum" | sed -n 's/^LOGIC_UTILIZATION=//p' | head -1)
+  if [ -z "$MD5" ] || [ -z "$NEG_SLACK_COUNT" ]; then
+    echo "FAIL remote summary missing MD5/NEG_SLACK fields" >&2
+    echo "true rc=4"
+    exit 4
+  fi
+  if [ "$NEG_SLACK_COUNT" -gt 0 ]; then
+    echo "FAIL STA_NEG_SLACK count=$NEG_SLACK_COUNT (remote)" >&2
+    echo "true rc=1"
+    exit 1
+  fi
 fi
 if [[ -n "$REFERENCE_RBF" ]]; then
   if [[ "$COPY_BACK" != "1" ]]; then

@@ -64,7 +64,19 @@ resume_stopped_main() {
 }
 
 echo "$(ts) PLEXCTL_SUPERVISE_START root=$ROOT lock=$LOCK" >>"$SUPLOG"
-trap 'kill $child 2>/dev/null || true; resume_stopped_main; exit 0' TERM INT
+# TERM/INT must NOT exit 0 — silent disarm of daily driver (parent 2026-07-31).
+_on_supervise_signal() {
+  sig="$1"
+  code="$2"
+  echo "$(ts) SUPERVISE_SIGNAL sig=$sig killing_child=${child:-none} — exit $code (not silent disarm)" >>"$SUPLOG"
+  if [ -n "${child:-}" ]; then
+    kill "$child" 2>/dev/null || true
+  fi
+  resume_stopped_main
+  exit "$code"
+}
+trap '_on_supervise_signal TERM 143' TERM
+trap '_on_supervise_signal INT 130' INT
 
 while true; do
   resume_stopped_main

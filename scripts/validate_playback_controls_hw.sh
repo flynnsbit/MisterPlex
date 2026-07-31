@@ -385,7 +385,16 @@ check_no_regression() {
 
   local cpu
   cpu=$(remote_sh <<'REMOTE' || true
-pid=$(pidof misterplexd | awk '{print $1}')
+pid=""
+for d in /proc/[0-9]*; do
+  [ -e "$d/exe" ] || continue
+  x=$(readlink -f "$d/exe" 2>/dev/null) || continue
+  x=${x% (deleted)}
+  b=$(basename "$x" 2>/dev/null) || continue
+  [ "$b" = "misterplexd" ] || continue
+  pid=${d#/proc/}
+  break
+done
 [ -n "$pid" ] || exit 1
 hz=$(getconf CLK_TCK 2>/dev/null || echo 100)
 read ut1 st1 < <(awk '{print $14, $15}' /proc/$pid/stat)

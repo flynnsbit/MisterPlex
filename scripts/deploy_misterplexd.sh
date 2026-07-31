@@ -534,7 +534,12 @@ if [[ "${DEPLOY_SKIP_BOOT_HOOK:-0}" != "1" ]]; then
     sync
     echo HOOK_BAK=\$bak
     echo HOOK_LINE=\$(grep misterplexd_supervise.sh \"\$hook\" | head -1)
-    n=\$(grep -c misterplexd_supervise.sh \"\$hook\" || true)
+    set +e
+    n=\$(grep -c misterplexd_supervise.sh \"\$hook\" 2>/dev/null)
+    grc=\$?
+    set -e
+    # grep -c: 0=matches, 1=no matches, >=2 error. Never || true → fake 0.
+    if [ \"\$grc\" -ge 2 ] || [ -z \"\$n\" ]; then echo FAIL_HOOK_UNREADABLE grc=\$grc; exit 8; fi
     if [ \"\$n\" -ne 1 ]; then echo FAIL_HOOK_N=\$n; exit 8; fi
     if [ \"\$root\" = /media/fat/misterplex_v2 ] && grep -qE '/misterplex/bin/misterplexd([^_]|\$)' \"\$hook\"; then
       echo FAIL_HOOK_V1_STILL_PRESENT; exit 8

@@ -262,7 +262,16 @@ for i in \$(seq 1 $MENU_WAIT_S); do
   if echo "\$c" | grep -qi plex; then
     echo "RECOVER_OK: product Plex live after reboot ($PRODUCT_CORE_REMOTE)"
     md5sum $PRODUCT_CORE_REMOTE
-    echo "misterplexd_pids=\$(pidof misterplexd | wc -w)"
+    n=0
+    for d in /proc/[0-9]*; do
+      [ -e "\$d/exe" ] || continue
+      x=\$(readlink -f "\$d/exe" 2>/dev/null) || continue
+      x=\${x% (deleted)}
+      b=\$(basename "\$x" 2>/dev/null) || continue
+      [ "\$b" = "misterplexd" ] || continue
+      n=\$((n+1))
+    done
+    echo "misterplexd_pids=\$n"
     exit 0
   fi
   sleep 1

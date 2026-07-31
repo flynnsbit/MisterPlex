@@ -241,7 +241,21 @@ resume_stopped_main() {
   done
 }
 echo "\$(ts) PLEXCTL_SUPERVISE_START root=\$ROOT" >>"\$SUPLOG"
-trap 'kill \$child 2>/dev/null || true; resume_stopped_main; exit 0' TERM INT
+# TERM/INT must NOT exit 0 — that silently disarms the daily driver (parent
+# 2026-07-31): supervisor dies, daemon TERMed, nothing restarts, cast target
+# gone, no error. Exit 143 (SIGTERM) / 130 (SIGINT) and log SUPERVISE_SIGNAL.
+_on_supervise_signal() {
+  sig="\$1"
+  code="\$2"
+  echo "\$(ts) SUPERVISE_SIGNAL sig=\$sig killing_child=\${child:-none} — exit \$code (not silent disarm)" >>"\$SUPLOG"
+  if [ -n "\${child:-}" ]; then
+    kill "\$child" 2>/dev/null || true
+  fi
+  resume_stopped_main
+  exit "\$code"
+}
+trap '_on_supervise_signal TERM 143' TERM
+trap '_on_supervise_signal INT 130' INT
 # After a sustained healthy run, forget prior crash-loop backoff. 120s is long
 # enough that a 1s crash-loop still doubles backoff, short enough that a late
 # intermittent SIGSEGV does not leave the daily driver dark for 64s hours later.
