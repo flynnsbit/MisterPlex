@@ -340,6 +340,24 @@ void MediaPlayer::setDecodeSize(int w, int h) {
         w = 1280;
     if (h > 720)
         h = 720;
+
+    // Hybrid RGB565 frame_store is fixed 320×240. Default: clamp DECODE to the
+    // store when PRESENT=fpga|both so the user never pays 4× CPU for 240p pixels.
+    // PRESENT_SCALE_TO_STORE=1 keeps oversized decode and scales at present.
+    const bool presentFpga =
+        (presentMode_ == "fpga" || presentMode_ == "both");
+    const int reqW = w;
+    const int reqH = h;
+    const DecodeStorePlan plan =
+        planDecodeForHybridStore(reqW, reqH, presentFpga, presentScaleToStore_);
+    if (plan.clamped) {
+        w = plan.decode_w;
+        h = plan.decode_h;
+        if (!decodeClampLogged_) {
+            decodeClampLogged_ = true;
+            log(formatDecodeClampLog(reqW, reqH, plan));
+        }
+    }
     outW_ = w;
     outH_ = h;
 }
@@ -1613,6 +1631,7 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
         usedRgb = true;
         presentCount_ = 0;
         presentScaleLogged_ = false;
+        // decodeClampLogged_ stays process-lifetime (conf DECODE)
         audioBytes_.store(0);
         std::vector<std::string> args;
         args.push_back(ffmpeg_);
@@ -1898,11 +1917,18 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                 // silent-skipped all FPGA presents at 624×480 (pfps=0.00, no log).
                 const bool reconOwnsF1 = streamEnabled_ && reconPresentOk_.load();
                 if (!reconOwnsF1 && fpga_.ok()) {
-                    const FpgaPresentPrep prep = fpgaPresentPrep(outW_, outH_);
+                    const FpgaPresentPrep prep = fpgaPresentPrep(outW_, outH_, presentScaleToStore_);
                     if (prep == FpgaPresentPrep::Reject) {
-                        if ((frameIndex % 30) == 0)
-                            log("media: fpga present reject bad decode geometry " +
-                                std::to_string(outW_) + "x" + std::to_string(outH_));
+                        if ((frameIndex % 30) == 0) {
+                            if (outW_ > 0 && outH_ > 0 && !presentScaleToStore_ &&
+                                !frameStoreHoldsDecode(outW_, outH_))
+                                log("media: fpga present reject decode=" +
+                                    std::to_string(outW_) + "x" + std::to_string(outH_) +
+                                    " (set PRESENT_SCALE_TO_STORE=1 to scale, or clamp DECODE)");
+                            else
+                                log("media: fpga present reject bad decode geometry " +
+                                    std::to_string(outW_) + "x" + std::to_string(outH_));
+                        }
                     } else {
                         const uint8_t* presentRgb = frame.data();
                         int pw = outW_;
@@ -1923,7 +1949,7 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                                     presentScaleLogged_ = true;
                                     log("media: present scale decode=" + std::to_string(outW_) +
                                         "x" + std::to_string(outH_) +
-                                        " → store=320x240 (hybrid RGB565 frame_store)");
+                                        " → store=320x240 (PRESENT_SCALE_TO_STORE=1, not native 480p)");
                                 }
                             }
                         }

@@ -42,6 +42,8 @@ unit: $(ROOT)/build/test_cadence $(ROOT)/build/test_avclock $(ROOT)/build/test_m
 	@chmod +x $(ROOT)/tests/unit/test_companion_http.sh $(ROOT)/tests/unit/test_plex_browse.sh
 	$(ROOT)/tests/unit/test_companion_http.sh
 	$(ROOT)/tests/unit/test_plex_browse.sh
+	@chmod +x $(ROOT)/tests/unit/test_supervise_backoff.sh
+	$(ROOT)/tests/unit/test_supervise_backoff.sh
 
 $(ROOT)/build/test_idct_quant: $(ROOT)/tests/unit/test_idct_quant.cpp \
 		$(ROOT)/host/libmisterplex/h264_cavlc.hpp $(ROOT)/host/libmisterplex/h264_nal.hpp \

@@ -35,6 +35,10 @@ public:
     void setAudioEnabled(bool on) { audioEnabled_ = on; }
     // present: "fb0" (default) and/or "fpga" (SPI ioctl → frame_store)
     void setPresentMode(std::string mode) { presentMode_ = std::move(mode); }
+    // PRESENT_SCALE_TO_STORE: keep oversized DECODE and scale into 320×240 at
+    // present (opt-in). Default false → clamp decode to store instead.
+    void setPresentScaleToStore(bool on) { presentScaleToStore_ = on; }
+    bool presentScaleToStore() const { return presentScaleToStore_; }
     // STREAM=1: demux annex-B H.264 → host I-slice recon (RGB565 → F1) + F3 stub feed
     void setStreamEnabled(bool on) { streamEnabled_ = on; }
     // When STREAM recon owns F1, optionally drop heavy FFmpeg RGB decode (keep audio).
@@ -172,6 +176,7 @@ private:
     std::string ffmpeg_ = "/media/fat/mistercast/bin/ffmpeg";
     std::string audioDev_ = "/dev/MrAudio";
     std::string presentMode_ = "fb0"; // "fb0", "fpga", "both"
+    bool presentScaleToStore_ = false;
     bool audioEnabled_ = true;
     bool streamEnabled_ = false; // annex-B → host recon F1 + F3 stub
     std::string streamSkipRgb_ = "auto"; // auto | on | off
@@ -244,6 +249,7 @@ private:
     // FPGA presents this session (wall-clock capped)
     int64_t presentCount_ = 0;
     bool presentScaleLogged_ = false;
+    bool decodeClampLogged_ = false;
     mutable std::mutex mu_;
     std::mutex lifeMu_; // serializes play/stop thr_ join + spawn
     std::thread thr_;

@@ -108,6 +108,7 @@ int main(int argc, char** argv) {
     bool plexTvAnnounce = false;
     int decodeW = 320, decodeH = 240;
     std::string presentMode = "fb0";
+    bool presentScaleToStore = false; // PRESENT_SCALE_TO_STORE, default off
     bool streamEnabled = false;
     std::string streamSkipRgb = "auto"; // auto | on | off — skip heavy RGB when PRESENT=fpga
     bool autoNext = true;
@@ -208,6 +209,9 @@ int main(int argc, char** argv) {
         v = loadConf(confPath, "PRESENT");
         if (!v.empty())
             presentMode = v; // fb0 | fpga | both
+        v = loadConf(confPath, "PRESENT_SCALE_TO_STORE");
+        if (!v.empty())
+            presentScaleToStore = confTruthy(v);
         v = loadConf(confPath, "STREAM");
         if (!v.empty())
             streamEnabled = confTruthy(v);
@@ -283,8 +287,29 @@ int main(int argc, char** argv) {
 
     misterplex::MediaPlayer player;
     player.setFfmpegPath(ffmpeg);
-    player.setDecodeSize(decodeW, decodeH);
+    player.setLog([](const std::string& s) { std::fprintf(stderr, "%s\n", s.c_str()); });
+    // Present mode + scale flag BEFORE setDecodeSize so hybrid store clamp applies.
     player.setPresentMode(presentMode);
+    player.setPresentScaleToStore(presentScaleToStore);
+    player.setDecodeSize(decodeW, decodeH);
+    std::fprintf(stderr, "misterplexd: PRESENT=%s PRESENT_SCALE_TO_STORE=%s decode=%dx%d\n",
+                 presentMode.c_str(), presentScaleToStore ? "1" : "0",
+                 player.decodeW(), player.decodeH());
+    // Keep PMS weak ladder aligned with effective (possibly clamped) decode.
+    {
+        const int ew = player.decodeW();
+        const int eh = player.decodeH();
+        const std::string er = std::to_string(ew) + "x" + std::to_string(eh);
+        if (weak.videoResolution != er) {
+            weak.videoResolution = er;
+            if (ew >= 640)
+                weak.maxVideoBitrateKbps = 2000;
+            else if (ew >= 480)
+                weak.maxVideoBitrateKbps = 1500;
+            else
+                weak.maxVideoBitrateKbps = 1000;
+        }
+    }
     player.setStreamEnabled(streamEnabled);
     player.setStreamSkipRgb(streamSkipRgb);
     if (subtitleMode == "ffmpeg")
@@ -348,7 +373,6 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "misterplexd: SUSPEND_MAIN_DURING_PLAY=%s\n",
                      suspendMain ? "1" : "0");
     }
-    player.setLog([](const std::string& s) { std::fprintf(stderr, "%s\n", s.c_str()); });
     if (streamEnabled) {
         std::fprintf(stderr,
                      "misterplexd: STREAM=1 (annex-B → host I-recon F1 + F3; preferDirectH264; "
