@@ -161,6 +161,7 @@ EXPECTED_COMMANDS = [
     "$(ROOT)/tests/unit/test_ddr_frame_store_warm_reset.sh",
     "$(ROOT)/tests/unit/test_ddr_frame_store_scanout_shear.sh",
     "$(ROOT)/tests/unit/test_ddr_frame_store_scanout_freeze.sh",
+    "$(ROOT)/tests/unit/test_ddr_frame_store_scanout_sustained.sh",
     "$(ROOT)/tests/unit/test_ddr_frame_store_scanout_colour.sh",
     "$(ROOT)/scripts/rtl_lint.py",
     "$(ROOT)/tests/unit/test_h264_syntax_primitives_rtl_sim.sh",

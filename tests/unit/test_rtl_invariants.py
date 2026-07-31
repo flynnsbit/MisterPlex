@@ -1419,6 +1419,17 @@ def check_ddr_frame_store_yuv_read_contract() -> None:
                 "want_y_sys<=Y_W'(pref_y)",
                 "want_y prefetcher must follow pref_y/src_y_line; src_y thrash is the left-edge class",
             ),
+            # Sustained high-rate publish: same-cycle swap_req + vsync must not
+            # NBA-clear swap_pending after latching a new pending_bank (playback
+            # freeze while idle still animates).
+            (
+                "parameterbitSWAP_REQ_HOLDS_PENDING_ACROSS_VSYNC=1'b1",
+                "product must default SWAP_REQ_HOLDS_PENDING_ACROSS_VSYNC=1",
+            ),
+            (
+                "if(SWAP_REQ_HOLDS_PENDING_ACROSS_VSYNC&&(swap_req_s2!=swap_req_seen))swap_pending<=1'b1;elseswap_pending<=1'b0;",
+                "vsync swap must retain swap_pending when a new swap_req collides same cycle",
+            ),
             (
                 "rd_cy=src_y_line[CODED_Y_W-1:1]",
                 "chroma line lookup must halve src_y_line (same vertical beam as Y)",
@@ -1496,6 +1507,18 @@ def check_ddr_frame_store_yuv_read_contract() -> None:
         fail(
             "deliberately restored X-gated want_y/src_y thrash "
             "(left black-prefix class) did not make the DDR frame-store gate red"
+        )
+    drop_holds = nt.replace(
+        "parameterbitSWAP_REQ_HOLDS_PENDING_ACROSS_VSYNC=1'b1",
+        "parameterbitSWAP_REQ_HOLDS_PENDING_ACROSS_VSYNC=1'b0",
+    ).replace(
+        "if(SWAP_REQ_HOLDS_PENDING_ACROSS_VSYNC&&(swap_req_s2!=swap_req_seen))swap_pending<=1'b1;elseswap_pending<=1'b0;",
+        "swap_pending<=1'b0;",
+    )
+    if not missing_requirements(drop_holds):
+        fail(
+            "deliberately dropped SWAP_REQ_HOLDS_PENDING_ACROSS_VSYNC "
+            "(same-cycle doorbell+vsync lost-pending class) did not make the gate red"
         )
     unused_module_decoy = frame_store_source.replace(
         "localparam int C_LINE_QWORDS = CODED_W / 16;",

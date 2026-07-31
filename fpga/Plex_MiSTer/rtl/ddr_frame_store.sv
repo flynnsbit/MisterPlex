@@ -40,7 +40,13 @@ module ddr_frame_store #(
 	// 1: prep slot alloc recycles valid-but-stale (wrong bank/line) slots.
 	// 0: invalid-only (9eb1431a) — after first swap prep set is full of old-bank
 	//    lines and hammers prep_base forever.
-	parameter bit PREP_SLOT_RECYCLE = 1'b1
+	parameter bit PREP_SLOT_RECYCLE = 1'b1,
+	// 1 (product): if a new swap_req is accepted on the same sys clk as a vsync
+	//    swap, keep swap_pending=1 for the newly latched pending_bank. Legacy
+	//    NBA order cleared swap_pending after setting it, dropping the doorbell
+	//    under sustained high-rate publish (playback ~24 fps) while idle's slow
+	//    presents rarely collide with the 1-cycle vsync window.
+	parameter bit SWAP_REQ_HOLDS_PENDING_ACROSS_VSYNC = 1'b1
 )(
 	input  wire        clk,
 	input  wire        clk_ddr,
@@ -250,19 +256,31 @@ module ddr_frame_store #(
 			pending_ready_s1 <= pending_ready_ddr;
 			pending_ready_s2 <= pending_ready_s1;
 
+			// Capture new doorbell before vsync-swap decision so a same-cycle collision
+			// can retain swap_pending for the newly latched bank (product).
+			// Legacy: both branches NBA-assigned swap_pending; the vsync clear
+			// won, consuming swap_req_seen while dropping the new pending frame.
 			if (swap_req_s2 != swap_req_seen) begin
 				swap_req_seen <= swap_req_s2;
 				pending_bank <= pending_bank_s2;
-				swap_pending <= 1'b1;
+				if (!(SWAP_REQ_HOLDS_PENDING_ACROSS_VSYNC
+				      && vsync_pulse && swap_pending && pending_ready_s2))
+					swap_pending <= 1'b1;
 			end
 
 			if (vsync_pulse && swap_pending && pending_ready_s2) begin
 `ifndef DDR_FRAME_STORE_FAULT_HOLD_DISP_BANK
+				// Uses pre-NBA pending_bank: the bank that was ready this cycle.
+				// A same-cycle swap_req updates pending_bank for the *next* swap.
 				disp_bank <= pending_bank;
 `endif
 				disp_buf <= ~disp_buf;
 				has_frame <= 1'b1;
-				swap_pending <= 1'b0;
+				if (SWAP_REQ_HOLDS_PENDING_ACROSS_VSYNC
+				    && (swap_req_s2 != swap_req_seen))
+					swap_pending <= 1'b1;
+				else
+					swap_pending <= 1'b0;
 				frames_done <= frames_done + 16'd1;
 				vsync_toggle <= ~vsync_toggle;
 			end else if (vsync_pulse) begin
