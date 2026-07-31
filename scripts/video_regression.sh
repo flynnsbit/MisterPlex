@@ -75,18 +75,22 @@ BASE_DAEMON_MD5=7cd10b4d438c714a9b8c4766dc982d59
 #   edc3a46b  CURRENT — DDR pair with c5382bee (w-geom 7554d6b2). Parent HW
 #             2026-07-31: 240p + native 480p MOTION_OK with conf
 #             DDR_YUV_FORCE_SCALE=1 FFMPEG_SWS_FLAGS=fast_bilinear.
-#             Full md5 resolved from artifacts/daemon-pins/misterplexd.edc3a46b
-#             when present; prefix8 identity is authoritative until fetch.
+#             Full md5 from live /proc/<pid>/exe (do not weaken gate).
 #   50f4eb92  PREV hybrid — SPI 320x240 clamp path (accepted rollback).
 #   e9f79de2  DDR hist — first silicon-correct DDR daemon (accepted rollback).
 #   3e2cbb98  older hybrid (accepted rollback).
 #   7cd10b4d  BASE release (above).
 HYBRID_DAEMON_PREFIX8=edc3a46b
+HYBRID_DAEMON_MD5_DEFAULT=edc3a46b9d1c6b86337deb90f896eb0f
 if [ -f "${REPO:-$(cd "$(dirname "$0")/.." && pwd)}/artifacts/daemon-pins/misterplexd.${HYBRID_DAEMON_PREFIX8}" ]; then
   HYBRID_DAEMON_MD5=$(md5sum "${REPO:-$(cd "$(dirname "$0")/.." && pwd)}/artifacts/daemon-pins/misterplexd.${HYBRID_DAEMON_PREFIX8}" | awk '{print $1}')
+  # Pin file must match measured identity — refuse silent wrong binary.
+  if [ "${HYBRID_DAEMON_MD5:0:8}" != "$HYBRID_DAEMON_PREFIX8" ]; then
+    echo "FAIL pin-file md5='$HYBRID_DAEMON_MD5' not prefix $HYBRID_DAEMON_PREFIX8" >&2
+    HYBRID_DAEMON_MD5="$HYBRID_DAEMON_MD5_DEFAULT"
+  fi
 else
-  # Prefix-only until parent: scripts/fetch_daemon_pins.sh ddr
-  HYBRID_DAEMON_MD5="${HYBRID_DAEMON_MD5:-$HYBRID_DAEMON_PREFIX8}"
+  HYBRID_DAEMON_MD5="${HYBRID_DAEMON_MD5:-$HYBRID_DAEMON_MD5_DEFAULT}"
 fi
 PREV_HYBRID_DAEMON_MD5=50f4eb925de10e29172999a565c87684
 DDR_HIST_DAEMON_MD5=e9f79de217982aff44207664fdb945c5

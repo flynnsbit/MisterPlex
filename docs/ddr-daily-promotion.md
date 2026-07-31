@@ -10,7 +10,7 @@ The FPGA DDR path renders correct colour/geometry on silicon (240p + native 480p
 | Piece | md5 | Role |
 |-------|-----|------|
 | RBF | `c5382bee73cecdee8220b811e529c297` | product DDR scanout (**not** do-not-ship) |
-| daemon | `edc3a46b…` (w-geom `7554d6b2`) | primary ARM companion |
+| daemon | `edc3a46b9d1c6b86337deb90f896eb0f` (w-geom `7554d6b2`) | primary ARM companion |
 | conf | `DDR_YUV_FORCE_SCALE=1` + `FFMPEG_SWS_FLAGS=fast_bilinear` | pair half (480p correctness) |
 | hist daemon | `e9f79de217982aff44207664fdb945c5` | previous DDR pin (on-device `.bak`) |
 
@@ -94,13 +94,14 @@ and conf-complete, not a wild install.
 cd /home/flynnsbit/Projects/MisterPlex/.worktrees/rollback-honest   # or main
 scripts/fetch_daemon_pins.sh both
 # expect: true rc=0
-# expect: artifacts/daemon-pins/misterplexd.edc3a46b  prefix edc3a46b
-# expect: artifacts/daemon-pins/misterplexd.50f4eb92  full 50f4eb92…
+# expect: artifacts/daemon-pins/misterplexd.edc3a46b  = edc3a46b9d1c6b86337deb90f896eb0f
+# expect: artifacts/daemon-pins/misterplexd.50f4eb92  = 50f4eb925de10e29172999a565c87684
 md5sum artifacts/daemon-pins/misterplexd.edc3a46b
-scripts/pair_ship_policy.sh find-daemon edc3a46b   # true rc=0
+# abort unless full md5 == edc3a46b9d1c6b86337deb90f896eb0f
+scripts/pair_ship_policy.sh find-daemon edc3a46b9d1c6b86337deb90f896eb0f   # true rc=0
 ```
 
-**Abort:** `true rc≠0` or md5 prefix ≠ `edc3a46b`.
+**Abort:** `true rc≠0` or md5 ≠ `edc3a46b9d1c6b86337deb90f896eb0f`.
 
 ### 1) Plan dry-run (no device)
 

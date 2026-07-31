@@ -39,10 +39,9 @@ DAEMON_PIN_V2_RELEASE_FULL=7cd10b4d438c714a9b8c4766dc982d59
 # NOT the primary promote target after w-geom 480p FORCE_SCALE land.
 DAEMON_PIN_DDR_E9F79DE2_FULL=e9f79de217982aff44207664fdb945c5
 # Primary live DDR daemon (parent 2026-07-31 viewed pixels + 480p MOTION_OK).
-# Full md5 is resolved from artifacts/daemon-pins/misterplexd.edc3a46b when
-# present (gitignored; parent fetch). Prefix8 is authoritative identity.
+# Full md5 measured from live /proc/<pid>/exe on device (edc3a46b9d1c…).
 DAEMON_PIN_DDR_EDC3_PREFIX8=edc3a46b
-DAEMON_PIN_DDR_EDC3_FULL="${DAEMON_PIN_DDR_EDC3_FULL:-}"  # optional override
+DAEMON_PIN_DDR_EDC3_FULL="${DAEMON_PIN_DDR_EDC3_FULL:-edc3a46b9d1c6b86337deb90f896eb0f}"
 # Back-compat alias: "candidate" == current primary DDR daemon pin.
 DAEMON_PIN_DDR_CANDIDATE_FULL="${DAEMON_PIN_DDR_CANDIDATE_FULL:-}"
 DAEMON_PIN_DDR_HIST_FULL="$DAEMON_PIN_DDR_E9F79DE2_FULL"
@@ -65,6 +64,13 @@ PAIR_CONF_DDR_KEYS=(
 PAIR_CONF_SPI_FORBIDDEN_KEYS=(
   "DDR_YUV_FORCE_SCALE=1"
 )
+
+rbf_policy_normalize_md5() {
+  # lowercase hex only; accept full or prefix (>=8).
+  local s="${1:-}"
+  s=$(printf '%s' "$s" | tr 'A-F' 'a-f' | tr -cd '0-9a-f')
+  printf '%s' "$s"
+}
 
 # Resolve full md5 for current DDR daemon from pin file / env / prefix.
 rbf_policy_resolve_ddr_daemon_full() {
@@ -96,13 +102,6 @@ rbf_policy_resolve_ddr_daemon_full() {
 
 # Populate DAEMON_PIN_DDR_CANDIDATE_FULL for callers that still read the alias.
 DAEMON_PIN_DDR_CANDIDATE_FULL="$(rbf_policy_resolve_ddr_daemon_full)"
-
-rbf_policy_normalize_md5() {
-  # lowercase hex only; accept full or prefix (>=8).
-  local s="${1:-}"
-  s=$(printf '%s' "$s" | tr 'A-F' 'a-f' | tr -cd '0-9a-f')
-  printf '%s' "$s"
-}
 
 rbf_policy_prefix8() {
   local s

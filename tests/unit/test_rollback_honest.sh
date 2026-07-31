@@ -422,7 +422,7 @@ echo "$LAST_OUT" | grep -qE 'MISSING_DAEMON_PIN|fetch_daemon_pins|ATOMIC_ROLLBAC
 }
 echo "OK ddr-preflight-refuse-no-pin rc=10"
 
-EDC_FULL=edc3a46b000000000000000000000001
+EDC_FULL=edc3a46b9d1c6b86337deb90f896eb0f
 
 echo "=== DDR primary preflight OK when disk already edc3a46b (green) ==="
 write_scen <<SCEN

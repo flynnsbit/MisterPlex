@@ -6,7 +6,7 @@ tracked; fetch pins onto the host with the script below. Rollback/promote
 
 | File (gitignored) | md5 | Pair |
 |-------------------|-----|------|
-| `misterplexd.edc3a46b` | `edc3a46b…` (full after fetch) | **PRIMARY** `ddr-c5382bee` + conf `DDR_YUV_FORCE_SCALE=1` `FFMPEG_SWS_FLAGS=fast_bilinear` |
+| `misterplexd.edc3a46b` | `edc3a46b9d1c6b86337deb90f896eb0f` | **PRIMARY** `ddr-c5382bee` + conf `DDR_YUV_FORCE_SCALE=1` `FFMPEG_SWS_FLAGS=fast_bilinear` |
 | `misterplexd.e9f79de2` | `e9f79de217982aff44207664fdb945c5` | hist `ddr-c5382bee-e9f79de2` (pre-480p) |
 | `misterplexd.50f4eb92` | `50f4eb925de10e29172999a565c87684` | `spi-v2-hybrid` (SPI core `dfebf2bf`) |
 
