@@ -24,15 +24,15 @@ struct DequantRef {
     int32_t values[16];
 };
 
-// Host-side dequant: identical to h264_recon.hpp dequant4x4 with maxCoeff=16
-DequantRef hostDequant(const int16_t coeff[16], int qp) {
+// Host-side dequant: identical to h264_recon.hpp dequant4x4
+DequantRef hostDequant(const int16_t coeff[16], int qp, int maxCoeff = 16) {
     DequantRef out;
     std::memset(&out, 0, sizeof(out));
     int shift = qp / 6 + 2;
-    for (int k = 0; k < 16; ++k) {
+    for (int k = 0; k < maxCoeff; ++k) {
         if (!coeff[k])
             continue;
-        int zi = kZigzag[k];
+        int zi = (maxCoeff == 15) ? kZigzag[k + 1] : kZigzag[k];
         int i = zi / 4, j = zi % 4;
         int mi = ((i & 1) + (j & 1)) == 0 ? 0 : (((i & 1) + (j & 1)) == 1 ? 1 : 2);
         int qmul = (kNormAdjust[qp % 6][mi] * 16) << shift;
@@ -132,7 +132,7 @@ int main(int argc, char** argv) {
             dut->qp = static_cast<uint8_t>(qp);
             dut->max_coeff = 16;
             for (int i = 0; i < 16; ++i)
-                dut->coeff[i] = static_cast<uint16_t>(pat.coeffs[i] & 0x1FF);
+                dut->coeff[i] = pat.coeffs[i];
             dut->eval();
 
             // Compute host reference
@@ -169,7 +169,7 @@ int main(int argc, char** argv) {
         dut->qp = static_cast<uint8_t>(qp);
         dut->max_coeff = 16;
         for (int i = 0; i < 16; ++i)
-            dut->coeff[i] = c[i] & 0x1FF;
+            dut->coeff[i] = c[i];
         dut->eval();
         int32_t rtl_val = dut->dequant[0];
         if (rtl_val & (1 << 17))

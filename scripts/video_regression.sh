@@ -11,12 +11,15 @@
 #     core   /media/fat/_Utility/Plex_v2.rbf            dfebf2bfd08dd70b473b587dd7e81848
 #     daemon /media/fat/misterplex_v2/bin/misterplexd   50f4eb925de10e29172999a565c87684
 #            (also accepts release 7cd10b4d… and PREV_HYBRID 3e2cbb98…)
-#   DDR product (first correct silicon DDR path — parent-viewed pixels + 295s soak):
+#   DDR product (first correct silicon DDR path — parent-viewed pixels):
 #     core   /media/fat/_Utility/Plex.rbf               c5382bee73cecdee8220b811e529c297
-#     daemon live /proc/<pid>/exe                       e9f79de217982aff44207664fdb945c5
+#     daemon live /proc/<pid>/exe                       edc3a46b… (CURRENT; 240p+native 480p)
+#            PREV DDR pin e9f79de2… still accepted (rollback)
 #   PRESENT=fpga   (fb0 decodes but never reaches HDMI: pfps stays 0.00)
 #   Rollback slot Plex_v2.rbf must stay dfebf2bf even when product is DDR so
 #   restore never gate-reds. verify PASSes when EITHER pair is fully live.
+#   GATE_CORE_IDENTITY=UNVERIFIED until live PLXC proves the running bitstream
+#   (on-disk RBF md5 alone is NOT silicon proof — see w-lint contract).
 #
 # LIVENESS (verify must not pass on a dead daemon):
 #   Authority is the RUNNING process: exact argv0 match via /proc/*/cmdline
@@ -88,12 +91,13 @@ BASE_DAEMON_MD5=7cd10b4d438c714a9b8c4766dc982d59
 HYBRID_DAEMON_MD5=50f4eb925de10e29172999a565c87684
 # PREV_* kept so a rollback binary never gate-reds after a pin advance.
 PREV_HYBRID_DAEMON_MD5=3e2cbb9881b2f54b0e4cb60238655fa7
-# e9f79de2  CURRENT DDR companion — PLXD doorbell-relative (98a7f186). Parent
-#           HW with c5382bee: correct idle + playback, 295s soak drops=2 flat.
-DDR_DAEMON_MD5=e9f79de217982aff44207664fdb945c5
-# No prior DDR pin yet; slot reserved so the next DDR advance can demote
-# e9f79de2 here without rewriting acceptance logic.
-PREV_DDR_DAEMON_MD5=
+# edc3a46b  CURRENT DDR companion — parent 2026-07-31: c5382bee + edc3a46b
+#           renders 240p AND native 480p correctly (viewed pixels). Full digest
+#           may be longer; md5_match accepts unique prefix ≥8 hex.
+DDR_DAEMON_MD5=edc3a46b
+# e9f79de2  PREV DDR companion — PLXD doorbell-relative; 295s soak drops=2.
+#           Kept so rollback never gate-reds after the pin advance.
+PREV_DDR_DAEMON_MD5=e9f79de217982aff44207664fdb945c5
 
 # Test clip: the 240p burned-in-telemetry ladder entry. Its overlay text makes
 # left-edge clipping obvious to the eye as well as to the measurement.
@@ -129,6 +133,16 @@ DEV_DAEMON_BIN=/media/fat/misterplex/bin/misterplexd
 BASE_CORE_PATH=/media/fat/_Utility/Plex_v2.rbf
 DDR_CORE_PATH=/media/fat/_Utility/Plex.rbf
 
+# md5_match PIN GOT — full equality, or PIN is unique prefix (≥8 hex) of GOT.
+md5_match() {
+  local pin="$1" got="$2"
+  [ -n "$pin" ] && [ -n "$got" ] || return 1
+  if [ "$pin" = "$got" ]; then return 0; fi
+  local plen=${#pin}
+  if [ "$plen" -ge 8 ] && [ "${got:0:plen}" = "$pin" ]; then return 0; fi
+  return 1
+}
+
 # SPI hybrid/release pins (pair with BASE_CORE_MD5 on Plex_v2.rbf).
 spi_daemon_md5_accepted() {
   case "$1" in
@@ -137,17 +151,11 @@ spi_daemon_md5_accepted() {
   esac
 }
 
-# DDR companion pins (pair with DDR_CORE_MD5 on Plex.rbf).
+# DDR companion pins (pair with DDR_CORE_MD5 on Plex.rbf). CURRENT + PREV.
 ddr_daemon_md5_accepted() {
-  case "$1" in
-    "$DDR_DAEMON_MD5") return 0 ;;
-    "$PREV_DDR_DAEMON_MD5")
-      # Empty PREV is not a pin.
-      [ -n "$PREV_DDR_DAEMON_MD5" ] && return 0
-      return 1
-      ;;
-    *) return 1 ;;
-  esac
+  if [ -n "${DDR_DAEMON_MD5:-}" ] && md5_match "$DDR_DAEMON_MD5" "$1"; then return 0; fi
+  if [ -n "${PREV_DDR_DAEMON_MD5:-}" ] && md5_match "$PREV_DDR_DAEMON_MD5" "$1"; then return 0; fi
+  return 1
 }
 
 # Any accepted known-good daemon (SPI or DDR). Pairing is enforced in verify.
@@ -426,8 +434,12 @@ verify_baseline() {
     # Running-bitstream identity (PLXC). On-disk RBF md5 is blind during mixed
     # promotion (DDR daemon + SPI core = black screen but file gate green).
     # Parent injects VIDREG_CORE_ID=absent|ddr|spi[,prov=0x....] from a live PLXC
-    # read (doorbell+0x130). When unset, skip with NOTE (pre-instrumentation).
-    # VIDREG_REQUIRE_CORE_ID=1 forces RED on missing inject (post identity RBF).
+    # read (doorbell+0x130). Fail CLOSED on identity: default stamp is
+    # GATE_CORE_IDENTITY=UNVERIFIED — GREEN pair/liveness is NOT silicon proof
+    # of the running bitstream (w-lint contract). VERIFIED_PLXC only when a live
+    # PLXC path=ddr|spi inject is present. VIDREG_REQUIRE_CORE_ID=1 forces RED
+    # on missing/absent inject (post identity RBF).
+    gate_core_identity=UNVERIFIED
     if [ -n "${VIDREG_CORE_ID:-}" ]; then
       id_path="${VIDREG_CORE_ID%%,*}"
       id_prov=""
@@ -441,6 +453,11 @@ verify_baseline() {
           rc=1
         else
           echo "OK   core-id path=$id_path compatible with SPI pair"
+          # SPI daily has no ddr_frame_store PLXC; path=absent stays UNVERIFIED.
+          # path=spi (future SPI stamp) or path=ddr would be fabric-proven.
+          if [ "$id_path" = "spi" ] || [ "$id_path" = "ddr" ]; then
+            gate_core_identity=VERIFIED_PLXC
+          fi
         fi
       elif [ "$pair" = "ddr" ]; then
         if [ "$id_path" = "spi" ]; then
@@ -448,6 +465,7 @@ verify_baseline() {
           rc=1
         elif [ "$id_path" = "ddr" ]; then
           echo "OK   core-id path=ddr compatible with DDR pair"
+          gate_core_identity=VERIFIED_PLXC
         elif [ "$id_path" = "absent" ]; then
           # c5382bee pre-identity: allow until first PLXC-bearing RBF is daily.
           if [ "${VIDREG_REQUIRE_CORE_ID:-0}" = "1" ]; then
@@ -456,6 +474,7 @@ verify_baseline() {
           else
             echo "OK   core-id absent allowed for pre-identity DDR core (set VIDREG_REQUIRE_CORE_ID=1 after first PLXC RBF)"
           fi
+          gate_core_identity=UNVERIFIED
         else
           echo "FAIL core-id path='$id_path' invalid (want absent|ddr|spi)"
           rc=1
@@ -464,8 +483,16 @@ verify_baseline() {
     elif [ "${VIDREG_REQUIRE_CORE_ID:-0}" = "1" ]; then
       echo "FAIL core-id missing inject (VIDREG_REQUIRE_CORE_ID=1)"
       rc=1
+      gate_core_identity=UNVERIFIED
     else
-      echo "NOTE core-id not injected (VIDREG_CORE_ID unset) — on-disk pair only; parent should supply live PLXC after identity RBF"
+      echo "NOTE core-id not injected (VIDREG_CORE_ID unset) — on-disk pair only; running-core identity UNVERIFIED"
+      gate_core_identity=UNVERIFIED
+    fi
+    echo "GATE_CORE_IDENTITY=$gate_core_identity"
+    if [ "$gate_core_identity" = UNVERIFIED ]; then
+      echo "NOTE GATE_CORE_IDENTITY=UNVERIFIED — pair/liveness may PASS; fabric hash not silicon-proven (no PLXC). NOT silicon proof of bitstream content hash."
+    elif [ "$gate_core_identity" = VERIFIED_PLXC ]; then
+      echo "OK   GATE_CORE_IDENTITY=VERIFIED_PLXC"
     fi
 
     # Real liveness signal: HTTP must answer. A process that exists but is

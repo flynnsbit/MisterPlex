@@ -4,8 +4,9 @@
 # and the NEW /proc argv0 + /proc/PID/exe + HTTP gate FAILs that case and
 # PASSes the live cases for BOTH known-good pairs:
 #   SPI: core dfebf2bf + daemon 50f4eb92 (PREV 3e2cbb98 still accepted)
-#   DDR: core c5382bee + daemon e9f79de2 (rollback core-v2 must stay intact)
+#   DDR: core c5382bee + daemon edc3a46b CURRENT (PREV e9f79de2 still accepted)
 # Red-before-green is proven in BOTH directions (wrong SPI, wrong DDR).
+# GATE_CORE_IDENTITY=UNVERIFIED until live PLXC inject (fail-closed stamp).
 # Never touches the real device — injects VIDREG_SSHM and VIDREG_HTTP.
 set -euo pipefail
 
@@ -18,7 +19,10 @@ DDR_CORE_MD5=c5382bee73cecdee8220b811e529c297
 BASE_DAEMON_MD5=7cd10b4d438c714a9b8c4766dc982d59
 HYBRID_DAEMON_MD5=50f4eb925de10e29172999a565c87684
 PREV_HYBRID_DAEMON_MD5=3e2cbb9881b2f54b0e4cb60238655fa7
-DDR_DAEMON_MD5=e9f79de217982aff44207664fdb945c5
+# CURRENT pin may be an 8-hex prefix (md5_match); live probe can use full digest.
+DDR_DAEMON_MD5=edc3a46b
+DDR_DAEMON_LIVE_MD5=edc3a46bcccccccccccccccccccccccc
+PREV_DDR_DAEMON_MD5=e9f79de217982aff44207664fdb945c5
 BIN_PATH=/media/fat/misterplex_v2/bin/misterplexd
 CORE_PATH=/media/fat/_Utility/Plex_v2.rbf
 V2_CONF=/media/fat/misterplex_v2/misterplex.conf
@@ -31,7 +35,7 @@ bash -n "$SCRIPT"
 
 # Pin lockstep: test constants must match the script under test.
 for name in BASE_CORE_MD5 DDR_CORE_MD5 BASE_DAEMON_MD5 HYBRID_DAEMON_MD5 \
-            PREV_HYBRID_DAEMON_MD5 DDR_DAEMON_MD5; do
+            PREV_HYBRID_DAEMON_MD5 DDR_DAEMON_MD5 PREV_DDR_DAEMON_MD5; do
   script_val=$(sed -n "s/^${name}=//p" "$SCRIPT" | head -1)
   test_val=${!name}
   if [[ "$script_val" != "$test_val" ]]; then
@@ -264,6 +268,8 @@ expect_grep "spi-live-ok" 'OK   daemon-live '"$HYBRID_DAEMON_MD5"
 expect_grep "spi-live-http" 'OK   daemon-http'
 expect_grep "spi-live-conf" 'OK   daemon-conf '"$V2_CONF"
 expect_grep "spi-live-pair" 'OK   pair SPI'
+expect_grep "spi-live-unverified" 'GATE_CORE_IDENTITY=UNVERIFIED'
+expect_grep "spi-live-unverified-note" 'NOT silicon proof'
 
 # ===========================================================================
 echo "=== NEW gate: PREV hybrid pin still accepted (SPI pair) ==="
@@ -284,12 +290,12 @@ expect_grep "spi-prev-ok" 'OK   daemon-live '"$PREV_HYBRID_DAEMON_MD5"
 expect_grep "spi-prev-pair" 'OK   pair SPI'
 
 # ===========================================================================
-echo "=== NEW gate: DDR pair (c5382bee + e9f79de2) + rollback intact PASSes ==="
+echo "=== NEW gate: DDR pair (c5382bee + edc3a46b CURRENT) + rollback intact PASSes ==="
 write_scenario <<EOF
 core_md5=$BASE_CORE_MD5
 core_ddr_md5=$DDR_CORE_MD5
-disk_md5=$DDR_DAEMON_MD5
-live_md5=$DDR_DAEMON_MD5
+disk_md5=$DDR_DAEMON_LIVE_MD5
+live_md5=$DDR_DAEMON_LIVE_MD5
 n_match=1
 appear_after=0
 http_code=200
@@ -298,18 +304,37 @@ live_conf=$V2_CONF
 EOF
 run_new_verify "ddr-live"
 expect_rc "ddr-live" 0
-expect_grep "ddr-live-ok" 'OK   daemon-live '"$DDR_DAEMON_MD5"
+expect_grep "ddr-live-ok" 'OK   daemon-live '"$DDR_DAEMON_LIVE_MD5"
 expect_grep "ddr-live-pair" 'OK   pair DDR'
 expect_grep "ddr-live-v2" 'OK   core-v2 \(rollback\) '"$BASE_CORE_MD5"
 expect_grep "ddr-live-product" 'OK   core-ddr \(product\) '"$DDR_CORE_MD5"
+expect_grep "ddr-live-unverified" 'GATE_CORE_IDENTITY=UNVERIFIED'
+expect_grep "ddr-live-unverified-note" 'NOT silicon proof'
+
+echo "=== NEW gate: PREV DDR rollback pin e9f79de2 still accepted ==="
+write_scenario <<EOF
+core_md5=$BASE_CORE_MD5
+core_ddr_md5=$DDR_CORE_MD5
+disk_md5=$PREV_DDR_DAEMON_MD5
+live_md5=$PREV_DDR_DAEMON_MD5
+n_match=1
+appear_after=0
+http_code=200
+live_port=3005
+live_conf=$V2_CONF
+EOF
+run_new_verify "ddr-prev"
+expect_rc "ddr-prev" 0
+expect_grep "ddr-prev-ok" 'OK   pair DDR'
+expect_grep "ddr-prev-daemon" 'OK   daemon-live '"$PREV_DDR_DAEMON_MD5"
 
 # ===========================================================================
 echo "=== RED: DDR daemon without product core must FAIL (not silent SPI) ==="
 write_scenario <<EOF
 core_md5=$BASE_CORE_MD5
 core_ddr_md5=
-disk_md5=$DDR_DAEMON_MD5
-live_md5=$DDR_DAEMON_MD5
+disk_md5=$DDR_DAEMON_LIVE_MD5
+live_md5=$DDR_DAEMON_LIVE_MD5
 n_match=1
 appear_after=0
 http_code=200
@@ -342,8 +367,8 @@ echo "=== RED: unknown product core md5 must FAIL (not accept as DDR) ==="
 write_scenario <<EOF
 core_md5=$BASE_CORE_MD5
 core_ddr_md5=$UNKNOWN_MD5
-disk_md5=$DDR_DAEMON_MD5
-live_md5=$DDR_DAEMON_MD5
+disk_md5=$DDR_DAEMON_LIVE_MD5
+live_md5=$DDR_DAEMON_LIVE_MD5
 n_match=1
 appear_after=0
 http_code=200
@@ -508,6 +533,7 @@ EOF
 VIDREG_CORE_ID=ddr run_new_verify "coreid-ddr-ok"
 expect_rc "coreid-ddr-ok" 0
 expect_grep "coreid-ddr-ok-msg" 'path=ddr compatible with DDR pair'
+expect_grep "coreid-ddr-ok-verified" 'GATE_CORE_IDENTITY=VERIFIED_PLXC'
 
 # ===========================================================================
 echo "=== NEW gate: core-id RED DDR daemon + require identity but absent ==="
