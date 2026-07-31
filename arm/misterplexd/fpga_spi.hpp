@@ -7,6 +7,7 @@
 #include <string>
 #include <vector>
 
+#include "libmisterplex/ddr_bank_release_select.hpp"
 #include "libmisterplex/ddr_frame_layout.hpp"
 #include "libmisterplex/ddr_bitstream_ring.hpp"
 #include "libmisterplex/ddr_present_bank.hpp"
@@ -324,6 +325,7 @@ private:
     uint32_t doorbellSeq_ = 0;
     double lastDdrBankDoorbellMs_[2] = {-1.0, -1.0};
     int lastPublishedBank_ = 0;
+    DdrBankSelectState ddrBankSelect_{};
     bool mboxInit_ = false;
     bool mboxAlive_ = false;
     uint16_t mboxSeq_ = 0;

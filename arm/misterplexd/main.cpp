@@ -48,7 +48,13 @@ void on_signal_info(int sig, siginfo_t* info, void*) {
         g_stopSiCode.store(info->si_code, std::memory_order_relaxed);
         g_stopSiPid.store(static_cast<int>(info->si_pid), std::memory_order_relaxed);
     }
-    // Orderly path: do NOT write death-as-crash here; main choke-points EXIT_REASON.
+    // Async-signal-safe first witness (write(2) only). Survives if teardown never
+    // reaches exitReported (hang in stop/join). Orderly EXIT_REASON overwrites later.
+    // SIGKILL cannot run this — supervisor SUPERVISE_EXIT is the only SIGKILL witness.
+    if (info)
+        misterplex::deathBreadcrumbOnSigInfo(info);
+    else
+        misterplex::deathBreadcrumbOnSignal(sig);
     g_stop.store(true, std::memory_order_release);
 }
 

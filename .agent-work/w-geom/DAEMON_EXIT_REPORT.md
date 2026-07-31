@@ -1,7 +1,7 @@
 # misterplexd rc=0 exit investigation (w-geom)
 
 Branch: `w-instr-motion-counter`  
-SHA: (see git after commit)  
+SHA: `8f144ea17548406841413473a2d8577aa8210063`  
 ARM binary: `build/arm/misterplexd`  
 md5: `13a505d372f45b004fdc9812b16eb149`  
 ELF: 32-bit ARM static  
