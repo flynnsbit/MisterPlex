@@ -249,23 +249,35 @@ int main() {
                 return o;
             };
             const std::string nt = strip(text);
+            // Product path: src_y_line (rd_y_visible) → pref_y (WANT_Y_LINE_ONLY=1)
+            // → want_y_sys / y_hit. Control builds may bind pref_y to X-gated src_y.
             const bool has_line =
                 nt.find("src_y_line=rd_y_visible?(display_y+CROP_TOP_L):'0") != std::string::npos;
+            const bool has_pref =
+                nt.find("pref_y=WANT_Y_LINE_ONLY?src_y_line:src_y") != std::string::npos;
+            const bool default_line_only =
+                nt.find("WANT_Y_LINE_ONLY=1'b1") != std::string::npos;
             const bool want_ok =
+                nt.find("want_y_sys<=Y_W'(pref_y)") != std::string::npos ||
                 nt.find("want_y_sys<=Y_W'(src_y_line)") != std::string::npos;
             const bool hit_ok =
+                nt.find("y_line_v2[video_slot]==Y_W'(pref_y)") != std::string::npos ||
                 nt.find("y_line_v2[video_slot]==Y_W'(src_y_line)") != std::string::npos;
+            // Red-check: sole product want_y from bare X-gated src_y (no line/pref).
             const bool legacy_thrash =
                 nt.find("want_y_sys<=Y_W'(src_y)") != std::string::npos &&
-                nt.find("want_y_sys<=Y_W'(src_y_line)") == std::string::npos;
-            if (!has_line || !want_ok || !hit_ok || legacy_thrash) {
+                nt.find("want_y_sys<=Y_W'(src_y_line)") == std::string::npos &&
+                nt.find("want_y_sys<=Y_W'(pref_y)") == std::string::npos;
+            if (!has_line || !has_pref || !default_line_only || !want_ok || !hit_ok ||
+                legacy_thrash) {
                 std::fputs(
-                    "MISS: ddr_frame_store.sv want_y must track src_y_line "
-                    "(rd_y_visible), not X-gated src_y\n",
+                    "MISS: ddr_frame_store.sv want_y must track pref_y=src_y_line "
+                    "(WANT_Y_LINE_ONLY=1 default), not X-gated src_y alone\n",
                     stderr);
                 ok = false;
             } else {
-                std::puts("PASS RTL source: want_y/hit follow src_y_line (no HBlank thrash)");
+                std::puts("PASS RTL source: want_y/hit follow pref_y/src_y_line "
+                          "(no HBlank thrash; LINE_ONLY default)");
             }
         }
     }

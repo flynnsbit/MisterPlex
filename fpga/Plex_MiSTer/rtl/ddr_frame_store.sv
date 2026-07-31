@@ -29,7 +29,18 @@ module ddr_frame_store #(
 	parameter bit IGNORE_STALE_DOORBELL_AFTER_RESET = 1'b1,
 	parameter int STALE_DOORBELL_FALLBACK_POLLS = 4096,
 	parameter bit PIPELINE_REFILL_SCHEDULER = 1'b1,
-	parameter bit STRICT_YUV_DOORBELL = 1'b1
+	parameter bit STRICT_YUV_DOORBELL = 1'b1,
+	// 1: want_y / y_hit follow vertical beam (src_y_line) — product anti-thrash.
+	// 0: legacy X-gated src_y thrash (HBlank want_y→0) — shear control only.
+	parameter bit WANT_Y_LINE_ONLY = 1'b1,
+	// 1: pending_ready holds while prep is complete even if IDLE schedules a
+	//    current-window refill (product). 0: legacy clear-on-current-sched —
+	//    freezes when want_y tracks the beam (silicon 9eb1431a class).
+	parameter bit PENDING_READY_STICKY_PREP = 1'b1,
+	// 1: prep slot alloc recycles valid-but-stale (wrong bank/line) slots.
+	// 0: invalid-only (9eb1431a) — after first swap prep set is full of old-bank
+	//    lines and hammers prep_base forever.
+	parameter bit PREP_SLOT_RECYCLE = 1'b1
 )(
 	input  wire        clk,
 	input  wire        clk_ddr,
@@ -157,8 +168,20 @@ module ddr_frame_store #(
 	wire rd_visible = rd_x_visible && rd_y_visible;
 	wire [X_W-1:0] display_x = rd_x - PRESENT_X_L;
 	wire [Y_W-1:0] display_y = rd_y - PRESENT_Y_L;
+	// Pixel path: X+Y gate (outside present window → black / addr 0).
 	wire [CODED_X_W-1:0] src_x = rd_visible ? (display_x + CROP_LEFT_L) : '0;
 	wire [CODED_Y_W-1:0] src_y = rd_visible ? (display_y + CROP_TOP_L) : '0;
+	// Line identity / prefetch path: follow the vertical beam whenever Y is inside
+	// the present band — independent of horizontal blank. Gating line match and
+	// want_y on full rd_visible forced src_y→0 every HBlank (including store_x=LAST),
+	// which thrashed the fill scheduler off the beam line and produced a variable
+	// black prefix at DE open (parent: ragged left edge, interiors aligned, median
+	// miss ~420 px on silicon). Do NOT use force_top (WANT_Y_FORCE_TOP) — that
+	// freeze-class latch cost two fits; vsync/leave-VBlank naturally returns the
+	// beam (and thus want_y) to the top via present_core store_y.
+	// WANT_Y_LINE_ONLY=0 restores X-gated thrash for freeze/shear control builds.
+	wire [CODED_Y_W-1:0] src_y_line = rd_y_visible ? (display_y + CROP_TOP_L) : '0;
+	wire [CODED_Y_W-1:0] pref_y = WANT_Y_LINE_ONLY ? src_y_line : src_y;
 	wire [Y_QW_AW-1:0] y_rd_addr = src_x[CODED_X_W-1:3];
 	wire [C_QW_AW-1:0] c_rd_addr = src_x[CODED_X_W-1:4];
 
@@ -297,9 +320,9 @@ module ddr_frame_store #(
 	reg [63:0] selected_y_q, selected_u_q, selected_v_q;
 	reg [SLOT_W-1:0] video_slot;
 `ifdef DDR_FRAME_STORE_FAULT_CHROMA_VERTICAL_FULLRES
-	wire [CODED_Y_W-2:0] rd_cy = src_y[CODED_Y_W-2:0];
+	wire [CODED_Y_W-2:0] rd_cy = src_y_line[CODED_Y_W-2:0];
 `else
-	wire [CODED_Y_W-2:0] rd_cy = src_y[CODED_Y_W-1:1];
+	wire [CODED_Y_W-2:0] rd_cy = src_y_line[CODED_Y_W-1:1];
 `endif
 	always @* begin
 		y_hit_now = 1'b0;
@@ -311,8 +334,9 @@ module ddr_frame_store #(
 		selected_v_q = 64'd0;
 		for (vi = 0; vi < LINE_COUNT; vi = vi + 1) begin
 			video_slot = (disp_buf ? SECOND_SET_BASE : '0) + vi[SLOT_W-1:0];
+			// Match beam line via pref_y (product: src_y_line; thrash control: src_y).
 			if (y_valid_v2[video_slot] && (y_bank_v2[video_slot] == disp_bank)
-			    && (y_line_v2[video_slot] == Y_W'(src_y)) && !y_hit_now) begin
+			    && (y_line_v2[video_slot] == Y_W'(pref_y)) && !y_hit_now) begin
 				y_hit_now = 1'b1;
 				y_hit_idx_now = video_slot;
 			end
@@ -329,14 +353,9 @@ module ddr_frame_store #(
 			end
 		end
 	end
-	// Miss when the line under the beam is not yet in an M10K slot. If DDR fill
-	// completes MID-line, later pixels transition miss→hit and the left edge of
-	// real content wanders by tens of pixels per scanline (parent measured ~44 px
-	// after the ARM stride fix). That is a prefetch/CDC budget issue, not an ARM
-	// writer margin bug: pack/FFmpeg use a constant x0 per frame.
-	// REQUIRES_FIT: tighten want_y lead / LINE_COUNT / blank-time fill so
-	// y_hit_now is true before DE opens each line; optional sticky-miss-to-EOL
-	// only converts wander into full black lines (still a fail).
+	// Miss when the line under the beam is not yet in an M10K slot → RGB black.
+	// Primary left-edge class: HBlank want_y/src_y thrash (fixed via src_y_line).
+	// Residual miss under true DDR backlog still counts as underrun.
 	wire rd_miss_now = rd_active && rd_visible && has_frame && (!y_hit_now || !c_hit_now);
 
 	wire [7:0] y_pix = pick_byte(selected_y_q, y_sel_r);
@@ -396,8 +415,15 @@ module ddr_frame_store #(
 				c_line_v2[vi] <= c_line_v1[vi];
 			end
 
-			if (Y_W'(src_y) != want_y_sys)
-				want_y_sys <= Y_W'(src_y);
+			// want_y: product uses pref_y=src_y_line (Y beam only). Thrash control
+			// uses pref_y=src_y (X-gated). No FORCE_TOP.
+			// When WANT_Y_LINE_ONLY=0, rd_visible low forces pref_y=0 every HBlank.
+			if (WANT_Y_LINE_ONLY ? rd_y_visible : rd_visible) begin
+				if (want_y_sys != Y_W'(pref_y))
+					want_y_sys <= Y_W'(pref_y);
+			end else if (want_y_sys != '0) begin
+				want_y_sys <= '0;
+			end
 			want_y_gray <= y_bin2gray(want_y_sys);
 
 			if (status_osd != status_osd_hold) begin
@@ -638,16 +664,46 @@ module ddr_frame_store #(
 				target_c_idx_cur_c = cur_base_idx + tj[SLOT_W-1:0];
 			end
 
-			if ((!y_valid[prep_base_idx + tj[SLOT_W-1:0]]) && !found_slot_y_prep) begin
-				found_slot_y_prep = 1'b1;
-				target_y_idx_prep_c = prep_base_idx + tj[SLOT_W-1:0];
-			end
-			if ((!c_valid[prep_base_idx + tj[SLOT_W-1:0]]) && !found_slot_c_prep) begin
-				found_slot_c_prep = 1'b1;
-				target_c_idx_prep_c = prep_base_idx + tj[SLOT_W-1:0];
+			// Prep slots must recycle stale post-swap contents (valid but wrong
+			// bank/line). Invalid-only selection left the set full of old-bank
+			// lines and hammered prep_base forever — prep never reached
+			// pending_ready_c (freeze after first swap under src_y_line).
+			if (PREP_SLOT_RECYCLE) begin
+				slot_keep = 1'b0;
+				for (tk = 0; tk < LINE_COUNT; tk = tk + 1) begin
+					if (y_valid[prep_base_idx + tj[SLOT_W-1:0]]
+					    && (y_bank[prep_base_idx + tj[SLOT_W-1:0]] == pending_bank_d2)
+					    && (y_line[prep_base_idx + tj[SLOT_W-1:0]] == tk[Y_W-1:0]))
+						slot_keep = 1'b1;
+				end
+				if ((!y_valid[prep_base_idx + tj[SLOT_W-1:0]] || !slot_keep) && !found_slot_y_prep) begin
+					found_slot_y_prep = 1'b1;
+					target_y_idx_prep_c = prep_base_idx + tj[SLOT_W-1:0];
+				end
+				slot_keep = 1'b0;
+				for (tk = 0; tk < LINE_COUNT; tk = tk + 1) begin
+					if (c_valid[prep_base_idx + tj[SLOT_W-1:0]]
+					    && (c_bank[prep_base_idx + tj[SLOT_W-1:0]] == pending_bank_d2)
+					    && (c_line[prep_base_idx + tj[SLOT_W-1:0]] == tk[Y_W-1:1]))
+						slot_keep = 1'b1;
+				end
+				if ((!c_valid[prep_base_idx + tj[SLOT_W-1:0]] || !slot_keep) && !found_slot_c_prep) begin
+					found_slot_c_prep = 1'b1;
+					target_c_idx_prep_c = prep_base_idx + tj[SLOT_W-1:0];
+				end
+			end else begin
+				if ((!y_valid[prep_base_idx + tj[SLOT_W-1:0]]) && !found_slot_y_prep) begin
+					found_slot_y_prep = 1'b1;
+					target_y_idx_prep_c = prep_base_idx + tj[SLOT_W-1:0];
+				end
+				if ((!c_valid[prep_base_idx + tj[SLOT_W-1:0]]) && !found_slot_c_prep) begin
+					found_slot_c_prep = 1'b1;
+					target_c_idx_prep_c = prep_base_idx + tj[SLOT_W-1:0];
+				end
 			end
 		end
 	end
+
 
 	reg fill_bank, fill_is_chroma, fill_plane_v;
 	reg [Y_W-1:0] fill_y;
@@ -908,8 +964,24 @@ module ddr_frame_store #(
 
 			case (state_ddr)
 				S_IDLE: begin
-					pending_ready_ddr <= swap_pending_d2 &&
-					                     (sched_valid ? (sched_for_pending && sched_pending_ready) : pending_ready_c);
+					// Product (PENDING_READY_STICKY_PREP=1): once prep lines are
+					// complete, keep pending_ready high even while IDLE schedules
+					// a *current* refill. Legacy ternary
+					//   sched_valid ? (sched_for_pending && sched_pending_ready)
+					//               : pending_ready_c
+					// clears ready whenever sched_valid && !sched_for_pending —
+					// continuous need_y_cur under src_y_line (beam-tracking want_y
+					// through VBlank) then misses the 1-cycle vsync swap window and
+					// freezes bank0 (silicon 9eb1431a). Do not revive FORCE_TOP.
+					if (PENDING_READY_STICKY_PREP) begin
+						pending_ready_ddr <= swap_pending_d2 &&
+						                     (pending_ready_c ||
+						                      (sched_valid && sched_for_pending && sched_pending_ready));
+					end else begin
+						pending_ready_ddr <= swap_pending_d2 &&
+						                     (sched_valid ? (sched_for_pending && sched_pending_ready)
+						                                  : pending_ready_c);
+					end
 					poll_div <= poll_div + 16'd1;
 					if (frame_mbox_req && (!frame_mbox_valid || poll_div[7:0] == 8'd224)
 					    && !DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE) begin

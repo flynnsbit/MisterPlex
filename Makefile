@@ -151,6 +151,8 @@ unit-unlocked: unit-rollcall preflight $(ROOT)/build/test_cadence $(ROOT)/build/
 	bash $(ROOT)/tests/unit/test_stream_path_ddr_ring_integration.sh
 	$(ROOT)/tests/unit/test_ddr_frame_store_warm_reset.sh
 	$(ROOT)/tests/unit/test_ddr_frame_store_scanout_shear.sh
+	$(ROOT)/tests/unit/test_ddr_frame_store_scanout_freeze.sh
+	$(ROOT)/tests/unit/test_ddr_frame_store_scanout_colour.sh
 	$(ROOT)/scripts/rtl_lint.py
 	$(ROOT)/tests/unit/test_h264_syntax_primitives_rtl_sim.sh
 	$(ROOT)/tests/unit/test_h264_sps_geometry_rtl_sim.sh
@@ -169,6 +171,8 @@ rtl-sim-unlocked:
 	$(ROOT)/tests/unit/test_stream_path_deblock_integration.sh
 	$(ROOT)/tests/unit/test_ddr_frame_store_warm_reset.sh
 	$(ROOT)/tests/unit/test_ddr_frame_store_scanout_shear.sh
+	$(ROOT)/tests/unit/test_ddr_frame_store_scanout_freeze.sh
+	$(ROOT)/tests/unit/test_ddr_frame_store_scanout_colour.sh
 	$(ROOT)/tests/unit/test_stream_path_recon_integration.sh
 	$(ROOT)/tests/unit/test_stream_path_full_frame_compare.sh
 	$(ROOT)/tests/unit/test_ddram_frame_rd_bank_select.sh

@@ -1408,12 +1408,16 @@ def check_ddr_frame_store_yuv_read_contract() -> None:
                 "line identity must track rd_y_visible (not X-gated rd_visible)",
             ),
             (
-                "y_line_v2[video_slot]==Y_W'(src_y_line)",
-                "Y linebuf hit must match src_y_line (vertical beam), not X-gated src_y",
+                "pref_y=WANT_Y_LINE_ONLY?src_y_line:src_y",
+                "product pref_y must default to src_y_line (WANT_Y_LINE_ONLY); thrash control uses src_y",
             ),
             (
-                "want_y_sys<=Y_W'(src_y_line)",
-                "want_y prefetcher must follow src_y_line; src_y thrash is the left-edge class",
+                "y_line_v2[video_slot]==Y_W'(pref_y)",
+                "Y linebuf hit must match pref_y (product=src_y_line), not bare X-gated src_y",
+            ),
+            (
+                "want_y_sys<=Y_W'(pref_y)",
+                "want_y prefetcher must follow pref_y/src_y_line; src_y thrash is the left-edge class",
             ),
             (
                 "rd_cy=src_y_line[CODED_Y_W-1:1]",
@@ -1480,8 +1484,9 @@ def check_ddr_frame_store_yuv_read_contract() -> None:
         fail("deliberately broken chroma half-resolution geometry did not make the gate red")
     # Legacy left-edge class: want_y / hit from X-gated src_y (HEAD before src_y_line).
     thrash_want_y = (
-        nt.replace("want_y_sys<=Y_W'(src_y_line)", "want_y_sys<=Y_W'(src_y)")
-        .replace("y_line_v2[video_slot]==Y_W'(src_y_line)", "y_line_v2[video_slot]==Y_W'(src_y)")
+        nt.replace("pref_y=WANT_Y_LINE_ONLY?src_y_line:src_y", "pref_y=src_y")
+        .replace("want_y_sys<=Y_W'(pref_y)", "want_y_sys<=Y_W'(src_y)")
+        .replace("y_line_v2[video_slot]==Y_W'(pref_y)", "y_line_v2[video_slot]==Y_W'(src_y)")
         .replace(
             "src_y_line=rd_y_visible?(display_y+CROP_TOP_L):'0",
             "src_y_line=rd_visible?(display_y+CROP_TOP_L):'0",
