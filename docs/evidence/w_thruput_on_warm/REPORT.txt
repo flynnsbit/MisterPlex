@@ -1,56 +1,75 @@
-# w-thruput REPORT — integ/thruput-on-warm (post hybrid port)
+# w-thruput SLOT-GRANT EVIDENCE — integ/thruput-on-warm
+# Written BEFORE any Quartus fit. Parent owns fit/deploy/HDMI.
 
-## Branch
-- Branch: integ/thruput-on-warm @ de13391b
-- Base: w-arm-p720-scope + thruput/area merge + hybrid ownership wiring
+## 1. Branch / SHA / ancestors
+- Branch: integ/thruput-on-warm
+- Tip: 6e2b2315ea724736b5a2c43a026ffd5700d32842 (6e2b2315)
+- Worktree: .worktrees/w-thruput-on-warm
+- RTL hybrid+thruput+area core: 9d9dadbd (ancestor)
+- w-area dequant 809a8197 IS ancestor: YES (merge-base --is-ancestor rc=0)
+  809a8197 integ(rtl): w-area comb shift-add dequant on thruput tip
+- w-arm-p720-scope tip ee842f2e IS ancestor: YES
+- w-fit tip 5b4dc082 IS ancestor: YES
+- Confirmed shift-add present: h264_iq_idct_4x4.sv mul_norm_adjust + qp_div6 tables
+- Also landed: src_y_line want_y (geom WIP) so warm tip gates pass; WANT_Y_FORCE_TOP freeze class NOT restored
 
-## Clock / budget (verified earlier; unchanged)
-- pll_0002 outclk_0 = 20 MHz decode domain
+## 2. Clock / budget (verified)
+- Decode domain pll_0002 outclk_0 = 20 MHz
 - Budget 320x240@25: 20e6/(300*25) = 2666.667 cy/MB
 
-## PRE-REG vs MEASURED (post hybrid)
+## 3. PRE-REG (written before this remeasure; see prereg_post_warm_merge.txt)
 | Metric | PRE-REG | MEASURED | Result |
 |--------|---------|----------|--------|
-| paint_per_mb f0 clip1 | 2239.647 | 2239.647 | HIT exact |
-| LUMA frame0 | 300/300 mae=0 | 300/300 mae=0.000000 | HIT |
-| real-ref XOR twin | candidates differ | OK real-ref XOR twin: candidates differ | HIT |
+| paint_per_mb f0 clip1 320 | 2239.647 | 2239.647 | HIT exact |
+| paint_per_mb f0 clip2 624 | 2102.850 | 2102.850 | HIT exact |
+| vs standing baseline 2965.8 | — | 2239.647 | 0.755x of baseline; pad vs 2667 ≈ 427 cy/MB |
+| LUMA frame0 320 | 300/300 mae=0 | 300/300 mae=0.000000 | HIT |
+| LUMA frame0 624 | 1170/1170 mae=0 | 1170/1170 mae=0.000000 | HIT |
+| real-ref XOR twin 320 | candidates differ | OK real-ref XOR twin | HIT |
 | dequant QP sweep | miss=0 | 1205/1205 PASS | HIT |
-| define-parity | 0 | 0 | HIT |
-| quartus-sv-subset | 0 | 0 | HIT |
-| make unit | 0 | 0 (with MISTERPLEX_ALLOW_LOW_MEMORY_TESTS=1 while w-fit exclusive live) | HIT |
+| define-parity | 0 | true rc=0 | HIT |
+| quartus-sv-subset | 0 | true rc=0 | HIT |
+| make unit | 0 | true rc=0 | HIT |
+| unit rollcall expected_commands | 105 (branch; not 99/101 main) | 105 rc=0 | HIT |
 
-## SINK_CY_BREAKDOWN (real_ref frame0 path)
+## 4. SINK_CY_BREAKDOWN (clip1 real_ref f0)
 total=480177 idle_wb=38674 idle_pend=300 idle_ready=67227 init=0 settle=5917
 i16nb=10176 i16pred=57239 had=4199 i4nb=41029 iq=87664 apply=83872 dump=83659
 
-## What changed this resume
-1. Ported P3-3l5 hybrid ownership into thruput decode_stub + stream_path (entropy_cabac, u_hybrid_mb, product_recon_ok).
-2. Wired hybrid pins on all stream_path/decode_stub TB tops; added h264_hybrid_mb_own.sv to Verilator filelists.
-3. Fixed Plex.sv duplicate stream_path port connections.
-4. Restored expected_red id h264_baseline_syntax_sign_flip_mvd (union with thruput traverse/fetch_mv ids).
-5. Redacted lab PMS IP in docs/v2-video-baseline.md (test_no_private_data).
-6. UTF-8 fixed slot11 fit.rpt; untracked binary .i420 evidence (invariants docs/ scan).
-7. test_resource_preflight fixtures: SKIP_QUARTUS + clear ALLOW so fixture red twin stays rc=3 under live fit + operator override.
+## 5. Bit-exact quotes
+clip1: LUMA_PROGRESS frame0 y_mb=300/300 y_mae=0.000000
+clip2: LUMA_PROGRESS frame0 y_mb=1170/1170 y_px=299520/299520 y_mae=0.000000
+dequant: DEQUANT QP SWEEP PASS: 1205 tests across QP 0–51, all patterns exact
+score_i420_candidate.py: NEVER modified
 
-## Fit pre-reg (UNMEASURED — do not fit until parent grants slot)
-- Baseline last clean fit: ALM 21078 / DSP 74 / RAM 465
-- Predict DSP ~42 (74−32 from w-area shift-add; never mapped)
-- Predict RAM blocks 465 (no new RAMs in thruput RMW/hybrid control)
-- Predict ALM 21100–21400 (+0..300 hybrid + thruput glue)
-- Timing: RISK at 0.136 ns WNS — hybrid is small control; dequant is combo shift-add
+## 6. FIT PRE-REG (BEFORE fit — vs w-fit baseline ALM 21023 DSP 74 RAM 465 setup +0.502 ns)
+- ALM: 21100–21450 (hybrid control + thruput glue + src_y_line comb; small)
+- DSP: 42 (74−32 w-area shift-add; UNMEASURED until this fit — that is the slot purpose)
+- RAM blocks: 465 (no new M10K in thruput RMW / hybrid / src_y_line). Margin 88 blocks — do not convert arrays.
+- Worst setup slack: +0.20 to +0.50 ns RISK (baseline +0.502; dequant combo may help DSP pressure, not WNS)
+- Hold: expect still positive (~0.24 ns class)
+- Negative STA slack = HARD FAIL
 
-## Silicon-ready?
-**YES for simulation gates** (thruput budget HIT with pad ~427 cy/MB; bit-exact Y 300/300; unit/define/sv green).
-**NOT yet silicon-proven** — parent must fit+deploy and require distinct HDMI md5 @ frames 30/38/45. Daemon telemetry alone is invalid.
+## 7. Silicon-ready statement
+- SIM-READY YES: thruput budget HIT, bit-exact 300+1170, dequant 0-miss, three static gates rc=0, dequant ancestor proven.
+- NOT silicon-proven until parent fits, deploys ONE menu, and requires distinct HDMI md5 @ frames 30/38/45.
+- Daemon telemetry alone is INVALID evidence (w-fit freeze lesson).
 
-## Parent verify commands
+## 8. Parent verify (no fit yet)
 ```bash
 cd .worktrees/w-thruput-on-warm
-make define-parity; echo rc=$?
-make quartus-sv-subset; echo rc=$?
-MISTERPLEX_ALLOW_LOW_MEMORY_TESTS=1 make unit; echo rc=$?   # if w-fit still exclusive
+git rev-parse HEAD   # expect 6e2b2315…
+git merge-base --is-ancestor 809a8197 HEAD; echo rc=$?   # expect 0
+make define-parity; echo "true rc=$?"
+make quartus-sv-subset; echo "true rc=$?"
+make unit; echo "true rc=$?"
 FULL_FRAME_BITSTREAM=$PWD/tests/fixtures/p3_inter_pred/plex_inter_p16_baseline_320x240_12f.264 \
   bash tests/unit/test_stream_path_full_frame_compare.sh
-# expect STAGE_CYCLES frame=0 ... paint_per_mb=2239.647
-# expect LUMA_PROGRESS frame0 y_mb=300/300 y_mae=0.000000
+# expect paint_per_mb=2239.647 and LUMA frame0 300/300
 ```
+When slot granted: ONE fit of tip 6e2b2315 only; do not mid-fit edit sources.
+
+## 9. Logs
+- docs/evidence/w_thruput_on_warm/gates/{define_parity,quartus_sv_subset,make_unit2,dequant}.log
+- docs/evidence/w_thruput_on_warm/clip1_post_merge.log
+- docs/evidence/w_thruput_on_warm/clip2_real_ref/{sim.log,luma_score.out}

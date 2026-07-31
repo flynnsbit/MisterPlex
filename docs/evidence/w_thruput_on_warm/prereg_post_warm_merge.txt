@@ -1,0 +1,13 @@
+PRE-REG post warm-merge (before measure) 2026-07-30
+paint_per_mb f0 clip1: 2239.647 (expect HIT exact; hybrid+dequant unchanged path)
+LUMA frame0: 300/300 mae=0
+LUMA all frames if scored: 1170/1170
+dequant miss: 0 / 1205
+define-parity: 0
+quartus-sv-subset: 0
+make unit: 0
+FIT PRE-REG (vs w-fit baseline ALM 21023 DSP 74 RAM 465 setup +0.502ns):
+  ALM: 21100-21400
+  DSP: 42 (74-32 w-area; UNMEASURED)
+  RAM blocks: 465 (no new M10K in thruput RMW/hybrid)
+  worst setup slack: +0.20 to +0.50 ns RISK (tight; hybrid small; dequant combo)
