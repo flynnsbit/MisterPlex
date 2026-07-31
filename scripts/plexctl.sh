@@ -186,13 +186,27 @@ while true; do
   wait "\$child"; st=\$?
   now_ts=\$(date +%s)
   ran_s=\$((now_ts - spawn_ts))
+  # Shell wait status is NOT full waitpid WIF*. Busybox/bash convention used here:
+  #   st < 128  → WIFEXITED-like, exit_status=st  (handled SIGTERM → often st=0)
+  #   st >= 128 → WIFSIGNALED-like, signal=(st-128)  (unhandled fatal / default action)
+  # SIGKILL=9 cannot run daemon EXIT_REASON; look for signal=9 + stale misterplexd.death.
+  if [ "\$st" -ge 128 ]; then
+    sig=\$((st - 128))
+    how="WIFSIGNALED_approx signal=\$sig"
+  else
+    how="WIFEXITED_approx exit_status=\$st"
+  fi
+  death_snap="(absent)"
+  [ -f "\$ROOT/misterplexd.death" ] && death_snap=\$(tr '\\n' ' ' <"\$ROOT/misterplexd.death" | sed 's/[[:space:]]\\+/ /g')
+  last_snap="(absent)"
+  [ -f "\$ROOT/misterplexd.last" ] && last_snap=\$(tr '\\n' ' ' <"\$ROOT/misterplexd.last" | sed 's/[[:space:]]\\+/ /g')
   if [ "\$ran_s" -ge "\$HEALTHY_SECS" ]; then
     if [ "\$backoff" -ne 2 ]; then
       echo "\$(ts) BACKOFF_RESET after healthy run_s=\$ran_s (was \${backoff}s → 2s)" >>"\$SUPLOG"
     fi
     backoff=2
   fi
-  echo "\$(ts) EXIT pid=\$child rc=\$st run_s=\$ran_s — respawn in \${backoff}s" >>"\$SUPLOG"
+  echo "\$(ts) SUPERVISE_EXIT pid=\$child wait_st=\$st \$how run_s=\$ran_s death=[\$death_snap] last=[\$last_snap] — respawn in \${backoff}s" >>"\$SUPLOG"
   resume_stopped_main
   sleep "\$backoff"
   # Grow backoff only after short (unhealthy) runs — not after a reset-worthy life.
