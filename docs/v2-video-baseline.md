@@ -151,7 +151,7 @@ HTTP status on plex.tv and not "device appears in some `/clients` somewhere."
 
 Source bundle (served from the local PMS web UI):
 
-`http://192.168.1.24:32400/web/js/main-8792-5e6a05fd7fbc07797f88-plex-4.160.0-75ddd7b.js`
+`http://YOUR-PLEX-SERVER:32400/web/js/main-8792-5e6a05fd7fbc07797f88-plex-4.160.0-75ddd7b.js`
 (Plex Web **4.160.0**)
 
 The picker does **not** poll "the server you are browsing." It polls a dedicated
@@ -213,7 +213,7 @@ servers (see `comparator` / `Ac` / `vc` above).
 Parent applied locally (SHIELD left running):
 
 ```bash
-curl -X PUT "http://192.168.1.24:32400/:/prefs?FriendlyName=MiSTerPlex%20Studio&X-Plex-Token=…"
+curl -X PUT "http://YOUR-PLEX-SERVER:32400/:/prefs?FriendlyName=MiSTerPlex%20Studio&X-Plex-Token=…"
 # → HTTP 200
 ```
 
