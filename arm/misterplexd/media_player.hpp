@@ -243,6 +243,7 @@ private:
     std::atomic<int64_t> droppedFrames_{0};
     // FPGA presents this session (wall-clock capped)
     int64_t presentCount_ = 0;
+    bool presentScaleLogged_ = false;
     mutable std::mutex mu_;
     std::mutex lifeMu_; // serializes play/stop thr_ join + spawn
     std::thread thr_;

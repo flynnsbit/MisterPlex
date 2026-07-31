@@ -4,6 +4,7 @@
 #include "libmisterplex/idle_screen.hpp"
 #include "libmisterplex/osd_menu.hpp"
 #include "libmisterplex/h264_recon.hpp"
+#include "libmisterplex/frame_store_present.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -1611,6 +1612,7 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                 " clock=wall-48k-audio+every-frame-present");
         usedRgb = true;
         presentCount_ = 0;
+        presentScaleLogged_ = false;
         audioBytes_.store(0);
         std::vector<std::string> args;
         args.push_back(ffmpeg_);
@@ -1890,31 +1892,69 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                 // film; capping at 15 dropped ~37% of frames and looked "slow/off"
                 // vs audio. SPI load at 24fps with short MainPause is acceptable now
                 // that audio is wall-paced (not competing for Main).
+                //
+                // Hybrid silicon frame_store is fixed 320×240 RGB565. DECODE may be
+                // larger (624×480). NEVER gate present on outW_/outH_ equality — that
+                // silent-skipped all FPGA presents at 624×480 (pfps=0.00, no log).
                 const bool reconOwnsF1 = streamEnabled_ && reconPresentOk_.load();
-                if (!reconOwnsF1 && fpga_.ok() && outW_ == 320 && outH_ == 240) {
-                    // Serialise with the OSD poller / idle painter: FpgaSpi keeps
-                    // transaction state, so overlapping ioctls corrupt each other.
-                    std::lock_guard<std::mutex> lk(presentMu_);
-                    bool ok = false;
-                    if (useDdrF1_) {
-                        ok = fpga_.sendRgb24FrameDdr(frame.data(), outW_, outH_, ddrBank_);
-                        ddrBank_ ^= 1;
-                        if (!ok) {
-                            useDdrF1_ = false;
-                            log("media: DDR F1 unavailable, SPI fallback: " + fpga_.lastError());
-                        }
-                    }
-                    if (!ok && !fpga_.sendRgb24Frame(frame.data(), outW_, outH_, /*F1*/ 1)) {
+                if (!reconOwnsF1 && fpga_.ok()) {
+                    const FpgaPresentPrep prep = fpgaPresentPrep(outW_, outH_);
+                    if (prep == FpgaPresentPrep::Reject) {
                         if ((frameIndex % 30) == 0)
-                            log("media: fpga frame_tx: " + fpga_.lastError());
+                            log("media: fpga present reject bad decode geometry " +
+                                std::to_string(outW_) + "x" + std::to_string(outH_));
                     } else {
-                        ++presentCount_;
-                        if ((presentCount_ % 48) == 0) {
-                            log(std::string("media: fpga frame_tx ok via ") +
-                                (useDdrF1_ ? "DDR" : "SPI") +
-                                " presents=" + std::to_string(presentCount_) +
-                                " frames=" + std::to_string(frameIndex) +
-                                " ms=" + std::to_string(static_cast<int>(fpga_.lastPushMs())));
+                        const uint8_t* presentRgb = frame.data();
+                        int pw = outW_;
+                        int ph = outH_;
+                        std::vector<uint8_t> scaledStore;
+                        if (prep == FpgaPresentPrep::ScaleToStore) {
+                            scaledStore.resize(kRgb24FrameStoreBytes);
+                            if (!scaleRgb24ToFrameStore(frame.data(), outW_, outH_,
+                                                        scaledStore.data())) {
+                                if ((frameIndex % 30) == 0)
+                                    log("media: present scale " + std::to_string(outW_) + "x" +
+                                        std::to_string(outH_) + "→320x240 failed");
+                            } else {
+                                presentRgb = scaledStore.data();
+                                pw = kRgb565FrameStoreW;
+                                ph = kRgb565FrameStoreH;
+                                if (!presentScaleLogged_) {
+                                    presentScaleLogged_ = true;
+                                    log("media: present scale decode=" + std::to_string(outW_) +
+                                        "x" + std::to_string(outH_) +
+                                        " → store=320x240 (hybrid RGB565 frame_store)");
+                                }
+                            }
+                        }
+                        if (presentRgb && pw == kRgb565FrameStoreW &&
+                            ph == kRgb565FrameStoreH) {
+                            // Serialise with the OSD poller / idle painter.
+                            std::lock_guard<std::mutex> lk(presentMu_);
+                            bool ok = false;
+                            if (useDdrF1_) {
+                                ok = fpga_.sendRgb24FrameDdr(presentRgb, pw, ph, ddrBank_);
+                                ddrBank_ ^= 1;
+                                if (!ok) {
+                                    useDdrF1_ = false;
+                                    log("media: DDR F1 unavailable, SPI fallback: " +
+                                        fpga_.lastError());
+                                }
+                            }
+                            if (!ok && !fpga_.sendRgb24Frame(presentRgb, pw, ph, /*F1*/ 1)) {
+                                if ((frameIndex % 30) == 0)
+                                    log("media: fpga frame_tx: " + fpga_.lastError());
+                            } else {
+                                ++presentCount_;
+                                if ((presentCount_ % 48) == 0) {
+                                    log(std::string("media: fpga frame_tx ok via ") +
+                                        (useDdrF1_ ? "DDR" : "SPI") +
+                                        " presents=" + std::to_string(presentCount_) +
+                                        " frames=" + std::to_string(frameIndex) +
+                                        " ms=" +
+                                        std::to_string(static_cast<int>(fpga_.lastPushMs())));
+                                }
+                            }
                         }
                     }
                 }
