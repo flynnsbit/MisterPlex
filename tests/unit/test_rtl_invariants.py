@@ -1384,7 +1384,25 @@ def check_ddr_frame_store_yuv_read_contract() -> None:
                 "line_addr=fill_is_chroma?chroma_addr:y_addr",
                 "chroma fill path must issue the selected chroma address",
             ),
-            ("rd_cy=src_y[CODED_Y_W-1:1]", "chroma line lookup must halve the source Y"),
+            # Prefetch/hit Y must follow vertical beam (rd_y_visible), never full
+            # rd_visible. X-gating src_y→0 every HBlank thrashes want_y to line 0
+            # and starves the beam line → left black prefix (parent median ~420 px).
+            (
+                "src_y_line=rd_y_visible?(display_y+CROP_TOP_L):'0",
+                "line identity must track rd_y_visible (not X-gated rd_visible)",
+            ),
+            (
+                "y_line_v2[video_slot]==Y_W'(src_y_line)",
+                "Y linebuf hit must match src_y_line (vertical beam), not X-gated src_y",
+            ),
+            (
+                "want_y_sys<=Y_W'(src_y_line)",
+                "want_y prefetcher must follow src_y_line; src_y thrash is the left-edge class",
+            ),
+            (
+                "rd_cy=src_y_line[CODED_Y_W-1:1]",
+                "chroma line lookup must halve src_y_line (same vertical beam as Y)",
+            ),
             (
                 "c_line_v2[video_slot]==(Y_W-1)'(rd_cy)",
                 "chroma line-buffer hit must compare against the halved source Y",
@@ -1435,7 +1453,7 @@ def check_ddr_frame_store_yuv_read_contract() -> None:
     if not missing_requirements(swapped_coeffs):
         fail("deliberately swapped YUV→RGB R/B chroma inputs did not make the gate red")
     bad_geometry = (
-        nt.replace("rd_cy=src_y[CODED_Y_W-1:1]", "rd_cy=src_y[CODED_Y_W-2:0]")
+        nt.replace("rd_cy=src_y_line[CODED_Y_W-1:1]", "rd_cy=src_y_line[CODED_Y_W-2:0]")
         .replace("c_sel_r<=src_x[3:1]", "c_sel_r<=src_x[2:0]")
         .replace(
             "fill_cy_qword={{(30-Y_W){1'b0}},fill_cy}*C_LINE_QWORDS_W",
@@ -1444,6 +1462,20 @@ def check_ddr_frame_store_yuv_read_contract() -> None:
     )
     if not missing_requirements(bad_geometry):
         fail("deliberately broken chroma half-resolution geometry did not make the gate red")
+    # Legacy left-edge class: want_y / hit from X-gated src_y (HEAD before src_y_line).
+    thrash_want_y = (
+        nt.replace("want_y_sys<=Y_W'(src_y_line)", "want_y_sys<=Y_W'(src_y)")
+        .replace("y_line_v2[video_slot]==Y_W'(src_y_line)", "y_line_v2[video_slot]==Y_W'(src_y)")
+        .replace(
+            "src_y_line=rd_y_visible?(display_y+CROP_TOP_L):'0",
+            "src_y_line=rd_visible?(display_y+CROP_TOP_L):'0",
+        )
+    )
+    if not missing_requirements(thrash_want_y):
+        fail(
+            "deliberately restored X-gated want_y/src_y thrash "
+            "(left black-prefix class) did not make the DDR frame-store gate red"
+        )
     unused_module_decoy = frame_store_source.replace(
         "localparam int C_LINE_QWORDS = CODED_W / 16;",
         "localparam int C_LINE_QWORDS = FRAME_W / 16;",

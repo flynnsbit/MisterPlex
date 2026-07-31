@@ -16,6 +16,8 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
+#include <string>
 #include <vector>
 
 namespace {
@@ -210,8 +212,64 @@ int main() {
         ok = false;
     }
 
-    // Static source guard: the RTL must not feed want_y from full-window src_y.
-    // (compile-time path is the real gate; this prints the contract.)
+    // Static source guard: product RTL must feed want_y / line-hit from src_y_line
+    // (rd_y_visible), never X-gated src_y. DE_LAG is not this gate.
+    {
+        const char* path = "fpga/Plex_MiSTer/rtl/ddr_frame_store.sv";
+        FILE* f = std::fopen(path, "r");
+        if (!f) {
+            // Allow running from build/ via ROOT-relative fallbacks.
+            f = std::fopen("../fpga/Plex_MiSTer/rtl/ddr_frame_store.sv", "r");
+        }
+        if (!f) {
+            std::fputs("MISS: cannot open ddr_frame_store.sv for want_y source guard\n", stderr);
+            ok = false;
+        } else {
+            std::string text;
+            char buf[4096];
+            while (std::size_t n = std::fread(buf, 1, sizeof buf, f))
+                text.append(buf, n);
+            std::fclose(f);
+            auto strip = [](std::string s) {
+                // Drop // line comments then whitespace for needle match.
+                std::string o;
+                o.reserve(s.size());
+                for (size_t i = 0; i < s.size();) {
+                    if (i + 1 < s.size() && s[i] == '/' && s[i + 1] == '/') {
+                        while (i < s.size() && s[i] != '\n')
+                            ++i;
+                        continue;
+                    }
+                    if (s[i] == ' ' || s[i] == '\t' || s[i] == '\n' || s[i] == '\r') {
+                        ++i;
+                        continue;
+                    }
+                    o.push_back(s[i++]);
+                }
+                return o;
+            };
+            const std::string nt = strip(text);
+            const bool has_line =
+                nt.find("src_y_line=rd_y_visible?(display_y+CROP_TOP_L):'0") != std::string::npos;
+            const bool want_ok =
+                nt.find("want_y_sys<=Y_W'(src_y_line)") != std::string::npos;
+            const bool hit_ok =
+                nt.find("y_line_v2[video_slot]==Y_W'(src_y_line)") != std::string::npos;
+            const bool legacy_thrash =
+                nt.find("want_y_sys<=Y_W'(src_y)") != std::string::npos &&
+                nt.find("want_y_sys<=Y_W'(src_y_line)") == std::string::npos;
+            if (!has_line || !want_ok || !hit_ok || legacy_thrash) {
+                std::fputs(
+                    "MISS: ddr_frame_store.sv want_y must track src_y_line "
+                    "(rd_y_visible), not X-gated src_y\n",
+                    stderr);
+                ok = false;
+            } else {
+                std::puts("PASS RTL source: want_y/hit follow src_y_line (no HBlank thrash)");
+            }
+        }
+    }
+
     std::puts(ok ? "test_ddr_want_y_hblank_thrash: PASS" : "test_ddr_want_y_hblank_thrash: FAIL");
     return ok ? 0 : 1;
 }
