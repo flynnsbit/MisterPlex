@@ -39,3 +39,6 @@ tests/unit/test_input_mailbox
 # Playwright e2e (local install + runtime artifacts)
 tests/hw/e2e/node_modules/
 build/e2e-artifacts/
+
+build/e2e-hdmi-capture/
+build/e2e-hdmi-empty/

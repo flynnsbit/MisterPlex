@@ -19,7 +19,10 @@ API-only checks do **not** satisfy this suite — Playwright is mandatory.
    match `PLEX_BASE` (or `EXPECT_COMPANION_HOST`). This is the FriendlyName sort-order
    regression gate.
 7. Select MiSTerPlex, start Play, confirm companion timeline `state=playing`.
-8. Best-effort pause; stop via UI or companion HTTP.
+8. Optional **HDMI motion** stage (`E2E_HDMI_MOTION=1`) — parent captures; suite scores.
+9. Best-effort pause; stop via UI or companion HTTP.
+10. **Hard teardown** — blank page, close page/context/browser, force companion stop,
+    assert timeline is quiescent (`TEARDOWN_OK`). Dirty teardown is a **FAIL**.
 
 Failure messages distinguish:
 
@@ -33,6 +36,10 @@ Failure messages distinguish:
 | `play_button_not_found` | Details ready; Play control selector drift |
 | `playback_did_not_start` | Picker OK; cast/play path broken |
 | `select_player_control_not_found` | UI layout/selector drift |
+| `teardown_device_not_quiescent` | Browser/controller left daemon playing/paused after exit |
+| `hdmi_motion_no_frames` | HDMI stage on but capture dir empty (parent must grab) |
+| `hdmi_motion_unscored` | Instrument rc=77 — hard FAIL in this gate |
+| `hdmi_motion_freeze` / `hdmi_motion_color_fail` | Instrument rc=1 / rc=2 |
 
 ## Prerequisites
 
@@ -77,6 +84,11 @@ Optional overrides:
 | `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH` | auto/cache | Chrome for Testing binary |
 | `PW_HEADED=1` | off | Headed browser |
 | `E2E_OUT` | `build/e2e-artifacts` | Screenshots |
+| `E2E_HDMI_MOTION` | `0` | `1` = optional pixel gate via parent HDMI capture |
+| `E2E_HDMI_CAPTURE_DIR` | `build/e2e-hdmi-capture` | PNG burst dir (parent-filled) |
+| `E2E_HDMI_HOLD_SEC` | `20` | Hold `playing` so parent can capture |
+| `E2E_HDMI_WARMUP_SKIP` | `15` | Passed to motion instrument |
+| `E2E_HDMI_VIDEO_DEV` | `/dev/video0` | **Parent only** — printed in capture cmd |
 
 Conf fallback: `MISTERPLEX_CONF` or `~/.config/misterplex/misterplex.conf`.
 
@@ -84,11 +96,50 @@ Conf fallback: `MISTERPLEX_CONF` or `~/.config/misterplex/misterplex.conf`.
 
 | rc | Meaning |
 |----|---------|
-| 0 | PASS |
-| 1 | FAIL (picker, companion, or playback) |
+| 0 | PASS (includes verified `TEARDOWN_OK`) |
+| 1 | FAIL (picker, companion, playback, teardown, or HDMI motion) |
 | 77 | SKIP-NOT-PASS — missing deps/env/PMS (not green) |
 
 Soft-skip is **not** a pass. A missing MiSTerPlex in the picker is always **FAIL**.
+Instrument `rc=77 UNSCORED` under `E2E_HDMI_MOTION=1` is a **hard FAIL**.
+
+## Interference warning — do not run during soak / CPU windows
+
+This suite drives real Plex Web as a cast **controller**. While the browser is open it
+long-polls `/player/timeline/poll?wait=1` and can issue pause/stop. That **will corrupt**
+concurrent playback, CPU sampling, and soak measurements on the same daemon.
+
+- Do **not** run this suite while a soak, HDMI motion burst for another test, or parent
+  CPU window is in progress on the same MiSTer.
+- Teardown must log `TEARDOWN_OK` (timeline not playing/paused). If you see
+  `teardown_device_not_quiescent`, treat the device as dirty until manually stopped.
+- Default path force-stops the companion and closes the browser context even on failure.
+
+## Optional HDMI motion stage (parent-owned grabber)
+
+When `E2E_HDMI_MOTION=1`, after timeline `playing` the suite:
+
+1. Prints `PARENT_HDMI_CAPTURE_CMD` and `PARENT_HDMI_SCORE_CMD` (exact commands).
+2. Holds playback for `E2E_HDMI_HOLD_SEC` so the **parent** can capture.
+3. **Never opens `/dev/video0`** (exclusive parent hardware).
+4. If `E2E_HDMI_CAPTURE_DIR` already contains PNGs, runs
+   `tools/hdmi_motion_instrument.py` and requires `MOTION_OK` (rc=0).
+
+```bash
+# Terminal A — suite (holds playing ~20s when HDMI stage on)
+E2E_HDMI_MOTION=1 E2E_HDMI_CAPTURE_DIR=build/e2e-hdmi-capture \
+  E2E_HDMI_HOLD_SEC=25 \
+  PLEX_BASE=… PLEX_TOKEN=… PLEX_RATING_KEY=3 PLEX_WEB_USER=… \
+  ./tests/hw/e2e/run_cast_picker.sh
+echo "true rc=$?"
+
+# Terminal B — parent, during HDMI_HOLD (from suite log PARENT_HDMI_CAPTURE_CMD)
+mkdir -p build/e2e-hdmi-capture
+ffmpeg -y -v error -f v4l2 -input_format mjpeg -video_size 1920x1080 \
+  -i /dev/video0 -frames:v 50 build/e2e-hdmi-capture/f_%04d.png
+```
+
+If the capture dir is empty at score time → `hdmi_motion_no_frames` (FAIL, not skip).
 
 ## Topology note
 
@@ -105,3 +156,4 @@ scans the tree. Use env or a gitignored conf file.
 
 - `docs/select-player-runbook.md` — companionServer / FriendlyName diagnosis
 - `docs/v2-video-baseline.md` — Plex Web picker mechanism (bundle citations)
+- `tools/hdmi_motion_instrument.py` — burned-in counter / green-cast scorer

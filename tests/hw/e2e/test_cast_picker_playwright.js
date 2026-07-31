@@ -35,7 +35,8 @@ const fs = require('fs');
 const http = require('http');
 const https = require('https');
 const path = require('path');
-const { loadConfig, daemonBase, redact } = require('./conf');
+const { spawnSync } = require('child_process');
+const { loadConfig, daemonBase, redact, ROOT } = require('./conf');
 
 const EXIT_PASS = 0;
 const EXIT_FAIL = 1;
@@ -52,10 +53,21 @@ function skip(reason) {
   process.exit(EXIT_SKIP);
 }
 
+/** Thrown instead of process.exit so try/finally teardown always runs. */
+class FailError extends Error {
+  constructor(reason, detail) {
+    super(reason);
+    this.name = 'FailError';
+    this.reason = reason;
+    this.detail = detail || '';
+    this.exitCode = EXIT_FAIL;
+  }
+}
+
 function fail(reason, detail) {
   console.error(`FAIL test_cast_picker_playwright: ${reason}`);
   if (detail) console.error(detail);
-  process.exit(EXIT_FAIL);
+  throw new FailError(reason, detail);
 }
 
 function ensureOutDir() {
@@ -799,6 +811,244 @@ async function waitPlayingOnDaemon(seconds) {
   return { playing, advance, maxT, last };
 }
 
+function sleep(ms) {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+/** Force companion stop — does not depend on browser still being alive. */
+async function forceStopDaemon(tag = 'teardown') {
+  for (let i = 0; i < 4; i++) {
+    const r = await httpGet(
+      `${daemonBase(cfg)}/player/playback/stop?commandID=${9800 + i}`,
+      {},
+      3000
+    );
+    log(`${tag}_stop_http i=${i} status=${r.status}`);
+  }
+}
+
+/**
+ * Device must be idle after the suite: not playing/paused with an active session.
+ * Parent measured leftover Plex Web long-poll controllers issuing pause/stop
+ * under concurrent CPU windows — browser close alone is not enough without
+ * verifying the companion timeline is quiescent.
+ */
+async function verifyDaemonQuiescent(maxMs = 12000) {
+  const deadline = Date.now() + maxMs;
+  let lastXml = '';
+  let lastState = '';
+  let lastTime = '';
+  while (Date.now() < deadline) {
+    lastXml = await pollDaemonTimeline(9700 + (Date.now() % 50));
+    lastState = xmlAttr(lastXml, 'state') || '';
+    lastTime = xmlAttr(lastXml, 'time') || '';
+    const dur = xmlAttr(lastXml, 'duration') || '0';
+    // Accept stopped, or buffering/navigation with no active media duration.
+    if (lastState === 'stopped') {
+      return { ok: true, state: lastState, time: lastTime, xml: lastXml };
+    }
+    if (
+      (lastState === 'buffering' || lastState === '') &&
+      (dur === '0' || dur === '' || lastTime === '0')
+    ) {
+      // Confirm stability across a second sample (no controller re-starting).
+      await sleep(800);
+      const xml2 = await pollDaemonTimeline(9750);
+      const s2 = xmlAttr(xml2, 'state') || '';
+      const t2 = xmlAttr(xml2, 'time') || '';
+      const d2 = xmlAttr(xml2, 'duration') || '0';
+      if (s2 === 'playing' || s2 === 'paused') {
+        lastState = s2;
+        lastTime = t2;
+        lastXml = xml2;
+        continue;
+      }
+      if (s2 === 'stopped' || d2 === '0' || d2 === '' || t2 === '0') {
+        return { ok: true, state: s2 || lastState, time: t2 || lastTime, xml: xml2 };
+      }
+    }
+    // Still dirty — hammer stop again.
+    if (lastState === 'playing' || lastState === 'paused') {
+      await forceStopDaemon('teardown_retry');
+    }
+    await sleep(500);
+  }
+  return { ok: false, state: lastState, time: lastTime, xml: lastXml };
+}
+
+/**
+ * Kill the browser controller hard: blank page (drops wait=1 timeline polls),
+ * close page → context → browser. Must run even on failure paths.
+ */
+async function closeBrowserController(page, context, browser, tracker) {
+  try {
+    if (page && !page.isClosed()) {
+      await page.goto('about:blank', { waitUntil: 'domcontentloaded', timeout: 5000 }).catch(() => {});
+      await page.close({ runBeforeUnload: false }).catch(() => {});
+    }
+  } catch (_) {
+    /* ignore */
+  }
+  try {
+    if (tracker) tracker.detach();
+  } catch (_) {
+    /* ignore */
+  }
+  try {
+    if (context) await context.close();
+  } catch (_) {
+    /* ignore */
+  }
+  try {
+    if (browser) await browser.close();
+  } catch (_) {
+    /* ignore */
+  }
+  log('browser_controller_closed');
+}
+
+/**
+ * Full teardown: stop media, destroy browser controller, assert quiescent.
+ * Returns { ok, detail }. Caller must FAIL the run if ok=false after a pass path.
+ */
+async function hardTeardown(page, context, browser, tracker) {
+  await forceStopDaemon('teardown');
+  await closeBrowserController(page, context, browser, tracker);
+  // Brief settle so any in-flight wait=1 from the closed browser dies.
+  await sleep(1500);
+  await forceStopDaemon('teardown_post_browser');
+  const q = await verifyDaemonQuiescent(12000);
+  if (q.ok) {
+    log(`TEARDOWN_OK state=${q.state || 'stopped'} time=${q.time || '0'}`);
+    return { ok: true, ...q };
+  }
+  log(`TEARDOWN_DIRTY state=${q.state || '?'} time=${q.time || '?'}`);
+  return { ok: false, ...q };
+}
+
+function countPngs(dir) {
+  try {
+    if (!fs.existsSync(dir)) return 0;
+    return fs.readdirSync(dir).filter((f) => /\.png$/i.test(f)).length;
+  } catch (_) {
+    return 0;
+  }
+}
+
+function parentHdmiCaptureCmd(cfg) {
+  const dir = cfg.hdmiCaptureDir;
+  // Parent-owned MacroSilicon path. Suite never opens this device.
+  // Warm-up: instrument discards first --warmup-skip frames; capture enough extras.
+  const n = Math.max(40, cfg.hdmiWarmupSkip + 30);
+  return (
+    `mkdir -p ${JSON.stringify(dir)} && ` +
+    `ffmpeg -y -v error -f v4l2 -input_format mjpeg -video_size 1920x1080 ` +
+    `-i ${cfg.hdmiVideoDev} -frames:v ${n} ${JSON.stringify(path.join(dir, 'f_%04d.png'))}`
+  );
+}
+
+function parentHdmiScoreCmd(cfg) {
+  const tool = path.join(ROOT, 'tools', 'hdmi_motion_instrument.py');
+  return (
+    `python3 ${JSON.stringify(tool)} ${JSON.stringify(cfg.hdmiCaptureDir)} ` +
+    `--warmup-skip ${cfg.hdmiWarmupSkip} --json; echo "true rc=$?"`
+  );
+}
+
+/**
+ * Optional conf-gated HDMI motion stage.
+ * - Never opens /dev/video0 (parent owns capture).
+ * - Prints exact parent capture + score commands.
+ * - Holds playback so parent can capture during E2E_HDMI_HOLD_SEC.
+ * - If capture dir already has PNGs, runs the instrument and asserts:
+ *     rc=0 MOTION_OK required
+ *     rc=77 UNSCORED → hard FAIL (not inconclusive)
+ *     rc=1 FREEZE / rc=2 COLOR_FAIL → hard FAIL
+ */
+async function optionalHdmiMotionStage() {
+  if (!cfg.hdmiMotion) {
+    log('HDMI_MOTION=off (set E2E_HDMI_MOTION=1 to enable parent-scored pixel gate)');
+    return { enabled: false };
+  }
+
+  const capDir = cfg.hdmiCaptureDir;
+  const captureCmd = parentHdmiCaptureCmd(cfg);
+  const scoreCmd = parentHdmiScoreCmd(cfg);
+  log('HDMI_MOTION=on');
+  log(`HDMI_CAPTURE_DIR=${capDir}`);
+  log(`PARENT_HDMI_CAPTURE_CMD=${captureCmd}`);
+  log(`PARENT_HDMI_SCORE_CMD=${scoreCmd}`);
+  log(
+    `HDMI_HOLD_SEC=${cfg.hdmiHoldSec} — parent should run PARENT_HDMI_CAPTURE_CMD now while playback holds`
+  );
+
+  // Hold playing so parent can grab a burst. Suite does NOT touch the grabber.
+  const holdMs = Math.max(0, cfg.hdmiHoldSec) * 1000;
+  const holdEnd = Date.now() + holdMs;
+  let cmd = 8500;
+  while (Date.now() < holdEnd) {
+    const xml = await pollDaemonTimeline(cmd++);
+    log(`  hdmi_hold state=${xmlAttr(xml, 'state') || '?'} time=${xmlAttr(xml, 'time') || '?'}`);
+    await sleep(1000);
+  }
+
+  const nPng = countPngs(capDir);
+  log(`hdmi_capture_png_count=${nPng} dir=${capDir}`);
+  if (nPng < 3) {
+    fail(
+      'hdmi_motion_no_frames',
+      `E2E_HDMI_MOTION=1 but capture dir has ${nPng} PNGs (need ≥3).\n` +
+        'Parent must run PARENT_HDMI_CAPTURE_CMD during HDMI_HOLD (suite never opens /dev/video0).\n' +
+        `CAPTURE: ${captureCmd}\n` +
+        `SCORE:   ${scoreCmd}`
+    );
+  }
+
+  const tool = path.join(ROOT, 'tools', 'hdmi_motion_instrument.py');
+  if (!fs.existsSync(tool)) {
+    fail(
+      'hdmi_motion_instrument_missing',
+      `Missing ${tool}. Land tools/hdmi_motion_instrument.py on this tree before enabling E2E_HDMI_MOTION.`
+    );
+  }
+
+  log(`hdmi_score spawning instrument on ${capDir}`);
+  const res = spawnSync(
+    'python3',
+    [tool, capDir, '--warmup-skip', String(cfg.hdmiWarmupSkip), '--json'],
+    { encoding: 'utf8', timeout: 300000 }
+  );
+  const out = `${res.stdout || ''}${res.stderr || ''}`;
+  for (const line of out.split('\n').filter(Boolean).slice(-30)) {
+    log(`  instrument: ${line.slice(0, 240)}`);
+  }
+  // Capture true rc directly (spawnSync status) — never through a pipe.
+  const rc = typeof res.status === 'number' ? res.status : 99;
+  log(`hdmi_instrument true rc=${rc}`);
+
+  if (rc === 77) {
+    fail(
+      'hdmi_motion_unscored',
+      'hdmi_motion_instrument.py returned rc=77 UNSCORED — treated as hard FAIL in this gate ' +
+        '(soft-skip is never a pass). Re-capture with a longer burst / confirm TREK24 overlay.'
+    );
+  }
+  if (rc === 1) {
+    fail('hdmi_motion_freeze', `instrument FREEZE rc=1\n${out.slice(-500)}`);
+  }
+  if (rc === 2) {
+    fail('hdmi_motion_color_fail', `instrument COLOR_FAIL rc=2\n${out.slice(-500)}`);
+  }
+  if (rc !== 0) {
+    fail(
+      'hdmi_motion_instrument_failed',
+      `instrument unexpected rc=${rc}\n${out.slice(-500)}`
+    );
+  }
+  log('HDMI_MOTION_OK instrument rc=0');
+  return { enabled: true, rc: 0, pngs: nPng };
+}
+
 (async () => {
   log('test_cast_picker_playwright: BEGIN');
   log(`conf=${cfg.confPath} library=${cfg.libraryName} item~=${cfg.itemTitle} cast=${cfg.castName}`);
@@ -912,6 +1162,10 @@ async function waitPlayingOnDaemon(seconds) {
   const page = await context.newPage();
   page.setDefaultTimeout(cfg.timeoutMs);
   page.on('pageerror', (e) => log(`browser-err ${String(e.message).slice(0, 100)}`));
+
+  let suitePassed = false;
+  let teardownResult = null;
+  let bodyError = null;
 
   try {
     // ── 1. Launch Plex Web on LOCAL PMS ─────────────────────────────────────
@@ -1121,7 +1375,10 @@ async function waitPlayingOnDaemon(seconds) {
     }
     log(`playing_ok samples=${prog.playing} advance=${prog.advance} time_max_ms=${prog.maxT}`);
 
-    // ── 5. Pause (best-effort) + Stop ───────────────────────────────────────
+    // ── 4b. Optional HDMI motion (parent capture; suite never opens video0) ─
+    const hdmi = await optionalHdmiMotionStage();
+
+    // ── 5. Pause (best-effort) + Stop via UI, then hard teardown ────────────
     const toggled = await clickPauseOrPlayToggle(page);
     if (toggled) {
       log(`pause_or_toggle ${toggled}`);
@@ -1137,26 +1394,73 @@ async function waitPlayingOnDaemon(seconds) {
       await shot(page, 'fail_stop');
       fail('stop_failed', 'Could not stop via UI or companion HTTP.');
     }
-    await page.waitForTimeout(1500);
+    await page.waitForTimeout(800);
     const afterStop = await pollDaemonTimeline(9002);
     log(`after_stop state=${xmlAttr(afterStop, 'state') || '?'}`);
     await shot(page, '05_stopped');
 
+    // Mark logical pass before teardown — teardown failure must still RED the run.
+    suitePassed = true;
+    log(
+      `suite_body_ok picker=ok companion=${(companion.matched || companion.hosts || []).join(',') || 'ok'} ` +
+        `play=ok hdmi=${hdmi.enabled ? 'ok' : 'off'} stop=ok cast=${cfg.castName} ` +
+        `ratingKey=${ratingKey} time_max_ms=${prog.maxT} context_requests=${tracker.all.length}`
+    );
+  } catch (e) {
+    suitePassed = false;
+    if (e instanceof FailError) {
+      bodyError = e;
+    } else {
+      await shot(page, 'fail_unhandled').catch(() => {});
+      console.error(`FAIL test_cast_picker_playwright: unhandled_error`);
+      console.error(redact(e.stack || e.message || String(e)));
+      bodyError = new FailError('unhandled_error', redact(e.stack || e.message || String(e)));
+    }
+  } finally {
+    teardownResult = await hardTeardown(page, context, browser, tracker).catch((te) => ({
+      ok: false,
+      state: 'teardown_error',
+      err: te.message,
+    }));
+  }
+
+  if (bodyError) {
+    // Body already printed FAIL lines via fail() / unhandled path.
+    process.exit(bodyError.exitCode || EXIT_FAIL);
+  }
+
+  if (suitePassed && teardownResult && !teardownResult.ok) {
+    console.error('FAIL test_cast_picker_playwright: teardown_device_not_quiescent');
+    console.error(
+      'Suite body passed but device/controller was left dirty after teardown.\n' +
+        `state=${teardownResult.state || '?'} time=${teardownResult.time || '?'} ` +
+        `err=${teardownResult.err || ''}\n` +
+        'Plex Web must not keep long-polling /player/timeline/poll or issuing pause/stop ' +
+        'after the suite exits (corrupts concurrent CPU/soak measurements).'
+    );
+    process.exit(EXIT_FAIL);
+  }
+  if (suitePassed && teardownResult && teardownResult.ok) {
     log('CAST_PICKER_E2E_RESULT=PASS');
     log(
-      `summary picker=ok companion=${(companion.matched || companion.hosts || []).join(',') || 'ok'} ` +
-        `play=ok stop=ok cast=${cfg.castName} ratingKey=${ratingKey} time_max_ms=${prog.maxT} ` +
-        `context_requests=${tracker.all.length}`
+      `summary picker=ok play=ok stop=ok teardown=ok cast=${cfg.castName} ratingKey=${ratingKey}`
     );
     process.exitCode = EXIT_PASS;
-  } catch (e) {
-    await shot(page, 'fail_unhandled');
-    fail('unhandled_error', redact(e.stack || e.message || String(e)));
-  } finally {
-    tracker.detach();
-    await browser.close().catch(() => {});
+    return;
   }
+  process.exit(EXIT_FAIL);
 })().catch((e) => {
   console.error(`UNHANDLED: ${redact(e.message || e)}`);
+  try {
+    http
+      .get(
+        `${daemonBase(cfg)}/player/playback/stop?commandID=9799`,
+        { timeout: 2000 },
+        (res) => res.resume()
+      )
+      .on('error', () => {});
+  } catch (_) {
+    /* ignore */
+  }
   process.exit(EXIT_SKIP);
 });

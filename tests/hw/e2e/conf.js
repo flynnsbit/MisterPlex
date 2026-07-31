@@ -76,6 +76,20 @@ function loadConfig() {
     // Optional override for companion-server host assert (comma-separated).
     // Default: hostname of PLEX_BASE (+ loopback unless ALLOW_LOOPBACK_COMPANION=0).
     expectCompanionHost: process.env.EXPECT_COMPANION_HOST || '',
+    // Optional HDMI motion gate (parent-owned grabber). Default OFF.
+    // When on: suite holds playback, prints parent capture+score commands, and
+    // if E2E_HDMI_CAPTURE_DIR already has PNGs, runs tools/hdmi_motion_instrument.py
+    // (never opens /dev/video0 itself). Instrument rc=77 → hard FAIL.
+    hdmiMotion: /^(1|true|yes|on)$/i.test(
+      String(process.env.E2E_HDMI_MOTION || conf.E2E_HDMI_MOTION || '0')
+    ),
+    hdmiCaptureDir:
+      process.env.E2E_HDMI_CAPTURE_DIR ||
+      conf.E2E_HDMI_CAPTURE_DIR ||
+      path.join(ROOT, 'build', 'e2e-hdmi-capture'),
+    hdmiHoldSec: parseInt(process.env.E2E_HDMI_HOLD_SEC || conf.E2E_HDMI_HOLD_SEC || '20', 10),
+    hdmiWarmupSkip: parseInt(process.env.E2E_HDMI_WARMUP_SKIP || '15', 10),
+    hdmiVideoDev: process.env.E2E_HDMI_VIDEO_DEV || '/dev/video0',
   };
 }
 
