@@ -1628,6 +1628,14 @@ def check_present_geometry_stride_contract() -> None:
                 "RTL chroma DDR line stride must be CODED_W/16 qwords (312 bytes), not display/FRAME width",
             ),
             (
+                # DDR row pitch in the fill FSM — this is the reader stride that must
+                # match ARM line_bytes. Default CODED_W=FRAME_W (640) would walk 640 B/line
+                # while the writer lays 624 B/line → 16 px leftward creep per scanline.
+                frame_norm,
+                "fill_y_qword={{(29-Y_W){1'b0}},fill_y}*Y_LINE_QWORDS_W",
+                "RTL DDR Y fill address must step by Y_LINE_QWORDS (CODED_W/8), never FRAME_W",
+            ),
+            (
                 frame_norm,
                 "PRESENT_END_X=X_W'(PRESENT_X+DISPLAY_W)",
                 "RTL visible area must end at pillar_left + display_width, leaving the right pillar outside DDR",
@@ -1642,6 +1650,18 @@ def check_present_geometry_stride_contract() -> None:
                 "fill_cy_qword={{(30-Y_W){1'b0}},fill_cy}*C_LINE_QWORDS_W",
                 "RTL chroma fetch address must stride by 312-byte chroma lines",
             ),
+            (
+                # Product path is planar YUV420p. RGB565_LINE_QWORDS must not appear in
+                # the store body (kills the "640 px RGB565 vs 624 pitch" theory for DDR).
+                frame_norm,
+                "Y_PLANE_QWORDS=29'((CODED_W*CODED_H)/8)",
+                "RTL product DDR store is YUV planar (Y plane qwords from CODED_W*CODED_H), not RGB565",
+            ),
+            (
+                frame_norm,
+                "rd_miss_now=rd_active&&rd_visible&&has_frame&&(!y_hit_now||!c_hit_now)",
+                "RTL must black on linebuf miss — mid-line late-hit is the other ragged-left mechanism",
+            ),
         ]
         return [msg for haystack, needle, msg in required if needle not in haystack]
 
@@ -1649,14 +1669,19 @@ def check_present_geometry_stride_contract() -> None:
     if missing:
         fail(f"present geometry/stride contract: {missing[0]}")
 
+    def present_ddr_wiring_ok(p_nt: str) -> bool:
+        return (
+            ".FRAME_W(FRAME_W)" in p_nt
+            and ".FRAME_H(FRAME_H)" in p_nt
+            and ".CODED_W(DDR_FRAME_CODED_WIDTH)" in p_nt
+            and ".DISPLAY_W(DDR_FRAME_DISPLAY_WIDTH)" in p_nt
+            and ".PRESENT_X(DDR_FRAME_PILLARBOX_LEFT)" in p_nt
+            and ".HPS_BANK_STRIDE_BYTES(DDR_FRAME_YUV420P_BANK_STRIDE)" in p_nt
+            and ".DOORBELL_PHYS(DDR_FRAME_YUV420P_DOORBELL_PHYS)" in p_nt
+        )
+
     check(
-        ".FRAME_W(FRAME_W)" in present_nt
-        and ".FRAME_H(FRAME_H)" in present_nt
-        and ".CODED_W(DDR_FRAME_CODED_WIDTH)" in present_nt
-        and ".DISPLAY_W(DDR_FRAME_DISPLAY_WIDTH)" in present_nt
-        and ".PRESENT_X(DDR_FRAME_PILLARBOX_LEFT)" in present_nt
-        and ".HPS_BANK_STRIDE_BYTES(DDR_FRAME_YUV420P_BANK_STRIDE)" in present_nt
-        and ".DOORBELL_PHYS(DDR_FRAME_YUV420P_DOORBELL_PHYS)" in present_nt,
+        present_ddr_wiring_ok(present_nt),
         "present_core must instantiate ddr_frame_store from the shared layout params: "
         "FRAME_W=640 for scanout, CODED_W=624 for DDR stride, DISPLAY_W=618 for crop, "
         "PRESENT_X=11 for pillarbox.",
@@ -1690,6 +1715,14 @@ def check_present_geometry_stride_contract() -> None:
     bad_chroma_stride = frame_nt.replace("C_LINE_QWORDS=CODED_W/16", "C_LINE_QWORDS=FRAME_W/16")
     if not missing_stride_requirements(host_nt, media_nt, bad_chroma_stride, ffmpeg_vf_nt):
         fail("deliberately changed RTL chroma stride 312→320 did not make the geometry gate red")
+    bad_luma_stride_frame_w = frame_nt.replace(
+        "Y_LINE_QWORDS=CODED_W/8", "Y_LINE_QWORDS=FRAME_W/8"
+    )
+    if not missing_stride_requirements(host_nt, media_nt, bad_luma_stride_frame_w, ffmpeg_vf_nt):
+        fail(
+            "deliberately changed RTL luma stride CODED_W/8→FRAME_W/8 "
+            "(640 B/line reader vs 624 B writer = 16 px/line shear) did not make the gate red"
+        )
     # Classic shear: FPGA-present geometry follows DECODE (320) instead of silicon 624.
     bad_fpga_present_identity = host_nt.replace(
         "inlineDdrFrameGeometryddrFrameGeometryForFpgaPresent(CodedWidth,CodedHeight)"
@@ -1711,10 +1744,40 @@ def check_present_geometry_stride_contract() -> None:
             "deliberately selected identity-DECODE geometry on PRESENT=fpga "
             "did not make the geometry gate red"
         )
+    # Dropping the explicit CODED_W port leaves parameter default CODED_W=FRAME_W=640
+    # → reader Y pitch 640 B/line while ARM writes 624 → 16 px/line leftward creep.
+    present_drop_coded = present_nt.replace(".CODED_W(DDR_FRAME_CODED_WIDTH)", "")
+    if present_ddr_wiring_ok(present_drop_coded):
+        fail(
+            "deliberately dropping .CODED_W(DDR_FRAME_CODED_WIDTH) "
+            "(default CODED_W=FRAME_W=640 shear) did not make the wiring gate red"
+        )
+
+    # Product DDR is YUV: RGB565 line-qword constant must not drive the store body.
+    check(
+        "RGB565_LINE_QWORDS" not in frame_nt and "DDR_FRAME_RGB565" not in frame_nt,
+        "ddr_frame_store must not reference RGB565 line geometry "
+        "(product path is YUV420p; 640×2 vs 624×2 RGB pitch theory does not apply)",
+    )
+
+    # Arithmetic pin: writer 624 B/line vs reader default-640 B/line = 16 B = 16 px/line.
+    coded_w = cpp_const(strip_comments(read(DDR_FRAME_LAYOUT_HPP)), "kPlex480pCodedWidth")
+    presented_w = cpp_const(strip_comments(read(DDR_FRAME_LAYOUT_HPP)), "kPlex480pPresentedWidth")
+    check(coded_w == 624 and presented_w == 640, "coded/presented constants drifted")
+    check(
+        (presented_w - coded_w) == 16,
+        "expected 16 px creep if reader wrongly used FRAME_W pitch against coded writer",
+    )
 
     print(
         "PASS present geometry/stride chain is declared end-to-end "
         "(coded 624 stride, display 618 crop, presented 640 with 11px pillars, chroma stride 312)"
+    )
+    print(
+        "PASS reader pitch is YUV CODED_W (not RGB565/FRAME_W); "
+        "CODED_W port + Y_LINE_QWORDS=CODED_W/8 red-checks armed; "
+        "NOTE: constant parity is BLIND to mid-line linebuf miss shear "
+        "(rd_miss_now→black) — that needs sim/fit, not define-parity"
     )
 
 
