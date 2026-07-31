@@ -157,8 +157,18 @@ module ddr_frame_store #(
 	wire rd_visible = rd_x_visible && rd_y_visible;
 	wire [X_W-1:0] display_x = rd_x - PRESENT_X_L;
 	wire [Y_W-1:0] display_y = rd_y - PRESENT_Y_L;
+	// Pixel path: X+Y gate (outside present window → black / addr 0).
 	wire [CODED_X_W-1:0] src_x = rd_visible ? (display_x + CROP_LEFT_L) : '0;
 	wire [CODED_Y_W-1:0] src_y = rd_visible ? (display_y + CROP_TOP_L) : '0;
+	// Line identity / prefetch path: follow the vertical beam whenever Y is inside
+	// the present band — independent of horizontal blank. Gating line match and
+	// want_y on full rd_visible forced src_y→0 every HBlank (including store_x=LAST),
+	// which thrashed the fill scheduler off the beam line and produced a variable
+	// black prefix at DE open (parent: ragged left edge, interiors aligned, median
+	// miss ~420 px on silicon). Do NOT use force_top (WANT_Y_FORCE_TOP) — that
+	// freeze-class latch cost two fits; vsync/leave-VBlank naturally returns the
+	// beam (and thus want_y) to the top via present_core store_y.
+	wire [CODED_Y_W-1:0] src_y_line = rd_y_visible ? (display_y + CROP_TOP_L) : '0;
 	wire [Y_QW_AW-1:0] y_rd_addr = src_x[CODED_X_W-1:3];
 	wire [C_QW_AW-1:0] c_rd_addr = src_x[CODED_X_W-1:4];
 
@@ -297,9 +307,9 @@ module ddr_frame_store #(
 	reg [63:0] selected_y_q, selected_u_q, selected_v_q;
 	reg [SLOT_W-1:0] video_slot;
 `ifdef DDR_FRAME_STORE_FAULT_CHROMA_VERTICAL_FULLRES
-	wire [CODED_Y_W-2:0] rd_cy = src_y[CODED_Y_W-2:0];
+	wire [CODED_Y_W-2:0] rd_cy = src_y_line[CODED_Y_W-2:0];
 `else
-	wire [CODED_Y_W-2:0] rd_cy = src_y[CODED_Y_W-1:1];
+	wire [CODED_Y_W-2:0] rd_cy = src_y_line[CODED_Y_W-1:1];
 `endif
 	always @* begin
 		y_hit_now = 1'b0;
@@ -311,8 +321,9 @@ module ddr_frame_store #(
 		selected_v_q = 64'd0;
 		for (vi = 0; vi < LINE_COUNT; vi = vi + 1) begin
 			video_slot = (disp_buf ? SECOND_SET_BASE : '0) + vi[SLOT_W-1:0];
+			// Match beam line via src_y_line (Y-visible), not X-gated src_y.
 			if (y_valid_v2[video_slot] && (y_bank_v2[video_slot] == disp_bank)
-			    && (y_line_v2[video_slot] == Y_W'(src_y)) && !y_hit_now) begin
+			    && (y_line_v2[video_slot] == Y_W'(src_y_line)) && !y_hit_now) begin
 				y_hit_now = 1'b1;
 				y_hit_idx_now = video_slot;
 			end
@@ -329,14 +340,9 @@ module ddr_frame_store #(
 			end
 		end
 	end
-	// Miss when the line under the beam is not yet in an M10K slot. If DDR fill
-	// completes MID-line, later pixels transition miss→hit and the left edge of
-	// real content wanders by tens of pixels per scanline (parent measured ~44 px
-	// after the ARM stride fix). That is a prefetch/CDC budget issue, not an ARM
-	// writer margin bug: pack/FFmpeg use a constant x0 per frame.
-	// REQUIRES_FIT: tighten want_y lead / LINE_COUNT / blank-time fill so
-	// y_hit_now is true before DE opens each line; optional sticky-miss-to-EOL
-	// only converts wander into full black lines (still a fail).
+	// Miss when the line under the beam is not yet in an M10K slot → RGB black.
+	// Primary left-edge class: HBlank want_y/src_y thrash (fixed via src_y_line).
+	// Residual miss under true DDR backlog still counts as underrun.
 	wire rd_miss_now = rd_active && rd_visible && has_frame && (!y_hit_now || !c_hit_now);
 
 	wire [7:0] y_pix = pick_byte(selected_y_q, y_sel_r);
@@ -396,8 +402,16 @@ module ddr_frame_store #(
 				c_line_v2[vi] <= c_line_v1[vi];
 			end
 
-			if (Y_W'(src_y) != want_y_sys)
-				want_y_sys <= Y_W'(src_y);
+			// want_y follows vertical beam only (src_y_line). Legacy X-gated src_y
+			// thrashed want_y→0 every HBlank and starved the beam-line fill.
+			// No force_top. Optional right-blank +1 lead deferred — must not drop
+			// the current line out of the LINE_COUNT fill window while DE drains.
+			if (rd_y_visible) begin
+				if (want_y_sys != Y_W'(src_y_line))
+					want_y_sys <= Y_W'(src_y_line);
+			end else if (want_y_sys != '0) begin
+				want_y_sys <= '0;
+			end
 			want_y_gray <= y_bin2gray(want_y_sys);
 
 			if (status_osd != status_osd_hold) begin
