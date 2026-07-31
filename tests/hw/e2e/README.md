@@ -348,6 +348,18 @@ apply without TREK overlay. Instrument `rc=77` is hard FAIL when `E2E_HDMI_MOTIO
   (user's long-lived Plex Web tab must not fail the suite).
 - **Do not run during soak/CPU windows** — cast interferes with concurrent playback.
 
+### Transitions N-cycle (S6)
+
+`E2E_TRANSITION_CYCLES` default **10**. Each cycle:
+1. **Resets** (force stop + play from beginning) — seek residual from prior cycle is cleared;
+   logs `CYCLE_START_STATE time0_ms=…`.
+2. pause / resume / seek@8000 / stop / idle→play with **timeline effect** asserts.
+3. Logs `TRANSITION_CYCLE_OK|FAIL` per cycle.
+
+Default `E2E_TRANSITION_CONTINUE_ON_FAIL=1` when N>1: a mid-run fail does **not**
+silently shorten the planned N — remaining cycles still run; aggregate PASS requires
+`pass==N fail==0`. Failure names `transition_cycle_K_<transition>`.
+
 ### Transitions N-cycle
 
 `E2E_TRANSITION_CYCLES` default **10**. Per-cycle pause/resume/seek/stop/replay

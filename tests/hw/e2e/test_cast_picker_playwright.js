@@ -1256,10 +1256,74 @@ function assertStoppedOrIdle(samples, tag) {
 }
 
 function cycleFail(cycle, total, transition, reason, detail) {
-  fail(
-    `transition_cycle_${cycle}_${transition}`,
-    `CYCLE ${cycle}/${total} FAILED at transition=${transition} reason=${reason}\n${detail || ''}`
+  const fullReason = `transition_cycle_${cycle}_${transition}`;
+  const fullDetail =
+    `CYCLE ${cycle}/${total} FAILED at transition=${transition} reason=${reason}\n${detail || ''}`;
+  console.error(`FAIL test_cast_picker_playwright: ${fullReason}`);
+  console.error(fullDetail);
+  const err = new FailError(fullReason, fullDetail);
+  err.cycle = cycle;
+  err.transition = transition;
+  err.failReason = reason;
+  throw err;
+}
+
+/**
+ * Force a known start-of-cycle baseline so seek residual from the previous
+ * cycle cannot poison the next (seek@8s left mid-clip). Always stop, then
+ * recast+play from beginning; log the starting timeline time.
+ */
+async function resetCycleStartState(page, itemTitle, detailsUrl, cycle, total) {
+  const tag = `c${cycle}_reset`;
+  const pre = await sampleTimeline(3, 250, `${tag}_pre`);
+  const preT = pre.length ? pre[pre.length - 1].time : -1;
+  const preS = pre.length ? pre[pre.length - 1].state : '?';
+  log(
+    `CYCLE_START_RESET cycle=${cycle}/${total} prior_state=${preS} prior_time=${preT} ` +
+      `(clearing seek/play residual before baseline)`
   );
+  await forceStopDaemon(tag).catch(() => false);
+  await sleep(700);
+  const afterStop = await sampleTimeline(3, 250, `${tag}_stopped`);
+  const stopOk = assertStoppedOrIdle(afterStop, tag);
+  if (!stopOk.ok) {
+    await forceStopDaemon(`${tag}_2`).catch(() => false);
+    await sleep(500);
+  }
+  const ready = await gotoDetailsClean(page, detailsUrl, itemTitle);
+  await ensureExactCastSelected(page, itemTitle);
+  const ready2 = await waitForDetailsReady(page, itemTitle, 60000);
+  await playFromDetails(page, itemTitle, ready2.playSel || ready.playSel, tag);
+  // Prefer "start from the beginning" — already inside handleResumeDialog.
+  const waitSec = Math.min(cfg.playWaitSec, 12);
+  const prog = await waitPlayingOnDaemon(waitSec);
+  if (prog.playing < 2) {
+    cycleFail(
+      cycle,
+      total,
+      'cycle_reset',
+      'not_playing',
+      `Could not establish clean cycle start (playing=${prog.playing} max_t=${prog.maxT})`
+    );
+  }
+  const samples = await sampleTimeline(5, 350, `${tag}_base`);
+  const adv = assertTimeAdvancing(samples, tag, 300);
+  const t0 = samples.length ? samples[0].time : prog.maxT;
+  log(
+    `CYCLE_START_STATE cycle=${cycle}/${total} time0_ms=${t0} advancing=${adv.ok ? 1 : 0} ` +
+      `max_t=${prog.maxT} (controlled baseline — not residual seek position)`
+  );
+  if (!adv.ok) {
+    cycleFail(cycle, total, 'cycle_reset', 'not_advancing', adv.detail || '');
+  }
+  // Soft warn if we somehow resumed deep into the clip (resume dialog missed).
+  if (t0 > 5000) {
+    log(
+      `WARN CYCLE_START_STATE time0_ms=${t0} is deep in clip — residual resume may have leaked; ` +
+        `cycle continues but start was not near 0`
+    );
+  }
+  return { time0: t0, advancing: adv.ok, maxT: prog.maxT };
 }
 
 async function dismissFullPlayerOverlay(page) {
@@ -1579,14 +1643,15 @@ async function optionalHdmiMotionStage(cycle, totalCycles) {
 
 /**
  * One stress cycle: pause/resume/seek/stop-idle-play with EFFECT asserts + optional HDMI.
+ * Always begins with resetCycleStartState so prior-cycle seek@8s cannot accumulate.
  */
 async function runOneTransitionCycle(page, itemTitle, detailsUrl, cycle, total) {
   const ctag = `c${cycle}`;
   const waitSec = Math.min(cfg.playWaitSec, 12);
 
-  // ── baseline playing + advancing ───────────────────────────────────────
-  let adv = await ensurePlayingSession(page, itemTitle, detailsUrl, `${ctag}_base`, waitSec);
-  if (!adv.ok) cycleFail(cycle, total, 'baseline_play', 'not_advancing', adv.detail);
+  // ── controlled baseline (no residual seek from previous cycle) ─────────
+  const start = await resetCycleStartState(page, itemTitle, detailsUrl, cycle, total);
+  let adv = { ok: true, time: start.time0, advance: 0, detail: '' };
 
   // ── pause: state=paused AND time frozen ────────────────────────────────
   await companionPlayback('pause', `${ctag}_pause`);
@@ -1751,12 +1816,20 @@ async function runOneTransitionCycle(page, itemTitle, detailsUrl, cycle, total) 
 
   // ── optional HDMI at defined point: mid-cycle while playing after replay ─
   const hdmi = await optionalHdmiMotionStage(cycle, total);
-  return { cycle, ok: true, hdmi };
+  return {
+    cycle,
+    ok: true,
+    startTime0: start.time0,
+    transitions: ['pause', 'resume', 'seek', 'stop', 'play_idle_play'],
+    hdmi,
+  };
 }
 
 /**
  * Multi-cycle transition stress. Default E2E_TRANSITION_CYCLES=10.
- * One flake in N is a FAILURE with cycle+transition named.
+ * Planned N is always attempted when continue_on_fail (default for N>1) so a
+ * 1-in-N flake cannot hide behind early abort. PASS requires pass==N fail==0.
+ * Failure names WHICH cycle and WHICH transition.
  */
 async function runTransitionScenarios(page, itemTitle, detailsUrl, _castAlreadySelected) {
   if (!cfg.transitions) {
@@ -1764,9 +1837,15 @@ async function runTransitionScenarios(page, itemTitle, detailsUrl, _castAlreadyS
     return { enabled: false, cycles: 0, passed: 0 };
   }
   const total = Math.max(1, cfg.transitionCycles || 10);
+  const continueOnFail = cfg.transitionContinueOnFail !== false;
   log(
-    `TRANSITIONS=on cycles=${total} content=${cfg.contentMode} hdmi=${cfg.hdmiMotion ? 1 : 0} ` +
+    `TRANSITIONS=on cycles=${total} continue_on_fail=${continueOnFail ? 1 : 0} ` +
+      `content=${cfg.contentMode} hdmi=${cfg.hdmiMotion ? 1 : 0} ` +
       `hdmi_every=${cfg.hdmiEveryCycle ? 1 : 0} hdmi_assert=${cfg.hdmiAssertMode}`
+  );
+  log(
+    'CYCLE_ISOLATION=on each cycle force-stops then plays from beginning ' +
+      '(seek@8s residual from prior cycle is cleared and reported via CYCLE_START_STATE)'
   );
   if (cfg.liveConf) log(`E2E_LIVE_CONF=${cfg.liveConf}`);
   if (cfg.liveDaemonId) log(`E2E_LIVE_DAEMON_ID=${cfg.liveDaemonId}`);
@@ -1776,38 +1855,96 @@ async function runTransitionScenarios(page, itemTitle, detailsUrl, _castAlreadyS
   );
 
   const results = [];
+  const failures = [];
   for (let c = 1; c <= total; c++) {
     log(`════════ TRANSITION_CYCLE ${c}/${total} ════════`);
     try {
       const r = await runOneTransitionCycle(page, itemTitle, detailsUrl, c, total);
       results.push(r);
-      log(`TRANSITION_CYCLE_OK ${c}/${total}`);
+      log(`TRANSITION_CYCLE_OK ${c}/${total} start_time0_ms=${r.startTime0}`);
     } catch (e) {
       if (e instanceof FailError) {
-        // Annotate summary before rethrow
+        const failedTransition = e.transition || e.reason || 'unknown';
+        const row = {
+          cycle: c,
+          ok: false,
+          reason: e.reason,
+          transition: failedTransition,
+          detail: e.detail || e.message || '',
+        };
+        results.push(row);
+        failures.push(row);
         log(
-          `TRANSITION_CYCLE_FAIL ${c}/${total} reason=${e.reason} ` +
-            `passed_before=${results.length}`
+          `TRANSITION_CYCLE_FAIL ${c}/${total} transition=${failedTransition} ` +
+            `reason=${e.reason} passed_so_far=${results.filter((x) => x.ok).length}`
         );
+        if (!continueOnFail) {
+          log(
+            `TRANSITIONS_SUMMARY planned=${total} attempted=${c} pass=${results.filter((x) => x.ok).length} ` +
+              `fail=${failures.length} failed_cycle=${c} failed_transition=${failedTransition} ` +
+              `abort_early=1 (E2E_TRANSITION_CONTINUE_ON_FAIL=0)`
+          );
+          // Re-throw so suite is RED with named cycle.
+          throw e;
+        }
         log(
-          `TRANSITIONS_SUMMARY cycles=${total} pass=${results.length} fail=1 ` +
-            `failed_cycle=${c} failed_transition=${e.reason}`
+          `TRANSITION_CONTINUE after fail cycle=${c}/${total} ` +
+            `(will still attempt remaining cycles; aggregate PASS requires 0 fails)`
         );
+        // Best-effort stop so next cycle reset is clean.
+        await forceStopDaemon(`c${c}_after_fail`).catch(() => false);
+        await sleep(500);
+        continue;
       }
       throw e;
     }
   }
 
-  const hdmiOk = results.filter((r) => r.hdmi && r.hdmi.enabled && !r.hdmi.skipped).length;
+  const passed = results.filter((r) => r.ok).length;
+  const failed = failures.length;
+  const hdmiOk = results.filter((r) => r.ok && r.hdmi && r.hdmi.enabled && !r.hdmi.skipped).length;
+
+  // Per-cycle table (always full planned N when continue_on_fail).
+  log('──────── TRANSITIONS_PER_CYCLE ────────');
+  for (const r of results) {
+    if (r.ok) {
+      log(
+        `  cycle ${r.cycle}/${total} PASS start_time0_ms=${r.startTime0} ` +
+          `transitions=${(r.transitions || []).join(',')}`
+      );
+    } else {
+      log(
+        `  cycle ${r.cycle}/${total} FAIL transition=${r.transition} reason=${r.reason}`
+      );
+    }
+  }
+  log(
+    `TRANSITIONS_SUMMARY planned=${total} attempted=${results.length} pass=${passed} fail=${failed} ` +
+      `hdmi_scored=${hdmiOk} shortened=${results.length < total ? 1 : 0}`
+  );
+
+  if (failed > 0 || passed !== total || results.length !== total) {
+    const first = failures[0];
+    const named = first
+      ? `first_fail cycle=${first.cycle} transition=${first.transition} reason=${first.reason}`
+      : `attempted=${results.length} planned=${total}`;
+    fail(
+      first ? first.reason : 'transitions_incomplete',
+      `TRANSITIONS aggregate RED: pass=${passed}/${total} fail=${failed}. ${named}\n` +
+        failures
+          .map((f) => `  - cycle ${f.cycle}: ${f.transition} (${f.reason})`)
+          .join('\n')
+    );
+  }
+
   log(
     `TRANSITIONS_OK cycles=${total}/${total} pause resume seek stop play_idle_play ` +
       `hdmi_scored=${hdmiOk}`
   );
-  log(`TRANSITIONS_SUMMARY cycles=${total} pass=${total} fail=0`);
   return {
     enabled: true,
     cycles: total,
-    passed: total,
+    passed,
     failed: 0,
     results,
   };

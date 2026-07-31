@@ -209,6 +209,13 @@ function loadConfig() {
   );
   if (!Number.isFinite(transitionCycles) || transitionCycles < 1) transitionCycles = 10;
   if (transitionCycles > 100) transitionCycles = 100;
+  // When N>1, continue remaining cycles after a failure so 1-in-N flakes are visible
+  // and the planned cycle count is never silently shortened. Set 0 to abort on first fail.
+  const continueOnFailDefault = transitionCycles > 1;
+  const transitionContinueOnFail = truthy(
+    process.env.E2E_TRANSITION_CONTINUE_ON_FAIL,
+    continueOnFailDefault
+  );
 
   // HDMI: parent-owned grabber. Per-cycle capture dirs when every-cycle is on.
   const hdmiMotion = truthy(process.env.E2E_HDMI_MOTION || conf.E2E_HDMI_MOTION || '0');
@@ -265,6 +272,7 @@ function loadConfig() {
     expectCompanionHost: process.env.EXPECT_COMPANION_HOST || '',
     transitions: truthy(process.env.E2E_TRANSITIONS, true),
     transitionCycles,
+    transitionContinueOnFail,
     // Optional parent-exported live identity (from /proc cmdline — never assumed).
     liveConf: process.env.E2E_LIVE_CONF || '',
     liveDaemonId: process.env.E2E_LIVE_DAEMON_ID || process.env.E2E_DAEMON_ID || '',
