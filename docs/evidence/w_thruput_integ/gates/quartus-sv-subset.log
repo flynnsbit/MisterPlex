@@ -1,0 +1,8 @@
+/home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/scripts/check_quartus_sv_subset.py $(/home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/scripts/rtl_lint.py --list-files)
+STATIC_PASS Quartus SV subset pattern scan: 44 file(s); toolchain=remote:docker; limitation=static_curated_patterns_only; paired_gate=verilator-elab_for_elaboration_errors; not_a_Quartus_analysis_or_synthesis_PASS
+/home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/scripts/check_verilator_elab.py
+Verilator elaboration: using Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
+Verilator elaboration: parsed 84 Quartus RTL/context files; checking 44 owned files
+Verilator elaboration: propagated QSF macros SDRAM_CLK_142=1 SDRAM_CL3=1 DDR_FRAME_STORE=1 FRAME_W=640 FRAME_H=480 FRAME_LINES_8=1
+Verilator elaboration: ignored 50 vendor/generated context errors; see build/verilator_elab.log
+VERILATOR_ELAB_PASS: no owned RTL elaboration errors

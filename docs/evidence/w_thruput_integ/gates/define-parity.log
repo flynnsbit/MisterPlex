@@ -1,0 +1,47 @@
+/home/flynnsbit/Projects/MisterPlex/.worktrees/w-thruput-integ/scripts/check_define_parity.py
+DEFINE_PARITY_TABLE_BEGIN
+| macro | Quartus | Verilator/lint | Verilator targeted tests | status |
+|---|---|---|---|---|
+| `BUILD_DATE` | <generated> (fpga/Plex_MiSTer/sys/build_id.tcl:8) | lint (scripts/rtl_lint.py:qsf-macro-injection) | — | shared |
+| `CAVLC_NEGATIVE_TEST` | — | — | 1 (tests/unit/test_h264_cavlc_residual_verilator.sh) | allowed test-only: Injected CAVLC residual fault for expected-red simulation only. |
+| `DDR_FRAME_STORE` | 1 (fpga/Plex_MiSTer/Plex.qsf:82) | 1 (scripts/rtl_lint.py:qsf-macro-injection) | — | shared |
+| `DDR_FRAME_STORE_FAULT_CHROMA_LUMA_STRIDE` | — | — | 1 (tests/unit/test_ddr_frame_store_warm_reset.sh) | allowed test-only: Injected DDR frame-store expected-red fault. |
+| `DDR_FRAME_STORE_FAULT_CHROMA_VERTICAL_FULLRES` | — | — | 1 (tests/unit/test_ddr_frame_store_warm_reset.sh) | allowed test-only: Injected DDR frame-store expected-red fault. |
+| `DDR_FRAME_STORE_FAULT_HOLD_DISP_BANK` | — | — | 1 (tests/unit/test_ddr_frame_store_warm_reset.sh) | allowed test-only: Injected DDR frame-store expected-red fault. |
+| `DDR_FRAME_STORE_FAULT_SWAP_UV_READ` | — | — | 1 (tests/unit/test_ddr_frame_store_warm_reset.sh) | allowed test-only: Injected DDR frame-store expected-red fault. |
+| `DEQUANT_FAULT_QP_SWEEP` | — | — | 1 (tests/unit/test_dequant_qp_sweep.py) | allowed test-only: Injected dequant QP-sweep fault for overflow boundary verification. |
+| `FRAME_H` | 480 (fpga/Plex_MiSTer/Plex.qsf:84) | 480 (scripts/rtl_lint.py:qsf-macro-injection) | — | shared |
+| `FRAME_LINES_8` | 1 (fpga/Plex_MiSTer/Plex.qsf:85) | 1 (scripts/rtl_lint.py:qsf-macro-injection) | — | shared |
+| `FRAME_W` | 640 (fpga/Plex_MiSTer/Plex.qsf:83) | 640 (scripts/rtl_lint.py:qsf-macro-injection) | — | shared |
+| `H264_DEBLOCK_FAULT_MB_COMMIT_EARLY` | — | — | 1 (tests/unit/test_p3_deblock_rtl_sim.sh)<br>1 (tests/unit/test_p3_dpb_mc_rtl_sim.sh) | allowed test-only: Injected deblock/DPB seam expected-red fault. |
+| `H264_DEBLOCK_FAULT_REF_READY_EARLY` | — | — | 1 (tests/unit/test_p3_deblock_rtl_sim.sh)<br>1 (tests/unit/test_p3_dpb_mc_rtl_sim.sh) | allowed test-only: Injected deblock/DPB seam expected-red fault. |
+| `H264_DECODE_CORE_FAULT_BAD_RBSP_REQ` | — | — | 1 (tests/unit/test_h264_decode_core_p16z_rtl_sim.sh) | allowed test-only: Injected decode-core P16x16 syntax-walker RBSP request expected-red fault. |
+| `H264_DECODE_CORE_FAULT_DROP_CLIP` | — | — | 1 (tests/unit/test_h264_decode_core_p16z_rtl_sim.sh) | allowed test-only: Injected decode-core P16x16 Clip1 drop expected-red fault (wrap instead of clip). |
+| `H264_DECODE_CORE_FAULT_DROP_LAST_CHROMA_RESIDUAL` | — | — | 1 (tests/unit/test_h264_decode_core_p16z_rtl_sim.sh) | allowed test-only: Injected decode-core P16x16 final scheduled chroma residual expected-red fault. |
+| `H264_DECODE_CORE_FAULT_DROP_LAST_LUMA_RESIDUAL` | — | — | 1 (tests/unit/test_h264_decode_core_p16z_rtl_sim.sh) | allowed test-only: Injected decode-core P16x16 final scheduled luma residual expected-red fault. |
+| `H264_DECODE_CORE_FAULT_DROP_MV_NEIGHBOR` | — | — | 1 (tests/unit/test_h264_decode_core_p16z_rtl_sim.sh) | allowed test-only: Injected decode-core P16x16 MV-neighbor expected-red fault. |
+| `H264_DECODE_CORE_FAULT_DROP_PRED` | — | — | 1 (tests/unit/test_h264_decode_core_p16z_rtl_sim.sh) | allowed test-only: Injected decode-core P16x16 real-P prediction-drop expected-red fault. |
+| `H264_DECODE_CORE_FAULT_DROP_RESIDUAL` | — | — | 1 (tests/unit/test_h264_decode_core_p16z_rtl_sim.sh) | allowed test-only: Injected decode-core P16x16 real-P residual-drop expected-red fault. |
+| `H264_DECODE_CORE_FAULT_DROP_SCHEDULED_RESIDUAL` | — | — | 1 (tests/unit/test_h264_decode_core_p16z_rtl_sim.sh) | allowed test-only: Injected decode-core P16x16 scheduled CAVLC/IDCT residual expected-red fault. |
+| `H264_DECODE_CORE_FAULT_DROP_WB` | — | — | 1 (tests/unit/test_h264_decode_core_writeback_rtl_sim.sh) | allowed test-only: Injected decode-core DPB writeback expected-red fault. |
+| `H264_DECODE_CORE_FAULT_PERTURB_MV` | — | — | 1 (tests/unit/test_h264_decode_core_p16z_rtl_sim.sh) | allowed test-only: Injected decode-core P16x16 real-P motion-vector expected-red fault. |
+| `H264_DECODE_CORE_FAULT_SKIP_CHROMA_RESIDUAL` | — | — | 1 (tests/unit/test_h264_decode_core_p16z_rtl_sim.sh) | allowed test-only: Injected decode-core P16x16 chroma residual skip expected-red fault. |
+| `H264_DECODE_CORE_FAULT_SWAP_CHROMA_READ` | — | — | 1 (tests/unit/test_h264_decode_core_p16z_rtl_sim.sh)<br>1 (tests/unit/test_h264_decode_core_real_slice_rtl_sim.sh) | allowed test-only: Injected decode-core P16x16 U/V chroma reference-read expected-red fault. |
+| `H264_DECODE_CORE_FAULT_SWAP_CHROMA_RESIDUAL` | — | — | 1 (tests/unit/test_h264_decode_core_p16z_rtl_sim.sh)<br>1 (tests/unit/test_h264_decode_core_real_slice_rtl_sim.sh) | allowed test-only: Injected decode-core P16x16 U/V chroma residual expected-red fault. |
+| `H264_DECODE_CORE_FAULT_SWAP_CHROMA_SCHEDULED_COEFF` | — | — | 1 (tests/unit/test_h264_decode_core_p16z_rtl_sim.sh) | allowed test-only: Injected decode-core P16x16 chroma CAVLC scan-order expected-red fault. |
+| `H264_DECODE_CORE_FAULT_SWAP_SCHEDULED_COEFF` | — | — | 1 (tests/unit/test_h264_decode_core_p16z_rtl_sim.sh) | allowed test-only: Injected decode-core P16x16 scheduled CAVLC scan-order expected-red fault. |
+| `H264_DECODE_CORE_FAULT_WRONG_CBP_BIT` | — | — | 1 (tests/unit/test_h264_decode_core_p16z_rtl_sim.sh) | allowed test-only: Injected decode-core P16x16 CBP 8x8-group bit inversion expected-red fault. |
+| `H264_DPB_FAULT_EARLY_PROMOTE` | — | — | 1 (tests/unit/test_p3_dpb_mc_rtl_sim.sh) | allowed test-only: Injected DPB early reference-promote expected-red fault. |
+| `H264_DPB_FAULT_NO_IDR_INVALIDATE` | — | — | 1 (tests/unit/test_p3_dpb_mc_rtl_sim.sh) | allowed test-only: Injected DPB missing-IDR-invalidate expected-red fault. |
+| `H264_DPB_FAULT_SKIP_DEBLOCK` | — | — | 1 (tests/unit/test_p3_dpb_mc_rtl_sim.sh) | allowed test-only: Injected DPB skip-deblock-before-commit expected-red fault. |
+| `LAST_FRAME_LATCH_FAULT_BANK_BASE` | — | — | 1 (tests/unit/test_last_frame_latch_red.sh) | allowed test-only: Injected LastFrame expected-red fault: latch computes bank base from the wrong geometry stride. |
+| `LAST_FRAME_LATCH_FAULT_IDLE_GEOMETRY` | — | — | 1 (tests/unit/test_last_frame_latch_red.sh) | allowed test-only: Injected LastFrame expected-red fault: latch publishes idle/default geometry instead of playback geometry. |
+| `LOG_REDACT_FAULT_IDENTITY` | — | — | 1 (tests/unit/test_log_redact_red.sh) | allowed test-only: Injected log-redact expected-red fault: redactSensitive becomes a no-op so cleartext tokens would pass. |
+| `OSD_MENU_FAULT_APPLY_INITIAL_IDLE` | — | — | 1 (tests/unit/test_osd_menu_red.sh) | allowed test-only: Injected OSD idle initial-snapshot expected-red fault. |
+| `OSD_MENU_FAULT_FALLBACK_624_BITRATE` | — | — | 1 (tests/unit/test_osd_menu_red.sh) | allowed test-only: Injected OSD/fallback 624x480 bitrate mismatch expected-red fault. |
+| `P3_INTRA_FRAME_RARE_NEGATIVE_TEST` | — | — | 1 (tests/unit/test_p3_intra_frame_verilator.py) | allowed test-only: Injected intra-frame expected-red fault. |
+| `P3_INTRA_NEGATIVE_TEST` | — | — | 1 (tests/unit/test_p3_intra_mb0_verilator.py) | allowed test-only: Injected intra-MB0 expected-red fault. |
+| `SDRAM_CL3` | 1 (fpga/Plex_MiSTer/Plex.qsf:57) | 1 (scripts/rtl_lint.py:qsf-macro-injection) | 1 (tests/unit/test_sdram_dq_turnaround_verilator.sh)<br>1 (tests/unit/test_sdram_startup_verilator.sh) | shared |
+| `SDRAM_CLK_142` | 1 (fpga/Plex_MiSTer/Plex.qsf:56) | 1 (scripts/rtl_lint.py:qsf-macro-injection) | — | shared |
+DEFINE_PARITY_TABLE_END
+PASS define parity: Quartus product macros match Verilator/lint; test-only macros are allowlisted

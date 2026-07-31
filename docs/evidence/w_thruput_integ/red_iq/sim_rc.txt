@@ -1,0 +1,2 @@
+red sim true rc=0
+red luma true rc=0
