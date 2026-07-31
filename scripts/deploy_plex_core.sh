@@ -4,16 +4,23 @@
 #   - kill -9 misterplexd / SPI thrash concurrent with Main load_core
 #   - flooding /dev/MiSTer_cmd while SPI exclusive pause is held
 #
+# FILE-NAMING TRAP (read twice):
+#   This script ALWAYS writes/loads  /media/fat/_Utility/Plex.rbf   ← PRODUCT
+#   The SPI daily-driver ROLLBACK is /media/fat/_Utility/Plex_v2.rbf ← NEVER touched
+#   CORENAME/RBFNAME both report "Plex" for every build — identity is path md5 only.
+#   One-step host restore of the daily driver: scripts/rollback_v2.sh
+#   DDR promotion runbook: docs/ddr-daily-promotion.md
+#
 # Usage:
-#   ./scripts/deploy_plex_core.sh [path/to/Plex.rbf]
+#   DEPLOY_LOAD=none|menu ./scripts/deploy_plex_core.sh [path/to/Plex.rbf]
 #
 # Env:
 #   MISTER_HOST   default 192.168.1.183
 #   MISTER_PASS   default 1
 #   DEPLOY_LOAD   none | menu | core
 #                 none (default) — copy only; leave running core alone (safest)
-#                 menu           — load Menu, wait, then load Plex (safer switch)
-#                 core           — load Plex only (use when already on Menu)
+#                 menu           — ONE Menu bounce then product Plex.rbf (preferred)
+#                 core           — load product Plex.rbf only (use when already on Menu)
 #   DEPLOY_SKIP_COPY 0 | 1
 #                 1 — bounce/load only; never scp or replace the on-device RBF.
 #                 Used by scripts/mister_soft_bounce.sh so a claim signal cannot
@@ -43,6 +50,11 @@ DEPLOY_REBOOT_WAIT_S="${DEPLOY_REBOOT_WAIT_S:-150}"
 DEPLOY_DECODE_PROMOTION="${DEPLOY_DECODE_PROMOTION:-0}"
 PMS_BASELINE_LIVE_STAMP="${PMS_BASELINE_LIVE_STAMP:-}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck source=rbf_ship_policy.sh
+source "$ROOT/scripts/rbf_ship_policy.sh"
+# Fixed device paths — never confuse PRODUCT with V2 daily rollback.
+PRODUCT_CORE_REMOTE="${DEVICE_CORE_PRODUCT}"
+V2_DAILY_REMOTE="${DEVICE_CORE_V2_DAILY}"
 
 if [[ "$DEPLOY_DECODE_PROMOTION" == "1" ]]; then
   PMS_BASELINE_LIVE_STAMP="${PMS_BASELINE_LIVE_STAMP:-$ROOT/build/pms-baseline-live-gate/PASS.stamp}"
@@ -79,9 +91,22 @@ if [[ "$DEPLOY_SKIP_COPY" == "1" ]]; then
       ;;
   esac
   # Bounce/load only: never resolve or scp a local RBF (claim soft-bounce path).
-  REMOTE_MD5=$("${SSH[@]}" 'md5sum /media/fat/_Utility/Plex.rbf 2>/dev/null' | awk '{print $1}' || true)
-  echo "Deploy SKIP_COPY=1 (on-device md5=${REMOTE_MD5:-unknown}) — will not flash RBF"
-  echo "  host=$USER@$HOST  load=$DEPLOY_LOAD"
+  # Loads PRODUCT slot only — never Plex_v2.rbf (rollback daily).
+  REMOTE_MD5=$("${SSH[@]}" "md5sum $PRODUCT_CORE_REMOTE 2>/dev/null" | awk '{print $1}' || true)
+  echo "Deploy SKIP_COPY=1 product=$PRODUCT_CORE_REMOTE (on-device md5=${REMOTE_MD5:-unknown}) — will not flash RBF"
+  echo "  host=$USER@$HOST  load=$DEPLOY_LOAD  (V2 daily rollback untouched: $V2_DAILY_REMOTE)"
+  if [[ -n "${REMOTE_MD5:-}" ]]; then
+    set +e
+    pol_out=$(rbf_policy_check_md5 "$REMOTE_MD5")
+    pol_rc=$?
+    set -e
+    echo "ship_policy: $pol_out"
+    echo "ship_policy true rc=$pol_rc"
+    if [[ "$pol_rc" -ne 0 ]]; then
+      echo "REFUSED: on-device product RBF fails ship policy — will not bounce into banned/do-not-ship core" >&2
+      exit "$pol_rc"
+    fi
+  fi
 else
   if [[ -z "$RBF" ]]; then
     for c in \
@@ -96,9 +121,30 @@ else
     echo "No Plex.rbf found. Build first: ./scripts/build_rbf.sh" >&2
     exit 1
   fi
+  # Refuse if operator points at a local file literally named Plex_v2.rbf —
+  # that basename is the rollback slot identity; product deploy must stay clear.
+  case "$(basename "$RBF")" in
+    Plex_v2.rbf|Plex_v3.rbf)
+      echo "REFUSED: source basename $(basename "$RBF") is a rollback/fallback slot name." >&2
+      echo "REFUSED: this script writes PRODUCT $PRODUCT_CORE_REMOTE only." >&2
+      echo "REFUSED: for V2 restore use scripts/rollback_v2.sh (never overwrite V2 with DDR)." >&2
+      exit 10
+      ;;
+  esac
   LOCAL_MD5=$(md5sum "$RBF" | awk '{print $1}')
-  echo "Deploy $RBF (md5=$LOCAL_MD5)"
+  echo "Deploy $RBF (md5=$LOCAL_MD5) → device PRODUCT $PRODUCT_CORE_REMOTE"
   echo "  host=$USER@$HOST  load=$DEPLOY_LOAD"
+  echo "  V2 daily rollback slot (untouched): $V2_DAILY_REMOTE"
+  set +e
+  pol_out=$(rbf_policy_check_md5 "$LOCAL_MD5")
+  pol_rc=$?
+  set -e
+  echo "ship_policy: $pol_out"
+  echo "ship_policy true rc=$pol_rc"
+  if [[ "$pol_rc" -ne 0 ]]; then
+    echo "REFUSED: local RBF fails banned/do-not-ship policy (scripts/rbf_ship_policy.sh)" >&2
+    exit "$pol_rc"
+  fi
 fi
 
 # --- remote prep: release SPI, soft-stop companion (never -9 first) ---
@@ -136,15 +182,16 @@ sync
 REMOTE
 
 if [[ "$DEPLOY_SKIP_COPY" == "1" ]]; then
-  echo "DEPLOY_SKIP_COPY=1 — leaving on-device /media/fat/_Utility/Plex.rbf untouched"
+  echo "DEPLOY_SKIP_COPY=1 — leaving on-device $PRODUCT_CORE_REMOTE untouched (not $V2_DAILY_REMOTE)"
 else
-  REMOTE_MD5=$("${SSH[@]}" 'md5sum /media/fat/_Utility/Plex.rbf 2>/dev/null' | awk '{print $1}' || true)
+  REMOTE_MD5=$("${SSH[@]}" "md5sum $PRODUCT_CORE_REMOTE 2>/dev/null" | awk '{print $1}' || true)
   if [[ -n "${REMOTE_MD5:-}" && -n "${LOCAL_MD5:-}" && "$REMOTE_MD5" == "$LOCAL_MD5" ]]; then
     echo "Remote already has md5=$REMOTE_MD5 — skip scp"
   else
-    # Stage then atomic replace (never scp onto the open/running name mid-read)
+    # Stage then atomic replace (never scp onto the open/running name mid-read).
+    # FINAL is always PRODUCT Plex.rbf — never Plex_v2.rbf (rollback daily).
     STAGED="/media/fat/_Utility/Plex.new.$$.rbf"
-    FINAL="/media/fat/_Utility/Plex.rbf"
+    FINAL="$PRODUCT_CORE_REMOTE"
     echo "SCP → $STAGED"
     "${SCP[@]}" "$RBF" "$USER@$HOST:$STAGED"
     "${SSH[@]}" "bash -s" <<REMOTE
@@ -207,20 +254,20 @@ recover_by_reboot() {
 set +e
 for i in \$(seq 1 30); do [ -e /dev/MiSTer_cmd ] && break; sleep 1; done
 sleep 3
-printf '%s\n' 'load_core /media/fat/_Utility/Plex.rbf' > /dev/MiSTer_cmd
+printf '%s\n' 'load_core $PRODUCT_CORE_REMOTE' > /dev/MiSTer_cmd
 sync
 for i in \$(seq 1 $MENU_WAIT_S); do
   c=\$(cat /tmp/CORENAME 2>/dev/null || true)
   echo "CORENAME=\$c"
   if echo "\$c" | grep -qi plex; then
-    echo "RECOVER_OK: Plex live after reboot"
-    md5sum /media/fat/_Utility/Plex.rbf
+    echo "RECOVER_OK: product Plex live after reboot ($PRODUCT_CORE_REMOTE)"
+    md5sum $PRODUCT_CORE_REMOTE
     echo "misterplexd_pids=\$(pidof misterplexd | wc -w)"
     exit 0
   fi
   sleep 1
 done
-echo "RECOVER_FAIL: rebooted but Plex never came up." >&2
+echo "RECOVER_FAIL: rebooted but product Plex never came up." >&2
 exit 6
 REMOTE
 }
@@ -235,15 +282,16 @@ case "$DEPLOY_LOAD" in
     echo "Select Plex from the OSD, or re-run with DEPLOY_LOAD=menu."
     ;;
   menu|bounce)
-    echo "Soft reload: Menu → wait → Plex"
+    echo "Soft reload: ONE Menu bounce → product $PRODUCT_CORE_REMOTE (not $V2_DAILY_REMOTE)"
     # The MENU step is also the ONLY valid Main liveness test. A wedged Main accepts
     # /dev/MiSTer_cmd writes and drops them: the RBF on SD updates (md5 verifies!) but the
     # FPGA keeps running the bitstream loaded when Main wedged. Reaching CORENAME=Plex at
     # the end proves nothing on its own, because Plex may simply never have been unloaded.
+    # ONE bounce only — never thrash load_core / kill-9 storms.
     set +e
     "${SSH[@]}" "bash -s" <<REMOTE
 set +e
-printf '%s\n' 'load_core /media/fat/menu.rbf' > /dev/MiSTer_cmd
+printf '%s\n' 'load_core $DEVICE_CORE_MENU' > /dev/MiSTer_cmd
 sync
 menu_ok=0
 for i in \$(seq 1 $MENU_WAIT_S); do
@@ -258,7 +306,7 @@ if [ "\$menu_ok" != "1" ]; then
   echo "  OLD BITSTREAM. Do not test this build. Reboot the MiSTer, then redeploy." >&2
   exit 3
 fi
-printf '%s\n' 'load_core /media/fat/_Utility/Plex.rbf' > /dev/MiSTer_cmd
+printf '%s\n' 'load_core $PRODUCT_CORE_REMOTE' > /dev/MiSTer_cmd
 sync
 for i in \$(seq 1 $MENU_WAIT_S); do
   c=\$(cat /tmp/CORENAME 2>/dev/null || true)
@@ -266,7 +314,7 @@ for i in \$(seq 1 $MENU_WAIT_S); do
   echo "\$c" | grep -qi plex && exit 0
   sleep 1
 done
-echo "DEPLOY_FAIL: Main accepted MENU but never came back to Plex." >&2
+echo "DEPLOY_FAIL: Main accepted MENU but never came back to product Plex ($PRODUCT_CORE_REMOTE)." >&2
 exit 4
 REMOTE
     rc=$?
@@ -286,10 +334,10 @@ REMOTE
     fi
     ;;
   core|plex|1)
-    echo "Reload Plex only (prefer when already on Menu)"
+    echo "Reload product $PRODUCT_CORE_REMOTE only (prefer when already on Menu; not $V2_DAILY_REMOTE)"
     "${SSH[@]}" "bash -s" <<REMOTE
 set +e
-printf '%s\n' 'load_core /media/fat/_Utility/Plex.rbf' > /dev/MiSTer_cmd
+printf '%s\n' 'load_core $PRODUCT_CORE_REMOTE' > /dev/MiSTer_cmd
 sync
 for i in \$(seq 1 $DEPLOY_WAIT_S); do
   c=\$(cat /tmp/CORENAME 2>/dev/null || true)

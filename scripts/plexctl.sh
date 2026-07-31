@@ -11,11 +11,16 @@
 # Contract: exactly one supervisor may hold the lock, and only the supervisor
 # spawns the daemon. A second invocation fails fast instead of duplicating.
 #
-# Usage: plexctl.sh {dev|v2|stop|status}
-#   dev    run the development bundle  (/media/fat/misterplex)
-#   v2     run the v0.2.0 known-good bundle (/media/fat/misterplex_v2)
-#   stop   stop everything
-#   status report what is running
+# Usage: plexctl.sh {dev|v2|reload-dev|reload-v2|stop|status}
+#   dev         run the development bundle  (/media/fat/misterplex)
+#   v2          run the v0.2.0 known-good bundle (/media/fat/misterplex_v2)
+#   reload-dev  stop daemon, load DEV core, start dev bundle (ON-DEVICE only)
+#   reload-v2   stop daemon, load V2 core, start v2 bundle (ON-DEVICE only)
+#   stop        stop everything
+#   status      report what is running
+#
+# Host-side daily-driver restore: scripts/rollback_v2.sh (SSH + retry).
+# Never run reload-* on the lab host — load_core will return rc=4 CANNOT_CHECK.
 
 set -eu
 
@@ -45,7 +50,21 @@ V3_CORE=/media/fat/_Utility/Plex_v3.rbf
 # caller's job, not this function's.
 load_core() {
   core="$1"
-  [ -f "$core" ] || { echo "ERROR no core at $core"; return 2; }
+  # ON-DEVICE only. Host-side [ -f "$core" ] evaluates a *device* path on the
+  # lab machine and falsely reports "ERROR no core at ...Plex_v2.rbf" while the
+  # file exists on the MiSTer (parent-measured 2026-07-31, rc=4 x3). That is a
+  # false catastrophe on the daily driver — never do it.
+  # Exit codes: 0=loaded, 2=MISSING on-device, 4=CANNOT_CHECK/not-on-device/unconfirmed
+  if [ ! -e /dev/MiSTer_cmd ]; then
+    echo "ERROR load_core: NOT_ON_DEVICE — not on MiSTer (missing /dev/MiSTer_cmd)"
+    echo "ERROR cannot check device path '$core' from this host — NO-DATA, not missing"
+    echo "ERROR use scripts/rollback_v2.sh from the lab host, or ssh and run on-device"
+    return 4
+  fi
+  if [ ! -f "$core" ]; then
+    echo "ERROR MISSING core at $core (checked on-device via /dev/MiSTer_cmd present)"
+    return 2
+  fi
   before=$(stat -c %Y /tmp/RBFNAME 2>/dev/null || echo 0)
   printf 'load_core %s\n' "$core" > /dev/MiSTer_cmd
   i=0
