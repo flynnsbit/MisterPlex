@@ -37,6 +37,14 @@ outclk_2 = 90.000000 MHz → clk_ddr (f2sdram), not decode.
   RK6  624x480@24  budget=712.251  paint=2102.850  2.952x  MISS
   RK6@25           budget=683.761  paint=2102.850  3.075x  MISS
 
+## Per-frame sum (parse+paint) — conservative real-time is worst-case IDR
+clip1 320x240 (period@24=833333, @30=666667, @60=333333 cy/frame):
+  f0 IDR: parse=289 paint=671894 sum=672183 (0.807×@24 HIT; 1.008×@30 MISS; 2.02×@60 MISS)
+  f1–11 P: parse≈413k paint=76800 sum≈490k (0.59×@24 HIT; 0.74×@30 HIT; 1.47×@60 MISS)
+  → Sustained P-path has margin at 24/30; IDR is the hard edge for RK4.
+clip2 624x480: f0 sum=2.46M, P sum≈1.92M — all miss @24 (period 833k) by ~2.3–3.0×.
+Next bottleneck for 480p: parse dominates P (~1.62M) and paint dump/iq on I.
+
 ## Two pipelines (do not conflate)
 1) **Product silicon today (parent-verified):** ARM software decode + DDR I420 present.
    - frame_tx ~4 ms @240p (parent log ms=4; w-bw model 4.06 ms).
