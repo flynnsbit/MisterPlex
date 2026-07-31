@@ -86,8 +86,16 @@ daemon-only and left core/geometry mismatched (SPI bank1 `0x30040000` vs DDR
 
 | Pair id | core | daemon | bank1 | conf |
 |---------|------|--------|-------|------|
-| **ddr-c5382bee** (PRIMARY) | c5382bee → `Plex.rbf` | edc3a46b9d1c… | 0x30080000 | DDR keys |
-| spi-v2-hybrid (undo) | dfebf2bf → `Plex_v2.rbf` | 50f4eb92 | 0x30040000 | strip DDR keys |
+| **ddr-c5382bee** (PRIMARY) | c5382bee → `Plex.rbf` | edc3a46b9d1c… | **0x30080000** | DDR keys only (never rewrite user `DECODE`) |
+| spi-v2-hybrid (undo) | dfebf2bf → `Plex_v2.rbf` | 50f4eb92 | **0x30040000** | strip DDR keys |
+
+**bank1 for shipping DDR pair is `0x30080000`.** The FPGA DDR frame store in
+`c5382bee` is synthesis-fixed at **624×480** bank geometry; bank1 is therefore
+`0x30080000` regardless of the live conf `DECODE=` value (user-owned; 320x240
+or 624x480). SPI `frame_store` daily is the other geometry (`0x30040000`). Mixing
+them is the black/green-screen class. Conf promote/rollback must **back up and
+restore faithfully** — only pair keys `DDR_YUV_FORCE_SCALE` / `FFMPEG_SWS_FLAGS`
+are enforced; never silently normalise `DECODE`.
 
 `n_daemon` is counted only when `basename(readlink -f /proc/PID/exe)==misterplexd`
 (not cmdline — `flock` embeds the path and lied as ERROR 14).
@@ -187,6 +195,10 @@ daemon/conf half failed. Run SPI rollback (step 7).
 ```bash
 scripts/promotion_gate_check.sh verify-live
 # without visual → expect true rc=8 VISUAL_REQUIRED (correct fail-closed)
+# Probe capture: md5 fields must be exactly 32 hex. A value like
+#   V2_MD5=<32hex>set +e
+# is SHAPE FAIL (rc=3) — never fuzzy-trimmed. Fixed by gate_join_remote_parts
+# (bash $(...) strips trailing newlines and used to glue the next script line).
 ```
 
 On device, parent should also see:
@@ -197,23 +209,37 @@ md5sum $(readlink -f /proc/<pid>/exe)   # edc3a46b…
 grep -E 'DDR_YUV_FORCE_SCALE|FFMPEG_SWS_FLAGS' $(... --conf path...)
 # DDR_YUV_FORCE_SCALE=1
 # FFMPEG_SWS_FLAGS=fast_bilinear
+# PAIR_OK … bank1=0x30080000   (DDR synth-fixed 624×480; not DECODE-dependent)
 ```
 
 ### 6) Visual / motion verify (claim success ONLY here)
 
+Visual **always runs** even if an earlier check failed (aggregate; never
+"skip visual — prior failed"). Parent live green path (device + HDMI):
+
 ```bash
-# Idle:
+# Idle (device already on coherent DDR pair + v2 boot hook):
+mkdir -p build/pair-visual
 ffmpeg -v error -f v4l2 -input_format mjpeg -video_size 1920x1080 \
   -i /dev/video0 -frames:v 1 -y build/pair-visual/idle.png
+# Capture true rc DIRECTLY:
 PAIR_IDLE_PNG=$PWD/build/pair-visual/idle.png \
   scripts/promotion_gate_check.sh verify-live
-# expect: PROMOTE_GATES_OK  true rc=0
-# judge pixels: orange chevron, NOT uniform green
+echo "true rc=$?"
+# expect probe: PRODUCT_MD5=c5382bee…  V2_MD5=dfebf2bf… (pure 32 hex, no glue)
+# expect: OK product-core / OK v2-rollback-core / OK n_daemon=1
+# expect: OK live-exe-md5 edc3a46b… / OK boot-hook / PAIR_OK bank1=0x30080000
+# expect: visual_idle true rc=0
+# expect: PROMOTE_GATES_OK
+# expect: true rc=0
+# judge pixels: orange chevron mean~38.5, NOT uniform green mean~128
+# ABORT if true rc≠0 OR pixels wrong — do not claim promote
 
 # Playback (240p or 480p burst dir):
 PROMOTE_MOTION_CAPTURE_DIR=/path/to/png-burst \
   scripts/promotion_gate_check.sh verify-live
-# expect motion instrument: VERDICT=MOTION_OK true rc=0
+echo "true rc=$?"
+# expect motion instrument: VERDICT=MOTION_OK true rc=0 → gate true rc=0
 # HARD FAIL: rc=1 FREEZE, rc=2 COLOR_FAIL, rc=77 UNSCORED → gate true rc=8
 ```
 

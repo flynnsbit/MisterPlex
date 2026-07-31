@@ -151,26 +151,77 @@ policy_local() {
   return 0
 }
 
+# Join remote script fragments. CRITICAL: $(...) strips trailing newlines, so
+# naive remote+="$(part1)$(part2)" glues the next line onto the previous echo
+# (parent 2026-07-31: V2_MD5=<md5>set +e). Always rejoin with an explicit \n.
+gate_join_remote_parts() {
+  local out="" part
+  for part in "$@"; do
+    # Strip a single trailing newline cluster then force exactly one separator.
+    part=${part%$'\n'}
+    if [ -z "$out" ]; then
+      out="$part"
+    else
+      out="${out}"$'\n'"${part}"
+    fi
+  done
+  # Final trailing newline so the remote script ends cleanly.
+  printf '%s\n' "$out"
+}
+
+# Parse KEY=value from probe blob; reject values that are not pure shape.
+# md5 fields: exactly 32 lowercase hex, or MISSING, or empty.
+# Never "trim to make pass" — malformed capture is FAIL (parent: almost-right md5).
+gate_field() {
+  local blob="$1" key="$2"
+  printf '%s\n' "$blob" | sed -n "s/^${key}=//p" | head -1
+}
+
+gate_assert_md5_shape() {
+  local name="$1" val="$2"
+  # Reject any whitespace / shell residue immediately (the set +e glue class).
+  case "$val" in
+    *[[:space:]]*|*+*|*\;*|*'set '*|*'$'*)
+      echo "FAIL $name shape got='$val' (probe capture contaminated — not pure md5)"
+      return 1
+      ;;
+  esac
+  if [ -z "$val" ]; then
+    return 0
+  fi
+  if [ "$val" = "MISSING" ]; then
+    return 0
+  fi
+  if printf '%s' "$val" | grep -Eq '^[0-9a-f]{32}$'; then
+    return 0
+  fi
+  # prefix8 alone is not accepted for disk core pins in verify-live
+  echo "FAIL $name shape got='$val' (want exactly 32 hex chars or MISSING; len=${#val})"
+  return 1
+}
+
 # Remote probe: product core, v2 core, live daemon via /proc/exe (not cmdline).
 remote_live_blob() {
   if [ -n "${PROMOTE_GATE_BLOB:-}" ]; then
     cat "$PROMOTE_GATE_BLOB"
     return 0
   fi
-  local remote
-  remote="PRODUCT=$(printf '%q' "$PRODUCT_CORE_PATH"); V2=$(printf '%q' "$V2_CORE_PATH"); "
-  remote+="$(cat <<'REMOTE'
+  local head live remote
+  head=$(cat <<REMOTE
+PRODUCT=$(printf '%q' "$PRODUCT_CORE_PATH")
+V2=$(printf '%q' "$V2_CORE_PATH")
 set +e
 prod_md5=""; v2_md5=""
-if [ ! -f "$PRODUCT" ]; then prod_md5=MISSING; else prod_md5=$(md5sum "$PRODUCT" | awk '{print $1}'); fi
-if [ ! -f "$V2" ]; then v2_md5=MISSING; else v2_md5=$(md5sum "$V2" | awk '{print $1}'); fi
-echo "PRODUCT_CORE=$PRODUCT"
-echo "PRODUCT_MD5=$prod_md5"
-echo "V2_CORE=$V2"
-echo "V2_MD5=$v2_md5"
+if [ ! -f "\$PRODUCT" ]; then prod_md5=MISSING; else prod_md5=\$(md5sum "\$PRODUCT" | awk '{print \$1}'); fi
+if [ ! -f "\$V2" ]; then v2_md5=MISSING; else v2_md5=\$(md5sum "\$V2" | awk '{print \$1}'); fi
+echo "PRODUCT_CORE=\$PRODUCT"
+echo "PRODUCT_MD5=\$prod_md5"
+echo "V2_CORE=\$V2"
+echo "V2_MD5=\$v2_md5"
 REMOTE
-)"
-  remote+="$(pair_remote_live_daemon_snippet)"
+)
+  live=$(pair_remote_live_daemon_snippet)
+  remote=$(gate_join_remote_parts "$head" "$live")
   run_ssh "$remote"
 }
 
@@ -190,12 +241,30 @@ verify_live() {
   fi
   printf '%s\n' "$blob" | sed 's/^/  [probe] /'
 
-  prod=$(printf '%s\n' "$blob" | sed -n 's/^PRODUCT_MD5=//p' | head -1)
-  v2=$(printf '%s\n' "$blob" | sed -n 's/^V2_MD5=//p' | head -1)
-  n=$(printf '%s\n' "$blob" | sed -n 's/^N_DAEMON=//p' | head -1)
-  live=$(printf '%s\n' "$blob" | sed -n 's/^LIVE_MD5=//p' | head -1)
-  conf=$(printf '%s\n' "$blob" | sed -n 's/^LIVE_CONF=//p' | head -1)
-  root=$(printf '%s\n' "$blob" | sed -n 's/^LIVE_ROOT=//p' | head -1)
+  prod=$(gate_field "$blob" PRODUCT_MD5)
+  v2=$(gate_field "$blob" V2_MD5)
+  n=$(gate_field "$blob" N_DAEMON)
+  live=$(gate_field "$blob" LIVE_MD5)
+  conf=$(gate_field "$blob" LIVE_CONF)
+  root=$(gate_field "$blob" LIVE_ROOT)
+
+  # Shape gates FIRST — contaminated capture must never reach md5 equality.
+  for _pair in "product-core:$prod" "v2-rollback-core:$v2" "live-exe-md5:$live"; do
+    _name="${_pair%%:*}"
+    _val="${_pair#*:}"
+    set +e
+    gate_assert_md5_shape "$_name" "$_val"
+    _src=$?
+    set -e
+    if [ "$_src" -ne 0 ]; then
+      rc=3
+    fi
+  done
+  # n_daemon must be a small integer if present
+  if [ -n "$n" ] && ! printf '%s' "$n" | grep -Eq '^[0-9]+$'; then
+    echo "FAIL n_daemon shape got='$n' (want digits only)"
+    rc=3
+  fi
 
   # product core
   if [ -z "$prod" ]; then
@@ -362,65 +431,66 @@ verify_live() {
     fi
   fi
 
-  # Visual is HARD for claim success. Parent 2026-07-31: telemetry passed on green screen.
-  # Prefer PROMOTE_VISUAL_CMD; else idle PNG gate; else PROMOTE_MOTION_CMD / capture dir.
-  # Default motion instrument: tools/hdmi_motion_instrument.py (w-instr).
-  # CRITICAL: motion rc=77 UNSCORED is HARD FAIL here (parent: green_cast leaked as 77).
-  # Never treat 77 as inconclusive-carry-on for promotion claim success.
-  if [ "$rc" -eq 0 ]; then
-    vrc=8
-    motion_cmd="${PROMOTE_MOTION_CMD:-}"
-    if [ -z "$motion_cmd" ] && [ -n "${PROMOTE_MOTION_CAPTURE_DIR:-}" ]; then
-      motion_cmd="python3 $(printf '%q' "$ROOT/tools/hdmi_motion_instrument.py") $(printf '%q' "$PROMOTE_MOTION_CAPTURE_DIR")"
-    fi
-    if [ -n "${PROMOTE_VISUAL_CMD:-}" ]; then
-      set +e
-      # shellcheck disable=SC2086
-      eval $PROMOTE_VISUAL_CMD
-      vrc=$?
-      set -e
-      echo "visual_hook true rc=$vrc"
-    elif [ -n "${PAIR_IDLE_PNG:-}" ] || [ -n "${PAIR_CAPTURE_CMD:-}" ] || [ "${PROMOTE_VISUAL_IDLE:-0}" = "1" ]; then
-      set +e
-      "$ROOT/scripts/pair_visual_gate.sh" idle
-      vrc=$?
-      set -e
-      echo "visual_idle true rc=$vrc"
-    elif [ -n "$motion_cmd" ]; then
-      set +e
-      # shellcheck disable=SC2086
-      eval $motion_cmd
-      vrc=$?
-      set -e
-      echo "motion_hook true rc=$vrc cmd=$motion_cmd"
-      # Map instrument contract → promotion claim:
-      #   0 MOTION_OK → pass
-      #   1 FREEZE / 2 COLOR_FAIL → hard fail
-      #   77 UNSCORED → HARD FAIL (never soft; green-cast leak class until w-instr lands rc=2)
-      if [ "$vrc" -eq 77 ]; then
-        echo "FAIL motion UNSCORED rc=77 is HARD FAIL for promotion (not inconclusive)"
-        echo "     (parent: broken green burst once reported VERDICT=UNSCORED despite GREEN_CAST_FAIL)"
-        vrc=8
-      elif [ "$vrc" -ne 0 ]; then
-        echo "FAIL motion instrument hard fail rc=$vrc (0=OK 1=FREEZE 2=COLOR_FAIL)"
-        vrc=8
-      fi
-    else
-      echo "VISUAL_REQUIRED: unset PROMOTE_VISUAL_CMD / PAIR_IDLE_PNG / PROMOTE_MOTION_CMD / PROMOTE_MOTION_CAPTURE_DIR"
-      echo "  Telemetry-only is insufficient (green screen still returns /resources 200)."
-      echo "  Playback: PROMOTE_MOTION_CAPTURE_DIR=/path/to/pngs  (tools/hdmi_motion_instrument.py)"
-      echo "  Idle:     PAIR_IDLE_PNG=/path/idle.png            (pair_visual_gate.sh)"
+  # Visual is HARD for claim success and ALWAYS RUNS (aggregate, never fail-fast-skip).
+  # Parent 2026-07-31: skipping visual because an earlier check failed loses the only
+  # evidence that can confirm the running bitstream (CORENAME is always "Plex").
+  # Prefer PROMOTE_VISUAL_CMD; else idle PNG; else PROMOTE_MOTION_CMD / capture dir.
+  # motion rc=77 UNSCORED is HARD FAIL (never soft).
+  vrc=8
+  prior_rc=$rc
+  motion_cmd="${PROMOTE_MOTION_CMD:-}"
+  if [ -z "$motion_cmd" ] && [ -n "${PROMOTE_MOTION_CAPTURE_DIR:-}" ]; then
+    motion_cmd="python3 $(printf '%q' "$ROOT/tools/hdmi_motion_instrument.py") $(printf '%q' "$PROMOTE_MOTION_CAPTURE_DIR")"
+  fi
+  if [ -n "${PROMOTE_VISUAL_CMD:-}" ]; then
+    set +e
+    # shellcheck disable=SC2086
+    eval $PROMOTE_VISUAL_CMD
+    vrc=$?
+    set -e
+    echo "visual_hook true rc=$vrc"
+  elif [ -n "${PAIR_IDLE_PNG:-}" ] || [ -n "${PAIR_CAPTURE_CMD:-}" ] || [ "${PROMOTE_VISUAL_IDLE:-0}" = "1" ]; then
+    set +e
+    "$ROOT/scripts/pair_visual_gate.sh" idle
+    vrc=$?
+    set -e
+    echo "visual_idle true rc=$vrc"
+  elif [ -n "$motion_cmd" ]; then
+    set +e
+    # shellcheck disable=SC2086
+    eval $motion_cmd
+    vrc=$?
+    set -e
+    echo "motion_hook true rc=$vrc cmd=$motion_cmd"
+    if [ "$vrc" -eq 77 ]; then
+      echo "FAIL motion UNSCORED rc=77 is HARD FAIL for promotion (not inconclusive)"
+      echo "     (parent: broken green burst once reported VERDICT=UNSCORED despite GREEN_CAST_FAIL)"
+      vrc=8
+    elif [ "$vrc" -ne 0 ]; then
+      echo "FAIL motion instrument hard fail rc=$vrc (0=OK 1=FREEZE 2=COLOR_FAIL)"
       vrc=8
     fi
-    if [ "$vrc" -eq 0 ]; then
-      echo "OK visual-or-motion-gate"
-    else
-      # No soft-skip path for claim success. (PROMOTE_ALLOW_VISUAL_SOFT_SKIP removed.)
-      echo "FAIL visual/motion gate rc=$vrc (hard — cannot claim pair success)"
-      rc=8
+  else
+    echo "VISUAL_REQUIRED: unset PROMOTE_VISUAL_CMD / PAIR_IDLE_PNG / PROMOTE_MOTION_CMD / PROMOTE_MOTION_CAPTURE_DIR"
+    echo "  Telemetry-only is insufficient (green screen still returns /resources 200)."
+    echo "  Playback: PROMOTE_MOTION_CAPTURE_DIR=/path/to/pngs  (tools/hdmi_motion_instrument.py)"
+    echo "  Idle:     PAIR_IDLE_PNG=/path/idle.png            (pair_visual_gate.sh)"
+    vrc=8
+  fi
+  if [ "$vrc" -eq 0 ]; then
+    echo "OK visual-or-motion-gate"
+    if [ "$prior_rc" -ne 0 ]; then
+      echo "NOTE visual OK but earlier gate already failed rc=$prior_rc (aggregate keeps earlier rc)"
     fi
   else
-    echo "NOTE skip visual — prior gate already failed rc=$rc"
+    echo "FAIL visual/motion gate rc=$vrc (hard — cannot claim pair success)"
+    if [ "$prior_rc" -ne 0 ]; then
+      echo "NOTE visual also failed; keeping earlier rc=$prior_rc (not overwriting with visual-only 8)"
+      # keep prior_rc (telemetry/boot more specific); visual failure still reported
+      rc=$prior_rc
+    else
+      rc=8
+    fi
   fi
 
   if [ "$rc" -eq 0 ]; then

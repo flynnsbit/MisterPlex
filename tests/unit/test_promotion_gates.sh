@@ -423,6 +423,110 @@ echo "  true rc=$rc"
 if echo "$out" | grep -q 'ERROR no core at'; then bad "plexctl-false-missing"; else ok "plexctl-no-false-missing"; fi
 echo "$out" | grep -qE 'NOT_ON_DEVICE|cannot check device path' && ok "plexctl-honest" || bad "plexctl-honest"
 
+echo "=== REGRESSION: probe join must not glue set +e onto V2_MD5 ==="
+# shellcheck source=/dev/null
+source "$ROOT/scripts/rbf_ship_policy.sh"
+# shellcheck source=/dev/null
+source "$ROOT/scripts/pair_ship_policy.sh"
+# shellcheck source=/dev/null
+source "$ROOT/scripts/pair_live_probe.inc.sh"
+# shellcheck source=/dev/null
+source "$ROOT/scripts/boot_hook_policy.sh"
+# Pull join + shape helpers from gate script without executing main:
+eval "$(sed -n '/^gate_join_remote_parts()/,/^}/p;/^gate_assert_md5_shape()/,/^}/p;/^gate_field()/,/^}/p' "$GATES")"
+# Reproduce the exact class: $(...) strips trailing NL so
+#   echo "V2_MD5=$v2_md5"  +  set +e
+# becomes one physical line: echo "V2_MD5=$v2_md5"set +e
+# which prints: V2_MD5=<32hex>set +e  (parent live measurement).
+p1=$(printf '%s\n' 'echo "V2_MD5=$v2_md5"')   # trailing NL stripped by $()
+p1=$(printf '%s' "$p1")                        # explicit strip if any remain
+p2=$(printf '%s\n' 'set +e' 'echo N_DAEMON=1')
+glued="${p1}${p2}"
+echo "  glued_sample=$(printf '%s' "$glued" | head -c 90 | cat -A)"
+printf '%s' "$glued" | grep -Fq 'v2_md5"set +e' && ok "glued-repro-exists" || bad "glued-repro-exists"
+joined=$(gate_join_remote_parts "$p1" "$p2")
+echo "$joined" | sed 's/^/  [joined] /' | cat -A | sed 's/^/  /'
+echo "$joined" | grep -Fq 'v2_md5"set +e' && bad "join-still-glued" || ok "join-no-glue"
+echo "$joined" | grep -qx 'echo "V2_MD5=$v2_md5"' && ok "join-line1" || bad "join-line1"
+# Shape must FAIL contaminated value (never fuzzy-trim to pass)
+set +e
+out=$(gate_assert_md5_shape v2-rollback-core 'dfebf2bfd08dd70b473b587dd7e81848set +e' 2>&1)
+src=$?
+set -e
+echo "$out" | sed 's/^/  /'
+echo "  shape-contaminated true rc=$src"
+[ "$src" -ne 0 ] && ok "shape-rejects-glue" || bad "shape-rejects-glue"
+set +e
+gate_assert_md5_shape v2-rollback-core 'dfebf2bfd08dd70b473b587dd7e81848'
+src=$?
+set -e
+[ "$src" -eq 0 ] && ok "shape-accepts-32hex" || bad "shape-accepts-32hex"
+set +e
+gate_assert_md5_shape v2-rollback-core 'dfebf2bf'
+src=$?
+set -e
+[ "$src" -ne 0 ] && ok "shape-rejects-prefix8" || bad "shape-rejects-prefix8"
+
+echo "=== REGRESSION: contaminated V2_MD5 in blob fails closed (not false mismatch trim) ==="
+cat >"$WORK/live_glue.blob" <<'BLOB'
+PRODUCT_CORE=/media/fat/_Utility/Plex.rbf
+PRODUCT_MD5=c5382bee73cecdee8220b811e529c297
+V2_CORE=/media/fat/_Utility/Plex_v2.rbf
+V2_MD5=dfebf2bfd08dd70b473b587dd7e81848set +e
+N_DAEMON=1
+PIDS=4242
+LIVE_EXE=/media/fat/misterplex_v2/bin/misterplexd
+LIVE_MD5=edc3a46b9d1c6b86337deb90f896eb0f
+LIVE_CONF=/media/fat/misterplex_v2/misterplex.conf
+LIVE_ROOT=/media/fat/misterplex_v2
+BLOB
+set +e
+out=$(
+  PROMOTE_GATE_BLOB="$WORK/live_glue.blob" \
+  PROMOTE_HTTP="$WORK/fake_http.sh" \
+  PROMOTE_VISUAL_CMD="$WORK/visual_ok.sh" \
+  PROMOTE_CONF_BLOB="$WORK/conf_ddr.txt" \
+  PROMOTE_CONF_PROFILE=ddr \
+  "$GATES" verify-live 2>&1
+)
+rc=$?
+set -e
+echo "$out" | sed 's/^/  [glue] /' | tail -25
+echo "  [glue] true rc=$rc"
+[ "$rc" -ne 0 ] && ok "glue-blob-fail" || bad "glue-blob-fail should not pass"
+echo "$out" | grep -q 'shape' && ok "glue-shape-msg" || bad "glue-shape-msg"
+# Visual MUST still run (aggregate) — not skip
+echo "$out" | grep -qE 'visual_hook|VISUAL_REQUIRED|visual_idle|motion_hook' && ok "glue-visual-ran" || bad "glue-visual-ran"
+echo "$out" | grep -q 'skip visual' && bad "glue-no-skip-visual" || ok "glue-no-skip-visual"
+
+echo "=== GREEN path still returns true rc=0 (success path is tested) ==="
+printf 'nohup /media/fat/misterplex_v2/bin/misterplexd_supervise.sh >>/media/fat/misterplex_v2/misterplexd_supervise.log 2>&1 &\n' \
+  >"$WORK/good_hook.txt"
+set +e
+out=$(
+  PROMOTE_GATE_BLOB="$WORK/live_ok.blob" \
+  PROMOTE_HTTP="$WORK/fake_http.sh" \
+  PROMOTE_VISUAL_CMD="$WORK/visual_ok.sh" \
+  PROMOTE_CONF_BLOB="$WORK/conf_ddr.txt" \
+  PROMOTE_CONF_PROFILE=ddr \
+  PROMOTE_HOOK_BLOB="$WORK/good_hook.txt" \
+  "$GATES" verify-live 2>&1
+)
+rc=$?
+set -e
+echo "$out" | sed 's/^/  [green] /' | tail -20
+echo "  [green] true rc=$rc"
+[ "$rc" -eq 0 ] && ok "full-green-rc0" || bad "full-green-rc0 got $rc"
+echo "$out" | grep -q 'PROMOTE_GATES_OK' && ok "full-green-ok-marker" || bad "full-green-ok-marker"
+echo "$out" | grep -q 'OK v2-rollback-core' && ok "full-green-v2" || bad "full-green-v2"
+echo "$out" | grep -q 'visual_hook true rc=0' && ok "full-green-visual" || bad "full-green-visual"
+
+echo "=== bank1 for shipping DDR pair is 0x30080000 (624x480 synthesis-fixed) ==="
+out=$(bash -c 'source '"$ROOT"'/scripts/pair_ship_policy.sh; pair_policy_lookup ddr-c5382bee')
+echo "$out" | grep -q 'PAIR_BANK1=0x30080000' && ok "bank1-ddr-480p" || bad "bank1-ddr-480p"
+out=$(bash -c 'source '"$ROOT"'/scripts/pair_ship_policy.sh; pair_policy_check c5382bee edc3a46b')
+echo "$out" | grep -q 'bank1=0x30080000' && ok "bank1-on-pair-ok" || bad "bank1-on-pair-ok"
+
 echo "=== summary pass=$pass fail=$fail ==="
 if [ "$fail" -ne 0 ]; then
   echo "test_promotion_gates: FAIL"
