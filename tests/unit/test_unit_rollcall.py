@@ -143,6 +143,7 @@ EXPECTED_COMMANDS = [
     "$(ROOT)/tests/unit/test_confstr_guard.sh",
     "$(ROOT)/tests/unit/test_core_conf_geometry_gate.sh",
     "$(ROOT)/tests/unit/test_video_regression_liveness.sh",
+    "$(ROOT)/tests/unit/test_deploy_misterplexd.sh",
     "$(ROOT)/tests/unit/test_timing_margin_gate.sh",
     "$(ROOT)/tests/unit/test_release_rbf_hash.sh",
     "$(ROOT)/tests/unit/test_sdram_startup_verilator.sh",

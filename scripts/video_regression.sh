@@ -71,14 +71,13 @@ BASE_CORE_MD5=dfebf2bfd08dd70b473b587dd7e81848
 # does not touch the present path. A video difference between them is a real
 # regression and must fail.
 BASE_DAEMON_MD5=7cd10b4d438c714a9b8c4766dc982d59
-# cf4f5d7a  CURRENT — p720-scope ARM: effective decode banner label when conf
-#           DECODE is rejected (decode=320x240 (rejected conf DECODE=624x480),
-#           decode_source=conf-rejected:…), indented conf key trim, crash
-#           backtrace handler, define-parity BUILD_ID allowlist. Host md5 of
-#           build/arm/misterplexd after commits 10ace19f+6a64588d. Parent must
-#           re-verify on device after deploy (daemon telemetry ≠ video correct).
-# 50f4eb92  PREV — hybrid clamp/present path last parent-verified on hardware.
-HYBRID_DAEMON_MD5=cf4f5d7aef058bfe7411ad892d4c45d8
+# 54f1d916  CURRENT — tip 898baf0f rebuild (BUILD_ID embeds git SHA). This is the
+#           md5 `make arm-plexd` produces at that tip and what deploy ships when
+#           DEPLOY_REBUILD=0 (default). cf4f5d7a was a pre-tip host artifact that
+#           the OLD deploy script could never install (it always rebuilt).
+# 50f4eb92  PREV — last parent-verified LIVE binary on misterplex_v2 (keep green
+#           until parent redeploys).
+HYBRID_DAEMON_MD5=54f1d9164735e04e2111565257fcf13e
 PREV_HYBRID_DAEMON_MD5=50f4eb925de10e29172999a565c87684
 
 # Test clip: the 240p burned-in-telemetry ladder entry. Its overlay text makes

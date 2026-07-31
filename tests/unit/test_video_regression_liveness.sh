@@ -11,8 +11,8 @@ SCRIPT="$ROOT/scripts/video_regression.sh"
 WORK="$ROOT/build/video-regression-liveness"
 BASE_CORE_MD5=dfebf2bfd08dd70b473b587dd7e81848
 BASE_DAEMON_MD5=7cd10b4d438c714a9b8c4766dc982d59
-# Keep in lockstep with scripts/video_regression.sh pins (cf4f5d7a banner lineage).
-HYBRID_DAEMON_MD5=cf4f5d7aef058bfe7411ad892d4c45d8
+# Keep in lockstep with scripts/video_regression.sh pins (54f1d916 tip rebuild lineage).
+HYBRID_DAEMON_MD5=54f1d9164735e04e2111565257fcf13e
 PREV_HYBRID_DAEMON_MD5=50f4eb925de10e29172999a565c87684
 BIN_PATH=/media/fat/misterplex_v2/bin/misterplexd
 CORE_PATH=/media/fat/_Utility/Plex_v2.rbf
