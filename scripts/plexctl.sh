@@ -45,7 +45,20 @@ V3_CORE=/media/fat/_Utility/Plex_v3.rbf
 # caller's job, not this function's.
 load_core() {
   core="$1"
-  [ -f "$core" ] || { echo "ERROR no core at $core"; return 2; }
+  # This helper is ON-DEVICE only. Running plexctl.sh on the lab host evaluates
+  # device paths with the host's [ -f ], which falsely reports
+  # "ERROR no core at /media/fat/_Utility/Plex_v2.rbf" while the file exists on
+  # the MiSTer (parent-measured 2026-07-31, rc=4 x3). Fail honestly instead.
+  if [ ! -e /dev/MiSTer_cmd ]; then
+    echo "ERROR load_core: not on MiSTer (missing /dev/MiSTer_cmd)."
+    echo "ERROR cannot check device path '$core' from this host."
+    echo "ERROR run on device, or: ssh root@\${MISTER_HOST:-192.168.1.183} \"echo load_core $core > /dev/MiSTer_cmd\""
+    return 4
+  fi
+  if [ ! -f "$core" ]; then
+    echo "ERROR no core at $core (checked on-device)"
+    return 2
+  fi
   before=$(stat -c %Y /tmp/RBFNAME 2>/dev/null || echo 0)
   printf 'load_core %s\n' "$core" > /dev/MiSTer_cmd
   i=0

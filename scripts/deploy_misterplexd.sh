@@ -1,34 +1,50 @@
 #!/usr/bin/env bash
-# Deploy static ARM misterplexd to the LIVE MiSTer install root and restart once.
+# Deploy a NAMED ARM misterplexd artifact to the LIVE MiSTer install root.
 #
-# Hard lessons (parent-measured 2026-07-30):
-#  1. Rebuilding inside deploy can ship a DIFFERENT md5 than the host-validated
-#     artifact (BUILD_ID / flags drift). Default is ship-the-file; rebuild is opt-in.
-#  2. Hardcoding /media/fat/misterplex installs to the WRONG root when the live
-#     daemon is misterplex_v2. Resolve root from live --conf (or explicit env).
-#  3. Starting a second tree without stopping the first leaves n_daemon=2 and a
-#     loser with no TCP bind. Stop → copy → single start → assert n_daemon==1
-#     and /proc/PID/exe md5 == host artifact.
+# Usage:
+#   ./scripts/deploy_misterplexd.sh /path/to/misterplexd
+#   DEPLOY_EXPECT_MD5=<md5> ./scripts/deploy_misterplexd.sh /path/to/misterplexd
 #
-# Host unit tests inject DEPLOY_SSHM / DEPLOY_SCPM (never touch the real box).
+# Contract (parent-measured defects 2026-07-30/31):
+#   1) Ships the EXACT file named on the CLI (byte-for-byte). Never rebuilds
+#      unless DEPLOY_REBUILD=1 (opt-in only).
+#   2) Install root = live process root from readlink -f /proc/<pid>/exe
+#      (not a hardcoded /media/fat/misterplex guess).
+#   3) Stop → install → start ONE daemon → verify:
+#        disk md5 == host md5 AND live /proc/PID/exe md5 == host md5
+#        AND n_daemon == 1. Disk-only match is NOT success (ETXTBSY / no restart).
+#   4) Every gate prints "true rc=N" captured directly (never through a pipe).
+#
+# Host unit tests inject DEPLOY_SSHM / DEPLOY_SCPM — never touches the real box.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck source=/dev/null
 source "$ROOT/scripts/deploy_misterplexd_lib.sh"
+
 HOST="${MISTER_HOST:-192.168.1.183}"
 USER="${MISTER_USER:-root}"
 PASS="${MISTER_PASS:-1}"
-BIN="${DEPLOY_BIN:-$ROOT/build/arm/misterplexd}"
 PLAYER_ID="${MISTERPLEX_ID:-misterplex-dev}"
 PMS_URL="${PLEX_BASE:-${PMS_URL:-}}"
 PORT="${MISTERPLEX_PORT:-3005}"
-# Opt-in rebuild only. Default ships the already-built artifact verbatim.
 DEPLOY_REBUILD="${DEPLOY_REBUILD:-0}"
-# Optional: parent pre-validated md5; refuse to ship anything else.
 EXPECT_MD5="${DEPLOY_EXPECT_MD5:-${EXPECT_MD5:-}}"
 DEPLOY_SKIP_GEOMETRY_GATE="${DEPLOY_SKIP_GEOMETRY_GATE:-0}"
-# Explicit root override (e.g. first install). Otherwise resolved from live daemon.
 FORCE_ROOT="${MISTERPLEX_ROOT:-}"
+
+# Explicit binary path: CLI arg > DEPLOY_BIN > default build path
+if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+  sed -n '2,20p' "$0" | sed 's/^# \?//'
+  exit 0
+fi
+if [[ $# -ge 1 && -n "${1:-}" ]]; then
+  BIN="$1"
+elif [[ -n "${DEPLOY_BIN:-}" ]]; then
+  BIN="$DEPLOY_BIN"
+else
+  BIN="$ROOT/build/arm/misterplexd"
+fi
 
 ssh_m() {
   if [[ -n "${DEPLOY_SSHM:-}" ]]; then
@@ -51,25 +67,38 @@ scp_to() {
 
 die() { echo "FAIL deploy_misterplexd: $*" >&2; exit 1; }
 
+report_rc() {
+  # Usage: report_rc LABEL RC — prints true rc= without piping the command.
+  local label="$1" rc="$2"
+  echo "deploy: ${label}: true rc=${rc}"
+  return "$rc"
+}
+
 # --- host artifact ------------------------------------------------------------
 if [[ "$DEPLOY_REBUILD" == "1" ]]; then
   export PATH="${PATH}:${ARM_TOOLCHAIN_BIN:-$HOME/Projects/mistercast-linux/third_party/arm-gnu-toolchain/bin}"
   make -C "$ROOT" arm-plexd
+  make_rc=$?
+  report_rc "rebuild_arm-plexd" "$make_rc" || die "arm-plexd failed"
 fi
 
-[[ -f "$BIN" ]] || die "missing artifact $BIN (build with make arm-plexd, or set DEPLOY_BIN)"
+[[ -f "$BIN" ]] || die "missing artifact $BIN (pass an explicit path: $0 /path/to/misterplexd)"
+[[ -r "$BIN" ]] || die "unreadable artifact $BIN"
 [[ -x "$BIN" ]] || chmod +x "$BIN" || true
 
 HOST_MD5="$(md5sum "$BIN" | awk '{print $1}')"
+HOST_SIZE="$(wc -c <"$BIN" | tr -d ' ')"
 echo "deploy: host_artifact=$BIN"
 echo "deploy: host_md5=$HOST_MD5"
+echo "deploy: host_bytes=$HOST_SIZE"
 if [[ -n "$EXPECT_MD5" && "$HOST_MD5" != "$EXPECT_MD5" ]]; then
   die "host md5 $HOST_MD5 != DEPLOY_EXPECT_MD5/EXPECT_MD5 $EXPECT_MD5 (refusing to ship unvalidated binary)"
 fi
 
-# --- resolve LIVE install root ------------------------------------------------
+# --- resolve LIVE install root via readlink -f /proc/PID/exe ------------------
 resolve_live_root() {
   ssh_m 'bash -s' <<'EOS'
+echo DEPLOY_LIVE_PROBE
 set +e
 found=""
 n=0
@@ -77,33 +106,41 @@ for d in /proc/[0-9]*; do
   [ -r "$d/cmdline" ] || continue
   cmd=$(tr "\0" " " < "$d/cmdline" 2>/dev/null) || continue
   case "$cmd" in
-    *plexctl.sh*) continue ;;
-    *plexctl_supervise*) continue ;;
-    *misterplexd_supervise*) continue ;;
-    *dedupe_daemon*) continue ;;
+    *plexctl.sh*|*plexctl_supervise*|*misterplexd_supervise*|*dedupe_daemon*) continue ;;
   esac
   case "$cmd" in
-    */misterplexd\ *|*/misterplexd)
-      ;;
+    */misterplexd\ *|*/misterplexd) ;;
     *) continue ;;
   esac
+  p=${d#/proc/}
   n=$((n + 1))
+  # Prefer the kernel's view of the running image (parent-measured truth).
+  exe=$(readlink -f "/proc/$p/exe" 2>/dev/null || true)
+  if [ -n "$exe" ]; then
+    root=$(dirname "$(dirname "$exe")")
+  else
+    conf=""
+    set -- $cmd
+    while [ $# -gt 0 ]; do
+      if [ "$1" = "--conf" ]; then conf="${2:-}"; break; fi
+      shift
+    done
+    if [ -n "$conf" ]; then
+      root=$(dirname "$conf")
+    else
+      binpath=$(tr "\0" "\n" < "$d/cmdline" 2>/dev/null | head -n1)
+      root=$(dirname "$(dirname "$binpath")")
+      exe=$binpath
+    fi
+  fi
   conf=""
   set -- $cmd
   while [ $# -gt 0 ]; do
-    if [ "$1" = "--conf" ]; then
-      conf="${2:-}"
-      break
-    fi
+    if [ "$1" = "--conf" ]; then conf="${2:-}"; break; fi
     shift
   done
-  if [ -n "$conf" ]; then
-    root=$(dirname "$conf")
-  else
-    binpath=$(tr "\0" "\n" < "$d/cmdline" 2>/dev/null | head -n1)
-    root=$(dirname "$(dirname "$binpath")")
-  fi
-  echo "LIVE_PID=${d#/proc/} ROOT=$root CONF=${conf:-} CMD=$cmd"
+  live_md5=$(md5sum "/proc/$p/exe" 2>/dev/null | awk '{print $1}')
+  echo "LIVE_PID=$p EXE=$exe ROOT=$root CONF=${conf:-} LIVE_MD5=${live_md5:-} CMD=$cmd"
   if [ -z "$found" ]; then
     found=$root
   elif [ "$found" != "$root" ]; then
@@ -119,45 +156,45 @@ fi
 EOS
 }
 
-LIVE_BLOB="$(resolve_live_root)"
+LIVE_BLOB="$(resolve_live_root)" || { probe_rc=$?; report_rc "live_probe" "$probe_rc"; die "live probe ssh failed"; }
 echo "$LIVE_BLOB" | sed 's/^/deploy: probe: /'
+report_rc "live_probe" 0
 
 if echo "$LIVE_BLOB" | grep -q '^MULTI_ROOT'; then
   die "multiple live daemon roots — stop extras before deploy (see probe lines)"
 fi
 
 LIVE_ROOT="$(echo "$LIVE_BLOB" | awk -F= '/^ROOT=/{print $2; exit}')"
+LIVE_N="$(echo "$LIVE_BLOB" | awk -F= '/^N_DAEMON=/{print $2; exit}')"
+LIVE_N="${LIVE_N:-0}"
+echo "deploy: live_n_daemon=$LIVE_N live_root=${LIVE_ROOT:-"(none)"}"
 
 rr=0
 TARGET_ROOT="$(deploy_resolve_target_root "$LIVE_ROOT" "$FORCE_ROOT")" || rr=$?
 if [[ "$rr" -eq 2 ]]; then
-  die "live root is $LIVE_ROOT but MISTERPLEX_ROOT=$FORCE_ROOT — refusing cross-root deploy (unset override or stop the live daemon)"
+  die "live root is $LIVE_ROOT but MISTERPLEX_ROOT=$FORCE_ROOT — refusing cross-root deploy"
 elif [[ "$rr" -eq 0 && -n "${TARGET_ROOT:-}" ]]; then
   if [[ -n "$FORCE_ROOT" ]]; then
     echo "deploy: target_root=$TARGET_ROOT (MISTERPLEX_ROOT override)"
   else
-    echo "deploy: target_root=$TARGET_ROOT (from live --conf)"
+    echo "deploy: target_root=$TARGET_ROOT (from readlink -f /proc/PID/exe)"
   fi
 else
   DETECT="$(ssh_m 'if [ -x /media/fat/misterplex_v2/bin/misterplexd ] || [ -f /media/fat/misterplex_v2/misterplex.conf ]; then echo /media/fat/misterplex_v2; elif [ -d /media/fat/misterplex ]; then echo /media/fat/misterplex; else echo /media/fat/misterplex_v2; fi')"
   TARGET_ROOT="$(echo "$DETECT" | tail -n1 | tr -d '\r')"
-  echo "deploy: target_root=$TARGET_ROOT (no live daemon; defaulted)"
+  echo "deploy: target_root=$TARGET_ROOT (no live daemon; defaulted to v2-first)"
 fi
 
 [[ -n "$TARGET_ROOT" ]] || die "empty target root"
-case "$TARGET_ROOT" in
-  /media/fat/misterplex|/media/fat/misterplex_v2) ;;
-  *)
-    [[ "$TARGET_ROOT" == /* ]] || die "target root must be absolute: $TARGET_ROOT"
-    ;;
-esac
+[[ "$TARGET_ROOT" == /* ]] || die "target root must be absolute: $TARGET_ROOT"
 
 REMOTE_BIN="$TARGET_ROOT/bin/misterplexd"
 REMOTE_CONF="$TARGET_ROOT/misterplex.conf"
 REMOTE_LOG="$TARGET_ROOT/misterplexd.log"
 
-# --- stop every daemon/supervisor (cmdline match; no kill -9) -----------------
+# --- stop every daemon/supervisor (cmdline match; no kill -9 storms) ----------
 echo "deploy: stopping all misterplexd + supervisors"
+set +e
 ssh_m 'bash -s' <<'EOS'
 set +e
 SUPERVISORS="plexctl_supervise.sh misterplexd_supervise.sh dedupe_daemon.sh"
@@ -198,22 +235,47 @@ if [ "$left" -ne 0 ]; then
 fi
 echo "STOP_OK"
 EOS
+stop_rc=$?
+set -e
+report_rc "stop_all" "$stop_rc" || die "stop failed (rc=$stop_rc)"
 
-# --- install exact bytes to LIVE root only ------------------------------------
-echo "deploy: install $HOST_MD5 -> $REMOTE_BIN"
+# --- install exact bytes ------------------------------------------------------
+echo "deploy: install host_md5=$HOST_MD5 -> $REMOTE_BIN"
+set +e
 ssh_m "echo DEPLOY_INSTALL_PREP root='$TARGET_ROOT'
 mkdir -p '$TARGET_ROOT/bin' '$TARGET_ROOT/scripts'
 if [ -f '$REMOTE_BIN' ]; then cp -f '$REMOTE_BIN' '$REMOTE_BIN.prev-deploy'; fi
 rm -f '$REMOTE_BIN'"
+prep_rc=$?
+set -e
+report_rc "install_prep" "$prep_rc" || die "install prep failed"
+
+set +e
 scp_to "$BIN" "$REMOTE_BIN"
+scp_rc=$?
+set -e
+report_rc "scp" "$scp_rc" || die "scp failed"
+
+# Disk md5 on device MUST match host before we restart (catches partial scp).
+set +e
+DISK_MD5="$(ssh_m "md5sum '$REMOTE_BIN'" | awk '{print $1}')"
+disk_rc=$?
+set -e
+report_rc "disk_md5_probe" "$disk_rc" || die "disk md5 probe failed"
+echo "deploy: disk_md5=$DISK_MD5"
+if [[ "$DISK_MD5" != "$HOST_MD5" ]]; then
+  die "disk md5 $DISK_MD5 != host md5 $HOST_MD5 (install corrupted; not restarting)"
+fi
+report_rc "disk_md5_match" 0
 
 if [[ -f "$ROOT/scripts/plex_browse.sh" ]]; then
   scp_to "$ROOT/scripts/plex_browse.sh" "$TARGET_ROOT/scripts/plex_browse.sh" || true
   [[ -f "$ROOT/scripts/plex_menu.sh" ]] && scp_to "$ROOT/scripts/plex_menu.sh" "$TARGET_ROOT/scripts/plex_menu.sh" || true
 fi
 
-# --- start exactly one daemon under TARGET_ROOT -------------------------------
-echo "deploy: start single daemon root=$TARGET_ROOT"
+# --- restart exactly one daemon; verify LIVE exe md5 (not disk alone) ---------
+echo "deploy: restart single daemon root=$TARGET_ROOT (disk match alone is NOT success)"
+set +e
 ssh_m env \
   "PLAYER_ID=$PLAYER_ID" \
   "PMS_URL=$PMS_URL" \
@@ -224,6 +286,7 @@ ssh_m env \
   "REMOTE_LOG=$REMOTE_LOG" \
   "HOST_MD5=$HOST_MD5" \
   bash -s <<'REMOTE'
+echo DEPLOY_RESTART_VERIFY
 set -euo pipefail
 chmod +x "$REMOTE_BIN"
 chmod +x "$TARGET_ROOT/scripts/plex_browse.sh" "$TARGET_ROOT/scripts/plex_menu.sh" 2>/dev/null || true
@@ -237,6 +300,14 @@ CONF
   if [[ -n "${PMS_URL:-}" ]]; then
     printf 'PLEX_BASE=%s\n' "$PMS_URL" >>"$REMOTE_CONF"
   fi
+fi
+
+# Disk check again on-device (belt and suspenders).
+disk_md5=$(md5sum "$REMOTE_BIN" | awk '{print $1}')
+echo "REMOTE_DISK_MD5=$disk_md5"
+if [[ "$disk_md5" != "$HOST_MD5" ]]; then
+  echo "FAIL disk md5 $disk_md5 != host $HOST_MD5 before start"
+  exit 5
 fi
 
 started=0
@@ -265,13 +336,15 @@ if [[ "$started" -ne 1 ]]; then
   # shellcheck disable=SC2086
   nohup "$REMOTE_BIN" --name MiSTerPlex --id "${PLAYER_ID:-misterplex-dev}" --port "${PORT:-3005}" \
     --conf "$REMOTE_CONF" $PMS_ARG >>"$REMOTE_LOG" 2>&1 &
-  sleep 1.2
+  # Give the process time to exec so /proc/PID/exe is the new image.
+  sleep 1.5
 fi
 
 n=0
 pids=""
 live_md5=""
 live_conf=""
+live_exe=""
 for d in /proc/[0-9]*; do
   [ -r "$d/cmdline" ] || continue
   cmd=$(tr "\0" " " < "$d/cmdline" 2>/dev/null) || continue
@@ -280,6 +353,7 @@ for d in /proc/[0-9]*; do
   p=${d#/proc/}
   n=$((n + 1))
   pids="$pids $p"
+  live_exe=$(readlink -f "/proc/$p/exe" 2>/dev/null || true)
   live_md5=$(md5sum "/proc/$p/exe" 2>/dev/null | awk '{print $1}')
   set -- $cmd
   while [ $# -gt 0 ]; do
@@ -291,8 +365,10 @@ pids=$(echo "$pids" | xargs)
 
 echo "POST_N_DAEMON=$n"
 echo "POST_PIDS=$pids"
+echo "POST_LIVE_EXE=$live_exe"
 echo "POST_LIVE_MD5=$live_md5"
 echo "POST_LIVE_CONF=$live_conf"
+echo "POST_DISK_MD5=$disk_md5"
 echo "POST_HOST_MD5=$HOST_MD5"
 echo "POST_TARGET_ROOT=$TARGET_ROOT"
 
@@ -301,11 +377,17 @@ if [[ "$n" -ne 1 ]]; then
   exit 3
 fi
 if [[ -z "$live_md5" ]]; then
-  echo "FAIL empty /proc/PID/exe md5"
+  echo "FAIL empty /proc/PID/exe md5 — process may not have started"
   exit 4
 fi
+# THE critical check: LIVE image, not disk. Disk can be new while process is old.
 if [[ "$live_md5" != "$HOST_MD5" ]]; then
-  echo "FAIL live exe md5 $live_md5 != host artifact $HOST_MD5 (ETXTBSY or wrong file shipped)"
+  echo "FAIL live exe md5 $live_md5 != host artifact $HOST_MD5"
+  echo "     disk_md5=$disk_md5 (disk-only match is NOT success — restart did not take)"
+  exit 5
+fi
+if [[ "$disk_md5" != "$HOST_MD5" ]]; then
+  echo "FAIL disk md5 $disk_md5 != host $HOST_MD5 after start"
   exit 5
 fi
 case "$live_conf" in
@@ -315,25 +397,37 @@ case "$live_conf" in
     exit 6
     ;;
 esac
+case "$live_exe" in
+  "$REMOTE_BIN"|"$TARGET_ROOT"/bin/*) ;;
+  *)
+    echo "FAIL live exe '$live_exe' not under $TARGET_ROOT/bin"
+    exit 6
+    ;;
+esac
 
-code=$(wget -q -O /dev/null -S "http://127.0.0.1:${PORT:-3005}/resources" 2>&1 | awk '/HTTP\//{print $2; exit}')
-code=${code:-000}
-echo "POST_HTTP=$code"
-if [[ "$code" != "200" ]]; then
-  # curl fallback for hosts without wget -S
-  if command -v curl >/dev/null 2>&1; then
-    code=$(curl -s -o /dev/null -w '%{http_code}' --connect-timeout 2 "http://127.0.0.1:${PORT:-3005}/resources" || echo 000)
-    echo "POST_HTTP_CURL=$code"
-  fi
+code=000
+if command -v wget >/dev/null 2>&1; then
+  code=$(wget -q -O /dev/null -S "http://127.0.0.1:${PORT:-3005}/resources" 2>&1 | awk '/HTTP\//{print $2; exit}')
+  code=${code:-000}
 fi
+if [[ "$code" != "200" ]] && command -v curl >/dev/null 2>&1; then
+  code=$(curl -s -o /dev/null -w '%{http_code}' --connect-timeout 2 "http://127.0.0.1:${PORT:-3005}/resources" || echo 000)
+fi
+echo "POST_HTTP=$code"
 if [[ "$code" != "200" ]]; then
   echo "FAIL /resources HTTP $code (daemon up but not healthy)"
   exit 7
 fi
-echo "DEPLOY_OK root=$TARGET_ROOT md5=$live_md5 n_daemon=1 http=$code"
+echo "DEPLOY_OK root=$TARGET_ROOT disk_md5=$disk_md5 live_md5=$live_md5 n_daemon=1 http=$code"
 REMOTE
+start_rc=$?
+set -e
+report_rc "restart_and_live_verify" "$start_rc" || die "restart/live verify failed (rc=$start_rc) — disk-only success is rejected"
 
-echo "Deployed misterplexd → $HOST root=$TARGET_ROOT md5=$HOST_MD5 (verified /proc/exe)"
+echo "Deployed misterplexd → $HOST"
+echo "deploy: summary host_md5=$HOST_MD5 target_root=$TARGET_ROOT remote_bin=$REMOTE_BIN"
+echo "deploy: summary LIVE process md5 verified equal to host (not disk alone)"
+report_rc "deploy_overall" 0
 
 if [[ "$DEPLOY_SKIP_GEOMETRY_GATE" != "1" && -z "${DEPLOY_SSHM:-}" ]]; then
   set +e
@@ -341,11 +435,11 @@ if [[ "$DEPLOY_SKIP_GEOMETRY_GATE" != "1" && -z "${DEPLOY_SSHM:-}" ]]; then
   geo_rc=$?
   set -e
   case "$geo_rc" in
-    0) echo "core_conf_geometry: PASS" ;;
-    77) echo "core_conf_geometry: SKIP-NOT-PASS (rc=77)" >&2 ;;
+    0) echo "core_conf_geometry: PASS"; report_rc "core_conf_geometry" 0 ;;
+    77) echo "core_conf_geometry: SKIP-NOT-PASS (rc=77)" >&2; report_rc "core_conf_geometry_skip" 77 || true ;;
     *)
       echo "core_conf_geometry: FAIL rc=$geo_rc" >&2
-      exit "$geo_rc"
+      report_rc "core_conf_geometry" "$geo_rc" || exit "$geo_rc"
       ;;
   esac
 fi
