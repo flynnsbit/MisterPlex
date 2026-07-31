@@ -1,0 +1,8 @@
+FAIL: sendDdrFrame must use selectDdrWriteBank (display-ack / stale-free guard)
+PASS source-text matcher ignores inactive preprocessor decoys
+PASS present_core G-VID1 scanout invariants
+PASS Plex.sv Phase A feature surface
+PASS Plex.sv DDR presenter reset is not held behind SDRAM startup
+PASS Quartus syntax tripwires for known Verilator-clean fit failures
+PASS async_fifo write-full path has no source-level combinational loop
+PASS frame-store CDC contract (clk/clk_ddr crossings and DDR timing constraints)

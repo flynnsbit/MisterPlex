@@ -2382,12 +2382,21 @@ def check_yuv_ddr_writer_contract() -> None:
     allowed_paths = {Path("tests/unit/test_rtl_invariants.py")}
 
     def forbidden_ddr_rgb_offenders() -> list[str]:
+        # Source-text sweep only. Binary assets under tools/ (e.g. .npz digit
+        # templates) are tracked product files but must not be UTF-8-decoded —
+        # a UnicodeDecodeError here is a gate crash, not a product finding.
+        text_suffixes = {
+            ".cpp", ".c", ".hpp", ".h", ".sv", ".svh", ".v", ".py", ".sh", ".md",
+            ".txt", ".cmake", ".mk", ".json", ".yml", ".yaml", ".toml",
+        }
         offenders: list[str] = []
         for path in tracked_product_and_doc_files():
             if not path.is_file():
                 continue
             rel = path.relative_to(ROOT)
             if rel in allowed_paths:
+                continue
+            if path.suffix.lower() not in text_suffixes:
                 continue
             text = read(path) if path.suffix == ".md" else active_audit_text(path)
             for lineno, line in enumerate(text.splitlines(), 1):
