@@ -1,4 +1,5 @@
 # w-promote status — 2026-07-31T23:05Z
+tip_SHA=894b44ecb28e5ac0dba5986b27c8eab5f197dc35
 branch: fix/rollback-honest
 worktree: /home/flynnsbit/Projects/MisterPlex/.worktrees/rollback-honest
 # USE THIS WORKTREE. Parent measured 961dc724 which PREDATES glue+centroid fixes.
