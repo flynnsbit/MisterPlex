@@ -25,6 +25,8 @@ AUDIO_DEV="${AUDIO_DEV:-hw:0,0}"
 VIDEO_SIZE="${VIDEO_SIZE:-1920x1080}"
 CAP_FPS="${CAP_FPS:-30}"
 LABEL="${LABEL:-lipsync}"
+MIN_PAIRS="${MIN_PAIRS:-40}"
+SKIP_SESSION_GATE="${SKIP_SESSION_GATE:-0}"
 mkdir -p "$OUT"
 
 if command -v fuser >/dev/null 2>&1; then
@@ -34,13 +36,50 @@ if command -v fuser >/dev/null 2>&1; then
   fi
 fi
 
+# Fixture contract (gen_avsync_blip.py — not guessed):
+# flash_s = 2/fps @ 24.000 → 0.0833 s full-frame white every 1.0 s (duty 8.33%).
+# Host-measured assets/avsync/sync_24fps_blip.mp4: duty_hot=0.0833 contrast≈233.
+echo "=== FIXTURE CONTRACT ==="
+echo "fixture_flash_period_s=1.0 src=caller_supplied_gen_avsync_blip"
+echo "fixture_flash_duration_s=0.083333 src=caller_supplied_2_frames_at_24fps"
+echo "fixture_flash_duty=0.0833 src=measured_file_and_generator"
+echo "fixture_beep_ms=50 src=caller_supplied_gen_avsync_blip"
+echo "fixture_fps=24.000 src=caller_supplied_ffprobe_r_frame_rate_24/1"
+warm_s=$(awk -v w=20 -v f="$CAP_FPS" 'BEGIN{printf "%.3f", w/f}')
+min_dur=$(awk -v w="$warm_s" -v n="$MIN_PAIRS" 'BEGIN{printf "%.3f", w+n+1.0}')
+echo "warmup_s=$warm_s src=derived_20_frames_over_cap_fps"
+echo "min_duration_s_for_min_pairs=$min_dur min_pairs=$MIN_PAIRS src=derived"
+if awk -v d="$DUR" -v m="$min_dur" 'BEGIN{exit !(d+0 < m+0)}'; then
+  echo "VERDICT=UNSCORED rc=77 reason=DURATION_TOO_SHORT_FOR_MIN_PAIRS dur=$DUR need>=$min_dur"
+  exit 77
+fi
+
 echo "=== PRE-REGISTERED PREDICTIONS (publish hit/miss after) ==="
-echo "P_MEDIAN: abs(median_offset_ms_raw) < 80 ms on soak480 blip @ LEAD=40 (raw_uncalibrated)"
+echo "P_MEDIAN: abs(median_offset_ms_raw) < 80 ms on blip @ LEAD=40 (raw_uncalibrated)"
 echo "P_SLOPE:  abs(slope_ms_per_s) < 0.5 over n_pairs>=40 (no cumulative clock walk)"
 echo "P_CLASS:  timing_class in STABLE|WANDER — MONOTONIC_DRIFT means rate mismatch"
 echo "P_WANDER: residual_rms_ms may be elevated if judder couples into flash phase; not assumed 0"
 echo "P_CPU:    arm_cpu_pct present as measured (no band claim without baseline)"
+echo "P_FLASH:  n_flashes >= 40 and no_flash_class absent on recovered device"
+echo "P_BEEP:   n_beeps >= 40 (audio leg)"
 echo "predictions_src=caller_supplied_pre_register"
+
+# Session gate: wall_s advancing (derivation=session clock) — not PLXD void fields.
+if [[ "$SKIP_SESSION_GATE" != "1" ]]; then
+  echo "=== SESSION GATE (wall_s advancing) ==="
+  set +e
+  bash "$ROOT/tools/avsync_wait_session.sh" >"$OUT/session_gate.txt" 2>&1
+  SG_RC=$?
+  set -e
+  echo "session_gate true rc=$SG_RC"
+  tail -n 20 "$OUT/session_gate.txt" || true
+  if [[ "$SG_RC" -ne 0 ]]; then
+    echo "VERDICT=UNSCORED rc=77 reason=session_gate_failed sg_rc=$SG_RC"
+    exit 77
+  fi
+else
+  echo "session_gate=SKIPPED src=caller_supplied"
+fi
 
 CPU_JSON="$OUT/arm_cpu.json"
 # Start CPU sample first and wait briefly so the JSON exists before measure ends

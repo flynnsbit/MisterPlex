@@ -157,6 +157,15 @@ check_rc silent 77 "$rc"
 rc="$(run_tool static --input "$OUT/static.mkv" --tol-ms 42)"
 echo "CASE static true_rc=$rc"
 check_rc static 77 "$rc"
+# T3: black video + real beeps must classify DISPLAY_FLAT (not a reason blob)
+if grep -q 'no_flash_class=DISPLAY_FLAT' "$OUT/run_static/stdout.txt"; then
+  echo "PASS static_discriminator DISPLAY_FLAT"
+  pass=$((pass + 1))
+else
+  echo "FAIL static_discriminator expected no_flash_class=DISPLAY_FLAT"
+  grep -E 'no_flash_class=|reason=' "$OUT/run_static/stdout.txt" | head -5 | sed 's/^/  | /'
+  fail=$((fail + 1))
+fi
 
 # --help must work
 set +e

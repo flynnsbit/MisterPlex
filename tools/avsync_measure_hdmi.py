@@ -161,6 +161,21 @@ DEFAULT_MIN_PAIRS = 4
 DEFAULT_PAIR_WINDOW_S = 0.9
 DEFAULT_BEEP_HZ = 1000.0
 DEFAULT_BEEP_MS = 50.0
+# Fixture geometry from scripts/gen_avsync_blip.py (quoted, not assumed):
+#   flash_s = 2.0 / fps_val; enable='lt(mod(t,1), flash_s)'; beep 50 ms @ 1 kHz
+# Host-measured on assets/avsync/sync_24fps_blip.mp4 (120 frames):
+#   duty_hot=0.0833, hot pairs every 24 frames, contrast≈233, floor≈3.3 peak≈236
+FIXTURE_FLASH_PERIOD_S = 1.0  # caller_supplied (generator integer-second cadence)
+FIXTURE_FLASH_FRAMES = 2.0  # caller_supplied (generator: 2.0/fps)
+FIXTURE_FPS = 24.0  # caller_supplied product RCA (ffprobe 24/1 — not 23.976)
+FIXTURE_FLASH_DURATION_S = FIXTURE_FLASH_FRAMES / FIXTURE_FPS  # 0.083333 s
+FIXTURE_FLASH_DUTY = FIXTURE_FLASH_DURATION_S / FIXTURE_FLASH_PERIOD_S  # 0.0833
+FIXTURE_MIN_CONTRAST = 40.0  # DEFAULT_ASSUMED detector floor (file contrast >> 200)
+# Min live capture so analysis span can hold N flash periods after warmup:
+#   T >= warmup_s + N * period + 1.0 s margin
+def min_capture_s_for_pairs(n_pairs: int, warmup_frames: int, cap_fps: float) -> float:
+    warm_s = float(warmup_frames) / float(cap_fps) if cap_fps > 0 else 1.0
+    return warm_s + float(n_pairs) * FIXTURE_FLASH_PERIOD_S + 1.0
 CAL_FORMAT = "misterplex.avsync_hdmi_calibration.v1"
 
 # Load-bearing scoring inputs that must not silently ride DEFAULT_ASSUMED
@@ -508,6 +523,122 @@ def load_audio_mono(path: Path, sr: int = DEFAULT_AUDIO_SR) -> tuple[np.ndarray,
 # ---------------------------------------------------------------------------
 # Detectors
 # ---------------------------------------------------------------------------
+def classify_no_flash_failure(
+    *,
+    n_beeps: int,
+    n_flashes: int,
+    flash_meta: dict[str, Any],
+    beep_meta: dict[str, Any] | None = None,
+    min_pairs: int = 3,
+) -> dict[str, Any]:
+    """Discriminate beeps>0/flashes=0 (and related) — never collapse to one blob.
+
+    Modes (parent T3):
+      DISPLAY_FLAT — span long enough for expected flashes, but luma contrast
+        below detector floor (black / frozen / idle / no flash on glass).
+      WINDOW_TOO_SHORT — analysis span cannot hold min_pairs flash periods
+        (warmup ate the window, or --duration too small).
+      THRESHOLD_NO_TRIGGER — contrast OK (>= min) but zero onsets (threshold
+        / separation bug or non-flash bright content).
+      NO_AV_MARKERS — neither beeps nor flashes (wrong fixture or silent/static).
+      AUDIO_ONLY_OK — beeps present, flashes zero (alias of above modes with
+        audio leg proven).
+    """
+    out: dict[str, Any] = {
+        "no_flash_class": "UNKNOWN",
+        "no_flash_class_src": "derived",
+        "n_beeps": int(n_beeps),
+        "n_flashes": int(n_flashes),
+        "n_beeps_src": "measured",
+        "n_flashes_src": "measured",
+    }
+    reason = str(flash_meta.get("reason") or "")
+    contrast = flash_meta.get("luma_contrast")
+    min_c = float(flash_meta.get("min_contrast_required") or FIXTURE_MIN_CONTRAST)
+    span = float(flash_meta.get("analysis_span_s") or 0.0)
+    expected = int(flash_meta.get("expected_flashes_in_span") or 0)
+    need_span = float(min_pairs) * FIXTURE_FLASH_PERIOD_S
+    out["analysis_span_s"] = span
+    out["analysis_span_s_src"] = str(flash_meta.get("analysis_span_s_src") or "NO-DATA")
+    out["expected_flashes_in_span"] = expected
+    out["expected_flashes_src"] = str(
+        flash_meta.get("expected_flashes_src") or "NO-DATA"
+    )
+    out["min_pairs_span_s"] = need_span
+    out["min_pairs_span_s_src"] = "derived"
+    out["luma_contrast"] = contrast
+    out["luma_contrast_src"] = "measured" if contrast is not None else "NO-DATA"
+    out["min_contrast_required"] = min_c
+    out["min_contrast_required_src"] = str(
+        flash_meta.get("min_contrast_required_src") or "DEFAULT_ASSUMED"
+    )
+    out["flash_reason"] = reason
+    out["fixture_flash_duty"] = FIXTURE_FLASH_DUTY
+    out["fixture_flash_duty_src"] = "caller_supplied_gen_avsync_blip"
+    out["fixture_flash_duration_s"] = FIXTURE_FLASH_DURATION_S
+    out["fixture_flash_duration_s_src"] = "caller_supplied_gen_avsync_blip"
+    # Host-measured file duty (sync_24fps_blip 120f): 0.0833 — matches generator.
+    out["host_file_duty_blip24"] = 0.0833
+    out["host_file_duty_blip24_src"] = "measured_assets_avsync_sync_24fps_blip"
+
+    if n_flashes > 0:
+        out["no_flash_class"] = "FLASHES_PRESENT"
+        out["detail"] = "not_a_no_flash_failure"
+        return out
+
+    if reason in ("no_frames", "too_few_frames_after_warmup"):
+        out["no_flash_class"] = "WINDOW_TOO_SHORT"
+        out["detail"] = f"reason={reason} analysis_n_frames={flash_meta.get('analysis_n_frames')}"
+        return out
+
+    if span + 1e-9 < need_span:
+        out["no_flash_class"] = "WINDOW_TOO_SHORT"
+        out["detail"] = (
+            f"analysis_span_s={span:.3f} < min_pairs*period={need_span:.3f} "
+            f"(need duration >= warmup_s + {min_pairs}*1.0s + 1.0s margin)"
+        )
+        return out
+
+    if contrast is not None and float(contrast) < min_c:
+        # Long enough window, flat luma → glass not flashing (or capture of idle).
+        out["no_flash_class"] = "DISPLAY_FLAT"
+        out["detail"] = (
+            f"luma_contrast={contrast} < min={min_c}; "
+            f"expected_flashes_in_span={expected} but peak≈floor; "
+            f"n_beeps={n_beeps} (audio leg "
+            f"{'OK' if n_beeps > 0 else 'also_empty'})"
+        )
+        if n_beeps > 0:
+            out["audio_leg"] = "OK_beeps_detected"
+            out["audio_leg_src"] = "measured"
+            out["implication"] = (
+                "HDMI audio path works; video path shows no flash contrast. "
+                "On a recovered device this is fixture/cast/idle — not ALSA."
+            )
+        else:
+            out["audio_leg"] = "NO_BEEPS"
+            out["audio_leg_src"] = "measured"
+        return out
+
+    if contrast is not None and float(contrast) >= min_c:
+        out["no_flash_class"] = "THRESHOLD_NO_TRIGGER"
+        out["detail"] = (
+            f"luma_contrast={contrast} >= min={min_c} but n_flashes=0 "
+            f"reason={reason or 'no_onset'}; detector/threshold bug or "
+            f"non-flash bright field"
+        )
+        return out
+
+    if n_beeps == 0 and n_flashes == 0:
+        out["no_flash_class"] = "NO_AV_MARKERS"
+        out["detail"] = "no beeps and no flashes"
+        return out
+
+    out["no_flash_class"] = "UNKNOWN"
+    out["detail"] = f"unclassified reason={reason}"
+    return out
+
+
 def detect_flashes(
     luma: np.ndarray,
     t: np.ndarray,
@@ -554,8 +685,30 @@ def detect_flashes(
     # Threshold: mid between floor and peak. Justified by measured fixture
     # contrast >> 40 (dark~3, flash~230). Absolute floor of 40 contrast rejects
     # static / idle captures.
-    MIN_CONTRAST = 40.0
+    MIN_CONTRAST = float(FIXTURE_MIN_CONTRAST)
     meta["min_contrast_required"] = MIN_CONTRAST
+    meta["min_contrast_required_src"] = "DEFAULT_ASSUMED"
+    # Span of analysed video (after warmup) — used by no-flash discriminator.
+    if tt.size >= 2:
+        meta["analysis_span_s"] = float(tt[-1] - tt[0])
+    elif tt.size == 1:
+        meta["analysis_span_s"] = 0.0
+    else:
+        meta["analysis_span_s"] = 0.0
+    meta["analysis_n_frames"] = int(lu.size)
+    meta["analysis_span_s_src"] = "measured"
+    # Expected flashes if fixture is 1 Hz full-frame white (generator contract).
+    span = float(meta["analysis_span_s"])
+    meta["fixture_flash_period_s"] = FIXTURE_FLASH_PERIOD_S
+    meta["fixture_flash_period_s_src"] = "caller_supplied"
+    meta["fixture_flash_duration_s"] = FIXTURE_FLASH_DURATION_S
+    meta["fixture_flash_duration_s_src"] = "caller_supplied_gen_avsync_blip"
+    meta["fixture_flash_duty"] = FIXTURE_FLASH_DUTY
+    meta["fixture_flash_duty_src"] = "caller_supplied_gen_avsync_blip"
+    meta["expected_flashes_in_span"] = (
+        int(math.floor(span / FIXTURE_FLASH_PERIOD_S)) if span > 0 else 0
+    )
+    meta["expected_flashes_src"] = "derived_from_span_and_fixture_period"
     if contrast < MIN_CONTRAST:
         meta["reason"] = "insufficient_luma_contrast"
         meta["threshold"] = None
@@ -1093,11 +1246,27 @@ def analyse_file(
     fmeta["fps_nom"] = vmeta.get("fps_nom")
     beeps, bmeta = detect_beeps(audio, sr, beep_hz=beep_hz)
 
-    if not flashes and fmeta.get("reason"):
+    if not flashes:
+        if not fmeta.get("reason"):
+            fmeta["reason"] = "zero_onsets"
+        disc = classify_no_flash_failure(
+            n_beeps=len(beeps),
+            n_flashes=0,
+            flash_meta=fmeta,
+            beep_meta=bmeta,
+            min_pairs=min_pairs,
+        )
+        fmeta["no_flash_discriminator"] = disc
+        cls = str(disc.get("no_flash_class") or "UNKNOWN")
         return MeasureResult(
-            ok=False, unscored=True, reason=f"no_flashes:{fmeta['reason']}",
-            n_flashes=0, n_beeps=len(beeps),
-            flash_meta=fmeta, beep_meta=bmeta, capture_path=str(path),
+            ok=False,
+            unscored=True,
+            reason=f"no_flashes:{cls}:{fmeta['reason']}",
+            n_flashes=0,
+            n_beeps=len(beeps),
+            flash_meta=fmeta,
+            beep_meta=bmeta,
+            capture_path=str(path),
         )
     if not beeps and bmeta.get("reason"):
         return MeasureResult(
@@ -1374,6 +1543,42 @@ def print_report(
         else:
             print(f"VERDICT=UNSCORED rc={RC_UNSCORED}")
         print(f"reason={res.reason or 'unscored'} src=measured")
+        # T3 discriminator — never collapse beeps>0/flashes=0 into one blob
+        disc = None
+        if res.flash_meta and isinstance(res.flash_meta.get("no_flash_discriminator"), dict):
+            disc = res.flash_meta["no_flash_discriminator"]
+        elif res.n_flashes == 0:
+            disc = classify_no_flash_failure(
+                n_beeps=int(res.n_beeps),
+                n_flashes=0,
+                flash_meta=res.flash_meta or {},
+                beep_meta=res.beep_meta,
+                min_pairs=min_pairs,
+            )
+        if disc:
+            print(f"no_flash_class={disc.get('no_flash_class')} src=derived")
+            print(f"no_flash_detail={disc.get('detail')} src=derived")
+            for k in (
+                "analysis_span_s",
+                "expected_flashes_in_span",
+                "min_pairs_span_s",
+                "luma_contrast",
+                "min_contrast_required",
+                "fixture_flash_duty",
+                "fixture_flash_duration_s",
+                "host_file_duty_blip24",
+                "audio_leg",
+                "implication",
+            ):
+                if k in disc and disc[k] is not None:
+                    src_k = f"{k}_src"
+                    src = disc.get(src_k, "derived")
+                    print(f"{k}={disc[k]} src={src}")
+            print(
+                "discriminator_legend: DISPLAY_FLAT=glass/idle flat luma with "
+                "long enough span; WINDOW_TOO_SHORT=span < min_pairs*1s; "
+                "THRESHOLD_NO_TRIGGER=contrast OK but zero onsets"
+            )
         if res.margin:
             print(f"margin_verdict={res.margin.get('margin_verdict')} src=derived")
             for rk in (
@@ -1878,6 +2083,58 @@ def _self_test() -> int:
     tc = classify_timing(drift_pairs, sl, r2, slope_tol=0.5, wander_rms_tol_ms=12.0)
     assert tc["timing_class"] == "MONOTONIC_DRIFT", tc
     print("SELF_TEST timing_class STABLE/DRIFT OK")
+
+    # T3 no-flash discriminators (red/green)
+    d_flat = classify_no_flash_failure(
+        n_beeps=60,
+        n_flashes=0,
+        flash_meta={
+            "reason": "insufficient_luma_contrast",
+            "luma_contrast": 0.0,
+            "min_contrast_required": 40.0,
+            "min_contrast_required_src": "DEFAULT_ASSUMED",
+            "analysis_span_s": 58.0,
+            "analysis_span_s_src": "measured",
+            "expected_flashes_in_span": 58,
+            "expected_flashes_src": "derived",
+        },
+        min_pairs=3,
+    )
+    assert d_flat["no_flash_class"] == "DISPLAY_FLAT", d_flat
+    d_short = classify_no_flash_failure(
+        n_beeps=1,
+        n_flashes=0,
+        flash_meta={
+            "reason": "insufficient_luma_contrast",
+            "luma_contrast": 0.0,
+            "min_contrast_required": 40.0,
+            "analysis_span_s": 1.5,
+            "expected_flashes_in_span": 1,
+        },
+        min_pairs=3,
+    )
+    assert d_short["no_flash_class"] == "WINDOW_TOO_SHORT", d_short
+    d_thr = classify_no_flash_failure(
+        n_beeps=10,
+        n_flashes=0,
+        flash_meta={
+            "reason": "zero_onsets",
+            "luma_contrast": 200.0,
+            "min_contrast_required": 40.0,
+            "analysis_span_s": 20.0,
+            "expected_flashes_in_span": 20,
+        },
+        min_pairs=3,
+    )
+    assert d_thr["no_flash_class"] == "THRESHOLD_NO_TRIGGER", d_thr
+    print("SELF_TEST no_flash_class DISPLAY_FLAT/WINDOW_TOO_SHORT/THRESHOLD OK")
+    # Fixture duty from generator must match host file measurement
+    assert abs(FIXTURE_FLASH_DUTY - 0.0833333333) < 1e-6, FIXTURE_FLASH_DUTY
+    assert abs(min_capture_s_for_pairs(40, 20, 30.0) - (20/30 + 40 + 1.0)) < 1e-9
+    print(
+        f"SELF_TEST fixture_duty={FIXTURE_FLASH_DUTY:.4f} "
+        f"min_capture_40pairs@30fps={min_capture_s_for_pairs(40,20,30):.2f}s OK"
+    )
 
     # DEFAULT_CAP_FPS must be hardware-legal (parent-measured ≤30)
     assert DEFAULT_CAP_FPS <= 30.0 + 1e-9, DEFAULT_CAP_FPS

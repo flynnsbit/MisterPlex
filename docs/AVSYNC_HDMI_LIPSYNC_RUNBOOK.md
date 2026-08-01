@@ -223,3 +223,20 @@ vs flash → **positive** Δoffset_ms ≈ +Δlead.
 
 **If audio sync is CORRECT:** acceptable, but only with margin proof that a
 defect would have been visible (prove100 + live margin_ok).
+
+
+## no_flash discriminator (T3)
+
+When `n_flashes=0`, report emits `no_flash_class=` instead of a single blob:
+
+| class | Meaning |
+|-------|---------|
+| DISPLAY_FLAT | span ≥ min_pairs×1s, luma_contrast < 40 (black/idle/wedged DDR) |
+| WINDOW_TOO_SHORT | analysis span too short for min_pairs |
+| THRESHOLD_NO_TRIGGER | contrast OK, zero onsets |
+
+Fixture duty (generator + file): **0.0833** (2 frames @ 24.000 / 1.0 s).
+Min capture for 40 pairs @30 fps warmup20: **41.67 s** (use DURATION=60).
+
+Session gate: `tools/avsync_wait_session.sh` requires advancing `wall_s`
+(session clock — not frames_done).
