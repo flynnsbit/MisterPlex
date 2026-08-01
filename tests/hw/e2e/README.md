@@ -68,6 +68,10 @@ Failure messages distinguish:
 | `hdmi_motion_no_frames` | HDMI stage on but capture dir empty (parent must grab) |
 | `hdmi_motion_unscored` | Instrument rc=77 — hard FAIL for synthetic/motion mode |
 | `hdmi_motion_freeze` / `hdmi_motion_color_fail` / `hdmi_motion_structure_fail` | rc=1 / rc=2 / rc=3 |
+| `ledger_unprobed` | No `/player/telemetry` and no parseable `E2E_DAEMON_LOG` (require=1) |
+| `ledger_residual_nonzero` | frames−presents−drops not accounted |
+| `ledger_session_changed` | daemon session id changed mid-cycle (self-exit/respawn) |
+| `ledger_lifetime_regressed` | lifetime_frames went backwards mid-cycle |
 
 ## Prerequisites
 
