@@ -65,14 +65,19 @@
   "doc_must_contain": [
     "Product pixels are ARM-decoded",
     "host_owns_fs",
-    "no CAVLC entropy decode in fabric",
+    "first-macroblock residual probe",
+    "physically unconnected",
+    "Method rule",
     "direct-play",
     "NOT CPU relief",
-    "88 RAM blocks",
+    "84% of blocks but only 53% of bits",
+    "fit-t7b-prog480",
+    "8fdf440f",
     "flattened into `decode_stub`"
   ],
   "doc_must_not_contain": [
     "full implementation of H264 in FPGA",
-    "fabric decode is needed for ARM CPU relief"
+    "fabric decode is needed for ARM CPU relief",
+    "ARM pushes a DDR frame at playback start"
   ]
 }

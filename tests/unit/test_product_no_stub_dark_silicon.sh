@@ -73,6 +73,25 @@ if not found:
 PY
 pass "present_core DDR fs_wr disconnect"
 
+# Exact consumer count: fs_wr_en only as port + legacy .wr_en (shipping else not compiled)
+python3 - "$PC" <<'PY2' || exit 1
+import re, sys
+from pathlib import Path
+text = Path(sys.argv[1]).read_text(errors="ignore")
+# all fs_wr_en mentions
+hits = [(i+1, line.rstrip()) for i, line in enumerate(text.splitlines()) if "fs_wr_en" in line]
+if len(hits) != 2:
+    print(f"FAIL: expected exactly 2 fs_wr_en lines (port + legacy map), got {len(hits)}:", hits, file=sys.stderr)
+    sys.exit(1)
+if "input" not in hits[0][1]:
+    print("FAIL: first fs_wr_en is not the port", hits[0], file=sys.stderr); sys.exit(1)
+if not re.search(r"\.wr_en\s*\(\s*fs_wr_en\s*\)", hits[1][1]):
+    print("FAIL: second fs_wr_en is not .wr_en(fs_wr_en)", hits[1], file=sys.stderr); sys.exit(1)
+print(f"fs_wr_en consumers: port L{hits[0][0]} + legacy map L{hits[1][0]} only")
+PY2
+pass "fs_wr_en exactly port+legacy (else-only consumer)"
+
+
 # --- 2) Plex.sv: ddr_swap / ddr_wr tied 0 under DDR_FRAME_STORE --------------
 python3 - "$PX" <<'PY' || exit 1
 import re, sys
@@ -142,11 +161,30 @@ grep -q '# set_global_assignment -name VERILOG_MACRO "PRODUCT_NO_STUB=1"' "$QSF"
   || fail "commented PRODUCT_NO_STUB assignment missing from QSF"
 pass "QSF PRODUCT_NO_STUB commented (not default-on)"
 
-# --- 5) Doc anchors ----------------------------------------------------------
+# --- 5) Doc anchors + banned withdrawn claims --------------------------------
 grep -q 'PRODUCT_NO_STUB' "$DOC" || fail "docs/phase3-decode.md missing PRODUCT_NO_STUB section"
-grep -q 'fs_wr disconnected\|does not reach\|never use the stub' "$DOC" \
-  || fail "doc missing DDR fs_wr disconnect claim"
-pass "phase3-decode.md PRODUCT_NO_STUB + dark-silicon anchors"
+grep -q 'physically unconnected\|no consumer' "$DOC" \
+  || fail "doc missing stronger unconnected-fs_wr claim"
+grep -q 'inert gate\|dead logic' "$DOC" \
+  || fail "doc must call host_owns_fs/stub_allow dead/inert under DDR_FRAME_STORE"
+grep -q 'Method rule' "$DOC" || fail "doc missing hierarchy Method rule"
+grep -q 'first-macroblock residual probe\|First MB' "$DOC" \
+  || fail "doc missing first-MB residual probe framing"
+grep -q '8fdf440f' "$DOC" && grep -q 'fit-t7b-prog480' "$DOC" \
+  || fail "doc must cite 8fdf440f with fit-t7b-prog480 path"
+# Withdrawn absolute-CAVLC-absence: fail if a line asserts it without probe/scope framing
+if grep -Ein 'no CAVLC entropy decode in fabric|there is no CAVLC' "$DOC"   | grep -Eiv 'withdrawn|probe|do not|never proves|equating|trap'; then
+  fail "doc still claims absolute CAVLC absence (withdrawn — use scope/probe framing)"
+fi
+if grep -Eiq 'first ARM DDR swap latches host_owns|ARM pushes a DDR frame.*host_owns_fs' "$DOC"; then
+  fail "doc still has withdrawn host_owns_fs-on-DDR-swap mechanism"
+fi
+if grep -Eiq 'RAM at 84% is the binding constraint|Free M10K today is \*\*88\*\* — binding' "$DOC"; then
+  fail "doc still slogans RAM blocks as the sole binding constraint"
+fi
+grep -q '84% of blocks but only 53% of bits\|84% of blocks but only 53%' "$DOC" \
+  || fail "doc missing M10K packing (84% blocks / 53% bits) finding"
+pass "phase3-decode.md corrected dark-silicon + probe framing"
 
 # --- 6) Red-before-green: stripping scaffolding must fail --------------------
 TMP="$ROOT/.agent-work/w-fit-1/rb_g_product_no_stub_$$"
