@@ -1,7 +1,7 @@
 lane=w-plextv
 branch=w-plextv-cast-picker-e2e-fix2
 worktree=.worktrees/w-plextv-e2e-fix
-sha=PENDING
+sha=90603c4b
 
 # Parent-only evidence (agent does not touch device / does not score E2E)
 
