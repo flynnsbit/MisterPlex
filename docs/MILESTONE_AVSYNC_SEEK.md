@@ -605,3 +605,84 @@ silently feeding the present loop a bogus latency. The servo is tested there too
 including a convergence simulation. An unparseable line yields `-1`, which
 disengages the servo and falls the clock back to the old submitted-byte
 behaviour.
+
+---
+
+## HDMI grabber A/V offset instrument (`tools/avsync_measure_hdmi.py`)
+
+**Added:** 2026-07-31 — real cross-correlation of flash ↔ beep on the MS2109 grabber.
+
+Daemon `av_drift_ms` is **not** an independent measurement (`av_clock` is driven
+from `frameIndex`). This tool captures **video + audio in one ffmpeg process**
+into a single MKV (shared mux PTS) and reports a measured offset.
+
+### Sign convention
+
+```
+offset_ms = (t_audio_onset - t_video_flash) * 1000
+positive  = audio LATE  (beep after flash; audio lags; video leads)
+negative  = audio EARLY (beep before flash; audio LEADS video)
+```
+
+Matches the earlier `tests/hw/avsync_measure.py` convention.
+
+### Return codes
+
+| rc | Meaning |
+|----|---------|
+| 0  | Measured and within tolerance (abs median ≤ `--tol-ms`, abs slope ≤ `--slope-tol-ms-per-s`) |
+| 2  | Measured FAIL — offset or drift slope out of tolerance |
+| 77 | UNSCORED — capture failed, silence, static video, too few pairs. Never a pass. |
+
+Defaults: `--tol-ms 42` (one 24p frame, G-AV3), `--slope-tol-ms-per-s 0.5` (30 ms/min).
+
+Every printed value is tagged `measured` / `caller_supplied` / `DEFAULT_ASSUMED`.
+If no calibration file is loaded the tool prints `calibration=NONE` and labels
+the median `raw_uncalibrated` — never silently “corrected”.
+
+### Calibration (remove instrument skew)
+
+The MS2109 has its own fixed A/V latency (historically ~215 ms on this rig). Do
+**not** report that as a MiSTer defect.
+
+1. Play the **same** blip fixture through a known-good path **into the grabber**
+   (e.g. workstation HDMI out → MS2109 in via `mpv`/`ffplay`, bypassing MiSTer).
+2. Record baseline:
+   ```bash
+   tools/avsync_measure_hdmi.py --calibrate --duration 15 \
+     --out /tmp/avsync_cal --calibration-out /tmp/avsync_cal.json
+   ```
+3. Device measure with correction:
+   ```bash
+   tools/avsync_measure_hdmi.py --duration 20 \
+     --calibration /tmp/avsync_cal.json --out /tmp/avsync_run
+   ```
+   Report shows both `median_offset_ms_raw` and `tag=calibration_corrected`
+   (`corrected = raw - instrument_offset`).
+
+### Parent live command (MiSTer playing blip fixture)
+
+```bash
+# While 624x480@24 (or any) blip fixture is casting on the MiSTer:
+tools/avsync_measure_hdmi.py --duration 30 --out /tmp/avsync_hdmi \
+  --calibration /tmp/avsync_cal.json   # omit if no cal yet
+# Expect: sticky pairs, slope_ms_per_s near 0 if no drift; inspect median.
+```
+
+Defaults: `/dev/video0` + ALSA `hw:0,0`, 1920x1080 MJPEG, 15 warm-up frames
+discarded (MS2109 junk). Override with `--video-dev` / `--audio-dev` /
+`--warmup-frames`.
+
+### Synthetic recovery (unit)
+
+`tests/unit/test_avsync_measure_hdmi.sh` injects known offsets via `itsoffset` /
+`adelay` and requires recovery within a few ms, plus rc∈{0,2,77} proofs. Soft-skip
+is never treated as pass.
+
+### Caveats
+
+- Warm-up: first ~11–15 grabber frames are uniform garbage — discarded.
+- Flash threshold is adaptive (luma floor_p20 + 0.5×contrast); needs contrast ≥ 40.
+- Beep detector is Goertzel @ 1 kHz; silence → rc=77, not a fabricated 0 ms.
+- Slope (`ms/s`) is the drift metric; a constant offset is mostly fixed latency.
+- Single-container capture is mandatory for a shared timebase; do not split A/V files.

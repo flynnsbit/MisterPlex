@@ -145,6 +145,7 @@ EXPECTED_COMMANDS = [
     "$(ROOT)/tests/unit/test_no_private_data.sh",
     "python3 $(ROOT)/tests/unit/test_gate_false_green_guard.py",
     "$(ROOT)/tests/unit/test_capture_rig.sh",
+    "$(ROOT)/tests/unit/test_avsync_measure_hdmi.sh",
     "$(ROOT)/tests/unit/test_resource_preflight.sh",
     "$(ROOT)/tests/unit/test_mister_soft_bounce_lock.sh",
     "$(ROOT)/scripts/check_define_parity.py",

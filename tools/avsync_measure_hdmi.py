@@ -1,0 +1,1060 @@
+#!/usr/bin/env python3
+"""Measure A/V offset from the HDMI-to-USB grabber (flash ↔ 1 kHz beep).
+
+WHY
+---
+Daemon-reported av_drift_ms is self-graded (av_clock derives time from
+frameIndex). Only a grabber-side cross-correlation of the visual flash and
+the audio beep is a real measurement of lipsync / drift.
+
+SIGN CONVENTION (unambiguous)
+-----------------------------
+  offset_ms = (t_audio_onset - t_video_flash) * 1000
+
+  positive  = audio is LATE relative to video
+              (beep heard AFTER flash; audio LAGS; video LEADS)
+  negative  = audio is EARLY relative to video
+              (beep heard BEFORE flash; audio LEADS video)
+
+  This matches docs/MILESTONE_AVSYNC_SEEK.md and tests/hw/avsync_measure.py.
+  Example: median_offset_ms=-60 means audio leads video by 60 ms.
+
+CONTAINER CHOICE
+----------------
+One ffmpeg process writes ONE Matroska file with both streams
+(MJPEG video + pcm_s16le audio). Reason (not a guess): a single muxer
+assigns PTS on one timeline from one process start, so flash PTS and beep
+sample clocks are directly comparable without wall-clock correlation of two
+files. Separate A/V files would require an external shared clock that the
+grabber does not expose.
+
+GRABBER WARM-UP
+---------------
+MacroSilicon MS2109 (534d:2109) emits ~11–15 uniform junk frames at start
+(min==max luma). Default --warmup-frames=15 discards them from analysis
+after capture. File/--input mode defaults warmup to 0 (fixture has no junk).
+
+RETURN CODES
+------------
+  0  = measured AND within tolerance (offset + slope)
+  2  = measured AND out of tolerance (real FAIL — offset or drift)
+  77 = UNSCORED / could-not-measure (capture fail, silence, static,
+       too few pairs). Never collapsed into 0 or 2.
+
+Every printed value is tagged measured | caller_supplied | DEFAULT_ASSUMED.
+
+Usage (parent on capture host, while MiSTer plays the blip fixture)
+-------------------------------------------------------------------
+  # Live HDMI measure (default 20 s):
+  tools/avsync_measure_hdmi.py --duration 20 --out /tmp/avsync_run
+
+  # With prior calibration file:
+  tools/avsync_measure_hdmi.py --duration 20 --calibration /tmp/avsync_cal.json \\
+      --out /tmp/avsync_run
+
+  # Calibrate instrument (play fixture locally into grabber; see docs):
+  tools/avsync_measure_hdmi.py --calibrate --duration 15 \\
+      --out /tmp/avsync_cal --calibration-out /tmp/avsync_cal.json
+
+  # Offline / synthetic (no device):
+  tools/avsync_measure_hdmi.py --input path/to/capture.mkv --out /tmp/ana
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import math
+import os
+import statistics
+import subprocess
+import sys
+import time
+from dataclasses import dataclass, field, asdict
+from pathlib import Path
+from typing import Any
+
+import numpy as np
+
+# ---------------------------------------------------------------------------
+# Defaults — every one is labelled DEFAULT_ASSUMED when used without override
+# ---------------------------------------------------------------------------
+DEFAULT_VIDEO_DEV = "/dev/video0"
+DEFAULT_AUDIO_DEV = "hw:0,0"  # ALSA; MS2109 parent-measured card 0 device 0
+DEFAULT_VIDEO_SIZE = "1920x1080"
+DEFAULT_CAP_FPS = 30.0
+DEFAULT_DURATION_S = 20.0
+DEFAULT_WARMUP_FRAMES = 15  # measured MS2109 junk; parent lab
+DEFAULT_AUDIO_SR = 48000
+DEFAULT_TOL_MS = 42.0  # one 24p frame; matches G-AV3 in MILESTONE_AVSYNC_SEEK
+DEFAULT_SLOPE_TOL_MS_PER_S = 0.5  # 30 ms/min; constant lag is OK, drift is not
+DEFAULT_MIN_PAIRS = 4
+DEFAULT_PAIR_WINDOW_S = 0.45  # half-period of 1 Hz blips
+DEFAULT_BEEP_HZ = 1000.0
+DEFAULT_BEEP_MS = 50.0
+CAL_FORMAT = "misterplex.avsync_hdmi_calibration.v1"
+
+RC_PASS = 0
+RC_FAIL = 2
+RC_UNSCORED = 77
+
+
+def _tag(value: Any, src: str) -> str:
+    """Format value with provenance tag."""
+    if isinstance(value, float):
+        return f"{value:.6g} src={src}"
+    return f"{value} src={src}"
+
+
+def _run(cmd: list[str], timeout: float | None = None) -> subprocess.CompletedProcess[bytes]:
+    return subprocess.run(cmd, capture_output=True, timeout=timeout)
+
+
+# ---------------------------------------------------------------------------
+# Capture
+# ---------------------------------------------------------------------------
+def capture_av(
+    dest: Path,
+    *,
+    duration_s: float,
+    video_dev: str,
+    audio_dev: str,
+    video_size: str,
+    cap_fps: float,
+) -> None:
+    """Capture video+audio in ONE ffmpeg process into one MKV.
+
+    Single-container justification: shared mux PTS timeline (see module doc).
+    """
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    if dest.exists():
+        dest.unlink()
+    # thread_queue_size avoids overruns when ALSA and v4l2 start at different rates.
+    cmd = [
+        "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+        "-thread_queue_size", "1024",
+        "-f", "v4l2",
+        "-input_format", "mjpeg",
+        "-video_size", video_size,
+        "-framerate", str(cap_fps),
+        "-i", video_dev,
+        "-thread_queue_size", "1024",
+        "-f", "alsa",
+        "-ac", "2",
+        "-ar", str(DEFAULT_AUDIO_SR),
+        "-i", audio_dev,
+        "-map", "0:v:0",
+        "-map", "1:a:0",
+        "-t", f"{duration_s:.3f}",
+        "-c:v", "mjpeg",
+        "-q:v", "5",
+        "-c:a", "pcm_s16le",
+        str(dest),
+    ]
+    try:
+        r = _run(cmd, timeout=duration_s + 90.0)
+    except FileNotFoundError as e:
+        raise RuntimeError("CAPTURE_FAILED reason=missing_ffmpeg") from e
+    except subprocess.TimeoutExpired as e:
+        raise RuntimeError("CAPTURE_FAILED reason=ffmpeg_timeout") from e
+    if r.returncode != 0 or not dest.exists() or dest.stat().st_size < 1000:
+        err = (r.stderr or b"").decode("utf-8", "replace").strip().splitlines()
+        tail = err[-1] if err else "no_stderr"
+        raise RuntimeError(
+            f"CAPTURE_FAILED rc={r.returncode} out={dest} log={tail}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Decode streams from a container
+# ---------------------------------------------------------------------------
+def load_video_luma(
+    path: Path, *, max_side: int = 64
+) -> tuple[np.ndarray, np.ndarray, dict[str, Any]]:
+    """Return (mean_luma[n], pts_s[n], meta) for the video stream."""
+    # Probe size for scale target keeping aspect
+    probe = _run(
+        [
+            "ffprobe", "-v", "error", "-select_streams", "v:0",
+            "-show_entries", "stream=width,height,avg_frame_rate,r_frame_rate",
+            "-of", "json", str(path),
+        ],
+        timeout=60,
+    )
+    w, h = max_side, max_side
+    fps_nom = DEFAULT_CAP_FPS
+    if probe.returncode == 0 and probe.stdout:
+        try:
+            info = json.loads(probe.stdout.decode())
+            st = info["streams"][0]
+            ow, oh = int(st["width"]), int(st["height"])
+            if ow >= oh:
+                w = max_side
+                h = max(1, int(round(max_side * oh / ow)))
+            else:
+                h = max_side
+                w = max(1, int(round(max_side * ow / oh)))
+            rate = st.get("avg_frame_rate") or st.get("r_frame_rate") or "0/0"
+            if "/" in rate:
+                num, den = rate.split("/", 1)
+                if float(den) != 0:
+                    fps_nom = float(num) / float(den)
+        except (KeyError, ValueError, IndexError, json.JSONDecodeError):
+            pass
+
+    raw = _run(
+        [
+            "ffmpeg", "-hide_banner", "-loglevel", "error",
+            "-i", str(path),
+            "-map", "0:v:0",
+            "-vf", f"scale={w}:{h}",
+            "-pix_fmt", "gray",
+            "-f", "rawvideo", "pipe:1",
+        ],
+        timeout=600,
+    )
+    if raw.returncode != 0:
+        raise RuntimeError(f"VIDEO_DECODE_FAILED file={path}")
+    buf = np.frombuffer(raw.stdout, dtype=np.uint8)
+    pix = w * h
+    if pix <= 0 or buf.size < pix:
+        raise RuntimeError(f"VIDEO_DECODE_FAILED file={path} reason=no_frames")
+    n = buf.size // pix
+    frames = buf[: n * pix].reshape(n, pix)
+    luma = frames.mean(axis=1).astype(np.float64)
+    # Per-frame min/max for uniform-frame detection (warm-up junk)
+    fmin = frames.min(axis=1).astype(np.float64)
+    fmax = frames.max(axis=1).astype(np.float64)
+
+    pts_raw = _run(
+        [
+            "ffprobe", "-v", "error", "-select_streams", "v:0",
+            "-show_entries", "frame=pts_time",
+            "-of", "csv=p=0", str(path),
+        ],
+        timeout=600,
+    )
+    times: list[float] = []
+    if pts_raw.returncode == 0 and pts_raw.stdout:
+        for line in pts_raw.stdout.decode("utf-8", "replace").splitlines():
+            s = line.strip().rstrip(",")
+            if not s or s == "N/A":
+                continue
+            try:
+                times.append(float(s))
+            except ValueError:
+                continue
+    t = np.asarray(times[:n], dtype=np.float64)
+    if t.size < n:
+        # No usable PTS — synthesize from nominal fps (labelled by caller)
+        t = np.arange(n, dtype=np.float64) / max(fps_nom, 1e-6)
+    # Stash uniform mask on the array object for warmup logic
+    luma_out = luma.copy()
+    luma_out_meta = {
+        "uniform": (fmax - fmin) < 1.0,  # min==max → junk
+        "fps_nom": fps_nom,
+        "n": n,
+        "pts_from_container": t.size == n and times != [],
+    }
+    return luma_out, t, luma_out_meta  # type: ignore[return-value]
+
+
+def _stream_start_time(path: Path, codec_type: str) -> float:
+    """Container start_time for first stream of codec_type (0.0 if absent)."""
+    probe = _run(
+        [
+            "ffprobe", "-v", "error",
+            "-select_streams", f"{codec_type[0]}:0",  # v:0 / a:0
+            "-show_entries", "stream=start_time",
+            "-of", "csv=p=0",
+            str(path),
+        ],
+        timeout=60,
+    )
+    if probe.returncode != 0 or not probe.stdout:
+        return 0.0
+    s = probe.stdout.decode("utf-8", "replace").strip().splitlines()
+    if not s:
+        return 0.0
+    try:
+        v = float(s[0].rstrip(","))
+    except ValueError:
+        return 0.0
+    if math.isnan(v) or math.isinf(v):
+        return 0.0
+    return v
+
+
+def load_audio_mono(path: Path, sr: int = DEFAULT_AUDIO_SR) -> tuple[np.ndarray, int]:
+    """Return mono float64 PCM in ~[-1, 1] and sample rate.
+
+    Sample index 0 is aligned to container t=0 by honouring audio start_time:
+    positive start_time → leading silence pad; negative → trim. Raw PCM dump
+    alone would drop itsoffset/mux delay and silently report 0 ms offset
+    (measured failure mode on +250 ms itsoffset fixtures before this pad).
+    """
+    raw = _run(
+        [
+            "ffmpeg", "-hide_banner", "-loglevel", "error",
+            "-i", str(path),
+            "-map", "0:a:0",
+            "-ac", "1",
+            "-ar", str(sr),
+            "-f", "f32le",
+            "pipe:1",
+        ],
+        timeout=600,
+    )
+    if raw.returncode != 0:
+        raise RuntimeError(f"AUDIO_DECODE_FAILED file={path}")
+    a = np.frombuffer(raw.stdout, dtype=np.float32).astype(np.float64)
+    if a.size == 0:
+        raise RuntimeError(f"AUDIO_DECODE_FAILED file={path} reason=no_samples")
+
+    start = _stream_start_time(path, "audio")
+    if start > 1e-6:
+        pad = int(round(start * sr))
+        if pad > 0:
+            a = np.concatenate([np.zeros(pad, dtype=np.float64), a])
+    elif start < -1e-6:
+        trim = int(round(-start * sr))
+        if 0 < trim < a.size:
+            a = a[trim:]
+    return a, sr
+
+
+# ---------------------------------------------------------------------------
+# Detectors
+# ---------------------------------------------------------------------------
+def detect_flashes(
+    luma: np.ndarray,
+    t: np.ndarray,
+    uniform: np.ndarray | None,
+    *,
+    warmup_frames: int,
+    min_separation_s: float = 0.6,
+) -> tuple[list[float], dict[str, Any]]:
+    """Detect white flash onsets via adaptive luma threshold.
+
+    Threshold choice: fixture is mostly dark (mean luma ~3–7 on scaled frames;
+    flash peaks ~200+). We set thr = floor + 0.5*(peak-floor) using percentiles
+    so a single stuck bright frame cannot dominate. Require peak-floor >= 40
+    luma counts or we declare no usable contrast (static / no flash).
+    """
+    meta: dict[str, Any] = {}
+    n = luma.size
+    if n == 0:
+        meta["reason"] = "no_frames"
+        return [], meta
+
+    start = min(max(0, warmup_frames), n)
+    # Also skip trailing uniform? no — only leading warm-up.
+    # Drop uniform frames only inside the warm-up window; after that score them.
+    if uniform is not None and start > 0:
+        # Count how many of the first warmup_frames were uniform (report only)
+        meta["warmup_uniform_count"] = int(uniform[:start].sum())
+    meta["warmup_frames_discarded"] = int(start)
+    meta["warmup_frames_requested"] = int(warmup_frames)
+
+    lu = luma[start:]
+    tt = t[start:]
+    if lu.size < 3:
+        meta["reason"] = "too_few_frames_after_warmup"
+        return [], meta
+
+    floor = float(np.percentile(lu, 20))
+    peak = float(np.percentile(lu, 99.5))
+    contrast = peak - floor
+    meta["luma_floor"] = floor
+    meta["luma_peak"] = peak
+    meta["luma_contrast"] = contrast
+    meta["luma_median"] = float(np.median(lu))
+    # Threshold: mid between floor and peak. Justified by measured fixture
+    # contrast >> 40 (dark~3, flash~230). Absolute floor of 40 contrast rejects
+    # static / idle captures.
+    MIN_CONTRAST = 40.0
+    meta["min_contrast_required"] = MIN_CONTRAST
+    if contrast < MIN_CONTRAST:
+        meta["reason"] = "insufficient_luma_contrast"
+        meta["threshold"] = None
+        return [], meta
+
+    thr = floor + 0.50 * contrast
+    meta["threshold"] = thr
+    meta["threshold_rule"] = "floor_p20 + 0.50*(peak_p99.5 - floor_p20)"
+
+    hot = lu > thr
+    onsets: list[float] = []
+    i = 0
+    while i < hot.size:
+        if not hot[i]:
+            i += 1
+            continue
+        # rising edge into a hot run → flash onset at this frame's PTS
+        if i == 0 or not hot[i - 1]:
+            ts = float(tt[i])
+            if not onsets or (ts - onsets[-1]) >= min_separation_s:
+                onsets.append(ts)
+        # skip rest of run
+        while i < hot.size and hot[i]:
+            i += 1
+    meta["n_flashes"] = len(onsets)
+    return onsets, meta
+
+
+def goertzel_power(block: np.ndarray, sr: int, freq: float) -> float:
+    """Goertzel power at `freq` for one block (unnormalized)."""
+    n = block.size
+    if n == 0:
+        return 0.0
+    k = int(0.5 + (n * freq) / sr)
+    w = 2.0 * math.pi * k / n
+    coeff = 2.0 * math.cos(w)
+    s0 = s1 = s2 = 0.0
+    for x in block:
+        s0 = x + coeff * s1 - s2
+        s2 = s1
+        s1 = s0
+    power = s1 * s1 + s2 * s2 - coeff * s1 * s2
+    return float(power) / (n * n)
+
+
+def detect_beeps(
+    audio: np.ndarray,
+    sr: int,
+    *,
+    beep_hz: float = DEFAULT_BEEP_HZ,
+    hop_ms: float = 5.0,
+    win_ms: float = 20.0,
+    min_separation_s: float = 0.6,
+) -> tuple[list[float], dict[str, Any]]:
+    """Detect 1 kHz beep onsets via Goertzel band energy.
+
+    Threshold: thr = floor_p20 + 0.35*(peak_p99.5 - floor). Require peak/floor
+    ratio evidence (or absolute peak) so silence returns zero beeps rather than
+    noise triggers. Onset = rising edge of the thresholded energy envelope.
+    """
+    meta: dict[str, Any] = {}
+    if audio.size < sr // 10:
+        meta["reason"] = "audio_too_short"
+        return [], meta
+
+    # RMS overall — silence gate
+    rms = float(np.sqrt(np.mean(audio * audio)))
+    meta["audio_rms"] = rms
+    SILENCE_RMS = 1e-4
+    meta["silence_rms_threshold"] = SILENCE_RMS
+    if rms < SILENCE_RMS:
+        meta["reason"] = "audio_silence"
+        return [], meta
+
+    hop = max(1, int(sr * hop_ms / 1000.0))
+    win = max(hop, int(sr * win_ms / 1000.0))
+    n_hops = 1 + max(0, (audio.size - win) // hop)
+    if n_hops < 3:
+        meta["reason"] = "too_few_hops"
+        return [], meta
+
+    energy = np.empty(n_hops, dtype=np.float64)
+    times = np.empty(n_hops, dtype=np.float64)
+    for i in range(n_hops):
+        s = i * hop
+        block = audio[s : s + win]
+        energy[i] = goertzel_power(block, sr, beep_hz)
+        # onset time at start of window (conservative; beep starts here)
+        times[i] = s / float(sr)
+
+    floor = float(np.percentile(energy, 20))
+    peak = float(np.percentile(energy, 99.5))
+    contrast = peak - floor
+    meta["goertzel_floor"] = floor
+    meta["goertzel_peak"] = peak
+    meta["goertzel_contrast"] = contrast
+    meta["beep_hz"] = beep_hz
+    meta["hop_ms"] = hop_ms
+    meta["win_ms"] = win_ms
+
+    # Absolute + relative gate: a real 0.9-amp 1 kHz beep produces peak >> 1e-4
+    MIN_PEAK = 1e-5
+    if peak < MIN_PEAK or contrast < MIN_PEAK * 0.5:
+        meta["reason"] = "no_beep_energy"
+        meta["threshold"] = None
+        return [], meta
+
+    thr = floor + 0.35 * contrast
+    meta["threshold"] = thr
+    meta["threshold_rule"] = "floor_p20 + 0.35*(peak_p99.5 - floor_p20)"
+
+    hot = energy > thr
+    onsets: list[float] = []
+    i = 0
+    while i < hot.size:
+        if not hot[i]:
+            i += 1
+            continue
+        if i == 0 or not hot[i - 1]:
+            ts = float(times[i])
+            if not onsets or (ts - onsets[-1]) >= min_separation_s:
+                onsets.append(ts)
+        while i < hot.size and hot[i]:
+            i += 1
+    meta["n_beeps"] = len(onsets)
+    return onsets, meta
+
+
+# ---------------------------------------------------------------------------
+# Pairing + stats
+# ---------------------------------------------------------------------------
+def pair_offsets(
+    flashes: list[float],
+    beeps: list[float],
+    window_s: float,
+) -> tuple[list[dict[str, float]], int, int]:
+    """Greedy nearest-neighbour pairing within ±window_s.
+
+    Returns (pairs, unpaired_flashes, unpaired_beeps).
+    Each pair: {t_flash, t_beep, offset_ms}.
+    """
+    used_b: set[int] = set()
+    pairs: list[dict[str, float]] = []
+    for f in flashes:
+        best_j = -1
+        best_abs = window_s + 1.0
+        for j, b in enumerate(beeps):
+            if j in used_b:
+                continue
+            d = abs(b - f)
+            if d <= window_s and d < best_abs:
+                best_abs = d
+                best_j = j
+        if best_j >= 0:
+            b = beeps[best_j]
+            used_b.add(best_j)
+            pairs.append(
+                {
+                    "t_flash_s": f,
+                    "t_beep_s": b,
+                    "offset_ms": (b - f) * 1000.0,
+                }
+            )
+    unpaired_f = len(flashes) - len(pairs)
+    unpaired_b = len(beeps) - len(pairs)
+    return pairs, unpaired_f, unpaired_b
+
+
+def linreg_slope(xs: list[float], ys: list[float]) -> tuple[float, float, float]:
+    """Return (slope, intercept, r_squared) for y = a*x + b."""
+    n = len(xs)
+    if n < 2:
+        return float("nan"), float("nan"), float("nan")
+    x = np.asarray(xs, dtype=np.float64)
+    y = np.asarray(ys, dtype=np.float64)
+    x_mean = float(x.mean())
+    y_mean = float(y.mean())
+    var_x = float(np.sum((x - x_mean) ** 2))
+    if var_x < 1e-18:
+        return float("nan"), y_mean, float("nan")
+    cov = float(np.sum((x - x_mean) * (y - y_mean)))
+    slope = cov / var_x
+    intercept = y_mean - slope * x_mean
+    y_hat = slope * x + intercept
+    ss_res = float(np.sum((y - y_hat) ** 2))
+    ss_tot = float(np.sum((y - y_mean) ** 2))
+    r2 = 1.0 - ss_res / ss_tot if ss_tot > 1e-18 else float("nan")
+    return slope, intercept, r2
+
+
+@dataclass
+class MeasureResult:
+    ok: bool
+    unscored: bool
+    reason: str = ""
+    pairs: list[dict[str, float]] = field(default_factory=list)
+    n_flashes: int = 0
+    n_beeps: int = 0
+    n_pairs: int = 0
+    unpaired_flashes: int = 0
+    unpaired_beeps: int = 0
+    median_offset_ms: float | None = None
+    mean_offset_ms: float | None = None
+    stdev_offset_ms: float | None = None
+    min_offset_ms: float | None = None
+    max_offset_ms: float | None = None
+    slope_ms_per_s: float | None = None
+    slope_intercept_ms: float | None = None
+    slope_r_squared: float | None = None
+    flash_meta: dict[str, Any] = field(default_factory=dict)
+    beep_meta: dict[str, Any] = field(default_factory=dict)
+    capture_path: str = ""
+
+
+def analyse_file(
+    path: Path,
+    *,
+    warmup_frames: int,
+    pair_window_s: float,
+    min_pairs: int,
+    beep_hz: float,
+) -> MeasureResult:
+    try:
+        luma, t, vmeta = load_video_luma(path)
+        audio, sr = load_audio_mono(path)
+    except RuntimeError as e:
+        return MeasureResult(ok=False, unscored=True, reason=str(e), capture_path=str(path))
+
+    uniform = vmeta.get("uniform")
+    flashes, fmeta = detect_flashes(
+        luma, t, uniform, warmup_frames=warmup_frames
+    )
+    fmeta["pts_from_container"] = vmeta.get("pts_from_container")
+    fmeta["fps_nom"] = vmeta.get("fps_nom")
+    beeps, bmeta = detect_beeps(audio, sr, beep_hz=beep_hz)
+
+    if not flashes and fmeta.get("reason"):
+        return MeasureResult(
+            ok=False, unscored=True, reason=f"no_flashes:{fmeta['reason']}",
+            n_flashes=0, n_beeps=len(beeps),
+            flash_meta=fmeta, beep_meta=bmeta, capture_path=str(path),
+        )
+    if not beeps and bmeta.get("reason"):
+        return MeasureResult(
+            ok=False, unscored=True, reason=f"no_beeps:{bmeta['reason']}",
+            n_flashes=len(flashes), n_beeps=0,
+            flash_meta=fmeta, beep_meta=bmeta, capture_path=str(path),
+        )
+
+    pairs, uf, ub = pair_offsets(flashes, beeps, pair_window_s)
+    res = MeasureResult(
+        ok=False,
+        unscored=False,
+        n_flashes=len(flashes),
+        n_beeps=len(beeps),
+        n_pairs=len(pairs),
+        unpaired_flashes=uf,
+        unpaired_beeps=ub,
+        pairs=pairs,
+        flash_meta=fmeta,
+        beep_meta=bmeta,
+        capture_path=str(path),
+    )
+    if len(pairs) < min_pairs:
+        res.unscored = True
+        res.reason = (
+            f"too_few_pairs n_pairs={len(pairs)} min_pairs={min_pairs} "
+            f"flashes={len(flashes)} beeps={len(beeps)}"
+        )
+        return res
+
+    offs = [p["offset_ms"] for p in pairs]
+    res.median_offset_ms = float(statistics.median(offs))
+    res.mean_offset_ms = float(statistics.fmean(offs))
+    res.stdev_offset_ms = float(statistics.pstdev(offs)) if len(offs) > 1 else 0.0
+    res.min_offset_ms = float(min(offs))
+    res.max_offset_ms = float(max(offs))
+
+    # Slope of offset vs flash time (ms per second of capture)
+    xs = [p["t_flash_s"] for p in pairs]
+    ys = offs
+    slope, intercept, r2 = linreg_slope(xs, ys)
+    res.slope_ms_per_s = slope
+    res.slope_intercept_ms = intercept
+    res.slope_r_squared = r2
+    res.ok = True
+    return res
+
+
+# ---------------------------------------------------------------------------
+# Calibration I/O
+# ---------------------------------------------------------------------------
+def save_calibration(path: Path, median_ms: float, meta: dict[str, Any]) -> None:
+    doc = {
+        "format": CAL_FORMAT,
+        "instrument_offset_ms": median_ms,
+        "sign_convention": (
+            "offset_ms=(t_audio-t_video)*1000; "
+            "positive=audio LATE (lags video); negative=audio EARLY (leads video)"
+        ),
+        "meta": meta,
+        "created_unix": time.time(),
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(doc, indent=2) + "\n")
+
+
+def load_calibration(path: Path) -> tuple[float, dict[str, Any]]:
+    doc = json.loads(path.read_text())
+    if doc.get("format") != CAL_FORMAT:
+        raise ValueError(f"bad calibration format: {doc.get('format')}")
+    return float(doc["instrument_offset_ms"]), doc
+
+
+# ---------------------------------------------------------------------------
+# Reporting
+# ---------------------------------------------------------------------------
+def print_report(
+    res: MeasureResult,
+    *,
+    tol_ms: float,
+    tol_src: str,
+    slope_tol: float,
+    slope_tol_src: str,
+    min_pairs: int,
+    min_pairs_src: str,
+    warmup_frames: int,
+    warmup_src: str,
+    cal_ms: float | None,
+    cal_path: str | None,
+    mode: str,
+    extra: dict[str, Any] | None = None,
+) -> int:
+    """Print tagged report; return rc."""
+    print("=== avsync_measure_hdmi ===")
+    print(f"mode={mode} src=caller_supplied")
+    print(
+        "sign_convention: offset_ms=(t_audio_onset - t_video_flash)*1000; "
+        "positive=audio LATE (lags video); negative=audio EARLY (LEADS video)"
+    )
+    print(f"capture_path={res.capture_path} src=measured")
+    print(f"warmup_frames={_tag(warmup_frames, warmup_src)}")
+    if res.flash_meta:
+        wd = res.flash_meta.get("warmup_frames_discarded")
+        if wd is not None:
+            print(f"warmup_frames_discarded={wd} src=measured")
+        thr = res.flash_meta.get("threshold")
+        if thr is not None:
+            print(f"flash_threshold_luma={thr:.4f} src=measured")
+            print(
+                f"flash_threshold_rule={res.flash_meta.get('threshold_rule')} "
+                f"src=DEFAULT_ASSUMED"
+            )
+        print(
+            f"luma_floor={res.flash_meta.get('luma_floor')} src=measured "
+            f"luma_peak={res.flash_meta.get('luma_peak')} src=measured "
+            f"luma_contrast={res.flash_meta.get('luma_contrast')} src=measured"
+        )
+    if res.beep_meta:
+        thr = res.beep_meta.get("threshold")
+        if thr is not None:
+            print(f"beep_threshold_goertzel={thr:.6g} src=measured")
+            print(
+                f"beep_threshold_rule={res.beep_meta.get('threshold_rule')} "
+                f"src=DEFAULT_ASSUMED"
+            )
+        print(
+            f"audio_rms={res.beep_meta.get('audio_rms')} src=measured "
+            f"goertzel_peak={res.beep_meta.get('goertzel_peak')} src=measured"
+        )
+
+    print(f"n_flashes={res.n_flashes} src=measured")
+    print(f"n_beeps={res.n_beeps} src=measured")
+    print(f"n_pairs={res.n_pairs} src=measured")
+    print(f"unpaired_flashes={res.unpaired_flashes} src=measured")
+    print(f"unpaired_beeps={res.unpaired_beeps} src=measured")
+    print(f"min_pairs={_tag(min_pairs, min_pairs_src)}")
+    print(f"tol_ms={_tag(tol_ms, tol_src)}")
+    print(f"slope_tol_ms_per_s={_tag(slope_tol, slope_tol_src)}")
+
+    if res.unscored or not res.ok:
+        print(f"VERDICT=UNSCORED rc={RC_UNSCORED}")
+        print(f"reason={res.reason or 'unscored'} src=measured")
+        if cal_ms is None:
+            print("calibration=NONE")
+        else:
+            print(f"calibration_ms={cal_ms:.4f} src=caller_supplied path={cal_path}")
+        if extra:
+            for k, v in extra.items():
+                print(f"{k}={v}")
+        return RC_UNSCORED
+
+    assert res.median_offset_ms is not None
+    raw = res.median_offset_ms
+    print(f"per_pair_offsets_ms={[round(p['offset_ms'], 3) for p in res.pairs]} src=measured")
+    print(f"median_offset_ms_raw={raw:.4f} src=measured tag=raw_uncalibrated")
+    print(f"mean_offset_ms_raw={res.mean_offset_ms:.4f} src=measured")
+    print(f"stdev_offset_ms={res.stdev_offset_ms:.4f} src=measured")
+    print(f"min_offset_ms={res.min_offset_ms:.4f} src=measured")
+    print(f"max_offset_ms={res.max_offset_ms:.4f} src=measured")
+    print(f"slope_ms_per_s={res.slope_ms_per_s:.6f} src=measured")
+    print(f"slope_intercept_ms={res.slope_intercept_ms:.4f} src=measured")
+    print(f"slope_r_squared={res.slope_r_squared:.6f} src=measured")
+
+    if cal_ms is None:
+        print("calibration=NONE")
+        print(f"median_offset_ms={raw:.4f} src=measured tag=raw_uncalibrated")
+        corrected = raw
+        corrected_tag = "raw_uncalibrated"
+        slope_corr = res.slope_ms_per_s
+    else:
+        print(f"calibration_ms={cal_ms:.4f} src=caller_supplied path={cal_path}")
+        print(
+            "calibration_note: corrected = raw - instrument_offset "
+            "(removes grabber fixed A/V latency)"
+        )
+        corrected = raw - cal_ms
+        corrected_tag = "calibration_corrected"
+        print(f"median_offset_ms={corrected:.4f} src=measured tag={corrected_tag}")
+        # Slope is differential; fixed cal does not change slope
+        slope_corr = res.slope_ms_per_s
+        print(f"slope_ms_per_s_corrected={slope_corr:.6f} src=measured tag=cal_invariant")
+
+    abs_med = abs(corrected)
+    abs_slope = abs(slope_corr) if slope_corr is not None and not math.isnan(slope_corr) else 0.0
+    offset_ok = abs_med <= tol_ms
+    slope_ok = abs_slope <= slope_tol
+    print(f"abs_median_offset_ms={abs_med:.4f} src=measured tag={corrected_tag}")
+    print(f"offset_within_tol={offset_ok} src=measured")
+    print(f"slope_within_tol={slope_ok} src=measured")
+
+    if offset_ok and slope_ok:
+        print(f"VERDICT=PASS rc={RC_PASS}")
+        rc = RC_PASS
+    else:
+        why = []
+        if not offset_ok:
+            why.append(f"abs_median={abs_med:.2f}>{tol_ms}")
+        if not slope_ok:
+            why.append(f"abs_slope={abs_slope:.4f}>{slope_tol}")
+        print(f"VERDICT=FAIL rc={RC_FAIL} reason={','.join(why)}")
+        rc = RC_FAIL
+
+    if extra:
+        for k, v in extra.items():
+            print(f"{k}={v}")
+    return rc
+
+
+def write_json(path: Path, payload: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, indent=2, default=str) + "\n")
+
+
+# ---------------------------------------------------------------------------
+# CLI
+# ---------------------------------------------------------------------------
+def build_arg_parser() -> argparse.ArgumentParser:
+    ap = argparse.ArgumentParser(
+        description=__doc__,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    ap.add_argument(
+        "--input", type=Path, default=None,
+        help="Analyse an existing A/V file instead of live capture (offline/synthetic)",
+    )
+    ap.add_argument(
+        "--out", type=Path, default=Path("avsync_hdmi_out"),
+        help="Output directory for capture + JSON report",
+    )
+    ap.add_argument(
+        "--duration", type=float, default=None,
+        help=f"Live capture seconds (default {DEFAULT_DURATION_S})",
+    )
+    ap.add_argument("--video-dev", default=None, help=f"default {DEFAULT_VIDEO_DEV}")
+    ap.add_argument("--audio-dev", default=None, help=f"ALSA device default {DEFAULT_AUDIO_DEV}")
+    ap.add_argument("--video-size", default=None, help=f"default {DEFAULT_VIDEO_SIZE}")
+    ap.add_argument("--cap-fps", type=float, default=None, help=f"default {DEFAULT_CAP_FPS}")
+    ap.add_argument(
+        "--warmup-frames", type=int, default=None,
+        help=f"Discard leading frames (live default {DEFAULT_WARMUP_FRAMES}; file default 0)",
+    )
+    ap.add_argument(
+        "--tol-ms", type=float, default=None,
+        help=f"Pass if abs(median offset) <= tol (default {DEFAULT_TOL_MS} = one 24p frame)",
+    )
+    ap.add_argument(
+        "--slope-tol-ms-per-s", type=float, default=None,
+        help=f"Pass if abs(slope) <= tol (default {DEFAULT_SLOPE_TOL_MS_PER_S} ms/s)",
+    )
+    ap.add_argument(
+        "--min-pairs", type=int, default=None,
+        help=f"Minimum flash/beep pairs to score (default {DEFAULT_MIN_PAIRS})",
+    )
+    ap.add_argument(
+        "--pair-window-s", type=float, default=None,
+        help=f"Max |t_beep-t_flash| to pair (default {DEFAULT_PAIR_WINDOW_S})",
+    )
+    ap.add_argument("--beep-hz", type=float, default=None, help=f"default {DEFAULT_BEEP_HZ}")
+    ap.add_argument(
+        "--calibrate", action="store_true",
+        help="Measure instrument baseline and write --calibration-out",
+    )
+    ap.add_argument(
+        "--calibration", type=Path, default=None,
+        help="Load calibration JSON; report raw and corrected offsets",
+    )
+    ap.add_argument(
+        "--calibration-out", type=Path, default=None,
+        help="Where --calibrate writes the calibration JSON",
+    )
+    ap.add_argument(
+        "--label", default="run",
+        help="Filename label for capture/report",
+    )
+    ap.add_argument(
+        "--json-out", type=Path, default=None,
+        help="Optional explicit JSON report path (default: <out>/<label>_report.json)",
+    )
+    return ap
+
+
+def main(argv: list[str] | None = None) -> int:
+    ap = build_arg_parser()
+    args = ap.parse_args(argv)
+
+    def pick(val, default, name):
+        if val is None:
+            return default, "DEFAULT_ASSUMED"
+        return val, "caller_supplied"
+
+    duration, duration_src = pick(args.duration, DEFAULT_DURATION_S, "duration")
+    video_dev, vdev_src = pick(args.video_dev, DEFAULT_VIDEO_DEV, "video_dev")
+    audio_dev, adev_src = pick(args.audio_dev, DEFAULT_AUDIO_DEV, "audio_dev")
+    video_size, vsz_src = pick(args.video_size, DEFAULT_VIDEO_SIZE, "video_size")
+    cap_fps, fps_src = pick(args.cap_fps, DEFAULT_CAP_FPS, "cap_fps")
+    tol_ms, tol_src = pick(args.tol_ms, DEFAULT_TOL_MS, "tol_ms")
+    slope_tol, slope_tol_src = pick(
+        args.slope_tol_ms_per_s, DEFAULT_SLOPE_TOL_MS_PER_S, "slope_tol"
+    )
+    min_pairs, min_pairs_src = pick(args.min_pairs, DEFAULT_MIN_PAIRS, "min_pairs")
+    pair_window, _pw_src = pick(args.pair_window_s, DEFAULT_PAIR_WINDOW_S, "pair_window")
+    beep_hz, _bh_src = pick(args.beep_hz, DEFAULT_BEEP_HZ, "beep_hz")
+
+    # Warmup: live capture defaults 15; file input defaults 0
+    if args.warmup_frames is not None:
+        warmup, warmup_src = args.warmup_frames, "caller_supplied"
+    elif args.input is not None:
+        warmup, warmup_src = 0, "DEFAULT_ASSUMED"
+    else:
+        warmup, warmup_src = DEFAULT_WARMUP_FRAMES, "DEFAULT_ASSUMED"
+
+    out_dir: Path = args.out
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    cal_ms: float | None = None
+    cal_path: str | None = None
+    if args.calibration is not None:
+        try:
+            cal_ms, _cal_doc = load_calibration(args.calibration)
+            cal_path = str(args.calibration)
+        except (OSError, ValueError, KeyError, json.JSONDecodeError) as e:
+            print(f"VERDICT=UNSCORED rc={RC_UNSCORED}")
+            print(f"reason=bad_calibration err={e}")
+            return RC_UNSCORED
+
+    # ---- obtain capture path ----
+    if args.input is not None:
+        cap_path = args.input
+        mode = "file"
+        if not cap_path.is_file():
+            print(f"VERDICT=UNSCORED rc={RC_UNSCORED}")
+            print(f"reason=input_missing path={cap_path}")
+            return RC_UNSCORED
+        print(f"input={cap_path} src=caller_supplied")
+    else:
+        mode = "calibrate" if args.calibrate else "live"
+        cap_path = out_dir / f"{args.label}_capture.mkv"
+        print(f"video_dev={_tag(video_dev, vdev_src)}")
+        print(f"audio_dev={_tag(audio_dev, adev_src)}")
+        print(f"video_size={_tag(video_size, vsz_src)}")
+        print(f"cap_fps={_tag(cap_fps, fps_src)}")
+        print(f"duration_s={_tag(duration, duration_src)}")
+        # Preflight devices
+        if not Path(video_dev).exists():
+            print(f"VERDICT=UNSCORED rc={RC_UNSCORED}")
+            print(f"reason=no_video_dev path={video_dev}")
+            return RC_UNSCORED
+        try:
+            capture_av(
+                cap_path,
+                duration_s=duration,
+                video_dev=video_dev,
+                audio_dev=audio_dev,
+                video_size=video_size,
+                cap_fps=cap_fps,
+            )
+        except RuntimeError as e:
+            print(f"VERDICT=UNSCORED rc={RC_UNSCORED}")
+            print(f"reason={e}")
+            return RC_UNSCORED
+        print(f"capture_bytes={cap_path.stat().st_size} src=measured")
+
+    res = analyse_file(
+        cap_path,
+        warmup_frames=warmup,
+        pair_window_s=pair_window,
+        min_pairs=min_pairs,
+        beep_hz=beep_hz,
+    )
+
+    # Calibrate mode: on success write calibration file; still report rc
+    if args.calibrate and res.ok and res.median_offset_ms is not None:
+        cal_out = args.calibration_out or (out_dir / f"{args.label}_calibration.json")
+        save_calibration(
+            cal_out,
+            res.median_offset_ms,
+            {
+                "n_pairs": res.n_pairs,
+                "stdev_offset_ms": res.stdev_offset_ms,
+                "capture": str(cap_path),
+                "note": (
+                    "Instrument baseline: play the SAME blip fixture through a "
+                    "known-good path into the grabber (e.g. mpv/ffplay local HDMI "
+                    "out looped to the MS2109). This median is grabber A/V skew, "
+                    "not a device defect."
+                ),
+            },
+        )
+        print(f"calibration_written={cal_out} src=measured")
+        print(f"instrument_offset_ms={res.median_offset_ms:.4f} src=measured")
+
+    rc = print_report(
+        res,
+        tol_ms=tol_ms,
+        tol_src=tol_src,
+        slope_tol=slope_tol,
+        slope_tol_src=slope_tol_src,
+        min_pairs=min_pairs,
+        min_pairs_src=min_pairs_src,
+        warmup_frames=warmup,
+        warmup_src=warmup_src,
+        cal_ms=cal_ms,
+        cal_path=cal_path,
+        mode=mode,
+    )
+
+    payload = {
+        "tool": "avsync_measure_hdmi",
+        "mode": mode,
+        "rc": rc,
+        "sign_convention": (
+            "offset_ms=(t_audio_onset-t_video_flash)*1000; "
+            "positive=audio LATE (lags); negative=audio EARLY (leads)"
+        ),
+        "result": asdict(res),
+        "tol_ms": tol_ms,
+        "tol_ms_src": tol_src,
+        "slope_tol_ms_per_s": slope_tol,
+        "slope_tol_src": slope_tol_src,
+        "calibration_ms": cal_ms,
+        "calibration_path": cal_path,
+        "warmup_frames": warmup,
+        "warmup_src": warmup_src,
+    }
+    if cal_ms is not None and res.median_offset_ms is not None:
+        payload["median_offset_ms_corrected"] = res.median_offset_ms - cal_ms
+        payload["median_offset_ms_tag"] = "calibration_corrected"
+    elif res.median_offset_ms is not None:
+        payload["median_offset_ms_corrected"] = None
+        payload["median_offset_ms_tag"] = "raw_uncalibrated"
+
+    jpath = args.json_out or (out_dir / f"{args.label}_report.json")
+    write_json(jpath, payload)
+    print(f"report_json={jpath} src=measured")
+    return rc
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except KeyboardInterrupt:
+        print(f"VERDICT=UNSCORED rc={RC_UNSCORED}")
+        print("reason=interrupted")
+        sys.exit(RC_UNSCORED)
