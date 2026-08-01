@@ -65,6 +65,12 @@ public:
     void setDdrMemFlush(bool on) { fpga_.setDdrMemFlush(on); }
     void setDdrFrameFormat(DdrFrameFormat format) { ddrFrameFormat_ = format; }
     void setPresentProfile(bool on) { presentProfile_ = on; }
+    // Post-ascal chrome plane (docs/osd-native-raster-arm-design.md).
+    // Conf CHROME_PLANE=1 alone does NOT go live — needs hwPlanePresent (RBF bit).
+    // Fail closed: old RBF keeps F1 bake (user bug path, but chrome still visible).
+    void setChromePlaneConf(bool confWants) { chromePlaneConf_ = confWants; }
+    void setChromePlaneHwPresent(bool hw) { chromePlaneHw_ = hw; }
+    bool chromePlaneLive() const { return chromePlaneConf_ && chromePlaneHw_; }
     // STREAM=1: demux annex-B H.264 → host I-slice recon (I420 → F1) + F3 stub feed
     void setStreamEnabled(bool on) { streamEnabled_ = on; }
     // When STREAM recon owns F1, optionally drop heavy FFmpeg RGB decode (keep audio).
@@ -335,6 +341,8 @@ private:
     FpgaSpi fpga_;
     DdrFrameFormat ddrFrameFormat_ = DdrFrameFormat::Yuv420p;
     bool presentProfile_ = false;
+    bool chromePlaneConf_ = false; // conf CHROME_PLANE wants plane=1
+    bool chromePlaneHw_ = false;   // RBF feature bit / mailbox — unset until w-fit
     bool useDdrF1_ = true; // F1 product presentation attempts DDR YUV420p only.
     int ddrBank_ = 0;      // ping-pong 0/1; stride comes from ddr_frame_layout.hpp
     // Bytes written to MrAudio this session (A/V clock diagnostics)

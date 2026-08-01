@@ -9,16 +9,20 @@
 //     Show transient skip feedback ("30s >>" or "<< 30s") and refresh the
 //     overlay timeout. Transport dispatch owns the actual seek/skip.
 //
-// Layout is resolution-independent: metrics are fractions of the *buffer*
-// (present canvas / coded) size. bodyScale is always >= 2 so glyph rows survive
-// present_core's even-row scanout cull; text y is snapped even. Callers must
-// pass the present/coded canvas size — never decode-tier alone. See docs/osd-hires.md.
+// Layout is resolution-independent: metrics are fractions of the *buffer* size.
+// Default path: present/coded bank (plane=0 F1 bake) — bodyScale floor 2 for
+// even-row cull. Native path: setOutputRasterLayout(true) + pass HDMI W×H so
+// metrics come from computeOutputChromeLayout (scale up to 6 @1440p). See
+// docs/osd-native-raster-arm-design.md.
 //
 // The renderer is buffer-format agnostic (RGB24, RGB565LE, BGRA32, YUV420p) and
 // only touches the overlay dirty region; when hidden, render*() returns false
 // without scanning the frame.
 
+#include "libmisterplex/mister_video_mode.hpp"
+
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -88,6 +92,7 @@ struct OverlayLayoutMetrics {
             return m;
         m.margin = std::max(6, w / 40);
         // Scale floor 2 (even-row cull). Taller canvases may use 3.
+        // Cap 3: bank/F1 path only — native HDMI uses fromOutputLayout.
         m.bodyScale = std::max(kOverlayMinScale, h >= 720 ? 3 : 2);
         m.titleScale = m.bodyScale;
         m.iconScale = std::max(kOverlayMinScale, h >= 720 ? 3 : 2);
@@ -107,24 +112,61 @@ struct OverlayLayoutMetrics {
             m.glyphH = kOverlayFontSmallH;
             m.glyphAdvance = kOverlayFontSmallAdvance;
         }
+        finishVertical(m, h);
+        return m;
+    }
+
+    // Native post-ascal plane authoring (HDMI W×H). Uses computeOutputChromeLayout
+    // so bodyScale tracks output height (6 @1440, 2 @480/240). Must not be used
+    // for F1 bank bake — bank stays on compute().
+    static OverlayLayoutMetrics fromOutputLayout(int outW, int outH) {
+        OverlayLayoutMetrics m;
+        if (outW <= 0 || outH <= 0)
+            return m;
+        const OutputChromeLayout L = computeOutputChromeLayout(outW, outH);
+        m.margin = L.margin;
+        m.panelH = L.panelH;
+        m.bodyScale = std::max(kOverlayMinScale, L.bodyScale);
+        m.titleScale = m.bodyScale;
+        m.iconScale = m.bodyScale;
+        if (L.useLargeFont) {
+            m.fontId = OverlayFontId::Large12x16;
+            m.glyphW = kOverlayFontLargeW;
+            m.glyphH = kOverlayFontLargeH;
+            m.glyphAdvance = kOverlayFontLargeAdvance;
+        } else {
+            m.fontId = OverlayFontId::Small8x13;
+            m.glyphW = kOverlayFontSmallW;
+            m.glyphH = kOverlayFontSmallH;
+            m.glyphAdvance = kOverlayFontSmallAdvance;
+        }
+        finishVertical(m, outH);
+        return m;
+    }
+
+    static OverlayLayoutMetrics resolve(int w, int h, bool outputRaster) {
+        return outputRaster ? fromOutputLayout(w, h) : compute(w, h);
+    }
+
+private:
+    static void finishVertical(OverlayLayoutMetrics& m, int h) {
         const int textH = m.glyphH * m.bodyScale;
-        // Panel must fit label + time + bar with scaled text.
         const int need = 8 + textH + 4 + textH + 12 + std::max(4, 6);
-        m.panelH = std::max(need, std::min(h / 3, std::max(64, h / 4)));
+        if (m.panelH <= 0)
+            m.panelH = std::max(need, std::min(h / 3, std::max(64, h / 4)));
+        if (m.panelH < need)
+            m.panelH = need;
         if (m.panelH > h - 2 * m.margin)
             m.panelH = std::max(need, h - 2 * m.margin);
         m.barH = std::max(4, m.panelH / 12);
         m.barBottomPad = 10 + m.barH;
         m.labelTop = 6;
-        // Snap offsets so panel.y + offset is even when panel.y is even (panel
-        // y is h - panelH - margin; we also snap at draw time).
         m.labelTop &= ~1;
         m.iconCy = m.labelTop + textH / 2;
         m.timeTop = m.labelTop + textH + 4;
         m.timeTop &= ~1;
         m.skipBoxH = std::max(28, textH + 12);
         m.noticeBoxH = m.skipBoxH;
-        return m;
     }
 };
 
@@ -133,6 +175,11 @@ public:
     static constexpr int64_t kVisibleMs = 3000;
     static constexpr int64_t kFadeMs = 500;
     static constexpr int64_t kSkipVisibleMs = 1200;
+
+    // plane=1 authoring: layout from HDMI W×H (computeOutputChromeLayout).
+    // Default false = F1 bank bake (compute). Safe degrade on old RBF.
+    void setOutputRasterLayout(bool on) { outputRasterLayout_.store(on, std::memory_order_relaxed); }
+    bool outputRasterLayout() const { return outputRasterLayout_.load(std::memory_order_relaxed); }
 
     void show(PlaybackOverlayState state, int64_t positionMs, int64_t durationMs) {
         showAt(state, positionMs, durationMs, monotonicMs());
@@ -201,11 +248,15 @@ public:
 
     OverlayRect dirtyBoundsAt(int w, int h, int64_t nowMs) const {
         Snapshot s = snapshot();
-        return dirtyBoundsFor(s, w, h, nowMs);
+        return dirtyBoundsFor(s, w, h, nowMs, outputRasterLayout());
     }
 
     static OverlayLayoutMetrics layoutMetrics(int w, int h) {
         return OverlayLayoutMetrics::compute(w, h);
+    }
+
+    OverlayLayoutMetrics activeLayoutMetrics(int w, int h) const {
+        return OverlayLayoutMetrics::resolve(w, h, outputRasterLayout());
     }
 
     bool renderRgb24(uint8_t* rgb, int w, int h) const {
@@ -216,11 +267,12 @@ public:
         if (!rgb || w <= 0 || h <= 0)
             return false;
         Snapshot s = snapshot();
-        const OverlayRect dirty = dirtyBoundsFor(s, w, h, nowMs);
+        const bool out = outputRasterLayout();
+        const OverlayRect dirty = dirtyBoundsFor(s, w, h, nowMs, out);
         if (dirty.empty())
             return false;
         Rgb24Target target{rgb, w, h};
-        render(target, s, w, h, nowMs);
+        render(target, s, w, h, nowMs, out);
         return true;
     }
 
@@ -232,11 +284,12 @@ public:
         if (!rgb565le || w <= 0 || h <= 0)
             return false;
         Snapshot s = snapshot();
-        const OverlayRect dirty = dirtyBoundsFor(s, w, h, nowMs);
+        const bool out = outputRasterLayout();
+        const OverlayRect dirty = dirtyBoundsFor(s, w, h, nowMs, out);
         if (dirty.empty())
             return false;
         Rgb565LeTarget target{rgb565le, w, h};
-        render(target, s, w, h, nowMs);
+        render(target, s, w, h, nowMs, out);
         return true;
     }
 
@@ -248,11 +301,12 @@ public:
         if (!bgra || w <= 0 || h <= 0)
             return false;
         Snapshot s = snapshot();
-        const OverlayRect dirty = dirtyBoundsFor(s, w, h, nowMs);
+        const bool out = outputRasterLayout();
+        const OverlayRect dirty = dirtyBoundsFor(s, w, h, nowMs, out);
         if (dirty.empty())
             return false;
         Bgra32Target target{bgra, w, h};
-        render(target, s, w, h, nowMs);
+        render(target, s, w, h, nowMs, out);
         return true;
     }
 
@@ -264,16 +318,21 @@ public:
         if (!yuv || w <= 0 || h <= 0 || (w & 1) || (h & 1))
             return false;
         Snapshot s = snapshot();
-        const OverlayRect dirty = dirtyBoundsFor(s, w, h, nowMs);
+        const bool out = outputRasterLayout();
+        const OverlayRect dirty = dirtyBoundsFor(s, w, h, nowMs, out);
         if (dirty.empty())
             return false;
         Yuv420pTarget target{yuv, w, h};
-        render(target, s, w, h, nowMs);
+        render(target, s, w, h, nowMs, out);
         return true;
     }
 
     static OverlayRect panelBounds(int w, int h) {
-        const OverlayLayoutMetrics m = OverlayLayoutMetrics::compute(w, h);
+        return panelBounds(w, h, false);
+    }
+
+    static OverlayRect panelBounds(int w, int h, bool outputRaster) {
+        const OverlayLayoutMetrics m = OverlayLayoutMetrics::resolve(w, h, outputRaster);
         // Even top edge so labelTop offsets keep text on a deterministic phase.
         int py = h - m.panelH - m.margin;
         py &= ~1;
@@ -473,13 +532,14 @@ private:
         return std::max<int>(1, static_cast<int>(((kNoticeVisibleMs - age) * 255) / kFadeMs));
     }
 
-    static OverlayRect dirtyBoundsFor(const Snapshot& s, int w, int h, int64_t nowMs) {
+    static OverlayRect dirtyBoundsFor(const Snapshot& s, int w, int h, int64_t nowMs,
+                                      bool outputRaster = false) {
         if (w <= 0 || h <= 0)
             return {};
-        const OverlayLayoutMetrics m = OverlayLayoutMetrics::compute(w, h);
+        const OverlayLayoutMetrics m = OverlayLayoutMetrics::resolve(w, h, outputRaster);
         OverlayRect out{};
         if (alphaFor(s, nowMs) > 0)
-            out = panelBounds(w, h);
+            out = panelBounds(w, h, outputRaster);
         if (skipAlphaFor(s, nowMs) > 0) {
             const int sw = std::min(w - 16, std::max(116, 40 * m.titleScale + 76));
             OverlayRect skip{(w - sw) / 2, std::max(8, h / 2 - m.skipBoxH - 2), sw, m.skipBoxH};
@@ -974,9 +1034,10 @@ private:
     }
 
     template <typename Target>
-    static void render(Target& t, const Snapshot& s, int w, int h, int64_t nowMs) {
+    static void render(Target& t, const Snapshot& s, int w, int h, int64_t nowMs,
+                       bool outputRaster = false) {
         const int alpha = alphaFor(s, nowMs);
-        const OverlayLayoutMetrics m = OverlayLayoutMetrics::compute(w, h);
+        const OverlayLayoutMetrics m = OverlayLayoutMetrics::resolve(w, h, outputRaster);
         constexpr Color black{0, 0, 0};
         constexpr Color panelEdge{70, 74, 82};
         constexpr Color white{235, 238, 244};
@@ -984,7 +1045,7 @@ private:
         constexpr Color amber{255, 178, 32};
 
         if (alpha > 0) {
-            const OverlayRect p = panelBounds(w, h);
+            const OverlayRect p = panelBounds(w, h, outputRaster);
             // Opaque dark-grey chrome (not pure black@170). Translucent black
             // left the empty center (right of state label, above scrubber) as a
             // solid black rectangle over video — silicon Test B residual hole
@@ -1081,6 +1142,7 @@ private:
     }
 
     mutable std::mutex mu_;
+    std::atomic<bool> outputRasterLayout_{false};
     PlaybackOverlayState state_ = PlaybackOverlayState::Stopped;
     int64_t positionMs_ = 0;
     int64_t durationMs_ = 0;

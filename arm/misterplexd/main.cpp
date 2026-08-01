@@ -133,6 +133,7 @@ int main(int argc, char** argv) {
     bool ddrMemSync = true;
     bool ddrMemFlush = false;
     bool presentProfile = false;
+    bool chromePlaneConf = false; // CHROME_PLANE=1 wants native plane; needs RBF bit
     bool streamEnabled = false;
     std::string streamSkipRgb = "auto"; // auto | on | off — skip heavy RGB when PRESENT=fpga
     // STREAM=0 -vf scale: skip_identity omits scale+pad when expected delivery
@@ -316,6 +317,9 @@ int main(int argc, char** argv) {
         v = loadConf(confPath, "PRESENT_PROFILE");
         if (!v.empty())
             presentProfile = confTruthy(v);
+        v = loadConf(confPath, "CHROME_PLANE");
+        if (!v.empty())
+            chromePlaneConf = confTruthy(v);
         v = loadConf(confPath, "STREAM");
         if (!v.empty())
             streamEnabled = confTruthy(v);
@@ -478,6 +482,13 @@ int main(int argc, char** argv) {
     player.setDdrMemSync(ddrMemSync);
     player.setDdrMemFlush(ddrMemFlush);
     player.setPresentProfile(presentProfile);
+    player.setChromePlaneConf(chromePlaneConf);
+    // chromePlaneHw stays false until w-fit publishes feature bit — fail closed.
+    if (chromePlaneConf) {
+        std::fprintf(stderr,
+                     "misterplexd: CHROME_PLANE=1 noted; plane stays off until RBF "
+                     "feature bit (fail closed, F1 chrome retained)\n");
+    }
     player.setStreamEnabled(streamEnabled);
     player.setStreamSkipRgb(streamSkipRgb);
     player.setFfmpegScaleMode(ffmpegScaleMode);

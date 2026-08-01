@@ -266,13 +266,23 @@ inline OutputChromeLayout computeOutputChromeLayout(int outW, int outH) {
     if (outW <= 0 || outH <= 0)
         return L;
     L.margin = std::max(6, outW / 40);
-    // bodyScale = clamp(2..8, round(H/240))
-    int raw = static_cast<int>(std::lround(static_cast<double>(outH) / 240.0));
-    if (raw < 2)
-        raw = 2;
-    if (raw > 8)
-        raw = 8;
-    L.bodyScale = raw;
+    // bodyScale = clamp(2..8, round(H/240)) with half-to-even — must match
+    // tests/unit/test_chrome_output_layout_static.py (Python 3 round).
+    // 600→2, 1080→4, 1440→6. Do not use lround (half away from zero).
+    {
+        const int q = outH / 240;
+        const int r = outH % 240;
+        int raw = q;
+        if (r > 120)
+            raw = q + 1;
+        else if (r == 120)
+            raw = (q % 2 == 0) ? q : (q + 1); // half toward even
+        if (raw < 2)
+            raw = 2;
+        if (raw > 8)
+            raw = 8;
+        L.bodyScale = raw;
+    }
     L.useLargeFont = (outH >= 480);
     L.glyphAdvance = L.useLargeFont ? 13 : 9;
     L.advancePx = L.glyphAdvance * L.bodyScale;

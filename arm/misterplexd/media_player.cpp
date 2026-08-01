@@ -66,8 +66,7 @@ inline std::string overlayOutputGeomTag() {
     }
     return std::string(" output=") + std::to_string(kMode.width) + "x" +
            std::to_string(kMode.height) + " mode=" +
-           (kMode.index >= 0 ? std::to_string(kMode.index) : std::string("custom")) +
-           " plane=0";
+           (kMode.index >= 0 ? std::to_string(kMode.index) : std::string("custom"));
 }
 
 inline std::string withUniversalOffset(const std::string& url, int64_t offsetMs) {
@@ -815,7 +814,13 @@ bool MediaPlayer::publishPausedOverlayFrame() {
         // resolved MiSTer video_mode raster. plane=0 → chrome still in bank (user bug).
         log(std::string("media: pause overlay canvas=") + std::to_string(cw) + "x" +
             std::to_string(ch) + " font=" + font +
-            " scale=" + std::to_string(lm.bodyScale) + overlayOutputGeomTag());
+            " scale=" + std::to_string(lm.bodyScale) + overlayOutputGeomTag() +
+            (chromePlaneLive() ? " plane=1" : " plane=0"));
+    }
+    if (chromePlaneLive()) {
+        // Video-only F1; native chrome published on plane path (w-fit ABI).
+        log("media: pause overlay plane=1 skip F1 bake (native path TBD doorbell)");
+        return true;
     }
     if (!overlay_.renderYuv420p(yuv.data(), cw, ch)) {
         log("media: pause overlay renderYuv420p returned false (dirty empty?)");
@@ -871,7 +876,8 @@ void MediaPlayer::paintIdle() {
         // canvas= bank authoring size; output= HDMI video_mode; plane=0 until (c).
         log("media: idle overlay canvas=" + std::to_string(cw) + "x" + std::to_string(ch) +
             " font=" + font + " scale=" + std::to_string(lm.bodyScale) +
-            (overlay_.visible() ? " chrome=1" : " chrome=0") + overlayOutputGeomTag());
+            (overlay_.visible() ? " chrome=1" : " chrome=0") + overlayOutputGeomTag() +
+            (chromePlaneLive() ? " plane=1" : " plane=0"));
     }
     std::vector<uint8_t> rgb(static_cast<size_t>(cw) * static_cast<size_t>(ch) * 3u);
     renderIdleRgb24(rgb.data(), cw, ch, m, idlePhase_.load());
@@ -3149,7 +3155,8 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                 rememberPauseFrame(cleanFrame, frameBytes, ddrGeometry);
             const OverlayRect dirty = overlay_.dirtyBounds(rawW, rawH);
             backupOverlayDirty(cleanFrame, dirty);
-            if (!dirty.empty()) {
+            // plane=1: never bake chrome into F1 (user bug path). Requires HW bit.
+            if (!dirty.empty() && !chromePlaneLive()) {
                 if (profilePresent) {
                     const auto overlay0 = std::chrono::steady_clock::now();
                     const int64_t overlayCpu0 = threadCpuMicros();

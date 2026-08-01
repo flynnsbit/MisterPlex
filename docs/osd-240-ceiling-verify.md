@@ -4,7 +4,29 @@
 **Verdict:** **(b)** — user-visible fix **requires** post-ascal RTL plane. ARM-only paint at “output size” into F1 is **cosmetic on glass**.  
 **Coordinate with:** `w-fit-integ` `docs/chrome-post-scale-plane-design.md` (not a parallel architecture).
 
-Parent measurement (period-3 on 1280×720 capture, contrast ~11) is **consistent with source**. Minor geometry nit below does **not** overturn the 240 finding.
+## Glass proof (parent hardware, established fact)
+
+Parent ran w-instr `push_frame --ddr --pattern` through product `FpgaSpi::publishDdrFrame`
+on RBF `c5382bee` (H.264 out of loop). Pre-registered even/odd row phases:
+
+| pattern | mean | std | note |
+|---------|-----:|----:|------|
+| mid_grey CONTROL | 137.0 | 0.00 | path sound |
+| even_black | 7.0 | 0.00 | solid black |
+| even_white | 255.0 | 0.00 | solid white |
+| odd_black | 255.0 | 0.00 | **solid white (inverted)** |
+| odd_white | 7.0 | 0.00 | **solid black (inverted)** |
+
+`std=0.00` + phase invert ⇒ odd store rows **entirely absent** (not attenuated stripes).
+Matches `store_y = py*2` / `V_STORE=240`. **Vertical ceiling is device fact.**
+Horizontal 529-of-640 remains arithmetic-only (not tested by this card). Period-3
+capture analysis is **withdrawn** (resample alias); do not cite it.
+
+After w-geom T7 (240→480 unique rows), re-run this card — solid-field collapse must break.
+
+---
+
+Parent period-3 analysis was withdrawn; source + glass even/odd proof stand.
 
 ---
 

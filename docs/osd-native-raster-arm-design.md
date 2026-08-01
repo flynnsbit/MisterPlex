@@ -26,6 +26,17 @@ cannot fix the user bug. Chrome must **leave** the pre-publish canvas.
 **B3 judder:** CLOSED per parent/rd-review — static PAUSED chrome does not  
 judder under latch phase. No longer an open design driver.
 
+**Vertical ceiling (parent glass, RBF c5382bee):** even/odd `push_frame` solid-field  
+invert, `std=0.00` — odd store rows absent. ARM F1 paint cannot fix sharpness.  
+See `docs/osd-240-ceiling-verify.md` glass-proof section.
+
+**Landed ARM scaffolding (this tip):**
+- `host/libmisterplex/chrome_plane.hpp` — `paintChromePlaneRgb565` / band @ HDMI W×H
+- `PlaybackOverlay::setOutputRasterLayout` + `fromOutputLayout` (scale half-to-even)
+- `MediaPlayer::chromePlaneLive()` = conf ∧ HW bit; **HW default false** (fail closed)
+- `presentCleanFrame` skips `renderOverlay` only when live
+- Gate: `tests/unit/test_chrome_plane_paint`
+
 **H columns:** do not assume 640 DE; product H_DE=529; clk_sys 20 MHz class  
 (parent). Plane geometry uses **HDMI W×H**, not core DE.
 
@@ -98,10 +109,12 @@ L = computeOutputChromeLayout(outW, outH)   // mister_video_mode.hpp
 | Mode | out | bodyScale | advance px (12×16 or 8×13) |
 |------|-----|----------:|---------------------------:|
 | 12 | 1920×1440 | 6 | 78 |
-| 8 | 1920×1080 | 4–5 | 52–65 |
-| 5 | 800×600 | 2–3 | 26–39 |
+| 8 | 1920×1080 | 4 | 52 |
+| 5 | 800×600 | 2 | 26 |
 | 6 | 640×480 | 2 | 26 |
 | 240p-class | 320×240 | 2 | 18 (8×13) |
+
+(bodyScale = round half-to-even of H/240, clamp 2..8 — G0 + C++ parity.)
 
 G0 gate: `tests/unit/test_chrome_output_layout_static.py`.
 
