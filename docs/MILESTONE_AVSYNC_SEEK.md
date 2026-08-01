@@ -1082,3 +1082,44 @@ explained by drops.
 `avsync_240_330.json` median **−304.7** (near the −316 mode). **No telemetry** → startup_drops
 **unresolvable**. Implied drops under a rejected 2-pt H-DROP invert (~14.7) are
 `DEFAULT_ASSUMED` model fiction — do not publish as measurement.
+
+### Two discrete offset clusters (post H-DROP)
+
+Parent series (rk8; absolute = `raw_uncalibrated`). Tool auto-picks `/tmp/avsync_repN.json`.
+
+| run | median_ms | 2-means | notes |
+|-----|----------:|---------|-------|
+| 480_330 | −318.0 | A | core-A |
+| rep1 | −316.0 | A | core-A |
+| rep2 | −196.7 | B | |
+| rep3 | −196.0 | B | |
+| rep4 | −304.7 | A | **shoulder-A** (~12 ms from core) |
+| 240_330 | −304.7 | A | shoulder-like; excluded from sep by default |
+
+- **Primary gap** is still ~120 ms (B vs core-A). Within-B spread **0.7 ms**; core-A spread **2.0 ms**.
+- Shoulder (−304.7) sits on A’s side of the big gap but is **not** the same 2 ms core — full-A spread becomes **13.3 ms** once rep4 is in.
+- Instrument SE(median) within a run ≈ **1.3 ms** → primary A/B split is not noise; shoulder needs more n before calling a third mode.
+
+**Whole-series vs developing (measured on all current reps):**
+
+- Pair-0 already on-cluster: core-A y0~−298…−282, B y0~−185…−172, shoulder y0~−275; |y0−med| ≪ |sep|/2.
+- Cross-run `med_d` early/mid/late thirds **flat** across the ~120 ms pairs (e.g. rep2−rep1 all **113.333**; rep4−rep2 all **−117.333**; slope_d ~0.02 ms/pair).
+- Rolling-median step-10 jumps max **~15–33 ms**, never ~120 → **no mid-run cluster flip**.
+- Verdict: `SHIFT_KIND=WHOLE_SERIES_STARTUP_LEVEL` — level chosen at startup and held; slow −0.09 ms/s slope is separate residual drift.
+
+**A,A,B,B(+A shoulder):** run order alone **cannot** distinguish bistable-random from one-way step. Need more repeats or intervention.
+
+**100 ms prefill vs 125 ms (3×frame) — tight gate, not ±42:**
+
+| sep definition | sep_ms | \|sep−100\| | \|sep−125\| | envelope gate |
+|----------------|-------:|------------:|------------:|---------------|
+| B − coreA (−317) | **120.67** | **20.67 → REJECT 100** | 4.33 (closer; not rejected at 3×2ms gate) | core spread 2 ms |
+| B − fullA (incl shoulder) | 116.56 | 16.56 | 8.44 | full-A spread 13 ms → neither rejected |
+
+`prefill+½frame=120.83` fits core sep to 0.17 ms — **numeric only, not a mechanism**.  
+`tools/analyze_drop_offset.py --clusters-only` prints both.  
+**E2 discriminator:** change feed-target ms (50/100/150) across sessions — sep tracks feed ⇒ prefill phase; sep stays ~3×frame ⇒ frame phase.
+
+### `av_drift_ms` blindness (parent-measured, external)
+
+Same three tele runs: internal `av_drift_ms` mean **−29.8 / −29.4 / −30.2** (range inside lead band) while external HDMI medians span **120 ms**. Confirms code argument (`AV_PRESENT_LEAD_MS` pins the band) with hardware. **Soak PASS on av-lock+av_drift_ms is not a lipsync claim.**

@@ -586,14 +586,309 @@ def analyze(runs: List[PairedRun], frame_ms: float, reject_resid_ms: float) -> i
 
 
 def build_default_runs() -> List[PairedRun]:
-    """Parent lab defaults under /tmp (capture host)."""
-    return [
-        PairedRun("rep1", "/tmp/avsync_rep1.json", "/tmp/tele_1.txt"),
-        PairedRun("rep2", "/tmp/avsync_rep2.json", "/tmp/tele_2.txt"),
-        PairedRun("rep3", "/tmp/avsync_rep3.json", "/tmp/tele_3.txt"),
+    """Parent lab defaults under /tmp (capture host). Auto-picks repN/tele_N if present."""
+    runs: List[PairedRun] = [
         PairedRun("480_330", "/tmp/avsync_480_330.json", None),
         PairedRun("240_330", "/tmp/avsync_240_330.json", None),
     ]
+    for i in range(1, 16):
+        aj = f"/tmp/avsync_rep{i}.json"
+        tj = f"/tmp/tele_{i}.txt"
+        if os.path.isfile(aj):
+            runs.append(PairedRun(f"rep{i}", aj, tj if os.path.isfile(tj) else None))
+    return runs
+
+
+def rolling_median(ys: Sequence[float], w: int = 30) -> List[float]:
+    out: List[float] = []
+    for i in range(len(ys)):
+        lo = max(0, i - w // 2)
+        hi = min(len(ys), i + w // 2 + 1)
+        out.append(median(ys[lo:hi]))
+    return out
+
+
+def kmeans_1d_two(vals: Sequence[float], n_iter: int = 25) -> Tuple[float, float]:
+    """Two-means on 1D values. Returns centers ordered (more_negative, more_positive)."""
+    if len(vals) < 2:
+        v = vals[0] if vals else 0.0
+        return v, v
+    c1, c2 = min(vals), max(vals)
+    for _ in range(n_iter):
+        a = [v for v in vals if abs(v - c1) <= abs(v - c2)]
+        b = [v for v in vals if abs(v - c1) > abs(v - c2)]
+        if not a or not b:
+            break
+        c1, c2 = mean(a), mean(b)
+    if c1 > c2:
+        c1, c2 = c2, c1
+    return c1, c2
+
+
+def analyze_clusters(
+    runs: List[PairedRun],
+    frame_ms: float,
+    exclude_name_substrings: Sequence[str] = ("240",),
+) -> int:
+    """Cluster membership, whole-series vs developing shift, 100 vs 125 ms quantum test.
+
+    Returns 0 if analysis ran; 77 if fewer than 2 avsync series loaded.
+    Does not use H-DROP exit codes (those stay in analyze()).
+    """
+    print("=== CLUSTER / LEVEL-SHIFT / QUANTUM ANALYSIS ===")
+    print_kv("frame_ms", frame_ms, "DEFAULT_ASSUMED_from_measured_24.000_fps")
+    print_kv("prefill_ms", PREFILL_MS, "DEFAULT_ASSUMED_from_kFeedTargetBytes_19200")
+
+    series: List[Dict[str, Any]] = []
+    for run in runs:
+        try:
+            if not run.av:
+                run.av = load_avsync(run.avsync_path)
+        except (OSError, ValueError, KeyError, json.JSONDecodeError) as e:
+            print(f"skip {run.name}: {e}  src=measured")
+            continue
+        av = run.av
+        series.append(
+            {
+                "name": run.name,
+                "path": run.avsync_path,
+                "t": av["t_flash_s"],
+                "y": av["offsets"],
+                "med": av["median_offset_ms"],
+                "n": av["n_pairs"],
+                "stdev": av["stdev_offset_ms"],
+                "slope": av["slope_json"],
+                "exclude_from_sep": any(s in run.name for s in exclude_name_substrings),
+            }
+        )
+
+    if len(series) < 2:
+        print("cluster analysis could-not-measure: need >=2 series  src=measured")
+        return 77
+
+    meds = [s["med"] for s in series]
+    c_a, c_b = kmeans_1d_two(meds)
+    print_kv("kmeans_center_A_ms", f"{c_a:.6f}", "measured")
+    print_kv("kmeans_center_B_ms", f"{c_b:.6f}", "measured")
+    print_kv("kmeans_center_gap_ms", f"{c_b - c_a:.6f}", "measured")
+
+    for s in series:
+        s["cluster"] = "A" if abs(s["med"] - c_a) <= abs(s["med"] - c_b) else "B"
+        se_med = 1.253 * s["stdev"] / math.sqrt(s["n"]) if s["n"] else float("nan")
+        print(
+            f"[{s['name']}] cluster={s['cluster']} median_offset_ms={s['med']:.6f} "
+            f"n={s['n']} stdev={s['stdev']:.4f} SE_median≈{se_med:.4f} "
+            f"slope={s['slope']} y0={s['y'][0]:.4f} t0={s['t'][0]:.4f}  src=measured"
+        )
+
+    # Separation on primary (non-excluded) members only
+    A = [s for s in series if s["cluster"] == "A" and not s["exclude_from_sep"]]
+    B = [s for s in series if s["cluster"] == "B" and not s["exclude_from_sep"]]
+    print_kv("cluster_A_members", [s["name"] for s in A], "measured")
+    print_kv("cluster_B_members", [s["name"] for s in B], "measured")
+    print_kv(
+        "excluded_from_separation",
+        [s["name"] for s in series if s["exclude_from_sep"]],
+        "caller_supplied_default_240",
+    )
+
+    if len(A) >= 1 and len(B) >= 1:
+        mA = mean([s["med"] for s in A])
+        mB = mean([s["med"] for s in B])
+        sep = mB - mA
+        sA = pstdev([s["med"] for s in A]) if len(A) > 1 else 0.0
+        sB = pstdev([s["med"] for s in B]) if len(B) > 1 else 0.0
+        se_sep = math.sqrt((sA ** 2) / len(A) + (sB ** 2) / len(B))
+        spread_A = (max(s["med"] for s in A) - min(s["med"] for s in A)) if A else 0.0
+        spread_B = (max(s["med"] for s in B) - min(s["med"] for s in B)) if B else 0.0
+        print_kv("sep_ms_B_minus_A_full", f"{sep:.6f}", "measured")
+        print_kv("within_A_spread_ms", f"{spread_A:.6f}", "measured")
+        print_kv("within_B_spread_ms", f"{spread_B:.6f}", "measured")
+        print_kv("se_sep_ms_fragile_n", f"{se_sep:.6f}", "measured")
+        print_kv("n_A", len(A), "measured")
+        print_kv("n_B", len(B), "measured")
+
+        # Core-A: members within core_radius of the most-negative median in A.
+        # Captures parent "tight A" (-318/-316) when a shoulder (-304) appears.
+        core_radius = 5.0  # ms; DEFAULT_ASSUMED split between 2ms tight and 12ms shoulder
+        print_kv("core_A_radius_ms", core_radius, "DEFAULT_ASSUMED")
+        most_neg_A = min(s["med"] for s in A)
+        core_A = [s for s in A if s["med"] <= most_neg_A + core_radius]
+        shoulder_A = [s for s in A if s not in core_A]
+        print_kv("core_A_members", [s["name"] for s in core_A], "measured")
+        print_kv("shoulder_A_members", [s["name"] for s in shoulder_A], "measured")
+        if len(core_A) >= 1:
+            mAc = mean([s["med"] for s in core_A])
+            sep_core = mB - mAc
+            spread_core = (
+                max(s["med"] for s in core_A) - min(s["med"] for s in core_A)
+                if len(core_A) > 1
+                else 0.0
+            )
+            print_kv("sep_ms_B_minus_coreA", f"{sep_core:.6f}", "measured")
+            print_kv("within_coreA_spread_ms", f"{spread_core:.6f}", "measured")
+        else:
+            sep_core = sep
+            spread_core = spread_A
+
+        # Envelope for quantum reject: prefer tight core+B spreads; fall back to full.
+        envelope = max(spread_core, spread_B, 2.0)
+        print_kv("quantum_envelope_ms", f"{envelope:.6f}", "measured")
+        print(
+            "NOTE: n small → se_sep fragile; quantum gate uses within-cluster spread "
+            "envelope (coreA vs B), not the product ±42 ms tol.  src=measured"
+        )
+
+        def quantum_report(sep_use: float, label_sep: str, env: float) -> None:
+            print(f"--- quantum residuals ({label_sep} sep={sep_use:.6f} ms) ---")
+            quanta = [
+                ("prefill_100", PREFILL_MS),
+                ("three_frame_125", 3.0 * frame_ms),
+                ("prefill_plus_half_frame", PREFILL_MS + 0.5 * frame_ms),
+                ("prefill_plus_frame", PREFILL_MS + frame_ms),
+                ("two_frame", 2.0 * frame_ms),
+            ]
+            e100 = abs(sep_use - PREFILL_MS)
+            e125 = abs(sep_use - 3.0 * frame_ms)
+            gate = max(3.0 * env, 5.0)
+            for label, q in quanta:
+                err = abs(sep_use - q)
+                rejected = err > gate
+                print(
+                    f"  quantum={label} q_ms={q:.6f} |sep-q|={err:.6f} "
+                    f"gate_ms={gate:.3f} REJECTED={rejected}  src=measured"
+                )
+            closer = (
+                "prefill_100"
+                if e100 + 1e-9 < e125
+                else ("three_frame_125" if e125 + 1e-9 < e100 else "tie")
+            )
+            print_kv(f"err_vs_100_prefill[{label_sep}]", f"{e100:.6f}", "measured")
+            print_kv(f"err_vs_125_3frame[{label_sep}]", f"{e125:.6f}", "measured")
+            print_kv(f"closer_quantum[{label_sep}]", closer, "measured")
+            print(
+                f"QUANTUM_100_PREFILL[{label_sep}]="
+                f"{'REJECTED' if e100 > gate else 'NOT_REJECTED'}_at_envelope_gate  src=measured"
+            )
+            print(
+                f"QUANTUM_125_3FRAME[{label_sep}]="
+                f"{'REJECTED' if e125 > gate else 'NOT_REJECTED'}_at_envelope_gate  src=measured"
+            )
+
+        quantum_report(sep, "fullA", max(spread_A, spread_B, 2.0))
+        quantum_report(sep_core, "coreA", envelope)
+        print(
+            "Tight discriminator (not ±42): |sep-q| <= max(3*within_cluster_spread, 5ms). "
+            "coreA vs B is the parent A/B reading when a ~-305 shoulder exists.  src=measured"
+        )
+    else:
+        print(
+            "separation could-not-measure: need members in both clusters after exclusions  src=measured"
+        )
+
+    # Whole-series vs developing
+    print("--- whole-series vs developing shift ---")
+    print(
+        "Test: if cluster is a startup level choice, (1) y0 already sits near its "
+        "cluster median, (2) cross-run difference early/mid/late thirds stay flat, "
+        "(3) no within-run rolling-median jump near |sep|."
+    )
+    for s in series:
+        rm = rolling_median(s["y"], 30)
+        step = 10
+        jumps = [rm[i] - rm[i - step] for i in range(step, len(rm), step)]
+        max_jump = max(abs(j) for j in jumps) if jumps else float("nan")
+        print(
+            f"[{s['name']}] y0={s['y'][0]:.4f} med={s['med']:.4f} y0-med={s['y'][0]-s['med']:.4f} "
+            f"roll30_range={max(rm)-min(rm):.4f} max_|droll_step10|={max_jump:.4f}  src=measured"
+        )
+
+    # Cross-run pair-index diffs for all pairs
+    print("--- cross-run offset difference (common pair index) ---")
+    for i in range(len(series)):
+        for j in range(i + 1, len(series)):
+            ra, rb = series[i], series[j]
+            n = min(ra["n"], rb["n"])
+            d = [rb["y"][k] - ra["y"][k] for k in range(n)]
+            n3 = max(1, n // 3)
+            e, m, lte = d[:n3], d[n3 : 2 * n3], d[2 * n3 :]
+            xs = list(range(n))
+            try:
+                _, slope_d, _ = ols(xs, d)
+            except ValueError:
+                slope_d = float("nan")
+            print(
+                f"  {rb['name']}-{ra['name']}: med_d={median(d):.4f} "
+                f"early_med_d={median(e):.4f} mid_med_d={median(m):.4f} "
+                f"late_med_d={median(lte):.4f} slope_d_ms_per_pair={slope_d:.6f} "
+                f"stdev_d={pstdev(d):.4f}  src=measured"
+            )
+
+    # Floor(t) bin stability for first A vs first B if available
+    def floor_bins(s: Dict[str, Any]) -> Dict[int, float]:
+        buckets: Dict[int, List[float]] = {}
+        for t, y in zip(s["t"], s["y"]):
+            buckets.setdefault(int(math.floor(t)), []).append(y)
+        return {k: median(v) for k, v in buckets.items()}
+
+    if A and B:
+        sa, sb = A[0], B[0]
+        ba, bb = floor_bins(sa), floor_bins(sb)
+        common = sorted(set(ba) & set(bb))
+        if len(common) >= 10:
+            diffs = [bb[k] - ba[k] for k in common]
+            early = [bb[k] - ba[k] for k in common if k < common[0] + 30]
+            late = [bb[k] - ba[k] for k in common if k > common[-1] - 30]
+            print(
+                f"floor_t {sb['name']}-{sa['name']}: n_bins={len(common)} "
+                f"med_d={median(diffs):.4f} stdev_d={pstdev(diffs):.4f} "
+                f"early30_med_d={median(early):.4f} late30_med_d={median(late):.4f} "
+                f"late-early={median(late)-median(early):.4f}  src=measured"
+            )
+
+    print("--- cluster structure verdict ---")
+    # Heuristic: whole-series if all |y0-med| << |sep|/2 and max droll << |sep|/2
+    if len(A) >= 1 and len(B) >= 1:
+        sep = mean([s["med"] for s in B]) - mean([s["med"] for s in A])
+        y0_ok = all(abs(s["y"][0] - s["med"]) < abs(sep) / 2 for s in A + B)
+        # max jump across A+B
+        jumps_ok = True
+        for s in A + B:
+            rm = rolling_median(s["y"], 30)
+            step = 10
+            jumps = [abs(rm[i] - rm[i - step]) for i in range(step, len(rm), step)]
+            if jumps and max(jumps) >= abs(sep) * 0.5:
+                jumps_ok = False
+        if y0_ok and jumps_ok:
+            print(
+                "SHIFT_KIND=WHOLE_SERIES_STARTUP_LEVEL  "
+                "(y0 already on cluster; no mid-run jump near |sep|)  src=measured"
+            )
+        elif not jumps_ok:
+            print(
+                "SHIFT_KIND=POSSIBLE_IN_RUN_DEVELOPMENT  "
+                "(rolling jump approaches |sep| — inspect)  src=measured"
+            )
+        else:
+            print(
+                "SHIFT_KIND=MIXED_OR_UNCLEAR  src=measured"
+            )
+        print(
+            "BIMODAL_VS_STEP: order of runs alone cannot decide with n_cluster_transitions<=1 "
+            "(A,A,B,B is compatible with bistable random OR one-way step). "
+            "Need more repeats or an intervention.  src=measured"
+        )
+    print(
+        "EXPERIMENTAL_DISCRIMINATOR_100_vs_125:\n"
+        "  E1. Collect N>=8 session medians with tele; bootstrap CI on sep; "
+        "reject q if q outside 95% CI.\n"
+        "  E2. Rebuild with kFeedTargetBytes equivalent 50ms and 150ms (or conf if added). "
+        "If sep tracks feed target → prefill phase; if sep stays ~3*frame independent of "
+        "feed → frame quantum phase.\n"
+        "  E3. Do not use ±42 ms product tol — use within-cluster spread (here ~1-2 ms) as "
+        "the noise floor for sep."
+    )
+    return 0
 
 
 def self_test() -> int:
@@ -733,10 +1028,19 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         help="OOS |residual| above this rejects H-DROP (default 30 ms)",
     )
     ap.add_argument("--self-test", action="store_true", help="Synthetic RED/GREEN and exit")
+    ap.add_argument(
+        "--clusters-only",
+        action="store_true",
+        help="Skip H-DROP section; only cluster/level-shift/quantum analysis",
+    )
     args = ap.parse_args(argv)
 
     print_kv("tool", "analyze_drop_offset.py", "DEFAULT_ASSUMED")
-    print_kv("frame_ms_arg", args.frame_ms, "caller_supplied" if args.frame_ms != FRAME_MS_24 else "DEFAULT_ASSUMED")
+    print_kv(
+        "frame_ms_arg",
+        args.frame_ms,
+        "caller_supplied" if args.frame_ms != FRAME_MS_24 else "DEFAULT_ASSUMED",
+    )
 
     if args.self_test:
         return self_test()
@@ -770,7 +1074,21 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         print("no runnable inputs  src=measured")
         return 77
 
-    return analyze(filtered, frame_ms=float(args.frame_ms), reject_resid_ms=float(args.reject_resid_ms))
+    rc = 0
+    if not args.clusters_only:
+        rc = analyze(
+            filtered,
+            frame_ms=float(args.frame_ms),
+            reject_resid_ms=float(args.reject_resid_ms),
+        )
+    # Always run cluster analysis when we have series (H-DROP reject must not skip it).
+    rc_c = analyze_clusters(filtered, frame_ms=float(args.frame_ms))
+    if rc_c == 77 and args.clusters_only:
+        return 77
+    # Prefer H-DROP reject code if set; else cluster rc.
+    if rc == 2:
+        return 2
+    return rc if rc != 0 else rc_c
 
 
 if __name__ == "__main__":
