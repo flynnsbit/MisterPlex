@@ -49,6 +49,23 @@ not attributed; do not build on an untested link.
   - `tests/hw/avsync_rate.py`
   - `tools/avsync_measure_hdmi.py` (parent grabber)
 
+## Parent 2026-07-31 follow-up — 117 ms bimodality is DEVICE (session-latched)
+
+ONE 360 s playback, THREE captures inside the same session (instrument confound
+controlled): within-session spread **3.33 ms** vs between-cluster separation
+**116.89 ms** (ratio 35×). Pre-registered SESSION-LATCHED. State latched by first
+flash/beep pair (~1.4 s), stable for whole session. Daemon session-start records
+identical across 117 ms-apart runs apart from timestamps — **every daemon-side
+signal is blind to this defect**.
+
+Also: common-mode ~25 ms startup transient (first-10 s less negative than last-60 s
+in both clusters). Short A/V windows are biased vs long soaks — label window length.
+
+Instrument note: `avsync_measure_hdmi.py` starts two live inputs without wallclock
+timestamps; per-capture USB race can absorb into alignment. Parent controlled for
+that with multi-capture same session. Label every instrument value
+`measured` / `caller-supplied` / `DEFAULT_ASSUMED`.
+
 ## Steady-state drops (related falsification)
 
 1 Hz sampling across three 360 s soaks: `drops` final by wall_s≈7; zero further

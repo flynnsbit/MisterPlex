@@ -1,36 +1,29 @@
 lane: w-lint GATE-INTEGRITY
-tip: eaec990a
 branch: w-lint-gate-integrity
+tip: (pending commit)
 worktree: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-lint
 
-## Parent RE-TASK response
+## Parent broadcast absorbed
+117 ms A/V bimodality = DEVICE session-latched (within-session 3.33 ms vs 116.89 ms).
+Daemon-side signals blind. av_drift/av-lock already TELEMETRY_ONLY on this branch.
+Short A/V windows biased ~25 ms vs long soaks — label window length.
+Evidence note: docs/evidence/w_lint_AV_DRIFT_BLIND.md updated.
 
-### 1. Running bitstream identity (blocker)
-- verify: FULL_PASS only VERIFIED_PLXC (parent VIDREG inject or future PLXC word)
-- UNVERIFIED → rc=2 REFUSE FULL_PASS (proven RBG in test_video_regression_liveness)
-- mixed SPI/DDR pair → rc=1
-- empty probe → rc=4 NO-DATA
-- FIXED hole: bare `dev) run_bundle` skipped verify — now baseline|dev always verify first
-- rc=2 allows HDMI measure for parent forensics; final exit stays 2 (measure ≠ identity)
-- CORENAME/RBFNAME never identity; on-disk RBF md5 never fabric proof
-- No RTL build-ID register in shipping core — PLXC design in docs/core-running-bitstream-identity.md (fit-gated)
-- HDMI fingerprint is parent-only; frame md5 alone invalid both ways (parent note)
+## This tick
+1. Scrub pidof misterplexd from HW tests (idle telemetry, bank_release, p480 CPU snap)
+   → /proc/PID/exe basename deleted-tolerant
+2. RBFNAME mtime: absence is empty NO-DATA, not || echo 0 (plexctl + video_regression)
+3. idle telemetry log counts: three-way (NO_DATA vs measured 0) — no || echo 0
+4. absence_as_zero + live_state guards hard-fail remaining pidof misterplexd
 
-### 2. Stub-lock inventory (no behaviour change)
-docs/evidence/w_lint_STUB_LOCK_INVENTORY.md — four items, all (a) intentional:
-1. audio_delay.hpp:45 + test_audio_delay.cpp:49 + authority_red
-2. ddrFrameFormatCode always 1 + test_frame_store_math.cpp:282
-3. kStubDcPaintY=104 goldens + test_idct_quant.cpp:129
-4. ddrFrameGeometryForFpgaPresent ignores decode + rtl_invariants/native_480p
-No (b) hidden gap found.
+## Standing
+- video_regression verify UNVERIFIED → rc=2 (not FULL_PASS)
+- fix/gate-liveness CLOSE; expected_commands=125 on this branch
+- No device / no Quartus; c5382bee do-not-disturb
 
-### 3. expected_commands
-- fix/gate-liveness: CLOSE/SUPERSEDED (EXPECTED_COMMANDS=102 measured) — do not merge
-- w-lint: 125 protected = Makefile reality (rollcall OK)
-- Never hand-edit integer; use test_unit_rollcall.py --write-expected
-
-### Direct true rc
+## Direct true rc
 | gate | true rc |
 |------|---------|
+| test_absence_as_zero_static_guard.py | 0 |
+| test_live_state_identity_audit.py | 0 |
 | test_video_regression_liveness.sh | 0 |
-| test_unit_rollcall.py | 0 |

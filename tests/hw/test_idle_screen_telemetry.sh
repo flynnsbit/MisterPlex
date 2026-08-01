@@ -98,7 +98,8 @@ else
     echo "RBF_PROVENANCE_UNVERIFIED=1"
 fi
 
-DAEMON_PID="$(ssh_read 'pidof misterplexd 2>/dev/null || echo DEAD')"
+# /proc/PID/exe basename after strip " (deleted)" — never pidof (parent 2026-07-31).
+DAEMON_PID="$(ssh_read 'n=0;pids="";for d in /proc/[0-9]*;do [ -e "$d/exe" ]||continue;x=$(readlink -f "$d/exe" 2>/dev/null)||continue;case "$x" in *" (deleted)") x=${x%" (deleted)"};;esac;[ "$(basename "$x")" = misterplexd ]||continue;n=$((n+1));pids="$pids ${d#/proc/}";done;pids=${pids# };if [ "$n" -eq 1 ];then echo "$pids";else echo DEAD;fi')"
 [ "$DAEMON_PID" != "DEAD" ] || unscored_exit "daemon-not-running"
 echo "DAEMON pid=$DAEMON_PID"
 
@@ -161,9 +162,18 @@ fi
 # Paint-path log bracket (parent RCA: PRESENT=fb0 skipped fpga_.open in initPresent,
 # paintIdle never entered the fpga_.ok() block → neither success nor fail logged).
 # Evidence class: presence/absence of specific log strings — not HDMI picture.
-PAINT_OK_N="$(ssh_read 'grep -c "idle screen painted" /media/fat/misterplex/misterplexd.log 2>/dev/null || echo 0')"
-PAINT_FAIL_N="$(ssh_read 'grep -c "idle paint DDR failed\|idle paint failed" /media/fat/misterplex/misterplexd.log 2>/dev/null || echo 0')"
-PAINT_OPEN_N="$(ssh_read 'grep -c "idle FPGA frame path OK\|FPGA frame path OK" /media/fat/misterplex/misterplexd.log 2>/dev/null || echo 0')"
+# Count only if log exists. Missing log = NO_DATA (never || echo 0 / || true).
+# grep -c: rc 0 = matches, rc 1 = zero matches (prints 0), rc 2 = error → NO_DATA.
+_log_count() {
+  local pat="$1"
+  ssh_read "log=/media/fat/misterplex/misterplexd.log; if [ ! -r \"\$log\" ]; then echo NO_DATA; else set +e; c=\$(grep -c \"$pat\" \"\$log\" 2>/dev/null); grc=\$?; set -e; if [ \"\$grc\" -eq 0 ] || [ \"\$grc\" -eq 1 ]; then echo \"\$c\"; else echo NO_DATA; fi; fi"
+}
+PAINT_OK_N="$(_log_count 'idle screen painted')"
+PAINT_FAIL_N="$(_log_count 'idle paint DDR failed\|idle paint failed')"
+PAINT_OPEN_N="$(_log_count 'idle FPGA frame path OK\|FPGA frame path OK')"
+if [ "$PAINT_OK_N" = "NO_DATA" ] || [ "$PAINT_FAIL_N" = "NO_DATA" ] || [ "$PAINT_OPEN_N" = "NO_DATA" ]; then
+  unscored_exit "daemon-log-unreadable"
+fi
 PAINT_OK_N=$(printf '%s' "$PAINT_OK_N" | tr -dc '0-9'); PAINT_OK_N=${PAINT_OK_N:-0}
 PAINT_FAIL_N=$(printf '%s' "$PAINT_FAIL_N" | tr -dc '0-9'); PAINT_FAIL_N=${PAINT_FAIL_N:-0}
 PAINT_OPEN_N=$(printf '%s' "$PAINT_OPEN_N" | tr -dc '0-9'); PAINT_OPEN_N=${PAINT_OPEN_N:-0}

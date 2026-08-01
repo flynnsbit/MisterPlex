@@ -127,8 +127,9 @@ def main() -> int:
         if has_corename_id and not has_live and rel != "scripts/video_regression.sh":
             print(f"WARN {rel}: CORENAME used as identity without claim/PLXC/live markers")
             # idle/f3 tests: informational — parent-owned HW; do not hard-fail unit
-        if has_pidof and rel == "tests/hw/test_idle_screen_telemetry.sh":
-            print(f"WARN {rel}: uses pidof misterplexd (prefer argv0 + /proc/PID/exe)")
+        if has_pidof:
+            print(f"FAIL {rel}: pidof misterplexd (use /proc/PID/exe basename; deleted-tolerant)")
+            rc = 1
         if has_corename_id and has_live:
             print(f"OK   {rel}: CORENAME present but live markers also present")
 

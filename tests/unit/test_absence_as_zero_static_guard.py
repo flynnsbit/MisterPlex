@@ -29,6 +29,9 @@ SCAN = [
     "scripts/restore_misterplexd_prev.sh",
     "scripts/source_rate_rca.sh",
     "scripts/validate_playback_controls_hw.sh",
+    "tests/hw/test_idle_screen_telemetry.sh",
+    "tests/hw/test_bank_release_visual.sh",
+    "tests/hw/test_p480_ab_harness.sh",
 ]
 
 GREP_C_COLLAPSE = re.compile(

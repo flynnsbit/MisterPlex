@@ -949,20 +949,23 @@ if [ -x /media/fat/misterplex/bin/plexctl.sh ]; then
   # plexctl may be a multi-command script; call load path if exported — else raw.
   :
 fi
-before=$(stat -c %Y /tmp/RBFNAME 2>/dev/null || echo 0)
+# Missing RBFNAME → empty (NO-DATA), never || echo 0 (absence≠measured epoch).
+before=$(stat -c %Y /tmp/RBFNAME 2>/dev/null || true)
+before=${before:-}
 printf '%s\n' "load_core $core" > /dev/MiSTer_cmd
 i=0
-after=$before
+after=""
 while [ "$i" -lt 40 ]; do
   sleep 0.5
-  after=$(stat -c %Y /tmp/RBFNAME 2>/dev/null || echo 0)
-  if [ "$after" != "$before" ]; then
+  after=$(stat -c %Y /tmp/RBFNAME 2>/dev/null || true)
+  after=${after:-}
+  if [ -n "$after" ] && [ "$after" != "$before" ]; then
     break
   fi
   i=$((i + 1))
 done
-if [ "$after" = "$before" ]; then
-  echo "FAIL CORE_LOAD_UNCONFIRMED $core (RBFNAME mtime did not advance)"
+if [ -z "$after" ] || [ "$after" = "$before" ]; then
+  echo "FAIL CORE_LOAD_UNCONFIRMED $core (RBFNAME mtime did not advance; before=${before:-none} after=${after:-none})"
   exit 4
 fi
 md=$(md5sum "$core" 2>/dev/null | awk '{print $1}')

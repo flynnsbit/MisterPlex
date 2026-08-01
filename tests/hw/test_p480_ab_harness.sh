@@ -480,8 +480,18 @@ snapshot() {
   local tag="$1"
   echo "SNAP $tag wall_ns=$(date +%s%N)"
   echo "HZ=$HZ"
+  # Enumerate by /proc/PID/exe basename (strip " (deleted)"). Never pidof —
+  # BusyBox name truncation + no path distinction (plexctl/video_regression docs).
   for name in misterplexd ffmpeg; do
-    pids=$(pidof "$name" 2>/dev/null || true)
+    pids=""
+    for d in /proc/[0-9]*; do
+      [ -e "$d/exe" ] || continue
+      x=$(readlink -f "$d/exe" 2>/dev/null) || continue
+      case "$x" in *" (deleted)") x=${x%" (deleted)"} ;; esac
+      [ "$(basename "$x" 2>/dev/null)" = "$name" ] || continue
+      pids="$pids ${d#/proc/}"
+    done
+    pids=${pids# }
     echo "PROCS name=$name pids=${pids:-none}"
     for pid in $pids; do
       [ -r "/proc/$pid/stat" ] || continue

@@ -118,10 +118,10 @@ echo ""
 # ─── PRE-FLIGHT (automated) ──────────────────────────────────────────────────
 echo "━━━ PRE-FLIGHT CHECKS (automated) ━━━"
 
-# Daemon alive?
-DAEMON_PID=$(ssh_read 'pidof misterplexd 2>/dev/null || echo DEAD')
+# Daemon alive via /proc/PID/exe (deleted-tolerant) — never pidof (parent 2026-07-31).
+DAEMON_PID=$(ssh_read 'n=0;pids="";for d in /proc/[0-9]*;do [ -e "$d/exe" ]||continue;x=$(readlink -f "$d/exe" 2>/dev/null)||continue;case "$x" in *" (deleted)") x=${x%" (deleted)"};;esac;[ "$(basename "$x")" = misterplexd ]||continue;n=$((n+1));pids="$pids ${d#/proc/}";done;pids=${pids# };if [ "$n" -eq 1 ];then echo "$pids";else echo DEAD;fi')
 if [ "$DAEMON_PID" = "DEAD" ]; then
-    echo "  UNSCORED: daemon not running"
+    echo "  UNSCORED: daemon not running (or n!=1)"
     unscored_exit "daemon-not-running"
 fi
 echo "  ✓ Daemon running (PID $DAEMON_PID)"

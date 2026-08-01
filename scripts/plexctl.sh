@@ -89,21 +89,26 @@ load_core() {
     echo "ERROR MISSING core at $core (checked on-device via /dev/MiSTer_cmd present)"
     return 2
   fi
-  before=$(stat -c %Y /tmp/RBFNAME 2>/dev/null || echo 0)
+  # Missing RBFNAME is empty (NO-DATA), never coerced to 0 (absence≠epoch mtime).
+  before=$(stat -c %Y /tmp/RBFNAME 2>/dev/null || true)
+  before=${before:-}
   printf 'load_core %s\n' "$core" > /dev/MiSTer_cmd
   i=0
+  after=""
   while [ "$i" -lt 40 ]; do
     sleep 0.5
-    after=$(stat -c %Y /tmp/RBFNAME 2>/dev/null || echo 0)
-    if [ "$after" != "$before" ]; then
-      echo "$(ts) CORE_LOADED $core (RBFNAME mtime $before -> $after)"
+    after=$(stat -c %Y /tmp/RBFNAME 2>/dev/null || true)
+    after=${after:-}
+    # Advance: first appearance (before empty, after set) OR mtime change.
+    if [ -n "$after" ] && [ "$after" != "$before" ]; then
+      echo "$(ts) CORE_LOADED $core (RBFNAME mtime ${before:-none} -> $after)"
       write_running_core_claim "$core" "$after" || return $?
       sleep 3
       return 0
     fi
     i=$((i + 1))
   done
-  echo "CORE_LOAD_UNCONFIRMED $core (RBFNAME mtime did not advance from $before)"
+  echo "CORE_LOAD_UNCONFIRMED $core (RBFNAME mtime did not advance from ${before:-none})"
   # Do NOT leave a stale claim pretending this load succeeded.
   return 4
 }
