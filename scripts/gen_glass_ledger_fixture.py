@@ -1,13 +1,10 @@
 #!/usr/bin/env python3
-"""OCR-proof glass-ledger soak fixture (624x480 @ measured 24/1).
+"""OCR-proof glass-ledger soak fixture.
 
-See tools/glass_frame_id.py for the full writer↔reader CONTRACT.
-Primary ID = binary Grey-code bar strip (not OCR). Secondary = fixed-width
-zero-padded digits + checksum on an opaque black plate.
+See tools/glass_frame_id.py and docs/glass_frame_id_contract.md.
+Primary ID = Grey-code bar strip. Secondary = fixed-width digits + checksum.
 
-Default duration 600 s (>=10 min) at fps 24/1 → n_frames=14400 ground truth.
-Audio: 1 kHz beep 50 ms / 1 ms attack each integer second (A/V still measurable).
-Flash: optional centered luma ramp for avsync (does not cover the ID plate).
+Default: 624x480 @ 24/1, duration 600 s. Also supports 320x240 and non-bank sizes.
 """
 from __future__ import annotations
 
@@ -22,18 +19,16 @@ from pathlib import Path
 import numpy as np
 
 try:
-    from PIL import Image, ImageDraw
+    from PIL import Image
 except ImportError as e:
     raise SystemExit(f"Pillow required: {e}") from e
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tools"))
 from glass_frame_id import (  # noqa: E402
-    BAR_Y1,
-    CANVAS_H,
-    CANVAS_W,
     draw_id_band,
     format_text,
+    geometry_for,
 )
 
 
@@ -54,7 +49,6 @@ def write_pcm_sharp(path: Path, duration_s: float, sr: int = 48000) -> None:
 
 
 def scene_luma(n: int, fps: float, ramp_frames: int = 4) -> int:
-    """Body luma only (ID plate is always opaque on top). Centered ramp on integer s."""
     t = n / float(fps)
     phase = t - math.floor(t)
     dt = phase - 1.0 if phase > 0.5 else phase
@@ -67,18 +61,24 @@ def scene_luma(n: int, fps: float, ramp_frames: int = 4) -> int:
     return 0
 
 
-def render_frame(n: int, fps: float, *, force_luma: int | None = None) -> np.ndarray:
+def render_frame(
+    n: int,
+    fps: float,
+    w: int,
+    h: int,
+    *,
+    force_luma: int | None = None,
+) -> np.ndarray:
     y = scene_luma(n, fps) if force_luma is None else int(force_luma)
-    rgb = np.zeros((CANVAS_H, CANVAS_W, 3), dtype=np.uint8)
+    rgb = np.zeros((h, w, 3), dtype=np.uint8)
     rgb[:, :, :] = y
-    # mouth bar
     t = n / fps
     phase = t - math.floor(t)
     if phase < 0.05 and force_luma is None:
-        bx = (CANVAS_W - CANVAS_W // 4) // 2
-        by = int(CANVAS_H * 3 / 4)
-        rgb[by : by + CANVAS_H // 10, bx : bx + CANVAS_W // 4, :] = (255, 0, 0)
-    draw_id_band(rgb, n)
+        bx = (w - w // 4) // 2
+        by = int(h * 3 / 4)
+        rgb[by : by + max(8, h // 10), bx : bx + w // 4, :] = (255, 0, 0)
+    draw_id_band(rgb, n, geometry_for(w, h))
     return rgb
 
 
@@ -88,6 +88,8 @@ def gen(
     duration_s: float = 600.0,
     fps_num: int = 24,
     fps_den: int = 1,
+    width: int = 624,
+    height: int = 480,
     vbitrate: str = "2000k",
 ) -> dict:
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -95,13 +97,20 @@ def gen(
     fps_str = f"{fps_num}/{fps_den}" if fps_den != 1 else str(fps_num)
     n_frames = int(round(duration_s * fps_val))
     bufsize = str(int(vbitrate[:-1]) * 2) + "k" if vbitrate[-1] in "kK" else vbitrate
+    geom = geometry_for(width, height)
     meta = {
         "out": str(out),
         "n_frames_ground_truth": n_frames,
         "fps_rational_requested": fps_str,
         "duration_s_requested": duration_s,
+        "width": width,
+        "height": height,
         "text_example": format_text(2358),
+        "cell_w": geom.cell_w,
+        "bar_y0": geom.bar_y0,
+        "bar_y1": geom.bar_y1,
         "contract": "tools/glass_frame_id.py",
+        "doc": "docs/glass_frame_id_contract.md",
     }
     with tempfile.TemporaryDirectory(prefix="glass_", dir=str(out.parent)) as td:
         pcm = Path(td) / "a.s16"
@@ -109,7 +118,7 @@ def gen(
         cmd = [
             "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
             "-f", "rawvideo", "-pix_fmt", "rgb24",
-            "-s", f"{CANVAS_W}x{CANVAS_H}", "-r", fps_str, "-i", "pipe:0",
+            "-s", f"{width}x{height}", "-r", fps_str, "-i", "pipe:0",
             "-f", "s16le", "-ar", "48000", "-ac", "2", "-i", str(pcm),
             "-map", "0:v:0", "-map", "1:a:0",
             "-c:v", "libx264", "-profile:v", "baseline", "-bf", "0",
@@ -123,15 +132,20 @@ def gen(
         ]
         meta["ffmpeg_cmd"] = " ".join(cmd)
         print("GEN", out, flush=True)
-        print("GROUND_TRUTH n_frames=", n_frames, "fps_requested=", fps_str, "src=caller_supplied", flush=True)
+        print(
+            f"GROUND_TRUTH n_frames={n_frames} fps={fps_str} "
+            f"geom={width}x{height} cell_w={geom.cell_w} src=caller_supplied",
+            flush=True,
+        )
         print("ID_CONTRACT bars=primary text=", format_text(0), "src=caller_supplied", flush=True)
         proc = subprocess.Popen(cmd, stdin=subprocess.PIPE)
         assert proc.stdin is not None
         try:
+            step = max(1, n_frames // 20)
             for n in range(n_frames):
-                frame = render_frame(n, fps_val)
+                frame = render_frame(n, fps_val, width, height)
                 proc.stdin.write(frame.tobytes())
-                if (n + 1) % 720 == 0:
+                if (n + 1) % step == 0:
                     print(f"  frames {n+1}/{n_frames}", flush=True)
         finally:
             proc.stdin.close()
@@ -147,14 +161,22 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--out", type=Path,
                     default=ROOT / "assets" / "avsync" / "sync_glass_ledger_480p24.mp4")
-    ap.add_argument("--duration", type=float, default=600.0,
-                    help="seconds; default 600 (>=10 min soak)")
+    ap.add_argument("--duration", type=float, default=600.0)
     ap.add_argument("--fps-num", type=int, default=24)
     ap.add_argument("--fps-den", type=int, default=1)
+    ap.add_argument("--width", type=int, default=624)
+    ap.add_argument("--height", type=int, default=480)
     ap.add_argument("--vbitrate", default="2000k")
     args = ap.parse_args()
-    gen(args.out, duration_s=args.duration, fps_num=args.fps_num,
-        fps_den=args.fps_den, vbitrate=args.vbitrate)
+    gen(
+        args.out,
+        duration_s=args.duration,
+        fps_num=args.fps_num,
+        fps_den=args.fps_den,
+        width=args.width,
+        height=args.height,
+        vbitrate=args.vbitrate,
+    )
     return 0
 
 
