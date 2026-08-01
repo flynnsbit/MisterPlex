@@ -1,25 +1,12 @@
-w-geom status — 117 ms FPGA path + host gate
-============================================
+lane: w-geom
 branch: w-avsync-hdmi-measure
-device: NOT TOUCHED (parent owns). core c5382bee undisturbed. NO FIT.
-
-SOURCE VERDICT (file:line in fpga-av-path-117ms.md)
-- Audio RTL two-state @117ms: CORRECT NEGATIVE (sample 0.020833ms; a_en2 170.667ms reset-only)
-- PLXD4 0x300FF12C: VIDEO frames_done high word — NOT audio
-- 3×24 content frames 125.00ms: REJECTED (|err|=7.90ms vs 117.10)
-- 7×T_disp=117.009ms: arith only; mechanism NOT-FOUND
-- Open: measure N=round((t_frames_done++ - t_audio_release)/16.715600) across clusters
-
-HOST DELIVERABLE
-- host/libmisterplex/av_phase_rtl_quanta.hpp
-- tests/unit/test_av_phase_rtl_quanta.cpp  (make unit wired)
-- scripts/parent_plxd_present_lag_protocol.sh
-- Gate: true rc=0 GREEN; RED path proven (must_red rc=1)
-
-PARENT RUN NEXT
-  scripts/parent_plxd_present_lag_protocol.sh recipe
-  # after logs: pair N_A vs N_B → H0 same-N or H1 ΔN≈7
-  # if H0: residual = kernel MrAudio SPI (out of tree) / sink
-
-GEOMETRY (prior, silicon-confirmed by parent)
-- FORCE_SCALE always 449280; B4 measured; B5 arm teardown; B1 N=2→S=224640
+task: 480p drop geometry-side cost (user frames dropped)
+status: DONE host gates + report
+verdict: DDR canvas IDENTICAL 240/480 (449280); FORCE_SCALE shared both tiers;
+  ffmpeg product total heavier at 624 (host ratio 1.325); drops≠publish_misses
+gates:
+  test_geom_frame_cost rc=0
+  test_force_scale_sws_cost rc=0 (H1 total 624>=320 HIT, H2 fb HIT, ratio=1.325)
+  rollcall rc=0 (+ glass_ledger Makefile wire)
+no_device no_fit
+report: .agent-work/w-geom/480P_DROP_GEOM_COST.md
