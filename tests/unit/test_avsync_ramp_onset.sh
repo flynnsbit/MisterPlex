@@ -165,6 +165,35 @@ else
   fi
 fi
 
+echo "=== HOST PROOF: ramp interp beats step quant on real capture PTS ==="
+PROOF="$ROOT/tools/avsync_ramp_onset_proof.py"
+CAP="$ROOT/avsync_hdmi_out/480p_repeat1_capture.mkv"
+PROOF_OUT="$OUT/onset_proof.json"
+if [[ ! -f "$PROOF" ]]; then
+  echo "FAIL missing $PROOF"
+  fail=$((fail + 1))
+elif [[ ! -f "$CAP" ]]; then
+  echo "FAIL missing capture $CAP (need checked-in or local HDMI capture for PTS grid)"
+  fail=$((fail + 1))
+else
+  set +e
+  python3 "$PROOF" --capture "$CAP" --duration 60 --json-out "$PROOF_OUT" \
+    >"$OUT/onset_proof.log" 2>&1
+  prc=$?
+  set -e
+  echo "onset_proof true_rc=$prc"
+  if [[ "$prc" -eq 0 ]] && grep -q 'VERDICT=PASS' "$OUT/onset_proof.log"; then
+    echo "PASS onset_proof_ramp_beats_step"
+    pass=$((pass + 1))
+    # Surface measured numbers
+    grep -E '^(PRE_REGISTER|MEASURED|PASS|FAIL|VERDICT)' "$OUT/onset_proof.log" | tail -20
+  else
+    echo "FAIL onset_proof"
+    tail -n 40 "$OUT/onset_proof.log" | sed 's/^/  | /'
+    fail=$((fail + 1))
+  fi
+fi
+
 echo "=== SUMMARY pass=$pass fail=$fail ==="
 if [[ "$fail" -ne 0 ]]; then
   echo "AVSYNC_RAMP_ONSET_FAIL"
