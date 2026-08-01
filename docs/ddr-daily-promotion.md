@@ -412,16 +412,31 @@ Sequence (atomic):
 
 If promotion is correct:
 
-- Product `Plex.rbf` md5 `c5382bee73cecdee8220b811e529c297`
-- `Plex_v2.rbf` still `dfebf2bf…` (untouched)
-- Live daemon exe md5 `e9f79de217982aff44207664fdb945c5`, `n_daemon=1`
-- Live conf path matches the root of that exe (often `misterplex_v2`)
-- `/resources` 200; cast playback `vfps≈23.5–23.7`, `clock=av-lock`
-- Viewed pixels: crisp text, correct colour, correct letterbox, no shear/green cast
+- Product `Plex.rbf` md5 `c5382bee73cecdee8220b811e529c297` (**disk** pin — not executing proof)
+- Executing core: PLXS magic `0x504C5853` + **advancing** `mbox_seq` (not CORENAME; not file md5 alone)
+- `Plex_v2.rbf` still `dfebf2bf…` (untouched SPI undo)
+- Live daemon exe md5 from `readlink -f /proc/PID/exe` equals pair pin; `n_daemon=1`
+- Live conf path from `/proc/PID/cmdline --conf` under live root (user-owned bytes)
+- `/resources` 200
+- **Viewed pixels** (required): idle chevron CC geometry and/or motion instrument
+  `MOTION_OK` on warmed HDMI capture — not telemetry
 - Rollback restore returns SPI baseline picture without hunting files
 
-If wrong core path was loaded: md5 of `Plex.rbf` may match while HDMI still
-shows the old SPI bitstream (or vice versa) — trust path md5 **and** pixels.
+### RETRACTED — never promotion/soak PASS criteria
+
+Parent fleet broadcast 2026-07-31 (measured on five same-config 480p runs):
+
+- **`clock=av-lock` and `av_drift_ms` are BLIND to real lip-sync.** Daemon series
+  stayed within ~0.8 ms while HDMI offset clusters were ~120 ms apart. `av_drift_ms`
+  is the servo reading its own setpoint (`host/libmisterplex/av_clock.hpp`).
+- **Do not quote av-lock / av_drift_ms as promote, soak, or pair PASS.**
+- Lip-sync (if claimed) is judged only by external pixel+audio:
+  `tools/avsync_measure_hdmi.py` — parent-owned; not a soft gate in this package.
+- Steady-state drop sawtooth also falsified (startup drops only). Drop totals are
+  not a rate-mismatch proof; do not build promote gates on drop slope.
+
+Promotion package success = pair identity + boot coherence + **pixels/motion** +
+PLXS execution proof. It does **not** claim calibrated lip-sync.
 
 ## Related scripts
 

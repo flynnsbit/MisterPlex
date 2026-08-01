@@ -23,6 +23,13 @@
 # Inject for unit tests (no device):
 #   PROMOTE_SSH / PROMOTE_HTTP / PROMOTE_GATE_BLOB
 
+# Rule 0: quoted code / true rc= / measured artifacts only.
+#
+# RETRACTED as PASS criteria (parent 2026-07-31 measured):
+#   clock=av-lock, av_drift_ms — internal servo echo; BLIND to HDMI lip-sync.
+#   Do not add gates on those fields. Lip-sync = tools/avsync_measure_hdmi.py only
+#   (parent-owned external instrument). This gate package does not claim A/V offset.
+#
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"

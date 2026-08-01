@@ -694,6 +694,32 @@ echo "  coldfix true rc=$rc"
 echo "$out" | grep -q 'grabber_not_ready' && ok "cold-class" || bad "cold-class"
 
 
+
+echo "=== RETRACT: av-lock / av_drift_ms must not be promote PASS criteria ==="
+# Gate source must not require av-lock
+if grep -nE 'av-lock|av_drift_ms' "$GATES" | grep -viE 'RETRACT|BLIND|not |never|comment|#' ; then
+  # allow only retract commentary
+  if grep -nE 'av-lock|av_drift_ms' "$GATES" | grep -viE 'RETRACT|BLIND|never|not a|Do not'; then
+    bad "gate-no-avlock-criterion"
+  else
+    ok "gate-no-avlock-criterion"
+  fi
+else
+  ok "gate-no-avlock-criterion"
+fi
+# Docs must not list clock=av-lock as success observation without RETRACT
+if grep -n 'clock=av-lock' "$ROOT/docs/ddr-daily-promotion.md" | grep -v RETRACT | grep -v BLIND | grep -v 'never' ; then
+  # if line is under RETRACTED section it's ok — check not in "If promotion is correct"
+  if grep -A20 'If promotion is correct' "$ROOT/docs/ddr-daily-promotion.md" | grep -q 'clock=av-lock'; then
+    bad "docs-no-avlock-pass"
+  else
+    ok "docs-no-avlock-pass"
+  fi
+else
+  ok "docs-no-avlock-pass"
+fi
+grep -q 'avsync_measure_hdmi' "$ROOT/docs/ddr-daily-promotion.md" && ok "docs-external-avsync-pointer" || bad "docs-external-avsync-pointer"
+
 echo "=== summary pass=$pass fail=$fail ==="
 if [ "$fail" -ne 0 ]; then
   echo "test_promotion_gates: FAIL"

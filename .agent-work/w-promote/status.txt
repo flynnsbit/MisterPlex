@@ -1,28 +1,20 @@
 lane: w-promote
 branch: fix/rollback-honest
 worktree: /home/flynnsbit/Projects/MisterPlex/.worktrees/rollback-honest
-tip: 96f68358
+tip: (post-commit)
 
-## Blockers addressed (repo-backed)
-1. V2_MD5 set+e glue — join + shape + host MD5…set refuse; GREEN + wrong-md5 RED proven
-2. Boot hook — S99user USER_SCRIPT; strip BOTH roots; one supervise line; decoy inert
-3. Atomic pair — rollback_v2 core+daemon+conf+boot; restore_misterplexd_prev rc=10
-4. Conf USER-OWNED — CONF_MD5_MATCH_OK after install; restore-file == backup md5
-5. Hook vs live root mismatch gate — RED when v1 hook + v2 live
+## Fleet broadcast response (av-lock blind)
+RETRACTED from promote package: clock=av-lock, av_drift_ms as PASS.
+Replaced with (unchanged executable gates): pair md5s, live exe md5,
+n_daemon=1, conf from cmdline (user-owned), /resources 200, PLXS+seq,
+boot-hook==live root, idle chevron CC + motion MOTION_OK (pixels).
+Lip-sync if ever claimed: tools/avsync_measure_hdmi.py only (parent).
+Do not build on drop sawtooth / rate-mismatch.
 
-## Host true rc (this turn)
-- test_promotion_gates.sh true rc=0 (pass=86) incl wrong-v2 + hook-mismatch + glue + green
-- test_conf_user_owned.sh true rc=0
-- test_boot_hook_policy.sh true rc=0
-- test_rollback_honest.sh true rc=0
+## Built
+- Atomic pair promote/rollback (core+daemon+conf+boot)
+- Gate glue fix, conf CONF_MD5_MATCH_OK, deploy stage+mv/comm
+- av-lock retracted from docs + regression test
 
-## Parent (worktree HEAD — NOT 961dc724)
-cd /home/flynnsbit/Projects/MisterPlex/.worktrees/rollback-honest
-git rev-parse --short HEAD
-bash tests/unit/test_promotion_gates.sh; echo "true rc=$?"
-PAIR_ID=ddr-c5382bee bash scripts/promotion_gate_check.sh verify-live; echo "true rc=$?"
-# expect: pure 32-hex V2_MD5, BOOT_HOOK_OK root=v2, CONF keys, n_daemon=1, PLXS_SEQ advance
-# atomic restore with user conf backup:
-# PAIR_CONF_RESTORE_FILE=/path/to/user.conf.bak PAIR_ID=ddr-c5382bee \
-#   ROLLBACK_DAEMON=devices/daemon-pins/misterplexd.edc3a46b \
-#   PAIR_IDLE_PNG=<warm> bash scripts/rollback_v2.sh restore; echo "true rc=$?"
+## Host true rc
+test_promotion_gates.sh true rc=0 (pass=89)
