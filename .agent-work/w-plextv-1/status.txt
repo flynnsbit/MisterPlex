@@ -1,7 +1,7 @@
 lane=w-plextv
 branch=w-plextv-cast-picker-e2e-fix2
 worktree=.worktrees/w-plextv-e2e-fix
-sha=PENDING
+sha=1c059ddd
 see=STATUS.md
 
 # API soak harness (repo — not session files/)
