@@ -7,11 +7,16 @@
 
 ## Do not use
 
-| thing | why |
-|-------|-----|
-| PLXD `frames_done` / `presents` / `drops` / `unaccounted` | vsync mislabel / residual alias on RBF `c5382bee` — **no FPGA observation** |
-| Cast `disc_nyquist_*.mp4` for 240-vs-480 | H.264 kills ceiling energy; **w-instr DDR publish** owns B2 |
+| thing | why (name + derivation) |
+|-------|-------------------------|
+| PLXD `frames_done` | **vsync counter** on RBF `c5382bee`, not bank swaps — freeze can look healthy |
+| PLXD `presents` / `drops` | ARM call/supply, not glass |
+| PLXD `unaccounted` | `residual` printed twice (`media_player.cpp`) — not independent |
+| Cast `disc_nyquist_*.mp4` for 240-vs-480 | H.264 kills ceiling; **vertical B2 already glass-proven** via w-instr even/odd DDR card |
 | PMS `videoFrameRate` alone | always ffprobe the file (`r_frame_rate`) |
+| Untrimmed soak series | startup/teardown bias; prior `p_ge50` class scores **UNSCORED** until re-measured trimmed |
+
+**Device fact for marker design:** only **even** store rows reach glass today (parent 5/5 even/odd card). A/V fixtures use body y≥88 + even_row_paint ID.
 
 ## RatingKeys (section 2, measured after index)
 

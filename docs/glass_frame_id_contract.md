@@ -27,7 +27,7 @@ resolvable, and digit reads can be cross-checked (disagree → `UNRESOLVED`).
 | cells | **20** | `cell_w = 624 // 20 = **31**` px |
 | right margin | 4 px | `624 - 20*31 = 4` unused |
 | cell i x-range | `[i*31, (i+1)*31)` | i = 0..19 left→right |
-| even-row paint | plate∪bars | odd row copies even row-1 (`present_core` STORE_Y_SCALE=2) |
+| even-row paint | plate∪bars | odd row copies even row-1 — **required**: parent glass proof on RBF `c5382bee` (product `publishDdrFrame`, codec out) shows only even store rows reach display (`std=0` solid fields; odd phase **inverts**). Without even-row paint the kept phase can drop half the bar/digit energy. |
 | chrome exclusion | y ≥ 100 | player chrome lower band — keep ID at top |
 
 Other coded sizes (320×240, 624×352, 640×480, 720×480) use `geometry_for(w,h)`:

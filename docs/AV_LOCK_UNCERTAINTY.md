@@ -54,16 +54,28 @@ AudioID onset times on 1800 s head (measured): t≈0.000, 1.997, 3.997, … (≈
 
 **Summary bound to quote:** post-AAC file median |error vs design| **≤ 0.15 ms** (0-offset) and **≤ 0.15 ms** (+100 design). Device lipsync uncertainty is **your** measurement on top of this.
 
-## Video markers vs pipeline (H.264 + 529×240 + 2 resamples)
+## Video markers vs pipeline (H.264 + V_STORE=240 + 2 resamples)
 
-Designed large on purpose:
+### Established device fact (parent, RBF `c5382bee`, product `publishDdrFrame`, codec out)
 
-- Body flash/ramp: full width, y∈[88,480) — **not** 1-line stripes (H.264 kills those; see Nyquist note).
-- Glass ID: opaque plate + 31×32 bar cells + even_row_paint; digits fixed-width + checksum.
-- Audio: 64 ms FSK bits = 3 AAC frames margin (independent of video decimation).
+Even/odd flat-field card on glass: control mid_grey mean=137 std=**0.00**; even_black→black, even_white→white; **odd_black→white, odd_white→black** (inverted solids). **std=0.00** ⇒ odd store rows are **entirely absent** — not attenuated stripes. Vertical path fetches only even rows (`store_y = py*2`). **50% of coded rows never reach display.** Horizontal 529-of-640 remains **arithmetic-only** on this card (not glass-proven here).
 
-Do **not** use PLXD `frames_done` / `presents` / `drops` / `unaccounted` (void/mislabelled on live RBF).
+### Fixture design under that fact
+
+- Body flash/ramp: full width, y∈[88,480) — many consecutive **even** rows so the flash survives 2:1 vertical fetch. **Not** 1-line stripes (H.264 kills Nyquist; parent spectral test was INCONCLUSIVE for the same reason).
+- Glass ID: opaque plate + 31×32 bar cells + **even_row_paint** (odd source rows copy even−1 so the kept phase still carries ID after cull). Digits fixed-width + checksum.
+- Audio: 64 ms FSK bits = 3 AAC frames margin (independent of video row cull).
+
+Host measured body contrast after H.264 decode + even-row cull sim: **255** (AudioID 60s marker neighborhood). Device glass still parent-owned.
+
+### Do not score these names (derivation in the same breath)
+
+| name | derivation on `c5382bee` | implication |
+|------|--------------------------|-------------|
+| `frames_done` | **vsync counter**, not bank swaps | frozen picture can look “live”; `[STALE]` may never fire |
+| `presents` | call returned, not glass | not display |
+| `drops` / `residual` / `unaccounted` | ARM supply; `unaccounted` ≡ residual printed twice | **no FPGA observation** |
 
 ## Nyquist cast MP4s are **not** the 240-vs-480 test
 
-`disc_nyquist_*.mp4` remain in-tree as host-sim toys only. **H.264 destroys 1-row Nyquist** before the core — same failure mode as the inconclusive spectral test. **w-instr owns `publishDdrFrame` raster publish** for B2. Do not cast disc_nyquist to settle tier.
+`disc_nyquist_*.mp4` are host-sim only. H.264 band-limits below the ceiling; **w-instr `publishDdrFrame` even/odd card already settled vertical B2 on glass.** Do not cast disc_nyquist to re-prove tier. Post-fix (w-geom T7 → 480 unique rows) the same card must **break** solid-field collapse — that is the after bank, not a cast MP4.
