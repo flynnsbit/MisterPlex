@@ -1,36 +1,12 @@
 worker: w-osd-hires
-branch: w-osd-hires
-status: READY_FOR_DEPLOY — black-rect P1 + localize pair RED/GREEN
-task: O1-O4 deploy package
+status: POST_UPSCALE_ARM — bank 624x480 chrome after vf scale; no RBF
+sha: (pending commit)
 
-## Settled truth
-PAUSED=STOPPED=12x16 @624x480 (parent tool-independent). No font defect.
-Output-native chrome = RTL (c) later (w-fit-1 paper). video_mode=12 = 1920x1440 verified by parent.
+T1 quoted in docs/osd-post-upscale-arm.md
+T2: ddrFrameGeometryForFpgaPresent + renderYuv420p @ rawW/H (already tip; hardened comments/gates)
+T3: compute(w,h) scales 800/640/240; 240p → 8x13 in-bounds
+T4: test_overlay_post_upscale + raster static RED on main (PresentedSize+Yuv break)
+T5: .agent-work/w-osd-hires/DEVICE_CARD_post_upscale.md
 
-## O1 black-rect intact
-panelBg{42,46,54} full alpha @ playback_overlay.hpp
-unit: Ywhite=Yblack=Ymid=55.6 |d|=0
-static panel_empty_center true rc=0
-md5=14b00f600aa62ac0948e24273e7030a1 (unchanged; tool-only tip)
-
-## O2 w-promote
-files/prereg/OSD-HIRES-W-PROMOTE-MERGE.md
-HOT: media_player.cpp (integrate ledger + pause publish; NOT ours-or-theirs)
-HOT: playback_overlay.hpp (prefer w-osd whole file)
-Main lacks "pause overlay DDR" — naive main deploy regresses daily driver
-
-## O3 P1 prereg @1920
-files/prereg/OSD-HIRES-BLACKRECT-P1.md
-score box x[760,1220] y[810,910]
-PASS mean luma 45-80 (host ~55.6 content-independent)
-FAIL <=35 (archive pre-fix ~31)
-falsify: <=35 with panel up, OR white-vs-black box delta >15
-log: media: pause overlay canvas=624x480 font=12x16 scale=2
-
-## O4 localize pair (demonstrated)
-python3 tools/readback_overlay_text.py --selftest-pause-localize
-RED_legacy: font=8x13 x=518 (ghost) 
-GREEN_fixed: font=12x16 x=76
-verdict=PAUSE_LOCALIZE_PAIR_OK true rc=0
-
-No device touch. No RTL fit. User conf untouched.
+rollcall true rc=0 | post_upscale true rc=0 | raster true rc=0
+sys/osd.v closed. No device.

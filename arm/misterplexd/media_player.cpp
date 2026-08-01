@@ -2999,8 +2999,11 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
         };
 
         auto renderOverlay = [&](uint8_t* data) {
-            // Composite after FFmpeg scale-to-canvas: rawW/rawH is the present
-            // canvas (product coded bank), not a separate decode-tier size.
+            // POST-UPSCALE composite (user bug fix): FFmpeg already wrote the
+            // frame at coded bank rawW×rawH (624×480 product). Chrome is drawn
+            // into that buffer HERE — never at DECODE/outW_ (e.g. 320×240).
+            // Order: scale+pad (vf) → read pipe → renderOverlay → publishDdrFrame.
+            // Do not move this before the pipe read / vf scale.
             switch (videoFmt) {
             case RawVideoFormat::Rgb565Le:
                 overlay_.renderRgb565Le(data, rawW, rawH);
@@ -3009,6 +3012,7 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                 overlay_.renderBgra32(data, rawW, rawH);
                 break;
             case RawVideoFormat::Yuv420p:
+                // Product path. Empty break was the main-branch no-op defect.
                 overlay_.renderYuv420p(data, rawW, rawH);
                 break;
             case RawVideoFormat::Rgb24:

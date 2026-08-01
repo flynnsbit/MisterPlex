@@ -74,6 +74,41 @@ def main() -> int:
     if "overlay_.renderYuv420p(data, rawW, rawH)" not in src:
         fail("playback Yuv420p branch must call overlay_.renderYuv420p")
 
+    # Post-upscale contract: FPGA present must force silicon bank, never
+    # ddrFrameGeometryForPresentedSize(outW_, outH_) which identity-maps DECODE.
+    if "ddrFrameGeometryForFpgaPresent(outW_, outH_)" not in src:
+        fail("playback must use ddrFrameGeometryForFpgaPresent (bank), not presented-size(DECODE)")
+    if re.search(
+        r"ddrFrameGeometryForPresentedSize\(\s*outW_\s*,\s*outH_\s*\)", src
+    ):
+        fail(
+            "REGRESSION: ddrFrameGeometryForPresentedSize(outW_, outH_) authors at "
+            "DECODE when conf is 320×240 — overlay pre-upscale defect"
+        )
+    # Yuv420p overlay must not be a no-op (main still has bare break).
+    yuv_case = re.search(
+        r"case\s+RawVideoFormat::Yuv420p\s*:\s*(.*?)break\s*;",
+        src,
+        re.S,
+    )
+    if not yuv_case:
+        fail("missing Yuv420p case in present path")
+    # Find the renderOverlay lambda's Yuv branch specifically
+    ro = re.search(
+        r"auto\s+renderOverlay\s*=\s*\[\&\]\s*\(uint8_t\*\s*data\)\s*\{(.*?)\}\s*;",
+        src,
+        re.S,
+    )
+    if not ro:
+        fail("missing renderOverlay lambda")
+    body = ro.group(1)
+    yuv_in_ro = re.search(
+        r"case\s+RawVideoFormat::Yuv420p\s*:\s*(.*?)break\s*;", body, re.S
+    )
+    if not yuv_in_ro:
+        fail("renderOverlay missing Yuv420p case")
+    if "renderYuv420p" not in yuv_in_ro.group(1):
+        fail("renderOverlay Yuv420p must call renderYuv420p (not empty break)")
     # RED twin: paintIdle sized at 320×240 must trip the bank-geometry rule.
     paint_bad = paint.replace(
         "const DdrFrameGeometry g = plex480pDdrFrameGeometry();\n"
