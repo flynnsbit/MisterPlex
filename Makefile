@@ -152,6 +152,7 @@ unit-unlocked: unit-rollcall preflight $(ROOT)/build/test_cadence $(ROOT)/build/
 	$(ROOT)/tests/unit/test_avsync_ramp_onset.sh
 	$(ROOT)/tests/unit/test_glass_ledger_fixture.sh
 	$(ROOT)/tests/unit/test_glass_ocr_proof_gate.sh
+	$(ROOT)/tests/unit/test_glass_frame_id_roundtrip.py
 	$(ROOT)/tests/unit/test_analyze_mraudio_handoff.sh
 	$(ROOT)/tests/unit/test_analyze_avsync_residual.sh
 	$(ROOT)/tests/unit/test_resource_preflight.sh
