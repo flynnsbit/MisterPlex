@@ -1,34 +1,55 @@
 # RTL proposal: `plex_chrome` — output-resolution overlay plane
 
 **Owner:** w-osd-hires · **Status:** design only — **no Quartus fit**  
-**Tip context:** `bc3d3484` (ARM bank chrome + fail-closed `plane=1` scaffolding)  
+**Tip context:** ARM bank chrome + fail-closed `plane=1` scaffolding  
 **Strategic drivers (parent):**
 1. User bug #2 — HUD must match **applied** MiSTer output res, not content/bank.  
 2. User direction — **offload ARM** to fabric/BRAM/DDR.  
 **One plane serves both:** post-ascal composite + semantic list (ARM stops per-frame pixel bake).
 
-**Binding device budget (parent, current fit class):**
-
-| Resource | Used / Total | Free |
-|----------|-------------:|-----:|
-| ALM | 23,585 / 41,910 | **18,325** |
-| M10K | 465 / 553 | **88** |
-| DSP | 44 / 112 | **68** |
-
-`decode_stub` reclaim (w-fit-1): **~9,217 ALM + 268 M10K** if stub never presents after `host_owns_fs` (`Plex.sv:682-692`).  
-Post-reclaim free M10K ≈ **88+268 = 356** (order-of-magnitude; map before spending).
+**r-misterfin (2026-08-01) — geometry discovery CLOSED:**
+- ARM **cannot** read applied HDMI timing (Main `v_cur` write-only via `UIO_SET_VIDEO`; `UIO_GET_VRES` = core DE).  
+- Fabric **already has** applied size: `HDMI_WIDTH`/`HDMI_HEIGHT` (`emu_ports.vh:34-35` ← `sys_top.v:909-910`).  
+- ⇒ **RTL self-sizes from those wires + DE counters. Zero ARM discovery required for scale.**  
+- ARM `output=DEFAULT_ASSUMED` stays honest; INI parse only as labelled `source=ini` intent fallback for logs/preview — **not** plane geometry authority.
 
 ---
 
-## 0. Decisive finding (restated)
+## 0. Budget baseline — which fit is “the device”
+
+| Artifact | ALM | M10K | bits | DSP | Notes |
+|----------|----:|-----:|-----:|----:|-------|
+| **`remote_out/fit-t7b-prog480/Plex.fit.rpt`** | **23,585 / 41,910** | **465 / 553 (84%)** | **2,997,709 (53%)** | **44 / 112** | Matches fixture `fabric_decode_fit_hierarchy_8fdf440f.excerpt.rpt` totals |
+| `output_files/Plex.fit.rpt` | 21,082 / 41,910 | 465 / 553 (84%) | same 53% bits | **74 / 112** | Older/local tree — **do not use for deployed `8fdf440f` class** |
+
+**Deployed-RBF class for design:** treat **t7b / 8fdf hierarchy** as binding  
+(ALM **23,585**, M10K **465**, DSP **44**). Free: ALM **18,325** · M10K **88** · DSP **68**.
+
+**M10K packing lesson (same reports):** **84% of blocks hold only 53% of bits** → many shallow/narrow memories.  
+Chrome ROMs/lists must be **few deep/wide stores**, not dozens of tiny RAMs. Consolidation is cheaper than “88 free blocks ⇒ 88 small buffers.”
+
+### `decode_stub` reclaim funding (corrected argument)
+
+| Claim | Status |
+|-------|--------|
+| Old: `host_owns_fs` alone proves stub dead | **Withdrawn** (parent) |
+| **Shipping:** `DDR_FRAME_STORE=1` → `present_core` uses `ddr_frame_store` (`:225-290`); **`.wr_en(fs_wr_en)` only in `` `else `` SDRAM `frame_store` (`:303`)** | **Cited** — write port of stub path **physically unconnected** on product macro |
+| Also: `Plex.sv:478-482` `ddr_swap=1'b0` / `ddr_wr_en=1'b0` under `DDR_FRAME_STORE` | Reinforces host DDR ingest is F1 doorbell path, not stub |
+| Hierarchy cost on 8fdf class | **`decode_stub`: 9,216.9 ALM · 268 M10K · 2,124,800 bits** (fixture line `\|decode_stub:stub\|`) |
+
+Post-reclaim free M10K ≈ **88+268 ≈ 356** (map before spending). w-fit-1 owns reclaim.
+
+---
+
+## 0b. Decisive product finding
 
 | Path | Can fix user bug #2? |
 |------|----------------------|
 | ARM composite into F1 624×480 | **No** — stretched by `present_core`+ascal |
-| Framework `sys/osd.v` | **No** — 256×64, Main SPI, dead during play |
-| **Post-ascal `plex_chrome` on `clk_hdmi`** | **Yes** — 1:1 output pixels |
+| Framework `sys/osd.v` | **No** — 256×64, Main SPI, dead during play (`SUSPEND_MAIN`) |
+| **Post-ascal `plex_chrome` on `clk_hdmi`, self-timed** | **Yes** — 1:1 output pixels |
 
-ARM-only ship = bank sharpness only. Full fix = this RTL + ARM list writer.
+ARM-only ship = bank sharpness only. Full fix = this RTL + ARM **semantic** list writer.
 
 ---
 
@@ -50,107 +71,115 @@ Evidence:
 - `sys_top.v:764-772` ascal `.o_r/g/b` → `hdmi_data`
 - `sys_top.v:1183-1200` `osd` blends on `clk_video(clk_hdmi)` after mask
 
-### Proposed insertion (framework-legal)
+### Proposed insertion (framework-legal — copy **osd pattern**, not size)
 
 ```text
 ascal → shadowmask → [plex_chrome NEW] → osd hdmi_osd → HDMI
                          ↑
-              clk_hdmi, din/hs/vs/de
-              optional: hdmi_width/height
+         clk_hdmi, din/hs/vs/de
+         HDMI_WIDTH / HDMI_HEIGHT (applied)
 ```
+
+**Stock OSD pattern to copy** (`sys/osd.v:26-36`):
+- Fixed **logical** buffer; **integer nearest-neighbour expand** from measured post-ascal DE.  
+- Self-times in fabric; host only pushes **bytes/commands**, not scanout pixels.  
+- Unusable as-is (256×64, Main SPI, suspended in play) — **structure is right**.
 
 **Why after shadowmask, before `osd`:**
 - Same stage class as framework OSD (proven composite after ascal).
 - F12 menu stays on top of player chrome (correct z-order).
-- Does not touch `present_core` / F1 / bank timing (w-geom scaler lives elsewhere).
+- Does not touch `present_core` / F1 (w-geom scaler is a separate pre-ascal/F1 problem).
 
-**If post-ascal were blocked** (it is **not** — `osd` already sits there):  
-best alternative would be pre-ascal DE blend → quality ceiling = core DE (~529×240-class), **fails user requirement**. Not proposed.
+**If post-ascal were blocked** (it is **not**): pre-ascal DE blend ceiling = core DE — **fails user**. Not proposed.
 
 ### Clock / CDC
 
 | Domain | Role |
 |--------|------|
-| `clk_hdmi` | Pixel counters, glyph expand, RGB blend (hot path) |
-| `clk_sys` | List mailbox write port, font ROM load if any, control regs |
-| CDC | Dual-clock RAM for list (sys write / hdmi read) or shadow regs on vs |
+| `clk_hdmi` | DE counters, glyph NN expand, RGB blend (hot path) |
+| `clk_sys` / HPS DDR mailbox | List write, enable/seq (ARM semantic channel) |
+| CDC | Dual-clock list RAM (sys/HPS write · hdmi read) or vsync shadow |
 
-Pattern already used by `osd.v`: `clk_sys` fills buffer; `clk_video` reads + blends.
-
-### Geometry authority (applied timing, not ini intent)
-
-`sys_top.v:896-910` already maintains:
+### Geometry authority — **fabric only**
 
 ```verilog
+// sys_top.v:909-910 — applied output (Main-latched WIDTH/HEIGHT ± HSET/VSET/PR)
 hdmi_height <= (VSET && (VSET < HEIGHT)) ? VSET : HEIGHT;
 hdmi_width  <= (HSET && (HSET < WIDTH))  ? HSET << HDMI_PR : WIDTH << HDMI_PR;
+// emu_ports.vh:34-35 → every core sees:
+input [11:0] HDMI_WIDTH, HDMI_HEIGHT;
 ```
 
-**Scanout must use DE pixel counters** (like `osd.v` `dsp_width`) and/or these wires — **never** ARM-supplied WxH alone.
+**`plex_chrome` sizing/scale:**
+1. Prefer running **hx/hy from DE** (osd-style self-time).  
+2. `bodyScale = clamp(2..8, half_even_round(HDMI_HEIGHT/240))` in fabric (or equiv. from measured DE height).  
+3. **Never** trust ARM WxH for pixel placement.
 
-**ARM discovery of applied timing (v1 → v2):**
-
-| Source | Role |
-|--------|------|
-| `MiSTer.ini` `video_mode` | Layout **preview** only (`mister_video_mode.hpp`) — intent |
-| **New** PLXO status qword (FPGA→ARM) | **Applied** `hdmi_width/height` + feature bit — **consume r-misterfin** for final packing; do not invent a second research path |
-| Fail closed | If PLXO absent → `plane=0` bank chrome (today) |
+**ARM telemetry (optional, not load-bearing):**
+- Keep `output=DEFAULT_ASSUMED` / `source=ini` labels honest.  
+- Optional **PLXO** FPGA→ARM mirror of `HDMI_WIDTH/HEIGHT` + `chrome_hw` for logs and list **preview** only — list coords still use same formula ARM already has for preview; fabric re-derives scale from HDMI_* if ARM is wrong.
 
 ---
 
-## 2. Storage options — M10K cost
+## 2. Storage options — M10K cost (pack against 84%/53%)
 
 Full-frame BRAM is impossible: 1920×1080 RGB565 ≈ **1620+ M10K** ≫ 88.
 
-| Option | What ARM writes | Fabric storage | Est. M10K | ARM CPU | Sharp @ output? |
-|--------|-----------------|----------------|----------:|---------|-----------------|
-| **A. Semantic display list + font/icon ROM** (primary) | cmds only | ROM + 2× list RAM | **14–24** | event-driven ≪1 ms | **Yes** |
-| **B. ARM-written BRAM band** (bottom panel RGB565) | pixels each UI | 2× band (e.g. 1920×160×16) | **~96–120** | paint band | Yes | **Does not fit 88** |
-| **C. DDR panel strip + line FIFO** | pixels to DDR | 2–4 line FIFO + FSM | **4–8** (+DDR port) | paint DDR | Yes | Contends F1 DDRAM |
+| Option | What ARM writes | Fabric storage | Est. M10K blocks | Est. bits | ARM CPU | Sharp @ output? |
+|--------|-----------------|----------------|-----------------:|----------:|---------|-----------------|
+| **A. Semantic list + consolidated font/icon ROM** | cmds only | **1–2** deep ROM + **1** dual-port list | **8–16** | ~100–200 kbit | event ≪1 ms | **Yes** |
+| **B. ARM BRAM band** (panel RGB565) | pixels | 2× 1920×160×16 | **~96–120** shallow | ~1.2 Mbit | paint | Yes — **no fit in 88** |
+| **C. DDR strip + line FIFO** | pixels→DDR | 2–4 line FIFO | **4–8** | small | paint+DDR | Contends F1 |
 
-### Option A detail (fits **88 free**)
+### Option A — packing rule (binding)
 
-| Block | Contents | M10K |
-|-------|----------|-----:|
-| Font 12×16 ×96 ×1bpp | 18 432 bit | 2 |
-| Font 8×13 ×96 ×1bpp | ~10 kbit | 1 |
-| Icons 8×32×32×1bpp | 8 kbit | 1 |
-| List RAM double-buf 2×512×64b | 64 kbit | 8 |
-| Optional y-span index | | 0–4 |
-| **Total A** | | **12–16** (budget **≤24** w/ packing) |
+Because **84% blocks / 53% bits**, do **not** allocate one M10K per glyph plane.
+
+| Logical content | Preferred implementation | Target M10K |
+|-----------------|--------------------------|------------:|
+| Fonts 12×16 + 8×13 + icons 1bpp | **Single** wide/deep `altsyncram` (or 2) with address map | **2–4** |
+| List double-buffer 2×256×64b (not 512 unless needed) | **One** true dual-port or 2-bank simple dual | **2–4** |
+| Span index | fold into list walk if ALM allows; else 1 deep RAM | **0–2** |
+| **Total A** | consolidated | **≤12** preferred, **hard cap 24** |
+
+Pause UI ≪ 64 cmds — 256-entry list is enough; avoid oversizing RAM “for later.”
 
 ### Option B — needs stub reclaim
 
-1920 × 160 × 16 bit × 2 buffers ≈ 1.23 Mbit ≈ **120 M10K** → **blocked** until stub reclaim (~356 free). Mark **Inc-B dependent on w-fit-1 stub out**.
+~120 M10K band → **blocked** until w-fit-1 stub out (~356 free). Not required for text/icons.
 
-### Option C — escape hatch
+### Option C — escape hatch only
 
-Only if list cannot express future art. Second DDR reader on active video is higher risk; **not first fit**.
-
-**Primary ship path = A.** Inc-1 can be HW solid rect only (**0 M10K**) to prove post-ascal blend before ROM.
+**Primary ship path = A.** Inc-1: solid rect **0 M10K** to prove post-ascal blend.
 
 ---
 
-## 3. ARM interface — semantic, doorbell-relative
+## 3. ARM interface — semantic only, doorbell-relative
 
 ### Principle
 
-ARM sends **meaning** (state, progress, strings as glyph codes, icon ids, geometry in output px).  
-RTL expands to pixels on `clk_hdmi`. That **removes** `renderYuv420p` bake from the play loop when `plane=1`.
+ARM sends **meaning** (state, progress fraction, glyph codes, icon ids, optional layout hints).  
+**RTL owns scale + pixel expand** from `HDMI_HEIGHT` / DE (osd NN pattern).  
+That **removes** `renderYuv420p` bake from the play loop when `plane=1` — offload goal met.
+
+ARM does **not** need applied timing API for correctness. Optional coords in list should be  
+computed with the **same** half-even H/240 rule; fabric may ignore ARM scale field and  
+recompute from `HDMI_HEIGHT` (recommended: ARM sends **unscaled logical** units OR  
+output px using ini preview — fabric clamps).
 
 ### Address map (MUST be doorbell-relative)
 
-Reuse lesson: **never hardcode absolute phys**; always `DOORBELL_PHYS + offset`  
-(`mailbox_abi_spec.hpp`, `BANK_MAILBOX_PHYS = DOORBELL_PHYS + 0x128`).
+**Never hardcode absolute phys** — `DOORBELL_PHYS + offset` only  
+(`mailbox_abi_spec.hpp`, `BANK_MAILBOX = DOORBELL + 0x128`).
 
 | Offset | Tag | Dir | Purpose |
 |-------:|-----|------|---------|
 | +0x128 | PLXD | F→A | bank (existing) |
-| **+0x130** | **PLXC** | A→F | chrome list control / doorbell |
-| **+0x138** | **PLXO** | F→A | applied `width/height` + `chrome_hw=1` + gen |
-| +0x140 | PLXL0 | A→F | list buffer phys base / or inline if small |
+| **+0x130** | **PLXC** | A→F | chrome list control / seq doorbell |
+| **+0x138** | **PLXO** | F→A | optional: `HDMI_WIDTH/HEIGHT` mirror + `chrome_hw` + gen (**telemetry**, not authority) |
+| +0x140… | list payload | A→F | cmds in DDR page or small dual-port filled via same window |
 
-*(Exact packing: add to `mailbox_abi_spec.hpp` + `test_rtl_invariants.py` before RTL merge.)*
+Add to `mailbox_abi_spec.hpp` + `test_rtl_invariants.py` before RTL merge.
 
 ### PLXC control word (illustrative 64-bit)
 
@@ -158,113 +187,110 @@ Reuse lesson: **never hardcode absolute phys**; always `DOORBELL_PHYS + offset`
 [31:0]  magic 'PLXC'
 [32]    enable
 [33]    bank_sel          // which list buffer is live
-[47:34] cmd_count         // 0..512
+[47:34] cmd_count         // 0..256
 [63:48] seq               // monotonic; fabric latches on vs after seq change
 ```
 
-### Command ISA (64-bit, ≤512 cmds)
+### Command ISA (64-bit, ≤256 cmds)
 
 | op | Fields |
 |----|--------|
-| `RECT` | x,y,w,h, rgba8 — panel / bar track / fill |
-| `GLYPH` | x,y, code, font_id, scale 1..8, rgba8 |
-| `ICON` | x,y, id, scale, rgba8 |
-| `BAR` | x,y,w,h, fill_w (ARM-precomputed → **0 DSP**) |
+| `RECT` | x,y,w,h, rgba8 — panel / bar track |
+| `GLYPH` | x,y, code, font_id, rgba8 — **scale from fabric HDMI_HEIGHT** |
+| `ICON` | x,y, id, rgba8 |
+| `BAR` | x,y,w,h, fill_w (ARM-precomputed fraction→px using preview W, or logical 0..1024) |
 | `END` | — |
 
-Pause chrome ≪ 64 cmds. ARM builds on **UI event only** (pause/play/seek/notice), not every video frame.
+Prefer **fabric multiplies** only if needed; default **ARM fill_w in output px using ini preview** with fabric clip — **0 DSP**.
+
+Pause chrome ≪ 64 cmds. Build on **UI event only**, not every video frame.
 
 ### Feature enable (fail closed)
 
 ```text
-chromePlaneLive = CHROME_PLANE conf ∧ PLXO.chrome_hw
+chromePlaneLive = CHROME_PLANE conf ∧ PLXO.chrome_hw   // or status bit
 ```
 
-Already scaffolded: `MediaPlayer::chromePlaneLive()`, skip F1 bake when live.
+Scaffolding: `MediaPlayer::chromePlaneLive()` skips F1 bake when live.
 
 ---
 
-## 4. Scaling rule (acceptance = existing gate)
+## 4. Scaling rule (fabric-authoritative)
 
 ```text
-outW,outH = applied (PLXO or DE) — not DECODE, not bank
-L = computeOutputChromeLayout(outW, outH)   // mister_video_mode.hpp
-  bodyScale = half-to-even round(H/240) clamp 2..8
-  font = H>=480 ? 12×16 : 8×13
-  panelH from fractions; snap even; clamp in-bounds
+// In plex_chrome (clk_hdmi), osd-style:
+meas_h = HDMI_HEIGHT  // or DE-measured frame height
+bodyScale = clamp(2..8, half_even_round(meas_h / 240))
+font_id   = (meas_h >= 480) ? FONT_12x16 : FONT_8x13
+// Glyph draw: nearest-neighbour expand by bodyScale (copy osd integer expand idea)
 ```
 
-| Mode | H | bodyScale | cellH (gate) |
-|------|--:|----------:|-------------:|
+| Mode | H | bodyScale | cellH |
+|------|--:|----------:|------:|
 | 240p | 240 | 2 | 26 |
 | 640×480 | 480 | 2 | 32 |
 | 800×600 | 600 | 2 | 32 |
 | 1080p | 1080 | 4 | 64 |
 | 1440p | 1440 | 6 | 96 |
 
-**Host acceptance (already green):**  
-`test_overlay_crispness_mutation` — `bank_cellH=32` vs `hdmi1080_cellH=64`; inkH tracks cellH on output layouts.
-
-**Glass acceptance (parent):** stem edge ≤2 grabber px @ mode 12; L:R chrome not required; advance ≈ 13×bodyScale ±10%; not soft bank stretch.
+**Host gap gate (plane=0 vs target):** `bank_cellH=32` vs `hdmi1080_cellH=64`.  
+**Glass:** stem edge ≤2 px @ mode 12; not bank mush.
 
 ---
 
-## 5. Budget versions
+## 5. Budget versions (prereg vs t7b/8fdf baseline)
 
-### V1 — fits **88 M10K free** (no stub dependency)
+**Baseline (binding):** ALM 23,585 · M10K 465 · DSP 44 · bits 2,997,709  
+Artifact: `w-fit-integ/.../remote_out/fit-t7b-prog480/Plex.fit.rpt` + `fabric_decode_fit_hierarchy_8fdf440f.excerpt.rpt`.
 
-| Item | Pred. Δ |
-|------|--------:|
-| M10K | **+16..24** (leave ≥64 free) |
-| ALM | **+1.5k..4k** |
-| DSP | **0** (ARM bar fill_w) |
-| Fmax | close existing HDMI path; ≤32 active cmds/line, 2–3 stage blend |
+### V1 — fits **88 M10K free** (no stub dependency) — **ship target**
 
-**Hard fail if map shows:** M10K Δ > 40, ALM Δ > 6k, or negative HDMI slack.
+| Item | Pred. Δ | Notes |
+|------|--------:|-------|
+| M10K | **+8..16** (cap **24**) | consolidated ROM+list; leave ≥64 free |
+| Block bits | **+~150 kbit** | small vs 2.99 Mbit baseline |
+| ALM | **+1.5k..3.5k** | DE counters + bounded cmd walk + NN expand |
+| DSP | **0** | ARM/logical bar fill |
+| Timing | HDMI path **HOLD** | ≤16–32 active cmds/line; 2–3 stage blend |
 
-### V2 — after `decode_stub` reclaim (w-fit-1)
+**Hard fail before/after map:** M10K Δ > 24 preferred / **>40 absolute**, ALM Δ > 6k, or neg HDMI slack.
 
-| Add-on | Pred. Δ extra |
-|--------|--------------:|
-| Optional BRAM panel band (opt B) | +80..120 M10K |
-| Or richer icon ROM / anti-alias 2bpp fonts | +4..12 M10K |
-| Combined free after stub | ~356 M10K class |
+### V2 — after stub reclaim (w-fit-1) — optional
 
-V2 **not** required for user bug #2 text/icons. Mark **dependent on stub reclaim map**.
+| Add-on | Pred. extra |
+|--------|------------:|
+| BRAM panel band (B) | +80..120 M10K |
+| 2bpp fonts / more icons | +4..12 M10K |
 
-### Inc-1 (optional first silicon slice)
+Not required for bug #2. **Dependent on stub map.**
 
-Solid-color bottom rect + enable bit only: **~0 M10K, ~0.3–0.8k ALM**. Proves post-ascal blend + PLXC enable before font ROM. Can share fit with V1 if schedule prefers one shot.
+### Inc-1 (optional same fit)
+
+Solid bottom rect + enable: **~0 M10K, ~0.3–0.8k ALM**.
 
 ---
 
 ## 6. Combined ONE-fit request (coordinate)
 
-**Do not schedule three exclusive fits.** Single coherent grant:
+**ONE exclusive, not three.**
 
-| Lane | Deliverable in same RBF |
-|------|-------------------------|
-| **w-fit-1** | `decode_stub` reclaim (funds M10K/ALM) + chrome feature bit / PLXO wire-up |
-| **w-geom** | content window + fabric scaler in `present_core` (delete ARM 320→618 resample) — **pre-ascal / F1 path** |
-| **w-osd-hires** | `plex_chrome` V1 post-ascal list blender + ARM list writer / `plane=1` |
+| Lane | Same RBF deliverable |
+|------|----------------------|
+| **w-fit-1** | Strip/gate `decode_stub` (write port already dead under `DDR_FRAME_STORE`) → reclaim ~9.2k ALM / 268 M10K; wire `chrome_hw` |
+| **w-geom** | Content window + fabric scaler (delete ARM 320→618 @ 10.4 ms/f) — F1/`present_core` |
+| **w-osd-hires** | `plex_chrome` V1 post-ascal list+ROM; ARM PLXC writer; `plane=1` fail-closed |
 
-**Dependency order inside one compile tree:**
-1. Stub reclaim (area).  
-2. w-geom scaler (video path; independent of chrome pixels).  
-3. `plex_chrome` insert in `sys_top` between mask and `osd`.  
-4. Mailbox ABI + invariants gate green **before** merge.
+**Order in tree:** stub reclaim → w-geom F1 path → `plex_chrome` in `sys_top` → ABI invariants green.
 
-**Pre-registration (combined — update when peers publish numbers):**
+**Combined prereg (chrome numbers firm; peers fill gaps):**
 
-| Resource | Baseline | Pred. Δ chrome V1 | Pred. Δ geom (TBD peer) | Pred. Δ stub reclaim | Net free M10K target |
-|----------|----------|-------------------:|------------------------:|---------------------:|---------------------:|
-| M10K | 465/553 | +20 | peer | −268 used | ≫ 88 |
-| ALM | 23585/41910 | +3k | peer | −9k used | healthy |
-| DSP | 44/112 | +0 | peer | 0 | — |
-| Timing | existing | HDMI path must HOLD | present_core path | — | no neg slack |
-
-Chrome owner prereg for **chrome slice alone:**  
-**M10K +20 ±4 · ALM +3000 ±1500 · DSP 0 · HDMI Fmax hold.**
+| Resource | Baseline (t7b/8fdf) | Chrome V1 Δ | Geom Δ | Stub reclaim | Net intent |
+|----------|--------------------:|------------:|-------:|-------------:|------------|
+| M10K | 465/553 | **+12±4** | TBD | **−268** | free ≫ 88 |
+| ALM | 23585/41910 | **+2.5k±1k** | TBD | **−9.2k** | headroom |
+| DSP | 44/112 | **0** | TBD | 0–1 (stub had 1) | — |
+| HDMI timing | hold | hold | n/a | n/a | no neg slack |
+| present_core timing | hold | n/a | hold | n/a | no neg slack |
 
 ---
 
@@ -301,17 +327,19 @@ Chrome owner prereg for **chrome slice alone:**
 
 ## 10. Recommendation (one paragraph)
 
-**Fund post-ascal `plex_chrome` V1 (display-list + font/icon ROM, ≤24 M10K, 0 DSP, ~2–4k ALM)** inserted at `sys_top.v` between shadowmask and `hdmi_osd`, clocked on `clk_hdmi`, geometry from DE/`hdmi_width/height`, control via **doorbell-relative PLXC/PLXO**. ARM emits semantic lists only; product play path stops F1 chrome bake when HW bit live. Land in **one** exclusive fit with w-fit-1 stub reclaim + w-geom scaler. Option B BRAM band only after stub reclaim. Until then, bank 624×480 chrome remains the fail-closed path — **useful, not the user-bug fix.**
+**Fund post-ascal `plex_chrome` V1:** copy **osd self-time + integer NN expand**, not osd size; size from **`HDMI_WIDTH`/`HDMI_HEIGHT` + DE** (r-misterfin: ARM cannot discover applied mode). ARM sends **semantic lists only** via **doorbell-relative PLXC**. Consolidated font/list RAM **≤12–16 M10K** (cap 24), **0 DSP**, **~2–3.5k ALM**, vs baseline **t7b/8fdf 23585/465/44**. Land in **one** fit with w-fit-1 stub reclaim (dead write port under `DDR_FRAME_STORE`) + w-geom scaler. Bank F1 chrome stays fail-closed until `chrome_hw` — **not** user-bug #2 fixed.
 
 ---
 
 ## 11. References
 
-- `sys_top.v:714-768` ascal · `:1159-1200` mask+osd · `:896-910` hdmi_width/height  
-- `sys/osd.v:26-36` 256×64 buffer (stage right, capacity wrong)  
-- `Plex.sv:682-692` `host_owns_fs` / stub never product-present  
-- `ddr_frame_store.sv:27` `BANK_MAILBOX_PHYS = DOORBELL_PHYS + 0x128`  
-- `mailbox_abi_spec.hpp` relative offsets  
-- `docs/osd-chrome-plane-design.md` prior paper (superseded for funding by this doc)  
-- `docs/osd-native-raster-arm-design.md` ARM half  
-- Host gap gate: `bank_cellH=32` vs `hdmi1080_cellH=64`
+- `sys_top.v:714-768` ascal · `:909-910` hdmi_w/h · `:1159-1200` mask+osd  
+- `sys/emu_ports.vh:34-35` `HDMI_WIDTH`/`HEIGHT`  
+- `sys/osd.v:26-36` pattern (256×64 capacity wrong)  
+- `present_core.sv:225-290` vs `:297-339` — `wr_en` only on non-DDR store  
+- `Plex.sv:478-482` `ddr_swap=0` under `DDR_FRAME_STORE`  
+- Fixture: `w-fit-integ/.../fabric_decode_fit_hierarchy_8fdf440f.excerpt.rpt` (`decode_stub` 9216.9 ALM / 268 M10K)  
+- Fit: `w-fit-integ/.../remote_out/fit-t7b-prog480/Plex.fit.rpt`  
+- `ddr_frame_store.sv:27` / `mailbox_abi_spec.hpp` doorbell-relative  
+- r-misterfin: no userspace applied-HDMI read API  
+- Host gap: `bank_cellH=32` vs `hdmi1080_cellH=64`
