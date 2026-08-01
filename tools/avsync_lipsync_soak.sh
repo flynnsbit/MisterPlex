@@ -17,7 +17,7 @@ if [[ -n "${PLXD_SCORE:-}" || -n "${USE_PLXD_FRAMES_DONE:-}" ]]; then
 fi
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 OUT="${OUT:-$ROOT/avsync_hdmi_out/lipsync_soak}"
-DUR="${DURATION:-60}"
+DUR="${DURATION:-30}"
 TOL="${TOL_MS:-42}"
 SLOPE_TOL="${SLOPE_TOL_MS_PER_S:-0.5}"
 VIDEO_DEV="${VIDEO_DEV:-/dev/video0}"
@@ -25,8 +25,11 @@ AUDIO_DEV="${AUDIO_DEV:-hw:0,0}"
 VIDEO_SIZE="${VIDEO_SIZE:-1920x1080}"
 CAP_FPS="${CAP_FPS:-30}"
 LABEL="${LABEL:-lipsync}"
-MIN_PAIRS="${MIN_PAIRS:-40}"
+# 30 s PMS asset (rk=6 class): default min_pairs=15 (need ≥16.67 s @30fps w20).
+# Long fixture later: DURATION=60 MIN_PAIRS=40.
+MIN_PAIRS="${MIN_PAIRS:-15}"
 SKIP_SESSION_GATE="${SKIP_SESSION_GATE:-0}"
+WARMUP_FRAMES="${WARMUP_FRAMES:-20}"
 mkdir -p "$OUT"
 
 if command -v fuser >/dev/null 2>&1; then
@@ -45,10 +48,12 @@ echo "fixture_flash_duration_s=0.083333 src=caller_supplied_2_frames_at_24fps"
 echo "fixture_flash_duty=0.0833 src=measured_file_and_generator"
 echo "fixture_beep_ms=50 src=caller_supplied_gen_avsync_blip"
 echo "fixture_fps=24.000 src=caller_supplied_ffprobe_r_frame_rate_24/1"
-warm_s=$(awk -v w=20 -v f="$CAP_FPS" 'BEGIN{printf "%.3f", w/f}')
+warm_s=$(awk -v w="$WARMUP_FRAMES" -v f="$CAP_FPS" 'BEGIN{printf "%.3f", w/f}')
 min_dur=$(awk -v w="$warm_s" -v n="$MIN_PAIRS" 'BEGIN{printf "%.3f", w+n+1.0}')
-echo "warmup_s=$warm_s src=derived_20_frames_over_cap_fps"
+echo "warmup_frames=$WARMUP_FRAMES src=caller_supplied_or_default"
+echo "warmup_s=$warm_s src=derived_warmup_frames_over_cap_fps"
 echo "min_duration_s_for_min_pairs=$min_dur min_pairs=$MIN_PAIRS src=derived"
+echo "note=30s_asset_OK_with_MIN_PAIRS=15; long_asset_use_DURATION=60_MIN_PAIRS=40"
 if awk -v d="$DUR" -v m="$min_dur" 'BEGIN{exit !(d+0 < m+0)}'; then
   echo "VERDICT=UNSCORED rc=77 reason=DURATION_TOO_SHORT_FOR_MIN_PAIRS dur=$DUR need>=$min_dur"
   exit 77
@@ -56,12 +61,13 @@ fi
 
 echo "=== PRE-REGISTERED PREDICTIONS (publish hit/miss after) ==="
 echo "P_MEDIAN: abs(median_offset_ms_raw) < 80 ms on blip @ LEAD=40 (raw_uncalibrated)"
-echo "P_SLOPE:  abs(slope_ms_per_s) < 0.5 over n_pairs>=40 (no cumulative clock walk)"
+echo "P_SLOPE:  abs(slope_ms_per_s) < 0.5 (gate active only if n_pairs>=20)"
 echo "P_CLASS:  timing_class in STABLE|WANDER — MONOTONIC_DRIFT means rate mismatch"
 echo "P_WANDER: residual_rms_ms may be elevated if judder couples into flash phase; not assumed 0"
 echo "P_CPU:    arm_cpu_pct present as measured (no band claim without baseline)"
-echo "P_FLASH:  n_flashes >= 40 and no_flash_class absent on recovered device"
-echo "P_BEEP:   n_beeps >= 40 (audio leg)"
+echo "P_FLASH:  n_flashes >= MIN_PAIRS and no_flash_class absent on recovered device"
+echo "P_BEEP:   n_beeps >= MIN_PAIRS (audio leg)"
+echo "P_NOT_AV_DRIFT: instrument never reads av_drift_ms (setpoint readout only)"
 echo "predictions_src=caller_supplied_pre_register"
 
 # Session gate: wall_s advancing (derivation=session clock) — not PLXD void fields.
@@ -99,7 +105,8 @@ python3 "$ROOT/tools/avsync_measure_hdmi.py" \
   --audio-dev "$AUDIO_DEV" \
   --video-size "$VIDEO_SIZE" \
   --cap-fps "$CAP_FPS" \
-  --warmup-frames 20 \
+  --warmup-frames "$WARMUP_FRAMES" \
+  --min-pairs "$MIN_PAIRS" \
   --tol-ms "$TOL" \
   --slope-tol-ms-per-s "$SLOPE_TOL" \
   --out "$OUT" \
@@ -110,6 +117,9 @@ python3 "$ROOT/tools/avsync_measure_hdmi.py" \
 RC=$?
 set -e
 echo "avsync_measure_hdmi true rc=$RC"
+# Surface SCORE + discriminator for parent without opening full log
+grep -E '^(SCORE |VERDICT=|no_flash_class=|n_flashes=|n_beeps=|n_pairs=|timing_class=|median_offset)' \
+  "$OUT/${LABEL}_stdout.txt" || true
 
 wait "$CPU_PID" 2>/dev/null || true
 if [[ ! -s "$CPU_JSON" ]]; then
