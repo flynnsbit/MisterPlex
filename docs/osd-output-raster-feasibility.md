@@ -164,3 +164,7 @@ grep -E 'video_mode' /media/fat/MiSTer.ini
 
 # Do NOT expect font span to jump to native-1080 sharpness without RTL (c)
 ```
+
+## Detailed design (follow-on)
+
+See [`docs/osd-chrome-plane-design.md`](osd-chrome-plane-design.md) for the area-budgeted (c) plan, M10K table, and G0–G3 gates.
