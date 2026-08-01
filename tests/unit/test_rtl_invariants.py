@@ -2049,13 +2049,17 @@ def check_plxd_liveness_degeneracy() -> None:
     cpp_nt = norm(fpga_cpp)
     h_nt = norm(fpga_h)
 
-    # Key signals of degeneracy defence in the PLXD consumer:
+    # Key signals of degeneracy defence in the PLXD consumer.
+    # Liveness is bank-identity (free/disp/swap), NOT frames_done-only —
+    # c5382bee packs bank_vsync_count into frames_done (freeze class).
     required = [
         (h_nt, "plxdStaleCount_", "PLXD consumer must track consecutive stale reads"),
         (h_nt, "plxdLivenessProven_", "PLXD consumer must record whether liveness was ever proven"),
-        (cpp_nt, "plxdStaleCount_", "sendDdrFrame must increment stale count when frames_done unchanged"),
-        (cpp_nt, "plxdLivenessProven_=true", "sendDdrFrame must mark liveness proven on first advance"),
+        (h_nt, "plxdLive_", "PLXD consumer must hold PlxdLivenessState"),
+        (cpp_nt, "plxdLivenessTick", "sendDdrFrame must tick bank-identity liveness"),
+        (cpp_nt, "plxdLivenessShouldFallback", "sendDdrFrame must fallback when identity stuck"),
         (cpp_nt, "[STALE]", "sendDdrFrame must log LOUD when mailbox is stale"),
+        (cpp_nt, "bank-identity", "STALE log must name bank-identity (not frames_done-only)"),
     ]
     missing = [msg for haystack, needle, msg in required if needle not in haystack]
     if missing:

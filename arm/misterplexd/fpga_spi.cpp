@@ -1,6 +1,7 @@
 #include "fpga_spi.hpp"
 
 #include "libmisterplex/ddr_bank_release_select.hpp"
+#include "libmisterplex/plxd_liveness.hpp"
 #include "libmisterplex/status_telemetry.hpp"
 #include "libmisterplex/pixel_format.hpp"
 
@@ -1366,20 +1367,25 @@ bool FpgaSpi::sendDdrFrame(const DdrPublishFrame& frame, const DdrPublishPlan& p
         int plxdIters = 0;
         if (readBankRelease(brs)) {
             // One-shot provenance diagnostic on first PLXD contact.
-            if (!plxdLivenessProven_ && plxdStaleCount_ == 0 &&
-                plxdLastFramesDone_ == 0) {
+            if (!plxdLive_.have_sample) {
                 auto diag = diagnosePlxdProvenance();
                 const char* label = "?";
                 switch (diag.provenance) {
                 case PlxdProvenance::Absent:    label = "ABSENT"; break;
                 case PlxdProvenance::Residue:   label = "RESIDUE(reserved!=0)"; break;
                 case PlxdProvenance::InitOnly:  label = "INIT_ONLY(frames_done=0)"; break;
-                case PlxdProvenance::Alive:     label = "ALIVE(frames_done>0,static)"; break;
-                case PlxdProvenance::LiveAdvance: label = "LIVE_ADVANCE"; break;
+                case PlxdProvenance::Alive:
+                    label = "ALIVE(fd>0_static;fd_may_be_vsync_on_c5382bee)";
+                    break;
+                case PlxdProvenance::LiveAdvance:
+                    label = "LIVE_ADVANCE(fd_moved;not_proof_of_swap)";
+                    break;
                 }
                 fprintf(stderr,
                         "[PLXD-PROVENANCE] %s raw=0x%08x_%08x "
-                        "frames_done=%u free_mask=%u disp=%u swap=%d reserved=0x%03x\n",
+                        "frames_done=%u frames_done_src=plxd[63:48]_rbf_dependent "
+                        "free_mask=%u disp=%u swap=%d reserved=0x%03x "
+                        "liveness=bank_identity_not_fd_alone\n",
                         label, diag.raw_hi, diag.raw_lo,
                         diag.frames_done, diag.free_bank_mask,
                         diag.disp_bank, diag.swap_pending, diag.reserved_bits);
@@ -1388,31 +1394,45 @@ bool FpgaSpi::sendDdrFrame(const DdrPublishFrame& frame, const DdrPublishPlan& p
             // --- Degeneracy defence (instrument-integrity #18) ---
             // A DDR word that happens to contain PLXD magic by coincidence
             // (boot residue) would pass the magic check and return valid-
-            // looking fields. Defence: check frames_done advances between
-            // successive frames. If it never advances, the mailbox is stale
-            // (never written by the FPGA) and we must not trust it.
-            if (brs.frames_done != plxdLastFramesDone_) {
-                plxdLivenessProven_ = true;
-                plxdStaleCount_ = 0;
-            } else {
-                ++plxdStaleCount_;
+            // looking fields.
+            //
+            // Liveness derivation (name + derivation):
+            //   Progress := change in bank-identity signature
+            //     free_bank_mask | disp_bank | swap_pending
+            //   NOT frames_done alone — on deployed RBF c5382bee PLXD[63:48]
+            //   packs bank_vsync_count (advances every vsync). frames_done-only
+            //   liveness kept PLXD "live" while swaps stuck so [STALE] never
+            //   fired (playback-freeze class). See plxd_liveness.hpp +
+            //   ddr_frame_store.sv pack comment. tip packs frames_done_d2
+            //   (swap counter) but identity gate is correct on both.
+            {
+                PlxdLivenessSample sample;
+                sample.frames_done = brs.frames_done;
+                sample.free_bank_mask = brs.free_bank_mask;
+                sample.disp_bank = brs.disp_bank;
+                sample.swap_pending = brs.swap_pending;
+                plxdLivenessTick(plxdLive_, sample);
+                plxdStaleCount_ = plxdLive_.stale_count;
+                plxdLivenessProven_ = plxdLive_.proven;
             }
-            plxdLastFramesDone_ = brs.frames_done;
-            // Residue at a wrong absolute address can prove live once (noise /
-            // one-shot change) then stick forever. Re-arm fallback even after
-            // proven if frames_done stops advancing.
             constexpr int kPlxdStaleLimitFrames = 10;
             constexpr int kPlxdStaleLimitAfterProven = 60; // ~1–2s at 30–60fps
-            const int staleLimit =
-                plxdLivenessProven_ ? kPlxdStaleLimitAfterProven : kPlxdStaleLimitFrames;
-            if (plxdStaleCount_ >= staleLimit) {
+            if (plxdLivenessShouldFallback(plxdLive_, kPlxdStaleLimitFrames,
+                                           kPlxdStaleLimitAfterProven)) {
                 fprintf(stderr,
-                        "[STALE] sendDdrFrame: PLXD mailbox frames_done stuck at %u for "
-                        "%d frames (proven=%d) — treating as residue, timed-delay fallback\n",
-                        static_cast<unsigned>(brs.frames_done), plxdStaleCount_,
-                        plxdLivenessProven_ ? 1 : 0);
-                plxdLivenessProven_ = false;
+                        "[STALE] sendDdrFrame: PLXD bank-identity stuck "
+                        "(free=%u disp=%u swap=%d frames_done=%u fd_only_adv=%d) "
+                        "for %d frames (proven=%d) — residue/freeze fallback "
+                        "(frames_done alone is vsync on c5382bee)\n",
+                        static_cast<unsigned>(brs.free_bank_mask),
+                        static_cast<unsigned>(brs.disp_bank),
+                        brs.swap_pending ? 1 : 0,
+                        static_cast<unsigned>(brs.frames_done),
+                        plxdLive_.last_tick_fd_advanced ? 1 : 0, plxdLive_.stale_count,
+                        plxdLive_.proven ? 1 : 0);
+                plxdLive_ = PlxdLivenessState{};
                 plxdStaleCount_ = 0;
+                plxdLivenessProven_ = false;
                 goto plxd_absent_fallback;
             }
 
@@ -1429,11 +1449,14 @@ bool FpgaSpi::sendDdrFrame(const DdrPublishFrame& frame, const DdrPublishPlan& p
                     ++plxdIters;
                     if (!readBankRelease(brs))
                         break;
-                    if (brs.frames_done != plxdLastFramesDone_) {
-                        plxdLivenessProven_ = true;
-                        plxdStaleCount_ = 0;
-                        plxdLastFramesDone_ = brs.frames_done;
-                    }
+                    PlxdLivenessSample wsample;
+                    wsample.frames_done = brs.frames_done;
+                    wsample.free_bank_mask = brs.free_bank_mask;
+                    wsample.disp_bank = brs.disp_bank;
+                    wsample.swap_pending = brs.swap_pending;
+                    plxdLivenessObserveWait(plxdLive_, wsample);
+                    plxdStaleCount_ = plxdLive_.stale_count;
+                    plxdLivenessProven_ = plxdLive_.proven;
                     sel = selectDdrWriteBank(brs, ddrBankSelect_, kPlxdPollMaxIters);
                 }
                 if (sel.action == DdrBankSelectAction::Write) {
@@ -1765,16 +1788,25 @@ FpgaSpi::PlxdDiag FpgaSpi::diagnosePlxdProvenance() {
         return d;
     }
 
-    // frames_done > 0 — at least one bank swap occurred. Now check liveness
-    // by reading again after a short delay to see if it advances.
+    // frames_done > 0: on tip = ≥1 swap; on c5382bee = ≥1 vsync. Not swap proof.
+    // Re-read after ~5 ms for motion diagnostic only (not the stale decision).
     usleep(5000); // 5 ms — one vsync at 60 Hz is ~16.7 ms
     __sync_synchronize();
     const uint32_t hi2 = mw[1];
     __sync_synchronize();
     const uint16_t frames_done2 = static_cast<uint16_t>(hi2 >> 16);
+    const uint8_t free2 = static_cast<uint8_t>(hi2 & 0x03);
+    const uint8_t disp2 = static_cast<uint8_t>((hi2 >> 2) & 0x01);
+    const bool swap2 = ((hi2 >> 3) & 0x01) != 0;
+    const bool fd_moved = frames_done2 != d.frames_done;
+    const bool id_moved =
+        free2 != d.free_bank_mask || disp2 != d.disp_bank || swap2 != d.swap_pending;
 
-    if (frames_done2 != d.frames_done) {
-        d.provenance = PlxdProvenance::LiveAdvance;
+    if (id_moved) {
+        d.provenance = PlxdProvenance::LiveAdvance; // bank identity moved
+    } else if (fd_moved) {
+        // c5382bee signature: fd ticks, banks static — still "Alive" class
+        d.provenance = PlxdProvenance::Alive;
     } else {
         d.provenance = PlxdProvenance::Alive;
     }

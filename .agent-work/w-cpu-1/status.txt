@@ -1,7 +1,4 @@
-PRIORITY: SOAK_AB trimmed p_ge50_steady (not raw p_ge50=0.145)
-Main 90.6 = source poll(0) CPU1; E1 strace still parent
-PRE_REG B1: p_ge50_steady<=0.05 + steady_sigma -30% if MAIN causal
-NOT cause: B1 MAIN<=2 and p_ge50_steady within ±0.02 of B0
-Discriminator: B1 must shrink write_us if observation-during-write; else late arrival
-T7 ARM bytes=0; overlay hostile at 84.5% until A/B
-unaccounted=residual double print; no PLXD on c5382bee
+FLEET: 240-row ceiling FACT (glass). raw p_ge50 UNSCORED. 
+SHIPPED: plxd_liveness bank-identity (not frames_done-only) — freeze STALE fix ARM-side
+PRIORITY still: trimmed Main A/B SOAK_AB + E1 strace
+No PLXD presents/drops/frames_done as evidence on c5382bee

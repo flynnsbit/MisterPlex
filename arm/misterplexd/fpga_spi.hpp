@@ -12,6 +12,7 @@
 #include "libmisterplex/ddr_bitstream_ring.hpp"
 #include "libmisterplex/ddr_present_bank.hpp"
 #include "libmisterplex/input_mailbox.hpp"
+#include "libmisterplex/plxd_liveness.hpp"
 
 namespace misterplex {
 
@@ -131,9 +132,10 @@ public:
         out = lastPublishBrs_;
         return true;
     }
-    // Sticky PLXD liveness (frames_done advanced at least once this process).
+    // Sticky PLXD liveness: bank-identity (free/disp/swap) moved at least once.
+    // frames_done alone is NOT proof — on c5382bee it is bank_vsync_count.
     // No per-session reset — parent cluster instrument field 1.
-    bool plxdLivenessProven() const { return plxdLivenessProven_; }
+    bool plxdLivenessProven() const { return plxdLive_.proven; }
     struct DdrDoorbellStatus {
         uint32_t seq = 0;
         int bank = 0;
@@ -148,9 +150,9 @@ public:
     enum class PlxdProvenance {
         Absent,      // magic does not match — cold DDR, pre-PLXD RBF, or corruption
         Residue,     // magic matches but reserved bits non-zero (coincidence/corruption)
-        InitOnly,    // magic valid, clean fields, but frames_done==0 — FPGA initialized, never swapped
-        Alive,       // magic valid, frames_done>0 — FPGA has completed at least one bank swap
-        LiveAdvance, // frames_done advanced between two reads — FPGA is actively running
+        InitOnly,    // magic valid, clean fields, frames_done==0
+        Alive,       // magic valid, frames_done>0 (tip: swap; c5382bee: may be vsync only)
+        LiveAdvance, // bank-identity moved between two reads (free/disp/swap) — swap path live
     };
     struct PlxdDiag {
         PlxdProvenance provenance = PlxdProvenance::Absent;
@@ -345,10 +347,11 @@ private:
     InputMailboxEdgeDetector inputMboxEdge_;
     int ddrKickMode_ = 0; // 0=unknown, 1=doorbell, 2=SPI kick, -1=fail
     double ddrKickFailMs_ = -1.0; // steady_clock timestamp of last ddrKickMode_ = -1
-    // PLXD liveness: detect stale/residue mailbox by checking frames_done advances.
-    uint16_t plxdLastFramesDone_ = 0;
-    int plxdStaleCount_ = 0;       // consecutive reads with no frames_done advance
-    bool plxdLivenessProven_ = false; // true once frames_done has advanced at least once
+    // PLXD liveness: bank-identity progress (see plxd_liveness.hpp). Not frames_done-only.
+    PlxdLivenessState plxdLive_{};
+    // Names kept for rtl_invariants / diagnostics (mirrors plxdLive_).
+    int plxdStaleCount_ = 0;
+    bool plxdLivenessProven_ = false;
     bool ensureDdrMap();
     void releaseDdrMap();
     bool ensureBitstreamDdrMap();
