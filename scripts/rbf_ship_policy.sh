@@ -30,6 +30,16 @@ RBF_DO_NOT_SHIP_PREFIX8=(
   2890baac
 )
 
+# Lab-OK but NOT daily-driver ready (parent fleet 2026-08-01 viewed-pixel proof).
+# c5382bee: (1) store_y=py*2 → only even store rows → 50% vertical rows absent (solid
+# field inverts under one-row phase shift; std=0.00). (2) frames_done packs
+# bank_vsync_count — PLXD STALE detector at fpga_spi.cpp:1388-1394 cannot fire on
+# frozen swaps (playback-freeze class). Horizontal 529/640 is arithmetic-only (clk_sys
+# 20 MHz) — NOT pixel-proven; do not overclaim.
+RBF_LAB_NOT_DAILY_PREFIX8=(
+  c5382bee
+)
+
 # Known-good pins (prefix8 or full). Used by promotion/rollback docs+gates.
 RBF_PIN_V2_DAILY_FULL=dfebf2bfd08dd70b473b587dd7e81848
 RBF_PIN_DDR_CANDIDATE_FULL=c5382bee73cecdee8220b811e529c297
@@ -46,6 +56,10 @@ DAEMON_PIN_DDR_3883F5AB_PREFIX8=3883f5ab
 # integ/osd-ledger-480p @ 533a4bca — parent live 2026-08-01 (frame-ledger + pause overlay)
 DAEMON_PIN_DDR_36B89BCB_FULL=36b89bcb87399f4681fd41ddd226e5b4
 DAEMON_PIN_DDR_36B89BCB_PREFIX8=36b89bcb
+# Parent live after raster card restore 2026-08-01 (fleet broadcast)
+DAEMON_PIN_DDR_7C991E47_FULL=7c991e47
+DAEMON_PIN_DDR_7C991E47_PREFIX8=7c991e47
+# Note: full md5 may be completed by parent pin file; prefix8 identity is authoritative for bak names.
 DAEMON_PIN_DDR_EDC3_PREFIX8=edc3a46b
 DAEMON_PIN_DDR_EDC3_FULL="${DAEMON_PIN_DDR_EDC3_FULL:-edc3a46b9d1c6b86337deb90f896eb0f}"
 DAEMON_PIN_DDR_5996385A_FULL=5996385a57c6af142b8e732a39b36a4a
@@ -239,3 +253,37 @@ if [ "${BASH_SOURCE[0]-}" = "${0:-}" ]; then
       ;;
   esac
 fi
+
+
+# Daily-driver promote readiness (HARD refuse). Lab deploy of tagged cores is still
+# allowed via deploy_plex_core (not banned); flipping daily requires override + glass.
+rbf_policy_daily_promote_ready() {
+  local md p8
+  md=$(rbf_policy_normalize_md5 "${1:-}")
+  if [ -z "$md" ] || [ "${#md}" -lt 8 ]; then
+    echo "DAILY_PROMOTE_READY=NO reason=bad_md5"
+    return 3
+  fi
+  p8="${md:0:8}"
+  local x
+  for x in "${RBF_LAB_NOT_DAILY_PREFIX8[@]}"; do
+    if [ "$p8" = "$x" ]; then
+      cat <<EOF
+DAILY_PROMOTE_READY=NO core_p8=$p8
+BLOCKER vertical_240_row_ceiling: store_y=py*2 even-only; 50% rows absent (parent push_frame --ddr card; std=0.00 solid invert)
+BLOCKER frames_done_vsync_STALE_blind: fpga_spi.cpp:1388-1394 cannot detect frozen swaps on c5382bee
+BLOCKER ledger_not_display: drops/unaccounted/publish_misses are ARM-supply; no FPGA observe field
+SCOPE_LIMIT horizontal_529of640 arithmetic_only_not_pixel_proven clk_sys=20MHz
+OVERRIDE PROMOTE_ALLOW_KNOWN_DEFECTS=1 (parent+user only; still requires viewed pixels)
+EOF
+      return 11
+    fi
+  done
+  # banned / do-not-ship also not daily
+  if ! rbf_policy_check_md5 "$md" >/dev/null 2>&1; then
+    echo "DAILY_PROMOTE_READY=NO core_p8=$p8 reason=banned_or_donotship"
+    return 1
+  fi
+  echo "DAILY_PROMOTE_READY=YES core_p8=$p8"
+  return 0
+}

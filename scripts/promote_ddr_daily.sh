@@ -114,6 +114,27 @@ require_execute() {
   return 1
 }
 
+# Fleet 2026-08-01: c5382bee is LAB-OK for experiments, NOT daily-driver ready.
+# Vertical 240-row ceiling pixel-proven; frames_done STALE-blind. Override only with
+# PROMOTE_ALLOW_KNOWN_DEFECTS=1 after glass re-card breaks solid-field collapse.
+refuse_daily_if_not_ready() {
+  local core_md5="${1:-$EXPECT_CORE_MD5}"
+  if [[ "${PROMOTE_ALLOW_KNOWN_DEFECTS:-0}" == "1" ]]; then
+    log "WARN PROMOTE_ALLOW_KNOWN_DEFECTS=1 — parent override; still need viewed pixels"
+    return 0
+  fi
+  set +e
+  rbf_policy_daily_promote_ready "$core_md5"
+  local rc=$?
+  set -e
+  if [[ "$rc" -ne 0 ]]; then
+    echo "REFUSE_DAILY_PROMOTE true rc=$rc"
+    echo "true rc=$rc"
+    return "$rc"
+  fi
+  return 0
+}
+
 print_plan() {
   local rbf="$1" daemon="$2"
   cat <<EOF
@@ -171,11 +192,26 @@ cmd_plan() {
   rbf="${1:-$(default_rbf || true)}"
   daemon="${2:-$(default_daemon || true)}"
   print_plan "$rbf" "$daemon"
+  echo "--- daily-promote readiness (fleet 2026-08-01) ---"
+  set +e
+  rbf_policy_daily_promote_ready "$EXPECT_CORE_MD5"
+  local ready_rc=$?
+  set -e
+  echo "rbf_policy_daily_promote_ready true rc=$ready_rc"
   if [ -n "$rbf" ] && [ -n "$daemon" ]; then
+    set +e
     "$ROOT/scripts/promotion_gate_check.sh" policy-local "$rbf" "$daemon"
-    return $?
+    local prc=$?
+    set -e
+    # Readiness block does not hide pair policy failures.
+    if [ "$prc" -ne 0 ]; then
+      echo "true rc=$prc"
+      return "$prc"
+    fi
+  else
+    echo "NOTE: local artifacts not both present — plan only"
   fi
-  echo "NOTE: local artifacts not both present — plan only"
+  # plan stays readable (rc=0) but prints BLOCKER; stage/activate hard-refuse.
   echo "true rc=0"
   return 0
 }
@@ -185,6 +221,8 @@ cmd_stage() {
   rbf="${rbf:-$(default_rbf || true)}"
   daemon="${daemon:-$(default_daemon || true)}"
   print_plan "$rbf" "$daemon"
+
+  refuse_daily_if_not_ready "$EXPECT_CORE_MD5" || return $?
 
   set +e
   "$ROOT/scripts/promotion_gate_check.sh" policy-local "$rbf" "$daemon"
@@ -218,6 +256,8 @@ cmd_activate() {
   daemon="${daemon:-$(default_daemon || true)}"
 
   print_plan "$rbf" "$daemon"
+  refuse_daily_if_not_ready "$EXPECT_CORE_MD5" || return $?
+
   set +e
   "$ROOT/scripts/promotion_gate_check.sh" policy-local "$rbf" "$daemon"
   local prc=$?

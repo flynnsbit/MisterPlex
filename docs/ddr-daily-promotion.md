@@ -122,16 +122,66 @@ Main-tree defects (do **not** use `scripts/` from pre-fix main):
 
 Red-before-green: `tests/unit/test_deploy_misterplexd.sh`, `tests/unit/test_rollback_honest.sh`.
 
-## Measurement claims (parent ERROR 18/19 withdrawn) — do NOT flip daily driver
+## Measurement claims — do NOT flip daily driver
+
+### Fleet 2026-08-01 — vertical 240-row ceiling (ESTABLISHED FACT)
+
+Parent-run on hardware, pre-registered, 5/5 predictions hit. Codec **out of loop**
+(`push_frame --ddr --pattern` → product `FpgaSpi::publishDdrFrame`) on RBF **`c5382bee`**:
+
+| pattern | mean | std | note |
+|---------|-----:|----:|------|
+| mid_grey CONTROL | 137.0 | 0.00 | path sound |
+| even_black | 7.0 | 0.00 | solid BLACK |
+| even_white | 255.0 | 0.00 | solid WHITE |
+| odd_black | 255.0 | 0.00 | solid WHITE **INVERTED** |
+| odd_white | 7.0 | 0.00 | solid BLACK **INVERTED** |
+
+**`std=0.00` is the result:** no stripes — odd store rows are **entirely absent**.
+`store_y = py*2` fetches even rows only → **50.0% of rows never reach display**.
+
+**Scope limit:** proves **vertical** ceiling only. Horizontal 529-of-640 is **arithmetic
+only** (`clk_sys=20 MHz`; 20e6/60/524=636&lt;640) — **not** pixel-proven here.
+
+**After w-geom T7 (unique rows 240→480):** re-run **identical** card; solid-field
+collapse **must break**. That is the glass proof. This card is the **"before" bank**.
+
+**Daily promote:** `rbf_policy_daily_promote_ready c5382bee` → **`true rc=11`**
+(`DAILY_PROMOTE_READY=NO`). `promote_ddr_daily.sh stage|activate` hard-refuses unless
+`PROMOTE_ALLOW_KNOWN_DEFECTS=1` (parent+user only). Lab RBF deploy still allowed
+(not on banned list) — **do not confuse lab OK with daily ready**.
+
+### SAFETY — frames_done / STALE (affects user **today** on c5382bee)
+
+`fpga_spi.cpp:1388-1394` proves mailbox liveness via `frames_done` advances.
+On `c5382bee`, that field is a **vsync counter** (`bank_vsync_count`) — advances
+even if bank swaps freeze → frozen picture reported healthy; `[STALE]` never fires.
+Plausible root of original playback-freeze class. **Rollback path must stay proven
+before any new RBF** (see preflight).
+
+### Retractions (STOP building on these)
 
 | Claim | Status |
 |-------|--------|
 | "22 skips / 1.54% frame loss" | **ERROR 18 WITHDRAWN** (30 fps capture, zero sampling margin) |
-| "1 skip / 0.070%" | **ERROR 19 WITHDRAWN** (min hold = one refresh 16.67 ms; 60 fps capture has negative margin) |
-| Defensible bound | **0 confirmed skips; ≤1 source frame in 1420 shown for ≤1 refresh.** Frame loss is **bounded, not measured.** |
-| Measured defect | **Judder**: adjacent display holds equal **29.9%** of the time (floor 15.1%) where ideal predicts 0%; average rate exact to 0.1%. |
+| "1 skip / 0.070%" | **ERROR 19 WITHDRAWN** (min hold = one refresh; 60 fps negative margin) |
+| `p_ge50 = 14.5%` | **UNSCORED**, not a MISS (σ≫mean; raw log gone — re-measure) |
+| "Two independent instruments agree" (`p_ge50` + `acf lag1`) | **WITHDRAWN** — two stats of **one** series; preemption manufactures both |
+| `drops=0` as display claim | **VOID** — ARM-supply only; `unaccounted` is `residual` printed twice; `residual≡publish_misses`; **no ledger field observes the FPGA** |
+| Any metric from PLXD `frames_done` on c5382bee | **VOID** until new RBF lands |
+| Defensible prior bound | Frame loss was **bounded, not measured**; vertical defect now **measured on glass** |
+| Judder | Still a separate measured presentation defect; not a promote PASS |
 
-**Do not** promote DDR pair to daily-driver default on telemetry alone. This package is reversible machinery only.
+### Standing rule (fleet) — field names
+
+**Publish no field name without its derivation in the same breath.**
+Pattern of four: `frames_done` / `presents` / `HISTORICAL FAULT` / `unaccounted` —
+names that do not match derivation.
+
+**Pre-retraction check (mandatory):** (1) name the artifact the finding was about
+and the artifact the retraction evidence came from — if they differ, retraction is
+**INVALID**; (2) device behaviour claims retract only on device-derived evidence;
+(3) a comment saying "fixed" is a claim — cite commit **and** live artifact.
 
 ### ARM CPU% (required on every soak report)
 
@@ -141,14 +191,20 @@ Promotion checks must stay light on-device (no heavy probes).
 
 ### Conf safety (USER-OWNED — assert, never rewrite)
 
-Live keys parent verifies after every op (md5 `7f06132f…` class):
-`DECODE=624x480`, `PRESENT=fpga`, `IDLE_SCREEN=logo`, `DECODE_ALLOW_LAB_480P=1`, `DDR_YUV_FORCE_SCALE=1`.
+**Current live (parent restored after raster lab 2026-08-01):** conf md5
+**`20d31046…`** byte-identical to pre-lab backup; reads **`DECODE=320x240`**
+(user-owned; do not "correct" to 624x480). Daemon pid 7585, live exe prefix
+**`7c991e47`**, `n_daemon=1`, `:3005/resources` OK, `CORENAME=Plex`.
+
+Prior lab conf class `7f06132f…` (`DECODE=624x480`, …) may return; **always**
+resolve path from `/proc/PID/cmdline --conf` and md5 the live file.
 
 | Key | Rule |
 |-----|------|
 | conf file | Back up + restore **byte-exactly**. Never normalise to a "validated default". |
 | `PRESENT` | Must be **`fpga` or `both`**. `PRESENT=fb0` is **wrong**: `initPresent()` skips `fpga_.open()` → DDR frame store never repainted → idle freezes. Deploy asserts this (does not rewrite). |
 | `IDLE_SCREEN` | Promotion captures want **`logo`** (static Plex logo). Screensaver contaminates test captures (user). Assert via `DEPLOY_ASSERT_IDLE_LOGO=1` on promote; never silent rewrite. |
+| `DECODE` | User-owned. Snapshot pre-swap; restore byte-exact. Never force 624x480. |
 
 ### RBF mechanical refuse
 
@@ -157,10 +213,14 @@ banned `{8832824e,75da8bb1,4d6ee356,4deaf6cc,dabdaeb0}` + do-not-ship `{9eb1431a
 `DEPLOY_LOAD=none|menu`; ONE menu bounce only; never thrash `load_core`.
 `bootcore=lastcore` is **user-authorised for testing** (do not flip without user).
 
-### Live daemon pin (parent 2026-08-01)
+**Daily vs lab:** `c5382bee` is **not banned** (lab experiments / before-bank OK) but
+`rbf_policy_daily_promote_ready` → rc=11 until vertical fix glass-proven.
 
-`/proc/<pid>/exe` md5 **`36b89bcb87399f4681fd41ddd226e5b4`** (`integ/osd-ledger-480p` @ `533a4bca`).
-Rollback bak on device: `misterplexd.bak.3883f5ab`. Verify live exe — never disk alone.
+### Live daemon pin (parent 2026-08-01 post-raster restore)
+
+`/proc/<pid>/exe` md5 prefix **`7c991e47`** (full via `readlink -f` on device).
+Prior pins still accepted for pair matrix: `36b89bcb`, `3883f5ab`, `edc3a46b`,
+`e9f79de2`, `b981fd20`. Verify live exe — never disk alone.
 
 ## Probe capture (V2_MD5 `set +e` glue)
 

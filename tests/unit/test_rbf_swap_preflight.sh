@@ -26,6 +26,9 @@ echo "$out" | grep -q 'H7 PRESENT' && pass min-h7 || fail min-h7 missing
 echo "$out" | grep -q 'S1 CORENAME' && pass soft-corename || fail soft-corename missing
 echo "$out" | grep -qi 'USELESS\|SOFT' && pass corename-not-hard || fail corename-not-hard 'CORENAME must be soft'
 echo "$out" | grep -qi 'frames_done\|vsync\|STALE' && pass c5382-note || fail c5382-note missing
+echo "$out" | grep -qi 'drops=0\|ARM-supply\|unaccounted' && pass drops-void || fail drops-void missing
+echo "$out" | grep -qi '240-row\|vertical' && pass vert-ceiling || fail vert-ceiling missing
+echo "$out" | grep -qi 'STANDING RULE\|derivation' && pass field-rule || fail field-rule missing
 
 # plan dry
 out=$("$SCR" plan 2>&1); rc=$?

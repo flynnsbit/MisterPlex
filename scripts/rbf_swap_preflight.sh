@@ -91,6 +91,16 @@ CLAIM (product success):
   C1 VIEWED pixels — visual gate; telemetry is never enough
   C2 frames_done must NOT be the sole liveness proof on c5382bee-class cores
        (vsync counter advances while swaps frozen — STALE cannot fire)
+  C3 daily promote BLOCKED on c5382bee until glass re-card breaks 240-row collapse
+       (parent fleet 2026-08-01: push_frame --ddr solid-field invert std=0.00)
+
+VOID / WITHDRAWN as promote evidence (fleet 2026-08-01):
+  V1 drops=0 — ARM-supply only; unaccounted≡residual≡publish_misses; no FPGA observe
+  V2 p_ge50 / "two instruments agree" — UNSCORED / WITHDRAWN (one series; preemption)
+  V3 any PLXD[63:48] frames_done derivative on c5382bee — void until new RBF
+  V4 horizontal 529-of-640 — arithmetic (clk_sys=20 MHz) NOT pixel-proven
+
+STANDING RULE: publish no field name without its derivation in the same breath.
 
 Parent proposed set vs this answer:
   live md5 == intended     -> H2 HARD (agree)
