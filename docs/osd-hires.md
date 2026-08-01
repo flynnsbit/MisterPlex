@@ -146,3 +146,17 @@ FAIL, or tool PASS on unreadable mush.
 
 `V_STORE` / Quartus. Only if multi-res read-back stays RED on silicon with
 human-legible chrome.
+
+## Even-row cull gate (host, no device)
+
+```bash
+python3 tools/even_row_cull_glyph_gate.py; echo "true rc=$?"
+```
+
+| Arm | Result |
+|---|---|
+| RED | 5×7 @ scale=1 → after even-row keep: mid-bar of `8` **dead**; 3/7 glyph rows culled |
+| GREEN | 12×16 @ scale=2 even y → STOPPED template frac ≥ 0.90 after same cull |
+
+`PAIR_OK` proves the fix is **not** a canvas-size no-op under the real fetch rule, and that
+scale≥2 **accommodates** the 240-line ceiling without restoring 480 independent lines.
