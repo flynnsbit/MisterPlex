@@ -1,14 +1,12 @@
-# Post-scale chrome plane — pointer
+# Post-scale chrome plane — pointer + ARM contract
 
-**Canonical costed RTL design lives with w-fit:**
+**Canonical RTL (w-fit-1):**  
+`.worktrees/w-fit-integ/docs/chrome-post-scale-plane-design.md`  
+(Inc-1 HW rect post-ascal → Inc-2 banded DDR; bypasses `V_STORE=240`.)
 
-`../w-fit-integ/docs/chrome-post-scale-plane-design.md`
+**ARM after ceiling lift (this worker):**  
+`docs/osd-arm-post-ceiling-contract.md`
 
-(also expected under `docs/` once promoted to main)
+**Ceiling verify:** `docs/osd-240-ceiling-verify.md`
 
-**This worker (w-osd-hires) conclusion:** see `docs/osd-240-ceiling-verify.md`.
-
-- Overlay **does not** bypass `present_core` `store_y` (T1).
-- User fix is **(b) RTL post-ascal**, not ARM-only F1 paint (T3).
-- Do **not** invent a second architecture; implement ARM writer against w-fit’s tap
-  (ascal → shadowmask → **plex_chrome** → osd) and M10K budget (banded N≤8 or glyph).
+Do not invent a parallel RTL architecture. ARM `plane=1` lands with w-fit RBF.
