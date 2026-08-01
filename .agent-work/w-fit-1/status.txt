@@ -77,3 +77,13 @@ Next fit bar: TB RED on current shipping RTL, GREEN on this tip, elaborate-prove
 - Wire real h264_hybrid_mb_own into thruput decode_stub (drop fail-closed).
 - Port product tip WIDTH casts to clear lint debt (remove waivers).
 - Do not ship binary .i420 under docs/evidence.
+
+## A/V bimodal FPGA RCA (2026-07-31, source-only)
+- Doc: `.agent-work/w-fit-1/AV_OFFSET_BIMODAL_FPGA_RCA.md`
+- Product audio: `/dev/MrAudio` → sys/alsa.sv → audio_out → I2S (NOT core audio_fifo)
+- Audio RTL: NO ~117 ms phase boundary (ce_sample 20.8µs; hurryup thr ≥682ms; a_en2 mute ~171ms one-shot)
+- Video: first-swap vsync quantisation CAN hold session offset; 7×(1/60)=116.67ms matches Δ (derived, unproven)
+- Observe: MrAudio line+comp; devmem PLXD 0x300FF128; time audio-release→frames_done 0→1
+- NO FIT
+- branch=w-fit-integ-c5382bee-dequant-swap HEAD=502cf857b4d77087b57114d8559d543b584ae5c1
+
