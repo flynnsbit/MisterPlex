@@ -1,0 +1,9 @@
+w-cpu-1 status
+branch=w-avsync-hdmi-measure SHA=b1e4c74a (pre-commit)
+
+RETRACT ERROR17: fps 24 vs 23976 false — closed
+DELIVERABLE: DELIVERABLE_MISTER_SPIN_AND_HEADROOM.md
+
+MiSTer spin: poll timeout=0 except Menu+FB; scheduler no sleep; CPU1
+Fix without suspend: Main patch timeout>0 only (lab); in-tree = SUSPEND only
+Headroom: H1/H2/H3 scripts in tools/ — never 200-busy
