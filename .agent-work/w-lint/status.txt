@@ -1,4 +1,5 @@
 lane: w-lint GATE-INTEGRITY
+tip: eaec990a
 branch: w-lint-gate-integrity
 worktree: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-lint
 
