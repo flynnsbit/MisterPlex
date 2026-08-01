@@ -54,6 +54,7 @@ unit-unlocked: unit-rollcall preflight $(ROOT)/build/test_cadence $(ROOT)/build/
 	$(ROOT)/tests/unit/test_cadence_swap_path_source.sh
 	$(ROOT)/build/test_publish_interval_ledger
 	$(ROOT)/build/test_publish_swap_delta_ledger
+	$(ROOT)/tests/unit/test_c5382bee_frames_done_pack.sh
 	$(ROOT)/build/test_present_store_scale_math
 	$(ROOT)/build/test_avclock
 	bash $(ROOT)/tests/unit/test_av_startup_hold_red.sh

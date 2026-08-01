@@ -56,6 +56,7 @@ struct PublishSwapDeltaLedger {
     std::int64_t delta0 = 0;
     std::int64_t delta1 = 0;
     std::int64_t delta_ge2 = 0;
+    std::int64_t sum_delta = 0;
     std::int64_t ge50 = 0;
     std::int64_t iv_n = 0;
     double sum_iv_ms = 0;
@@ -70,6 +71,7 @@ struct PublishSwapDeltaLedger {
         last_fd = -1;
         pair_n = delta0 = delta1 = delta_ge2 = ge50 = iv_n = 0;
         sum_iv_ms = sum_iv_ms2 = 0;
+        sum_delta = 0;
         std::memset(d0_phase_bin, 0, sizeof(d0_phase_bin));
         std::memset(d1_phase_bin, 0, sizeof(d1_phase_bin));
         for (std::size_t i = 0; i < kCap; ++i)
@@ -102,6 +104,7 @@ struct PublishSwapDeltaLedger {
         if (last_fd >= 0) {
             s.delta_fd = unwrapFdDelta(last_fd, static_cast<int>(frames_done));
             ++pair_n;
+            sum_delta += s.delta_fd;
             const int bin = static_cast<int>((s.phase_est_us * 4) / kVsyncPeriodUs) & 3;
             if (s.delta_fd == 0) {
                 ++delta0;
@@ -129,11 +132,14 @@ struct PublishSwapDeltaLedger {
         double p_delta0 = 0;
         double p_delta1 = 0;
         double p_delta_ge2 = 0;
+        double mean_delta = 0;
         double p_ge50 = 0;
         double mean_ms = 0;
         double sigma_ms = 0;
         const char* interval_verdict = "UNSCORED";
         const char* skip_verdict = "UNSCORED";
+        // fd_semantics: SWAP_COUNTER only if p_d1 dominates; else not a skip meter.
+        const char* fd_semantics = "UNSCORED";
     };
 
     Summary summarize() const {
@@ -144,6 +150,7 @@ struct PublishSwapDeltaLedger {
             s.p_delta0 = double(delta0) / double(pair_n);
             s.p_delta1 = double(delta1) / double(pair_n);
             s.p_delta_ge2 = double(delta_ge2) / double(pair_n);
+            s.mean_delta = double(sum_delta) / double(pair_n);
         }
         if (iv_n > 0) {
             s.mean_ms = sum_iv_ms / double(iv_n);
@@ -151,7 +158,6 @@ struct PublishSwapDeltaLedger {
                 std::max(0.0, sum_iv_ms2 / double(iv_n) - s.mean_ms * s.mean_ms);
             s.sigma_ms = std::sqrt(var);
             s.p_ge50 = double(ge50) / double(iv_n);
-            // Corrected ERROR 21 mapping
             if (s.p_ge50 >= 0.09 && s.p_ge50 <= 0.11)
                 s.interval_verdict = "ARM_LATE_MATCH_HOLD45";
             else if (s.p_ge50 < 0.03 && s.sigma_ms < 4.0)
@@ -163,31 +169,43 @@ struct PublishSwapDeltaLedger {
             else
                 s.interval_verdict = "ARM_OTHER";
         }
-        // Skip: any sustained delta0 is zero-refresh overwrite
-        if (pair_n >= 100) {
+
+        // Premise for skip: Δfd ∈ {0,1} with p_d1 ≈ 1 (real swap counter).
+        // Parent soak on c5382bee: p_dge2≈0.97 → NOT a swap counter; skip UNSCORED.
+        if (pair_n < 50) {
+            s.fd_semantics = "UNSCORED";
+            s.skip_verdict = "UNSCORED";
+        } else if (s.p_delta1 < 0.5) {
+            // Inconsistent with per-publish swap counter.
+            if (s.p_delta_ge2 >= 0.5 && s.mean_delta >= 1.5 && s.mean_delta <= 5.0)
+                s.fd_semantics = "LIKELY_VSYNC_PACKED"; // Δ tracks refreshes/interval
+            else
+                s.fd_semantics = "UNKNOWN_NOT_SWAP";
+            s.skip_verdict = "UNSCORED"; // NEVER pass when premise violated
+        } else {
+            s.fd_semantics = "SWAP_COUNTER";
             if (s.p_delta0 < 0.001)
                 s.skip_verdict = "NO_ZERO_REFRESH_SKIP";
             else if (s.p_delta0 < 0.01)
                 s.skip_verdict = "RARE_ZERO_REFRESH_SKIP";
             else
                 s.skip_verdict = "ZERO_REFRESH_SKIPS_PRESENT";
-        } else if (pair_n > 0) {
-            s.skip_verdict = s.p_delta0 > 0 ? "ZERO_REFRESH_SKIPS_PRESENT" : "NO_ZERO_REFRESH_SKIP";
         }
         return s;
     }
 
     std::string formatSummaryLine(const char* tag = "measured") const {
         const Summary s = summarize();
-        char buf[640];
+        char buf[768];
         std::snprintf(
             buf, sizeof(buf),
             "publish_swap_delta notes=%lld pairs=%lld p_d0=%.4f p_d1=%.4f p_dge2=%.4f "
-            "p_ge50=%.4f mean_ms=%.3f sigma_ms=%.3f interval_verdict=%s skip_verdict=%s "
+            "mean_delta=%.3f p_ge50=%.4f mean_ms=%.3f sigma_ms=%.3f "
+            "interval_verdict=%s skip_verdict=%s fd_semantics=%s "
             "phase_tag=ESTIMATE_60Hz ideal_ms=%.3f tag=%s",
             static_cast<long long>(s.notes), static_cast<long long>(s.pairs), s.p_delta0,
-            s.p_delta1, s.p_delta_ge2, s.p_ge50, s.mean_ms, s.sigma_ms, s.interval_verdict,
-            s.skip_verdict, 1000.0 / 24.0, tag);
+            s.p_delta1, s.p_delta_ge2, s.mean_delta, s.p_ge50, s.mean_ms, s.sigma_ms,
+            s.interval_verdict, s.skip_verdict, s.fd_semantics, 1000.0 / 24.0, tag);
         return std::string(buf);
     }
 

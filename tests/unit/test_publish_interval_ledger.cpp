@@ -108,11 +108,27 @@ int main() {
         std::printf("clean %s\n", L.formatSummaryLine("synthetic").c_str());
         EXPECT(s.intervals == 499, "clean interval count");
         EXPECT(std::fabs(s.mean_ms - (1000.0 / 24.0)) < 0.05, "clean mean ~41.667");
+        EXPECT(std::fabs(s.median_ms - (1000.0 / 24.0)) < 0.05, "clean median ~41.667");
+        EXPECT(std::fabs(s.trimmed_mean_ms - (1000.0 / 24.0)) < 0.05, "clean trimmed ~41.667");
         EXPECT(s.sigma_ms < 0.5, "clean sigma tiny");
         EXPECT(s.p_ge50 < 0.001, "clean no late");
+        EXPECT(s.p_ge50_steady < 0.001, "clean steady no late");
         EXPECT(s.p_in_band > 0.99, "clean in band");
         EXPECT(std::string(s.verdict) == "ARM_EXONERATED_FPGA_SIDE",
                "clean verdict ARM_EXONERATED_FPGA_SIDE (ERROR 21)");
+    }
+
+    // Outlier-skewed raw mean still has stable median/trimmed
+    {
+        PublishIntervalLedger L;
+        fill_clean(L, 200);
+        // Inject one huge gap (session tear)
+        L.note(L.last_us + 5'000'000);
+        const auto s = L.summarize();
+        std::printf("outlier %s\n", L.formatSummaryLine("synthetic").c_str());
+        EXPECT(s.mean_ms > 50.0, "raw mean pulled up by outlier");
+        EXPECT(std::fabs(s.median_ms - (1000.0 / 24.0)) < 1.0, "median resists outlier");
+        EXPECT(std::fabs(s.trimmed_mean_ms - (1000.0 / 24.0)) < 2.0, "trimmed resists outlier");
     }
 
     // Late 10%
@@ -149,12 +165,11 @@ int main() {
         EXPECT(std::fabs(rho) < 0.05, "clean lag1 acf ~0");
     }
 
-    // frames_done semantics note (documentation lock for fabric tool death)
-    std::printf("FACT frames_done increments only on swap (vsync&&pending&&ready); "
-                "Delta frames_done between publishes is typically 1 and carries "
-                "ZERO hold-length info. Fabric hold-via-fd-edges is INVALID.\n");
-    std::printf("FACT vsync_toggle / bank_vsync_count not ARM-readable via PLXD "
-                "(reserved [47:36]=0); would need RBF to pack.\n");
+    std::printf("FACT tip RTL: internal frames_done++ only on swap; PLXD packs "
+                "frames_done_d2. DEPLOYED c5382bee packs bank_vsync_count into "
+                "PLXD[63:48] (HISTORICAL FAULT live) — see test_c5382bee_frames_done_pack.\n");
+    std::printf("FACT on c5382bee, ΔPLXD_fd tracks vsyncs/interval (~3 @50ms), NOT swaps; "
+                "skip_verdict must be UNSCORED when p_d1<0.5.\n");
 
     if (g_fails) {
         std::fprintf(stderr, "%d publish_interval fail(s)\n", g_fails);

@@ -82,17 +82,57 @@ struct PublishIntervalLedger {
         last_us = now_us;
     }
 
+    // Drop first/last notes when scoring steady-state (startup/teardown).
+    static constexpr std::size_t kDropHeadNotes = 48; // ~2 s @24
+    static constexpr std::size_t kDropTailNotes = 24; // ~1 s @24
+
     struct Summary {
         std::int64_t notes = 0;
         std::int64_t intervals = 0;
-        double mean_ms = 0;
-        double sigma_ms = 0;
-        double p_ge50 = 0;
+        double mean_ms = 0;       // raw (all intervals; can be outlier-skewed)
+        double sigma_ms = 0;      // raw
+        double median_ms = 0;     // steady window
+        double trimmed_mean_ms = 0; // steady, 10% each tail
+        double steady_sigma_ms = 0;
+        double p_ge50 = 0;        // raw all intervals
+        double p_ge50_steady = 0; // steady window — use for verdict
         double p_ge83 = 0;
         double p_lt25 = 0;
         double p_in_band = 0;
+        std::int64_t steady_n = 0;
         const char* verdict = "UNSCORED";
     };
+
+    static double percentileSorted(std::vector<double>& v, double q) {
+        if (v.empty())
+            return 0;
+        std::sort(v.begin(), v.end());
+        const double idx = q * double(v.size() - 1);
+        const std::size_t lo = static_cast<std::size_t>(idx);
+        const std::size_t hi = std::min(lo + 1, v.size() - 1);
+        const double f = idx - double(lo);
+        return v[lo] * (1.0 - f) + v[hi] * f;
+    }
+
+    // Intervals from chronological mono; optional head/tail note drops.
+    void collectIntervalsMs(std::vector<double>& out, bool steady_window) const {
+        out.clear();
+        std::int64_t tmp[kCap];
+        std::size_t n = 0;
+        copyChronological(tmp, &n);
+        if (n < 2)
+            return;
+        std::size_t i0 = 0, i1 = n;
+        if (steady_window && n > kDropHeadNotes + kDropTailNotes + 2) {
+            i0 = kDropHeadNotes;
+            i1 = n - kDropTailNotes;
+        }
+        for (std::size_t i = i0 + 1; i < i1; ++i) {
+            if (tmp[i] < tmp[i - 1])
+                continue;
+            out.push_back(double(tmp[i] - tmp[i - 1]) / 1000.0);
+        }
+    }
 
     Summary summarize() const {
         Summary s;
@@ -110,15 +150,49 @@ struct PublishIntervalLedger {
         s.p_lt25 = double(lt25_count) / double(iv_n);
         s.p_in_band = double(in_band_count) / double(iv_n);
 
-        // Corrected pre-register (parent ERROR 21): p_ge50<3% EXONERATES ARM and
-        // redirects to FPGA CDC / DDR-completion — it is NOT a dead end.
-        if (s.sigma_ms < 4.0 && s.p_in_band >= 0.99 && s.p_ge50 < 0.03)
+        // Steady-state robust stats (exclude startup/teardown notes).
+        std::vector<double> steady;
+        collectIntervalsMs(steady, true);
+        s.steady_n = static_cast<std::int64_t>(steady.size());
+        if (!steady.empty()) {
+            std::vector<double> sorted = steady;
+            s.median_ms = percentileSorted(sorted, 0.5);
+            // 10% trimmed mean
+            std::sort(steady.begin(), steady.end());
+            const std::size_t trim = steady.size() / 10;
+            const std::size_t a = trim;
+            const std::size_t b = steady.size() - trim;
+            double sum = 0;
+            std::size_t m = 0;
+            double sum2 = 0;
+            int ge50s = 0;
+            for (std::size_t i = a; i < b; ++i) {
+                sum += steady[i];
+                sum2 += steady[i] * steady[i];
+                ++m;
+            }
+            for (double v : steady) {
+                if (v > 50.0)
+                    ++ge50s;
+            }
+            if (m > 0) {
+                s.trimmed_mean_ms = sum / double(m);
+                const double v2 = std::max(0.0, sum2 / double(m) - s.trimmed_mean_ms * s.trimmed_mean_ms);
+                s.steady_sigma_ms = std::sqrt(v2);
+            }
+            s.p_ge50_steady = double(ge50s) / double(steady.size());
+        }
+
+        // Verdict on STEADY p_ge50 (parent ERROR 21 mapping). Fall back to raw.
+        const double p50 = (s.steady_n >= 100) ? s.p_ge50_steady : s.p_ge50;
+        const double sig = (s.steady_n >= 100) ? s.steady_sigma_ms : s.sigma_ms;
+        if (sig < 4.0 && s.p_in_band >= 0.99 && p50 < 0.03)
             s.verdict = "ARM_EXONERATED_FPGA_SIDE";
-        else if (s.p_ge50 >= 0.09 && s.p_ge50 <= 0.11)
+        else if (p50 >= 0.09 && p50 <= 0.11)
             s.verdict = "ARM_LATE_MATCH_HOLD45";
-        else if (s.p_ge50 > 0.03 && s.p_ge50 < 0.09)
+        else if (p50 > 0.03 && p50 < 0.09)
             s.verdict = "ARM_LATE_MILD";
-        else if (s.p_ge50 > 0.11 || s.p_ge83 > 0.02)
+        else if (p50 > 0.11 || s.p_ge83 > 0.02)
             s.verdict = "ARM_LATE_OR_BIMODAL";
         else
             s.verdict = "ARM_OTHER";
@@ -138,14 +212,16 @@ struct PublishIntervalLedger {
 
     std::string formatSummaryLine(const char* tag = "measured") const {
         const Summary s = summarize();
-        char buf[512];
+        char buf[768];
         std::snprintf(buf, sizeof(buf),
                       "publish_interval notes=%lld intervals=%lld mean_ms=%.3f sigma_ms=%.3f "
-                      "p_ge50=%.4f p_ge83=%.4f p_lt25=%.4f p_in_band=%.4f "
+                      "median_ms=%.3f trimmed_mean_ms=%.3f steady_sigma_ms=%.3f steady_n=%lld "
+                      "p_ge50=%.4f p_ge50_steady=%.4f p_ge83=%.4f p_lt25=%.4f p_in_band=%.4f "
                       "verdict=%s ideal_ms=%.3f tag=%s",
                       static_cast<long long>(s.notes), static_cast<long long>(s.intervals),
-                      s.mean_ms, s.sigma_ms, s.p_ge50, s.p_ge83, s.p_lt25, s.p_in_band,
-                      s.verdict, 1000.0 / 24.0, tag);
+                      s.mean_ms, s.sigma_ms, s.median_ms, s.trimmed_mean_ms, s.steady_sigma_ms,
+                      static_cast<long long>(s.steady_n), s.p_ge50, s.p_ge50_steady, s.p_ge83,
+                      s.p_lt25, s.p_in_band, s.verdict, 1000.0 / 24.0, tag);
         return std::string(buf);
     }
 
