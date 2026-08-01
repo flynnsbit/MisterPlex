@@ -9,6 +9,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <string>
 
 static int fails = 0;
 #define CHECK(cond)                                                                              \
@@ -571,6 +572,52 @@ int main() {
                     static_cast<long long>(red.drainBurstLeadMs),
                     static_cast<long long>(green.drainBurstLeadMs),
                     static_cast<long long>(green.heldMs), esc.shouldArm ? 1 : 0);
+    }
+
+    // --- A5: servo setpoint vs display-path offset (not pinned identically) ---
+    {
+        // lead=40 ⇒ setpoint -40; margin at drift=-30 is 10.
+        CHECK(avServoSetpointMs(40) == -40);
+        CHECK(avServoSetpointMs(20) == -20);
+        CHECK(avServoMarginMs(-30, 40) == 10);
+        CHECK(avServoMarginMs(-40, 40) == 0);
+        // Hold threshold is strict: drift + lead < 0. At equality → Present.
+        CHECK(avDecide(-41, 40, 80, 0) == AvAction::Hold);
+        CHECK(avDecide(-40, 40, 80, 0) == AvAction::Present);
+        CHECK(avDecide(-39, 40, 80, 0) == AvAction::Present);
+
+        // Classic servo error uses frameIndex; after 2 drops with 10 presents,
+        // frameIndex=12, presentCount=10. Audio at present content time:
+        //   display offset uses presentCount (glass); drift uses frameIndex (pipe).
+        const int64_t presents = 10;
+        const int64_t frames = 12; // 2 pacedrops
+        const int64_t audioMs = frameContentMs(presents, 24, 1); // locked to glass
+        const int64_t driftPipe = avDriftMs(audioMs, frameContentMs(frames, 24, 1));
+        const int64_t disp = avDisplayOffsetMs(audioMs, presents, 24, 1);
+        const int64_t ahead = avPipeAheadMs(frames, presents, 24, 1);
+        CHECK(disp == 0);
+        CHECK(driftPipe < 0); // pipe content ahead of audio ⇒ negative drift
+        // Integer ms schedule: ahead == content(frames)-content(presents), not
+        // content(frames-presents) (truncation: content(2)=83 vs 500-416=84).
+        CHECK(ahead == frameContentMs(frames, 24, 1) - frameContentMs(presents, 24, 1));
+        CHECK(disp - driftPipe == ahead);
+
+        char buf[384];
+        formatAvServoTelemetry(buf, sizeof(buf), /*drift*/ -30, /*lead*/ 40, disp, ahead);
+        CHECK(std::string(buf).find("av_drift_role=servo_error_not_lipsync") != std::string::npos);
+        CHECK(std::string(buf).find("av_servo_setpoint_ms=-40") != std::string::npos);
+        CHECK(std::string(buf).find("lead_ms=40") != std::string::npos);
+        CHECK(std::string(buf).find("av_display_offset_ms=0") != std::string::npos);
+
+        // Falsifier (parent): AV_PRESENT_LEAD_MS 40→20.
+        // If av_drift_ms is setpoint readout: median must move ≈ +20 ms (e.g. -30→-10).
+        // av_servo_setpoint_ms must read -20. av_display_offset_ms is NOT forced to
+        // -lead by avDecide (keys off frameIndex); lipsync GT remains grabber only.
+        CHECK(avServoSetpointMs(20) - avServoSetpointMs(40) == 20);
+        std::printf("PRE_REGISTER A5_LEAD20: set AV_PRESENT_LEAD_MS=20; expect "
+                    "median av_drift_ms ≈ av_drift_ms@40 + 20 (±8); "
+                    "av_servo_setpoint_ms=-20; av_display_offset_ms NOT required "
+                    "to equal -lead; grabber GT independent\n");
     }
 
     if (fails) {

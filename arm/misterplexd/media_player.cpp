@@ -4057,6 +4057,19 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                 const int64_t ltU = frameLedgerResidual(ltF, ltP, ltD);
                 const uint64_t pep = processEpoch_.load(std::memory_order_acquire);
                 const uint64_t sseq = streamSeq_.load(std::memory_order_acquire);
+                // A5: av_drift_ms is servo error (pinned near -lead). Also emit
+                // display-path offset (presentCount) which drops do not auto-heal.
+                char avServoBuf[384];
+                const int64_t driftNow = avDriftMs_.load();
+                const int64_t dispOff = misterplex::avDisplayOffsetMs(
+                    wantAudio && audioActive_.load()
+                        ? misterplex::audibleClockMs(audioBytes_.load(), audioQueuedBytes_.load())
+                        : wall2,
+                    presentCount_, fpsNum, fpsDen);
+                const int64_t pipeAhead =
+                    misterplex::avPipeAheadMs(frameIndex, presentCount_, fpsNum, fpsDen);
+                misterplex::formatAvServoTelemetry(avServoBuf, sizeof(avServoBuf), driftNow,
+                                                   leadMs, dispOff, pipeAhead);
                 log("media: " + frameLedgerTelemetryFragment(led) +
                     " vfps=" + std::to_string(vfps).substr(0, 4) +
                     " pfps=" + std::to_string(pfps).substr(0, 4) +
@@ -4065,7 +4078,7 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                     " mono_ms=" + std::to_string(steadyMonoMs()) +
                     " audio=" + (audioActive_.load() ? "on" : "off") +
                     " clock=av-lock" +
-                    " av_drift_ms=" + std::to_string(avDriftMs_.load()) +
+                    " " + std::string(avServoBuf) +
                     " fps=" + std::to_string(fpsNum) + "/" + std::to_string(fpsDen) +
                     " fps_src=" +
                     (fpsNum_ > 0 ? std::string("caller_supplied") : "DEFAULT_ASSUMED") +

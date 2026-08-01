@@ -275,6 +275,55 @@ inline AvAction avDecide(int64_t driftMs, int64_t leadMs, int64_t dropMs, int dr
     return AvAction::Present;
 }
 
+// --- Servo vs open metrics (A5) ----------------------------------------------
+//
+// Product av_drift_ms = avDriftMs(audibleClock, frameContentMs(frameIndex)).
+// avDecide HOLDs while drift + lead < 0, so in steady state the *observed*
+// av_drift_ms sits in approximately [-lead, drop) BY CONSTRUCTION. That band
+// is a readout of AV_PRESENT_LEAD_MS, not an independent lipsync accuracy.
+// Parent: measured −21..−40 ms with lead=40 is the deadband, not a PASS.
+//
+// Only tools/avsync_measure_hdmi.py (glass) is lipsync ground truth.
+// Host metrics below split "servo error" from "display path offset".
+
+// Equilibrium the hold threshold targets (ms). drift ≈ setpoint in lock.
+inline int64_t avServoSetpointMs(int64_t leadMs) { return -leadMs; }
+
+// Distance above the hold line: 0 ⇒ sitting on Hold threshold.
+// Steady lock keeps this in [0, lead+drop) roughly; not a lipsync score.
+inline int64_t avServoMarginMs(int64_t driftMs, int64_t leadMs) { return driftMs + leadMs; }
+
+// Audio heard vs content time of SUCCESSFULLY PRESENTED frames (presentCount),
+// not the pipe frameIndex the pacer is chasing. Drops advance frameIndex (and
+// pull classic av_drift back toward the setpoint) without advancing glass
+// content — this metric does NOT get that free correction.
+// Same sign as avDriftMs: >0 audio ahead of displayed content.
+inline int64_t avDisplayOffsetMs(int64_t audioMs, int64_t presentCount, int fpsNum, int fpsDen) {
+    return avDriftMs(audioMs, frameContentMs(presentCount, fpsNum, fpsDen));
+}
+
+// Pipe content not yet presented (ms). Equals period * (frames - presents) at CFR.
+inline int64_t avPipeAheadMs(int64_t frameIndex, int64_t presentCount, int fpsNum, int fpsDen) {
+    return frameContentMs(frameIndex, fpsNum, fpsDen) - frameContentMs(presentCount, fpsNum, fpsDen);
+}
+
+// Compact telemetry fragment. lead_ms is caller_supplied conf; others measured.
+inline void formatAvServoTelemetry(char* buf, size_t bufLen, int64_t driftMs, int64_t leadMs,
+                                   int64_t displayOffsetMs, int64_t pipeAheadMs) {
+    if (!buf || bufLen == 0)
+        return;
+    std::snprintf(buf, bufLen,
+                  "av_drift_ms=%lld av_servo_error_ms=%lld av_servo_setpoint_ms=%lld "
+                  "av_servo_margin_ms=%lld lead_ms=%lld lead_ms_src=caller_supplied "
+                  "av_display_offset_ms=%lld av_pipe_ahead_ms=%lld "
+                  "av_drift_role=servo_error_not_lipsync",
+                  static_cast<long long>(driftMs), static_cast<long long>(driftMs),
+                  static_cast<long long>(avServoSetpointMs(leadMs)),
+                  static_cast<long long>(avServoMarginMs(driftMs, leadMs)),
+                  static_cast<long long>(leadMs), static_cast<long long>(displayOffsetMs),
+                  static_cast<long long>(pipeAheadMs));
+}
+
 // --- Startup pacer (host unit / silicon drop-count model) --------------------
 //
 // Silicon soaks (rk=8, 360 s, identical conf): startup drops ONLY, then flat.
