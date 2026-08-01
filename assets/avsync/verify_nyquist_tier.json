@@ -1,0 +1,98 @@
+{
+  "p480_native_geom": [
+    480,
+    624,
+    3
+  ],
+  "p240_native_geom": [
+    240,
+    320,
+    3
+  ],
+  "src": "measured",
+  "energy": {
+    "480_native": {
+      "n_rows": 480,
+      "luma_mean": 107.04960158475784,
+      "luma_std": 91.59766447726257,
+      "rowdiff_mean": 131.49609228628017,
+      "rowdiff_max": 255.0,
+      "even_odd_abs": 130.83395655270658,
+      "even_mean": 172.46657986111114,
+      "odd_mean": 41.632623308404554,
+      "src": "measured_on_array"
+    },
+    "480_even_cull": {
+      "n_rows": 240,
+      "luma_mean": 172.46657986111114,
+      "luma_std": 80.6139111693418,
+      "rowdiff_mean": 17.875567714479846,
+      "rowdiff_max": 122.50320512820514,
+      "even_odd_abs": 0.0703125,
+      "even_mean": 172.43142361111114,
+      "odd_mean": 172.50173611111114,
+      "src": "measured_on_array"
+    },
+    "240_native": {
+      "n_rows": 240,
+      "luma_mean": 107.34292100694444,
+      "luma_std": 91.26301595257958,
+      "rowdiff_mean": 131.66143654114367,
+      "rowdiff_max": 255.0,
+      "even_odd_abs": 130.58686631944443,
+      "even_mean": 172.63635416666665,
+      "odd_mean": 42.04948784722222,
+      "src": "measured_on_array"
+    },
+    "240_upscaled_480": {
+      "n_rows": 480,
+      "luma_mean": 107.34986867877493,
+      "luma_std": 64.37692214693772,
+      "rowdiff_mean": 35.24135485252396,
+      "rowdiff_max": 127.0,
+      "even_odd_abs": 0.0014868233618159366,
+      "even_mean": 107.34912526709401,
+      "odd_mean": 107.35061209045583,
+      "src": "measured_on_array"
+    },
+    "240_up_even_cull": {
+      "n_rows": 240,
+      "luma_mean": 107.34912526709401,
+      "luma_std": 64.37706472191216,
+      "rowdiff_mean": 66.26258135750814,
+      "rowdiff_max": 148.39903846153845,
+      "even_odd_abs": 65.0565660612536,
+      "even_mean": 139.87740829772082,
+      "odd_mean": 74.82084223646721,
+      "src": "measured_on_array"
+    },
+    "480_full_chain": {
+      "n_rows": 1080,
+      "luma_mean": 172.56142570087448,
+      "luma_std": 78.98680739538125,
+      "rowdiff_mean": 3.9452759756976623,
+      "rowdiff_max": 28.698437499999997,
+      "even_odd_abs": 0.15309638631686084,
+      "even_mean": 172.48487750771605,
+      "odd_mean": 172.6379738940329,
+      "src": "measured_on_array"
+    },
+    "240_full_chain": {
+      "n_rows": 1080,
+      "luma_mean": 107.46593701774691,
+      "luma_std": 55.74091072880017,
+      "rowdiff_mean": 11.924314405056123,
+      "rowdiff_max": 33.673958333333346,
+      "even_odd_abs": 0.03708301183127105,
+      "even_mean": 107.44739551183127,
+      "odd_mean": 107.48447852366255,
+      "src": "measured_on_array"
+    }
+  },
+  "separability_luma_std": 23.245896666581075,
+  "separability_rowdiff": 7.979038429358461,
+  "cull_signature_480": "FLAT_AFTER_EVEN_CULL",
+  "fail": [],
+  "pass": true,
+  "w_instr_hint": "On glass after legacy 240-store path: 480-nyquist source \u2192 near-flat body (period-2 killed by even-row fetch). 240-nyquist force-scaled \u2192 lower pre-cull even_odd and different luma_std on grabber. Score body ROI excluding glass ID band y-mapped rows. Side panel period-8 leaves period-4 after cull as backup spatial feature."
+}
