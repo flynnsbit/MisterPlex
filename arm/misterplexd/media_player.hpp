@@ -171,6 +171,10 @@ public:
                              : misterplex::OsdControlMode::ForcedOff);
     }
     misterplex::OsdControlMode osdControlMode() const { return osdMode_; }
+    // When true, F12-inert state flashes osdInertUserNotice() on HDMI (default false:
+    // log only so IDLE_SCREEN=logo stays a clean chevron). Conf OSD_INERT_NOTICE=1.
+    void setOsdInertNoticeHdmi(bool on) { osdInertNoticeHdmi_ = on; }
+    bool osdInertNoticeHdmi() const { return osdInertNoticeHdmi_; }
     misterplex::OsdCapability osdCapability() const {
         return static_cast<misterplex::OsdCapability>(osdCapability_.load());
     }
@@ -318,6 +322,7 @@ private:
     static std::string hex16(uint16_t v);
 
     misterplex::OsdControlMode osdMode_ = misterplex::OsdControlMode::Auto;
+    bool osdInertNoticeHdmi_ = false; // conf OSD_INERT_NOTICE; default log-only
     std::atomic<int> osdCapability_{static_cast<int>(misterplex::OsdCapability::Unknown)};
     std::atomic<bool> osdInertNotified_{false};
     std::atomic<bool> osdRun_{false};

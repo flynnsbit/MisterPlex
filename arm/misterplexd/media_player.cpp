@@ -523,11 +523,14 @@ void MediaPlayer::startOsdPoll() {
         if (!osdInertNotified_.exchange(true)) {
             log("media: OSD F12 inert mode=off capability=absent — Idle Screen menu "
                 "does nothing; use IDLE_SCREEN conf");
+        // HDMI banner is opt-in (OSD_INERT_NOTICE=1). Default: clean logo only.
+        if (osdInertNoticeHdmi_) {
             overlay_.flashNotice(osdInertUserNotice());
             if (!playing_.load())
                 paintIdle();
         }
-        return;
+    }
+    return;
     }
     // Auto/On: probe live CONF_STR (generation) then poll status word.
     if (osdRun_.exchange(true))
@@ -632,10 +635,14 @@ void MediaPlayer::startOsdPoll() {
                 if (settledInert && !osdInertNotified_.exchange(true)) {
                     log(std::string("media: OSD F12 inert mode=") + osdControlModeName(osdMode_) +
                         " capability=" + osdCapabilityName(c) +
-                        " — Idle Screen menu does nothing; use IDLE_SCREEN conf");
-                    overlay_.flashNotice(osdInertUserNotice());
-                    if (!playing_.load())
-                        paintIdle();
+                        " — Idle Screen menu does nothing; use IDLE_SCREEN conf" +
+                        (osdInertNoticeHdmi_ ? " (HDMI notice on)" : " (HDMI notice off)"));
+                    // Default OFF: product idle is clean chevron (IDLE_SCREEN=logo).
+                    if (osdInertNoticeHdmi_) {
+                        overlay_.flashNotice(osdInertUserNotice());
+                        if (!playing_.load())
+                            paintIdle();
+                    }
                 }
             }
 

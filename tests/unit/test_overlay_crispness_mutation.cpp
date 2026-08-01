@@ -67,14 +67,20 @@ static void nnScaleY(const uint8_t* src, int sw, int sh, uint8_t* dst, int dw, i
     }
 }
 
-static int maxVertInkRun(const uint8_t* y, int w, int h, misterplex::OverlayRect panel) {
+static int maxVertInkRun(const uint8_t* y, int w, int h, misterplex::OverlayRect panel,
+                         uint8_t thr = 120) {
     int best = 0;
-    const int x0 = panel.x + panel.w / 4;
-    const int x1 = panel.x + (panel.w * 3) / 4;
-    for (int x = x0; x < x1; x += 2) {
+    if (panel.empty())
+        return 0;
+    const int x0 = std::max(0, panel.x);
+    const int x1 = std::min(w, panel.x + panel.w);
+    const int y0 = std::max(0, panel.y);
+    const int y1 = std::min(h, panel.y + panel.h);
+    // Sample every column in the panel — large scale glyphs can sit off-centre.
+    for (int x = x0; x < x1; ++x) {
         int run = 0;
-        for (int row = panel.y; row < panel.y + panel.h && row < h; ++row) {
-            if (y[static_cast<size_t>(row) * w + x] >= 160) {
+        for (int row = y0; row < y1; ++row) {
+            if (y[static_cast<size_t>(row) * static_cast<size_t>(w) + x] >= thr) {
                 ++run;
                 if (run > best)
                     best = run;
@@ -158,6 +164,7 @@ int main() {
     }
 
     // --- Resolution-adaptive OUTPUT layout (fractions of H) — user modes ---
+    // Renders real PAUSED transport chrome (outputRaster=true) and measures ink.
     struct Mode {
         int w, h;
         int expectScale;
@@ -165,12 +172,15 @@ int main() {
         const char* name;
     };
     // bodyScale = half-to-even round(H/240) clamp 2..8 (mister_video_mode.hpp).
+    // Ascending H so ink/cell monotonicity is scored.
     const Mode modes[] = {
-        {1920, 1080, 4, true, "1080p"},   // 1080/240=4.5 → 4
-        {800, 600, 2, true, "800x600"},   // 600/240=2.5 → 2
-        {640, 480, 2, true, "640x480"},
         {320, 240, 2, false, "240p"},
+        {640, 480, 2, true, "640x480"},
+        {800, 600, 2, true, "800x600"},   // 600/240=2.5 → 2
+        {1920, 1080, 4, true, "1080p"},   // 1080/240=4.5 → 4
     };
+    int prevCellH = 0;
+    int prevH = 0;
     for (const auto& m : modes) {
         const auto L = computeOutputChromeLayout(m.w, m.h);
         const auto om = OverlayLayoutMetrics::fromOutputLayout(m.w, m.h);
@@ -183,13 +193,32 @@ int main() {
         CHECK(p.y >= 0 && p.y + p.h <= m.h);
         CHECK(p.x >= 0 && p.x + p.w <= m.w);
         CHECK(om.textCellH() * 4 <= m.h);
+
+        // Paint PAUSED at this OUTPUT raster (plane=1 contract).
+        PlaybackOverlay tov;
+        tov.setOutputRasterLayout(true);
+        tov.showAt(PlaybackOverlayState::Paused, 12'000, 120'000, 0);
+        std::vector<uint8_t> tyuv;
+        fillStudioYuv(tyuv, m.w, m.h);
+        CHECK(tov.renderYuv420p(tyuv.data(), m.w, m.h));
+        const int inkH = maxVertInkRun(tyuv.data(), m.w, m.h, p);
+        // Glyph stroke height must track textCellH (fixed-pixel font on big raster = FAIL).
+        CHECK(inkH >= om.textCellH() / 2);
+        CHECK(inkH <= om.textCellH() + 6);
+        if (prevH > 0 && m.h > prevH) {
+            // Taller output → taller-or-equal cell (user: scale with MiSTer res).
+            CHECK(om.textCellH() >= prevCellH);
+        }
+        prevCellH = om.textCellH();
+        prevH = m.h;
+
         if (m.h <= 240) {
             CHECK(L.bodyScale >= 2);
             CHECK(!L.useLargeFont);
             CHECK(om.textCellH() >= 26);
         }
-        std::printf("mode %s %dx%d scale=%d cellH=%d panelH=%d\n", m.name, m.w, m.h, L.bodyScale,
-                    om.textCellH(), p.h);
+        std::printf("mode %s %dx%d scale=%d cellH=%d inkH=%d panelH=%d\n", m.name, m.w, m.h,
+                    L.bodyScale, om.textCellH(), inkH, p.h);
     }
     // Monotonic scale with height
     CHECK(computeOutputChromeLayout(320, 240).bodyScale <=
@@ -198,6 +227,18 @@ int main() {
           computeOutputChromeLayout(1920, 1080).bodyScale);
     CHECK(computeOutputChromeLayout(1920, 1080).bodyScale <=
           computeOutputChromeLayout(1920, 1440).bodyScale);
+
+    // Product plane=0 (bank) is NOT HDMI-native: bank metrics ≠ 1080p output metrics.
+    // This pins the remaining user-bug gap until plane=1 is live on glass.
+    {
+        const auto bankM = OverlayLayoutMetrics::compute(624, 480);
+        const auto hdmiM = OverlayLayoutMetrics::fromOutputLayout(1920, 1080);
+        CHECK(bankM.textCellH() == 32);
+        CHECK(hdmiM.textCellH() == 64);
+        CHECK(bankM.textCellH() < hdmiM.textCellH());
+        std::printf("plane0_gap bank_cellH=%d hdmi1080_cellH=%d (plane=0 ships bank only)\n",
+                    bankM.textCellH(), hdmiM.textCellH());
+    }
 
     // Measured output source: ini helper does not invent when missing
     {

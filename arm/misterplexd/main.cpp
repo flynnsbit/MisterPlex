@@ -559,11 +559,21 @@ int main(int argc, char** argv) {
         const auto osdRaw = loadConf(confPath, "OSD_CONTROL");
         const auto osdMode = misterplex::parseOsdControlMode(osdRaw);
         player.setOsdControlMode(osdMode);
+        // OSD_INERT_NOTICE: default off — do not paint "F12 Idle: use conf" on HDMI.
+        // Operators who want the banner set OSD_INERT_NOTICE=1. Logs always emit.
+        const auto inertNotice = loadConf(confPath, "OSD_INERT_NOTICE");
+        const bool inertHdmi =
+            (inertNotice == "1" || inertNotice == "on" || inertNotice == "yes");
+        player.setOsdInertNoticeHdmi(inertHdmi);
         std::fprintf(stderr,
                      "misterplexd: OSD_CONTROL=%s (conf=%s) — auto applies only when "
                      "CONF_STR has O[15:14],Idle screen; on=force; off=F12 inert\n",
                      misterplex::osdControlModeName(osdMode),
                      osdRaw.empty() ? "(default auto)" : osdRaw.c_str());
+        std::fprintf(stderr,
+                     "misterplexd: OSD_INERT_NOTICE=%s (default off — clean logo idle; "
+                     "set 1 to flash F12-inert banner on HDMI)\n",
+                     inertHdmi ? "1" : "0");
         if (osdMode == misterplex::OsdControlMode::ForcedOff) {
             std::fprintf(stderr,
                          "misterplexd: OSD_CONTROL=off — F12 menu Idle Screen is inert; "
@@ -578,7 +588,7 @@ int main(int argc, char** argv) {
             std::fprintf(stderr,
                          "misterplexd: OSD_CONTROL=auto — probing live CONF_STR via "
                          "UIO_GET_STRING; F12 Idle stays inert until Idle-screen marker "
-                         "(fail closed). HDMI notice if pre-v3/absent.\n");
+                         "(fail closed). HDMI F12-inert banner only if OSD_INERT_NOTICE=1.\n");
         }
         std::fprintf(stderr, "misterplexd: IDLE_SCREEN=%s AV_OFFSET_MS=%d\n",
                      idle.empty() ? "logo(default)" : idle.c_str(), player.avOffsetMs());

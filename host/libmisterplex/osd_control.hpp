@@ -193,8 +193,10 @@ inline OsdCapability osdAutoSettle(OsdCapability current, double start_ms, doubl
     return OsdCapability::Unknown;
 }
 
-// User-facing short notice when F12 Idle cannot drive the daemon.
-// Keep ASCII + short: drawn with the 5x7 overlay font on idle HDMI.
+// Optional HDMI banner when F12 Idle cannot drive the daemon.
+// Product default: LOG ONLY (no HDMI paint) so IDLE_SCREEN=logo stays a clean
+// chevron. Opt-in conf OSD_INERT_NOTICE=1 flashes this string via PlaybackOverlay.
+// Keep ASCII + short if ever enabled on glass.
 inline const char* osdInertUserNotice() {
     return "F12 Idle: use conf";
 }
