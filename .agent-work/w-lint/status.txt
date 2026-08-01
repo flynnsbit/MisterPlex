@@ -1,15 +1,8 @@
 lane: w-lint GATE-INTEGRITY
-branch: w-lint-gate-integrity
-task: product-path orphan + telemetry provenance
-
-GATES
-  tests/unit/test_product_path_orphan.py
-    self-test true rc=0 (RBG real cadence+present_cadence + synth rawPipe)
-    full true rc=1 TIER1=4 (cadence×3 + present_cadence) INTENTIONAL RED
-  tests/unit/test_telemetry_provenance_guard.py
-    self+full true rc=0
-  media_player: no substr vfps; av_drift_role=servo_error_not_lipsync; *_src= tags
-
-rollcall expected_commands=130 sha16=ee475f7c2077f7ff true rc=0
-evidence: docs/evidence/w_lint_PRODUCT_PATH_ORPHAN.md
-NO device / NO Quartus
+tip: dd69bb16
+T1 glass RC 2 vs 3 locked; collision guard rc=0; glass --self-test rc=0
+T2 cannot-fail audit in w_lint_T1_T5_GATE_BLOCKERS.md
+T3 docs/SAMPLING_MARGIN.md + glass F4
+T4 deploy incomplete on geo 77; restore rc=10 unit
+T5 frames_done comment fixed
+rollcall 134
