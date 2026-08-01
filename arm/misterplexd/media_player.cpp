@@ -1452,8 +1452,14 @@ void MediaPlayer::ffmpegStderrPump(int errReadFd, size_t codedFrameBytes, bool i
             const bool risk = pipeDesyncRisk(prodBytes, codedFrameBytes, identitySkip);
             if (risk)
                 pipeDesyncRisk_.store(true);
-            log(std::string("media: MEASURED_DELIVERY ") + std::to_string(g.w) + "x" +
-                std::to_string(g.h) + " bytes=" + std::to_string(prodBytes) +
+            // delivered_geom: ACTUAL input WxH from ffmpeg Stream banner (stderr).
+            // Derivation: parseFfmpegGeometryLine on -loglevel info "Stream #… Video: … WxH".
+            // Not library metadata, not PMS /status/sessions, not the requested
+            // videoResolution= query. src=ffmpeg_banner is permanent observability (B2).
+            log(std::string("media: MEASURED_DELIVERY delivered_geom=") +
+                std::to_string(g.w) + "x" + std::to_string(g.h) +
+                " src=ffmpeg_banner" +
+                " bytes=" + std::to_string(prodBytes) +
                 " coded_bytes=" + std::to_string(codedFrameBytes) +
                 " identity_skip=" + (identitySkip ? "1" : "0") +
                 " desync_risk=" + (risk ? "1" : "0") +
@@ -3065,10 +3071,12 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
         args.push_back(ffmpeg_);
         args.push_back("-hide_banner");
         // info + stats: Stream # WxH (B2) AND frame= for supply ledger (glass-loss).
-        // Stderr pump parses frame= into ffmpegOutFrames_ without logging each line.
+        // -loglevel error SUPPRESSES the Stream banner → delivery_verified stays 0.
+        // info is required. Stderr pump parses geometry + frame=; non-matching
+        // info lines are discarded (not logged) so soak logs are not flooded.
         args.push_back("-stats");
         args.push_back("-loglevel");
-        args.push_back("info");
+        args.push_back("info"); // DO NOT change to error — breaks delivered_geom
         args.push_back("-nostdin");
 
         if (testPattern) {
@@ -4343,16 +4351,17 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
             }
         }
         if (mw > 0 && mh > 0) {
-            log("media: MEASURED_DELIVERY_FINAL " + std::to_string(mw) + "x" +
-                std::to_string(mh) + " producer_bytes=" + std::to_string(prodBytes) +
+            log("media: MEASURED_DELIVERY_FINAL delivered_geom=" + std::to_string(mw) + "x" +
+                std::to_string(mh) + " src=ffmpeg_banner" +
+                " producer_bytes=" + std::to_string(prodBytes) +
                 " reader_bytes=" + std::to_string(frameBytes) +
                 " identity_skip=" + (vfPlan.identity_skip ? "1" : "0") +
                 " phase_desync=" + (phaseDesync ? "1" : "0") +
                 " desync_risk=" + (risk ? "1" : "0") +
                 " delivery_verified=1 delivery_basis=measured tag=measured");
         } else if (usedRawVideo) {
-            log("media: MEASURED_DELIVERY_FINAL none — ffmpeg banner not parsed "
-                "(check -loglevel info / stderr pipe) delivery_verified=" +
+            log("media: MEASURED_DELIVERY_FINAL delivered_geom=NO-DATA src=ffmpeg_banner "
+                "— banner not parsed (need -loglevel info + stderr pipe) delivery_verified=" +
                 std::string(deliveryGeometryVerified_.load(std::memory_order_relaxed) ? "1"
                                                                                         : "0") +
                 " tag=NO-DATA");

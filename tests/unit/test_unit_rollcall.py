@@ -83,6 +83,7 @@ EXPECTED_COMMANDS = [
     "$(ROOT)/build/test_publish_swap_delta_ledger",
     "$(ROOT)/build/test_plxd_liveness",
     "$(ROOT)/tests/unit/test_c5382bee_frames_done_pack.sh",
+    "bash $(ROOT)/tests/unit/test_delivered_geom_loglevel.sh",
     "$(ROOT)/build/test_present_store_scale_math",
     "$(ROOT)/build/test_avclock",
     "bash $(ROOT)/tests/unit/test_av_startup_hold_red.sh",
