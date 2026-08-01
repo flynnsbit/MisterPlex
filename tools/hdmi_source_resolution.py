@@ -1,6 +1,12 @@
 #!/usr/bin/env python3
 """Infer source vertical raster period from an HDMI capture frame.
 
+*** PARTIAL WITHDRAWAL (rd-review / parent) ***
+Period alone does NOT prove 240 vs 480 source rows: 480→720 also yields
+period 3. max/min contrast inflates with period. For the B2 discriminator
+use tools/hdmi_vstore_discriminate.py (n_low_phases at fundamental).
+This tool remains for period/FFT cross-check reporting only.
+
 Parent measurement (720p live OCR fixture)::
 
   period 2 (360 src lines) contrast 1.69

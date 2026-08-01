@@ -1,15 +1,9 @@
-w-instr ERROR18/19 + T1 band + T2 src-res @ this commit
+PRIMARY glass instruments (ARM frames_done void on c5382bee)
 
-D1 min_hold_ms = 1000/refresh_hz (RTL 1 vsync), NOT floor(refresh/src).
-  p60 max_iv=21 >= 16.667 → UNSCORED rc=77 (ERROR19 skip claim withdrawn).
-D2 RC_SKIP_FAIL=2 vs RC_INSTRUMENT_FAIL=3 distinct.
-T1 band/loose-checksum recovery: p60 confirmed_torn=144 unresolved=22
-  margin_unresolved v=5578 only; genuine=0 under refuse.
-T2 tools/hdmi_source_resolution.py: phase contrast + Δrow autocorr/FFT;
-  disagree→77. Device p60 frames period=3 → 240 lines, matches parent.
+1) tools/glass_hold_skip.py — hold hist, median/trim intervals, skip, pre-reg verdict
+2) tools/hdmi_vstore_discriminate.py — B2 n_low_phases (not period max/min)
+3) scripts/gen_vstore_ceiling_fixture.py — odd_only/even_only for ceiling before/after
+4) hdmi_source_resolution.py — period report only; B2 withdrawn to (2)
 
-Host true rc:
-  glass --self-test → 0
-  glass --p60-acceptance → 0
-  hdmi_source_resolution --self-test → 0
-  device 4 frames → 0 RES_OK period=3
+Host true rc: hold_skip --self-test 0; vstore --self-test 0; fixture gen 0
+Device p60 sample: ROWS_240_HOLD p=3 n_low=2 (matches broken V_STORE path)
