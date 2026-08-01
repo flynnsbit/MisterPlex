@@ -1,12 +1,14 @@
 # Post-scale chrome plane — pointer + ARM contract
 
-**Canonical RTL (w-fit-1):**  
-`.worktrees/w-fit-integ/docs/chrome-post-scale-plane-design.md`  
-(Inc-1 HW rect post-ascal → Inc-2 banded DDR; bypasses `V_STORE=240`.)
+**Canonical funded design (w-osd-hires, parent 2026-08-01):**  
+[`docs/plex-chrome-plane-rtl-proposal.md`](plex-chrome-plane-rtl-proposal.md)  
+— post-ascal `plex_chrome`, display-list V1 ≤24 M10K, doorbell-relative PLXC/PLXO,  
+one-fit with w-geom + w-fit-1 stub reclaim.
 
-**ARM after ceiling lift (this worker):**  
-`docs/osd-arm-post-ceiling-contract.md`
+**Prior paper (detail/gates):** [`docs/osd-chrome-plane-design.md`](osd-chrome-plane-design.md)
 
-**Ceiling verify:** `docs/osd-240-ceiling-verify.md`
+**ARM after ceiling lift:** [`docs/osd-arm-post-ceiling-contract.md`](osd-arm-post-ceiling-contract.md)
 
-Do not invent a parallel RTL architecture. ARM `plane=1` lands with w-fit RBF.
+**Ceiling verify:** [`docs/osd-240-ceiling-verify.md`](osd-240-ceiling-verify.md)
+
+ARM `plane=1` fails closed until RBF feature bit; no exclusive Quartus on this lane.
