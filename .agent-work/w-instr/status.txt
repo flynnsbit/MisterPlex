@@ -1,9 +1,13 @@
 # w-instr status — daemon drop-log build + cluster axis + B7 colour + overlay decline
 updated: 2026-07-31
 branch: w-avsync-hdmi-measure
+SHA: 419eaa984efb2ed1039ca3e46ab3466b367847ac
+ARM_md5: 5996385a57c6af142b8e732a39b36a4a
 
 ## BLOCKING — daemon build (every-drop + cluster mono_ms)
 branch: w-avsync-hdmi-measure
+SHA: 419eaa984efb2ed1039ca3e46ab3466b367847ac
+ARM_md5: 5996385a57c6af142b8e732a39b36a4a
 daemon source: tip includes ee1cde42 (first_audio_pcm/mono_ms) + ba1ded83 (every-drop + first_video_present)
 ARM binary (rebuilt this session from tip sources):
   path: build/arm/misterplexd
