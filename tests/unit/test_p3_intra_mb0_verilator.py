@@ -7,12 +7,12 @@ import hashlib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-VERILATOR = Path.home() / ".local/oss-cad-suite-20260726/bin/verilator"
 FIXTURE = ROOT / "tests/fixtures/p3_host_recon/mb0_luma_v1.json"
 RTL = ROOT / "fpga/Plex_MiSTer/rtl"
 TB = ROOT / "tests/unit/rtl/p3_intra_mb0_tb.sv"
 sys.path.insert(0, str(ROOT / "tests/unit"))
 from expected_red import ExpectedRedError, require_expected_red  # noqa: E402
+from verilator_invoke import resolve_verilator, run_verilator_build  # noqa: E402
 
 
 def c_array(values):
@@ -148,8 +148,9 @@ def build_and_run(name: str, negative: bool, expected_red_id: str | None = None)
     build_dir.mkdir(parents=True, exist_ok=True)
     cpp.parent.mkdir(parents=True, exist_ok=True)
     write_harness(cpp)
+    vl = resolve_verilator()
     cmd = [
-        str(VERILATOR), "--cc", "--exe", "--build",
+        str(vl), "--cc", "--exe", "--build",
         "--top-module", "p3_intra_mb0_tb",
         "--Mdir", str(build_dir),
         "-Wno-fatal", "-Wno-WIDTHEXPAND", "-Wno-WIDTHTRUNC",
@@ -163,8 +164,9 @@ def build_and_run(name: str, negative: bool, expected_red_id: str | None = None)
         str(TB),
         str(cpp),
     ]
-    run(cmd)
     exe = build_dir / "Vp3_intra_mb0_tb"
+    # PINNOTFOUND/%Error with rc=0 must not leave a stale TB green (verilator_invoke).
+    run_verilator_build(cmd, cwd=ROOT, exe=exe)
     if expected_red_id:
         rc, out = run_capture([str(exe)])
         try:
@@ -278,26 +280,31 @@ def build_and_run_guard() -> int:
     build_dir.mkdir(parents=True, exist_ok=True)
     cpp.parent.mkdir(parents=True, exist_ok=True)
     write_guard_harness(cpp)
+    exe = build_dir / "Vh264_intra_mode_guard"
     cmd = [
-        str(VERILATOR), "--cc", "--exe", "--build",
+        str(resolve_verilator()), "--cc", "--exe", "--build",
         "--top-module", "h264_intra_mode_guard",
         "--Mdir", str(build_dir),
         "--CFLAGS", "-std=c++17 -O2",
         str(RTL / "h264_intra_pred.sv"),
         str(cpp),
     ]
-    run(cmd)
-    return run([str(build_dir / "Vh264_intra_mode_guard")], expect_success=False)
+    run_verilator_build(cmd, cwd=ROOT, exe=exe)
+    return run([str(exe)], expect_success=False)
 
 
 def main() -> int:
-    if not VERILATOR.exists():
-        print(f"SKIP P3_INTRA_MB0_VERILATOR: Verilator not found at {VERILATOR}; RTL behavioural test NOT run")
+    try:
+        vl = resolve_verilator()
+    except FileNotFoundError as e:
+        print(f"SKIP-NOT-PASS P3_INTRA_MB0_VERILATOR: {e}; RTL behavioural test NOT run")
         if os.environ.get("ALLOW_MISSING_VERILATOR", "0") != "1":
             print("RTL SIM ERROR: Verilator not found; refusing to report PASS without running the simulation.")
             print("A skipped RTL gate is NOT a pass. Set ALLOW_MISSING_VERILATOR=1 only if you accept that RTL was never verified.")
             return 3
-        return 0
+        print("SKIP-NOT-PASS: ALLOW_MISSING_VERILATOR=1; soft-skip≠PASS")
+        return 77
+    _ = vl
     neg_rc = build_and_run("p3_intra_mb0_neg", True, "p3_intra_mb0_negative")
     if neg_rc == 0:
         print("P3 intra MB0 negative-direction check FAILED: perturbing RTL behaviour still passed")

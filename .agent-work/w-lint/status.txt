@@ -1,19 +1,12 @@
 lane: w-lint GATE-INTEGRITY
 branch: w-lint-gate-integrity
-tip: 9c98ca9b
-worktree: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-lint
+tip: pending inert-gate commit
 
-DELIVERED:
-- docs/evidence/w_lint_FALSE_GREEN_HUNT.md (ranked blast B1–B4)
-- tests/unit/test_false_green_pattern_guard.py RBG 0/1/0
-- unit-unlocked + rollcall expected_commands=126
+WORST THREE (RBG proven, tree cleaned of probes):
+1. gate_false_green_guard blind to Python return 0 — FIXED (scans .py)
+2. ALLOW_MISSING return 0 laundered as PASS — FIXED (rc=77 SKIP-NOT-PASS)
+3. direct verilator PINNOTFOUND rc=0 + stale TB — FIXED (verilator_invoke)
 
-true rc:
-- unit-unlocked=0
-- make unit no-key: GATE_RESULT=PASS_INCOMPLETE process_rc=78
-- pattern/pipe/av_drift/rollcall=0
-
-CRITICAL PMS enforce: pms-baseline-live | MISTERPLEX_BASELINE_ANNEXB=… (not lowered)
-Parent (1)(2) NOT-FOUND here; tripwire blocks reintro; w-avsync@8a7df256 has scrub
-PROMOTE_OK=0 without PLXC (correct)
+true rc: gfg=0 mb0=0 nb=0 frame=0
+docs: docs/evidence/w_lint_INERT_GATE_SWEEP.md
 NO device/Quartus

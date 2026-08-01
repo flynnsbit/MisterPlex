@@ -9,14 +9,16 @@ context provided by h264_intra_nb_ctx. Verifies:
      Without this, a test on MB(0,0) alone passes trivially.
   3. Reconstructed pixels from host golden match RTL output.
 """
+import os
 import subprocess
 import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-VERILATOR = Path.home() / ".local/oss-cad-suite-20260726/bin/verilator"
 RTL = ROOT / "fpga/Plex_MiSTer/rtl"
 TB = ROOT / "tests/unit/rtl/h264_intra_nb_ctx_tb.sv"
+sys.path.insert(0, str(ROOT / "tests/unit"))
+from verilator_invoke import resolve_verilator, run_verilator_build  # noqa: E402
 
 # We need multi-MB fixture data. For the initial RED test, we generate
 # a minimal 2x2 grid (4 MBs) with DC mode (mode 2) and zero residual.
@@ -125,9 +127,14 @@ int main(int argc, char** argv) {
 
 
 def main():
-    if not VERILATOR.exists():
-        print(f"ERROR: Verilator not found at {VERILATOR}", file=sys.stderr)
-        sys.exit(1)
+    try:
+        vl = resolve_verilator()
+    except FileNotFoundError as e:
+        print(f"SKIP-NOT-PASS h264_intra_nb_ctx: {e}", file=sys.stderr)
+        if os.environ.get("ALLOW_MISSING_VERILATOR", "0") != "1":
+            print("RTL SIM ERROR: Verilator not found; refusing PASS.", file=sys.stderr)
+            sys.exit(3)
+        sys.exit(77)
 
     build_dir = ROOT / "build/obj_h264_intra_nb_ctx"
     build_dir.mkdir(parents=True, exist_ok=True)
@@ -135,8 +142,9 @@ def main():
     cpp.parent.mkdir(parents=True, exist_ok=True)
     generate_harness(cpp)
 
+    exe = build_dir / "Vh264_intra_nb_ctx_tb"
     cmd = [
-        str(VERILATOR), "--cc", "--exe", "--build",
+        str(vl), "--cc", "--exe", "--build",
         "--top-module", "h264_intra_nb_ctx_tb",
         "--Mdir", str(build_dir),
         "-Wno-fatal", "-Wno-WIDTHEXPAND", "-Wno-WIDTHTRUNC",
@@ -148,14 +156,9 @@ def main():
         str(cpp),
     ]
 
-    print(f"[RTL] Building h264_intra_nb_ctx testbench...")
-    proc = subprocess.run(cmd, cwd=ROOT, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-    if proc.returncode != 0:
-        print(proc.stdout[-2000:] if len(proc.stdout) > 2000 else proc.stdout)
-        print(f"\nFAIL h264_intra_nb_ctx: compilation failed")
-        sys.exit(1)
+    print("[RTL] Building h264_intra_nb_ctx testbench...")
+    run_verilator_build(cmd, cwd=ROOT, exe=exe)
 
-    exe = build_dir / "Vh264_intra_nb_ctx_tb"
     proc = subprocess.run([str(exe)], cwd=ROOT, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     sys.stdout.write(proc.stdout)
     if proc.returncode != 0:

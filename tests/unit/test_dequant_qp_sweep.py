@@ -13,12 +13,12 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-VERILATOR = Path.home() / ".local/oss-cad-suite-20260726/bin/verilator"
 RTL = ROOT / "fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv"
 CPP = ROOT / "tests/unit/test_dequant_qp_sweep.cpp"
 
 sys.path.insert(0, str(ROOT / "tests/unit"))
 from expected_red import ExpectedRedError, require_expected_red  # noqa: E402
+from verilator_invoke import resolve_verilator, run_verilator_build  # noqa: E402
 
 
 def source_fingerprint() -> str:
@@ -52,12 +52,15 @@ def build_and_run(name: str, extra_cflags: str = "") -> tuple[int, str]:
 
 
 def main() -> int:
-    if not VERILATOR.exists():
-        print(f"SKIP DEQUANT_QP_SWEEP: Verilator not found at {VERILATOR}")
+    try:
+        resolve_verilator()
+    except FileNotFoundError as e:
+        print(f"SKIP-NOT-PASS DEQUANT_QP_SWEEP: {e}")
         if os.environ.get("ALLOW_MISSING_VERILATOR", "0") != "1":
             print("RTL SIM ERROR: Verilator not found; refusing to report PASS.")
             return 3
-        return 0
+        print("SKIP-NOT-PASS: ALLOW_MISSING_VERILATOR=1; soft-skip≠PASS")
+        return 77
 
     # The sweep itself IS the test — it compares RTL against host reference
     # for every QP 0-51 with multiple coefficient patterns.

@@ -27,6 +27,10 @@ GLOBS = (
     "*ddram*.sh",
     "*hybrid_gate*.sh",
     "*scanout*.sh",
+    # Python RTL paths were BLIND to this guard (only scanned *.sh + exit N).
+    "*verilator*.py",
+    "*dequant*.py",
+    "*rtl_model*.py",
 )
 
 # False-green patterns (multiline-ish via window).
@@ -34,8 +38,11 @@ GLOBS = (
 # Match "Verilator not found", "Verilator runner not found", etc.
 MISSING_VL = re.compile(r"Verilator(?:\s+runner)?\s+not\s+found", re.I)
 EXIT0 = re.compile(r"\bexit\s+0\b")
+RETURN0 = re.compile(r"\breturn\s+0\b")
 EXIT77 = re.compile(r"\bexit\s+77\b")
+RETURN77 = re.compile(r"\breturn\s+77\b|sys\.exit\(77\)")
 EXIT3 = re.compile(r"\bexit\s+3\b")
+RETURN3 = re.compile(r"\breturn\s+3\b|sys\.exit\(3\)")
 ALLOW = re.compile(r"ALLOW_MISSING_VERILATOR")
 SKIP_NOT_PASS = re.compile(r"SKIP-NOT-PASS")
 BARE_VERILATOR_FALLBACK = re.compile(
@@ -47,9 +54,15 @@ BARE_VERILATOR_FALLBACK = re.compile(
 def collect_scripts() -> list[Path]:
     seen: set[Path] = set()
     out: list[Path] = []
+    skip_names = {
+        "verilator_invoke.py",  # helper, not a gate
+        "test_gate_false_green_guard.py",
+    }
     for pat in GLOBS:
         for p in UNIT.glob(pat):
             if p in seen or not p.is_file():
+                continue
+            if p.name in skip_names:
                 continue
             seen.add(p)
             out.append(p)
@@ -78,19 +91,24 @@ def audit_script(path: Path) -> list[str]:
             if not MISSING_VL.search(line):
                 continue
             window = "\n".join(lines[i : min(len(lines), i + 18)])
-            if ALLOW.search(window) and EXIT0.search(window) and not EXIT77.search(window):
+            soft0 = bool(EXIT0.search(window) or RETURN0.search(window))
+            soft77 = bool(EXIT77.search(window) or RETURN77.search(window))
+            soft3 = bool(EXIT3.search(window) or RETURN3.search(window))
+            if ALLOW.search(window) and soft0 and not soft77:
                 errs.append(
-                    f"{rel}:{i+1}: ALLOW_MISSING_VERILATOR path exits 0 "
-                    f"(must exit 77 SKIP-NOT-PASS; soft-skip≠PASS)"
+                    f"{rel}:{i+1}: ALLOW_MISSING_VERILATOR path exits/returns 0 "
+                    f"(must exit/return 77 SKIP-NOT-PASS; soft-skip≠PASS)"
                 )
-            if EXIT0.search(window) and not EXIT77.search(window):
+            if soft0 and not soft77 and not soft3:
                 errs.append(
-                    f"{rel}:{i+1}: 'Verilator not found' followed by exit 0 without exit 77 "
+                    f"{rel}:{i+1}: 'Verilator not found' followed by exit/return 0 without 77 "
                     f"(missing tool must not green the gate)"
                 )
-            if ALLOW.search(window) and EXIT77.search(window) and not SKIP_NOT_PASS.search(window):
+            if ALLOW.search(window) and soft77 and not (
+                SKIP_NOT_PASS.search(window) or SKIP_NOT_PASS.search(text)
+            ):
                 errs.append(
-                    f"{rel}:{i+1}: ALLOW_MISSING_VERILATOR exit 77 without SKIP-NOT-PASS marker "
+                    f"{rel}:{i+1}: ALLOW_MISSING_VERILATOR exit/return 77 without SKIP-NOT-PASS marker "
                     f"(skip summary cannot classify coverage holes)"
                 )
 
@@ -130,7 +148,27 @@ def audit_script(path: Path) -> list[str]:
                                 f"{rel}:{i+1}: SKIP path exits 0 (must be 77 SKIP-NOT-PASS or 3 refuse)"
                             )
 
+    # Python that shells out to verilator binary must use verilator_invoke
+    # (PINNOTFOUND/%Error with rc=0 + stale TB was a proven false-green).
+    if path.suffix == ".py" and re.search(r"--cc\s+--exe|--exe\s+--build", text):
+        if "verilator_invoke" not in text and "run_verilator_build" not in text:
+            if "run_verilator.sh" not in text:
+                errs.append(
+                    f"{rel}: Python RTL build calls verilator directly without "
+                    f"verilator_invoke.run_verilator_build (PINNOTFOUND rc=0 + stale TB false-green)"
+                )
+
     # Scripts that build/run a Verilator TB must prove the TB executed.
+    # Python that shells out to verilator binary must use verilator_invoke
+    # (PINNOTFOUND/%Error with rc=0 + stale TB was a proven false-green).
+    if path.suffix == ".py" and re.search(r"--cc\s+--exe|--exe\s+--build", text):
+        if "verilator_invoke" not in text and "run_verilator_build" not in text:
+            if "run_verilator.sh" not in text:
+                errs.append(
+                    f"{rel}: Python RTL build calls verilator directly without "
+                    f"verilator_invoke.run_verilator_build (PINNOTFOUND rc=0 + stale TB false-green)"
+                )
+
     # Scripts that build/run a Verilator TB must prove the TB executed.
     runs_tb = bool(
         re.search(r"run_verilator\.sh|--cc\s+--exe|--exe\s+--build", text)
