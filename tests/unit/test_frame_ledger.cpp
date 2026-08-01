@@ -78,8 +78,11 @@ static void testPublishMissVsDropsAndDrift() {
     CHECK(frag.find("drops=1") != std::string::npos);
     CHECK(frag.find("publish_misses=2") != std::string::npos);
     CHECK(frag.find("residual=2") != std::string::npos);
-    CHECK(frag.find("unaccounted=2") != std::string::npos);
-    CHECK(frag.find("unaccounted_eq=frames-presents-drops") != std::string::npos);
+    CHECK(frag.find("residual_eq=frames-presents-drops") != std::string::npos);
+    CHECK(frag.find("residual_scope=supply_arm_only") != std::string::npos);
+    CHECK(frag.find("fpga_obs=none") != std::string::npos);
+    CHECK(frag.find("presents_src=arm_publish_ok") != std::string::npos);
+    CHECK(frag.find("unaccounted=") == std::string::npos); // no duplicate alias
     CHECK(frag.find("tag=measured") != std::string::npos);
     CHECK(misterplex::sessionEpochString(1000, 3) == "1000.3");
 
@@ -123,7 +126,10 @@ static void testFileLedgerAcrossRestarts() {
     CHECK(txt.find("event=session_end") != std::string::npos);
     CHECK(txt.find("event=process_exit") != std::string::npos);
     CHECK(txt.find("publish_misses=5") != std::string::npos);
-    CHECK(txt.find("unaccounted=5") != std::string::npos);
+    CHECK(txt.find("residual=5") != std::string::npos);
+    CHECK(txt.find("residual_scope=supply_arm_only") != std::string::npos);
+    CHECK(txt.find("fpga_obs=none") != std::string::npos);
+    CHECK(txt.find("unaccounted=") == std::string::npos);
     CHECK(txt.find("why=signal-g_stop_sig=15") != std::string::npos);
     int starts = 0;
     for (size_t i = 0; (i = txt.find("event=process_start", i)) != std::string::npos; ++i)

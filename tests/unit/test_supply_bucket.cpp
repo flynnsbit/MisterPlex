@@ -1,5 +1,5 @@
 // Red-before-green: supply bucket + ffmpeg frame= parse + pipe identity.
-// Parent: 22 glass skips with unaccounted=0 — need PRE vs POST split.
+// Parent: 22 glass skips with residual=0 — need PRE vs POST split.
 // true rc direct. No device.
 #include "libmisterplex/supply_bucket.hpp"
 
@@ -81,7 +81,7 @@ int main() {
         CHECK(std::fabs(d.d_wall_s - 1.0) < 1e-9);
         CHECK(d.d_frames == 24);
         CHECK(d.d_drops == 0);
-        CHECK(d.d_unaccounted == 0);
+        CHECK(d.d_residual == 0);
         CHECK(std::fabs(d.expected_frames - 24.0) < 1e-9);
         CHECK(std::fabs(d.supply_gap) < 1e-9);
         CHECK(d.ffmpeg_out_known && d.d_ffmpeg_out == 24);
@@ -142,6 +142,10 @@ int main() {
             formatSupplyBucketLine(d, 11.0, 264, 256, 8, 0, 0, 264, 24, 1, "1.2");
         CHECK(line.find("supply_bucket") != std::string::npos);
         CHECK(line.find("d_frames=24") != std::string::npos);
+        CHECK(line.find("d_residual=") != std::string::npos);
+        CHECK(line.find("residual_eq=frames-presents-drops") != std::string::npos);
+        CHECK(line.find("fpga_obs=none") != std::string::npos);
+        CHECK(line.find("d_unaccounted=") == std::string::npos);
         CHECK(line.find("ffmpeg_out_frames=264") != std::string::npos);
         CHECK(line.find("session_epoch=1.2") != std::string::npos);
         auto id = supplyPipeIdentity(449280u * 10u, 449280u, 10);

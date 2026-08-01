@@ -1,11 +1,6 @@
-w-geom: ERROR 20/21 absorbed; swap-delta first
+w-geom status 2026-08-01
+DONE: disc pre/post + honest ledger + H640 cost + underrun baseline cmd
 branch: w-avsync-hdmi-measure
-use: git rev-parse --short HEAD
-gates true rc:
-  test_publish_interval_ledger=0
-  test_publish_swap_delta_ledger=0
-  test_present_store_scale_math=0
-  test_cadence_swap_path(+source)=0
-  unit-rollcall=0
-report: .agent-work/w-geom/ERROR_20_21_RESPONSE.md
-parent: deploy daemon, 60s soak, grep publish_swap_delta
+gates: interval/frame_ledger/supply/geom/define-parity all true rc=0
+T7: signed off to w-fit-ceiling-fd-min (no second fit)
+prior p_ge50=0.145 UNSCORED — re-soak with disc_verdict

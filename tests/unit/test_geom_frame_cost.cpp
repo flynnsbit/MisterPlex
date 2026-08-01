@@ -102,6 +102,8 @@ int main() {
         const auto frag = frameLedgerTelemetryFragment(live);
         expect(frag.find("publish_misses=3") != std::string::npos, "P4 fragment has publish_misses");
         expect(frag.find("drops=12") != std::string::npos, "P4 fragment has drops");
+        expect(frag.find("fpga_obs=none") != std::string::npos, "P4 supply-side label");
+        expect(frag.find("unaccounted=") == std::string::npos, "P4 no duplicate unaccounted");
         std::printf("P4_OK %s\n", frag.c_str());
     }
 

@@ -760,21 +760,26 @@ bool MediaPlayer::publishDdrFrame(const DdrPublishFrame& frame, const char* cont
             *err = std::string(context ? context : "DDR") + ": " + localErr;
         return false;
     }
+    // Late-arrival vs late-observation: stamp immediately BEFORE the DDR/SPI
+    // write and immediately AFTER it returns. Intervals use pre-to-pre (arrival);
+    // write_us=post-pre discriminates blocking inside the write (parent 2026-08-01).
+    const auto tPre = std::chrono::steady_clock::now();
     const bool ok = fpga_.publishDdrFrame(frame, ddrBank_);
+    const auto tPost = std::chrono::steady_clock::now();
     // Advance from the bank actually written (PLXD may override the hint).
     if (ok) {
         ddrBank_ = nextDdrPresentBank(fpga_.lastPublishedBank(), true);
-        // Publish-interval + swap-delta ledgers. mono is VDSO-class; PLXD
-        // frames_done comes from the bank-select read already done inside
-        // sendDdrFrame (no extra SPI).
-        const auto tp = std::chrono::steady_clock::now();
-        const int64_t us = std::chrono::duration_cast<std::chrono::microseconds>(
-                               tp.time_since_epoch())
-                               .count();
-        pubInterval_.note(us);
+        const int64_t preUs = std::chrono::duration_cast<std::chrono::microseconds>(
+                                  tPre.time_since_epoch())
+                                  .count();
+        const int64_t postUs = std::chrono::duration_cast<std::chrono::microseconds>(
+                                   tPost.time_since_epoch())
+                                   .count();
+        pubInterval_.note(preUs, postUs);
+        // PLXD frames_done from bank-select read already done inside sendDdrFrame.
         BankReleaseStatus brs{};
         if (fpga_.lastPublishBankRelease(brs)) {
-            pubSwapDelta_.note(us, brs.frames_done,
+            pubSwapDelta_.note(preUs, brs.frames_done,
                                static_cast<uint8_t>(brs.swap_pending ? 1 : 0),
                                brs.free_bank_mask, brs.disp_bank);
         }
@@ -786,6 +791,7 @@ bool MediaPlayer::publishDdrFrame(const DdrPublishFrame& frame, const char* cont
         if (kLogMid && (pubInterval_.count % 240) == 0) {
             log(std::string("media: ") + pubInterval_.formatSummaryLine("measured") +
                 " phase=mid");
+            log(std::string("media: ") + pubInterval_.formatDiscLine() + " phase=mid");
             log(std::string("media: ") + pubSwapDelta_.formatSummaryLine("measured") +
                 " phase=mid");
         }
@@ -3570,11 +3576,17 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                                 std::to_string(missWall).substr(0, 6) +
                                 " mono_ms=" + std::to_string(steadyMonoMs()) +
                                 " publish_misses=" + std::to_string(missNow) +
+                                " publish_misses_src=arm_publish_fail" +
                                 " frames=" + std::to_string(frameIndex) +
+                                " frames_src=pipe_assemble" +
                                 " presents=" + std::to_string(presentCount_) +
+                                " presents_src=arm_publish_ok" +
                                 " drops=" + std::to_string(droppedFrames_.load()) +
+                                " drops_src=av_pacer" +
                                 " residual=" + std::to_string(residual) +
-                                " unaccounted=" + std::to_string(residual) +
+                                " residual_eq=frames-presents-drops" +
+                                " residual_scope=supply_arm_only" +
+                                " fpga_obs=none" +
                                 " err=" +
                                 (ddrErr.empty() ? fpga_.lastError() : ddrErr) +
                                 " tag=measured");
@@ -4183,7 +4195,9 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                     " lifetime_presents=" + std::to_string(ltP) +
                     " lifetime_drops=" + std::to_string(ltD) +
                     " lifetime_publish_misses=" + std::to_string(ltM) +
-                    " lifetime_unaccounted=" + std::to_string(ltU) +
+                    " lifetime_residual=" + std::to_string(ltU) +
+                    " lifetime_residual_eq=frames-presents-drops" +
+                    " lifetime_residual_scope=supply_arm_only" +
                     // Soak continuity markers (P4): process_epoch is stamped once at
                     // daemon start (steady mono_ms). pid changes on every respawn.
                     // A soak that sees either field change mid-window is interrupted.
@@ -4307,9 +4321,9 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                 win.d_presents = presentCount_;
                 win.d_drops = droppedFrames_.load();
                 win.d_publish_misses = publishMisses_.load();
-                win.d_unaccounted =
-                    misterplex::supplyUnaccounted(frameIndex, presentCount_,
-                                                  droppedFrames_.load());
+                win.d_residual =
+                    misterplex::supplyResidual(frameIndex, presentCount_,
+                                               droppedFrames_.load());
                 win.supply_gap = 0; // filled below from wall if known
             }
             const int64_t ff = ffmpegOutFrames_.load(std::memory_order_relaxed);
@@ -4482,7 +4496,10 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
         " lifetime_presents=" + std::to_string(ltP) +
         " lifetime_drops=" + std::to_string(ltD) +
         " lifetime_publish_misses=" + std::to_string(ltM) +
-        " lifetime_unaccounted=" + std::to_string(frameLedgerResidual(ltF, ltP, ltD)) +
+        " lifetime_residual=" +
+            std::to_string(frameLedgerResidual(ltF, ltP, ltD)) +
+        " lifetime_residual_eq=frames-presents-drops" +
+        " lifetime_residual_scope=supply_arm_only" +
         " recon=" + std::to_string(reconFrames_.load()) +
         " cabac=" + (cabacSkip_.load() ? "1" : "0") +
         " stream=" + (streamEnabled_ ? "on" : "off") +
@@ -4496,13 +4513,14 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
     if (pubInterval_.iv_n > 0) {
         log(std::string("media: ") + pubInterval_.formatSummaryLine("measured") +
             " phase=session_end");
+        log(std::string("media: ") + pubInterval_.formatDiscLine() + " phase=session_end");
         log(std::string("media: ") + pubInterval_.formatHistLine());
         log(std::string("media: ") + pubInterval_.formatAutocorrLine());
         log(std::string("media: ") + pubInterval_.formatCorrLine());
         if (const char* dump = std::getenv("MISTERPLEX_PUBLISH_INTERVAL_DUMP")) {
             if (dump[0] && pubInterval_.dumpMonoUs(dump))
                 log(std::string("media: publish_interval_dump path=") + dump +
-                    " tag=measured");
+                    " cols=pre_us,write_us tag=measured");
             else if (dump[0])
                 log(std::string("media: publish_interval_dump FAIL path=") + dump);
         }

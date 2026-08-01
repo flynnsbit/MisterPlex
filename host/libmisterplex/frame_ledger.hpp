@@ -90,15 +90,23 @@ inline bool frameLedgerResidualExplainedByPublishMiss(const FrameLedgerLive& s) 
 }
 
 // Compact key=value fragment for telemetry (no leading/trailing space).
-// Parent P5: unaccounted is the free ledger identity — print every term so a
-// soak never requires hand arithmetic. residual is kept as a synonym.
+//
+// HONEST LABELS (parent 2026-08-01): every field carries its derivation.
+// All counters below are SUPPLY-SIDE (ARM control flow). None observe the FPGA
+// scanout/swap. residual == frames-presents-drops by arithmetic; when the only
+// non-present paths are pacer-drop or publish-miss, residual == publish_misses.
+// Do NOT print a second name for residual that sounds independent (no bare
+// "unaccounted=" duplicate).
 inline std::string frameLedgerTelemetryFragment(const FrameLedgerLive& s) {
-    return "frames=" + std::to_string(s.frames) + " presents=" + std::to_string(s.presents) +
-           " drops=" + std::to_string(s.drops) +
+    return "frames=" + std::to_string(s.frames) + " frames_src=pipe_assemble" +
+           " presents=" + std::to_string(s.presents) + " presents_src=arm_publish_ok" +
+           " drops=" + std::to_string(s.drops) + " drops_src=av_pacer" +
            " publish_misses=" + std::to_string(s.publish_misses) +
-           " unaccounted=" + std::to_string(s.residual) +
+           " publish_misses_src=arm_publish_fail" +
            " residual=" + std::to_string(s.residual) +
-           " unaccounted_eq=frames-presents-drops" +
+           " residual_eq=frames-presents-drops" +
+           " residual_scope=supply_arm_only" +
+           " fpga_obs=none" +
            " tag=measured";
 }
 
