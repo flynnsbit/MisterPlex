@@ -222,6 +222,92 @@ int main() {
                     early.drops, coarm.steadyRealOffsetMs, hold.steadyRealOffsetMs);
     }
 
+    // --- release-path content origin (must be 0, never 206) ---
+    {
+        const auto ok = checkAudioReleaseOrigin(/*written*/ 0, /*held*/ 192000 / 5); // 200 ms held
+        CHECK(ok.ok);
+        CHECK(ok.contentOriginMs == 0);
+        CHECK(ok.audioBytesAtRelease == 0);
+        CHECK(ok.heldMs == 200);
+        const auto bad = checkAudioReleaseOrigin(/*written*/ 192000 * 206 / 1000, /*held*/ 0);
+        CHECK(!bad.ok);
+        CHECK(bad.contentOriginMs == 206);
+        if (ok.contentOriginMs != 0 || bad.contentOriginMs != 206) {
+            std::fprintf(stderr, "FAIL: release origin check vacuous ok=%lld bad=%lld\n",
+                         static_cast<long long>(ok.contentOriginMs),
+                         static_cast<long long>(bad.contentOriginMs));
+            return 1;
+        }
+        std::printf("PASS release origin: ok_origin=0 bad_origin=%d held_ms=%d\n",
+                    static_cast<int>(bad.contentOriginMs), static_cast<int>(ok.heldMs));
+    }
+
+    // --- handoff policy: seek/auto-next re-arm; pause/resume does not ---
+    CHECK(handoffReArmsAudioHold(SessionHandoffKind::FreshPlay));
+    CHECK(handoffReArmsAudioHold(SessionHandoffKind::SeekRestart));
+    CHECK(handoffReArmsAudioHold(SessionHandoffKind::AutoNextRestart));
+    CHECK(!handoffReArmsAudioHold(SessionHandoffKind::PauseResume));
+
+    // --- multi-session seek / auto-next (3 sessions × 206 ms lead if early) ---
+    {
+        const auto red = simulateMultiSessionStartup(3, 206, StartupAudioMode::EarlyPlay);
+        const auto green = simulateMultiSessionStartup(3, 206, StartupAudioMode::HoldUntilVideo);
+        const auto coarm = simulateMultiSessionStartup(3, 206, StartupAudioMode::CoArmOrigin);
+        std::printf("multisession EARLY drops=%d worst_real=%d origin_nz=%d\n", red.totalDrops,
+                    red.worstSteadyRealMs, red.sessionsOriginNonZero);
+        std::printf("multisession HOLD  drops=%d worst_real=%d origin_nz=%d\n", green.totalDrops,
+                    green.worstSteadyRealMs, green.sessionsOriginNonZero);
+        std::printf("multisession COARM drops=%d worst_real=%d origin_nz=%d\n", coarm.totalDrops,
+                    coarm.worstSteadyRealMs, coarm.sessionsOriginNonZero);
+        // RED: every session massacres frames and leaves real lead.
+        CHECK(red.totalDrops >= 30); // ~13 × 3
+        CHECK(red.sessionsOriginNonZero == 3);
+        CHECK(red.worstSteadyRealMs > 80);
+        // GREEN: hold each restart — no massacre, origin zero class.
+        CHECK(green.totalDrops <= 6);
+        CHECK(green.sessionsOriginNonZero == 0);
+        CHECK(std::abs(green.worstSteadyRealMs) <= 50);
+        // COARM: drops look fine but origin non-zero every session (grabber-class fail).
+        CHECK(coarm.totalDrops <= 6);
+        CHECK(coarm.sessionsOriginNonZero == 3);
+        CHECK(coarm.worstSteadyRealMs > 80);
+        if (green.sessionsOriginNonZero != 0 || red.totalDrops < 30) {
+            std::fprintf(stderr, "FAIL: multisession gate vacuous\n");
+            return 1;
+        }
+        std::printf("PASS multisession seek/auto-next: early_drops=%d hold_origin_nz=%d "
+                    "coarm_origin_nz=%d\n",
+                    red.totalDrops, green.sessionsOriginNonZero, coarm.sessionsOriginNonZero);
+    }
+
+    // --- pause/resume: must not re-arm hold (would mute until a non-event) ---
+    {
+        const auto good = simulatePauseResumeHold(/*reArmHoldOnResume=*/false);
+        const auto bad = simulatePauseResumeHold(/*reArmHoldOnResume=*/true);
+        CHECK(good.gateOpenAfterResume);
+        CHECK(!good.audioMutedAfterResume);
+        CHECK(!bad.gateOpenAfterResume);
+        CHECK(bad.audioMutedAfterResume);
+        std::printf("PASS pause/resume hold policy: good_open=%d bad_muted=%d\n",
+                    good.gateOpenAfterResume ? 1 : 0, bad.audioMutedAfterResume ? 1 : 0);
+    }
+
+    // --- no first video: buffer caps, never writes MrAudio, no hang model ---
+    {
+        const int64_t fiveSec = 48000LL * 4LL * 5;
+        const auto nv = simulateHoldNoVideo(fiveSec);
+        CHECK(nv.capped);
+        CHECK(nv.heldBytes == kAudioHoldCapBytes);
+        CHECK(nv.heldMs == kAudioHoldCapMs);
+        CHECK(!nv.wroteMrAudio);
+        const auto small = simulateHoldNoVideo(19200);
+        CHECK(!small.capped);
+        CHECK(!small.wroteMrAudio);
+        std::printf("PASS hold no-video: cap_bytes=%lld held_ms=%d wrote=%d\n",
+                    static_cast<long long>(nv.heldBytes), static_cast<int>(nv.heldMs),
+                    nv.wroteMrAudio ? 1 : 0);
+    }
+
     if (fails) {
         std::fprintf(stderr, "test_avclock: %d failures\n", fails);
         return 1;

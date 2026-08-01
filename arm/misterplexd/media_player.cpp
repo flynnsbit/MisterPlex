@@ -2055,15 +2055,18 @@ void MediaPlayer::audioPump(int afd) {
     std::vector<uint8_t> f2acc;
     f2acc.reserve(32768);
     // Hold buffer: PCM from stream start while audioStartGate_ is closed.
-    // Cap 2 s — preserves content t=0 so release plays from the beginning in
-    // lockstep with first video, rather than discarding into a permanent lead.
+    // Cap kAudioHoldCapMs (2 s) — preserves content t=0 so release plays from
+    // the beginning in lockstep with first video. No auto-release without
+    // video (that would recreate the lead); EOF/stop ends the pump cleanly.
     constexpr size_t kAudioHoldCapBytes =
-        static_cast<size_t>(misterplex::kMrAudioBytesPerSec * 2);
+        static_cast<size_t>(misterplex::kAudioHoldCapBytes);
     std::vector<uint8_t> holdBuf;
-    holdBuf.reserve(misterplex::kMrAudioBytesPerSec); // 1 s typical
+    holdBuf.reserve(static_cast<size_t>(misterplex::kMrAudioBytesPerSec)); // 1 s typical
     bool holdLogged = false;
     bool holdOverflowLogged = false;
     bool releaseLogged = false;
+    auto holdSince = std::chrono::steady_clock::time_point{};
+    int64_t lastHoldWaitLogMs = -1;
     // After a non-empty hold drain, do NOT bias audioDue into the past: that
     // prefill would blast held PCM into the ring and recreate the audible lead
     // we just avoided. Live-only starts (empty hold) still use normal prefill.
@@ -2219,8 +2222,11 @@ void MediaPlayer::audioPump(int afd) {
         if (!audioStartGate_.load(std::memory_order_acquire)) {
             if (!holdLogged) {
                 holdLogged = true;
+                holdSince = std::chrono::steady_clock::now();
                 log("media: audio hold — buffering PCM until first video frame "
-                    "(no MrAudio write yet)");
+                    "(no MrAudio write yet; cap_ms=" +
+                    std::to_string(misterplex::kAudioHoldCapMs) +
+                    "; no auto-release without video)");
             }
             const size_t nn = static_cast<size_t>(n);
             if (holdBuf.size() < kAudioHoldCapBytes) {
@@ -2238,6 +2244,21 @@ void MediaPlayer::audioPump(int afd) {
                 log("media: audio hold cap reached bytes=" + std::to_string(holdBuf.size()) +
                     " — keeping stream start, dropping tail until release");
             }
+            // Still gated: log wait progress so a stuck first-frame is visible.
+            // Do NOT open the gate here — releasing without video recreates the
+            // +206 ms lead. Session stop / audio EOF ends the pump (no hang).
+            if (holdLogged) {
+                const int64_t waited = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                           std::chrono::steady_clock::now() - holdSince)
+                                           .count();
+                if (lastHoldWaitLogMs < 0 || waited - lastHoldWaitLogMs >= 1000) {
+                    lastHoldWaitLogMs = waited;
+                    log("media: audio hold waiting_ms=" + std::to_string(waited) +
+                        " held_bytes=" + std::to_string(holdBuf.size()) +
+                        " audio_bytes_written=" + std::to_string(audioBytes_.load()) +
+                        " (gate closed; content_origin still 0)");
+                }
+            }
             total += static_cast<size_t>(n);
             continue;
         }
@@ -2245,11 +2266,22 @@ void MediaPlayer::audioPump(int afd) {
         // Gate just opened: drain hold buffer first (content t=0…), then live.
         if (!releaseLogged) {
             releaseLogged = true;
-            const int64_t heldMs =
-                (static_cast<int64_t>(holdBuf.size()) * 1000LL) / misterplex::kMrAudioBytesPerSec;
-            log("media: audio release — writing held_bytes=" + std::to_string(holdBuf.size()) +
-                " held_ms=" + std::to_string(heldMs) +
-                " (content starts with first video frame)");
+            const int64_t writtenBefore = audioBytes_.load();
+            const auto rel = misterplex::checkAudioReleaseOrigin(
+                writtenBefore, static_cast<int64_t>(holdBuf.size()));
+            // Assert content origin is 0 — any prior MrAudio write means hold failed.
+            if (!rel.ok) {
+                log("ERROR media: audio release content_origin_ms=" +
+                    std::to_string(rel.contentOriginMs) +
+                    " audio_bytes_at_release=" + std::to_string(rel.audioBytesAtRelease) +
+                    " held_ms=" + std::to_string(rel.heldMs) +
+                    " — hold bypassed (co-arm-class lead risk)");
+            } else {
+                log("media: audio release content_origin_ms=0"
+                    " audio_bytes_at_release=0 held_bytes=" +
+                    std::to_string(holdBuf.size()) + " held_ms=" + std::to_string(rel.heldMs) +
+                    " (stream-start PCM; first video armed gate)");
+            }
             if (!holdBuf.empty())
                 suppressStartupPrefill = true;
             // Drain in ~20 ms chunks at realtime (no past-bias prefill).
@@ -3349,16 +3381,30 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                     avAudioReleased = true;
                     t0 = std::chrono::steady_clock::now();
                     lastCompleteVideoFrame = t0;
+                    // Gate open is the physical start. content_origin must be 0:
+                    // audioBytes_ is only incremented on MrAudio write, which the
+                    // hold path forbids while the gate is closed.
+                    const int64_t writtenBefore = audioBytes_.load();
+                    const auto rel = misterplex::checkAudioReleaseOrigin(writtenBefore, /*held*/ 0);
+                    audioStartGate_.store(true, std::memory_order_release);
                     if (wantAudio && audioActive_.load()) {
-                        audioStartGate_.store(true, std::memory_order_release);
-                        log("media: A/V audio_release first_frame=" +
-                            std::to_string(frameIndex) +
-                            " (MrAudio starts; held PCM plays from content t=0)");
+                        if (!rel.ok) {
+                            log("ERROR media: A/V audio_release first_frame=" +
+                                std::to_string(frameIndex) +
+                                " content_origin_ms=" + std::to_string(rel.contentOriginMs) +
+                                " audio_bytes_at_release=" +
+                                std::to_string(rel.audioBytesAtRelease) +
+                                " — hold bypassed before gate open");
+                        } else {
+                            log("media: A/V audio_release first_frame=" +
+                                std::to_string(frameIndex) +
+                                " content_origin_ms=0 audio_bytes_at_release=0"
+                                " (MrAudio starts; held PCM from content t=0)");
+                        }
                     } else {
-                        audioStartGate_.store(true, std::memory_order_release);
                         log("media: A/V audio_release first_frame=" +
                             std::to_string(frameIndex) +
-                            " (wall clock; audio inactive)");
+                            " content_origin_ms=0 (wall clock; audio inactive)");
                     }
                 }
                 // Live OSD trim is read every frame so the menu takes effect at once.

@@ -54,6 +54,90 @@ inline int64_t realContentOffsetMs(int64_t audioHeardContentMs, int64_t videoDis
     return audioHeardContentMs - videoDisplayedContentMs;
 }
 
+// --- Audio hold policy (product pump) ---------------------------------------
+// Cap on PCM buffered while MrAudio is gated. 2 s @ 48 kHz stereo s16le.
+// Beyond this we KEEP stream start (content t=0) and drop the tail — never
+// shift the content origin forward (that would recreate a permanent lead).
+constexpr int64_t kAudioHoldCapMs = 2000;
+constexpr int64_t kAudioHoldCapBytes = 48000LL * 4LL * (kAudioHoldCapMs / 1000); // 384000
+
+// How a session handoff interacts with audioStartGate_.
+// Seek (media_player.cpp:seekMs → play) and auto-next (main.cpp:doPlay → play)
+// both spawn a NEW threadMain + audioPump, so the gate must re-arm closed.
+// Pause/resume only SIGSTOP/SIGCONT the children; the gate stays open.
+enum class SessionHandoffKind {
+    FreshPlay,        // first playMedia / --play-file
+    SeekRestart,      // seekMs → play() or doPlay re-resolve
+    AutoNextRestart,  // natural EOF → tryAutoNext → doPlay
+    PauseResume,      // pause()/resume() mid-session
+};
+
+// True ⇒ product must store audioStartGate_=false before the new audioPump runs.
+inline bool handoffReArmsAudioHold(SessionHandoffKind k) {
+    return k != SessionHandoffKind::PauseResume;
+}
+
+// Release-path check: nothing may have been written to MrAudio before the gate
+// opens. content_origin_ms is then 0 by construction (held PCM is stream start).
+// A non-zero audioBytesAtRelease means the hold was bypassed — the co-arm class
+// of defect (lead already unpaid before "release").
+struct AudioReleaseCheck {
+    bool ok = false;
+    int64_t contentOriginMs = -1;     // must be 0 on a correct release
+    int64_t audioBytesAtRelease = -1; // MrAudio bytes already written
+    int64_t heldMs = 0;               // buffered PCM duration (content t=0..)
+};
+
+inline AudioReleaseCheck checkAudioReleaseOrigin(int64_t audioBytesWrittenBeforeRelease,
+                                                 int64_t heldBytes) {
+    AudioReleaseCheck c;
+    c.audioBytesAtRelease = audioBytesWrittenBeforeRelease < 0 ? 0 : audioBytesWrittenBeforeRelease;
+    if (heldBytes < 0)
+        heldBytes = 0;
+    c.heldMs = (heldBytes * 1000LL) / (48000LL * 4LL);
+    // Content origin is the already-heard position at release. Hold requires 0.
+    c.contentOriginMs = (c.audioBytesAtRelease * 1000LL) / (48000LL * 4LL);
+    c.ok = (c.audioBytesAtRelease == 0 && c.contentOriginMs == 0);
+    return c;
+}
+
+// Pause/resume must NOT close the gate. If a mutant re-arms hold on resume,
+// audio stays muted (no "first frame" event) — model that as permanent hold.
+struct PauseResumeHoldSim {
+    bool gateOpenAfterResume = true;
+    bool audioMutedAfterResume = false;
+};
+
+inline PauseResumeHoldSim simulatePauseResumeHold(bool reArmHoldOnResume) {
+    PauseResumeHoldSim out{};
+    // Correct product: gate stays open across SIGSTOP/SIGCONT.
+    out.gateOpenAfterResume = !reArmHoldOnResume;
+    out.audioMutedAfterResume = reArmHoldOnResume;
+    return out;
+}
+
+// No-video failure: gate stays closed; buffer grows to cap; no MrAudio write.
+struct HoldNoVideoSim {
+    int64_t heldBytes = 0;
+    int64_t heldMs = 0;
+    bool wroteMrAudio = false;
+    bool capped = false;
+};
+
+inline HoldNoVideoSim simulateHoldNoVideo(int64_t incomingBytes,
+                                         int64_t capBytes = kAudioHoldCapBytes) {
+    HoldNoVideoSim out{};
+    if (capBytes < 0)
+        capBytes = 0;
+    if (incomingBytes < 0)
+        incomingBytes = 0;
+    out.heldBytes = incomingBytes <= capBytes ? incomingBytes : capBytes;
+    out.heldMs = (out.heldBytes * 1000LL) / (48000LL * 4LL);
+    out.capped = incomingBytes > capBytes;
+    out.wroteMrAudio = false; // gate never opened
+    return out;
+}
+
 enum class AvAction {
     Present, // show this frame
     Hold,    // wait, video is running ahead of the master clock
@@ -178,6 +262,31 @@ inline StartupPacerSim simulateStartupPacer(int64_t audioMsAtFirstFrame, bool co
     return simulateStartupPacer(audioMsAtFirstFrame,
                                 coArm ? StartupAudioMode::CoArmOrigin : StartupAudioMode::EarlyPlay,
                                 frames, leadMs, dropMs, fpsNum, fpsDen);
+}
+
+// Multi-session startup (seek / auto-next): each restart is an independent
+// HoldUntilVideo window. RED = EarlyPlay every session; GREEN = Hold each time.
+struct MultiSessionStartupSim {
+    int sessions = 0;
+    int totalDrops = 0;
+    int worstSteadyRealMs = 0;
+    int sessionsOriginNonZero = 0;
+};
+
+inline MultiSessionStartupSim simulateMultiSessionStartup(int sessions, int64_t audioLeadMs,
+                                                          StartupAudioMode mode,
+                                                          int framesPerSession = 26) {
+    MultiSessionStartupSim out{};
+    out.sessions = sessions < 0 ? 0 : sessions;
+    for (int s = 0; s < out.sessions; ++s) {
+        const auto one = simulateStartupPacer(audioLeadMs, mode, framesPerSession);
+        out.totalDrops += one.drops;
+        if (one.steadyRealOffsetMs > out.worstSteadyRealMs)
+            out.worstSteadyRealMs = one.steadyRealOffsetMs;
+        if (one.firstRealOffsetMs > 80)
+            ++out.sessionsOriginNonZero;
+    }
+    return out;
 }
 
 // Terminal-signal inventory for the rawvideo read loop. EAGAIN/EWOULDBLOCK is
