@@ -1,202 +1,95 @@
 # Startup drop-count variance RCA (w-cpu)
 
-**Branch/SHA:** see `status.txt` after commit  
-**Scope:** source analysis + host unit model. No device access.  
-**ERROR 17:** retracted — fixtures are genuinely 24.000 fps; `fps=24/1` is correct.
+**Scope:** source analysis + host unit model. No device access.
+**ERROR 17:** retracted — fixtures are 24.000 fps; `fps=24/1` is correct.
 
-## Parent silicon facts (given)
+## Fleet corrections absorbed (parent 2026-07-31)
 
-| run | drops by ~7 s | drops at ~360 s | residual | publish_misses | A/V offset |
-|-----|---------------|-----------------|----------|----------------|------------|
-| 1   | 15            | 15 (flat)       | 0        | 0              | −316.0 ms  |
-| 2   | 12            | 12 (flat)       | 0        | 0              | −196.7 ms  |
+| Claim | Status |
+|-------|--------|
+| Steady-state drop sawtooth | **FALSIFIED** — 100% of drops by wall_s≈7; flat thereafter |
+| H-DROP (offset set by startup drop count) | **REJECTED** — 12-drop and 18-drop same HDMI cluster (0.7 ms); pred −446.8 vs meas −196.0 |
+| `av_drift_ms` / `clock=av-lock` as lip-sync | **BLIND** — five runs mean drift ≈ −30 ms identical; HDMI offsets two clusters ~116 ms apart |
+| w-cpu dLead≈127 ↔ parent Δoffset 119 | **MISS PUBLISHED** — was an untested link; do not rebuild |
 
-- Same fixture (rk8 480p), conf, daemon binary, core.
-- **All drops in first ~7 s; zero steady-state drops for ~353 s.**
-- Falsifies “steady-state sawtooth” inferred from a single EOF total.
-- Δoffset = 119.3 ms between runs — product-relevant beyond drop count.
+**Lip-sync criterion (binding):** `tools/avsync_measure_hdmi.py` only.  
+`av_drift_ms` is servo telemetry inside `AV_PRESENT_LEAD_MS` deadband — never a soak PASS.
 
-## 1. Every path that can produce a `drops` increment
+## Parent silicon facts (drop count)
 
-`droppedFrames_` / telemetry `drops` count **only** deliberate A/V-pacer skips.
+| run | drops by ~7 s | drops at ~360 s | residual | publish_misses |
+|-----|---------------|-----------------|----------|----------------|
+| 1   | 15            | 15 (flat)       | 0        | 0              |
+| 2   | 12            | 12 (flat)       | 0        | 0              |
 
-### Sole increment site
+HDMI offset clusters are a **separate** phenomenon (not explained by drop count).
 
-```3503:3509:arm/misterplexd/media_player.cpp
-            if (!present) {
-                ++dropRun;
-                droppedFrames_.fetch_add(1);
-                ...
-                log("media: A/V resync drop drift_ms=...");
-```
+## 1. Every path that increments `drops`
 
-`present` is cleared only when `avDecide` returns `Drop`:
-
-```3477:3485:arm/misterplexd/media_player.cpp
-                    const AvAction act = avDecide(drift, leadMs, dropMs, dropRun);
-                    ...
-                    present = (act != AvAction::Drop);
-```
-
-```48:52:host/libmisterplex/av_clock.hpp
-// avDecide: Drop iff dropMs>0 && driftMs>dropMs && dropRun<maxDropRun (default 1)
-// Hold iff driftMs+leadMs<0; else Present
-```
-
-Defaults: `resyncDropMs_ = 80` (`kDefaultResyncDropMs`), `presentLeadMs_` from `AV_PRESENT_LEAD_MS` (typically 40), `maxDropRun = 1`.
-
-### Not counted as `drops`
-
-| Event | Counter |
-|-------|---------|
-| ffmpeg under-production | invisible to `drops` (shows as `frames` vs `wall*fps`) |
-| failed DDR publish | `publishMisses_` / ledger, not `drops` |
-| deliberate? No — only pacer Drop | |
-
-Ledger (parent residual=0): `frames - presents - drops - publish_misses ≈ 0` with `publish_misses=0` ⇒ every non-present was a pacer Drop.
-
-### Counter reset (per stream)
-
-```2521:2525:arm/misterplexd/media_player.cpp
-    const int64_t leadMs = presentLeadMs_;
-    const int64_t dropMs = resyncDropMs_;
-    int dropRun = 0;
-    ...
-    droppedFrames_.store(0);
-```
-
-### `audioActive_` / gate sites (timing, not drop counters)
-
-| Site | Role |
-|------|------|
-| `audioActive_.store(true)` ~2054 | top of `audioPump` — pacer may use audible clock |
-| `audioActive_.store(false)` ~2353 | pump exit |
-| `audioStartGate_.store(false)` ~2870 | product path: closed until first video |
-| `audioStartGate_.store(true)` ~3436 | **first complete video frame** (main release) |
-| `audioStartGate_.store(true)` ~2245 | hold **timeout** (`kAudioHoldTimeoutMs=1200`) without video |
-| `audioStartGate_.store(true)` ~2543 | audio-only / skipRgb path (immediate) |
-| `audioStartGate_.store(true)` ~2873 | no audio pipe |
-
-## 2. What accumulates +80 ms drift at startup (and why the count varies)
-
-### Drift definition
+Sole site — deliberate pacer skip:
 
 ```
-drift = audibleClockMs(audioBytes, queued) − frameContentMs(frameIndex)
-Drop when drift > 80 and dropRun < 1
+media_player.cpp: if (!present) droppedFrames_.fetch_add(1);
+present = (avDecide(drift, leadMs, dropMs, dropRun) != Drop);
+avDecide: Drop iff dropMs>0 && drift>dropMs && dropRun<maxDropRun (default 1)
 ```
 
-`frameContentMs` is exact rational (`frameIndex * 1000 * den / num`) — **not** a rate bug (ERROR 17 retracted).
+Defaults: `resyncDropMs_=80`, lead ~40 (`AV_PRESENT_LEAD_MS`), `maxDropRun=1`.
 
-`AV_PRESENT_LEAD_MS` (~40) is a **Hold** deadband (`drift + lead < 0`), not a Drop threshold. Drop threshold is solely `resyncDropMs` (80).
+**Not** `drops`: ffmpeg under-production, publish misses (`publishMisses_`).
 
-### Prefill bias (100.0 ms)
+Counters reset per stream (`droppedFrames_.store(0)` near play start).
 
-```114:114:host/libmisterplex/mraudio_status.hpp
-inline constexpr int64_t kFeedTargetBytes = kMrAudioBytesPerSec / 10; // 19200 B = 100.0 ms
+Gate sites (`audioStartGate_`): first video ~3436; hold timeout ~2245; skipRgb ~2543; no-audio ~2873.  
+`audioActive_.store(true)` at top of `audioPump` (~2054).
+
+## 2. What varies startup drop **count** (not HDMI offset)
+
+```
+drift = audibleClockMs(bytes, queued) - frameContentMs(frameIndex)
+Drop when drift > 80
 ```
 
-`writePacedChunk` **always** past-biases `audioDue` by that depth on first write — including hold-drain:
+- `kFeedTargetBytes` = 19200 B = **100.0 ms** past-bias on first `writePacedChunk` (including hold-drain).
+- `queuedBytes` starts −1 → submitted-byte clock until status sample.
+- Hold buffer `held_ms = f(T_first_video)` — timing-sensitive.
+- Drop freezes relative audio vs frameIndex; Present ~period → repay until drift≤80 → quiet.
 
-```arm/misterplexd/media_player.cpp (writePacedChunk)
-// Always past-bias prefill (cold-start, seek, hold-release same).
-audioDue = now - kFeedTargetBytes/rate;
-```
+Host model (DROP COUNT only):
 
-So after gate open the pump can burst ~100 ms of PCM before sleeping.
+| residual lead | drops |
+|---------------|-------|
+| 588 ms | 12 |
+| 715 ms | 15 |
+| Δlead 127 ms | ≈3×period geometry — **not** HDMI Δoffset |
 
-### Submitted-clock window
+Hold race unit: held 620→12, 745→15, 120→0.
 
-`audioQueuedBytes_` starts at **−1**. Until `readMrAudioQueuedBytes` succeeds (every 4 chunks), `audibleClockMs` falls back to **submitted** bytes (no ring subtract) — burst looks fully “heard.”
-
-### Hold-until-video ideal vs silicon
-
-Ideal hold: `audioBytes_==0` at gate open, content origin 0, sim `HoldUntilVideo` → **0 drops**.
-
-Silicon still sees **12–15** drops ⇒ a **residual audio lead at/after frame 1** remains. Candidates (all **timing-sensitive**, not content bytes):
-
-1. **`held_ms = f(T_first_video)`** while gate closed (decode/net/sched). Cap 2 s ring-drop-head.
-2. **Hold dump race:** past-bias + submitted clock let held PCM race ahead of `frameIndex`.
-3. **Video present/decode lag** vs realtime in the first seconds (positive drift).
-4. **maxDropRun=1** ⇒ Drop/Present staircase while repaying lead; then quiet.
-
-### Why drops stop after ~7 s
-
-Product Drop skips `presentCleanFrame` and immediately takes the next pipe frame; audio keeps running on the pump thread. Relative to `frameIndex`, a fast Drop **freezes** audible while `frameMs` jumps +period → drift falls ~one frame. Present spends ~period of wall so audio advances with picture. After enough pairs, `drift ≤ 80` permanently → **zero steady-state drops**. Matches parent soaks.
-
-### Why 12 vs 15 (and Δoffset ≈ 119 ms)
-
-Host first-principles model (`kStartupDropWallMs=0`, `kStartupPresentWallMs=41`):
-
-| residual lead at frame1 | drops |
-|-------------------------|-------|
-| 588 ms                  | 12    |
-| 715 ms                  | 15    |
-| Δlead = **127 ms**      | Δdrops = 3 |
-
-**127 ms ≈ parent Δoffset 119.3 ms** (within model/measurement band).
-
-Mechanism claim: **drop count and steady offset both track residual lead after gate open;** run-to-run lead differs by ~one to three frame periods because `T_first_video` / held dump / sched jitter differ.
-
-Hold-race unit map: `held_ms=620 → drops=12`, `held_ms=745 → drops=15`, `held_ms=120 → drops=0`.
-
-## 3. Pre-registered predictions
+## 3. Pre-register (drop count only)
 
 | ID | Prediction | Falsify if |
 |----|------------|------------|
-| P1 | Startup drops = f(residual_lead); 12 @ ~588 ms, 15 @ ~715 ms | Equal residual lead (log `held_ms` + first `drift_ms`) but Δdrops ≥ 3 |
-| P2 | Δlead between the two soak classes ≈ 100–140 ms | Measured first-drift delta outside that band while drops still 12 vs 15 |
-| P3 | All drops before wall_s≈10; then flat | New drops after wall_s=30 with residual=0 |
-| P4 | Ideal hold (proven `audio_bytes_at_release=0` **and** no dump race) → drops ≤ 2 | drops ≥ 10 with both proven |
-| P5 | `drops` never counts publish miss or ffmpeg gap | `drops` rises while `avDecide` never Drop (need code bug) |
+| P1 | drops = f(residual lead); 12@~588, 15@~715 | equal first-drift/held but Δdrops≥3 |
+| P2 | all drops before wall_s≈10 then flat | new drops after wall_s=30 |
+| P3 | ideal hold (zero residual + no dump race) → drops≤2 | drops≥10 with both proven |
 
-**ERROR 17:** do not predict drops from fps mismatch — fixtures are 24.000.
+**Do not** predict HDMI offset from drop count (H-DROP rejected).
 
-## 4. Host test (red-before-green, both outcomes)
-
-Implemented in `host/libmisterplex/av_clock.hpp` + `tests/unit/test_avclock.cpp`:
-
-- `simulateStartupPacer(..., EarlyPlay)` with first-principles walls
-- `sweepEarlyPlayDrops(500,800)` covers drops 9–17 including **exact 12 and 15**
-- `simulateHoldReleaseRace(held_ms)` — controlled timing perturbation; 620 vs 745 yields 12 vs 15
-- A constant answer cannot pass: requires `dLead ∈ [100,140]` and both soak counts
+## 4. Unexplained (do not build on)
 
 ```
-make unit   # true rc=0
-# test_avclock excerpt:
-# PASS startup drop variance: drops12=12 drops15=15 dLead=127 ...
+media_player.hpp:301  audioClockPpm_ = -638;  // feed trimmed
+av_clock.hpp          audioClockMs hardcodes 48000  // pacer clock NOT trimmed
 ```
 
-## 5. Parent-only device checks (do not run from agent)
+Asymmetry noted by parent — untested attribution.
 
-Log on next soak (confirm mechanism, no patch required yet):
+## 5. Gates
 
-```bash
-# On device, during first 15 s of play, capture hold/release + first drops:
-# (parent already has media: logs; ensure these lines are retained)
-#   media: audio hold — buffering PCM...
-#   media: audio release content_origin_ms=0 ... held_bytes=... held_ms=...
-#   media: A/V audio_release first_frame=... content_origin_ms=0
-#   media: A/V resync drop drift_ms=... drops=...
-#
-# After run, extract:
-#   held_ms from release line; first drift_ms; final drops; steady av offset
-# PREDICT: larger held_ms ↔ more startup drops; Δheld_ms ≈ Δoffset ≈ 100–140 ms for 12 vs 15
 ```
-
-## 6. Verdict
-
-| Question | Answer |
-|----------|--------|
-| What varies 12 vs 15? | **Timing-sensitive residual audio lead** after gate open (hold dump / T_first_video / sched), repaid by pacer Drops until drift ≤ 80 |
-| Content-determined? | **No** — same fixture/conf; host race test changes only `held_ms` |
-| Steady-state sawtooth? | **Falsified** by parent soaks + repayment model |
-| Recoverable? | Ideal hold already targets 0; remaining drops imply dump-race residual — product fix would serialize hold drain with frame1 / avoid submitted-clock overstatement / open gate with paced drain tied to video (design separate from this RCA) |
-| Quantified | Δ3 drops ↔ Δlead ≈ **127 ms** model vs **119 ms** measured offset |
-
-## Citations
-
-- `arm/misterplexd/media_player.cpp` — gate, hold, writePacedChunk past-bias, avDecide Drop
-- `host/libmisterplex/av_clock.hpp` — frameContentMs, avDecide, StartupPacerSim, HoldReleaseRace
-- `host/libmisterplex/mraudio_status.hpp` — kFeedTargetBytes, audibleClockMs
-- `tests/unit/test_avclock.cpp` — variance gates + PRE_REGISTER lines
+make unit; echo "true rc=$?"   # expect 0
+# test_avclock: PASS startup drop variance (drop COUNT model only; not lip-sync)
+# CRITERION lip_sync=tools/avsync_measure_hdmi.py ONLY
+# H_DROP_STATUS REJECTED
+# MISS_PUBLISHED H-DROP
+```

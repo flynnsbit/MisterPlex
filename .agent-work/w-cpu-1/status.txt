@@ -1,9 +1,21 @@
 worker: w-cpu-1
-task: startup drop-count variance RCA (12 vs 15 in first ~7s)
 branch: w-avsync-hdmi-measure
-sha: 57009a63
-status: DONE
+status: DONE (fleet broadcast absorbed)
 make_unit: true rc=0
+hold_red: true rc=0 (OK hold B3/B4 red/green)
+test_avclock: true rc=0
 
-Result: residual lead after hold gate; 588ms->12 drops, 715ms->15; dLead=127~=119 offset
-RCA: .agent-work/w-cpu-1/STARTUP_DROP_VARIANCE_RCA.md
+## Built
+- Startup drop COUNT variance model (residual lead after hold gate)
+- RCA + PRE_REGISTER; H-DROP miss published
+- MiSTer spin / headroom / starvation tools (earlier commits)
+- Lip-sync criterion REVISED: avsync_measure_hdmi.py ONLY
+  av_drift_ms / av-lock NEVER soak PASS
+
+## Blocking
+- None for host lane. HDMI cluster root cause unknown (H-DROP rejected).
+- audioClockPpm_=-638 vs untrimmed pacer clock: unexplained, do not build on.
+- ARM md5: N/A (no daemon binary change this turn)
+
+## SHA
+see git log -1 after commit
