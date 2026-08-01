@@ -1,20 +1,7 @@
-worker: w-cpu-1
-branch: w-avsync-hdmi-measure
-task: MiSTer timeout=5 lab — patch + parent A/B
-status: READY_FOR_PARENT_MEASURE
-sha_pending_commit: f27a27fc
-
-Deliverables:
-- .agent-work/w-cpu-1/patches/main_mister_input_timeout5_plex.patch
-- .agent-work/w-cpu-1/MISTER_TIMEOUT5_PARENT_AB.md  (PRE_REG + A/B + revert)
-- tools/arm_cpu_sample.py H1_* fields; fixed_work_probe (host smoke true rc=0)
-
-PRE_REG:
-  Main idle %onecpu 5-30 (was 100)
-  Main play240 10-45 (was 83)
-  input add <=5ms worst; load_core still works
-  if green: strictly better than SUSPEND for CPU reclaim
-
-NOT claimed: fix for 117ms session-latched lip-sync clusters
-ERROR17: nothing product to unwind
-Device: parent only
+w-cpu CRITICAL PATH (judder / publish jitter)
+T1: Main timeout=0 poll on CPU1 — upstream Main_MiSTer confirmed 2026-08-01
+T2: parent_t2_mister_ab.sh A|B|strace — PRE_REG idle Main high = not our spin
+T3: PREDICTION P1 78→20 => P(iv>50) toward <0.05 IF baseline ARM_LATE_*
+T4: rank1 lab poll timeout=5 Plex-scoped; no SCHED_FIFO yet
+Doc: CRITICAL_PATH_MISTER_78_PUBLISH_JITTER.md
+Do NOT optimise frame loss (ERROR18/19 withdrawn). No device touch.
