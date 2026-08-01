@@ -192,6 +192,14 @@ REMOTE_BIN="$TARGET_ROOT/bin/misterplexd"
 REMOTE_CONF="$TARGET_ROOT/misterplex.conf"
 REMOTE_LOG="$TARGET_ROOT/misterplexd.log"
 
+# DEPLOY TRAP (parent 2026-07-31 measured): NEVER rename the live binary before
+# kill. After `mv misterplexd misterplexd.bak.<md5>`, /proc/PID/exe resolves to
+# the .bak path and a `case $exe in *misterplexd)` kill loop matches NOTHING —
+# old daemon keeps running; disk looks perfect; live md5 stays old. Sibling of
+# ETXTBSY. Rule: stop/kill by /proc/comm+argv0 (and/or captured PIDs) BEFORE any
+# rename; verify AFTER by md5sum "$(readlink -f /proc/$pid/exe)". No pgrep on
+# device (busybox — missing).
+#
 # --- stop every daemon/supervisor (no kill -9 storms) --------------------------
 # Parent trap: NEVER match cmdline substring "misterplexd" — flock argv contains
 # it and yields false PIDs / false 0% CPU. Use /proc/PID/comm + argv0 basename.

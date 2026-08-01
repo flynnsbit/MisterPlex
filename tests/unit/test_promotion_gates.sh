@@ -122,8 +122,9 @@ echo "  true rc=$rc"
 [ "$rc" -eq 3 ] && ok "policy-local-daemon-mismatch" || bad "policy-local-daemon-mismatch rc=$rc"
 
 # --- verify-live via blob inject --------------------------------------------
-# Primary DDR daemon pin is edc3a46b (prefix; full filled after fetch).
-EDC_LIVE=edc3a46b9d1c6b86337deb90f896eb0f
+# Primary DDR daemon pin is 5996385a (parent 2026-07-31 evening live).
+EDC_LIVE=5996385a57c6af142b8e732a39b36a4a
+EDC_ROLLBACK=edc3a46b9d1c6b86337deb90f896eb0f
 cat >"$WORK/live_ok.blob" <<BLOB
 PRODUCT_CORE=/media/fat/_Utility/Plex.rbf
 PRODUCT_MD5=c5382bee73cecdee8220b811e529c297
@@ -497,7 +498,7 @@ V2_MD5=dfebf2bfd08dd70b473b587dd7e81848set +e
 N_DAEMON=1
 PIDS=4242
 LIVE_EXE=/media/fat/misterplex_v2/bin/misterplexd
-LIVE_MD5=edc3a46b9d1c6b86337deb90f896eb0f
+LIVE_MD5=5996385a57c6af142b8e732a39b36a4a
 LIVE_CONF=/media/fat/misterplex_v2/misterplex.conf
 LIVE_ROOT=/media/fat/misterplex_v2
 PLXS_MAGIC=0x504C5853
@@ -600,7 +601,7 @@ echo "$out" | grep -qE 'hook_does_not_match_live_pair_root|supervise_root_mismat
 echo "=== bank1 for shipping DDR pair is 0x30080000 (624x480 synthesis-fixed) ==="
 out=$(bash -c 'source '"$ROOT"'/scripts/pair_ship_policy.sh; pair_policy_lookup ddr-c5382bee')
 echo "$out" | grep -q 'PAIR_BANK1=0x30080000' && ok "bank1-ddr-480p" || bad "bank1-ddr-480p"
-out=$(bash -c 'source '"$ROOT"'/scripts/pair_ship_policy.sh; pair_policy_check c5382bee edc3a46b')
+out=$(bash -c 'source '"$ROOT"'/scripts/pair_ship_policy.sh; pair_policy_check c5382bee 5996385a')
 echo "$out" | grep -q 'bank1=0x30080000' && ok "bank1-on-pair-ok" || bad "bank1-on-pair-ok"
 
 echo "=== conf keys REQUIRED but not injected → HARD rc=3 (not NOTE) ==="

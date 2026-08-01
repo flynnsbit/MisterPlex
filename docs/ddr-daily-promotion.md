@@ -10,7 +10,7 @@ The FPGA DDR path renders correct colour/geometry on silicon (240p + native 480p
 | Piece | md5 | Role |
 |-------|-----|------|
 | RBF | `c5382bee73cecdee8220b811e529c297` | product DDR scanout (**not** do-not-ship) |
-| daemon | `edc3a46b9d1c6b86337deb90f896eb0f` (w-geom `7554d6b2`) | primary ARM companion |
+| daemon | `5996385a (rollbacks: b981fd20, edc3a46b, e9f79de2)9d1c6b86337deb90f896eb0f` (w-geom `7554d6b2`) | primary ARM companion |
 | conf | `DDR_YUV_FORCE_SCALE=1` + `FFMPEG_SWS_FLAGS=fast_bilinear` | pair half (480p correctness) |
 | hist daemon | `e9f79de217982aff44207664fdb945c5` | previous DDR pin (on-device `.bak`) |
 
@@ -653,3 +653,98 @@ Atomic pair promote/rollback remains `scripts/rollback_v2.sh` / `promote_ddr_dai
 ## V2_MD5 capture (blind-and-RED class)
 
 Fixed by `gate_join_remote_parts` + host-side refuse of `MD5=<32hex>set` in joined remote script + `gate_assert_md5_shape` before equality. Wrong pure 32-hex still fails equality (`FAIL v2-rollback-core`). Contaminated values fail shape — never fuzzy-trim.
+
+
+## Daemon pin chain (2026-07-31 evening)
+
+| prefix8 | role | full md5 (when known) |
+|---------|------|------------------------|
+| **5996385a** | **CURRENT** live DDR (w-instr) | `5996385a57c6af142b8e732a39b36a4a` |
+| b981fd20 | on-device bak rollback | prefix until pin filed |
+| edc3a46b | prior DDR primary | `edc3a46b9d1c6b86337deb90f896eb0f` |
+| e9f79de2 | first silicon-correct DDR | `e9f79de217982aff44207664fdb945c5` |
+| 50f4eb92 | SPI hybrid undo | `50f4eb925de10e29172999a565c87684` |
+
+`video_regression.sh` and `pair_ship_policy.sh` accept CURRENT + documented
+rollbacks only. Unknown md5 → FAIL (mixed-pair catch). Primary pair id
+`ddr-c5382bee` resolves daemon to CURRENT.
+
+User conf md5 **`7f06132f`** is USER-OWNED (`misterplex.conf.bak.horigin`) —
+restore with `PAIR_CONF_RESTORE_FILE=…` only; never rewrite DECODE/PRESENT/IDLE.
+
+## Deploy trap — rename-before-kill (sibling of ETXTBSY)
+
+Parent-measured failure mode:
+
+```sh
+mv $B/misterplexd $B/misterplexd.bak.b981fd20   # BAD if process still live
+mv $B/misterplexd.new $B/misterplexd
+# kill loop on readlink -f /proc/*/exe matching *misterplexd → MATCHES NOTHING
+# because exe path is now …/misterplexd.bak.b981fd20
+```
+
+Disk looks correct; old daemon keeps serving. **Required order:**
+
+1. Capture target PIDs (`/proc/PID/comm == misterplexd` or argv0 basename).
+2. Stop/kill those PIDs (no `pgrep` — not on busybox MiSTer).
+3. Only then stage+`mv` the new binary (or `cp` to `.bak` then replace).
+4. Start one daemon; verify `md5sum "$(readlink -f /proc/$NEWPID/exe)"` == host artifact.
+5. Assert `n_daemon==1` by the same comm/argv0 rule.
+
+`scripts/deploy_misterplexd.sh` stops before install and uses stage+`mv`.
+
+## Running bitstream (promotion blocker honesty)
+
+- File md5 of `Plex.rbf` = **product-core-disk** only.
+- `/tmp/CORENAME` = `Plex` for every build — **not** a bitstream id.
+- Executing proof required: **PLXS** magic `0x504C5853` @ bank mailbox + **advancing**
+  `mbox_seq` (`PROMOTE_REQUIRE_PLXS_SEQ_ADVANCE=1` default). SPI core + DDR daemon
+  is `PAIR_REFUSE` and must not go green.
+
+## Power-cycle evidence checklist (parent; ask user before reboot)
+
+Pre (SSH session stable):
+
+```bash
+# on device (or ssh one-liners) — capture true rc DIRECTLY
+md5sum /media/fat/_Utility/Plex.rbf /media/fat/_Utility/Plex_v2.rbf
+readlink -f /proc/$(…misterplexd pid…)/exe | xargs md5sum
+tr '\0' ' ' < /proc/PID/cmdline; echo
+n_daemon via comm==misterplexd count
+wget -q -O /dev/null -S http://127.0.0.1:3005/resources 2>&1 | head -1
+grep USER_SCRIPT= /etc/init.d/S99user
+grep misterplex /media/fat/linux/user-startup.sh
+# decoy must be inert:
+grep -E 'misterplexd' /media/fat/linux/_user-startup.sh || echo DECOY_INERT
+md5sum /media/fat/misterplex_v2/misterplex.conf
+# conf must still be user bytes (7f06132f…)
+devmem 0x300FF100 32; sleep 0.05; devmem 0x300FF100 32   # PLXS + seq change
+```
+
+Detached arm (survive SSH drop):
+
+```bash
+# host prepares:
+scripts/power_cycle_pair_rehearsal.sh plan
+# on device: copy on_device_pair_boot_check.sh; run under nohup; then reboot
+```
+
+Post (after boot + ~30s):
+
+```bash
+# same probes as pre; expect:
+#   product core c5382bee, v2 dfebf2bf untouched
+#   n_daemon==1, live exe md5 == 5996385a… (or chosen pair pin)
+#   conf md5 == pre bak (user-owned)
+#   hook exactly one v2 supervise line; decoy inert
+#   /resources 200
+#   PLXS magic + seq advance
+# host:
+PAIR_ID=ddr-c5382bee bash scripts/promotion_gate_check.sh verify-live; echo "true rc=$?"
+# warmed capture (NOT -frames:v 1 alone):
+scripts/hdmi_capture_idle.sh /path/idle.png; echo "true rc=$?"
+PAIR_IDLE_PNG=/path/idle.png scripts/pair_visual_gate.sh idle; echo "true rc=$?"
+# motion if cast available — MOTION_OK rc=0 only (77=fail)
+```
+
+Soft-skip rc=77 is never PASS. Do not quote av-lock/av_drift as soak PASS.

@@ -72,19 +72,19 @@ BASE_CORE_MD5=dfebf2bfd08dd70b473b587dd7e81848
 # regression and must fail.
 BASE_DAEMON_MD5=7cd10b4d438c714a9b8c4766dc982d59
 # Daemon pin chain (do NOT weaken — unknown md5 still FAILs):
-#   edc3a46b  CURRENT — DDR pair with c5382bee (w-geom 7554d6b2). Parent HW
-#             2026-07-31: 240p + native 480p MOTION_OK with conf
-#             DDR_YUV_FORCE_SCALE=1 FFMPEG_SWS_FLAGS=fast_bilinear.
-#             Full md5 from live /proc/<pid>/exe (do not weaken gate).
-#   50f4eb92  PREV hybrid — SPI 320x240 clamp path (accepted rollback).
-#   e9f79de2  DDR hist — first silicon-correct DDR daemon (accepted rollback).
-#   3e2cbb98  older hybrid (accepted rollback).
+#   5996385a  CURRENT — w-instr instrumented (parent 2026-07-31 evening).
+#             Full md5 from live readlink -f /proc/9102/exe; n_daemon=1;
+#             480p viewed OK with user conf 7f06132f (DECODE=624x480).
+#   b981fd20  PREV on-device bak — accepted DDR rollback (prefix until full pin).
+#   edc3a46b  prior DDR primary — accepted rollback.
+#   e9f79de2  first silicon-correct DDR — accepted rollback.
+#   50f4eb92  SPI hybrid clamp path — accepted SPI rollback.
+#   3e2cbb98  older hybrid — accepted rollback.
 #   7cd10b4d  BASE release (above).
-HYBRID_DAEMON_PREFIX8=edc3a46b
-HYBRID_DAEMON_MD5_DEFAULT=edc3a46b9d1c6b86337deb90f896eb0f
+HYBRID_DAEMON_PREFIX8=5996385a
+HYBRID_DAEMON_MD5_DEFAULT=5996385a57c6af142b8e732a39b36a4a
 if [ -f "${REPO:-$(cd "$(dirname "$0")/.." && pwd)}/artifacts/daemon-pins/misterplexd.${HYBRID_DAEMON_PREFIX8}" ]; then
   HYBRID_DAEMON_MD5=$(md5sum "${REPO:-$(cd "$(dirname "$0")/.." && pwd)}/artifacts/daemon-pins/misterplexd.${HYBRID_DAEMON_PREFIX8}" | awk '{print $1}')
-  # Pin file must match measured identity — refuse silent wrong binary.
   if [ "${HYBRID_DAEMON_MD5:0:8}" != "$HYBRID_DAEMON_PREFIX8" ]; then
     echo "FAIL pin-file md5='$HYBRID_DAEMON_MD5' not prefix $HYBRID_DAEMON_PREFIX8" >&2
     HYBRID_DAEMON_MD5="$HYBRID_DAEMON_MD5_DEFAULT"
@@ -92,8 +92,12 @@ if [ -f "${REPO:-$(cd "$(dirname "$0")/.." && pwd)}/artifacts/daemon-pins/mister
 else
   HYBRID_DAEMON_MD5="${HYBRID_DAEMON_MD5:-$HYBRID_DAEMON_MD5_DEFAULT}"
 fi
-PREV_HYBRID_DAEMON_MD5=50f4eb925de10e29172999a565c87684
+# Documented rollbacks (full when known; prefix8 identity accepted for b981).
+DDR_CUR_DAEMON_MD5="$HYBRID_DAEMON_MD5"
+DDR_B981_DAEMON_MD5="${DDR_B981_DAEMON_MD5:-b981fd20}"
+DDR_EDC3_DAEMON_MD5=edc3a46b9d1c6b86337deb90f896eb0f
 DDR_HIST_DAEMON_MD5=e9f79de217982aff44207664fdb945c5
+PREV_HYBRID_DAEMON_MD5=50f4eb925de10e29172999a565c87684
 OLDER_HYBRID_DAEMON_MD5=3e2cbb9881b2f54b0e4cb60238655fa7
 
 # Test clip: the 240p burned-in-telemetry ladder entry. Its overlay text makes
@@ -181,13 +185,15 @@ daemon_md5_accepted() {
   local m="${1:-}" p8
   [ -n "$m" ] || return 1
   case "$m" in
-    "$BASE_DAEMON_MD5"|"$HYBRID_DAEMON_MD5"|"$PREV_HYBRID_DAEMON_MD5"|"$DDR_HIST_DAEMON_MD5"|"$OLDER_HYBRID_DAEMON_MD5")
+    "$BASE_DAEMON_MD5"|"$HYBRID_DAEMON_MD5"|"$DDR_CUR_DAEMON_MD5"|"$DDR_EDC3_DAEMON_MD5"|"$DDR_HIST_DAEMON_MD5"|"$PREV_HYBRID_DAEMON_MD5"|"$OLDER_HYBRID_DAEMON_MD5")
       return 0
       ;;
   esac
-  # Prefix match only for the CURRENT hybrid when full pin not yet fetched
-  # (HYBRID_DAEMON_MD5 is prefix8). Never accepts arbitrary prefixes.
   p8="${m:0:8}"
+  # Accepted DDR prefix8 set (current + documented rollbacks). Unknown → FAIL.
+  case "$p8" in
+    5996385a|b981fd20|edc3a46b|e9f79de2|50f4eb92|3e2cbb98|7cd10b4d) return 0 ;;
+  esac
   if [ "${#HYBRID_DAEMON_MD5}" -eq 8 ] && [ "$p8" = "$HYBRID_DAEMON_MD5" ]; then
     return 0
   fi
@@ -388,7 +394,7 @@ verify_baseline() {
   elif daemon_md5_accepted "$got_disk"; then
     echo "OK   daemon-disk $got_disk"
   else
-    echo "FAIL daemon-disk got='$got_disk' want=accepted{$BASE_DAEMON_MD5,$HYBRID_DAEMON_MD5,$PREV_HYBRID_DAEMON_MD5,$DDR_HIST_DAEMON_MD5,$OLDER_HYBRID_DAEMON_MD5}"
+    echo "FAIL daemon-disk got='$got_disk' want=accepted{5996385a,b981fd20,edc3a46b,e9f79de2,50f4eb92,7cd10b4d,...}"
     rc=1
   fi
 
@@ -417,7 +423,7 @@ verify_baseline() {
     echo "     supervisor may be in backoff, but it never came back — hard FAIL"
     rc=1
   elif ! daemon_md5_accepted "$live"; then
-    echo "FAIL daemon-live md5='$live' not in accepted {$BASE_DAEMON_MD5,$HYBRID_DAEMON_MD5,$PREV_HYBRID_DAEMON_MD5,$DDR_HIST_DAEMON_MD5,$OLDER_HYBRID_DAEMON_MD5} pid='$pids'"
+    echo "FAIL daemon-live md5='$live' not in accepted {5996385a,b981fd20,edc3a46b,e9f79de2,50f4eb92,...} pid='$pids'"
     rc=1
   else
     if printf '%s\n' "$wait_out" | grep -q 'LIVE_WAIT_RESULT=respawned'; then

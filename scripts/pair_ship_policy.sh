@@ -30,10 +30,10 @@ fi
 #   DDR 480p-capable YUV layout → 0x30080000
 # A mixed pair is a silent geometry mismatch (release.md lab stable pair).
 #
-# PRIMARY promote target (parent 2026-07-31 viewed pixels + native 480p):
-#   ddr-c5382bee = core c5382bee + daemon edc3a46b + conf ddr + bank1 0x30080000
-# Historical DDR (pre-480p FORCE_SCALE land) kept as explicit rollback id:
-#   ddr-c5382bee-e9f79de2
+# PRIMARY promote target (parent 2026-07-31 evening):
+#   ddr-c5382bee = core c5382bee + daemon 5996385a + conf ddr + bank1 0x30080000
+# Documented DDR rollbacks (same core+conf profile+bank1):
+#   ddr-c5382bee-b981fd20, ddr-c5382bee-edc3a46b, ddr-c5382bee-e9f79de2
 PAIR_BANK1_SPI=0x30040000
 PAIR_BANK1_DDR=0x30080000
 _PAIR_DDR_DAEMON="$(rbf_policy_resolve_ddr_daemon_full)"
@@ -41,6 +41,8 @@ PAIR_MATRIX_ROWS=(
   "${RBF_PIN_V2_DAILY_FULL}|${DAEMON_PIN_V2_HYBRID_FULL}|${DEVICE_CORE_V2_DAILY}|spi|spi-v2-hybrid|spi|${PAIR_BANK1_SPI}"
   "${RBF_PIN_V2_DAILY_FULL}|${DAEMON_PIN_V2_RELEASE_FULL}|${DEVICE_CORE_V2_DAILY}|spi|spi-v2-release|spi|${PAIR_BANK1_SPI}"
   "${RBF_PIN_DDR_CANDIDATE_FULL}|${_PAIR_DDR_DAEMON}|${DEVICE_CORE_PRODUCT}|ddr|ddr-c5382bee|ddr|${PAIR_BANK1_DDR}"
+  "${RBF_PIN_DDR_CANDIDATE_FULL}|${DAEMON_PIN_DDR_B981_FULL}|${DEVICE_CORE_PRODUCT}|ddr|ddr-c5382bee-b981fd20|ddr|${PAIR_BANK1_DDR}"
+  "${RBF_PIN_DDR_CANDIDATE_FULL}|${DAEMON_PIN_DDR_EDC3_FULL}|${DEVICE_CORE_PRODUCT}|ddr|ddr-c5382bee-edc3a46b|ddr|${PAIR_BANK1_DDR}"
   "${RBF_PIN_DDR_CANDIDATE_FULL}|${DAEMON_PIN_DDR_E9F79DE2_FULL}|${DEVICE_CORE_PRODUCT}|ddr|ddr-c5382bee-e9f79de2|ddr|${PAIR_BANK1_DDR}"
 )
 
@@ -49,6 +51,8 @@ PAIR_MATRIX_ROWS=(
 PAIR_ID_SPI_HYBRID=spi-v2-hybrid
 PAIR_ID_SPI_RELEASE=spi-v2-release
 PAIR_ID_DDR_C5382=ddr-c5382bee
+PAIR_ID_DDR_B981=ddr-c5382bee-b981fd20
+PAIR_ID_DDR_EDC3=ddr-c5382bee-edc3a46b
 PAIR_ID_DDR_HIST=ddr-c5382bee-e9f79de2
 PAIR_DEFAULT_ROLLBACK="${PAIR_DEFAULT_ROLLBACK:-$PAIR_ID_SPI_HYBRID}"
 PAIR_DEFAULT_PROMOTE="${PAIR_DEFAULT_PROMOTE:-$PAIR_ID_DDR_C5382}"
@@ -95,10 +99,7 @@ pair_policy_check() {
     fi
   done
   # Explicit known-bad mixes (black/green screen classes)
-  if [ "$c" = "${RBF_PIN_V2_DAILY_FULL:0:8}" ] && {
-       [ "$d" = "${DAEMON_PIN_DDR_EDC3_PREFIX8}" ] ||
-       [ "$d" = "${DAEMON_PIN_DDR_E9F79DE2_FULL:0:8}" ]
-     }; then
+  if [ "$c" = "${RBF_PIN_V2_DAILY_FULL:0:8}" ] && rbf_policy_ddr_daemon_accepted "$daemon"; then
     echo "PAIR_REFUSE reason=spi_core_plus_ddr_daemon core=$c daemon=$d"
     echo "PAIR_REFUSE detail=black_or_green_screen (SPI core has no ddr_frame_store; telemetry can still pass)"
     return 1

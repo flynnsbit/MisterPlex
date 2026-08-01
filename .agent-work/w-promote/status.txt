@@ -1,20 +1,21 @@
 lane: w-promote
 branch: fix/rollback-honest
-worktree: /home/flynnsbit/Projects/MisterPlex/.worktrees/rollback-honest
-tip: 1fd9d574
+tip: (post-commit)
+worktree: .worktrees/rollback-honest
 
-## Fleet broadcast response (av-lock blind)
-RETRACTED from promote package: clock=av-lock, av_drift_ms as PASS.
-Replaced with (unchanged executable gates): pair md5s, live exe md5,
-n_daemon=1, conf from cmdline (user-owned), /resources 200, PLXS+seq,
-boot-hook==live root, idle chevron CC + motion MOTION_OK (pixels).
-Lip-sync if ever claimed: tools/avsync_measure_hdmi.py only (parent).
-Do not build on drop sawtooth / rate-mismatch.
+## Device pin track (parent-verified)
+CURRENT daemon 5996385a57c6af142b8e732a39b36a4a
+rollbacks: b981fd20, edc3a46b, e9f79de2
+core c5382bee; user conf 7f06132f USER-OWNED
 
-## Built
-- Atomic pair promote/rollback (core+daemon+conf+boot)
-- Gate glue fix, conf CONF_MD5_MATCH_OK, deploy stage+mv/comm
-- av-lock retracted from docs + regression test
+## Encoded
+- pair/video_regression/rbf pins + SPI×DDR refuse
+- rename-before-kill trap (stop by comm before any mv)
+- no pgrep; live verify readlink exe md5
+- glue fix remains; atomic pair+conf+boot
+- power-cycle checklist in docs/ddr-daily-promotion.md
 
 ## Host true rc
-test_promotion_gates.sh true rc=0 (pass=89)
+test_promotion_gates.sh true rc=0
+test_rollback_honest.sh true rc=0
+pair check 5996385a/b981/edc3 OK; dfebf2bf+5996385a REFUSE rc=1

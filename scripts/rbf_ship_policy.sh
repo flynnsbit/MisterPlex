@@ -35,14 +35,23 @@ RBF_PIN_V2_DAILY_FULL=dfebf2bfd08dd70b473b587dd7e81848
 RBF_PIN_DDR_CANDIDATE_FULL=c5382bee73cecdee8220b811e529c297
 DAEMON_PIN_V2_HYBRID_FULL=50f4eb925de10e29172999a565c87684
 DAEMON_PIN_V2_RELEASE_FULL=7cd10b4d438c714a9b8c4766dc982d59
-# Historical DDR daemon (pre-480p fix); still a matched pair with c5382bee but
-# NOT the primary promote target after w-geom 480p FORCE_SCALE land.
-DAEMON_PIN_DDR_E9F79DE2_FULL=e9f79de217982aff44207664fdb945c5
-# Primary live DDR daemon (parent 2026-07-31 viewed pixels + 480p MOTION_OK).
-# Full md5 measured from live /proc/<pid>/exe on device (edc3a46b9d1c…).
+# DDR daemon pin chain (parent 2026-07-31 evening — do NOT weaken mixed-pair gate):
+#   5996385a  CURRENT — w-instr instrumented; live /proc/9102/exe; n=1; 480p viewed OK
+#   b981fd20  PREV on-device bak (misterplexd.bak.b981fd20) — accepted rollback
+#   edc3a46b  prior DDR primary (480p FORCE_SCALE land) — accepted rollback
+#   e9f79de2  first silicon-correct DDR — accepted rollback
+DAEMON_PIN_DDR_5996385A_FULL=5996385a57c6af142b8e732a39b36a4a
+DAEMON_PIN_DDR_5996385A_PREFIX8=5996385a
+# Full md5 of b981fd20 not published; prefix8 identity until pin file fetched.
+DAEMON_PIN_DDR_B981_PREFIX8=b981fd20
+DAEMON_PIN_DDR_B981_FULL="${DAEMON_PIN_DDR_B981_FULL:-b981fd20}"
 DAEMON_PIN_DDR_EDC3_PREFIX8=edc3a46b
 DAEMON_PIN_DDR_EDC3_FULL="${DAEMON_PIN_DDR_EDC3_FULL:-edc3a46b9d1c6b86337deb90f896eb0f}"
-# Back-compat alias: "candidate" == current primary DDR daemon pin.
+DAEMON_PIN_DDR_E9F79DE2_FULL=e9f79de217982aff44207664fdb945c5
+# Primary = CURRENT instrumented pin (override with DAEMON_PIN_DDR_PRIMARY_FULL).
+DAEMON_PIN_DDR_PRIMARY_FULL="${DAEMON_PIN_DDR_PRIMARY_FULL:-$DAEMON_PIN_DDR_5996385A_FULL}"
+DAEMON_PIN_DDR_PRIMARY_PREFIX8="${DAEMON_PIN_DDR_PRIMARY_FULL:0:8}"
+# Back-compat aliases
 DAEMON_PIN_DDR_CANDIDATE_FULL="${DAEMON_PIN_DDR_CANDIDATE_FULL:-}"
 DAEMON_PIN_DDR_HIST_FULL="$DAEMON_PIN_DDR_E9F79DE2_FULL"
 
@@ -74,9 +83,10 @@ rbf_policy_normalize_md5() {
 
 # Resolve full md5 for current DDR daemon from pin file / env / prefix.
 rbf_policy_resolve_ddr_daemon_full() {
-  local root pin m
-  if [ -n "${DAEMON_PIN_DDR_EDC3_FULL:-}" ] && [ "${#DAEMON_PIN_DDR_EDC3_FULL}" -ge 32 ]; then
-    printf '%s' "$(rbf_policy_normalize_md5 "$DAEMON_PIN_DDR_EDC3_FULL")"
+  local root pin m pref
+  # Explicit primary full md5 wins (default 5996385a…).
+  if [ -n "${DAEMON_PIN_DDR_PRIMARY_FULL:-}" ] && [ "${#DAEMON_PIN_DDR_PRIMARY_FULL}" -ge 32 ]; then
+    printf '%s' "$(rbf_policy_normalize_md5 "$DAEMON_PIN_DDR_PRIMARY_FULL")"
     return 0
   fi
   if [ -n "${DAEMON_PIN_DDR_CANDIDATE_FULL:-}" ] && [ "${#DAEMON_PIN_DDR_CANDIDATE_FULL}" -ge 32 ]; then
@@ -84,20 +94,34 @@ rbf_policy_resolve_ddr_daemon_full() {
     return 0
   fi
   root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-  for pin in \
-    "$root/artifacts/daemon-pins/misterplexd.${DAEMON_PIN_DDR_EDC3_PREFIX8}" \
-    "/home/flynnsbit/Projects/MisterPlex/artifacts/daemon-pins/misterplexd.${DAEMON_PIN_DDR_EDC3_PREFIX8}"
+  for pref in     "${DAEMON_PIN_DDR_5996385A_PREFIX8}"     "${DAEMON_PIN_DDR_B981_PREFIX8}"     "${DAEMON_PIN_DDR_EDC3_PREFIX8}"
   do
-    [ -f "$pin" ] || continue
-    m=$(md5sum "$pin" | awk '{print $1}')
-    if [ "${m:0:8}" = "$DAEMON_PIN_DDR_EDC3_PREFIX8" ]; then
-      printf '%s' "$m"
-      return 0
-    fi
+    for pin in       "$root/artifacts/daemon-pins/misterplexd.${pref}"       "/home/flynnsbit/Projects/MisterPlex/artifacts/daemon-pins/misterplexd.${pref}"
+    do
+      [ -f "$pin" ] || continue
+      m=$(md5sum "$pin" | awk '{print $1}')
+      if [ "${m:0:8}" = "$pref" ]; then
+        printf '%s' "$m"
+        return 0
+      fi
+    done
   done
-  # Prefix-only identity until parent fetches the pin (not a guess of full hash).
-  printf '%s' "$DAEMON_PIN_DDR_EDC3_PREFIX8"
+  # Known full primary constant (no pin file required for gate identity).
+  printf '%s' "$(rbf_policy_normalize_md5 "${DAEMON_PIN_DDR_5996385A_FULL}")"
   return 0
+}
+
+# True if daemon md5 is any accepted DDR pin (current or documented rollback).
+rbf_policy_ddr_daemon_accepted() {
+  local d p8
+  d=$(rbf_policy_normalize_md5 "${1:-}")
+  [ "${#d}" -ge 8 ] || return 1
+  p8="${d:0:8}"
+  case "$p8" in
+    "$DAEMON_PIN_DDR_5996385A_PREFIX8"|"$DAEMON_PIN_DDR_B981_PREFIX8"|"$DAEMON_PIN_DDR_EDC3_PREFIX8"|"${DAEMON_PIN_DDR_E9F79DE2_FULL:0:8}")
+      return 0 ;;
+  esac
+  return 1
 }
 
 # Populate DAEMON_PIN_DDR_CANDIDATE_FULL for callers that still read the alias.
