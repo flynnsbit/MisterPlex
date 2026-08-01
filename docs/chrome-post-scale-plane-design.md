@@ -16,9 +16,10 @@
 | M10K free | **88** (= 553−465) | derived from parent RAM |
 | M10K capacity | **10 240 bits = 1 280 B** per block | Cyclone V M10K; same 1280 B/block used in feasibility doc |
 | Free on-chip bytes | **88 × 1280 = 112 640 B** | derived |
-| Product `FRAME_W/H` | 640 / 480 | `Plex.qsf` macros |
-| Product line prefetch | `FRAME_LINES_8=1` | `Plex.qsf` |
-| DDR content bank | 624×480 coded YUV | `ddr_frame_layout_params.svh` |
+| Product `FRAME_W/H` | **640 / 480** (presented) | `Plex.qsf:83-84` — **not** 624 |
+| Product line prefetch | `FRAME_LINES_8=1` | `Plex.qsf:85` |
+| DDR content bank | 624×480 coded YUV | `ddr_frame_layout_params.svh:5-6` |
+| Vertical samples to display | **240 even store rows** | `present_core.sv:161-198`; see `docs/chrome-240-verify-and-inc1.md` |
 | `clk_sys` / `clk_ddr` | 20.000 / **90.000 MHz** | `pll_0002.v` `output_clock_frequency0/2` |
 | Live HDMI (parent) | `video_mode=12` → **1920×1440@60** | parent device read |
 | Grabber archives | often 1920×1080 | feasibility doc (mode 8 vs 12 not unique from PNG alone) |

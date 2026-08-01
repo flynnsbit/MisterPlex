@@ -74,3 +74,13 @@ Parent product baseline (c5382bee class): setup **+0.165** / hold **+0.245** —
 ## No cadence RTL
 
 Explicit: **no** `present_cadence` policy change prepared. DDR swap path remains async vsync re-latch (`ddr_frame_store` `swap_pending && pending_ready_s2`).
+
+## Chrome / 240-line (2026-08-01)
+
+- Parent ERROR 18/19: frame-loss % **void**; judder is the open smoothness question.
+- T1–T4: `docs/chrome-240-verify-and-inc1.md` — **240 V samples CONFIRMED**; product FRAME=**640×480**; Inc-1 post-ascal rect specified; ship (a) before (b).
+- DO-NOT-SHIP: **`c5382bee` NOT banned** (1.54% justification void). Still banned freeze/timing hashes + classic set.
+
+## Slot
+
+**CLOSED — no fit request.**
