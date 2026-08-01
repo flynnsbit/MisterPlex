@@ -1,7 +1,7 @@
 lane=w-plextv
 branch=w-plextv-cast-picker-e2e-fix2
 worktree=.worktrees/w-plextv-e2e-fix
-sha=e3676c45
+sha=HEAD  # git -C .worktrees/w-plextv-e2e-fix rev-parse --short HEAD
 see=STATUS.md
 
 # API: ./scripts/parent_cast_local.sh play|stop|idle-check
