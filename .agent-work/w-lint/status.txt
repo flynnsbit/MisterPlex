@@ -1,8 +1,29 @@
 lane: w-lint GATE-INTEGRITY
 branch: w-lint-gate-integrity
-tip: 7a66341e
+tip_docs: c32bd611
+tip_func: 7a66341e
+reconfirm: docs/evidence/w_lint_PARENT_P1_P4_RECONFIRM.md
 
-WORST THREE inert gates fixed + RBG proven (see docs/evidence/w_lint_INERT_GATE_SWEEP.md)
-true rc: gfg=0 mb0=0 nb=0 frame=0
-tree clean of probes
-NO device/Quartus
+P1 RUNNING bitstream: FAIL LOUD
+  UNVERIFIED → GATE_RESULT=CORE_IDENTITY_UNVERIFIED PROMOTE_OK=0 true rc=2
+  mixed pair → FAIL rc=1
+  FULL_PASS only VERIFIED_PLXC
+  no software fabric content hash on c5382bee (CORENAME always Plex)
+  vidreg unit true rc=0
+
+P2 blind-green/red class: audited + fixed on branch
+  ETXTBSY live /proc/PID/exe; PINNOTFOUND rc=2; set+e capture shape
+  harness capture true rc=0; promotion_gates true rc=0
+  evidence: w_lint_GATE_SUITE_AUDIT / FALSE_GREEN_HUNT / INERT_GATE_SWEEP
+
+P3 CRITICAL live-pms-baseline-profile
+  missing key → process_rc=78 PASS_INCOMPLETE; make unit true rc=2
+  NOT lowered; enforce via make pms-baseline-live or ANNEXB
+
+P4 fix/gate-liveness 323c14f1
+  CLOSE/SUPERSEDED — not ancestor of HEAD (merge-base exit=1)
+  f746f10f IS ancestor; expected_commands=126 (not 99)
+  DO NOT MERGE
+
+rollcall true rc=0 expected_commands=126 sha16=67395583620c7487
+NO device / NO Quartus / tree probes cleaned after RBG
