@@ -1,13 +1,8 @@
 worker: w-cpu-1
-lane: MiSTer spin + headroom + ERROR17 absorb
+task: MiSTer timeout=5 lab card + ERROR17 absorb
 branch: w-avsync-hdmi-measure
-tip: 824b85ba
-status: DONE (source RCA + tools; no device)
-
-ERROR17: absorbed — no product unwind needed (false fps defect never landed)
-MiSTer spin: poll(...,0) in input.cpp L5596-5617; scheduler_co_poll no sleep
-Surgical alt to SIGSTOP: non-zero poll timeout (lab Main); stock Menu+FB already uses 25ms
-Headroom: never 200-busy; use tools/{arm_cpu,headroom,schedstat,fixed_work}_*.py
-
-make unit: not required for doc-only refresh this turn
-ARM md5: N/A
+sha_before_commit: 0e8a6922
+status: DONE
+card: .agent-work/w-cpu-1/MISTER_TIMEOUT5_PARENT_AB.md
+ERROR17: absorbed — no product discard needed
+PRE_REG: Main idle 5-30 %onecpu; play 10-45; input add <=5ms worst; strictly better than SUSPEND if green
