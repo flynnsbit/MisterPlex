@@ -38,9 +38,10 @@ def main() -> int:
     media_h = MEDIA_H.read_text()
     main_cpp = MAIN.read_text()
 
-    # Locate render() panel fill.
+    # Locate render() panel fill (optional outputRaster arg for plane=1 path).
     m = re.search(
-        r"static void render\(Target& t, const Snapshot& s, int w, int h, int64_t nowMs\) \{(.*)\n    \}",
+        r"static void render\(Target& t, const Snapshot& s, int w, int h, int64_t nowMs"
+        r"(?:,\s*bool\s+outputRaster\s*=\s*false)?\)\s*\{(.*)\n    \}",
         ov,
         re.S,
     )
