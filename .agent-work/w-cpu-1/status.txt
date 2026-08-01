@@ -1,9 +1,11 @@
 w-cpu-1 status
-branch=w-avsync-hdmi-measure SHA=b1e4c74a (pre-commit)
+branch=w-avsync-hdmi-measure SHA=c8c7152d COMMITTED
 
-RETRACT ERROR17: fps 24 vs 23976 false — closed
-DELIVERABLE: DELIVERABLE_MISTER_SPIN_AND_HEADROOM.md
+ERROR17 retracted — fps path correct, no change
 
-MiSTer spin: poll timeout=0 except Menu+FB; scheduler no sleep; CPU1
-Fix without suspend: Main patch timeout>0 only (lab); in-tree = SUSPEND only
-Headroom: H1/H2/H3 scripts in tools/ — never 200-busy
+MiSTer spin: input.cpp poll timeout=0 (Menu+FB:25); scheduler_co_poll no sleep; CPU1
+Not Plex-induced. In-tree fix without Main fork: SUSPEND only.
+Targeted idle without suspend: Main timeout>0 (lab — MISTER_TIMEOUT5_LAB.md)
+
+Headroom: never 200-busy. tools/ arm_cpu_sample headroom_sample schedstat_sample fixed_work_probe
+Deliverable: .agent-work/w-cpu-1/DELIVERABLE_MISTER_SPIN_AND_HEADROOM.md
