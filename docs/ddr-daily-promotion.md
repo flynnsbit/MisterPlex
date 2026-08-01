@@ -625,3 +625,16 @@ Atomic pair promote/rollback remains `scripts/rollback_v2.sh` / `promote_ddr_dai
 ### V2_MD5 probe glue (never fuzzy-trim)
 
 `$(ssh …)` strips trailing newlines, so a remote `echo V2_MD5=$md5` fused with the next `set +e` produced `…81848set +e` (parent 2026-07-31). Fix: `gate_join_remote_parts` + `gate_assert_md5_shape` (exactly 32 hex). Contaminated values fail closed — do not strip noise.
+
+## Conf restore md5 equality (user-owned)
+
+`rollback_v2.sh apply_pair_conf` always:
+
+1. Computes `CONF_WANT_MD5` of the exact bytes about to install (restore-file = backup; merge-keys = merge output only touching pair keys).
+2. Byte-backups the live conf first (`CONF_BAK_MD5`).
+3. `mv` installs, then requires `CONF_NEW_MD5 == CONF_WANT_MD5` (`CONF_MD5_MATCH_OK`). Mismatch → hard fail (no silent default rewrite).
+4. `PAIR_CONF_RESTORE_FILE` additionally requires equality to the parent-supplied backup md5 (e.g. user conf `7f06132f…` with `DECODE=624x480`).
+
+## V2_MD5 capture (blind-and-RED class)
+
+Fixed by `gate_join_remote_parts` + host-side refuse of `MD5=<32hex>set` in joined remote script + `gate_assert_md5_shape` before equality. Wrong pure 32-hex still fails equality (`FAIL v2-rollback-core`). Contaminated values fail shape — never fuzzy-trim.

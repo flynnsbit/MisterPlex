@@ -1,21 +1,28 @@
 lane: w-promote
 branch: fix/rollback-honest
 worktree: /home/flynnsbit/Projects/MisterPlex/.worktrees/rollback-honest
-tip: 7d37fcc8
-substantive: d68363ae deploy comm/argv0 + stage+mv
+tip: (post-commit)
 
-## Host true rc
-- test_deploy_misterplexd.sh true rc=0
-- test_promotion_gates.sh true rc=0 (glue inject fail-closed; green rc=0)
-- test_rollback_honest / conf_user_owned / boot_hook true rc=0
+## Blockers addressed (repo-backed)
+1. V2_MD5 set+e glue — join + shape + host MD5…set refuse; GREEN + wrong-md5 RED proven
+2. Boot hook — S99user USER_SCRIPT; strip BOTH roots; one supervise line; decoy inert
+3. Atomic pair — rollback_v2 core+daemon+conf+boot; restore_misterplexd_prev rc=10
+4. Conf USER-OWNED — CONF_MD5_MATCH_OK after install; restore-file == backup md5
+5. Hook vs live root mismatch gate — RED when v1 hook + v2 live
 
-## Parent (worktree HEAD — not 961dc724)
+## Host true rc (this turn)
+- test_promotion_gates.sh true rc=0 (pass=86) incl wrong-v2 + hook-mismatch + glue + green
+- test_conf_user_owned.sh true rc=0
+- test_boot_hook_policy.sh true rc=0
+- test_rollback_honest.sh true rc=0
+
+## Parent (worktree HEAD — NOT 961dc724)
 cd /home/flynnsbit/Projects/MisterPlex/.worktrees/rollback-honest
-git rev-parse --short HEAD   # expect 7d37fcc8+
+git rev-parse --short HEAD
 bash tests/unit/test_promotion_gates.sh; echo "true rc=$?"
 PAIR_ID=ddr-c5382bee bash scripts/promotion_gate_check.sh verify-live; echo "true rc=$?"
-
-## Atomic pair
-PAIR_ID=ddr-c5382bee ROLLBACK_DAEMON=devices/daemon-pins/misterplexd.edc3a46b \\
-  PAIR_IDLE_PNG=<warm> bash scripts/rollback_v2.sh restore; echo "true rc=$?"
-# conf USER-OWNED; power-cycle: scripts/power_cycle_pair_rehearsal.sh
+# expect: pure 32-hex V2_MD5, BOOT_HOOK_OK root=v2, CONF keys, n_daemon=1, PLXS_SEQ advance
+# atomic restore with user conf backup:
+# PAIR_CONF_RESTORE_FILE=/path/to/user.conf.bak PAIR_ID=ddr-c5382bee \
+#   ROLLBACK_DAEMON=devices/daemon-pins/misterplexd.edc3a46b \
+#   PAIR_IDLE_PNG=<warm> bash scripts/rollback_v2.sh restore; echo "true rc=$?"

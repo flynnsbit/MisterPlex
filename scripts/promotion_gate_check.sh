@@ -207,6 +207,10 @@ remote_live_blob() {
     return 0
   fi
   local head live remote
+  # One remote script. head ends with a marker line so even a bad join cannot
+  # paste "set +e" onto V2_MD5=... (parent: ...81848set +e). live snippet is
+  # joined with explicit \\n via gate_join_remote_parts; md5 shape is asserted
+  # before equality.
   head=$(cat <<REMOTE
 PRODUCT=$(printf '%q' "$PRODUCT_CORE_PATH")
 V2=$(printf '%q' "$V2_CORE_PATH")
@@ -214,14 +218,24 @@ set +e
 prod_md5=""; v2_md5=""
 if [ ! -f "\$PRODUCT" ]; then prod_md5=MISSING; else prod_md5=\$(md5sum "\$PRODUCT" | awk '{print \$1}'); fi
 if [ ! -f "\$V2" ]; then v2_md5=MISSING; else v2_md5=\$(md5sum "\$V2" | awk '{print \$1}'); fi
-echo "PRODUCT_CORE=\$PRODUCT"
-echo "PRODUCT_MD5=\$prod_md5"
-echo "V2_CORE=\$V2"
-echo "V2_MD5=\$v2_md5"
+# Emit md5 on their own lines; never put set/+e after these echoes in this fragment.
+printf 'PRODUCT_CORE=%s\n' "\$PRODUCT"
+printf 'PRODUCT_MD5=%s\n' "\$prod_md5"
+printf 'V2_CORE=%s\n' "\$V2"
+printf 'V2_MD5=%s\n' "\$v2_md5"
+printf 'CORE_MD5_PROBE_DONE=1\n'
 REMOTE
 )
   live=$(pair_remote_live_daemon_snippet)
+  # Drop a leading "set +e" from the live fragment — already set above.
+  live=$(printf '%s\n' "$live" | sed '1{/^set +e$/d;}')
   remote=$(gate_join_remote_parts "$head" "$live")
+  # Host-side sanity: joined script must never contain glued md5+set
+  if printf '%s' "$remote" | grep -Eq 'MD5=[0-9a-f]{32}set'; then
+    echo "FAIL host-side remote script still has MD5…set glue" >&2
+    printf '%s\n' "$remote" | sed -n '/MD5=/p' | head -5 | sed 's/^/  /' >&2
+    return 3
+  fi
   run_ssh "$remote"
 }
 

@@ -429,35 +429,71 @@ apply_pair_conf() {
   fi
 
   # Stage on device under pair root (not a shared name); backup then atomic mv.
+  # Parent: conf is USER-OWNED — want_md5 is the exact bytes we intend to install
+  # (restore-file = backup bytes; merge-keys = merge output). After install,
+  # CONF_NEW_MD5 MUST equal want_md5. Never silently normalise to a default.
+  want_md5=$(md5sum "$host_tmp" | awk '{print $1}')
+  echo "CONF_WANT_MD5=$want_md5 mode=$mode"
   staged="${conf_path}.pair-stage.$$"
   remote_bak="${conf_path}.bak.pre-${PAIR_ID}.$(date -u +%Y%m%dT%H%M%SZ)"
   set +e
   run_scp "$host_tmp" "$staged"
   rc=$?
   set -e
-  rm -f "$host_tmp"
-  if [ "$rc" -ne 0 ]; then return 5; fi
+  if [ "$rc" -ne 0 ]; then rm -f "$host_tmp"; return 5; fi
 
-  run_ssh "set -e
+  set +e
+  conf_out=$(run_ssh "set -e
     conf=$(printf '%q' "$conf_path")
     staged=$(printf '%q' "$staged")
     bak=$(printf '%q' "$remote_bak")
+    want=$(printf '%q' "$want_md5")
     mkdir -p \"\$(dirname \"\$conf\")\"
     if [ -f \"\$conf\" ]; then
       cp -f \"\$conf\" \"\$bak\"
       echo CONF_BAK_MD5=\$(md5sum \"\$bak\" | awk '{print \$1}')
     else
       echo CONF_BAK=none
+      echo CONF_BAK_MD5=
     fi
     mv -f \"\$staged\" \"\$conf\"
     sync
+    new=\$(md5sum \"\$conf\" | awk '{print \$1}')
     echo CONF_INSTALLED=\$conf
     echo CONF_BAK=\$bak
-    echo CONF_NEW_MD5=\$(md5sum \"\$conf\" | awk '{print \$1}')
-  "
-  echo "OK conf-applied mode=$mode profile=$profile path=$conf_path bak=$remote_bak"
+    echo CONF_NEW_MD5=\$new
+    if [ \"\$new\" != \"\$want\" ]; then
+      echo FAIL_CONF_MD5_MISMATCH got=\$new want=\$want
+      exit 7
+    fi
+    echo CONF_MD5_MATCH_OK want=\$want
+  ")
+  rc=$?
+  set -e
+  printf '%s\n' "$conf_out" | sed 's/^/  [conf] /'
+  rm -f "$host_tmp"
+  if [ "$rc" -ne 0 ]; then
+    echo "FAIL conf install/md5-equality true rc=$rc"
+    return 3
+  fi
+  new_md5=$(printf '%s\n' "$conf_out" | sed -n 's/^CONF_NEW_MD5=//p' | head -1)
+  if [ -z "$new_md5" ] || [ "$new_md5" != "$want_md5" ]; then
+    echo "FAIL conf host-side md5 equality got='$new_md5' want='$want_md5'"
+    return 3
+  fi
+  # restore-file: also prove equality to the backup the parent handed us
+  if [ "$mode" = "restore-file" ] && [ -n "${PAIR_CONF_RESTORE_FILE:-}" ]; then
+    bak_md5=$(md5sum "$PAIR_CONF_RESTORE_FILE" | awk '{print $1}')
+    if [ "$new_md5" != "$bak_md5" ]; then
+      echo "FAIL conf restore-file md5 got=$new_md5 backup=$bak_md5 path=$PAIR_CONF_RESTORE_FILE"
+      return 3
+    fi
+    echo "OK conf-restore-file-md5 $new_md5 (== backup; user-owned byte-faithful)"
+  fi
+  echo "OK conf-applied mode=$mode profile=$profile path=$conf_path bak=$remote_bak md5=$new_md5"
   return 0
 }
+
 
 run_visual_gate() {
   log "visual gate (HARD for claim success — green screen class)"

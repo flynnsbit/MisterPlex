@@ -550,6 +550,53 @@ echo "$out" | grep -q 'OK v2-rollback-core' && ok "full-green-v2" || bad "full-g
 echo "$out" | grep -q 'visual_hook true rc=0' && ok "full-green-visual" || bad "full-green-visual"
 echo "$out" | grep -q 'USER_SCRIPT=/media/fat/linux/user-startup.sh' && ok "full-green-s99-path" || bad "full-green-s99-path"
 
+echo "=== RED: pure-wrong V2_MD5 (32 hex, not glue) must FAIL equality — never fuzzy ==="
+sed 's/^V2_MD5=.*/V2_MD5=00000000000000000000000000000000/' "$WORK/live_ok.blob" >"$WORK/live_wrong_v2.blob"
+set +e
+out=$(
+  PROMOTE_GATE_BLOB="$WORK/live_wrong_v2.blob" \
+  PROMOTE_HTTP="$WORK/fake_http.sh" \
+  PROMOTE_VISUAL_CMD="$WORK/visual_ok.sh" \
+  PROMOTE_CONF_BLOB="$WORK/conf_ddr.txt" \
+  PROMOTE_CONF_PROFILE=ddr \
+  PROMOTE_S99_BLOB="$WORK/s99.real" \
+  PROMOTE_HOOK_BLOB="$WORK/good_hook.txt" \
+  PROMOTE_DECOY_HOOK_BLOB="$WORK/inert.decoy" \
+  "$GATES" verify-live 2>&1
+)
+rc=$?
+set -e
+echo "$out" | sed 's/^/  [wrongv2] /' | tail -12
+echo "  [wrongv2] true rc=$rc"
+[ "$rc" -ne 0 ] && ok "wrong-v2-md5-fail" || bad "wrong-v2-md5-fail should not pass"
+echo "$out" | grep -q 'FAIL v2-rollback-core' && ok "wrong-v2-msg" || bad "wrong-v2-msg"
+# Must be equality fail, not shape contamination class
+echo "$out" | grep -q 'probe capture contaminated' && bad "wrong-v2-must-not-be-shape-only" || ok "wrong-v2-equality-not-shape"
+
+echo "=== RED: boot hook v1 while live root v2 (session-long mismatch class) ==="
+printf 'nohup /media/fat/misterplex/bin/misterplexd_supervise.sh >>/media/fat/misterplex/misterplexd_supervise.log 2>&1 &\n' \
+  >"$WORK/bad_v1_hook.txt"
+set +e
+out=$(
+  PROMOTE_GATE_BLOB="$WORK/live_ok.blob" \
+  PROMOTE_HTTP="$WORK/fake_http.sh" \
+  PROMOTE_VISUAL_CMD="$WORK/visual_ok.sh" \
+  PROMOTE_CONF_BLOB="$WORK/conf_ddr.txt" \
+  PROMOTE_CONF_PROFILE=ddr \
+  PROMOTE_S99_BLOB="$WORK/s99.real" \
+  PROMOTE_HOOK_BLOB="$WORK/bad_v1_hook.txt" \
+  PROMOTE_DECOY_HOOK_BLOB="$WORK/inert.decoy" \
+  "$GATES" verify-live 2>&1
+)
+rc=$?
+set -e
+echo "$out" | sed 's/^/  [hookmismatch] /' | tail -15
+echo "  [hookmismatch] true rc=$rc"
+[ "$rc" -ne 0 ] && ok "hook-live-mismatch-fail" || bad "hook-live-mismatch-fail"
+echo "$out" | grep -qE 'hook_does_not_match_live_pair_root|supervise_root_mismatch|BOOT_HOOK_FAIL|FAIL boot-hook' \
+  && ok "hook-live-mismatch-msg" || bad "hook-live-mismatch-msg"
+
+
 echo "=== bank1 for shipping DDR pair is 0x30080000 (624x480 synthesis-fixed) ==="
 out=$(bash -c 'source '"$ROOT"'/scripts/pair_ship_policy.sh; pair_policy_lookup ddr-c5382bee')
 echo "$out" | grep -q 'PAIR_BANK1=0x30080000' && ok "bank1-ddr-480p" || bad "bank1-ddr-480p"
