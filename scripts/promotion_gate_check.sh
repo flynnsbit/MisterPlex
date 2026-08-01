@@ -25,12 +25,15 @@
 
 # Rule 0: quoted code / true rc= / measured artifacts only.
 #
-# RETRACTED as PASS criteria (parent 2026-07-31 measured):
-#   clock=av-lock, av_drift_ms - internal servo echo; BLIND to HDMI lip-sync.
-#   Do not add gates on those fields. Lip-sync = tools/avsync_measure_hdmi.py only
-#   (parent-owned external instrument). This gate package does not claim A/V offset.
-#   Parent 2026-07-31: ~117 ms HDMI offset bimodality is SESSION-LATCHED DEVICE defect;
-#   within-session capture spread ~3 ms. Promote gates cannot and must not "pass" it.
+# RETRACTED as PASS criteria (never re-add):
+#   clock=av-lock, av_drift_ms — CIRCULAR + BLIND to HDMI lip-sync.
+#   2026-08-01 rd-review: av_drift_ms is stored inside the A/V hold loop vs leadMs
+#   (media_player.cpp ~4122-4130) — controller deadband, not glass accuracy.
+#   Always-negative band is a setpoint signature (AV_PRESENT_LEAD_MS), not error.
+#   A/V is UNSCORED until grabber-side measure (w-avsync); grabber is video-only.
+#   UNSCORED / rc=77 is never promote PASS. Do not gate on these fields.
+#   Historical: ~117 ms HDMI offset bimodality was SESSION-LATCHED device defect;
+#   still not a promote PASS criterion (superseded by A/V UNSCORED / P6).
 #
 set -euo pipefail
 

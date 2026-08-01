@@ -11,6 +11,17 @@ Parent-owned device work only. Agents produce artifacts and commands; they must
 | `78eff44e` / `c5382bee` | LAB-NOT-DAILY (240-row and/or STALE-blind) — bak present for rollback |
 | SPI `Plex_v2.rbf` `dfebf2bf` | one-step SPI undo |
 
+## Status change card (parent 2026-08-01 evening) — re-source these claims
+
+| Claim class | Old formulation | New rule (this package) |
+|-------------|-----------------|-------------------------|
+| **A/V sync** | "drift bounded ±40 ms, av-lock held" | **UNSCORED — never PASS.** `av_drift_ms` is the A/V controller's own deadband (`media_player.cpp` stores it inside the hold loop vs `leadMs` / `AV_PRESENT_LEAD_MS`); always-negative band is a setpoint signature, not glass accuracy. Replacement = grabber-side (w-avsync); HDMI-USB grabber is **video-only** so lipsync may remain unmeasurable. Soft-skip/`rc=77` is not PASS. |
+| **Throughput @ 480p24** | (implied ARM risk / FPGA roadmap pressure) | **Healthy headroom, product-only:** on-device ffmpeg at exact 480p24 tier measured `fps=230, speed=9.57x`; raw video pipe 2 MiB / 4.67 frames (`set_ok=1` via `F_GETPIPE_SZ`). **Does not extrapolate** to 720p/1080p (`ddrFrameStoreAcceptsResolution(1280,720)` is false on current contract). |
+| **castBound_** | (not in package) | **BLOCKER — liveness hole only.** Latched on `/player/` **or `/resources`** (`companion.cpp`); `/resources` is LAN discovery, not a cast. Cleared only by `/player/timeline/unsubscribe`; **no expiry**. Vanished controller → indefinite `buffering` report. **Not** the intentional buffering@navigation UX. Gate owned by **w-lint** (`test_castbound_liveness`) — do not duplicate. |
+| **P7 real title** | synthetic flash fixture soaks | **OPEN.** One real title end-to-end on **viewed pixels** required. Telemetry-only play (even healthy `pfps`/`drops`) does not close P7. w-plextv-1 E2E owns the suite; acceptance below. |
+| **Soak continuity** | flat drops across N minutes | Must assert **one** `session_epoch` (`supply_bucket` / media lines). Daemon `rc=0` respawns reset per-stream counters. Tool: `tools/soak_continuity_assert.py --require-single-session-epoch`. |
+| **V2_MD5 blind-RED** | gate stuck on `…81848set +e` | Capture fixed (single-heredoc); never trim comparison. Re-run from worktree HEAD. |
+
 ## Mutation-proven gates (host: `bash tests/unit/test_promote_runbook_mutations.sh`)
 
 | Check | Failure it catches | Mutation | rc before (broken) | rc after (fixed) |
@@ -310,10 +321,30 @@ Audit: `scripts/promotion_gate_check.sh dump-remote-live | cat -A`
 | **P1** | **Real power-cycle / cold boot** of daily driver | **OPEN** — hook execution rehearsed; kernel boot path **not** exercised. Parent will not reboot without asking user. |
 | P2 | Live `verify-live` on worktree HEAD (not `961dc724`) against device | Parent-owned; glue fix is host-proven |
 | P3 | Running-bitstream ID beyond PLXS magic+seq | Partial — PLXS+seq required; CORENAME useless; file md5 = disk only |
-| P4 | HDMI A/V offset bimodality (~117 ms SESSION-LATCHED device defect) | **OPEN / out of promote scope** — not closable by pair md5/PLXS/pixels gates; see below |
-| P5 | Daemon pin file `5996385a` in `artifacts/daemon-pins/` on host | Optional; full md5 constant is in policy |
+| **P4** | **Single-session soak** (`session_epoch` constant; no SUPERVISE `rc=0` respawn in window) | **OPEN** until parent soak log passes `soak_continuity_assert --require-single-session-epoch` |
+| **P5** | Frame ledger reconciles (`frames=/presents=/drops=/publish_misses=/unaccounted=` same line) | Partial — fields exist; claim needs single-session window |
+| **P6** | **A/V lipsync on glass** | **UNSCORED** — `av_drift_ms`/`av-lock` **CIRCULAR** (controller deadband vs `leadMs`); grabber video-only. Never promote PASS. w-avsync owns replacement. |
+| **P7** | **One real title E2E on viewed pixels** | **OPEN** — largest gap. Fixture flash ≠ real content. See acceptance below. w-plextv-1 suite. |
+| **P8** | **castBound_ liveness** | **BLOCKER OPEN** — no TTL; `/resources` latches. w-lint gate; not runbook-owned fix. |
+| P9 | HDMI A/V offset bimodality (~117 ms SESSION-LATCHED) historical note | Superseded by P6 UNSCORED — do not re-open as promote PASS |
 
 **P1 is NOT closed. BLOCKED ON USER APPROVAL** — parent will not power-cycle the daily driver without explicit user consent. Hook rehearsal ≠ kernel cold boot. Runbook step + post-conditions are ready; execution waits on the user.
+
+### P7 acceptance (must match w-plextv-1 output)
+
+All required; any missing → P7 not closed:
+
+1. Library title is **real content** (e.g. Big Buck Bunny rk=29..32 class), not the synthetic mostly-black flash fixture.
+2. Parent **views pixels** (HDMI capture PNG/clip scored by eye or instrument) — telemetry alone (`pfps`/`drops`) is insufficient.
+3. Same window: `delivery_verified=1`, `measured_delivery=` matches tier, ledger closed or explained, **one** `session_epoch`.
+4. Soft-skip / `rc=77` / UNSCORED motion ≠ PASS.
+
+### P6 A/V — what is forbidden in this package
+
+- Any gate, table row, or soak claim that treats `av_drift_ms`, `clock=av-lock`, or
+  "drift bounded ±N ms" as PASS.
+- Falsifier that only changes `AV_PRESENT_LEAD_MS` and watches the band move proves
+  setpoint tracking, **not** lipsync (rd-review).
 
 
 ## Cold-boot survival (P1) — blocked on user approval
@@ -767,19 +798,36 @@ If promotion is correct:
 
 ### RETRACTED — never promotion/soak PASS criteria
 
-Parent fleet broadcast 2026-07-31 (measured on five same-config 480p runs):
+**2026-08-01 rd-review (stronger than prior BLIND note):**
 
-- **`clock=av-lock` and `av_drift_ms` are BLIND to real lip-sync.** Daemon series
-  stayed within ~0.8 ms while HDMI offset clusters were ~120 ms apart. `av_drift_ms`
-  is the servo reading its own setpoint (`host/libmisterplex/av_clock.hpp`).
-- **Do not quote av-lock / av_drift_ms as promote, soak, or pair PASS.**
-- Lip-sync (if claimed) is judged only by external pixel+audio:
-  `tools/avsync_measure_hdmi.py` — parent-owned; not a soft gate in this package.
+- `av_drift_ms` is stored **inside** the A/V control loop that holds until
+  `avDecide` stops returning `Hold`, evaluated against setpoint `leadMs`
+  (`media_player.cpp` ~4122-4130). **Published drift is the controller's own
+  deadband**, not glass A/V accuracy — circular if used as a promote criterion.
+- Band is **always negative** (e.g. -21..-40 ms): signature of a setpoint
+  (`AV_PRESENT_LEAD_MS` default 40), not a symmetric measurement error.
+- Prior 2026-07-31 note still holds: daemon series stayed tight while HDMI
+  offset clusters were ~120 ms apart — BLIND to real lip-sync.
+- **A/V sync is UNSCORED until w-avsync delivers a grabber-side measure.**
+  UNSCORED / `rc=77` is **never** a promote PASS.
+- Lip-sync (if ever claimed) requires external pixel+audio instrument
+  (`tools/avsync_measure_hdmi.py` — parent-owned); current HDMI-USB grabber is
+  **video-only** — may remain permanently UNSCORED.
 - Steady-state drop sawtooth also falsified (startup drops only). Drop totals are
   not a rate-mismatch proof; do not build promote gates on drop slope.
 
 Promotion package success = pair identity + boot coherence + **pixels/motion** +
-PLXS execution proof. It does **not** claim calibrated lip-sync.
+PLXS execution proof + single-session soak when counters are quoted.
+It does **not** claim calibrated lip-sync.
+
+### Throughput @ 480p24 (product health — not a 720p roadmap claim)
+
+Parent on-device (2026-08-01): product ffmpeg on the exact 480p24 tier reported
+`fps=230, speed=9.57x` (≈9.57× real-time headroom). Raw video pipe confirmed
+2 MiB / 4.67 frames with `set_ok=1` (`F_GETPIPE_SZ` read-back). **ARM is not at
+capacity at this tier** — no throughput risk for daily-driver 480p24 promotion.
+**Do not extrapolate** to 720p/1080p: `ddrFrameStoreAcceptsResolution(1280,720)`
+is false on the current FPGA contract.
 
 ## Related scripts
 

@@ -380,7 +380,13 @@ check_no_regression() {
     [[ -z "$d" ]] && continue
     (( d > max_drops )) && max_drops=$d
   done < <(grep -oE 'drops=[0-9]+' "$logf" | sed 's/.*=//')
-  if (( max_abs <= ${MAX_ABS_AV_DRIFT_MS:-250} )); then pass "av_drift_ms max_abs=$max_abs"; else fail "av_drift_ms max_abs=$max_abs exceeds ${MAX_ABS_AV_DRIFT_MS:-250}"; fi
+  # 2026-08-01 rd-review: av_drift_ms is the A/V controller deadband (circular vs
+  # leadMs) — NEVER a promote/regression PASS. Record only; A/V remains UNSCORED.
+  if (( max_abs > 0 )); then
+    log "UNSCORED av_drift_ms max_abs=$max_abs (controller deadband, not glass lipsync — do not PASS/FAIL on this)"
+  else
+    log "UNSCORED av_drift_ms: no samples in log tail (also not a PASS)"
+  fi
   if (( max_drops <= ${MAX_DROPS_DELTA:-10} )); then pass "drops max=$max_drops"; else fail "drops max=$max_drops exceeds ${MAX_DROPS_DELTA:-10}"; fi
 
   local cpu

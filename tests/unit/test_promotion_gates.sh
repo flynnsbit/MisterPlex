@@ -772,10 +772,9 @@ echo "$out" | grep -q 'grabber_not_ready' && ok "cold-class" || bad "cold-class"
 
 
 echo "=== RETRACT: av-lock / av_drift_ms must not be promote PASS criteria ==="
-# Gate source must not require av-lock
-if grep -nE 'av-lock|av_drift_ms' "$GATES" | grep -viE 'RETRACT|BLIND|not |never|comment|#' ; then
-  # allow only retract commentary
-  if grep -nE 'av-lock|av_drift_ms' "$GATES" | grep -viE 'RETRACT|BLIND|never|not a|Do not'; then
+# Gate source must not require av-lock as success (CIRCULAR/UNSCORED commentary OK)
+if grep -nE 'av-lock|av_drift_ms' "$GATES" | grep -viE 'RETRACT|BLIND|CIRCULAR|UNSCORED|not |never|comment|#' ; then
+  if grep -nE 'av-lock|av_drift_ms' "$GATES" | grep -viE 'RETRACT|BLIND|CIRCULAR|UNSCORED|never|not a|Do not'; then
     bad "gate-no-avlock-criterion"
   else
     ok "gate-no-avlock-criterion"
@@ -784,8 +783,7 @@ else
   ok "gate-no-avlock-criterion"
 fi
 # Docs must not list clock=av-lock as success observation without RETRACT
-if grep -n 'clock=av-lock' "$ROOT/docs/ddr-daily-promotion.md" | grep -v RETRACT | grep -v BLIND | grep -v 'never' ; then
-  # if line is under RETRACTED section it's ok — check not in "If promotion is correct"
+if grep -n 'clock=av-lock' "$ROOT/docs/ddr-daily-promotion.md" | grep -v RETRACT | grep -v BLIND | grep -v CIRCULAR | grep -v 'never' ; then
   if grep -A20 'If promotion is correct' "$ROOT/docs/ddr-daily-promotion.md" | grep -q 'clock=av-lock'; then
     bad "docs-no-avlock-pass"
   else
@@ -797,8 +795,19 @@ fi
 grep -q 'avsync_measure_hdmi' "$ROOT/docs/ddr-daily-promotion.md" && ok "docs-external-avsync-pointer" || bad "docs-external-avsync-pointer"
 grep -q 'SESSION-LATCHED' "$ROOT/docs/ddr-daily-promotion.md" && ok "docs-session-latched" || bad "docs-session-latched"
 grep -q '117' "$ROOT/docs/ddr-daily-promotion.md" && ok "docs-117ms" || bad "docs-117ms"
+# 2026-08-01 evening card
+grep -q 'CIRCULAR' "$ROOT/docs/ddr-daily-promotion.md" && ok "docs-avdrift-circular" || bad "docs-avdrift-circular"
+grep -qE 'UNSCORED' "$ROOT/docs/ddr-daily-promotion.md" && ok "docs-av-unscored" || bad "docs-av-unscored"
+grep -q 'castBound' "$ROOT/docs/ddr-daily-promotion.md" && ok "docs-castbound-blocker" || bad "docs-castbound-blocker"
+grep -q 'P7' "$ROOT/docs/ddr-daily-promotion.md" && ok "docs-p7-open" || bad "docs-p7-open"
+grep -q '9.57' "$ROOT/docs/ddr-daily-promotion.md" && ok "docs-throughput-480p" || bad "docs-throughput-480p"
+if grep -nE 'pass ["'\'']av_drift' "$ROOT/scripts/validate_playback_controls_hw.sh" 2>/dev/null; then
+  bad "validate-no-avdrift-pass"
+else
+  ok "validate-no-avdrift-pass"
+fi
 # Promote must not require a numeric HDMI offset PASS
-if grep -nE 'median offset|av_offset|REQUIRE.*AVSYNC|AVSYNC_PASS' "$GATES" | grep -viE 'RETRACT|not |never|BLIND|SESSION'; then
+if grep -nE 'median offset|av_offset|REQUIRE.*AVSYNC|AVSYNC_PASS' "$GATES" | grep -viE 'RETRACT|not |never|BLIND|SESSION|CIRCULAR|UNSCORED'; then
   bad "gate-no-avsync-offset-pass"
 else
   ok "gate-no-avsync-offset-pass"
