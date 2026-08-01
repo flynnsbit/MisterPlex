@@ -4,6 +4,33 @@ Parent-owned device work only. Agents produce artifacts and commands; they must
 **not** SSH to `192.168.1.183`, deploy, cast, or capture HDMI.
 
 
+## Deploy rc contract (parent 2026-08-01 false-negative)
+
+**Defect hit on daily driver:** post-conditions all PASSED but script returned
+`true rc=1` because it sourced missing `boot_hook_policy.sh` **after** success messaging.
+
+**Contract now:**
+1. Deps required **before any device I/O** (`daemon_backup_policy.sh`,
+   `deploy_misterplexd_lib.sh`; unless `DEPLOY_SKIP_BOOT_HOOK=1` also
+   `boot_hook_policy.sh` + `misterplexd_supervise.sh`) — missing → `true rc=2`.
+2. Remote live success prints **`REMOTE_LIVE_OK`** (not final).
+3. **`DEPLOY_OK` only at absolute end** after live post-conditions + boot-hook + geometry.
+   If you see `DEPLOY_OK`, process rc **must** be 0.
+4. Both directions: `bash tests/unit/test_deploy_misterplexd.sh`
+   (`dir-green-deploy-ok-rc0`, `dir-red-no-deploy-ok`, `miss-dep-rc2`).
+
+## RBF rollback before next fit
+
+Product: `/media/fat/_Utility/Plex.rbf` (`c5382bee…`). Prove rollback on host first:
+
+```bash
+PAIR_ID=spi-v2-hybrid bash scripts/rollback_v2.sh plan; echo "true rc=$?"
+# Parent execute when needed — ONE menu bounce, conf PAIR_CONF_RESTORE_FILE byte-exact:
+PAIR_ID=spi-v2-hybrid ROLLBACK_DAEMON=artifacts/daemon-pins/misterplexd.50f4eb92   PAIR_CONF_RESTORE_FILE=./misterplex.conf.userbak PAIR_IDLE_PNG=/path/idle.png   scripts/rollback_v2.sh restore
+```
+
+`restore_misterplexd_prev.sh` without `PAIR_ID` → `true rc=10`.
+
 ## Deploy / restore fail-loud (rd-review 2026-08-01)
 
 Main-tree defects (do **not** use `scripts/` from pre-fix main):

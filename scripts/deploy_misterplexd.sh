@@ -14,6 +14,10 @@
 #        disk md5 == host md5 AND live /proc/PID/exe md5 == host md5
 #        AND n_daemon == 1. Disk-only match is NOT success (ETXTBSY / no restart).
 #   4) Every gate prints "true rc=N" captured directly (never through a pipe).
+#   5) DEPLOY_OK is emitted ONLY as the final line of a successful run. Final rc
+#      is a pure function of post-conditions. Never DEPLOY_OK then fail (parent
+#      2026-08-01 false rc=1 after live verify — missing late source).
+#   6) All policy deps are resolved BEFORE any device I/O (missing file = rc=2).
 #
 # Host unit tests inject DEPLOY_SSHM / DEPLOY_SCPM — never touches the real box.
 set -euo pipefail
@@ -24,10 +28,51 @@ set -euo pipefail
 #   PID capture + stop BEFORE any rename; verify live exe md5 AFTER
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+
+# --- dependency gate (BEFORE any device touch) --------------------------------
+# Parent: missing daemon_backup_policy.sh died mid-flight; missing
+# boot_hook_policy.sh sourced AFTER remote DEPLOY_OK → false rc=1 on success.
+require_deploy_deps() {
+  local f missing=0
+  # Always required (sourced or invoked for bak naming / postconditions).
+  for f in \
+    "$ROOT/scripts/deploy_misterplexd_lib.sh" \
+    "$ROOT/scripts/daemon_backup_policy.sh"
+  do
+    if [[ ! -f "$f" ]]; then
+      echo "FAIL deploy_misterplexd: missing dependency $f (exit before device touch)" >&2
+      missing=1
+    fi
+  done
+  # Boot-hook path (default ON). Require files now so we never fail after live OK.
+  if [[ "${DEPLOY_SKIP_BOOT_HOOK:-0}" != "1" ]]; then
+    for f in \
+      "$ROOT/scripts/boot_hook_policy.sh" \
+      "$ROOT/scripts/misterplexd_supervise.sh"
+    do
+      if [[ ! -f "$f" ]]; then
+        echo "FAIL deploy_misterplexd: missing dependency $f (needed unless DEPLOY_SKIP_BOOT_HOOK=1)" >&2
+        missing=1
+      fi
+    done
+  fi
+  if [[ "$missing" -ne 0 ]]; then
+    echo "true rc=2"
+    exit 2
+  fi
+}
+require_deploy_deps
+
 # shellcheck source=daemon_backup_policy.sh
 source "$ROOT/scripts/daemon_backup_policy.sh"
 # shellcheck source=/dev/null
 source "$ROOT/scripts/deploy_misterplexd_lib.sh"
+# Boot policy: source early (not after live verify). Install body is inlined below;
+# sourcing proves the file is valid bash before we touch the device.
+if [[ "${DEPLOY_SKIP_BOOT_HOOK:-0}" != "1" ]]; then
+  # shellcheck source=boot_hook_policy.sh
+  source "$ROOT/scripts/boot_hook_policy.sh"
+fi
 
 HOST="${MISTER_HOST:-192.168.1.183}"
 USER="${MISTER_USER:-root}"
@@ -643,9 +688,10 @@ if [[ "$code" != "200" && "$code" != "204" ]]; then
   echo "FAIL /resources HTTP $code (daemon up but not healthy; port ${PORT:-3005})"
   exit 7
 fi
-# Final on-device postcondition bundle (must never exit 0 if any half fails).
+# Live half OK on-device — NOT final success (boot hook / geometry may remain).
+# Parent 2026-08-01: never emit DEPLOY_OK here (false rc=1 after late source).
 echo "POSTCOND n=$n live_md5=$live_md5 host_md5=$HOST_MD5 http=$code conf_pre=${CONF_MD5_PRE:-} conf_post=$conf_md5_post"
-echo "DEPLOY_OK root=$TARGET_ROOT disk_md5=$disk_md5 live_md5=$live_md5 n_daemon=1 http=$code conf_md5=$conf_md5_post"
+echo "REMOTE_LIVE_OK root=$TARGET_ROOT disk_md5=$disk_md5 live_md5=$live_md5 n_daemon=1 http=$code conf_md5=$conf_md5_post"
 REMOTE
 start_rc=$?
 set +o pipefail
@@ -673,21 +719,15 @@ set -e
 report_rc "host_postconditions" "$post_rc" || die "host postconditions failed (rc=$post_rc)"
 rm -f "$VERIFY_LOG"
 
-echo "Deployed misterplexd → $HOST"
-echo "deploy: summary host_md5=$HOST_MD5 target_root=$TARGET_ROOT remote_bin=$REMOTE_BIN"
-echo "deploy: summary LIVE /proc/PID/exe md5 verified equal to host (not disk alone)"
-echo "deploy: summary conf_md5=$CONF_MD5_PRE (user-owned; byte-unchanged)"
-report_rc "deploy_overall" 0
+echo "deploy: live half verified host_md5=$HOST_MD5 root=$TARGET_ROOT conf_md5=$CONF_MD5_PRE (user-owned unchanged)"
+echo "deploy: LIVE /proc/PID/exe md5 == host (not disk alone); n_daemon=1; HTTP OK"
+# Do NOT print DEPLOY_OK or deploy_overall yet — boot hook / geometry still pending.
 
 # --- boot path: durable supervisor + user-startup from S99user (P0 decoy fix) ---
-# Old deploy wrote v1 bare misterplexd and grepped only 'misterplex/bin/misterplexd',
-# which cannot match misterplex_v2. Also wrote _user-startup.sh DECOY — MiSTer runs
-# USER_SCRIPT from /etc/init.d/S99user (user-startup.sh, no underscore).
+# Policy already sourced at top (require_deploy_deps). Never source after live OK.
 if [[ "${DEPLOY_SKIP_BOOT_HOOK:-0}" != "1" ]]; then
-  # shellcheck source=boot_hook_policy.sh
-  source "$ROOT/scripts/boot_hook_policy.sh"
   SUP_SRC="$ROOT/scripts/misterplexd_supervise.sh"
-  [[ -f "$SUP_SRC" ]] || die "missing $SUP_SRC"
+  [[ -f "$SUP_SRC" ]] || die "missing $SUP_SRC (should have been caught by require_deploy_deps)"
   echo "deploy: install supervisor + boot hook for root=$TARGET_ROOT (path from S99user)"
   set +e
   scp_to "$SUP_SRC" "/tmp/misterplexd_supervise.deploy.$$"
@@ -762,3 +802,12 @@ if [[ "$DEPLOY_SKIP_GEOMETRY_GATE" != "1" && -z "${DEPLOY_SSHM:-}" ]]; then
       ;;
   esac
 fi
+
+# --- terminal success ONLY here (parent: DEPLOY_OK ⇒ rc must be 0) ------------
+echo "Deployed misterplexd → $HOST"
+echo "deploy: summary host_md5=$HOST_MD5 target_root=$TARGET_ROOT remote_bin=$REMOTE_BIN"
+echo "deploy: summary LIVE /proc/PID/exe md5 verified equal to host (not disk alone)"
+echo "deploy: summary conf_md5=$CONF_MD5_PRE (user-owned; byte-unchanged)"
+echo "DEPLOY_OK root=$TARGET_ROOT disk_md5=$HOST_MD5 live_md5=$HOST_MD5 n_daemon=1 conf_md5=$CONF_MD5_PRE"
+report_rc "deploy_overall" 0
+exit 0

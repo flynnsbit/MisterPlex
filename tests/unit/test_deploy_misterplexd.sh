@@ -156,7 +156,7 @@ if ! echo "$blob" | grep -q 'DEPLOY_RESTART_VERIFY\|DEPLOY_LIVE_PROBE\|INSTALL_O
 fi
 
 # Restart/verify MUST be first among body matches (also contains readlink).
-if echo "$input" | grep -q 'DEPLOY_RESTART_VERIFY\|POST_N_DAEMON=\|DEPLOY_OK root='; then
+if echo "$input" | grep -q 'DEPLOY_RESTART_VERIFY\|POST_N_DAEMON=\|REMOTE_LIVE_OK\|DEPLOY_OK root='; then
   for tok in $args; do
     case "$tok" in
       TARGET_ROOT=*) echo "${tok#TARGET_ROOT=}" >"$STATE_DIR/chosen_root" ;;
@@ -213,7 +213,7 @@ if echo "$input" | grep -q 'DEPLOY_RESTART_VERIFY\|POST_N_DAEMON=\|DEPLOY_OK roo
   if [[ "$livekey" == "v2" && "$chosen" == "/media/fat/misterplex" ]]; then
     echo "FAIL install to v1 while live is v2"; exit 8
   fi
-  echo "DEPLOY_OK root=$chosen disk_md5=$disk live_md5=$md n_daemon=1 http=$http conf_md5=$conf_post"
+  echo "REMOTE_LIVE_OK root=$chosen disk_md5=$disk live_md5=$md n_daemon=1 http=$http conf_md5=$conf_post"
   exit 0
 fi
 
@@ -303,6 +303,7 @@ run_deploy() {
   DEPLOY_SCPM="$WORK/fake_scpm.sh" \
   DEPLOY_REBUILD=0 \
   DEPLOY_SKIP_GEOMETRY_GATE=1 \
+  DEPLOY_SKIP_BOOT_HOOK="${DEPLOY_SKIP_BOOT_HOOK:-1}" \
   "$@" >"$WORK/${label}.out" 2>&1
   rc=$?
   set -e
@@ -543,6 +544,69 @@ grep -q 'not on MiSTer' "$ROOT/scripts/plexctl.sh" && ok "plexctl-source-has-hos
   || bad "plexctl-source-has-host-guard"
 grep -q 'checked on-device' "$ROOT/scripts/plexctl.sh" && ok "plexctl-source-on-device-check" \
   || bad "plexctl-source-on-device-check"
+
+
+echo "=== STRUCTURAL: single terminal DEPLOY_OK; no late boot_hook source ==="
+n_ok=$(grep -cE '^\s*echo "DEPLOY_OK' "$SCRIPT" || true)
+[[ "$n_ok" -eq 1 ]] && ok "struct-one-deploy-ok-echo" || bad "struct-one-deploy-ok-echo n=$n_ok"
+grep -q 'REMOTE_LIVE_OK' "$SCRIPT" && ok "struct-remote-live-ok" || bad "struct-remote-live-ok"
+grep -q 'require_deploy_deps' "$SCRIPT" && ok "struct-require-deps" || bad "struct-require-deps"
+set +e
+python3 - "$SCRIPT" <<'PY'
+import sys, re
+t=open(sys.argv[1]).read()
+idx=t.find('echo "REMOTE_LIVE_OK')
+if idx<0:
+    sys.exit(1)
+rest=t[idx:]
+if re.search(r'^\s*source .*boot_hook_policy', rest, re.M):
+    sys.exit(1)
+sys.exit(0)
+PY
+prc=$?
+set -e
+[[ "$prc" -eq 0 ]] && ok "struct-no-late-boot-source" || bad "struct-no-late-boot-source"
+
+echo "=== RED: missing daemon_backup_policy fails BEFORE device (rc=2) ==="
+MISS="$WORK/miss-deps"
+rm -rf "$MISS"
+mkdir -p "$MISS/scripts"
+cp -a "$SCRIPT" "$MISS/scripts/deploy_misterplexd.sh"
+cp -a "$ROOT/scripts/deploy_misterplexd_lib.sh" "$MISS/scripts/"
+printf 'x\n' >"$MISS/binfake"
+chmod +x "$MISS/scripts/deploy_misterplexd.sh" "$MISS/binfake"
+set +e
+DEPLOY_FAKE_STATE="$STATE" DEPLOY_SSHM="$WORK/fake_sshm.sh" DEPLOY_SCPM="$WORK/fake_scpm.sh" \
+  DEPLOY_SKIP_GEOMETRY_GATE=1 DEPLOY_SKIP_BOOT_HOOK=1 DEPLOY_REBUILD=0 \
+  "$MISS/scripts/deploy_misterplexd.sh" "$MISS/binfake" >"$WORK/miss-dep.out" 2>&1
+mrc=$?
+set -e
+echo "  [miss-dep] true rc=$mrc"
+[[ "$mrc" -eq 2 ]] && ok "miss-dep-rc2" || bad "miss-dep-rc2 got=$mrc"
+grep -q 'daemon_backup_policy' "$WORK/miss-dep.out" && ok "miss-dep-msg" || bad "miss-dep-msg"
+if grep -q 'missing dependency' "$WORK/miss-dep.out"; then
+  ok "miss-dep-before-device"
+else
+  bad "miss-dep-before-device"
+fi
+
+echo "=== BOTH DIRECTIONS: green has DEPLOY_OK+rc0; red postcond has no DEPLOY_OK ==="
+if grep -q 'DEPLOY_OK' "$WORK/green.out" && grep -q 'deploy_overall: true rc=0' "$WORK/green.out"; then
+  ok "dir-green-deploy-ok-rc0"
+else
+  bad "dir-green-deploy-ok-rc0"
+  tail -25 "$WORK/green.out" | sed 's/^/  /' || true
+fi
+if grep -q 'DEPLOY_OK' "$WORK/disk-only.out" 2>/dev/null; then
+  bad "dir-red-must-not-deploy-ok"
+else
+  ok "dir-red-no-deploy-ok"
+fi
+if grep -q 'DEPLOY_OK' "$WORK/http-bad.out" 2>/dev/null; then
+  bad "dir-http-no-deploy-ok"
+else
+  ok "dir-http-no-deploy-ok"
+fi
 
 echo "=== summary pass=$pass fail=$fail ==="
 [[ "$fail" -eq 0 ]] || exit 1
