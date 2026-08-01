@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# promotion_gate_check.sh — executable promotion / health gates (host-side).
+# promotion_gate_check.sh - executable promotion / health gates (host-side).
 #
 # Verifies observations already collected (or via SSH when PROMOTE_EXECUTE=1).
 # Never treats soft-skip (77) as PASS. Prints true rc=N on the last line of each
@@ -7,13 +7,13 @@
 #
 # Gates (all must pass for PROMOTE_GATES_OK):
 #   1) core disk md5 == EXPECT_CORE_MD5 (product slot Plex.rbf, never Plex_v2)
-#   2) V2 rollback core still at known pin (Plex_v2.rbf) — one-step restore
+#   2) V2 rollback core still at known pin (Plex_v2.rbf) - one-step restore
 #   3) live daemon md5 via readlink -f /proc/PID/exe (+ md5sum of that path)
 #      NEVER disk-only (ETXTBSY leaves stale live image)
 #   4) n_daemon == 1
 #   5) live --conf path from /proc/PID/cmdline (not a hardcoded misterplex.conf)
-#   6) HTTP GET :PORT/resources → 200
-#   7) optional motion hook (PROMOTE_MOTION_CMD) — counter-verified TREK24 etc.
+#   6) HTTP GET :PORT/resources -> 200
+#   7) optional motion hook (PROMOTE_MOTION_CMD) - counter-verified TREK24 etc.
 #      If unset: MOTION_SKIP rc=77 printed, NOT counted as gate pass.
 #
 # Usage:
@@ -26,7 +26,7 @@
 # Rule 0: quoted code / true rc= / measured artifacts only.
 #
 # RETRACTED as PASS criteria (parent 2026-07-31 measured):
-#   clock=av-lock, av_drift_ms — internal servo echo; BLIND to HDMI lip-sync.
+#   clock=av-lock, av_drift_ms - internal servo echo; BLIND to HDMI lip-sync.
 #   Do not add gates on those fields. Lip-sync = tools/avsync_measure_hdmi.py only
 #   (parent-owned external instrument). This gate package does not claim A/V offset.
 #   Parent 2026-07-31: ~117 ms HDMI offset bimodality is SESSION-LATCHED DEVICE defect;
@@ -157,7 +157,7 @@ policy_local() {
     fi
     echo "OK host-pair-compatibility"
   else
-    echo "NOTE PROMOTE_PAIR_CHECK=0 — pair matrix not applied (test/explicit only)"
+    echo "NOTE PROMOTE_PAIR_CHECK=0 - pair matrix not applied (test/explicit only)"
   fi
   echo "PROMOTE_POLICY_LOCAL_OK"
   echo "true rc=0"
@@ -184,7 +184,7 @@ gate_join_remote_parts() {
 
 # Parse KEY=value from probe blob; reject values that are not pure shape.
 # md5 fields: exactly 32 lowercase hex, or MISSING, or empty.
-# Never "trim to make pass" — malformed capture is FAIL (parent: almost-right md5).
+# Never "trim to make pass" - malformed capture is FAIL (parent: almost-right md5).
 gate_field() {
   local blob="$1" key="$2" line
   # CR-strip (Windows/SSH artifacts); take first matching line only.
@@ -199,25 +199,25 @@ gate_assert_md5_shape() {
     return 0
   fi
   # Pure 32 lowercase hex only. NEVER trim trailing garbage to pass
-  # (parent: tempting fix for V2_MD5=<32hex>set +e is to strip — forbidden).
+  # (parent: tempting fix for V2_MD5=<32hex>set +e is to strip - forbidden).
   if printf '%s' "$val" | grep -Eq '^[0-9a-f]{32}$'; then
     return 0
   fi
   case "$val" in
     *set*|*+*|*[[:space:]]*|*\;*|*'$'*)
-      echo "FAIL $name shape got='$val' (probe capture contaminated — not pure md5)"
+      echo "FAIL $name shape got='$val' (probe capture contaminated - not pure md5)"
       return 1
       ;;
   esac
-  # prefix8 / wrong length — still fail closed
+  # prefix8 / wrong length - still fail closed
   echo "FAIL $name shape got='$val' (want exactly 32 hex chars or MISSING; len=${#val})"
   return 1
 }
 
 # Remote probe: product core, v2 core, live daemon via /proc/exe (not cmdline).
-# STRUCTURAL FIX (parent V2_MD5=…81848set +e):
-#   1) ONE remote script in a single heredoc — never $(frag1)$(frag2).
-#   2) md5 lines use printf '%s\n' only — never echo "V2_MD5=$x" adjacent to set.
+# STRUCTURAL FIX (parent V2_MD5=...81848set +e):
+#   1) ONE remote script in a single heredoc - never $(frag1)$(frag2).
+#   2) md5 lines use printf '%s\n' only - never echo "V2_MD5=$x" adjacent to set.
 #   3) set +e is ONLY on its own line, BEFORE any md5 computation, never after.
 #   4) gate_join_remote_parts remains for unit tests of the glue class only.
 remote_live_blob() {
@@ -231,7 +231,7 @@ remote_live_blob() {
   remote=$(cat <<REMOTE
 PRODUCT=$(printf '%q' "$PRODUCT_CORE_PATH")
 V2=$(printf '%q' "$V2_CORE_PATH")
-# disable errexit for probe body (token alone on next line — never glue)
+# disable errexit for probe body (token alone on next line - never glue)
 set +e
 prod_md5=
 v2_md5=
@@ -245,7 +245,7 @@ if [ ! -f "\$V2" ]; then
 else
   v2_md5=\$(md5sum "\$V2" 2>/dev/null | awk '{print \$1}')
 fi
-# Emit KEY=value on isolated lines. printf format ends with \\n — the next
+# Emit KEY=value on isolated lines. printf format ends with \\n - the next
 # statement is always a new physical line in this heredoc (never adjacent set).
 printf 'PRODUCT_CORE=%s\n' "\$PRODUCT"
 printf 'PRODUCT_MD5=%s\n' "\$prod_md5"
@@ -347,9 +347,9 @@ verify_live() {
   conf=$(gate_field "$blob" LIVE_CONF)
   root=$(gate_field "$blob" LIVE_ROOT)
 
-  # Shape gates FIRST — contaminated capture must never reach md5 equality.
+  # Shape gates FIRST - contaminated capture must never reach md5 equality.
   # Track per-field shape so a glue-contaminated V2_MD5 does not also emit a
-  # misleading "got=…set +e want=<clean>" drift message (blind-and-RED class).
+  # misleading "got=...set +e want=<clean>" drift message (blind-and-RED class).
   shape_prod=0
   shape_v2=0
   shape_live=0
@@ -370,9 +370,9 @@ verify_live() {
     rc=3
   fi
 
-  # product core (skip equality when shape already failed — do not look like pin drift)
+  # product core (skip equality when shape already failed - do not look like pin drift)
   if [ "$shape_prod" -ne 0 ]; then
-    echo "SKIP product-core equality (shape failed — fix probe capture, do not relax compare)"
+    echo "SKIP product-core equality (shape failed - fix probe capture, do not relax compare)"
   elif [ -z "$prod" ]; then
     echo "NO-DATA product-core md5 empty"
     rc=4
@@ -399,12 +399,12 @@ verify_live() {
 
   # V2 rollback slot must remain intact
   if [ "$shape_v2" -ne 0 ]; then
-    echo "SKIP v2-rollback-core equality (shape failed — capture contaminated; comparison not relaxed)"
+    echo "SKIP v2-rollback-core equality (shape failed - capture contaminated; comparison not relaxed)"
   elif [ -z "$v2" ]; then
     echo "NO-DATA v2-rollback-core md5 empty"
     [ "$rc" -eq 0 ] && rc=4
   elif [ "$v2" = "MISSING" ]; then
-    echo "FAIL v2-rollback-core MISSING at $V2_CORE_PATH — refuse promote without rollback path"
+    echo "FAIL v2-rollback-core MISSING at $V2_CORE_PATH - refuse promote without rollback path"
     rc=2
   elif [ "$v2" != "$EXPECT_V2_CORE_MD5" ]; then
     echo "FAIL v2-rollback-core got=$v2 want=$EXPECT_V2_CORE_MD5 (do not promote if rollback pin drifted)"
@@ -426,7 +426,7 @@ verify_live() {
   fi
 
   if [ "$shape_live" -ne 0 ]; then
-    echo "SKIP live-exe-md5 equality (shape failed — fix probe capture)"
+    echo "SKIP live-exe-md5 equality (shape failed - fix probe capture)"
   elif [ -z "$live" ]; then
     echo "NO-DATA live /proc/PID/exe md5 (disk-only is NOT success)"
     [ "$rc" -eq 0 ] && rc=4
@@ -438,7 +438,7 @@ verify_live() {
     echo "OK live-exe-md5 $live (accepted DDR pin; primary=$EXPECT_DAEMON_MD5)"
   else
     echo "FAIL live-exe-md5 got=$live want=primary:$EXPECT_DAEMON_MD5 or accepted DDR pin set"
-    echo "     hint: verify via readlink -f /proc/PID/exe — never on-disk file alone (ETXTBSY)"
+    echo "     hint: verify via readlink -f /proc/PID/exe - never on-disk file alone (ETXTBSY)"
     rc=3
   fi
 
@@ -449,7 +449,7 @@ verify_live() {
     echo "OK live-conf $conf (from cmdline)"
     # conf should live under live root when root known
     if [ -n "$root" ] && [ "$conf" != "$root/misterplex.conf" ]; then
-      echo "NOTE conf $conf vs root $root/misterplex.conf — operator must confirm"
+      echo "NOTE conf $conf vs root $root/misterplex.conf - operator must confirm"
     fi
     # Conf keys are part of the DDR pair (FORCE_SCALE + SWS flags).
     if [ -n "${PROMOTE_CONF_BLOB:-}" ] || [ -n "${PROMOTE_CONF_PATH:-}" ]; then
@@ -521,14 +521,14 @@ verify_live() {
     set -e
     printf '%s\n' "$out"
     if [ "$prc" -ne 0 ]; then
-      echo "FAIL live pair-compatibility (mixed pair → solid green screen class)"
+      echo "FAIL live pair-compatibility (mixed pair -> solid green screen class)"
       rc=3
     else
       echo "OK live-pair-compatibility"
     fi
   fi
 
-  # product-core-disk md5 proves the ON-DISK RBF file only — not that the FPGA is
+  # product-core-disk md5 proves the ON-DISK RBF file only - not that the FPGA is
 # executing it (CORENAME=MENU still possible). Executing proof = PLXS magic+seq.
   # Running bitstream proof: PLXS mailbox magic (only ddr_frame_store publishes).
   # Parent: RBF md5 + daemon md5 pass while CORENAME=MENU. Disk ≠ executing core.
@@ -640,7 +640,7 @@ REMOTE
   fi
 
   # Boot hook must match live pair root (parent cold-boot defect 2026-07-31).
-  # P0 2026-07-31: path MUST come from /etc/init.d/S99user USER_SCRIPT= — never
+  # P0 2026-07-31: path MUST come from /etc/init.d/S99user USER_SCRIPT= - never
   # hardcode _user-startup.sh (decoy). Gate green-on-decoy nearly stranded daily driver.
   if [ "${PROMOTE_SKIP_BOOT_HOOK:-0}" != "1" ]; then
     hook_body=""
@@ -681,9 +681,9 @@ REMOTE
       echo "NOTE boot-hook path from PROMOTE_HOOK_PATH=$resolved_hook_path (init not injected)"
     elif [ -n "${PROMOTE_GATE_BLOB:-}" ] && [ -z "${PROMOTE_HOOK_BLOB:-}" ] && [ -z "${PROMOTE_HOOK_BODY:-}" ] \
          && [ "${PROMOTE_REQUIRE_BOOT_HOOK:-0}" != "1" ]; then
-      echo "NOTE boot-hook not in gate blob — set PROMOTE_S99_BLOB + PROMOTE_HOOK_BLOB"
+      echo "NOTE boot-hook not in gate blob - set PROMOTE_S99_BLOB + PROMOTE_HOOK_BLOB"
     elif [ "${PROMOTE_REQUIRE_BOOT_HOOK:-1}" = "1" ] && [ -z "${PROMOTE_GATE_BLOB:-}" ]; then
-      echo "FAIL boot-hook S99user body unavailable — cannot derive USER_SCRIPT"
+      echo "FAIL boot-hook S99user body unavailable - cannot derive USER_SCRIPT"
       rc=3
     fi
 
@@ -771,7 +771,7 @@ REMOTE
   fi
 
   # Visual ALWAYS RUNS (aggregate). Parent 2026-07-31:
-  # 1) auto-idle elif hid motion — motion unreachable when grabber present (backwards).
+  # 1) auto-idle elif hid motion - motion unreachable when grabber present (backwards).
   # 2) idle luma envelope passed MiSTer MENU while CORENAME=MENU / Plex not loaded.
   # Require positive chevron idle AND motion when grabber present (or both injected).
   vrc=8
@@ -890,7 +890,7 @@ REMOTE
       echo "NOTE visual OK but earlier gate already failed rc=$prior_rc (aggregate keeps earlier rc)"
     fi
   else
-    echo "FAIL visual/motion gate rc=$vrc (hard — cannot claim pair success)"
+    echo "FAIL visual/motion gate rc=$vrc (hard - cannot claim pair success)"
     if [ "$prior_rc" -ne 0 ]; then
       echo "NOTE visual also failed; keeping earlier rc=$prior_rc (not overwriting with visual-only 8)"
       # keep prior_rc (telemetry/boot more specific); visual failure still reported
