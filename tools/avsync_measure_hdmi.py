@@ -76,41 +76,43 @@ VISUAL MARKER vs 529×240 scanout
 
 RETURN CODES
 ------------
-  0  = measured AND within tolerance (offset + slope), scoring inputs OK
-  2  = measured AND out of tolerance (real FAIL — offset or drift)
-  77 = UNSCORED / could-not-measure / REFUSE_DEFAULT_ASSUMED (capture fail,
-       silence, static, too few pairs, warm-up-only, or PASS/FAIL would rest
-       on DEFAULT_ASSUMED without --allow-default-score).
-       Never collapsed into 0 or 2. A measured FAIL never decays to 77.
+  0  = attributable metrics OK (slope/wander; absolute only if calibrated)
+  2  = OFFSET_FAIL — absolute offset out of tol **with known-zero calibration**
+  3  = INSTRUMENT_BROKEN
+  4  = DRIFT_FAIL (monotonic slope; cal-free, attributable)
+  5  = WANDER_FAIL (excess residual after detrend; cal-free, attributable)
+  6  = FIXTURE_FAIL
+  77 = UNSCORED / ABS_OFFSET_UNSCOREABLE / REFUSE_DEFAULT_ASSUMED / no-data
+
+  CRITICAL: when calibration=NONE, an absolute-median breach is
+  VERDICT=ABS_OFFSET_UNSCOREABLE rc=77 — NOT OFFSET_FAIL rc=2.
+  Absolute is not device-attributable without known-zero cal; failing it as a
+  device defect is a false finding. It is also never a PASS.
+  Slope / A/B delta / wander remain scoreable at 0/4/5 without calibration.
 
 Every printed value is tagged measured | caller_supplied | DEFAULT_ASSUMED.
 
 Usage (parent on capture host, while MiSTer plays the blip fixture)
 -------------------------------------------------------------------
   # Live HDMI measure (default 20 s):
-  tools/avsync_measure_hdmi.py --duration 20 --out /tmp/avsync_run
+  tools/avsync_measure_hdmi.py --duration 20 --out DIR --tol-ms 42
 
-  # With prior calibration file:
-  tools/avsync_measure_hdmi.py --duration 20 --calibration /tmp/avsync_cal.json \\
-      --out /tmp/avsync_run
+  # Offline capture file:
+  tools/avsync_measure_hdmi.py --input path/to/capture.mkv --out DIR --tol-ms 42
 
-  # Calibrate instrument — measures WHATEVER is on the grabber inputs right now.
-  # Absolute device lipsync needs a known-aligned flash+beep into the MS2109
-  # (re-cable workstation HDMI, or a second path). MiSTer-as-daily-driver means
-  # absolute offset stays raw_uncalibrated; slope/deltas cancel fixed latency.
-  tools/avsync_measure_hdmi.py --calibrate --duration 15 \\
-      --out /tmp/avsync_cal --calibration-out /tmp/avsync_cal.json
+  # A/B delta significance (B cancels; no cal needed):
+  tools/avsync_measure_hdmi.py --compare-json-a a.json --compare-json-b b.json
 
-  # Offline / synthetic (no device):
-  tools/avsync_measure_hdmi.py --input path/to/capture.mkv --out /tmp/ana
+  # Known-zero calibration — see CALIBRATION section; requires --known-zero-kind
 
-ABSOLUTE vs RELATIVE (hole 2)
------------------------------
-  - slope_ms_per_s and before/after Δmedian on the same rig: fixed grabber
-    latency cancels — reportable as measured without re-cabling.
-  - absolute median_offset_ms without --calibration: always tag=raw_uncalibrated.
-    No calibration-free absolute device claim exists while MiSTer owns the only
-    HDMI into the grabber.
+ABSOLUTE vs RELATIVE
+--------------------
+  - slope_ms_per_s and same-rig A/B Δmedian: B cancels — measured without cal.
+  - absolute median without known-zero cal: tag=raw_uncalibrated only.
+  - TRUE known-zero into the MS2109 is NOT achievable with only MiSTer + this
+    workstation + grabber (MiSTer is the DUT; host player A/V is not a zero).
+    Requires an external HDMI A/V test generator (or equivalent) with certified
+    simultaneous flash+beep at the connector. See --known-zero-kind docs.
 """
 from __future__ import annotations
 
@@ -186,16 +188,29 @@ CAL_FORMAT = "misterplex.avsync_hdmi_calibration.v1"
 SCORE_DEFAULT_KEYS = ("tol_ms",)
 
 RC_PASS = 0
-RC_OFFSET_FAIL = 2       # measured lipsync offset out of tol (path/device)
+RC_OFFSET_FAIL = 2       # absolute lipsync out of tol WITH known-zero calibration
 RC_FAIL = RC_OFFSET_FAIL  # alias — unit tests / callers may still say FAIL
 RC_INSTRUMENT_BROKEN = 3  # capture/tool broken (never soft-skip)
-RC_DRIFT_FAIL = 4         # monotonic clock-rate mismatch (slope)
-RC_WANDER_FAIL = 5        # high residual wander after detrend (scheduling)
+RC_DRIFT_FAIL = 4         # monotonic clock-rate mismatch (slope) — cal-free
+RC_WANDER_FAIL = 5        # high residual wander after detrend — cal-free
 RC_FIXTURE_FAIL = 6       # self-check audio/video ID failed when required
-RC_UNSCORED = 77          # could-not-measure / margin inadequate / refuse default
+RC_UNSCORED = 77          # could-not-measure / ABS_OFFSET_UNSCOREABLE / refuse default
 # Distinct verdict *strings* always accompany rc — never collapse instrument vs
 # device into the same (verdict, rc) pair (glass_template_skip defect).
 # PROCESS DEFECT #6: rc=77 is NEVER a pass and never masks breakage (use 3).
+# ABS_OFFSET_UNSCOREABLE shares rc=77 with UNSCORED but NEVER prints OFFSET_FAIL
+# and NEVER prints PASS — absolute without cal is not a device defect gate.
+
+# Wander: capture frame quant alone contributes T/sqrt(12) RMS (uniform bin).
+# Default excess budget on top of that floor (quadrature); not a magic 12.0.
+DEFAULT_WANDER_EXCESS_TOL_MS = 8.0
+
+# Known-zero kinds for --calibrate (honest labels — do not invent zeros)
+KNOWN_ZERO_KINDS = (
+    "external_hdmi_generator",  # trusted absolute cal
+    "file_pts_synthetic",       # file --input with designed PTS zero only
+    "host_loopback_UNTRUSTED",  # host player→grabber; NOT a true zero
+)
 
 
 def _tag(value: Any, src: str) -> str:
@@ -609,7 +624,18 @@ def classify_no_flash_failure(
     min_c = float(flash_meta.get("min_contrast_required") or FIXTURE_MIN_CONTRAST)
     span = float(flash_meta.get("analysis_span_s") or 0.0)
     expected = int(flash_meta.get("expected_flashes_in_span") or 0)
-    need_span = float(min_pairs) * FIXTURE_FLASH_PERIOD_S
+    period = float(
+        flash_meta.get("fixture_flash_period_s")
+        or flash_meta.get("marker_period_s")
+        or FIXTURE_FLASH_PERIOD_S
+    )
+    need_span = float(min_pairs) * period
+    out["fixture_flash_period_s"] = period
+    out["fixture_flash_period_s_src"] = str(
+        flash_meta.get("fixture_flash_period_s_src")
+        or flash_meta.get("marker_period_s_src")
+        or "DEFAULT_ASSUMED"
+    )
     out["analysis_span_s"] = span
     out["analysis_span_s_src"] = str(flash_meta.get("analysis_span_s_src") or "NO-DATA")
     out["expected_flashes_in_span"] = expected
@@ -647,7 +673,7 @@ def classify_no_flash_failure(
         out["no_flash_class"] = "WINDOW_TOO_SHORT"
         out["detail"] = (
             f"analysis_span_s={span:.3f} < min_pairs*period={need_span:.3f} "
-            f"(need duration >= warmup_s + {min_pairs}*1.0s + 1.0s margin)"
+            f"(need duration >= warmup_s + {min_pairs}*{period}s + 1.0s margin)"
         )
         return out
 
@@ -697,7 +723,9 @@ def detect_flashes(
     uniform: np.ndarray | None,
     *,
     warmup_frames: int,
-    min_separation_s: float = 0.6,
+    min_separation_s: float | None = None,
+    marker_period_s: float | None = None,
+    marker_period_src: str = "DEFAULT_ASSUMED",
 ) -> tuple[list[float], dict[str, Any]]:
     """Detect white flash onsets via adaptive luma threshold.
 
@@ -749,18 +777,33 @@ def detect_flashes(
         meta["analysis_span_s"] = 0.0
     meta["analysis_n_frames"] = int(lu.size)
     meta["analysis_span_s_src"] = "measured"
-    # Expected flashes if fixture is 1 Hz full-frame white (generator contract).
+    # Expected flashes from marker period (rk=27 = 2.0 s; legacy blip = 1.0 s).
     span = float(meta["analysis_span_s"])
-    meta["fixture_flash_period_s"] = FIXTURE_FLASH_PERIOD_S
-    meta["fixture_flash_period_s_src"] = "caller_supplied"
+    period = float(marker_period_s) if marker_period_s is not None else float(FIXTURE_FLASH_PERIOD_S)
+    psrc = (
+        marker_period_src if marker_period_s is not None
+        else "caller_supplied_gen_default_1s"
+    )
+    if min_separation_s is None:
+        # Keep events from adjacent markers distinct (~55% of period).
+        min_separation_s = max(0.35, 0.55 * period)
+        meta["min_separation_s_src"] = "derived_from_marker_period"
+    else:
+        meta["min_separation_s_src"] = "caller_supplied"
+    meta["min_separation_s"] = float(min_separation_s)
+    meta["fixture_flash_period_s"] = period
+    meta["fixture_flash_period_s_src"] = psrc
+    meta["marker_period_s"] = period
+    meta["marker_period_s_src"] = psrc
     meta["fixture_flash_duration_s"] = FIXTURE_FLASH_DURATION_S
     meta["fixture_flash_duration_s_src"] = "caller_supplied_gen_avsync_blip"
-    meta["fixture_flash_duty"] = FIXTURE_FLASH_DUTY
-    meta["fixture_flash_duty_src"] = "caller_supplied_gen_avsync_blip"
+    # Duty uses generator flash body duration over THIS period (not always 1s).
+    meta["fixture_flash_duty"] = float(FIXTURE_FLASH_DURATION_S) / period if period > 0 else float("nan")
+    meta["fixture_flash_duty_src"] = "derived_duration_over_marker_period"
     meta["expected_flashes_in_span"] = (
-        int(math.floor(span / FIXTURE_FLASH_PERIOD_S)) if span > 0 else 0
+        int(math.floor(span / period)) if span > 0 and period > 0 else 0
     )
-    meta["expected_flashes_src"] = "derived_from_span_and_fixture_period"
+    meta["expected_flashes_src"] = "derived_from_span_and_marker_period"
     if contrast < MIN_CONTRAST:
         meta["reason"] = "insufficient_luma_contrast"
         meta["threshold"] = None
@@ -1106,6 +1149,100 @@ def percentile_nearest(vals: list[float], p: float) -> float:
     return float(s[f] * (c - k) + s[c] * (k - f))
 
 
+def video_quant_rms_ms(sample_period_ms: float) -> float:
+    """RMS of uniform quantization over one capture frame period.
+
+    Flash onset lands in a T-ms bin → error ~ U(-T/2, T/2) → RMS = T/√12.
+    At 30 fps, T=33.333 → 9.62 ms of irreducible instrument floor on residuals
+    that are dominated by single-frame flash timing (parent: 33/√12 = 9.5).
+    """
+    return float(sample_period_ms) / math.sqrt(12.0)
+
+
+def derive_wander_tol_ms(
+    sample_period_ms: float | None,
+    excess_budget_ms: float,
+) -> dict[str, Any]:
+    """Wander gate = quadrature(quant_floor, excess_budget) — not a magic 12.0."""
+    if sample_period_ms is None or sample_period_ms <= 0:
+        # No period → cannot derive; fall back labelled DEFAULT_ASSUMED
+        q = None
+        tol = float(excess_budget_ms)
+        src = "DEFAULT_ASSUMED_excess_only_no_period"
+    else:
+        q = video_quant_rms_ms(sample_period_ms)
+        tol = math.sqrt(q * q + float(excess_budget_ms) ** 2)
+        src = "derived_quant_quad_excess"
+    return {
+        "video_sample_period_ms": sample_period_ms,
+        "video_quant_rms_ms": q,
+        "video_quant_rms_def": "T/sqrt(12) uniform frame-bin (flash timing)",
+        "wander_excess_budget_ms": excess_budget_ms,
+        "wander_rms_tol_ms": tol,
+        "wander_rms_tol_src": src,
+    }
+
+
+def excess_wander_rms_ms(residual_rms_ms: float, quant_rms_ms: float | None) -> float:
+    """Genuine wander after removing quant floor in quadrature (floor at 0)."""
+    if quant_rms_ms is None:
+        return float(residual_rms_ms)
+    r2 = float(residual_rms_ms) ** 2 - float(quant_rms_ms) ** 2
+    return math.sqrt(r2) if r2 > 0.0 else 0.0
+
+
+def se_median_ms(stdev_ms: float, n: int) -> float:
+    """SE of median ≈ 1.2533 * σ / √n for large n (normal approx)."""
+    if n <= 0 or stdev_ms is None or (
+        isinstance(stdev_ms, float) and math.isnan(stdev_ms)
+    ):
+        return float("nan")
+    return 1.2533 * float(stdev_ms) / math.sqrt(float(n))
+
+
+def ab_delta_significance(
+    median_a: float,
+    se_a: float,
+    n_a: int,
+    median_b: float,
+    se_b: float,
+    n_b: int,
+    *,
+    label_a: str = "A",
+    label_b: str = "B",
+) -> dict[str, Any]:
+    """Same-rig A/B delta: B_instrument cancels; report delta, SE, sigma."""
+    delta = float(median_a) - float(median_b)
+    se_d = math.sqrt(float(se_a) ** 2 + float(se_b) ** 2)
+    sigma = abs(delta) / se_d if se_d > 1e-12 else float("inf")
+    # parent between-run range n=16 was 25 ms with ~20 ms unattributed
+    return {
+        "label_a": label_a,
+        "label_b": label_b,
+        "median_a_ms": median_a,
+        "median_b_ms": median_b,
+        "ab_delta_ms": delta,
+        "ab_delta_ms_def": f"median({label_a})-median({label_b}); B_grabber cancels",
+        "se_median_a_ms": se_a,
+        "se_median_b_ms": se_b,
+        "se_delta_ms": se_d,
+        "se_delta_def": "sqrt(se_a^2+se_b^2)",
+        "sigma": sigma,
+        "sigma_def": "|delta|/se_delta",
+        "n_a": n_a,
+        "n_b": n_b,
+        "significant_2sigma": bool(sigma >= 2.0),
+        "significant_3sigma": bool(sigma >= 3.0),
+        "between_run_context_ms": 25.0,
+        "between_run_context_note": (
+            "parent n=16 between-run median range 25 ms (~20 ms unattributed); "
+            "deltas inside that band are not device claims"
+        ),
+        "between_run_context_src": "caller_supplied_parent_n16",
+        "tag": "measured_same_rig_delta",
+    }
+
+
 def classify_timing(
     pairs: list[dict[str, float]],
     slope_ms_per_s: float,
@@ -1114,12 +1251,14 @@ def classify_timing(
     slope_tol: float,
     wander_rms_tol_ms: float,
     min_pairs_class: int = 8,
+    video_quant_rms: float | None = None,
 ) -> dict[str, Any]:
     """Distinguish monotonic drift vs residual wander vs stable.
 
     Mean offset alone is blind to judder-class defects (parent): exact average
     rate with ±1–2 refresh wander still looks wrong. Residual after linear
-    detrend is the wander metric.
+    detrend is the wander metric. Compare residual to a tol that already
+    includes the capture-frame quant floor (T/√12), not a bare magic 12.0.
     """
     out: dict[str, Any] = {
         "timing_class": "INSUFFICIENT_SPAN",
@@ -1128,6 +1267,9 @@ def classify_timing(
         "residual_rms_src": "NO-DATA",
         "detrended_max_abs_ms": None,
         "slope_r_squared": r2,
+        "video_quant_rms_ms": video_quant_rms,
+        "excess_wander_rms_ms": None,
+        "wander_rms_tol_ms": wander_rms_tol_ms,
     }
     if len(pairs) < min_pairs_class:
         out["timing_class_reason"] = f"n_pairs={len(pairs)}<{min_pairs_class}"
@@ -1147,6 +1289,9 @@ def classify_timing(
     out["residual_rms_src"] = "measured"
     out["detrended_max_abs_ms"] = max(abs(r) for r in resid)
     out["detrend_intercept_ms"] = b
+    ex = excess_wander_rms_ms(rms, video_quant_rms)
+    out["excess_wander_rms_ms"] = ex
+    out["excess_wander_rms_src"] = "derived"
     abs_slope = abs(slope_ms_per_s)
     # High r2 + slope beyond tol → clock-rate mismatch
     if abs_slope > slope_tol and (math.isnan(r2) or r2 >= 0.5):
@@ -1158,13 +1303,15 @@ def classify_timing(
     if rms > wander_rms_tol_ms:
         out["timing_class"] = "WANDER"
         out["timing_class_reason"] = (
-            f"residual_rms_ms={rms:.3f}>{wander_rms_tol_ms} "
-            f"(scheduling/judder-class; mean may still look fine)"
+            f"residual_rms_ms={rms:.3f}>{wander_rms_tol_ms:.3f} "
+            f"(tol=quad(quant={video_quant_rms},excess_budget); "
+            f"excess_wander_rms_ms={ex:.3f}; mean may still look fine)"
         )
         return out
     out["timing_class"] = "STABLE"
     out["timing_class_reason"] = (
-        f"abs_slope={abs_slope:.4f}<={slope_tol} residual_rms_ms={rms:.3f}<={wander_rms_tol_ms}"
+        f"abs_slope={abs_slope:.4f}<={slope_tol} residual_rms_ms={rms:.3f}"
+        f"<={wander_rms_tol_ms:.3f} excess_wander_rms_ms={ex:.3f}"
     )
     return out
 
@@ -1283,6 +1430,8 @@ def analyse_file(
     early_window_src: str = "DEFAULT_ASSUMED",
     late_window_s: float = DEFAULT_LATE_WINDOW_S,
     late_window_src: str = "DEFAULT_ASSUMED",
+    marker_period_s: float | None = None,
+    marker_period_src: str = "DEFAULT_ASSUMED",
 ) -> MeasureResult:
     try:
         luma, t, vmeta = load_video_luma(path)
@@ -1292,7 +1441,12 @@ def analyse_file(
 
     uniform = vmeta.get("uniform")
     flashes, fmeta = detect_flashes(
-        luma, t, uniform, warmup_frames=warmup_frames
+        luma,
+        t,
+        uniform,
+        warmup_frames=warmup_frames,
+        marker_period_s=marker_period_s,
+        marker_period_src=marker_period_src,
     )
     fmeta["pts_from_container"] = vmeta.get("pts_from_container")
     fmeta["fps_nom"] = vmeta.get("fps_nom")
@@ -1428,10 +1582,21 @@ def analyse_file(
         res.timing_class = "MARGIN_INADEQUATE"
         res.timing_class_reason = res.reason
         return res
-    # timing class uses slope_tol default here; print_report reclassifies with
-    # caller slope_tol when scoring.
+    # timing class uses defaults here; print_report reclassifies with caller tols.
+    _per = None
+    if res.margin and res.margin.get("video_sample_period_ms") is not None:
+        try:
+            _per = float(res.margin["video_sample_period_ms"])
+        except (TypeError, ValueError):
+            _per = None
+    _wt = derive_wander_tol_ms(_per, DEFAULT_WANDER_EXCESS_TOL_MS)
     tc = classify_timing(
-        pairs, slope, r2, slope_tol=DEFAULT_SLOPE_TOL_MS_PER_S, wander_rms_tol_ms=12.0
+        pairs,
+        slope,
+        r2,
+        slope_tol=DEFAULT_SLOPE_TOL_MS_PER_S,
+        wander_rms_tol_ms=float(_wt["wander_rms_tol_ms"]),
+        video_quant_rms=_wt.get("video_quant_rms_ms"),
     )
     res.timing_class = str(tc.get("timing_class"))
     res.timing_class_reason = str(tc.get("timing_class_reason") or "")
@@ -1444,16 +1609,33 @@ def analyse_file(
 # ---------------------------------------------------------------------------
 # Calibration I/O
 # ---------------------------------------------------------------------------
-def save_calibration(path: Path, median_ms: float, meta: dict[str, Any]) -> None:
+def save_calibration(
+    path: Path,
+    median_ms: float,
+    meta: dict[str, Any],
+    *,
+    known_zero_kind: str,
+    absolute_trusted: bool,
+) -> None:
     doc = {
         "format": CAL_FORMAT,
         "instrument_offset_ms": median_ms,
+        "instrument_offset_ms_src": "measured",
+        "known_zero_kind": known_zero_kind,
+        "known_zero_kind_src": "caller_supplied",
+        "absolute_trusted": bool(absolute_trusted),
+        "absolute_trusted_src": "derived_from_known_zero_kind",
         "sign_convention": (
             "offset_ms=(t_audio-t_video)*1000; "
             "positive=audio LATE (lags video); negative=audio EARLY (leads video)"
         ),
         "meta": meta,
         "created_unix": time.time(),
+        "honesty": (
+            "Only external_hdmi_generator yields absolute_trusted=true. "
+            "host_loopback_UNTRUSTED and DUT-as-source are NOT known-zero. "
+            "file_pts_synthetic is trusted for file-mode tool checks only."
+        ),
     }
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(doc, indent=2) + "\n")
@@ -1464,6 +1646,14 @@ def load_calibration(path: Path) -> tuple[float, dict[str, Any]]:
     if doc.get("format") != CAL_FORMAT:
         raise ValueError(f"bad calibration format: {doc.get('format')}")
     return float(doc["instrument_offset_ms"]), doc
+
+
+def calibration_absolute_trusted(doc: dict[str, Any]) -> bool:
+    """Whether corrected absolute offset may be scored as OFFSET_FAIL/PASS."""
+    if "absolute_trusted" in doc:
+        return bool(doc["absolute_trusted"])
+    # legacy files without the field: treat as UNTRUSTED (do not invent trust)
+    return False
 
 
 # ---------------------------------------------------------------------------
@@ -1515,6 +1705,11 @@ def print_report(
     mode: str,
     allow_default_score: bool,
     extra: dict[str, Any] | None = None,
+    wander_excess_tol_ms: float = DEFAULT_WANDER_EXCESS_TOL_MS,
+    wander_excess_tol_src: str = "DEFAULT_ASSUMED",
+    cal_absolute_trusted: bool = False,
+    cal_known_zero_kind: str | None = None,
+    no_absolute_score: bool = False,
 ) -> int:
     """Print tagged report; return rc."""
     print("=== avsync_measure_hdmi ===")
@@ -1551,11 +1746,14 @@ def print_report(
         if res.flash_meta.get("capture_frame_period_ms") is not None:
             print(
                 f"capture_frame_period_ms="
-                f"{res.flash_meta['capture_frame_period_ms']:.4f} src=measured"
+                f"{float(res.flash_meta['capture_frame_period_ms']):.4f} src=measured"
             )
+            qni = res.flash_meta.get("capture_frame_quant_ms_no_interp")
+            if qni is None:
+                qni = res.flash_meta.get("capture_frame_period_ms")
             print(
                 f"capture_frame_quant_ms_no_interp="
-                f"{res.flash_meta['capture_frame_quant_ms_no_interp']:.4f} src=measured"
+                f"{float(qni):.4f} src=measured"
             )
         if res.flash_meta.get("flash_interp_abs_delta_ms_median") is not None:
             print(
@@ -1710,14 +1908,28 @@ def print_report(
     print(f"slope_ms_per_s={res.slope_ms_per_s:.6f} src=measured")
     print(f"slope_intercept_ms={res.slope_intercept_ms:.4f} src=measured")
     print(f"slope_r_squared={res.slope_r_squared:.6f} src=measured")
-    # Reclassify with caller slope_tol + wander tol
-    wander_tol = 12.0  # ms RMS after detrend; DEFAULT_ASSUMED
+    # Capture-frame quant floor + derived wander tol (not magic 12.0)
+    sample_period = None
+    if res.margin and res.margin.get("video_sample_period_ms") is not None:
+        try:
+            sample_period = float(res.margin["video_sample_period_ms"])
+        except (TypeError, ValueError):
+            sample_period = None
+    if sample_period is None and res.flash_meta:
+        try:
+            sample_period = float(res.flash_meta.get("capture_frame_period_ms"))
+        except (TypeError, ValueError):
+            sample_period = None
+    wmeta = derive_wander_tol_ms(sample_period, float(wander_excess_tol_ms))
+    wander_tol = float(wmeta["wander_rms_tol_ms"])
+    quant_rms = wmeta.get("video_quant_rms_ms")
     tc = classify_timing(
         res.pairs,
         float(res.slope_ms_per_s) if res.slope_ms_per_s is not None else float("nan"),
         float(res.slope_r_squared) if res.slope_r_squared is not None else float("nan"),
         slope_tol=float(slope_tol),
         wander_rms_tol_ms=wander_tol,
+        video_quant_rms=float(quant_rms) if quant_rms is not None else None,
     )
     res.timing_class = str(tc.get("timing_class"))
     res.timing_class_reason = str(tc.get("timing_class_reason") or "")
@@ -1726,9 +1938,28 @@ def print_report(
     print(f"timing_class={res.timing_class} src=derived")
     print(f"timing_class_reason={res.timing_class_reason} src=derived")
     print(
+        f"video_sample_period_ms={sample_period} src="
+        f"{'measured' if sample_period is not None else 'NO-DATA'}"
+    )
+    print(
+        f"video_quant_rms_ms={quant_rms} src="
+        f"{'derived' if quant_rms is not None else 'NO-DATA'} "
+        f"def=T/sqrt(12)_uniform_frame_bin"
+    )
+    print(
+        f"wander_excess_budget_ms={wander_excess_tol_ms} src={wander_excess_tol_src}"
+    )
+    print(
+        f"wander_rms_tol_ms={wander_tol} src={wmeta['wander_rms_tol_src']} "
+        f"def=sqrt(quant_rms^2+excess_budget^2)"
+    )
+    print(
         f"residual_rms_ms={res.residual_rms_ms} src="
-        f"{'measured' if res.residual_rms_ms is not None else 'NO-DATA'} "
-        f"wander_rms_tol_ms={wander_tol} src=DEFAULT_ASSUMED"
+        f"{'measured' if res.residual_rms_ms is not None else 'NO-DATA'}"
+    )
+    print(
+        f"excess_wander_rms_ms={tc.get('excess_wander_rms_ms')} src=derived "
+        f"def=sqrt(max(0,residual^2-quant^2))"
     )
     print(
         f"detrended_max_abs_ms={res.detrended_max_abs_ms} src="
@@ -1761,11 +1992,18 @@ def print_report(
             f"goertzel_win_ms={res.margin.get('goertzel_win_ms')}"
         )
 
+    # Absolute scoring only when calibration is present AND trusted known-zero.
+    abs_gate_active = bool(cal_ms is not None and cal_absolute_trusted)
     if cal_ms is None:
         print("calibration=NONE")
         print(
             "absolute_offset_note: no known-zero source into grabber; "
             "median is NOT device-attributable; use slope and A/B deltas only"
+        )
+        print(
+            "absolute_gate: INACTIVE — abs median breach will be "
+            "ABS_OFFSET_UNSCOREABLE rc=77, never OFFSET_FAIL rc=2 and never PASS "
+            "on the absolute number alone"
         )
         print(f"median_offset_ms={raw:.4f} src=measured tag=raw_uncalibrated")
         print(
@@ -1778,39 +2016,61 @@ def print_report(
     else:
         print(f"calibration_ms={cal_ms:.4f} src=caller_supplied path={cal_path}")
         print(
-            "calibration_note: corrected = raw - instrument_offset "
-            "(only valid if cal source was known-aligned into the same grabber)"
+            f"calibration_known_zero_kind={cal_known_zero_kind or 'LEGACY_UNSPECIFIED'} "
+            f"src={'caller_supplied' if cal_known_zero_kind else 'NO-DATA'}"
         )
         print(
-            "calibration_loop: --calibrate measures the A/V path currently wired "
-            "to /dev/video0+ALSA — it does NOT invent a zero; re-cable or host "
-            "loopback required for absolute device lipsync"
+            f"calibration_absolute_trusted={cal_absolute_trusted} src=derived "
+            f"(only external_hdmi_generator is trusted for OFFSET_FAIL/PASS on abs)"
+        )
+        print(
+            "calibration_note: corrected = raw - instrument_offset "
+            "(only device-attributable if absolute_trusted=true)"
         )
         corrected = raw - cal_ms
-        corrected_tag = "calibration_corrected"
+        corrected_tag = (
+            "calibration_corrected_trusted"
+            if cal_absolute_trusted
+            else "calibration_corrected_UNTRUSTED"
+        )
         print(f"median_offset_ms={corrected:.4f} src=measured tag={corrected_tag}")
-        # Slope is differential; fixed cal does not change slope
         slope_corr = res.slope_ms_per_s
         print(f"slope_ms_per_s_corrected={slope_corr:.6f} src=measured tag=cal_invariant")
+        if not cal_absolute_trusted:
+            print(
+                "absolute_gate: INACTIVE — cal present but not known-zero trusted; "
+                "abs treated like raw_uncalibrated for OFFSET_FAIL"
+            )
+            abs_gate_active = False
 
     abs_med = abs(corrected)
     abs_slope = abs(slope_corr) if slope_corr is not None and not math.isnan(slope_corr) else 0.0
-    offset_ok = abs_med <= tol_ms
-    # Slope gate needs span: short windows (≤15 pairs) have noisy fits and must
-    # not fail a calibration / short capture that has a good median. Require
-    # n_pairs >= 20 before slope can force FAIL (still always reported).
+    offset_within_tol = abs_med <= tol_ms
+    # Slope gate needs span: short windows have noisy fits.
     slope_gate_active = res.n_pairs >= 20
     slope_ok = (abs_slope <= slope_tol) if slope_gate_active else True
     print(f"abs_median_offset_ms={abs_med:.4f} src=measured tag={corrected_tag}")
-    print(f"offset_within_tol={offset_ok} src=measured")
+    print(f"offset_within_tol={offset_within_tol} src=measured")
+    print(f"absolute_gate_active={abs_gate_active} src=derived")
+    print(
+        f"no_absolute_score={int(bool(no_absolute_score))} src=caller_supplied "
+        f"note=when_1_skip_ABS_OFFSET_UNSCOREABLE_score_slope_wander_only"
+    )
     print(f"slope_within_tol={abs_slope <= slope_tol} src=measured")
     print(f"slope_gate_active={slope_gate_active} src=DEFAULT_ASSUMED")
 
-    # Only tol_ms is load-bearing for REFUSE_DEFAULT_ASSUMED (SCORE_DEFAULT_KEYS).
-    # slope_tol DEFAULT is reported; when gate is active it still affects PASS/FAIL
-    # but does not alone force UNSCORE (parent soaks pin --tol-ms).
+    # SE(median) always printed — parent A/B arithmetic
+    sigma_run = res.stdev_offset_ms if res.stdev_offset_ms is not None else float("nan")
+    se_med_run = se_median_ms(float(sigma_run), int(res.n_pairs))
+    print(
+        f"se_median_ms={se_med_run:.4f} src=derived def=1.2533*stdev/sqrt(n) "
+        f"n={res.n_pairs} stdev={sigma_run}"
+    )
+
+    # Only tol_ms is load-bearing for REFUSE_DEFAULT_ASSUMED when abs gate active.
+    # When abs gate inactive, tol_ms default must not block slope/wander scoring.
     default_score_keys = []
-    if tol_src == "DEFAULT_ASSUMED":
+    if tol_src == "DEFAULT_ASSUMED" and abs_gate_active:
         default_score_keys.append("tol_ms")
     slope_default_in_score = bool(slope_gate_active and slope_tol_src == "DEFAULT_ASSUMED")
     print(
@@ -1820,7 +2080,8 @@ def print_report(
     )
     print(f"tol_ms_src={tol_src} slope_tol_src={slope_tol_src}")
 
-    # ERROR 17 class: never silently PASS/FAIL on DEFAULT_ASSUMED offset tol.
+    # ERROR 17 class: never silently PASS/FAIL on DEFAULT_ASSUMED offset tol
+    # when that tol actually gates.
     if default_score_keys and not allow_default_score:
         print(
             f"VERDICT=REFUSE_DEFAULT_ASSUMED rc={RC_UNSCORED} "
@@ -1829,7 +2090,7 @@ def print_report(
         )
         print(
             f"measured_would_have_been="
-            f"{'PASS' if (offset_ok and slope_ok) else 'FAIL'} "
+            f"{'PASS' if (offset_within_tol and slope_ok) else 'FAIL'} "
             f"abs_median_ms={abs_med:.4f} tag={corrected_tag} src=measured"
         )
         if extra:
@@ -1838,39 +2099,35 @@ def print_report(
         return RC_UNSCORED
 
     tag = "caller_supplied_score" if not default_score_keys else "DEFAULT_ASSUMED_IN_SCORE"
-    # Distinct failure classes — never share one rc across instrument vs path.
-    # Priority: OFFSET (level) → DRIFT (monotonic) → WANDER (residual) → PASS.
+    # Priority (attributable first):
+    #   DRIFT → WANDER → (trusted) OFFSET_FAIL → ABS_OFFSET_UNSCOREABLE → PASS
+    # Absolute without trusted cal must never be OFFSET_FAIL and never PASS alone.
     verdict_name = "PASS"
-    if not offset_ok:
-        why = f"abs_median={abs_med:.2f}>{tol_ms}"
-        print(f"VERDICT=OFFSET_FAIL rc={RC_OFFSET_FAIL} reason={why} score_tag={tag}")
-        print(
-            "verdict_note: OFFSET_FAIL is a measured lipsync level defect on this "
-            "capture path (not instrument broken; not margin)"
-        )
-        rc = RC_OFFSET_FAIL
-        verdict_name = "OFFSET_FAIL"
-    elif res.timing_class == "MONOTONIC_DRIFT" and slope_gate_active:
+    rc = RC_PASS
+
+    if res.timing_class == "MONOTONIC_DRIFT" and slope_gate_active:
         why = (
             f"timing_class=MONOTONIC_DRIFT abs_slope={abs_slope:.4f} "
             f"slope_tol={slope_tol} residual_rms_ms={res.residual_rms_ms}"
         )
         print(f"VERDICT=DRIFT_FAIL rc={RC_DRIFT_FAIL} reason={why} score_tag={tag}")
         print(
-            "verdict_note: DRIFT_FAIL = clock-rate mismatch; fix differs from wander"
+            "verdict_note: DRIFT_FAIL = clock-rate mismatch (cal-free, attributable)"
         )
         rc = RC_DRIFT_FAIL
         verdict_name = "DRIFT_FAIL"
     elif res.timing_class == "WANDER":
         why = (
             f"timing_class=WANDER residual_rms_ms={res.residual_rms_ms} "
+            f"excess_wander_rms_ms={tc.get('excess_wander_rms_ms')} "
+            f"wander_rms_tol_ms={wander_tol} "
             f"detrended_max_abs_ms={res.detrended_max_abs_ms} "
-            f"(mean offset may still be inside tol — still a FAIL)"
+            f"(cal-free attributable; mean offset may still look fine)"
         )
         print(f"VERDICT=WANDER_FAIL rc={RC_WANDER_FAIL} reason={why} score_tag={tag}")
         print(
-            "verdict_note: WANDER_FAIL = scheduling/judder-class residual after "
-            "detrend; mean-only would false-PASS"
+            "verdict_note: WANDER_FAIL = excess residual after detrend above "
+            "quant-aware tol; mean-only would false-PASS"
         )
         rc = RC_WANDER_FAIL
         verdict_name = "WANDER_FAIL"
@@ -1879,11 +2136,69 @@ def print_report(
         print(f"VERDICT=DRIFT_FAIL rc={RC_DRIFT_FAIL} reason={why} score_tag={tag}")
         rc = RC_DRIFT_FAIL
         verdict_name = "DRIFT_FAIL"
-    else:
+    elif abs_gate_active and not offset_within_tol:
+        why = (
+            f"abs_median={abs_med:.2f}>{tol_ms} tag={corrected_tag} "
+            f"calibration_absolute_trusted=true"
+        )
+        print(f"VERDICT=OFFSET_FAIL rc={RC_OFFSET_FAIL} reason={why} score_tag={tag}")
+        print(
+            "verdict_note: OFFSET_FAIL is a measured lipsync level defect after "
+            "trusted known-zero calibration (device/path attributable)"
+        )
+        rc = RC_OFFSET_FAIL
+        verdict_name = "OFFSET_FAIL"
+    elif (not abs_gate_active) and (not offset_within_tol) and (not no_absolute_score):
+        # THE FIX: do not call this OFFSET_FAIL — absolute is unscoreable here.
+        why = (
+            f"abs_median={abs_med:.2f}>{tol_ms} but calibration="
+            f"{'NONE' if cal_ms is None else 'UNTRUSTED'}; "
+            f"absolute offset is NOT device-attributable on this rig; "
+            f"slope/wander already checked OK; "
+            f"do NOT widen --tol-ms to silence this — obtain known-zero cal "
+            f"or use A/B deltas only"
+        )
+        print(
+            f"VERDICT=ABS_OFFSET_UNSCOREABLE rc={RC_UNSCORED} "
+            f"reason={why} score_tag={tag}"
+        )
+        print(
+            "verdict_note: ABS_OFFSET_UNSCOREABLE is NOT a pass and NOT "
+            "OFFSET_FAIL — the instrument refuses to promote raw_uncalibrated "
+            "median to a device lipsync defect (parent false-finding guard)"
+        )
+        rc = RC_UNSCORED
+        verdict_name = "ABS_OFFSET_UNSCOREABLE"
+    elif (not abs_gate_active) and (not offset_within_tol) and no_absolute_score:
+        # Long-soak / transition mode: absolute is forensic only; slope/wander already OK.
+        print(
+            f"VERDICT=PASS rc={RC_PASS} score_tag={tag} "
+            f"mode=slope_wander_only no_absolute_score=1"
+        )
+        print(
+            f"pass_note: absolute median tag={corrected_tag} abs={abs_med:.2f} "
+            f"printed forensic NOT device claim; scored slope/wander only "
+            f"(timing_class={res.timing_class} residual_rms_ms={res.residual_rms_ms}); "
+            f"w-instr owns known-zero cal for absolute PASS/FAIL"
+        )
+        rc = RC_PASS
+        verdict_name = "PASS"
+    elif abs_gate_active and offset_within_tol:
         print(f"VERDICT=PASS rc={RC_PASS} score_tag={tag}")
         print(
             f"pass_note: timing_class={res.timing_class} residual_rms_ms="
-            f"{res.residual_rms_ms} — PASS requires offset AND non-wander/non-drift"
+            f"{res.residual_rms_ms} absolute tag={corrected_tag} trusted cal — "
+            f"PASS requires offset AND non-wander/non-drift"
+        )
+        rc = RC_PASS
+        verdict_name = "PASS"
+    else:
+        # cal-free, attributable metrics OK; absolute inside tol only as forensic
+        print(f"VERDICT=PASS rc={RC_PASS} score_tag={tag}")
+        print(
+            f"pass_note: cal-free PASS on slope/wander only "
+            f"(timing_class={res.timing_class} residual_rms_ms={res.residual_rms_ms}); "
+            f"absolute median tag={corrected_tag} is forensic NOT a device lipsync claim"
         )
         rc = RC_PASS
         verdict_name = "PASS"
@@ -2008,6 +2323,25 @@ def build_arg_parser() -> argparse.ArgumentParser:
             "0.45 mispairs large offsets — default is the correct behaviour."
         ),
     )
+    ap.add_argument(
+        "--marker-period-s",
+        type=float,
+        default=None,
+        help=(
+            "Flash+beep period seconds for expected_flashes / WINDOW_TOO_SHORT "
+            "(rk=27 GlassAV = 2.0; legacy gen_avsync_blip = 1.0). Detection is "
+            "still data-driven."
+        ),
+    )
+    ap.add_argument(
+        "--no-absolute-score",
+        action="store_true",
+        help=(
+            "Score slope/wander only; do not emit ABS_OFFSET_UNSCOREABLE when "
+            "|median| exceeds --tol-ms without trusted cal. Median still printed "
+            "tag=raw_uncalibrated. For long-soak drift and transition deltas."
+        ),
+    )
     ap.add_argument("--beep-hz", type=float, default=None, help=f"default {DEFAULT_BEEP_HZ}")
     ap.add_argument(
         "--early-window-s", type=float, default=None,
@@ -2025,7 +2359,21 @@ def build_arg_parser() -> argparse.ArgumentParser:
     )
     ap.add_argument(
         "--calibrate", action="store_true",
-        help="Measure instrument baseline and write --calibration-out",
+        help=(
+            "Measure instrument baseline and write --calibration-out. "
+            "REQUIRES --known-zero-kind. Refuses to treat DUT-as-source as zero."
+        ),
+    )
+    ap.add_argument(
+        "--known-zero-kind",
+        choices=list(KNOWN_ZERO_KINDS),
+        default=None,
+        help=(
+            "What feeds the grabber during --calibrate: "
+            "external_hdmi_generator (trusted absolute), "
+            "file_pts_synthetic (file-mode tool check only), "
+            "host_loopback_UNTRUSTED (host player A/V unknown — NOT absolute)."
+        ),
     )
     ap.add_argument(
         "--calibration", type=Path, default=None,
@@ -2034,6 +2382,38 @@ def build_arg_parser() -> argparse.ArgumentParser:
     ap.add_argument(
         "--calibration-out", type=Path, default=None,
         help="Where --calibrate writes the calibration JSON",
+    )
+    ap.add_argument(
+        "--wander-excess-tol-ms",
+        type=float,
+        default=None,
+        help=(
+            f"Excess wander budget beyond video quant floor T/sqrt(12) "
+            f"(default {DEFAULT_WANDER_EXCESS_TOL_MS}). "
+            f"wander_tol = sqrt(quant_rms^2 + excess^2)."
+        ),
+    )
+    ap.add_argument(
+        "--compare-json-a",
+        type=Path,
+        default=None,
+        help="A/B mode: first report JSON (median + se from result)",
+    )
+    ap.add_argument(
+        "--compare-json-b",
+        type=Path,
+        default=None,
+        help="A/B mode: second report JSON",
+    )
+    ap.add_argument(
+        "--compare-label-a",
+        default="A",
+        help="Label for --compare-json-a (default A)",
+    )
+    ap.add_argument(
+        "--compare-label-b",
+        default="B",
+        help="Label for --compare-json-b (default B)",
     )
     ap.add_argument(
         "--label", default="run",
@@ -2149,14 +2529,136 @@ def _self_test() -> int:
     print("SELF_TEST margin ERROR19-class refuse + 24p@30cap OK")
     # timing class: flat → STABLE; ramp → DRIFT; noise → WANDER
     flat = [{"t_flash_s": float(i), "offset_ms": 5.0} for i in range(12)]
-    tc = classify_timing(flat, 0.0, 0.0, slope_tol=0.5, wander_rms_tol_ms=12.0)
+    q30 = video_quant_rms_ms(33.0)
+    w30 = derive_wander_tol_ms(33.0, DEFAULT_WANDER_EXCESS_TOL_MS)
+    assert abs(q30 - 33.0 / math.sqrt(12.0)) < 1e-9, q30
+    # Pure-quant residual (~9.5) must NOT exceed derived tol (~12.4)
+    assert q30 < float(w30["wander_rms_tol_ms"]), (q30, w30)
+    tc = classify_timing(
+        flat, 0.0, 0.0, slope_tol=0.5,
+        wander_rms_tol_ms=float(w30["wander_rms_tol_ms"]),
+        video_quant_rms=q30,
+    )
     assert tc["timing_class"] == "STABLE", tc
     drift_pairs = [{"t_flash_s": float(i), "offset_ms": 2.0 * i} for i in range(12)]
     sl, _, r2 = linreg_slope([p["t_flash_s"] for p in drift_pairs],
                              [p["offset_ms"] for p in drift_pairs])
-    tc = classify_timing(drift_pairs, sl, r2, slope_tol=0.5, wander_rms_tol_ms=12.0)
+    tc = classify_timing(
+        drift_pairs, sl, r2, slope_tol=0.5,
+        wander_rms_tol_ms=float(w30["wander_rms_tol_ms"]),
+        video_quant_rms=q30,
+    )
     assert tc["timing_class"] == "MONOTONIC_DRIFT", tc
-    print("SELF_TEST timing_class STABLE/DRIFT OK")
+    print(
+        f"SELF_TEST timing_class STABLE/DRIFT OK "
+        f"quant_rms@33ms={q30:.3f} wander_tol={w30['wander_rms_tol_ms']:.3f}"
+    )
+
+    # Uncalibrated absolute breach → ABS_OFFSET_UNSCOREABLE rc=77, never OFFSET_FAIL
+    pairs_off = [
+        {"t_flash_s": float(i) * 2.0, "offset_ms": -116.0 + (0.1 if i % 2 else -0.1)}
+        for i in range(24)
+    ]
+    res_u = MeasureResult(
+        ok=True,
+        unscored=False,
+        pairs=pairs_off,
+        n_flashes=24,
+        n_beeps=24,
+        n_pairs=24,
+        median_offset_ms=-116.0,
+        mean_offset_ms=-116.0,
+        stdev_offset_ms=5.0,
+        min_offset_ms=-116.1,
+        max_offset_ms=-115.9,
+        slope_ms_per_s=0.0,
+        slope_intercept_ms=-116.0,
+        slope_r_squared=0.0,
+        first_pair_offset_ms=-116.0,
+        first_pair_t_flash_s=0.0,
+        first_pair_t_beep_s=0.116,
+        early_window_s=10.0,
+        early_median_offset_ms=-116.0,
+        early_n_pairs=5,
+        late_window_s=60.0,
+        late_median_offset_ms=-116.0,
+        late_n_pairs=24,
+        early_minus_late_ms=0.0,
+        p05_offset_ms=-116.1,
+        p95_offset_ms=-115.9,
+        iqr_offset_ms=0.2,
+        margin={
+            "margin_ok": True,
+            "margin_verdict": "MARGIN_OK",
+            "video_sample_period_ms": 33.0,
+            "video_sample_period_src": "measured",
+        },
+        flash_meta={"capture_frame_period_ms": 33.0},
+    )
+    import io
+    from contextlib import redirect_stdout
+    buf = io.StringIO()
+    with redirect_stdout(buf):
+        rc_u = print_report(
+            res_u,
+            tol_ms=42.0,
+            tol_src="caller_supplied",
+            slope_tol=0.5,
+            slope_tol_src="DEFAULT_ASSUMED",
+            min_pairs=12,
+            min_pairs_src="caller_supplied",
+            warmup_frames=0,
+            warmup_src="DEFAULT_ASSUMED",
+            pair_window_s=0.9,
+            pair_window_src="DEFAULT_ASSUMED",
+            cal_ms=None,
+            cal_path=None,
+            mode="file",
+            allow_default_score=False,
+        )
+    out_u = buf.getvalue()
+    assert rc_u == RC_UNSCORED, rc_u
+    assert "ABS_OFFSET_UNSCOREABLE" in out_u, out_u[-500:]
+    assert "OFFSET_FAIL" not in out_u or "never OFFSET_FAIL" in out_u, out_u[-500:]
+    assert "VERDICT=OFFSET_FAIL" not in out_u, out_u[-500:]
+    print(f"SELF_TEST uncalibrated abs breach → ABS_OFFSET_UNSCOREABLE rc={rc_u} OK")
+
+    # Trusted cal + same breach → OFFSET_FAIL rc=2
+    buf2 = io.StringIO()
+    with redirect_stdout(buf2):
+        rc_t = print_report(
+            res_u,
+            tol_ms=42.0,
+            tol_src="caller_supplied",
+            slope_tol=0.5,
+            slope_tol_src="DEFAULT_ASSUMED",
+            min_pairs=12,
+            min_pairs_src="caller_supplied",
+            warmup_frames=0,
+            warmup_src="DEFAULT_ASSUMED",
+            pair_window_s=0.9,
+            pair_window_src="DEFAULT_ASSUMED",
+            cal_ms=0.0,
+            cal_path="/tmp/fake_cal.json",
+            mode="file",
+            allow_default_score=False,
+            cal_absolute_trusted=True,
+            cal_known_zero_kind="external_hdmi_generator",
+        )
+    out_t = buf2.getvalue()
+    assert rc_t == RC_OFFSET_FAIL, (rc_t, out_t[-400:])
+    assert "VERDICT=OFFSET_FAIL" in out_t, out_t[-400:]
+    print(f"SELF_TEST trusted-cal abs breach → OFFSET_FAIL rc={rc_t} OK")
+
+    # A/B significance arithmetic
+    ab = ab_delta_significance(-116.0, 3.86, 30, -123.0, 3.27, 30, label_a="480p", label_b="240p")
+    assert abs(ab["ab_delta_ms"] - 7.0) < 1e-9, ab
+    assert ab["se_delta_ms"] > 0
+    assert abs(ab["sigma"] - abs(7.0) / ab["se_delta_ms"]) < 1e-9
+    print(
+        f"SELF_TEST A/B delta={ab['ab_delta_ms']:.1f}±{ab['se_delta_ms']:.1f} "
+        f"sigma={ab['sigma']:.2f} sig2={ab['significant_2sigma']} OK"
+    )
 
     # T3 no-flash discriminators (red/green)
     d_flat = classify_no_flash_failure(
@@ -2248,11 +2750,82 @@ def _self_test() -> int:
     return 0
 
 
+def _load_report_median_se(path: Path) -> tuple[float, float, int, dict[str, Any]]:
+    """Extract median, se_median, n from a prior report JSON."""
+    doc = json.loads(path.read_text())
+    res = doc.get("result") or {}
+    med = res.get("median_offset_ms")
+    if med is None:
+        med = doc.get("median_offset_ms_corrected")
+    if med is None:
+        raise ValueError(f"no median_offset_ms in {path}")
+    n = int(res.get("n_pairs") or 0)
+    stdev = res.get("stdev_offset_ms")
+    if stdev is None:
+        raise ValueError(f"no stdev_offset_ms in {path}")
+    se = se_median_ms(float(stdev), n)
+    return float(med), float(se), n, doc
+
+
+def run_ab_compare(
+    path_a: Path,
+    path_b: Path,
+    *,
+    label_a: str,
+    label_b: str,
+) -> int:
+    """Print A/B delta significance; rc=0 always if parseable (report-only)."""
+    try:
+        med_a, se_a, n_a, _ = _load_report_median_se(path_a)
+        med_b, se_b, n_b, _ = _load_report_median_se(path_b)
+    except (OSError, ValueError, json.JSONDecodeError, TypeError, KeyError) as e:
+        print(f"VERDICT=UNSCORED rc={RC_UNSCORED} reason=ab_compare_load_failed err={e}")
+        return RC_UNSCORED
+    rep = ab_delta_significance(
+        med_a, se_a, n_a, med_b, se_b, n_b, label_a=label_a, label_b=label_b
+    )
+    print("=== avsync_measure_hdmi A/B delta (B_grabber cancels) ===")
+    print(f"median_{label_a}_ms={rep['median_a_ms']:.4f} src=measured tag=raw_or_report")
+    print(f"median_{label_b}_ms={rep['median_b_ms']:.4f} src=measured tag=raw_or_report")
+    print(f"se_median_{label_a}_ms={rep['se_median_a_ms']:.4f} src=derived")
+    print(f"se_median_{label_b}_ms={rep['se_median_b_ms']:.4f} src=derived")
+    print(f"ab_delta_ms={rep['ab_delta_ms']:.4f} src=measured def={rep['ab_delta_ms_def']}")
+    print(f"se_delta_ms={rep['se_delta_ms']:.4f} src=derived def={rep['se_delta_def']}")
+    print(f"sigma={rep['sigma']:.4f} src=derived def={rep['sigma_def']}")
+    print(f"significant_2sigma={rep['significant_2sigma']} src=derived")
+    print(f"significant_3sigma={rep['significant_3sigma']} src=derived")
+    print(
+        f"between_run_context_ms={rep['between_run_context_ms']} "
+        f"src={rep['between_run_context_src']} note={rep['between_run_context_note']}"
+    )
+    print(
+        f"VERDICT=AB_DELTA_REPORT rc={RC_PASS} "
+        f"delta_ms={rep['ab_delta_ms']:.2f}±{rep['se_delta_ms']:.2f} "
+        f"sigma={rep['sigma']:.2f} "
+        f"note=not_a_pass_on_absolute_lipsync"
+    )
+    return RC_PASS
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = build_arg_parser()
     args = ap.parse_args(argv)
     if args.self_test:
         return _self_test()
+
+    if args.compare_json_a is not None or args.compare_json_b is not None:
+        if args.compare_json_a is None or args.compare_json_b is None:
+            print(
+                f"VERDICT=UNSCORED rc={RC_UNSCORED} "
+                f"reason=compare_needs_both_json_a_and_b"
+            )
+            return RC_UNSCORED
+        return run_ab_compare(
+            args.compare_json_a,
+            args.compare_json_b,
+            label_a=str(args.compare_label_a),
+            label_b=str(args.compare_label_b),
+        )
 
     def pick(val, default, name):
         if val is None:
@@ -2272,6 +2845,11 @@ def main(argv: list[str] | None = None) -> int:
     pair_window, pair_window_src = pick(
         args.pair_window_s, DEFAULT_PAIR_WINDOW_S, "pair_window"
     )
+    if args.marker_period_s is not None:
+        marker_period_s, marker_period_src = float(args.marker_period_s), "caller_supplied"
+    else:
+        marker_period_s, marker_period_src = float(FIXTURE_FLASH_PERIOD_S), "DEFAULT_ASSUMED"
+    no_absolute_score = bool(args.no_absolute_score)
     beep_hz, _bh_src = pick(args.beep_hz, DEFAULT_BEEP_HZ, "beep_hz")
     min_cap_frames, min_cap_src = pick(
         args.min_capture_frames, DEFAULT_MIN_CAPTURE_FRAMES, "min_capture_frames"
@@ -2298,14 +2876,32 @@ def main(argv: list[str] | None = None) -> int:
 
     cal_ms: float | None = None
     cal_path: str | None = None
+    cal_doc: dict[str, Any] = {}
+    cal_absolute_trusted = False
+    cal_known_zero_kind: str | None = None
     if args.calibration is not None:
         try:
-            cal_ms, _cal_doc = load_calibration(args.calibration)
+            cal_ms, cal_doc = load_calibration(args.calibration)
             cal_path = str(args.calibration)
+            cal_absolute_trusted = calibration_absolute_trusted(cal_doc)
+            cal_known_zero_kind = cal_doc.get("known_zero_kind")
         except (OSError, ValueError, KeyError, json.JSONDecodeError) as e:
             print(f"VERDICT=UNSCORED rc={RC_UNSCORED}")
             print(f"reason=bad_calibration err={e}")
             return RC_UNSCORED
+
+    if args.calibrate and args.known_zero_kind is None:
+        print(f"VERDICT=UNSCORED rc={RC_UNSCORED}")
+        print(
+            "reason=--calibrate requires --known-zero-kind="
+            + "|".join(KNOWN_ZERO_KINDS)
+            + " — refusing to save a DUT median as a fake known-zero"
+        )
+        return RC_UNSCORED
+
+    wander_excess, wander_excess_src = pick(
+        args.wander_excess_tol_ms, DEFAULT_WANDER_EXCESS_TOL_MS, "wander_excess"
+    )
 
     # ---- obtain capture path ----
     ffmpeg_argv: list[str] | None = None
@@ -2373,6 +2969,9 @@ def main(argv: list[str] | None = None) -> int:
     if ffmpeg_argv is not None:
         print(f"capture_ffmpeg_argv={' '.join(ffmpeg_argv)} src=measured")
 
+    print(f"marker_period_s={marker_period_s} src={marker_period_src}")
+    print(f"no_absolute_score={int(no_absolute_score)} src=caller_supplied")
+
     res = analyse_file(
         cap_path,
         warmup_frames=warmup,
@@ -2383,6 +2982,8 @@ def main(argv: list[str] | None = None) -> int:
         early_window_src=early_win_src,
         late_window_s=float(late_win),
         late_window_src=late_win_src,
+        marker_period_s=marker_period_s,
+        marker_period_src=marker_period_src,
     )
 
     # Live warm-up / short-burst guard: need enough decoded frames.
@@ -2433,6 +3034,19 @@ def main(argv: list[str] | None = None) -> int:
 
     # Calibrate mode: on success write calibration file; still report rc
     if args.calibrate and res.ok and res.median_offset_ms is not None:
+        kind = str(args.known_zero_kind)
+        trusted = kind == "external_hdmi_generator" or (
+            kind == "file_pts_synthetic" and mode == "file"
+        )
+        if kind == "host_loopback_UNTRUSTED":
+            trusted = False
+        if kind == "file_pts_synthetic" and mode != "file":
+            print(f"VERDICT=UNSCORED rc={RC_UNSCORED}")
+            print(
+                "reason=file_pts_synthetic only valid with --input file mode "
+                "(live grabber is not PTS-synthetic zero)"
+            )
+            return RC_UNSCORED
         cal_out = args.calibration_out or (out_dir / f"{args.label}_calibration.json")
         save_calibration(
             cal_out,
@@ -2441,16 +3055,20 @@ def main(argv: list[str] | None = None) -> int:
                 "n_pairs": res.n_pairs,
                 "stdev_offset_ms": res.stdev_offset_ms,
                 "capture": str(cap_path),
+                "mode": mode,
                 "note": (
-                    "Instrument baseline: play the SAME blip fixture through a "
-                    "known-good path into the grabber (e.g. mpv/ffplay local HDMI "
-                    "out looped to the MS2109). This median is grabber A/V skew, "
-                    "not a device defect."
+                    "instrument_offset_ms = measured median under known_zero_kind. "
+                    "absolute_trusted only for external_hdmi_generator (or "
+                    "file_pts_synthetic in file mode). host_loopback_UNTRUSTED "
+                    "must not be promoted to a device absolute claim."
                 ),
             },
+            known_zero_kind=kind,
+            absolute_trusted=trusted,
         )
         print(f"calibration_written={cal_out} src=measured")
         print(f"instrument_offset_ms={res.median_offset_ms:.4f} src=measured")
+        print(f"known_zero_kind={kind} src=caller_supplied absolute_trusted={trusted}")
 
     # Concurrent CPU is parent-supplied via --cpu-pct-json (soak wrapper).
     cpu_extra: dict[str, Any] = {}
@@ -2523,6 +3141,11 @@ def main(argv: list[str] | None = None) -> int:
         mode=mode,
         allow_default_score=bool(args.allow_default_score),
         extra=cpu_extra,
+        wander_excess_tol_ms=float(wander_excess),
+        wander_excess_tol_src=wander_excess_src,
+        cal_absolute_trusted=cal_absolute_trusted,
+        cal_known_zero_kind=cal_known_zero_kind,
+        no_absolute_score=no_absolute_score,
     )
     # Time series CSV — required artifact (mean-only is forbidden)
     ts_path = out_dir / f"{args.label}_offset_timeseries.csv"
