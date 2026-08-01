@@ -62,6 +62,7 @@ const {
 } = require('./glass_counter_loss');
 const { emitGlassExpect } = require('./glass_expect');
 const { assertDeviceIdleP4 } = require('./device_idle');
+const { createStateMarker } = require('./state_mark');
 
 const EXIT_PASS = 0;
 const EXIT_FAIL = 1;
@@ -83,6 +84,13 @@ const runCorr = createRunCorrelation({
 const tlSeries = createTimelineSeries({
   outDir: cfg.outDir,
   runId: runCorr.runId,
+  log,
+});
+
+/** Machine-readable UI state markers (parent HDMI join — no pixel assert). */
+const uiState = createStateMarker({
+  runId: runCorr.runId,
+  outDir: cfg.outDir,
   log,
 });
 
@@ -615,9 +623,14 @@ async function assertCompanionServer(tracker) {
 
   const mode = (process.env.ASSERT_COMPANION || '1').trim();
   if (mode === '0' || /^skip|off|no$/i.test(mode)) {
-    // Explicit skip of topology assert — NOT a pass of the companion check.
-    log('COMPANION_ASSERT=SKIP-NOT-PASS reason=ASSERT_COMPANION=0 (logged only)');
-    return { skipped: true, hosts: uniqueKeys, urls };
+    // Explicit opt-out — NOT a pass of the companion check (never soft-green).
+    fail(
+      'companion_assert_unconfigured',
+      'ASSERT_COMPANION=0 disables the companion topology gate. ' +
+        'That is UNSCORED/unconfigured for companion — not PASS. ' +
+        'Unset ASSERT_COMPANION (default 1) to score which server Web picked. ' +
+        'value_kind=caller-supplied'
+    );
   }
 
   if (urls.length === 0) {
@@ -625,60 +638,179 @@ async function assertCompanionServer(tracker) {
       'companion_discovery_not_observed',
       'Opened Select Player but context captured zero /clients or /neighborhood/devices requests. ' +
         `Total context requests=${tracker.all.length}. ` +
-        'If this is a cached picker with no network, set ASSERT_COMPANION=0 to log-only (still not a companion PASS).'
+        'Cannot diagnose companion sort without discovery traffic. value_kind=measured'
+    );
+  }
+
+  if (!cfg.plexBase) {
+    fail(
+      'companion_assert_unconfigured',
+      'PLEX_BASE unset — cannot assert companion vs PMS under test. value_kind=caller-supplied'
     );
   }
 
   const expected = expectedCompanionKeys(cfg);
-  log(`companion_expected_keys=${[...expected].join(',')}`);
+  log(`companion_expected_keys=${[...expected].join(',')} value_kind=caller-supplied`);
 
-  // Always probe friendlyNames of polled hosts so sort-order is greppable.
+  // Probe friendlyNames of polled hosts (sort key for _pickCompanionServer).
   const probes = [];
   for (const k of uniqueKeys.slice(0, 8)) {
     probes.push(await probeHostFriendlyName(k));
   }
+  // Also probe PLEX_BASE host identity (prefs FriendlyName) — blank is the original bug.
+  let pmsBaseHost = '';
+  try {
+    pmsBaseHost = normalizeHostKey(new URL(cfg.plexBase).hostname);
+  } catch (_) {
+    pmsBaseHost = '';
+  }
+  let pmsIdentityFn = '';
+  if (pmsBaseHost && pmsBaseHost !== '127.0.0.1') {
+    const pmsP = await probeHostFriendlyName(pmsBaseHost);
+    pmsIdentityFn = pmsP.friendlyName || '';
+    log(
+      `COMPANION_PMS_UNDER_TEST host=${pmsBaseHost} identity_friendlyName=${JSON.stringify(pmsIdentityFn)} ` +
+        `http=${pmsP.status} value_kind=measured`
+    );
+  }
+  // Prefs FriendlyName (identity XML can lag prefs).
+  const prefs = await httpGet(`${cfg.plexBase}/:/prefs`, { 'X-Plex-Token': cfg.token });
+  const prefFn =
+    (prefs.body.match(/id="FriendlyName"[^>]*value="([^"]*)"/) || [])[1] ||
+    (prefs.body.match(/id="FriendlyName"[^>]*value='([^']*)'/) || [])[1] ||
+    '';
+  log(
+    `COMPANION_PMS_PREFS FriendlyName=${JSON.stringify(prefFn || '(blank)')} ` +
+      `http=${prefs.status} value_kind=measured`
+  );
+
+  const effectiveFn = (prefFn || pmsIdentityFn || '').trim();
+  const effectiveFnLower = effectiveFn.toLowerCase();
+
+  if (!effectiveFn || effectiveFn === '(unknown)' || effectiveFn === '(blank)') {
+    fail(
+      'companion_pms_friendlyname_blank',
+      'LOCAL PMS FriendlyName is blank — hostname fallback collides with any other ' +
+        'owned server sharing that hostname (original SHIELD/node-worker1 class).\n' +
+        '  Plex Web _pickCompanionServer: first owned private connected server by ' +
+        'comparator (isShared?"1":"0")+lowercased friendlyName.\n' +
+        '  Remediation (on LOCAL PMS only): PUT /:/prefs?FriendlyName=<unique> ' +
+        'e.g. "MiSTerPlex Studio" so it sorts predictably.\n' +
+        '  Do NOT encode other household server IPs into CI. ' +
+        'plex.tv provides=player is neither necessary nor sufficient.\n' +
+        `  plexBase=${cfg.plexBase} value_kind=measured`
+    );
+  }
+
   const sortedByName = [...probes].sort((a, b) =>
     String(a.friendlyName).toLowerCase().localeCompare(String(b.friendlyName).toLowerCase())
   );
   for (const p of probes) {
     log(
       `  companion_host_identity host=${p.host} friendlyName=${JSON.stringify(p.friendlyName)} ` +
-        `http=${p.status}`
+        `http=${p.status} value_kind=measured`
     );
   }
   if (sortedByName.length) {
     log(
-      `COMPANION_FRIENDLYNAME_SORT_HINT first_would_win=${JSON.stringify(sortedByName[0].friendlyName)} ` +
-        `order=${sortedByName.map((p) => p.friendlyName).join(' < ')}`
+      `COMPANION_FRIENDLYNAME_SORT_ORDER first_would_win=${JSON.stringify(sortedByName[0].friendlyName)} ` +
+        `order=${sortedByName.map((p) => p.friendlyName).join(' < ')} value_kind=measured`
+    );
+  }
+
+  // Collision: two distinct hosts with same lowercased friendlyName (or blank→hostname class).
+  const byFn = new Map();
+  for (const p of probes) {
+    const fn = String(p.friendlyName || '').toLowerCase();
+    if (!fn || fn === '(loopback)' || fn === '(unknown)') continue;
+    if (!byFn.has(fn)) byFn.set(fn, []);
+    byFn.get(fn).push(p.host);
+  }
+  for (const [fn, hs] of byFn) {
+    const uniq = [...new Set(hs)];
+    if (uniq.length > 1) {
+      fail(
+        'companion_friendlyname_sort_collision',
+        `Two+ companion hosts share lowercased friendlyName=${JSON.stringify(fn)}: ${uniq.join(', ')}.\n` +
+          '  _pickCompanionServer order is undefined between ties / first-wins race.\n' +
+          '  Rename one PMS FriendlyName so lowercased names are unique.\n' +
+          `  polled=${probes.map((p) => `${p.host}=${p.friendlyName}`).join('; ')} value_kind=measured`
+      );
+    }
+  }
+
+  // Optional pin: EXPECT_COMPANION_FRIENDLYNAME must match PMS under test (no LAN IP).
+  const expectFn = (process.env.EXPECT_COMPANION_FRIENDLYNAME || '').trim();
+  if (expectFn) {
+    if (effectiveFnLower !== expectFn.toLowerCase()) {
+      fail(
+        'companion_friendlyname_mismatch',
+        `EXPECT_COMPANION_FRIENDLYNAME=${JSON.stringify(expectFn)} but PMS under test is ` +
+          `${JSON.stringify(effectiveFn)}. value_kind=caller-supplied+measured`
+      );
+    }
+    log(
+      `COMPANION_FRIENDLYNAME_PIN_OK expected=${JSON.stringify(expectFn)} actual=${JSON.stringify(effectiveFn)}`
     );
   }
 
   const hit = uniqueKeys.filter((k) => expected.has(k));
+  // Which host did Web actually poll first / primarily?
+  const primaryHost = uniqueKeys[0] || '';
+  const primaryProbe = probes.find((p) => p.host === primaryHost) || probes[0];
+  log(
+    `COMPANION_SELECTED host=${primaryHost || 'NA'} ` +
+      `friendlyName=${JSON.stringify(primaryProbe && primaryProbe.friendlyName)} ` +
+      `pms_under_test_fn=${JSON.stringify(effectiveFn)} ` +
+      `matched_expected=${hit.length ? 1 : 0} value_kind=measured`
+  );
+
   if (hit.length === 0) {
+    const winnerFn = primaryProbe && primaryProbe.friendlyName;
+    const sortNote =
+      winnerFn &&
+      effectiveFn &&
+      String(winnerFn).toLowerCase() < effectiveFnLower
+        ? `DIAGNOSIS: polled winner friendlyName=${JSON.stringify(winnerFn)} sorts BEFORE ` +
+          `PMS-under-test ${JSON.stringify(effectiveFn)} — rename the earlier server or ` +
+          `give local PMS a name that sorts first (lab used "MiSTerPlex Studio").`
+        : `DIAGNOSIS: Web polled ${uniqueKeys.join(',')} not PLEX_BASE host keys ${[...expected].join(',')}. ` +
+          'Check owned-server list sort by lowercased friendlyName.';
     fail(
       'wrong_companion_server',
       'Plex Web polled a companionServer that is NOT the PLEX_BASE under test.\n' +
         `  polled_norm=${uniqueKeys.join(',')}\n` +
         `  expected_norm=${[...expected].join(',')}\n` +
         `  polled_friendlyNames=${probes.map((p) => `${p.host}=${p.friendlyName}`).join('; ')}\n` +
-        'ROOT CAUSE CLASS: _pickCompanionServer takes the FIRST owned, private, ' +
-        'connected, non-shared server sorted by lowercased friendlyName.\n' +
-        'Lab fix was renaming local PMS to "MiSTerPlex Studio" so it sorts before ' +
-        '"node-worker1". ANY new owned server sorting earlier silently breaks casting.\n' +
-        'Action: list owned servers by friendlyName (case-insensitive), rename/remove ' +
-        'the one that sorts first, or point PLEX_BASE at the winner.\n' +
-        'Do NOT encode another household server IP into CI. plex.tv provides=player is ' +
-        'neither necessary nor sufficient.\n' +
-        'See docs/select-player-runbook.md.'
+        `  pms_under_test_FriendlyName=${JSON.stringify(effectiveFn)}\n` +
+        `  ${sortNote}\n` +
+        'ROOT CAUSE CLASS: _pickCompanionServer = first owned private connected non-shared ' +
+        'server sorted by (isShared?"1":"0")+lowercased friendlyName.\n' +
+        'Do NOT encode other household server IPs into CI. ' +
+        'plex.tv provides=player is neither necessary nor sufficient.\n' +
+        'See docs/select-player-runbook.md. value_kind=measured'
     );
   }
 
-  log(`COMPANION_ASSERT=PASS matched=${hit.join(',')} polled=${uniqueKeys.join(',')}`);
+  log(
+    `COMPANION_ASSERT=PASS matched=${hit.join(',')} polled=${uniqueKeys.join(',')} ` +
+      `selected_fn=${JSON.stringify(primaryProbe && primaryProbe.friendlyName)} ` +
+      `pms_fn=${JSON.stringify(effectiveFn)}`
+  );
   log(
     'COMPANION_SORT_FRAGILITY=active rule=first_owned_private_connected_by_lowercased_friendlyName ' +
-      'lab_anchor_friendlyName=MiSTerPlex Studio — new owned server sorting earlier → silent cast break'
+      `anchor_fn=${JSON.stringify(effectiveFn)} — any new owned server sorting earlier → silent cast break`
   );
-  return { skipped: false, hosts: uniqueKeys, matched: hit, urls, probes };
+  return {
+    skipped: false,
+    hosts: uniqueKeys,
+    matched: hit,
+    urls,
+    probes,
+    selectedHost: primaryHost,
+    selectedFriendlyName: primaryProbe && primaryProbe.friendlyName,
+    pmsFriendlyName: effectiveFn,
+  };
 }
 
 /**
@@ -1400,6 +1532,35 @@ async function glassMark(cycle, transition, phase, extra = {}) {
       mark: (ev, x) => runCorr.mark(ev, x),
     }
   );
+  // Parallel machine-readable UI_STATE for parent HDMI join (no pixels).
+  const uiStateName = (() => {
+    if (extra.picture === 'pause_overlay' || extra.defect_hint === 'pause_overlay_low_res') {
+      return 'overlay_visible';
+    }
+    if (extra.picture === 'play_chrome' || extra.defect_hint === 'play_timeline_overlay_low_res') {
+      return 'overlay_visible';
+    }
+    if (extra.picture === 'idle_logo' || transition === 'idle' || transition === 'stop') {
+      return 'idle';
+    }
+    if (transition === 'pause') return 'paused';
+    if (transition === 'seek_fwd' || transition === 'seek_back') return 'seeking';
+    if (transition === 'play' || transition === 'resume') return 'playing';
+    if (transition === 'discovery') return 'discovery';
+    return state || transition || 'unknown';
+  })();
+  uiState.mark(uiStateName, {
+    phase,
+    cycle,
+    daemon_state: state,
+    daemon_time_ms: time,
+    ui_time_ms: extra.ui_time_ms,
+    defect_hint: extra.defect_hint,
+    glass_expect: extra.picture,
+    hold_ms: g && g.hold_ms,
+    note: extra.note,
+    value_kind: 'measured',
+  });
   // Optional in-process hold so parent HDMI can grab the named window if
   // capture runs concurrent with the suite (E2E_GLASS_HOLD=1).
   const doHold = /^(1|true|yes|on)$/i.test(String(process.env.E2E_GLASS_HOLD || '0'));
@@ -3019,6 +3180,10 @@ async function runTransitionScenarios(page, itemTitle, detailsUrl, _castAlreadyS
       '(seek@8s residual from prior cycle is cleared and reported via CYCLE_START_STATE)'
   );
   log(
+    'CHEVRON_GEOMETRY=parent_verified_fixed daemon=f3aa2443 gap_ratio≈1.01 — suite does NOT assert chevron pixels (no regress gate here).\n' +
+      'OVERLAY_RES=user_bug_open w-osd-hires owns fix; suite emits UI_STATE overlay_visible only.\n'
+  );
+  log(
     'BOUNDARY_PLAYWRIGHT: asserts Plex Web control-plane + :3005 session state only. ' +
       'Does NOT prove video pixels, row coverage, overlay resolution, judder, or lipsync. ' +
       'Only parent HDMI-USB capture settles video claims.'
@@ -3683,6 +3848,15 @@ async function runTransitionScenarios(page, itemTitle, detailsUrl, _castAlreadyS
         `playing_ok samples=${prog.playing} advance=${prog.advance} time_max_ms=${prog.maxT} ` +
           `run_id=${runCorr.runId}`
       );
+      uiState.mark('playing', {
+        phase: 'enter',
+        daemon_state: 'playing',
+        daemon_time_ms: prog.maxT,
+        rating_key: String(ratingKey),
+        glass_expect: 'motion',
+        note: 'playback started — parent HDMI may grab motion',
+        value_kind: 'measured',
+      });
       {
         // Control-plane truthfulness: UI clock vs daemon (parent measured glass ~0:34/6:00).
         const uiR = await assertUiMatchesDaemon(page, `tier_${tier.name}_playing_ui_clock`);
