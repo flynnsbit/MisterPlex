@@ -58,7 +58,21 @@ WHAT THIS TOOL CANNOT MEASURE (read before promoting a number)
     the same capture-config fingerprint. Never promote raw_uncalibrated to
     an absolute claim.
   - Daemon av_drift_ms: servo deadband readout, not grabber ground truth.
+  - PLXD frames_done / presents / drops on RBF c5382bee: frames_done is
+    bank_vsync_count (ddr_frame_store), not content frames — VOID. This tool
+    never reads companion telemetry; audio is ALSA on the MS2109 grabber.
   - md5 / mean-luma freeze or health (invalid both directions on this project).
+
+AUDIO SOURCE (common clock)
+---------------------------
+  MacroSilicon 534d:2109 exposes /dev/video0 (MJPEG) AND ALSA hw:CARD,0.
+  ONE ffmpeg opens both with -use_wallclock_as_timestamps 1 so they share
+  host wall time at open. Video is NOT the only stream on the grabber.
+
+VISUAL MARKER vs 529×240 scanout
+--------------------------------
+  Fixture flash is full-frame white (drawbox w=iw h=ih) for ~2 frames @24.000.
+  Survives 50% row + 17.3% column decimation; 1-px markers would not.
 
 RETURN CODES
 ------------
@@ -1569,6 +1583,7 @@ def print_report(
     tag = "caller_supplied_score" if not default_score_keys else "DEFAULT_ASSUMED_IN_SCORE"
     # Distinct failure classes — never share one rc across instrument vs path.
     # Priority: OFFSET (level) → DRIFT (monotonic) → WANDER (residual) → PASS.
+    verdict_name = "PASS"
     if not offset_ok:
         why = f"abs_median={abs_med:.2f}>{tol_ms}"
         print(f"VERDICT=OFFSET_FAIL rc={RC_OFFSET_FAIL} reason={why} score_tag={tag}")
@@ -1577,6 +1592,7 @@ def print_report(
             "capture path (not instrument broken; not margin)"
         )
         rc = RC_OFFSET_FAIL
+        verdict_name = "OFFSET_FAIL"
     elif res.timing_class == "MONOTONIC_DRIFT" and slope_gate_active:
         why = (
             f"timing_class=MONOTONIC_DRIFT abs_slope={abs_slope:.4f} "
@@ -1587,6 +1603,7 @@ def print_report(
             "verdict_note: DRIFT_FAIL = clock-rate mismatch; fix differs from wander"
         )
         rc = RC_DRIFT_FAIL
+        verdict_name = "DRIFT_FAIL"
     elif res.timing_class == "WANDER":
         why = (
             f"timing_class=WANDER residual_rms_ms={res.residual_rms_ms} "
@@ -1599,10 +1616,12 @@ def print_report(
             "detrend; mean-only would false-PASS"
         )
         rc = RC_WANDER_FAIL
+        verdict_name = "WANDER_FAIL"
     elif slope_gate_active and not slope_ok:
         why = f"abs_slope={abs_slope:.4f}>{slope_tol}"
         print(f"VERDICT=DRIFT_FAIL rc={RC_DRIFT_FAIL} reason={why} score_tag={tag}")
         rc = RC_DRIFT_FAIL
+        verdict_name = "DRIFT_FAIL"
     else:
         print(f"VERDICT=PASS rc={RC_PASS} score_tag={tag}")
         print(
@@ -1610,10 +1629,39 @@ def print_report(
             f"{res.residual_rms_ms} — PASS requires offset AND non-wander/non-drift"
         )
         rc = RC_PASS
+        verdict_name = "PASS"
 
     if extra:
         for k, v in extra.items():
             print(f"{k}={v}")
+    # One-line parent-grepable summary (never uses PLXD frames_done/presents/drops).
+    sigma = res.stdev_offset_ms if res.stdev_offset_ms is not None else float("nan")
+    se_med = (
+        (1.2533 * sigma / math.sqrt(res.n_pairs))
+        if res.n_pairs > 0 and not math.isnan(sigma)
+        else float("nan")
+    )
+    # Uncertainty: max(SE_median, half capture-frame quant, instrument file RMSE~1ms)
+    half_quant = 16.7  # DEFAULT_ASSUMED @30fps; overwritten if margin has period
+    if res.margin and res.margin.get("video_sample_period_ms"):
+        try:
+            half_quant = 0.5 * float(res.margin["video_sample_period_ms"])
+        except (TypeError, ValueError):
+            pass
+    u_ms = max(
+        se_med if not math.isnan(se_med) else 0.0,
+        half_quant,
+        1.0,  # prove100 file-path residual floor
+    )
+    print(
+        f"SCORE offset_ms={corrected:.4f} sigma_ms={sigma:.4f} "
+        f"se_median_ms={se_med:.4f} uncertainty_ms={u_ms:.4f} "
+        f"n={res.n_pairs} timing_class={res.timing_class} "
+        f"residual_rms_ms={res.residual_rms_ms} "
+        f"tag={corrected_tag} verdict={verdict_name} "
+        f"rc={rc} src=measured "
+        f"note=no_PLXD_frames_done_presents_drops"
+    )
     return rc
 
 
