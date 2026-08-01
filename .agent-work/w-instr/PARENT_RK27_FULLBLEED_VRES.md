@@ -1,8 +1,11 @@
 # Parent card — rk=27 FullBleed VRes zone scorer (RBF `8fdf440f`)
 
-**Tool:** `tools/hdmi_fullbleed_vres_zones.py`  
+**Tool:** `tools/hdmi_fullbleed_vres_zones.py` (SOLID/STRIPES + mid/chirp zones)  
+**PRIMARY V-res metric (pitch + err + peak_share):** `tools/hdmi_vertical_pitch.py` — see `PARENT_VERTICAL_PITCH.md`  
 **Branch:** `w-avsync-hdmi-measure`  
 **Agent does not touch the device.** Parent runs capture + stamps.
+
+**Note:** Amplitude (STD) does not separate 240 vs 480. Prefer pitch instrument for the resolution claim; this zone tool remains the P=2 SOLID collapse + multi-zone report.
 
 ## Why this exists
 
