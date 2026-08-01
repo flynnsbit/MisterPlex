@@ -72,15 +72,16 @@ BASE_CORE_MD5=dfebf2bfd08dd70b473b587dd7e81848
 # regression and must fail.
 BASE_DAEMON_MD5=7cd10b4d438c714a9b8c4766dc982d59
 # Daemon pin chain (do NOT weaken — unknown md5 still FAILs):
-#   edc3a46b  CURRENT primary DDR pair with c5382bee (parent promote target).
+#   3883f5ab  CURRENT live DDR (parent 2026-08-01 hand-deploy verified).
+#   edc3a46b  prior primary — accepted rollback.
 #   5996385a  w-instr instrumented — accepted alternate.
 #   b981fd20  on-device bak — accepted DDR rollback.
 #   e9f79de2  first silicon-correct DDR — accepted rollback.
 #   50f4eb92  SPI hybrid clamp path — accepted SPI rollback.
 #   3e2cbb98  older hybrid — accepted rollback.
 #   7cd10b4d  BASE release (above).
-HYBRID_DAEMON_PREFIX8=edc3a46b
-HYBRID_DAEMON_MD5_DEFAULT=edc3a46b9d1c6b86337deb90f896eb0f
+HYBRID_DAEMON_PREFIX8=3883f5ab
+HYBRID_DAEMON_MD5_DEFAULT=3883f5ab8744e070e7b0820c6b9b4376
 if [ -f "${REPO:-$(cd "$(dirname "$0")/.." && pwd)}/artifacts/daemon-pins/misterplexd.${HYBRID_DAEMON_PREFIX8}" ]; then
   HYBRID_DAEMON_MD5=$(md5sum "${REPO:-$(cd "$(dirname "$0")/.." && pwd)}/artifacts/daemon-pins/misterplexd.${HYBRID_DAEMON_PREFIX8}" | awk '{print $1}')
   if [ "${HYBRID_DAEMON_MD5:0:8}" != "$HYBRID_DAEMON_PREFIX8" ]; then
@@ -190,7 +191,7 @@ daemon_md5_accepted() {
   p8="${m:0:8}"
   # Accepted DDR prefix8 set (current + documented rollbacks). Unknown → FAIL.
   case "$p8" in
-    5996385a|b981fd20|edc3a46b|e9f79de2|50f4eb92|3e2cbb98|7cd10b4d) return 0 ;;
+    3883f5ab|5996385a|b981fd20|edc3a46b|e9f79de2|50f4eb92|3e2cbb98|7cd10b4d) return 0 ;;
   esac
   if [ "${#HYBRID_DAEMON_MD5}" -eq 8 ] && [ "$p8" = "$HYBRID_DAEMON_MD5" ]; then
     return 0
@@ -392,7 +393,7 @@ verify_baseline() {
   elif daemon_md5_accepted "$got_disk"; then
     echo "OK   daemon-disk $got_disk"
   else
-    echo "FAIL daemon-disk got='$got_disk' want=accepted{5996385a,b981fd20,edc3a46b,e9f79de2,50f4eb92,7cd10b4d,...}"
+    echo "FAIL daemon-disk got='$got_disk' want=accepted{3883f5ab,edc3a46b,5996385a,b981fd20,e9f79de2,50f4eb92,7cd10b4d,...}"
     rc=1
   fi
 
@@ -421,7 +422,7 @@ verify_baseline() {
     echo "     supervisor may be in backoff, but it never came back — hard FAIL"
     rc=1
   elif ! daemon_md5_accepted "$live"; then
-    echo "FAIL daemon-live md5='$live' not in accepted {5996385a,b981fd20,edc3a46b,e9f79de2,50f4eb92,...} pid='$pids'"
+    echo "FAIL daemon-live md5='$live' not in accepted {3883f5ab,edc3a46b,5996385a,b981fd20,e9f79de2,50f4eb92,...} pid='$pids'"
     rc=1
   else
     if printf '%s\n' "$wait_out" | grep -q 'LIVE_WAIT_RESULT=respawned'; then

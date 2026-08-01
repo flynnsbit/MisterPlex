@@ -30,8 +30,8 @@ fi
 #   DDR 480p-capable YUV layout → 0x30080000
 # A mixed pair is a silent geometry mismatch (release.md lab stable pair).
 #
-# PRIMARY promote target (parent 2026-07-31 evening):
-#   ddr-c5382bee = core c5382bee + daemon 5996385a + conf ddr + bank1 0x30080000
+# PRIMARY promote target:
+#   ddr-c5382bee = core c5382bee + daemon 3883f5ab (resolve) + conf ddr + bank1 0x30080000
 # Documented DDR rollbacks (same core+conf profile+bank1):
 #   ddr-c5382bee-b981fd20, ddr-c5382bee-edc3a46b, ddr-c5382bee-e9f79de2
 PAIR_BANK1_SPI=0x30040000
@@ -41,6 +41,7 @@ PAIR_MATRIX_ROWS=(
   "${RBF_PIN_V2_DAILY_FULL}|${DAEMON_PIN_V2_HYBRID_FULL}|${DEVICE_CORE_V2_DAILY}|spi|spi-v2-hybrid|spi|${PAIR_BANK1_SPI}"
   "${RBF_PIN_V2_DAILY_FULL}|${DAEMON_PIN_V2_RELEASE_FULL}|${DEVICE_CORE_V2_DAILY}|spi|spi-v2-release|spi|${PAIR_BANK1_SPI}"
   "${RBF_PIN_DDR_CANDIDATE_FULL}|${_PAIR_DDR_DAEMON}|${DEVICE_CORE_PRODUCT}|ddr|ddr-c5382bee|ddr|${PAIR_BANK1_DDR}"
+  "${RBF_PIN_DDR_CANDIDATE_FULL}|${DAEMON_PIN_DDR_3883F5AB_FULL}|${DEVICE_CORE_PRODUCT}|ddr|ddr-c5382bee-3883f5ab|ddr|${PAIR_BANK1_DDR}"
   "${RBF_PIN_DDR_CANDIDATE_FULL}|${DAEMON_PIN_DDR_B981_FULL}|${DEVICE_CORE_PRODUCT}|ddr|ddr-c5382bee-b981fd20|ddr|${PAIR_BANK1_DDR}"
   "${RBF_PIN_DDR_CANDIDATE_FULL}|${DAEMON_PIN_DDR_EDC3_FULL}|${DEVICE_CORE_PRODUCT}|ddr|ddr-c5382bee-edc3a46b|ddr|${PAIR_BANK1_DDR}"
   "${RBF_PIN_DDR_CANDIDATE_FULL}|${DAEMON_PIN_DDR_E9F79DE2_FULL}|${DEVICE_CORE_PRODUCT}|ddr|ddr-c5382bee-e9f79de2|ddr|${PAIR_BANK1_DDR}"
@@ -296,8 +297,8 @@ MISSING_DAEMON_PIN want=${want:-empty} prefix8=$pfx
   Fetch from the MiSTer (parent only):
     scripts/fetch_daemon_pins.sh both
     # or: scripts/fetch_daemon_pins.sh spi    # 50f4eb92
-    # or: scripts/fetch_daemon_pins.sh ddr    # edc3a46b (primary) + e9f79de2 hist
-    # or: scripts/fetch_daemon_pins.sh edc3a46b
+    # or: scripts/fetch_daemon_pins.sh ddr    # 3883f5ab (primary) + edc3/e9f79 hist
+    # or: scripts/fetch_daemon_pins.sh 3883f5ab
   Then re-run:
     scripts/pair_ship_policy.sh find-daemon $pfx
   Override:

@@ -23,7 +23,7 @@ The FPGA DDR path renders correct colour/geometry on silicon (240p + native 480p
 | Piece | md5 | Role |
 |-------|-----|------|
 | RBF | `c5382bee73cecdee8220b811e529c297` | product DDR scanout (**not** do-not-ship) |
-| daemon | `5996385a (rollbacks: b981fd20, edc3a46b, e9f79de2)9d1c6b86337deb90f896eb0f` (w-geom `7554d6b2`) | primary ARM companion |
+| daemon | `3883f5ab8744e070e7b0820c6b9b4376` (rollbacks: edc3a46b, 5996385a, b981fd20, e9f79de2) | primary ARM companion |
 | conf | `DDR_YUV_FORCE_SCALE=1` + `FFMPEG_SWS_FLAGS=fast_bilinear` | pair half (480p correctness) |
 | hist daemon | `e9f79de217982aff44207664fdb945c5` | previous DDR pin (on-device `.bak`) |
 
@@ -99,7 +99,7 @@ daemon-only and left core/geometry mismatched (SPI bank1 `0x30040000` vs DDR
 
 | Pair id | core | daemon | bank1 | conf |
 |---------|------|--------|-------|------|
-| **ddr-c5382bee** (PRIMARY) | c5382bee → `Plex.rbf` | edc3a46b9d1c… | **0x30080000** | DDR keys only (never rewrite user `DECODE`) |
+| **ddr-c5382bee** (PRIMARY) | c5382bee → `Plex.rbf` | 3883f5ab8744… | **0x30080000** | DDR keys only (never rewrite user `DECODE`) |
 | spi-v2-hybrid (undo) | dfebf2bf → `Plex_v2.rbf` | 50f4eb92 | **0x30040000** | strip DDR keys |
 
 **bank1 for shipping DDR pair is `0x30080000`.** The FPGA DDR frame store in
@@ -126,7 +126,7 @@ PAIR_ID=ddr-c5382bee scripts/rollback_v2.sh plan
 
 ## Numbered parent runbook (exact commands)
 
-**Pair = ONE unit:** core `c5382bee` + daemon `edc3a46b` + conf
+**Pair = ONE unit:** core `c5382bee` + daemon `3883f5ab` + conf
 `DDR_YUV_FORCE_SCALE=1` `FFMPEG_SWS_FLAGS=fast_bilinear`. Half-state
 (DDR daemon + SPI core, or binaries without conf) = black/green screen that
 can still return `/resources` 200. **Abort on any non-zero `true rc=`.**
@@ -140,21 +140,23 @@ and conf-complete, not a wild install.
 cd /home/flynnsbit/Projects/MisterPlex/.worktrees/rollback-honest   # or main
 scripts/fetch_daemon_pins.sh both
 # expect: true rc=0
-# expect: artifacts/daemon-pins/misterplexd.edc3a46b  = edc3a46b9d1c6b86337deb90f896eb0f
-# expect: artifacts/daemon-pins/misterplexd.50f4eb92  = 50f4eb925de10e29172999a565c87684
-md5sum artifacts/daemon-pins/misterplexd.edc3a46b
-# abort unless full md5 == edc3a46b9d1c6b86337deb90f896eb0f
-scripts/pair_ship_policy.sh find-daemon edc3a46b9d1c6b86337deb90f896eb0f   # true rc=0
+# expect: artifacts/daemon-pins/misterplexd.3883f5ab = 3883f5ab8744e070e7b0820c6b9b4376
+# expect: artifacts/daemon-pins/misterplexd.edc3a46b  = edc3a46b9d1c6b86337deb90f896eb0f (rollback)
+# expect: artifacts/daemon-pins/misterplexd.50f4eb92  = 50f4eb925de10e29172999a565c87684 (SPI)
+md5sum artifacts/daemon-pins/misterplexd.3883f5ab
+# abort unless full md5 == 3883f5ab8744e070e7b0820c6b9b4376
+scripts/pair_ship_policy.sh find-daemon 3883f5ab8744e070e7b0820c6b9b4376   # true rc=0
 ```
 
-**Abort:** `true rc≠0` or md5 ≠ `edc3a46b9d1c6b86337deb90f896eb0f`.
+**Abort:** `true rc≠0` or md5 ≠ `3883f5ab8744e070e7b0820c6b9b4376`.
 
 ### 1) Plan dry-run (no device)
 
 ```bash
 RBF=/home/flynnsbit/Projects/MisterPlex/.agent-work/w-fit/leftedge3-proj/remote_out/w-fit-leftedge3/Plex.rbf
-DAE=artifacts/daemon-pins/misterplexd.edc3a46b
+DAE=artifacts/daemon-pins/misterplexd.3883f5ab
 md5sum "$RBF"   # expect c5382bee73cecdee8220b811e529c297
+md5sum "$DAE"   # expect 3883f5ab8744e070e7b0820c6b9b4376
 PROMOTE_EXECUTE=0 scripts/promote_ddr_daily.sh plan "$RBF" "$DAE"
 # expect: PROMOTE_POLICY_LOCAL_OK  true rc=0
 # expect: PAIR_OK id=ddr-c5382bee
@@ -803,3 +805,40 @@ Device runs a durable supervisor that races stop-everything-then-start. Required
 Never: kill-then-manual-start when supervise is live. Never: md5 disk alone. Never: pgrep. Never: cmdline substring.
 
 Primary pair: core `c5382bee` + daemon `edc3a46b…`. Also accepted: 5996385a, b981fd20, e9f79de2.
+
+## Parent hand-sequence (mechanised — do not improvise)
+
+```
+# Host: stage named by measured host md5, ship, verify live exe only
+HOST_MD5=$(md5sum build/arm/misterplexd | awk '{print $1}')   # expect 3883f5ab8744e070e7b0820c6b9b4376
+HOST_P8=${HOST_MD5:0:8}
+DEPLOY_EXPECT_MD5=$HOST_MD5 \
+  ./scripts/deploy_misterplexd.sh build/arm/misterplexd
+# true rc=0 required; prints STAGE_MD5, OUTGOING_MD5, ARCHIVED_DAEMON …bak.<out_p8>, live exe md5
+```
+
+On-device order encoded in `deploy_misterplexd.sh` (parent 2026-08-01):
+1. CAPTURE PIDs (`comm`/`argv0`/`pidof` OK; **never** cmdline substring; **no pgrep**)
+2. `scp` → `…/bin/misterplexd.stage.<host_p8>`; **md5 staged first**
+3. `cp -p` live → `misterplexd.bak.<measured_outgoing_p8>` **and** `misterplexd.<p8>.bak`
+4. `mv` stage → live (not `cp` — ETXTBSY)
+5. `kill` **captured** PIDs only; supervisor restarts
+6. Verify `md5sum $(readlink -f /proc/NEW/exe)` + `n_daemon==1` + conf from cmdline `--conf`
+
+## Backup naming / retention (decidable rollback)
+
+```bash
+# Host: print policy + inventory plan (no device delete)
+./scripts/daemon_backup_policy.sh retention-policy
+./scripts/daemon_backup_policy.sh inventory-plan
+./scripts/daemon_backup_policy.sh name-for 3883f5ab8744e070e7b0820c6b9b4376
+```
+
+**Rule:** a path is a rollback pin only if `name_prefix8 == content_md5_prefix8` (VERIFIED_PIN).
+MISLABEL / UNVERIFIED must not be used as `ROLLBACK_DAEMON` until re-pinned from measured content.
+Agents never delete on device — parent runs inventory and quarantine renames.
+
+User conf (byte-exact, never normalise):
+`7f06132f0c00e90b35141bdc0c60ccc9` @ `/media/fat/misterplex_v2/misterplex.conf`
+(always resolve conf from `/proc/PID/cmdline --conf`, never guess root).
+

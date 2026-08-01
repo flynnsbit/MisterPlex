@@ -122,8 +122,8 @@ echo "  true rc=$rc"
 [ "$rc" -eq 3 ] && ok "policy-local-daemon-mismatch" || bad "policy-local-daemon-mismatch rc=$rc"
 
 # --- verify-live via blob inject --------------------------------------------
-# Primary DDR daemon pin is edc3a46b (parent promote pair).
-EDC_LIVE=edc3a46b9d1c6b86337deb90f896eb0f
+# Primary DDR daemon pin is 3883f5ab (parent hand-deploy 2026-08-01).
+EDC_LIVE=3883f5ab8744e070e7b0820c6b9b4376
 cat >"$WORK/live_ok.blob" <<BLOB
 PRODUCT_CORE=/media/fat/_Utility/Plex.rbf
 PRODUCT_MD5=c5382bee73cecdee8220b811e529c297
@@ -600,8 +600,10 @@ echo "$out" | grep -qE 'hook_does_not_match_live_pair_root|supervise_root_mismat
 echo "=== bank1 for shipping DDR pair is 0x30080000 (624x480 synthesis-fixed) ==="
 out=$(bash -c 'source '"$ROOT"'/scripts/pair_ship_policy.sh; pair_policy_lookup ddr-c5382bee')
 echo "$out" | grep -q 'PAIR_BANK1=0x30080000' && ok "bank1-ddr-480p" || bad "bank1-ddr-480p"
-out=$(bash -c 'source '"$ROOT"'/scripts/pair_ship_policy.sh; pair_policy_check c5382bee edc3a46b')
+out=$(bash -c 'source '"$ROOT"'/scripts/pair_ship_policy.sh; pair_policy_check c5382bee 3883f5ab')
 echo "$out" | grep -q 'bank1=0x30080000' && ok "bank1-on-pair-ok" || bad "bank1-on-pair-ok"
+out=$(bash -c 'source '"$ROOT"'/scripts/pair_ship_policy.sh; pair_policy_check c5382bee edc3a46b')
+echo "$out" | grep -q 'PAIR_OK\|bank1=0x30080000' && ok "bank1-edc3-still-accepted" || bad "bank1-edc3-still-accepted"
 
 echo "=== conf keys REQUIRED but not injected → HARD rc=3 (not NOTE) ==="
 set +e

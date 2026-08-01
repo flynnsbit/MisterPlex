@@ -419,14 +419,14 @@ echo "OK restore-refuse-atomic rc=10"
 
 # --- PAIR_ID=ddr-c5382bee (primary recovery) red-before-green ---------------
 DDR_CORE=c5382bee73cecdee8220b811e529c297
-echo "=== DDR pair lookup OK (primary=edc3a46b) ==="
+echo "=== DDR pair lookup OK (primary=3883f5ab) ==="
 set +e
 out=$("$ROOT/scripts/pair_ship_policy.sh" lookup ddr-c5382bee 2>&1)
 rc=$?
 set -e
 [ "$rc" -eq 0 ] || { echo "FAIL ddr lookup rc=$rc"; exit 1; }
 echo "$out" | grep -q "$DDR_CORE" || { echo "FAIL ddr core pin"; exit 1; }
-echo "$out" | grep -qiE 'edc3a46b|PAIR_DAEMON_MD5=edc3' || { echo "FAIL ddr daemon pin edc3a46b: $out"; exit 1; }
+echo "$out" | grep -qiE '3883f5ab|PAIR_DAEMON_MD5=3883' || { echo "FAIL ddr daemon pin 3883f5ab: $out"; exit 1; }
 echo "$out" | grep -q 'PAIR_CONF_PROFILE=ddr' || { echo "FAIL conf profile"; exit 1; }
 echo "OK ddr-lookup"
 set +e
@@ -458,13 +458,14 @@ echo "$LAST_OUT" | grep -qE 'MISSING_DAEMON_PIN|fetch_daemon_pins|ATOMIC_ROLLBAC
 echo "OK ddr-preflight-refuse-no-pin rc=10"
 
 EDC_FULL=edc3a46b9d1c6b86337deb90f896eb0f
+CUR_FULL=3883f5ab8744e070e7b0820c6b9b4376
 
-echo "=== DDR primary preflight OK when disk already edc3a46b (green) ==="
+echo "=== DDR primary preflight OK when disk already 3883f5ab (green) ==="
 write_scen <<SCEN
 product_md5=$DDR_CORE
 core_md5=$DDR_CORE
-disk_md5=$EDC_FULL
-live_md5=$EDC_FULL
+disk_md5=$CUR_FULL
+live_md5=$CUR_FULL
 n_daemon=1
 http_code=200
 SCEN
@@ -473,7 +474,7 @@ PAIR_ID=ddr-c5382bee run_rb ddr-pre-ok preflight
 echo "$LAST_OUT" | grep -q PREFLIGHT_OK || { echo "FAIL PREFLIGHT_OK ddr"; exit 1; }
 echo "OK ddr-preflight-disk-pin rc=0"
 
-echo "=== DDR primary verify happy + visual + conf (green) ==="
+echo "=== DDR edc3 pair-id preflight OK when disk edc3a46b (accepted rollback) ==="
 write_scen <<SCEN
 product_md5=$DDR_CORE
 core_md5=$DDR_CORE
@@ -481,21 +482,34 @@ disk_md5=$EDC_FULL
 live_md5=$EDC_FULL
 n_daemon=1
 http_code=200
+SCEN
+PAIR_ID=ddr-c5382bee-edc3a46b run_rb ddr-edc-pre preflight
+[ "$LAST_RC" -eq 0 ] || { echo "FAIL ddr-edc-pre want 0 got $LAST_RC"; exit 1; }
+echo "OK ddr-edc3-preflight rc=0"
+
+echo "=== DDR primary verify happy + visual + conf (green) ==="
+write_scen <<SCEN
+product_md5=$DDR_CORE
+core_md5=$DDR_CORE
+disk_md5=$CUR_FULL
+live_md5=$CUR_FULL
+n_daemon=1
+http_code=200
 conf_profile=ddr
 SCEN
 PAIR_ID=ddr-c5382bee PAIR_IDLE_PNG="$WORK/idle_ok.png" ROLLBACK_REQUIRE_VISUAL=1 \
-  run_rb ddr-edc-vis verify
-[ "$LAST_RC" -eq 0 ] || { echo "FAIL ddr-edc-vis want 0 got $LAST_RC"; exit 1; }
-echo "$LAST_OUT" | grep -q 'OK pair-compatibility' || { echo "FAIL edc pair"; exit 1; }
+  run_rb ddr-cur-vis verify
+[ "$LAST_RC" -eq 0 ] || { echo "FAIL ddr-cur-vis want 0 got $LAST_RC"; exit 1; }
+echo "$LAST_OUT" | grep -q 'OK pair-compatibility' || { echo "FAIL cur pair"; exit 1; }
 echo "$LAST_OUT" | grep -q 'OK conf-profile=ddr' || { echo "FAIL ddr conf profile"; exit 1; }
-echo "OK ddr-edc3a46b-verify rc=0"
+echo "OK ddr-3883f5ab-verify rc=0"
 
 echo "=== DDR verify FAILS without conf keys (half-state conf) ==="
 write_scen <<SCEN
 product_md5=$DDR_CORE
 core_md5=$DDR_CORE
-disk_md5=$EDC_FULL
-live_md5=$EDC_FULL
+disk_md5=$CUR_FULL
+live_md5=$CUR_FULL
 n_daemon=1
 http_code=200
 conf_profile=spi

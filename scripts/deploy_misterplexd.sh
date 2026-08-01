@@ -24,6 +24,8 @@ set -euo pipefail
 #   PID capture + stop BEFORE any rename; verify live exe md5 AFTER
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck source=daemon_backup_policy.sh
+source "$ROOT/scripts/daemon_backup_policy.sh"
 # shellcheck source=/dev/null
 source "$ROOT/scripts/deploy_misterplexd_lib.sh"
 
@@ -197,10 +199,11 @@ REMOTE_BIN="$TARGET_ROOT/bin/misterplexd"
 REMOTE_CONF="$TARGET_ROOT/misterplex.conf"
 REMOTE_LOG="$TARGET_ROOT/misterplexd.log"
 
-# DEPLOY ORDER (parent 2026-08-01 — supervisor-safe; races naive stop-first):
+# DEPLOY ORDER (parent 2026-08-01 hand sequence — supervisor-safe):
 #   1) CAPTURE daemon PIDs by /proc/comm+argv0 (NOT cmdline; NOT pgrep — busybox)
-#   2) stage new bytes to /tmp/misterplexd.deploy.$$
-#   3) cp live -> .bak.<prefix8> / .prev-deploy  (never mv live name away first)
+#      pidof misterplexd is OK as supplement; never match flock via cmdline substring
+#   2) scp -> $BIN/misterplexd.stage.<host_prefix8>; md5 STAGED first
+#   3) cp -p live -> misterplexd.bak.<measured_outgoing_prefix8> (+ canonical .PREFIX.bak)
 #   4) mv stage onto live path  (rename OK while old inode still executing)
 #   5) kill ONLY captured daemon PIDs  (leave supervisor alive)
 #   6) supervisor restarts child; do NOT kill-then-manual-start when supervise present
@@ -253,9 +256,11 @@ CAPTURED_PIDS=$(printf '%s\n' "$CAP_OUT" | sed -n 's/^CAPTURED_PIDS=//p' | head 
 N_SUP_LIVE=$(printf '%s\n' "$CAP_OUT" | sed -n 's/^N_SUP_LIVE=//p' | head -1 | tr -d '\r')
 echo "deploy: captured_pids='${CAPTURED_PIDS:-}' n_sup_live=${N_SUP_LIVE:-0}"
 
-# --- 2-4) stage → cp bak → mv onto live (exact artifact; no rebuild) ----------
-echo "deploy: install host_md5=$HOST_MD5 -> $REMOTE_BIN (stage+cp_bak+mv; no rebuild)"
-STAGED_REMOTE="/tmp/misterplexd.deploy.$$"
+# --- 2-4) stage → cp -p bak(measured md5) → mv (parent hand sequence) --------
+echo "deploy: install host_md5=$HOST_MD5 -> $REMOTE_BIN (stage+cp -p bak+mv)"
+HOST_P8="${HOST_MD5:0:8}"
+# Stage beside live bin with measured prefix (parent: misterplexd.stage.3883f5ab)
+STAGED_REMOTE="${REMOTE_BIN}.stage.${HOST_P8}"
 set +e
 ssh_m "set -e
   root='$TARGET_ROOT'
@@ -277,6 +282,8 @@ ssh_m "set -e
   staged='$STAGED_REMOTE'
   dst='$REMOTE_BIN'
   host_want='$HOST_MD5'
+  host_p8='${HOST_P8}'
+  # 1) md5 the STAGED file first (parent sequence)
   sm=\$(md5sum \"\$staged\" | awk '{print \$1}')
   echo STAGE_MD5=\$sm
   if [ \"\$sm\" != \"\$host_want\" ]; then
@@ -284,20 +291,38 @@ ssh_m "set -e
     rm -f \"\$staged\"
     exit 7
   fi
+  if [ \"\${sm:0:8}\" != \"\$host_p8\" ]; then
+    echo \"FAIL stage prefix \${sm:0:8} != \$host_p8\"
+    exit 7
+  fi
+  # 2) backup LIVE bytes labeled with md5 they ACTUALLY are (cp -p; never mv live away)
   if [ -f \"\$dst\" ]; then
     om=\$(md5sum \"\$dst\" | awk '{print \$1}')
-    cp -f \"\$dst\" \"\${dst}.prev-deploy\"
-    if [ -n \"\$om\" ]; then
-      arch=\"\${dst}.\${om:0:8}.bak\"
-      if [ ! -f \"\$arch\" ]; then
-        cp -f \"\$dst\" \"\$arch\"
-        echo \"ARCHIVED_DAEMON \$arch\"
+    op8=\${om:0:8}
+    echo OUTGOING_MD5=\$om
+    # canonical + parent alias; skip if already present with matching content
+    canon=\"\${dst}.\${op8}.bak\"
+    alias=\"\${dst}.bak.\${op8}\"
+    if [ ! -f \"\$canon\" ]; then
+      cp -p \"\$dst\" \"\$canon\"
+      echo \"ARCHIVED_DAEMON \$canon md5=\$om\"
+    else
+      cm=\$(md5sum \"\$canon\" | awk '{print \$1}')
+      if [ \"\$cm\" = \"\$om\" ]; then
+        echo \"ARCHIVE_DAEMON_SKIP \$canon\"
       else
-        echo \"ARCHIVE_DAEMON_SKIP \$arch\"
+        echo \"FAIL archive path \$canon content \$cm != outgoing \$om (MISLABEL risk)\"
+        exit 7
       fi
     fi
+    if [ ! -f \"\$alias\" ]; then
+      cp -p \"\$dst\" \"\$alias\" || true
+      echo \"ARCHIVED_ALIAS \$alias\"
+    fi
+  else
+    echo OUTGOING_MD5=MISSING
   fi
-  # mv replaces directory entry; running process (if any) keeps old inode until kill
+  # 3) mv stage onto live (rename survives execution; cp would ETXTBSY)
   mv -f \"\$staged\" \"\$dst\"
   chmod 755 \"\$dst\"
   sync
@@ -307,7 +332,7 @@ ssh_m "set -e
     echo \"FAIL disk md5 \$dm != host \$host_want after mv\"
     exit 7
   fi
-  echo INSTALL_OK
+  echo INSTALL_OK bak_prefix=\${op8:-none} new_prefix=\$host_p8
 "
 inst_rc=$?
 set -e
@@ -376,14 +401,16 @@ set -euo pipefail
 chmod +x "$REMOTE_BIN"
 chmod +x "$TARGET_ROOT/scripts/plex_browse.sh" "$TARGET_ROOT/scripts/plex_menu.sh" 2>/dev/null || true
 
+# Conf is USER-OWNED. Never invent a default conf to make deploy succeed.
 if [[ ! -f "$REMOTE_CONF" ]]; then
-  mkdir -p "$TARGET_ROOT"
-  cat >"$REMOTE_CONF" <<'CONF'
-# Set PLEX_BASE=http://YOUR-PLEX-SERVER:32400
-# PLEX_TOKEN=
-CONF
-  if [[ -n "${PMS_URL:-}" ]]; then
-    printf 'PLEX_BASE=%s\n' "$PMS_URL" >>"$REMOTE_CONF"
+  if [[ "${DEPLOY_ALLOW_CREATE_CONF:-0}" == "1" ]]; then
+    mkdir -p "$TARGET_ROOT"
+    printf '# empty bootstrap; operator must fill\n' >"$REMOTE_CONF"
+    echo "WARN created empty conf DEPLOY_ALLOW_CREATE_CONF=1 path=$REMOTE_CONF"
+  else
+    echo "FAIL conf missing at $REMOTE_CONF (user-owned; will not invent a default)"
+    echo "     set DEPLOY_ALLOW_CREATE_CONF=1 only when intentionally bootstrapping"
+    exit 8
   fi
 fi
 
@@ -414,7 +441,9 @@ wait_live_match() {
       fi
       [ "$is" -eq 1 ] || continue
       n=$((n+1))
-      m=$(md5sum "$d/exe" 2>/dev/null | awk '{print $1}')
+      ep=$(readlink -f "$d/exe" 2>/dev/null || true)
+      [ -n "$ep" ] || continue
+      m=$(md5sum "$ep" 2>/dev/null | awk '{print $1}')
     done
     if [ "$n" -eq 1 ] && [ "$m" = "$HOST_MD5" ]; then
       echo "SUPERVISE_RESTART_OK live_md5=$m"

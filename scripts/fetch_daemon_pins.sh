@@ -31,13 +31,14 @@ scp_from() {
   sshpass -p "$PASS" scp -o StrictHostKeyChecking=no -o ConnectTimeout=12 "$USER@$HOST:$1" "$2"
 }
 
-# Pins by prefix8 (full md5 verified after fetch). Primary DDR = edc3a46b.
+# Pins by prefix8 (full md5 verified after fetch). Primary DDR = 3883f5ab.
 # shellcheck disable=SC2034
 SPI_MD5=50f4eb925de10e29172999a565c87684
 SPI_PFX=50f4eb92
 DDR_HIST_MD5=e9f79de217982aff44207664fdb945c5
 DDR_HIST_PFX=e9f79de2
-DDR_LIVE_PFX=edc3a46b   # full filled after fetch; live process is source of truth
+DDR_LIVE_PFX=3883f5ab   # full filled after fetch; live process is source of truth
+DDR_EDC3_PFX=edc3a46b   # accepted rollback pin
 
 fetch_one() {
   local label="$1" want_spec="$2" out_name="$3"
@@ -160,16 +161,20 @@ case "$WANT" in
   hist|e9f79de2|ddr-hist)
     fetch_one ddr_hist "$DDR_HIST_MD5" misterplexd.e9f79de2 || rc=$?
     ;;
-  ddr|edc3a46b|live)
-    fetch_one ddr_live "$DDR_LIVE_PFX" misterplexd.edc3a46b || rc=$?
+  ddr|3883f5ab|live)
+    fetch_one ddr_live "$DDR_LIVE_PFX" misterplexd.3883f5ab || rc=$?
+    ;;
+  edc3a46b)
+    fetch_one ddr_edc3 "$DDR_EDC3_PFX" misterplexd.edc3a46b || rc=$?
     ;;
   both|all|"")
     fetch_one spi "$SPI_MD5" misterplexd.50f4eb92 || rc=$?
-    fetch_one ddr_live "$DDR_LIVE_PFX" misterplexd.edc3a46b || rc=$?
+    fetch_one ddr_live "$DDR_LIVE_PFX" misterplexd.3883f5ab || rc=$?
+    fetch_one ddr_edc3 "$DDR_EDC3_PFX" misterplexd.edc3a46b || true
     fetch_one ddr_hist "$DDR_HIST_MD5" misterplexd.e9f79de2 || true
     ;;
   *)
-    echo "usage: $0 {both|spi|ddr|edc3a46b|hist|e9f79de2}" >&2
+    echo "usage: $0 {both|spi|ddr|3883f5ab|edc3a46b|hist|e9f79de2}" >&2
     echo "true rc=9"
     exit 9
     ;;

@@ -185,11 +185,12 @@ if echo "$args $input" | grep -qE 'DEPLOY_INSTALL_PREP|PREP_OK|mkdir -p .*/bin';
 fi
 
 # stage+mv install remote body
-if echo "$input $args" | grep -q 'INSTALL_OK\|STAGE_MD5=\|ARCHIVED_DAEMON\|prev-deploy'; then
+if echo "$input $args" | grep -q 'INSTALL_OK\|STAGE_MD5=\|ARCHIVED_DAEMON\|OUTGOING_MD5\|prev-deploy'; then
   host=$(cat "$STATE_DIR/disk_md5")
   echo "STAGE_MD5=$host"
+  echo "OUTGOING_MD5=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
   echo "DISK_MD5=$host"
-  echo "INSTALL_OK"
+  echo "INSTALL_OK bak_prefix=aaaaaaaa new_prefix=${host:0:8}"
   exit 0
 fi
 
@@ -291,8 +292,8 @@ if run_deploy "green" env -u MISTERPLEX_ROOT \
 else
   bad "integ-green-rc0"; tail -40 "$WORK/green.out" >&2
 fi
-# scp lands on /tmp stage path; final path is mv on-device (parent ETXTBSY trap)
-grep -E '/tmp/misterplexd\.deploy\.' "$STATE/scp_dests" \
+# scp lands on bin/misterplexd.stage.<prefix8>; final path is mv on-device (parent hand sequence)
+grep -E 'misterplexd\.stage\.[0-9a-f]{8}' "$STATE/scp_dests" \
   && ok "integ-green-scp-stage" || bad "integ-green-scp-stage"
 grep -qE 'INSTALL_OK|install_mv true rc=0|stage\+cp_bak\+mv|STAGE_MD5=|DISK_MD5=' "$WORK/green.out" \
   && ok "integ-green-install-mv" || bad "integ-green-install-mv"
@@ -316,7 +317,10 @@ else
 fi
 grep -qE 'comm.*=.*misterplexd|/proc/.*/comm' "$SCRIPT" && ok "source-has-comm-daemon" || bad "source-has-comm-daemon"
 grep -q 'mv -f' "$SCRIPT" && ok "source-stage-mv" || bad "source-stage-mv"
-grep -q 'misterplexd.deploy' "$SCRIPT" && ok "source-stage-path" || bad "source-stage-path"
+grep -q 'misterplexd.stage.' "$SCRIPT" && ok "source-stage-path" || bad "source-stage-path"
+grep -q 'misterplexd.bak.' "$SCRIPT" && ok "source-bak-measured-md5" || bad "source-bak-measured-md5"
+grep -q 'OUTGOING_MD5' "$SCRIPT" && ok "source-outgoing-md5" || bad "source-outgoing-md5"
+grep -q 'DEPLOY_ALLOW_CREATE_CONF' "$SCRIPT" && ok "source-conf-user-owned" || bad "source-conf-user-owned"
 # kill-captured path must leave supervise tokens (supervisor restart model)
 if grep -q 'misterplexd_supervise.sh' "$SCRIPT" && grep -q 'CAPTURED_PIDS\|captured_pids\|KILL_CAPTURED' "$SCRIPT"; then
   ok "source-stop-supervise-token-ok"

@@ -4,7 +4,7 @@
 # Parent-measured working pair (2026-07-31 viewed pixels + native 480p):
 #   RBF    md5 c5382bee73cecdee8220b811e529c297  → device PRODUCT slot
 #          /media/fat/_Utility/Plex.rbf
-#   daemon md5 edc3a46b… (w-geom 7554d6b2) — full from pin file after fetch
+#   daemon md5 3883f5ab8744e070e7b0820c6b9b4376 — full from pin file after fetch
 #          live root from readlink -f /proc/PID/exe (usually misterplex_v2)
 #   conf   DDR_YUV_FORCE_SCALE=1 FFMPEG_SWS_FLAGS=fast_bilinear
 #          (resolved live --conf from /proc/PID/cmdline — never assume path)
@@ -82,6 +82,7 @@ default_daemon() {
   want=$(printf '%s' "$EXPECT_DAEMON_MD5" | tr -d '[:space:]' | tr 'A-F' 'a-f')
   for pin in \
     "$ROOT/artifacts/daemon-pins/misterplexd.${want:0:8}" \
+    "$ROOT/artifacts/daemon-pins/misterplexd.3883f5ab" \
     "$ROOT/artifacts/daemon-pins/misterplexd.edc3a46b" \
     "$ROOT/artifacts/daemon-pins/misterplexd.e9f79de2" \
     "$ROOT/build/arm/misterplexd"
@@ -90,7 +91,7 @@ default_daemon() {
     m=$(md5sum "$pin" | awk '{print $1}')
     if [ -z "$want" ] || [ "$m" = "$want" ] || [ "${m:0:8}" = "${want:0:8}" ]; then
       # Prefer current DDR prefix over historical pins / unrelated build trees.
-      if [ "${want:0:8}" = "edc3a46b" ] && [ "${m:0:8}" != "edc3a46b" ]; then
+      if [ "${want:0:8}" = "3883f5ab" ] && [ "${m:0:8}" != "3883f5ab" ]; then
         continue
       fi
       printf '%s' "$pin"
@@ -145,7 +146,8 @@ Power-cycle worst moments (see: PAIR_ID=ddr-c5382bee scripts/rollback_v2.sh plan
 
 Daemon pins (gitignored — fetch first if missing):
   scripts/fetch_daemon_pins.sh both
-  artifacts/daemon-pins/misterplexd.edc3a46b  (DDR PRIMARY edc3a46b9d1c…)
+  artifacts/daemon-pins/misterplexd.3883f5ab  (DDR PRIMARY 3883f5ab8744…)
+  artifacts/daemon-pins/misterplexd.edc3a46b  (DDR rollback)
   artifacts/daemon-pins/misterplexd.e9f79de2  (DDR hist)
   artifacts/daemon-pins/misterplexd.50f4eb92  (SPI)
 

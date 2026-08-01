@@ -344,9 +344,13 @@ verify_live() {
     echo "NO-DATA live /proc/PID/exe md5 (disk-only is NOT success)"
     [ "$rc" -eq 0 ] && rc=4
   elif pair_policy_md5_match "$live" "$EXPECT_DAEMON_MD5"; then
-    echo "OK live-exe-md5 $live (from readlink -f /proc/PID/exe; want=$EXPECT_DAEMON_MD5)"
+    echo "OK live-exe-md5 $live (from readlink -f /proc/PID/exe; primary=$EXPECT_DAEMON_MD5)"
+  elif rbf_policy_ddr_daemon_accepted "$live"; then
+    # Accepted rollback/alternate pins (edc3/5996385a/b981/e9f79) must still verify-live GREEN.
+    # Primary pin is the promote target; gate must not force exclusive primary match.
+    echo "OK live-exe-md5 $live (accepted DDR pin; primary=$EXPECT_DAEMON_MD5)"
   else
-    echo "FAIL live-exe-md5 got=$live want=$EXPECT_DAEMON_MD5"
+    echo "FAIL live-exe-md5 got=$live want=primary:$EXPECT_DAEMON_MD5 or accepted DDR pin set"
     echo "     hint: verify via readlink -f /proc/PID/exe — never on-disk file alone (ETXTBSY)"
     rc=3
   fi
