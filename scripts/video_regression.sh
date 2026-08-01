@@ -389,10 +389,17 @@ peek() {
   fi
 }
 # Product doorbell control page (0x300FF000 family).
+# PLXK/PLXS/PLXD = DDR-family/liveness signals only — NOT RBF content hash.
+# Residue from a prior DDR load can fake magic after SPI load (docs).
 echo "PLXK_WORD=$(peek 0x300FF000)"
 echo "PLXS_WORD=$(peek 0x300FF100)"
 echo "PLXD_WORD=$(peek 0x300FF128)"
 echo "PLXC_WORD=$(peek 0x300FF130)"
+# Bank1 base peeks (tier geometry). Forensic only — not sole identity.
+# SPI 320x240 bank1 0x30040000; DDR 480p bank1 0x30080000. STRICT_DEVMEM
+# blocks dd; busybox devmem mmaps. Values alone do not prove which RBF is loaded.
+echo "BANK1_SPI_PEEK=$(peek 0x30040000)"
+echo "BANK1_DDR_PEEK=$(peek 0x30080000)"
 REMOTE
 )"
 }
@@ -874,15 +881,40 @@ verify_baseline() {
     rc=1
     gate_core_identity=UNVERIFIED
   else
-    echo "NOTE core-id not injected (VIDREG_CORE_ID unset) — claim/pair only; running-core identity UNVERIFIED"
-    gate_core_identity=UNVERIFIED
+    echo "NOTE core-id not injected (VIDREG_CORE_ID unset) — claim/pair only unless PLXC word already verified"
+    # Do not clobber claim/PLXC-word VERIFIED_PLXC just because inject is unset.
+    if [ "$gate_core_identity" != VERIFIED_PLXC ]; then
+      gate_core_identity=UNVERIFIED
+    fi
   fi
 
   echo "GATE_CORE_IDENTITY=$gate_core_identity"
   if [ "$gate_core_identity" = UNVERIFIED ]; then
-    echo "NOTE GATE_CORE_IDENTITY=UNVERIFIED — pair/liveness may PASS; fabric hash not silicon-proven (no PLXC). NOT silicon proof of bitstream content hash."
+    echo "NOTE GATE_CORE_IDENTITY=UNVERIFIED — fabric content hash not silicon-proven."
+    echo "     CORENAME/RBFNAME are vacuous (always Plex). On-disk RBF md5 ≠ running bitstream."
+    echo "     PLXC @ 0x300FF130 absent until identity RBF. Claim+pair are interim only."
+    echo "     A DDR daemon + SPI core (black screen) is the promotion mixed-state class."
   elif [ "$gate_core_identity" = VERIFIED_PLXC ]; then
     echo "OK   GATE_CORE_IDENTITY=VERIFIED_PLXC"
+  fi
+
+  # Refuse FULL PASS when running bitstream cannot be identified.
+  # Parent 2026-07-31: gate was blind-and-green on mixed SPI core + DDR daemon
+  # because non-visual checks passed. Honest outcome is three-way:
+  #   rc=0 FULL_PASS only with VERIFIED identity + all checks OK
+  #   rc=2 CORE_IDENTITY_UNVERIFIED when checks OK but fabric unproven
+  #   rc=1 FAIL / rc=4 NO-DATA / rc=5 NETWORK unchanged
+  if [ "$rc" -eq 0 ]; then
+    if [ "$gate_core_identity" = UNVERIFIED ]; then
+      echo "REFUSE FULL_PASS reason=running_bitstream_identity_unverified"
+      echo "VERIFY_STATUS=CORE_IDENTITY_UNVERIFIED"
+      echo "     Pair/liveness lines above are NOT a full PASS. Do not promote on this alone."
+      rc=2
+    else
+      echo "VERIFY_STATUS=FULL_PASS GATE_CORE_IDENTITY=$gate_core_identity"
+    fi
+  else
+    echo "VERIFY_STATUS=FAIL rc=$rc GATE_CORE_IDENTITY=$gate_core_identity"
   fi
 
   return $rc
@@ -1005,8 +1037,23 @@ if [ "${VIDREG_LIB_ONLY:-0}" = "1" ]; then
 fi
 
 case "${1:-verify}" in
-  verify)   verify_baseline ;;
-  baseline) verify_baseline; run_bundle baseline ;;
+  verify)
+    set +e
+    verify_baseline
+    _vr=$?
+    set -e
+    echo "true rc=$_vr"
+    exit "$_vr"
+    ;;
+  baseline)
+    set +e
+    verify_baseline
+    _vr=$?
+    set -e
+    echo "true rc=$_vr"
+    [ "$_vr" -eq 0 ] || exit "$_vr"
+    run_bundle baseline
+    ;;
   dev)      run_bundle dev ;;
   *) echo "usage: $0 {baseline|dev|verify}"; exit 1 ;;
 esac

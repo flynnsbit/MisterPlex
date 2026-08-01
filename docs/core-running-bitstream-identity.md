@@ -43,6 +43,12 @@ Mailboxes are family/liveness, not identity.
 3. **(core, daemon) pair table** — SPI baseline pins and DDR pins must match
    families. Mixed pair → **FAIL** even if HTTP is 200.
 4. CORENAME/RBFNAME strings are logged and **never** used as identity.
+5. **Refuse FULL_PASS when fabric unproven** (`GATE_CORE_IDENTITY=UNVERIFIED`):
+   `verify` exits **rc=2** `VERIFY_STATUS=CORE_IDENTITY_UNVERIFIED` even if
+   pair/liveness OK. **rc=0 FULL_PASS** only with `VERIFIED_PLXC` (live PLXC
+   inject or identity word). Bank1 peeks (`0x30040000` / `0x30080000`) and
+   PLXK/PLXD are forensic/family only — not sole identity (residue fakes magic).
+6. Empty SSH/hash probes → **NO-DATA rc=4**, never `FAIL got=''` mismatch.
 
 ## Durable design: PLXC build identity (rides next fit — do not open a slot)
 

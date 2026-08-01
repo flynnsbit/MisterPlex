@@ -1,30 +1,36 @@
-lane: w-lint (GATE-INTEGRITY)
+w-lint GATE-INTEGRITY status
 branch: w-lint-gate-integrity
-tip: (see git log)
+tip: dddef8e17511a59bf689a12897c7bc0b64e8dfd0
+worktree: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-lint
 
-RULE (parent 2026-07-31): absence of evidence must never become a measured value.
-  Outcomes: MEASURED_VALUE | MEASURED_ABSENCE | COULD_NOT_MEASURE
-  Shell primitive: scripts/lib/measure_status.inc.sh (UNSCORED/NO_DATA family)
+## RE-TASK complete — running bitstream + glue + empty=NO-DATA
 
-PRIORITY FIXES THIS TICK:
-1. STA hole — scripts/build_rbf_remote.sh HARD FAIL on absent/unreadable STA
-   (was: grep -c || true → zero negative slack). Remote path same.
-2. Supervisor TERM trap — plexctl.sh write_supervisor + misterplexd_supervise.sh
-   exit 143/130 + SUPERVISE_SIGNAL log (was exit 0 = silent disarm).
-3. measure_c2_pixel_path.sh — grep -c || echo 0 → three-way NO_DATA.
-4. pidof misterplexd removed from deploy_plex_core, source_rate_rca,
-   validate_playback_controls_hw (restore_misterplexd_prev already HARD REFUSE).
-5. deploy_misterplexd hook count: no grep -c || true.
+### Defect 1 — running bitstream identity
+- verify REFUSES FULL_PASS when GATE_CORE_IDENTITY=UNVERIFIED
+- rc=0 FULL_PASS only VERIFIED_PLXC
+- rc=2 VERIFY_STATUS=CORE_IDENTITY_UNVERIFIED (pair OK, fabric unproven)
+- BANK1 peeks forensic only; PLXC still fit-gated
+- docs/core-running-bitstream-identity.md updated
 
-RBG suites:
-  test_measure_status_three_way.sh     true rc=0
-  test_supervise_term_trap.sh          true rc=0  (historic exit0 reproduced; fix→143)
-  test_absence_as_zero_static_guard.py true rc=0
-  boothook/deploy/rollcall             true rc=0  expected_commands=124
+Evidence (true rc direct):
+  test_video_regression_liveness.sh  true rc=0
+    dead/mixed → rc=1; coherent UNVERIFIED → rc=2; PLXC ddr → rc=0; empty disk → rc=4
 
-PRIOR (005dd330): (deleted) exe enum, validated-pair 865d4c8a, plexctl exe stop.
+### Defect 2 — blind-and-RED glue
+- pair_pin_update newline join + LIVE_MD5 shape (contam rc=3, empty rc=4)
+- test_harness_capture_integrity.py true rc=0
+- test_promotion_gates.sh true rc=0 (glue fail rc=3 + green rc=0)
 
-PARENT device (you run):
-  QUARANTINE_EXECUTE=1 scripts/quarantine_stale_daemon_tree.sh apply
-  After deploy: confirm supervise log SUPERVISE_SIGNAL on stop; never exit 0 on TERM
-  pair_pin_update.sh --daemon-md5 <full> after validate
+### Defect 3 — empty = NO-DATA
+- classify_obs_hash + pin update empty → rc=4 never FAIL got=''
+
+### Rollcall
+- expected_commands=124 protected; UNIT_ROLLCALL_OK true rc=0
+
+### Parent device (do not run from agent)
+bash scripts/video_regression.sh verify; echo "true rc=$?"
+# expect rc=2 CORE_IDENTITY_UNVERIFIED on pre-PLXC c5382bee
+# VIDREG_CORE_ID=ddr … only when live PLXC proves CAP_DDR
+MISTER_HOST=… bash scripts/pair_pin_update.sh --from-live
+
+No Quartus / no device SSH this lane.

@@ -353,14 +353,16 @@ live_conf=$V2_CONF
 $(spi_claim_ok)
 EOF
 run_new_verify "new-live"
-expect_rc "new-live" 0
+# Honest: pair/liveness OK but fabric unproven → refuse FULL_PASS (rc=2)
+expect_rc "new-live" 2
 expect_grep "new-live-core" "OK   core-running $BASE_CORE_MD5"
 expect_grep "new-live-ok" "OK   daemon-live $SPI_HYBRID_DAEMON_MD5"
 expect_grep "new-live-http" 'OK   daemon-http'
 expect_grep "new-live-pair" 'OK   pair-coherent'
 expect_grep "new-live-conf" "OK   daemon-conf $V2_CONF"
 expect_grep "new-live-unverified" 'GATE_CORE_IDENTITY=UNVERIFIED'
-expect_grep "new-live-unverified-note" 'NOT silicon proof'
+expect_grep "new-live-refuse" 'REFUSE FULL_PASS'
+expect_grep "new-live-status" 'VERIFY_STATUS=CORE_IDENTITY_UNVERIFIED'
 
 echo "=== NEW gate: coherent DDR pair (c5382bee + edc3a46b PREV CURRENT) PASSes ==="
 write_scenario <<EOF
@@ -383,10 +385,11 @@ corename=Plex
 rbfname=Plex
 EOF
 run_new_verify "ddr-pair"
-expect_rc "ddr-pair" 0
+expect_rc "ddr-pair" 2
 expect_grep "ddr-pair-core" "OK   core-running $DDR_CORE_MD5"
 expect_grep "ddr-pair-ok" 'OK   pair-coherent'
 expect_grep "ddr-family" 'family=ddr'
+expect_grep "ddr-pair-unv" 'VERIFY_STATUS=CORE_IDENTITY_UNVERIFIED'
 
 echo "=== NEW gate: CURRENT pin prefix 865d4c8a + DDR core PASSes ==="
 write_scenario <<EOF
@@ -409,9 +412,10 @@ corename=Plex
 rbfname=Plex
 EOF
 run_new_verify "ddr-current-865d"
-expect_rc "ddr-current-865d" 0
+expect_rc "ddr-current-865d" 2
 expect_grep "ddr-865d-ok" 'OK   pair-coherent'
 expect_grep "ddr-865d-live" "OK   daemon-live ${CURRENT_DDR_PREFIX}"
+expect_grep "ddr-865d-unv" 'VERIFY_STATUS=CORE_IDENTITY_UNVERIFIED'
 
 echo "=== NEW gate: PREV DDR rollback pin e9f79de2 still accepted ==="
 write_scenario <<EOF
@@ -434,7 +438,7 @@ corename=Plex
 rbfname=Plex
 EOF
 run_new_verify "ddr-prev"
-expect_rc "ddr-prev" 0
+expect_rc "ddr-prev" 2
 expect_grep "ddr-prev-ok" 'OK   pair-coherent'
 expect_grep "ddr-prev-daemon" "OK   daemon-live $PREV_DDR_DAEMON_MD5"
 
@@ -474,7 +478,7 @@ live_conf=$V2_CONF
 $(spi_claim_ok)
 EOF
 run_new_verify "new-prev"
-expect_rc "new-prev" 0
+expect_rc "new-prev" 2
 expect_grep "new-prev-ok" "OK   daemon-live $PREV_HYBRID_DAEMON_MD5"
 
 echo "=== NEW gate: process up but HTTP dead → FAIL ==="
@@ -540,8 +544,9 @@ $(spi_claim_ok)
 EOF
 # Integer-second deadline is coarse; give headroom so appear_after=3 can fire.
 LIVE_WAIT_SEC=5 LIVE_POLL_SEC=0.05 run_new_verify "new-respawn"
-expect_rc "new-respawn" 0
+expect_rc "new-respawn" 2
 expect_grep "new-respawn-note" 'respawned during wait'
+expect_grep "new-respawn-unv" 'VERIFY_STATUS=CORE_IDENTITY_UNVERIFIED'
 
 echo "=== NEW gate: never comes back within wait → FAIL ==="
 write_scenario <<EOF
@@ -588,9 +593,10 @@ live_conf=$V2_CONF
 $(spi_claim_ok)
 EOF
 VIDREG_CORE_ID=absent run_new_verify "coreid-spi-absent"
-expect_rc "coreid-spi-absent" 0
+expect_rc "coreid-spi-absent" 2
 expect_grep "coreid-spi-absent-ok" 'compatible with SPI pair'
 expect_grep "coreid-spi-absent-unv" 'GATE_CORE_IDENTITY=UNVERIFIED'
+expect_grep "coreid-spi-absent-status" 'VERIFY_STATUS=CORE_IDENTITY_UNVERIFIED'
 
 echo "=== NEW gate: core-id GREEN DDR daemon + CAP_DDR ==="
 write_scenario <<EOF
@@ -616,6 +622,7 @@ VIDREG_CORE_ID=ddr run_new_verify "coreid-ddr-ok"
 expect_rc "coreid-ddr-ok" 0
 expect_grep "coreid-ddr-ok-msg" 'path=ddr compatible with DDR pair'
 expect_grep "coreid-ddr-ok-verified" 'GATE_CORE_IDENTITY=VERIFIED_PLXC'
+expect_grep "coreid-ddr-ok-full" 'VERIFY_STATUS=FULL_PASS'
 
 echo "=== NEW gate: core-id RED DDR + require identity but absent ==="
 write_scenario <<EOF
@@ -655,7 +662,7 @@ live_conf=$V2_CONF
 $(spi_claim_ok)
 EOF
 run_new_verify "older-spi"
-expect_rc "older-spi" 0
+expect_rc "older-spi" 2
 expect_grep "older-spi-ok" "OK   daemon-live $OLDER_HYBRID_DAEMON_MD5"
 
 echo "ALL test_video_regression_liveness checks passed"
