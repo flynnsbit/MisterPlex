@@ -4,6 +4,19 @@ Parent-owned device work only. Agents produce artifacts and commands; they must
 **not** SSH to `192.168.1.183`, deploy, cast, or capture HDMI.
 
 
+## Frame-loss bar (parent 2026-08-01) — do NOT flip daily driver
+
+Parent pixel-proven **1.54% presentation-side frame loss** on the DDR path
+(22 verified skips in 1429 source frames). Real product defect. **Do not**
+promote DDR pair to daily-driver default until understood. This package is
+reversible machinery only.
+
+## Probe capture (V2_MD5 `set +e` glue)
+
+Parent: `got=dfebf2bf…81848set +e`. Cause: `$(frag1)$(frag2)` strips trailing
+newlines. Fix: **one** remote heredoc (`promotion_gate_check.sh dump-remote-live`
+to audit). Shape assert rejects contaminated digests — never fuzzy-trim.
+
 ## OPEN conditions (do not mark closed)
 
 | ID | Condition | Status |

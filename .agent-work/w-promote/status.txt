@@ -1,9 +1,11 @@
 lane: w-promote
 branch: fix/rollback-honest
-sha: db208afd
-primary_pair: core=c5382bee daemon=3883f5ab8744e070e7b0820c6b9b4376 conf_user=7f06132f
-deploy_order: capture_PID -> stage.<host_p8> -> cp -p bak.<outgoing_p8> -> mv -> signal captured -> supervise -> live exe md5
-backup_policy: scripts/daemon_backup_policy.sh (VERIFIED_PIN only; propose quarantine; never auto-rm)
-OPEN: P1 power-cycle NOT closed
+HEAD: (see git)
+blocker_fix: remote_live_blob is ONE heredoc — V2_MD5 set+e glue structurally impossible
+audit: scripts/promotion_gate_check.sh dump-remote-live | cat -A
+DO_NOT_PROMOTE_DDR_DEFAULT: parent 1.54% presentation frame loss (22/1429)
+atomic_pair: rollback_v2 includes core+daemon+conf+boot; restore_misterplexd_prev rc=10
+deploy: named artifact, live root from /proc/exe, stage+bak+mv, n_daemon==1
+plexctl: load_core NOT_ON_DEVICE rc=4 honest (no host [ -f ] false missing)
+conf: USER-OWNED byte-exact
 device: parent-only
-host_tests: backup/deploy/gates/rollback/boot true rc=0

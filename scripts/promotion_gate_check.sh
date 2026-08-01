@@ -210,40 +210,99 @@ gate_assert_md5_shape() {
 }
 
 # Remote probe: product core, v2 core, live daemon via /proc/exe (not cmdline).
+# STRUCTURAL FIX (parent V2_MD5=…81848set +e): build ONE remote script in a
+# single heredoc. Never concatenate $(fragment1)$(fragment2) — command
+# substitution strips trailing newlines and glues the next line onto the last
+# printf/echo. gate_join_remote_parts remains for unit tests of the class.
 remote_live_blob() {
   if [ -n "${PROMOTE_GATE_BLOB:-}" ]; then
     cat "$PROMOTE_GATE_BLOB"
     return 0
   fi
-  local head live remote
-  # One remote script. head ends with a marker line so even a bad join cannot
-  # paste "set +e" onto V2_MD5=... (parent: ...81848set +e). live snippet is
-  # joined with explicit \\n via gate_join_remote_parts; md5 shape is asserted
-  # before equality.
-  head=$(cat <<REMOTE
+  local remote
+  # Unquoted heredoc only for host-side %q of paths; remote expansions stay \$/\%.
+  remote=$(cat <<REMOTE
 PRODUCT=$(printf '%q' "$PRODUCT_CORE_PATH")
 V2=$(printf '%q' "$V2_CORE_PATH")
 set +e
-prod_md5=""; v2_md5=""
-if [ ! -f "\$PRODUCT" ]; then prod_md5=MISSING; else prod_md5=\$(md5sum "\$PRODUCT" | awk '{print \$1}'); fi
-if [ ! -f "\$V2" ]; then v2_md5=MISSING; else v2_md5=\$(md5sum "\$V2" | awk '{print \$1}'); fi
-# Emit md5 on their own lines; never put set/+e after these echoes in this fragment.
+prod_md5=""
+v2_md5=""
+if [ ! -f "\$PRODUCT" ]; then
+  prod_md5=MISSING
+else
+  prod_md5=\$(md5sum "\$PRODUCT" | awk '{print \$1}')
+fi
+if [ ! -f "\$V2" ]; then
+  v2_md5=MISSING
+else
+  v2_md5=\$(md5sum "\$V2" | awk '{print \$1}')
+fi
+# Pure digest only — never append shell noise to these lines.
 printf 'PRODUCT_CORE=%s\n' "\$PRODUCT"
 printf 'PRODUCT_MD5=%s\n' "\$prod_md5"
 printf 'V2_CORE=%s\n' "\$V2"
 printf 'V2_MD5=%s\n' "\$v2_md5"
 printf 'CORE_MD5_PROBE_DONE=1\n'
+# --- live daemon identity (inlined; do not source a second fragment) ---
+n=0
+pids=""
+live=""
+conf=""
+port=""
+exe=""
+root=""
+for d in /proc/[0-9]*; do
+  [ -e "\$d/exe" ] || continue
+  p=\${d#/proc/}
+  x=\$(readlink -f "\$d/exe" 2>/dev/null) || continue
+  case "\$x" in
+    *"(deleted)"*) continue ;;
+  esac
+  base=\$(basename "\$x" 2>/dev/null) || continue
+  [ "\$base" = "misterplexd" ] || continue
+  m=\$(md5sum "\$d/exe" 2>/dev/null | awk '{print \$1}')
+  [ -n "\$m" ] || continue
+  n=\$((n + 1))
+  pids="\${pids}\${pids:+ }\$p"
+  exe=\$x
+  live=\$m
+  root=\$(dirname "\$(dirname "\$x")")
+  conf=""; port=""; prev=""
+  if [ -r "\$d/cmdline" ]; then
+    cmd=\$(tr '\\0' ' ' <"\$d/cmdline" 2>/dev/null) || cmd=""
+    for tok in \$cmd; do
+      case "\$prev" in
+        --port) port="\$tok"; prev=""; continue ;;
+        --conf) conf="\$tok"; prev=""; continue ;;
+      esac
+      case "\$tok" in
+        --port) prev=--port ;;
+        --port=*) port="\${tok#--port=}"; prev="" ;;
+        --conf) prev=--conf ;;
+        --conf=*) conf="\${tok#--conf=}"; prev="" ;;
+        *) prev="" ;;
+      esac
+    done
+  fi
+done
+printf 'N_DAEMON=%s\n' "\$n"
+printf 'PIDS=%s\n' "\$pids"
+printf 'LIVE_MD5=%s\n' "\$live"
+printf 'LIVE_EXE=%s\n' "\$exe"
+printf 'LIVE_PORT=%s\n' "\$port"
+printf 'LIVE_CONF=%s\n' "\$conf"
+printf 'LIVE_ROOT=%s\n' "\$root"
 REMOTE
 )
-  live=$(pair_remote_live_daemon_snippet)
-  # Drop a leading "set +e" from the live fragment — already set above.
-  live=$(printf '%s\n' "$live" | sed '1{/^set +e$/d;}')
-  remote=$(gate_join_remote_parts "$head" "$live")
-  # Host-side sanity: joined script must never contain glued md5+set
-  if printf '%s' "$remote" | grep -Eq 'MD5=[0-9a-f]{32}set'; then
-    echo "FAIL host-side remote script still has MD5…set glue" >&2
-    printf '%s\n' "$remote" | sed -n '/MD5=/p' | head -5 | sed 's/^/  /' >&2
+  # Host-side structural guard (must never ship a glued script).
+  if printf '%s' "$remote" | grep -Eq 'MD5=[0-9a-f]{32}set|PROBE_DONE=1[a-zA-Z]'; then
+    echo "FAIL host-side remote script still has MD5/PROBE glue" >&2
+    printf '%s\n' "$remote" | cat -A | sed -n '/MD5=\|/PROBE_DONE=/p' | head -10 | sed 's/^/  /' >&2
     return 3
+  fi
+  if [ "${PROMOTE_DUMP_REMOTE:-0}" = "1" ]; then
+    printf '%s\n' "$remote"
+    return 0
   fi
   run_ssh "$remote"
 }
@@ -828,8 +887,13 @@ case "$cmd" in
   verify-live)
     verify_live
     ;;
+  dump-remote-live)
+    # Host-only: print the exact remote probe script (no SSH). For glue audits.
+    PROMOTE_DUMP_REMOTE=1 remote_live_blob
+    echo "true rc=0"
+    ;;
   *)
-    echo "usage: $0 {policy-local <rbf> <daemon>|verify-live}" >&2
+    echo "usage: $0 {policy-local <rbf> <daemon>|verify-live|dump-remote-live}" >&2
     echo "true rc=9"
     exit 9
     ;;

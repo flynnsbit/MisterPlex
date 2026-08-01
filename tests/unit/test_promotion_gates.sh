@@ -488,6 +488,39 @@ src=$?
 set -e
 [ "$src" -ne 0 ] && ok "shape-rejects-prefix8" || bad "shape-rejects-prefix8"
 
+echo "=== REGRESSION: dump-remote-live is single heredoc — no V2_MD5 glue possible ==="
+set +e
+"$GATES" dump-remote-live >"$WORK/dump_remote.txt" 2>&1
+drc=$?
+set -e
+echo "  dump-remote true rc=$drc"
+[ "$drc" -eq 0 ] && ok "dump-remote-rc0" || bad "dump-remote-rc0"
+# cat -A style: V2_MD5 printf line must not contain set
+grep -n "V2_MD5" "$WORK/dump_remote.txt" | sed 's/^/  /'
+if grep -E 'V2_MD5=.*set|MD5=%s.*set \+e' "$WORK/dump_remote.txt"; then
+  bad "dump-has-v2-set-glue"
+else
+  ok "dump-no-v2-set-glue"
+fi
+if grep -Eq 'MD5=\[0-9a-f\]{32}set|PROBE_DONE=1[a-zA-Z]' "$WORK/dump_remote.txt"; then
+  bad "dump-structural-glue"
+else
+  ok "dump-structural-clean"
+fi
+# must inline live identity (not a second fragment join marker only)
+grep -q "LIVE_MD5" "$WORK/dump_remote.txt" && ok "dump-has-live-md5" || bad "dump-has-live-md5"
+grep -q "readlink -f" "$WORK/dump_remote.txt" && ok "dump-uses-readlink" || bad "dump-uses-readlink"
+# set +e only as whole line (never glued onto another statement)
+set +e
+bad_set=$(grep -n 'set +e' "$WORK/dump_remote.txt" | grep -v '^[0-9]*:set +e$' || true)
+set -e
+if [ -z "$bad_set" ]; then
+  ok "dump-set-e-alone"
+else
+  echo "$bad_set" | sed 's/^/  /'
+  bad "dump-set-e-alone"
+fi
+
 echo "=== REGRESSION: contaminated V2_MD5 in blob fails closed (not false mismatch trim) ==="
 cat >"$WORK/live_glue.blob" <<'BLOB'
 PRODUCT_CORE=/media/fat/_Utility/Plex.rbf
