@@ -118,3 +118,10 @@ MISTER_HOST=192.168.1.183 bash scripts/pair_pin_update.sh --from-live
 ## 9. Needs next fit (not this lane)
 
 PLXC @ 0x300FF130 — only durable running-bitstream content id without HDMI.
+
+## av_drift_ms / av-lock blind to lip-sync (2026-07-31 parent)
+
+See `docs/evidence/w_lint_AV_DRIFT_BLIND.md`. Binding: never pass/fail soak on
+daemon `av_drift_ms` or `clock=av-lock`. External HDMI instrument only.
+Static guard: `tests/unit/test_av_drift_not_lipsync_pass.py`.
+`validate_playback_controls_hw.sh` now TELEMETRY_ONLY for av_drift.

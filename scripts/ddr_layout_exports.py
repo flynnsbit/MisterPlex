@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Export shell DDR layout addrs derived from host/libmisterplex/ddr_frame_layout.hpp.
 
-Runtime scripts must not reintroduce fixed 0x3004_0000 / 0x3008_0000 / 0x300F_F000
-literals (test_rtl_invariants runtime_ddr_layout_literal_sweep). Source this via:
+Runtime scripts must not reintroduce fixed bank/mailbox phys literals
+(test_rtl_invariants runtime_ddr_layout_literal_sweep). Source this via:
 
   eval "$(python3 scripts/ddr_layout_exports.py)"
 

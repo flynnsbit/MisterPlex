@@ -44,7 +44,9 @@ usage:
 Environment:
   MISTER_HOST=$HOST, MISTER_PASS, HDMI_DEV=/dev/video4
   PMS_BASE, PMS_TOKEN, PMS_RATING_KEY enable scripted PMS resume verification.
-  MAX_ABS_AV_DRIFT_MS=250 MAX_DROPS_DELTA=10 MAX_CPU_PCT=95 tune no-regression gates.
+  MAX_DROPS_DELTA=10 MAX_CPU_PCT=95 tune no-regression gates.
+  # MAX_ABS_AV_DRIFT_MS retired: av_drift_ms/av-lock are NOT lip-sync evidence
+  # (parent 2026-07-31 HDMI vs daemon series). Use tests/hw/avsync_measure.py.
 
 Notes:
   --rbf deploys with exactly: DEPLOY_LOAD=menu ./scripts/deploy_plex_core.sh <rbf>
@@ -367,7 +369,7 @@ check_pms_progress() {
 }
 
 check_no_regression() {
-  log "7. No-regression checks: drift/drops/CPU"
+  log "7. No-regression checks: drops/CPU (av_drift is NOT lip-sync)"
   local logf="$STATE_DIR/misterplexd_tail.log"
   remote "tail -n 300 /media/fat/misterplex/misterplexd.log" > "$logf" || true
   local max_abs=0 max_drops=0 v d
@@ -380,7 +382,12 @@ check_no_regression() {
     [[ -z "$d" ]] && continue
     (( d > max_drops )) && max_drops=$d
   done < <(grep -oE 'drops=[0-9]+' "$logf" | sed 's/.*=//')
-  if (( max_abs <= ${MAX_ABS_AV_DRIFT_MS:-250} )); then pass "av_drift_ms max_abs=$max_abs"; else fail "av_drift_ms max_abs=$max_abs exceeds ${MAX_ABS_AV_DRIFT_MS:-250}"; fi
+  # Parent HW 2026-07-31: av_drift_ms is the servo setpoint echo (av_clock.hpp
+  # deadband). Three runs with mean av_drift ≈ -30 ms were 120 ms apart on HDMI.
+  # clock=av-lock / av_drift_ms must NEVER pass or fail as lip-sync evidence.
+  # Only external pixel+audio (tests/hw/avsync_measure.py / tools/avsync_measure_hdmi.py).
+  echo "NOTE av_drift_ms max_abs=$max_abs TELEMETRY_ONLY not_lip_sync (av-lock blind by construction)"
+  echo "     lip-sync judge: tests/hw/avsync_measure.py or tools/avsync_measure_hdmi.py (parent grabber)"
   if (( max_drops <= ${MAX_DROPS_DELTA:-10} )); then pass "drops max=$max_drops"; else fail "drops max=$max_drops exceeds ${MAX_DROPS_DELTA:-10}"; fi
 
   local cpu

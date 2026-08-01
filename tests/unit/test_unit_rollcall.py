@@ -183,6 +183,7 @@ EXPECTED_COMMANDS = [
     "$(ROOT)/tests/unit/test_measure_status_three_way.sh",
     "$(ROOT)/tests/unit/test_supervise_term_trap.sh",
     "python3 $(ROOT)/tests/unit/test_absence_as_zero_static_guard.py",
+    "python3 $(ROOT)/tests/unit/test_av_drift_not_lipsync_pass.py",
     "$(ROOT)/tests/unit/test_timing_margin_gate.sh",
     "$(ROOT)/tests/unit/test_release_rbf_hash.sh",
     "$(ROOT)/tests/unit/test_sdram_startup_verilator.sh",

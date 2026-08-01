@@ -8,8 +8,8 @@
 # voluntary_ctxt_switches vs nonvoluntary_ctxt_switches per thread.
 #
 # Frame metrics from misterplexd.log (vfps/pfps/drops/av_drift/ddr ms/present_profile).
-# Audio: sustained av_drift_ms from the same window; optional HDMI path reuses
-# tests/hw/avsync_measure.py and tests/hw/avsync_rate.py when --hdmi-avsync.
+# Audio: av_drift_ms is TELEMETRY ONLY (servo echo; NOT lip-sync — parent 2026-07-31).
+# Lip-sync judge: tests/hw/avsync_measure.py / avsync_rate.py when --hdmi-avsync (parent grabber).
 #
 # Tier force (default): OSD_CONTROL=0 + DECODE=320x240|624x480 + DECODE_ALLOW_LAB_480P
 # for the run, conf restored on exit. Does NOT change the shipping default conf
@@ -721,7 +721,7 @@ if [[ "$HDMI_AVSYNC" == "1" ]]; then
       HDMI_JSON="$(cat "$(ls -1 "$HDMI_DIR"/*.json | head -1)")"
     fi
   else
-    log "HDMI avsync unscored/failed (see $HDMI_DIR/avsync_rate.err) — log av_drift still counts"
+    log "HDMI avsync unscored/failed (see $HDMI_DIR/avsync_rate.err) — log av_drift is TELEMETRY ONLY (not lip-sync PASS; parent 2026-07-31)"
   fi
 fi
 

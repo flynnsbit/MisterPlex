@@ -1,35 +1,35 @@
-w-lint GATE-INTEGRITY
+lane: w-lint GATE-INTEGRITY
 branch: w-lint-gate-integrity
 worktree: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-lint
 
-## Headline — running bitstream
-- CORENAME/RBFNAME vacuous; on-disk RBF ≠ fabric
-- pair family mismatch → rc=1
-- coherent pair without PLXC → rc=2 REFUSE FULL_PASS (not green)
-- FULL_PASS rc=0 only VERIFIED_PLXC
-- PLXC still fit-gated; HDMI parent-only for content fingerprint
-- pins: artifacts/validated-pair/CURRENT (865d4c8a prefix)
+## Fleet broadcast (av-lock / av_drift blind) — DONE
+Replaced soak criteria that used daemon av_drift_ms / clock=av-lock.
 
-## fix/gate-liveness
-CLOSE/SUPERSEDED — do not merge 99-count; content absorbed+extended here
+| Was | Now |
+|-----|-----|
+| pass if max_abs av_drift_ms ≤ 250 | TELEMETRY_ONLY not_lip_sync NOTE |
+| HDMI fail → "av_drift still counts" | unscored; av_drift not substitute |
+| soak on clock=av-lock | FORBIDDEN |
 
-## CRITICAL PMS gap
-run_with_skip_summary process_rc=78 PASS_INCOMPLETE (never 0)
-make unit-unlocked = host green without PMS inventory
+Lip-sync judge only: tests/hw/avsync_measure.py, avsync_rate.py, tools/avsync_measure_hdmi.py
+Evidence: docs/evidence/w_lint_AV_DRIFT_BLIND.md (quotes parent HDMI clusters + av_clock.hpp)
+Static guard: tests/unit/test_av_drift_not_lipsync_pass.py (RBG: injected pass line rc=1; clean rc=0)
 
-## PINNOTFOUND
-run_verilator RBG: fake PINNOTFOUND exit0 → wrapper rc=2; clean → 0
+## Direct true rc (host)
+| cmd | true rc |
+|-----|---------|
+| test_av_drift_not_lipsync_pass.py | 0 |
+| test_unit_rollcall.py (expected_commands=125) | 0 |
+| test_rtl_invariants.py | 0 |
+| make unit-unlocked | 0 |
+| make unit no MISTERPLEX_BASELINE_KEY | GATE_RESULT process_rc=78 PASS_INCOMPLETE; make exit=2 (make masks) |
 
-## Evidence (true rc direct)
-test_video_regression_liveness.sh  0
-test_harness_capture_integrity.py  0
-test_promotion_gates.sh            0
-test_gate_false_green_guard.py     0
-test_rtl_invariants.py             0
-test_unit_rollcall.py              0 (expected_commands=124)
-make unit-unlocked                 0
-make unit (no BASELINE_KEY)        78 PASS_INCOMPLETE
+## Standing (unchanged this delta)
+- video_regression verify: FULL_PASS only VERIFIED_PLXC; UNVERIFIED rc=2
+- CRITICAL live-pms-baseline-profile soft-skip → process_rc=78 ≠ pass
+- fix/gate-liveness SUPERSEDED
+- No device / no Quartus; ARM md5 N/A
 
-## Docs
-docs/evidence/w_lint_GATE_INTEGRITY_REPORT.md
-tip: 3b11cf7af56ac59f9ec9483c385815e2a8eed547
+## Parent commands
+bash scripts/video_regression.sh verify; echo "true rc=$?"
+# expect rc=2 until PLXC fit
