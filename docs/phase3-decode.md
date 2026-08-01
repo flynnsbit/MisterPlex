@@ -166,9 +166,11 @@ Gate: `tests/unit/test_fabric_decode_inventory.sh` · `make fabric-decode-invent
 
 ---
 
-## PRODUCT_NO_STUB — reclaim dark decode budget (scoped, unfitted)
+## PRODUCT_NO_STUB — M10K enabler for OSD hi-res overlay (scoped, unfitted)
 
-**Motivation (honest — not 24 fps starvation):** Parent measured live 24 fps DDR playback with **0 drops**, closed ledger, and **~103 %onecpu free**. “ARM must shed decode to survive” is **retracted** at 24 fps. Fabric work is justified by **(a)** headroom at 30 fps+, **(b)** **direct-play** (eliminate PMS transcode / high-bitrate), **(c)** user direction to move features off ARM. Highest-value near-term offload remains **scale/geometry** (ffmpeg scaler still large when forced), which wants M10K headroom. `ascal` ≈ 1,936 ALM / 43 M10K / 23 DSP on the `8fdf440f` fit.
+**Primary value is not throughput ms.** PRESENT_PROFILE stays flat (control). **Primary value is M10K for user bug #2** (overlay must match HDMI output res via post-ascal plane / w-osd-hires): shipping free M10K **88** → after stub subtree reclaim **~356** (~4×). Pair PRODUCT_NO_STUB with the OSD plane in **one** exclusive fit — never alone.
+
+**Motivation (honest — not 24 fps starvation):** Parent measured live 24 fps DDR playback with **0 drops**, closed ledger, and **~103 %onecpu free**. “ARM must shed decode to survive” is **retracted** at 24 fps. Throughput case for stub reclaim is weak (pacer-limited). **M10K case is strong:** user overlay bug #2 needs a post-ascal plane (w-osd-hires); fabric already has `HDMI_WIDTH`/`HEIGHT`. Direct-play remains the long-term decode case, not 24p relief.
 
 **Subtree vs own (do not confuse):** Quartus `decode_stub:stub` row is **subtree** ALM **9,216.9** / M10K **268** / DSP **1**. Own residual (parent ALMs after children, incl. flattened `h264_hybrid_mb_own`) = **1,922.1**. **Reclaim quotes the subtree only if every fitted child is exclusive to the stub path.** On `8fdf440f` fit-t7b: every fitted `h264_*` instance under stub has **0 outside-stub instances**; DPB `altsyncram:dpb_mem_rtl_0` (**256 M10K**) is stub-only (the `altsyncram` *type* appears elsewhere, e.g. ascal — instance is exclusive). ⇒ **−9,217 ALM / −268 M10K is valid subtree reclaim** for PRODUCT_NO_STUB.
 
@@ -183,13 +185,13 @@ Gate: `tests/unit/test_fabric_decode_inventory.sh` · `make fabric-decode-invent
 
 DPB check: 2,097,152 / 256 = **8,192** bits/block. Free now: 553−465=**88** blocks / ~**2.66 Mbit**.
 
-**Source hook (Tier A):** `stream_path.sv` `` `ifndef PRODUCT_NO_STUB `` / else constant-0 (incl. `stub_busy`). QSF macro **commented** until parent grants a fit pairing reclaim with scaler/geometry cargo:
+**Source hook (Tier A):** `stream_path.sv` `` `ifndef PRODUCT_NO_STUB `` / else constant-0 (incl. `stub_busy`). QSF macro **commented** until parent grants a fit pairing reclaim with **w-osd-hires** (and any scaler cargo):
 
 ```tcl
 # set_global_assignment -name VERILOG_MACRO "PRODUCT_NO_STUB=1"
 ```
 
-**Already on the `8fdf440f` / tip tree (do not burn a slot alone):** `907e5950` same-cycle vsync+doorbell hold; comb shift-add dequant (DSP 44). Next exclusive fit should carry **PRODUCT_NO_STUB + w-geom scaler/geometry**, not those two again.
+**Already on the `8fdf440f` / tip tree (do not burn a slot alone):** `907e5950` NBA hold; comb shift-add dequant (DSP 44). **Next exclusive fit:** `PRODUCT_NO_STUB` + **OSD hi-res post-ascal plane** together — score on viewed 1080p overlay pixels (parent), PRESENT_PROFILE flat (control).
 
 **SDC:** no new `set_false_path`.
 

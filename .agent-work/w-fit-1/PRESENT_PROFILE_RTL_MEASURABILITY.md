@@ -25,7 +25,7 @@
 | `907e5950` NBA swap_pending hold | **YES** (tip md5-match) | bank swap corner | **No** at steady 24p closed ledger |
 | comb shift-add dequant (−32 DSP) | **YES** (DSP 44 on 8fdf) | only under `decode_stub` | **No** — stub `fs_wr` unconnected; not product decode |
 | `frames_done_d2` / pending_ready hold | **YES** on tip | present mailbox | **No** measurable fps/pacing win while pacer-limited |
-| **PRODUCT_NO_STUB** (scaffold, default OFF) | **NOT fitted** | removes dark stub subtree | **No row in this table** — frees ALM/M10K only |
+| **PRODUCT_NO_STUB** (scaffold, default OFF) | **NOT fitted** | removes dark stub subtree | **No row in this table** — but **M10K enabler** for w-osd-hires overlay (88→~356 free); pair in one fit |
 | Future fabric scaler (w-geom, not held complete) | not held | would cut ARM scale | **Would** hit `pixel_*` and/or ffmpeg side of `read block` — **not ready** |
 
 ### Plain answer
@@ -53,7 +53,8 @@ Only request a fit when cargo has a registered field prediction. Examples (not h
 
 ## What PRODUCT_NO_STUB is still for (not this table)
 
-- Reclaim display-dark exclusive stub subtree for **scaler/geometry** M10K headroom.  
+- **Primary:** M10K enabler for **w-osd-hires** post-ascal overlay (user bug #2) — free blocks **88 → ~356**.
+- Also: reclaim for fabric scaler/geometry M10K headroom.  
 - Honest decode case remains **direct-play**, not 24p throughput (ERROR 15 / parent pacer result).  
 - Rides **one** future exclusive fit **with** measurable scaler cargo — never alone on a void endpoint.
 
