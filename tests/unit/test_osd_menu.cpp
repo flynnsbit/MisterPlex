@@ -6,8 +6,10 @@
 #include "libmisterplex/idle_screen.hpp"
 #include "libmisterplex/osd_menu.hpp"
 
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
 #include <string>
 #include <vector>
 
@@ -269,6 +271,88 @@ int main() {
     expectI420Sample(yuv, bgX0, bgY0, kBgY, kBgU, kBgV);
     expectI420Sample(yuv2, fgX1, fgY1, kFgY, kFgU, kFgV);
     CHECK(fgX0 != fgX1 || fgY0 != fgY1);
+
+    // --- Logo chevron: centre the GLYPH, not the empty bounding box ---
+    // Pre-fix: ox centres size-box; glyph only fills half+stroke of width →
+    // left bias (~0.15*size). oy already centres full vertical extent.
+    // Assert glyph bbox centre == raster centre within <=1 px on both axes.
+    {
+        struct Raster {
+            int w, h;
+            const char* name;
+        };
+        const Raster rasters[] = {
+            {624, 480, "624x480"},
+            {320, 240, "320x240"},
+            {800, 600, "800x600"},
+            {640, 480, "640x480"},
+            {320, 240, "240p"}, // even dims (I420-safe); 240p-class height
+        };
+        for (const auto& r : rasters) {
+            std::vector<uint8_t> frame(static_cast<size_t>(r.w) * static_cast<size_t>(r.h) * 3u);
+            renderIdleRgb24(frame.data(), r.w, r.h, IdleMode::Logo, 0);
+            int minX = r.w, maxX = -1, minY = r.h, maxY = -1;
+            for (int y = 0; y < r.h; ++y) {
+                for (int x = 0; x < r.w; ++x) {
+                    const size_t i = (static_cast<size_t>(y) * r.w + x) * 3u;
+                    if (frame[i] == kIdleFgR && frame[i + 1] == kIdleFgG &&
+                        frame[i + 2] == kIdleFgB) {
+                        if (x < minX)
+                            minX = x;
+                        if (x > maxX)
+                            maxX = x;
+                        if (y < minY)
+                            minY = y;
+                        if (y > maxY)
+                            maxY = y;
+                    }
+                }
+            }
+            CHECK(maxX >= minX && maxY >= minY);
+            const double gcx = 0.5 * (static_cast<double>(minX) + static_cast<double>(maxX));
+            const double gcy = 0.5 * (static_cast<double>(minY) + static_cast<double>(maxY));
+            const double rcx = 0.5 * static_cast<double>(r.w - 1);
+            const double rcy = 0.5 * static_cast<double>(r.h - 1);
+            const double dx = gcx - rcx;
+            const double dy = gcy - rcy;
+            std::printf("chevron_centre %s glyph=[%d..%d]x[%d..%d] gcx=%.1f gcy=%.1f "
+                        "rcx=%.1f rcy=%.1f dx=%.1f dy=%.1f\n",
+                        r.name, minX, maxX, minY, maxY, gcx, gcy, rcx, rcy, dx, dy);
+            CHECK(std::fabs(dx) <= 1.0);
+            CHECK(std::fabs(dy) <= 1.0);
+        }
+
+        // Screensaver drift span must use glyph width (not full size box).
+        {
+            const int sw = 624, sh = 480;
+            const IdleRenderState st0 = idleRenderState(sw, sh, IdleMode::Screensaver, 0);
+            const IdleRenderState stMid =
+                idleRenderState(sw, sh, IdleMode::Screensaver, kIdlePhasePeriod / 2);
+            // At phase 0: ox == margin; glyph must stay inside right margin at mid.
+            CHECK(st0.ox == kIdleMargin);
+            int maxFgX = -1;
+            std::vector<uint8_t> ss(static_cast<size_t>(sw) * sh * 3u);
+            renderIdleRgb24(ss.data(), sw, sh, IdleMode::Screensaver, kIdlePhasePeriod / 2);
+            for (int y = 0; y < sh; ++y) {
+                for (int x = 0; x < sw; ++x) {
+                    const size_t i = (static_cast<size_t>(y) * sw + x) * 3u;
+                    if (ss[i] == kIdleFgR && ss[i + 1] == kIdleFgG && ss[i + 2] == kIdleFgB) {
+                        if (x > maxFgX)
+                            maxFgX = x;
+                    }
+                }
+            }
+            CHECK(maxFgX >= 0);
+            CHECK(maxFgX < sw - kIdleMargin);
+            // Glyph-based span is wider than box-based: mid ox should exceed
+            // the old (w - size - 2*margin) endpoint's ox for the same phase.
+            const int size = stMid.size;
+            const int oldSpanX = sw - size - 2 * kIdleMargin;
+            const int oldOxMid = kIdleMargin + oldSpanX; // idleDrift at half period = span
+            CHECK(stMid.ox > oldOxMid); // true glyphW < size → larger span → farther right
+            (void)st0;
+        }
+    }
 
     if (fails) {
         std::fprintf(stderr, "test_osd_menu: %d failure(s)\n", fails);

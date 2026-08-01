@@ -50,8 +50,31 @@ inline int idleDrift(int phase, int span) {
     return (tri * span) / half;
 }
 
-// Is (x,y) inside the chevron mark whose bounding box is [ox,oy]+[size,size]?
-// The mark is a ">" stroke: two arms meeting at the right-hand vertex.
+// Shared ">" stroke metrics. idleChevronHit and idleRenderState MUST both use
+// this so ox/span cannot drift from the painted glyph extent.
+//
+// The mark does not fill the size×size box: max ink lx is half+stroke-1, so
+// glyph width is half+stroke (~0.7*size). Centring the box left-biases the mark.
+struct IdleChevronExtent {
+    int half = 0;
+    int stroke = 0;
+    int glyphW = 0; // half + stroke (lx in [0, glyphW))
+    int glyphH = 0; // full size (vertical arms span the box)
+};
+
+inline IdleChevronExtent idleChevronExtent(int size) {
+    IdleChevronExtent e{};
+    if (size <= 0)
+        return e;
+    e.half = size / 2;
+    e.stroke = size / 5 > 0 ? size / 5 : 1;
+    e.glyphW = e.half + e.stroke;
+    e.glyphH = size;
+    return e;
+}
+
+// Is (x,y) inside the chevron mark whose origin is (ox,oy) and whose design
+// box is size×size (hit test still uses the design box; ox centres glyphW).
 inline bool idleChevronHit(int x, int y, int ox, int oy, int size) {
     if (size <= 0)
         return false;
@@ -59,11 +82,10 @@ inline bool idleChevronHit(int x, int y, int ox, int oy, int size) {
     const int ly = y - oy;
     if (lx < 0 || ly < 0 || lx >= size || ly >= size)
         return false;
-    const int half = size / 2;
-    const int stroke = size / 5 > 0 ? size / 5 : 1;
+    const IdleChevronExtent e = idleChevronExtent(size);
     // Distance from the two 45-degree arms, in "diagonal" units.
-    const int d = ly <= half ? (lx - ly) : (lx - (size - 1 - ly));
-    return d >= 0 && d < stroke;
+    const int d = ly <= e.half ? (lx - ly) : (lx - (size - 1 - ly));
+    return d >= 0 && d < e.stroke;
 }
 
 struct IdleRenderState {
@@ -79,11 +101,15 @@ inline IdleRenderState idleRenderState(int w, int h, IdleMode mode, int phase) {
     s.size = (w < h ? w : h) / 3;
     if (s.size < 4)
         s.size = 4;
-    s.ox = (w - s.size) / 2;
-    s.oy = (h - s.size) / 2;
+    const IdleChevronExtent e = idleChevronExtent(s.size);
+    // Centre the visible glyph, not the empty design box. oy still uses full
+    // height (glyphH == size); do not touch vertical policy.
+    s.ox = (w - e.glyphW) / 2;
+    s.oy = (h - e.glyphH) / 2;
     if (mode == IdleMode::Screensaver) {
-        const int spanX = w - s.size - 2 * kIdleMargin;
-        const int spanY = h - s.size - 2 * kIdleMargin;
+        // Drift span tracks true glyph extent so the mark reaches both margins.
+        const int spanX = w - e.glyphW - 2 * kIdleMargin;
+        const int spanY = h - e.glyphH - 2 * kIdleMargin;
         s.ox = kIdleMargin + idleDrift(phase, spanX);
         // Quarter-period offset so the drift traces a path, not a diagonal line.
         s.oy = kIdleMargin + idleDrift(phase + kIdlePhasePeriod / 4, spanY);
