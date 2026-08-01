@@ -1,52 +1,32 @@
-# w-promote status — 2026-07-31T23:05Z
-tip_SHA=894b44ecb28e5ac0dba5986b27c8eab5f197dc35
+lane: w-promote
 branch: fix/rollback-honest
 worktree: /home/flynnsbit/Projects/MisterPlex/.worktrees/rollback-honest
-# USE THIS WORKTREE. Parent measured 961dc724 which PREDATES glue+centroid fixes.
+tip: (see git rev-parse after commit)
 
-## Defect 1 (V2_MD5…set +e blind-RED) — FIXED since 92d4434f
-- Root: bash $(…) strips trailing newlines → echo V2_MD5=… glued to set +e
-- Fix: gate_join_remote_parts + gate_assert_md5_shape (exactly 32 hex; refuse trim)
-- Redteam: V2_MD5 contam → rc=3; control green → rc=0
-- Parent must NOT run 961dc724; run HEAD below
+## This turn
+- deploy_misterplexd: stop by /proc/comm+argv0 (not cmdline substr/flock trap)
+- deploy_misterplexd: install stage (/tmp/misterplexd.deploy.$$) then mv -f
+- post n_daemon count also comm/argv0
+- unit test_deploy_misterplexd extended (stage path + source asserts)
+- gate V2_MD5 glue already fixed (gate_join_remote_parts) — parent must not run 961dc724
 
-## Defect 2 (centroid 20% false RED) — FIXED since aa1233ac
-- Root: asserting screen position of bouncing screensaver logo
-- Fix: CC geometry dominance/aspect/fill; cx/cy diagnostic only
-- stopcap s_026..s_050: 25/25 GREEN; MENU postboot RED
-
-## MENU false-green CLOSED (keep fixture)
-- tests/fixtures/promote/postboot.png
-- tests/fixtures/promote/mister_menu_postboot.png
-
-## Atomic pair + boot (already on branch)
-- deploy_misterplexd: LIVE root from /proc exe+cmdline --conf; DEPLOY_REBUILD=0 default;
-  boot hook from S99user USER_SCRIPT; decoy inert; both roots grepped
-- rollback_v2: core+daemon+conf+boot; restore_misterplexd_prev rc=10
-- conf user-owned: DECODE=624x480 + DECODE_ALLOW_LAB_480P survive merge
-- power_cycle_pair_rehearsal.sh + on_device_pair_boot_check.sh
-
-## Host evidence this turn
+## Host evidence (direct true rc)
+- test_deploy_misterplexd.sh true rc=0 (pass=31)
+- test_rollback_honest.sh true rc=0
 - test_conf_user_owned.sh true rc=0
-- test_promotion_redteam.sh true rc=0 (29 pass, incl v2-md5-contam)
-- test_idle_chevron_geometry.sh true rc=0 (stopcap 25/25)
-- test_promotion_gates.sh true rc=0 (81 pass)
+- test_boot_hook_policy.sh true rc=0
+- test_promotion_gates.sh true rc=0 (glue inject RED rc=3; green path rc=0)
 
-## Parent commands (worktree)
-```bash
+## Parent must run (worktree HEAD, not 961dc724)
 cd /home/flynnsbit/Projects/MisterPlex/.worktrees/rollback-honest
-git rev-parse --short HEAD   # expect aa1233ac or later
+git rev-parse --short HEAD
+bash tests/unit/test_promotion_gates.sh; echo "true rc=$?"
+# live:
+PAIR_ID=ddr-c5382bee PROMOTE_REQUIRE_PLXS_SEQ_ADVANCE=1 \
+  bash scripts/promotion_gate_check.sh verify-live; echo "true rc=$?"
 
-# Defect1 green path (needs device; expect pure 32-hex V2_MD5, true rc=0 if healthy):
-PROMOTE_MOTION_CAPTURE_DIR=/path/to/burst scripts/promotion_gate_check.sh verify-live
-echo "true rc=$?"
-
-# Defect2 fixtures host-only:
-PAIR_VISUAL_NO_RECAPTURE=1 PAIR_IDLE_PNG=tests/fixtures/promote/postboot.png \
-  scripts/pair_visual_gate.sh idle; echo "true rc=$?"   # expect 8
-PAIR_VISUAL_NO_RECAPTURE=1 PAIR_IDLE_PNG=tests/fixtures/promote/plex_idle_chevron.png \
-  scripts/pair_visual_gate.sh idle; echo "true rc=$?"   # expect 0
-
-scripts/power_cycle_pair_rehearsal.sh plan
-scripts/power_cycle_pair_rehearsal.sh host-preflight; echo "true rc=$?"
-```
+## Atomic pair
+PAIR_ID=ddr-c5382bee ROLLBACK_DAEMON=devices/daemon-pins/misterplexd.edc3a46b \
+  PAIR_IDLE_PNG=<warm capture> bash scripts/rollback_v2.sh restore
+# power-cycle: scripts/power_cycle_pair_rehearsal.sh (detached on-device)
+# conf: USER-OWNED — backup/restore bytes; never validated-default rewrite

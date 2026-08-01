@@ -607,3 +607,21 @@ and bbox `fill` (~0.28 notched). Position is diagnostic only.
 
 STOPPED transport overlay over the chevron is **accepted** by the idle stage
 (logo still present). OSD-absent is a separate concern for w-osd-hires.
+
+
+## deploy_misterplexd honesty (re-task)
+
+Measured traps encoded in `scripts/deploy_misterplexd.sh`:
+
+1. **Exact artifact only** — `DEPLOY_REBUILD=0` default; host md5 of the named path is what must appear on live `/proc/PID/exe`.
+2. **Target root** from live `readlink -f /proc/PID/exe` (and live `--conf`); refuse cross-root when live is v2 and override is v1.
+3. **Stop then start** — stop supervisors + daemon by `/proc/PID/comm` + argv0 basename, **not** cmdline substring (flock embeds `misterplexd`).
+4. **Install** — scp to `/tmp/misterplexd.deploy.$$`, verify stage md5, `mv -f` onto final path (ETXTBSY-safe). stderr not suppressed.
+5. **Post** — `n_daemon==1` via comm/argv0; live exe md5; live `--conf` under target root; `/resources` 200.
+6. **Boot hook** — real `USER_SCRIPT` from S99user; decoy `_user-startup.sh` left inert; both v1/v2 paths grepped so dual boot lines fail closed.
+
+Atomic pair promote/rollback remains `scripts/rollback_v2.sh` / `promote_ddr_daily.sh` (core+daemon+user conf+boot). Half-restore `restore_misterplexd_prev.sh` → rc=10.
+
+### V2_MD5 probe glue (never fuzzy-trim)
+
+`$(ssh …)` strips trailing newlines, so a remote `echo V2_MD5=$md5` fused with the next `set +e` produced `…81848set +e` (parent 2026-07-31). Fix: `gate_join_remote_parts` + `gate_assert_md5_shape` (exactly 32 hex). Contaminated values fail closed — do not strip noise.

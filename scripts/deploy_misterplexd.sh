@@ -192,42 +192,64 @@ REMOTE_BIN="$TARGET_ROOT/bin/misterplexd"
 REMOTE_CONF="$TARGET_ROOT/misterplex.conf"
 REMOTE_LOG="$TARGET_ROOT/misterplexd.log"
 
-# --- stop every daemon/supervisor (cmdline match; no kill -9 storms) ----------
-echo "deploy: stopping all misterplexd + supervisors"
+# --- stop every daemon/supervisor (no kill -9 storms) --------------------------
+# Parent trap: NEVER match cmdline substring "misterplexd" — flock argv contains
+# it and yields false PIDs / false 0% CPU. Use /proc/PID/comm + argv0 basename.
+# After stop, do not readlink exe of a deleted inode (empty); match on comm/argv0.
+echo "deploy: stopping all misterplexd + supervisors (comm/argv0, not cmdline substr)"
 set +e
 ssh_m 'bash -s' <<'EOS'
 set +e
-SUPERVISORS="plexctl_supervise.sh misterplexd_supervise.sh dedupe_daemon.sh"
-match_pids() {
-  pat="$1"
+is_daemon_pid() {
+  p="$1"
+  [ -r "/proc/$p/comm" ] || return 1
+  c=$(cat "/proc/$p/comm" 2>/dev/null || true)
+  # kernel comm is truncated to 15 chars — misterplexd fits
+  if [ "$c" = "misterplexd" ]; then return 0; fi
+  [ -r "/proc/$p/cmdline" ] || return 1
+  a0=$(tr "\0" "\n" < "/proc/$p/cmdline" 2>/dev/null | head -n1)
+  case "$a0" in
+    */misterplexd|misterplexd) return 0 ;;
+  esac
+  return 1
+}
+is_supervisor_pid() {
+  p="$1"
+  [ -r "/proc/$p/cmdline" ] || return 1
+  cmd=$(tr "\0" " " < "/proc/$p/cmdline" 2>/dev/null) || return 1
+  case "$cmd" in *plexctl.sh*) return 1 ;; esac
+  # Match supervise SCRIPT path tokens, not bare "misterplexd"
+  case "$cmd" in
+    *misterplexd_supervise.sh*|*plexctl_supervise.sh*|*dedupe_daemon.sh*) return 0 ;;
+  esac
+  return 1
+}
+list_targets() {
   for d in /proc/[0-9]*; do
-    [ -r "$d/cmdline" ] || continue
-    cmd=$(tr "\0" " " < "$d/cmdline" 2>/dev/null) || continue
-    case "$cmd" in *plexctl.sh*) continue ;; esac
-    case "$cmd" in *"$pat"*) echo "${d#/proc/}" ;; esac
+    [ -d "$d" ] || continue
+    p=${d#/proc/}
+    if is_daemon_pid "$p" || is_supervisor_pid "$p"; then
+      echo "$p"
+    fi
   done
 }
-for pat in $SUPERVISORS misterplexd; do
-  for p in $(match_pids "$pat"); do
-    kill "$p" 2>/dev/null || true
-  done
+for p in $(list_targets); do
+  kill "$p" 2>/dev/null || true
 done
 i=0
 while [ "$i" -lt 40 ]; do
   left=0
-  for pat in $SUPERVISORS misterplexd; do
-    for p in $(match_pids "$pat"); do left=$((left + 1)); done
-  done
+  for p in $(list_targets); do left=$((left + 1)); done
   [ "$left" -eq 0 ] && break
   i=$((i + 1))
   sleep 0.25
 done
 left=0
-for pat in $SUPERVISORS misterplexd; do
-  for p in $(match_pids "$pat"); do
-    left=$((left + 1))
-    echo "STILL_UP pid=$p $(tr '\0' ' ' < /proc/$p/cmdline 2>/dev/null)"
-  done
+for p in $(list_targets); do
+  left=$((left + 1))
+  c=$(cat /proc/$p/comm 2>/dev/null || echo "?")
+  a0=$(tr "\0" "\n" < /proc/$p/cmdline 2>/dev/null | head -n1)
+  echo "STILL_UP pid=$p comm=$c argv0=$a0"
 done
 if [ "$left" -ne 0 ]; then
   echo "STOP_FAILED n=$left"
@@ -239,38 +261,68 @@ stop_rc=$?
 set -e
 report_rc "stop_all" "$stop_rc" || die "stop failed (rc=$stop_rc)"
 
-# --- install exact bytes ------------------------------------------------------
-echo "deploy: install host_md5=$HOST_MD5 -> $REMOTE_BIN"
+# --- install exact bytes (stage then mv; never cp over running binary) --------
+echo "deploy: install host_md5=$HOST_MD5 -> $REMOTE_BIN (stage+mv; no rebuild)"
 # Content-addressed archive of outgoing daemon so atomic pair rollback can find
-# the previous pin (parent 2026-07-31: SPI rollback needed 50f4eb92 after DDR
-# overwrite; without bak, restore cannot be atomic and must refuse).
+# the previous pin. Parent: ETXTBSY on cp-over-running silently leaves old live.
+# stderr is NOT suppressed on deploy steps.
+STAGED_REMOTE="/tmp/misterplexd.deploy.$$"
 set +e
 ssh_m "echo DEPLOY_INSTALL_PREP root='$TARGET_ROOT'
+set -e
 mkdir -p '$TARGET_ROOT/bin' '$TARGET_ROOT/scripts'
 if [ -f '$REMOTE_BIN' ]; then
-  om=\$(md5sum '$REMOTE_BIN' 2>/dev/null | awk '{print \$1}')
-  cp -f '$REMOTE_BIN' '$REMOTE_BIN.prev-deploy' || true
-  if [ -n \"\$om\" ]; then
+  om=\$(md5sum '$REMOTE_BIN' | awk '{print \$1}')
+  cp -f '$REMOTE_BIN' '$REMOTE_BIN.prev-deploy'
+  if [ -n "\$om" ]; then
     arch='$REMOTE_BIN.'.\${om:0:8}.bak
-    if [ ! -f \"\$arch\" ]; then
-      cp -f '$REMOTE_BIN' \"\$arch\" && echo \"ARCHIVED_DAEMON \$arch\" || echo ARCHIVE_DAEMON_WARN
+    if [ ! -f "\$arch" ]; then
+      cp -f '$REMOTE_BIN' "\$arch"
+      echo "ARCHIVED_DAEMON \$arch"
     else
-      echo \"ARCHIVE_DAEMON_SKIP \$arch\"
+      echo "ARCHIVE_DAEMON_SKIP \$arch"
     fi
   fi
 fi
-rm -f '$REMOTE_BIN'"
+echo PREP_OK"
 prep_rc=$?
 set -e
 report_rc "install_prep" "$prep_rc" || die "install prep failed"
 
 set +e
-scp_to "$BIN" "$REMOTE_BIN"
+scp_to "$BIN" "$STAGED_REMOTE"
 scp_rc=$?
 set -e
-report_rc "scp" "$scp_rc" || die "scp failed"
+report_rc "scp_stage" "$scp_rc" || die "scp to stage failed (stderr above; not suppressed)"
 
-# Disk md5 on device MUST match host before we restart (catches partial scp).
+set +e
+ssh_m "set -e
+  staged='$STAGED_REMOTE'
+  dst='$REMOTE_BIN'
+  host_want='$HOST_MD5'
+  sm=\$(md5sum "\$staged" | awk '{print \$1}')
+  echo STAGE_MD5=\$sm
+  if [ "\$sm" != "\$host_want" ]; then
+    echo "FAIL stage md5 \$sm != host \$host_want"
+    rm -f "\$staged"
+    exit 7
+  fi
+  # rename semantics replace destination; daemon must already be stopped
+  mv -f "\$staged" "\$dst"
+  chmod 755 "\$dst"
+  sync
+  dm=\$(md5sum "\$dst" | awk '{print \$1}')
+  echo DISK_MD5=\$dm
+  if [ "\$dm" != "\$host_want" ]; then
+    echo "FAIL disk md5 \$dm != host \$host_want after mv"
+    exit 7
+  fi
+  echo INSTALL_OK
+"
+inst_rc=$?
+set -e
+report_rc "install_mv" "$inst_rc" || die "stage+mv install failed (rc=$inst_rc)"
+
 set +e
 DISK_MD5="$(ssh_m "md5sum '$REMOTE_BIN'" | awk '{print $1}')"
 disk_rc=$?
@@ -281,11 +333,6 @@ if [[ "$DISK_MD5" != "$HOST_MD5" ]]; then
   die "disk md5 $DISK_MD5 != host md5 $HOST_MD5 (install corrupted; not restarting)"
 fi
 report_rc "disk_md5_match" 0
-
-if [[ -f "$ROOT/scripts/plex_browse.sh" ]]; then
-  scp_to "$ROOT/scripts/plex_browse.sh" "$TARGET_ROOT/scripts/plex_browse.sh" || true
-  [[ -f "$ROOT/scripts/plex_menu.sh" ]] && scp_to "$ROOT/scripts/plex_menu.sh" "$TARGET_ROOT/scripts/plex_menu.sh" || true
-fi
 
 # --- restart exactly one daemon; verify LIVE exe md5 (not disk alone) ---------
 echo "deploy: restart single daemon root=$TARGET_ROOT (disk match alone is NOT success)"
@@ -360,15 +407,25 @@ live_md5=""
 live_conf=""
 live_exe=""
 for d in /proc/[0-9]*; do
-  [ -r "$d/cmdline" ] || continue
-  cmd=$(tr "\0" " " < "$d/cmdline" 2>/dev/null) || continue
-  case "$cmd" in *plexctl.sh*|*supervise*|*dedupe_daemon*) continue ;; esac
-  case "$cmd" in */misterplexd\ *|*/misterplexd) ;; *) continue ;; esac
+  [ -d "$d" ] || continue
   p=${d#/proc/}
+  # Identity by comm + argv0 basename — NOT cmdline substring (flock trap).
+  is_d=0
+  if [ -r "$d/comm" ]; then
+    c=$(cat "$d/comm" 2>/dev/null || true)
+    [ "$c" = "misterplexd" ] && is_d=1
+  fi
+  if [ "$is_d" -eq 0 ] && [ -r "$d/cmdline" ]; then
+    a0=$(tr "\0" "\n" < "$d/cmdline" 2>/dev/null | head -n1)
+    case "$a0" in */misterplexd|misterplexd) is_d=1 ;; esac
+  fi
+  [ "$is_d" -eq 1 ] || continue
+  cmd=$(tr "\0" " " < "$d/cmdline" 2>/dev/null || true)
   n=$((n + 1))
   pids="$pids $p"
   live_exe=$(readlink -f "/proc/$p/exe" 2>/dev/null || true)
   live_md5=$(md5sum "/proc/$p/exe" 2>/dev/null | awk '{print $1}')
+  # conf from argv tokens
   set -- $cmd
   while [ $# -gt 0 ]; do
     if [ "$1" = "--conf" ]; then live_conf="${2:-}"; break; fi

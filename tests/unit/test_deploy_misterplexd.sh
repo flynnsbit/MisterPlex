@@ -166,7 +166,16 @@ fi
 
 if echo "$args" | grep -q 'DEPLOY_INSTALL_PREP' || echo "$input" | grep -q 'DEPLOY_INSTALL_PREP'; then
   echo "$args" >>"$STATE_DIR/ssh_cmds"
-  echo "MKDIR_OK"; exit 0
+  echo "PREP_OK"; exit 0
+fi
+
+# stage+mv install remote body
+if echo "$input $args" | grep -q 'INSTALL_OK\|STAGE_MD5='; then
+  host=$(cat "$STATE_DIR/disk_md5")
+  echo "STAGE_MD5=$host"
+  echo "DISK_MD5=$host"
+  echo "INSTALL_OK"
+  exit 0
 fi
 
 if echo "$args" | grep -q 'misterplex_v2'; then
@@ -267,8 +276,11 @@ if run_deploy "green" env -u MISTERPLEX_ROOT \
 else
   bad "integ-green-rc0"; tail -40 "$WORK/green.out" >&2
 fi
-grep -q '/media/fat/misterplex_v2/bin/misterplexd' "$STATE/scp_dests" \
-  && ok "integ-green-scp-v2" || bad "integ-green-scp-v2"
+# scp lands on /tmp stage path; final path is mv on-device (parent ETXTBSY trap)
+grep -E '/tmp/misterplexd\.deploy\.' "$STATE/scp_dests" \
+  && ok "integ-green-scp-stage" || bad "integ-green-scp-stage"
+grep -q 'INSTALL_OK\|install_mv true rc=0\|stage+mv' "$WORK/green.out" \
+  && ok "integ-green-install-mv" || bad "integ-green-install-mv"
 grep -qx "$HOST_MD5" "$STATE/scp_src_md5s" \
   && ok "integ-green-shipped-named-md5" || bad "integ-green-shipped-named-md5"
 grep -q "DEPLOY_OK" "$WORK/green.out" && ok "integ-green-deploy-ok" || bad "integ-green-deploy-ok"
@@ -278,6 +290,29 @@ if grep -qE 'arm-plexd|make -C' "$WORK/green.out"; then
   bad "integ-green-must-not-rebuild"
 else
   ok "integ-green-no-rebuild"
+fi
+
+# --- static: stop uses comm/argv0, install uses stage+mv -------------------
+echo "=== RED source: stop=comm/argv0; install=stage+mv ==="
+if grep -nE 'match_pids' "$SCRIPT" | grep -v '^[[:space:]]*#'; then
+  bad "source-no-match_pids-helper"
+else
+  ok "source-no-match_pids-helper"
+fi
+grep -q 'is_daemon_pid' "$SCRIPT" && ok "source-has-comm-daemon" || bad "source-has-comm-daemon"
+grep -q 'mv -f' "$SCRIPT" && ok "source-stage-mv" || bad "source-stage-mv"
+grep -q 'misterplexd.deploy' "$SCRIPT" && ok "source-stage-path" || bad "source-stage-path"
+# stop body must not bare-match *misterplexd* on full cmdline (flock trap)
+stop_body=$(awk '/stopping all misterplexd/,/report_rc "stop_all"/' "$SCRIPT")
+if printf '%s\n' "$stop_body" | grep -q 'misterplexd_supervise.sh'; then
+  ok "source-stop-supervise-token-ok"
+else
+  bad "source-stop-supervise-token-ok"
+fi
+if printf '%s\n' "$stop_body" | grep -qE 'case "\$cmd" in \*\"\$pat\"\*'; then
+  bad "source-stop-no-pat-substr"
+else
+  ok "source-stop-no-pat-substr"
 fi
 
 # --- plexctl load_core host false-negative -----------------------------------
