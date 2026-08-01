@@ -19,6 +19,8 @@ Branch tip: see `status.txt` for SHA. Agent runs are **not** evidence; parent ru
 | PMS unreachable → not PASS | `UNVERIFIED` **rc=2** | **Real** (prove_red_paths P2) |
 | Daemon down → FAIL | preflight `daemon_unreachable` rc=1 | **Real** (prove_red_paths P1 + suite) |
 | Wallclock timeline series | `PLEX_TIMELINE_SAMPLE` + jsonl | **Emitted** for parent HDMI join |
+| Glass frame loss % | w-instr instrument + counter gaps; max 1% default | **Real when capture provided**; 1.54% class unit-RED |
+| S6 N=10 distribution | `TRANSITION_CYCLE_ROW` + pass==N | **Code real**; parent N=10 evidence pending |
 
 ## NOT covered / must not pretend
 
@@ -46,7 +48,8 @@ Branch tip: see `status.txt` for SHA. Agent runs are **not** evidence; parent ru
 | RED when daemon down | **Yes** (default require) |
 | No blind green if PMS down | **Yes** rc=2 UNVERIFIED |
 | Correlate timeline to HDMI wallclock | **Yes** series file — parent joins |
-| Attribute 0.70% loss to PMS vs device | **Not claimed** — series is an input only |
+| Attribute frame loss to PMS vs device | **Partial** — glass % is display-side; stage split still parent |
+| Glass gate without capture | Logs `GLASS_NOT_SCORED` — **not** glass PASS |
 | Real non-fixture library titles | **Weak** — often empty; fails loud when required |
 
 ## Worktree

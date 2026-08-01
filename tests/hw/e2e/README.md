@@ -76,6 +76,10 @@ Failure messages distinguish:
 | `ledger_lifetime_regressed` | lifetime_frames went backwards mid-cycle |
 | `daemon_pid_changed` | misterplexd PID changed mid-run (self-exit rc=0 / respawn) |
 | `daemon_pid_unprobed` | telemetry missing `pid=` and `E2E_REQUIRE_PID=1` |
+| `hdmi_motion_rate_fail` | instrument RATE_FAIL rc=4 (span/revisit) |
+| `glass_frame_loss` | burned-in counter gap loss% > `E2E_GLASS_MAX_LOSS_PCT` (default 1.0) — **1.54% class RED** |
+| `glass_counter_unscored` | glass required but counter sequence unreadable |
+| `glass_capture_required` | `E2E_REQUIRE_GLASS=1` without capture dir / HDMI motion |
 
 ## Prerequisites
 
@@ -206,6 +210,46 @@ PLEX_TIMELINE_SAMPLE run_id=… wall_ms=… wall_iso=… plex_time_ms=… state=
 Artifact: `$E2E_OUT/plex_timeline_series.jsonl` (default under `build/e2e-artifacts/`).
 Parent aligns `host_wall_ms` windows to HDMI capture spans and daemon `e2e_mark` /
 session origin lines. **No lipsync score** from this file.
+
+
+## Glass frame-loss gate (w-instr counter — not timeline advance)
+
+Daemon `frames/presents/drops` can close identity while **display** loses ~1.5% of
+source frames (parent pixel measure: 22 skips / 1429). Timeline advance alone is
+**necessary but not sufficient**.
+
+When a capture is available, the suite runs `tools/hdmi_motion_instrument.py`
+(template digit decoder) then `glass_counter_loss.js`:
+
+- `loss_pct = 100 * skips / source_span` on ordered counter `n` (measured)
+- Default max **1.0%** (`E2E_GLASS_MAX_LOSS_PCT`) → parent **1.54%** session is **FAIL**
+- `rc=4 RATE_FAIL` → `hdmi_motion_rate_fail`
+- `rc=77 UNSCORED` → hard FAIL (never pass)
+
+### Parent provides capture (suite never opens `/dev/video0`)
+
+```bash
+# Offline score only:
+E2E_GLASS_CAPTURE_DIR=/path/to/pngs E2E_GLASS_MAX_LOSS_PCT=1.0 \
+  node tests/hw/e2e/score_glass_capture.js; echo "true rc=$?"
+
+# Full E2E + score provided dir after play starts:
+E2E_GLASS_CAPTURE_DIR=/path/to/pngs E2E_REQUIRE_GLASS=1 \
+  E2E_TRANSITION_CYCLES=10 ... ./tests/hw/e2e/run_cast_picker.sh; echo "true rc=$?"
+
+# Live hold + parent capture during HDMI_HOLD (existing):
+E2E_HDMI_MOTION=1 E2E_REQUIRE_GLASS=1 ...
+```
+
+Without glass capture and without `E2E_REQUIRE_GLASS`, the suite logs
+`GLASS_NOT_SCORED=1` — that is **not** a glass PASS.
+
+## S6 N-loop (default 10)
+
+`E2E_TRANSITION_CYCLES` (default **10**). Each cycle logs `TRANSITION_CYCLE_ROW`;
+aggregate PASS requires `pass==N` and `fail==0`. Majority is never a pass.
+`TRANSITION_DISTRIBUTION` prints fail rate.
+
 
 ## Interference warning — do not run during soak / CPU windows
 

@@ -361,6 +361,18 @@ function loadConfig() {
     hdmiCaptureFps,
     hdmiCaptureFpsLabel,
     sessionHoldSec,
+    // Glass integrity (w-instr counter). Parent provides capture dir; suite never grabs.
+    // E2E_REQUIRE_GLASS=1 → missing/unscored glass is FAIL (not timeline-only PASS).
+    requireGlass: truthy(process.env.E2E_REQUIRE_GLASS, false),
+    glassMaxLossPct: (() => {
+      const v = parseFloat(process.env.E2E_GLASS_MAX_LOSS_PCT || '1.0');
+      return Number.isFinite(v) ? v : 1.0;
+    })(),
+    // Pre-filled capture for offline glass score (parent pixel burst path).
+    glassCaptureDir:
+      process.env.E2E_GLASS_CAPTURE_DIR ||
+      process.env.E2E_HDMI_SCORE_DIR ||
+      '',
   };
 }
 

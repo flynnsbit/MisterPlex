@@ -55,6 +55,11 @@ const {
 const { createRunCorrelation } = require('./run_correlate');
 const { readUiPlayerTimeline, assertUiDaemonTimeline } = require('./ui_timeline');
 const { createTimelineSeries } = require('./timeline_series');
+const {
+  analyzeCounterGaps,
+  nsFromInstrumentJson,
+  assertGlassLoss,
+} = require('./glass_counter_loss');
 
 const EXIT_PASS = 0;
 const EXIT_FAIL = 1;
@@ -1915,20 +1920,21 @@ async function runSessionHold(tier, ratingKey) {
  *   BUT STRUCTURE/COLOR still hard-fail. If rc=77 and mode=motion → FAIL.
  */
 function scoreHdmiCaptureDir(capDir, cycleTag) {
+  const tag = cycleTag || 'hdmi';
   const tool = path.join(ROOT, 'tools', 'hdmi_motion_instrument.py');
   if (!fs.existsSync(tool)) {
     fail(
       'hdmi_motion_instrument_missing',
-      `Missing ${tool}. Land tools/hdmi_motion_instrument.py before E2E_HDMI_MOTION.`
+      `Missing ${tool}. Land tools/hdmi_motion_instrument.py before glass/HDMI score.`
     );
   }
   const nPng = countPngs(capDir);
-  log(`hdmi_capture_png_count=${nPng} dir=${capDir} tag=${cycleTag || '-'}`);
+  log(`hdmi_capture_png_count=${nPng} dir=${capDir} tag=${tag}`);
   if (nPng < 3) {
     fail(
       'hdmi_motion_no_frames',
-      `${cycleTag || 'hdmi'}: E2E_HDMI_MOTION=1 but capture dir has ${nPng} PNGs (need ≥3).\n` +
-        'Parent must run PARENT_HDMI_CAPTURE_CMD during HDMI_HOLD (suite never opens /dev/video0).\n' +
+      `${tag}: glass/HDMI score needs ≥3 PNGs; have ${nPng}.\n` +
+        'Parent fills capture dir (suite never opens /dev/video0).\n' +
         `CAPTURE: ${parentHdmiCaptureCmd(cfg, capDir)}\n` +
         `SCORE:   ${parentHdmiScoreCmd(cfg, capDir)}`
     );
@@ -1954,45 +1960,88 @@ function scoreHdmiCaptureDir(capDir, cycleTag) {
     log(`  instrument: ${line.slice(0, 280)}`);
   }
   const rc = typeof res.status === 'number' ? res.status : 99;
-  log(`hdmi_instrument true rc=${rc} tag=${cycleTag || '-'}`);
+  log(`hdmi_instrument true rc=${rc} tag=${tag}`);
+  log(
+    `hdmi_fps source=${cfg.hdmiSourceFps} (${cfg.hdmiSourceFpsLabel}) ` +
+      `capture=${cfg.hdmiCaptureFps} (${cfg.hdmiCaptureFpsLabel})`
+  );
 
-  // STRUCTURE_FAIL is the strongest structural RCA class.
   if (rc === 3) {
     fail(
       'hdmi_motion_structure_fail',
-      `${cycleTag || 'hdmi'}: instrument STRUCTURE_FAIL rc=3\n${out.slice(-600)}`
+      `${tag}: instrument STRUCTURE_FAIL rc=3\n${out.slice(-600)}`
     );
   }
   if (rc === 2) {
     fail(
       'hdmi_motion_color_fail',
-      `${cycleTag || 'hdmi'}: instrument COLOR_FAIL rc=2\n${out.slice(-600)}`
+      `${tag}: instrument COLOR_FAIL rc=2\n${out.slice(-600)}`
     );
   }
   if (rc === 1) {
     fail(
       'hdmi_motion_freeze',
-      `${cycleTag || 'hdmi'}: instrument FREEZE rc=1\n${out.slice(-600)}`
+      `${tag}: instrument FREEZE rc=1\n${out.slice(-600)}`
+    );
+  }
+  if (rc === 4) {
+    fail(
+      'hdmi_motion_rate_fail',
+      `${tag}: instrument RATE_FAIL rc=4 (span/revisit/plateau — display integrity)\n` +
+        out.slice(-600)
     );
   }
   if (rc === 77) {
-    // rc=77 is NEVER a pass (idle race, warm-up, missing counter, pre-session grab).
     fail(
       'hdmi_motion_unscored',
-      `${cycleTag || 'hdmi'}: instrument rc=77 UNSCORED — hard FAIL ` +
+      `${tag}: instrument rc=77 UNSCORED — hard FAIL ` +
         '(soft-skip is never a pass). Capture only after session established; ' +
-        'synthetic needs TREK overlay; real content prefer eye+timeline unless instrument MOTION_OK.\n' +
+        'synthetic needs TREK overlay.\n' +
         out.slice(-400)
     );
   }
   if (rc !== 0) {
     fail(
       'hdmi_motion_instrument_failed',
-      `${cycleTag || 'hdmi'}: instrument unexpected rc=${rc}\n${out.slice(-500)}`
+      `${tag}: instrument unexpected rc=${rc}\n${out.slice(-500)}`
     );
   }
-  log(`HDMI_MOTION_OK instrument rc=0 tag=${cycleTag || '-'}`);
-  return { enabled: true, rc: 0, mode: cfg.hdmiAssertMode, pngs: nPng };
+
+  // Glass frame-loss % from counter gaps (parent: 22 skips / 1429 → 1.54%).
+  // MOTION_OK alone is insufficient if gap loss exceeds threshold.
+  const ns = nsFromInstrumentJson(out);
+  const gap = analyzeCounterGaps(ns);
+  log(
+    `GLASS_COUNTER_GAPS tag=${tag} samples=${gap.n_samples} n=${gap.n_first}->${gap.n_last} ` +
+      `span=${gap.source_span} skips=${gap.skips} loss_pct=${
+        gap.loss_pct != null ? gap.loss_pct.toFixed(3) : 'NA'
+      } max_gap=${gap.max_gap} plateaus=${gap.plateaus} backward=${gap.backward} ` +
+      `value_kind=${gap.value_kind}`
+  );
+  const maxLoss = cfg.glassMaxLossPct != null ? cfg.glassMaxLossPct : 1.0;
+  const gr = assertGlassLoss(gap, maxLoss, tag);
+  if (!gr.ok) {
+    if (gr.reason === 'glass_counter_unscored' && !cfg.requireGlass) {
+      log(
+        `GLASS_LOSS_SOFT_SKIP tag=${tag} ${gr.detail} — E2E_REQUIRE_GLASS=0 ` +
+          '(NOT a pass of glass integrity; timeline-only is blind to ~1.5% loss)'
+      );
+    } else {
+      fail(gr.reason || 'glass_frame_loss', gr.detail || '');
+    }
+  } else {
+    log(`GLASS_LOSS_OK ${gr.detail}`);
+  }
+
+  log(`HDMI_MOTION_OK instrument rc=0 tag=${tag} glass_loss_ok=${gr.ok ? 1 : 0}`);
+  return {
+    enabled: true,
+    rc: 0,
+    mode: cfg.hdmiAssertMode,
+    pngs: nPng,
+    glass: gap,
+    glassOk: !!gr.ok,
+  };
 }
 
 /**
@@ -2492,6 +2541,29 @@ async function runTransitionScenarios(page, itemTitle, detailsUrl, _castAlreadyS
       `daemon_pid=${baselineDaemonPid > 0 ? baselineDaemonPid : 'NA'} ` +
       `majority_pass_is_pass=0`
   );
+  // Per-cycle distribution (S6) — never collapse to majority-only.
+  for (const r of results) {
+    if (r.ok) {
+      log(
+        `TRANSITION_CYCLE_ROW cycle=${r.cycle}/${total} result=PASS ` +
+          `start_time0_ms=${r.startTime0 != null ? r.startTime0 : 'NA'} ` +
+          `glass=${r.hdmi && r.hdmi.glassOk != null ? (r.hdmi.glassOk ? 1 : 0) : 'NA'}`
+      );
+    } else {
+      log(
+        `TRANSITION_CYCLE_ROW cycle=${r.cycle}/${total} result=FAIL ` +
+          `transition=${r.transition || '?'} reason=${r.reason || r.fullReason || '?'} ` +
+          `detail=${String(r.detail || '')
+            .replace(/\s+/g, ' ')
+            .slice(0, 120)}`
+      );
+    }
+  }
+  log(
+    `TRANSITION_DISTRIBUTION pass=${passed} fail=${failed} rate_fail=${
+      total > 0 ? (failed / total).toFixed(3) : 'NA'
+    } pass_eq_N=${passed === total && failed === 0 ? 1 : 0}`
+  );
 
   if (failed > 0 || passed !== total || results.length !== total) {
     const first = failures[0];
@@ -2959,6 +3031,29 @@ async function runTransitionScenarios(page, itemTitle, detailsUrl, _castAlreadyS
       await runCorr.joinTelemetry(`tier_${tier.name}_playing_ok`);
       runCorr.persist(cfg.outDir);
       await captureAndAssertPid(`tier_${tier.name}_playing_ok`, { hardFail: true });
+
+      // Optional glass score on parent-provided capture (no grabber). Timeline-only
+      // PASS is blind to ~1.5% display loss — when dir set or requireGlass, score it.
+      if (cfg.glassCaptureDir) {
+        log(
+          `GLASS_CAPTURE_DIR=${cfg.glassCaptureDir} max_loss_pct=${cfg.glassMaxLossPct} ` +
+            `require=${cfg.requireGlass ? 1 : 0} (w-instr template counter + gap loss%)`
+        );
+        scoreHdmiCaptureDir(cfg.glassCaptureDir, `glass_provided_${tier.name}`);
+      } else if (cfg.requireGlass && !cfg.hdmiMotion) {
+        fail(
+          'glass_capture_required',
+          'E2E_REQUIRE_GLASS=1 but neither E2E_GLASS_CAPTURE_DIR nor E2E_HDMI_MOTION=1 set. ' +
+            'Parent must provide a capture dir (suite does not open /dev/video0). ' +
+            'Timeline advance alone must not green-wash display-side frame loss.'
+        );
+      } else if (!cfg.hdmiMotion) {
+        log(
+          'GLASS_NOT_SCORED=1 — timeline/control-plane only. NOT a pass of glass integrity. ' +
+            'Set E2E_GLASS_CAPTURE_DIR or E2E_HDMI_MOTION=1 + parent capture to gate ~1.5% loss class.'
+        );
+      }
+
 
       // ── 4b. Transitions (pause/resume, seek, stop+recast, play→idle→play) ─
       // Per-tier capture base so 240p/480p frames do not mix when E2E_TIER=all.
