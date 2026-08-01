@@ -22,11 +22,22 @@ SIGN CONVENTION (unambiguous)
 CONTAINER CHOICE
 ----------------
 One ffmpeg process writes ONE Matroska file with both streams
-(MJPEG video + pcm_s16le audio). Reason (not a guess): a single muxer
-assigns PTS on one timeline from one process start, so flash PTS and beep
-sample clocks are directly comparable without wall-clock correlation of two
-files. Separate A/V files would require an external shared clock that the
-grabber does not expose.
+(MJPEG video + pcm_s16le audio). Live capture stamps BOTH inputs with
+`-use_wallclock_as_timestamps 1` so v4l2 and ALSA share wall time at open
+(rd-review confound: without that, each input's first packet can normalise
+to t=0 independently and absorb a USB startup race into the alignment).
+
+PARENT HARDWARE (SESSION-LATCHED — instrument exonerated)
+---------------------------------------------------------
+One 360 s playback, THREE back-to-back captures inside it (pre-registered):
+  within-session spread of medians = 3.33 ms
+  between-cluster separation (n=15 prior runs) = 116.89 ms
+  ratio ≈ 35× → SESSION-LATCHED, DEVICE CONFIRMED (not capture race).
+Clusters fully separate at the VERY FIRST flash/beep pair (A −286 vs B −171,
+sep 114.92 ms, zero overlap, n=15). State latches within ~1.4 s and holds.
+Common-mode: first-10 s median is 20–40 ms less negative than last-60 s in
+BOTH clusters — a real ~25 ms startup transient; short captures are biased.
+This tool therefore always prints first_pair_* and early/late window medians.
 
 GRABBER WARM-UP
 ---------------
@@ -162,7 +173,11 @@ def capture_av(
 ) -> None:
     """Capture video+audio in ONE ffmpeg process into one MKV.
 
-    Single-container justification: shared mux PTS timeline (see module doc).
+    Both inputs use wallclock timestamps so v4l2 and ALSA share one clock at
+    open (avoids independent first-packet→0 normalisation absorbing USB race).
+    Parent multi-capture-within-session test: within-session median spread
+    3.33 ms vs 116.89 ms cluster sep → device-latched, not capture race; wallclock
+    is still required hygiene.
     """
     dest.parent.mkdir(parents=True, exist_ok=True)
     if dest.exists():
@@ -171,18 +186,21 @@ def capture_av(
     cmd = [
         "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
         "-thread_queue_size", "1024",
+        "-use_wallclock_as_timestamps", "1",
         "-f", "v4l2",
         "-input_format", "mjpeg",
         "-video_size", video_size,
         "-framerate", str(cap_fps),
         "-i", video_dev,
         "-thread_queue_size", "1024",
+        "-use_wallclock_as_timestamps", "1",
         "-f", "alsa",
         "-ac", "2",
         "-ar", str(DEFAULT_AUDIO_SR),
         "-i", audio_dev,
         "-map", "0:v:0",
         "-map", "1:a:0",
+        "-copyts",
         "-t", f"{duration_s:.3f}",
         "-c:v", "mjpeg",
         "-q:v", "5",
@@ -681,9 +699,43 @@ class MeasureResult:
     slope_ms_per_s: float | None = None
     slope_intercept_ms: float | None = None
     slope_r_squared: float | None = None
+    # SESSION-LATCHED instrument fields (parent n=15 + 3-in-1-session)
+    first_pair_offset_ms: float | None = None
+    first_pair_t_flash_s: float | None = None
+    first_pair_t_beep_s: float | None = None
+    early_window_s: float | None = None  # caller/default window length
+    early_window_s_src: str = "DEFAULT_ASSUMED"
+    early_median_offset_ms: float | None = None
+    early_n_pairs: int = 0
+    late_window_s: float | None = None
+    late_window_s_src: str = "DEFAULT_ASSUMED"
+    late_median_offset_ms: float | None = None
+    late_n_pairs: int = 0
+    early_minus_late_ms: float | None = None  # startup transient (parent ~+25 ms)
     flash_meta: dict[str, Any] = field(default_factory=dict)
     beep_meta: dict[str, Any] = field(default_factory=dict)
     capture_path: str = ""
+
+
+# Parent-measured common-mode startup transient windows (design defaults).
+DEFAULT_EARLY_WINDOW_S = 10.0
+DEFAULT_LATE_WINDOW_S = 60.0
+
+
+def _window_median(
+    pairs: list[dict[str, float]],
+    *,
+    t0: float,
+    t1: float,
+) -> tuple[float | None, int]:
+    vals = [
+        float(p["offset_ms"])
+        for p in pairs
+        if t0 <= float(p["t_flash_s"]) < t1
+    ]
+    if not vals:
+        return None, 0
+    return float(statistics.median(vals)), len(vals)
 
 
 def analyse_file(
@@ -693,6 +745,10 @@ def analyse_file(
     pair_window_s: float,
     min_pairs: int,
     beep_hz: float,
+    early_window_s: float = DEFAULT_EARLY_WINDOW_S,
+    early_window_src: str = "DEFAULT_ASSUMED",
+    late_window_s: float = DEFAULT_LATE_WINDOW_S,
+    late_window_src: str = "DEFAULT_ASSUMED",
 ) -> MeasureResult:
     try:
         luma, t, vmeta = load_video_luma(path)
@@ -734,6 +790,10 @@ def analyse_file(
         flash_meta=fmeta,
         beep_meta=bmeta,
         capture_path=str(path),
+        early_window_s=float(early_window_s),
+        early_window_s_src=early_window_src,
+        late_window_s=float(late_window_s),
+        late_window_s_src=late_window_src,
     )
     if len(pairs) < min_pairs:
         res.unscored = True
@@ -749,6 +809,27 @@ def analyse_file(
     res.stdev_offset_ms = float(statistics.pstdev(offs)) if len(offs) > 1 else 0.0
     res.min_offset_ms = float(min(offs))
     res.max_offset_ms = float(max(offs))
+
+    # First pair — parent: clusters fully separated here (n=15, zero overlap).
+    p0 = pairs[0]
+    res.first_pair_offset_ms = float(p0["offset_ms"])
+    res.first_pair_t_flash_s = float(p0["t_flash_s"])
+    res.first_pair_t_beep_s = float(p0["t_beep_s"])
+
+    # Early/late windows — parent common-mode ~25 ms startup transient.
+    t_min = min(float(p["t_flash_s"]) for p in pairs)
+    t_max = max(float(p["t_flash_s"]) for p in pairs)
+    e_med, e_n = _window_median(pairs, t0=t_min, t1=t_min + float(early_window_s))
+    l_med, l_n = _window_median(
+        pairs, t0=max(t_min, t_max - float(late_window_s)), t1=t_max + 1e-9
+    )
+    res.early_median_offset_ms = e_med
+    res.early_n_pairs = e_n
+    res.late_median_offset_ms = l_med
+    res.late_n_pairs = l_n
+    if e_med is not None and l_med is not None:
+        # early - late: parent saw first-10s LESS NEGATIVE → positive delta ~20-40
+        res.early_minus_late_ms = float(e_med - l_med)
 
     # Slope of offset vs flash time (ms per second of capture)
     xs = [p["t_flash_s"] for p in pairs]
@@ -808,6 +889,12 @@ def print_limitations_banner() -> None:
         "DEFAULT_ASSUMED values are NEVER measurements; PASS/FAIL refused "
         "unless every scoring threshold is caller_supplied or "
         "--allow-default-score is set"
+    )
+    print(
+        "SESSION_LATCHED (parent measured): within-session 3-capture spread "
+        "3.33 ms vs cluster sep 116.89 ms — defect is DEVICE, not capture race; "
+        "first_pair fully separates clusters; early-late ~25 ms common-mode "
+        "startup transient biases short captures"
     )
 
 
@@ -918,6 +1005,42 @@ def print_report(
     assert res.median_offset_ms is not None
     raw = res.median_offset_ms
     print(f"per_pair_offsets_ms={[round(p['offset_ms'], 3) for p in res.pairs]} src=measured")
+    # First pair — parent n=15: clusters fully separated here (never a bare "first")
+    print(
+        f"first_pair_offset_ms={res.first_pair_offset_ms} src=measured "
+        f"tag=raw_uncalibrated"
+    )
+    print(
+        f"first_pair_t_flash_s={res.first_pair_t_flash_s} src=measured "
+        f"first_pair_t_beep_s={res.first_pair_t_beep_s} src=measured"
+    )
+    print(
+        f"early_window_s={_tag(res.early_window_s, res.early_window_s_src)} "
+        f"early_n_pairs={res.early_n_pairs} src=measured "
+        f"early_median_offset_ms={res.early_median_offset_ms} src="
+        f"{'measured' if res.early_median_offset_ms is not None else 'NO-DATA'} "
+        f"tag=raw_uncalibrated"
+    )
+    print(
+        f"late_window_s={_tag(res.late_window_s, res.late_window_s_src)} "
+        f"late_n_pairs={res.late_n_pairs} src=measured "
+        f"late_median_offset_ms={res.late_median_offset_ms} src="
+        f"{'measured' if res.late_median_offset_ms is not None else 'NO-DATA'} "
+        f"tag=raw_uncalibrated"
+    )
+    if res.early_minus_late_ms is not None:
+        print(
+            f"early_minus_late_ms={res.early_minus_late_ms:.4f} src=measured "
+            f"note=startup_transient_common_mode_parent_~25ms_both_clusters "
+            f"(short_capture_bias)"
+        )
+    else:
+        print(f"early_minus_late_ms=None src=NO-DATA")
+    print(
+        "session_latch_note: parent 3-in-1-session spread=3.33ms vs cluster_sep="
+        "116.89ms → DEVICE SESSION-LATCHED (instrument exonerated); "
+        "use tools/avsync_session_latch.py on multi-capture JSON set"
+    )
     print(f"median_offset_ms_raw={raw:.4f} src=measured tag=raw_uncalibrated")
     print(f"mean_offset_ms_raw={res.mean_offset_ms:.4f} src=measured")
     print(f"stdev_offset_ms={res.stdev_offset_ms:.4f} src=measured")
@@ -1101,6 +1224,20 @@ def build_arg_parser() -> argparse.ArgumentParser:
     )
     ap.add_argument("--beep-hz", type=float, default=None, help=f"default {DEFAULT_BEEP_HZ}")
     ap.add_argument(
+        "--early-window-s", type=float, default=None,
+        help=(
+            f"Median over first N seconds of pairs (default {DEFAULT_EARLY_WINDOW_S}); "
+            "parent common-mode startup transient window"
+        ),
+    )
+    ap.add_argument(
+        "--late-window-s", type=float, default=None,
+        help=(
+            f"Median over last N seconds of pairs (default {DEFAULT_LATE_WINDOW_S}); "
+            "compare to early for short-capture bias"
+        ),
+    )
+    ap.add_argument(
         "--calibrate", action="store_true",
         help="Measure instrument baseline and write --calibration-out",
     )
@@ -1148,6 +1285,12 @@ def main(argv: list[str] | None = None) -> int:
     beep_hz, _bh_src = pick(args.beep_hz, DEFAULT_BEEP_HZ, "beep_hz")
     min_cap_frames, min_cap_src = pick(
         args.min_capture_frames, DEFAULT_MIN_CAPTURE_FRAMES, "min_capture_frames"
+    )
+    early_win, early_win_src = pick(
+        args.early_window_s, DEFAULT_EARLY_WINDOW_S, "early_window_s"
+    )
+    late_win, late_win_src = pick(
+        args.late_window_s, DEFAULT_LATE_WINDOW_S, "late_window_s"
     )
 
     # Warmup: live capture defaults 20; file input defaults 0
@@ -1219,6 +1362,10 @@ def main(argv: list[str] | None = None) -> int:
         pair_window_s=pair_window,
         min_pairs=min_pairs,
         beep_hz=beep_hz,
+        early_window_s=float(early_win),
+        early_window_src=early_win_src,
+        late_window_s=float(late_win),
+        late_window_src=late_win_src,
     )
 
     # Live warm-up / short-burst guard: need enough decoded frames.

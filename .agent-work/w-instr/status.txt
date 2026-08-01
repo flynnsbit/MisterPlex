@@ -1,40 +1,36 @@
-# w-instr status — avsync harden + bimodality + ledger
+# w-instr status — SESSION-LATCHED instrumentation
 
 branch: w-avsync-hdmi-measure
-code tip: git rev-parse --short HEAD
+# tip after commit
 
-## Task 1 — avsync_measure_hdmi.py (ONLY working lipsync judge)
-- DEFAULT_PAIR_WINDOW_S=0.9 (correct default; 0.45 mispairs)
-- DEFAULT_WARMUP_FRAMES=20; live min decoded frames=50 → else UNSCORED
-- LIMITATIONS banner every run: absolute lipsync CANNOT_MEASURE (raw_uncalibrated);
-  same-rig deltas CAN; av_drift_ms BLIND
-- PASS/FAIL refused (rc=77 REFUSE_DEFAULT_ASSUMED) when tol_ms is DEFAULT_ASSUMED
-  unless --allow-default-score or --tol-ms supplied (ERROR 17)
-- No 23.976 anywhere in this tool
-- unit: tests/unit/test_avsync_measure_hdmi.sh true rc=0 (28 pass incl refuse_default)
+## Parent result (binding)
+SESSION-LATCHED DEVICE CONFIRMED:
+  1 session × 3 captures: within spread 3.33 ms vs cluster sep 116.89 ms (ratio 35×)
+  first flash/beep pair fully separates clusters (n=15, zero overlap)
+  common-mode early−late ~25 ms startup transient (both clusters)
+  seven predictors dead; peer survey NOT-FOUND; instrument exonerated
 
-## Task 2 — tools/avsync_bimodality.py
-- Data-driven 1-D two-means; NO hardcoded A/B centres
-- BIMODAL rc=2, UNIMODAL rc=0, UNSCORED rc=77 (min n/cluster)
-- first_* carries run_index + first_pair_t_flash_s
-- RBG: parent-scale ~117ms → rc=2; tight → rc=0; n=1 → 77
+## Delivered this turn
+1. tools/avsync_measure_hdmi.py
+   - live capture: -use_wallclock_as_timestamps 1 on BOTH inputs + -copyts
+   - first_pair_offset_ms + t_flash/t_beep (never bare "first")
+   - early_window (10s) / late_window (60s) medians + early_minus_late_ms
+   - LIMITATIONS + SESSION_LATCHED banner
+   - unit 28/28 true rc=0
 
-## Task 3 — tools/frame_ledger_report.py
-Full single-session ledger:
-  residual = frames - presents - drops
-  drops = A/V-pacer ONLY; publish_misses separate
-Parent command (after pulling ledger/log — agent does not touch device):
+2. tools/avsync_session_latch.py (NEW)
+   - SESSION_LATCHED rc=0 / CAPTURE_RACE_SUSPECT rc=2 / UNSCORED 77
+   - parent numbers → SESSION_LATCHED sep_over_within≈35.1 true rc=0
 
-  python3 tools/frame_ledger_report.py \
-    --ledger /path/to/misterplexd.frame_ledger \
-    --require-explained; echo "true rc=$?"
+## Parent recipes (host only)
+# After N captures in ONE session:
+python3 tools/avsync_session_latch.py \
+  --values <m1> <m2> <m3> \
+  --between-cluster-sep-ms 116.89 --max-within-ms 30 --min-captures 3
+echo "true rc=$?"
 
-  # or from daemon log:
-  python3 tools/frame_ledger_report.py --log /path/to/misterplexd.log; echo "true rc=$?"
+# Single capture now prints first_pair + early/late:
+python3 tools/avsync_measure_hdmi.py --duration 100 --tol-ms 42 --out /tmp/av
 
-Device path typically: /media/fat/misterplex_v2/misterplexd.frame_ledger
-
-## Evidence
-python3 tools/avsync_bimodality.py --self-test; echo "true rc=$?"  → 0
-python3 tools/frame_ledger_report.py --self-test; echo "true rc=$?" → 0
-bash tests/unit/test_avsync_measure_hdmi.sh; echo "true rc=$?" → 0
+# Cluster set:
+python3 tools/avsync_bimodality.py --json-dir /path/to/reports --min-n-per-cluster 2
