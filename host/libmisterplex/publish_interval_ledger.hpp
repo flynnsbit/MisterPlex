@@ -292,7 +292,12 @@ struct PublishIntervalLedger {
 
         const double p50 = (s.steady_n >= 100) ? s.p_ge50_steady : s.p_ge50;
         const double sig = (s.steady_n >= 100) ? s.steady_sigma_ms : s.sigma_ms;
-        if (sig < 4.0 && s.p_in_band >= 0.99 && p50 < 0.03)
+        // Binding: refuse p_ge50 as a score when sigma >= mean (parent T2).
+        const double mean_for_gate =
+            (s.steady_n >= 100 && s.trimmed_mean_ms > 0.0) ? s.trimmed_mean_ms : s.mean_ms;
+        if (mean_for_gate > 0.0 && sig >= mean_for_gate) {
+            s.verdict = "UNSCORED_SIGMA_GE_MEAN";
+        } else if (sig < 4.0 && s.p_in_band >= 0.99 && p50 < 0.03)
             s.verdict = "ARM_EXONERATED_FPGA_SIDE";
         else if (p50 >= 0.09 && p50 <= 0.11)
             s.verdict = "ARM_LATE_MATCH_HOLD45";
@@ -304,7 +309,10 @@ struct PublishIntervalLedger {
             s.verdict = "ARM_OTHER";
 
         // Discriminator (needs enough writes). Reuses p50 from verdict block.
-        const bool arrival_late = p50 > 0.03;
+        // Do not claim arrival_late from an unscored high-sigma series.
+        const bool p50_scoreable =
+            std::strcmp(s.verdict, "UNSCORED_SIGMA_GE_MEAN") != 0;
+        const bool arrival_late = p50_scoreable && (p50 > 0.03);
         const bool write_fat = (s.p_write_ge5ms >= 0.05) ||
                                (s.write_max_us >= 10000 && s.p_write_ge1ms >= 0.05) ||
                                (s.mean_write_us >= 2000.0);

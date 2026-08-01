@@ -794,6 +794,8 @@ bool MediaPlayer::publishDdrFrame(const DdrPublishFrame& frame, const char* cont
             log(std::string("media: ") + pubInterval_.formatDiscLine() + " phase=mid");
             log(std::string("media: ") + pubSwapDelta_.formatSummaryLine("measured") +
                 " phase=mid");
+            log(std::string("media: ") + pubSwapDelta_.formatCompatAliasLine() +
+                " phase=mid");
         }
     }
     if (!ok && err)
@@ -4527,6 +4529,8 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
     }
     if (pubSwapDelta_.pair_n > 0 || pubSwapDelta_.count > 0) {
         log(std::string("media: ") + pubSwapDelta_.formatSummaryLine("measured") +
+            " phase=session_end");
+        log(std::string("media: ") + pubSwapDelta_.formatCompatAliasLine() +
             " phase=session_end");
         log(std::string("media: ") + pubSwapDelta_.formatPhaseLine());
     }

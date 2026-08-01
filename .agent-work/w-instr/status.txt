@@ -1,17 +1,13 @@
 lane=w-instr
-branch=w-avsync-hdmi-measure
+task=cadence_p_ge50_sigma_hold_d
 sha=pending
-
-ESTABLISHED (parent device, 2026-08-01):
-  V_STORE 240 vertical ceiling via push_frame flat suite, std=0.00, 5/5
-  bank=VSTORE_CEILING_BEFORE_c5382bee.json
-
-This tick:
-  --expect-after-fix gate (AFTER_FIX_OK / AFTER_FIX_STILL_240)
-  fabric VOID_ON_c5382bee banner + refuse rc=2
-  ESTABLISHED_FACTS.md + before JSON bank
-  glass_hold_skip: freeze+STALE void notes; p_ge50 retracted
-
-Host gates (true rc direct):
-  hdmi_vstore_discriminate --self-test → 0
-  fabric --self-test → 0 ; bare → 2 refuse
+host_gates:
+  test_publish_swap_delta_ledger true rc=0
+  test_publish_interval_ledger true rc=0
+  publish_cadence_score --self-test true rc=0
+deliverables:
+  host/libmisterplex/publish_swap_delta_ledger.hpp — hold_d + sigma gate + tags
+  host/libmisterplex/publish_interval_ledger.hpp — UNSCORED_SIGMA_GE_MEAN
+  tools/publish_cadence_score.py
+  PARENT_CADENCE_480P_CARD.md
+  CADENCE_METRIC_SPEC.md
