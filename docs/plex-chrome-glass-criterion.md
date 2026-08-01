@@ -12,13 +12,12 @@ This is the **only** claim that closes bug #2. Bank F1 chrome (daemon today) is 
 
 | Source | Use |
 |--------|-----|
-| **`remote_out/fit-t7b-prog480/Plex.fit.rpt` / 8fdf hierarchy** ALM **23,585** · M10K **465** · DSP **44** | **BINDING** for Δ prereg |
-| `output_files/Plex.fit.rpt` ALM 21,082 · DSP 74 | **Not** deployed class until w-fit-1 settles `8fdf440f` match |
-| **PRODUCT_NO_STUB** reclaim | **−9,217 ALM / −268 M10K** → free M10K **~356** (w-fit-1) |
+| **Deployed RBF `8fdf440f` = w-fit-integ `remote_out/fit-t7b-prog480/`** ALM **23,585** · M10K **465/553** · DSP **44** | **ONLY** binding baseline |
+| `output_files/Plex.rbf` (`2890baac`) | **BANNED** — never cite its reports |
+| **PRODUCT_NO_STUB** (enabler) | **−9,217 ALM / −268 M10K** → M10K **~197 used / ~356 free** |
 
-If 8fdf match flips to the lighter report, **re-state chrome Δ against that baseline** before scoring a fit. Do not mix ALM columns.
-
-Chrome V1 prereg (with or without stub — still small): **M10K +12±4 (cap 24) · ALM +2.5k±1k · DSP 0**.
+Chrome V1 prereg: **M10K +12±4 (cap 24) · ALM +2.5k±1k · DSP 0**.  
+HDMI domain: **`pll_hdmi` / `clk_hdmi`** (STA Fmax **164.93 MHz**, slack **+0.669 ns** on t7b).
 
 ---
 

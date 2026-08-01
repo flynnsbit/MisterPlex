@@ -19,11 +19,13 @@
 
 | Artifact | ALM | M10K | bits | DSP | Notes |
 |----------|----:|-----:|-----:|----:|-------|
-| **`remote_out/fit-t7b-prog480/Plex.fit.rpt`** | **23,585 / 41,910** | **465 / 553 (84%)** | **2,997,709 (53%)** | **44 / 112** | Matches fixture `fabric_decode_fit_hierarchy_8fdf440f.excerpt.rpt` totals |
-| `output_files/Plex.fit.rpt` | 21,082 / 41,910 | 465 / 553 (84%) | same 53% bits | **74 / 112** | Older/local tree — **do not use for deployed `8fdf440f` class** |
+| **`8fdf440f` = w-fit-integ `remote_out/fit-t7b-prog480/`** | **23,585 / 41,910** | **465 / 553 (84%)** | **2,997,709 (53%)** | **44 / 112** | **ONLY** live-core reports (parent-verified) |
+| `output_files/Plex.rbf` (`2890baac`) | — | — | — | — | **BANNED** — never cite |
 
-**Deployed-RBF class for design:** treat **t7b / 8fdf hierarchy** as binding  
-(ALM **23,585**, M10K **465**, DSP **44**). Free: ALM **18,325** · M10K **88** · DSP **68**.
+**Binding baseline:** ALM **23,585**, M10K **465**, DSP **44**. Free pre-stub: ALM **18,325** · M10K **88** · DSP **68**.
+
+**STA (same fit):** `clk_sys` Fmax 23.46 (+0.793 ns) · `clk_ddr` 96.83 (+0.333 ns) · **`pll_hdmi` 164.93 (+0.669 ns)** · TNS=0.  
+**Chrome hot path on `clk_hdmi` (`pll_hdmi`)** — largest slack; prereg **hold HDMI setup slack > 0** (target ≥ +0.20 ns).
 
 **M10K packing lesson (same reports):** **84% of blocks hold only 53% of bits** → many shallow/narrow memories.  
 Chrome ROMs/lists must be **few deep/wide stores**, not dozens of tiny RAMs. Consolidation is cheaper than “88 free blocks ⇒ 88 small buffers.”
