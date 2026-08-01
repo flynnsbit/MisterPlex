@@ -64,17 +64,18 @@ Rate / revisit model (parent calibration)
   Capture FPS (MacroSilicon MJPEG burst) and source FPS are independent.
   **Neither rate is measured by this instrument.** Pass both explicitly when
   known (daemon telemetry `fps=24/1` → `--source-fps 24` / `--src-fps 24/1`).
-  Provenance is always printed:
-    src_fps=24.000 src=caller          # caller supplied --source-fps
-    src_fps=24.000 src=DEFAULT_ASSUMED # fell back to library default
+  Provenance is always printed with tags measured | caller_supplied | DEFAULT_ASSUMED:
+    src_fps=24.000 src=caller_supplied   # --source-fps
+    src_fps=24.000 src=DEFAULT_ASSUMED   # fell back to library default
+    cap_fps=29.9068 cap=measured         # wall_s or mtime
   Library assets (Plex metadata frameRate="24.000" / videoFrameRate="24p")
   are genuinely 24.000 — NOT NTSC 24000/1001. PARENT ERROR 17: a printed
   23.976 default was mistaken for a measurement and published as a defect.
   Default assumed source = 24.000; default assumed capture = 30.0.
   **When either fps is DEFAULT_ASSUMED the rate dimension is RATE_UNSCORED,
   never RATE_OK.** Ratio/endpoint/plateau gates only fire when BOTH fps are
-  caller-supplied. Revisit (bank-swap) still hard-fails without fps — it is
-  a pure measured sequence property.
+  authoritative (caller_supplied / measured / container). Revisit (bank-swap)
+  still hard-fails without fps — pure measured sequence property.
   Healthy 24fps-on-30-capture (parent hand measure, 105-frame burst):
     84 distinct counter states, 84 runs, max plateau 2, plateau hist {1,2},
     zero non-adjacent revisits, unique/frames = 84/105 = 0.800 = 24/30.
@@ -105,16 +106,35 @@ discarded and never scored as FREEZE. Frames where the yellow overlay is not
 visible are also not scored as FREEZE (black content / flash without a clean
 overlay read → contribute nothing, not a pin).
 
-Bright-frame OCR (yellow on white flash) is best-effort only. Template tier-6
-reads never enter the burst motion sequence alone — only OCR tier>=7 (or the
-overlay-bitmap secondary signal) can produce MOTION_OK / FREEZE.
+Bright-frame OCR (yellow on white flash): always try tesseract then digit
+templates (tier-6). Sequence analysis uses tier>=6 after structural filter so
+flash frames do not dominate the blind rate (parent: 12.3% undecodable ≈ 18×
+the steady-state effect size). Overlay-bitmap secondary still backs motion
+when OCR is thin.
+
+Display loss vs grabber drop (Gap 1)
+------------------------------------
+PNG-only sequences have NO per-frame timestamps. This instrument therefore
+ASSUMES uniform capture spacing when scoring adjacent cap_idx pairs — grabber
+drops masquerade as source +2. Primary detector is presence holes in the RLE
+counter span (absent n ⇒ displayed < one capture period or never, because
+cap interval 33.4ms < source hold 41.7ms). Adjacent max_exp is SECONDARY only
+(undercounts hold-then-jump).
+
+With --pts-csv (ffprobe pkt_pts_time / idx,pts_s):
+  dt_ratio < 1.45 → device_skip_frames
+  dt_ratio >= 1.45 → grabber_drop_frames
+  Never merged. loss_split_status=LOSS_SPLIT_OK.
+Without PTS: loss_split_status=LOSS_UNSCORED, steady_state_loss=UNSCORED,
+resolution_floor_frac is first-class (blind_frac, grabber_rate_deficit,
+unsplit_presence). Do NOT report a hedged device-loss percent below the floor.
 
 Usage
 -----
-  tools/hdmi_motion_instrument.py CAPTURE_DIR
-  tools/hdmi_motion_instrument.py CAPTURE_DIR --json
-  tools/hdmi_motion_instrument.py FRAME.png [FRAME.png ...]   # multi-frame list
-  tools/hdmi_motion_instrument.py --self-test                  # unit checks only
+  tools/hdmi_motion_instrument.py CAPTURE_DIR --source-fps 24 --capture-wall-s W
+  tools/hdmi_motion_instrument.py --counters-csv ctr.csv --pts-csv pts.csv \\
+      --source-fps 24 --capture-fps 29.9068
+  tools/hdmi_motion_instrument.py --self-test
 
 Dependencies: Python 3, Pillow, numpy, tesseract (already on the lab host).
 No OpenCV. Does NOT touch tools/score_i420_candidate.py.
@@ -162,12 +182,27 @@ DEFAULT_ASSUMED_CAPTURE_FPS = 30.0
 # Back-compat aliases (same values; prefer DEFAULT_ASSUMED_* in new code).
 DEFAULT_SOURCE_FPS = DEFAULT_ASSUMED_SOURCE_FPS
 DEFAULT_CAPTURE_FPS = DEFAULT_ASSUMED_CAPTURE_FPS
-PROVENANCE_CALLER = "caller"
+PROVENANCE_CALLER = "caller_supplied"  # ERROR 17: never print bare "caller"
 PROVENANCE_DEFAULT_ASSUMED = "DEFAULT_ASSUMED"
 # Provenance for rates read from a capture container (ffprobe), not assumed.
 PROVENANCE_CONTAINER = "container"
 # Provenance for rates measured from this capture (PNG mtimes or --capture-wall-s).
 PROVENANCE_MEASURED = "measured"
+# Accept legacy "caller" in comparisons
+_PROVENANCE_CALLER_ALIASES = frozenset({PROVENANCE_CALLER, "caller"})
+
+
+def _is_caller_prov(src: str | None) -> bool:
+    return str(src or "") in _PROVENANCE_CALLER_ALIASES
+
+
+def _is_cap_auth_prov(src: str | None) -> bool:
+    return str(src or "") in (
+        PROVENANCE_CALLER,
+        "caller",
+        PROVENANCE_CONTAINER,
+        PROVENANCE_MEASURED,
+    )
 
 # Display-level skip measurement (burned-in counter jumps). Not a hard verdict
 # dimension: reported as count + confidence. Parent: drops/av_drift_ms are
@@ -191,6 +226,13 @@ STARTUP_DROP_MATCH_TOL = 3  # design: |gaps - daemon_drops| ≤ this → match t
 # Below this adj loss, a LOW-conf window cannot claim REAL_DISPLAY_LOSS
 # (single +2 is the steady-state ambiguity floor; startup claim needs cluster).
 STARTUP_MIN_ADJ_LOSS_CALL = 5  # design: ~17 expected on parent soak if (b)
+# PTS split: gap ratio vs median inter-arrival.
+# ratio < GAP_NORMAL_MAX → NORMAL (device skip if counter hole)
+# ratio >= GAP_ANOM_MIN → ANOMALOUS (grabber drop attribution)
+PTS_GAP_NORMAL_MAX = 1.45  # design: <~1.5× median dt
+PTS_GAP_ANOM_MIN = 1.45  # design: same threshold; >= is anomalous
+# Presence/split scorable only above this source span (else floor swallows signal)
+PRESENCE_MIN_SPAN = 60  # design
 
 
 def parse_fps_token(token: str | float | int | None) -> float | None:
@@ -432,9 +474,8 @@ def analyze_counter_skips(
     # ceil(di * src/cap) + 1 slack. Requires fps; when assumed, still compute
     # with labelled assumption but confidence stays capped at LOW.
     fps_known = (
-        source_fps_src == PROVENANCE_CALLER
-        and capture_fps_src
-        in (PROVENANCE_CALLER, PROVENANCE_CONTAINER, PROVENANCE_MEASURED)
+        _is_caller_prov(source_fps_src)
+        and _is_cap_auth_prov(capture_fps_src)
         and source_fps > 0
         and capture_fps > 0
     )
@@ -1622,16 +1663,18 @@ def read_frame(path: str | Path, *, force_ocr: bool = False) -> dict[str, Any]:
     tier = 0
     raw = ""
 
-    # Dark / mid frames: tesseract is reliable. Bright flash: tesseract is often
-    # blind; prefer template fallback (and still try OCR when force_ocr).
-    run_tess = force_ocr or mean_luma <= 40.0
+    # Dark / mid: tesseract first. Bright flash (mean~230): tesseract is often
+    # blind on yellow-on-white — still TRY it, then always template-fallback.
+    # Parent lab: 12.3% undecodable was almost all flash (luma p50~231); that
+    # blind rate was 18× the steady-state loss effect and was the resolution floor.
+    run_tess = True  # always attempt; cost is dominated by tesseract either way
     if run_tess:
         n, tier, raw = ocr_counter(binary, mean_luma)
 
-    # Template fallback: only for force_ocr (single-frame inspection) or when
-    # OCR is completely blind on a mid/dark frame. Burst motion scoring does
-    # not need flash-frame numbers — dark frames carry the counter.
-    if n is None and (force_ocr or mean_luma <= 40.0):
+    # Template fallback whenever OCR is blind — INCLUDING bright flash frames.
+    # Tier-6 template enters presence/loss analysis; motion rate still prefers
+    # tier>=7 but will accept tier>=6 when that is all we have.
+    if n is None:
         tn, tscore, traw = _template_read_n(binary)
         if tn is not None and tscore >= 0.35:
             n, tier, raw = tn, 6, f"tpl:{traw}"
@@ -1667,21 +1710,380 @@ def list_capture_frames(src: str | Path) -> list[str]:
     return [str(f) for f in frames]
 
 
-def load_counters_csv(path: str | Path) -> list[tuple[int, int]]:
-    """Load parent/cache CSV with at least idx + n columns (empty n skipped)."""
+def load_counters_csv(path: str | Path) -> tuple[list[tuple[int, int]], dict[str, Any]]:
+    """Load parent/cache CSV with at least idx + n columns (empty n skipped).
+
+    Returns (pairs, meta) where meta has frames_total, blind_frames, blind_frac
+    measured from the CSV rows (empty n = blind/undecoded).
+    """
     import csv
 
     pairs: list[tuple[int, int]] = []
+    total = 0
+    blind = 0
     with open(path, newline="") as f:
         r = csv.DictReader(f)
         if not r.fieldnames or "idx" not in r.fieldnames or "n" not in r.fieldnames:
             raise ValueError(f"counters CSV needs idx,n columns; got {r.fieldnames}")
         for row in r:
+            total += 1
             ns = (row.get("n") or "").strip()
             if ns == "":
+                blind += 1
                 continue
             pairs.append((int(row["idx"]), int(float(ns))))
-    return pairs
+    meta = {
+        "frames_total": int(total),
+        "blind_frames": int(blind),
+        "decoded_frames": int(len(pairs)),
+        "blind_frac": (round(blind / total, 4) if total else None),
+        "frames_total_src": PROVENANCE_MEASURED,
+        "blind_frac_src": PROVENANCE_MEASURED,
+    }
+    return pairs, meta
+
+
+def load_pts_csv(path: str | Path) -> dict[int, float]:
+    """Load per-frame timestamps.
+
+    Accepts:
+      - one float seconds per line (index = line number)
+      - csv with columns idx,pts_s  OR  pts_s only
+      - ffprobe csv=p=0 single column of pkt_pts_time
+    Returns map capture_idx → pts_seconds (float).
+    """
+    import csv
+
+    text = Path(path).read_text(encoding="utf-8", errors="replace").strip()
+    if not text:
+        return {}
+    lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+    out: dict[int, float] = {}
+    # Try headered CSV
+    if "," in lines[0] and not lines[0][0].isdigit() and "pts" in lines[0].lower():
+        r = csv.DictReader(lines)
+        for i, row in enumerate(r):
+            pts_s = row.get("pts_s") or row.get("pkt_pts_time") or row.get("pts")
+            idx_s = row.get("idx") or row.get("frame")
+            if pts_s is None or pts_s == "":
+                continue
+            idx = int(idx_s) if idx_s not in (None, "") else i
+            out[idx] = float(pts_s)
+        return out
+    # Plain one float per line (ffprobe -of csv=p=0)
+    for i, ln in enumerate(lines):
+        # ffprobe sometimes emits "N/A"
+        part = ln.split(",")[0].strip()
+        if part.upper() == "N/A" or part == "":
+            continue
+        try:
+            out[i] = float(part)
+        except ValueError:
+            continue
+    return out
+
+
+def analyze_presence_loss_split(
+    pairs: list[tuple[int, int]],
+    *,
+    pts_by_idx: dict[int, float] | None = None,
+    source_fps: float = DEFAULT_ASSUMED_SOURCE_FPS,
+    capture_fps: float = DEFAULT_ASSUMED_CAPTURE_FPS,
+    source_fps_src: str = PROVENANCE_DEFAULT_ASSUMED,
+    capture_fps_src: str = PROVENANCE_DEFAULT_ASSUMED,
+    frames_total: int | None = None,
+    blind_frames: int | None = None,
+) -> dict[str, Any]:
+    """PRIMARY loss detector: absent burned-in counter values + optional PTS split.
+
+    Parent (rule 0):
+      capture interval (33.4ms) < source hold (41.7ms) ⇒ every fully-displayed
+      source frame MUST be sampled ≥ once. Therefore any ABSENT counter value in
+      the observed span was displayed <33.4ms or never.
+
+    Primary metric is the set of holes between successive *distinct* observed n
+    after structural OCR filter (RLE values). The per-adjacent-pair max_exp test
+    UNDERCOUNTS hold-then-jump and is secondary only (see analyze_counter_skips).
+
+    With PTS (monotonic per-frame arrival times):
+      for each successive observed (n0@t0) → (n1@t1) with hole = n1-n0-1 > 0:
+        ratio = (t1-t0) / median_dt
+        ratio < PTS_GAP_NORMAL_MAX  → DEVICE_SKIP (normal inter-arrival)
+        ratio >= PTS_GAP_ANOM_MIN   → GRABBER_DROP (anomalous gap)
+      Never merge the two counters.
+
+    Without PTS: cannot split. loss_split_status=UNSCORED. presence holes are
+    candidates only. Steady-state claim below resolution_floor → UNSCORED
+    (not a hedged percent). rc=77 discipline for the loss dimension.
+    """
+    fps_auth = _is_caller_prov(source_fps_src) and _is_cap_auth_prov(capture_fps_src)
+    notes: list[str] = []
+    out: dict[str, Any] = {
+        "loss_split_status": "LOSS_UNSCORED",
+        "device_skip_frames": None,
+        "grabber_drop_frames": None,
+        "device_skip_events": 0,
+        "grabber_drop_events": 0,
+        "presence_hole_frames": None,
+        "presence_hole_events": 0,
+        "presence_holes_head": [],
+        "unsplit_candidate_frames": None,
+        "resolution_floor_frac": None,
+        "resolution_floor_src": PROVENANCE_DEFAULT_ASSUMED,
+        "candidate_loss_frac": None,
+        "steady_state_loss": "UNSCORED",
+        "steady_state_reason": "",
+        "pts_available": bool(pts_by_idx),
+        "pts_src": PROVENANCE_MEASURED if pts_by_idx else PROVENANCE_DEFAULT_ASSUMED,
+        "median_dt_s": None,
+        "median_dt_src": PROVENANCE_DEFAULT_ASSUMED,
+        "blind_frames": blind_frames,
+        "blind_frac": None,
+        "blind_frac_src": PROVENANCE_MEASURED if blind_frames is not None else PROVENANCE_DEFAULT_ASSUMED,
+        "fps_authoritative": fps_auth,
+        "source_fps": source_fps,
+        "capture_fps": capture_fps,
+        "source_fps_src": source_fps_src,
+        "capture_fps_src": capture_fps_src,
+        "loss_notes": notes,
+        "loss_arithmetic": "",
+        "primary_detector": "presence_holes_RLE",
+        "secondary_detector": "adjacent_max_exp (undercounts hold-then-jump)",
+    }
+
+    if frames_total and frames_total > 0 and blind_frames is not None:
+        out["blind_frac"] = round(blind_frames / frames_total, 4)
+        out["blind_frac_src"] = PROVENANCE_MEASURED
+
+    if len(pairs) < RATE_MIN_SAMPLES:
+        notes.append(f"insufficient_pairs={len(pairs)}")
+        out["steady_state_reason"] = "insufficient_samples"
+        out["loss_arithmetic"] = "n/a"
+        return out
+
+    ns = [n for _, n in pairs]
+    idxs = [i for i, _ in pairs]
+    runs = _rle_runs(ns)
+    vals = [v for v, _ in runs]
+    if len(vals) < 2:
+        notes.append("fewer_than_2_unique_states")
+        out["steady_state_reason"] = "pinned_or_single_state"
+        out["loss_arithmetic"] = "n/a"
+        return out
+
+    n_first, n_last = vals[0], vals[-1]
+    ctr_span = n_last - n_first
+    out["presence_n_first"] = int(n_first)
+    out["presence_n_last"] = int(n_last)
+    out["presence_ctr_span"] = int(ctr_span)
+
+    # Map each RLE value → first capture idx where it appears (for PTS)
+    first_idx_for_val: dict[int, int] = {}
+    for cap_i, n in pairs:
+        if n not in first_idx_for_val:
+            first_idx_for_val[n] = cap_i
+
+    hole_frames = 0
+    hole_events = 0
+    holes_detail: list[dict[str, Any]] = []
+    device_frames = 0
+    grabber_frames = 0
+    device_events = 0
+    grabber_events = 0
+
+    # Median dt from PTS if available
+    median_dt = None
+    pts_src = out["pts_src"]
+    if pts_by_idx:
+        ordered_pts = []
+        for cap_i in sorted(pts_by_idx):
+            ordered_pts.append(pts_by_idx[cap_i])
+        dts = [
+            ordered_pts[i + 1] - ordered_pts[i]
+            for i in range(len(ordered_pts) - 1)
+            if ordered_pts[i + 1] > ordered_pts[i]
+        ]
+        if dts:
+            dts_s = sorted(dts)
+            median_dt = float(dts_s[len(dts_s) // 2])
+            out["median_dt_s"] = round(median_dt, 6)
+            out["median_dt_src"] = PROVENANCE_MEASURED
+            pts_src = PROVENANCE_MEASURED
+    if median_dt is None or median_dt <= 0:
+        if capture_fps > 0:
+            median_dt = 1.0 / capture_fps
+            out["median_dt_s"] = round(median_dt, 6)
+            out["median_dt_src"] = (
+                capture_fps_src if pts_by_idx is None else PROVENANCE_DEFAULT_ASSUMED
+            )
+            if pts_by_idx is None:
+                notes.append(
+                    "no_pts: median_dt derived from cap_fps "
+                    f"({capture_fps} src={capture_fps_src}) — CANNOT split "
+                    "device vs grabber; uniform spacing ASSUMED"
+                )
+
+    for a, b in zip(vals, vals[1:]):
+        if b <= a:
+            continue
+        hole = b - a - 1
+        if hole <= 0:
+            continue
+        hole_frames += hole
+        hole_events += 1
+        i0 = first_idx_for_val.get(a)
+        i1 = first_idx_for_val.get(b)
+        detail: dict[str, Any] = {
+            "n0": int(a),
+            "n1": int(b),
+            "hole": int(hole),
+            "cap_idx0": i0,
+            "cap_idx1": i1,
+        }
+        if (
+            pts_by_idx
+            and i0 is not None
+            and i1 is not None
+            and i0 in pts_by_idx
+            and i1 in pts_by_idx
+            and median_dt
+            and median_dt > 0
+        ):
+            dt = float(pts_by_idx[i1] - pts_by_idx[i0])
+            ratio = dt / median_dt if median_dt else None
+            detail["dt_s"] = round(dt, 6)
+            detail["dt_ratio"] = round(ratio, 3) if ratio is not None else None
+            detail["dt_src"] = PROVENANCE_MEASURED
+            if ratio is not None and ratio < PTS_GAP_NORMAL_MAX:
+                device_frames += hole
+                device_events += 1
+                detail["class"] = "DEVICE_SKIP"
+            elif ratio is not None and ratio >= PTS_GAP_ANOM_MIN:
+                grabber_frames += hole
+                grabber_events += 1
+                detail["class"] = "GRABBER_DROP"
+            else:
+                detail["class"] = "UNSCORED"
+        else:
+            detail["class"] = "UNSPLIT_NO_PTS" if not pts_by_idx else "UNSPLIT_NO_PTS_FOR_PAIR"
+        holes_detail.append(detail)
+
+    out["presence_hole_frames"] = int(hole_frames)
+    out["presence_hole_events"] = int(hole_events)
+    out["presence_holes_head"] = holes_detail[:12]
+    out["unsplit_candidate_frames"] = (
+        int(hole_frames) if not pts_by_idx else int(
+            sum(d["hole"] for d in holes_detail if d.get("class", "").startswith("UNSPLIT"))
+        )
+    )
+
+    if pts_by_idx:
+        out["device_skip_frames"] = int(device_frames)
+        out["grabber_drop_frames"] = int(grabber_frames)
+        out["device_skip_events"] = int(device_events)
+        out["grabber_drop_events"] = int(grabber_events)
+        out["loss_split_status"] = "LOSS_SPLIT_OK"
+        notes.append(
+            f"pts_split device_skip_frames={device_frames} grabber_drop_frames={grabber_frames} "
+            f"(never merged; normal ratio<{PTS_GAP_NORMAL_MAX} vs anom>={PTS_GAP_ANOM_MIN})"
+        )
+    else:
+        out["device_skip_frames"] = None
+        out["grabber_drop_frames"] = None
+        out["loss_split_status"] = "LOSS_UNSCORED"
+        notes.append(
+            "NO_PTS: device_skip vs grabber_drop INDISTINGUISHABLE — "
+            "do not treat presence holes as device loss"
+        )
+
+    # --- Resolution floor (first-class) ---
+    # Components (fractions of source span):
+    #   blind_frac: undecoded capture samples (flash/OCR) — measured if given
+    #   grabber_rate_deficit: |1 - cap_meas/cap_nom| when cap measured vs 30
+    #   single_event: 1/ctr_span
+    # Floor = max of available components. Claim only if candidate >> floor.
+    comps: list[tuple[str, float]] = []
+    if out.get("blind_frac") is not None:
+        comps.append(("blind_frac", float(out["blind_frac"])))
+    if (
+        _is_cap_auth_prov(capture_fps_src)
+        and capture_fps > 0
+        and DEFAULT_ASSUMED_CAPTURE_FPS > 0
+    ):
+        # How short the grabber ran vs nominal 30 — order-of-magnitude for
+        # "same order as candidate events" (parent 29.9068 → ~0.31% rate error;
+        # integrated over span as fraction of samples missing).
+        deficit = abs(DEFAULT_ASSUMED_CAPTURE_FPS - capture_fps) / DEFAULT_ASSUMED_CAPTURE_FPS
+        comps.append(("grabber_rate_deficit_vs_30nom", float(deficit)))
+        notes.append(
+            f"grabber_rate_deficit vs DEFAULT_ASSUMED 30.0 = {deficit:.4f} "
+            f"(cap_fps={capture_fps} src={capture_fps_src}) — same class as "
+            "small steady-state claims"
+        )
+    if ctr_span > 0:
+        comps.append(("one_source_frame", 1.0 / float(ctr_span)))
+    # Without PTS, the entire presence-hole fraction is below-resolution for
+    # *device* attribution — floor at least the unsplit candidate fraction
+    # so we never mint a device-loss claim from PNG-only.
+    if not pts_by_idx and ctr_span > 0 and hole_frames > 0:
+        comps.append(("unsplit_presence_equals_floor", hole_frames / float(ctr_span)))
+
+    floor = max((c for _, c in comps), default=0.02)
+    out["resolution_floor_frac"] = round(floor, 4)
+    out["resolution_floor_src"] = PROVENANCE_MEASURED if comps else PROVENANCE_DEFAULT_ASSUMED
+    out["resolution_floor_components"] = {k: round(v, 4) for k, v in comps}
+
+    cand_frac = (hole_frames / float(ctr_span)) if ctr_span > 0 else None
+    out["candidate_loss_frac"] = round(cand_frac, 4) if cand_frac is not None else None
+
+    # Steady-state verdict for the LOSS dimension (not main rc unless we choose)
+    if ctr_span < PRESENCE_MIN_SPAN:
+        out["steady_state_loss"] = "UNSCORED"
+        out["steady_state_reason"] = f"ctr_span={ctr_span}<{PRESENCE_MIN_SPAN}"
+    elif not pts_by_idx:
+        out["steady_state_loss"] = "UNSCORED"
+        out["steady_state_reason"] = (
+            "below_instrument_resolution_floor_no_pts "
+            f"candidate_frac={out['candidate_loss_frac']} "
+            f"floor={out['resolution_floor_frac']} "
+            "(PNG-only cannot separate grabber drop from device skip; "
+            "do NOT report a hedged device-loss percent)"
+        )
+    elif cand_frac is not None and cand_frac <= floor * 1.5:
+        # device-only fraction vs floor
+        dev_frac = (device_frames / float(ctr_span)) if ctr_span else 0.0
+        out["steady_state_loss"] = "UNSCORED"
+        out["steady_state_reason"] = (
+            f"device_skip_frac={dev_frac:.4f} candidate_frac={cand_frac:.4f} "
+            f"<= ~1.5×floor={floor:.4f} — BELOW RESOLUTION FLOOR"
+        )
+    else:
+        dev_frac = (device_frames / float(ctr_span)) if ctr_span else 0.0
+        if dev_frac > floor * 1.5:
+            out["steady_state_loss"] = "DEVICE_LOSS_ABOVE_FLOOR"
+            out["steady_state_reason"] = (
+                f"device_skip_frac={dev_frac:.4f} > 1.5×floor={floor:.4f}"
+            )
+        else:
+            out["steady_state_loss"] = "UNSCORED"
+            out["steady_state_reason"] = (
+                f"device_skip_frac={dev_frac:.4f} not above floor={floor:.4f}"
+            )
+
+    out["loss_arithmetic"] = (
+        f"PRIMARY presence: RLE distinct n; hole=n[i+1]-n[i]-1; "
+        f"sum_holes={hole_frames} over ctr_span={ctr_span} "
+        f"(n_first={n_first} n_last={n_last}). "
+        f"capture_interval < source_hold ⇒ absent n ⇒ displayed <1 cap period or never. "
+        f"PTS split: dt_ratio=(t1-t0)/median_dt; "
+        f"<{PTS_GAP_NORMAL_MAX}→DEVICE_SKIP >=→GRABBER_DROP. "
+        f"device_frames={out['device_skip_frames']} grabber_frames={out['grabber_drop_frames']}. "
+        f"floor={out['resolution_floor_frac']} components={out['resolution_floor_components']}. "
+        f"max_exp adjacent is SECONDARY only (undercounts hold-then-jump)."
+    )
+    out["loss_notes"] = notes
+    out["pts_src"] = pts_src
+    return out
 
 
 def score_counter_pairs(
@@ -1695,11 +2097,13 @@ def score_counter_pairs(
     daemon_session_drops: int | None = None,
     daemon_drops_src: str = PROVENANCE_DEFAULT_ASSUMED,
     frames_total: int | None = None,
+    blind_frames: int | None = None,
+    pts_by_idx: dict[int, float] | None = None,
 ) -> dict[str, Any]:
     """Score a pre-decoded counter sequence (e.g. parent OCR cache CSV).
 
-    Applies the same structural OCR filter + rate/skip/startup path as score_burst
-    without re-reading PNGs. Colour/structure are UNSCORED here (no pixels).
+    Applies the same structural OCR filter + rate/skip/startup/presence path as
+    score_burst without re-reading PNGs. Colour/structure are UNSCORED here.
     """
     pairs, ocr_rejections = _filter_counter_pairs(pairs_raw)
     ns = [n for _, n in pairs]
@@ -1726,6 +2130,16 @@ def score_counter_pairs(
         window_s=startup_window_s,
         daemon_session_drops=daemon_session_drops,
         daemon_drops_src=daemon_drops_src,
+    )
+    loss_info = analyze_presence_loss_split(
+        pairs,
+        pts_by_idx=pts_by_idx,
+        source_fps=source_fps,
+        capture_fps=capture_fps,
+        source_fps_src=source_fps_src,
+        capture_fps_src=capture_fps_src,
+        frames_total=frames_total,
+        blind_frames=blind_frames,
     )
     motion = "UNSCORED"
     reason = "no_counter_reads"
@@ -1827,6 +2241,30 @@ def score_counter_pairs(
         "startup_drops_match": startup_info.get("drops_match"),
         "startup_notes": startup_info.get("startup_notes"),
         "startup_arithmetic": startup_info.get("startup_arithmetic"),
+        # Presence + PTS split (Gap 1)
+        "loss_split_status": loss_info.get("loss_split_status"),
+        "device_skip_frames": loss_info.get("device_skip_frames"),
+        "grabber_drop_frames": loss_info.get("grabber_drop_frames"),
+        "device_skip_events": loss_info.get("device_skip_events"),
+        "grabber_drop_events": loss_info.get("grabber_drop_events"),
+        "presence_hole_frames": loss_info.get("presence_hole_frames"),
+        "presence_hole_events": loss_info.get("presence_hole_events"),
+        "presence_holes_head": loss_info.get("presence_holes_head"),
+        "resolution_floor_frac": loss_info.get("resolution_floor_frac"),
+        "resolution_floor_src": loss_info.get("resolution_floor_src"),
+        "resolution_floor_components": loss_info.get("resolution_floor_components"),
+        "candidate_loss_frac": loss_info.get("candidate_loss_frac"),
+        "steady_state_loss": loss_info.get("steady_state_loss"),
+        "steady_state_reason": loss_info.get("steady_state_reason"),
+        "blind_frames": loss_info.get("blind_frames"),
+        "blind_frac": loss_info.get("blind_frac"),
+        "blind_frac_src": loss_info.get("blind_frac_src"),
+        "pts_available": loss_info.get("pts_available"),
+        "pts_src": loss_info.get("pts_src"),
+        "median_dt_s": loss_info.get("median_dt_s"),
+        "median_dt_src": loss_info.get("median_dt_src"),
+        "loss_notes": loss_info.get("loss_notes"),
+        "loss_arithmetic": loss_info.get("loss_arithmetic"),
         "verdict": final,
         "reason": reason,
         "rc": rc,
@@ -1875,12 +2313,12 @@ def _filter_counter_pairs(
     Structural rules are *implausible-by-construction* for a monotonic burned-in
     counter (parent false-RED on /tmp/cap480_long — NOT threshold loosening):
 
-      1) digit-count discontinuity vs neighbours (e.g. 4-digit stream, one
-         5-digit read ``1352``→``13527``): reject that sample.
-      2) interior spike / backward: for triple (a,b,c) with a <= c < b, b is a
-         strict local max above the continuing progression — reject b
-         (covers ``2``→``7`` class: 1581,1587,1583 and 2911,2917,2913).
-      3) sequential backward step after a kept level: reject the new read.
+      1) extra digit vs neighbours (e.g. 4-digit stream, one 5-digit read
+         ``1352``→``13527``) or truncation far from neighbour center
+         (``1900``→``19``). Legal decade growth 9→10 / 99→100 is kept.
+      2) RLE spike / trough: (b-a)>=4 and c<b (covers ``2``→``7``:
+         1581,1587,1583 and 2911,2917,2913).
+      3) MAD radius (not widened). Bank-swap revisits survive for RATE_FAIL.
 
     MAD radius is unchanged (not widened). Rejections carry printed reasons
     naming capture idx and the violated rule so RATE_FAIL cannot launder OCR.
@@ -1890,6 +2328,11 @@ def _filter_counter_pairs(
         return list(pairs), rejections
 
     # --- Pass A: local digit-count discontinuity (not global mode alone) ---
+    # Counter grows 1→2→3→4 digits over a long clip — that is LEGAL.
+    # Reject ONLY:
+    #   • dlen > mode_len  (spurious extra digit: 1352→13527)
+    #   • dlen < mode_len AND value far from neighbour center (truncation: 1900→19)
+    # Do NOT reject decade boundaries (9→10, 99→100, 999→1000).
     ns = [n for _, n in pairs]
     keep_idx = set(range(len(pairs)))
     for i, (cap_i, n) in enumerate(pairs):
@@ -1897,17 +2340,60 @@ def _filter_counter_pairs(
         if mode_len is None or mode_c < 2:
             continue
         dlen = len(str(n))
-        if dlen != mode_len:
+        if dlen == mode_len:
+            continue
+        neigh = [ns[j] for j in range(max(0, i - 4), min(len(ns), i + 5)) if j != i]
+        if not neigh:
+            continue
+        med_n = float(_median_int(neigh))
+        if dlen == mode_len + 1:
+            # Legal decade growth (9→10, 99→100, 999→1000) vs 1352→13527.
+            boundary = 10 ** mode_len
+            near_boundary = (
+                abs(float(n) - boundary) <= 30.0
+                or abs(med_n - boundary) <= 30.0
+                or (boundary <= float(n) <= boundary + 50.0 and med_n >= boundary * 0.5)
+            )
+            if near_boundary and float(n) < boundary * 10:
+                continue  # keep legal growth
             keep_idx.discard(i)
             rejections.append(
                 {
                     "cap_idx": int(cap_i),
                     "n": int(n),
-                    "rule": "digit_count_discontinuity",
+                    "rule": "digit_count_extra",
                     "reason": (
-                        f"cap_idx={cap_i} n={n} digits={dlen} != neighbour_mode="
-                        f"{mode_len} (count={mode_c}) — impossible for monotonic "
-                        f"counter digit growth in one capture step"
+                        f"cap_idx={cap_i} n={n} digits={dlen} > neighbour_mode="
+                        f"{mode_len} (count={mode_c}) med_neigh={med_n:.0f} — "
+                        f"spurious extra digit (e.g. 1352→13527)"
+                    ),
+                }
+            )
+        elif dlen > mode_len + 1:
+            keep_idx.discard(i)
+            rejections.append(
+                {
+                    "cap_idx": int(cap_i),
+                    "n": int(n),
+                    "rule": "digit_count_extra",
+                    "reason": (
+                        f"cap_idx={cap_i} n={n} digits={dlen} >> neighbour_mode="
+                        f"{mode_len} (count={mode_c}) — impossible digit jump"
+                    ),
+                }
+            )
+        elif dlen < mode_len and abs(float(n) - med_n) > max(50.0, 0.05 * abs(med_n)):
+            # Truncation misread among multi-digit neighbours (1900→19).
+            keep_idx.discard(i)
+            rejections.append(
+                {
+                    "cap_idx": int(cap_i),
+                    "n": int(n),
+                    "rule": "digit_count_truncation",
+                    "reason": (
+                        f"cap_idx={cap_i} n={n} digits={dlen} < neighbour_mode="
+                        f"{mode_len} (count={mode_c}) med_neigh={med_n:.0f} — "
+                        f"truncation misread, not decade-boundary growth"
                     ),
                 }
             )
@@ -1916,14 +2402,16 @@ def _filter_counter_pairs(
     if len(stage) < 3:
         stage = list(pairs)
 
-    # --- Pass B: RLE spike / trough (plateau-safe) ---
-    # Parent 2→7 class often plateaus 1–2 capture frames (2917,2917) so a
-    # sample-wise interior check sees neighbours (2911,2917) or (2917,2913)
-    # and misses. Collapse runs first: for successive distinct values a,b,c
-    #   spike if (b-a) >= 4 and c < b   # jumped up, then any drop
-    #   trough if (a-b) >= 4 and c > b
+    # --- Pass B: RLE SPIKES only (plateau-safe) ---
+    # Parent 2→7 class often plateaus 1–2 capture frames (2917,2917).
+    # Collapse runs: spike if (b-a) >= 4 and c < b (jumped up, then any drop).
     # Bank-swap 100,101,100: b-a=1 < 4 → kept (real revisit still RATE_FAIL).
     # Healthy +2 skip: a,a+2,a+3 → c>b → kept.
+    #
+    # Do NOT apply symmetric troughs here. On noisy startup CSVs, patterns like
+    # OCR_spike, real_n, OCR_spike (85→66→87) made trough delete the REAL 66
+    # between two misreads (1029 false troughs on /tmp/ctr_startup). Spike-only
+    # multi-pass removes 2917-class; MAD catches residual outliers.
     changed = True
     while changed and len(stage) >= 3:
         changed = False
@@ -1931,7 +2419,6 @@ def _filter_counter_pairs(
         runs = _rle_runs(ns_s)
         if len(runs) < 3:
             break
-        # Map run index → list of stage indices in that run
         run_stage_idxs: list[list[int]] = []
         si = 0
         for _v, cnt in runs:
@@ -1941,12 +2428,9 @@ def _filter_counter_pairs(
         vals = [v for v, _ in runs]
         for ri in range(1, len(vals) - 1):
             a, b, c = vals[ri - 1], vals[ri], vals[ri + 1]
-            rule = ""
             if (b - a) >= 4 and c < b:
                 rule = "rle_spike_up_then_drop"
-            elif (a - b) >= 4 and c > b:
-                rule = "rle_trough_down_then_rise"
-            if not rule:
+            else:
                 continue
             for sj in run_stage_idxs[ri]:
                 drop_stage.add(sj)
@@ -1958,7 +2442,7 @@ def _filter_counter_pairs(
                         "rule": rule,
                         "reason": (
                             f"cap_idx={cap_j} n={n_j} RLE neighbours "
-                            f"{a}->{b}->{c}: {rule} — OCR spike/trough "
+                            f"{a}->{b}->{c}: {rule} — OCR spike "
                             f"(e.g. trailing 2→7), not a real counter state"
                         ),
                     }
@@ -1975,26 +2459,30 @@ def _filter_counter_pairs(
     # OCR jumps are already removed as spikes/troughs/digit-count.
 
     # --- Pass C: MAD gate (radius NOT widened — parent forbid) ---
+    # Growing counters legally mix 1/2/3/4 digit lengths. Never drop shorter
+    # lengths globally (that destroyed startup n=1..99 on /tmp/ctr_startup).
+    # Only strip residual EXTRA-digit samples (mode_len+1) still in stage.
     ns2 = [n for _, n in stage]
     lengths = Counter(len(str(n)) for n in ns2)
     mode_len, mode_c = lengths.most_common(1)[0]
+    by_len: list[tuple[int, int]] = []
     if mode_c >= max(3, len(ns2) // 3):
-        by_len = [(i, n) for i, n in stage if len(str(n)) == mode_len]
         for i, n in stage:
-            if len(str(n)) != mode_len:
-                # Already mostly caught; record if still present
+            if len(str(n)) > mode_len:
                 if not any(r["cap_idx"] == i and r["n"] == n for r in rejections):
                     rejections.append(
                         {
                             "cap_idx": int(i),
                             "n": int(n),
-                            "rule": "global_digit_mode",
+                            "rule": "global_digit_extra",
                             "reason": (
-                                f"cap_idx={i} n={n} digits={len(str(n))} != "
-                                f"global_mode={mode_len}"
+                                f"cap_idx={i} n={n} digits={len(str(n))} > "
+                                f"global_mode={mode_len} — residual extra digit"
                             ),
                         }
                     )
+            else:
+                by_len.append((i, n))
     else:
         by_len = list(stage)
     if len(by_len) < 3:
@@ -2077,12 +2565,8 @@ def analyze_counter_rate(
     Returns rate dimension RATE_OK | RATE_FAIL | RATE_UNSCORED plus metrics.
     RATE_UNSCORED = insufficient samples OR fps assumed — not a pass.
     """
-    src_ok = source_fps_src == PROVENANCE_CALLER
-    cap_ok = capture_fps_src in (
-        PROVENANCE_CALLER,
-        PROVENANCE_CONTAINER,
-        PROVENANCE_MEASURED,
-    )
+    src_ok = _is_caller_prov(source_fps_src)
+    cap_ok = _is_cap_auth_prov(capture_fps_src)
     fps_auth = bool(src_ok and cap_ok)
     empty = {
         "rate": "RATE_UNSCORED",
@@ -2303,6 +2787,7 @@ def score_burst(
     startup_window_s: float = STARTUP_DEFAULT_WINDOW_S,
     daemon_session_drops: int | None = None,
     daemon_drops_src: str = PROVENANCE_DEFAULT_ASSUMED,
+    pts_by_idx: dict[int, float] | None = None,
     progress: bool = False,
 ) -> dict[str, Any]:
     """Score a capture burst. See module docstring for verdicts."""
@@ -2327,14 +2812,16 @@ def score_burst(
         usable.append(r)
 
     ok_reads = [r for r in usable if r["status"] == "ok" and r["n"] is not None]
-    # Burst motion sequence uses OCR-grade reads only (tier >= 7).
-    # Template tier-6 (flash best-effort) must never manufacture MOTION_OK alone.
-    strong = [r for r in ok_reads if int(r.get("tier") or 0) >= 7]
+    # Presence/rate sequence: tier>=6 includes flash template best-effort so blind
+    # rate is not dominated by white-flash frames (parent: 12.3% undecodable).
+    # Structural OCR filter still strips digit-count/spike/backward misreads.
+    strong = [r for r in ok_reads if int(r.get("tier") or 0) >= 6]
     seq_src = strong
     pairs_raw = [(int(r["idx"]), int(r["n"])) for r in seq_src]
     pairs, ocr_rejections = _filter_counter_pairs(pairs_raw)
     ns_raw = [n for _, n in pairs_raw]
     ns = [n for _, n in pairs]
+    blind_frames = max(0, len(usable) - len(ok_reads))
 
     # Secondary motion signal: distinct overlay fingerprints on DARK usable frames.
     dark_fps = [
@@ -2440,6 +2927,16 @@ def score_burst(
         window_s=startup_window_s,
         daemon_session_drops=daemon_session_drops,
         daemon_drops_src=daemon_drops_src,
+    )
+    loss_info = analyze_presence_loss_split(
+        pairs,
+        pts_by_idx=pts_by_idx,
+        source_fps=source_fps,
+        capture_fps=capture_fps,
+        source_fps_src=source_fps_src,
+        capture_fps_src=capture_fps_src,
+        frames_total=len(usable),
+        blind_frames=blind_frames,
     )
     if len(ns) < min_reads:
         # Secondary: overlay bitmap motion without OCR.
@@ -2629,6 +3126,30 @@ def score_burst(
         "startup_drops_match": startup_info.get("drops_match"),
         "startup_notes": startup_info.get("startup_notes"),
         "startup_arithmetic": startup_info.get("startup_arithmetic"),
+        # Presence + PTS split (Gap 1) — device_skip vs grabber_drop never merged
+        "loss_split_status": loss_info.get("loss_split_status"),
+        "device_skip_frames": loss_info.get("device_skip_frames"),
+        "grabber_drop_frames": loss_info.get("grabber_drop_frames"),
+        "device_skip_events": loss_info.get("device_skip_events"),
+        "grabber_drop_events": loss_info.get("grabber_drop_events"),
+        "presence_hole_frames": loss_info.get("presence_hole_frames"),
+        "presence_hole_events": loss_info.get("presence_hole_events"),
+        "presence_holes_head": loss_info.get("presence_holes_head"),
+        "resolution_floor_frac": loss_info.get("resolution_floor_frac"),
+        "resolution_floor_src": loss_info.get("resolution_floor_src"),
+        "resolution_floor_components": loss_info.get("resolution_floor_components"),
+        "candidate_loss_frac": loss_info.get("candidate_loss_frac"),
+        "steady_state_loss": loss_info.get("steady_state_loss"),
+        "steady_state_reason": loss_info.get("steady_state_reason"),
+        "blind_frames": loss_info.get("blind_frames"),
+        "blind_frac": loss_info.get("blind_frac"),
+        "blind_frac_src": loss_info.get("blind_frac_src"),
+        "pts_available": loss_info.get("pts_available"),
+        "pts_src": loss_info.get("pts_src"),
+        "median_dt_s": loss_info.get("median_dt_s"),
+        "median_dt_src": loss_info.get("median_dt_src"),
+        "loss_notes": loss_info.get("loss_notes"),
+        "loss_arithmetic": loss_info.get("loss_arithmetic"),
         "verdict": final,
         "reason": reason,
         "rc": rc,
@@ -2760,6 +3281,43 @@ def _print_human(report: dict[str, Any], src: str) -> None:
             print(f"startup_notes={' | '.join(str(n) for n in snotes)}")
         if report.get("startup_arithmetic"):
             print(f"startup_arithmetic={report.get('startup_arithmetic')}")
+    # Presence holes + PTS device/grabber split (Gap 1). Loss is not main rc.
+    if report.get("loss_split_status") is not None or report.get("presence_hole_frames") is not None:
+        print(
+            f"loss_metrics status={report.get('loss_split_status')} "
+            f"steady_state_loss={report.get('steady_state_loss')} "
+            f"presence_hole_frames={report.get('presence_hole_frames')} "
+            f"presence_hole_events={report.get('presence_hole_events')} "
+            f"device_skip_frames={report.get('device_skip_frames')} "
+            f"grabber_drop_frames={report.get('grabber_drop_frames')} "
+            f"device_skip_events={report.get('device_skip_events')} "
+            f"grabber_drop_events={report.get('grabber_drop_events')} "
+            f"candidate_loss_frac={report.get('candidate_loss_frac')} "
+            f"resolution_floor_frac={report.get('resolution_floor_frac')} "
+            f"floor_src={report.get('resolution_floor_src')} "
+            f"floor_components={report.get('resolution_floor_components')} "
+            f"blind_frames={report.get('blind_frames')} "
+            f"blind_frac={report.get('blind_frac')} "
+            f"blind_src={report.get('blind_frac_src')} "
+            f"pts_available={report.get('pts_available')} "
+            f"pts_src={report.get('pts_src')} "
+            f"median_dt_s={report.get('median_dt_s')} "
+            f"median_dt_src={report.get('median_dt_src')}"
+        )
+        if report.get("steady_state_reason"):
+            print(f"steady_state_reason={report.get('steady_state_reason')}")
+        lnotes = report.get("loss_notes") or []
+        if lnotes:
+            print(f"loss_notes={' | '.join(str(n) for n in lnotes)}")
+        if report.get("loss_arithmetic"):
+            print(f"loss_arithmetic={report.get('loss_arithmetic')}")
+        holes = report.get("presence_holes_head") or []
+        for h in holes[:8]:
+            print(
+                f"  hole n={h.get('n0')}->{h.get('n1')} missing={h.get('hole')} "
+                f"class={h.get('class')} dt_s={h.get('dt_s')} "
+                f"dt_ratio={h.get('dt_ratio')}"
+            )
     print(f"reason={report['reason']}")
     print(f"VERDICT={report['verdict']} rc={report['rc']}")
 
@@ -3269,6 +3827,104 @@ def _self_test() -> int:
     assert m["capture_fps"] is not None and abs(m["capture_fps"] - 29.5) < 0.01, m
     assert m["capture_fps_src"] == PROVENANCE_MEASURED, m
 
+    # --- Gap 1: presence holes + PTS device vs grabber split ---
+    # Build a long healthy 24-on-30 sequence then inject known holes.
+    base_ns: list[int] = []
+    sn = 100
+    for cap_i in range(400):
+        if cap_i > 0 and (cap_i % 5) != 0:
+            sn += 1
+        base_ns.append(sn)
+    # Inject two holes at known RLE transitions by editing values after idx 50:
+    # hole A: skip one source frame (device) — we'll give normal PTS gap
+    # hole B: skip one source frame with 2× PTS gap (grabber)
+    pairs_pres = list(enumerate(base_ns))
+    # Force n sequence to jump +2 at two RLE boundaries after filter.
+    # Find first two places where n advances by 1 and bump the later value.
+    forced: list[tuple[int, int]] = []
+    jumps_done = 0
+    prev_n = None
+    for i, n in pairs_pres:
+        nn = n
+        if prev_n is not None and n == prev_n + 1 and jumps_done < 2 and i > 80:
+            nn = n + 1  # create hole of 1 between prev and nn
+            jumps_done += 1
+        # Keep subsequent values consistent after each forced bump
+        if jumps_done >= 1 and prev_n is not None and n > prev_n:
+            # once we've forced, shift all later by total forced count so far
+            pass
+        forced.append((i, nn if jumps_done == 0 else n + jumps_done))
+        prev_n = forced[-1][1]
+
+    # Rebuild cleaner controlled pairs: contiguous then two holes.
+    ctrl: list[tuple[int, int]] = []
+    sn = 500
+    hole_at_cap = {120: 1, 200: 1}  # cap_idx → hole size before this sample's n
+    for i in range(360):
+        if i in hole_at_cap:
+            sn += 1 + hole_at_cap[i]  # advance past missing n
+        elif i > 0 and (i % 5) != 0:
+            sn += 1
+        ctrl.append((i, sn))
+
+    # No PTS → LOSS_UNSCORED + floor; never a device-loss percent claim.
+    loss_nopts = analyze_presence_loss_split(
+        ctrl,
+        pts_by_idx=None,
+        source_fps=24.0,
+        capture_fps=29.9068,
+        source_fps_src=PROVENANCE_CALLER,
+        capture_fps_src=PROVENANCE_MEASURED,
+        frames_total=360,
+        blind_frames=40,
+    )
+    assert loss_nopts["loss_split_status"] == "LOSS_UNSCORED", loss_nopts
+    assert loss_nopts["device_skip_frames"] is None, loss_nopts
+    assert loss_nopts["presence_hole_frames"] is not None
+    assert loss_nopts["presence_hole_frames"] >= 2, loss_nopts
+    assert loss_nopts["steady_state_loss"] == "UNSCORED", loss_nopts
+    assert loss_nopts["resolution_floor_frac"] is not None
+    assert loss_nopts["resolution_floor_frac"] >= 0.01, loss_nopts
+    assert "no_pts" in " ".join(loss_nopts.get("loss_notes") or []).lower() or (
+        "NO_PTS" in " ".join(loss_nopts.get("loss_notes") or [])
+    ), loss_nopts
+
+    # PTS: normal gap at first hole → DEVICE_SKIP; 2× gap at second → GRABBER_DROP.
+    pts_map: dict[int, float] = {}
+    t = 0.0
+    dt = 1.0 / 30.0
+    for i in range(360):
+        if i == 200:
+            t += dt  # extra interval → ~2× median between samples around hole
+        pts_map[i] = t
+        t += dt
+    loss_pts = analyze_presence_loss_split(
+        ctrl,
+        pts_by_idx=pts_map,
+        source_fps=24.0,
+        capture_fps=30.0,
+        source_fps_src=PROVENANCE_CALLER,
+        capture_fps_src=PROVENANCE_CALLER,
+        frames_total=360,
+        blind_frames=5,
+    )
+    assert loss_pts["loss_split_status"] == "LOSS_SPLIT_OK", loss_pts
+    assert loss_pts["device_skip_frames"] is not None
+    assert loss_pts["grabber_drop_frames"] is not None
+    assert int(loss_pts["device_skip_frames"]) >= 1, loss_pts
+    assert int(loss_pts["grabber_drop_frames"]) >= 1, loss_pts
+    classes = {h.get("class") for h in (loss_pts.get("presence_holes_head") or [])}
+    assert "DEVICE_SKIP" in classes, loss_pts
+    assert "GRABBER_DROP" in classes, loss_pts
+    # Separate counters exist (may equal numerically; must not be a single merged field)
+    assert "device_skip_frames" in loss_pts and "grabber_drop_frames" in loss_pts
+    assert int(loss_pts["device_skip_frames"]) + int(loss_pts["grabber_drop_frames"]) == int(
+        loss_pts["presence_hole_frames"]
+    ), loss_pts
+
+    # Provenance string must be caller_supplied not bare "caller"
+    assert PROVENANCE_CALLER == "caller_supplied", PROVENANCE_CALLER
+
     print("SELF_TEST_OK")
     return 0
 
@@ -3364,8 +4020,18 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help=(
             "pre-decoded counter cache (CSV with idx,n). Skips PNG OCR; applies "
-            "structural OCR filter + rate/skip/startup. Used to prove filter on "
-            "parent caches (e.g. /tmp/ctr480.csv) without re-tesseract."
+            "structural OCR filter + rate/skip/startup/presence. Used to prove "
+            "filter on parent caches (e.g. /tmp/ctr480.csv) without re-tesseract."
+        ),
+    )
+    ap.add_argument(
+        "--pts-csv",
+        default=None,
+        help=(
+            "per-frame presentation timestamps (idx,pts_s CSV or one float pts "
+            "per line from ffprobe). REQUIRED to split DEVICE_SKIP vs GRABBER_DROP. "
+            "Without PTS: loss_split_status=LOSS_UNSCORED and steady_state_loss "
+            "is BELOW RESOLUTION FLOOR (never a hedged device-loss percent)."
         ),
     )
     ap.add_argument("--json", action="store_true", help="machine-readable report")
@@ -3435,15 +4101,40 @@ def main(argv: list[str] | None = None) -> int:
                 pass
         return source_fps, source_fps_src, capture_fps, capture_fps_src, cap_measure_meta
 
+    pts_by_idx: dict[int, float] | None = None
+    if args.pts_csv:
+        try:
+            pts_by_idx = load_pts_csv(args.pts_csv)
+        except (OSError, ValueError) as e:
+            print(f"ERROR: --pts-csv: {e}", file=sys.stderr)
+            return RC_UNSCORED
+        if not pts_by_idx:
+            print(
+                "WARN: --pts-csv produced zero timestamps; loss stays UNSCORED",
+                file=sys.stderr,
+            )
+            pts_by_idx = None
+
     if args.counters_csv:
         try:
-            pairs_raw = load_counters_csv(args.counters_csv)
+            pairs_raw, ctr_meta = load_counters_csv(args.counters_csv)
         except (OSError, ValueError) as e:
             print(f"ERROR: --counters-csv: {e}", file=sys.stderr)
             return RC_UNSCORED
         source_fps, source_fps_src, capture_fps, capture_fps_src, _meta = _resolve_fps(
             None
         )
+        # If parent supplies wall_s + we know n_frames from CSV, measure cap_fps.
+        if (
+            capture_fps_src == PROVENANCE_DEFAULT_ASSUMED
+            and args.capture_wall_s is not None
+            and args.capture_wall_s > 0
+            and ctr_meta.get("frames_total")
+        ):
+            n_fr = int(ctr_meta["frames_total"])
+            if n_fr >= 2:
+                capture_fps = (n_fr - 1) / float(args.capture_wall_s)
+                capture_fps_src = PROVENANCE_MEASURED
         # Parent measured cap_fps=29.9068 on this burst — prefer explicit --cap-fps.
         daemon_drops = args.daemon_session_drops
         daemon_drops_src = (
@@ -3458,8 +4149,14 @@ def main(argv: list[str] | None = None) -> int:
             startup_window_s=float(args.startup_window_s),
             daemon_session_drops=daemon_drops,
             daemon_drops_src=daemon_drops_src,
+            frames_total=int(ctr_meta.get("frames_total") or 0) or None,
+            blind_frames=int(ctr_meta.get("blind_frames") or 0)
+            if ctr_meta.get("blind_frames") is not None
+            else None,
+            pts_by_idx=pts_by_idx,
         )
         report["src"] = str(args.counters_csv)
+        report["counters_csv_meta"] = ctr_meta
         if args.json:
             print(json.dumps(report, indent=2))
         else:
@@ -3582,6 +4279,7 @@ def main(argv: list[str] | None = None) -> int:
         startup_window_s=startup_window_s,
         daemon_session_drops=daemon_drops,
         daemon_drops_src=daemon_drops_src,
+        pts_by_idx=pts_by_idx,
         progress=args.progress,
     )
     report["src"] = src_label

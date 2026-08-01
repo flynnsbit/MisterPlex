@@ -1,112 +1,86 @@
-# w-instr status — OCR ROI false-RED fix + PTS grabber design
+# w-instr status — Gap1 PTS loss split + Gap2 provenance + OCR filter harden
 updated: 2026-07-31
 branch: w-avsync-hdmi-measure
-SHA: 39f78bef
+SHA: 34664f46
 
-## TASK 1 — false RATE_FAIL from OCR (ACCEPTED defect, FIXED)
+## Delivered this tick
 
-### Mechanism (measured, not guessed)
-find_overlay hard-yellow bbox ended at the trailing glyph edge (parent: x1=643
-with ink to 643). Exclusive slice dropped the last column; AA/borderw=2 black
-skirt was never in the hard mask. Last digit mangled:
-  1352 → 13527 (extra digit)   2912 → 2917 (2→7)
-gen_avsync_blip.py draws `TREK24 n=%{n}` at x=8,y=8 with GROWING width — bbox
-is recomputed per frame so "early-frame ROI freeze" is NOT the mechanism; per-frame
-right-edge clip of the *current* last digit is.
+### Gap 1 — DEVICE_SKIP vs GRABBER_DROP (PRIMARY)
+- Primary detector: presence holes in RLE distinct-n span
+  (absent n => displayed <1 capture period or never; cap 33.4ms < hold 41.7ms).
+- Adjacent max_exp is SECONDARY only (undercounts hold-then-jump).
+- --pts-csv + analyze_presence_loss_split:
+    dt_ratio < 1.45 -> device_skip_frames
+    dt_ratio >= 1.45 -> grabber_drop_frames
+  NEVER merged. Printed separately.
+- Without PTS: loss_split_status=LOSS_UNSCORED, steady_state_loss=UNSCORED,
+  resolution_floor_frac FIRST-CLASS (blind_frac, grabber_rate_deficit_vs_30nom,
+  unsplit_presence_equals_floor). Do NOT report hedged device-loss %.
+- Flash blind-rate attack: always tesseract + template tier-6; sequence uses tier>=6.
+- uniform_capture_spacing=ASSUMED on PNG-only — stated in skip_notes.
 
-### Fix (not gate-loosening)
-1. Pad ROI (~2.4 glyph-heights right) and RE-threshold padded RGB with
-   hard|soft yellow so new columns carry ink (pad of False mask is useless alone).
-2. Structural OCR filter (implausible-by-construction):
-   - digit_count_discontinuity vs neighbour mode
-   - RLE spike: (b-a)>=4 and c<b  (plateau-safe 2→7)
-   - RLE trough: (a-b)>=4 and c>b
-   MAD radius NOT widened.
-3. Rate/revisit/skip run on filtered sequence only. Printed ocr_reject reasons
-   name cap_idx + rule. Real bank-swap A,B,A still RATE_FAIL (b-a=1 survives).
+### Gap 2 — provenance (ERROR 17)
+- PROVENANCE_CALLER = "caller_supplied" (not bare "caller")
+- Every fps print: measured | caller_supplied | DEFAULT_ASSUMED
+- RATE_OK never on DEFAULT_ASSUMED src or cap
+- avsync_measure_hdmi.py already tags DEFAULT_ASSUMED (audit OK)
 
-### RED-before-GREEN evidence (true rc direct)
-LEGACY MAD-only on /tmp/ctr480.csv (parent OCR cache):
-  rate=RATE_FAIL revisits=2 lost_adj=20 hist_adj={'2':10,'6':2}
-  reasons=[non_adjacent_revisits=2>=2]
+### OCR filter harden (startup CSV)
+- digit_count_extra only (legal decade 9->10/99->100 kept)
+- RLE SPIKE only — trough deleted real n between OCR spikes on ctr_startup
+  (was 1029 false troughs -> 51 structural rejects)
+- global mode no longer drops shorter digit lengths (1->4 growth)
 
-FIXED --counters-csv /tmp/ctr480.csv --src-fps 24/1 --cap-fps 29.9068:
-  VERDICT=MOTION_OK rc=0  revisits=0  hist_adj={'2':10}  (no class 6)
-  ocr_rejected=19 with printed reasons including:
-    cap_idx=172 n=13527 digit_count_discontinuity
-    cap_idx=2123/2124 n=2917 rle_spike_up_then_drop 2911->2917->2913
-    cap_idx=460/461 n=1587 rle_spike_up_then_drop 1581->1587->1586
-  true rc=0
+## Evidence (true rc direct, never via pipe)
 
-ROI re-OCR after pad (viewed sites):
-  f_0173 n=1352 OK  f_2124 n=2912 OK  (was 13527 / 2917)
+python3 tools/hdmi_motion_instrument.py --self-test; echo "true rc=$?"
+# SELF_TEST_OK true rc=0
+# includes: no-PTS -> LOSS_UNSCORED+floor; PTS normal->DEVICE_SKIP; 2x->GRABBER_DROP
 
-REAL revisit synthetic still:
-  VERDICT=RATE_FAIL rc=4 revisits=78  true rc=4
+python3 tools/hdmi_motion_instrument.py --counters-csv /tmp/ctr_startup.csv \
+  --source-fps 24.0 --capture-fps 29.9068 --daemon-session-drops 13
+# head=[3,3,3,5,5,5,7,7,7,9]  <- pixel-verified odd startup pattern
+# loss_split_status=LOSS_UNSCORED steady_state_loss=UNSCORED
+# resolution_floor_frac=0.123 (blind_frac=0.123 dominant)
+# candidate_loss_frac=0.1184  BELOW FLOOR — not a device-loss claim
+# VERDICT=MOTION_OK rc=0   true rc=0
 
-self-test: SELF_TEST_OK true rc=0
+python3 tools/hdmi_motion_instrument.py --counters-csv /tmp/ctr480.csv \
+  --source-fps 24.0 --capture-fps 29.9068
+# ocr_rejected=18 (13527/2917 classes), revisits=0, RATE_OK
+# floor~0.096  steady_state_loss=UNSCORED
+# VERDICT=MOTION_OK rc=0   true rc=0
 
-## TASK 2 — remaining 10 × +2 and grabber drops
+Resolution floor on parent 2700-frame PNG soaks: ~9-12% (blind-dominated).
+Steady-state candidate ~same order -> UNSCORED, not "0.68% hedged".
 
-### Does the instrument assume uniform capture spacing?
-YES — stated explicitly now in skip_arithmetic and skip_notes:
-  uniform_capture_spacing=ASSUMED
-  di = cap_idx delta treated as di × (1/cap_fps) intervals.
-  PNG sequence with only wall_s / n_frames for cap_fps cannot see a missing
-  grabber sample: Δt≈2/cap between saved frames looks identical to a device
-  +2 if you only have indices. This can inflate frames_lost_adj on every
-  capture this project has taken. Parent: 2400/80.216=29.9068 vs 30.0
-  ⇒ ~7.5 frame deficit over 80s, same order as the 10 +2 events.
+## Parent capture commands (PTS-capable)
 
-### Discriminator: PTS-tagged capture
-PNG f_%04d has no timestamps. Capture to MKV/NUT keeping v4l2 timestamps:
-
-```bash
 OUT=$HOME/misterplex-captures/pts_$(date +%Y%m%d_%H%M%S)
 mkdir -p "$OUT"
-# passthrough timestamps from v4l2; mkv stores pts
-ffmpeg -v error -f v4l2 -input_format mjpeg -video_size 1920x1080 \
-  -i /dev/video0 -vsync 0 -copyts -c:v copy \
+# 1) START GRABBER FIRST (startup window), keep v4l2 timestamps
+ffmpeg -hide_banner -f v4l2 -input_format mjpeg -video_size 1920x1080 \
+  -i /dev/video0 -vsync 0 -copyts -c:v copy -t 120 \
   -f matroska "$OUT/cap.mkv"
-# After session (or parallel limited frames):
-ffprobe -v error -select_streams v:0 -show_entries frame=pkt_pts_time,best_effort_timestamp_time \
-  -of csv=p=0 "$OUT/cap.mkv" > "$OUT/pts.csv"
-# Extract PNGs WITH same order for OCR (or decode in-order):
+# (cast while ffmpeg runs)
+# 2) PTS sidecar (one float seconds per frame, index=line)
+ffprobe -v error -select_streams v:0 \
+  -show_entries frame=pkt_pts_time -of csv=p=0 \
+  "$OUT/cap.mkv" > "$OUT/pts.csv"
+# 3) PNG for OCR (same order)
 ffmpeg -v error -i "$OUT/cap.mkv" -vsync 0 "$OUT/f_%04d.png"
-# Pair: line i of pts.csv ↔ f_XXXX.png counter
-python3 tools/hdmi_motion_instrument.py "$OUT" --src-fps 24/1 \
-  --capture-fps 30  # or measured from PTS median Δ
-# Then analysis entry (to be wired as --pts-csv next if needed):
-#   for each adj +2 in counter domain, look at Δpts between those two PNGs
-#   Δpts ≈ 1/cap_nom  (~33.4ms)  → device skip (source frame never shown long enough
-#                                   OR never shown — still need n gap + short Δt)
-#   Δpts ≈ 2/cap_nom  (~66.8ms)  → grabber drop (missing capture sample)
-#   Δpts ambiguous     → UNSCORED for that event
-```
+# 4) wall measure
+WALL=$(ffprobe -v error -show_entries format=duration -of csv=p=0 "$OUT/cap.mkv")
+# 5) score with split
+python3 tools/hdmi_motion_instrument.py "$OUT" \
+  --source-fps 24/1 --capture-wall-s "$WALL" --pts-csv "$OUT/pts.csv"
 
-Note: with 24fps content held 41.7ms and capture 33.4ms, a *displayed* source
-frame cannot be entirely skipped under perfect uniform capture — parent arithmetic
-accepted. So +2 with Δpts≈1/cap implies the source frame was on screen < one
-capture period (possible with Drop present-skip). +2 with Δpts≈2/cap is grabber.
+For each presence hole: class=DEVICE_SKIP (dpts~1x med) vs GRABBER_DROP (dpts~2x med).
 
-Better discriminator if available: same PTS path is the minimum; no ALSA needed.
+## Startup transient (prior RCA, unchanged)
+droppedFrames_ only on avDecide Drop when drift=audio-frameMs > resyncDropMs(80);
+early video -> Hold. Pixel odd-n pattern at open = REAL_DISPLAY_LOSS (b), not catch-up.
 
-### Analysis entry point (current)
-Manual join pts.csv[i] with counter sequence after OCR; classify each
-skip_hist_adj event. Follow-up can add `--pts-csv` to auto-tag each +2.
-Until then every frames_lost_adj on PNG-only bursts is
-  measured_counter_gap / ASSUMED_uniform_spacing
-not a pure device-loss count.
-
-## Commands for parent
-```bash
-# fixed score on cached counters (fast)
-python3 tools/hdmi_motion_instrument.py --counters-csv /tmp/ctr480.csv \
-  --src-fps 24/1 --cap-fps 29.9068; echo "true rc=$?"
-
-# ROI check one frame
-python3 tools/hdmi_motion_instrument.py --one /tmp/cap480_long/f_0173.png; echo "true rc=$?"
-```
-
-## Startup predictions still live
-P_STARTUP_1 / P_STARTUP_2 unchanged; awaiting cast-in-window capture.
+## Files
+- tools/hdmi_motion_instrument.py  (only instrument change this commit)
+- .agent-work/w-instr/status.txt
