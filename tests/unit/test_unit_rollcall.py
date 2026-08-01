@@ -20,6 +20,8 @@ EXPECTED_PREREQS = [
     "unit-rollcall",
     "preflight",
     "$(ROOT)/build/test_cadence",
+    "$(ROOT)/build/test_cadence_swap_path",
+    "$(ROOT)/build/test_publish_interval_ledger",
     "$(ROOT)/build/test_avclock",
     "$(ROOT)/build/test_audio_delay",
     "$(ROOT)/build/test_mraudio_status",
