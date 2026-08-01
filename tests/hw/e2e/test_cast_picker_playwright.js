@@ -1393,7 +1393,7 @@ async function glassMark(cycle, transition, phase, extra = {}) {
   const xml = extra.xml != null ? extra.xml : await pollDaemonTimeline(nextSuiteCmd());
   const state = extra.state != null ? extra.state : xmlAttr(xml, 'state') || '';
   const time = extra.time != null ? extra.time : parseInt(xmlAttr(xml, 'time') || '-1', 10);
-  return emitGlassExpect(
+  const g = await emitGlassExpect(
     {
       cycle,
       transition,
@@ -1402,7 +1402,10 @@ async function glassMark(cycle, transition, phase, extra = {}) {
       counter: extra.counter || 'na',
       daemon_state: state,
       daemon_time_ms: time,
+      ui_time_ms: extra.ui_time_ms,
+      ui_pct: extra.ui_pct,
       hold_ms: extra.hold_ms,
+      defect_hint: extra.defect_hint || '',
       note: extra.note || '',
     },
     {
@@ -1411,6 +1414,15 @@ async function glassMark(cycle, transition, phase, extra = {}) {
       mark: (ev, x) => runCorr.mark(ev, x),
     }
   );
+  // Optional in-process hold so parent HDMI can grab the named window if
+  // capture runs concurrent with the suite (E2E_GLASS_HOLD=1).
+  const doHold = /^(1|true|yes|on)$/i.test(String(process.env.E2E_GLASS_HOLD || '0'));
+  if (doHold && g && g.hold_ms > 0 && (phase === 'after' || phase === 'hold')) {
+    log(`GLASS_HOLD_BEGIN wall_ms=${g.host_wall_ms} hold_ms=${g.hold_ms} picture=${g.picture}`);
+    await sleep(g.hold_ms);
+    log(`GLASS_HOLD_END wall_ms=${Date.now()} picture=${g.picture}`);
+  }
+  return g;
 }
 
 async function waitTimelineState(wantStates, maxMs = 12000, label = 'wait_state') {
@@ -2225,8 +2237,14 @@ async function runOneTransitionCycle(page, itemTitle, detailsUrl, cycle, total) 
   let samples = await sampleTimeline(6, 400, `${ctag}_paused`);
   let fr = assertTimeFrozen(samples, `${ctag}_pause`);
   if (!fr.ok) cycleFail(cycle, total, 'pause', 'time_still_advancing', fr.detail);
+  // Nudge player chrome so scrubber/timeline is visible (user overlay defect window).
+  await page.mouse.move(640, 600).catch(() => {});
+  await page.mouse.click(640, 600).catch(() => {});
+  await sleep(400);
+  let uiPauseClock = null;
   {
     const uiR = await assertUiMatchesDaemon(page, `${ctag}_pause_ui_clock`);
+    uiPauseClock = uiR;
     if (!uiR.ok && !uiR.softSkip) {
       cycleFail(cycle, total, 'ui_timeline', uiR.reason || 'ui_daemon_skew', uiR.detail || '');
     }
@@ -2234,14 +2252,35 @@ async function runOneTransitionCycle(page, itemTitle, detailsUrl, cycle, total) 
   log(
     `transition_pause_ok cycle=${cycle}/${total} time=${fr.time} drift_ms=${fr.drift} ui=${uiPause || 'http_fallback'}`
   );
+  // Control-plane: paused + frozen time. Glass: parent scores freeze AND
+  // pause-overlay chrome resolution (user: "timeline very low res when paused").
+  // Present path is 529×240 only — suite never claims fine chrome detail.
+  const pauseHold = parseInt(process.env.E2E_PAUSE_OVERLAY_HOLD_MS || '4000', 10) || 4000;
+  const uiM = (uiPauseClock && uiPauseClock.metrics) || {};
   await glassMark(cycle, 'pause', 'after', {
-    picture: 'frozen',
+    picture: 'pause_overlay',
     counter: 'pinned',
     state: 'paused',
     time: fr.time,
-    note: 'EXPECT glass frozen; TREK n pinned; parent score still-frame window',
-    hold_ms: 2500,
+    ui_time_ms: uiM.ui_ms != null ? uiM.ui_ms : undefined,
+    ui_pct: uiM.ui_pct != null ? uiM.ui_pct : undefined,
+    defect_hint: 'pause_overlay_low_res',
+    note:
+      'CONTROL: state=paused time frozen. GLASS(parent): frozen frame + player chrome/timeline ' +
+      'visible on MiSTer — score chrome res (user low-res overlay bug). 529x240 present only. ' +
+      'Playwright PASS ≠ video OK.',
+    hold_ms: pauseHold,
   });
+  // Always give parent a short named window even without E2E_GLASS_HOLD (log timestamps).
+  log(
+    `PAUSE_OVERLAY_WINDOW_OPEN wall_ms=${Date.now()} hold_ms=${pauseHold} ` +
+      `daemon_time_ms=${fr.time} — parent: capture now for overlay chrome res`
+  );
+  if (!/^(1|true|yes|on)$/i.test(String(process.env.E2E_GLASS_HOLD || '0'))) {
+    // Brief settle so chrome paints; full hold is parent's capture job unless E2E_GLASS_HOLD=1.
+    await sleep(Math.min(1200, pauseHold));
+  }
+  log(`PAUSE_OVERLAY_WINDOW_CLOSE wall_ms=${Date.now()}`);
 
   // ── resume: UI-first play toggle ───────────────────────────────────────
   const pausedTime = fr.time;
@@ -2386,6 +2425,18 @@ async function runOneTransitionCycle(page, itemTitle, detailsUrl, cycle, total) 
     note: `EXPECT counter near source frame for ~${seekTo}ms then advances; how=${seekHow}`,
     hold_ms: 2000,
   });
+  // Timeline scrub with chrome: user low-res overlay also appears on play+timeline.
+  await glassMark(cycle, 'seek_fwd', 'hold', {
+    picture: 'play_chrome',
+    counter: 'advancing',
+    state: 'playing',
+    time: adv.time,
+    defect_hint: 'play_timeline_overlay_low_res',
+    note:
+      'CONTROL: playing near seek target. GLASS(parent): if player chrome/timeline drawn on MiSTer, ' +
+      'score chrome res (529x240 present). Playwright cannot verify overlay pixels.',
+    hold_ms: 2500,
+  });
 
   // ── seek BACKWARD: earlier offset, land, then advance ───────────────────
   {
@@ -2477,8 +2528,9 @@ async function runOneTransitionCycle(page, itemTitle, detailsUrl, cycle, total) 
       cycleFail(cycle, total, 'ledger', lr.reason || 'ledger_fail', lr.detail || '');
     } else {
       log(
-        `LEDGER_OK cycle=${cycle}/${total} residual=${lr.residual} session=${lr.session}` +
-          ` pid=${lr.pid != null ? lr.pid : ledgerEnd.pid}` +
+        `LEDGER_OK cycle=${cycle}/${total} residual=${lr.residual != null ? lr.residual : 'NA'} ` +
+          `session=${lr.session} pid=${lr.pid != null ? lr.pid : ledgerEnd.pid}` +
+          (lr.plxd_frames_void ? ' plxd_frames_void=1' : '') +
           (lr.note ? ` note=${lr.note}` : '')
       );
     }
@@ -2664,6 +2716,18 @@ async function runTransitionScenarios(page, itemTitle, detailsUrl, _castAlreadyS
   log(
     'CYCLE_ISOLATION=on each cycle force-stops then plays from beginning ' +
       '(seek@8s residual from prior cycle is cleared and reported via CYCLE_START_STATE)'
+  );
+  log(
+    'BOUNDARY_PLAYWRIGHT: asserts Plex Web control-plane + :3005 session state only. ' +
+      'Does NOT prove video pixels, overlay resolution, judder, or lipsync. ' +
+      'Only parent HDMI-USB capture settles video claims. Present path 529x240 only. ' +
+      'PLXD frames/presents/drops VOID on live RBF c5382bee (frames_done=bank_vsync). ' +
+      'No companion /status endpoint.'
+  );
+  log(
+    'GLASS_PAIR: watch GLASS_EXPECT/GLASS_JOIN + PAUSE_OVERLAY_WINDOW_* wall_ms; ' +
+      'defect_hint=pause_overlay_low_res|play_timeline_overlay_low_res. ' +
+      'E2E_GLASS_HOLD=1 to block suite during hold_ms for concurrent capture.'
   );
   if (cfg.liveConf) log(`E2E_LIVE_CONF=${cfg.liveConf}`);
   if (cfg.liveDaemonId) log(`E2E_LIVE_DAEMON_ID=${cfg.liveDaemonId}`);

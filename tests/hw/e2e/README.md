@@ -573,6 +573,14 @@ tr '\0' ' ' < /proc/$pid/cmdline; echo
 Teardown still asserts only OUR Playwright controller is gone after all N cycles.
 
 
+## BOUNDARY + live RBF
+
+Playwright = control plane + :3005 session only. **Not** video pixels.
+`E2E_PLXD_FRAMES_VOID=1` (default): do not gate on frames/presents/drops (live RBF
+packs bank_vsync into frames_done). Present geometry **529×240** only.
+Pause emits `GLASS_EXPECT picture=pause_overlay defect_hint=pause_overlay_low_res`
+for parent chrome-res scoring. `E2E_GLASS_HOLD=1` holds suite during marker windows.
+
 ## UI timeline truthfulness (control plane)
 
 After play and each pause/resume/seek, the suite reads the **Plex Web** clock/scrubber

@@ -6,10 +6,15 @@
  * Daemon emits (1 Hz media line + /player/telemetry when deployed):
  *   frames presents drops publish_misses residual lifetime_* session=
  *
- * Identity: residual == frames - presents - drops
- * Parent gate: residual == 0 (or residual == publish_misses when misses counted).
+ * LIVE RBF c5382bee (parent, 2026-08): ddr_frame_store packs bank_vsync_count into
+ * the ARM-visible frames_done field. Until a new RBF lands, PLXD-derived
+ * frames/presents/drops residual identity is VOID as video evidence
+ * (E2E_PLXD_FRAMES_VOID=1 default). Suite still uses telemetry for pid/exe/
+ * session/playing — never frames_done as proof of correct video.
+ *
  * session must not change mid-cycle during continuous play (daemon self-exit
  * respawn resets counters — false pass without this check).
+ * Companion has NO /status endpoint — only /resources, timeline, telemetry.
  */
 
 const http = require('http');
@@ -113,18 +118,20 @@ function parseLedgerFromLogText(text) {
 }
 
 async function fetchLedgerHttp(daemonBase) {
-  const urls = [
-    `${daemonBase}/player/telemetry`,
-    `${daemonBase}/telemetry`,
-    `${daemonBase}/player/status`,
-  ];
+  // No /status on companion :3005 (parent). Prefer telemetry only.
+  const urls = [`${daemonBase}/player/telemetry`, `${daemonBase}/telemetry`];
   for (const u of urls) {
     const r = await httpGet(u);
-    if (r.status === 200 && r.body && /frames=|session=|presents=/.test(r.body)) {
+    if (
+      r.status === 200 &&
+      r.body &&
+      /frames=|session=|presents=|pid=|playing=/.test(r.body)
+    ) {
       const kv = parseKv(r.body);
       kv._line = r.body.trim().split('\n')[0];
       const snap = normalizeSnap(kv, 'http');
-      if (snap.ok || snap.session >= 0) return snap;
+      // Accept pid/session-only snaps when frames void / missing.
+      if (snap.ok || snap.session >= 0 || snap.pid > 0) return snap;
     }
   }
   return null;
@@ -184,28 +191,47 @@ function allowPublishMissResidual() {
 }
 
 /**
- * Assert residual identity and session stability across a continuous-play window.
+ * Live RBF packs bank_vsync into frames_done — residual/presents/drops are not
+ * video evidence. Default void=1. Set E2E_PLXD_FRAMES_VOID=0 only after a new
+ * RBF where frames_done is a real frame counter again.
+ */
+function plxdFramesVoid() {
+  const v = process.env.E2E_PLXD_FRAMES_VOID;
+  if (v === undefined || v === null || v === '') return true;
+  return /^(1|true|yes|on)$/i.test(String(v));
+}
+
+/**
+ * Assert session/pid stability across a continuous-play window.
+ * Residual identity is VOID by default (E2E_PLXD_FRAMES_VOID=1) on live RBF.
  * @returns {{ ok:true } | { ok:false, reason, detail }}
  */
 function assertLedgerWindow(start, end, tag) {
   if (!start || !end) {
     return { ok: false, reason: 'ledger_missing', detail: `${tag}: null snapshot` };
   }
-  if (!start.ok || !end.ok) {
+
+  // Prefer pid/session path when frames are void or unprobed.
+  const identityOk =
+    (start.pid > 0 && end.pid > 0) ||
+    (start.session >= 0 && end.session >= 0) ||
+    (start.ok && end.ok);
+
+  if (!identityOk) {
     if (requireLedger()) {
       return {
         ok: false,
         reason: 'ledger_unprobed',
         detail:
           `${tag}: ledger unprobed (source start=${start.source} end=${end.source}). ` +
-          `Deploy daemon with GET /player/telemetry or export E2E_DAEMON_LOG with media lines ` +
-          `containing frames/presents/drops/session. Set E2E_REQUIRE_LEDGER=0 to soft-skip (not a pass).`,
+          `Need GET /player/telemetry with pid= and/or session=. ` +
+          `Set E2E_REQUIRE_LEDGER=0 to soft-skip (not a pass).`,
       };
     }
     return {
       ok: true,
       softSkip: true,
-      detail: `${tag}: ledger unprobed — E2E_REQUIRE_LEDGER=0 soft-skip (NOT a pass of residual)`,
+      detail: `${tag}: ledger unprobed — E2E_REQUIRE_LEDGER=0 soft-skip (NOT a pass)`,
     };
   }
 
@@ -217,7 +243,7 @@ function assertLedgerWindow(start, end, tag) {
       detail:
         `${tag}: daemon pid ${start.pid} → ${end.pid} mid-window ` +
         `exe_start=${start.exe || '?'} exe_end=${end.exe || '?'} ` +
-        `(self-exit rc=0 / respawn — droppedFrames_/presentCount_ reset; soak counters invalid)`,
+        `(self-exit rc=0 / respawn — counters reset; soak invalid)`,
     };
   }
   if (start.exe && end.exe && start.exe !== end.exe) {
@@ -241,8 +267,9 @@ function assertLedgerWindow(start, end, tag) {
     };
   }
 
-  // Lifetime must not regress (process restart).
+  // Lifetime must not regress (process restart) — only when field is real.
   if (
+    !plxdFramesVoid() &&
     start.lifetime_frames >= 0 &&
     end.lifetime_frames >= 0 &&
     end.lifetime_frames < start.lifetime_frames
@@ -256,6 +283,36 @@ function assertLedgerWindow(start, end, tag) {
     };
   }
 
+  // ── residual / frames / presents / drops ──────────────────────────────
+  if (plxdFramesVoid()) {
+    return {
+      ok: true,
+      residual: end.residual,
+      session: end.session,
+      pid: end.pid,
+      note:
+        'plxd_frames_void: residual/presents/drops NOT evidence ' +
+        '(live RBF frames_done=bank_vsync_count; parent c5382bee). ' +
+        'pid+session only. Set E2E_PLXD_FRAMES_VOID=0 after fixed RBF.',
+      plxd_frames_void: true,
+    };
+  }
+
+  if (!start.ok || !end.ok) {
+    if (requireLedger()) {
+      return {
+        ok: false,
+        reason: 'ledger_unprobed',
+        detail: `${tag}: frames/presents/drops incomplete with E2E_PLXD_FRAMES_VOID=0`,
+      };
+    }
+    return {
+      ok: true,
+      softSkip: true,
+      detail: `${tag}: frame ledger incomplete — soft-skip`,
+    };
+  }
+
   const residual = end.residual;
   if (residual === null || residual === undefined) {
     return {
@@ -265,7 +322,6 @@ function assertLedgerWindow(start, end, tag) {
     };
   }
 
-  // Recompute identity from components (detect bad telemetry).
   const recomputed = end.frames - end.presents - end.drops;
   if (recomputed !== residual) {
     return {
@@ -277,9 +333,6 @@ function assertLedgerWindow(start, end, tag) {
     };
   }
 
-  // Parent gate: residual == frames - presents - drops == 0 (accounted).
-  // Live mid-play may have 0..slack frames in the present pipeline; unexplained
-  // gap above slack (after publish_misses) is a real ledger hole / respawn glitch.
   let slack = parseInt(process.env.E2E_LEDGER_RESIDUAL_SLACK || '2', 10);
   if (!Number.isFinite(slack) || slack < 0) slack = 2;
 
@@ -287,7 +340,6 @@ function assertLedgerWindow(start, end, tag) {
     return { ok: true, residual: 0, session: end.session, pid: end.pid };
   }
 
-  // residual == publish_misses is the product identity when publishes fail.
   if (allowPublishMissResidual() && residual === end.publish_misses) {
     return {
       ok: true,
@@ -417,4 +469,5 @@ module.exports = {
   parseKv,
   formatSnap,
   requireLedger,
+  plxdFramesVoid,
 };
