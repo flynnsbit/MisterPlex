@@ -353,6 +353,54 @@ int main() {
         expect(!rawPipeByteAligned(R * 100 + 1, R), "misaligned total");
     }
 
+    // --- B5 teardown classifier: parent live trips must NOT hard-error under scale ---
+    {
+        const size_t R = 449280u; // 624x480 I420
+        // Parent: producer=115200 (320x240) reader=449280 frames=2739 byte_align=1
+        const size_t p320 = yuv420pFrameBytesWH(320, 240);
+        expect(p320 == 115200u, "parent 320x240 bytes");
+        {
+            const auto t = classifyPipeDesyncTeardown(
+                p320, R, R, 2739, R * 2739, /*identity_skip=*/false, /*sticky=*/false);
+            expect(!t.hard_error, "parent 320x240 scale path not ERROR");
+            expect(!t.phase_desync, "phase uses OUTPUT==R");
+            expect(std::string(t.class_token) == "INPUT_NE_READER_SCALED",
+                   "class INPUT_NE_READER_SCALED");
+        }
+        // Same input under identity_skip IS a real trip.
+        {
+            const auto t = classifyPipeDesyncTeardown(
+                p320, 0, R, 2739, R * 2739, /*identity_skip=*/true, /*sticky=*/false);
+            expect(t.hard_error && t.phase_desync, "identity+320 is PHASE_LIVE");
+            expect(std::string(t.class_token) == "PHASE_LIVE", "class PHASE_LIVE");
+        }
+        // Parent: 86400=320x180, 112320=312x240, 438048=624x468 — all scale-path benign.
+        for (size_t pin : {86400u, 112320u, 438048u}) {
+            const auto t = classifyPipeDesyncTeardown(
+                pin, R, R, 720, R * 720, false, false);
+            expect(!t.hard_error, "parent producer under scale not hard");
+            expect(std::string(t.class_token) == "INPUT_NE_READER_SCALED",
+                   "scaled class for parent residual sizes");
+        }
+        // Scale path, no MEASURED_OUTPUT → NO-DATA phase, not defect.
+        {
+            const auto t = classifyPipeDesyncTeardown(
+                p320, 0, R, 100, R * 100, false, false);
+            expect(!t.hard_error, "no output not hard");
+            expect(std::string(t.class_token) == "PHASE_NO_DATA" ||
+                       std::string(t.class_token) == "INPUT_NE_READER_SCALED",
+                   "NO-DATA or scaled when output missing");
+        }
+        // Real misalign still hard.
+        {
+            const auto t = classifyPipeDesyncTeardown(
+                R, R, R, 10, R * 10 + 17, false, false);
+            expect(t.hard_error && !t.byte_aligned, "misalign hard");
+            expect(std::string(t.class_token) == "BYTE_MISALIGN", "BYTE_MISALIGN");
+        }
+        std::printf("GREEN_B5_TEARDOWN_CLASS parent_false_positive_killed\n");
+    }
+
     // --- FORCE_SCALE=1 output pin: no delivered INPUT size can change OUTPUT bytes ---
     {
         const size_t R = yuv420pFrameBytesWH(624, 480);

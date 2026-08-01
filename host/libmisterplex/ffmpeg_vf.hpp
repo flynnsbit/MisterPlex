@@ -438,6 +438,93 @@ inline bool rawPipeByteAligned(size_t total_bytes, size_t reader_frame_bytes) {
     return (total_bytes % reader_frame_bytes) == 0;
 }
 
+// Teardown B5 classification.
+//
+// producer_input_bytes  = I420 size of MEASURED_DELIVERY (pre-vf Stream banner).
+// producer_output_bytes = I420 size of MEASURED_OUTPUT (post-vf rawvideo), or 0=NO-DATA.
+// reader_frame_bytes    = fixed raw-pipe read size (coded bank).
+//
+// The pipe carries post-vf frames when scale/crop/pad ran. Comparing INPUT size to
+// the reader always yields rawPipeDesynced when source ≠ coded (e.g. 320x240 vs
+// 624x480) even though FORCE_SCALE pinned OUTPUT == reader. Parent live trips:
+//   producer=115200 (320x240) reader=449280 byte_align=1 frames=2739
+// were that false positive — teardown-only, not mid-stream phase walk.
+//
+// hard_error (ERROR PIPE_DESYNC) only when:
+//   - !byte_aligned, or
+//   - sticky mid-stream risk, or
+//   - real phase: identity_skip uses input-as-pipe; else use output when known.
+// INPUT≠reader under !identity_skip with aligned pipe → INFO class only.
+struct PipeDesyncTeardown {
+    bool hard_error = false;
+    bool phase_desync = false;     // real pipe-phase claim
+    bool byte_aligned = true;
+    bool input_ne_reader = false;  // pre-vf size ≠ reader (may be expected)
+    bool output_ne_reader = false; // post-vf size ≠ reader when known
+    bool output_known = false;
+    bool pipe_bytes_known = false; // which size was used for phase model
+    size_t pipe_producer_bytes = 0; // size fed to rawPipeDesynced (0=NO-DATA)
+    const char* class_token = "OK"; // OK|PHASE_LIVE|BYTE_MISALIGN|INPUT_NE_READER_SCALED|PHASE_NO_DATA
+};
+
+inline PipeDesyncTeardown classifyPipeDesyncTeardown(size_t producer_input_bytes,
+                                                    size_t producer_output_bytes,
+                                                    size_t reader_frame_bytes,
+                                                    size_t frame_index, size_t total_bytes,
+                                                    bool identity_skip,
+                                                    bool sticky_midstream_risk) {
+    PipeDesyncTeardown t;
+    t.byte_aligned = rawPipeByteAligned(total_bytes, reader_frame_bytes);
+    t.input_ne_reader = producer_input_bytes > 0 && reader_frame_bytes > 0 &&
+                        producer_input_bytes != reader_frame_bytes;
+    t.output_known = producer_output_bytes > 0;
+    t.output_ne_reader = t.output_known && reader_frame_bytes > 0 &&
+                         producer_output_bytes != reader_frame_bytes;
+
+    // Which size is on the pipe?
+    if (identity_skip) {
+        // No scale/pad: pipe bytes == decoded delivery (input banner).
+        t.pipe_producer_bytes = producer_input_bytes;
+        t.pipe_bytes_known = producer_input_bytes > 0;
+    } else if (t.output_known) {
+        t.pipe_producer_bytes = producer_output_bytes;
+        t.pipe_bytes_known = true;
+    } else {
+        // Scale path but no MEASURED_OUTPUT → cannot claim phase from input.
+        t.pipe_producer_bytes = 0;
+        t.pipe_bytes_known = false;
+    }
+
+    if (t.pipe_bytes_known && reader_frame_bytes > 0) {
+        t.phase_desync =
+            rawPipeDesynced(t.pipe_producer_bytes, reader_frame_bytes, frame_index);
+    } else {
+        t.phase_desync = false; // NO-DATA, not a defect
+    }
+
+    if (!t.byte_aligned) {
+        t.hard_error = true;
+        t.class_token = "BYTE_MISALIGN";
+    } else if (t.phase_desync || sticky_midstream_risk) {
+        t.hard_error = true;
+        t.class_token = "PHASE_LIVE";
+    } else if (t.input_ne_reader && !identity_skip && !t.phase_desync) {
+        // Expected under FORCE_SCALE / crop+pad: input 320x240, reader 624x480.
+        t.hard_error = false;
+        t.class_token = "INPUT_NE_READER_SCALED";
+    } else if (!t.pipe_bytes_known && identity_skip && t.input_ne_reader) {
+        t.hard_error = true;
+        t.class_token = "PHASE_LIVE";
+    } else if (!t.pipe_bytes_known && !identity_skip && frame_index > 0) {
+        t.hard_error = false;
+        t.class_token = "PHASE_NO_DATA"; // scale path, no output banner
+    } else {
+        t.hard_error = false;
+        t.class_token = "OK";
+    }
+    return t;
+}
+
 // Pixel-format conversion is NOT expressed here — misterplexd uses -pix_fmt on the
 // rawvideo output. That keeps format conversion out of the scale/resample path.
 inline FfmpegVfPlan buildFfmpegVideoFilter(const FfmpegVfRequest& req) {

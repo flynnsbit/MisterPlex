@@ -307,6 +307,10 @@ private:
     // Runtime-measured input geometry from ffmpeg stderr (B2). 0 = not seen yet.
     std::atomic<int> measuredDeliveryW_{0};
     std::atomic<int> measuredDeliveryH_{0};
+    // Post-vf rawvideo geometry (MEASURED_OUTPUT). 0 = NO-DATA. Pipe phase uses this
+    // when !identity_skip; input size alone must not trip PIPE_DESYNC under scale.
+    std::atomic<int> measuredOutputW_{0};
+    std::atomic<int> measuredOutputH_{0};
     // Runtime-measured content fps from the same Stream banner (w-cpu ERROR 17).
     // 0 = not seen; den defaults to 1 when num set. Never invent 24 here.
     std::atomic<int> measuredFpsNum_{0};
