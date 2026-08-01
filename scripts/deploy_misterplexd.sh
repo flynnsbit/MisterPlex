@@ -452,6 +452,34 @@ elif [[ "${CONF_MD5_PRE:-}" == "MISSING" && "${DEPLOY_ALLOW_CREATE_CONF:-0}" != 
   :
 fi
 
+# PRESENT must be fpga|both (fb0 freezes idle). Assert only — never rewrite conf.
+if [[ "${DEPLOY_ASSERT_PRESENT:-1}" == "1" ]]; then
+  pval=$(sed -n 's/^[[:space:]]*PRESENT=//p' "$REMOTE_CONF" 2>/dev/null | head -1 | tr -d '\r' | awk '{print $1}' | tr 'A-Z' 'a-z')
+  echo "POST_PRESENT=${pval:-}"
+  case "${pval:-}" in
+    fpga|both) echo "OK PRESENT=$pval" ;;
+    fb0)
+      echo "FAIL PRESENT=fb0 freezes idle (initPresent skips fpga_.open unless fpga|both)"
+      exit 8
+      ;;
+    *)
+      echo "FAIL PRESENT='${pval:-}' want=fpga|both"
+      exit 8
+      ;;
+  esac
+fi
+# Optional: IDLE_SCREEN=logo for promotion (default off for plain deploy; promote sets 1)
+if [[ "${DEPLOY_ASSERT_IDLE_LOGO:-0}" == "1" ]]; then
+  ival=$(sed -n 's/^[[:space:]]*IDLE_SCREEN=//p' "$REMOTE_CONF" 2>/dev/null | head -1 | tr -d '\r' | awk '{print $1}' | tr 'A-Z' 'a-z')
+  echo "POST_IDLE_SCREEN=${ival:-}"
+  if [[ "${ival:-}" != "logo" ]]; then
+    echo "FAIL IDLE_SCREEN='${ival:-}' want=logo (screensaver contaminates captures)"
+    exit 8
+  fi
+  echo "OK IDLE_SCREEN=logo"
+fi
+
+
 # Disk check again on-device (belt and suspenders).
 disk_md5=$(md5sum "$REMOTE_BIN" | awk '{print $1}')
 echo "REMOTE_DISK_MD5=$disk_md5"

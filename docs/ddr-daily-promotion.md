@@ -20,12 +20,45 @@ Main-tree defects (do **not** use `scripts/` from pre-fix main):
 
 Red-before-green: `tests/unit/test_deploy_misterplexd.sh`, `tests/unit/test_rollback_honest.sh`.
 
-## Frame-loss bar (parent 2026-08-01) — do NOT flip daily driver
+## Measurement claims (parent ERROR 18/19 withdrawn) — do NOT flip daily driver
 
-Parent pixel-proven **1.54% presentation-side frame loss** on the DDR path
-(22 verified skips in 1429 source frames). Real product defect. **Do not**
-promote DDR pair to daily-driver default until understood. This package is
-reversible machinery only.
+| Claim | Status |
+|-------|--------|
+| "22 skips / 1.54% frame loss" | **ERROR 18 WITHDRAWN** (30 fps capture, zero sampling margin) |
+| "1 skip / 0.070%" | **ERROR 19 WITHDRAWN** (min hold = one refresh 16.67 ms; 60 fps capture has negative margin) |
+| Defensible bound | **0 confirmed skips; ≤1 source frame in 1420 shown for ≤1 refresh.** Frame loss is **bounded, not measured.** |
+| Measured defect | **Judder**: adjacent display holds equal **29.9%** of the time (floor 15.1%) where ideal predicts 0%; average rate exact to 0.1%. |
+
+**Do not** promote DDR pair to daily-driver default on telemetry alone. This package is reversible machinery only.
+
+### ARM CPU% (required on every soak report)
+
+User rule: report ARM CPU% with every soak. Reference split (of 200% onecpu):
+**86.6%** total — MiSTer 78.0, ffmpeg 60.5, misterplexd 24.3.
+Promotion checks must stay light on-device (no heavy probes).
+
+### Conf safety (USER-OWNED — assert, never rewrite)
+
+Live keys parent verifies after every op (md5 `7f06132f…` class):
+`DECODE=624x480`, `PRESENT=fpga`, `IDLE_SCREEN=logo`, `DECODE_ALLOW_LAB_480P=1`, `DDR_YUV_FORCE_SCALE=1`.
+
+| Key | Rule |
+|-----|------|
+| conf file | Back up + restore **byte-exactly**. Never normalise to a "validated default". |
+| `PRESENT` | Must be **`fpga` or `both`**. `PRESENT=fb0` is **wrong**: `initPresent()` skips `fpga_.open()` → DDR frame store never repainted → idle freezes. Deploy asserts this (does not rewrite). |
+| `IDLE_SCREEN` | Promotion captures want **`logo`** (static Plex logo). Screensaver contaminates test captures (user). Assert via `DEPLOY_ASSERT_IDLE_LOGO=1` on promote; never silent rewrite. |
+
+### RBF mechanical refuse
+
+`scripts/deploy_plex_core.sh` calls `rbf_policy_check_md5` and **refuses** banned/do-not-ship:
+banned `{8832824e,75da8bb1,4d6ee356,4deaf6cc,dabdaeb0}` + do-not-ship `{9eb1431a,ff2e3ca3,f0d3a385,2890baac}`.
+`DEPLOY_LOAD=none|menu`; ONE menu bounce only; never thrash `load_core`.
+`bootcore=lastcore` is **user-authorised for testing** (do not flip without user).
+
+### Live daemon pin (parent 2026-08-01)
+
+`/proc/<pid>/exe` md5 **`36b89bcb87399f4681fd41ddd226e5b4`** (`integ/osd-ledger-480p` @ `533a4bca`).
+Rollback bak on device: `misterplexd.bak.3883f5ab`. Verify live exe — never disk alone.
 
 ## Probe capture (V2_MD5 `set +e` glue)
 
@@ -43,7 +76,36 @@ to audit). Shape assert rejects contaminated digests — never fuzzy-trim.
 | P4 | HDMI A/V offset bimodality (~117 ms SESSION-LATCHED device defect) | **OPEN / out of promote scope** — not closable by pair md5/PLXS/pixels gates; see below |
 | P5 | Daemon pin file `5996385a` in `artifacts/daemon-pins/` on host | Optional; full md5 constant is in policy |
 
-**P1 is NOT closed.** Do not claim cold-boot survival until parent captures post-reboot evidence checklist.
+**P1 is NOT closed. BLOCKED ON USER APPROVAL** — parent will not power-cycle the daily driver without explicit user consent. Hook rehearsal ≠ kernel cold boot. Runbook step + post-conditions are ready; execution waits on the user.
+
+
+## Cold-boot survival (P1) — blocked on user approval
+
+**Do not execute without explicit user approval.** Daily driver at 192.168.1.183.
+
+When authorised, parent runs (agents never SSH):
+
+```bash
+# 0) Pre-capture (evidence baseline)
+#    n_daemon, live exe md5, conf md5, CORE product md5, /resources, HDMI idle frame
+
+# 1) Power cycle the DE10-Nano (physical or authorised PDU) — NOT ssh reboot unless user says so
+
+# 2) Wait for network + Main (~150s)
+
+# 3) Post-conditions (all required; any fail = P1 FAIL):
+#    - n_daemon == 1  (enumerate /proc, readlink -f exe basename misterplexd; not cmdline/flock)
+#    - md5sum "$(readlink -f /proc/$PID/exe)" == expected pair daemon pin
+#    - product core md5 on disk == pair core pin (c5382bee…) OR intentional SPI undo
+#    - conf md5 == pre-cycle backup (USER-OWNED byte-exact)
+#    - PRESENT=fpga|both ; IDLE_SCREEN as user left it (prefer logo)
+#    - curl -s -o /dev/null -w '%{http_code}' http://$HOST:3005/resources  → 200
+#    - boot hook: exactly one misterplexd_supervise for live root; decoy inert
+#    - VIEWED pixels: idle logo/playback OK (not green/black freeze)
+#    - ARM CPU% snapshot during soak (user-required)
+```
+
+Host helper (no device mutate): `PAIR_ID=ddr-c5382bee scripts/power_cycle_pair_rehearsal.sh plan`
 
 ## Why this document exists
 

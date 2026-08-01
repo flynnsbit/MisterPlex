@@ -73,6 +73,23 @@ echo "=== GREEN: conf unchanged ==="
 deploy_assert_conf_unchanged 7f06132f0c00e90b35141bdc0c60ccc9 7f06132f0c00e90b35141bdc0c60ccc9 \
   && ok "conf-unchanged-ok" || bad "conf-unchanged-ok"
 
+echo "=== RED: PRESENT=fb0 freezes idle ==="
+if deploy_assert_present_fpga $'PRESENT=fb0\nDECODE=624x480\n' 2>/dev/null; then
+  bad "present-fb0 should fail"
+else
+  [[ $? -eq 7 ]] && ok "present-fb0-rc=7" || bad "present-fb0 unexpected rc"
+fi
+echo "=== GREEN: PRESENT=fpga ==="
+deploy_assert_present_fpga $'PRESENT=fpga\nIDLE_SCREEN=logo\n' && ok "present-fpga-ok" || bad "present-fpga-ok"
+echo "=== RED: IDLE_SCREEN=screensaver when logo required ==="
+if deploy_assert_idle_logo $'IDLE_SCREEN=screensaver\n' 2>/dev/null; then
+  bad "idle-ss should fail"
+else
+  [[ $? -eq 7 ]] && ok "idle-ss-rc=7" || bad "idle-ss unexpected rc"
+fi
+echo "=== GREEN: IDLE_SCREEN=logo ==="
+deploy_assert_idle_logo $'IDLE_SCREEN=logo\n' && ok "idle-logo-ok" || bad "idle-logo-ok"
+
 echo "=== RED: postconditions http fail ==="
 if deploy_assert_postconditions 1 abc abc \
     "/media/fat/misterplex_v2/misterplex.conf" "/media/fat/misterplex_v2" \
@@ -119,6 +136,7 @@ echo "200" >"$STATE/http"
 # Parent-measured conf pin (USER-OWNED); fake must keep it byte-stable unless RED case.
 echo "7f06132f0c00e90b35141bdc0c60ccc9" >"$STATE/conf_md5"
 echo "7f06132f0c00e90b35141bdc0c60ccc9" >"$STATE/conf_md5_post"
+echo "fpga" >"$STATE/present"
 
 cat >"$WORK/fake_sshm.sh" <<'FAKE'
 #!/usr/bin/env bash
@@ -159,6 +177,12 @@ if echo "$input" | grep -q 'DEPLOY_RESTART_VERIFY\|POST_N_DAEMON=\|DEPLOY_OK roo
   conf="${chosen}/misterplex.conf"
   echo "POST_CONF_MD5=$conf_post"
   echo "PRE_CONF_MD5=$conf_pre"
+  present=$(cat "$STATE_DIR/present" 2>/dev/null || echo fpga)
+  echo "POST_PRESENT=$present"
+  if [[ "${present}" != "fpga" && "${present}" != "both" ]]; then
+    echo "FAIL PRESENT=$present want=fpga|both"; exit 8
+  fi
+  echo "OK PRESENT=$present"
   echo "REMOTE_DISK_MD5=$disk"
   echo "POST_N_DAEMON=$n"
   echo "POST_PIDS=99"
@@ -348,6 +372,22 @@ else
     && ok "integ-http-bad-nonzero" || ok "integ-http-bad-nonzero"
 fi
 
+echo "=== RED integration: PRESENT=fb0 must fail deploy ==="
+echo "v2" >"$STATE/live_root"
+echo "1" >"$STATE/n_after"
+echo "$HOST_MD5" >"$STATE/live_md5"
+echo "$HOST_MD5" >"$STATE/disk_md5"
+echo "200" >"$STATE/http"
+echo "7f06132f0c00e90b35141bdc0c60ccc9" >"$STATE/conf_md5"
+echo "7f06132f0c00e90b35141bdc0c60ccc9" >"$STATE/conf_md5_post"
+echo "fb0" >"$STATE/present"
+if run_deploy "present-fb0" env -u MISTERPLEX_ROOT "$SCRIPT" "$WORK/fake.bin"; then
+  bad "integ-present-fb0 should fail"
+else
+  grep -qi 'PRESENT=fb0\|freezes idle\|want=fpga' "$WORK/present-fb0.out" \
+    && ok "integ-present-fb0-msg" || bad "integ-present-fb0-msg"
+fi
+
 echo "=== RED integration: conf mutated mid-deploy (USER-OWNED) ==="
 echo "v2" >"$STATE/live_root"
 echo "1" >"$STATE/n_after"
@@ -386,6 +426,7 @@ echo "$HOST_MD5" >"$STATE/disk_md5"
 echo "200" >"$STATE/http"
 echo "7f06132f0c00e90b35141bdc0c60ccc9" >"$STATE/conf_md5"
 echo "7f06132f0c00e90b35141bdc0c60ccc9" >"$STATE/conf_md5_post"
+echo "fpga" >"$STATE/present"
 : >"$STATE/scp_dests"
 : >"$STATE/scp_src_md5s"
 if run_deploy "green" env -u MISTERPLEX_ROOT \

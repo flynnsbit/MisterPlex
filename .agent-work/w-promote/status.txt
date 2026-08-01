@@ -1,8 +1,11 @@
 lane: w-promote
 branch: fix/rollback-honest
-defect: deploy false-success + restore zero postcond (main tree) — FIXED on this branch
-deploy: live /proc/exe md5 + n_daemon==1 + HTTP:3005 + conf byte-unchanged; host re-assert
-restore: PAIR_ID required -> rollback_v2; no PAIR_ID rc=10; RESTORE_ALLOW_HALF ignored
-tests: test_deploy_misterplexd true rc=0; test_rollback_honest true rc=0
+HEAD: (git)
+T1: deploy/restore fail-loud — host_postconditions + atomic restore PAIR_ID; MAIN tree scripts synced from this branch
+T2: PRESENT=fpga|both asserted (fb0 RED); IDLE_SCREEN=logo assert via DEPLOY_ASSERT_IDLE_LOGO=1; conf never rewritten
+T3: deploy_plex_core rbf_policy banned/do-not-ship refuse; DEPLOY_LOAD=none|menu
+T4: ERROR 18/19 WITHDRAWN in docs; judder is measured defect; ARM CPU% required on soak
+T5: P1 cold-boot BLOCKED ON USER APPROVAL — runbook step ready
+live_daemon_pin: 36b89bcb (integ 533a4bca); bak 3883f5ab
 device: parent-only
-DO_NOT_PROMOTE_DDR_DEFAULT: 1.54% frame loss bar
+tests: deploy rc=0 pass=52; rollback rc=0; conf rc=0

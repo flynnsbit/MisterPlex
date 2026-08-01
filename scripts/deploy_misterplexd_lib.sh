@@ -129,3 +129,59 @@ deploy_assert_postconditions() {
   fi
   return 0
 }
+
+# --- conf safety (USER-OWNED bytes; assert only, never rewrite) -----------------
+# PRESENT=fb0 freezes idle (initPresent skips fpga_.open unless fpga|both).
+# Args: conf body or file path. Returns 0 OK, 7 bad PRESENT, 4 NO-DATA.
+deploy_assert_present_fpga() {
+  local src="${1:-}" body
+  if [[ -z "$src" ]]; then
+    echo "FAIL PRESENT NO-DATA (empty conf)" >&2
+    return 4
+  fi
+  if [[ -f "$src" ]]; then body=$(cat "$src"); else body="$src"; fi
+  local val
+  val=$(printf '%s\n' "$body" | sed -n 's/^[[:space:]]*PRESENT=//p' | head -1 | tr -d '\r' | awk '{print $1}')
+  val=$(printf '%s' "$val" | tr 'A-Z' 'a-z')
+  if [[ -z "$val" ]]; then
+    echo "FAIL PRESENT missing (need fpga|both; fb0 freezes idle)" >&2
+    return 7
+  fi
+  case "$val" in
+    fpga|both)
+      echo "OK PRESENT=$val"
+      return 0
+      ;;
+    fb0)
+      echo "FAIL PRESENT=fb0 freezes idle (initPresent skips fpga_.open)" >&2
+      return 7
+      ;;
+    *)
+      echo "FAIL PRESENT=$val want=fpga|both" >&2
+      return 7
+      ;;
+  esac
+}
+
+# Promotion capture hygiene: static logo, not bouncing screensaver.
+# Assert only — never rewrite user conf. Returns 0 OK, 7 warn-as-fail when required.
+deploy_assert_idle_logo() {
+  local src="${1:-}" body val
+  if [[ -z "$src" ]]; then
+    echo "FAIL IDLE_SCREEN NO-DATA" >&2
+    return 4
+  fi
+  if [[ -f "$src" ]]; then body=$(cat "$src"); else body="$src"; fi
+  val=$(printf '%s\n' "$body" | sed -n 's/^[[:space:]]*IDLE_SCREEN=//p' | head -1 | tr -d '\r' | awk '{print $1}')
+  val=$(printf '%s' "$val" | tr 'A-Z' 'a-z')
+  if [[ -z "$val" ]]; then
+    echo "FAIL IDLE_SCREEN missing (want logo for promotion captures)" >&2
+    return 7
+  fi
+  if [[ "$val" == "logo" ]]; then
+    echo "OK IDLE_SCREEN=logo"
+    return 0
+  fi
+  echo "FAIL IDLE_SCREEN=$val want=logo (screensaver contaminates captures; user rule)" >&2
+  return 7
+}
