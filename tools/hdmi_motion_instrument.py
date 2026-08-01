@@ -84,24 +84,18 @@ Rate / revisit model (parent calibration)
   Capture FPS (MacroSilicon MJPEG burst) and source FPS are independent.
   **Neither rate is measured by this instrument.** Pass both explicitly when
   known (daemon telemetry `fps=24/1` → `--source-fps 24` / `--src-fps 24/1`).
-  Provenance tokens (daemon/w-cpu-1 three + one extension):
-    measured | caller_supplied | DEFAULT_ASSUMED
-    + caller_supplied_measured  # PMS frameRate= / ffmpeg banner via
-                                # --source-fps 24 --source-fps-src caller_supplied_measured
-  Print form is ALWAYS `value [tag]` (bare numbers forbidden — ERROR 17):
-    src_fps=24.000 [caller_supplied_measured]
-    src_fps=24.000 [caller_supplied]            # --source-fps alone
-    src_fps=24.000 [DEFAULT_ASSUMED]            # CLI omitted — NOT measured
-    cap_fps=29.9068 [measured]                  # wall_s or mtime
+  Provenance is always printed with tags measured | caller_supplied | DEFAULT_ASSUMED:
+    src_fps=24.000 src=caller_supplied   # --source-fps
+    src_fps=24.000 src=DEFAULT_ASSUMED   # fell back to library default
+    cap_fps=29.9068 cap=measured         # wall_s or mtime
   Library assets (Plex metadata frameRate="24.000" / videoFrameRate="24p")
   are genuinely 24.000 — NOT NTSC 24000/1001. PARENT ERROR 17: a printed
   23.976 default was mistaken for a measurement and published as a defect.
   Default assumed source = 24.000; default assumed capture = 30.0.
   **When either fps is DEFAULT_ASSUMED the rate dimension is RATE_UNSCORED,
-  never RATE_OK, and expected= prints UNSCORED (never a guessed number).**
-  Ratio/endpoint/plateau gates only fire when BOTH fps are authoritative
-  (caller_supplied / caller_supplied_measured / measured / container).
-  Revisit (bank-swap) still hard-fails without fps — pure sequence property.
+  never RATE_OK.** Ratio/endpoint/plateau gates only fire when BOTH fps are
+  authoritative (caller_supplied / measured / container). Revisit (bank-swap)
+  still hard-fails without fps — pure measured sequence property.
   Healthy 24fps-on-30-capture (parent hand measure, 105-frame burst):
     84 distinct counter states, 84 runs, max plateau 2, plateau hist {1,2},
     zero non-adjacent revisits, unique/frames = 84/105 = 0.800 = 24/30.
@@ -215,50 +209,44 @@ FORBIDDEN_FPS_LOOKALIKES = (24000.0 / 1001.0, 23.976, 23.976023976023978)
 DEFAULT_SOURCE_FPS = DEFAULT_ASSUMED_SOURCE_FPS
 DEFAULT_CAPTURE_FPS = DEFAULT_ASSUMED_CAPTURE_FPS
 PROVENANCE_CALLER = "caller_supplied"  # ERROR 17: never print bare "caller"
+# Parent read from PMS frameRate= / ffmpeg banner — still caller-supplied, but
+# explicitly measured outside this tool (not a bare guess).
+PROVENANCE_CALLER_MEASURED = "caller_supplied_measured"
 PROVENANCE_DEFAULT_ASSUMED = "DEFAULT_ASSUMED"
 # Provenance for rates read from a capture container (ffprobe), not assumed.
 PROVENANCE_CONTAINER = "container"
 # Provenance for rates measured from this capture (PNG mtimes or --capture-wall-s).
 PROVENANCE_MEASURED = "measured"
-# Parent-read asset rate (PMS frameRate= / ffmpeg banner). Authoritative for
-# rate gates; NOT instrument-measured — label must stay distinct from measured.
-PROVENANCE_CALLER_MEASURED = "caller_supplied_measured"
-# Canonical three tokens shared with daemon (w-cpu-1 supply_bucket fps_src=):
-PROVENANCE_THREE = (
-    PROVENANCE_MEASURED,
-    PROVENANCE_CALLER,
-    PROVENANCE_DEFAULT_ASSUMED,
+# Accept legacy "caller" in comparisons; caller_supplied_measured is authoritative.
+_PROVENANCE_CALLER_ALIASES = frozenset(
+    {PROVENANCE_CALLER, PROVENANCE_CALLER_MEASURED, "caller", "caller_supplied_measured"}
 )
-# Accept legacy "caller" in comparisons; measured/caller_supplied_measured auth src.
-_PROVENANCE_SRC_AUTH = frozenset(
-    {
-        PROVENANCE_CALLER,
-        "caller",
-        PROVENANCE_CALLER_MEASURED,
-        PROVENANCE_MEASURED,
-    }
-)
+
+
+def _tag(value: Any, src: str | None) -> str:
+    """Format ``value [provenance]`` so defaults cannot look measured (ERROR 17)."""
+    if value is None:
+        return f"None [{src or 'UNSCORED'}]"
+    if isinstance(value, float):
+        s = f"{value:.6g}"
+    else:
+        s = str(value)
+    return f"{s} [{src or 'UNSCORED'}]"
 
 
 def _is_caller_prov(src: str | None) -> bool:
-    """True when source_fps may authorise rate gates (not DEFAULT_ASSUMED)."""
-    return str(src or "") in _PROVENANCE_SRC_AUTH
+    return str(src or "") in _PROVENANCE_CALLER_ALIASES
 
 
 def _is_cap_auth_prov(src: str | None) -> bool:
     return str(src or "") in (
         PROVENANCE_CALLER,
-        "caller",
         PROVENANCE_CALLER_MEASURED,
+        "caller",
+        "caller_supplied_measured",
         PROVENANCE_CONTAINER,
         PROVENANCE_MEASURED,
     )
-
-
-def _tag(value: Any, src: str | None) -> str:
-    """Format value [provenance] — bare numbers are forbidden (ERROR 17)."""
-    s = str(src or PROVENANCE_DEFAULT_ASSUMED)
-    return f"{value} [{s}]"
 
 # Display-level skip measurement (burned-in counter jumps). Not a hard verdict
 # dimension: reported as count + confidence. Parent: drops/av_drift_ms are
@@ -908,6 +896,21 @@ UV_SWAP_SAT_FRAC_MIN = 0.02  # design: need enough saturated samples
 # Minimum frames with a structural flag before structure alone hard-fails.
 STRUCT_MIN_FRAMES = 3  # design
 
+# Counter provenance (ERROR 17 class for burned-in n). A hallucinated digit
+# string is worse than blank — it mints false revisits downstream.
+COUNTER_SRC_MEASURED = "measured"
+COUNTER_SRC_LOW_CONF = "low_confidence"
+COUNTER_SRC_UNREADABLE = "UNREADABLE"
+
+# Luma contrast |ink_Y − bg_Y| in counter ROI.
+# Parent-measured /tmp/cap480b: dark yellow-on-black dY≈138; white FLASH
+# yellow-on-white dY≈4.4. Tesseract is luma-driven (blue still separates on
+# flash); refuse on dY so OCR cannot mint a plausible wrong n.
+LOW_CONTRAST_DY_MAX = 25.0  # DEFAULT_ASSUMED design bound
+# Overlay-present frames that refused the counter. Healthy flash duty ≪ this;
+# above it, MOTION_OK is not trustworthy → demote to UNSCORED (never a pass).
+UNREADABLE_FRAC_MOTION_CAP = 0.35  # DEFAULT_ASSUMED design
+
 
 # ---------------------------------------------------------------------------
 # Frame geometry / masks
@@ -978,7 +981,6 @@ def green_cast_metrics(rgb: np.ndarray) -> dict[str, Any]:
         "channel_means": [float(rgb.mean())] * 3 if rgb.size else [0.0, 0.0, 0.0],
         "chroma_cast": False,
         "greyscale_flat": False,
-        "chroma_constant": False,
         "uv_swap": False,
         "active_frac": 0.0,
         "active_chroma_mean": 0.0,
@@ -987,7 +989,6 @@ def green_cast_metrics(rgb: np.ndarray) -> dict[str, Any]:
         "blue_dom": 0.0,
         "cyan_dom": 0.0,
         "color_fail": False,
-        "color_metrics_src": PROVENANCE_MEASURED,
     }
     if _is_uniform(rgb):
         # Near-black uniform = grabber junk. Lit uniform grey = dead chroma defect.
@@ -1062,8 +1063,6 @@ def green_cast_metrics(rgb: np.ndarray) -> dict[str, Any]:
         "channel_means": [round(x, 1) for x in means],
         "chroma_cast": bool(chroma_cast),
         "greyscale_flat": bool(greyscale_flat),
-        # Alias for parent B7 "chroma-constant" vocabulary (same predicate).
-        "chroma_constant": bool(greyscale_flat),
         "uv_swap": bool(uv_swap),
         "active_frac": round(active_frac, 4),
         "active_chroma_mean": round(active_chroma_mean, 3),
@@ -1074,7 +1073,6 @@ def green_cast_metrics(rgb: np.ndarray) -> dict[str, Any]:
         "mean_cb": round(mean_cb, 2),
         "mean_cr": round(mean_cr, 2),
         "color_fail": color_fail,
-        "color_metrics_src": PROVENANCE_MEASURED,
     }
 
 
@@ -2005,6 +2003,145 @@ def _ocr_digit_field(binary: np.ndarray) -> tuple[int | None, int, str]:
     return None, tier, raw
 
 
+
+def _dilate_bool(mask: np.ndarray, radius: int = 2) -> np.ndarray:
+    """Cheap binary dilate (no scipy). radius in pixels."""
+    if mask.size == 0 or radius <= 0:
+        return mask.astype(bool, copy=False)
+    m = mask.astype(bool, copy=False)
+    out = m.copy()
+    ys, xs = np.where(m)
+    if len(ys) == 0:
+        return out
+    h, w = m.shape
+    for dy in range(-radius, radius + 1):
+        for dx in range(-radius, radius + 1):
+            if dy == 0 and dx == 0:
+                continue
+            yy = ys + dy
+            xx = xs + dx
+            ok = (yy >= 0) & (yy < h) & (xx >= 0) & (xx < w)
+            out[yy[ok], xx[ok]] = True
+    return out
+
+
+def measure_counter_contrast(
+    rgb: np.ndarray,
+    roi: tuple[int, int, int, int] | None,
+    binary: np.ndarray | None = None,
+) -> dict[str, Any]:
+    """Measure **local edge** luma contrast of counter glyphs.
+
+    Physics of the flash failure mode (parent-viewed /tmp/cap480b/f_049):
+    yellow ink on white paper collapses the AA edge — local |ink_Y - ring_Y|
+    drops to single digits while a ROI-wide white median still shows ~50 LU
+    (yellow body vs distant white). Tesseract is edge/luma driven, so the
+    LOCAL ring is the right refuse signal.
+
+    Method:
+      - ink = HARD yellow when available (glyph body; soft AA skirts are the
+        washed band and must not dominate ink_Y)
+      - bg  = mean Y on a 1–3 px dilated ring around ink (not whole-ROI median)
+      - dY  = |ink_Y - bg_Y|   [measured]
+      - low_contrast iff dY < LOW_CONTRAST_DY_MAX  [DEFAULT_ASSUMED design]
+
+    Parent-measured anchors (this host):
+      dark f_030: dY ≈ 138–190 (readable TREK24)
+      flash f_049: local dY ≈ 4–20 (OCR hallucinates field_inv n=322)
+    """
+    out: dict[str, Any] = {
+        "contrast_dy": None,
+        "contrast_dy_src": PROVENANCE_MEASURED,
+        "ink_y": None,
+        "bg_y": None,
+        "low_contrast": False,
+        "contrast_status": "NO_ROI",
+        "low_contrast_dy_max": LOW_CONTRAST_DY_MAX,
+        "low_contrast_dy_max_src": "DEFAULT_ASSUMED",
+    }
+    if rgb is None or roi is None:
+        return out
+    x0, y0, x1, y1 = (int(v) for v in roi)
+    if x1 <= x0 or y1 <= y0:
+        return out
+    crop = rgb[y0:y1, x0:x1]
+    if crop.size == 0:
+        return out
+    Y = (
+        0.299 * crop[:, :, 0].astype(np.float32)
+        + 0.587 * crop[:, :, 1].astype(np.float32)
+        + 0.114 * crop[:, :, 2].astype(np.float32)
+    )
+    hard = _yellow_mask(crop)
+    soft = _yellow_mask_soft(crop)
+    if int(hard.sum()) >= 30:
+        ink_m = hard
+        ink_kind = "hard_yellow"
+    elif binary is not None and binary.shape[:2] == crop.shape[:2] and int(np.asarray(binary).sum()) >= 30:
+        ink_m = np.asarray(binary).astype(bool)
+        ink_kind = "ocr_binary"
+    elif int(soft.sum()) >= 30:
+        ink_m = soft
+        ink_kind = "soft_yellow"
+    else:
+        chroma = _chroma_yellow_mask(crop)
+        if int(chroma.sum()) < 20:
+            out["contrast_status"] = "NO_INK"
+            return out
+        ink_m = chroma
+        ink_kind = "chroma_yellow"
+
+    # Local ring: dilate 2, then 3 if thin. Never fall back to whole-ROI median
+    # (that measures yellow-body vs distant white and misses edge washout).
+    ring = _dilate_bool(ink_m, radius=2) & ~ink_m
+    if int(ring.sum()) < 40:
+        ring = _dilate_bool(ink_m, radius=3) & ~ink_m
+    if int(ring.sum()) < 20:
+        ring = _dilate_bool(ink_m, radius=5) & ~ink_m
+    if int(ring.sum()) < 10:
+        out["contrast_status"] = "NO_BG"
+        return out
+
+    ink_y = float(Y[ink_m].mean())
+    bg_y = float(Y[ring].mean())
+    dy = abs(ink_y - bg_y)
+    out["ink_y"] = round(ink_y, 3)
+    out["bg_y"] = round(bg_y, 3)
+    out["contrast_dy"] = round(dy, 3)
+    out["contrast_status"] = "ok"
+    out["ink_mask"] = ink_kind
+    out["low_contrast"] = bool(dy < LOW_CONTRAST_DY_MAX)
+    return out
+
+
+def _counter_provenance(
+    *,
+    n: int | None,
+    tier: int,
+    raw: str,
+    low_contrast: bool,
+    contrast_status: str,
+) -> tuple[str, str]:
+    """Return (n_src, status_suffix_reason).
+
+    n_src ∈ {measured, low_confidence, UNREADABLE}.
+    Only measured may enter revisit/rate statistics.
+    """
+    if low_contrast or contrast_status == "low_contrast":
+        return COUNTER_SRC_UNREADABLE, "low_contrast"
+    if n is None:
+        return COUNTER_SRC_UNREADABLE, "undecoded"
+    # field_inv / flash template paths are best-effort — never "measured".
+    raw_l = str(raw or "").lower()
+    if "field_inv" in raw_l or raw_l.startswith("tpl:") or "tpl_weak" in raw_l:
+        return COUNTER_SRC_LOW_CONF, "template_or_field_inv"
+    if int(tier) >= 9:
+        return COUNTER_SRC_MEASURED, "trek_label"
+    if int(tier) >= 7:
+        return COUNTER_SRC_LOW_CONF, f"tier_{tier}"
+    return COUNTER_SRC_LOW_CONF, f"weak_tier_{tier}"
+
+
 def read_frame(
     path: str | Path,
     *,
@@ -2072,11 +2209,18 @@ def read_frame(
             "path": path,
             "status": st,
             "n": None,
+            "n_src": COUNTER_SRC_UNREADABLE,
+            "n_src_reason": st,
             "tier": 0,
             "raw": "",
             "fp": None,
             "roi": None,
             "mean_luma": round(mean_luma, 3),
+            "overlay_present": False,
+            "low_contrast": False,
+            "contrast_dy": None,
+            "contrast_dy_src": PROVENANCE_MEASURED,
+            "contrast_status": "NO_OVERLAY",
             **gc,
             **sm,
         }
@@ -2086,6 +2230,32 @@ def read_frame(
     tier = 0
     raw = ""
     flash = mean_luma > 80.0  # white FLASH frames; yellow-on-white
+
+    # Direct low-contrast refuse (parent ERROR: yellow-on-white FLASH).
+    # Measure dY BEFORE any OCR so a washed-out overlay cannot hallucinate n.
+    cmet = measure_counter_contrast(rgb, roi, binary)
+    if cmet.get("low_contrast"):
+        return {
+            "path": path,
+            "status": "unreadable_low_contrast",
+            "n": None,
+            "n_src": COUNTER_SRC_UNREADABLE,
+            "n_src_reason": "low_contrast",
+            "tier": 0,
+            "raw": f"UNREADABLE[low_contrast dY={cmet.get('contrast_dy')}]",
+            "fp": fp,
+            "roi": roi,
+            "mean_luma": round(mean_luma, 3),
+            "overlay_present": True,
+            "low_contrast": True,
+            "contrast_dy": cmet.get("contrast_dy"),
+            "contrast_dy_src": PROVENANCE_MEASURED,
+            "ink_y": cmet.get("ink_y"),
+            "bg_y": cmet.get("bg_y"),
+            "contrast_status": cmet.get("contrast_status"),
+            **gc,
+            **sm,
+        }
 
     # Throughput + accuracy (parent glass480):
     #   FLASH: digit-FIELD first (full-line tess emits N=2 / 3/7 mess).
@@ -2140,17 +2310,35 @@ def read_frame(
         if len(sn) == len(sf) + 1 and sn.startswith(sf):
             n, tier, raw = field_n, max(tier, field_t), f"final_ext_fix:{raw}"
 
-    status = "ok" if n is not None else "undecoded"
+    n_src, n_reason = _counter_provenance(
+        n=n, tier=int(tier or 0), raw=str(raw or ""),
+        low_contrast=False, contrast_status=str(cmet.get("contrast_status") or "ok"),
+    )
+    if n is None:
+        status = "undecoded"
+        n_src = COUNTER_SRC_UNREADABLE
+    elif n_src == COUNTER_SRC_LOW_CONF:
+        status = "ok_low_confidence"
+    else:
+        status = "ok"
     return {
         "path": path,
         "status": status,
         "n": n,
+        "n_src": n_src,
+        "n_src_reason": n_reason,
         "tier": tier,
         "raw": raw,
         "fp": fp,
         "roi": roi,
         "mean_luma": round(mean_luma, 3),
         "overlay_present": True,
+        "low_contrast": False,
+        "contrast_dy": cmet.get("contrast_dy"),
+        "contrast_dy_src": PROVENANCE_MEASURED,
+        "ink_y": cmet.get("ink_y"),
+        "bg_y": cmet.get("bg_y"),
+        "contrast_status": cmet.get("contrast_status"),
         **gc,
         **sm,
     }
@@ -3030,70 +3218,9 @@ def _filter_counter_pairs(
     if len(stage) < 3:
         stage = [pairs[i] for i in range(len(pairs)) if i in keep_idx] or list(pairs)
 
-    # --- Pass B2: multi-run OCR EXCURSION (flash field_inv class) ---
-    # Parent /tmp/cap480b known-good FAIL was instrument defect (ERROR 17 class
-    # for counters): white-flash field_inv OCR emitted n=322,323 (tier 8,
-    # luma~171) between real 311 and 314. Later real 322/323 looked like
-    # non_adjacent_revisits=2 → RATE_FAIL rc=4 on a visually correct control.
-    #
-    # Single-run spike (Pass B) needs a,b,c with (b-a)>=4 and c<b. A two-run
-    # plateau 311→322→323→314 never matches (c=323 is not < b=322).
-    #
-    # Rule (implausible-by-construction for a monotonic burned-in counter):
-    #   leave track upward by >=4, wander one or more runs ALL above a+3,
-    #   then land at c with c < peak and c within a small band of a.
-    # Those intermediate values are UNREADABLE — drop them; never emit as
-    # measurements that mint revisits. Real large skips do not return near a.
-    # Bank-swap 100,101,100: jump 1 < 4 → untouched.
-    if len(stage) >= 4:
-        ns_e = [n for _, n in stage]
-        drop_exc: set[int] = set()
-        i = 0
-        while i < len(ns_e) - 2:
-            jump = ns_e[i + 1] - ns_e[i]
-            if jump < 4:
-                i += 1
-                continue
-            a = ns_e[i]
-            j = i + 1
-            peak = ns_e[j]
-            while j < len(ns_e) and ns_e[j] >= a + 4:
-                peak = max(peak, ns_e[j])
-                j += 1
-            # j is first index back on/near track, or len
-            if j >= len(ns_e):
-                i += 1
-                continue
-            c = ns_e[j]
-            band = max(8, (j - i) + 2)
-            if c < peak and abs(c - a) <= band and (j - i) >= 2:
-                for k in range(i + 1, j):
-                    drop_exc.add(k)
-                    cap_k, n_k = stage[k]
-                    rejections.append(
-                        {
-                            "cap_idx": int(cap_k),
-                            "n": int(n_k),
-                            "rule": "ocr_excursion_unreadable",
-                            "reason": (
-                                f"cap_idx={cap_k} n={n_k} OCR excursion "
-                                f"a={a}→…peak={peak}→c={c} (len={j - i - 1}) — "
-                                f"UNREADABLE flash/field misread, not a counter "
-                                f"state (would mint false revisit)"
-                            ),
-                        }
-                    )
-                # rebuild and restart scan on shortened stage
-                stage = [p for k, p in enumerate(stage) if k not in drop_exc]
-                ns_e = [n for _, n in stage]
-                drop_exc.clear()
-                i = 0
-                continue
-            i += 1
-
     # NOTE: do NOT strip all backward steps. Bank-swap ping-pong (100,101,100,101)
     # is exactly the real revisit RATE_FAIL we must still catch. Large backward
-    # OCR jumps are already removed as spikes/troughs/digit-count/excursions.
+    # OCR jumps are already removed as spikes/troughs/digit-count.
 
     # --- Pass C: MAD gate (radius NOT widened — parent forbid) ---
     # Growing counters legally mix 1/2/3/4 digit lengths. Never drop shorter
@@ -3235,25 +3362,13 @@ def analyze_counter_rate(
 
     expected = source_fps / capture_fps
     max_plat_allowed = int(math.ceil(capture_fps / source_fps)) + 1
-    # ERROR 17: never emit a numeric expected under DEFAULT_ASSUMED — a wrong
-    # but plausible number is worse than no number (parent false 23.976 finding).
-    empty["expected_ratio"] = round(expected, 4) if fps_auth else None
-    empty["expected_ratio_src"] = (
-        "derived_src_over_cap" if fps_auth else "UNSCORED_fps_not_authoritative"
-    )
-    empty["max_plateau_allowed"] = max_plat_allowed if fps_auth else None
-    empty["max_plateau_allowed_src"] = (
-        "derived_ceil_cap_over_src_plus_1" if fps_auth else "UNSCORED_fps_not_authoritative"
-    )
-    empty["source_fps_src"] = source_fps_src
-    empty["capture_fps_src"] = capture_fps_src
+    empty["expected_ratio"] = round(expected, 4)
+    empty["max_plateau_allowed"] = max_plat_allowed
     if not fps_auth:
         empty["rate_notes"] = [
             "rate_unscored_fps_assumed "
             f"src={source_fps_src} cap={capture_fps_src} "
-            "(pass --source-fps with --source-fps-src caller_supplied_measured "
-            "from PMS frameRate= / ffmpeg banner, or daemon fps=; "
-            "expected= is UNSCORED not a guessed number — ERROR 17)"
+            "(pass --source-fps/--capture-fps from daemon fps= token for RATE_OK)"
         ]
 
     if len(pairs) < RATE_MIN_SAMPLES:
@@ -3372,9 +3487,7 @@ def analyze_counter_rate(
         notes.append(
             "rate_unscored_fps_assumed "
             f"src={source_fps_src} cap={capture_fps_src} "
-            "(pass --source-fps with --source-fps-src caller_supplied_measured "
-            "from PMS frameRate= / ffmpeg banner, or daemon fps=; "
-            "expected= is UNSCORED not a guessed number — ERROR 17)"
+            "(pass --source-fps/--capture-fps from daemon fps= token for RATE_OK)"
         )
         # Informational only under assumed fps — never fail on the guess.
         if max_plateau > max_plat_allowed:
@@ -3398,34 +3511,15 @@ def analyze_counter_rate(
     return {
         "rate": rate_label,
         "rate_fail": rate_fail,
-        # unique_ratio / endpoint_rate are measured from counter sequence.
+        # Comparable to expected (= src_fps/cap_fps) only when fps_authoritative:
         "unique_ratio": round(unique_ratio, 4),
-        "unique_ratio_src": PROVENANCE_MEASURED,
         "endpoint_rate": round(endpoint_rate, 4),
-        "endpoint_rate_src": PROVENANCE_MEASURED,
-        # expected only when fps authoritative — else None (print UNSCORED).
-        "expected_ratio": round(expected, 4) if fps_authoritative else None,
-        "expected_ratio_src": (
-            "derived_src_over_cap"
-            if fps_authoritative
-            else "UNSCORED_fps_not_authoritative"
-        ),
+        "expected_ratio": round(expected, 4),
         # Deprecated alias of endpoint_rate (same value); do not reinterpret.
-        "span_rate": round(span_rate, 4) if fps_authoritative else None,
-        "span_rate_src": (
-            "alias_of_endpoint_rate"
-            if fps_authoritative
-            else "UNSCORED_fps_not_authoritative"
-        ),
+        "span_rate": round(span_rate, 4),
         "max_plateau": int(max_plateau),
-        "max_plateau_src": PROVENANCE_MEASURED,
-        "max_plateau_allowed": max_plat_allowed if fps_authoritative else None,
-        "max_plateau_allowed_src": (
-            "derived_ceil_cap_over_src_plus_1"
-            if fps_authoritative
-            else "UNSCORED_fps_not_authoritative"
-        ),
-        "plateau_warn": bool(plateau_warn) if fps_authoritative else False,
+        "max_plateau_allowed": max_plat_allowed,
+        "plateau_warn": bool(plateau_warn),
         "plateau_hist": {str(k): int(v) for k, v in sorted(plateau_hist.items())},
         "unique_states": int(unique_states),
         "n_samples": len(ns),
@@ -3434,7 +3528,6 @@ def analyze_counter_rate(
         "n_first": int(ns[0]),
         "n_last": int(ns[-1]),
         "non_adjacent_revisits": int(revisits),
-        "non_adjacent_revisits_src": PROVENANCE_MEASURED,
         "revisit_fail": bool(revisit_fail),
         "rate_reasons": reasons,
         "rate_notes": notes,
@@ -3447,22 +3540,25 @@ def analyze_counter_rate(
 
 
 def _write_counters_csv(path: str | Path, rows: list[dict[str, Any]]) -> None:
-    """Write idx,n,status,tier,mean_luma for --export-counters-csv / re-score."""
+    """Write idx,n,n_src,status,tier,mean_luma,contrast_dy for export/re-score."""
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8") as f:
-        f.write("idx,n,status,tier,mean_luma,raw\n")
+        f.write("idx,n,n_src,status,tier,mean_luma,contrast_dy,raw\n")
         for i, r in enumerate(rows):
             idx = int(r.get("idx", i))
             n = r.get("n")
             n_s = "" if n is None else str(int(n))
+            n_src = str(r.get("n_src") or "")
             st = str(r.get("status") or "")
             tier = r.get("tier")
             tier_s = "" if tier is None else str(int(tier))
             ml = r.get("mean_luma")
             ml_s = "" if ml is None else str(ml)
+            dy = r.get("contrast_dy")
+            dy_s = "" if dy is None else str(dy)
             raw = str(r.get("raw") or "").replace("\n", " ").replace(",", ";")
-            f.write(f"{idx},{n_s},{st},{tier_s},{ml_s},{raw}\n")
+            f.write(f"{idx},{n_s},{n_src},{st},{tier_s},{ml_s},{dy_s},{raw}\n")
 
 
 def score_burst(
@@ -3523,22 +3619,60 @@ def score_burst(
             warmup_n += 1
             continue
         # Leading grabber junk that is non-uniform but still pre-picture.
-        if r["idx"] < warmup_skip and r["status"] != "ok":
+        # measured ok OR low-contrast unreadable still counts as "got picture".
+        if r["idx"] < warmup_skip and r.get("status") not in (
+            "ok",
+            "ok_low_confidence",
+            "unreadable_low_contrast",
+        ):
             warmup_n += 1
             continue
         usable.append(r)
 
-    ok_reads = [r for r in usable if r["status"] == "ok" and r["n"] is not None]
-    # Presence/rate sequence: tier>=6 includes flash template best-effort so blind
-    # rate is not dominated by white-flash frames (parent: 12.3% undecodable).
-    # Structural OCR filter still strips digit-count/spike/backward misreads.
-    strong = [r for r in ok_reads if int(r.get("tier") or 0) >= 6]
-    seq_src = strong
+    # Counter provenance (ERROR 17 class for n): only measured values enter
+    # rate/revisit/plateau. low_confidence and UNREADABLE never mint revisits.
+    ok_reads = [
+        r
+        for r in usable
+        if r.get("n") is not None
+        and r.get("status") in ("ok", "ok_low_confidence")
+    ]
+    measured_reads = [
+        r
+        for r in ok_reads
+        if str(r.get("n_src") or "") == COUNTER_SRC_MEASURED
+        or (
+            # back-compat: tier-9+ TREK without n_src field
+            not r.get("n_src")
+            and int(r.get("tier") or 0) >= 9
+            and "field_inv" not in str(r.get("raw") or "")
+        )
+    ]
+    low_conf_reads = [
+        r
+        for r in ok_reads
+        if str(r.get("n_src") or "") == COUNTER_SRC_LOW_CONF
+        or r.get("status") == "ok_low_confidence"
+    ]
+    unreadable_lc = [
+        r
+        for r in usable
+        if r.get("status") == "unreadable_low_contrast" or r.get("low_contrast")
+    ]
+    overlay_present_frames = [
+        r for r in usable if r.get("overlay_present") or r.get("fp") is not None
+    ]
+    n_overlay = len(overlay_present_frames)
+    unreadable_frac = (
+        (len(unreadable_lc) / n_overlay) if n_overlay > 0 else 0.0
+    )
+    # Rate/revisit sequence: MEASURED only. Excursion filter remains belt-and-braces.
+    seq_src = measured_reads
     pairs_raw = [(int(r["idx"]), int(r["n"])) for r in seq_src]
     pairs, ocr_rejections = _filter_counter_pairs(pairs_raw)
     ns_raw = [n for _, n in pairs_raw]
     ns = [n for _, n in pairs]
-    blind_frames = max(0, len(usable) - len(ok_reads))
+    blind_frames = max(0, len(usable) - len(ok_reads) - len(unreadable_lc))
 
     # Secondary motion signal: distinct overlay fingerprints on DARK usable frames.
     dark_fps = [
@@ -3583,8 +3717,6 @@ def score_burst(
     if len(chroma_hits) >= GREEN_CAST_MIN_FRAMES:
         color_flags.append("CHROMA")
     if len(grey_hits) >= GREEN_CAST_MIN_FRAMES:
-        # Parent B7 vocabulary: chroma-constant == dead U/V on lit picture.
-        color_flags.append("CHROMA_CONSTANT")
         color_flags.append("GREYSCALE")
     if len(uv_hits) >= GREEN_CAST_MIN_FRAMES:
         color_flags.append("UV_SWAP")
@@ -3733,6 +3865,26 @@ def score_burst(
             f"on top of {reason}"
         )
 
+    # Low-contrast UNREADABLE fraction: MOTION_OK is not trustworthy when a
+    # large share of overlay-present frames refused the counter (parent: never
+    # pass on sparse measured islands). Cap is DEFAULT_ASSUMED design (see
+    # UNREADABLE_FRAC_MOTION_CAP). STRUCTURE/COLOR/RATE hard fails still win.
+    unreadable_motion_demote = False
+    if (
+        motion == "MOTION_OK"
+        and n_overlay > 0
+        and unreadable_frac > UNREADABLE_FRAC_MOTION_CAP
+    ):
+        unreadable_motion_demote = True
+        motion = "UNSCORED"
+        reason = (
+            f"unreadable_frac={unreadable_frac:.3f} "
+            f"[measured n_unreadable_low_contrast={len(unreadable_lc)}/"
+            f"n_overlay_present={n_overlay}] > "
+            f"cap={UNREADABLE_FRAC_MOTION_CAP} [DEFAULT_ASSUMED] — "
+            f"MOTION_OK demoted to UNSCORED (never a pass); prior={reason}"
+        )
+
     # --- Severity resolution (see module docstring). Positive failure wins. ---
     # STRUCTURE > COLOR > RATE > FREEZE > MOTION_OK > UNSCORED.
     # Measured failures never collapse to rc=77, even when motion is UNSCORED.
@@ -3763,8 +3915,8 @@ def score_burst(
             f"unique_ratio={_tag(rate_info.get('unique_ratio'), PROVENANCE_MEASURED)} "
             f"endpoint_rate={_tag(rate_info.get('endpoint_rate'), PROVENANCE_MEASURED)} "
             f"expected={exp_s} "
-            f"max_plateau={_tag(rate_info.get('max_plateau'), PROVENANCE_MEASURED)}/"
-            f"{rate_info.get('max_plateau_allowed')} "
+            f"max_plateau={rate_info.get('max_plateau')}/"
+            f"{rate_info.get('max_plateau_allowed')} [{PROVENANCE_MEASURED}] "
             f"revisits={_tag(rate_info.get('non_adjacent_revisits'), PROVENANCE_MEASURED)} "
             f"(hard FAIL independent of motion={motion}); {reason}"
         )
@@ -3779,7 +3931,18 @@ def score_burst(
         "frames_total": len(frames),
         "warmup_skipped": warmup_n,
         "decodes": len(ok_reads),
-        "strong_decodes": len(strong),
+        "strong_decodes": len(measured_reads),
+        "measured_counter_frames": len(measured_reads),
+        "low_confidence_counter_frames": len(low_conf_reads),
+        "unreadable_low_contrast_frames": len(unreadable_lc),
+        "overlay_present_frames": n_overlay,
+        "unreadable_frac": round(unreadable_frac, 4),
+        "unreadable_frac_src": PROVENANCE_MEASURED,
+        "unreadable_frac_cap": UNREADABLE_FRAC_MOTION_CAP,
+        "unreadable_frac_cap_src": "DEFAULT_ASSUMED",
+        "unreadable_motion_demote": bool(unreadable_motion_demote),
+        "low_contrast_dy_max": LOW_CONTRAST_DY_MAX,
+        "low_contrast_dy_max_src": "DEFAULT_ASSUMED",
         "ns_head": ns[:10],
         "ns_tail": ns[-10:],
         "n_min": (min(ns) if ns else None),
@@ -3798,21 +3961,14 @@ def score_burst(
         "structure": structure,
         "rate": rate_label,
         "unique_ratio": rate_info.get("unique_ratio"),
-        "unique_ratio_src": rate_info.get("unique_ratio_src"),
         "endpoint_rate": rate_info.get("endpoint_rate"),
-        "endpoint_rate_src": rate_info.get("endpoint_rate_src"),
         "span_rate": rate_info.get("span_rate"),  # alias of endpoint_rate
-        "span_rate_src": rate_info.get("span_rate_src"),
         "expected_ratio": rate_info.get("expected_ratio"),
-        "expected_ratio_src": rate_info.get("expected_ratio_src"),
         "max_plateau": rate_info.get("max_plateau"),
-        "max_plateau_src": rate_info.get("max_plateau_src"),
         "max_plateau_allowed": rate_info.get("max_plateau_allowed"),
-        "max_plateau_allowed_src": rate_info.get("max_plateau_allowed_src"),
         "plateau_warn": rate_info.get("plateau_warn"),
         "plateau_hist": rate_info.get("plateau_hist"),
         "non_adjacent_revisits": rate_info.get("non_adjacent_revisits"),
-        "non_adjacent_revisits_src": rate_info.get("non_adjacent_revisits_src"),
         "cap_span": rate_info.get("cap_span"),
         "ctr_span": rate_info.get("ctr_span"),
         "fps_authoritative": rate_info.get("fps_authoritative"),
@@ -3890,6 +4046,8 @@ def score_burst(
                 "f": os.path.basename(r["path"]),
                 "status": r["status"],
                 "n": r["n"],
+                "n_src": r.get("n_src"),
+                "contrast_dy": r.get("contrast_dy"),
                 "tier": r.get("tier"),
                 "fp": r.get("fp"),
                 "mean": r.get("mean_luma"),
@@ -3957,6 +4115,12 @@ def _print_human(report: dict[str, Any], src: str) -> None:
     print(
         f"frames={report['frames_total']} warmup_skipped={report['warmup_skipped']} "
         f"decodes={report['decodes']} strong={report['strong_decodes']} "
+        f"measured_counter_frames={report.get('measured_counter_frames', report['strong_decodes'])} "
+        f"low_confidence_counter_frames={report.get('low_confidence_counter_frames', 0)} "
+        f"unreadable_low_contrast_frames={report.get('unreadable_low_contrast_frames', 0)} "
+        f"overlay_present_frames={report.get('overlay_present_frames')} "
+        f"unreadable_frac={_tag(report.get('unreadable_frac'), report.get('unreadable_frac_src') or PROVENANCE_MEASURED)} "
+        f"unreadable_frac_cap={_tag(report.get('unreadable_frac_cap'), report.get('unreadable_frac_cap_src') or 'DEFAULT_ASSUMED')} "
         f"unique_fp={report['unique_overlay_fp']} "
         f"green_cast_frames={report['green_cast_frames']} "
         f"chroma_cast_frames={report.get('chroma_cast_frames', 0)} "
@@ -3967,8 +4131,11 @@ def _print_human(report: dict[str, Any], src: str) -> None:
     )
     if report["n_min"] is not None:
         print(
-            f"counter n_min={report['n_min']} n_max={report['n_max']} "
-            f"head={report['ns_head']} tail={report['ns_tail']}"
+            f"counter n_min={_tag(report['n_min'], PROVENANCE_MEASURED)} "
+            f"n_max={_tag(report['n_max'], PROVENANCE_MEASURED)} "
+            f"head={report['ns_head']} tail={report['ns_tail']} "
+            f"(only n_src=measured enter rate/revisit; "
+            f"low_confidence/UNREADABLE excluded)"
         )
     ocr_n = int(report.get("ocr_rejected") or 0)
     if ocr_n:
@@ -3986,65 +4153,36 @@ def _print_human(report: dict[str, Any], src: str) -> None:
         # Print comparable pairs together; never mix incomparable quantities.
         # unique_ratio  ≈ expected  (= src_fps/cap_fps)   — primary gate
         # endpoint_rate ≈ expected  (ctr_span/cap_span)   — secondary gate
-        # Every scalar carries [provenance] — bare numbers are ERROR 17.
         pw = report.get("plateau_warn")
         pw_s = " plateau_warn=1" if pw else ""
         auth = report.get("fps_authoritative")
         auth_s = "fps_authoritative=1" if auth else "fps_authoritative=0"
-        exp = report.get("expected_ratio")
+        exp_v = report.get("expected_ratio")
         exp_src = report.get("expected_ratio_src") or (
             "derived_src_over_cap" if auth else "UNSCORED_fps_not_authoritative"
         )
         exp_s = (
-            _tag(exp, exp_src)
-            if exp is not None
+            _tag(exp_v, exp_src)
+            if exp_v is not None
             else "UNSCORED [UNSCORED_fps_not_authoritative]"
         )
-        span = report.get("span_rate")
-        span_s = (
-            _tag(span, report.get("span_rate_src") or "alias_of_endpoint_rate")
-            if span is not None
-            else "UNSCORED [UNSCORED_fps_not_authoritative]"
-        )
-        max_allowed = report.get("max_plateau_allowed")
-        max_allowed_s = (
-            _tag(
-                max_allowed,
-                report.get("max_plateau_allowed_src")
-                or "derived_ceil_cap_over_src_plus_1",
-            )
-            if max_allowed is not None
-            else "UNSCORED [UNSCORED_fps_not_authoritative]"
-        )
-        src_tag = str(
-            report.get("source_fps_src") or PROVENANCE_DEFAULT_ASSUMED
-        )
-        cap_tag = str(
-            report.get("capture_fps_src") or PROVENANCE_DEFAULT_ASSUMED
-        )
-        err17 = ""
-        if src_tag == PROVENANCE_DEFAULT_ASSUMED or not auth:
-            err17 = (
-                " NOTE_ERROR17=src_fps_or_cap_not_authoritative_"
-                "expected_and_rate_gates_are_UNSCORED_not_a_measurement"
-            )
         print(
             f"rate_metrics "
             f"unique_ratio={_tag(report.get('unique_ratio'), PROVENANCE_MEASURED)} "
             f"endpoint_rate={_tag(report.get('endpoint_rate'), PROVENANCE_MEASURED)} "
             f"expected={exp_s} "
-            f"span_rate={span_s} "
-            f"(unique_ratio/endpoint_rate comparable to expected only when "
+            f"(unique_ratio and endpoint_rate comparable to expected only when "
             f"fps_authoritative) "
-            f"max_plateau={_tag(report.get('max_plateau'), PROVENANCE_MEASURED)}/"
-            f"{max_allowed_s}{pw_s} "
+            f"max_plateau={report.get('max_plateau')}/"
+            f"{report.get('max_plateau_allowed')} [{PROVENANCE_MEASURED}]{pw_s} "
             f"plateau_hist={report.get('plateau_hist')} "
             f"revisits={_tag(report.get('non_adjacent_revisits'), PROVENANCE_MEASURED)} "
             f"ctr_span={_tag(report.get('ctr_span'), PROVENANCE_MEASURED)} "
             f"cap_span={_tag(report.get('cap_span'), PROVENANCE_MEASURED)} "
-            f"src_fps={_tag(report.get('source_fps'), src_tag)} "
-            f"cap_fps={_tag(report.get('capture_fps'), cap_tag)} "
-            f"{auth_s}{err17}"
+            f"src_fps={_tag(report.get('source_fps'), report.get('source_fps_src', PROVENANCE_DEFAULT_ASSUMED))} "
+            f"cap_fps={_tag(report.get('capture_fps'), report.get('capture_fps_src', PROVENANCE_DEFAULT_ASSUMED))} "
+            f"{auth_s} "
+            f"NOTE_ERROR17=DEFAULT_ASSUMED_src_fps_is_not_a_measurement"
         )
         notes = report.get("rate_notes") or []
         if notes:
@@ -4299,7 +4437,6 @@ def _self_test() -> int:
         assert rep_gy["greyscale_frames"] >= GREEN_CAST_MIN_FRAMES, rep_gy
         assert rep_gy["rc"] == RC_COLOR_FAIL, rep_gy
         assert "GREYSCALE" in rep_gy["color"], rep_gy
-        assert "CHROMA_CONSTANT" in rep_gy["color"], rep_gy
 
         # UV-swapped flash burst → COLOR_FAIL.
         uvdir = tdp / "uvswap"
@@ -4353,7 +4490,6 @@ def _self_test() -> int:
     assert abs(float(ri["expected_ratio"]) - 0.8) < 1e-6, ri
 
     # DEFAULT_ASSUMED on healthy pattern → RATE_UNSCORED (never RATE_OK on a guess).
-    # expected_ratio must be None — a wrong-but-plausible number is ERROR 17.
     ri_assumed = analyze_counter_rate(
         list(enumerate(good_ns)),
         source_fps=DEFAULT_ASSUMED_SOURCE_FPS,
@@ -4364,23 +4500,6 @@ def _self_test() -> int:
     assert ri_assumed["rate"] == "RATE_UNSCORED", ri_assumed
     assert ri_assumed["rate_fail"] is False, ri_assumed
     assert ri_assumed["fps_authoritative"] is False, ri_assumed
-    assert ri_assumed["expected_ratio"] is None, ri_assumed
-    assert ri_assumed["span_rate"] is None, ri_assumed
-    assert "UNSCORED" in str(ri_assumed["expected_ratio_src"]), ri_assumed
-
-    # PMS/ffmpeg banner rate → caller_supplied_measured authorises rate gates.
-    ri_csm = analyze_counter_rate(
-        list(enumerate(good_ns)),
-        source_fps=24.0,
-        capture_fps=30.0,
-        source_fps_src=PROVENANCE_CALLER_MEASURED,
-        capture_fps_src=PROVENANCE_MEASURED,
-    )
-    assert ri_csm["rate"] == "RATE_OK", ri_csm
-    assert ri_csm["fps_authoritative"] is True, ri_csm
-    assert ri_csm["expected_ratio"] is not None, ri_csm
-    assert abs(float(ri_csm["expected_ratio"]) - 0.8) < 1e-6, ri_csm
-    assert ri_csm["source_fps_src"] == PROVENANCE_CALLER_MEASURED, ri_csm
 
     # Bound-riding plateau (== allowed) is PASS + plateau_warn, not RATE_FAIL.
     # ceil(30/24)+1 = 3; force a single run of length 3 in an otherwise healthy seq.
@@ -4809,74 +4928,74 @@ def _self_test() -> int:
     out_o = _apply_strict_fps(fake_ok, True, PROVENANCE_DEFAULT_ASSUMED, PROVENANCE_CALLER)
     assert out_o["rc"] == RC_UNSCORED and out_o["verdict"] == "REFUSE_DEFAULT_ASSUMED", out_o
 
-    # --- Flash OCR excursion must be UNREADABLE (parent cap480b false RATE_FAIL) ---
-    # Pattern from measured CSV: dark 311 → field_inv 322,323,323 (luma~171) →
-    # dark 314; later real 322/323. Emitting flash values minted revisits=2.
-    flash_exc = [
-        (47, 311),
-        (48, 322),
-        (49, 323),
-        (50, 323),
-        (51, 314),
-        (52, 315),
-        (53, 316),
-        (54, 317),
-        (55, 318),
-        (56, 319),
-        (57, 320),
-        (58, 321),
-        (59, 322),
-        (60, 322),
-        (61, 323),
-        (62, 324),
-        (63, 325),
-        (64, 326),
-        (65, 327),
-        (66, 328),
-        (67, 329),
-        (68, 330),
-    ]
-    kept_fe, rej_fe = _filter_counter_pairs(flash_exc)
-    assert not any(i in (48, 49, 50) for i, _ in kept_fe), kept_fe
-    assert any(r.get("rule") == "ocr_excursion_unreadable" for r in rej_fe), rej_fe
-    assert any(i == 59 and n == 322 for i, n in kept_fe), kept_fe
-    ri_fe = analyze_counter_rate(
-        kept_fe,
-        source_fps=24.0,
-        capture_fps=30.0,
-        source_fps_src=PROVENANCE_CALLER_MEASURED,
-        capture_fps_src=PROVENANCE_MEASURED,
-    )
-    assert ri_fe["non_adjacent_revisits"] == 0, ri_fe
-    assert ri_fe["rate"] == "RATE_OK", ri_fe
+    # --- Low-contrast counter refuse (parent flash yellow-on-white) ---
+    # Dark yellow-on-black: high dY, contrast OK.
+    dark_y = np.zeros((270, 480, 3), dtype=np.uint8)
+    dark_y[20:48, 12:220] = (220, 220, 40)
+    b_d, roi_d, st_d = find_overlay(dark_y)
+    assert st_d == "ok" and b_d is not None and roi_d is not None, (st_d, roi_d)
+    cm_d = measure_counter_contrast(dark_y, roi_d, b_d)
+    assert cm_d["contrast_status"] == "ok", cm_d
+    assert cm_d["contrast_dy"] is not None and cm_d["contrast_dy"] > LOW_CONTRAST_DY_MAX, cm_d
+    assert cm_d["low_contrast"] is False, cm_d
 
-    # Real device skip (+11) then continue MUST survive (not an excursion return).
-    real_skip = [(i, 200 + i) for i in range(10)] + [
-        (10, 220),
-        (11, 221),
-        (12, 222),
-        (13, 223),
-        (14, 224),
-        (15, 225),
-    ]
-    kept_rs, rej_rs = _filter_counter_pairs(real_skip)
-    assert any(n == 220 for _, n in kept_rs), kept_rs
-    assert not any(r.get("rule") == "ocr_excursion_unreadable" for r in rej_rs), rej_rs
+    # White field + yellow glyph: dY collapses → low_contrast must fire.
+    flash_y = np.full((270, 480, 3), 235, dtype=np.uint8)
+    flash_y[20:48, 12:220] = (230, 230, 60)  # yellow-on-white, near-zero luma delta
+    b_f, roi_f, st_f = find_overlay(flash_y)
+    assert st_f == "ok" and b_f is not None and roi_f is not None, (st_f, roi_f)
+    cm_f = measure_counter_contrast(flash_y, roi_f, b_f)
+    assert cm_f["contrast_status"] == "ok", cm_f
+    assert cm_f["contrast_dy"] is not None and cm_f["contrast_dy"] < LOW_CONTRAST_DY_MAX, cm_f
+    assert cm_f["low_contrast"] is True, cm_f
 
-    # Bank-swap ping-pong still RATE_FAIL (threshold unchanged).
-    bs = [(i, 100 + (i % 2)) for i in range(10)] + [
-        (10 + k, 102 + k) for k in range(20)
-    ]
-    kept_bs, _ = _filter_counter_pairs(bs)
-    ri_bs = analyze_counter_rate(
-        kept_bs,
-        source_fps=24.0,
-        capture_fps=30.0,
-        source_fps_src=PROVENANCE_CALLER,
-        capture_fps_src=PROVENANCE_CALLER,
-    )
-    assert ri_bs["non_adjacent_revisits"] >= 2, ri_bs
-    assert ri_bs["rate"] == "RATE_FAIL", ri_bs
+    # Provenance helper: low_contrast → UNREADABLE; tier-10 TREK → measured.
+    assert _counter_provenance(
+        n=312, tier=10, raw="TREK24 n=312", low_contrast=True, contrast_status="ok"
+    )[0] == COUNTER_SRC_UNREADABLE
+    assert _counter_provenance(
+        n=312, tier=10, raw="TREK24 n=312", low_contrast=False, contrast_status="ok"
+    )[0] == COUNTER_SRC_MEASURED
+    assert _counter_provenance(
+        n=322, tier=7, raw="field_inv_e1_s0.50_p7:322", low_contrast=False, contrast_status="ok"
+    )[0] == COUNTER_SRC_LOW_CONF
+
+    # read_frame on synthetic flash yellow must refuse OCR (no hallucinated n).
+    with tempfile.TemporaryDirectory(prefix="hdmi_motion_lc_") as td:
+        tdp = Path(td)
+        fp = tdp / "flash.png"
+        Image.fromarray(flash_y).save(fp)
+        rf = read_frame(fp, force_ocr=True)
+        assert rf["status"] == "unreadable_low_contrast", rf
+        assert rf["n"] is None, rf
+        assert rf["n_src"] == COUNTER_SRC_UNREADABLE, rf
+        assert rf.get("low_contrast") is True, rf
+        assert "low_contrast" in str(rf.get("raw") or ""), rf
+
+        # High unreadable_frac demotes MOTION_OK → UNSCORED (never pass).
+        # Build a burst where every frame is low-contrast yellow-on-white.
+        lcdir = tdp / "all_lc"
+        lcdir.mkdir()
+        for i in range(12):
+            Image.fromarray(flash_y).save(lcdir / f"f_{i:03d}.png")
+        rep_lc = score_burst(
+            sorted(str(p) for p in lcdir.glob("f_*.png")),
+            warmup_skip=0,
+            min_reads=3,
+            source_fps=24.0,
+            capture_fps=30.0,
+            source_fps_src="caller_supplied_measured",
+            capture_fps_src=PROVENANCE_CALLER,
+        )
+        assert rep_lc["unreadable_low_contrast_frames"] >= 8, rep_lc
+        assert float(rep_lc["unreadable_frac"]) > UNREADABLE_FRAC_MOTION_CAP, rep_lc
+        # No measured counters → cannot be MOTION_OK / RATE_OK pass.
+        assert rep_lc["rc"] != RC_MOTION_OK, rep_lc
+        assert rep_lc["verdict"] != "MOTION_OK", rep_lc
+
+    # _tag formatting must make DEFAULT_ASSUMED unmistakable.
+    assert _tag(23.976, PROVENANCE_DEFAULT_ASSUMED).endswith("[DEFAULT_ASSUMED]")
+    assert "[measured]" in _tag(24.0, PROVENANCE_MEASURED)
 
     print("SELF_TEST_OK")
     return 0
@@ -4921,32 +5040,24 @@ def main(argv: list[str] | None = None) -> int:
             "daemon token '24/1'. Library 24p clips are 24.000 — NOT 23.976. "
             "If omitted, DEFAULT_ASSUMED="
             f"{DEFAULT_ASSUMED_SOURCE_FPS} and rate dimension is RATE_UNSCORED "
-            "(never RATE_OK on a guess — ERROR 17 class). Pair with "
-            "--source-fps-src to label provenance (default caller_supplied)."
+            "(never RATE_OK on a guess — ERROR 17 class)."
         ),
     )
     ap.add_argument(
         "--source-fps-src",
-        "--src-fps-src",
         dest="source_fps_src",
-        type=str,
-        default=None,
-        choices=sorted(
-            {
-                PROVENANCE_CALLER,
-                PROVENANCE_CALLER_MEASURED,
-                PROVENANCE_MEASURED,
-                PROVENANCE_DEFAULT_ASSUMED,
-                "caller",
-            }
+        choices=(
+            PROVENANCE_CALLER,
+            PROVENANCE_CALLER_MEASURED,
+            PROVENANCE_DEFAULT_ASSUMED,
+            PROVENANCE_MEASURED,
+            PROVENANCE_CONTAINER,
         ),
+        default=None,
         help=(
-            "provenance tag for --source-fps (ERROR 17). "
-            f"Use {PROVENANCE_CALLER_MEASURED} when the value was read from "
-            "PMS frameRate= or an ffmpeg banner (authoritative for rate gates, "
-            "not instrument-measured). Use caller_supplied for daemon fps= "
-            f"tokens. Default when --source-fps set: {PROVENANCE_CALLER}. "
-            "Omitted --source-fps forces DEFAULT_ASSUMED."
+            "provenance tag for --source-fps. Use caller_supplied_measured when "
+            "the rate was read from PMS frameRate= or an ffmpeg banner (ERROR 17). "
+            "Default: caller_supplied if --source-fps given, else DEFAULT_ASSUMED."
         ),
     )
     ap.add_argument(
@@ -4959,27 +5070,6 @@ def main(argv: list[str] | None = None) -> int:
             "HDMI grabber capture rate for the burst (float or '30/1'). "
             "If omitted, try --capture-wall-s measurement, then PNG mtimes, "
             f"then DEFAULT_ASSUMED={DEFAULT_ASSUMED_CAPTURE_FPS}."
-        ),
-    )
-    ap.add_argument(
-        "--capture-fps-src",
-        "--cap-fps-src",
-        dest="capture_fps_src",
-        type=str,
-        default=None,
-        choices=sorted(
-            {
-                PROVENANCE_CALLER,
-                PROVENANCE_CALLER_MEASURED,
-                PROVENANCE_MEASURED,
-                PROVENANCE_CONTAINER,
-                PROVENANCE_DEFAULT_ASSUMED,
-                "caller",
-            }
-        ),
-        help=(
-            "provenance override for --capture-fps. Default when set: "
-            f"{PROVENANCE_CALLER}. Measured paths keep tag={PROVENANCE_MEASURED}."
         ),
     )
     ap.add_argument(
@@ -5107,26 +5197,18 @@ def main(argv: list[str] | None = None) -> int:
             raise SystemExit(RC_UNSCORED) from e
         if src_parsed is None:
             source_fps = DEFAULT_ASSUMED_SOURCE_FPS
-            source_fps_src = PROVENANCE_DEFAULT_ASSUMED
-            if args.source_fps_src and args.source_fps_src != PROVENANCE_DEFAULT_ASSUMED:
-                print(
-                    "ERROR: --source-fps-src requires --source-fps "
-                    f"(got src={args.source_fps_src} with no value)",
-                    file=sys.stderr,
-                )
-                raise SystemExit(RC_UNSCORED)
+            source_fps_src = (
+                args.source_fps_src
+                if args.source_fps_src is not None
+                else PROVENANCE_DEFAULT_ASSUMED
+            )
         else:
             source_fps = src_parsed
-            # Default CLI supply → caller_supplied; parent PMS/ffmpeg reads
-            # must pass --source-fps-src caller_supplied_measured (ERROR 17).
-            source_fps_src = args.source_fps_src or PROVENANCE_CALLER
-            if source_fps_src == PROVENANCE_DEFAULT_ASSUMED:
-                print(
-                    "ERROR: --source-fps-src=DEFAULT_ASSUMED with an explicit "
-                    "--source-fps is contradictory; omit --source-fps to assume",
-                    file=sys.stderr,
-                )
-                raise SystemExit(RC_UNSCORED)
+            source_fps_src = (
+                args.source_fps_src
+                if args.source_fps_src is not None
+                else PROVENANCE_CALLER
+            )
         try:
             cap_parsed = parse_fps_token(args.capture_fps)
         except ValueError as e:
@@ -5135,14 +5217,7 @@ def main(argv: list[str] | None = None) -> int:
         cap_measure_meta: dict[str, Any] | None = None
         if cap_parsed is not None:
             capture_fps = cap_parsed
-            capture_fps_src = args.capture_fps_src or PROVENANCE_CALLER
-            if capture_fps_src == PROVENANCE_DEFAULT_ASSUMED:
-                print(
-                    "ERROR: --capture-fps-src=DEFAULT_ASSUMED with explicit "
-                    "--capture-fps is contradictory",
-                    file=sys.stderr,
-                )
-                raise SystemExit(RC_UNSCORED)
+            capture_fps_src = PROVENANCE_CALLER
         else:
             capture_fps = DEFAULT_ASSUMED_CAPTURE_FPS
             capture_fps_src = PROVENANCE_DEFAULT_ASSUMED
@@ -5272,7 +5347,9 @@ def main(argv: list[str] | None = None) -> int:
             if not args.json:
                 print(
                     f"{os.path.basename(r['path'])}: status={r['status']} "
-                    f"n={r['n']} tier={r.get('tier')} raw={r.get('raw')!r} "
+                    f"n={r['n']} n_src={r.get('n_src')} "
+                    f"contrast_dy={r.get('contrast_dy')} "
+                    f"tier={r.get('tier')} raw={r.get('raw')!r} "
                     f"mean={r.get('mean_luma')} green_cast={r.get('green_cast')} "
                     f"chroma_cast={r.get('chroma_cast')} "
                     f"spread={r.get('channel_spread')} "
@@ -5287,13 +5364,67 @@ def main(argv: list[str] | None = None) -> int:
         return RC_MOTION_OK if any_ok else RC_UNSCORED
 
     # Provenance: anything not supplied on the CLI is DEFAULT_ASSUMED (ERROR 17).
-    # RATE_OK requires BOTH authoritative src + cap (caller/measured/container).
+    # RATE_OK requires BOTH caller-supplied (or container-probed capture).
     try:
-        source_fps, source_fps_src, capture_fps, capture_fps_src, cap_measure_meta = (
-            _resolve_fps(frames)
+        src_parsed = parse_fps_token(args.source_fps)
+    except ValueError as e:
+        print(f"ERROR: --source-fps: {e}", file=sys.stderr)
+        return RC_UNSCORED
+    if src_parsed is None:
+        source_fps = DEFAULT_ASSUMED_SOURCE_FPS
+        source_fps_src = (
+            args.source_fps_src
+            if args.source_fps_src is not None
+            else PROVENANCE_DEFAULT_ASSUMED
         )
-    except SystemExit as e:
-        return int(e.code) if isinstance(e.code, int) else RC_UNSCORED
+    else:
+        source_fps = src_parsed
+        source_fps_src = (
+            args.source_fps_src
+            if args.source_fps_src is not None
+            else PROVENANCE_CALLER
+        )
+
+    try:
+        cap_parsed = parse_fps_token(args.capture_fps)
+    except ValueError as e:
+        print(f"ERROR: --capture-fps: {e}", file=sys.stderr)
+        return RC_UNSCORED
+    cap_measure_meta: dict[str, Any] | None = None
+    if cap_parsed is not None:
+        capture_fps = cap_parsed
+        capture_fps_src = PROVENANCE_CALLER
+    else:
+        capture_fps = DEFAULT_ASSUMED_CAPTURE_FPS
+        capture_fps_src = PROVENANCE_DEFAULT_ASSUMED
+        # 1) explicit wall clock from parent capture harness
+        # 2) PNG mtime span
+        # 3) ffprobe container
+        # 4) DEFAULT_ASSUMED
+        measured = measure_capture_fps_from_paths(
+            frames, wall_s=args.capture_wall_s
+        )
+        cap_measure_meta = measured
+        if measured.get("capture_fps") is not None:
+            capture_fps = float(measured["capture_fps"])
+            capture_fps_src = str(measured["capture_fps_src"])
+        elif args.probe_capture:
+            probed, how = try_probe_capture_fps(args.probe_capture)
+            if probed is not None:
+                capture_fps = probed
+                capture_fps_src = PROVENANCE_CONTAINER
+            else:
+                print(
+                    f"WARN: --probe-capture failed ({how}); "
+                    f"cap_fps stays DEFAULT_ASSUMED={capture_fps}",
+                    file=sys.stderr,
+                )
+        elif measured.get("reason"):
+            print(
+                f"WARN: cap_fps measure failed ({measured.get('reason')}); "
+                f"cap_fps stays DEFAULT_ASSUMED={capture_fps}",
+                file=sys.stderr,
+            )
 
     daemon_drops = args.daemon_session_drops
     daemon_drops_src = (

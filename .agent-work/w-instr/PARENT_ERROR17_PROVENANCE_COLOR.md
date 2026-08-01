@@ -119,3 +119,50 @@ VERDICT=STRUCTURE_FAIL rc=3  (color still GREEN+CHROMA+CHROMA_CONSTANT+GREYSCALE
 
 `STRUCTURE_FAIL 3 > COLOR_FAIL 2 > FREEZE 1 > OK 0 > UNSCORED 77`  
 (+ `RATE_FAIL 4` for rate/revisit integrity). Measured failure never decays to 77.
+## LOW-CONTRAST COUNTER (parent pixel correction)
+
+**Mechanism (parent-viewed pixels):** `/tmp/cap480b/f_049.png` is a healthy white
+FLASH with burned-in `TREK24 n=312`. Yellow-on-white collapses **local edge** luma
+contrast; tesseract previously hallucinated `field_inv n=322/323`. That is the same
+disease as bare `src_fps` defaults: a low-confidence value masquerading as measured.
+
+**Instrument fix (this commit):**
+1. `measure_counter_contrast` — hard-yellow ink vs local dilated ring; dY [measured].
+2. Refuse OCR when `dY < LOW_CONTRAST_DY_MAX=25` [DEFAULT_ASSUMED] →
+   `status=unreadable_low_contrast`, `n_src=UNREADABLE`, `n=None` (never a digit).
+3. Counter provenance: only `n_src=measured` enters rate/revisit/plateau.
+   `low_confidence` / `UNREADABLE` excluded.
+4. Report `unreadable_low_contrast_frames`, `unreadable_frac` [measured],
+   `unreadable_frac_cap=0.35` [DEFAULT_ASSUMED]. If MOTION_OK and frac>cap →
+   demote to UNSCORED (never a pass). STRUCTURE/COLOR/RATE hard fails still win.
+5. CLI `--source-fps-src caller_supplied_measured` for PMS/ffmpeg-banner rates.
+
+**Measured anchors (this host):**
+| frame | mean_luma | dY | status | n |
+|---|---|---|---|---|
+| f_030.png (dark) | 4.95 | 138.337 | ok / measured | 297 |
+| f_049.png (flash) | 171.426 | 17.046 | unreadable_low_contrast | None |
+| f_050.png | 171.423 | 16.615 | unreadable_low_contrast | None |
+| f_051.png | 171.423 | 16.615 | unreadable_low_contrast | None |
+
+**Burst validation (`true rc` direct):**
+```
+python3 tools/hdmi_motion_instrument.py /tmp/cap480b --warmup-skip 15 \
+  --source-fps 24 --source-fps-src caller_supplied_measured; echo "true rc=$?"
+→ VERDICT=MOTION_OK rc=0  revisits=0  unreadable_low_contrast_frames=9
+  unreadable_frac=0.1184 [measured] < cap=0.35
+
+python3 tools/hdmi_motion_instrument.py /tmp/cap480a --warmup-skip 15 \
+  --source-fps 24 --source-fps-src caller_supplied_measured; echo "true rc=$?"
+→ VERDICT=STRUCTURE_FAIL rc=3  (vdup=15 wrap=8) — measured fail never→77
+
+python3 tools/hdmi_motion_instrument.py --self-test; echo "true rc=$?"
+→ SELF_TEST_OK true rc=0
+```
+
+**w-asset480 coordination (raise via parent, not direct):** render counter with a
+contrasting outline or solid background box so yellow remains readable on both
+black and white frames. Instrument must still handle existing fixtures.
+
+**MILESTONE 4:** f_049 is genuinely correct on glass — instrument defect only;
+native 480p DDR path citation stands.
