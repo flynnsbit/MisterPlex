@@ -492,3 +492,20 @@ tr '\0' ' ' < /proc/$pid/cmdline; echo
 ```
 
 Teardown still asserts only OUR Playwright controller is gone after all N cycles.
+
+
+## UI timeline truthfulness (control plane)
+
+After play and each pause/resume/seek, the suite reads the **Plex Web** clock/scrubber
+and compares to companion `time`/`duration`:
+
+- `skew_ms = |ui_ms - daemon_ms|` default max **2500** (`E2E_UI_TIMELINE_SKEW_MS`)
+- scrubber pct delta default max **3 pp** (`E2E_UI_TIMELINE_PCT_PP`)
+- Failures: `ui_timeline_unreadable`, `ui_daemon_timeline_skew`, `ui_daemon_timeline_pct_skew`
+
+Transport in the N-loop is **UI-first** (Pause/Play/Stop/scrubber); companion HTTP is
+tagged fallback only. This is the user control plane — HDMI owns pixels.
+
+```bash
+E2E_REQUIRE_UI_TIMELINE=1 E2E_TRANSITION_CYCLES=10 E2E_TIER=480p ...
+```

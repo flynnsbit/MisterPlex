@@ -52,6 +52,7 @@ const {
   formatSnap,
 } = require('./ledger');
 const { createRunCorrelation } = require('./run_correlate');
+const { readUiPlayerTimeline, assertUiDaemonTimeline } = require('./ui_timeline');
 
 const EXIT_PASS = 0;
 const EXIT_FAIL = 1;
@@ -890,9 +891,96 @@ async function clickStop(page) {
       /* next */
     }
   }
-  const r = await httpGet(`${daemonBase(cfg)}/player/playback/stop?commandID=9901`, {}, 3000);
-  log(`stop_http status=${r.status}`);
-  return r.status === 200;
+  return false;
+}
+
+/**
+ * Seek via UI scrubber click at fraction of bar width (0..1).
+ * Returns how=selector or null if no bar found.
+ */
+async function uiSeekFraction(page, fraction) {
+  const frac = Math.min(0.95, Math.max(0.02, fraction));
+  const sels = [
+    '[data-testid="seekBar"]',
+    '[class*="SeekBar-bar"]',
+    '[class*="SeekBar"]',
+    '[role="slider"]',
+    'input[type="range"]',
+  ];
+  for (const sel of sels) {
+    try {
+      const el = page.locator(sel).first();
+      if (!(await el.isVisible({ timeout: 1500 }).catch(() => false))) continue;
+      const box = await el.boundingBox();
+      if (!box || box.width < 8) continue;
+      const x = box.x + box.width * frac;
+      const y = box.y + box.height / 2;
+      await page.mouse.click(x, y);
+      log(`ui_seek selector=${sel} frac=${frac.toFixed(3)} x=${x.toFixed(0)}`);
+      return sel;
+    } catch (_) {
+      /* next */
+    }
+  }
+  return null;
+}
+
+/**
+ * UI clock vs companion timeline. Hard fail when unreadable if required.
+ * E2E_REQUIRE_UI_TIMELINE=1 default.
+ */
+async function assertUiMatchesDaemon(page, tag, opts = {}) {
+  const rawReq = process.env.E2E_REQUIRE_UI_TIMELINE;
+  const requireUi =
+    rawReq === undefined || rawReq === ''
+      ? true
+      : /^(1|true|yes|on)$/i.test(String(rawReq));
+  // Hover player chrome so time labels render.
+  try {
+    await page.mouse.move(400, 400);
+    await page.mouse.move(420, 420);
+    await sleep(200);
+  } catch (_) {
+    /* ignore */
+  }
+  const ui = await readUiPlayerTimeline(page);
+  const xml = await pollDaemonTimeline(nextSuiteCmd());
+  const daemon = {
+    state: xmlAttr(xml, 'state') || '',
+    time: parseInt(xmlAttr(xml, 'time') || '-1', 10),
+    duration: parseInt(xmlAttr(xml, 'duration') || '0', 10),
+  };
+  const r = assertUiDaemonTimeline(ui, daemon, tag, {
+    maxSkewMs: parseInt(process.env.E2E_UI_TIMELINE_SKEW_MS || '2500', 10),
+    maxPctPoints: parseFloat(process.env.E2E_UI_TIMELINE_PCT_PP || '3'),
+  });
+  if (r.metrics) {
+    const m = r.metrics;
+    log(
+      `UI_DAEMON_TIMELINE tag=${tag} ok=${r.ok ? 1 : 0} ` +
+        `ui_ms=${m.ui_ms} daemon_ms=${m.daemon_ms} skew_ms=${m.skew_ms} ` +
+        `ui_pct=${m.ui_pct != null ? m.ui_pct.toFixed(2) : 'NA'} ` +
+        `daemon_pct=${m.daemon_pct != null ? m.daemon_pct.toFixed(2) : 'NA'} ` +
+        `pct_delta=${m.pct_delta != null ? m.pct_delta.toFixed(2) : 'NA'} ` +
+        `ui_src=${m.ui_source} ui_raw=${JSON.stringify(m.ui_raw)} daemon_state=${m.daemon_state}`
+    );
+  } else {
+    log(
+      `UI_DAEMON_TIMELINE tag=${tag} ok=0 reason=${r.reason} ui_src=${ui.source} ` +
+        `ui_raw=${JSON.stringify(ui.raw)} daemon_t=${daemon.time}`
+    );
+  }
+  if (!r.ok) {
+    if (r.reason === 'ui_timeline_unreadable' && !requireUi) {
+      log(
+        `UI_TIMELINE_SOFT_SKIP tag=${tag} ${r.detail} — E2E_REQUIRE_UI_TIMELINE=0 (NOT a pass of truthfulness)`
+      );
+      return { ok: true, softSkip: true, ...r };
+    }
+    return r;
+  }
+  return r;
+}
 }
 
 async function waitPlayingOnDaemon(seconds) {
@@ -1914,19 +2002,26 @@ async function runOneTransitionCycle(page, itemTitle, detailsUrl, cycle, total) 
   const ledgerStart = await captureLedger(cfg);
   log(`LEDGER_START cycle=${cycle}/${total} ${formatSnap(ledgerStart)}`);
 
-  // ── pause: state=paused AND time frozen ────────────────────────────────
-  await companionPlayback('pause', `${ctag}_pause`);
+  // ── pause: UI-first (control plane user touches), then effect asserts ───
+  let uiPause = await clickPauseOrPlayToggle(page);
+  log(`transition_pause_ui selector=${uiPause || '(none)'}`);
   let st = await waitTimelineState(['paused'], 8000, `${ctag}_pause`);
-  if (!st.ok && st.state === 'playing') {
-    await clickPauseOrPlayToggle(page);
-    st = await waitTimelineState(['paused'], 6000, `${ctag}_pause_ui`);
+  if (!st.ok) {
+    // One HTTP fallback only if UI control missing/ineffective — tagged.
+    log(`${ctag}_pause UI miss/ineffective — companion HTTP pause fallback (tagged)`);
+    await companionPlayback('pause', `${ctag}_pause_http_fallback`);
+    st = await waitTimelineState(['paused'], 6000, `${ctag}_pause_http`);
   }
   if (!st.ok && (st.state === 'buffering' || st.state === 'stopped' || st.state === '')) {
     log(`${ctag}_pause session_dropped — reseed`);
     adv = await ensurePlayingSession(page, itemTitle, detailsUrl, `${ctag}_pause_reseed`, waitSec);
     if (!adv.ok) cycleFail(cycle, total, 'pause_reseed', 'not_playing', adv.detail);
-    await companionPlayback('pause', `${ctag}_pause2`);
+    uiPause = await clickPauseOrPlayToggle(page);
     st = await waitTimelineState(['paused'], 8000, `${ctag}_pause2`);
+    if (!st.ok) {
+      await companionPlayback('pause', `${ctag}_pause2_http`);
+      st = await waitTimelineState(['paused'], 8000, `${ctag}_pause2_http`);
+    }
   }
   if (!st.ok) {
     cycleFail(
@@ -1934,21 +2029,31 @@ async function runOneTransitionCycle(page, itemTitle, detailsUrl, cycle, total) 
       total,
       'pause',
       'state_not_paused',
-      `Expected state=paused; got state=${st.state} time=${st.time}`
+      `Expected state=paused after UI pause; got state=${st.state} time=${st.time} ui=${uiPause || 'none'}`
     );
   }
   let samples = await sampleTimeline(6, 400, `${ctag}_paused`);
   let fr = assertTimeFrozen(samples, `${ctag}_pause`);
   if (!fr.ok) cycleFail(cycle, total, 'pause', 'time_still_advancing', fr.detail);
-  log(`transition_pause_ok cycle=${cycle}/${total} time=${fr.time} drift_ms=${fr.drift}`);
+  {
+    const uiR = await assertUiMatchesDaemon(page, `${ctag}_pause_ui_clock`);
+    if (!uiR.ok && !uiR.softSkip) {
+      cycleFail(cycle, total, 'ui_timeline', uiR.reason || 'ui_daemon_skew', uiR.detail || '');
+    }
+  }
+  log(
+    `transition_pause_ok cycle=${cycle}/${total} time=${fr.time} drift_ms=${fr.drift} ui=${uiPause || 'http_fallback'}`
+  );
 
-  // ── resume: playing AND advancing ──────────────────────────────────────
+  // ── resume: UI-first play toggle ───────────────────────────────────────
   const pausedTime = fr.time;
-  await companionPlayback('play', `${ctag}_resume`);
+  let uiResume = await clickPauseOrPlayToggle(page);
+  log(`transition_resume_ui selector=${uiResume || '(none)'}`);
   st = await waitTimelineState(['playing'], 12000, `${ctag}_resume`);
   if (!st.ok) {
-    await clickPauseOrPlayToggle(page);
-    st = await waitTimelineState(['playing'], 8000, `${ctag}_resume_ui`);
+    log(`${ctag}_resume UI miss — companion HTTP play fallback (tagged)`);
+    await companionPlayback('play', `${ctag}_resume_http_fallback`);
+    st = await waitTimelineState(['playing'], 8000, `${ctag}_resume_http`);
   }
   if (!st.ok) {
     cycleFail(
@@ -1956,7 +2061,7 @@ async function runOneTransitionCycle(page, itemTitle, detailsUrl, cycle, total) 
       total,
       'resume',
       'state_not_playing',
-      `Expected playing after resume; got state=${st.state} time=${st.time}`
+      `Expected playing after UI resume; got state=${st.state} time=${st.time} ui=${uiResume || 'none'}`
     );
   }
   samples = await sampleTimeline(7, 400, `${ctag}_resumed`);
@@ -1972,7 +2077,15 @@ async function runOneTransitionCycle(page, itemTitle, detailsUrl, cycle, total) 
       `resume time=${adv.time} < paused time=${pausedTime}`
     );
   }
-  log(`transition_resume_ok cycle=${cycle}/${total} time=${adv.time} advance_ms=${adv.advance}`);
+  {
+    const uiR = await assertUiMatchesDaemon(page, `${ctag}_resume_ui_clock`);
+    if (!uiR.ok && !uiR.softSkip) {
+      cycleFail(cycle, total, 'ui_timeline', uiR.reason || 'ui_daemon_skew', uiR.detail || '');
+    }
+  }
+  log(
+    `transition_resume_ok cycle=${cycle}/${total} time=${adv.time} advance_ms=${adv.advance} ui=${uiResume || 'http_fallback'}`
+  );
 
   // ── seek: land near target THEN advance ────────────────────────────────
   // Short synthetic fixtures (~30s) and external controllers can drop the
@@ -1988,11 +2101,23 @@ async function runOneTransitionCycle(page, itemTitle, detailsUrl, cycle, total) 
     }
   }
   const seekTo = 8000;
-  await companionPlayback(`seekTo?offset=${seekTo}`, `${ctag}_seek`);
-  st = await waitTimelineNear(seekTo, 3500, 15000);
+  // Prefer UI scrubber (user control plane). Fall back to HTTP seekTo only if bar missing.
+  let seekHow = 'ui';
+  const xmlDur = await pollDaemonTimeline(nextSuiteCmd());
+  const durMs = parseInt(xmlAttr(xmlDur, 'duration') || '0', 10);
+  const frac = durMs > 0 ? seekTo / durMs : 0.05;
+  const uiSeek = await uiSeekFraction(page, frac);
+  if (uiSeek) {
+    log(`transition_seek_ui selector=${uiSeek} target_ms=${seekTo} frac=${frac.toFixed(4)} dur=${durMs}`);
+    st = await waitTimelineNear(seekTo, 4500, 15000);
+  } else {
+    seekHow = 'http_fallback';
+    log(`${ctag}_seek no UI scrubber — companion seekTo HTTP fallback (tagged)`);
+    await companionPlayback(`seekTo?offset=${seekTo}`, `${ctag}_seek_http`);
+    st = await waitTimelineNear(seekTo, 3500, 15000);
+  }
   if (!st.ok) {
-    // One reseed+retry (session may have died mid-seek).
-    log(`${ctag}_seek land miss state=${st.state} time=${st.time} — reseed+retry once`);
+    log(`${ctag}_seek land miss state=${st.state} time=${st.time} — reseed+HTTP retry once`);
     adv = await ensurePlayingSession(page, itemTitle, detailsUrl, `${ctag}_seek_retry`, waitSec);
     if (!adv.ok) {
       cycleFail(
@@ -2000,10 +2125,16 @@ async function runOneTransitionCycle(page, itemTitle, detailsUrl, cycle, total) 
         total,
         'seek',
         'did_not_land',
-        `Expected timeline near offset=${seekTo}ms; got state=${st.state} time=${st.time}; reseed failed`
+        `Expected timeline near offset=${seekTo}ms; got state=${st.state} time=${st.time}; reseed failed how=${seekHow}`
       );
     }
-    await companionPlayback(`seekTo?offset=${seekTo}`, `${ctag}_seek2`);
+    const uiSeek2 = await uiSeekFraction(page, frac);
+    if (!uiSeek2) {
+      await companionPlayback(`seekTo?offset=${seekTo}`, `${ctag}_seek2_http`);
+      seekHow = 'http_fallback_retry';
+    } else {
+      seekHow = 'ui_retry';
+    }
     st = await waitTimelineNear(seekTo, 3500, 15000);
   }
   if (!st.ok) {
@@ -2012,10 +2143,12 @@ async function runOneTransitionCycle(page, itemTitle, detailsUrl, cycle, total) 
       total,
       'seek',
       'did_not_land',
-      `Expected timeline near offset=${seekTo}ms; got state=${st.state} time=${st.time}`
+      `Expected timeline near offset=${seekTo}ms; got state=${st.state} time=${st.time} how=${seekHow}`
     );
   }
-  log(`transition_seek_land_ok cycle=${cycle}/${total} target=${seekTo} time=${st.time}`);
+  log(
+    `transition_seek_land_ok cycle=${cycle}/${total} target=${seekTo} time=${st.time} how=${seekHow}`
+  );
   // Wait until playing after possible buffering.
   st = await waitTimelineState(['playing'], 12000, `${ctag}_post_seek`);
   if (!st.ok) {
@@ -2030,7 +2163,15 @@ async function runOneTransitionCycle(page, itemTitle, detailsUrl, cycle, total) 
   samples = await sampleTimeline(7, 400, `${ctag}_seek_adv`);
   adv = assertTimeAdvancing(samples, `${ctag}_seek`, 300);
   if (!adv.ok) cycleFail(cycle, total, 'seek', 'time_not_advancing_after_seek', adv.detail);
-  log(`transition_seek_ok cycle=${cycle}/${total} target=${seekTo} time=${adv.time}`);
+  {
+    const uiR = await assertUiMatchesDaemon(page, `${ctag}_seek_ui_clock`);
+    if (!uiR.ok && !uiR.softSkip) {
+      cycleFail(cycle, total, 'ui_timeline', uiR.reason || 'ui_daemon_skew', uiR.detail || '');
+    }
+  }
+  log(
+    `transition_seek_ok cycle=${cycle}/${total} target=${seekTo} time=${adv.time} how=${seekHow}`
+  );
 
   // Ledger end of continuous-play window (still same demux session; before stop).
   await sleep(1100);
@@ -2074,19 +2215,23 @@ async function runOneTransitionCycle(page, itemTitle, detailsUrl, cycle, total) 
     }
   }
 
-  // ── stop → idle (not playing) ──────────────────────────────────────────
-  await forceStopDaemon(`${ctag}_stop`);
-  await sleep(900);
+  // ── stop → idle: UI Stop first, HTTP only as tagged fallback ───────────
+  const uiStop = await clickStop(page);
+  log(`transition_stop_ui ok=${uiStop ? 1 : 0}`);
+  await sleep(700);
   samples = await sampleTimeline(5, 350, `${ctag}_stopped`);
   let idle = assertStoppedOrIdle(samples, `${ctag}_stop`);
   if (!idle.ok) {
-    await forceStopDaemon(`${ctag}_stop2`);
+    log(`${ctag}_stop UI insufficient — forceStopDaemon HTTP fallback (tagged)`);
+    await forceStopDaemon(`${ctag}_stop_http`);
     await sleep(700);
     samples = await sampleTimeline(5, 350, `${ctag}_stopped2`);
     idle = assertStoppedOrIdle(samples, `${ctag}_stop2`);
   }
   if (!idle.ok) cycleFail(cycle, total, 'stop', 'not_idle', idle.detail);
-  log(`transition_stop_ok cycle=${cycle}/${total} state=${idle.state}`);
+  log(
+    `transition_stop_ok cycle=${cycle}/${total} state=${idle.state} ui=${uiStop ? 1 : 0}`
+  );
 
   // ── idle → play (recast exact target) ──────────────────────────────────
   await dismissFullPlayerOverlay(page);
@@ -2697,6 +2842,16 @@ async function runTransitionScenarios(page, itemTitle, detailsUrl, _castAlreadyS
         `playing_ok samples=${prog.playing} advance=${prog.advance} time_max_ms=${prog.maxT} ` +
           `run_id=${runCorr.runId}`
       );
+      {
+        // Control-plane truthfulness: UI clock vs daemon (parent measured glass ~0:34/6:00).
+        const uiR = await assertUiMatchesDaemon(page, `tier_${tier.name}_playing_ui_clock`);
+        if (!uiR.ok && !uiR.softSkip) {
+          fail(uiR.reason || 'ui_daemon_timeline_skew', uiR.detail || '');
+        }
+        if (uiR.ok && !uiR.softSkip) {
+          log(`UI_TIMELINE_TRUTHFUL=1 tier=${tier.name}`);
+        }
+      }
       await runCorr.mark('playing_ok', {
         tier: tier.name,
         ratingKey: String(ratingKey),
