@@ -1328,3 +1328,19 @@ Full note: `.agent-work/w-geom/fpga-av-path-117ms.md`.
 | Observe | `frames_done=(devmem 0x300FF12C)>>16`; Δ(audio_release→first frames_done++) / 16.715600 → N; A vs B. |
 
 **Audio in-tree RTL eliminated as 117 ms bistable. Video open until lag measured. Kernel MrAudio driver still out of repo.**
+
+## Observability boundary — definitive Q1–Q4 (w-avsync)
+
+Full CITED/NOT-FOUND table: `.agent-work/w-avsync/observability-boundary.md`.
+
+| Q | Answer (one line) |
+|---|-------------------|
+| 1 Path | `::write(/dev/MrAudio)` → 512 KiB kernel ring → SPI → `sys/alsa.sv` (DDR PCM + NCO) → `audio_out` → I2S. F2 `audio_fifo` **off** product path when MrAudio works (`media_player.cpp:2062-2063`). |
+| 1 Readable | **YES:** status `rptr,wptr,len,comp` (`mraudio_status.hpp`). **NO:** `got_first`, NCO phase, HDMI audio phase. Driver `.c` **NOT-FOUND** in repo. |
+| 2 Period | CITED sample period **20.833 µs** (`alsa.sv` CLK_RATE/48000). **NOT-FOUND** ~117 ms audio start quantum. `a_en2` mute ≈170.7 ms **after audio_out reset only**. |
+| 3 Unproven-identical readable | Absolute **rptr/wptr**, **comp**, PLXD **frames_done**, early **len** trajectory. Steady `len≈100 ms` already identical both clusters. |
+| 4 Instrument | `logMrAudioHandoffAt` at `audio_release` + `first_video_present`; `early_traj` chunks 0..15; existing open/first_write snaps. ARM md5 see commit. |
+
+**Falsifier:** A/B `rptr` Δ ≈ 22464 B (117 ms × 192000 B/s) at same handoff tag **supports** ring-phase track; **identical** snaps + HDMI sep 117 **kills** MrAudio-visible state → look past SPI / video `frames_done` lag / out-of-repo driver.
+
+Hold still dumps content t=0; origin not rebased mid-play; hold **not** 117 ms cause (parent).

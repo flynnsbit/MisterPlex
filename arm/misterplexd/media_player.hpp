@@ -321,6 +321,9 @@ private:
     // driver does not expose it. Cheap: one open/read/close, no allocation.
     int64_t readMrAudioQueuedBytes();
     misterplex::MrAudioStatusSnap readMrAudioStatusSnap(std::string* rawOut = nullptr);
+    // Log full ring snap + optional PLXD frames_done at a named handoff point.
+    // Observability ends at MrAudio status; frames_done is VIDEO swap count only.
+    void logMrAudioHandoffAt(const char* where);
 
     static std::string hex16(uint16_t v);
 

@@ -2052,6 +2052,34 @@ misterplex::MrAudioStatusSnap MediaPlayer::readMrAudioStatusSnap(std::string* ra
     return misterplex::parseMrAudioStatusSnap(buf, end);
 }
 
+void MediaPlayer::logMrAudioHandoffAt(const char* where) {
+    // Parent A/B across clusters: pair rptr/wptr/len/comp at the same `where`.
+    // If identical while HDMI sep≈117 ms, ring snapshot at this point is NOT the
+    // discriminator. Does not claim lipsync; tag=measured on every field we got.
+    std::string raw;
+    const auto snap = readMrAudioStatusSnap(&raw);
+    const int64_t mono = steadyMonoMs();
+    const int64_t qms =
+        (snap.len >= 0) ? (snap.len * 1000LL) / misterplex::kMrAudioBytesPerSec : -1;
+    std::string plxd = " frames_done=NO-DATA";
+    if (fpga_.ok()) {
+        BankReleaseStatus brs;
+        if (fpga_.readBankRelease(brs))
+            plxd = " frames_done=" + std::to_string(static_cast<unsigned>(brs.frames_done));
+        else
+            plxd = " frames_done=UNREADABLE";
+    }
+    log(std::string("media: MrAudio handoff_at=") + (where ? where : "?") +
+        " mono_ms=" + std::to_string(mono) +
+        " rptr=" + std::to_string(snap.rptr) + " wptr=" + std::to_string(snap.wptr) +
+        " len_B=" + std::to_string(snap.len) + " len_ms=" + std::to_string(qms) +
+        " comp=" + std::to_string(snap.comp) + plxd +
+        " written_B=" + std::to_string(audioBytes_.load()) +
+        " raw=\"" + (raw.empty() ? std::string("NO-DATA") : raw) + "\""
+        " tag=measured"
+        " (post-write FPGA drain phase not in this sample)");
+}
+
 void MediaPlayer::audioPump(int afd) {
     // Drain PCM to MrAudio. Lab evidence: MrAudio write() does NOT pace realtime
     // (audio_s grew ~3× wall → jumpy audio). Pace ourselves to exact 48 kHz wall
@@ -2235,6 +2263,26 @@ void MediaPlayer::audioPump(int afd) {
                     " raw=\"" + (raw.empty() ? std::string("NO-DATA") : raw) + "\""
                     " tag=measured"
                     " (post-write drain still FPGA-scheduled; not a lipsync claim)");
+            }
+
+            // Early ring trajectory (first ~320 ms @ 20 ms chunks). Parent: if
+            // A vs B len/rptr tracks stay parallel with only a constant offset
+            // that does NOT match HDMI sep (117 ms ≈ 22464 B), kill ring-phase.
+            if (chunkIndex < 16) {
+                std::string raw;
+                const auto snap = readMrAudioStatusSnap(&raw);
+                const int64_t mono = steadyMonoMs();
+                const int64_t qms =
+                    (snap.len >= 0) ? (snap.len * 1000LL) / misterplex::kMrAudioBytesPerSec
+                                    : -1;
+                log("media: MrAudio early_traj chunk=" + std::to_string(chunkIndex) +
+                    " mono_ms=" + std::to_string(mono) +
+                    " rptr=" + std::to_string(snap.rptr) +
+                    " wptr=" + std::to_string(snap.wptr) +
+                    " len_B=" + std::to_string(snap.len) +
+                    " len_ms=" + std::to_string(qms) +
+                    " written_B=" + std::to_string(audioBytes_.load()) +
+                    " tag=measured");
             }
 
             const double rate = misterplex::feedRateBytesPerSec(
@@ -3418,6 +3466,10 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                                           (48000.0 * 4.0))
                                 .substr(0, 5) +
                             " tag=measured");
+                        // VIDEO present vs ring phase. frames_done is swap count
+                        // (not audio). Pair handoff_at=first_video_present A vs B.
+                        if (audioActive_.load())
+                            logMrAudioHandoffAt("first_video_present");
                     }
                     if ((presentCount_ % 48) == 0) {
                         log(std::string("media: fpga frame_tx ok via ") +
@@ -3731,6 +3783,9 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                                 " content_origin_ms=0 audio_bytes_at_release=0" + axis +
                                 " (MrAudio starts; held PCM from content t=0)");
                         }
+                        // Handoff sample at gate-open (before first write races).
+                        // Parent: pair handoff_at=audio_release rptr/wptr across clusters.
+                        logMrAudioHandoffAt("audio_release");
                     } else {
                         log("media: A/V audio_release first_frame=" +
                             std::to_string(frameIndex) +

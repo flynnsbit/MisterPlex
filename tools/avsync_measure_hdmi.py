@@ -127,7 +127,10 @@ CAL_FORMAT = "misterplex.avsync_hdmi_calibration.v1"
 
 # Load-bearing scoring inputs that must not silently ride DEFAULT_ASSUMED
 # (PARENT ERROR 17 class). Without --allow-default-score, PASS/FAIL is refused.
-SCORE_DEFAULT_KEYS = ("tol_ms", "slope_tol_ms_per_s")
+# Only tol_ms is mandatory: slope_tol may stay DEFAULT_ASSUMED when --tol-ms is
+# set (still printed with src=DEFAULT_ASSUMED; score_tag notes it). Forcing both
+# would UNSCORE every parent soak that only pins the offset band.
+SCORE_DEFAULT_KEYS = ("tol_ms",)
 
 RC_PASS = 0
 RC_FAIL = 2
@@ -969,20 +972,21 @@ def print_report(
     print(f"slope_within_tol={abs_slope <= slope_tol} src=measured")
     print(f"slope_gate_active={slope_gate_active} src=DEFAULT_ASSUMED")
 
-    # Only thresholds that participate in THIS verdict are load-bearing.
-    # slope_tol is idle when slope_gate_active is false (short captures).
+    # Only tol_ms is load-bearing for REFUSE_DEFAULT_ASSUMED (SCORE_DEFAULT_KEYS).
+    # slope_tol DEFAULT is reported; when gate is active it still affects PASS/FAIL
+    # but does not alone force UNSCORE (parent soaks pin --tol-ms).
     default_score_keys = []
     if tol_src == "DEFAULT_ASSUMED":
         default_score_keys.append("tol_ms")
-    if slope_gate_active and slope_tol_src == "DEFAULT_ASSUMED":
-        default_score_keys.append("slope_tol_ms_per_s")
+    slope_default_in_score = bool(slope_gate_active and slope_tol_src == "DEFAULT_ASSUMED")
     print(
         f"scoring_defaults={default_score_keys or 'none'} "
+        f"slope_tol_default_in_score={slope_default_in_score} "
         f"allow_default_score={allow_default_score} src=measured"
     )
     print(f"tol_ms_src={tol_src} slope_tol_src={slope_tol_src}")
 
-    # ERROR 17 class: never silently PASS/FAIL on DEFAULT_ASSUMED thresholds.
+    # ERROR 17 class: never silently PASS/FAIL on DEFAULT_ASSUMED offset tol.
     if default_score_keys and not allow_default_score:
         print(
             f"VERDICT=REFUSE_DEFAULT_ASSUMED rc={RC_UNSCORED} "
