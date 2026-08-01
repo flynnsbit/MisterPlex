@@ -61,9 +61,10 @@ Measured on n=16 NEW JSONs + sixfield recs:
   of median (n=10). Constants uninformative. Does **not** clear capture-side or
   post-MrAudio path.
 - **P6 MISS:** Spearman(first_pair, median)=0.22 — residual is not first-pair latch.
-- **Session common-mode:** empirical SE(median) from within σ≈14.7 ms is ≈2.75 ms →
-  E[range 16]≈9.7 ms; obs 25 ms; excess session σ≈**6.3 ms**; bootstrap
-  P(range≥25 \| no session φ)=0.
+- **Excess session σ (variance label, not mechanism):** empirical SE(median) from
+  within σ≈14.7 ms is ≈2.75 ms → E[range 16]≈9.7 ms; obs 25 ms; excess session
+  σ≈**6.3 ms**; bootstrap P(range≥25 \| no session φ)=0. This *relabels* the
+  residual's statistical structure; it does **not** name a physical source.
 - **No named mechanism.** CC-3 stops on ALSA period, present-lag N, and grabber
   open-delta (not in corpus). Cheapest settler: log/compare v4l2−ALSA open delta
   (I1) or file-mode null arm; then PLXD N / MrAudio rptr (I3/I4).

@@ -393,7 +393,8 @@ def analyze_quant(runs: List[RunJson]) -> Dict[str, Any]:
     out["residual_beyond_quant_range_ms"] = residual
     out["residual_beyond_quant_range_ms_src"] = "measured_minus_derived"
 
-    # Empirical session common-mode: use within-run pair stdev when present.
+    # Excess between-run σ beyond within-run SE (variance decomposition label only —
+    # NOT a named physical mechanism / attribution).
     # SE_emp = 1.2533 * median(within_stdev) / sqrt(n_pairs)
     # excess_session_sigma = sqrt(max(0, var(medians) - SE_emp^2))
     within = [r.stdev_ms for r in runs if r.stdev_ms is not None]

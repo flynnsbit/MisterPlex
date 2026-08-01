@@ -76,6 +76,7 @@ EXPECTED_COMMANDS = [
     "bash $(ROOT)/tests/unit/test_audio_delay_authority_red.sh",
     "$(ROOT)/build/test_mraudio_status",
     "$(ROOT)/build/test_av_phase_rtl_quanta",
+    "bash $(ROOT)/tests/unit/test_av_phase_rtl_quanta_guard_red.sh",
     "$(ROOT)/build/test_osd_menu",
     "$(ROOT)/build/test_osd_control",
     "bash $(ROOT)/tests/unit/test_osd_menu_red.sh",

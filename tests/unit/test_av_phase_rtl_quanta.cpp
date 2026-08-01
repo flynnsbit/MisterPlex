@@ -1,7 +1,17 @@
 // Locks RTL-derived A/V phase quanta (T_disp, sample period, a_en2, PLXD4).
 // Does NOT encode retracted OLD-argv cluster sep 117.10 ms.
 // COMPILE FAIL is RED. Soft-skip is not used.
+//
+// Durable anti-restore guard: poison the identifier as a macro BEFORE including
+// the header. #if defined() cannot see C++ constexpr names (rd-review: restoring
+// inline constexpr kParentClusterSepMsX100 left GUARD_TEST_RC=0). If the header
+// redeclares the name, the preprocessor expands the poison and the compile fails.
+// Poison must NOT expand to a valid identifier (a plain rename still compiles).
+// Expand to a parenthesized string so `constexpr int64_t NAME = …` is a syntax error.
+#define kParentClusterSepMsX100                                                                             \
+    ("RETRACTED_OLD_ARGV_ARTIFACT_kParentClusterSepMsX100_do_not_restore")
 #include "libmisterplex/av_phase_rtl_quanta.hpp"
+#undef kParentClusterSepMsX100
 #include "libmisterplex/input_mailbox.hpp"
 #include "libmisterplex/mailbox_abi_spec.hpp"
 #include "libmisterplex/ddr_frame_layout.hpp"
@@ -106,11 +116,6 @@ int main() {
         CHECK(plxd4FreeMask(hi) == 0);
     }
 
-    // Guard: retracted parent cluster constant must not reappear
-#if defined(kParentClusterSepMsX100)
-#error "kParentClusterSepMsX100 was retracted (OLD-argv artifact); do not restore"
-#endif
-
     if (fails) {
         std::fprintf(stderr, "test_av_phase_rtl_quanta: %d failure(s)\n", fails);
         return 1;
@@ -122,6 +127,6 @@ int main() {
                 static_cast<long long>(kSevenDispMsX100));
     std::printf("  3*content24_ms_x100=%lld (tag=content-arithmetic)\n",
                 static_cast<long long>(kHyp3Content24MsX100));
-    std::printf("  kParentClusterSepMsX100=DELETED (OLD-argv 117.10 retracted)\n");
+    std::printf("  kParentClusterSepMsX100=DELETED; poison-macro guard active (redeclare in header => compile RED)\n");
     return 0;
 }
