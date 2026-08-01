@@ -3,7 +3,7 @@
 branch: w-fit-integ-c5382bee-dequant-swap
 worktree: .worktrees/w-fit-integ
 merge: 48df5e29 thruput RMW+area dequant onto product tip + 907e + SDC record
-tip: d44abe25b399271616c1b1067d3c73d21b98b74a
+tip: see FIT_READY_CARD + git HEAD (post-fit pre-staged)
 
 ## Parent constraints (binding) — 2026-08-01 refresh
 - NO exclusive Quartus slot granted. Fit-READY only until w-geom settles POST-PRESENT SCANOUT.
