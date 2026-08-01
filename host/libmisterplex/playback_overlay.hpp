@@ -413,6 +413,16 @@ private:
     }
 
     static int alphaFor(const Snapshot& s, int64_t nowMs) {
+        // Paused transport chrome stays up for the whole pause. A 3s auto-hide
+        // (kVisibleMs) made the pause path look "broken": after fade-out the
+        // present loop republished a clean frame and wiped the panel, so a
+        // capture after grabber warm-up saw only the frozen video (max luma~0
+        // in the panel band). Playing/Stopped still use the transient timeout.
+        if (s.state == PlaybackOverlayState::Paused) {
+            if (s.shownAtMs < 0)
+                return 0;
+            return 255;
+        }
         const int64_t age = nowMs - s.shownAtMs;
         if (age < 0 || age >= kVisibleMs)
             return 0;

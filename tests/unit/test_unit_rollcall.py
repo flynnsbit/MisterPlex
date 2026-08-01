@@ -76,6 +76,7 @@ EXPECTED_COMMANDS = [
     "bash $(ROOT)/tests/unit/test_overlay_edge_measure.sh",
     "bash $(ROOT)/tests/unit/test_overlay_text_readback.sh",
     "python3 $(ROOT)/tools/even_row_cull_glyph_gate.py",
+    "python3 $(ROOT)/tests/unit/test_pause_overlay_publish_static.py",
     "$(ROOT)/build/test_input_mailbox",
     "$(ROOT)/build/test_pixel_format",
     "$(ROOT)/build/test_main_guard",

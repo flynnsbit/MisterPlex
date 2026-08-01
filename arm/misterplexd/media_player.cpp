@@ -747,17 +747,24 @@ void MediaPlayer::rememberPauseFrame(const uint8_t* yuv, size_t len, const DdrFr
 bool MediaPlayer::publishPausedOverlayFrame() {
     // Composite transport chrome onto the last held F1 YUV (or studio black) and publish.
     // pauseLatchMu_ is separate from presentMu_ (present paths may hold presentMu_).
+    // Every exit logs — silent early-return made Test B undiagnosable (grep found nothing).
     const DdrFrameGeometry g = plex480pDdrFrameGeometry();
     const int cw = g.coded_width.get();
     const int ch = g.coded_height.get();
-    if (cw <= 0 || ch <= 0 || (cw & 1) || (ch & 1))
+    if (cw <= 0 || ch <= 0 || (cw & 1) || (ch & 1)) {
+        log("media: pause overlay skip bad geometry cw=" + std::to_string(cw) +
+            " ch=" + std::to_string(ch));
         return false;
+    }
     const DdrFrameLayout layout =
         makeDdrFrameLayout(g, kDdrFramePhysBase, kDdrFrameStrideAlign, DdrFrameFormat::Yuv420p);
-    if (!ddrFrameLayoutValid(layout))
+    if (!ddrFrameLayoutValid(layout)) {
+        log("media: pause overlay skip invalid DDR layout");
         return false;
+    }
 
     std::vector<uint8_t> yuv(layout.frame_bytes);
+    bool usedLatch = false;
     {
         std::lock_guard<std::mutex> lk(pauseLatchMu_);
         if (pauseFrameLatch_.haveFrame() &&
@@ -765,12 +772,20 @@ bool MediaPlayer::publishPausedOverlayFrame() {
             pauseFrameLatch_.frame().geometry().coded_height.get() == ch &&
             pauseFrameLatch_.frame().size() == layout.frame_bytes) {
             std::memcpy(yuv.data(), pauseFrameLatch_.frame().data(), layout.frame_bytes);
+            usedLatch = true;
         } else {
             fillYuv420pStudioBlack(yuv.data(), cw, ch);
         }
     }
 
-    overlay_.renderYuv420p(yuv.data(), cw, ch);
+    if (!overlay_.visible()) {
+        log("media: pause overlay skip not-visible (state may have timed out)");
+        return false;
+    }
+    if (!overlay_.renderYuv420p(yuv.data(), cw, ch)) {
+        log("media: pause overlay renderYuv420p returned false (dirty empty?)");
+        return false;
+    }
 
     std::lock_guard<std::mutex> lk(presentMu_);
     if (fb_.ok())
@@ -782,14 +797,21 @@ bool MediaPlayer::publishPausedOverlayFrame() {
             ddrBank_ = 0;
         }
     }
-    if (!fpga_.ok() || !useDdrF1_)
+    if (!fpga_.ok() || !useDdrF1_) {
+        log(std::string("media: pause overlay no DDR path fpga_ok=") +
+            (fpga_.ok() ? "1" : "0") + " useDdrF1=" + (useDdrF1_ ? "1" : "0") +
+            " fb_ok=" + (fb_.ok() ? "1" : "0"));
         return fb_.ok();
+    }
 
     DdrPublishFrame frame{yuv.data(), yuv.size(), g, DdrFrameFormat::Yuv420p};
     std::string err;
     const bool ok = publishDdrFrame(frame, "pause overlay DDR", &err);
     if (!ok)
         log("media: pause overlay publish failed: " + (err.empty() ? fpga_.lastError() : err));
+    else
+        log(std::string("media: pause overlay DDR ok latch=") + (usedLatch ? "1" : "0") +
+            " " + std::to_string(cw) + "x" + std::to_string(ch));
     return ok;
 }
 
@@ -1194,7 +1216,11 @@ void MediaPlayer::pause() {
     showPlaybackOverlay(PlaybackOverlayState::Paused, positionMs_.load(), durationMs());
     // Publish chrome onto the last held F1 frame BEFORE SIGSTOP. The play thread may be
     // blocked in read() and cannot run its pause present loop until FFmpeg is continued.
-    (void)publishPausedOverlayFrame();
+    // Paused overlay is sticky (playback_overlay alphaFor) so later present loops must
+    // not wipe it after kVisibleMs — that was Test B (panel absent after warm-up).
+    const bool painted = publishPausedOverlayFrame();
+    if (!painted)
+        log("media: pause overlay first paint failed (will retry on play-thread pause loop)");
     signalChildren(SIGSTOP);
     if (onProgress_)
         onProgress_("paused", positionMs_.load(), durationMs_);
@@ -3215,14 +3241,21 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                     pauseStarted = std::chrono::steady_clock::now();
                 }
                 const bool overlayNow = overlay_.visible();
-                if (overlayNow || pausedOverlayWasVisible) {
+                // While chrome is up, keep republishing it onto the latched frame.
+                // When it is not, do NOT presentCleanFrame — that would doorbell a
+                // clean video frame and wipe a previously painted panel (Test B).
+                if (overlayNow) {
                     if (frameIndex > 0) {
                         rememberPauseFrame(frame.data(), frameBytes, ddrGeometry);
                         presentCleanFrame(frame.data(), /*countPresent*/ false);
                     } else {
                         (void)publishPausedOverlayFrame();
                     }
-                    pausedOverlayWasVisible = overlayNow;
+                    pausedOverlayWasVisible = true;
+                } else if (!pausedOverlayWasVisible) {
+                    // First pause ticks before show() is visible — try dedicated path.
+                    (void)publishPausedOverlayFrame();
+                    pausedOverlayWasVisible = overlay_.visible();
                 }
                 std::this_thread::sleep_for(std::chrono::milliseconds(50));
                 continue;

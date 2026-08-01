@@ -263,19 +263,24 @@ int main() {
     }
 
     // 3. Auto-hide timing with injected timestamps, no sleeps.
+    // Playing/Stopped transient; Paused is sticky (Test B — panel must survive warm-up).
     {
         PlaybackOverlay timed;
-        timed.showAt(PlaybackOverlayState::Paused, 1000, 5000, 10000);
+        timed.showAt(PlaybackOverlayState::Playing, 1000, 5000, 10000);
         CHECK(timed.visibleAt(10000));
         CHECK(timed.visibleAt(10000 + PlaybackOverlay::kVisibleMs - PlaybackOverlay::kFadeMs));
         CHECK(timed.visibleAt(10000 + PlaybackOverlay::kVisibleMs - 1));
         CHECK(!timed.visibleAt(10000 + PlaybackOverlay::kVisibleMs));
         CHECK(timed.dirtyBoundsAt(W, H, 10000 + PlaybackOverlay::kVisibleMs).empty());
 
+        timed.showAt(PlaybackOverlayState::Paused, 1000, 5000, 10000);
+        CHECK(timed.visibleAt(10000 + PlaybackOverlay::kVisibleMs + 60'000));
+        CHECK(!timed.dirtyBoundsAt(W, H, 10000 + PlaybackOverlay::kVisibleMs + 60'000).empty());
+
         timed.flashSkipAt(30000, 2000, 90000, 20000);
+        // flashSkip refreshes show time but state remains Paused → still sticky.
         CHECK(timed.visibleAt(20000));
-        CHECK(timed.visibleAt(20000 + PlaybackOverlay::kSkipVisibleMs - 1));
-        CHECK(!timed.visibleAt(20000 + PlaybackOverlay::kVisibleMs));
+        CHECK(timed.visibleAt(20000 + PlaybackOverlay::kVisibleMs + 1));
     }
 
     // 5. Multi-resolution layout: no overflow, sane panel fractions, bar endpoints.
@@ -554,6 +559,41 @@ int main() {
             }
         }
         CHECK(changed);
+    }
+
+    // 9. Paused chrome is sticky past kVisibleMs (Test B regression).
+    // Playing still auto-hides so transport flash does not stick forever.
+    {
+        using misterplex::PlaybackOverlay;
+        using misterplex::PlaybackOverlayState;
+        PlaybackOverlay ov;
+        constexpr int64_t t0 = 1'000'000;
+        ov.showAt(PlaybackOverlayState::Paused, 5000, 60000, t0);
+        CHECK(ov.visibleAt(t0));
+        CHECK(ov.visibleAt(t0 + PlaybackOverlay::kVisibleMs + 10'000));
+        CHECK(!ov.dirtyBoundsAt(624, 480, t0 + PlaybackOverlay::kVisibleMs + 10'000).empty());
+        // Resume / playing must still time out.
+        ov.showAt(PlaybackOverlayState::Playing, 5000, 60000, t0);
+        CHECK(ov.visibleAt(t0 + 100));
+        CHECK(!ov.visibleAt(t0 + PlaybackOverlay::kVisibleMs + 1));
+        // Stopped still times out (idle path owns long-lived chrome).
+        ov.showAt(PlaybackOverlayState::Stopped, 0, 0, t0);
+        CHECK(ov.visibleAt(t0 + 100));
+        CHECK(!ov.visibleAt(t0 + PlaybackOverlay::kVisibleMs + 1));
+        // After long pause, YUV render still paints (not dirty-empty).
+        ov.showAt(PlaybackOverlayState::Paused, 1000, 2000, t0);
+        std::vector<uint8_t> yuv(static_cast<size_t>(640) * 480 * 3 / 2, 16);
+        std::fill(yuv.begin() + 640 * 480, yuv.end(), 128);
+        CHECK(ov.renderYuv420pAt(yuv.data(), 640, 480, t0 + 60'000));
+        bool bright = false;
+        for (size_t i = 0; i < static_cast<size_t>(640) * 480; ++i) {
+            if (yuv[i] > 100) {
+                bright = true;
+                break;
+            }
+        }
+        CHECK(bright);
+        std::printf("pause-sticky: PAUSED visible at +60s; PLAYING/STOPPED hide after kVisibleMs\n");
     }
 
     if (fails) {
