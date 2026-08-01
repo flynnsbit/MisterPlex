@@ -51,14 +51,16 @@ int main() {
     // Regression contract: natural EOF with no auto-next must converge to the same
     // local/companion state as explicit stop. MediaPlayer already paints idle at EOF;
     // the companion must clear the media bind so timeline polls are navigation,
-    // duration=0, and contain no stale media key. The old path did
-    // buffering@duration while deciding auto-next, then a plain stopped progress
-    // update without clearMedia(), leaving fullScreenVideo/buffering forever.
+    // duration=0, terminal stopped (not buffering forever), and contain no stale
+    // media key. Old path: buffering@duration then stopped without clearMedia →
+    // fullScreenVideo/buffering forever. Later path: clearMedia + castBound hold
+    // rewrote stopped→buffering@navigation forever (HDMI STOPPED, API buffering).
     comp.setState("buffering", 1286942, 1286942);
     comp.endMediaSession(1286942, 1286942);
     const std::string eof = comp.timelineXml("eof");
     require(has(eof, "location=\"navigation\""), "EOF did not return to navigation: " + eof);
-    require(has(eof, "state=\"buffering\""), "EOF stop hold should be buffering@navigation: " + eof);
+    require(has(eof, "state=\"stopped\""), "EOF must be terminal stopped@navigation: " + eof);
+    require(!has(eof, "state=\"buffering\""), "EOF must not stick in buffering: " + eof);
     require(has(eof, "duration=\"0\""), "EOF retained stale duration: " + eof);
     require(!has(eof, "key=\"/library/metadata/3\""), "EOF retained stale media key: " + eof);
     require(!has(eof, "fullScreenVideo"), "EOF retained fullScreenVideo: " + eof);

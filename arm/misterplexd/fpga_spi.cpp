@@ -1464,8 +1464,7 @@ bool FpgaSpi::sendDdrFrame(const DdrPublishFrame& frame, const DdrPublishPlan& p
                         plxdStaleCount_ = plxdLive_.no_advance_streak;
                         if (live.swap_pending_stuck || live.display_ack_stuck) {
                             fprintf(stderr,
-                                    "[SWAP_STUCK] sendDdrFrame wait-loop: %s semantics=%s
-",
+                                    "[SWAP_STUCK] sendDdrFrame wait-loop: %s semantics=%s\n",
                                     live.swap_pending_stuck ? "swap_pending" : "display_ack",
                                     live.semantics_label);
                             plxdLivenessClearStuck(plxdLive_);
@@ -2055,15 +2054,18 @@ FpgaSpi::CoreStatus FpgaSpi::parseCoreStatus(const uint8_t raw[16]) {
     const uint16_t w4 = static_cast<uint16_t>(raw[8] | (raw[9] << 8));
     const uint16_t w5 = static_cast<uint16_t>(raw[10] | (raw[11] << 8));
 
+    // Positional ABI locked to status_telemetry.hpp + Plex.sv telem_flags pack.
+    // Do not reorder masks without updating both sides and test_telem_flags_abi.
+    using namespace misterplex::status_telemetry;
     const uint8_t flags = static_cast<uint8_t>(w1 & 0xFF);
-    s.has_frame = (flags & 1) != 0;
-    s.has_audio = (flags & 2) != 0;
-    s.has_stream = (flags & 4) != 0;
-    s.audio_underrun = (flags & 8) != 0;
-    s.has_idr = (flags & 16) != 0;
-    s.stub_busy = (flags & 32) != 0;
-    s.sps_valid = (flags & 64) != 0;
-    s.pps_valid = (flags & 128) != 0;
+    s.has_frame = (flags & (1u << kTelemFlagHasFrameBit)) != 0;
+    s.has_audio = (flags & (1u << kTelemFlagHasAudioBit)) != 0;
+    s.has_stream = (flags & (1u << kTelemFlagHasStreamBit)) != 0;
+    s.audio_underrun = (flags & (1u << kTelemFlagAudioUnderrunBit)) != 0;
+    s.has_idr = (flags & (1u << kTelemFlagHasIdrBit)) != 0;
+    s.stub_busy = (flags & (1u << kTelemFlagStubBusyBit)) != 0;
+    s.sps_valid = (flags & (1u << kTelemFlagSpsValidBit)) != 0;
+    s.pps_valid = (flags & (1u << kTelemFlagPpsValidBit)) != 0;
     s.last_nal_type = static_cast<uint8_t>((w1 >> 8) & 0xFF);
     s.nalu_count = w2;
     s.first_mb_type = static_cast<uint8_t>(w3 & 0xFF);

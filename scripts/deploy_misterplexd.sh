@@ -139,15 +139,22 @@ for d in /proc/[0-9]*; do
   case "$cmd" in
     *plexctl.sh*|*plexctl_supervise*|*misterplexd_supervise*|*dedupe_daemon*) continue ;;
   esac
-  # Identity: /proc/PID/exe basename after strip " (deleted)" — never cmdline alone.
+  # Identity: /proc/PID/exe must contain misterplexd. After binary replace the
+  # kernel reports ".../misterplexd (deleted)" — readlink -f may be empty, and
+  # a trailing-only glob *misterplexd) misses the suffix. Use *misterplexd*.
   p=${d#/proc/}
-  exe=$(readlink -f "/proc/$p/exe" 2>/dev/null || true)
+  exe_raw=$(readlink "/proc/$p/exe" 2>/dev/null || true)
+  exe_f=$(readlink -f "/proc/$p/exe" 2>/dev/null || true)
+  exe=${exe_f:-$exe_raw}
+  case "$exe" in
+    *misterplexd*) ;;
+    *) continue ;;
+  esac
   exe_clean=${exe% (deleted)}
-  base=$(basename "$exe_clean" 2>/dev/null || true)
-  [ "$base" = "misterplexd" ] || continue
   n=$((n + 1))
-  if [ -n "$exe" ]; then
-    root=$(dirname "$(dirname "$exe")")
+  if [ -n "$exe_clean" ]; then
+    root=$(dirname "$(dirname "$exe_clean")")
+    exe=$exe_clean
   else
     conf=""
     set -- $cmd
@@ -270,7 +277,10 @@ set -e
 report_rc "stop_all" "$stop_rc" || die "stop failed (rc=$stop_rc)"
 
 # --- install exact bytes ------------------------------------------------------
-echo "deploy: install host_md5=$HOST_MD5 -> $REMOTE_BIN"
+# rename() over a running executable is legal; open-for-write raises ETXTBSY.
+# Stage to misterplexd.new then mv -f onto the live name (parent deploy trap).
+echo "deploy: install host_md5=$HOST_MD5 -> $REMOTE_BIN (stage .new + mv -f)"
+REMOTE_BIN_NEW="${REMOTE_BIN}.new"
 # Content-addressed archive of outgoing daemon so atomic pair rollback can find
 # the previous pin (parent 2026-07-31: SPI rollback needed 50f4eb92 after DDR
 # overwrite; without bak, restore cannot be atomic and must refuse).
@@ -289,16 +299,22 @@ if [ -f '$REMOTE_BIN' ]; then
     fi
   fi
 fi
-rm -f '$REMOTE_BIN'"
+rm -f '$REMOTE_BIN_NEW'"
 prep_rc=$?
 set -e
 report_rc "install_prep" "$prep_rc" || die "install prep failed"
 
 set +e
-scp_to "$BIN" "$REMOTE_BIN"
+scp_to "$BIN" "$REMOTE_BIN_NEW"
 scp_rc=$?
 set -e
-report_rc "scp" "$scp_rc" || die "scp failed"
+report_rc "scp" "$scp_rc" || die "scp to .new failed"
+
+set +e
+ssh_m "mv -f '$REMOTE_BIN_NEW' '$REMOTE_BIN' && chmod +x '$REMOTE_BIN' && echo INSTALL_MV_OK"
+mv_rc=$?
+set -e
+report_rc "install_mv" "$mv_rc" || die "mv -f .new -> live failed (rc=$mv_rc)"
 
 # Disk md5 on device MUST match host before we restart (catches partial scp).
 set +e
@@ -403,10 +419,15 @@ for d in /proc/[0-9]*; do
   cmd=$(tr "\0" " " < "$d/cmdline" 2>/dev/null) || continue
   case "$cmd" in *plexctl.sh*|*supervise*|*dedupe_daemon*) continue ;; esac
   p=${d#/proc/}
-  live_exe=$(readlink -f "/proc/$p/exe" 2>/dev/null || true)
+  # *misterplexd* — deleted suffix must not drop the match (parent 2026-07-31).
+  live_raw=$(readlink "/proc/$p/exe" 2>/dev/null || true)
+  live_f=$(readlink -f "/proc/$p/exe" 2>/dev/null || true)
+  live_exe=${live_f:-$live_raw}
+  case "$live_exe" in
+    *misterplexd*) ;;
+    *) continue ;;
+  esac
   live_clean=${live_exe% (deleted)}
-  base=$(basename "$live_clean" 2>/dev/null || true)
-  [ "$base" = "misterplexd" ] || continue
   n=$((n + 1))
   pids="$pids $p"
   live_exe=$live_clean

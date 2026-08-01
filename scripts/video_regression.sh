@@ -539,18 +539,25 @@ deleted=0
 for d in /proc/[0-9]*; do
   [ -e "$d/exe" ] || continue
   p=${d#/proc/}
-  x_raw=$(readlink -f "$d/exe" 2>/dev/null) || continue
+  # readlink -f may be EMPTY on a replaced binary; plain readlink keeps
+  # ".../misterplexd (deleted)". Match *misterplexd* — never trailing-only
+  # *misterplexd) which misses the kernel suffix (parent 2026-07-31).
+  x_plain=$(readlink "$d/exe" 2>/dev/null || true)
+  x_f=$(readlink -f "$d/exe" 2>/dev/null || true)
+  x_raw=${x_f:-$x_plain}
   [ -n "$x_raw" ] || continue
   x=$x_raw
   case "$x" in
+    *misterplexd*) ;;
+    *) continue ;;
+  esac
+  case "$x" in
     *" (deleted)") x=${x%" (deleted)"}; deleted=1 ;;
   esac
-  base=$(basename "$x" 2>/dev/null) || continue
-  [ "$base" = "misterplexd" ] || continue
   # When bin is set, accept exact cleaned path OR any misterplexd (deploy may rename).
   if [ -n "$bin" ] && [ "$x" != "$bin" ]; then
     # Still count: argv0 path match is insufficient during (deleted) rename races;
-    # basename already proves identity. Keep all misterplexd for n_match.
+    # *misterplexd* already proves identity. Keep all misterplexd for n_match.
     :
   fi
   pids="${pids}${pids:+ }$p"

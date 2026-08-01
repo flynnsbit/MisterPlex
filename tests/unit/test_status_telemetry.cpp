@@ -99,6 +99,58 @@ int main(int argc, char** argv) {
                   "PLXE overrun sticky bit");
     static_assert(misterplex::ddr_bitstream_ring::kErrActiveBit == 47,
                   "PLXE active bit");
+    // telem_flags positional ABI (Plex.sv MSB-first pack ↔ ARM masks).
+    static_assert(kTelemFlagHasFrameBit == 0 && kTelemFlagHasAudioBit == 1 &&
+                      kTelemFlagHasStreamBit == 2 && kTelemFlagAudioUnderrunBit == 3 &&
+                      kTelemFlagHasIdrBit == 4 && kTelemFlagStubBusyBit == 5 &&
+                      kTelemFlagSpsValidBit == 6 && kTelemFlagPpsValidBit == 7,
+                  "telem_flags bit positions drifted");
+    static_assert(kTelemFlagsByte == 2, "telem_flags live in raw[2]");
+
+    // One-hot walk: each flag bit must decode to exactly one CoreStatus field.
+    {
+        using FlagFn = bool (*)(const FpgaSpi::CoreStatus&);
+        const struct {
+            int bit;
+            FlagFn get;
+            const char* name;
+        } kFlags[] = {
+            {kTelemFlagHasFrameBit, [](const FpgaSpi::CoreStatus& s) { return s.has_frame; },
+             "has_frame"},
+            {kTelemFlagHasAudioBit, [](const FpgaSpi::CoreStatus& s) { return s.has_audio; },
+             "has_audio"},
+            {kTelemFlagHasStreamBit, [](const FpgaSpi::CoreStatus& s) { return s.has_stream; },
+             "has_stream"},
+            {kTelemFlagAudioUnderrunBit,
+             [](const FpgaSpi::CoreStatus& s) { return s.audio_underrun; }, "audio_underrun"},
+            {kTelemFlagHasIdrBit, [](const FpgaSpi::CoreStatus& s) { return s.has_idr; },
+             "has_idr"},
+            {kTelemFlagStubBusyBit, [](const FpgaSpi::CoreStatus& s) { return s.stub_busy; },
+             "stub_busy"},
+            {kTelemFlagSpsValidBit, [](const FpgaSpi::CoreStatus& s) { return s.sps_valid; },
+             "sps_valid"},
+            {kTelemFlagPpsValidBit, [](const FpgaSpi::CoreStatus& s) { return s.pps_valid; },
+             "pps_valid"},
+        };
+        for (const auto& f : kFlags) {
+            Raw raw{};
+            setBit(raw, 16 + f.bit, true); // status flags at bits [23:16] → raw[2]
+            const FpgaSpi::CoreStatus st = FpgaSpi::parseCoreStatus(raw.data());
+            expect(f.get(st), "telem flag one-hot decode failed");
+            for (const auto& o : kFlags) {
+                if (o.bit == f.bit)
+                    continue;
+                expect(!o.get(st), "telem flag crosstalk — bit position drift");
+            }
+        }
+        // Mutation class: if stub_busy were dropped from RTL, bit5 would carry
+        // sps_valid. Prove parser still binds bit5 → stub_busy (not sps).
+        Raw shift{};
+        setBit(shift, 16 + kTelemFlagStubBusyBit, true);
+        const FpgaSpi::CoreStatus shifted = FpgaSpi::parseCoreStatus(shift.data());
+        expect(shifted.stub_busy && !shifted.sps_valid,
+               "bit5 must remain stub_busy (drop-field shift hazard)");
+    }
 
     const auto dc_u8 = static_cast<uint8_t>(kDc);
     for (uint8_t ar = 0; ar < 4; ++ar) {
