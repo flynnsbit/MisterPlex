@@ -5,6 +5,7 @@
 #include "libmisterplex/av_clock.hpp"
 #include "libmisterplex/ffmpeg_vf.hpp"
 #include "libmisterplex/frame_ledger.hpp"
+#include "libmisterplex/supply_bucket.hpp"
 #include "libmisterplex/idle_screen.hpp"
 #include "libmisterplex/last_frame_latch.hpp"
 #include "libmisterplex/osd_menu.hpp"
@@ -33,6 +34,22 @@
 
 namespace misterplex {
 namespace {
+
+// Telemetry rates must be evidence-grade. NEVER truncate with string.substr(0,4):
+// std::to_string(23.9694) and std::to_string(23.9111) both become "23.9", which over
+// a 360 s soak is a ±36 frame ambiguity (parent DEFECT 1). Prefer exact counters
+// (frames=/presents=/wall_ms=) and print rates with enough decimals to resolve
+// single-frame deficits (1/360 s ≈ 0.0028 fps → %.4f).
+inline std::string fmtFpsRate(double v) {
+    char buf[32];
+    std::snprintf(buf, sizeof(buf), "%.4f", v);
+    return std::string(buf);
+}
+inline std::string fmtSec3(double v) {
+    char buf[32];
+    std::snprintf(buf, sizeof(buf), "%.3f", v);
+    return std::string(buf);
+}
 
 // Steady-clock ms since epoch — shared axis for startup cluster instrumentation.
 // wall_s is session-relative (only after sessionOriginMonoMs_ is armed). mono_ms
@@ -1349,8 +1366,16 @@ void MediaPlayer::ffmpegStderrPump(int errReadFd, size_t codedFrameBytes, bool i
                 break;
             std::string line = acc.substr(0, nl);
             acc.erase(0, nl + 1);
-            // Drop progress noise if any slipped past -nostats.
-            if (line.rfind("frame=", 0) == 0 || line.find("fps=") != std::string::npos)
+            // Capture ffmpeg frame= into atomic; do not log every stats line (spam).
+            // Parent glass-loss split needs ffmpeg_out_frames vs frameIndex.
+            {
+                int64_t ff = 0;
+                if (misterplex::parseFfmpegFrameCountLine(line, &ff)) {
+                    ffmpegOutFrames_.store(ff, std::memory_order_relaxed);
+                    continue;
+                }
+            }
+            if (line.find("fps=") != std::string::npos && line.find("Stream") == std::string::npos)
                 continue;
             const auto g = parseFfmpegGeometryLine(line);
             if (!g.ok)
@@ -2837,6 +2862,9 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
     auto t0 = std::chrono::steady_clock::now();
     auto lastLog = t0;
     size_t totalBytes = 0;
+    // Per-second supply bucket baseline (glass-loss 1/2.71s resolvable).
+    misterplex::SupplyCounters supplyPrev{};
+    bool supplyPrevInit = false;
 
     bool usedRawVideo = false;
     bool videoEof = false;
@@ -2859,6 +2887,7 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
     avDriftMs_.store(0);
     droppedFrames_.store(0);
     publishMisses_.store(0);
+    ffmpegOutFrames_.store(-1, std::memory_order_relaxed);
     if (fpsNum_ <= 0)
         log("media: content fps UNKNOWN — pacing at " + std::to_string(kDefaultFpsNum) + "/" +
             std::to_string(kDefaultFpsDen) + " and relying on drift correction");
@@ -2990,8 +3019,9 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
         std::vector<std::string> args;
         args.push_back(ffmpeg_);
         args.push_back("-hide_banner");
-        // info + nostats: Stream # Video WxH banners without frame= spam (B2).
-        args.push_back("-nostats");
+        // info + stats: Stream # WxH (B2) AND frame= for supply ledger (glass-loss).
+        // Stderr pump parses frame= into ffmpegOutFrames_ without logging each line.
+        args.push_back("-stats");
         args.push_back("-loglevel");
         args.push_back("info");
         args.push_back("-nostdin");
@@ -4086,11 +4116,16 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                     misterplex::avPipeAheadMs(frameIndex, presentCount_, fpsNum, fpsDen);
                 misterplex::formatAvServoTelemetry(avServoBuf, sizeof(avServoBuf), driftNow,
                                                    leadMs, dispOff, pipeAhead);
+                // Exact integers are SoT for soak math; vfps/pfps are derived display
+                // only (%.4f). Decode-side deficit = expected_frames - frames (content
+                // vs wall). Presentation-side loss is a SEPARATE ledger (presents /
+                // glass) — never conflate the two (parent DEFECT 2).
                 log("media: " + frameLedgerTelemetryFragment(led) +
-                    " vfps=" + std::to_string(vfps).substr(0, 4) +
-                    " pfps=" + std::to_string(pfps).substr(0, 4) +
-                    " audio_s=" + std::to_string(a_sec).substr(0, 5) +
-                    " wall_s=" + std::to_string(wall2 / 1000.0).substr(0, 5) +
+                    " vfps=" + fmtFpsRate(vfps) +
+                    " pfps=" + fmtFpsRate(pfps) +
+                    " audio_s=" + fmtSec3(a_sec) +
+                    " wall_s=" + fmtSec3(static_cast<double>(wall2) / 1000.0) +
+                    " wall_ms=" + std::to_string(wall2) +
                     " mono_ms=" + std::to_string(steadyMonoMs()) +
                     " audio=" + (audioActive_.load() ? "on" : "off") +
                     " clock=av-lock" +
@@ -4120,7 +4155,35 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                     " stream_seq=" + std::to_string(sseq) +
                     " session_epoch=" + sessionEpochString(pep, sseq) +
                     " session_completed=" + std::to_string(sessionSeq_.load()) +
+                    " ffmpeg_out_frames=" +
+                    (ffmpegOutFrames_.load(std::memory_order_relaxed) >= 0
+                         ? std::to_string(ffmpegOutFrames_.load(std::memory_order_relaxed))
+                         : "NO-DATA") +
                     " tag=measured");
+                // Per-second supply bucket — resolvable at ~1 skip / 2.71 s.
+                {
+                    misterplex::SupplyCounters cur;
+                    cur.frames = frameIndex;
+                    cur.presents = presentCount_;
+                    cur.drops = droppedFrames_.load();
+                    cur.publish_misses = publishMisses_.load();
+                    cur.pipe_bytes = static_cast<int64_t>(totalBytes);
+                    cur.ffmpeg_out_frames =
+                        ffmpegOutFrames_.load(std::memory_order_relaxed);
+                    cur.wall_s = static_cast<double>(wall2) / 1000.0;
+                    if (supplyPrevInit) {
+                        const auto d =
+                            misterplex::supplyBucketDelta(supplyPrev, cur, fpsNum, fpsDen);
+                        const std::string se = sessionEpochString(pep, sseq);
+                        log("media: " +
+                            misterplex::formatSupplyBucketLine(
+                                d, cur.wall_s, cur.frames, cur.presents, cur.drops,
+                                cur.publish_misses, led.residual, cur.ffmpeg_out_frames,
+                                fpsNum, fpsDen, se.c_str()));
+                    }
+                    supplyPrev = cur;
+                    supplyPrevInit = true;
+                }
             }
             // Periodic hard check (B5): measured size vs reader under identity_skip.
             if (vfPlan.identity_skip && (frameIndex % 120) == 0) {
@@ -4183,6 +4246,48 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                 " frameBytes=" + std::to_string(frameBytes) +
                 " frames=" + std::to_string(frameIndex) +
                 " total_mod_frame=0 tag=measured");
+        }
+        {
+            const auto id =
+                misterplex::supplyPipeIdentity(totalBytes, frameBytes, frameIndex);
+            misterplex::SupplyBucketDelta win{};
+            if (supplyPrevInit) {
+                misterplex::SupplyCounters endc;
+                endc.frames = frameIndex;
+                endc.presents = presentCount_;
+                endc.drops = droppedFrames_.load();
+                endc.publish_misses = publishMisses_.load();
+                endc.pipe_bytes = static_cast<int64_t>(totalBytes);
+                endc.ffmpeg_out_frames =
+                    ffmpegOutFrames_.load(std::memory_order_relaxed);
+                endc.wall_s = supplyPrev.wall_s; // not used for stage at teardown
+                // Whole-session style: compare end counters to zeros baseline.
+                misterplex::SupplyCounters zero{};
+                zero.ffmpeg_out_frames = -1;
+                win = misterplex::supplyBucketDelta(zero, endc, fpsNum, fpsDen);
+                // Prefer first-bucket→end if we have prev from last 1Hz (approx).
+                win.d_frames = frameIndex;
+                win.d_presents = presentCount_;
+                win.d_drops = droppedFrames_.load();
+                win.d_publish_misses = publishMisses_.load();
+                win.d_unaccounted =
+                    misterplex::supplyUnaccounted(frameIndex, presentCount_,
+                                                  droppedFrames_.load());
+                win.supply_gap = 0; // filled below from wall if known
+            }
+            const int64_t ff = ffmpegOutFrames_.load(std::memory_order_relaxed);
+            if (ff >= 0)
+                win.d_ffmpeg_out = ff;
+            win.ffmpeg_out_known = ff >= 0;
+            const char* hint = misterplex::supplyStageHint(win, /*glass*/ 0, risk);
+            log("media: " + misterplex::formatSupplyTeardownLine(id, totalBytes, frameBytes,
+                                                                   ff, hint));
+            if (!id.ok && totalBytes > 0) {
+                log("ERROR media: SUPPLY_PIPE_IDENTITY_FAIL frames_from_bytes=" +
+                    std::to_string(id.frames_from_bytes) +
+                    " frame_index=" + std::to_string(frameIndex) +
+                    " delta=" + std::to_string(id.delta_frames_vs_bytes) + " tag=measured");
+            }
         }
         if (mw > 0 && mh > 0) {
             log("media: MEASURED_DELIVERY_FINAL " + std::to_string(mw) + "x" +
