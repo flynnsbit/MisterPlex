@@ -198,3 +198,6 @@ Absence = **NO-DATA**. Never `200−accounted` as headroom.
 | SUSPEND −45.7 | measured (parent historical) |
 | Fabric scaler %onecpu save | **ESTIMATED** until §A |
 | 449280 both tiers | source (`624*480*3/2`) |
+
+
+**SUPERSEDED for ranking:** use `ARM_OFFLOAD_INVENTORY_WALL_MS.md` (wall ms/f only; %onecpu not mixed).
