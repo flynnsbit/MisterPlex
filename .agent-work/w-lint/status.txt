@@ -1,41 +1,24 @@
 lane: w-lint GATE-INTEGRITY
 branch: w-lint-gate-integrity
-tip: 95ca7d06
 worktree: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-lint
 
-## Parent promotion-blocker response
+DELIVERED (false-green systematic hunt):
+- docs/evidence/w_lint_FALSE_GREEN_HUNT.md — ranked B1–B4 findings + CRITICAL PMS enforce recipe
+- tests/unit/test_false_green_pattern_guard.py — tripwire for kParentClusterSepMsX100=11710 / Q4 lab goldens
+  RBG: clean rc=0; inject 11710 rc=1; restore rc=0
+- Makefile unit-unlocked + rollcall expected_commands=126 (sha16=67395583620c7487)
 
-### DEFECT 1 running bitstream
-HONEST NEGATIVE: no software path names RUNNING rbf content hash today.
-- CORENAME/RBFNAME always Plex; disk md5 ≠ fabric
-- PLXD/PLXS/plxa/banks/frames_done = family/liveness ONLY (not build id)
-- PLXC @ +0x130 designed, not shipping on c5382bee
-- HDMI = parent-only
+VERIFIED true rc (direct):
+- make unit-unlocked → 0
+- make unit (no MISTERPLEX_BASELINE_KEY) → GATE_RESULT=PASS_INCOMPLETE process_rc=78
+- pattern/pipe/av_drift/rollcall guards → 0
 
-Gate behaviour (RBG unit true rc):
-| case | GATE_RESULT | true rc |
-|------|-------------|---------|
-| mixed SPI core + DDR daemon | FAIL | 1 |
-| coherent pair no PLXC | CORE_IDENTITY_UNVERIFIED | 2 |
-| VIDREG_CORE_ID=ddr inject | FULL_PASS | 0 |
-| empty probe | NO_DATA | 4 |
+CRITICAL PMS: NOT lowered. Enforce via make pms-baseline-live or
+MISTERPLEX_BASELINE_ANNEXB=… Offline path documented in hunt doc.
+Exposure while skipped: PMS decoder-contract drift (480p drop class).
 
-PROMOTE_OK=0|1 + GATE_RESULT= are the only promote scanners; mid-script OK lines are steps.
+Parent patterns (1)(2): NOT-FOUND on this tree; fixed on w-avsync@8a7df256;
+tripwire blocks reintro on merge.
 
-### DEFECT 2 set +e glue
-Capture fix already present: gate_join_remote_parts + gate_assert_md5_shape.
-harness RBG: glued md5set+e → shape FAIL rc=1; clean → 0. Never relax comparison.
-
-### DEFECT 3 audit
-docs/evidence/w_lint_GATE_SUITE_AUDIT.md — blind-green/red + rc=77 taxonomy A/B/C.
-CRITICAL PMS gap → process_rc=78. fix/gate-liveness CLOSE (102 vs 125).
-
-### Direct true rc
-test_video_regression_liveness.sh → 0
-test_harness_capture_integrity.py → 0
-test_promotion_gates.sh → 0
-test_unit_rollcall.py → 0 (expected_commands=125)
-
-### Parent commands
-bash scripts/video_regression.sh verify; echo "true rc=$?"
-# pre-PLXC: GATE_RESULT=CORE_IDENTITY_UNVERIFIED PROMOTE_OK=0 true rc=2
+Identity/PROMOTE: still PROMOTE_OK=0 without PLXC (correct blind refusal).
+NO device. NO Quartus.
