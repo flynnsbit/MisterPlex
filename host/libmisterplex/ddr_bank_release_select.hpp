@@ -11,7 +11,7 @@
 // just became the display bank. Legacy ARM freeBank()+force(disp^1) then
 // overwrites the live display / same-as-disp pending bank under rate.
 //
-// HISTORICAL FAULT (fixed in product RTL pack): an older pack put
+// HISTORICAL FAULT (fixed in tip RTL pack; c5382bee daily-driver NOT YET FITTED): an older pack put
 // bank_vsync_count into the PLXD frames_done field so the mailbox looked
 // "live" while swaps were stuck. Product ddr_frame_store.sv now packs the
 // real swap counter only:

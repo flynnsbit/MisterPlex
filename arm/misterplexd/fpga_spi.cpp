@@ -1,6 +1,7 @@
 #include "fpga_spi.hpp"
 
 #include "libmisterplex/ddr_bank_release_select.hpp"
+#include "libmisterplex/plxd_liveness.hpp"
 
 #include "libmisterplex/status_telemetry.hpp"
 #include "libmisterplex/pixel_format.hpp"
@@ -1374,8 +1375,8 @@ bool FpgaSpi::sendDdrFrame(const DdrPublishFrame& frame, const DdrPublishPlan& p
                 case PlxdProvenance::Absent:    label = "ABSENT"; break;
                 case PlxdProvenance::Residue:   label = "RESIDUE(reserved!=0)"; break;
                 case PlxdProvenance::InitOnly:  label = "INIT_ONLY(frames_done=0)"; break;
-                case PlxdProvenance::Alive:     label = "ALIVE(frames_done>0,static)"; break;
-                case PlxdProvenance::LiveAdvance: label = "LIVE_ADVANCE"; break;
+                case PlxdProvenance::Alive:     label = "ALIVE(counter>0,static,NOT_swap_proof)"; break;
+                case PlxdProvenance::LiveAdvance: label = "LIVE_ADVANCE(counter_moving,NOT_swap_proof)"; break;
                 }
                 fprintf(stderr,
                         "[PLXD-PROVENANCE] %s raw=0x%08x_%08x "
@@ -1385,35 +1386,59 @@ bool FpgaSpi::sendDdrFrame(const DdrPublishFrame& frame, const DdrPublishPlan& p
                         diag.disp_bank, diag.swap_pending, diag.reserved_bits);
             }
 
-            // --- Degeneracy defence (instrument-integrity #18) ---
-            // A DDR word that happens to contain PLXD magic by coincidence
-            // (boot residue) would pass the magic check and return valid-
-            // looking fields. Defence: check frames_done advances between
-            // successive frames. If it never advances, the mailbox is stale
-            // (never written by the FPGA) and we must not trust it.
-            if (brs.frames_done != plxdLastFramesDone_) {
-                plxdLivenessProven_ = true;
-                plxdStaleCount_ = 0;
-            } else {
-                ++plxdStaleCount_;
-            }
-            plxdLastFramesDone_ = brs.frames_done;
-            // Residue at a wrong absolute address can prove live once (noise /
-            // one-shot change) then stick forever. Re-arm fallback even after
-            // proven if frames_done stops advancing.
-            constexpr int kPlxdStaleLimitFrames = 10;
-            constexpr int kPlxdStaleLimitAfterProven = 60; // ~1–2s at 30–60fps
-            const int staleLimit =
-                plxdLivenessProven_ ? kPlxdStaleLimitAfterProven : kPlxdStaleLimitFrames;
-            if (plxdStaleCount_ >= staleLimit) {
-                fprintf(stderr,
-                        "[STALE] sendDdrFrame: PLXD mailbox frames_done stuck at %u for "
-                        "%d frames (proven=%d) — treating as residue, timed-delay fallback\n",
-                        static_cast<unsigned>(brs.frames_done), plxdStaleCount_,
-                        plxdLivenessProven_ ? 1 : 0);
-                plxdLivenessProven_ = false;
-                plxdStaleCount_ = 0;
-                goto plxd_absent_fallback;
+            // --- PLXD liveness (c5382bee freeze-blindness fix) ---
+            // frames_done advance alone does NOT prove bank swaps. On c5382bee
+            // PLXD[63:48] packs bank_vsync_count: counter moves every vsync while
+            // swaps can be frozen — old degeneracy defence could never fire.
+            // Use plxd_liveness.hpp: counter motion = timebase; swap health from
+            // disp_bank / swap_pending / display-ack. Derivation tags in log.
+            {
+                const auto live = plxdLivenessObserve(
+                    plxdLive_, brs.frames_done, brs.disp_bank, brs.swap_pending);
+                plxdLastFramesDone_ = brs.frames_done;
+                plxdLivenessProven_ = plxdLive_.counter_moving_proven; // NOT swap_live
+                plxdStaleCount_ = plxdLive_.no_advance_streak;
+
+                if (live.residue_counter_stale) {
+                    fprintf(stderr,
+                            "[STALE] sendDdrFrame: PLXD counter (labelled frames_done) "
+                            "stuck at %u for %d samples semantics=%s "
+                            "derivation=counter_not_swap — residue fallback\n",
+                            static_cast<unsigned>(brs.frames_done), plxdStaleCount_,
+                            live.semantics_label);
+                    plxdLivenessProven_ = false;
+                    plxdLivenessClearStuck(plxdLive_);
+                    goto plxd_absent_fallback;
+                }
+                if (live.swap_pending_stuck) {
+                    fprintf(stderr,
+                            "[SWAP_STUCK] sendDdrFrame: swap_pending held across %d "
+                            "counter ticks fd=%u disp=%u semantics=%s "
+                            "derivation=swap_pending_vs_counter_timebase — drop\n",
+                            plxdLive_.swap_pend_true_ticks,
+                            static_cast<unsigned>(brs.frames_done),
+                            static_cast<unsigned>(brs.disp_bank), live.semantics_label);
+                    plxdLivenessClearStuck(plxdLive_);
+                    timing.plxa_poll_us = elapsedUs(tPrep0, std::chrono::steady_clock::now());
+                    timing.plxa_used = true;
+                    setErr("sendDdrFrame: PLXD swap_pending stuck (freeze class)");
+                    return false;
+                }
+                if (live.display_ack_stuck) {
+                    fprintf(stderr,
+                            "[SWAP_STUCK] sendDdrFrame: display-ack timeout bank=%u "
+                            "ticks=%d fd=%u disp=%u semantics=%s "
+                            "derivation=disp_bank_vs_last_publish — drop\n",
+                            static_cast<unsigned>(plxdLive_.await_bank),
+                            plxdLive_.await_ack_ticks,
+                            static_cast<unsigned>(brs.frames_done),
+                            static_cast<unsigned>(brs.disp_bank), live.semantics_label);
+                    plxdLivenessClearStuck(plxdLive_);
+                    timing.plxa_poll_us = elapsedUs(tPrep0, std::chrono::steady_clock::now());
+                    timing.plxa_used = true;
+                    setErr("sendDdrFrame: PLXD display-ack stuck (freeze class)");
+                    return false;
+                }
             }
 
             // PLXD present — bank identity is authoritative (free/disp). Do not
@@ -1429,10 +1454,26 @@ bool FpgaSpi::sendDdrFrame(const DdrPublishFrame& frame, const DdrPublishPlan& p
                     ++plxdIters;
                     if (!readBankRelease(brs))
                         break;
-                    if (brs.frames_done != plxdLastFramesDone_) {
-                        plxdLivenessProven_ = true;
-                        plxdStaleCount_ = 0;
+                    {
+                        const auto live = plxdLivenessObserve(
+                            plxdLive_, brs.frames_done, brs.disp_bank, brs.swap_pending);
                         plxdLastFramesDone_ = brs.frames_done;
+                        plxdLivenessProven_ = plxdLive_.counter_moving_proven;
+                        plxdStaleCount_ = plxdLive_.no_advance_streak;
+                        if (live.swap_pending_stuck || live.display_ack_stuck) {
+                            fprintf(stderr,
+                                    "[SWAP_STUCK] sendDdrFrame wait-loop: %s semantics=%s
+",
+                                    live.swap_pending_stuck ? "swap_pending" : "display_ack",
+                                    live.semantics_label);
+                            plxdLivenessClearStuck(plxdLive_);
+                            timing.plxa_poll_us =
+                                elapsedUs(tPrep0, std::chrono::steady_clock::now());
+                            timing.plxa_poll_iters = plxdIters;
+                            timing.plxa_used = true;
+                            setErr("sendDdrFrame: PLXD swap stuck in wait-loop");
+                            return false;
+                        }
                     }
                     sel = selectDdrWriteBank(brs, ddrBankSelect_, kPlxdPollMaxIters);
                 }
@@ -1627,6 +1668,7 @@ bool FpgaSpi::sendDdrFrame(const DdrPublishFrame& frame, const DdrPublishPlan& p
     lastDdrTiming_ = timing;
     lastPublishedBank_ = bank & 1;
     noteDdrBankPublished(ddrBankSelect_, bank);
+    plxdLivenessNotePublished(plxdLive_, bank);
     clearErr();
     return true;
 }
@@ -1762,8 +1804,8 @@ FpgaSpi::PlxdDiag FpgaSpi::diagnosePlxdProvenance() {
         return d;
     }
 
-    // frames_done > 0 — at least one bank swap occurred. Now check liveness
-    // by reading again after a short delay to see if it advances.
+    // frames_done > 0 — counter non-zero (on c5382bee: vsyncs, NOT swaps).
+    // Check if counter advances — proves COUNTER motion only.
     usleep(5000); // 5 ms — one vsync at 60 Hz is ~16.7 ms
     __sync_synchronize();
     const uint32_t hi2 = mw[1];

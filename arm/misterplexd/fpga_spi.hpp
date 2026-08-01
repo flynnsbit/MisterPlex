@@ -7,6 +7,7 @@
 #include <string>
 #include <vector>
 
+#include "libmisterplex/plxd_liveness.hpp"
 #include "libmisterplex/ddr_bank_release_select.hpp"
 #include "libmisterplex/ddr_frame_layout.hpp"
 #include "libmisterplex/ddr_bitstream_ring.hpp"
@@ -138,9 +139,9 @@ public:
     enum class PlxdProvenance {
         Absent,      // magic does not match — cold DDR, pre-PLXD RBF, or corruption
         Residue,     // magic matches but reserved bits non-zero (coincidence/corruption)
-        InitOnly,    // magic valid, clean fields, but frames_done==0 — FPGA initialized, never swapped
-        Alive,       // magic valid, frames_done>0 — FPGA has completed at least one bank swap
-        LiveAdvance, // frames_done advanced between two reads — FPGA is actively running
+        InitOnly,    // magic valid, clean fields, frames_done==0 — counter never ticked
+        Alive,       // magic valid, frames_done>0 static — counter non-zero once (NOT swap proof)
+        LiveAdvance, // frames_done advanced — COUNTER moving (vsync OR swap; NOT swap-live alone)
     };
     struct PlxdDiag {
         PlxdProvenance provenance = PlxdProvenance::Absent;
@@ -333,10 +334,13 @@ private:
     InputMailboxEdgeDetector inputMboxEdge_;
     int ddrKickMode_ = 0; // 0=unknown, 1=doorbell, 2=SPI kick, -1=fail
     double ddrKickFailMs_ = -1.0; // steady_clock timestamp of last ddrKickMode_ = -1
-    // PLXD liveness: detect stale/residue mailbox by checking frames_done advances.
-    uint16_t plxdLastFramesDone_ = 0;
-    int plxdStaleCount_ = 0;       // consecutive reads with no frames_done advance
-    bool plxdLivenessProven_ = false; // true once frames_done has advanced at least once
+    // PLXD liveness (see plxd_liveness.hpp). frames_done advance alone is NOT
+    // swap-live on c5382bee (vsync-packed). Legacy plxdLivenessProven_ means
+    // counter_moving only; swap health uses plxdLive_.swap_progress_proven.
+    PlxdLivenessState plxdLive_{};
+    uint16_t plxdLastFramesDone_ = 0; // mirror for logs
+    int plxdStaleCount_ = 0;          // residue: no counter advance streak
+    bool plxdLivenessProven_ = false; // counter_moving_proven (NOT swap_live)
     bool ensureDdrMap();
     void releaseDdrMap();
     bool ensureBitstreamDdrMap();

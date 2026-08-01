@@ -56,3 +56,12 @@ Parent ERROR 20 ("I manufactured the defect") is **itself retracted**. Running p
   **outside** a HISTORICAL-marked block.
 - Self-test: HISTORICAL block not flagged; bare present-tense flagged.
 - RBG: reintroducing pre-`100b797d` wording → **rc=1**; restore → **rc=0**.
+
+## Three-line pre-retraction (binding)
+
+See `docs/PRE_RETRACTION_CHECK.md`. Summary:
+
+1. Name finding artifact vs retraction artifact — if they differ, retraction invalid without bridge.
+2. Device behaviour ↔ device evidence only.
+3. Comment "FIXED" must cite commit **and** live artifact, or say `NOT YET FITTED`.
+
