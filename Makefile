@@ -11,7 +11,8 @@ all: unit
 
 help:
 	@echo "Targets:"
-	@echo "  make unit       - serialized host unit tests with resource backoff (cadence, resolve, companion HTTP)"
+	@echo "  make unit       - host unit + skip-summary (CRITICAL PMS gap => process_rc=78 PASS_INCOMPLETE, not PASS)"
+	@echo "  make unit-unlocked - host unit only (no PMS inventory; use when key absent and you need host green)"
 	@echo "  make rtl-sim    - run real Verilator RTL simulations if Verilator is installed"
 	@echo "  make rtl-lint   - run Verilator parse/lint width/implicit regression gate (not Quartus synthesis)"
 	@echo "  make verilator-elab - run fast Verilator elaboration guard for synthesis-fatal owned RTL errors"

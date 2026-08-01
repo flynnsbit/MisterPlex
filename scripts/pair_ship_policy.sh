@@ -26,15 +26,21 @@ fi
 # core_md5|daemon_md5_or_prefix|core_device_path|mode|label|conf_profile|bank1
 # conf_profile: ddr | spi | none
 # bank1: DDR frame-store bank1 phys (geometry half of the pair)
-#   SPI 320x240 → 0x30040000
-#   DDR 480p-capable YUV layout → 0x30080000
+#   SPI 320x240 → DDR_BANK1_SPI (layout-derived)
+#   DDR 480p YUV → DDR_BANK1_DDR (layout-derived)
 # A mixed pair is a silent geometry mismatch (release.md lab stable pair).
 #
 # PRIMARY promote target tracks artifacts/validated-pair/CURRENT (pair_pin_update).
 #   ddr-c5382bee = core c5382bee + CURRENT daemon (865d4c8a …) + conf ddr + bank1
 # PREV CURRENT (edc3a46b) and hist (e9f79de2) remain explicit matched rows.
-PAIR_BANK1_SPI=0x30040000
-PAIR_BANK1_DDR=0x30080000
+# Bank1 phys derived from ddr_frame_layout.hpp (no fixed frame-store literals).
+if [ -z "${PAIR_BANK1_SPI:-}" ] || [ -z "${PAIR_BANK1_DDR:-}" ]; then
+  _pair_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+  # shellcheck disable=SC1090
+  eval "$(python3 "$_pair_root/scripts/ddr_layout_exports.py")"
+  PAIR_BANK1_SPI="${DDR_BANK1_SPI}"
+  PAIR_BANK1_DDR="${DDR_BANK1_DDR}"
+fi
 _PAIR_DDR_DAEMON="$(rbf_policy_resolve_ddr_daemon_full)"
 _PAIR_DDR_PREV_EDC3="${DAEMON_PIN_DDR_EDC3_FULL:-edc3a46b9d1c6b86337deb90f896eb0f}"
 PAIR_MATRIX_ROWS=(

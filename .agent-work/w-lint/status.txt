@@ -1,8 +1,35 @@
 w-lint GATE-INTEGRITY
 branch: w-lint-gate-integrity
-tip: 759135f7e3f3f7bd8e7d46c8f7eebbbe6b897c9b
-SEE git log -2 --oneline
+worktree: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-lint
 
-RE-TASK: refuse FULL_PASS without PLXC (rc=2 UNVERIFIED).
-liveness/harness/promo/rollcall true rc=0
-Parent: scripts/video_regression.sh verify → expect rc=2 pre-PLXC
+## Headline — running bitstream
+- CORENAME/RBFNAME vacuous; on-disk RBF ≠ fabric
+- pair family mismatch → rc=1
+- coherent pair without PLXC → rc=2 REFUSE FULL_PASS (not green)
+- FULL_PASS rc=0 only VERIFIED_PLXC
+- PLXC still fit-gated; HDMI parent-only for content fingerprint
+- pins: artifacts/validated-pair/CURRENT (865d4c8a prefix)
+
+## fix/gate-liveness
+CLOSE/SUPERSEDED — do not merge 99-count; content absorbed+extended here
+
+## CRITICAL PMS gap
+run_with_skip_summary process_rc=78 PASS_INCOMPLETE (never 0)
+make unit-unlocked = host green without PMS inventory
+
+## PINNOTFOUND
+run_verilator RBG: fake PINNOTFOUND exit0 → wrapper rc=2; clean → 0
+
+## Evidence (true rc direct)
+test_video_regression_liveness.sh  0
+test_harness_capture_integrity.py  0
+test_promotion_gates.sh            0
+test_gate_false_green_guard.py     0
+test_rtl_invariants.py             0
+test_unit_rollcall.py              0 (expected_commands=124)
+make unit-unlocked                 0
+make unit (no BASELINE_KEY)        78 PASS_INCOMPLETE
+
+## Docs
+docs/evidence/w_lint_GATE_INTEGRITY_REPORT.md
+tip: 21adfcb87d90271ac0815666cb33f3b4ea894b18

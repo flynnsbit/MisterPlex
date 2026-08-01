@@ -48,6 +48,10 @@ VIDEO="${VIDEO_DEV:-/dev/video0}"
 OUT="${OUT_DIR:-/tmp/vidreg}"
 FRAMES="${FRAMES:-45}"
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# Layout addrs from ddr_frame_layout.hpp (literal sweep quarantine).
+if [ -z "${DDR_DOORBELL_PHYS:-}" ]; then
+  eval "$(python3 "$REPO/scripts/ddr_layout_exports.py")"
+fi
 
 BASE_CORE_MD5=dfebf2bfd08dd70b473b587dd7e81848
 
@@ -340,7 +344,9 @@ pair_coherent() {
 #   PLXC_WORD=...        (future build-id mailbox; empty until RTL lands)
 observe_core_once() {
   local claim_path="${RUNNING_CORE_CLAIM}"
-  sshm "CLAIM_PATH=$(printf '%q' "$claim_path"); V2=$(printf '%q' "$V2_CORE_PATH"); DEV=$(printf '%q' "$DEV_CORE_PATH"); $(cat <<'REMOTE'
+  # Inject layout-derived phys as remote env (quoted heredoc body must not embed
+  # fixed 0x300* frame-store literals — rtl_invariants literal sweep).
+  sshm "CLAIM_PATH=$(printf '%q' "$claim_path"); V2=$(printf '%q' "$V2_CORE_PATH"); DEV=$(printf '%q' "$DEV_CORE_PATH"); DDR_PLXK_PHYS=$(printf '%q' "$DDR_PLXK_PHYS"); DDR_PLXS_PHYS=$(printf '%q' "$DDR_PLXS_PHYS"); DDR_PLXD_PHYS=$(printf '%q' "$DDR_PLXD_PHYS"); DDR_PLXC_PHYS=$(printf '%q' "$DDR_PLXC_PHYS"); DDR_BANK1_SPI=$(printf '%q' "$DDR_BANK1_SPI"); DDR_BANK1_DDR=$(printf '%q' "$DDR_BANK1_DDR"); $(cat <<'REMOTE'
 set +e
 echo "CORENAME=$(cat /tmp/CORENAME 2>/dev/null | tr -d '\r' | head -n1)"
 echo "RBFNAME=$(cat /tmp/RBFNAME 2>/dev/null | tr -d '\r' | head -n1)"
@@ -388,18 +394,17 @@ peek() {
     echo ""
   fi
 }
-# Product doorbell control page (0x300FF000 family).
+# Product doorbell control page — addrs injected by host from ddr_layout_exports.
 # PLXK/PLXS/PLXD = DDR-family/liveness signals only — NOT RBF content hash.
 # Residue from a prior DDR load can fake magic after SPI load (docs).
-echo "PLXK_WORD=$(peek 0x300FF000)"
-echo "PLXS_WORD=$(peek 0x300FF100)"
-echo "PLXD_WORD=$(peek 0x300FF128)"
-echo "PLXC_WORD=$(peek 0x300FF130)"
-# Bank1 base peeks (tier geometry). Forensic only — not sole identity.
-# SPI 320x240 bank1 0x30040000; DDR 480p bank1 0x30080000. STRICT_DEVMEM
+echo "PLXK_WORD=$(peek "$DDR_PLXK_PHYS")"
+echo "PLXS_WORD=$(peek "$DDR_PLXS_PHYS")"
+echo "PLXD_WORD=$(peek "$DDR_PLXD_PHYS")"
+echo "PLXC_WORD=$(peek "$DDR_PLXC_PHYS")"
+# Bank1 peeks (tier geometry). Forensic only — not sole identity. STRICT_DEVMEM
 # blocks dd; busybox devmem mmaps. Values alone do not prove which RBF is loaded.
-echo "BANK1_SPI_PEEK=$(peek 0x30040000)"
-echo "BANK1_DDR_PEEK=$(peek 0x30080000)"
+echo "BANK1_SPI_PEEK=$(peek "$DDR_BANK1_SPI")"
+echo "BANK1_DDR_PEEK=$(peek "$DDR_BANK1_DDR")"
 REMOTE
 )"
 }
@@ -892,7 +897,7 @@ verify_baseline() {
   if [ "$gate_core_identity" = UNVERIFIED ]; then
     echo "NOTE GATE_CORE_IDENTITY=UNVERIFIED — fabric content hash not silicon-proven."
     echo "     CORENAME/RBFNAME are vacuous (always Plex). On-disk RBF md5 ≠ running bitstream."
-    echo "     PLXC @ 0x300FF130 absent until identity RBF. Claim+pair are interim only."
+    echo "     PLXC @ doorbell+0x130 absent until identity RBF. Claim+pair are interim only."
     echo "     A DDR daemon + SPI core (black screen) is the promotion mixed-state class."
   elif [ "$gate_core_identity" = VERIFIED_PLXC ]; then
     echo "OK   GATE_CORE_IDENTITY=VERIFIED_PLXC"

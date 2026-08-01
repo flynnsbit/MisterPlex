@@ -4,7 +4,7 @@
 # Parent 2026-07-31: this script restored ONLY the daemon and left the core
 # alone. A DDR daemon with the SPI core (or reverse bank geometry) is a
 # BLACK/GREEN screen that still passes file-md5 gates. 320x240 bank1 is
-# 0x30040000; 480p bank1 is 0x30080000 — mismatched pairs are silent.
+# DDR_BANK1_SPI; 480p bank1 is DDR_BANK1_DDR — mismatched pairs are silent.
 #
 # DO NOT use this script. Atomic pair restore:
 #   PAIR_ID=ddr-c5382bee PAIR_IDLE_PNG=/path/idle.png \
@@ -20,7 +20,7 @@ cat <<'MSG' >&2
 REFUSE HALF_RESTORE: scripts/restore_misterplexd_prev.sh is disabled (B8).
   It restored daemon bytes only and explicitly did NOT restore Plex.rbf.
   Mixed core+daemon geometry → black/green screen; telemetry can still pass.
-  bank1 SPI 320x240 = 0x30040000 ; bank1 DDR 480p = 0x30080000
+  bank1 SPI 320x240 = DDR_BANK1_SPI ; bank1 DDR 480p = DDR_BANK1_DDR
 
 Use ATOMIC pair tools instead (core + daemon + conf together):
 

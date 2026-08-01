@@ -182,13 +182,74 @@ def main() -> int:
     if "PINNOTFOUND" not in rv or "exit 2" not in rv:
         errors.append("scripts/run_verilator.sh must HARD FAIL PINNOTFOUND with exit 2")
 
+    # RED-before-GREEN: fake verilator that exits 0 after printing PINNOTFOUND
+    # must still yield process rc=2 (the historic false-green class).
+    import os
+    import stat
+    import subprocess
+    import tempfile
+    from pathlib import Path as _P
+
+    with tempfile.TemporaryDirectory(prefix="pinnotfound-rbg-") as td:
+        fake = _P(td) / "fake_verilator"
+        fake.write_text(
+            "#!/usr/bin/env bash\n"
+            "echo '%Error: PINNOTFOUND: x.v:1: pin foo not found'\n"
+            "exit 0\n",
+            encoding="utf-8",
+        )
+        fake.chmod(fake.stat().st_mode | stat.S_IXUSR)
+        env = os.environ.copy()
+        env["VERILATOR"] = str(fake)
+        red = subprocess.run(
+            ["bash", str(ROOT / "scripts" / "run_verilator.sh"), "--lint-only", "x.v"],
+            cwd=str(ROOT),
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        print(f"PINNOTFOUND_RBG_RED true rc={red.returncode}")
+        if red.returncode != 2:
+            errors.append(
+                f"run_verilator PINNOTFOUND RBG RED failed: want rc=2 got {red.returncode} "
+                f"out={(red.stdout or '')[-200:]} err={(red.stderr or '')[-200:]}"
+            )
+        if "HARD FAIL" not in (red.stderr or "") + (red.stdout or ""):
+            errors.append("run_verilator PINNOTFOUND RBG RED missing HARD FAIL marker")
+
+        fake.write_text(
+            "#!/usr/bin/env bash\n"
+            "echo 'Verilator clean OK'\n"
+            "exit 0\n",
+            encoding="utf-8",
+        )
+        green = subprocess.run(
+            ["bash", str(ROOT / "scripts" / "run_verilator.sh"), "--lint-only", "x.v"],
+            cwd=str(ROOT),
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        print(f"PINNOTFOUND_RBG_GREEN true rc={green.returncode}")
+        if green.returncode != 0:
+            errors.append(
+                f"run_verilator clean path RBG GREEN failed: want rc=0 got {green.returncode}"
+            )
+
     print(f"gate_false_green_guard: scanned {len(scripts)} RTL sim scripts")
     if errors:
         print("FAIL gate_false_green_guard: false-green patterns remain:", file=sys.stderr)
         for e in errors:
             print(f"  {e}", file=sys.stderr)
+        print(f"true rc=1")
         return 1
-    print("PASS gate_false_green_guard: no missing-Verilator exit-0 false greens; run_verilator PINNOTFOUND hard-fail present")
+    print(
+        "PASS gate_false_green_guard: no missing-Verilator exit-0 false greens; "
+        "run_verilator PINNOTFOUND hard-fail RBG both dirs"
+    )
+    print("true rc=0")
     return 0
 
 

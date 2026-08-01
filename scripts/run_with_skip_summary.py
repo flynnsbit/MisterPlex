@@ -1,16 +1,18 @@
 #!/usr/bin/env python3
 """Run a gate command and print a skipped-coverage summary + GATE_RESULT.
 
-The wrapped command's exit code is preserved for FAIL paths. Soft-skip (rc=77)
-and CRITICAL coverage holes are NEVER reported as PASS:
+Soft-skip (rc=77) and CRITICAL coverage holes are NEVER success:
 
-  GATE_RESULT=PASS                  rc==0 and critical_skips==0
-  GATE_RESULT=PASS_INCOMPLETE       rc==0 and critical_skips>0  (UNSCORED gaps)
-  GATE_RESULT=SKIP_NOT_PASS         rc==77
-  GATE_RESULT=FAIL                  any other non-zero rc
+  GATE_RESULT=PASS                  process_rc=0   (wrapped 0, critical_skips==0)
+  GATE_RESULT=PASS_INCOMPLETE       process_rc=78  (wrapped 0, critical_skips>0)
+  GATE_RESULT=SKIP_NOT_PASS         process_rc=77  (wrapped 77)
+  GATE_RESULT=FAIL                  process_rc=wrapped (any other non-zero)
 
-Aggregates must key off GATE_RESULT, never assume rc==0 means full coverage.
-Exit 77 is not success. UNSCORED is not success. Soft-skip ≠ PASS.
+CRITICAL inventory gaps (e.g. live-pms-baseline-profile missing
+MISTERPLEX_BASELINE_KEY) must not look like make-unit green: process exit is
+78, not 0. Exit 77 is not success. UNSCORED is not success. Soft-skip ≠ PASS.
+
+Host-only unit without the PMS inventory: `make unit-unlocked` (no skip wrapper).
 """
 from __future__ import annotations
 
@@ -158,6 +160,11 @@ def summarize(records: list[SkipRecord], wrapped_rc: int | None = None) -> str:
     return "\n".join(lines)
 
 
+# Process exit when wrapped succeeded but CRITICAL coverage is missing.
+# Distinct from 77 (soft-skip of the wrapped command itself).
+PASS_INCOMPLETE_RC = 78
+
+
 def gate_result_line(wrapped_rc: int, critical_count: int) -> str:
     """Map rc + critical skips to a single aggregate-facing token.
 
@@ -170,16 +177,29 @@ def gate_result_line(wrapped_rc: int, critical_count: int) -> str:
     if wrapped_rc == 77:
         return (
             f"GATE_RESULT=SKIP_NOT_PASS wrapped_rc={wrapped_rc} critical_skips={critical_count} "
-            f"(exit 77 is not success; soft-skip≠PASS)"
+            f"process_rc=77 (exit 77 is not success; soft-skip≠PASS)"
         )
     if wrapped_rc == 0 and critical_count > 0:
         return (
             f"GATE_RESULT=PASS_INCOMPLETE wrapped_rc={wrapped_rc} critical_skips={critical_count} "
-            f"(CRITICAL coverage holes remain UNSCORED; not a full pass)"
+            f"process_rc={PASS_INCOMPLETE_RC} "
+            f"(CRITICAL coverage holes remain UNSCORED; not a full pass; exit≠0)"
         )
     if wrapped_rc == 0:
-        return f"GATE_RESULT=PASS wrapped_rc={wrapped_rc} critical_skips=0"
-    return f"GATE_RESULT=FAIL wrapped_rc={wrapped_rc} critical_skips={critical_count}"
+        return f"GATE_RESULT=PASS wrapped_rc={wrapped_rc} critical_skips=0 process_rc=0"
+    return (
+        f"GATE_RESULT=FAIL wrapped_rc={wrapped_rc} critical_skips={critical_count} "
+        f"process_rc={wrapped_rc}"
+    )
+
+
+def process_rc_from(wrapped_rc: int, critical_count: int) -> int:
+    """Exit status the wrapper must return (never collapse CRITICAL gap to 0)."""
+    if wrapped_rc == 77:
+        return 77
+    if wrapped_rc == 0 and critical_count > 0:
+        return PASS_INCOMPLETE_RC
+    return wrapped_rc
 
 
 def run_wrapped(label: str, cmd: list[str]) -> int:
@@ -206,11 +226,17 @@ def run_wrapped(label: str, cmd: list[str]) -> int:
             rec = classify_skip_line(line)
             if rec:
                 records.append(rec)
-        rc = proc.wait()
-        summary = summarize(records, wrapped_rc=rc) + "\n"
+        wrapped_rc = proc.wait()
+        # Dedup same as summarize for critical count stability
+        dedup_names = {(r.name, r.severity, r.source) for r in records}
+        critical = sum(1 for _n, sev, _s in dedup_names if sev == "CRITICAL")
+        summary = summarize(records, wrapped_rc=wrapped_rc) + "\n"
         sys.stdout.write(summary)
         log.write(summary)
-    return rc
+        out_rc = process_rc_from(wrapped_rc, critical)
+        sys.stdout.write(f"true rc={out_rc}\n")
+        log.write(f"true rc={out_rc}\n")
+    return out_rc
 
 
 def self_test() -> int:
@@ -229,6 +255,21 @@ def self_test() -> int:
     if "GATE_RESULT=PASS_INCOMPLETE" not in red:
         print("missing PASS_INCOMPLETE for critical skip + rc0:\n", red)
         return 1
+    if f"process_rc={PASS_INCOMPLETE_RC}" not in red:
+        print(f"missing process_rc={PASS_INCOMPLETE_RC} for PASS_INCOMPLETE:\n", red)
+        return 1
+    if process_rc_from(0, 1) != PASS_INCOMPLETE_RC:
+        print("process_rc_from(0,1) must be PASS_INCOMPLETE_RC")
+        return 1
+    if process_rc_from(0, 0) != 0:
+        print("process_rc_from(0,0) must be 0")
+        return 1
+    if process_rc_from(77, 0) != 77:
+        print("process_rc_from(77,0) must be 77")
+        return 1
+    if process_rc_from(1, 1) != 1:
+        print("process_rc_from(1,1) must preserve FAIL rc")
+        return 1
     green = summarize([], wrapped_rc=0)
     if "total=0 critical=0 high=0 advisory=0" not in green or "GATE_SKIP_NONE" not in green:
         print(green)
@@ -240,19 +281,20 @@ def self_test() -> int:
     if "GATE_RESULT=SKIP_NOT_PASS" not in skip77:
         print("missing SKIP_NOT_PASS for rc77:\n", skip77)
         return 1
-    # rc=77 must never be called PASS even with empty skip list
-    if "GATE_RESULT=PASS" in skip77.split("GATE_RESULT=")[-1]:
-        # the token after GATE_RESULT= should be SKIP_NOT_PASS
-        token = skip77.split("GATE_RESULT=", 1)[1].split()[0]
-        if token == "PASS":
-            print(skip77)
-            return 1
+    token = skip77.split("GATE_RESULT=", 1)[1].split()[0]
+    if token == "PASS":
+        print(skip77)
+        return 1
     print("SELFTEST_RED_SUMMARY")
     print(red)
     print("SELFTEST_GREEN_SUMMARY")
     print(green)
     print("SELFTEST_SKIP77_SUMMARY")
     print(skip77)
+    print(
+        f"SELFTEST_PROCESS_RC incomplete={process_rc_from(0, 1)} "
+        f"green={process_rc_from(0, 0)} skip77={process_rc_from(77, 0)}"
+    )
     return 0
 
 
