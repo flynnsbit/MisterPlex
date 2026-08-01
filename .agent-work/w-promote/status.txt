@@ -1,7 +1,7 @@
 lane: w-promote
 branch: fix/rollback-honest
 worktree: /home/flynnsbit/Projects/MisterPlex/.worktrees/rollback-honest
-tip: (post-commit)
+tip: 1fd9d574
 
 ## Fleet broadcast response (av-lock blind)
 RETRACTED from promote package: clock=av-lock, av_drift_ms as PASS.
