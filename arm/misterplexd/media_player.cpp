@@ -3483,19 +3483,35 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                 }
                 if (!ok) {
                     if (countPresent) {
-                        publishMisses_.fetch_add(1, std::memory_order_relaxed);
+                        const int64_t missNow =
+                            publishMisses_.fetch_add(1, std::memory_order_relaxed) + 1;
                         // Exact form required by rtl_invariants present-path degradation
                         // contract (whitespace-stripped needle includes frame_status).
                         if ((frameIndex % 30) == 0)
                             log("media: fpga frame_tx: " +
                                 (ddrErr.empty() ? fpga_.lastError() : ddrErr));
-                        if ((publishMisses_.load() % 30) == 1)
-                            log("media: publish_misses=" +
-                                std::to_string(publishMisses_.load()) +
+                        // Every miss (glass-loss instrument): drops stays flat while
+                        // residual/unaccounted rises. Parent pairs wall_s with HDMI
+                        // missing indices. err= carries bank-select / STALL reason.
+                        {
+                            const auto missTp = std::chrono::steady_clock::now();
+                            const double missWall =
+                                std::chrono::duration<double>(missTp - t0).count();
+                            const int64_t residual = frameLedgerResidual(
+                                frameIndex, presentCount_, droppedFrames_.load());
+                            log("media: publish_miss wall_s=" +
+                                std::to_string(missWall).substr(0, 6) +
+                                " mono_ms=" + std::to_string(steadyMonoMs()) +
+                                " publish_misses=" + std::to_string(missNow) +
                                 " frames=" + std::to_string(frameIndex) +
-                                " residual=" +
-                                std::to_string(frameLedgerResidual(
-                                    frameIndex, presentCount_, droppedFrames_.load())));
+                                " presents=" + std::to_string(presentCount_) +
+                                " drops=" + std::to_string(droppedFrames_.load()) +
+                                " residual=" + std::to_string(residual) +
+                                " unaccounted=" + std::to_string(residual) +
+                                " err=" +
+                                (ddrErr.empty() ? fpga_.lastError() : ddrErr) +
+                                " tag=measured");
+                        }
                     }
                 } else if (countPresent) {
                     ++presentCount_;

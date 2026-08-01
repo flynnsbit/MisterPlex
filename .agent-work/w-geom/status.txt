@@ -1,12 +1,12 @@
 lane: w-geom
-branch: w-avsync-hdmi-measure
-task: 480p drop geometry-side cost (user frames dropped)
-status: DONE host gates + report
-verdict: DDR canvas IDENTICAL 240/480 (449280); FORCE_SCALE shared both tiers;
-  ffmpeg product total heavier at 624 (host ratio 1.325); drops≠publish_misses
-gates:
-  test_geom_frame_cost rc=0
-  test_force_scale_sws_cost rc=0 (H1 total 624>=320 HIT, H2 fb HIT, ratio=1.325)
-  rollcall rc=0 (+ glass_ledger Makefile wire)
+task: glass 0.70% loss G1-G4
+status: DONE
+verdict:
+  G1 P240 loss 0.00-0.20%; >=0.40% kills decode-cost
+  G2 mid-stream short-read silent discard ELIMINATED (terminal); FORCE_SCALE phase desync ELIMINATED
+  G3 death without drops: publish_miss/bank-select 50ms; OR ffmpeg never-emitted (residual 0)
+  G4 bands in GLASS_LOSS_G1_G4.md
+gates: test_glass_loss_death_points rc=0
+arm: every publish_miss logs wall_s+err
+report: .agent-work/w-geom/GLASS_LOSS_G1_G4.md
 no_device no_fit
-report: .agent-work/w-geom/480P_DROP_GEOM_COST.md
