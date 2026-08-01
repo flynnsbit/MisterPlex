@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fabric-side hold histogram: vsyncs between successive frames_done edges.
+"""INVALIDATED for hold-length (frames_done=swaps). Fabric-side hold histogram: vsyncs between successive frames_done edges.
 
 WHY
 ---
@@ -218,6 +218,14 @@ def main() -> int:
         help="synthetic healthy + jitter series; expect band separation",
     )
     args = ap.parse_args()
+
+    print(
+        "INVALIDATED_HOLD: frames_done is swap counter (vsync&&pending&&ready only); "
+        "delta carries ZERO hold-length. Use media: publish_interval verdict=."
+    )
+    if not getattr(args, "self_test", False):
+        print("FAIL: hold-via-frames_done mode disabled", file=sys.stderr)
+        return 2
 
     # PRE-REGISTER first — before any compute
     pre_register(float(args.hdmi_ge4))

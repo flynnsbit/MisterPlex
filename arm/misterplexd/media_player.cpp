@@ -13,11 +13,13 @@
 #include "libmisterplex/h264_recon.hpp"
 #include "libmisterplex/raw_video_pipe.hpp"
 #include "libmisterplex/yuv420p_chroma_health.hpp"
+#include "libmisterplex/publish_interval_ledger.hpp"
 #include <algorithm>
 #include <atomic>
 #include <cctype>
 #include <cerrno>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <chrono>
 #include <exception>
@@ -759,8 +761,25 @@ bool MediaPlayer::publishDdrFrame(const DdrPublishFrame& frame, const char* cont
     }
     const bool ok = fpga_.publishDdrFrame(frame, ddrBank_);
     // Advance from the bank actually written (PLXD may override the hint).
-    if (ok)
+    if (ok) {
         ddrBank_ = nextDdrPresentBank(fpga_.lastPublishedBank(), true);
+        // Publish-interval ledger: timestamp AFTER successful doorbell/swap_req.
+        // steady_clock is typically VDSO — no open/read. Ring is fixed-size.
+        const auto tp = std::chrono::steady_clock::now();
+        const int64_t us = std::chrono::duration_cast<std::chrono::microseconds>(
+                               tp.time_since_epoch())
+                               .count();
+        pubInterval_.note(us);
+        // Optional mid-session sample (env): every 240 successful pubs (~10s @24).
+        static const bool kLogMid = [] {
+            const char* e = std::getenv("MISTERPLEX_PUBLISH_INTERVAL_LOG");
+            return e && e[0] && e[0] != '0';
+        }();
+        if (kLogMid && (pubInterval_.count % 240) == 0) {
+            log(std::string("media: ") + pubInterval_.formatSummaryLine("measured") +
+                " phase=mid");
+        }
+    }
     if (!ok && err)
         *err = fpga_.lastError();
     return ok;
@@ -4462,6 +4481,14 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
         " skip_rgb=" + (skipRgb ? "1" : "0") +
         " reason=" + endReason +
         " tag=measured");
+    // Always emit publish-interval summary at session end (one log line; ring
+    // already filled on the hot path). Parent greps publish_interval verdict=.
+    if (pubInterval_.iv_n > 0) {
+        log(std::string("media: ") + pubInterval_.formatSummaryLine("measured") +
+            " phase=session_end");
+        log(std::string("media: ") + pubInterval_.formatCorrLine());
+    }
+    pubInterval_.reset();
 }
 
 } // namespace misterplex

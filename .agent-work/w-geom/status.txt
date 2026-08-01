@@ -1,11 +1,13 @@
-w-geom: cadence vs DDR swap + fabric hold experiment
+w-geom: publish-interval + frames_done correction
 branch: w-avsync-hdmi-measure
-gates: test_cadence_swap_path_source rc=0; fabric_hold self-test rc=0
-report: .agent-work/w-geom/CADENCE_SWAP_PATH.md
+gate: test_publish_interval_ledger true rc=0
+report: .agent-work/w-geom/PUBLISH_INTERVAL.md
 
-VERDICT: r-misterfin CORRECT — present_cadence/cadence.hpp not on DDR swap path.
-Swap = vsync_pulse && swap_pending && pending_ready_s2 (fstart).
-Strict 3:2 is bars/stats only; advance in Plex.sv _unused.
-Async+jitter model ge4=10.34% matches parent HDMI 10.29%; cadence-gate kills ge4.
-NO RBF until parent fabric PLXD hold hist decides device vs capture.
-Parent: scripts/poll_plxd_frames_done_hold.sh + tools/fabric_frames_done_hold_hist.py
+VERDICT:
+- frames_done = SWAP count only (RTL quoted). Fabric hold-via-fd INVALIDATED (tools rc=2).
+- Stale ddr_bank_release_select comment fixed.
+- vsync_toggle/bank_vsync_count NOT ARM-readable without RBF.
+- Instrumented publishDdrFrame with steady_clock ring; session_end logs
+  media: publish_interval ... verdict= + corr line.
+- Pre-register: p_ge50<3% ARM_CLEAN; 9-11% ARM_LATE_MATCH_HOLD45.
+Parent: deploy daemon, 60s soak, grep publish_interval.

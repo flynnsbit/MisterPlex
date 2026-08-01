@@ -11,6 +11,7 @@
 #include "libmisterplex/osd_control.hpp"
 #include "libmisterplex/osd_menu.hpp"
 #include "libmisterplex/playback_overlay.hpp"
+#include "libmisterplex/publish_interval_ledger.hpp"
 
 #include <atomic>
 #include <cstdint>
@@ -370,6 +371,8 @@ private:
     bool presentProfile_ = false;
     bool useDdrF1_ = true; // F1 product presentation attempts DDR YUV420p only.
     int ddrBank_ = 0;      // ping-pong 0/1; stride comes from ddr_frame_layout.hpp
+    // Successful publish timestamps (doorbell/swap_req). See publish_interval_ledger.hpp.
+    misterplex::PublishIntervalLedger pubInterval_{};
     // Bytes written to MrAudio this session (A/V clock diagnostics)
     std::atomic<int64_t> audioBytes_{0};
     // Bytes sitting in the MrAudio DMA ring, i.e. handed to the driver but not

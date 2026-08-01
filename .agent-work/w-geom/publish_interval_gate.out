@@ -1,0 +1,12 @@
+PRE-REGISTER publish-interval device bands (parent soak):
+  ARM_CLEAN: sigma_ms<4 p_in_band>=0.99 p_ge50<0.03
+  ARM_LATE_MATCH_HOLD45: p_ge50 in [0.09,0.11] (~4/5-hold fraction)
+  p_ge50<0.03 => late-publish hypothesis FALSIFIED
+  ideal_ms=41.666667 (frameRate=24.000, not 23.976)
+PASS stale_comment_fixed
+clean publish_interval notes=500 intervals=499 mean_ms=41.666 sigma_ms=0.000 p_ge50=0.0000 p_ge83=0.0000 p_lt25=0.0000 p_in_band=1.0000 verdict=ARM_CLEAN ideal_ms=41.667 tag=synthetic
+late10 publish_interval notes=500 intervals=499 mean_ms=41.629 sigma_ms=8.166 p_ge50=0.0982 p_ge83=0.0000 p_lt25=0.1002 p_in_band=0.8016 verdict=ARM_LATE_MATCH_HOLD45 ideal_ms=41.667 tag=synthetic
+late10 publish_interval_corr short_lt25_n=50 short_then_lt50=50 short_then_ge50=0 tag=derived
+FACT frames_done increments only on swap (vsync&&pending&&ready); Delta frames_done between publishes is typically 1 and carries ZERO hold-length info. Fabric hold-via-fd-edges is INVALID.
+FACT vsync_toggle / bank_vsync_count not ARM-readable via PLXD (reserved [47:36]=0); would need RBF to pack.
+OK test_publish_interval_ledger

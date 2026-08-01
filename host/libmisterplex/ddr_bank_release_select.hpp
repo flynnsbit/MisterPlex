@@ -9,17 +9,25 @@
 // Root class: PLXD free_bank_mask is refreshed on vsync/heartbeat, not on the
 // doorbell edge. After a swap, a *stale* free mask still names the bank that
 // just became the display bank. Legacy ARM freeBank()+force(disp^1) then
-// overwrites the live display / same-as-disp pending bank under rate, and the
-// frames_done field is actually bank_vsync_count so liveness never detects a
-// stuck swap.
+// overwrites the live display / same-as-disp pending bank under rate.
+//
+// HISTORICAL FAULT (fixed in product RTL pack): an older pack put
+// bank_vsync_count into the PLXD frames_done field so the mailbox looked
+// "live" while swaps were stuck. Product ddr_frame_store.sv now packs the
+// real swap counter only:
+//   frames_done <= frames_done + 1  inside (vsync && swap_pending && ready)
+//   vsync_toggle flips on EVERY vsync (swap arm and else-if vsync)
+//   PLXD[63:48] = frames_done_d2  // NOT bank_vsync_count (see pack comment)
+// Do not reintroduce vsync-as-frames_done. input_mailbox.hpp / mailbox_abi_spec
+// correctly document frames_done as monotonic swap count.
 //
 // Protocol:
 //   1. Never write free_bank == disp_bank (stale/residue).
 //   2. Never re-write last_published until PLXD disp_bank has shown it
 //      (display-ack), unless free is clearly the other bank.
 //   3. On free_mask=0 timeout: DROP the frame — do not force-write disp^1.
-//   4. frames_done advancing is not required for bank select (RTL may pack
-//      vsync count); free/disp identity is authoritative.
+//   4. frames_done is the real swap counter on product RTL; bank select still
+//      treats free/disp identity as authoritative (do not require fd advance).
 
 #include "libmisterplex/input_mailbox.hpp"
 

@@ -72,6 +72,9 @@ EXPECTED_PREREQS = [
 
 EXPECTED_COMMANDS = [
     "$(ROOT)/build/test_cadence",
+    "$(ROOT)/build/test_cadence_swap_path",
+    "$(ROOT)/tests/unit/test_cadence_swap_path_source.sh",
+    "$(ROOT)/build/test_publish_interval_ledger",
     "$(ROOT)/build/test_avclock",
     "bash $(ROOT)/tests/unit/test_av_startup_hold_red.sh",
     "$(ROOT)/build/test_audio_delay",
