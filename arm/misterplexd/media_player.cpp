@@ -4083,7 +4083,11 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                     " lifetime_drops=" + std::to_string(ltD) +
                     " lifetime_publish_misses=" + std::to_string(ltM) +
                     " lifetime_unaccounted=" + std::to_string(ltU) +
+                    // Soak continuity markers (P4): process_epoch is stamped once at
+                    // daemon start (steady mono_ms). pid changes on every respawn.
+                    // A soak that sees either field change mid-window is interrupted.
                     " process_epoch=" + std::to_string(pep) +
+                    " pid=" + std::to_string(static_cast<long>(::getpid())) +
                     " stream_seq=" + std::to_string(sseq) +
                     " session_epoch=" + sessionEpochString(pep, sseq) +
                     " session_completed=" + std::to_string(sessionSeq_.load()) +

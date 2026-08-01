@@ -73,6 +73,7 @@ unit-unlocked: unit-rollcall preflight $(ROOT)/build/test_cadence $(ROOT)/build/
 	bash $(ROOT)/tests/unit/test_live_daemon_enum.sh
 	bash $(ROOT)/tests/unit/test_supervise_exit_classify.sh
 	bash $(ROOT)/tests/unit/test_main_rc0_paths.sh
+	bash $(ROOT)/tests/unit/test_soak_continuity_assert.sh
 	$(ROOT)/build/test_status_telemetry
 	$(ROOT)/build/test_resolve
 	$(ROOT)/build/test_log_redact
