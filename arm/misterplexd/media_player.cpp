@@ -50,8 +50,11 @@ inline bool urlHasUniversalOffset(const std::string& url) {
     return qs.find("offset=") != std::string::npos;
 }
 
-// Cached MiSTer output geometry for logs + future chrome-plane list builder.
-// Does NOT change bank authoring size (still plex480p). plane=0 until RTL (c).
+// Measured MiSTer OUTPUT geometry for logs (+ plane=1 layout when HW lives).
+// Source: /media/fat/MiSTer.ini [Plex] video_mode= via loadMisterVideoMode().
+// NOT live ascal WxH (no SPI read on this RBF). Authoring canvas for plane=0
+// remains silicon bank 624×480 — never invent HDMI size for F1 bake.
+// Missing ini → DEFAULT_ASSUMED (output unknown; bank authoring unchanged).
 inline std::string overlayOutputGeomTag() {
     static const MisterVideoMode kMode = [] {
         // Test/lab override: MISTERPLEX_MISTER_INI=/path/to/ini
@@ -61,12 +64,15 @@ inline std::string overlayOutputGeomTag() {
         }
         return loadMisterVideoMode();
     }();
+    // Product F1 authoring is always the coded bank (silicon constant).
+    constexpr const char* kAuth = " authoring=624x480";
     if (!kMode.ok) {
-        return " output=?x? mode=? plane=0";
+        return std::string(" output=DEFAULT_ASSUMED mode=? source=none") + kAuth;
     }
     return std::string(" output=") + std::to_string(kMode.width) + "x" +
            std::to_string(kMode.height) + " mode=" +
-           (kMode.index >= 0 ? std::to_string(kMode.index) : std::string("custom"));
+           (kMode.index >= 0 ? std::to_string(kMode.index) : std::string("custom")) +
+           " source=ini" + kAuth;
 }
 
 inline std::string withUniversalOffset(const std::string& url, int64_t offsetMs) {

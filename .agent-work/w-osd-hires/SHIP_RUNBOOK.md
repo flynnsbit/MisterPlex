@@ -26,6 +26,7 @@
 |------|------------------|-----------|
 | `test_overlay_raster_geometry_static.py` | `media_player.cpp` source: FpgaPresent, no PresentedSize(outW), Yuv renderYuv420p | **YES** — main → defects, `true rc=1` |
 | `test_overlay_post_upscale` | Geometry 320→624; metrics present>content; real YUV ink runs | N/A unit math; fails if bank≠624 |
+| `test_overlay_crispness_mutation` | mean |∇| on panel ink: bank paint vs content→NN; adaptive 1080/800/640/240 | **YES** — defect path grad=22.4 fails floor 30 (mutant rc=1); bank grad=38.0 passes (rc=0). **No OCR / no readback_overlay_text.py** |
 | `test_overlay_post_upscale_red_main.sh` | meta: main must fail contract | **YES** prints RED_OK when main fails |
 
 ```bash
@@ -62,7 +63,7 @@ md5sum .worktrees/w-osd-hires/build/arm/misterplexd
 | **UI state** | Playback **PAUSED** (not playing chrome flash) |
 | **Hold** | **≥ 8 seconds** sticky pause (overlay does not fade while Paused) |
 | **Ideal** | 10 s pause hold, single 1920×1080 (or 1280×720) still mid-window |
-| **Log must show** | `pause overlay canvas=624x480 font=12x16 scale=2` — **reject** `320x240` |
+| **Log must show** | `pause overlay canvas=624x480 font=12x16 scale=2` + `authoring=624x480` and either `source=ini output=WxH` or `output=DEFAULT_ASSUMED` — **reject** `320x240` |
 | **GEOM log** | `decode_target=624x480` with `arm_rescale=1` if DECODE=320x240 |
 | **SEE** | Bottom transport panel, PAUSED label, timeline — glyphs should match **12×16 cell @2** on bank (advance ~26 bank-px), **not** 8×13 content-tier mush |
 | **Do not score with** | `readback_overlay_text.py` |
