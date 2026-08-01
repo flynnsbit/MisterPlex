@@ -97,3 +97,7 @@ Banned set: `{8832824e, 75da8bb1, 4d6ee356, 4deaf6cc, dabdaeb0}`.
 - Worktree: `.worktrees/w-fit-integ` · branch `w-fit-ceiling-fd-min`  
 - Static/sim only until parent grants exclusive Quartus slot.  
 - No device. No telem layout change without w-lint gate.
+
+## PRESENT_PROFILE (2026-08-01)
+
+Pacer-limited at 480p24 (16.7 ms sleep). **No held RTL moves that table.** See `PRESENT_PROFILE_RTL_MEASURABILITY.md`. Quartus hold reinstated; no fit.
