@@ -393,6 +393,20 @@ private:
     // Cluster instrument places first_audio_pcm / audio_release / first_video on
     // mono_ms (always) and wall_s (only after origin is armed). Never invent 0.
     std::atomic<int64_t> sessionOriginMonoMs_{-1};
+    // First-class hold metrics (audio-thread authoritative). -1 = no release yet.
+    // held_ms = content duration of PCM buffered while gate closed.
+    // hold_waited_ms = wall time gate stayed closed (may exceed held_ms if sparse).
+    std::atomic<int64_t> lastHeldMs_{-1};
+    std::atomic<int64_t> lastHoldWaitedMs_{-1};
+    // first_audio_pcm mono_ms (pump input). -1 until first PCM byte.
+    // Enables hold_wall_ms = release_mono - first_audio without hand subtraction.
+    std::atomic<int64_t> firstAudioPcmMonoMs_{-1};
+    // Gate-open / physical start mono_ms (A/V audio_release). -1 until armed.
+    std::atomic<int64_t> avAudioReleaseMonoMs_{-1};
+    // Pump "audio release" mono_ms (held PCM flush starts). -1 until logged.
+    std::atomic<int64_t> pumpAudioReleaseMonoMs_{-1};
+    // held_bytes at pump release (content duration of hold buffer). -1 unknown.
+    std::atomic<int64_t> holdBytesAtRelease_{-1};
     std::atomic<bool> streamActive_{false};
     std::atomic<int64_t> reconFrames_{0};
     std::atomic<bool> reconPresentOk_{false}; // at least one recon → F1/fb0 this session

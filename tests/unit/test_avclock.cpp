@@ -296,7 +296,8 @@ int main() {
         std::printf("PRE_REGISTER HOLD_RACE predicted_startup_drops=[12,15] when "
                     "held_ms varies ~620..745 (T_first_video timing); "
                     "falsify_if_equal_held_ms_yields_delta_drops_ge_3\n");
-        std::printf("PRE_REGISTER note: kFeedTargetMs=%lld past-bias always on after gate; "
+        std::printf("PRE_REGISTER note: kFeedTargetMs=%lld past-bias ONLY on empty-hold open "
+                    "(non-empty hold drain: past_bias=0 peer-aligned); "
                     "ERROR 17 retracted (fps=24/1 is correct for these fixtures); "
                     "lip_sync criterion = avsync_measure_hdmi.py only\n",
                     static_cast<long long>(kFeedTargetMs));
@@ -469,18 +470,17 @@ int main() {
                     labPrefers125 ? 1 : 0, labPrefers100 ? 1 : 0);
 
         // PRE_REGISTER HOLD vs cluster structure (parent hardware).
-        // HOLD still past-biases kFeedTargetBytes (media_player.cpp writePacedChunk);
-        // it does NOT remove the 100 ms prefill quantum.
+        // Non-empty hold drain: NO past-bias (peer-aligned). Empty-hold open still
+        // past-biases kFeedTarget for ring fill.
         std::printf("PRE_REGISTER HOLD_vs_CLUSTERS:\n");
-        std::printf("  fact: HOLD does NOT strip kFeedTarget prefill (always past-bias)\n");
-        std::printf("  if clusters = startup residual discreteness: HOLD ideal collapses "
-                    "to ONE cluster; between-run |Δmedian| < 40 ms over n>=4 soaks; "
-                    "medians LESS audio-lead than cluster A (more positive than A mean)\n");
-        std::printf("  if clusters = prefill on/off or dual depth: HOLD leaves A/B intact "
-                    "(prefill still always-on) — falsify collapse claim\n");
-        std::printf("  if clusters = external (PMS cache etc): HOLD leaves A/B intact\n");
-        std::printf("  falsify_collapse: after HOLD, some pair |median_i-median_j| >= 80 ms\n");
-        std::printf("  falsify_less_lead: HOLD medians still <= A_mean-20 (still as lead-y as A)\n");
+        std::printf("  fact: non-empty hold drain past_bias=0 burst_lead_ms=0; "
+                    "empty-hold open may past-bias %lld ms\n",
+                    static_cast<long long>(kFeedTargetMs));
+        std::printf("  if clusters = hold-drain burst / held_ms imprint: peer drain collapses "
+                    "A/B toward one cluster; |Δmedian|<40 over n>=4; "
+                    "held_ms logged every session (first-class)\n");
+        std::printf("  if clusters = external (PMS cache etc): A/B intact after peer drain\n");
+        std::printf("  falsify_collapse: after peer drain, some pair |median_i-median_j| >= 80 ms\n");
         std::printf("  do_not_sell: lipsync fix; sell startup frame preservation only\n");
         std::printf("PASS quantum discrimination: prefill=%lld three_frame=%lld "
                     "steady_dGrab=%lld lab_prefers125=%d\n",
@@ -488,6 +488,89 @@ int main() {
                     static_cast<long long>(kThreeFrame24Ms),
                     static_cast<long long>(steadyGrabberDeltaForLeadsMs(100, 125)),
                     labPrefers125 ? 1 : 0);
+    }
+
+    // --- Peer-aligned hold drain + first-class held_ms (RED→GREEN) ------------
+    // RED: past-bias on non-empty hold drain injects kFeedTargetMs burst lead.
+    // GREEN: holdDrainShouldPastBias(true)==false → burst lead 0.
+    {
+        std::printf("PEER_HOLD CITED: mpv both-READY; GStreamer preroll+base-time; "
+                    "ffplay/GST queue in clock; GST discont_wait permanent-offset class\n");
+        std::printf("PEER_HOLD NOT-FOUND: keep-HEAD t=0 FIFO; prefill→permanent bias doc; "
+                    "drop-count freezes offset; 1200ms copied from mpv/VLC\n");
+
+        // Both-READY arm (CITED shape) + timeout escape (engineering compromise).
+        const auto both = peerBothReadyArm(/*a*/ true, /*v*/ true, /*wait*/ 50);
+        CHECK(both.shouldArm);
+        CHECK(!both.timedOut);
+        const auto waitVid = peerBothReadyArm(true, false, 50);
+        CHECK(!waitVid.shouldArm);
+        const auto esc = peerBothReadyArm(true, false, kAudioHoldTimeoutMs);
+        CHECK(esc.shouldArm);
+        CHECK(esc.timedOut);
+        CHECK(kAudioHoldTimeoutMs == 1200); // engineering compromise constant
+
+        // RED policy (old): past-bias on hold drain.
+        CHECK(holdDrainBurstLeadMs(/*pastBias*/ true, kFeedTargetMs) == kFeedTargetMs);
+        CHECK(holdDrainBurstLeadMs(true, 100) == 100);
+        // GREEN policy: no past-bias when hold non-empty.
+        CHECK(holdDrainShouldPastBias(/*holdBufNonEmpty*/ true) == false);
+        CHECK(holdDrainShouldPastBias(/*holdBufNonEmpty*/ false) == true);
+        CHECK(holdDrainBurstLeadMs(holdDrainShouldPastBias(true), kFeedTargetMs) == 0);
+        CHECK(holdDrainBurstLeadMs(holdDrainShouldPastBias(false), kFeedTargetMs) ==
+              kFeedTargetMs);
+
+        // First-class held_ms: report always has held_ms>=0; GREEN drain ok.
+        const auto green = makeHoldSessionReport(/*written*/ 0, /*heldBytes*/ 19200 * 2,
+                                                 /*waited*/ 120, /*pastBias*/ false,
+                                                 /*timeout*/ false);
+        CHECK(green.heldMs == 200);
+        CHECK(green.holdWaitedMs == 120);
+        CHECK(green.drainBurstLeadMs == 0);
+        CHECK(green.ok);
+        if (green.heldMs < 0 || !green.ok) {
+            std::fprintf(stderr, "FAIL: green hold report held_ms=%lld ok=%d\n",
+                         static_cast<long long>(green.heldMs), green.ok ? 1 : 0);
+            return 1;
+        }
+
+        // RED report: past-bias on non-empty hold → not ok (burst lead).
+        const auto red = makeHoldSessionReport(0, 19200 * 2, 120, /*pastBias*/ true, false);
+        CHECK(red.heldMs == 200);
+        CHECK(red.drainBurstLeadMs == 100);
+        CHECK(!red.ok);
+        if (red.ok || red.drainBurstLeadMs != 100) {
+            std::fprintf(stderr, "FAIL: red hold report should be !ok burst=100 got ok=%d burst=%lld\n",
+                         red.ok ? 1 : 0, static_cast<long long>(red.drainBurstLeadMs));
+            return 1;
+        }
+
+        // Empty hold may past-bias (ring fill) and still be ok.
+        const auto empty = makeHoldSessionReport(0, 0, 0, /*pastBias*/ true, false);
+        CHECK(empty.heldMs == 0);
+        CHECK(empty.ok);
+
+        // Timeout path still reports held_ms (first-class).
+        const auto to = makeHoldSessionReport(0, 48000, kAudioHoldTimeoutMs, false, true);
+        CHECK(to.timedOut);
+        CHECK(to.heldMs == 250);
+        CHECK(to.ok);
+
+        // Overflow: product DropHead; OpenGate alternative exists; NOT-FOUND peer.
+        CHECK(!holdOverflowOpensGate(HoldOverflowPolicy::DropHeadKeepTail));
+        CHECK(holdOverflowOpensGate(HoldOverflowPolicy::OpenGate));
+        CHECK(holdRingAppendDropHead(kAudioHoldCapBytes - 100, 500, kAudioHoldCapBytes) == 400);
+
+        std::printf("PRE_REGISTER PEER_DRAIN: non-empty hold past_bias=0 "
+                    "drain_burst_lead_ms=0; falsify if log shows past_bias=1 with held_ms>0\n");
+        std::printf("PRE_REGISTER ESCAPE: timeout_ms=%lld engineering compromise NOT peer-copied; "
+                    "falsify if hang with no TIMEOUT log when video absent >timeout\n",
+                    static_cast<long long>(kAudioHoldTimeoutMs));
+        std::printf("PASS peer hold drain: red_burst=%lld green_burst=%lld held_ms=%lld "
+                    "timeout_escape=%d\n",
+                    static_cast<long long>(red.drainBurstLeadMs),
+                    static_cast<long long>(green.drainBurstLeadMs),
+                    static_cast<long long>(green.heldMs), esc.shouldArm ? 1 : 0);
     }
 
     if (fails) {

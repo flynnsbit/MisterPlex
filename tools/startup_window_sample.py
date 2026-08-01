@@ -43,19 +43,24 @@ Exit codes
 
 Daemon lines consumed (after parent deploys every-drop + cluster-axis patch)
 ---------------------------------------------------------------------------
-  media: first_audio_pcm mono_ms=... wall_s=...|NO-DATA nbytes=... gate=closed|open
-  media: A/V audio_release first_frame=... mono_ms=... wall_s=0.000 ...
-  media: audio release ... held_ms=... mono_ms=... wall_s=... reason=...
-  media: first_video_present wall_s=... mono_ms=... av_drift_ms=... frames=... presents=1
+  media: first_audio_pcm mono_ms=... wall_s=...|NO-DATA nbytes=... gate=... tag=measured
+  media: A/V audio_release ... mono_ms=... wall_s=0.000 held_ms=... hold_wall_ms=... tag=measured
+  media: audio release ... held_ms=... hold_wall_ms=... mono_ms=... wall_s=... tag=measured
+  media: first_video_present wall_s=... mono_ms=... since_first_audio_pcm_ms=...
+       since_audio_release_ms=... since_pump_release_ms=... av_drift_ms=... tag=measured
+  media: MrAudio playback position available mono_ms=... wall_s=... since_origin_ms=...
+       since_first_audio_pcm_ms=... since_audio_release_ms=... tag=measured
+  media: audio latency ms=... queued_B=... mono_ms=... wall_s=... since_origin_ms=... tag=measured
   media: A/V resync drop wall_s=... mono_ms=... drift_ms=... drops=... frames=... presents=...
   media: frames=... wall_s=... av_drift_ms=... presents=... drops=... residual=...
 
 Cluster axis (parent HDMI offset clusters ~116 ms apart; av_drift_ms is BLIND)
 ------------------------------------------------------------------------------
-Every run prints ONE block with three mono_ms values on the same axis:
-  first_audio_pcm_mono_ms | audio_hold_release_mono_ms | first_video_present_mono_ms
-plus deltas (ms). Absence is NO-DATA, never 0.0. wall_s is secondary (session-
-relative; first_audio is usually pre-origin so wall_s=NO-DATA there).
+Every run prints ONE block with three mono_ms values on the same axis PLUS
+explicit held_ms / hold_wall_ms / since_* deltas (never require hand subtraction).
+Absence is NO-DATA, never 0.0.
+
+Multi-session held_ms stability: tools/held_ms_stability_gate.py (separate).
 
 Rule 0: absence is NO-DATA. Hardcoded fps is never printed as a measurement.
 """
@@ -80,6 +85,19 @@ PROVENANCE_MEASURED = "measured"
 PROVENANCE_CALLER = "caller_supplied"
 PROVENANCE_DEFAULT_ASSUMED = "DEFAULT_ASSUMED"
 PROVENANCE_NO_DATA = "NO-DATA"
+
+
+def _num_or_nodata(kv: Dict[str, str], key: str) -> Tuple[Optional[float], str]:
+    """Parse numeric field; literal NO-DATA stays NO-DATA (never 0.0)."""
+    if key not in kv:
+        return None, PROVENANCE_NO_DATA
+    raw = kv[key]
+    if str(raw).upper() == "NO-DATA":
+        return None, PROVENANCE_NO_DATA
+    try:
+        return float(raw), PROVENANCE_MEASURED
+    except ValueError:
+        return None, PROVENANCE_NO_DATA
 
 # field=value tokens on media lines
 _KV_RE = re.compile(r"([A-Za-z_][A-Za-z0-9_]*)=(-?[0-9]+(?:\.[0-9]+)?|[A-Za-z0-9_./+-]+)")
@@ -131,7 +149,16 @@ class Sample:
     session: Optional[int] = None
     drift_ms: Optional[int] = None  # on drop lines
     held_ms: Optional[float] = None
+    hold_wall_ms: Optional[float] = None
+    since_first_audio_pcm_ms: Optional[float] = None
+    since_audio_release_ms: Optional[float] = None
+    since_pump_release_ms: Optional[float] = None
+    since_origin_ms: Optional[float] = None
+    since_av_release_ms: Optional[float] = None
+    lat_ms: Optional[float] = None
+    queued_B: Optional[int] = None
     gate: Optional[str] = None
+    tag: Optional[str] = None
     raw: str = ""
 
 
@@ -192,6 +219,29 @@ class Report:
     delta_hold_release_to_video_ms_src: str = PROVENANCE_NO_DATA
     delta_audio_pcm_to_hold_release_ms: Optional[float] = None
     delta_audio_pcm_to_hold_release_ms_src: str = PROVENANCE_NO_DATA
+    # Explicit daemon-emitted metrics (prefer over hand-computed mono deltas)
+    hold_wall_ms: Optional[float] = None  # first_audio → release wall span
+    hold_wall_ms_src: str = PROVENANCE_NO_DATA
+    held_ms_content: Optional[float] = None  # hold buffer bytes→ms
+    held_ms_content_src: str = PROVENANCE_NO_DATA
+    since_audio_release_ms: Optional[float] = None  # on first_video line
+    since_audio_release_ms_src: str = PROVENANCE_NO_DATA
+    since_first_audio_pcm_ms: Optional[float] = None  # on first_video line
+    since_first_audio_pcm_ms_src: str = PROVENANCE_NO_DATA
+    since_pump_release_ms: Optional[float] = None
+    since_pump_release_ms_src: str = PROVENANCE_NO_DATA
+    mraudio_available_mono_ms: Optional[int] = None
+    mraudio_available_mono_ms_src: str = PROVENANCE_NO_DATA
+    mraudio_available_since_origin_ms: Optional[float] = None
+    mraudio_available_since_origin_ms_src: str = PROVENANCE_NO_DATA
+    mraudio_available_since_audio_release_ms: Optional[float] = None
+    mraudio_available_since_audio_release_ms_src: str = PROVENANCE_NO_DATA
+    first_audio_latency_ms: Optional[float] = None
+    first_audio_latency_ms_src: str = PROVENANCE_NO_DATA
+    first_audio_latency_since_origin_ms: Optional[float] = None
+    first_audio_latency_since_origin_ms_src: str = PROVENANCE_NO_DATA
+    first_audio_latency_mono_ms: Optional[int] = None
+    first_audio_latency_n: int = 0  # how many latency samples seen
     audio_vs_video: str = "NO-DATA"
     cluster_axis: List[Dict[str, Any]] = field(default_factory=list)
     # Ledger continuity
@@ -217,6 +267,10 @@ def classify_line(line: str) -> Optional[str]:
         return "av_audio_release"
     if "media: audio release" in line or "ERROR media: audio release" in line:
         return "audio_release"
+    if "media: MrAudio playback position available" in line:
+        return "mraudio_available"
+    if "media: audio latency" in line:
+        return "audio_latency"
     if "media: frames=" in line:
         return "media"
     if "media: publish_misses=" in line:
@@ -250,7 +304,21 @@ def parse_line(line: str, host_t: float) -> Optional[Sample]:
     s.audio = kv.get("audio")
     s.session = _i(kv, "session")
     s.held_ms = _f(kv, "held_ms")
+    s.hold_wall_ms, _ = _num_or_nodata(kv, "hold_wall_ms")
+    s.since_first_audio_pcm_ms, _ = _num_or_nodata(kv, "since_first_audio_pcm_ms")
+    s.since_audio_release_ms, _ = _num_or_nodata(kv, "since_audio_release_ms")
+    s.since_pump_release_ms, _ = _num_or_nodata(kv, "since_pump_release_ms")
+    s.since_origin_ms, _ = _num_or_nodata(kv, "since_origin_ms")
+    s.since_av_release_ms, _ = _num_or_nodata(kv, "since_av_release_ms")
+    # audio latency: ms=... or lat_ms=...
+    s.lat_ms = _f(kv, "lat_ms")
+    if s.lat_ms is None:
+        s.lat_ms = _f(kv, "ms")  # "audio latency ms=76"
+    s.queued_B = _i(kv, "queued_B")
+    if s.queued_B is None:
+        s.queued_B = _i(kv, "queued")  # legacy queued=14749B stripped by parser?
     s.gate = kv.get("gate")
+    s.tag = kv.get("tag")
     # residual identity when fields present
     if s.frames is not None and s.presents is not None and s.drops is not None:
         s.residual_computed = int(s.frames) - int(s.presents) - int(s.drops)
@@ -464,6 +532,12 @@ def analyze_samples(samples: List[Sample], *, hz_req: float, hz_src: str) -> Rep
             rep.av_audio_release_wall_s_src = (
                 PROVENANCE_MEASURED if s.wall_s is not None else PROVENANCE_NO_DATA
             )
+            if s.hold_wall_ms is not None and rep.hold_wall_ms is None:
+                rep.hold_wall_ms = float(s.hold_wall_ms)
+                rep.hold_wall_ms_src = PROVENANCE_MEASURED
+            if s.held_ms is not None and rep.held_ms_content is None:
+                rep.held_ms_content = float(s.held_ms)
+                rep.held_ms_content_src = PROVENANCE_MEASURED
             break
 
     # Pump audio release (held PCM flush to MrAudio)
@@ -506,6 +580,103 @@ def analyze_samples(samples: List[Sample], *, hz_req: float, hz_src: str) -> Rep
         rep.hold_release_mono_ms = None
         rep.hold_release_mono_ms_src = PROVENANCE_NO_DATA
         rep.hold_release_source = "NO-DATA"
+
+    # Explicit hold_wall_ms / held_ms from daemon lines (prefer over mono subtract)
+    for s in samples:
+        if s.kind in ("audio_release", "av_audio_release") and s.hold_wall_ms is not None:
+            rep.hold_wall_ms = float(s.hold_wall_ms)
+            rep.hold_wall_ms_src = PROVENANCE_MEASURED
+            break
+    if rep.hold_wall_ms is None and (
+        rep.first_audio_pcm_mono_ms is not None and rep.hold_release_mono_ms is not None
+    ):
+        # Fallback computed — still measured mono deltas, labelled as such
+        rep.hold_wall_ms = float(rep.hold_release_mono_ms - rep.first_audio_pcm_mono_ms)
+        rep.hold_wall_ms_src = PROVENANCE_MEASURED
+        rep.notes.append(
+            "hold_wall_ms computed from mono_ms pair (daemon hold_wall_ms field absent)"
+        )
+    for s in samples:
+        if s.kind in ("audio_release", "av_audio_release") and s.held_ms is not None:
+            rep.held_ms_content = float(s.held_ms)
+            rep.held_ms_content_src = PROVENANCE_MEASURED
+            # Prefer pump buffer held_ms over gate-open held_ms=0
+            if s.kind == "audio_release":
+                break
+    # first_video explicit since_* (daemon-emitted; do not hand-subtract)
+    for s in samples:
+        if s.kind == "first_video":
+            if s.since_audio_release_ms is not None:
+                rep.since_audio_release_ms = float(s.since_audio_release_ms)
+                rep.since_audio_release_ms_src = PROVENANCE_MEASURED
+            if s.since_first_audio_pcm_ms is not None:
+                rep.since_first_audio_pcm_ms = float(s.since_first_audio_pcm_ms)
+                rep.since_first_audio_pcm_ms_src = PROVENANCE_MEASURED
+            if s.since_pump_release_ms is not None:
+                rep.since_pump_release_ms = float(s.since_pump_release_ms)
+                rep.since_pump_release_ms_src = PROVENANCE_MEASURED
+            break
+    # Fallbacks from mono if daemon omitted since_*
+    if (
+        rep.since_audio_release_ms is None
+        and rep.first_video_mono_ms is not None
+        and rep.av_audio_release_mono_ms is not None
+    ):
+        rep.since_audio_release_ms = float(
+            rep.first_video_mono_ms - rep.av_audio_release_mono_ms
+        )
+        rep.since_audio_release_ms_src = PROVENANCE_MEASURED
+        rep.notes.append(
+            "since_audio_release_ms computed from mono_ms (daemon field absent)"
+        )
+    if (
+        rep.since_first_audio_pcm_ms is None
+        and rep.first_video_mono_ms is not None
+        and rep.first_audio_pcm_mono_ms is not None
+    ):
+        rep.since_first_audio_pcm_ms = float(
+            rep.first_video_mono_ms - rep.first_audio_pcm_mono_ms
+        )
+        rep.since_first_audio_pcm_ms_src = PROVENANCE_MEASURED
+
+    # MrAudio available one-shot (fallback-window end)
+    for s in samples:
+        if s.kind == "mraudio_available":
+            rep.mraudio_available_mono_ms = s.mono_ms
+            rep.mraudio_available_mono_ms_src = (
+                PROVENANCE_MEASURED if s.mono_ms is not None else PROVENANCE_NO_DATA
+            )
+            if s.since_origin_ms is not None:
+                rep.mraudio_available_since_origin_ms = float(s.since_origin_ms)
+                rep.mraudio_available_since_origin_ms_src = PROVENANCE_MEASURED
+            if s.since_audio_release_ms is not None:
+                rep.mraudio_available_since_audio_release_ms = float(
+                    s.since_audio_release_ms
+                )
+                rep.mraudio_available_since_audio_release_ms_src = PROVENANCE_MEASURED
+            break
+
+    # First audio latency sample — ALWAYS carry since_origin (sampling-phase trap)
+    lat_n = 0
+    for s in samples:
+        if s.kind != "audio_latency":
+            continue
+        lat_n += 1
+        if rep.first_audio_latency_ms is None and s.lat_ms is not None:
+            rep.first_audio_latency_ms = float(s.lat_ms)
+            rep.first_audio_latency_ms_src = PROVENANCE_MEASURED
+            rep.first_audio_latency_mono_ms = s.mono_ms
+            if s.since_origin_ms is not None:
+                rep.first_audio_latency_since_origin_ms = float(s.since_origin_ms)
+                rep.first_audio_latency_since_origin_ms_src = PROVENANCE_MEASURED
+            else:
+                rep.first_audio_latency_since_origin_ms = None
+                rep.first_audio_latency_since_origin_ms_src = PROVENANCE_NO_DATA
+                rep.notes.append(
+                    "first audio latency line lacks since_origin_ms — "
+                    "cannot place on session axis (sampling-phase trap risk)"
+                )
+    rep.first_audio_latency_n = lat_n
 
     def _delta_ms(a: Optional[int], b: Optional[int]) -> Tuple[Optional[float], str]:
         if a is None or b is None:
@@ -758,6 +929,54 @@ def _print_human(rep: Report) -> None:
             + (f" held_ms={ev.get('held_ms')}" if ev.get("held_ms") is not None else "")
             + (f" source={ev.get('source')}" if ev.get("source") is not None else "")
         )
+    print("--- ORIGIN_EXPLICIT (no hand subtraction) ---")
+    pv("hold_wall_ms", rep.hold_wall_ms, rep.hold_wall_ms_src)
+    pv("held_ms_content", rep.held_ms_content, rep.held_ms_content_src)
+    pv(
+        "since_audio_release_ms",
+        rep.since_audio_release_ms,
+        rep.since_audio_release_ms_src,
+    )
+    pv(
+        "since_first_audio_pcm_ms",
+        rep.since_first_audio_pcm_ms,
+        rep.since_first_audio_pcm_ms_src,
+    )
+    pv(
+        "since_pump_release_ms",
+        rep.since_pump_release_ms,
+        rep.since_pump_release_ms_src,
+    )
+    pv(
+        "mraudio_available_mono_ms",
+        rep.mraudio_available_mono_ms,
+        rep.mraudio_available_mono_ms_src,
+    )
+    pv(
+        "mraudio_available_since_origin_ms",
+        rep.mraudio_available_since_origin_ms,
+        rep.mraudio_available_since_origin_ms_src,
+    )
+    pv(
+        "mraudio_available_since_audio_release_ms",
+        rep.mraudio_available_since_audio_release_ms,
+        rep.mraudio_available_since_audio_release_ms_src,
+    )
+    pv(
+        "first_audio_latency_ms",
+        rep.first_audio_latency_ms,
+        rep.first_audio_latency_ms_src,
+    )
+    pv(
+        "first_audio_latency_since_origin_ms",
+        rep.first_audio_latency_since_origin_ms,
+        rep.first_audio_latency_since_origin_ms_src,
+    )
+    pv(
+        "first_audio_latency_n",
+        rep.first_audio_latency_n,
+        PROVENANCE_MEASURED,
+    )
     pv(
         "delta_audio_pcm_to_video_ms",
         rep.delta_audio_pcm_to_video_ms,
@@ -824,19 +1043,29 @@ def _self_test() -> int:
     finally:
         os.unlink(empty)
 
-    # GREEN: synthetic startup with cluster axis + 5 per-drop lines + media
-    # Cluster A: first_audio → video = 200 ms; Cluster B would be ~316 ms etc.
+    # GREEN: synthetic startup with cluster axis + explicit hold metrics + media
+    # Parent-shaped: first_audio → A/V release = 120 ms hold_wall.
     lines = [
         "media: first_audio_pcm mono_ms=1000000 wall_s=NO-DATA nbytes=3840 gate=closed "
-        "(cluster axis; pre-MrAudio)\n",
+        "tag=measured (cluster axis; pre-MrAudio)\n",
         "media: A/V audio_release first_frame=0 content_origin_ms=0 "
-        "audio_bytes_at_release=0 mono_ms=1000200 wall_s=0.000 "
+        "audio_bytes_at_release=0 mono_ms=1000120 wall_s=0.000 held_ms=0 "
+        "hold_wall_ms=120 tag=measured "
         "(MrAudio starts; held PCM from content t=0)\n",
         "media: audio release content_origin_ms=0 audio_bytes_at_release=0 "
-        "held_bytes=48000 held_ms=250 reason=first_video_or_path "
-        "mono_ms=1000205 wall_s=0.005\n",
-        "media: first_video_present wall_s=0.020 mono_ms=1000220 av_drift_ms=-35 "
-        "frames=1 presents=1 audio=on audio_s=0.25\n",
+        "held_bytes=23040 reason=first_video_or_path mono_ms=1000125 wall_s=0.005 "
+        "held_ms=120 hold_wall_ms=125 since_av_release_ms=5 tag=measured\n",
+        "media: first_video_present wall_s=0.020 mono_ms=1000140 "
+        "since_first_audio_pcm_ms=140 since_audio_release_ms=20 "
+        "since_pump_release_ms=15 av_drift_ms=-35 "
+        "frames=1 presents=1 audio=on audio_s=0.25 tag=measured\n",
+        "media: MrAudio playback position available mono_ms=1000300 wall_s=0.180 "
+        "since_origin_ms=180 since_first_audio_pcm_ms=300 since_audio_release_ms=180 "
+        "queued_B=19200 lat_ms=100 tag=measured — video now paces off what is HEARD\n",
+        "media: audio latency ms=100 queued_B=19200 mono_ms=1000300 wall_s=0.180 "
+        "since_origin_ms=180 tag=measured\n",
+        "media: audio latency ms=102 queued_B=19584 mono_ms=1005300 wall_s=5.180 "
+        "since_origin_ms=5180 tag=measured\n",
     ]
     for i, d in enumerate(range(1, 6), start=1):
         lines.append(
@@ -875,14 +1104,25 @@ def _self_test() -> int:
         assert rep.first_audio_pcm_mono_ms == 1000000, rep
         assert rep.first_audio_pcm_wall_s is None, rep  # NO-DATA not 0.0
         assert rep.first_audio_pcm_wall_s_src == PROVENANCE_NO_DATA, rep
-        assert rep.first_video_mono_ms == 1000220, rep
-        assert rep.hold_release_mono_ms == 1000205, rep
         assert rep.hold_release_source == "audio_release_pump", rep
-        assert rep.delta_audio_pcm_to_video_ms == 220.0, rep
+        assert rep.first_video_mono_ms == 1000140, rep
+        assert rep.hold_release_mono_ms == 1000125, rep
+        assert rep.delta_audio_pcm_to_video_ms == 140.0, rep
         assert rep.delta_audio_pcm_to_video_ms_src == PROVENANCE_MEASURED, rep
         assert rep.delta_hold_release_to_video_ms == 15.0, rep
         assert len(rep.cluster_axis) == 3, rep.cluster_axis
-        print("SELF_TEST synthetic startup SESSION_OK drop_events=5 cluster_axis OK")
+        # Explicit origin metrics — no hand subtraction
+        assert rep.hold_wall_ms == 120.0, rep
+        assert rep.hold_wall_ms_src == PROVENANCE_MEASURED, rep
+        assert rep.held_ms_content == 120.0, rep  # pump held_ms preferred
+        assert rep.since_audio_release_ms == 20.0, rep
+        assert rep.since_first_audio_pcm_ms == 140.0, rep
+        assert rep.mraudio_available_mono_ms == 1000300, rep
+        assert rep.mraudio_available_since_origin_ms == 180.0, rep
+        assert rep.first_audio_latency_ms == 100.0, rep
+        assert rep.first_audio_latency_since_origin_ms == 180.0, rep
+        assert rep.first_audio_latency_n == 2, rep
+        print("SELF_TEST synthetic startup SESSION_OK drop_events=5 cluster+origin OK")
     finally:
         os.unlink(path)
 

@@ -1069,6 +1069,10 @@ void MediaPlayer::killChildren() {
     audioActive_.store(false);
     audioStartGate_.store(false);
     sessionOriginMonoMs_.store(-1, std::memory_order_release);
+    firstAudioPcmMonoMs_.store(-1, std::memory_order_release);
+    avAudioReleaseMonoMs_.store(-1, std::memory_order_release);
+    pumpAudioReleaseMonoMs_.store(-1, std::memory_order_release);
+    holdBytesAtRelease_.store(-1, std::memory_order_release);
     streamActive_.store(false);
 }
 
@@ -2086,10 +2090,17 @@ void MediaPlayer::audioPump(int afd) {
         }
     };
     // Hold buffer while audioStartGate_ is closed. Cap kAudioHoldCapMs (2 s).
-    // RING policy: on overflow drop the HEAD so release stays continuous with
-    // live (keeping head + dropping tail caused an audible 2s→T_release jump).
-    // Timeout kAudioHoldTimeoutMs opens the gate without video so silent casts
-    // cannot hang forever (degrade to pre-hold: user at least hears audio).
+    //
+    // Peer shape (CITED): arm when BOTH ready / preroll then latch base-time
+    // (mpv, GStreamer). NOT-FOUND: peer keep-HEAD hold FIFO from stream t=0.
+    //
+    // Overflow: DropHeadKeepTail (NOT-FOUND peer consensus). keep-HEAD was a
+    // measured audible jump; drop-head is still a content discontinuity at the
+    // discarded head — honest, not peer-blessed.
+    //
+    // Timeout kAudioHoldTimeoutMs: ENGINEERING COMPROMISE (NOT "what mpv does")
+    // between infinite silence and ExoPlayer-scale ~2.5 s start buffers. Logs
+    // loudly; lastHoldWaitedMs_ makes it telemetry-visible.
     constexpr size_t kAudioHoldCapBytes =
         static_cast<size_t>(misterplex::kAudioHoldCapBytes);
     std::vector<uint8_t> holdBuf;
@@ -2099,8 +2110,12 @@ void MediaPlayer::audioPump(int afd) {
     bool holdTimeoutLogged = false;
     bool releaseLogged = false;
     bool firstAudioPcmLogged = false;
+    // Peer-aligned: no past-bias when draining a non-empty hold (see av_clock.hpp).
+    bool pastBiasOnNextOrigin = true;
     auto holdSince = std::chrono::steady_clock::time_point{};
     int64_t lastHoldWaitLogMs = -1;
+    lastHeldMs_.store(-1, std::memory_order_release);
+    lastHoldWaitedMs_.store(-1, std::memory_order_release);
     size_t total = 0;
     size_t f2total = 0;
     int f2Fail = 0;
@@ -2143,18 +2158,28 @@ void MediaPlayer::audioPump(int afd) {
             }
             audioBytes_.fetch_add(static_cast<int64_t>(n));
 
-            // Anchor on the first chunk actually written. Always past-bias by
-            // kFeedTargetBytes (~100 ms) so the ring prefills — cold-start,
-            // seek, and hold-release share this path (suppressStartupPrefill
-            // was removed: a zero-prefill open introduced a time-varying lipsync
-            // term). HOLD does NOT remove this prefill quantum.
+            // Anchor on the first chunk actually written.
+            // Peer-aligned hold drain: when pastBiasOnNextOrigin is false (non-
+            // empty hold), start audioDue at `now` so held PCM does not burst
+            // kFeedTargetMs ahead of the video origin latched at the same wall
+            // instant (cluster-sep suspect). Cold/live open (empty hold) still
+            // past-biases to the ring servo set-point.
             if (!audioClockStarted) {
                 audioClockStarted = true;
-                audioDue = std::chrono::steady_clock::now() -
-                           std::chrono::duration_cast<std::chrono::steady_clock::duration>(
-                               std::chrono::duration<double>(
-                                   static_cast<double>(misterplex::kFeedTargetBytes) /
-                                   kBytesPerSec));
+                const auto now0 = std::chrono::steady_clock::now();
+                if (pastBiasOnNextOrigin) {
+                    audioDue = now0 - std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+                                          std::chrono::duration<double>(
+                                              static_cast<double>(misterplex::kFeedTargetBytes) /
+                                              kBytesPerSec));
+                    log("media: audio pace origin=past_bias prefill_ms=" +
+                        std::to_string(misterplex::kFeedTargetMs) +
+                        " (empty-hold / live open)");
+                } else {
+                    audioDue = now0;
+                    log("media: audio pace origin=now hold_drain_no_past_bias=1 "
+                        "burst_lead_ms=0 (peer-aligned; held PCM realtime with video)");
+                }
             }
 
             const double rate = misterplex::feedRateBytesPerSec(
@@ -2179,14 +2204,60 @@ void MediaPlayer::audioPump(int afd) {
                         (queuedEma * 1000LL) / misterplex::kMrAudioBytesPerSec;
                     if (!latencyLogged) {
                         latencyLogged = true;
-                        log("media: MrAudio playback position available — video now paces "
-                            "off what is HEARD, not what is sent");
+                        // One-shot: marks end of submitted-byte-clock fallback window.
+                        // mono_ms required — without it the pre-availability length is
+                        // unmeasurable (parent H-RING rejection still needs the window).
+                        const int64_t mono = steadyMonoMs();
+                        const int64_t origin =
+                            sessionOriginMonoMs_.load(std::memory_order_acquire);
+                        const int64_t fa =
+                            firstAudioPcmMonoMs_.load(std::memory_order_acquire);
+                        const int64_t ar =
+                            avAudioReleaseMonoMs_.load(std::memory_order_acquire);
+                        std::string wallField = " wall_s=NO-DATA";
+                        std::string sinceOrigin = " since_origin_ms=NO-DATA";
+                        if (origin >= 0) {
+                            const int64_t so = mono - origin;
+                            wallField = " wall_s=" +
+                                        std::to_string(static_cast<double>(so) / 1000.0)
+                                            .substr(0, 8);
+                            sinceOrigin = " since_origin_ms=" + std::to_string(so);
+                        }
+                        std::string sinceFa = " since_first_audio_pcm_ms=NO-DATA";
+                        if (fa >= 0)
+                            sinceFa = " since_first_audio_pcm_ms=" + std::to_string(mono - fa);
+                        std::string sinceAr = " since_audio_release_ms=NO-DATA";
+                        if (ar >= 0)
+                            sinceAr = " since_audio_release_ms=" + std::to_string(mono - ar);
+                        log("media: MrAudio playback position available mono_ms=" +
+                            std::to_string(mono) + wallField + sinceOrigin + sinceFa +
+                            sinceAr + " queued_B=" + std::to_string(queuedEma) +
+                            " lat_ms=" + std::to_string(latMs) +
+                            " tag=measured"
+                            " — video now paces off what is HEARD, not what is sent");
                     }
                     const int64_t nowMs = audioClockMs(audioBytes_.load());
                     if (lastLatLog < 0 || nowMs - lastLatLog >= 5000) {
                         lastLatLog = nowMs;
-                        log("media: audio latency " + std::to_string(latMs) + "ms queued=" +
-                            std::to_string(queuedEma) + "B");
+                        // Every latency sample carries mono_ms + since_origin so a
+                        // "first" value cannot be misread as session-start (parent
+                        // sampling-phase trap: index-9 76ms vs steady ~100ms).
+                        const int64_t mono = steadyMonoMs();
+                        const int64_t origin =
+                            sessionOriginMonoMs_.load(std::memory_order_acquire);
+                        std::string sinceOrigin = " since_origin_ms=NO-DATA";
+                        std::string wallField = " wall_s=NO-DATA";
+                        if (origin >= 0) {
+                            const int64_t so = mono - origin;
+                            sinceOrigin = " since_origin_ms=" + std::to_string(so);
+                            wallField = " wall_s=" +
+                                        std::to_string(static_cast<double>(so) / 1000.0)
+                                            .substr(0, 8);
+                        }
+                        log("media: audio latency ms=" + std::to_string(latMs) +
+                            " queued_B=" + std::to_string(queuedEma) +
+                            " mono_ms=" + std::to_string(mono) + wallField + sinceOrigin +
+                            " tag=measured");
                     }
                     if (!overrunLogged && queuedEma > (misterplex::kMrAudioRingBytes * 3) / 4) {
                         overrunLogged = true;
@@ -2250,9 +2321,16 @@ void MediaPlayer::audioPump(int afd) {
             if (waited >= misterplex::kAudioHoldTimeoutMs) {
                 if (!holdTimeoutLogged) {
                     holdTimeoutLogged = true;
+                    // ENGINEERING COMPROMISE — NOT peer-copied (not mpv/VLC).
                     log("media: audio hold TIMEOUT waited_ms=" + std::to_string(waited) +
+                        " held_ms=" +
+                        std::to_string(misterplex::heldMsFromBytes(
+                            static_cast<int64_t>(holdBuf.size()))) +
                         " held_bytes=" + std::to_string(holdBuf.size()) +
-                        " — opening gate without video (degrade to pre-hold audio)");
+                        " timeout_ms=" + std::to_string(misterplex::kAudioHoldTimeoutMs) +
+                        " — escape open without video "
+                        "(engineering compromise, not peer-copied; degrade to pre-hold audio)");
+                    lastHoldWaitedMs_.store(waited, std::memory_order_release);
                 }
                 audioStartGate_.store(true, std::memory_order_release);
             } else {
@@ -2298,6 +2376,7 @@ void MediaPlayer::audioPump(int afd) {
         if (!firstAudioPcmLogged) {
             firstAudioPcmLogged = true;
             const int64_t mono = steadyMonoMs();
+            firstAudioPcmMonoMs_.store(mono, std::memory_order_release);
             const int64_t origin = sessionOriginMonoMs_.load(std::memory_order_acquire);
             std::string wallField = " wall_s=NO-DATA";
             if (origin >= 0) {
@@ -2309,6 +2388,7 @@ void MediaPlayer::audioPump(int afd) {
                 " gate=" +
                 std::string(audioStartGate_.load(std::memory_order_acquire) ? "open"
                                                                            : "closed") +
+                " tag=measured"
                 " (cluster axis; pre-MrAudio)");
         }
 
@@ -2321,9 +2401,14 @@ void MediaPlayer::audioPump(int afd) {
                               holdBuf.begin() + static_cast<std::ptrdiff_t>(over));
                 if (!holdOverflowLogged) {
                     holdOverflowLogged = true;
+                    // DropHeadKeepTail: NOT-FOUND peer consensus; measured fix vs keep-HEAD.
                     log("media: audio hold cap reached bytes=" +
                         std::to_string(holdBuf.size()) +
-                        " — ring drop HEAD keep live tail (no content jump on release)");
+                        " held_ms=" +
+                        std::to_string(misterplex::heldMsFromBytes(
+                            static_cast<int64_t>(holdBuf.size()))) +
+                        " — ring drop HEAD keep live tail "
+                        "(NOT-FOUND peer FIFO policy; keep-HEAD was audible jump)");
                 }
             }
             total += static_cast<size_t>(n);
@@ -2333,29 +2418,64 @@ void MediaPlayer::audioPump(int afd) {
         if (!releaseLogged) {
             releaseLogged = true;
             const int64_t writtenBefore = audioBytes_.load();
-            const auto rel = misterplex::checkAudioReleaseOrigin(
-                writtenBefore, static_cast<int64_t>(holdBuf.size()));
+            const int64_t heldBytes = static_cast<int64_t>(holdBuf.size());
+            const auto rel = misterplex::checkAudioReleaseOrigin(writtenBefore, heldBytes);
             const char* why = holdTimeoutLogged ? "hold_timeout" : "first_video_or_path";
             const int64_t mono = steadyMonoMs();
+            pumpAudioReleaseMonoMs_.store(mono, std::memory_order_release);
+            holdBytesAtRelease_.store(heldBytes, std::memory_order_release);
             const int64_t origin = sessionOriginMonoMs_.load(std::memory_order_acquire);
+            const int64_t fa = firstAudioPcmMonoMs_.load(std::memory_order_acquire);
+            const int64_t avr = avAudioReleaseMonoMs_.load(std::memory_order_acquire);
             std::string wallField = " wall_s=NO-DATA";
             if (origin >= 0) {
                 const double ws = static_cast<double>(mono - origin) / 1000.0;
                 wallField = " wall_s=" + std::to_string(ws).substr(0, 8);
             }
-            const std::string axis = " mono_ms=" + std::to_string(mono) + wallField;
-            if (!rel.ok) {
+            // held_ms = content duration of hold buffer (bytes→ms @ 48k stereo s16).
+            // hold_wall_ms = wall duration first_audio_pcm→this release (explicit;
+            // parent must not hand-subtract mono_ms). Both tagged measured.
+            int64_t holdWallMs = -1;
+            std::string holdWall = " hold_wall_ms=NO-DATA";
+            if (fa >= 0) {
+                holdWallMs = mono - fa;
+                holdWall = " hold_wall_ms=" + std::to_string(holdWallMs);
+            } else if (holdLogged) {
+                holdWallMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                 std::chrono::steady_clock::now() - holdSince)
+                                 .count();
+                holdWall = " hold_wall_ms=" + std::to_string(holdWallMs);
+            }
+            std::string sinceAv = " since_av_release_ms=NO-DATA";
+            if (avr >= 0)
+                sinceAv = " since_av_release_ms=" + std::to_string(mono - avr);
+            // Peer-aligned drain: non-empty hold → no past-bias burst (av_clock.hpp).
+            pastBiasOnNextOrigin = misterplex::holdDrainShouldPastBias(heldBytes > 0);
+            const bool pastBias = pastBiasOnNextOrigin;
+            const auto rep = misterplex::makeHoldSessionReport(
+                writtenBefore, heldBytes, holdWallMs < 0 ? 0 : holdWallMs, pastBias,
+                holdTimeoutLogged);
+            lastHeldMs_.store(rep.heldMs, std::memory_order_release);
+            lastHoldWaitedMs_.store(rep.holdWaitedMs, std::memory_order_release);
+            const std::string axis = " mono_ms=" + std::to_string(mono) + wallField +
+                                     " held_ms=" + std::to_string(rep.heldMs) + holdWall +
+                                     " hold_waited_ms=" + std::to_string(rep.holdWaitedMs) +
+                                     " drain_burst_lead_ms=" +
+                                     std::to_string(rep.drainBurstLeadMs) +
+                                     " past_bias=" + std::to_string(pastBias ? 1 : 0) + sinceAv +
+                                     " tag=measured";
+            if (!rel.ok || !rep.ok) {
                 log("ERROR media: audio release content_origin_ms=" +
-                    std::to_string(rel.contentOriginMs) +
+                    std::to_string(rep.contentOriginMs) +
                     " audio_bytes_at_release=" + std::to_string(rel.audioBytesAtRelease) +
-                    " held_ms=" + std::to_string(rel.heldMs) + " reason=" + why + axis +
-                    " — hold bypassed (co-arm-class lead risk)");
+                    " held_bytes=" + std::to_string(holdBuf.size()) +
+                    " reason=" + why + axis +
+                    " — hold report not ok (co-arm-class lead risk)");
             } else {
                 log("media: audio release content_origin_ms=0"
                     " audio_bytes_at_release=0 held_bytes=" +
-                    std::to_string(holdBuf.size()) + " held_ms=" + std::to_string(rel.heldMs) +
-                    " reason=" + why + axis +
-                    " (held PCM continuous with live; stops startup frame drops)");
+                    std::to_string(holdBuf.size()) + " reason=" + why + axis +
+                    " (held PCM continuous with live; peer-aligned drain)");
             }
             constexpr size_t kChunk = 3840;
             size_t off = 0;
@@ -2370,6 +2490,8 @@ void MediaPlayer::audioPump(int afd) {
             }
             holdBuf.clear();
             holdBuf.shrink_to_fit();
+            // Origin already started during drain; live path must not re-bias.
+            pastBiasOnNextOrigin = true;
         }
 
         writePacedChunk(reinterpret_cast<const uint8_t*>(buf), static_cast<size_t>(n));
@@ -2909,10 +3031,18 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
             // Closed until first complete video frame — see audioPump hold path.
             audioStartGate_.store(false, std::memory_order_release);
             sessionOriginMonoMs_.store(-1, std::memory_order_release);
+            firstAudioPcmMonoMs_.store(-1, std::memory_order_release);
+            avAudioReleaseMonoMs_.store(-1, std::memory_order_release);
+            pumpAudioReleaseMonoMs_.store(-1, std::memory_order_release);
+            holdBytesAtRelease_.store(-1, std::memory_order_release);
             audioThr_ = std::thread([this, afd = apipe[0]] { audioPump(afd); });
         } else {
             audioStartGate_.store(true, std::memory_order_release);
             sessionOriginMonoMs_.store(-1, std::memory_order_release);
+            firstAudioPcmMonoMs_.store(-1, std::memory_order_release);
+            avAudioReleaseMonoMs_.store(-1, std::memory_order_release);
+            pumpAudioReleaseMonoMs_.store(-1, std::memory_order_release);
+            holdBytesAtRelease_.store(-1, std::memory_order_release);
         }
         std::vector<uint8_t> frame(frameBytes);
         // Zero-init → green-cast under any underfill (U=V=0). Studio black
@@ -3196,13 +3326,33 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                         ++prof.presented;
                     if (presentCount_ == 1) {
                         // Extract BEFORE any log clear — parent ERROR class.
+                        // Explicit deltas — never require hand-subtraction of mono_ms.
                         const auto fv = std::chrono::steady_clock::now();
                         const double fvWall =
                             std::chrono::duration<double>(fv - t0).count();
                         const int64_t mono = steadyMonoMs();
+                        const int64_t fa =
+                            firstAudioPcmMonoMs_.load(std::memory_order_acquire);
+                        const int64_t avr =
+                            avAudioReleaseMonoMs_.load(std::memory_order_acquire);
+                        const int64_t pr =
+                            pumpAudioReleaseMonoMs_.load(std::memory_order_acquire);
+                        std::string sinceFa = " since_first_audio_pcm_ms=NO-DATA";
+                        if (fa >= 0)
+                            sinceFa =
+                                " since_first_audio_pcm_ms=" + std::to_string(mono - fa);
+                        std::string sinceAv = " since_audio_release_ms=NO-DATA";
+                        if (avr >= 0)
+                            sinceAv =
+                                " since_audio_release_ms=" + std::to_string(mono - avr);
+                        std::string sincePump = " since_pump_release_ms=NO-DATA";
+                        if (pr >= 0)
+                            sincePump =
+                                " since_pump_release_ms=" + std::to_string(mono - pr);
                         log("media: first_video_present wall_s=" +
                             std::to_string(fvWall).substr(0, 6) +
-                            " mono_ms=" + std::to_string(mono) +
+                            " mono_ms=" + std::to_string(mono) + sinceFa + sinceAv +
+                            sincePump +
                             " av_drift_ms=" + std::to_string(avDriftMs_.load()) +
                             " frames=" + std::to_string(frameIndex) +
                             " presents=1"
@@ -3211,7 +3361,8 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                             " audio_s=" +
                             std::to_string(static_cast<double>(audioBytes_.load()) /
                                           (48000.0 * 4.0))
-                                .substr(0, 5));
+                                .substr(0, 5) +
+                            " tag=measured");
                     }
                     if ((presentCount_ % 48) == 0) {
                         log(std::string("media: fpga frame_tx ok via ") +
@@ -3492,14 +3643,25 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                     // Arm shared origin for cluster axis (audio thread reads this).
                     const int64_t originMono = steadyMonoMs();
                     sessionOriginMonoMs_.store(originMono, std::memory_order_release);
+                    avAudioReleaseMonoMs_.store(originMono, std::memory_order_release);
                     // Gate open is the physical start. content_origin must be 0:
                     // audioBytes_ is only incremented on MrAudio write, which the
                     // hold path forbids while the gate is closed.
                     const int64_t writtenBefore = audioBytes_.load();
                     const auto rel = misterplex::checkAudioReleaseOrigin(writtenBefore, /*held*/ 0);
                     audioStartGate_.store(true, std::memory_order_release);
-                    const std::string axis = " mono_ms=" + std::to_string(originMono) +
-                                             " wall_s=0.000";
+                    // hold_wall_ms = first_audio_pcm → gate open (explicit; do not
+                    // hand-subtract mono_ms). held_ms here is content_origin check
+                    // (0 when hold worked); pump "audio release" has buffer held_ms.
+                    const int64_t fa =
+                        firstAudioPcmMonoMs_.load(std::memory_order_acquire);
+                    std::string holdWall = " hold_wall_ms=NO-DATA";
+                    if (fa >= 0)
+                        holdWall = " hold_wall_ms=" + std::to_string(originMono - fa);
+                    const std::string axis =
+                        " mono_ms=" + std::to_string(originMono) + " wall_s=0.000" +
+                        " held_ms=" + std::to_string(rel.heldMs) + holdWall +
+                        " tag=measured";
                     if (wantAudio && audioActive_.load()) {
                         if (!rel.ok) {
                             log("ERROR media: A/V audio_release first_frame=" +

@@ -1,52 +1,55 @@
-# w-instr status — daemon drop-log build + cluster axis + B7 colour + overlay decline
-updated: 2026-07-31
+# w-instr status — origin record decisive + held_ms variance gate
+
 branch: w-avsync-hdmi-measure
-SHA: 419eaa984efb2ed1039ca3e46ab3466b367847ac
-ARM_md5: 5996385a57c6af142b8e732a39b36a4a
+SHA: (see git log -1 --oneline on w-avsync-hdmi-measure; stamped at report time)
 
-## BLOCKING — daemon build (every-drop + cluster mono_ms)
-branch: w-avsync-hdmi-measure
-SHA: 419eaa984efb2ed1039ca3e46ab3466b367847ac
-ARM_md5: 5996385a57c6af142b8e732a39b36a4a
-daemon source: tip includes ee1cde42 (first_audio_pcm/mono_ms) + ba1ded83 (every-drop + first_video_present)
-ARM binary (rebuilt this session from tip sources):
-  path: build/arm/misterplexd
-  md5:  5996385a57c6af142b8e732a39b36a4a
-  file: ELF 32-bit LSB ARM EABI5 statically linked
-make unit: true rc=0
-make arm-plexd: true rc=0
+## ARM daemon (parent deploys)
+path: build/arm/misterplexd
+md5: aaa726c7c5bcb733e8d9b08b3fe051ca
+prev_deployed: 5996385a57c6af142b8e732a39b36a4a  (parent confirmed live; lacks this turn's fields)
 
-### Per-drop log line — BOTH timestamp and frame index
-  media: A/V resync drop wall_s=<s from t0> mono_ms=<steady epoch ms>
-                       drift_ms=... drops=... frames=<frameIndex> presents=...
-first_video_present: wall_s + mono_ms + av_drift_ms + frames + presents + audio_s
-first_audio_pcm: mono_ms + wall_s|NO-DATA + nbytes + gate (pre-MrAudio)
-audio release / A/V audio_release: mono_ms + wall_s + held_ms
+## What changed (this commit)
+1. Explicit hold metrics on daemon lines (no hand mono subtract):
+   - first_audio_pcm: mono_ms + wall_s + tag=measured
+   - A/V audio_release: held_ms + hold_wall_ms + mono_ms + tag=measured
+   - pump audio release: held_ms + hold_wall_ms + past_bias + since_* + tag=measured
+   - first_video_present: since_first_audio_pcm_ms + since_audio_release_ms + since_pump_release_ms
+   - MrAudio playback position available: mono_ms + since_origin_ms + since_first_audio + since_audio_release (fallback window length)
+   - audio latency samples: mono_ms + since_origin_ms (anti sampling-phase trap)
 
-Parent deploy (parent owns 192.168.1.183):
-  scripts/deploy_misterplexd.sh
-  # expect md5 5996385a57c6af142b8e732a39b36a4a
+2. Peer-aligned hold drain (av_clock.hpp + media_player):
+   - non-empty hold → past_bias=0 (hold_drain_no_past_bias=1)
+   - empty-hold open may still past-bias kFeedTargetMs
+   - makeHoldSessionReport / holdDrainShouldPastBias first-class
 
-## CLUSTER_AXIS (startup instrument)
-tools/startup_window_sample.py every run:
-  first_audio_pcm_mono_ms | hold_release_mono_ms | first_video_present_mono_ms
-  + deltas ms; NO-DATA never 0.0
-  av_drift_ms printed but tagged BLIND for HDMI accuracy (parent: identical
-  across runs 120ms apart at HDMI; deadband of AV_PRESENT_LEAD_MS)
+3. tools/held_ms_stability_gate.py — multi-session variance gate
+   - FAIL rc=4 when range(hold_wall_ms) > --max-range-ms (default 40 DEFAULT_ASSUMED)
+   - NO-DATA rc=77 if n < min_sessions
+   - measured FAIL never decays to 77
 
-## B7 colour
-Not green-only: green_cast | chroma_cast | greyscale_flat | uv_swap
-Self-test RED: green/magenta/blue/grey/uv → COLOR_FAIL
-cap480a true rc=3 STRUCTURE_FAIL; cap480b true rc=0 MOTION_OK
+4. tools/startup_window_sample.py — ORIGIN_EXPLICIT + CLUSTER_AXIS parse/print
 
-## overlay_lowres_evidence.png
-files/ + tests/unit/fixtures/overlay_readback/
-single + 40-frame burst: VERDICT=UNSCORED true rc=77 (DECLINE, not motion)
+## Evidence (true rc DIRECT)
+python3 tools/held_ms_stability_gate.py --self-test; echo "true rc=$?"  → 0
+python3 tools/startup_window_sample.py --self-test; echo "true rc=$?" → 0
+python3 tools/held_ms_stability_gate.py --values 120 200 120 --min-sessions 3 --max-range-ms 40
+  → HOLD_VARIANCE_FAIL true rc=4
+python3 tools/held_ms_stability_gate.py --values 118 120 119 121 --min-sessions 3 --max-range-ms 40
+  → HOLD_STABLE true rc=0
+python3 tools/held_ms_stability_gate.py --values 120
+  → NO-DATA true rc=77
+make arm-plexd; echo "true rc=$?" → 0
+make unit; echo "true rc=$?" → 0
+strings: hold_wall_ms / MrAudio available mono_ms / hold_drain_no_past_bias present
 
-## Evidence commands (rc DIRECT)
-  python3 tools/startup_window_sample.py --self-test; echo "true rc=$?"
-  python3 tools/hdmi_motion_instrument.py --self-test; echo "true rc=$?"
-  python3 tools/hdmi_motion_instrument.py /tmp/cap480a --source-fps 24 --capture-fps 30; echo "true rc=$?"
-  python3 tools/hdmi_motion_instrument.py files/overlay_lowres_evidence.png; echo "true rc=$?"
-  md5sum build/arm/misterplexd
-  make unit; echo "true rc=$?"
+## Parent recipes (host only; parent owns device)
+# Deploy new binary then:
+python3 tools/startup_window_sample.py --hz 10 --duration 12 --log /tmp/sws_run.log
+# After n>=3 instrumented sessions, gate on hold_wall_ms:
+python3 tools/held_ms_stability_gate.py --values <h1> <h2> <h3> ... --min-sessions 3 --max-range-ms 40; echo "true rc=$?"
+# Or from logs:
+python3 tools/held_ms_stability_gate.py --log /tmp/sws_*.log --min-sessions 3; echo "true rc=$?"
+
+## Labels discipline
+Every value: measured | caller_supplied | DEFAULT_ASSUMED | NO-DATA
+DEFAULT max_range_ms=40 is DEFAULT_ASSUMED (design half of ~117 ms cluster sep) — override with --max-range-ms for caller_supplied.

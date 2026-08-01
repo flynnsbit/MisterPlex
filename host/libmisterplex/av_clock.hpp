@@ -65,14 +65,131 @@ inline int64_t grabberOffsetMs(int64_t audioHeardContentMs, int64_t videoDisplay
 constexpr int64_t kFeedTargetMs = 100; // kFeedTargetBytes / (48000*4)
 
 // --- Audio hold policy -------------------------------------------------------
+//
+// Peer survey (CITED vs NOT-FOUND — do not invent provenance):
+//   CITED mpv: arm when BOTH A/V READY (handle_playback_restart / queue full).
+//   CITED GStreamer: PLAYING after sink preroll; base-time latched then.
+//   CITED GStreamer audiobasesink DEFAULT_DISCONT_WAIT = 1s — "permanent offset"
+//         is an explicit category in production code.
+//   CITED ffplay/GStreamer: queued-but-unplayed audio enters the clock
+//         (hw_buf subtract / buffer-time).
+//   CITED late frames: drop-against-clock or drop-pre-start — not keep-HEAD FIFO.
+//   NOT-FOUND: peer "hold audio from stream t=0 until first video, keep HEAD
+//         on overflow" FIFO. Continuity argument against keep-HEAD is logical.
+//   NOT-FOUND: peer doc tying prefill quantum → permanent lipsync bias.
+//   NOT-FOUND: peer bug of the "drop count freezes offset" shape.
+//   NOT-FOUND: 1200 ms escape "copied from mpv/VLC" — that would be fabricated.
+//
+// Escape timeout is an ENGINEERING COMPROMISE: bound infinite silence if video
+// never arrives, between hang-forever and ExoPlayer-scale ~2.5 s start buffers.
+// It is NOT peer-copied. Must log loudly and be telemetry-visible.
+//
+// Hold-drain past-bias: product MUST NOT past-bias the first write when
+// draining a non-empty hold (that bursts kFeedTargetMs of content ahead of
+// the just-latched video origin — cluster-sep candidate). Live/cold path may
+// still past-bias to fill the ring servo set-point.
+
 constexpr int64_t kAudioHoldCapMs = 2000;
 constexpr int64_t kAudioHoldCapBytes = 48000LL * 4LL * (kAudioHoldCapMs / 1000);
+// Engineering compromise (NOT peer-copied). See comment block above.
 constexpr int64_t kAudioHoldTimeoutMs = 1200;
 
 enum class SessionHandoffKind { FreshPlay, SeekRestart, AutoNextRestart, PauseResume };
 
 inline bool handoffReArmsAudioHold(SessionHandoffKind k) {
     return k != SessionHandoffKind::PauseResume;
+}
+
+// Peer-style both-READY arm (CITED: mpv / GStreamer preroll shape).
+struct PeerBothReadyArm {
+    bool audioReady = false;
+    bool videoReady = false;
+    int64_t waitedMs = 0;
+    int64_t timeoutMs = kAudioHoldTimeoutMs;
+    bool timedOut = false;
+    bool shouldArm = false;
+};
+
+inline PeerBothReadyArm peerBothReadyArm(bool audioReady, bool videoReady, int64_t waitedMs,
+                                         int64_t timeoutMs = kAudioHoldTimeoutMs) {
+    PeerBothReadyArm a{};
+    a.audioReady = audioReady;
+    a.videoReady = videoReady;
+    a.waitedMs = waitedMs < 0 ? 0 : waitedMs;
+    a.timeoutMs = timeoutMs < 0 ? 0 : timeoutMs;
+    a.timedOut = a.waitedMs >= a.timeoutMs;
+    // Peer: arm when both READY. Escape: arm on timeout even if one side missing
+    // (engineering compromise — prevents infinite silence; NOT "what mpv does").
+    a.shouldArm = (a.audioReady && a.videoReady) || a.timedOut;
+    return a;
+}
+
+// Burst lead injected by past-bias on the FIRST MrAudio write after gate open.
+// RED (old): past-bias on hold drain → up to kFeedTargetMs audio content races
+// ahead of the video origin latched at the same wall instant.
+// GREEN (peer-aligned drain): pastBias=false when holdBuf non-empty → 0.
+inline int64_t holdDrainBurstLeadMs(bool pastBiasOnFirstWrite, int64_t feedTargetMs = kFeedTargetMs) {
+    if (!pastBiasOnFirstWrite)
+        return 0;
+    return feedTargetMs < 0 ? 0 : feedTargetMs;
+}
+
+// Should the first post-gate write past-bias? Peer-aligned: only when there is
+// nothing held to drain (cold/live open). Non-empty hold → realtime origin.
+inline bool holdDrainShouldPastBias(bool holdBufNonEmpty) { return !holdBufNonEmpty; }
+
+enum class HoldOverflowPolicy {
+    DropHeadKeepTail, // product: continuous with live; still a content discontinuity at head
+    OpenGate,         // alternative: stop holding; play immediately (also discontinuous)
+};
+
+// NOT-FOUND peer consensus on FIFO overflow. Product uses DropHeadKeepTail
+// because keep-HEAD+drop-tail caused an audible content jump (measured).
+inline bool holdOverflowOpensGate(HoldOverflowPolicy p) {
+    return p == HoldOverflowPolicy::OpenGate;
+}
+
+// held_ms is first-class: every release must produce a report with held_ms set
+// (0 if nothing held). -1 means "not reported" and is a product bug.
+struct HoldSessionReport {
+    int64_t heldMs = -1;       // content ms from held bytes (required >= 0)
+    int64_t holdWaitedMs = -1; // wall ms gate was closed (required >= 0 at release)
+    int64_t heldBytes = 0;
+    int64_t contentOriginMs = -1;
+    bool pastBiasOnDrain = false;
+    int64_t drainBurstLeadMs = 0;
+    bool timedOut = false;
+    bool ok = false;
+};
+
+inline int64_t heldMsFromBytes(int64_t heldBytes) {
+    if (heldBytes <= 0)
+        return 0;
+    return (heldBytes * 1000LL) / (48000LL * 4LL);
+}
+
+inline HoldSessionReport makeHoldSessionReport(int64_t audioBytesWrittenBeforeRelease,
+                                               int64_t heldBytes, int64_t holdWaitedMs,
+                                               bool pastBiasOnDrain, bool timedOut) {
+    HoldSessionReport r{};
+    if (heldBytes < 0)
+        heldBytes = 0;
+    if (holdWaitedMs < 0)
+        holdWaitedMs = 0;
+    r.heldBytes = heldBytes;
+    r.heldMs = heldMsFromBytes(heldBytes);
+    r.holdWaitedMs = holdWaitedMs;
+    r.pastBiasOnDrain = pastBiasOnDrain;
+    r.drainBurstLeadMs = holdDrainBurstLeadMs(pastBiasOnDrain);
+    r.timedOut = timedOut;
+    const int64_t written = audioBytesWrittenBeforeRelease < 0 ? 0 : audioBytesWrittenBeforeRelease;
+    r.contentOriginMs = (written * 1000LL) / (48000LL * 4LL);
+    // First-class held_ms/hold_waited_ms; content origin 0; non-empty hold must
+    // not past-bias (drainBurstLeadMs==0). Empty hold may past-bias for ring fill.
+    const bool peerDrainOk = (heldBytes == 0) || (r.drainBurstLeadMs == 0);
+    r.ok = (r.heldMs >= 0 && r.holdWaitedMs >= 0 && written == 0 && r.contentOriginMs == 0 &&
+            peerDrainOk);
+    return r;
 }
 
 struct AudioReleaseCheck {
@@ -88,7 +205,7 @@ inline AudioReleaseCheck checkAudioReleaseOrigin(int64_t audioBytesWrittenBefore
     c.audioBytesAtRelease = audioBytesWrittenBeforeRelease < 0 ? 0 : audioBytesWrittenBeforeRelease;
     if (heldBytes < 0)
         heldBytes = 0;
-    c.heldMs = (heldBytes * 1000LL) / (48000LL * 4LL);
+    c.heldMs = heldMsFromBytes(heldBytes);
     c.contentOriginMs = (c.audioBytesAtRelease * 1000LL) / (48000LL * 4LL);
     c.ok = (c.audioBytesAtRelease == 0 && c.contentOriginMs == 0);
     return c;

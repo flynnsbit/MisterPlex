@@ -33,6 +33,15 @@ green_checks() {
   grep -q 'simulateMultiSessionStartup' "$av" || return 1
   grep -q 'simulatePauseResumeHold' "$av" || return 1
   grep -q 'simulateHoldNoVideo' "$av" || return 1
+  # Peer-aligned hold drain + first-class held_ms
+  grep -q 'holdDrainShouldPastBias' "$av" || return 1
+  grep -q 'holdDrainBurstLeadMs' "$av" || return 1
+  grep -q 'makeHoldSessionReport' "$av" || return 1
+  grep -q 'peerBothReadyArm' "$av" || return 1
+  grep -q 'ENGINEERING COMPROMISE' "$mp" || return 1
+  grep -q 'hold_drain_no_past_bias' "$mp" || return 1
+  grep -q 'lastHeldMs_' "$hpp" || return 1
+  grep -q 'holdDrainShouldPastBias' "$mp" || return 1
   grep -q 'play(withUniversalOffset' "$mp" || return 1
   grep -q 'tryAutoNext' "$main" || return 1
   grep -q 'doPlay' "$main" || return 1
@@ -88,12 +97,16 @@ printf '%s\n' "$TIP_OUT"; echo "tip rc=$TIP_RC"; [[ "$TIP_RC" -eq 0 ]]
 for need in \
   'PASS startup drop variance' \
   'PASS hold no-video' \
+  'PASS peer hold drain' \
   'PRE_REGISTER HOLD_IDEAL predicted_startup_drops' \
   'PRE_REGISTER residual_lead_ms for drops=12' \
+  'PRE_REGISTER PEER_DRAIN' \
   'SIGN_CONVENTION grabber_offset_ms' \
   'CRITERION lip_sync=tools/avsync_measure_hdmi.py ONLY' \
   'H_DROP_STATUS REJECTED' \
-  'MISS_PUBLISHED H-DROP'; do
+  'MISS_PUBLISHED H-DROP' \
+  'PEER_HOLD NOT-FOUND' \
+  'PEER_HOLD CITED'; do
   printf '%s\n' "$TIP_OUT" | grep -q "$need" || { echo "missing $need" >&2; exit 1; }
 done
 # PRIMARY discrimination: exact silicon soak drop counts (12 and 15).
@@ -113,4 +126,13 @@ sed 's/kStartupDropWallMs = 0/kStartupDropWallMs = 41/' "$AV" >"$WORK/inc/libmis
 set +e; ZOUT="$("$WORK/test_avclock_zero" 2>&1)"; ZRC=$?; set -e
 printf '%s\n' "$ZOUT" | tail -20
 echo "bad_drop_wall rc=$ZRC"; [[ "$ZRC" -ne 0 ]]
-echo "OK hold B3/B4 red/green"
+
+# Mutant: holdDrainShouldPastBias always true (old past-bias-on-drain) ⇒ peer test RED.
+sed 's/return !holdBufNonEmpty;/return true; \/* MUTANT past-bias always *\//' "$AV" \
+  >"$WORK/inc/libmisterplex/av_clock.hpp"
+"$CXX_BIN" "${CXX_FLAGS[@]}" -I"$WORK/inc" -I"$ROOT/host" -o "$WORK/test_avclock_bias" \
+  "$ROOT/tests/unit/test_avclock.cpp"
+set +e; BOUT="$("$WORK/test_avclock_bias" 2>&1)"; BRC=$?; set -e
+printf '%s\n' "$BOUT" | tail -15
+echo "bad_past_bias rc=$BRC"; [[ "$BRC" -ne 0 ]]
+echo "OK hold B3/B4 + peer-drain red/green"
