@@ -20,7 +20,8 @@ Parent-owned device work only. Agents produce artifacts and commands; they must
 | **castBound_** | (not in package) | **BLOCKER — liveness hole only.** Latched on `/player/` **or `/resources`** (`companion.cpp`); `/resources` is LAN discovery, not a cast. Cleared only by `/player/timeline/unsubscribe`; **no expiry**. Vanished controller → indefinite `buffering` report. **Not** the intentional buffering@navigation UX. Gate owned by **w-lint** (`test_castbound_liveness`) — do not duplicate. |
 | **P7 real title** | synthetic flash fixture soaks | **OPEN.** One real title end-to-end on **viewed pixels** required. Telemetry-only play (even healthy `pfps`/`drops`) does not close P7. w-plextv-1 E2E owns the suite; acceptance below. |
 | **Soak continuity** | flat drops across N minutes | Must assert **one** `session_epoch` (`supply_bucket` / media lines). Daemon `rc=0` respawns reset per-stream counters. Tool: `tools/soak_continuity_assert.py --require-single-session-epoch`. |
-| **V2_MD5 blind-RED** | gate stuck on `…81848set +e` | Capture fixed (single-heredoc); never trim comparison. Re-run from worktree HEAD. |
+| **V2_MD5 blind-RED** | gate stuck on `…81848set +e` | Capture fixed at `23fc28d4`/`33cbac42` (single-heredoc + shape SKIP equality); **never trim comparison**. Parent must re-run from worktree HEAD (`e8f416cd`+). Pre-`2bdd18ea` SHAs still glue. |
+| **Live daemon `9ce2c2d1`** | (parent measured healthy live) | **UNKNOWN from repo pins** — not in `artifacts/daemon-pins/`, not in `rbf_policy_ddr_daemon_accepted`. Agent notes *claim* tip `bc3d3484` but no measured host binary md5 matches. **Do not treat as validated pair.** `verify-live` must FAIL live-exe until pinned. |
 
 ## Mutation-proven gates (host: `bash tests/unit/test_promote_runbook_mutations.sh`)
 
@@ -294,16 +295,34 @@ banned `{8832824e,75da8bb1,4d6ee356,4deaf6cc,dabdaeb0}` + do-not-ship `{9eb1431a
 
 ### Live daemon pin (parent 2026-08-01 post-raster restore)
 
-`/proc/<pid>/exe` md5 prefix **`7c991e47`** (full via `readlink -f` on device).
-Prior pins still accepted for pair matrix: `36b89bcb`, `3883f5ab`, `edc3a46b`,
-`e9f79de2`, `b981fd20`. Verify live exe — never disk alone.
+Historical parent pins (accepted set only if full md5 matches policy):
+`7c991e47`, `36b89bcb`, `3883f5ab`, `edc3a46b`, `e9f79de2`, `b981fd20`.
+Verify live exe via `readlink -f /proc/PID/exe` — never disk alone.
+
+### Live daemon `9ce2c2d1` — UNKNOWN (rule 0)
+
+Parent measured live `/proc/PID/exe` md5 prefix **`9ce2c2d1`** (healthy:
+`n_daemon=1`, `/resources`=200). **Repo evidence:**
+
+| Check | Result |
+|-------|--------|
+| `artifacts/daemon-pins/*` | no file / no md5 `9ce2…` |
+| `rbf_policy_ddr_daemon_accepted 9ce2c2d1` | **rc=1** (rejected) |
+| host `find` of `misterplexd` binaries under tree | **no** md5 starting `9ce2c2d1` |
+| agent notes (`.agent-work/w-cpu-1`, `w-geom`) | *claim* pair with tip `bc3d3484` — **not** a pin artifact |
+
+**Conclusion: unknown — not a validated promote artifact.** Do not invent
+`ddr-…+9ce2` pair. To validate: parent `md5sum $(readlink -f /proc/PID/exe)` full
+32-hex, scp to `artifacts/daemon-pins/misterplexd.9ce2c2d1`, record soak, then
+add to policy only after glass evidence. Until then `verify-live` correctly
+**FAIL live-exe-md5** if EXPECT/accepted set excludes it.
 
 ## Probe capture (V2_MD5 `set +e` glue)
 
 Parent: `got=dfebf2bf…81848set +e` / `[probe] V2_MD5=…81848set +e` (gate on
-`961dc724` multipath join). Cause: `$(frag1)$(frag2)` strips trailing newlines so
+pre-fix multipath join). Cause: `$(frag1)$(frag2)` strips trailing newlines so
 `echo "V2_MD5=$v2_md5"` + next `set +e` becomes one physical line and prints the
-glue into the value. **Fix the capture, not the comparison:**
+glue into the value. **Fix the capture, not the comparison** (`23fc28d4`):
 
 1. `remote_live_blob` is a **single heredoc** (`printf 'V2_MD5=%s\n'` only; never
    append `pair_remote_live_daemon_snippet` via `remote+=`).
@@ -312,7 +331,53 @@ glue into the value. **Fix the capture, not the comparison:**
 4. Shape fail → **SKIP equality** (no misleading `got=…set +e want=<clean>`).
 5. Host-exec of `dump-remote-live` proves pure 32-hex (`sim-v2-pure` unit).
 
-Audit: `scripts/promotion_gate_check.sh dump-remote-live | cat -A`
+### Parent: prove capture green (device; worktree HEAD only)
+
+```bash
+WT=/home/flynnsbit/Projects/MisterPlex/.worktrees/rollback-honest
+cd "$WT"
+git rev-parse --short HEAD   # need >= 23fc28d4 (tip e8f416cd+ OK)
+# 1) Host structural dump — V2_MD5 line must be printf only; set +e alone
+"$WT/scripts/promotion_gate_check.sh" dump-remote-live | cat -A | tee /tmp/promote-dump.A
+# expect lines (cat -A):
+#   set +e$
+#   printf 'V2_MD5=%s\n' "$v2_md5"$
+# forbid: V2_MD5=...set +e   or   echo "V2_MD5=
+# 2) Live probe (parent SSH path via gate)
+PROMOTE_EXECUTE=1 EXPECT_CORE_MD5=<product full md5> \
+  EXPECT_V2_CORE_MD5=dfebf2bfd08dd70b473b587dd7e81848 \
+  EXPECT_DAEMON_MD5=<validated pin full or leave default> \
+  "$WT/scripts/promotion_gate_check.sh" verify-live; echo "true rc=$?"
+# Contaminated capture would print:
+#   FAIL v2-rollback-core shape got='…set +e' …
+#   SKIP v2-rollback-core equality (shape failed …)
+# NEVER again: FAIL v2-rollback-core got=…81848set +e want=…81848
+# Clean device: [probe] V2_MD5=dfebf2bfd08dd70b473b587dd7e81848  (exactly 32 hex)
+```
+
+## Deploy dual-line RCA (parent :45–56 class)
+
+**Defect (main-era / pre-fix):** idempotence grepped only
+`misterplex/bin/misterplexd`, so a hand-added v2 supervise line **coexisted**
+with a v1 line → two daemons on :3005. Deploy also wrote v1 hook roots.
+
+**This branch (`deploy_misterplexd.sh` boot block):**
+
+1. Strips **both** `/misterplex/bin/misterplexd` and `/misterplex_v2/bin/misterplexd`
+   plus any `misterplexd_supervise.sh` before rewrite.
+2. Writes **exactly one** `nohup $root/bin/misterplexd_supervise.sh … &` for
+   `TARGET_ROOT` (live install root, not hardcoded v1).
+3. Fails `FAIL_HOOK_N` if n≠1; `FAIL_HOOK_V1_STILL_PRESENT` if v2 root still
+   has v1 binary path; decoy `_user-startup.sh` disarmed.
+4. Ships repo `scripts/misterplexd_supervise.sh` (flock, `HEALTHY_SECS=120`,
+   exact-argv0 `resume_stopped_main`) → `$root/bin/misterplexd_supervise.sh`.
+5. Deps required **before** device touch (`require_deploy_deps`); no late fail
+   after half-deploy.
+6. Live postconds: `/proc/PID/exe` md5, `n_daemon==1`, HTTP — geometry soft-skip
+   is **rc=78**, never DEPLOY_OK.
+
+Gate: `boot_hook_check_body` + verify-live hook≠`LIVE_ROOT` →
+`BOOT_HOOK_FAIL detail=hook_does_not_match_live_pair_root` (rc=3).
 
 ## OPEN conditions (do not mark closed)
 
