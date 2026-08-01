@@ -1124,11 +1124,21 @@ Parent series (rk8; absolute = `raw_uncalibrated`). Tool auto-picks `/tmp/avsync
 
 Same three tele runs: internal `av_drift_ms` mean **−29.8 / −29.4 / −30.2** (range inside lead band) while external HDMI medians span **120 ms**. Confirms code argument (`AV_PRESENT_LEAD_MS` pins the band) with hardware. **Soak PASS on av-lock+av_drift_ms is not a lipsync claim.**
 
-### Audio hold machine (source — candidate for ~117 ms cluster gap)
+### Audio hold machine (source)
 
-Parent n=1 instrumented run on daemon `5996385a`:
-`first_audio_pcm → A/V audio_release` = **120 ms** wall (mono_ms delta); cluster sep **117.1 ms**.
-**Not established** until hold duration is paired with cluster id across repeats.
+**Hold is NOT the 117 ms cluster discriminator (parent-measured, published miss).**
+Instrumented daemon `5996385a`, opposite clusters:
+
+| run | HDMI offset | cluster | held_ms | release→video | pcm→video | silence_head |
+|-----|------------:|---------|--------:|--------------:|----------:|-------------:|
+| 1 | −190.67 | B | **112** | 81 | 193 | 9 |
+| 2 | −308.00 | A | **107** | 71 | 178 | 9 |
+| Δ | **117.33** | | **5** | 10 | 15 | **0** |
+
+H-DEV required origin/hold delta ≈ 117±30 ms between clusters; measured hold Δ=5 ms.
+Session-start fields (geometry, vf, silence head, adelay, identity_skip, …) also **identical**
+across clusters (parent P5 null). Hold source trace below remains valid plumbing; it is **not**
+a fix justification for bimodality.
 
 #### End-to-end (product RGB+audio path)
 
@@ -1201,4 +1211,63 @@ cluster        = HDMI median vs A≈-314 / B≈-197
 | hold stats identical across A and B (within ~5 ms) while HDMI sep stays 117 | **kill** hold-duration suspect; look post-release (prefill burst / present lag) |
 | reason=`hold_timeout` ever on rk8 | separate degrade path — exclude from A/B |
 
-Do **not** use `av_drift_ms` (proven blind).
+Do **not** use `av_drift_ms` (proven blind). Hold pairing **already ran** — falsified.
+
+### MrAudio → FPGA handoff — where daemon control and observability END
+
+Product audio path (header `media_player.hpp:2-3`, arch diagram `docs/architecture.md`):
+
+```text
+ffmpeg s16le 48k stereo
+    → audioPump writePacedChunk
+    → ::write(/dev/MrAudio)          ← LAST userspace store the daemon performs
+    → MiSTer MrAudio DMA ring (kernel)
+    → SPI toward FPGA / sys audio mix  ← daemon does not schedule this
+    → HDMI / analog out
+```
+
+#### Last thing the daemon **controls**
+
+1. **Whether** to write and **which PCM bytes** (`media_player.cpp` `writePacedChunk`, `::write(out, …)` after gate open).
+2. **Software pacing** of those writes: `audioDue` + `sleep_until`, rate from `feedRateBytesPerSec(nominal, queuedEma)` (`mraudio_status.hpp:133-145`), seed `AUDIO_CLOCK_PPM`.
+3. **Optional F2 fallback** only if MrAudio open fails: `FpgaSpi::sendPcmChunk` → `sendFileTx` index 2 (`fpga_spi.cpp:1823-1832`; pump prefers MrAudio and skips F2 when Mr works — `media_player.cpp:2036-2040`).
+
+#### First things the daemon does **not** control
+
+Quoted from in-tree driver notes (`mraudio_status.hpp:4-14`, expanded `docs/MILESTONE_AVSYNC_SEEK.md` “wrong clock” section):
+
+- `/dev/MrAudio` is a **512 KB DMA ring** (`kMrAudioRingBytes`, `mraudio_status.hpp:33`).
+- **`write()` never blocks and never consults the read pointer** — copy into ring, wrap, return. Lab: 10 s PCM accepted in 116 ms.
+- **FPGA/SPI drain schedule** (when the consumer advances `rptr`) is **not** set by misterplexd.
+- **Sys audio mix / HDMI audio packet phase** relative to video scanout — outside this process (`osd_menu.hpp:12-16`: remaining path difference is “FPGA output, HDMI, and the display… cannot be measured from the ARM”).
+
+So: daemon chooses **byte stream + feed rate into the ring**. Hardware/driver choose **when those bytes become sound** on the wire.
+
+#### Where observability **ends** (precise)
+
+| Observable | How | Cadence / limit |
+|------------|-----|-----------------|
+| Bytes **submitted** | `audioBytes_ += n` on successful write intent (`writePacedChunk`) | every chunk |
+| Ring **depth** `len=(wptr-rptr)` | `readMrAudioQueuedBytes`: open MrAudio **O_RDONLY**, `read` status line, `parseMrAudioQueuedBytes` (`media_player.cpp:2020-2029`, `mraudio_status.hpp:18-22,39-69`) | **every 4th chunk** (~80 ms), not per sample |
+| “Heard” clock used by pacer | `audibleClockMs(written, queued) = (written−queued)/192000` (`mraudio_status.hpp:76-82`) | same sample rate as `len`; assumes **nominal 48 kHz** drain |
+| Overwrite risk | log if `queuedEma > 3/4 ring` | coarse |
+
+**Not observed / not logged by this daemon (from source):**
+
+- Absolute **wall time of first DAC/HDMI audio sample** (no HW PTS back to userspace beyond `len`).
+- **Phase** of FPGA audio clock vs video pixel clock / vsync.
+- Per-sample SPI completion; `comp:` field is parsed only as part of the status line format comment, not used in product logic.
+- Anything after SPI leave (core mix, HDMI A/V relative skew in the RBF).
+
+**Implication for the 117 ms defect (bounded claim):** parent showed session-start daemon fields and hold stats do not separate clusters. The handoff model says a **fixed or session-random phase** in the **post-write** path (ring start phase, FPGA drain, HDMI) would be **invisible** to every signal built from `written`, `len`, `frameIndex`, and `av_drift_ms` **if that phase is constant for the session and similar in steady `len`** — because `audibleClockMs` subtracts depth and `av_drift_ms` only compares that clock to `frameIndex`. That is a **compatibility** statement with blindness, **not** a location of the cause. Locating it needs an observation **outside** this set (grabber already is; on-device would need a new sensor, e.g. core-side marker or external loopback).
+
+#### Held PCM from content t=0? / origin rebase? (unchanged)
+
+- **Yes** dump from `holdBuf.begin()` after `audio_bytes_at_release==0` (see hold section) — independent of cluster falsification.
+- **No** steady-state origin rebase; latch once at first complete frame; seek/new play resets gate.
+
+#### Cheapest next falsifiers (still parent-owned hardware)
+
+1. Log **first N** `len`/lat samples with `mono_ms` for cluster A vs B (depth **trajectory** at open, not only steady 100 ms) — if identical through first 500 ms, ring depth path is weaker as discriminator.
+2. Keep using **HDMI instrument Δ** as ground truth; do not promote `av_drift_ms` or origin-record equality into “in sync”.
+3. Do **not** treat hold redesign as the 117 ms fix (measurement already killed that).
