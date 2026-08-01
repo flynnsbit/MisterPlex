@@ -100,8 +100,12 @@ if ! grep -q 'OK test_cadence_swap_path' <<<"$OUT"; then
   echo "FAIL: missing OK marker" >&2
   exit 2
 fi
-if ! grep -q 'PRE-REGISTER device fabric' <<<"$OUT"; then
+if ! grep -q 'PRE-REGISTER publish_interval' <<<"$OUT"; then
   echo "FAIL: pre-register not printed before compute" >&2
+  exit 2
+fi
+if ! grep -q 'INVALIDATED: fabric hold via frames_done' <<<"$OUT"; then
+  echo "FAIL: missing frames_done hold INVALIDATED note" >&2
   exit 2
 fi
 

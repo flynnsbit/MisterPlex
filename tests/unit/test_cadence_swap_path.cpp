@@ -3,7 +3,9 @@
 // Parent/r-misterfin claim: present_cadence + cadence.hpp are tested green but do
 // NOT drive DDR swaps; product is async vsync re-latch
 //   (vsync_pulse && swap_pending && pending_ready_s2).
-// HDMI plateau_hist showed 4/5 holds at ~10% — fabric vs capture unknown.
+// HDMI plateau_hist showed 4/5 holds at ~10%. frames_done is SWAP-only, so a
+// fabric hold hist via fd edges is INVALID (see PUBLISH_INTERVAL.md). Decisive
+// device experiment is ARM publish-interval ledger (publish_interval verdict=).
 //
 // This gate:
 //   C1  Source-path lock: cadence advance is stats/bars only (quoted facts).
@@ -12,10 +14,9 @@
 //   C4  Async with late ready/publish → introduces hold≥4 (pre-register).
 //   C5  Cadence-gated swap (hypothetical wire) forces {2,3} even with jitter.
 //
-// PRE-REGISTER (printed before compute) — device fabric poll (parent):
-//   P_fab_ge4_if_healthy ∈ [0.00, 0.03]   // always-ready free-gated
-//   P_fab_ge4_if_matches_hdmi ∈ [0.08, 0.13]
-//   w-geom lean: device-real if pfps<24 or prep stalls → P_fab_ge4 ∈ [0.05, 0.15]
+// PRE-REGISTER (printed before compute) — publish-interval device bands:
+//   ARM_CLEAN: p_ge50 < 0.03
+//   ARM_LATE_MATCH_HOLD45: p_ge50 ∈ [0.09, 0.11]
 //
 // true rc direct. Soft-skip never. Do not weaken.
 
@@ -243,14 +244,12 @@ int run_c1_source_facts() {
 } // namespace
 
 int main() {
-    std::printf("PRE-REGISTER device fabric hold hist (parent poll; not computed here):\n");
-    std::printf("  P_fab_ge4_healthy_band=[0.00,0.03]\n");
-    std::printf("  P_fab_ge4_hdmi_match_band=[0.08,0.13]\n");
-    std::printf("  w_geom_lean_device_band=[0.05,0.15]  # if pfps<24 or prep stalls\n");
+    std::printf("PRE-REGISTER publish_interval device bands (parent soak; not measured here):\n");
+    std::printf("  ARM_CLEAN: p_ge50<0.03 (late-publish FALSIFIED)\n");
+    std::printf("  ARM_LATE_MATCH_HOLD45: p_ge50 in [0.09,0.11] (~4/5-hold fraction)\n");
     std::printf("  parent_hdmi_frac_ge4_caller_supplied=%.4f\n", 130.0 / 1263.0);
-    std::printf("  note: bank_vsync_count exists in RTL but is NOT packed in PLXD;\n");
-    std::printf("  fabric poll uses frames_done edges + mono time / T_vsync "
-                "(T_vsync tag=DEFAULT_ASSUMED 1/60 unless measured).\n");
+    std::printf("  INVALIDATED: fabric hold via frames_done edges (fd=swap count only).\n");
+    std::printf("  vsync_toggle/bank_vsync_count NOT ARM-readable without RBF.\n");
 
     if (run_c1_source_facts() != 0)
         return 1;
@@ -321,9 +320,10 @@ int main() {
     // Tradeoff summary (printed, not a fail)
     std::printf("TRADEOFF_NOTE: wiring present_cadence into swap is (a) correct for "
                 "strict 3:2 film cadence, (b) safe only if swap still requires "
-                "pending_ready (no torn frame), (c) worth it ONLY if fabric hist "
-                "shows device-side ge4; if fabric pure 2/3, HDMI 4/5 is instrument — "
-                "do not fit.\n");
+                "pending_ready (no torn frame), (c) worth it ONLY after "
+                "publish_interval verdict settles cause — ARM_LATE_* => CPU/schedule "
+                "not cadence wire; ARM_CLEAN => need vsync-domain observability (RBF). "
+                "Do not fit on HDMI 4/5 alone.\n");
 
     if (g_fails) {
         std::fprintf(stderr, "%d cadence_swap_path fail(s)\n", g_fails);

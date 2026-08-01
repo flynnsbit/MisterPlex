@@ -1,13 +1,18 @@
-w-geom: publish-interval + frames_done correction
+w-geom DONE: publish-interval + frames_done correction
 branch: w-avsync-hdmi-measure
-gate: test_publish_interval_ledger true rc=0
+tip: 23b65932
+gates:
+  test_publish_interval_ledger true rc=0
+  test_cadence_swap_path true rc=0
+  test_cadence_swap_path_source true rc=0
+  unit-rollcall true rc=0
 report: .agent-work/w-geom/PUBLISH_INTERVAL.md
 
-VERDICT:
-- frames_done = SWAP count only (RTL quoted). Fabric hold-via-fd INVALIDATED (tools rc=2).
-- Stale ddr_bank_release_select comment fixed.
-- vsync_toggle/bank_vsync_count NOT ARM-readable without RBF.
-- Instrumented publishDdrFrame with steady_clock ring; session_end logs
-  media: publish_interval ... verdict= + corr line.
-- Pre-register: p_ge50<3% ARM_CLEAN; 9-11% ARM_LATE_MATCH_HOLD45.
-Parent: deploy daemon, 60s soak, grep publish_interval.
+PARENT (agent does not touch device):
+1. Deploy misterplexd built from tip 23b65932
+2. 60s 480p soak (frameRate=24.000 fixture)
+3. On session end: grep -E 'publish_interval' <daemon-log>
+4. Compare verdict= to:
+   ARM_CLEAN: p_ge50<0.03
+   ARM_LATE_MATCH_HOLD45: p_ge50 in [0.09,0.11]
+DO NOT use poll_plxd_frames_done_hold.sh (rc=2 INVALIDATED)
