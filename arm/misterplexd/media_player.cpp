@@ -1469,8 +1469,11 @@ void MediaPlayer::ffmpegStderrPump(int errReadFd, size_t codedFrameBytes, bool i
                     continue;
                 lastOutW = g.w;
                 lastOutH = g.h;
+                measuredOutputW_.store(g.w);
+                measuredOutputH_.store(g.h);
                 log("media: MEASURED_OUTPUT " + std::to_string(g.w) + "x" +
-                    std::to_string(g.h) + " (post-vf rawvideo)");
+                    std::to_string(g.h) +
+                    " (post-vf rawvideo) src=ffmpeg_banner_output tag=measured");
                 continue;
             }
             // Input / decoded delivery geometry — the B2 permanent observable.
@@ -1498,7 +1501,9 @@ void MediaPlayer::ffmpegStderrPump(int errReadFd, size_t codedFrameBytes, bool i
             // videoResolution= query. src=ffmpeg_banner is permanent observability (B2).
             log(std::string("media: MEASURED_DELIVERY delivered_geom=") +
                 std::to_string(g.w) + "x" + std::to_string(g.h) +
-                " src=ffmpeg_banner" +
+                " src=ffmpeg_input_banner" +
+                " basis=pre_vf_input_stream" +
+                " NOT_post_vf_active_picture" +
                 " bytes=" + std::to_string(prodBytes) +
                 " coded_bytes=" + std::to_string(codedFrameBytes) +
                 " identity_skip=" + (identitySkip ? "1" : "0") +
@@ -3104,6 +3109,8 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
         audioBytes_.store(0);
         measuredDeliveryW_.store(0);
         measuredDeliveryH_.store(0);
+        measuredOutputW_.store(0);
+        measuredOutputH_.store(0);
         // Session measure starts unverified; only MEASURED_DELIVERY sets true (B4).
         deliveryGeometryVerified_.store(false, std::memory_order_relaxed);
         pipeDesyncRisk_.store(false);
@@ -4192,6 +4199,8 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                 const double a_sec = static_cast<double>(abytes) / (48000.0 * 4.0);
                 const int mw = measuredDeliveryW_.load();
                 const int mh = measuredDeliveryH_.load();
+                const int mow = measuredOutputW_.load();
+                const int moh = measuredOutputH_.load();
                 const auto led = frameLedgerLiveOf(frameIndex, presentCount_,
                                                    droppedFrames_.load(),
                                                    publishMisses_.load());
@@ -4234,9 +4243,16 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                     (fpsNum_ > 0 ? std::string("caller_supplied") : "DEFAULT_ASSUMED") +
                     " decode=" + std::to_string(outW_) + "x" + std::to_string(outH_) +
                     " decode_src=caller_supplied" +
+                    // measured_delivery = INPUT Stream WxH (pre-vf), NOT letterboxed
+                    // active height inside pad. See MEASURED_DELIVERY delivered_geom.
                     " measured_delivery=" +
                     (mw > 0 ? (std::to_string(mw) + "x" + std::to_string(mh)) : "pending") +
                     " measured_delivery_src=" + (mw > 0 ? "measured" : "NO-DATA") +
+                    " measured_delivery_basis=ffmpeg_input_banner" +
+                    " measured_output=" +
+                    (mow > 0 ? (std::to_string(mow) + "x" + std::to_string(moh)) : "pending") +
+                    " measured_output_src=" + (mow > 0 ? "measured" : "NO-DATA") +
+                    " measured_output_basis=ffmpeg_output_banner" +
                     // Live flag: flips to 1 only after MEASURED_DELIVERY (not play-time GEOM).
                     " delivery_verified=" +
                     (deliveryGeometryVerified_.load(std::memory_order_relaxed) ? "1" : "0") +

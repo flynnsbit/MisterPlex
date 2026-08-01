@@ -300,9 +300,16 @@ private:
     std::atomic<bool> deliveryGeometryVerified_{false};
     int ffmpegScaleSourceW_ = 0;
     int ffmpegScaleSourceH_ = 0;
-    // Runtime-measured input geometry from ffmpeg stderr (B2). 0 = not seen yet.
+    // Runtime-measured INPUT geometry from ffmpeg stderr Stream banner (B2).
+    // Derivation: parseFfmpegGeometryLine on pre-Output lines — NOT post-vf size,
+    // NOT active-picture height inside a letterboxed 624x480 frame. 0 = not seen.
     std::atomic<int> measuredDeliveryW_{0};
     std::atomic<int> measuredDeliveryH_{0};
+    // Runtime-measured OUTPUT geometry (post-vf rawvideo). Derivation: Stream
+    // lines classified outish (Output/rawvideo). Expect coded bank e.g. 624x480
+    // when scale+pad ran. 0 = not seen.
+    std::atomic<int> measuredOutputW_{0};
+    std::atomic<int> measuredOutputH_{0};
     std::atomic<bool> pipeDesyncRisk_{false};
     // Conf AUDIO_DELAY_MS — default 0. Applied as FFmpeg adelay on product path.
     int audioDelayMs_ = 0;

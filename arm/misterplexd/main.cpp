@@ -160,15 +160,43 @@ misterplex::WeakLadder weakForContentResolution(const misterplex::WeakLadder& ba
 
 namespace {
 
-// MiSTerPlex ships its own static ffmpeg, but installs that predate that (or that
-// share a box with mistercast-linux) keep it elsewhere. Probe our own bin first so
-// a stock install is self-contained, then fall back rather than hard-failing.
+// MiSTerPlex ships its own static ffmpeg beside the daemon. Install roots that
+// predate v2 (or share a box with mistercast-linux) keep it elsewhere.
+//
+// Order matters for the v2 daily driver: probe misterplex_v2 BEFORE the legacy
+// misterplex root. A v2 daemon that fell through to /media/fat/misterplex/bin/ffmpeg
+// would exec an OLD binary while reading v2 conf (parent: strings on live v2
+// binary still contain the hardcoded v1 paths as compile-time defaults — that is
+// expected; runtime must not prefer them when v2 ffmpeg exists).
+//
+// conf-adjacent override is applied after --conf is known (see resolveFfmpegPath).
 std::string defaultFfmpegPath() {
-    for (const char* c : {"/media/fat/misterplex/bin/ffmpeg", "/media/fat/mistercast/bin/ffmpeg"}) {
+    for (const char* c : {"/media/fat/misterplex_v2/bin/ffmpeg",
+                          "/media/fat/misterplex/bin/ffmpeg",
+                          "/media/fat/mistercast/bin/ffmpeg"}) {
         if (::access(c, X_OK) == 0)
             return c;
     }
-    return "/media/fat/misterplex/bin/ffmpeg";
+    return "/media/fat/misterplex_v2/bin/ffmpeg";
+}
+
+// Prefer confDir/bin/ffmpeg when it exists (pair install root), else default probe.
+// conf FFMPEG= and CLI --ffmpeg still win (applied by caller before/after).
+std::string resolveFfmpegPath(const std::string& confPath, const std::string& current) {
+    // If caller already set a non-default explicit path that exists, keep it.
+    // We cannot know "explicit" vs default here when current equals a probe hit;
+    // conf key / CLI overwrite current before this is called when set.
+    if (!confPath.empty()) {
+        std::string dir = confDirFromPath(confPath);
+        if (!dir.empty()) {
+            const std::string beside = dir + "/bin/ffmpeg";
+            if (::access(beside.c_str(), X_OK) == 0)
+                return beside;
+        }
+    }
+    if (!current.empty() && ::access(current.c_str(), X_OK) == 0)
+        return current;
+    return defaultFfmpegPath();
 }
 
 } // namespace
@@ -308,8 +336,12 @@ int main(int argc, char** argv) {
                              profile.c_str(), weak.profileName.c_str());
         }
         auto v = loadConf(confPath, "FFMPEG");
-        if (!v.empty())
-            ffmpeg = v;
+        if (!v.empty()) {
+            ffmpeg = v; // conf explicit — never normalise; user-owned if they set it
+        } else {
+            // No conf FFMPEG=: bind to conf install root when that root ships ffmpeg.
+            ffmpeg = resolveFfmpegPath(confPath, ffmpeg);
+        }
         v = loadConf(confPath, "DECODE_ALLOW_LAB_480P");
         if (!v.empty())
             decodeAllowLab480p = decodeAllowLab480p || confTruthy(v);
@@ -578,6 +610,17 @@ int main(int argc, char** argv) {
         player.armProcessEpoch(static_cast<uint64_t>(pe > 0 ? pe : 1));
     }
     player.setFfmpegPath(ffmpeg);
+    // Derivation: conf FFMPEG= if set; else confDir/bin/ffmpeg if X_OK; else
+    // defaultFfmpegPath() probe order v2 → v1 → mistercast. Compiled-in string
+    // literals for the old root may still appear in `strings` — runtime path is this.
+    {
+        const int xok = (::access(ffmpeg.c_str(), X_OK) == 0) ? 1 : 0;
+        std::fprintf(stderr,
+                     "misterplexd: ffmpeg_path=%s x_ok=%d conf=%s "
+                     "ffmpeg_path_src=%s tag=measured\n",
+                     ffmpeg.c_str(), xok, confPath.c_str(),
+                     loadConf(confPath, "FFMPEG").empty() ? "resolved" : "conf_FFMPEG");
+    }
     player.setDecodeSize(decodeSize);
     player.setPresentMode(presentMode);
     player.setDdrFrameFormat(ddrFrameFormat);
