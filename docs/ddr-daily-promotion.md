@@ -761,3 +761,28 @@ PAIR_IDLE_PNG=/path/idle.png scripts/pair_visual_gate.sh idle; echo "true rc=$?"
 ```
 
 Soft-skip rc=77 is never PASS. Do not quote av-lock/av_drift as soak PASS.
+
+## HDMI A/V ~117 ms bimodality (parent 2026-07-31 — DEVICE CONFIRMED)
+
+**Not a promotion gate. Not closable by this package.**
+
+Parent one-session / three-capture test (thresholds pre-registered before run):
+
+| capture | window | median offset (ms) | n_pairs |
+|---------|--------|--------------------:|--------:|
+| 1 | ~12–112 s | -293.33 | 99 |
+| 2 | ~148–248 s | -296.00 | 99 |
+| 3 | ~284–360 s | -292.67 | 74 |
+
+- Within-session spread **3.33 ms** vs between-cluster separation **~117 ms** (~35×).
+- Verdict: **SESSION-LATCHED** on the device (instrument multi-input confound ruled out for this design).
+- State latched by first flash/beep pair (~1.4 s); stable for whole session.
+- Daemon `av_drift_ms` / `clock=av-lock` remain **BLIND** (RETRACTED as promote/soak PASS).
+- Common-mode ~25 ms startup transient (first-10 s vs last-60 s) in **both** clusters — short A/V windows are biased.
+
+**Promotion PASS does not claim lip-sync.** Success = pair identity + boot + user conf bytes + PLXS exec + viewed pixels/motion. Closing 117 ms is a separate rig program.
+
+Instrument value labels when referenced from this package:
+- `measured` — from device/capture this run
+- `caller-supplied` — parent env / pin
+- `DEFAULT_ASSUMED` — code default (never present as measurement)
