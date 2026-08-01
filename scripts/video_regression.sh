@@ -74,7 +74,8 @@ BASE_DAEMON_MD5=7cd10b4d438c714a9b8c4766dc982d59
 # 50f4eb92  CURRENT — clamps DECODE to the 320x240 RGB565 frame store instead of
 #           silently skipping FPGA present (pfps was 0.00 at 624x480), opt-in
 #           PRESENT_SCALE_TO_STORE, and supervisor backoff reset after a healthy
-#           run. Parent-verified on hardware: 240p unchanged (pfps 23.2, av-lock,
+#           run. Parent-verified on hardware: 240p unchanged (pfps 23.2; av-lock
+#           is NOT a lip-sync PASS — use tools/avsync_measure_hdmi.py),
 #           3 distinct HDMI md5s); 624x480 clamps and presents (pfps 23.6).
 HYBRID_DAEMON_MD5=50f4eb925de10e29172999a565c87684
 PREV_HYBRID_DAEMON_MD5=3e2cbb9881b2f54b0e4cb60238655fa7

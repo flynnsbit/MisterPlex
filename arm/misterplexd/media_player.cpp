@@ -3544,7 +3544,10 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                     " audio_s=" + std::to_string(a_sec).substr(0, 5) +
                     " wall_s=" + std::to_string(wall2 / 1000.0).substr(0, 5) +
                     " audio=" + (audioActive_.load() ? "on" : "off") +
-                    " clock=av-lock" +
+                    // Internal pacer deadband readout ONLY (av_clock.hpp). Parent-measured
+                    // 2026-07-31: av_drift_ms identical across runs whose HDMI lip-sync
+                    // differed by ~120 ms. NOT a soak PASS; lip-sync = tools/avsync_measure_hdmi.py.
+                    " clock=av-servo-internal" +
                     " av_drift_ms=" + std::to_string(avDriftMs_.load()) +
                     " " + frameLedgerTelemetryFragment(led) +
                     " fps=" + std::to_string(fpsNum) + "/" + std::to_string(fpsDen) +

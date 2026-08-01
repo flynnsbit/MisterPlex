@@ -1,9 +1,11 @@
 // Red-before-green: frame ledger residual catches publish loss that drops + av_drift miss.
 //
-// Contrast (the test):
+// Contrast (the test) — av_drift is shown ONLY to prove blindness, not as PASS:
 //   - A/V pacer drops increment `drops` and are subtracted from residual.
 //   - Failed DDR publish does NOT touch drops or av_drift_ms (drift uses frameIndex only).
 //   - residual = frames - presents - drops rises on publish miss; drops stay clean.
+//   - av_drift_ms staying 0 while residual=2 is the point: internal drift is not a
+//     lip-sync or publish-health criterion (parent HDMI measure 2026-07-31).
 #include "libmisterplex/av_clock.hpp"
 #include "libmisterplex/frame_ledger.hpp"
 

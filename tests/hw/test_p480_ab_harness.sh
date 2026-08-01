@@ -249,9 +249,9 @@ self_test_parse() {
   cat >"$f" <<LOG
 misterplexd: content resolution=624x480 source=conf/--decode status_word=0x0000 weak=624x480 bitrate=2000
 media: content fps=24000/1001 (pms frameRate=23.976 vfr=0)
-media: frames=100 vfps=23.9 pfps=23.8 audio_s=4.20 wall_s=4.18 audio=on clock=av-lock av_drift_ms=-12 drops=1 fps=24000/1001 decode=624x480
-media: frames=200 vfps=24.0 pfps=23.9 audio_s=8.40 wall_s=8.33 audio=on clock=av-lock av_drift_ms=-10 drops=2 fps=24000/1001 decode=624x480
-media: frames=300 vfps=24.1 pfps=24.0 audio_s=12.5 wall_s=12.4 audio=on clock=av-lock av_drift_ms=-8 drops=2 fps=24000/1001 decode=624x480
+media: frames=100 vfps=23.9 pfps=23.8 audio_s=4.20 wall_s=4.18 audio=on clock=av-servo-internal av_drift_ms=-12 drops=1 fps=24000/1001 decode=624x480
+media: frames=200 vfps=24.0 pfps=23.9 audio_s=8.40 wall_s=8.33 audio=on clock=av-servo-internal av_drift_ms=-10 drops=2 fps=24000/1001 decode=624x480
+media: frames=300 vfps=24.1 pfps=24.0 audio_s=12.5 wall_s=12.4 audio=on clock=av-servo-internal av_drift_ms=-8 drops=2 fps=24000/1001 decode=624x480
 media: fpga frame_tx ok via DDR presents=48 frames=300 ms=7
 media: present_profile frames=300 drops=2 presented=298 ddr_copy_us_p=7200 ddr_total_us_p=10400 ddr_plxd_used_x100_p=100 frame_bytes=${fb480}
 media: session end frames=300 recon_ok=0 recon_fail=0

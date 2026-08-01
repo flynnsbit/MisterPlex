@@ -61,6 +61,12 @@ bool frameLedgerSumFile(const std::string& path, FrameLedgerTotals* out);
 //   • a failed publish increments residual and publish_misses; drops stays flat
 //   • identity when every non-present is either pacedrop or publish-miss:
 //       residual == publish_misses
+//
+// Soak PASS criteria for THIS instrument (w-geom / P5):
+//   residual (measured), publish_misses, pfps_1s vs source fps, MEASURED_OUTPUT pin,
+//   pipe phase_desync=0. NEVER clock=av-lock / av_drift_ms — those are the internal
+//   servo setpoint echoed back (av_clock.hpp avDecide lead/drop deadband) and are
+//   parent-proven blind to real HDMI lip-sync (~120 ms HDMI gap, 0.8 ms drift delta).
 inline int64_t frameLedgerResidual(int64_t frames, int64_t presents, int64_t drops) {
     return frames - presents - drops;
 }
