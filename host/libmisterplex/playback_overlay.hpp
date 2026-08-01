@@ -91,8 +91,10 @@ struct OverlayLayoutMetrics {
         m.bodyScale = std::max(kOverlayMinScale, h >= 720 ? 3 : 2);
         m.titleScale = m.bodyScale;
         m.iconScale = std::max(kOverlayMinScale, h >= 720 ? 3 : 2);
-        // Prefer denser 8×13; 12×16 only when panel has room after scale≥2.
-        if (h >= 480 && m.bodyScale == 2) {
+        // Product bank is 624×480. Prefer 12×16 on any product-width canvas
+        // (w>=600) or full 480-line height at bodyScale==2. Short/narrow
+        // rasters (e.g. 320×240 unit fixtures) keep denser 8×13.
+        if (m.bodyScale == 2 && (w >= 600 || h >= 480)) {
             m.fontId = OverlayFontId::Large12x16;
             m.glyphW = kOverlayFontLargeW;
             m.glyphH = kOverlayFontLargeH;
@@ -431,12 +433,12 @@ private:
     }
 
     static int alphaFor(const Snapshot& s, int64_t nowMs) {
-        // Paused transport chrome stays up for the whole pause. A 3s auto-hide
-        // (kVisibleMs) made the pause path look "broken": after fade-out the
-        // present loop republished a clean frame and wiped the panel, so a
-        // capture after grabber warm-up saw only the frozen video (max luma~0
-        // in the panel band). Playing/Stopped still use the transient timeout.
-        if (s.state == PlaybackOverlayState::Paused) {
+        // Paused and Stopped transport chrome stay up until the next state
+        // change. A 3s auto-hide (kVisibleMs) wiped PAUSED after grabber
+        // warm-up (Test B) and also dropped STOPPED on the idle path so a late
+        // capture saw logo-only. Playing still uses the transient timeout.
+        if (s.state == PlaybackOverlayState::Paused ||
+            s.state == PlaybackOverlayState::Stopped) {
             if (s.shownAtMs < 0)
                 return 0;
             return 255;

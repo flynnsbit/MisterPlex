@@ -577,10 +577,10 @@ int main() {
         ov.showAt(PlaybackOverlayState::Playing, 5000, 60000, t0);
         CHECK(ov.visibleAt(t0 + 100));
         CHECK(!ov.visibleAt(t0 + PlaybackOverlay::kVisibleMs + 1));
-        // Stopped still times out (idle path owns long-lived chrome).
+        // Stopped is sticky too (idle stop chrome must survive grabber warm-up).
         ov.showAt(PlaybackOverlayState::Stopped, 0, 0, t0);
         CHECK(ov.visibleAt(t0 + 100));
-        CHECK(!ov.visibleAt(t0 + PlaybackOverlay::kVisibleMs + 1));
+        CHECK(ov.visibleAt(t0 + PlaybackOverlay::kVisibleMs + 10'000));
         // After long pause, YUV render still paints (not dirty-empty).
         ov.showAt(PlaybackOverlayState::Paused, 1000, 2000, t0);
         std::vector<uint8_t> yuv(static_cast<size_t>(640) * 480 * 3 / 2, 16);
@@ -594,7 +594,7 @@ int main() {
             }
         }
         CHECK(bright);
-        std::printf("pause-sticky: PAUSED visible at +60s; PLAYING/STOPPED hide after kVisibleMs\n");
+        std::printf("pause-sticky: PAUSED+STOPPED visible at +60s; PLAYING hides after kVisibleMs\n");
     }
 
 

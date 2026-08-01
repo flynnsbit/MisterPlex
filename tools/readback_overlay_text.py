@@ -290,16 +290,102 @@ def separation_score(rows, x0: int, y0: int, mask) -> float:
     return max(0.0, min(1.0, 0.55 * sep + 0.45 * min(1.0, bright)))
 
 
+def cell_span_px(text: str, font: str, scale: int) -> int:
+    """Word width in pixels: (n-1)*advance*sc + glyphW*sc (matches parent formula)."""
+    gw, _gh, adv, _ = font_geom(font)
+    sc = max(1, scale)
+    n = max(1, len(text))
+    return (n - 1) * adv * sc + gw * sc
+
+
+def measure_ink_span(rows, x0: int, y0: int, mw: int, mh: int, thr: int = 160):
+    """Ink bounding-box width inside [x0,x0+mw) x [y0,y0+mh). None if too little ink."""
+    H = len(rows)
+    W = len(rows[0]) if H else 0
+    xlo, xhi = W, -1
+    ink = 0
+    for r in range(mh):
+        yy = y0 + r
+        if yy < 0 or yy >= H:
+            continue
+        row = rows[yy]
+        for c in range(mw):
+            xx = x0 + c
+            if xx < 0 or xx >= W:
+                continue
+            if row[xx] >= thr:
+                ink += 1
+                if xx < xlo:
+                    xlo = xx
+                if xx > xhi:
+                    xhi = xx
+    if ink < 12 or xhi < xlo:
+        return None
+    return xhi - xlo + 1
+
+
+def resolve_font_from_span(text: str, measured_span: int | None, scale_candidates=(2,)):
+    """Pick font by measured word span. UNRESOLVED unless one family uniquely wins.
+
+    Parent silicon falsifier: template-score alone reported PAUSED=8x13 and
+    STOPPED=12x16 — both backwards vs span geometry. Span is the authority.
+
+    Default scale_candidates=(2,): product bodyScale is 2 on the 480-line bank
+    (scale 3 only if h>=720). After HDMI normalize to 640x480, scale-2 cell
+    geometry is the right ruler. Including scale=3 made 12x16@2 ink (slightly
+    under full cell) look ambiguous with 8x13@3 — false UNRESOLVED.
+    """
+    if measured_span is None or measured_span <= 0:
+        return "UNRESOLVED", None, {}
+    ranked = []
+    for font in ("12x16", "8x13"):
+        for sc in scale_candidates:
+            pred = cell_span_px(text, font, sc)
+            err = abs(measured_span - pred) / float(pred)
+            ranked.append((err, font, sc, pred))
+    ranked.sort(key=lambda t: t[0])
+    best_err, best_font, best_sc, best_pred = ranked[0]
+    second = ranked[1] if len(ranked) > 1 else None
+    detail = {
+        "measured_span": measured_span,
+        "pred_span": best_pred,
+        "span_err_frac": round(best_err, 4),
+        "span_ranked": [
+            {"font": f, "scale": sc, "pred": p, "err_frac": round(e, 4)}
+            for e, f, sc, p in ranked
+        ],
+    }
+    # Ink bbox is usually a few px under full cell span (outer columns empty).
+    if best_err > 0.14:
+        return "UNRESOLVED", None, detail
+    if second is not None:
+        sec_err, sec_font, sec_sc, _ = second
+        # Require clear separation between font families (not just 1% noise).
+        if sec_font != best_font and (sec_err - best_err) < 0.10:
+            detail["ambiguous_with"] = f"{sec_font}@{sec_sc}"
+            return "UNRESOLVED", None, detail
+    return best_font, best_sc, detail
+
+
 def find_string(rows, text: str):
-    """Search bottom panel. Shipped fonts only: 8x13/12x16 at scale >= 2."""
+    """Search bottom panel. Font metadata is MEASURED from ink span, not top score.
+
+    Template match still recovers the string (score). Reported font/scale comes
+    from resolve_font_from_span on the winning location's ink bbox. If span cannot
+    uniquely identify 8x13 vs 12x16, font=UNRESOLVED (not a guessed winner).
+    """
     H = len(rows)
     W = len(rows[0]) if H else 0
     y_lo = int(H * 0.55)
     configs = [("12x16", 2), ("8x13", 2), ("12x16", 3), ("8x13", 3)]
-    best = (0.0, "", None)
+    # Per-config best, then global best for recovery only.
+    per = {}  # (font,sc) -> (score, x, y, mask)
+    global_best = (0.0, None)  # score, key
 
     def search(mask, font, sc, step_x, step_y, x_lo=0, x_hi=None, y0_lo=None, y0_hi=None):
-        nonlocal best
+        nonlocal global_best
+        key = (font, sc)
+        best_s, best_x, best_y = per.get(key, (0.0, 0, 0))[:3] if key in per else (0.0, 0, 0)
         mh, mw = len(mask), len(mask[0])
         if x_hi is None:
             x_hi = max(1, W - mw)
@@ -307,35 +393,65 @@ def find_string(rows, text: str):
             y0_lo = y_lo & ~1
         if y0_hi is None:
             y0_hi = max(y0_lo + 1, H - mh - 1)
+        hit = False
         for y0 in range(y0_lo, y0_hi, step_y):
             for x0 in range(x_lo, x_hi, step_x):
                 s = separation_score(rows, x0, y0, mask)
-                if s > best[0]:
-                    best = (s, text if s >= 0.40 else "", {
-                        "font": font, "scale": sc, "x": x0, "y": y0, "score": s,
-                    })
+                if s > best_s:
+                    best_s, best_x, best_y = s, x0, y0
                     if s >= 0.58:
-                        return True
-        return False
+                        hit = True
+        per[key] = (best_s, best_x, best_y, mask)
+        if best_s > global_best[0]:
+            global_best = (best_s, key)
+        return hit
 
     for font, sc in configs:
         mask = render_mask(text, font, sc)
         coarse_x = max(2, sc * 2)
         coarse_y = max(2, sc * 2)
         if search(mask, font, sc, coarse_x, coarse_y):
-            return text, best[0], best[2]
-        if best[2] and best[2].get("font") == font and best[2].get("scale") == sc and best[0] >= 0.28:
-            bx, by = best[2]["x"], best[2]["y"]
+            # refine
+            bs, bx, by, _m = per[(font, sc)]
             mh, mw = len(mask), len(mask[0])
-            if search(mask, font, sc, 1, 2,
-                      x_lo=max(0, bx - coarse_x),
-                      x_hi=min(W - mw, bx + coarse_x + 1),
-                      y0_lo=max(y_lo & ~1, by - coarse_y),
-                      y0_hi=min(H - mh, by + coarse_y + 1)):
-                return text, best[0], best[2]
-    score, recovered, meta = best
-    if score < 0.40:
-        recovered = ""
+            search(mask, font, sc, 1, 2,
+                   x_lo=max(0, bx - coarse_x),
+                   x_hi=min(W - mw, bx + coarse_x + 1),
+                   y0_lo=max(y_lo & ~1, by - coarse_y),
+                   y0_hi=min(H - mh, by + coarse_y + 1))
+        else:
+            bs, bx, by, _m = per.get((font, sc), (0.0, 0, 0, mask))
+            if bs >= 0.28:
+                mh, mw = len(mask), len(mask[0])
+                search(mask, font, sc, 1, 2,
+                       x_lo=max(0, bx - coarse_x),
+                       x_hi=min(W - mw, bx + coarse_x + 1),
+                       y0_lo=max(y_lo & ~1, by - coarse_y),
+                       y0_hi=min(H - mh, by + coarse_y + 1))
+
+    score, key = global_best
+    if key is None or score < 0.40:
+        return "", score, {"font": "UNRESOLVED", "scale": None, "score": score}
+
+    # Location from the best-scoring template (recovery), then MEASURE font via span.
+    t_score, x0, y0, mask = per[key]
+    mh, mw = len(mask), len(mask[0])
+    measured = measure_ink_span(rows, x0, y0, mw, mh)
+    # Also try slightly expanded box — ascal blur can pull ink outside mask.
+    if measured is None:
+        measured = measure_ink_span(rows, max(0, x0 - 4), max(0, y0 - 2), mw + 8, mh + 4)
+    font_m, scale_m, span_detail = resolve_font_from_span(text, measured)
+
+    meta = {
+        "font": font_m,
+        "scale": scale_m if scale_m is not None else "UNRESOLVED",
+        "x": x0,
+        "y": y0,
+        "score": t_score,
+        "template_best": f"{key[0]}@{key[1]}",
+        **span_detail,
+    }
+    recovered = text if score >= 0.40 else ""
     return recovered, score, meta
 
 
@@ -465,6 +581,70 @@ def selftest_synthetic_green() -> int:
                         verdict="SYNTH_GREEN_OK" if ok else "SYNTH_GREEN_FAIL")
 
 
+
+def _paint_label(rows, text: str, font: str, scale: int, x: int, y: int, ink=235):
+    gw, gh, adv, _ = font_geom(font)
+    sc = max(1, scale)
+    cx = x
+    H = len(rows)
+    W = len(rows[0]) if H else 0
+    for ch in text:
+        for row in range(gh):
+            for col in range(gw):
+                if not glyph_on(font, ch, row, col):
+                    continue
+                for vr in range(sc):
+                    for hr in range(sc):
+                        yy = y + row * sc + vr
+                        xx = cx + col * sc + hr
+                        if 0 <= yy < H and 0 <= xx < W:
+                            rows[yy][xx] = ink
+        cx += adv * sc
+
+
+def selftest_font_measure() -> int:
+    """RED/GREEN: reported font must match the font used to paint the synthetic.
+
+    Parent silicon: template-score alone swapped 8x13 and 12x16. This gate paints
+    each font at known geometry and requires meta.font to match. Ambiguous → fail.
+    """
+    W, H = 640, 480
+    cases = [
+        ("12x16", 2, "STOPPED"),
+        ("8x13", 2, "STOPPED"),
+        ("12x16", 2, "PAUSED"),
+        ("8x13", 2, "PAUSED"),
+    ]
+    fails = 0
+    for font, sc, label in cases:
+        rows = [[30] * W for _ in range(H)]
+        # panel band
+        for y in range(H - 140, H - 20):
+            for x in range(20, W - 20):
+                rows[y][x] = 48
+        x0 = 40
+        y0 = (H - 120) & ~1
+        _paint_label(rows, label, font, sc, x0, y0)
+        rec, score, meta = find_string(rows, label)
+        got = meta.get("font") if meta else None
+        scale_got = meta.get("scale") if meta else None
+        ok = rec == label and got == font and scale_got == sc
+        tag = "OK" if ok else "FAIL"
+        print(
+            f"font_measure {tag}: paint={font}@{sc} label={label} "
+            f"recovered={rec!r} meta_font={got} meta_scale={scale_got} "
+            f"measured_span={meta.get('measured_span') if meta else None} "
+            f"score={score:.3f}"
+        )
+        if not ok:
+            fails += 1
+            print(f"  meta_full={meta}")
+    if fails:
+        return print_result(RC_FAIL, recovered="<font_measure>",
+                            verdict=f"FONT_MEASURE_FAIL n={fails}")
+    return print_result(RC_PASS, recovered="font_measure", verdict="FONT_MEASURE_OK")
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -475,8 +655,12 @@ def main(argv=None) -> int:
     ap.add_argument("--selftest-red", action="store_true")
     ap.add_argument("--selftest-green", action="store_true",
                     help="Synthetic DE-cull GREEN (pair is the real gate)")
+    ap.add_argument("--selftest-font-measure", action="store_true",
+                    help="Synthetic 8x13 vs 12x16: reported font must match paint")
     args = ap.parse_args(argv)
 
+    if args.selftest_font_measure:
+        return selftest_font_measure()
     if args.selftest_pair:
         return selftest_pair()
     if args.selftest_red:

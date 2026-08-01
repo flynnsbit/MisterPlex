@@ -46,22 +46,22 @@ def main() -> int:
     if not (pub < stop):
         fail("publishPausedOverlayFrame must run BEFORE SIGSTOP")
 
-    # --- sticky PAUSED in alphaFor ---
+    # --- sticky PAUSED + STOPPED in alphaFor ---
     if "PlaybackOverlayState::Paused" not in ov:
         fail("overlay missing Paused state")
-    # Require explicit sticky branch before age >= kVisibleMs kill
     af = re.search(r"static int alphaFor\(const Snapshot& s, int64_t nowMs\) \{(.*?)\n    \}", ov, re.S)
     if not af:
         fail("alphaFor not found")
     af_body = af.group(1)
     if "PlaybackOverlayState::Paused" not in af_body:
         fail("alphaFor must special-case Paused (sticky) — without it Test B wipes at 3s")
+    if "PlaybackOverlayState::Stopped" not in af_body:
+        fail("alphaFor must special-case Stopped (sticky) — stop chrome must survive warm-up")
     if "return 255" not in af_body:
-        fail("Paused branch must return full alpha (255)")
-    # RED twin: remove Paused sticky → gate must fail if we only had age check
+        fail("Paused/Stopped branch must return full alpha (255)")
+    # Playing still times out via kVisibleMs
     if "age >= kVisibleMs" not in af_body:
-        fail("Playing/Stopped timeout path missing")
-
+        fail("Playing timeout path missing")
     # --- pause loop must not wipe ---
     # Look for comment or structure: only present when overlay visible
     if "do NOT presentCleanFrame" not in media and "do not presentCleanFrame" not in media.lower():

@@ -161,6 +161,33 @@ python3 tools/even_row_cull_glyph_gate.py; echo "true rc=$?"
 `PAIR_OK` proves the fix is **not** a canvas-size no-op under the real fetch rule, and that
 scale≥2 **accommodates** the 240-line ceiling without restoring 480 independent lines.
 
+## Readback font metadata (measured, not template-winner)
+
+`tools/readback_overlay_text.py` recovers the string by template score, but
+**reports `font`/`scale` from measured ink span** vs cell-span predictions
+(`(n-1)*advance*sc + glyphW*sc`). If 8×13 vs 12×16 is ambiguous → `font=UNRESOLVED`
+(never a confident wrong pick).
+
+```bash
+python3 tools/readback_overlay_text.py --selftest-font-measure; echo "true rc=$?"
+# paints 12x16@2 and 8x13@2 for STOPPED/PAUSED — each must report matching font
+```
+
+Parent falsifier: template-only metadata had PAUSED=8×13 and STOPPED=12×16 swapped.
+FIXED silicon fixture under measured font: **12×16@2** `measured_span=173` (pred 180).
+
+## STOP/idle authoring canvas
+
+**Source (current):** `MediaPlayer::paintIdle` uses `plex480pDdrFrameGeometry()` →
+`cw×ch = 624×480`, then `overlay_.renderRgb24(rgb, cw, ch)`. Font pick:
+`bodyScale==2 && (w>=600 || h>=480)` → **12×16**. Host ink span STOPPED@624×480 = 174
+(pred 180). Loud log: `media: idle overlay canvas=624x480 font=12x16 scale=2 chrome=0|1`.
+
+**Stopped is sticky** in `alphaFor` (same as Paused) so late captures still see STOPPED.
+
+If a capture still measures 8×13-class span, grepping the idle canvas log settles whether
+the live binary authored short — do not trust template font metadata alone.
+
 ## Panel empty-center black rectangle (silicon residual after 3883f5ab)
 
 **Measured (parent):** inside PAUSED panel, axis-aligned dark rect ≈ HDMI x740–1190 /

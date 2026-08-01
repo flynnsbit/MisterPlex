@@ -826,6 +826,17 @@ void MediaPlayer::paintIdle() {
     const DdrFrameGeometry g = plex480pDdrFrameGeometry();
     const int cw = g.coded_width.get();
     const int ch = g.coded_height.get();
+    // Hard pin: stop/idle chrome authors on the product bank, never DECODE tier.
+    // Parent span geometry requires 12×16 here (h=480,w=624); log so a short
+    // canvas regression is greppable without HDMI.
+    {
+        const auto lm = PlaybackOverlay::layoutMetrics(cw, ch);
+        const char* font =
+            lm.fontId == OverlayFontId::Large12x16 ? "12x16" : "8x13";
+        log("media: idle overlay canvas=" + std::to_string(cw) + "x" + std::to_string(ch) +
+            " font=" + font + " scale=" + std::to_string(lm.bodyScale) +
+            (overlay_.visible() ? " chrome=1" : " chrome=0"));
+    }
     std::vector<uint8_t> rgb(static_cast<size_t>(cw) * static_cast<size_t>(ch) * 3u);
     renderIdleRgb24(rgb.data(), cw, ch, m, idlePhase_.load());
     // Composite F12-inert / transport notice onto idle RGB (HDMI-visible without logs).

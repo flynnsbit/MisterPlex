@@ -1,34 +1,31 @@
 worker: w-osd-hires
 branch: w-osd-hires
-task: panel empty-center black rect RCA + fix
 status: READY_FOR_PARENT_DEPLOY
 
-## RCA (source-cited)
-Classification: (c) empty panel interior — NOT title widget, NOT dirty-rect hole.
-- playback_overlay.hpp render(): was fillRect(..., black, (170*alpha)/255) full panel
-- No title drawn; band right of PAUSED / above scrubber = translucent pure black over video
-- dirtyBounds = full panelBounds (no unpainted dirty hole)
-- Parent map x247-397 y360-404 @624x480 matches that empty band (layout math)
+## Done this turn
+### 2a readback font measured (not template winner)
+- tools/readback_overlay_text.py: font/scale from ink span vs cell-span preds
+- UNRESOLVED if ambiguous; never confident wrong pick
+- --selftest-font-measure: 12x16@2 and 8x13@2 both OK (true rc=0)
+- FIXED silicon fixture now reports font=12x16 measured_span=173 (was metadata noise)
 
-## Fix
-- Opaque panelBg{42,46,54} @ full alpha (empty-center Y independent of video)
-- setTitle + muted title right of state label; main doPlay setOverlayTitle(resolved.title)
-- fitText uppercase+truncate; JQXZ glyphs added
+### 3 STOP/idle canvas
+- Source: paintIdle already plex480pDdrFrameGeometry 624x480 + renderRgb24(cw,ch)
+- Host STOPPED@624x480 ink_span=174 = 12x16@2 (not 8x13)
+- FIXED fixture under fixed tool: 12x16 — contradicts parent 8x13 span on some other capture
+- Hardened: font pick w>=600||h>=480; Stopped sticky; log idle overlay canvas=WxH font=
+- Gate: tests/unit/test_stop_idle_canvas_static.py true rc=0
 
-## Evidence host
-- test_panel_empty_center_static: RED ed1fc22f rc=1 / GREEN current rc=0
-- test_playback_overlay panel-empty-center: Ywhite=Yblack=Ymid=55.6 |d|=0; title band 67.2
-- test_pause_overlay_publish_static: rc=0
-- make arm-plexd: rc=0
-- md5: cb0a24d8f2dd9a594dd6957886cc3665
+### 4 black rect (prior commit 8475a8dd, still in tree)
+- opaque panelBg + title; panel-empty-center Y=55.6 independent of video
 
-## P2 font miss (parent)
-Renderer at 624x480 always Large12x16 (h>=480 && bodyScale==2). Tool reporting 8x13 on PAUSED
-is unknown without tool search path evidence — likely multi-hypothesis scorer, not renderer.
+## ARM
+md5 aa7776a8ffd5fe0d494053658b38d1bd
+make arm-plexd true rc=0
 
-## Hardware prediction (parent only)
-P1 empty-center luma 50-70 grey chrome (FAIL if ≤35 black hole)
-P2 title text right of PAUSED when resolve has title
-P3 no regression sticky PAUSED / timeline bar
-
-No RTL. User conf untouched.
+## Parent deploy checks
+1) python3 tools/readback_overlay_text.py --selftest-font-measure; echo true rc=$?
+2) After deploy: stop → wait 6s → capture
+   grep 'idle overlay canvas=' log → expect 624x480 font=12x16
+   readback --expect STOPPED → font=12x16 measured_span ~170-180 (norm 640) or out-span ~520 @1920
+3) pause 6s: no black hole (empty-center luma 50-70 grey); title if resolve has one
