@@ -24,6 +24,10 @@ std::atomic<int64_t> g_presents{0};
 std::atomic<int64_t> g_posMs{0};
 std::atomic<int64_t> g_startMs{0};
 std::atomic<int64_t> g_lastWriteMs{0};
+// Last fatal/stop signal snapshot (set by OnSig*/read by Exit). 0 = none.
+std::atomic<int> g_lastSig{0};
+std::atomic<int> g_lastSiCode{0};
+std::atomic<int> g_lastSiPid{0};
 std::mutex g_pathMu;
 bool g_inited = false;
 
@@ -120,6 +124,9 @@ void asAppendHexPtr(char* buf, size_t cap, size_t* o, unsigned long v) {
 }
 
 void writeDeathSignalSafe(int sig) {
+    g_lastSig.store(sig, std::memory_order_relaxed);
+    g_lastSiCode.store(0, std::memory_order_relaxed);
+    g_lastSiPid.store(0, std::memory_order_relaxed);
     if (g_deathPathC[0] == '\0') return;
     const int fd =
         ::open(g_deathPathC, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644);
@@ -136,7 +143,11 @@ void writeDeathSignalSafe(int sig) {
 }
 
 void writeDeathSigInfoSafe(const siginfo_t* info) {
-    if (g_deathPathC[0] == '\0' || !info) return;
+    if (!info) return;
+    g_lastSig.store(info->si_signo, std::memory_order_relaxed);
+    g_lastSiCode.store(info->si_code, std::memory_order_relaxed);
+    g_lastSiPid.store(static_cast<int>(info->si_pid), std::memory_order_relaxed);
+    if (g_deathPathC[0] == '\0') return;
     const int fd =
         ::open(g_deathPathC, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644);
     if (fd < 0) return;
@@ -216,37 +227,59 @@ void deathBreadcrumbUpdate(DeathState st, int64_t frames, int64_t presents, int6
     writeLastUnlocked(force);
 }
 
+int64_t deathBreadcrumbUptimeS() {
+    const int64_t startMs = g_startMs.load(std::memory_order_relaxed);
+    if (!g_inited || startMs <= 0)
+        return 0;
+    return (nowMs() - startMs) / 1000;
+}
+
 void deathBreadcrumbExit(int code, const char* why) {
     std::lock_guard<std::mutex> lk(g_pathMu);
     char ts[32];
     wallTs(ts, sizeof(ts));
-    const int64_t startMs = g_startMs.load(std::memory_order_relaxed);
-    const int64_t uptimeS =
-        (g_inited && startMs > 0) ? (nowMs() - startMs) / 1000 : 0;
+    const int64_t uptimeS = deathBreadcrumbUptimeS();
+    const int lastSig = g_lastSig.load(std::memory_order_relaxed);
+    const int lastCode = g_lastSiCode.load(std::memory_order_relaxed);
+    const int lastPid = g_lastSiPid.load(std::memory_order_relaxed);
+    const char* siName = "NONE";
+    if (lastSig != 0) {
+        if (lastCode == 0)
+            siName = "SI_USER";
+        else if (lastCode == 0x80)
+            siName = "SI_KERNEL";
+        else
+            siName = "OTHER";
+    }
     // Choke-point log: ALWAYS to stderr so a missing death file cannot hide exits.
     // why must name call site + signal/context (never empty "clean").
+    // Keep si_* as first-class fields (not only inside why=) so SUPERVISE_EXIT
+    // still sees them after this overwrite of the signal-safe death line.
     std::fprintf(stderr,
                  "misterplexd: EXIT_REASON code=%d why=%s state=%s frames=%lld presents=%lld "
-                 "pos_ms=%lld uptime_s=%lld pid=%d death_path=%s\n",
+                 "pos_ms=%lld uptime_s=%lld pid=%d signal=%d si_code=%d si_code_name=%s "
+                 "si_pid=%d death_path=%s\n",
                  code, why ? why : "?",
                  stateName(g_state.load(std::memory_order_relaxed)),
                  static_cast<long long>(g_frames.load(std::memory_order_relaxed)),
                  static_cast<long long>(g_presents.load(std::memory_order_relaxed)),
                  static_cast<long long>(g_posMs.load(std::memory_order_relaxed)),
-                 static_cast<long long>(uptimeS), static_cast<int>(::getpid()),
+                 static_cast<long long>(uptimeS), static_cast<int>(::getpid()), lastSig,
+                 lastCode, siName, lastPid,
                  g_deathPath.empty() ? "(unset)" : g_deathPath.c_str());
     if (g_deathPath.empty()) return;
-    char line[512];
+    char line[640];
     const int n = std::snprintf(
         line, sizeof(line),
-        "ts=%s exit_code=%d why=%s state=%s frames=%lld presents=%lld pos_ms=%lld uptime_s=%lld pid=%d\n",
+        "ts=%s exit_code=%d why=%s state=%s frames=%lld presents=%lld pos_ms=%lld "
+        "uptime_s=%lld pid=%d signal=%d si_code=%d si_code_name=%s si_pid=%d\n",
         ts, code, why ? why : "?",
         stateName(g_state.load(std::memory_order_relaxed)),
         static_cast<long long>(g_frames.load(std::memory_order_relaxed)),
         static_cast<long long>(g_presents.load(std::memory_order_relaxed)),
         static_cast<long long>(g_posMs.load(std::memory_order_relaxed)),
-        static_cast<long long>(uptimeS),
-        static_cast<int>(::getpid()));
+        static_cast<long long>(uptimeS), static_cast<int>(::getpid()), lastSig, lastCode,
+        siName, lastPid);
     if (n <= 0) return;
     const int fd = ::open(g_deathPath.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644);
     if (fd < 0) return;

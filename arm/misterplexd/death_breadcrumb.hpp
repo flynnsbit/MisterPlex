@@ -36,7 +36,12 @@ void deathBreadcrumbUpdate(DeathState st, int64_t frames, int64_t presents, int6
                            bool force = false);
 
 // Orderly exit (SIGTERM path / main return). Not async-signal-safe.
+// Preserves last SA_SIGINFO fields (si_signo/si_code/si_pid) so SUPERVISE_EXIT
+// can still attribute the sender after overwriting the signal-safe death line.
 void deathBreadcrumbExit(int code, const char* why);
+
+// Steady-clock seconds since deathBreadcrumbInit (0 if never inited).
+int64_t deathBreadcrumbUptimeS();
 
 // Async-signal-safe: write misterplexd.death with signal number. No heap.
 // Prefer deathBreadcrumbOnSigInfo when SA_SIGINFO is available.

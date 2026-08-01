@@ -75,7 +75,7 @@ std::string confDirFromPath(const std::string& confPath) {
 // via deathBreadcrumbExit (stderr + misterplexd.death) and frame ledger exit row.
 // Call AFTER teardown (player.stop / companion.stop). Returns `code` for main.
 int exitReported(int code, const char* siteWhy, misterplex::MediaPlayer* player = nullptr,
-                 int64_t uptimeS = 0) {
+                 int64_t uptimeS = -1) {
     int64_t lf = 0, lp = 0, ld = 0, pos = 0;
     if (player) {
         lf = player->lifetimeFrames();
@@ -85,6 +85,10 @@ int exitReported(int code, const char* siteWhy, misterplex::MediaPlayer* player 
         misterplex::deathBreadcrumbUpdate(misterplex::DeathState::Stopping, lf, lp, pos,
                                           /*force=*/true);
     }
+    // Default was 0 and silently starved frame_ledger process_exit of uptime.
+    // Prefer explicit arg; else steady clock since deathBreadcrumbInit.
+    if (uptimeS < 0)
+        uptimeS = misterplex::deathBreadcrumbUptimeS();
     misterplex::frameLedgerProcessExit(code, siteWhy, lf, lp, ld, uptimeS);
     misterplex::deathBreadcrumbExit(code, siteWhy);
     return code;

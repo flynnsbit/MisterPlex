@@ -76,6 +76,17 @@ int main() {
     CHECK(death_user.find("si_pid=4242") != std::string::npos);
     CHECK(death_user.find("si_uid=0") != std::string::npos);
 
+    // Orderly exit MUST keep si_* after overwriting the signal-safe line.
+    // Without this, SUPERVISE_EXIT lost the sender (parent rc=0 RCA).
+    misterplex::deathBreadcrumbExit(0, "site=main.cpp:main_loop_g_stop_sig=15");
+    const std::string death_orderly = slurp(death);
+    CHECK(death_orderly.find("exit_code=0") != std::string::npos);
+    CHECK(death_orderly.find("signal=15") != std::string::npos);
+    CHECK(death_orderly.find("si_code=0") != std::string::npos);
+    CHECK(death_orderly.find("si_code_name=SI_USER") != std::string::npos);
+    CHECK(death_orderly.find("si_pid=4242") != std::string::npos);
+    CHECK(misterplex::deathBreadcrumbUptimeS() >= 0);
+
     if (fails) {
         std::fprintf(stderr, "test_death_breadcrumb: %d FAIL(s)\n", fails);
         return 1;
