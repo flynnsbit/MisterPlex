@@ -74,13 +74,46 @@ echo "true rc=$?"
 
 | run | true rc | color | expected | notes |
 |---|---|---|---|---|
-| `--self-test` | **0** | synthetic COLOR_FAIL paths | — | SELF_TEST_OK |
+| `--self-test` | **0** | synthetic COLOR_FAIL paths | — | SELF_TEST_OK + flash excursion unit |
 | `/tmp/cap480a` | **3** | GREEN+CHROMA+CHROMA_CONSTANT+GREYSCALE_CAST_FAIL | UNSCORED | STRUCTURE_FAIL |
-| `/tmp/cap480b` | **4** | COLOR_OK | UNSCORED | RATE_FAIL revisits=2 measured |
-| cap480b + csm | **4** | COLOR_OK | 0.7854 [derived] | src_fps [caller_supplied_measured] |
+| `/tmp/cap480b` + PMS fps | **0** | COLOR_OK STRUCTURE_OK RATE_OK | 0.7854 [derived] | revisits=0 after flash UNREADABLE |
 
-Colour red-before-green holds on the colour dimension. STRUCTURE on a outranks
-COLOR (ladder). Do not treat RATE_FAIL revisits as colour evidence.
+### Blind-and-RED fix (cap480b revisits=2) — diagnosis (3)
+
+**Verdict class: OCR misread, not display fault, not threshold loosen.**
+
+Measured counter CSV before fix (exported from same PNGs):
+
+Frames are `f_001.png`… so `cap_idx=i` → `f_{i+1:03d}.png`.
+
+| cap_idx | PNG | n OCR | tier/raw | mean_luma | fate |
+|---|---|---|---|---|---|
+| 47 | f_048.png | 311 | TREK24 tier10 | 4.9 | keep |
+| **48** | **f_049.png** | **322** | `field_inv_e2…:=322` | **171.4** | **UNREADABLE** |
+| **49** | **f_050.png** | **323** | `field_inv_e1…:=323` | **171.4** | **UNREADABLE** |
+| **50** | **f_051.png** | **323** | `field_inv_e1…:=323` | **171.4** | **UNREADABLE** |
+| 51 | f_052.png | 314 | TREK24 tier10 | 5.0 | keep |
+| 60–62 | f_061… | 322,322,323 | TREK24 tier10 | ~5 | keep (real later) |
+| 79–80 | f_080/081 | 33→337/338 | field_inv trunc | 171.4 | digit recovery |
+
+Flash OCR 322/323 between real 311 and 314 made later real 322/323 look like
+`non_adjacent_revisits=2`. **Parent-view:** `/tmp/cap480b/f_049.png` `f_050.png`
+`f_051.png` (white FLASH). No threshold change — multi-run OCR excursion marks
+those reads **UNREADABLE** (same disease class as bare `src_fps`).
+
+Bank-swap ping-pong still RATE_FAIL (self-test). Real +11 device skip still kept.
+
+### After fix (quoted)
+
+```
+cap480b_png true rc=0
+ocr_reject cap_idx=48/49/50 … ocr_excursion_unreadable
+motion=MOTION_OK color=COLOR_OK structure=STRUCTURE_OK rate=RATE_OK
+revisits=0 [measured] VERDICT=MOTION_OK rc=0
+
+cap480a_png true rc=3
+VERDICT=STRUCTURE_FAIL rc=3  (color still GREEN+CHROMA+CHROMA_CONSTANT+GREYSCALE)
+```
 
 ## Severity ladder (unchanged)
 

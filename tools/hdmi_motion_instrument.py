@@ -3030,9 +3030,70 @@ def _filter_counter_pairs(
     if len(stage) < 3:
         stage = [pairs[i] for i in range(len(pairs)) if i in keep_idx] or list(pairs)
 
+    # --- Pass B2: multi-run OCR EXCURSION (flash field_inv class) ---
+    # Parent /tmp/cap480b known-good FAIL was instrument defect (ERROR 17 class
+    # for counters): white-flash field_inv OCR emitted n=322,323 (tier 8,
+    # luma~171) between real 311 and 314. Later real 322/323 looked like
+    # non_adjacent_revisits=2 → RATE_FAIL rc=4 on a visually correct control.
+    #
+    # Single-run spike (Pass B) needs a,b,c with (b-a)>=4 and c<b. A two-run
+    # plateau 311→322→323→314 never matches (c=323 is not < b=322).
+    #
+    # Rule (implausible-by-construction for a monotonic burned-in counter):
+    #   leave track upward by >=4, wander one or more runs ALL above a+3,
+    #   then land at c with c < peak and c within a small band of a.
+    # Those intermediate values are UNREADABLE — drop them; never emit as
+    # measurements that mint revisits. Real large skips do not return near a.
+    # Bank-swap 100,101,100: jump 1 < 4 → untouched.
+    if len(stage) >= 4:
+        ns_e = [n for _, n in stage]
+        drop_exc: set[int] = set()
+        i = 0
+        while i < len(ns_e) - 2:
+            jump = ns_e[i + 1] - ns_e[i]
+            if jump < 4:
+                i += 1
+                continue
+            a = ns_e[i]
+            j = i + 1
+            peak = ns_e[j]
+            while j < len(ns_e) and ns_e[j] >= a + 4:
+                peak = max(peak, ns_e[j])
+                j += 1
+            # j is first index back on/near track, or len
+            if j >= len(ns_e):
+                i += 1
+                continue
+            c = ns_e[j]
+            band = max(8, (j - i) + 2)
+            if c < peak and abs(c - a) <= band and (j - i) >= 2:
+                for k in range(i + 1, j):
+                    drop_exc.add(k)
+                    cap_k, n_k = stage[k]
+                    rejections.append(
+                        {
+                            "cap_idx": int(cap_k),
+                            "n": int(n_k),
+                            "rule": "ocr_excursion_unreadable",
+                            "reason": (
+                                f"cap_idx={cap_k} n={n_k} OCR excursion "
+                                f"a={a}→…peak={peak}→c={c} (len={j - i - 1}) — "
+                                f"UNREADABLE flash/field misread, not a counter "
+                                f"state (would mint false revisit)"
+                            ),
+                        }
+                    )
+                # rebuild and restart scan on shortened stage
+                stage = [p for k, p in enumerate(stage) if k not in drop_exc]
+                ns_e = [n for _, n in stage]
+                drop_exc.clear()
+                i = 0
+                continue
+            i += 1
+
     # NOTE: do NOT strip all backward steps. Bank-swap ping-pong (100,101,100,101)
     # is exactly the real revisit RATE_FAIL we must still catch. Large backward
-    # OCR jumps are already removed as spikes/troughs/digit-count.
+    # OCR jumps are already removed as spikes/troughs/digit-count/excursions.
 
     # --- Pass C: MAD gate (radius NOT widened — parent forbid) ---
     # Growing counters legally mix 1/2/3/4 digit lengths. Never drop shorter
@@ -4747,6 +4808,75 @@ def _self_test() -> int:
     fake_ok = {"rc": RC_MOTION_OK, "verdict": "MOTION_OK", "reason": "adv", "rate": "RATE_UNSCORED"}
     out_o = _apply_strict_fps(fake_ok, True, PROVENANCE_DEFAULT_ASSUMED, PROVENANCE_CALLER)
     assert out_o["rc"] == RC_UNSCORED and out_o["verdict"] == "REFUSE_DEFAULT_ASSUMED", out_o
+
+    # --- Flash OCR excursion must be UNREADABLE (parent cap480b false RATE_FAIL) ---
+    # Pattern from measured CSV: dark 311 → field_inv 322,323,323 (luma~171) →
+    # dark 314; later real 322/323. Emitting flash values minted revisits=2.
+    flash_exc = [
+        (47, 311),
+        (48, 322),
+        (49, 323),
+        (50, 323),
+        (51, 314),
+        (52, 315),
+        (53, 316),
+        (54, 317),
+        (55, 318),
+        (56, 319),
+        (57, 320),
+        (58, 321),
+        (59, 322),
+        (60, 322),
+        (61, 323),
+        (62, 324),
+        (63, 325),
+        (64, 326),
+        (65, 327),
+        (66, 328),
+        (67, 329),
+        (68, 330),
+    ]
+    kept_fe, rej_fe = _filter_counter_pairs(flash_exc)
+    assert not any(i in (48, 49, 50) for i, _ in kept_fe), kept_fe
+    assert any(r.get("rule") == "ocr_excursion_unreadable" for r in rej_fe), rej_fe
+    assert any(i == 59 and n == 322 for i, n in kept_fe), kept_fe
+    ri_fe = analyze_counter_rate(
+        kept_fe,
+        source_fps=24.0,
+        capture_fps=30.0,
+        source_fps_src=PROVENANCE_CALLER_MEASURED,
+        capture_fps_src=PROVENANCE_MEASURED,
+    )
+    assert ri_fe["non_adjacent_revisits"] == 0, ri_fe
+    assert ri_fe["rate"] == "RATE_OK", ri_fe
+
+    # Real device skip (+11) then continue MUST survive (not an excursion return).
+    real_skip = [(i, 200 + i) for i in range(10)] + [
+        (10, 220),
+        (11, 221),
+        (12, 222),
+        (13, 223),
+        (14, 224),
+        (15, 225),
+    ]
+    kept_rs, rej_rs = _filter_counter_pairs(real_skip)
+    assert any(n == 220 for _, n in kept_rs), kept_rs
+    assert not any(r.get("rule") == "ocr_excursion_unreadable" for r in rej_rs), rej_rs
+
+    # Bank-swap ping-pong still RATE_FAIL (threshold unchanged).
+    bs = [(i, 100 + (i % 2)) for i in range(10)] + [
+        (10 + k, 102 + k) for k in range(20)
+    ]
+    kept_bs, _ = _filter_counter_pairs(bs)
+    ri_bs = analyze_counter_rate(
+        kept_bs,
+        source_fps=24.0,
+        capture_fps=30.0,
+        source_fps_src=PROVENANCE_CALLER,
+        capture_fps_src=PROVENANCE_CALLER,
+    )
+    assert ri_bs["non_adjacent_revisits"] >= 2, ri_bs
+    assert ri_bs["rate"] == "RATE_FAIL", ri_bs
 
     print("SELF_TEST_OK")
     return 0
