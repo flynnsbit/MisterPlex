@@ -58,7 +58,9 @@ int main() {
         expect(pipeDesyncRisk(460800u, bank, /*identity_skip=*/true), "D3 risk under skip");
         expect(!pipeDesyncRisk(460800u, bank, /*identity_skip=*/false),
                "D3 no risk flag when not identity_skip (scale path)");
-        // FORCE_SCALE Always: identity_skip false, pad→449280.
+        // FORCE_SCALE Always + exact coded: true identity; producer bytes == coded
+        // by construction (624x480 I420). Display 618 is clearYuv, not ffmpeg pad.
+        // Mismatch still scales (MILESTONE 4 pin) — checked via pipeDesyncRisk above.
         FfmpegVfRequest r;
         r.coded_w = 624;
         r.coded_h = 480;
@@ -69,12 +71,18 @@ int main() {
         r.source_h = 480;
         r.delivery_geometry_verified = true;
         const auto plan = buildFfmpegVideoFilter(r);
-        // Exact coded under force: crop+pad (no identity_skip; no swscale decrease).
-        expect(!plan.identity_skip, "D3 force Always not identity_skip");
-        expect(plan.vf.find("pad=624:480") != std::string::npos, "D3 pad coded");
-        expect(plan.vf.find("crop=618:480") != std::string::npos || plan.scale_applied,
-               "D3 mutates into coded bank");
-        std::printf("D3_OK FORCE_SCALE pins 449280; phase desync eliminated on product path\n");
+        expect(plan.identity_skip && !plan.scale_applied, "D3 force exact = identity");
+        expect(plan.vf.find("scale=") == std::string::npos, "D3 no scale on exact");
+        expect(plan.vf.find("force_original_aspect_ratio") == std::string::npos, "D3 no FOAR");
+        expect(!pipeDesyncRisk(bank, bank, plan.identity_skip),
+               "D3 exact+identity is not pipe risk");
+        // Non-exact under force still scales (pin remains).
+        r.source_w = 1920;
+        r.source_h = 1080;
+        const auto mis = buildFfmpegVideoFilter(r);
+        expect(mis.scale_applied && !mis.identity_skip, "D3 mismatch still scales under force");
+        expect(mis.vf.find("pad=624:480") != std::string::npos, "D3 mismatch pads coded bank");
+        std::printf("D3_OK FORCE_SCALE exact=identity mismatch=scale; bank=%zu\n", bank);
     }
 
     // --- D4: residual / drops / publish_misses identities ---

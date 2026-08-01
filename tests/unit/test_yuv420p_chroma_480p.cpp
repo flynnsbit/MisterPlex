@@ -141,15 +141,17 @@ int main() {
         r.source_h = h;
         r.delivery_geometry_verified = false; // PMS transcode_request
 
-        // Default DDR policy force ON → Always → exact coded uses crop_pad_no_v_scale
-        // (not scale=618:decrease — that was the vertical-resample product defect).
+        // Default DDR policy force ON → Always → exact coded is true identity no-op
+        // (not scale=618:decrease; not crop+pad — FOAR waste on native 624).
         r.scale_mode = ffmpegScaleModeForDdrYuvPresent(FfmpegScaleMode::SkipIdentity);
         const auto on = buildFfmpegVideoFilter(r);
-        expect(!on.scale_applied && !on.identity_skip, "default force crop-pad at 624");
-        expect_eq_str(on.reason, "crop_pad_no_v_scale", "default force reason");
-        expect(on.vf.find("crop=618:480") != std::string::npos, "crop to display");
-        expect(on.vf.find("pad=624:480") != std::string::npos, "pad to coded");
+        expect(!on.scale_applied && on.identity_skip, "default force identity at 624");
+        expect_eq_str(on.reason, "force_exact_identity_crop_clear_unverified",
+                      "default force reason");
         expect(on.vf.find("scale=") == std::string::npos, "no swscale on exact coded");
+        expect(on.vf.find("force_original_aspect_ratio") == std::string::npos, "no FOAR");
+        // fps-only (or empty without fps): product path keeps fps=24/1 here.
+        expect(on.vf == "fps=24/1", "fps only under force exact identity");
 
         // Escape force=0: SkipIdentity but unverified → still must NOT identity-skip.
         r.scale_mode = ffmpegScaleModeForDdrYuvPresent(FfmpegScaleMode::SkipIdentity, false);

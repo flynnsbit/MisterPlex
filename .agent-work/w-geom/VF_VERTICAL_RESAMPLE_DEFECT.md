@@ -2,15 +2,27 @@
 
 **Branch:** `w-avsync-hdmi-measure`  
 **Scope:** source + unit only. No device. No Quartus.  
-**Artifact pair for prior glass that exposed this:** RBF `8fdf440f` + daemon `7c991e47` (parent).  
+**Artifact pair for prior glass that exposed this:** RBF `8fdf440f` + daemon `7c991e47` / live `9ce2c2d1` (parent).  
 **This fix is ARM-only** (daemon / `host/libmisterplex/ffmpeg_vf.hpp`). No RBF change.
 
 | Item | Value |
 |------|--------|
 | ARM binary | `build/arm/misterplexd` |
-| ARM md5 | `92c1993889bd3f5859d804fe93cb4d6d` |
+| ARM md5 | `7a7854f4005c1766a5016c7f0fa62071` |
 | Host gate | `build/test_ffmpeg_vf` GREEN `true rc=0` |
-| RED mutation | legacy decrease in bank-h branch → `true rc=1` |
+| RED mutation | disable exact-identity + bank-h crop → FOAR fallthrough → `true rc=1` |
+| GREEN restore | same binary rebuilt after restore → `true rc=0` |
+
+## LIVE product path (parent 2026-08-01)
+
+Daemon `9ce2c2d1` still shows FOAR decrease on exact 624×480 under `DDR_YUV_FORCE_SCALE=1`:
+`scale=618:480:…:force_original_aspect_ratio=decrease,pad=624:480` with `arm_rescale=1`.
+
+**Tip daemon (this md5) must show instead:**
+`identity_skip=1 arm_rescale=0 reason=force_exact_identity_crop_clear[_unverified] vf=fps=… or (none)`
+and **no** `force_original_aspect_ratio=decrease` when source==coded==624×480.
+
+FORCE_SCALE is **kept**: mismatch/unknown still Always-scales to coded bank (MILESTONE 4).
 
 ---
 
@@ -66,17 +78,22 @@ Horizontal display crop is a **real product geometry** constraint. The bug was f
 
 ## 3. Fix + tradeoffs
 
-### Fix (landed)
+### Fix (landed) — two tiers
 
-When `source_w/h == coded_w/h` **and** display crop is active:
+1. **Always / FORCE_SCALE + exact coded (product path):** true identity no-op  
+   - `identity_skip=true`, `scale_applied=false`  
+   - vf = fps-only or empty (no scale/crop/pad)  
+   - reason: `force_exact_identity_crop_clear` (+ `_unverified` if not measured)  
+   - Display 618 crop: `clearYuv420pCropPadding` on present path (already always-on)
 
-```
-crop=618:480:<crop_left>:<crop_top>,pad=624:480:<padX>:<padY>:color=black
-```
+2. **SkipIdentity + unverified exact (force=0 escape):** still refuses identity_skip  
+   - `crop_pad_no_v_scale_unverified_delivery` (no FOAR decrease)
 
-via `buildCropPadNoScale` — **zero vertical resample**, **zero swscale**.  
-Reason token: `crop_pad_no_v_scale` (or `…_unverified_delivery` when SkipIdentity + numeric match without verify).  
-`scale_applied=false` → GEOM `arm_rescale=0` for exact bank (honest).
+3. **Non-exact bank-height (e.g. 640×480):** `crop_pad_no_v_scale_hfit`
+
+4. **240p / shorter:** still `scale_pad_crop` + FOAR decrease (needs V upscale)
+
+`scale_applied=false` + `identity_skip=1` → GEOM `arm_rescale=0` for exact bank under force.
 
 ### Still uses decrease-into-display
 

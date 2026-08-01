@@ -268,9 +268,23 @@ int main() {
             const auto p = buildFfmpegVideoFilter(r);
             expect(r.scale_mode == FfmpegScaleMode::Always, "force→Always");
             const bool exactBank = (c.sw == coded_w && c.sh == coded_h);
-            // Any delivery already at bank height with width >= display: crop+pad, no V resample.
-            const bool bankHeightWide = (c.sh == coded_h && c.sw >= disp_w);
-            if (bankHeightWide) {
+            // Non-exact bank-height wide deliveries: crop+pad, no V resample.
+            // Exact bank under FORCE_SCALE Always: true identity no-op (clearYuv).
+            const bool bankHeightWideNonExact =
+                !exactBank && (c.sh == coded_h && c.sw >= disp_w);
+            if (exactBank) {
+                expect(!p.scale_applied && p.identity_skip,
+                       (std::string("FORCE_SCALE exact identity for ") + c.name).c_str());
+                expect(p.vf.find("scale=") == std::string::npos,
+                       (std::string("exact no scale= for ") + c.name).c_str());
+                expect(p.vf.find("force_original_aspect_ratio") == std::string::npos,
+                       (std::string("exact no FOAR for ") + c.name).c_str());
+                expect(vfPreservesBankHeightSource(p.vf),
+                       (std::string("exact preserves height for ") + c.name).c_str());
+                // Unverified exact under Always flags the unverified reason.
+                expect_eq(p.reason, "force_exact_identity_crop_clear_unverified",
+                          "exact bank reason");
+            } else if (bankHeightWideNonExact) {
                 expect(!p.scale_applied && !p.identity_skip,
                        (std::string("FORCE_SCALE bank-h crop-pad for ") + c.name).c_str());
                 expect(vfPreservesBankHeightSource(p.vf),
@@ -279,10 +293,7 @@ int main() {
                        (std::string("bank-h crops display for ") + c.name).c_str());
                 expect(p.vf.find("pad=624:480") != std::string::npos,
                        (std::string("bank-h pads coded for ") + c.name).c_str());
-                if (exactBank)
-                    expect_eq(p.reason, "crop_pad_no_v_scale", "exact bank reason");
-                else
-                    expect_eq(p.reason, "crop_pad_no_v_scale_hfit", "bank-h hfit reason");
+                expect_eq(p.reason, "crop_pad_no_v_scale_hfit", "bank-h hfit reason");
             } else {
                 expect(p.scale_applied && !p.identity_skip,
                        (std::string("FORCE_SCALE pins scale for ") + c.name).c_str());
@@ -387,7 +398,7 @@ int main() {
         expect(!vfPreservesBankHeightSource(legacy),
                "RED: legacy decrease-into-display fails vfPreservesBankHeightSource");
 
-        // 3) GREEN: product Always/force with exact coded source → crop+pad, preserve.
+        // 3) GREEN: product Always/force with exact coded source → true identity no-op.
         FfmpegVfRequest r;
         r.coded_w = 624;
         r.coded_h = 480;
@@ -402,11 +413,18 @@ int main() {
         const auto p = buildFfmpegVideoFilter(r);
         expect(vfPreservesBankHeightSource(p.vf),
                "GREEN: exact coded source vf preserves bank height");
-        expect(!p.scale_applied && !p.identity_skip, "GREEN: crop-pad not swscale/skip");
-        expect_eq(p.reason, "crop_pad_no_v_scale", "GREEN reason");
-        expect_eq(p.vf,
-                  "crop=618:480:0:0,pad=624:480:0+(618-iw)/2:0+(480-ih)/2:color=black",
-                  "GREEN crop-pad string");
+        expect(!p.scale_applied && p.identity_skip, "GREEN: true identity no-op");
+        expect_eq(p.reason, "force_exact_identity_crop_clear_unverified", "GREEN reason");
+        expect(p.vf.find("scale=") == std::string::npos, "GREEN no scale=");
+        expect(p.vf.find("force_original_aspect_ratio") == std::string::npos, "GREEN no FOAR");
+        expect(p.vf.empty() || p.vf.rfind("fps=", 0) == 0, "GREEN empty or fps-only");
+
+        // 3b) Verified exact under Always: same true identity, verified reason.
+        r.delivery_geometry_verified = true;
+        const auto pv = buildFfmpegVideoFilter(r);
+        expect(pv.identity_skip && !pv.scale_applied, "GREEN verified exact identity");
+        expect_eq(pv.reason, "force_exact_identity_crop_clear", "GREEN verified reason");
+        r.delivery_geometry_verified = false;
 
         // 4) 240p tier still upscales via decrease (must not break).
         r.source_w = 320;
@@ -432,7 +450,7 @@ int main() {
         expect(scaleDecreaseResamplesHeight(624, 480, 618, 480), "decrease would V-resample");
         expect(!scaleDecreaseResamplesHeight(624, 480, 624, 480), "coded box would not");
 
-        std::printf("GREEN_NO_V_RESAMPLE out_h_624=475 legacy_red=1 product_crop_pad=1 "
+        std::printf("GREEN_NO_V_RESAMPLE out_h_624=475 legacy_red=1 product_identity=1 "
                     "p240_upscale=1 p640_hfit=1\n");
     }
 

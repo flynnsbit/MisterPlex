@@ -113,7 +113,13 @@ inline bool repairDeadYuv420pChroma(uint8_t* yuv, int w, int h) {
 // Silicon (parent viewed pixels): FORCE_SCALE=0 → magenta wrap + desync + defect B;
 // FORCE_SCALE=1 → COLOR_OK + pfps 23.2. Escape hatch: conf DDR_YUV_FORCE_SCALE=0
 // still hits the delivery_geometry_verified guard in buildFfmpegVideoFilter.
-// Conf Off stays Off. Always stays Always. At 240p force is a no-op (320≠624).
+// Conf Off stays Off. Always stays Always.
+//
+// FORCE_SCALE does NOT mean "always run swscale". buildFfmpegVideoFilter still
+// true-no-ops when source WxH == coded WxH (force_exact_identity_*), so a
+// native 624x480 delivery is not FOAR-rescaled into 618. Force only keeps the
+// scale+pad path for mismatched/unknown sizes so reader_bytes stay coded.
+// At 240p (320≠624) force still scales.
 inline FfmpegScaleMode ffmpegScaleModeForDdrYuvPresent(FfmpegScaleMode confMode,
                                                        bool forceScale = true) {
     if (forceScale && confMode == FfmpegScaleMode::SkipIdentity)

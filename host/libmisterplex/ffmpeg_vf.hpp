@@ -153,7 +153,9 @@ inline bool vfPreservesBankHeightSource(const std::string& vf) {
 // narrower display box with force_original_aspect_ratio=decrease — that applies
 // min(display_w/src_w, display_h/src_h) to BOTH axes and turns a pure 6-px
 // horizontal crop into a ~1% vertical resample (624x480 → ~618x475 → pad).
-// Exact-coded uses crop+pad only (buildCropPadNoScale).
+// Under Always/FORCE_SCALE, exact-coded is a true identity no-op (empty/fps-only
+// vf + clearYuv420pCropPadding). Under SkipIdentity+unverified, crop+pad only.
+// Non-exact bank-height (e.g. 640x480) uses buildCropPadNoScale (hfit).
 //
 // Square path: scale into coded geometry with centred pad.
 //
@@ -367,55 +369,61 @@ inline FfmpegVfPlan buildFfmpegVideoFilter(const FfmpegVfRequest& req) {
     if (req.scale_mode == FfmpegScaleMode::SkipIdentity && sourceMatchesCoded(req))
         return finish(false, true, hasCrop ? "identity_skip_crop_pad_clear" : "identity_skip");
 
-    // Loud reason when numbers matched but delivery was not verified — the
-    // silicon desync class (parent: wrap + magenta at force_scale=0).
-    const bool numericMatchUnverified =
-        req.scale_mode == FfmpegScaleMode::SkipIdentity && req.source_w > 0 &&
-        req.source_h > 0 && req.source_w == req.coded_w && req.source_h == req.coded_h &&
-        !req.delivery_geometry_verified && !req.assume_source_matches_coded;
+    const bool exactCodedSource = req.source_w > 0 && req.source_h > 0 &&
+                                  req.source_w == req.coded_w && req.source_h == req.coded_h;
+    const bool exactUnverified =
+        exactCodedSource && !req.delivery_geometry_verified && !req.assume_source_matches_coded;
 
-    // Always, or SkipIdentity with mismatched/unknown/unverified source: scale+pad.
+    // FORCE_SCALE product path maps conf SkipIdentity → Always. Under Always,
+    // exact coded source (624x480==624x480) is a TRUE NO-OP geometry filter —
+    // not scale=618:FOAR=decrease and not crop+pad. Parent live GEOM proved
+    // FOAR still burned every native-480 frame under Always.
+    //
+    // What FORCE_SCALE still protects: non-exact / unknown source still scales
+    // so reader_bytes stay coded (MILESTONE 4). Exact match ⇒ producer frame
+    // bytes == coded by construction of source dims; display 618 is cleared by
+    // clearYuv420pCropPadding on the present path, not ffmpeg.
+    // Unverified exact under Always: still no-op (reason flags it); MEASURED
+    // delivery + pipeDesyncRisk remain the safety net if PMS lies.
+    //
+    // SkipIdentity + unverified exact does NOT take this branch — force=0
+    // escape still refuses identity_skip without verification (crop_pad path).
+    if (req.scale_mode == FfmpegScaleMode::Always && exactCodedSource) {
+        if (exactUnverified)
+            return finish(false, true,
+                          hasCrop ? "force_exact_identity_crop_clear_unverified"
+                                  : "force_exact_identity_unverified");
+        return finish(false, true, hasCrop ? "force_exact_identity_crop_clear"
+                                           : "force_exact_identity");
+    }
+
+    // Always (non-exact), or SkipIdentity with mismatched/unknown/unverified: scale+pad.
     const std::string flags = swsFlagsTokenOk(req.sws_flags) ? req.sws_flags : std::string();
 
     // Height already equals bank/display height and width is wide enough to
-    // cover the display window: crop+pad ONLY. Never scale into the narrower
-    // display box with force_original_aspect_ratio=decrease — that applies
-    // min(sx,sy) to BOTH axes and turns a pure horizontal fit into a ~1%
-    // vertical resample (624x480 → ~618x475 → pad; same class for 640x480).
+    // cover the display window: crop+pad ONLY (no FOAR decrease V-resample).
+    // Covers: SkipIdentity unverified exact 624; Always/Skip 640x480 hfit; etc.
     // 240p / shorter sources still take buildScalePadCropped (need V upscale).
-    // Narrower-than-display at bank height (rare) still decreases (H upscale).
     const bool heightAlreadyBank = req.source_h > 0 && req.source_h == req.coded_h &&
                                    req.source_h == dispH;
     const bool wideEnoughForDisplayCrop =
         req.source_w > 0 && req.source_w >= dispW;
-    const bool exactCodedSource = req.source_w > 0 && req.source_h > 0 &&
-                                  req.source_w == req.coded_w && req.source_h == req.coded_h;
     if (hasCrop && heightAlreadyBank && wideEnoughForDisplayCrop) {
         append(buildCropPadNoScale(dispW, dispH, req.coded_w, req.coded_h, req.crop_left,
                                    req.crop_top, req.source_w));
-        // scale_applied=false: no swscale resample (arm_rescale=0). vf still set.
-        if (numericMatchUnverified ||
-            (exactCodedSource && req.scale_mode == FfmpegScaleMode::SkipIdentity &&
-             !req.delivery_geometry_verified && !req.assume_source_matches_coded))
+        if (exactUnverified && req.scale_mode == FfmpegScaleMode::SkipIdentity)
             return finish(false, false, "crop_pad_no_v_scale_unverified_delivery");
-        return finish(false, false,
-                      exactCodedSource ? "crop_pad_no_v_scale" : "crop_pad_no_v_scale_hfit");
+        if (exactCodedSource)
+            return finish(false, false, "crop_pad_no_v_scale");
+        return finish(false, false, "crop_pad_no_v_scale_hfit");
     }
 
     if (hasCrop) {
         append(buildScalePadCropped(dispW, dispH, req.coded_w, req.coded_h, req.crop_left,
                                     req.crop_top, flags));
-        if (numericMatchUnverified)
-            return finish(true, false,
-                          flags.empty() ? "scale_pad_crop_unverified_delivery"
-                                        : "scale_pad_crop_unverified_delivery_flags");
         return finish(true, false, flags.empty() ? "scale_pad_crop" : "scale_pad_crop_flags");
     }
     append(buildScalePadCentered(req.coded_w, req.coded_h, flags));
-    if (numericMatchUnverified)
-        return finish(true, false,
-                      flags.empty() ? "scale_pad_center_unverified_delivery"
-                                    : "scale_pad_center_unverified_delivery_flags");
     return finish(true, false, flags.empty() ? "scale_pad_center" : "scale_pad_center_flags");
 }
 
