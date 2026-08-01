@@ -1,36 +1,8 @@
-w-lint GATE-INTEGRITY status
+w-lint GATE-INTEGRITY
 branch: w-lint-gate-integrity
-tip: dddef8e17511a59bf689a12897c7bc0b64e8dfd0
-worktree: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-lint
+tip: 759135f7e3f3f7bd8e7d46c8f7eebbbe6b897c9b
+SEE git log -2 --oneline
 
-## RE-TASK complete — running bitstream + glue + empty=NO-DATA
-
-### Defect 1 — running bitstream identity
-- verify REFUSES FULL_PASS when GATE_CORE_IDENTITY=UNVERIFIED
-- rc=0 FULL_PASS only VERIFIED_PLXC
-- rc=2 VERIFY_STATUS=CORE_IDENTITY_UNVERIFIED (pair OK, fabric unproven)
-- BANK1 peeks forensic only; PLXC still fit-gated
-- docs/core-running-bitstream-identity.md updated
-
-Evidence (true rc direct):
-  test_video_regression_liveness.sh  true rc=0
-    dead/mixed → rc=1; coherent UNVERIFIED → rc=2; PLXC ddr → rc=0; empty disk → rc=4
-
-### Defect 2 — blind-and-RED glue
-- pair_pin_update newline join + LIVE_MD5 shape (contam rc=3, empty rc=4)
-- test_harness_capture_integrity.py true rc=0
-- test_promotion_gates.sh true rc=0 (glue fail rc=3 + green rc=0)
-
-### Defect 3 — empty = NO-DATA
-- classify_obs_hash + pin update empty → rc=4 never FAIL got=''
-
-### Rollcall
-- expected_commands=124 protected; UNIT_ROLLCALL_OK true rc=0
-
-### Parent device (do not run from agent)
-bash scripts/video_regression.sh verify; echo "true rc=$?"
-# expect rc=2 CORE_IDENTITY_UNVERIFIED on pre-PLXC c5382bee
-# VIDREG_CORE_ID=ddr … only when live PLXC proves CAP_DDR
-MISTER_HOST=… bash scripts/pair_pin_update.sh --from-live
-
-No Quartus / no device SSH this lane.
+RE-TASK: refuse FULL_PASS without PLXC (rc=2 UNVERIFIED).
+liveness/harness/promo/rollcall true rc=0
+Parent: scripts/video_regression.sh verify → expect rc=2 pre-PLXC
