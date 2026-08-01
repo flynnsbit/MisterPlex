@@ -383,9 +383,16 @@ inline FfmpegVfPlan buildFfmpegVideoFilter(const FfmpegVfRequest& req) {
     // hot path, not an edge case.
     //
     // Unverified + Always: crop+pad (NO swscale, NO FOAR decrease). Pins OUTPUT
-    // geometry to coded bank the way old Always-scale did, without the ~1%
-    // vertical resample (624→618 FOAR → 475). identity_skip=false so a wrong
-    // claim cannot silent-phase-walk the raw reader (MILESTONE 4 class).
+    // geometry to coded bank the way old Always-scale did.
+    //
+    // FOAR=decrease is a PICTURE-QUALITY defect, not merely CPU waste: it applies
+    // min(sx,sy) to BOTH axes, so scale into display 618x480 turns a bank-exact
+    // 624x480 source into ~618x475 then pad — a ~1% vertical resample of every
+    // frame (scaleDecreaseOutHeight(624,480,618,480)==475). crop+pad kills that.
+    //
+    // identity_skip=false so a wrong PMS claim cannot silent-phase-walk the raw
+    // reader (MILESTONE 4). Claims are unreliable predictors of delivery
+    // (parent: request 624x480 → measured 624x350; also 426x240 tiers).
     //
     // Verified + Always (lab / measured-before-plan): true identity no-op;
     // display crop cols cleared by clearYuv420pCropPadding on present.

@@ -1,0 +1,5 @@
+GREEN_FORCE_SCALE_GEOM cases=13 coded_bytes=449280
+GREEN_OUTPUT_PIN force_scale output_bytes=449280 == reader
+GREEN_NO_V_RESAMPLE out_h_624=475 legacy_red=1 product_crop_pad=1 verified_identity=1 p240_upscale=1 p640_hfit=1
+GREEN_WIDTH_MISMATCH w640=hfit w720=hfit v350=scale d426=scale
+PASS test_ffmpeg_vf

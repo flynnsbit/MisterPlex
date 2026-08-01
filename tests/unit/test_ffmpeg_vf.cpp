@@ -241,14 +241,15 @@ int main() {
         const Case cases[] = {
             {624, 480, "exact_bank"},
             {624, 352, "scope_2.35"},
-            {624, 350, "measured_short_480p"},
-            {640, 480, "640x480"},
-            {720, 480, "720x480"},
+            {624, 350, "measured_short_480p"}, // parent device: request 624x480 → 624x350
+            {640, 480, "640x480"},             // WIDTH > bank, H exact
+            {720, 480, "720x480"},             // WIDTH > bank, H exact
             {704, 396, "704x396"},
             {720, 576, "720x576"},
             {1440, 1080, "1440x1080"},
             {1920, 1080, "1920x1080"},
             {320, 240, "320x240"},
+            {426, 240, "426x240"}, // parent device: PMS square-pixel-ish 16:9 tier
             {625, 481, "odd_dims"}, // scale accepts; I420 coded out is still even
             {618, 480, "display_exact"},
         };
@@ -268,8 +269,9 @@ int main() {
             const auto p = buildFfmpegVideoFilter(r);
             expect(r.scale_mode == FfmpegScaleMode::Always, "force→Always");
             const bool exactBank = (c.sw == coded_w && c.sh == coded_h);
-            // Non-exact bank-height wide deliveries: crop+pad, no V resample.
-            // Exact bank under FORCE_SCALE Always: true identity no-op (clearYuv).
+            // Non-exact bank-height wide deliveries (WIDTH mismatch, H==480):
+            // crop+pad hfit, no V resample. Exact unverified: crop+pad pin.
+            // Verified exact identity is covered outside this loop.
             const bool bankHeightWideNonExact =
                 !exactBank && (c.sh == coded_h && c.sw >= disp_w);
             if (exactBank) {
@@ -466,6 +468,74 @@ int main() {
 
         std::printf("GREEN_NO_V_RESAMPLE out_h_624=475 legacy_red=1 product_crop_pad=1 "
                     "verified_identity=1 p240_upscale=1 p640_hfit=1\n");
+    }
+
+    // --- WIDTH mismatch gate (parent: 624x350 only proved vertical pin) ---
+    // 640x480 and 720x480 into coded 624x480: must center-crop to display 618
+    // then pad to 624 — no FOAR, no swscale. I420 plane sizes stay even.
+    {
+        const int coded_w = 624, coded_h = 480, disp_w = 618, disp_h = 480;
+        struct WCase {
+            int sw, sh;
+            const char* name;
+            const char* crop_x_needle; // substring unique to center vs left crop
+        };
+        const WCase wcases[] = {
+            {640, 480, "w640", "(iw-618)/2"},
+            {720, 480, "w720", "(iw-618)/2"},
+        };
+        for (const auto& c : wcases) {
+            FfmpegVfRequest r;
+            r.coded_w = coded_w;
+            r.coded_h = coded_h;
+            r.display_w = disp_w;
+            r.display_h = disp_h;
+            r.crop_left = 0;
+            r.crop_top = 0;
+            r.scale_mode = FfmpegScaleMode::Always;
+            r.source_w = c.sw;
+            r.source_h = c.sh;
+            r.delivery_geometry_verified = false;
+            const auto p = buildFfmpegVideoFilter(r);
+            expect(!p.scale_applied && !p.identity_skip,
+                   (std::string("WIDTH ") + c.name + " crop-pad not scale/skip").c_str());
+            expect(p.vf.find("force_original_aspect_ratio") == std::string::npos,
+                   (std::string("WIDTH ") + c.name + " no FOAR").c_str());
+            expect(p.vf.find("scale=") == std::string::npos,
+                   (std::string("WIDTH ") + c.name + " no scale=").c_str());
+            expect(p.vf.find("crop=618:480:") != std::string::npos,
+                   (std::string("WIDTH ") + c.name + " crops display").c_str());
+            expect(p.vf.find(c.crop_x_needle) != std::string::npos,
+                   (std::string("WIDTH ") + c.name + " center-crop expr").c_str());
+            expect(p.vf.find("pad=624:480") != std::string::npos,
+                   (std::string("WIDTH ") + c.name + " pads coded bank").c_str());
+            expect_eq(p.reason, "crop_pad_no_v_scale_hfit",
+                      (std::string("WIDTH ") + c.name + " reason").c_str());
+            // Output byte contract is always coded bank (reader size).
+            expect(yuv420pFrameBytesWH(coded_w, coded_h) == 449280u, "WIDTH bank bytes");
+            // Chroma plane dims for coded bank stay even (I420).
+            expect((coded_w % 2) == 0 && (coded_h % 2) == 0, "WIDTH coded even");
+            expect((disp_w % 2) == 0 && (disp_h % 2) == 0, "WIDTH display even");
+        }
+        // Vertical-only mismatch (parent measured 624x350): MUST scale (not crop).
+        FfmpegVfRequest rv;
+        rv.coded_w = coded_w;
+        rv.coded_h = coded_h;
+        rv.display_w = disp_w;
+        rv.display_h = disp_h;
+        rv.scale_mode = FfmpegScaleMode::Always;
+        rv.source_w = 624;
+        rv.source_h = 350;
+        const auto pv = buildFfmpegVideoFilter(rv);
+        expect(pv.scale_applied && !pv.identity_skip, "V-mismatch 624x350 scales");
+        expect(pv.vf.find("scale=618:480") != std::string::npos, "V-mismatch scales into display");
+        // 426x240 (parent measured PMS tier): must scale.
+        rv.source_w = 426;
+        rv.source_h = 240;
+        const auto p426 = buildFfmpegVideoFilter(rv);
+        expect(p426.scale_applied && !p426.identity_skip, "426x240 scales under force");
+        expect(p426.vf.find("pad=624:480") != std::string::npos, "426x240 pads coded");
+        std::printf("GREEN_WIDTH_MISMATCH w640=hfit w720=hfit v350=scale d426=scale\n");
     }
 
     if (g_fails) {
