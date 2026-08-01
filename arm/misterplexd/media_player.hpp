@@ -411,6 +411,9 @@ private:
     std::atomic<int64_t> pumpAudioReleaseMonoMs_{-1};
     // held_bytes at pump release (content duration of hold buffer). -1 unknown.
     std::atomic<int64_t> holdBytesAtRelease_{-1};
+    // mono_ms when audioQueuedBytes_ first becomes >= 0 (end of submitted-byte
+    // fallback window). -1 until observed. Field 6 of cluster FPGA instrument.
+    std::atomic<int64_t> firstAudioQueuedGe0MonoMs_{-1};
     std::atomic<bool> streamActive_{false};
     std::atomic<int64_t> reconFrames_{0};
     std::atomic<bool> reconPresentOk_{false}; // at least one recon → F1/fb0 this session

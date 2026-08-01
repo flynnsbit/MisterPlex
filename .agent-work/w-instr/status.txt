@@ -1,36 +1,52 @@
-# w-instr status — SESSION-LATCHED instrumentation
+# w-instr status — SIX-FIELD first-present FPGA instrument
 
 branch: w-avsync-hdmi-measure
-# tip after commit
+tip: 4388a6af
 
-## Parent result (binding)
-SESSION-LATCHED DEVICE CONFIRMED:
-  1 session × 3 captures: within spread 3.33 ms vs cluster sep 116.89 ms (ratio 35×)
-  first flash/beep pair fully separates clusters (n=15, zero overlap)
-  common-mode early−late ~25 ms startup transient (both clusters)
-  seven predictors dead; peer survey NOT-FOUND; instrument exonerated
+## ARM binary (THIS BUILD — parent deploys)
+path: build/arm/misterplexd
+md5: a9ade50b18c50feff08021ba4ab12e87
+build: make arm-plexd ; echo "true rc=$?"   # measured true rc=0
 
-## Delivered this turn
-1. tools/avsync_measure_hdmi.py
-   - live capture: -use_wallclock_as_timestamps 1 on BOTH inputs + -copyts
-   - first_pair_offset_ms + t_flash/t_beep (never bare "first")
-   - early_window (10s) / late_window (60s) medians + early_minus_late_ms
-   - LIMITATIONS + SESSION_LATCHED banner
-   - unit 28/28 true rc=0
+## Six fields at first present (one normalisable line)
+log needle: media: first_video_fpga_state
+  F1 plxa_used + plxd_liveness_proven (getter; sticky process lifetime)
+  F2 free_bank_mask disp_bank swap_pending published_bank (+ br_ok)
+  F3 frames_done PAIRED frames_done_mono_ms + frames_done_wall_s (same read)
+  F4 full DdrTiming: prep/copy/flush/doorbell/post/total/bank_reuse/plxa_poll(+iters)
+  F5 av_hold_count + av_hold_wait_us (at first present) AND
+     media: av_hold_first_10s at wall_s>=10 (plain counters, NOT presentProfile_)
+  F6 media: audio_queued_first_ge0 mono_ms=… when audioQueuedBytes_ first >=0
+     also echoed on first_video_fpga_state (or NO-DATA if still -1)
 
-2. tools/avsync_session_latch.py (NEW)
-   - SESSION_LATCHED rc=0 / CAPTURE_RACE_SUSPECT rc=2 / UNSCORED 77
-   - parent numbers → SESSION_LATCHED sep_over_within≈35.1 true rc=0
+Every value tagged measured or NO-DATA. No DEFAULT_ASSUMED scoring keys.
 
-## Parent recipes (host only)
-# After N captures in ONE session:
-python3 tools/avsync_session_latch.py \
-  --values <m1> <m2> <m3> \
-  --between-cluster-sep-ms 116.89 --max-within-ms 30 --min-captures 3
-echo "true rc=$?"
+## Present-path cost (explicit)
+- F1–F4: 1× readBankRelease (SPI mailbox double-read) + struct copy of lastDdrTiming
+  already filled by the publish just completed. No extra DDR frame copy. No profile path.
+- F5: on each AvAction::Hold already sleeping ~2ms: +chrono + 2 integer adds (<< sleep).
+- F6: one CAS on first q>=0 in existing MrAudio poll path (every 4th chunk).
 
-# Single capture now prints first_pair + early/late:
-python3 tools/avsync_measure_hdmi.py --duration 100 --tol-ms 42 --out /tmp/av
+## make unit
+true rc=2 — PRE-EXISTING from 62441302 w-geom (NOT this patch):
+  FAIL runtime DDR frame layout literals:
+  host/libmisterplex/av_phase_rtl_quanta.hpp kProductDoorbellPhys=0x300FF000
+  scripts/parent_plxd_present_lag_protocol.sh product doorbell comment
+arm-plexd build true rc=0; strings verify first_video_fpga_state / audio_queued_first_ge0 / av_hold_first_10s
 
-# Cluster set:
-python3 tools/avsync_bimodality.py --json-dir /path/to/reports --min-n-per-cluster 2
+## SAFE DEPLOY (parent only — agent does NOT touch device)
+# Trap: never rename running binary before kill; no pgrep; no cmdline match (flock).
+# Capture PID BEFORE any path replace; verify readlink -f /proc/PID/exe + md5 THAT path.
+
+make arm-plexd
+md5sum build/arm/misterplexd   # expect a9ade50b18c50feff08021ba4ab12e87
+REMOTE_ROOT=/media/fat/misterplex_v2 \
+  ./scripts/deploy_misterplexd_pid_safe.sh
+# expect DEPLOY_VERIFY_OK md5=a9ade50b18c50feff08021ba4ab12e87
+
+## Pre-registered (parent)
+If F1–F4 identical across clusters → REAL NULL → state below ARM-readable interfaces
+→ hand lead to w-geom / w-fit-1. Not a disappointment.
+
+## Grep after cast (normalisable)
+grep -E 'first_video_fpga_state|av_hold_first_10s|audio_queued_first_ge0' LOG | tail -20

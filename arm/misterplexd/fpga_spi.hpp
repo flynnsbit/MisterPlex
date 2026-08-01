@@ -124,6 +124,9 @@ public:
         bool plxa_used = false;       // true if PLXA drove bank selection
     };
     DdrTiming lastDdrTiming() const { return lastDdrTiming_; }
+    // Sticky PLXD liveness (frames_done advanced at least once this process).
+    // No per-session reset — parent cluster instrument field 1.
+    bool plxdLivenessProven() const { return plxdLivenessProven_; }
     struct DdrDoorbellStatus {
         uint32_t seq = 0;
         int bank = 0;

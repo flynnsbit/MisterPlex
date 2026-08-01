@@ -1073,6 +1073,7 @@ void MediaPlayer::killChildren() {
     avAudioReleaseMonoMs_.store(-1, std::memory_order_release);
     pumpAudioReleaseMonoMs_.store(-1, std::memory_order_release);
     holdBytesAtRelease_.store(-1, std::memory_order_release);
+    firstAudioQueuedGe0MonoMs_.store(-1, std::memory_order_release);
     streamActive_.store(false);
 }
 
@@ -2303,6 +2304,39 @@ void MediaPlayer::audioPump(int afd) {
                 } else {
                     queuedEma = (queuedEma < 0) ? q : (queuedEma * 3 + q) / 4;
                     audioQueuedBytes_.store(queuedEma);
+                    // Field 6: first transition audioQueuedBytes_ -1 → >=0.
+                    // Ends submitted-byte-clock fallback window (H-RING length).
+                    {
+                        int64_t expected = -1;
+                        const int64_t monoQ = steadyMonoMs();
+                        if (firstAudioQueuedGe0MonoMs_.compare_exchange_strong(
+                                expected, monoQ, std::memory_order_acq_rel)) {
+                            const int64_t origin =
+                                sessionOriginMonoMs_.load(std::memory_order_acquire);
+                            const int64_t fa =
+                                firstAudioPcmMonoMs_.load(std::memory_order_acquire);
+                            std::string wallField = " wall_s=NO-DATA";
+                            std::string sinceOrigin = " since_origin_ms=NO-DATA";
+                            if (origin >= 0) {
+                                const int64_t so = monoQ - origin;
+                                wallField =
+                                    " wall_s=" +
+                                    std::to_string(static_cast<double>(so) / 1000.0)
+                                        .substr(0, 8);
+                                sinceOrigin =
+                                    " since_origin_ms=" + std::to_string(so);
+                            }
+                            std::string sinceFa = " since_first_audio_pcm_ms=NO-DATA";
+                            if (fa >= 0)
+                                sinceFa = " since_first_audio_pcm_ms=" +
+                                          std::to_string(monoQ - fa);
+                            log("media: audio_queued_first_ge0 mono_ms=" +
+                                std::to_string(monoQ) + wallField + sinceOrigin +
+                                sinceFa + " queued_B=" + std::to_string(queuedEma) +
+                                " raw_q_B=" + std::to_string(q) +
+                                " tag=measured");
+                        }
+                    }
                     const int64_t latMs =
                         (queuedEma * 1000LL) / misterplex::kMrAudioBytesPerSec;
                     if (!latencyLogged) {
@@ -2786,6 +2820,11 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
     const int64_t leadMs = presentLeadMs_;
     const int64_t dropMs = resyncDropMs_;
     int dropRun = 0;
+    // Field 5: plain A/V Hold counters (NOT presentProfile_). Each Hold sleeps
+    // ~2 ms; chrono + two integer adds are << sleep cost.
+    int64_t avHoldCount = 0;
+    int64_t avHoldWaitUs = 0;
+    bool hold10sLogged = false;
     avDriftMs_.store(0);
     droppedFrames_.store(0);
     publishMisses_.store(0);
@@ -3138,6 +3177,7 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
             avAudioReleaseMonoMs_.store(-1, std::memory_order_release);
             pumpAudioReleaseMonoMs_.store(-1, std::memory_order_release);
             holdBytesAtRelease_.store(-1, std::memory_order_release);
+            firstAudioQueuedGe0MonoMs_.store(-1, std::memory_order_release);
             audioThr_ = std::thread([this, afd = apipe[0]] { audioPump(afd); });
         } else {
             audioStartGate_.store(true, std::memory_order_release);
@@ -3146,6 +3186,7 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
             avAudioReleaseMonoMs_.store(-1, std::memory_order_release);
             pumpAudioReleaseMonoMs_.store(-1, std::memory_order_release);
             holdBytesAtRelease_.store(-1, std::memory_order_release);
+            firstAudioQueuedGe0MonoMs_.store(-1, std::memory_order_release);
         }
         std::vector<uint8_t> frame(frameBytes);
         // Zero-init → green-cast under any underfill (U=V=0). Studio black
@@ -3466,6 +3507,79 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                                           (48000.0 * 4.0))
                                 .substr(0, 5) +
                             " tag=measured");
+                        // SIX-FIELD cluster instrument at first present.
+                        // Prefer FPGA state over daemon software state.
+                        // Cost: 1× readBankRelease (SPI mailbox) + struct copy of
+                        // lastDdrTiming already filled by the publish just done;
+                        // no presentProfile_ path; no extra DDR frame copy.
+                        {
+                            const auto dt = fpga_.lastDdrTiming();
+                            BankReleaseStatus brs{};
+                            // frames_done MUST be paired with the ARM time of THIS read.
+                            const int64_t fdMono = steadyMonoMs();
+                            const auto fdTp = std::chrono::steady_clock::now();
+                            const bool brOk = fpga_.readBankRelease(brs);
+                            const double fdWallS =
+                                std::chrono::duration<double>(fdTp - t0).count();
+                            const int pubBank = fpga_.lastPublishedBank();
+                            const int64_t q0 =
+                                firstAudioQueuedGe0MonoMs_.load(std::memory_order_acquire);
+                            std::string q0f = " audio_queued_first_ge0_mono_ms=NO-DATA"
+                                              " audio_queued_first_ge0_since_origin_ms=NO-DATA"
+                                              " audio_queued_first_ge0_tag=NO-DATA";
+                            if (q0 >= 0) {
+                                const int64_t origin =
+                                    sessionOriginMonoMs_.load(std::memory_order_acquire);
+                                std::string so = "NO-DATA";
+                                if (origin >= 0)
+                                    so = std::to_string(q0 - origin);
+                                q0f = " audio_queued_first_ge0_mono_ms=" +
+                                      std::to_string(q0) +
+                                      " audio_queued_first_ge0_since_origin_ms=" + so +
+                                      " audio_queued_first_ge0_tag=measured";
+                            }
+                            std::string brf =
+                                " br_ok=0 free_bank_mask=NO-DATA disp_bank=NO-DATA"
+                                " swap_pending=NO-DATA frames_done=NO-DATA"
+                                " frames_done_mono_ms=" +
+                                std::to_string(fdMono) + " frames_done_wall_s=" +
+                                std::to_string(fdWallS).substr(0, 8) +
+                                " frames_done_tag=measured";
+                            if (brOk) {
+                                brf = " br_ok=1 free_bank_mask=" +
+                                      std::to_string(static_cast<unsigned>(brs.free_bank_mask)) +
+                                      " disp_bank=" +
+                                      std::to_string(static_cast<unsigned>(brs.disp_bank)) +
+                                      " swap_pending=" +
+                                      std::to_string(brs.swap_pending ? 1 : 0) +
+                                      " frames_done=" + std::to_string(brs.frames_done) +
+                                      " frames_done_mono_ms=" + std::to_string(fdMono) +
+                                      " frames_done_wall_s=" +
+                                      std::to_string(fdWallS).substr(0, 8) +
+                                      " frames_done_tag=measured";
+                            }
+                            log("media: first_video_fpga_state mono_ms=" +
+                                std::to_string(mono) + " wall_s=" +
+                                std::to_string(fvWall).substr(0, 8) +
+                                " plxa_used=" + std::to_string(dt.plxa_used ? 1 : 0) +
+                                " plxd_liveness_proven=" +
+                                std::to_string(fpga_.plxdLivenessProven() ? 1 : 0) +
+                                " published_bank=" + std::to_string(pubBank) + brf +
+                                " ddr_prep_wait_us=" + std::to_string(dt.prep_wait_us) +
+                                " ddr_copy_us=" + std::to_string(dt.copy_us) +
+                                " ddr_flush_us=" + std::to_string(dt.flush_us) +
+                                " ddr_doorbell_us=" + std::to_string(dt.doorbell_us) +
+                                " ddr_post_wait_us=" + std::to_string(dt.post_wait_us) +
+                                " ddr_total_us=" + std::to_string(dt.total_us) +
+                                " ddr_bank_reuse_wait_us=" +
+                                std::to_string(dt.bank_reuse_wait_us) +
+                                " ddr_plxa_poll_us=" + std::to_string(dt.plxa_poll_us) +
+                                " ddr_plxa_poll_iters=" +
+                                std::to_string(dt.plxa_poll_iters) +
+                                " av_hold_count=" + std::to_string(avHoldCount) +
+                                " av_hold_wait_us=" + std::to_string(avHoldWaitUs) +
+                                q0f + " tag=measured");
+                        }
                         // VIDEO present vs ring phase. frames_done is swap count
                         // (not audio). Pair handoff_at=first_video_present A vs B.
                         if (audioActive_.load())
@@ -3816,16 +3930,23 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                     avDriftMs_.store(drift);
                     const AvAction act = avDecide(drift, leadMs, dropMs, dropRun);
                     if (act == AvAction::Hold) {
+                        // Always count holds (field 5). Profile path adds CPU accounting.
+                        const auto hold0 = std::chrono::steady_clock::now();
                         if (profilePresent) {
-                            const auto hold0 = std::chrono::steady_clock::now();
                             const int64_t holdCpu0 = threadCpuMicros();
                             std::this_thread::sleep_for(std::chrono::milliseconds(2));
                             const int64_t holdCpu1 = threadCpuMicros();
                             const auto hold1 = std::chrono::steady_clock::now();
-                            framePacingWaitUs += microsBetween(hold0, hold1);
+                            const int64_t hus = microsBetween(hold0, hold1);
+                            framePacingWaitUs += hus;
                             framePacingWaitCpuUs += holdCpu1 - holdCpu0;
+                            ++avHoldCount;
+                            avHoldWaitUs += hus;
                         } else {
                             std::this_thread::sleep_for(std::chrono::milliseconds(2));
+                            const auto hold1 = std::chrono::steady_clock::now();
+                            ++avHoldCount;
+                            avHoldWaitUs += microsBetween(hold0, hold1);
                         }
                         continue;
                     }
@@ -3867,6 +3988,18 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
             const int64_t wall2 = std::chrono::duration_cast<std::chrono::milliseconds>(
                                       now - t0)
                                       .count();
+            // Field 5 cumulative: first 10 s of session wall after t0/origin.
+            if (!hold10sLogged && wall2 >= 10000) {
+                hold10sLogged = true;
+                log("media: av_hold_first_10s mono_ms=" +
+                    std::to_string(steadyMonoMs()) +
+                    " wall_s=" +
+                    std::to_string(static_cast<double>(wall2) / 1000.0).substr(0, 6) +
+                    " av_hold_count=" + std::to_string(avHoldCount) +
+                    " av_hold_wait_us=" + std::to_string(avHoldWaitUs) +
+                    " av_hold_wait_ms=" + std::to_string(avHoldWaitUs / 1000) +
+                    " tag=measured");
+            }
             if (now - lastLog > std::chrono::seconds(1)) {
                 lastLog = now;
                 const double vfps =
