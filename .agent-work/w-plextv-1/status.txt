@@ -1,29 +1,36 @@
-agent=w-plextv
+lane=w-plextv
 branch=w-plextv-cast-picker-e2e-fix2
-sha=651a77f6
 worktree=.worktrees/w-plextv-e2e-fix
-status=ready_for_parent
-updated=2026-08-01T06:53Z
+sha=PENDING
 
-## Honest assessment
-See ASSESSMENT.md — real gates vs decorative vs out-of-scope.
-Parent-proven @ older SHA: picker, transitions N=1, TEARDOWN.
-New this tip: UI-first transport + UI↔daemon timeline truthfulness + S6 N=10 + pid/exe.
+# Parent-only evidence (agent does not touch device / does not score E2E)
 
-## Parent command
+## A) Red-path proof (no cast)
 cd .worktrees/w-plextv-e2e-fix
-# deploy daemon with pid+exe telemetry from this branch tip if not already
+node tests/hw/e2e/prove_red_paths.js; echo "true rc=$?"
+# optional live classify: PLEX_BASE=http://YOUR-PLEX-SERVER:32400 node tests/hw/e2e/prove_red_paths.js
+
+PRE_REGISTER_A: PROOF_OK true rc=0; miss → rc=1
+  P1 daemon_unreachable would_exit=1
+  P2 PMS_UNREACHABLE would_exit=2
+  never PASS on wrong endpoint
+
+## B) Full cast lifecycle
+cd .worktrees/w-plextv-e2e-fix
 E2E_TIER=480p E2E_DAEMON_DECODE=624x480 E2E_TRANSITION_CYCLES=10 \
-E2E_REQUIRE_UI_TIMELINE=1 E2E_REQUIRE_PID=1 \
-PLEX_BASE=http://192.168.1.24:32400 PLEX_TOKEN=<tok> PLEX_WEB_USER=shawnhenderson \
-MISTER_HOST=192.168.1.183 \
+E2E_REQUIRE_UI_TIMELINE=1 E2E_REQUIRE_PID=1 E2E_REQUIRE_DAEMON=1 \
+PLEX_BASE=http://YOUR-PLEX-SERVER:32400 PLEX_TOKEN=<tok> PLEX_WEB_USER=<profile> \
+MISTER_HOST=<mister> \
 ./tests/hw/e2e/run_cast_picker.sh; echo "true rc=$?"
 
-## Pre-registered predictions
-P1: CAST_PICKER_E2E_RESULT=PASS, TRANSITIONS_OK 10/10, DAEMON_PID_STABLE=1
-P2: UI_TIMELINE_TRUTHFUL=1 with skew_ms < 2500 on playing + pause + seek samples
-P3: If Plex hides clock until hover, suite hovers; if still unreadable → rc=1 ui_timeline_unreadable (NOT soft green)
-P4: HTTP fallback lines may appear tagged; still not a lipsync claim
-P5 MISS to publish if: UI shows time that disagrees with daemon by >2.5s while glass matches daemon (UI lag) or glass matches UI while daemon wrong (timeline lie)
+PRE_REGISTER_B:
+  PASS rc=0 CAST_PICKER_E2E_RESULT=PASS N=10
+  PMS down rc=2 UNVERIFIED
+  daemon down rc=1 daemon_unreachable
+  artifact: PLEX_TIMELINE_SERIES_FILE + PLEX_TIMELINE_SAMPLE wall_ms
 
-agent_note=no device; agent E2E not evidence; local PMS only
+## C) Wrong daemon port
+MISTER_PORT=1 E2E_REQUIRE_DAEMON=1 ... run_cast_picker.sh; echo "true rc=$?"
+PRE_REGISTER_C: rc=1 daemon_unreachable
+
+notes=LOCAL PMS only; no lipsync; no conf mutate; agent E2E not evidence

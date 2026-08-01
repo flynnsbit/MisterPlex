@@ -18,8 +18,9 @@
  *
  * Exit codes:
  *   0  PASS
- *   1  FAIL — picker / companion / playback
- *  77  SKIP-NOT-PASS — missing env/deps/PMS unreachable (never a green gate)
+ *   1  FAIL — picker / companion / playback / daemon unreachable when required
+ *   2  UNVERIFIED — PLEX_BASE set but PMS unreachable/unusable (never green; w-lint style)
+ *  77  SKIP-NOT-PASS — missing env/deps/chromium (never a green gate)
  *
  * Credentials: PLEX_BASE + PLEX_TOKEN env, or MISTERPLEX_CONF / ~/.config/...
  * NEVER hardcode private PMS :32400 or tokens (test_no_private_data).
@@ -53,9 +54,12 @@ const {
 } = require('./ledger');
 const { createRunCorrelation } = require('./run_correlate');
 const { readUiPlayerTimeline, assertUiDaemonTimeline } = require('./ui_timeline');
+const { createTimelineSeries } = require('./timeline_series');
 
 const EXIT_PASS = 0;
 const EXIT_FAIL = 1;
+/** Configured but cannot verify claim (PMS down) — never PASS (match CORE_IDENTITY_UNVERIFIED). */
+const EXIT_UNVERIFIED = 2;
 const EXIT_SKIP = 77;
 
 const cfg = loadConfig();
@@ -65,6 +69,13 @@ const runCorr = createRunCorrelation({
   misterHost: cfg.misterHost || process.env.MISTER_HOST || '127.0.0.1',
   misterPort: cfg.misterPort || process.env.MISTER_PORT || 3005,
   outDir: cfg.outDir,
+  log,
+});
+
+/** Wallclock ↔ Plex position series for parent HDMI three-way join. */
+const tlSeries = createTimelineSeries({
+  outDir: cfg.outDir,
+  runId: runCorr.runId,
   log,
 });
 
@@ -110,7 +121,22 @@ function log(...a) {
 
 function skip(reason) {
   console.error(`SKIP-NOT-PASS test_cast_picker_playwright: ${reason}`);
+  console.error('CAST_PICKER_E2E_RESULT=SKIP-NOT-PASS');
   process.exit(EXIT_SKIP);
+}
+
+/**
+ * Configured target cannot be verified (e.g. PMS unreachable).
+ * Never PASS. Distinct from FAIL (assertion disproved) and SKIP (deps missing).
+ */
+function unresolved(reason, detail) {
+  console.error(`UNVERIFIED test_cast_picker_playwright: ${reason}`);
+  if (detail) console.error(detail);
+  console.error('CAST_PICKER_E2E_RESULT=UNVERIFIED');
+  const err = new FailError(reason, detail || '');
+  err.exitCode = EXIT_UNVERIFIED;
+  err.unverified = true;
+  throw err;
 }
 
 /** Thrown instead of process.exit so try/finally teardown always runs. */
@@ -127,6 +153,7 @@ class FailError extends Error {
 function fail(reason, detail) {
   console.error(`FAIL test_cast_picker_playwright: ${reason}`);
   if (detail) console.error(detail);
+  console.error('CAST_PICKER_E2E_RESULT=FAIL');
   throw new FailError(reason, detail);
 }
 
@@ -964,11 +991,31 @@ async function assertUiMatchesDaemon(page, tag, opts = {}) {
         `pct_delta=${m.pct_delta != null ? m.pct_delta.toFixed(2) : 'NA'} ` +
         `ui_src=${m.ui_source} ui_raw=${JSON.stringify(m.ui_raw)} daemon_state=${m.daemon_state}`
     );
+    tlSeries.emit({
+      tag,
+      source: 'ui_and_daemon',
+      plex_time_ms: m.daemon_ms,
+      plex_duration_ms: m.daemon_dur_ms,
+      state: m.daemon_state,
+      ui_time_ms: m.ui_ms,
+      ui_duration_ms: m.ui_dur_ms,
+      skew_ms: m.skew_ms,
+      ui_raw: m.ui_raw,
+    });
   } else {
     log(
       `UI_DAEMON_TIMELINE tag=${tag} ok=0 reason=${r.reason} ui_src=${ui.source} ` +
         `ui_raw=${JSON.stringify(ui.raw)} daemon_t=${daemon.time}`
     );
+    tlSeries.emit({
+      tag,
+      source: 'ui_read_fail',
+      plex_time_ms: daemon.time >= 0 ? daemon.time : null,
+      plex_duration_ms: daemon.duration > 0 ? daemon.duration : null,
+      state: daemon.state,
+      ui_raw: ui.raw,
+      extra: { reason: r.reason || 'unknown' },
+    });
   }
   if (!r.ok) {
     if (r.reason === 'ui_timeline_unreadable' && !requireUi) {
@@ -990,12 +1037,22 @@ async function waitPlayingOnDaemon(seconds) {
   let prev = -1;
   let maxT = 0;
   let buffering = 0;
+  let i = 0;
   while (Date.now() < deadline) {
     const xml = await pollDaemonTimeline(nextSuiteCmd());
     last = xml;
     const state = xmlAttr(xml, 'state');
     const t = parseInt(xmlAttr(xml, 'time') || '-1', 10);
-    log(`  timeline state=${state || '?'} time=${xmlAttr(xml, 'time') || '?'}`);
+    const dur = parseInt(xmlAttr(xml, 'duration') || '0', 10);
+    const w = tlSeries.wallNow();
+    log(`  timeline state=${state || '?'} time=${xmlAttr(xml, 'time') || '?'} wall_ms=${w.ms}`);
+    tlSeries.emit({
+      tag: `wait_playing[${i++}]`,
+      source: 'daemon_timeline',
+      plex_time_ms: t >= 0 ? t : null,
+      plex_duration_ms: dur > 0 ? dur : null,
+      state: state || '',
+    });
     if (state === 'playing') {
       playing++;
       if (t > prev && prev >= 0) advance++;
@@ -1339,8 +1396,24 @@ async function sampleTimeline(n = 6, intervalMs = 450, label = 'sample') {
     const state = xmlAttr(xml, 'state') || '';
     const time = parseInt(xmlAttr(xml, 'time') || '-1', 10);
     const duration = parseInt(xmlAttr(xml, 'duration') || '0', 10);
-    samples.push({ state, time, duration, i });
-    log(`  ${label}[${i}] state=${state || '?'} time=${time}`);
+    const w = tlSeries.wallNow();
+    samples.push({
+      state,
+      time,
+      duration,
+      i,
+      wall_ms: w.ms,
+      wall_iso: w.iso,
+    });
+    log(`  ${label}[${i}] state=${state || '?'} time=${time} wall_ms=${w.ms}`);
+    // Parent HDMI join: host wall clock + Plex-reported position (measured).
+    tlSeries.emit({
+      tag: `${label}[${i}]`,
+      source: 'daemon_timeline',
+      plex_time_ms: time >= 0 ? time : null,
+      plex_duration_ms: duration > 0 ? duration : null,
+      state,
+    });
     if (i + 1 < n) await sleep(intervalMs);
   }
   return samples;
@@ -2502,13 +2575,26 @@ async function runTransitionScenarios(page, itemTitle, detailsUrl, _castAlreadyS
 
   const web = await httpGet(`${cfg.plexBase}/web/index.html`);
   if (web.status < 200 || web.status >= 400) {
-    skip(`Plex Web unreachable at ${cfg.plexBase}/web/index.html HTTP ${web.status}`);
+    // PLEX_BASE is set but PMS/Web is not usable — UNVERIFIED (rc=2), never PASS.
+    // Missing token/chromium stays SKIP(77). Prove path: prove_red_paths.js P2.
+    unresolved(
+      'PMS_UNREACHABLE',
+      `Plex Web unreachable at ${cfg.plexBase}/web/index.html HTTP ${web.status}. ` +
+        'CAST_PICKER_E2E_RESULT=UNVERIFIED — cannot claim cast lifecycle without a reachable local PMS.'
+    );
   }
 
   const idn = await pmsIdentity();
   log(
     `pms_identity status=${idn.status} friendlyName=${idn.friendlyName || '?'} machineId=${idn.machineId || '?'}`
   );
+  if (idn.status < 200 || idn.status >= 400 || !idn.machineId) {
+    unresolved(
+      'PMS_IDENTITY_UNVERIFIED',
+      `GET ${cfg.plexBase}/identity status=${idn.status} machineId=${idn.machineId || '(empty)'}. ` +
+        'Cannot bind details URL or trust companion without PMS identity.'
+    );
+  }
 
   // Prefs FriendlyName (identity XML often omits it)
   const prefs = await httpGet(`${cfg.plexBase}/:/prefs`, { 'X-Plex-Token': cfg.token });
@@ -2517,9 +2603,24 @@ async function runTransitionScenarios(page, itemTitle, detailsUrl, _castAlreadyS
 
   const baseTl = await pollDaemonTimeline(nextSuiteCmd());
   const daemonUp = baseTl.includes('Timeline') || baseTl.includes('MediaContainer');
+  // Default: daemon required for any lifecycle claim (play/pause/seek). Opt out only for
+  // picker-only dry runs via E2E_REQUIRE_DAEMON=0 (still never green on play asserts).
+  const requireDaemon =
+    process.env.E2E_REQUIRE_DAEMON === undefined || process.env.E2E_REQUIRE_DAEMON === ''
+      ? true
+      : /^(1|true|yes|on)$/i.test(String(process.env.E2E_REQUIRE_DAEMON));
   if (!daemonUp) {
+    if (requireDaemon) {
+      fail(
+        'daemon_unreachable',
+        `Companion timeline not reachable at ${daemonBase(cfg)} (no Timeline/MediaContainer). ` +
+          'Gate is RED when daemon is down — prove with MISTER_PORT=1 or prove_red_paths.js P1. ' +
+          'Set E2E_REQUIRE_DAEMON=0 only for picker-only experiments (playback still fails if down).'
+      );
+    }
     log(
-      `WARN daemon timeline not reachable at ${daemonBase(cfg)} — picker + companion still scored; playback assert will FAIL if still down`
+      `WARN daemon timeline not reachable at ${daemonBase(cfg)} — E2E_REQUIRE_DAEMON=0; ` +
+        'picker may still run; playback assert will FAIL if still down'
     );
   } else {
     log(`daemon_ok ${daemonBase(cfg)}`);
@@ -2809,7 +2910,7 @@ async function runTransitionScenarios(page, itemTitle, detailsUrl, _castAlreadyS
         if (!(againTl.includes('Timeline') || againTl.includes('MediaContainer'))) {
           await shot(page, `fail_daemon_down_after_play_${tier.name}`);
           fail(
-            'playback_did_not_start',
+            'daemon_unreachable',
             `Play was clicked in Plex Web but companion at ${daemonBase(cfg)} is unreachable — cannot confirm playing state.`
           );
         }
@@ -2939,6 +3040,11 @@ async function runTransitionScenarios(page, itemTitle, detailsUrl, _castAlreadyS
   }
 
   if (bodyError) {
+    try {
+      tlSeries.summary();
+    } catch (_) {
+      /* ignore */
+    }
     process.exit(bodyError.exitCode || EXIT_FAIL);
   }
 
@@ -2967,14 +3073,20 @@ async function runTransitionScenarios(page, itemTitle, detailsUrl, _castAlreadyS
     }
     await runCorr.mark('suite_pass').catch(() => {});
     runCorr.persist(cfg.outDir);
+    const seriesSum = tlSeries.summary();
     log('CAST_PICKER_E2E_RESULT=PASS');
     log(
       `summary ${summaryBits.join(' ') || 'ok'} teardown=ok cast=${cfg.castName} ` +
         `lastTier=${lastTierName} lastRatingKey=${lastRatingKey} run_id=${runCorr.runId} ` +
-        `daemon_pid=${baselineDaemonPid > 0 ? baselineDaemonPid : 'NA'}`
+        `daemon_pid=${baselineDaemonPid > 0 ? baselineDaemonPid : 'NA'} ` +
+        `timeline_samples=${seriesSum.n}`
     );
     log(
       `E2E_RUN_ID=${runCorr.runId} — parent: grep e2e_mark run_id=${runCorr.runId} then origin lines`
+    );
+    log(
+      `TIMELINE_JOIN file=${seriesSum.file || 'NA'} n=${seriesSum.n} ` +
+        `fields=host_wall_ms,host_wall_iso,plex_time_ms,state — align to HDMI capture wall windows`
     );
     log(
       `DAEMON_PID_STABLE=1 pid=${baselineDaemonPid > 0 ? baselineDaemonPid : 'NA'} ` +
@@ -2987,8 +3099,13 @@ async function runTransitionScenarios(page, itemTitle, detailsUrl, _castAlreadyS
   }
   process.exit(EXIT_FAIL);
 })().catch((e) => {
-  // fail() before the inner try/finally still must be rc=1, never 77.
+  // fail()/unresolved() before the inner try/finally — honor exitCode (1 or 2), never 77-as-pass.
   if (e instanceof FailError) {
+    try {
+      tlSeries.summary();
+    } catch (_) {
+      /* ignore */
+    }
     process.exit(e.exitCode || EXIT_FAIL);
   }
   console.error(`UNHANDLED: ${redact(e.message || e)}`);

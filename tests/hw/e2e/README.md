@@ -58,6 +58,8 @@ Failure messages distinguish:
 | `details_never_rendered` | Item details still loading/spinner — race, not a missing Play selector |
 | `play_button_not_found` | Details ready; Play control selector drift |
 | `playback_did_not_start` | Picker OK; cast/play path broken |
+| `daemon_unreachable` | Companion `:3005` timeline down (preflight or post-play) — gate RED when daemon down |
+| `PMS_UNREACHABLE` / `PMS_IDENTITY_UNVERIFIED` | Local PMS configured but not verifiable — **rc=2**, not PASS |
 | `select_player_control_not_found` | UI layout/selector drift |
 | `daemon_tier_unprobed` | Tier requires parent conf probe (`E2E_DAEMON_DECODE`) — not applied |
 | `daemon_tier_mismatch` | Parent conf/decode does not match `E2E_TIER` |
@@ -171,11 +173,39 @@ Conf fallback: `MISTERPLEX_CONF` or `~/.config/misterplex/misterplex.conf`.
 | rc | Meaning |
 |----|---------|
 | 0 | PASS (includes verified `TEARDOWN_OK` for **this** controller) |
-| 1 | FAIL (picker, companion, playback, tier, transition, teardown, or HDMI) |
-| 77 | SKIP-NOT-PASS — missing deps/env/PMS (not green) |
+| 1 | FAIL (picker, companion, playback, daemon unreachable, tier, transition, teardown, or HDMI) |
+| 2 | **UNVERIFIED** — `PLEX_BASE` set but PMS/Web/identity unreachable (`PMS_UNREACHABLE` / `PMS_IDENTITY_UNVERIFIED`). Never green (w-lint `CORE_IDENTITY_UNVERIFIED` precedent). |
+| 77 | SKIP-NOT-PASS — missing deps/env/token/chromium (not green) |
 
 Soft-skip is **not** a pass. A missing MiSTerPlex in the picker is always **FAIL**.
 Instrument `rc=77 UNSCORED` under `E2E_HDMI_MOTION=1` is a **hard FAIL**.
+`rc=2` and `rc=77` are **never** reported as `CAST_PICKER_E2E_RESULT=PASS`.
+
+### Red-path proof (no device cast)
+
+```bash
+node tests/hw/e2e/prove_red_paths.js; echo "true rc=$?"
+# optional live PMS classify:
+PLEX_BASE=http://YOUR-LOCAL-PMS:32400 node tests/hw/e2e/prove_red_paths.js; echo "true rc=$?"
+```
+
+Pre-registered: wrong daemon port → `daemon_unreachable` class would be rc=1;
+wrong PMS → `PMS_UNREACHABLE` would be rc=2; never rc=0.
+
+Full suite also hard-fails at preflight when companion timeline is down
+(`E2E_REQUIRE_DAEMON=1` default): `FAIL … daemon_unreachable`.
+
+### Timeline series (HDMI three-way join)
+
+Every daemon/UI sample emits:
+
+```
+PLEX_TIMELINE_SAMPLE run_id=… wall_ms=… wall_iso=… plex_time_ms=… state=… value_kind=measured
+```
+
+Artifact: `$E2E_OUT/plex_timeline_series.jsonl` (default under `build/e2e-artifacts/`).
+Parent aligns `host_wall_ms` windows to HDMI capture spans and daemon `e2e_mark` /
+session origin lines. **No lipsync score** from this file.
 
 ## Interference warning — do not run during soak / CPU windows
 
