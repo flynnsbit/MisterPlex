@@ -1,7 +1,7 @@
 # w-instr status — origin record decisive + held_ms variance gate
 
 branch: w-avsync-hdmi-measure
-SHA: 8d0f28b1 (HEAD) / 5dd06733 (code: origin+gate)
+code_SHA: 5dd06733  tip: git rev-parse --short HEAD  branch: w-avsync-hdmi-measure
 
 ## ARM daemon (parent deploys)
 path: build/arm/misterplexd
