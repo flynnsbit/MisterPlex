@@ -168,40 +168,45 @@ Gate: `tests/unit/test_fabric_decode_inventory.sh` · `make fabric-decode-invent
 
 ## PRODUCT_NO_STUB — reclaim dark decode budget (scoped, unfitted)
 
-**Motivation (measured, not the old premise):** ARM cost in 240p/480p playback is dominated by the **scaler** (~50 %onecpu inside ffmpeg), not H.264 decode (~6). Highest-value offload is **fabric scale/geometry in `present_core`**. `ascal` proves a fabric scaler class is ~1,936 ALM / 43 M10K / 23 DSP on the `8fdf440f` fit. Free **88 M10K blocks** is tight for many small buffers; reclaiming display-dark `decode_stub` (**268 M10K**, mostly the 256-block DPB) is the enabler. **Do not delete** decode RTL — residual probe must stay buildable.
+**Motivation (honest — not 24 fps starvation):** Parent measured live 24 fps DDR playback with **0 drops**, closed ledger, and **~103 %onecpu free**. “ARM must shed decode to survive” is **retracted** at 24 fps. Fabric work is justified by **(a)** headroom at 30 fps+, **(b)** **direct-play** (eliminate PMS transcode / high-bitrate), **(c)** user direction to move features off ARM. Highest-value near-term offload remains **scale/geometry** (ffmpeg scaler still large when forced), which wants M10K headroom. `ascal` ≈ 1,936 ALM / 43 M10K / 23 DSP on the `8fdf440f` fit.
 
-**Do not delete decode RTL.** Research/STREAM builds leave `PRODUCT_NO_STUB` undefined so `decode_stub` stays in `files.qip` and fully gated.
+**Subtree vs own (do not confuse):** Quartus `decode_stub:stub` row is **subtree** ALM **9,216.9** / M10K **268** / DSP **1**. Own residual (parent ALMs after children, incl. flattened `h264_hybrid_mb_own`) = **1,922.1**. **Reclaim quotes the subtree only if every fitted child is exclusive to the stub path.** On `8fdf440f` fit-t7b: every fitted `h264_*` instance under stub has **0 outside-stub instances**; DPB `altsyncram:dpb_mem_rtl_0` (**256 M10K**) is stub-only (the `altsyncram` *type* appears elsewhere, e.g. ascal — instance is exclusive). ⇒ **−9,217 ALM / −268 M10K is valid subtree reclaim** for PRODUCT_NO_STUB.
+
+**Do not delete decode RTL.** Research/STREAM leave `PRODUCT_NO_STUB` undefined so `decode_stub` stays in `files.qip` and gated. Verilator TBs reference `stub_busy`/`stub_frames` — **gate, never delete.**
+
+**Telemetry hazard:** `telem_flags` is MSB-first `{pps_valid, sps_valid, stub_busy, has_idr, audio_underrun, has_stream, has_audio, has_frame}`; ARM decodes by bit mask (`fpga_spi.cpp` has_frame=1 … stub_busy=32, sps=64, pps=128). **Never shorten the concat** — tie removed slots to `1'b0` (PRODUCT_NO_STUB else already assigns `stub_busy=0`). Shortening shifts sps/pps → wrong-status (not loss-of-picture). Do not land bit-layout changes before the **w-lint bit-position gate** exists. Dead `stub_allow` / `_keep_hybrid_product` may drop only with that discipline.
 
 | Tier | Macro | What drops from product top | Predicted post-fit (**estimate**, baseline `8fdf440f`) | Free after |
 |------|--------|-----------------------------|--------------------------------------------------------|------------|
-| **A** (default product candidate) | `PRODUCT_NO_STUB=1` | `decode_stub` instance + children (DPB 256 M10K, dequant/IDCT/MC/…) | ALM **~14,368** used (−9,217) · M10K **~197** (−268) · DSP **~43** (−1) | ALM **~27.5k** · M10K **~356** · DSP **~69** |
-| **B** (optional) | `PRODUCT_NO_STREAM_PATH=1` | whole `stream_path` (stub + parsers + `bitstream_fifo` 32 M10K + reader) | ALM **~11,317** (−12,268) · M10K **~162** (−303) · DSP **~42** (−2) | ALM **~30.6k** · M10K **~391** · DSP **~70** |
+| **A** (default product candidate) | `PRODUCT_NO_STUB=1` | entire stub **subtree** (exclusive h264_* + DPB 256 M10K) | ALM **~14,368** (−9,217) · M10K **~197** (−268) · DSP **~43** (−1) | ALM **~27.5k** · M10K **~356** · DSP **~69** |
+| **B** (optional) | `PRODUCT_NO_STREAM_PATH=1` | whole `stream_path` | ALM **~11,317** (−12,268) · M10K **~162** (−303) · DSP **~42** (−2) | ALM **~30.6k** · M10K **~391** · DSP **~70** |
 
-Arithmetic check on baseline DPB: 2,097,152 bits / 256 M10K = **8,192 bits/block** (M10K). Free now: 553−465=**88**.
+DPB check: 2,097,152 / 256 = **8,192** bits/block. Free now: 553−465=**88** blocks / ~**2.66 Mbit**.
 
-**Source hook (Tier A):** `stream_path.sv` wraps `decode_stub` in `` `ifndef PRODUCT_NO_STUB `` / `` `else `` constant-0 assigns on stub outputs. QSF ships with the macro **commented** until parent grants a fit that pairs reclaim with w-geom scaler cargo:
+**Source hook (Tier A):** `stream_path.sv` `` `ifndef PRODUCT_NO_STUB `` / else constant-0 (incl. `stub_busy`). QSF macro **commented** until parent grants a fit pairing reclaim with scaler/geometry cargo:
 
 ```tcl
 # set_global_assignment -name VERILOG_MACRO "PRODUCT_NO_STUB=1"
 ```
 
-**SDC:** no new `set_false_path`. Existing narrow async_fifo exception unchanged.
+**Already on the `8fdf440f` / tip tree (do not burn a slot alone):** `907e5950` same-cycle vsync+doorbell hold; comb shift-add dequant (DSP 44). Next exclusive fit should carry **PRODUCT_NO_STUB + w-geom scaler/geometry**, not those two again.
 
-**Pre-register (publish misses after first PRODUCT_NO_STUB fit):**
+**SDC:** no new `set_false_path`.
+
+**Pre-register:**
 
 | Metric | Baseline `8fdf440f` | Tier A prediction | Tier B prediction |
 |--------|--------------------:|------------------:|------------------:|
 | ALM used | 23,585 | ~14,368 | ~11,317 |
 | M10K used | 465 | ~197 | ~162 |
 | DSP used | 44 | ~43 | ~42 |
-| setup min | +0.333 | ≥0 (unknown until STA) | ≥0 |
-| hold min | +0.245 | ≥0 (unknown until STA) | ≥0 |
+| setup / hold | +0.333 / +0.245 | ≥0 until STA | ≥0 until STA |
 
-If Tier A M10K drop is **≠ ~268**, that is a finding (something else held the DPB or packing differed) — not rounding.
+Tier A M10K Δ ≠ ~268 ⇒ finding.
 
-**Static gate:** `tests/unit/test_product_no_stub_dark_silicon.sh` (red-before-green on scaffolding + DDR `fs_wr` disconnect).
+**Static gate:** `tests/unit/test_product_no_stub_dark_silicon.sh`. Brief: `.agent-work/w-fit-1/INTEGRATION_BRIEF.md`.
 
-**No exclusive fit requested** from this write-up. Scaler (w-geom) should ride the same fit as Tier A.
+**No exclusive fit requested** here.
 
 ---
 
