@@ -6,7 +6,6 @@
 #include "libmisterplex/ffmpeg_vf.hpp"
 #include "libmisterplex/frame_ledger.hpp"
 #include "libmisterplex/supply_bucket.hpp"
-#include "libmisterplex/proc_io_sample.hpp"
 #include "libmisterplex/idle_screen.hpp"
 #include "libmisterplex/last_frame_latch.hpp"
 #include "libmisterplex/osd_menu.hpp"
@@ -3000,10 +2999,6 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
     // Per-second supply bucket baseline (glass-loss 1/2.71s resolvable).
     misterplex::SupplyCounters supplyPrev{};
     bool supplyPrevInit = false;
-    // ffmpeg child /proc/pid/io — PMS HTTP arrival (rchar), not pipe read_bytes_f.
-    misterplex::ProcIoSample ffmpegIoPrev{};
-    bool ffmpegIoPrevInit = false;
-    double ffmpegIoPrevWallS = 0;
 
     bool usedRawVideo = false;
     bool videoEof = false;
@@ -4400,37 +4395,9 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                                 d, cur.wall_s, cur.frames, cur.presents, cur.drops,
                                 cur.publish_misses, led.residual, cur.ffmpeg_out_frames,
                                 scoreN, scoreD, se.c_str(), fpsSrc));
-                        // PMS arrival: sample product ffmpeg /proc/<pid>/io rchar.
-                        // Distinct from pipe empty/full and from pacing_wait (rd-review).
-                        {
-                            const pid_t ffp = childPid_.load();
-                            misterplex::ProcIoSample ios{};
-                            if (ffp > 0 && misterplex::readProcIoPid(static_cast<int>(ffp),
-                                                                     &ios)) {
-                                if (ffmpegIoPrevInit) {
-                                    const double dw = cur.wall_s - ffmpegIoPrevWallS;
-                                    const auto iod =
-                                        misterplex::procIoDelta(ffmpegIoPrev, ios, dw);
-                                    // Nominal from conf bitrate if unknown: 456 kb/s
-                                    // video ≈ 57000 B/s (caller can ignore field).
-                                    constexpr double kNominalBps = 57000.0;
-                                    log("media: " +
-                                        misterplex::formatFfmpegIoLine(iod,
-                                                                       static_cast<int>(ffp),
-                                                                       kNominalBps,
-                                                                       se.c_str()));
-                                }
-                                ffmpegIoPrev = ios;
-                                ffmpegIoPrevWallS = cur.wall_s;
-                                ffmpegIoPrevInit = true;
-                            } else if (ffmpegIoPrevInit) {
-                                log("media: ffmpeg_io pid=" +
-                                    std::to_string(static_cast<long>(ffp)) +
-                                    " d_wall_s=NO-DATA rchar_Bps=NO-DATA "
-                                    "tag=NO-DATA reason=io_or_pid");
-                                ffmpegIoPrevInit = false;
-                            }
-                        }
+                        // PMS supply: do NOT log /proc/pid/io rchar here.
+                        // VOID on this kernel (recv() ∉ rchar; parent syscr=5).
+                        // Parent instrument: tools/pms_recvq_backlog_sample.sh (ss Recv-Q).
                     }
                     supplyPrev = cur;
                     supplyPrevInit = true;
