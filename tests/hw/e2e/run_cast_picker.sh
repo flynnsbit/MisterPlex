@@ -1,18 +1,17 @@
 #!/usr/bin/env bash
-# run_cast_picker.sh — single entrypoint for the Plex Web cast-picker Playwright suite.
+# run_cast_picker.sh — single entrypoint for Plex Web cast-picker Playwright suite.
 #
-# Credentials from env (preferred) or conf:
-#   PLEX_BASE   LOCAL PMS only, e.g. http://YOUR-PLEX-SERVER:32400
-#   PLEX_TOKEN  account/server token accepted by that PMS web UI
-#   MISTERPLEX_CONF  optional path to misterplex.conf
+# Self-diagnosing: missing required env → FAIL rc=1 with remediation;
+# PMS unreachable → UNVERIFIED rc=2; missing playwright/chromium → SKIP-NOT-PASS rc=77.
+# Never soft-passes a missing token/base.
 #
-# Optional:
-#   PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH  Chrome for Testing binary if browser
-#                                        download is unavailable
+# Optional gitignored lab env (does not override existing exports):
+#   $E2E_ENV_FILE | tests/hw/e2e/.env.lab | ~/.config/misterplex/e2e.env
 #
-# Do NOT point PLEX_BASE at remote / SHIELD / ignored servers.
+# Overlay-only (parent HDMI chrome grab):
+#   E2E_OVERLAY_ONLY=1 E2E_OVERLAY_HOLD_SEC=10 ./tests/hw/e2e/run_cast_picker.sh
 #
-# Exit: 0 PASS | 1 FAIL | 77 SKIP-NOT-PASS (missing deps/env)
+# Exit: 0 PASS | 1 FAIL | 2 UNVERIFIED | 77 SKIP-NOT-PASS
 
 set -u
 ROOT="$(cd "$(dirname "$0")" && pwd)"
@@ -22,12 +21,11 @@ if [[ ! -d node_modules/playwright ]]; then
   echo "run_cast_picker: installing npm deps in tests/hw/e2e ..."
   npm install --no-fund --no-audit || {
     echo "SKIP-NOT-PASS: npm install failed"
+    echo "CAST_PICKER_E2E_RESULT=SKIP-NOT-PASS"
     exit 77
   }
 fi
 
-# Prefer an already-bundled Chromium when the matching revision is cached.
-# Avoid a hard dependency on a fresh CDN download in the lab.
 if [[ -z "${PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH:-}" && -z "${PW_CHROMIUM_PATH:-}" ]]; then
   expected="$(node -e "
 try {
@@ -53,8 +51,10 @@ if [[ -z "${PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH:-}" ]]; then
   echo "run_cast_picker: no Chromium binary yet — trying playwright install chromium"
   if ! npx --no-install playwright install chromium; then
     echo "SKIP-NOT-PASS: playwright install chromium failed; set PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH"
+    echo "CAST_PICKER_E2E_RESULT=SKIP-NOT-PASS"
     exit 77
   fi
 fi
 
+node "$ROOT/preflight_env.js" || exit $?
 exec node "$ROOT/test_cast_picker_playwright.js" "$@"

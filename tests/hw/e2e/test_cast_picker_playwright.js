@@ -2256,7 +2256,13 @@ async function runOneTransitionCycle(page, itemTitle, detailsUrl, cycle, total) 
   // pause-overlay chrome resolution (user: "timeline very low res when paused").
   // Vertical: parent-proven odd rows absent (store_y=py*2) on c5382bee — suite
   // does not score rows. Horizontal 529-of-640 is arithmetic-only, not glass-proven.
-  const pauseHold = parseInt(process.env.E2E_PAUSE_OVERLAY_HOLD_MS || '4000', 10) || 4000;
+  // Prefer E2E_OVERLAY_HOLD_SEC (seconds, parent grab window); ms override still works.
+  const pauseHold = (() => {
+    const msEnv = parseInt(process.env.E2E_PAUSE_OVERLAY_HOLD_MS || '', 10);
+    if (Number.isFinite(msEnv) && msEnv > 0) return msEnv;
+    const sec = cfg.overlayHoldSec || 8;
+    return Math.round(sec * 1000);
+  })();
   const uiM = (uiPauseClock && uiPauseClock.metrics) || {};
   await glassMark(cycle, 'pause', 'after', {
     picture: 'pause_overlay',
@@ -2282,6 +2288,18 @@ async function runOneTransitionCycle(page, itemTitle, detailsUrl, cycle, total) 
     await sleep(Math.min(1200, pauseHold));
   }
   log(`PAUSE_OVERLAY_WINDOW_CLOSE wall_ms=${Date.now()}`);
+  // Full-duration hold only when parent asks (overlay-only mode always holds in its own seq).
+  // Default off so N=10 is not 8s×N wall-clock on pause alone.
+  if (
+    /^(1|true|yes|on)$/i.test(String(process.env.E2E_GLASS_HOLD || '0')) ||
+    /^(1|true|yes|on)$/i.test(String(process.env.E2E_OVERLAY_FORCE_HOLD || '0'))
+  ) {
+    const remain = Math.max(0, pauseHold - 1200);
+    if (remain > 0) {
+      log(`PAUSE_OVERLAY_FORCE_HOLD remain_ms=${remain}`);
+      await sleep(remain);
+    }
+  }
 
   // ── resume: UI-first play toggle ───────────────────────────────────────
   const pausedTime = fr.time;
@@ -2702,7 +2720,196 @@ async function recheckDiscoveryPicker(page, itemTitle, tag = 'discovery_recheck'
   return { ok: true, clickedText };
 }
 
+/**
+ * Deterministic overlay hold for parent HDMI (user low-res chrome / w-osd-hires).
+ * Brings player chrome up via pause + scrub and HOLDS it for overlayHoldSec
+ * with printed wall_ms boundaries — no race. Suite does not capture pixels.
+ *
+ * Chrome must match OUTPUT resolution (E2E_OUTPUT_W×H), not content decode.
+ */
+async function runOverlayHoldSequence(page, itemTitle, detailsUrl, tag = 'overlay') {
+  const holdSec = cfg.overlayHoldSec || 8;
+  const holdMs = Math.round(holdSec * 1000);
+  const repeats = cfg.overlayRepeats || 2;
+  const outW = cfg.outputWidth || 1920;
+  const outH = cfg.outputHeight || 1080;
+  const waitSec = Math.min(cfg.playWaitSec, 15);
+
+  log(
+    `OVERLAY_HOLD_SEQ begin tag=${tag} repeats=${repeats} hold_sec=${holdSec} ` +
+      `output=${outW}x${outH} chrome_must_match_output=1 ` +
+      `content_title=${JSON.stringify(itemTitle)} ` +
+      `(Playwright asserts control-plane only; parent scores chrome res on glass)`
+  );
+
+  // Ensure playing from a clean start.
+  await resetCycleStartState(page, itemTitle, detailsUrl, 0, 1).catch(async () => {
+    await ensurePlayingSession(page, itemTitle, detailsUrl, `${tag}_seed`, waitSec);
+  });
+  let prog = await waitPlayingOnDaemon(waitSec);
+  if (prog.playing < 2) {
+    fail(
+      'overlay_not_playing',
+      `${tag}: need playing session before overlay hold; samples=${prog.playing}`
+    );
+  }
+
+  for (let r = 1; r <= repeats; r++) {
+    const rtag = `${tag}_r${r}`;
+    // ── PAUSE overlay (primary user-reported window) ─────────────────────
+    await page.mouse.move(640, 520).catch(() => {});
+    await sleep(300);
+    let uiPause = await clickPauseOrPlayToggle(page);
+    let st = await waitTimelineState(['paused'], 10000, `${rtag}_pause`);
+    if (!st.ok) {
+      await companionPlayback('pause', `${rtag}_pause_http`);
+      st = await waitTimelineState(['paused'], 8000, `${rtag}_pause2`);
+    }
+    if (!st.ok) {
+      fail(
+        'overlay_pause_failed',
+        `${rtag}: expected paused for overlay hold; got ${st.state}@${st.time} ui=${uiPause || 'none'}`
+      );
+    }
+    // Keep chrome up: nudge mouse over player area during hold.
+    await page.mouse.move(700, 620).catch(() => {});
+    const uiR = await assertUiMatchesDaemon(page, `${rtag}_pause_ui`).catch(() => ({ ok: false }));
+    const uiM = (uiR && uiR.metrics) || {};
+    const openMs = Date.now();
+    const openIso = new Date(openMs).toISOString();
+    log(
+      `PAUSE_OVERLAY_WINDOW_OPEN tag=${rtag} wall_ms=${openMs} wall_iso=${openIso} ` +
+        `hold_ms=${holdMs} hold_sec=${holdSec} ` +
+        `daemon_state=paused daemon_time_ms=${st.time} ` +
+        `ui_time_ms=${uiM.ui_ms != null ? uiM.ui_ms : 'NA'} ` +
+        `output=${outW}x${outH} ` +
+        `EXPECT_GLASS=frozen_frame+player_chrome_timeline visible; ` +
+        `chrome_pixel_size_must_match_output_not_content; ` +
+        `defect_hint=pause_overlay_low_res (w-osd-hires). ` +
+        `capture_now=1 video_mode_assumed=${outW}x${outH}`
+    );
+    await glassMark(r, 'pause', 'hold', {
+      picture: 'pause_overlay',
+      counter: 'pinned',
+      state: 'paused',
+      time: st.time,
+      ui_time_ms: uiM.ui_ms,
+      ui_pct: uiM.ui_pct,
+      defect_hint: 'pause_overlay_low_res',
+      hold_ms: holdMs,
+      note: `deterministic hold ${holdSec}s output=${outW}x${outH}`,
+    });
+    // Always block for full hold — parent needs 1:1 grab window (not optional).
+    const holdEnd = openMs + holdMs;
+    while (Date.now() < holdEnd) {
+      await page.mouse.move(680 + ((Date.now() / 400) % 40), 600).catch(() => {});
+      const left = holdEnd - Date.now();
+      await sleep(Math.min(1000, Math.max(200, left)));
+      const xml = await pollDaemonTimeline(nextSuiteCmd());
+      log(
+        `  overlay_hold_tick tag=${rtag} state=${xmlAttr(xml, 'state') || '?'} ` +
+          `time=${xmlAttr(xml, 'time') || '?'} left_ms=${Math.max(0, holdEnd - Date.now())}`
+      );
+      // Re-assert paused if something resumed us.
+      if ((xmlAttr(xml, 'state') || '') === 'playing') {
+        await companionPlayback('pause', `${rtag}_repause`);
+      }
+    }
+    const closeMs = Date.now();
+    log(
+      `PAUSE_OVERLAY_WINDOW_CLOSE tag=${rtag} wall_ms=${closeMs} wall_iso=${new Date(closeMs).toISOString()} ` +
+        `elapsed_ms=${closeMs - openMs} hold_ms=${holdMs}`
+    );
+
+    // ── Resume then SEEK scrub chrome ────────────────────────────────────
+    let uiRes = await clickPauseOrPlayToggle(page);
+    st = await waitTimelineState(['playing'], 12000, `${rtag}_resume`);
+    if (!st.ok) {
+      await companionPlayback('play', `${rtag}_resume_http`);
+      st = await waitTimelineState(['playing'], 8000, `${rtag}_resume2`);
+    }
+    if (!st.ok) {
+      fail('overlay_resume_failed', `${rtag}: resume after overlay pause failed state=${st.state}`);
+    }
+    log(`overlay_resume_ok tag=${rtag} ui=${uiRes || 'http'}`);
+
+    // Scrub to ~25% to force timeline chrome on device during play.
+    const xmlDur = await pollDaemonTimeline(nextSuiteCmd());
+    const durMs = parseInt(xmlAttr(xmlDur, 'duration') || '0', 10);
+    const frac = 0.25;
+    const seekTo = durMs > 0 ? Math.round(durMs * frac) : 8000;
+    const uiSeek = await uiSeekFraction(page, frac);
+    if (!uiSeek) {
+      await companionPlayback(`seekTo?offset=${seekTo}`, `${rtag}_seek_http`);
+    }
+    await waitTimelineNear(seekTo, 5000, 15000);
+    await page.mouse.move(720, 640).catch(() => {});
+    const scrubOpen = Date.now();
+    const scrubHold = Math.min(holdMs, 6000);
+    log(
+      `SCRUB_OVERLAY_WINDOW_OPEN tag=${rtag} wall_ms=${scrubOpen} wall_iso=${new Date(scrubOpen).toISOString()} ` +
+        `hold_ms=${scrubHold} seek_target_ms=${seekTo} frac=${frac} ` +
+        `output=${outW}x${outH} EXPECT_GLASS=play_or_frame+timeline_chrome ` +
+        `chrome_must_match_output defect_hint=play_timeline_overlay_low_res`
+    );
+    await glassMark(r, 'seek_fwd', 'hold', {
+      picture: 'play_chrome',
+      counter: 'advancing',
+      state: 'playing',
+      time: seekTo,
+      defect_hint: 'play_timeline_overlay_low_res',
+      hold_ms: scrubHold,
+      note: `scrub chrome hold output=${outW}x${outH}`,
+    });
+    await sleep(scrubHold);
+    const scrubClose = Date.now();
+    log(
+      `SCRUB_OVERLAY_WINDOW_CLOSE tag=${rtag} wall_ms=${scrubClose} ` +
+        `elapsed_ms=${scrubClose - scrubOpen}`
+    );
+
+    // Second pause after scrub — common path for timeline+pause chrome together.
+    uiPause = await clickPauseOrPlayToggle(page);
+    st = await waitTimelineState(['paused'], 10000, `${rtag}_pause_after_scrub`);
+    if (!st.ok) {
+      await companionPlayback('pause', `${rtag}_pause_scrub_http`);
+      st = await waitTimelineState(['paused'], 8000, `${rtag}_pause_scrub2`);
+    }
+    if (st.ok) {
+      const p2open = Date.now();
+      const p2hold = Math.min(holdMs, 5000);
+      log(
+        `PAUSE_AFTER_SCRUB_WINDOW_OPEN tag=${rtag} wall_ms=${p2open} hold_ms=${p2hold} ` +
+          `daemon_time_ms=${st.time} output=${outW}x${outH} ` +
+          `EXPECT_GLASS=paused_chrome_at_scrub_position`
+      );
+      await sleep(p2hold);
+      log(`PAUSE_AFTER_SCRUB_WINDOW_CLOSE tag=${rtag} wall_ms=${Date.now()}`);
+      // Resume for next repeat or exit.
+      await clickPauseOrPlayToggle(page);
+      await waitTimelineState(['playing'], 8000, `${rtag}_replay`).catch(() => {});
+    }
+  }
+
+  await forceStopDaemon(`${tag}_end`).catch(() => false);
+  await assertP4DeviceIdle(`${tag}_end`);
+  log(`OVERLAY_HOLD_SEQ_OK tag=${tag} repeats=${repeats} hold_sec=${holdSec} output=${outW}x${outH}`);
+  return { ok: true, repeats, holdSec, output: `${outW}x${outH}` };
+}
+
 async function runTransitionScenarios(page, itemTitle, detailsUrl, _castAlreadySelected) {
+  // Overlay-only mode: drive chrome windows for parent HDMI, then return (no N-loop).
+  if (cfg.overlayOnly) {
+    log('E2E_OVERLAY_ONLY=1 — running deterministic overlay hold sequence (skip N-loop transitions)');
+    const ov = await runOverlayHoldSequence(page, itemTitle, detailsUrl, 'overlay_only');
+    return {
+      enabled: true,
+      cycles: 0,
+      passed: ov.ok ? 1 : 0,
+      overlay: ov,
+      results: [{ ok: ov.ok, cycle: 0, transitions: ['overlay_hold'] }],
+    };
+  }
   if (!cfg.transitions) {
     log('TRANSITIONS=off (E2E_TRANSITIONS=0)');
     return { enabled: false, cycles: 0, passed: 0 };
@@ -2726,10 +2933,25 @@ async function runTransitionScenarios(page, itemTitle, detailsUrl, _castAlreadyS
   );
   // Fleet facts (parent-run glass, RBF c5382bee) — do not rebuild on retracted metrics.
   log(
-    'FLEET_FACT vertical_row_ceiling=proven glass push_frame even/odd solid-field invert ' +
-      'std=0 store_y=py*2 odd_rows_absent (50% rows never reach display). ' +
-      'horizontal_529_of_640=arithmetic_only_NOT_glass_proven. ' +
-      'clk_sys=20MHz class (20e6/60/524=636<640).'
+    'FLEET_FACT vertical_row_ceiling=ROOT_CAUSED V_STORE_SD=480 V_STORE_PROG=240 ' +
+      'forced_scandoubler=0 → store_y=py*2 over 240 DE lines (even store rows only). ' +
+      'glass FFT period≈3.988 vs 3.983 predicted for 240 rows; push_frame even/odd solid invert std=0. ' +
+      'horizontal_529_of_640=arithmetic_only_NOT_glass_proven. clk_sys=20MHz (20e6/60/524=636<640).'
+  );
+  log(
+    'FLEET_FACT idle_painter=CLEARED writes 480 distinct rows (h=ch=480 no upscale); ' +
+      'fb0 320x240 is separate non-HDMI path. ' +
+      'delivery_verified=1 measured_delivery live (delivery_verified=0 STALE). ' +
+      'make define-parity rc=0 does NOT cover T7 structure (non-protective for V_STORE_PROG). ' +
+      'E2E_PLXD_FRAMES_VOID stays 1 until parent glass-confirms post-fit RBF (do not lift speculatively).'
+  );
+  log(
+    `OVERLAY_CONTRACT output=${cfg.outputWidth}x${cfg.outputHeight} ` +
+      `chrome_must_match_OUTPUT_not_content=1 ` +
+      `(user bug: HUD drawn into content canvas then upscaled — w-osd-hires). ` +
+      `hold_sec=${cfg.overlayHoldSec} repeats=${cfg.overlayRepeats} ` +
+      `overlay_only=${cfg.overlayOnly ? 1 : 0} ` +
+      `MiSTer.ini video_mode=8 → 1920x1080 default; override E2E_OUTPUT_W/H for 640x480/800x600/240p.`
   );
   log(
     'FLEET_FACT field_derivations: ' +
@@ -2961,10 +3183,19 @@ async function runTransitionScenarios(page, itemTitle, detailsUrl, _castAlreadyS
   }
 
   if (!cfg.plexBase) {
-    skip('PLEX_BASE missing — export PLEX_BASE=http://YOUR-PLEX-SERVER:32400 or set in conf');
+    fail(
+      'env_plex_base_missing',
+      'PLEX_BASE missing. Remediation: export PLEX_BASE=http://YOUR-PLEX-SERVER:32400 ' +
+        'or put PLEX_BASE= in tests/hw/e2e/.env.lab / ~/.config/misterplex/e2e.env. ' +
+        'run_cast_picker.sh preflight should have caught this.'
+    );
   }
   if (!cfg.token) {
-    skip('PLEX_TOKEN missing — export PLEX_TOKEN or set in conf');
+    fail(
+      'env_plex_token_missing',
+      'PLEX_TOKEN missing. Remediation: export PLEX_TOKEN=... or PLEX_TOKEN_FILE=/tmp/local_tok.txt ' +
+        '(auto-tried). Never soft-skip credentials.'
+    );
   }
   if (/plex\.nevertrustaf\.art|32401/.test(cfg.plexBase)) {
     fail(
@@ -3164,7 +3395,17 @@ async function runTransitionScenarios(page, itemTitle, detailsUrl, _castAlreadyS
           (pickerUser.names ? ` names=${pickerUser.names.join('|')}` : '')
       );
     }
-    if (pickerUser.shown) log(`user_picker dismissed profile=${pickerUser.picked}`);
+    if (pickerUser.shown) {
+      log(`user_picker dismissed profile=${pickerUser.picked}`);
+      if (pickerUser.picked && !cfg.webUser) {
+        log(
+          `PLEX_WEB_USER_DEFAULTED=${pickerUser.picked} ` +
+            `(first Home profile; pin with export PLEX_WEB_USER=${pickerUser.picked})`
+        );
+      } else if (pickerUser.picked && cfg.webUser) {
+        log(`PLEX_WEB_USER_USED=${pickerUser.picked} (from env/conf)`);
+      }
+    }
 
     const serverSeg = idn.machineId || 'auto';
 

@@ -1,45 +1,52 @@
-# w-plextv — Playwright half of definition of done
+# w-plextv runbook (parent paste)
 
-**Branch:** `w-plextv-cast-picker-e2e-fix2` · **Worktree:** `.worktrees/w-plextv-e2e-fix`  
-**Tip:** `git rev-parse --short HEAD` · Agent E2E ≠ evidence.
+## Self-diagnosing harness
 
-## Fleet facts absorbed (parent glass, RBF c5382bee)
+`./tests/hw/e2e/run_cast_picker.sh` runs `preflight_env.js` first:
+- missing PLEX_BASE/TOKEN → **FAIL rc=1** + remediation (never soft-pass)
+- PMS down → **UNVERIFIED rc=2**
+- no playwright/chromium → **SKIP-NOT-PASS rc=77**
+- Auto token files: `PLEX_TOKEN_FILE`, `/tmp/local_tok.txt`, `~/.config/misterplex/plex_token`
+- Auto lab env: `tests/hw/e2e/.env.lab` or `~/.config/misterplex/e2e.env` (gitignored)
+- `PLEX_WEB_USER` optional — empty → first Home profile, logs `PLEX_WEB_USER_DEFAULTED=<name>`
+- `MISTER_HOST` defaults to lab MiSTer when unset
 
-| Fact | Implication for this lane |
-|------|---------------------------|
-| Vertical row ceiling **proven** (even/odd solid invert, std=0; `store_y=py*2`) | Suite never claims rows reached glass; after w-geom T7 parent re-scores solid-field card |
-| Horizontal 529-of-640 | **Arithmetic only** — not glass-proven; suite does not assert column count |
-| `frames_done` = vsync counter | `E2E_PLXD_FRAMES_VOID=1`; never PASS on residual/presents/drops |
-| `presents`/`drops` = ARM call/supply | Not display claims |
-| `unaccounted` = residual twice | Not independent |
-| `p_ge50` / dual-instrument | WITHDRAWN — do not cite |
-| Stale detector blind when swaps stuck | Not Playwright-visible; note only |
+## Paste commands (zero placeholders if .env.lab present)
 
-**Standing rule:** every field name logged with its derivation (suite startup `FLEET_FACT field_derivations`).
-
-## BOUNDARY
-
-Playwright = Plex Web control-plane + `:3005` session (playing/paused/seek/idle/pid).  
-**Not** pixels, rows, chrome res, judder, lipsync. Parent HDMI only for video.
-
-## Covered (control plane)
-
-Picker exact MiSTerPlex · companion · play/pause/resume/seek/stop · UI clock · N=10 · P4 idle · TEARDOWN · `GLASS_JOIN`/`pause_overlay` for parent chrome-res join.
-
-## Commands (parent)
-
+Full N=10 (control plane):
 ```bash
-cd .worktrees/w-plextv-e2e-fix
-E2E_TIER=240p E2E_TRANSITION_CYCLES=10 E2E_REQUIRE_PID=1 E2E_PLXD_FRAMES_VOID=1 \
-PLEX_BASE=http://192.168.1.24:32400 PLEX_TOKEN_FILE=/tmp/local_tok.txt \
-PLEX_WEB_USER=<profile> MISTER_HOST=<mister> \
+cd /home/flynnsbit/Projects/MisterPlex/.worktrees/w-plextv-e2e-fix
 ./tests/hw/e2e/run_cast_picker.sh; echo "true rc=$?"
 ```
-Device conf is user-owned (`DECODE=320x240` live) — do not mutate for green.  
-Pre-reg: rc=0, pass==N, P4_IDLE_OK, TEARDOWN_OK, PAUSE_OVERLAY_WINDOW_*, FLEET_FACT lines present.
 
-API soak: `./scripts/parent_cast_local.sh play|stop|idle-check` (env-only).
+Overlay-only (long chrome windows for HDMI — use this for low-res overlay bug):
+```bash
+cd /home/flynnsbit/Projects/MisterPlex/.worktrees/w-plextv-e2e-fix
+E2E_OVERLAY_ONLY=1 E2E_OVERLAY_HOLD_SEC=10 E2E_OVERLAY_REPEATS=2 \
+E2E_OUTPUT_W=1920 E2E_OUTPUT_H=1080 \
+./tests/hw/e2e/run_cast_picker.sh; echo "true rc=$?"
+```
 
-## NOT covered
+Align capture on log lines:
+- `PAUSE_OVERLAY_WINDOW_OPEN wall_ms=… hold_ms=…`
+- `PAUSE_OVERLAY_WINDOW_CLOSE wall_ms=…`
+- `SCRUB_OVERLAY_WINDOW_OPEN/CLOSE`
+- `PAUSE_AFTER_SCRUB_WINDOW_OPEN/CLOSE`
+- `OVERLAY_CONTRACT output=WxH chrome_must_match_OUTPUT_not_content=1`
 
-Rows/columns on glass · overlay res · PLXD as video · agent E2E as pass · SHIELD/remote.
+If preflight fails without .env.lab:
+```bash
+export PLEX_BASE=http://192.168.1.24:32400
+export MISTER_HOST=192.168.1.183
+export PLEX_TOKEN_FILE=/tmp/local_tok.txt
+# optional: export PLEX_WEB_USER=YourProfileName
+./tests/hw/e2e/run_cast_picker.sh; echo "true rc=$?"
+```
+
+## Profile name
+
+How to find: open Plex Web Home → "Select User" names. Suite logs options at `user_picker clicking profile=… options=…`. Pin with `PLEX_WEB_USER`.
+
+## Boundary
+
+Playwright ≠ pixels/rows. PLXD void until parent glass-confirms post-fit RBF.

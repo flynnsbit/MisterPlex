@@ -214,12 +214,46 @@ function parentConfCommands(tier, misterHost) {
   };
 }
 
+function resolveTokenFromEnv(conf = {}) {
+  if (process.env.PLEX_TOKEN && String(process.env.PLEX_TOKEN).trim()) {
+    return String(process.env.PLEX_TOKEN).trim();
+  }
+  if (conf.PLEX_TOKEN) return String(conf.PLEX_TOKEN).trim();
+  const files = [
+    process.env.PLEX_TOKEN_FILE,
+    conf.PLEX_TOKEN_FILE,
+    '/tmp/local_tok.txt',
+    path.join(os.homedir(), '.config', 'misterplex', 'plex_token'),
+  ].filter(Boolean);
+  for (const f of files) {
+    try {
+      if (!fs.existsSync(f)) continue;
+      const t = fs.readFileSync(f, 'utf8').replace(/\r?\n/g, '').trim();
+      if (t.length >= 8) {
+        process.env.PLEX_TOKEN_FILE = f;
+        return t;
+      }
+    } catch (_) {
+      /* next */
+    }
+  }
+  return '';
+}
+
 function loadConfig() {
+  // Optional lab env (gitignored) — applied before conf so env wins when set.
+  try {
+    const { applyLabEnvFiles } = require('./preflight_env');
+    applyLabEnvFiles();
+  } catch (_) {
+    /* preflight optional at conf load */
+  }
+
   const confPath = resolveConfPath();
   const conf = readConfFile(confPath);
 
   const plexBase = (process.env.PLEX_BASE || conf.PLEX_BASE || '').replace(/\/$/, '');
-  const token = process.env.PLEX_TOKEN || conf.PLEX_TOKEN || '';
+  const token = resolveTokenFromEnv(conf);
 
   let tiers;
   let tierResolveError = '';
@@ -329,8 +363,8 @@ function loadConfig() {
     castName: process.env.CAST_TARGET_NAME || 'MiSTerPlex',
     playerId: process.env.CAST_PLAYER_ID || 'misterplex-dev',
     webUser: process.env.PLEX_WEB_USER || conf.PLEX_WEB_USER || '',
-    misterHost: process.env.MISTER_HOST || '192.168.1.183',
-    misterPort: parseInt(process.env.MISTER_PORT || '3005', 10),
+    misterHost: process.env.MISTER_HOST || conf.MISTER_HOST || '192.168.1.183',
+    misterPort: parseInt(process.env.MISTER_PORT || conf.MISTER_PORT || '3005', 10),
     headless: process.env.PW_HEADED !== '1',
     timeoutMs: parseInt(process.env.PW_TIMEOUT_MS || '45000', 10),
     playWaitSec: parseInt(process.env.PW_PLAY_WAIT_SEC || '20', 10),
@@ -343,6 +377,31 @@ function loadConfig() {
     transitions: truthy(process.env.E2E_TRANSITIONS, true),
     transitionCycles,
     transitionContinueOnFail,
+    // Overlay hold for parent HDMI (user low-res chrome bug / w-osd-hires).
+    // E2E_OVERLAY_ONLY=1 → drive pause/seek chrome windows then stop (no full N-loop).
+    overlayOnly: truthy(process.env.E2E_OVERLAY_ONLY, false),
+    overlayHoldSec: (() => {
+      const v = parseFloat(process.env.E2E_OVERLAY_HOLD_SEC || conf.E2E_OVERLAY_HOLD_SEC || '8');
+      if (!Number.isFinite(v) || v < 1) return 8;
+      if (v > 120) return 120;
+      return v;
+    })(),
+    overlayRepeats: (() => {
+      const v = parseInt(process.env.E2E_OVERLAY_REPEATS || '2', 10);
+      if (!Number.isFinite(v) || v < 1) return 2;
+      if (v > 20) return 20;
+      return v;
+    })(),
+    // MiSTer OUTPUT resolution (chrome must match OUTPUT, not content). Defaults:
+    // video_mode=8 → 1920x1080. Override for 640x480 / 800x600 / 240p labs.
+    outputWidth: (() => {
+      const v = parseInt(process.env.E2E_OUTPUT_W || conf.E2E_OUTPUT_W || '1920', 10);
+      return Number.isFinite(v) && v > 0 ? v : 1920;
+    })(),
+    outputHeight: (() => {
+      const v = parseInt(process.env.E2E_OUTPUT_H || conf.E2E_OUTPUT_H || '1080', 10);
+      return Number.isFinite(v) && v > 0 ? v : 1080;
+    })(),
     // Optional parent-exported live identity (from /proc cmdline — never assumed).
     liveConf: process.env.E2E_LIVE_CONF || '',
     liveDaemonId: process.env.E2E_LIVE_DAEMON_ID || process.env.E2E_DAEMON_ID || '',
