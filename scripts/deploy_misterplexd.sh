@@ -453,7 +453,8 @@ if [[ "$code" != "200" ]]; then
   echo "FAIL /resources HTTP $code (daemon up but not healthy)"
   exit 7
 fi
-echo "DEPLOY_OK root=$TARGET_ROOT disk_md5=$disk_md5 live_md5=$live_md5 n_daemon=1 http=$code"
+echo "DEPLOY_LIVE_VERIFY_OK root=$TARGET_ROOT disk_md5=$disk_md5 live_md5=$live_md5 n_daemon=1 http=$code"
+echo "deploy: live /proc/PID/exe md5 matches host (binary post-condition)"
 REMOTE
 start_rc=$?
 set -e
@@ -462,7 +463,7 @@ report_rc "restart_and_live_verify" "$start_rc" || die "restart/live verify fail
 echo "Deployed misterplexd → $HOST"
 echo "deploy: summary host_md5=$HOST_MD5 target_root=$TARGET_ROOT remote_bin=$REMOTE_BIN"
 echo "deploy: summary LIVE process md5 verified equal to host (not disk alone)"
-report_rc "deploy_overall" 0
+echo "deploy: binary live-verify OK — final overall rc deferred until hook+geometry post-conditions"
 
 # --- boot path: durable supervisor + LIVE USER_SCRIPT (never decoy) -------------
 # Parent BLOCKER 2026-07-31: main wrote HOOK=/media/fat/linux/_user-startup.sh
@@ -555,17 +556,47 @@ if [[ "${DEPLOY_SKIP_BOOT_HOOK:-0}" != "1" ]]; then
   report_rc "boot_hook" "$hook_rc" || die "boot hook install failed (rc=$hook_rc)"
 fi
 
+# Final post-conditions after binary live-verify. Never print deploy_overall=0
+# before these. Geometry soft-skip (rc=77) is NOT a deploy pass — exit 78
+# PASS_INCOMPLETE (same class as CRITICAL unit skips).
+DEPLOY_FINAL_RC=0
+DEPLOY_FINAL_VERDICT=DEPLOY_OK
+
 if [[ "$DEPLOY_SKIP_GEOMETRY_GATE" != "1" && -z "${DEPLOY_SSHM:-}" ]]; then
   set +e
   "$ROOT/scripts/check_core_conf_geometry.sh"
   geo_rc=$?
   set -e
   case "$geo_rc" in
-    0) echo "core_conf_geometry: PASS"; report_rc "core_conf_geometry" 0 ;;
-    77) echo "core_conf_geometry: SKIP-NOT-PASS (rc=77)" >&2; report_rc "core_conf_geometry_skip" 77 || true ;;
+    0)
+      echo "core_conf_geometry: PASS"
+      report_rc "core_conf_geometry" 0 || true
+      ;;
+    77)
+      echo "core_conf_geometry: SKIP-NOT-PASS (rc=77) — deploy incomplete, not green" >&2
+      report_rc "core_conf_geometry_skip" 77 || true
+      DEPLOY_FINAL_RC=78
+      DEPLOY_FINAL_VERDICT=DEPLOY_INCOMPLETE_GEOMETRY_UNSCORED
+      ;;
     *)
       echo "core_conf_geometry: FAIL rc=$geo_rc" >&2
-      report_rc "core_conf_geometry" "$geo_rc" || exit "$geo_rc"
+      report_rc "core_conf_geometry" "$geo_rc" || true
+      echo "verdict=DEPLOY_FAIL_GEOMETRY"
+      echo "true rc=$geo_rc"
+      exit "$geo_rc"
       ;;
   esac
 fi
+
+if [[ "$DEPLOY_FINAL_RC" -ne 0 ]]; then
+  echo "verdict=$DEPLOY_FINAL_VERDICT"
+  echo "DEPLOY_INCOMPLETE host_md5=$HOST_MD5 live_verified=1 geometry_gap=1"
+  report_rc "deploy_overall" "$DEPLOY_FINAL_RC" || true
+  echo "true rc=$DEPLOY_FINAL_RC"
+  exit "$DEPLOY_FINAL_RC"
+fi
+
+echo "verdict=DEPLOY_OK"
+echo "DEPLOY_OK root=$TARGET_ROOT host_md5=$HOST_MD5 live_md5_verified=1"
+report_rc "deploy_overall" 0
+echo "true rc=0"
