@@ -1,5 +1,17 @@
 # w-lint T1–T5 gate blockers (host-only)
 
+## T5 WITHDRAWN (parent ERROR 20) — DO NOT TREAT AS DEFECT
+
+Parent mis-read `ddr_bank_release_select.hpp` without the enclosing block.
+The file's **HISTORICAL FAULT (fixed…)** note correctly documents that an
+older pack put `bank_vsync_count` into `frames_done`, and that product RTL
+now packs the real swap counter. **Do not rewrite as a "stale comment" fix.**
+
+- Restored canonical HISTORICAL FAULT block from parent-verified main tree.
+- Encoded: `docs/COMMENT_CONTEXT_RULE.md`, `tests/unit/test_comment_context_guard.py`
+- RBG: strip HISTORICAL FAULT → rc=1; bare present-tense claim → rc=1; restore → rc=0
+
+
 **Branch tip at write:** see git. **No device / no Quartus.**
 
 All `true rc` captured **directly** (no pipe).

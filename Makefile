@@ -159,6 +159,8 @@ unit-unlocked: unit-rollcall preflight $(ROOT)/build/test_cadence $(ROOT)/build/
 	python3 $(ROOT)/tests/unit/test_telemetry_provenance_guard.py
 	python3 $(ROOT)/tests/unit/test_exit_code_collision_guard.py --self-test
 	python3 $(ROOT)/tests/unit/test_exit_code_collision_guard.py
+	python3 $(ROOT)/tests/unit/test_comment_context_guard.py --self-test
+	python3 $(ROOT)/tests/unit/test_comment_context_guard.py
 	python3 $(ROOT)/tools/glass_template_skip.py --self-test
 	$(ROOT)/tests/unit/test_restore_misterplexd_prev_refuse.sh
 	$(ROOT)/tests/unit/test_timing_margin_gate.sh

@@ -60,3 +60,30 @@ When adding or editing a measurement tool under `tools/` or `tests/hw/`:
 
 `rc=77` / `UNSCORED` is **never** a pass in aggregate reporting  
 (`scripts/run_with_skip_summary.py`).
+
+## Null model (statistical gates)
+
+**ERROR class (parent ERROR 20/21 session):** an inference published as a measurement — including comparisons against an **unstated or wrong null**.
+
+Any statistical measurement gate must declare:
+
+1. **null_model** — the distribution or baseline expected under "no effect"
+   - Prefer **data-conditioned nulls** (e.g. i.i.d. draws from observed marginals)
+   - Never imply **"vs ideal 0%"** unless the process truly forbids the event
+2. **How the null was computed** (formula + code path), with provenance tags
+3. **Effect size vs that null**, not vs an unstated ideal
+
+Example (parent-corrected): adjacent-equal holds reported as 29.9% vs "ideal 0%" overstated the finding; correct null from observed marginals was **41.4%**. Against the right null the signal can still stand, but the gate must not use the wrong floor.
+
+Inadequate null declaration → treat like inadequate sampling margin: **UNSCORED rc=77**, never pass/fail on the effect claim.
+
+## Comment / quote context (ERROR 20)
+
+A line-number quote without the enclosing block is not evidence.
+
+- Before flagging a "stale comment", **read the full enclosing comment block**.
+- Text under headings **`HISTORICAL` / `FIXED` / `DO NOT REINTRODUCE` / `HISTORICAL FAULT`** documents a **past** defect and the **current** correct behaviour. It is **not** an assertion that the product still has the fault.
+- Grep-based stale-comment audits that ignore those headings will manufacture false defect reports (ERROR 20).
+
+See also: `docs/COMMENT_CONTEXT_RULE.md`.
+

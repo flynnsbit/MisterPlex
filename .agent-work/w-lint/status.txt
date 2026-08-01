@@ -1,8 +1,10 @@
-lane: w-lint GATE-INTEGRITY
-tip: dd69bb16
-T1 glass RC 2 vs 3 locked; collision guard rc=0; glass --self-test rc=0
-T2 cannot-fail audit in w_lint_T1_T5_GATE_BLOCKERS.md
-T3 docs/SAMPLING_MARGIN.md + glass F4
-T4 deploy incomplete on geo 77; restore rc=10 unit
-T5 frames_done comment fixed
-rollcall 134
+lane=w-lint GATE-INTEGRITY
+branch=w-lint-gate-integrity
+focus=T5 WITHDRAWN (ERROR 20); HISTORICAL FAULT restored; comment_context_guard; null model docs
+tip_pending=pre-commit
+rules=no device; no Quartus; rc direct; 77!=pass; never weaken gates
+T5=WITHDRAWN HISTORICAL FAULT intact comment_context_guard rc=0
+T1=glass RC split SKIP_FAIL=2 INSTRUMENT=3 collision_guard
+T3=SAMPLING_MARGIN + null_model + COMMENT_CONTEXT
+T4=deploy deferred overall; restore refuse 10
+orphan_TIER1=RED intentional (cadence/present_cadence)
