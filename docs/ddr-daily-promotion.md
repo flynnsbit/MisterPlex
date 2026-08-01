@@ -19,6 +19,81 @@ Parent-owned device work only. Agents produce artifacts and commands; they must
 4. Both directions: `bash tests/unit/test_deploy_misterplexd.sh`
    (`dir-green-deploy-ok-rc0`, `dir-red-no-deploy-ok`, `miss-dep-rc2`).
 
+
+
+## Minimum rollback post-conditions (answer to rd-review)
+
+rd-review open item: *"`deploy_misterplexd.sh` exits 0 on failed deploy; `restore_misterplexd_prev.sh` has no enforced post-conditions."*
+
+**Status on this branch (`fix/rollback-honest`):** both fixed. Deploy: early deps + live `/proc/exe` + terminal `DEPLOY_OK` only. Restore: no `PAIR_ID` → `true rc=10`; with `PAIR_ID` → `rollback_v2.sh` which enforces the HARD set below.
+
+### HARD (any fail ⇒ rollback FAILED, rc ≠ 0)
+
+| ID | Check | Why |
+|----|-------|-----|
+| **H1** | `n_daemon==1` via `/proc/[0-9]*` + `comm`/`argv0` basename `misterplexd`, then `readlink -f $p/exe` | No pgrep (busybox). No cmdline substring (flock trap). |
+| **H2** | live exe md5 == intended daemon pin | Disk path alone is ETXTBSY-class blind. |
+| **H3** | loaded core **path** md5 == intended pin (`Plex.rbf` or `Plex_v2.rbf`) | Product vs SPI naming trap. |
+| **H4** | `pair_policy_check(core,daemon)==PAIR_OK` | bank1 SPI `0x30040000` vs DDR `0x30080000` — mixed = black/green. |
+| **H5** | HTTP `:3005/resources` ∈ {200,204} | Necessary, **not** sufficient alone. |
+| **H6** | conf md5 == pre-swap backup (byte-exact) | USER-OWNED; path from cmdline `--conf` only. |
+| **H7** | `PRESENT=fpga\|both` (assert, never rewrite) | `fb0` freezes idle (`initPresent` skips `fpga_.open`). |
+
+### SOFT only (record; never sole PASS)
+
+- **S1 `CORENAME=Plex`** — parent proposed as HARD; **disagree**. Every `Plex*.rbf` reports Plex. Useless as pair proof.
+- Disk `misterplexd` md5 without live `/proc/exe`.
+- `/resources` alone (mixed pair can still answer 200).
+
+### CLAIM (product)
+
+- Viewed pixels. Telemetry never enough.
+- On **c5382bee**: `frames_done` packs `bank_vsync_count` (vsync free-run). ARM STALE at `fpga_spi.cpp:1388-1394` stays "live" if swaps freeze. **Do not** claim core health from `frames_done` alone.
+
+Print the set: `./scripts/rbf_swap_preflight.sh min-postcond; echo "true rc=$?"`
+
+## Pre-RBF-swap preflight (before w-fit-1 / next product core)
+
+Deployed product `c5382bee…` has the STALE-blind defect above. **Snapshot before swap; prove rollback against snapshot.**
+
+```bash
+cd .worktrees/rollback-honest   # or merge fix/rollback-honest
+git rev-parse --short HEAD
+
+# 1) Host plan + banned check (set NEW_RBF when fit lands)
+NEW_RBF=/path/to/new_Plex.rbf ./scripts/rbf_swap_preflight.sh plan
+echo "true rc=$?"
+
+# 2) Device READ-ONLY snapshot (parent only)
+OUT=./build/preflight-$(date -u +%Y%m%dT%H%M%SZ)
+PREFLIGHT_EXECUTE=1 OUT=$OUT NEW_RBF=$NEW_RBF   ./scripts/rbf_swap_preflight.sh snapshot
+echo "true rc=$?"
+# artifacts: snapshot.txt conf_pre.conf conf_pre.md5 pins.env rollback_cmds.sh
+
+# 3) ONE menu deploy discipline
+DEPLOY_LOAD=none ./scripts/deploy_plex_core.sh "$NEW_RBF"
+DEPLOY_LOAD=menu DEPLOY_SKIP_COPY=1 ./scripts/deploy_plex_core.sh
+# never thrash load_core; never kill -9 storms
+
+# 4) If bad — atomic SPI undo (core+daemon+conf)
+PAIR_ID=spi-v2-hybrid \
+  ROLLBACK_DAEMON=${ROLLBACK_DAEMON:-artifacts/daemon-pins/misterplexd.50f4eb92} \
+  PAIR_CONF_RESTORE_FILE=$OUT/conf_pre.conf \
+  PAIR_IDLE_PNG=/path/to/idle.png \
+  scripts/rollback_v2.sh restore
+echo "true rc=$?"
+
+# 5) Score rollback vs snapshot HARD set
+PREFLIGHT_EXECUTE=1 SNAP=$OUT \
+  EXPECT_DAEMON_MD5=<spi_or_bak_pin> \
+  EXPECT_CORE_MD5=dfebf2bfd08dd70b473b587dd7e81848 \
+  ./scripts/rbf_swap_preflight.sh verify-rollback
+echo "true rc=$?"
+```
+
+Host both-direction unit (no device):
+`bash tests/unit/test_rbf_swap_preflight.sh` — green mock ⇒ rc0; red n_daemon/http/conf/PRESENT ⇒ rc9.
+
 ## RBF rollback before next fit
 
 Product: `/media/fat/_Utility/Plex.rbf` (`c5382bee…`). Prove rollback on host first:
