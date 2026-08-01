@@ -162,27 +162,28 @@ inline AvAction avDecide(int64_t driftMs, int64_t leadMs, int64_t dropMs, int dr
 //
 // Silicon soaks (rk=8, 360 s, identical conf): startup drops ONLY, then flat.
 //   run1 drops=15, run2 drops=12 — variance on byte-identical config.
-//   Measured A/V offset differed by ~119 ms between those two runs.
+//   100% startup drops; zero steady-state (sawtooth model FALSIFIED).
 // Co-arm cleared drops but worsened grabber offset (−168 → −456).
-// Ideal HOLD (lead=0 at frame1) predicts drops 0–2; silicon 12–15 means a
+// Ideal HOLD (lead=0 at frame1) predicts drops 0–2; silicon 12–18 means a
 // residual lead remains after gate open (hold-dump race), not content mismatch.
 //
-// Product path (media_player.cpp Drop branch): skip present, immediately take
-// the next pipe frame. Audio pump is a concurrent thread on wall time. Relative
-// to frameIndex, a fast Drop freezes the audible clock while frameMs jumps
-// +period → drift falls ~one frame. Present spends ~one content period of wall
-// so audio advances with picture. maxDropRun=1 forces Drop/Present alternation
-// until drift ≤ resyncDropMs (80), then quiet — matches "all drops in first ~7s".
+// PARENT FLEET 2026-07-31 — H-DROP REJECTED: startup drop count does NOT set
+// HDMI lip-sync offset (12-drop and 18-drop same cluster within 0.7 ms).
+// av_drift_ms / clock=av-lock are blind to real lip-sync (servo deadband);
+// only tools/avsync_measure_hdmi.py judges lip-sync. Do NOT map Δdrops→Δoffset.
 //
-// First-principles walls (not fitted to a short EarlyPlay window):
-//   Drop  wall ≈ 0  (next frame already in hand / cheap skip)
-//   Present wall ≈ period @24fps (1000/24 = 41)
-// Map: residual lead 588→12 drops, 715→15 drops; Δlead=127 ms ≈ parent Δoffset 119.
+// Product path (media_player.cpp Drop): skip present, next pipe frame ASAP.
+// Audio pump concurrent. Fast Drop freezes audible vs frameIndex; frameMs
+// jumps +period → drift falls ~one frame. Present ~period wall. maxDropRun=1
+// staircase until drift ≤ 80, then quiet — matches "all drops in first ~7s".
 //
-// Residual lead sources after hold gate (timing-sensitive, NOT content):
-//   held_ms = f(T_first_video); writePacedChunk past-bias kFeedTargetMs=100;
-//   audibleClockMs submitted fallback while queuedBytes<0; video present lag.
-// PRIMARY falsifiable output: predicted_startup_drops (HW band 12–15).
+// First-principles walls: Drop≈0; Present≈period @24fps (1000/24=41).
+// Map (DROP COUNT only): lead 588→12, 715→15; Δlead=127 ms ≈3*period geometry,
+// NOT a claim about HDMI offset clusters.
+//
+// Residual lead after hold gate (timing-sensitive, NOT content): held_ms,
+// kFeedTargetMs past-bias, submitted-clock fallback, video lag.
+// PRIMARY falsifiable output: predicted_startup_drops (HW band ~12–18).
 
 enum class StartupAudioMode { EarlyPlay, CoArmOrigin, HoldUntilVideo };
 
@@ -401,6 +402,77 @@ inline MultiSessionStartupSim simulateMultiSessionStartup(int sessions, int64_t 
     }
     return out;
 }
+
+// --- Cluster / quantum discrimination (grabber medians) ----------------------
+// Parent lab: two discrete offset clusters ~120 ms apart; within-cluster
+// spread 0.7–2 ms; av_drift_ms blind to the gap. A 42 ms PASS band cannot
+// tell 100 ms (kFeedTarget) from 125 ms (3 frames @ 24.000). Use mean |Δ−q|
+// over CROSS-cluster median deltas and require a margin.
+//
+// Convention: deltas are absolute |median_i − median_j| for pairs that land
+// in different clusters. Smaller meanAbsErr wins.
+
+struct QuantumFit {
+    double quantumMs = 0;
+    double meanAbsErr = 0;
+    double rmse = 0;
+    int n = 0;
+};
+
+inline QuantumFit scoreQuantumFit(const double* absCrossDeltasMs, int n, double quantumMs) {
+    QuantumFit f{};
+    f.quantumMs = quantumMs;
+    f.n = n < 0 ? 0 : n;
+    if (f.n == 0 || !absCrossDeltasMs || quantumMs <= 0)
+        return f;
+    double sae = 0;
+    double sse = 0;
+    for (int i = 0; i < f.n; ++i) {
+        double d = absCrossDeltasMs[i];
+        if (d < 0)
+            d = -d;
+        const double e = d - quantumMs;
+        const double ae = e < 0 ? -e : e;
+        sae += ae;
+        sse += ae * ae;
+    }
+    f.meanAbsErr = sae / static_cast<double>(f.n);
+    const double mse = sse / static_cast<double>(f.n);
+    // Newton sqrt, header-only (no <cmath>).
+    if (mse <= 0) {
+        f.rmse = 0;
+    } else {
+        double r = mse;
+        for (int k = 0; k < 12; ++k)
+            r = 0.5 * (r + mse / r);
+        f.rmse = r;
+    }
+    return f;
+}
+
+// True when winner's mean abs err beats loser by at least minMarginMs.
+// Parent tol_ms=42 cannot separate 100 vs 125 for a single ~120 delta;
+// margin test on the *error difference* can (need |err100-err125| >= minMargin).
+inline bool quantumFitBeats(const QuantumFit& winner, const QuantumFit& loser,
+                            double minMarginMs) {
+    if (winner.n <= 0 || loser.n <= 0 || winner.n != loser.n)
+        return false;
+    if (minMarginMs < 0)
+        minMarginMs = 0;
+    return (loser.meanAbsErr - winner.meanAbsErr) >= minMarginMs;
+}
+
+// Steady pipeline lead difference → grabber Δ (sign: neg = audio leads).
+// grabber(lead) ≈ −lead for content-aligned markers after lock.
+// Discriminates 100 vs 125 by construction: Δgrabber = −(L1−L2).
+inline int64_t steadyGrabberDeltaForLeadsMs(int64_t leadAMs, int64_t leadBMs) {
+    // grabber(A) - grabber(B) = (−leadA) − (−leadB) = leadB − leadA
+    return leadBMs - leadAMs;
+}
+
+// Prefill quantum (product) and 3-frame @ 24.000 fps.
+constexpr int64_t kPrefillQuantumMs = kFeedTargetMs;          // 100
+constexpr int64_t kThreeFrame24Ms = (1000 * 3) / 24;          // 125 exactly (integer)
 
 inline bool rawVideoTerminalSignal(bool explicitStopOrSeek, bool readZero, bool readError,
                                    bool shortRead, bool knownDurationStall) {

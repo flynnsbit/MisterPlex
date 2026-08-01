@@ -388,6 +388,11 @@ private:
     // cannot race ahead of picture (silicon: co-arm hid a ~206 ms lead and made
     // real lip-sync ~288 ms worse). Release is a real start, not a clock re-base.
     std::atomic<bool> audioStartGate_{false};
+    // Session A/V origin as steady_clock ms since epoch. Set when t0 is latched
+    // at first complete video frame (gate open). -1 = not yet armed.
+    // Cluster instrument places first_audio_pcm / audio_release / first_video on
+    // mono_ms (always) and wall_s (only after origin is armed). Never invent 0.
+    std::atomic<int64_t> sessionOriginMonoMs_{-1};
     std::atomic<bool> streamActive_{false};
     std::atomic<int64_t> reconFrames_{0};
     std::atomic<bool> reconPresentOk_{false}; // at least one recon → F1/fb0 this session

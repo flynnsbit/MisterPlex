@@ -23,7 +23,8 @@ green_checks() {
   grep -q 'ring drop HEAD' "$mp" || return 1
   if grep -q 'keeping stream start, dropping tail' "$mp"; then return 1; fi
   if grep -q 'no auto-release without video' "$mp"; then return 1; fi
-  if grep -q 'suppressStartupPrefill' "$mp"; then return 1; fi
+  # Name may appear in comments documenting removal; fail only on live use.
+  if grep -nE 'suppressStartupPrefill\s*[=;(]' "$mp" >/dev/null; then return 1; fi
   grep -q 'holdRingAppendDropHead' "$av" || return 1
   grep -q 'kStartupDropWallMs' "$av" || return 1
   grep -q 'grabberOffsetMs' "$av" || return 1
@@ -89,7 +90,10 @@ for need in \
   'PASS hold no-video' \
   'PRE_REGISTER HOLD_IDEAL predicted_startup_drops' \
   'PRE_REGISTER residual_lead_ms for drops=12' \
-  'SIGN_CONVENTION grabber_offset_ms'; do
+  'SIGN_CONVENTION grabber_offset_ms' \
+  'CRITERION lip_sync=tools/avsync_measure_hdmi.py ONLY' \
+  'H_DROP_STATUS REJECTED' \
+  'MISS_PUBLISHED H-DROP'; do
   printf '%s\n' "$TIP_OUT" | grep -q "$need" || { echo "missing $need" >&2; exit 1; }
 done
 # PRIMARY discrimination: exact silicon soak drop counts (12 and 15).

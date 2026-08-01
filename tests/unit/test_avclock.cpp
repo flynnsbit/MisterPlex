@@ -156,9 +156,18 @@ int main() {
     // Grabber convention (lab): offset_ms = t_audio_onset - t_video_flash;
     //   negative ⇒ audio LEADS. All printed offsets below use that sign.
     // Silicon soaks (parent): startup drops ONLY (first ~7 s), then flat;
-    //   run1 drops=15, run2 drops=12 on identical conf; Δoffset ≈ 119 ms.
+    //   run1 drops=15, run2 drops=12 on identical conf. Steady-state sawtooth
+    //   FALSIFIED. H-DROP REJECTED: drop count does NOT set HDMI offset clusters.
+    //   av_drift_ms / av-lock are NOT lip-sync evidence (servo deadband).
+    //   Lip-sync judge: tools/avsync_measure_hdmi.py only.
     std::printf("SIGN_CONVENTION grabber_offset_ms = t_audio_onset - t_video_flash; "
                 "negative = audio LEADS (matches tools/avsync_measure_hdmi.py)\n");
+    std::printf("CRITERION lip_sync=tools/avsync_measure_hdmi.py ONLY; "
+                "av_drift_ms and clock=av-lock are NOT soak PASS criteria "
+                "(parent fleet: five runs identical av_drift~-30, HDMI offset clusters "
+                "116 ms apart)\n");
+    std::printf("H_DROP_STATUS REJECTED by parent: 12-drop and 18-drop same HDMI "
+                "cluster (0.7 ms); do not map drops→offset\n");
     CHECK(coArmedClockMs(206, 206) == 0);
     CHECK(grabberOffsetMs(206, 41) == -165);
     CHECK(realContentOffsetMs(206, 41) == 165);
@@ -214,10 +223,11 @@ int main() {
             return 1;
         }
 
-        // Lead variance ⇒ drop variance (12 vs 15). dLead ≈ parent Δoffset 119 ms.
+        // Lead variance ⇒ DROP COUNT variance (12 vs 15). dLead ≈ 3*period is a
+        // geometric property of the repay model — NOT HDMI offset (H-DROP rejected).
         const auto sweep = sweepEarlyPlayDrops(/*lo*/ 500, /*hi*/ 800, /*step*/ 1, kFrames);
         std::printf("startup_sim EARLY_SWEEP lead_ms=[%d,%d] drops=[%d,%d] "
-                    "L12=%d L15=%d n=%d (HW soak band target [12,15])\n",
+                    "L12=%d L15=%d n=%d (HW soak drop-count band [12,15]; NOT offset)\n",
                     sweep.leadMinMs, sweep.leadMaxMs, sweep.dropsMin, sweep.dropsMax,
                     sweep.leadForDrops12, sweep.leadForDrops15, sweep.nLeads);
         CHECK(sweep.dropsMin <= 12);
@@ -225,8 +235,9 @@ int main() {
         CHECK(sweep.leadForDrops12 > 0);
         CHECK(sweep.leadForDrops15 > sweep.leadForDrops12);
         const int dLead = sweep.leadForDrops15 - sweep.leadForDrops12;
+        // ≈3 content periods @24fps (1000/24≈41.7 → ~125 ms). Band is model geometry.
         CHECK(dLead >= 100);
-        CHECK(dLead <= 140); // parent Δoffset 119 ms
+        CHECK(dLead <= 140);
         if (sweep.leadForDrops12 < 0 || sweep.leadForDrops15 < 0 || dLead < 100 || dLead > 140) {
             std::fprintf(stderr, "FAIL: sweep L12=%d L15=%d dLead=%d\n", sweep.leadForDrops12,
                          sweep.leadForDrops15, dLead);
@@ -277,7 +288,7 @@ int main() {
         std::printf("PRE_REGISTER mechanism: startup drops repay residual audio lead "
                     "after gate open; count = f(held_ms / dump race), NOT content bytes\n");
         std::printf("PRE_REGISTER residual_lead_ms for drops=12 ~= %d; for drops=15 ~= %d; "
-                    "dLead=%d (parent Δoffset 119 ms)\n",
+                    "dLead=%d (model geometry ~3*period; NOT HDMI offset — H-DROP rejected)\n",
                     sweep.leadForDrops12, sweep.leadForDrops15, dLead);
         std::printf("PRE_REGISTER HOLD_IDEAL predicted_startup_drops=[0,2] "
                     "falsify_if_drops_ge=10 when residual lead proven 0 "
@@ -286,10 +297,14 @@ int main() {
                     "held_ms varies ~620..745 (T_first_video timing); "
                     "falsify_if_equal_held_ms_yields_delta_drops_ge_3\n");
         std::printf("PRE_REGISTER note: kFeedTargetMs=%lld past-bias always on after gate; "
-                    "ERROR 17 retracted (fps=24/1 is correct for these fixtures)\n",
+                    "ERROR 17 retracted (fps=24/1 is correct for these fixtures); "
+                    "lip_sync criterion = avsync_measure_hdmi.py only\n",
                     static_cast<long long>(kFeedTargetMs));
+        std::printf("MISS_PUBLISHED H-DROP: w-cpu linked dLead~127 to parent Δoffset 119; "
+                    "parent measured 12-drop and 18-drop in SAME HDMI cluster — rejected\n");
         std::printf("PASS startup drop variance: drops12=%d drops15=%d dLead=%d "
-                    "hold_ideal_drops=%d coarm_drops=%d race_small_drops=%d\n",
+                    "hold_ideal_drops=%d coarm_drops=%d race_small_drops=%d "
+                    "(drop COUNT model only; not lip-sync)\n",
                     early12.drops, early15.drops, dLead, holdIdeal.drops, coarm.drops,
                     raceSmall.drops);
     }
@@ -385,6 +400,94 @@ int main() {
                     static_cast<long long>(before.heldBytes),
                     static_cast<long long>(kAudioHoldTimeoutMs), after.timedOpen ? 1 : 0,
                     static_cast<long long>(before.droppedHeadBytes));
+    }
+
+    // --- 100 ms prefill vs 125 ms (3 frames @ 24.000) discrimination --------
+    // Parent tol_ms=42 cannot separate them as explanations of a ~120 ms gap.
+    // Host test: (1) steady-lead Δ is exact; (2) mean-|Δ−q| margin picks a winner.
+    {
+        CHECK(kPrefillQuantumMs == 100);
+        CHECK(kThreeFrame24Ms == 125);
+        CHECK(kFeedTargetMs == 100);
+        // Steady grabber delta between two pipeline leads (grabber sign).
+        CHECK(steadyGrabberDeltaForLeadsMs(100, 125) == 25);  // leadB−leadA
+        CHECK(steadyGrabberDeltaForLeadsMs(125, 100) == -25);
+        CHECK(grabberOffsetMs(100, 0) == -100);
+        CHECK(grabberOffsetMs(125, 0) == -125);
+        CHECK(grabberOffsetMs(100, 0) - grabberOffsetMs(125, 0) == 25);
+
+        // Synthetic cross-cluster |Δ| set centered on 125 (with small noise).
+        const double around125[] = {122.0, 119.3, 120.0, 121.3, 108.0, 108.7};
+        // 108 appears when one A-member is -304.7 not -316 — still cross-cluster.
+        const int nD = 6;
+        const auto fit100 = scoreQuantumFit(around125, nD, 100.0);
+        const auto fit125 = scoreQuantumFit(around125, nD, 125.0);
+        std::printf("quantum_fit n=%d fit100_mae=%.3f fit125_mae=%.3f "
+                    "margin_125_over_100=%.3f (tol_ms=42 cannot claim either alone)\n",
+                    nD, fit100.meanAbsErr, fit125.meanAbsErr,
+                    fit100.meanAbsErr - fit125.meanAbsErr);
+        CHECK(fit125.meanAbsErr < fit100.meanAbsErr);
+        // Margin test: require ≥5 ms better mean abs err to claim a winner.
+        // Single-delta |120-100|=20 and |120-125|=5 both < 42 → band is blind.
+        CHECK(quantumFitBeats(fit125, fit100, /*minMarginMs=*/5.0));
+        CHECK(!quantumFitBeats(fit100, fit125, 5.0));
+
+        // Control: pure-100 deltas must prefer 100 with margin.
+        const double around100[] = {100.0, 99.0, 101.5, 100.5};
+        const auto c100 = scoreQuantumFit(around100, 4, 100.0);
+        const auto c125 = scoreQuantumFit(around100, 4, 125.0);
+        CHECK(quantumFitBeats(c100, c125, 5.0));
+
+        // Lone |Δ|=120: tol_ms=42 band accepts BOTH quanta (vacuous), but
+        // mean-|Δ−q| margin prefers 125 (err 5 vs 20).
+        const double lone120[] = {120.0};
+        const auto l100 = scoreQuantumFit(lone120, 1, 100.0);
+        const auto l125 = scoreQuantumFit(lone120, 1, 125.0);
+        CHECK(l100.meanAbsErr == 20.0);
+        CHECK(l125.meanAbsErr == 5.0);
+        CHECK(l100.meanAbsErr < 42.0 && l125.meanAbsErr < 42.0); // band blind
+        CHECK(quantumFitBeats(l125, l100, 5.0));                 // margin sees it
+
+        // Lab cross-cluster |Δ| from CLUSTER_ANALYSIS (A×B pairs only):
+        // orig-rep2=121.33, orig-rep3=122, rep1-rep2=119.33, rep1-rep3=120,
+        // rep2-rep4=108, rep3-rep4=108.67  (rep4 is A at -304.7)
+        const double labCross[] = {121.33, 122.0, 119.33, 120.0, 108.0, 108.67};
+        const auto lab100 = scoreQuantumFit(labCross, 6, 100.0);
+        const auto lab125 = scoreQuantumFit(labCross, 6, 125.0);
+        std::printf("LAB_CROSS_QUANTUM n=6 mae100=%.3f mae125=%.3f prefer=%s margin=%.3f\n",
+                    lab100.meanAbsErr, lab125.meanAbsErr,
+                    (lab125.meanAbsErr < lab100.meanAbsErr) ? "125_three_frame" : "100_prefill",
+                    (lab100.meanAbsErr > lab125.meanAbsErr)
+                        ? (lab100.meanAbsErr - lab125.meanAbsErr)
+                        : (lab125.meanAbsErr - lab100.meanAbsErr));
+        // Evidence note only — do NOT hard-fail the suite on lab preference;
+        // publish which quantum currently wins under the margin rule.
+        const bool labPrefers125 = quantumFitBeats(lab125, lab100, 5.0);
+        const bool labPrefers100 = quantumFitBeats(lab100, lab125, 5.0);
+        std::printf("LAB_CROSS_VERDICT prefers125=%d prefers100=%d (need margin>=5; "
+                    "else INCONCLUSIVE)\n",
+                    labPrefers125 ? 1 : 0, labPrefers100 ? 1 : 0);
+
+        // PRE_REGISTER HOLD vs cluster structure (parent hardware).
+        // HOLD still past-biases kFeedTargetBytes (media_player.cpp writePacedChunk);
+        // it does NOT remove the 100 ms prefill quantum.
+        std::printf("PRE_REGISTER HOLD_vs_CLUSTERS:\n");
+        std::printf("  fact: HOLD does NOT strip kFeedTarget prefill (always past-bias)\n");
+        std::printf("  if clusters = startup residual discreteness: HOLD ideal collapses "
+                    "to ONE cluster; between-run |Δmedian| < 40 ms over n>=4 soaks; "
+                    "medians LESS audio-lead than cluster A (more positive than A mean)\n");
+        std::printf("  if clusters = prefill on/off or dual depth: HOLD leaves A/B intact "
+                    "(prefill still always-on) — falsify collapse claim\n");
+        std::printf("  if clusters = external (PMS cache etc): HOLD leaves A/B intact\n");
+        std::printf("  falsify_collapse: after HOLD, some pair |median_i-median_j| >= 80 ms\n");
+        std::printf("  falsify_less_lead: HOLD medians still <= A_mean-20 (still as lead-y as A)\n");
+        std::printf("  do_not_sell: lipsync fix; sell startup frame preservation only\n");
+        std::printf("PASS quantum discrimination: prefill=%lld three_frame=%lld "
+                    "steady_dGrab=%lld lab_prefers125=%d\n",
+                    static_cast<long long>(kPrefillQuantumMs),
+                    static_cast<long long>(kThreeFrame24Ms),
+                    static_cast<long long>(steadyGrabberDeltaForLeadsMs(100, 125)),
+                    labPrefers125 ? 1 : 0);
     }
 
     if (fails) {

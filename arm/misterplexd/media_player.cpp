@@ -34,6 +34,15 @@
 namespace misterplex {
 namespace {
 
+// Steady-clock ms since epoch — shared axis for startup cluster instrumentation.
+// wall_s is session-relative (only after sessionOriginMonoMs_ is armed). mono_ms
+// is always available so first_audio_pcm (pre-origin) and first_video share one axis.
+inline int64_t steadyMonoMs() {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(
+               std::chrono::steady_clock::now().time_since_epoch())
+        .count();
+}
+
 // PMS universal already bakes offset= (seconds). Applying FFmpeg -ss again double-seeks
 // and breaks resume / mid-play scrub on STREAM=0 cast. Timeline still uses startMs.
 inline bool isUniversalTranscodeUrl(const std::string& url) {
@@ -1059,6 +1068,7 @@ void MediaPlayer::killChildren() {
     }
     audioActive_.store(false);
     audioStartGate_.store(false);
+    sessionOriginMonoMs_.store(-1, std::memory_order_release);
     streamActive_.store(false);
 }
 
@@ -2088,6 +2098,7 @@ void MediaPlayer::audioPump(int afd) {
     bool holdOverflowLogged = false;
     bool holdTimeoutLogged = false;
     bool releaseLogged = false;
+    bool firstAudioPcmLogged = false;
     auto holdSince = std::chrono::steady_clock::time_point{};
     int64_t lastHoldWaitLogMs = -1;
     size_t total = 0;
@@ -2132,10 +2143,11 @@ void MediaPlayer::audioPump(int afd) {
             }
             audioBytes_.fetch_add(static_cast<int64_t>(n));
 
-            // Anchor on the first chunk actually written. Normal path biases one
-            // target-depth into the past so the ring prefills; hold-drain path
-            // starts at `now` so held content plays in realtime with video.
-            // Always past-bias prefill (cold-start, seek, hold-release same).
+            // Anchor on the first chunk actually written. Always past-bias by
+            // kFeedTargetBytes (~100 ms) so the ring prefills — cold-start,
+            // seek, and hold-release share this path (suppressStartupPrefill
+            // was removed: a zero-prefill open introduced a time-varying lipsync
+            // term). HOLD does NOT remove this prefill quantum.
             if (!audioClockStarted) {
                 audioClockStarted = true;
                 audioDue = std::chrono::steady_clock::now() -
@@ -2280,6 +2292,26 @@ void MediaPlayer::audioPump(int afd) {
         // Always scan pump-input PCM (hold path and live path share this read).
         noteSilence(buf, static_cast<size_t>(n));
 
+        // First ffmpeg PCM byte on the pump — BEFORE gate open / MrAudio write.
+        // Cluster instrument: mono_ms always; wall_s only if session origin armed
+        // (usually NO-DATA here because origin latches at first video).
+        if (!firstAudioPcmLogged) {
+            firstAudioPcmLogged = true;
+            const int64_t mono = steadyMonoMs();
+            const int64_t origin = sessionOriginMonoMs_.load(std::memory_order_acquire);
+            std::string wallField = " wall_s=NO-DATA";
+            if (origin >= 0) {
+                const double ws = static_cast<double>(mono - origin) / 1000.0;
+                wallField = " wall_s=" + std::to_string(ws).substr(0, 8);
+            }
+            log("media: first_audio_pcm mono_ms=" + std::to_string(mono) + wallField +
+                " nbytes=" + std::to_string(n) +
+                " gate=" +
+                std::string(audioStartGate_.load(std::memory_order_acquire) ? "open"
+                                                                           : "closed") +
+                " (cluster axis; pre-MrAudio)");
+        }
+
         if (!audioStartGate_.load(std::memory_order_acquire)) {
             const size_t nn = static_cast<size_t>(n);
             holdBuf.insert(holdBuf.end(), buf, buf + nn);
@@ -2304,17 +2336,25 @@ void MediaPlayer::audioPump(int afd) {
             const auto rel = misterplex::checkAudioReleaseOrigin(
                 writtenBefore, static_cast<int64_t>(holdBuf.size()));
             const char* why = holdTimeoutLogged ? "hold_timeout" : "first_video_or_path";
+            const int64_t mono = steadyMonoMs();
+            const int64_t origin = sessionOriginMonoMs_.load(std::memory_order_acquire);
+            std::string wallField = " wall_s=NO-DATA";
+            if (origin >= 0) {
+                const double ws = static_cast<double>(mono - origin) / 1000.0;
+                wallField = " wall_s=" + std::to_string(ws).substr(0, 8);
+            }
+            const std::string axis = " mono_ms=" + std::to_string(mono) + wallField;
             if (!rel.ok) {
                 log("ERROR media: audio release content_origin_ms=" +
                     std::to_string(rel.contentOriginMs) +
                     " audio_bytes_at_release=" + std::to_string(rel.audioBytesAtRelease) +
-                    " held_ms=" + std::to_string(rel.heldMs) + " reason=" + why +
+                    " held_ms=" + std::to_string(rel.heldMs) + " reason=" + why + axis +
                     " — hold bypassed (co-arm-class lead risk)");
             } else {
                 log("media: audio release content_origin_ms=0"
                     " audio_bytes_at_release=0 held_bytes=" +
                     std::to_string(holdBuf.size()) + " held_ms=" + std::to_string(rel.heldMs) +
-                    " reason=" + why +
+                    " reason=" + why + axis +
                     " (held PCM continuous with live; stops startup frame drops)");
             }
             constexpr size_t kChunk = 3840;
@@ -2868,9 +2908,11 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
         if (apipe[0] >= 0) {
             // Closed until first complete video frame — see audioPump hold path.
             audioStartGate_.store(false, std::memory_order_release);
+            sessionOriginMonoMs_.store(-1, std::memory_order_release);
             audioThr_ = std::thread([this, afd = apipe[0]] { audioPump(afd); });
         } else {
             audioStartGate_.store(true, std::memory_order_release);
+            sessionOriginMonoMs_.store(-1, std::memory_order_release);
         }
         std::vector<uint8_t> frame(frameBytes);
         // Zero-init → green-cast under any underfill (U=V=0). Studio black
@@ -3157,8 +3199,10 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                         const auto fv = std::chrono::steady_clock::now();
                         const double fvWall =
                             std::chrono::duration<double>(fv - t0).count();
+                        const int64_t mono = steadyMonoMs();
                         log("media: first_video_present wall_s=" +
                             std::to_string(fvWall).substr(0, 6) +
+                            " mono_ms=" + std::to_string(mono) +
                             " av_drift_ms=" + std::to_string(avDriftMs_.load()) +
                             " frames=" + std::to_string(frameIndex) +
                             " presents=1"
@@ -3445,30 +3489,36 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                     avAudioReleased = true;
                     t0 = std::chrono::steady_clock::now();
                     lastCompleteVideoFrame = t0;
+                    // Arm shared origin for cluster axis (audio thread reads this).
+                    const int64_t originMono = steadyMonoMs();
+                    sessionOriginMonoMs_.store(originMono, std::memory_order_release);
                     // Gate open is the physical start. content_origin must be 0:
                     // audioBytes_ is only incremented on MrAudio write, which the
                     // hold path forbids while the gate is closed.
                     const int64_t writtenBefore = audioBytes_.load();
                     const auto rel = misterplex::checkAudioReleaseOrigin(writtenBefore, /*held*/ 0);
                     audioStartGate_.store(true, std::memory_order_release);
+                    const std::string axis = " mono_ms=" + std::to_string(originMono) +
+                                             " wall_s=0.000";
                     if (wantAudio && audioActive_.load()) {
                         if (!rel.ok) {
                             log("ERROR media: A/V audio_release first_frame=" +
                                 std::to_string(frameIndex) +
                                 " content_origin_ms=" + std::to_string(rel.contentOriginMs) +
                                 " audio_bytes_at_release=" +
-                                std::to_string(rel.audioBytesAtRelease) +
+                                std::to_string(rel.audioBytesAtRelease) + axis +
                                 " — hold bypassed before gate open");
                         } else {
                             log("media: A/V audio_release first_frame=" +
                                 std::to_string(frameIndex) +
-                                " content_origin_ms=0 audio_bytes_at_release=0"
+                                " content_origin_ms=0 audio_bytes_at_release=0" + axis +
                                 " (MrAudio starts; held PCM from content t=0)");
                         }
                     } else {
                         log("media: A/V audio_release first_frame=" +
                             std::to_string(frameIndex) +
-                            " content_origin_ms=0 (wall clock; audio inactive)");
+                            " content_origin_ms=0" + axis +
+                            " (wall clock; audio inactive)");
                     }
                 }
                 // Live OSD trim is read every frame so the menu takes effect at once.
@@ -3523,13 +3573,14 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                     ++prof.drops;
                 // Every drop (not every 24th): startup-window instrument needs
                 // wall_s of EACH drop. Steady state is zero drops so volume is
-                // ~12–17 lines per session open only.
+                // ~12–17 lines per session open only. mono_ms joins cluster axis.
                 {
                     const auto dropNow = std::chrono::steady_clock::now();
                     const double dropWallS =
                         std::chrono::duration<double>(dropNow - t0).count();
                     log("media: A/V resync drop wall_s=" +
                         std::to_string(dropWallS).substr(0, 6) +
+                        " mono_ms=" + std::to_string(steadyMonoMs()) +
                         " drift_ms=" + std::to_string(avDriftMs_.load()) +
                         " drops=" + std::to_string(dropsNow) +
                         " frames=" + std::to_string(frameIndex) +
