@@ -1,19 +1,9 @@
 worker: w-cpu-1
 task: startup drop-count variance RCA (12 vs 15 in first ~7s)
 branch: w-avsync-hdmi-measure
-sha: b260266e
+sha: 57009a63
 status: DONE
 make_unit: true rc=0
 
-## Result
-- drops ONLY from avDecide Drop (resyncDropMs=80, maxDropRun=1)
-- Mechanism: residual audio lead after hold gate (held_ms/dump race), repaid then quiet
-- NOT content; NOT ERROR17 fps
-- Model: lead 588->12, 715->15; dLead=127 ms ~= parent Deltaoffset 119 ms
-- Hold race unit: held 620/745/120 -> drops 12/15/0
-
-## Artifacts
-- .agent-work/w-cpu-1/STARTUP_DROP_VARIANCE_RCA.md
-- host/libmisterplex/av_clock.hpp
-- tests/unit/test_avclock.cpp
-- tests/unit/test_av_startup_hold_red.sh
+Result: residual lead after hold gate; 588ms->12 drops, 715ms->15; dLead=127~=119 offset
+RCA: .agent-work/w-cpu-1/STARTUP_DROP_VARIANCE_RCA.md
