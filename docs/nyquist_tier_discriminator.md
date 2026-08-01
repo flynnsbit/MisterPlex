@@ -1,5 +1,12 @@
 # 240-vs-480 Nyquist tier discriminator
 
+> **SUPERSEDED FOR GLASS CAST TESTS (parent 2026-08-01).**  
+> H.264 destroys 1-row vertical Nyquist before the core — same failure as the
+> inconclusive spectral cutoff. **w-instr owns `publishDdrFrame` (codec out of
+> loop) for B2.** These MP4s are host-sim / documentation only; **do not cast
+> them to settle 240-vs-480.**
+
+
 ## Problem
 
 Ordinary video is band-limited below the store sampling ceiling. Spectral tests

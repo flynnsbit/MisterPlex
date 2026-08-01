@@ -1,60 +1,66 @@
-# How to play fixture assets (local PMS only)
+# Playbook — A/V sync & soak fixtures (local PMS only)
 
-**Host:** `http://192.168.1.24:32400`  
-**Ignore:** SHIELD `192.168.1.122`, remote `plex.nevertrustaf.art`  
-**Section:** library section **2** (“MiSTerPlex Tests”)  
-**Token:** `$TOK` from your lab file — never commit it.
+**PMS:** `http://192.168.1.24:32400` library section **2**  
+**Ignore:** `192.168.1.122` (SHIELD), `plex.nevertrustaf.art`  
+**Token:** `$TOK` (lab file only — never commit)  
+**Device:** parent only. Agent does not ssh/cast.
 
-## 1. Copy files into the media mount
+## Do not use
 
-PMS docker `plex` mounts `~/plex/media` → `/data`. Movies live in:
+| thing | why |
+|-------|-----|
+| PLXD `frames_done` / `presents` / `drops` / `unaccounted` | vsync mislabel / residual alias on RBF `c5382bee` — **no FPGA observation** |
+| Cast `disc_nyquist_*.mp4` for 240-vs-480 | H.264 kills ceiling energy; **w-instr DDR publish** owns B2 |
+| PMS `videoFrameRate` alone | always ffprobe the file (`r_frame_rate`) |
 
-```bash
-MEDIA=~/plex/media/movies
-cp -f assets/avsync/sync_audio_id_glass_480p24_1800s.mp4 \
-  "$MEDIA/MiSTerPlex AudioID Glass 480p 24fps 1800s (2026).mp4"
-cp -f assets/avsync/sync_audio_id_glass_480p24_60s.mp4 \
-  "$MEDIA/MiSTerPlex AudioID Glass 480p 24fps 60s (2026).mp4"
-cp -f assets/avsync/sync_audio_id_glass_480p24_60s_audioPlus100ms.mp4 \
-  "$MEDIA/MiSTerPlex AudioID Glass 480p 24fps 60s audioPlus100ms (2026).mp4"
-cp -f assets/avsync/sync_glass_av_480p24_600s.mp4 \
-  "$MEDIA/MiSTerPlex AVSync Glass 480p 24fps 600s (2026).mp4"
-cp -f assets/avsync/disc_nyquist_480p_624x480.mp4 \
-  "$MEDIA/MiSTerPlex Disc Nyquist 480p 624x480 (2026).mp4"
-cp -f assets/avsync/disc_nyquist_240p_320x240.mp4 \
-  "$MEDIA/MiSTerPlex Disc Nyquist 240p 320x240 (2026).mp4"
-```
+## RatingKeys (section 2, measured after index)
 
-(Agent may have already copied these; re-copy is safe.)
+| rk | title | use |
+|----|-------|-----|
+| **23** | AudioID Glass 480p 24fps **60s** | quick A/V + checksum audio packets |
+| **24** | AudioID … **audioPlus100ms** | instrument RED (expect ~+100 ms) |
+| **22** | AudioID Glass 480p 24fps **1800s** | long soak + slow drift |
+| **20** | AVSync Glass 480p 24fps **600s** | flash↔beep offset 0 |
+| **21** | AVSync Glass … **audioPlus100ms** | flash↔beep +100 ms |
+| **13** | Glass OCRProof 480p 24fps **600s** | glass frame-ID / drops (video half) |
 
-## 2. Refresh section 2 and read ratingKeys
+If rk missing, re-copy from `assets/avsync/` → `~/plex/media/movies/` and:
 
 ```bash
 curl -sS "http://192.168.1.24:32400/library/sections/2/refresh?X-Plex-Token=$TOK"
-# poll
-curl -sS "http://192.168.1.24:32400/library/sections/2/all?X-Plex-Token=$TOK" \
-  | tr '>' '>\n' | rg -n "AudioID|AVSync|Nyquist|OCRProof|ratingKey"
+curl -sS "http://192.168.1.24:32400/library/sections/2/all?X-Plex-Token=$TOK" | rg "AudioID|AVSync|OCRProof"
 ```
 
-Cast by **ratingKey** via your usual companion / Plex client path to the MiSTer
-(parent-owned). Confirm Direct Play when possible (`MISTERPLEX_BASELINE_KEY` may
-be unenforced).
+Cast by **ratingKey** with your companion path to the MiSTer. Prefer Direct Play.
 
-## 3. Which fixture for which agent
+## Recommended runs
 
-| need | asset | notes |
-|------|-------|-------|
-| w-avsync lipsync | AudioID 60s / 1800s / AVSync glass | checksummed FSK + body flash; +100ms twin for RED |
-| w-instr 240 vs 480 | Disc Nyquist 480 + 240 pair | ceiling energy; see verify JSON |
-| long soak + CPU% | AudioID **1800s** | 10ppm→18ms drift window; sample ARM% yourself |
-| glass frame drops | OCRProof 480p rk13 / AudioID | fixed-width + bars; not PLXD drops |
+1. **Instrument RED/GREEN (w-avsync):** cast **24** (or **21**), expect offset ≈ +100 ms; then **23**/**20**, expect ≈ 0 (plus device bias you measure).  
+2. **Long soak:** cast **22** (1800 s). **Mandatory trim:** drop first **30 s** and last **30 s** before stats (startup/teardown). Sample ARM CPU% concurrently (user requirement).  
+3. **Glass drops only:** cast **13**; decode `G n=DDDDDD c=C` / bars — not PLXD drops.
 
-## 4. ffprobe every time (never trust PMS alone)
+## ffprobe every asset before trusting it
 
 ```bash
 ffprobe -v error -select_streams v:0 \
   -show_entries stream=width,height,r_frame_rate,nb_frames,duration,profile,has_b_frames \
   -of default=noprint_wrappers=1 FILE
+# expect: 624x480, r_frame_rate=24/1, profile=Constrained Baseline, has_b_frames=0
 ```
 
-Expect **r_frame_rate=24/1** on these fixtures (ERROR 17 class).
+## Trimmed duration — minimum for stable estimates
+
+Markers every **2.000 s**. After excluding head+tail **30 s** each:
+
+| goal | math | minimum wall duration |
+|------|------|------------------------|
+| A/V offset median, ~≥100 pairs after trim | pairs ≈ (T−60)/2 ≥ 100 → T−60 ≥ 200 | **T ≥ 260 s** → use **rk20/21 (600 s)** |
+| Drop rate SE ≲ 0.001 at p≈0.007 | n_frames ≳ p(1−p)/SE² ≈ 7000 → 7000/24 ≈ 292 s content + 60 s trim | **T ≥ 360 s** → use **rk13/20 (600 s)** |
+| Clock drift 10 ppm as ≥18 ms cumulative | drift_ms = ppm×T×0.001 → 10×T×0.001 ≥ 18 → T ≥ 1800 | **T = 1800 s (rk22)** |
+
+**Do not score untrimmed series** (rd-review / prior false result).  
+**Ship defaults:** 600 s (offset + drops), **1800 s** (drift soak).
+
+## Lock numbers to expect (file, not device)
+
+See `docs/AV_LOCK_UNCERTAINTY.md`: post-AAC median error **≈ 0.15 ms** vs design 0 / +100. Device adds unknown bias — that is the measurement.
