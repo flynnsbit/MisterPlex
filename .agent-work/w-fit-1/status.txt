@@ -1,16 +1,17 @@
-# w-fit status — fit-ready integration (UNFITTED)
+# w-fit status — fit-READY (not fit-STARTED)
 
 branch: w-fit-integ-c5382bee-dequant-swap
 worktree: .worktrees/w-fit-integ
 merge: 48df5e29 thruput RMW+area dequant onto product tip + 907e + SDC record
-tip: 5be060542e26b0f2ecfd4f5441e3ee1cc3b96906
+tip: d44abe25b399271616c1b1067d3c73d21b98b74a
 
-## Parent constraints (binding)
-- NO exclusive Quartus slot. Core c5382bee CURRENT-GOOD on silicon (DDR path).
-- Do not request fit without RED→GREEN TB for an observable silicon defect.
-- Roadmap frame: fabric decode = direct-play (not ARM CPU relief; ERROR 15 retracted).
-- No device access. Static/sim gates only.
-- Soak PASS must NOT use av-lock / av_drift_ms (fleet broadcast).
+## Parent constraints (binding) — 2026-08-01 refresh
+- NO exclusive Quartus slot granted. Fit-READY only until w-geom settles POST-PRESENT SCANOUT.
+- Parent pixel-proved 22 display skips / 1429 src frames (1.54%); ≥14 invisible to daemon counters.
+- Leading fit payload IF proven: bank-swap / 907e same-cycle vsync+doorbell (w-geom owns kill/prove).
+- Do not spend slot on chrome/dequant alone while that is open.
+- c5382bee renders but carries the 1.54% defect (parent list). Banned freeze/timing set unchanged.
+- No device access. Static/sim gates only. Soak ≠ av-lock/av_drift_ms.
 
 ## Bundle on branch (fit-ready)
 1. thruput RMW A–D (h264_i_res_recon_sink) + max15 dequant path
@@ -44,34 +45,42 @@ Evidence: docs/evidence/w_thruput_integ/clip{1,2}/luma_score.out;
 - Baseline rewritten to current counts + justified_waivers (deferred cast cleanup;
   bit-exact gates hold). Prefer eventual explicit casts (clean end-state).
 
-## Gates (true rc= captured DIRECTLY)
+## Gates re-confirmed 2026-08-01 (true rc= DIRECT)
 | gate | true rc |
 |---|---:|
 | make define-parity | 0 |
 | make quartus-sv-subset (+ verilator-elab) | 0 |
 | make unit | 0 |
-| python3 scripts/rtl_lint.py | 0 |
-| tests/unit/test_p3_stream_path_recon_rtl_sim.sh | 0 |
-| tests/unit/test_gate_false_green_guard.py | 0 |
-| tests/unit/test_dequant_qp_sweep.py | 0 |
+| test_ddr_frame_store_scanout_freeze.sh (TB executed RED+GREEN) | 0 |
+| test_dequant_qp_sweep.py (1205/1205 miss=0) | 0 |
 
-make unit GATE_SKIP: live-pms-baseline-profile CRITICAL (missing MISTERPLEX_BASELINE_KEY);
-skip-not-pass HIGH for live PMS wrapper rc=77 — inventory only, not a silent pass.
+make unit GATE_SKIP inventory: live-pms-baseline CRITICAL (no KEY); skip-not-pass HIGH rc=77 — not passes.
+run_verilator.sh: PINNOTFOUND/%Error → rc=2 HARD FAIL (scripts/run_verilator.sh:6,53-56) — confirmed present.
 
-## Pre-register area for FUTURE fit (UNMEASURED on this tip’s map/fit)
-Baseline parent (9eb1431a class / c5382bee shipping area): ALM 21095/41910 · DSP 74/112 · RAM 465/553 · setup +0.165 · hold +0.245
+## Bit-exact / cy/MB (post-merge measure; tip since is docs/ARM-only)
+| metric | measured | source |
+|---|---:|---|
+| clip1 paint_per_mb f0 | 2239.647 | docs/evidence/w_thruput_integ/clip1/sim_key.txt |
+| clip2 paint_per_mb f0 | 2102.850 | clip2/sim_key.txt |
+| clip1 luma intra | 300/300 mae=0 | clip1/luma_score.out |
+| clip2 luma intra | 1170/1170 mae=0 | clip2/luma_score.out |
+| dequant | 1205/1205 miss=0 | re-run true rc=0 this session |
+budget 320×240@25 @20MHz = 2666.667 cy/MB (derived); both clips under budget.
+
+## Pre-register area for FUTURE fit (UNMEASURED — BLOCK counts)
+Baseline: ALM 21095/41910 · DSP 74/112 · **RAM 465/553 (88 free)** · setup +0.165 · hold +0.245
 | resource | predict | basis |
 |---|---|---|
-| DSP | ~42/112 (−32) | derived from w-area comb shift-add dequant; MUST hit −32 or finding |
-| RAM | ~465/553 | assumed unchanged (no new M10K in thruput RMW intent) |
-| ALM | 21095..+300 | assumed small RMW/907e overhead |
-| setup | ≥ +0.100 ns class | assumed; risk if dequant comb deepens |
-| hold | ≥ +0.200 ns | assumed |
-Re-publish hits/misses only after parent-granted exclusive fit + map/STA artifacts.
+| DSP | **42/112 (−32 blocks)** | comb shift-add dequant intent; MUST hit −32 or FINDING |
+| RAM | **465/553 (0 new M10K)** | no new arrays in dequant/907e/thruput intent |
+| ALM | 21095..+300 | ESTIMATE small RMW/907e |
+| setup | ≥ +0.100 ns class | ESTIMATE; comb dequant depth risk |
+| hold | ≥ +0.200 ns | ESTIMATE |
+Report RAM as **blocks**, never bits. Re-publish hits/misses only after granted map/STA.
 
-## Not requesting fit
-Silicon works on c5382bee; no observable defect closed by this RTL bundle yet.
-Next fit bar: TB RED on current shipping RTL, GREEN on this tip, elaborate-proven.
+## Fit request status
+**NOT requesting.** Holding ready: 907e + dequant + thruput + SDC record + chrome design doc.
+Next grant should prefer **proven post-present skip fix** (w-geom) as primary payload; ride 907e if that is the fix.
 
 ## Open (non-blocking for static green)
 - Wire real h264_hybrid_mb_own into thruput decode_stub (drop fail-closed).
