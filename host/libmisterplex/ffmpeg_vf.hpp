@@ -256,6 +256,17 @@ inline bool rawPipeDesynced(size_t producer_frame_bytes, size_t reader_frame_byt
            frame_index > 0;
 }
 
+// Capture discriminator (B1): N legible frame-counter copies in one *reader*
+// raster ⇒ producer frame size ≈ reader_bytes / N.
+// Example: N=2 TREK24 copies in a 449280-byte bank ⇒ S≈224640 = 624x240 I420.
+// 640x480=460800 > reader cannot place two full producer frames in one raster
+// (wrong sign for the historical N=2 silicon story).
+inline size_t producerBytesFromCounterCopies(size_t reader_frame_bytes, int n_copies) {
+    if (n_copies <= 0 || reader_frame_bytes == 0)
+        return 0;
+    return reader_frame_bytes / static_cast<size_t>(n_copies);
+}
+
 // Runtime risk: identity_skip (or any path that reads fixed reader_bytes) while the
 // producer frame size differs. The STREAM=0 loop always reads exactly reader_bytes
 // per frame, so totalBytes % reader_bytes stays 0 even while the pipe desyncs —

@@ -1,0 +1,24 @@
+PRODUCT_VF=scale=618:480:force_original_aspect_ratio=decrease,pad=624:480:0+(618-iw)/2:0+(480-ih)/2:color=black
+CROP_PAD_EXACT=crop=618:480:0:0,pad=624:480:0+(618-iw)/2:0+(480-ih)/2:color=black
+CROP_PAD_HFIT=crop=618:480:(iw-618)/2:0,pad=624:480:0+(618-iw)/2:0+(480-ih)/2:color=black
+FRAME_BYTES=449280 NFRAMES=3 EXPECTED=1347840
+PASS g_exact_bank_scale src=624x480 bytes=1347840 want=1347840
+PASS g_scope_235 src=624x352 bytes=1347840 want=1347840
+PASS g_624x350 src=624x350 bytes=1347840 want=1347840
+PASS g_640x480_scale src=640x480 bytes=1347840 want=1347840
+PASS g_720x480_scale src=720x480 bytes=1347840 want=1347840
+PASS g_704x396 src=704x396 bytes=1347840 want=1347840
+PASS g_1440x1080 src=1440x1080 bytes=1347840 want=1347840
+PASS g_320x240 src=320x240 bytes=1347840 want=1347840
+PASS g_426x240 src=426x240 bytes=1347840 want=1347840
+PASS g_odd src=625x481 bytes=1347840 want=1347840
+PASS g_618x480 src=618x480 bytes=1347840 want=1347840
+PASS g_exact_crop_pad src=624x480 bytes=1347840 want=1347840
+PASS g_640_crop_pad src=640x480 bytes=1347840 want=1347840
+PASS g_720_crop_pad src=720x480 bytes=1347840 want=1347840
+PASS_RED r_640_identity src=640x480 bytes=1382400 != product 1347840
+PASS_RED r_352_identity src=624x352 bytes=988416 != product 1347840
+PASS_RED r_720_identity src=720x480 bytes=1555200 != product 1347840
+PASS_RED r_426_identity src=426x240 bytes=460080 != product 1347840
+SUMMARY pass=18 fail=0 frame_bytes=449280
+FORCE_SCALE_FFMPEG_OUT_OK pass=18

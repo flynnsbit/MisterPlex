@@ -17,8 +17,13 @@ CODED_W=624
 CODED_H=480
 DISP_W=618
 DISP_H=480
-# Product silicon crop path (media_player + buildScalePadCropped, crop_left=0).
+# Product silicon paths (media_player + ffmpeg_vf.hpp):
+#   non-bank-height / narrow: buildScalePadCropped (FOAR decrease into display)
+#   bank-height wide or exact-unverified: buildCropPadNoScale (no FOAR V-resample)
 PRODUCT_VF="scale=${DISP_W}:${DISP_H}:force_original_aspect_ratio=decrease,pad=${CODED_W}:${CODED_H}:0+(${DISP_W}-iw)/2:0+(${DISP_H}-ih)/2:color=black"
+# Center-crop when source_w > coded (640/720); left crop when source_w == coded.
+CROP_PAD_EXACT="crop=${DISP_W}:${DISP_H}:0:0,pad=${CODED_W}:${CODED_H}:0+(${DISP_W}-iw)/2:0+(${DISP_H}-ih)/2:color=black"
+CROP_PAD_HFIT="crop=${DISP_W}:${DISP_H}:(iw-${DISP_W})/2:0,pad=${CODED_W}:${CODED_H}:0+(${DISP_W}-iw)/2:0+(${DISP_H}-ih)/2:color=black"
 FRAME_BYTES=$((CODED_W * CODED_H * 3 / 2)) # 449280
 NFRAMES=3
 EXPECTED=$((FRAME_BYTES * NFRAMES))
@@ -75,30 +80,41 @@ run_case() {
 }
 
 echo "PRODUCT_VF=$PRODUCT_VF"
+echo "CROP_PAD_EXACT=$CROP_PAD_EXACT"
+echo "CROP_PAD_HFIT=$CROP_PAD_HFIT"
 echo "FRAME_BYTES=$FRAME_BYTES NFRAMES=$NFRAMES EXPECTED=$EXPECTED"
 
-# GREEN: FORCE_SCALE product vf
-run_case "g_exact_bank" 624 480 "$PRODUCT_VF" "$EXPECTED" 1
+# GREEN: FORCE_SCALE scale+pad pins OUTPUT bytes (non-bank-height / general)
+run_case "g_exact_bank_scale" 624 480 "$PRODUCT_VF" "$EXPECTED" 1
 run_case "g_scope_235" 624 352 "$PRODUCT_VF" "$EXPECTED" 1
-run_case "g_640x480" 640 480 "$PRODUCT_VF" "$EXPECTED" 1
-run_case "g_720x480" 720 480 "$PRODUCT_VF" "$EXPECTED" 1
+run_case "g_624x350" 624 350 "$PRODUCT_VF" "$EXPECTED" 1
+run_case "g_640x480_scale" 640 480 "$PRODUCT_VF" "$EXPECTED" 1
+run_case "g_720x480_scale" 720 480 "$PRODUCT_VF" "$EXPECTED" 1
 run_case "g_704x396" 704 396 "$PRODUCT_VF" "$EXPECTED" 1
 run_case "g_1440x1080" 1440 1080 "$PRODUCT_VF" "$EXPECTED" 1
 run_case "g_320x240" 320 240 "$PRODUCT_VF" "$EXPECTED" 1
+run_case "g_426x240" 426 240 "$PRODUCT_VF" "$EXPECTED" 1
 run_case "g_odd" 625 481 "$PRODUCT_VF" "$EXPECTED" 1
 run_case "g_618x480" 618 480 "$PRODUCT_VF" "$EXPECTED" 1
+
+# GREEN: product bank-height path is crop+pad (WIDTH≠624 and exact-unverified)
+# — still pins 449280, and is the FOAR-free path tip ships.
+run_case "g_exact_crop_pad" 624 480 "$CROP_PAD_EXACT" "$EXPECTED" 1
+run_case "g_640_crop_pad" 640 480 "$CROP_PAD_HFIT" "$EXPECTED" 1
+run_case "g_720_crop_pad" 720 480 "$CROP_PAD_HFIT" "$EXPECTED" 1
 
 # RED twin: no scale/pad — source size leaks to pipe (except exact bank)
 run_case "r_640_identity" 640 480 "null" "$EXPECTED" 0
 run_case "r_352_identity" 624 352 "null" "$EXPECTED" 0
 run_case "r_720_identity" 720 480 "null" "$EXPECTED" 0
+run_case "r_426_identity" 426 240 "null" "$EXPECTED" 0
 
 echo "SUMMARY pass=$pass fail=$fail frame_bytes=$FRAME_BYTES"
 if [[ "$fail" -ne 0 ]]; then
   echo "FORCE_SCALE_FFMPEG_OUT_FAIL fail=$fail"
   exit 1
 fi
-if [[ "$pass" -lt 12 ]]; then
+if [[ "$pass" -lt 18 ]]; then
   echo "FORCE_SCALE_FFMPEG_OUT_FAIL pass=$pass too few"
   exit 1
 fi

@@ -201,8 +201,16 @@ int main() {
         expect(s624x240 == 224640u, "624x240 I420 (N=2 candidate)");
         expect(coded % s624x240 == 0u, "N=2 exact divide");
         expect(coded / s624x240 == 2u, "exactly two 624x240 per coded");
+        // B1 discriminator: N copies → S ≈ reader/N (not 640x480).
+        expect(producerBytesFromCounterCopies(coded, 2) == 224640u, "N=2 ⇒ 224640");
+        expect(producerBytesFromCounterCopies(coded, 2) == s624x240, "N=2 matches 624x240");
+        expect(producerBytesFromCounterCopies(coded, 4) == 112320u, "N=4 ⇒ 112320");
+        expect(producerBytesFromCounterCopies(coded, 1) == coded, "N=1 ⇒ full bank");
+        expect(producerBytesFromCounterCopies(coded, 0) == 0u, "N=0 guard");
         // 640x480 cannot explain N=2 full frames in one reader raster.
         expect(s640x480 > coded, "640x480 larger than reader — not N=2 packing");
+        expect(s640x480 != producerBytesFromCounterCopies(coded, 2),
+               "640x480 is NOT the N=2 producer size");
         expect(rawPipeDesynced(s624x240, coded, 0) == false, "aligned at 0");
         // After 1 reader frame of a smaller producer, phase may return 0 when
         // reader is an integer multiple — still two producer frames per raster.
