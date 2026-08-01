@@ -1,24 +1,13 @@
 lane: w-promote
 branch: fix/rollback-honest
-tip: 40b90050
+tip: (post-commit)
 worktree: .worktrees/rollback-honest
 
-## Deliverables (repo-backed; parent runs device)
-1. V2_MD5 set+e glue FIXED (join+shape); green rc=0; wrong md5 RED — NOT 961dc724
-2. Atomic pair: rollback_v2 core+daemon+conf+boot; restore_misterplexd_prev rc=10
-3. Conf USER-OWNED: CONF_MD5_MATCH_OK + PAIR_CONF_RESTORE_FILE
-4. Boot hook vs live root mismatch gate RED-before-green
-5. Rename-before-kill / no pgrep / NO-DATA empty / comm identity encoded
-
-## Pins
-CURRENT 5996385a… (parent live); rollbacks b981fd20, edc3a46b, e9f79de2
-core c5382bee; conf 7f06132f USER-OWNED
-
-## OPEN (not closed)
-P1 REAL POWER CYCLE — OPEN (hook rehearsed only; do not claim cold-boot)
-P2 parent verify-live on HEAD
-P3 bitstream ID beyond PLXS+seq (partial)
-P4 lip-sync not promote criterion
+## Broadcast absorbed
+~117 ms HDMI A/V bimodality = SESSION-LATCHED DEVICE defect (parent measured).
+Promote package does NOT gate on it; av-lock still RETRACTED.
+P4 OPEN/out-of-scope. P1 real power-cycle still OPEN.
 
 ## Host true rc
-promotion_gates=0 deploy=0 rollback=0 boot_hook=0 conf=0
+test_promotion_gates.sh true rc=0 (pass=93)
+test_rollback_honest.sh / deploy — see commit message

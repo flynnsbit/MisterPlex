@@ -720,6 +720,15 @@ else
   ok "docs-no-avlock-pass"
 fi
 grep -q 'avsync_measure_hdmi' "$ROOT/docs/ddr-daily-promotion.md" && ok "docs-external-avsync-pointer" || bad "docs-external-avsync-pointer"
+grep -q 'SESSION-LATCHED' "$ROOT/docs/ddr-daily-promotion.md" && ok "docs-session-latched" || bad "docs-session-latched"
+grep -q '117' "$ROOT/docs/ddr-daily-promotion.md" && ok "docs-117ms" || bad "docs-117ms"
+# Promote must not require a numeric HDMI offset PASS
+if grep -nE 'median offset|av_offset|REQUIRE.*AVSYNC|AVSYNC_PASS' "$GATES" | grep -viE 'RETRACT|not |never|BLIND|SESSION'; then
+  bad "gate-no-avsync-offset-pass"
+else
+  ok "gate-no-avsync-offset-pass"
+fi
+grep -q 'SESSION-LATCHED' "$GATES" && ok "gate-mentions-session-latched" || bad "gate-mentions-session-latched"
 
 echo "=== summary pass=$pass fail=$fail ==="
 if [ "$fail" -ne 0 ]; then

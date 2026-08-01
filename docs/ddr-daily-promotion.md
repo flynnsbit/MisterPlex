@@ -11,7 +11,7 @@ Parent-owned device work only. Agents produce artifacts and commands; they must
 | **P1** | **Real power-cycle / cold boot** of daily driver | **OPEN** — hook execution rehearsed; kernel boot path **not** exercised. Parent will not reboot without asking user. |
 | P2 | Live `verify-live` on worktree HEAD (not `961dc724`) against device | Parent-owned; glue fix is host-proven |
 | P3 | Running-bitstream ID beyond PLXS magic+seq | Partial — PLXS+seq required; CORENAME useless; file md5 = disk only |
-| P4 | Lip-sync / HDMI A/V offset | **Not** a promote criterion (`av-lock`/`av_drift_ms` RETRACTED); external `avsync_measure_hdmi.py` only |
+| P4 | HDMI A/V offset bimodality (~117 ms SESSION-LATCHED device defect) | **OPEN / out of promote scope** — not closable by pair md5/PLXS/pixels gates; see below |
 | P5 | Daemon pin file `5996385a` in `artifacts/daemon-pins/` on host | Optional; full md5 constant is in policy |
 
 **P1 is NOT closed.** Do not claim cold-boot survival until parent captures post-reboot evidence checklist.

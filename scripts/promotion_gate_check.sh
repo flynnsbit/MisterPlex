@@ -29,6 +29,8 @@
 #   clock=av-lock, av_drift_ms — internal servo echo; BLIND to HDMI lip-sync.
 #   Do not add gates on those fields. Lip-sync = tools/avsync_measure_hdmi.py only
 #   (parent-owned external instrument). This gate package does not claim A/V offset.
+#   Parent 2026-07-31: ~117 ms HDMI offset bimodality is SESSION-LATCHED DEVICE defect;
+#   within-session capture spread ~3 ms. Promote gates cannot and must not "pass" it.
 #
 set -euo pipefail
 
