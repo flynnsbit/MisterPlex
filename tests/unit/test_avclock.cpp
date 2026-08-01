@@ -70,6 +70,25 @@ int main() {
     CHECK(avDecide(200, lead, drop, 1) == AvAction::Present);
     CHECK(avDecide(200, lead, drop, 3) == AvAction::Present);
 
+    // --- drop residual is ONE frame period, not a full resync to 0 ---
+    // Product: frameIndex already counts the dropped frame; next frameMs is +T.
+    // clockMs unchanged ⇒ drift falls by T only. Just-over-threshold drops land
+    // under dropMs as ISOLATED singles (maxDropRun=1). Full-reset 80/τ ppm model
+    // is false in source; class-A period uses T/τ instead.
+    {
+        // frameContentMs(i)=i*1000/24 → deltas 41 or 42 ms (integer truncation)
+        const int64_t tStep = frameContentMs(100, 24, 1) - frameContentMs(99, 24, 1);
+        CHECK(tStep == 41 || tStep == 42);
+        const int64_t d0 = 81; // just above resyncDropMs=80
+        const int64_t d1 = d0 - tStep;
+        CHECK(d1 < drop); // single drop clears threshold
+        CHECK(d1 > 0);    // NOT reset to zero
+        const double r_partial = 41.0 / 30.0; // ms/s if τ=30s
+        const double r_full = 80.0 / 30.0;    // false full-reset model
+        CHECK(r_partial > 1.3 && r_partial < 1.5);
+        CHECK(r_full > 2.5 && r_full < 2.8);
+    }
+
     // --- closed loop recovery from a decode stall ---
     // Steady state is drift ~0 (forced CFR keeps supply == schedule). Inject a 1 s
     // transport stall and require the corrector to pull drift back under the drop
