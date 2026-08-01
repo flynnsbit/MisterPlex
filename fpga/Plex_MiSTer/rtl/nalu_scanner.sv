@@ -1,7 +1,16 @@
-// Phase 3.3–3.3d: annex-B scan + typed counts + RBSP capture (SPS/PPS/slice hdr).
-// EPB (00 00 03) stripped. Slice capture stores first 32 bytes then ends parse.
+// Phase 3.3–3.3d: annex-B scan + typed counts + RBSP capture (SPS/PPS/slice).
+// EPB (00 00 03) stripped.
+// Slice header path: sl_cap_end after first 48 RBSP bytes (first-MB + sticky residual).
+// MB traversal path: sl_rbsp_eop at true type-1 *and* type-5 (IDR) NAL end
+// (start code / EOF / MAX). Full IDR RBSP is required for the I-slice residual
+// walk — the old scaffold stopped IDR store at 48 B and never pulsed eop.
+// Splitting hdr-end vs eop prevents the next NAL's sl_cap_clear from aborting
+// a late cap_end parse.
 
-module nalu_scanner (
+module nalu_scanner #(
+	// 624x480 IDR RBSP ≈11KB; keep headroom for larger I-slices.
+	parameter int MAX_SLICE_RBSP = 16384
+) (
 	input  wire        clk,
 	input  wire        reset,
 
@@ -35,6 +44,7 @@ module nalu_scanner (
 	output reg         sl_cap_en,
 	output reg  [7:0]  sl_cap_data,
 	output reg         sl_cap_end,
+	output reg         sl_rbsp_eop,
 	output reg         sl_is_idr,
 	output reg         sl_nal_ref_idc_nonzero
 );
@@ -44,15 +54,22 @@ module nalu_scanner (
 	reg       data_valid;
 	reg [1:0] cap_tgt; // 0 none, 1 sps, 2 pps, 3 slice
 	reg [1:0] epb_z;
-	reg [5:0] cap_len;
+	reg [15:0] cap_len;
 	reg       sl_idr_r;
 	reg       sl_ref_r;
-	reg       sl_done; // slice header already ended (still draining NAL)
+	reg       sl_hdr_ended; // sl_cap_end already issued for this slice
+	reg       sl_done;      // full RBSP store complete (eop/MAX) for type-1/5
+	// Last VCL may lack a trailing start code — flush after FIFO idle.
+	reg [15:0] eof_idle;
 
 	wire [4:0] nal_t = rd_data[4:0];
-	// Slice header + first mb_type fit in ~48 bytes of RBSP
+	// Full RBSP up to MAX for both IDR and non-IDR VCL (I residual walk needs IDR).
+	// Do NOT slice MAX to [13:0]: 16384 = 1<<14 would truncate to 0.
+	wire [15:0] sl_store_limit = MAX_SLICE_RBSP[15:0];
 	wire       can_store = (cap_tgt != 2'd0) && !sl_done &&
-	                       !(cap_tgt == 2'd3 && cap_len >= 6'd48);
+	                       !(cap_tgt == 2'd3 && cap_len >= sl_store_limit);
+	// open_cap for EOF: VCL still filling past hdr end counts as open
+	wire       open_cap = (cap_tgt == 2'd3) && !sl_done && (cap_len != 16'd0);
 
 	always @(posedge clk) begin
 		if (reset) begin
@@ -74,7 +91,9 @@ module nalu_scanner (
 			epb_z         <= 0;
 			cap_len       <= 0;
 			sl_idr_r      <= 0;
+			sl_hdr_ended  <= 0;
 			sl_done       <= 0;
+			eof_idle      <= 0;
 			sps_cap_clear <= 0;
 			sps_cap_en    <= 0;
 			sps_cap_data  <= 0;
@@ -87,6 +106,7 @@ module nalu_scanner (
 			sl_cap_en     <= 0;
 			sl_cap_data   <= 0;
 			sl_cap_end    <= 0;
+			sl_rbsp_eop   <= 0;
 			sl_is_idr     <= 0;
 			sl_nal_ref_idc_nonzero <= 0;
 			sl_ref_r      <= 0;
@@ -101,22 +121,19 @@ module nalu_scanner (
 			sl_cap_clear  <= 1'b0;
 			sl_cap_en     <= 1'b0;
 			sl_cap_end    <= 1'b0;
+			sl_rbsp_eop   <= 1'b0;
 
 			rd_en <= !rd_empty;
 
 			if (data_valid) begin
 				bytes_seen <= bytes_seen + 1'd1;
 				has_stream <= 1'b1;
+				eof_idle   <= 16'd0;
 
 				if (pend_type) begin
-					// Close prior capture
+					// Close prior SPS/PPS only (slice uses early hdr end + rbsp_eop)
 					if (cap_tgt == 2'd1) sps_cap_end <= 1'b1;
 					else if (cap_tgt == 2'd2) pps_cap_end <= 1'b1;
-					else if (cap_tgt == 2'd3 && !sl_done) begin
-						sl_cap_end <= 1'b1;
-						sl_is_idr  <= sl_idr_r;
-						sl_nal_ref_idc_nonzero <= sl_ref_r;
-					end
 
 					last_nal_type <= rd_data;
 					nalu_count    <= nalu_count + 1'd1;
@@ -124,6 +141,7 @@ module nalu_scanner (
 					zrun          <= 0;
 					epb_z         <= 0;
 					cap_len       <= 0;
+					sl_hdr_ended  <= 0;
 					sl_done       <= 0;
 
 					case (nal_t)
@@ -143,7 +161,9 @@ module nalu_scanner (
 							vcl_pulse    <= 1'b1;
 							cap_tgt      <= 2'd3;
 							sl_idr_r     <= 1'b1;
+							sl_is_idr    <= 1'b1;
 							sl_ref_r     <= (rd_data[6:5] != 2'd0);
+							sl_nal_ref_idc_nonzero <= (rd_data[6:5] != 2'd0);
 							sl_cap_clear <= 1'b1;
 						end
 						5'd1: begin
@@ -151,7 +171,9 @@ module nalu_scanner (
 							vcl_pulse    <= 1'b1;
 							cap_tgt      <= 2'd3;
 							sl_idr_r     <= 1'b0;
+							sl_is_idr    <= 1'b0;
 							sl_ref_r     <= (rd_data[6:5] != 2'd0);
+							sl_nal_ref_idc_nonzero <= (rd_data[6:5] != 2'd0);
 							sl_cap_clear <= 1'b1;
 						end
 						default: cap_tgt <= 2'd0;
@@ -170,24 +192,41 @@ module nalu_scanner (
 							sl_cap_en <= 1'b1; sl_cap_data <= 8'h00;
 						end
 						cap_len <= cap_len + 1'd1;
-						// slice: end after storing 32nd byte
-						if (cap_tgt == 2'd3 && cap_len == 6'd47) begin
-							sl_cap_end <= 1'b1;
-							sl_is_idr  <= sl_idr_r;
-							sl_nal_ref_idc_nonzero <= sl_ref_r;
-							sl_done    <= 1'b1;
+						if (cap_tgt == 2'd3) begin
+							// Header window: first 48 B → slice_hdr_parser (do not
+							// end the RBSP store — walker needs the full NAL).
+							if (!sl_hdr_ended && (cap_len + 14'd1) >= 14'd48) begin
+								sl_cap_end <= 1'b1;
+								sl_is_idr  <= sl_idr_r;
+								sl_nal_ref_idc_nonzero <= sl_ref_r;
+								sl_hdr_ended <= 1'b1;
+							end
+							// Hard cap (IDR + type-1)
+							if ((cap_len + 16'd1) >= sl_store_limit) begin
+								sl_rbsp_eop <= 1'b1;
+								sl_done <= 1'b1;
+							end
 						end
 					end
 				end else if (rd_data == 8'h01 && zrun >= 2'd2) begin
+					// Start code: end SPS/PPS; finish VCL RBSP; hdr if short NAL
 					if (cap_tgt == 2'd1) sps_cap_end <= 1'b1;
 					else if (cap_tgt == 2'd2) pps_cap_end <= 1'b1;
-					else if (cap_tgt == 2'd3 && !sl_done) begin
-						sl_cap_end <= 1'b1;
-						sl_is_idr  <= sl_idr_r;
-						sl_nal_ref_idc_nonzero <= sl_ref_r;
+					else if (cap_tgt == 2'd3) begin
+						if (!sl_hdr_ended) begin
+							sl_cap_end <= 1'b1;
+							sl_is_idr  <= sl_idr_r;
+							sl_nal_ref_idc_nonzero <= sl_ref_r;
+							sl_hdr_ended <= 1'b1;
+						end
+						if (!sl_done) begin
+							sl_rbsp_eop <= 1'b1;
+							sl_done <= 1'b1;
+						end
 					end
 					cap_tgt   <= 2'd0;
-					sl_done   <= 0;
+					sl_done   <= 1'b0;
+					sl_hdr_ended <= 1'b0;
 					epb_z     <= 0;
 					cap_len   <= 0;
 					pend_type <= 1'b1;
@@ -206,17 +245,44 @@ module nalu_scanner (
 							end
 							cap_len <= cap_len + 1'd1;
 							epb_z <= 0;
-							if (cap_tgt == 2'd3 && cap_len == 6'd47) begin
-								sl_cap_end <= 1'b1;
-								sl_is_idr  <= sl_idr_r;
-								sl_nal_ref_idc_nonzero <= sl_ref_r;
-								sl_done    <= 1'b1;
+							if (cap_tgt == 2'd3) begin
+								if (!sl_hdr_ended && (cap_len + 14'd1) >= 14'd48) begin
+									sl_cap_end <= 1'b1;
+									sl_is_idr  <= sl_idr_r;
+									sl_nal_ref_idc_nonzero <= sl_ref_r;
+									sl_hdr_ended <= 1'b1;
+								end
+								if ((cap_len + 16'd1) >= sl_store_limit) begin
+									sl_rbsp_eop <= 1'b1;
+									sl_done <= 1'b1;
+								end
 							end
 						end
 					end
 					zrun <= 0;
 				end
-			end
+			end else if (rd_empty && open_cap) begin
+				if (eof_idle >= 16'd32) begin
+					if (cap_tgt == 2'd1) sps_cap_end <= 1'b1;
+					else if (cap_tgt == 2'd2) pps_cap_end <= 1'b1;
+					else if (cap_tgt == 2'd3) begin
+						if (!sl_hdr_ended) begin
+							sl_cap_end <= 1'b1;
+							sl_is_idr  <= sl_idr_r;
+							sl_nal_ref_idc_nonzero <= sl_ref_r;
+							sl_hdr_ended <= 1'b1;
+						end
+						if (!sl_done) begin
+							sl_rbsp_eop <= 1'b1;
+							sl_done <= 1'b1;
+						end
+					end
+					cap_tgt  <= 2'd0;
+					eof_idle <= 16'd0;
+				end else
+					eof_idle <= eof_idle + 16'd1;
+			end else if (rd_empty)
+				eof_idle <= 16'd0;
 
 			data_valid <= rd_en && !rd_empty;
 		end

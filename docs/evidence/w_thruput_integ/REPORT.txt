@@ -1,0 +1,150 @@
+w-thruput INTEGRATION READY — thruput + w-area dequant
+======================================================
+Agent: w-thruput
+Branch: integ/thruput-area-fit
+Worktree: .worktrees/w-thruput-integ
+SOURCE_SHA: a2bb545904dec3eefc7ddd62b084466bab9d9d45 (RTL 809a8197 + evidence)
+Base: rtl/sink-contract-phase2 @ 5b9d93b7 + 1 commit (w-area dequant arithmetic)
+NO device touch. NO Quartus fit. Simulation/static only.
+tools/score_i420_candidate.py NOT modified.
+Geometry constants NOT modified.
+ddr_frame_store.sv NOT modified (shipping scanout path).
+
+------------------------------------------------------------------------
+1. INTEGRATION SCOPE
+------------------------------------------------------------------------
+Files changed vs thruput tip 5b9d93b7 (only):
+  fpga/Plex_MiSTer/rtl/h264_iq_idct_4x4.sv       (combo h264_dequant4x4)
+  fpga/Plex_MiSTer/rtl/h264_dequant4x4_serial.sv (sink serial IQ)
+
+What was integrated from w-area:
+  - qp_mod6 / qp_div6 case tables (kill vendor %/ divide IP)
+  - mul_norm_adjust shift-add for c*na (kill DSP mult farm)
+  - dequant_one: ((prod<<(qdiv+6))+32)>>6  32-bit wrap path
+
+What was PRESERVED from thruput tip (NOT overwritten by w-area file):
+  - max15 skip_dc inverse-zigzag layout in combo module
+    (w-area artifact used older max16-only assign list — semantic
+     conflict if file-copied wholesale; arithmetic-only merge taken)
+  - serial IQ still 16 cycles / 1 lane (latency unchanged)
+  - RMW A–D + traverse window reuse untouched
+
+Semantic conflict verdict: NONE on latency.
+  Combo remains 0-cycle. Serial remains 16-cy.
+  Drop neither; arithmetic unified on both.
+  DO NOT drop thruput for area, or area for thruput.
+
+------------------------------------------------------------------------
+2. CLOCK + BUDGET (re-quoted)
+------------------------------------------------------------------------
+pll_0002.v:46  .output_clock_frequency0("20.000000 MHz")  // outclk_0
+Decode clock = 20.000 MHz
+Budget 320x240@25: 20e6/(300*25) = 2666.666... cy/MB
+
+------------------------------------------------------------------------
+3. PRE-REGISTER vs MEASURED (post-integration)
+------------------------------------------------------------------------
+PRE (before measure, docs/evidence/w_thruput_integ/prereg.txt):
+  paint_per_mb_f0 clip1 = 2239.647 +/- 5
+  paint_per_mb_f0 clip2 = 2102.850 +/- 5
+  luma clip1 300/300 mae=0; clip2 1170/1170 mae=0
+  RED FAULT_SERIAL_IQ_ZERO y_mb=0/300
+  dequant miss=0
+
+MEASURED:
+  clip1 320x240 f0: paint_per_mb = 2239.647
+    STAGE_CYCLES frame=0 parse=289 paint=671894 paint_per_mb=2239.647
+    sim true rc=0; luma_score true rc=0
+    LUMA intra y_mb=300/300 y_px=76800/76800 mae=0.0
+    SINK_CY_BREAKDOWN total=480177 idle_wb=38674 idle_pend=300 idle_ready=67227
+      init=0 settle=5917 i16nb=10176 i16pred=57239 had=4199 i4nb=41029
+      iq=87664 apply=83872 dump=83659
+    log: docs/evidence/w_thruput_integ/clip1/
+
+  clip2 624x480 f0: paint_per_mb = 2102.850
+    STAGE_CYCLES frame=0 parse=287 paint=2460335 paint_per_mb=2102.850
+    sim true rc=0; luma_score true rc=0
+    LUMA intra y_mb=1170/1170 y_px=299520/299520 mae=0.0
+    log: docs/evidence/w_thruput_integ/clip2/
+
+  RED FAULT_SERIAL_IQ_ZERO:
+    paint_per_mb_f0 = 2009.933
+    LUMA y_mb=0/300 y_px=5/76800 mae=80.145  PASS_RED
+    sim true rc=0; luma_score true rc=0
+    log: docs/evidence/w_thruput_integ/red_iq/
+
+  dequant_qp_sweep: 1205/1205 exact, true rc=0
+    "DEQUANT QP SWEEP PASS: 1205 tests across QP 0-51, all patterns exact"
+
+PRE verdict: EXACT HIT on thruput numbers (0.000 delta). Bit-exact HIT.
+vs budget 2666.667: 2239.647 = 0.840x  pad ~427 cy/MB  **HARD HIT**
+
+------------------------------------------------------------------------
+4. STATIC GATES (true exit codes, not piped)
+------------------------------------------------------------------------
+  make define-parity      true rc=0
+  make quartus-sv-subset  true rc=0
+  make unit               true rc=0
+  dequant_qp_sweep        true rc=0
+
+make unit notes:
+  - GATE_SKIP CRITICAL live-pms-baseline-profile (missing MISTERPLEX_BASELINE_KEY) expected; not counted as pass.
+  - GATE_SKIP HIGH skip-not-pass rc=77 expected.
+  - No UNREGISTERED_COMMAND on this branch (scanout_freeze test not in rollcall here;
+    left-edge abandoned; ddr_frame_store untouched; unit green without it).
+  - logs: docs/evidence/w_thruput_integ/gates/
+
+------------------------------------------------------------------------
+5. FIT PRE-REGISTRATION (publish before exclusive slot)
+------------------------------------------------------------------------
+Baseline last clean product fit (parent / w-area):
+  ALM 21,078/41,910 · DSP 74/112 · RAM blocks 465/553
+  setup slack 0.136 ns · hold 0.243 ns · TNS 0
+
+PREDICTED post-fit resources for THIS branch (NOT MEASURED — no fit run):
+  DSP:  42 +/- 4   (= 74 - 32 combo farm; serial may free ~0-2 more if it
+                   still mapped a mult; shift-add should map 0 DSP)
+  RAM:  465 +/- 0  (no new memories; thruput uses existing plane_y/top_row only;
+                   dequant is pure comb/logic — 0 M10K)
+  ALM:  21,100..21,400  (tables + shift-add replace Div0/Mod0 (~60 ALM) and
+                   32 DSP mults; net ALM likely +0..+300 vs baseline;
+                   UNKNOWN until map — do not treat as claim)
+  Timing: RISK. Comb dequant depth may grow (shift-add adder tree vs DSP).
+          Current pad only 0.136 ns setup. PREDICT: may close OR fail by
+          <0.2 ns on dequant fanout into IDCT. If fail: register one stage
+          on dequant output (would add 1 cy to combo path users; sink serial
+          unaffected). Hold expected still positive.
+
+RAM headroom remaining if RAM stays 465: 88 physical blocks. Change does not
+pressure RAM. Flag: none for RAM.
+
+------------------------------------------------------------------------
+6. SILICON READINESS
+------------------------------------------------------------------------
+SIM/STATIC: YES — ready for exclusive Quartus slot.
+  - Throughput HARD HIT 2239.6 <= 2667
+  - Bit-exact 300/300, 1170/1170, RED 0/300, dequant miss=0
+  - define-parity / quartus-sv-subset / unit all rc=0
+  - No geometry / scanout-default / scorer edits
+
+HARDWARE: UNKNOWN until parent deploys RBF and captures distinct HDMI
+  md5s at frames 30/38/45. Daemon telemetry alone is invalid evidence
+  (w-fit freeze lesson). Do not assert motion from this worker.
+
+CAVEATS for parent before granting slot:
+  1. Branch is integ/thruput-area-fit from sink-contract-phase2 tip, NOT
+     rebased onto w-arm-p720-scope main HEAD. Product decode path here is
+     the sink+traverse path that ships the thruput work.
+  2. DSP -32 and ALM delta are UNMEASURED until fit/map.
+  3. Timing tight — first fit may need a registered dequant cut if STA red.
+  4. Unit freeze registration from w-fit is not on this branch; unit is
+     green without it (no UNREGISTERED). Bring-forward optional.
+
+------------------------------------------------------------------------
+7. DIFF SUMMARY
+------------------------------------------------------------------------
+Commit 809a8197 integ(rtl): w-area comb shift-add dequant on thruput tip
+  2 files, +130/-13
+
+Ready for parent exclusive fit grant.
+EOF

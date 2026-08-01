@@ -1,0 +1,66 @@
+sv-traverse — M10K PHYSICAL BLOCK PAUSE ACK
+==========================================
+SOURCE_SHA tip: 13b91e16 (RTL A+B: f5cafa7e)
+Date: 2026-07-30
+Parent correction: physical M10K blocks binding, not bit % free.
+
+1. RELIANCE ON BAD UNIT — PUBLISHED MISS
+---------------------------------------
+YES — this lane relied on parent-circulated "~46% M10K free / free 2,589,235
+bits (~46%)" as the resource with room for array→M10K transforms
+(plane_y, top_row, tc_top, i4_mode_top). That figure is bit-capacity
+arithmetic from a map, not physical block headroom.
+
+Independent audit quote (parent; live fit product-wire6 / RBF 14eaeff3):
+  ALMs:       21021/41910  (50%)
+  DSP:           74/112    (66%)
+  RAM blocks:   465/553    (84%)   <-- physical M10K
+  remaining physical blocks: 88
+
+I did not independently derive block counts. I treated bit free% as headroom.
+MISS: wrong resource unit for next-step design.
+
+2. COMPLETED WORK vs NEW M10K
+-----------------------------
+| Commit   | Change                         | New M10K instances? |
+|----------|--------------------------------|---------------------|
+| 788aa5f  | plane_y + top_row M10K         | YES (prior)         |
+| 4f281e6  | tc_top + i4_mode_top M10K      | YES (prior)         |
+| f5cafa7e | RMW A+B HAD_PAINT kill + dump  | NO                  |
+
+A+B evidence (git diff 4f281e6..f5cafa7 sink):
+  - no new h264_byte_ram_sp / ram module instantiations
+  - B: i16_dc[0:15] remains regs (16×16-bit), not memory
+  - A: pipelines reads of existing u_plane_y only
+
+Bit-exact still holds on f5cafa7e:
+  clip1 300/300, clip2 1170/1170, RED IQ-zero 0/300
+  paint_per_mb f0: 4036.9 → 2965.8 (PRE 2700..3100 HIT; ≤2667 MISS 1.11×)
+
+3. PAUSE — IMMEDIATE
+--------------------
+- NO further array→M10K conversions until sv-integrate reports physical
+  block counts per instance (u_rbsp_ram, u_plane_y, u_top_row, tc_top,
+  i4_mode_top) and remaining shipping block headroom.
+- NO self-fit / Quartus / RBF / deploy.
+- Small-array "logic may be cheaper than a whole M10K block" is now the
+  default suspicion for any future area step — opposite of last four moves
+  if blocks are binding.
+
+4. WHAT THIS LANE MAY STILL DO (no new memories)
+------------------------------------------------
+- Cycle work on existing RMW paths only (e.g. pipeline I16 APPLY RMW)
+  — only if parent re-authorises; still over 2667 by ~299 cy/MB mean.
+- Correctness / contract / evidence; no DSP multipliers.
+- Do NOT propose packing more small arrays into M10K until integrate
+  block report lands.
+
+5. OPEN FOR INTEGRATE (not this lane)
+-------------------------------------
+Need quoted fitter/map Info for:
+  - device M10K block used/total on current tree composition
+  - blocks per: u_rbsp_ram, u_plane_y, u_top_row, tc_top, i4_mode_top
+  - efficiency bits/block vs 10Kb nominal
+  - remaining blocks for chroma merge
+
+END ACK

@@ -7,7 +7,17 @@ module stream_path_full_frame_tb #(
 	parameter int FRAME_W = 320,
 	parameter int FRAME_H = 240,
 	parameter bit FAULT_PIXEL_XOR = 1'b0,
-	parameter bit FAULT_TRACE_COEFF0_PLUS1 = 1'b0
+	parameter bit FAULT_TRACE_COEFF0_PLUS1 = 1'b0,
+	parameter bit USE_REAL_REF_COMMIT = 1'b0,
+	parameter bit FAULT_REAL_REF_XOR_FILL = 1'b0,
+	parameter bit FAULT_DROP_TRAV_MB = 1'b0,
+	parameter bit FAULT_DUP_STORE = 1'b0,
+	parameter bit FAULT_NO_QP_WRAP = 1'b0,
+	parameter bit FAULT_SKIP_WIN_LOAD = 1'b0,
+	parameter bit FAULT_SERIAL_IQ_ZERO = 1'b0,
+	parameter bit FAULT_SERIAL_I16_PRED_128 = 1'b0,
+	parameter bit FAULT_SKIP_PLANE_NB = 1'b0,
+	parameter bit FAULT_SKIP_TC_TOP_NB = 1'b0
 )(
 	input  wire        clk,
 	input  wire        reset,
@@ -57,6 +67,9 @@ module stream_path_full_frame_tb #(
 	output wire [15:0] fs_wr_pixel,
 	output wire        fs_wr_reset,
 	output wire        fs_swap,
+	output wire [15:0] p_mb_count,
+	output wire        p_slice_done,
+	output wire        p_mb_valid,
 
 	output wire        native_inter_valid,
 	output wire [15:0] native_inter_frame_idx,
@@ -112,6 +125,9 @@ module stream_path_full_frame_tb #(
 	wire [2:0] first_mb_part_count_w;
 	wire first_mb_uses_sub_mb_w;
 	wire first_mb_intra_w;
+	wire p_mb_valid_w;
+	wire [15:0] p_mb_count_w;
+	wire p_slice_done_w;
 
 	wire        hybrid_fpga_owned_w;
 	wire        hybrid_host_required_w;
@@ -125,7 +141,17 @@ module stream_path_full_frame_tb #(
 
 	stream_path #(
 		.FRAME_W(FRAME_W),
-		.FRAME_H(FRAME_H)
+		.FRAME_H(FRAME_H),
+		.USE_REAL_REF_COMMIT(USE_REAL_REF_COMMIT),
+		.FAULT_REAL_REF_XOR_FILL(FAULT_REAL_REF_XOR_FILL),
+		.FAULT_DROP_TRAV_MB(FAULT_DROP_TRAV_MB),
+		.FAULT_DUP_STORE(FAULT_DUP_STORE),
+		.FAULT_NO_QP_WRAP(FAULT_NO_QP_WRAP),
+		.FAULT_SKIP_WIN_LOAD(FAULT_SKIP_WIN_LOAD),
+		.FAULT_SERIAL_IQ_ZERO(FAULT_SERIAL_IQ_ZERO),
+		.FAULT_SERIAL_I16_PRED_128(FAULT_SERIAL_I16_PRED_128),
+		.FAULT_SKIP_PLANE_NB(FAULT_SKIP_PLANE_NB),
+		.FAULT_SKIP_TC_TOP_NB(FAULT_SKIP_TC_TOP_NB)
 	) dut (
 		.clk(clk),
 		.reset(reset),
@@ -215,6 +241,25 @@ module stream_path_full_frame_tb #(
 	.fs_wr_en(fs_wr_en),
 		.fs_wr_pixel(fs_wr_pixel_dut),
 		.fs_wr_reset(fs_wr_reset),
+		.p_mb_valid(p_mb_valid_w),
+		.p_mb_addr(),
+		.p_mb_x(),
+		.p_mb_y(),
+		.p_mb_skip(),
+		.p_mb_part_mode(),
+		.p_mb_part_count(),
+		.p_mb_uses_sub_mb(),
+		.p_mb_intra(),
+		.p_mb_count(p_mb_count_w),
+		.p_slice_done(p_slice_done_w),
+		.p_traverse_busy(),
+	.first_mb_mvd_x(),
+	.first_mb_mvd_y(),
+	.product_fetch_mv_x(),
+	.product_fetch_mv_y(),
+	.product_luma_origin_x(),
+	.product_luma_origin_y(),
+
 		.fs_swap(fs_swap)
 	);
 
@@ -224,6 +269,9 @@ module stream_path_full_frame_tb #(
 	assign trace_residual_t1 = dut.sl_place_t1;
 	assign trace_residual_dc = dut.stub.lat_res_dc;
 	assign trace_residual_csum = residual_csum;
+	assign p_mb_count = p_mb_count_w;
+	assign p_slice_done = p_slice_done_w;
+	assign p_mb_valid = p_mb_valid_w;
 	assign native_inter_valid = dut.stub.inter_capture_valid;
 	assign native_inter_frame_idx = dut.stub.frames_out;
 	assign native_inter_mb_x = dut.stub.lat_p_mb_x;

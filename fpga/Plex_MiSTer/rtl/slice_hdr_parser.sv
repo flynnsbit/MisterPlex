@@ -170,12 +170,9 @@ module slice_hdr_parser (
 		input [15:0] code;
 		reg signed [15:0] mask;
 		reg signed [15:0] t;
-		reg signed [16:0] t17;
 		begin
 			mask = code[0] ? -16'sd1 : 16'sd0;
-			// 17-bit path: (code+2)>>1 then fold to signed 16 (decoder levels fit).
-			t17 = ($signed({1'b0, code}) + 17'sd2) >>> 1;
-			t = t17[15:0];
+			t = ($signed({1'b0, code}) + 17'sd2) >>> 1;
 			lev_of = (t ^ mask) - mask;
 		end
 	endfunction
@@ -264,8 +261,11 @@ module slice_hdr_parser (
 		ST_REFIDX_L0   = 6'd33,
 		ST_NIDR_REFMARK = 6'd34,
 		ST_P_MBT       = 6'd35,
+		ST_LISTMOD_F   = 6'd36, // ref_pic_list_modification_flag_l0
+		ST_LISTMOD_IDC = 6'd37, // modification_of_pic_nums_idc
+		ST_LISTMOD_ARG = 6'd38, // abs_diff_pic_num_minus1 / long_term_pic_num
 		// First P-MB mvd_l0 se(v) pairs (x then y per partition, raster order).
-		ST_P_MVD       = 6'd36;
+		ST_P_MVD       = 6'd39;
 
 	task automatic res_clear;
 		integer ci;
@@ -552,20 +552,39 @@ module slice_hdr_parser (
 				zcnt <= 0; ue_cont <= ST_QPD; st <= ST_UE_Z;
 			end
 			ST_REFIDX_FLAG: begin
+				// After override: always ref_pic_list_modification() for P (7.3.3).
 				if (acc[0]) begin
 					zcnt <= 0; ue_cont <= ST_REFIDX_L0; st <= ST_UE_Z;
+				end else begin
+					nleft <= 5'd1; acc <= 0; cont <= ST_LISTMOD_F; st <= ST_GETBITS;
+				end
+			end
+			ST_REFIDX_L0: begin
+				nleft <= 5'd1; acc <= 0; cont <= ST_LISTMOD_F; st <= ST_GETBITS;
+			end
+			ST_LISTMOD_F: begin
+				if (acc[0]) begin
+					zcnt <= 0; ue_cont <= ST_LISTMOD_IDC; st <= ST_UE_Z;
 				end else if (nal_ref_lat) begin
 					nleft <= 5'd1; acc <= 0; cont <= ST_NIDR_REFMARK; st <= ST_GETBITS;
 				end else begin
 					zcnt <= 0; ue_cont <= ST_QPD; st <= ST_UE_Z;
 				end
 			end
-			ST_REFIDX_L0: begin
-				if (nal_ref_lat) begin
-					nleft <= 5'd1; acc <= 0; cont <= ST_NIDR_REFMARK; st <= ST_GETBITS;
-				end else begin
-					zcnt <= 0; ue_cont <= ST_QPD; st <= ST_UE_Z;
-				end
+			ST_LISTMOD_IDC: begin
+				if (ue_val == 16'd3) begin
+					if (nal_ref_lat) begin
+						nleft <= 5'd1; acc <= 0; cont <= ST_NIDR_REFMARK; st <= ST_GETBITS;
+					end else begin
+						zcnt <= 0; ue_cont <= ST_QPD; st <= ST_UE_Z;
+					end
+				end else if (ue_val <= 16'd2) begin
+					zcnt <= 0; ue_cont <= ST_LISTMOD_ARG; st <= ST_UE_Z;
+				end else
+					st <= ST_DONE;
+			end
+			ST_LISTMOD_ARG: begin
+				zcnt <= 0; ue_cont <= ST_LISTMOD_IDC; st <= ST_UE_Z;
 			end
 			ST_NIDR_REFMARK: begin
 				// Baseline product profile uses one short-term reference and no MMCO.

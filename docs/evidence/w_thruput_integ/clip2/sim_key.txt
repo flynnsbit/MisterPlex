@@ -1,0 +1,2 @@
+321:SINK_CY_BREAKDOWN total=473038 idle_wb=33036 idle_pend=300 idle_ready=71543 init=0 settle=5650 i16nb=10320 i16pred=63714 had=4674 i4nb=27998 iq=87264 apply=84672 dump=83621
+514:STAGE_CYCLES frame=0 parse_cycles=287 paint_cycles=2460335 parse_per_mb=0.245 paint_per_mb=2102.850

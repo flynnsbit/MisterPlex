@@ -1,10 +1,18 @@
+WITHDRAWN-AS-BUDGET-COMPARISON (kept for measured 4037 artifact only)
+=====================================================================
+The "~2000 cy/MB" budget comparison below is UNFOUNDED — no traced derivation
+in-repo. Superseded by:
+  docs/evidence/throughput_budget_defense_33904df.txt
+Product SoT is docs/decode-throughput.md: clk_sys=20 MHz, 2667@320/25, 684@624/25.
+4037 measurement itself remains valid as STAGE_CYCLES paint_per_mb @788aa5f.
+
 CYCLES / MACROBLOCK — measured + analytical breakdown
 =====================================================
 Lane: sv-traverse
 SHA:  788aa5f (RTL) / f82400a (evidence tip)
 Clip: plex_inter_p16_baseline_320x240_12f  frame=0  (300 MB)
 Clock budget cited by parent: ~2000 cy/MB @ 50 MHz for 320×240 ~23 fps
-  (docs/cycle-iterative-traverse-area.md historical; generous one serialisation ago)
+  (ORAL / untraced — DO NOT USE; see throughput_budget_defense_33904df.txt)
 
 ---------------------------------------------------------------------
 1. MEASURED TOTAL (product path, REAL_REF, SOURCE_SHA=788aa5f)

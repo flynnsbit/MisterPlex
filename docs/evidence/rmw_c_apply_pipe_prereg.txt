@@ -1,0 +1,87 @@
+RMW C — PIPELINE I16 APPLY RMW — PRE-REGISTER (before RTL)
+==========================================================
+Lane: sv-traverse / rtl/sink-contract-phase2
+Base tip: 3542824b (A+B at f5cafa7e)
+Authorised: pipeline I16 APPLY only. NO new memories. NO new DSP/mul.
+NO de-serial IQ / I16 pred. Target 2667 cy/MB (240p@20MHz@25). Not 684.
+Bit-exact: 300/300, 1170/1170, RED FAULT_SERIAL_IQ_ZERO ≪300.
+
+------------------------------------------------------------------------
+Mechanism (from design)
+------------------------------------------------------------------------
+u_plane_y = h264_byte_ram_sp: q registered 1 cy after raddr; we||raddr same
+cycle OK if waddr != raddr (no_rw_check).
+
+Today ST_APPLY_PX I16 (A+B): 3-cy RMW × 16 px = 48 cy/AC blk × 16 blk
+  = 768 cy/MB when cbp_l=15.
+
+I4 APPLY already 1 write/cy (recon_px in regs) — unchanged.
+
+Clip1 evidence for mix (rmw_ab clip1 sim):
+  I_RECON_DONE mb_written=299 blk_applied=5020
+  Identity: N_I16 + 16*N_I16 + 16*N_I4 = 5020 with N_I16+N_I4=300
+  → N_I16=221, N_I4=79 (all I16 appear full-AC; cbp_l=15)
+  f_I16_AC = 221/300 ≈ 0.7367
+
+Pipe (same pattern as MB_DUMP A):
+  issue every cy; capture at issue-2; write on capture.
+  2 fill + 16 capt = 18 cy/blk (was 48) → save 30 cy/blk × 16 = 480 cy
+  on each full-AC I16 MB.
+
+Same-cycle write(capt) + issue(next): addresses differ within 4x4 → OK.
+No new RAM instance. idct_r[] already held. Add only issue/capt index
+mux for apply_addr (function of px index, not only apply_i).
+
+------------------------------------------------------------------------
+PRE cycle
+------------------------------------------------------------------------
+  Mean save ≈ 480 * 0.7367 ≈ 354 cy/MB on paint_per_mb f0
+  2965.8 − 354 ≈ 2612
+
+  PRE paint_per_mb f0 ∈ 2550 .. 2700
+  PRE vs hard ≤2667: likely HIT with ~50–100 cy margin on this clip1 mix.
+  MISS modes: paint includes non-sink; clip2 mix differs; pipe bubble off-by-one.
+
+  Does C alone close the ~299 gap? YES on clip1 arithmetic (354 > 299).
+  Margin thin (~55). Chroma merge will consume margin — say so.
+
+------------------------------------------------------------------------
+PRE ALM / DSP / M10K
+------------------------------------------------------------------------
+  ALM delta: +0 .. +60 comb (dual addr, 5-bit pipe cnt; drop rd_ph thrash)
+  DSP delta: 0 (add+clip only; no mul)
+  M10K blocks: 0 new (reuse u_plane_y)
+
+------------------------------------------------------------------------
+Realistic floor — no new memory, no mul, no de-serial IQ/I16
+------------------------------------------------------------------------
+After C, remaining large serial fixed costs (I16 full-AC analytical sink):
+  MB_INIT 256 | I16_NB ~48 | I16_PRED 256 | IQ×16 ~272 | APPLY 288 | DUMP ~278
+  ≈ 1400 cy/MB pure I16 path (sink FSM only)
+
+Further no-mem levers (NOT authorised now — named only):
+  D) Skip MB_INIT when I16_PRED/I4 always cover plane → −256 all MB
+     PRE mean after C+D: ~2612−256 ≈ 2356 (room for chroma)
+  E) Pipeline neighbour top_row/plane fetches (3-cy → ~1+fill) — tens/MB
+  F) De-serial IQ or I16_PRED — FORBIDDEN without parent numbers+decision
+     IQ 272 / PRED 256 are the next big chunks; each deserial costs ALMs/DSP
+
+Luma-only realistic floor with D+E, no mem, no mul, serial IQ/PRED kept:
+  ~2200–2400 paint_per_mb f0 (clip1-like mix). Under 2667 with chroma headroom
+  only if chroma add stays under ~200–400 cy/MB mean — UNKNOWN until merge
+  measures. If chroma costs more, 2667 may need a later parent trade
+  (not taken here).
+
+Honest: C alone may land ≤2667 on luma clip1 but leaves little chroma room.
+Floor without memory/mul/deserial is ~2.2–2.4k mean, not ~1.4k paint
+(paint tracks more than pure sink sum). Chroma will go up.
+
+------------------------------------------------------------------------
+Verification
+------------------------------------------------------------------------
+1. PRE file on disk before RTL edit
+2. REAL_REF clip1 + clip2 + RED FAULT_SERIAL_IQ_ZERO
+3. STAGE_CYCLES paint_per_mb f0 + SOURCE_SHA
+4. No self-Quartus
+
+END PRE-REG

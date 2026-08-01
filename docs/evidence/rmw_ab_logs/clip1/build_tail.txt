@@ -1,0 +1,40 @@
+%Warning-WIDTHTRUNC: fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:1819:10: Operator TASKREF 'commit_tc_after_chr' expects 2 bits on the Function Argument, but Function Argument's AND generates 5 bits.
+                                                                       : ... note: In instance 'stream_path_full_frame_tb.dut.u_p_traverse'
+ 1819 |          commit_tc_after_chr(
+      |          ^~~~~~~~~~~~~~~~~~~
+%Warning-WIDTHEXPAND: fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:1829:33: Operator AND expects 5 bits on the RHS, but RHS's CONST '2'h3' generates 2 bits.
+                                                                        : ... note: In instance 'stream_path_full_frame_tb.dut.u_p_traverse'
+ 1829 |          (res_hold_idx - 5'd18) & 2'd3,
+      |                                 ^
+%Warning-WIDTHTRUNC: fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:1827:9: Operator TASKREF 'commit_tc_after_chr' expects 2 bits on the Function Argument, but Function Argument's AND generates 5 bits.
+                                                                      : ... note: In instance 'stream_path_full_frame_tb.dut.u_p_traverse'
+ 1827 |         commit_tc_after_chr(
+      |         ^~~~~~~~~~~~~~~~~~~
+%Warning-WIDTHEXPAND: fpga/Plex_MiSTer/rtl/h264_p_mb_traverse.sv:1846:23: Operator GTE expects 32 bits on the LHS, but LHS's VARREF 'bit_pos' generates 18 bits.
+                                                                        : ... note: In instance 'stream_path_full_frame_tb.dut.u_p_traverse'
+ 1846 |      else if (bit_pos >= rbsp_bit_total)
+      |                       ^~
+%Warning-WIDTHTRUNC: fpga/Plex_MiSTer/rtl/slice_hdr_parser.sv:175:6: Operator ASSIGN expects 16 bits on the Assign RHS, but Assign RHS's SHIFTRS generates 17 bits.
+                                                                   : ... note: In instance 'stream_path_full_frame_tb.dut.slp'
+  175 |    t = ($signed({1'b0, code}) + 17'sd2) >>> 1;
+      |      ^
+%Warning-WIDTHEXPAND: fpga/Plex_MiSTer/rtl/nalu_scanner.sv:198:38: Operator ADD expects 16 bits on the RHS, but RHS's CONST '14'h1' generates 14 bits.
+                                                                 : ... note: In instance 'stream_path_full_frame_tb.dut.scan'
+  198 |        if (!sl_hdr_ended && (cap_len + 14'd1) >= 14'd48) begin
+      |                                      ^
+%Warning-WIDTHEXPAND: fpga/Plex_MiSTer/rtl/nalu_scanner.sv:198:47: Operator GTE expects 16 bits on the RHS, but RHS's CONST '14'h30' generates 14 bits.
+                                                                 : ... note: In instance 'stream_path_full_frame_tb.dut.scan'
+  198 |        if (!sl_hdr_ended && (cap_len + 14'd1) >= 14'd48) begin
+      |                                               ^~
+%Warning-WIDTHEXPAND: fpga/Plex_MiSTer/rtl/nalu_scanner.sv:249:39: Operator ADD expects 16 bits on the RHS, but RHS's CONST '14'h1' generates 14 bits.
+                                                                 : ... note: In instance 'stream_path_full_frame_tb.dut.scan'
+  249 |         if (!sl_hdr_ended && (cap_len + 14'd1) >= 14'd48) begin
+      |                                       ^
+%Warning-WIDTHEXPAND: fpga/Plex_MiSTer/rtl/nalu_scanner.sv:249:48: Operator GTE expects 16 bits on the RHS, but RHS's CONST '14'h30' generates 14 bits.
+                                                                 : ... note: In instance 'stream_path_full_frame_tb.dut.scan'
+  249 |         if (!sl_hdr_ended && (cap_len + 14'd1) >= 14'd48) begin
+      |                                                ^~
+%Warning-WIDTHEXPAND: tests/rtl/stream_path_full_frame_tb_top.sv:260:35: Operator ADD expects 16 bits on the RHS, but RHS's CONST '9'sh1' generates 9 bits.
+                                                                       : ... note: In instance 'stream_path_full_frame_tb'
+  260 |      (dut.stub.lat_coeff[trace_i] + 9'sd1) : dut.stub.lat_coeff[trace_i];
+      |                                   ^

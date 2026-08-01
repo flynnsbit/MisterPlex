@@ -169,6 +169,9 @@ unit-unlocked: unit-rollcall preflight $(ROOT)/build/test_cadence $(ROOT)/build/
 	$(ROOT)/tests/unit/test_h264_sps_geometry_rtl_sim.sh
 	$(ROOT)/tests/unit/test_h264_baseline_syntax_rtl_sim.sh
 	$(ROOT)/tests/unit/test_h264_inter_nb_mvd_rtl_sim.sh
+	python3 $(ROOT)/tests/unit/test_dpb_writeback_source.py
+	$(ROOT)/tests/unit/test_h264_p_mb_traverse_rtl_sim.sh
+	$(ROOT)/tests/unit/test_decode_stub_fetch_mv_rtl_sim.sh
 
 rtl-sim:
 	python3 $(ROOT)/scripts/run_with_skip_summary.py --label rtl-sim -- $(MAKE) rtl-sim-unlocked

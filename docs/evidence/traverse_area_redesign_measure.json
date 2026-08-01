@@ -1,0 +1,40 @@
+{
+  "title": "h264_p_mb_traverse cycle-iterative area redesign",
+  "baseline_map2d": {
+    "traverse_comb_alms": 1180271,
+    "self_comb": 1177415,
+    "doc": "docs/cycle-iterative-traverse-area.md adb3260"
+  },
+  "pre_register": {
+    "alm_band": "800..3000",
+    "alm_gate": "<=3000 (sv-integrate owns map)",
+    "luma_320": "300/300",
+    "headline": "0/300 chroma floor"
+  },
+  "actual_functional_320": {
+    "SOURCE_SHA_log": "docs/evidence/traverse_area_redesign_320_run.log",
+    "intra_y_mb": "300/300",
+    "intra_y_px": "76800/76800",
+    "inter_y_mb": "1939/3300",
+    "headline": "0/300",
+    "STORE": "unique=300 dup=0",
+    "DELIVERED": "unique=300 dup=0",
+    "mb_written": 300,
+    "true_rc_measure_script": 0
+  },
+  "red_twin_FAULT_SKIP_WIN_LOAD": {
+    "log": "docs/evidence/traverse_area_fault_skip_win.log",
+    "evidence": "TRAV_FAIL_NOW mb=0 st=33 (ST_RES_WAIT) on IDR; STORE unique=0 expected=300",
+    "result": "DISCRIMINATES \u2014 serial window load is load-bearing"
+  },
+  "rtl_changes": [
+    "rbsp[] combo array \u2192 (* ramstyle=M10K *) rbsp_mem + registered rbsp_q",
+    "rbsp_bit_at() removed; bit_ready/cur_bit from registered byte (+M10K latency)",
+    "load_res_window 64-wide \u2192 ST_RES_WIN_LOAD serial 64B (win_k 0..65)",
+    "curr_mb % / \u2192 curr_x_r/curr_y_r counters + ST_INIT_XY",
+    "FAULT_SKIP_WIN_LOAD RED twin wired through stream_path + TB"
+  ],
+  "deferred_phase2": "tc_top/i4_mode_top still small regs with combo nC functions \u2014 secondary after RBSP; serial clear optional if map still high",
+  "alm_actual": "UNKNOWN \u2014 sv-integrate map gate; do not self-launch quartus_map",
+  "clip2": "superseded by sv-mvd 1170/1170 joint; not re-run this turn"
+}

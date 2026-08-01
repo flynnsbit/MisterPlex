@@ -1,0 +1,7 @@
+CLIP path=tests/fixtures/p3_multinal/wcap_residual14_idr_plus_p.264 geom=320x240 mb=20x15=300 rbsp_bytes=6091
+MODES I4=83 I16=217
+WRAP_EVENTS raw!=wrapQpY 0
+QP_RANGE [5,26] mean=10.88 final=5
+MT_HIST 0:83 1:184 2:7 3:5 5:8 6:6 7:3 9:2 13:1 23:1
+QP_HIST 5:206 19:2 20:5 21:3 22:7 23:13 24:27 25:30 26:7
+OK bit=48726 br_ok=1

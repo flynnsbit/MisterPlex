@@ -1,0 +1,44 @@
+{
+  "title": "second-clip validation 624x480",
+  "clip": "plex_inter_p16_baseline_624x480_12f.264",
+  "clip_stats": {
+    "I4": 167,
+    "I16": 1003,
+    "wrap_events": 6,
+    "qp_range": [
+      1,
+      35
+    ],
+    "mb": 1170,
+    "rbsp": 10891
+  },
+  "vs_320": {
+    "I4": 79,
+    "I16": 221,
+    "wrap_events": 1,
+    "mb": 300
+  },
+  "pre_register": {
+    "headline": "0/1170",
+    "intra_y_mb": "1100..1170/1170"
+  },
+  "actual": {
+    "headline": "0/1170",
+    "intra_y_mb": "1170/1170",
+    "intra_y_px": "299520/299520",
+    "inter_y_mb": "5036/12870",
+    "store": "1170/1170"
+  },
+  "prereg_result": "HIT",
+  "enabling_fixes": [
+    "nalu_scanner MAX_SLICE_RBSP 8192\u219216384; cap_len 16-bit (16384[13:0] was 0)",
+    "stream_path TRAV_BUF_MAX/MAX_RBSP_BYTES 16384",
+    "h264_p_mb_traverse bit_pos 16\u219218 bits (10891*8=87128 overflowed 16-bit at ~250/1170)"
+  ],
+  "320_regression": {
+    "intra_y_mb": "300/300",
+    "inter_y_mb": "1939/3300",
+    "log": "docs/evidence/i_slice_luma_320_post_bitpos_run.log"
+  },
+  "conclusion": "Not overfit to 320 clip \u2014 full I luma exact on 624 with different mode mix and 6 QP wraps"
+}

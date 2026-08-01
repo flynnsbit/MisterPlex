@@ -1,0 +1,59 @@
+{
+  "lane": "sv-traverse",
+  "branch": "rtl/sink-contract-phase2",
+  "base_freeze": "cf6842a",
+  "parent_of_work": "f91fbe3 (serial I16 accepted; plane/top ordered before map)",
+  "pre_reg": {
+    "sink_ALM": "1500..4000",
+    "sink_DSP": "4..6 (hold; no new DSP)",
+    "clip1": "300/300 px exact",
+    "clip2": "1170/1170 px exact",
+    "RED_FAULT_SKIP_PLANE_NB": "intra_y << 300 discriminates",
+    "cycles_per_mb_est": "2700..3000 (pre-impl; may exceed ~2000 budget)"
+  },
+  "commit_sha": "788aa5f68fcd8fa83ccbeec909ea6efdc037681f",
+  "measured_functional": {
+    "clip1_320": {
+      "intra_y_mb": "300/300",
+      "y_px": "76800/76800",
+      "y_blk4": "4800/4800",
+      "paint_per_mb_frame0": 4036.907,
+      "true_rc_luma_score": 0,
+      "source_sha": "788aa5f68fcd8fa83ccbeec909ea6efdc037681f",
+      "log": "docs/evidence/plane_m10k_clip1_788aa5f.log"
+    },
+    "clip2_624": {
+      "intra_y_mb": "1170/1170",
+      "y_px": "299520/299520",
+      "y_blk4": "18720/18720",
+      "paint_per_mb_frame0": 3977.876,
+      "true_rc_luma_score": 0,
+      "source_sha": "788aa5f68fcd8fa83ccbeec909ea6efdc037681f",
+      "log": "docs/evidence/plane_m10k_clip2_788aa5f.log"
+    },
+    "RED_SKIP_PLANE_NB": {
+      "build": "-GFAULT_SKIP_PLANE_NB=1",
+      "intra_y_mb": "0/300",
+      "y_px": "120/76800",
+      "discriminates": true,
+      "log": "docs/evidence/plane_m10k_red_gparam.log"
+    },
+    "unit": {
+      "make_unit_true_rc": 0,
+      "rtl_lint": "PASS vs tests/fixtures/rtl_lint_baseline.json",
+      "log": "docs/evidence/plane_m10k_unit_final.log"
+    }
+  },
+  "throughput": {
+    "budget_cy_per_mb_nominal": 2000,
+    "measured_paint_per_mb_frame0_320": 4036.907,
+    "measured_paint_per_mb_frame0_624": 3977.876,
+    "vs_budget": "OVER ~2.0x (~4.0k cy/MB paint path frame0)",
+    "verdict": "THROUGHPUT_RISK_PUBLISHED — serial IQ + serial I16 + plane RMW/nb stacked; not hidden"
+  },
+  "ALM_DSP": "UNKNOWN until sv-integrate maps complete phase-2 tip once (do NOT map f91fbe3 alone)",
+  "method": "plane_y + top_row via h264_byte_ram_sp (1 we, 1 raddr, registered q); serial I4/I16 nb issue/wait/capt; RMW paint/apply; tl_for_right from top_row before overwrite; FAULT_SKIP_PLANE_NB",
+  "inference_note": "M10K inference must be confirmed by Quartus RAM summary / Info 276029 — not by low ALM count",
+  "dsp_hold": "no new multipliers; pre-reg DSP 4..6",
+  "map_request": "ONE complete phase-2 map after this commit; protect DSP wall (111/112)"
+}

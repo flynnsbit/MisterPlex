@@ -1,0 +1,14 @@
+cf6842a MAP (sv-integrate 2874be25 / docs/coord-map-cf6842a-ALMS.txt) — publish both ways
+========================================================================================
+PRE-REG sink: ALM 2500..4000  DSP 6..12
+MEASURED:
+  sink DSP   64 -> 4     vs <=12  **HIT** (below band; u_dq=2 u_had=2 shared NOT pruned)
+  whole DSP 149 -> 111   vs 112   **PASS by 1**
+  sink comb 38687 -> 39155 (self 23211) vs <=4k  **MISS** (serial IQ removed DSP not fabric)
+  whole ALM 63199 -> 61267 vs 41910 **MISS** 1.46x
+  traverse  9167 -> 8682 still MISS vs <=3k
+
+Phase-2 target (this branch rtl/sink-contract-phase2):
+  serialise i16 pred (10643 comb) + plane/top_row -> h264_byte_ram_sp
+  DO NOT add DSP (1 headroom)
+  pre-reg phase-2: sink ALM 2000..4000  DSP 4..6 (hold)

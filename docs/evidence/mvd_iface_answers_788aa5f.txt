@@ -1,0 +1,35 @@
+sv-mvd INTERFACE ANSWERS — rebase chroma onto 788aa5f
+======================================================
+From: sv-traverse / rtl/sink-contract-phase2 @ f00d8605+
+Base freeze for chroma: 788aa5f6
+Normative doc: docs/serial-iq-sink-contract.md §10
+Budget SoT:    docs/decode-throughput.md + docs/evidence/throughput_budget_defense_33904df.txt
+
+You are UNBLOCKED on interface. Summary answers (full table in contract §10.6):
+
+1. BASE = 788aa5f6 (not cf6842a). Luma res_blk_* ports unchanged.
+2. Additive ports OK: res_mb_chroma_mode[1:0], chroma_qp_index_offset signed[4:0],
+   EXT_SERIAL_DQ + ext_dq_{start,coeff,qp,max_coeff,busy,done,dequant},
+   optional nb_commit for Intra-in-P neighbour seed.
+3. ONE serial dequant only (share via EXT_SERIAL_DQ). No combo h264_dequant4x4,
+   no 16-wide mul farm. Device DSP headroom at map was 1 (111/112).
+4. QP port = wrapped 0..51. Chroma: QPc from wrapped QP_Y + PPS offset (se(v)).
+5. Chroma DC = h264_chroma_dc_hadamard_inv (2x2), NOT h264_i16_dc_hadamard_serial.
+6. ST_SETTLE else-branch currently drops !luma → IDLE. Hook chroma there.
+   Never skip SETTLE; never dq_start on accept cycle.
+7. res_blk_ready = (st==IDLE) && !write_busy && !pend_mb_end  — still.
+8. plane_y/top_row are h264_byte_ram_sp (3-cy RMW). plane_u/v at freeze are regs[0:63].
+   top_u/v if added: h264_byte_ram_sp DEPTH=MAX_PIC_W/2 — NOT wide fabric.
+9. write_req only after ST_MB_DUMP completes; U/V must be final first.
+   Prior chroma defect: mb_written=299 when chroma path broken — gate STORE_MB_BITMAP.
+10. Bit-exact non-negotiable: Y 300/300 and 1170/1170 must hold after merge.
+11. Do NOT self-launch Quartus. Pre-reg ALM; sv-integrate maps.
+12. Oral "~2000 cy/MB @50 MHz" is WITHDRAWN. Decode clk_sys=20.000 MHz
+    (pll_0002 outclk_0). Budgets 2667@320/25 and 684@624/25.
+    IDR paint_per_mb≈4037 is OVER those SoT budgets — cycle work is RMW-tax
+    (HAD_PAINT/APPLY/DUMP), not de-serialising IQ/I16. See defense card.
+
+Traverse phase-2 (tc_top/i4_mode_top M10K) is on this branch @ 4f281e6 if you
+need it under you; pure chroma can land on clean 788aa5f then rebase.
+
+Patch protocol: your patch/PR; we review for parallel muls / SETTLE / ready / QP.

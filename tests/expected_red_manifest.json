@@ -164,7 +164,7 @@
     {
       "id": "h264_decode_core_p16z_drop_clip",
       "owner": "tests/unit/test_h264_decode_core_p16z_rtl_sim.sh",
-      "why": "Dropping Clip1 after pred+residual must wrap high samples (255+1→0) and fail the scoreboard, proving clip is not vacuous.",
+      "why": "Dropping Clip1 after pred+residual must wrap high samples (255+1\u21920) and fail the scoreboard, proving clip is not vacuous.",
       "required_substrings": [
         "FAIL h264_decode_core p16x16 real-P scoreboard: mb=(1,0) sample 126 plane=Y got=0 want=255 pred=255 residual=1"
       ]
@@ -221,17 +221,41 @@
     {
       "id": "h264_inter_nb_ctx_swap_ab",
       "owner": "tests/unit/test_h264_inter_nb_mvd_rtl_sim.sh",
-      "why": "Swapping A/B neighbours must fail median MVP against reference-decoder frame MVs.",
+      "why": "Swapping A/B neighbour availability must fail top-row single-A neighbour selection.",
       "required_substrings": [
-        "FAIL h264_inter_nb_mvd: top-row single-A avail got a=0 b=1"
+        "FAIL h264_inter_nb_mvd: top-row single-A avail got a=0 b=1 c=0 d=0"
       ]
     },
     {
       "id": "h264_inter_nb_ctx_drop_c_fallback",
       "owner": "tests/unit/test_h264_inter_nb_mvd_rtl_sim.sh",
-      "why": "Dropping C\u2192D fallback must fail cases where C is unavailable and D carries the third median candidate.",
+      "why": "Dropping C-neighbour fallback must fail c_fallback availability golden.",
       "required_substrings": [
-        "FAIL h264_inter_nb_mvd: c_fallback"
+        "FAIL h264_inter_nb_mvd: c_fallback avail got a=1 b=1 c=0 d=0"
+      ]
+    },
+    {
+      "id": "h264_p_mb_traverse_bad_skip",
+      "owner": "tests/unit/test_h264_p_mb_traverse_rtl_sim.sh",
+      "why": "Ignoring mb_skip_run must under-count or fault so full P-MB traversal cannot vacuous-pass on skip runs.",
+      "required_substrings": [
+        "FAIL mut_bad_skip"
+      ]
+    },
+    {
+      "id": "h264_p_mb_traverse_drop_last_row",
+      "owner": "tests/unit/test_h264_p_mb_traverse_rtl_sim.sh",
+      "why": "Dropping the last MB of each row must under-count traversed MBs so raster completeness is not silently skipped.",
+      "required_substrings": [
+        "FAIL mut_drop_last"
+      ]
+    },
+    {
+      "id": "decode_stub_fetch_mv_zero",
+      "owner": "tests/unit/test_decode_stub_fetch_mv_rtl_sim.sh",
+      "why": "Forcing fetch MV to zero must fail the product-path origin shift gate (proves hardwire is gone).",
+      "required_substrings": [
+        "FAIL decode_stub fetch_mv: product_fetch_mv got=(0,0) want=(16,0)"
       ]
     }
   ]

@@ -1,10 +1,26 @@
 // Phase 3.3–3.3l-1: F3 → FIFO → NAL → SPS/PPS/slice_hdr(+full first residual) + decode_stub.
 // Hybrid: stub diagnostic paint is F3-only; host F1 recon owns product present (Plex.sv).
-// P3-3l5: expose product_recon_ok / hybrid_host_required for STREAM skip-host policy.
 
 module stream_path #(
 	parameter int FRAME_W = 320,
-	parameter int FRAME_H = 240
+	parameter int FRAME_H = 240,
+	// Self-produced DPB reference commit (no golden prefill). Sim/measure only
+	// until product IDR recon is complete; default off preserves legacy path.
+	parameter bit USE_REAL_REF_COMMIT = 1'b0,
+	parameter bit FAULT_REAL_REF_XOR_FILL = 1'b0,
+	// Mutation: ACK walker while dropping hold load (proves lossless backpressure).
+	parameter bit FAULT_DROP_TRAV_MB = 1'b0,
+	// Mutation: double-count store address (proves STORE_MB_BITMAP RED).
+	parameter bit FAULT_DUP_STORE = 1'b0,
+	// Mutation: skip QP_Y mod-52 wrap on mb_qp_delta (restores 4× residual).
+	parameter bit FAULT_NO_QP_WRAP = 1'b0,
+	// Mutation: skip serial RBSP→res_win load (area redesign twin).
+	parameter bit FAULT_SKIP_WIN_LOAD = 1'b0,
+	// Mutation: serial dequant forces zeros (sink area redesign twin).
+	parameter bit FAULT_SERIAL_IQ_ZERO = 1'b0,
+	parameter bit FAULT_SERIAL_I16_PRED_128 = 1'b0,
+	parameter bit FAULT_SKIP_PLANE_NB = 1'b0,
+	parameter bit FAULT_SKIP_TC_TOP_NB = 1'b0
 )(
 	input  wire        clk,
 	input  wire        reset,
@@ -68,7 +84,19 @@ module stream_path #(
 	output wire [2:0]  first_mb_part_count,
 	output wire        first_mb_uses_sub_mb,
 	output wire        first_mb_intra,
-	// First P-MB mvd_l0[0] se(v) → product DPB fetch (MVP + mvd).
+	// P-slice full MB traversal observables
+	output wire        p_mb_valid,
+	output wire [15:0] p_mb_addr,
+	output wire [7:0]  p_mb_x,
+	output wire [7:0]  p_mb_y,
+	output wire        p_mb_skip,
+	output wire [2:0]  p_mb_part_mode,
+	output wire [2:0]  p_mb_part_count,
+	output wire        p_mb_uses_sub_mb,
+	output wire        p_mb_intra,
+	output wire [15:0] p_mb_count,
+	output wire        p_slice_done,
+	output wire        p_traverse_busy,
 	output wire signed [15:0] first_mb_mvd_x,
 	output wire signed [15:0] first_mb_mvd_y,
 	// Product MV actually driven into DPB fetch (post MVP+mvd).
@@ -96,14 +124,6 @@ module stream_path #(
 	output wire [7:0]  recon_dbg,
 	output wire        recon_dbg_valid,
 	output wire        recon_valid,
-
-	// P3-3l5 hybrid product handoff
-	output wire        hybrid_fpga_owned,
-	output wire        hybrid_host_required,
-	output wire        product_recon_ok,
-	output wire [2:0]  hybrid_own_code,
-	output wire [3:0]  hybrid_own_reason,
-	output wire        entropy_cabac,
 
 	output wire        fs_wr_en,
 	output wire [15:0] fs_wr_pixel,
@@ -174,7 +194,7 @@ module stream_path #(
 	wire [7:0] sps_cap_data;
 	wire pps_cap_clear, pps_cap_en, pps_cap_end;
 	wire [7:0] pps_cap_data;
-	wire sl_cap_clear, sl_cap_en, sl_cap_end, sl_is_idr, sl_nal_ref_idc_nonzero;
+	wire sl_cap_clear, sl_cap_en, sl_cap_end, sl_rbsp_eop, sl_is_idr, sl_nal_ref_idc_nonzero;
 	wire [7:0] sl_cap_data;
 
 	nalu_scanner scan (
@@ -189,7 +209,8 @@ module stream_path #(
 		.pps_cap_clear(pps_cap_clear), .pps_cap_en(pps_cap_en),
 		.pps_cap_data(pps_cap_data), .pps_cap_end(pps_cap_end),
 		.sl_cap_clear(sl_cap_clear), .sl_cap_en(sl_cap_en),
-		.sl_cap_data(sl_cap_data), .sl_cap_end(sl_cap_end), .sl_is_idr(sl_is_idr),
+		.sl_cap_data(sl_cap_data), .sl_cap_end(sl_cap_end),
+		.sl_rbsp_eop(sl_rbsp_eop), .sl_is_idr(sl_is_idr),
 		.sl_nal_ref_idc_nonzero(sl_nal_ref_idc_nonzero)
 	);
 
@@ -304,11 +325,341 @@ module stream_path #(
 	assign residual_t1   = sl_rt1;
 	assign residual_ok   = sl_res_ok;
 	assign residual_dc   = sl_rdc;
-	assign entropy_cabac = pps_cabac;
+
+	// ── Full P/I-slice MB traversal (independent of first-MB residual sticky) ──
+	// Side-buffer slice RBSP, then load the walker when idle so multi-slice
+	// streams are not dropped while a prior walk is in progress.
+	// Product: non-IDR only. Real-ref: also capture IDR for I-slice residual walk.
+	// 1-deep hold feeds stub. Lossless backpressure is UNCONDITIONAL for product
+	// and real-ref (do not gate behind USE_REAL_REF_COMMIT — that divergence
+	// made p=300 real-ref-only while product dropped hold beats).
+	// 624x480 IDR RBSP ≈11KB; 320x240 ≈3KB. Keep headroom for larger I-slices.
+	localparam int TRAV_BUF_MAX = 16384;
+	// Under real-ref, capture IDR so I residual can fill recon_store before P.
+	wire trav_cap_ok = USE_REAL_REF_COMMIT ? 1'b1 : !sl_is_idr;
+	reg [7:0]  trav_buf [0:TRAV_BUF_MAX-1];
+	reg [15:0] trav_buf_len;
+	reg        trav_buf_ready;   // closed buffer awaiting load
+	reg        trav_buf_active;  // capturing into buffer
+	reg [15:0] trav_load_idx;
+	reg [1:0]  trav_ld_st; // 0 idle, 1 clear, 2 load, 3 start
+	reg        trav_start_r;
+	reg        trav_clear_r;
+	// Context latched at RBSP close so a later NAL cannot change walker inputs.
+	reg        trav_lat_nal_ref;
+	reg        trav_lat_deblock;
+	reg        trav_lat_is_idr;
+	reg signed [7:0] trav_lat_qp;
+	reg [2:0]  trav_lat_nref;
+	reg [4:0]  trav_lat_log2_fn;
+	reg [2:0]  trav_lat_poc;
+	reg [7:0]  trav_lat_mb_w, trav_lat_mb_h;
+	wire       trav_in_ready;
+	wire       trav_w_valid;
+	reg         hold_v;
+	wire        trav_mb_ready; // from stub
+	// Lossless: walker advances only when hold can take the beat.
+	// FAULT_DROP_TRAV_MB: always-ready + skip load when full → drop (RED twin).
+	wire       trav_w_ready = FAULT_DROP_TRAV_MB ? 1'b1 : (!hold_v || trav_mb_ready);
+	wire [15:0] trav_w_addr;
+	wire [7:0]  trav_w_x, trav_w_y;
+	wire        trav_w_skip;
+	wire [7:0]  trav_w_type;
+	wire [2:0]  trav_w_part_mode, trav_w_part_count;
+	wire        trav_w_uses_sub, trav_w_intra;
+	wire [5:0]  trav_w_cbp;
+	wire signed [7:0] trav_w_mb_qp;
+	wire [15:0] trav_w_res_off;
+	wire [15:0] trav_mb_count;
+	wire        trav_slice_done, trav_busy, trav_err, trav_unsup;
+	// I residual export → decode_stub sink
+	wire        trav_res_blk_valid;
+	wire        trav_res_blk_ready;
+	wire [15:0] trav_res_blk_mb_addr;
+	wire [7:0]  trav_res_blk_mb_x, trav_res_blk_mb_y;
+	wire [4:0]  trav_res_blk_idx;
+	wire        trav_res_blk_is_i16, trav_res_blk_is_luma;
+	wire [5:0]  trav_res_blk_qp;
+	wire [4:0]  trav_res_blk_max;
+	wire [3:0]  trav_res_blk_pred_mode;
+	wire signed [15:0] trav_res_blk_coeff [0:15];
+	wire        trav_res_mb_end;
+	wire [15:0] trav_res_mb_end_addr;
+
+	wire trav_loading = (trav_ld_st == 2'd2);
+	wire trav_in_valid = trav_loading && (trav_load_idx < trav_buf_len) && trav_in_ready;
+	wire [7:0] trav_in_byte = trav_buf[trav_load_idx[13:0]];
+
+	always @(posedge clk) begin
+		if (reset | flush) begin
+			trav_buf_len <= 16'd0;
+			trav_buf_ready <= 1'b0;
+			trav_buf_active <= 1'b0;
+			trav_load_idx <= 16'd0;
+			trav_ld_st <= 2'd0;
+			trav_start_r <= 1'b0;
+			trav_clear_r <= 1'b0;
+			trav_lat_nal_ref <= 1'b0;
+			trav_lat_deblock <= 1'b0;
+			trav_lat_is_idr <= 1'b0;
+			trav_lat_qp <= 8'sd26;
+			trav_lat_nref <= 3'd0;
+			trav_lat_log2_fn <= 5'd4;
+			trav_lat_poc <= 3'd0;
+			trav_lat_mb_w <= 8'd20;
+			trav_lat_mb_h <= 8'd15;
+		end else begin
+			trav_start_r <= 1'b0;
+			trav_clear_r <= 1'b0;
+
+			// Capture slice RBSP (P always; IDR too under USE_REAL_REF_COMMIT)
+			if (sl_cap_clear && trav_cap_ok) begin
+				if (!trav_buf_ready && trav_ld_st == 2'd0) begin
+					trav_buf_len <= 16'd0;
+					trav_buf_active <= 1'b1;
+`ifdef VERILATOR
+					$display("TRAV_CAP_START idr=%0d", sl_is_idr);
+`endif
+				end
+			end else if (sl_cap_clear && !trav_cap_ok) begin
+				trav_buf_active <= 1'b0;
+			end
+			if (trav_buf_active && sl_cap_en && trav_cap_ok) begin
+				if (trav_buf_len < TRAV_BUF_MAX[15:0]) begin
+					trav_buf[trav_buf_len[13:0]] <= sl_cap_data;
+					trav_buf_len <= trav_buf_len + 16'd1;
+				end
+			end
+			// Close on true NAL end (not the 48 B header window)
+			if (trav_buf_active && sl_rbsp_eop && trav_cap_ok) begin
+				trav_buf_active <= 1'b0;
+				trav_buf_ready <= 1'b1;
+				trav_lat_nal_ref <= sl_nal_ref_idc_nonzero;
+				trav_lat_deblock <= pps_deblock;
+				trav_lat_is_idr <= sl_is_idr;
+				trav_lat_qp <= pps_qp;
+				trav_lat_nref <= pps_nref[2:0];
+				trav_lat_log2_fn <= log2_fn;
+				trav_lat_poc <= poc_t;
+				trav_lat_mb_w <= sps_mb_w;
+				trav_lat_mb_h <= sps_mb_h;
+`ifdef VERILATOR
+				$display("TRAV_CAP_EOP idr=%0d len=%0d mb_w=%0d mb_h=%0d",
+					sl_is_idr, trav_buf_len, sps_mb_w, sps_mb_h);
+`endif
+			end
+
+			// clear → load → start handshake into walker
+			case (trav_ld_st)
+			2'd0: begin
+				if (trav_buf_ready && !trav_busy) begin
+					trav_clear_r <= 1'b1;
+					trav_load_idx <= 16'd0;
+					trav_ld_st <= 2'd1;
+				end
+			end
+			2'd1: begin
+				// clear applied; begin byte load next cycle
+				trav_ld_st <= 2'd2;
+			end
+			2'd2: begin
+				if (trav_buf_len == 16'd0) begin
+					trav_ld_st <= 2'd3;
+				end else if (trav_in_valid) begin
+					if (trav_load_idx + 16'd1 >= trav_buf_len)
+						trav_ld_st <= 2'd3;
+					else
+						trav_load_idx <= trav_load_idx + 16'd1;
+				end
+			end
+			default: begin
+				trav_start_r <= 1'b1;
+				trav_buf_ready <= 1'b0;
+				trav_ld_st <= 2'd0;
+`ifdef VERILATOR
+				$display("TRAV_START idr=%0d len=%0d", trav_lat_is_idr, trav_buf_len);
+`endif
+			end
+			endcase
+		end
+	end
+
+	h264_p_mb_traverse #(
+		.MAX_RBSP_BYTES(16384),
+		.FAULT_NO_QP_WRAP(FAULT_NO_QP_WRAP),
+		.FAULT_SKIP_WIN_LOAD(FAULT_SKIP_WIN_LOAD),
+		.FAULT_SKIP_TC_TOP_NB(FAULT_SKIP_TC_TOP_NB)
+	) u_p_traverse (
+		.clk(clk), .reset(reset | flush), .clear(trav_clear_r | reset | flush),
+		.in_valid(trav_in_valid), .in_byte(trav_in_byte),
+		.in_last(1'b0), .in_ready(trav_in_ready),
+		.start(trav_start_r),
+		.mb_width(trav_lat_mb_w), .mb_height(trav_lat_mb_h),
+		.log2_max_frame_num(trav_lat_log2_fn),
+		.poc_type(trav_lat_poc),
+		.is_idr_nal(trav_lat_is_idr),
+		.nal_ref_idc_nonzero(trav_lat_nal_ref),
+		.pps_deblock_ctrl(trav_lat_deblock),
+		.pps_pic_init_qp(trav_lat_qp),
+		.num_ref_idx_l0_active_minus1(trav_lat_nref),
+		.mb_valid(trav_w_valid), .mb_ready(trav_w_ready),
+		.mb_addr(trav_w_addr), .mb_x(trav_w_x), .mb_y(trav_w_y),
+		.mb_skip(trav_w_skip), .mb_type(trav_w_type),
+		.part_mode(trav_w_part_mode), .part_count(trav_w_part_count),
+		.uses_sub_mb(trav_w_uses_sub), .is_intra(trav_w_intra),
+		.cbp(trav_w_cbp), .mb_qp(trav_w_mb_qp),
+		.residual_bit_offset(trav_w_res_off),
+		.res_blk_valid(trav_res_blk_valid),
+		.res_blk_ready(trav_res_blk_ready),
+		.res_blk_mb_addr(trav_res_blk_mb_addr),
+		.res_blk_mb_x(trav_res_blk_mb_x),
+		.res_blk_mb_y(trav_res_blk_mb_y),
+		.res_blk_idx(trav_res_blk_idx),
+		.res_blk_is_i16(trav_res_blk_is_i16),
+		.res_blk_is_luma(trav_res_blk_is_luma),
+		.res_blk_qp(trav_res_blk_qp),
+		.res_blk_max_coeff(trav_res_blk_max),
+		.res_blk_pred_mode(trav_res_blk_pred_mode),
+		.res_blk_coeff(trav_res_blk_coeff),
+		.res_mb_end(trav_res_mb_end),
+		.res_mb_end_addr(trav_res_mb_end_addr),
+		.mb_count(trav_mb_count),
+		.slice_done(trav_slice_done),
+		.busy(trav_busy), .error(trav_err), .unsupported(trav_unsup)
+	);
+
+	// 1-deep hold for decode_stub. With unconditional backpressure this is
+	// lossless (no drop); FAULT_DROP_TRAV_MB reintroduces drop for RED twin.
+	reg [15:0]  hold_addr;
+	reg [7:0]   hold_x, hold_y;
+	reg         hold_skip;
+	reg [2:0]   hold_pm, hold_pc;
+	reg         hold_sub, hold_intra;
+	wire        trav_mb_valid = hold_v;
+	wire [15:0] trav_mb_addr = hold_addr;
+	wire [7:0]  trav_mb_x = hold_x;
+	wire [7:0]  trav_mb_y = hold_y;
+	wire        trav_mb_skip = hold_skip;
+	wire [2:0]  trav_part_mode = hold_pm;
+	wire [2:0]  trav_part_count = hold_pc;
+	wire        trav_uses_sub = hold_sub;
+	wire        trav_intra = hold_intra;
+
+`ifdef VERILATOR
+	// Delivered-MB address bitmap (stub accepts). Proves unique coverage
+	// independent of dbg_store_wr_* enqueue counts.
+	reg [1199:0] deliv_mb_bits; // up to 1200 MBs (624x480=1170)
+	reg [15:0]    deliv_unique;
+	reg [15:0]    deliv_dup;
+	reg [15:0]    deliv_oob;
+	reg [15:0]    deliv_expected; // mb_w*mb_h latched at slice start
+`endif
+
+	always @(posedge clk) begin
+		if (reset | flush) begin
+			hold_v <= 1'b0;
+`ifdef VERILATOR
+			deliv_mb_bits <= '0;
+			deliv_unique <= 16'd0;
+			deliv_dup <= 16'd0;
+			deliv_oob <= 16'd0;
+			deliv_expected <= 16'd0;
+`endif
+		end else begin
+`ifdef VERILATOR
+			if (trav_start_r) begin
+				deliv_mb_bits <= '0;
+				deliv_unique <= 16'd0;
+				deliv_dup <= 16'd0;
+				deliv_oob <= 16'd0;
+				deliv_expected <= 16'({8'd0, trav_lat_mb_w}) * 16'({8'd0, trav_lat_mb_h});
+			end
+`endif
+			if (hold_v && trav_mb_ready)
+				hold_v <= 1'b0;
+			// Load when empty or same-cycle consumer take.
+			// Count unique MB addresses at hold *load* (not stub accept) so the
+			// last beat is recorded even if slice_done races ahead of drain.
+			// Fault path: walker always ready but skip load when full → drop.
+			if (trav_w_valid && (!hold_v || trav_mb_ready)) begin
+				hold_v <= 1'b1;
+				hold_addr <= trav_w_addr;
+				hold_x <= trav_w_x;
+				hold_y <= trav_w_y;
+				hold_skip <= trav_w_skip;
+				hold_pm <= trav_w_part_mode;
+				hold_pc <= trav_w_part_count;
+				hold_sub <= trav_w_uses_sub;
+				hold_intra <= trav_w_intra;
+`ifdef VERILATOR
+				if (trav_w_addr < 16'd1200) begin
+					if (deliv_mb_bits[trav_w_addr[10:0]])
+						deliv_dup <= deliv_dup + 16'd1;
+					else begin
+						deliv_mb_bits[trav_w_addr[10:0]] <= 1'b1;
+						deliv_unique <= deliv_unique + 16'd1;
+					end
+				end else
+					deliv_oob <= deliv_oob + 16'd1;
+`endif
+			end else if (FAULT_DROP_TRAV_MB && trav_w_valid && hold_v && !trav_mb_ready) begin
+				// Explicit drop under fault (ready forged high above) — no count.
+			end
+`ifdef VERILATOR
+			if (trav_slice_done) begin
+				$display("DELIVERED_MB_BITMAP unique=%0d dup=%0d oob=%0d expected=%0d fault_drop=%0d real_ref=%0d",
+					deliv_unique, deliv_dup, deliv_oob, deliv_expected,
+					FAULT_DROP_TRAV_MB, USE_REAL_REF_COMMIT);
+			end
+`endif
+		end
+	end
+
+	// Sticky peak mb_count across slices (walker clears per start)
+	reg [15:0] trav_mb_count_peak;
+	reg        trav_slice_done_sticky;
+	// Edge-pulse error/unsup so stub can retire a failed walk once.
+	reg        trav_err_d, trav_unsup_d;
+	wire       trav_fail_pulse = (trav_err & ~trav_err_d) | (trav_unsup & ~trav_unsup_d);
+	wire       trav_slice_retire = trav_slice_done | trav_fail_pulse;
+	always @(posedge clk) begin
+		if (reset | flush) begin
+			trav_mb_count_peak <= 16'd0;
+			trav_slice_done_sticky <= 1'b0;
+			trav_err_d <= 1'b0;
+			trav_unsup_d <= 1'b0;
+		end else begin
+			trav_err_d <= trav_err;
+			trav_unsup_d <= trav_unsup;
+			trav_slice_done_sticky <= trav_slice_retire;
+			if (trav_mb_count > trav_mb_count_peak)
+				trav_mb_count_peak <= trav_mb_count;
+		end
+	end
+
+	assign p_mb_valid = trav_w_valid;
+	assign p_mb_addr = trav_w_addr;
+	assign p_mb_x = trav_w_x;
+	assign p_mb_y = trav_w_y;
+	assign p_mb_skip = trav_w_skip;
+	assign p_mb_part_mode = trav_w_part_mode;
+	assign p_mb_part_count = trav_w_part_count;
+	assign p_mb_uses_sub_mb = trav_w_uses_sub;
+	assign p_mb_intra = trav_w_intra;
+	assign p_mb_count = trav_mb_count_peak;
+	assign p_slice_done = trav_slice_done_sticky;
+	assign p_traverse_busy = trav_busy;
 
 	decode_stub #(
 		.WIDTH(FRAME_W),
-		.HEIGHT(FRAME_H)
+		.HEIGHT(FRAME_H),
+		.USE_REAL_REF_COMMIT(USE_REAL_REF_COMMIT),
+		.ENABLE_FIRST_MB_P_FETCH(1'b0),
+		.FAULT_REAL_REF_XOR_FILL(FAULT_REAL_REF_XOR_FILL),
+		.FAULT_DUP_STORE(FAULT_DUP_STORE),
+		.FAULT_SERIAL_IQ_ZERO(FAULT_SERIAL_IQ_ZERO),
+		.FAULT_SERIAL_I16_PRED_128(FAULT_SERIAL_I16_PRED_128),
+		.FAULT_SKIP_PLANE_NB(FAULT_SKIP_PLANE_NB)
 	) stub (
 		.clk(clk), .reset(reset | flush),
 		.vcl_pulse(vcl_pulse),
@@ -329,10 +680,35 @@ module stream_path #(
 		.first_mb_part_count(first_mb_part_count),
 		.first_mb_uses_sub_mb(first_mb_uses_sub_mb),
 		.first_mb_intra(first_mb_intra),
+		// Per-MB traversal feed (supersedes first-MB-only clone walk)
+		.trav_mb_valid(trav_mb_valid),
+		.trav_mb_ready(trav_mb_ready),
+		.trav_mb_addr(trav_mb_addr),
+		.trav_mb_x(trav_mb_x),
+		.trav_mb_y(trav_mb_y),
+		.trav_mb_skip(trav_mb_skip),
+		.trav_part_mode(trav_part_mode),
+		.trav_part_count(trav_part_count),
+		.trav_uses_sub_mb(trav_uses_sub),
+		.trav_intra(trav_intra),
+		.trav_slice_done(trav_slice_retire),
+		// I residual stream (real-ref I-slice recon sink)
+		.i_res_blk_valid(trav_res_blk_valid),
+		.i_res_blk_ready(trav_res_blk_ready),
+		.i_res_blk_mb_addr(trav_res_blk_mb_addr),
+		.i_res_blk_mb_x(trav_res_blk_mb_x),
+		.i_res_blk_mb_y(trav_res_blk_mb_y),
+		.i_res_blk_idx(trav_res_blk_idx),
+		.i_res_blk_is_i16(trav_res_blk_is_i16),
+		.i_res_blk_is_luma(trav_res_blk_is_luma),
+		.i_res_blk_qp(trav_res_blk_qp),
+		.i_res_blk_max_coeff(trav_res_blk_max),
+		.i_res_blk_pred_mode(trav_res_blk_pred_mode),
+		.i_res_blk_coeff(trav_res_blk_coeff),
+		.i_res_mb_end(trav_res_mb_end),
+		.i_res_mb_end_addr(trav_res_mb_end_addr),
 		.first_mb_mvd_x(first_mb_mvd_x),
 		.first_mb_mvd_y(first_mb_mvd_y),
-		.entropy_cabac(pps_cabac),
-		.first_mb_type_i(sl_mbt),
 		.residual_ok(sl_place_ok),
 		.residual_tc(sl_place_tc),
 		.residual_dc(sl_place_dc),
@@ -343,11 +719,6 @@ module stream_path #(
 		.recon_dbg(recon_dbg),
 		.recon_dbg_valid(recon_dbg_valid),
 		.recon_valid(recon_valid),
-		.hybrid_fpga_owned(hybrid_fpga_owned),
-		.hybrid_host_required(hybrid_host_required),
-		.product_recon_ok(product_recon_ok),
-		.hybrid_own_code(hybrid_own_code),
-		.hybrid_own_reason(hybrid_own_reason),
 		.product_fetch_mv_x(product_fetch_mv_x),
 		.product_fetch_mv_y(product_fetch_mv_y),
 		.product_luma_origin_x(product_luma_origin_x),
@@ -367,13 +738,10 @@ module stream_path #(
 	             pps_busy | sl_busy | |pps_id_w | |pps_qp | pps_cabac | |sl_first |
 	             |sl_fn | |sl_qpd | pps_deblock | |residual_csum | residual_place_pulse |
 	             recon_valid | recon_dbg_valid | |recon_sig | |recon_dbg |
-	             hybrid_host_required | product_recon_ok | hybrid_fpga_owned |
-	             |hybrid_own_code | |hybrid_own_reason |
-	             |product_fetch_mv_x | |product_fetch_mv_y |
-	             |product_luma_origin_x | |product_luma_origin_y |
-	             |first_mb_mvd_x | |first_mb_mvd_y |
 	             sl_place_ok | |sl_place_tc | |sl_place_t1 | |sl_place_qp |
 	             residual_coeff[0][0] | residual_coeff[1][0] |
-	             residual_coeff[15][0] | sl_place_coeff[0][0] | sl_place_coeff[15][0];
+	             residual_coeff[15][0] | sl_place_coeff[0][0] | sl_place_coeff[15][0] |
+	             trav_busy | trav_err | trav_unsup | |trav_mb_count | |trav_w_cbp |
+	             |trav_w_type | |trav_w_res_off;
 
 endmodule

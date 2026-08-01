@@ -1,0 +1,15 @@
+{
+  "format": "misterplex.p3.mb0_pipeline_trace.v1",
+  "colorspace": "I420_NATIVE",
+  "valid": true,
+  "cycle": 597482,
+  "qp": 27,
+  "total_coeff": 8,
+  "trailing_ones": 3,
+  "residual_dc": -19,
+  "residual_csum": 16,
+  "coefficients_zigzag": [-19,3,3,0,-3,0,-1,0,0,-1,1,0,1,0,0,0],
+  "dequant": [-4256,864,0,-288,864,-1104,0,368,0,0,0,0,-288,368,0,0],
+  "idct": [-55,-57,-54,-55,-57,-54,-56,-54,-54,-56,-99,-102,-55,-54,-102,-100],
+  "recon": [73,71,74,73,71,74,72,74,74,72,29,26,73,74,26,28]
+}

@@ -1,0 +1,71 @@
+TRAVERSE FEED — WINDOW REUSE — PRE-REGISTER (before RTL)
+========================================================
+Lane: sv-traverse / tip eb4c8b64 + D
+Target: cut idle_ready (458 cy/MB) by removing redundant ST_RES_WIN_LOAD.
+NO new M10K. NO new DSP. Bit-exact absolute. No de-serial IQ/I16.
+
+------------------------------------------------------------------------
+BASELINE (measured, I-frame clip1, busy-only traverse counters)
+------------------------------------------------------------------------
+TRAV_CY_BREAKDOWN total=536458
+  win=125202   wait=67287   hold=317013   setup=8321   other=18635
+  win_loads=1897   zero_exp=4020
+  win/MB = 417.3   (1897×66/300 — 66 cy/load exact)
+  hold/MB = 1056.7 (traverse waiting on sink)
+  wait/MB = 224.3  (CAVLC)
+
+SINK: idle_ready=137491 (458.3/MB) idle_wb=38737 (129.1/MB)
+paint_per_mb f0 = 2474.070
+
+Structural: RES is serial export→HOLD(ready)→WIN_LOAD→CAVLC→export.
+hold ≫ win: sink often slower; but win still causes idle_ready when sink drains.
+
+------------------------------------------------------------------------
+MECHANISM
+------------------------------------------------------------------------
+Today every coded slot does full 64B serial RBSP→res_win (win_k 0..65).
+Window is always re-based to byte-of-bit_pos even when bit_pos still lies
+inside the previous 512-bit window.
+
+Reuse: if win_valid && bit_pos ∈ [res_win_bit0, res_win_bit0+256]
+  (256-bit / 32-byte headroom left in 64B window), set
+  cavlc_bit0_r = bit_pos - res_win_bit0, keep res_win, skip WIN_LOAD,
+  pulse cavlc_start → ST_RES_WAIT.
+
+win_valid set on completed WIN_LOAD; clear on slice/rbsp reload.
+
+No new memory (res_win already 64×8 regs). No mul.
+
+------------------------------------------------------------------------
+PRE cycle / area
+------------------------------------------------------------------------
+  win_loads today 6.32/MB. If reuse hits on 50%..80% of loads after first:
+    loads/MB → ~1.3..3.2; save ~3..5 loads × 66 ≈ 200..330 cy/MB traverse win
+  Not all win cy are on paint critical path (hold overlaps).
+  PRE paint save: 120..280 cy/MB (partial pass-through of win save)
+  PRE paint_per_mb f0 ∈ 2200 .. 2360
+  vs 2667: HIT with pad ~300..470
+  PRE ALM: +20..80 (compare + mux; maybe tiny)
+  PRE DSP: 0
+  PRE M10K blocks: 0
+
+  MISS modes: headroom too tight → CAVLC fail/bitexact break (must not);
+  reuse rare if blocks consume >256 bits often; paint save ≪ win save.
+
+------------------------------------------------------------------------
+FOLLOW-ON (named, not this step)
+------------------------------------------------------------------------
+If reuse leaves idle_ready high: HOLD-prefetch next WIN_LOAD while
+res_blk_valid && !ready (res_win free after CAVLC; coeffs in res_hold_*).
+That hides win under hold (1057 cy/MB budget vs 417 win).
+
+recon_store 384: still follow-on; hide vs shrink after feed.
+
+------------------------------------------------------------------------
+VERIFY
+------------------------------------------------------------------------
+1. This PRE on disk first
+2. clip1+clip2+RED; TRAV_CY win_loads drop; SINK idle_ready drop
+3. Publish hit/miss
+
+END PRE-REG

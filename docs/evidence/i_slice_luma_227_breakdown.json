@@ -1,0 +1,153 @@
+{
+  "source_sha": "6b19915-dirty-i16ac",
+  "candidate": "build/p3_full_frame_real_ref/native_inter_candidate.i420",
+  "reference": "tests/fixtures/p3_frame_planes/plex_inter_p16_320x240_12f_i420.yuv",
+  "total_i_mb": 300,
+  "intra_y_mb_ok": 227,
+  "intra_y_mb_fail": 73,
+  "headline_note": "HEADLINE mb_exact stays 0 while chroma stubbed at 128",
+  "pre_register_buckets": {
+    "I16_m0_*": "100-130",
+    "I_NxN": "60-80",
+    "other_I16": "10-30",
+    "cold128": "0-5"
+  },
+  "actual_buckets": {
+    "I16_m0_*": 36,
+    "I_NxN": 34,
+    "other_I16": 3,
+    "cold128": 0
+  },
+  "by_class_ok": {
+    "I16_m0_cl0_cc0": 155,
+    "I16_m0_cl0_cc1": 1,
+    "I16_m0_cl0_cc2": 2,
+    "I16_m0_cl15_cc0": 1,
+    "I16_m1_cl0_cc0": 9,
+    "I16_m1_cl0_cc1": 3,
+    "I16_m1_cl15_cc2": 2,
+    "I16_m2_cl0_cc0": 5,
+    "I16_m2_cl0_cc1": 4,
+    "I_NxN": 45
+  },
+  "by_class_fail": {
+    "I16_m0_cl0_cc0": 28,
+    "I16_m0_cl0_cc1": 3,
+    "I16_m0_cl0_cc2": 4,
+    "I16_m0_cl15_cc1": 1,
+    "I16_m1_cl0_cc0": 2,
+    "I16_m1_cl0_cc1": 1,
+    "I_NxN": 34
+  },
+  "i16_fail_neighbours": {
+    "L=False,A=False": 31,
+    "L=False,A=True": 1,
+    "L=True,A=False": 6,
+    "L=True,A=True": 1
+  },
+  "i16_ok_neighbours": {
+    "L=False,A=True": 3,
+    "L=True,A=False": 3,
+    "L=True,A=True": 176
+  },
+  "seed_fails_L_and_A_ok": [
+    {
+      "mb_x": 8,
+      "mb_y": 3,
+      "class": "I_NxN",
+      "type": 0,
+      "modes": [
+        6,
+        1,
+        2,
+        1,
+        0,
+        0,
+        1,
+        2,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ]
+    },
+    {
+      "mb_x": 13,
+      "mb_y": 6,
+      "class": "I_NxN",
+      "type": 0,
+      "modes": [
+        1,
+        0,
+        1,
+        0,
+        2,
+        0,
+        0,
+        1,
+        1,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        0
+      ]
+    },
+    {
+      "mb_x": 4,
+      "mb_y": 10,
+      "class": "I16_m0_cl0_cc2",
+      "type": 9,
+      "modes": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ]
+    },
+    {
+      "mb_x": 12,
+      "mb_y": 10,
+      "class": "I_NxN",
+      "type": 0,
+      "modes": [
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        3,
+        5,
+        3,
+        5
+      ]
+    }
+  ],
+  "seed_fail_count": 4,
+  "root_cause_note": "I16_m0 fails are 100% cascade (above Y wrong). Seed fails are few I_NxN MBs; largest fix target was I4 above-right pad (undecoded plane read as 128) in h264_i_res_recon_sink \u2014 H.264 8.3.1.2 requires p[3,-1] substitution."
+}

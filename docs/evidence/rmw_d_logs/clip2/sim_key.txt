@@ -1,0 +1,9 @@
+SOURCE_SHA_git=be9027c419df80ddf25f142fba006aa8b2523419
+324:I_RECON_DONE mb_written=1169 blk_applied=19722 luma_nz_peak=944
+502:STAGE_CYCLES frame=0 parse_cycles=287 paint_cycles=2616908 parse_per_mb=0.245 paint_per_mb=2236.674
+517:sim true rc=0
+STAGE_CYCLES frame=11 parse_cycles=1711130 paint_cycles=299520 parse_per_mb=1462.504 paint_per_mb=256.000
+STAGE_CYCLES_TOTAL frames=12 parse_total=18914047 paint_total=5911628 injection_total=140696 nonvcl_idle_total=768 reset_total=12 parse_per_mb=1347.154 paint_per_mb=421.056 injection_per_mb=10.021
+FULL_FRAME_COMPARE summary width=624 height=480 frames=12 nals=15 idr=1 p=11 bytes=70348 p_mb_count_max=1170 p_slice_done_pulses=12 traversed/total=1170/1170 native_inter_mb_captures=12870 native_inter_ignored=0 native_i420_dpb_writes=5391360 cycles=25007954 first_bad_frame=0 strict_pass=0 mode=expect-red
+OK full-frame expected-red: strict reference comparison diverged at frame 0
+sim true rc=0

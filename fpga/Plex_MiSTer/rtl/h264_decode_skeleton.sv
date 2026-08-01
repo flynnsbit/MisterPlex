@@ -160,10 +160,12 @@ module h264_decode_skeleton #(
         .pred(i4_pred)
     );
 
-    // Intra 16×16
-    wire       i16_unsupported;
-    wire [7:0] i16_pred [0:255];
+    // Intra 16×16 (serial stream; skeleton does not consume pixels yet)
+    wire       i16_unsupported, i16_busy, i16_done, i16_px_valid;
+    wire [7:0] i16_px_addr, i16_px_data;
+    wire [7:0] i16_pred [0:255]; // unused placeholder
     h264_intra16x16_pred u_intra16x16 (
+        .clk(clk), .reset(reset), .start(1'b0),
         .mode(stim_mode[1:0]),
         .above(nb_above_16),
         .left(nb_left_16),
@@ -171,7 +173,8 @@ module h264_decode_skeleton #(
         .has_above(stim_valid),
         .has_left(stim_valid),
         .unsupported(i16_unsupported),
-        .pred(i16_pred)
+        .busy(i16_busy), .done(i16_done),
+        .px_valid(i16_px_valid), .px_addr(i16_px_addr), .px_data(i16_px_data)
     );
 
     // Chroma 8×8

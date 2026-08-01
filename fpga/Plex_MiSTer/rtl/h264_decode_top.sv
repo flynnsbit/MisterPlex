@@ -190,9 +190,11 @@ module h264_decode_top (
     // ════════════════════════════════════════════════════════════════════
     // INTRA 16×16 PREDICTION
     // ════════════════════════════════════════════════════════════════════
-    wire       i16_unsupported;
+    wire       i16_unsupported, i16_busy, i16_done, i16_px_valid;
+    wire [7:0] i16_px_addr, i16_px_data;
     wire [7:0] i16_pred_pixels [0:255];
     h264_intra16x16_pred u_i16_pred (
+        .clk(clk), .reset(reset), .start(1'b0),
         .mode(i16_pred_mode),
         .above(nb_top),
         .left(nb_left),
@@ -200,7 +202,8 @@ module h264_decode_top (
         .has_above(mb_avail_top),
         .has_left(mb_avail_left),
         .unsupported(i16_unsupported),
-        .pred(i16_pred_pixels)
+        .busy(i16_busy), .done(i16_done),
+        .px_valid(i16_px_valid), .px_addr(i16_px_addr), .px_data(i16_px_data)
     );
 
     // ════════════════════════════════════════════════════════════════════

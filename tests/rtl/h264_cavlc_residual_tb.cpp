@@ -54,10 +54,11 @@ static int signed_to_level_code(int level) {
     return level > 0 ? 2 * level - 2 : -2 * level - 1;
 }
 
+// Match FFmpeg/OpenH264 and product RTL: unsigned(level+3) > 6, not signed.
 static int suffix_next_first(int prefix, int suffix_length, int level) {
     if (prefix > 14 || (prefix == 14 && suffix_length == 0))
         return 2;
-    return 1 + (level + 3 > 6);
+    return 1 + (static_cast<unsigned>(level + 3) > 6u);
 }
 
 static int suffix_next(int suffix_length, int level) {

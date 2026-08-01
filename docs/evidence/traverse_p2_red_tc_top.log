@@ -1,0 +1,5 @@
+PRE-REG RED FAULT_SKIP_TC_TOP_NB: intra_y << 300
+source_sha=d4d9d80e9b8e0a29a3cc5678e4eef73bd77ba0d6-dirty
+LUMA intra_y_mb=20/300 y_px=5163/76800
+RED_DISCRIMINATES YES
+true rc=0

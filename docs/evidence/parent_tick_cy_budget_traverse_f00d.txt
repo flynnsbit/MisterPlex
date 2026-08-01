@@ -1,0 +1,111 @@
+PARENT TICK — sv-traverse / sink-contract-phase2
+================================================
+SOURCE_SHA_TIP (pre this card commit): f00d8605
+RTL freezes: sink phase-2 788aa5f6 · traverse phase-2 4f281e6f
+NO FIT / NO DEPLOY this lane.
+
+------------------------------------------------------------------------
+A. sv-mvd INTERFACE — UNBLOCKED
+------------------------------------------------------------------------
+Answers: docs/evidence/mvd_iface_answers_788aa5f.txt
+Normative: docs/serial-iq-sink-contract.md §10 (788aa5f rebase target)
+
+Key: base 788aa5f6; res_blk_* stable; SETTLE else drops chroma (hook there);
+one serial DQ share; QPc from wrapped QP_Y; top_u/v → h264_byte_ram_sp;
+no parallel mul; Y 300/300 & 1170/1170 non-negotiable.
+
+------------------------------------------------------------------------
+B. 4037 DERIVATION (measured + FSM model)
+------------------------------------------------------------------------
+TB (stream_path_full_frame_tb.cpp):
+  paint_per_mb = (first fs_swap - first fs_wr_reset after stub_busy) / MB
+
+Quoted log plane_m10k_clip1_788aa5f.log:
+  STAGE_CYCLES frame=0 paint_cycles=1211072 paint_per_mb=4036.907
+  STAGE_CYCLES frame=1..11 paint_cycles=76800 paint_per_mb=256.000
+
+Frame0 wr_reset starts PH_I_RECON (not pure paint). Split:
+  diag_paint   = 320*240 = 76800
+  dpb_approx   = 300*385 = 115500   (deblock wait UNKNOWN extra)
+  i_recon_est  = 1211072 - 76800 - 115500 = 1018772 → ~3396 cy/MB
+
+Sink FSM phases STRICT SERIAL (res_blk_ready only in ST_IDLE) — I16 all-AC model:
+
+  phase            cy/MB
+  ST_MB_INIT         256
+  ST_I16_NB           48   (16×3 top_row)
+  ST_I16_PRED        256
+  ST_HAD_WAIT         ~5   UNCERTAIN
+  ST_HAD_PAINT       768   *** RMW 3cy ×256
+  ST_IQ_WAIT×16      272
+  ST_APPLY_PX×16     768   *** RMW 3cy ×256
+  ST_MB_DUMP         788   *** dump+top we
+  misc                ~5
+  ------------------ ----
+  sink model        ~3163
+  vs i_recon        ~3396  delta~233 traverse/handshake
+
+DOMINANT CLASS: 3-cy M10K RMW (HAD_PAINT+APPLY_I16+MB_DUMP) ≈ 2324 cy/MB (~68% sink)
+
+Overlap: NONE on residual path. assign res_blk_ready = (st==ST_IDLE)&&...
+Naive phase sum ≈ wall clock.
+
+------------------------------------------------------------------------
+C. REAL BUDGET (independent; SoT docs/decode-throughput.md)
+------------------------------------------------------------------------
+Clock chain (quoted):
+  FPGA_CLK2_50 → pll_0002.v output_clock_frequency0("20.000000 MHz") → clk_sys
+  Plex.sv .outclk_0(clk_sys) → stream_path.clk(clk_sys)
+Decode clock = 20.000 MHz. NOT 50. NOT 100.
+
+Product geometry/fps in SoT:
+  25 fps PMS; 624×480 = 1170 MB; 320×240 = 300 MB fixture/240p
+  Plex.qsf FRAME_W=640 FRAME_H=480 (display buffer macros)
+  OSD O[4] toggles content 320x240 / 640x480 (Plex.sv:63)
+  Coded 480p profile in docs is 624×480 (1170 MB), not 640×480 display.
+
+Budgets @ 20e6 / (MB_frame × 25):
+  320×240: 2666.667 cy/MB
+  624×480:  683.761 cy/MB
+
+WITHDRAWN / not product:
+  "~2000 @ 50 MHz" — no derivation in-repo
+  Parent probe 50e6/(300×30)=5555 — wrong clock and fps
+  Historical 100 MHz figure — wrong domain (retracted in decode-throughput.md)
+
+VERDICT vs SoT (LOUD):
+  | metric              | cy/MB | vs 2667 (320) | vs 684 (624) |
+  | paint_per_mb f0 IDR |  4037 | OVER ~1.51×   | OVER ~5.90×  |
+  | I_RECON est         |  3397 | OVER ~1.27×   | OVER ~4.97×  |
+  | P parse_per_mb      |  1484 | PASS ~1.8×    | OVER ~2.17×  |
+
+**Budget is NOT generous.** Throughput problem is real at product 20 MHz.
+Do NOT de-serialise IQ/I16 area wins to chase oral ~2000.
+Cheapest recovery (proposal only): pipeline MB_DUMP / kill HAD_PAINT RMW
+(keep DC in regs) — see defense §5. PRE-REG ALM before any RTL.
+
+------------------------------------------------------------------------
+D. TRAVERSE PHASE-2 — DONE @ 4f281e6
+------------------------------------------------------------------------
+Method: tc_top + i4_mode_top → h264_byte_ram_sp; 4-entry edge cache ST_EDGE_LOAD;
+        tc_spat within-MB; FAULT_SKIP_TC_TOP_NB
+
+Measured (traverse_p2_*_4f281e6.log / measure.json):
+  clip1: intra_y 300/300  y_px 76800/76800
+  clip2: intra_y 1170/1170 y_px 299520/299520
+  RED SKIP_TC_TOP_NB: 20/300 y_px 5163/76800 discriminates
+  paint_per_mb f0 still ~4037 (edge load parse-side only)
+  ALM: UNKNOWN until integrate maps — no self-fit
+  Pre-reg was close 7079 → ≤3000; map pending
+
+MISS published earlier: 7079 vs ≤3000 target — phase-2 is the fix under map.
+
+------------------------------------------------------------------------
+E. SEQUENCING
+------------------------------------------------------------------------
+1. mvd unblocked on §10 / mvd_iface_answers_788aa5f.txt
+2. Cycle recovery optional; parent priority vs chroma merge map
+3. Traverse p2 awaits integrate map (no further RTL this card)
+4. cf6842a freeze historical; new chroma base 788aa5f
+
+END

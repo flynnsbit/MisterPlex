@@ -1,0 +1,20 @@
+PRE-REGISTER — h264_p_mb_traverse cycle-iterative area redesign
+SOURCE baseline: 6209d43 (functional 300/300 I-luma)
+map2d measured: 1,180,271 comb ALMs (self 1,177,415) — docs/cycle-iterative-traverse-area.md adb3260
+Target gate (parent/integrate): <= 3,000 ALMs, DSP <= 2
+PRE-REG ALM band (estimate, not self-measured): 800 .. 3,000
+  Rationale: qpel 318k→484 (~650x); kill 64x8192 mux + combo rbsp_bit_at;
+  residual control FSM + one CAVLC (~2k) + small res_win regs + bit engine.
+PRE-REG functional (clip 320, scorer unmodified):
+  HEADLINE intra 0/300 (chroma floor unless mvd merged)
+  LUMA intra_y_mb 300/300
+  STORE unique=300 dup=0
+  FAULT_SKIP_WIN_LOAD twin: intra_y_mb << 300 (expect collapse)
+ALM measurement owner: sv-integrate (no self quartus_map)
+
+MEASURED functional 320 (dirty pre-commit):
+  LUMA intra_y_mb=300/300 y_px=76800/76800  HIT
+  HEADLINE 0/300
+  STORE unique=300 dup=0
+  RED FAULT_SKIP_WIN_LOAD: TRAV_FAIL mb=0 STORE unique=0  DISCRIMINATES
+ALM: UNKNOWN pending sv-integrate map of freeze SHA

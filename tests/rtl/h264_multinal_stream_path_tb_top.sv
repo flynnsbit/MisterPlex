@@ -38,6 +38,18 @@ module h264_multinal_stream_path_tb #(
     output wire [2:0]  first_mb_part_count,
     output wire        first_mb_uses_sub_mb,
     output wire        first_mb_intra,
+    output wire        p_mb_valid,
+    output wire [15:0] p_mb_addr,
+    output wire [7:0]  p_mb_x,
+    output wire [7:0]  p_mb_y,
+    output wire        p_mb_skip,
+    output wire [2:0]  p_mb_part_mode,
+    output wire [2:0]  p_mb_part_count,
+    output wire        p_mb_uses_sub_mb,
+    output wire        p_mb_intra,
+    output wire [15:0] p_mb_count,
+    output wire        p_slice_done,
+    output wire        p_traverse_busy,
     output wire [7:0]  residual_csum,
     output wire        residual_place_pulse,
     output wire [5:0]  slice_parser_state,
@@ -72,16 +84,6 @@ module h264_multinal_stream_path_tb #(
     wire [31:0] stream_ddr_bytes_out, stream_ddr_host_write, stream_ddr_fpga_read;
     wire [15:0] stream_ddr_underruns, stream_ddr_overruns;
 
-	wire        hybrid_fpga_owned_w;
-	wire        hybrid_host_required_w;
-	wire        product_recon_ok_w;
-	wire signed [15:0] first_mb_mvd_x_w, first_mb_mvd_y_w;
-	wire signed [15:0] product_fetch_mv_x_w, product_fetch_mv_y_w;
-	wire signed [15:0] product_luma_origin_x_w, product_luma_origin_y_w;
-	wire [2:0]  hybrid_own_code_w;
-	wire [3:0]  hybrid_own_reason_w;
-	wire        entropy_cabac_w;
-
     stream_path #(.FRAME_W(16), .FRAME_H(16)) dut (
         .clk(clk), .reset(reset),
         .ioctl_download(ioctl_download), .ioctl_wr(ioctl_wr), .ioctl_dout(ioctl_dout),
@@ -104,12 +106,6 @@ module h264_multinal_stream_path_tb #(
         .first_mb_p_skip(first_mb_p_skip), .p_skip_run(p_skip_run),
         .first_mb_part_mode(first_mb_part_mode), .first_mb_part_count(first_mb_part_count),
         .first_mb_uses_sub_mb(first_mb_uses_sub_mb), .first_mb_intra(first_mb_intra),
-		.first_mb_mvd_x(first_mb_mvd_x_w),
-		.first_mb_mvd_y(first_mb_mvd_y_w),
-		.product_fetch_mv_x(product_fetch_mv_x_w),
-		.product_fetch_mv_y(product_fetch_mv_y_w),
-		.product_luma_origin_x(product_luma_origin_x_w),
-		.product_luma_origin_y(product_luma_origin_y_w),
         .slice_qp(slice_qp), .disable_deblocking_filter_idc(disable_deblocking_filter_idc),
         .slice_alpha_c0_offset_div2(slice_alpha_c0_offset_div2),
         .slice_beta_offset_div2(slice_beta_offset_div2),
@@ -119,14 +115,26 @@ module h264_multinal_stream_path_tb #(
         .residual_ok(residual_ok), .residual_dc(residual_dc), .residual_csum(residual_csum),
         .residual_coeff(residual_coeff), .residual_place_pulse(residual_place_pulse),
         .recon_sig(recon_sig_dut), .recon_dbg(recon_dbg), .recon_dbg_valid(recon_dbg_valid),
-        .recon_valid(recon_valid),
-	.hybrid_fpga_owned(hybrid_fpga_owned_w),
-	.hybrid_host_required(hybrid_host_required_w),
-	.product_recon_ok(product_recon_ok_w),
-	.hybrid_own_code(hybrid_own_code_w),
-	.hybrid_own_reason(hybrid_own_reason_w),
-	.entropy_cabac(entropy_cabac_w),
-	.fs_wr_en(fs_wr_en), .fs_wr_pixel(fs_wr_pixel),
+        .recon_valid(recon_valid), .fs_wr_en(fs_wr_en), .fs_wr_pixel(fs_wr_pixel),
+        .p_mb_valid(p_mb_valid),
+        .p_mb_addr(p_mb_addr),
+        .p_mb_x(p_mb_x),
+        .p_mb_y(p_mb_y),
+        .p_mb_skip(p_mb_skip),
+        .p_mb_part_mode(p_mb_part_mode),
+        .p_mb_part_count(p_mb_part_count),
+        .p_mb_uses_sub_mb(p_mb_uses_sub_mb),
+        .p_mb_intra(p_mb_intra),
+        .p_mb_count(p_mb_count),
+        .p_slice_done(p_slice_done),
+        .p_traverse_busy(p_traverse_busy),
+	.first_mb_mvd_x(),
+	.first_mb_mvd_y(),
+	.product_fetch_mv_x(),
+	.product_fetch_mv_y(),
+	.product_luma_origin_x(),
+	.product_luma_origin_y(),
+
         .fs_wr_reset(fs_wr_reset), .fs_swap(fs_swap)
     );
 

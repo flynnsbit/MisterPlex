@@ -1,0 +1,14 @@
+324:SINK_CY_BREAKDOWN total=480177 idle_wb=38674 idle_pend=300 idle_ready=67227 init=0 settle=5917 i16nb=10176 i16pred=57239 had=4199 i4nb=41029 iq=87664 apply=83872 dump=83659
+512:STAGE_CYCLES frame=0 parse_cycles=289 paint_cycles=671894 parse_per_mb=0.963 paint_per_mb=2239.647
+513:STAGE_CYCLES frame=1 parse_cycles=413697 paint_cycles=76800 parse_per_mb=1378.990 paint_per_mb=256.000
+514:STAGE_CYCLES frame=2 parse_cycles=413867 paint_cycles=76800 parse_per_mb=1379.557 paint_per_mb=256.000
+515:STAGE_CYCLES frame=3 parse_cycles=413965 paint_cycles=76800 parse_per_mb=1379.883 paint_per_mb=256.000
+516:STAGE_CYCLES frame=4 parse_cycles=413487 paint_cycles=76800 parse_per_mb=1378.290 paint_per_mb=256.000
+517:STAGE_CYCLES frame=5 parse_cycles=413753 paint_cycles=76800 parse_per_mb=1379.177 paint_per_mb=256.000
+518:STAGE_CYCLES frame=6 parse_cycles=413974 paint_cycles=76800 parse_per_mb=1379.913 paint_per_mb=256.000
+519:STAGE_CYCLES frame=7 parse_cycles=414298 paint_cycles=76800 parse_per_mb=1380.993 paint_per_mb=256.000
+520:STAGE_CYCLES frame=8 parse_cycles=413361 paint_cycles=76800 parse_per_mb=1377.870 paint_per_mb=256.000
+521:STAGE_CYCLES frame=9 parse_cycles=413102 paint_cycles=76800 parse_per_mb=1377.007 paint_per_mb=256.000
+522:STAGE_CYCLES frame=10 parse_cycles=413652 paint_cycles=76800 parse_per_mb=1378.840 paint_per_mb=256.000
+523:STAGE_CYCLES frame=11 parse_cycles=413102 paint_cycles=76800 parse_per_mb=1377.007 paint_per_mb=256.000
+524:STAGE_CYCLES_TOTAL frames=12 parse_total=4550547 paint_total=1516694 injection_total=55306 nonvcl_idle_total=768 reset_total=12 parse_per_mb=1264.041 paint_per_mb=421.304 injection_per_mb=15.363
