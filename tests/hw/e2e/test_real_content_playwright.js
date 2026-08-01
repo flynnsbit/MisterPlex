@@ -535,7 +535,13 @@ async function waitSessionEstablished(thresholdMs, timeoutSec) {
   return { ok: false, timeMs: maxT, playingHits, maxT, state: lastState };
 }
 
-/** Parse parent-provided daemon log for DELIVERED_GEOM / Stream banners / GEOM. */
+const {
+  resolveMeasuredDelivery,
+  assertMeasuredDelivery,
+  parseMeasuredDeliveryText,
+} = require('./measured_delivery');
+
+/** Parse parent-provided daemon log for MEASURED_DELIVERY / legacy DELIVERED_GEOM. */
 function parseDeliveredFromLogText(text, correlationId, ratingKey) {
   const lines = String(text || '').split(/\r?\n/);
   const hits = {
@@ -543,38 +549,62 @@ function parseDeliveredFromLogText(text, correlationId, ratingKey) {
     geom: null,
     stream: null,
     wall: null,
+    desync_risk: null,
+    session_epoch: null,
     correlLines: [],
   };
+  const md = parseMeasuredDeliveryText(text);
+  if (md && md.delivered_geom) hits.delivered = md.delivered_geom.text;
+  if (md) {
+    hits.desync_risk = md.desync_risk;
+    hits.session_epoch = md.session_epoch;
+    if (md.line) hits.geom = md.line;
+  }
   const delivRe = /DELIVERED_GEOM\s+stream=(\d+x\d+)/i;
-  const geomRe =
-    /GEOM\s+.*?(?:expected_delivery|library_media)=([0-9]+x[0-9]+|[a-zA-Z0-9_]+)/i;
-  const geomFullRe =
-    /(?:misterplexd: )?GEOM\s+(.+)/i;
+  const geomFullRe = /(?:misterplexd: )?GEOM\s+(.+)/i;
   const streamRe = /Stream\s+#0:0[^\n]*?(\d{2,5})x(\d{2,5})/i;
   const wallRe = /wall_s=([0-9.]+)/i;
   for (const line of lines) {
     if (correlationId && line.includes(correlationId)) hits.correlLines.push(line.slice(0, 240));
-    if (ratingKey && line.includes(String(ratingKey)) && /GEOM|playMedia|DELIVERED/i.test(line)) {
+    if (ratingKey && line.includes(String(ratingKey)) && /GEOM|playMedia|DELIVERED|MEASURED/i.test(line)) {
       hits.correlLines.push(line.slice(0, 240));
     }
     let m = line.match(delivRe);
-    if (m) hits.delivered = m[1];
+    if (m) hits.delivered = hits.delivered || m[1];
     m = line.match(streamRe);
     if (m) hits.stream = `${m[1]}x${m[2]}`;
     m = line.match(wallRe);
     if (m) hits.wall = m[1];
-    if (geomFullRe.test(line)) hits.geom = line.trim().slice(0, 400);
+    if (geomFullRe.test(line) && !hits.geom) hits.geom = line.trim().slice(0, 400);
   }
   return hits;
 }
 
-function resolveDeliveredGeometry(correlationId, ratingKey) {
-  // Priority: explicit env measurement > daemon log file parent cleared/copied.
-  const envGeom = String(process.env.E2E_DELIVERED_GEOM || '').trim();
-  if (envGeom) {
-    log(`DELIVERED_GEOM_SOURCE=env E2E_DELIVERED_GEOM=${envGeom}`);
-    return { ok: true, stream: envGeom, source: 'env' };
+async function resolveDeliveredGeometry(correlationId, ratingKey) {
+  // Shared resolver: env → E2E_DAEMON_LOG MEASURED_DELIVERY → telemetry.
+  const md = await resolveMeasuredDelivery(cfg);
+  if (md.ok && md.delivered_geom) {
+    log(
+      `DELIVERED_GEOM_SOURCE=${md.source} stream=${md.delivered_geom.text} ` +
+        `desync_risk=${md.desync_risk != null ? md.desync_risk : 'NA'} ` +
+        `session_epoch=${md.session_epoch || 'NA'} value_kind=${md.value_kind || 'measured'}`
+    );
+    if (md.desync_risk === 1 || md.pipe_desync) {
+      fail(
+        'pipe_desync_risk',
+        `desync_risk=1 delivered=${md.delivered_geom.text} raw=${String(md.raw || '').slice(0, 200)}`
+      );
+    }
+    return {
+      ok: true,
+      stream: md.delivered_geom.text,
+      source: md.source,
+      desync_risk: md.desync_risk,
+      session_epoch: md.session_epoch,
+      md,
+    };
   }
+  // Legacy correl scrape for parent diagnostics only.
   const logPath = process.env.E2E_DAEMON_LOG || process.env.E2E_DAEMON_LOG_SNIPPET || '';
   if (logPath && fs.existsSync(logPath)) {
     const text = fs.readFileSync(logPath, 'utf8');
@@ -583,13 +613,12 @@ function resolveDeliveredGeometry(correlationId, ratingKey) {
       `DELIVERED_GEOM_LOG path=${logPath} delivered=${hits.delivered || '-'} ` +
         `stream=${hits.stream || '-'} wall_s=${hits.wall || '-'} correl_hits=${hits.correlLines.length}`
     );
-    if (hits.geom) log(`DELIVERED_GEOM_LOG_GEOM_LINE ${hits.geom}`);
     for (const c of hits.correlLines.slice(0, 5)) log(`  correl_line: ${c}`);
     const stream = hits.delivered || hits.stream;
     if (stream) return { ok: true, stream, source: 'daemon_log', hits };
     return { ok: false, stream: '', source: 'daemon_log_empty', hits };
   }
-  return { ok: false, stream: '', source: 'unprobed' };
+  return { ok: false, stream: '', source: md.source || 'unprobed', md };
 }
 
 function printParentLogClearRecipe(correlationId) {
@@ -949,7 +978,7 @@ async function probeDirectPlayDecision(item) {
     const requireDelivered = /^(1|true|yes|on)$/i.test(
       String(process.env.E2E_REQUIRE_DELIVERED_GEOM || '0')
     );
-    let delivered = resolveDeliveredGeometry(correlationId, item.ratingKey);
+    let delivered = await resolveDeliveredGeometry(correlationId, item.ratingKey);
     if (!delivered.ok && requireDelivered) {
       fail(
         'delivered_geom_unprobed',
@@ -984,7 +1013,7 @@ async function probeDirectPlayDecision(item) {
           `correlation=${correlationId}`
       );
       if (!delivered.ok) {
-        const again = resolveDeliveredGeometry(correlationId, item.ratingKey);
+        const again = await resolveDeliveredGeometry(correlationId, item.ratingKey);
         if (again.ok) {
           delivered = again;
           log(`DELIVERED_GEOM_MEASURED_LATE stream=${delivered.stream} source=${delivered.source}`);
@@ -999,7 +1028,7 @@ async function probeDirectPlayDecision(item) {
     log(`CAST_WINDOW_END_UNIX_MS=${Date.now()} iso=${new Date().toISOString()}`);
 
     if (requireDelivered) {
-      delivered = resolveDeliveredGeometry(correlationId, item.ratingKey);
+      delivered = await resolveDeliveredGeometry(correlationId, item.ratingKey);
       if (!delivered.ok) {
         fail(
           'delivered_geom_missing_after_hold',

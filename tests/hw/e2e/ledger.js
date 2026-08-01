@@ -60,6 +60,15 @@ function parseKv(text) {
   if (exeM) out.exe = exeM[1];
   const decM = s.match(/\bdecode=(\d+x\d+)/i);
   if (decM) out.decode = decM[1];
+  // session_epoch is process_epoch.stream_seq (may be "12.3" — not a pure float field).
+  const seM = s.match(/\bsession_epoch=([^\s]+)/);
+  if (seM) out.session_epoch = seM[1];
+  const mdM = s.match(/\bmeasured_delivery=(\d+x\d+|pending|NO-DATA)\b/i);
+  if (mdM) out.measured_delivery = mdM[1];
+  const riskM = s.match(/\bdesync_risk=([01])\b/);
+  if (riskM) out.desync_risk = parseInt(riskM[1], 10);
+  const verM = s.match(/\bdelivery_verified=([01])\b/);
+  if (verM) out.delivery_verified = parseInt(verM[1], 10);
   return out;
 }
 
@@ -73,6 +82,21 @@ function normalizeSnap(raw, source) {
     residual = frames - presents - drops;
   }
   const exe = raw.exe != null ? String(raw.exe) : '';
+  const session_epoch =
+    raw.session_epoch != null && String(raw.session_epoch).trim() !== ''
+      ? String(raw.session_epoch).trim()
+      : '';
+  let measured_delivery = '';
+  if (raw.measured_delivery != null) {
+    const md = String(raw.measured_delivery);
+    if (/^\d+x\d+$/i.test(md)) measured_delivery = md.toLowerCase();
+  }
+  const desync_risk =
+    raw.desync_risk === 0 || raw.desync_risk === 1 ? raw.desync_risk : -1;
+  const delivery_verified =
+    raw.delivery_verified === 0 || raw.delivery_verified === 1
+      ? raw.delivery_verified
+      : -1;
   return {
     ok: frames >= 0 && presents >= 0 && drops >= 0,
     source,
@@ -86,6 +110,11 @@ function normalizeSnap(raw, source) {
     lifetime_drops: intOr(raw.lifetime_drops, -1),
     lifetime_publish_misses: intOr(raw.lifetime_publish_misses, -1),
     session: intOr(raw.session, -1),
+    // process_epoch.stream_seq — unique session id (supply_bucket / media line).
+    session_epoch,
+    measured_delivery,
+    desync_risk,
+    delivery_verified,
     // Process identity — supervise CLEAN rc=0 exits respawn and re-zero counters.
     // pid/exe come from the live companion process (not host pidof/cmdline).
     pid: intOr(raw.pid, -1),
@@ -183,6 +212,10 @@ async function captureLedger(cfg) {
     lifetime_drops: -1,
     lifetime_publish_misses: -1,
     session: -1,
+    session_epoch: '',
+    measured_delivery: '',
+    desync_risk: -1,
+    delivery_verified: -1,
     pid: -1,
     exe: '',
     raw: '',
@@ -271,6 +304,30 @@ function assertLedgerWindow(start, end, tag) {
       detail:
         `${tag}: session changed mid-cycle ${start.session} → ${end.session} ` +
         `(daemon may have self-exited rc=0 and respawned; counters reset — false pass risk)`,
+    };
+  }
+
+  // session_epoch (process_epoch.stream_seq) — preferred single-session id.
+  // Parent: any spanning assert without stable session_epoch compares two sessions.
+  if (start.session_epoch && end.session_epoch && start.session_epoch !== end.session_epoch) {
+    return {
+      ok: false,
+      reason: 'session_epoch_changed',
+      detail:
+        `${tag}: session_epoch ${start.session_epoch} → ${end.session_epoch} mid continuous-play ` +
+        `(stream restart or daemon respawn — drops/presents re-zeroed; window INVALID)`,
+    };
+  }
+
+  // desync_risk=1 is always a hard product fail when observed.
+  if (end.desync_risk === 1 || start.desync_risk === 1) {
+    return {
+      ok: false,
+      reason: 'pipe_desync_risk',
+      detail:
+        `${tag}: desync_risk=1 observed start=${start.desync_risk} end=${end.desync_risk} ` +
+        `measured_delivery=${end.measured_delivery || start.measured_delivery || 'NA'} ` +
+        `(identity_skip path disagreed with measured producer bytes)`,
     };
   }
 
@@ -387,6 +444,8 @@ function formatSnap(s) {
   return (
     `src=${s.source} pid=${s.pid} exe=${exeShort} playing=${s.playing} frames=${s.frames} presents=${s.presents} ` +
     `drops=${s.drops} pub_miss=${s.publish_misses} residual=${s.residual} session=${s.session} ` +
+    `session_epoch=${s.session_epoch || 'NA'} measured_delivery=${s.measured_delivery || 'NA'} ` +
+    `desync_risk=${s.desync_risk >= 0 ? s.desync_risk : 'NA'} ` +
     `life_f=${s.lifetime_frames}`
   );
 }
@@ -477,4 +536,5 @@ module.exports = {
   formatSnap,
   requireLedger,
   plxdFramesVoid,
+  fetchLedgerHttp,
 };

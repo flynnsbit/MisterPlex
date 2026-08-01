@@ -52,6 +52,11 @@ const {
   assertPidUnchanged,
   formatSnap,
 } = require('./ledger');
+const {
+  resolveMeasuredDelivery,
+  assertMeasuredDelivery,
+  assertSessionEpochUnchanged,
+} = require('./measured_delivery');
 const { createRunCorrelation } = require('./run_correlate');
 const { readUiPlayerTimeline, assertUiDaemonTimeline } = require('./ui_timeline');
 const { createTimelineSeries } = require('./timeline_series');
@@ -97,6 +102,59 @@ const uiState = createStateMarker({
 /** Baseline misterplexd process identity (self-reported via telemetry — not pidof). */
 let baselineDaemonPid = -1;
 let baselineDaemonExe = '';
+/** session_epoch for continuous-play windows (process_epoch.stream_seq). */
+let baselineSessionEpoch = '';
+
+/**
+ * Probe MEASURED_DELIVERY (log/env/telemetry). Fail desync_risk=1.
+ * Does NOT treat request/library geometry as delivered.
+ */
+async function assertMeasuredDeliveryGate(tag, opts = {}) {
+  const require =
+    opts.require != null ? !!opts.require : !!cfg.requireMeasuredDelivery;
+  // Brief settle so ffmpeg banner can land in parent-fed log.
+  const retries = opts.retries != null ? opts.retries : require ? 5 : 2;
+  const delayMs = opts.delayMs != null ? opts.delayMs : 1000;
+  let md = null;
+  for (let i = 0; i < retries; i++) {
+    md = await resolveMeasuredDelivery(cfg);
+    if (md && md.ok && md.delivered_geom) break;
+    if (md && (md.desync_risk === 1 || md.pipe_desync)) break;
+    await sleep(delayMs);
+  }
+  const rejectBank =
+    opts.rejectBankGeom ||
+    (cfg.isRealContent && cfg.rejectMeasuredBankGeom
+      ? cfg.rejectMeasuredBankGeom
+      : '');
+  const ar = assertMeasuredDelivery(md, {
+    tag,
+    require,
+    expectGeom: opts.expectGeom || process.env.E2E_EXPECT_MEASURED_GEOM || '',
+    rejectBankGeom: rejectBank || '',
+  });
+  if (ar.softSkip) {
+    log(
+      `MEASURED_DELIVERY_UNPROBED tag=${tag} ${ar.detail} ` +
+        `source=${md && md.source ? md.source : 'NA'} — NOT a pass of delivered geometry`
+    );
+    return { ok: true, softSkip: true, md };
+  }
+  if (!ar.ok) {
+    fail(ar.reason || 'measured_delivery_fail', ar.detail || '');
+  }
+  log(
+    `MEASURED_DELIVERY_OK tag=${tag} delivered=${ar.delivered} desync_risk=${ar.desync_risk} ` +
+      `source=${ar.source} session_epoch=${ar.session_epoch || (md && md.session_epoch) || 'NA'} ` +
+      `value_kind=${ar.value_kind || 'measured'} ` +
+      `(request/library geometry NOT used as delivery evidence)`
+  );
+  if (ar.session_epoch && !baselineSessionEpoch) {
+    baselineSessionEpoch = String(ar.session_epoch);
+    log(`SESSION_EPOCH_BASELINE epoch=${baselineSessionEpoch} tag=${tag} value_kind=measured`);
+  }
+  return { ok: true, softSkip: false, md, assert: ar };
+}
 
 async function captureAndAssertPid(tag, { hardFail = true } = {}) {
   const snap = await captureLedger(cfg);
@@ -2337,6 +2395,33 @@ async function runOneTransitionCycle(page, itemTitle, detailsUrl, cycle, total) 
   await sleep(1100); // allow ≥1 Hz media telemetry tick when using log source
   const ledgerStart = await captureLedger(cfg);
   log(`LEDGER_START cycle=${cycle}/${total} ${formatSnap(ledgerStart)}`);
+  // Continuous-play session_epoch baseline for this cycle (stop/recast may bump later).
+  let cycleSessionEpoch =
+    (ledgerStart && ledgerStart.session_epoch) || baselineSessionEpoch || '';
+  if (!cycleSessionEpoch) {
+    const md0 = await resolveMeasuredDelivery(cfg);
+    if (md0 && md0.session_epoch) cycleSessionEpoch = String(md0.session_epoch);
+  }
+  if (cycleSessionEpoch) {
+    log(
+      `SESSION_EPOCH_CYCLE_START cycle=${cycle}/${total} epoch=${cycleSessionEpoch} value_kind=measured`
+    );
+  } else if (cfg.requireSessionEpoch) {
+    cycleFail(
+      cycle,
+      total,
+      'session_epoch',
+      'session_epoch_unprobed',
+      `${ctag}: session_epoch required but unprobed at cycle start ` +
+        `(need E2E_DAEMON_LOG with session_epoch= or telemetry). ` +
+        `Spanning pause/resume/seek without epoch compares unknown sessions.`
+    );
+  } else {
+    log(
+      `SESSION_EPOCH_UNPROBED cycle=${cycle}/${total} — NOT a pass of single-session ` +
+        `(set E2E_REQUIRE_SESSION_EPOCH=1 + log/telemetry to gate)`
+    );
+  }
 
   await glassMark(cycle, 'play', 'after', {
     picture: 'motion',
@@ -2696,9 +2781,64 @@ async function runOneTransitionCycle(page, itemTitle, detailsUrl, cycle, total) 
     } else {
       log(
         `LEDGER_OK cycle=${cycle}/${total} residual=${lr.residual != null ? lr.residual : 'NA'} ` +
-          `session=${lr.session} pid=${lr.pid != null ? lr.pid : ledgerEnd.pid}` +
+          `session=${lr.session} session_epoch=${ledgerEnd.session_epoch || cycleSessionEpoch || 'NA'} ` +
+          `pid=${lr.pid != null ? lr.pid : ledgerEnd.pid}` +
           (lr.plxd_frames_void ? ' plxd_frames_void=1' : '') +
           (lr.note ? ` note=${lr.note}` : '')
+      );
+    }
+  }
+  // Single-session: session_epoch unchanged across pause/resume/seek (before stop).
+  {
+    let endEpoch = (ledgerEnd && ledgerEnd.session_epoch) || '';
+    if (!endEpoch) {
+      const mdE = await resolveMeasuredDelivery(cfg);
+      if (mdE && mdE.session_epoch) endEpoch = String(mdE.session_epoch);
+      if (mdE && (mdE.desync_risk === 1 || mdE.pipe_desync)) {
+        cycleFail(
+          cycle,
+          total,
+          'desync',
+          'pipe_desync_risk',
+          `${ctag}: desync_risk=1 during continuous window delivered=${
+            mdE.delivered_geom ? mdE.delivered_geom.text : 'NA'
+          }`
+        );
+      }
+    }
+    const seR = assertSessionEpochUnchanged(
+      cycleSessionEpoch || null,
+      endEpoch || null,
+      `${ctag}_session_epoch`
+    );
+    // Honour suite require flag (module defaults soft when both null unless env set).
+    if (
+      seR.softSkip &&
+      cfg.requireSessionEpoch &&
+      !cycleSessionEpoch &&
+      !endEpoch
+    ) {
+      cycleFail(
+        cycle,
+        total,
+        'session_epoch',
+        'session_epoch_unprobed',
+        seR.detail || `${ctag}: session_epoch required but unprobed`
+      );
+    } else if (seR.softSkip) {
+      log(`SESSION_EPOCH_SOFT_SKIP cycle=${cycle}/${total} ${seR.detail}`);
+    } else if (!seR.ok) {
+      cycleFail(
+        cycle,
+        total,
+        'session_epoch',
+        seR.reason || 'session_epoch_changed',
+        seR.detail || ''
+      );
+    } else {
+      log(
+        `SESSION_EPOCH_OK cycle=${cycle}/${total} epoch=${seR.session_epoch} ` +
+          `value_kind=measured (pause/resume/seek same session)`
       );
     }
   }
@@ -3421,6 +3561,19 @@ async function runTransitionScenarios(page, itemTitle, detailsUrl, _castAlreadyS
       `cycles=${cfg.transitionCycles} hdmi=${cfg.hdmiMotion ? 1 : 0} run_id=${runCorr.runId}`
   );
   log(
+    `GATES require_measured_delivery=${cfg.requireMeasuredDelivery ? 1 : 0} ` +
+      `require_session_epoch=${cfg.requireSessionEpoch ? 1 : 0} ` +
+      `plxd_frames_void=${process.env.E2E_PLXD_FRAMES_VOID == null ? 'DEFAULT_1' : process.env.E2E_PLXD_FRAMES_VOID} ` +
+      `daemon_log=${process.env.E2E_DAEMON_LOG || '(unset)'} ` +
+      `rating_key=${process.env.PLEX_RATING_KEY || cfg.ratingKey || 'tier_default'} ` +
+      `value_kinds=measured|caller-supplied|DEFAULT_ASSUMED`
+  );
+  log(
+    'MEASURED_DELIVERY_CONTRACT: assert delivered_geom from ffmpeg banner / telemetry only — ' +
+      'never request videoResolution= or library_media as delivery proof. desync_risk=1 → FAIL. ' +
+      'session_epoch must hold across pause/resume/seek (stop/recast may bump stream_seq).'
+  );
+  log(
     'NO_LIPSYNC_ASSERT: suite never gates on av-lock/av_drift_ms; A/V bimodal offset is ' +
       'parent HDMI-only (tools/avsync_measure_hdmi.py).'
   );
@@ -3874,6 +4027,39 @@ async function runTransitionScenarios(page, itemTitle, detailsUrl, _castAlreadyS
       await runCorr.joinTelemetry(`tier_${tier.name}_playing_ok`);
       runCorr.persist(cfg.outDir);
       await captureAndAssertPid(`tier_${tier.name}_playing_ok`, { hardFail: true });
+
+      // Delivered geometry = MEASURED_DELIVERY only (never request / library_media).
+      {
+        const mdGate = await assertMeasuredDeliveryGate(`tier_${tier.name}_play`, {
+          require: cfg.requireMeasuredDelivery,
+        });
+        if (mdGate && mdGate.assert && mdGate.assert.delivered) {
+          summaryBits.push(`measured=${mdGate.assert.delivered}`);
+        } else if (mdGate && mdGate.softSkip) {
+          summaryBits.push('measured=unprobed');
+        }
+        // session_epoch from ledger snap if delivery lacked it
+        const snapSe = await captureLedger(cfg);
+        if (snapSe && snapSe.session_epoch && !baselineSessionEpoch) {
+          baselineSessionEpoch = String(snapSe.session_epoch);
+          log(
+            `SESSION_EPOCH_BASELINE epoch=${baselineSessionEpoch} tag=tier_${tier.name}_play ` +
+              `src=ledger value_kind=measured`
+          );
+        }
+        if (snapSe && snapSe.desync_risk === 1) {
+          fail(
+            'pipe_desync_risk',
+            `tier_${tier.name}: ledger desync_risk=1 measured_delivery=${snapSe.measured_delivery || 'NA'}`
+          );
+        }
+        log(
+          `SESSION_EPOCH_GATE require=${cfg.requireSessionEpoch ? 1 : 0} ` +
+            `baseline=${baselineSessionEpoch || 'NA'} ` +
+            `ledger_epoch=${snapSe && snapSe.session_epoch ? snapSe.session_epoch : 'NA'} ` +
+            `content=${cfg.contentMode}`
+        );
+      }
 
       // Optional glass score on parent-provided capture (no grabber). Timeline-only
       // PASS is blind to ~1.5% display loss — when dir set or requireGlass, score it.

@@ -435,6 +435,21 @@ function loadConfig() {
     hdmiCaptureFps,
     hdmiCaptureFpsLabel,
     sessionHoldSec,
+    // Measured delivery (ffmpeg banner) — never assert request/library as delivered.
+    // Real content / geom matrix default require=1; synthetic default 0.
+    requireMeasuredDelivery: truthy(
+      process.env.E2E_REQUIRE_MEASURED_DELIVERY,
+      isReal || truthy(process.env.E2E_REAL_GEOM_MATRIX, false)
+    ),
+    // session_epoch=process_epoch.stream_seq — spanning asserts need stable epoch.
+    requireSessionEpoch: truthy(
+      process.env.E2E_REQUIRE_SESSION_EPOCH,
+      isReal || truthy(process.env.E2E_REAL_GEOM_MATRIX, false)
+    ),
+    // Optional bank size to reject as measured identity on real-geom arms (e.g. 624x480).
+    rejectMeasuredBankGeom: String(
+      process.env.E2E_REJECT_MEASURED_BANK || process.env.E2E_EXPECT_DECODE || ''
+    ).trim(),
     // Glass integrity (w-instr counter). Parent provides capture dir; suite never grabs.
     // E2E_REQUIRE_GLASS=1 → missing/unscored glass is FAIL (not timeline-only PASS).
     requireGlass: truthy(process.env.E2E_REQUIRE_GLASS, false),
