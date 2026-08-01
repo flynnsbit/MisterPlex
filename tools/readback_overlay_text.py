@@ -373,6 +373,12 @@ def find_string(rows, text: str):
     Template match still recovers the string (score). Reported font/scale comes
     from resolve_font_from_span on the winning location's ink bbox. If span cannot
     uniquely identify 8x13 vs 12x16, font=UNRESOLVED (not a guessed winner).
+
+    Localization note (silicon PAUSED 3883f5ab): a coarse y-step of 4 skipped the
+    true 12×16 peak at y=350 (grid hit only 348/352 at score~0.50) and let a
+    weaker right-side 8×13 false peak (~0.55 @ x=516) win — reporting font=8x13
+    and ink_span~341 while the real left label is 12×16 @ span~441. Coarse y-step
+    is therefore 2 (even phase) and every config is refined around its peak.
     """
     H = len(rows)
     W = len(rows[0]) if H else 0
@@ -393,41 +399,48 @@ def find_string(rows, text: str):
             y0_lo = y_lo & ~1
         if y0_hi is None:
             y0_hi = max(y0_lo + 1, H - mh - 1)
-        hit = False
+        # Keep even y phase when step_y is even (glyph even-origin contract).
+        if step_y >= 2:
+            y0_lo &= ~1
         for y0 in range(y0_lo, y0_hi, step_y):
             for x0 in range(x_lo, x_hi, step_x):
                 s = separation_score(rows, x0, y0, mask)
                 if s > best_s:
                     best_s, best_x, best_y = s, x0, y0
-                    if s >= 0.58:
-                        hit = True
         per[key] = (best_s, best_x, best_y, mask)
         if best_s > global_best[0]:
             global_best = (best_s, key)
-        return hit
+        return best_s
 
     for font, sc in configs:
         mask = render_mask(text, font, sc)
-        coarse_x = max(2, sc * 2)
-        coarse_y = max(2, sc * 2)
-        if search(mask, font, sc, coarse_x, coarse_y):
-            # refine
-            bs, bx, by, _m = per[(font, sc)]
-            mh, mw = len(mask), len(mask[0])
-            search(mask, font, sc, 1, 2,
-                   x_lo=max(0, bx - coarse_x),
-                   x_hi=min(W - mw, bx + coarse_x + 1),
-                   y0_lo=max(y_lo & ~1, by - coarse_y),
-                   y0_hi=min(H - mh, by + coarse_y + 1))
-        else:
-            bs, bx, by, _m = per.get((font, sc), (0.0, 0, 0, mask))
-            if bs >= 0.28:
-                mh, mw = len(mask), len(mask[0])
-                search(mask, font, sc, 1, 2,
-                       x_lo=max(0, bx - coarse_x),
-                       x_hi=min(W - mw, bx + coarse_x + 1),
-                       y0_lo=max(y_lo & ~1, by - coarse_y),
-                       y0_hi=min(H - mh, by + coarse_y + 1))
+        mh, mw = len(mask), len(mask[0])
+        # y-step MUST be 2 (not sc*2=4): PAUSED 12×16 peak sits on y=350; step-4
+        # from y_lo=264 only samples 348/352 and misses the real score 0.62.
+        coarse_x = max(2, sc)
+        coarse_y = 2
+        search(mask, font, sc, coarse_x, coarse_y)
+        bs, bx, by, _m = per[(font, sc)]
+        if bs >= 0.28:
+            # Local refine; also a left-panel pass for transport state labels so a
+            # weaker right-edge false peak cannot outrank the real label.
+            rad_x = max(8, coarse_x * 3)
+            rad_y = max(4, 6)
+            search(mask, font, sc, 1, 1,
+                   x_lo=max(0, bx - rad_x),
+                   x_hi=min(W - mw + 1, bx + rad_x + 1),
+                   y0_lo=max(y_lo & ~1, by - rad_y),
+                   y0_hi=min(H - mh + 1, by + rad_y + 1))
+            if text in ("PAUSED", "STOPPED", "PLAYING"):
+                left_hi = max(1, min(W - mw + 1, W // 2))
+                search(mask, font, sc, 2, 2, x_lo=0, x_hi=left_hi)
+                bs2, bx2, by2, _ = per[(font, sc)]
+                if bs2 >= 0.28:
+                    search(mask, font, sc, 1, 1,
+                           x_lo=max(0, bx2 - rad_x),
+                           x_hi=min(W - mw + 1, bx2 + rad_x + 1),
+                           y0_lo=max(y_lo & ~1, by2 - rad_y),
+                           y0_hi=min(H - mh + 1, by2 + rad_y + 1))
 
     score, key = global_best
     if key is None or score < 0.40:
@@ -645,6 +658,52 @@ def selftest_font_measure() -> int:
     return print_result(RC_PASS, recovered="font_measure", verdict="FONT_MEASURE_OK")
 
 
+def selftest_pause_localize() -> int:
+    """Silicon PAUSED must localize LEFT 12×16 label, not right-side 8×13 ghost.
+
+    Ground truth (exhaustive left-half search on osd_pause_3883f5ab_PAUSED_PASS.png):
+      best = 12x16@2 at norm x≈76 y≈350 score≈0.62; ink_span_output_px≈441
+    Broken coarse y-step=4 reported 8x13@2 at x≈517 span≈341 (false peak).
+    """
+    root = repo_root()
+    path = root / "files/device-evidence/osd_pause_3883f5ab_PAUSED_PASS.png"
+    if not path.is_file():
+        path = root / "tests/unit/fixtures/overlay_readback/osd_pause_3883f5ab_PAUSED_PASS.png"
+    if not path.is_file():
+        return print_result(RC_FAIL, error="missing_paused_fixture", verdict="FAIL")
+    w, h, rows = load_png_luma(path)
+    norm, tag = normalize_capture(rows)
+    if norm is None:
+        return print_result(RC_UNSCORED, geometry_tag=tag, verdict="UNSCORED")
+    rec, score, meta = find_string(norm, "PAUSED")
+    font = meta.get("font") if meta else None
+    x = meta.get("x") if meta else None
+    span = meta.get("measured_span") if meta else None
+    print(f"pause_localize image={path}")
+    print(f"geometry_tag={tag} capture={w}x{h}")
+    print(f"meta={meta}")
+    print(f"score={score:.4f}")
+    # PASS: recovered, font 12x16, label in left half, span near 154 (12x16@2 cell)
+    ok = (
+        rec == "PAUSED"
+        and font == "12x16"
+        and isinstance(x, int)
+        and x < 200
+        and isinstance(span, int)
+        and 140 <= span <= 190
+    )
+    # Explicit FAIL signature of the old bug
+    old_bug = font == "8x13" and isinstance(x, int) and x > 400
+    if old_bug:
+        return print_result(RC_FAIL, recovered=rec, font=font, x=x,
+                            measured_span=span, verdict="FAIL_RIGHT_SIDE_8x13_GHOST")
+    if not ok:
+        return print_result(RC_FAIL, recovered=rec, font=font, x=x,
+                            measured_span=span, verdict="FAIL_LOCALIZE")
+    return print_result(RC_PASS, recovered=rec, font=font, x=x,
+                        measured_span=span, verdict="PAUSE_LOCALIZE_OK")
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -657,10 +716,14 @@ def main(argv=None) -> int:
                     help="Synthetic DE-cull GREEN (pair is the real gate)")
     ap.add_argument("--selftest-font-measure", action="store_true",
                     help="Synthetic 8x13 vs 12x16: reported font must match paint")
+    ap.add_argument("--selftest-pause-localize", action="store_true",
+                    help="Silicon PAUSED: left 12x16 label, not right 8x13 ghost")
     args = ap.parse_args(argv)
 
     if args.selftest_font_measure:
         return selftest_font_measure()
+    if args.selftest_pause_localize:
+        return selftest_pause_localize()
     if args.selftest_pair:
         return selftest_pair()
     if args.selftest_red:

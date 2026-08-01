@@ -1,42 +1,39 @@
 worker: w-osd-hires
 branch: w-osd-hires
-task: R1 span reconcile + R2 drop w>=600 + R3 prereg
 status: READY_FOR_PARENT_DEPLOY
+task: S1-S5 pause 8x13 was tool false peak; localize fix + pause font log
 
-## R1 — who is wrong
-- Named 3883f5ab/0370af91 STOPPED archives: NOT-FOUND on this tree
-- Only silicon STOPPED on disk: files/device-evidence/overlay_FIXED_db3d9367_stopped.png
-- measure_overlay_word_span.py → ink_span_output_px=531 @1920 family=12x16 (true rc=0)
-- pred_8x13@2_via640=372.0 matches parent hand 370 — that is the 8x13 *prediction*, not FIXED ink
-- VERDICT on FIXED: parent 370 is WRONG; worker 12x16/531 is RIGHT
-- Do not claim both valid. If parent has 3883 STOPPED PNG, re-run measure tool on it.
+## S1 pause canvas (cited)
+publishPausedOverlayFrame: plex480pDdrFrameGeometry → cw/ch → renderYuv420p(yuv,cw,ch)
+Host compute(624,480) → font=12x16 scale=2
+Play path renderOverlay: rawW/rawH from ddrFrameGeometryForFpgaPresent = same bank
 
-## R2 — w>=600
-- At product 624x480, h>=480 alone selects 12x16 → w>=600 does NOT change STOP path
-- REMOVED as dead/masking code (playback_overlay.hpp font pick = h>=480 && bodyScale==2 only)
-- Gate test_stop_idle_canvas_static rejects any remaining w>=600
+## S2 contradiction
+Log 624x480 + glyphs "8x13" was FALSE. True left PAUSED = 12x16 span~452@1920.
+Old find_string coarse_y=sc*2=4 skipped y=350; weaker right 8x13@x517 won (span 341).
+Not intermediate blit; not bodyScale clamp; not short-H pause path.
 
-## R3 prereg
-- files/prereg/OSD-HIRES-aa7776a8-DEPLOY.md (title historical; binary md5 below)
-- Log expect: media: idle overlay canvas=624x480 font=12x16 scale=2 chrome=1
-- STOPPED ink @1920 PASS 480-580 (FIXED=531); FAIL 340-400 (parent 8x13 class)
-- Falsify worker: span<=400 or log font=8x13 or canvas!=624x480
+## S3 fix
+tools/readback_overlay_text.py: coarse_y=2, refine step1, left-label pass for PAUSED/STOPPED
+--selftest-pause-localize true rc=0 on silicon archive
+media: pause overlay canvas=... font=... log added
+tests/unit/test_pause_canvas_font_static.py
+
+## S4 prereg
+files/prereg/OSD-HIRES-PAUSE-12x16-DEPLOY.md
+PAUSED @1920 PASS 420-500 (archive 452); FAIL 300-360 (old 341 ghost)
+log: media: pause overlay canvas=624x480 font=12x16 scale=2
+
+## S5 black-rect
+8475a8dd opaque panelBg+title still in tree; score P1 empty-center 50-70
 
 ## Binary
-md5sum build/arm/misterplexd = 972a7794b0616012a2f4aa074b832552
-make arm-plexd true rc=0 (worktree)
+md5=14b00f600aa62ac0948e24273e7030a1
+commit: 5d175785
 
-## Host gates (true rc=0)
-- test_stop_idle_canvas_static
-- test_panel_empty_center_static
-- test_pause_overlay_publish_static
-- readback --selftest-font-measure
-- measure_overlay_word_span on FIXED
-- test_playback_overlay
+## Parent cmds
+python3 tools/measure_overlay_word_span.py --image CAP.png --expect PAUSED; echo "true rc=$?"
+python3 tools/readback_overlay_text.py --selftest-pause-localize; echo "true rc=$?"
+grep 'pause overlay canvas=' misterplexd.log
 
-## Parent commands
-python3 tools/measure_overlay_word_span.py --image CAP.png --expect STOPPED; echo "true rc=$?"
-python3 tools/readback_overlay_text.py --image CAP.png --expect STOPPED; echo "true rc=$?"
-grep 'idle overlay canvas=' misterplexd.log
-
-No device touch. No RTL.
+No device touch. No RTL. User conf untouched.

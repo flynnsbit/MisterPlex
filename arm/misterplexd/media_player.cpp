@@ -782,6 +782,17 @@ bool MediaPlayer::publishPausedOverlayFrame() {
         log("media: pause overlay skip not-visible (state may have timed out)");
         return false;
     }
+    // Log the AUTHORING canvas+font (same contract as paintIdle). Parent silicon
+    // span once looked 8×13 while this line said 624×480 — that was a readback
+    // false peak, not a second canvas; keep both greppable.
+    {
+        const auto lm = PlaybackOverlay::layoutMetrics(cw, ch);
+        const char* font =
+            lm.fontId == OverlayFontId::Large12x16 ? "12x16" : "8x13";
+        log(std::string("media: pause overlay canvas=") + std::to_string(cw) + "x" +
+            std::to_string(ch) + " font=" + font +
+            " scale=" + std::to_string(lm.bodyScale));
+    }
     if (!overlay_.renderYuv420p(yuv.data(), cw, ch)) {
         log("media: pause overlay renderYuv420p returned false (dirty empty?)");
         return false;

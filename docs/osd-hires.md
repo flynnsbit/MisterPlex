@@ -244,3 +244,17 @@ python3 tests/unit/test_panel_empty_center_static.py; echo "true rc=$?"
 # cast → play ~22s → pause → wait 6s → capture
 python3 tools/readback_overlay_text.py --image CAP.png --expect PAUSED; echo "true rc=$?"
 ```
+
+## Pause path canvas vs 8×13 false peak (settled)
+
+**S1 source:** `publishPausedOverlayFrame` (`media_player.cpp`) uses
+`plex480pDdrFrameGeometry()` → `renderYuv420p(yuv, cw, ch)` with product **624×480**.
+Host `compute(624,480)` → **12×16@2**. Same bank as `paintIdle`.
+
+**S2:** Silicon `osd_pause_3883f5ab_PAUSED_PASS.png` left-label exhaustive search:
+`12x16@2` at norm x=76 y=349 score 0.62, `ink_span_output_px≈452` (pred 474 via624).
+Old tool coarse **y-step=4** missed y=350 and picked right-side 8×13 ghost (x≈517,
+score 0.55, span 341). **Not a short authoring canvas.** Fix: `coarse_y=2` + left
+state-label pass + `--selftest-pause-localize`. Loud log:
+`media: pause overlay canvas=624x480 font=12x16 scale=2`.
+
