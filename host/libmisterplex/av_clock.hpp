@@ -1,327 +1,108 @@
 #pragma once
 // A/V presentation clock for the product cast path.
-//
-// The raw RGB pipe carries no PTS, so `frameIndex` is the only notion of video
-// time. That makes the assumed content rate load-bearing: pacing 23.976 fps
-// content at 24 fps makes video lead audio by ~1 ms/s, which is invisible in a
-// 12 s test clip but reaches ~234 ms by 3:54 and ~5.5 s across a 91-minute
-// episode. Everything here is exact integer math on a rational rate.
-
 #include <cstdint>
-
 namespace misterplex {
-
-// Default rate when PMS metadata gives us nothing. The drift corrector absorbs
-// the error, but log it — an unknown rate means degraded lipsync.
 constexpr int kDefaultFpsNum = 24;
 constexpr int kDefaultFpsDen = 1;
-
-// Content timestamp (ms) of frame `frameIndex` at rate num/den.
-// frameIndex is 1-based (the frame just presented), matching the present loop.
-// int64 throughout: 131 400 frames * 1000 * 1001 stays far inside the range.
 inline int64_t frameContentMs(int64_t frameIndex, int num, int den) {
-    if (num <= 0 || den <= 0) {
-        num = kDefaultFpsNum;
-        den = kDefaultFpsDen;
-    }
+    if (num <= 0 || den <= 0) { num = kDefaultFpsNum; den = kDefaultFpsDen; }
     return (frameIndex * 1000LL * static_cast<int64_t>(den)) / static_cast<int64_t>(num);
 }
-
-// Audio master clock (ms) from bytes handed to MrAudio (s16le stereo @ 48 kHz).
 inline int64_t audioClockMs(int64_t audioBytes) {
-    if (audioBytes <= 0)
-        return 0;
+    if (audioBytes <= 0) return 0;
     return (audioBytes * 1000LL) / (48000LL * 4LL);
 }
-
-// drift = audio clock − content time of the frame about to be shown.
-//   drift < 0  video is ahead of audio (audio sounds late) → hold
-//   drift > 0  video is behind audio (we are late) → drop to catch up
 inline int64_t avDriftMs(int64_t audioMs, int64_t frameMs) { return audioMs - frameMs; }
-
-// DEPRECATED as a product fix: subtracting an origin at first video frame
-// zeroes the *pacer's* drift without moving photons/samples. Hardware (rk=8):
-// co-arm cleared drops (13→0) but moved grabber lip-sync −168 → −456 ms
-// (audio even earlier). Kept only so unit tests can model that failure mode.
-inline int64_t coArmedClockMs(int64_t rawAudibleMs, int64_t originMs) {
-    return rawAudibleMs - originMs;
-}
-
-// Real content A/V offset the grabber measures (calibration-free in a before/
-// after delta): content time of audio being heard minus content time of the
-// frame on screen. >0 ⇒ audio content leads picture (the lab failure sign).
-inline int64_t realContentOffsetMs(int64_t audioHeardContentMs, int64_t videoDisplayedContentMs) {
-    return audioHeardContentMs - videoDisplayedContentMs;
-}
-
-// --- Audio hold policy (product pump) ---------------------------------------
-// Cap on PCM buffered while MrAudio is gated. 2 s @ 48 kHz stereo s16le.
-// Beyond this we KEEP stream start (content t=0) and drop the tail — never
-// shift the content origin forward (that would recreate a permanent lead).
+inline int64_t coArmedClockMs(int64_t rawAudibleMs, int64_t originMs) { return rawAudibleMs - originMs; }
+// Daemon sign >0 audio leads. Grabber opposite — do not compare raw.
+inline int64_t realContentOffsetMs(int64_t a, int64_t v) { return a - v; }
 constexpr int64_t kAudioHoldCapMs = 2000;
-constexpr int64_t kAudioHoldCapBytes = 48000LL * 4LL * (kAudioHoldCapMs / 1000); // 384000
-
-// How a session handoff interacts with audioStartGate_.
-// Seek (media_player.cpp:seekMs → play) and auto-next (main.cpp:doPlay → play)
-// both spawn a NEW threadMain + audioPump, so the gate must re-arm closed.
-// Pause/resume only SIGSTOP/SIGCONT the children; the gate stays open.
-enum class SessionHandoffKind {
-    FreshPlay,        // first playMedia / --play-file
-    SeekRestart,      // seekMs → play() or doPlay re-resolve
-    AutoNextRestart,  // natural EOF → tryAutoNext → doPlay
-    PauseResume,      // pause()/resume() mid-session
-};
-
-// True ⇒ product must store audioStartGate_=false before the new audioPump runs.
-inline bool handoffReArmsAudioHold(SessionHandoffKind k) {
-    return k != SessionHandoffKind::PauseResume;
-}
-
-// Release-path check: nothing may have been written to MrAudio before the gate
-// opens. content_origin_ms is then 0 by construction (held PCM is stream start).
-// A non-zero audioBytesAtRelease means the hold was bypassed — the co-arm class
-// of defect (lead already unpaid before "release").
-struct AudioReleaseCheck {
-    bool ok = false;
-    int64_t contentOriginMs = -1;     // must be 0 on a correct release
-    int64_t audioBytesAtRelease = -1; // MrAudio bytes already written
-    int64_t heldMs = 0;               // buffered PCM duration (content t=0..)
-};
-
-inline AudioReleaseCheck checkAudioReleaseOrigin(int64_t audioBytesWrittenBeforeRelease,
-                                                 int64_t heldBytes) {
-    AudioReleaseCheck c;
-    c.audioBytesAtRelease = audioBytesWrittenBeforeRelease < 0 ? 0 : audioBytesWrittenBeforeRelease;
-    if (heldBytes < 0)
-        heldBytes = 0;
-    c.heldMs = (heldBytes * 1000LL) / (48000LL * 4LL);
-    // Content origin is the already-heard position at release. Hold requires 0.
+constexpr int64_t kAudioHoldCapBytes = 48000LL * 4LL * (kAudioHoldCapMs / 1000);
+constexpr int64_t kAudioHoldTimeoutMs = 1200;
+enum class SessionHandoffKind { FreshPlay, SeekRestart, AutoNextRestart, PauseResume };
+inline bool handoffReArmsAudioHold(SessionHandoffKind k) { return k != SessionHandoffKind::PauseResume; }
+struct AudioReleaseCheck { bool ok=false; int64_t contentOriginMs=-1; int64_t audioBytesAtRelease=-1; int64_t heldMs=0; };
+inline AudioReleaseCheck checkAudioReleaseOrigin(int64_t written, int64_t held) {
+    AudioReleaseCheck c; c.audioBytesAtRelease = written < 0 ? 0 : written;
+    if (held < 0) held = 0;
+    c.heldMs = (held * 1000LL) / (48000LL * 4LL);
     c.contentOriginMs = (c.audioBytesAtRelease * 1000LL) / (48000LL * 4LL);
-    c.ok = (c.audioBytesAtRelease == 0 && c.contentOriginMs == 0);
-    return c;
+    c.ok = (c.audioBytesAtRelease == 0 && c.contentOriginMs == 0); return c;
 }
-
-// Pause/resume must NOT close the gate. If a mutant re-arms hold on resume,
-// audio stays muted (no "first frame" event) — model that as permanent hold.
-struct PauseResumeHoldSim {
-    bool gateOpenAfterResume = true;
-    bool audioMutedAfterResume = false;
-};
-
-inline PauseResumeHoldSim simulatePauseResumeHold(bool reArmHoldOnResume) {
-    PauseResumeHoldSim out{};
-    // Correct product: gate stays open across SIGSTOP/SIGCONT.
-    out.gateOpenAfterResume = !reArmHoldOnResume;
-    out.audioMutedAfterResume = reArmHoldOnResume;
-    return out;
+struct PauseResumeHoldSim { bool gateOpenAfterResume=true; bool audioMutedAfterResume=false; };
+inline PauseResumeHoldSim simulatePauseResumeHold(bool reArm) {
+    PauseResumeHoldSim o; o.gateOpenAfterResume=!reArm; o.audioMutedAfterResume=reArm; return o;
 }
-
-// No-video failure: gate stays closed; buffer grows to cap; no MrAudio write.
-struct HoldNoVideoSim {
-    int64_t heldBytes = 0;
-    int64_t heldMs = 0;
-    bool wroteMrAudio = false;
-    bool capped = false;
-};
-
-inline HoldNoVideoSim simulateHoldNoVideo(int64_t incomingBytes,
-                                         int64_t capBytes = kAudioHoldCapBytes) {
-    HoldNoVideoSim out{};
-    if (capBytes < 0)
-        capBytes = 0;
-    if (incomingBytes < 0)
-        incomingBytes = 0;
-    out.heldBytes = incomingBytes <= capBytes ? incomingBytes : capBytes;
-    out.heldMs = (out.heldBytes * 1000LL) / (48000LL * 4LL);
-    out.capped = incomingBytes > capBytes;
-    out.wroteMrAudio = false; // gate never opened
-    return out;
+struct HoldNoVideoSim { int64_t heldBytes=0; int64_t heldMs=0; bool wroteMrAudio=false; bool capped=false; bool timedOpen=false; int64_t droppedHeadBytes=0; };
+inline HoldNoVideoSim simulateHoldNoVideo(int64_t incoming, int64_t waitMs=0,
+    int64_t cap=kAudioHoldCapBytes, int64_t timeoutMs=kAudioHoldTimeoutMs) {
+    HoldNoVideoSim o; if (cap<0) cap=0; if (incoming<0) incoming=0;
+    if (incoming>cap) { o.droppedHeadBytes=incoming-cap; o.heldBytes=cap; o.capped=true; }
+    else o.heldBytes=incoming;
+    o.heldMs=(o.heldBytes*1000LL)/(48000LL*4LL); o.timedOpen=waitMs>=timeoutMs; o.wroteMrAudio=o.timedOpen; return o;
 }
-
-enum class AvAction {
-    Present, // show this frame
-    Hold,    // wait, video is running ahead of the master clock
-    Drop,    // skip presenting, we are too far behind to catch up by waiting
-};
-
-// Decide what to do with the frame we just decoded.
-//   leadMs      small allowed video lead so the vsync path is never starved
-//   dropMs      drift past which a late frame is dropped (0 disables dropping)
-//   dropRun     how many frames we have dropped back-to-back
-//   maxDropRun  cap on consecutive drops so a stall cannot shred the picture
-//
-// Dropping is only safe because the FFmpeg chain is forced to CFR at this same
-// rate: supply then matches the schedule, so drift can only come from a real
-// decode/transport stall, never from a rate mismatch. Without forced CFR a
-// too-fast assumed rate would make this drop frames forever.
-inline AvAction avDecide(int64_t driftMs, int64_t leadMs, int64_t dropMs, int dropRun,
-                         int maxDropRun = 1) {
-    if (dropMs > 0 && driftMs > dropMs && dropRun < maxDropRun)
-        return AvAction::Drop;
-    if (driftMs + leadMs < 0)
-        return AvAction::Hold;
-    return AvAction::Present;
+inline int64_t holdRingAppendDropHead(int64_t cur, int64_t add, int64_t cap) {
+    if (cap<0) cap=0; if (cur<0) cur=0; if (add<0) add=0;
+    const int64_t t=cur+add; return t>cap ? t-cap : 0;
 }
-
-// Startup-window simulations (host unit tests).
-//
-// Silicon (rk=8, 24.000 fps):
-//   - Early audio play: audibleClock ~+159..206 ms when frame 1 is ready →
-//     pacer Drop/Present massacre (~13 drops) OR, if origin is re-based
-//     (co-arm), drops=0 while REAL content offset stays ~+165..206 ms unpaid
-//     (grabber −168 → −456 ms, delta −288 ms measured).
-//   - Hold-until-video: MrAudio writes start only when frame 1 is ready, so
-//     audioHeardContent and videoDisplayedContent share a common wall origin.
-//     Drops ~0 AND real content offset ~0 (modulo present lead).
-//
-// `realOffset` is what the grabber measures (content A − content V). The
-// daemon's av_drift_ms is intentionally NOT used as a success criterion here.
-enum class StartupAudioMode {
-    EarlyPlay,       // audio free-runs before first video; pacer sees raw clock
-    CoArmOrigin,     // same physical audio lead; pacer subtracts origin (FAILED on HW)
-    HoldUntilVideo,  // audio device starts at first video frame (product fix)
-};
-
-struct StartupPacerSim {
-    int drops = 0;
-    int presents = 0;
-    int holds = 0;
-    int firstDriftMs = 0; // pacer drift on frame 1 (daemon-visible, can lie)
-    int maxDropRun = 0;
-    int firstRealOffsetMs = 0;  // content A − content V at first Present
-    int lastRealOffsetMs = 0;   // same metric after the window
-    int steadyRealOffsetMs = 0; // mean real offset over last half of presents
-};
-
-inline StartupPacerSim simulateStartupPacer(int64_t audioMsAtFirstFrame, StartupAudioMode mode,
-                                           int frames, int64_t leadMs = 40, int64_t dropMs = 80,
-                                           int fpsNum = 24, int fpsDen = 1) {
+enum class AvAction { Present, Hold, Drop };
+inline AvAction avDecide(int64_t driftMs, int64_t leadMs, int64_t dropMs, int dropRun, int maxDropRun=1) {
+    if (dropMs>0 && driftMs>dropMs && dropRun<maxDropRun) return AvAction::Drop;
+    if (driftMs+leadMs<0) return AvAction::Hold; return AvAction::Present;
+}
+enum class StartupAudioMode { EarlyPlay, CoArmOrigin, HoldUntilVideo };
+constexpr int64_t kStartupDropReclaimMs = 22;
+struct StartupPacerSim { int drops=0,presents=0,holds=0,firstDriftMs=0,maxDropRun=0,firstRealOffsetMs=0,lastRealOffsetMs=0,steadyRealOffsetMs=0; };
+inline StartupPacerSim simulateStartupPacer(int64_t audioMsAtFirstFrame, StartupAudioMode mode, int frames,
+    int64_t leadMs=40, int64_t dropMs=80, int fpsNum=24, int fpsDen=1, int64_t dropReclaimMs=kStartupDropReclaimMs) {
     StartupPacerSim out{};
-    // Physical audio content already heard when frame 1 becomes ready.
-    // HoldUntilVideo forces this to 0 (device was gated). Other modes keep it.
-    const int64_t audioLeadAtFrame1 =
-        (mode == StartupAudioMode::HoldUntilVideo) ? 0 : audioMsAtFirstFrame;
-    const int64_t origin =
-        (mode == StartupAudioMode::CoArmOrigin) ? audioMsAtFirstFrame : 0;
-    int64_t audioHeardContentMs = audioLeadAtFrame1;
-    int64_t rawAudioMs = audioLeadAtFrame1; // pacer raw audible clock
-    int dropRun = 0;
-    int64_t realSum = 0;
-    int realN = 0;
-    const int64_t framePeriodMs =
-        (1000LL * static_cast<int64_t>(fpsDen)) / static_cast<int64_t>(fpsNum > 0 ? fpsNum : 24);
-    bool gotFirstPresent = false;
-    for (int i = 1; i <= frames; ++i) {
-        const int64_t frameMs = frameContentMs(i, fpsNum, fpsDen);
-        int64_t clock = coArmedClockMs(rawAudioMs, origin);
-        int64_t drift = avDriftMs(clock, frameMs);
-        if (i == 1)
-            out.firstDriftMs = static_cast<int>(drift);
-        AvAction act = avDecide(drift, leadMs, dropMs, dropRun);
-        int holdGuard = 0;
-        while (act == AvAction::Hold && holdGuard++ < 10000) {
-            ++out.holds;
-            rawAudioMs += 2;
-            audioHeardContentMs += 2; // device keeps playing during Hold
-            clock = coArmedClockMs(rawAudioMs, origin);
-            drift = avDriftMs(clock, frameMs);
-            act = avDecide(drift, leadMs, dropMs, dropRun);
+    const int64_t lead = (mode==StartupAudioMode::HoldUntilVideo)?0:audioMsAtFirstFrame;
+    const int64_t origin = (mode==StartupAudioMode::CoArmOrigin)?audioMsAtFirstFrame:0;
+    int64_t heard=lead, raw=lead; int dropRun=0; int64_t realSum=0; int realN=0;
+    const int64_t period=(1000LL*fpsDen)/ (fpsNum>0?fpsNum:24);
+    if (dropReclaimMs<0) dropReclaimMs=0; bool got=false;
+    for (int i=1;i<=frames;++i) {
+        const int64_t frameMs=frameContentMs(i,fpsNum,fpsDen);
+        int64_t clock=coArmedClockMs(raw,origin); int64_t drift=avDriftMs(clock,frameMs);
+        if (i==1) out.firstDriftMs=(int)drift;
+        AvAction act=avDecide(drift,leadMs,dropMs,dropRun); int hg=0;
+        while (act==AvAction::Hold && hg++<10000) {
+            ++out.holds; raw+=2; heard+=2; clock=coArmedClockMs(raw,origin); drift=avDriftMs(clock,frameMs); act=avDecide(drift,leadMs,dropMs,dropRun);
         }
-        if (act == AvAction::Drop) {
-            ++out.drops;
-            ++dropRun;
-            if (dropRun > out.maxDropRun)
-                out.maxDropRun = dropRun;
-            // Drop: content never reaches display. Audio keeps rolling; next
-            // decoded frame arrives in ~one period (no backlog).
+        if (act==AvAction::Drop) {
+            ++out.drops; ++dropRun; if (dropRun>out.maxDropRun) out.maxDropRun=dropRun;
+            raw+=period; heard+=period;
+            if (heard>=dropReclaimMs) heard-=dropReclaimMs; else heard=0;
         } else {
-            ++out.presents;
-            dropRun = 0;
-            const int64_t realOff = realContentOffsetMs(audioHeardContentMs, frameMs);
-            out.lastRealOffsetMs = static_cast<int>(realOff);
-            if (!gotFirstPresent) {
-                gotFirstPresent = true;
-                out.firstRealOffsetMs = static_cast<int>(realOff);
-            }
-            if (i > frames / 2) {
-                realSum += realOff;
-                ++realN;
-            }
+            ++out.presents; dropRun=0; raw+=period; heard+=period;
+            const int64_t ro=realContentOffsetMs(heard,frameMs); out.lastRealOffsetMs=(int)ro;
+            if (!got){got=true; out.firstRealOffsetMs=(int)ro;}
+            if (i>frames/2){realSum+=ro; ++realN;}
         }
-        rawAudioMs += framePeriodMs;
-        audioHeardContentMs += framePeriodMs;
     }
-    out.steadyRealOffsetMs = realN > 0 ? static_cast<int>(realSum / realN) : out.lastRealOffsetMs;
-    return out;
+    out.steadyRealOffsetMs = realN? (int)(realSum/realN) : out.lastRealOffsetMs; return out;
 }
-
-// Back-compat wrapper used by older call sites / red twins.
-inline StartupPacerSim simulateStartupPacer(int64_t audioMsAtFirstFrame, bool coArm, int frames,
-                                           int64_t leadMs = 40, int64_t dropMs = 80,
-                                           int fpsNum = 24, int fpsDen = 1) {
-    return simulateStartupPacer(audioMsAtFirstFrame,
-                                coArm ? StartupAudioMode::CoArmOrigin : StartupAudioMode::EarlyPlay,
-                                frames, leadMs, dropMs, fpsNum, fpsDen);
+inline StartupPacerSim simulateStartupPacer(int64_t a, bool coArm, int frames, int64_t leadMs=40, int64_t dropMs=80, int fpsNum=24, int fpsDen=1) {
+    return simulateStartupPacer(a, coArm?StartupAudioMode::CoArmOrigin:StartupAudioMode::EarlyPlay, frames, leadMs, dropMs, fpsNum, fpsDen);
 }
-
-// Multi-session startup (seek / auto-next): each restart is an independent
-// HoldUntilVideo window. RED = EarlyPlay every session; GREEN = Hold each time.
-struct MultiSessionStartupSim {
-    int sessions = 0;
-    int totalDrops = 0;
-    int worstSteadyRealMs = 0;
-    int sessionsOriginNonZero = 0;
-};
-
-inline MultiSessionStartupSim simulateMultiSessionStartup(int sessions, int64_t audioLeadMs,
-                                                          StartupAudioMode mode,
-                                                          int framesPerSession = 26) {
-    MultiSessionStartupSim out{};
-    out.sessions = sessions < 0 ? 0 : sessions;
-    for (int s = 0; s < out.sessions; ++s) {
-        const auto one = simulateStartupPacer(audioLeadMs, mode, framesPerSession);
-        out.totalDrops += one.drops;
-        if (one.steadyRealOffsetMs > out.worstSteadyRealMs)
-            out.worstSteadyRealMs = one.steadyRealOffsetMs;
-        if (one.firstRealOffsetMs > 80)
-            ++out.sessionsOriginNonZero;
+struct MultiSessionStartupSim { int sessions=0,totalDrops=0,worstSteadyRealMs=0,sessionsOriginNonZero=0; };
+inline MultiSessionStartupSim simulateMultiSessionStartup(int sessions, int64_t audioLeadMs, StartupAudioMode mode, int framesPerSession=26) {
+    MultiSessionStartupSim out{}; out.sessions=sessions<0?0:sessions;
+    for (int s=0;s<out.sessions;++s) {
+        auto one=simulateStartupPacer(audioLeadMs,mode,framesPerSession);
+        out.totalDrops+=one.drops;
+        if (one.steadyRealOffsetMs>out.worstSteadyRealMs) out.worstSteadyRealMs=one.steadyRealOffsetMs;
+        if (one.firstRealOffsetMs>80) ++out.sessionsOriginNonZero;
     }
     return out;
 }
-
-// Terminal-signal inventory for the rawvideo read loop. EAGAIN/EWOULDBLOCK is
-// deliberately absent: without a known-duration stall, "no bytes right now" is
-// indistinguishable from a slow source.
-inline bool rawVideoTerminalSignal(bool explicitStopOrSeek, bool readZero, bool readError,
-                                   bool shortRead, bool knownDurationStall) {
-    return explicitStopOrSeek || readZero || readError || shortRead || knownDurationStall;
+inline bool rawVideoTerminalSignal(bool a,bool b,bool c,bool d,bool e){return a||b||c||d||e;}
+inline int64_t eofStallAudioSilenceMs(bool wantAudio,bool audioSeen,int64_t noVideoMs,int64_t noAudioMs){
+    return (!wantAudio||!audioSeen)?noVideoMs:noAudioMs;
 }
-
-// For the known-duration EOF stall detector, audio silence is required only when
-// the session actually produced audio. Video-only/no-audio-yet sessions use the
-// video-silence timer so the detector is not vacuously disabled.
-inline int64_t eofStallAudioSilenceMs(bool wantAudio, bool audioSeen, int64_t noVideoMs,
-                                      int64_t noAudioMs) {
-    return (!wantAudio || !audioSeen) ? noVideoMs : noAudioMs;
+inline bool knownDurationEofStall(int64_t startMs,int64_t durationMs,int64_t elapsedMs,int64_t partial,int64_t noVideoMs,int64_t noAudioMs,int64_t graceMs=5000){
+    if (durationMs<=0||elapsedMs<0||partial<0) return false; if (graceMs<0) graceMs=0;
+    const int64_t ov=graceMs*3; const bool aq=noAudioMs>=graceMs||noVideoMs>=ov;
+    return startMs+elapsedMs>=durationMs+graceMs && noVideoMs>=graceMs && aq;
 }
-
-// A bounded EOF escape for PMS/FFmpeg streams that reach known duration, stop
-// producing rawvideo, but leave the pipe open. A partial frame is tolerated only
-// after its bytes have also gone stale for the same video-silence grace; otherwise
-// slow sources could be truncated mid-frame. Audio progress blocks short stalls
-// from being misread as EOF, but not forever: a known-duration video stream with
-// no complete decoded frame for 3× grace is treated as terminal even if audio or
-// silence keeps trickling.
-inline bool knownDurationEofStall(int64_t startMs, int64_t durationMs, int64_t elapsedMs,
-                                  int64_t partialFrameBytes, int64_t noVideoMs, int64_t noAudioMs,
-                                  int64_t graceMs = 5000) {
-    if (durationMs <= 0 || elapsedMs < 0 || partialFrameBytes < 0)
-        return false;
-    if (graceMs < 0)
-        graceMs = 0;
-    const int64_t audioOverrideMs = graceMs * 3;
-    const bool audioQuiet = noAudioMs >= graceMs || noVideoMs >= audioOverrideMs;
-    return startMs + elapsedMs >= durationMs + graceMs && noVideoMs >= graceMs && audioQuiet;
-}
-
 } // namespace misterplex

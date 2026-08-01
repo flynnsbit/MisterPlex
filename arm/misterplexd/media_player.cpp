@@ -1,7 +1,6 @@
 #include "media_player.hpp"
 #include "log_redact.hpp"
 
-#include "libmisterplex/audio_delay.hpp"
 #include "libmisterplex/av_clock.hpp"
 #include "libmisterplex/ffmpeg_vf.hpp"
 #include "libmisterplex/frame_ledger.hpp"
@@ -25,6 +24,7 @@
 #include <vector>
 
 #include <fcntl.h>
+#include <poll.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/wait.h>
@@ -1457,12 +1457,10 @@ pid_t MediaPlayer::spawnAudioOnly(const std::string& url, const std::string& hea
     args.push_back("-map");
     args.push_back("0:a:0?");
     args.push_back("-af");
-    // Portable adelay=N|N (see libmisterplex/audio_delay.hpp). Conf intent is
-    // logged here; audioPump measures pcm_silence_head_ms on the wire.
-    args.push_back(misterplex::ffmpegAudioDelayFilter(audioDelayMs_));
     if (audioDelayMs_ > 0)
-        log("media: ffmpeg adelay_ms=" + std::to_string(audioDelayMs_) +
-            " filter=" + misterplex::ffmpegAudioDelayFilter(audioDelayMs_));
+        args.push_back("aresample=48000,adelay=" + std::to_string(audioDelayMs_) + ":all=1");
+    else
+        args.push_back("aresample=48000");
     args.push_back("-f");
     args.push_back("s16le");
     args.push_back("-ac");
@@ -2057,40 +2055,21 @@ void MediaPlayer::audioPump(int afd) {
     char buf[3840];
     std::vector<uint8_t> f2acc;
     f2acc.reserve(32768);
-    // Measure leading PCM silence (adelay proof on the wire). conf intent alone
-    // is not enough — parent A/B saw only +33 ms of a 150 ms request.
-    misterplex::SilenceHeadScan silenceScan;
-    silenceScan.reset(/*threshold=*/500, /*sr=*/48000, /*maxMs=*/2000);
-    bool silenceLogged = false;
-    auto noteSilence = [&](const void* data, size_t nbytes) {
-        if (silenceLogged)
-            return;
-        if (silenceScan.feed(data, nbytes)) {
-            silenceLogged = true;
-            log("media: pcm_silence_head_ms=" + std::to_string(silenceScan.headMs) +
-                " conf_adelay_ms=" + std::to_string(audioDelayMs_) +
-                " predicted_shift_ms=" +
-                std::to_string(misterplex::adelayContentShiftMs(audioDelayMs_)) +
-                " (measured on pump input; tag=measured)");
-        }
-    };
-    // Hold buffer: PCM from stream start while audioStartGate_ is closed.
-    // Cap kAudioHoldCapMs (2 s) — preserves content t=0 so release plays from
-    // the beginning in lockstep with first video. No auto-release without
-    // video (that would recreate the lead); EOF/stop ends the pump cleanly.
+    // Hold buffer while audioStartGate_ is closed. Cap kAudioHoldCapMs (2 s).
+    // RING policy: on overflow drop the HEAD so release stays continuous with
+    // live (keeping head + dropping tail caused an audible 2s→T_release jump).
+    // Timeout kAudioHoldTimeoutMs opens the gate without video so silent casts
+    // cannot hang forever (degrade to pre-hold: user at least hears audio).
     constexpr size_t kAudioHoldCapBytes =
         static_cast<size_t>(misterplex::kAudioHoldCapBytes);
     std::vector<uint8_t> holdBuf;
     holdBuf.reserve(static_cast<size_t>(misterplex::kMrAudioBytesPerSec)); // 1 s typical
     bool holdLogged = false;
     bool holdOverflowLogged = false;
+    bool holdTimeoutLogged = false;
     bool releaseLogged = false;
     auto holdSince = std::chrono::steady_clock::time_point{};
     int64_t lastHoldWaitLogMs = -1;
-    // After a non-empty hold drain, do NOT bias audioDue into the past: that
-    // prefill would blast held PCM into the ring and recreate the audible lead
-    // we just avoided. Live-only starts (empty hold) still use normal prefill.
-    bool suppressStartupPrefill = false;
     size_t total = 0;
     size_t f2total = 0;
     int f2Fail = 0;
@@ -2136,18 +2115,14 @@ void MediaPlayer::audioPump(int afd) {
             // Anchor on the first chunk actually written. Normal path biases one
             // target-depth into the past so the ring prefills; hold-drain path
             // starts at `now` so held content plays in realtime with video.
+            // Always past-bias prefill (cold-start, seek, hold-release same).
             if (!audioClockStarted) {
                 audioClockStarted = true;
-                const auto now0 = std::chrono::steady_clock::now();
-                if (suppressStartupPrefill) {
-                    audioDue = now0;
-                } else {
-                    audioDue =
-                        now0 - std::chrono::duration_cast<std::chrono::steady_clock::duration>(
-                                   std::chrono::duration<double>(
-                                       static_cast<double>(misterplex::kFeedTargetBytes) /
-                                       kBytesPerSec));
-                }
+                audioDue = std::chrono::steady_clock::now() -
+                           std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+                               std::chrono::duration<double>(
+                                   static_cast<double>(misterplex::kFeedTargetBytes) /
+                                   kBytesPerSec));
             }
 
             const double rate = misterplex::feedRateBytesPerSec(
@@ -2225,89 +2200,100 @@ void MediaPlayer::audioPump(int afd) {
             std::this_thread::sleep_for(std::chrono::milliseconds(20));
             continue;
         }
-        ssize_t n = ::read(afd, buf, sizeof(buf));
-        if (n < 0) {
-            if (errno == EINTR)
-                continue;
-            break;
-        }
-        if (n == 0)
-            break;
 
-        // Always scan pump-input PCM (hold path and live path share this read).
-        noteSilence(buf, static_cast<size_t>(n));
-
-        // Gate closed: buffer stream-start PCM, do not touch MrAudio. This is
-        // where the measured ~206 ms audible lead used to be created (prefill +
-        // concurrent play while video still decoded frame 1). Co-arm re-based
-        // the pacer around that lead and left it as permanent lip-sync error;
-        // holding the device closed removes the lead instead of relabeling it.
-        if (!audioStartGate_.load(std::memory_order_acquire)) {
+        const bool gated = !audioStartGate_.load(std::memory_order_acquire);
+        if (gated) {
             if (!holdLogged) {
                 holdLogged = true;
                 holdSince = std::chrono::steady_clock::now();
                 log("media: audio hold — buffering PCM until first video frame "
                     "(no MrAudio write yet; cap_ms=" +
                     std::to_string(misterplex::kAudioHoldCapMs) +
-                    "; no auto-release without video)");
+                    " ring_drop_head; timeout_ms=" +
+                    std::to_string(misterplex::kAudioHoldTimeoutMs) + ")");
             }
+            const int64_t waited = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                       std::chrono::steady_clock::now() - holdSince)
+                                       .count();
+            if (waited >= misterplex::kAudioHoldTimeoutMs) {
+                if (!holdTimeoutLogged) {
+                    holdTimeoutLogged = true;
+                    log("media: audio hold TIMEOUT waited_ms=" + std::to_string(waited) +
+                        " held_bytes=" + std::to_string(holdBuf.size()) +
+                        " — opening gate without video (degrade to pre-hold audio)");
+                }
+                audioStartGate_.store(true, std::memory_order_release);
+            } else {
+                pollfd pfd{};
+                pfd.fd = afd;
+                pfd.events = POLLIN;
+                const int pr = ::poll(&pfd, 1, 50);
+                if (pr < 0) {
+                    if (errno == EINTR)
+                        continue;
+                    break;
+                }
+                if (pr == 0) {
+                    if (lastHoldWaitLogMs < 0 || waited - lastHoldWaitLogMs >= 1000) {
+                        lastHoldWaitLogMs = waited;
+                        log("media: audio hold waiting_ms=" + std::to_string(waited) +
+                            " held_bytes=" + std::to_string(holdBuf.size()) +
+                            " audio_bytes_written=" + std::to_string(audioBytes_.load()) +
+                            " (gate closed)");
+                    }
+                    continue;
+                }
+            }
+        }
+
+        ssize_t n = ::read(afd, buf, sizeof(buf));
+        if (n < 0) {
+            if (errno == EINTR)
+                continue;
+            if (errno == EAGAIN || errno == EWOULDBLOCK)
+                continue;
+            break;
+        }
+        if (n == 0)
+            break;
+
+        if (!audioStartGate_.load(std::memory_order_acquire)) {
             const size_t nn = static_cast<size_t>(n);
-            if (holdBuf.size() < kAudioHoldCapBytes) {
-                const size_t room = kAudioHoldCapBytes - holdBuf.size();
-                const size_t take = nn < room ? nn : room;
-                holdBuf.insert(holdBuf.end(), buf, buf + take);
-                if (take < nn && !holdOverflowLogged) {
+            holdBuf.insert(holdBuf.end(), buf, buf + nn);
+            if (holdBuf.size() > kAudioHoldCapBytes) {
+                const size_t over = holdBuf.size() - kAudioHoldCapBytes;
+                holdBuf.erase(holdBuf.begin(),
+                              holdBuf.begin() + static_cast<std::ptrdiff_t>(over));
+                if (!holdOverflowLogged) {
                     holdOverflowLogged = true;
                     log("media: audio hold cap reached bytes=" +
                         std::to_string(holdBuf.size()) +
-                        " — keeping stream start, dropping tail until release");
-                }
-            } else if (!holdOverflowLogged) {
-                holdOverflowLogged = true;
-                log("media: audio hold cap reached bytes=" + std::to_string(holdBuf.size()) +
-                    " — keeping stream start, dropping tail until release");
-            }
-            // Still gated: log wait progress so a stuck first-frame is visible.
-            // Do NOT open the gate here — releasing without video recreates the
-            // +206 ms lead. Session stop / audio EOF ends the pump (no hang).
-            if (holdLogged) {
-                const int64_t waited = std::chrono::duration_cast<std::chrono::milliseconds>(
-                                           std::chrono::steady_clock::now() - holdSince)
-                                           .count();
-                if (lastHoldWaitLogMs < 0 || waited - lastHoldWaitLogMs >= 1000) {
-                    lastHoldWaitLogMs = waited;
-                    log("media: audio hold waiting_ms=" + std::to_string(waited) +
-                        " held_bytes=" + std::to_string(holdBuf.size()) +
-                        " audio_bytes_written=" + std::to_string(audioBytes_.load()) +
-                        " (gate closed; content_origin still 0)");
+                        " — ring drop HEAD keep live tail (no content jump on release)");
                 }
             }
             total += static_cast<size_t>(n);
             continue;
         }
 
-        // Gate just opened: drain hold buffer first (content t=0…), then live.
         if (!releaseLogged) {
             releaseLogged = true;
             const int64_t writtenBefore = audioBytes_.load();
             const auto rel = misterplex::checkAudioReleaseOrigin(
                 writtenBefore, static_cast<int64_t>(holdBuf.size()));
-            // Assert content origin is 0 — any prior MrAudio write means hold failed.
+            const char* why = holdTimeoutLogged ? "hold_timeout" : "first_video_or_path";
             if (!rel.ok) {
                 log("ERROR media: audio release content_origin_ms=" +
                     std::to_string(rel.contentOriginMs) +
                     " audio_bytes_at_release=" + std::to_string(rel.audioBytesAtRelease) +
-                    " held_ms=" + std::to_string(rel.heldMs) +
+                    " held_ms=" + std::to_string(rel.heldMs) + " reason=" + why +
                     " — hold bypassed (co-arm-class lead risk)");
             } else {
                 log("media: audio release content_origin_ms=0"
                     " audio_bytes_at_release=0 held_bytes=" +
                     std::to_string(holdBuf.size()) + " held_ms=" + std::to_string(rel.heldMs) +
-                    " (stream-start PCM; first video armed gate)");
+                    " reason=" + why +
+                    " (held PCM continuous with live; stops startup frame drops)");
             }
-            if (!holdBuf.empty())
-                suppressStartupPrefill = true;
-            // Drain in ~20 ms chunks at realtime (no past-bias prefill).
             constexpr size_t kChunk = 3840;
             size_t off = 0;
             while (off < holdBuf.size() && !stop_.load()) {
@@ -2342,11 +2328,6 @@ void MediaPlayer::audioPump(int afd) {
         ::close(out);
     ::close(afd);
     audioActive_.store(false);
-    if (!silenceLogged) {
-        log("media: pcm_silence_head_ms=UNKNOWN conf_adelay_ms=" +
-            std::to_string(audioDelayMs_) +
-            " (could-not-measure; too little PCM or empty stream) tag=UNSCORED");
-    }
     log("media: audio pump end bytes=" + std::to_string(total) +
         " f2=" + std::to_string(f2total));
 }
@@ -2746,23 +2727,13 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                 args.push_back("0:a:0?");
                 args.push_back("-vn");
                 args.push_back("-af");
-                // AUDIO_DELAY_MS>0: content-aligned silence via adelay=N|N (ms per
-                // channel). Portable form — not :all=1 — so device FFmpeg matches
-                // host unit ladders. Sample-clock pacer does NOT cancel this
-                // (adelayContentShiftMs == conf). Pump logs measured silence head.
-                {
-                    const std::string af = misterplex::ffmpegAudioDelayFilter(audioDelayMs_);
-                    args.push_back(af);
-                    if (audioDelayMs_ > 0)
-                        log("media: ffmpeg adelay_ms=" + std::to_string(audioDelayMs_) +
-                            " filter=" + af +
-                            " predicted_content_shift_ms=" +
-                            std::to_string(misterplex::adelayContentShiftMs(audioDelayMs_)) +
-                            " prefill_cancel_ms=" +
-                            std::to_string(misterplex::adelayCancelledByPrefillMs(
-                                audioDelayMs_,
-                                static_cast<int>(misterplex::kFeedTargetBytes * 1000 /
-                                                 misterplex::kMrAudioBytesPerSec))));
+                if (audioDelayMs_ > 0) {
+                    // adelay unit is ms per channel; all=1 applies to every channel.
+                    args.push_back("aresample=48000,adelay=" + std::to_string(audioDelayMs_) +
+                                   ":all=1");
+                    log("media: ffmpeg adelay_ms=" + std::to_string(audioDelayMs_));
+                } else {
+                    args.push_back("aresample=48000");
                 }
                 args.push_back("-f");
                 args.push_back("s16le");

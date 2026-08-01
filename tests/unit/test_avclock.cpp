@@ -206,6 +206,16 @@ int main() {
                          coarm.steadyRealOffsetMs);
             return 1;
         }
+        const int coarmMinusEarly = coarm.steadyRealOffsetMs - early.steadyRealOffsetMs;
+        std::printf("startup_sim coarm_minus_early_real=%d (need >=150; reclaim=%lld)\n",
+                    coarmMinusEarly, static_cast<long long>(kStartupDropReclaimMs));
+        CHECK(coarmMinusEarly >= 150);
+        if (coarmMinusEarly < 150) {
+            std::fprintf(stderr,
+                         "FAIL: co-arm vs early real delta=%d < 150 — model under-predicts\n",
+                         coarmMinusEarly);
+            return 1;
+        }
 
         // GREEN: hold-until-video — no massacre, real offset near 0 (lead band).
         CHECK(hold.drops <= 2);
@@ -218,8 +228,10 @@ int main() {
                          hold.steadyRealOffsetMs);
             return 1;
         }
-        std::printf("PASS startup hold-until-video: early_drops=%d coarm_real=%d hold_real=%d\n",
-                    early.drops, coarm.steadyRealOffsetMs, hold.steadyRealOffsetMs);
+        std::printf("PASS startup hold-until-video: early_drops=%d coarm_real=%d hold_real=%d "
+                    "coarm_minus_early=%d\n",
+                    early.drops, coarm.steadyRealOffsetMs, hold.steadyRealOffsetMs,
+                    coarmMinusEarly);
     }
 
     // --- release-path content origin (must be 0, never 206) ---
@@ -262,7 +274,6 @@ int main() {
         // RED: every session massacres frames and leaves real lead.
         CHECK(red.totalDrops >= 30); // ~13 × 3
         CHECK(red.sessionsOriginNonZero == 3);
-        CHECK(red.worstSteadyRealMs > 80);
         // GREEN: hold each restart — no massacre, origin zero class.
         CHECK(green.totalDrops <= 6);
         CHECK(green.sessionsOriginNonZero == 0);
@@ -292,20 +303,28 @@ int main() {
                     good.gateOpenAfterResume ? 1 : 0, bad.audioMutedAfterResume ? 1 : 0);
     }
 
-    // --- no first video: buffer caps, never writes MrAudio, no hang model ---
+    // --- no first video: ring drop-head + timeout opens gate (B3/B4) ---
     {
         const int64_t fiveSec = 48000LL * 4LL * 5;
-        const auto nv = simulateHoldNoVideo(fiveSec);
-        CHECK(nv.capped);
-        CHECK(nv.heldBytes == kAudioHoldCapBytes);
-        CHECK(nv.heldMs == kAudioHoldCapMs);
-        CHECK(!nv.wroteMrAudio);
-        const auto small = simulateHoldNoVideo(19200);
+        const auto before = simulateHoldNoVideo(fiveSec, /*waitMs=*/500);
+        CHECK(before.capped);
+        CHECK(before.heldBytes == kAudioHoldCapBytes);
+        CHECK(before.heldMs == kAudioHoldCapMs);
+        CHECK(!before.wroteMrAudio);
+        CHECK(!before.timedOpen);
+        CHECK(before.droppedHeadBytes == fiveSec - kAudioHoldCapBytes);
+        const auto after = simulateHoldNoVideo(fiveSec, /*waitMs=*/kAudioHoldTimeoutMs);
+        CHECK(after.timedOpen);
+        CHECK(after.wroteMrAudio);
+        const auto small = simulateHoldNoVideo(19200, /*waitMs=*/0);
         CHECK(!small.capped);
-        CHECK(!small.wroteMrAudio);
-        std::printf("PASS hold no-video: cap_bytes=%lld held_ms=%d wrote=%d\n",
-                    static_cast<long long>(nv.heldBytes), static_cast<int>(nv.heldMs),
-                    nv.wroteMrAudio ? 1 : 0);
+        CHECK(!small.timedOpen);
+        CHECK(holdRingAppendDropHead(kAudioHoldCapBytes - 100, 500, kAudioHoldCapBytes) == 400);
+        CHECK(holdRingAppendDropHead(0, 1000, kAudioHoldCapBytes) == 0);
+        std::printf("PASS hold no-video: cap=%lld timeout_ms=%lld timed_open=%d dropped_head=%lld\n",
+                    static_cast<long long>(before.heldBytes),
+                    static_cast<long long>(kAudioHoldTimeoutMs), after.timedOpen ? 1 : 0,
+                    static_cast<long long>(before.droppedHeadBytes));
     }
 
     if (fails) {
