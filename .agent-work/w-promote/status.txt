@@ -1,32 +1,21 @@
 lane: w-promote
 branch: fix/rollback-honest
 worktree: /home/flynnsbit/Projects/MisterPlex/.worktrees/rollback-honest
-tip: 45e3dfb0 (substantive d68363ae)
+tip: 7d37fcc8
+substantive: d68363ae deploy comm/argv0 + stage+mv
 
-## This turn
-- deploy_misterplexd: stop by /proc/comm+argv0 (not cmdline substr/flock trap)
-- deploy_misterplexd: install stage (/tmp/misterplexd.deploy.$$) then mv -f
-- post n_daemon count also comm/argv0
-- unit test_deploy_misterplexd extended (stage path + source asserts)
-- gate V2_MD5 glue already fixed (gate_join_remote_parts) — parent must not run 961dc724
+## Host true rc
+- test_deploy_misterplexd.sh true rc=0
+- test_promotion_gates.sh true rc=0 (glue inject fail-closed; green rc=0)
+- test_rollback_honest / conf_user_owned / boot_hook true rc=0
 
-## Host evidence (direct true rc)
-- test_deploy_misterplexd.sh true rc=0 (pass=31)
-- test_rollback_honest.sh true rc=0
-- test_conf_user_owned.sh true rc=0
-- test_boot_hook_policy.sh true rc=0
-- test_promotion_gates.sh true rc=0 (glue inject RED rc=3; green path rc=0)
-
-## Parent must run (worktree HEAD, not 961dc724)
+## Parent (worktree HEAD — not 961dc724)
 cd /home/flynnsbit/Projects/MisterPlex/.worktrees/rollback-honest
-git rev-parse --short HEAD
+git rev-parse --short HEAD   # expect 7d37fcc8+
 bash tests/unit/test_promotion_gates.sh; echo "true rc=$?"
-# live:
-PAIR_ID=ddr-c5382bee PROMOTE_REQUIRE_PLXS_SEQ_ADVANCE=1 \
-  bash scripts/promotion_gate_check.sh verify-live; echo "true rc=$?"
+PAIR_ID=ddr-c5382bee bash scripts/promotion_gate_check.sh verify-live; echo "true rc=$?"
 
 ## Atomic pair
-PAIR_ID=ddr-c5382bee ROLLBACK_DAEMON=devices/daemon-pins/misterplexd.edc3a46b \
-  PAIR_IDLE_PNG=<warm capture> bash scripts/rollback_v2.sh restore
-# power-cycle: scripts/power_cycle_pair_rehearsal.sh (detached on-device)
-# conf: USER-OWNED — backup/restore bytes; never validated-default rewrite
+PAIR_ID=ddr-c5382bee ROLLBACK_DAEMON=devices/daemon-pins/misterplexd.edc3a46b \\
+  PAIR_IDLE_PNG=<warm> bash scripts/rollback_v2.sh restore; echo "true rc=$?"
+# conf USER-OWNED; power-cycle: scripts/power_cycle_pair_rehearsal.sh
