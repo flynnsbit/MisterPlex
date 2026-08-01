@@ -1,7 +1,6 @@
-w-cpu CRITICAL PATH (judder / publish jitter)
-T1: Main timeout=0 poll on CPU1 — upstream Main_MiSTer confirmed 2026-08-01
-T2: parent_t2_mister_ab.sh A|B|strace — PRE_REG idle Main high = not our spin
-T3: PREDICTION P1 78→20 => P(iv>50) toward <0.05 IF baseline ARM_LATE_*
-T4: rank1 lab poll timeout=5 Plex-scoped; no SCHED_FIFO yet
-Doc: CRITICAL_PATH_MISTER_78_PUBLISH_JITTER.md
-Do NOT optimise frame loss (ERROR18/19 withdrawn). No device touch.
+w-cpu CRITICAL: Main 90.6 + p_ge50=0.1450 (parent)
+Explain: poll timeout=0 CPU1 (source); device E1=strace top poll
+A/B: SOAK_AB_MISTER_QUIESCE_PGE50.md — PRE_REG B1 p_ge50<=0.06 if MAIN_CAUSAL
+Ceiling RTL: ARM bytes already full 449280; FPGA read ~2x; p_ge50 second-order
+Overlay @84.5%: risky until Main reclaim; gates present_us_p99
+NO PLXD frames_done/presents/drops on c5382bee
