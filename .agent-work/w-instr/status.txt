@@ -1,7 +1,7 @@
 # w-instr status — startup transient RCA + discriminator
 updated: 2026-07-31
 branch: w-avsync-hdmi-measure
-SHA: 3517ef71
+SHA: 0266501d
 
 ## Parent question
 305s soak @ 624x480 24.000: drops→17 then FLAT; residual=0 publish_misses=0;
