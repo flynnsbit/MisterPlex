@@ -1,96 +1,182 @@
-# 480p glass frame loss — stage attribution (A1–A5)
+# 480p glass frame loss — decision-complete attribution (A1–A5)
 
 **Finding (parent, pixel-confirmed):** 4 / 568 = **0.70%** steady-state source
-frames absent on HDMI during 480p playback of a 24.000 fps burned-in counter
-fixture. Not startup-only. Daemon `drops` can stay flat while glass loses frames.
+frames absent on HDMI (480p, burned-in counter, **frameRate=24.000** — not 23.976).
+Daemon `drops` can stay flat. Telemetry cannot see this class until residual +
+supply_gap + glass are combined.
 
 **This agent does not touch the device.** Parent deploys, captures, scores.
 
-## Already in tree (do not re-land)
+---
 
-| ID | Mechanism | Evidence in tree |
-|----|-----------|------------------|
-| A1 | `unaccounted = frames - presents - drops` on 1 Hz media line + session_end | `host/libmisterplex/frame_ledger.hpp` `frameLedgerTelemetryFragment`; `media_player.cpp` 1 Hz log |
-| A2 | `publish_misses=` on same line; fail path logs `publish_misses=` | `publishMisses_` + fragment |
-| A3 | Play-path ffmpeg `-loglevel info` + `-nostats` (Stream # WxH) | `media_player.cpp` raw-video spawn (~2995) |
-| A4 | Teardown `rawPipeByteAligned` + `rawPipeDesynced` → `PIPE_BYTE_MISALIGN` / `PIPE_DESYNC` | `ffmpeg_vf.hpp` + teardown block |
-| A5 | Servo vs display metrics (this change) | `av_servo_*`, `av_display_offset_ms`, `av_pipe_ahead_ms` |
+## D1 — Discriminator for residual=0 + glass holes
 
-Poison-macro guard for retracted `kParentClusterSepMsX100`: commit `63b98803`
-(`#define` string poison before include + `test_av_phase_rtl_quanta_guard_red.sh`).
-
-## Closed accounting (host)
+### What residual alone cannot do
 
 ```
-unaccounted = frames - presents - drops     # residual; tag=measured
-when every non-present is pacedrop OR publish-miss:
-  unaccounted == publish_misses
+unaccounted = frames - presents - drops     # integer, resolution = 1 frame
 ```
 
-**What residual cannot see:** frames ffmpeg never produced (never enter `frames`).
-Those are glass holes with `unaccounted=0` and `publish_misses=0`.
+| Residual cell | Blind to |
+|---------------|----------|
+| `unaccounted = 0` | (a) frames **never produced** (never enter `frames`) |
+| | (c) **post-present** scanout (present already counted) |
 
-## Pre-registered stage split (parent run)
+So the old row "unaccounted≈0 ⇒ supply **or** scanout" is **one cell, two ends
+of the pipe**. It is the most likely outcome and must be split.
 
-Capture **≥90 s** 480p of the burned-in 24.000 fixture while logging daemon
-stderr. Pull `misterplexd.frame_ledger` + log. Run glass ledger on PNG/pts.
+### Discriminator available **now** (no new device binary fields)
+
+On **one** `session_epoch`, steady window `wall_s ∈ [T0, T1]` (default T0=10):
+
+| Symbol | Definition | Source |
+|--------|------------|--------|
+| `d_wall_s` | wall_s(T1)−wall_s(T0) | measured 1 Hz lines |
+| `d_frames` | frames(T1)−frames(T0) | measured |
+| `expected` | `d_wall_s * fps_num / fps_den` | derived (fps **caller_supplied** 24/1) |
+| **`supply_gap`** | `expected − d_frames` | derived |
+| **`host_gap`** | unaccounted(T1)−unaccounted(T0) | measured delta |
+| **`glass_holes`** | ABSENT source indices in same window | caller_supplied (glass ledger) |
+
+**Meaning of supply_gap (not a guess):** with product CFR `fps=num/den` forced on
+the ffmpeg chain, wall×fps is the schedule the pipe is built to match. If the
+daemon assembled fewer frames than that schedule, the shortfall is
+**pre-`frameIndex` (PMS/ffmpeg/pipe supply)**. If supply matched and host residual
+stayed flat while glass still has holes, presents were counted but pixels did not
+show the new source index ⇒ **post-present (DDR/RTL/scanout)**.
+
+### What is **not** available today
+
+| Candidate | Status |
+|-----------|--------|
+| ffmpeg `frame=` count vs `frameIndex` | **NOT in logs.** Play path uses `-nostats`; stderr pump **discards** `frame=` / `fps=` lines (`media_player.cpp` stderr loop). Claiming equality would violate Rule 0. |
+| PMS delivered frame count | **NOT** in daemon telemetry. |
+| Monotonic source index to publish | burned-in on fixture only; daemon does not OCR. |
+
+**Minimum addition** if wall×fps is rejected as too soft: emit
+`ffmpeg_out_frames=` by parsing the last `frame=N` (drop `-nostats` or add
+`-progress pipe:3`) and stop discarding those lines. Then
+`ffmpeg_gap = ffmpeg_out_frames − frames` splits demux/decode vs daemon read.
+
+### Exact thresholds (must resolve ~15 holes in ~2160)
+
+Parent scale: ≥90 s soak, skip 10 s → ≥80 s steady @ 24.000 ⇒ **expected ≥ 1920**
+frames; **0.70% ≈ 13.4 → ~15 holes**.
+
+Counters are **integers** ⇒ resolution **1 frame**.
+
+| Name | Value | Role |
+|------|------:|------|
+| `HOST_GAP_FLAT` | **2** | host_gap ≤2 **cannot** explain 15 glass holes |
+| `HOST_GAP_HIT` | **10** | host_gap ≥10 **can** carry the ~15-hole signal |
+| `SUPPLY_GAP_FLAT` | **2** | same for supply_gap |
+| `SUPPLY_GAP_HIT` | **10** | same |
+| `PAIR_TOL` | **5** | \|gap − glass_holes\| for "explains glass" |
+| `GLASS_LOSS_MIN` | **3** | below → do not attribute (OCR/noise) |
+| `MIN_STEADY_S` | **60** | window length floor |
+
+**Resolution proof:** FLAT≤2 and HIT≥10 leave **(3..9) = AMBIGUOUS** — never
+collapsed into 0 or 15. Self-test in `tools/analyze_glass480_stage.py`:
+`15∈HIT`, `0∈FLAT`, mid-band → `rc=2`. A threshold of "≈0" that used e.g. 5% of
+total (108 frames) would be **blind** to 15; we use **absolute frame counts**, not
+fractions of 2160.
+
+### Decision table (tool-encoded)
+
+| glass_holes | PIPE_* | host_gap | supply_gap | STAGE |
+|------------:|:------:|---------:|-----------:|-------|
+| ≥3 | yes | * | * | **PIPE** (stop) |
+| ≥3 | | ≥10 & ≈glass | * | **HOST_MID** (± publish if pm≈host) |
+| ≥3 | | ≤2 | ≥10 & ≈glass | **PRE_FRAMEINDEX_SUPPLY** |
+| ≥3 | | ≤2 | ≤2 | **POST_PRESENT_SCANOUT** |
+| ≥3 | | else | else | **AMBIGUOUS** rc=2 |
+| <3 | | | | **NO-DATA** rc=77 |
 
 ```bash
-# Host-side after parent pulls artifacts:
-python3 tools/frame_ledger_report.py --log /path/daemon.log --ledger /path/misterplexd.frame_ledger
+python3 tools/analyze_glass480_stage.py --self-test; echo "true rc=$?"
+python3 tools/analyze_glass480_stage.py \
+  --log /path/daemon.log --glass-holes N \
+  --fps-num 24 --fps-den 1 --t0-s 10
 echo "true rc=$?"
-
-python3 tools/glass_frame_ledger.py --png-dir /path/png --pts-csv /path/pts.csv \
-  --src-fps 24/1 --src-fps-src caller_supplied
-echo "true rc=$?"
-
-# Grep measured fields (presence of keys, then values):
-rg -n "unaccounted=|publish_misses=|PIPE_|MEASURED_DELIVERY|av_display_offset|av_servo_setpoint|session_epoch=" /path/daemon.log | head -80
 ```
 
-### Predictions (falsifiable)
+---
 
-| Observation (all measured) | Stage attribution |
-|----------------------------|-------------------|
-| Glass holes **and** `unaccounted` rises ≈ hole count ×1, `publish_misses≈0` | Upstream of/at present accounting but **not** DDR fail — pacer/path skipped present without counting drop, or double-count bug |
-| Glass holes **and** `publish_misses` rises, `unaccounted == publish_misses` | **DDR publish fail** (A2). Residual explained |
-| Glass holes **and** `unaccounted=0`, `publish_misses=0`, `drops` flat | **Supply loss before frameIndex** (ffmpeg/PMS/pipe never delivered) **OR** **post-present scanout** (DDR/RTL). Host ledger cannot split (a) vs (c) — need bitstream/ recon counters or fabric |
-| `PIPE_DESYNC=1` or `PIPE_BYTE_MISALIGN` | Raw pipe geometry/byte phase (A4) — treat as hard fail before other RCA |
-| `delivery_verified=0` / no MEASURED_DELIVERY | A3 banner parse failed — geometry untrusted |
+## D2 — A5 falsifier (setpoint tracking, **not** lipsync)
 
-**Steady-state window:** ignore first 10 s wall_s (startup drops). Require single
-`session_epoch` for the window (P4).
+**Claim under test:** `av_drift_ms` tracks `AV_PRESENT_LEAD_MS` (servo error).
+**PASS does not prove lipsync.** Grabber (`avsync_measure_hdmi.py`) remains GT.
 
-## A5 — unpinned vs servo (lipsync host metrics)
+### Prefer env — do not edit user conf
 
-| Field | Role |
-|-------|------|
-| `av_drift_ms` / `av_servo_error_ms` | Control error on **frameIndex**; pinned near `-lead` |
-| `av_servo_setpoint_ms` | `-AV_PRESENT_LEAD_MS` |
-| `av_servo_margin_ms` | `drift + lead` (0 ≈ hold line) |
-| `av_display_offset_ms` | Audio vs **presentCount** content time — drops do not auto-heal this |
-| `av_pipe_ahead_ms` | Pipe content not yet presented |
-| grabber (`avsync_measure_hdmi.py`) | **Only** lipsync GT |
+```text
+MISTERPLEX_AV_PRESENT_LEAD_MS=<int>   # overrides conf; conf file not written
+```
 
-### Falsifier — `AV_PRESENT_LEAD_MS=20` (was 40)
-
-Pre-register before deploy:
-
-1. **If `av_drift_ms` is setpoint readout (expected):** steady median moves by
-   **≈ +20 ms** (e.g. −30 → −10), band ±8 ms; `av_servo_setpoint_ms=-20`.
-2. **`av_display_offset_ms`:** not required to equal `-lead`; if it moves lock-step
-   with setpoint while glass lipsync (grabber) does not, it is still servo-coupled.
-3. **Grabber median:** independent GT. Lead change *may* move presentation phase
-   ~Δlead; do not treat host `av_drift_ms` as confirming lipsync.
+Startup must show `AV_PRESENT_LEAD_MS=env:20` (or `env:40`) and an override banner
+`(conf not modified)`.
 
 ```bash
-# On device conf (parent only):
-# AV_PRESENT_LEAD_MS=20
-# redeploy daemon, 60s soak, capture 1 Hz lines + optional grabber run
+CONF=/media/fat/misterplex/misterplex.conf
+cp -a "$CONF" "/media/fat/misterplex/misterplex.conf.bak_lead_$(date +%Y%m%d%H%M%S)"
+# restore only if something wrote conf:
+# cp -a "$BACKUP" "$CONF" && cmp -s "$BACKUP" "$CONF" && echo RESTORE_OK
 ```
 
-## Frame-rate note
+Keep `DECODE=624x480`, `PRESENT=fpga`, `IDLE_SCREEN=logo` unchanged.
 
-Fixtures for this RCA are **`frameRate=24.000`**, not 23.976. Always pass
-`--src-fps 24/1` with `src-fps-src=caller_supplied` (or measure with ffprobe).
-Never print a hardcoded 23.976 beside measured values.
+### Sequence + PASS/FAIL
+
+```bash
+MISTERPLEX_AV_PRESENT_LEAD_MS=40 ./misterplexd ...   # arm A, ≥70 s wall
+MISTERPLEX_AV_PRESENT_LEAD_MS=20 ./misterplexd ...   # arm B, conf bytes identical
+```
+
+| Check | PASS | FAIL |
+|-------|------|------|
+| setpoint A/B | **−40** / **−20** | else |
+| median av_drift B−A | **∈ [+12, +28] ms** | outside |
+| conf cmp to backup | **identical** | any diff |
+| lipsync from this test | **forbidden** | claiming lipsync OK |
+
+`av_display_offset_ms`: record; not required to equal `−lead`.
+
+---
+
+## D3 — Soak pre-register (≥90 s, T0=10 s, one session_epoch)
+
+### Instrument health
+
+| Field | PASS (steady) | FAIL |
+|-------|---------------|------|
+| session_epoch | **one** value | change mid-window |
+| PIPE_* | **absent** | any → PIPE stage |
+| delivery_verified | **1** | stays 0 |
+| Δdrops (wall≥10) | **≤2** | ≥10 unexplained |
+| Δpublish_misses | **0** clean prior | ≥10 → HOST_MID_PUBLISH |
+| host_gap | **≤2** clean prior | ≥10 → HOST_MID |
+| av_servo_setpoint_ms | **−lead** | mismatch |
+| av_servo_margin_ms | **∈ [0, 80]** | sustained <0 |
+| av_display_offset_ms | record only | not lipsync PASS |
+| av_drift_ms | near −lead | servo health only |
+
+### Stage falsifiers
+
+- Claimed **supply**, got POST_PRESENT with supply_gap≤2, host_gap≤2, glass≥10 → **FALSIFIED**
+- Claimed **scanout**, got PRE_FRAMEINDEX with supply_gap≥10 ≈ glass → **FALSIFIED**
+- Claimed **DDR publish**, publish_misses_delta≤2 while glass≥10 → **FALSIFIED**
+- glass≥10 and AMBIGUOUS → **incomplete**, not a pass
+
+```bash
+python3 tools/analyze_glass480_stage.py --self-test; echo "true rc=$?"
+python3 tools/frame_ledger_report.py --log DAEMON.log --ledger LEDGER; echo "true rc=$?"
+python3 tools/glass_frame_ledger.py --png-dir PNG --pts-csv PTS \
+  --src-fps 24/1 --src-fps-src caller_supplied; echo "true rc=$?"
+python3 tools/analyze_glass480_stage.py --log DAEMON.log --glass-holes N \
+  --fps-num 24 --fps-den 1 --t0-s 10; echo "true rc=$?"
+```
+
+## Reference
+
+A1–A4 in tree; A5 servo metrics + `MISTERPLEX_AV_PRESENT_LEAD_MS`; guard `63b98803`.
+fps **24.000** only for this RCA.

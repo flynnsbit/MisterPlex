@@ -620,6 +620,18 @@ int main(int argc, char** argv) {
         auto lead = loadConf(confPath, "AV_PRESENT_LEAD_MS");
         if (!lead.empty())
             player.setPresentLeadMs(std::atoi(lead.c_str()));
+        // Env wins over conf so lab can falsify LEAD without editing user-owned conf.
+        // Parent must still backup/restore conf if conf is ever written; prefer env.
+        const char* leadEnv = std::getenv("MISTERPLEX_AV_PRESENT_LEAD_MS");
+        std::string leadSrc = lead.empty() ? "40(default)" : ("conf:" + lead);
+        if (leadEnv && leadEnv[0] != '\0') {
+            player.setPresentLeadMs(std::atoi(leadEnv));
+            leadSrc = std::string("env:") + leadEnv;
+            std::fprintf(stderr,
+                         "misterplexd: AV_PRESENT_LEAD_MS overridden by "
+                         "MISTERPLEX_AV_PRESENT_LEAD_MS=%s (conf not modified)\n",
+                         leadEnv);
+        }
         auto drop = loadConf(confPath, "AV_RESYNC_DROP_MS");
         if (!drop.empty())
             player.setResyncDropMs(std::atoi(drop.c_str()));
@@ -631,7 +643,7 @@ int main(int argc, char** argv) {
         if (!avoff.empty())
             player.setAvOffsetMs(std::atoi(avoff.c_str()));
         std::fprintf(stderr, "misterplexd: AV_PRESENT_LEAD_MS=%s AV_RESYNC_DROP_MS=%s\n",
-                     lead.empty() ? "40(default)" : lead.c_str(),
+                     leadSrc.c_str(),
                      drop.empty() ? "80(default)" : drop.c_str());
         // Raw video pipe capacity. Default ON (2 MiB). 0/off keeps kernel 64 KiB.
         // Startup banner probes a throwaway pipe and prints F_GETPIPE_SZ actual —
