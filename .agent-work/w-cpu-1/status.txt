@@ -1,8 +1,20 @@
 worker: w-cpu-1
-task: MiSTer timeout=5 lab card + ERROR17 absorb
 branch: w-avsync-hdmi-measure
-sha_before_commit: 0e8a6922
-status: DONE
-card: .agent-work/w-cpu-1/MISTER_TIMEOUT5_PARENT_AB.md
-ERROR17: absorbed — no product discard needed
-PRE_REG: Main idle 5-30 %onecpu; play 10-45; input add <=5ms worst; strictly better than SUSPEND if green
+task: MiSTer timeout=5 lab — patch + parent A/B
+status: READY_FOR_PARENT_MEASURE
+sha_pending_commit: f27a27fc
+
+Deliverables:
+- .agent-work/w-cpu-1/patches/main_mister_input_timeout5_plex.patch
+- .agent-work/w-cpu-1/MISTER_TIMEOUT5_PARENT_AB.md  (PRE_REG + A/B + revert)
+- tools/arm_cpu_sample.py H1_* fields; fixed_work_probe (host smoke true rc=0)
+
+PRE_REG:
+  Main idle %onecpu 5-30 (was 100)
+  Main play240 10-45 (was 83)
+  input add <=5ms worst; load_core still works
+  if green: strictly better than SUSPEND for CPU reclaim
+
+NOT claimed: fix for 117ms session-latched lip-sync clusters
+ERROR17: nothing product to unwind
+Device: parent only

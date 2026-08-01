@@ -1,8 +1,17 @@
 # PARENT A/B — Main `poll` timeout=5 (LAB ONLY)
 
 **Agent:** w-cpu · branch `w-avsync-hdmi-measure`  
+**Applyable patch:** `.agent-work/w-cpu-1/patches/main_mister_input_timeout5_plex.patch`  
+```sh
+cd Main_MiSTer && patch -p1 < /path/to/main_mister_input_timeout5_plex.patch
+```
+
 **ERROR 17:** absorbed — no fps work; fixtures are 24.000; discard any “duplicate frame
 every 41.7s” story. Nothing product was built on that false defect.
+
+**117 ms A/V clusters (parent SESSION-LATCHED):** real device defect; daemon-blind;
+instrument exonerated. This Main-timeout lab does **not** claim to fix lip-sync clusters.
+It only targets elastic Main CPU spin. Do not use `av_drift_ms` as success for this lab.
 
 **NOT A PRODUCT SHIP.** Daily-driver Main. Lab experiment only until you score reclaim
 and latency falsifiers.
