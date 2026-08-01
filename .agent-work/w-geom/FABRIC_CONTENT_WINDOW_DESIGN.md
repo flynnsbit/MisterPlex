@@ -2,8 +2,11 @@
 
 **Lane:** w-geom · **Branch:** `w-avsync-hdmi-measure` · **No Quartus** (design + host math only)  
 **Fit owner:** w-fit-1 (coordinate ONE fit with decode_stub reclaim)  
-**Artifact baseline for cost facts:** RBF `8fdf440f` fit summary  
-`ALM 23585/41910 · M10K 465/553 (88 free) · DSP 44/112`
+
+> **PRIORITY UPDATE:** Present/DDR (**10.411 ms/f**) outranks scaler (**2.954 ms/f**).  
+> See **`PRESENT_DDR_OFFLOAD_RERANK.md`**. Content window remains the vehicle (fewer bytes = primary; NN scale = secondary side-effect).  
+> **Fit numbers only from** `/home/flynnsbit/mplex-builds/fit-t7b-prog480/…` **RBF `8fdf440f`**  
+> (`ALM 23585 · M10K 465/553 · DSP 44` — **not** repo `fpga/.../output_files` RBF `2890baac`).
 
 ---
 

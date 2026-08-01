@@ -133,6 +133,23 @@ int main() {
     EXPECT(yuv420_bytes(320, 240) != yuv420_bytes(624, 480),
            "FORCE_SCALE must retarget reader bytes when window is 320");
 
+    // FEED wall ms/f pins (docs/evidence/p480/p720-bus-and-bitrate-margin.md).
+    {
+        constexpr double present_ms = 10.411;
+        constexpr double scale_ms = 2.954;
+        constexpr double sum_ms = 40.190;
+        constexpr double budget_25 = 40.0;
+        EXPECT(present_ms > scale_ms * 3.0, "FEED: present/DDR > 3x scale delta");
+        EXPECT(sum_ms > budget_25, "FEED: full stack over 25 fps budget");
+        const double bytes_ratio = 449280.0 / 115200.0;
+        EXPECT(bytes_ratio > 3.89 && bytes_ratio < 3.91, "byte ratio 3.9");
+        const double save_lo = 0.30 * present_ms * (1.0 - 1.0 / bytes_ratio);
+        const double save_hi = 0.70 * present_ms * (1.0 - 1.0 / bytes_ratio);
+        EXPECT(save_lo > 2.0 && save_hi < 6.0, "pre-reg A1 save band ~2-5.5 ms/f");
+        std::printf("FEED_PIN present=%.3f scale=%.3f A1_save_band=%.2f..%.2f ms/f\n", present_ms,
+                    scale_ms, save_lo, save_hi);
+    }
+
     if (g_fails) {
         std::fprintf(stderr, "test_fabric_content_window_math: %d failure(s)\n", g_fails);
         return 1;
