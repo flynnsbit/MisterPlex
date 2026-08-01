@@ -14,6 +14,7 @@
 #include "libmisterplex/raw_video_pipe.hpp"
 #include "libmisterplex/yuv420p_chroma_health.hpp"
 #include "libmisterplex/publish_interval_ledger.hpp"
+#include "libmisterplex/publish_swap_delta_ledger.hpp"
 #include <algorithm>
 #include <atomic>
 #include <cctype>
@@ -763,13 +764,20 @@ bool MediaPlayer::publishDdrFrame(const DdrPublishFrame& frame, const char* cont
     // Advance from the bank actually written (PLXD may override the hint).
     if (ok) {
         ddrBank_ = nextDdrPresentBank(fpga_.lastPublishedBank(), true);
-        // Publish-interval ledger: timestamp AFTER successful doorbell/swap_req.
-        // steady_clock is typically VDSO — no open/read. Ring is fixed-size.
+        // Publish-interval + swap-delta ledgers. mono is VDSO-class; PLXD
+        // frames_done comes from the bank-select read already done inside
+        // sendDdrFrame (no extra SPI).
         const auto tp = std::chrono::steady_clock::now();
         const int64_t us = std::chrono::duration_cast<std::chrono::microseconds>(
                                tp.time_since_epoch())
                                .count();
         pubInterval_.note(us);
+        BankReleaseStatus brs{};
+        if (fpga_.lastPublishBankRelease(brs)) {
+            pubSwapDelta_.note(us, brs.frames_done,
+                               static_cast<uint8_t>(brs.swap_pending ? 1 : 0),
+                               brs.free_bank_mask, brs.disp_bank);
+        }
         // Optional mid-session sample (env): every 240 successful pubs (~10s @24).
         static const bool kLogMid = [] {
             const char* e = std::getenv("MISTERPLEX_PUBLISH_INTERVAL_LOG");
@@ -777,6 +785,8 @@ bool MediaPlayer::publishDdrFrame(const DdrPublishFrame& frame, const char* cont
         }();
         if (kLogMid && (pubInterval_.count % 240) == 0) {
             log(std::string("media: ") + pubInterval_.formatSummaryLine("measured") +
+                " phase=mid");
+            log(std::string("media: ") + pubSwapDelta_.formatSummaryLine("measured") +
                 " phase=mid");
         }
     }
@@ -4481,8 +4491,8 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
         " skip_rgb=" + (skipRgb ? "1" : "0") +
         " reason=" + endReason +
         " tag=measured");
-    // Always emit publish-interval summary at session end (ring filled on hot
-    // path). Parent greps publish_interval verdict= / hist / acf.
+    // Session-end: interval + swap-delta (Δframes_done / phase ESTIMATE).
+    // Parent greps publish_interval / publish_swap_delta.
     if (pubInterval_.iv_n > 0) {
         log(std::string("media: ") + pubInterval_.formatSummaryLine("measured") +
             " phase=session_end");
@@ -4497,7 +4507,13 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                 log(std::string("media: publish_interval_dump FAIL path=") + dump);
         }
     }
+    if (pubSwapDelta_.pair_n > 0 || pubSwapDelta_.count > 0) {
+        log(std::string("media: ") + pubSwapDelta_.formatSummaryLine("measured") +
+            " phase=session_end");
+        log(std::string("media: ") + pubSwapDelta_.formatPhaseLine());
+    }
     pubInterval_.reset();
+    pubSwapDelta_.reset();
 }
 
 } // namespace misterplex

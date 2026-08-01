@@ -59,19 +59,19 @@ import sys
 p = float(sys.argv[1]) if sys.argv[1] else float("nan")
 sig = float(sys.argv[2]) if sys.argv[2] else float("nan")
 v = sys.argv[3]
-print("PRE-REGISTER bands:")
-print("  ARM_LATE_MATCH_HOLD45: p_ge50 in [0.09, 0.11]")
-print("  ARM_CLEAN:             p_ge50 < 0.03 (and sigma small / in-band)")
+print("PRE-REGISTER bands (parent ERROR 21 corrected):")
+print("  ARM_LATE_MATCH_HOLD45:     p_ge50 in [0.09, 0.11]")
+print("  ARM_EXONERATED_FPGA_SIDE:  p_ge50 < 0.03  (redirect to CDC/DDR-complete; NOT dead)")
 print(f"MEASURED p_ge50={p:.6f} sigma_ms={sig:.6f} log_verdict={v}")
 if p != p:
     print("FAIL: could not parse p_ge50")
     sys.exit(1)
 if 0.09 <= p <= 0.11:
     print("SCORE ARM_LATE_MATCH_HOLD45 — late ARM publish CONFIRMED (matches ~4/5-hold)")
-    print("IMPLICATION: fix scheduling/CPU, NOT RTL cadence wire; FPGA decode MAY help judder")
+    print("IMPLICATION: fix scheduling/CPU; FPGA decode MAY help judder")
 elif p < 0.03:
-    print("SCORE ARM_CLEAN — late-publish hypothesis DEAD")
-    print("IMPLICATION: look vsync/present domain next (needs RBF for bank_vsync_count)")
+    print("SCORE ARM_EXONERATED_FPGA_SIDE — ARM publish schedule clean")
+    print("IMPLICATION: positive redirect to CDC pending_ready_s2 / DDR-complete / SWAP_REQ race")
 elif 0.03 <= p < 0.09:
     print("SCORE ARM_LATE_MILD — elevated late rate, below 4/5-hold match band")
 else:
@@ -79,4 +79,7 @@ else:
 print("OK score_publish_interval_log")
 sys.exit(0)
 PY
-echo "score_true_rc=$?"
+# Also surface swap-delta lines if present
+if [[ "$IN" != "-" ]]; then
+  extract | grep -E 'publish_swap_delta' | tail -n 10 || true
+fi

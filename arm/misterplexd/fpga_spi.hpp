@@ -124,6 +124,13 @@ public:
         bool plxa_used = false;       // true if PLXA drove bank selection
     };
     DdrTiming lastDdrTiming() const { return lastDdrTiming_; }
+    // PLXD snapshot at last successful sendDdrFrame bank-select (swap-delta ledger).
+    bool lastPublishBankRelease(BankReleaseStatus& out) const {
+        if (!lastPublishBrsOk_)
+            return false;
+        out = lastPublishBrs_;
+        return true;
+    }
     // Sticky PLXD liveness (frames_done advanced at least once this process).
     // No per-session reset — parent cluster instrument field 1.
     bool plxdLivenessProven() const { return plxdLivenessProven_; }
@@ -322,6 +329,8 @@ private:
     bool ddrMemSync_ = true;
     bool ddrMemFlush_ = false;
     DdrTiming lastDdrTiming_{};
+    BankReleaseStatus lastPublishBrs_{};
+    bool lastPublishBrsOk_ = false;
     // Default to the product silicon canvas (624 coded). DECODE=320x240 must not
     // leave the doorbell/stride at the packed-320 layout or the first frame shears.
     DdrFrameLayout ddrLayout_ = makeDdrFrameLayout(productDdrFrameStoreGeometry());

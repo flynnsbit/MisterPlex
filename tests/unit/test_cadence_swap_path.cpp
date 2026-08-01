@@ -245,11 +245,12 @@ int run_c1_source_facts() {
 
 int main() {
     std::printf("PRE-REGISTER publish_interval device bands (parent soak; not measured here):\n");
-    std::printf("  ARM_CLEAN: p_ge50<0.03 (late-publish FALSIFIED)\n");
+    std::printf("  ARM_EXONERATED_FPGA_SIDE: p_ge50<0.03 (redirect CDC/DDR-complete; NOT dead)\n");
     std::printf("  ARM_LATE_MATCH_HOLD45: p_ge50 in [0.09,0.11] (~4/5-hold fraction)\n");
     std::printf("  parent_hdmi_frac_ge4_caller_supplied=%.4f\n", 130.0 / 1263.0);
     std::printf("  INVALIDATED: fabric hold via frames_done edges (fd=swap count only).\n");
     std::printf("  vsync_toggle/bank_vsync_count NOT ARM-readable without RBF.\n");
+    std::printf("  FIRST measure: publish_swap_delta (Δfd + phase_est ESTIMATE_60Hz).\n");
 
     if (run_c1_source_facts() != 0)
         return 1;

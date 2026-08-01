@@ -110,9 +110,10 @@ struct PublishIntervalLedger {
         s.p_lt25 = double(lt25_count) / double(iv_n);
         s.p_in_band = double(in_band_count) / double(iv_n);
 
-        // Pre-register bands (parent brief).
+        // Corrected pre-register (parent ERROR 21): p_ge50<3% EXONERATES ARM and
+        // redirects to FPGA CDC / DDR-completion — it is NOT a dead end.
         if (s.sigma_ms < 4.0 && s.p_in_band >= 0.99 && s.p_ge50 < 0.03)
-            s.verdict = "ARM_CLEAN";
+            s.verdict = "ARM_EXONERATED_FPGA_SIDE";
         else if (s.p_ge50 >= 0.09 && s.p_ge50 <= 0.11)
             s.verdict = "ARM_LATE_MATCH_HOLD45";
         else if (s.p_ge50 > 0.03 && s.p_ge50 < 0.09)

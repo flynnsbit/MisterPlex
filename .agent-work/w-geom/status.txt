@@ -1,13 +1,11 @@
-w-geom DONE: Part1 store-scale + Part2 publish-interval
+w-geom: ERROR 20/21 absorbed; swap-delta first
 branch: w-avsync-hdmi-measure
-use: git rev-parse --short HEAD  (do not trust stale tip in this file)
+use: git rev-parse --short HEAD
 gates true rc:
-  test_present_store_scale_math=0
   test_publish_interval_ledger=0
+  test_publish_swap_delta_ledger=0
+  test_present_store_scale_math=0
+  test_cadence_swap_path(+source)=0
   unit-rollcall=0
-  score_publish_interval_log smoke=0
-reports:
-  .agent-work/w-geom/PART1_STORE_SCALE.md
-  .agent-work/w-geom/PUBLISH_INTERVAL.md
-PART1: product FRAME_W/H=640/480 (QSF); V_STORE=240; only even store rows; RBF needed for true 480 lines
-PART2: instrumented; parent runs score_publish_interval_log.sh after 60s soak
+report: .agent-work/w-geom/ERROR_20_21_RESPONSE.md
+parent: deploy daemon, 60s soak, grep publish_swap_delta

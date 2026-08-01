@@ -29,10 +29,10 @@ int g_fails = 0;
     } while (0)
 
 void pre_register() {
-    std::printf("PRE-REGISTER publish-interval device bands (parent soak):\n");
-    std::printf("  ARM_CLEAN: sigma_ms<4 p_in_band>=0.99 p_ge50<0.03\n");
+    std::printf("PRE-REGISTER publish-interval device bands (parent soak ERROR 21):\n");
+    std::printf("  ARM_EXONERATED_FPGA_SIDE: sigma_ms<4 p_in_band>=0.99 p_ge50<0.03\n");
+    std::printf("    => ARM clean; redirect search to CDC/DDR-completion (NOT dead end)\n");
     std::printf("  ARM_LATE_MATCH_HOLD45: p_ge50 in [0.09,0.11] (~4/5-hold fraction)\n");
-    std::printf("  p_ge50<0.03 => late-publish hypothesis FALSIFIED\n");
     std::printf("  ideal_ms=%.6f (frameRate=24.000, not 23.976)\n", 1000.0 / 24.0);
 }
 
@@ -111,7 +111,8 @@ int main() {
         EXPECT(s.sigma_ms < 0.5, "clean sigma tiny");
         EXPECT(s.p_ge50 < 0.001, "clean no late");
         EXPECT(s.p_in_band > 0.99, "clean in band");
-        EXPECT(std::string(s.verdict) == "ARM_CLEAN", "clean verdict ARM_CLEAN");
+        EXPECT(std::string(s.verdict) == "ARM_EXONERATED_FPGA_SIDE",
+               "clean verdict ARM_EXONERATED_FPGA_SIDE (ERROR 21)");
     }
 
     // Late 10%
@@ -135,7 +136,8 @@ int main() {
                    std::string(s.verdict) == "ARM_LATE_OR_BIMODAL" ||
                    std::string(s.verdict) == "ARM_LATE_MILD",
                "late10 not ARM_CLEAN");
-        EXPECT(std::string(s.verdict) != "ARM_CLEAN", "late10 must not be CLEAN");
+        EXPECT(std::string(s.verdict) != "ARM_EXONERATED_FPGA_SIDE",
+               "late10 must not be EXONERATED");
     }
 
     // Clean acf ~0

@@ -136,10 +136,13 @@ int main() {
     std::printf("FACT: present_core store_x/y index FRAME_W x FRAME_H domain (%dx%d)\n", FRAME_W,
                 FRAME_H);
     std::printf("FACT: ddr_frame_store planes use CODED_W=624 CODED_H=480\n");
+    std::printf("FACT: Y_STRIDE_BYTES=624; PRESENTED=640 with pillar 11+11; DISPLAY crop 618\n");
+    std::printf("FACT: DECODE=624x480 is the coded bank contract, NOT a FRAME_W mismatch bug\n");
+    std::printf("FACT: FRAME_STRIDE defaults to FRAME_W=640 but YUV plane addr uses CODED_W\n");
     std::printf("FACT: V_STORE=240 hardcodes content window; scandouble only halves vc→py\n");
     std::printf("VERDICT_PART1: only 240 of 480 store rows addressed (even); "
-                "529 of 640 store cols sampled. Native 480-line detail does NOT "
-                "reach ascal without RBF changing V_STORE/scale.\n");
+                "529 of 640 store cols sampled (17.3%% never unique). Native 480-line "
+                "detail does NOT reach ascal without RBF changing V_STORE/scale.\n");
 
     if (g_fails) {
         std::fprintf(stderr, "%d present_store_scale fail(s)\n", g_fails);

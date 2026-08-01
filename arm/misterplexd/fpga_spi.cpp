@@ -1352,6 +1352,7 @@ bool FpgaSpi::sendDdrFrame(const DdrPublishFrame& frame, const DdrPublishPlan& p
 
     DdrTiming timing{};
     auto t0 = std::chrono::steady_clock::now();
+    lastPublishBrsOk_ = false;
 
     // Prefer the PLXD bank-release mailbox when it is present and live: it is the
     // authoritative scanout/release signal, so the old same-bank timing floor is
@@ -1438,6 +1439,9 @@ bool FpgaSpi::sendDdrFrame(const DdrPublishFrame& frame, const DdrPublishPlan& p
                 if (sel.action == DdrBankSelectAction::Write) {
                     bank = sel.bank & 1;
                     plxdUsed = true;
+                    // Snapshot for MediaPlayer publish_swap_delta ledger (no extra SPI).
+                    lastPublishBrs_ = brs;
+                    lastPublishBrsOk_ = true;
                 } else {
                     // Drop — no force-write on PLXD timeout.
                     fprintf(stderr,
