@@ -1,6 +1,7 @@
 #include "media_player.hpp"
 #include "log_redact.hpp"
 
+#include "libmisterplex/audio_delay.hpp"
 #include "libmisterplex/av_clock.hpp"
 #include "libmisterplex/ffmpeg_vf.hpp"
 #include "libmisterplex/frame_ledger.hpp"
@@ -1456,10 +1457,12 @@ pid_t MediaPlayer::spawnAudioOnly(const std::string& url, const std::string& hea
     args.push_back("-map");
     args.push_back("0:a:0?");
     args.push_back("-af");
+    // Portable adelay=N|N (see libmisterplex/audio_delay.hpp). Conf intent is
+    // logged here; audioPump measures pcm_silence_head_ms on the wire.
+    args.push_back(misterplex::ffmpegAudioDelayFilter(audioDelayMs_));
     if (audioDelayMs_ > 0)
-        args.push_back("aresample=48000,adelay=" + std::to_string(audioDelayMs_) + ":all=1");
-    else
-        args.push_back("aresample=48000");
+        log("media: ffmpeg adelay_ms=" + std::to_string(audioDelayMs_) +
+            " filter=" + misterplex::ffmpegAudioDelayFilter(audioDelayMs_));
     args.push_back("-f");
     args.push_back("s16le");
     args.push_back("-ac");
@@ -2054,6 +2057,23 @@ void MediaPlayer::audioPump(int afd) {
     char buf[3840];
     std::vector<uint8_t> f2acc;
     f2acc.reserve(32768);
+    // Measure leading PCM silence (adelay proof on the wire). conf intent alone
+    // is not enough — parent A/B saw only +33 ms of a 150 ms request.
+    misterplex::SilenceHeadScan silenceScan;
+    silenceScan.reset(/*threshold=*/500, /*sr=*/48000, /*maxMs=*/2000);
+    bool silenceLogged = false;
+    auto noteSilence = [&](const void* data, size_t nbytes) {
+        if (silenceLogged)
+            return;
+        if (silenceScan.feed(data, nbytes)) {
+            silenceLogged = true;
+            log("media: pcm_silence_head_ms=" + std::to_string(silenceScan.headMs) +
+                " conf_adelay_ms=" + std::to_string(audioDelayMs_) +
+                " predicted_shift_ms=" +
+                std::to_string(misterplex::adelayContentShiftMs(audioDelayMs_)) +
+                " (measured on pump input; tag=measured)");
+        }
+    };
     // Hold buffer: PCM from stream start while audioStartGate_ is closed.
     // Cap kAudioHoldCapMs (2 s) — preserves content t=0 so release plays from
     // the beginning in lockstep with first video. No auto-release without
@@ -2214,6 +2234,9 @@ void MediaPlayer::audioPump(int afd) {
         if (n == 0)
             break;
 
+        // Always scan pump-input PCM (hold path and live path share this read).
+        noteSilence(buf, static_cast<size_t>(n));
+
         // Gate closed: buffer stream-start PCM, do not touch MrAudio. This is
         // where the measured ~206 ms audible lead used to be created (prefill +
         // concurrent play while video still decoded frame 1). Co-arm re-based
@@ -2319,6 +2342,11 @@ void MediaPlayer::audioPump(int afd) {
         ::close(out);
     ::close(afd);
     audioActive_.store(false);
+    if (!silenceLogged) {
+        log("media: pcm_silence_head_ms=UNKNOWN conf_adelay_ms=" +
+            std::to_string(audioDelayMs_) +
+            " (could-not-measure; too little PCM or empty stream) tag=UNSCORED");
+    }
     log("media: audio pump end bytes=" + std::to_string(total) +
         " f2=" + std::to_string(f2total));
 }
@@ -2718,13 +2746,23 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                 args.push_back("0:a:0?");
                 args.push_back("-vn");
                 args.push_back("-af");
-                if (audioDelayMs_ > 0) {
-                    // adelay unit is ms per channel; all=1 applies to every channel.
-                    args.push_back("aresample=48000,adelay=" + std::to_string(audioDelayMs_) +
-                                   ":all=1");
-                    log("media: ffmpeg adelay_ms=" + std::to_string(audioDelayMs_));
-                } else {
-                    args.push_back("aresample=48000");
+                // AUDIO_DELAY_MS>0: content-aligned silence via adelay=N|N (ms per
+                // channel). Portable form — not :all=1 — so device FFmpeg matches
+                // host unit ladders. Sample-clock pacer does NOT cancel this
+                // (adelayContentShiftMs == conf). Pump logs measured silence head.
+                {
+                    const std::string af = misterplex::ffmpegAudioDelayFilter(audioDelayMs_);
+                    args.push_back(af);
+                    if (audioDelayMs_ > 0)
+                        log("media: ffmpeg adelay_ms=" + std::to_string(audioDelayMs_) +
+                            " filter=" + af +
+                            " predicted_content_shift_ms=" +
+                            std::to_string(misterplex::adelayContentShiftMs(audioDelayMs_)) +
+                            " prefill_cancel_ms=" +
+                            std::to_string(misterplex::adelayCancelledByPrefillMs(
+                                audioDelayMs_,
+                                static_cast<int>(misterplex::kFeedTargetBytes * 1000 /
+                                                 misterplex::kMrAudioBytesPerSec))));
                 }
                 args.push_back("-f");
                 args.push_back("s16le");

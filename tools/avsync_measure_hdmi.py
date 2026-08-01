@@ -52,12 +52,23 @@ Usage (parent on capture host, while MiSTer plays the blip fixture)
   tools/avsync_measure_hdmi.py --duration 20 --calibration /tmp/avsync_cal.json \\
       --out /tmp/avsync_run
 
-  # Calibrate instrument (play fixture locally into grabber; see docs):
+  # Calibrate instrument — measures WHATEVER is on the grabber inputs right now.
+  # Absolute device lipsync needs a known-aligned flash+beep into the MS2109
+  # (re-cable workstation HDMI, or a second path). MiSTer-as-daily-driver means
+  # absolute offset stays raw_uncalibrated; slope/deltas cancel fixed latency.
   tools/avsync_measure_hdmi.py --calibrate --duration 15 \\
       --out /tmp/avsync_cal --calibration-out /tmp/avsync_cal.json
 
   # Offline / synthetic (no device):
   tools/avsync_measure_hdmi.py --input path/to/capture.mkv --out /tmp/ana
+
+ABSOLUTE vs RELATIVE (hole 2)
+-----------------------------
+  - slope_ms_per_s and before/after Δmedian on the same rig: fixed grabber
+    latency cancels — reportable as measured without re-cabling.
+  - absolute median_offset_ms without --calibration: always tag=raw_uncalibrated.
+    No calibration-free absolute device claim exists while MiSTer owns the only
+    HDMI into the grabber.
 """
 from __future__ import annotations
 
@@ -88,7 +99,10 @@ DEFAULT_AUDIO_SR = 48000
 DEFAULT_TOL_MS = 42.0  # one 24p frame; matches G-AV3 in MILESTONE_AVSYNC_SEEK
 DEFAULT_SLOPE_TOL_MS_PER_S = 0.5  # 30 ms/min; constant lag is OK, drift is not
 DEFAULT_MIN_PAIRS = 4
-DEFAULT_PAIR_WINDOW_S = 0.45  # half-period of 1 Hz blips
+# Default 0.9 s (was 0.45). Parent hardware: |offset|~168 ms is fine at 0.45,
+# but larger offsets silently dropped pairs (28/40) — degraded n_pairs is
+# could-not-measure, not a result. 0.9 is still < half the 1 Hz gap (no double-pair).
+DEFAULT_PAIR_WINDOW_S = 0.9
 DEFAULT_BEEP_HZ = 1000.0
 DEFAULT_BEEP_MS = 50.0
 CAL_FORMAT = "misterplex.avsync_hdmi_calibration.v1"
@@ -863,7 +877,15 @@ def print_report(
 
     if cal_ms is None:
         print("calibration=NONE")
+        print(
+            "absolute_offset_note: no known-zero source into grabber; "
+            "median is NOT device-attributable; use slope and A/B deltas only"
+        )
         print(f"median_offset_ms={raw:.4f} src=measured tag=raw_uncalibrated")
+        print(
+            "slope_note: fixed instrument latency cancels in slope_ms_per_s "
+            "(tag=measured, cal-free)"
+        )
         corrected = raw
         corrected_tag = "raw_uncalibrated"
         slope_corr = res.slope_ms_per_s
@@ -871,7 +893,12 @@ def print_report(
         print(f"calibration_ms={cal_ms:.4f} src=caller_supplied path={cal_path}")
         print(
             "calibration_note: corrected = raw - instrument_offset "
-            "(removes grabber fixed A/V latency)"
+            "(only valid if cal source was known-aligned into the same grabber)"
+        )
+        print(
+            "calibration_loop: --calibrate measures the A/V path currently wired "
+            "to /dev/video0+ALSA — it does NOT invent a zero; re-cable or host "
+            "loopback required for absolute device lipsync"
         )
         corrected = raw - cal_ms
         corrected_tag = "calibration_corrected"

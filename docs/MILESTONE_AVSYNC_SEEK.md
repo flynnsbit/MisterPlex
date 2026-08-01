@@ -889,6 +889,97 @@ sits **beyond the +90 ms acceptability threshold** for audio lead —
 Parent live command (prefer 60 fps + long window for slope):
 
 ```bash
-tools/avsync_measure_hdmi.py --duration 40 --cap-fps 60 \
+tools/avsync_measure_hdmi.py --duration 40 --cap-fps 60 --pair-window-s 0.9 \
   --out /tmp/avsync_hdmi --label rk8
 ```
+
+(Default `--pair-window-s` is now **0.9**; degraded pair counts are could-not-measure.)
+
+---
+
+## HOLE 1 — 117 ms of `AUDIO_DELAY_MS=150` unaccounted (source account)
+
+**Parent A/B (device md5 `b981fd20` = worktree `ca29aa11`, early-play, no hold gate):**
+
+| conf | instrument median (raw) | Δ |
+|------|------------------------:|--:|
+| unset / 0 | −168.3 ms | — |
+| `AUDIO_DELAY_MS=150` | −135.0 ms | **+33.3 ms** |
+
+SE(median)≈2.4 ms → +33.3 is ~14 SE, real. **117 ms missing.**
+
+### Trace (quoted)
+
+1. **Conf parse** (`arm/misterplexd/main.cpp`): `AUDIO_DELAY_MS` → `setAudioDelayMs` → banner log.
+2. **Product filter** (`media_player.cpp`): `-af` from `misterplex::ffmpegAudioDelayFilter(ms)` →
+   `aresample=48000,adelay=N|N` (portable per-channel form; was `:all=1`).
+3. **Units:** FFmpeg `adelay` is **milliseconds** (host-measured: req 150 → silence head 150.042 ms;
+   `adelay=150S` → ~3.2 ms samples — not what we emit).
+4. **Pump:** wall-paced MrAudio; `audioBytes_ += n` on every PCM byte; **no second delay line**.
+5. **Prefill** (`kFeedTargetBytes=19200` ≈ 100 ms): biases first `audioDue` into the past so the
+   ring fills; `audibleClockMs` **subtracts queued bytes**. Model function
+   `adelayCancelledByPrefillMs(conf, prefill) == 0` always — prefill does **not** eat content delay.
+6. **Pacer:** `clockMs = audibleClockMs(written, queued)` (sample clock). adelay moves *content*
+   inside the byte stream; sample index still maps 1:1 to audible time → predicted
+   `adelayContentShiftMs(conf) == conf` (full authority).
+
+### Host proofs (this commit)
+
+| Check | Result |
+|-------|--------|
+| Offline pacer model Δ(offset) for adelay 0→150 | **+150.00 ms** (full) |
+| Host ffmpeg filter silence head 0/60/150 | **0/60/150 ms** |
+| `test_audio_delay` conf→filter→silence_head | PASS |
+| RED twin: strip `pcm_silence_head_ms` measure | green_checks fail |
+| RED twin: mutant prefill-cancel ≠ 0 | unit FAIL |
+
+### What is **not** proven from source
+
+The **117 ms** is **not** explained by prefill cancel, sample-clock video slaving, or a broken
+filter string on the host. Parent daemon `b981fd20` used early-play (no `audioStartGate_`);
+session-to-session lead variance and post-MrAudio/HDMI path remain candidates.
+
+**New log line (deploy this ARM to settle on silicon):**
+
+```
+media: pcm_silence_head_ms=<N> conf_adelay_ms=<C> predicted_shift_ms=<C> (measured on pump input; tag=measured)
+```
+
+| If parent sees… | Meaning |
+|-----------------|--------|
+| `pcm_silence_head_ms≈150` with conf 150, lipsync Δ still ~33 | delay is in PCM; loss is **after** pump (HDMI/core/path) or session factor |
+| `pcm_silence_head_ms≈33` or `≈0` with conf 150 | filter never landed full delay on device FFmpeg/PCM |
+| `pcm_silence_head_ms=UNKNOWN` | could-not-measure (empty/short audio) — not a pass |
+
+Also logged at spawn: `predicted_content_shift_ms` and `prefill_cancel_ms=0`.
+
+**Prefer OSD `Video delay` (`avOffsetMs`)** for mid-play trim — G-OSD4 proved full authority on
+hardware. Do not remove `AUDIO_DELAY_MS` until silence-head A/B is run; do not claim it is inert.
+
+---
+
+## HOLE 2 — absolute offset without re-cabling
+
+### What `--calibrate` measures
+
+The **currently connected** grabber loop: whatever video hits `/dev/video0` and whatever audio
+hits the ALSA capture device, cross-correlated the same way as a normal run. It stores
+`instrument_offset_ms` in a JSON file. It does **not** know whether that source is
+device-aligned or zero-offset.
+
+### Can we bound fixed latency without unplugging the daily driver?
+
+| Method | Needs | Result |
+|--------|-------|--------|
+| Host HDMI → same MS2109 playing known-aligned fixture | Second cable into grabber **or** unplug MiSTer | True absolute cal |
+| Before/after conf A/B on same wiring | Nothing | **Δ median** trustworthy (fixed latency cancels) |
+| `slope_ms_per_s` | Nothing | Fixed latency cancels exactly; drift is measured |
+| Infer absolute from daemon queues | — | **No** — ring is in the clock; grabber skew unknown |
+
+**Ruling:** while MiSTer owns the only HDMI into the grabber, **absolute device lipsync is
+unknowable**. That is acceptable. The tool must (and does) print
+`calibration=NONE` + `tag=raw_uncalibrated` on every absolute median, and never present raw as
+corrected. Slope and A/B deltas remain the publishable quantities.
+
+Parent position on slope canceling fixed latency: **legitimate**, not a proxy — same physical
+pairs, derivative removes the additive constant.
