@@ -1,6 +1,6 @@
 # Publish-interval instrumentation + frames_done correction (w-geom)
 
-**Branch:** `w-avsync-hdmi-measure` @ `8dacf8d9`
+**Branch:** `w-avsync-hdmi-measure` @ `9a0ed2b6`
 **Gates:** `build/test_publish_interval_ledger` **true rc=0**  
 **Log:** `.agent-work/w-geom/publish_interval_gate.out`
 

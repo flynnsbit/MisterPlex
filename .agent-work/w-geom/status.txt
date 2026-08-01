@@ -1,6 +1,6 @@
 w-geom DONE: publish-interval + frames_done correction
 branch: w-avsync-hdmi-measure
-tip: 8dacf8d9
+tip: 9a0ed2b6
 gates:
   test_publish_interval_ledger true rc=0
   test_cadence_swap_path true rc=0
@@ -9,7 +9,7 @@ gates:
 report: .agent-work/w-geom/PUBLISH_INTERVAL.md
 
 PARENT (agent does not touch device):
-1. Deploy misterplexd built from tip 8dacf8d9
+1. Deploy misterplexd built from tip 9a0ed2b6 (bundle starts 100b797d)
 2. 60s 480p soak (frameRate=24.000 fixture)
 3. On session end: grep -E 'publish_interval' <daemon-log>
 4. Compare verdict= to:
