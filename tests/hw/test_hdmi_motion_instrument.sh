@@ -605,6 +605,66 @@ ri=analyze_counter_rate(
 )
 fail += expect("pingpong-revisit", ri["revisit_fail"] is True and ri["non_adjacent_revisits"]>=2, ri)
 
+# Display-level skip measurement (count + conf; not a hard rc).
+from hdmi_motion_instrument import (
+    analyze_counter_skips,
+    measure_capture_fps_from_paths,
+    SKIP_MIN_CTR_SPAN,
+)
+# GREEN: long healthy 24-on-30 → adjacent lost 0
+long=[]; n=1000
+for i in range(900):
+    if i>0 and i%5!=0: n+=1
+    long.append(n)
+sk=analyze_counter_skips(
+    list(enumerate(long)),
+    source_fps=24.0, capture_fps=30.0,
+    source_fps_src=PROVENANCE_CALLER, capture_fps_src=PROVENANCE_CALLER,
+)
+fail += expect(
+    "skip-green-adj0",
+    sk["frames_lost_adj"]==0 and sk["skip_status"]=="SKIP_OK" and sk["skip_confidence"] in ("MEDIUM","HIGH"),
+    sk,
+)
+# RED: regular +3 jumps on adjacent captures
+bad=[]; n=2000
+for i in range(800):
+    if i>0:
+        n += 1
+        if i%3==0: n += 2
+    bad.append(n)
+sk=analyze_counter_skips(
+    list(enumerate(bad)),
+    source_fps=24.0, capture_fps=30.0,
+    source_fps_src=PROVENANCE_CALLER, capture_fps_src=PROVENANCE_CALLER,
+)
+fail += expect(
+    "skip-red-loss",
+    sk["frames_lost_adj"] is not None and sk["frames_lost_adj"]>=50
+    and sk["skip_status"] in ("SKIP_SUSPECT","SKIP_LOSS")
+    and sk["skip_confidence"] in ("MEDIUM","HIGH"),
+    sk,
+)
+# Short window → SKIP_UNSCORED
+sk=analyze_counter_skips(
+    list(enumerate(long[:25])),
+    source_fps=24.0, capture_fps=30.0,
+    source_fps_src=PROVENANCE_CALLER, capture_fps_src=PROVENANCE_CALLER,
+)
+fail += expect(
+    "skip-short-unscored",
+    sk["skip_status"]=="SKIP_UNSCORED" and sk["skip_confidence"]=="UNSCORED",
+    sk,
+)
+# cap_fps from wall_s
+m=measure_capture_fps_from_paths([f"f_{i:03d}.png" for i in range(60)], wall_s=2.0)
+fail += expect(
+    "cap-fps-wall-measured",
+    m.get("capture_fps") is not None and abs(m["capture_fps"]-29.5)<0.01
+    and m.get("capture_fps_src")=="measured",
+    m,
+)
+
 sys.exit(1 if fail else 0)
 PY
 rate_rc=$?

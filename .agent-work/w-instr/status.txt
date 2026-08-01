@@ -1,60 +1,124 @@
-# w-instr status — parent attack response (plateau WARN + RATE honesty + overlay readback)
+# w-instr — display-level frame-loss + measured cap_fps + A/V sync assessment
 
 branch: w-instr-motion-counter
+SHA: (post-commit)
+
+## PRE-REGISTERED PREDICTIONS (before parent long capture)
+
+P1. On a healthy 480p 24fps clip, long capture (≥3 min, --src-fps 24/1, measured cap):
+    frames_lost_adj ≈ 0, lost_frac_adj < 0.02, skip_status=SKIP_OK, conf=HIGH.
+    HIT/MISS: parent publishes after run.
+
+P2. If user-visible drops are real at the display:
+    frames_lost_adj grows roughly linear with wall time; lost_frac_adj stable >0.05
+    → skip_status=SKIP_LOSS conf=HIGH. Daemon drops/av_drift_ms may stay near 0
+    (inadmissible by construction).
+
+P3. Short bursts (ctr_span < 60): skip_status=SKIP_UNSCORED conf=UNSCORED —
+    refuse a defended loss number. Existing ~5s labs are conf=LOW at best.
+
+P4. cap_fps from PNG mtimes on this grabber ≈ 30–31 (already measured on
+    capboot/cap480q/cap480b). If parent switches mode to 60, expected=src/cap
+    becomes ~0.4 and rate gates move with the measurement — not a hardcoded 30.
+
+P5. RLE-only lost_frac ~0.12 on known-good short bursts is mostly OCR misses
+    of intermediate n (adjacent_lost=0). Trust frames_lost_adj, not frames_lost_rle.
 
 ## Delivered
 
-### Attack 1 — max_plateau=3/3 at bound
-- Hard fail remains only max_plateau > ceil(cap/src)+1 (allowed=3 at 24/30).
-- max_plateau == allowed is still PASS (healthy cal maxed at 2; 3 is one unlucky sample).
-- Emits plateau_warn=1 + rate_notes when riding the bound so it is never silent green.
-- Form ceil(cap_fps/src_fps)+1 kept: ideal hold is <=ceil(cap/src); +1 is single-sample slack.
+### 1. Skip / jump detection (pixels only)
+- skip_metrics: frames_lost_adj (PRIMARY), frames_lost_rle, hist, lost_frac, conf
+- Arithmetic printed on every run (skip_arithmetic=...)
+- ADJ: max_exp=max(1,ceil(di*src/cap)); dn>+max_exp → lost += excess
+  (+2 on adjacent capture = 1 lost; no plateau slack)
+- conf: UNSCORED span<60 | LOW <200 | MEDIUM <600 | HIGH ≥600 source frames
+- status: SKIP_UNSCORED | SKIP_OK | SKIP_SUSPECT (≥2%) | SKIP_LOSS (≥5%, MED/HIGH)
+- Does NOT change main rc (measurement dimension). Short window → UNSCORED conf.
 
-### Attack 2 — RATE_OK never on DEFAULT_ASSUMED
-- RATE_OK requires both fps authoritative:
-  - src: caller (--source-fps / --src-fps / daemon token 24/1)
-  - cap: caller or container (--capture-fps / --cap-fps / --probe-capture ffprobe)
-- Otherwise rate dimension = RATE_UNSCORED (never RATE_OK). Metrics still printed with provenance.
-- Ratio/endpoint/plateau gates only fire when authoritative.
-- Revisit (bank-swap) still RATE_FAIL without fps — pure measured sequence property.
-- FREEZE still hard rc=1 when counter pinned (do not soften).
+### 2. cap_fps MEASURED
+- Auto: (n-1)/mtime_wall labelled cap=measured
+- Better: --capture-wall-s from ffmpeg wall clock
+- Also --cap-fps caller / --probe-capture container
+- RATE_OK needs src=caller AND cap in {caller, measured, container}
+- src DEFAULT_ASSUMED → rate=RATE_UNSCORED always
 
-### Overlay string read-back (user #1 acceptance)
-- New: tools/overlay_string_readback.py
-- Exact glyph recovery of expected string (default STOPPED) via 5x7 bitmaps from
-  playback_overlay.hpp — NOT lattice-pitch.
-- RED on real overlay_lowres_evidence.png: READBACK_FAIL rc=1 decoded='4TNEEE0'
-- RED on synth STORE_Y_SCALE=2 row-delete: READBACK_FAIL rc=1 decoded='STOPP4Y'
-- GREEN on synth clean: READBACK_OK rc=0 decoded='STOPPED'
-- Motion instrument still UNSCORED rc=77 on that evidence (no TREK counter) — correct.
-
-## Commands for parent
-
-python3 tools/hdmi_motion_instrument.py CAP_DIR --src-fps 24/1 --cap-fps 30
-# Without fps flags -> motion may be OK but rate=RATE_UNSCORED
-
-python3 tools/overlay_string_readback.py FRAME.png --expect STOPPED
-python3 tools/overlay_string_readback.py --synth-row-delete --expect STOPPED   # expect rc=1
-python3 tools/overlay_string_readback.py --self-test
-
-./tests/hw/test_hdmi_motion_instrument.sh
-
-## Evidence (true rc, direct)
-
+### 3. Controlled pair (true rc)
 | case | result |
 |------|--------|
-| suite targeted | pass=34 fail=0 skip=1 RESULT=PASS true rc=0 |
-| evidence overlay readback | READBACK_FAIL rc=1 decoded=4TNEEE0 |
-| synth clean readback | READBACK_OK rc=0 |
-| synth row-delete | READBACK_FAIL rc=1 |
-| capboot no fps | MOTION_OK rc=0 rate=RATE_UNSCORED src=DEFAULT_ASSUMED |
-| capboot +fps | MOTION_OK rc=0 rate=RATE_OK fps_authoritative=1 endpoint=0.7982 expected=0.8 |
-| cap480a | STRUCTURE_FAIL rc=3 |
-| cap480n | UNSCORED rc=77 |
-| half-rate synth | RATE_FAIL rc=4 |
+| self-test skip green/red/short + cap wall | SELF_TEST_OK rc=0 |
+| suite rate-unit skip-* + cap-fps | PASS (block rc=0) |
+| capboot --src-fps 24/1 (mtime cap≈31.1) | MOTION_OK rc=0 lost_adj=0 SKIP_OK conf=LOW |
+| cap480q | MOTION_OK rc=0 lost_adj=1 frac=0.0086 SKIP_OK conf=LOW |
+| even-n thinned RED dir | lost_adj=44 frac=0.51 SKIP_SUSPECT |
+| synth +3 jumps unit | SKIP_LOSS lost_adj=532 frac=0.40 HIGH |
 
-## Hardcoded constants audit
-- DEFAULT_ASSUMED_SOURCE_FPS=24.0 — assumed, labelled
-- DEFAULT_ASSUMED_CAPTURE_FPS=30.0 — assumed, labelled; PNG dirs cannot measure fps
-- max_plateau_allowed formula — design (parent cal)
-- CELL_SCORE_MIN/STRING_SCORE_MIN — design for overlay readback
+### 4. A/V SYNC — instrument does NOT exist yet; path is real
+
+Grabber audio IS present on this host:
+  arecord -l → card 0: MS2109 [MS2109], device 0: USB Audio
+  /proc/asound/cards → 0 [MS2109]: USB-Audio - MS2109 (534d:2109)
+
+Honest status: **no A/V sync instrument is implemented today.** Video-only
+counter tools cannot see audio. Self-reported audio_s/wall_s/av-lock share
+daemon blindness and are inadmissible as proof.
+
+Recommended measured approach (parent owns hardware):
+1. Add PMS asset "AVSYNC_CLICK" : white FLASH frame at known content time T
+   paired with a 1 kHz click (or single sample impulse) at the same T.
+   Burn-in TREK24 counter continues so video flash frame n is known.
+2. Capture simultaneously:
+   - video: ffmpeg v4l2 → PNG/MJPEG
+   - audio: arecord -D plughw:0,0 -f S16_LE -r 48000 -c 2 out.wav
+   (confirm device: `arecord -l`; card index may move — prefer plughw:MS2109,0)
+3. Detect:
+   - video flash: frame where mean luma jumps (or counter n at flash)
+   - audio onset: first sample energy above noise floor near expected time
+4. av_skew_ms = 1000 * (t_audio_onset - t_video_flash)
+   Bound with capture latency (USB MJPEG + ALSA) — characterise once with
+   a loopback known-good path if available.
+
+If ALSA open races the exclusive video device, capture audio in the same
+ffmpeg graph when the MS2109 exposes an ALSA source alongside v4l2
+(`ffmpeg -f v4l2 ... -f alsa -i hw:0 ...`).
+
+## Minimum capture for defensible skip answer
+
+| goal | content time | @24fps src | @~30 cap PNGs |
+|------|--------------|------------|---------------|
+| conf LOW floor | ≥2.5 s | ctr_span≥60 | ~90 |
+| conf MEDIUM | ≥8 s | ≥200 | ~300 |
+| conf HIGH | ≥25 s | ≥600 | ~900 |
+| user "sustained" | **≥3 min** | ≥4320 | **≥5400** |
+
+Grabber rate IS limiting for rate gates if assumed 30 while running 60 —
+now measured so expected tracks. Skip ADJ needs src+cap known for HIGH conf.
+
+## Parent capture commands (do not run here)
+
+```bash
+# Timed long soak (3+ min). Pass daemon fps= token. Wall-clock for cap_fps.
+OUT=/path/cap480_long
+mkdir -p "$OUT"
+START=$(date +%s.%N)
+ffmpeg -v error -f v4l2 -input_format mjpeg -video_size 1920x1080 \
+  -i /dev/video0 -frames:v 5400 -y "$OUT/f_%04d.png"
+END=$(date +%s.%N)
+WALL=$(python3 -c "print($END-$START)")
+echo "wall_s=$WALL"
+
+python3 tools/hdmi_motion_instrument.py "$OUT" \
+  --src-fps 24/1 --capture-wall-s "$WALL"
+# expect: cap_fps_measure src=measured; skip_metrics conf=HIGH; publish HIT/MISS on P1/P2
+# true rc:  cmd; echo "true rc=$?"
+```
+
+Optional audio alongside (A/V asset once added):
+```bash
+arecord -D plughw:0,0 -f S16_LE -r 48000 -c 2 -d 180 "$OUT/audio.wav" &
+# ... ffmpeg video ...
+wait
+```
+
+## Commands
+python3 tools/hdmi_motion_instrument.py CAP --src-fps 24/1 --capture-wall-s WALL
+./tests/hw/test_hdmi_motion_instrument.sh

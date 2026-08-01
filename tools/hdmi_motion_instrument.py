@@ -166,6 +166,21 @@ PROVENANCE_CALLER = "caller"
 PROVENANCE_DEFAULT_ASSUMED = "DEFAULT_ASSUMED"
 # Provenance for rates read from a capture container (ffprobe), not assumed.
 PROVENANCE_CONTAINER = "container"
+# Provenance for rates measured from this capture (PNG mtimes or --capture-wall-s).
+PROVENANCE_MEASURED = "measured"
+
+# Display-level skip measurement (burned-in counter jumps). Not a hard verdict
+# dimension: reported as count + confidence. Parent: drops/av_drift_ms are
+# inadmissible (they cannot see failed DDR publishes).
+# Minimum source-frame span before skip count is scorable at all.
+SKIP_MIN_CTR_SPAN = 60  # design: ~2.5s at 24fps — below this → SKIP_UNSCORED
+SKIP_CONF_MEDIUM_SPAN = 200  # ~8s at 24fps
+SKIP_CONF_HIGH_SPAN = 600  # ~25s at 24fps; prefer minutes for user "sustained"
+# Adjacent-capture +2 is strong; RLE +2 is OCR-sensitive. Treat adjacent as
+# primary. Sustained adjacent loss fraction above this is SKIP_LOSS (still does
+# not override STRUCTURE/COLOR severity — informational dimension + note).
+SKIP_LOSS_FRAC_SUSPECT = 0.02  # 2% of source span
+SKIP_LOSS_FRAC_LOSS = 0.05  # 5%
 
 
 def parse_fps_token(token: str | float | int | None) -> float | None:
@@ -244,6 +259,295 @@ def try_probe_capture_fps(path: str | Path) -> tuple[float | None, str]:
         if v is not None and 1.0 <= v <= 240.0:
             return v, PROVENANCE_CONTAINER
     return None, f"ffprobe_no_rate lines={lines!r}"
+
+
+def measure_capture_fps_from_paths(
+    paths: list[str],
+    *,
+    wall_s: float | None = None,
+) -> dict[str, Any]:
+    """Measure capture fps from PNG burst timing.
+
+    Preferred: caller passes wall_s from the capture command wall clock
+    (ffmpeg start→end). Fallback: (n-1)/(mtime_last - mtime_first).
+
+    Returns dict with capture_fps, provenance, wall_s, method — or fps=None
+    with reason when unmeasurable (batch-write mtimes, too few frames).
+    """
+    n = len(paths)
+    out: dict[str, Any] = {
+        "capture_fps": None,
+        "capture_fps_src": PROVENANCE_DEFAULT_ASSUMED,
+        "wall_s": None,
+        "n_frames": n,
+        "method": None,
+        "reason": None,
+    }
+    if n < 8:
+        out["reason"] = f"too_few_frames={n}<8"
+        return out
+
+    if wall_s is not None and wall_s > 0:
+        fps = (n - 1) / float(wall_s)
+        out["wall_s"] = round(float(wall_s), 4)
+        out["method"] = "caller_wall_s_(n-1)/wall"
+        if not (5.0 <= fps <= 120.0):
+            out["reason"] = f"wall_fps_out_of_range={fps:.4f}"
+            return out
+        out["capture_fps"] = round(fps, 4)
+        out["capture_fps_src"] = PROVENANCE_MEASURED
+        return out
+
+    try:
+        mtimes = [os.path.getmtime(p) for p in paths]
+    except OSError as e:
+        out["reason"] = f"mtime_failed:{e}"
+        return out
+    t0, t1 = float(mtimes[0]), float(mtimes[-1])
+    wall = t1 - t0
+    out["wall_s"] = round(wall, 4)
+    if wall < 0.05:
+        out["reason"] = "mtime_collapsed_batch_write"
+        out["method"] = "png_mtime_(n-1)/wall"
+        return out
+    fps = (n - 1) / wall
+    out["method"] = "png_mtime_(n-1)/wall"
+    if not (5.0 <= fps <= 120.0):
+        out["reason"] = f"mtime_fps_out_of_range={fps:.4f}"
+        return out
+    out["capture_fps"] = round(fps, 4)
+    out["capture_fps_src"] = PROVENANCE_MEASURED
+    return out
+
+
+def analyze_counter_skips(
+    pairs: list[tuple[int, int]],
+    *,
+    source_fps: float = DEFAULT_ASSUMED_SOURCE_FPS,
+    capture_fps: float = DEFAULT_ASSUMED_CAPTURE_FPS,
+    source_fps_src: str = PROVENANCE_DEFAULT_ASSUMED,
+    capture_fps_src: str = PROVENANCE_DEFAULT_ASSUMED,
+) -> dict[str, Any]:
+    """Display-level frame-loss from burned-in counter jumps.
+
+    Arithmetic (on outlier-filtered (cap_idx, n) pairs):
+      RLE of counter values → successive distinct states v0, v1, ...
+      For each step d = v_{i+1} - v_i:
+        d == 1  → healthy advance (one new source frame)
+        d >= 2  → rle_skip: (d-1) source frames never observed
+                  (display skip OR OCR miss of intermediate n)
+        d <= 0  → non-monotonic (OCR / rewind); counted separately
+
+      Adjacent-capture skip (PRIMARY, stronger):
+        when cap_idx differs by 1 and dn >= 2, the display advanced 2+
+        source frames in one capture period — max expected advance over
+        one capture slot is ~1 when src < cap. frames_lost_adj += dn - 1.
+
+    Confidence:
+      SKIP_UNSCORED — ctr_span < SKIP_MIN_CTR_SPAN or too few samples
+      LOW/MEDIUM/HIGH by source span (prefer minutes for user claim)
+      A single +2 is sampling/OCR-ambiguous; sustained rate is not.
+
+    This is a MEASUREMENT dimension, not a hard rc verdict. Parent cannot
+    use daemon drops/av_drift_ms here (blind to failed publishes).
+    """
+    empty: dict[str, Any] = {
+        "skip_status": "SKIP_UNSCORED",
+        "frames_lost_rle": None,
+        "frames_lost_adj": None,
+        "skip_events_rle": 0,
+        "skip_events_adj": 0,
+        "skip_hist_rle": {},
+        "skip_hist_adj": {},
+        "step_hist_rle": {},
+        "ctr_span": 0,
+        "unique_states": 0,
+        "lost_frac_rle": None,
+        "lost_frac_adj": None,
+        "skip_confidence": "UNSCORED",
+        "skip_notes": [],
+        "arithmetic": "",
+        "n_samples": len(pairs),
+        "source_fps": source_fps,
+        "capture_fps": capture_fps,
+        "source_fps_src": source_fps_src,
+        "capture_fps_src": capture_fps_src,
+    }
+    if len(pairs) < RATE_MIN_SAMPLES:
+        empty["skip_notes"] = [
+            f"insufficient_samples={len(pairs)} need>={RATE_MIN_SAMPLES}"
+        ]
+        empty["arithmetic"] = "n/a (too few samples)"
+        return empty
+
+    idxs = [i for i, _ in pairs]
+    ns = [n for _, n in pairs]
+    runs = _rle_runs(ns)
+    vals = [v for v, _ in runs]
+    unique_states = len(vals)
+    if unique_states < 2:
+        empty["skip_notes"] = ["fewer_than_2_unique_counter_states"]
+        empty["unique_states"] = unique_states
+        empty["arithmetic"] = "n/a (pinned or single state)"
+        return empty
+
+    n_first, n_last = vals[0], vals[-1]
+    ctr_span = n_last - n_first
+    empty["ctr_span"] = int(ctr_span)
+    empty["unique_states"] = int(unique_states)
+    empty["n_first"] = int(n_first)
+    empty["n_last"] = int(n_last)
+
+    # --- RLE step analysis ---
+    hist_rle: Counter = Counter()
+    step_hist: Counter = Counter()
+    lost_rle = 0
+    skip_ev_rle = 0
+    neg_steps = 0
+    for a, b in zip(vals, vals[1:]):
+        d = b - a
+        step_hist[d] += 1
+        if d >= 2:
+            hist_rle[d] += 1
+            lost_rle += d - 1
+            skip_ev_rle += 1
+        elif d <= 0:
+            neg_steps += 1
+
+    # --- Adjacent-capture analysis (PRIMARY) ---
+    hist_adj: Counter = Counter()
+    lost_adj = 0
+    skip_ev_adj = 0
+    # Expected max source advance over di capture slots:
+    # ceil(di * src/cap) + 1 slack. Requires fps; when assumed, still compute
+    # with labelled assumption but confidence stays capped at LOW.
+    fps_known = (
+        source_fps_src == PROVENANCE_CALLER
+        and capture_fps_src
+        in (PROVENANCE_CALLER, PROVENANCE_CONTAINER, PROVENANCE_MEASURED)
+        and source_fps > 0
+        and capture_fps > 0
+    )
+    for (i0, n0), (i1, n1) in zip(pairs, pairs[1:]):
+        di = i1 - i0
+        dn = n1 - n0
+        if di <= 0 or dn < 2:
+            continue
+        # Max source advance WITHOUT a display skip over di capture slots.
+        # At 24/30, di=1 → max_exp=1, so dn=+2 is exactly one lost frame.
+        # Do NOT add the plateau +1 slack here (that slack is for rate gates only).
+        if fps_known:
+            max_exp = max(1, int(math.ceil(di * source_fps / capture_fps)))
+        else:
+            # Without fps: di==1 → max_exp=1; else allow di (1 per capture upper).
+            max_exp = 1 if di == 1 else di
+        if dn > max_exp:
+            excess = dn - max_exp
+            # Record as jump size dn for histogram clarity
+            hist_adj[dn] += 1
+            lost_adj += excess
+            skip_ev_adj += 1
+
+    lost_frac_rle = (lost_rle / ctr_span) if ctr_span > 0 else None
+    lost_frac_adj = (lost_adj / ctr_span) if ctr_span > 0 else None
+
+    notes: list[str] = []
+    if neg_steps:
+        notes.append(f"non_monotonic_rle_steps={neg_steps} (OCR noise residue)")
+
+    # Confidence from window length + fps provenance
+    if ctr_span < SKIP_MIN_CTR_SPAN:
+        conf = "UNSCORED"
+        notes.append(
+            f"window_too_short ctr_span={ctr_span}<{SKIP_MIN_CTR_SPAN} "
+            f"(need >={SKIP_MIN_CTR_SPAN} source frames; prefer "
+            f">={SKIP_CONF_HIGH_SPAN} / minutes for user sustained claim)"
+        )
+    elif not fps_known:
+        conf = "LOW"
+        notes.append(
+            "fps_not_authoritative: skip excess uses adjacent-only bound; "
+            "pass --src-fps from daemon and measure cap_fps for higher conf"
+        )
+        if ctr_span >= SKIP_CONF_HIGH_SPAN:
+            notes.append("span_would_be_HIGH_if_fps_known")
+    elif ctr_span >= SKIP_CONF_HIGH_SPAN:
+        conf = "HIGH"
+    elif ctr_span >= SKIP_CONF_MEDIUM_SPAN:
+        conf = "MEDIUM"
+    else:
+        conf = "LOW"
+        notes.append(
+            f"span_low ctr_span={ctr_span}<{SKIP_CONF_MEDIUM_SPAN} "
+            f"(single +2 can be OCR/sampling artifact)"
+        )
+
+    # Status from adjacent (primary) loss fraction
+    if conf == "UNSCORED":
+        status = "SKIP_UNSCORED"
+    elif lost_frac_adj is not None and lost_frac_adj >= SKIP_LOSS_FRAC_LOSS and conf in (
+        "MEDIUM",
+        "HIGH",
+    ):
+        status = "SKIP_LOSS"
+        notes.append(
+            f"sustained_adjacent_loss lost_frac_adj={lost_frac_adj:.4f}>="
+            f"{SKIP_LOSS_FRAC_LOSS} conf={conf}"
+        )
+    elif lost_frac_adj is not None and lost_frac_adj >= SKIP_LOSS_FRAC_SUSPECT:
+        status = "SKIP_SUSPECT"
+        notes.append(
+            f"elevated_adjacent_loss lost_frac_adj={lost_frac_adj:.4f}>="
+            f"{SKIP_LOSS_FRAC_SUSPECT}"
+        )
+    elif lost_adj == 0 and lost_rle > 0:
+        status = "SKIP_OK"
+        notes.append(
+            f"rle_lost={lost_rle} but adjacent_lost=0 → likely OCR misses of "
+            f"intermediate n, not display skips"
+        )
+    else:
+        status = "SKIP_OK"
+
+    # Arithmetic string for parent audit
+    arith = (
+        f"RLE: for each successive distinct n, d=n[i+1]-n[i]; "
+        f"if d>=2 frames_lost_rle += (d-1). "
+        f"sum={lost_rle} over ctr_span={ctr_span} "
+        f"(n_first={n_first} n_last={n_last} unique_states={unique_states}). "
+        f"ADJ: for consecutive filtered pairs (i0,n0)->(i1,n1), "
+        f"di=i1-i0 dn=n1-n0; max_exp=max(1,ceil(di*src/cap)) "
+        f"(no plateau slack; +2 on di=1 = 1 lost) "
+        f"{'(fps labelled)' if fps_known else '(fps weak)'}; "
+        f"if dn>max_exp frames_lost_adj += dn-max_exp → {lost_adj}."
+    )
+
+    return {
+        "skip_status": status,
+        "frames_lost_rle": int(lost_rle),
+        "frames_lost_adj": int(lost_adj),
+        "skip_events_rle": int(skip_ev_rle),
+        "skip_events_adj": int(skip_ev_adj),
+        "skip_hist_rle": {str(k): int(v) for k, v in sorted(hist_rle.items())},
+        "skip_hist_adj": {str(k): int(v) for k, v in sorted(hist_adj.items())},
+        "step_hist_rle": {str(k): int(v) for k, v in sorted(step_hist.items())},
+        "ctr_span": int(ctr_span),
+        "unique_states": int(unique_states),
+        "n_first": int(n_first),
+        "n_last": int(n_last),
+        "lost_frac_rle": (round(lost_frac_rle, 4) if lost_frac_rle is not None else None),
+        "lost_frac_adj": (round(lost_frac_adj, 4) if lost_frac_adj is not None else None),
+        "skip_confidence": conf,
+        "skip_notes": notes,
+        "arithmetic": arith,
+        "n_samples": len(pairs),
+        "non_monotonic_steps": int(neg_steps),
+        "source_fps": source_fps,
+        "capture_fps": capture_fps,
+        "source_fps_src": source_fps_src,
+        "capture_fps_src": capture_fps_src,
+        "fps_known_for_skip": bool(fps_known),
+    }
 
 
 # Minimum strong counter samples before rate/revisit can hard-fail.
@@ -1199,7 +1503,11 @@ def analyze_counter_rate(
     RATE_UNSCORED = insufficient samples OR fps assumed — not a pass.
     """
     src_ok = source_fps_src == PROVENANCE_CALLER
-    cap_ok = capture_fps_src in (PROVENANCE_CALLER, PROVENANCE_CONTAINER)
+    cap_ok = capture_fps_src in (
+        PROVENANCE_CALLER,
+        PROVENANCE_CONTAINER,
+        PROVENANCE_MEASURED,
+    )
     fps_auth = bool(src_ok and cap_ok)
     empty = {
         "rate": "RATE_UNSCORED",
@@ -1538,6 +1846,13 @@ def score_burst(
         source_fps_src=source_fps_src,
         capture_fps_src=capture_fps_src,
     )
+    skip_info = analyze_counter_skips(
+        pairs,
+        source_fps=source_fps,
+        capture_fps=capture_fps,
+        source_fps_src=source_fps_src,
+        capture_fps_src=capture_fps_src,
+    )
     if len(ns) < min_reads:
         # Secondary: overlay bitmap motion without OCR.
         # Bitmap path has no counter rate → rate stays UNSCORED (not a pass).
@@ -1689,6 +2004,20 @@ def score_burst(
         "capture_fps": rate_info.get("capture_fps"),
         "source_fps_src": rate_info.get("source_fps_src"),
         "capture_fps_src": rate_info.get("capture_fps_src"),
+        # Display-level skip measurement (count + confidence; not a hard rc).
+        "skip_status": skip_info.get("skip_status"),
+        "frames_lost_rle": skip_info.get("frames_lost_rle"),
+        "frames_lost_adj": skip_info.get("frames_lost_adj"),
+        "skip_events_rle": skip_info.get("skip_events_rle"),
+        "skip_events_adj": skip_info.get("skip_events_adj"),
+        "skip_hist_rle": skip_info.get("skip_hist_rle"),
+        "skip_hist_adj": skip_info.get("skip_hist_adj"),
+        "step_hist_rle": skip_info.get("step_hist_rle"),
+        "lost_frac_rle": skip_info.get("lost_frac_rle"),
+        "lost_frac_adj": skip_info.get("lost_frac_adj"),
+        "skip_confidence": skip_info.get("skip_confidence"),
+        "skip_notes": skip_info.get("skip_notes"),
+        "skip_arithmetic": skip_info.get("arithmetic"),
         "verdict": final,
         "reason": reason,
         "rc": rc,
@@ -1767,6 +2096,27 @@ def _print_human(report: dict[str, Any], src: str) -> None:
         notes = report.get("rate_notes") or []
         if notes:
             print(f"rate_notes={' | '.join(str(n) for n in notes)}")
+    # Display-level skip measurement (pixels only; not daemon drops/av_drift).
+    if report.get("skip_status") is not None or report.get("frames_lost_adj") is not None:
+        print(
+            f"skip_metrics status={report.get('skip_status')} "
+            f"conf={report.get('skip_confidence')} "
+            f"frames_lost_adj={report.get('frames_lost_adj')} "
+            f"frames_lost_rle={report.get('frames_lost_rle')} "
+            f"events_adj={report.get('skip_events_adj')} "
+            f"events_rle={report.get('skip_events_rle')} "
+            f"hist_adj={report.get('skip_hist_adj')} "
+            f"hist_rle={report.get('skip_hist_rle')} "
+            f"step_hist_rle={report.get('step_hist_rle')} "
+            f"lost_frac_adj={report.get('lost_frac_adj')} "
+            f"lost_frac_rle={report.get('lost_frac_rle')} "
+            f"ctr_span={report.get('ctr_span')}"
+        )
+        snotes = report.get("skip_notes") or []
+        if snotes:
+            print(f"skip_notes={' | '.join(str(n) for n in snotes)}")
+        if report.get("skip_arithmetic"):
+            print(f"skip_arithmetic={report.get('skip_arithmetic')}")
     print(f"reason={report['reason']}")
     print(f"VERDICT={report['verdict']} rc={report['rc']}")
 
@@ -2115,6 +2465,66 @@ def _self_test() -> int:
     assert DEFAULT_ASSUMED_SOURCE_FPS == 24.0, DEFAULT_ASSUMED_SOURCE_FPS
     assert abs(DEFAULT_ASSUMED_SOURCE_FPS - (24000.0 / 1001.0)) > 0.01
 
+    # --- Display-level skip measurement (RED/GREEN unit) ---
+    # GREEN: healthy 24-on-30 plateau pattern over long span — adjacent lost ~0.
+    long_ns = []
+    src_n = 1000
+    for cap_i in range(900):  # ~720 source frames at 24/30
+        if cap_i > 0 and (cap_i % 5) != 0:
+            src_n += 1
+        long_ns.append(src_n)
+    sk_ok = analyze_counter_skips(
+        list(enumerate(long_ns)),
+        source_fps=24.0,
+        capture_fps=30.0,
+        source_fps_src=PROVENANCE_CALLER,
+        capture_fps_src=PROVENANCE_CALLER,
+    )
+    assert sk_ok["frames_lost_adj"] == 0, sk_ok
+    assert sk_ok["skip_status"] == "SKIP_OK", sk_ok
+    assert sk_ok["skip_confidence"] in ("MEDIUM", "HIGH"), sk_ok
+    assert sk_ok["ctr_span"] >= SKIP_MIN_CTR_SPAN, sk_ok
+
+    # RED: every 5th advance is +2 (drop one source frame regularly).
+    drop_ns = []
+    src_n = 2000
+    for cap_i in range(900):
+        if cap_i > 0 and (cap_i % 5) != 0:
+            src_n += 1
+            if (src_n % 10) == 0:
+                src_n += 1  # skip one source number
+        drop_ns.append(src_n)
+    sk_bad = analyze_counter_skips(
+        list(enumerate(drop_ns)),
+        source_fps=24.0,
+        capture_fps=30.0,
+        source_fps_src=PROVENANCE_CALLER,
+        capture_fps_src=PROVENANCE_CALLER,
+    )
+    assert sk_bad["frames_lost_rle"] is not None and sk_bad["frames_lost_rle"] >= 20, sk_bad
+    assert sk_bad["frames_lost_adj"] is not None and sk_bad["frames_lost_adj"] >= 10, sk_bad
+    assert sk_bad["skip_status"] in ("SKIP_SUSPECT", "SKIP_LOSS"), sk_bad
+    assert sk_bad["skip_confidence"] in ("MEDIUM", "HIGH"), sk_bad
+
+    # Short window → SKIP_UNSCORED (not a fake zero).
+    sk_short = analyze_counter_skips(
+        list(enumerate(good_ns[:20])),
+        source_fps=24.0,
+        capture_fps=30.0,
+        source_fps_src=PROVENANCE_CALLER,
+        capture_fps_src=PROVENANCE_CALLER,
+    )
+    assert sk_short["skip_status"] == "SKIP_UNSCORED", sk_short
+    assert sk_short["skip_confidence"] == "UNSCORED", sk_short
+
+    # measure_capture_fps via explicit wall_s
+    m = measure_capture_fps_from_paths(
+        [f"f_{i:03d}.png" for i in range(60)],
+        wall_s=2.0,  # 59/2 = 29.5
+    )
+    assert m["capture_fps"] is not None and abs(m["capture_fps"] - 29.5) < 0.01, m
+    assert m["capture_fps_src"] == PROVENANCE_MEASURED, m
+
     print("SELF_TEST_OK")
     return 0
 
@@ -2163,9 +2573,18 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help=(
             "HDMI grabber capture rate for the burst (float or '30/1'). "
-            "PNG dirs have no container fps — pass explicitly. "
-            f"If omitted, DEFAULT_ASSUMED={DEFAULT_ASSUMED_CAPTURE_FPS} and "
-            "rate stays RATE_UNSCORED unless both fps are caller-supplied."
+            "If omitted, try --capture-wall-s measurement, then PNG mtimes, "
+            f"then DEFAULT_ASSUMED={DEFAULT_ASSUMED_CAPTURE_FPS}."
+        ),
+    )
+    ap.add_argument(
+        "--capture-wall-s",
+        type=float,
+        default=None,
+        help=(
+            "wall-clock seconds of the capture command (ffmpeg start→end). "
+            "Measures cap_fps=(n_frames-1)/wall_s labelled cap=measured. "
+            "Preferred over mtime when the writer batches flushes."
         ),
     )
     ap.add_argument(
@@ -2261,13 +2680,25 @@ def main(argv: list[str] | None = None) -> int:
     except ValueError as e:
         print(f"ERROR: --capture-fps: {e}", file=sys.stderr)
         return RC_UNSCORED
+    cap_measure_meta: dict[str, Any] | None = None
     if cap_parsed is not None:
         capture_fps = cap_parsed
         capture_fps_src = PROVENANCE_CALLER
     else:
         capture_fps = DEFAULT_ASSUMED_CAPTURE_FPS
         capture_fps_src = PROVENANCE_DEFAULT_ASSUMED
-        if args.probe_capture:
+        # 1) explicit wall clock from parent capture harness
+        # 2) PNG mtime span
+        # 3) ffprobe container
+        # 4) DEFAULT_ASSUMED
+        measured = measure_capture_fps_from_paths(
+            frames, wall_s=args.capture_wall_s
+        )
+        cap_measure_meta = measured
+        if measured.get("capture_fps") is not None:
+            capture_fps = float(measured["capture_fps"])
+            capture_fps_src = str(measured["capture_fps_src"])
+        elif args.probe_capture:
             probed, how = try_probe_capture_fps(args.probe_capture)
             if probed is not None:
                 capture_fps = probed
@@ -2278,6 +2709,12 @@ def main(argv: list[str] | None = None) -> int:
                     f"cap_fps stays DEFAULT_ASSUMED={capture_fps}",
                     file=sys.stderr,
                 )
+        elif measured.get("reason"):
+            print(
+                f"WARN: cap_fps measure failed ({measured.get('reason')}); "
+                f"cap_fps stays DEFAULT_ASSUMED={capture_fps}",
+                file=sys.stderr,
+            )
 
     report = score_burst(
         frames,
@@ -2290,10 +2727,21 @@ def main(argv: list[str] | None = None) -> int:
         progress=args.progress,
     )
     report["src"] = src_label
+    if cap_measure_meta is not None:
+        report["cap_fps_measure"] = cap_measure_meta
     if args.json:
         # Drop bulky per-frame list unless explicitly wanted — keep it, parent wants evidence.
         print(json.dumps(report, indent=2))
     else:
+        if cap_measure_meta is not None:
+            print(
+                f"cap_fps_measure method={cap_measure_meta.get('method')} "
+                f"wall_s={cap_measure_meta.get('wall_s')} "
+                f"n_frames={cap_measure_meta.get('n_frames')} "
+                f"fps={cap_measure_meta.get('capture_fps')} "
+                f"src={cap_measure_meta.get('capture_fps_src')} "
+                f"reason={cap_measure_meta.get('reason')}"
+            )
         _print_human(report, src_label)
     return int(report["rc"])
 
