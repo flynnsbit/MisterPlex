@@ -8,6 +8,7 @@
 #pragma once
 
 #include <cstdint>
+#include <cstdio>
 #include <string>
 
 namespace misterplex {
@@ -65,12 +66,17 @@ inline int64_t frameLedgerResidual(int64_t frames, int64_t presents, int64_t dro
 }
 
 // Live snapshot fields emitted on the 1 Hz media telemetry line and at session_end.
+//
+// Three-way measurement (repo rule — never collapse "could not measure" into 0):
+//   measured=true  → counters are from an active session that has assembled ≥1 frame
+//   measured=false → UNKNOWN in telemetry (not residual=0, which means "accounted")
 struct FrameLedgerLive {
     int64_t frames = 0;
     int64_t presents = 0;
     int64_t drops = 0;
     int64_t publish_misses = 0;
-    int64_t residual = 0; // frames - presents - drops
+    int64_t residual = 0; // frames - presents - drops (only meaningful when measured)
+    bool measured = false;
 };
 
 inline FrameLedgerLive frameLedgerLiveOf(int64_t frames, int64_t presents, int64_t drops,
@@ -81,19 +87,40 @@ inline FrameLedgerLive frameLedgerLiveOf(int64_t frames, int64_t presents, int64
     s.drops = drops;
     s.publish_misses = publishMisses;
     s.residual = frameLedgerResidual(frames, presents, drops);
+    // A session with zero pipe frames has not measured present/drop/miss yet.
+    // residual=0 would falsely read as "healthy soak"; emit UNKNOWN instead.
+    s.measured = frames > 0;
     return s;
 }
 
 // True when residual is fully explained by counted publish misses (no other gap).
+// Unmeasured snapshots are never "explained".
 inline bool frameLedgerResidualExplainedByPublishMiss(const FrameLedgerLive& s) {
-    return s.residual == s.publish_misses;
+    return s.measured && s.residual == s.publish_misses;
 }
 
 // Compact key=value fragment for telemetry (no leading/trailing space).
+// When !measured every field is the literal UNKNOWN (not 0).
 inline std::string frameLedgerTelemetryFragment(const FrameLedgerLive& s) {
+    if (!s.measured) {
+        return "presents=UNKNOWN drops=UNKNOWN publish_misses=UNKNOWN residual=UNKNOWN";
+    }
     return "presents=" + std::to_string(s.presents) + " drops=" + std::to_string(s.drops) +
            " publish_misses=" + std::to_string(s.publish_misses) +
            " residual=" + std::to_string(s.residual);
+}
+
+// Rate field: value with one decimal, or UNKNOWN when the interval is unusable.
+// wallMs<=0 or negative deltas must not collapse to "0.0" (false health).
+inline std::string frameRateTelemetryField(const char* key, int64_t countDelta, int64_t wallMs) {
+    if (wallMs <= 0 || countDelta < 0)
+        return std::string(key) + "=UNKNOWN";
+    const double rate =
+        1000.0 * static_cast<double>(countDelta) / static_cast<double>(wallMs);
+    char buf[32];
+    // One decimal is enough for human soak reads (23.9 vs 24.0); keep width stable.
+    std::snprintf(buf, sizeof(buf), "%s=%.1f", key, rate);
+    return std::string(buf);
 }
 
 } // namespace misterplex

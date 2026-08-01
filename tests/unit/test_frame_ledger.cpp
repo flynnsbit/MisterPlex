@@ -73,10 +73,12 @@ static void testPublishMissVsDropsAndDrift() {
     CHECK(live.residual != 0);
 
     const std::string frag = misterplex::frameLedgerTelemetryFragment(live);
+    CHECK(live.measured);
     CHECK(frag.find("presents=97") != std::string::npos);
     CHECK(frag.find("drops=1") != std::string::npos);
     CHECK(frag.find("publish_misses=2") != std::string::npos);
     CHECK(frag.find("residual=2") != std::string::npos);
+    CHECK(frag.find("UNKNOWN") == std::string::npos);
 
     SimCounters healthy{};
     for (int i = 0; i < 50; ++i)
@@ -91,7 +93,30 @@ static void testPublishMissVsDropsAndDrift() {
     CHECK(h.drops == 1);
     CHECK(h.publish_misses == 0);
     CHECK(h.residual == 0);
+    CHECK(h.measured);
     CHECK(healthy.av_drift_ms == 0);
+}
+
+// residual=0 before any frames is NOT a health claim — must say UNKNOWN.
+static void testUnmeasuredIsUnknownNotZero() {
+    const auto empty = misterplex::frameLedgerLiveOf(0, 0, 0, 0);
+    CHECK(!empty.measured);
+    CHECK(empty.residual == 0); // arithmetic identity still holds
+    const std::string frag = misterplex::frameLedgerTelemetryFragment(empty);
+    CHECK(frag.find("residual=UNKNOWN") != std::string::npos);
+    CHECK(frag.find("presents=UNKNOWN") != std::string::npos);
+    CHECK(frag.find("drops=UNKNOWN") != std::string::npos);
+    CHECK(frag.find("publish_misses=UNKNOWN") != std::string::npos);
+    // Must not look like a clean soak (residual=0).
+    CHECK(frag.find("residual=0") == std::string::npos);
+    CHECK(!misterplex::frameLedgerResidualExplainedByPublishMiss(empty));
+
+    // Rate fields: unusable wall must not collapse to 0.0.
+    CHECK(misterplex::frameRateTelemetryField("vfps", 100, 0) == "vfps=UNKNOWN");
+    CHECK(misterplex::frameRateTelemetryField("pfps_1s", 24, -1) == "pfps_1s=UNKNOWN");
+    CHECK(misterplex::frameRateTelemetryField("vfps_1s", -1, 1000) == "vfps_1s=UNKNOWN");
+    const std::string ok = misterplex::frameRateTelemetryField("pfps_1s", 24, 1000);
+    CHECK(ok.find("pfps_1s=24.0") != std::string::npos);
 }
 
 static void testFileLedgerAcrossRestarts() {
@@ -143,6 +168,7 @@ static void testFileLedgerAcrossRestarts() {
 
 int main() {
     testPublishMissVsDropsAndDrift();
+    testUnmeasuredIsUnknownNotZero();
     testFileLedgerAcrossRestarts();
 
     if (fails) {

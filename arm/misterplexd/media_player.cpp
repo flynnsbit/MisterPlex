@@ -2440,6 +2440,11 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
     int64_t frameIndex = 0;
     auto t0 = std::chrono::steady_clock::now();
     auto lastLog = t0;
+    // Windowed rate baseline (updated every 1 Hz media: line). Cumulative vfps/pfps
+    // hide steady-state loss behind startup; vfps_1s/pfps_1s expose the last second.
+    auto rateWinT0 = t0;
+    int64_t rateWinFrames0 = 0;
+    int64_t rateWinPresents0 = 0;
     size_t totalBytes = 0;
 
     bool usedRawVideo = false;
@@ -3168,9 +3173,12 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                     if (profilePresent)
                         ++prof.presented;
                     if ((presentCount_ % 48) == 0) {
+                        const auto ledTx = frameLedgerLiveOf(frameIndex, presentCount_,
+                                                             droppedFrames_.load(),
+                                                             publishMisses_.load());
                         log(std::string("media: fpga frame_tx ok via ") +
                             "DDR" +
-                            " presents=" + std::to_string(presentCount_) +
+                            " " + frameLedgerTelemetryFragment(ledTx) +
                             " frames=" + std::to_string(frameIndex) +
                             " ms=" + std::to_string(static_cast<int>(fpga_.lastPushMs())));
                     }
@@ -3494,14 +3502,21 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                                       .count();
             if (now - lastLog > std::chrono::seconds(1)) {
                 lastLog = now;
-                const double vfps =
-                    wall2 > 0 ? (1000.0 * static_cast<double>(frameIndex) /
-                                 static_cast<double>(wall2))
-                              : 0.0;
-                const double pfps =
-                    wall2 > 0 ? (1000.0 * static_cast<double>(presentCount_) /
-                                 static_cast<double>(wall2))
-                              : 0.0;
+                const int64_t winMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                          now - rateWinT0)
+                                          .count();
+                const int64_t dFrames = frameIndex - rateWinFrames0;
+                const int64_t dPresents = presentCount_ - rateWinPresents0;
+                // Cumulative rates stay for trend; _1s is the soak instrument.
+                // wall2<=0 → UNKNOWN (never fake 0.0 fps as a healthy reading).
+                const std::string vfpsF = frameRateTelemetryField("vfps", frameIndex, wall2);
+                const std::string pfpsF = frameRateTelemetryField("pfps", presentCount_, wall2);
+                const std::string vfps1sF = frameRateTelemetryField("vfps_1s", dFrames, winMs);
+                const std::string pfps1sF =
+                    frameRateTelemetryField("pfps_1s", dPresents, winMs);
+                rateWinT0 = now;
+                rateWinFrames0 = frameIndex;
+                rateWinPresents0 = presentCount_;
                 const int64_t abytes = audioBytes_.load();
                 const double a_sec = static_cast<double>(abytes) / (48000.0 * 4.0);
                 const int mw = measuredDeliveryW_.load();
@@ -3510,8 +3525,7 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                                                    droppedFrames_.load(),
                                                    publishMisses_.load());
                 log("media: frames=" + std::to_string(frameIndex) +
-                    " vfps=" + std::to_string(vfps).substr(0, 4) +
-                    " pfps=" + std::to_string(pfps).substr(0, 4) +
+                    " " + vfpsF + " " + vfps1sF + " " + pfpsF + " " + pfps1sF +
                     " audio_s=" + std::to_string(a_sec).substr(0, 5) +
                     " wall_s=" + std::to_string(wall2 / 1000.0).substr(0, 5) +
                     " audio=" + (audioActive_.load() ? "on" : "off") +
