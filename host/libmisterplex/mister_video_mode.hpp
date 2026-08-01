@@ -186,34 +186,47 @@ inline MisterVideoMode parseMisterVideoModeValue(const std::string& rawIn) {
     return m;
 }
 
-// Read [Plex] video_mode= from an ini file. Prefers bare video_mode over _ntsc/_pal.
+// Read video_mode= from MiSTer.ini.
+// Provenance (honest labels — never call ini "measured"):
+//   1) [Plex] video_mode  → source "ini:plex"  (core-local override)
+//   2) else [MiSTer] video_mode → source "ini:mister" (device global; parent lab)
+//   3) else empty → ok=false (caller logs DEFAULT_ASSUMED source=none)
+// Prefers bare video_mode over _ntsc/_pal within a section. Not applied HDMI
+// (no userspace read API — r-misterfin); fabric plane uses HDMI_WIDTH/HEIGHT wires.
 inline MisterVideoMode loadMisterVideoModeFromIni(const std::string& path) {
     MisterVideoMode out;
     std::ifstream in(path);
     if (!in)
         return out;
-    bool inPlex = false;
+    enum class Sec { Other, Plex, Mister };
+    Sec sec = Sec::Other;
+    std::string plexRaw;
+    std::string misterRaw;
+    std::string plexAlt;
+    std::string misterAlt;
     std::string line;
-    std::string bestRaw;
     while (std::getline(in, line)) {
         std::string t = detail::trimCopy(line);
         if (t.empty() || t[0] == ';' || t[0] == '#')
             continue;
         if (t.front() == '[') {
-            // section
-            std::string sec = t;
-            if (!sec.empty() && sec.back() == ']')
-                sec.pop_back();
-            if (!sec.empty() && sec.front() == '[')
-                sec.erase(sec.begin());
-            // case-insensitive [Plex]
-            std::string low = sec;
+            std::string s = t;
+            if (!s.empty() && s.back() == ']')
+                s.pop_back();
+            if (!s.empty() && s.front() == '[')
+                s.erase(s.begin());
+            std::string low = s;
             for (char& c : low)
                 c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-            inPlex = (low == "plex");
+            if (low == "plex")
+                sec = Sec::Plex;
+            else if (low == "mister")
+                sec = Sec::Mister;
+            else
+                sec = Sec::Other;
             continue;
         }
-        if (!inPlex)
+        if (sec != Sec::Plex && sec != Sec::Mister)
             continue;
         const auto eq = t.find('=');
         if (eq == std::string::npos)
@@ -222,20 +235,41 @@ inline MisterVideoMode loadMisterVideoModeFromIni(const std::string& path) {
         std::string val = detail::trimCopy(t.substr(eq + 1));
         for (char& c : key)
             c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-        if (key == "video_mode") {
-            bestRaw = val; // definitive
-            break;
-        }
-        if (key == "video_mode_ntsc" || key == "video_mode_pal") {
-            if (bestRaw.empty())
-                bestRaw = val;
-        }
+        auto take = [&](std::string& primary, std::string& alt) {
+            if (key == "video_mode")
+                primary = val;
+            else if (key == "video_mode_ntsc" || key == "video_mode_pal") {
+                if (alt.empty())
+                    alt = val;
+            }
+        };
+        if (sec == Sec::Plex)
+            take(plexRaw, plexAlt);
+        else
+            take(misterRaw, misterAlt);
     }
-    if (bestRaw.empty())
+    const std::string* best = nullptr;
+    const char* tag = nullptr;
+    if (!plexRaw.empty()) {
+        best = &plexRaw;
+        tag = "ini:plex";
+    } else if (!plexAlt.empty()) {
+        best = &plexAlt;
+        tag = "ini:plex";
+    } else if (!misterRaw.empty()) {
+        best = &misterRaw;
+        tag = "ini:mister";
+    } else if (!misterAlt.empty()) {
+        best = &misterAlt;
+        tag = "ini:mister";
+    }
+    if (!best)
         return out;
-    out = parseMisterVideoModeValue(bestRaw);
-    if (out.ok)
-        out.source = path;
+    out = parseMisterVideoModeValue(*best);
+    if (out.ok) {
+        // tag is authoritative provenance; path is secondary detail in raw logs
+        out.source = tag ? tag : "ini";
+    }
     return out;
 }
 

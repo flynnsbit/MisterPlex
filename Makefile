@@ -71,6 +71,7 @@ unit-unlocked: unit-rollcall preflight $(ROOT)/build/test_cadence $(ROOT)/build/
 	python3 $(ROOT)/tests/unit/test_panel_empty_center_static.py
 	python3 $(ROOT)/tests/unit/test_stop_idle_canvas_static.py
 	python3 $(ROOT)/tests/unit/test_chrome_output_layout_static.py
+	python3 $(ROOT)/tests/unit/test_plex_chrome_write_path_static.py
 	python3 $(ROOT)/tests/unit/test_overlay_leaves_cleanframe_static.py
 	$(ROOT)/build/test_input_mailbox
 	$(ROOT)/build/test_pixel_format

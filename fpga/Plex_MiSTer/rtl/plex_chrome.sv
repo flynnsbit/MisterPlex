@@ -21,7 +21,10 @@
 module plex_chrome #(
     parameter int MAX_CMDS = 64,
     parameter int FONT_W   = 8,
-    parameter int FONT_H   = 8
+    parameter int FONT_H   = 8,
+    // BOOT_DEMO: preload one solid '#' glyph so 1080p glass can score body_scale
+    // without ARM PLXC. Disabled when ARM drives cfg_seq/list_we.
+    parameter bit BOOT_DEMO = 1'b0
 ) (
     input  wire        clk_hdmi,
     input  wire        reset,
@@ -113,12 +116,17 @@ module plex_chrome #(
         end
     endfunction
 
-    (* ramstyle = "no_rw_check, M10K" *) reg [63:0] list_a [0:MAX_CMDS-1];
-    (* ramstyle = "no_rw_check, M10K" *) reg [63:0] list_b [0:MAX_CMDS-1];
+    (* ramstyle = "no_rw_check, M10K" *) (* noprune *) (* preserve *) reg [63:0] list_a [0:MAX_CMDS-1];
+    (* ramstyle = "no_rw_check, M10K" *) (* noprune *) (* preserve *) reg [63:0] list_b [0:MAX_CMDS-1];
     reg        live_bank;
     reg [15:0] latched_seq;
     reg [7:0]  latched_count;
     reg        latched_en;
+
+    // Cmd pack: [7:0]=op [23:8]=x [39:24]=y [47:40]=code; op=2 glyph
+    // BOOT_DEMO: op=2, x=64, y=64, code='#' at list_a[0] (live_bank=0 reads list_a)
+    localparam [63:0] BOOT_DEMO_CMD =
+        {8'h00, 8'h00, 8'h23, 16'd64, 16'd64, 8'd2};
 
     integer li;
     initial begin
@@ -126,10 +134,20 @@ module plex_chrome #(
             list_a[li] = 64'd0;
             list_b[li] = 64'd0;
         end
-        live_bank     = 1'b0;
-        latched_seq   = 16'd0;
-        latched_count = 8'd0;
-        latched_en    = 1'b0;
+        // live_bank=0 reads list_a (see hit mux). Demo MUST land in list_a or
+        // glass gets NO-DATA (c74c6863: list_b preload + live_bank=0 = elided/invisible).
+        if (BOOT_DEMO) begin
+            list_a[0]     = BOOT_DEMO_CMD;
+            live_bank     = 1'b0;
+            latched_seq   = 16'd1;
+            latched_count = 8'd1;
+            latched_en    = 1'b1;
+        end else begin
+            live_bank     = 1'b0;
+            latched_seq   = 16'd0;
+            latched_count = 8'd0;
+            latched_en    = 1'b0;
+        end
     end
 
     always @(posedge clk_hdmi) begin
@@ -145,10 +163,17 @@ module plex_chrome #(
     always @(posedge clk_hdmi) begin
         vs_d <= vs_in;
         if (reset) begin
-            latched_en    <= 1'b0;
-            latched_seq   <= 16'd0;
-            latched_count <= 8'd0;
-            live_bank     <= 1'b0;
+            if (BOOT_DEMO) begin
+                latched_en    <= 1'b1;
+                latched_seq   <= 16'd1;
+                latched_count <= 8'd1;
+                live_bank     <= 1'b0;
+            end else begin
+                latched_en    <= 1'b0;
+                latched_seq   <= 16'd0;
+                latched_count <= 8'd0;
+                live_bank     <= 1'b0;
+            end
         end else if (vs_in && !vs_d) begin
             if (cfg_seq != latched_seq) begin
                 latched_seq   <= cfg_seq;

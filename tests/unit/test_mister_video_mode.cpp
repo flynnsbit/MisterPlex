@@ -50,7 +50,7 @@ int main() {
         CHECK(!m.ok);
     }
 
-    // Ini [Plex] section
+    // Ini [Plex] section wins over [MiSTer]
     {
         const char* path = "build/test_mister_ini_plex.ini";
         std::system("mkdir -p build");
@@ -62,6 +62,29 @@ int main() {
         const auto m = loadMisterVideoModeFromIni(path);
         CHECK(m.ok);
         CHECK(m.width == 1920 && m.height == 1440 && m.index == 12);
+        CHECK(m.source == "ini:plex");
+    }
+    // Parent lab: only [MiSTer] video_mode=8 (was source=none / DEFAULT_ASSUMED)
+    {
+        const char* path = "build/test_mister_ini_mister_only.ini";
+        {
+            std::ofstream o(path);
+            o << "[MiSTer]\nvideo_mode=8\nvideo_mode_ntsc=8\n";
+        }
+        const auto m = loadMisterVideoModeFromIni(path);
+        CHECK(m.ok);
+        CHECK(m.width == 1920 && m.height == 1080 && m.index == 8);
+        CHECK(m.source == "ini:mister");
+    }
+    // Empty → not ok (DEFAULT_ASSUMED path)
+    {
+        const char* path = "build/test_mister_ini_empty.ini";
+        {
+            std::ofstream o(path);
+            o << "[Plex]\nfb_terminal=0\n";
+        }
+        const auto m = loadMisterVideoModeFromIni(path);
+        CHECK(!m.ok);
     }
 
     // Output layout §4

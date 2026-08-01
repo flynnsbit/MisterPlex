@@ -1,23 +1,21 @@
-# w-osd-hires STATUS
+# w-osd-hires status
 
-## Tip
-See `git rev-parse --short HEAD` on branch `w-osd-hires`.
+## Summary (≤10 lines)
+1. Bug #2 still OPEN on glass — bank 624×480 chrome stretched (plane=0).
+2. HALF A DONE: ini `[MiSTer]` fallback + honest `source=ini:mister|ini:plex|none`.
+3. HALF B gate DONE: RED BAD rc=1, GREEN GOOD rc=0, FIT_INTEG sys_top still RED rc=1.
+4. RTL: BOOT_DEMO → list_a[0]; noprune list RAM; product needs non-const list_we.
+5. c74c6863 NO-DATA mechanised: list_we=0 + wrong bank; gate encodes both.
+6. unit-unlocked true rc=0; test_mister_video_mode true rc=0; chrome_sim true rc=0.
+7. Daemon rebuilt; parent deploy for log line only — does NOT fix glass sharpness.
+8. No Quartus request. ONE-fit waits w-fit-1 GOOD sys_top wire + telem gate.
 
-## User bug #2
-**NOT FIXED on glass** until post-ascal `plex_chrome` + parent 1080p score.
-ARM bank path paints but stretches — evidence `overlay_lowres_stopped_9ce2c2d1.png`.
-
-## Design / sim (this lane)
-- `docs/plex-chrome-plane-rtl-proposal.md` — tap, PLXC, budget
-- `docs/plex-chrome-glass-criterion.md` — falsifiable G-CELL / G-RUN
-- `rtl/plex_chrome.sv` — fit-ready, **NOT in QSF**
-- `test_plex_chrome_sim` — RED bank-stretch rc path; GREEN fabric; FREEZE 624×480
-
-## Budget BINDING
-t7b/8fdf: ALM 23585 M10K 465 DSP 44
-PRODUCT_NO_STUB: −9217 ALM −268 M10K → ~356 free
-Chrome V1: +12±4 M10K cap24, +2.5k±1k ALM, DSP 0
-Do not assume output_files 21822/DSP74 until w-fit-1 settles 8fdf.
-
-## ONE-fit
-Coordinate w-fit-1 PRODUCT_NO_STUB + this plane (+ w-geom). Quartus hold ON — no fit request.
+## Evidence (direct rc)
+- BAD subject: true rc=1
+- GOOD subject: true rc=0
+- full write-path gate: true rc=0
+- w-fit-integ sys_top: true rc=1 (still c74c dead write)
+- test_mister_video_mode: true rc=0
+- test_plex_chrome_sim: true rc=0
+- make unit-unlocked: true rc=0
+- make arm-plexd: true rc=0

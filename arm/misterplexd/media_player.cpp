@@ -50,9 +50,10 @@ inline bool urlHasUniversalOffset(const std::string& url) {
     return qs.find("offset=") != std::string::npos;
 }
 
-// Measured MiSTer OUTPUT geometry for logs (+ plane=1 layout when HW lives).
-// Source: /media/fat/MiSTer.ini [Plex] video_mode= via loadMisterVideoMode().
-// NOT live ascal WxH (no SPI read on this RBF). Authoring canvas for plane=0
+// OUTPUT geometry for logs (+ plane=1 layout when HW lives).
+// Provenance via loadMisterVideoMode(): ini:plex | ini:mister | none.
+// NOT live ascal WxH (no SPI/register read API — never label source=measured
+// unless a real fabric/register path is wired). Authoring canvas for plane=0
 // remains silicon bank 624×480 — never invent HDMI size for F1 bake.
 // Missing ini → DEFAULT_ASSUMED (output unknown; bank authoring unchanged).
 inline std::string overlayOutputGeomTag() {
@@ -69,10 +70,11 @@ inline std::string overlayOutputGeomTag() {
     if (!kMode.ok) {
         return std::string(" output=DEFAULT_ASSUMED mode=? source=none") + kAuth;
     }
+    const std::string src = kMode.source.empty() ? std::string("ini") : kMode.source;
     return std::string(" output=") + std::to_string(kMode.width) + "x" +
            std::to_string(kMode.height) + " mode=" +
            (kMode.index >= 0 ? std::to_string(kMode.index) : std::string("custom")) +
-           " source=ini" + kAuth;
+           " source=" + src + kAuth;
 }
 
 inline std::string withUniversalOffset(const std::string& url, int64_t offsetMs) {
