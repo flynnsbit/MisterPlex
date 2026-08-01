@@ -983,3 +983,102 @@ corrected. Slope and A/B deltas remain the publishable quantities.
 
 Parent position on slope canceling fixed latency: **legitimate**, not a proxy — same physical
 pairs, derivative removes the additive constant.
+
+---
+
+## Startup drops vs lipsync offset (H-DROP)
+
+### What the 1 Hz telemetries established
+
+On rk8 360 s 480p repeats (`tele_1/2/3` + `avsync_rep1/2/3`):
+
+| run | startup_drops | transitions after first sample | median_offset_ms (raw) | steady residual/pub_miss |
+|-----|--------------:|-------------------------------:|-----------------------:|--------------------------|
+| rep1 | 15 | 0 (flat from wall_s≈7) | −316.0 | 0 / 0 |
+| rep2 | 12 | 0 | −196.7 | 0 / 0 |
+| rep3 | 18 | 0 | −196.0 | 0 / 0 |
+
+Every drop is a **startup transient**. Ledgers close (`frames − presents − drops = 0`). The old
+“steady-state sawtooth, one drop per 30 s” reading is **falsified** — it was inference from an
+EOF total, not a time series.
+
+### H-DROP (pre-registered)
+
+`offset_ms ≈ a − (1000/24)·startup_drops` with frame quantum **41.667 ms** at measured 24.000 fps.
+
+**What n=3 can and cannot establish**
+
+- A 2-point fit is a **tautology** (zero residual by construction). It cannot validate H-DROP.
+- The 3rd paired run is the first out-of-sample test (one residual degree of freedom).
+- Confidence is the **OOS residual in ms** vs within-run median noise (~few ms), not “119 vs 125
+  both fit in ±42”.
+
+**Measured OOS (fit on rep1+rep2, predict rep3)**
+
+| model | rep3 predicted | rep3 measured | residual |
+|-------|---------------:|--------------:|---------:|
+| free 2-pt slope ≈ −39.78 ms/drop | −435.3 | −196.0 | **+239.3 ms** |
+| forced −41.667 ms/drop | −443.8 | −196.0 | **+247.8 ms** |
+| 3-pt OLS | slope **+0.11** ms/drop, R²≈0.00002, pearson r≈0.005 | — | s_yx≈98 ms |
+
+**Verdict: H-DROP REJECTED.** rep2 (drops=12) and rep3 (drops=18) share the same offset cluster
+(~−196) despite Δdrops=+6 (expected ~250 ms under H-DROP).
+
+Re-run:
+
+```bash
+python3 tools/analyze_drop_offset.py --defaults
+# self-test: rc=0 on consistent synthetic H-DROP, rc=2 on broken OOS, rc=77 on missing
+python3 tools/analyze_drop_offset.py --self-test
+```
+
+### Alternatives evaluated from the data (not speculation)
+
+1. **One prefill quantum (100.0 ms)** — `kFeedTargetBytes=19200` at 48000·4 B/s
+   (`mraudio_status.hpp`). Between-cluster jump |Δ(rep2−rep1)|=**119.33 ms**:
+   - vs 100 ms → err **19.33 ms**
+   - vs 3·frame (125 ms) → err **5.67 ms**
+   - vs prefill+½frame (120.83) → err **1.5 ms** (descriptive only; not a mechanism proof)
+   Steady-state `queued_ms_median` is **~100 ms on all three runs** (range 0.23 ms). Identical
+   depth does **not** kill a one-shot **startup phase** equal to one quantum (depth ≠ content
+   phase). It does kill “different steady prefill depth between runs.”
+
+2. **`AV_PRESENT_LEAD_MS` / `av_drift_ms` deadband** — tele `av_drift_ms` medians sit ~−30 on
+   all three runs. That metric is self-graded and was already proven blind to real lipsync; it
+   does **not** move with the −316 vs −196 cluster split. Not an explanation of the jump.
+
+3. **`AUDIO_DELAY_MS` / 117 ms hole** — none of these long runs were an adelay A/B; conf path
+   cannot be blamed from this dataset. Unknown — would need silence-head + instrument A/B.
+
+4. **Bistable absolute phase** — data favor **two offset modes** (~−316 and ~−196, gap ~120 ms)
+   with startup_drops **not** selecting the mode (12 and 18 → same mode). Mechanism of the mode
+   flip is **unresolved** from these files alone.
+
+**Discrimination that actually works** (42 ms gate cannot separate 100 vs 125):
+
+- **D1 (already live):** vary drops inside a mode — done; kills linear H-DROP.
+- **D2:** change feed-target ms (50 / 100 / 150) across sessions; mode gap tracks feed → prefill
+  phase; gap stays ~3 frames independent of feed → frame-quantum phase.
+- **D3:** log clock-origin / hold-release / `pcm_silence_head` at start vs cluster id.
+
+### Within-run structure (drops out as cause)
+
+With steady drops flat, residual slope remains:
+
+| run | per-pair slope ms/s | ρ₁ | SE_AR1 | t_AR1 | block10 slope | block10 t_AR1 |
+|-----|--------------------:|---:|-------:|------:|--------------:|--------------:|
+| rep1 | −0.108 | 0.34 | 0.014 | −7.9 | −0.106 | −2.81 |
+| rep2 | −0.088 | 0.33 | 0.014 | −6.3 | −0.087 | −2.36 |
+| rep3 | −0.093 | 0.39 | 0.016 | −5.7 | −0.087 | −2.27 |
+| 480_330 | −0.094 | 0.50 | 0.019 | −5.0 | −0.088 | −2.04 |
+| 240_330 | −0.122 | 0.45 | 0.014 | −8.8 | −0.139 | −3.70 |
+
+All slopes negative and clustered. AR1-adjusted block-median t-stats still exceed ~2. Slow
+drift ~0.09–0.12 ms/s × 320 s ≈ 30–40 ms matches early-vs-late fifth median gaps. **Not**
+explained by drops.
+
+### 240p arm
+
+`avsync_240_330.json` median **−304.7** (near the −316 mode). **No telemetry** → startup_drops
+**unresolvable**. Implied drops under a rejected 2-pt H-DROP invert (~14.7) are
+`DEFAULT_ASSUMED` model fiction — do not publish as measurement.
