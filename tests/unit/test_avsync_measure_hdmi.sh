@@ -172,6 +172,24 @@ else
   fail=$((fail + 1))
 fi
 
+# ERROR 17 class: DEFAULT_ASSUMED tol must NOT silently score → rc=77
+rc="$(run_tool refuse_def --input "$OUT/inj_0.mkv")"
+echo "CASE refuse_default_tol true_rc=$rc"
+check_rc refuse_def 77 "$rc"
+if grep -q 'REFUSE_DEFAULT_ASSUMED\|CANNOT_MEASURE absolute_lipsync' "$OUT/run_refuse_def/stdout.txt" \
+   && grep -q 'pair_window_s=.*src=DEFAULT_ASSUMED\|pair_window_s=0.9' "$OUT/run_refuse_def/stdout.txt"; then
+  echo "PASS refuse_default banners+pair_window"
+  pass=$((pass + 1))
+else
+  echo "FAIL refuse_default missing banners"
+  tail -n 30 "$OUT/run_refuse_def/stdout.txt" | sed 's/^/  | /'
+  fail=$((fail + 1))
+fi
+# With --allow-default-score, same file may PASS
+rc="$(run_tool allow_def --input "$OUT/inj_0.mkv" --allow-default-score)"
+echo "CASE allow_default_score true_rc=$rc"
+check_rc allow_def 0 "$rc"
+
 # calibration round-trip: treat 0 ms file as instrument baseline, apply to +250
 mkdir -p "$OUT/cal" "$OUT/cal_apply"
 set +e

@@ -30,16 +30,30 @@ grabber does not expose.
 
 GRABBER WARM-UP
 ---------------
-MacroSilicon MS2109 (534d:2109) emits ~11–15 uniform junk frames at start
-(min==max luma). Default --warmup-frames=15 discards them from analysis
-after capture. File/--input mode defaults warmup to 0 (fixture has no junk).
+MacroSilicon MS2109 (534d:2109) emits ~13–15 uniform junk frames at start
+(min==max luma, often mean=7). Default --warmup-frames=20 discards them from
+analysis after capture. Live capture must yield >=50 decoded frames or the
+run is UNSCORED (short burst of warm-up is NO-DATA, never a black screen).
+File/--input mode defaults warmup to 0 (fixture has no junk).
+
+WHAT THIS TOOL CANNOT MEASURE (read before promoting a number)
+--------------------------------------------------------------
+  - Absolute lipsync to the device: fixed grabber A/V latency B is unknown.
+    median_offset_ms without a known-zero calibration is always
+    tag=raw_uncalibrated. B cancels in same-rig DIFFERENCES and in slope —
+    that is why a 117 ms cluster separation is solid while the absolute
+    median is not. Never promote raw_uncalibrated to an absolute claim.
+  - Daemon av_drift_ms: servo deadband readout, BLIND to the 117 ms defect.
+  - md5 / mean-luma freeze or health (invalid both directions on this project).
 
 RETURN CODES
 ------------
-  0  = measured AND within tolerance (offset + slope)
+  0  = measured AND within tolerance (offset + slope), scoring inputs OK
   2  = measured AND out of tolerance (real FAIL — offset or drift)
-  77 = UNSCORED / could-not-measure (capture fail, silence, static,
-       too few pairs). Never collapsed into 0 or 2.
+  77 = UNSCORED / could-not-measure / REFUSE_DEFAULT_ASSUMED (capture fail,
+       silence, static, too few pairs, warm-up-only, or PASS/FAIL would rest
+       on DEFAULT_ASSUMED without --allow-default-score).
+       Never collapsed into 0 or 2. A measured FAIL never decays to 77.
 
 Every printed value is tagged measured | caller_supplied | DEFAULT_ASSUMED.
 
@@ -94,7 +108,10 @@ DEFAULT_AUDIO_DEV = "hw:0,0"  # ALSA; MS2109 parent-measured card 0 device 0
 DEFAULT_VIDEO_SIZE = "1920x1080"
 DEFAULT_CAP_FPS = 60.0  # half the 30 fps frame quant; still MS2109-capable
 DEFAULT_DURATION_S = 20.0
-DEFAULT_WARMUP_FRAMES = 15  # measured MS2109 junk; parent lab
+# Parent lab: MS2109 emits ~13–15 uniform luma=7 warm-up frames. Discard 20.
+# Capture must retain >=50 frames after discard or the run is NO-DATA.
+DEFAULT_WARMUP_FRAMES = 20  # measured MS2109 junk floor + margin; parent lab
+DEFAULT_MIN_CAPTURE_FRAMES = 50  # live: UNSCORED if fewer decoded frames
 DEFAULT_AUDIO_SR = 48000
 DEFAULT_TOL_MS = 42.0  # one 24p frame; matches G-AV3 in MILESTONE_AVSYNC_SEEK
 DEFAULT_SLOPE_TOL_MS_PER_S = 0.5  # 30 ms/min; constant lag is OK, drift is not
@@ -102,10 +119,15 @@ DEFAULT_MIN_PAIRS = 4
 # Default 0.9 s (was 0.45). Parent hardware: |offset|~168 ms is fine at 0.45,
 # but larger offsets silently dropped pairs (28/40) — degraded n_pairs is
 # could-not-measure, not a result. 0.9 is still < half the 1 Hz gap (no double-pair).
+# REQUIRED behaviour is the default; do not ship a default that mispairs.
 DEFAULT_PAIR_WINDOW_S = 0.9
 DEFAULT_BEEP_HZ = 1000.0
 DEFAULT_BEEP_MS = 50.0
 CAL_FORMAT = "misterplex.avsync_hdmi_calibration.v1"
+
+# Load-bearing scoring inputs that must not silently ride DEFAULT_ASSUMED
+# (PARENT ERROR 17 class). Without --allow-default-score, PASS/FAIL is refused.
+SCORE_DEFAULT_KEYS = ("tol_ms", "slope_tol_ms_per_s")
 
 RC_PASS = 0
 RC_FAIL = 2
@@ -764,6 +786,28 @@ def load_calibration(path: Path) -> tuple[float, dict[str, Any]]:
 # ---------------------------------------------------------------------------
 # Reporting
 # ---------------------------------------------------------------------------
+def print_limitations_banner() -> None:
+    """Always-on: what this instrument cannot claim (PARENT ERROR 17 class)."""
+    print("=== LIMITATIONS (not optional) ===")
+    print(
+        "CANNOT_MEASURE absolute_lipsync: fixed grabber latency B unknown; "
+        "median without known-zero cal is tag=raw_uncalibrated only"
+    )
+    print(
+        "CAN_MEASURE same_rig_delta_ms and slope_ms_per_s: B cancels "
+        "(cluster separation / drift) — tag=measured"
+    )
+    print(
+        "CANNOT_MEASURE via av_drift_ms: daemon servo deadband is BLIND to "
+        "~117 ms HDMI clusters (parent-measured)"
+    )
+    print(
+        "DEFAULT_ASSUMED values are NEVER measurements; PASS/FAIL refused "
+        "unless every scoring threshold is caller_supplied or "
+        "--allow-default-score is set"
+    )
+
+
 def print_report(
     res: MeasureResult,
     *,
@@ -775,13 +819,17 @@ def print_report(
     min_pairs_src: str,
     warmup_frames: int,
     warmup_src: str,
+    pair_window_s: float,
+    pair_window_src: str,
     cal_ms: float | None,
     cal_path: str | None,
     mode: str,
+    allow_default_score: bool,
     extra: dict[str, Any] | None = None,
 ) -> int:
     """Print tagged report; return rc."""
     print("=== avsync_measure_hdmi ===")
+    print_limitations_banner()
     print(f"mode={mode} src=caller_supplied")
     print(
         "sign_convention: offset_ms=(t_audio_onset - t_video_flash)*1000; "
@@ -789,6 +837,7 @@ def print_report(
     )
     print(f"capture_path={res.capture_path} src=measured")
     print(f"warmup_frames={_tag(warmup_frames, warmup_src)}")
+    print(f"pair_window_s={_tag(pair_window_s, pair_window_src)}")
     if res.flash_meta:
         wd = res.flash_meta.get("warmup_frames_discarded")
         if wd is not None:
@@ -920,8 +969,39 @@ def print_report(
     print(f"slope_within_tol={abs_slope <= slope_tol} src=measured")
     print(f"slope_gate_active={slope_gate_active} src=DEFAULT_ASSUMED")
 
+    # Only thresholds that participate in THIS verdict are load-bearing.
+    # slope_tol is idle when slope_gate_active is false (short captures).
+    default_score_keys = []
+    if tol_src == "DEFAULT_ASSUMED":
+        default_score_keys.append("tol_ms")
+    if slope_gate_active and slope_tol_src == "DEFAULT_ASSUMED":
+        default_score_keys.append("slope_tol_ms_per_s")
+    print(
+        f"scoring_defaults={default_score_keys or 'none'} "
+        f"allow_default_score={allow_default_score} src=measured"
+    )
+    print(f"tol_ms_src={tol_src} slope_tol_src={slope_tol_src}")
+
+    # ERROR 17 class: never silently PASS/FAIL on DEFAULT_ASSUMED thresholds.
+    if default_score_keys and not allow_default_score:
+        print(
+            f"VERDICT=REFUSE_DEFAULT_ASSUMED rc={RC_UNSCORED} "
+            f"reason=score_would_use_DEFAULT_ASSUMED:{','.join(default_score_keys)} "
+            f"(pass --tol-ms/--slope-tol-ms-per-s or --allow-default-score)"
+        )
+        print(
+            f"measured_would_have_been="
+            f"{'PASS' if (offset_ok and slope_ok) else 'FAIL'} "
+            f"abs_median_ms={abs_med:.4f} tag={corrected_tag} src=measured"
+        )
+        if extra:
+            for k, v in extra.items():
+                print(f"{k}={v}")
+        return RC_UNSCORED
+
     if offset_ok and slope_ok:
-        print(f"VERDICT=PASS rc={RC_PASS}")
+        tag = "caller_supplied_score" if not default_score_keys else "DEFAULT_ASSUMED_IN_SCORE"
+        print(f"VERDICT=PASS rc={RC_PASS} score_tag={tag}")
         rc = RC_PASS
     else:
         why = []
@@ -929,7 +1009,9 @@ def print_report(
             why.append(f"abs_median={abs_med:.2f}>{tol_ms}")
         if slope_gate_active and not (abs_slope <= slope_tol):
             why.append(f"abs_slope={abs_slope:.4f}>{slope_tol}")
-        print(f"VERDICT=FAIL rc={RC_FAIL} reason={','.join(why)}")
+        # Measured FAIL must never decay to 77 even if defaults were allowed.
+        tag = "caller_supplied_score" if not default_score_keys else "DEFAULT_ASSUMED_IN_SCORE"
+        print(f"VERDICT=FAIL rc={RC_FAIL} reason={','.join(why)} score_tag={tag}")
         rc = RC_FAIL
 
     if extra:
@@ -969,15 +1051,38 @@ def build_arg_parser() -> argparse.ArgumentParser:
     ap.add_argument("--cap-fps", type=float, default=None, help=f"default {DEFAULT_CAP_FPS}")
     ap.add_argument(
         "--warmup-frames", type=int, default=None,
-        help=f"Discard leading frames (live default {DEFAULT_WARMUP_FRAMES}; file default 0)",
+        help=(
+            f"Discard leading frames (live default {DEFAULT_WARMUP_FRAMES}; "
+            "file default 0). Live MS2109 needs >=20."
+        ),
+    )
+    ap.add_argument(
+        "--min-capture-frames", type=int, default=None,
+        help=(
+            f"Live: UNSCORED if decoded frames < N (default {DEFAULT_MIN_CAPTURE_FRAMES})"
+        ),
     )
     ap.add_argument(
         "--tol-ms", type=float, default=None,
-        help=f"Pass if abs(median offset) <= tol (default {DEFAULT_TOL_MS} = one 24p frame)",
+        help=(
+            f"Pass if abs(median offset) <= tol (library default {DEFAULT_TOL_MS}). "
+            "Without this or --allow-default-score, PASS/FAIL is refused (ERROR 17)."
+        ),
     )
     ap.add_argument(
         "--slope-tol-ms-per-s", type=float, default=None,
-        help=f"Pass if abs(slope) <= tol (default {DEFAULT_SLOPE_TOL_MS_PER_S} ms/s)",
+        help=(
+            f"Pass if abs(slope) <= tol (library default {DEFAULT_SLOPE_TOL_MS_PER_S}). "
+            "Same refuse-default discipline as --tol-ms."
+        ),
+    )
+    ap.add_argument(
+        "--allow-default-score",
+        action="store_true",
+        help=(
+            "Permit PASS/FAIL when tol/slope-tol are DEFAULT_ASSUMED. "
+            "Default is refuse (rc=77) so a constant cannot look like a measurement."
+        ),
     )
     ap.add_argument(
         "--min-pairs", type=int, default=None,
@@ -985,7 +1090,10 @@ def build_arg_parser() -> argparse.ArgumentParser:
     )
     ap.add_argument(
         "--pair-window-s", type=float, default=None,
-        help=f"Max |t_beep-t_flash| to pair (default {DEFAULT_PAIR_WINDOW_S})",
+        help=(
+            f"Max |t_beep-t_flash| to pair (default {DEFAULT_PAIR_WINDOW_S}). "
+            "0.45 mispairs large offsets — default is the correct behaviour."
+        ),
     )
     ap.add_argument("--beep-hz", type=float, default=None, help=f"default {DEFAULT_BEEP_HZ}")
     ap.add_argument(
@@ -1030,10 +1138,15 @@ def main(argv: list[str] | None = None) -> int:
         args.slope_tol_ms_per_s, DEFAULT_SLOPE_TOL_MS_PER_S, "slope_tol"
     )
     min_pairs, min_pairs_src = pick(args.min_pairs, DEFAULT_MIN_PAIRS, "min_pairs")
-    pair_window, _pw_src = pick(args.pair_window_s, DEFAULT_PAIR_WINDOW_S, "pair_window")
+    pair_window, pair_window_src = pick(
+        args.pair_window_s, DEFAULT_PAIR_WINDOW_S, "pair_window"
+    )
     beep_hz, _bh_src = pick(args.beep_hz, DEFAULT_BEEP_HZ, "beep_hz")
+    min_cap_frames, min_cap_src = pick(
+        args.min_capture_frames, DEFAULT_MIN_CAPTURE_FRAMES, "min_capture_frames"
+    )
 
-    # Warmup: live capture defaults 15; file input defaults 0
+    # Warmup: live capture defaults 20; file input defaults 0
     if args.warmup_frames is not None:
         warmup, warmup_src = args.warmup_frames, "caller_supplied"
     elif args.input is not None:
@@ -1043,6 +1156,8 @@ def main(argv: list[str] | None = None) -> int:
 
     out_dir: Path = args.out
     out_dir.mkdir(parents=True, exist_ok=True)
+
+    print_limitations_banner()
 
     cal_ms: float | None = None
     cal_path: str | None = None
@@ -1072,6 +1187,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"video_size={_tag(video_size, vsz_src)}")
         print(f"cap_fps={_tag(cap_fps, fps_src)}")
         print(f"duration_s={_tag(duration, duration_src)}")
+        print(f"min_capture_frames={_tag(min_cap_frames, min_cap_src)}")
+        print(f"pair_window_s={_tag(pair_window, pair_window_src)}")
         # Preflight devices
         if not Path(video_dev).exists():
             print(f"VERDICT=UNSCORED rc={RC_UNSCORED}")
@@ -1099,6 +1216,30 @@ def main(argv: list[str] | None = None) -> int:
         min_pairs=min_pairs,
         beep_hz=beep_hz,
     )
+
+    # Live warm-up / short-burst guard: need enough decoded frames.
+    n_decoded = None
+    if isinstance(res.flash_meta, dict):
+        # warmup_frames_discarded + remaining is not total; use fps_nom path via reason
+        pass
+    # Count from capture: re-probe cheaply only for live min-frames gate
+    if mode != "file":
+        try:
+            luma_chk, _t_chk, vmeta_chk = load_video_luma(cap_path)
+            n_decoded = int(vmeta_chk.get("n") or luma_chk.size)
+            print(f"decoded_frames={n_decoded} src=measured")
+            print(f"min_capture_frames={_tag(min_cap_frames, min_cap_src)}")
+            if n_decoded < int(min_cap_frames):
+                print(f"VERDICT=UNSCORED rc={RC_UNSCORED}")
+                print(
+                    f"reason=too_few_capture_frames n={n_decoded} "
+                    f"min={min_cap_frames} (warm-up-only bursts are NO-DATA)"
+                )
+                return RC_UNSCORED
+        except RuntimeError as e:
+            print(f"VERDICT=UNSCORED rc={RC_UNSCORED}")
+            print(f"reason={e}")
+            return RC_UNSCORED
 
     # Calibrate mode: on success write calibration file; still report rc
     if args.calibrate and res.ok and res.median_offset_ms is not None:
@@ -1131,9 +1272,12 @@ def main(argv: list[str] | None = None) -> int:
         min_pairs_src=min_pairs_src,
         warmup_frames=warmup,
         warmup_src=warmup_src,
+        pair_window_s=pair_window,
+        pair_window_src=pair_window_src,
         cal_ms=cal_ms,
         cal_path=cal_path,
         mode=mode,
+        allow_default_score=bool(args.allow_default_score),
     )
 
     payload = {
@@ -1144,15 +1288,25 @@ def main(argv: list[str] | None = None) -> int:
             "offset_ms=(t_audio_onset-t_video_flash)*1000; "
             "positive=audio LATE (lags); negative=audio EARLY (leads)"
         ),
+        "limitations": {
+            "absolute_lipsync": "CANNOT_MEASURE without known-zero cal into grabber",
+            "raw_median_tag": "raw_uncalibrated",
+            "same_rig_delta": "CAN_MEASURE (B cancels)",
+            "av_drift_ms": "BLIND to ~117 ms HDMI clusters",
+        },
         "result": asdict(res),
         "tol_ms": tol_ms,
         "tol_ms_src": tol_src,
         "slope_tol_ms_per_s": slope_tol,
         "slope_tol_src": slope_tol_src,
+        "pair_window_s": pair_window,
+        "pair_window_src": pair_window_src,
+        "allow_default_score": bool(args.allow_default_score),
         "calibration_ms": cal_ms,
         "calibration_path": cal_path,
         "warmup_frames": warmup,
         "warmup_src": warmup_src,
+        "decoded_frames": n_decoded,
     }
     if cal_ms is not None and res.median_offset_ms is not None:
         payload["median_offset_ms_corrected"] = res.median_offset_ms - cal_ms

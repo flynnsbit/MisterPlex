@@ -1,55 +1,40 @@
-# w-instr status — origin record decisive + held_ms variance gate
+# w-instr status — avsync harden + bimodality + ledger
 
 branch: w-avsync-hdmi-measure
-code_SHA: 5dd06733  tip: git rev-parse --short HEAD  branch: w-avsync-hdmi-measure
+code tip: git rev-parse --short HEAD
 
-## ARM daemon (parent deploys)
-path: build/arm/misterplexd
-md5: aaa726c7c5bcb733e8d9b08b3fe051ca
-prev_deployed: 5996385a57c6af142b8e732a39b36a4a  (parent confirmed live; lacks this turn's fields)
+## Task 1 — avsync_measure_hdmi.py (ONLY working lipsync judge)
+- DEFAULT_PAIR_WINDOW_S=0.9 (correct default; 0.45 mispairs)
+- DEFAULT_WARMUP_FRAMES=20; live min decoded frames=50 → else UNSCORED
+- LIMITATIONS banner every run: absolute lipsync CANNOT_MEASURE (raw_uncalibrated);
+  same-rig deltas CAN; av_drift_ms BLIND
+- PASS/FAIL refused (rc=77 REFUSE_DEFAULT_ASSUMED) when tol_ms is DEFAULT_ASSUMED
+  unless --allow-default-score or --tol-ms supplied (ERROR 17)
+- No 23.976 anywhere in this tool
+- unit: tests/unit/test_avsync_measure_hdmi.sh true rc=0 (28 pass incl refuse_default)
 
-## What changed (this commit)
-1. Explicit hold metrics on daemon lines (no hand mono subtract):
-   - first_audio_pcm: mono_ms + wall_s + tag=measured
-   - A/V audio_release: held_ms + hold_wall_ms + mono_ms + tag=measured
-   - pump audio release: held_ms + hold_wall_ms + past_bias + since_* + tag=measured
-   - first_video_present: since_first_audio_pcm_ms + since_audio_release_ms + since_pump_release_ms
-   - MrAudio playback position available: mono_ms + since_origin_ms + since_first_audio + since_audio_release (fallback window length)
-   - audio latency samples: mono_ms + since_origin_ms (anti sampling-phase trap)
+## Task 2 — tools/avsync_bimodality.py
+- Data-driven 1-D two-means; NO hardcoded A/B centres
+- BIMODAL rc=2, UNIMODAL rc=0, UNSCORED rc=77 (min n/cluster)
+- first_* carries run_index + first_pair_t_flash_s
+- RBG: parent-scale ~117ms → rc=2; tight → rc=0; n=1 → 77
 
-2. Peer-aligned hold drain (av_clock.hpp + media_player):
-   - non-empty hold → past_bias=0 (hold_drain_no_past_bias=1)
-   - empty-hold open may still past-bias kFeedTargetMs
-   - makeHoldSessionReport / holdDrainShouldPastBias first-class
+## Task 3 — tools/frame_ledger_report.py
+Full single-session ledger:
+  residual = frames - presents - drops
+  drops = A/V-pacer ONLY; publish_misses separate
+Parent command (after pulling ledger/log — agent does not touch device):
 
-3. tools/held_ms_stability_gate.py — multi-session variance gate
-   - FAIL rc=4 when range(hold_wall_ms) > --max-range-ms (default 40 DEFAULT_ASSUMED)
-   - NO-DATA rc=77 if n < min_sessions
-   - measured FAIL never decays to 77
+  python3 tools/frame_ledger_report.py \
+    --ledger /path/to/misterplexd.frame_ledger \
+    --require-explained; echo "true rc=$?"
 
-4. tools/startup_window_sample.py — ORIGIN_EXPLICIT + CLUSTER_AXIS parse/print
+  # or from daemon log:
+  python3 tools/frame_ledger_report.py --log /path/to/misterplexd.log; echo "true rc=$?"
 
-## Evidence (true rc DIRECT)
-python3 tools/held_ms_stability_gate.py --self-test; echo "true rc=$?"  → 0
-python3 tools/startup_window_sample.py --self-test; echo "true rc=$?" → 0
-python3 tools/held_ms_stability_gate.py --values 120 200 120 --min-sessions 3 --max-range-ms 40
-  → HOLD_VARIANCE_FAIL true rc=4
-python3 tools/held_ms_stability_gate.py --values 118 120 119 121 --min-sessions 3 --max-range-ms 40
-  → HOLD_STABLE true rc=0
-python3 tools/held_ms_stability_gate.py --values 120
-  → NO-DATA true rc=77
-make arm-plexd; echo "true rc=$?" → 0
-make unit; echo "true rc=$?" → 0
-strings: hold_wall_ms / MrAudio available mono_ms / hold_drain_no_past_bias present
+Device path typically: /media/fat/misterplex_v2/misterplexd.frame_ledger
 
-## Parent recipes (host only; parent owns device)
-# Deploy new binary then:
-python3 tools/startup_window_sample.py --hz 10 --duration 12 --log /tmp/sws_run.log
-# After n>=3 instrumented sessions, gate on hold_wall_ms:
-python3 tools/held_ms_stability_gate.py --values <h1> <h2> <h3> ... --min-sessions 3 --max-range-ms 40; echo "true rc=$?"
-# Or from logs:
-python3 tools/held_ms_stability_gate.py --log /tmp/sws_*.log --min-sessions 3; echo "true rc=$?"
-
-## Labels discipline
-Every value: measured | caller_supplied | DEFAULT_ASSUMED | NO-DATA
-DEFAULT max_range_ms=40 is DEFAULT_ASSUMED (design half of ~117 ms cluster sep) — override with --max-range-ms for caller_supplied.
+## Evidence
+python3 tools/avsync_bimodality.py --self-test; echo "true rc=$?"  → 0
+python3 tools/frame_ledger_report.py --self-test; echo "true rc=$?" → 0
+bash tests/unit/test_avsync_measure_hdmi.sh; echo "true rc=$?" → 0
