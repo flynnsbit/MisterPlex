@@ -910,6 +910,9 @@ def green_cast_metrics(rgb: np.ndarray) -> dict[str, Any]:
       4. uv_swap        — saturated-pixel primary inversion (cyan/blue vs red)
 
     Letterbox black and mostly-black clips do not trip greyscale/uv_swap.
+
+    Throughput: operate on a stride-8 subsample (global cast is low-frequency).
+    Full 1080p was ~0.19 s/frame — dominated ledger OCR cost for no gain.
     """
     empty = {
         "mean_rgb": float(rgb.mean()) if rgb.size else 0.0,
@@ -940,6 +943,9 @@ def green_cast_metrics(rgb: np.ndarray) -> dict[str, Any]:
             empty["color_fail"] = True
         return empty
 
+    # Stride subsample — cast metrics are global; full-res is pure cost.
+    if rgb.shape[0] > 240 and rgb.shape[1] > 320:
+        rgb = rgb[::8, ::8]
     pix = rgb.reshape(-1, 3).astype(np.float32)
     mean_rgb = float(pix.mean())
     means = [float(pix[:, i].mean()) for i in range(3)]
@@ -1052,6 +1058,10 @@ def structure_metrics(rgb: np.ndarray) -> dict[str, Any]:
     if _is_uniform(rgb):
         return empty
 
+    # Half-res is enough for wrap/vdup (thresholds calibrated with margin).
+    # Full 1080p structure was ~0.035 s/frame; half-res ~4× cheaper.
+    if rgb.shape[0] >= 720 and rgb.shape[1] >= 1280:
+        rgb = rgb[::2, ::2]
     h, w = rgb.shape[:2]
     gray = rgb.astype(np.float32).mean(axis=2)
     # Horizontal gradient magnitude (text strokes / edges).
@@ -1211,20 +1221,30 @@ def find_overlay(
         return None, None, "no_overlay"
 
     mean_luma = float(rgb.mean())
-    # Flash frames: prefer chroma mask; dark frames: plain yellow.
-    if mean_luma > 40.0:
-        m = _chroma_yellow_mask(rgb) | _yellow_mask(rgb)
+    flash = mean_luma > 80.0
+    # Locate yellow ink. Chroma helps on mid tones but FLOODS white FLASH
+    # frames (parent glass480 f_1844: chroma ink 3× hard, merges glyphs so
+    # template segmentation fails and tess emits garbage). Use chroma for
+    # bbox location only when needed; OCR binary prefers hard|soft on flash.
+    hard = _yellow_mask(rgb)
+    soft = _yellow_mask_soft(rgb)
+    if flash:
+        m_loc = hard | soft
+        if int(m_loc.sum()) < 80:
+            m_loc = m_loc | _chroma_yellow_mask(rgb)
+    elif mean_luma > 40.0:
+        m_loc = _chroma_yellow_mask(rgb) | hard
     else:
-        m = _yellow_mask(rgb)
+        m_loc = hard
 
-    if int(m.sum()) < 80:
+    if int(m_loc.sum()) < 80:
         return None, None, "no_overlay"
 
     row_e = rgb.astype(np.float32).mean(axis=2).mean(axis=1)
     active = np.where(row_e > 3.0)[0]
     y_top = int(active[0]) if len(active) else 0
 
-    ys, xs = np.where(m)
+    ys, xs = np.where(m_loc)
     keep = (ys >= y_top) & (ys <= y_top + int(0.40 * h)) & (xs < int(0.80 * w))
     if int(keep.sum()) < 80:
         keep = (ys < int(0.45 * h)) & (xs < int(0.80 * w))
@@ -1247,10 +1267,13 @@ def find_overlay(
     x0 = max(0, x0_raw - pad_x_left)
     x1 = min(w, x1_raw + pad_x_right)
     # CRITICAL: do not return the hard-mask slice alone. Padding a False skirt
-    # adds no ink. Re-threshold the padded RGB crop with hard|soft|chroma so
-    # the previously clipped trailing glyph columns become ink for OCR.
+    # adds no ink. Re-threshold the padded RGB crop so trailing glyph columns
+    # become ink. FLASH: hard|soft only (no chroma flood). Dark/mid: soft+hard,
+    # chroma allowed when not flash.
     crop = rgb[y0:y1, x0:x1]
-    if mean_luma > 40.0:
+    if flash:
+        binary = _yellow_mask(crop) | _yellow_mask_soft(crop)
+    elif mean_luma > 40.0:
         binary = (
             _chroma_yellow_mask(crop)
             | _yellow_mask(crop)
@@ -1259,8 +1282,8 @@ def find_overlay(
     else:
         binary = _yellow_mask(crop) | _yellow_mask_soft(crop)
     if int(binary.sum()) < 80:
-        # Fall back to hard-mask crop rather than inventing empty ink.
-        binary = m[y0:y1, x0:x1]
+        # Fall back to location mask crop rather than inventing empty ink.
+        binary = m_loc[y0:y1, x0:x1]
     return binary, (x0, y0, x1, y1), "ok"
 
 
@@ -1307,7 +1330,13 @@ def _tesseract_png(img: Image.Image, psm: int, whitelist: str) -> str:
 
 
 def _prep_variants(binary: np.ndarray, mean_luma: float) -> list[Image.Image]:
-    """A few OCR-ready images (keep call count low — tesseract is the cost)."""
+    """OCR-ready images. Keep the list short — tesseract dominates cost.
+
+    Parent glass480 defect: psm7 on the full padded glyph invented a trailing
+    digit (2358→23538) while psm8/13 and the right-crop were correct. We still
+    emit multiple polarities, but callers must VOTE across them — never early-
+    accept the first tier-10 hit.
+    """
     bim = Image.fromarray((binary.astype(np.uint8) * 255))
     scale = max(2.5, 64.0 / max(1, bim.height))
     bim = bim.resize(
@@ -1323,20 +1352,14 @@ def _prep_variants(binary: np.ndarray, mean_luma: float) -> list[Image.Image]:
     # Flash: black-on-white first; dark: white-on-black first.
     ordered = [inv, pad] if mean_luma > 40.0 else [pad, inv]
 
-    # For flash, also try chroma-as-gray autocontrast of the ROI already in binary.
-    if mean_luma > 40.0:
-        g = Image.fromarray((binary.astype(np.uint8) * 255))
-        g = g.resize(
-            (max(1, g.width * 4), max(1, g.height * 4)), Image.Resampling.NEAREST
-        )
-        g = ImageOps.autocontrast(g)
-        ordered.append(ImageOps.invert(g))
-        ordered.append(g)
-
-    # Digit-right crop of the preferred polarity.
+    # Digit-right crop of the preferred polarity (often cleanest for n=NNNN).
     primary = ordered[0]
     w, _h = primary.size
-    ordered.append(primary.crop((int(w * 0.55), 0, w, _h)))
+    ordered.append(primary.crop((int(w * 0.50), 0, w, _h)))
+    # Right crop of secondary polarity too (cheap; no extra tess until used).
+    secondary = ordered[1]
+    w2, h2 = secondary.size
+    ordered.append(secondary.crop((int(w2 * 0.50), 0, w2, h2)))
     return ordered
 
 
@@ -1361,52 +1384,176 @@ def _parse_counter(text: str) -> tuple[int | None, int]:
     return None, 0
 
 
+def _collapse_spurious_digit_votes(
+    votes: list[tuple[int, int, str]],
+) -> list[tuple[int, int, str]]:
+    """Drop phantom *extra* trailing digits — not legitimate longer counters.
+
+    Parent glass480 f_1820: psm7 emits ``TREK24 n=23538`` while psm8/13 emit
+    ``n=2358``. The 5-digit form is the artifact.
+
+    Do NOT collapse 2492→249: a 3-digit field truncation must not beat a
+    tier-10 4-digit label read (that manufactured false holes).
+    Rule: only drop long when len(long)>=5 or len(long)==mode_len+1 where
+    mode among high-tier votes is the shorter length, and short has tier>=8.
+    """
+    if len(votes) < 2:
+        return votes
+    by_n: dict[int, list[tuple[int, int, str]]] = {}
+    for t, n, raw in votes:
+        by_n.setdefault(n, []).append((t, n, raw))
+    # Digit-length mode among tier>=8 votes (or all if none)
+    strong = [v for v in votes if v[0] >= 8] or list(votes)
+    len_mode, _ = Counter(len(str(v[1])) for v in strong).most_common(1)[0]
+    drop: set[int] = set()
+    ns = list(by_n.keys())
+    for long_n in ns:
+        s_long = str(long_n)
+        max_long = max(t for t, _, _ in by_n[long_n])
+        for short_n in ns:
+            if short_n == long_n:
+                continue
+            s_short = str(short_n)
+            if not (
+                len(s_long) == len(s_short) + 1 and s_long.startswith(s_short)
+            ):
+                continue
+            max_short = max(t for t, _, _ in by_n[short_n])
+            n_short = len(by_n[short_n])
+            n_long = len(by_n[long_n])
+            # Case A: classic 4→5 insertion (2358→23538)
+            if len(s_long) >= 5 and len(s_short) >= 3 and max_short >= 7:
+                drop.add(long_n)
+                continue
+            # Case B: long is one past the strong length mode, short matches mode
+            if (
+                len(s_long) == len_mode + 1
+                and len(s_short) == len_mode
+                and max_short >= 8
+                and (n_short >= n_long or max_short >= max_long)
+            ):
+                drop.add(long_n)
+                continue
+            # Case C: long never has tier>=9 label, short does
+            if max_long < 9 and max_short >= 9 and n_short >= 1:
+                drop.add(long_n)
+    if not drop:
+        return votes
+    return [v for v in votes if v[1] not in drop]
+
+
+def _vote_counter(
+    votes: list[tuple[int, int, str]],
+) -> tuple[int | None, int, str]:
+    """Consensus across tesseract parses. Never first-hit-wins."""
+    if not votes:
+        return None, 0, ""
+    votes = _collapse_spurious_digit_votes(votes)
+    # Prefer digit-length mode among high-tier votes (reject lone 5-digit
+    # phantoms when the field is 4 digits).
+    high = [v for v in votes if v[0] >= 7] or list(votes)
+    len_mode, _ = Counter(len(str(v[1])) for v in high).most_common(1)[0]
+    length_ok = [v for v in high if len(str(v[1])) == len_mode]
+    pool = length_ok if length_ok else high
+    # Weight by tier; majority on n
+    scores: dict[int, float] = {}
+    raw_for: dict[int, str] = {}
+    tier_for: dict[int, int] = {}
+    for t, n, raw in pool:
+        scores[n] = scores.get(n, 0.0) + float(t)
+        if n not in raw_for or t >= tier_for.get(n, 0):
+            raw_for[n] = raw
+            tier_for[n] = t
+    best_n = max(scores, key=lambda k: (scores[k], tier_for[k]))
+    best_c = sum(1 for _, n, _ in pool if n == best_n)
+    tier = tier_for[best_n]
+    raw = raw_for[best_n]
+    # Accept label-tier with majority or multi-vote; bare digits need agreement.
+    if tier >= 9 and best_c >= 1 and (
+        best_c >= 2 or scores[best_n] >= 18.0 or len(pool) == 1
+    ):
+        # Single tier-10 only OK if no conflicting n at tier>=7 after collapse
+        rivals = [n for n in scores if n != best_n]
+        if rivals and best_c == 1 and max(scores[r] for r in rivals) >= 7:
+            # Ambiguous — refuse rather than invent a revisit
+            return None, tier, raw
+        return best_n, tier, raw
+    if tier >= 7 and best_c >= 2:
+        return best_n, tier, raw
+    if tier >= 5 and best_c >= 2:
+        return best_n, tier, raw
+    if tier >= 7 and best_c == 1 and len(scores) == 1:
+        return best_n, tier, raw
+    return None, tier, raw
+
+
 def ocr_counter(binary: np.ndarray, mean_luma: float) -> tuple[int | None, int, str]:
-    """OCR the overlay binary. Returns (n|None, tier, raw_text)."""
+    """OCR the overlay binary. Returns (n|None, tier, raw_text).
+
+    Throughput: dark frames try psm8 on the primary glyph first. A clean
+    ``TREK24 n=NNNN`` (tier-10) is accepted immediately — the parent insertion
+    bug was psm7 first-hit-wins (2358→23538), not psm8 labels. Only escalate
+    to multi-psm vote when the first hit is weak or bare-digit.
+    Flash frames should call field/template first (see read_frame).
+    """
     wl_full = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789= "
     wl_digits = "0123456789nN= "
     votes: list[tuple[int, int, str]] = []
     raws: list[str] = []
+    variants = _prep_variants(binary, mean_luma)
 
-    for img in _prep_variants(binary, mean_luma):
-        for psm in (7, 8):
-            # Full whitelist first (captures TREK24 n=123).
+    # Fast path: one psm8 full-line call. Tier-10 TREK label is trustworthy on
+    # dark frames (measured: f_1820/1821). Do NOT early-accept psm7 or bare digits.
+    txt0 = _tesseract_png(variants[0], 8, wl_full)
+    if txt0:
+        raws.append(txt0)
+        n0, t0 = _parse_counter(txt0)
+        if n0 is not None and t0 >= 10 and 2 <= len(str(n0)) <= 5:
+            return n0, t0, txt0
+        if n0 is not None and t0 > 0:
+            votes.append((t0, n0, txt0))
+
+    # Escalate: right-crop psm8 + primary psm13. Stop on multi-vote consensus.
+    imgs = [variants[0]]
+    if len(variants) > 2:
+        imgs.append(variants[2])
+    for img_i, img in enumerate(imgs):
+        for psm in ((13,) if img_i == 0 else (8, 13)):
+            if img_i == 0 and psm == 8:
+                continue  # already did primary psm8
             txt = _tesseract_png(img, psm, wl_full)
             if txt:
                 raws.append(txt)
             n, tier = _parse_counter(txt)
             if n is not None and tier > 0:
                 votes.append((tier, n, txt))
-            # Early exit on strong label hit.
-            if any(v[0] >= 9 for v in votes):
-                break
-        if any(v[0] >= 9 for v in votes):
-            break
+        n_c, t_c, raw_c = _vote_counter(votes)
+        if n_c is not None and t_c >= 9 and sum(1 for v in votes if v[1] == n_c) >= 2:
+            return n_c, t_c, raw_c
+        # Single tier-10 after a second independent parse still OK if no rival
+        if n_c is not None and t_c >= 10 and len({v[1] for v in votes if v[0] >= 7}) == 1:
+            return n_c, t_c, raw_c
 
-    # Digit-only fallback if no label-tier hit.
+    # Only if still weak: psm7 on primary (never alone as first-hit) + digit wl
+    if not any(v[0] >= 9 for v in votes):
+        txt = _tesseract_png(variants[0], 7, wl_full)
+        if txt:
+            raws.append(txt)
+            n, tier = _parse_counter(txt)
+            if n is not None and tier > 0:
+                votes.append((tier, n, txt))
     if not any(v[0] >= 7 for v in votes):
-        for img in _prep_variants(binary, mean_luma)[:2]:
-            txt = _tesseract_png(img, 7, wl_digits)
-            if txt:
-                raws.append(txt)
+        txt = _tesseract_png(variants[0], 8, wl_digits)
+        if txt:
+            raws.append(txt)
             n, tier = _parse_counter(txt)
             if n is not None and tier > 0:
                 votes.append((tier, n, txt))
 
-    if not votes:
-        return None, 0, (raws[0] if raws else "")
-
-    max_tier = max(v[0] for v in votes)
-    top = [v for v in votes if v[0] >= max_tier - 1]
-    counts = Counter(v[1] for v in top)
-    best_n, best_c = counts.most_common(1)[0]
-    tier = max(v[0] for v in top if v[1] == best_n)
-    raw = next(v[2] for v in top if v[1] == best_n)
-
-    # Accept label-tier (>=7) with any vote; bare digits need agreement.
-    if tier >= 7 or (tier >= 5 and best_c >= 2):
-        return best_n, tier, raw
-    return None, tier, raw
+    n, tier, raw = _vote_counter(votes)
+    if n is None:
+        return None, tier, (raw or (raws[0] if raws else ""))
+    return n, tier, raw
 
 
 # ---------------------------------------------------------------------------
@@ -1414,12 +1561,16 @@ def ocr_counter(binary: np.ndarray, mean_luma: float) -> tuple[int | None, int, 
 # ---------------------------------------------------------------------------
 
 def _template_read_n(binary: np.ndarray) -> tuple[int | None, float, str]:
-    """Best-effort digit-template read of the rightmost counter field.
+    """Digit-template read of the counter field (3–5 digits).
 
-    Used when tesseract fails (typically white-flash frames). Templates ship in
-    tools/hdmi_motion_digit_templates.npz (built from real TREK24 HDMI captures).
-    Tries a few erode strengths and split strategies; majority-votes the result.
-    Returns (n, min_score, raw).
+    Used on white-flash frames (tesseract is weak on yellow-on-white) and as a
+    cross-check when tess invents a trailing digit. Templates:
+    tools/hdmi_motion_digit_templates.npz (real TREK24 HDMI captures).
+
+    Parent defects this must catch:
+      - 2358 read as 23538 (extra glyph split) — digit-length scoring kills it
+      - 2378↔2338 and 2352↔2353 on FLASH — template NCC on segmented glyphs
+    Returns (n, min_glyph_score, raw).
     """
     tpl_path = Path(__file__).resolve().parent / "hdmi_motion_digit_templates.npz"
     if not tpl_path.is_file():
@@ -1453,19 +1604,31 @@ def _template_read_n(binary: np.ndarray) -> tuple[int | None, float, str]:
         ys = np.where(rows)[0]
         xs = np.where(cols)[0]
         sub = sub[ys.min() : ys.max() + 1, xs.min() : xs.max() + 1]
+        # Reject slivers (noise / split halves of one glyph)
+        if sub.shape[1] < 3 or sub.shape[0] < 6:
+            return "?", -1.0
         dn = _norm(sub)
         best, bs = "?", -1.0
+        second = -1.0
         for ch, t in avg.items():
             s = _ncc(dn, t)
             if s > bs:
+                second = bs
                 best, bs = ch, s
+            elif s > second:
+                second = s
+        # 3 vs 7 confusion: require a margin when top-2 are close
+        if best in ("3", "7") and second >= 0 and (bs - second) < 0.04:
+            # Prefer the higher absolute score only if margin ok; else weak
+            if bs < 0.55:
+                return best, bs * 0.85  # down-weight ambiguous 3/7
         return best, bs
 
-    def _attempt(b2: np.ndarray) -> tuple[int | None, float, str]:
-        col = np.convolve(b2.mean(axis=0), np.ones(3) / 3.0, mode="same")
-        thr = float(col.max()) * 0.10
+    def _col_runs(mask: np.ndarray, thr_frac: float = 0.12) -> list[tuple[int, int]]:
+        col = np.convolve(mask.mean(axis=0), np.ones(3) / 3.0, mode="same")
+        thr = float(col.max()) * thr_frac
         if thr <= 0:
-            return None, 0.0, ""
+            return []
         runs: list[tuple[int, int]] = []
         i = 0
         w = int(col.shape[0])
@@ -1474,100 +1637,138 @@ def _template_read_n(binary: np.ndarray) -> tuple[int | None, float, str]:
                 j = i
                 while j < w and col[j] >= thr:
                     j += 1
-                runs.append((i, j))
+                if j - i >= 2:
+                    runs.append((i, j))
                 i = j
             else:
                 i += 1
+        return runs
+
+    def _score_cuts(
+        region: np.ndarray, cuts: list[int]
+    ) -> tuple[int | None, float, str]:
+        """cuts are inclusive-exclusive boundaries, len = ndigits+1."""
+        nd = len(cuts) - 1
+        if nd < 3 or nd > 5:
+            return None, -1.0, ""
+        chars: list[str] = []
+        scores: list[float] = []
+        for k in range(nd):
+            x0, x1 = cuts[k], cuts[k + 1]
+            if x1 - x0 < 2:
+                return None, -1.0, ""
+            ch, s = _classify(region[:, x0:x1])
+            chars.append(ch)
+            scores.append(s)
+        if not all(c.isdigit() for c in chars):
+            return None, -1.0, ""
+        mn = float(min(scores))
+        return int("".join(chars)), mn, "".join(chars)
+
+    def _equal_cuts(x0: int, x1: int, nd: int) -> list[int]:
+        w = x1 - x0
+        return [x0 + (k * w) // nd for k in range(nd)] + [x1]
+
+    def _attempt(b2: np.ndarray) -> tuple[int | None, float, str]:
+        # Full-line column runs: label + "n=" + digits. Digits are the rightmost
+        # 3–5 similar-width runs (not the whole rightmost blob alone).
+        runs = _col_runs(b2, 0.10)
         if not runs:
             return None, 0.0, ""
-        a, b = runs[-1]
-        region = b2[:, a:b]
-        rw = int(region.shape[1])
-        if rw < 12:
-            return None, 0.0, ""
-
-        # Sub-runs inside the rightmost blob (may already be split).
-        c2 = np.convolve(region.mean(axis=0), np.ones(2) / 2.0, mode="same")
-        thr2 = float(c2.max()) * 0.18
-        subruns: list[tuple[int, int]] = []
-        i = 0
-        while i < rw:
-            if c2[i] >= thr2:
-                j = i
-                while j < rw and c2[j] >= thr2:
-                    j += 1
-                if j - i >= 2:
-                    subruns.append((i, j))
-                i = j
+        # Merge very tight gaps (AA bridges) then take rightmost candidates.
+        merged: list[tuple[int, int]] = [runs[0]]
+        for a, b in runs[1:]:
+            pa, pb = merged[-1]
+            gap = a - pb
+            width = b - a
+            if gap <= max(2, width // 5):
+                merged[-1] = (pa, b)
             else:
-                i += 1
-
-        candidates: list[list[int]] = []
-        if len(subruns) >= 3:
-            sa0, _ = subruns[-3]
-            sa1, _ = subruns[-2]
-            sa2, sb2 = subruns[-1]
-            candidates.append([sa0, sa1, sa2, sb2])
-        if len(subruns) >= 1:
-            sa, sb = subruns[-1]
-            fat_w = sb - sa
-            if fat_w > 40:
-                candidates.append([sa, sa + fat_w // 3, sa + 2 * fat_w // 3, sb])
-                # valley pair on fat run
-                fat = region[:, sa:sb]
-                proj = np.convolve(fat.mean(axis=0), np.ones(3) / 3.0, mode="same")
-                interior = proj[4 : max(5, fat_w - 4)]
-                mins: list[tuple[float, int]] = []
-                for ii in range(1, len(interior) - 1):
-                    if interior[ii] < interior[ii - 1] and interior[ii] <= interior[ii + 1]:
-                        mins.append((float(interior[ii]), ii + 4))
-                mins.sort()
-                vs = sorted(m[1] for m in mins[:6])
-                best_pair = None
-                best_sc = 1e9
-                for i0 in range(len(vs)):
-                    for i1 in range(i0 + 1, len(vs)):
-                        if vs[i1] - vs[i0] < fat_w * 0.15:
-                            continue
-                        if vs[i0] < fat_w * 0.12 or vs[i1] > fat_w * 0.88:
-                            continue
-                        scv = float(proj[vs[i0]] + proj[vs[i1]])
-                        if scv < best_sc:
-                            best_sc = scv
-                            best_pair = (vs[i0], vs[i1])
-                if best_pair is not None:
-                    candidates.append(
-                        [sa, sa + best_pair[0], sa + best_pair[1], sb]
-                    )
-        # Whole right region equal thirds
-        candidates.append([0, rw // 3, 2 * rw // 3, rw])
-
+                merged.append((a, b))
+        runs = merged
+        # Typical line: many runs for TREK24, then n, then 3–5 digit runs.
+        # Prefer rightmost nd runs whose median width is digit-like.
         best_n: int | None = None
         best_min = -1.0
         best_raw = ""
-        for cuts in candidates:
-            if len(cuts) != 4:
-                continue
-            chars: list[str] = []
-            scores: list[float] = []
-            ok = True
-            for k in range(3):
-                x0, x1 = cuts[k], cuts[k + 1]
-                if x1 - x0 < 2:
-                    ok = False
-                    break
-                ch, s = _classify(region[:, x0:x1])
-                chars.append(ch)
-                scores.append(s)
-            if not ok or not all(c.isdigit() for c in chars):
-                continue
-            mn = float(min(scores))
-            if mn < 0.30:
-                continue
-            if mn > best_min:
-                best_min = mn
-                best_n = int("".join(chars))
-                best_raw = "".join(chars)
+
+        def _consider(n: int | None, sc: float, raw: str) -> None:
+            nonlocal best_n, best_min, best_raw
+            if n is None or sc < 0.32:
+                return
+            # Prefer higher min score; tie-break toward 4 digits (lab fixtures).
+            nd = len(str(n))
+            prev_nd = len(str(best_n)) if best_n is not None else 0
+            if sc > best_min + 0.02 or (
+                abs(sc - best_min) <= 0.02 and nd == 4 and prev_nd != 4
+            ):
+                best_n, best_min, best_raw = n, sc, raw
+
+        for nd in (4, 3, 5):
+            if len(runs) >= nd:
+                dig_runs = runs[-nd:]
+                # Reject if widths wildly inconsistent (label glyph mixed in)
+                widths = [b - a for a, b in dig_runs]
+                med_w = float(sorted(widths)[len(widths) // 2])
+                if med_w < 4:
+                    continue
+                if max(widths) > med_w * 2.8 or min(widths) < med_w * 0.35:
+                    continue
+                x0 = dig_runs[0][0]
+                x1 = dig_runs[-1][1]
+                region = b2[:, x0:x1]
+                # cuts relative to region
+                cuts = [0]
+                for a, b in dig_runs:
+                    if len(cuts) == 1:
+                        cuts = [a - x0]
+                    cuts.append(b - x0)
+                # rebuild clean cuts from dig_runs
+                cuts = [a - x0 for a, _ in dig_runs] + [dig_runs[-1][1] - x0]
+                n, sc, raw = _score_cuts(region, cuts)
+                _consider(n, sc, raw)
+                # Also equal-split the digit span (handles merged blobs)
+                n2, sc2, raw2 = _score_cuts(region, _equal_cuts(0, x1 - x0, nd))
+                _consider(n2, sc2, raw2)
+
+        # Fat rightmost blob equal-split (legacy path) for 3 and 4 digits
+        a, b = runs[-1]
+        region = b2[:, a:b]
+        rw = int(region.shape[1])
+        if rw >= 20:
+            for nd in (4, 3, 5):
+                n, sc, raw = _score_cuts(region, _equal_cuts(0, rw, nd))
+                _consider(n, sc, raw)
+            # Valley splits for 4 digits on fat blob
+            proj = np.convolve(region.mean(axis=0), np.ones(3) / 3.0, mode="same")
+            interior = proj[3 : max(4, rw - 3)]
+            mins: list[tuple[float, int]] = []
+            for ii in range(1, len(interior) - 1):
+                if interior[ii] < interior[ii - 1] and interior[ii] <= interior[ii + 1]:
+                    mins.append((float(interior[ii]), ii + 3))
+            mins.sort()
+            valleys = sorted(m[1] for m in mins[:8])
+            if len(valleys) >= 3:
+                # pick 3 valleys that roughly quarter the blob
+                best_local = None
+                best_scv = 1e9
+                for i0 in range(len(valleys)):
+                    for i1 in range(i0 + 1, len(valleys)):
+                        for i2 in range(i1 + 1, len(valleys)):
+                            vs = (valleys[i0], valleys[i1], valleys[i2])
+                            if vs[0] < rw * 0.1 or vs[2] > rw * 0.9:
+                                continue
+                            if vs[1] - vs[0] < rw * 0.1 or vs[2] - vs[1] < rw * 0.1:
+                                continue
+                            scv = float(proj[vs[0]] + proj[vs[1]] + proj[vs[2]])
+                            if scv < best_scv:
+                                best_scv = scv
+                                best_local = vs
+                if best_local is not None:
+                    cuts = [0, best_local[0], best_local[1], best_local[2], rw]
+                    n, sc, raw = _score_cuts(region, cuts)
+                    _consider(n, sc, raw)
+
         return best_n, best_min, best_raw
 
     votes: list[tuple[int, float, str]] = []
@@ -1582,30 +1783,181 @@ def _template_read_n(binary: np.ndarray) -> tuple[int | None, float, str]:
             votes.append((n, sc, raw))
 
     if not votes:
-        # Return weakest raw for debugging if any attempt produced digits-like text
         return None, 0.0, ""
 
-    # Majority vote weighted by score
     tallies: dict[int, float] = {}
     raw_for: dict[int, str] = {}
+    sc_for: dict[int, float] = {}
     for n, sc, raw in votes:
         tallies[n] = tallies.get(n, 0.0) + sc
-        raw_for[n] = raw
-    best_n = max(tallies, key=lambda k: tallies[k])
-    best_sc = max(sc for n, sc, _ in votes if n == best_n)
-    # Require either multi-vote agreement or a strong single score
+        if sc >= sc_for.get(n, -1.0):
+            raw_for[n] = raw
+            sc_for[n] = sc
+    # Prefer 4-digit when scores close (fixture counters in this range)
+    best_n = max(
+        tallies,
+        key=lambda k: (tallies[k], 1 if len(str(k)) == 4 else 0, sc_for[k]),
+    )
+    best_sc = sc_for[best_n]
     agree = sum(1 for n, _, _ in votes if n == best_n)
-    if agree >= 2 or best_sc >= 0.40:
+    if agree >= 2 or best_sc >= 0.42:
         return best_n, float(best_sc), raw_for[best_n]
     return None, float(best_sc), raw_for[best_n]
 
 
-def read_frame(path: str | Path, *, force_ocr: bool = False) -> dict[str, Any]:
+def _ocr_digit_field(binary: np.ndarray) -> tuple[int | None, int, str]:
+    """Isolate the right-hand counter digits and OCR/template them.
+
+    Parent glass480 flash path: full-line tess returns garbage (``N=2``) while a
+    lightly-eroded right-field crop recovers ``n=2352`` / ``=2377``. This path
+    is the flash primary and a dark-frame cross-check.
+
+    Measured failure modes (glass480 pixel-confirmed):
+      f_2024 n=2521 — split=0.42 returned multi-token garbage; split=0.55 OK
+      f_2652 n=3024 — erode0 split=0.42 → ``n=362``; erode1+ OK
+      f_2654 n=3025 — erode0 → ``n=3625`` (phantom 6); erode1 split=0.42 OK
+
+    So we VOTE across split∈{0.42,0.55} × erode∈{0,1,2} and never early-accept
+    a lone 3-digit or 5-digit when a 4-digit rival exists.
+
+    Returns (n, tier, raw) with tier 8 for strong field hits, 6 for template.
+    """
+    if binary is None or binary.size == 0:
+        return None, 0, ""
+    base = Image.fromarray((binary.astype(np.uint8) * 255))
+    votes: list[tuple[int, int, str]] = []  # tier, n, raw
+    wl = "0123456789nN="
+
+    def _add_vote(txt: str, erode_n: int, split: float, psm: int) -> None:
+        n, tier = _parse_counter(txt)
+        if n is None:
+            # Prefer the LONGEST digit run (avoid '1 1 135' → 135 beating 2521)
+            runs = re.findall(r"\d{2,5}", txt or "")
+            if runs:
+                best_run = max(runs, key=lambda s: (len(s), s))
+                n, tier = int(best_run), 5
+        if n is None or not (2 <= len(str(n)) <= 5):
+            return
+        # Down-weight bare multi-token garbage and short truncations
+        bonus = 0
+        if tier >= 9:
+            bonus += 2
+        elif tier >= 7:
+            bonus += 1
+        if len(str(n)) == 4:
+            bonus += 2
+        elif len(str(n)) == 5:
+            bonus -= 1  # often phantom insertion on flash
+        elif len(str(n)) <= 3:
+            bonus -= 1
+        votes.append(
+            (max(1, tier + bonus), n,
+             f"field_inv_e{erode_n}_s{split:.2f}_p{psm}:{txt}")
+        )
+
+    # Pass order: cheap first. Escalate only when no solid 4-digit consensus.
+    # Measured HITs need split 0.55 and/or erode>=1 on hard flash frames.
+    # Do NOT early-stop on bare-digit tier-5 pairs (f_2652: 3028×2 beat 3024).
+    schedules: list[tuple[int, float, tuple[int, ...]]] = [
+        (0, 0.42, (8,)),
+        (0, 0.55, (8,)),
+        (1, 0.42, (8, 13)),
+        (1, 0.55, (8,)),
+        (2, 0.42, (8, 13)),
+        (2, 0.55, (8,)),
+        (1, 0.35, (8,)),
+        (2, 0.35, (8,)),
+        (1, 0.50, (8,)),
+    ]
+    for erode_n, split, psms in schedules:
+        im = base
+        for _ in range(erode_n):
+            im = im.filter(ImageFilter.MinFilter(3))
+        arr = np.asarray(im) > 128
+        w = int(arr.shape[1])
+        x_split = int(w * split)
+        right = arr[:, x_split:]
+        if int(right.sum()) < 40:
+            continue
+        ri = Image.fromarray((right.astype(np.uint8) * 255))
+        ri = ri.resize((max(8, ri.width * 3), max(8, ri.height * 3)), Image.NEAREST)
+        pad = Image.new("L", (ri.width + 16, ri.height + 16), 0)
+        pad.paste(ri, (8, 8))
+        inv = ImageOps.invert(pad)
+        for psm in psms:
+            txt = _tesseract_png(inv, psm, wl)
+            if txt:
+                _add_vote(txt, erode_n, split, psm)
+        # Early stop only on labeled (tier>=9 after bonus → raw parse tier>=7
+        # with n=) 4-digit multi-agree. Bare digits alone never stop the search.
+        strong4 = [
+            v for v in votes
+            if len(str(v[1])) == 4 and v[0] >= 9 and ("n=" in v[2] or "N=" in v[2] or "=" in v[2])
+        ]
+        if strong4:
+            cnt = Counter(v[1] for v in strong4)
+            top_n, top_c = cnt.most_common(1)[0]
+            if top_c >= 2:
+                break
+
+    if not votes:
+        return None, 0, ""
+    collapsed = _collapse_spurious_digit_votes([(t, n, r) for t, n, r in votes])
+    by_n: dict[int, list[tuple[int, str]]] = {}
+    for t, n, r in collapsed:
+        by_n.setdefault(n, []).append((t, r))
+
+    def _rank(n: int) -> tuple:
+        hits = by_n[n]
+        nd = len(str(n))
+        # Labeled n= hits (raw contains n=) beat bare digits at same count.
+        labeled = sum(1 for _, r in hits if "n=" in r or "N=" in r or ":=" in r or "_p" in r and "=" in r.split(":")[-1])
+        # Simpler: count high-tier hits
+        hi = sum(1 for t, _ in hits if t >= 9)
+        return (
+            2 if nd == 4 else (0 if nd == 5 else -1),
+            hi,
+            labeled,
+            max(t for t, _ in hits),
+            sum(t for t, _ in hits),
+            len(hits),
+        )
+
+    best = max(by_n.keys(), key=_rank)
+    hits = by_n[best]
+    tier = max(t for t, _ in hits)
+    # Prefer a labeled raw string when available
+    labeled_hits = [r for t, r in hits if "n=" in r or "N=" in r]
+    raw = labeled_hits[0] if labeled_hits else hits[0][1]
+    # Prefer any 4-digit over 3-digit truncation / 5-digit phantom
+    four_cands = [n for n in by_n if len(str(n)) == 4]
+    if four_cands and len(str(best)) != 4:
+        best = max(four_cands, key=_rank)
+        hits = by_n[best]
+        tier = max(t for t, _ in hits)
+        labeled_hits = [r for t, r in hits if "n=" in r or "N=" in r]
+        raw = labeled_hits[0] if labeled_hits else hits[0][1]
+    if len(hits) >= 2 or tier >= 8:
+        return best, max(tier, 8 if len(hits) >= 2 else tier), raw
+    if tier >= 7 and len(str(best)) >= 3:
+        return best, tier, raw
+    return None, tier, raw
+
+
+def read_frame(
+    path: str | Path,
+    *,
+    force_ocr: bool = False,
+    ocr_only: bool = False,
+) -> dict[str, Any]:
     """Read one PNG. Never raises on decode failure — returns status.
 
     force_ocr: always run OCR (single-frame mode). In burst mode, bright flash
     frames skip tesseract (dark frames carry the counter) but still try the
     digit-template fallback so a visible overlay is not silently ignored.
+
+    ocr_only: skip colour/structure metrics (ledger identity path). Counter OCR
+    + mean_luma only — ~0.2 s/frame saved. Colour/structure stay False/empty.
     """
     path = str(path)
     _struct_empty = {
@@ -1619,6 +1971,16 @@ def read_frame(path: str | Path, *, force_ocr: bool = False) -> dict[str, Any]:
         "wrap_both_e": 0.0,
         "wrap_mid_e": 0.0,
     }
+    _color_empty = {
+        "mean_rgb": None,
+        "green_frac": None,
+        "green_cast": False,
+        "channel_spread": None,
+        "chroma_cast": False,
+        "color_fail": False,
+        "greyscale_flat": False,
+        "uv_swap": False,
+    }
     try:
         im = Image.open(path).convert("RGB")
     except OSError as e:
@@ -1629,19 +1991,19 @@ def read_frame(path: str | Path, *, force_ocr: bool = False) -> dict[str, Any]:
             "tier": 0,
             "raw": str(e),
             "fp": None,
-            "mean_rgb": None,
-            "green_frac": None,
-            "green_cast": False,
-            "channel_spread": None,
-            "chroma_cast": False,
-            "color_fail": False,
+            **_color_empty,
             **_struct_empty,
         }
 
     rgb = np.asarray(im)
-    gc = green_cast_metrics(rgb)
-    sm = structure_metrics(rgb)
     mean_luma = float(rgb.mean())
+    if ocr_only:
+        gc = dict(_color_empty)
+        gc["mean_rgb"] = round(mean_luma, 3)
+        sm = dict(_struct_empty)
+    else:
+        gc = green_cast_metrics(rgb)
+        sm = structure_metrics(rgb)
 
     binary, roi, st = find_overlay(rgb)
     if binary is None:
@@ -1662,24 +2024,60 @@ def read_frame(path: str | Path, *, force_ocr: bool = False) -> dict[str, Any]:
     n: int | None = None
     tier = 0
     raw = ""
+    flash = mean_luma > 80.0  # white FLASH frames; yellow-on-white
 
-    # Dark / mid: tesseract first. Bright flash (mean~230): tesseract is often
-    # blind on yellow-on-white — still TRY it, then always template-fallback.
-    # Parent lab: 12.3% undecodable was almost all flash (luma p50~231); that
-    # blind rate was 18× the steady-state loss effect and was the resolution floor.
-    run_tess = True  # always attempt; cost is dominated by tesseract either way
-    if run_tess:
+    # Throughput + accuracy (parent glass480):
+    #   FLASH: digit-FIELD first (full-line tess emits N=2 / 3/7 mess).
+    #   DARK:  multi-psm vote (kills 2358→23538) + field cross-check.
+    # FLASH: digit-field first (cheap-ish right crop). DARK: full-line vote
+    # first; field only if needed (throughput — field does multiple tess calls).
+    field_n: int | None = None
+    field_t = 0
+    field_r = ""
+    if flash:
+        field_n, field_t, field_r = _ocr_digit_field(binary)
+        # Prefer clean 4-digit field. Lone 3/5-digit must not beat a tier-9
+        # full-line TREK label (f_2654: field 3625 vs line n=3025).
+        if field_n is not None and field_t >= 7 and len(str(field_n)) == 4:
+            n, tier, raw = field_n, field_t, field_r
+        else:
+            n, tier, raw = ocr_counter(binary, mean_luma)
+            if field_n is not None and (
+                n is None
+                or (len(str(field_n)) == 4 and len(str(n)) != 4)
+                or (len(str(n)) < len(str(field_n)) and len(str(field_n)) <= 4)
+            ):
+                n, tier, raw = field_n, field_t, field_r
+    else:
         n, tier, raw = ocr_counter(binary, mean_luma)
+        # Only spend field OCR when tess looks like insertion (5+ digits) or blind
+        need_field = n is None or len(str(n)) >= 5 or (tier < 9 and force_ocr)
+        if need_field:
+            field_n, field_t, field_r = _ocr_digit_field(binary)
+            if n is None and field_n is not None:
+                n, tier, raw = field_n, field_t, field_r
+            elif (
+                n is not None
+                and field_n is not None
+                and len(str(n)) == len(str(field_n)) + 1
+                and str(n).startswith(str(field_n))
+                and len(str(n)) >= 5
+            ):
+                # 23538 vs 2358 only
+                n, tier, raw = field_n, max(tier, field_t), f"ext_fix:{raw}->{field_r}"
 
-    # Template fallback whenever OCR is blind — INCLUDING bright flash frames.
-    # Tier-6 template enters presence/loss analysis; motion rate still prefers
-    # tier>=7 but will accept tier>=6 when that is all we have.
     if n is None:
         tn, tscore, traw = _template_read_n(binary)
         if tn is not None and tscore >= 0.35:
             n, tier, raw = tn, 6, f"tpl:{traw}"
         elif traw:
             raw = raw or f"tpl_weak:{traw}"
+
+    # Final: strip 5-digit insertion only (never 4→3 truncation)
+    if n is not None and len(str(n)) >= 5 and field_n is not None:
+        sn, sf = str(n), str(field_n)
+        if len(sn) == len(sf) + 1 and sn.startswith(sf):
+            n, tier, raw = field_n, max(tier, field_t), f"final_ext_fix:{raw}"
 
     status = "ok" if n is not None else "undecoded"
     return {
@@ -1695,6 +2093,12 @@ def read_frame(path: str | Path, *, force_ocr: bool = False) -> dict[str, Any]:
         **gc,
         **sm,
     }
+
+
+def _read_frame_job(args: tuple[str, bool, bool]) -> dict[str, Any]:
+    """Picklable worker for ProcessPoolExecutor."""
+    path, force_ocr, ocr_only = args
+    return read_frame(path, force_ocr=force_ocr, ocr_only=ocr_only)
 
 
 def list_capture_frames(src: str | Path) -> list[str]:
@@ -2324,6 +2728,8 @@ def _filter_counter_pairs(
     naming capture idx and the violated rule so RATE_FAIL cannot launder OCR.
     """
     rejections: list[dict[str, Any]] = []
+    # Shallow copy so recovery rewrites do not mutate the caller's list.
+    pairs = [(int(i), int(n)) for i, n in pairs]
     if len(pairs) < 3:
         return list(pairs), rejections
 
@@ -2333,6 +2739,7 @@ def _filter_counter_pairs(
     #   • dlen > mode_len  (spurious extra digit: 1352→13527)
     #   • dlen < mode_len AND value far from neighbour center (truncation: 1900→19)
     # Do NOT reject decade boundaries (9→10, 99→100, 999→1000).
+    # Extra-digit with recoverable prefix → rewrite (never emit 5-digit phantom).
     ns = [n for _, n in pairs]
     keep_idx = set(range(len(pairs)))
     for i, (cap_i, n) in enumerate(pairs):
@@ -2356,16 +2763,53 @@ def _filter_counter_pairs(
             )
             if near_boundary and float(n) < boundary * 10:
                 continue  # keep legal growth
+            # RECOVER: drop exactly one digit so length matches mode, pick the
+            # candidate nearest the neighbour median. Covers:
+            #   23538→2358 (trailing insertion, parent glass480 f_1820)
+            #   29682→2962 (interior phantom digit; //10 alone yields 2968 wrong)
+            # Parent: emitting the long value manufactures false revisit+gap.
+            s_n = str(n)
+            cands: list[int] = []
+            if dlen == mode_len + 1:
+                for di in range(len(s_n)):
+                    c = int(s_n[:di] + s_n[di + 1 :])
+                    if len(str(c)) == mode_len or (
+                        c == 0 and mode_len == 1
+                    ):
+                        cands.append(c)
+            recovered = None
+            if cands:
+                recovered = min(cands, key=lambda c: abs(float(c) - med_n))
+                if abs(float(recovered) - med_n) > max(8.0, 0.01 * abs(med_n) + 5.0):
+                    recovered = None
+            if recovered is not None:
+                pairs[i] = (cap_i, int(recovered))
+                ns[i] = int(recovered)
+                rejections.append(
+                    {
+                        "cap_idx": int(cap_i),
+                        "n": int(n),
+                        "recovered_n": int(recovered),
+                        "rule": "digit_count_extra_recovered",
+                        "reason": (
+                            f"cap_idx={cap_i} n={n} digits={dlen} > neighbour_mode="
+                            f"{mode_len}; recovered n={recovered} near med_neigh="
+                            f"{med_n:.0f} (drop-one-digit; cands={cands})"
+                        ),
+                    }
+                )
+                continue
+            # No safe recovery — UNRESOLVED: drop the value, never emit it.
             keep_idx.discard(i)
             rejections.append(
                 {
                     "cap_idx": int(cap_i),
                     "n": int(n),
-                    "rule": "digit_count_extra",
+                    "rule": "digit_count_extra_unresolved",
                     "reason": (
                         f"cap_idx={cap_i} n={n} digits={dlen} > neighbour_mode="
                         f"{mode_len} (count={mode_c}) med_neigh={med_n:.0f} — "
-                        f"spurious extra digit (e.g. 1352→13527)"
+                        f"UNRESOLVED spurious extra digit (e.g. 1352→13527)"
                     ),
                 }
             )
@@ -2382,21 +2826,62 @@ def _filter_counter_pairs(
                     ),
                 }
             )
-        elif dlen < mode_len and abs(float(n) - med_n) > max(50.0, 0.05 * abs(med_n)):
-            # Truncation misread among multi-digit neighbours (1900→19).
-            keep_idx.discard(i)
-            rejections.append(
-                {
-                    "cap_idx": int(cap_i),
-                    "n": int(n),
-                    "rule": "digit_count_truncation",
-                    "reason": (
-                        f"cap_idx={cap_i} n={n} digits={dlen} < neighbour_mode="
-                        f"{mode_len} (count={mode_c}) med_neigh={med_n:.0f} — "
-                        f"truncation misread, not decade-boundary growth"
-                    ),
-                }
-            )
+        elif dlen < mode_len:
+            # Truncation (1900→19) or flash right-crop (=252 from 2521).
+            # Expand by appending digits; prefer monotonic continuity from the
+            # previous sample (prev+1) over pure median when both are plausible.
+            recovered_t = None
+            exp = mode_len - dlen
+            prev_n = ns[i - 1] if i > 0 else None
+            next_n = ns[i + 1] if i + 1 < len(ns) else None
+            if 1 <= exp <= 2 and n >= 0:
+                base_m = n * (10 ** exp)
+                cands_t = [base_m + k for k in range(10 ** exp)]
+                # Score: distance to med, with bonus for prev+1 / next-1
+                def _tc_score(c: int) -> float:
+                    s = abs(float(c) - med_n)
+                    if prev_n is not None and c == int(prev_n) + 1:
+                        s -= 3.0
+                    if next_n is not None and c == int(next_n) - 1:
+                        s -= 3.0
+                    if prev_n is not None and next_n is not None:
+                        if int(prev_n) < c < int(next_n):
+                            s -= 1.5
+                    return s
+                best_t = min(cands_t, key=_tc_score)
+                if abs(float(best_t) - med_n) <= max(12.0, 0.015 * abs(med_n) + 8.0):
+                    recovered_t = best_t
+            if recovered_t is not None:
+                pairs[i] = (cap_i, int(recovered_t))
+                ns[i] = int(recovered_t)
+                rejections.append(
+                    {
+                        "cap_idx": int(cap_i),
+                        "n": int(n),
+                        "recovered_n": int(recovered_t),
+                        "rule": "digit_count_truncation_recovered",
+                        "reason": (
+                            f"cap_idx={cap_i} n={n} digits={dlen} < neighbour_mode="
+                            f"{mode_len}; recovered n={recovered_t} near med_neigh="
+                            f"{med_n:.0f}"
+                        ),
+                    }
+                )
+            elif abs(float(n) - med_n) > max(50.0, 0.05 * abs(med_n)):
+                # UNRESOLVED truncation — never emit short value as a counter.
+                keep_idx.discard(i)
+                rejections.append(
+                    {
+                        "cap_idx": int(cap_i),
+                        "n": int(n),
+                        "rule": "digit_count_truncation_unresolved",
+                        "reason": (
+                            f"cap_idx={cap_i} n={n} digits={dlen} < neighbour_mode="
+                            f"{mode_len} (count={mode_c}) med_neigh={med_n:.0f} — "
+                            f"UNRESOLVED truncation misread"
+                        ),
+                    }
+                )
 
     stage = [pairs[i] for i in range(len(pairs)) if i in keep_idx]
     if len(stage) < 3:
@@ -2426,28 +2911,58 @@ def _filter_counter_pairs(
             si += cnt
         drop_stage: set[int] = set()
         vals = [v for v, _ in runs]
+        rewrite_stage: dict[int, int] = {}
         for ri in range(1, len(vals) - 1):
             a, b, c = vals[ri - 1], vals[ri], vals[ri + 1]
-            if (b - a) >= 4 and c < b:
-                rule = "rle_spike_up_then_drop"
-            else:
+            if not ((b - a) >= 4 and c < b):
                 continue
-            for sj in run_stage_idxs[ri]:
-                drop_stage.add(sj)
-                cap_j, n_j = stage[sj]
-                rejections.append(
-                    {
-                        "cap_idx": int(cap_j),
-                        "n": int(n_j),
-                        "rule": rule,
-                        "reason": (
-                            f"cap_idx={cap_j} n={n_j} RLE neighbours "
-                            f"{a}->{b}->{c}: {rule} — OCR spike "
-                            f"(e.g. trailing 2→7), not a real counter state"
-                        ),
-                    }
-                )
-        if drop_stage:
+            # Recover when neighbours bracket a short advance (flash 2759→2780→2761
+            # is really 2760). Prefer rewrite over drop so we do not invent a hole.
+            recovered_b = None
+            if c > a and (c - a) <= 3:
+                recovered_b = a + 1 if c >= a + 1 else c
+                if recovered_b < a or recovered_b > c:
+                    recovered_b = (a + c) // 2
+            if recovered_b is not None and recovered_b != b:
+                for sj in run_stage_idxs[ri]:
+                    cap_j, n_j = stage[sj]
+                    rewrite_stage[sj] = int(recovered_b)
+                    rejections.append(
+                        {
+                            "cap_idx": int(cap_j),
+                            "n": int(n_j),
+                            "recovered_n": int(recovered_b),
+                            "rule": "rle_spike_recovered",
+                            "reason": (
+                                f"cap_idx={cap_j} n={n_j} RLE {a}->{b}->{c} → "
+                                f"recovered {recovered_b} (flash/OCR spike, not drop)"
+                            ),
+                        }
+                    )
+            else:
+                for sj in run_stage_idxs[ri]:
+                    drop_stage.add(sj)
+                    cap_j, n_j = stage[sj]
+                    rejections.append(
+                        {
+                            "cap_idx": int(cap_j),
+                            "n": int(n_j),
+                            "rule": "rle_spike_up_then_drop",
+                            "reason": (
+                                f"cap_idx={cap_j} n={n_j} RLE neighbours "
+                                f"{a}->{b}->{c}: rle_spike_up_then_drop — OCR spike "
+                                f"(e.g. trailing 2→7), not a real counter state"
+                            ),
+                        }
+                    )
+        if rewrite_stage:
+            stage = [
+                ((stage[k][0], rewrite_stage[k]) if k in rewrite_stage else stage[k])
+                for k in range(len(stage))
+                if k not in drop_stage
+            ]
+            changed = True
+        elif drop_stage:
             stage = [p for k, p in enumerate(stage) if k not in drop_stage]
             changed = True
 
@@ -2775,6 +3290,25 @@ def analyze_counter_rate(
     }
 
 
+def _write_counters_csv(path: str | Path, rows: list[dict[str, Any]]) -> None:
+    """Write idx,n,status,tier,mean_luma for --export-counters-csv / re-score."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as f:
+        f.write("idx,n,status,tier,mean_luma,raw\n")
+        for i, r in enumerate(rows):
+            idx = int(r.get("idx", i))
+            n = r.get("n")
+            n_s = "" if n is None else str(int(n))
+            st = str(r.get("status") or "")
+            tier = r.get("tier")
+            tier_s = "" if tier is None else str(int(tier))
+            ml = r.get("mean_luma")
+            ml_s = "" if ml is None else str(ml)
+            raw = str(r.get("raw") or "").replace("\n", " ").replace(",", ";")
+            f.write(f"{idx},{n_s},{st},{tier_s},{ml_s},{raw}\n")
+
+
 def score_burst(
     frames: list[str],
     *,
@@ -2789,15 +3323,42 @@ def score_burst(
     daemon_drops_src: str = PROVENANCE_DEFAULT_ASSUMED,
     pts_by_idx: dict[int, float] | None = None,
     progress: bool = False,
+    jobs: int = 1,
+    ocr_only: bool = False,
+    export_counters_csv: str | Path | None = None,
 ) -> dict[str, Any]:
-    """Score a capture burst. See module docstring for verdicts."""
+    """Score a capture burst. See module docstring for verdicts.
+
+    jobs>1: ProcessPoolExecutor over read_frame (tesseract-bound).
+    ocr_only: skip colour/structure (glass ledger path).
+    """
     results: list[dict[str, Any]] = []
-    for i, path in enumerate(frames):
-        r = read_frame(path, force_ocr=False)
-        r["idx"] = i
-        results.append(r)
-        if progress and (i + 1) % 25 == 0:
-            print(f"  ...scored {i + 1}/{len(frames)}", file=sys.stderr)
+    n_jobs = max(1, int(jobs))
+    if n_jobs == 1 or len(frames) < 4:
+        for i, path in enumerate(frames):
+            r = read_frame(path, force_ocr=False, ocr_only=ocr_only)
+            r["idx"] = i
+            results.append(r)
+            if progress and (i + 1) % 25 == 0:
+                print(f"  ...scored {i + 1}/{len(frames)}", file=sys.stderr)
+    else:
+        # Parallel OCR — each worker is a full process (tesseract is not
+        # thread-friendly). Order preserved via map.
+        from concurrent.futures import ProcessPoolExecutor
+
+        work = [(p, False, ocr_only) for p in frames]
+        # chunksize keeps IPC reasonable on 2700-frame sets
+        chunk = max(1, len(work) // (n_jobs * 4))
+        with ProcessPoolExecutor(max_workers=n_jobs) as ex:
+            # map preserves order
+            for i, r in enumerate(ex.map(_read_frame_job, work, chunksize=chunk)):
+                r = dict(r)
+                r["idx"] = i
+                results.append(r)
+                if progress and (i + 1) % 50 == 0:
+                    print(f"  ...scored {i + 1}/{len(frames)}", file=sys.stderr)
+    if export_counters_csv:
+        _write_counters_csv(export_counters_csv, results)
 
     warmup_n = 0
     usable: list[dict[str, Any]] = []
@@ -4155,6 +4716,32 @@ def main(argv: list[str] | None = None) -> int:
             "still score; rate stays RATE_UNSCORED."
         ),
     )
+    ap.add_argument(
+        "--jobs",
+        type=int,
+        default=1,
+        help=(
+            "parallel OCR workers (ProcessPool). Default 1. Use 4–8 for long "
+            "glass captures; 90s@30fps (~2700 PNG) should finish under wall time."
+        ),
+    )
+    ap.add_argument(
+        "--ocr-only",
+        action="store_true",
+        help=(
+            "skip colour/structure metrics (glass identity ledger). Counter OCR "
+            "+ mean_luma only. Pair with --export-counters-csv."
+        ),
+    )
+    ap.add_argument(
+        "--export-counters-csv",
+        default=None,
+        metavar="PATH",
+        help=(
+            "write idx,n,status,tier,mean_luma CSV while scoring (or with --one). "
+            "Empty n for undecoded. Re-score later via --counters-csv without OCR."
+        ),
+    )
     args = ap.parse_args(argv)
 
     if args.self_test:
@@ -4294,9 +4881,20 @@ def main(argv: list[str] | None = None) -> int:
         # Single-frame / per-frame dump mode.
         any_ok = False
         rows = []
-        for f in frames:
-            r = read_frame(f, force_ocr=True)
-            rows.append(r)
+        n_jobs = max(1, int(args.jobs))
+        ocr_only = bool(args.ocr_only)
+        if n_jobs == 1 or len(frames) < 4:
+            for f in frames:
+                rows.append(read_frame(f, force_ocr=True, ocr_only=ocr_only))
+        else:
+            from concurrent.futures import ProcessPoolExecutor
+
+            work = [(f, True, ocr_only) for f in frames]
+            chunk = max(1, len(work) // (n_jobs * 4))
+            with ProcessPoolExecutor(max_workers=n_jobs) as ex:
+                rows = list(ex.map(_read_frame_job, work, chunksize=chunk))
+        for i, r in enumerate(rows):
+            r["idx"] = i
             if r["status"] == "ok":
                 any_ok = True
             if not args.json:
@@ -4309,6 +4907,8 @@ def main(argv: list[str] | None = None) -> int:
                     f"vdup={r.get('vertical_dup')} wrap={r.get('horiz_wrap')} "
                     f"overlay={r.get('overlay_present', r.get('fp') is not None)}"
                 )
+        if args.export_counters_csv:
+            _write_counters_csv(args.export_counters_csv, rows)
         if args.json:
             print(json.dumps(rows, indent=2))
         # Single-frame: ok decode → 0; undecoded → 77; never claim FREEZE from 1 frame.
@@ -4387,6 +4987,9 @@ def main(argv: list[str] | None = None) -> int:
         daemon_drops_src=daemon_drops_src,
         pts_by_idx=pts_by_idx,
         progress=args.progress,
+        jobs=int(args.jobs),
+        ocr_only=bool(args.ocr_only),
+        export_counters_csv=args.export_counters_csv,
     )
     report["src"] = src_label
     if cap_measure_meta is not None:
