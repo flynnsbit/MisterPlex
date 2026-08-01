@@ -529,7 +529,15 @@ def analyze_counter_skips(
         f"di=i1-i0 dn=n1-n0; max_exp=max(1,ceil(di*src/cap)) "
         f"(no plateau slack; +2 on di=1 = 1 lost) "
         f"{'(fps labelled)' if fps_known else '(fps weak)'}; "
-        f"if dn>max_exp frames_lost_adj += dn-max_exp → {lost_adj}."
+        f"if dn>max_exp frames_lost_adj += dn-max_exp → {lost_adj}. "
+        f"ASSUMPTION(uniform_capture_spacing): di=cap_idx delta is treated as "
+        f"di nominal capture intervals using global cap_fps — PNG sequences "
+        f"without PTS cannot see grabber drops (Δt≈2/cap looks like +2 source). "
+        f"Use MKV+PTS capture to split device skip vs grabber drop."
+    )
+    notes.append(
+        "uniform_capture_spacing=ASSUMED "
+        "(cap_idx adjacency ≠ measured Δt; grabber drops masquerade as +2)"
     )
 
     return {
@@ -818,6 +826,18 @@ def _yellow_mask(rgb: np.ndarray) -> np.ndarray:
     g = rgb[:, :, 1].astype(np.int16)
     b = rgb[:, :, 2].astype(np.int16)
     return (r > 130) & (g > 130) & (r + g > 2 * b + 40) & ((r + g) > 220)
+
+
+def _yellow_mask_soft(rgb: np.ndarray) -> np.ndarray:
+    """AA / border skirt of the yellow overlay (drawtext borderw=2 is black+blend).
+
+    Used only inside an already-localised padded ROI so it cannot pull in
+    unrelated warm pixels from the full frame.
+    """
+    r = rgb[:, :, 0].astype(np.int16)
+    g = rgb[:, :, 1].astype(np.int16)
+    b = rgb[:, :, 2].astype(np.int16)
+    return (r > 95) & (g > 95) & (r + g > 2 * b + 15) & ((r + g) > 160)
 
 
 def _chroma_yellow_mask(rgb: np.ndarray) -> np.ndarray:
@@ -1131,6 +1151,16 @@ def find_overlay(
     """Locate yellow overlay binary in top-of-active-picture band.
 
     Returns (binary, roi_xyxy, status) where status is ok|warmup|no_overlay.
+
+    ROI padding is load-bearing: the yellow mask bbox often ends mid-glyph on the
+    trailing digit (AA/border pixels fall outside the hard yellow threshold).
+    Parent lab evidence on /tmp/cap480_long: ROI x1=643 clipped the final glyph
+    so ``1352`` OCR'd as ``13527`` and ``2912`` as ``2917``. gen_avsync_blip.py
+    draws ``TREK24 n=%{n}`` at fixed (x=8,y=8) with growing digit width — a
+    tight mask on early 1–3 digit frames is not the failure mode (bbox is
+    recomputed every frame); per-frame right-edge clip of the *current* last
+    digit is. Pad by ~2 glyph widths from ROI height so 1→4 digit growth and
+    AA skirts stay inside the crop.
     """
     h, w = rgb.shape[:2]
     if _is_uniform(rgb):
@@ -1161,11 +1191,36 @@ def find_overlay(
         return None, None, "no_overlay"
 
     ys, xs = ys[keep], xs[keep]
-    y0 = max(0, int(ys.min()) - 2)
-    y1 = min(h, int(ys.max()) + 3)
-    x0 = max(0, int(xs.min()) - 2)
-    x1 = min(w, int(xs.max()) + 3)
-    return m[y0:y1, x0:x1], (x0, y0, x1, y1), "ok"
+    y0_raw = int(ys.min())
+    y1_raw = int(ys.max()) + 1
+    x0_raw = int(xs.min())
+    x1_raw = int(xs.max()) + 1
+    box_h = max(1, y1_raw - y0_raw)
+    # ~0.6*height ≈ one DejaVu digit advance at this fontsize; pad 2+ widths
+    # on the right (trailing n=NNNN growth + AA), 1 width elsewhere.
+    pad_x_right = max(48, int(round(2.4 * box_h)))
+    pad_x_left = max(8, int(round(0.6 * box_h)))
+    pad_y = max(4, int(round(0.25 * box_h)))
+    y0 = max(0, y0_raw - pad_y)
+    y1 = min(h, y1_raw + pad_y)
+    x0 = max(0, x0_raw - pad_x_left)
+    x1 = min(w, x1_raw + pad_x_right)
+    # CRITICAL: do not return the hard-mask slice alone. Padding a False skirt
+    # adds no ink. Re-threshold the padded RGB crop with hard|soft|chroma so
+    # the previously clipped trailing glyph columns become ink for OCR.
+    crop = rgb[y0:y1, x0:x1]
+    if mean_luma > 40.0:
+        binary = (
+            _chroma_yellow_mask(crop)
+            | _yellow_mask(crop)
+            | _yellow_mask_soft(crop)
+        )
+    else:
+        binary = _yellow_mask(crop) | _yellow_mask_soft(crop)
+    if int(binary.sum()) < 80:
+        # Fall back to hard-mask crop rather than inventing empty ink.
+        binary = m[y0:y1, x0:x1]
+    return binary, (x0, y0, x1, y1), "ok"
 
 
 def overlay_fingerprint(binary: np.ndarray) -> str:
@@ -1612,6 +1667,173 @@ def list_capture_frames(src: str | Path) -> list[str]:
     return [str(f) for f in frames]
 
 
+def load_counters_csv(path: str | Path) -> list[tuple[int, int]]:
+    """Load parent/cache CSV with at least idx + n columns (empty n skipped)."""
+    import csv
+
+    pairs: list[tuple[int, int]] = []
+    with open(path, newline="") as f:
+        r = csv.DictReader(f)
+        if not r.fieldnames or "idx" not in r.fieldnames or "n" not in r.fieldnames:
+            raise ValueError(f"counters CSV needs idx,n columns; got {r.fieldnames}")
+        for row in r:
+            ns = (row.get("n") or "").strip()
+            if ns == "":
+                continue
+            pairs.append((int(row["idx"]), int(float(ns))))
+    return pairs
+
+
+def score_counter_pairs(
+    pairs_raw: list[tuple[int, int]],
+    *,
+    source_fps: float = DEFAULT_ASSUMED_SOURCE_FPS,
+    capture_fps: float = DEFAULT_ASSUMED_CAPTURE_FPS,
+    source_fps_src: str = PROVENANCE_DEFAULT_ASSUMED,
+    capture_fps_src: str = PROVENANCE_DEFAULT_ASSUMED,
+    startup_window_s: float = STARTUP_DEFAULT_WINDOW_S,
+    daemon_session_drops: int | None = None,
+    daemon_drops_src: str = PROVENANCE_DEFAULT_ASSUMED,
+    frames_total: int | None = None,
+) -> dict[str, Any]:
+    """Score a pre-decoded counter sequence (e.g. parent OCR cache CSV).
+
+    Applies the same structural OCR filter + rate/skip/startup path as score_burst
+    without re-reading PNGs. Colour/structure are UNSCORED here (no pixels).
+    """
+    pairs, ocr_rejections = _filter_counter_pairs(pairs_raw)
+    ns = [n for _, n in pairs]
+    rate_info = analyze_counter_rate(
+        pairs,
+        source_fps=source_fps,
+        capture_fps=capture_fps,
+        source_fps_src=source_fps_src,
+        capture_fps_src=capture_fps_src,
+    )
+    skip_info = analyze_counter_skips(
+        pairs,
+        source_fps=source_fps,
+        capture_fps=capture_fps,
+        source_fps_src=source_fps_src,
+        capture_fps_src=capture_fps_src,
+    )
+    startup_info = analyze_startup_transient(
+        pairs,
+        source_fps=source_fps,
+        capture_fps=capture_fps,
+        source_fps_src=source_fps_src,
+        capture_fps_src=capture_fps_src,
+        window_s=startup_window_s,
+        daemon_session_drops=daemon_session_drops,
+        daemon_drops_src=daemon_drops_src,
+    )
+    motion = "UNSCORED"
+    reason = "no_counter_reads"
+    if len(ns) >= DEFAULT_MIN_READS:
+        n_min, n_max = min(ns), max(ns)
+        if n_max == n_min:
+            motion, reason = "FREEZE", f"counter_pinned n={n_min}"
+        elif n_max > n_min:
+            motion = "MOTION_OK"
+            reason = f"counter_advances {n_min}->{n_max} filtered={len(ns)}/{len(pairs_raw)}"
+    rate_fail = bool(rate_info.get("rate_fail")) and motion != "FREEZE"
+    rate_label = str(rate_info.get("rate") or "RATE_UNSCORED")
+    if motion == "FREEZE":
+        rate_label = "RATE_PINNED"
+    if motion == "MOTION_OK" and rate_fail:
+        reason = (
+            f"rate_fail [{'; '.join(rate_info.get('rate_reasons') or [])}] "
+            f"on top of {reason}"
+        )
+    if rate_fail:
+        final, rc = "RATE_FAIL", RC_RATE_FAIL
+    elif motion == "FREEZE":
+        final, rc = "FREEZE", RC_FREEZE
+    elif motion == "MOTION_OK":
+        final, rc = "MOTION_OK", RC_MOTION_OK
+    else:
+        final, rc = "UNSCORED", RC_UNSCORED
+    return {
+        "frames_total": frames_total if frames_total is not None else (pairs_raw[-1][0] + 1 if pairs_raw else 0),
+        "warmup_skipped": 0,
+        "decodes": len(pairs_raw),
+        "strong_decodes": len(pairs_raw),
+        "ns_head": ns[:10],
+        "ns_tail": ns[-10:],
+        "n_min": (min(ns) if ns else None),
+        "n_max": (max(ns) if ns else None),
+        "unique_overlay_fp": 0,
+        "green_cast_frames": 0,
+        "chroma_cast_frames": 0,
+        "greyscale_frames": 0,
+        "uv_swap_frames": 0,
+        "color_fail_frames": 0,
+        "vertical_dup_frames": 0,
+        "horiz_wrap_frames": 0,
+        "structure_fail_frames": 0,
+        "motion": motion,
+        "color": "COLOR_UNSCORED_NO_PIXELS",
+        "structure": "STRUCTURE_UNSCORED_NO_PIXELS",
+        "rate": rate_label,
+        "unique_ratio": rate_info.get("unique_ratio"),
+        "endpoint_rate": rate_info.get("endpoint_rate"),
+        "span_rate": rate_info.get("span_rate"),
+        "expected_ratio": rate_info.get("expected_ratio"),
+        "max_plateau": rate_info.get("max_plateau"),
+        "max_plateau_allowed": rate_info.get("max_plateau_allowed"),
+        "plateau_warn": rate_info.get("plateau_warn"),
+        "plateau_hist": rate_info.get("plateau_hist"),
+        "non_adjacent_revisits": rate_info.get("non_adjacent_revisits"),
+        "cap_span": rate_info.get("cap_span"),
+        "ctr_span": rate_info.get("ctr_span"),
+        "fps_authoritative": rate_info.get("fps_authoritative"),
+        "rate_notes": rate_info.get("rate_notes"),
+        "rate_reasons": rate_info.get("rate_reasons"),
+        "source_fps": rate_info.get("source_fps"),
+        "capture_fps": rate_info.get("capture_fps"),
+        "source_fps_src": rate_info.get("source_fps_src"),
+        "capture_fps_src": rate_info.get("capture_fps_src"),
+        "skip_status": skip_info.get("skip_status"),
+        "frames_lost_rle": skip_info.get("frames_lost_rle"),
+        "frames_lost_adj": skip_info.get("frames_lost_adj"),
+        "skip_events_rle": skip_info.get("skip_events_rle"),
+        "skip_events_adj": skip_info.get("skip_events_adj"),
+        "skip_hist_rle": skip_info.get("skip_hist_rle"),
+        "skip_hist_adj": skip_info.get("skip_hist_adj"),
+        "step_hist_rle": skip_info.get("step_hist_rle"),
+        "lost_frac_rle": skip_info.get("lost_frac_rle"),
+        "lost_frac_adj": skip_info.get("lost_frac_adj"),
+        "skip_confidence": skip_info.get("skip_confidence"),
+        "skip_notes": skip_info.get("skip_notes"),
+        "skip_arithmetic": skip_info.get("arithmetic"),
+        "ocr_rejections": ocr_rejections,
+        "ocr_rejected": len(ocr_rejections),
+        "startup_status": startup_info.get("startup_status"),
+        "startup_hypothesis": startup_info.get("hypothesis"),
+        "startup_window_s": startup_info.get("startup_window_s"),
+        "startup_window_s_src": startup_info.get("startup_window_s_src"),
+        "startup_frames_lost_adj": startup_info.get("startup_frames_lost_adj"),
+        "startup_frames_lost_rle": startup_info.get("startup_frames_lost_rle"),
+        "startup_ctr_span": startup_info.get("startup_ctr_span"),
+        "startup_n_first": startup_info.get("startup_n_first"),
+        "startup_n_last": startup_info.get("startup_n_last"),
+        "startup_unique": startup_info.get("startup_unique"),
+        "startup_confidence": startup_info.get("startup_confidence"),
+        "startup_skip_hist_adj": startup_info.get("startup_skip_hist_adj"),
+        "startup_skip_hist_rle": startup_info.get("startup_skip_hist_rle"),
+        "startup_step_hist_rle": startup_info.get("startup_step_hist_rle"),
+        "daemon_session_drops": startup_info.get("daemon_session_drops"),
+        "daemon_session_drops_src": startup_info.get("daemon_session_drops_src"),
+        "startup_drops_match": startup_info.get("drops_match"),
+        "startup_notes": startup_info.get("startup_notes"),
+        "startup_arithmetic": startup_info.get("startup_arithmetic"),
+        "verdict": final,
+        "reason": reason,
+        "rc": rc,
+        "input_mode": "counters_csv",
+    }
+
+
 def _median_int(vals: list[int]) -> int:
     if not vals:
         return 0
@@ -1625,63 +1847,175 @@ def _filter_counter_outliers(ns: list[int]) -> list[int]:
     Real avsync counters are monotonic and same digit-width for a given clip
     segment. Tesseract occasionally emits 3434 for 345 or 17494 for 174; those
     must not flip a MOTION_OK median or fake a non-monotonic sequence.
+
+    Prefer _filter_counter_pairs (structural + MAD). This ns-only path remains
+    for callers that lack capture indices.
     """
-    if len(ns) < 3:
-        return list(ns)
+    pairs = list(enumerate(ns))
+    kept, _rej = _filter_counter_pairs(pairs)
+    return [n for _, n in kept]
 
-    # 1) Majority digit-length (3-digit TREK clips, 4-digit long soaks, ...).
-    lengths = Counter(len(str(n)) for n in ns)
-    mode_len, mode_c = lengths.most_common(1)[0]
-    if mode_c >= max(3, len(ns) // 3):
-        by_len = [n for n in ns if len(str(n)) == mode_len]
-    else:
-        by_len = list(ns)
-    if len(by_len) < 3:
-        by_len = list(ns)
 
-    # 2) MAD gate around the median (robust to remaining strays).
-    med = _median_int(by_len)
-    abs_dev = sorted(abs(n - med) for n in by_len)
-    mad = abs_dev[len(abs_dev) // 2] if abs_dev else 0
-    # Frame counters advance slowly vs OCR jumps of thousands.
-    radius = max(80, 6 * mad if mad > 0 else 80)
-    filtered = [n for n in by_len if abs(n - med) <= radius]
-
-    # 3) Sequential gate: drop points that jump > radius from a robust running level.
-    if len(filtered) >= 3:
-        out: list[int] = [filtered[0]]
-        level = float(filtered[0])
-        for n in filtered[1:]:
-            if abs(n - level) <= radius * 1.5:
-                out.append(n)
-                # slow EMA toward accepted points
-                level = 0.7 * level + 0.3 * float(n)
-            # else drop as OCR spike
-        filtered = out if len(out) >= 3 else filtered
-
-    return filtered if len(filtered) >= 3 else by_len
+def _local_digit_mode(ns: list[int], i: int, radius: int = 4) -> tuple[int | None, int]:
+    """Mode of digit-lengths in a neighbour window excluding i. (mode_len, count)."""
+    lo = max(0, i - radius)
+    hi = min(len(ns), i + radius + 1)
+    lengths = [len(str(ns[j])) for j in range(lo, hi) if j != i]
+    if not lengths:
+        return None, 0
+    mode_len, mode_c = Counter(lengths).most_common(1)[0]
+    return int(mode_len), int(mode_c)
 
 
 def _filter_counter_pairs(
     pairs: list[tuple[int, int]],
-) -> list[tuple[int, int]]:
-    """Filter (capture_idx, n) pairs with the same outlier rules as ns-only."""
+) -> tuple[list[tuple[int, int]], list[dict[str, Any]]]:
+    """Filter (capture_idx, n) pairs: structural OCR rules first, then MAD.
+
+    Structural rules are *implausible-by-construction* for a monotonic burned-in
+    counter (parent false-RED on /tmp/cap480_long — NOT threshold loosening):
+
+      1) digit-count discontinuity vs neighbours (e.g. 4-digit stream, one
+         5-digit read ``1352``→``13527``): reject that sample.
+      2) interior spike / backward: for triple (a,b,c) with a <= c < b, b is a
+         strict local max above the continuing progression — reject b
+         (covers ``2``→``7`` class: 1581,1587,1583 and 2911,2917,2913).
+      3) sequential backward step after a kept level: reject the new read.
+
+    MAD radius is unchanged (not widened). Rejections carry printed reasons
+    naming capture idx and the violated rule so RATE_FAIL cannot launder OCR.
+    """
+    rejections: list[dict[str, Any]] = []
     if len(pairs) < 3:
-        return list(pairs)
+        return list(pairs), rejections
+
+    # --- Pass A: local digit-count discontinuity (not global mode alone) ---
     ns = [n for _, n in pairs]
-    lengths = Counter(len(str(n)) for n in ns)
+    keep_idx = set(range(len(pairs)))
+    for i, (cap_i, n) in enumerate(pairs):
+        mode_len, mode_c = _local_digit_mode(ns, i, radius=4)
+        if mode_len is None or mode_c < 2:
+            continue
+        dlen = len(str(n))
+        if dlen != mode_len:
+            keep_idx.discard(i)
+            rejections.append(
+                {
+                    "cap_idx": int(cap_i),
+                    "n": int(n),
+                    "rule": "digit_count_discontinuity",
+                    "reason": (
+                        f"cap_idx={cap_i} n={n} digits={dlen} != neighbour_mode="
+                        f"{mode_len} (count={mode_c}) — impossible for monotonic "
+                        f"counter digit growth in one capture step"
+                    ),
+                }
+            )
+
+    stage = [pairs[i] for i in range(len(pairs)) if i in keep_idx]
+    if len(stage) < 3:
+        stage = list(pairs)
+
+    # --- Pass B: RLE spike / trough (plateau-safe) ---
+    # Parent 2→7 class often plateaus 1–2 capture frames (2917,2917) so a
+    # sample-wise interior check sees neighbours (2911,2917) or (2917,2913)
+    # and misses. Collapse runs first: for successive distinct values a,b,c
+    #   spike if (b-a) >= 4 and c < b   # jumped up, then any drop
+    #   trough if (a-b) >= 4 and c > b
+    # Bank-swap 100,101,100: b-a=1 < 4 → kept (real revisit still RATE_FAIL).
+    # Healthy +2 skip: a,a+2,a+3 → c>b → kept.
+    changed = True
+    while changed and len(stage) >= 3:
+        changed = False
+        ns_s = [n for _, n in stage]
+        runs = _rle_runs(ns_s)
+        if len(runs) < 3:
+            break
+        # Map run index → list of stage indices in that run
+        run_stage_idxs: list[list[int]] = []
+        si = 0
+        for _v, cnt in runs:
+            run_stage_idxs.append(list(range(si, si + cnt)))
+            si += cnt
+        drop_stage: set[int] = set()
+        vals = [v for v, _ in runs]
+        for ri in range(1, len(vals) - 1):
+            a, b, c = vals[ri - 1], vals[ri], vals[ri + 1]
+            rule = ""
+            if (b - a) >= 4 and c < b:
+                rule = "rle_spike_up_then_drop"
+            elif (a - b) >= 4 and c > b:
+                rule = "rle_trough_down_then_rise"
+            if not rule:
+                continue
+            for sj in run_stage_idxs[ri]:
+                drop_stage.add(sj)
+                cap_j, n_j = stage[sj]
+                rejections.append(
+                    {
+                        "cap_idx": int(cap_j),
+                        "n": int(n_j),
+                        "rule": rule,
+                        "reason": (
+                            f"cap_idx={cap_j} n={n_j} RLE neighbours "
+                            f"{a}->{b}->{c}: {rule} — OCR spike/trough "
+                            f"(e.g. trailing 2→7), not a real counter state"
+                        ),
+                    }
+                )
+        if drop_stage:
+            stage = [p for k, p in enumerate(stage) if k not in drop_stage]
+            changed = True
+
+    if len(stage) < 3:
+        stage = [pairs[i] for i in range(len(pairs)) if i in keep_idx] or list(pairs)
+
+    # NOTE: do NOT strip all backward steps. Bank-swap ping-pong (100,101,100,101)
+    # is exactly the real revisit RATE_FAIL we must still catch. Large backward
+    # OCR jumps are already removed as spikes/troughs/digit-count.
+
+    # --- Pass C: MAD gate (radius NOT widened — parent forbid) ---
+    ns2 = [n for _, n in stage]
+    lengths = Counter(len(str(n)) for n in ns2)
     mode_len, mode_c = lengths.most_common(1)[0]
-    if mode_c >= max(3, len(ns) // 3):
-        by_len = [(i, n) for i, n in pairs if len(str(n)) == mode_len]
+    if mode_c >= max(3, len(ns2) // 3):
+        by_len = [(i, n) for i, n in stage if len(str(n)) == mode_len]
+        for i, n in stage:
+            if len(str(n)) != mode_len:
+                # Already mostly caught; record if still present
+                if not any(r["cap_idx"] == i and r["n"] == n for r in rejections):
+                    rejections.append(
+                        {
+                            "cap_idx": int(i),
+                            "n": int(n),
+                            "rule": "global_digit_mode",
+                            "reason": (
+                                f"cap_idx={i} n={n} digits={len(str(n))} != "
+                                f"global_mode={mode_len}"
+                            ),
+                        }
+                    )
     else:
-        by_len = list(pairs)
+        by_len = list(stage)
     if len(by_len) < 3:
-        by_len = list(pairs)
+        by_len = list(stage)
     med = _median_int([n for _, n in by_len])
     abs_dev = sorted(abs(n - med) for _, n in by_len)
     mad = abs_dev[len(abs_dev) // 2] if abs_dev else 0
     radius = max(80, 6 * mad if mad > 0 else 80)
     filtered = [(i, n) for i, n in by_len if abs(n - med) <= radius]
+    for i, n in by_len:
+        if abs(n - med) > radius:
+            rejections.append(
+                {
+                    "cap_idx": int(i),
+                    "n": int(n),
+                    "rule": "mad_radius",
+                    "reason": (
+                        f"cap_idx={i} n={n} outside MAD radius={radius} med={med}"
+                    ),
+                }
+            )
     if len(filtered) >= 3:
         out: list[tuple[int, int]] = [filtered[0]]
         level = float(filtered[0][1])
@@ -1689,8 +2023,21 @@ def _filter_counter_pairs(
             if abs(n - level) <= radius * 1.5:
                 out.append((i, n))
                 level = 0.7 * level + 0.3 * float(n)
+            else:
+                rejections.append(
+                    {
+                        "cap_idx": int(i),
+                        "n": int(n),
+                        "rule": "sequential_mad_jump",
+                        "reason": (
+                            f"cap_idx={i} n={n} jump from level={level:.1f} "
+                            f"> radius*1.5={radius * 1.5}"
+                        ),
+                    }
+                )
         filtered = out if len(out) >= 3 else filtered
-    return filtered if len(filtered) >= 3 else by_len
+    kept = filtered if len(filtered) >= 3 else by_len
+    return kept, rejections
 
 
 def _rle_runs(ns: list[int]) -> list[tuple[int, int]]:
@@ -1985,7 +2332,7 @@ def score_burst(
     strong = [r for r in ok_reads if int(r.get("tier") or 0) >= 7]
     seq_src = strong
     pairs_raw = [(int(r["idx"]), int(r["n"])) for r in seq_src]
-    pairs = _filter_counter_pairs(pairs_raw)
+    pairs, ocr_rejections = _filter_counter_pairs(pairs_raw)
     ns_raw = [n for _, n in pairs_raw]
     ns = [n for _, n in pairs]
 
@@ -2259,6 +2606,9 @@ def score_burst(
         "skip_confidence": skip_info.get("skip_confidence"),
         "skip_notes": skip_info.get("skip_notes"),
         "skip_arithmetic": skip_info.get("arithmetic"),
+        # Structural OCR rejections (digit-count / spike / backward) — printed.
+        "ocr_rejections": ocr_rejections,
+        "ocr_rejected": len(ocr_rejections),
         # Startup transient discriminator (measurement; not a hard rc alone).
         "startup_status": startup_info.get("startup_status"),
         "startup_hypothesis": startup_info.get("hypothesis"),
@@ -2323,6 +2673,13 @@ def _print_human(report: dict[str, Any], src: str) -> None:
             f"counter n_min={report['n_min']} n_max={report['n_max']} "
             f"head={report['ns_head']} tail={report['ns_tail']}"
         )
+    ocr_n = int(report.get("ocr_rejected") or 0)
+    if ocr_n:
+        print(f"ocr_rejected={ocr_n} (structural digit_count/spike/backward — not scored)")
+        for rej in (report.get("ocr_rejections") or [])[:40]:
+            print(f"  ocr_reject {rej.get('reason')}")
+        if ocr_n > 40:
+            print(f"  ocr_reject ... ({ocr_n - 40} more)")
     print(
         f"motion={report['motion']} color={report['color']} "
         f"structure={report.get('structure', 'STRUCTURE_OK')} "
@@ -2715,8 +3072,12 @@ def _self_test() -> int:
     ping = []
     for i in range(30):
         ping.append(100 + (i % 2))  # 100,101,100,101,...
+    # Real revisits must survive structural filter and still RATE_FAIL.
+    ping_pairs = list(enumerate(ping * 2))
+    ping_kept, ping_rej = _filter_counter_pairs(ping_pairs)
+    assert len(ping_kept) >= RATE_MIN_SAMPLES, (len(ping_kept), ping_rej)
     ri_ping = analyze_counter_rate(
-        list(enumerate(ping * 2)),
+        ping_kept,
         source_fps=24.0,
         capture_fps=30.0,
         source_fps_src=PROVENANCE_CALLER,
@@ -2725,6 +3086,44 @@ def _self_test() -> int:
     assert ri_ping["rate_fail"] is True, ri_ping
     assert ri_ping["revisit_fail"] is True, ri_ping
     assert ri_ping["non_adjacent_revisits"] >= 2, ri_ping
+
+    # Parent false-RED classes: 5-digit insertion + 2→7 spike must be rejected
+    # structurally (not by widening MAD), and must not mint revisits.
+    ocr_bug = []
+    n = 1340
+    for i in range(40):
+        ocr_bug.append(n)
+        n += 1
+        if i == 10:
+            ocr_bug.append(13527)  # was 1352
+        if i == 25:
+            ocr_bug.append(2917)  # was 2912 mid-stream (use nearby)
+    # Build explicit sequence around the lab sites
+    lab_seq = (
+        [(i, 1340 + i) for i in range(11)]
+        + [(11, 13527)]  # misread of 1351+1
+        + [(12, 1353)]
+        + [(13 + k, 1354 + k) for k in range(20)]
+        + [(40, 2911), (41, 2917), (42, 2913)]  # 2→7 then continue
+        + [(43 + k, 2914 + k) for k in range(30)]
+    )
+    kept_lab, rej_lab = _filter_counter_pairs(lab_seq)
+    rules = {r["rule"] for r in rej_lab}
+    assert any(r["n"] == 13527 for r in rej_lab), rej_lab
+    assert any(
+        r["n"] == 2917 and r["cap_idx"] == 41 for r in rej_lab
+    ), rej_lab  # the spike at cap 41, not later real n=2917
+    assert 13527 not in {n for _, n in kept_lab}, kept_lab
+    assert (41, 2917) not in kept_lab, kept_lab
+    ri_lab = analyze_counter_rate(
+        kept_lab,
+        source_fps=24.0,
+        capture_fps=30.0,
+        source_fps_src=PROVENANCE_CALLER,
+        capture_fps_src=PROVENANCE_CALLER,
+    )
+    assert ri_lab["non_adjacent_revisits"] == 0, ri_lab
+    assert ri_lab.get("revisit_fail") is False, ri_lab
 
     # Too few samples → RATE_UNSCORED (not a fail).
     ri_few = analyze_counter_rate(
@@ -2960,6 +3359,15 @@ def main(argv: list[str] | None = None) -> int:
             "Do NOT pass lifetime_drops. Inadmissible as sole evidence — pixels decide."
         ),
     )
+    ap.add_argument(
+        "--counters-csv",
+        default=None,
+        help=(
+            "pre-decoded counter cache (CSV with idx,n). Skips PNG OCR; applies "
+            "structural OCR filter + rate/skip/startup. Used to prove filter on "
+            "parent caches (e.g. /tmp/ctr480.csv) without re-tesseract."
+        ),
+    )
     ap.add_argument("--json", action="store_true", help="machine-readable report")
     ap.add_argument(
         "--progress",
@@ -2981,8 +3389,85 @@ def main(argv: list[str] | None = None) -> int:
     if args.self_test:
         return _self_test()
 
+    # --- shared fps provenance resolution (used by CSV and PNG paths) ---
+    def _resolve_fps(
+        frames_for_measure: list[str] | None = None,
+    ) -> tuple[float, str, float, str, dict[str, Any] | None]:
+        try:
+            src_parsed = parse_fps_token(args.source_fps)
+        except ValueError as e:
+            print(f"ERROR: --source-fps: {e}", file=sys.stderr)
+            raise SystemExit(RC_UNSCORED) from e
+        if src_parsed is None:
+            source_fps = DEFAULT_ASSUMED_SOURCE_FPS
+            source_fps_src = PROVENANCE_DEFAULT_ASSUMED
+        else:
+            source_fps = src_parsed
+            source_fps_src = PROVENANCE_CALLER
+        try:
+            cap_parsed = parse_fps_token(args.capture_fps)
+        except ValueError as e:
+            print(f"ERROR: --capture-fps: {e}", file=sys.stderr)
+            raise SystemExit(RC_UNSCORED) from e
+        cap_measure_meta: dict[str, Any] | None = None
+        if cap_parsed is not None:
+            capture_fps = cap_parsed
+            capture_fps_src = PROVENANCE_CALLER
+        else:
+            capture_fps = DEFAULT_ASSUMED_CAPTURE_FPS
+            capture_fps_src = PROVENANCE_DEFAULT_ASSUMED
+            if frames_for_measure:
+                measured = measure_capture_fps_from_paths(
+                    frames_for_measure, wall_s=args.capture_wall_s
+                )
+                cap_measure_meta = measured
+                if measured.get("capture_fps") is not None:
+                    capture_fps = float(measured["capture_fps"])
+                    capture_fps_src = str(measured["capture_fps_src"])
+                elif args.probe_capture:
+                    probed, how = try_probe_capture_fps(args.probe_capture)
+                    if probed is not None:
+                        capture_fps = probed
+                        capture_fps_src = PROVENANCE_CONTAINER
+            elif args.capture_wall_s is not None and args.capture_wall_s > 0:
+                # CSV path: parent can pass wall + n via --capture-fps preferred;
+                # wall alone is not enough without n_frames.
+                pass
+        return source_fps, source_fps_src, capture_fps, capture_fps_src, cap_measure_meta
+
+    if args.counters_csv:
+        try:
+            pairs_raw = load_counters_csv(args.counters_csv)
+        except (OSError, ValueError) as e:
+            print(f"ERROR: --counters-csv: {e}", file=sys.stderr)
+            return RC_UNSCORED
+        source_fps, source_fps_src, capture_fps, capture_fps_src, _meta = _resolve_fps(
+            None
+        )
+        # Parent measured cap_fps=29.9068 on this burst — prefer explicit --cap-fps.
+        daemon_drops = args.daemon_session_drops
+        daemon_drops_src = (
+            PROVENANCE_CALLER if daemon_drops is not None else PROVENANCE_DEFAULT_ASSUMED
+        )
+        report = score_counter_pairs(
+            pairs_raw,
+            source_fps=source_fps,
+            capture_fps=capture_fps,
+            source_fps_src=source_fps_src,
+            capture_fps_src=capture_fps_src,
+            startup_window_s=float(args.startup_window_s),
+            daemon_session_drops=daemon_drops,
+            daemon_drops_src=daemon_drops_src,
+        )
+        report["src"] = str(args.counters_csv)
+        if args.json:
+            print(json.dumps(report, indent=2))
+        else:
+            _print_human(report, str(args.counters_csv))
+        return int(report["rc"])
+
     if not args.inputs:
-        ap.error("provide a capture directory or PNG frames (or --self-test)")
+        ap.error("provide a capture directory or PNG frames (or --self-test/--counters-csv)")
 
     # Resolve frames from dirs and/or files.
     frames: list[str] = []

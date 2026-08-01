@@ -1,102 +1,112 @@
-# w-instr status — startup transient RCA + discriminator
+# w-instr status — OCR ROI false-RED fix + PTS grabber design
 updated: 2026-07-31
 branch: w-avsync-hdmi-measure
-SHA: 0266501d
+SHA: 39f78bef
 
-## Parent question
-305s soak @ 624x480 24.000: drops→17 then FLAT; residual=0 publish_misses=0;
-steady 23.95–24.02. Startup stutter = (a) cosmetic catch-up or (b) real loss?
+## TASK 1 — false RATE_FAIL from OCR (ACCEPTED defect, FIXED)
 
-## 1. What increments droppedFrames_? (quoted)
+### Mechanism (measured, not guessed)
+find_overlay hard-yellow bbox ended at the trailing glyph edge (parent: x1=643
+with ink to 643). Exclusive slice dropped the last column; AA/borderw=2 black
+skirt was never in the hard mask. Last digit mangled:
+  1352 → 13527 (extra digit)   2912 → 2917 (2→7)
+gen_avsync_blip.py draws `TREK24 n=%{n}` at x=8,y=8 with GROWING width — bbox
+is recomputed per frame so "early-frame ROI freeze" is NOT the mechanism; per-frame
+right-edge clip of the *current* last digit is.
 
-media_player.cpp present loop (after full frame read, ++frameIndex):
-  frameMs = frameContentMs(frameIndex, fpsNum, fpsDen) + avOffsetMs_
-  clockMs = audibleClockMs(audioBytes_, audioQueuedBytes_) if audio else (now-t0)
-  drift = avDriftMs(clockMs, frameMs)   // audio/wall − content
-  act = avDecide(drift, leadMs, dropMs, dropRun)
-  if !present: droppedFrames_.fetch_add(1)   // NO presentCleanFrame
-  else: presentCleanFrame(...); dropRun=0
+### Fix (not gate-loosening)
+1. Pad ROI (~2.4 glyph-heights right) and RE-threshold padded RGB with
+   hard|soft yellow so new columns carry ink (pad of False mask is useless alone).
+2. Structural OCR filter (implausible-by-construction):
+   - digit_count_discontinuity vs neighbour mode
+   - RLE spike: (b-a)>=4 and c<b  (plateau-safe 2→7)
+   - RLE trough: (a-b)>=4 and c>b
+   MAD radius NOT widened.
+3. Rate/revisit/skip run on filtered sequence only. Printed ocr_reject reasons
+   name cap_idx + rule. Real bank-swap A,B,A still RATE_FAIL (b-a=1 survives).
 
-av_clock.hpp:37-64:
-  drift<0 video ahead → Hold; drift>0 video behind → Drop
-  Drop iff dropMs>0 && driftMs>dropMs && dropRun<maxDropRun(default 1)
-  Hold iff driftMs+leadMs < 0
+### RED-before-GREEN evidence (true rc direct)
+LEGACY MAD-only on /tmp/ctr480.csv (parent OCR cache):
+  rate=RATE_FAIL revisits=2 lost_adj=20 hist_adj={'2':10,'6':2}
+  reasons=[non_adjacent_revisits=2>=2]
 
-Defaults: presentLeadMs_=40, resyncDropMs_=80 (media_player.hpp:335-336).
-ONLY this path increments droppedFrames_. publish_misses_ is DDR fail path.
+FIXED --counters-csv /tmp/ctr480.csv --src-fps 24/1 --cap-fps 29.9068:
+  VERDICT=MOTION_OK rc=0  revisits=0  hist_adj={'2':10}  (no class 6)
+  ocr_rejected=19 with printed reasons including:
+    cap_idx=172 n=13527 digit_count_discontinuity
+    cap_idx=2123/2124 n=2917 rle_spike_up_then_drop 2911->2917->2913
+    cap_idx=460/461 n=1587 rle_spike_up_then_drop 1581->1587->1586
+  true rc=0
 
-## 2. Why 10–17 at startup then never?
+ROI re-OCR after pad (viewed sites):
+  f_0173 n=1352 OK  f_2124 n=2912 OK  (was 13527 / 2917)
 
-From source (kill/prove candidates):
+REAL revisit synthetic still:
+  VERDICT=RATE_FAIL rc=4 revisits=78  true rc=4
 
-KILL (a) early-dump-as-too-early: Drop requires drift > dropMs (video LATE).
-  Early video → negative drift → Hold (2ms sleep), never Drop.
+self-test: SELF_TEST_OK true rc=0
 
-PROVE startup lateness path:
-  media_player.cpp:3020-3036 waits for audioActive_ then sets t0, THEN reads video.
-  audioPump:2048 sets audioActive_=true at start; audioBytes_ advances while
-  ffmpeg/video first frames still arriving → first paced frames often
-  audibleClock >> frameMs+80 → Drop.
+## TASK 2 — remaining 10 × +2 and grabber drops
 
-maxDropRun=1 → interleaved drop/present until drift≤80; then flat (matches
-parent: drops stuck at 17 for 7000+ frames). residual/publish_misses=0 rules
-out DDR as the drop counter.
+### Does the instrument assume uniform capture spacing?
+YES — stated explicitly now in skip_arithmetic and skip_notes:
+  uniform_capture_spacing=ASSUMED
+  di = cap_idx delta treated as di × (1/cap_fps) intervals.
+  PNG sequence with only wall_s / n_frames for cap_fps cannot see a missing
+  grabber sample: Δt≈2/cap between saved frames looks identical to a device
+  +2 if you only have indices. This can inflate frames_lost_adj on every
+  capture this project has taken. Parent: 2400/80.216=29.9068 vs 30.0
+  ⇒ ~7.5 frame deficit over 80s, same order as the 10 +2 events.
 
-AV_PRESENT_LEAD_MS only widens Hold; does not create Drops.
+### Discriminator: PTS-tagged capture
+PNG f_%04d has no timestamps. Capture to MKV/NUT keeping v4l2 timestamps:
 
-Fixable? Yes (not implemented): co-arm A/V origin on first video frame;
-startup grace dropMs=0 until locked; or delay audio master until first present.
-Re-label alone without pixel proof would hide real present-skips.
-
-## 3. Discriminator (landed)
-
-analyze_startup_transient in tools/hdmi_motion_instrument.py
-  --startup-window-s 60
-  --daemon-session-drops N   # session drops only, caller_supplied
-  --src-fps 24/1 --capture-wall-s WALL
-
-startup_status (measurement, not hard rc):
-  STARTUP_CONTIGUOUS | STARTUP_CONTIGUOUS_vs_DROPS | STARTUP_DISPLAY_LOSS
-  | STARTUP_SUSPECT | STARTUP_UNSCORED
-Primary: startup_frames_lost_adj (RLE-only + adj0 = OCR, not loss)
-drops_match when |adj - daemon_drops| <= 3
-
-Startup resolvable? YES — ~17 events >> single-+2 noise floor at 30-vs-24.
-Steady-state still ambiguous; startup cluster is not.
-
-## 4. Capture — grabber BEFORE cast
-
-OUT=$HOME/misterplex-captures/startup_$(date +%Y%m%d_%H%M%S)
+```bash
+OUT=$HOME/misterplex-captures/pts_$(date +%Y%m%d_%H%M%S)
 mkdir -p "$OUT"
-START=$(date +%s.%N)
+# passthrough timestamps from v4l2; mkv stores pts
 ffmpeg -v error -f v4l2 -input_format mjpeg -video_size 1920x1080 \
-  -i /dev/video0 -frames:v 2700 -y "$OUT/f_%04d.png" &
-FFPID=$!
-sleep 2
-# *** CAST rk=8 360s fixture NOW ***
-wait $FFPID
-END=$(date +%s.%N)
-WALL=$(python3 -c "print($END-$START)")
-python3 tools/hdmi_motion_instrument.py "$OUT" \
-  --src-fps 24/1 --capture-wall-s "$WALL" \
-  --startup-window-s 60 --daemon-session-drops 17
-echo "true rc=$?"
+  -i /dev/video0 -vsync 0 -copyts -c:v copy \
+  -f matroska "$OUT/cap.mkv"
+# After session (or parallel limited frames):
+ffprobe -v error -select_streams v:0 -show_entries frame=pkt_pts_time,best_effort_timestamp_time \
+  -of csv=p=0 "$OUT/cap.mkv" > "$OUT/pts.csv"
+# Extract PNGs WITH same order for OCR (or decode in-order):
+ffmpeg -v error -i "$OUT/cap.mkv" -vsync 0 "$OUT/f_%04d.png"
+# Pair: line i of pts.csv ↔ f_XXXX.png counter
+python3 tools/hdmi_motion_instrument.py "$OUT" --src-fps 24/1 \
+  --capture-fps 30  # or measured from PTS median Δ
+# Then analysis entry (to be wired as --pts-csv next if needed):
+#   for each adj +2 in counter domain, look at Δpts between those two PNGs
+#   Δpts ≈ 1/cap_nom  (~33.4ms)  → device skip (source frame never shown long enough
+#                                   OR never shown — still need n gap + short Δt)
+#   Δpts ≈ 2/cap_nom  (~66.8ms)  → grabber drop (missing capture sample)
+#   Δpts ambiguous     → UNSCORED for that event
+```
 
-## 5. PRE-REGISTERED predictions
+Note: with 24fps content held 41.7ms and capture 33.4ms, a *displayed* source
+frame cannot be entirely skipped under perfect uniform capture — parent arithmetic
+accepted. So +2 with Δpts≈1/cap implies the source frame was on screen < one
+capture period (possible with Drop present-skip). +2 with Δpts≈2/cap is grabber.
 
-P_STARTUP_1 (primary): NOT parent-(a) early dump. Video-late Drop present-skips.
-  IF cast inside window: STARTUP_DISPLAY_LOSS, lost_adj≈14..20, drops_match=True.
-  User sees ~0.7s missing content + holds at every episode start, then clean 24.0.
+Better discriminator if available: same PTS path is the minimum; no ALSA needed.
 
-P_STARTUP_2: grabber after settle → CONTIGUOUS(_vs_DROPS), lost_adj≈0 — window miss,
-  NOT proof of cosmetic (a).
+### Analysis entry point (current)
+Manual join pts.csv[i] with counter sequence after OCR; classify each
+skip_hist_adj event. Follow-up can add `--pts-csv` to auto-tag each +2.
+Until then every frames_lost_adj on PNG-only bursts is
+  measured_counter_gap / ASSUMED_uniform_spacing
+not a pure device-loss count.
 
-P_STARTUP_3 falsifier: cast-in-window + lost_adj≈0 + drops=17 conf MEDIUM+
-  → CONTIGUOUS_vs_DROPS; would force re-audit of sole fetch_add site.
+## Commands for parent
+```bash
+# fixed score on cached counters (fast)
+python3 tools/hdmi_motion_instrument.py --counters-csv /tmp/ctr480.csv \
+  --src-fps 24/1 --cap-fps 29.9068; echo "true rc=$?"
 
-## Evidence
-python3 tools/hdmi_motion_instrument.py --self-test → SELF_TEST_OK true rc=0
-(includes CONTIGUOUS / DISPLAY_LOSS+match / CONTIGUOUS_vs_DROPS)
+# ROI check one frame
+python3 tools/hdmi_motion_instrument.py --one /tmp/cap480_long/f_0173.png; echo "true rc=$?"
+```
 
-## Rules
-no device; direct rc; score_i420_candidate.py untouched; drops/av_drift not sole evidence
+## Startup predictions still live
+P_STARTUP_1 / P_STARTUP_2 unchanged; awaiting cast-in-window capture.
