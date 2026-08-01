@@ -1,22 +1,27 @@
 # w-lint T1–T5 gate blockers (host-only)
 
-## T5 WITHDRAWN (parent ERROR 20) — DO NOT TREAT AS DEFECT
+## T5 — REAL defect, FIXED (keep HISTORICAL FAULT; do not revert)
 
-Parent mis-read `ddr_bank_release_select.hpp` without the enclosing block.
-The file's **HISTORICAL FAULT (fixed…)** note correctly documents that an
-older pack put `bank_vsync_count` into `frames_done`, and that product RTL
-now packs the real swap counter. **Do not rewrite as a "stale comment" fix.**
+**Status:** Real present-tense lie existed pre-`100b797d`:
 
-- Restored canonical HISTORICAL FAULT block from parent-verified main tree.
-- Encoded: `docs/COMMENT_CONTEXT_RULE.md`, `tests/unit/test_comment_context_guard.py`
-- RBG: strip HISTORICAL FAULT → rc=1; bare present-tense claim → rc=1; restore → rc=0
+```
+// frames_done field is actually bank_vsync_count so liveness never detects a
+```
+
+w-geom `100b797d` fixed it into the **HISTORICAL FAULT** block. Product packs
+real swap counters. **Do not reintroduce the pre-fix line.**
+
+Parent briefly ordered a retraction (ERROR 20) after reading only the fixed file;
+that order is **cancelled**. Gate-integrity lesson:
+
+1. Grep audits must read the enclosing block (HISTORICAL = docs, not live claim).
+2. Before retracting a finding, check `git log`/`git show` — a completed fix is
+   not proof the defect was imaginary.
+
+`tests/unit/test_comment_context_guard.py` locks the HISTORICAL marker and
+rejects bare present-tense reintroduction (RBG: old wording rc=1, restore rc=0).
 
 
-**Branch tip at write:** see git. **No device / no Quartus.**
-
-All `true rc` captured **directly** (no pipe).
-
----
 
 ## T1 — opposite outcomes sharing one exit code
 

@@ -77,13 +77,16 @@ Example (parent-corrected): adjacent-equal holds reported as 29.9% vs "ideal 0%"
 
 Inadequate null declaration → treat like inadequate sampling margin: **UNSCORED rc=77**, never pass/fail on the effect claim.
 
-## Comment / quote context (ERROR 20)
+## Comment / quote context + retraction discipline
 
-A line-number quote without the enclosing block is not evidence.
+Two opposite failures (see `docs/COMMENT_CONTEXT_RULE.md`):
 
-- Before flagging a "stale comment", **read the full enclosing comment block**.
-- Text under headings **`HISTORICAL` / `FIXED` / `DO NOT REINTRODUCE` / `HISTORICAL FAULT`** documents a **past** defect and the **current** correct behaviour. It is **not** an assertion that the product still has the fault.
-- Grep-based stale-comment audits that ignore those headings will manufacture false defect reports (ERROR 20).
+1. **Flag a fixed HISTORICAL note as a live defect** (decontextualized grep).
+2. **Retract a real defect** because the working tree already shows the fix —
+   without `git log`/`git show`. A fix in flight looks identical to "never broken."
 
-See also: `docs/COMMENT_CONTEXT_RULE.md`.
+T5 (`frames_done` present-tense = `bank_vsync_count`) was **real**; fixed in
+`100b797d`. Keep the HISTORICAL FAULT block. Do **not** reintroduce the pre-fix line.
+
+Before any defect retraction: check history, not only the current file.
 

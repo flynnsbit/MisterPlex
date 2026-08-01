@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""ERROR 20 guard: HISTORICAL comment blocks are not present-tense defects.
+"""Comment-context guard: HISTORICAL blocks stay; pre-fix lie stays dead.
 
-Parent withdrew T5 after mis-reading ddr_bank_release_select.hpp without the
-enclosing HISTORICAL FAULT block. This test locks:
+T5 was real (present-tense frames_done==bank_vsync_count). Fixed in 100b797d
+into HISTORICAL FAULT. Parent briefly retracted after reading only the fixed
+file — that retraction is cancelled. This test locks:
 
   1) The HISTORICAL FAULT marker remains on the bank-select header.
   2) No present-tense claim that frames_done *is* bank_vsync_count outside

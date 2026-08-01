@@ -1,10 +1,10 @@
 lane=w-lint GATE-INTEGRITY
 branch=w-lint-gate-integrity
-tip=89cfe3d3
-focus=T5 WITHDRAWN ERROR20; HISTORICAL FAULT restored; comment_context_guard; null_model
-T5=WITHDRAWN HISTORICAL FAULT intact guard rc=0
+tip_pending=post-ERROR20-retract-cancel
+focus=T5 REAL fixed 100b797d; keep HISTORICAL; dual failure modes + git-before-retract
+T5=REAL_FIXED keep HISTORICAL FAULT; reintroduce old line → guard rc=1
 T1=glass SKIP_FAIL=2 INSTRUMENT=3 collision_guard rc=0
-T3=SAMPLING_MARGIN+null_model+COMMENT_CONTEXT
-T4=deploy deferred overall; restore refuse 10
-rollcall=expected_commands=136
+T3=SAMPLING_MARGIN + null_model + comment/retract rules
+T4=deploy live md5 + n_daemon=1; geometry→78; restore refuse rc=10
+rules=no device; no Quartus; rc direct; 77!=pass; never weaken; never reintroduce pre-100b797d lie
 orphan_TIER1=RED intentional
