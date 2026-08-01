@@ -446,3 +446,27 @@ Artifacts: `$E2E_OUT_DIR/e2e_run_id.txt` and `e2e_run_events.jsonl`.
 
 **Lipsync is NOT asserted here.** `av-lock` / `av_drift_ms` are blind to the measured
 bimodal HDMI offset. Only `tools/avsync_measure_hdmi.py` on a parent capture is valid.
+
+
+## Session hold — parent multi-capture (session-latched A/V)
+
+Device A/V offset is **session-latched** (~117 ms bimodal clusters; within-session
+spread ~3 ms). The suite **cannot** score lipsync. For parent experiments that need
+several HDMI/avsync captures on **one** continuous cast:
+
+```bash
+# Short UI transitions, then 360s hold for 3 captures (do not stop between)
+E2E_TIER=480p E2E_480P_ARM=soak E2E_DAEMON_DECODE=624x480 \
+E2E_TRANSITION_CYCLES=1 E2E_SESSION_HOLD_SEC=360 \
+PLEX_BASE=http://YOUR-LOCAL-PMS:32400 PLEX_TOKEN=… PLEX_WEB_USER=… \
+MISTER_HOST=… \
+./tests/hw/e2e/run_cast_picker.sh; echo "true rc=$?"
+```
+
+During hold the suite prints `PARENT_MULTI_CAPTURE_RECIPE` with windows ≈12s, 148s,
+284s, asserts `playing` + stable `pid`/`session`, and stamps `e2e_mark` /
+`SESSION_HOLD_WINDOW_OPEN`. **Pre-registered:** within-session capture medians agree
+within ~30 ms if session-latched; ~117 ms split would implicate the capture path.
+
+`src_fps`/`cap_fps` defaults are labeled `DEFAULT_ASSUMED` unless env overrides
+(`caller-supplied`) — never treat defaults as ffprobe measurements.

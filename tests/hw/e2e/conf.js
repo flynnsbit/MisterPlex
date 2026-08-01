@@ -269,6 +269,41 @@ function loadConfig() {
     hdmiAssertMode = isReal ? 'color_structure' : 'motion';
   }
 
+  // After transitions (or first play), hold one continuous session so parent can
+  // run multiple HDMI/avsync captures WITHOUT stop/recast (session-latched A/V).
+  // 0 = off. Parent multi-capture recipe uses ~360.
+  let sessionHoldSec = parseInt(
+    process.env.E2E_SESSION_HOLD_SEC || conf.E2E_SESSION_HOLD_SEC || '0',
+    10
+  );
+  if (!Number.isFinite(sessionHoldSec) || sessionHoldSec < 0) sessionHoldSec = 0;
+  if (sessionHoldSec > 7200) sessionHoldSec = 7200;
+
+  // FPS labels — ERROR 17 class: never print a default as if measured.
+  // Fixtures: RK8 soak is 24.000 (ffprobe-measured by parent); instrument default
+  // used to hardcode 23.976. Prefer explicit env; else DEFAULT_ASSUMED 24.0 for
+  // synthetic 480p soak, 24.0 for 240p lab fixtures unless overridden.
+  const srcFpsEnv = process.env.E2E_HDMI_SOURCE_FPS;
+  let hdmiSourceFps;
+  let hdmiSourceFpsLabel;
+  if (srcFpsEnv !== undefined && srcFpsEnv !== '') {
+    hdmiSourceFps = parseFloat(srcFpsEnv);
+    hdmiSourceFpsLabel = 'caller-supplied';
+  } else {
+    hdmiSourceFps = 24.0;
+    hdmiSourceFpsLabel = 'DEFAULT_ASSUMED';
+  }
+  const capFpsEnv = process.env.E2E_HDMI_CAPTURE_FPS;
+  let hdmiCaptureFps;
+  let hdmiCaptureFpsLabel;
+  if (capFpsEnv !== undefined && capFpsEnv !== '') {
+    hdmiCaptureFps = parseFloat(capFpsEnv);
+    hdmiCaptureFpsLabel = 'caller-supplied';
+  } else {
+    hdmiCaptureFps = 30.0;
+    hdmiCaptureFpsLabel = 'DEFAULT_ASSUMED';
+  }
+
   return {
     confPath: confPath || '(none)',
     plexBase,
@@ -316,8 +351,11 @@ function loadConfig() {
     hdmiHoldSec,
     hdmiWarmupSkip: parseInt(process.env.E2E_HDMI_WARMUP_SKIP || '15', 10),
     hdmiVideoDev: process.env.E2E_HDMI_VIDEO_DEV || '/dev/video0',
-    hdmiSourceFps: parseFloat(process.env.E2E_HDMI_SOURCE_FPS || '23.976'),
-    hdmiCaptureFps: parseFloat(process.env.E2E_HDMI_CAPTURE_FPS || '30'),
+    hdmiSourceFps,
+    hdmiSourceFpsLabel,
+    hdmiCaptureFps,
+    hdmiCaptureFpsLabel,
+    sessionHoldSec,
   };
 }
 

@@ -1590,6 +1590,152 @@ function parentHdmiScoreCmd(cfg, capDir) {
 }
 
 /**
+ * Hold one continuous cast session so parent can run multiple HDMI/avsync
+ * captures without stop/recast. Session-latched A/V (117 ms bimodality) is
+ * DEVICE-side and invisible to this suite — we only keep the session alive,
+ * assert PID/session stable, and emit join marks. NO lipsync scoring.
+ */
+async function runSessionHold(tier, ratingKey) {
+  const holdSec = cfg.sessionHoldSec || 0;
+  if (holdSec <= 0) {
+    log('SESSION_HOLD=off (set E2E_SESSION_HOLD_SEC=360 for parent multi-capture)');
+    return { enabled: false };
+  }
+
+  log('──────── SESSION_HOLD (parent multi-capture window) ────────');
+  log(`SESSION_HOLD_SEC=${holdSec} run_id=${runCorr.runId} tier=${tier.name} rk=${ratingKey}`);
+  log(
+    'SESSION_LATCH_NOTE: A/V offset is SESSION-LATCHED on device (within-session spread ~3ms, ' +
+      'between-cluster ~117ms). Suite cannot see it. Parent: ONE playback session, ' +
+      'THREE back-to-back avsync captures. Do NOT stop/recast between captures.'
+  );
+  log(
+    'NO_LIPSYNC_ASSERT: suite will only check playing + pid + session stability during hold. ' +
+      'av-lock/av_drift_ms are blind (measured).'
+  );
+
+  // Ensure still playing after transitions.
+  let prog = await waitPlayingOnDaemon(Math.min(cfg.playWaitSec, 15));
+  if (prog.playing < 2) {
+    fail(
+      'session_hold_not_playing',
+      `E2E_SESSION_HOLD_SEC=${holdSec} but daemon not playing (samples=${prog.playing}). ` +
+        'Cannot open multi-capture window.'
+    );
+  }
+
+  await runCorr.mark('session_hold_begin', {
+    tier: tier.name,
+    ratingKey: String(ratingKey),
+  });
+  const join0 = await runCorr.joinTelemetry('session_hold_begin');
+  await captureAndAssertPid('session_hold_begin', { hardFail: true });
+
+  const holdStartMs = Date.now();
+  const holdEndMs = holdStartMs + holdSec * 1000;
+  // Parent recipe windows aligned to the confirmed 3-capture experiment.
+  const windows = [
+    { name: 'cap1', atSec: 12, durSec: 100 },
+    { name: 'cap2', atSec: 148, durSec: 100 },
+    { name: 'cap3', atSec: 284, durSec: 76 },
+  ];
+  log('PARENT_MULTI_CAPTURE_RECIPE (pre-registered; ONE session — do not stop between):');
+  log(
+    `  tools/avsync_measure_hdmi.py  # parent-owned; suite never opens ${cfg.hdmiVideoDev}`
+  );
+  for (const w of windows) {
+    if (w.atSec + 5 > holdSec) {
+      log(
+        `  SKIP_WINDOW ${w.name} at_s=${w.atSec} — hold ${holdSec}s too short (need ≥${w.atSec + w.durSec})`
+      );
+      continue;
+    }
+    log(
+      `  WINDOW ${w.name} start_at_hold_s≈${w.atSec} duration_s≈${w.durSec} ` +
+        `PREDICTION: within-session medians agree within ~30ms if SESSION-LATCHED; ` +
+        `if captures differ by ~117ms → capture-instrument confound (should NOT happen on fixed device session)`
+    );
+  }
+  log(
+    `  fps labels for any motion instrument: source_fps=${cfg.hdmiSourceFps} (${cfg.hdmiSourceFpsLabel}) ` +
+      `capture_fps=${cfg.hdmiCaptureFps} (${cfg.hdmiCaptureFpsLabel}) — not ffprobe unless caller-supplied`
+  );
+  log(
+    `E2E_JOIN session=${join0.session || 'NA'} run_id=${runCorr.runId} ` +
+      `pid=${baselineDaemonPid > 0 ? baselineDaemonPid : 'NA'}`
+  );
+
+  let tick = 0;
+  let lastSession = join0.session || '';
+  while (Date.now() < holdEndMs) {
+    tick += 1;
+    const elapsed = Math.floor((Date.now() - holdStartMs) / 1000);
+    const left = Math.max(0, holdSec - elapsed);
+    const xml = await pollDaemonTimeline(nextSuiteCmd());
+    const state = xmlAttr(xml, 'state') || '?';
+    const time = xmlAttr(xml, 'time') || '?';
+    const snap = await captureLedger(cfg);
+    const pr = assertPidUnchanged(baselineDaemonPid, snap, `session_hold_t${elapsed}`);
+    if (!pr.ok && !pr.softSkip) {
+      fail(pr.reason || 'daemon_pid_changed', pr.detail || '');
+    }
+    if (
+      lastSession &&
+      snap.session >= 0 &&
+      String(snap.session) !== String(lastSession) &&
+      snap.session !== -1
+    ) {
+      fail(
+        'session_hold_session_changed',
+        `During SESSION_HOLD session ${lastSession} → ${snap.session} at elapsed_s=${elapsed} ` +
+          `(respawn/new stream — multi-capture window invalid)`
+      );
+    }
+    if (snap.session >= 0) lastSession = snap.session;
+
+    if (state !== 'playing' && state !== 'buffering') {
+      fail(
+        'session_hold_left_playing',
+        `SESSION_HOLD expected playing; state=${state} time=${time} elapsed_s=${elapsed} ` +
+          `run_id=${runCorr.runId}`
+      );
+    }
+
+    log(
+      `SESSION_HOLD_TICK n=${tick} elapsed_s=${elapsed} left_s=${left} state=${state} ` +
+        `time_ms=${time} pid=${snap.pid >= 0 ? snap.pid : 'NA'} session=${snap.session >= 0 ? snap.session : 'NA'} ` +
+        `run_id=${runCorr.runId}`
+    );
+
+    // Mark capture window boundaries for log join.
+    for (const w of windows) {
+      if (elapsed === w.atSec) {
+        await runCorr.mark(`session_hold_${w.name}_open`, {
+          tier: tier.name,
+          ratingKey: String(ratingKey),
+          session: lastSession,
+        });
+        log(`SESSION_HOLD_WINDOW_OPEN name=${w.name} elapsed_s=${elapsed} run_id=${runCorr.runId}`);
+      }
+    }
+
+    await sleep(1000);
+  }
+
+  await runCorr.mark('session_hold_end', {
+    tier: tier.name,
+    ratingKey: String(ratingKey),
+  });
+  await captureAndAssertPid('session_hold_end', { hardFail: true });
+  runCorr.persist(cfg.outDir);
+  log(
+    `SESSION_HOLD_OK sec=${holdSec} run_id=${runCorr.runId} pid=${baselineDaemonPid} ` +
+      `session=${lastSession || 'NA'} (still no lipsync claim)`
+  );
+  return { enabled: true, holdSec, session: lastSession, pid: baselineDaemonPid };
+}
+
+/**
  * Score parent-filled capture dir. Never opens /dev/video0.
  * synthetic/motion mode: rc=0 MOTION_OK required; 77 hard FAIL
  * real/color_structure: COLOR_FAIL(2)/STRUCTURE_FAIL(3)/FREEZE(1) fail;
@@ -1714,6 +1860,11 @@ async function optionalHdmiMotionStage(cycle, totalCycles) {
   const captureCmd = parentHdmiCaptureCmd(cfg, capDir);
   const scoreCmd = parentHdmiScoreCmd(cfg, capDir);
   log(`HDMI_MOTION=on tag=${tag} assert_mode=${cfg.hdmiAssertMode} content=${cfg.contentMode}`);
+  log(
+    `HDMI_FPS source_fps=${cfg.hdmiSourceFps} (${cfg.hdmiSourceFpsLabel || '?'}) ` +
+      `capture_fps=${cfg.hdmiCaptureFps} (${cfg.hdmiCaptureFpsLabel || '?'}) ` +
+      `— DEFAULT_ASSUMED is not a measurement (ERROR 17 class)`
+  );
   log(`HDMI_CAPTURE_DIR=${capDir}`);
   log(`PARENT_HDMI_CAPTURE_CMD=${captureCmd}`);
   log(`PARENT_HDMI_SCORE_CMD=${scoreCmd}`);
@@ -2504,6 +2655,13 @@ async function runTransitionScenarios(page, itemTitle, detailsUrl, _castAlreadyS
         hdmi = { enabled: !!(tr.results || []).some((r) => r.hdmi && r.hdmi.enabled) };
       }
       cfg.hdmiCaptureDir = hdmiDirBase;
+
+      // ── 4c. Optional long hold for parent multi-capture (session-latched A/V) ─
+      // Must run BEFORE final stop so one continuous session is available.
+      const hold = await runSessionHold(tier, ratingKey);
+      if (hold.enabled) {
+        summaryBits.push(`hold=${hold.holdSec}s/session=${hold.session || 'NA'}`);
+      }
 
       // ── 5. Final stop for this tier (UI best-effort + HTTP) ───────────────
       const toggled = await clickPauseOrPlayToggle(page);
