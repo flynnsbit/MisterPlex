@@ -6,30 +6,66 @@ Related: `host/libmisterplex/playback_overlay.hpp`, `arm/misterplexd/media_playe
 `fpga/Plex_MiSTer/rtl/present_core.sv`, `tools/readback_overlay_text.py`,
 `docs/display-resolution.md`.
 
-## Output resolution: ARM ceiling (settled)
+## Output resolution: gap vs ceiling (settled)
 
-**True HDMI `video_mode` WxH composite is NOT available to the ARM daemon today.**
+Split two questions that were conflated:
+
+### A) Can ARM *know* HDMI `video_mode` WxH?
+
+**Gap (not a hard ceiling).** Product `misterplexd` does **not currently read** it
+(only a comment mentions `video_mode` in `media_player.cpp`). It is still
+**readable on-device** without RTL:
+
+| Source | Evidence | Used for overlay today? |
+|---|---|---|
+| `/media/fat/MiSTer.ini` `[Plex] video_mode=` | Same FS daemon already uses (`main.cpp` conf under `/media/fat/misterplex/`); `scripts/sweep_plex_video_modes.sh` edits this file | **No** |
+| `/dev/fb0` `FBIOGET_VSCREENINFO` xres/yres | `fb_present.cpp:27-37` | **No** — and product path is `PRESENT=fpga` DDR, not fb0 sizing |
+| Live scaler WxH via HPS | Framework `sys_top.v` holds `WIDTH` / `hdmi_width` for ascal; not wired into misterplexd SPI status today | **No** |
+
+So “daemon has no video_mode read” = **implementation gap**. Knowing WxH still does
+**not** let ARM paint a 1920×1440 buffer into the product F1 path (see B).
+
+### B) Can ARM *composite* chrome at HDMI output resolution on the product path?
+
+**Ceiling (RTL/fit).** Overlay pixels only reach HDMI through:
 
 | Layer | Geometry | Source |
 |---|---|---|
-| Overlay authoring | **coded bank 624×480** | `plex480pDdrFrameGeometry()` / `ddrGeometry.coded_*` |
-| Present DE fetch | **~529×240** (even store rows only) | `present_core.sv` `H_DE`/`V_STORE`/`STORE_Y_SCALE=2` |
-| HDMI out | MiSTer `video_mode` (e.g. 1080p) | `ascal` after present_core |
+| Overlay authoring | coded bank **624×480** | `plex480pDdrFrameGeometry()` / `ddrGeometry.coded_*` |
+| Present fetch | **240 unique Y samples**, even bank rows only | below |
+| HDMI out | `video_mode` (e.g. 12 → 1920×1440) | `ascal` in `sys_top.v` after present_core |
 
-Evidence:
-- Bank is compile-time: `fpga/Plex_MiSTer/rtl/ddr_frame_layout_params.svh` + host
-  `plex480pDdrFrameGeometry()`.
-- No `video_mode` (or equivalent live HDMI WxH) read in `arm/misterplexd/` /
-  `host/libmisterplex/` product path.
-- `outW_`/`outH_` are the **decode ladder**, forced onto the silicon canvas for
-  FPGA DDR — they are not the MiSTer output mode.
+**Vertical ceiling quantified** (`Plex.qsf` `FRAME_H=480`, `present_core.sv:161-200`):
 
-So matching “MiSTer output resolution” literally requires an **RTL/fit-gated** path
-(larger store, OSD plane, or post-ascal composite). This branch delivers the maximum
-ARM-only fix: author chrome at the **full bank** (not 320×240 decode tier),
-vscale≥2 + even-y (odd-row cull), and paint stop/pause/play.
+```text
+STORE_Y_SCALE = (FRAME_H * 65536) / 240 = 131072 = exactly 2.0 in 16.16
+store_y = (py * STORE_Y_SCALE) >> 16  for py in 0..239
+        = 0, 2, 4, …, 478
+```
 
-Host pin: `tests/unit/test_overlay_raster_geometry_static.py` (bank geometry, not decode).
+- Unique `store_y` values: **240**. Odd bank rows **never** fetched (`parity={0}`).
+- Effective vertical resolution of anything in the bank (video **or** overlay) before
+  ascal is **240 lines**, not 480 — half the authored rows are discarded, not blended.
+- Horizontal DE is `H_DE=529` with a separate X scale into `FRAME_W`.
+
+### C) Does `vscale≥2 + even-y` fix (B)?
+
+**Accommodates, does not restore resolution.**
+
+| | scale=1 (old) | scale≥2 + even y (this branch) |
+|---|---|---|
+| Glyph row → content rows | 1 row | ≥2 rows |
+| After even-row fetch | **Alternate glyph rows deleted** → wrong characters (`8→0`) | Each glyph row keeps ≥1 survivor |
+| Distinct vertical samples to ascal | still ≤240 | still ≤240 |
+
+So the fix stops **character corruption** and makes STOPPED/timecodes human-legible
+inside the 240-line ceiling. It does **not** give 480 independent chrome lines or
+native `video_mode` sharpness. Restoring full vertical detail needs RTL
+(`V_STORE`/`STORE_Y_SCALE`, separate OSD plane, or post-ascal composite).
+
+ARM-only max on this path: full **bank** chrome (not decode 320×240), phase-safe
+glyphs, pause/play paint. Host pin:
+`tests/unit/test_overlay_raster_geometry_static.py`.
 
 ## Mechanism (settled)
 
