@@ -79,10 +79,33 @@ function createP7Window(opts) {
     log(`P7_FILE=${JSON.stringify(item.file || '')} value_kind=measured`);
     log(
       'P7_NOTE library_media is PMS metadata only — delivered geometry may differ ' +
-        '(parent observed request 624x480 → measured 624x350). Assert MEASURED_DELIVERY separately.'
+        '(parent observed request 624x480 → measured 624x350). Assert MEASURED_DELIVERY / ' +
+        'DELIVERED_GEOM stream= only — never delivery_basis=library_media as measured.'
     );
     log(`CAST_CORRELATION_ID=${state.correlationId}`);
     if (runId) log(`E2E_RUN_ID=${runId}`);
+    // Pre-register what parent should see on glass (Rule 0 — publish before measure).
+    log('──────── P7_PREREGISTER (parent HDMI — publish before grab) ────────');
+    log('P7_PREREG_PICTURE=real_content_not_flash_fixture value_kind=caller_expectation');
+    log(
+      `P7_PREREG_EXPECT_MEAN_LUMA=NOT_fixture_black (synthetic soak mean luma ~3–7 is FAIL for P7) ` +
+        `title=${JSON.stringify(item.title || '')}`
+    );
+    log(
+      `P7_PREREG_LIBRARY_MEDIA=${w}x${h} value_kind=measured_pms_metadata ` +
+        `(claim only — do not score as delivered)`
+    );
+    log(
+      'P7_PREREG_DELIVERED_GEOM=MUST_COME_FROM measured_delivery=|MEASURED_DELIVERY|DELIVERED_GEOM stream= ' +
+        'in CAST_WINDOW after log clear — never from library_media / requested_pms'
+    );
+    log(
+      'P7_PREREG_GLASS=recognizable_motion_or_scene_detail from this title; ' +
+        'correlation_id must match CAPTURE_WINDOW / CAST_CORRELATION_ID'
+    );
+    log(
+      `P7_PREREG_SESSION=single session_epoch across pause/resume/seek; stop_recast may bump epoch`
+    );
     emit('item_bound', {
       rating_key: String(item.ratingKey),
       title: item.title,
@@ -91,7 +114,6 @@ function createP7Window(opts) {
     });
     return state.correlationId;
   }
-
   /** Print BEFORE play — parent must clear log now or correlation is invalid. */
   function printLogClearRecipe() {
     const id = state.correlationId || 'UNBOUND';

@@ -169,20 +169,25 @@ function scoreCandidate(c, tierExpectDecode, opts = {}) {
 
   if (/h264|avc/i.test(c.videoCodec)) s += 5;
 
-  // Contract 3 preference (w-asset480): FullBleed long soak > long BBB > short BBB.
+  // Contract 3 preference (w-asset480). P7 wants REAL + LONG by default;
+  // short 90s ladder clips lose to ≥5–20 min BBB/FullBleed. Use E2E_P7_ARM=nonbank
+  // when parent wants 1440x1080 / 720x480 scale-path stress over soak length.
   if (contract3) {
     s += 200;
     const blob = `${c.title || ''} ${c.file || ''}`.toLowerCase();
     if (CONTRACT3_FULLBLEED_RE.test(blob)) s += 80;
-    if (CONTRACT3_BBB_RE.test(blob)) s += 60;
-    if (dur >= 1000 * 1000) s += 40; // ≥~16 min soak
-    // Non-bank BBB forces crop/pad/scale — valuable when parent wants geometry stress.
-    if (!isBankGeometry(w, h) && (w >= 640 || h !== 480 || w !== 624)) s += 30;
-    if (w >= 1280 || h >= 720) s += 50; // true full-frame (e.g. 1440x1080)
+    if (CONTRACT3_BBB_RE.test(blob)) s += 100; // real picture content > lab FullBleed pattern
+    // Long title bonuses (rd-review P7: not a 30s flash fixture).
+    if (dur >= 15 * 60 * 1000) s += 120; // ≥15 min
+    else if (dur >= 5 * 60 * 1000) s += 90; // ≥5 min
+    else if (dur >= 3 * 60 * 1000) s += 40;
+    else if (dur > 0 && dur < 120 * 1000) s -= 40; // short ladder (90s) deprioritized
+    // Non-bank forces crop/pad/scale — soft preference unless arm=nonbank (caller).
+    if (!isBankGeometry(w, h)) s += 35;
+    if (w >= 1280 || h >= 720) s += 45; // true full-frame source
   }
   return s;
-}
-/**
+}/**
  * Discover best real title.
  * opts.p7Mode / E2E_P7: prefer w-asset480 Contract 3 (FullBleed / Real BBB);
  *   bank geometry allowed for those titles; instrument glass rejected.
