@@ -1,41 +1,115 @@
-# w-instr — P5 frame ledger / session_epoch
+# w-instr — USER #1 BUG: glass frame-loss ledger (480p drops)
 
 branch: w-avsync-hdmi-measure
-tip: (git rev-parse HEAD)
+tool: tools/glass_frame_ledger.py
 
-## ARM binary
-path: build/arm/misterplexd
-md5: a9579a4294a64043ff271baebddc4f1e
-make arm-plexd true rc=0
+## Pre-registration (LOCKED before parent device series)
 
-## What shipped
-1. session_epoch = process_epoch.stream_seq
-   - process_epoch: armed once at daemon start (steady mono_ms)
-   - stream_seq: bumped at every play()/stream START
-   - emitted on 1 Hz media line + session end + stream_start
-2. Per-stream counters unchanged; lifetime_* + lifetime_unaccounted on every line
-3. unaccounted = frames - presents - drops printed every telemetry line
-   (residual synonym kept). unaccounted_eq=frames-presents-drops tag=measured
-4. B5: teardown asserts totalBytes % frameBytes==0 + rawPipeDesynced;
-   ERROR media: PIPE_DESYNC=1 hard trip
-5. B2: MEASURED_DELIVERY already -loglevel info; tag=measured on lines;
-   1 Hz measured_delivery=WxH measured_delivery_src=measured|NO-DATA
+Identity test (resolvable at 30fps cap vs 24fps src WITHOUT matching rates):
+  cap_interval(33.3ms) < source_hold(41.7ms) ⇒ every fully-presented source
+  frame must appear ≥1× in capture. Missing burned-in n ⇒ not fully presented
+  OR OCR miss. Naive N_png − N_source counting = UNRESOLVABLE.
 
-## Host gate
-python3 tools/frame_ledger_report.py --log DAEMON.log --ledger LEDGER \
-  --require-explained; echo "true rc=$?"
-- multi session_epoch in window → LEDGER_FAIL rc=2
-- unaccounted != publish_misses with --require-explained → rc=2
-- clean → rc=0
+Layers a/b/c from glass alone = ALWAYS UNRESOLVABLE_FROM_GLASS
+  (a) never decoded  (b) decoded not published  (c) published not shown
+  Pair daemon P5 ledger for (a)/(b) hints; (c) needs fabric.
 
-## Deploy (parent only)
-REMOTE_ROOT=/media/fat/misterplex_v2 ./scripts/deploy_misterplexd_pid_safe.sh
-# expect LIVE md5 a9579a4294a64043ff271baebddc4f1e via readlink -f /proc/PID/exe
+Gates (design_locked_before_device_series):
+  MIN_CTR_SPAN_SCORE=200
+  OK_ADJ_FRAC=0.02   LOSS_ADJ_FRAC=0.05
+  OK_MAX_HOLE=2      BURST_HOLE_SIZE=3  BURST_MAX_HOLE_HARD=5
+  max_repeat_run allowed = ceil(cap/src)+1 when fps authoritative
+  TIER_DELTA_ADJ_FRAC=0.02  TIER_HOLE_MARGIN=1
 
-## Pre-registered predictions (next soak)
-- Clean single-session soak: unaccounted ≈ publish_misses (often 0);
-  session_epoch stable for whole cast; lifetime_* monotonic; process_epoch fixed.
-- If daemon self-exits mid-soak: process_epoch changes → frame_ledger_report
-  with --log MUST LEDGER_FAIL multi_session_epoch (P4 visible).
-- If ~16 frames still missing vs 24.000 source while drops=1: unaccounted grows
-  and is NOT explained by publish_misses → --require-explained FAIL (S2 named).
+PASS (GLASS_OK rc=0): conf≥MEDIUM, lost_frac_adj<0.02, max_hole_adj≤2,
+  max_repeat_run≤allowed. RLE-only holes without adj/PTS = OCR-class, not LOSS.
+
+FAIL GLASS_LOSS rc=2: lost_frac_adj≥0.05 conf≥MEDIUM (or PTS device_skip_frac≥0.05)
+FAIL GLASS_BURST rc=3: large adj hole / clustered adj skips / severe hold
+FAIL TIER_REGRESSION rc=4: 480 worse than 240 under --compare
+UNRESOLVABLE rc=76 / UNSCORED rc=77: NEVER passes
+
+## Host evidence (true rc direct, no pipe)
+  python3 tools/glass_frame_ledger.py --self-test
+    → SELFTEST OK  true rc=0
+    green GLASS_OK rc=0 | red_loss GLASS_LOSS rc=2 | red_burst GLASS_BURST rc=3
+    short UNRESOLVABLE rc=76 | tier_reg TIER_REGRESSION rc=4 | tier_ok TIER_OK rc=0
+
+  --counters-csv /tmp/ctr480.csv --source-fps 24 --capture-fps 29.9068
+    → GLASS_OK rc=0  lost_frac_adj=0.0052 max_hole_adj=1 (rle_holes OCR-class)
+
+  --counters-csv /tmp/ctr_fixed.csv --source-fps 24 --capture-fps 30
+    → GLASS_BURST rc=3  adj_skip_events=25 max_hole_adj=4 lost_frac_adj=0.012
+
+  --counters-csv /tmp/ctr_startup.csv --source-fps 24 --capture-fps 30
+    → GLASS_BURST rc=3  adj_skip_events=27 max_hole_adj=4
+
+## Parent-run recipe (agent does NOT touch device)
+
+### 0) Preconditions
+- /dev/video0 free (fuser -v /dev/video0)
+- Daemon with P5 ledger preferred (session_epoch on media lines)
+- Conf USER-OWNED — backup before any conf touch; restore byte-exact
+- Working core c5382bee — do not disturb
+- Capture FPS must be in {5,10,20,25,30} — never 60
+
+### 1) Capture one tier (repeat for 240p and 480p conf)
+
+# A) MKV+PTS preferred (enables device vs grabber split)
+OUT=captures/glass_480_$(date +%Y%m%d_%H%M%S)
+mkdir -p "$OUT"
+# start grabber BEFORE cast; discard warm-up in tool (default 15 via OCR path)
+/usr/bin/time -f 'wall_s=%e' -o "$OUT/wall.txt" \
+  ffmpeg -y -v error \
+    -use_wallclock_as_timestamps 1 \
+    -f v4l2 -input_format mjpeg -video_size 1920x1080 -framerate 30 -i /dev/video0 \
+    -an -c:v copy -t 90 -copyts -start_at_zero \
+    "$OUT/cap.mkv"
+# true rc of ffmpeg:
+# ffmpeg ...; echo "ffmpeg true rc=$?"
+
+ffprobe -v error -select_streams v:0 -show_entries frame=pkt_pts_time \
+  -of csv=p=0 "$OUT/cap.mkv" > "$OUT/pts.csv"
+ffmpeg -v error -i "$OUT/cap.mkv" -start_number 0 "$OUT/f_%04d.png"
+
+# B) PNG-only fallback (loss_split stays UNSCORED — still identity-scorable)
+# ffmpeg -v error -f v4l2 -input_format mjpeg -video_size 1920x1080 -framerate 30 \
+#   -i /dev/video0 -frames:v 900 -y "$OUT/f_%04d.png"
+
+### 2) OCR counter cache (host)
+python3 tools/hdmi_motion_instrument.py "$OUT" --source-fps 24 \
+  --capture-fps 30 --json > "$OUT/motion.json"
+# Or build counters CSV via --one loop / existing parent OCR path → "$OUT/ctr.csv"
+
+# If motion.json path inconvenient, run instrument once with progress and
+# keep parent OCR cache as idx,n CSV (see /tmp/ctr480.csv schema).
+
+### 3) Glass ledger
+python3 tools/glass_frame_ledger.py \
+  --counters-csv "$OUT/ctr.csv" \
+  --pts-csv "$OUT/pts.csv" \
+  --source-fps 24 --capture-fps 30 \
+  --label 480p
+echo "glass true rc=$?"
+
+### 4) Tier compare (after both tiers, SAME capture argv)
+python3 tools/glass_frame_ledger.py --compare \
+  --a-csv captures/glass_240_.../ctr.csv --a-pts captures/glass_240_.../pts.csv --a-label 240p \
+  --b-csv captures/glass_480_.../ctr.csv --b-pts captures/glass_480_.../pts.csv --b-label 480p \
+  --source-fps 24 --capture-fps 30
+echo "compare true rc=$?"
+
+### 5) Parallel daemon ledger (does NOT settle glass; correlates a/b)
+# From session log covering the cast ONLY (one session_epoch):
+python3 tools/frame_ledger_report.py --log DAEMON.log --require-explained
+echo "daemon_ledger true rc=$?"
+# Mid-window session_epoch change → INVALIDATE soak (P4)
+
+## Prediction (pre-registered for next parent soak)
+- Healthy 240p long soak + PTS: GLASS_OK, lost_frac_adj < 0.02, device_skip small
+- User-repro 480p if real glass loss: GLASS_LOSS or GLASS_BURST, and/or
+  TIER_REGRESSION vs 240p
+- If both OK: user judder may be audio-side or below 30fps identity floor →
+  say UNRESOLVABLE for single-frame claims without stronger fixture
+- layers a/b/c still UNRESOLVABLE from glass; non-zero growing unaccounted
+  on daemon ledger with glass OK → points at (b) publish path
