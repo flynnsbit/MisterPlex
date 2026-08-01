@@ -6,6 +6,31 @@ Related: `host/libmisterplex/playback_overlay.hpp`, `arm/misterplexd/media_playe
 `fpga/Plex_MiSTer/rtl/present_core.sv`, `tools/readback_overlay_text.py`,
 `docs/display-resolution.md`.
 
+## Output resolution: ARM ceiling (settled)
+
+**True HDMI `video_mode` WxH composite is NOT available to the ARM daemon today.**
+
+| Layer | Geometry | Source |
+|---|---|---|
+| Overlay authoring | **coded bank 624×480** | `plex480pDdrFrameGeometry()` / `ddrGeometry.coded_*` |
+| Present DE fetch | **~529×240** (even store rows only) | `present_core.sv` `H_DE`/`V_STORE`/`STORE_Y_SCALE=2` |
+| HDMI out | MiSTer `video_mode` (e.g. 1080p) | `ascal` after present_core |
+
+Evidence:
+- Bank is compile-time: `fpga/Plex_MiSTer/rtl/ddr_frame_layout_params.svh` + host
+  `plex480pDdrFrameGeometry()`.
+- No `video_mode` (or equivalent live HDMI WxH) read in `arm/misterplexd/` /
+  `host/libmisterplex/` product path.
+- `outW_`/`outH_` are the **decode ladder**, forced onto the silicon canvas for
+  FPGA DDR — they are not the MiSTer output mode.
+
+So matching “MiSTer output resolution” literally requires an **RTL/fit-gated** path
+(larger store, OSD plane, or post-ascal composite). This branch delivers the maximum
+ARM-only fix: author chrome at the **full bank** (not 320×240 decode tier),
+vscale≥2 + even-y (odd-row cull), and paint stop/pause/play.
+
+Host pin: `tests/unit/test_overlay_raster_geometry_static.py` (bank geometry, not decode).
+
 ## Mechanism (settled)
 
 `present_core.sv` fetches only **even** store rows (`STORE_Y_SCALE=2.0` with

@@ -22,7 +22,7 @@ if len(re.findall(r"bool\s+MediaPlayer::publishDdrFrame\s*\(", src)) != 1:
     fail("expected exactly one MediaPlayer::publishDdrFrame definition")
 
 contexts = re.findall(r'publishDdrFrame\(frame,\s*"([^"]+)"', src)
-want_contexts = ["idle DDR", "recon DDR", "playback DDR"]
+want_contexts = ["pause overlay DDR", "idle DDR", "recon DDR", "playback DDR"]
 if contexts != want_contexts:
     fail(f"expected publish contexts {want_contexts}, saw {contexts}")
 
@@ -47,5 +47,5 @@ print(
     "test_ddr_publish_path_static: OK "
     f"publish_call_sites={len(contexts)} contexts={','.join(contexts)} "
     "use centralized publishDdrFrame + lastPublishedBank; "
-    "STREAM0=playback DDR STREAM1=recon DDR idle=idle DDR"
+    "STREAM0=playback DDR STREAM1=recon DDR idle=idle DDR pause=pause overlay DDR"
 )

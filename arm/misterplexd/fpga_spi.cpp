@@ -1,5 +1,6 @@
 #include "fpga_spi.hpp"
 
+#include "libmisterplex/ddr_bank_release_select.hpp"
 #include "libmisterplex/status_telemetry.hpp"
 #include "libmisterplex/pixel_format.hpp"
 
@@ -1414,39 +1415,53 @@ bool FpgaSpi::sendDdrFrame(const DdrPublishFrame& frame, const DdrPublishPlan& p
                 goto plxd_absent_fallback;
             }
 
-            // PLXD present and live — use it for bank selection. Do not also
-            // apply kDdrBankReuseMinUs here; the mailbox is the release proof.
-            if (brs.anyFree()) {
-                bank = brs.freeBank();
-                plxdUsed = true;
-            } else {
-                // Both banks in use (swap pending). Poll until free or timeout.
-                for (int i = 0; i < kPlxdPollMaxIters; ++i) {
+            // PLXD present — bank identity is authoritative (free/disp). Do not
+            // freeBank() blindly: after a swap, a *stale* free_mask still names
+            // the bank that just became display. Never force-write disp^1.
+            // Protocol: host/libmisterplex/ddr_bank_release_select.hpp
+            // (selectDdrWriteBank — display-ack / stale-free guard).
+            {
+                DdrBankSelectResult sel =
+                    selectDdrWriteBank(brs, ddrBankSelect_, kPlxdPollMaxIters);
+                while (sel.action == DdrBankSelectAction::Wait) {
                     usleep(1000);
                     ++plxdIters;
-                    if (readBankRelease(brs) && brs.anyFree()) {
-                        bank = brs.freeBank();
-                        plxdUsed = true;
+                    if (!readBankRelease(brs))
                         break;
+                    if (brs.frames_done != plxdLastFramesDone_) {
+                        plxdLivenessProven_ = true;
+                        plxdStaleCount_ = 0;
+                        plxdLastFramesDone_ = brs.frames_done;
                     }
+                    sel = selectDdrWriteBank(brs, ddrBankSelect_, kPlxdPollMaxIters);
                 }
-                if (!plxdUsed) {
-                    // LOUD timeout — never silently fall back to the timed
-                    // interlock after PLXD was accepted as live.
+                if (sel.action == DdrBankSelectAction::Write) {
+                    bank = sel.bank & 1;
+                    plxdUsed = true;
+                } else {
+                    // Drop — no force-write on PLXD timeout.
                     fprintf(stderr,
-                            "[STALL] sendDdrFrame: PLXD bank-release timeout after %d ms "
-                            "(free_bank_mask=0, frames_done=%u disp_bank=%u swap_pending=%d)\n",
-                            plxdIters, static_cast<unsigned>(brs.frames_done),
+                            "[STALL] sendDdrFrame: PLXD bank-select %s after %d ms "
+                            "(free_mask=%u frames_done=%u disp=%u swap=%d last_pub=%d "
+                            "seen_disp=%d) — dropping frame (no force-write)\n",
+                            sel.reason ? sel.reason : "drop", plxdIters,
+                            static_cast<unsigned>(brs.free_bank_mask),
+                            static_cast<unsigned>(brs.frames_done),
                             static_cast<unsigned>(brs.disp_bank),
-                            static_cast<int>(brs.swap_pending));
-                    // Use the opposite of disp_bank as a best-effort guess.
-                    bank = brs.disp_bank ^ 1;
+                            static_cast<int>(brs.swap_pending), lastPublishedBank_,
+                            ddrBankSelect_.last_publish_seen_on_display ? 1 : 0);
+                    timing.plxa_poll_us = elapsedUs(tPrep0, std::chrono::steady_clock::now());
+                    timing.plxa_poll_iters = plxdIters;
+                    timing.plxa_used = true;
+                    setErr(std::string("sendDdrFrame: PLXD bank-select drop (") +
+                           (sel.reason ? sel.reason : "drop") + ")");
+                    return false;
                 }
             }
             auto tPlxd1 = std::chrono::steady_clock::now();
             timing.plxa_poll_us = elapsedUs(tPrep0, tPlxd1);
             timing.plxa_poll_iters = plxdIters;
-            timing.plxa_used = plxdUsed || (!plxdUsed && plxdIters > 0);
+            timing.plxa_used = plxdUsed;
         } else {
             plxd_absent_fallback:
             // PLXD absent — pre-PLXD RBF, mailbox not yet written, or stale residue.
@@ -1610,6 +1625,7 @@ bool FpgaSpi::sendDdrFrame(const DdrPublishFrame& frame, const DdrPublishPlan& p
     timing.total_us = elapsedUs(t0, t1);
     lastDdrTiming_ = timing;
     lastPublishedBank_ = bank & 1;
+    noteDdrBankPublished(ddrBankSelect_, bank);
     clearErr();
     return true;
 }

@@ -834,48 +834,55 @@ void MediaPlayer::paintIdle() {
                 makeDdrFrameLayout(g, kDdrFramePhysBase, kDdrFrameStrideAlign,
                                    DdrFrameFormat::Yuv420p);
             std::vector<uint8_t> yuv(layout.frame_bytes);
-            // Always RGB→YUV from the canvas-sized buffer so overlay and chevron
-            // share one authoring resolution (was: plain idle used YUV-direct at
-            // coded size while notices used a separate RGB path; fb0 used 320×240).
-            uint8_t* yPlane = yuv.data();
-            uint8_t* uPlane = yPlane + static_cast<size_t>(cw) * static_cast<size_t>(ch);
-            uint8_t* vPlane = uPlane + static_cast<size_t>(cw / 2) * static_cast<size_t>(ch / 2);
-            for (int y = 0; y < ch; ++y) {
-                for (int x = 0; x < cw; ++x) {
-                    const size_t i = (static_cast<size_t>(y) * static_cast<size_t>(cw) +
-                                      static_cast<size_t>(x)) *
-                                     3u;
-                    yPlane[static_cast<size_t>(y) * static_cast<size_t>(cw) +
-                           static_cast<size_t>(x)] =
-                        idleRgbToY(rgb[i], rgb[i + 1], rgb[i + 2]);
-                }
-            }
-            for (int cy = 0; cy < ch / 2; ++cy) {
-                for (int cx = 0; cx < cw / 2; ++cx) {
-                    int rSum = 0, gSum = 0, bSum = 0;
-                    for (int dy = 0; dy < 2; ++dy) {
-                        for (int dx = 0; dx < 2; ++dx) {
-                            const size_t i =
-                                (static_cast<size_t>(cy * 2 + dy) * static_cast<size_t>(cw) +
-                                 static_cast<size_t>(cx * 2 + dx)) *
-                                3u;
-                            rSum += rgb[i];
-                            gSum += rgb[i + 1];
-                            bSum += rgb[i + 2];
-                        }
+            bool haveYuv = false;
+            // When a notice/transport banner is up, render idle+overlay at coded
+            // size in RGB then convert so HDMI (DDR path) shows the same chrome.
+            if (overlay_.visible()) {
+                uint8_t* yPlane = yuv.data();
+                uint8_t* uPlane = yPlane + static_cast<size_t>(cw) * static_cast<size_t>(ch);
+                uint8_t* vPlane = uPlane + static_cast<size_t>(cw / 2) * static_cast<size_t>(ch / 2);
+                for (int y = 0; y < ch; ++y) {
+                    for (int x = 0; x < cw; ++x) {
+                        const size_t i = (static_cast<size_t>(y) * static_cast<size_t>(cw) +
+                                          static_cast<size_t>(x)) *
+                                         3u;
+                        yPlane[static_cast<size_t>(y) * static_cast<size_t>(cw) +
+                               static_cast<size_t>(x)] =
+                            idleRgbToY(rgb[i], rgb[i + 1], rgb[i + 2]);
                     }
-                    const int r = (rSum + 2) / 4;
-                    const int g = (gSum + 2) / 4;
-                    const int b = (bSum + 2) / 4;
-                    const size_t ci =
-                        static_cast<size_t>(cy) * static_cast<size_t>(cw / 2) +
-                        static_cast<size_t>(cx);
-                    uPlane[ci] = idleRgbToU(r, g, b);
-                    vPlane[ci] = idleRgbToV(r, g, b);
                 }
+                for (int cy = 0; cy < ch / 2; ++cy) {
+                    for (int cx = 0; cx < cw / 2; ++cx) {
+                        int rSum = 0, gSum = 0, bSum = 0;
+                        for (int dy = 0; dy < 2; ++dy) {
+                            for (int dx = 0; dx < 2; ++dx) {
+                                const size_t i =
+                                    (static_cast<size_t>(cy * 2 + dy) * static_cast<size_t>(cw) +
+                                     static_cast<size_t>(cx * 2 + dx)) *
+                                    3u;
+                                rSum += rgb[i];
+                                gSum += rgb[i + 1];
+                                bSum += rgb[i + 2];
+                            }
+                        }
+                        const int r = (rSum + 2) / 4;
+                        const int g = (gSum + 2) / 4;
+                        const int b = (bSum + 2) / 4;
+                        const size_t ci =
+                            static_cast<size_t>(cy) * static_cast<size_t>(cw / 2) +
+                            static_cast<size_t>(cx);
+                        uPlane[ci] = idleRgbToU(r, g, b);
+                        vPlane[ci] = idleRgbToV(r, g, b);
+                    }
+                }
+                haveYuv = true;
+            } else {
+                haveYuv = renderIdleYuv420p(yuv.data(), cw, ch, m, idlePhase_.load());
             }
-            DdrPublishFrame frame{yuv.data(), yuv.size(), g, DdrFrameFormat::Yuv420p};
-            ok = publishDdrFrame(frame, "idle DDR", &ddrErr);
+            if (haveYuv) {
+                DdrPublishFrame frame{yuv.data(), yuv.size(), g, DdrFrameFormat::Yuv420p};
+                ok = publishDdrFrame(frame, "idle DDR", &ddrErr);
+            }
         }
         if (!ok) {
             if (!idleWarned_.exchange(true))
