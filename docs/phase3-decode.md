@@ -2,9 +2,186 @@
 
 ## Goal
 
-Move **decode off dual-A9 FFmpeg** for Profile MiSTerPlex-1 so ARM is protocol/demux only and **FPGA owns unique frames + present + audio FIFO**.
+**Product today (shipping RBF `8fdf440f`):** ARM (FFmpeg) decodes H.264; the FPGA owns **DDR frame store + vsync present + audio FIFO**. That is **not** a full H.264 implementation in fabric.
+
+**Honest long-term case for fabric decode is direct-play** (eliminate the PMS transcode rung; handle high-bitrate sources the dual-A9 cannot sustain). It is **NOT CPU relief**: measured H.264 decode threads are only ~6 %onecpu while the *scaler* is ~50 %onecpu — moving entropy/IQ/IDCT into fabric would not fix the ARM budget the way the old premise claimed. Do not resurrect “fabric decode for ARM idle” as motivation.
 
 Phase 2 remains valid bootstrap: FFmpeg → `/dev/fb0` + `/dev/MrAudio`.
+
+---
+
+## Shipping fabric H.264 inventory (authoritative)
+
+**One-line answer for “do we have full H.264 in the FPGA?”:** **No.** Fabric has partial reconstruct/MC/DPB/deblock **blocks** under `decode_stub`, plus NAL/SPS/PPS/slice-header **parsers**, but **no CAVLC entropy decode in fabric**, so the FPGA **cannot extract coefficients from a real bitstream on its own**. Product pixels are ARM-decoded YUV written over DDR.
+
+### Product ownership — why fabric recon cannot present (DDR_FRAME_STORE)
+
+Shipping product builds with **`DDR_FRAME_STORE=1`**. Under that macro the dark-silicon claim is **stronger** than the SPI-era `host_owns_fs` story alone:
+
+1. **Product pixels never use the stub `fs_wr_*` path.** `present_core.sv` under `DDR_FRAME_STORE` instantiates `ddr_frame_store` (doorbell + HPS DDR banks) and **ties `fs_wr_ready=1` without connecting `fs_wr_en` / `fs_wr_pixel` / `fs_swap` to the store**. Those ports only feed the legacy `frame_store` in the `#else` branch. Quoted:
+
+```systemverilog
+// present_core.sv — DDR_FRAME_STORE branch
+assign fs_wr_ready = 1'b1;
+// ...
+ddr_frame_store #(...) fstore ( /* rd_*, start_req, bank_sel, DDRAM_*, vsync — no wr_en */ );
+// #else legacy frame_store takes .wr_en(fs_wr_en), .swap_banks(fs_swap), ...
+```
+
+2. **`ddr_swap` / `ddr_wr_*` are compile-tied to 0** in `Plex.sv` when `DDR_FRAME_STORE` is set. So `host_owns_fs` **cannot** latch on a product DDR doorbell — only on SPI `f1_swap` (ioctl frame download). The earlier shorthand “first ARM DDR swap latches host_owns_fs” is **false under the shipping macro**; product ARM frames enter via `ddr_frame_store` doorbell inside `present_core`, not `ddr_swap`.
+
+```systemverilog
+// Plex.sv — DDR_FRAME_STORE
+assign ddr_wr_en = 1'b0;
+assign ddr_swap = 1'b0;
+// ...
+else if (f1_swap | ddr_swap) host_owns_fs <= 1'b1;  // ddr_swap constant 0
+wire stub_allow = ~host_owns_fs & ~ingest_dl & ~ddr_busy & product_recon_ok_w;
+```
+
+3. **`product_recon_ok` resets 0** and only sets on the stub’s pure I-slice hybrid path (`decode_stub.sv`). Product STREAM=0 playback does not open that path. Even if `stub_allow` were 1, (1) still blocks product pixels.
+
+4. **Idle/boot screen** is ARM `paintIdle` → HPS publish → `ddr_frame_store`, not stub paint.
+
+**Verdict:** `decode_stub` **cannot affect product HDMI pixels** in the shipping DDR configuration. It is still **not free silicon**: it consumes fit resources, and `stream_ddr_enable=1` lets `ddr_bitstream_reader` **poll-assert `bus_want`** (arbiter m1) even with an empty ring — a soft DDR tax. Status/LED/telemetry still observe stream counters.
+
+`(* keep = 1 *) wire _keep_hybrid_product = product_recon_ok_w | …` is a **synth keep only** so hybrid handoff nets are not pruned; it is not a pixel path. Removing the stub under `PRODUCT_NO_STUB` drives those nets to 0; the keep OR folds away. It does **not** require keeping the stub for product correctness.
+
+**`decode_stub` ~9.2k ALMs / 268 M10K (~39% ALMs of the device under this fit’s stub row) is diagnostic/experimental fabric, not product video.** See `PRODUCT_NO_STUB` below for reclaim.
+
+### What survived the shipping fit vs what did not
+
+| Class | Meaning |
+|-------|---------|
+| **PRESENT** | Entity has a hierarchy row in `Plex.fit.rpt` (fitted into `sys_top`) |
+| **ABSENT / stripped** | Zero hierarchy rows — unreachable from `sys_top` (see mechanism below) |
+| **FLATTENED into parent** | Instantiated in source but no separate hierarchy row; logic absorbed into parent ALMs |
+
+**`h264_hybrid_mb_own` is flattened into `decode_stub`**, not stripped. Source instantiates it (`decode_stub.sv` `u_hybrid_mb`); it is a small comb leaf (`always @*`). Measured `decode_stub` residual own ALMs (stub total minus direct child rows, including `lpm_divide` / `altsyncram`) = **1922.1**. Do **not** report hybrid as absent.
+
+**Mechanism for stripped entropy/intra (verified on `files.qip` + instantiators):**
+
+- In `files.qip` but **not fitted:** `h264_cavlc_residual.sv`, `h264_intra_pred.sv`, `h264_inter_pred.sv`, `h264_decode_core.sv`, … — compile units exist, but nothing on the live `sys_top → stream_path → decode_stub` path **instantiates** them. Quartus drops unreachable design units.
+- **Not in `files.qip` at all:** `h264_decode_top.sv`, `h264_decode_skeleton.sv`, `h264_intra_nb_ctx.sv` (never enter the project).
+- CAVLC (`h264_cavlc_residual_block`) is only instantiated under `h264_decode_core` / `h264_decode_skeleton`. Core is in the QIP but **uninstantiated** from the product top; skeleton is not in the QIP. **⇒ no CAVLC entropy decode in fabric.**
+- Intra predictors live under `h264_decode_top` / skeleton only — same unreachability.
+- Note: `h264_iq_idct_4x4.sv` **is** product-reachable; its entities are named `h264_dequant4x4` / `h264_idct4x4` / `h264_recon4x4` (not an entity called `h264_iq_idct_4x4`).
+
+### Machine-checked table (do not hand-edit ALMs)
+
+Regenerate after a new BUILD_OK fit:
+
+```bash
+python3 scripts/check_fabric_decode_inventory.py \
+  --fit-rpt path/to/Plex.fit.rpt \
+  --fixture tests/fixtures/fabric_decode_inventory.json \
+  --emit-table
+# paste between markers; then:
+make fabric-decode-inventory FIT_RPT=path/to/Plex.fit.rpt
+```
+
+Baseline below is shipping RBF **`8fdf440f`** (`fit-t7b-prog480`). Gate fails if the doc PRESENT rows disagree with the fit.
+
+<!-- FABRIC_DECODE_INVENTORY_BEGIN -->
+| fit totals | ALM **23,585** / 41,910 · regs **22,479** · RAM blocks **465** / 553 · DSP **44** / 112 · block bits **2,997,709** / 5,662,720 |
+
+| entity | ALMs needed | status |
+|---|---:|---|
+| `stream_path` | 12268 | PRESENT |
+| `decode_stub` | 9216.9 | PRESENT |
+| `ddr_bitstream_reader` | 541 | PRESENT |
+| `bitstream_fifo` | 33.7 | PRESENT |
+| `present_core` | 3604.4 | PRESENT |
+| `ddr_frame_store` | 3501.3 | PRESENT |
+| `h264_dequant4x4` | 2876.3 | PRESENT |
+| `h264_dpb_ref_commit` | 1290.7 | PRESENT |
+| `h264_deblock_mb` | 962.7 | PRESENT |
+| `h264_idct4x4` | 895.8 | PRESENT |
+| `h264_mc_block` | 518.3 | PRESENT |
+| `h264_mv_pred_part` | 445.3 | PRESENT |
+| `h264_mv_pred_16x16` | 369.5 | PRESENT |
+| `h264_mc_luma_qpel` | 348.6 | PRESENT |
+| `h264_recon4x4` | 306.1 | PRESENT |
+| `h264_dpb_one_ref` | 299.2 | PRESENT |
+| `h264_mc_chroma_epel` | 168.2 | PRESENT |
+| `h264_dpb_mb_write_addr` | 40.7 | PRESENT |
+| `h264_dpb_i420_addr` | 39.3 | PRESENT |
+| `h264_deblock_writeback_ctrl` | 11.2 | PRESENT |
+| `decode_stub` residual (own + flattened leaves e.g. `h264_hybrid_mb_own`) | 1922.1 | FLATTENED_INTO_PARENT |
+| `h264_cavlc_residual` | 0 | ABSENT_OK |
+| `h264_cavlc_residual_block` | 0 | ABSENT_OK |
+| `h264_intra_pred` | 0 | ABSENT_OK |
+| `h264_intra4x4_pred` | 0 | ABSENT_OK |
+| `h264_intra16x16_pred` | 0 | ABSENT_OK |
+| `h264_inter_pred` | 0 | ABSENT_OK |
+| `h264_decode_core` | 0 | ABSENT_OK |
+| `h264_decode_top` | 0 | ABSENT_OK |
+| `h264_decode_skeleton` | 0 | ABSENT_OK |
+| `h264_intra_nb_ctx` | 0 | ABSENT_OK |
+<!-- FABRIC_DECODE_INVENTORY_END -->
+
+Remaining budget on this fit (device − used): **ALM 18,325** · **DSP 68** · **88 RAM blocks** free (RAM at 84% is the binding constraint — always quote **block** counts, never bit-% “free”).
+
+### What it would take for fabric decode to produce product pixels
+
+Minimum product path (estimates labeled **estimates** — not a fit):
+
+1. **CAVLC entropy** reachable and instantiated on the live top (`h264_cavlc_residual_block` under a wired `h264_decode_core` or equivalent) — without this, no coeffs from real bitstreams.
+2. **Intra prediction** reachable (`h264_intra4x4` / `h264_intra16x16` + nb ctx) for I/IDR.
+3. **Wire existing** dequant/IDCT/recon/MC/DPB/deblock (already PRESENT) to that entropy/intra front-end instead of stub stimulus.
+4. **Product pixel path for fabric recon** under `DDR_FRAME_STORE`: either wire a fabric→DDR present path into `ddr_frame_store` (new), or run a non-DDR `frame_store` product build. Today’s `stub_allow`/`fs_wr_*` mux **does not reach** the product store — fixing `host_owns_fs` alone is **not** enough on the shipping macro set.
+5. Inter/P-slice completeness, CABAC policy, and bitrate/direct-play product rules — larger than (1–4).
+
+| Resource | Headroom now | Rough add for (1–2) Baseline CAVLC+intra (**estimate**) | Risk |
+|----------|-------------:|--------------------------------------------------------:|------|
+| ALM | 18,325 | +2k–8k (entropy+intra+glue; wide band until map) | ALM OK on paper |
+| DSP | 68 | ~0 if shift-add dequant stays | OK |
+| **RAM blocks** | **88** | **+10–40** for coeff/nb/line state (**estimate**) | **Binding** — 84% already |
+
+A skeleton-only map (`h264_decode_skeleton`) is **not** product evidence; it is off the shipping QIP on purpose.
+
+Gate: `tests/unit/test_fabric_decode_inventory.sh` · `make fabric-decode-inventory FIT_RPT=...`.
+
+---
+
+## PRODUCT_NO_STUB — reclaim dark decode budget (scoped, unfitted)
+
+**Motivation (measured, not the old premise):** ARM cost in 240p/480p playback is dominated by the **scaler** (~50 %onecpu inside ffmpeg), not H.264 decode (~6). Highest-value offload is **fabric scale/geometry in `present_core`**, which needs M10K headroom. `ascal` proves a fabric scaler class is ~1,936 ALM / 43 M10K / 23 DSP. Free M10K today is **88** — binding. Reclaiming `decode_stub` is the enabler.
+
+**Do not delete decode RTL.** Research/STREAM builds leave `PRODUCT_NO_STUB` undefined so `decode_stub` stays in `files.qip` and fully gated.
+
+| Tier | Macro | What drops from product top | Predicted post-fit (**estimate**, baseline `8fdf440f`) | Free after |
+|------|--------|-----------------------------|--------------------------------------------------------|------------|
+| **A** (default product candidate) | `PRODUCT_NO_STUB=1` | `decode_stub` instance + children (DPB 256 M10K, dequant/IDCT/MC/…) | ALM **~14,368** used (−9,217) · M10K **~197** (−268) · DSP **~43** (−1) | ALM **~27.5k** · M10K **~356** · DSP **~69** |
+| **B** (optional) | `PRODUCT_NO_STREAM_PATH=1` | whole `stream_path` (stub + parsers + `bitstream_fifo` 32 M10K + reader) | ALM **~11,317** (−12,268) · M10K **~162** (−303) · DSP **~42** (−2) | ALM **~30.6k** · M10K **~391** · DSP **~70** |
+
+Arithmetic check on baseline DPB: 2,097,152 bits / 256 M10K = **8,192 bits/block** (M10K). Free now: 553−465=**88**.
+
+**Source hook (Tier A):** `stream_path.sv` wraps `decode_stub` in `` `ifndef PRODUCT_NO_STUB `` / `` `else `` constant-0 assigns on stub outputs. QSF ships with the macro **commented** until parent grants a fit that pairs reclaim with w-geom scaler cargo:
+
+```tcl
+# set_global_assignment -name VERILOG_MACRO "PRODUCT_NO_STUB=1"
+```
+
+**SDC:** no new `set_false_path`. Existing narrow async_fifo exception unchanged.
+
+**Pre-register (publish misses after first PRODUCT_NO_STUB fit):**
+
+| Metric | Baseline `8fdf440f` | Tier A prediction | Tier B prediction |
+|--------|--------------------:|------------------:|------------------:|
+| ALM used | 23,585 | ~14,368 | ~11,317 |
+| M10K used | 465 | ~197 | ~162 |
+| DSP used | 44 | ~43 | ~42 |
+| setup min | +0.333 | ≥0 (unknown until STA) | ≥0 |
+| hold min | +0.245 | ≥0 (unknown until STA) | ≥0 |
+
+If Tier A M10K drop is **≠ ~268**, that is a finding (something else held the DPB or packing differed) — not rounding.
+
+**Static gate:** `tests/unit/test_product_no_stub_dark_silicon.sh` (red-before-green on scaffolding + DDR `fs_wr` disconnect).
+
+**No exclusive fit requested** from this write-up. Scaler (w-geom) should ride the same fit as Tier A.
+
+---
 
 ## Profile MiSTerPlex-1 (initial)
 
@@ -32,8 +209,8 @@ Phase 2 remains valid bootstrap: FFmpeg → `/dev/fb0` + `/dev/MrAudio`.
 | BRAM | NAL/entropy FIFOs, linebufs, audio ring |
 | SDRAM | Decoded unique frame store (console VRAM pattern) |
 | DDR3 | Stream buffers, ARM↔FPGA bulk, large modes |
-| FPGA | Decode + cadence present + AUDIO_L/R |
-| ARM | GDM/companion/resolve/demux, not pixel loop |
+| FPGA | **Today:** DDR frame store + cadence present + AUDIO_L/R; partial H.264 blocks under `decode_stub` (not product pixels). **Future direct-play:** entropy+intra+… when wired |
+| ARM | **Today:** GDM/companion/resolve + **FFmpeg H.264 decode** + DDR publish. Future demux-only only after fabric product path exists |
 
 ## Intermediate milestone (before full H.264 IP)
 
@@ -582,12 +759,15 @@ Phase 3.1b (DDR bulk path — implemented this fire):
 ## Acceptance
 
 - Same titles as Phase 2 cast path
-- ARM CPU mostly idle during play (protocol + demux)
+- Product path: ARM decode + FPGA present stays green on viewed pixels (freeze/shear/colour/ledger)
+- Fabric-decode product path (future): inventory gate green on the shipping fit **and** glass proof that pixels come from fabric recon — not merely that CAVLC ALMs exist
 - A/V sync ≤ ±40 ms; audioUnderrun ≈ 0; no stuck frame
 - Kill daemon / stop never hangs core
+- **Not** an acceptance criterion: “ARM mostly idle because decode moved to FPGA” (retracted — scaler dominates CPU; fabric decode motivation is **direct-play**)
 
 ## Non-goals (Phase 3)
 
 - Arbitrary 4K HEVC remux without PMS ladder
 - Optical-flow interpolation
 - Replacing PMS
+- Claiming full H.264 in FPGA while CAVLC/intra are unfitted and `host_owns_fs` blocks stub present

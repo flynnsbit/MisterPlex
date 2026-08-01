@@ -306,6 +306,10 @@ module stream_path #(
 	assign residual_dc   = sl_rdc;
 	assign entropy_cabac = pps_cabac;
 
+	// PRODUCT_NO_STUB: product RBF omits decode_stub (dark under DDR_FRAME_STORE —
+	// fs_wr_* never reach ddr_frame_store). Research / STREAM sim builds leave the
+	// macro undefined so decode_stub stays in files.qip and fully gated.
+`ifndef PRODUCT_NO_STUB
 	decode_stub #(
 		.WIDTH(FRAME_W),
 		.HEIGHT(FRAME_H)
@@ -359,10 +363,32 @@ module stream_path #(
 		.busy(stub_busy),
 		.frames_out(stub_frames)
 	);
+`else
+	assign recon_sig = 8'd0;
+	assign recon_dbg = 8'd0;
+	assign recon_dbg_valid = 1'b0;
+	assign recon_valid = 1'b0;
+	assign hybrid_fpga_owned = 1'b0;
+	assign hybrid_host_required = 1'b0;
+	assign product_recon_ok = 1'b0;
+	assign hybrid_own_code = 3'd0;
+	assign hybrid_own_reason = 4'd0;
+	assign product_fetch_mv_x = 16'sd0;
+	assign product_fetch_mv_y = 16'sd0;
+	assign product_luma_origin_x = 16'sd0;
+	assign product_luma_origin_y = 16'sd0;
+	assign fs_wr_en = 1'b0;
+	assign fs_wr_pixel = 16'd0;
+	assign fs_wr_reset = 1'b0;
+	assign fs_swap = 1'b0;
+	assign stub_busy = 1'b0;
+	assign stub_frames = 16'd0;
+`endif
 
 	(* keep = 1 *) wire keep_si = si_active;
 	(* keep = 1 *) wire keep_bf = bf_has;
 	// Touch residual_csum + place pulse + a few coeff LSBs so place is not pruned.
+	// Under PRODUCT_NO_STUB the stub/hybrid terms are constant 0 and fold away.
 	wire _keep = keep_si | keep_bf | |fifo_level | |bytes_in | stub_busy | sps_busy |
 	             pps_busy | sl_busy | |pps_id_w | |pps_qp | pps_cabac | |sl_first |
 	             |sl_fn | |sl_qpd | pps_deblock | |residual_csum | residual_place_pulse |

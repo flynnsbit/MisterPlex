@@ -1,0 +1,78 @@
+{
+  "schema": "misterplex.fabric_decode_inventory.v1",
+  "source_rbf_md5_prefix": "8fdf440f",
+  "source_fit_slot": "fit-t7b-prog480",
+  "notes": [
+    "ALMs are Quartus 'ALMs needed [=A-B+C]' from Plex.fit.rpt hierarchy — not comb ALUTs.",
+    "RAM budget uses physical block counts (465/553), never bit-% free.",
+    "h264_hybrid_mb_own is FLATTENED into decode_stub residual — not stripped.",
+    "h264_iq_idct_4x4.sv compiles as entities h264_dequant4x4 / h264_idct4x4 / h264_recon4x4."
+  ],
+  "fit_totals": {
+    "alm_used": 23585,
+    "alm_total": 41910,
+    "registers": 22479,
+    "ram_blocks_used": 465,
+    "ram_blocks_total": 553,
+    "dsp_used": 44,
+    "dsp_total": 112,
+    "block_bits_used": 2997709,
+    "block_bits_total": 5662720
+  },
+  "decode_stub_residual_own_alms": 1922.1,
+  "decode_stub_residual_tol": 1.0,
+  "must_present": [
+    {"entity": "stream_path", "hierarchy_contains": "stream_path:spath", "alm": 12268.0, "alm_tol": 0.5},
+    {"entity": "decode_stub", "hierarchy_contains": "decode_stub:stub", "alm": 9216.9, "alm_tol": 0.5},
+    {"entity": "ddr_bitstream_reader", "hierarchy_contains": "ddr_bitstream_reader:ddr_stream", "alm": 541.0, "alm_tol": 0.5},
+    {"entity": "bitstream_fifo", "hierarchy_contains": "bitstream_fifo:bfifo", "alm": 33.7, "alm_tol": 0.5},
+    {"entity": "present_core", "hierarchy_contains": "present_core:present", "alm": 3604.4, "alm_tol": 0.5},
+    {"entity": "ddr_frame_store", "hierarchy_contains": "ddr_frame_store:fstore", "alm": 3501.3, "alm_tol": 0.5},
+    {"entity": "h264_dequant4x4", "hierarchy_contains": "h264_dequant4x4:u_h264_dequant4x4", "alm": 2876.3, "alm_tol": 0.5},
+    {"entity": "h264_dpb_ref_commit", "hierarchy_contains": "h264_dpb_ref_commit:u_product_ref_commit", "alm": 1290.7, "alm_tol": 0.5},
+    {"entity": "h264_deblock_mb", "hierarchy_contains": "h264_deblock_mb:u_deblock", "alm": 962.7, "alm_tol": 0.5},
+    {"entity": "h264_idct4x4", "hierarchy_contains": "h264_idct4x4:u_h264_idct4x4", "alm": 895.8, "alm_tol": 0.5},
+    {"entity": "h264_mc_block", "hierarchy_contains": "h264_mc_block:u_stream_mc", "alm": 518.3, "alm_tol": 0.5},
+    {"entity": "h264_mv_pred_part", "hierarchy_contains": "h264_mv_pred_part:u_product_mv_pred", "alm": 445.3, "alm_tol": 0.5},
+    {"entity": "h264_mv_pred_16x16", "hierarchy_contains": "h264_mv_pred_16x16:u_median", "alm": 369.5, "alm_tol": 0.5},
+    {"entity": "h264_mc_luma_qpel", "hierarchy_contains": "h264_mc_luma_qpel:u_luma", "alm": 348.6, "alm_tol": 0.5},
+    {"entity": "h264_recon4x4", "hierarchy_contains": "h264_recon4x4:u_h264_recon4x4", "alm": 306.1, "alm_tol": 0.5},
+    {"entity": "h264_dpb_one_ref", "hierarchy_contains": "h264_dpb_one_ref:u_dpb", "alm": 299.2, "alm_tol": 0.5},
+    {"entity": "h264_mc_chroma_epel", "hierarchy_contains": "h264_mc_chroma_epel:u_chroma", "alm": 168.2, "alm_tol": 0.5},
+    {"entity": "h264_dpb_mb_write_addr", "hierarchy_contains": "h264_dpb_mb_write_addr:u_write_addr", "alm": 40.7, "alm_tol": 0.5},
+    {"entity": "h264_dpb_i420_addr", "hierarchy_contains": "h264_dpb_i420_addr:u_addr", "alm": 39.3, "alm_tol": 0.5},
+    {"entity": "h264_deblock_writeback_ctrl", "hierarchy_contains": "h264_deblock_writeback_ctrl:u_wb_ctrl", "alm": 11.2, "alm_tol": 0.5}
+  ],
+  "must_absent": [
+    "h264_cavlc_residual",
+    "h264_cavlc_residual_block",
+    "h264_intra_pred",
+    "h264_intra4x4_pred",
+    "h264_intra16x16_pred",
+    "h264_inter_pred",
+    "h264_decode_core",
+    "h264_decode_top",
+    "h264_decode_skeleton",
+    "h264_intra_nb_ctx"
+  ],
+  "must_flattened_not_absent": [
+    {
+      "entity": "h264_hybrid_mb_own",
+      "instantiated_in_source": "rtl/decode_stub.sv",
+      "doc_must_contain": "flattened into `decode_stub`"
+    }
+  ],
+  "doc_must_contain": [
+    "Product pixels are ARM-decoded",
+    "host_owns_fs",
+    "no CAVLC entropy decode in fabric",
+    "direct-play",
+    "NOT CPU relief",
+    "88 RAM blocks",
+    "flattened into `decode_stub`"
+  ],
+  "doc_must_not_contain": [
+    "full implementation of H264 in FPGA",
+    "fabric decode is needed for ARM CPU relief"
+  ]
+}
