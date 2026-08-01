@@ -105,8 +105,10 @@ unit-unlocked: unit-rollcall preflight $(ROOT)/build/test_cadence $(ROOT)/build/
 	$(ROOT)/build/test_frame_store_math
 	$(ROOT)/build/test_coded_size_adopt
 	$(ROOT)/build/test_ffmpeg_vf
+	$(ROOT)/build/test_force_scale_construction
 	bash $(ROOT)/tests/unit/test_force_scale_ffmpeg_out.sh
 	bash $(ROOT)/tests/unit/test_force_scale_sws_cost.sh
+	bash $(ROOT)/tests/unit/test_b2_b5_source_wiring.sh
 	$(ROOT)/build/test_yuv420p_chroma_480p
 	$(ROOT)/build/test_geom_frame_cost
 	$(ROOT)/build/test_glass_loss_death_points
@@ -400,6 +402,12 @@ $(ROOT)/build/test_ffmpeg_vf: $(ROOT)/tests/unit/test_ffmpeg_vf.cpp \
 		$(ROOT)/host/libmisterplex/ddr_frame_layout.hpp
 	@mkdir -p $(ROOT)/build
 	$(CXX) $(CXXFLAGS) -o $@ $(ROOT)/tests/unit/test_ffmpeg_vf.cpp
+
+$(ROOT)/build/test_force_scale_construction: $(ROOT)/tests/unit/test_force_scale_construction.cpp \
+		$(ROOT)/host/libmisterplex/ffmpeg_vf.hpp \
+		$(ROOT)/host/libmisterplex/yuv420p_chroma_health.hpp
+	@mkdir -p $(ROOT)/build
+	$(CXX) $(CXXFLAGS) -o $@ $(ROOT)/tests/unit/test_force_scale_construction.cpp
 
 $(ROOT)/build/test_yuv420p_chroma_480p: $(ROOT)/tests/unit/test_yuv420p_chroma_480p.cpp \
 		$(ROOT)/host/libmisterplex/yuv420p_chroma_health.hpp \

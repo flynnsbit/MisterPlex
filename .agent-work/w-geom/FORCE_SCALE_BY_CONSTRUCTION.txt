@@ -1,0 +1,32 @@
+reader_bytes=449280 coded=624x480 display=618x480 FORCE_SCALE=Always
+CASE exact_bank in=624x480 prod_bytes=449280 identity_skip=0 scale=0 reason=force_exact_crop_pad_unverified
+  vf=crop=618:480:0:0,pad=624:480:0+(618-iw)/2:0+(480-ih)/2:color=black
+  out_bytes=449280 out_pinned=1 pipe_risk=0 SAFE=YES
+CASE 624x352 in=624x352 prod_bytes=329472 identity_skip=0 scale=1 reason=scale_pad_crop
+  vf=scale=618:480:force_original_aspect_ratio=decrease,pad=624:480:0+(618-iw)/2:0+(480-ih)/2:color=black
+  out_bytes=449280 out_pinned=1 pipe_risk=0 SAFE=YES
+CASE 624x350 in=624x350 prod_bytes=327600 identity_skip=0 scale=1 reason=scale_pad_crop
+  vf=scale=618:480:force_original_aspect_ratio=decrease,pad=624:480:0+(618-iw)/2:0+(480-ih)/2:color=black
+  out_bytes=449280 out_pinned=1 pipe_risk=0 SAFE=YES
+CASE 640x480 in=640x480 prod_bytes=460800 identity_skip=0 scale=0 reason=crop_pad_no_v_scale_hfit
+  vf=crop=618:480:(iw-618)/2:0,pad=624:480:0+(618-iw)/2:0+(480-ih)/2:color=black
+  out_bytes=449280 out_pinned=1 pipe_risk=0 SAFE=YES
+CASE 720x480 in=720x480 prod_bytes=518400 identity_skip=0 scale=0 reason=crop_pad_no_v_scale_hfit
+  vf=crop=618:480:(iw-618)/2:0,pad=624:480:0+(618-iw)/2:0+(480-ih)/2:color=black
+  out_bytes=449280 out_pinned=1 pipe_risk=0 SAFE=YES
+CASE 720x404 in=720x404 prod_bytes=436320 identity_skip=0 scale=1 reason=scale_pad_crop
+  vf=scale=618:480:force_original_aspect_ratio=decrease,pad=624:480:0+(618-iw)/2:0+(480-ih)/2:color=black
+  out_bytes=449280 out_pinned=1 pipe_risk=0 SAFE=YES
+CASE 1440x1080 in=1440x1080 prod_bytes=2332800 identity_skip=0 scale=1 reason=scale_pad_crop
+  vf=scale=618:480:force_original_aspect_ratio=decrease,pad=624:480:0+(618-iw)/2:0+(480-ih)/2:color=black
+  out_bytes=449280 out_pinned=1 pipe_risk=0 SAFE=YES
+CASE 426x240 in=426x240 prod_bytes=153360 identity_skip=0 scale=1 reason=scale_pad_crop
+  vf=scale=618:480:force_original_aspect_ratio=decrease,pad=624:480:0+(618-iw)/2:0+(480-ih)/2:color=black
+  out_bytes=449280 out_pinned=1 pipe_risk=0 SAFE=YES
+CASE 320x240 in=320x240 prod_bytes=115200 identity_skip=0 scale=1 reason=scale_pad_crop
+  vf=scale=618:480:force_original_aspect_ratio=decrease,pad=624:480:0+(618-iw)/2:0+(480-ih)/2:color=black
+  out_bytes=449280 out_pinned=1 pipe_risk=0 SAFE=YES
+CASE 1920x1080 in=1920x1080 prod_bytes=3110400 identity_skip=0 scale=1 reason=scale_pad_crop
+  vf=scale=618:480:force_original_aspect_ratio=decrease,pad=624:480:0+(618-iw)/2:0+(480-ih)/2:color=black
+  out_bytes=449280 out_pinned=1 pipe_risk=0 SAFE=YES
+CASE verified_exact identity_skip=1 reason=force_exact_identity_crop_clear SAFE=YES

@@ -1,0 +1,54 @@
+FAIL: exact_bank must not identity_skip unverified
+FAIL: exact_bank pads coded bank
+FAIL: 624x352 must not identity_skip unverified
+FAIL: 624x352 pads coded bank
+FAIL: 624x352 pipeDesyncRisk must be 0 under force
+FAIL: 624x352 scales
+FAIL: 624x352 FOAR decrease for non-bank-h
+FAIL: 624x350 must not identity_skip unverified
+FAIL: 624x350 pads coded bank
+FAIL: 624x350 pipeDesyncRisk must be 0 under force
+FAIL: 624x350 scales
+FAIL: 624x350 FOAR decrease for non-bank-h
+FAIL: 640x480 must not identity_skip unverified
+FAIL: 640x480 pads coded bank
+FAIL: 640x480 pipeDesyncRisk must be 0 under force
+FAIL: 720x480 must not identity_skip unverified
+FAIL: 720x480 pads coded bank
+FAIL: 720x480 pipeDesyncRisk must be 0 under force
+FAIL: 720x404 must not identity_skip unverified
+FAIL: 720x404 pads coded bank
+FAIL: 720x404 pipeDesyncRisk must be 0 under force
+FAIL: 720x404 scales
+FAIL: 720x404 FOAR decrease for non-bank-h
+FAIL: 1440x1080 must not identity_skip unverified
+FAIL: 1440x1080 pads coded bank
+FAIL: 1440x1080 pipeDesyncRisk must be 0 under force
+FAIL: 1440x1080 scales
+FAIL: 1440x1080 FOAR decrease for non-bank-h
+FAIL: 426x240 must not identity_skip unverified
+FAIL: 426x240 pads coded bank
+FAIL: 426x240 pipeDesyncRisk must be 0 under force
+FAIL: 426x240 scales
+FAIL: 426x240 FOAR decrease for non-bank-h
+FAIL: 320x240 must not identity_skip unverified
+FAIL: 320x240 pads coded bank
+FAIL: 320x240 pipeDesyncRisk must be 0 under force
+FAIL: 320x240 scales
+FAIL: 320x240 FOAR decrease for non-bank-h
+FAIL: 1920x1080 must not identity_skip unverified
+FAIL: 1920x1080 pads coded bank
+FAIL: 1920x1080 pipeDesyncRisk must be 0 under force
+FAIL: 1920x1080 scales
+FAIL: 1920x1080 FOAR decrease for non-bank-h
+test_force_scale_construction: 43 failure(s)
+SAFE exact_bank in=624x480 prod=449280 reason=RED_always_identity scale=0 skip=1
+SAFE 624x352 in=624x352 prod=329472 reason=RED_always_identity scale=0 skip=1
+SAFE 624x350 in=624x350 prod=327600 reason=RED_always_identity scale=0 skip=1
+SAFE 640x480 in=640x480 prod=460800 reason=RED_always_identity scale=0 skip=1
+SAFE 720x480 in=720x480 prod=518400 reason=RED_always_identity scale=0 skip=1
+SAFE 720x404 in=720x404 prod=436320 reason=RED_always_identity scale=0 skip=1
+SAFE 1440x1080 in=1440x1080 prod=2332800 reason=RED_always_identity scale=0 skip=1
+SAFE 426x240 in=426x240 prod=153360 reason=RED_always_identity scale=0 skip=1
+SAFE 320x240 in=320x240 prod=115200 reason=RED_always_identity scale=0 skip=1
+SAFE 1920x1080 in=1920x1080 prod=3110400 reason=RED_always_identity scale=0 skip=1
