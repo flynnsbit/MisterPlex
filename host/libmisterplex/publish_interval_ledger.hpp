@@ -184,9 +184,15 @@ struct PublishIntervalLedger {
         }
 
         // Verdict on STEADY p_ge50 (parent ERROR 21 mapping). Fall back to raw.
+        // Parent fleet: σ ≫ mean → UNSCORED (not MISS). p_ge50 and acf lag1 are
+        // two stats of ONE series — never "two independent instruments."
         const double p50 = (s.steady_n >= 100) ? s.p_ge50_steady : s.p_ge50;
         const double sig = (s.steady_n >= 100) ? s.steady_sigma_ms : s.sigma_ms;
-        if (sig < 4.0 && s.p_in_band >= 0.99 && p50 < 0.03)
+        const double mean_for_margin =
+            (s.steady_n >= 100 && s.trimmed_mean_ms > 0.0) ? s.trimmed_mean_ms : s.mean_ms;
+        if (mean_for_margin > 0.0 && sig > 2.0 * mean_for_margin)
+            s.verdict = "UNSCORED";
+        else if (sig < 4.0 && s.p_in_band >= 0.99 && p50 < 0.03)
             s.verdict = "ARM_EXONERATED_FPGA_SIDE";
         else if (p50 >= 0.09 && p50 <= 0.11)
             s.verdict = "ARM_LATE_MATCH_HOLD45";

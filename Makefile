@@ -167,6 +167,7 @@ unit-unlocked: unit-rollcall preflight $(ROOT)/build/test_cadence $(ROOT)/build/
 	python3 $(ROOT)/tests/unit/test_instrument_premise_guard.py --self-test
 	python3 $(ROOT)/tests/unit/test_instrument_premise_guard.py
 	python3 $(ROOT)/tests/unit/test_label_derivation_guard.py
+	python3 $(ROOT)/tests/unit/test_c5382bee_established_facts.py
 	python3 $(ROOT)/tools/frame_ledger_report.py --self-test
 	python3 $(ROOT)/tools/glass_template_skip.py --self-test
 	$(ROOT)/tests/unit/test_restore_misterplexd_prev_refuse.sh

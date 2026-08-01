@@ -158,7 +158,12 @@ struct PublishSwapDeltaLedger {
                 std::max(0.0, sum_iv_ms2 / double(iv_n) - s.mean_ms * s.mean_ms);
             s.sigma_ms = std::sqrt(var);
             s.p_ge50 = double(ge50) / double(iv_n);
-            if (s.p_ge50 >= 0.09 && s.p_ge50 <= 0.11)
+            // Parent fleet 2026-08-01: p_ge50 vs pre-reg band is UNSCORED when
+            // σ ≫ mean (e.g. σ=500ms, mean=50ms). Fat tail from preemption is
+            // not a late-publisher score. Never treat as MISS/HIT.
+            if (s.mean_ms > 0.0 && s.sigma_ms > 2.0 * s.mean_ms)
+                s.interval_verdict = "UNSCORED";
+            else if (s.p_ge50 >= 0.09 && s.p_ge50 <= 0.11)
                 s.interval_verdict = "ARM_LATE_MATCH_HOLD45";
             else if (s.p_ge50 < 0.03 && s.sigma_ms < 4.0)
                 s.interval_verdict = "ARM_EXONERATED_FPGA_SIDE";
