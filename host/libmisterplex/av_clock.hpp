@@ -39,16 +39,19 @@ inline int64_t audioClockMs(int64_t audioBytes) {
 //   drift > 0  video is behind audio (we are late) → drop to catch up
 inline int64_t avDriftMs(int64_t audioMs, int64_t frameMs) { return audioMs - frameMs; }
 
-// Co-arm: session video clock = raw audible clock − origin latched when the
-// FIRST complete video frame is ready to pace. Without this, audio has already
-// been writing into MrAudio (prefill + decode warm-up) for ~100–200 ms before
-// frame 1 arrives, so drift opens at +159 ms (measured), and avDecide with
-// dropMs=80 / maxDropRun=1 alternates Drop/Present for ~13 frames — real
-// display loss (pixel-confirmed odd-only TREK24 counters). Subtracting the
-// origin makes initial drift ~0 by construction. Steady-state dynamics are
-// unchanged (constant offset cancels in the drift loop).
+// DEPRECATED as a product fix: subtracting an origin at first video frame
+// zeroes the *pacer's* drift without moving photons/samples. Hardware (rk=8):
+// co-arm cleared drops (13→0) but moved grabber lip-sync −168 → −456 ms
+// (audio even earlier). Kept only so unit tests can model that failure mode.
 inline int64_t coArmedClockMs(int64_t rawAudibleMs, int64_t originMs) {
     return rawAudibleMs - originMs;
+}
+
+// Real content A/V offset the grabber measures (calibration-free in a before/
+// after delta): content time of audio being heard minus content time of the
+// frame on screen. >0 ⇒ audio content leads picture (the lab failure sign).
+inline int64_t realContentOffsetMs(int64_t audioHeardContentMs, int64_t videoDisplayedContentMs) {
+    return audioHeardContentMs - videoDisplayedContentMs;
 }
 
 enum class AvAction {
@@ -76,35 +79,54 @@ inline AvAction avDecide(int64_t driftMs, int64_t leadMs, int64_t dropMs, int dr
     return AvAction::Present;
 }
 
-// Startup-window pacer simulation (host unit tests).
+// Startup-window simulations (host unit tests).
 //
-// Silicon (rk=8, 24.000 fps): audio is already ~+159 ms ahead when frame 1 is
-// ready. With an empty/near-empty raw pipe, Drop cannot skip decoder backlog —
-// the next frame still arrives in realtime — so the deficit stays elevated and
-// maxDropRun=1 forces Drop/Present/Drop/Present… (~13 drops in ~0.8 s, pixel-
-// confirmed odd-only counters). Co-arm zeros the clock at frame 1 so the
-// opening drift is −frameContentMs(1) (Hold→Present), not +159 (Drop).
+// Silicon (rk=8, 24.000 fps):
+//   - Early audio play: audibleClock ~+159..206 ms when frame 1 is ready →
+//     pacer Drop/Present massacre (~13 drops) OR, if origin is re-based
+//     (co-arm), drops=0 while REAL content offset stays ~+165..206 ms unpaid
+//     (grabber −168 → −456 ms, delta −288 ms measured).
+//   - Hold-until-video: MrAudio writes start only when frame 1 is ready, so
+//     audioHeardContent and videoDisplayedContent share a common wall origin.
+//     Drops ~0 AND real content offset ~0 (modulo present lead).
 //
-// Model: raw audible clock free-runs at content realtime from audioMsAtFirstFrame;
-// coArm latches that value as origin. Drop does not reclaim time (no backlog).
+// `realOffset` is what the grabber measures (content A − content V). The
+// daemon's av_drift_ms is intentionally NOT used as a success criterion here.
+enum class StartupAudioMode {
+    EarlyPlay,       // audio free-runs before first video; pacer sees raw clock
+    CoArmOrigin,     // same physical audio lead; pacer subtracts origin (FAILED on HW)
+    HoldUntilVideo,  // audio device starts at first video frame (product fix)
+};
+
 struct StartupPacerSim {
     int drops = 0;
     int presents = 0;
     int holds = 0;
-    int firstDriftMs = 0; // drift seen on frame 1 before any Hold sleep
+    int firstDriftMs = 0; // pacer drift on frame 1 (daemon-visible, can lie)
     int maxDropRun = 0;
+    int firstRealOffsetMs = 0;  // content A − content V at first Present
+    int lastRealOffsetMs = 0;   // same metric after the window
+    int steadyRealOffsetMs = 0; // mean real offset over last half of presents
 };
 
-inline StartupPacerSim simulateStartupPacer(int64_t audioMsAtFirstFrame, bool coArm, int frames,
-                                           int64_t leadMs = 40, int64_t dropMs = 80,
+inline StartupPacerSim simulateStartupPacer(int64_t audioMsAtFirstFrame, StartupAudioMode mode,
+                                           int frames, int64_t leadMs = 40, int64_t dropMs = 80,
                                            int fpsNum = 24, int fpsDen = 1) {
     StartupPacerSim out{};
-    const int64_t origin = coArm ? audioMsAtFirstFrame : 0;
-    // Raw audible clock at the moment frame 1 is first paced.
-    int64_t rawAudioMs = audioMsAtFirstFrame;
+    // Physical audio content already heard when frame 1 becomes ready.
+    // HoldUntilVideo forces this to 0 (device was gated). Other modes keep it.
+    const int64_t audioLeadAtFrame1 =
+        (mode == StartupAudioMode::HoldUntilVideo) ? 0 : audioMsAtFirstFrame;
+    const int64_t origin =
+        (mode == StartupAudioMode::CoArmOrigin) ? audioMsAtFirstFrame : 0;
+    int64_t audioHeardContentMs = audioLeadAtFrame1;
+    int64_t rawAudioMs = audioLeadAtFrame1; // pacer raw audible clock
     int dropRun = 0;
+    int64_t realSum = 0;
+    int realN = 0;
     const int64_t framePeriodMs =
         (1000LL * static_cast<int64_t>(fpsDen)) / static_cast<int64_t>(fpsNum > 0 ? fpsNum : 24);
+    bool gotFirstPresent = false;
     for (int i = 1; i <= frames; ++i) {
         const int64_t frameMs = frameContentMs(i, fpsNum, fpsDen);
         int64_t clock = coArmedClockMs(rawAudioMs, origin);
@@ -116,6 +138,7 @@ inline StartupPacerSim simulateStartupPacer(int64_t audioMsAtFirstFrame, bool co
         while (act == AvAction::Hold && holdGuard++ < 10000) {
             ++out.holds;
             rawAudioMs += 2;
+            audioHeardContentMs += 2; // device keeps playing during Hold
             clock = coArmedClockMs(rawAudioMs, origin);
             drift = avDriftMs(clock, frameMs);
             act = avDecide(drift, leadMs, dropMs, dropRun);
@@ -125,15 +148,36 @@ inline StartupPacerSim simulateStartupPacer(int64_t audioMsAtFirstFrame, bool co
             ++dropRun;
             if (dropRun > out.maxDropRun)
                 out.maxDropRun = dropRun;
+            // Drop: content never reaches display. Audio keeps rolling; next
+            // decoded frame arrives in ~one period (no backlog).
         } else {
             ++out.presents;
             dropRun = 0;
+            const int64_t realOff = realContentOffsetMs(audioHeardContentMs, frameMs);
+            out.lastRealOffsetMs = static_cast<int>(realOff);
+            if (!gotFirstPresent) {
+                gotFirstPresent = true;
+                out.firstRealOffsetMs = static_cast<int>(realOff);
+            }
+            if (i > frames / 2) {
+                realSum += realOff;
+                ++realN;
+            }
         }
-        // Next decoded frame arrives in ~one content period (no backlog to burn).
-        // Audio free-runs by the same quantum → deficit persists without co-arm.
         rawAudioMs += framePeriodMs;
+        audioHeardContentMs += framePeriodMs;
     }
+    out.steadyRealOffsetMs = realN > 0 ? static_cast<int>(realSum / realN) : out.lastRealOffsetMs;
     return out;
+}
+
+// Back-compat wrapper used by older call sites / red twins.
+inline StartupPacerSim simulateStartupPacer(int64_t audioMsAtFirstFrame, bool coArm, int frames,
+                                           int64_t leadMs = 40, int64_t dropMs = 80,
+                                           int fpsNum = 24, int fpsDen = 1) {
+    return simulateStartupPacer(audioMsAtFirstFrame,
+                                coArm ? StartupAudioMode::CoArmOrigin : StartupAudioMode::EarlyPlay,
+                                frames, leadMs, dropMs, fpsNum, fpsDen);
 }
 
 // Terminal-signal inventory for the rawvideo read loop. EAGAIN/EWOULDBLOCK is

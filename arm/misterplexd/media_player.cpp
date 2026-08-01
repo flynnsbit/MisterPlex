@@ -1056,6 +1056,7 @@ void MediaPlayer::killChildren() {
         waitpid(sp, &st, 0);
     }
     audioActive_.store(false);
+    audioStartGate_.store(false);
     streamActive_.store(false);
 }
 
@@ -2053,6 +2054,20 @@ void MediaPlayer::audioPump(int afd) {
     char buf[3840];
     std::vector<uint8_t> f2acc;
     f2acc.reserve(32768);
+    // Hold buffer: PCM from stream start while audioStartGate_ is closed.
+    // Cap 2 s — preserves content t=0 so release plays from the beginning in
+    // lockstep with first video, rather than discarding into a permanent lead.
+    constexpr size_t kAudioHoldCapBytes =
+        static_cast<size_t>(misterplex::kMrAudioBytesPerSec * 2);
+    std::vector<uint8_t> holdBuf;
+    holdBuf.reserve(misterplex::kMrAudioBytesPerSec); // 1 s typical
+    bool holdLogged = false;
+    bool holdOverflowLogged = false;
+    bool releaseLogged = false;
+    // After a non-empty hold drain, do NOT bias audioDue into the past: that
+    // prefill would blast held PCM into the ring and recreate the audible lead
+    // we just avoided. Live-only starts (empty hold) still use normal prefill.
+    bool suppressStartupPrefill = false;
     size_t total = 0;
     size_t f2total = 0;
     int f2Fail = 0;
@@ -2066,13 +2081,10 @@ void MediaPlayer::audioPump(int afd) {
     // value is only a starting point — and the fallback if the depth is
     // unreadable.
     const double kBytesPerSec = 48000.0 * 4.0 * (1.0 + audioClockPpm_ / 1000000.0);
-    // Deadline for the next chunk. Started on the FIRST chunk actually read, not
-    // here: FFmpeg needs a variable, sometimes multi-hundred-ms warm-up before it
-    // emits anything, and anchoring the clock before that made the pump write
-    // flat out to "catch up", dumping the entire warm-up into the ring where it
-    // stayed for the session (feed and drain are both ~48 kHz, so nothing ever
-    // drained it). That is what made ring depth — and therefore lipsync —
-    // session-dependent.
+    // Deadline for the next chunk. Started on the FIRST chunk actually written
+    // to MrAudio (after audioStartGate_), not on the first ffmpeg read: holding
+    // the device closed until first video is what absorbs the ~206 ms startup
+    // lead (measured audio_origin_ms) without re-basing the pacer clock.
     std::chrono::steady_clock::time_point audioDue{};
     bool audioClockStarted = false;
     int64_t chunkIndex = 0;
@@ -2081,24 +2093,13 @@ void MediaPlayer::audioPump(int afd) {
     bool latencyLogged = false;
     bool overrunLogged = false;
 
-    while (!stop_.load()) {
-        if (paused_.load()) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(20));
-            continue;
-        }
-        ssize_t n = ::read(afd, buf, sizeof(buf));
-        if (n < 0) {
-            if (errno == EINTR)
-                continue;
-            break;
-        }
-        if (n == 0)
-            break;
-
-        if (out >= 0) {
+    // Write one PCM chunk to MrAudio (and/or accumulate F2) with the normal
+    // 48 kHz pace + ring servo. Called only after audioStartGate_ opens.
+    auto writePacedChunk = [&](const uint8_t* data, size_t n) {
+        if (out >= 0 && n > 0) {
             size_t off = 0;
-            while (off < static_cast<size_t>(n) && !stop_.load()) {
-                ssize_t w = ::write(out, buf + off, static_cast<size_t>(n) - off);
+            while (off < n && !stop_.load()) {
+                ssize_t w = ::write(out, data + off, n - off);
                 if (w < 0) {
                     if (errno == EINTR)
                         continue;
@@ -2107,58 +2108,41 @@ void MediaPlayer::audioPump(int afd) {
                 }
                 off += static_cast<size_t>(w);
             }
-            audioBytes_.fetch_add(static_cast<size_t>(n));
+            audioBytes_.fetch_add(static_cast<int64_t>(n));
 
-            // Anchor on the first chunk, biased one target-depth into the past so
-            // the pump runs flat out just long enough to prefill the ring to the
-            // servo's set point, then falls into paced mode. This is the ordinary
-            // audio prefill, and it is bounded — unlike the old warm-up burst.
+            // Anchor on the first chunk actually written. Normal path biases one
+            // target-depth into the past so the ring prefills; hold-drain path
+            // starts at `now` so held content plays in realtime with video.
             if (!audioClockStarted) {
                 audioClockStarted = true;
-                audioDue = std::chrono::steady_clock::now() -
-                           std::chrono::duration_cast<std::chrono::steady_clock::duration>(
-                               std::chrono::duration<double>(
-                                   static_cast<double>(misterplex::kFeedTargetBytes) /
-                                   kBytesPerSec));
+                const auto now0 = std::chrono::steady_clock::now();
+                if (suppressStartupPrefill) {
+                    audioDue = now0;
+                } else {
+                    audioDue =
+                        now0 - std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+                                   std::chrono::duration<double>(
+                                       static_cast<double>(misterplex::kFeedTargetBytes) /
+                                       kBytesPerSec));
+                }
             }
 
-            // Advance the deadline by this chunk's duration at the servo-corrected
-            // rate. Accumulating the deadline (rather than recomputing it from a
-            // fixed origin) is what lets the rate change mid-stream without the
-            // schedule jumping.
             const double rate = misterplex::feedRateBytesPerSec(
                 kBytesPerSec, audioQueuedBytes_.load(std::memory_order_relaxed));
             audioDue += std::chrono::duration_cast<std::chrono::steady_clock::duration>(
-                std::chrono::duration<double>(n / rate));
+                std::chrono::duration<double>(static_cast<double>(n) / rate));
             const auto now = std::chrono::steady_clock::now();
             if (audioDue > now)
                 std::this_thread::sleep_until(audioDue);
             else if (now - audioDue > std::chrono::seconds(1)) {
-                // We fell more than a second behind (decoder stall, CPU spike).
-                // Do not try to make it up in one burst — that is precisely the
-                // ring-stuffing behaviour we just removed. Re-anchor and let the
-                // servo refill the target depth at its own pace.
                 audioDue = now;
             }
 
-            // Turn the submitted-byte counter into a real playback position by
-            // subtracting what is still sitting in the driver's DMA ring. This
-            // reading is also the servo's error signal, so it feeds both the
-            // video clock and the feed rate.
-            // Sampled every 4th chunk (~80 ms), which is far faster than the
-            // servo's 8 s time constant; polling harder buys nothing but
-            // syscalls.
             if ((chunkIndex++ % 4) == 0) {
                 const int64_t q = readMrAudioQueuedBytes();
                 if (q < 0) {
                     audioQueuedBytes_.store(-1);
                 } else {
-                    // Low-pass the depth. The servo holds the true depth
-                    // constant, so sample-to-sample movement is mostly noise;
-                    // feeding it raw into the video clock would jitter every
-                    // frame's release time, and into the servo would make it
-                    // chase that jitter. Seed on the first sample so startup is
-                    // not slewed in from zero.
                     queuedEma = (queuedEma < 0) ? q : (queuedEma * 3 + q) / 4;
                     audioQueuedBytes_.store(queuedEma);
                     const int64_t latMs =
@@ -2174,8 +2158,6 @@ void MediaPlayer::audioPump(int afd) {
                         log("media: audio latency " + std::to_string(latMs) + "ms queued=" +
                             std::to_string(queuedEma) + "B");
                     }
-                    // The ring has no backpressure: writing past the read pointer
-                    // silently destroys unplayed audio. Nothing else reports this.
                     if (!overrunLogged && queuedEma > (misterplex::kMrAudioRingBytes * 3) / 4) {
                         overrunLogged = true;
                         log("media: WARNING MrAudio ring " + std::to_string(latMs) +
@@ -2184,37 +2166,112 @@ void MediaPlayer::audioPump(int afd) {
                 }
             }
         }
+    };
 
+    auto flushF2 = [&]() {
+        while (wantF2 && f2acc.size() >= kF2Chunk && !stop_.load()) {
+            if (fpga_.sendPcmChunk(f2acc.data(), kF2Chunk, /*F2*/ 2)) {
+                f2total += kF2Chunk;
+                f2Fail = 0;
+            } else {
+                ++f2Fail;
+                if (f2Fail == 1 || f2Fail == 8 || (f2Fail % 64) == 0)
+                    log("media: F2 pcm: " + fpga_.lastError() + " (fail#" +
+                        std::to_string(f2Fail) + ")");
+                if (fpga_.lastError().find("user mode") != std::string::npos && f2Fail >= 4) {
+                    log("media: F2 disabled for session (FPGA left user mode)");
+                    wantF2 = false;
+                    f2acc.clear();
+                    break;
+                }
+                if (f2Fail >= 32) {
+                    log("media: F2 disabled for session (too many SPI errors)");
+                    wantF2 = false;
+                    f2acc.clear();
+                    break;
+                }
+            }
+            if (wantF2)
+                f2acc.erase(f2acc.begin(),
+                            f2acc.begin() + static_cast<std::ptrdiff_t>(kF2Chunk));
+        }
+    };
+
+    while (!stop_.load()) {
+        if (paused_.load()) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+            continue;
+        }
+        ssize_t n = ::read(afd, buf, sizeof(buf));
+        if (n < 0) {
+            if (errno == EINTR)
+                continue;
+            break;
+        }
+        if (n == 0)
+            break;
+
+        // Gate closed: buffer stream-start PCM, do not touch MrAudio. This is
+        // where the measured ~206 ms audible lead used to be created (prefill +
+        // concurrent play while video still decoded frame 1). Co-arm re-based
+        // the pacer around that lead and left it as permanent lip-sync error;
+        // holding the device closed removes the lead instead of relabeling it.
+        if (!audioStartGate_.load(std::memory_order_acquire)) {
+            if (!holdLogged) {
+                holdLogged = true;
+                log("media: audio hold — buffering PCM until first video frame "
+                    "(no MrAudio write yet)");
+            }
+            const size_t nn = static_cast<size_t>(n);
+            if (holdBuf.size() < kAudioHoldCapBytes) {
+                const size_t room = kAudioHoldCapBytes - holdBuf.size();
+                const size_t take = nn < room ? nn : room;
+                holdBuf.insert(holdBuf.end(), buf, buf + take);
+                if (take < nn && !holdOverflowLogged) {
+                    holdOverflowLogged = true;
+                    log("media: audio hold cap reached bytes=" +
+                        std::to_string(holdBuf.size()) +
+                        " — keeping stream start, dropping tail until release");
+                }
+            } else if (!holdOverflowLogged) {
+                holdOverflowLogged = true;
+                log("media: audio hold cap reached bytes=" + std::to_string(holdBuf.size()) +
+                    " — keeping stream start, dropping tail until release");
+            }
+            total += static_cast<size_t>(n);
+            continue;
+        }
+
+        // Gate just opened: drain hold buffer first (content t=0…), then live.
+        if (!releaseLogged) {
+            releaseLogged = true;
+            const int64_t heldMs =
+                (static_cast<int64_t>(holdBuf.size()) * 1000LL) / misterplex::kMrAudioBytesPerSec;
+            log("media: audio release — writing held_bytes=" + std::to_string(holdBuf.size()) +
+                " held_ms=" + std::to_string(heldMs) +
+                " (content starts with first video frame)");
+            if (!holdBuf.empty())
+                suppressStartupPrefill = true;
+            // Drain in ~20 ms chunks at realtime (no past-bias prefill).
+            constexpr size_t kChunk = 3840;
+            size_t off = 0;
+            while (off < holdBuf.size() && !stop_.load()) {
+                const size_t chunk =
+                    (holdBuf.size() - off) < kChunk ? (holdBuf.size() - off) : kChunk;
+                writePacedChunk(holdBuf.data() + off, chunk);
+                if (wantF2)
+                    f2acc.insert(f2acc.end(), holdBuf.data() + off, holdBuf.data() + off + chunk);
+                flushF2();
+                off += chunk;
+            }
+            holdBuf.clear();
+            holdBuf.shrink_to_fit();
+        }
+
+        writePacedChunk(reinterpret_cast<const uint8_t*>(buf), static_cast<size_t>(n));
         if (wantF2) {
             f2acc.insert(f2acc.end(), buf, buf + n);
-            while (f2acc.size() >= kF2Chunk && !stop_.load()) {
-                if (fpga_.sendPcmChunk(f2acc.data(), kF2Chunk, /*F2*/ 2)) {
-                    f2total += kF2Chunk;
-                    f2Fail = 0;
-                } else {
-                    ++f2Fail;
-                    // Rate-limit: was logging every chunk when f2total==0 (0 % N == 0).
-                    if (f2Fail == 1 || f2Fail == 8 || (f2Fail % 64) == 0)
-                        log("media: F2 pcm: " + fpga_.lastError() +
-                            " (fail#" + std::to_string(f2Fail) + ")");
-                    // Core reconfig / menu: stop hammering SPI; MrAudio still plays.
-                    if (fpga_.lastError().find("user mode") != std::string::npos && f2Fail >= 4) {
-                        log("media: F2 disabled for session (FPGA left user mode)");
-                        wantF2 = false;
-                        f2acc.clear();
-                        break;
-                    }
-                    if (f2Fail >= 32) {
-                        log("media: F2 disabled for session (too many SPI errors)");
-                        wantF2 = false;
-                        f2acc.clear();
-                        break;
-                    }
-                }
-                if (wantF2)
-                    f2acc.erase(f2acc.begin(),
-                                f2acc.begin() + static_cast<std::ptrdiff_t>(kF2Chunk));
-            }
+            flushF2();
         }
         total += static_cast<size_t>(n);
     }
@@ -2413,6 +2470,8 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
             ::close(apipe[1]);
             if (pid > 0) {
                 childPid_.store(pid);
+                // No RGB frame cadence on this path — open the gate immediately.
+                audioStartGate_.store(true, std::memory_order_release);
                 audioThr_ = std::thread([this, afd = apipe[0]] { audioPump(afd); });
             } else {
                 ::close(apipe[0]);
@@ -2728,7 +2787,11 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
             fcntl(rfd, F_SETFL, rflags | O_NONBLOCK);
 
         if (apipe[0] >= 0) {
+            // Closed until first complete video frame — see audioPump hold path.
+            audioStartGate_.store(false, std::memory_order_release);
             audioThr_ = std::thread([this, afd = apipe[0]] { audioPump(afd); });
+        } else {
+            audioStartGate_.store(true, std::memory_order_release);
         }
         std::vector<uint8_t> frame(frameBytes);
         // Zero-init → green-cast under any underfill (U=V=0). Studio black
@@ -3027,17 +3090,17 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
             onProgress_("playing", startMs, durationMs);
 
         // Deterministic A/V origin:
-        // 1) Wait for the audio pump to exist so we never start on wall and then
+        // 1) Wait for the audio pump thread so we never start on wall and then
         //    switch to audio mid-stream (that step discontinuity randomised lipsync
         //    by tens of ms — measured spread ~67 ms across identical runs).
-        // 2) Do NOT latch the pacing origin here. The audio pump sets audioActive_
-        //    and begins MrAudio prefill immediately; by the time frame 1 is fully
-        //    read, audibleClock is already ~+159 ms (measured). Pacing against that
-        //    with resyncDropMs=80 / maxDropRun=1 alternates Drop/Present and burns
-        //    ~13 real display frames at every session open (pixel-confirmed).
-        // 3) Co-arm: latch audioClockOriginMs from audibleClock when the FIRST
-        //    complete video frame is ready (see pacing block). Startup-only; the
-        //    steady-state avDecide path is unchanged (constant offset cancels).
+        // 2) MrAudio stays GATED (audioStartGate_=false) until the first complete
+        //    video frame. Early play created ~206 ms of already-heard audio before
+        //    frame 1 (measured audio_origin_ms); the pacer then either dropped ~13
+        //    frames to repay it (odd-only counters) or — under co-arm — re-based
+        //    the clock and left the lead as permanent lip-sync error (grabber
+        //    −168 → −456 ms). Holding the device closed removes the lead.
+        // 3) On first frame we open the gate; pump writes held PCM from content
+        //    t=0. Pacer uses raw audibleClockMs (no origin subtract). Startup only.
         if (wantAudio && apipe[0] >= 0) {
             const auto waitStart = std::chrono::steady_clock::now();
             while (!stop_.load() && !audioActive_.load() &&
@@ -3050,11 +3113,10 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
             log("media: A/V audio_active=" +
                 std::string(audioActive_.load() ? "1" : "0") +
                 " waited_ms=" + std::to_string(waited) +
-                " — co-arm deferred until first video frame");
+                " — MrAudio gated until first video frame");
         }
-        t0 = std::chrono::steady_clock::now(); // provisional; re-latched at co-arm
-        bool avCoArmDone = false;
-        int64_t audioClockOriginMs = 0;
+        t0 = std::chrono::steady_clock::now(); // provisional; re-latched at audio release
+        bool avAudioReleased = false;
         bool pauseClockHeld = false;
         bool pausedOverlayWasVisible = false;
         std::chrono::steady_clock::time_point pauseStarted{};
@@ -3280,23 +3342,23 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
             int64_t framePacingWaitUs = 0;
             int64_t framePacingWaitCpuUs = 0;
             {
-                // Co-arm once: snapshot audible clock at the first complete video
-                // frame so startup drift is ~0. Startup-window only (avCoArmDone).
-                if (!avCoArmDone) {
-                    avCoArmDone = true;
+                // Release audio once: open MrAudio gate at the first complete video
+                // frame. Startup-window only (avAudioReleased). Physical start —
+                // not a clock re-base (co-arm failed that distinction on silicon).
+                if (!avAudioReleased) {
+                    avAudioReleased = true;
                     t0 = std::chrono::steady_clock::now();
                     lastCompleteVideoFrame = t0;
                     if (wantAudio && audioActive_.load()) {
-                        const int64_t raw = misterplex::audibleClockMs(
-                            audioBytes_.load(), audioQueuedBytes_.load());
-                        audioClockOriginMs = raw;
-                        log("media: A/V co-arm first_frame=" + std::to_string(frameIndex) +
-                            " audio_origin_ms=" + std::to_string(audioClockOriginMs) +
-                            " (session clock zeroed at first video frame)");
+                        audioStartGate_.store(true, std::memory_order_release);
+                        log("media: A/V audio_release first_frame=" +
+                            std::to_string(frameIndex) +
+                            " (MrAudio starts; held PCM plays from content t=0)");
                     } else {
-                        audioClockOriginMs = 0;
-                        log("media: A/V co-arm first_frame=" + std::to_string(frameIndex) +
-                            " audio_origin_ms=0 (wall clock; audio inactive)");
+                        audioStartGate_.store(true, std::memory_order_release);
+                        log("media: A/V audio_release first_frame=" +
+                            std::to_string(frameIndex) +
+                            " (wall clock; audio inactive)");
                     }
                 }
                 // Live OSD trim is read every frame so the menu takes effect at once.
@@ -3309,11 +3371,10 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                     if (wantAudio && audioActive_.load()) {
                         // What has actually been HEARD, not what has been handed
                         // to the driver. Falls back to the submitted-byte clock
-                        // when the ring depth is unavailable. Co-arm subtracts the
-                        // origin latched at first video frame (see above).
-                        const int64_t raw = misterplex::audibleClockMs(
+                        // when the ring depth is unavailable. No origin subtract:
+                        // gate ensures audible clock starts near 0 with frame 1.
+                        clockMs = misterplex::audibleClockMs(
                             audioBytes_.load(), audioQueuedBytes_.load());
-                        clockMs = misterplex::coArmedClockMs(raw, audioClockOriginMs);
                     } else {
                         clockMs = std::chrono::duration_cast<std::chrono::milliseconds>(
                                       std::chrono::steady_clock::now() - t0)

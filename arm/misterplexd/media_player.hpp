@@ -383,6 +383,11 @@ private:
     std::atomic<bool> playing_{false};
     std::atomic<bool> paused_{false};
     std::atomic<bool> audioActive_{false};
+    // False until the first complete video frame is ready. While false the audio
+    // pump reads+buffers PCM but does NOT write MrAudio — so audible playback
+    // cannot race ahead of picture (silicon: co-arm hid a ~206 ms lead and made
+    // real lip-sync ~288 ms worse). Release is a real start, not a clock re-base.
+    std::atomic<bool> audioStartGate_{false};
     std::atomic<bool> streamActive_{false};
     std::atomic<int64_t> reconFrames_{0};
     std::atomic<bool> reconPresentOk_{false}; // at least one recon → F1/fb0 this session
