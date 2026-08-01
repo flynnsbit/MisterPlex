@@ -115,10 +115,11 @@ inline bool repairDeadYuv420pChroma(uint8_t* yuv, int w, int h) {
 // still hits the delivery_geometry_verified guard in buildFfmpegVideoFilter.
 // Conf Off stays Off. Always stays Always.
 //
-// FORCE_SCALE does NOT mean "always run swscale". buildFfmpegVideoFilter still
-// true-no-ops when source WxH == coded WxH (force_exact_identity_*), so a
-// native 624x480 delivery is not FOAR-rescaled into 618. Force only keeps the
-// scale+pad path for mismatched/unknown sizes so reader_bytes stay coded.
+// FORCE_SCALE does NOT mean "always run swscale". buildFfmpegVideoFilter:
+//   Always + exact claim + unverified → crop+pad (no FOAR, identity_skip=0)
+//   Always + exact + verified         → true identity (lab / measured path)
+//   Always + mismatch/unknown         → scale+pad (MILESTONE 4 byte pin)
+// Product play-time plans are unverified (banner arrives after plan freeze).
 // At 240p (320≠624) force still scales.
 inline FfmpegScaleMode ffmpegScaleModeForDdrYuvPresent(FfmpegScaleMode confMode,
                                                        bool forceScale = true) {

@@ -153,9 +153,9 @@ inline bool vfPreservesBankHeightSource(const std::string& vf) {
 // narrower display box with force_original_aspect_ratio=decrease — that applies
 // min(display_w/src_w, display_h/src_h) to BOTH axes and turns a pure 6-px
 // horizontal crop into a ~1% vertical resample (624x480 → ~618x475 → pad).
-// Under Always/FORCE_SCALE, exact-coded is a true identity no-op (empty/fps-only
-// vf + clearYuv420pCropPadding). Under SkipIdentity+unverified, crop+pad only.
-// Non-exact bank-height (e.g. 640x480) uses buildCropPadNoScale (hfit).
+// Under Always/FORCE_SCALE: unverified exact → crop+pad pin (product hot path);
+// verified exact → true identity. SkipIdentity+unverified → crop+pad. Non-exact
+// bank-height (e.g. 640x480) uses buildCropPadNoScale (hfit).
 //
 // Square path: scale into coded geometry with centred pad.
 //
@@ -374,27 +374,34 @@ inline FfmpegVfPlan buildFfmpegVideoFilter(const FfmpegVfRequest& req) {
     const bool exactUnverified =
         exactCodedSource && !req.delivery_geometry_verified && !req.assume_source_matches_coded;
 
-    // FORCE_SCALE product path maps conf SkipIdentity → Always. Under Always,
-    // exact coded source (624x480==624x480) is a TRUE NO-OP geometry filter —
-    // not scale=618:FOAR=decrease and not crop+pad. Parent live GEOM proved
-    // FOAR still burned every native-480 frame under Always.
+    // FORCE_SCALE product path maps conf SkipIdentity → Always.
     //
-    // What FORCE_SCALE still protects: non-exact / unknown source still scales
-    // so reader_bytes stay coded (MILESTONE 4). Exact match ⇒ producer frame
-    // bytes == coded by construction of source dims; display 618 is cleared by
-    // clearYuv420pCropPadding on the present path, not ffmpeg.
-    // Unverified exact under Always: still no-op (reason flags it); MEASURED
-    // delivery + pipeDesyncRisk remain the safety net if PMS lies.
+    // Exact coded *claim* at plan time is almost always UNVERIFIED: source WxH
+    // is PMS transcode_request / library_media (main.cpp setFfmpegScaleSourceSize),
+    // and delivery_geometry_verified stays 0 until the ffmpeg banner arrives —
+    // after the vf plan is frozen for the session. Unverified is the product
+    // hot path, not an edge case.
     //
-    // SkipIdentity + unverified exact does NOT take this branch — force=0
-    // escape still refuses identity_skip without verification (crop_pad path).
+    // Unverified + Always: crop+pad (NO swscale, NO FOAR decrease). Pins OUTPUT
+    // geometry to coded bank the way old Always-scale did, without the ~1%
+    // vertical resample (624→618 FOAR → 475). identity_skip=false so a wrong
+    // claim cannot silent-phase-walk the raw reader (MILESTONE 4 class).
+    //
+    // Verified + Always (lab / measured-before-plan): true identity no-op;
+    // display crop cols cleared by clearYuv420pCropPadding on present.
+    //
+    // Non-exact / unknown under Always: still scale+pad below (byte pin).
     if (req.scale_mode == FfmpegScaleMode::Always && exactCodedSource) {
-        if (exactUnverified)
-            return finish(false, true,
-                          hasCrop ? "force_exact_identity_crop_clear_unverified"
-                                  : "force_exact_identity_unverified");
-        return finish(false, true, hasCrop ? "force_exact_identity_crop_clear"
-                                           : "force_exact_identity");
+        if (!exactUnverified) {
+            return finish(false, true, hasCrop ? "force_exact_identity_crop_clear"
+                                               : "force_exact_identity");
+        }
+        // Unverified claim of exact coded — pin via crop+pad, never identity_skip.
+        append(buildCropPadNoScale(dispW, dispH, req.coded_w, req.coded_h, req.crop_left,
+                                   req.crop_top, req.source_w));
+        return finish(false, false,
+                      hasCrop ? "force_exact_crop_pad_unverified"
+                              : "force_exact_pad_unverified");
     }
 
     // Always (non-exact), or SkipIdentity with mismatched/unknown/unverified: scale+pad.

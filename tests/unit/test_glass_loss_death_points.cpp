@@ -58,9 +58,8 @@ int main() {
         expect(pipeDesyncRisk(460800u, bank, /*identity_skip=*/true), "D3 risk under skip");
         expect(!pipeDesyncRisk(460800u, bank, /*identity_skip=*/false),
                "D3 no risk flag when not identity_skip (scale path)");
-        // FORCE_SCALE Always + exact coded: true identity; producer bytes == coded
-        // by construction (624x480 I420). Display 618 is clearYuv, not ffmpeg pad.
-        // Mismatch still scales (MILESTONE 4 pin) — checked via pipeDesyncRisk above.
+        // FORCE_SCALE Always + unverified exact: crop+pad pin (product hot path).
+        // Verified exact: true identity. Mismatch still scales.
         FfmpegVfRequest r;
         r.coded_w = 624;
         r.coded_h = 480;
@@ -69,20 +68,24 @@ int main() {
         r.scale_mode = ffmpegScaleModeForDdrYuvPresent(FfmpegScaleMode::SkipIdentity, true);
         r.source_w = 624;
         r.source_h = 480;
+        r.delivery_geometry_verified = false;
+        const auto unv = buildFfmpegVideoFilter(r);
+        expect(!unv.identity_skip && !unv.scale_applied, "D3 unverified exact = crop-pad");
+        expect(unv.vf.find("pad=624:480") != std::string::npos, "D3 unverified pads coded");
+        expect(unv.vf.find("force_original_aspect_ratio") == std::string::npos, "D3 no FOAR");
         r.delivery_geometry_verified = true;
         const auto plan = buildFfmpegVideoFilter(r);
-        expect(plan.identity_skip && !plan.scale_applied, "D3 force exact = identity");
-        expect(plan.vf.find("scale=") == std::string::npos, "D3 no scale on exact");
-        expect(plan.vf.find("force_original_aspect_ratio") == std::string::npos, "D3 no FOAR");
+        expect(plan.identity_skip && !plan.scale_applied, "D3 verified exact = identity");
         expect(!pipeDesyncRisk(bank, bank, plan.identity_skip),
                "D3 exact+identity is not pipe risk");
-        // Non-exact under force still scales (pin remains).
         r.source_w = 1920;
         r.source_h = 1080;
         const auto mis = buildFfmpegVideoFilter(r);
         expect(mis.scale_applied && !mis.identity_skip, "D3 mismatch still scales under force");
         expect(mis.vf.find("pad=624:480") != std::string::npos, "D3 mismatch pads coded bank");
-        std::printf("D3_OK FORCE_SCALE exact=identity mismatch=scale; bank=%zu\n", bank);
+        std::printf("D3_OK FORCE_SCALE unverified=crop_pad verified=identity mismatch=scale; "
+                    "bank=%zu\n",
+                    bank);
     }
 
     // --- D4: residual / drops / publish_misses identities ---

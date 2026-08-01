@@ -1498,8 +1498,11 @@ void MediaPlayer::ffmpegStderrPump(int errReadFd, size_t codedFrameBytes, bool i
             ffmpegScaleSourceH_ = g.h;
             const size_t prodBytes = yuv420pFrameBytesWH(g.w, g.h);
             // desync_risk is real: identity_skip && measured_input_bytes != reader.
-            // Under FORCE_SCALE identity_skip=0 ⇒ risk stays 0 even if input ≠ coded
-            // (scale pins OUTPUT). Not an unwired field.
+            // Product FORCE_SCALE (Always) at play-time plan uses crop+pad for an
+            // *unverified* exact claim (identity_skip=0) so OUTPUT stays coded-
+            // shaped without FOAR; risk stays 0 unless a verified-identity path
+            // was taken and measurement later disagrees. identity_skip=1 is only
+            // for verified/assume exact (or SkipIdentity+verified). Not unwired.
             const bool risk = pipeDesyncRisk(prodBytes, codedFrameBytes, identitySkip);
             if (risk)
                 pipeDesyncRisk_.store(true);
@@ -1525,13 +1528,14 @@ void MediaPlayer::ffmpegStderrPump(int errReadFd, size_t codedFrameBytes, bool i
                     " identity_skip=1 tag=measured — raw pipe will phase-walk; force scale");
             }
             if (changed) {
-                // Play-time GEOM / vf plan is fixed for the session. FORCE_SCALE=Always
-                // keeps OUTPUT at coded bank if scale survives; identity_skip cannot
-                // rebuild. Surface loudly — parent B2 residual.
+                // Play-time GEOM / vf plan is fixed for the session. Unverified
+                // exact under Always uses crop+pad (not identity_skip) so the
+                // filter still emits coded WxH when input is large enough to crop;
+                // identity_skip cannot rebuild if it was taken. Surface loudly.
                 log("ERROR media: MEASURED_DELIVERY mid-stream change — play-time "
                     "geometry guard cannot rebuild vf; identity_skip=" +
                     std::string(identitySkip ? "1" : "0") +
-                    " (force-scale pins OUTPUT only while scale filter stays live)");
+                    " (crop+pad/scale pin OUTPUT only while those filters stay live)");
             }
         }
     }

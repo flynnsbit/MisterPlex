@@ -273,17 +273,20 @@ int main() {
             const bool bankHeightWideNonExact =
                 !exactBank && (c.sh == coded_h && c.sw >= disp_w);
             if (exactBank) {
-                expect(!p.scale_applied && p.identity_skip,
-                       (std::string("FORCE_SCALE exact identity for ") + c.name).c_str());
+                // Unverified exact under Always: crop+pad pin, NOT identity_skip.
+                expect(!p.scale_applied && !p.identity_skip,
+                       (std::string("FORCE_SCALE exact crop-pad pin for ") + c.name).c_str());
                 expect(p.vf.find("scale=") == std::string::npos,
                        (std::string("exact no scale= for ") + c.name).c_str());
                 expect(p.vf.find("force_original_aspect_ratio") == std::string::npos,
                        (std::string("exact no FOAR for ") + c.name).c_str());
+                expect(p.vf.find("crop=618:480") != std::string::npos,
+                       (std::string("exact crops display for ") + c.name).c_str());
+                expect(p.vf.find("pad=624:480") != std::string::npos,
+                       (std::string("exact pads coded for ") + c.name).c_str());
                 expect(vfPreservesBankHeightSource(p.vf),
                        (std::string("exact preserves height for ") + c.name).c_str());
-                // Unverified exact under Always flags the unverified reason.
-                expect_eq(p.reason, "force_exact_identity_crop_clear_unverified",
-                          "exact bank reason");
+                expect_eq(p.reason, "force_exact_crop_pad_unverified", "exact bank reason");
             } else if (bankHeightWideNonExact) {
                 expect(!p.scale_applied && !p.identity_skip,
                        (std::string("FORCE_SCALE bank-h crop-pad for ") + c.name).c_str());
@@ -323,6 +326,13 @@ int main() {
                 const auto skip = buildFfmpegVideoFilter(r);
                 expect(skip.identity_skip && !skip.scale_applied,
                        "RED: force=0+verified exact may identity_skip");
+                // Always + verified exact → true identity (lab path).
+                r.scale_mode = FfmpegScaleMode::Always;
+                const auto id = buildFfmpegVideoFilter(r);
+                expect(id.identity_skip && !id.scale_applied,
+                       "Always+verified exact is true identity");
+                expect_eq(id.reason, "force_exact_identity_crop_clear",
+                          "Always+verified identity reason");
             }
         }
         // Odd measured dims: I420 byte helper returns 0 (not a valid plane size).
@@ -398,7 +408,7 @@ int main() {
         expect(!vfPreservesBankHeightSource(legacy),
                "RED: legacy decrease-into-display fails vfPreservesBankHeightSource");
 
-        // 3) GREEN: product Always/force with exact coded source → true identity no-op.
+        // 3) GREEN product hot path: Always + unverified exact → crop+pad pin (no FOAR).
         FfmpegVfRequest r;
         r.coded_w = 624;
         r.coded_h = 480;
@@ -410,20 +420,24 @@ int main() {
         r.source_w = 624;
         r.source_h = 480;
         r.sws_flags = "fast_bilinear";
+        r.delivery_geometry_verified = false;
         const auto p = buildFfmpegVideoFilter(r);
         expect(vfPreservesBankHeightSource(p.vf),
                "GREEN: exact coded source vf preserves bank height");
-        expect(!p.scale_applied && p.identity_skip, "GREEN: true identity no-op");
-        expect_eq(p.reason, "force_exact_identity_crop_clear_unverified", "GREEN reason");
+        expect(!p.scale_applied && !p.identity_skip, "GREEN: crop-pad pin not identity_skip");
+        expect_eq(p.reason, "force_exact_crop_pad_unverified", "GREEN reason");
         expect(p.vf.find("scale=") == std::string::npos, "GREEN no scale=");
         expect(p.vf.find("force_original_aspect_ratio") == std::string::npos, "GREEN no FOAR");
-        expect(p.vf.empty() || p.vf.rfind("fps=", 0) == 0, "GREEN empty or fps-only");
+        expect_eq(p.vf,
+                  "crop=618:480:0:0,pad=624:480:0+(618-iw)/2:0+(480-ih)/2:color=black",
+                  "GREEN crop-pad string");
 
-        // 3b) Verified exact under Always: same true identity, verified reason.
+        // 3b) Verified exact under Always: true identity (lab / measured-before-plan).
         r.delivery_geometry_verified = true;
         const auto pv = buildFfmpegVideoFilter(r);
         expect(pv.identity_skip && !pv.scale_applied, "GREEN verified exact identity");
         expect_eq(pv.reason, "force_exact_identity_crop_clear", "GREEN verified reason");
+        expect(pv.vf.empty() || pv.vf.rfind("fps=", 0) == 0, "GREEN verified empty/fps");
         r.delivery_geometry_verified = false;
 
         // 4) 240p tier still upscales via decrease (must not break).
@@ -450,8 +464,8 @@ int main() {
         expect(scaleDecreaseResamplesHeight(624, 480, 618, 480), "decrease would V-resample");
         expect(!scaleDecreaseResamplesHeight(624, 480, 624, 480), "coded box would not");
 
-        std::printf("GREEN_NO_V_RESAMPLE out_h_624=475 legacy_red=1 product_identity=1 "
-                    "p240_upscale=1 p640_hfit=1\n");
+        std::printf("GREEN_NO_V_RESAMPLE out_h_624=475 legacy_red=1 product_crop_pad=1 "
+                    "verified_identity=1 p240_upscale=1 p640_hfit=1\n");
     }
 
     if (g_fails) {

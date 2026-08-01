@@ -1,53 +1,56 @@
-# FORCE_SCALE exact identity (FOAR no-op) — parent handoff
+# FORCE_SCALE exact geometry — parent handoff (hazard revision)
 
 **Lane:** w-geom  
 **Branch:** `w-avsync-hdmi-measure`  
-**HEAD (pre-commit working tree):** see git after commit  
 **Scope:** ARM-only. No RBF. No device by agent.
 
 ## Summary (≤10 lines)
 
-1. Live `9ce2c2d1` FOAR on exact 624×480 under FORCE_SCALE is the product waste path.  
-2. Tip: Always + source==coded → **true identity** (`force_exact_identity_crop_clear*`).  
-3. FORCE_SCALE kept: non-exact/unknown still scale+pad to 449280.  
-4. force=0 SkipIdentity + unverified still crop_pad (no identity_skip).  
-5. clearYuv always strips 618-display pad cols on YUV present.  
-6. Gates: RED rc=1, GREEN rc=0 (`test_ffmpeg_vf`).  
-7. ARM md5 **`7a7854f4005c1766a5016c7f0fa62071`**.  
-8. Content-window RTL still secondary (30 fps / 320 bytes).  
-9. FOAR ~475 subsumed when identity fires (no V resample).  
-10. Justify 30 fps headroom, not “out of budget at 24”.
+1. Parent hazard **accepted**: Always+unverified must not `identity_skip` (every fresh play is unverified).  
+2. Product hot path: Always + exact claim + unverified → **`force_exact_crop_pad_unverified`**.  
+3. True identity only when **verified** (`force_exact_identity_crop_clear`).  
+4. FOAR V-resample eliminated on exact claim; mismatch still scale+pad (MILESTONE 4).  
+5. Plan-time `source_w/h` = PMS claim (`main.cpp:955-976`), not measurement.  
+6. clearYuv blanks cols 618–623 of a full-width buffer; those cols are outside DISPLAY_W (not on glass).  
+7. Gates: RED `true rc=1` / GREEN `true rc=0`.  
+8. ARM md5 **`05e8055e66d26bc17700a9f65bb889e5`**.  
+9. Crop+pad pins OUTPUT when input ≥ crop box; smaller fails loud (better than silent desync).  
+10. Content-window RTL still secondary.
 
-## Parent verify (device — parent only)
+## Why not identity on unverified (parent was right)
 
-```bash
-# deploy tip daemon only (parent owns deploy)
-# After cast of exact 624x480 asset (library/metadata/27 or equivalent):
-# Expect GEOM:
-#   arm_rescale=0 identity_skip=1
-#   reason=force_exact_identity_crop_clear  OR  force_exact_identity_crop_clear_unverified
-#   vf=fps=… or (none) — MUST NOT contain force_original_aspect_ratio=decrease
-#   MUST NOT contain scale=618:480
+| Fact | Citation |
+|------|----------|
+| Plan-time source is claim | `main.cpp:955-976` `setFfmpegScaleSourceSize(expectW,expectH)` from `transcode_request` / `library_media` |
+| delivery_verified=0 at plan | `main.cpp:971-976` — banner not yet available |
+| Plan frozen for session | `media_player.cpp` MEASURED_DELIVERY mid-stream cannot rebuild vf |
+| identity_skip + wrong size = phase walk | `pipeDesyncRisk` / MILESTONE 4 |
+
+## clearYuv vs 6 columns of picture
+
+`clearYuv420pCropPadding` (`media_player.cpp:196-234`) with `crop_right=6` (`ddr_frame_layout.hpp` kPlex480pCropRight) memsets Y/U/V columns `width-right .. width-1` to studio black.
+
+- **crop+pad path (product):** ffmpeg already emits black pad in cols 618–623; clearYuv is redundant.  
+- **true identity path (verified only):** ffmpeg emits full 624-wide picture; clearYuv **does** blank 6 columns of decoded image data.  
+- **On glass:** present uses DISPLAY_W=618; those 6 columns are outside the active display window either way. So user-visible picture is not missing 6 columns of *content that would have been shown* — the product contract is display 618 inside coded 624.
+
+## Parent verify
+
+```text
+identity_skip=0 arm_rescale=0 reason=force_exact_crop_pad_unverified
+vf contains crop=618:480 and pad=624:480
+vf MUST NOT contain force_original_aspect_ratio=decrease or scale=618:480
 ```
 
-## Host gates (agent-run)
+## Host gates
 
 ```
-build/test_ffmpeg_vf                 true rc=0
-build/test_geom_frame_cost           true rc=0
-build/test_yuv420p_chroma_480p       true rc=0
-build/test_glass_loss_death_points   true rc=0
-RED mutation (exact identity disabled + bank-h off)  true rc=1
+test_ffmpeg_vf                 true rc=0
+test_geom_frame_cost           true rc=0
+test_yuv420p_chroma_480p       true rc=0
+test_glass_loss_death_points   true rc=0
+RED (FOAR mutation)            true rc=1
+GREEN restore                  true rc=0
 ```
 
-Logs: `.agent-work/w-geom/RED_force_exact_identity.log`, `GREEN_force_exact_identity.log`.
-
-## Why identity failed before
-
-`ffmpegScaleModeForDdrYuvPresent(SkipIdentity, force=true)` → **Always**.  
-Always historically always emitted scale+pad. Exact 624 never hit SkipIdentity’s verified identity branch.  
-display=618 came from `kPlex480pDisplayWidth` / crop_right=6, so hasCrop forced FOAR decrease → out_h=475.
-
-## What FORCE_SCALE still protects
-
-Mismatched delivery (e.g. 1920×1080, 320×240, 624×350) still Always-scales into coded bank so reader_bytes=449280 (MILESTONE 4). Exact WxH match is the only no-op under Always.
+Logs: `.agent-work/w-geom/RED_force_crop_pad.log`, `GREEN_force_crop_pad.log`.

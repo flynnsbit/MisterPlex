@@ -8,21 +8,22 @@
 | Item | Value |
 |------|--------|
 | ARM binary | `build/arm/misterplexd` |
-| ARM md5 | `7a7854f4005c1766a5016c7f0fa62071` |
+| ARM md5 | `05e8055e66d26bc17700a9f65bb889e5` |
 | Host gate | `build/test_ffmpeg_vf` GREEN `true rc=0` |
-| RED mutation | disable exact-identity + bank-h crop → FOAR fallthrough → `true rc=1` |
-| GREEN restore | same binary rebuilt after restore → `true rc=0` |
+| RED mutation | crop+pad → FOAR decrease → `true rc=1` |
+| GREEN restore | restore crop+pad → `true rc=0` |
 
 ## LIVE product path (parent 2026-08-01)
 
 Daemon `9ce2c2d1` still shows FOAR decrease on exact 624×480 under `DDR_YUV_FORCE_SCALE=1`:
 `scale=618:480:…:force_original_aspect_ratio=decrease,pad=624:480` with `arm_rescale=1`.
 
-**Tip daemon (this md5) must show instead:**
-`identity_skip=1 arm_rescale=0 reason=force_exact_identity_crop_clear[_unverified] vf=fps=… or (none)`
-and **no** `force_original_aspect_ratio=decrease` when source==coded==624×480.
+**Tip daemon (this md5) must show instead (play-time unverified):**
+`identity_skip=0 arm_rescale=0 reason=force_exact_crop_pad_unverified`
+`vf=crop=618:480:…,pad=624:480:…` — **no** FOAR decrease, **no** scale=.
 
 FORCE_SCALE is **kept**: mismatch/unknown still Always-scales to coded bank (MILESTONE 4).
+True identity only when delivery_verified (lab / measured-before-plan).
 
 ---
 
@@ -78,22 +79,21 @@ Horizontal display crop is a **real product geometry** constraint. The bug was f
 
 ## 3. Fix + tradeoffs
 
-### Fix (landed) — two tiers
+### Fix (landed) — parent hazard revision
 
-1. **Always / FORCE_SCALE + exact coded (product path):** true identity no-op  
-   - `identity_skip=true`, `scale_applied=false`  
-   - vf = fps-only or empty (no scale/crop/pad)  
-   - reason: `force_exact_identity_crop_clear` (+ `_unverified` if not measured)  
-   - Display 618 crop: `clearYuv420pCropPadding` on present path (already always-on)
+1. **Always + exact + unverified (product hot path):** `force_exact_crop_pad_unverified`  
+   - crop+pad, `identity_skip=false`, `scale_applied=false`  
+   - Pins OUTPUT to coded bank without FOAR V-resample
 
-2. **SkipIdentity + unverified exact (force=0 escape):** still refuses identity_skip  
-   - `crop_pad_no_v_scale_unverified_delivery` (no FOAR decrease)
+2. **Always + exact + verified:** `force_exact_identity_crop_clear` (true no-op)
 
-3. **Non-exact bank-height (e.g. 640×480):** `crop_pad_no_v_scale_hfit`
+3. **SkipIdentity + unverified exact:** `crop_pad_no_v_scale_unverified_delivery`
 
-4. **240p / shorter:** still `scale_pad_crop` + FOAR decrease (needs V upscale)
+4. **Non-exact bank-height (e.g. 640×480):** `crop_pad_no_v_scale_hfit`
 
-`scale_applied=false` + `identity_skip=1` → GEOM `arm_rescale=0` for exact bank under force.
+5. **240p / shorter:** still `scale_pad_crop` + FOAR decrease (needs V upscale)
+
+`scale_applied=false` → GEOM `arm_rescale=0` for exact claim under force.
 
 ### Still uses decrease-into-display
 

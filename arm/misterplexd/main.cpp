@@ -1000,19 +1000,27 @@ int main(int argc, char** argv) {
                 : misterplex::makeDdrFrameGeometry(contentRes.width, contentRes.height);
         const int codedW = codedGeom.coded_width.get();
         const int codedH = codedGeom.coded_height.get();
+        // Predict arm_rescale from the same buildFfmpegVideoFilter media_player uses
+        // (Always+unverified exact → crop_pad scale_applied=0; FOAR only when needed).
         int armRescale = 1;
         if (scaleMode == misterplex::FfmpegScaleMode::Off) {
             armRescale = 0;
-        } else if (scaleMode == misterplex::FfmpegScaleMode::SkipIdentity) {
+        } else {
             misterplex::FfmpegVfRequest pred;
             pred.coded_w = codedW;
             pred.coded_h = codedH;
+            pred.display_w = codedGeom.display_width.get();
+            pred.display_h = codedGeom.display_height.get();
+            pred.crop_left = codedGeom.crop_left;
+            pred.crop_top = codedGeom.crop_top;
             pred.scale_mode = scaleMode;
             pred.source_w = expectW;
             pred.source_h = expectH;
             pred.assume_source_matches_coded = ffmpegScaleAssumeMatch;
             pred.delivery_geometry_verified = deliveryVerified;
-            armRescale = misterplex::sourceMatchesCoded(pred) ? 0 : 1;
+            pred.sws_flags = ffmpegSwsFlags;
+            const auto predPlan = misterplex::buildFfmpegVideoFilter(pred);
+            armRescale = predPlan.scale_applied ? 1 : 0;
         }
         // Greppable single-line geometry contract for parent device logs.
         // Keys: requested_pms expected_delivery decode_target arm_rescale

@@ -141,17 +141,17 @@ int main() {
         r.source_h = h;
         r.delivery_geometry_verified = false; // PMS transcode_request
 
-        // Default DDR policy force ON → Always → exact coded is true identity no-op
-        // (not scale=618:decrease; not crop+pad — FOAR waste on native 624).
+        // Default DDR policy force ON → Always → unverified exact is crop+pad pin
+        // (not scale=618:decrease FOAR; not identity_skip — MILESTONE 4).
         r.scale_mode = ffmpegScaleModeForDdrYuvPresent(FfmpegScaleMode::SkipIdentity);
         const auto on = buildFfmpegVideoFilter(r);
-        expect(!on.scale_applied && on.identity_skip, "default force identity at 624");
-        expect_eq_str(on.reason, "force_exact_identity_crop_clear_unverified",
-                      "default force reason");
+        expect(!on.scale_applied && !on.identity_skip, "default force crop-pad at 624");
+        expect_eq_str(on.reason, "force_exact_crop_pad_unverified", "default force reason");
         expect(on.vf.find("scale=") == std::string::npos, "no swscale on exact coded");
         expect(on.vf.find("force_original_aspect_ratio") == std::string::npos, "no FOAR");
-        // fps-only (or empty without fps): product path keeps fps=24/1 here.
-        expect(on.vf == "fps=24/1", "fps only under force exact identity");
+        expect(on.vf.find("crop=618:480") != std::string::npos, "crop to display");
+        expect(on.vf.find("pad=624:480") != std::string::npos, "pad to coded");
+        expect(on.vf.rfind("fps=24/1,", 0) == 0, "fps then crop-pad");
 
         // Escape force=0: SkipIdentity but unverified → still must NOT identity-skip.
         r.scale_mode = ffmpegScaleModeForDdrYuvPresent(FfmpegScaleMode::SkipIdentity, false);
@@ -164,6 +164,11 @@ int main() {
         const auto ver = buildFfmpegVideoFilter(r);
         expect(ver.identity_skip && !ver.scale_applied, "escape+verified may skip");
         expect_eq_str(ver.reason, "identity_skip_crop_pad_clear", "verified skip reason");
+        // Always + verified exact → true identity.
+        r.scale_mode = FfmpegScaleMode::Always;
+        const auto avid = buildFfmpegVideoFilter(r);
+        expect(avid.identity_skip && !avid.scale_applied, "Always+verified identity");
+        expect_eq_str(avid.reason, "force_exact_identity_crop_clear", "Always verified reason");
         std::printf("GREEN_POLICY force_default_reason=%s escape_unverified=%s\n",
                     on.reason.c_str(), off.reason.c_str());
     }
