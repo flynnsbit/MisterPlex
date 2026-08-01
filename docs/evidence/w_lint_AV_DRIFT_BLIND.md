@@ -72,3 +72,5 @@ python3 tests/unit/test_av_drift_not_lipsync_pass.py; echo "true rc=$?"  # 0
 python3 tests/unit/test_unit_rollcall.py; echo "true rc=$?"  # 0
 ```
 
+
+**Branch tip:** `w-lint-gate-integrity` @ `e5ce4759`
