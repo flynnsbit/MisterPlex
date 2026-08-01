@@ -18,6 +18,7 @@
 // Rule 0: every field tagged measured | caller_supplied | derived | NO-DATA.
 #pragma once
 
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -50,9 +51,79 @@ struct SupplyBucketDelta {
     int64_t d_pipe_bytes = 0;
     int64_t d_ffmpeg_out = -1; // -1 if either endpoint NO-DATA
     double expected_frames = 0;
-    double supply_gap = 0; // expected - d_frames
+    double supply_gap = 0; // expected - d_frames (only valid when gap_scored)
     bool ffmpeg_out_known = false;
+    bool gap_scored = true; // false → supply_gap must not be used as a measurement
+    const char* gap_score_tag = "scored"; // scored | refused_* | NO-DATA
 };
+
+// Pace rate provenance for supply_bucket / status lines (ERROR 17 class).
+// "caller_supplied" is NOT a measurement — only "measured" is banner-derived.
+inline const char* supplyFpsSrcName(bool measured, bool caller_set) {
+    if (measured)
+        return "measured";
+    if (caller_set)
+        return "caller_supplied";
+    return "DEFAULT_ASSUMED";
+}
+
+// |a-b| in fps units; rationals with den<=0 rejected.
+inline bool supplyFpsRationalsAgree(int n1, int d1, int n2, int d2, double maxAbsFps = 0.51) {
+    if (n1 <= 0 || d1 <= 0 || n2 <= 0 || d2 <= 0)
+        return false;
+    const double a = static_cast<double>(n1) / static_cast<double>(d1);
+    const double b = static_cast<double>(n2) / static_cast<double>(d2);
+    return std::fabs(a - b) <= maxAbsFps;
+}
+
+// Decide whether expected_frames/supply_gap may be scored.
+// Refuse when pace is DEFAULT_ASSUMED and a measured banner rate disagrees (ERROR 17).
+// Also refuse when caller_supplied pace disagrees with measured banner.
+// When pace is measured, always score. When DEFAULT_ASSUMED and no measured yet,
+// refuse (do not silently score against 24).
+struct SupplyGapScoreDecision {
+    bool score = false;
+    const char* tag = "NO-DATA";
+};
+
+inline SupplyGapScoreDecision decideSupplyGapScore(const char* fps_src, bool have_measured,
+                                                   int pace_n, int pace_d, int meas_n,
+                                                   int meas_d) {
+    SupplyGapScoreDecision r;
+    if (!fps_src)
+        fps_src = "NO-DATA";
+    if (std::strcmp(fps_src, "measured") == 0) {
+        r.score = (pace_n > 0 && pace_d > 0);
+        r.tag = r.score ? "scored" : "NO-DATA";
+        return r;
+    }
+    if (std::strcmp(fps_src, "caller_supplied") == 0) {
+        if (have_measured && !supplyFpsRationalsAgree(pace_n, pace_d, meas_n, meas_d)) {
+            r.score = false;
+            r.tag = "refused_caller_vs_measured";
+            return r;
+        }
+        r.score = (pace_n > 0 && pace_d > 0);
+        r.tag = r.score ? "scored" : "NO-DATA";
+        return r;
+    }
+    // DEFAULT_ASSUMED
+    if (!have_measured) {
+        r.score = false;
+        r.tag = "refused_assumed_unverified";
+        return r;
+    }
+    if (!supplyFpsRationalsAgree(pace_n, pace_d, meas_n, meas_d)) {
+        r.score = false;
+        r.tag = "refused_assumed_vs_measured";
+        return r;
+    }
+    // Assumed 24 matched measured banner — still label fps_src as measured at call site
+    // when scoring against the banner rate. Here pace agrees: allow score.
+    r.score = true;
+    r.tag = "scored_assumed_matches_measured";
+    return r;
+}
 
 // residual = frames - presents - drops (supply-side arithmetic only).
 inline int64_t supplyResidual(int64_t frames, int64_t presents, int64_t drops) {
@@ -146,6 +217,16 @@ inline bool takeFfmpegStderrLine(std::string& acc, std::string* outLine) {
     return true;
 }
 
+// Apply gap-score decision onto a delta (zeros gap fields when refused).
+inline void applySupplyGapScore(SupplyBucketDelta& d, const SupplyGapScoreDecision& dec) {
+    d.gap_scored = dec.score;
+    d.gap_score_tag = dec.tag ? dec.tag : "NO-DATA";
+    if (!dec.score) {
+        d.expected_frames = 0;
+        d.supply_gap = 0;
+    }
+}
+
 // Teardown: bytes ↔ frameIndex identity when aligned.
 struct SupplyPipeIdentity {
     bool byte_aligned = false;
@@ -209,51 +290,102 @@ inline const char* supplyStageHint(const SupplyBucketDelta& d, int64_t glassHole
 }
 
 // Telemetry line (no leading media: prefix — caller adds).
+// fps_src must be measured|caller_supplied|DEFAULT_ASSUMED (never hardcode).
+// When !d.gap_scored, expected_frames/supply_gap print as NO-DATA (refuse-to-score).
 inline std::string formatSupplyBucketLine(const SupplyBucketDelta& d, double wall_s,
                                           int64_t frames, int64_t presents, int64_t drops,
                                           int64_t publishMisses, int64_t residual,
                                           int64_t ffmpegOut, int fpsNum, int fpsDen,
-                                          const char* sessionEpoch) {
-    char buf[768];
+                                          const char* sessionEpoch, const char* fpsSrc) {
+    char buf[896];
+    const char* src = (fpsSrc && fpsSrc[0]) ? fpsSrc : "NO-DATA";
+    const char* gapTag = d.gap_score_tag ? d.gap_score_tag : "NO-DATA";
     if (ffmpegOut >= 0) {
-        std::snprintf(
-            buf, sizeof(buf),
-            "supply_bucket wall_s=%.3f d_wall_s=%.3f d_frames=%lld d_presents=%lld "
-            "d_drops=%lld d_publish_misses=%lld d_residual=%lld "
-            "d_residual_eq=frames-presents-drops residual_scope=supply_arm_only "
-            "d_pipe_bytes=%lld expected_frames=%.3f supply_gap=%.3f d_ffmpeg_out=%lld "
-            "ffmpeg_out_frames=%lld frames=%lld presents=%lld drops=%lld "
-            "publish_misses=%lld residual=%lld residual_eq=frames-presents-drops "
-            "fps=%d/%d fps_src=caller_supplied session_epoch=%s fpga_obs=none tag=measured",
-            wall_s, d.d_wall_s, static_cast<long long>(d.d_frames),
-            static_cast<long long>(d.d_presents), static_cast<long long>(d.d_drops),
-            static_cast<long long>(d.d_publish_misses),
-            static_cast<long long>(d.d_residual),
-            static_cast<long long>(d.d_pipe_bytes), d.expected_frames, d.supply_gap,
-            static_cast<long long>(d.d_ffmpeg_out), static_cast<long long>(ffmpegOut),
-            static_cast<long long>(frames), static_cast<long long>(presents),
-            static_cast<long long>(drops), static_cast<long long>(publishMisses),
-            static_cast<long long>(residual), fpsNum, fpsDen,
-            sessionEpoch ? sessionEpoch : "NO-DATA");
+        if (d.gap_scored) {
+            std::snprintf(
+                buf, sizeof(buf),
+                "supply_bucket wall_s=%.3f d_wall_s=%.3f d_frames=%lld d_presents=%lld "
+                "d_drops=%lld d_publish_misses=%lld d_residual=%lld "
+                "d_residual_eq=frames-presents-drops residual_scope=supply_arm_only "
+                "d_pipe_bytes=%lld expected_frames=%.3f supply_gap=%.3f gap_score=%s "
+                "d_ffmpeg_out=%lld "
+                "ffmpeg_out_frames=%lld frames=%lld presents=%lld drops=%lld "
+                "publish_misses=%lld residual=%lld residual_eq=frames-presents-drops "
+                "fps=%d/%d fps_src=%s session_epoch=%s fpga_obs=none tag=measured",
+                wall_s, d.d_wall_s, static_cast<long long>(d.d_frames),
+                static_cast<long long>(d.d_presents), static_cast<long long>(d.d_drops),
+                static_cast<long long>(d.d_publish_misses),
+                static_cast<long long>(d.d_residual),
+                static_cast<long long>(d.d_pipe_bytes), d.expected_frames, d.supply_gap, gapTag,
+                static_cast<long long>(d.d_ffmpeg_out), static_cast<long long>(ffmpegOut),
+                static_cast<long long>(frames), static_cast<long long>(presents),
+                static_cast<long long>(drops), static_cast<long long>(publishMisses),
+                static_cast<long long>(residual), fpsNum, fpsDen, src,
+                sessionEpoch ? sessionEpoch : "NO-DATA");
+        } else {
+            std::snprintf(
+                buf, sizeof(buf),
+                "supply_bucket wall_s=%.3f d_wall_s=%.3f d_frames=%lld d_presents=%lld "
+                "d_drops=%lld d_publish_misses=%lld d_residual=%lld "
+                "d_residual_eq=frames-presents-drops residual_scope=supply_arm_only "
+                "d_pipe_bytes=%lld expected_frames=NO-DATA supply_gap=NO-DATA gap_score=%s "
+                "d_ffmpeg_out=%lld "
+                "ffmpeg_out_frames=%lld frames=%lld presents=%lld drops=%lld "
+                "publish_misses=%lld residual=%lld residual_eq=frames-presents-drops "
+                "fps=%d/%d fps_src=%s session_epoch=%s fpga_obs=none tag=measured",
+                wall_s, d.d_wall_s, static_cast<long long>(d.d_frames),
+                static_cast<long long>(d.d_presents), static_cast<long long>(d.d_drops),
+                static_cast<long long>(d.d_publish_misses),
+                static_cast<long long>(d.d_residual),
+                static_cast<long long>(d.d_pipe_bytes), gapTag,
+                static_cast<long long>(d.d_ffmpeg_out), static_cast<long long>(ffmpegOut),
+                static_cast<long long>(frames), static_cast<long long>(presents),
+                static_cast<long long>(drops), static_cast<long long>(publishMisses),
+                static_cast<long long>(residual), fpsNum, fpsDen, src,
+                sessionEpoch ? sessionEpoch : "NO-DATA");
+        }
     } else {
-        std::snprintf(
-            buf, sizeof(buf),
-            "supply_bucket wall_s=%.3f d_wall_s=%.3f d_frames=%lld d_presents=%lld "
-            "d_drops=%lld d_publish_misses=%lld d_residual=%lld "
-            "d_residual_eq=frames-presents-drops residual_scope=supply_arm_only "
-            "d_pipe_bytes=%lld expected_frames=%.3f supply_gap=%.3f d_ffmpeg_out=NO-DATA "
-            "ffmpeg_out_frames=NO-DATA frames=%lld presents=%lld drops=%lld "
-            "publish_misses=%lld residual=%lld residual_eq=frames-presents-drops "
-            "fps=%d/%d fps_src=caller_supplied session_epoch=%s fpga_obs=none tag=measured",
-            wall_s, d.d_wall_s, static_cast<long long>(d.d_frames),
-            static_cast<long long>(d.d_presents), static_cast<long long>(d.d_drops),
-            static_cast<long long>(d.d_publish_misses),
-            static_cast<long long>(d.d_residual),
-            static_cast<long long>(d.d_pipe_bytes), d.expected_frames, d.supply_gap,
-            static_cast<long long>(frames), static_cast<long long>(presents),
-            static_cast<long long>(drops), static_cast<long long>(publishMisses),
-            static_cast<long long>(residual), fpsNum, fpsDen,
-            sessionEpoch ? sessionEpoch : "NO-DATA");
+        if (d.gap_scored) {
+            std::snprintf(
+                buf, sizeof(buf),
+                "supply_bucket wall_s=%.3f d_wall_s=%.3f d_frames=%lld d_presents=%lld "
+                "d_drops=%lld d_publish_misses=%lld d_residual=%lld "
+                "d_residual_eq=frames-presents-drops residual_scope=supply_arm_only "
+                "d_pipe_bytes=%lld expected_frames=%.3f supply_gap=%.3f gap_score=%s "
+                "d_ffmpeg_out=NO-DATA "
+                "ffmpeg_out_frames=NO-DATA frames=%lld presents=%lld drops=%lld "
+                "publish_misses=%lld residual=%lld residual_eq=frames-presents-drops "
+                "fps=%d/%d fps_src=%s session_epoch=%s fpga_obs=none tag=measured",
+                wall_s, d.d_wall_s, static_cast<long long>(d.d_frames),
+                static_cast<long long>(d.d_presents), static_cast<long long>(d.d_drops),
+                static_cast<long long>(d.d_publish_misses),
+                static_cast<long long>(d.d_residual),
+                static_cast<long long>(d.d_pipe_bytes), d.expected_frames, d.supply_gap, gapTag,
+                static_cast<long long>(frames), static_cast<long long>(presents),
+                static_cast<long long>(drops), static_cast<long long>(publishMisses),
+                static_cast<long long>(residual), fpsNum, fpsDen, src,
+                sessionEpoch ? sessionEpoch : "NO-DATA");
+        } else {
+            std::snprintf(
+                buf, sizeof(buf),
+                "supply_bucket wall_s=%.3f d_wall_s=%.3f d_frames=%lld d_presents=%lld "
+                "d_drops=%lld d_publish_misses=%lld d_residual=%lld "
+                "d_residual_eq=frames-presents-drops residual_scope=supply_arm_only "
+                "d_pipe_bytes=%lld expected_frames=NO-DATA supply_gap=NO-DATA gap_score=%s "
+                "d_ffmpeg_out=NO-DATA "
+                "ffmpeg_out_frames=NO-DATA frames=%lld presents=%lld drops=%lld "
+                "publish_misses=%lld residual=%lld residual_eq=frames-presents-drops "
+                "fps=%d/%d fps_src=%s session_epoch=%s fpga_obs=none tag=measured",
+                wall_s, d.d_wall_s, static_cast<long long>(d.d_frames),
+                static_cast<long long>(d.d_presents), static_cast<long long>(d.d_drops),
+                static_cast<long long>(d.d_publish_misses),
+                static_cast<long long>(d.d_residual),
+                static_cast<long long>(d.d_pipe_bytes), gapTag,
+                static_cast<long long>(frames), static_cast<long long>(presents),
+                static_cast<long long>(drops), static_cast<long long>(publishMisses),
+                static_cast<long long>(residual), fpsNum, fpsDen, src,
+                sessionEpoch ? sessionEpoch : "NO-DATA");
+        }
     }
     return std::string(buf);
 }

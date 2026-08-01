@@ -307,6 +307,10 @@ private:
     // Runtime-measured input geometry from ffmpeg stderr (B2). 0 = not seen yet.
     std::atomic<int> measuredDeliveryW_{0};
     std::atomic<int> measuredDeliveryH_{0};
+    // Runtime-measured content fps from the same Stream banner (w-cpu ERROR 17).
+    // 0 = not seen; den defaults to 1 when num set. Never invent 24 here.
+    std::atomic<int> measuredFpsNum_{0};
+    std::atomic<int> measuredFpsDen_{0};
     std::atomic<bool> pipeDesyncRisk_{false};
     // Conf AUDIO_DELAY_MS — default 0. Applied as FFmpeg adelay on product path.
     int audioDelayMs_ = 0;

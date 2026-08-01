@@ -11,6 +11,7 @@
 #pragma once
 
 #include <cctype>
+#include <cmath>
 #include <cstdio>
 #include <string>
 
@@ -320,6 +321,112 @@ inline FfmpegGeometryLine parseFfmpegGeometryLine(const std::string& line) {
         }
     }
     return g;
+}
+
+// Frame rate from the same Stream banner as geometry (ffmpeg -loglevel info).
+// Prefers the "N fps" / "N/D fps" token; falls back to "tbr" if fps absent.
+// Does NOT invent 24 — ok=false when no rate token is present.
+struct FfmpegStreamFps {
+    bool ok = false;
+    int num = 0;
+    int den = 1;
+    bool from_tbr = false; // true only when fps token missing and tbr used
+};
+
+// Map common float banner rates onto exact NTSC/film rationals.
+// Integers / exact 24|25|30|50|60 are checked before 23.98/29.97 so that
+// fabs(24−23.98)≈0.02 cannot steal film 24 → 24000/1001 (binary 23.98 trap).
+inline bool floatFpsToRational(double f, int* num, int* den) {
+    if (!num || !den || !(f > 0.0) || f > 240.0)
+        return false;
+    const double nearest = std::round(f);
+    if (std::fabs(f - nearest) < 0.005 && nearest >= 1.0) {
+        *num = static_cast<int>(nearest);
+        *den = 1;
+        return true;
+    }
+    struct Known {
+        double v;
+        int n;
+        int d;
+    };
+    // Non-integer broadcast rates only (integers handled above).
+    static const Known k[] = {
+        {23.976, 24000, 1001}, {23.98, 24000, 1001}, {29.97, 30000, 1001},
+        {59.94, 60000, 1001},
+    };
+    for (const auto& e : k) {
+        if (std::fabs(f - e.v) < 0.015) {
+            *num = e.n;
+            *den = e.d;
+            return true;
+        }
+    }
+    // Fallback: thousandths (e.g. uncommon fractional rates).
+    *num = static_cast<int>(std::lround(f * 1000.0));
+    *den = 1000;
+    return *num > 0;
+}
+
+// Parse "…, 24 fps, 24 tbr, …" or "…, 30000/1001 fps, 29.97 tbr, …".
+inline FfmpegStreamFps parseFfmpegStreamFpsLine(const std::string& line) {
+    FfmpegStreamFps out;
+    if (line.find("Video:") == std::string::npos && line.find("video:") == std::string::npos)
+        return out;
+
+    auto tryToken = [&](const char* token, bool is_tbr) -> bool {
+        const std::string key(token);
+        size_t pos = 0;
+        while ((pos = line.find(key, pos)) != std::string::npos) {
+            // Walk backward over spaces to the rate token preceding "fps"/"tbr".
+            size_t end = pos;
+            while (end > 0 && (line[end - 1] == ' ' || line[end - 1] == '\t'))
+                --end;
+            if (end == 0) {
+                pos += key.size();
+                continue;
+            }
+            size_t start = end;
+            while (start > 0) {
+                const char c = line[start - 1];
+                if ((c >= '0' && c <= '9') || c == '.' || c == '/')
+                    --start;
+                else
+                    break;
+            }
+            if (start >= end) {
+                pos += key.size();
+                continue;
+            }
+            const std::string tok = line.substr(start, end - start);
+            int n = 0, d = 0, consumed = 0;
+            if (std::sscanf(tok.c_str(), "%d/%d%n", &n, &d, &consumed) == 2 && d > 0 && n > 0 &&
+                static_cast<size_t>(consumed) == tok.size()) {
+                out.ok = true;
+                out.num = n;
+                out.den = d;
+                out.from_tbr = is_tbr;
+                return true;
+            }
+            double f = 0;
+            consumed = 0;
+            if (std::sscanf(tok.c_str(), "%lf%n", &f, &consumed) == 1 &&
+                static_cast<size_t>(consumed) == tok.size() && floatFpsToRational(f, &n, &d)) {
+                out.ok = true;
+                out.num = n;
+                out.den = d;
+                out.from_tbr = is_tbr;
+                return true;
+            }
+            pos += key.size();
+        }
+        return false;
+    };
+
+    if (tryToken("fps", false))
+        return out;
+    (void)tryToken("tbr", true);
+    return out;
 }
 
 // Session-end align check. Complete frames always yield remainder 0 by construction

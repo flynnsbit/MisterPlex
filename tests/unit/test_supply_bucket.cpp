@@ -138,8 +138,11 @@ int main() {
         d.supply_gap = 0;
         d.d_ffmpeg_out = 24;
         d.ffmpeg_out_known = true;
+        d.gap_scored = true;
+        d.gap_score_tag = "scored";
         const std::string line =
-            formatSupplyBucketLine(d, 11.0, 264, 256, 8, 0, 0, 264, 24, 1, "1.2");
+            formatSupplyBucketLine(d, 11.0, 264, 256, 8, 0, 0, 264, 24, 1, "1.2",
+                                   "measured");
         CHECK(line.find("supply_bucket") != std::string::npos);
         CHECK(line.find("d_frames=24") != std::string::npos);
         CHECK(line.find("d_residual=") != std::string::npos);
@@ -148,11 +151,81 @@ int main() {
         CHECK(line.find("d_unaccounted=") == std::string::npos);
         CHECK(line.find("ffmpeg_out_frames=264") != std::string::npos);
         CHECK(line.find("session_epoch=1.2") != std::string::npos);
+        CHECK(line.find("fps_src=measured") != std::string::npos);
+        CHECK(line.find("fps_src=caller_supplied") == std::string::npos);
+        CHECK(line.find("gap_score=scored") != std::string::npos);
+        CHECK(line.find("supply_gap=0.000") != std::string::npos);
         auto id = supplyPipeIdentity(449280u * 10u, 449280u, 10);
         const std::string td = formatSupplyTeardownLine(id, 449280u * 10u, 449280u, 10, "POST");
         CHECK(td.find("supply_ledger") != std::string::npos);
         CHECK(td.find("identity_ok=1") != std::string::npos);
         std::printf("PASS format lines\n");
+    }
+
+    // --- ERROR 17: refuse supply_gap when DEFAULT_ASSUMED unverified ---
+    {
+        const auto dec = decideSupplyGapScore("DEFAULT_ASSUMED", /*have_measured=*/false,
+                                              24, 1, 0, 0);
+        CHECK(!dec.score);
+        CHECK(std::strcmp(dec.tag, "refused_assumed_unverified") == 0);
+        SupplyBucketDelta d = supplyBucketDelta({}, {}, 24, 1);
+        d.expected_frames = 24;
+        d.supply_gap = 0;
+        applySupplyGapScore(d, dec);
+        CHECK(!d.gap_scored);
+        const std::string line =
+            formatSupplyBucketLine(d, 1.0, 24, 24, 0, 0, 0, -1, 24, 1, "e",
+                                   "DEFAULT_ASSUMED");
+        CHECK(line.find("supply_gap=NO-DATA") != std::string::npos);
+        CHECK(line.find("expected_frames=NO-DATA") != std::string::npos);
+        CHECK(line.find("gap_score=refused_assumed_unverified") != std::string::npos);
+        CHECK(line.find("fps_src=DEFAULT_ASSUMED") != std::string::npos);
+        // Must NOT look like a scored 24 fps measurement.
+        CHECK(line.find("supply_gap=0.000") == std::string::npos);
+        std::printf("PASS refuse assumed unverified\n");
+    }
+
+    // --- refuse when assumed 24 disagrees with measured 30 ---
+    {
+        const auto dec =
+            decideSupplyGapScore("DEFAULT_ASSUMED", true, 24, 1, 30, 1);
+        CHECK(!dec.score);
+        CHECK(std::strcmp(dec.tag, "refused_assumed_vs_measured") == 0);
+        std::printf("PASS refuse assumed vs measured 30\n");
+    }
+
+    // --- refuse caller 24 vs measured 25 ---
+    {
+        const auto dec =
+            decideSupplyGapScore("caller_supplied", true, 24, 1, 25, 1);
+        CHECK(!dec.score);
+        CHECK(std::strcmp(dec.tag, "refused_caller_vs_measured") == 0);
+        std::printf("PASS refuse caller vs measured\n");
+    }
+
+    // --- measured path scores ---
+    {
+        const auto dec = decideSupplyGapScore("measured", true, 24, 1, 24, 1);
+        CHECK(dec.score);
+        CHECK(std::strcmp(dec.tag, "scored") == 0);
+        // maxAbsFps=0.51: 24 vs 23.976 agree; 24 vs 30 must not.
+        CHECK(supplyFpsRationalsAgree(24, 1, 24000, 1001)); // |24-23.976|<0.51
+        CHECK(!supplyFpsRationalsAgree(24, 1, 30, 1));
+        CHECK(!supplyFpsRationalsAgree(25, 1, 30, 1));
+        CHECK(supplyFpsRationalsAgree(24, 1, 24, 1));
+        CHECK(std::strcmp(supplyFpsSrcName(true, false), "measured") == 0);
+        CHECK(std::strcmp(supplyFpsSrcName(false, true), "caller_supplied") == 0);
+        CHECK(std::strcmp(supplyFpsSrcName(false, false), "DEFAULT_ASSUMED") == 0);
+        std::printf("PASS measured scores + fps src names\n");
+    }
+
+    // --- assumed matches measured → score allowed ---
+    {
+        const auto dec =
+            decideSupplyGapScore("DEFAULT_ASSUMED", true, 24, 1, 24, 1);
+        CHECK(dec.score);
+        CHECK(std::strcmp(dec.tag, "scored_assumed_matches_measured") == 0);
+        std::printf("PASS assumed matches measured\n");
     }
 
     // --- resolution: FLAT=2 cannot hide 15 ---

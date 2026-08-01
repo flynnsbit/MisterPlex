@@ -1467,6 +1467,34 @@ void MediaPlayer::ffmpegStderrPump(int errReadFd, size_t codedFrameBytes, bool i
             }
             if (line.find("fps=") != std::string::npos && line.find("Stream") == std::string::npos)
                 continue;
+            // Content fps from Stream banner (same line family as geometry). Prefer
+            // "N fps"; tbr only if fps absent. Do not invent 24 (ERROR 17).
+            {
+                const auto fr = parseFfmpegStreamFpsLine(line);
+                if (fr.ok && fr.num > 0 && fr.den > 0) {
+                    const int prevN = measuredFpsNum_.load(std::memory_order_relaxed);
+                    const int prevD = measuredFpsDen_.load(std::memory_order_relaxed);
+                    if (prevN != fr.num || prevD != fr.den) {
+                        measuredFpsNum_.store(fr.num, std::memory_order_relaxed);
+                        measuredFpsDen_.store(fr.den, std::memory_order_relaxed);
+                        log(std::string("media: MEASURED_FPS fps=") +
+                            std::to_string(fr.num) + "/" + std::to_string(fr.den) +
+                            " src=ffmpeg_banner token=" +
+                            std::string(fr.from_tbr ? "tbr" : "fps") +
+                            " tag=measured");
+                        if (fpsNum_ > 0 && fpsDen_ > 0 &&
+                            !misterplex::supplyFpsRationalsAgree(fpsNum_, fpsDen_, fr.num,
+                                                                fr.den)) {
+                            log("ERROR media: FPS_MISMATCH caller=" +
+                                std::to_string(fpsNum_) + "/" + std::to_string(fpsDen_) +
+                                " measured=" + std::to_string(fr.num) + "/" +
+                                std::to_string(fr.den) +
+                                " — supply_gap will refuse until rates agree "
+                                "tag=measured");
+                        }
+                    }
+                }
+            }
             const auto g = parseFfmpegGeometryLine(line);
             if (!g.ok)
                 continue;
@@ -2994,12 +3022,17 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
     droppedFrames_.store(0);
     publishMisses_.store(0);
     ffmpegOutFrames_.store(-1, std::memory_order_relaxed);
+    measuredFpsNum_.store(0, std::memory_order_relaxed);
+    measuredFpsDen_.store(0, std::memory_order_relaxed);
     if (fpsNum_ <= 0)
         log("media: content fps UNKNOWN — pacing at " + std::to_string(kDefaultFpsNum) + "/" +
-            std::to_string(kDefaultFpsDen) + " and relying on drift correction");
+            std::to_string(kDefaultFpsDen) +
+            " (fps_src=DEFAULT_ASSUMED) until MEASURED_FPS; supply_gap refused "
+            "while unverified — relying on drift correction");
     else
         log("media: content fps=" + std::to_string(fpsNum) + "/" + std::to_string(fpsDen) +
-            " lead_ms=" + std::to_string(leadMs) + " resync_drop_ms=" + std::to_string(dropMs));
+            " fps_src=caller_supplied lead_ms=" + std::to_string(leadMs) +
+            " resync_drop_ms=" + std::to_string(dropMs));
 
     if (skipRgb) {
         // Audio-only FFmpeg + wall-clock position. Host recon owns F1.
@@ -4246,7 +4279,24 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                     " " + std::string(avServoBuf) +
                     " fps=" + std::to_string(fpsNum) + "/" + std::to_string(fpsDen) +
                     " fps_src=" +
-                    (fpsNum_ > 0 ? std::string("caller_supplied") : "DEFAULT_ASSUMED") +
+                    [&]() -> std::string {
+                        const int mn = measuredFpsNum_.load(std::memory_order_relaxed);
+                        const int md = measuredFpsDen_.load(std::memory_order_relaxed);
+                        if (mn > 0 && md > 0 &&
+                            misterplex::supplyFpsRationalsAgree(fpsNum, fpsDen, mn, md))
+                            return "measured";
+                        if (fpsNum_ > 0)
+                            return "caller_supplied";
+                        return "DEFAULT_ASSUMED";
+                    }() +
+                    " measured_fps=" +
+                    [&]() -> std::string {
+                        const int mn = measuredFpsNum_.load(std::memory_order_relaxed);
+                        const int md = measuredFpsDen_.load(std::memory_order_relaxed);
+                        if (mn > 0 && md > 0)
+                            return std::to_string(mn) + "/" + std::to_string(md);
+                        return "NO-DATA";
+                    }() +
                     " decode=" + std::to_string(outW_) + "x" + std::to_string(outH_) +
                     " decode_src=" + decodeSizeSource_ +
                     " decode_src_der=setDecodeSizeSource_not_hardcoded" +
@@ -4289,14 +4339,50 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                         ffmpegOutFrames_.load(std::memory_order_relaxed);
                     cur.wall_s = static_cast<double>(wall2) / 1000.0;
                     if (supplyPrevInit) {
-                        const auto d =
-                            misterplex::supplyBucketDelta(supplyPrev, cur, fpsNum, fpsDen);
+                        const int mn =
+                            measuredFpsNum_.load(std::memory_order_relaxed);
+                        const int md =
+                            measuredFpsDen_.load(std::memory_order_relaxed);
+                        const bool haveM = mn > 0 && md > 0;
+                        // Score expected_frames against measured banner rate when
+                        // available; else pace rational. fps_src labels provenance.
+                        int scoreN = fpsNum;
+                        int scoreD = fpsDen;
+                        const char* fpsSrc = misterplex::supplyFpsSrcName(
+                            /*measured=*/false, /*caller_set=*/fpsNum_ > 0);
+                        if (haveM) {
+                            scoreN = mn;
+                            scoreD = md;
+                            fpsSrc = "measured";
+                        }
+                        auto d = misterplex::supplyBucketDelta(supplyPrev, cur, scoreN,
+                                                               scoreD);
+                        // Refuse gap when assumed unverified, or caller≠measured.
+                        const char* decideSrc = fpsSrc;
+                        if (haveM && fpsNum_ > 0 &&
+                            !misterplex::supplyFpsRationalsAgree(fpsNum_, fpsDen_ > 0
+                                                                             ? fpsDen_
+                                                                             : 1,
+                                                                 mn, md)) {
+                            decideSrc = "caller_supplied"; // force mismatch path
+                            scoreN = fpsNum_;
+                            scoreD = fpsDen_ > 0 ? fpsDen_ : 1;
+                            d = misterplex::supplyBucketDelta(supplyPrev, cur, scoreN,
+                                                              scoreD);
+                            fpsSrc = "caller_supplied";
+                        } else if (!haveM && fpsNum_ <= 0) {
+                            decideSrc = "DEFAULT_ASSUMED";
+                            fpsSrc = "DEFAULT_ASSUMED";
+                        }
+                        const auto dec = misterplex::decideSupplyGapScore(
+                            decideSrc, haveM, scoreN, scoreD, mn, md);
+                        misterplex::applySupplyGapScore(d, dec);
                         const std::string se = sessionEpochString(pep, sseq);
                         log("media: " +
                             misterplex::formatSupplyBucketLine(
                                 d, cur.wall_s, cur.frames, cur.presents, cur.drops,
                                 cur.publish_misses, led.residual, cur.ffmpeg_out_frames,
-                                fpsNum, fpsDen, se.c_str()));
+                                scoreN, scoreD, se.c_str(), fpsSrc));
                     }
                     supplyPrev = cur;
                     supplyPrevInit = true;

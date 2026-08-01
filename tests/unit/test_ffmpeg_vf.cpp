@@ -468,6 +468,40 @@ int main() {
                     "verified_identity=1 p240_upscale=1 p640_hfit=1\n");
     }
 
+    // --- Stream banner fps (ERROR 17: never invent 24) ---
+    {
+        const auto a = parseFfmpegStreamFpsLine(
+            "  Stream #0:0: Video: h264 (High), yuv420p, 624x480, 1412 kb/s, 24 fps, 24 tbr, "
+            "1k tbn");
+        expect(a.ok && a.num == 24 && a.den == 1 && !a.from_tbr, "24 fps integer");
+
+        const auto b = parseFfmpegStreamFpsLine(
+            "  Stream #0:0(eng): Video: h264 (High) (avc1 / 0x31637661), yuv420p, 1920x1080, "
+            "5996 kb/s, 29.97 fps, 29.97 tbr, 30k tbn (default)");
+        expect(b.ok && b.num == 30000 && b.den == 1001 && !b.from_tbr, "29.97 → 30000/1001");
+
+        const auto c = parseFfmpegStreamFpsLine(
+            "  Stream #0:0: Video: h264, yuv420p, 1280x720, 30000/1001 fps, 29.97 tbr, 30k tbn");
+        expect(c.ok && c.num == 30000 && c.den == 1001, "rational 30000/1001 fps");
+
+        const auto d = parseFfmpegStreamFpsLine(
+            "  Stream #0:0: Video: h264, yuv420p, 720x480, 25 fps, 25 tbr, 1k tbn");
+        expect(d.ok && d.num == 25 && d.den == 1, "25 fps");
+
+        const auto e = parseFfmpegStreamFpsLine(
+            "  Stream #0:0: Video: h264, yuv420p, 624x480"); // no rate token
+        expect(!e.ok, "no invent when fps/tbr absent");
+
+        const auto f = parseFfmpegStreamFpsLine("frame=  123 fps=24 q=-1.0 size=N/A");
+        expect(!f.ok, "stats fps= is not a Stream banner");
+
+        int n = 0, den = 0;
+        expect(floatFpsToRational(23.976, &n, &den) && n == 24000 && den == 1001,
+               "23.976 film");
+        expect(floatFpsToRational(30.0, &n, &den) && n == 30 && den == 1, "30.0");
+        std::printf("GREEN_STREAM_FPS 24=1 29.97=30000/1001 no_invent=1\n");
+    }
+
     if (g_fails) {
         std::fprintf(stderr, "test_ffmpeg_vf: %d failure(s)\n", g_fails);
         return 1;
