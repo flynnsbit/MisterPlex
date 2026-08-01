@@ -1123,3 +1123,82 @@ Parent series (rk8; absolute = `raw_uncalibrated`). Tool auto-picks `/tmp/avsync
 ### `av_drift_ms` blindness (parent-measured, external)
 
 Same three tele runs: internal `av_drift_ms` mean **−29.8 / −29.4 / −30.2** (range inside lead band) while external HDMI medians span **120 ms**. Confirms code argument (`AV_PRESENT_LEAD_MS` pins the band) with hardware. **Soak PASS on av-lock+av_drift_ms is not a lipsync claim.**
+
+### Audio hold machine (source — candidate for ~117 ms cluster gap)
+
+Parent n=1 instrumented run on daemon `5996385a`:
+`first_audio_pcm → A/V audio_release` = **120 ms** wall (mono_ms delta); cluster sep **117.1 ms**.
+**Not established** until hold duration is paired with cluster id across repeats.
+
+#### End-to-end (product RGB+audio path)
+
+| Step | Where | What |
+|------|-------|------|
+| Arm closed | `media_player.cpp:2908-2911` | After ffmpeg spawn: `audioStartGate_=false`, `sessionOriginMonoMs_=-1`, start `audioPump` |
+| Pump live | `:2064` | `audioActive_=true`; `audioBytes_=0` |
+| Hold | `:2236-2356`, `:2315-2355` | While gate closed: `poll`+`read` PCM into `holdBuf`; **no** MrAudio `write`. Cap `kAudioHoldCapBytes` (2 s) with **ring drop HEAD** (`:2318-2325`). |
+| Release trigger A (normal) | `:3475-3500` | On **first complete video frame** (`!avAudioReleased` after `++frameIndex`): latch `t0`, arm `sessionOriginMonoMs_`, `checkAudioReleaseOrigin(audioBytes_,0)`, **`audioStartGate_=true`**. Log `A/V audio_release … held PCM from content t=0`. |
+| Release trigger B (degrade) | `:2250-2257` | If gated wait ≥ `kAudioHoldTimeoutMs` (**1200**, `av_clock.hpp:70`): pump opens gate **without video**. |
+| Release trigger C (audio-only) | `:2583` | `skipRgb` path opens gate immediately (no hold). |
+| Release trigger D (no audio pipe) | `:2914` | Gate forced open if no apipe. |
+| Dump | `:2358-2371` | On first post-open pump iteration: `writePacedChunk` entire `holdBuf` from **begin()** (oldest = stream head unless HEAD was dropped), then live PCM. |
+| Prefill at first write | `:2146-2157` | First MrAudio write past-biases `audioDue` by `kFeedTargetBytes` (~**100 ms**). Comment: **HOLD does NOT remove this prefill quantum.** |
+| Present (later) | `:3526-3592` | `avDecide` may **Hold** video after gate is already open; `first_video_present` logs only when `presentCleanFrame` runs (`:3203`). Parent saw present **~86 ms after** release — consistent with post-gate pacing Hold while audio dumps. |
+
+Constants: `kAudioHoldCapMs=2000`, `kAudioHoldTimeoutMs=1200`, `kFeedTargetMs=100` (`av_clock.hpp:65-70`).
+
+#### What sets hold **duration**?
+
+**Wall hold** ≈ time from first pump PCM (`first_audio_pcm`, `:2297-2311`) until trigger A or B opens the gate.  
+**Buffer `held_ms`** = `holdBuf.size()` → ms via `checkAudioReleaseOrigin` (`av_clock.hpp:84-93`) — content depth in the ring buffer, not the mono wall delta (equal only if fill is real-time and no head drop).
+
+There is **no fixed 120 ms timer** on the success path. Duration is a **race**: ffmpeg audio availability vs first full video frame assembly (or 1200 ms timeout).
+
+#### Can it be bimodal (≈0 vs ≈120)?
+
+| Trigger | When | held outcome |
+|---------|------|----------------|
+| A first complete frame | normal cast | continuous: whatever PCM arrived before frame1 (can be ~0 if video wins race, or 100s of ms if audio leads) |
+| B timeout 1200 ms | no video in 1.2 s | large hold / degrade — **not** the 120 ms cluster scale |
+| C audio-only | skipRgb | ~0 by construction |
+| D no audio | — | N/A |
+
+So product path has **two code triggers** (frame vs timeout), not a 0/120 pair. A **~120 ms mode** is compatible with a typical audio-leads-first-frame race; a **~0 ms mode** is compatible with video winning that race. That is a **timing race on one trigger (A)**, not two discrete release machines at 0 and 120. Whether silicon clusters map 1:1 to held_ms is **unproven** until parent pairs them (n=1 so far).
+
+#### Is held PCM replayed from content t=0? **Yes (if no HEAD drop)**
+
+- While gated, PCM is only appended to `holdBuf` (`:2315-2355`); `audioBytes_` increments only in `writePacedChunk` (`:2144`) after gate open.
+- `checkAudioReleaseOrigin` requires `audioBytesAtRelease==0` (`av_clock.hpp:88-92`); else ERROR “hold bypassed”.
+- Dump writes `holdBuf` from `begin()` (`:2362-2365`) = oldest samples = stream head unless cap dropped HEAD (`:2318-2325`).
+- Log text is literal: “held PCM from content t=0” (`:3515`).
+
+**Sticky origin implication (mechanism, not silicon proof):** at gate open, video is at `frameIndex=1` → `frameContentMs(1)=1000/24≈41.7 ms` (`av_clock.hpp:15-21`). Dump submits the **entire** held content (e.g. 0…held_ms) into MrAudio in a burst (past-bias allows no sleep until prefill caught up). Audible timeline then runs with that content already queued; pacer uses **raw** `audibleClockMs` with **no origin subtract** (`:3534-3537`, `:3243`). Startup drops may repay some lead (`avDecide` Drop when drift large); any **unpaid** remainder is a **permanent content offset** for the session (same class GStreamer calls a permanent offset until flush/seek).
+
+Host model of residual lead after hold dump: `simulateHoldReleaseRace` (`av_clock.hpp:345-370`).
+
+#### Origin latch / rebase
+
+| Event | Behavior |
+|-------|----------|
+| Gate open / first complete frame | `t0` re-latched; `sessionOriginMonoMs_` set once (`:3488-3494`). **Physical start, not co-arm subtract** (`:3487`, header `:386-390`). |
+| Pause | `t0` adjusted by pause duration (`:3288-3290`) — wall clock only when not on audio. |
+| Seek / new play | New session: gate closed again (`:2910-2911`, kill path `:1070-1071`). |
+| Steady state | **No** GStreamer-style discont rebase. `coArmedClockMs` is **DEPRECATED unit-only** (`av_clock.hpp:34-36`). Product: raw audible clock. |
+
+#### Cheapest falsifier (parent hardware — agent must not run)
+
+On each instrumented cast, parse:
+
+```text
+Δ_hold_wall_ms = mono(A/V audio_release) - mono(first_audio_pcm)
+held_ms_buf    = from pump "audio release … held_ms=" OR held_bytes/192
+cluster        = HDMI median vs A≈-314 / B≈-197
+```
+
+| If | Conclude |
+|----|----------|
+| Δ_hold_wall (or held_ms_buf) tracks cluster with slope≈1 and Δ≈117 between A/B | hold (or dump race) is the cluster mechanism |
+| hold stats identical across A and B (within ~5 ms) while HDMI sep stays 117 | **kill** hold-duration suspect; look post-release (prefill burst / present lag) |
+| reason=`hold_timeout` ever on rk8 | separate degrade path — exclude from A/B |
+
+Do **not** use `av_drift_ms` (proven blind).
