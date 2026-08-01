@@ -1,113 +1,97 @@
-# PARENT LIPSYNC RUN CARD (long soak + transitions)
+# PARENT CARD — lipsync GT + LEAD falsifier + +100 ms proof
 
-## AUDIO PATH (settled)
-MacroSilicon `534d:2109` = `/dev/video0` + ALSA `hw:0,0` (card MS2109), same USB.
-One ffmpeg, wallclock+copyts. **Never** `av_drift_ms` (servo deadband).
+## ≤10-line status
+1. **Audio path YES:** MS2109 ALSA `hw:0,0` + `/dev/video0` (settled).
+2. **Instrument resolves +100 ms (HOST, measured):** AudioID Δ=**99.29 ms**; GlassAV Δ=**100.00 ms**.
+3. **`av_drift_ms` is NOT lipsync** — pinned in `[-lead,drop)` by construction (`av_clock.hpp` + `av_drift_role=servo_error_not_lipsync`).
+4. **LEAD falsifier designed** — env `MISTERPLEX_AV_PRESENT_LEAD_MS=40|20`; pre-reg Δservo ∈[+12,+28].
+5. **session_epoch required** per arm — `tools/avsync_capture_session_epoch.sh`.
+6. **fps_src=caller_supplied** on supply_bucket is ASSUMPTION — do not build GT on `supply_gap` alone.
+7. Agent never touches device. Soft-skip 77 ≠ pass.
 
-## Sign / tags
-`offset_ms=(t_beep−t_flash)×1000` · **+ = audio LATE**  
-Every value: `measured` | `caller_supplied` | `DEFAULT_ASSUMED`  
-Absolute median without known-zero cal = `raw_uncalibrated` (grabber B unknown).  
-Same-rig **Δ** and **slope** cancel B.
+## Sign
+`offset_ms=(t_beep−t_flash)×1000` · **+ = audio LATE** · tags: measured|caller_supplied|DEFAULT_ASSUMED
 
-## Fixture rk=27
-`/library/metadata/27` · 624×480 · 24.000 fps · **1200 s** · markers every **2.000 s** · design offset 0.  
-**Do not loop** a short clip for long soaks (stream counters reset).
+## Host green (this session)
+| Pair | zero median | plus median | Δ | rc |
+|------|------------:|------------:|--:|---|
+| AudioID 60s (rk23/24 class) | 81.99 | 181.28 | **99.29** | 0 |
+| GlassAV 600s (rk20/21 class) | −6.35 | 93.65 | **100.00** | 0 |
 
-## Power table (σ_res=16 ms parent pilot, period=2 s, z=2.8 ≈ 80% power)
+```bash
+# Re-run host gate anytime (no device):
+cd /home/flynnsbit/Projects/MisterPlex/.worktrees/w-avsync-lane
+OUT=$PWD/.agent-work/w-avsync/plus100_ab MODE=host bash tools/avsync_plus100_ab.sh
+echo "true rc=$?"
+```
 
-| duration | n≈ | δ_min (ms/s) @80% | cum @ δ_min over span |
-|---------:|---:|------------------:|----------------------:|
-| 60 s     | 28 | 0.524             | ~28 ms                |
-| 900 s    | 448| **0.0082**        | ~7.3 ms               |
-| 1200 s   | 598| **0.0053**        | ~6.3 ms               |
+---
 
-Null `|slope|<δ_min` ⇒ cannot reject zero drift at 80% power — **not** proof of perfect sync.
+## PASTE A — LEAD falsifier (you restart daemon; I do not)
 
-## Pre-register (publish hit/miss after)
+Pre-register (publish hit/miss):
 
 | ID | Prediction |
 |----|------------|
-| L1 | 15 min soak: n_pairs ≥ 0.8×expected (~358 @900s) |
-| L2 | If \|slope\| < δ_min → `drift_null_at_80pct_power=1` |
-| L3 | no DISPLAY_FLAT; artifact_pair both md5 measured |
-| T1 | seek: \|Δmedian\| < 80 ms after settle (STEP_TOL) |
-| T2 | pause_resume: same STEP_TOL |
-| T3 | pre and post each n_pairs ≥ MIN_PAIRS |
-
----
-
-## PASTE 1 — Long soak 15 min (rk=27 already playing, session established)
+| P_SERVO_A | LEAD=40 → av_drift median ∈ [−40,−15] |
+| P_SERVO_B | LEAD=20 → av_drift median ∈ [−20,+5] |
+| P_SERVO_Δ | median_B−A ∈ **[+12,+28]** → **CIRCULAR** (must not be lipsync GT) |
+| P_HDMI_Δ | HDMI median_B−A ≈ **+20±15** (video advanced) OR ≈0 (decoupled) |
+| P_CONF | conf bytes unchanged |
+| P_BANNER | `AV_PRESENT_LEAD_MS=env:40` / `env:20` |
 
 ```bash
-cd /home/flynnsbit/Projects/MisterPlex
-fuser -v /dev/video0 || true   # must be free
-arecord -l | head -6
-OUT=$PWD/avsync_hdmi_out/long_$(date +%Y%m%dT%H%M%S)
-mkdir -p "$OUT"
-DURATION=900 MARKER_PERIOD_S=2.0 SIGMA_RES_MS=16.0 \
-  SIGMA_SRC=measured_parent_480p_pilot DECODE_SRC=caller_supplied \
-  OUT="$OUT" LABEL=long900 \
-  bash tools/avsync_long_soak.sh >"$OUT/wrap.txt" 2>&1
-echo "long_soak true rc=$?"
-grep -E '^(SCORE |VERDICT=|min_detectable|measured_slope|drift_null|n_pairs=|artifact_pair=|slope_ms)' \
-  "$OUT/wrap.txt" "$OUT/long900_stdout.txt" 2>/dev/null
+cd /home/flynnsbit/Projects/MisterPlex/.worktrees/w-avsync-lane
+bash tools/avsync_lead_falsifier.sh card    # full procedure
+
+# After arm A (LEAD=40) soak + daemon_tail saved as LOG_A / REPORT_A,
+# and arm B (LEAD=20) similarly:
+LOG_A=.../leadA/daemon_tail.txt LOG_B=.../leadB/daemon_tail.txt \
+  REPORT_A=.../leadA_stdout.txt REPORT_B=.../leadB_stdout.txt \
+  bash tools/avsync_lead_falsifier.sh score_both
+echo "lead_falsifier true rc=$?"
 ```
 
-Optional full fixture length: `DURATION=1200`.
-
----
-
-## PASTE 2 — Transition SEEK (playing rk=27)
-
-```bash
-cd /home/flynnsbit/Projects/MisterPlex
-OUT=$PWD/avsync_hdmi_out/xseek_$(date +%Y%m%dT%H%M%S)
-mkdir -p "$OUT"
-TRANSITION=seek SEEK_MS=120000 ARM_S=30 SETTLE_S=8 \
-  MARKER_PERIOD_S=2.0 MIN_PAIRS=10 STEP_TOL_MS=80 \
-  DECODE_SRC=caller_supplied OUT="$OUT" \
-  bash tools/avsync_transition_harness.sh >"$OUT/wrap.txt" 2>&1
-echo "transition_seek true rc=$?"
-grep -E '^(SCORE_TRANSITION|VERDICT=|pre_median|post_median|delta_median|arm=)' \
-  "$OUT/wrap.txt"
+Daemon restart (device; conf not written):
+```text
+MISTERPLEX_AV_PRESENT_LEAD_MS=40   # arm A — expect banner env:40
+MISTERPLEX_AV_PRESENT_LEAD_MS=20   # arm B — expect banner env:20
 ```
-
----
-
-## PASTE 3 — Transition PAUSE→RESUME
-
+Each arm: single `session_epoch`; soak ≥60 s:
 ```bash
-cd /home/flynnsbit/Projects/MisterPlex
-OUT=$PWD/avsync_hdmi_out/xpause_$(date +%Y%m%dT%H%M%S)
-mkdir -p "$OUT"
-TRANSITION=pause_resume ARM_S=30 SETTLE_S=8 \
-  MARKER_PERIOD_S=2.0 MIN_PAIRS=10 STEP_TOL_MS=80 \
-  DECODE_SRC=caller_supplied OUT="$OUT" \
-  bash tools/avsync_transition_harness.sh >"$OUT/wrap.txt" 2>&1
-echo "transition_pause true rc=$?"
-grep -E '^(SCORE_TRANSITION|VERDICT=|delta_median|pre_median|post_median)' "$OUT/wrap.txt"
-```
-
----
-
-## Short steady-state (unchanged soak)
-
-```bash
-OUT=$PWD/avsync_hdmi_out/ss_$(date +%Y%m%dT%H%M%S)
-DURATION=60 MARKER_PERIOD_S=2.0 MIN_PAIRS=20 TOL_MS=200 DECODE_SRC=caller_supplied OUT="$OUT" \
-  bash tools/avsync_lipsync_soak.sh >"$OUT/soak_wrap.txt" 2>&1
+bash tools/avsync_capture_session_epoch.sh | tee epoch.txt
+OUT=$PWD/avsync_hdmi_out/leadX_$(date +%Y%m%dT%H%M%S); mkdir -p "$OUT"
+DURATION=60 MARKER_PERIOD_S=2.0 MIN_PAIRS=20 TOL_MS=200 DECODE_SRC=caller_supplied \
+  OUT="$OUT" LABEL=leadX bash tools/avsync_lipsync_soak.sh >"$OUT/wrap.txt" 2>&1
 echo "soak true rc=$?"
+# also: ssh grep av_drift_ms= + supply_bucket + session_epoch → daemon_tail.txt
 ```
 
-Note: uncalibrated \|median\|~100+ ms → `ABS_OFFSET_UNSCOREABLE` rc=77 (not OFFSET_FAIL).  
-Long/transition harnesses pass `--no-absolute-score` so slope/Δ can PASS without pretending absolute is calibrated.
+---
 
-## Host green (this agent)
-- `python3 tools/avsync_measure_hdmi.py --self-test` rc=0  
-- `python3 tools/avsync_drift_power.py --self-test` rc=0  
-- `bash tests/unit/test_avsync_measure_hdmi.sh` **36/36** rc=0  
-- adelay ladder RMSE ~0.95 ms  
+## PASTE B — Live +100 ms on glass (rk=23 then rk=24)
 
-## Agent never touches device
-Parent casts, captures, deploys. Capture rc: `cmd; echo "true rc=$?"` never through a pipe.
+```bash
+cd /home/flynnsbit/Projects/MisterPlex/.worktrees/w-avsync-lane
+OUT=$PWD/avsync_hdmi_out/live100_$(date +%Y%m%dT%H%M%S); mkdir -p "$OUT"
+# Cast rk=23 (AudioID 0ms), wait playing:
+MODE=live ARM=zero ARM_S=45 MARKER_PERIOD_S=2.0 MIN_PAIRS=10 OUT="$OUT" \
+  bash tools/avsync_plus100_ab.sh | tee "$OUT/zero_wrap.txt"
+echo "zero true rc=$?"
+# Cast rk=24 (audioPlus100ms), then:
+MODE=live ARM=plus ARM_S=45 MARKER_PERIOD_S=2.0 MIN_PAIRS=10 OUT="$OUT" \
+  bash tools/avsync_plus100_ab.sh | tee "$OUT/plus_wrap.txt"
+echo "plus_ab true rc=$?"
+# Expect SCORE_PLUS100_AB delta_ms ≈ 100, verdict INSTRUMENT_RESOLVES_100MS
+```
+Each arm stamps `session_epoch` — do not compare if either is NO-DATA.
+
+rk=20/21 = same idea @600s (longer soak).
+
+---
+
+## Forbidden
+- Scoring lipsync from `av_drift_ms` / av-lock alone
+- Pooling across `session_epoch`
+- Treating `fps_src=caller_supplied` as measured rate for supply_gap GT
+- Claiming absolute HDMI median without known-zero cal (`raw_uncalibrated`)
