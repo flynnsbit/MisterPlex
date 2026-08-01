@@ -1,0 +1,13 @@
+PRE-REGISTER fabric hold hist (before any binning):
+  P_fab_ge4_healthy_band=[0.00,0.03]
+  P_fab_ge4_hdmi_match_band=[0.08,0.13]
+  w_geom_lean_device_band=[0.05,0.15]
+  parent_hdmi_frac_ge4_caller_supplied=0.102930
+  T_vsync_tag=DEFAULT_ASSUMED unless --t-vsync-ms provided as measured
+  frames_done_tag=must be PLXD swap counter (measured)
+t_vsync_ms=16.666667 tag=DEFAULT_ASSUMED_1_60
+selftest_healthy n=1000 mean=2.5000 frac_ge4=0.0000 ratio2_3=1.0000 hist={2: 500, 3: 500} hold_unit=vsync t_vsync_tag=DEFAULT_ASSUMED_1_60
+selftest_healthy_verdict=FABRIC_HEALTHY_2_3
+selftest_jitter n=1000 mean=2.6440 frac_ge4=0.0870 ratio2_3=1.0289 hist={2: 463, 3: 450, 4: 67, 5: 20} hold_unit=vsync t_vsync_tag=DEFAULT_ASSUMED_1_60
+selftest_jitter_verdict=FABRIC_MATCHES_HDMI_GE4
+OK fabric_frames_done_hold_hist self-test

@@ -1,0 +1,54 @@
+=== C1 source path: cadence vs swap ===
+OK C1: present_cadence instantiated
+116:	present_cadence cadence (
+OK C1: advance is only stat_advance assign
+437:	assign stat_advance       = advance;
+OK C1: ddr swap condition
+267:				      && vsync_pulse && swap_pending && pending_ready_s2))
+271:			if (vsync_pulse && swap_pending && pending_ready_s2) begin
+OK C1: vsync_pulse from fstart
+283:		.vsync_pulse(fstart),
+327:		.vsync_pulse(fstart),
+OK C1: advance tied unused at top
+1023:wire _unused = |{disp_i, cont_i, advance, ingest_pixels, ingest_dl, af_active, ioctl_addr,
+OK C1: daemon paces content comment
+230:// Legacy cadence input is now fixed; the daemon handles exact content pacing.
+OK C1: content_fps hardwired 24
+231:wire [7:0] content_fps = 8'd24;
+OK C1: cadence.hpp not referenced from arm/
+524:	reg [15:0] bank_vsync_count;
+860:			bank_vsync_count <= 16'd0;
+954:				bank_vsync_count <= bank_vsync_count + 16'd1;
+1037:						// bank_vsync_count). Packing vsync kept PLXD "live" while
+525:	reg [15:0] frames_done_d1, frames_done_d2; // clk→clk_ddr (PLXD pack)
+862:			frames_done_d2 <= 16'd0;
+905:			frames_done_d2 <= frames_done_d1;
+OK C1: frames_done packed; bank_vsync_count exists (must not be PLXD frames field)
+OK C1: bank_vsync_count not packed into PLXD DIN
+OK C1: no cadence symbols driving ddr_frame_store.sv
+PRE-REGISTER device fabric hold hist (parent poll; not computed here):
+  P_fab_ge4_healthy_band=[0.00,0.03]
+  P_fab_ge4_hdmi_match_band=[0.08,0.13]
+  w_geom_lean_device_band=[0.05,0.15]  # if pfps<24 or prep stalls
+  parent_hdmi_frac_ge4_caller_supplied=0.1029
+  note: bank_vsync_count exists in RTL but is NOT packed in PLXD;
+  fabric poll uses frames_done edges + mono time / T_vsync (T_vsync tag=DEFAULT_ASSUMED 1/60 unless measured).
+C1 SOURCE FACTS (quoted in report; logic locks):
+  present_core.sv: present_cadence -> advance, cont_i
+  cont_i -> colorbars.content_index only
+  advance -> stat_advance only; Plex.sv ties advance in _unused
+  ddr_frame_store swap: vsync_pulse && swap_pending && pending_ready_s2
+  vsync_pulse = colorbars.frame_start (fstart), not cadence
+  cadence.hpp: no arm/ references (test-only product path)
+  Plex.sv: "Legacy cadence input is now fixed; the daemon handles exact content pacing." content_fps=24 hardwired
+PASS C1: claim shape locked (see companion shell file greps)
+C2_strict_cadence_24_60 n=2400 mean=2.5000 frac_ge4=0.0000 ratio2_3=1.0000 hist={2:1200, 3:1200}
+C3_async_healthy_free_gated n=2399 mean=2.5002 frac_ge4=0.0000 ratio2_3=0.9992 hist={2:1199, 3:1200}
+C4_async_late_jitter n=2399 mean=2.5002 frac_ge4=0.1034 ratio2_3=1.2494 hist={1:248, 2:1057, 3:846, 4:142, 5:106}
+C4_note parent_hdmi_ge4=0.1029 model_ge4=0.1034
+C5_cadence_gated_with_jitter n=2397 mean=2.5010 frac_ge4=0.0004 ratio2_3=1.0000 hist={2:1198, 3:1198, 5:1}
+C5_vs_C4 ge4 cadence=0.0004 async=0.1034
+TRADEOFF_NOTE: wiring present_cadence into swap is (a) correct for strict 3:2 film cadence, (b) safe only if swap still requires pending_ready (no torn frame), (c) worth it ONLY if fabric hist shows device-side ge4; if fabric pure 2/3, HDMI 4/5 is instrument — do not fit.
+OK test_cadence_swap_path
+test_cadence_swap_path true rc=0
+OK test_cadence_swap_path_source: C1 greps + model gate rc=0

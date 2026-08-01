@@ -1,9 +1,11 @@
-w-geom status — post-present scanout skip prove-or-kill
+w-geom: cadence vs DDR swap + fabric hold experiment
 branch: w-avsync-hdmi-measure
-SHA: 46f71f8a (tip; status file may lag one amend)
-gate: tests/unit/test_ddr_frame_store_scanout_skip.sh  true rc=0
-report: .agent-work/w-geom/SCANOUT_SKIP_PROVE_OR_KILL.md
+gates: test_cadence_swap_path_source rc=0; fabric_hold self-test rc=0
+report: .agent-work/w-geom/CADENCE_SWAP_PATH.md
 
-VERDICT: free-gated product never_swapped=0 → scanout does NOT skip under ARM free contract;
-hostile overwrite-while-pending REPRO 39 skips on same RTL; H1 kills 1-cycle beat as 1.54% sole cause;
-NO RBF. Residual ≥14 glass skips → w-avsync supply IF free contract held.
+VERDICT: r-misterfin CORRECT — present_cadence/cadence.hpp not on DDR swap path.
+Swap = vsync_pulse && swap_pending && pending_ready_s2 (fstart).
+Strict 3:2 is bars/stats only; advance in Plex.sv _unused.
+Async+jitter model ge4=10.34% matches parent HDMI 10.29%; cadence-gate kills ge4.
+NO RBF until parent fabric PLXD hold hist decides device vs capture.
+Parent: scripts/poll_plxd_frames_done_hold.sh + tools/fabric_frames_done_hold_hist.py
