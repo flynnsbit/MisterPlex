@@ -125,6 +125,16 @@ module stream_path #(
 	output wire        recon_dbg_valid,
 	output wire        recon_valid,
 
+	// P3-3l5 hybrid product handoff (ports required by Plex.sv).
+	// Thruput decode_stub does not yet publish these; fail-closed tie-offs:
+	// host owns present until a real hybrid classifier is rebased onto thruput.
+	output wire        hybrid_fpga_owned,
+	output wire        hybrid_host_required,
+	output wire        product_recon_ok,
+	output wire [2:0]  hybrid_own_code,
+	output wire [3:0]  hybrid_own_reason,
+	output wire        entropy_cabac,
+
 	output wire        fs_wr_en,
 	output wire [15:0] fs_wr_pixel,
 	output wire        fs_wr_reset,
@@ -325,6 +335,16 @@ module stream_path #(
 	assign residual_t1   = sl_rt1;
 	assign residual_ok   = sl_res_ok;
 	assign residual_dc   = sl_rdc;
+
+	// Fail-closed hybrid until thruput stub publishes ownership (product tip had
+	// h264_hybrid_mb_own inside decode_stub). entropy_cabac is real PPS bit.
+	assign hybrid_fpga_owned = 1'b0;
+	assign hybrid_host_required = 1'b1;
+	assign product_recon_ok = 1'b0;
+	assign hybrid_own_code = 3'd0;
+	assign hybrid_own_reason = 4'd0;
+	assign entropy_cabac = pps_cabac;
+
 
 	// ── Full P/I-slice MB traversal (independent of first-MB residual sticky) ──
 	// Side-buffer slice RBSP, then load the walker when idle so multi-slice
@@ -738,6 +758,8 @@ module stream_path #(
 	             pps_busy | sl_busy | |pps_id_w | |pps_qp | pps_cabac | |sl_first |
 	             |sl_fn | |sl_qpd | pps_deblock | |residual_csum | residual_place_pulse |
 	             recon_valid | recon_dbg_valid | |recon_sig | |recon_dbg |
+	             hybrid_host_required | product_recon_ok | hybrid_fpga_owned |
+	             |hybrid_own_code | |hybrid_own_reason | entropy_cabac |
 	             sl_place_ok | |sl_place_tc | |sl_place_t1 | |sl_place_qp |
 	             residual_coeff[0][0] | residual_coeff[1][0] |
 	             residual_coeff[15][0] | sl_place_coeff[0][0] | sl_place_coeff[15][0] |

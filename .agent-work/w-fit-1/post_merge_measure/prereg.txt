@@ -1,0 +1,13 @@
+PRE-REGISTER post-merge SHA=pending (stream_path hybrid fail-closed + thruput RTL)
+baseline thruput integ measure (668fd776 / 809a8197):
+  clip1 paint_per_mb_f0 = 2239.647
+  clip2 paint_per_mb_f0 = 2102.850
+  luma clip1 300/300 mae=0; clip2 1170/1170 mae=0
+  dequant miss=0
+PREDICT post-merge (thruput RTL taken whole + hybrid tie-off only in stream_path wrapper):
+  paint_per_mb_f0 clip1 = 2239.647 +/- 5  HIT if within
+  paint_per_mb_f0 clip2 = 2102.850 +/- 5
+  luma 300/300 and 1170/1170 mae=0
+  dequant miss=0
+  hybrid tie-off does not affect REAL_REF I-slice paint path (assumed)
+budget 320x240@25 @20MHz = 2666.667 cy/MB

@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
+
+
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
 RUN_VERILATOR="$ROOT/scripts/run_verilator.sh"
@@ -14,7 +16,8 @@ if [[ "$VERILATOR_RC" -eq 127 ]]; then
     echo "A skipped RTL gate is NOT a pass. Set ALLOW_MISSING_VERILATOR=1 only if you accept that RTL was never verified." >&2
     exit 3
   fi
-  exit 0
+  echo "SKIP-NOT-PASS: Verilator missing; soft-skip≠PASS" >&2
+  exit 77
 elif [[ "$VERILATOR_RC" -ne 0 ]]; then
   echo "RTL SIM ERROR: Verilator probe failed:" >&2
   printf '%s\n' "$VERILATOR_VERSION" >&2
@@ -54,4 +57,15 @@ echo "RTL SIM: using $VERILATOR_VERSION" >&2
   "$ROOT/fpga/Plex_MiSTer/rtl/stream_path.sv" \
   "$ROOT/tests/rtl/stream_path_recon_tb.cpp"
 
-"$BUILD/Vstream_path_recon_tb" "$FIXTURE"
+# shellcheck source=tests/unit/lib_rtl_sim_gate.sh
+source "$ROOT/tests/unit/lib_rtl_sim_gate.sh"
+set +e
+RECON_OUT="$("$BUILD/Vstream_path_recon_tb" "$FIXTURE" 2>&1)"
+RECON_RC=$?
+set -e
+printf '%s\n' "$RECON_OUT"
+echo "stream_path_recon_sim true rc=$RECON_RC"
+if [[ "$RECON_RC" -ne 0 ]]; then
+  exit "$RECON_RC"
+fi
+assert_sim_executed "stream_path_recon" "$RECON_OUT" "OK stream_path"

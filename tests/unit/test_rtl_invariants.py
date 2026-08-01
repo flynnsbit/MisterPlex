@@ -115,7 +115,8 @@ DOC_AUDIT_ROOTS = ("docs",)
 
 def read(path: Path) -> str:
     try:
-        return path.read_text()
+        # errors=replace: evidence dirs may hold binary .i420 etc; audit is text-pattern only.
+        return path.read_text(encoding="utf-8", errors="replace")
     except OSError as e:
         fail(f"could not read {path}: {e}")
 

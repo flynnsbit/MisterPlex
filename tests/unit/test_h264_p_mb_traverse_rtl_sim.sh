@@ -15,7 +15,8 @@ SKIP
     echo "RTL SIM ERROR: Verilator not found; refusing to report PASS without running the simulation." >&2
     exit 3
   fi
-  exit 0
+  echo "SKIP-NOT-PASS: Verilator missing; soft-skip≠PASS" >&2
+  exit 77
 elif [[ "$VERILATOR_RC" -ne 0 ]]; then
   echo "RTL SIM ERROR: Verilator probe failed:" >&2
   printf '%s\n' "$VERILATOR_VERSION" >&2

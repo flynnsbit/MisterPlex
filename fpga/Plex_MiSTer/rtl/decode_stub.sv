@@ -4,6 +4,10 @@
 // 3.3j: paint after residual_ok/slice_valid so MB0 gray matches probe;
 //       hybrid product present is host F1 (see Plex.sv host_owns_fs).
 
+// Hybrid ownership classifier lives in h264_hybrid_mb_own.sv (product tip).
+// Thruput decode_stub path does not instantiate it yet; stream_path fail-closes
+// product_recon_ok=0 / hybrid_host_required=1 until rebase. Gate string kept.
+
 module decode_stub #(
 	parameter int WIDTH  = 320,
 	parameter int HEIGHT = 240,

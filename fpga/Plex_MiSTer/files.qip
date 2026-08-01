@@ -21,6 +21,7 @@ set_global_assignment -name SYSTEMVERILOG_FILE rtl/pps_parser.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/slice_hdr_parser.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/h264_cavlc_residual.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/h264_iq_idct_4x4.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/h264_hybrid_mb_own.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/h264_dequant4x4_serial.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/h264_intra_pred.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/h264_syntax_primitives.sv
