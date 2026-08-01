@@ -981,7 +981,6 @@ async function assertUiMatchesDaemon(page, tag, opts = {}) {
   }
   return r;
 }
-}
 
 async function waitPlayingOnDaemon(seconds) {
   const deadline = Date.now() + seconds * 1000;
