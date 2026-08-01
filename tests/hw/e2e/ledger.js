@@ -77,6 +77,7 @@ function normalizeSnap(raw, source) {
     // Process identity — supervise CLEAN rc=0 exits respawn and re-zero counters.
     // pid/exe come from the live companion process (not host pidof/cmdline).
     pid: intOr(raw.pid, -1),
+    playing: intOr(raw.playing, -1),
     exe,
     raw: String(raw._line || '').slice(0, 300),
   };
@@ -325,7 +326,7 @@ function formatSnap(s) {
   if (!s) return '(null)';
   const exeShort = s.exe ? s.exe.replace(/^.*\//, '') : '?';
   return (
-    `src=${s.source} pid=${s.pid} exe=${exeShort} frames=${s.frames} presents=${s.presents} ` +
+    `src=${s.source} pid=${s.pid} exe=${exeShort} playing=${s.playing} frames=${s.frames} presents=${s.presents} ` +
     `drops=${s.drops} pub_miss=${s.publish_misses} residual=${s.residual} session=${s.session} ` +
     `life_f=${s.lifetime_frames}`
   );

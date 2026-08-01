@@ -61,6 +61,7 @@ const {
   assertGlassLoss,
 } = require('./glass_counter_loss');
 const { emitGlassExpect } = require('./glass_expect');
+const { assertDeviceIdleP4 } = require('./device_idle');
 
 const EXIT_PASS = 0;
 const EXIT_FAIL = 1;
@@ -1359,6 +1360,34 @@ async function resolveItemForTier(tier) {
 }
 
 
+
+async function probeResources() {
+  const r = await httpGet(`${daemonBase(cfg)}/resources`, {}, 4000);
+  return r.status || 0;
+}
+
+/** P4 STOPPED unregressed — device idle after suite stop (not UI-only). */
+async function assertP4DeviceIdle(tag, timelineSamples) {
+  const samples =
+    timelineSamples ||
+    (await sampleTimeline(6, 350, `${tag}_p4`));
+  const tele = await captureLedger(cfg);
+  const resSt = await probeResources();
+  const r = assertDeviceIdleP4(samples, tele, {
+    tag,
+    resourcesStatus: resSt,
+  });
+  if (!r.ok) {
+    fail(r.reason || 'p4_idle_fail', r.detail || '');
+  }
+  log(
+    `P4_IDLE_OK tag=${tag} state=${r.state} resources=${resSt} ` +
+      `telemetry_playing=${r.playing != null ? r.playing : 'NA'} session=${r.session != null ? r.session : 'NA'} ` +
+      `glass_contract=IDLE_SCREEN=logo`
+  );
+  return r;
+}
+
 /** Emit GLASS_EXPECT + e2e_mark for parent HDMI join (suite does not capture). */
 async function glassMark(cycle, transition, phase, extra = {}) {
   const xml = extra.xml != null ? extra.xml : await pollDaemonTimeline(nextSuiteCmd());
@@ -2503,6 +2532,8 @@ async function runOneTransitionCycle(page, itemTitle, detailsUrl, cycle, total) 
     note: 'EXPECT IDLE_SCREEN=logo static Plex logo; no moving decode (parent conf)',
     hold_ms: 2500,
   });
+  // P4: device-side idle (timeline + resources + telemetry playing≠1) — not UI-only.
+  await assertP4DeviceIdle(`${ctag}_stop`, samples);
 
   // ── idle → play (recast exact target) ──────────────────────────────────
   await dismissFullPlayerOverlay(page);
@@ -2550,6 +2581,7 @@ async function runOneTransitionCycle(page, itemTitle, detailsUrl, cycle, total) 
     note: 'cycle end forced idle — daily driver safe',
     hold_ms: 1000,
   });
+  await assertP4DeviceIdle(`${ctag}_cycle_end`);
 
   return {
     cycle,
@@ -3327,6 +3359,10 @@ async function runTransitionScenarios(page, itemTitle, detailsUrl, _castAlreadyS
       await page.waitForTimeout(500);
       const afterStop = await pollDaemonTimeline(nextSuiteCmd());
       log(`after_stop state=${xmlAttr(afterStop, 'state') || '?'}`);
+      {
+        const p4samples = await sampleTimeline(5, 350, `tier_${tier.name}_p4_stop`);
+        await assertP4DeviceIdle(`tier_${tier.name}_stop`, p4samples);
+      }
       await shot(page, `05_stopped_${tier.name}`);
 
       summaryBits.push(
@@ -3348,6 +3384,7 @@ async function runTransitionScenarios(page, itemTitle, detailsUrl, _castAlreadyS
       note: 'suite complete — device idle for daily driver',
       hold_ms: 1000,
     });
+    await assertP4DeviceIdle('suite_end');
 
     suitePassed = true;
     log(

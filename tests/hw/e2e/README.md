@@ -1,3 +1,8 @@
+## Parent API harness (soaks)
+
+`scripts/parent_cast_local.sh` — env-only LOCAL cast play/stop/idle-check on :3005.
+DoD UI path remains `run_cast_picker.sh`. Session `files/parent_cast_local.sh` is **not** in repo (rc=127).
+
 # Plex Web cast-picker e2e (Playwright)
 
 Drives the **real Plex Web UI** against a **LOCAL PMS** and verifies MiSTerPlex as a

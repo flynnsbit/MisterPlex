@@ -1,20 +1,13 @@
 lane=w-plextv
 branch=w-plextv-cast-picker-e2e-fix2
 worktree=.worktrees/w-plextv-e2e-fix
-sha=44a9ab01
+sha=PENDING
 see=STATUS.md
 
-# Parent (evidence)
-cd .worktrees/w-plextv-e2e-fix
-node tests/hw/e2e/prove_red_paths.js; echo "true rc=$?"
+# API soak harness (repo — not session files/)
+# export MISTER_HOST PLEX_BASE PLEX_TOKEN PLEX_MACHINE_ID
+# ./scripts/parent_cast_local.sh play|stop|idle-check; echo "true rc=$?"
 
-E2E_TIER=480p E2E_DAEMON_DECODE=624x480 E2E_TRANSITION_CYCLES=10 \
-E2E_DISCOVERY_RECHECK=1 E2E_REQUIRE_UI_TIMELINE=1 E2E_REQUIRE_PID=1 \
-PLEX_BASE=http://YOUR-PLEX-SERVER:32400 PLEX_TOKEN=<tok> PLEX_WEB_USER=<profile> \
-MISTER_HOST=<mister> ./tests/hw/e2e/run_cast_picker.sh; echo "true rc=$?"
-
-# Align HDMI on GLASS_EXPECT wall_ms lines; score:
-# E2E_GLASS_CAPTURE_DIR=<pngs> node tests/hw/e2e/score_glass_capture.js; echo "true rc=$?"
-
-PRE_REG: N=10 pass==N; DISCOVERY_RECHECK_OK; suite_end idle; TEARDOWN_OK
-PARENT_PROVEN_ONLY_AT: 93fa0c04 N=1 (tip needs re-run)
+# Playwright DoD
+# ./tests/hw/e2e/run_cast_picker.sh; echo "true rc=$?"
+# Expect: P4_IDLE_OK, TRANSITION pass==N, TEARDOWN_OK
