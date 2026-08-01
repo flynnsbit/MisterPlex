@@ -491,8 +491,7 @@ Each transition cycle captures ledger at start/end of the continuous-play window
 `E2E_DAEMON_LOG` tail.
 
 Asserts:
-- `residual == frames - presents - drops` (identity)
-- residual accounted (`==0` or `==publish_misses` or within `E2E_LEDGER_RESIDUAL_SLACK`, default 2)
+- pid + session stable (residual/presents/drops void on c5382bee unless E2E_PLXD_FRAMES_VOID=0)
 - `session` unchanged mid-cycle (daemon self-exit/respawn → FAIL `ledger_session_changed`)
 - `lifetime_frames` not regressed
 
@@ -573,13 +572,16 @@ tr '\0' ' ' < /proc/$pid/cmdline; echo
 Teardown still asserts only OUR Playwright controller is gone after all N cycles.
 
 
-## BOUNDARY + live RBF
+## BOUNDARY + fleet facts (parent glass, RBF c5382bee)
 
-Playwright = control plane + :3005 session only. **Not** video pixels.
-`E2E_PLXD_FRAMES_VOID=1` (default): do not gate on frames/presents/drops (live RBF
-packs bank_vsync into frames_done). Present geometry **529×240** only.
-Pause emits `GLASS_EXPECT picture=pause_overlay defect_hint=pause_overlay_low_res`
-for parent chrome-res scoring. `E2E_GLASS_HOLD=1` holds suite during marker windows.
+Playwright = control plane + :3005 session only. **Not** video pixels or rows.
+- **Vertical row ceiling proven** (even/odd solid-field invert, std=0; odd rows absent).
+  Suite does not score rows; w-geom T7 fix is parent glass re-card.
+- **Horizontal 529-of-640** = arithmetic only until glass-proven — not asserted here.
+- `E2E_PLXD_FRAMES_VOID=1` (default): `frames_done`=vsync count; `presents`/`drops`=ARM
+  supply/call — **not** display. `unaccounted`≡residual printed twice.
+- Pause: `GLASS_EXPECT picture=pause_overlay defect_hint=pause_overlay_low_res`.
+- `E2E_GLASS_HOLD=1` holds suite during marker windows for concurrent HDMI.
 
 ## UI timeline truthfulness (control plane)
 

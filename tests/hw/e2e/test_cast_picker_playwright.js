@@ -2254,7 +2254,8 @@ async function runOneTransitionCycle(page, itemTitle, detailsUrl, cycle, total) 
   );
   // Control-plane: paused + frozen time. Glass: parent scores freeze AND
   // pause-overlay chrome resolution (user: "timeline very low res when paused").
-  // Present path is 529×240 only — suite never claims fine chrome detail.
+  // Vertical: parent-proven odd rows absent (store_y=py*2) on c5382bee — suite
+  // does not score rows. Horizontal 529-of-640 is arithmetic-only, not glass-proven.
   const pauseHold = parseInt(process.env.E2E_PAUSE_OVERLAY_HOLD_MS || '4000', 10) || 4000;
   const uiM = (uiPauseClock && uiPauseClock.metrics) || {};
   await glassMark(cycle, 'pause', 'after', {
@@ -2267,8 +2268,8 @@ async function runOneTransitionCycle(page, itemTitle, detailsUrl, cycle, total) 
     defect_hint: 'pause_overlay_low_res',
     note:
       'CONTROL: state=paused time frozen. GLASS(parent): frozen frame + player chrome/timeline ' +
-      'visible on MiSTer — score chrome res (user low-res overlay bug). 529x240 present only. ' +
-      'Playwright PASS ≠ video OK.',
+      'on MiSTer — score chrome res (user low-res overlay). Row ceiling=parent glass fact ' +
+      '(odd rows absent). Playwright PASS ≠ video/rows OK.',
     hold_ms: pauseHold,
   });
   // Always give parent a short named window even without E2E_GLASS_HOLD (log timestamps).
@@ -2434,7 +2435,8 @@ async function runOneTransitionCycle(page, itemTitle, detailsUrl, cycle, total) 
     defect_hint: 'play_timeline_overlay_low_res',
     note:
       'CONTROL: playing near seek target. GLASS(parent): if player chrome/timeline drawn on MiSTer, ' +
-      'score chrome res (529x240 present). Playwright cannot verify overlay pixels.',
+      'score chrome res. Rows: parent-proven vertical ceiling on c5382bee — not suite. ' +
+      'Playwright cannot verify overlay/row pixels.',
     hold_ms: 2500,
   });
 
@@ -2719,15 +2721,31 @@ async function runTransitionScenarios(page, itemTitle, detailsUrl, _castAlreadyS
   );
   log(
     'BOUNDARY_PLAYWRIGHT: asserts Plex Web control-plane + :3005 session state only. ' +
-      'Does NOT prove video pixels, overlay resolution, judder, or lipsync. ' +
-      'Only parent HDMI-USB capture settles video claims. Present path 529x240 only. ' +
-      'PLXD frames/presents/drops VOID on live RBF c5382bee (frames_done=bank_vsync). ' +
-      'No companion /status endpoint.'
+      'Does NOT prove video pixels, row coverage, overlay resolution, judder, or lipsync. ' +
+      'Only parent HDMI-USB capture settles video claims.'
+  );
+  // Fleet facts (parent-run glass, RBF c5382bee) — do not rebuild on retracted metrics.
+  log(
+    'FLEET_FACT vertical_row_ceiling=proven glass push_frame even/odd solid-field invert ' +
+      'std=0 store_y=py*2 odd_rows_absent (50% rows never reach display). ' +
+      'horizontal_529_of_640=arithmetic_only_NOT_glass_proven. ' +
+      'clk_sys=20MHz class (20e6/60/524=636<640).'
+  );
+  log(
+    'FLEET_FACT field_derivations: ' +
+      'frames_done=PLXD[63:48]=vsync_count_not_swaps (void video; stale-detector blind). ' +
+      'presents=ARM_call_returned_not_display. ' +
+      'drops=ARM_supply_not_display. ' +
+      'unaccounted=residual_printed_twice (media_player.cpp) residual≡publish_misses. ' +
+      'p_ge50_and_acf_lag1=one_series_WITHDRAWN_as_two_instruments. ' +
+      'E2E_PLXD_FRAMES_VOID=1 default — suite never PASSes on those fields.'
   );
   log(
     'GLASS_PAIR: watch GLASS_EXPECT/GLASS_JOIN + PAUSE_OVERLAY_WINDOW_* wall_ms; ' +
       'defect_hint=pause_overlay_low_res|play_timeline_overlay_low_res. ' +
-      'E2E_GLASS_HOLD=1 to block suite during hold_ms for concurrent capture.'
+      'After w-geom T7 (unique rows 240→480) parent re-runs solid-field card — suite does not. ' +
+      'E2E_GLASS_HOLD=1 to block suite during hold_ms for concurrent capture. ' +
+      'No companion /status endpoint.'
   );
   if (cfg.liveConf) log(`E2E_LIVE_CONF=${cfg.liveConf}`);
   if (cfg.liveDaemonId) log(`E2E_LIVE_DAEMON_ID=${cfg.liveDaemonId}`);

@@ -5,7 +5,9 @@
  * Timeline advance alone is blind to display-side gaps. Parent ERROR 18/19
  * frame-loss % claims were WITHDRAWN (capture sampling margin); this gate still
  * flags large counter discontinuities when a capture is scored — not a claim
- * that 1.54% was measured.
+ * that 1.54% was measured. Parent vertical row ceiling (odd rows absent) is a
+ * separate glass fact; this scorer does not measure row coverage.
+ * drops/presents are ARM-derived (not display) — never treat as glass truth.
  *
  * Input: ordered counter values n (source frame index burned into fixtures),
  * typically from tools/hdmi_motion_instrument.py JSON `reads[].n` (status=ok).

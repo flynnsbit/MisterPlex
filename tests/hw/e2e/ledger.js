@@ -6,15 +6,22 @@
  * Daemon emits (1 Hz media line + /player/telemetry when deployed):
  *   frames presents drops publish_misses residual lifetime_* session=
  *
- * LIVE RBF c5382bee (parent, 2026-08): ddr_frame_store packs bank_vsync_count into
- * the ARM-visible frames_done field. Until a new RBF lands, PLXD-derived
- * frames/presents/drops residual identity is VOID as video evidence
- * (E2E_PLXD_FRAMES_VOID=1 default). Suite still uses telemetry for pid/exe/
- * session/playing — never frames_done as proof of correct video.
+ * LIVE RBF c5382bee field derivations (parent fleet; name+derivation required):
+ *   frames_done  = PLXD[63:48] = vsync counter, NOT bank swaps
+ *                  (stale-detector blind: freeze looks "live")
+ *   presents     = ARM publish/present call returned, NOT glass
+ *   drops        = ARM-supply accounting, NOT display
+ *   residual     = frames - presents - drops (ARM identity)
+ *   unaccounted  = residual printed twice (media_player.cpp) ≡ publish_misses
+ * Until a new RBF lands, residual/presents/drops/frames_done are VOID as video
+ * evidence (E2E_PLXD_FRAMES_VOID=1 default). Suite gates pid/exe/session/playing only.
  *
  * session must not change mid-cycle during continuous play (daemon self-exit
  * respawn resets counters — false pass without this check).
  * Companion has NO /status endpoint — only /resources, timeline, telemetry.
+ *
+ * Glass vertical row ceiling (parent push_frame even/odd solid invert, std=0) is
+ * NOT observed by any ledger field — only HDMI capture.
  */
 
 const http = require('http');

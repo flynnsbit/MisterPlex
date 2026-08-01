@@ -96,10 +96,11 @@ function glassSeeSummary(exp) {
     case 'pause_overlay':
       // User defect: player chrome/timeline on MiSTer is very low-res when paused.
       // Suite asserts control-plane paused; PARENT scores chrome resolution on glass.
-      // Present path is 529x240 only — do not expect fine UI detail.
-      return 'frozen_frame+player_chrome_timeline_visible_on_glass_score_chrome_res_parent_529x240_only';
+      // Vertical row ceiling (odd rows absent, store_y=py*2) is parent glass fact —
+      // not scored here. Horizontal unique cols are arithmetic-only until glass-proven.
+      return 'frozen_frame+player_chrome_timeline_visible_score_chrome_res_parent_rows_parent_only';
     case 'play_chrome':
-      return 'motion_or_frame+timeline_chrome_if_shown_score_res_parent';
+      return 'motion_or_frame+timeline_chrome_if_shown_score_res_parent_not_rows';
     case 'idle_logo':
       return 'static_Plex_logo_IDLE_SCREEN_no_playback_chrome';
     case 'seek_discontinuity':
