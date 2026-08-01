@@ -1344,3 +1344,49 @@ Full CITED/NOT-FOUND table: `.agent-work/w-avsync/observability-boundary.md`.
 **Falsifier:** A/B `rptr` Δ ≈ 22464 B (117 ms × 192000 B/s) at same handoff tag **supports** ring-phase track; **identical** snaps + HDMI sep 117 **kills** MrAudio-visible state → look past SPI / video `frames_done` lag / out-of-repo driver.
 
 Hold still dumps content t=0; origin not rebased mid-play; hold **not** 117 ms cause (parent).
+
+## SESSION-LATCHED device defect (parent 2026-07-31)
+
+Parent: one 360 s playback, three back-to-back HDMI captures (instrument confound test).
+
+| capture | window | median offset | n_pairs |
+|---------|--------|---------------|---------|
+| 1 | ~12–112 s | −293.33 | 99 |
+| 2 | ~148–248 s | −296.00 | 99 |
+| 3 | ~284–360 s | −292.67 | 74 |
+
+Within-session spread **3.33 ms** vs between-cluster sep **116.89 ms** (ratio 35×).  
+Pre-registered &lt;30 ms = SESSION-LATCHED. **VERDICT: SESSION-LATCHED, DEVICE CONFIRMED.**
+
+First flash/beep pair already fully separates clusters (A −286.00 vs B −171.08, sep 114.92 ms, n=15, zero overlap). State latched by ~1.4 s, stable for the session.
+
+Common-mode: first-10 s median is 20–40 ms less negative than last-60 s in **both** clusters (~25 ms startup transient). Short captures are biased vs long ones; cannot explain 117 ms.
+
+### Host analyzer for post-deploy handoff snaps
+
+```bash
+# After parent deploys instrumented misterplexd and runs opposite-cluster casts:
+python3 tools/analyze_mraudio_handoff.py \
+  --log-pair /path/runA_daemon.log /path/runB_daemon.log \
+  --where audio_release --json-out handoff_ab.json
+# true rc: 0 analyzed, 2 P-RPTR/P-FDONE REJECTED, 77 no snaps
+```
+
+Pre-registered:
+- **P-RPTR:** |Δrptr| or |Δwptr| ∈ 22483 B ±20% with |Δlen| ≤ 5 ms → ring phase tracks cluster.
+- **P-RPTR kill:** snaps identical (Δptr≤64 B, len match) while HDMI sep stays ~117 → MrAudio-visible state dead.
+- **P-FDONE:** |Δ(frames_done lag release→present)| ∈ {6,7,8} → video multi-frame lag candidate  
+  (7 × T_disp, T_disp = 638×524/20e6 = **16.715600 ms**, 7× = **117.009200 ms** — arithmetic only until measured).
+
+### Video swap path (source — not a cause claim)
+
+```verilog
+// ddr_frame_store.sv:271-284 — swap only on vsync when pending ready
+if (vsync_pulse && swap_pending && pending_ready_s2) begin
+    ...
+    frames_done <= frames_done + 16'd1;
+```
+
+No RTL bistable “0 vs 7 frames.” First picture can still lag gate-open by N display periods if prep/pending_ready is late. **Measure** frames_done on `handoff_at=` lines; do not assume N.
+
+Unit: `tests/unit/test_analyze_mraudio_handoff.sh` (self-test + pair/empty/identical).

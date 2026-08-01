@@ -116,3 +116,12 @@ Hold duration is **not** the 117 ms cluster discriminator (parent Δheld_ms=5).
 2. **No cited ~117 ms audio period**; cited sample period is **20.833 µs**.  
 3. **Readable leftover:** absolute `rptr/wptr`, `comp`, `frames_done`, early trajectory — now logged.  
 4. **Cheapest falsifier:** parent A/B grep of `handoff_at=` + `early_traj` vs HDMI cluster label.
+
+---
+
+## Parent update absorbed: SESSION-LATCHED (2026-07-31)
+
+Three captures inside one 360 s session: medians −293.33 / −296.00 / −292.67 (spread 3.33 ms).  
+Between-cluster sep ~117 ms. **Device defect confirmed; instrument confounds killed.**
+
+Analyzer: `tools/analyze_mraudio_handoff.py` scores P-RPTR and P-FDONE on handoff logs.
