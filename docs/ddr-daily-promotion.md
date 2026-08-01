@@ -3,6 +3,66 @@
 Parent-owned device work only. Agents produce artifacts and commands; they must
 **not** SSH to `192.168.1.183`, deploy, cast, or capture HDMI.
 
+## Glass status (parent 2026-08-01)
+
+| Core | Status |
+|------|--------|
+| `8fdf440f` | **Deployed**; 240-row ceiling cleared (row-alt 1.82→58.89); 480p ledger closed `frames=presents drops=0`; conf `7f06132f` / ini `ab8398d6` byte-identical |
+| `78eff44e` / `c5382bee` | LAB-NOT-DAILY (240-row and/or STALE-blind) — bak present for rollback |
+| SPI `Plex_v2.rbf` `dfebf2bf` | one-step SPI undo |
+
+## Mutation-proven gates (host: `bash tests/unit/test_promote_runbook_mutations.sh`)
+
+| Check | Failure it catches | Mutation | rc before (broken) | rc after (fixed) |
+|-------|-------------------|----------|--------------------:|-----------------:|
+| Liveness HTTP | Dead daemon / no `/resources` | empty or `000` code | **0** (`wget\|head` lie) | **4** / **7** |
+| `n_daemon==1` | Dead or dual daemon | `n=0` into `deploy_assert_postconditions` | would continue | **3** |
+| Geometry | Soft-skip treated as PASS | `geo_rc=77` + require | **0** (`\|\| true`) | **78** |
+| Restore live md5 | Rollback without verifying binary | live≠expect | **0** (`md5sum\|\|true`) | **5** |
+| Restore conf | Conf rewritten on rollback | conf live≠bak | **0** | **7** |
+| Two-roots | Silent v1 `DECODE=320x240` | install conf missing + foreign exists | silent adopt | **12** |
+| Conf/ini byte-exact | USER-OWNED rewrite | ini md5 mismatch | n/a | **7** |
+| Session telemetry | Vacuous PASS without play | `SESSION_ESTABLISHED=0` | would PASS | **77 UNSCORED** |
+| Session drops | Closed ledger | `drops=2` | n/a | **1** |
+| Menu bounce | Bare `menu.rbf` no-op | `promotion_menu_bounce_cmd` | silent no-op | full path only |
+
+Also: `bash tests/unit/test_deploy_misterplexd.sh` (62 checks) — green DEPLOY_OK⇒rc0; red no DEPLOY_OK.
+
+### Parent commands (device)
+
+```bash
+# Preflight user state (conf+ini)
+OUT=./build/user-state-$(date -u +%Y%m%dT%H%M%SZ) USER_STATE_EXECUTE=1 \
+  ./scripts/user_state_snapshot.sh snapshot; echo "true rc=$?"
+
+# Two-roots (must be rc=0 before promote)
+PREFLIGHT_EXECUTE=1 ./scripts/two_roots_preflight.sh check; echo "true rc=$?"
+
+# Daemon deploy (live /proc/exe + n_daemon + HTTP; geometry skip ≠ PASS)
+DEPLOY_SKIP_BOOT_HOOK=0 ./scripts/deploy_misterplexd.sh /path/to/misterplexd
+echo "true rc=$?"   # DEPLOY_OK only if rc=0
+
+# ONE menu bounce (full paths — bare menu.rbf silently does nothing)
+# write to device /dev/MiSTer_cmd:
+#   load_core /media/fat/menu.rbf
+#   sleep 6
+#   load_core /media/fat/_Utility/Plex.rbf
+DEPLOY_LOAD=menu ./scripts/deploy_plex_core.sh   # preferred; one bounce
+
+# Post-promotion session (UNSCORED if no play window)
+# after a real cast/play, from device log or env:
+DELIVERY_VERIFIED=1 MEASURED_DELIVERY=624x480 DROPS=0 UNACCOUNTED=0 \
+  VFPS=23.9706 SOURCE_FPS=23.97 SESSION_ESTABLISHED=1 \
+  ./scripts/promotion_session_verify.sh; echo "true rc=$?"
+
+# Restore postcond host check (after parent rollback)
+RESTORE_POST_N=1 RESTORE_POST_LIVE_MD5=<pin> RESTORE_POST_EXPECT_DAEMON=<pin> \
+  RESTORE_POST_HTTP=200 RESTORE_POST_CONF_LIVE=7f06132f RESTORE_POST_CONF_EXPECT=7f06132f \
+  RESTORE_POST_INI_LIVE=ab8398d6 RESTORE_POST_INI_EXPECT=ab8398d6 \
+  ./scripts/restore_misterplexd_prev.sh verify-post; echo "true rc=$?"
+```
+
+Daemon install-root bind (refuse silent v1 conf): `w-480-delivery` @ `1fa15ec8`.
 
 ## Deploy rc contract (parent 2026-08-01 false-negative)
 

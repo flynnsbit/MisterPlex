@@ -36,13 +36,24 @@ RBF_DO_NOT_SHIP_PREFIX8=(
 # bank_vsync_count — PLXD STALE detector at fpga_spi.cpp:1388-1394 cannot fire on
 # frozen swaps (playback-freeze class). Horizontal 529/640 is arithmetic-only (clk_sys
 # 20 MHz) — NOT pixel-proven; do not overclaim.
+# 78eff44e: parent still measured 240-row ceiling on glass (pre-8fdf440f).
 RBF_LAB_NOT_DAILY_PREFIX8=(
   c5382bee
+  78eff44e
 )
 
 # Known-good pins (prefix8 or full). Used by promotion/rollback docs+gates.
 RBF_PIN_V2_DAILY_FULL=dfebf2bfd08dd70b473b587dd7e81848
-RBF_PIN_DDR_CANDIDATE_FULL=c5382bee73cecdee8220b811e529c297
+# Parent 2026-08-01 glass A/B: 8fdf440f cleared 240-row ceiling (row alt 1.82→58.89);
+# 480p ledger closed frames=presents drops=0. Full md5 filled when parent pins it.
+RBF_PIN_DDR_GLASS_OK_PREFIX8=8fdf440f
+RBF_PIN_DDR_GLASS_OK_FULL="${RBF_PIN_DDR_GLASS_OK_FULL:-8fdf440f}"
+# Historical lab pin (still in pair matrix / unit fixtures). NOT daily-ready.
+RBF_PIN_DDR_C5382_FULL=c5382bee73cecdee8220b811e529c297
+# Back-compat alias used by older gates/tests as "DDR lab candidate" (= c5382).
+RBF_PIN_DDR_CANDIDATE_FULL="${RBF_PIN_DDR_CANDIDATE_FULL:-$RBF_PIN_DDR_C5382_FULL}"
+# Daily promote default expect (parent glass-ok). Override with PROMOTE_EXPECT_CORE_MD5.
+RBF_PIN_DDR_PROMOTE_FULL="${RBF_PIN_DDR_PROMOTE_FULL:-$RBF_PIN_DDR_GLASS_OK_FULL}"
 DAEMON_PIN_V2_HYBRID_FULL=50f4eb925de10e29172999a565c87684
 DAEMON_PIN_V2_RELEASE_FULL=7cd10b4d438c714a9b8c4766dc982d59
 # DDR daemon pin chain (do NOT weaken mixed-pair gate):
@@ -271,9 +282,10 @@ rbf_policy_daily_promote_ready() {
       cat <<EOF
 DAILY_PROMOTE_READY=NO core_p8=$p8
 BLOCKER vertical_240_row_ceiling: store_y=py*2 even-only; 50% rows absent (parent push_frame --ddr card; std=0.00 solid invert)
-BLOCKER frames_done_vsync_STALE_blind: fpga_spi.cpp:1388-1394 cannot detect frozen swaps on c5382bee
+BLOCKER frames_done_vsync_STALE_blind: fpga_spi.cpp:1388-1394 cannot detect frozen swaps on c5382bee-class
 BLOCKER ledger_not_display: drops/unaccounted/publish_misses are ARM-supply; no FPGA observe field
 SCOPE_LIMIT horizontal_529of640 arithmetic_only_not_pixel_proven clk_sys=20MHz
+NOTE glass_ok_candidate_prefix8=${RBF_PIN_DDR_GLASS_OK_PREFIX8:-8fdf440f} (parent A/B 2026-08-01)
 OVERRIDE PROMOTE_ALLOW_KNOWN_DEFECTS=1 (parent+user only; still requires viewed pixels)
 EOF
       return 11
@@ -285,5 +297,8 @@ EOF
     return 1
   fi
   echo "DAILY_PROMOTE_READY=YES core_p8=$p8"
+  if [ "$p8" = "${RBF_PIN_DDR_GLASS_OK_PREFIX8:-8fdf440f}" ]; then
+    echo "NOTE parent_glass_ab_ok=1 row_alt_1.82_to_58.89 ledger_closed=1 (still run promotion_session_verify)"
+  fi
   return 0
 }

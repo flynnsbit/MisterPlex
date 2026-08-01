@@ -788,19 +788,41 @@ if [[ "${DEPLOY_SKIP_BOOT_HOOK:-0}" != "1" ]]; then
   report_rc "boot_hook" "$hook_rc" || die "boot hook install failed (rc=$hook_rc)"
 fi
 
+# Geometry: soft-skip (77) is NEVER evidence of success (parent :86 swallow bug).
+# Default: 77 blocks DEPLOY_OK (exit 78) so a dead/unprobeable core cannot look green.
+# Opt-out only: DEPLOY_SKIP_GEOMETRY_GATE=1 (unit fakes) or DEPLOY_ALLOW_GEOMETRY_SKIP=1.
 if [[ "$DEPLOY_SKIP_GEOMETRY_GATE" != "1" && -z "${DEPLOY_SSHM:-}" ]]; then
   set +e
   "$ROOT/scripts/check_core_conf_geometry.sh"
   geo_rc=$?
   set -e
-  case "$geo_rc" in
-    0) echo "core_conf_geometry: PASS"; report_rc "core_conf_geometry" 0 ;;
-    77) echo "core_conf_geometry: SKIP-NOT-PASS (rc=77)" >&2; report_rc "core_conf_geometry_skip" 77 || true ;;
-    *)
-      echo "core_conf_geometry: FAIL rc=$geo_rc" >&2
-      report_rc "core_conf_geometry" "$geo_rc" || exit "$geo_rc"
-      ;;
-  esac
+  require_geo=1
+  if [[ "${DEPLOY_ALLOW_GEOMETRY_SKIP:-0}" == "1" ]]; then
+    require_geo=0
+  fi
+  if [[ "${DEPLOY_REQUIRE_GEOMETRY:-1}" == "0" ]]; then
+    require_geo=0
+  fi
+  set +e
+  deploy_geometry_gate_rc "$geo_rc" "$require_geo"
+  geo_final=$?
+  set -e
+  report_rc "core_conf_geometry" "$geo_final" || {
+    echo "FAIL deploy: geometry gate rc=$geo_final — refusing DEPLOY_OK" >&2
+    echo "true rc=$geo_final"
+    exit "$geo_final"
+  }
+elif [[ -n "${DEPLOY_SSHM:-}" && "${DEPLOY_FAKE_GEO_RC:-}" != "" ]]; then
+  # Unit injection: geometry rc under fake SSH path.
+  set +e
+  deploy_geometry_gate_rc "${DEPLOY_FAKE_GEO_RC}" "${DEPLOY_REQUIRE_GEOMETRY:-1}"
+  geo_final=$?
+  set -e
+  report_rc "core_conf_geometry" "$geo_final" || {
+    echo "FAIL deploy: geometry gate rc=$geo_final — refusing DEPLOY_OK" >&2
+    echo "true rc=$geo_final"
+    exit "$geo_final"
+  }
 fi
 
 # --- terminal success ONLY here (parent: DEPLOY_OK ⇒ rc must be 0) ------------

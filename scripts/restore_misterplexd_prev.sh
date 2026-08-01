@@ -30,10 +30,38 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 ROLLBACK="$ROOT/scripts/rollback_v2.sh"
+# shellcheck source=deploy_misterplexd_lib.sh
+source "$ROOT/scripts/deploy_misterplexd_lib.sh"
 
 if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
   sed -n '2,40p' "$0" | sed 's/^# \?//'
   exit 0
+fi
+
+# Host-only post-condition gate (mutation-tested). Inject observations:
+#   RESTORE_POST_N=1 RESTORE_POST_LIVE_MD5=... RESTORE_POST_EXPECT_DAEMON=...
+#   RESTORE_POST_HTTP=200 RESTORE_POST_CONF_LIVE=... RESTORE_POST_CONF_EXPECT=...
+#   RESTORE_POST_CORE_LIVE=... RESTORE_POST_CORE_EXPECT=...
+#   RESTORE_POST_INI_LIVE=... RESTORE_POST_INI_EXPECT=...
+#   scripts/restore_misterplexd_prev.sh verify-post
+# Old bug: `md5sum a b || true` discarded mismatch — this path never uses || true.
+if [[ "${1:-}" == "verify-post" ]]; then
+  set +e
+  restore_assert_postconditions \
+    "${RESTORE_POST_N:-}" \
+    "${RESTORE_POST_LIVE_MD5:-}" \
+    "${RESTORE_POST_EXPECT_DAEMON:-}" \
+    "${RESTORE_POST_HTTP:-}" \
+    "${RESTORE_POST_CONF_LIVE:-}" \
+    "${RESTORE_POST_CONF_EXPECT:-}" \
+    "${RESTORE_POST_CORE_LIVE:-}" \
+    "${RESTORE_POST_CORE_EXPECT:-}" \
+    "${RESTORE_POST_INI_LIVE:-}" \
+    "${RESTORE_POST_INI_EXPECT:-}"
+  rc=$?
+  set -e
+  echo "restore verify-post true rc=$rc"
+  exit "$rc"
 fi
 
 # Permanently refuse the old half-restore path (even if someone sets a flag).
@@ -62,6 +90,11 @@ Atomic restore (post-conditions enforced by rollback_v2.sh):
     ROLLBACK_DAEMON=artifacts/daemon-pins/misterplexd.50f4eb92 \
     PAIR_IDLE_PNG=/path/to/idle.png \
     scripts/restore_misterplexd_prev.sh
+
+  # Host postcond only (no device):
+  RESTORE_POST_N=1 RESTORE_POST_LIVE_MD5=abc RESTORE_POST_EXPECT_DAEMON=abc \
+    RESTORE_POST_HTTP=200 RESTORE_POST_CONF_LIVE=x RESTORE_POST_CONF_EXPECT=x \
+    scripts/restore_misterplexd_prev.sh verify-post
 
   # Plan only (no device):
   PAIR_ID=ddr-c5382bee scripts/rollback_v2.sh plan

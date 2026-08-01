@@ -30,36 +30,46 @@ fi
 #   DDR 480p-capable YUV layout → 0x30080000
 # A mixed pair is a silent geometry mismatch (release.md lab stable pair).
 #
-# PRIMARY promote target:
-#   ddr-c5382bee = core c5382bee + daemon 3883f5ab (resolve) + conf ddr + bank1 0x30080000
-# Documented DDR rollbacks (same core+conf profile+bank1):
-#   ddr-c5382bee-b981fd20, ddr-c5382bee-edc3a46b, ddr-c5382bee-e9f79de2
+# PRIMARY promote target (parent glass A/B 2026-08-01):
+#   ddr-8fdf440f = core 8fdf440f (240-row fixed) + live DDR daemon + conf ddr + bank1 0x30080000
+# Historical LAB pairs (c5382bee) kept for bak rollback only — not daily-ready.
 PAIR_BANK1_SPI=0x30040000
 PAIR_BANK1_DDR=0x30080000
 _PAIR_DDR_DAEMON="$(rbf_policy_resolve_ddr_daemon_full)"
+_PAIR_C5382="${RBF_PIN_DDR_C5382_FULL:-c5382bee73cecdee8220b811e529c297}"
+_PAIR_GLASS="${RBF_PIN_DDR_GLASS_OK_PREFIX8:-8fdf440f}"
 PAIR_MATRIX_ROWS=(
   "${RBF_PIN_V2_DAILY_FULL}|${DAEMON_PIN_V2_HYBRID_FULL}|${DEVICE_CORE_V2_DAILY}|spi|spi-v2-hybrid|spi|${PAIR_BANK1_SPI}"
   "${RBF_PIN_V2_DAILY_FULL}|${DAEMON_PIN_V2_RELEASE_FULL}|${DEVICE_CORE_V2_DAILY}|spi|spi-v2-release|spi|${PAIR_BANK1_SPI}"
-  "${RBF_PIN_DDR_CANDIDATE_FULL}|${_PAIR_DDR_DAEMON}|${DEVICE_CORE_PRODUCT}|ddr|ddr-c5382bee|ddr|${PAIR_BANK1_DDR}"
-  "${RBF_PIN_DDR_CANDIDATE_FULL}|${DAEMON_PIN_DDR_3883F5AB_FULL}|${DEVICE_CORE_PRODUCT}|ddr|ddr-c5382bee-3883f5ab|ddr|${PAIR_BANK1_DDR}"
-  "${RBF_PIN_DDR_CANDIDATE_FULL}|${DAEMON_PIN_DDR_36B89BCB_FULL}|${DEVICE_CORE_PRODUCT}|ddr|ddr-c5382bee-36b89bcb|ddr|${PAIR_BANK1_DDR}"
-  # parent live after push_frame --ddr raster card restore 2026-08-01 (prefix8; full pin optional)
-  "${RBF_PIN_DDR_CANDIDATE_FULL}|${DAEMON_PIN_DDR_7C991E47_PREFIX8}|${DEVICE_CORE_PRODUCT}|ddr|ddr-c5382bee-7c991e47|ddr|${PAIR_BANK1_DDR}"
-  "${RBF_PIN_DDR_CANDIDATE_FULL}|${DAEMON_PIN_DDR_B981_FULL}|${DEVICE_CORE_PRODUCT}|ddr|ddr-c5382bee-b981fd20|ddr|${PAIR_BANK1_DDR}"
-  "${RBF_PIN_DDR_CANDIDATE_FULL}|${DAEMON_PIN_DDR_EDC3_FULL}|${DEVICE_CORE_PRODUCT}|ddr|ddr-c5382bee-edc3a46b|ddr|${PAIR_BANK1_DDR}"
-  "${RBF_PIN_DDR_CANDIDATE_FULL}|${DAEMON_PIN_DDR_E9F79DE2_FULL}|${DEVICE_CORE_PRODUCT}|ddr|ddr-c5382bee-e9f79de2|ddr|${PAIR_BANK1_DDR}"
+  # Glass-OK product core (daily promote candidate)
+  "${_PAIR_GLASS}|${_PAIR_DDR_DAEMON}|${DEVICE_CORE_PRODUCT}|ddr|ddr-8fdf440f|ddr|${PAIR_BANK1_DDR}"
+  "${_PAIR_GLASS}|${DAEMON_PIN_DDR_3883F5AB_FULL}|${DEVICE_CORE_PRODUCT}|ddr|ddr-8fdf440f-3883f5ab|ddr|${PAIR_BANK1_DDR}"
+  "${_PAIR_GLASS}|${DAEMON_PIN_DDR_36B89BCB_FULL}|${DEVICE_CORE_PRODUCT}|ddr|ddr-8fdf440f-36b89bcb|ddr|${PAIR_BANK1_DDR}"
+  "${_PAIR_GLASS}|${DAEMON_PIN_DDR_7C991E47_PREFIX8}|${DEVICE_CORE_PRODUCT}|ddr|ddr-8fdf440f-7c991e47|ddr|${PAIR_BANK1_DDR}"
+  "${_PAIR_GLASS}|${DAEMON_PIN_DDR_B981_FULL}|${DEVICE_CORE_PRODUCT}|ddr|ddr-8fdf440f-b981fd20|ddr|${PAIR_BANK1_DDR}"
+  "${_PAIR_GLASS}|${DAEMON_PIN_DDR_EDC3_FULL}|${DEVICE_CORE_PRODUCT}|ddr|ddr-8fdf440f-edc3a46b|ddr|${PAIR_BANK1_DDR}"
+  "${_PAIR_GLASS}|${DAEMON_PIN_DDR_E9F79DE2_FULL}|${DEVICE_CORE_PRODUCT}|ddr|ddr-8fdf440f-e9f79de2|ddr|${PAIR_BANK1_DDR}"
+  # c5382bee historical (lab bak only)
+  "${_PAIR_C5382}|${_PAIR_DDR_DAEMON}|${DEVICE_CORE_PRODUCT}|ddr|ddr-c5382bee|ddr|${PAIR_BANK1_DDR}"
+  "${_PAIR_C5382}|${DAEMON_PIN_DDR_3883F5AB_FULL}|${DEVICE_CORE_PRODUCT}|ddr|ddr-c5382bee-3883f5ab|ddr|${PAIR_BANK1_DDR}"
+  "${_PAIR_C5382}|${DAEMON_PIN_DDR_36B89BCB_FULL}|${DEVICE_CORE_PRODUCT}|ddr|ddr-c5382bee-36b89bcb|ddr|${PAIR_BANK1_DDR}"
+  "${_PAIR_C5382}|${DAEMON_PIN_DDR_7C991E47_PREFIX8}|${DEVICE_CORE_PRODUCT}|ddr|ddr-c5382bee-7c991e47|ddr|${PAIR_BANK1_DDR}"
+  "${_PAIR_C5382}|${DAEMON_PIN_DDR_B981_FULL}|${DEVICE_CORE_PRODUCT}|ddr|ddr-c5382bee-b981fd20|ddr|${PAIR_BANK1_DDR}"
+  "${_PAIR_C5382}|${DAEMON_PIN_DDR_EDC3_FULL}|${DEVICE_CORE_PRODUCT}|ddr|ddr-c5382bee-edc3a46b|ddr|${PAIR_BANK1_DDR}"
+  "${_PAIR_C5382}|${DAEMON_PIN_DDR_E9F79DE2_FULL}|${DEVICE_CORE_PRODUCT}|ddr|ddr-c5382bee-e9f79de2|ddr|${PAIR_BANK1_DDR}"
 )
 
 # Default rollback target pair id. Prefer SPI hybrid as the named "daily" undo
-# unless operator sets PAIR_ID=ddr-c5382bee (primary recovery when DDR is live).
+# unless operator sets PAIR_ID=ddr-8fdf440f (primary recovery when DDR is live).
 PAIR_ID_SPI_HYBRID=spi-v2-hybrid
 PAIR_ID_SPI_RELEASE=spi-v2-release
+PAIR_ID_DDR_GLASS=ddr-8fdf440f
 PAIR_ID_DDR_C5382=ddr-c5382bee
 PAIR_ID_DDR_B981=ddr-c5382bee-b981fd20
 PAIR_ID_DDR_EDC3=ddr-c5382bee-edc3a46b
 PAIR_ID_DDR_HIST=ddr-c5382bee-e9f79de2
 PAIR_DEFAULT_ROLLBACK="${PAIR_DEFAULT_ROLLBACK:-$PAIR_ID_SPI_HYBRID}"
-PAIR_DEFAULT_PROMOTE="${PAIR_DEFAULT_PROMOTE:-$PAIR_ID_DDR_C5382}"
+PAIR_DEFAULT_PROMOTE="${PAIR_DEFAULT_PROMOTE:-$PAIR_ID_DDR_GLASS}"
 
 # Idle visual envelopes (parent HDMI, 2026-07-31):
 #   good orange Plex chevron idle: mean ~38.5

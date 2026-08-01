@@ -33,18 +33,20 @@ set -e
 echo "lab-ship c5382 true rc=$grc"
 [[ "$grc" -eq 0 ]] && pass lab-ok || fail lab-ok "rc=$grc"
 
-# promote stage refuses without override
+# promote stage: force LAB-NOT-DAILY core → refuse rc=11 without override
 set +e
-out=$(PROMOTE_EXECUTE=0 "$ROOT/scripts/promote_ddr_daily.sh" stage 2>&1); prc=$?
+out=$(PROMOTE_EXPECT_CORE_MD5=c5382bee73cecdee8220b811e529c297 \
+  PROMOTE_EXECUTE=0 "$ROOT/scripts/promote_ddr_daily.sh" stage 2>&1); prc=$?
 set -e
-echo "promote stage true rc=$prc"
+echo "promote stage c5382 true rc=$prc"
 echo "$out" | tail -15
 [[ "$prc" -eq 11 ]] && pass stage-refuse || fail stage-refuse "rc=$prc"
 echo "$out" | grep -q REFUSE_DAILY_PROMOTE && pass stage-msg || fail stage-msg missing
 
 # override opens gate path past ready (may fail later on missing artifacts — not rc=11)
 set +e
-out=$(PROMOTE_ALLOW_KNOWN_DEFECTS=1 PROMOTE_EXECUTE=0 "$ROOT/scripts/promote_ddr_daily.sh" stage 2>&1); orc=$?
+out=$(PROMOTE_EXPECT_CORE_MD5=c5382bee73cecdee8220b811e529c297 \
+  PROMOTE_ALLOW_KNOWN_DEFECTS=1 PROMOTE_EXECUTE=0 "$ROOT/scripts/promote_ddr_daily.sh" stage 2>&1); orc=$?
 set -e
 echo "promote stage override true rc=$orc"
 echo "$out" | tail -10
@@ -60,6 +62,22 @@ set -e
 echo "pair 7c991e47 true rc=$prc"
 echo "$pout"
 [[ "$prc" -eq 0 ]] && pass pair-7c99 || fail pair-7c99 "rc=$prc"
+
+# Parent glass A/B: 8fdf440f is daily-promote READY=YES (still needs session verify)
+set +e
+out=$(rbf_policy_daily_promote_ready 8fdf440f 2>&1); grc=$?
+set -e
+echo "8fdf440f daily_ready true rc=$grc"
+echo "$out"
+[[ "$grc" -eq 0 ]] && pass glass-ok-ready-yes || fail glass-ok-ready-yes "rc=$grc"
+echo "$out" | grep -q 'DAILY_PROMOTE_READY=YES' && pass glass-ok-msg || fail glass-ok-msg missing
+
+# 78eff44e still LAB-NOT-DAILY
+set +e
+out=$(rbf_policy_daily_promote_ready 78eff44e 2>&1); erc=$?
+set -e
+echo "78eff44e daily_ready true rc=$erc"
+[[ "$erc" -eq 11 ]] && pass pre-fix-still-no || fail pre-fix-still-no "rc=$erc"
 
 echo "=== summary pass=$PASS fail=$FAIL ==="
 [[ "$FAIL" -eq 0 ]]
