@@ -1313,3 +1313,17 @@ if(!len[18:10]) hurryup <= 0;
 1. Log **first N** `len`/lat samples with `mono_ms` for cluster A vs B (depth **trajectory** at open, not only steady 100 ms) — if identical through first 500 ms, ring depth path is weaker as discriminator.
 2. Keep using **HDMI instrument Δ** as ground truth; do not promote `av_drift_ms` or origin-record equality into “in sync”.
 3. Do **not** treat hold redesign as the 117 ms fix (measurement already killed that).
+
+### w-geom FPGA path source (117 ms clusters)
+
+Full note: `.agent-work/w-geom/fpga-av-path-117ms.md` (source-only; no fit).
+
+| Q | Answer (bounded) |
+|---|------------------|
+| Daemon control ends | `::write(/dev/MrAudio)` — after that kernel ring + `sys/alsa.sv` NCO + `audio_out` + HDMI |
+| FPGA audio two-state @ ~117 ms? | **NO** in `alsa.sv`: free-run sample period **20.833 µs**; `got_first` snap is one-shot variable discard; `hurryup` is rate bend; `audio_out` `a_en2` mute ≈**170.7 ms after reset only**. Correct negative. |
+| Video multi-frame present? | Swap only on `vsync_pulse && swap_pending && pending_ready_s2` (`ddr_frame_store.sv`). 1×60 Hz=16.7 ms; **7×60 Hz=116.67 ms ≈ parent sep** (numerology, not a coded bistable). First picture can lag gate-open by N display frames. |
+| Observe | PLXD **`0x300FF128`**: `frames_done[63:48]`; measure **Δ(audio_release → first frames_done++)** across clusters. No DDR audio-phase reg. MrAudio `rptr/len` only. F2 `stat_has_audio` is **not** MrAudio. |
+
+Kernel `MiSTer-audio-spi.c` is **not in this repo** — still an unexamined layer between `write()` and `alsa.sv`.
+

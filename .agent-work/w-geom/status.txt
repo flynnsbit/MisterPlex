@@ -1,46 +1,21 @@
-w-geom P5 residual + death sender + force-scale harden — FINAL
-branch: w-instr-motion-counter
-sha: a07163699ab8b7db9763fd7469fe66b9cae1b4b6
+worker=w-geom
+branch=w-integ-m0-p5-osd
+sha=1e01bb0bee4f143e9f8d0c8bd62ce470265cd5f7
+md5=239c6bc7f9dadfd68b2a6a9f93f35fd4
+make_unit_true_rc=0
+make_arm_plexd_true_rc=0
+artifact=.worktrees/w-integ-m0-p5-osd/build/arm/misterplexd
 
-# LOUD: P5 residual was ALREADY wired at 2e05d80c / prior binary 63094a7e
-# Live device line without residual = OLD binary still installed (865d4c8a era).
-# New line includes: presents= drops= publish_misses= residual= lifetime_* session=
+T1_FORCE_SCALE: Always pad=624:480; OUTPUT always 449280 for all table sources
+  including 624x352,640x480,720x480,704x396,odd dims. Aspect=decrease+black.
+B5: CLOSED arm rawPipeDesynced+ByteAligned+PHASE_DESYNC (not unit-only)
+B4: helper measured-only; FIXED consume — MEASURED_DELIVERY now prints
+  delivery_verified=1 basis=measured; 1Hz media line carries live flag
+  (play-time GEOM delivery_verified=0 is pre-measure, expected)
+B1: SETTLED N=2→S=224640; 640x480 REJECTED
+desync_risk: REAL (identity_skip && input_bytes!=reader); force⇒0 is correct
 
-# binary (install THIS)
-path: build/arm/misterplexd
-md5: e8f61b5a258b56883f36b7d69d33d68e
-make unit: true rc=0
-test_death_breadcrumb: true rc=0
-test_frame_ledger: true rc=0
+parent: md5sum live exe; after cast expect delivery_verified=1 on MEASURED_DELIVERY
+  and media: line once banners parse; MEASURED_OUTPUT 624x480 phase_desync=0
 
-# death breadcrumb (Addition 1)
-handler writes: si_code + si_code_name (SI_USER|SI_KERNEL|OTHER) + si_pid + si_uid
-  async-signal-safe open/write/close only
-supervisor (plexctl write_supervisor) AT DETECTION:
-  parses si_pid/si_code from death file
-  snapshots /proc/si_pid/cmdline + ppid chain into SUPERVISE_EXIT
-  (not at human read time — kills pid recycle race)
-
-# force-scale (Addition 2)
-CODE default ON always.
-DDR_YUV_FORCE_SCALE=0 WITHOUT DDR_YUV_FORCE_SCALE_LAB=1 → IGNORED + ERROR log.
-Only LAB=1 + FORCE=0 disables (WARN).
-library_media already NOT verified (deliveryGeometryVerifiedFromBasis measured-only).
-desync_risk: set when measured producer bytes ≠ reader under identity_skip;
-  with force-scale ON identity_skip=0 so desync_risk stays 0 while scale pins pipe.
-teardown already asserts totalBytes % frameBytes via rawPipeByteAligned + ERROR.
-
-# parent install
-ROOT=/media/fat/misterplex_v2
-# hand-copy build/arm/misterplexd; also refresh plexctl supervisor script if used
-# (scripts/plexctl.sh write_supervisor embeds SUPERVISE_EXIT sender snap)
-PID=$(pidof misterplexd | awk '{print $1}')
-md5sum $(readlink -f /proc/$PID/exe)  # expect e8f61b5a258b56883f36b7d69d33d68e
-
-# residual on promote line
-grep 'media: frames=' $ROOT/misterplexd.log | tail -3
-# expect: ... av_drift_ms=N presents=P drops=D publish_misses=M residual=R ...
-
-# after death
-cat $ROOT/misterplexd.death   # si_code_name=SI_USER si_pid=...
-tail -5 $ROOT/misterplexd_supervise.log   # sender_cmd= sender_chain=
+updated=2026-08-01T03:29:55Z
