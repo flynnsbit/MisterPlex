@@ -95,6 +95,16 @@ Next fit bar: TB RED on current shipping RTL, GREEN on this tip, elaborate-prove
 - Observe: MrAudio rptr/len/comp + PLXD 0x300FF128/12C first-advance
 - NO FIT · c5382bee undisturbed
 
+## Post-scale chrome plane (c) — paper design (NO FIT)
+- Doc: `docs/chrome-post-scale-plane-design.md`
+- Tap: AFTER ascal on clk_hdmi (sys_top), NOT present_core pre-ascal
+- Full 1920x1440 RGB565 BRAM = 4320 M10K — FAILS 88 free
+- Fits: banded DDR N=4..8 (12–24 M10K) and/or glyph ROM (2–10 M10K)
+- V_STORE=240 bypassed for chrome; content video still capped
+- Smallest increment: HW rect post-ascal (0 M10K) prove tap
+- Stale integ/fit4,fit5,rtl-consol (Jul 29): RETIRE as bases
+- Slot remains RELEASED / closed
+
 ## SESSION-LATCHED defect → concrete probe (post parent confirm)
 Parent: within-session HDMI spread 3.33 ms vs between-cluster ~117 ms; latched by first pair.
 Daemon was blind → added one-shot BIMODAL_LATCH lines (does not claim cause):
