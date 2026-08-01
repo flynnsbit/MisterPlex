@@ -1,3 +1,35 @@
+# S3 LEAD FALSIFIER — RUN THIS NEXT
+
+Full card: [`docs/AVSYNC_S3_LEAD_FALSIFIER.md`](AVSYNC_S3_LEAD_FALSIFIER.md)
+
+**Pre-register (publish hit/miss):**
+
+| LEAD | P_MEDIAN av_drift (S3) | H_REAL if stuck |
+|-----:|------------------------:|-----------------|
+| 20 | [−22, −12] | still [−40,−21] |
+| 40 | [−42, −28] | [−40,−21] |
+| 80 | [−82, −60] | still [−40,−21] |
+
+- Δ(20−40) ∈ [+12,+28] under S3  
+- **S3_CONFIRMED** → retire av_drift as accuracy; lipsync = HDMI flash↔beep only  
+- Fixture for HDMI: **rk=20** (not idle); flashes=0 → UNSCORED glass  
+
+```bash
+# Preferred: env (conf untouched). Banner must show env:N
+MISTERPLEX_AV_PRESENT_LEAD_MS=40|20|80   # restart daemon each arm
+
+# Per arm after cast rk=20:
+bash tools/avsync_capture_session_epoch.sh | tee epoch.txt
+ssh root@$HOST 'grep -E "av_drift_ms=|supply_bucket|session_epoch=" LOG | tail -400' > daemon_tail.txt
+# score:
+python3 tools/avsync_score_lead_s3.py --arm 20:L20/daemon_tail.txt --arm 40:L40/daemon_tail.txt --arm 80:L80/daemon_tail.txt
+echo "s3_score true rc=$?"
+```
+
+Conf key if env unavailable: `AV_PRESENT_LEAD_MS=` with bak+`cmp` restore — see S3 doc.
+
+---
+
 # PARENT CARD — lipsync GT + LEAD falsifier + +100 ms proof
 
 ## ≤10-line status
