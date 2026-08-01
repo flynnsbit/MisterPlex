@@ -923,6 +923,8 @@ int main(int argc, char** argv) {
                          static_cast<long long>(resolved.durationMs),
                          resolved.transcoded ? 1 : 0, base.c_str());
         }
+        // Transport chrome title (fills former empty black panel band).
+        player.setOverlayTitle(resolved.title);
 
         // Expected delivery geometry for identity-scale decisions:
         // - universal transcode: we *request* weakForPlay.videoResolution — NOT

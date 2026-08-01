@@ -749,22 +749,117 @@ bool MediaPlayer::publishDdrFrame(const DdrPublishFrame& frame, const char* cont
     return ok;
 }
 
+
+void MediaPlayer::rememberPauseFrame(const uint8_t* yuv, size_t len, const DdrFrameGeometry& g) {
+    if (!yuv || len == 0)
+        return;
+    std::lock_guard<std::mutex> lk(pauseLatchMu_);
+    pauseFrameLatch_.remember(yuv, len, g);
+}
+
+bool MediaPlayer::publishPausedOverlayFrame() {
+    // Composite transport chrome onto the last held F1 YUV (or studio black) and publish.
+    // pauseLatchMu_ is separate from presentMu_ (present paths may hold presentMu_).
+    // Every exit logs — silent early-return made Test B undiagnosable (grep found nothing).
+    const DdrFrameGeometry g = plex480pDdrFrameGeometry();
+    const int cw = g.coded_width.get();
+    const int ch = g.coded_height.get();
+    if (cw <= 0 || ch <= 0 || (cw & 1) || (ch & 1)) {
+        log("media: pause overlay skip bad geometry cw=" + std::to_string(cw) +
+            " ch=" + std::to_string(ch));
+        return false;
+    }
+    const DdrFrameLayout layout =
+        makeDdrFrameLayout(g, kDdrFramePhysBase, kDdrFrameStrideAlign, DdrFrameFormat::Yuv420p);
+    if (!ddrFrameLayoutValid(layout)) {
+        log("media: pause overlay skip invalid DDR layout");
+        return false;
+    }
+
+    std::vector<uint8_t> yuv(layout.frame_bytes);
+    bool usedLatch = false;
+    {
+        std::lock_guard<std::mutex> lk(pauseLatchMu_);
+        if (pauseFrameLatch_.haveFrame() &&
+            pauseFrameLatch_.frame().geometry().coded_width.get() == cw &&
+            pauseFrameLatch_.frame().geometry().coded_height.get() == ch &&
+            pauseFrameLatch_.frame().size() == layout.frame_bytes) {
+            std::memcpy(yuv.data(), pauseFrameLatch_.frame().data(), layout.frame_bytes);
+            usedLatch = true;
+        } else {
+            fillYuv420pStudioBlack(yuv.data(), cw, ch);
+        }
+    }
+
+    if (!overlay_.visible()) {
+        log("media: pause overlay skip not-visible (state may have timed out)");
+        return false;
+    }
+    if (!overlay_.renderYuv420p(yuv.data(), cw, ch)) {
+        log("media: pause overlay renderYuv420p returned false (dirty empty?)");
+        return false;
+    }
+
+    std::lock_guard<std::mutex> lk(presentMu_);
+    if (fb_.ok())
+        (void)fb_.blitYuv420p(yuv.data(), cw, ch);
+
+    if (!fpga_.ok() && presentMode_ != "none") {
+        if (fpga_.open()) {
+            useDdrF1_ = true;
+            ddrBank_ = 0;
+        }
+    }
+    if (!fpga_.ok() || !useDdrF1_) {
+        log(std::string("media: pause overlay no DDR path fpga_ok=") +
+            (fpga_.ok() ? "1" : "0") + " useDdrF1=" + (useDdrF1_ ? "1" : "0") +
+            " fb_ok=" + (fb_.ok() ? "1" : "0"));
+        return fb_.ok();
+    }
+
+    DdrPublishFrame frame{yuv.data(), yuv.size(), g, DdrFrameFormat::Yuv420p};
+    std::string err;
+    const bool ok = publishDdrFrame(frame, "pause overlay DDR", &err);
+    if (!ok)
+        log("media: pause overlay publish failed: " + (err.empty() ? fpga_.lastError() : err));
+    else
+        log(std::string("media: pause overlay DDR ok latch=") + (usedLatch ? "1" : "0") +
+            " " + std::to_string(cw) + "x" + std::to_string(ch));
+    return ok;
+}
+
 void MediaPlayer::paintIdle() {
     const IdleMode m = idleMode();
     if (m == IdleMode::LastFrame)
         return;
-    const int w = 320;
-    const int h = 240;
-    std::vector<uint8_t> buf(static_cast<size_t>(w) * h * 3);
-    renderIdleRgb24(buf.data(), w, h, m, idlePhase_.load());
+    // Author idle + notice/transport chrome at the product coded canvas
+    // (plex480pDdrFrameGeometry), never a hard-coded 320×240. fb0 and DDR must
+    // share one raster so notice banners and the chevron match; both still go
+    // through MiSTer ascal to HDMI video_mode (see docs/osd-hires.md).
+    const DdrFrameGeometry g = plex480pDdrFrameGeometry();
+    const int cw = g.coded_width.get();
+    const int ch = g.coded_height.get();
+    // Hard pin: stop/idle chrome authors on the product bank, never DECODE tier.
+    // Parent span geometry requires 12×16 here (h=480,w=624); log so a short
+    // canvas regression is greppable without HDMI.
+    {
+        const auto lm = PlaybackOverlay::layoutMetrics(cw, ch);
+        const char* font =
+            lm.fontId == OverlayFontId::Large12x16 ? "12x16" : "8x13";
+        log("media: idle overlay canvas=" + std::to_string(cw) + "x" + std::to_string(ch) +
+            " font=" + font + " scale=" + std::to_string(lm.bodyScale) +
+            (overlay_.visible() ? " chrome=1" : " chrome=0"));
+    }
+    std::vector<uint8_t> rgb(static_cast<size_t>(cw) * static_cast<size_t>(ch) * 3u);
+    renderIdleRgb24(rgb.data(), cw, ch, m, idlePhase_.load());
     // Composite F12-inert / transport notice onto idle RGB (HDMI-visible without logs).
-    overlay_.renderRgb24(buf.data(), w, h);
+    overlay_.renderRgb24(rgb.data(), cw, ch);
 
     std::lock_guard<std::mutex> lk(presentMu_);
-    if (fb_.ok() && !fb_.blitRgb24(buf.data(), w, h))
+    if (fb_.ok() && !fb_.blitRgb24(rgb.data(), cw, ch))
         log("media: idle fb0 blit failed");
     // F1 latches the last frame written, so the frame store must be repainted too.
-    // C3 frame-store DDR is YUV-only, so encode the same idle renderer as I420
+    // C3 frame-store DDR is YUV-only, so encode the same idle+overlay RGB as I420
     // instead of ringing the doorbell with an RGB payload.
     if (!fpga_.ok() && presentMode_ != "none") {
         if (fpga_.open()) {
@@ -781,28 +876,24 @@ void MediaPlayer::paintIdle() {
         bool ok = false;
         std::string ddrErr;
         if (useDdrF1_) {
-            const DdrFrameGeometry g = plex480pDdrFrameGeometry();
-            const int cw = g.coded_width.get();
-            const int ch = g.coded_height.get();
             const DdrFrameLayout layout =
                 makeDdrFrameLayout(g, kDdrFramePhysBase, kDdrFrameStrideAlign,
                                    DdrFrameFormat::Yuv420p);
             std::vector<uint8_t> yuv(layout.frame_bytes);
             bool haveYuv = false;
-            // When a notice banner is up, render idle+overlay at coded size in RGB
-            // then convert so HDMI (DDR path) shows the same banner as fb0.
+            // When a notice/transport banner is up, render idle+overlay at coded
+            // size in RGB then convert so HDMI (DDR path) shows the same chrome.
             if (overlay_.visible()) {
-                std::vector<uint8_t> rgb(static_cast<size_t>(cw) * ch * 3);
-                renderIdleRgb24(rgb.data(), cw, ch, m, idlePhase_.load());
-                overlay_.renderRgb24(rgb.data(), cw, ch);
-                // RGB24 → planar YUV420 using the same coeffs as idle_screen.
                 uint8_t* yPlane = yuv.data();
-                uint8_t* uPlane = yPlane + static_cast<size_t>(cw) * ch;
-                uint8_t* vPlane = uPlane + static_cast<size_t>(cw / 2) * (ch / 2);
+                uint8_t* uPlane = yPlane + static_cast<size_t>(cw) * static_cast<size_t>(ch);
+                uint8_t* vPlane = uPlane + static_cast<size_t>(cw / 2) * static_cast<size_t>(ch / 2);
                 for (int y = 0; y < ch; ++y) {
                     for (int x = 0; x < cw; ++x) {
-                        const size_t i = (static_cast<size_t>(y) * cw + x) * 3;
-                        yPlane[static_cast<size_t>(y) * cw + x] =
+                        const size_t i = (static_cast<size_t>(y) * static_cast<size_t>(cw) +
+                                          static_cast<size_t>(x)) *
+                                         3u;
+                        yPlane[static_cast<size_t>(y) * static_cast<size_t>(cw) +
+                               static_cast<size_t>(x)] =
                             idleRgbToY(rgb[i], rgb[i + 1], rgb[i + 2]);
                     }
                 }
@@ -812,7 +903,9 @@ void MediaPlayer::paintIdle() {
                         for (int dy = 0; dy < 2; ++dy) {
                             for (int dx = 0; dx < 2; ++dx) {
                                 const size_t i =
-                                    (static_cast<size_t>(cy * 2 + dy) * cw + (cx * 2 + dx)) * 3;
+                                    (static_cast<size_t>(cy * 2 + dy) * static_cast<size_t>(cw) +
+                                     static_cast<size_t>(cx * 2 + dx)) *
+                                    3u;
                                 rSum += rgb[i];
                                 gSum += rgb[i + 1];
                                 bSum += rgb[i + 2];
@@ -821,7 +914,9 @@ void MediaPlayer::paintIdle() {
                         const int r = (rSum + 2) / 4;
                         const int g = (gSum + 2) / 4;
                         const int b = (bSum + 2) / 4;
-                        const size_t ci = static_cast<size_t>(cy) * (cw / 2) + cx;
+                        const size_t ci =
+                            static_cast<size_t>(cy) * static_cast<size_t>(cw / 2) +
+                            static_cast<size_t>(cx);
                         uPlane[ci] = idleRgbToU(r, g, b);
                         vPlane[ci] = idleRgbToV(r, g, b);
                     }
@@ -1149,8 +1244,15 @@ void MediaPlayer::stop() {
 
 void MediaPlayer::pause() {
     paused_.store(true);
-    signalChildren(SIGSTOP);
     showPlaybackOverlay(PlaybackOverlayState::Paused, positionMs_.load(), durationMs());
+    // Publish chrome onto the last held F1 frame BEFORE SIGSTOP. The play thread may be
+    // blocked in read() and cannot run its pause present loop until FFmpeg is continued.
+    // Paused overlay is sticky (playback_overlay alphaFor) so later present loops must
+    // not wipe it after kVisibleMs — that was Test B (panel absent after warm-up).
+    const bool painted = publishPausedOverlayFrame();
+    if (!painted)
+        log("media: pause overlay first paint failed (will retry on play-thread pause loop)");
+    signalChildren(SIGSTOP);
     if (onProgress_)
         onProgress_("paused", positionMs_.load(), durationMs_);
 }
@@ -1714,12 +1816,15 @@ void MediaPlayer::streamPump(int sfd) {
                         if (!ok) {
                             log("media: recon YUV420 DDR F1 unavailable: " +
                                 (ddrErr.empty() ? fpga_.lastError() : ddrErr));
-                        } else if ((reconOk % 30) == 0) {
+                        } else {
+                            rememberPauseFrame(bank.data(), bank.size(), g);
+                            if ((reconOk % 30) == 0) {
                             log("media: recon F1 via YUV420 DDR " +
                                 std::to_string(rec.width) + "x" + std::to_string(rec.height) +
                                 "→" + std::to_string(g.coded_width.get()) + "x" +
                                 std::to_string(g.coded_height.get()) + " " +
                                 std::to_string(static_cast<int>(fpga_.lastPushMs())) + "ms");
+                            }
                         }
                     }
                 } else if (!reconDdrMismatchLogged) {
@@ -2902,7 +3007,9 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                     break;
             }
             if (paused_.load()) {
-                std::this_thread::sleep_for(std::chrono::milliseconds(20));
+                if (overlay_.visible())
+                    (void)publishPausedOverlayFrame();
+                std::this_thread::sleep_for(std::chrono::milliseconds(50));
                 continue;
             }
             // Wall-clock position (no RGB frame cadence)
@@ -3353,6 +3460,8 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
         };
 
         auto renderOverlay = [&](uint8_t* data) {
+            // Composite after FFmpeg scale-to-canvas: rawW/rawH is the present
+            // canvas (product coded bank), not a separate decode-tier size.
             switch (videoFmt) {
             case RawVideoFormat::Rgb565Le:
                 overlay_.renderRgb565Le(data, rawW, rawH);
@@ -3361,6 +3470,7 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                 overlay_.renderBgra32(data, rawW, rawH);
                 break;
             case RawVideoFormat::Yuv420p:
+                overlay_.renderYuv420p(data, rawW, rawH);
                 break;
             case RawVideoFormat::Rgb24:
             default:
@@ -3371,8 +3481,59 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
 
         auto backupOverlayDirty = [&](uint8_t* cleanFrame, const OverlayRect& dirty) {
             fbOverlayBackup.clear();
-            if (dirty.empty())
+            if (dirty.empty() || !cleanFrame)
                 return;
+            if (videoFmt == RawVideoFormat::Yuv420p) {
+                // Plane-strided I420 backup (Y full rect + U/V 2×2-aligned).
+                const int x0 = dirty.x & ~1;
+                const int y0 = dirty.y & ~1;
+                const int x1 = std::min(rawW, (dirty.x + dirty.w + 1) & ~1);
+                const int y1 = std::min(rawH, (dirty.y + dirty.h + 1) & ~1);
+                const int bw = x1 - x0;
+                const int bh = y1 - y0;
+                if (bw <= 0 || bh <= 0)
+                    return;
+                const size_t yBytes = static_cast<size_t>(bw) * static_cast<size_t>(bh);
+                const size_t cBytes =
+                    static_cast<size_t>(bw / 2) * static_cast<size_t>(bh / 2);
+                // Prefix 16 bytes: x0,y0,bw,bh little-endian int32.
+                fbOverlayBackup.resize(16 + yBytes + 2 * cBytes);
+                auto putI32 = [&](size_t off, int v) {
+                    const uint32_t u = static_cast<uint32_t>(v);
+                    fbOverlayBackup[off + 0] = static_cast<uint8_t>(u & 0xff);
+                    fbOverlayBackup[off + 1] = static_cast<uint8_t>((u >> 8) & 0xff);
+                    fbOverlayBackup[off + 2] = static_cast<uint8_t>((u >> 16) & 0xff);
+                    fbOverlayBackup[off + 3] = static_cast<uint8_t>((u >> 24) & 0xff);
+                };
+                putI32(0, x0);
+                putI32(4, y0);
+                putI32(8, bw);
+                putI32(12, bh);
+                uint8_t* yDst = fbOverlayBackup.data() + 16;
+                uint8_t* uDst = yDst + yBytes;
+                uint8_t* vDst = uDst + cBytes;
+                const uint8_t* ySrc = cleanFrame;
+                const uint8_t* uSrc =
+                    cleanFrame + static_cast<size_t>(rawW) * static_cast<size_t>(rawH);
+                const uint8_t* vSrc =
+                    uSrc + static_cast<size_t>(rawW / 2) * static_cast<size_t>(rawH / 2);
+                for (int yy = 0; yy < bh; ++yy) {
+                    std::memcpy(yDst + static_cast<size_t>(yy) * bw,
+                                ySrc + static_cast<size_t>(y0 + yy) * rawW + x0,
+                                static_cast<size_t>(bw));
+                }
+                for (int yy = 0; yy < bh / 2; ++yy) {
+                    std::memcpy(uDst + static_cast<size_t>(yy) * (bw / 2),
+                                uSrc + static_cast<size_t>((y0 / 2) + yy) * (rawW / 2) +
+                                    (x0 / 2),
+                                static_cast<size_t>(bw / 2));
+                    std::memcpy(vDst + static_cast<size_t>(yy) * (bw / 2),
+                                vSrc + static_cast<size_t>((y0 / 2) + yy) * (rawW / 2) +
+                                    (x0 / 2),
+                                static_cast<size_t>(bw / 2));
+                }
+                return;
+            }
             const size_t bpp = rawVideoPackedBytesPerPixel(videoFmt);
             if (bpp == 0)
                 return;
@@ -3387,8 +3548,55 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
         };
 
         auto restoreOverlayDirty = [&](uint8_t* cleanFrame, const OverlayRect& dirty) {
-            if (dirty.empty() || fbOverlayBackup.empty())
+            if (dirty.empty() || fbOverlayBackup.empty() || !cleanFrame)
                 return;
+            if (videoFmt == RawVideoFormat::Yuv420p) {
+                if (fbOverlayBackup.size() < 16)
+                    return;
+                auto getI32 = [&](size_t off) -> int {
+                    const uint32_t u =
+                        static_cast<uint32_t>(fbOverlayBackup[off + 0]) |
+                        (static_cast<uint32_t>(fbOverlayBackup[off + 1]) << 8) |
+                        (static_cast<uint32_t>(fbOverlayBackup[off + 2]) << 16) |
+                        (static_cast<uint32_t>(fbOverlayBackup[off + 3]) << 24);
+                    return static_cast<int>(u);
+                };
+                const int x0 = getI32(0);
+                const int y0 = getI32(4);
+                const int bw = getI32(8);
+                const int bh = getI32(12);
+                if (bw <= 0 || bh <= 0)
+                    return;
+                const size_t yBytes = static_cast<size_t>(bw) * static_cast<size_t>(bh);
+                const size_t cBytes =
+                    static_cast<size_t>(bw / 2) * static_cast<size_t>(bh / 2);
+                if (fbOverlayBackup.size() < 16 + yBytes + 2 * cBytes)
+                    return;
+                const uint8_t* ySrc = fbOverlayBackup.data() + 16;
+                const uint8_t* uSrc = ySrc + yBytes;
+                const uint8_t* vSrc = uSrc + cBytes;
+                uint8_t* yDst = cleanFrame;
+                uint8_t* uDst =
+                    cleanFrame + static_cast<size_t>(rawW) * static_cast<size_t>(rawH);
+                uint8_t* vDst =
+                    uDst + static_cast<size_t>(rawW / 2) * static_cast<size_t>(rawH / 2);
+                for (int yy = 0; yy < bh; ++yy) {
+                    std::memcpy(yDst + static_cast<size_t>(y0 + yy) * rawW + x0,
+                                ySrc + static_cast<size_t>(yy) * bw,
+                                static_cast<size_t>(bw));
+                }
+                for (int yy = 0; yy < bh / 2; ++yy) {
+                    std::memcpy(uDst + static_cast<size_t>((y0 / 2) + yy) * (rawW / 2) +
+                                    (x0 / 2),
+                                uSrc + static_cast<size_t>(yy) * (bw / 2),
+                                static_cast<size_t>(bw / 2));
+                    std::memcpy(vDst + static_cast<size_t>((y0 / 2) + yy) * (rawW / 2) +
+                                    (x0 / 2),
+                                vSrc + static_cast<size_t>(yy) * (bw / 2),
+                                static_cast<size_t>(bw / 2));
+                }
+                return;
+            }
             const size_t bpp = rawVideoPackedBytesPerPixel(videoFmt);
             if (bpp == 0)
                 return;
@@ -3403,6 +3611,9 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
         };
 
         auto presentCleanFrame = [&](uint8_t* cleanFrame, bool countPresent) {
+            // Latch clean pixels (no chrome) for pause republish.
+            if (videoFmt == RawVideoFormat::Yuv420p)
+                rememberPauseFrame(cleanFrame, frameBytes, ddrGeometry);
             const OverlayRect dirty = overlay_.dirtyBounds(rawW, rawH);
             backupOverlayDirty(cleanFrame, dirty);
             if (!dirty.empty()) {
@@ -3683,9 +3894,21 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                     pauseStarted = std::chrono::steady_clock::now();
                 }
                 const bool overlayNow = overlay_.visible();
-                if ((overlayNow || pausedOverlayWasVisible) && frameIndex > 0) {
-                    presentCleanFrame(frame.data(), /*countPresent*/ false);
-                    pausedOverlayWasVisible = overlayNow;
+                // While chrome is up, keep republishing it onto the latched frame.
+                // When it is not, do NOT presentCleanFrame — that would doorbell a
+                // clean video frame and wipe a previously painted panel (Test B).
+                if (overlayNow) {
+                    if (frameIndex > 0) {
+                        rememberPauseFrame(frame.data(), frameBytes, ddrGeometry);
+                        presentCleanFrame(frame.data(), /*countPresent*/ false);
+                    } else {
+                        (void)publishPausedOverlayFrame();
+                    }
+                    pausedOverlayWasVisible = true;
+                } else if (!pausedOverlayWasVisible) {
+                    // First pause ticks before show() is visible — try dedicated path.
+                    (void)publishPausedOverlayFrame();
+                    pausedOverlayWasVisible = overlay_.visible();
                 }
                 std::this_thread::sleep_for(std::chrono::milliseconds(50));
                 continue;

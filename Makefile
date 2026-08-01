@@ -64,6 +64,12 @@ unit-unlocked: unit-rollcall preflight $(ROOT)/build/test_cadence $(ROOT)/build/
 	$(ROOT)/build/test_last_frame_latch
 	bash $(ROOT)/tests/unit/test_last_frame_latch_red.sh
 	$(ROOT)/build/test_playback_overlay
+	bash $(ROOT)/tests/unit/test_overlay_edge_measure.sh
+	bash $(ROOT)/tests/unit/test_overlay_text_readback.sh
+	python3 $(ROOT)/tools/even_row_cull_glyph_gate.py
+	python3 $(ROOT)/tests/unit/test_pause_overlay_publish_static.py
+	python3 $(ROOT)/tests/unit/test_panel_empty_center_static.py
+	python3 $(ROOT)/tests/unit/test_stop_idle_canvas_static.py
 	$(ROOT)/build/test_input_mailbox
 	$(ROOT)/build/test_pixel_format
 	$(ROOT)/build/test_main_guard
@@ -106,6 +112,7 @@ unit-unlocked: unit-rollcall preflight $(ROOT)/build/test_cadence $(ROOT)/build/
 	$(ROOT)/build/test_sdram_mailbox
 	$(ROOT)/build/test_annexb_count
 	python3 $(ROOT)/tests/unit/test_ddr_publish_path_static.py
+	python3 $(ROOT)/tests/unit/test_overlay_raster_geometry_static.py
 	@mkdir -p $(ROOT)/build
 	@python3 $(ROOT)/scripts/gen_test_annexb_real.py $(UNIT_ANNEXB)
 	$(ROOT)/build/test_status_telemetry $(UNIT_ANNEXB)

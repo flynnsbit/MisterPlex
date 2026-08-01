@@ -1,0 +1,42 @@
+worker: w-osd-hires
+branch: w-osd-hires
+task: R1 span reconcile + R2 drop w>=600 + R3 prereg
+status: READY_FOR_PARENT_DEPLOY
+
+## R1 — who is wrong
+- Named 3883f5ab/0370af91 STOPPED archives: NOT-FOUND on this tree
+- Only silicon STOPPED on disk: files/device-evidence/overlay_FIXED_db3d9367_stopped.png
+- measure_overlay_word_span.py → ink_span_output_px=531 @1920 family=12x16 (true rc=0)
+- pred_8x13@2_via640=372.0 matches parent hand 370 — that is the 8x13 *prediction*, not FIXED ink
+- VERDICT on FIXED: parent 370 is WRONG; worker 12x16/531 is RIGHT
+- Do not claim both valid. If parent has 3883 STOPPED PNG, re-run measure tool on it.
+
+## R2 — w>=600
+- At product 624x480, h>=480 alone selects 12x16 → w>=600 does NOT change STOP path
+- REMOVED as dead/masking code (playback_overlay.hpp font pick = h>=480 && bodyScale==2 only)
+- Gate test_stop_idle_canvas_static rejects any remaining w>=600
+
+## R3 prereg
+- files/prereg/OSD-HIRES-aa7776a8-DEPLOY.md (title historical; binary md5 below)
+- Log expect: media: idle overlay canvas=624x480 font=12x16 scale=2 chrome=1
+- STOPPED ink @1920 PASS 480-580 (FIXED=531); FAIL 340-400 (parent 8x13 class)
+- Falsify worker: span<=400 or log font=8x13 or canvas!=624x480
+
+## Binary
+md5sum build/arm/misterplexd = 972a7794b0616012a2f4aa074b832552
+make arm-plexd true rc=0 (worktree)
+
+## Host gates (true rc=0)
+- test_stop_idle_canvas_static
+- test_panel_empty_center_static
+- test_pause_overlay_publish_static
+- readback --selftest-font-measure
+- measure_overlay_word_span on FIXED
+- test_playback_overlay
+
+## Parent commands
+python3 tools/measure_overlay_word_span.py --image CAP.png --expect STOPPED; echo "true rc=$?"
+python3 tools/readback_overlay_text.py --image CAP.png --expect STOPPED; echo "true rc=$?"
+grep 'idle overlay canvas=' misterplexd.log
+
+No device touch. No RTL.
