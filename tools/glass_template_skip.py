@@ -12,21 +12,28 @@ Parent findings folded in (device-measured 2026-08-01, 720p60 bank /tmp/p60):
      the accepted set, find bracketing accepted captures a<b. v is a genuine
      display skip IFF rejected_between == []. Transition-torn rejects must not
      count as skips (adjacent-Δ under-counts / mis-counts).
-  F4 ERROR-18 sampling-margin gate: refuse skip verdict (rc=77) when
-     max_measured_capture_interval_ms >= min_hold_ms. Intervals from pts.csv
+  F4 ERROR-18/19 sampling-margin gate: refuse skip verdict (rc=77) when
+     max_measured_capture_interval_ms >= min_hold_ms. min_hold is RTL-backed:
+     1 refresh = 1000/refresh_hz (ddr_frame_store swaps on vsync_pulse; floor is
+     ONE refresh not floor(refresh/src) 3:2). Intervals from pts.csv
      (ffprobe pts_time), NEVER from di/capture_fps.
+  F5 Per-band torn validation: rejected frames split into horizontal bands;
+     each band decoded with independent checksum. Missing v is CONFIRMED_TORN
+     only if a band recovers v; else UNRESOLVED (not forced torn/skip).
 
 Also: LOO on SIM templates is labelled SIM_ONLY — never presented as device
 accuracy. Device LOO requires --bootstrap-viewed-gt / parent T60.pkl.
 
 k-means is FORBIDDEN (produced fictitious decreasing sequences).
 
-Exit codes
-----------
-  0  SKIP_OK — margin OK, completeness finds 0 genuine skips, invariants hold
-  2  SKIP_FAIL — ≥1 genuine display skip (rejected_between=[]) or physics break
-  77 UNSCORED — no data / zero sampling margin / fps not authoritative
-  1  usage / internal
+Exit codes (distinct failure classes — D2)
+------------------------------------------
+  0  SKIP_OK — margin OK, 0 genuine skips, invariants hold, bands clean
+  1  USAGE — bad args / internal usage
+  2  SKIP_FAIL — ≥1 genuine display skip proven (margin OK, rejected_between=[])
+  3  INSTRUMENT_OR_FIXTURE_FAIL — decreasing pairs / physics break (not device skip)
+  77 UNSCORED — no data / zero-or-negative sampling margin / fps not authoritative
+                 / band-unresolved only (never a pass)
 
   rc=77 is never a pass. Capture true rc DIRECTLY (never through a pipe).
 
@@ -91,9 +98,12 @@ PROVENANCE_DEFAULT = "DEFAULT_ASSUMED"
 PROVENANCE_SIM_ONLY = "SIM_ONLY"
 
 RC_OK = 0
-RC_FAIL = 2
-RC_UNSCORED = 77
 RC_USAGE = 1
+RC_SKIP_FAIL = 2  # device: genuine display skip proven
+RC_INSTRUMENT_FAIL = 3  # instrument/fixture physics break (not device skip)
+RC_UNSCORED = 77
+# Back-compat alias used only in legacy comparisons inside this file
+RC_FAIL = RC_SKIP_FAIL
 
 DEFAULT_ASSUMED_SRC_FPS = 24.0  # NOT 23.976
 DEFAULT_ASSUMED_CAP_FPS = 30.0
@@ -448,6 +458,213 @@ def decode_frame(
 
 
 # ---------------------------------------------------------------------------
+# Per-band torn validation (T1 / F5)
+# ---------------------------------------------------------------------------
+def decode_overlay_rows(
+    rgb: np.ndarray,
+    bank: "TemplateBank",
+    geom: dict[str, Any],
+    y0: int,
+    y1: int,
+    *,
+    dist_max: float = DIST_MAX_SOFT,
+) -> dict[str, Any]:
+    """Decode digits using only rows [y0,y1) of the yellow overlay band."""
+    g = dict(geom)
+    g["rows"] = (int(y0), int(y1))
+    g["geometry_src"] = f"{geom.get('geometry_src','?')}+band_rows_{y0}_{y1}"
+    return decode_frame(rgb, bank, geom=g, dist_max=dist_max)
+
+
+def decode_frame_bands(
+    rgb: np.ndarray,
+    bank: "TemplateBank",
+    geom: dict[str, Any],
+    *,
+    n_bands: int = 4,
+    dist_max: float = DIST_MAX_SOFT,
+) -> list[dict[str, Any]]:
+    """Split overlay rows into horizontal bands; decode each with own checksum."""
+    r0, r1 = int(geom["rows"][0]), int(geom["rows"][1])
+    h = max(0, r1 - r0)
+    if h < 8:
+        return [decode_overlay_rows(rgb, bank, geom, r0, r1, dist_max=dist_max)]
+    n_bands = max(2, int(n_bands))
+    out: list[dict[str, Any]] = []
+    for bi in range(n_bands):
+        ya = r0 + (bi * h) // n_bands
+        yb = r0 + ((bi + 1) * h) // n_bands
+        if yb - ya < 6:
+            continue
+        rec = decode_overlay_rows(rgb, bank, geom, ya, yb, dist_max=dist_max)
+        rec["band_index"] = bi
+        rec["band_rows"] = (ya, yb)
+        out.append(rec)
+    return out
+
+
+def validate_missing_with_bands(
+    missing_recs: list[dict[str, Any]],
+    *,
+    path_by_idx: dict[int, str],
+    bank: "TemplateBank",
+    geom: dict[str, Any] | None,
+    n_bands: int = 3,
+    dist_max: float = DIST_MAX_SOFT,
+    dist_max_recover: float = 12.0,
+) -> dict[str, Any]:
+    """Prove missing v appears in a rejected capture (checksum-closed), or UNRESOLVED.
+
+    Recovery ladder per rejected frame (all require checksum close):
+      1. Full overlay band at dist_max_recover (soft NN was why frame was rejected)
+      2. Horizontal sub-bands (torn stack — parent T1)
+      3. Sliding windows (~digit height) across overlay rows
+
+    Parent LOO: errors carried distance >9.5 and were caught by the soft gate;
+    checksum at dist<=12 still independent (~10% random pass).
+    """
+    confirmed_torn: list[dict[str, Any]] = []
+    unresolved: list[dict[str, Any]] = []
+    still_absent: list[dict[str, Any]] = []
+
+    if not hasattr(validate_missing_with_bands, "_band_cache"):
+        validate_missing_with_bands._band_cache = {}  # type: ignore[attr-defined]
+    cache: dict = validate_missing_with_bands._band_cache  # type: ignore[attr-defined]
+
+    def _recover_values(path: str) -> dict[str, Any]:
+        ck = (
+            path,
+            n_bands,
+            round(dist_max_recover, 3),
+            tuple((geom or {}).get("rows", ())),
+            "v3",
+        )
+        if ck in cache:
+            return cache[ck]
+        rgb = np.asarray(Image.open(path).convert("RGB"))
+        vals: set[int] = set()
+        methods: list[dict[str, Any]] = []
+
+        # 1) full overlay, looser NN, checksum hard
+        full = decode_frame(rgb, bank, geom=geom, dist_max=dist_max_recover)
+        methods.append(
+            {
+                "method": "full_loose",
+                "ok": bool(full.get("ok")),
+                "n": full.get("n"),
+                "reason": full.get("reason"),
+                "max_dist": full.get("max_dist"),
+            }
+        )
+        if full.get("ok") and full.get("n") is not None:
+            vals.add(int(full["n"]))
+
+        # 2) equal bands
+        bands = decode_frame_bands(
+            rgb, bank, geom, n_bands=n_bands, dist_max=dist_max_recover
+        )
+        for b in bands:
+            methods.append(
+                {
+                    "method": f"band{b.get('band_index')}",
+                    "rows": b.get("band_rows"),
+                    "ok": bool(b.get("ok")),
+                    "n": b.get("n"),
+                    "reason": b.get("reason"),
+                }
+            )
+            if b.get("ok") and b.get("n") is not None:
+                vals.add(int(b["n"]))
+
+        # 3) sliding windows (~28px like glyph height)
+        r0, r1 = int(geom["rows"][0]), int(geom["rows"][1])
+        win = min(28, max(16, (r1 - r0) // 2))
+        step = max(4, win // 3)
+        for ya in range(r0, max(r0 + 1, r1 - win + 1), step):
+            yb = min(r1, ya + win)
+            if yb - ya < 12:
+                continue
+            b = decode_overlay_rows(
+                rgb, bank, geom, ya, yb, dist_max=dist_max_recover
+            )
+            if b.get("ok") and b.get("n") is not None:
+                vals.add(int(b["n"]))
+                methods.append(
+                    {
+                        "method": "slide",
+                        "rows": (ya, yb),
+                        "ok": True,
+                        "n": int(b["n"]),
+                    }
+                )
+
+        packed = {"values": vals, "methods": methods[:24], "n_methods": len(methods)}
+        cache[ck] = packed
+        return packed
+
+    for rec in missing_recs:
+        v = int(rec["v"])
+        rej = list(rec.get("rejected_between") or [])
+        if not rej:
+            still_absent.append(dict(rec))
+            continue
+        if geom is None:
+            u = dict(rec)
+            u["type"] = "UNRESOLVED_NO_GEOM"
+            u["band_evidence"] = []
+            unresolved.append(u)
+            continue
+        found = False
+        evidence: list[dict[str, Any]] = []
+        for j in rej:
+            path = path_by_idx.get(j) or ""
+            if not path or not Path(path).is_file():
+                evidence.append({"idx": j, "path": path, "status": "missing_file"})
+                continue
+            packed = _recover_values(path)
+            hit = v in packed["values"]
+            if hit:
+                found = True
+            evidence.append(
+                {
+                    "idx": j,
+                    "path": path,
+                    "recovered_values": sorted(packed["values"]),
+                    "found_v": hit,
+                    "methods_head": packed["methods"][:8],
+                }
+            )
+            if found:
+                break
+        out = dict(rec)
+        out["band_evidence"] = evidence
+        out["evidence_src"] = PROVENANCE_MEASURED
+        if found:
+            out["type"] = "CONFIRMED_TORN_OR_REJECTED_DECODE"
+            confirmed_torn.append(out)
+        else:
+            out["type"] = "UNRESOLVED_TORN_OR_SKIP"
+            unresolved.append(out)
+
+    return {
+        "confirmed_torn": confirmed_torn,
+        "unresolved_band": unresolved,
+        "still_absent_empty_reject": still_absent,
+        "n_confirmed_torn": len(confirmed_torn),
+        "n_unresolved_band": len(unresolved),
+        "n_still_absent": len(still_absent),
+        "band_validation_src": PROVENANCE_MEASURED,
+        "n_bands": n_bands,
+        "dist_max_recover": dist_max_recover,
+        "dist_max_recover_src": PROVENANCE_DEFAULT,
+        "recovery_note": (
+            "checksum still required; dist_max_recover loosens NN only "
+            "(parent LOO errors were dist>9.5)"
+        ),
+    }
+
+
+# ---------------------------------------------------------------------------
 # Bootstrap
 # ---------------------------------------------------------------------------
 def _render_hdmi_frame(n: int) -> np.ndarray:
@@ -690,17 +907,31 @@ def sampling_margin_gate(
     refresh_hz_src: str,
     outlier_ms: float = 100.0,
 ) -> dict[str, Any]:
-    """F4: refuse skip verdict when max interval >= min_hold_ms."""
-    min_hold_ms = (1000.0 / refresh_hz) * float(np.floor(refresh_hz / source_fps))
+    """F4 ERROR-18/19: refuse skip verdict when max interval >= min_hold_ms.
+
+    min_hold is RTL-backed floor of ONE display refresh, not floor(refresh/src).
+    Quoted: ddr_frame_store.sv swaps on vsync_pulse && swap_pending && pending_ready;
+    pending_bank overwrite means a true 0-refresh skip is architecturally reachable,
+    so the shortest *held* frame the sampler must resolve is 1 refresh.
+    Parent ERROR 18: 30fps vs 33.3ms hold (old wrong 2-refresh floor still zero-margin).
+    Parent ERROR 19: 60fps vs 16.67ms floor — max_iv=21ms → negative margin → withdraw skip.
+    """
+    # RTL floor = 1 vsync. Do NOT use floor(refresh/src) (encodes 3:2 assumption).
+    min_hold_ms = 1000.0 / float(refresh_hz)
     min_hold_src = (
-        PROVENANCE_MEASURED
-        if source_fps_src != PROVENANCE_DEFAULT and refresh_hz_src != PROVENANCE_DEFAULT
-        else PROVENANCE_DEFAULT
+        "RTL_derived(1_vsync)"
+        if refresh_hz_src != PROVENANCE_DEFAULT
+        else "RTL_derived(1_vsync)+refresh_DEFAULT_ASSUMED"
     )
     out: dict[str, Any] = {
         "min_hold_ms": round(min_hold_ms, 4),
         "min_hold_ms_src": min_hold_src,
-        "min_hold_formula": "1000/refresh_hz * floor(refresh_hz/source_fps)",
+        "min_hold_formula": "1000/refresh_hz  # RTL floor=1 vsync (ddr_frame_store vsync_pulse swap)",
+        "min_hold_rtl_cite": "ddr_frame_store.sv:vsync_pulse&&swap_pending&&pending_ready; pending_bank overwrite",
+        "min_hold_note": (
+            "NOT floor(refresh/src)*T_vsync — that assumed 3:2 pulldown the product "
+            "does not implement (ERROR 18/19)"
+        ),
         "source_fps": source_fps,
         "source_fps_src": source_fps_src,
         "refresh_hz": refresh_hz,
@@ -745,7 +976,7 @@ def sampling_margin_gate(
                 "sampling_margin_ok"
                 if margin_ok
                 else (
-                    f"ERROR18_zero_margin max_iv={max_iv:.3f}ms >= "
+                    f"ERROR18_19_zero_or_neg_margin max_iv={max_iv:.3f}ms >= "
                     f"min_hold={min_hold_ms:.3f}ms — refuse skip verdict"
                 )
             ),
@@ -765,6 +996,11 @@ def analyze_completeness(
     source_fps_src: str,
     capture_fps_src: str,
     margin: dict[str, Any],
+    bank: "TemplateBank | None" = None,
+    geom: dict[str, Any] | None = None,
+    enable_band_validation: bool = True,
+    n_bands: int = 4,
+    dist_max: float = DIST_MAX_SOFT,
 ) -> dict[str, Any]:
     accepted = [
         (int(r["idx"]), int(r["n"]), str(r.get("path", "")))
@@ -785,6 +1021,7 @@ def analyze_completeness(
             "reason": f"insufficient_accepted={len(accepted)}",
             "n_accepted": len(accepted),
             "n_frames": len(per_frame),
+            "sampling_margin": margin,
         }
 
     adj_hist: Counter = Counter()
@@ -801,8 +1038,7 @@ def analyze_completeness(
     obs = {n for _, n, _ in accepted}
     missing = [v for v in range(lo_n, hi_n + 1) if v not in obs]
 
-    genuine: list[dict[str, Any]] = []
-    torn_not_skip: list[dict[str, Any]] = []
+    missing_recs: list[dict[str, Any]] = []
     for v in missing:
         befores = [(i, n, p) for i, n, p in accepted if n < v]
         afters = [(i, n, p) for i, n, p in accepted if n > v]
@@ -823,12 +1059,65 @@ def analyze_completeness(
             "rejected_between_files": [path_by_idx.get(j, "") for j in rej_between],
             "evidence_src": PROVENANCE_MEASURED,
         }
-        if not rej_between:
-            rec["type"] = "GENUINE_DISPLAY_SKIP"
-            genuine.append(rec)
+        missing_recs.append(rec)
+
+    # Completeness split (pre-band): empty reject vs nonempty
+    completeness_empty_reject = [r for r in missing_recs if not r["rejected_between"]]
+    completeness_with_reject = [r for r in missing_recs if r["rejected_between"]]
+
+    band_rep: dict[str, Any] = {
+        "enabled": False,
+        "n_confirmed_torn": 0,
+        "n_unresolved_band": 0,
+        "n_still_absent": len(completeness_empty_reject),
+        "confirmed_torn": [],
+        "unresolved_band": [],
+        "still_absent_empty_reject": completeness_empty_reject,
+    }
+    if enable_band_validation and bank is not None and completeness_with_reject:
+        band_rep = validate_missing_with_bands(
+            completeness_with_reject,
+            path_by_idx=path_by_idx,
+            bank=bank,
+            geom=geom,
+            n_bands=n_bands,
+            dist_max=dist_max,
+        )
+        band_rep["enabled"] = True
+    elif completeness_with_reject:
+        # No band pass — do not force torn; mark unresolved
+        band_rep = {
+            "enabled": False,
+            "n_confirmed_torn": 0,
+            "n_unresolved_band": len(completeness_with_reject),
+            "n_still_absent": len(completeness_empty_reject),
+            "confirmed_torn": [],
+            "unresolved_band": [
+                {**r, "type": "UNRESOLVED_NO_BAND_PASS"} for r in completeness_with_reject
+            ],
+            "still_absent_empty_reject": completeness_empty_reject,
+            "band_validation_src": "skipped",
+        }
+
+    # Proven genuine skips only when margin allows a skip verdict
+    refuse = bool(margin.get("refuse_skip_verdict", True))
+    genuine: list[dict[str, Any]] = []
+    margin_unresolved_candidates: list[dict[str, Any]] = []
+    for r in completeness_empty_reject:
+        rr = dict(r)
+        if refuse:
+            rr["type"] = "UNRESOLVED_SAMPLING_MARGIN"
+            rr["note"] = (
+                "empty rejected_between but max_capture_interval >= min_hold_ms "
+                "(ERROR18/19) — cannot prove skip"
+            )
+            margin_unresolved_candidates.append(rr)
         else:
-            rec["type"] = "TORN_TRANSITION_NOT_SKIP"
-            torn_not_skip.append(rec)
+            rr["type"] = "GENUINE_DISPLAY_SKIP"
+            genuine.append(rr)
+
+    confirmed_torn = list(band_rep.get("confirmed_torn") or [])
+    unresolved_band = list(band_rep.get("unresolved_band") or [])
 
     cap0, cap1 = accepted[0][0], accepted[-1][0]
     caps = max(1, cap1 - cap0)
@@ -851,22 +1140,29 @@ def analyze_completeness(
     G_src = PROVENANCE_DEFAULT
     if fps_auth and ideal and ideal > 0:
         G = adv_span / ideal - caps
-        # G is computed: adv/caps are measured; ideal ratio is caller_supplied fps.
         G_src = "computed(adv_caps=measured;ideal_ratio=caller_supplied_fps)"
 
-    refuse = bool(margin.get("refuse_skip_verdict", True))
+    # Verdict priority (distinct rc — D2)
     if refuse:
         verdict, rc = "UNSCORED", RC_UNSCORED
         reason = str(margin.get("reason", "sampling_margin_refused"))
     elif decreasing > 0:
-        verdict, rc = "INSTRUMENT_OR_FIXTURE_FAIL", RC_FAIL
+        verdict, rc = "INSTRUMENT_OR_FIXTURE_FAIL", RC_INSTRUMENT_FAIL
         reason = f"decreasing_pairs={decreasing}"
     elif genuine:
-        verdict, rc = "SKIP_FAIL", RC_FAIL
+        verdict, rc = "SKIP_FAIL", RC_SKIP_FAIL
         reason = (
             f"genuine_display_skips={len(genuine)} "
-            f"(completeness rejected_between=[]); "
-            f"torn_not_skip={len(torn_not_skip)}"
+            f"(completeness rejected_between=[] + margin_ok); "
+            f"confirmed_torn={len(confirmed_torn)} "
+            f"unresolved_band={len(unresolved_band)}"
+        )
+    elif unresolved_band and not confirmed_torn and not genuine:
+        # Only unresolved band evidence — cannot pass or fail device
+        verdict, rc = "UNSCORED", RC_UNSCORED
+        reason = (
+            f"band_unresolved={len(unresolved_band)} "
+            f"(missing values not proven torn or skip — not a pass)"
         )
     elif not fps_auth:
         verdict, rc = "UNSCORED", RC_UNSCORED
@@ -874,8 +1170,8 @@ def analyze_completeness(
     else:
         verdict, rc = "SKIP_OK", RC_OK
         reason = (
-            f"completeness_clean genuine=0 torn_not_skip={len(torn_not_skip)} "
-            f"margin_ok"
+            f"completeness_clean genuine=0 confirmed_torn={len(confirmed_torn)} "
+            f"unresolved_band={len(unresolved_band)} margin_ok"
         )
 
     return {
@@ -907,9 +1203,22 @@ def analyze_completeness(
         ),
         "missing_from_accepted": len(missing),
         "genuine_display_skips": len(genuine),
-        "torn_transition_not_skip": len(torn_not_skip),
+        "torn_transition_not_skip": len(confirmed_torn),
+        "unresolved_band": len(unresolved_band),
+        "margin_unresolved_candidates": len(margin_unresolved_candidates),
         "genuine_events": genuine,
-        "torn_events_head": torn_not_skip[:8],
+        "confirmed_torn_events": confirmed_torn[:32],
+        "unresolved_band_events": unresolved_band[:32],
+        "margin_unresolved_events": margin_unresolved_candidates[:16],
+        "torn_events_head": confirmed_torn[:8],
+        "band_validation": {
+            "enabled": band_rep.get("enabled"),
+            "n_confirmed_torn": band_rep.get("n_confirmed_torn"),
+            "n_unresolved_band": band_rep.get("n_unresolved_band"),
+            "n_still_absent": band_rep.get("n_still_absent"),
+            "n_bands": band_rep.get("n_bands", n_bands),
+            "src": band_rep.get("band_validation_src", "n/a"),
+        },
         "decreasing_pairs": decreasing,
         "G_grabber_confound": round(G, 4) if G is not None else None,
         "G_src": G_src,
@@ -928,14 +1237,18 @@ def analyze_completeness(
         "capture_fps_src": capture_fps_src,
         "fps_authoritative": fps_auth,
         "sampling_margin": margin,
-        "detector": "completeness_rejected_between_empty",
+        "detector": "completeness_rejected_between_empty+band_checksum",
         "detector_note": (
-            "Genuine skip iff value absent from accepted set AND no rejected "
-            "capture between bracketing accepts. Adjacent-Δ alone is biased."
+            "Genuine skip iff value absent from accepted set AND rejected_between=[] "
+            "AND sampling margin OK (max_iv < min_hold=1 refresh RTL). "
+            "Torn confirmed only via per-band checksum recovering v. "
+            "Else UNRESOLVED (rc=77), never forced."
         ),
     }
 
 
+# ---------------------------------------------------------------------------
+# Capture scoring
 # ---------------------------------------------------------------------------
 # Capture scoring
 # ---------------------------------------------------------------------------
@@ -1025,6 +1338,10 @@ def score_capture_dir(
         source_fps_src=source_fps_src,
         capture_fps_src=capture_fps_src,
         margin=margin,
+        bank=bank,
+        geom=geom,
+        enable_band_validation=True,
+        dist_max=dist_max,
     )
     rep["src"] = str(src)
     rep["geometry_frozen"] = geom
@@ -1089,8 +1406,8 @@ def run_self_test() -> int:
     work = ROOT / ".agent-work" / "w-instr" / "template-skip-gate"
     work.mkdir(parents=True, exist_ok=True)
     bank, binfo = bootstrap_templates_sim(path=work / "templates_sim.npz")
-    loo = leave_one_frame_out(bank)
     print("BOOTSTRAP_SIM", json.dumps(binfo, indent=2))
+    loo = leave_one_frame_out(bank)
     print(
         f"LOO_SIM_ONLY {loo['loo_per_digit_correct']}/{loo['loo_per_digit_total']} "
         f"= {loo['loo_per_digit_accuracy_pct']}% scope={loo['loo_scope']} "
@@ -1098,26 +1415,27 @@ def run_self_test() -> int:
     )
     if loo["gate"] != "PASS":
         print("SELF_TEST_FAIL loo_sim")
-        return RC_FAIL
+        return RC_INSTRUMENT_FAIL
     bank.save(TEMPLATE_PATH)
 
-    green = work / "green60"
-    red = work / "red60"
-    g_pts = work / "green60_pts.csv"
-    r_pts = work / "red60_pts.csv"
-    _synth_sequence(green, n0=1000, n_source_frames=48, capture_fps=60.0, pts_path=g_pts)
+    # Positive-margin synth: capture at 120 fps so max_iv=8.33 < min_hold=16.67
+    green = work / "green120"
+    red = work / "red120"
+    g_pts = work / "green120_pts.csv"
+    r_pts = work / "red120_pts.csv"
+    _synth_sequence(green, n0=1000, n_source_frames=48, capture_fps=120.0, pts_path=g_pts)
     _synth_sequence(
         red,
         n0=1000,
         n_source_frames=72,
-        capture_fps=60.0,
+        capture_fps=120.0,
         skip_at_source={1017, 1034, 1051, 1068},
         pts_path=r_pts,
     )
 
     common = dict(
         source_fps=24.0,
-        capture_fps=60.0,
+        capture_fps=120.0,
         source_fps_src=PROVENANCE_CALLER,
         capture_fps_src=PROVENANCE_CALLER,
         refresh_hz=60.0,
@@ -1130,8 +1448,10 @@ def run_self_test() -> int:
     print(
         f"GREEN verdict={g.get('verdict')} rc={g.get('rc')} "
         f"genuine={g.get('genuine_display_skips')} torn={g.get('torn_transition_not_skip')} "
+        f"unresolved_band={g.get('unresolved_band')} "
         f"span_ratio={g.get('span_ratio')} adj_hist={g.get('adjacent_delta_histogram')} "
-        f"margin_ok={g.get('sampling_margin', {}).get('margin_ok')}"
+        f"margin_ok={g.get('sampling_margin', {}).get('margin_ok')} "
+        f"min_hold={g.get('sampling_margin', {}).get('min_hold_ms')}"
     )
     print(
         f"RED   verdict={r.get('verdict')} rc={r.get('rc')} "
@@ -1140,19 +1460,28 @@ def run_self_test() -> int:
     )
 
     ok = True
+    # min_hold must be ~16.67 not ~33.33
+    mh = float((g.get("sampling_margin") or {}).get("min_hold_ms") or 0)
+    if abs(mh - (1000.0 / 60.0)) > 0.05:
+        print(f"FAIL min_hold RTL want ~16.667 got {mh}")
+        ok = False
+    else:
+        print(f"PASS min_hold RTL 1-refresh={mh}")
+
     if g.get("rc") != RC_OK or g.get("genuine_display_skips", 1) != 0:
         print(f"FAIL GREEN rc={g.get('rc')} genuine={g.get('genuine_display_skips')}")
         ok = False
     else:
         print("PASS GREEN")
-    if r.get("rc") != RC_FAIL or r.get("genuine_display_skips", 0) < 1:
+    if r.get("rc") != RC_SKIP_FAIL or r.get("genuine_display_skips", 0) < 1:
         print(f"FAIL RED rc={r.get('rc')} genuine={r.get('genuine_display_skips')}")
         ok = False
     else:
         print("PASS RED")
 
-    zm = work / "zero_margin"
-    zm_pts = work / "zero_margin_pts.csv"
+    # ERROR18: 30 fps capture — max_iv~33.3 >= min_hold 16.67 → UNSCORED
+    zm = work / "zero_margin30"
+    zm_pts = work / "zero_margin30_pts.csv"
     _synth_sequence(zm, n0=2000, n_source_frames=24, capture_fps=30.0, pts_path=zm_pts)
     z = score_capture_dir(
         zm,
@@ -1175,6 +1504,42 @@ def run_self_test() -> int:
     else:
         print(f"PASS ERROR18 refuse rc=77 reason={z.get('reason')}")
 
+    # ERROR19: exact 60 fps capture intervals == min_hold → refuse (zero margin)
+    zm60 = work / "zero_margin60"
+    zm60_pts = work / "zero_margin60_pts.csv"
+    _synth_sequence(zm60, n0=3000, n_source_frames=24, capture_fps=60.0, pts_path=zm60_pts)
+    z60 = score_capture_dir(
+        zm60,
+        bank,
+        source_fps=24.0,
+        capture_fps=60.0,
+        source_fps_src=PROVENANCE_CALLER,
+        capture_fps_src=PROVENANCE_CALLER,
+        refresh_hz=60.0,
+        refresh_hz_src=PROVENANCE_CALLER,
+        pts_path=zm60_pts,
+        force_mode="sim",
+        warmup_skip=0,
+    )
+    sm60 = z60.get("sampling_margin") or {}
+    if z60.get("rc") != RC_UNSCORED or not sm60.get("refuse_skip_verdict", False):
+        print(f"FAIL ERROR19 gate rc={z60.get('rc')} margin={sm60}")
+        ok = False
+    else:
+        print(
+            f"PASS ERROR19 refuse rc=77 max_iv={sm60.get('max_measured_capture_interval_ms')} "
+            f">= min_hold={sm60.get('min_hold_ms')}"
+        )
+
+    # D2: instrument fail uses rc=3 not rc=2
+    # Inject decreasing by hand on a tiny accepted sequence via margin-ok pts
+    # (unit check on constants)
+    if RC_SKIP_FAIL == RC_INSTRUMENT_FAIL:
+        print("FAIL D2 RCs not distinct")
+        ok = False
+    else:
+        print(f"PASS D2 distinct rc SKIP_FAIL={RC_SKIP_FAIL} INSTRUMENT={RC_INSTRUMENT_FAIL}")
+
     p60 = Path("/tmp/p60/png")
     if p60.is_dir():
         sample = list_pngs(p60)[100]
@@ -1195,11 +1560,19 @@ def run_self_test() -> int:
         print("SELF_TEST_OK")
         return RC_OK
     print("SELF_TEST_FAIL")
-    return RC_FAIL
+    return RC_INSTRUMENT_FAIL
 
 
 def run_p60_acceptance() -> int:
-    """Reproduce parent p60 numbers exactly (device banked, no device touch)."""
+    """Reproduce parent p60 *decode* numbers; skip verdict must UNSCORE (ERROR19).
+
+    Parent ERROR 19: with RTL min_hold=16.67ms and measured max_iv=21ms the
+    previous genuine=1 claim is withdrawn. Acceptance checks:
+      - accepted 3179/3591, adj_hist, span_ratio, decreasing=0 (decode stats)
+      - min_hold ≈ 16.667 (not 33.333)
+      - margin refuse → verdict UNSCORED rc=77
+      - empty-reject candidate 5578 may appear as margin_unresolved, NOT genuine
+    """
     png = Path("/tmp/p60/png")
     pts = Path("/tmp/p60/pts.csv")
     t60 = Path("/tmp/p60/T60.pkl")
@@ -1245,6 +1618,9 @@ def run_p60_acceptance() -> int:
         source_fps_src=PROVENANCE_MEASURED,
         refresh_hz_src=PROVENANCE_CALLER,
     )
+    # Band validation on full 3591 is expensive; first pass without bands for
+    # decode stats, then band-validate only empty-reject / with-reject heads
+    # via enable_band_validation on the missing set (required for T1).
     rep = analyze_completeness(
         per_frame,
         source_fps=24.0,
@@ -1252,6 +1628,11 @@ def run_p60_acceptance() -> int:
         source_fps_src=PROVENANCE_MEASURED,
         capture_fps_src=PROVENANCE_MEASURED,
         margin=margin,
+        bank=bank_pkl,
+        geom=geom,
+        enable_band_validation=True,
+        n_bands=4,
+        dist_max=8.0,
     )
     print(
         f"P60 accepted={rep['n_accepted']}/{rep['n_frames']} "
@@ -1259,16 +1640,25 @@ def run_p60_acceptance() -> int:
     )
     print(
         f"P60 adj_hist={rep['adjacent_delta_histogram']} "
-        f"span_ratio={rep['span_ratio']} genuine={rep['genuine_display_skips']}"
+        f"span_ratio={rep['span_ratio']} genuine={rep['genuine_display_skips']} "
+        f"confirmed_torn={rep['torn_transition_not_skip']} "
+        f"unresolved_band={rep['unresolved_band']} "
+        f"margin_unresolved={rep['margin_unresolved_candidates']}"
     )
-    print(f"P60 genuine_events={json.dumps(rep.get('genuine_events'), indent=2)}")
+    print(f"P60 band={json.dumps(rep.get('band_validation'), indent=2)}")
     print(
         f"P60 margin_ok={margin.get('margin_ok')} "
         f"max_iv={margin.get('max_measured_capture_interval_ms')} "
         f"min_hold={margin.get('min_hold_ms')} "
+        f"formula={margin.get('min_hold_formula')} "
         f"iv_hist={margin.get('interval_hist_ms_rounded')}"
     )
     print(f"P60 verdict={rep['verdict']} rc={rep['rc']} reason={rep['reason']}")
+    if rep.get("margin_unresolved_events"):
+        print(
+            "P60 margin_unresolved_events="
+            f"{json.dumps(rep['margin_unresolved_events'][:5], indent=2)}"
+        )
 
     ok = True
     if rep["n_accepted"] != 3179 or rep["n_frames"] != 3591:
@@ -1296,32 +1686,68 @@ def run_p60_acceptance() -> int:
         ok = False
     else:
         print("PASS span_ratio ~0.3994")
-    if rep["genuine_display_skips"] != 1:
-        print(f"FAIL genuine want 1 got {rep['genuine_display_skips']}")
+
+    # ERROR19: must refuse, not SKIP_FAIL
+    mh = float(margin.get("min_hold_ms") or 0)
+    if abs(mh - 1000.0 / 60.0) > 0.05:
+        print(f"FAIL min_hold want ~16.667 got {mh}")
         ok = False
     else:
-        g0 = rep["genuine_events"][0]
-        if int(g0["v"]) != 5578:
-            print(f"FAIL genuine v want 5578 got {g0['v']}")
+        print(f"PASS min_hold RTL={mh}")
+    if margin.get("margin_ok") or not margin.get("refuse_skip_verdict"):
+        print(f"FAIL ERROR19 expected refuse margin={margin}")
+        ok = False
+    else:
+        print("PASS ERROR19 margin refuse (max_iv>=min_hold)")
+    if rep["rc"] != RC_UNSCORED or rep["verdict"] != "UNSCORED":
+        print(f"FAIL verdict want UNSCORED/77 got {rep['verdict']}/{rep['rc']}")
+        ok = False
+    else:
+        print("PASS rc=77 UNSCORED (skip claim withdrawn)")
+    if rep["genuine_display_skips"] != 0:
+        print(f"FAIL genuine must be 0 under refuse got {rep['genuine_display_skips']}")
+        ok = False
+    else:
+        print("PASS genuine=0 under margin refuse")
+    # Candidate 5578 should appear as margin_unresolved
+    mur = [e for e in (rep.get("margin_unresolved_events") or []) if int(e.get("v", -1)) == 5578]
+    if not mur:
+        print("FAIL expected margin_unresolved candidate v=5578")
+        ok = False
+    else:
+        print("PASS margin_unresolved includes v=5578 (not proven skip)")
+
+    # Band validation: of 166 with-reject missings, report confirmed vs unresolved
+    bv = rep.get("band_validation") or {}
+    print(
+        f"P60_BAND confirmed_torn={bv.get('n_confirmed_torn')} "
+        f"unresolved={bv.get('n_unresolved_band')} "
+        f"still_absent={bv.get('n_still_absent')} enabled={bv.get('enabled')}"
+    )
+    if not bv.get("enabled"):
+        print("FAIL band validation not enabled")
+        ok = False
+    else:
+        print("PASS band validation ran")
+        n_c = int(bv.get("n_confirmed_torn") or 0)
+        n_u = int(bv.get("n_unresolved_band") or 0)
+        if n_c + n_u < 100:
+            print(f"FAIL band coverage too low confirmed+unresolved={n_c}+{n_u}")
             ok = False
         else:
-            print("PASS genuine skip exactly 005578")
-    if not margin.get("margin_ok"):
-        print(f"FAIL margin should be ok at 60fps: {margin}")
-        ok = False
-    else:
-        print("PASS sampling margin ok at 60fps")
-    if rep["rc"] != RC_FAIL:
-        print(f"FAIL rc want 2 got {rep['rc']}")
-        ok = False
-    else:
-        print("PASS rc=2 SKIP_FAIL")
+            print(f"PASS band coverage confirmed={n_c} unresolved={n_u}")
+        # T1: must not force all 166 to torn without evidence; unresolved is OK.
+        # Expect majority recoverable via loose+checksum on rejected captures.
+        if n_c < 50:
+            print(f"WARN low confirmed_torn={n_c} (recovery weak; not hard-fail yet)")
+        else:
+            print(f"PASS confirmed_torn={n_c} mechanical recoveries")
 
     if ok:
         print("P60_ACCEPTANCE_OK")
         return RC_OK
     print("P60_ACCEPTANCE_FAIL")
-    return RC_FAIL
+    return RC_INSTRUMENT_FAIL
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -1455,9 +1881,16 @@ def main(argv: list[str] | None = None) -> int:
         print(
             f"adj_hist={rep.get('adjacent_delta_histogram')} "
             f"genuine={rep.get('genuine_display_skips')} "
-            f"torn_not_skip={rep.get('torn_transition_not_skip')} "
+            f"confirmed_torn={rep.get('torn_transition_not_skip')} "
+            f"unresolved_band={rep.get('unresolved_band')} "
+            f"margin_unresolved={rep.get('margin_unresolved_candidates')} "
             f"G={rep.get('G_grabber_confound')} G_src={rep.get('G_src')} "
             f"G_formula={rep.get('G_formula')}"
+        )
+        bv = rep.get("band_validation") or {}
+        print(
+            f"band enabled={bv.get('enabled')} confirmed={bv.get('n_confirmed_torn')} "
+            f"unresolved={bv.get('n_unresolved_band')} still_absent={bv.get('n_still_absent')}"
         )
         if rep.get("G_note"):
             print(f"G_note={rep.get('G_note')}")
@@ -1474,6 +1907,19 @@ def main(argv: list[str] | None = None) -> int:
                 f"b={e.get('bracket_b_n')}@"
                 f"{Path(str(e.get('bracket_b_file', '') or '')).name} "
                 f"rejected_between={e.get('rejected_between')}"
+            )
+        for e in (rep.get("margin_unresolved_events") or [])[:8]:
+            print(
+                f"MARGIN_UNRESOLVED v={e.get('v')} "
+                f"a={e.get('bracket_a_n')}@"
+                f"{Path(str(e.get('bracket_a_file', '') or '')).name} "
+                f"b={e.get('bracket_b_n')}@"
+                f"{Path(str(e.get('bracket_b_file', '') or '')).name}"
+            )
+        for e in (rep.get("unresolved_band_events") or [])[:5]:
+            print(
+                f"BAND_UNRESOLVED v={e.get('v')} "
+                f"rej={e.get('rejected_between')} type={e.get('type')}"
             )
     return int(rep.get("rc", RC_UNSCORED))
 

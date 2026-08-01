@@ -1,0 +1,20 @@
+FILE=/tmp/p60/png/f_00500.png VERDICT=RES_OK rc=0 reason=vertical_period=3 ≈ 240 distinct source lines at capture_h=720
+  A_phase_v pick=3 score=8.1724 sep=1.8235 src=measured hist={'2': 1.457, '3': 8.1724, '4': 2.5792, '5': 1.8231, '6': 14.9026, '8': 4.9986, '10': 4.7795}
+  B_ac+fft pick=3 score=1.0 src=measured ac={'2': 0.0723, '3': 0.1366, '4': 0.057, '5': 0.0597, '6': 0.1204, '8': 0.0321, '10': 0.0297} fft={'2': 0.2134, '3': 1.0, '4': 0.3675, '5': 0.0677, '6': 0.2979, '8': 0.2304, '10': 0.3608}
+  H_phase hist={'2': 1.2185, '3': 1.6891, '4': 1.4223, '5': 1.229, '6': 1.9741, '8': 1.5929, '10': 2.0085} agree=True src_lines=240
+  rtl V_STORE=240 src=present_core.sv:162 H_DE=529
+FILE=/tmp/p60/png/f_01200.png VERDICT=RES_OK rc=0 reason=vertical_period=3 ≈ 240 distinct source lines at capture_h=720
+  A_phase_v pick=3 score=11.0179 sep=1.6182 src=measured hist={'2': 1.7053, '3': 11.0179, '4': 3.0623, '5': 2.0106, '6': 17.8297, '8': 5.0396, '10': 5.3004}
+  B_ac+fft pick=3 score=1.0 src=measured ac={'2': 0.0898, '3': 0.1983, '4': 0.0744, '5': 0.0642, '6': 0.1758, '8': 0.0537, '10': 0.0488} fft={'2': 0.1906, '3': 1.0, '4': 0.2008, '5': 0.0826, '6': 0.3556, '8': 0.2089, '10': 0.3161}
+  H_phase hist={'2': 1.0505, '3': 1.3584, '4': 1.1655, '5': 1.3099, '6': 1.5129, '8': 1.3913, '10': 1.6135} agree=True src_lines=240
+  rtl V_STORE=240 src=present_core.sv:162 H_DE=529
+FILE=/tmp/p60/png/f_02400.png VERDICT=RES_OK rc=0 reason=vertical_period=3 ≈ 240 distinct source lines at capture_h=720
+  A_phase_v pick=3 score=11.1811 sep=1.582 src=measured hist={'2': 1.6891, '3': 11.1811, '4': 3.225, '5': 2.618, '6': 17.6884, '8': 5.9414, '10': 5.9105}
+  B_ac+fft pick=3 score=1.0 src=measured ac={'2': 0.0739, '3': 0.1519, '4': 0.0599, '5': 0.0487, '6': 0.1265, '8': 0.0359, '10': 0.0326} fft={'2': 0.1833, '3': 1.0, '4': 0.2686, '5': 0.1364, '6': 0.3285, '8': 0.2329, '10': 0.3914}
+  H_phase hist={'2': 1.092, '3': 1.4242, '4': 1.1728, '5': 1.216, '6': 1.5973, '8': 1.6028, '10': 1.5634} agree=True src_lines=240
+  rtl V_STORE=240 src=present_core.sv:162 H_DE=529
+FILE=/tmp/p60/png/f_03000.png VERDICT=RES_OK rc=0 reason=vertical_period=3 ≈ 240 distinct source lines at capture_h=720
+  A_phase_v pick=3 score=11.7076 sep=1.5963 src=measured hist={'2': 1.7421, '3': 11.7076, '4': 3.4811, '5': 2.6951, '6': 18.6885, '8': 6.9347, '10': 5.4489}
+  B_ac+fft pick=3 score=1.0 src=measured ac={'2': 0.064, '3': 0.1265, '4': 0.0509, '5': 0.0394, '6': 0.1, '8': 0.0269, '10': 0.0248} fft={'2': 0.2001, '3': 1.0, '4': 0.3179, '5': 0.1357, '6': 0.3588, '8': 0.3004, '10': 0.4109}
+  H_phase hist={'2': 1.1488, '3': 1.6635, '4': 1.2379, '5': 1.1283, '6': 1.9623, '8': 1.2993, '10': 1.5733} agree=True src_lines=240
+  rtl V_STORE=240 src=present_core.sv:162 H_DE=529

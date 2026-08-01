@@ -1,7 +1,15 @@
-w-instr fabric hold + instrument unify
-- fabric_frames_done_hold_hist.py: pre-reg before binning, parent HDMI plateau compare, media-log parse
-- poll_plxd_frames_done_hold.sh: parent device poll (unchanged path)
-- PARENT_FABRIC_HOLD_CMDS.md: exact parent command list
-- hdmi_motion_instrument.py: DEPRECATED_FOR_DISPLAY_LOSS → glass_template_skip.py
-- G_note on glass_template_skip: G=-5.5 is NOT grabber drop (|G|/caps~0.15%)
-Host gates: fabric --self-test rc=0; glass --self-test rc=0; p60 genuine=5578 rc=2
+w-instr ERROR18/19 + T1 band + T2 src-res @ this commit
+
+D1 min_hold_ms = 1000/refresh_hz (RTL 1 vsync), NOT floor(refresh/src).
+  p60 max_iv=21 >= 16.667 → UNSCORED rc=77 (ERROR19 skip claim withdrawn).
+D2 RC_SKIP_FAIL=2 vs RC_INSTRUMENT_FAIL=3 distinct.
+T1 band/loose-checksum recovery: p60 confirmed_torn=144 unresolved=22
+  margin_unresolved v=5578 only; genuine=0 under refuse.
+T2 tools/hdmi_source_resolution.py: phase contrast + Δrow autocorr/FFT;
+  disagree→77. Device p60 frames period=3 → 240 lines, matches parent.
+
+Host true rc:
+  glass --self-test → 0
+  glass --p60-acceptance → 0
+  hdmi_source_resolution --self-test → 0
+  device 4 frames → 0 RES_OK period=3
