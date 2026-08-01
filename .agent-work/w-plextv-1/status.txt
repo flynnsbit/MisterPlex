@@ -1,7 +1,7 @@
 lane=w-plextv
 branch=w-plextv-cast-picker-e2e-fix2
 worktree=.worktrees/w-plextv-e2e-fix
-sha=PENDING
+sha=44a9ab01
 see=STATUS.md
 
 # Parent (evidence)
