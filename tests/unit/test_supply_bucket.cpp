@@ -155,6 +155,8 @@ int main() {
         CHECK(line.find("fps_src=caller_supplied") == std::string::npos);
         CHECK(line.find("gap_score=scored") != std::string::npos);
         CHECK(line.find("supply_gap=0.000") != std::string::npos);
+        // Line tag follows weakest input — here fps_src=measured → tag=measured.
+        CHECK(line.find("tag=measured") != std::string::npos);
         auto id = supplyPipeIdentity(449280u * 10u, 449280u, 10);
         const std::string td = formatSupplyTeardownLine(id, 449280u * 10u, 449280u, 10, "POST");
         CHECK(td.find("supply_ledger") != std::string::npos);
