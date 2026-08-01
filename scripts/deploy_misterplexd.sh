@@ -17,6 +17,11 @@
 #
 # Host unit tests inject DEPLOY_SSHM / DEPLOY_SCPM — never touches the real box.
 set -euo pipefail
+# Observation rules (parent ERROR 11 / 14):
+#   got='' from probe → NO-DATA (rc path must not call it mismatch)
+#   never pgrep (busybox missing → silent fail)
+#   never cmdline substring "misterplexd" (flock)
+#   PID capture + stop BEFORE any rename; verify live exe md5 AFTER
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 # shellcheck source=/dev/null

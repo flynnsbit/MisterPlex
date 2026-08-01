@@ -1,11 +1,24 @@
 lane: w-promote
 branch: fix/rollback-honest
-tip: e5552b72
-substantive: 630adc0d pin 5996385a + rename-before-kill
+tip: (post-commit)
 worktree: .worktrees/rollback-honest
 
-CURRENT daemon 5996385a57c6af142b8e732a39b36a4a
-rollbacks b981fd20 edc3a46b e9f79de2 | core c5382bee | conf 7f06132f USER-OWNED
+## Deliverables (repo-backed; parent runs device)
+1. V2_MD5 set+e glue FIXED (join+shape); green rc=0; wrong md5 RED — NOT 961dc724
+2. Atomic pair: rollback_v2 core+daemon+conf+boot; restore_misterplexd_prev rc=10
+3. Conf USER-OWNED: CONF_MD5_MATCH_OK + PAIR_CONF_RESTORE_FILE
+4. Boot hook vs live root mismatch gate RED-before-green
+5. Rename-before-kill / no pgrep / NO-DATA empty / comm identity encoded
 
-Host true rc: promotion_gates=0 rollback_honest=0 boot_hook=0 vidreg_liveness=0 conf=0
-mix SPI+DDR REFUSE rc=1 | glue still fail-closed | green path rc=0
+## Pins
+CURRENT 5996385a… (parent live); rollbacks b981fd20, edc3a46b, e9f79de2
+core c5382bee; conf 7f06132f USER-OWNED
+
+## OPEN (not closed)
+P1 REAL POWER CYCLE — OPEN (hook rehearsed only; do not claim cold-boot)
+P2 parent verify-live on HEAD
+P3 bitstream ID beyond PLXS+seq (partial)
+P4 lip-sync not promote criterion
+
+## Host true rc
+promotion_gates=0 deploy=0 rollback=0 boot_hook=0 conf=0

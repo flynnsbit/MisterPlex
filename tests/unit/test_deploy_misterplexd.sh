@@ -316,6 +316,17 @@ else
 fi
 
 # --- plexctl load_core host false-negative -----------------------------------
+
+echo "=== source policy: no pgrep; rename-before-kill documented ==="
+# Comments may mention pgrep-as-forbidden; fail only on live invocations.
+if grep -nE '^[^#]*\bpgrep\b' "$SCRIPT"; then
+  bad "source-no-pgrep"
+else
+  ok "source-no-pgrep"
+fi
+grep -q 'RENAME-BEFORE-KILL\|rename before kill\|BEFORE any rename' "$SCRIPT" && ok "source-rename-trap-doc" || bad "source-rename-trap-doc"
+grep -q 'is_daemon_pid\|/proc/.*/comm' "$SCRIPT" && ok "source-comm-identity" || bad "source-comm-identity"
+
 echo "=== RED: plexctl load_core on host must not claim missing device RBF ==="
 # Simulate host: no /dev/MiSTer_cmd. Source only the function via a wrapper.
 cat >"$WORK/plexctl_load_core_probe.sh" <<'P'
