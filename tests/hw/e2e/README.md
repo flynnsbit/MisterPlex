@@ -364,3 +364,38 @@ silently shorten the planned N — remaining cycles still run; aggregate PASS re
 
 `E2E_TRANSITION_CYCLES` default **10**. Per-cycle pause/resume/seek/stop/replay
 with timeline **effect** asserts. Failure names `transition_cycle_K_<transition>`.
+
+
+## Tiers (240p / 480p)
+
+| E2E_TIER | ratingKey | item | expect DECODE |
+|----------|-----------|------|---------------|
+| `240p` (default) | 3 | MiSTerPlex Test 240p | 320x240 |
+| `480p` | **8** | MiSTerPlex Soak 480p 24fps | 624x480 |
+| `all` | both | sequential | parent conf per tier |
+
+Suite never edits device conf. Device may already be `DECODE=624x480` (user-owned);
+export `E2E_DAEMON_DECODE` to match live banner or suite fails `daemon_tier_mismatch`.
+
+```bash
+# 480p arm (rk=8 soak) + 10 transition cycles + ledger
+E2E_TIER=480p E2E_DAEMON_DECODE=624x480 E2E_TRANSITION_CYCLES=10 \
+PLEX_BASE=http://YOUR-LOCAL-PMS:32400 PLEX_TOKEN=… PLEX_WEB_USER=… \
+MISTER_HOST=… \
+./tests/hw/e2e/run_cast_picker.sh; echo "true rc=$?"
+```
+
+## Frame ledger asserts
+
+Each transition cycle captures ledger at start/end of the continuous-play window
+(before stop) via `GET http://$MISTER_HOST:3005/player/telemetry` (preferred) or
+`E2E_DAEMON_LOG` tail.
+
+Asserts:
+- `residual == frames - presents - drops` (identity)
+- residual accounted (`==0` or `==publish_misses` or within `E2E_LEDGER_RESIDUAL_SLACK`, default 2)
+- `session` unchanged mid-cycle (daemon self-exit/respawn → FAIL `ledger_session_changed`)
+- `lifetime_frames` not regressed
+
+`E2E_REQUIRE_LEDGER=1` (default): unprobed ledger is RED, not a soft pass.
+Requires daemon with `/player/telemetry` (this branch) or a live log feed.

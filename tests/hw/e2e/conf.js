@@ -30,8 +30,9 @@ const TIER_DEFS = {
   },
   '480p': {
     name: '480p',
-    ratingKey: '6',
-    itemTitle: 'MiSTerPlex Test 480p',
+    // Soak 480p 24fps (TREK24) — parent-measured RK8, not short RK6 test clip.
+    ratingKey: '8',
+    itemTitle: 'MiSTerPlex Soak 480p 24fps',
     expectDecode: '624x480',
     confKeys: {
       DECODE: '624x480',

@@ -5,7 +5,7 @@
  * Playwright drives real Plex Web against a LOCAL PMS and verifies MiSTerPlex
  * end-to-end as a cast target:
  *   1. Sign in (token injection) + dismiss Plex Home "Select User"
- *   2. Open tier item (E2E_TIER=240p→RK3 / 480p→RK6); parent applies DECODE conf
+ *   2. Open tier item (E2E_TIER=240p→RK3 / 480p→RK8 soak); parent applies DECODE conf
  *   3. Open Select Player; assert MiSTerPlex via BEFORE/AFTER body-text DIFF
  *      (whole-page regex for "MiSTerPlex" is a FALSE POSITIVE — library/item/
  *      server names all contain it)
@@ -45,6 +45,7 @@ const {
   isBankGeometry,
   mediaInfo,
 } = require('./discover_real');
+const { captureLedger, assertLedgerWindow, formatSnap } = require('./ledger');
 
 const EXIT_PASS = 0;
 const EXIT_FAIL = 1;
@@ -1653,6 +1654,11 @@ async function runOneTransitionCycle(page, itemTitle, detailsUrl, cycle, total) 
   const start = await resetCycleStartState(page, itemTitle, detailsUrl, cycle, total);
   let adv = { ok: true, time: start.time0, advance: 0, detail: '' };
 
+  // Ledger at start of continuous-play window (after baseline, before pause).
+  await sleep(1100); // allow ≥1 Hz media telemetry tick when using log source
+  const ledgerStart = await captureLedger(cfg);
+  log(`LEDGER_START cycle=${cycle}/${total} ${formatSnap(ledgerStart)}`);
+
   // ── pause: state=paused AND time frozen ────────────────────────────────
   await companionPlayback('pause', `${ctag}_pause`);
   let st = await waitTimelineState(['paused'], 8000, `${ctag}_pause`);
@@ -1771,6 +1777,24 @@ async function runOneTransitionCycle(page, itemTitle, detailsUrl, cycle, total) 
   if (!adv.ok) cycleFail(cycle, total, 'seek', 'time_not_advancing_after_seek', adv.detail);
   log(`transition_seek_ok cycle=${cycle}/${total} target=${seekTo} time=${adv.time}`);
 
+  // Ledger end of continuous-play window (still same demux session; before stop).
+  await sleep(1100);
+  const ledgerEnd = await captureLedger(cfg);
+  log(`LEDGER_END cycle=${cycle}/${total} ${formatSnap(ledgerEnd)}`);
+  {
+    const lr = assertLedgerWindow(ledgerStart, ledgerEnd, `${ctag}_continuous`);
+    if (lr.softSkip) {
+      log(`LEDGER_SOFT_SKIP cycle=${cycle}/${total} ${lr.detail}`);
+    } else if (!lr.ok) {
+      cycleFail(cycle, total, 'ledger', lr.reason || 'ledger_fail', lr.detail || '');
+    } else {
+      log(
+        `LEDGER_OK cycle=${cycle}/${total} residual=${lr.residual} session=${lr.session}` +
+          (lr.note ? ` note=${lr.note}` : '')
+      );
+    }
+  }
+
   // ── stop → idle (not playing) ──────────────────────────────────────────
   await forceStopDaemon(`${ctag}_stop`);
   await sleep(900);
@@ -1820,7 +1844,8 @@ async function runOneTransitionCycle(page, itemTitle, detailsUrl, cycle, total) 
     cycle,
     ok: true,
     startTime0: start.time0,
-    transitions: ['pause', 'resume', 'seek', 'stop', 'play_idle_play'],
+    transitions: ['pause', 'resume', 'seek', 'ledger', 'stop', 'play_idle_play'],
+    ledger: { start: ledgerStart, end: ledgerEnd },
     hdmi,
   };
 }

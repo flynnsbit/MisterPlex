@@ -171,6 +171,20 @@ public:
     // Negative = video ahead of audio (audio sounds late).
     int64_t avDriftMs() const { return avDriftMs_.load(); }
     int64_t droppedFrames() const { return droppedFrames_.load(); }
+    // Successful FPGA/DDR presents this demux (resets each play).
+    int64_t presentCount() const { return presentCount_; }
+    // Assembled pipe frames this demux (live atomic for /player/telemetry).
+    int64_t liveFrames() const { return liveFrames_.load(); }
+    // Failed present publishes this demux (not A/V-pacer drops).
+    int64_t publishMisses() const { return publishMisses_.load(); }
+    // Monotonic in-process session counter (bumps each play(); detects respawn).
+    uint64_t sessionSeq() const { return sessionSeq_.load(); }
+    int64_t lifetimeFrames() const { return lifetimeFrames_.load(); }
+    int64_t lifetimePresents() const { return lifetimePresents_.load(); }
+    int64_t lifetimeDrops() const { return lifetimeDrops_.load(); }
+    int64_t lifetimePublishMisses() const { return lifetimePublishMisses_.load(); }
+    // Compact key=value line for GET /player/telemetry (suite ledger asserts).
+    std::string telemetryLine() const;
     // Coded payload only. Bare ints / PresentedWidth do not bind (conf seal).
     // Proofs: geometry_type_mismatch_set_decode_*.cpp + MediaPlayer mutant in
     // test_geometry_type_safety.sh. Conf/argv must use adoptExternalCodedSize.
@@ -321,6 +335,13 @@ private:
     std::atomic<int64_t> droppedFrames_{0};
     // FPGA presents this session (wall-clock capped)
     int64_t presentCount_ = 0;
+    std::atomic<int64_t> liveFrames_{0};
+    std::atomic<int64_t> publishMisses_{0};
+    std::atomic<uint64_t> sessionSeq_{0};
+    std::atomic<int64_t> lifetimeFrames_{0};
+    std::atomic<int64_t> lifetimePresents_{0};
+    std::atomic<int64_t> lifetimeDrops_{0};
+    std::atomic<int64_t> lifetimePublishMisses_{0};
     mutable std::mutex mu_;
     mutable std::mutex summaryMu_;
     PlaybackSummary lastSummary_;

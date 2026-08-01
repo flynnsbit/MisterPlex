@@ -729,6 +729,25 @@ void Companion::httpLoop() {
             continue;
         }
 
+        // Frame ledger for e2e: residual = frames - presents - drops; session=N.
+        // Not a cast-control path — does not set castBound_ / does not pollute teardown.
+        if (req.find("GET /player/telemetry") != std::string::npos ||
+            req.find("GET /telemetry") != std::string::npos) {
+            std::string body = "ok=0 reason=no_telemetry_handler\n";
+            if (onTelemetry_) {
+                try {
+                    body = onTelemetry_();
+                    if (!body.empty() && body.back() != '\n')
+                        body.push_back('\n');
+                } catch (...) {
+                    body = "ok=0 reason=telemetry_exception\n";
+                }
+            }
+            sendHttp(c, 200, "text/plain", body);
+            close(c);
+            continue;
+        }
+
         // Unsubscribe: drop cast-bound hold so idle polls can go pure stopped.
         if (req.find("/player/timeline/unsubscribe") != std::string::npos) {
             {

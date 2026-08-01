@@ -1109,6 +1109,10 @@ int main(int argc, char** argv) {
         doPlay(req);
     });
 
+    // E2E / soak: GET /player/telemetry → frames presents drops residual session=
+    // Does not affect castBound; suite polls without becoming a timeline controller.
+    comp.setTelemetry([&]() { return player.telemetryLine(); });
+
     comp.setPause([&]() { player.pause(); });
     comp.setResume([&]() { player.resume(); });
     comp.setStop([&]() {

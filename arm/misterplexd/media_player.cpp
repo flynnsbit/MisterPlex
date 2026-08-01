@@ -1220,6 +1220,11 @@ bool MediaPlayer::play(const std::string& urlOrPath, int64_t startOffsetMs,
         // poll playing() cannot race stop() before threadMain runs and wipe the
         // session at frames=0 / audio_s=0.
         playing_.store(true);
+        liveFrames_.store(0);
+        publishMisses_.store(0);
+        // Bump session before demux so /player/telemetry can detect mid-cycle
+        // daemon respawn (session would reset / lifetime regress).
+        sessionSeq_.fetch_add(1, std::memory_order_relaxed);
         showPlaybackOverlay(PlaybackOverlayState::Playing, startOffsetMs, durationMs);
         thr_ = std::thread([this, urlOrPath, startOffsetMs, httpHeaders, durationMs] {
             try {
@@ -2881,9 +2886,13 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                         "YUV420p");
                 }
                 if (!ok) {
-                    if (countPresent && (frameIndex % 30) == 0)
-                        log("media: fpga frame_tx: " +
-                            (ddrErr.empty() ? fpga_.lastError() : ddrErr));
+                    if (countPresent) {
+                        publishMisses_.fetch_add(1, std::memory_order_relaxed);
+                        if ((frameIndex % 30) == 0)
+                            log("media: fpga frame_tx: " +
+                                (ddrErr.empty() ? fpga_.lastError() : ddrErr) +
+                                " publish_misses=" + std::to_string(publishMisses_.load()));
+                    }
                 } else if (countPresent) {
                     ++presentCount_;
                     if (profilePresent)
@@ -3104,6 +3113,7 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
             }
 
             ++frameIndex;
+            liveFrames_.store(frameIndex, std::memory_order_relaxed);
             if (profilePresent) {
                 ++prof.frames;
                 prof.readCalls += frameReadCalls;
@@ -3201,6 +3211,9 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                               : 0.0;
                 const int64_t abytes = audioBytes_.load();
                 const double a_sec = static_cast<double>(abytes) / (48000.0 * 4.0);
+                const int64_t drops = droppedFrames_.load();
+                const int64_t pubMiss = publishMisses_.load();
+                const int64_t residual = frameIndex - presentCount_ - drops;
                 log("media: frames=" + std::to_string(frameIndex) +
                     " vfps=" + std::to_string(vfps).substr(0, 4) +
                     " pfps=" + std::to_string(pfps).substr(0, 4) +
@@ -3209,9 +3222,21 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                     " audio=" + (audioActive_.load() ? "on" : "off") +
                     " clock=av-lock" +
                     " av_drift_ms=" + std::to_string(avDriftMs_.load()) +
-                    " drops=" + std::to_string(droppedFrames_.load()) +
+                    " presents=" + std::to_string(presentCount_) +
+                    " drops=" + std::to_string(drops) +
+                    " publish_misses=" + std::to_string(pubMiss) +
+                    " residual=" + std::to_string(residual) +
                     " fps=" + std::to_string(fpsNum) + "/" + std::to_string(fpsDen) +
-                    " decode=" + std::to_string(outW_) + "x" + std::to_string(outH_));
+                    " decode=" + std::to_string(outW_) + "x" + std::to_string(outH_) +
+                    " lifetime_frames=" +
+                    std::to_string(lifetimeFrames_.load() + frameIndex) +
+                    " lifetime_presents=" +
+                    std::to_string(lifetimePresents_.load() + presentCount_) +
+                    " lifetime_drops=" +
+                    std::to_string(lifetimeDrops_.load() + drops) +
+                    " lifetime_publish_misses=" +
+                    std::to_string(lifetimePublishMisses_.load() + pubMiss) +
+                    " session=" + std::to_string(sessionSeq_.load()));
             }
 
             {
@@ -3316,13 +3341,55 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
     }
     startIdle();
 
+    const int64_t sessFrames = usedRawVideo ? frameIndex : reconFrames_.load();
+    const int64_t sessPresents = presentCount_;
+    const int64_t sessDrops = droppedFrames_.load();
+    const int64_t sessPubMiss = publishMisses_.load();
+    lifetimeFrames_.fetch_add(sessFrames, std::memory_order_relaxed);
+    lifetimePresents_.fetch_add(sessPresents, std::memory_order_relaxed);
+    lifetimeDrops_.fetch_add(sessDrops, std::memory_order_relaxed);
+    lifetimePublishMisses_.fetch_add(sessPubMiss, std::memory_order_relaxed);
+    const int64_t residual = sessFrames - sessPresents - sessDrops;
     log("media: session end frames=" + std::to_string(frameIndex) +
+        " presents=" + std::to_string(sessPresents) +
+        " drops=" + std::to_string(sessDrops) +
+        " publish_misses=" + std::to_string(sessPubMiss) +
+        " residual=" + std::to_string(residual) +
+        " session=" + std::to_string(sessionSeq_.load()) +
+        " lifetime_frames=" + std::to_string(lifetimeFrames_.load()) +
+        " lifetime_presents=" + std::to_string(lifetimePresents_.load()) +
+        " lifetime_drops=" + std::to_string(lifetimeDrops_.load()) +
+        " lifetime_publish_misses=" + std::to_string(lifetimePublishMisses_.load()) +
         " recon=" + std::to_string(reconFrames_.load()) +
         " cabac=" + (cabacSkip_.load() ? "1" : "0") +
         " stream=" + (streamEnabled_ ? "on" : "off") +
         " rawvideo=" + (usedRawVideo ? "on" : "off") +
         " present=" + presentMode_ +
         " skip_rgb=" + (skipRgb ? "1" : "0"));
+}
+
+std::string MediaPlayer::telemetryLine() const {
+    const int64_t frames = liveFrames_.load();
+    const int64_t presents = presentCount_;
+    const int64_t drops = droppedFrames_.load();
+    const int64_t pubMiss = publishMisses_.load();
+    const int64_t residual = frames - presents - drops;
+    return std::string("ok=1") +
+           " frames=" + std::to_string(frames) +
+           " presents=" + std::to_string(presents) +
+           " drops=" + std::to_string(drops) +
+           " publish_misses=" + std::to_string(pubMiss) +
+           " residual=" + std::to_string(residual) +
+           " lifetime_frames=" + std::to_string(lifetimeFrames_.load() + frames) +
+           " lifetime_presents=" + std::to_string(lifetimePresents_.load() + presents) +
+           " lifetime_drops=" + std::to_string(lifetimeDrops_.load() + drops) +
+           " lifetime_publish_misses=" +
+           std::to_string(lifetimePublishMisses_.load() + pubMiss) +
+           " session=" + std::to_string(sessionSeq_.load()) +
+           " playing=" + (playing_.load() ? "1" : "0") +
+           " paused=" + (paused_.load() ? "1" : "0") +
+           " time_ms=" + std::to_string(positionMs_.load()) +
+           " decode=" + std::to_string(outW_) + "x" + std::to_string(outH_);
 }
 
 } // namespace misterplex

@@ -37,11 +37,14 @@ public:
     using CtrlFn = std::function<void()>;
     using SeekFn = std::function<void(int64_t ms)>;
     using StepFn = std::function<void(int64_t deltaMs)>;
+    // Frame ledger snapshot for GET /player/telemetry (e2e residual/session asserts).
+    using TelemetryFn = std::function<std::string()>;
 
     void setName(std::string n) { name_ = std::move(n); }
     void setMachineId(std::string id) { machineId_ = std::move(id); }
     void setPort(uint16_t p) { port_ = p; }
     void setLog(LogFn f) { log_ = std::move(f); }
+    void setTelemetry(TelemetryFn f) { onTelemetry_ = std::move(f); }
     void setPlay(PlayFn f) { onPlay_ = std::move(f); }
     // Fired on the HTTP thread as soon as playMedia plants scrubber state (before
     // the async onPlay_ thread). Used to ++playGen and kill in-flight resolve.
@@ -113,6 +116,7 @@ private:
     std::string machineId_ = kPlayerDefaultMachineId;
     uint16_t port_ = kPlayerDefaultPort;
     LogFn log_;
+    TelemetryFn onTelemetry_;
     PlayFn onPlay_;
     CtrlFn onPlayQueued_;
     CtrlFn onPause_;
