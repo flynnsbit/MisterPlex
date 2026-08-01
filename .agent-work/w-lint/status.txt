@@ -1,7 +1,4 @@
-lane=w-lint GATE-INTEGRITY
+lane=w-lint
 branch=w-lint-gate-integrity
-focus=PLXD freeze-blindness SAFETY; plxd_liveness; label≠derivation; pre-retraction
-T_SAFETY=frames_done≠swap on c5382bee; SWAP_STUCK via pend/ack; fd=timebase only
-interim=no true swap counter on silicon until new RBF; ARM detects stuck pend/ack
-T5=HISTORICAL kept NOT YET FITTED on daily driver
-no_device=1 no_quartus=1
+tip=27faff4f
+focus=PLXD freeze-blindness landed
