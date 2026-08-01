@@ -673,6 +673,86 @@ run_new_verify "older-spi"
 expect_rc "older-spi" 2
 expect_grep "older-spi-ok" "OK   daemon-live $OLDER_HYBRID_DAEMON_MD5"
 
+# Parent 2026-08-01: live daemon 9ce2c2d1 is NOT pinned. Gate must FAIL closed —
+# never weaken acceptance to match an unproven binary (w-promote owns pin+provenance).
+echo "=== NEW gate: unregistered live pin 9ce2c2d1 → FAIL (do not weaken) ==="
+UNPINNED_LIVE=9ce2c2d1aaaaaaaaaaaaaaaaaaaaaaaa
+write_scenario <<EOF
+core_md5=$DDR_CORE_MD5
+disk_md5=$UNPINNED_LIVE
+live_md5=$UNPINNED_LIVE
+n_match=1
+appear_after=0
+http_code=200
+live_port=3005
+live_conf=$V2_CONF
+claim_present=1
+claim_md5=$DDR_CORE_MD5
+claim_path_field=/media/fat/_Utility/Plex.rbf
+claim_rbfname_mtime=1000
+claim_source=test
+rbfname_mtime=1000
+dev_core_md5=$DDR_CORE_MD5
+corename=Plex
+rbfname=Plex
+EOF
+run_new_verify "unpinned-9ce2"
+expect_rc "unpinned-9ce2" 1
+expect_grep "unpinned-9ce2-msg" "FAIL daemon-live md5=.*not in accepted pins"
+expect_grep "unpinned-9ce2-promote" 'PROMOTE_OK=0'
+expect_grep "unpinned-9ce2-gate" 'GATE_RESULT=FAIL'
+if grep -qE 'VERIFY_STATUS=FULL_PASS|PROMOTE_OK=1' <<<"$LAST_OUT"; then
+  echo "FAIL unpinned-9ce2: unregistered pin must not FULL_PASS" >&2
+  exit 1
+fi
+echo "OK unpinned-9ce2 fail-closed (coordinate pair_pin_update with provenance — do not weaken)"
+
+# PLXC word present → FULL_PASS path (fabric identity when RTL ships).
+echo "=== NEW gate: PLXC magic word + coherent DDR pair → FULL_PASS ==="
+write_scenario <<EOF
+core_md5=$DDR_CORE_MD5
+disk_md5=$DDR_DAEMON_MD5
+live_md5=$DDR_DAEMON_MD5
+n_match=1
+appear_after=0
+http_code=200
+live_port=3005
+live_conf=$V2_CONF
+claim_present=1
+claim_md5=$DDR_CORE_MD5
+claim_path_field=/media/fat/_Utility/Plex.rbf
+claim_rbfname_mtime=1000
+claim_source=test
+rbfname_mtime=1000
+dev_core_md5=$DDR_CORE_MD5
+corename=Plex
+rbfname=Plex
+plxc_word=0x504c5843
+EOF
+run_new_verify "plxc-full"
+expect_rc "plxc-full" 0
+expect_grep "plxc-full-id" 'RUNNING_CORE_IDENTITY=VERIFIED_PLXC'
+expect_grep "plxc-full-gate" 'GATE_CORE_IDENTITY=VERIFIED_PLXC'
+expect_grep "plxc-full-pass" 'VERIFY_STATUS=FULL_PASS'
+expect_grep "plxc-full-promote" 'PROMOTE_OK=1'
+
+echo "=== NEW gate: banner declares no fabric authority until PLXC ==="
+write_scenario <<EOF
+core_md5=$BASE_CORE_MD5
+disk_md5=$SPI_HYBRID_DAEMON_MD5
+live_md5=$SPI_HYBRID_DAEMON_MD5
+n_match=1
+appear_after=0
+http_code=200
+live_port=3005
+live_conf=$V2_CONF
+$(spi_claim_ok)
+EOF
+run_new_verify "banner"
+expect_rc "banner" 2
+expect_grep "banner-auth" 'FABRIC_IDENTITY_AUTHORITY=none_until_PLXC'
+expect_grep "banner-refuse" 'REFUSE FULL_PASS'
+
 echo "=== STATIC: baseline|dev must call verify_baseline (no blind measure path) ==="
 vr_src="$ROOT/scripts/video_regression.sh"
 grep -q 'baseline|dev)' "$vr_src" || { echo "FAIL missing baseline|dev combined arm"; exit 1; }

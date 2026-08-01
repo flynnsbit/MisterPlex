@@ -673,6 +673,14 @@ probe_http_liveness() {
 
 verify_baseline() {
   echo "== verifying RUNNING core identity + baseline pair coherence =="
+  # Loud authority banner — scanners must not treat mid-script OK lines as PASS.
+  echo "FABRIC_IDENTITY_AUTHORITY=none_until_PLXC"
+  echo "  CORENAME/RBFNAME strings are vacuous (always Plex) — never identity."
+  echo "  On-disk RBF md5 is the SD file, not the fabric bitstream."
+  echo "  Claim+RBFNAME-mtime is interim load bookkeeping only (not silicon proof)."
+  echo "  FULL_PASS requires GATE_CORE_IDENTITY=VERIFIED_PLXC (PLXC word or VIDREG_CORE_ID)."
+  echo "  Unverified coherent pair → rc=2 CORE_IDENTITY_UNVERIFIED PROMOTE_OK=0 (not green)."
+  echo "  Mixed SPI/DDR pair → rc=1 FAIL (black-screen class)."
   local rc=0
   local core_obs resolve_out resolve_rc run_core run_path run_via
   local got_disk wait_out wait_rc disk live n note pids port conf

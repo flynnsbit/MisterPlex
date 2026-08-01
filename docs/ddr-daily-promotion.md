@@ -245,10 +245,23 @@ echo "true rc=$?"
 # HARD FAIL: rc=1 FREEZE, rc=2 COLOR_FAIL, rc=77 UNSCORED → gate true rc=8
 ```
 
-**Honesty:** until w-fit-1 core-identity register exists, on-disk RBF md5 +
-`/tmp/CORENAME=Plex` cannot prove the *running* bitstream. **Viewed pixels
-are the claim.** `video_regression.sh` still cannot see mixed DDR-daemon+SPI-core
-as broken (w-lint/w-fit-1); do not treat it as promotion safety alone.
+**Honesty (w-lint `video_regression.sh` verify — updated):** there is still **no**
+silicon content-hash of the running RBF (`CORENAME`/`RBFNAME` are vacuous;
+on-disk md5 ≠ fabric; PLXC @ doorbell+0x130 not shipping). **Viewed pixels remain
+parent proof of picture.** But verify is **not** promote-green on that hole:
+
+| Situation | `GATE_RESULT` | true rc | `PROMOTE_OK` |
+|---|---|---:|---:|
+| Mixed SPI core + DDR daemon (or reverse) | `FAIL` | **1** | 0 |
+| Coherent pair, live daemon, no PLXC/VIDREG | `CORE_IDENTITY_UNVERIFIED` | **2** | 0 |
+| Coherent + `VIDREG_CORE_ID=ddr|spi` / PLXC magic | `FULL_PASS` | **0** | 1 |
+| Unregistered daemon pin (e.g. live `9ce2c2d1` before pin) | `FAIL` | **1** | 0 |
+
+Do **not** promote on mid-script `OK` lines. Key `GATE_RESULT=` / `PROMOTE_OK=` /
+`true rc=`. Pin advance: `scripts/pair_pin_update.sh` with provenance — never
+weaken acceptance to match a new binary. Host proof:
+`tests/unit/test_video_regression_liveness.sh`. Design:
+`docs/core-running-bitstream-identity.md`.
 
 ### 7) Atomic SPI rollback (if promote wrong)
 
