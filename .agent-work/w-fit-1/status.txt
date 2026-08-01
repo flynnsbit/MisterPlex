@@ -1,23 +1,46 @@
-# w-fit-1 — daemon rc=0 exit RCA (drop sawtooth FALSIFIED)
+# w-fit-1 fleet report — 2026-07-31T21:55
 BRANCH=w-fit-integ-c5382bee-dequant-swap
-NO_FIT=1 NO_DEVICE=1
-SHIPPING_CORE=c5382bee
+TIP_SHA=4627f3f91f64e15dd930192d5ecdf5d298532423
+ARM_misterplexd_md5=a9c22920bbc067d0823ff986da9c4412
+NO_FIT=1 NO_DEVICE=1 SHIPPING_CORE=c5382bee
 
-## Falsified
-Steady-state drop sawtooth RCA DEAD (parent: 0 steady drops ~353s x2).
-Do not resume CV/Fano discriminator work for that phenomenon.
+## Built (this lane)
+1. Daemon exit RCA + instrumentation (4627f3f9)
+   - exit paths enumerated; product rc=0 = SIGTERM→g_stop→WIFEXITED(0)
+   - crash guard SA_SIGINFO → misterplexd.death (pc/lr) then re-raise
+   - test_daemon_exit_rc0, test_crash_guard_death
+2. P5 frame ledger (cross-restart file + present_fails) — 825d205d
+3. Shelved RTL bundle (PLXC/907e/dequant) — NOT requesting fit
+4. Drop sawtooth RCA docs — SUPERSEDED/FALSIFIED by parent measure (0 steady drops)
 
-## Daemon exit
-Doc: .agent-work/w-fit-1/DAEMON_EXIT_RCA.md
-- Product rc=0 = main_loop_g_stop after SIGINT/SIGTERM (WIFEXITED 0)
-- No internal timer; variable run_s ⇒ external signal (si_pid settles)
-- rc=139 SIGSEGV is DIFFERENT bug (crash path re-raises)
-- Crash guard now writes death breadcrumb + pc/lr before re-raise
-- breadcrumb init BEFORE installCrashGuard
-
-## true rc=
-test_death_breadcrumb true rc=0
+## true rc= (DIRECT)
 test_crash_guard_death true rc=0
-test_main_guard true rc=0
 test_daemon_exit_rc0 true rc=0
-make unit true rc=0
+test_frame_ledger true rc=0
+test_death_breadcrumb true rc=0
+make unit true rc=0   # prior full run on tip
+arm-plexd true rc=0
+
+## av-lock / av_drift_ms criterion — REVISED (fleet binding)
+This lane MUST NOT and does NOT use clock=av-lock or av_drift_ms as soak PASS.
+Replaced criteria for our deliverables:
+  - Frame accounting: ledger residual==0 across session_end rows (print/assert_frame_ledger)
+  - Daemon liveness: EXIT_REASON + si_pid on rc=0; death signal=11+pc on SEGV
+  - Lip-sync: OUT OF SCOPE for w-fit — only tools/avsync_measure_hdmi.py (parent owns HW)
+  - av_drift_ms remains useful ONLY as pacer control-input telemetry (drop trigger), never PASS
+
+P6 lead=20 falsifier: still valid to test whether reported drift tracks setpoint
+(readout), NOT to prove HDMI lip-sync. Parent HDMI vs internal 120 ms split confirms
+readout-blindness for lip-sync.
+
+## audioClockPpm -638 vs clock 48000 asymmetry
+Noted; NOT attributed. Do not build mechanism on untested link.
+Check that would settle it: A/B AUDIO_CLOCK_PPM=0 vs -638 with HDMI avsync_measure only.
+
+## Blocking
+- Need parent deploy of ARM a9c22920 to capture next EXIT_REASON/si_pid on mysterious rc=0
+- No fit granted / none requested
+- Lip-sync RCA is not this lane unless reassigned
+
+## Do not re-import
+ERROR 17 fps=24/1 false; steady-state drop sawtooth dead; av-lock as PASS dead
