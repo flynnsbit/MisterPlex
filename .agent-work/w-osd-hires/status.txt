@@ -1,0 +1,34 @@
+worker: w-osd-hires
+branch: w-osd-hires
+task: panel empty-center black rect RCA + fix
+status: READY_FOR_PARENT_DEPLOY
+
+## RCA (source-cited)
+Classification: (c) empty panel interior — NOT title widget, NOT dirty-rect hole.
+- playback_overlay.hpp render(): was fillRect(..., black, (170*alpha)/255) full panel
+- No title drawn; band right of PAUSED / above scrubber = translucent pure black over video
+- dirtyBounds = full panelBounds (no unpainted dirty hole)
+- Parent map x247-397 y360-404 @624x480 matches that empty band (layout math)
+
+## Fix
+- Opaque panelBg{42,46,54} @ full alpha (empty-center Y independent of video)
+- setTitle + muted title right of state label; main doPlay setOverlayTitle(resolved.title)
+- fitText uppercase+truncate; JQXZ glyphs added
+
+## Evidence host
+- test_panel_empty_center_static: RED ed1fc22f rc=1 / GREEN current rc=0
+- test_playback_overlay panel-empty-center: Ywhite=Yblack=Ymid=55.6 |d|=0; title band 67.2
+- test_pause_overlay_publish_static: rc=0
+- make arm-plexd: rc=0
+- md5: cb0a24d8f2dd9a594dd6957886cc3665
+
+## P2 font miss (parent)
+Renderer at 624x480 always Large12x16 (h>=480 && bodyScale==2). Tool reporting 8x13 on PAUSED
+is unknown without tool search path evidence — likely multi-hypothesis scorer, not renderer.
+
+## Hardware prediction (parent only)
+P1 empty-center luma 50-70 grey chrome (FAIL if ≤35 black hole)
+P2 title text right of PAUSED when resolve has title
+P3 no regression sticky PAUSED / timeline bar
+
+No RTL. User conf untouched.

@@ -205,6 +205,8 @@ public:
     // "<< Ns" / "Ns >>" feedback; callers still own the actual seek/skip.
     void showPlaybackOverlay(PlaybackOverlayState state, int64_t positionMs, int64_t durationMs);
     void flashPlaybackSkip(int64_t deltaMs);
+    // Media title for transport chrome (empty clears). Drawn in panel center band.
+    void setOverlayTitle(const std::string& title) { overlay_.setTitle(title.c_str()); }
     // Process-exit teardown: joins every worker thread without touching the FPGA
     // or reloading Main. A std::thread that is still joinable when ~MediaPlayer
     // runs calls std::terminate(), which is how the daemon used to abort on

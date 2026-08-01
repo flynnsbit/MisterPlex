@@ -160,3 +160,43 @@ python3 tools/even_row_cull_glyph_gate.py; echo "true rc=$?"
 
 `PAIR_OK` proves the fix is **not** a canvas-size no-op under the real fetch rule, and that
 scale≥2 **accommodates** the 240-line ceiling without restoring 480 independent lines.
+
+## Panel empty-center black rectangle (silicon residual after 3883f5ab)
+
+**Measured (parent):** inside PAUSED panel, axis-aligned dark rect ≈ HDMI x740–1190 /
+rows 809–910 (store map ≈ x247–397 y360–404 @624×480), interior luma ~40 vs surrounding
+chrome grey.
+
+**RCA (source, not guess):**
+- Classification **(c) empty panel interior** — not (a) a title field widget, not (b) a
+  dirty-rect hole (`dirtyBounds` = full `panelBounds`).
+- `playback_overlay.hpp` `render()` filled the whole panel with
+  `fillRect(..., black, (170 * alpha) / 255)` and drew only icon + state label + times +
+  scrubber. The band right of `PAUSED` / above the scrubber had **no content**, so
+  translucent pure black over video read as a solid black rectangle.
+- No `title` was ever drawn into Snapshot (confirmed across overlay history).
+
+**Fix (ARM-only, no RTL):**
+1. Opaque chrome `panelBg{42,46,54}` at full `alpha` (empty-center Y independent of video).
+2. Optional media title: `setTitle` / `MediaPlayer::setOverlayTitle` / `doPlay` sets
+   `resolved.title`; muted text right of state label (`fitText` truncates).
+
+**Host gates:**
+```bash
+python3 tests/unit/test_panel_empty_center_static.py; echo "true rc=$?"
+# red-before-green proven: ed1fc22f overlay → rc=1; current → rc=0
+./build/test_playback_overlay   # section panel-empty-center: |Ywhite-Yblack|<8, Ymid~55
+```
+
+**Hardware prediction (parent deploys):**
+| | PASS | FAIL |
+|---|---|---|
+| P1 empty-center mean luma (store map x250–390 y360–400, or HDMI equiv) | **50–70** and visually **grey chrome**, not black hole | ≤35 solid black interior |
+| P2 title | muted uppercase title right of `PAUSED` when cast has `resolved.title` | blank band with black hole |
+| P3 sticky PAUSED / timeline | no regression vs 3883f5ab | panel missing or bar wrong |
+
+```bash
+# after deploy new misterplexd:
+# cast → play ~22s → pause → wait 6s → capture
+python3 tools/readback_overlay_text.py --image CAP.png --expect PAUSED; echo "true rc=$?"
+```

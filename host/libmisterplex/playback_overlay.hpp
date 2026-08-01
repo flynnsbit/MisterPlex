@@ -149,6 +149,16 @@ public:
         durationMs_ = clampNonNegative(durationMs);
     }
 
+    // Media title drawn in the empty panel band (right of state label). Empty clears.
+    void setTitle(const char* title) {
+        std::lock_guard<std::mutex> lock(mu_);
+        titleText_[0] = '\0';
+        if (title && title[0]) {
+            std::snprintf(titleText_, sizeof(titleText_), "%s", title);
+            titleText_[sizeof(titleText_) - 1] = '\0';
+        }
+    }
+
     void flashSkip(int64_t deltaMs, int64_t positionMs, int64_t durationMs) {
         flashSkipAt(deltaMs, positionMs, durationMs, monotonicMs());
     }
@@ -285,6 +295,7 @@ private:
         int64_t skipDeltaMs = 0;
         int64_t noticeAtMs = -kNoticeVisibleMs;
         char noticeText[32]{};
+        char titleText[64]{};
     };
 
     struct Rgb24Target {
@@ -406,9 +417,16 @@ private:
 
     Snapshot snapshot() const {
         std::lock_guard<std::mutex> lock(mu_);
-        Snapshot s{state_, positionMs_, durationMs_, shownAtMs_, skipAtMs_, skipDeltaMs_,
-                   noticeAtMs_, {}};
+        Snapshot s;
+        s.state = state_;
+        s.positionMs = positionMs_;
+        s.durationMs = durationMs_;
+        s.shownAtMs = shownAtMs_;
+        s.skipAtMs = skipAtMs_;
+        s.skipDeltaMs = skipDeltaMs_;
+        s.noticeAtMs = noticeAtMs_;
         std::memcpy(s.noticeText, noticeText_, sizeof(s.noticeText));
+        std::memcpy(s.titleText, titleText_, sizeof(s.titleText));
         return s;
     }
 
@@ -611,8 +629,18 @@ private:
                                          0x66, 0x66, 0x66, 0x7C, 0x00, 0x00};
         static constexpr uint8_t v[13] = {0x00, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66,
                                          0x66, 0x3C, 0x18, 0x18, 0x00, 0x00};
+        static constexpr uint8_t j[13] = {0x00, 0x1E, 0x0C, 0x0C, 0x0C, 0x0C, 0x0C,
+                                         0x0C, 0x0C, 0x6C, 0x38, 0x00, 0x00};
+        static constexpr uint8_t q[13] = {0x00, 0x3C, 0x66, 0xC3, 0xC3, 0xC3, 0xC3,
+                                         0xDB, 0xCF, 0x66, 0x3D, 0x00, 0x00};
+        static constexpr uint8_t x[13] = {0x00, 0xC3, 0x66, 0x3C, 0x18, 0x18, 0x3C,
+                                         0x66, 0xC3, 0xC3, 0xC3, 0x00, 0x00};
+        static constexpr uint8_t z[13] = {0x00, 0xFF, 0x06, 0x0C, 0x18, 0x18, 0x30,
+                                         0x60, 0xC0, 0xC0, 0xFF, 0x00, 0x00};
         static constexpr uint8_t slash[13] = {0x00, 0x06, 0x06, 0x0C, 0x0C, 0x18, 0x18,
                                              0x30, 0x30, 0x60, 0x60, 0x00, 0x00};
+        if (ch >= 'a' && ch <= 'z')
+            ch = static_cast<char>(ch - 'a' + 'A');
         switch (ch) {
         case '0': return d0;
         case '1': return d1;
@@ -638,19 +666,23 @@ private:
         case 'G': return g;
         case 'H': return h;
         case 'I': return i;
+        case 'J': return j;
         case 'K': return k;
         case 'L': return l;
         case 'M': return m;
         case 'N': return n;
         case 'O': return o;
         case 'P': return p;
+        case 'Q': return q;
         case 'R': return r;
         case 'S': return s;
         case 'T': return t;
         case 'U': return u;
         case 'V': return v;
         case 'W': return w;
+        case 'X': return x;
         case 'Y': return y;
+        case 'Z': return z;
         default: return space;
         }
     }
@@ -663,6 +695,52 @@ private:
             return 0;
         const int sc = std::max(kOverlayMinScale, m.bodyScale);
         return n * m.glyphAdvance * sc - sc;
+    }
+
+    // Uppercase + truncate to maxPx (append "..." when clipped). outCap includes NUL.
+    static void fitText(const char* text, const OverlayLayoutMetrics& m, int maxPx, char* out,
+                        size_t outCap) {
+        if (!out || outCap == 0)
+            return;
+        out[0] = '\0';
+        if (!text || maxPx <= 0)
+            return;
+        char upper[64];
+        size_t n = 0;
+        for (const char* p = text; *p && n + 1 < sizeof(upper); ++p) {
+            char c = *p;
+            if (c >= 'a' && c <= 'z')
+                c = static_cast<char>(c - 'a' + 'A');
+            // Keep printable ASCII; drop others as space so width stays stable.
+            if (c < 32 || c > 126)
+                c = ' ';
+            upper[n++] = c;
+        }
+        upper[n] = '\0';
+        if (n == 0)
+            return;
+        if (textWidth(upper, m) <= maxPx) {
+            std::snprintf(out, outCap, "%s", upper);
+            return;
+        }
+        const char* ell = "...";
+        const int ellW = textWidth(ell, m);
+        if (ellW > maxPx) {
+            out[0] = '\0';
+            return;
+        }
+        // Binary-ish shrink: drop chars until upper[0..k) + "..." fits.
+        while (n > 0) {
+            --n;
+            upper[n] = '\0';
+            char trial[68];
+            std::snprintf(trial, sizeof(trial), "%s%s", upper, ell);
+            if (textWidth(trial, m) <= maxPx) {
+                std::snprintf(out, outCap, "%s", trial);
+                return;
+            }
+        }
+        std::snprintf(out, outCap, "%s", ell);
     }
 
     // 12×16 bitmaps: each row is 12 bits in the high 12 of a uint16_t (MSB = left).
@@ -781,6 +859,20 @@ private:
         static constexpr uint16_t F[16] = {
             0x0000, 0x3FC0, 0x3000, 0x3000, 0x3000, 0x3000, 0x3F00, 0x3000,
             0x3000, 0x3000, 0x3000, 0x3000, 0x3000, 0x0000, 0x0000, 0x0000};
+        static constexpr uint16_t J[16] = {
+            0x0000, 0x0FC0, 0x0180, 0x0180, 0x0180, 0x0180, 0x0180, 0x0180,
+            0x0180, 0x3180, 0x3180, 0x3180, 0x1F00, 0x0000, 0x0000, 0x0000};
+        static constexpr uint16_t Q[16] = {
+            0x0000, 0x1F00, 0x30C0, 0x6060, 0x6060, 0x6060, 0x6060, 0x6060,
+            0x66C0, 0x63C0, 0x6180, 0x30C0, 0x1F60, 0x0000, 0x0000, 0x0000};
+        static constexpr uint16_t X[16] = {
+            0x0000, 0x30C0, 0x30C0, 0x1980, 0x0F00, 0x0600, 0x0600, 0x0F00,
+            0x1980, 0x30C0, 0x30C0, 0x30C0, 0x30C0, 0x0000, 0x0000, 0x0000};
+        static constexpr uint16_t Z[16] = {
+            0x0000, 0x3FC0, 0x0060, 0x00C0, 0x0180, 0x0300, 0x0600, 0x0C00,
+            0x1800, 0x3000, 0x3000, 0x3000, 0x3FC0, 0x0000, 0x0000, 0x0000};
+        if (ch >= 'a' && ch <= 'z')
+            ch = static_cast<char>(ch - 'a' + 'A');
         switch (ch) {
         case '0': return d0; case '1': return d1; case '2': return d2; case '3': return d3;
         case '4': return d4; case '5': return d5; case '6': return d6; case '7': return d7;
@@ -788,10 +880,11 @@ private:
         case '>': return gt; case '-': return minus; case '/': return slash;
         case 'A': return A; case 'B': return B; case 'C': return C; case 'D': return D;
         case 'E': return E; case 'F': return F; case 'G': return G; case 'H': return H;
-        case 'I': return I; case 'K': return K; case 'L': return L; case 'M': return M;
-        case 'N': return N; case 'O': return O; case 'P': return P; case 'R': return R;
-        case 'S': return S; case 'T': return T; case 'U': return U; case 'V': return V;
-        case 'W': return W; case 'Y': return Y;
+        case 'I': return I; case 'J': return J; case 'K': return K; case 'L': return L;
+        case 'M': return M; case 'N': return N; case 'O': return O; case 'P': return P;
+        case 'Q': return Q; case 'R': return R; case 'S': return S; case 'T': return T;
+        case 'U': return U; case 'V': return V; case 'W': return W; case 'X': return X;
+        case 'Y': return Y; case 'Z': return Z;
         default: return space;
         }
     }
@@ -888,16 +981,37 @@ private:
 
         if (alpha > 0) {
             const OverlayRect p = panelBounds(w, h);
-            fillRect(t, p.x, p.y, p.w, p.h, black, (170 * alpha) / 255);
-            strokeRect(t, p.x, p.y, p.w, p.h, panelEdge, (150 * alpha) / 255);
+            // Opaque dark-grey chrome (not pure black@170). Translucent black
+            // left the empty center (right of state label, above scrubber) as a
+            // solid black rectangle over video — silicon Test B residual hole
+            // at ~x247-397 y360-404 on 624x480. Opaque panelBg makes that band
+            // intentional chrome grey independent of underlying luma.
+            constexpr Color panelBg{42, 46, 54};
+            fillRect(t, p.x, p.y, p.w, p.h, panelBg, alpha);
+            strokeRect(t, p.x, p.y, p.w, p.h, panelEdge, (200 * alpha) / 255);
 
             const int iconXFinal = p.x + 18;
             // Even y-origins: present_core drops odd store rows.
             const int labelY = (p.y + m.labelTop) & ~1;
             const int iconCy = (p.y + m.iconCy) & ~1;
-            drawIcon(t, s.state, iconXFinal, iconCy, alpha, std::max(kOverlayMinScale, m.iconScale));
-            drawText(t, iconXFinal + 14 + 8 * std::max(kOverlayMinScale, m.iconScale), labelY,
-                     stateLabel(s.state), m, white, alpha);
+            const int iconSc = std::max(kOverlayMinScale, m.iconScale);
+            drawIcon(t, s.state, iconXFinal, iconCy, alpha, iconSc);
+            const int stateX = iconXFinal + 14 + 8 * iconSc;
+            const char* label = stateLabel(s.state);
+            drawText(t, stateX, labelY, label, m, white, alpha);
+
+            // Title fills the former empty black band (right of state label).
+            if (s.titleText[0] != '\0') {
+                const int gap = std::max(10, 6 * m.bodyScale);
+                const int titleX = stateX + textWidth(label, m) + gap;
+                const int titleMaxR = p.x + p.w - 14;
+                if (titleX + m.glyphAdvance * m.bodyScale < titleMaxR) {
+                    char fitted[64];
+                    fitText(s.titleText, m, titleMaxR - titleX, fitted, sizeof(fitted));
+                    if (fitted[0] != '\0')
+                        drawText(t, titleX, labelY, fitted, m, muted, alpha);
+                }
+            }
 
             char elapsed[32];
             char total[32];
@@ -971,6 +1085,7 @@ private:
     int64_t skipDeltaMs_ = 0;
     int64_t noticeAtMs_ = -kNoticeVisibleMs;
     char noticeText_[32]{};
+    char titleText_[64]{};
 };
 
 } // namespace misterplex

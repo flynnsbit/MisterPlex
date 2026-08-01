@@ -1,6 +1,7 @@
 #include "libmisterplex/playback_overlay.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -594,6 +595,75 @@ int main() {
         }
         CHECK(bright);
         std::printf("pause-sticky: PAUSED visible at +60s; PLAYING/STOPPED hide after kVisibleMs\n");
+    }
+
+
+    // 10. Panel empty-center is opaque chrome grey — not translucent pure-black hole.
+    // Parent silicon (3883f5ab Test B): black rect ~x247-397 y360-404 @624x480, luma~40
+    // over video; surrounding chrome looked grey. Source: fillRect black@(170*a/255) with
+    // no title/content in that band. Opaque panelBg must make empty-center Y independent
+    // of underlying video and clearly above studio-black.
+    {
+        using misterplex::PlaybackOverlay;
+        using misterplex::PlaybackOverlayState;
+        using misterplex::OverlayRect;
+        constexpr int OW = 624, OH = 480;
+        const size_t ysz = static_cast<size_t>(OW) * OH;
+        const size_t csz = static_cast<size_t>(OW / 2) * (OH / 2);
+        auto meanY = [&](const std::vector<uint8_t>& yuv, int x0, int y0, int x1, int y1) {
+            long sum = 0;
+            int n = 0;
+            for (int y = y0; y < y1; ++y) {
+                for (int x = x0; x < x1; ++x) {
+                    sum += yuv[static_cast<size_t>(y) * OW + x];
+                    ++n;
+                }
+            }
+            return n ? static_cast<double>(sum) / n : -1.0;
+        };
+        const OverlayRect panel = PlaybackOverlay::panelBounds(OW, OH);
+        const auto lm = PlaybackOverlay::layoutMetrics(OW, OH);
+        // Empty band right of state label / left of right margin, between label and time.
+        const int x0 = panel.x + panel.w / 3;
+        const int x1 = panel.x + (2 * panel.w) / 3;
+        const int y0 = panel.y + lm.labelTop + 2;
+        const int y1 = panel.y + lm.timeTop - 2;
+        CHECK(x1 > x0 && y1 > y0);
+
+        auto renderOnY = [&](uint8_t Yfill) {
+            std::vector<uint8_t> yuv(ysz + 2 * csz);
+            std::fill(yuv.begin(), yuv.begin() + static_cast<std::ptrdiff_t>(ysz), Yfill);
+            std::fill(yuv.begin() + static_cast<std::ptrdiff_t>(ysz), yuv.end(), 128);
+            PlaybackOverlay ov;
+            ov.showAt(PlaybackOverlayState::Paused, 34000, 360000, 0);
+            // No title: empty center must still be chrome, not a video hole.
+            CHECK(ov.renderYuv420pAt(yuv.data(), OW, OH, 0));
+            return meanY(yuv, x0, y0, x1, y1);
+        };
+        const double yOnWhite = renderOnY(235);
+        const double yOnBlack = renderOnY(16);
+        const double yOnMid = renderOnY(128);
+        std::printf("panel-empty-center: Ywhite=%.1f Yblack=%.1f Ymid=%.1f |d|=%.1f\n",
+                    yOnWhite, yOnBlack, yOnMid, std::abs(yOnWhite - yOnBlack));
+        // Opaque chrome: background must not leak into empty center.
+        CHECK(std::abs(yOnWhite - yOnBlack) < 8.0);
+        CHECK(std::abs(yOnMid - yOnBlack) < 8.0);
+        // Grey chrome band (not studio black ~16, not near-white).
+        CHECK(yOnMid > 30.0);
+        CHECK(yOnMid < 100.0);
+
+        // With title set, title glyphs raise luma in the label row band.
+        {
+            std::vector<uint8_t> yuv(ysz + 2 * csz, 16);
+            std::fill(yuv.begin() + static_cast<std::ptrdiff_t>(ysz), yuv.end(), 128);
+            PlaybackOverlay ov;
+            ov.setTitle("TREK TITLE");
+            ov.showAt(PlaybackOverlayState::Paused, 34000, 360000, 0);
+            CHECK(ov.renderYuv420pAt(yuv.data(), OW, OH, 0));
+            const double yTitle = meanY(yuv, x0, y0, x1, y1);
+            std::printf("panel-title-band: Y=%.1f (expect > empty chrome)\n", yTitle);
+            CHECK(yTitle > yOnMid + 5.0);
+        }
     }
 
     if (fails) {
