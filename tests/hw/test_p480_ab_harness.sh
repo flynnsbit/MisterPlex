@@ -473,13 +473,33 @@ CPU_RAW_PATH="$OUT_DIR/p480_ab_${TIER}_${STAMP}_cpu_raw.txt"
 ssh_m "WINDOW_S='$WINDOW_S' bash -s" <<'REMOTE' >"$CPU_RAW_PATH"
 set -euo pipefail
 WINDOW_S="${WINDOW_S:-60}"
-HZ=$(getconf CLK_TCK 2>/dev/null || echo 100)
+# Parent 2026-08-01: busybox getconf CLK_TCK can return EMPTY with rc=0.
+# Never `HZ=$(getconf ... || echo 100)` — empty success bypasses || and every
+# P=100*dticks/(HZ*dwall) becomes 0.0 (false "idle" table).
+g=$(getconf CLK_TCK 2>/dev/null || true)
+if [[ "$g" =~ ^[1-9][0-9]*$ ]]; then
+  HZ=$g
+  HZ_SRC=getconf
+else
+  echo "CLK_TCK_GETCONF_EMPTY_OR_BAD raw='${g}' — deriving" >&2
+  _j() { awk '/^cpu0 /{s=0;for(i=2;i<=NF;i++)s+=$i;print s;exit} /^cpu /{s=0;for(i=2;i<=NF;i++)s+=$i;print s;exit}' /proc/stat; }
+  c0=$(_j); t0=$(date +%s); sleep 1; t1=$(date +%s); c1=$(_j)
+  dwall=$((t1-t0)); dticks=$((c1-c0))
+  if [ "$dwall" -le 0 ] || [ "$dticks" -le 0 ]; then
+    echo "verdict=UNSCORED reason=clk_tck_unresolved"; echo "true rc=77"; exit 77
+  fi
+  HZ=$((dticks/dwall)); HZ_SRC=derived_proc_stat
+  if [ "$HZ" -lt 50 ] || [ "$HZ" -gt 1500 ]; then
+    echo "verdict=UNSCORED reason=clk_tck_out_of_range hz=$HZ"; echo "true rc=77"; exit 77
+  fi
+fi
+[ -n "$HZ" ] && [ "$HZ" -gt 0 ] || { echo "verdict=UNSCORED reason=empty_hz"; echo "true rc=77"; exit 77; }
 
 # Snapshot: for each pid of interest, every task's utime stime + status ctxt
 snapshot() {
   local tag="$1"
   echo "SNAP $tag wall_ns=$(date +%s%N)"
-  echo "HZ=$HZ"
+  echo "HZ=$HZ src=$HZ_SRC"
   # Enumerate by /proc/PID/exe basename (strip " (deleted)"). Never pidof —
   # BusyBox name truncation + no path distinction (plexctl/video_regression docs).
   for name in misterplexd ffmpeg; do
@@ -495,8 +515,17 @@ snapshot() {
     echo "PROCS name=$name pids=${pids:-none}"
     for pid in $pids; do
       [ -r "/proc/$pid/stat" ] || continue
-      # process-level
-      awk -v pid="$pid" -v name="$name" '{print "PROC", name, pid, "utime="$14, "stime="$15, "num_threads="$20}' "/proc/$pid/stat"
+      # process-level — AFTER last ')' (never whole-line $14; comm may have spaces)
+      awk -v pid="$pid" -v name="$name" '{
+        end=0
+        for (i=length($0);i>0;i--) if (substr($0,i,1)==")") { end=i; break }
+        if (end==0) exit 2
+        rest=substr($0,end+2); n=split(rest,a,/ /)
+        if (n<13) exit 2
+        # rest: 1=state ... 12=utime 13=stime; num_threads is rest field 18
+        ut=a[12]+0; st=a[13]+0; nt=(n>=18?a[18]+0:0)
+        print "PROC", name, pid, "utime="ut, "stime="st, "num_threads="nt
+      }' "/proc/$pid/stat"
       if [ -r "/proc/$pid/status" ]; then
         awk -v pid="$pid" -v name="$name" '
           /^voluntary_ctxt_switches:/ {v=$2}
@@ -563,7 +592,8 @@ def ensure_task(pid, tid):
 phase = None
 for line in raw:
     if line.startswith("HZ="):
-        hz = int(line.split("=",1)[1])
+        # "HZ=100 src=getconf" — take first token only (never int("100 src=..."))
+        hz = int(line.split("=", 1)[1].split()[0])
     m = re.match(r"SNAP (START|END) wall_ns=(\d+)", line)
     if m:
         phase = m.group(1)

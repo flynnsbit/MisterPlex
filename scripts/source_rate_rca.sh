@@ -150,13 +150,40 @@ sample_cpu() {
   local label="$1"
   "${SSH[@]}" "LABEL='$label' DURATION='$DURATION' REMOTE_BASE='$REMOTE_BASE' bash -s" <<'REMOTE'
 set -euo pipefail
-hz=$(getconf CLK_TCK 2>/dev/null || echo 100)
+# Parent 2026-08-01: empty getconf CLK_TCK (busybox rc=0) must not become HZ="".
+g=$(getconf CLK_TCK 2>/dev/null || true)
+if [[ "$g" =~ ^[1-9][0-9]*$ ]]; then
+  hz=$g
+  echo "HZ=$hz src=getconf"
+else
+  echo "CLK_TCK_GETCONF_EMPTY_OR_BAD raw='${g}' — deriving" >&2
+  _j() { awk '/^cpu0 /{s=0;for(i=2;i<=NF;i++)s+=$i;print s;exit} /^cpu /{s=0;for(i=2;i<=NF;i++)s+=$i;print s;exit}' /proc/stat; }
+  c0=$(_j); t0=$(date +%s); sleep 1; t1=$(date +%s); c1=$(_j)
+  dwall=$((t1-t0)); dticks=$((c1-c0))
+  if [ "$dwall" -le 0 ] || [ "$dticks" -le 0 ]; then
+    echo "verdict=UNSCORED reason=clk_tck_unresolved"; echo "true rc=77"; exit 77
+  fi
+  hz=$((dticks/dwall))
+  echo "HZ=$hz src=derived_proc_stat"
+  if [ "$hz" -lt 50 ] || [ "$hz" -gt 1500 ]; then
+    echo "verdict=UNSCORED reason=clk_tck_out_of_range hz=$hz"; echo "true rc=77"; exit 77
+  fi
+fi
+[ -n "$hz" ] && [ "$hz" -gt 0 ] || { echo "verdict=UNSCORED reason=empty_hz"; echo "true rc=77"; exit 77; }
 read_cpu() { awk '/^cpu /{print $2,$3,$4,$5,$6,$7,$8,$9}' /proc/stat; }
+# utime+stime AFTER last ')' — awk $14+$15 shifts when comm has spaces.
 sum_proc() {
   total=0
   for p in "$@"; do
     [ -r "/proc/$p/stat" ] || continue
-    t=$(awk '{print $14 + $15}' "/proc/$p/stat")
+    t=$(awk '{
+      end=0
+      for (i=length($0);i>0;i--) if (substr($0,i,1)==")") { end=i; break }
+      if (end==0) exit 2
+      rest=substr($0,end+2); n=split(rest,a,/ /)
+      if (n<13) exit 2
+      print (a[12]+0)+(a[13]+0)
+    }' "/proc/$p/stat") || continue
     total=$((total + t))
   done
   echo "$total"
@@ -191,8 +218,14 @@ total0=$((u0+n0+s0+i0+w0+irq0+sirq0+steal0))
 total1=$((u1+n1+s1+i1+w1+irq1+sirq1+steal1))
 dt=$((total1 - total0))
 [ "$dt" -gt 0 ] || dt=1
-onecpu() { awk -v d="$1" -v hz="$hz" -v e="$elapsed" 'BEGIN{printf "%.1f", (100.0*d)/(hz*e)}'; }
-pct() { awk -v d="$1" -v t="$dt" 'BEGIN{printf "%.1f", (100.0*d)/t}'; }
+onecpu() {
+  # Refuse empty/zero HZ or elapsed — never print 0.0 from a void denominator.
+  awk -v d="$1" -v hz="$hz" -v e="$elapsed" 'BEGIN{
+    if (hz+0 <= 0 || e+0 <= 0) { print "UNSCORED"; exit 77 }
+    printf "%.1f", (100.0*d)/(hz*e)
+  }'
+}
+pct() { awk -v d="$1" -v t="$dt" 'BEGIN{ if (t+0<=0) { print "UNSCORED"; exit 77 } printf "%.1f", (100.0*d)/t}'; }
 echo "CPU case=$LABEL seconds=$elapsed misterplexd_pct_onecpu=$(onecpu $((m1-m0))) ffmpeg_pct_onecpu=$(onecpu $((f1-f0))) usr_pct=$(pct $((u1-u0+n1-n0))) sys_pct=$(pct $((s1-s0))) idle_pct=$(pct $((i1-i0+w1-w0))) sirq_pct=$(pct $((sirq1-sirq0))) mpids='$mpids' ffmpeg_pids='$fpids'"
 base=$(awk -F= '/^PLEX_BASE=/{print $2; exit}' "$REMOTE_BASE/misterplexd.conf" 2>/dev/null || true)
 tok=$(awk -F= '/^PLEX_TOKEN=/{print $2; exit}' "$REMOTE_BASE/misterplexd.conf" 2>/dev/null || true)

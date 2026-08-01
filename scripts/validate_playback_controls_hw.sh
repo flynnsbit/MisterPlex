@@ -403,11 +403,28 @@ for d in /proc/[0-9]*; do
   break
 done
 [ -n "$pid" ] || exit 1
-hz=$(getconf CLK_TCK 2>/dev/null || echo 100)
-read ut1 st1 < <(awk '{print $14, $15}' /proc/$pid/stat)
+# Parent 2026-08-01: empty getconf CLK_TCK must not become a 0.0 CPU table.
+# utime/stime AFTER last ')' (never whole-line $14 — comm may have spaces).
+ut_st() {
+  awk '{
+    end=0
+    for (i=length($0);i>0;i--) if (substr($0,i,1)==")") { end=i; break }
+    if (end==0) exit 2
+    rest=substr($0,end+2); n=split(rest,a,/ /)
+    if (n<13) exit 2
+    print (a[12]+0), (a[13]+0)
+  }' "$1"
+}
+g=$(getconf CLK_TCK 2>/dev/null || true)
+if ! [[ "$g" =~ ^[1-9][0-9]*$ ]]; then
+  echo "verdict=UNSCORED reason=clk_tck_empty_or_bad raw='${g}'" >&2
+  exit 77
+fi
+hz=$g
+read ut1 st1 < <(ut_st /proc/$pid/stat) || exit 77
 read c1 < /proc/stat
 sleep 2
-read ut2 st2 < <(awk '{print $14, $15}' /proc/$pid/stat)
+read ut2 st2 < <(ut_st /proc/$pid/stat) || exit 77
 read c2 < /proc/stat
 # shellcheck disable=SC2086
 set -- $c1; shift; total1=0; for x in "$@"; do total1=$((total1+x)); done
@@ -415,8 +432,15 @@ set -- $c1; shift; total1=0; for x in "$@"; do total1=$((total1+x)); done
 set -- $c2; shift; total2=0; for x in "$@"; do total2=$((total2+x)); done
 proc=$(( (ut2+st2) - (ut1+st1) ))
 total=$(( total2 - total1 ))
-[ "$total" -gt 0 ] || total=1
-awk -v p="$proc" -v t="$total" 'BEGIN { printf "%.1f", (100.0*p)/t }'
+if [ "$total" -le 0 ] || [ -z "$hz" ]; then
+  echo "verdict=UNSCORED reason=empty_cpu_denominator" >&2
+  exit 77
+fi
+# Prefer /proc/stat share (independent of HZ); still refuse void total.
+awk -v p="$proc" -v t="$total" 'BEGIN {
+  if (t <= 0) exit 77
+  printf "%.1f", (100.0*p)/t
+}'
 REMOTE
 )
   if [[ -n "$cpu" ]]; then
