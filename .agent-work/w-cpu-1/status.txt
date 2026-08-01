@@ -1,21 +1,18 @@
 worker: w-cpu-1
 branch: w-avsync-hdmi-measure
-status: DONE (fleet broadcast absorbed)
+tip_sha: 0910a126
 make_unit: true rc=0
-hold_red: true rc=0 (OK hold B3/B4 red/green)
+hold_red: true rc=0
 test_avclock: true rc=0
+ARM_md5: N/A (no daemon binary this turn)
 
-## Built
-- Startup drop COUNT variance model (residual lead after hold gate)
+Built:
+- Startup DROP COUNT variance model (residual lead / hold dump race)
 - RCA + PRE_REGISTER; H-DROP miss published
-- MiSTer spin / headroom / starvation tools (earlier commits)
-- Lip-sync criterion REVISED: avsync_measure_hdmi.py ONLY
-  av_drift_ms / av-lock NEVER soak PASS
+- Earlier: MiSTer spin RCA, headroom/schedstat tools, starvation verdict
+- Criterion REVISED: lip_sync = tools/avsync_measure_hdmi.py ONLY
 
-## Blocking
-- None for host lane. HDMI cluster root cause unknown (H-DROP rejected).
-- audioClockPpm_=-638 vs untrimmed pacer clock: unexplained, do not build on.
-- ARM md5: N/A (no daemon binary change this turn)
-
-## SHA
-see git log -1 after commit
+Blocking:
+- HDMI A/B clusters unexplained (H-DROP rejected; not drop count)
+- audioClockPpm_=-638 vs untrimmed pacer 48000 clock: do not build on
+- No device access (parent owns hardware)
