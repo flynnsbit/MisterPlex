@@ -1378,7 +1378,7 @@ bool FpgaSpi::sendDdrFrame(const DdrPublishFrame& frame, const DdrPublishPlan& p
                     label = "ALIVE(fd>0_static;fd_may_be_vsync_on_c5382bee)";
                     break;
                 case PlxdProvenance::LiveAdvance:
-                    label = "LIVE_ADVANCE(fd_moved;not_proof_of_swap)";
+                    label = "LIVE_ADVANCE(bank_identity_moved)";
                     break;
                 }
                 fprintf(stderr,

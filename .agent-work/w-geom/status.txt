@@ -1,6 +1,9 @@
-w-geom status 2026-08-01
-DONE: disc pre/post + honest ledger + H640 cost + underrun baseline cmd
-branch: w-avsync-hdmi-measure
-gates: interval/frame_ledger/supply/geom/define-parity all true rc=0
-T7: signed off to w-fit-ceiling-fd-min (no second fit)
-prior p_ge50=0.145 UNSCORED — re-soak with disc_verdict
+w-geom status 2026-08-01 post fleet broadcast
+HEAD: see git
+FACT: vertical 240-row ceiling proven on glass (parent push_frame patterns)
+T7 RTL: on branch (91c22999 / w-fit-ceiling-fd-min) — await fit+post card
+PLXD freeze-blindness: bank-identity liveness on branch (7b6815a3)
+disc+ledger honesty: fc58f7d1
+p_ge50 prior UNSCORED — re-soak only
+H640: costed, not implemented
+No device / no fit from this lane
