@@ -1,7 +1,7 @@
 # w-lint GATE INTEGRITY AUDIT (promotion blocker)
 
 - **branch:** `w-lint-gate-integrity`
-- **tip:** `21adfcb87d90271ac0815666cb33f3b4ea894b18`
+- **tip:** `3b11cf7af56ac59f9ec9483c385815e2a8eed547`
 - **date:** 2026-07-31
 - **scope:** host/source only — no SSH to 192.168.1.183, no Quartus
 - **Rule 0:** every rc below captured as `cmd; echo "true rc=$?"` (never through a pipe)

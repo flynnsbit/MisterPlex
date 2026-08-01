@@ -32,4 +32,4 @@ make unit (no BASELINE_KEY)        78 PASS_INCOMPLETE
 
 ## Docs
 docs/evidence/w_lint_GATE_INTEGRITY_REPORT.md
-tip: 21adfcb87d90271ac0815666cb33f3b4ea894b18
+tip: 3b11cf7af56ac59f9ec9483c385815e2a8eed547
