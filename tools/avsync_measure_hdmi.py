@@ -27,17 +27,20 @@ One ffmpeg process writes ONE Matroska file with both streams
 (rd-review confound: without that, each input's first packet can normalise
 to t=0 independently and absorb a USB startup race into the alignment).
 
-PARENT HARDWARE (SESSION-LATCHED — instrument exonerated)
----------------------------------------------------------
-One 360 s playback, THREE back-to-back captures inside it (pre-registered):
-  within-session spread of medians = 3.33 ms
-  between-cluster separation (n=15 prior runs) = 116.89 ms
-  ratio ≈ 35× → SESSION-LATCHED, DEVICE CONFIRMED (not capture race).
-Clusters fully separate at the VERY FIRST flash/beep pair (A −286 vs B −171,
-sep 114.92 ms, zero overlap, n=15). State latches within ~1.4 s and holds.
-Common-mode: first-10 s median is 20–40 ms less negative than last-60 s in
-BOTH clusters — a real ~25 ms startup transient; short captures are biased.
-This tool therefore always prints first_pair_* and early/late window medians.
+CAPTURE ARGV (binding)
+----------------------
+Live capture MUST stamp both inputs with wallclock and preserve timestamps:
+  -use_wallclock_as_timestamps 1 on v4l2 and alsa, plus -copyts -start_at_zero.
+Without that, ffmpeg normalises each live input's first packet to t=0
+independently and absorbs the v4l2-vs-ALSA USB startup race into the alignment
+(OLD-argv artifact: false ~117 ms multi-modality; RETRACTED 2026-08-01).
+Do not pool runs across capture-config fingerprints (MIXED_CAPTURE_CONFIG).
+
+NEW-argv residual (parent, n=16): between-run median range 25.00 ms. Per-pair
+flash quant T≈33 ms does NOT set the median floor after averaging
+(SE(median)≈1.8 ms, E[range 16]≈6.4 ms) — ~20 ms remains unattributed.
+Short captures are biased by a ~25 ms early-vs-late startup transient.
+This tool always prints first_pair_* and early/late window medians.
 
 GRABBER WARM-UP
 ---------------
@@ -51,10 +54,10 @@ WHAT THIS TOOL CANNOT MEASURE (read before promoting a number)
 --------------------------------------------------------------
   - Absolute lipsync to the device: fixed grabber A/V latency B is unknown.
     median_offset_ms without a known-zero calibration is always
-    tag=raw_uncalibrated. B cancels in same-rig DIFFERENCES and in slope —
-    that is why a 117 ms cluster separation is solid while the absolute
-    median is not. Never promote raw_uncalibrated to an absolute claim.
-  - Daemon av_drift_ms: servo deadband readout, BLIND to the 117 ms defect.
+    tag=raw_uncalibrated. B cancels in same-rig DIFFERENCES and in slope under
+    the same capture-config fingerprint. Never promote raw_uncalibrated to
+    an absolute claim.
+  - Daemon av_drift_ms: servo deadband readout, not grabber ground truth.
   - md5 / mean-luma freeze or health (invalid both directions on this project).
 
 RETURN CODES
@@ -297,7 +300,7 @@ def capture_av(
     Both inputs use wallclock timestamps so v4l2 and ALSA share one clock at
     open (avoids independent first-packet→0 normalisation absorbing USB race).
     Parent multi-capture-within-session test: within-session median spread
-    3.33 ms vs 116.89 ms cluster sep → device-latched, not capture race; wallclock
+    wallclock+copyts required; OLD-argv false multi-modality retracted; wallclock
     is still required hygiene.
 
     Returns the exact ffmpeg argv used (for capture_config fingerprint).
@@ -807,7 +810,7 @@ class MeasureResult:
     slope_ms_per_s: float | None = None
     slope_intercept_ms: float | None = None
     slope_r_squared: float | None = None
-    # SESSION-LATCHED instrument fields (parent n=15 + 3-in-1-session)
+    # Startup diagnostics (first pair + early/late windows)
     first_pair_offset_ms: float | None = None
     first_pair_t_flash_s: float | None = None
     first_pair_t_beep_s: float | None = None
@@ -918,7 +921,7 @@ def analyse_file(
     res.min_offset_ms = float(min(offs))
     res.max_offset_ms = float(max(offs))
 
-    # First pair — parent: clusters fully separated here (n=15, zero overlap).
+    # First pair — always report; useful for startup latch diagnostics.
     p0 = pairs[0]
     res.first_pair_offset_ms = float(p0["offset_ms"])
     res.first_pair_t_flash_s = float(p0["t_flash_s"])
@@ -991,7 +994,7 @@ def print_limitations_banner() -> None:
     )
     print(
         "CANNOT_MEASURE via av_drift_ms: daemon servo deadband is BLIND to "
-        "~117 ms HDMI clusters (parent-measured)"
+        "OLD-argv false multi-modality retracted; NEW residual ~25 ms range (parent)"
     )
     print(
         "DEFAULT_ASSUMED values are NEVER measurements; PASS/FAIL refused "
@@ -999,9 +1002,9 @@ def print_limitations_banner() -> None:
         "--allow-default-score is set"
     )
     print(
-        "SESSION_LATCHED (parent measured): within-session 3-capture spread "
-        "3.33 ms vs cluster sep 116.89 ms — defect is DEVICE, not capture race; "
-        "first_pair fully separates clusters; early-late ~25 ms common-mode "
+        "RETRACTED device-latch claim (OLD-argv). NEW-argv: n=16 range 25 ms; "
+        "SE(median) quant model E[range]~6.4 ms → ~20 ms unattributed; "
+        "early-late ~25 ms common-mode startup transient; "
         "startup transient biases short captures"
     )
 
@@ -1113,7 +1116,7 @@ def print_report(
     assert res.median_offset_ms is not None
     raw = res.median_offset_ms
     print(f"per_pair_offsets_ms={[round(p['offset_ms'], 3) for p in res.pairs]} src=measured")
-    # First pair — parent n=15: clusters fully separated here (never a bare "first")
+    # First pair — always report (startup diagnostics)
     print(
         f"first_pair_offset_ms={res.first_pair_offset_ms} src=measured "
         f"tag=raw_uncalibrated"
@@ -1139,14 +1142,14 @@ def print_report(
     if res.early_minus_late_ms is not None:
         print(
             f"early_minus_late_ms={res.early_minus_late_ms:.4f} src=measured "
-            f"note=startup_transient_common_mode_parent_~25ms_both_clusters "
+            f"note=startup_transient_common_mode_parent_~25ms "
             f"(short_capture_bias)"
         )
     else:
         print(f"early_minus_late_ms=None src=NO-DATA")
     print(
-        "session_latch_note: parent 3-in-1-session spread=3.33ms vs cluster_sep="
-        "116.89ms → DEVICE SESSION-LATCHED (instrument exonerated); "
+        "session_latch_note: OLD Q4 DEVICE-LATCH claim RETRACTED (instrument artifact); "
+        "use tools/avsync_session_latch.py for spread-only SESSION_STABLE; "
         "use tools/avsync_session_latch.py on multi-capture JSON set"
     )
     print(f"median_offset_ms_raw={raw:.4f} src=measured tag=raw_uncalibrated")
@@ -1698,7 +1701,7 @@ def main(argv: list[str] | None = None) -> int:
             "absolute_lipsync": "CANNOT_MEASURE without known-zero cal into grabber",
             "raw_median_tag": "raw_uncalibrated",
             "same_rig_delta": "CAN_MEASURE (B cancels)",
-            "av_drift_ms": "BLIND to ~117 ms HDMI clusters",
+            "av_drift_ms": "servo deadband; not grabber GT (parent-measured blindness on OLD artifact)",
             "historical_dataset": (
                 "pre-wallclock+start_at_zero runs INVALID for absolute compare; "
                 "re-establish bimodality on fingerprinted captures only"

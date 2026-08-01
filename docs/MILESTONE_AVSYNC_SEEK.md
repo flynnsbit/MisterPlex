@@ -27,10 +27,24 @@ re-measured under a NEW capture-config fingerprint.
 
 `tools/analyze_avsync_residual.py` on `/tmp/sixfield/av*.json` + `/tmp/ab/new_*.json`:
 
-- `flash_onset_n_interp=0` / `n_flashes=712` (all step) · `capture_frame_quant_ms=33.00` · beep `hop_ms=2.0`
-- between-run median range **25.00 ms** ≤ T · E[range|U(0,T),n=16]=**29.12 ms** → **H-QUANT SUPPORTED**
-- **Instrument floor ≈ 33 ms** (one capture frame). **No A/V claim tighter than ~33 ms** until ramped-flash / sub-frame onset.
-- sixfield daemon fields vs median: **H-FIELD NULL** (no |Spearman|>0.5; banks/frames_done vary without tracking offset)
+- `flash_onset_n_interp=0` on essentially all flashes · NEW `capture_frame_period_ms=33.00` · beep hop ~2 ms
+- between-run median range **25.00 ms** (n=16 NEW; series pooling safe by measurement)
+- **Per-pair** quant σ ≈ T/√12 ≈ 9.5 ms does **not** set the run-median floor.
+  With n_pairs≈44–45: SE(median)≈1.2533·σ/√n ≈ **1.8 ms**;
+  E[range of 16 run-medians]≈ **6.4 ms**. Observed 25 ms ≈ **3.9×** that expectation
+  → **H-QUANT REJECTED** under the SE-median model. **~20 ms unattributed residual.**
+- **Do not publish** “instrument cannot resolve below ~33 ms” as a *median* floor
+  (that confuses per-pair quant with averaged medians). Per-pair onset is still
+  frame-quantised; ramped-flash still needed for sub-frame *pair* precision.
+- Integer vs thirds grid: NEW medians land on integer ms (period 33.0); OLD on
+  thirds (period 33⅓). n_pairs parity does **not** explain it (both arms mostly n=45).
+- sixfield daemon fields vs median: **H-FIELD NULL** (no |Spearman|>0.5)
+
+**Compile-time retraction:** `kParentClusterSepMsX100=11710` and the unit pin of
+7×T_disp to 117.10 within 0.09 ms are **deleted**. 7×T_disp remains pure RTL
+arithmetic (≈117.01 ms) with **no** claim it is a device quantum. Hypothesis
+“3 content frames @ 24 fps = 125 ms” is no longer killed solely by distance to
+the retracted sep.
 
 Audit map: `.agent-work/w-avsync/OLD_ARGV_AUDIT.md`. Artifacts:
 `.agent-work/w-avsync/residual_new_pool.txt`, `prereg_residual.txt`.
@@ -1351,9 +1365,9 @@ Full note: `.agent-work/w-geom/fpga-av-path-117ms.md`.
 |---|--------|
 | Audio two-state @ 117 ms? | **NO (correct negative).** Quanta: sample **0.020833 ms** (`alsa.sv` 24576000/48000); I2S frame same; `a_en2` mute **170.667 ms after audio_out reset only**; `got_first` one-shot variable discard. No fill-threshold start. |
 | Audio mailbox? | **NOT-FOUND.** `0x300FF12C` (“PLXD4”) = **high word of PLXD** = `frames_done` (video), not audio. |
-| Video / 3 content frames? | **REJECTED:** 3×24 fps = **125.0 ms**, \|125−117.10\|=**7.9 ms**. |
+| Video / 3 content frames? | Content arithmetic: 3×24 fps = **125.0 ms**. Former reject-by-distance-to-117.10 **retracted** with the sep. |
 | Video / 1 vsync? | Exact **T_disp = 638×524/20e6 = 16.715600 ms** (colorbars+20 MHz). One-frame late ≠ 117 ms. |
-| Video / 7×T_disp? | **7×T = 117.009200 ms** (err 0.091 ms vs 117.10) — arithmetic match only; **no RTL bistable for 0 vs 7**. Measure `frames_done` lag. |
+| Video / 7×T_disp? | **7×T = 117.009200 ms** pure RTL arithmetic — **not** pinned to lab sep (constant deleted). **no RTL bistable for 0 vs 7**. |
 | Observe | `frames_done=(devmem 0x300FF12C)>>16`; Δ(audio_release→first frames_done++) / 16.715600 → N; A vs B. |
 
 **Audio in-tree RTL eliminated as 117 ms bistable. Video open until lag measured. Kernel MrAudio driver still out of repo.**
@@ -1374,7 +1388,11 @@ Full CITED/NOT-FOUND table: `.agent-work/w-avsync/observability-boundary.md`.
 
 Hold still dumps content t=0; origin not rebased mid-play; hold **not** 117 ms cause (parent).
 
-## SESSION-LATCHED device defect (parent 2026-07-31)
+## SESSION-LATCHED device defect (parent 2026-07-31) — **RETRACTED**
+
+**RETRACTED 2026-08-01:** within-session stability was real; the 116.89 ms
+between-cluster sep was an OLD-argv instrument artifact, not a device two-state.
+Kept below as historical measurement only.
 
 Parent: one 360 s playback, three back-to-back HDMI captures (instrument confound test).
 
@@ -1385,7 +1403,7 @@ Parent: one 360 s playback, three back-to-back HDMI captures (instrument confoun
 | 3 | ~284–360 s | −292.67 | 74 |
 
 Within-session spread **3.33 ms** vs between-cluster sep **116.89 ms** (ratio 35×).  
-Pre-registered &lt;30 ms = SESSION-LATCHED. **VERDICT: SESSION-LATCHED, DEVICE CONFIRMED.**
+Pre-registered &lt;30 ms = SESSION-LATCHED. **VERDICT at the time: SESSION-LATCHED, DEVICE CONFIRMED — later RETRACTED (instrument artifact).**
 
 First flash/beep pair already fully separates clusters (A −286.00 vs B −171.08, sep 114.92 ms, n=15, zero overlap). State latched by ~1.4 s, stable for the session.
 
@@ -1394,11 +1412,12 @@ Common-mode: first-10 s median is 20–40 ms less negative than last-60 s in **b
 ### Host analyzer for post-deploy handoff snaps
 
 ```bash
-# After parent deploys instrumented misterplexd and runs opposite-cluster casts:
+# After parent deploys instrumented misterplexd and runs paired casts:
+# --sep-ms is REQUIRED (no default; 117.10 default was retracted).
 python3 tools/analyze_mraudio_handoff.py \
   --log-pair /path/runA_daemon.log /path/runB_daemon.log \
-  --where audio_release --json-out handoff_ab.json
-# true rc: 0 analyzed, 2 P-RPTR/P-FDONE REJECTED, 77 no snaps
+  --sep-ms 100 --where audio_release --json-out handoff_ab.json
+# true rc: 0 analyzed, 2 P-RPTR/P-FDONE REJECTED, 77 no snaps / missing sep
 ```
 
 Pre-registered:
@@ -1425,8 +1444,9 @@ Unit: `tests/unit/test_analyze_mraudio_handoff.sh` (self-test + pair/empty/ident
 ```bash
 make "$(pwd)/build/test_av_phase_rtl_quanta"
 ./build/test_av_phase_rtl_quanta; echo "true rc=$?"
-# true rc=0 locks: T_disp_ns=16715600; 3×24fps=125 REJECT vs 117.10;
-# audio sample/a_en2/F2 cannot explain 117.10; PLXD4 hi=frames_done
+# true rc=0 locks: T_disp_ns=16715600; 7*T_disp_ms_x100=11701 (RTL only);
+# kParentClusterSepMsX100 DELETED; a_en2 mute ≠ 125 ms content hyp;
+# PLXD4 hi=frames_done (video). No lab 117.10 pin.
 scripts/parent_plxd_present_lag_protocol.sh recipe
 # H0: N_A==N_B kills video lag; H1: |ΔN|==7 keeps multi-frame present open
 ```

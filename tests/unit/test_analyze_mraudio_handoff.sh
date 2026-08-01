@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 # Host-only unit for tools/analyze_mraudio_handoff.py
+# --sep-ms is required (117.0 here is the synthetic fixture design: Δrptr=22464 B).
+# It is NOT a restored product/lab constant.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 TOOL="$ROOT/tools/analyze_mraudio_handoff.py"
@@ -45,7 +47,7 @@ media: MrAudio handoff_at=first_video_present mono_ms=2200 rptr=36000 wptr=55200
 EOF
 
 set +e
-python3 "$TOOL" --log-pair "$OUT/a.log" "$OUT/b.log" --json-out "$OUT/pair.json" >"$OUT/pair.txt" 2>&1
+python3 "$TOOL" --log-pair "$OUT/a.log" "$OUT/b.log" --sep-ms 117.0 --json-out "$OUT/pair.json" >"$OUT/pair.txt" 2>&1
 prc=$?
 set -e
 echo "CASE log-pair true_rc=$prc"
@@ -61,14 +63,14 @@ fi
 
 # Empty → 77
 set +e
-python3 "$TOOL" --log-pair "$OUT/empty1.log" "$OUT/empty2.log" >"$OUT/empty.txt" 2>&1
+python3 "$TOOL" --log-pair "$OUT/empty1.log" "$OUT/empty2.log" --sep-ms 117.0 >"$OUT/empty.txt" 2>&1
 erc=$?
 set -e
 # files missing → python exception; create empty files
 : >"$OUT/empty1.log"
 : >"$OUT/empty2.log"
 set +e
-python3 "$TOOL" --log-pair "$OUT/empty1.log" "$OUT/empty2.log" >"$OUT/empty.txt" 2>&1
+python3 "$TOOL" --log-pair "$OUT/empty1.log" "$OUT/empty2.log" --sep-ms 117.0 >"$OUT/empty.txt" 2>&1
 erc=$?
 set -e
 echo "CASE empty true_rc=$erc"
@@ -76,11 +78,20 @@ check_rc empty 77 "$erc"
 
 # Identical → 2
 set +e
-python3 "$TOOL" --log-pair "$OUT/a.log" "$OUT/a.log" >"$OUT/ident.txt" 2>&1
+python3 "$TOOL" --log-pair "$OUT/a.log" "$OUT/a.log" --sep-ms 117.0 >"$OUT/ident.txt" 2>&1
 irc=$?
 set -e
 echo "CASE identical true_rc=$irc"
 check_rc identical 2 "$irc"
+
+
+# Missing --sep-ms → 77 (no retracted default)
+set +e
+python3 "$TOOL" --log-pair "$OUT/a.log" "$OUT/b.log" >"$OUT/noseep.txt" 2>&1
+nrc=$?
+set -e
+echo "CASE missing_sep true_rc=$nrc"
+check_rc missing_sep 77 "$nrc"
 
 echo "=== SUMMARY pass=$pass fail=$fail ==="
 if [[ "$fail" -eq 0 ]]; then

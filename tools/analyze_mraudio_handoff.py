@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Analyze MrAudio handoff snaps vs HDMI A/V clusters (host-only).
+"""Analyze MrAudio handoff snaps (host-only).
 
 Parses daemon log lines produced by media_player handoff instrumentation:
   media: MrAudio handoff_at=audio_release|first_video_present ...
@@ -7,25 +7,25 @@ Parses daemon log lines produced by media_player handoff instrumentation:
   media: MrAudio ring_after_first_write ...
   media: MrAudio early_traj chunk=N ...
 
-Optional: pair runs with HDMI cluster labels from a JSON/CSV the parent supplies
-(cluster A ≈ −314 ms, B ≈ −197 ms, sep ≈ 117 ms — parent-measured; this tool
-does not invent cluster membership).
+Optional: pair two runs and test whether ring pointers differ by a
+*caller-supplied* separation (--sep-ms). There is NO default lab separation:
+the former 117.10 ms default was an OLD-argv instrument artifact and was
+deleted. Pass --sep-ms explicitly when testing a hypothesis.
 
-Pre-registered predictions (w-avsync, after SESSION-LATCHED confirmation):
-  P-RPTR: opposite clusters differ in absolute rptr (or wptr) by
-          ≈ 117.10 ms × 192000 B/s = 22483.2 B at the same handoff_at tag,
+Pre-registered prediction templates (sep is caller_supplied only):
+  P-RPTR: opposite groups differ in absolute rptr (or wptr) by
+          sep_ms × 192000 B/s at the same handoff_at tag,
           while len_B stays within ~5 ms (960 B).
-  P-FDONE: frames_done lag (audio_release → first_video_present) differs by
-           N ∈ {6,7,8} display frames between clusters
-           (7 × T_disp, T_disp = 638×524/20e6 = 16.715600 ms → 117.0092 ms).
-  Kill either: snaps identical across opposite HDMI clusters within noise.
+  P-FDONE: frames_done lag differs by N display frames
+           (T_disp = 638×524/20e6 = 16.715600 ms from RTL literals).
+  Kill either: snaps identical across groups within noise.
 
 Every printed quantity is tagged measured | caller_supplied | DEFAULT_ASSUMED.
 
 Exit codes (never through a pipe):
   0  = analysis completed; no pre-registered kill fired (or --self-test PASS)
   2  = analysis completed AND a prediction is REJECTED by the data
-  77 = could-not-measure (no snaps, missing files)
+  77 = could-not-measure (no snaps, missing files, missing --sep-ms when required)
 """
 
 from __future__ import annotations
@@ -42,8 +42,8 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 # host/libmisterplex/mraudio_status.hpp
 BYTES_PER_SEC = 48000 * 4  # 192000 — s16le stereo @ 48 kHz
-# Parent cluster separation (n=8) — caller may override; default is caller_supplied lab SoT
-DEFAULT_SEP_MS = 117.10
+# No default sep: OLD 117.10 was retracted (instrument artifact). Require --sep-ms.
+DEFAULT_SEP_MS = None
 # colorbars.sv H_LAST=637 → 638 clocks/line; NTSC scandouble vc wrap 523 → 524 lines;
 # clk_sys 20 MHz (pll). T_disp = 638*524/20e6 s.
 T_DISP_MS = (638 * 524) / 20_000_000.0 * 1000.0  # 16.715600 ms
@@ -376,13 +376,13 @@ def self_test() -> int:
     )
     ra, rb = parse_log_text(log_a, "a"), parse_log_text(log_b, "b")
     ra.cluster, rb.cluster = "A", "B"
-    r = analyze_pair(ra, rb, sep_ms=117.10, len_match_ms=5.0, rptr_tol_frac=0.20)
+    r = analyze_pair(ra, rb, sep_ms=100.0, len_match_ms=5.0, rptr_tol_frac=0.20)
     check(r["P_RPTR"]["verdict"] == "SUPPORTED", f"P_RPTR SUPPORT got {r['P_RPTR']['verdict']}")
     check(r["P_FDONE"]["verdict"] == "SUPPORTED", f"P_FDONE SUPPORT got {r['P_FDONE']['verdict']}")
     check(r["rc"] == RC_OK, f"rc OK got {r['rc']}")
 
     # Reject identical
-    r2 = analyze_pair(ra, ra, sep_ms=117.10, len_match_ms=5.0, rptr_tol_frac=0.20)
+    r2 = analyze_pair(ra, ra, sep_ms=100.0, len_match_ms=5.0, rptr_tol_frac=0.20)
     check(
         r2["P_RPTR"]["verdict"] == "REJECTED_identical_snaps",
         f"identical reject got {r2['P_RPTR']['verdict']}",
@@ -391,7 +391,7 @@ def self_test() -> int:
 
     # Unscored empty
     empty = parse_log_text("no handoff here\n", "e")
-    r3 = analyze_pair(empty, empty, sep_ms=117.10, len_match_ms=5.0, rptr_tol_frac=0.20)
+    r3 = analyze_pair(empty, empty, sep_ms=100.0, len_match_ms=5.0, rptr_tol_frac=0.20)
     check(r3["rc"] == RC_UNSCORED, f"empty UNSCORED got {r3['rc']}")
 
     # Parse ring_at_open
@@ -402,8 +402,8 @@ def self_test() -> int:
     check(len(ring.snaps) == 1 and ring.snaps[0].kind == "ring_at_open", "parse ring_at_open")
 
     print(f"T_disp_ms={T_DISP_MS:.6f} src=measured_from_RTL_constants")
-    print(f"7*T_disp_ms={7 * T_DISP_MS:.6f} src=measured_from_RTL_constants")
-    print(f"expect_B_at_117.10ms={117.10 * BYTES_PER_SEC / 1000.0:.1f} src=caller_supplied*format")
+    print(f"7*T_disp_ms={7 * T_DISP_MS:.6f} src=derived_from_RTL_literals_not_lab_sep")
+    print(f"expect_B_at_100.0ms={100.0 * BYTES_PER_SEC / 1000.0:.1f} src=caller_supplied*format")
 
     if fails:
         print(f"SELF_TEST_FAIL fails={fails}")
@@ -430,7 +430,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         default=None,
         help="JSON map run_id -> {cluster, offset_ms}",
     )
-    ap.add_argument("--sep-ms", type=float, default=DEFAULT_SEP_MS, help="cluster separation ms")
+    ap.add_argument("--sep-ms", type=float, default=None, help="caller_supplied sep ms (required for pair analysis; no default)")
     ap.add_argument("--len-match-ms", type=float, default=DEFAULT_LEN_MATCH_MS)
     ap.add_argument("--rptr-tol-frac", type=float, default=DEFAULT_RPTR_TOL_FRAC)
     ap.add_argument(
@@ -505,11 +505,16 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         )
         return RC_UNSCORED
 
+    if args.sep_ms is None:
+        print("VERDICT=UNSCORED rc=77 reason=missing_sep_ms src=could-not-measure")
+        print("pass --sep-ms explicitly; DEFAULT 117.10 was retracted (OLD-argv artifact)")
+        return RC_UNSCORED
+
     print("=== analyze_mraudio_handoff ===")
     print(f"sep_ms={args.sep_ms} src=caller_supplied")
     print(f"expect_rptr_delta_B={args.sep_ms * BYTES_PER_SEC / 1000.0:.1f} src=caller_supplied*format")
     print(f"T_disp_ms={T_DISP_MS:.6f} src=measured_from_RTL_constants")
-    print(f"7*T_disp_ms={7 * T_DISP_MS:.6f} src=measured_from_RTL_constants")
+    print(f"7*T_disp_ms={7 * T_DISP_MS:.6f} src=derived_from_RTL_literals_not_lab_sep")
     print(f"n_pairs={len(pairs)} src=measured")
 
     worst_rc = RC_OK

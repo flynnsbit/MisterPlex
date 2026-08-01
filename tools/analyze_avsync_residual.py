@@ -4,29 +4,28 @@
 Host-only. Reads parent-captured avsync JSON + optional sixfield rec*.txt.
 Does NOT touch the device.
 
-Context (parent 2026-08-01):
+Context (parent 2026-08-01, corrected):
   - 117 ms bimodality = INSTRUMENT ARTIFACT (OLD ffmpeg argv, no wallclock/copyts).
   - NEW argv (wallclock both + copyts + start_at_zero): n=16, range 25.00 ms.
-  - flash_onset_n_interp=0 on essentially all flashes → video onset = capture frame
-    grid (quant T = capture_frame_period_ms, typically ~33.3 ms @ 30 fps).
-  - beep hop ~2 ms.
+  - flash_onset_n_interp=0 on essentially all flashes → per-pair video onset
+    is quantised to capture frame period T (~33 ms @ 30 fps). Beep hop ~2 ms.
+  - Per-pair quant σ ≈ T/√12 does NOT set the floor on the *run median*:
+    SE(median) ≈ 1.2533·σ/√n_pairs. With n_pairs≈44–45, SE≈1.8 ms and
+    E[range across 16 runs]≈6.4 ms. Observed 25 ms ⇒ ~20 ms unattributed
+    residual after averaging. Never publish "cannot resolve below ~33 ms"
+    as a median-floor claim (that conflates per-pair with per-run-median).
 
-Pre-registered before measuring (this file's self-check documents the math;
-live numbers come only from JSON/rec files you pass):
+Pre-registered H-QUANT (SE-median model):
+  SUPPORT if between_run_range ≲ 1.5 × E[range of N run-medians under pure quant].
+  REJECT  if between_run_range ≫ that expectation (residual beyond quant).
+  Report residual_beyond_quant_range_ms = max(0, obs_range − E[range]).
 
-  H-QUANT: between-run range of medians ≤ capture_frame_quant_ms (one frame).
-           Expected range for n i.i.d. Uniform[0,T] ≈ T*(n-1)/(n+1).
-           If observed_range ≤ T and ≈ E[range], quantisation ALONE accounts
-           for the residual → instrument floor is ~T; no A/V claim below T
-           until ramped-flash (or sub-frame onset) lands.
-
-  H-FIELD: some sixfield daemon field correlates with median_offset
-           (|Spearman| > 0.5 and not constant). Else NULL — all fields
-           identical or uncorrelated.
+H-FIELD: sixfield daemon field correlates with median_offset
+         (|Spearman| > 0.5 and not constant). Else NULL.
 
 Exit:
-  0  = analysis completed (quant accounts OR fields differ with numbers printed)
-  2  = analysis completed and H-QUANT rejected (range >> T) without field explanation
+  0  = analysis completed (quant accounts OR fields reported)
+  2  = H-QUANT rejected (range >> SE-median expectation) without field explanation
   77 = could-not-measure (no JSON / missing fields)
 """
 
@@ -180,10 +179,104 @@ def spearman(xs: List[float], ys: List[float]) -> Optional[float]:
 
 
 def expected_uniform_range(T: float, n: int) -> float:
-    """E[max-min] for n i.i.d. Uniform[0, T] = T * (n-1)/(n+1)."""
+    """E[max-min] for n i.i.d. Uniform[0, T] = T * (n-1)/(n+1).
+
+    Kept for reference / self-test of the Uniform formula only.
+    Do NOT use this as the H-QUANT model for *run medians* (averaging applies).
+    """
     if n < 2:
         return float("nan")
     return T * (n - 1) / (n + 1)
+
+
+def pair_quant_sigma_ms(T: float) -> float:
+    """σ of Uniform[0,T] (or equivalent span-T) onset error: T/√12."""
+    return T / math.sqrt(12.0)
+
+
+# Asymptotic SE(sample median) / (σ/√n) for large n, normal parent ≈ sqrt(π/2).
+SE_MEDIAN_OVER_SEM = math.sqrt(math.pi / 2.0)  # ≈ 1.253314
+
+
+def se_median_ms(T: float, n_pairs: int) -> float:
+    """SE of the median of n_pairs i.i.d. pair offsets under pure frame quant.
+
+    SE(median) ≈ 1.2533 · (T/√12) / √n_pairs
+    tag when printing: derived_from_measured_T_and_n_pairs
+    """
+    if n_pairs < 1 or T <= 0:
+        return float("nan")
+    return SE_MEDIAN_OVER_SEM * pair_quant_sigma_ms(T) / math.sqrt(float(n_pairs))
+
+
+def _norm_ppf(p: float) -> float:
+    """Approximate standard-normal inverse CDF (Acklam rational, public domain)."""
+    if p <= 0.0:
+        return float("-inf")
+    if p >= 1.0:
+        return float("+inf")
+    # Coefficients for central region
+    a = [
+        -3.969683028665376e01,
+        2.209460984245205e02,
+        -2.759285104469687e02,
+        1.383577518672690e02,
+        -3.066479806614716e01,
+        2.506628277459239e00,
+    ]
+    b = [
+        -5.447609879822406e01,
+        1.615858368580409e02,
+        -1.556989798598866e02,
+        6.680131188771972e01,
+        -1.328068155288572e01,
+    ]
+    c = [
+        -7.784894002430293e-03,
+        -3.223964580411365e-01,
+        -2.400758277161838e00,
+        -2.549732539343734e00,
+        4.374664141464968e00,
+        2.938163982698783e00,
+    ]
+    d = [
+        7.784695709041462e-03,
+        3.224671290700398e-01,
+        2.445134137142996e00,
+        3.754408661907416e00,
+    ]
+    plow = 0.02425
+    phigh = 1.0 - plow
+    if p < plow:
+        q = math.sqrt(-2.0 * math.log(p))
+        return (
+            (((((c[0] * q + c[1]) * q + c[2]) * q + c[3]) * q + c[4]) * q + c[5])
+            / ((((d[0] * q + d[1]) * q + d[2]) * q + d[3]) * q + 1.0)
+        )
+    if p > phigh:
+        q = math.sqrt(-2.0 * math.log(1.0 - p))
+        return -(
+            (((((c[0] * q + c[1]) * q + c[2]) * q + c[3]) * q + c[4]) * q + c[5])
+            / ((((d[0] * q + d[1]) * q + d[2]) * q + d[3]) * q + 1.0)
+        )
+    q = p - 0.5
+    r = q * q
+    return (
+        (((((a[0] * r + a[1]) * r + a[2]) * r + a[3]) * r + a[4]) * r + a[5]) * q
+        / (((((b[0] * r + b[1]) * r + b[2]) * r + b[3]) * r + b[4]) * r + 1.0)
+    )
+
+
+def expected_normal_range(sigma: float, n: int) -> float:
+    """Approx E[max-min] for n i.i.d. N(0, sigma^2) via Blom extreme plotting positions.
+
+    E[max]≈σ·Φ^{-1}((n-0.375)/(n+0.25)); E[min]=-E[max] ⇒ E[range]≈2·E[max].
+    For n=16 this is ≈3.53·σ (parent used ~3.5×SE for the 6.4 ms figure).
+    """
+    if n < 2 or sigma < 0 or math.isnan(sigma):
+        return float("nan")
+    pmax = (n - 0.375) / (n + 0.25)
+    return 2.0 * sigma * _norm_ppf(pmax)
 
 
 def analyze_quant(runs: List[RunJson]) -> Dict[str, Any]:
@@ -239,10 +332,11 @@ def analyze_quant(runs: List[RunJson]) -> Dict[str, Any]:
     if within:
         out["within_run_stdev_ms_median"] = statistics.median(within)
         out["within_run_stdev_ms_median_src"] = "measured"
-        # Uniform[0,T] has stdev T/sqrt(12)
-        if T:
-            out["uniform_0_T_stdev_ms"] = T / math.sqrt(12.0)
-            out["uniform_0_T_stdev_ms_src"] = "derived_from_measured_T"
+
+    n_pairs_list = [r.n_pairs for r in runs if r.n_pairs and r.n_pairs > 0]
+    n_pairs = int(statistics.median(n_pairs_list)) if n_pairs_list else 0
+    out["n_pairs_median"] = n_pairs if n_pairs else None
+    out["n_pairs_median_src"] = "measured" if n_pairs else "could-not-measure"
 
     if T is None:
         out["H_QUANT"] = {"verdict": "UNSCORED", "verdict_src": "could-not-measure"}
@@ -250,75 +344,123 @@ def analyze_quant(runs: List[RunJson]) -> Dict[str, Any]:
         out["status"] = "could-not-measure"
         return out
 
-    n = len(meds)
-    e_range = expected_uniform_range(T, n)
-    out["expected_uniform_range_ms"] = e_range
-    out["expected_uniform_range_ms_src"] = "derived_E_max_min_Uniform_0_T"
-    out["range_over_T"] = rng / T if T else None
-    out["range_over_T_src"] = "measured/derived"
+    if T:
+        out["uniform_0_T_stdev_ms"] = pair_quant_sigma_ms(T)
+        out["uniform_0_T_stdev_ms_src"] = "derived_from_measured_T"
+        # Legacy Uniform-of-medians figure (WRONG model for averaged medians) — printed
+        # only as contrast so nobody re-adopts range≤T as a median floor.
+        n = len(meds)
+        out["legacy_uniform_median_E_range_ms"] = expected_uniform_range(T, n)
+        out["legacy_uniform_median_E_range_ms_src"] = (
+            "derived_E_max_min_Uniform_0_T_DO_NOT_USE_as_median_floor"
+        )
 
-    # Session-constant phase bias model: each run median ≈ φ_run + ε
-    # φ_run ~ approx Uniform on an interval of length T (first-hot-frame error).
-    # Support H-QUANT if observed range ≤ T (hard ceiling) AND range is not
-    # wildly larger than E[range] (allow 1.25× for finite-n luck).
-    hard_ok = rng <= T + 1e-9
-    soft_ok = rng <= e_range * 1.25 + 1e-9
-    # Also: if ALL flashes are step (n_interp==0), quantisation is fully engaged.
     all_step = n_flash > 0 and n_interp == 0
-
     out["all_flashes_step_no_interp"] = all_step
     out["all_flashes_step_no_interp_src"] = "measured"
 
-    if hard_ok and all_step:
+    n = len(meds)
+    if n_pairs < 1:
+        out["H_QUANT"] = {
+            "verdict": "UNSCORED",
+            "verdict_src": "could-not-measure",
+            "detail": "n_pairs missing; cannot compute SE(median)",
+        }
+        out["rc"] = RC_UNSCORED
+        out["status"] = "could-not-measure"
+        return out
+
+    sigma_pair = pair_quant_sigma_ms(T)
+    se_med = se_median_ms(T, n_pairs)
+    e_range = expected_normal_range(se_med, n)
+    out["pair_quant_sigma_ms"] = sigma_pair
+    out["pair_quant_sigma_ms_src"] = "derived_T_over_sqrt12"
+    out["se_median_ms"] = se_med
+    out["se_median_ms_src"] = "derived_1.2533_sigma_over_sqrt_n_pairs"
+    out["expected_between_run_range_ms"] = e_range
+    out["expected_between_run_range_ms_src"] = (
+        "derived_E_range_N_normals_sigma_eq_SE_median"
+    )
+    # Keep key name expected_uniform_range_ms only as alias for printers that
+    # still look for it — value is the SE-median model, not Uniform[0,T].
+    out["expected_uniform_range_ms"] = e_range
+    out["expected_uniform_range_ms_src"] = out["expected_between_run_range_ms_src"]
+    out["range_over_expected"] = (rng / e_range) if e_range and e_range > 0 else None
+    out["range_over_expected_src"] = "measured/derived"
+    out["range_over_T"] = rng / T if T else None
+    out["range_over_T_src"] = "measured/derived_legacy_ratio_not_a_floor"
+    residual = max(0.0, rng - e_range)
+    out["residual_beyond_quant_range_ms"] = residual
+    out["residual_beyond_quant_range_ms_src"] = "measured_minus_derived"
+
+    # SUPPORT if obs range within 1.5× of SE-median expectation (finite-n slack).
+    # REJECT if obs range > 2.0× expectation (clear excess beyond quant averaging).
+    support_ok = e_range > 0 and rng <= e_range * 1.5 + 1e-9
+    reject_ok = e_range > 0 and rng > e_range * 2.0 + 1e-9
+
+    # Per-pair instrument quant (for documentation only — NOT a median floor).
+    out["per_pair_quant_ms"] = T
+    out["per_pair_quant_ms_src"] = "measured_capture_frame_quant"
+    out["instrument_floor_ms"] = se_med
+    out["instrument_floor_ms_src"] = (
+        "SE_median_under_pure_quant_NOT_per_pair_T"
+    )
+
+    if support_ok and all_step:
         out["H_QUANT"] = {
             "verdict": "SUPPORTED",
             "verdict_src": "measured",
             "detail": (
-                f"between_run_range_ms={rng:.4f} ≤ T={T:.4f}; "
-                f"E[range|U(0,T),n={n}]={e_range:.4f}; "
+                f"between_run_range_ms={rng:.4f} ≤ 1.5×E[range]={e_range:.4f}; "
+                f"SE(median)={se_med:.4f} n_pairs={n_pairs} T={T:.4f}; "
                 f"flash_onset_n_interp=0/{n_flash}"
             ),
         }
-        out["instrument_floor_ms"] = T
-        out["instrument_floor_ms_src"] = "measured_capture_frame_quant"
         out["consequence"] = (
-            f"This instrument cannot resolve A/V error smaller than ~{T:.2f} ms "
-            f"(one capture frame) while flash onset is step-quantised "
-            f"(n_interp=0). No A/V claim below that threshold until ramped-flash "
-            f"or sub-frame onset lands."
+            f"Between-run median range {rng:.2f} ms is consistent with "
+            f"per-pair frame quant after averaging "
+            f"(SE(median)≈{se_med:.2f} ms, E[range n={n}]≈{e_range:.2f} ms). "
+            f"Per-pair onset is still quantised to T={T:.2f} ms; that is NOT "
+            f"the run-median resolution. Residual beyond quant ≈ {residual:.2f} ms."
         )
         out["rc"] = RC_OK
         out["status"] = "quant_accounts_for_residual"
-    elif not hard_ok:
+    elif reject_ok:
         out["H_QUANT"] = {
             "verdict": "REJECTED",
             "verdict_src": "measured",
-            "detail": f"between_run_range_ms={rng:.4f} > T={T:.4f}",
+            "detail": (
+                f"between_run_range_ms={rng:.4f} > 2×E[range]={e_range:.4f}; "
+                f"SE(median)={se_med:.4f} n_pairs={n_pairs} T={T:.4f}; "
+                f"residual_beyond_quant_range_ms={residual:.4f}"
+            ),
         }
-        out["instrument_floor_ms"] = T
-        out["instrument_floor_ms_src"] = "measured_capture_frame_quant"
         out["consequence"] = (
-            f"Quantisation alone (T={T:.2f} ms) does NOT cover observed range "
-            f"{rng:.2f} ms. Residual beyond one frame remains unexplained by "
-            f"video grid alone."
+            f"Video-side frame quantisation alone cannot explain the "
+            f"{rng:.2f} ms between-run median range after averaging "
+            f"(E[range|SE_median,n={n}]≈{e_range:.2f} ms, "
+            f"SE(median)≈{se_med:.2f} ms, T={T:.2f} ms, n_pairs≈{n_pairs}). "
+            f"Unattributed residual range ≈ {residual:.2f} ms "
+            f"(~{residual:.0f} ms of genuine run-to-run signal). "
+            f"Do NOT publish a ~{T:.0f} ms median floor."
         )
         out["rc"] = RC_REJECT
         out["status"] = "quant_insufficient"
     else:
-        # hard_ok but some interp or range >> E[range]
         out["H_QUANT"] = {
             "verdict": "INCONCLUSIVE",
             "verdict_src": "measured",
             "detail": (
-                f"range={rng:.4f} ≤ T={T:.4f} but soft_ok={soft_ok} "
-                f"all_step={all_step} E[range]={e_range:.4f}"
+                f"range={rng:.4f} E[range]={e_range:.4f} "
+                f"ratio={out['range_over_expected']} all_step={all_step} "
+                f"SE_median={se_med:.4f}"
             ),
         }
-        out["instrument_floor_ms"] = T
-        out["instrument_floor_ms_src"] = "measured_capture_frame_quant"
         out["consequence"] = (
-            f"Range fits in one frame quant T={T:.2f} ms but conditions for a "
-            f"hard SUPPORT are incomplete (interp or E[range] mismatch)."
+            f"Between-run range {rng:.2f} ms vs E[range]≈{e_range:.2f} ms "
+            f"is neither a clean SUPPORT (≤1.5×) nor REJECT (>2×). "
+            f"Residual beyond quant ≈ {residual:.2f} ms. "
+            f"Per-pair T={T:.2f} ms is not a median floor."
         )
         out["rc"] = RC_OK
         out["status"] = "quant_plausible"
@@ -422,8 +564,15 @@ def print_report(title: str, q: Dict[str, Any], f: Optional[Dict[str, Any]] = No
         "between_run_stdev_ms",
         "between_run_mean_ms",
         "capture_frame_quant_ms",
+        "n_pairs_median",
+        "pair_quant_sigma_ms",
+        "se_median_ms",
+        "expected_between_run_range_ms",
         "expected_uniform_range_ms",
+        "range_over_expected",
         "range_over_T",
+        "residual_beyond_quant_range_ms",
+        "legacy_uniform_median_E_range_ms",
         "flash_onset_n_interp_total",
         "flash_onset_n_step_total",
         "flash_onset_n_flashes_total",
@@ -431,6 +580,7 @@ def print_report(title: str, q: Dict[str, Any], f: Optional[Dict[str, Any]] = No
         "within_run_stdev_ms_median",
         "uniform_0_T_stdev_ms",
         "all_flashes_step_no_interp",
+        "per_pair_quant_ms",
         "instrument_floor_ms",
         "status",
     ]:
@@ -471,38 +621,97 @@ def self_test() -> int:
         else:
             print(f"PASS {m}")
 
-    # E[range] for U(0,1), n=2 → 1/3
-    check(abs(expected_uniform_range(1.0, 2) - 1.0 / 3.0) < 1e-9, "E range n=2")
-    check(abs(expected_uniform_range(33.333, 16) - 33.333 * 15 / 17) < 1e-6, "E range n=16")
+    # Uniform formula still correct as pure math (not H-QUANT model)
+    check(abs(expected_uniform_range(1.0, 2) - 1.0 / 3.0) < 1e-9, "E U-range n=2")
+    check(abs(expected_uniform_range(33.333, 16) - 33.333 * 15 / 17) < 1e-6, "E U-range n=16")
 
-    # Synthetic: medians span 25 < T=33.3, all step
+    # Parent-verified SE(median) arithmetic (T=33.33, n_pairs=44)
+    T = 33.33
+    sig = pair_quant_sigma_ms(T)
+    check(abs(sig - T / math.sqrt(12.0)) < 1e-12, "sigma=T/sqrt12")
+    se = se_median_ms(T, 44)
+    # 1.253314 * 9.6217 / sqrt(44) ≈ 1.821
+    check(abs(se - 1.821) < 0.02, f"SE(median)≈1.82 got {se}")
+    er = expected_normal_range(se, 16)
+    # parent ≈ 3.5 * 1.82 ≈ 6.4
+    check(abs(er - 6.4) < 0.4, f"E[range n=16]≈6.4 got {er}")
+
+    # Parent NEW pool shape: range 25 ms, n_pairs=45, n_runs=16 → H-QUANT REJECTED
+    meds = [-113, -107, -123, -113, -110, -119, -100, -125,
+            -117, -115, -112, -118, -111, -120, -114, -116]
+    # force range exactly 25
+    meds = [-100.0 + i for i in range(15)] + [-100.0 + 25.0]
     runs = []
-    for i, m in enumerate([-113, -107, -123, -113, -110, -119, -100, -125]):
+    for i, m in enumerate(meds):
         runs.append(
             RunJson(
                 path=f"s{i}",
-                median_ms=m,
+                median_ms=float(m),
                 stdev_ms=14.0,
-                n_pairs=40,
+                n_pairs=45,
                 n_interp=0,
-                n_step=40,
-                n_flashes=40,
-                quant_ms=33.333,
-                period_ms=33.333,
+                n_step=45,
+                n_flashes=45,
+                quant_ms=33.0,
+                period_ms=33.0,
                 hop_ms=2.0,
             )
         )
     q = analyze_quant(runs)
-    check(q["H_QUANT"]["verdict"] == "SUPPORTED", f"quant support got {q['H_QUANT']['verdict']}")
-    check(q["instrument_floor_ms"] == 33.333, "floor=T")
+    check(q["H_QUANT"]["verdict"] == "REJECTED", f"quant reject got {q['H_QUANT']['verdict']}")
+    check(q["between_run_range_ms"] == 25.0, "range=25")
+    check(q["residual_beyond_quant_range_ms"] > 10.0, "residual>~10ms")
+    check("Do NOT publish" in (q.get("consequence") or ""), "no false 33ms floor")
+    # instrument_floor is SE(median), not T
+    check(q["instrument_floor_ms"] < 5.0, f"floor is SE_med not T got {q['instrument_floor_ms']}")
 
-    # Reject: range 50 > T 33
-    runs2 = [
-        RunJson(path="a", median_ms=0, n_interp=0, n_step=10, n_flashes=10, quant_ms=33.3),
-        RunJson(path="b", median_ms=50, n_interp=0, n_step=10, n_flashes=10, quant_ms=33.3),
+    # Small range consistent with quant after averaging → SUPPORT
+    runs_s = []
+    base = -113.0
+    for i in range(16):
+        runs_s.append(
+            RunJson(
+                path=f"t{i}",
+                median_ms=base + (i % 5) * 0.5,  # range 2.0 ms
+                stdev_ms=9.0,
+                n_pairs=45,
+                n_interp=0,
+                n_step=45,
+                n_flashes=45,
+                quant_ms=33.0,
+                period_ms=33.0,
+                hop_ms=2.0,
+            )
+        )
+    qs = analyze_quant(runs_s)
+    check(qs["H_QUANT"]["verdict"] == "SUPPORTED", f"quant support got {qs['H_QUANT']['verdict']}")
+
+    # Large range still REJECT even if range < T (the old wrong SUPPORT path)
+    runs_mid = [
+        RunJson(
+            path="a",
+            median_ms=0.0,
+            n_pairs=45,
+            n_interp=0,
+            n_step=45,
+            n_flashes=45,
+            quant_ms=33.0,
+        ),
+        RunJson(
+            path="b",
+            median_ms=25.0,
+            n_pairs=45,
+            n_interp=0,
+            n_step=45,
+            n_flashes=45,
+            quant_ms=33.0,
+        ),
     ]
-    q2 = analyze_quant(runs2)
-    check(q2["H_QUANT"]["verdict"] == "REJECTED", f"quant reject got {q2['H_QUANT']['verdict']}")
+    qm = analyze_quant(runs_mid)
+    check(
+        qm["H_QUANT"]["verdict"] == "REJECTED",
+        f"range 25 < T=33 must still REJECT under SE model got {qm['H_QUANT']['verdict']}",
+    )
 
     # Field null constant
     rj = RunJson(path="x", median_ms=-110.0)

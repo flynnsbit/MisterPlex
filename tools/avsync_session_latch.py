@@ -1,29 +1,25 @@
 #!/usr/bin/env python3
-"""Classify SESSION-LATCHED vs CAPTURE-RACE from multi-capture A/V medians.
+"""Classify multi-capture median spread: SESSION-STABLE vs CAPTURE-RACE-SUSPECT.
 
-WHY
----
-rd-review: dual live inputs without wallclock can absorb USB startup race into
-alignment. Parent pre-registered test (ONE 360 s session, THREE captures):
+Compares within-session (or within-series) median spread to an optional
+between-group separation the *caller* supplies. Does not assert device defect.
 
-  within-session median spread = 3.33 ms
-  between-cluster separation   = 116.89 ms
-  ratio ≈ 35×  → SESSION-LATCHED, DEVICE CONFIRMED (instrument exonerated).
-
-This tool automates that decision on a set of capture medians that share one
-playback session (or report between-session cluster sep for context).
+RETRACTION (2026-08-01): The prior canonical self-test used OLD-argv medians
+(-293.33/-296/-292.67) and between_cluster_sep=116.89 as "DEVICE CONFIRMED".
+That separation was an instrument artifact (no wallclock/copyts). Self-test now
+uses synthetic numbers only and never claims device confirmation.
 
 Exit codes
 ----------
-  0   SESSION_LATCHED — within spread << cluster sep (device state)
-  2   CAPTURE_RACE_SUSPECT — within spread comparable to cluster sep
+  0   SESSION_STABLE — within spread ≤ max_within_ms (and sep clears min_sep if given)
+  2   CAPTURE_RACE_SUSPECT — within spread > max_within_ms
   77  UNSCORED — too few captures / missing numbers (never a pass)
   1   usage
 
-Pre-registered thresholds (override with flags; defaults DEFAULT_ASSUMED):
-  --max-within-ms 30     parent: <30 ms ⇒ SESSION-LATCHED
-  --min-sep-ms 80        cluster separation must clear this to claim ratio
-  --min-captures 3       parent used 3
+Thresholds (override with flags; defaults DEFAULT_ASSUMED):
+  --max-within-ms 30
+  --min-sep-ms 80        only if --between-cluster-sep-ms is set
+  --min-captures 3
 
 Every value tagged measured | caller_supplied | DEFAULT_ASSUMED | NO-DATA.
 """
@@ -36,7 +32,7 @@ import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
 
-RC_LATCHED = 0
+RC_STABLE = 0
 RC_USAGE = 1
 RC_RACE = 2
 RC_UNSCORED = 77
@@ -127,7 +123,7 @@ def classify(
         rep["between_cluster_sep_ms"] = {"value": None, "src": PROVENANCE_NO_DATA}
         rep["sep_over_within_ratio"] = {"value": None, "src": PROVENANCE_NO_DATA}
 
-    # Decision (parent pre-reg): spread < max_within → SESSION_LATCHED
+    # Decision (parent pre-reg): spread < max_within → SESSION_STABLE
     if spread <= max_within_ms:
         # If between-sep provided, require it clears min_sep (else weak claim)
         if between_cluster_sep_ms is not None and between_cluster_sep_ms < min_sep_ms:
@@ -139,11 +135,11 @@ def classify(
                 "— cannot claim latch vs noise"
             )
             return rep
-        rep["verdict"] = "SESSION_LATCHED"
-        rep["rc"] = RC_LATCHED
+        rep["verdict"] = "SESSION_STABLE"
+        rep["rc"] = RC_STABLE
         rep["reason"] = (
             f"within_spread_ms={spread:.3f} <= max_within_ms={max_within_ms} "
-            f"(parent pre-reg; device state, not capture race)"
+            f"(spread within max_within_ms; not a device-defect claim)"
         )
         return rep
 
@@ -159,8 +155,8 @@ def classify(
 def print_rep(rep: Dict[str, Any], rows: List[Dict[str, Any]]) -> None:
     print("=== avsync_session_latch ===")
     print(
-        "pre_register: within_spread < max_within_ms ⇒ SESSION_LATCHED "
-        "(parent: 3.33 ms vs 116.89 ms cluster sep, ratio 35x)"
+        "pre_register: within_spread < max_within_ms ⇒ SESSION_STABLE "
+        "(spread ≤ max_within; optional between-sep is caller_supplied only)"
     )
     print(f"verdict={rep.get('verdict')} rc={rep.get('rc')}")
     print(f"reason={rep.get('reason')}")
@@ -188,8 +184,9 @@ def print_rep(rep: Dict[str, Any], rows: List[Dict[str, Any]]) -> None:
 
 
 def _self_test() -> int:
-    # Parent numbers: three captures within session
-    meds = [-293.33, -296.00, -292.67]
+    # Synthetic: tight within-spread, large caller_supplied between-sep.
+    # Numbers are fixtures for the classifier, NOT lab device claims.
+    meds = [-110.0, -112.0, -109.0]
     rep = classify(
         meds,
         max_within_ms=30.0,
@@ -198,23 +195,24 @@ def _self_test() -> int:
         min_sep_src=PROVENANCE_CALLER,
         min_captures=3,
         min_captures_src=PROVENANCE_CALLER,
-        between_cluster_sep_ms=116.89,
+        between_cluster_sep_ms=100.0,
         between_src=PROVENANCE_CALLER,
     )
-    assert rep["rc"] == RC_LATCHED, rep
-    assert abs(rep["within_spread_ms"]["value"] - 3.33) < 0.01, rep
-    print("SELF_TEST parent 3-in-1 SESSION_LATCHED rc=0 OK")
+    assert rep["rc"] == RC_STABLE, rep
+    assert abs(rep["within_spread_ms"]["value"] - 3.0) < 0.01, rep
+    assert rep["verdict"] == "SESSION_STABLE", rep
+    print("SELF_TEST synthetic SESSION_STABLE rc=0 OK")
 
-    # Capture race scale: spread ~120 ms
+    # Capture race scale: spread > max_within
     rep = classify(
-        [-300.0, -180.0, -290.0],
+        [-110.0, -40.0, -100.0],
         max_within_ms=30.0,
         max_within_src=PROVENANCE_CALLER,
         min_sep_ms=80.0,
         min_sep_src=PROVENANCE_CALLER,
         min_captures=3,
         min_captures_src=PROVENANCE_CALLER,
-        between_cluster_sep_ms=117.0,
+        between_cluster_sep_ms=100.0,
         between_src=PROVENANCE_CALLER,
     )
     assert rep["rc"] == RC_RACE, rep

@@ -1,23 +1,27 @@
 #!/usr/bin/env bash
-# Parent-only present-lag discriminator for the 117.10 ms A/V clusters.
+# Parent-only present-lag discriminator (PLXD frames_done vs audio_release).
 #
 # PURPOSE
 #   Measure Δt = t(first PLXD frames_done++) − t(audio_release mono) and
 #   convert to N = round(Δt / T_disp) with T_disp = 16.715600 ms (RTL).
 #
 #   PRE-REGISTERED meanings (do not reinterpret after measuring):
-#     same N in cluster A and B  →  first-present lag is NOT the 117 ms cause
-#     ΔN ≈ 7 between clusters    →  video present lag IS a viable discriminator
-#     ΔN ≈ 3 @ content 24 fps    →  REJECTED by arithmetic (125 vs 117.10; err 7.9)
+#     same N across sessions     →  first-present lag is stable (not a 2-state)
+#     ΔN ≈ 7 between sessions    →  video present lag varies by 7×T_disp (RTL arith)
+#     ΔN ≈ 3 @ content 24 fps    →  content-frame lag candidate (125.00 ms)
+#
+#   RETRACTION: former "117.10 ms device cluster" sep was an OLD-argv instrument
+#   artifact. This recipe no longer encodes that number as a product constant.
 #
 #   This script does NOT touch the device by default. It prints the recipe and
 #   can optionally parse a parent-supplied log of (t_mono_ms, plxd_hi) samples.
 #
 # CONSTRAINTS
 #   - Parent owns hardware. Agents must not ssh / deploy / fit.
-#   - PLXD4 @ 0x300FF12C is VIDEO frames_done (high word of PLXD), not audio.
-#   - Short captures have a common-mode ~25 ms startup transient — use first
-#     flash/beep pair for cluster ID; lag N is a separate metric.
+#   - PLXD hi word is VIDEO frames_done, not audio (mailbox_abi kPlxdOffset).
+#   - Short captures have a common-mode ~25 ms startup transient.
+#   - Doorbell/PLXD phys come from ddr_frame_layout.hpp — do not hardcode
+#     banned 0x300F F000-class literals in product scripts (rtl_invariants).
 #
 # Usage:
 #   scripts/parent_plxd_present_lag_protocol.sh            # print recipe
@@ -32,45 +36,55 @@
 set -euo pipefail
 
 T_DISP_MS="16.715600"
-# 7 * T_disp for reference (arithmetic only — mechanism NOT-FOUND in RTL)
+# 7 * T_disp for reference (pure RTL arithmetic — not a lab cluster constant)
 SEVEN_T_MS=$(awk -v t="$T_DISP_MS" 'BEGIN{printf "%.6f", 7*t}')
-PARENT_SEP_MS="117.10"
-PRODUCT_PLXD4="0x300FF12C"
-PRODUCT_PLXD="0x300FF128"
+# Resolve product doorbell + PLXD from the layout SoT (no banned hex literals).
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+LAYOUT_HPP="$ROOT/host/libmisterplex/ddr_frame_layout.hpp"
+PRODUCT_DOORBELL=$(
+  sed -n 's/.*kPlex480pYuv420pDoorbellPhys = \(0x[0-9A-Fa-f]\+\)u;.*/\1/p' \
+    "$LAYOUT_HPP" | head -1
+)
+if [[ -z "${PRODUCT_DOORBELL}" ]]; then
+  echo "could-not-measure: doorbell phys missing from $LAYOUT_HPP" >&2
+  exit 77
+fi
+# PLXD offset 0x128 from mailbox_abi; hi word +4
+PRODUCT_PLXD=$(printf '0x%X' $((PRODUCT_DOORBELL + 0x128)))
+PRODUCT_PLXD4=$(printf '0x%X' $((PRODUCT_DOORBELL + 0x12C)))
 
 print_recipe() {
   cat <<EOF
 === parent_plxd_present_lag_protocol (w-geom) ===
 tag=rtl-literal T_disp_ms=${T_DISP_MS}  (638*524/20e6; colorbars+pll)
-tag=derived     7*T_disp_ms=${SEVEN_T_MS}  (arith vs parent_sep=${PARENT_SEP_MS})
-tag=caller-supplied parent cluster sep ms = ${PARENT_SEP_MS}
+tag=derived     7*T_disp_ms=${SEVEN_T_MS}  (RTL only; NOT lab cluster sep)
+tag=derived     product_doorbell=${PRODUCT_DOORBELL}  (from ddr_frame_layout.hpp)
 
-PLXD addresses (product doorbell 0x300FF000):
+PLXD addresses (doorbell + mailbox_abi::kPlxdOffset):
   lo magic+status  ${PRODUCT_PLXD}   ("PLXD")
   hi frames_done   ${PRODUCT_PLXD4}  (bits[31:16]=frames_done)
 
 PRE-REGISTERED:
-  H0: N_A == N_B  → kill video-present-lag as 117 ms cause
-  H1: |N_A - N_B| == 7  → video lag discriminates clusters (still need mechanism)
-  H_KILL: |N_A - N_B| == 3 content frames @24fps  already REJECTED (125.00 vs 117.10)
+  H0: N_A == N_B  → first-present lag stable across sessions
+  H1: |N_A - N_B| == 7  → video lag differs by 7×T_disp (mechanism still open)
+  H_CONTENT3: |N_A - N_B| corresponds to 3 content frames @24fps (125.00 ms)
 
 RECIPE (parent on device; do not run from agent):
-  1. Start playback of the A/V flash-beep fixture (same conf both clusters).
+  1. Start playback of the A/V flash-beep fixture (same conf).
   2. Capture daemon mono time of the audio_release log line (or gate open).
   3. Poll PLXD4 with busybox devmem ${PRODUCT_PLXD4} 32 at ~1 ms until
      frames_done increments from the pre-start baseline.
   4. Record: t0_audio_release_ms, t1_first_frames_done_ms, plxd_hi_before, after.
   5. N = round( (t1-t0) / ${T_DISP_MS} )
-  6. Repeat until both HDMI clusters A and B are observed (external measure).
-  7. Compare N_A vs N_B against H0/H1 above. Publish miss if neither.
+  6. Repeat across sessions; compare N against H0/H1 above. Publish miss if neither.
 
 Optional log for this script:
   t_mono_ms  plxd_hi_hex
   ...
   Then: $0 parse path/to/log
 
-NOTE: kernel MiSTer-audio-spi.c is OUT OF TREE — if H0 holds, residual suspect
-is the audio handoff below /dev/MrAudio write (not in this repo).
+NOTE: kernel MiSTer-audio-spi.c is OUT OF TREE — residual audio path past
+/dev/MrAudio write is not in this repo.
 EOF
 }
 
