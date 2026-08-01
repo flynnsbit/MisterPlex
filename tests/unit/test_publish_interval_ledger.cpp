@@ -120,17 +120,31 @@ int main() {
         fill_late_10pct(L, 500);
         const auto s = L.summarize();
         std::printf("late10 %s\n", L.formatSummaryLine("synthetic").c_str());
+        std::printf("late10 %s\n", L.formatHistLine().c_str());
+        std::printf("late10 %s\n", L.formatAutocorrLine().c_str());
         std::printf("late10 %s\n", L.formatCorrLine().c_str());
         EXPECT(s.p_ge50 >= 0.08 && s.p_ge50 <= 0.12, "late10 p_ge50 ~10%");
         EXPECT(s.p_lt25 > 0.05, "late10 has catch-up shorts");
         const auto c = L.shortIntervalCorrelation(25.0);
         EXPECT(c.short_n > 0, "corr has shorts");
+        // Catch-up model: long then short → lag1 autocorr negative
+        const double rho = L.lag1Autocorr();
+        EXPECT(rho < 0.0, "late10 catch-up model lag1 acf negative");
         // After a stretch, catch-up is short → short_then often follows late in our model
         EXPECT(std::string(s.verdict) == "ARM_LATE_MATCH_HOLD45" ||
                    std::string(s.verdict) == "ARM_LATE_OR_BIMODAL" ||
                    std::string(s.verdict) == "ARM_LATE_MILD",
                "late10 not ARM_CLEAN");
         EXPECT(std::string(s.verdict) != "ARM_CLEAN", "late10 must not be CLEAN");
+    }
+
+    // Clean acf ~0
+    {
+        PublishIntervalLedger L;
+        fill_clean(L, 200);
+        const double rho = L.lag1Autocorr();
+        std::printf("clean %s\n", L.formatAutocorrLine().c_str());
+        EXPECT(std::fabs(rho) < 0.05, "clean lag1 acf ~0");
     }
 
     // frames_done semantics note (documentation lock for fabric tool death)

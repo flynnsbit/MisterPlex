@@ -25,6 +25,7 @@
 #include <cstdio>
 #include <cstring>
 #include <string>
+#include <vector>
 
 namespace misterplex {
 
@@ -183,6 +184,112 @@ struct PublishIntervalLedger {
                       "short_then_ge50=%d tag=derived",
                       c.short_n, c.short_then_lt50, c.short_then_ge50);
         return std::string(buf);
+    }
+
+    // Interval histogram (ms bins). Parent needs full shape, not only p_ge50.
+    // Bins: <25, 25-33, 33-42, 42-50, 50-67, 67-83, 83-100, >=100
+    std::string formatHistLine() const {
+        std::int64_t tmp[kCap];
+        std::size_t n = 0;
+        copyChronological(tmp, &n);
+        int b[8] = {};
+        int tot = 0;
+        for (std::size_t i = 1; i < n; ++i) {
+            if (tmp[i] < tmp[i - 1])
+                continue;
+            const double ms = double(tmp[i] - tmp[i - 1]) / 1000.0;
+            ++tot;
+            if (ms < 25.0)
+                ++b[0];
+            else if (ms < 33.0)
+                ++b[1];
+            else if (ms < 42.0)
+                ++b[2];
+            else if (ms < 50.0)
+                ++b[3];
+            else if (ms < 67.0)
+                ++b[4];
+            else if (ms < 83.0)
+                ++b[5];
+            else if (ms < 100.0)
+                ++b[6];
+            else
+                ++b[7];
+        }
+        char buf[384];
+        std::snprintf(buf, sizeof(buf),
+                      "publish_interval_hist n=%d lt25=%d b25_33=%d b33_42=%d b42_50=%d "
+                      "b50_67=%d b67_83=%d b83_100=%d ge100=%d tag=derived",
+                      tot, b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]);
+        return std::string(buf);
+    }
+
+    // Lag-1 Pearson autocorrelation of consecutive intervals.
+    // Bursty late publishes → positive rho (long followed by long).
+    // Catch-up after late → negative rho (long followed by short).
+    double lag1Autocorr() const {
+        std::int64_t tmp[kCap];
+        std::size_t n = 0;
+        copyChronological(tmp, &n);
+        if (n < 3)
+            return 0.0;
+        std::vector<double> iv;
+        iv.reserve(n);
+        for (std::size_t i = 1; i < n; ++i) {
+            if (tmp[i] < tmp[i - 1])
+                continue;
+            iv.push_back(double(tmp[i] - tmp[i - 1]) / 1000.0);
+        }
+        if (iv.size() < 3)
+            return 0.0;
+        double mean = 0;
+        for (double v : iv)
+            mean += v;
+        mean /= double(iv.size());
+        double num = 0, den = 0;
+        for (std::size_t i = 0; i + 1 < iv.size(); ++i) {
+            const double a = iv[i] - mean;
+            const double b = iv[i + 1] - mean;
+            num += a * b;
+            den += a * a;
+        }
+        // Use population variance of all samples for den stability
+        double den_all = 0;
+        for (double v : iv) {
+            const double d = v - mean;
+            den_all += d * d;
+        }
+        if (den_all <= 1e-18)
+            return 0.0;
+        // Standard lag-1: num / sqrt(sum a^2 * sum b^2) ≈ num/den_all for long series
+        (void)den;
+        return num / den_all;
+    }
+
+    std::string formatAutocorrLine() const {
+        char buf[160];
+        std::snprintf(buf, sizeof(buf),
+                      "publish_interval_acf lag1=%.4f tag=derived", lag1Autocorr());
+        return std::string(buf);
+    }
+
+    // Write chronological mono_us (one per line) for offline parent analysis.
+    // Returns false if path empty or open fails.
+    bool dumpMonoUs(const char* path) const {
+        if (!path || !path[0])
+            return false;
+        FILE* f = std::fopen(path, "w");
+        if (!f)
+            return false;
+        std::int64_t tmp[kCap];
+        std::size_t n = 0;
+        copyChronological(tmp, &n);
+        std::fprintf(f, "# publish_interval mono_us chronological notes=%zu cap=%zu\n", n,
+                     kCap);
+        for (std::size_t i = 0; i < n; ++i)
+            std::fprintf(f, "%lld\n", static_cast<long long>(tmp[i]));
+        std::fclose(f);
+        return true;
     }
 };
 

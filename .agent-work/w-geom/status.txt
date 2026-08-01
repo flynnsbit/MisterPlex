@@ -1,18 +1,13 @@
-w-geom DONE: publish-interval + frames_done correction
+w-geom DONE: Part1 store-scale + Part2 publish-interval
 branch: w-avsync-hdmi-measure
-tip: 9a0ed2b6
-gates:
-  test_publish_interval_ledger true rc=0
-  test_cadence_swap_path true rc=0
-  test_cadence_swap_path_source true rc=0
-  unit-rollcall true rc=0
-report: .agent-work/w-geom/PUBLISH_INTERVAL.md
-
-PARENT (agent does not touch device):
-1. Deploy misterplexd built from tip 9a0ed2b6 (bundle starts 100b797d)
-2. 60s 480p soak (frameRate=24.000 fixture)
-3. On session end: grep -E 'publish_interval' <daemon-log>
-4. Compare verdict= to:
-   ARM_CLEAN: p_ge50<0.03
-   ARM_LATE_MATCH_HOLD45: p_ge50 in [0.09,0.11]
-DO NOT use poll_plxd_frames_done_hold.sh (rc=2 INVALIDATED)
+use: git rev-parse --short HEAD  (do not trust stale tip in this file)
+gates true rc:
+  test_present_store_scale_math=0
+  test_publish_interval_ledger=0
+  unit-rollcall=0
+  score_publish_interval_log smoke=0
+reports:
+  .agent-work/w-geom/PART1_STORE_SCALE.md
+  .agent-work/w-geom/PUBLISH_INTERVAL.md
+PART1: product FRAME_W/H=640/480 (QSF); V_STORE=240; only even store rows; RBF needed for true 480 lines
+PART2: instrumented; parent runs score_publish_interval_log.sh after 60s soak

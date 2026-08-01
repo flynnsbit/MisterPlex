@@ -4481,12 +4481,21 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
         " skip_rgb=" + (skipRgb ? "1" : "0") +
         " reason=" + endReason +
         " tag=measured");
-    // Always emit publish-interval summary at session end (one log line; ring
-    // already filled on the hot path). Parent greps publish_interval verdict=.
+    // Always emit publish-interval summary at session end (ring filled on hot
+    // path). Parent greps publish_interval verdict= / hist / acf.
     if (pubInterval_.iv_n > 0) {
         log(std::string("media: ") + pubInterval_.formatSummaryLine("measured") +
             " phase=session_end");
+        log(std::string("media: ") + pubInterval_.formatHistLine());
+        log(std::string("media: ") + pubInterval_.formatAutocorrLine());
         log(std::string("media: ") + pubInterval_.formatCorrLine());
+        if (const char* dump = std::getenv("MISTERPLEX_PUBLISH_INTERVAL_DUMP")) {
+            if (dump[0] && pubInterval_.dumpMonoUs(dump))
+                log(std::string("media: publish_interval_dump path=") + dump +
+                    " tag=measured");
+            else if (dump[0])
+                log(std::string("media: publish_interval_dump FAIL path=") + dump);
+        }
     }
     pubInterval_.reset();
 }
