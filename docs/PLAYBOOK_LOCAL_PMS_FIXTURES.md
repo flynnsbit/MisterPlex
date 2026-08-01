@@ -22,12 +22,17 @@
 
 | rk | title | use |
 |----|-------|-----|
+| **TBD** | **Real BBB GlassAV 624×480 24fps 1200s** | **PRIMARY long soak** — real content + glass ID + flash/beep @2s; parent assigns rk after scan |
+| **TBD** | Real BBB GlassAV 624×352 / 640×480 / 720×480 / 1440×1080 **90s** | geometry ladder (FORCE_SCALE / awkward sizes) |
 | **23** | AudioID Glass 480p 24fps **60s** | quick A/V + checksum audio packets |
 | **24** | AudioID … **audioPlus100ms** | instrument RED (expect ~+100 ms) |
-| **22** | AudioID Glass 480p 24fps **1800s** | long soak + slow drift |
-| **20** | AVSync Glass 480p 24fps **600s** | flash↔beep offset 0 |
+| **22** | AudioID Glass 480p 24fps **1800s** | long FSK soak (synthetic body) |
+| **20** | AVSync Glass 480p 24fps **600s** | flash↔beep offset 0 (synthetic) |
 | **21** | AVSync Glass … **audioPlus100ms** | flash↔beep +100 ms |
-| **13** | Glass OCRProof 480p 24fps **600s** | glass frame-ID / drops (video half) |
+| **13** | Glass OCRProof 480p 24fps **600s** | glass frame-ID / drops (synthetic) |
+
+Media paths (pre-scan): `~/plex/media/movies/MiSTerPlex Real BBB GlassAV * (2026).mp4`  
+Generator: `scripts/gen_real_bbb_avsync_soak.py` · report: `.agent-work/w-asset480/REPORT.md`
 
 If rk missing, re-copy from `assets/avsync/` → `~/plex/media/movies/` and:
 
