@@ -515,17 +515,36 @@ def check_present_core() -> None:
     )
 
     nt = norm(text)
+    # T7: past_last_row is V_STORE-relative (product V_STORE=FRAME_H=480), not hard 240.
+    past_ok = (
+        "past_last_row=(py>=V_STORE)" in nt
+        and (
+            "store_y_clamped=past_last_row?V_STORE_LAST:py" in nt
+            or "store_y_clamped=past_last_row?10'd239:py" in nt
+        )
+    )
     check(
-        "past_last_row=(py>=10'd240)" in nt and "store_y_clamped=past_last_row?10'd239:py" in nt,
-        "present_core past_last_row clamp is missing. It prevents fetching row 240 and stops the "
-        "241st-row/bottom-edge artifact; restore past_last_row and store_y_clamped.",
+        past_ok,
+        "present_core past_last_row clamp is missing. It prevents fetching past V_STORE and "
+        "stops the surplus-row/bottom-edge artifact; restore past_last_row and store_y_clamped "
+        "(T7: py>=V_STORE / V_STORE_LAST, not hard-coded 240).",
     )
     check(
         "vb_d=vb|past_last_row" in nt,
         "present_core VBlank no longer includes past_last_row. The bottom-edge fix blanks rows "
-        "past source row 239; restore `vb_d = vb | past_last_row` or re-verify G-VID1.",
+        "past the content window; restore `vb_d = vb | past_last_row` or re-verify G-VID1.",
     )
-    print("PASS present_core G-VID1 scanout invariants")
+    check(
+        "NATIVE_V_1TO1" in text and "V_STORE_I" in text,
+        "present_core missing NATIVE_V_1TO1 / V_STORE_I — product FRAME_H>240 must 1:1 map "
+        "store_y to vc so all 480 rows are fetched (T7 ceiling fix).",
+    )
+    check(
+        "STORE_Y_SCALE = (FRAME_H * 65536) / V_STORE_I" in text
+        or "STORE_Y_SCALE=(FRAME_H*65536)/V_STORE_I" in nt,
+        "present_core STORE_Y_SCALE must divide by V_STORE_I (1.0 at product 480), not hard 240.",
+    )
+    print("PASS present_core G-VID1+T7 scanout invariants")
 
 
 def check_phase_a_surface() -> None:
@@ -2025,23 +2044,40 @@ def check_ddr_bank_handoff_contract() -> None:
 
 
 def check_plxd_liveness_degeneracy() -> None:
-    """Instrument-integrity #18: ensure PLXD consumer has stale-buffer detection."""
+    """Instrument-integrity #18 + freeze-blindness: PLXD consumer must not treat
+    frames_done advance alone as swap-live (defeated when fd=bank_vsync_count).
+    """
     fpga_cpp = strip_comments(read(FPGA_SPI_CPP))
     fpga_h = strip_comments(read(FPGA_SPI_HPP))
     cpp_nt = norm(fpga_cpp)
     h_nt = norm(fpga_h)
+    live_path = ROOT / "host" / "libmisterplex" / "plxd_liveness.hpp"
+    live_txt = live_path.read_text(encoding="utf-8", errors="replace") if live_path.is_file() else ""
+    live_nt = norm(live_txt)
 
-    # Key signals of degeneracy defence in the PLXD consumer:
+    # Key signals: counter motion ≠ swap_live; SWAP_STUCK path required on c5382bee class.
     required = [
         (h_nt, "plxdStaleCount_", "PLXD consumer must track consecutive stale reads"),
         (h_nt, "plxdLivenessProven_", "PLXD consumer must record whether liveness was ever proven"),
         (cpp_nt, "plxdStaleCount_", "sendDdrFrame must increment stale count when frames_done unchanged"),
-        (cpp_nt, "plxdLivenessProven_=true", "sendDdrFrame must mark liveness proven on first advance"),
+        (cpp_nt, "plxdLivenessObserve", "must call plxdLivenessObserve (not fd-advance alone)"),
+        (cpp_nt, "plxdLivenessProven_=plxdLive_.counter_moving_proven",
+         "proven flag must track counter_moving_proven, never bare =true on fd tick"),
         (cpp_nt, "[STALE]", "sendDdrFrame must log LOUD when mailbox is stale"),
+        (cpp_nt, "[SWAP_STUCK]", "must log SWAP_STUCK when swaps freeze under moving vsync counter"),
+        (live_nt, "doesNOTprove:bankswaps", "plxd_liveness must document fd≠swap"),
+        (live_nt, "swap_live", "plxd_liveness must expose swap_live separate from counter_moving"),
     ]
     missing = [msg for haystack, needle, msg in required if needle not in haystack]
     if missing:
         fail(f"PLXD liveness/degeneracy defence missing: {missing[0]}")
+
+    # Forbidden: old freeze-blind pattern that set proven=true on any fd change alone.
+    if "plxdLivenessProven_=true" in cpp_nt and "counter_moving_proven" not in cpp_nt:
+        fail(
+            "fpga_spi.cpp still uses plxdLivenessProven_=true without counter_moving_proven — "
+            "defeated when frames_done is bank_vsync_count (c5382bee freeze-blind class)"
+        )
 
     # Red-proof: removing the stale detection must make the gate fail.
     poisoned = h_nt.replace("plxdStaleCount_", "")
@@ -2051,7 +2087,7 @@ def check_plxd_liveness_degeneracy() -> None:
     if not missing_poisoned:
         fail("deliberately removed stale counter did not make the liveness gate red")
 
-    print("PASS PLXD consumer has stale-buffer degeneracy defence (#18)")
+    print("PASS PLXD consumer has freeze-safe liveness defence (#18 + SWAP_STUCK)")
 
 
 def check_yuv_ddr_writer_contract() -> None:

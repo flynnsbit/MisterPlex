@@ -63,6 +63,24 @@ REQUIRED = [
         ],
         "comment/retract rules present",
     ),
+    (
+        "host/libmisterplex/input_mailbox.hpp",
+        [
+            "bank_vsync_count",
+            "frames_done_d2",
+            "NOT YET on c5382bee",
+        ],
+        "mailbox frames_done must not claim bare 'monotonic swap count'",
+    ),
+    (
+        "scripts/check_define_parity.py",
+        [
+            "NATIVE_V_1TO1",
+            "NOT a VERILOG_MACRO",
+            "check_present_core_t7_contract",
+        ],
+        "define-parity must cover T7 localparam (not macros alone)",
+    ),
 ]
 
 PRE_RETRACT_DOC = ROOT / "docs/PRE_RETRACTION_CHECK.md"

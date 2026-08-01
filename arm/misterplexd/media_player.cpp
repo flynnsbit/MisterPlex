@@ -2642,9 +2642,14 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
             const int64_t ddrWaitUs = prof.ddrPrepWaitUs + prof.ddrPostWaitUs;
             const int64_t ddrAccountedUs =
                 ddrWaitUs + prof.ddrCopyUs + prof.ddrFlushUs + prof.ddrDoorbellUs;
+            // presented/drops here = ARM present_profile counters (call OK / A-V
+            // resync drops), NOT glass/display. scope=ARM_PUBLISH_NOT_DISPLAY
             log("media: present_profile frames=" + std::to_string(prof.frames) +
                 " presented=" + std::to_string(prof.presented) +
+                " presented_src=arm_prof.presented" +
                 " drops=" + std::to_string(prof.drops) +
+                " drops_src=arm_prof.drops" +
+                " scope=ARM_PUBLISH_NOT_DISPLAY" +
                 " read_us_f=" + std::to_string(avgFrame(prof.readWallUs)) +
                 " read_cpu_us_f=" + std::to_string(avgFrame(prof.readCpuUs)) +
                 " read_syscall_us_f=" + std::to_string(avgFrame(prof.readSyscallUs)) +
@@ -2853,9 +2858,13 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                     if (profilePresent)
                         ++prof.presented;
                     if ((presentCount_ % 48) == 0) {
+                        // presents= ARM publishCount_ only (function returned OK) —
+                        // NOT glass/display presents. scope=ARM_PUBLISH_NOT_DISPLAY
                         log(std::string("media: fpga frame_tx ok via ") +
                             "DDR" +
                             " presents=" + std::to_string(presentCount_) +
+                            " presents_src=arm_presentCount_" +
+                            " scope=ARM_PUBLISH_NOT_DISPLAY" +
                             " frames=" + std::to_string(frameIndex) +
                             " ms=" + std::to_string(static_cast<int>(fpga_.lastPushMs())));
                     }

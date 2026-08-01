@@ -10,12 +10,12 @@ Parent measurement (720p live OCR fixture)::
   period 6                17.51 but HARMONIC of 3, not independent
   horizontal: no strong period (best 1.42) — 529→1280 non-integer resample
 
-RTL (quoted present_core.sv:161-164)::
+RTL (depends on fitted RBF — do not print one V_STORE as universal)::
 
-  H_DE = 529
-  V_STORE = 240
-  STORE_Y_SCALE = (FRAME_H * 65536) / 240
-  At FRAME_H=480 → scale=2.0 exact → store_y = py*2 → only even store rows.
+  H_DE = 529 (all current product trees)
+  c5382bee daily: V_STORE=240, STORE_Y_SCALE=(FRAME_H*65536)/240 → even rows only
+  tip T7: NATIVE_V_1TO1=(FRAME_H>240) → V_STORE=FRAME_H=480, SCALE=1.0
+  Parent glass proof of 240 ceiling was on c5382bee; tip source may differ.
 
 Method A — phase-binned row-diff contrast (parent method)
   For candidate period p: mean |row[i]-row[i-1]| binned by (i mod p).
@@ -230,16 +230,24 @@ def analyze_frame(
             f"at capture_h={h}"
         )
 
-    # RTL expectation note
+    # RTL expectation note — derive from tip present_core when readable; never
+    # print hard V_STORE=240 as if it were the only product path (T7 NATIVE_V_1TO1
+    # sets V_STORE=FRAME_H=480). c5382bee daily RBF still ships the 240 ceiling.
     rtl = {
-        "V_STORE": 240,
-        "V_STORE_src": "present_core.sv:162",
+        "V_STORE_c5382bee_daily": 240,
+        "V_STORE_c5382bee_src": "c5382bee frozen present_core hard localparam (ESTABLISHED_FACTS)",
+        "V_STORE_tip_T7": 480,
+        "V_STORE_tip_src": "present_core.sv NATIVE_V_1TO1=(FRAME_H>240) → V_STORE_I=FRAME_H",
         "H_DE": 529,
-        "H_DE_src": "present_core.sv:161",
-        "STORE_Y_SCALE_at_480": 2.0,
-        "STORE_Y_SCALE_src": "present_core.sv:164 (FRAME_H*65536)/240",
-        "expected_period_at_480_capture_scale": (
+        "H_DE_src": "present_core.sv H_DE localparam",
+        "STORE_Y_SCALE_at_480_pre_T7": 2.0,
+        "STORE_Y_SCALE_at_480_T7": 1.0,
+        "STORE_Y_SCALE_src": "pre-T7 (FRAME_H*65536)/240; T7 (FRAME_H*65536)/V_STORE_I",
+        "expected_period_at_480_capture_scale_pre_T7": (
             "period 3 on 720p if 240 store lines doubled then scaled to 720"
+        ),
+        "expected_period_note": (
+            "Do not treat V_STORE=240 as tip product; silicon identity is the RBF under test"
         ),
     }
 

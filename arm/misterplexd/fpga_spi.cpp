@@ -1380,7 +1380,9 @@ bool FpgaSpi::sendDdrFrame(const DdrPublishFrame& frame, const DdrPublishPlan& p
                 }
                 fprintf(stderr,
                         "[PLXD-PROVENANCE] %s raw=0x%08x_%08x "
-                        "frames_done=%u free_mask=%u disp=%u swap=%d reserved=0x%03x\n",
+                        "frames_done=%u frames_done_src=PLXD[63:48]_pack_depends_on_RBF "
+                        "(c5382bee=bank_vsync_count tip=frames_done_d2) "
+                        "free_mask=%u disp=%u swap=%d reserved=0x%03x\n",
                         label, diag.raw_hi, diag.raw_lo,
                         diag.frames_done, diag.free_bank_mask,
                         diag.disp_bank, diag.swap_pending, diag.reserved_bits);

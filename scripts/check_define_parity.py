@@ -11,6 +11,14 @@
    *presented* canvas (640x480), not the coded DDR pitch (624). Without (2)
    this gate was GREEN while a 624-writer vs 640-reader pitch shear was still
    possible at the constant layer.
+
+3) T7 vertical store contract (NATIVE_V_1TO1). NATIVE_V_1TO1 is a *localparam*
+   derived from FRAME_H, NOT a VERILOG_MACRO — so (1) alone never sees it.
+   When product FRAME_H>240, present_core.sv must implement
+   NATIVE_V_1TO1 / V_STORE_I=FRAME_H / STORE_Y_SCALE÷V_STORE_I. Without (3)
+   this gate was GREEN with hard V_STORE=240 (even-row ceiling) while QSF
+   still advertised FRAME_H=480 — a candidate explanation for T7 no-ops on
+   silicon when the fitted tree lagged the intended T7 source.
 """
 from __future__ import annotations
 
@@ -27,6 +35,7 @@ PROJECT = ROOT / "fpga" / "Plex_MiSTer"
 DEFAULT_ALLOWLIST = ROOT / "tests" / "fixtures" / "define_parity_allowlist.json"
 DEFAULT_HOST_LAYOUT = ROOT / "host" / "libmisterplex" / "ddr_frame_layout.hpp"
 DEFAULT_RTL_LAYOUT = PROJECT / "rtl" / "ddr_frame_layout_params.svh"
+DEFAULT_PRESENT_CORE = PROJECT / "rtl" / "present_core.sv"
 
 # Host↔RTL geometry contract. Historically BLIND in this gate (only QSF
 # VERILOG_MACRO names were compared). A 624-writer vs 640-reader pitch is the
@@ -353,6 +362,103 @@ def check_ddr_layout_parity(
     return errors
 
 
+def check_present_core_t7_contract(
+    quartus: dict[str, Macro],
+    present_core: Path = DEFAULT_PRESENT_CORE,
+    *,
+    fault_strip_native: bool = False,
+) -> list[str]:
+    """When product FRAME_H>240, present_core must implement NATIVE_V_1TO1.
+
+    NATIVE_V_1TO1 is NOT a VERILOG_MACRO — define-parity table (1) never lists it.
+    Parent fit 78eff44e: FRAME_H=480 in QSF while glass still showed 240-row
+    ceiling — (3) fails closed if present_core still hardcodes V_STORE=240.
+    """
+    errors: list[str] = []
+    fh = quartus.get("FRAME_H")
+    if fh is None:
+        return errors  # already reported by layout check
+    try:
+        fh_v = int(fh.value, 0)
+    except ValueError:
+        return errors
+
+    print("DEFINE_PARITY_T7_PRESENT_BEGIN")
+    print(f"| check | FRAME_H | present_core | status |")
+    print("|---|---:|---|---|")
+
+    if not present_core.is_file():
+        msg = f"missing {present_core.relative_to(ROOT)}"
+        print(f"| T7_NATIVE_V_1TO1 | {fh_v} | {msg} | MISSING-FILE |")
+        print("DEFINE_PARITY_T7_PRESENT_END")
+        if fh_v > 240:
+            errors.append(
+                f"FRAME_H={fh_v}>240 but present_core.sv missing — cannot verify T7 NATIVE_V_1TO1"
+            )
+        return errors
+
+    text = present_core.read_text(errors="ignore")
+    if fault_strip_native:
+        # self-test: pretend pre-T7 hard-240 tree
+        text = text.replace("NATIVE_V_1TO1", "NATIVE_V_STRIPPED")
+        text = text.replace("V_STORE_I", "V_STORE_STRIPPED")
+
+    try:
+        rel = present_core.resolve().relative_to(ROOT.resolve()).as_posix()
+    except ValueError:
+        rel = str(present_core)
+    has_native = "NATIVE_V_1TO1" in text and "V_STORE_I" in text
+    has_scale = (
+        "STORE_Y_SCALE = (FRAME_H * 65536) / V_STORE_I" in text
+        or "STORE_Y_SCALE=(FRAME_H*65536)/V_STORE_I" in text.replace(" ", "")
+    )
+    # Pre-T7 defect locked as HISTORY: hard localparam V_STORE = 10'd240 + / 240
+    hard_240 = bool(
+        re.search(r"localparam\s+(?:\[[^\]]+\]\s+)?V_STORE\s*=\s*10'd240\s*;", text)
+    ) and "NATIVE_V_1TO1" not in text
+    hard_scale_240 = bool(
+        re.search(r"STORE_Y_SCALE\s*=\s*\(FRAME_H\s*\*\s*65536\)\s*/\s*240\s*;", text)
+    ) and "V_STORE_I" not in text
+
+    if fh_v <= 240:
+        print(
+            f"| T7_NATIVE_V_1TO1 | {fh_v} | {rel} | N/A (FRAME_H<=240 legacy half-height) |"
+        )
+        print("DEFINE_PARITY_T7_PRESENT_END")
+        return errors
+
+    # Product 480 path — must be native 1:1
+    if not has_native:
+        print(f"| T7_NATIVE_V_1TO1 | {fh_v} | {rel} | MISSING-NATIVE |")
+        errors.append(
+            f"FRAME_H={fh_v}>240 but {rel} lacks NATIVE_V_1TO1/V_STORE_I — "
+            f"T7 vertical 1:1 store map absent; gate would pass on macros alone "
+            f"while even-row ceiling (V_STORE=240) can remain"
+        )
+    elif hard_240 or hard_scale_240:
+        print(f"| T7_NATIVE_V_1TO1 | {fh_v} | {rel} | HARD-240-REGRESSION |")
+        errors.append(
+            f"{rel}: hard V_STORE=240 / STORE_Y_SCALE÷240 with FRAME_H={fh_v} — "
+            f"pre-T7 even-row ceiling locked in source"
+        )
+    elif not has_scale:
+        print(f"| T7_NATIVE_V_1TO1 | {fh_v} | {rel} | SCALE-NOT-V_STORE_I |")
+        errors.append(
+            f"{rel}: STORE_Y_SCALE must divide by V_STORE_I when FRAME_H={fh_v} "
+            f"(expect 1.0 Q16 at product 480)"
+        )
+    else:
+        print(f"| T7_NATIVE_V_1TO1 | {fh_v} | {rel} | present (localparam, not VERILOG_MACRO) |")
+
+    # Explicit: name is localparam — never claim QSF macro parity covered it
+    print(
+        f"| T7_MACRO_NOTE | {fh_v} | NATIVE_V_1TO1 | "
+        f"NOT a VERILOG_MACRO — derivation=localparam (FRAME_H>240) |"
+    )
+    print("DEFINE_PARITY_T7_PRESENT_END")
+    return errors
+
+
 def main(argv: list[str]) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--allowlist", type=Path, default=DEFAULT_ALLOWLIST)
@@ -367,6 +473,18 @@ def main(argv: list[str]) -> int:
         default=None,
         help="self-test hook: override RTL CODED_WIDTH/Y_STRIDE before layout compare "
         "(e.g. 320 reproduces ARM624-vs-RTL320 shear; expect exit 1)",
+    )
+    ap.add_argument(
+        "--fault-strip-t7-native",
+        action="store_true",
+        help="self-test hook: strip NATIVE_V_1TO1/V_STORE_I from present_core text "
+        "before T7 contract check (expect exit 1 when FRAME_H>240)",
+    )
+    ap.add_argument(
+        "--present-core",
+        type=Path,
+        default=DEFAULT_PRESENT_CORE,
+        help="present_core.sv path for T7 NATIVE_V_1TO1 contract",
     )
     args = ap.parse_args(argv[1:])
 
@@ -406,6 +524,13 @@ def main(argv: list[str]) -> int:
             fault_rtl_coded_width=args.fault_rtl_coded_width,
         )
     )
+    errors.extend(
+        check_present_core_t7_contract(
+            quartus,
+            present_core=args.present_core,
+            fault_strip_native=args.fault_strip_t7_native,
+        )
+    )
 
     if errors:
         print("DEFINE_PARITY_REJECTED(exit=1):", file=sys.stderr)
@@ -415,7 +540,8 @@ def main(argv: list[str]) -> int:
     print(
         "PASS define parity: Quartus product macros match Verilator/lint; "
         "test-only macros are allowlisted; "
-        "DDR host/RTL layout constants and QSF FRAME_W/H↔presented agree"
+        "DDR host/RTL layout constants and QSF FRAME_W/H↔presented agree; "
+        "T7 NATIVE_V_1TO1 present_core contract holds when FRAME_H>240"
     )
     return 0
 

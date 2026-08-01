@@ -104,7 +104,10 @@ struct BankReleaseStatus {
     uint8_t free_bank_mask = 0; // bit 0 = bank 0 free, bit 1 = bank 1 free
     uint8_t disp_bank = 0;     // 0 or 1
     bool swap_pending = false;
-    uint16_t frames_done = 0;  // monotonic swap count
+    // Derivation depends on fitted RTL pack of PLXD[63:48]:
+    //   tip source: frames_done_d2 (real bank swaps) — NOT YET on c5382bee daily RBF
+    //   c5382bee:   bank_vsync_count (every vsync) — do NOT treat as swap proof
+    uint16_t frames_done = 0;
 
     bool bank0Free() const { return free_bank_mask & 1u; }
     bool bank1Free() const { return (free_bank_mask >> 1) & 1u; }
