@@ -32,41 +32,74 @@ constexpr int64_t kMrAudioBytesPerSec = 48000LL * 4LL;
 // nonsense and means we misparsed.
 constexpr int64_t kMrAudioRingBytes = 512LL * 1024LL;
 
-// Pull the `len:` field out of the driver's status line.
-// Returns bytes queued, or -1 if the line is absent/malformed/out of range.
-// Deliberately hand-rolled: this parses a kernel string on a hot path and must
-// not throw, allocate, or depend on locale.
-inline int64_t parseMrAudioQueuedBytes(const char* s, int64_t n) {
-    if (!s || n <= 0)
+// Full status line: "rptr: N, wptr: N, len: N, comp: N"
+// Lab-captured format pinned by tests/unit/test_mraudio_status.cpp.
+// Fields missing/malformed → ok=false; individual fields may be -1.
+struct MrAudioStatusLine {
+    bool ok = false;
+    int64_t rptr = -1;
+    int64_t wptr = -1;
+    int64_t len = -1;
+    int64_t comp = -1; // driver "comp" = FPGA alsa hurryup (sys/alsa.sv spi_out)
+};
+
+// Parse unsigned decimal after key (e.g. "len:"). Returns -1 on failure.
+// maxInclusive: value must be <= maxInclusive (ring fields use kMrAudioRingBytes-1
+// effective via caller); pass a large bound for comp.
+inline int64_t parseMrAudioU64Field(const char* s, int64_t n, const char* key, int64_t keyLen,
+                                    int64_t maxInclusive) {
+    if (!s || n <= 0 || !key || keyLen <= 0)
         return -1;
-    static const char kKey[] = "len:";
-    constexpr int64_t kKeyLen = 4;
-    for (int64_t i = 0; i + kKeyLen <= n; ++i) {
+    for (int64_t i = 0; i + keyLen <= n; ++i) {
         bool hit = true;
-        for (int64_t k = 0; k < kKeyLen; ++k) {
-            if (s[i + k] != kKey[k]) {
+        for (int64_t k = 0; k < keyLen; ++k) {
+            if (s[i + k] != key[k]) {
                 hit = false;
                 break;
             }
         }
         if (!hit)
             continue;
-        int64_t j = i + kKeyLen;
+        int64_t j = i + keyLen;
         while (j < n && (s[j] == ' ' || s[j] == '\t'))
             ++j;
-        // The field is unsigned in the driver; a '-' means we are misreading.
         if (j >= n || s[j] < '0' || s[j] > '9')
             return -1;
         int64_t v = 0;
         while (j < n && s[j] >= '0' && s[j] <= '9') {
             v = v * 10 + (s[j] - '0');
-            if (v > kMrAudioRingBytes)
+            if (v > maxInclusive)
                 return -1;
             ++j;
         }
-        return v >= kMrAudioRingBytes ? -1 : v;
+        return v;
     }
     return -1;
+}
+
+inline MrAudioStatusLine parseMrAudioStatusLine(const char* s, int64_t n) {
+    MrAudioStatusLine out;
+    if (!s || n <= 0)
+        return out;
+    // rptr/wptr/len are byte indices into the 512 KiB ring; comp is hurryup 0..7-ish.
+    out.rptr = parseMrAudioU64Field(s, n, "rptr:", 5, kMrAudioRingBytes);
+    out.wptr = parseMrAudioU64Field(s, n, "wptr:", 5, kMrAudioRingBytes);
+    out.len = parseMrAudioU64Field(s, n, "len:", 4, kMrAudioRingBytes - 1);
+    out.comp = parseMrAudioU64Field(s, n, "comp:", 5, 255);
+    out.ok = (out.rptr >= 0 && out.wptr >= 0 && out.len >= 0 && out.comp >= 0);
+    return out;
+}
+
+// Pull the `len:` field out of the driver's status line.
+// Returns bytes queued, or -1 if the line is absent/malformed/out of range.
+// Deliberately hand-rolled: this parses a kernel string on a hot path and must
+// not throw, allocate, or depend on locale.
+inline int64_t parseMrAudioQueuedBytes(const char* s, int64_t n) {
+    const MrAudioStatusLine st = parseMrAudioStatusLine(s, n);
+    if (st.len >= 0)
+        return st.len;
+    // Fall back to len-only parse for lines that omit rptr/wptr (tests + robustness).
+    return parseMrAudioU64Field(s, n, "len:", 4, kMrAudioRingBytes - 1);
 }
 
 // Audible playback position (ms) = what we handed the driver, minus what is

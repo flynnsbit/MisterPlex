@@ -93,5 +93,14 @@ Next fit bar: TB RED on current shipping RTL, GREEN on this tip, elaborate-prove
 - 3 content frames @24fps = 125.0 ms: REJECT (err 7.9 ms vs measured 117.10)
 - NTSC display tick T=16.715600 ms (20MHz, 262*638*2); 7*T=117.0092 ms err 0.091 ms — numerical only; multi-state ladder not bimodal cause by itself
 - Observe: MrAudio rptr/len/comp + PLXD 0x300FF128/12C first-advance
-- NO FIT · w-fit-integ-c5382bee-dequant-swap @ follow-up commit
+- NO FIT · c5382bee undisturbed
 
+## SESSION-LATCHED defect → concrete probe (post parent confirm)
+Parent: within-session HDMI spread 3.33 ms vs between-cluster ~117 ms; latched by first pair.
+Daemon was blind → added one-shot BIMODAL_LATCH lines (does not claim cause):
+- host: `av_bimodal_latch.hpp` + full `parseMrAudioStatusLine`
+- unit: `test_av_bimodal_latch` (T_disp, nearest_n=7 for 117.10, line format)
+- ARM: AUDIO_T0 / FIRST_PRESENT / PLXD_ADVANCE in media_player
+- arm-plexd BUILD_OK md5=601c1c15b944d76c1ebb58c020720a1f (host build artifact)
+Parent: deploy this daemon only; grep BIMODAL_LATCH; pre-reg H-VDISP7/H-AUDIO/H-NULL before cluster id.
+av-lock / av_drift_ms still NOT a soak criterion (replaced by ledger residual + HDMI instrument).

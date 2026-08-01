@@ -194,13 +194,32 @@ f_disp = 59.824356 Hz
 # 1) Classify PLXD[63:48] rate (swaps vs vsyncs) during play
 #    read 0x300FF12C (hi) every 50ms for 2s; delta>>16 / 2.0 = Hz
 
-# 2) Per session start:
-#    t0 = first MrAudio status with len rising through ~target
-#    t1 = first PLXD frames/vsync counter increment after t0
-#    log (t1-t0), MrAudio len/rptr/comp, HDMI cluster label
+# 2) Per session start (AUTOMATED on probe daemon):
+#    grep BIMODAL_LATCH /path/to/misterplexd.log
+#    tags: AUDIO_T0 | FIRST_PRESENT | PLXD_ADVANCE
+#    fields: wall_ms dt_audio_ms mra_{rptr,wptr,len,comp}
+#             plxd_ok free_mask disp_bank swap_pending frames_done presents T_disp_ms
 
-# 3) Pre-register:
-#    H-VDISP7:  Δ(t1-t0) across clusters ≈ 117.0±2 ms, len identical
-#    H-AUDIO:   Δlen ≈ 22483 B, (t1-t0) identical
-#    H-NULL:    both null → leave FPGA RTL region
+# 3) Pre-register (bind BEFORE measuring HDMI cluster):
+#    H-VDISP7:  mean(dt_audio_ms of PLXD_ADVANCE)_A − mean(..._B) ≈ ±117.0±2 ms
+#               mra_len identical across clusters at AUDIO_T0 / PLXD_ADVANCE
+#    H-AUDIO:   Δmra_len ≈ 22483 B at matched wall; dt_audio_ms of PLXD_ADVANCE identical
+#    H-NULL:    both dt and len null across clusters → leave FPGA RTL region
+#               (kernel/HDMI below I2S still open)
+
+# 4) Offline tick classify (host, no device):
+#    build/test_av_bimodal_latch  # pins T_disp=16.715600, nearest_n=7 for 117.10
 ```
+
+### Probe implementation (this branch — host-testable)
+
+| Piece | Path |
+|-------|------|
+| Full MrAudio parse `rptr/wptr/len/comp` | `host/libmisterplex/mraudio_status.hpp` `parseMrAudioStatusLine` |
+| T_disp + nearest-n + `BIMODAL_LATCH` format | `host/libmisterplex/av_bimodal_latch.hpp` |
+| Unit gate | `tests/unit/test_av_bimodal_latch.cpp` (in `make unit`) |
+| Daemon emit | `MediaPlayer::emitBimodalLatch` — AUDIO_T0 at pace-clock start; FIRST_PRESENT at presentCount==1; PLXD_ADVANCE on first frames_done ≠ AUDIO_T0 baseline |
+
+**AUDIO_T0 anchor (quoted):** first chunk after FFmpeg warm-up when `audioClockStarted` flips — same site that sets `audioDue` with `kFeedTargetBytes` bias (`media_player.cpp` audioPump). This is **not** “first audible sample”; it is the daemon pace origin. Parent still owns HDMI truth.
+
+**Does not claim cause.** Logs are discriminators for H-VDISP7 / H-AUDIO / H-NULL only.

@@ -1915,15 +1915,47 @@ void MediaPlayer::streamPump(int sfd) {
 }
 
 int64_t MediaPlayer::readMrAudioQueuedBytes() {
+    const misterplex::MrAudioStatusLine st = readMrAudioStatusLine();
+    return st.len;
+}
+
+misterplex::MrAudioStatusLine MediaPlayer::readMrAudioStatusLine() {
+    misterplex::MrAudioStatusLine st;
     const int fd = ::open(audioDev_.c_str(), O_RDONLY);
     if (fd < 0)
-        return -1;
-    char buf[128];
+        return st;
+    char buf[160];
     const ssize_t n = ::read(fd, buf, sizeof(buf));
     ::close(fd);
     if (n <= 0)
-        return -1;
-    return misterplex::parseMrAudioQueuedBytes(buf, n);
+        return st;
+    return misterplex::parseMrAudioStatusLine(buf, n);
+}
+
+void MediaPlayer::emitBimodalLatch(const char* tag, int64_t wall_ms, int64_t dt_audio_ms,
+                                   int presents) {
+    if (!tag)
+        return;
+    const misterplex::MrAudioStatusLine mra = readMrAudioStatusLine();
+    int plxd_ok = 0;
+    int free_mask = -1;
+    int disp_bank = -1;
+    int swap_pending = -1;
+    int frames_done = -1;
+    BankReleaseStatus brs;
+    if (fpga_.ok() && fpga_.readBankRelease(brs)) {
+        plxd_ok = 1;
+        free_mask = static_cast<int>(brs.free_bank_mask);
+        disp_bank = static_cast<int>(brs.disp_bank);
+        swap_pending = brs.swap_pending ? 1 : 0;
+        frames_done = static_cast<int>(brs.frames_done);
+    }
+    char line[512];
+    const int n = misterplex::av_bimodal::formatBimodalLatchLine(
+        line, sizeof(line), tag, wall_ms, dt_audio_ms, mra.rptr, mra.wptr, mra.len, mra.comp,
+        plxd_ok, free_mask, disp_bank, swap_pending, frames_done, presents);
+    if (n > 0)
+        log(std::string(line));
 }
 
 void MediaPlayer::audioPump(int afd) {
@@ -1965,6 +1997,9 @@ void MediaPlayer::audioPump(int afd) {
     audioActive_.store(true);
     audioBytes_.store(0);
     audioQueuedBytes_.store(-1);
+    bimodalAudioT0Ms_.store(-1);
+    bimodalAudioT0Fd_.store(-1);
+    bimodalLatchBits_.store(0);
     // 20ms chunks @ 48k stereo s16le
     char buf[3840];
     std::vector<uint8_t> f2acc;
@@ -2031,11 +2066,27 @@ void MediaPlayer::audioPump(int afd) {
             // audio prefill, and it is bounded — unlike the old warm-up burst.
             if (!audioClockStarted) {
                 audioClockStarted = true;
-                audioDue = std::chrono::steady_clock::now() -
+                const auto tAnchor = std::chrono::steady_clock::now();
+                audioDue = tAnchor -
                            std::chrono::duration_cast<std::chrono::steady_clock::duration>(
                                std::chrono::duration<double>(
                                    static_cast<double>(misterplex::kFeedTargetBytes) /
                                    kBytesPerSec));
+                // Session-latch RCA: wall origin when pace clock starts (not first write
+                // completion). Parent correlates BIMODAL_LATCH with HDMI cluster id.
+                const int64_t wallMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                           tAnchor.time_since_epoch())
+                                           .count();
+                bimodalAudioT0Ms_.store(wallMs, std::memory_order_relaxed);
+                if ((bimodalLatchBits_.fetch_or(1u) & 1u) == 0u) {
+                    emitBimodalLatch("AUDIO_T0", wallMs, 0, 0);
+                    // Capture PLXD counter baseline if the AUDIO_T0 line's read succeeded
+                    // is re-done here so PLXD_ADVANCE can detect first counter move.
+                    BankReleaseStatus brs0;
+                    if (fpga_.ok() && fpga_.readBankRelease(brs0))
+                        bimodalAudioT0Fd_.store(static_cast<int>(brs0.frames_done),
+                                                std::memory_order_relaxed);
+                }
             }
 
             // Advance the deadline by this chunk's duration at the servo-corrected
@@ -2875,6 +2926,32 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                     ++presentCount_;
                     if (profilePresent)
                         ++prof.presented;
+                    // Session-latch probes (one-shot): first ARM present + first PLXD
+                    // counter advance vs AUDIO_T0. Does not claim cause — parent judges.
+                    {
+                        const int64_t t0 = bimodalAudioT0Ms_.load(std::memory_order_relaxed);
+                        const int64_t wallMs =
+                            std::chrono::duration_cast<std::chrono::milliseconds>(
+                                std::chrono::steady_clock::now().time_since_epoch())
+                                .count();
+                        const int64_t dt = (t0 >= 0) ? (wallMs - t0) : -1;
+                        if (presentCount_ == 1 && (bimodalLatchBits_.fetch_or(2u) & 2u) == 0u)
+                            emitBimodalLatch("FIRST_PRESENT", wallMs, dt,
+                                             static_cast<int>(presentCount_));
+                        if ((bimodalLatchBits_.load(std::memory_order_relaxed) & 4u) == 0u) {
+                            BankReleaseStatus brs;
+                            if (fpga_.ok() && fpga_.readBankRelease(brs)) {
+                                const int fd0 =
+                                    bimodalAudioT0Fd_.load(std::memory_order_relaxed);
+                                const int fd = static_cast<int>(brs.frames_done);
+                                if (fd0 >= 0 && fd != fd0 &&
+                                    (bimodalLatchBits_.fetch_or(4u) & 4u) == 0u) {
+                                    emitBimodalLatch("PLXD_ADVANCE", wallMs, dt,
+                                                     static_cast<int>(presentCount_));
+                                }
+                            }
+                        }
+                    }
                     if ((presentCount_ % 48) == 0) {
                         log(std::string("media: fpga frame_tx ok via ") +
                             "DDR" +

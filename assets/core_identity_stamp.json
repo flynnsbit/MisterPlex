@@ -2,12 +2,12 @@
   "magic": "0x504C5843",
   "magic_ascii": "PLXC",
   "offset_from_doorbell": "0x130",
-  "source_git": "48df5e2942509c1208d81f8ca7cdf304d7af3735",
-  "provenance_28": "0x48DF5E2",
+  "source_git": "d4dc5d92831d678e79c076408356c9b87ebbb026",
+  "provenance_28": "0xD4DC5D9",
   "cap_ddr_frame_store": 1,
   "cap_spi_legacy": 0,
   "abi_version": 1,
-  "hi32": "0x548DF5E2",
-  "word64": "0x548DF5E2504C5843",
+  "hi32": "0x5D4DC5D9",
+  "word64": "0x5D4DC5D9504C5843",
   "product_phys_example": "0x300FF130"
 }

@@ -7,6 +7,7 @@
 #include "fpga_spi.hpp"
 #include "libmisterplex/idle_screen.hpp"
 #include "libmisterplex/coded_size.hpp"
+#include "libmisterplex/av_bimodal_latch.hpp"
 #include "libmisterplex/mraudio_status.hpp"
 #include "libmisterplex/osd_control.hpp"
 #include "libmisterplex/osd_menu.hpp"
@@ -300,6 +301,11 @@ private:
     // Snapshot the MrAudio ring occupancy. Returns bytes queued, or -1 if the
     // driver does not expose it. Cheap: one open/read/close, no allocation.
     int64_t readMrAudioQueuedBytes();
+    // Full rptr/wptr/len/comp parse (same open/read). ok=false if unavailable.
+    misterplex::MrAudioStatusLine readMrAudioStatusLine();
+    // One-shot session-start probe for HDMI A/V bimodality RCA (parent-owned HW).
+    // tag: AUDIO_T0 | FIRST_PRESENT | PLXD_ADVANCE
+    void emitBimodalLatch(const char* tag, int64_t wall_ms, int64_t dt_audio_ms, int presents);
 
     static std::string hex16(uint16_t v);
 
@@ -335,6 +341,12 @@ private:
     // yet played. -1 = unknown (kernel without the status line) and the clock
     // falls back to counting submitted bytes. See libmisterplex/mraudio_status.hpp.
     std::atomic<int64_t> audioQueuedBytes_{-1};
+    // Session-latch probe: steady wall ms when audio pace clock starts; -1 = not yet.
+    std::atomic<int64_t> bimodalAudioT0Ms_{-1};
+    // frames_done (or packed counter) sampled at AUDIO_T0; -1 = unknown.
+    std::atomic<int> bimodalAudioT0Fd_{-1};
+    // bit0 AUDIO_T0, bit1 FIRST_PRESENT, bit2 PLXD_ADVANCE emitted this session.
+    std::atomic<unsigned> bimodalLatchBits_{0};
     // Live A/V drift + resync counters (per play/seek / ledger session)
     std::atomic<int64_t> avDriftMs_{0};
     std::atomic<int64_t> droppedFrames_{0};   // pacer drops only
