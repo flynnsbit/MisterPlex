@@ -1,10 +1,16 @@
 # VF vertical resample defect (rd-review) — settled + ARM-only fix
 
 **Branch:** `w-avsync-hdmi-measure`  
-**Worktree SHA (pre-commit tip when written):** see `git rev-parse HEAD`  
 **Scope:** source + unit only. No device. No Quartus.  
 **Artifact pair for prior glass that exposed this:** RBF `8fdf440f` + daemon `7c991e47` (parent).  
-**This fix is ARM-only** (daemon / `ffmpeg_vf.hpp`). No RBF change.
+**This fix is ARM-only** (daemon / `host/libmisterplex/ffmpeg_vf.hpp`). No RBF change.
+
+| Item | Value |
+|------|--------|
+| ARM binary | `build/arm/misterplexd` |
+| ARM md5 | `92c1993889bd3f5859d804fe93cb4d6d` |
+| Host gate | `build/test_ffmpeg_vf` GREEN `true rc=0` |
+| RED mutation | legacy decrease in bank-h branch → `true rc=1` |
 
 ---
 
@@ -185,3 +191,96 @@ Ledger `drops=0` does not observe 1-refresh holds — only `p_hold_d1` does.
 - `tests/unit/test_force_scale_sws_cost.sh` — 624 path uses crop vf  
 
 **Loud for parent:** **ARM-ONLY fix. Deploy daemon; no Quartus.**
+
+---
+
+## 8. What `force_original_aspect_ratio=decrease` protects (from source)
+
+**Mechanism:** ffmpeg `scale=W:H:force_original_aspect_ratio=decrease` fits the **entire** source inside the W×H box, preserving AR, by applying `s = min(W/src_w, H/src_h)` to **both** axes. Without it, `scale=W:H` **stretches** to exactly W×H (distorts non-matching AR).
+
+**What it was protecting against in this chain**
+
+| Threat | Without decrease | With decrease |
+|--------|------------------|---------------|
+| Over-wide delivery (640×480, 720×480, 1920×1080) into 618×480 box | Horizontal+vertical stretch to 618×480 | Fit inside box; letter/pillar via pad |
+| Scope 2.35 (624×352) | Vertical stretch to 480 | Scale up with bars |
+| 320×240 upscale | Stretch to 618×480 (wrong AR vs bank) | Fit; pad centers |
+
+**It was NOT needed for** exact 624×480 (or any source already at height 480 and width ≥ 618): horizontal fit is a **crop**, not a scale. Decrease turned that crop into a coupled V-resample (`out_h=475`).
+
+### Inputs that reach the chain (`media_player.cpp` / `main.cpp`)
+
+| Case | `source_w/h` at vf build | Mode | Old vf | New vf |
+|------|--------------------------|------|--------|--------|
+| PMS request / expect 624×480 (product 480p) | 624×480 | Always (YUV force) | decrease → 475 | **crop+pad** `crop_pad_no_v_scale` |
+| measured later 624×480 | dims set mid-session; **vf NOT rebuilt** | — | fixed at play start | fixed at play start |
+| library_media 1920×1080 expect | 1920×1080 | Always | decrease | decrease (still need fit) |
+| 320×240 tier | 320×240 | Always | decrease upscale | **unchanged** decrease |
+| 640×480 / 720×480 | w×480 | Always | decrease V-shrink | **crop hfit** (no V resample) |
+| unknown 0×0 | 0×0 | Always | decrease (safe default) | decrease (unchanged) |
+| SkipIdentity + verified exact | 624×480 verified | SkipIdentity | empty + clearYuv | **unchanged** identity_skip |
+| SkipIdentity + unverified exact | 624×480 | SkipIdentity | was decrease | **crop+pad** (not skip) |
+
+Play-time GEOM is built once (`buildFfmpegVideoFilter` at start). `MEASURED_DELIVERY` updates `ffmpegScaleSourceW/H` but **does not rebuild vf** (logged). Product path sets expect from PMS `videoResolution` / transcode request **before** play — parent verified `measured_delivery=624x480`; with expect 624×480 the new path fires at start.
+
+---
+
+## 9. Pre-registered glass predictions (commit before parent capture)
+
+### A. Pitch (marginal, ~1%, near FFT bin floor)
+
+| | value |
+|--|--|
+| Baseline (old daemon, ~475 rows) | measured **4.06** capture rows (rk=27 left zone, period-2) |
+| After fix (480 rows) | **3.9917 ≈ 3.99** = `958/480×2` |
+| Tolerance | HIT if pitch **≤ 4.00** AND GEOM `reason=crop_pad_no_v_scale` (or identity_skip) with **no** `force_original_aspect_ratio=decrease` in `vf=` |
+| MISS | pitch stays ~4.06 **or** GEOM still shows decrease into 618 |
+
+**Discriminating power is marginal** — parent already noted bin lock at 4.06. Treat pitch as supporting only.
+
+### B. Higher-power falsifier — rowcount vernier (PRIMARY)
+
+Asset: `assets/avsync/rowcount_vernier_624x480_24_120s.mp4`  
+Doc: `docs/rowcount_vernier_fixture.md` (commit `2532cdc1`)  
+Host-measured on the **encoded file** after product ARM vf:
+
+| metric | 480 rows (no 618-shrink) | old product 475+pad | power |
+|--------|--------------------------|---------------------|-------|
+| **pad_total** (black edge rows) | **0** | **5** (top 2 + bot 3) | **integers — high** |
+| pad_top / pad_bot | 0 / 0 | 2 / 3 | high |
+| body fiducial span | **360.001** | **356.867** | medium (Δ≈3.1) |
+
+**Pre-register:** after this daemon on RBF `8fdf440f` + vernier cast:
+
+- **HIT:** pad_total **0** (and GEOM `crop_pad_no_v_scale` or identity_skip).  
+- **MISS:** pad_total **5** (old path still live).  
+- **UNSCORED:** coded edges cropped by HDMI/ascal so pad unreadable → fall back to fiducial span only and say so.
+
+rk=27 even/odd separation 252.44 on decoded file (w-asset480) remains valid phase-lock proof; drift was ARM resample.
+
+---
+
+## 10. Parent verify commands (host; no device from agent)
+
+```bash
+cd /home/flynnsbit/Projects/MisterPlex
+# Host gate (must true rc=0)
+rm -f build/test_ffmpeg_vf
+make "$(pwd)/build/test_ffmpeg_vf"
+./build/test_ffmpeg_vf; echo "true rc=$?"
+
+# ARM binary
+md5sum build/arm/misterplexd
+# expect: 92c1993889bd3f5859d804fe93cb4d6d
+
+# Deploy is PARENT-owned, e.g.:
+# scripts/deploy_misterplexd.sh   # do not run from this agent
+```
+
+On device after parent deploy, greppable success:
+```
+media: GEOM ... reason=crop_pad_no_v_scale ... arm_rescale=0 ... vf=crop=618:480:0:0,pad=624:480:...
+```
+Absence of `force_original_aspect_ratio=decrease` on 624×480 sessions.
+
+**Loud: ARM-ONLY. No Quartus. Pair with RBF `8fdf440f`.**

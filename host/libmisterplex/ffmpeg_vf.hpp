@@ -183,14 +183,23 @@ inline std::string buildScalePadCropped(int display_w, int display_h, int coded_
 }
 
 // Horizontal display crop + pad back to coded bank — zero vertical resample.
-// Source must already be coded WxH (caller enforces). crop x starts at crop_left
-// (product kPlex480pCropLeft=0 → take leftmost display_w columns; crop_right=6
-// is the discarded right strip). After crop, iw=display_w so pad x collapses to
-// crop_left.
+// Caller enforces source_h == display_h == coded_h and source_w >= display_w.
+//
+// crop_x:
+//   - exact coded width (source_w == coded_w): fixed crop_left (product 0 →
+//     leftmost display_w; right strip = crop_right).
+//   - wider than coded (e.g. 640x480): center-crop with ffmpeg expr so the
+//     visible window is taken from the source middle without any scale.
+// After crop, iw=display_w so pad x collapses to crop_left.
 inline std::string buildCropPadNoScale(int display_w, int display_h, int coded_w, int coded_h,
-                                       int crop_left, int crop_top) {
+                                       int crop_left, int crop_top,
+                                       int source_w = 0) {
+    const bool centerInSource = source_w > coded_w;
+    const std::string cropX =
+        centerInSource ? ("(iw-" + std::to_string(display_w) + ")/2")
+                       : std::to_string(crop_left);
     const std::string crop = "crop=" + std::to_string(display_w) + ":" +
-                             std::to_string(display_h) + ":" + std::to_string(crop_left) + ":" +
+                             std::to_string(display_h) + ":" + cropX + ":" +
                              std::to_string(crop_top);
     const std::string padX = std::to_string(crop_left) + "+(" + std::to_string(display_w) +
                              "-iw)/2";
@@ -368,19 +377,29 @@ inline FfmpegVfPlan buildFfmpegVideoFilter(const FfmpegVfRequest& req) {
     // Always, or SkipIdentity with mismatched/unknown/unverified source: scale+pad.
     const std::string flags = swsFlagsTokenOk(req.sws_flags) ? req.sws_flags : std::string();
 
-    // Exact coded source + display crop: crop+pad ONLY. Never scale into the
-    // narrower display box with force_original_aspect_ratio=decrease — that is
-    // the 624x480→~618x475 vertical-resample product defect (rd-review).
-    // 240p / other sizes still take buildScalePadCropped below (need upscale).
+    // Height already equals bank/display height and width is wide enough to
+    // cover the display window: crop+pad ONLY. Never scale into the narrower
+    // display box with force_original_aspect_ratio=decrease — that applies
+    // min(sx,sy) to BOTH axes and turns a pure horizontal fit into a ~1%
+    // vertical resample (624x480 → ~618x475 → pad; same class for 640x480).
+    // 240p / shorter sources still take buildScalePadCropped (need V upscale).
+    // Narrower-than-display at bank height (rare) still decreases (H upscale).
+    const bool heightAlreadyBank = req.source_h > 0 && req.source_h == req.coded_h &&
+                                   req.source_h == dispH;
+    const bool wideEnoughForDisplayCrop =
+        req.source_w > 0 && req.source_w >= dispW;
     const bool exactCodedSource = req.source_w > 0 && req.source_h > 0 &&
                                   req.source_w == req.coded_w && req.source_h == req.coded_h;
-    if (hasCrop && exactCodedSource) {
+    if (hasCrop && heightAlreadyBank && wideEnoughForDisplayCrop) {
         append(buildCropPadNoScale(dispW, dispH, req.coded_w, req.coded_h, req.crop_left,
-                                   req.crop_top));
+                                   req.crop_top, req.source_w));
         // scale_applied=false: no swscale resample (arm_rescale=0). vf still set.
-        if (numericMatchUnverified)
+        if (numericMatchUnverified ||
+            (exactCodedSource && req.scale_mode == FfmpegScaleMode::SkipIdentity &&
+             !req.delivery_geometry_verified && !req.assume_source_matches_coded))
             return finish(false, false, "crop_pad_no_v_scale_unverified_delivery");
-        return finish(false, false, "crop_pad_no_v_scale");
+        return finish(false, false,
+                      exactCodedSource ? "crop_pad_no_v_scale" : "crop_pad_no_v_scale_hfit");
     }
 
     if (hasCrop) {

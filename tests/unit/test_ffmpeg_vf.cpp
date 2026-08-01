@@ -268,18 +268,21 @@ int main() {
             const auto p = buildFfmpegVideoFilter(r);
             expect(r.scale_mode == FfmpegScaleMode::Always, "force→Always");
             const bool exactBank = (c.sw == coded_w && c.sh == coded_h);
-            if (exactBank) {
-                // Exact coded: crop+pad only — never decrease into 618 (V-resample defect).
+            // Any delivery already at bank height with width >= display: crop+pad, no V resample.
+            const bool bankHeightWide = (c.sh == coded_h && c.sw >= disp_w);
+            if (bankHeightWide) {
                 expect(!p.scale_applied && !p.identity_skip,
-                       (std::string("FORCE_SCALE exact bank crop-pad for ") + c.name)
-                           .c_str());
+                       (std::string("FORCE_SCALE bank-h crop-pad for ") + c.name).c_str());
                 expect(vfPreservesBankHeightSource(p.vf),
-                       (std::string("exact bank preserves height for ") + c.name).c_str());
+                       (std::string("bank-h preserves height for ") + c.name).c_str());
                 expect(p.vf.find("crop=618:480") != std::string::npos,
-                       (std::string("exact bank crops display for ") + c.name).c_str());
+                       (std::string("bank-h crops display for ") + c.name).c_str());
                 expect(p.vf.find("pad=624:480") != std::string::npos,
-                       (std::string("exact bank pads coded for ") + c.name).c_str());
-                expect_eq(p.reason, "crop_pad_no_v_scale", "exact bank reason");
+                       (std::string("bank-h pads coded for ") + c.name).c_str());
+                if (exactBank)
+                    expect_eq(p.reason, "crop_pad_no_v_scale", "exact bank reason");
+                else
+                    expect_eq(p.reason, "crop_pad_no_v_scale_hfit", "bank-h hfit reason");
             } else {
                 expect(p.scale_applied && !p.identity_skip,
                        (std::string("FORCE_SCALE pins scale for ") + c.name).c_str());
@@ -416,8 +419,21 @@ int main() {
         expect(!vfPreservesBankHeightSource(p240.vf),
                "240p vf is not a bank-height preserve path (upscale)");
 
+        // 5) delivery height==480, width>coded (640): still no V resample (hfit crop).
+        r.source_w = 640;
+        r.source_h = 480;
+        const auto p640 = buildFfmpegVideoFilter(r);
+        expect(vfPreservesBankHeightSource(p640.vf), "640x480 preserves bank height");
+        expect(!p640.scale_applied, "640x480 crop not scale");
+        expect_eq(p640.reason, "crop_pad_no_v_scale_hfit", "640 hfit reason");
+        expect(p640.vf.find("(iw-618)/2") != std::string::npos, "640 center-crop expr");
+
+        // 6) Gate contract: delivery_h == bank_h ⇒ preserve (parent wording).
+        expect(scaleDecreaseResamplesHeight(624, 480, 618, 480), "decrease would V-resample");
+        expect(!scaleDecreaseResamplesHeight(624, 480, 624, 480), "coded box would not");
+
         std::printf("GREEN_NO_V_RESAMPLE out_h_624=475 legacy_red=1 product_crop_pad=1 "
-                    "p240_upscale=1\n");
+                    "p240_upscale=1 p640_hfit=1\n");
     }
 
     if (g_fails) {
