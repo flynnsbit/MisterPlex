@@ -1,0 +1,325 @@
+{
+  "out": "assets/avsync/rowcount_vernier_624x480_24_120s.mp4",
+  "size_bytes": 6146502,
+  "caller_supplied": {
+    "width": 624,
+    "height": 480,
+    "sar": "1:1",
+    "fps": "24/1",
+    "duration_s": 120.0,
+    "arm_vf": "scale=618:480:flags=fast_bilinear:force_original_aspect_ratio=decrease,pad=624:480:0+(618-iw)/2:0+(480-ih)/2:color=black",
+    "fiducial_ys": [
+      100,
+      130,
+      160,
+      190,
+      220,
+      250,
+      280,
+      310,
+      340,
+      370,
+      400,
+      430,
+      460
+    ],
+    "vernier": [
+      19,
+      20
+    ],
+    "n_frames": 2880,
+    "n_beeps": 60,
+    "id_bottom": 88,
+    "vernier_periods": [
+      19,
+      20
+    ],
+    "beat_source_rows": 380
+  },
+  "measured_ffprobe": {
+    "programs": [],
+    "stream_groups": [],
+    "streams": [
+      {
+        "profile": "Constrained Baseline",
+        "width": 624,
+        "height": 480,
+        "has_b_frames": 0,
+        "sample_aspect_ratio": "1:1",
+        "display_aspect_ratio": "13:10",
+        "r_frame_rate": "24/1",
+        "duration": "120.000000",
+        "nb_frames": "2880"
+      }
+    ]
+  },
+  "predictions": {
+    "identity_no_force_scale": {
+      "pad_top": 0,
+      "pad_bot": 0,
+      "active_rows": 480,
+      "beat_lag_source_rows": 380,
+      "fiducial_span_expect_approx": 360.0,
+      "measured_on_decoded": {
+        "pad_top_rows": 0,
+        "pad_bot_rows": 0,
+        "pad_total": 0,
+        "active_row_count": 452,
+        "active_first": 0,
+        "active_last": 479,
+        "n_fiducial_peaks": 14,
+        "fiducial_peaks": [
+          1.727,
+          99.983,
+          129.805,
+          159.093,
+          189.875,
+          219.508,
+          249.866,
+          279.238,
+          309.813,
+          339.651,
+          369.74,
+          399.257,
+          429.767,
+          459.983
+        ],
+        "fiducial_span": 458.256,
+        "vernier_lag19": 1,
+        "vernier_std19": 112.05,
+        "vernier_lag20": 60,
+        "vernier_std20": 111.5,
+        "beat_lag": 300,
+        "row_mean_head": [
+          255.0,
+          255.0,
+          255.0,
+          255.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "row_mean_tail": [
+          55.09,
+          55.09,
+          58.77,
+          123.12,
+          254.68,
+          254.68,
+          254.92,
+          254.92
+        ]
+      }
+    },
+    "product_arm_force_scale": {
+      "pad_top": 2,
+      "pad_bot": 3,
+      "active_rows": 475,
+      "scale_box": "618x480 decrease \u2192 618x475 (ffprobe-measured)",
+      "beat_lag_source_rows": 376.0416666666667,
+      "fiducial_span_expect_approx": 356.25,
+      "measured_after_arm_vf_on_decoded": {
+        "pad_top_rows": 2,
+        "pad_bot_rows": 3,
+        "pad_total": 5,
+        "active_row_count": 448,
+        "active_first": 2,
+        "active_last": 476,
+        "n_fiducial_peaks": 15,
+        "fiducial_peaks": [
+          3.265,
+          100.151,
+          129.965,
+          159.941,
+          189.879,
+          219.055,
+          248.943,
+          278.952,
+          307.981,
+          338.139,
+          367.773,
+          397.217,
+          426.909,
+          457.018,
+          474.661
+        ],
+        "fiducial_span": 471.396,
+        "vernier_lag19": 1,
+        "vernier_std19": 105.14,
+        "vernier_lag20": 1,
+        "vernier_std20": 104.8,
+        "beat_lag": 297,
+        "row_mean_head": [
+          0.0,
+          0.0,
+          252.55,
+          252.55,
+          252.55,
+          243.63,
+          0.0,
+          0.0
+        ],
+        "row_mean_tail": [
+          118.69,
+          247.43,
+          252.17,
+          252.42,
+          252.42,
+          0.0,
+          0.0,
+          0.0
+        ]
+      },
+      "arm_vf": "scale=618:480:flags=fast_bilinear:force_original_aspect_ratio=decrease,pad=624:480:0+(618-iw)/2:0+(480-ih)/2:color=black"
+    },
+    "separation": {
+      "delta_pad_total": 5,
+      "delta_active_rows": 5,
+      "delta_beat_rows": 3.9583333333333193,
+      "delta_fiducial_span_rows": 3.7499999999999867,
+      "primary_metric": "pad_top+pad_bot black row count (0 vs 5) \u2014 unambiguous integers",
+      "secondary_metric": "fiducial_span and n_fiducial_peaks",
+      "tertiary_metric": "vernier beat_lag (~380 vs ~376)",
+      "note_glass": "Grabber/ascal rescale absolute row indices; prefer pad_total and relative span. Integer pad 0 vs 5 survives if coded edges reach glass."
+    },
+    "approach_evaluation": {
+      "vernier_moire": "WORKS as tertiary: \u0394beat\u22484 src rows. After ~2\u00d7 to capture ~8 px \u2014 tight but countable with centroiding; host beat_lag may be noisy.",
+      "counted_fiducials": "WORKS as secondary: 13 thick ticks; span shrinks by ~1% under ARM; peak count should stay 13 if none lost to pad (edge ticks may clip).",
+      "edge_pad_probes": "WORKS as PRIMARY: host-measured ARM pad_top=2 pad_bot=3. Identity pad=0. Integers far apart for grabber.",
+      "binary_row_column": "PARTIAL: large 12px cells + 2-row paint survive H.264 better than 1px; bilinear merge under 475-scale blurs LSB \u2014 use for coarse confirm only."
+    }
+  },
+  "frame_measured": 100,
+  "refined_predictions": {
+    "mp4": "assets/avsync/rowcount_vernier_624x480_24_120s.mp4",
+    "ffprobe_cmd": "ffprobe -v error -select_streams v:0 -show_entries stream=width,height,sample_aspect_ratio,display_aspect_ratio,r_frame_rate,nb_frames,duration,profile,has_b_frames -of default=noprint_wrappers=1 assets/avsync/rowcount_vernier_624x480_24_120s.mp4",
+    "arm_vf": "scale=618:480:flags=fast_bilinear:force_original_aspect_ratio=decrease,pad=624:480:0+(618-iw)/2:0+(480-ih)/2:color=black",
+    "arm_scale_measured": "618x475 then pad \u2192 top2 bottom3 black (host white-field proof)",
+    "approaches": {
+      "edge_pad_probes": {
+        "verdict": "PRIMARY \u2014 USE",
+        "why": "pad_total 0 vs 5 integers; survives H.264 (white bars std high)"
+      },
+      "counted_fiducials": {
+        "verdict": "SECONDARY \u2014 USE",
+        "why": "body span identity 360.001 vs ARM 356.867; delta clear"
+      },
+      "vernier": {
+        "verdict": "WEAK / do not rely",
+        "why": "acf peaks messy (lag19=19/19); beat not clean at this encode; H.264+fiducial contamination"
+      },
+      "binary_column": {
+        "verdict": "PARTIAL",
+        "why": "LSB dies under bilinear 480\u2192475; MSB row-band OK for coarse check only"
+      }
+    },
+    "prereg_glass": {
+      "metric_primary": "pad_top_rows + pad_bot_rows on coded-edge-visible capture (or pre-present dump)",
+      "predict_480_identity_or_no_force_scale": {
+        "pad_total": 0,
+        "pad_top": 0,
+        "pad_bot": 0,
+        "top4_mean": "high ~255"
+      },
+      "predict_475_product_arm_vf": {
+        "pad_total": 5,
+        "pad_top": 2,
+        "pad_bot": 3,
+        "top4_mean": "first 2 rows ~0"
+      },
+      "metric_secondary": "body fiducial span (peaks with y in ~90..470 of 624x480 coded space)",
+      "predict_span_identity": 360.001,
+      "predict_span_arm": 356.867,
+      "delta_span_rows": 3.134,
+      "do_not_use": [
+        "vernier beat as sole metric",
+        "single-row binary LSB"
+      ],
+      "glass_caveat": "If ascal/HDMI crops coded edges, pad metric is lost \u2014 then use body fiducial span only. Publish miss if edges not visible."
+    },
+    "measured_identity": {
+      "pad_top": 0,
+      "pad_bot": 0,
+      "pad_total": 0,
+      "top4_mean": 255.0,
+      "bot4_mean": 254.8,
+      "n_body_fiducials": 13,
+      "body_fiducial_peaks": [
+        99.983,
+        129.805,
+        159.093,
+        189.875,
+        219.508,
+        249.866,
+        279.238,
+        309.813,
+        339.651,
+        369.74,
+        399.257,
+        429.767,
+        459.983
+      ],
+      "body_fiducial_span": 360.001,
+      "vernier_lag19": 19,
+      "vernier_acf19": 0.655,
+      "vernier_std19": 112.05,
+      "vernier_lag20": 20,
+      "vernier_acf20": 0.684,
+      "vernier_std20": 111.5
+    },
+    "measured_arm": {
+      "pad_top": 2,
+      "pad_bot": 3,
+      "pad_total": 5,
+      "top4_mean": 126.27,
+      "bot4_mean": 63.1,
+      "n_body_fiducials": 13,
+      "body_fiducial_peaks": [
+        100.151,
+        129.965,
+        159.941,
+        189.879,
+        219.055,
+        248.943,
+        278.952,
+        307.981,
+        338.139,
+        367.773,
+        397.217,
+        426.909,
+        457.018
+      ],
+      "body_fiducial_span": 356.867,
+      "vernier_lag19": 19,
+      "vernier_acf19": 0.656,
+      "vernier_std19": 105.14,
+      "vernier_lag20": 20,
+      "vernier_acf20": 0.696,
+      "vernier_std20": 104.8
+    },
+    "theory": {
+      "identity": {
+        "pad_total": 0,
+        "pad_top": 0,
+        "pad_bot": 0,
+        "body_fiducial_span": 360,
+        "n_fiducials": 13
+      },
+      "arm": {
+        "pad_total": 5,
+        "pad_top": 2,
+        "pad_bot": 3,
+        "body_fiducial_span": 356.25,
+        "n_fiducials": 13
+      },
+      "deltas": {
+        "pad_total": "0 vs 5 (PRIMARY \u2014 integer, grabber-safe)",
+        "body_span_rows": "360 vs 356.25  (delta=3.75 src rows)",
+        "top4_mean": "~255 vs ~0 on true pad rows; after ARM top4 mixes pad+scaled edge white"
+      }
+    },
+    "frame": 100,
+    "src": "measured"
+  }
+}
