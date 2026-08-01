@@ -1,0 +1,8 @@
+VERDICT=SKIP_FAIL rc=2 reason=genuine_display_skips=1 (completeness rejected_between=[]); torn_not_skip=166
+accepted=3179/3591 frac=0.8853 src=measured span n=4653->6082 span_ratio=0.399385 src=measured
+src_fps=24.0 src=caller_supplied cap_fps=60.0 src=caller_supplied fps_auth=True
+margin_ok=True max_iv_ms=21.0 min_hold_ms=33.3333 iv_src=measured refuse=False
+adj_hist={'0': 1916, '1': 1107, '2': 1} genuine=1 torn_not_skip=166 G=-5.5 G_src=measured G_formula=G = adv_span/(src_fps/cap_fps) - caps_span
+G_note=G>0 consistent with grabber losing captures (raises adv/caps). G≈0 match. G<0 is NOT grabber-drop: advance slightly under ideal (display skips, span endpoints, or cap_fps slightly high). p60 parent: G≈-5.5 on caps≈3578 is |G|/caps≈0.15% — shortfall adv vs ideal*caps of ~2.2 source units (G*(src/cap)); at 30fps parent measured G≈0. Do not treat small negative G as defect.
+LOO 116/119 = 97.479% scope=device_templates (device_or_viewed_templates)
+GENUINE_SKIP v=5578 a=5577@f_02328.png b=5579@f_02329.png rejected_between=[]

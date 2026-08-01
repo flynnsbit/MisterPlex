@@ -851,7 +851,8 @@ def analyze_completeness(
     G_src = PROVENANCE_DEFAULT
     if fps_auth and ideal and ideal > 0:
         G = adv_span / ideal - caps
-        G_src = PROVENANCE_MEASURED
+        # G is computed: adv/caps are measured; ideal ratio is caller_supplied fps.
+        G_src = "computed(adv_caps=measured;ideal_ratio=caller_supplied_fps)"
 
     refuse = bool(margin.get("refuse_skip_verdict", True))
     if refuse:
@@ -913,6 +914,14 @@ def analyze_completeness(
         "G_grabber_confound": round(G, 4) if G is not None else None,
         "G_src": G_src,
         "G_formula": "G = adv_span/(src_fps/cap_fps) - caps_span",
+        "G_note": (
+            "G>0 consistent with grabber losing captures (raises adv/caps). "
+            "G≈0 match. G<0 is NOT grabber-drop: advance slightly under ideal "
+            "(display skips, span endpoints, or cap_fps slightly high). "
+            "p60 parent: G≈-5.5 on caps≈3578 is |G|/caps≈0.15% — shortfall "
+            "adv vs ideal*caps of ~2.2 source units (G*(src/cap)); "
+            "at 30fps parent measured G≈0. Do not treat small negative G as defect."
+        ),
         "source_fps": source_fps,
         "source_fps_src": source_fps_src,
         "capture_fps": capture_fps,
@@ -1447,8 +1456,11 @@ def main(argv: list[str] | None = None) -> int:
             f"adj_hist={rep.get('adjacent_delta_histogram')} "
             f"genuine={rep.get('genuine_display_skips')} "
             f"torn_not_skip={rep.get('torn_transition_not_skip')} "
-            f"G={rep.get('G_grabber_confound')} G_src={rep.get('G_src')}"
+            f"G={rep.get('G_grabber_confound')} G_src={rep.get('G_src')} "
+            f"G_formula={rep.get('G_formula')}"
         )
+        if rep.get("G_note"):
+            print(f"G_note={rep.get('G_note')}")
         print(
             f"LOO {loo['loo_per_digit_correct']}/{loo['loo_per_digit_total']} "
             f"= {loo['loo_per_digit_accuracy_pct']}% scope={loo['loo_scope']} "

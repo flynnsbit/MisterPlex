@@ -1,6 +1,23 @@
 #!/usr/bin/env python3
 """HDMI MOTION / CORRECTNESS instrument for MiSTerPlex lab captures.
 
+*** DEPRECATION (display-side frame loss / G-fixture n= counter) ***
+--------------------------------------------------------------------
+For OCR-fixture / G n=NNNNNN c=D / completeness skip scoring, the **reference**
+instrument is ``tools/glass_template_skip.py`` (parent-verified on /tmp/p60:
+accepted=3179/3591, genuine=1 v=5578 only).
+
+This file retains TREK24-style OCR + COLOR/STRUCTURE gates for legacy captures.
+It must NOT be used as the display-loss ledger: known digit-insertion defect and
+historical DEFAULT_ASSUMED src_fps printed beside measurements (ERROR 17).
+Two disagreeing instruments caused false RATE_FAIL.
+
+Prefer::
+
+  python3 tools/glass_template_skip.py CAP_DIR --templates T.pkl --pts pts.csv \
+    --source-fps 24 --capture-fps 60 --refresh-hz 60
+
+
 Why this exists
 ---------------
 Parent ERROR 8:  distinct HDMI md5s do NOT prove correctness (moving garbage passes).
@@ -4586,6 +4603,12 @@ def _self_test() -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    print(
+        "DEPRECATED_FOR_DISPLAY_LOSS: use tools/glass_template_skip.py "
+        "for G-fixture completeness skip scoring "
+        "(this tool kept for TREK24 OCR + COLOR/STRUCTURE only)",
+        file=sys.stderr,
+    )
     ap = argparse.ArgumentParser(
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter,

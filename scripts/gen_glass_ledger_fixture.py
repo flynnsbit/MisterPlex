@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 """OCR-proof glass-ledger soak fixture.
 
+ENCODING: docs/glass_frame_id_contract.md  (checksum C=sum(digits)%10;
+  bars=20 cells Grey MSB-left + parity; plate opaque; text G n=DDDDDD c=C)
+A/V sync variant: scripts/gen_avsync_glass_sync.py + ENCODING_avsync_glass_sync.md
+
 See tools/glass_frame_id.py and docs/glass_frame_id_contract.md.
 Primary ID = Grey-code bar strip. Secondary = fixed-width digits + checksum.
 
