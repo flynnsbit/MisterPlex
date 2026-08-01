@@ -373,40 +373,43 @@ scans the tree. Use env or a gitignored conf file.
 - `tools/hdmi_motion_instrument.py` — burned-in counter / green-cast scorer
 
 
-## P7 — Real library content cast (`make e2e-real-content`)
+## P7 — Real title + capture window (`run_p7_real_title.sh`)
 
-Pixel-verifies a **genuine** (non-fixture, **non-bank-geometry**) title on the
-**LOCAL** PMS only. Ignores SHIELD / `plex.nevertrustaf.art`. **Never** falls
-back to `MiSTerPlex Tests` avsync fixtures or to `library_media` of `320x240` /
-`624x480` (those only prove "fixture at bank size").
+Closes the **suite half** of rd-review P7: cast a **w-asset480 Contract 3**
+title (FullBleed / Real BBB GlassAV) via Plex Web, emit correlated
+`CAST_WINDOW_*` / `CAPTURE_WINDOW_*`, N≈10 transitions, MEASURED_DELIVERY +
+session_epoch. **Viewed pixels remain parent HDMI only** — green Playwright ≠
+P7 promotion closed.
+
+- Discovers by **path/title fingerprint** (not hardcoded CI topology).
+- Does **not** treat the whole "MiSTerPlex Tests" section as fixtures (Contract 3
+  lives there beside Test/Soak).
+- Rejects Test/Soak/flash and instrument OCR/AVSync glass for P7.
+- Bank-sized Contract 3 (FullBleed/BBB 624×480) is allowed under `E2E_P7=1`.
 
 ```bash
-# 1) Parent: apply 480p conf from LIVE --conf (two install roots — resolve via /proc)
-# 2) Parent: CLEAR daemon log + ffmpeg.err BEFORE play (correlation)
-# 3) Discover + cast + hold (capture recipe prints ONLY after SESSION_ESTABLISHED)
-cd .worktrees/w-plextv-e2e-fix   # or repo root with this branch
-E2E_TIER=480p E2E_DAEMON_DECODE=624x480 E2E_REAL_HOLD_SEC=45 \
-E2E_SESSION_WALL_MS=3000 \
-PLEX_BASE=http://YOUR-LOCAL-PMS:32400 PLEX_TOKEN=… PLEX_WEB_USER=… \
-MISTER_HOST=… \
-./tests/hw/e2e/run_real_content.sh; echo "true rc=$?"
+cd .worktrees/w-plextv-e2e-form
+# Prefer env PLEX_BASE / PLEX_TOKEN_FILE / MISTER_HOST — never commit lab IPs.
+PLEX_BASE=http://YOUR-LOCAL-PMS:32400 PLEX_TOKEN_FILE=… MISTER_HOST=… \
+E2E_TRANSITION_CYCLES=10 E2E_P7_HOLD_SEC=45 \
+./tests/hw/e2e/run_p7_real_title.sh; echo "true rc=$?"
 
-# Multi-cycle transitions on synthetic (default N=10):
-E2E_TIER=240p E2E_DAEMON_DECODE=320x240 E2E_TRANSITION_CYCLES=10 \
-PLEX_BASE=… PLEX_TOKEN=… PLEX_WEB_USER=… MISTER_HOST=… \
-./tests/hw/e2e/run_cast_picker.sh; echo "true rc=$?"
+# Arms: E2E_P7_ARM=fullbleed|bbb|nonbank   or pin E2E_P7_RATING_KEY=<rk>
+# Real-content (non-P7) non-bank path still available:
+./tests/hw/e2e/run_real_content.sh; echo "true rc=$?"
 ```
 
 ### Fail-loud discovery
 
 | Reason | Meaning |
 |--------|---------|
+| `p7_contract3_not_in_library` | No FullBleed / Real BBB on LOCAL PMS |
 | `real_content_library_empty` | No non-fixture titles |
-| `real_content_no_nonbank_geometry` | Only bank-sized non-fixtures |
-| `real_content_is_fixture` | Explicit RK is lab fixture |
-| `real_content_bank_geometry` | Explicit RK is 320x240/624x480 |
+| `real_content_no_nonbank_geometry` | Only bank-sized non-fixtures (non-P7) |
+| `real_content_is_fixture` | Explicit RK is lab Test/Soak |
+| `p7_not_contract3` | Explicit RK not Contract 3 (override: `E2E_P7_ALLOW_NON_CONTRACT3=1`) |
+| `real_content_bank_geometry` | Explicit RK is 320x240/624x480 without P7/allow |
 | `session_not_established` | Timeline never reached threshold — **do not capture** |
-
 ### Delivered geometry (measurement, not request)
 
 Daemon change: rawvideo ffmpeg spawn uses `-loglevel info` and re-logs

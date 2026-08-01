@@ -10,15 +10,36 @@
 const http = require('http');
 const https = require('https');
 
-/** Titles / paths that are lab fixtures (burned-in counter, bank-sized). */
+/**
+ * Lab fixtures (burned-in counter / flash / soak). Title+path only —
+ * never reject an entire library section: Contract-3 real titles live in
+ * "MiSTerPlex Tests" alongside fixtures (parent PMS layout).
+ */
 const FIXTURE_TITLE_RE =
-  /misterplex\s*(test|soak)|gen_avsync|trek24|ntsc2397|plex24|testsrc|avsync\s*blip/i;
-const FIXTURE_SECTION_RE = /^misterplex\s*tests$/i;
-const FIXTURE_PATH_RE = /gen_avsync|avsync_blip|misterplex\s*test|misterplex\s*soak/i;
+  /misterplex\s*(test|soak)\b|gen_avsync|trek24|ntsc2397|plex24|testsrc|avsync\s*blip|disc\s*nyquist/i;
+const FIXTURE_SECTION_RE = /^misterplex\s*tests$/i; // informational only — not a reject
+const FIXTURE_PATH_RE =
+  /gen_avsync|avsync_blip|misterplex\s*test\b|misterplex\s*soak\b|disc\s*nyquist/i;
+
+/**
+ * Instrument glass (OCR/AVSync/AudioID) — useful for counter loss, NOT P7
+ * "one real title on viewed pixels". Still non-fixture for other real arms.
+ */
+const INSTRUMENT_GLASS_RE =
+  /ocrproof|avsync\s*glass|audioid\s*glass|glass\s*ledger|glass\s*ocr/i;
+
+/**
+ * w-asset480 Contract 3 — preferred P7 sources (path/title fingerprint).
+ * ratingKeys are PMS-local and must be discovered, never hard-coded as CI truth.
+ *   FullBleed 624x480 1200s · Real BBB GlassAV ladder · bare Real BBB
+ */
+const CONTRACT3_RE =
+  /fullbleed|full-bleed|bank480\s*fullbleed|real\s*bbb|big\s*buck\s*bunny|glassav|glassid/i;
+const CONTRACT3_FULLBLEED_RE = /fullbleed|full-bleed|bank480\s*fullbleed/i;
+const CONTRACT3_BBB_RE = /real\s*bbb|big\s*buck\s*bunny|glassav|glassid/i;
 
 /** Coded-bank sizes used by lab fixtures / DECODE tiers — NOT general-case geometry. */
 const BANK_GEOMS = new Set(['320x240', '624x480']);
-
 function geomKey(w, h) {
   const wi = parseInt(w, 10) || 0;
   const hi = parseInt(h, 10) || 0;
@@ -52,18 +73,44 @@ function httpGet(url, headers = {}, timeoutMs = 12000) {
   });
 }
 
-function isFixtureMeta(m, sectionTitle) {
+function metaBlob(m) {
   const title = String(m.title || '');
-  const file = String((((m.Media || [])[0] || {}).Part || [])[0]?.file || '');
+  const file = String((((m.Media || [])[0] || {}).Part || [])[0]?.file || m.file || '');
+  return { title, file, blob: `${title} ${file}` };
+}
+
+/** w-asset480 Contract 3 real content (FullBleed / Real BBB). */
+function isContract3Meta(m) {
+  const { blob } = metaBlob(m);
+  return CONTRACT3_RE.test(blob);
+}
+
+function isInstrumentGlassMeta(m) {
+  const { blob } = metaBlob(m);
+  if (isContract3Meta(m)) return false; // Real BBB GlassAV is Contract 3, not instrument
+  return INSTRUMENT_GLASS_RE.test(blob);
+}
+
+/**
+ * True for synthetic Test/Soak/flash fixtures only.
+ * sectionTitle is logged by callers but MUST NOT reject Contract-3 rows in
+ * "MiSTerPlex Tests" — that section holds both fixtures and real BBB/FullBleed.
+ */
+function isFixtureMeta(m, sectionTitle) {
+  void sectionTitle;
+  if (isContract3Meta(m)) return false;
+  const { title, file } = metaBlob(m);
   if (FIXTURE_TITLE_RE.test(title)) return true;
   if (FIXTURE_PATH_RE.test(file)) return true;
-  if (sectionTitle && FIXTURE_SECTION_RE.test(String(sectionTitle))) {
-    // Entire "MiSTerPlex Tests" section is fixture lab content.
-    return true;
-  }
   return false;
 }
 
+/** P7-eligible: Contract 3 preferred; never synthetic fixture; instrument glass out. */
+function isP7EligibleMeta(m, sectionTitle) {
+  if (isFixtureMeta(m, sectionTitle)) return false;
+  if (isInstrumentGlassMeta(m)) return false;
+  return isContract3Meta(m);
+}
 function mediaInfo(m) {
   const media = (m.Media || [])[0] || {};
   const part = (media.Part || [])[0] || {};
@@ -91,9 +138,10 @@ function mediaInfo(m) {
 
 /**
  * Score candidates: prefer long duration, non-bank geometry, real detail (bitrate).
- * Bank sizes 320x240 / 624x480 are typical fixture coded sizes — deprioritize.
+ * Bank sizes 320x240 / 624x480 are typical fixture coded sizes — deprioritize
+ * unless Contract 3 (FullBleed / Real BBB at bank) which is P7-valid.
  */
-function scoreCandidate(c, tierExpectDecode) {
+function scoreCandidate(c, tierExpectDecode, opts = {}) {
   let s = 0;
   const dur = c.durationMs || 0;
   // Prefer soak-length material.
@@ -109,20 +157,35 @@ function scoreCandidate(c, tierExpectDecode) {
   else if (w >= 720 || h >= 480) s += 25;
   else if (w > 0 && h > 0) s += 5;
 
-  // Deprioritize / exclude already-at-bank geometry (fixture-like / trivial scale).
   const bank = String(tierExpectDecode || '').toLowerCase();
-  if (bank && w && h && `${w}x${h}` === bank) s -= 50;
-  if (isBankGeometry(w, h)) s -= 80;
+  const contract3 = !!(c.contract3 || opts.contract3);
+  if (!contract3) {
+    if (bank && w && h && `${w}x${h}` === bank) s -= 50;
+    if (isBankGeometry(w, h)) s -= 80;
+  }
 
   if (c.bitrate >= 2000) s += 20;
   else if (c.bitrate >= 500) s += 10;
 
   if (/h264|avc/i.test(c.videoCodec)) s += 5;
+
+  // Contract 3 preference (w-asset480): FullBleed long soak > long BBB > short BBB.
+  if (contract3) {
+    s += 200;
+    const blob = `${c.title || ''} ${c.file || ''}`.toLowerCase();
+    if (CONTRACT3_FULLBLEED_RE.test(blob)) s += 80;
+    if (CONTRACT3_BBB_RE.test(blob)) s += 60;
+    if (dur >= 1000 * 1000) s += 40; // ≥~16 min soak
+    // Non-bank BBB forces crop/pad/scale — valuable when parent wants geometry stress.
+    if (!isBankGeometry(w, h) && (w >= 640 || h !== 480 || w !== 624)) s += 30;
+    if (w >= 1280 || h >= 720) s += 50; // true full-frame (e.g. 1440x1080)
+  }
   return s;
 }
-
 /**
  * Discover best real title.
+ * opts.p7Mode / E2E_P7: prefer w-asset480 Contract 3 (FullBleed / Real BBB);
+ *   bank geometry allowed for those titles; instrument glass rejected.
  * @returns {{ ok:true, item } | { ok:false, reason, detail, scanned }}
  */
 async function discoverRealTitle(cfg, opts = {}) {
@@ -133,12 +196,25 @@ async function discoverRealTitle(cfg, opts = {}) {
   const tierDecode = (opts.expectDecode || cfg.tiers?.[0]?.expectDecode || '').toLowerCase();
   const minDurationMs = parseInt(opts.minDurationMs || process.env.E2E_REAL_MIN_DURATION_MS || '20000', 10);
   const preferSection = process.env.E2E_REAL_LIBRARY_NAME || cfg.libraryName || '';
-  // P7: library_media must NOT be 320x240 or 624x480 unless explicitly allowed.
-  // Bank-sized sources only prove "fixture at bank size", not general scale/AR paths.
+  const p7Mode =
+    opts.p7Mode !== undefined
+      ? !!opts.p7Mode
+      : /^(1|true|yes|on)$/i.test(String(process.env.E2E_P7 || process.env.E2E_P7_REAL_TITLE || ''));
+  // Prefer Contract 3 only (default on for P7). Set E2E_P7_CONTRACT3_ONLY=0 to allow any non-fixture.
+  const contract3Only =
+    opts.contract3Only !== undefined
+      ? !!opts.contract3Only
+      : p7Mode && !/^(0|false|no|off)$/i.test(String(process.env.E2E_P7_CONTRACT3_ONLY || '1'));
+  // P7 Contract 3 may be bank-sized (FullBleed/BBB 624x480). Non-P7 still defaults non-bank.
   const requireNonBank =
     opts.requireNonBank !== undefined
       ? !!opts.requireNonBank
-      : !allowBankGeometry();
+      : p7Mode
+        ? false
+        : !allowBankGeometry();
+  const preferArm = String(opts.preferArm || process.env.E2E_P7_ARM || '')
+    .trim()
+    .toLowerCase(); // fullbleed | bbb | nonbank | ''
 
   const sec = await httpGet(`${cfg.plexBase}/library/sections`, headers);
   if (sec.status !== 200) {
@@ -158,17 +234,18 @@ async function discoverRealTitle(cfg, opts = {}) {
   const dirs = sections.MediaContainer?.Directory || [];
   const candidates = [];
   const rejectedFixtures = [];
+  const rejectedInstrument = [];
   const rejectedBankGeom = [];
   const rejectedShort = [];
+  const rejectedNotContract3 = [];
   let scanned = 0;
 
   for (const d of dirs) {
     const secTitle = d.title || '';
     const secKey = d.key;
-    // Optional: only scan a named real library when set and not the fixture section.
     if (preferSection && !FIXTURE_SECTION_RE.test(preferSection)) {
       if (!String(secTitle).toLowerCase().includes(String(preferSection).toLowerCase())) {
-        // Still scan other non-fixture sections so discovery is robust.
+        // Still scan all sections — preferSection is a soft hint only.
       }
     }
     const all = await httpGet(`${cfg.plexBase}/library/sections/${secKey}/all`, headers);
@@ -190,6 +267,20 @@ async function discoverRealTitle(cfg, opts = {}) {
         });
         continue;
       }
+      if (p7Mode && isInstrumentGlassMeta(m)) {
+        rejectedInstrument.push({
+          ratingKey: String(m.ratingKey || ''),
+          title: String(m.title || ''),
+        });
+        continue;
+      }
+      if (contract3Only && !isContract3Meta(m)) {
+        rejectedNotContract3.push({
+          ratingKey: String(m.ratingKey || ''),
+          title: String(m.title || ''),
+        });
+        continue;
+      }
       const mi = mediaInfo(m);
       if (mi.durationMs > 0 && mi.durationMs < minDurationMs) {
         rejectedShort.push({
@@ -199,7 +290,9 @@ async function discoverRealTitle(cfg, opts = {}) {
         });
         continue;
       }
-      if (requireNonBank && isBankGeometry(mi.width, mi.height)) {
+      const contract3 = isContract3Meta(m);
+      // Non-Contract3 bank geom still rejected when requireNonBank.
+      if (requireNonBank && !contract3 && isBankGeometry(mi.width, mi.height)) {
         rejectedBankGeom.push({
           ratingKey: String(m.ratingKey || ''),
           title: String(m.title || ''),
@@ -207,8 +300,7 @@ async function discoverRealTitle(cfg, opts = {}) {
         });
         continue;
       }
-      // Unknown geometry (0x0) is not proof of non-bank — reject for P7.
-      if (requireNonBank && (!mi.width || !mi.height)) {
+      if (requireNonBank && !contract3 && (!mi.width || !mi.height)) {
         rejectedBankGeom.push({
           ratingKey: String(m.ratingKey || ''),
           title: String(m.title || ''),
@@ -217,15 +309,33 @@ async function discoverRealTitle(cfg, opts = {}) {
         });
         continue;
       }
+      if (preferArm === 'fullbleed' && !CONTRACT3_FULLBLEED_RE.test(`${m.title || ''} ${mi.file || ''}`)) {
+        continue;
+      }
+      if (preferArm === 'bbb' && !CONTRACT3_BBB_RE.test(`${m.title || ''} ${mi.file || ''}`)) {
+        continue;
+      }
+      if (
+        preferArm === 'nonbank' &&
+        isBankGeometry(mi.width, mi.height)
+      ) {
+        continue;
+      }
       const item = {
         ratingKey: String(m.ratingKey || ''),
         title: String(m.title || ''),
         sectionKey: String(secKey),
         sectionTitle: secTitle,
         librarySectionID: m.librarySectionID,
+        contract3,
+        contract3_kind: contract3
+          ? CONTRACT3_FULLBLEED_RE.test(`${m.title || ''} ${mi.file || ''}`)
+            ? 'fullbleed'
+            : 'bbb'
+          : '',
         ...mi,
       };
-      item.score = scoreCandidate(item, tierDecode);
+      item.score = scoreCandidate(item, tierDecode, { contract3 });
       candidates.push(item);
     }
   }
@@ -235,30 +345,42 @@ async function discoverRealTitle(cfg, opts = {}) {
   if (!candidates.length) {
     const bankNote = requireNonBank
       ? ` Also rejected ${rejectedBankGeom.length} non-fixture item(s) with bank-sized ` +
-        `library_media in {320x240,624x480} (or unknown dims) — P7 requires real geometry ` +
-        `(e.g. 1440x1080, 720x480, 640x480, 624x352). Override only with E2E_REAL_ALLOW_BANK_GEOM=1.`
+        `library_media in {320x240,624x480} (or unknown dims). For P7 bank-sized FullBleed/BBB ` +
+        `use E2E_P7=1 (Contract 3). For non-bank stress pin E2E_P7_ARM=nonbank or rk 29/31/32/28.`
+      : '';
+    const c3note = contract3Only
+      ? ` Contract3-only filter active (w-asset480 FullBleed / Real BBB / GlassAV). ` +
+        `Rejected ${rejectedNotContract3.length} non-Contract3. Scan section 2 for ` +
+        `"Bank480 FullBleed" or "Real BBB GlassAV" — do not source new assets in this lane.`
       : '';
     const reason =
-      rejectedBankGeom.length > 0 && rejectedFixtures.length + rejectedShort.length < scanned
-        ? 'real_content_no_nonbank_geometry'
-        : 'real_content_library_empty';
+      contract3Only && rejectedNotContract3.length
+        ? 'p7_contract3_not_in_library'
+        : rejectedBankGeom.length > 0 && rejectedFixtures.length + rejectedShort.length < scanned
+          ? 'real_content_no_nonbank_geometry'
+          : 'real_content_library_empty';
     return {
       ok: false,
       reason,
       detail:
         `Scanned ${scanned} items across ${dirs.length} sections; ` +
         `${rejectedFixtures.length} rejected as lab fixtures` +
+        (rejectedInstrument.length ? `; ${rejectedInstrument.length} instrument glass` : '') +
         (rejectedShort.length ? `; ${rejectedShort.length} too short (<${minDurationMs}ms)` : '') +
-        `. No suitable non-fixture title met P7 rules (min_duration_ms=${minDurationMs}` +
-        (requireNonBank ? ', require_nonbank_library_media=1' : '') +
+        `. No suitable title met rules (min_duration_ms=${minDurationMs}` +
+        (p7Mode ? ', p7=1' : '') +
+        (contract3Only ? ', contract3_only=1' : '') +
+        (requireNonBank ? ', require_nonbank=1' : '') +
         `). ` +
-        `Add a real movie/clip whose library_media is NOT 320x240/624x480 to a non-` +
-        `"MiSTerPlex Tests" library on the LOCAL PMS (e.g. section "Other Videos") — ` +
-        `do not point at SHIELD/remote. Fixture fallback is intentionally DISABLED.` +
+        `Coordinate w-asset480 Contract 3; LOCAL PMS only — never SHIELD/remote. ` +
+        `Fixture fallback DISABLED.` +
+        c3note +
         bankNote,
       scanned,
       rejectedFixtures: rejectedFixtures.slice(0, 12),
+      rejectedInstrument: rejectedInstrument.slice(0, 8),
       rejectedBankGeom: rejectedBankGeom.slice(0, 12),
+      rejectedNotContract3: rejectedNotContract3.slice(0, 8),
       sections: dirs.map((d) => ({ key: d.key, title: d.title })),
     };
   }
@@ -266,14 +388,32 @@ async function discoverRealTitle(cfg, opts = {}) {
   return {
     ok: true,
     item: candidates[0],
-    alternates: candidates.slice(1, 6),
+    alternates: candidates.slice(1, 8),
     scanned,
     rejectedFixtures: rejectedFixtures.length,
+    rejectedInstrument: rejectedInstrument.length,
     rejectedBankGeom: rejectedBankGeom.length,
+    rejectedNotContract3: rejectedNotContract3.length,
     requireNonBank,
+    p7Mode,
+    contract3Only,
+    preferArm: preferArm || '',
+    source: 'discover_real_contract3',
   };
 }
 
+/**
+ * P7 entry: Contract 3 discovery (FullBleed / Real BBB). ratingKey is measured
+ * from PMS — never commit household topology; optional E2E_P7_RATING_KEY pins.
+ */
+async function discoverP7Title(cfg, opts = {}) {
+  return discoverRealTitle(cfg, {
+    ...opts,
+    p7Mode: true,
+    contract3Only: opts.contract3Only !== undefined ? opts.contract3Only : true,
+    requireNonBank: false,
+  });
+}
 /**
  * Build expected geometry chain for logs (PMS-side + tier). Delivery mode is
  * best-effort from daemon STREAM policy: H.264 library parts often direct-play.
@@ -308,10 +448,15 @@ function geometryChain(item, tier) {
 
 module.exports = {
   discoverRealTitle,
+  discoverP7Title,
   geometryChain,
   isFixtureMeta,
+  isContract3Meta,
+  isInstrumentGlassMeta,
+  isP7EligibleMeta,
   isBankGeometry,
   mediaInfo,
   FIXTURE_TITLE_RE,
+  CONTRACT3_RE,
   BANK_GEOMS,
 };

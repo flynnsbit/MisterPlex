@@ -25,21 +25,29 @@ export E2E_REQUIRE_PID="${E2E_REQUIRE_PID:-1}"
 export E2E_PLXD_FRAMES_VOID="${E2E_PLXD_FRAMES_VOID:-1}"
 export E2E_P7_HOLD_SEC="${E2E_P7_HOLD_SEC:-45}"
 export E2E_P7_CAPTURE_HOLD="${E2E_P7_CAPTURE_HOLD:-1}"
-# BBB / real keys: prefer long real title; parent may pin.
-# rk=30 BBB 624x480 1200s | rk=32 720x480 | rk=29 624x352 | rk=27 full-bleed
-if [[ -z "${PLEX_RATING_KEY:-}" && -z "${PLEX_KEY:-}" ]]; then
-  export PLEX_RATING_KEY="${E2E_P7_RATING_KEY:-30}"
-  export PLEX_KEY="/library/metadata/${PLEX_RATING_KEY}"
-fi
-# Real BBB at bank library_media is allowed under E2E_P7 (not a flash fixture).
+# Contract 3 bank-sized FullBleed/BBB is valid under E2E_P7.
 export E2E_REAL_ALLOW_BANK_GEOM="${E2E_REAL_ALLOW_BANK_GEOM:-1}"
+# Prefer w-asset480 Contract 3 discovery (path/title fingerprint). ratingKeys are
+# PMS-local — never encode as CI truth. Optional pin:
+#   E2E_P7_RATING_KEY / PLEX_RATING_KEY  (caller-supplied)
+#   E2E_P7_ARM=fullbleed|bbb|nonbank     (discover filter)
+if [[ -n "${E2E_P7_RATING_KEY:-}" && -z "${PLEX_RATING_KEY:-}" && -z "${PLEX_KEY:-}" ]]; then
+  export PLEX_RATING_KEY="${E2E_P7_RATING_KEY}"
+  export PLEX_KEY="/library/metadata/${PLEX_RATING_KEY}"
+  echo "P7_RUN pin ratingKey=${PLEX_RATING_KEY} value_kind=caller-supplied"
+elif [[ -n "${PLEX_RATING_KEY:-}${PLEX_KEY:-}" ]]; then
+  echo "P7_RUN pin ratingKey=${PLEX_RATING_KEY:-from_PLEX_KEY} value_kind=caller-supplied"
+else
+  echo "P7_RUN pin ratingKey=(auto-discover Contract3) value_kind=measured_at_runtime arm=${E2E_P7_ARM:-default}"
+fi
 
 export E2E_OUT="${E2E_OUT:-$REPO/build/e2e-p7}"
 mkdir -p "$E2E_OUT"
 
-echo "P7_RUN begin ratingKey=${PLEX_RATING_KEY:-} cycles=${E2E_TRANSITION_CYCLES} hold_sec=${E2E_P7_HOLD_SEC}"
+echo "P7_RUN begin cycles=${E2E_TRANSITION_CYCLES} hold_sec=${E2E_P7_HOLD_SEC} tier=${E2E_TIER}"
 echo "P7_RUN out=${E2E_OUT}"
 echo "P7_RUN artifacts: ${E2E_OUT}/p7_cast_manifest.json ${E2E_OUT}/p7_events.jsonl ${E2E_OUT}/e2e_run_id.txt"
+echo "P7_RUN contract3=FullBleed|Real BBB GlassAV (w-asset480) — reject Test/Soak/OCR instrument"
 if [[ -n "${E2E_DAEMON_LOG:-}" ]]; then
   echo "P7_RUN E2E_DAEMON_LOG=${E2E_DAEMON_LOG} cleared_flag=${E2E_LOG_CLEARED_BEFORE_CAST:-0}"
 else

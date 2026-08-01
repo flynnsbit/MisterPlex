@@ -280,11 +280,13 @@ function loadConfig() {
   }
 
   const t0 = tiers && tiers[0];
-  const contentMode = String(process.env.E2E_CONTENT || process.env.E2E_CONTENT_MODE || 'synthetic')
+  const contentModeRaw = String(process.env.E2E_CONTENT || process.env.E2E_CONTENT_MODE || 'synthetic')
     .trim()
     .toLowerCase();
-  const isReal = contentMode === 'real' || contentMode === 'library';
-
+  // E2E_P7 forces real-content path (Contract 3 discovery) even if E2E_CONTENT unset.
+  const p7Early = truthy(process.env.E2E_P7 || process.env.E2E_P7_REAL_TITLE, false);
+  const contentMode = p7Early && contentModeRaw === 'synthetic' ? 'real' : contentModeRaw;
+  const isReal = contentMode === 'real' || contentMode === 'library' || p7Early;
   // Multi-cycle stress. Default 10 so intermittent transition flakes surface.
   // Set E2E_TRANSITION_CYCLES=1 for a fast smoke.
   let transitionCycles = parseInt(

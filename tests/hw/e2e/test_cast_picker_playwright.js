@@ -42,7 +42,9 @@ const { spawnSync } = require('child_process');
 const { loadConfig, daemonBase, redact, ROOT, parentConfCommands, normalizeDecode } = require('./conf');
 const {
   discoverRealTitle,
+  discoverP7Title,
   isFixtureMeta,
+  isContract3Meta,
   isBankGeometry,
   mediaInfo,
 } = require('./discover_real');
@@ -1470,10 +1472,13 @@ async function resolveItemForTier(tier) {
     Accept: 'application/json',
   };
 
-  if (cfg.isRealContent) {
+  if (cfg.isRealContent || cfg.p7Mode) {
     // Explicit RK via env only (tier default RK3/RK6 must not silently select fixtures).
     let ratingKey = String(process.env.PLEX_RATING_KEY || process.env.PLEX_KEY || '')
       .replace(/^\/library\/metadata\//, '');
+    const p7 =
+      cfg.p7Mode ||
+      /^(1|true|yes|on)$/i.test(String(process.env.E2E_P7 || process.env.E2E_P7_REAL_TITLE || ''));
     if (ratingKey) {
       const meta = await httpGet(`${cfg.plexBase}/library/metadata/${ratingKey}`, headers);
       if (meta.status !== 200) {
@@ -1494,11 +1499,26 @@ async function resolveItemForTier(tier) {
         );
       }
       const mi = mediaInfo(m);
-      // P7 may use real BBB at bank-sized library_media (rk=30 624x480) — still not a fixture.
-      // Non-P7 real content still defaults to non-bank unless E2E_REAL_ALLOW_BANK_GEOM=1.
-      const p7 = /^(1|true|yes|on)$/i.test(String(process.env.E2E_P7 || process.env.E2E_P7_REAL_TITLE || ''));
+      const contract3 = isContract3Meta(m);
+      // P7 prefers w-asset480 Contract 3 (FullBleed / Real BBB). Explicit pin of a
+      // non-Contract3 title is allowed only with E2E_P7_ALLOW_NON_CONTRACT3=1.
+      if (
+        p7 &&
+        !contract3 &&
+        !/^(1|true|yes|on)$/i.test(String(process.env.E2E_P7_ALLOW_NON_CONTRACT3 || ''))
+      ) {
+        fail(
+          'p7_not_contract3',
+          `ratingKey=${ratingKey} title=${JSON.stringify(m.title)} file=${JSON.stringify(mi.file)} ` +
+            'is not w-asset480 Contract 3 (FullBleed / Real BBB GlassAV). ' +
+            'Omit PLEX_RATING_KEY to auto-discover, or pin a Contract-3 key, or set ' +
+            'E2E_P7_ALLOW_NON_CONTRACT3=1 deliberately.'
+        );
+      }
+      // P7 Contract3 may be bank-sized; non-P7 real content still defaults non-bank.
       const allowBank =
         p7 ||
+        contract3 ||
         /^(1|true|yes|on)$/i.test(String(process.env.E2E_REAL_ALLOW_BANK_GEOM || ''));
       if (!allowBank && isBankGeometry(mi.width, mi.height)) {
         fail(
@@ -1508,17 +1528,45 @@ async function resolveItemForTier(tier) {
       }
       log(
         `resolved REAL ratingKey=${ratingKey} title=${m.title} library_media=${mi.width}x${mi.height} ` +
-          `fps=${mi.frameRate || 'NA'} duration_ms=${mi.durationMs} value_kind=measured`
+          `fps=${mi.frameRate || 'NA'} duration_ms=${mi.durationMs} contract3=${contract3 ? 1 : 0} ` +
+          `value_kind=measured source=${ratingKey ? 'caller-supplied-rk' : 'NA'}`
       );
       return {
         ratingKey: String(ratingKey),
         title: String(m.title || ''),
         sectionTitle: String(sectionTitle || ''),
+        contract3,
+        contract3_kind: contract3
+          ? /fullbleed|full-bleed|bank480/i.test(`${m.title || ''} ${mi.file || ''}`)
+            ? 'fullbleed'
+            : 'bbb'
+          : '',
         tier: tier.name,
         ...mi,
       };
     }
-    // Runtime discovery — no fixture / bank fallback.
+    // Runtime discovery — P7: Contract 3 (w-asset480); never silent fixture fallback.
+    if (p7) {
+      log('CONTENT=p7 discoverP7Title (w-asset480 Contract 3 — no explicit PLEX_RATING_KEY)');
+      const disc = await discoverP7Title(cfg, { expectDecode: tier.expectDecode });
+      if (!disc.ok) {
+        fail(disc.reason || 'p7_contract3_not_in_library', disc.detail || '');
+      }
+      log(
+        `discover_p7_ok rk=${disc.item.ratingKey} title=${JSON.stringify(disc.item.title)} ` +
+          `library_media=${disc.item.width}x${disc.item.height} kind=${disc.item.contract3_kind || 'contract3'} ` +
+          `score=${disc.item.score} value_kind=measured source=pms_discover_contract3`
+      );
+      if (disc.alternates && disc.alternates.length) {
+        log(
+          `discover_p7_alts ${disc.alternates
+            .slice(0, 5)
+            .map((a) => `rk=${a.ratingKey}/${a.width}x${a.height}/${a.contract3_kind || '?'}`)
+            .join(' ')}`
+        );
+      }
+      return { ...disc.item, tier: tier.name };
+    }
     log('CONTENT=real discover_real (no explicit PLEX_RATING_KEY)');
     const disc = await discoverRealTitle(cfg, { expectDecode: tier.expectDecode });
     if (!disc.ok) {
@@ -1530,7 +1578,6 @@ async function resolveItemForTier(tier) {
     );
     return { ...disc.item, tier: tier.name };
   }
-
   // Prefer explicit env (parent bind: rk=27/30/1/8), else tier default.
   let ratingKey = String(
     process.env.PLEX_RATING_KEY ||

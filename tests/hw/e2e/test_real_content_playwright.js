@@ -237,16 +237,27 @@ async function resolveExplicitRealItem(ratingKey) {
     );
   }
   const mi = mediaInfo(m);
-  const allowBank = /^(1|true|yes|on)$/i.test(String(process.env.E2E_REAL_ALLOW_BANK_GEOM || ''));
+  const p7 = /^(1|true|yes|on)$/i.test(String(process.env.E2E_P7 || process.env.E2E_P7_REAL_TITLE || ''));
+  // Contract 3 / P7 may be bank-sized FullBleed or Real BBB 624x480.
+  let isC3 = false;
+  try {
+    const { isContract3Meta } = require('./discover_real');
+    isC3 = isContract3Meta(m);
+  } catch (_) {
+    isC3 = false;
+  }
+  const allowBank =
+    p7 ||
+    isC3 ||
+    /^(1|true|yes|on)$/i.test(String(process.env.E2E_REAL_ALLOW_BANK_GEOM || ''));
   if (!allowBank && isBankGeometry(mi.width, mi.height)) {
     fail(
       'real_content_bank_geometry',
       `ratingKey=${rk} title=${JSON.stringify(m.title)} library_media=${mi.width}x${mi.height} ` +
-        'is bank-sized (320x240 or 624x480). P7 requires non-bank geometry so scale/AR paths run. ' +
-        'Override only with E2E_REAL_ALLOW_BANK_GEOM=1.'
+        'is bank-sized (320x240 or 624x480). Prefer non-bank (720x480/624x352/1440x1080) or ' +
+        'E2E_P7=1 Contract3 / E2E_REAL_ALLOW_BANK_GEOM=1.'
     );
-  }
-  if (!allowBank && (!mi.width || !mi.height)) {
+  }  if (!allowBank && (!mi.width || !mi.height)) {
     fail(
       'real_content_unknown_geometry',
       `ratingKey=${rk} has no library_media width/height — cannot prove non-bank geometry.`
