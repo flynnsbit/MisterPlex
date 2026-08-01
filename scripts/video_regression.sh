@@ -904,23 +904,61 @@ verify_baseline() {
     echo "OK   GATE_CORE_IDENTITY=VERIFIED_PLXC"
   fi
 
+  # Fabric mailbox words (PLXK/PLXS/PLXD) are FAMILY/LIVENESS only — NOT RBF id.
+  # Parent 2026-08-01: plxa_used/plxd_liveness/banks/frames_done are measured
+  # daemon fields; product PLXD magic proves DDR control page presence, not which
+  # .rbf is loaded. Residue can fake magic. PLXC @ +0x130 is the only designed
+  # content-hash identity and is NOT in shipping c5382bee. HDMI fingerprint is
+  # parent-only. Do not treat mailbox presence as FULL_PASS identity.
+  plxd_w=$(printf '%s\n' "$core_obs" | sed -n 's/^PLXD_WORD=//p' | head -1 | tr 'A-F' 'a-f')
+  plxs_w=$(printf '%s\n' "$core_obs" | sed -n 's/^PLXS_WORD=//p' | head -1 | tr 'A-F' 'a-f')
+  fabric_family_hint=unknown
+  case "$plxd_w" in
+    *504c5844*) fabric_family_hint=ddr_mailbox_magic_present ;;
+  esac
+  case "$plxs_w" in
+    *504c5853*) fabric_family_hint="${fabric_family_hint}+plxs" ;;
+  esac
+  echo "FABRIC_FAMILY_HINT=$fabric_family_hint (NOT bitstream identity; PLXC absent until fit)"
+  if [ -n "$run_core" ]; then
+    cf_run=$(core_family "$run_core")
+    if [ "$cf_run" = spi ] && [[ "$fabric_family_hint" == ddr_mailbox* ]]; then
+      echo "NOTE FABRIC_HINT claim/pin family=spi but product PLXD magic present — residue OR mixed; not sole FAIL (magic can be residue)"
+    fi
+  fi
+
   # Refuse FULL PASS when running bitstream cannot be identified.
-  # Parent 2026-07-31: gate was blind-and-green on mixed SPI core + DDR daemon
-  # because non-visual checks passed. Honest outcome is three-way:
-  #   rc=0 FULL_PASS only with VERIFIED identity + all checks OK
-  #   rc=2 CORE_IDENTITY_UNVERIFIED when checks OK but fabric unproven
-  #   rc=1 FAIL / rc=4 NO-DATA / rc=5 NETWORK unchanged
+  # Parent: mixed SPI-core+DDR-daemon black screen must never look like promote-green.
+  # Three-way (+ NO-DATA):
+  #   rc=0 FULL_PASS only with VERIFIED_PLXC identity + all checks OK
+  #   rc=2 CORE_IDENTITY_UNVERIFIED when checks OK but fabric content unproven
+  #   rc=1 FAIL (pair mismatch, dead daemon, …)
+  #   rc=4 NO-DATA / rc=5 NETWORK
+  # Intermediate "OK …" lines are step checks only. Promote scanners MUST key off
+  # GATE_RESULT= / PROMOTE_OK= / true rc= — never off a mid-script OK line.
   if [ "$rc" -eq 0 ]; then
     if [ "$gate_core_identity" = UNVERIFIED ]; then
       echo "REFUSE FULL_PASS reason=running_bitstream_identity_unverified"
       echo "VERIFY_STATUS=CORE_IDENTITY_UNVERIFIED"
-      echo "     Pair/liveness lines above are NOT a full PASS. Do not promote on this alone."
+      echo "GATE_RESULT=CORE_IDENTITY_UNVERIFIED"
+      echo "PROMOTE_OK=0"
+      echo "     Pair/liveness OK lines above are NOT a full PASS. Do not promote on this alone."
+      echo "     No software path can name the RUNNING rbf today (CORENAME=Plex always;"
+      echo "     on-disk md5≠fabric; PLXD/PLXS=family only; PLXC not shipping; HDMI=parent)."
       rc=2
     else
       echo "VERIFY_STATUS=FULL_PASS GATE_CORE_IDENTITY=$gate_core_identity"
+      echo "GATE_RESULT=FULL_PASS"
+      echo "PROMOTE_OK=1"
     fi
+  elif [ "$rc" -eq 4 ]; then
+    echo "VERIFY_STATUS=NO_DATA rc=4 GATE_CORE_IDENTITY=$gate_core_identity"
+    echo "GATE_RESULT=NO_DATA"
+    echo "PROMOTE_OK=0"
   else
     echo "VERIFY_STATUS=FAIL rc=$rc GATE_CORE_IDENTITY=$gate_core_identity"
+    echo "GATE_RESULT=FAIL"
+    echo "PROMOTE_OK=0"
   fi
 
   return $rc

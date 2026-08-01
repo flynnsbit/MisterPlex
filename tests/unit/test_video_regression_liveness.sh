@@ -315,6 +315,8 @@ run_new_verify "mixed-spi-core-ddr-daemon"
 expect_rc "mixed-spi-core-ddr-daemon" 1
 expect_grep "mixed-msg" 'FAIL pair-mismatch'
 expect_grep "mixed-hint" 'SPI/DDR mix'
+expect_grep "mixed-spi-gate-result" 'GATE_RESULT=FAIL'
+expect_grep "mixed-spi-promote" 'PROMOTE_OK=0'
 
 echo "=== NEW gate: DDR core claim + SPI hybrid daemon → FAIL pair-mismatch ==="
 write_scenario <<EOF
@@ -339,6 +341,8 @@ EOF
 run_new_verify "mixed-ddr-core-spi-daemon"
 expect_rc "mixed-ddr-core-spi-daemon" 1
 expect_grep "mixed2-msg" 'FAIL pair-mismatch|FAIL core-running'
+expect_grep "mixed-ddr-gate-result" 'GATE_RESULT=FAIL'
+expect_grep "mixed-ddr-promote" 'PROMOTE_OK=0'
 
 echo "=== NEW gate: coherent SPI hybrid + claim + HTTP 200 PASSes ==="
 write_scenario <<EOF
@@ -363,6 +367,8 @@ expect_grep "new-live-conf" "OK   daemon-conf $V2_CONF"
 expect_grep "new-live-unverified" 'GATE_CORE_IDENTITY=UNVERIFIED'
 expect_grep "new-live-refuse" 'REFUSE FULL_PASS'
 expect_grep "new-live-status" 'VERIFY_STATUS=CORE_IDENTITY_UNVERIFIED'
+expect_grep "new-live-gate-result" 'GATE_RESULT=CORE_IDENTITY_UNVERIFIED'
+expect_grep "new-live-promote" 'PROMOTE_OK=0'
 
 echo "=== NEW gate: coherent DDR pair (c5382bee + edc3a46b PREV CURRENT) PASSes ==="
 write_scenario <<EOF
@@ -623,6 +629,8 @@ expect_rc "coreid-ddr-ok" 0
 expect_grep "coreid-ddr-ok-msg" 'path=ddr compatible with DDR pair'
 expect_grep "coreid-ddr-ok-verified" 'GATE_CORE_IDENTITY=VERIFIED_PLXC'
 expect_grep "coreid-ddr-ok-full" 'VERIFY_STATUS=FULL_PASS'
+expect_grep "coreid-ddr-ok-gate-result" 'GATE_RESULT=FULL_PASS'
+expect_grep "coreid-ddr-ok-promote" 'PROMOTE_OK=1'
 
 echo "=== NEW gate: core-id RED DDR + require identity but absent ==="
 write_scenario <<EOF

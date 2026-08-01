@@ -1,29 +1,41 @@
 lane: w-lint GATE-INTEGRITY
 branch: w-lint-gate-integrity
-tip: 39828387
+tip: pending
 worktree: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-lint
 
-## Parent broadcast absorbed
-117 ms A/V bimodality = DEVICE session-latched (within-session 3.33 ms vs 116.89 ms).
-Daemon-side signals blind. av_drift/av-lock already TELEMETRY_ONLY on this branch.
-Short A/V windows biased ~25 ms vs long soaks — label window length.
-Evidence note: docs/evidence/w_lint_AV_DRIFT_BLIND.md updated.
+## Parent promotion-blocker response
 
-## This tick
-1. Scrub pidof misterplexd from HW tests (idle telemetry, bank_release, p480 CPU snap)
-   → /proc/PID/exe basename deleted-tolerant
-2. RBFNAME mtime: absence is empty NO-DATA, not || echo 0 (plexctl + video_regression)
-3. idle telemetry log counts: three-way (NO_DATA vs measured 0) — no || echo 0
-4. absence_as_zero + live_state guards hard-fail remaining pidof misterplexd
+### DEFECT 1 running bitstream
+HONEST NEGATIVE: no software path names RUNNING rbf content hash today.
+- CORENAME/RBFNAME always Plex; disk md5 ≠ fabric
+- PLXD/PLXS/plxa/banks/frames_done = family/liveness ONLY (not build id)
+- PLXC @ +0x130 designed, not shipping on c5382bee
+- HDMI = parent-only
 
-## Standing
-- video_regression verify UNVERIFIED → rc=2 (not FULL_PASS)
-- fix/gate-liveness CLOSE; expected_commands=125 on this branch
-- No device / no Quartus; c5382bee do-not-disturb
+Gate behaviour (RBG unit true rc):
+| case | GATE_RESULT | true rc |
+|------|-------------|---------|
+| mixed SPI core + DDR daemon | FAIL | 1 |
+| coherent pair no PLXC | CORE_IDENTITY_UNVERIFIED | 2 |
+| VIDREG_CORE_ID=ddr inject | FULL_PASS | 0 |
+| empty probe | NO_DATA | 4 |
 
-## Direct true rc
-| gate | true rc |
-|------|---------|
-| test_absence_as_zero_static_guard.py | 0 |
-| test_live_state_identity_audit.py | 0 |
-| test_video_regression_liveness.sh | 0 |
+PROMOTE_OK=0|1 + GATE_RESULT= are the only promote scanners; mid-script OK lines are steps.
+
+### DEFECT 2 set +e glue
+Capture fix already present: gate_join_remote_parts + gate_assert_md5_shape.
+harness RBG: glued md5set+e → shape FAIL rc=1; clean → 0. Never relax comparison.
+
+### DEFECT 3 audit
+docs/evidence/w_lint_GATE_SUITE_AUDIT.md — blind-green/red + rc=77 taxonomy A/B/C.
+CRITICAL PMS gap → process_rc=78. fix/gate-liveness CLOSE (102 vs 125).
+
+### Direct true rc
+test_video_regression_liveness.sh → 0
+test_harness_capture_integrity.py → 0
+test_promotion_gates.sh → 0
+test_unit_rollcall.py → 0 (expected_commands=125)
+
+### Parent commands
+bash scripts/video_regression.sh verify; echo "true rc=$?"
+# pre-PLXC: GATE_RESULT=CORE_IDENTITY_UNVERIFIED PROMOTE_OK=0 true rc=2
