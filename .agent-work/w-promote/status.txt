@@ -1,7 +1,7 @@
 lane: w-promote
 branch: fix/rollback-honest
 worktree: /home/flynnsbit/Projects/MisterPlex/.worktrees/rollback-honest
-tip: (post-commit)
+tip: 96f68358
 
 ## Blockers addressed (repo-backed)
 1. V2_MD5 set+e glue — join + shape + host MD5…set refuse; GREEN + wrong-md5 RED proven
