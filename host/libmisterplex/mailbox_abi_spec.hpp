@@ -52,6 +52,10 @@ constexpr uint32_t kPlxmOffset = 0x110u;
 constexpr uint32_t kPlxfOffset = 0x118u;
 constexpr uint32_t kSdramDiagOffset = 0x120u;
 constexpr uint32_t kPlxdOffset = 0x128u;
+// plex_chrome semantic list (ARM→FPGA) and optional HDMI mirror (FPGA→ARM).
+// Doorbell-relative only — never hardcode absolute phys (see PLXD lesson).
+constexpr uint32_t kPlxcOffset = 0x130u;
+constexpr uint32_t kPlxoOffset = 0x138u;
 
 // Legacy example doorbell base (historical 0x3007F000 control page).
 constexpr uint32_t kLegacyFrameStoreDoorbellPhys = 0x3007F000u;
@@ -103,6 +107,17 @@ constexpr uint32_t kSdramDiagAddr = 0x3007F120u;
 // Legacy absolute (example base only) — product live addr is doorbell+0x128:
 constexpr uint32_t kPlxdAddr  = 0x3007F128u;
 constexpr uint32_t kPlxdMagic = 0x504C5844u; // "PLXD"
+
+// PLXC — Chrome list control (ARM→FPGA). Semantic cmds only; fabric owns scale.
+// Layout (64-bit LE): [31:0] magic "PLXC", [32] enable, [33] bank_sel,
+// [47:34] cmd_count, [63:48] seq. List payload at doorbell+0x140 (design).
+constexpr uint32_t kPlxcAddr  = 0x3007F130u; // legacy example base + 0x130
+constexpr uint32_t kPlxcMagic = 0x504C5843u; // "PLXC"
+
+// PLXO — Chrome telemetry (FPGA→ARM). Applied HDMI_W/H mirror + chrome_hw.
+// Telemetry only — NOT geometry authority (fabric uses HDMI_WIDTH/HEIGHT wires).
+constexpr uint32_t kPlxoAddr  = 0x3007F138u;
+constexpr uint32_t kPlxoMagic = 0x504C584Fu; // "PLXO"
 // Bit-field positions (in the upper 32 bits, i.e. offset from bit 32):
 constexpr unsigned kPlxdFreeBankMaskBit = 0;  // bits [33:32] → [1:0] of upper word
 constexpr unsigned kPlxdFreeBankMaskWidth = 2;
@@ -128,7 +143,7 @@ struct MagicEntry {
     uint32_t magic;
 };
 
-constexpr std::array<MagicEntry, 7> kAllMagics = {{
+constexpr std::array<MagicEntry, 9> kAllMagics = {{
     {"PLXK", kPlxkMagic},
     {"PLXS", kPlxsMagic},
     {"PLXI", kPlxiMagic},
@@ -136,11 +151,13 @@ constexpr std::array<MagicEntry, 7> kAllMagics = {{
     {"PLXF", kPlxfMagic},
     {"PLXD", kPlxdMagic},
     {"PLXB", kPlxbMagic},
+    {"PLXC", kPlxcMagic},
+    {"PLXO", kPlxoMagic},
 }};
 
 // ---- All addressed mailboxes (for address-collision detection) ----
 // Every occupied DDR mailbox slot. Gate rejects overlapping addresses.
-constexpr std::array<MailboxEntry, 8> kAllMailboxes = {{
+constexpr std::array<MailboxEntry, 10> kAllMailboxes = {{
     {"PLXK", kPlxkAddr,     kPlxkMagic,     8, "arm_to_fpga",  true},
     {"PLXS", kPlxsAddr,     kPlxsMagic,     8, "fpga_to_arm",  true},
     {"PLXI", kPlxiAddr,     kPlxiMagic,     8, "fpga_to_arm",  true},
@@ -148,6 +165,8 @@ constexpr std::array<MailboxEntry, 8> kAllMailboxes = {{
     {"PLXF", kPlxfAddr,     kPlxfMagic,     8, "fpga_to_arm",  true},
     {"DIAG", kSdramDiagAddr, 0,             8, "fpga_to_arm",  false},
     {"PLXD", kPlxdAddr,     kPlxdMagic,     8, "fpga_to_arm",  true},
+    {"PLXC", kPlxcAddr,     kPlxcMagic,     8, "arm_to_fpga",  true},
+    {"PLXO", kPlxoAddr,     kPlxoMagic,     8, "fpga_to_arm",  true},
     {"PLXB", kPlxbAddr,     kPlxbMagic,     8, "arm_to_fpga",  true},
 }};
 

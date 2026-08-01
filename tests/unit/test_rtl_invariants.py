@@ -768,6 +768,9 @@ def check_mailboxes() -> None:
         "PLXF": ("kPlxfAddr", "kPlxfMagic", 0x3007F118, 0x504C5846),
         "DIAG": ("kSdramDiagAddr", None, 0x3007F120, None),
         "PLXD": ("kPlxdAddr", "kPlxdMagic", 0x3007F128, 0x504C5844),
+        # plex_chrome (design): doorbell-relative; no RTL consumer until ONE-fit
+        "PLXC": ("kPlxcAddr", "kPlxcMagic", 0x3007F130, 0x504C5843),
+        "PLXO": ("kPlxoAddr", "kPlxoMagic", 0x3007F138, 0x504C584F),
         "PLXB": ("kPlxbAddr", "kPlxbMagic", 0x30140000, 0x504C5842),
     }
     for name, (addr_sym, magic_sym, exp_addr, exp_magic) in spec_entries.items():

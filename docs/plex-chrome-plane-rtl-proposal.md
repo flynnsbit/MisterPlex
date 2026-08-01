@@ -310,9 +310,16 @@ Solid bottom rect + enable: **~0 M10K, ~0.3–0.8k ALM**.
 |------|------|-----------|
 | G0 layout | `test_chrome_output_layout_static.py` + crispness modes | host rc=0 |
 | G1 list ISA unit | encode PAUSED list → software walker golden vs `paintChromePlane` | host |
-| G2 Verilator | `plex_chrome` + font ROM, 1 line of PAUSED at 640 and 1920 | sim |
+| **G2 host behavioral** | `tests/unit/test_plex_chrome_sim.cpp` + `plex_chrome_sim.hpp` | **shipped** |
+| G2b Verilator | `rtl/plex_chrome.sv` + font ROM (after shell costs out) | sim |
 | G3 solo map | hierarchical synth M10K≤40 ALM≤6k | **before** fit grant |
 | G4 glass | parent pause grab edge sharpness | after ONE fit |
+
+### G2 metric (measured, not OCR)
+
+- **Fabric GREEN:** render semantic `PAUSED` list at HDMI W×H with `bodyScale=fabricBodyScale(H)`; every maximal **glyph** (near-white) H/V ink run length is a multiple of `bodyScale`; bbox height ≥ `8*scale`. Modes: 320×240, 640×480, 800×600, 1920×1080.
+- **Bank RED:** author at 624×480 scale=2 then NN-stretch to 1920×1080 (product path). Assert fails fabric scale-4 metric (`hBad|vBad>0` **or** `cellH != 32`). Empty raster is **not** PASS (`ink>50` required).
+- Skeleton RTL: `fpga/Plex_MiSTer/rtl/plex_chrome.sv` — **not in QSF**; ports + `body_scale_f` + DE shell only.
 
 ---
 
