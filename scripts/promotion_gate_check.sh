@@ -71,7 +71,11 @@ run_ssh() {
     rc=$?
   fi
   set -e
-  printf '%s' "$out"
+  # Always end the blob with a newline. $(...) strips trailing NLs; without this
+  # a later host-side append can glue the next token onto the last probe field.
+  if [ -n "$out" ]; then
+    printf '%s\n' "$out"
+  fi
   return "$rc"
 }
 
@@ -182,38 +186,40 @@ gate_join_remote_parts() {
 # md5 fields: exactly 32 lowercase hex, or MISSING, or empty.
 # Never "trim to make pass" — malformed capture is FAIL (parent: almost-right md5).
 gate_field() {
-  local blob="$1" key="$2"
-  printf '%s\n' "$blob" | sed -n "s/^${key}=//p" | head -1
+  local blob="$1" key="$2" line
+  # CR-strip (Windows/SSH artifacts); take first matching line only.
+  line=$(printf '%s\n' "$blob" | tr -d '\r' | sed -n "s/^${key}=//p" | head -1)
+  printf '%s' "$line"
 }
 
 gate_assert_md5_shape() {
   local name="$1" val="$2"
-  # Reject any whitespace / shell residue immediately (the set +e glue class).
+  # Empty / MISSING ok (caller decides whether absence is hard fail).
+  if [ -z "$val" ] || [ "$val" = "MISSING" ]; then
+    return 0
+  fi
+  # Pure 32 lowercase hex only. NEVER trim trailing garbage to pass
+  # (parent: tempting fix for V2_MD5=<32hex>set +e is to strip — forbidden).
+  if printf '%s' "$val" | grep -Eq '^[0-9a-f]{32}$'; then
+    return 0
+  fi
   case "$val" in
-    *[[:space:]]*|*+*|*\;*|*'set '*|*'$'*)
+    *set*|*+*|*[[:space:]]*|*\;*|*'$'*)
       echo "FAIL $name shape got='$val' (probe capture contaminated — not pure md5)"
       return 1
       ;;
   esac
-  if [ -z "$val" ]; then
-    return 0
-  fi
-  if [ "$val" = "MISSING" ]; then
-    return 0
-  fi
-  if printf '%s' "$val" | grep -Eq '^[0-9a-f]{32}$'; then
-    return 0
-  fi
-  # prefix8 alone is not accepted for disk core pins in verify-live
+  # prefix8 / wrong length — still fail closed
   echo "FAIL $name shape got='$val' (want exactly 32 hex chars or MISSING; len=${#val})"
   return 1
 }
 
 # Remote probe: product core, v2 core, live daemon via /proc/exe (not cmdline).
-# STRUCTURAL FIX (parent V2_MD5=…81848set +e): build ONE remote script in a
-# single heredoc. Never concatenate $(fragment1)$(fragment2) — command
-# substitution strips trailing newlines and glues the next line onto the last
-# printf/echo. gate_join_remote_parts remains for unit tests of the class.
+# STRUCTURAL FIX (parent V2_MD5=…81848set +e):
+#   1) ONE remote script in a single heredoc — never $(frag1)$(frag2).
+#   2) md5 lines use printf '%s\n' only — never echo "V2_MD5=$x" adjacent to set.
+#   3) set +e is ONLY on its own line, BEFORE any md5 computation, never after.
+#   4) gate_join_remote_parts remains for unit tests of the glue class only.
 remote_live_blob() {
   if [ -n "${PROMOTE_GATE_BLOB:-}" ]; then
     cat "$PROMOTE_GATE_BLOB"
@@ -221,36 +227,39 @@ remote_live_blob() {
   fi
   local remote
   # Unquoted heredoc only for host-side %q of paths; remote expansions stay \$/\%.
+  # IMPORTANT: do not place `set +e` immediately after any MD5 printf/echo line.
   remote=$(cat <<REMOTE
 PRODUCT=$(printf '%q' "$PRODUCT_CORE_PATH")
 V2=$(printf '%q' "$V2_CORE_PATH")
+# disable errexit for probe body (token alone on next line — never glue)
 set +e
-prod_md5=""
-v2_md5=""
+prod_md5=
+v2_md5=
 if [ ! -f "\$PRODUCT" ]; then
   prod_md5=MISSING
 else
-  prod_md5=\$(md5sum "\$PRODUCT" | awk '{print \$1}')
+  prod_md5=\$(md5sum "\$PRODUCT" 2>/dev/null | awk '{print \$1}')
 fi
 if [ ! -f "\$V2" ]; then
   v2_md5=MISSING
 else
-  v2_md5=\$(md5sum "\$V2" | awk '{print \$1}')
+  v2_md5=\$(md5sum "\$V2" 2>/dev/null | awk '{print \$1}')
 fi
-# Pure digest only — never append shell noise to these lines.
+# Emit KEY=value on isolated lines. printf format ends with \\n — the next
+# statement is always a new physical line in this heredoc (never adjacent set).
 printf 'PRODUCT_CORE=%s\n' "\$PRODUCT"
 printf 'PRODUCT_MD5=%s\n' "\$prod_md5"
 printf 'V2_CORE=%s\n' "\$V2"
 printf 'V2_MD5=%s\n' "\$v2_md5"
-printf 'CORE_MD5_PROBE_DONE=1\n'
-# --- live daemon identity (inlined; do not source a second fragment) ---
+printf 'CORE_MD5_PROBE_DONE=%s\n' "1"
+# --- live daemon identity (inlined; do NOT append pair_remote_live_daemon_snippet) ---
 n=0
-pids=""
-live=""
-conf=""
-port=""
-exe=""
-root=""
+pids=
+live=
+conf=
+port=
+exe=
+root=
 for d in /proc/[0-9]*; do
   [ -e "\$d/exe" ] || continue
   p=\${d#/proc/}
@@ -267,20 +276,22 @@ for d in /proc/[0-9]*; do
   exe=\$x
   live=\$m
   root=\$(dirname "\$(dirname "\$x")")
-  conf=""; port=""; prev=""
+  conf=
+  port=
+  prev=
   if [ -r "\$d/cmdline" ]; then
-    cmd=\$(tr '\\0' ' ' <"\$d/cmdline" 2>/dev/null) || cmd=""
+    cmd=\$(tr '\\0' ' ' <"\$d/cmdline" 2>/dev/null) || cmd=
     for tok in \$cmd; do
       case "\$prev" in
-        --port) port="\$tok"; prev=""; continue ;;
-        --conf) conf="\$tok"; prev=""; continue ;;
+        --port) port="\$tok"; prev=; continue ;;
+        --conf) conf="\$tok"; prev=; continue ;;
       esac
       case "\$tok" in
         --port) prev=--port ;;
-        --port=*) port="\${tok#--port=}"; prev="" ;;
+        --port=*) port="\${tok#--port=}"; prev= ;;
         --conf) prev=--conf ;;
-        --conf=*) conf="\${tok#--conf=}"; prev="" ;;
-        *) prev="" ;;
+        --conf=*) conf="\${tok#--conf=}"; prev= ;;
+        *) prev= ;;
       esac
     done
   fi
@@ -292,12 +303,18 @@ printf 'LIVE_EXE=%s\n' "\$exe"
 printf 'LIVE_PORT=%s\n' "\$port"
 printf 'LIVE_CONF=%s\n' "\$conf"
 printf 'LIVE_ROOT=%s\n' "\$root"
+printf 'LIVE_PROBE_DONE=%s\n' "1"
 REMOTE
 )
   # Host-side structural guard (must never ship a glued script).
-  if printf '%s' "$remote" | grep -Eq 'MD5=[0-9a-f]{32}set|PROBE_DONE=1[a-zA-Z]'; then
+  if printf '%s\n' "$remote" | grep -Eq 'MD5=.*set \+e|MD5=[0-9a-f]{32}set|PROBE_DONE=1[a-zA-Z]|v2_md5"set'; then
     echo "FAIL host-side remote script still has MD5/PROBE glue" >&2
-    printf '%s\n' "$remote" | cat -A | sed -n '/MD5=\|/PROBE_DONE=/p' | head -10 | sed 's/^/  /' >&2
+    printf '%s\n' "$remote" | cat -A | grep -E 'MD5=|PROBE_DONE=|set \+e' | head -20 | sed 's/^/  /' >&2
+    return 3
+  fi
+  # Every set +e must be alone on its line (cat -A style check without requiring cat -A).
+  if printf '%s\n' "$remote" | grep -n 'set +e' | grep -vE '^[0-9]+:set \+e$'; then
+    echo "FAIL host-side remote script: set +e not alone on its line" >&2
     return 3
   fi
   if [ "${PROMOTE_DUMP_REMOTE:-0}" = "1" ]; then
@@ -331,25 +348,32 @@ verify_live() {
   root=$(gate_field "$blob" LIVE_ROOT)
 
   # Shape gates FIRST — contaminated capture must never reach md5 equality.
-  for _pair in "product-core:$prod" "v2-rollback-core:$v2" "live-exe-md5:$live"; do
-    _name="${_pair%%:*}"
-    _val="${_pair#*:}"
-    set +e
-    gate_assert_md5_shape "$_name" "$_val"
-    _src=$?
-    set -e
-    if [ "$_src" -ne 0 ]; then
-      rc=3
-    fi
-  done
+  # Track per-field shape so a glue-contaminated V2_MD5 does not also emit a
+  # misleading "got=…set +e want=<clean>" drift message (blind-and-RED class).
+  shape_prod=0
+  shape_v2=0
+  shape_live=0
+  set +e
+  gate_assert_md5_shape "product-core" "$prod"
+  shape_prod=$?
+  gate_assert_md5_shape "v2-rollback-core" "$v2"
+  shape_v2=$?
+  gate_assert_md5_shape "live-exe-md5" "$live"
+  shape_live=$?
+  set -e
+  if [ "$shape_prod" -ne 0 ] || [ "$shape_v2" -ne 0 ] || [ "$shape_live" -ne 0 ]; then
+    rc=3
+  fi
   # n_daemon must be a small integer if present
   if [ -n "$n" ] && ! printf '%s' "$n" | grep -Eq '^[0-9]+$'; then
     echo "FAIL n_daemon shape got='$n' (want digits only)"
     rc=3
   fi
 
-  # product core
-  if [ -z "$prod" ]; then
+  # product core (skip equality when shape already failed — do not look like pin drift)
+  if [ "$shape_prod" -ne 0 ]; then
+    echo "SKIP product-core equality (shape failed — fix probe capture, do not relax compare)"
+  elif [ -z "$prod" ]; then
     echo "NO-DATA product-core md5 empty"
     rc=4
   elif [ "$prod" = "MISSING" ]; then
@@ -374,7 +398,9 @@ verify_live() {
   fi
 
   # V2 rollback slot must remain intact
-  if [ -z "$v2" ]; then
+  if [ "$shape_v2" -ne 0 ]; then
+    echo "SKIP v2-rollback-core equality (shape failed — capture contaminated; comparison not relaxed)"
+  elif [ -z "$v2" ]; then
     echo "NO-DATA v2-rollback-core md5 empty"
     [ "$rc" -eq 0 ] && rc=4
   elif [ "$v2" = "MISSING" ]; then
@@ -399,7 +425,9 @@ verify_live() {
     echo "OK n_daemon=1"
   fi
 
-  if [ -z "$live" ]; then
+  if [ "$shape_live" -ne 0 ]; then
+    echo "SKIP live-exe-md5 equality (shape failed — fix probe capture)"
+  elif [ -z "$live" ]; then
     echo "NO-DATA live /proc/PID/exe md5 (disk-only is NOT success)"
     [ "$rc" -eq 0 ] && rc=4
   elif pair_policy_md5_match "$live" "$EXPECT_DAEMON_MD5"; then

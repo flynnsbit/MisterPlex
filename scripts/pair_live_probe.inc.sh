@@ -9,16 +9,22 @@
 
 # Emit a remote shell fragment that prints:
 #   N_DAEMON= PIDS= LIVE_MD5= LIVE_EXE= LIVE_PORT= LIVE_CONF= LIVE_ROOT=
+#
+# JOIN SAFETY: this fragment is safe to append ONLY via gate_join_remote_parts
+# (explicit \\n). Never do remote+="$(snippet)" after an echo "V2_MD5=$x" line —
+# $(...) strips trailing NL and produces V2_MD5=<hex>set +e (parent blind-RED).
+# Prefer inlining inside a single heredoc (promotion_gate_check remote_live_blob).
 pair_remote_live_daemon_snippet() {
   cat <<'REMOTE'
+# pair live identity fragment (errexit off on next line only)
 set +e
 n=0
-pids=""
-live=""
-conf=""
-port=""
-exe=""
-root=""
+pids=
+live=
+conf=
+port=
+exe=
+root=
 for d in /proc/[0-9]*; do
   [ -e "$d/exe" ] || continue
   p=${d#/proc/}
@@ -37,30 +43,33 @@ for d in /proc/[0-9]*; do
   exe=$x
   live=$m
   root=$(dirname "$(dirname "$x")")
-  conf=""; port=""; prev=""
+  conf=
+  port=
+  prev=
   if [ -r "$d/cmdline" ]; then
-    cmd=$(tr '\0' ' ' <"$d/cmdline" 2>/dev/null) || cmd=""
+    cmd=$(tr '\0' ' ' <"$d/cmdline" 2>/dev/null) || cmd=
     for tok in $cmd; do
       case "$prev" in
-        --port) port="$tok"; prev=""; continue ;;
-        --conf) conf="$tok"; prev=""; continue ;;
+        --port) port="$tok"; prev=; continue ;;
+        --conf) conf="$tok"; prev=; continue ;;
       esac
       case "$tok" in
         --port) prev=--port ;;
-        --port=*) port="${tok#--port=}"; prev="" ;;
+        --port=*) port="${tok#--port=}"; prev= ;;
         --conf) prev=--conf ;;
-        --conf=*) conf="${tok#--conf=}"; prev="" ;;
-        *) prev="" ;;
+        --conf=*) conf="${tok#--conf=}"; prev= ;;
+        *) prev= ;;
       esac
     done
   fi
 done
-echo "N_DAEMON=$n"
-echo "PIDS=$pids"
-echo "LIVE_MD5=${live}"
-echo "LIVE_EXE=${exe}"
-echo "LIVE_PORT=${port}"
-echo "LIVE_CONF=${conf}"
-echo "LIVE_ROOT=${root}"
+printf 'N_DAEMON=%s\n' "$n"
+printf 'PIDS=%s\n' "$pids"
+printf 'LIVE_MD5=%s\n' "$live"
+printf 'LIVE_EXE=%s\n' "$exe"
+printf 'LIVE_PORT=%s\n' "$port"
+printf 'LIVE_CONF=%s\n' "$conf"
+printf 'LIVE_ROOT=%s\n' "$root"
+printf 'LIVE_PROBE_DONE=%s\n' "1"
 REMOTE
 }

@@ -552,9 +552,50 @@ echo "$out" | sed 's/^/  [glue] /' | tail -25
 echo "  [glue] true rc=$rc"
 [ "$rc" -ne 0 ] && ok "glue-blob-fail" || bad "glue-blob-fail should not pass"
 echo "$out" | grep -q 'shape' && ok "glue-shape-msg" || bad "glue-shape-msg"
+# Contaminated capture must NOT also look like pin-drift equality failure
+# (parent blind-and-RED: got=<hex>set +e want=<hex>). Skip equality instead.
+if echo "$out" | grep -qE 'got=.*set \+e want='; then
+  bad "glue-no-got-want-drift-msg"
+else
+  ok "glue-no-got-want-drift-msg"
+fi
+echo "$out" | grep -q 'SKIP v2-rollback-core equality' && ok "glue-skip-equality" || bad "glue-skip-equality"
+# Must NOT strip glue to 32-hex and pass
+echo "$out" | grep -q 'OK v2-rollback-core dfebf2bfd08dd70b473b587dd7e81848' && bad "glue-must-not-trim-pass" || ok "glue-must-not-trim-pass"
 # Visual MUST still run (aggregate) — not skip
 echo "$out" | grep -qE 'visual_hook|VISUAL_REQUIRED|visual_idle|motion_hook' && ok "glue-visual-ran" || bad "glue-visual-ran"
 echo "$out" | grep -q 'skip visual' && bad "glue-no-skip-visual" || ok "glue-no-skip-visual"
+
+echo "=== REGRESSION: host-executed remote probe emits pure 32-hex V2_MD5 ==="
+# Simulate device files + run the dumped remote script under bash (no SSH).
+mkdir -p "$WORK/sim/media/fat/_Utility" "$WORK/sim/proc"
+# 32-byte fake RBFs with known md5 via content
+printf 'PRODUCT_RBF_BYTES_FOR_MD5_AAAA' >"$WORK/sim/media/fat/_Utility/Plex.rbf"
+printf 'V2_ROLLBACK_RBF_BYTES_FOR_MD5_BB' >"$WORK/sim/media/fat/_Utility/Plex_v2.rbf"
+want_v2=$(md5sum "$WORK/sim/media/fat/_Utility/Plex_v2.rbf" | awk '{print $1}')
+want_prod=$(md5sum "$WORK/sim/media/fat/_Utility/Plex.rbf" | awk '{print $1}')
+set +e
+"$GATES" dump-remote-live >"$WORK/dump_for_sim.txt" 2>&1
+drc=$?
+set -e
+[ "$drc" -eq 0 ] || bad "sim-dump-rc"
+# Rewrite absolute device paths in the remote script to the sim tree.
+sed -e "s#/media/fat/_Utility/Plex.rbf#$WORK/sim/media/fat/_Utility/Plex.rbf#g" \
+    -e "s#/media/fat/_Utility/Plex_v2.rbf#$WORK/sim/media/fat/_Utility/Plex_v2.rbf#g" \
+    "$WORK/dump_for_sim.txt" >"$WORK/sim_remote.sh"
+set +e
+sim_out=$(bash "$WORK/sim_remote.sh" 2>/dev/null)
+src=$?
+set -e
+echo "$sim_out" | sed 's/^/  [sim] /' | head -20
+echo "  [sim] true rc=$src"
+v2_line=$(printf '%s\n' "$sim_out" | grep '^V2_MD5=' | head -1)
+echo "  [sim] $v2_line"
+# Must be exactly V2_MD5=<32hex> with nothing glued
+printf '%s\n' "$v2_line" | grep -Eq "^V2_MD5=${want_v2}$" && ok "sim-v2-pure" || bad "sim-v2-pure got='$v2_line' want=V2_MD5=$want_v2"
+printf '%s\n' "$v2_line" | grep -q 'set' && bad "sim-v2-no-set-token" || ok "sim-v2-no-set-token"
+prod_line=$(printf '%s\n' "$sim_out" | grep '^PRODUCT_MD5=' | head -1)
+printf '%s\n' "$prod_line" | grep -Eq "^PRODUCT_MD5=${want_prod}$" && ok "sim-prod-pure" || bad "sim-prod-pure"
 
 echo "=== GREEN path still returns true rc=0 (success path is tested) ==="
 printf 'nohup /media/fat/misterplex_v2/bin/misterplexd_supervise.sh >>/media/fat/misterplex_v2/misterplexd_supervise.log 2>&1 &\n' \

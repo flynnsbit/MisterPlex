@@ -25,6 +25,9 @@ Parent-owned device work only. Agents produce artifacts and commands; they must
 | Session telemetry | Vacuous PASS without play | `SESSION_ESTABLISHED=0` | would PASS | **77 UNSCORED** |
 | Session drops | Closed ledger | `drops=2` | n/a | **1** |
 | Menu bounce | Bare `menu.rbf` no-op | `promotion_menu_bounce_cmd` | silent no-op | full path only |
+| **V2_MD5 capture** | Blind-and-RED: `V2_MD5=<32hex>set +e` from `$(frag1)$(frag2)` glue | inject contaminated blob; host-exec dump-remote | permanent RED (tempt: strip glue) | shape FAIL + **SKIP equality** (no got/want drift); sim probe pure 32-hex |
+| Boot hook ≠ live root | Cold boot starts v1 daemon/conf | v1 hook + v2 LIVE_ROOT | undetected all session | **rc=3** `BOOT_HOOK_FAIL` / hook-live-mismatch |
+| `plexctl reload-v2` host | Host `[ -f ]` on device path → false "no core" | run on lab host | **rc=4** false MISSING | **rc=4 NOT_ON_DEVICE** (honest; use `rollback_v2.sh`) |
 
 Also: `bash tests/unit/test_deploy_misterplexd.sh` (62 checks) — green DEPLOY_OK⇒rc0; red no DEPLOY_OK.
 
@@ -284,9 +287,19 @@ Prior pins still accepted for pair matrix: `36b89bcb`, `3883f5ab`, `edc3a46b`,
 
 ## Probe capture (V2_MD5 `set +e` glue)
 
-Parent: `got=dfebf2bf…81848set +e`. Cause: `$(frag1)$(frag2)` strips trailing
-newlines. Fix: **one** remote heredoc (`promotion_gate_check.sh dump-remote-live`
-to audit). Shape assert rejects contaminated digests — never fuzzy-trim.
+Parent: `got=dfebf2bf…81848set +e` / `[probe] V2_MD5=…81848set +e` (gate on
+`961dc724` multipath join). Cause: `$(frag1)$(frag2)` strips trailing newlines so
+`echo "V2_MD5=$v2_md5"` + next `set +e` becomes one physical line and prints the
+glue into the value. **Fix the capture, not the comparison:**
+
+1. `remote_live_blob` is a **single heredoc** (`printf 'V2_MD5=%s\n'` only; never
+   append `pair_remote_live_daemon_snippet` via `remote+=`).
+2. `set +e` only alone on its own line, **before** md5 emit.
+3. `gate_assert_md5_shape` rejects non-`^[0-9a-f]{32}$` — **never strip** glue.
+4. Shape fail → **SKIP equality** (no misleading `got=…set +e want=<clean>`).
+5. Host-exec of `dump-remote-live` proves pure 32-hex (`sim-v2-pure` unit).
+
+Audit: `scripts/promotion_gate_check.sh dump-remote-live | cat -A`
 
 ## OPEN conditions (do not mark closed)
 
@@ -967,7 +980,11 @@ Atomic pair promote/rollback remains `scripts/rollback_v2.sh` / `promote_ddr_dai
 
 ### V2_MD5 probe glue (never fuzzy-trim)
 
-`$(ssh …)` strips trailing newlines, so a remote `echo V2_MD5=$md5` fused with the next `set +e` produced `…81848set +e` (parent 2026-07-31). Fix: `gate_join_remote_parts` + `gate_assert_md5_shape` (exactly 32 hex). Contaminated values fail closed — do not strip noise.
+`$(…)` strips trailing newlines, so multipath `echo "V2_MD5=$md5"` fused with the
+next `set +e` produced `…81848set +e` (parent measured on `961dc724`). Fix:
+**single-heredoc** remote probe + `gate_assert_md5_shape` (exactly 32 hex) +
+skip equality on shape fail. Contaminated values fail closed — do not strip noise.
+`run_ssh` re-terminates blobs with `\n` so host-side append cannot re-glue.
 
 ## Conf restore md5 equality (user-owned)
 
@@ -980,7 +997,12 @@ Atomic pair promote/rollback remains `scripts/rollback_v2.sh` / `promote_ddr_dai
 
 ## V2_MD5 capture (blind-and-RED class)
 
-Fixed by `gate_join_remote_parts` + host-side refuse of `MD5=<32hex>set` in joined remote script + `gate_assert_md5_shape` before equality. Wrong pure 32-hex still fails equality (`FAIL v2-rollback-core`). Contaminated values fail shape — never fuzzy-trim.
+Fixed by single-heredoc remote probe (not multipath join) + host-side refuse of
+`MD5=<32hex>set` in dumped remote script + `gate_assert_md5_shape` before equality
++ **SKIP equality** when shape fails. Wrong pure 32-hex still fails equality
+(`FAIL v2-rollback-core got=… want=…`). Contaminated values fail shape only —
+never fuzzy-trim. Host unit: `sim-v2-pure` executes the dumped remote script
+against temp RBF files and requires `^V2_MD5=<32hex>$`.
 
 
 ## Daemon pin chain (2026-07-31 evening)
