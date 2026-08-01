@@ -84,18 +84,24 @@ Rate / revisit model (parent calibration)
   Capture FPS (MacroSilicon MJPEG burst) and source FPS are independent.
   **Neither rate is measured by this instrument.** Pass both explicitly when
   known (daemon telemetry `fps=24/1` → `--source-fps 24` / `--src-fps 24/1`).
-  Provenance is always printed with tags measured | caller_supplied | DEFAULT_ASSUMED:
-    src_fps=24.000 src=caller_supplied   # --source-fps
-    src_fps=24.000 src=DEFAULT_ASSUMED   # fell back to library default
-    cap_fps=29.9068 cap=measured         # wall_s or mtime
+  Provenance tokens (daemon/w-cpu-1 three + one extension):
+    measured | caller_supplied | DEFAULT_ASSUMED
+    + caller_supplied_measured  # PMS frameRate= / ffmpeg banner via
+                                # --source-fps 24 --source-fps-src caller_supplied_measured
+  Print form is ALWAYS `value [tag]` (bare numbers forbidden — ERROR 17):
+    src_fps=24.000 [caller_supplied_measured]
+    src_fps=24.000 [caller_supplied]            # --source-fps alone
+    src_fps=24.000 [DEFAULT_ASSUMED]            # CLI omitted — NOT measured
+    cap_fps=29.9068 [measured]                  # wall_s or mtime
   Library assets (Plex metadata frameRate="24.000" / videoFrameRate="24p")
   are genuinely 24.000 — NOT NTSC 24000/1001. PARENT ERROR 17: a printed
   23.976 default was mistaken for a measurement and published as a defect.
   Default assumed source = 24.000; default assumed capture = 30.0.
   **When either fps is DEFAULT_ASSUMED the rate dimension is RATE_UNSCORED,
-  never RATE_OK.** Ratio/endpoint/plateau gates only fire when BOTH fps are
-  authoritative (caller_supplied / measured / container). Revisit (bank-swap)
-  still hard-fails without fps — pure measured sequence property.
+  never RATE_OK, and expected= prints UNSCORED (never a guessed number).**
+  Ratio/endpoint/plateau gates only fire when BOTH fps are authoritative
+  (caller_supplied / caller_supplied_measured / measured / container).
+  Revisit (bank-swap) still hard-fails without fps — pure sequence property.
   Healthy 24fps-on-30-capture (parent hand measure, 105-frame burst):
     84 distinct counter states, 84 runs, max plateau 2, plateau hist {1,2},
     zero non-adjacent revisits, unique/frames = 84/105 = 0.800 = 24/30.
@@ -214,21 +220,45 @@ PROVENANCE_DEFAULT_ASSUMED = "DEFAULT_ASSUMED"
 PROVENANCE_CONTAINER = "container"
 # Provenance for rates measured from this capture (PNG mtimes or --capture-wall-s).
 PROVENANCE_MEASURED = "measured"
-# Accept legacy "caller" in comparisons
-_PROVENANCE_CALLER_ALIASES = frozenset({PROVENANCE_CALLER, "caller"})
+# Parent-read asset rate (PMS frameRate= / ffmpeg banner). Authoritative for
+# rate gates; NOT instrument-measured — label must stay distinct from measured.
+PROVENANCE_CALLER_MEASURED = "caller_supplied_measured"
+# Canonical three tokens shared with daemon (w-cpu-1 supply_bucket fps_src=):
+PROVENANCE_THREE = (
+    PROVENANCE_MEASURED,
+    PROVENANCE_CALLER,
+    PROVENANCE_DEFAULT_ASSUMED,
+)
+# Accept legacy "caller" in comparisons; measured/caller_supplied_measured auth src.
+_PROVENANCE_SRC_AUTH = frozenset(
+    {
+        PROVENANCE_CALLER,
+        "caller",
+        PROVENANCE_CALLER_MEASURED,
+        PROVENANCE_MEASURED,
+    }
+)
 
 
 def _is_caller_prov(src: str | None) -> bool:
-    return str(src or "") in _PROVENANCE_CALLER_ALIASES
+    """True when source_fps may authorise rate gates (not DEFAULT_ASSUMED)."""
+    return str(src or "") in _PROVENANCE_SRC_AUTH
 
 
 def _is_cap_auth_prov(src: str | None) -> bool:
     return str(src or "") in (
         PROVENANCE_CALLER,
         "caller",
+        PROVENANCE_CALLER_MEASURED,
         PROVENANCE_CONTAINER,
         PROVENANCE_MEASURED,
     )
+
+
+def _tag(value: Any, src: str | None) -> str:
+    """Format value [provenance] — bare numbers are forbidden (ERROR 17)."""
+    s = str(src or PROVENANCE_DEFAULT_ASSUMED)
+    return f"{value} [{s}]"
 
 # Display-level skip measurement (burned-in counter jumps). Not a hard verdict
 # dimension: reported as count + confidence. Parent: drops/av_drift_ms are
@@ -948,6 +978,7 @@ def green_cast_metrics(rgb: np.ndarray) -> dict[str, Any]:
         "channel_means": [float(rgb.mean())] * 3 if rgb.size else [0.0, 0.0, 0.0],
         "chroma_cast": False,
         "greyscale_flat": False,
+        "chroma_constant": False,
         "uv_swap": False,
         "active_frac": 0.0,
         "active_chroma_mean": 0.0,
@@ -956,6 +987,7 @@ def green_cast_metrics(rgb: np.ndarray) -> dict[str, Any]:
         "blue_dom": 0.0,
         "cyan_dom": 0.0,
         "color_fail": False,
+        "color_metrics_src": PROVENANCE_MEASURED,
     }
     if _is_uniform(rgb):
         # Near-black uniform = grabber junk. Lit uniform grey = dead chroma defect.
@@ -1030,6 +1062,8 @@ def green_cast_metrics(rgb: np.ndarray) -> dict[str, Any]:
         "channel_means": [round(x, 1) for x in means],
         "chroma_cast": bool(chroma_cast),
         "greyscale_flat": bool(greyscale_flat),
+        # Alias for parent B7 "chroma-constant" vocabulary (same predicate).
+        "chroma_constant": bool(greyscale_flat),
         "uv_swap": bool(uv_swap),
         "active_frac": round(active_frac, 4),
         "active_chroma_mean": round(active_chroma_mean, 3),
@@ -1040,6 +1074,7 @@ def green_cast_metrics(rgb: np.ndarray) -> dict[str, Any]:
         "mean_cb": round(mean_cb, 2),
         "mean_cr": round(mean_cr, 2),
         "color_fail": color_fail,
+        "color_metrics_src": PROVENANCE_MEASURED,
     }
 
 
@@ -3139,13 +3174,25 @@ def analyze_counter_rate(
 
     expected = source_fps / capture_fps
     max_plat_allowed = int(math.ceil(capture_fps / source_fps)) + 1
-    empty["expected_ratio"] = round(expected, 4)
-    empty["max_plateau_allowed"] = max_plat_allowed
+    # ERROR 17: never emit a numeric expected under DEFAULT_ASSUMED — a wrong
+    # but plausible number is worse than no number (parent false 23.976 finding).
+    empty["expected_ratio"] = round(expected, 4) if fps_auth else None
+    empty["expected_ratio_src"] = (
+        "derived_src_over_cap" if fps_auth else "UNSCORED_fps_not_authoritative"
+    )
+    empty["max_plateau_allowed"] = max_plat_allowed if fps_auth else None
+    empty["max_plateau_allowed_src"] = (
+        "derived_ceil_cap_over_src_plus_1" if fps_auth else "UNSCORED_fps_not_authoritative"
+    )
+    empty["source_fps_src"] = source_fps_src
+    empty["capture_fps_src"] = capture_fps_src
     if not fps_auth:
         empty["rate_notes"] = [
             "rate_unscored_fps_assumed "
             f"src={source_fps_src} cap={capture_fps_src} "
-            "(pass --source-fps/--capture-fps from daemon fps= token for RATE_OK)"
+            "(pass --source-fps with --source-fps-src caller_supplied_measured "
+            "from PMS frameRate= / ffmpeg banner, or daemon fps=; "
+            "expected= is UNSCORED not a guessed number — ERROR 17)"
         ]
 
     if len(pairs) < RATE_MIN_SAMPLES:
@@ -3264,7 +3311,9 @@ def analyze_counter_rate(
         notes.append(
             "rate_unscored_fps_assumed "
             f"src={source_fps_src} cap={capture_fps_src} "
-            "(pass --source-fps/--capture-fps from daemon fps= token for RATE_OK)"
+            "(pass --source-fps with --source-fps-src caller_supplied_measured "
+            "from PMS frameRate= / ffmpeg banner, or daemon fps=; "
+            "expected= is UNSCORED not a guessed number — ERROR 17)"
         )
         # Informational only under assumed fps — never fail on the guess.
         if max_plateau > max_plat_allowed:
@@ -3288,15 +3337,34 @@ def analyze_counter_rate(
     return {
         "rate": rate_label,
         "rate_fail": rate_fail,
-        # Comparable to expected (= src_fps/cap_fps) only when fps_authoritative:
+        # unique_ratio / endpoint_rate are measured from counter sequence.
         "unique_ratio": round(unique_ratio, 4),
+        "unique_ratio_src": PROVENANCE_MEASURED,
         "endpoint_rate": round(endpoint_rate, 4),
-        "expected_ratio": round(expected, 4),
+        "endpoint_rate_src": PROVENANCE_MEASURED,
+        # expected only when fps authoritative — else None (print UNSCORED).
+        "expected_ratio": round(expected, 4) if fps_authoritative else None,
+        "expected_ratio_src": (
+            "derived_src_over_cap"
+            if fps_authoritative
+            else "UNSCORED_fps_not_authoritative"
+        ),
         # Deprecated alias of endpoint_rate (same value); do not reinterpret.
-        "span_rate": round(span_rate, 4),
+        "span_rate": round(span_rate, 4) if fps_authoritative else None,
+        "span_rate_src": (
+            "alias_of_endpoint_rate"
+            if fps_authoritative
+            else "UNSCORED_fps_not_authoritative"
+        ),
         "max_plateau": int(max_plateau),
-        "max_plateau_allowed": max_plat_allowed,
-        "plateau_warn": bool(plateau_warn),
+        "max_plateau_src": PROVENANCE_MEASURED,
+        "max_plateau_allowed": max_plat_allowed if fps_authoritative else None,
+        "max_plateau_allowed_src": (
+            "derived_ceil_cap_over_src_plus_1"
+            if fps_authoritative
+            else "UNSCORED_fps_not_authoritative"
+        ),
+        "plateau_warn": bool(plateau_warn) if fps_authoritative else False,
         "plateau_hist": {str(k): int(v) for k, v in sorted(plateau_hist.items())},
         "unique_states": int(unique_states),
         "n_samples": len(ns),
@@ -3305,6 +3373,7 @@ def analyze_counter_rate(
         "n_first": int(ns[0]),
         "n_last": int(ns[-1]),
         "non_adjacent_revisits": int(revisits),
+        "non_adjacent_revisits_src": PROVENANCE_MEASURED,
         "revisit_fail": bool(revisit_fail),
         "rate_reasons": reasons,
         "rate_notes": notes,
@@ -3453,6 +3522,8 @@ def score_burst(
     if len(chroma_hits) >= GREEN_CAST_MIN_FRAMES:
         color_flags.append("CHROMA")
     if len(grey_hits) >= GREEN_CAST_MIN_FRAMES:
+        # Parent B7 vocabulary: chroma-constant == dead U/V on lit picture.
+        color_flags.append("CHROMA_CONSTANT")
         color_flags.append("GREYSCALE")
     if len(uv_hits) >= GREEN_CAST_MIN_FRAMES:
         color_flags.append("UV_SWAP")
@@ -3620,14 +3691,20 @@ def score_burst(
         )
     elif rate_fail:
         final, rc = "RATE_FAIL", RC_RATE_FAIL
+        exp_v = rate_info.get("expected_ratio")
+        exp_s = (
+            _tag(exp_v, rate_info.get("expected_ratio_src") or "derived_src_over_cap")
+            if exp_v is not None
+            else "UNSCORED [UNSCORED_fps_not_authoritative]"
+        )
         reason = (
             f"rate={rate_label} "
-            f"unique_ratio={rate_info.get('unique_ratio')} "
-            f"endpoint_rate={rate_info.get('endpoint_rate')} "
-            f"expected={rate_info.get('expected_ratio')} "
-            f"max_plateau={rate_info.get('max_plateau')}/"
+            f"unique_ratio={_tag(rate_info.get('unique_ratio'), PROVENANCE_MEASURED)} "
+            f"endpoint_rate={_tag(rate_info.get('endpoint_rate'), PROVENANCE_MEASURED)} "
+            f"expected={exp_s} "
+            f"max_plateau={_tag(rate_info.get('max_plateau'), PROVENANCE_MEASURED)}/"
             f"{rate_info.get('max_plateau_allowed')} "
-            f"revisits={rate_info.get('non_adjacent_revisits')} "
+            f"revisits={_tag(rate_info.get('non_adjacent_revisits'), PROVENANCE_MEASURED)} "
             f"(hard FAIL independent of motion={motion}); {reason}"
         )
     elif motion == "FREEZE":
@@ -3660,14 +3737,21 @@ def score_burst(
         "structure": structure,
         "rate": rate_label,
         "unique_ratio": rate_info.get("unique_ratio"),
+        "unique_ratio_src": rate_info.get("unique_ratio_src"),
         "endpoint_rate": rate_info.get("endpoint_rate"),
+        "endpoint_rate_src": rate_info.get("endpoint_rate_src"),
         "span_rate": rate_info.get("span_rate"),  # alias of endpoint_rate
+        "span_rate_src": rate_info.get("span_rate_src"),
         "expected_ratio": rate_info.get("expected_ratio"),
+        "expected_ratio_src": rate_info.get("expected_ratio_src"),
         "max_plateau": rate_info.get("max_plateau"),
+        "max_plateau_src": rate_info.get("max_plateau_src"),
         "max_plateau_allowed": rate_info.get("max_plateau_allowed"),
+        "max_plateau_allowed_src": rate_info.get("max_plateau_allowed_src"),
         "plateau_warn": rate_info.get("plateau_warn"),
         "plateau_hist": rate_info.get("plateau_hist"),
         "non_adjacent_revisits": rate_info.get("non_adjacent_revisits"),
+        "non_adjacent_revisits_src": rate_info.get("non_adjacent_revisits_src"),
         "cap_span": rate_info.get("cap_span"),
         "ctr_span": rate_info.get("ctr_span"),
         "fps_authoritative": rate_info.get("fps_authoritative"),
@@ -3841,30 +3925,65 @@ def _print_human(report: dict[str, Any], src: str) -> None:
         # Print comparable pairs together; never mix incomparable quantities.
         # unique_ratio  ≈ expected  (= src_fps/cap_fps)   — primary gate
         # endpoint_rate ≈ expected  (ctr_span/cap_span)   — secondary gate
+        # Every scalar carries [provenance] — bare numbers are ERROR 17.
         pw = report.get("plateau_warn")
         pw_s = " plateau_warn=1" if pw else ""
         auth = report.get("fps_authoritative")
         auth_s = "fps_authoritative=1" if auth else "fps_authoritative=0"
+        exp = report.get("expected_ratio")
+        exp_src = report.get("expected_ratio_src") or (
+            "derived_src_over_cap" if auth else "UNSCORED_fps_not_authoritative"
+        )
+        exp_s = (
+            _tag(exp, exp_src)
+            if exp is not None
+            else "UNSCORED [UNSCORED_fps_not_authoritative]"
+        )
+        span = report.get("span_rate")
+        span_s = (
+            _tag(span, report.get("span_rate_src") or "alias_of_endpoint_rate")
+            if span is not None
+            else "UNSCORED [UNSCORED_fps_not_authoritative]"
+        )
+        max_allowed = report.get("max_plateau_allowed")
+        max_allowed_s = (
+            _tag(
+                max_allowed,
+                report.get("max_plateau_allowed_src")
+                or "derived_ceil_cap_over_src_plus_1",
+            )
+            if max_allowed is not None
+            else "UNSCORED [UNSCORED_fps_not_authoritative]"
+        )
+        src_tag = str(
+            report.get("source_fps_src") or PROVENANCE_DEFAULT_ASSUMED
+        )
+        cap_tag = str(
+            report.get("capture_fps_src") or PROVENANCE_DEFAULT_ASSUMED
+        )
+        err17 = ""
+        if src_tag == PROVENANCE_DEFAULT_ASSUMED or not auth:
+            err17 = (
+                " NOTE_ERROR17=src_fps_or_cap_not_authoritative_"
+                "expected_and_rate_gates_are_UNSCORED_not_a_measurement"
+            )
         print(
             f"rate_metrics "
-            f"unique_ratio={report.get('unique_ratio')} "
-            f"endpoint_rate={report.get('endpoint_rate')} "
-            f"expected={report.get('expected_ratio')} "
-            f"(unique_ratio and endpoint_rate comparable to expected only when "
+            f"unique_ratio={_tag(report.get('unique_ratio'), PROVENANCE_MEASURED)} "
+            f"endpoint_rate={_tag(report.get('endpoint_rate'), PROVENANCE_MEASURED)} "
+            f"expected={exp_s} "
+            f"span_rate={span_s} "
+            f"(unique_ratio/endpoint_rate comparable to expected only when "
             f"fps_authoritative) "
-            f"max_plateau={report.get('max_plateau')}/"
-            f"{report.get('max_plateau_allowed')}{pw_s} "
+            f"max_plateau={_tag(report.get('max_plateau'), PROVENANCE_MEASURED)}/"
+            f"{max_allowed_s}{pw_s} "
             f"plateau_hist={report.get('plateau_hist')} "
-            f"revisits={report.get('non_adjacent_revisits')} "
-            f"ctr_span={report.get('ctr_span')} cap_span={report.get('cap_span')} "
-            f"src_fps={report.get('source_fps')} "
-            f"src_fps_der=cli_or_default_NOT_asset_probe "
-            f"src_fps_tag={report.get('source_fps_src', PROVENANCE_DEFAULT_ASSUMED)} "
-            f"cap_fps={report.get('capture_fps')} "
-            f"cap_fps_der=cli_or_default_or_pts "
-            f"cap_fps_tag={report.get('capture_fps_src', PROVENANCE_DEFAULT_ASSUMED)} "
-            f"{auth_s} "
-            f"NOTE_ERROR17=src_fps_tag_DEFAULT_ASSUMED_is_not_a_measurement"
+            f"revisits={_tag(report.get('non_adjacent_revisits'), PROVENANCE_MEASURED)} "
+            f"ctr_span={_tag(report.get('ctr_span'), PROVENANCE_MEASURED)} "
+            f"cap_span={_tag(report.get('cap_span'), PROVENANCE_MEASURED)} "
+            f"src_fps={_tag(report.get('source_fps'), src_tag)} "
+            f"cap_fps={_tag(report.get('capture_fps'), cap_tag)} "
+            f"{auth_s}{err17}"
         )
         notes = report.get("rate_notes") or []
         if notes:
@@ -4119,6 +4238,7 @@ def _self_test() -> int:
         assert rep_gy["greyscale_frames"] >= GREEN_CAST_MIN_FRAMES, rep_gy
         assert rep_gy["rc"] == RC_COLOR_FAIL, rep_gy
         assert "GREYSCALE" in rep_gy["color"], rep_gy
+        assert "CHROMA_CONSTANT" in rep_gy["color"], rep_gy
 
         # UV-swapped flash burst → COLOR_FAIL.
         uvdir = tdp / "uvswap"
@@ -4172,6 +4292,7 @@ def _self_test() -> int:
     assert abs(float(ri["expected_ratio"]) - 0.8) < 1e-6, ri
 
     # DEFAULT_ASSUMED on healthy pattern → RATE_UNSCORED (never RATE_OK on a guess).
+    # expected_ratio must be None — a wrong-but-plausible number is ERROR 17.
     ri_assumed = analyze_counter_rate(
         list(enumerate(good_ns)),
         source_fps=DEFAULT_ASSUMED_SOURCE_FPS,
@@ -4182,6 +4303,23 @@ def _self_test() -> int:
     assert ri_assumed["rate"] == "RATE_UNSCORED", ri_assumed
     assert ri_assumed["rate_fail"] is False, ri_assumed
     assert ri_assumed["fps_authoritative"] is False, ri_assumed
+    assert ri_assumed["expected_ratio"] is None, ri_assumed
+    assert ri_assumed["span_rate"] is None, ri_assumed
+    assert "UNSCORED" in str(ri_assumed["expected_ratio_src"]), ri_assumed
+
+    # PMS/ffmpeg banner rate → caller_supplied_measured authorises rate gates.
+    ri_csm = analyze_counter_rate(
+        list(enumerate(good_ns)),
+        source_fps=24.0,
+        capture_fps=30.0,
+        source_fps_src=PROVENANCE_CALLER_MEASURED,
+        capture_fps_src=PROVENANCE_MEASURED,
+    )
+    assert ri_csm["rate"] == "RATE_OK", ri_csm
+    assert ri_csm["fps_authoritative"] is True, ri_csm
+    assert ri_csm["expected_ratio"] is not None, ri_csm
+    assert abs(float(ri_csm["expected_ratio"]) - 0.8) < 1e-6, ri_csm
+    assert ri_csm["source_fps_src"] == PROVENANCE_CALLER_MEASURED, ri_csm
 
     # Bound-riding plateau (== allowed) is PASS + plateau_warn, not RATE_FAIL.
     # ceil(30/24)+1 = 3; force a single run of length 3 in an otherwise healthy seq.
@@ -4653,7 +4791,32 @@ def main(argv: list[str] | None = None) -> int:
             "daemon token '24/1'. Library 24p clips are 24.000 — NOT 23.976. "
             "If omitted, DEFAULT_ASSUMED="
             f"{DEFAULT_ASSUMED_SOURCE_FPS} and rate dimension is RATE_UNSCORED "
-            "(never RATE_OK on a guess — ERROR 17 class)."
+            "(never RATE_OK on a guess — ERROR 17 class). Pair with "
+            "--source-fps-src to label provenance (default caller_supplied)."
+        ),
+    )
+    ap.add_argument(
+        "--source-fps-src",
+        "--src-fps-src",
+        dest="source_fps_src",
+        type=str,
+        default=None,
+        choices=sorted(
+            {
+                PROVENANCE_CALLER,
+                PROVENANCE_CALLER_MEASURED,
+                PROVENANCE_MEASURED,
+                PROVENANCE_DEFAULT_ASSUMED,
+                "caller",
+            }
+        ),
+        help=(
+            "provenance tag for --source-fps (ERROR 17). "
+            f"Use {PROVENANCE_CALLER_MEASURED} when the value was read from "
+            "PMS frameRate= or an ffmpeg banner (authoritative for rate gates, "
+            "not instrument-measured). Use caller_supplied for daemon fps= "
+            f"tokens. Default when --source-fps set: {PROVENANCE_CALLER}. "
+            "Omitted --source-fps forces DEFAULT_ASSUMED."
         ),
     )
     ap.add_argument(
@@ -4666,6 +4829,27 @@ def main(argv: list[str] | None = None) -> int:
             "HDMI grabber capture rate for the burst (float or '30/1'). "
             "If omitted, try --capture-wall-s measurement, then PNG mtimes, "
             f"then DEFAULT_ASSUMED={DEFAULT_ASSUMED_CAPTURE_FPS}."
+        ),
+    )
+    ap.add_argument(
+        "--capture-fps-src",
+        "--cap-fps-src",
+        dest="capture_fps_src",
+        type=str,
+        default=None,
+        choices=sorted(
+            {
+                PROVENANCE_CALLER,
+                PROVENANCE_CALLER_MEASURED,
+                PROVENANCE_MEASURED,
+                PROVENANCE_CONTAINER,
+                PROVENANCE_DEFAULT_ASSUMED,
+                "caller",
+            }
+        ),
+        help=(
+            "provenance override for --capture-fps. Default when set: "
+            f"{PROVENANCE_CALLER}. Measured paths keep tag={PROVENANCE_MEASURED}."
         ),
     )
     ap.add_argument(
@@ -4794,9 +4978,25 @@ def main(argv: list[str] | None = None) -> int:
         if src_parsed is None:
             source_fps = DEFAULT_ASSUMED_SOURCE_FPS
             source_fps_src = PROVENANCE_DEFAULT_ASSUMED
+            if args.source_fps_src and args.source_fps_src != PROVENANCE_DEFAULT_ASSUMED:
+                print(
+                    "ERROR: --source-fps-src requires --source-fps "
+                    f"(got src={args.source_fps_src} with no value)",
+                    file=sys.stderr,
+                )
+                raise SystemExit(RC_UNSCORED)
         else:
             source_fps = src_parsed
-            source_fps_src = PROVENANCE_CALLER
+            # Default CLI supply → caller_supplied; parent PMS/ffmpeg reads
+            # must pass --source-fps-src caller_supplied_measured (ERROR 17).
+            source_fps_src = args.source_fps_src or PROVENANCE_CALLER
+            if source_fps_src == PROVENANCE_DEFAULT_ASSUMED:
+                print(
+                    "ERROR: --source-fps-src=DEFAULT_ASSUMED with an explicit "
+                    "--source-fps is contradictory; omit --source-fps to assume",
+                    file=sys.stderr,
+                )
+                raise SystemExit(RC_UNSCORED)
         try:
             cap_parsed = parse_fps_token(args.capture_fps)
         except ValueError as e:
@@ -4805,7 +5005,14 @@ def main(argv: list[str] | None = None) -> int:
         cap_measure_meta: dict[str, Any] | None = None
         if cap_parsed is not None:
             capture_fps = cap_parsed
-            capture_fps_src = PROVENANCE_CALLER
+            capture_fps_src = args.capture_fps_src or PROVENANCE_CALLER
+            if capture_fps_src == PROVENANCE_DEFAULT_ASSUMED:
+                print(
+                    "ERROR: --capture-fps-src=DEFAULT_ASSUMED with explicit "
+                    "--capture-fps is contradictory",
+                    file=sys.stderr,
+                )
+                raise SystemExit(RC_UNSCORED)
         else:
             capture_fps = DEFAULT_ASSUMED_CAPTURE_FPS
             capture_fps_src = PROVENANCE_DEFAULT_ASSUMED
@@ -4950,59 +5157,13 @@ def main(argv: list[str] | None = None) -> int:
         return RC_MOTION_OK if any_ok else RC_UNSCORED
 
     # Provenance: anything not supplied on the CLI is DEFAULT_ASSUMED (ERROR 17).
-    # RATE_OK requires BOTH caller-supplied (or container-probed capture).
+    # RATE_OK requires BOTH authoritative src + cap (caller/measured/container).
     try:
-        src_parsed = parse_fps_token(args.source_fps)
-    except ValueError as e:
-        print(f"ERROR: --source-fps: {e}", file=sys.stderr)
-        return RC_UNSCORED
-    if src_parsed is None:
-        source_fps = DEFAULT_ASSUMED_SOURCE_FPS
-        source_fps_src = PROVENANCE_DEFAULT_ASSUMED
-    else:
-        source_fps = src_parsed
-        source_fps_src = PROVENANCE_CALLER
-
-    try:
-        cap_parsed = parse_fps_token(args.capture_fps)
-    except ValueError as e:
-        print(f"ERROR: --capture-fps: {e}", file=sys.stderr)
-        return RC_UNSCORED
-    cap_measure_meta: dict[str, Any] | None = None
-    if cap_parsed is not None:
-        capture_fps = cap_parsed
-        capture_fps_src = PROVENANCE_CALLER
-    else:
-        capture_fps = DEFAULT_ASSUMED_CAPTURE_FPS
-        capture_fps_src = PROVENANCE_DEFAULT_ASSUMED
-        # 1) explicit wall clock from parent capture harness
-        # 2) PNG mtime span
-        # 3) ffprobe container
-        # 4) DEFAULT_ASSUMED
-        measured = measure_capture_fps_from_paths(
-            frames, wall_s=args.capture_wall_s
+        source_fps, source_fps_src, capture_fps, capture_fps_src, cap_measure_meta = (
+            _resolve_fps(frames)
         )
-        cap_measure_meta = measured
-        if measured.get("capture_fps") is not None:
-            capture_fps = float(measured["capture_fps"])
-            capture_fps_src = str(measured["capture_fps_src"])
-        elif args.probe_capture:
-            probed, how = try_probe_capture_fps(args.probe_capture)
-            if probed is not None:
-                capture_fps = probed
-                capture_fps_src = PROVENANCE_CONTAINER
-            else:
-                print(
-                    f"WARN: --probe-capture failed ({how}); "
-                    f"cap_fps stays DEFAULT_ASSUMED={capture_fps}",
-                    file=sys.stderr,
-                )
-        elif measured.get("reason"):
-            print(
-                f"WARN: cap_fps measure failed ({measured.get('reason')}); "
-                f"cap_fps stays DEFAULT_ASSUMED={capture_fps}",
-                file=sys.stderr,
-            )
+    except SystemExit as e:
+        return int(e.code) if isinstance(e.code, int) else RC_UNSCORED
 
     daemon_drops = args.daemon_session_drops
     daemon_drops_src = (
