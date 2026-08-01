@@ -1,12 +1,8 @@
 lane: w-lint GATE-INTEGRITY
 branch: w-lint-gate-integrity
-tip: pending inert-gate commit
+tip: 7a66341e
 
-WORST THREE (RBG proven, tree cleaned of probes):
-1. gate_false_green_guard blind to Python return 0 — FIXED (scans .py)
-2. ALLOW_MISSING return 0 laundered as PASS — FIXED (rc=77 SKIP-NOT-PASS)
-3. direct verilator PINNOTFOUND rc=0 + stale TB — FIXED (verilator_invoke)
-
+WORST THREE inert gates fixed + RBG proven (see docs/evidence/w_lint_INERT_GATE_SWEEP.md)
 true rc: gfg=0 mb0=0 nb=0 frame=0
-docs: docs/evidence/w_lint_INERT_GATE_SWEEP.md
+tree clean of probes
 NO device/Quartus
