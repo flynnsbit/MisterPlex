@@ -145,6 +145,8 @@ unit-unlocked: unit-rollcall preflight $(ROOT)/build/test_cadence $(ROOT)/build/
 	python3 $(ROOT)/tests/unit/test_live_state_identity_audit.py
 	$(ROOT)/tests/unit/test_rollback_honest.sh
 	$(ROOT)/tests/unit/test_deploy_misterplexd.sh
+	$(ROOT)/tests/unit/test_deploy_restore_mutations.sh
+	$(ROOT)/tests/unit/test_soak_continuity_assert.sh
 	$(ROOT)/tests/unit/test_promotion_gates.sh
 	python3 $(ROOT)/tests/unit/test_harness_capture_integrity.py
 	$(ROOT)/tests/unit/test_live_object_integrity.sh
