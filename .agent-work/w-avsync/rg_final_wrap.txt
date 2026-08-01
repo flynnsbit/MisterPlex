@@ -1,0 +1,24 @@
+=== avsync_plus100_ab ===
+mode=host src=caller_supplied
+expect_delta_ms=100 tol_delta_ms=15 src=caller_supplied
+sign: offset_ms=(t_beep-t_flash)*1000; + = audio LATE
+delta_ms = median_plus - median_zero; designed content lag +100 ms → delta≈+100
+NOT_USED=av_drift_ms (servo deadband)
+=== PRE-REGISTER ===
+P_DELTA: |delta_ms - 100| <= 15 → INSTRUMENT_RESOLVES_100MS
+P_FAIL:  |delta| < 40 → INSTRUMENT_BLIND (cannot adjudicate user bug)
+predictions_src=caller_supplied_pre_register
+zero_mp4=/home/flynnsbit/Projects/MisterPlex/.worktrees/w-avsync-lane/assets/avsync/sync_glass_av_480p24_600s.mp4 src=caller_supplied
+plus_mp4=/home/flynnsbit/Projects/MisterPlex/.worktrees/w-avsync-lane/assets/avsync/sync_glass_av_480p24_600s_audioPlus100ms.mp4 src=caller_supplied
+arm=zero measure true rc=0 mp4=/home/flynnsbit/Projects/MisterPlex/.worktrees/w-avsync-lane/assets/avsync/sync_glass_av_480p24_600s.mp4
+arm=zero median_offset_ms=-6.3488 n_pairs=300 src=measured_or_NO-DATA
+arm=plus measure true rc=0 mp4=/home/flynnsbit/Projects/MisterPlex/.worktrees/w-avsync-lane/assets/avsync/sync_glass_av_480p24_600s_audioPlus100ms.mp4
+arm=plus median_offset_ms=93.6490 n_pairs=300 src=measured_or_NO-DATA
+zero_median_ms=-6.3488 n=300 session_epoch=n/a src=measured_or_NO-DATA
+plus_median_ms=93.6490 n=300 session_epoch=n/a src=measured_or_NO-DATA
+delta_ms=99.9978 src=measured tag=same_tool_B_cancels_on_file_or_same_rig
+abs_err_vs_expect_ms=0.0022 expect=100 src=derived
+tol_delta_ms=15 src=caller_supplied
+VERDICT=INSTRUMENT_RESOLVES_100MS rc=0
+SCORE_PLUS100_AB delta_ms=99.9978 err_ms=0.0022 zero_ms=-6.3488 plus_ms=93.6490 n_zero=300 n_plus=300 verdict=INSTRUMENT_RESOLVES_100MS rc=0 src=measured
+PLUS100_AB_RC=0

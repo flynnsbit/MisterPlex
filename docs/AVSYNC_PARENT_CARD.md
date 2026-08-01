@@ -1,4 +1,6 @@
-# AUDIO PATH: YES (re-measured)
+# AUDIO PATH: YES
+**LIVE RUN CARD:** [`docs/AVSYNC_PARENT_NOW.md`](AVSYNC_PARENT_NOW.md) — rk=20/21 ready on PMS.
+ (re-measured)
 
 MacroSilicon `534d:2109` = `/dev/video0` + ALSA **`hw:0,0`** (card MS2109), same USB.
 `arecord -d 1` → **192044 bytes**, rc=0. Parent “video only” claim is **false on this host**.

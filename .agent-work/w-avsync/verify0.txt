@@ -1,0 +1,8 @@
+FFPROBE {"width": 624, "height": 480, "r_frame_rate": "24/1", "avg_frame_rate": "24/1", "nb_frames": "14400", "profile": "Constrained Baseline", "has_b_frames": 0, "duration_v": "600.000000", "audio_codec": "aac", "sample_rate": "48000", "format_duration": "600.000000", "src": "measured"}
+decode body luma...
+FLASH n=300 n_interp=299 n_step=0 contrast=255.0
+decode audio...
+BEEP n=300 hop_s=0.001
+BAR_SPOT [{'n': 0, 'ok': True, 'decoded': 0, 'status': 'OK', 'reason': 'bars_ok'}, {'n': 48, 'ok': True, 'decoded': 48, 'status': 'OK', 'reason': 'bars_ok'}, {'n': 2358, 'ok': True, 'decoded': 2358, 'status': 'OK', 'reason': 'bars_ok'}, {'n': 14399, 'ok': True, 'decoded': 14399, 'status': 'OK', 'reason': 'bars_ok'}] ok True
+OFFSET_MS median=-0.14475493765786496 expect=0.0 tol=5.0 n_pairs=300 src=measured
+AVSYNC_GLASS_FIXTURE_OK
