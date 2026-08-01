@@ -100,7 +100,12 @@ public:
     }
     // True only for verified delivery (library_media / measured) — never for
     // PMS transcode_request. Gates identity_skip when force-scale is escaped.
-    void setDeliveryGeometryVerified(bool v) { deliveryGeometryVerified_ = v; }
+    void setDeliveryGeometryVerified(bool v) {
+        deliveryGeometryVerified_.store(v, std::memory_order_relaxed);
+    }
+    bool deliveryGeometryVerified() const {
+        return deliveryGeometryVerified_.load(std::memory_order_relaxed);
+    }
     // Intentional A/V lead compensation via FFmpeg adelay (ms). Default 0.
     // Prefer contentFps wall/audio pacing first; use adelay only for small residual.
     void setAudioDelayMs(int ms) { audioDelayMs_ = ms < 0 ? 0 : ms; }
@@ -281,7 +286,9 @@ private:
     std::string ffmpegSwsFlags_;
     bool ffmpegScaleAssumeMatch_ = false;
     bool ddrYuvForceScale_ = true; // conf DDR_YUV_FORCE_SCALE; default ON
-    bool deliveryGeometryVerified_ = false;
+    // Set true only after ffmpeg stderr MEASURED_DELIVERY (basis=measured).
+    // Play-time library_media/transcode_request must leave this false (B4).
+    std::atomic<bool> deliveryGeometryVerified_{false};
     int ffmpegScaleSourceW_ = 0;
     int ffmpegScaleSourceH_ = 0;
     // Runtime-measured INPUT geometry from ffmpeg stderr (pre-vf delivery). 0 = none.

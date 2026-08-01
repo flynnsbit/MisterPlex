@@ -1411,10 +1411,14 @@ void MediaPlayer::ffmpegStderrPump(int errReadFd, size_t codedFrameBytes, bool i
             lastInH = g.h;
             measuredDeliveryW_.store(g.w);
             measuredDeliveryH_.store(g.h);
-            deliveryGeometryVerified_ = true;
+            // B4: only a runtime measurement upgrades verification (not library_media).
+            deliveryGeometryVerified_.store(true, std::memory_order_relaxed);
             ffmpegScaleSourceW_ = g.w;
             ffmpegScaleSourceH_ = g.h;
             const size_t prodBytes = yuv420pFrameBytesWH(g.w, g.h);
+            // desync_risk is real: identity_skip && measured_input_bytes != reader.
+            // Under FORCE_SCALE identity_skip=0 ⇒ risk stays 0 even if input ≠ 624x480
+            // (scale pins OUTPUT). Not an unwired field.
             const bool risk = pipeDesyncRisk(prodBytes, codedFrameBytes, identitySkip);
             if (risk)
                 pipeDesyncRisk_.store(true);
@@ -1423,6 +1427,7 @@ void MediaPlayer::ffmpegStderrPump(int errReadFd, size_t codedFrameBytes, bool i
                 " coded_bytes=" + std::to_string(codedFrameBytes) +
                 " identity_skip=" + (identitySkip ? "1" : "0") +
                 " desync_risk=" + (risk ? "1" : "0") +
+                " delivery_verified=1 delivery_basis=measured" +
                 (changed ? " MID_STREAM_CHANGE=1" : " MID_STREAM_CHANGE=0") +
                 (changed ? " — size changed after play start" : ""));
             if (risk) {
@@ -2353,7 +2358,8 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
     vfReq.source_w = ffmpegScaleSourceW_;
     vfReq.source_h = ffmpegScaleSourceH_;
     vfReq.assume_source_matches_coded = ffmpegScaleAssumeMatch_;
-    vfReq.delivery_geometry_verified = deliveryGeometryVerified_;
+    vfReq.delivery_geometry_verified =
+        deliveryGeometryVerified_.load(std::memory_order_relaxed);
     const FfmpegVfPlan vfPlan = buildFfmpegVideoFilter(vfReq);
     std::string vf = vfPlan.vf;
     // Actual scale decision (parent greps arm_rescale= here and on misterplexd: GEOM).
@@ -2373,7 +2379,8 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
         " mode=" + ffmpegScaleModeName(vfReq.scale_mode) +
         " conf_mode=" + ffmpegScaleModeName(confScaleMode) +
         " yuv_ddr_force_scale=" + (forceScale ? "1" : "0") +
-        " delivery_verified=" + (deliveryGeometryVerified_ ? "1" : "0") +
+        " delivery_verified=" +
+        (deliveryGeometryVerified_.load(std::memory_order_relaxed) ? "1" : "0") +
         " sws_flags=" + (ffmpegSwsFlags_.empty() ? "(default)" : ffmpegSwsFlags_) +
         " assume_match=" + (ffmpegScaleAssumeMatch_ ? "1" : "0") +
         " display=" + std::to_string(rawDisplayW) + "x" + std::to_string(rawDisplayH) +
@@ -3554,6 +3561,9 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                     " decode=" + std::to_string(outW_) + "x" + std::to_string(outH_) +
                     " measured=" +
                     (mw > 0 ? (std::to_string(mw) + "x" + std::to_string(mh)) : "pending") +
+                    // Live flag: flips to 1 only after MEASURED_DELIVERY (not play-time GEOM).
+                    " delivery_verified=" +
+                    (deliveryGeometryVerified_.load(std::memory_order_relaxed) ? "1" : "0") +
                     " desync_risk=" + (pipeDesyncRisk_.load() ? "1" : "0") +
                     " lifetime_frames=" + std::to_string(lifetimeFrames_.load() + frameIndex) +
                     " lifetime_presents=" +
@@ -3645,10 +3655,13 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                 " reader_bytes=" + std::to_string(frameBytes) +
                 " identity_skip=" + (vfPlan.identity_skip ? "1" : "0") +
                 " desync_risk=" + (risk ? "1" : "0") +
+                " delivery_verified=1 delivery_basis=measured" +
                 " (pre-vf input measurement)");
         } else if (usedRawVideo) {
             log("media: MEASURED_DELIVERY_FINAL none — could-not-measure input geometry "
-                "(ffmpeg banner not parsed; not the same as 0x0)");
+                "(ffmpeg banner not parsed; not the same as 0x0) delivery_verified=" +
+                std::string(deliveryGeometryVerified_.load(std::memory_order_relaxed) ? "1"
+                                                                                        : "0"));
         }
         if (mow > 0 && moh > 0) {
             log("media: MEASURED_OUTPUT_FINAL " + std::to_string(mow) + "x" +

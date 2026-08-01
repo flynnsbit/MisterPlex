@@ -239,12 +239,16 @@ int main() {
             {624, 480, "exact_bank"},
             {624, 352, "scope_2.35"},
             {624, 350, "measured_short_480p"},
-            {640, 480, "640x480"},
-            {720, 480, "720x480"},
+            {640, 480, "640x480_presented_trap"},
+            {720, 480, "720x480_ntsc_dvd"},
+            {704, 396, "704x396"},
             {720, 576, "720x576"},
             {1440, 1080, "1440x1080"},
             {1920, 1080, "1920x1080"},
             {320, 240, "320x240"},
+            // Odd dims: yuv420pFrameBytesWH returns 0 for odd; scale still targets even bank.
+            {719, 479, "odd_719x479"},
+            {641, 360, "odd_641x360"},
         };
         for (const auto& c : cases) {
             FfmpegVfRequest r;

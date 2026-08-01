@@ -359,10 +359,19 @@ int main() {
                "arm must emit MEASURED_DELIVERY_FINAL (pre-vf measurement)");
         expect(src.find("PIPE_PHASE_DESYNC") != std::string::npos,
                "arm must ERROR on phase desync");
+        // B4 consume path: measurement must advertise delivery_verified=1 basis=measured
+        // (play-time GEOM may still say 0 — that is pre-measure, not a stuck flag).
+        expect(src.find("delivery_verified=1 delivery_basis=measured") != std::string::npos,
+               "MEASURED_DELIVERY must set delivery_verified=1 basis=measured");
+        expect(src.find("deliveryGeometryVerified_.store(true") != std::string::npos,
+               "measurement must store deliveryGeometryVerified_=true");
         // B4: library_media must not verify delivery in the helper.
         expect(!deliveryGeometryVerifiedFromBasis("library_media"),
                "B4 library_media never verifies");
-        std::printf("GREEN_B5_ARM_WIRE rawPipeDesynced+MEASURED_*_FINAL present\n");
+        expect(!deliveryGeometryVerifiedFromBasis("transcode_request"),
+               "B4 transcode_request never verifies");
+        expect(deliveryGeometryVerifiedFromBasis("measured"), "B4 measured verifies");
+        std::printf("GREEN_B5_ARM_WIRE rawPipeDesynced+MEASURED_*_FINAL+B4_consume present\n");
     }
 
     if (g_fails) {
