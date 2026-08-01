@@ -9,32 +9,32 @@ Host residual:
 cannot see frames never produced (never enter frames) NOR post-present scanout
 loss (present already counted). Those two collapse into the same residual=0 cell.
 
-DISCRIMINATOR (available without new device code)
-------------------------------------------------
+DISCRIMINATOR (supply_bucket + ffmpeg_out_frames now in daemon)
+---------------------------------------------------------------
 On a single session_epoch, steady window wall_s in [T0, T1] (default 10..end):
 
   d_wall_s   = wall_s(T1) - wall_s(T0)                         measured
   d_frames   = frames(T1) - frames(T0)                         measured
   expected   = d_wall_s * fps_num / fps_den                    derived (caller fps)
   supply_gap = expected - d_frames                             derived
-               >0 ⇒ fewer pipe frames than wall×fps (pre-frameIndex shortfall)
-               ≈0 ⇒ supply matched wall schedule
-
+  d_ffmpeg_out = ffmpeg_out_frames(T1)-ffmpeg_out_frames(T0)  measured (or NO-DATA)
   host_gap   = unaccounted(T1) - unaccounted(T0)               measured delta
-               (or absolute unaccounted at T1 if T0 unaccounted missing)
+  glass_holes = caller_supplied ABSENT source indices
 
-  glass_holes = caller_supplied count of ABSENT source indices in same window
+Also accepts 1 Hz `media: supply_bucket ...` lines (sums d_* over window).
 
 Decision table (all integers; see THRESHOLDS):
   glass_holes >= GLASS_LOSS_MIN  (else UNSCORED — no loss to attribute)
-  PIPE_* in log                  → STAGE=PIPE (stop)
-  host_gap >= HOST_GAP_HIT and |host_gap - glass_holes| <= PAIR_TOL
-                                 → STAGE=HOST_MID (publish / uncounted skip)
-  supply_gap >= SUPPLY_GAP_HIT and |supply_gap - glass_holes| <= PAIR_TOL
-                                 → STAGE=PRE_FRAMEINDEX_SUPPLY
-  supply_gap <= SUPPLY_GAP_FLAT and host_gap <= HOST_GAP_FLAT
-                                 → STAGE=POST_PRESENT_SCANOUT
-  else                           → STAGE=AMBIGUOUS (print all three)
+  PIPE_* / SUPPLY_PIPE_IDENTITY_FAIL → STAGE=PIPE
+  host_gap >= HOST_GAP_HIT ≈ glass → HOST_MID (± publish)
+  ffmpeg known + ff_gap≥HIT + frames≈ffmpeg + host flat → PRE_FFMPEG_SUPPLY
+  ffmpeg known + ffmpeg−frames ≥HIT + host flat → PIPE_READ_SHORT
+  supply_gap ≥ HIT + host flat → PRE_FRAMEINDEX_SUPPLY
+  supply flat + host flat + (ff flat if known) → POST_PRESENT_SCANOUT
+  else → AMBIGUOUS
+
+CAN: PRE-ffmpeg vs pipe-read vs post-present (when ffmpeg_out_frames measured).
+CANNOT: DDR bank vs RTL vs HDMI PHY inside POST_PRESENT.
 
 THRESHOLDS — resolution proof for 0.70% / ~15 frames in 90 s @ 24 fps
 --------------------------------------------------------------------
@@ -56,15 +56,14 @@ Proof that FLAT=2 distinguishes 15 from 0:
   15 lies in HIT; 0 lies in FLAT; band (3..9) is AMBIGUOUS — never silently
   collapsed into either. Self-test asserts this trichotomy.
 
-ffmpeg frame= accounting: NOT available today. media_player drops frame= lines
-and passes -nostats. Do NOT claim ffmpeg_out_frames == frameIndex from logs
-that lack those lines ("log does not contain X" ≠ "X did not happen" is moot —
-we never asked ffmpeg to emit it). Minimum addition to get that arm: remove
--nostats OR add -progress pipe, and stop discarding frame= (parse last N).
+ffmpeg_out_frames: play path uses -stats -loglevel info; stderr pump splits on
+CR/LF and stores last frame=N. If every line shows ffmpeg_out_frames=NO-DATA,
+that is measured absence of stats parse — do not invent a count. Prefer
+supply_bucket.d_ffmpeg_out when present.
 
 Exit codes
 ----------
-  0  STAGE decided (PRE_FRAMEINDEX_SUPPLY | POST_PRESENT_SCANOUT | HOST_MID | PIPE)
+  0  STAGE decided (PRE_* | POST_PRESENT_SCANOUT | HOST_MID | PIPE | PIPE_READ_SHORT)
   2  AMBIGUOUS or threshold conflict
   77 could-not-measure (no lines / multi epoch / short window) — NEVER a pass
   1  usage
@@ -101,7 +100,7 @@ DEFAULT_FPS_DEN = 1
 
 RE_MEDIA = re.compile(r"media:\s+(?P<body>.+)")
 RE_KV = re.compile(r"([A-Za-z_][A-Za-z0-9_]*)=([^\s]+)")
-RE_PIPE = re.compile(r"PIPE_(?:BYTE_MISALIGN|DESYNC)")
+RE_PIPE = re.compile(r"PIPE_(?:BYTE_MISALIGN|DESYNC)|SUPPLY_PIPE_IDENTITY_FAIL")
 
 
 @dataclass
@@ -113,11 +112,16 @@ class Sample:
     unaccounted: int
     publish_misses: int
     session_epoch: str
+    ffmpeg_out_frames: Optional[int] = None  # None = NO-DATA
     av_drift_ms: Optional[float] = None
     av_servo_margin_ms: Optional[float] = None
     av_display_offset_ms: Optional[float] = None
     av_servo_setpoint_ms: Optional[float] = None
     lead_ms: Optional[float] = None
+    is_supply_bucket: bool = False
+    d_frames: Optional[int] = None
+    d_ffmpeg_out: Optional[int] = None
+    supply_gap_line: Optional[float] = None
     raw: str = ""
 
 
@@ -141,21 +145,36 @@ def _i(kv: dict, k: str) -> Optional[int]:
         return None
 
 
+def _ffmpeg_out(kv: dict) -> Optional[int]:
+    v = kv.get("ffmpeg_out_frames")
+    if v is None or v == "NO-DATA":
+        return None
+    try:
+        return int(float(v))
+    except ValueError:
+        return None
+
+
 def parse_log(text: str) -> Tuple[List[Sample], bool]:
     samples: List[Sample] = []
     pipe_hit = bool(RE_PIPE.search(text))
     for line in text.splitlines():
-        if "PIPE_BYTE_MISALIGN" in line or "PIPE_DESYNC" in line:
+        if (
+            "PIPE_BYTE_MISALIGN" in line
+            or "PIPE_DESYNC" in line
+            or "SUPPLY_PIPE_IDENTITY_FAIL" in line
+        ):
             pipe_hit = True
         m = RE_MEDIA.search(line)
         if not m:
             continue
         body = m.group("body")
-        if "frames=" not in body or "presents=" not in body:
-            continue
         if body.startswith("session end"):
             continue
         kv = {a: b for a, b in RE_KV.findall(body)}
+        is_bucket = body.startswith("supply_bucket") or "supply_bucket " in body
+        if "frames=" not in body or "presents=" not in body:
+            continue
         wall = _f(kv, "wall_s")
         frames = _i(kv, "frames")
         presents = _i(kv, "presents")
@@ -165,13 +184,13 @@ def parse_log(text: str) -> Tuple[List[Sample], bool]:
         unacc = _i(kv, "unaccounted")
         if unacc is None:
             unacc = frames - presents - drops  # derived identity
-            unacc_src = "derived"
-        else:
-            unacc_src = "measured"
         pm = _i(kv, "publish_misses")
         if pm is None:
             pm = 0
         se = kv.get("session_epoch", "NO-DATA")
+        d_ff = None
+        if kv.get("d_ffmpeg_out") not in (None, "NO-DATA"):
+            d_ff = _i(kv, "d_ffmpeg_out")
         samples.append(
             Sample(
                 wall_s=wall,
@@ -181,16 +200,19 @@ def parse_log(text: str) -> Tuple[List[Sample], bool]:
                 unaccounted=unacc,
                 publish_misses=pm,
                 session_epoch=se,
+                ffmpeg_out_frames=_ffmpeg_out(kv),
                 av_drift_ms=_f(kv, "av_drift_ms"),
                 av_servo_margin_ms=_f(kv, "av_servo_margin_ms"),
                 av_display_offset_ms=_f(kv, "av_display_offset_ms"),
                 av_servo_setpoint_ms=_f(kv, "av_servo_setpoint_ms"),
                 lead_ms=_f(kv, "lead_ms"),
+                is_supply_bucket=is_bucket,
+                d_frames=_i(kv, "d_frames") if is_bucket else None,
+                d_ffmpeg_out=d_ff if is_bucket else None,
+                supply_gap_line=_f(kv, "supply_gap") if is_bucket else None,
                 raw=line,
             )
         )
-        # silence unused
-        del unacc_src
     return samples, pipe_hit
 
 
@@ -220,9 +242,12 @@ def decide(
     glass_holes: Optional[int],
     pipe_hit: bool,
     pm_delta: int,
+    d_frames: Optional[int] = None,
+    d_ffmpeg_out: Optional[int] = None,
+    expected: Optional[float] = None,
 ) -> Tuple[str, int, str]:
     if pipe_hit:
-        return "PIPE", RC_OK, "PIPE_* in log — stop before other RCA"
+        return "PIPE", RC_OK, "PIPE_* / SUPPLY_PIPE_IDENTITY_FAIL in log — stop"
     if glass_holes is not None and glass_holes < GLASS_LOSS_MIN:
         return (
             "NO_GLASS_LOSS",
@@ -249,16 +274,49 @@ def decide(
     supply_hit = supply_gap >= SUPPLY_GAP_HIT
     supply_flat = supply_gap <= SUPPLY_GAP_FLAT
     host_flat = host_gap <= HOST_GAP_FLAT
+    ff_known = (
+        d_ffmpeg_out is not None
+        and d_frames is not None
+        and expected is not None
+    )
+
+    if ff_known and host_flat:
+        ff_gap = float(expected) - float(d_ffmpeg_out)
+        pipe_vs_ff = int(d_frames) - int(d_ffmpeg_out)
+        if (
+            ff_gap >= SUPPLY_GAP_HIT
+            and abs(pipe_vs_ff) <= HOST_GAP_FLAT
+            and (gh is None or abs(ff_gap - gh) <= PAIR_TOL or abs(supply_gap - gh) <= PAIR_TOL)
+        ):
+            return (
+                "PRE_FFMPEG_SUPPLY",
+                RC_OK,
+                "ffmpeg_out short vs wall; frames≈ffmpeg_out — PMS/decode short",
+            )
+        if int(d_ffmpeg_out) - int(d_frames) >= HOST_GAP_HIT:
+            return (
+                "PIPE_READ_SHORT",
+                RC_OK,
+                "ffmpeg_out advances more than frameIndex — daemon read short",
+            )
 
     if supply_hit and host_flat:
         if gh is None or abs(supply_gap - gh) <= PAIR_TOL:
-            return (
-                "PRE_FRAMEINDEX_SUPPLY",
-                RC_OK,
-                "wall×fps − Δframes explains glass; residual flat",
-            )
+            label = "PRE_FRAMEINDEX_SUPPLY"
+            detail = "wall×fps − Δframes explains glass; residual flat"
+            if not ff_known:
+                detail += " (ffmpeg_out NO-DATA — cannot split decode vs pipe)"
+            return (label, RC_OK, detail)
 
     if supply_flat and host_flat and (gh is None or gh >= GLASS_LOSS_MIN):
+        if ff_known:
+            ff_gap = float(expected) - float(d_ffmpeg_out)
+            if ff_gap > SUPPLY_GAP_FLAT:
+                return (
+                    "AMBIGUOUS",
+                    RC_AMBIGUOUS,
+                    f"frames matched wall but ffmpeg_out gap={ff_gap:.2f}",
+                )
         return (
             "POST_PRESENT_SCANOUT",
             RC_OK,
@@ -269,7 +327,7 @@ def decide(
         "AMBIGUOUS",
         RC_AMBIGUOUS,
         f"supply_gap={supply_gap:.2f} host_gap={host_gap} glass={gh} "
-        f"flat_max={HOST_GAP_FLAT} hit_min={HOST_GAP_HIT}",
+        f"d_ffmpeg_out={d_ffmpeg_out} flat_max={HOST_GAP_FLAT} hit_min={HOST_GAP_HIT}",
     )
 
 
@@ -321,6 +379,24 @@ def analyze(
     pm_delta = b.publish_misses - a.publish_misses
     expected = d_wall * float(fps_num) / float(fps_den)
     supply_gap = expected - float(d_frames)
+    d_ffmpeg_out: Optional[int] = None
+    d_ffmpeg_src = "NO-DATA"
+    if a.ffmpeg_out_frames is not None and b.ffmpeg_out_frames is not None:
+        d_ffmpeg_out = b.ffmpeg_out_frames - a.ffmpeg_out_frames
+        d_ffmpeg_src = "measured"
+    else:
+        # Prefer summed supply_bucket d_ffmpeg_out over the steady window.
+        bucket_ff = [
+            s.d_ffmpeg_out
+            for s in samples
+            if s.is_supply_bucket
+            and s.d_ffmpeg_out is not None
+            and s.wall_s + 1e-9 >= a.wall_s
+            and s.wall_s <= b.wall_s + 1e-9
+        ]
+        if bucket_ff:
+            d_ffmpeg_out = sum(bucket_ff)
+            d_ffmpeg_src = "measured_sum_supply_bucket"
 
     out.update(
         {
@@ -333,6 +409,10 @@ def analyze(
             "d_frames_src": "measured",
             "d_presents": d_presents,
             "d_drops": d_drops,
+            "d_ffmpeg_out": d_ffmpeg_out,
+            "d_ffmpeg_out_src": d_ffmpeg_src,
+            "ffmpeg_out_a": a.ffmpeg_out_frames,
+            "ffmpeg_out_b": b.ffmpeg_out_frames,
             "expected_frames": expected,
             "expected_frames_src": "derived_wall_times_fps",
             "supply_gap": supply_gap,
@@ -349,7 +429,16 @@ def analyze(
             "lead_ms_b": b.lead_ms,
         }
     )
-    stage, rc, reason = decide(supply_gap, host_gap, glass_holes, pipe_hit, pm_delta)
+    stage, rc, reason = decide(
+        supply_gap,
+        host_gap,
+        glass_holes,
+        pipe_hit,
+        pm_delta,
+        d_frames=d_frames,
+        d_ffmpeg_out=d_ffmpeg_out,
+        expected=expected,
+    )
     out["stage"] = stage
     out["rc"] = rc
     out["reason"] = reason
@@ -389,6 +478,9 @@ def print_report(out: dict) -> None:
         "d_frames",
         "d_presents",
         "d_drops",
+        "d_ffmpeg_out",
+        "ffmpeg_out_a",
+        "ffmpeg_out_b",
         "expected_frames",
         "supply_gap",
         "host_gap",
@@ -403,15 +495,15 @@ def print_report(out: dict) -> None:
     ):
         if k not in out:
             continue
-        src = out.get(f"{k}_src", "measured" if k.endswith(("_a", "_b", "epoch")) else "")
+        src = out.get(f"{k}_src")
         if not src:
-            src = out.get(
-                f"{k}_src",
-                "derived"
-                if k in ("expected_frames", "supply_gap", "d_wall_s")
-                else "measured",
-            )
-        print(f"{k}={out[k]} src={src or 'measured'}")
+            if k in ("expected_frames", "supply_gap"):
+                src = "derived"
+            elif k in ("d_ffmpeg_out", "ffmpeg_out_a", "ffmpeg_out_b") and out.get(k) is None:
+                src = "NO-DATA"
+            else:
+                src = "measured"
+        print(f"{k}={out[k]} src={src}")
     print(f"STAGE={out['stage']} reason={out['reason']}")
     print(f"VERDICT={out['stage']} rc={out['rc']}")
 
@@ -432,6 +524,14 @@ def self_test() -> int:
     check(st == "POST_PRESENT_SCANOUT" and rc == RC_OK, "15 glass + flat supply/host → POST")
     st, rc, _ = decide(15.0, 0, 15, False, 0)
     check(st == "PRE_FRAMEINDEX_SUPPLY" and rc == RC_OK, "15 supply_gap → PRE")
+    st, rc, _ = decide(
+        15.0, 0, 15, False, 0, d_frames=9, d_ffmpeg_out=9, expected=24.0
+    )
+    check(st == "PRE_FFMPEG_SUPPLY" and rc == RC_OK, "ffmpeg short → PRE_FFMPEG")
+    st, rc, _ = decide(
+        15.0, 0, 15, False, 0, d_frames=9, d_ffmpeg_out=24, expected=24.0
+    )
+    check(st == "PIPE_READ_SHORT" and rc == RC_OK, "ffmpeg>frames → PIPE_READ_SHORT")
     st, rc, _ = decide(0.0, 15, 15, False, 15)
     check(st == "HOST_MID_PUBLISH" and rc == RC_OK, "15 host+pm → PUBLISH")
     st, rc, _ = decide(0.0, 15, 15, False, 0)
@@ -455,6 +555,7 @@ def self_test() -> int:
         lines.append(
             f"media: frames={frames} presents={presents} drops={drops} "
             f"publish_misses=0 unaccounted={unacc} residual={unacc} "
+            f"ffmpeg_out_frames={frames} "
             f"wall_s={float(w):.1f} session_epoch={epoch} "
             f"av_drift_ms=-30 av_servo_setpoint_ms=-40 av_servo_margin_ms=10 "
             f"av_display_offset_ms=-30 lead_ms=40 tag=measured"

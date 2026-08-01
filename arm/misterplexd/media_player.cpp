@@ -1361,11 +1361,13 @@ void MediaPlayer::ffmpegStderrPump(int errReadFd, size_t codedFrameBytes, bool i
             break;
         acc.append(buf, static_cast<size_t>(n));
         for (;;) {
-            const auto nl = acc.find('\n');
-            if (nl == std::string::npos)
+            // Must split on '\r' too: ffmpeg -stats uses CR progress updates.
+            // Splitting only on '\n' leaves ffmpeg_out_frames=NO-DATA all soak.
+            std::string line;
+            if (!misterplex::takeFfmpegStderrLine(acc, &line))
                 break;
-            std::string line = acc.substr(0, nl);
-            acc.erase(0, nl + 1);
+            if (line.empty())
+                continue;
             // Capture ffmpeg frame= into atomic; do not log every stats line (spam).
             // Parent glass-loss split needs ffmpeg_out_frames vs frameIndex.
             {
@@ -1438,6 +1440,12 @@ void MediaPlayer::ffmpegStderrPump(int errReadFd, size_t codedFrameBytes, bool i
                     " (force-scale pins OUTPUT only while scale filter stays live)");
             }
         }
+    }
+    // EOF: final stats line may lack a trailing separator.
+    if (!acc.empty()) {
+        int64_t ff = 0;
+        if (misterplex::parseFfmpegFrameCountLine(acc, &ff))
+            ffmpegOutFrames_.store(ff, std::memory_order_relaxed);
     }
     ::close(errReadFd);
 }

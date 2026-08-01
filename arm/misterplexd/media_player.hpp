@@ -381,6 +381,8 @@ private:
     std::atomic<int64_t> droppedFrames_{0};
     // Present attempted but DDR/FPGA publish failed (per stream). NOT in drops.
     std::atomic<int64_t> publishMisses_{0};
+    // Last ffmpeg -stats/-progress frame= count (-1 = never seen). Supply split.
+    std::atomic<int64_t> ffmpegOutFrames_{-1};
     // Lifetime (process) totals — soak-auditable across stream resets / restarts
     // via confDir/misterplexd.frame_ledger (see frame_ledger.hpp).
     std::atomic<int64_t> lifetimeFrames_{0};
