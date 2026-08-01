@@ -1,7 +1,7 @@
-// Product present_core store sampling math — T7 ceiling lock (w-fit + w-geom Part1).
+// Product present_core store sampling math — T7b ceiling lock (w-fit).
 //
-// Legacy (c5382bee class): V_STORE=240 + py=vc>>1 + STORE_Y_SCALE=2.0 → even rows only.
-// Product fix (scandouble): V_STORE_SD=480 + py=vc + STORE_Y_SCALE=1.0 → all 480 rows.
+// Legacy (c5382bee / 78eff44e PROG arm): V_STORE=240 + STORE_Y_SCALE=2.0 → even rows only.
+// Product fix (T7b): V_STORE=FRAME_H=480 + STORE_Y_SCALE=1.0 always — NO scandouble mux.
 //
 // Locks Plex.qsf FRAME_W=640 FRAME_H=480 (not ifndef 320/240, not CODED_W=624).
 // true rc direct. Soft-skip never. Red twin proves old even-row cull still enumerable.
@@ -33,8 +33,8 @@ bool file_contains(const char* path, const char* needle) {
 }
 
 int store_x_scale(int frame_w) { return (frame_w * 39647) / 320; }
-int store_y_scale_sd(int frame_h) { return (frame_h * 65536) / 480; }
-int store_y_scale_prog(int frame_h) { return (frame_h * 65536) / 240; }
+int store_y_scale_1to1(int frame_h) { return (frame_h * 65536) / frame_h; }
+int store_y_scale_legacy_prog(int frame_h) { return (frame_h * 65536) / 240; }
 
 int store_x_at(int hc, int scale, int last_x) {
     const uint32_t prod = uint32_t(hc) * uint32_t(scale);
@@ -69,15 +69,22 @@ int main() {
            "H_DE hardcoded 529 (Template; H ceiling deferred)");
     EXPECT(file_contains("fpga/Plex_MiSTer/rtl/present_core.sv", "wire [9:0] read_hc = hc"),
            "read_hc is hc (identity)");
-    EXPECT(file_contains("fpga/Plex_MiSTer/rtl/present_core.sv", "V_STORE_SD   = 480"),
-           "T7 V_STORE_SD=480");
-    EXPECT(file_contains("fpga/Plex_MiSTer/rtl/present_core.sv", "V_STORE_PROG = 240"),
-           "progressive window still 240");
-    EXPECT(file_contains("fpga/Plex_MiSTer/rtl/present_core.sv", "STORE_Y_SCALE_SD ="),
-           "STORE_Y_SCALE_SD present");
+    EXPECT(file_contains("fpga/Plex_MiSTer/rtl/present_core.sv", "localparam int V_STORE = FRAME_H"),
+           "T7b V_STORE=FRAME_H (480 product)");
+    EXPECT(!file_contains("fpga/Plex_MiSTer/rtl/present_core.sv", "V_STORE_PROG = 240"),
+           "PROG 240 arm must be gone");
+    EXPECT(!file_contains("fpga/Plex_MiSTer/rtl/present_core.sv",
+                          "store_y_scale = scandouble"),
+           "no scandouble mux on store_y_scale");
     EXPECT(file_contains("fpga/Plex_MiSTer/rtl/present_core.sv",
-                         "(FRAME_H * 65536) / V_STORE_SD"),
-           "sd scale formula 1:1 at FRAME_H=480");
+                         "wire [31:0] store_y_scale = 32'(STORE_Y_SCALE)"),
+           "store_y_scale constant 1.0 (stops doubling)");
+    EXPECT(file_contains("fpga/Plex_MiSTer/rtl/present_core.sv",
+                         "(FRAME_H * 65536) / V_STORE"),
+           "scale formula 1:1 at FRAME_H");
+    EXPECT(file_contains("fpga/Plex_MiSTer/rtl/present_core.sv",
+                         ".scandouble(PRODUCT_V_480)"),
+           "colorbars DE hard-wired 480-line arm");
     EXPECT(!file_contains("fpga/Plex_MiSTer/rtl/present_core.sv",
                           "wire [9:0] py = scandouble ? (vc >> 1) : vc"),
            "legacy py=vc>>1 must be gone");
@@ -88,35 +95,36 @@ int main() {
     constexpr int FRAME_W = 640;
     constexpr int FRAME_H = 480;
     constexpr int H_DE = 529;
-    constexpr int V_STORE_SD = 480;
-    constexpr int V_STORE_PROG = 240;
+    constexpr int V_STORE = 480;
+    constexpr int V_STORE_LEGACY_PROG = 240;
 
     const int sx_scale = store_x_scale(FRAME_W);
-    const int sy_sd = store_y_scale_sd(FRAME_H);
-    const int sy_prog = store_y_scale_prog(FRAME_H);
+    const int sy_1to1 = store_y_scale_1to1(FRAME_H);
+    const int sy_legacy = store_y_scale_legacy_prog(FRAME_H);
     std::printf("PRODUCT FRAME_W=%d FRAME_H=%d\n", FRAME_W, FRAME_H);
-    std::printf("STORE_X_SCALE=%d STORE_Y_SCALE_SD=%d STORE_Y_SCALE_PROG=%d\n", sx_scale, sy_sd,
-                sy_prog);
+    std::printf("STORE_X_SCALE=%d STORE_Y_SCALE=%d (legacy_prog was %d)\n", sx_scale, sy_1to1,
+                sy_legacy);
     EXPECT(sx_scale == 79294, "STORE_X_SCALE product = 640*39647/320 = 79294");
-    EXPECT(sy_sd == 65536, "STORE_Y_SCALE_SD = 480*65536/480 = 65536 (=1.0 Q16)");
-    EXPECT(sy_prog == 131072, "STORE_Y_SCALE_PROG legacy 2.0 Q16");
+    EXPECT(sy_1to1 == 65536, "STORE_Y_SCALE = 480*65536/480 = 65536 (=1.0 Q16)");
+    EXPECT(sy_legacy == 131072, "RED twin reference: legacy PROG was 2.0 Q16");
 
-    std::set<int> ys_sd;
-    for (int py = 0; py < V_STORE_SD; ++py)
-        ys_sd.insert(store_y_at(py, sy_sd, V_STORE_SD, FRAME_H - 1));
-    std::printf("scandouble unique store_y count=%zu min=%d max=%d\n", ys_sd.size(),
-                *ys_sd.begin(), *ys_sd.rbegin());
-    EXPECT(ys_sd.size() == 480, "scandouble: 480 unique store_y");
-    EXPECT(*ys_sd.begin() == 0 && *ys_sd.rbegin() == 479, "scandouble spans 0..479");
+    std::set<int> ys;
+    for (int py = 0; py < V_STORE; ++py)
+        ys.insert(store_y_at(py, sy_1to1, V_STORE, FRAME_H - 1));
+    std::printf("product unique store_y count=%zu min=%d max=%d\n", ys.size(), *ys.begin(),
+                *ys.rbegin());
+    EXPECT(ys.size() == 480, "product: 480 unique store_y");
+    EXPECT(*ys.begin() == 0 && *ys.rbegin() == 479, "product spans 0..479");
     int odd_hit = 0;
-    for (int y : ys_sd)
+    for (int y : ys)
         if (y & 1)
             ++odd_hit;
-    EXPECT(odd_hit == 240, "scandouble: odd store rows ARE fetched (240 odds)");
+    EXPECT(odd_hit == 240, "product: odd store rows ARE fetched (240 odds)");
 
+    // RED twin: old PROG arm math (must stay enumerable so a regression is visible).
     std::set<int> ys_legacy;
-    for (int py = 0; py < V_STORE_PROG; ++py)
-        ys_legacy.insert(store_y_at(py, sy_prog, V_STORE_PROG, FRAME_H - 1));
+    for (int py = 0; py < V_STORE_LEGACY_PROG; ++py)
+        ys_legacy.insert(store_y_at(py, sy_legacy, V_STORE_LEGACY_PROG, FRAME_H - 1));
     EXPECT(ys_legacy.size() == 240, "legacy unique count 240");
     bool legacy_all_even = true;
     for (int y : ys_legacy)
@@ -135,7 +143,7 @@ int main() {
     EXPECT(xs.size() == 529, "529 unique store_x from H_DE (H ceiling deferred)");
     EXPECT(*xs.rbegin() == 638, "store_x max 638 under FRAME_W=640");
 
-    std::printf("VERDICT_T7: scandouble product fetches all 480 store rows 1:1; "
+    std::printf("VERDICT_T7b: product fetches all 480 store rows 1:1 (no PROG *2); "
                 "H_DE=529 deferred; frames_done pack is separate (PLXD).\n");
 
     if (g_fails) {

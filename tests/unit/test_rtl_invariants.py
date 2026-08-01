@@ -516,8 +516,8 @@ def check_present_core() -> None:
 
     nt = norm(text)
     # Legacy (pre-T7): hard-coded V_STORE=240 even-row window.
-    # T7: scandouble uses v_store=480 (1:1), progressive keeps 240; clamp is
-    # parameterized on v_store so past-window rows never address store_y.
+    # T7: scandouble mux V_STORE_SD/PROG (PROG was still 240 — P5=MISS on 78eff44e).
+    # T7b: v_store=FRAME_H always (no scandouble mux); clamp still on v_store.
     legacy_y_clamp = (
         "past_last_row=(py>=10'd240)" in nt
         and "store_y_clamped=past_last_row?10'd239:py" in nt
@@ -527,11 +527,17 @@ def check_present_core() -> None:
         and "store_y_clamped=past_last_row?(v_store-10'd1):py" in nt
         and "v_store=scandouble?10'(V_STORE_SD):10'(V_STORE_PROG)" in nt
     )
+    t7b_y_clamp = (
+        "past_last_row=(py>=v_store)" in nt
+        and "store_y_clamped=past_last_row?(v_store-10'd1):py" in nt
+        and "v_store=10'(V_STORE)" in nt
+        and "localparamintV_STORE=FRAME_H" in nt
+    )
     check(
-        legacy_y_clamp or t7_y_clamp,
+        legacy_y_clamp or t7_y_clamp or t7b_y_clamp,
         "present_core past_last_row clamp is missing. It prevents fetching past the active "
         "store window and stops the bottom-edge artifact; restore past_last_row and "
-        "store_y_clamped (legacy py>=240→239, or T7 py>=v_store→v_store-1).",
+        "store_y_clamped (legacy py>=240→239, T7 mux, or T7b v_store=FRAME_H).",
     )
     check(
         "vb_d=vb|past_last_row" in nt,

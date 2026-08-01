@@ -132,11 +132,20 @@ module present_core #(
 	// O[9] Force bars=Yes → always Bars (1), never None.
 	wire [1:0] eff_pattern = use_frame_store ? 2'd1 : pattern;
 
+	// Product core timing is always 480 active lines (VBlank @ vc==480).
+	// forced_scandoubler/cfg[4] must NOT select a 240-line progressive DE: on
+	// 78eff44e that left V_STORE_PROG=240 + store_y=py*2 (even rows only) and
+	// parent scored P5=MISS (period 3.988 ≈ 240-row pred 3.983). Hard-wire the
+	// colorbars 480-line arm; the scandouble port is retained for hierarchy but
+	// does not gate store height or DE line count.
+	localparam bit PRODUCT_V_480 = 1'b1;
+	wire _unused_scandouble_port = scandouble;
+
 	colorbars bars (
 		.clk(clk),
 		.reset(reset),
 		.pal(pal),
-		.scandouble(scandouble),
+		.scandouble(PRODUCT_V_480),
 		.content_index(cont_i),
 		.pattern(eff_pattern),
 		.ce_pix(ce_pix_i),
@@ -159,31 +168,27 @@ module present_core #(
 	// Prior attempts (combo ÷529, reconstructed hc Bresenham) still UVC-pillar 0.604 on
 	// solid-red F1 while bars on same RBF span 0.998. Use colorbars hc + mul-shift.
 	//
-	// T7 ceiling (product FRAME_H=480 + scandouble): colorbars already emits 480 active
-	// lines (VBlank @ vc==480 when scandouble). Legacy py=vc>>1 + V_STORE=240 +
-	// STORE_Y_SCALE=2.0 fetched only even store rows 0,2,..478 — half vertical detail
-	// discarded before ascal (parent period-3 on glass). Product path uses full vc with
-	// 1:1 Q16 scale so all FRAME_H rows are addressable. Progressive (non-scandouble)
-	// keeps the 240-line Template window. Horizontal H_DE=529 Template DE unchanged
-	// this fit (FBAR/DE_LAG class); 529-of-640 X sample is deferred.
+	// T7b (post P5=MISS on 78eff44e): product always fetches FRAME_H unique store
+	// rows 1:1. Defect was the PROG arm: V_STORE_PROG=240 + STORE_Y_SCALE=2.0 ⇒
+	// store_y = py*2 over 240 DE lines ⇒ even rows only. Fix BOTH sides:
+	//   (1) colorbars DE = 480 via PRODUCT_V_480 (above)
+	//   (2) v_store = FRAME_H, STORE_Y_SCALE = 1.0 Q16 — NO scandouble mux, NO *2
+	// THE LINE THAT STOPS DOUBLING: store_y_scale is constant 65536 (1.0), not
+	// the old scandouble ? 1.0 : 2.0 mux. store_y_addr = py (clamped), not py*2.
+	// Horizontal H_DE=529 Template DE unchanged (FBAR/DE_LAG class); 529-of-640 X deferred.
 	localparam H_DE    = 10'd529;
-	localparam int V_STORE_SD   = 480; // scandoubled active lines (colorbars.sv VBlank)
-	localparam int V_STORE_PROG = 240; // progressive 15 kHz class
+	localparam int V_STORE = FRAME_H; // product: full store height (480), both arms
 	localparam int STORE_X_SCALE = (FRAME_W * 39647) / 320;
-	// Compile-time scales; runtime picks via scandouble (product HDMI is scandoubled).
-	localparam int STORE_Y_SCALE_SD =
-		(FRAME_H * 65536) / V_STORE_SD;   // FRAME_H=480 → 65536 = 1.0 Q16
-	localparam int STORE_Y_SCALE_PROG =
-		(FRAME_H * 65536) / V_STORE_PROG; // FRAME_H=480 → 131072 = 2.0 Q16 (legacy)
+	// 1.0 Q16 always — progressive must not double. (FRAME_H*65536)/V_STORE = 65536.
+	localparam int STORE_Y_SCALE = (FRAME_H * 65536) / V_STORE;
 	localparam [FRAME_X_W-1:0] FRAME_LAST_X = FRAME_X_W'(FRAME_W - 1);
 	localparam [FRAME_Y_W-1:0] FRAME_LAST_Y = FRAME_Y_W'(FRAME_H - 1);
 	localparam [15:0] FRAME_LAST_X_16 = 16'(FRAME_W - 1);
 	localparam [15:0] FRAME_LAST_Y_16 = 16'(FRAME_H - 1);
 
-	// Store beam Y: physical line index (scandouble active 0..479; progressive 0..239).
-	// Do NOT vc>>1 — that was the even-row cull on the product scandouble path.
+	// Store beam Y: physical line index 0..FRAME_H-1. Never vc>>1, never *2.
 	wire [9:0] py = vc;
-	wire [9:0] v_store = scandouble ? 10'(V_STORE_SD) : 10'(V_STORE_PROG);
+	wire [9:0] v_store = 10'(V_STORE);
 	wire in_content = (hc < H_DE) && (py < v_store) && ~hb && ~vb;
 	// store_x = floor(hc * FRAME_W / 529) via (hc * STORE_X_SCALE) >> 16
 	// Drive the address straight from the clamped counter, with no blank-time special
@@ -199,11 +204,13 @@ module present_core #(
 	wire [FRAME_X_W-1:0] store_x_clamped =
 		(store_x_comb > FRAME_LAST_X_16) ? FRAME_LAST_X : store_x_comb[FRAME_X_W-1:0];
 
-	// Clamp Y to the active store window; scale 1:1 (sd) or 2:1 (prog legacy).
+	// Clamp Y to the active store window; scale always 1:1 (no PROG *2).
 	wire       past_last_row = (py >= v_store);
 	wire [9:0] store_y_clamped = past_last_row ? (v_store - 10'd1) : py;
-	wire [31:0] store_y_scale = scandouble ? 32'(STORE_Y_SCALE_SD) : 32'(STORE_Y_SCALE_PROG);
-	wire [31:0] store_y_prod = store_y_clamped * store_y_scale;	wire [15:0] store_y_comb = store_y_prod[31:16];
+	// *** T7b: constant 1.0 Q16 — this assignment is what stops store_y doubling ***
+	wire [31:0] store_y_scale = 32'(STORE_Y_SCALE);
+	wire [31:0] store_y_prod = store_y_clamped * store_y_scale;
+	wire [15:0] store_y_comb = store_y_prod[31:16];
 	wire [FRAME_Y_W-1:0] store_y_addr =
 		(store_y_comb > FRAME_LAST_Y_16) ? FRAME_LAST_Y : store_y_comb[FRAME_Y_W-1:0];
 	reg [FRAME_X_W-1:0] store_x;
