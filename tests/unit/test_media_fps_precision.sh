@@ -9,12 +9,26 @@ FAIL=0
 
 [ -f "$MP" ] || { echo "FAIL missing $MP"; exit 2; }
 
-# Forbidden pattern: to_string(vfps|pfps).substr(0, 4)
-if grep -nE 'to_string\((vfps|pfps)\)\.substr\(0,\s*4\)' "$MP" >/dev/null; then
-  echo "FAIL forbidden truncating substr on vfps/pfps:"
-  grep -nE 'to_string\((vfps|pfps)\)\.substr\(0,\s*4\)' "$MP" || true
+# Forbidden: any to_string(...fps...).substr(0, N) truncator (parent ed1fc22f:3536 class).
+if grep -nE 'to_string\([^)]*[fp]fps[^)]*\)\.substr\(0,\s*[0-9]+\)' "$MP" >/dev/null; then
+  echo "FAIL forbidden truncating substr on *fps* rates:"
+  grep -nE 'to_string\([^)]*[fp]fps[^)]*\)\.substr\(0,\s*[0-9]+\)' "$MP" || true
   FAIL=$((FAIL + 1))
 fi
+# Also forbid the exact historical needles on the media rate locals.
+if grep -nE 'to_string\((vfps|pfps)\)\.substr\(' "$MP" >/dev/null; then
+  echo "FAIL forbidden to_string(vfps|pfps).substr:"
+  grep -nE 'to_string\((vfps|pfps)\)\.substr\(' "$MP" || true
+  FAIL=$((FAIL + 1))
+fi
+# Exactly one vfps= emission site, and it must use fmtFpsRate (not bare to_string).
+vfps_sites=$(grep -cE '" vfps="' "$MP" || true)
+[ "$vfps_sites" -eq 1 ] || { echo "FAIL expected 1 vfps= site, got $vfps_sites"; FAIL=$((FAIL + 1)); }
+grep -nE '" vfps="' "$MP" | grep -q 'fmtFpsRate' || {
+  echo "FAIL vfps= site does not use fmtFpsRate"
+  grep -nE '" vfps="' "$MP" || true
+  FAIL=$((FAIL + 1))
+}
 
 # Required: fmtFpsRate / %.4f path
 grep -q 'fmtFpsRate' "$MP" || { echo "FAIL missing fmtFpsRate helper"; FAIL=$((FAIL + 1)); }
