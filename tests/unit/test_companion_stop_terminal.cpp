@@ -60,9 +60,10 @@ int main() {
     require(comp.bindMedia(req, 600000), "bindMedia rejected");
     {
         std::lock_guard<std::mutex> lock(comp.mu_);
-        comp.castBound_ = true;
         comp.wantPlay_ = true;
         comp.prePlayHold_ = false;
+        comp.touchCastBoundLocked(); // refresh liveness clock (not bare castBound_=true)
+        comp.castHoldTtlMs_ = 600000; // hold must outlive this test
     }
     comp.setState("playing", 12000, 600000);
 
@@ -103,9 +104,10 @@ int main() {
     {
         std::lock_guard<std::mutex> lock(comp.mu_);
         comp.state_ = "stopped";
-        comp.castBound_ = true;
-        comp.prePlayHold_ = true;
         comp.wantPlay_ = false;
+        comp.touchCastBoundLocked();
+        comp.prePlayHold_ = true;
+        comp.castHoldTtlMs_ = 600000;
     }
     const std::string rehold = comp.timelineXml("rehold");
     require(has(rehold, "state=\"buffering\""),

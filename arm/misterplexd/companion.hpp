@@ -6,6 +6,7 @@
 #include "player_identity.hpp"
 
 #include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <functional>
 #include <mutex>
@@ -139,6 +140,16 @@ private:
     bool wantPlay_ = false;
     bool prePlayHold_ = false;
     bool castBound_ = false;
+    // Last time a real cast signal touched castBound_ (poll/subscribe/play/mirror/
+    // playback — NOT /resources discovery). Used to expire the idle hold when a
+    // controller vanishes without unsubscribe. Default TTL 120s; tests may lower.
+    std::chrono::steady_clock::time_point castBoundAt_{};
+    int64_t castHoldTtlMs_ = 120000;
+
+    // Latch cast presence from cast-path traffic only; refresh liveness clock.
+    void touchCastBoundLocked();
+    // If !wantPlay_ and castBound_ older than castHoldTtlMs_, clear hold.
+    void maybeExpireCastHoldLocked();
 
     // Active / staged media for Web scrubber
     std::string pendingKey_;

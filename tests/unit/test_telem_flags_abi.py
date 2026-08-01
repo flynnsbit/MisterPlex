@@ -206,7 +206,7 @@ def run_check(rtl_path: Path, arm_path: Path, hdr_path: Path) -> int:
 
 def mutate_drop_stub_busy(src: Path, dst: Path) -> None:
     text = src.read_text(encoding="utf-8", errors="replace")
-    # Remove stub_busy from the concat (simulates "dead code cleanup").
+    # PRODUCT_NO_STUB hazard: remove stub_busy from concat ("dead code cleanup").
     new, n = re.subn(
         r"(wire\s*\[\s*7\s*:\s*0\s*\]\s*telem_flags\s*=\s*\{[^}]*?),\s*stub_busy\s*,",
         r"\1,",
@@ -215,7 +215,6 @@ def mutate_drop_stub_busy(src: Path, dst: Path) -> None:
         flags=re.MULTILINE | re.DOTALL,
     )
     if n != 1:
-        # alternate spacing: stub_busy on its own line in the list
         new, n = re.subn(
             r"(\btelem_flags\s*=\s*\{[^}]*?)\bstub_busy\s*,\s*",
             r"\1",
@@ -228,8 +227,43 @@ def mutate_drop_stub_busy(src: Path, dst: Path) -> None:
     dst.write_text(new, encoding="utf-8")
 
 
+def mutate_swap_stub_with_sps(src: Path, dst: Path) -> None:
+    """Reorder upper flags — bit positions drift without width change."""
+    text = src.read_text(encoding="utf-8", errors="replace")
+    new, n = re.subn(
+        r"wire\s*\[\s*7\s*:\s*0\s*\]\s*telem_flags\s*=\s*\{([^}]+)\}",
+        "wire [7:0] telem_flags = {\n\tpps_valid, stub_busy, sps_valid, has_idr,\n"
+        "\taudio_underrun, has_stream, has_audio, has_frame\n}",
+        text,
+        count=1,
+        flags=re.MULTILINE | re.DOTALL,
+    )
+    if n != 1:
+        raise RuntimeError("mutation failed: could not rewrite telem_flags order")
+    dst.write_text(new, encoding="utf-8")
+
+
+def check_product_no_stub_policy(rtl_text: str) -> list[str]:
+    """stub_busy may be tied to 0 under PRODUCT_NO_STUB, but must remain a named
+    bit-5 field in the concat — never silently deleted (parent fit critical path)."""
+    errs: list[str] = []
+    try:
+        fields = parse_rtl_telem_flags(rtl_text)
+    except ValueError as e:
+        return [str(e)]
+    if len(fields) != 8:
+        errs.append(f"PRODUCT_NO_STUB policy: telem_flags must stay 8 wide, got {fields}")
+    # Bit 5 from LSB = index 2 from MSB
+    if len(fields) == 8 and fields[2] != "stub_busy":
+        errs.append(
+            f"PRODUCT_NO_STUB policy: MSB index 2 must remain stub_busy "
+            f"(bit5), got {fields[2]!r} — gate the stub, do not delete the bit"
+        )
+    return errs
+
+
 def self_test() -> int:
-    """Red-before-green: product GREEN, drop-stub_busy RED, empty UNSCORED≠pass."""
+    """Red-before-green: product GREEN; drop/reorder stub_busy RED; empty≠pass."""
     if not PLEX_SV.is_file() or not FPGA_SPI.is_file() or not HDR.is_file():
         return die("missing product sources for self-test")
 
@@ -237,15 +271,23 @@ def self_test() -> int:
     if rc_ok != 0:
         return die(f"product tree already RED rc={rc_ok} (fix ABI before mutations)")
 
+    rtl_prod = PLEX_SV.read_text(encoding="utf-8", errors="replace")
+    pol = check_product_no_stub_policy(rtl_prod)
+    if pol:
+        return die("product violates PRODUCT_NO_STUB bit5 policy: " + pol[0])
+    print("COVERAGE PRODUCT_NO_STUB_policy bit5=stub_busy width=8")
+
+    arm_text = FPGA_SPI.read_text(encoding="utf-8", errors="replace")
+    hdr_text = HDR.read_text(encoding="utf-8", errors="replace")
+
     with tempfile.TemporaryDirectory(prefix="telem_flags_mut_") as td:
         tdir = Path(td)
-        mut_sv = tdir / "Plex.sv"
+
+        mut_sv = tdir / "Plex_drop.sv"
         mutate_drop_stub_busy(PLEX_SV, mut_sv)
-        # Run check logic on mutated RTL against product ARM (drift).
         rtl_text = mut_sv.read_text(encoding="utf-8", errors="replace")
-        arm_text = FPGA_SPI.read_text(encoding="utf-8", errors="replace")
-        hdr_text = HDR.read_text(encoding="utf-8", errors="replace")
         errs = check_paths(rtl_text, arm_text, hdr_text)
+        errs += check_product_no_stub_policy(rtl_text)
         if not errs:
             return die(
                 "MUTATION_BLIND: dropping stub_busy did not turn gate RED — gate cannot fail"
@@ -257,7 +299,14 @@ def self_test() -> int:
             + errs[0]
         )
 
-        # Empty inspection: no telem_flags → must not be rc=0
+        mut_ord = tdir / "Plex_swap.sv"
+        mutate_swap_stub_with_sps(PLEX_SV, mut_ord)
+        rtl_swap = mut_ord.read_text(encoding="utf-8", errors="replace")
+        errs2 = check_paths(rtl_swap, arm_text, hdr_text)
+        if not errs2:
+            return die("MUTATION_BLIND: reordering stub_busy/sps_valid did not RED")
+        print("MUTATION_RED reorder_stub_sps sample=" + errs2[0])
+
         empty = tdir / "empty.sv"
         empty.write_text("// no telem_flags here\n", encoding="utf-8")
         try:
@@ -266,7 +315,10 @@ def self_test() -> int:
         except ValueError:
             print("MUTATION_RED empty_rtl: parse raised (not silent pass)")
 
-    print("PASS telem_flags_abi self-test (product GREEN, drop_stub_busy RED)")
+    print(
+        "PASS telem_flags_abi self-test (product GREEN; drop+reorder stub_busy RED; "
+        "PRODUCT_NO_STUB bit5 policy)"
+    )
     return 0
 
 

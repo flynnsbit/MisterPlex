@@ -282,8 +282,30 @@ std::string Companion::resourcesXml() const {
     return buildResourcesXml(a);
 }
 
+void Companion::touchCastBoundLocked() {
+    castBound_ = true;
+    castBoundAt_ = std::chrono::steady_clock::now();
+}
+
+void Companion::maybeExpireCastHoldLocked() {
+    // Live playback keeps the session; only idle cast hold can expire.
+    if (!castBound_ || wantPlay_)
+        return;
+    if (castHoldTtlMs_ <= 0)
+        return; // 0/negative = no expiry (lab only)
+    const auto ageMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                           std::chrono::steady_clock::now() - castBoundAt_)
+                           .count();
+    if (ageMs < castHoldTtlMs_)
+        return;
+    castBound_ = false;
+    prePlayHold_ = false;
+}
+
 std::string Companion::timelineXml(const std::string& commandId) const {
     std::lock_guard<std::mutex> lock(mu_);
+    // const method but may expire stale cast hold — lock already held.
+    const_cast<Companion*>(this)->maybeExpireCastHoldLocked();
 
     std::string videoState = state_;
     // Intentional wire hold (NOT a screen/API desync bug): after stop while
@@ -291,7 +313,8 @@ std::string Companion::timelineXml(const std::string& commandId) const {
     // but timeline polls report buffering@navigation so Plex Web keeps the cast
     // Resume dialog alive without a fresh mirror (clearMediaLocked sticky hold;
     // mirror path comment "wire shows buffering via prePlayHold_").
-    // Released when castBound_ clears — see /player/timeline/unsubscribe.
+    // Released on /player/timeline/unsubscribe OR cast-hold TTL expiry (controller
+    // vanished without unsubscribe). Discovery /resources must NOT latch castBound_.
     const bool holdIdle =
         !wantPlay_ && (prePlayHold_ || castBound_) &&
         (videoState == "stopped" || videoState.empty() || videoState == "buffering");
@@ -525,7 +548,7 @@ void Companion::stagePlay(const PlayRequest& req) {
     std::lock_guard<std::mutex> lock(mu_);
     wantPlay_ = true;
     prePlayHold_ = false;
-    castBound_ = true;
+    touchCastBoundLocked();
     state_ = "buffering";
     durationMs_ = 0;
     timeMs_ = req.offsetMs < 0 ? 0 : req.offsetMs;
@@ -717,9 +740,12 @@ void Companion::httpLoop() {
             log("HTTP IN " + requestLine(req));
 
         {
+            // Cast liveness: only /player/* is evidence of a cast controller.
+            // /resources is a plain LAN discovery probe (any Plex client) — latching
+            // castBound_ on it left buffering@navigation forever after a probe.
             std::lock_guard<std::mutex> lock(mu_);
-            if (req.find("/player/") != std::string::npos || req.find("/resources") != std::string::npos)
-                castBound_ = true;
+            if (req.find("/player/") != std::string::npos)
+                touchCastBoundLocked();
         }
 
         if (req.find("OPTIONS") == 0) {
@@ -759,7 +785,7 @@ void Companion::httpLoop() {
              req.find("mirror") == std::string::npos && req.find("unsubscribe") == std::string::npos)) {
             {
                 std::lock_guard<std::mutex> lock(mu_);
-                castBound_ = true;
+                touchCastBoundLocked();
                 // Live poller ⇒ Web still has us as cast target; hold for Resume dialog.
                 if (!wantPlay_ && !prePlayHold_)
                     prePlayHold_ = true;
@@ -814,7 +840,7 @@ void Companion::httpLoop() {
                     prePlayHold_ = true;
                     wantPlay_ = false;
                     state_ = "stopped"; // wire shows buffering via prePlayHold_
-                    castBound_ = true;
+                    touchCastBoundLocked();
                 }
                 // else: leave live timeline alone (Web mirror after playMedia must not idle)
             }
@@ -855,7 +881,7 @@ void Companion::httpLoop() {
                     std::lock_guard<std::mutex> lock(mu_);
                     wantPlay_ = true;
                     prePlayHold_ = false;
-                    castBound_ = true;
+                    touchCastBoundLocked();
                     state_ = "buffering";
                     // Never plant negative scrubber time (Web/browse edge).
                     int64_t off = pr.offsetMs < 0 ? 0 : pr.offsetMs;
