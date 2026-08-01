@@ -871,7 +871,8 @@ verify_baseline() {
           echo "FAIL core-id absent but VIDREG_REQUIRE_CORE_ID=1 (identity RBF required)"
           rc=1
         else
-          echo "OK   core-id absent allowed for pre-identity DDR core (set VIDREG_REQUIRE_CORE_ID=1 after first PLXC RBF)"
+          echo "NOTE core-id absent allowed for pre-identity DDR core (set VIDREG_REQUIRE_CORE_ID=1 after first PLXC RBF)"
+          echo "     absent is NOT identity proof — GATE stays UNVERIFIED (no FULL_PASS)"
         fi
         gate_core_identity=UNVERIFIED
       else
@@ -1050,15 +1051,38 @@ case "${1:-verify}" in
     echo "true rc=$_vr"
     exit "$_vr"
     ;;
-  baseline)
+  baseline|dev)
+    # Always run identity/liveness before HDMI measure. Previously `dev` skipped
+    # verify entirely (blind path) and `baseline` aborted on rc=2 so parent could
+    # not capture while the gate correctly refused FULL_PASS.
+    # Policy:
+    #   rc=0 VERIFIED → measure, exit 0
+    #   rc=2 UNVERIFIED → measure allowed (parent grabber), final exit stays 2
+    #   other → hard stop, no measure (do not paper over FAIL/NO-DATA)
+    _mode="$1"
     set +e
     verify_baseline
     _vr=$?
     set -e
     echo "true rc=$_vr"
-    [ "$_vr" -eq 0 ] || exit "$_vr"
-    run_bundle baseline
+    case "$_vr" in
+      0) ;;
+      2)
+        echo "NOTE CORE_IDENTITY_UNVERIFIED — HDMI measure may proceed; cannot FULL_PASS"
+        echo "     measure_edges / frame md5 is parent forensic only, not fabric identity"
+        ;;
+      *)
+        echo "REFUSE measure reason=verify_rc=$_vr (not 0/2)"
+        exit "$_vr"
+        ;;
+    esac
+    run_bundle "$_mode"
+    if [ "$_vr" -ne 0 ]; then
+      echo "POST_MEASURE VERIFY_STATUS=CORE_IDENTITY_UNVERIFIED (measure ≠ identity upgrade)"
+      echo "true rc=$_vr"
+      exit "$_vr"
+    fi
+    echo "true rc=0"
     ;;
-  dev)      run_bundle dev ;;
   *) echo "usage: $0 {baseline|dev|verify}"; exit 1 ;;
 esac

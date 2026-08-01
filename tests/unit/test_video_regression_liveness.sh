@@ -665,5 +665,25 @@ run_new_verify "older-spi"
 expect_rc "older-spi" 2
 expect_grep "older-spi-ok" "OK   daemon-live $OLDER_HYBRID_DAEMON_MD5"
 
+echo "=== STATIC: baseline|dev must call verify_baseline (no blind measure path) ==="
+vr_src="$ROOT/scripts/video_regression.sh"
+grep -q 'baseline|dev)' "$vr_src" || { echo "FAIL missing baseline|dev combined arm"; exit 1; }
+if grep -nE '^\s*dev\)\s+run_bundle' "$vr_src"; then
+  echo "FAIL bare dev) run_bundle path restored (blind measure)"
+  exit 1
+fi
+python3 - <<'PY'
+from pathlib import Path
+t = Path("scripts/video_regression.sh").read_text()
+i = t.find("baseline|dev)")
+j = t.find("*) echo \"usage:", i)
+arm = t[i:j]
+assert "verify_baseline" in arm, "verify_baseline missing in baseline|dev arm"
+assert "run_bundle" in arm, "run_bundle missing in baseline|dev arm"
+assert "CORE_IDENTITY_UNVERIFIED" in arm
+assert "REFUSE measure" in arm
+print("OK static baseline|dev verify-before-measure contract")
+PY
+
 echo "ALL test_video_regression_liveness checks passed"
 exit 0

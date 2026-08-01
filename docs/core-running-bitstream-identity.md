@@ -119,3 +119,11 @@ Prefix match (≥8 hex) allowed only when full md5 not yet registered; prefer fu
 Unknown core, missing claim, or unreadable identity → **rc=1 FAIL**, never
 rc=77 skip and never PASS. Visual confirmation remains parent-only for pixel
 correctness; this gate only refuses incoherent / unknown running core.
+
+## 2026-07-31 follow-up (w-lint)
+
+- `verify` still **rc=2** `VERIFY_STATUS=CORE_IDENTITY_UNVERIFIED` without PLXC/VIDREG proof.
+- Hole closed: bare `dev) run_bundle` skipped verify — **`baseline|dev` now always call `verify_baseline` first**.
+- rc=2 may proceed to HDMI `measure_edges` for parent forensics; **final exit stays 2** (measure does not upgrade identity).
+- Frame md5 alone is **not** registered as fabric identity (parent: distinctness invalid both ways).
+- RTL: no shipping build-ID register; PLXC @ doorbell+0x130 remains fit-gated (above).

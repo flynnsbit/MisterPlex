@@ -1,36 +1,35 @@
 lane: w-lint GATE-INTEGRITY
-tip: e5ce4759
 branch: w-lint-gate-integrity
 worktree: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-lint
 
-## Fleet broadcast (av-lock / av_drift blind) — DONE
-Replaced soak criteria that used daemon av_drift_ms / clock=av-lock.
+## Parent RE-TASK response
 
-| Was | Now |
-|-----|-----|
-| pass if max_abs av_drift_ms ≤ 250 | TELEMETRY_ONLY not_lip_sync NOTE |
-| HDMI fail → "av_drift still counts" | unscored; av_drift not substitute |
-| soak on clock=av-lock | FORBIDDEN |
+### 1. Running bitstream identity (blocker)
+- verify: FULL_PASS only VERIFIED_PLXC (parent VIDREG inject or future PLXC word)
+- UNVERIFIED → rc=2 REFUSE FULL_PASS (proven RBG in test_video_regression_liveness)
+- mixed SPI/DDR pair → rc=1
+- empty probe → rc=4 NO-DATA
+- FIXED hole: bare `dev) run_bundle` skipped verify — now baseline|dev always verify first
+- rc=2 allows HDMI measure for parent forensics; final exit stays 2 (measure ≠ identity)
+- CORENAME/RBFNAME never identity; on-disk RBF md5 never fabric proof
+- No RTL build-ID register in shipping core — PLXC design in docs/core-running-bitstream-identity.md (fit-gated)
+- HDMI fingerprint is parent-only; frame md5 alone invalid both ways (parent note)
 
-Lip-sync judge only: tests/hw/avsync_measure.py, avsync_rate.py, tools/avsync_measure_hdmi.py
-Evidence: docs/evidence/w_lint_AV_DRIFT_BLIND.md (quotes parent HDMI clusters + av_clock.hpp)
-Static guard: tests/unit/test_av_drift_not_lipsync_pass.py (RBG: injected pass line rc=1; clean rc=0)
+### 2. Stub-lock inventory (no behaviour change)
+docs/evidence/w_lint_STUB_LOCK_INVENTORY.md — four items, all (a) intentional:
+1. audio_delay.hpp:45 + test_audio_delay.cpp:49 + authority_red
+2. ddrFrameFormatCode always 1 + test_frame_store_math.cpp:282
+3. kStubDcPaintY=104 goldens + test_idct_quant.cpp:129
+4. ddrFrameGeometryForFpgaPresent ignores decode + rtl_invariants/native_480p
+No (b) hidden gap found.
 
-## Direct true rc (host)
-| cmd | true rc |
-|-----|---------|
-| test_av_drift_not_lipsync_pass.py | 0 |
-| test_unit_rollcall.py (expected_commands=125) | 0 |
-| test_rtl_invariants.py | 0 |
-| make unit-unlocked | 0 |
-| make unit no MISTERPLEX_BASELINE_KEY | GATE_RESULT process_rc=78 PASS_INCOMPLETE; make exit=2 (make masks) |
+### 3. expected_commands
+- fix/gate-liveness: CLOSE/SUPERSEDED (EXPECTED_COMMANDS=102 measured) — do not merge
+- w-lint: 125 protected = Makefile reality (rollcall OK)
+- Never hand-edit integer; use test_unit_rollcall.py --write-expected
 
-## Standing (unchanged this delta)
-- video_regression verify: FULL_PASS only VERIFIED_PLXC; UNVERIFIED rc=2
-- CRITICAL live-pms-baseline-profile soft-skip → process_rc=78 ≠ pass
-- fix/gate-liveness SUPERSEDED
-- No device / no Quartus; ARM md5 N/A
-
-## Parent commands
-bash scripts/video_regression.sh verify; echo "true rc=$?"
-# expect rc=2 until PLXC fit
+### Direct true rc
+| gate | true rc |
+|------|---------|
+| test_video_regression_liveness.sh | 0 |
+| test_unit_rollcall.py | 0 |
