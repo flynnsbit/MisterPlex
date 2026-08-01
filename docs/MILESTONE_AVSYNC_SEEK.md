@@ -8,6 +8,35 @@
 
 ---
 
+## RETRACTION (2026-08-01) — 117 ms “device bimodality” was INSTRUMENT ARTIFACT
+
+Parent interleaved A/B (`files/prereg/AB-ALIGN.md`): OLD ffmpeg dual-input (no
+`-use_wallclock_as_timestamps`, no `-copyts`) vs NEW (wallclock both + `-copyts`
+`-start_at_zero`).
+
+| argv class | n | between-run median range | note |
+|------------|---|--------------------------|------|
+| OLD | 6 | **135.33 ms** | empty gap / false clusters |
+| NEW | 16 | **25.00 ms** | pooled sixfield+ab/new, same class |
+
+**Do not cite cluster A/B ≈ −314/−197, sep ≈ 117 ms, or SESSION-LATCHED-as-device
+as product defects.** Those sections below are **HISTORICAL / OLD-argv** unless
+re-measured under a NEW capture-config fingerprint.
+
+### Residual under NEW argv (host analysis, measured)
+
+`tools/analyze_avsync_residual.py` on `/tmp/sixfield/av*.json` + `/tmp/ab/new_*.json`:
+
+- `flash_onset_n_interp=0` / `n_flashes=712` (all step) · `capture_frame_quant_ms=33.00` · beep `hop_ms=2.0`
+- between-run median range **25.00 ms** ≤ T · E[range|U(0,T),n=16]=**29.12 ms** → **H-QUANT SUPPORTED**
+- **Instrument floor ≈ 33 ms** (one capture frame). **No A/V claim tighter than ~33 ms** until ramped-flash / sub-frame onset.
+- sixfield daemon fields vs median: **H-FIELD NULL** (no |Spearman|>0.5; banks/frames_done vary without tracking offset)
+
+Audit map: `.agent-work/w-avsync/OLD_ARGV_AUDIT.md`. Artifacts:
+`.agent-work/w-avsync/residual_new_pool.txt`, `prereg_residual.txt`.
+
+---
+
 ## Problems
 
 1. **Lips out of sync** on MiSTer cast (Trek dialogue) while local Plex is fine.  

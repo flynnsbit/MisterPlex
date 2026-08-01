@@ -1,0 +1,30 @@
+loaded_json_n=6 src=measured
+  run=old_1 median_ms=-288.66666666666777 quant_ms=33.333333333333215 n_interp=0 n_step=45 n_flash=45 hop_ms=2.0 stdev_ms=10.467796327075538 src=measured
+  run=old_2 median_ms=-159.3333333333291 quant_ms=33.333333333333215 n_interp=0 n_step=44 n_flash=44 hop_ms=2.0 stdev_ms=15.96037908831722 src=measured
+  run=old_3 median_ms=-294.6666666666644 quant_ms=33.333333333333215 n_interp=0 n_step=45 n_flash=45 hop_ms=2.0 stdev_ms=12.595433230802444 src=measured
+  run=old_4 median_ms=-287.3333333333328 quant_ms=33.333333333333215 n_interp=0 n_step=45 n_flash=45 hop_ms=2.0 stdev_ms=12.838436802570694 src=measured
+  run=old_5 median_ms=-290.66666666666663 quant_ms=33.333333333333215 n_interp=0 n_step=45 n_flash=45 hop_ms=2.0 stdev_ms=14.492841996510169 src=measured
+  run=old_6 median_ms=-284.0000000000025 quant_ms=33.333333333333215 n_interp=0 n_step=45 n_flash=45 hop_ms=2.0 stdev_ms=12.945927430548794 src=measured
+=== H-QUANT residual ===
+n_runs=6 src=measured
+between_run_range_ms=135.3333333333353 src=measured
+between_run_stdev_ms=48.45680270504041 src=measured
+between_run_mean_ms=-267.4444444444439 src=measured
+capture_frame_quant_ms=33.333333333333215 src=measured
+expected_uniform_range_ms=23.80952380952372 src=derived_E_max_min_Uniform_0_T
+range_over_T=4.060000000000073 src=measured/derived
+flash_onset_n_interp_total=0 src=measured
+flash_onset_n_step_total=269 src=measured
+flash_onset_n_flashes_total=269 src=measured
+beep_hop_ms=2.0 src=measured
+within_run_stdev_ms_median=12.892182116559745 src=measured
+uniform_0_T_stdev_ms=9.62250448649373 src=derived_from_measured_T
+all_flashes_step_no_interp=True src=measured
+instrument_floor_ms=33.333333333333215 src=measured_capture_frame_quant
+status=quant_insufficient src=measured
+median_ms_list=-294.6667,-290.6667,-288.6667,-287.3333,-284.0000,-159.3333 src=measured
+H_QUANT=REJECTED src=measured detail=between_run_range_ms=135.3333 > T=33.3333
+CONSEQUENCE=Quantisation alone (T=33.33 ms) does NOT cover observed range 135.33 ms. Residual beyond one frame remains unexplained by video grid alone.
+H_FIELD=UNSCORED src=could-not-measure detail=no_rec_pairs
+json_out=.agent-work/w-avsync/residual_old_pool.json src=measured
+VERDICT_RC=2 src=measured

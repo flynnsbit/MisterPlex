@@ -1,0 +1,295 @@
+{
+  "quant": {
+    "n_runs": 16,
+    "n_runs_src": "measured",
+    "median_ms_list": [
+      -129.999999999999,
+      -127.00000000000067,
+      -123.00000000000023,
+      -122.99999999999756,
+      -122.99999999999756,
+      -118.99999999999977,
+      -117.00000000000088,
+      -116.9999999999991,
+      -115.00000000000199,
+      -115.00000000000021,
+      -112.99999999999955,
+      -112.99999999999955,
+      -109.99999999999943,
+      -109.99999999999943,
+      -106.99999999999932,
+      -105.00000000000043
+    ],
+    "between_run_range_ms": 24.99999999999858,
+    "between_run_range_ms_src": "measured",
+    "between_run_stdev_ms": 6.898539247550642,
+    "between_run_stdev_ms_src": "measured",
+    "between_run_mean_ms": -116.68749999999967,
+    "between_run_mean_ms_src": "measured",
+    "capture_frame_quant_ms": 33.00000000000125,
+    "capture_frame_quant_ms_src": "measured",
+    "flash_onset_n_interp_total": 0,
+    "flash_onset_n_step_total": 712,
+    "flash_onset_n_flashes_total": 712,
+    "flash_onset_counts_src": "measured",
+    "beep_hop_ms": 2.0,
+    "beep_hop_ms_src": "measured",
+    "within_run_stdev_ms_median": 14.706083396963589,
+    "within_run_stdev_ms_median_src": "measured",
+    "uniform_0_T_stdev_ms": 9.526279441629187,
+    "uniform_0_T_stdev_ms_src": "derived_from_measured_T",
+    "expected_uniform_range_ms": 29.117647058824634,
+    "expected_uniform_range_ms_src": "derived_E_max_min_Uniform_0_T",
+    "range_over_T": 0.7575757575756858,
+    "range_over_T_src": "measured/derived",
+    "all_flashes_step_no_interp": true,
+    "all_flashes_step_no_interp_src": "measured",
+    "H_QUANT": {
+      "verdict": "SUPPORTED",
+      "verdict_src": "measured",
+      "detail": "between_run_range_ms=25.0000 \u2264 T=33.0000; E[range|U(0,T),n=16]=29.1176; flash_onset_n_interp=0/712"
+    },
+    "instrument_floor_ms": 33.00000000000125,
+    "instrument_floor_ms_src": "measured_capture_frame_quant",
+    "consequence": "This instrument cannot resolve A/V error smaller than ~33.00 ms (one capture frame) while flash onset is step-quantised (n_interp=0). No A/V claim below that threshold until ramped-flash or sub-frame onset lands.",
+    "rc": 0,
+    "status": "quant_accounts_for_residual"
+  },
+  "fields": {
+    "n_paired": 16,
+    "n_paired_src": "measured",
+    "fields": [
+      {
+        "field": "plxa_used",
+        "status": "constant",
+        "unique": [
+          1
+        ],
+        "n_unique": 1,
+        "spearman": null,
+        "spearman_src": "could-not-measure"
+      },
+      {
+        "field": "plxd_liveness_proven",
+        "status": "constant",
+        "unique": [
+          1
+        ],
+        "n_unique": 1,
+        "spearman": null,
+        "spearman_src": "could-not-measure"
+      },
+      {
+        "field": "published_bank",
+        "status": "varies",
+        "unique": [
+          0,
+          1
+        ],
+        "n_unique": 2,
+        "spearman": -0.3078141705358133,
+        "spearman_src": "measured"
+      },
+      {
+        "field": "free_bank_mask",
+        "status": "varies",
+        "unique": [
+          0,
+          1,
+          2
+        ],
+        "n_unique": 3,
+        "spearman": 0.3692544090280203,
+        "spearman_src": "measured"
+      },
+      {
+        "field": "disp_bank",
+        "status": "varies",
+        "unique": [
+          0,
+          1
+        ],
+        "n_unique": 2,
+        "spearman": -0.3078141705358133,
+        "spearman_src": "measured"
+      },
+      {
+        "field": "swap_pending",
+        "status": "varies",
+        "unique": [
+          0,
+          1
+        ],
+        "n_unique": 2,
+        "spearman": -0.10444065961360519,
+        "spearman_src": "measured"
+      },
+      {
+        "field": "frames_done",
+        "status": "varies",
+        "unique": [
+          21655,
+          26113,
+          30536,
+          34977,
+          39454,
+          44396,
+          48798,
+          53262,
+          57739,
+          62275
+        ],
+        "n_unique": 10,
+        "spearman": -0.40266568558631016,
+        "spearman_src": "measured"
+      },
+      {
+        "field": "av_hold_count",
+        "status": "varies",
+        "unique": [
+          0,
+          10,
+          3,
+          4,
+          7,
+          9
+        ],
+        "n_unique": 6,
+        "spearman": -0.006508015183822382,
+        "spearman_src": "measured"
+      },
+      {
+        "field": "av_hold_wait_us",
+        "status": "varies",
+        "unique": [
+          0,
+          12922,
+          15248,
+          20338,
+          22870,
+          8567
+        ],
+        "n_unique": 6,
+        "spearman": -0.006508015183822382,
+        "spearman_src": "measured"
+      },
+      {
+        "field": "audio_queued_first_ge0_since_origin_ms",
+        "status": "varies",
+        "unique": [
+          33,
+          35,
+          36,
+          39,
+          40,
+          49,
+          51,
+          56,
+          59
+        ],
+        "n_unique": 9,
+        "spearman": -0.0253173049316348,
+        "spearman_src": "measured"
+      },
+      {
+        "field": "ddr_total_us",
+        "status": "varies",
+        "unique": [
+          137644,
+          27534,
+          41993,
+          44584,
+          49820,
+          53038,
+          63223,
+          65990,
+          74365,
+          75646
+        ],
+        "n_unique": 10,
+        "spearman": 0.318283538239179,
+        "spearman_src": "measured"
+      },
+      {
+        "field": "ddr_copy_us",
+        "status": "varies",
+        "unique": [
+          10248,
+          4857,
+          5529,
+          6613,
+          6734,
+          6994,
+          7847,
+          8125,
+          9233,
+          9374
+        ],
+        "n_unique": 10,
+        "spearman": 0.09622525574672854,
+        "spearman_src": "measured"
+      },
+      {
+        "field": "ddr_doorbell_us",
+        "status": "varies",
+        "unique": [
+          1,
+          122742,
+          24841,
+          34981,
+          37135,
+          40665,
+          47465,
+          52056,
+          61113,
+          64096
+        ],
+        "n_unique": 10,
+        "spearman": 0.29015615579013526,
+        "spearman_src": "measured"
+      },
+      {
+        "field": "ddr_plxa_poll_us",
+        "status": "varies",
+        "unique": [
+          10209,
+          11598,
+          14341,
+          19669,
+          2523,
+          3,
+          5509,
+          9037
+        ],
+        "n_unique": 8,
+        "spearman": -0.23662615672073023,
+        "spearman_src": "measured"
+      }
+    ],
+    "H_FIELD": {
+      "verdict": "NULL_no_correlation",
+      "verdict_src": "measured",
+      "detail": "some fields vary but |Spearman|\u22640.5 vs median_offset for all"
+    },
+    "status": "null_no_correlation",
+    "rc": 0
+  },
+  "runs": [
+    "av1",
+    "av10",
+    "av2",
+    "av3",
+    "av4",
+    "av5",
+    "av6",
+    "av7",
+    "av8",
+    "av9",
+    "new_1",
+    "new_2",
+    "new_3",
+    "new_4",
+    "new_5",
+    "new_6"
+  ]
+}

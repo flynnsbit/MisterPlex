@@ -142,6 +142,7 @@ unit-unlocked: unit-rollcall preflight $(ROOT)/build/test_cadence $(ROOT)/build/
 	$(ROOT)/tests/unit/test_avsync_measure_hdmi.sh
 	$(ROOT)/tests/unit/test_avsync_ramp_onset.sh
 	$(ROOT)/tests/unit/test_analyze_mraudio_handoff.sh
+	$(ROOT)/tests/unit/test_analyze_avsync_residual.sh
 	$(ROOT)/tests/unit/test_resource_preflight.sh
 	$(ROOT)/tests/unit/test_mister_soft_bounce_lock.sh
 	$(ROOT)/scripts/check_define_parity.py

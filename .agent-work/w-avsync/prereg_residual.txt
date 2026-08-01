@@ -1,0 +1,6 @@
+PRE-REGISTER 2026-08-01 before reading sixfield/ab aggregates via analyzer:
+H-QUANT: NEW-argv between-run median range (parent said 25 ms) ≤ capture_frame_quant_ms
+         (~33.3 if 30 fps step onset). If flash_onset_n_interp total == 0 and range ≤ T,
+         SUPPORT → instrument floor = T; no A/V claim below T.
+H-QUANT miss if range > T.
+H-FIELD: sixfield rec fields all constant OR |rho|≤0.5 → NULL (valid result).
