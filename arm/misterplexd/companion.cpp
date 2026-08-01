@@ -748,6 +748,60 @@ void Companion::httpLoop() {
             continue;
         }
 
+        // UI↔daemon join key for parent soaks. Does NOT set castBound_.
+        // Suite stamps run_id; parent greps misterplexd.log for e2e_mark then
+        // first_audio_pcm / A/V audio_release / first_video_present / pcm_silence_head_ms.
+        if (req.find("GET /player/e2e_mark") != std::string::npos ||
+            req.find("POST /player/e2e_mark") != std::string::npos ||
+            req.find("GET /e2e_mark") != std::string::npos) {
+            const auto runId = queryParam(req, "run_id");
+            const auto event = queryParam(req, "event");
+            const auto hostWall = queryParam(req, "host_wall_ms");
+            const auto hostIso = queryParam(req, "host_wall_iso");
+            const auto cycle = queryParam(req, "cycle");
+            const auto tier = queryParam(req, "tier");
+            const auto rk = queryParam(req, "ratingKey");
+            const auto sess = queryParam(req, "session");
+            const auto transition = queryParam(req, "transition");
+            const auto reason = queryParam(req, "reason");
+            const auto mono = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                  std::chrono::steady_clock::now().time_since_epoch())
+                                  .count();
+            const auto unixMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                    std::chrono::system_clock::now().time_since_epoch())
+                                    .count();
+            std::string line = "companion: e2e_mark";
+            line += " run_id=" + (runId.empty() ? std::string("MISSING") : runId);
+            line += " event=" + (event.empty() ? std::string("mark") : event);
+            line += " host_wall_ms=" + (hostWall.empty() ? std::string("NA") : hostWall);
+            if (!hostIso.empty())
+                line += " host_wall_iso=" + hostIso;
+            line += " daemon_unix_ms=" + std::to_string(unixMs);
+            line += " mono_ms=" + std::to_string(mono);
+            if (!cycle.empty())
+                line += " cycle=" + cycle;
+            if (!tier.empty())
+                line += " tier=" + tier;
+            if (!rk.empty())
+                line += " ratingKey=" + rk;
+            if (!sess.empty())
+                line += " session=" + sess;
+            if (!transition.empty())
+                line += " transition=" + transition;
+            if (!reason.empty())
+                line += " reason=" + reason;
+            line += " tag=correlation";
+            log(line);
+            std::string body = "ok=1 e2e_mark=1 run_id=" +
+                               (runId.empty() ? std::string("MISSING") : runId) +
+                               " event=" + (event.empty() ? std::string("mark") : event) +
+                               " mono_ms=" + std::to_string(mono) +
+                               " daemon_unix_ms=" + std::to_string(unixMs) + "\n";
+            sendHttp(c, 200, "text/plain", body);
+            close(c);
+            continue;
+        }
+
         // Unsubscribe: drop cast-bound hold so idle polls can go pure stopped.
         if (req.find("/player/timeline/unsubscribe") != std::string::npos) {
             {

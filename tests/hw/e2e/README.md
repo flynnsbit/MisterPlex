@@ -417,3 +417,30 @@ Asserts:
 
 `E2E_REQUIRE_LEDGER=1` (default): unprobed ledger is RED, not a soft pass.
 Requires daemon with `/player/telemetry` (this branch) or a live log feed.
+
+
+## Per-run correlation key (UI ↔ daemon origin)
+
+Every cast-picker run emits a unique `E2E_RUN_ID` (override with env) and stamps the
+daemon log via `GET /player/e2e_mark?run_id=…&event=…&host_wall_ms=…` (no `castBound`).
+
+```
+E2E_RUN_ID=cast-<ms>-<hex>
+E2E_MARK event=play_issued …
+E2E_JOIN session=N …
+```
+
+Parent join recipe (do **not** bare-tail a shared log — ERROR 12 class):
+
+```bash
+# after suite prints E2E_RUN_ID=...
+RID=cast-...
+grep -F "e2e_mark run_id=$RID" /path/to/misterplexd.log
+# then origin lines in the same session window:
+grep -E 'first_audio_pcm|A/V audio_release|first_video_present|pcm_silence_head_ms' …
+```
+
+Artifacts: `$E2E_OUT_DIR/e2e_run_id.txt` and `e2e_run_events.jsonl`.
+
+**Lipsync is NOT asserted here.** `av-lock` / `av_drift_ms` are blind to the measured
+bimodal HDMI offset. Only `tools/avsync_measure_hdmi.py` on a parent capture is valid.

@@ -46,12 +46,21 @@ const {
   mediaInfo,
 } = require('./discover_real');
 const { captureLedger, assertLedgerWindow, formatSnap } = require('./ledger');
+const { createRunCorrelation } = require('./run_correlate');
 
 const EXIT_PASS = 0;
 const EXIT_FAIL = 1;
 const EXIT_SKIP = 77;
 
 const cfg = loadConfig();
+
+/** Per-suite join key → daemon e2e_mark / origin lines. No lipsync scoring. */
+const runCorr = createRunCorrelation({
+  misterHost: cfg.misterHost || process.env.MISTER_HOST || '127.0.0.1',
+  misterPort: cfg.misterPort || process.env.MISTER_PORT || 3005,
+  outDir: cfg.outDir,
+  log,
+});
 
 function log(...a) {
   console.log(...a.map((x) => (typeof x === 'string' ? redact(x) : x)));
@@ -742,6 +751,11 @@ async function clickPlay(page, preferSel) {
       }
       await el.click({ timeout: 5000 });
       log(`play_button selector=${sel}`);
+      // Fire-and-forget mark — join UI play to daemon origin window (not lipsync).
+      runCorr
+        .mark('play_issued', { selector: sel })
+        .then(() => runCorr.joinTelemetry('play_issued'))
+        .catch(() => {});
       return sel;
     } catch (_) {
       /* next candidate */
@@ -1295,10 +1309,12 @@ async function resetCycleStartState(page, itemTitle, detailsUrl, cycle, total) {
   await ensureExactCastSelected(page, itemTitle);
   const ready2 = await waitForDetailsReady(page, itemTitle, 60000);
   await playFromDetails(page, itemTitle, ready2.playSel || ready.playSel, tag);
+  await runCorr.mark('cycle_play_issued', { cycle });
   // Prefer "start from the beginning" — already inside handleResumeDialog.
   const waitSec = Math.min(cfg.playWaitSec, 12);
   const prog = await waitPlayingOnDaemon(waitSec);
   if (prog.playing < 2) {
+    await runCorr.mark('cycle_not_playing', { cycle });
     cycleFail(
       cycle,
       total,
@@ -1310,9 +1326,11 @@ async function resetCycleStartState(page, itemTitle, detailsUrl, cycle, total) {
   const samples = await sampleTimeline(5, 350, `${tag}_base`);
   const adv = assertTimeAdvancing(samples, tag, 300);
   const t0 = samples.length ? samples[0].time : prog.maxT;
+  const joined = await runCorr.joinTelemetry(`cycle_${cycle}_playing`);
   log(
     `CYCLE_START_STATE cycle=${cycle}/${total} time0_ms=${t0} advancing=${adv.ok ? 1 : 0} ` +
-      `max_t=${prog.maxT} (controlled baseline — not residual seek position)`
+      `max_t=${prog.maxT} run_id=${runCorr.runId} daemon_session=${joined.session || 'NA'} ` +
+      `(controlled baseline — not residual seek position)`
   );
   if (!adv.ok) {
     cycleFail(cycle, total, 'cycle_reset', 'not_advancing', adv.detail || '');
@@ -1866,7 +1884,8 @@ async function runTransitionScenarios(page, itemTitle, detailsUrl, _castAlreadyS
   log(
     `TRANSITIONS=on cycles=${total} continue_on_fail=${continueOnFail ? 1 : 0} ` +
       `content=${cfg.contentMode} hdmi=${cfg.hdmiMotion ? 1 : 0} ` +
-      `hdmi_every=${cfg.hdmiEveryCycle ? 1 : 0} hdmi_assert=${cfg.hdmiAssertMode}`
+      `hdmi_every=${cfg.hdmiEveryCycle ? 1 : 0} hdmi_assert=${cfg.hdmiAssertMode} ` +
+      `run_id=${runCorr.runId}`
   );
   log(
     'CYCLE_ISOLATION=on each cycle force-stops then plays from beginning ' +
@@ -1882,11 +1901,14 @@ async function runTransitionScenarios(page, itemTitle, detailsUrl, _castAlreadyS
   const results = [];
   const failures = [];
   for (let c = 1; c <= total; c++) {
-    log(`════════ TRANSITION_CYCLE ${c}/${total} ════════`);
+    log(`════════ TRANSITION_CYCLE ${c}/${total} run_id=${runCorr.runId} ════════`);
+    await runCorr.mark('cycle_start', { cycle: c });
     try {
       const r = await runOneTransitionCycle(page, itemTitle, detailsUrl, c, total);
       results.push(r);
-      log(`TRANSITION_CYCLE_OK ${c}/${total} start_time0_ms=${r.startTime0}`);
+      await runCorr.mark('cycle_ok', { cycle: c });
+      await runCorr.joinTelemetry(`cycle_${c}_ok`);
+      log(`TRANSITION_CYCLE_OK ${c}/${total} start_time0_ms=${r.startTime0} run_id=${runCorr.runId}`);
     } catch (e) {
       if (e instanceof FailError) {
         const failedTransition = e.transition || e.reason || 'unknown';
@@ -1899,9 +1921,17 @@ async function runTransitionScenarios(page, itemTitle, detailsUrl, _castAlreadyS
         };
         results.push(row);
         failures.push(row);
+        await runCorr
+          .mark('cycle_fail', {
+            cycle: c,
+            transition: failedTransition,
+            reason: e.reason,
+          })
+          .catch(() => {});
         log(
           `TRANSITION_CYCLE_FAIL ${c}/${total} transition=${failedTransition} ` +
-            `reason=${e.reason} passed_so_far=${results.filter((x) => x.ok).length}`
+            `reason=${e.reason} run_id=${runCorr.runId} ` +
+            `passed_so_far=${results.filter((x) => x.ok).length}`
         );
         if (!continueOnFail) {
           log(
@@ -1977,8 +2007,19 @@ async function runTransitionScenarios(page, itemTitle, detailsUrl, _castAlreadyS
 
 (async () => {
   log('test_cast_picker_playwright: BEGIN');
+  runCorr.emitBanner();
+  await runCorr.mark('suite_begin');
+  runCorr.persist(cfg.outDir);
   log(`conf=${cfg.confPath} library=${cfg.libraryName} cast=${cfg.castName}`);
-  log(`tiers=${(cfg.tiers || []).map((t) => t.name).join(',') || '(none)'} content=${cfg.contentMode} transitions=${cfg.transitions ? 1 : 0} cycles=${cfg.transitionCycles} hdmi=${cfg.hdmiMotion ? 1 : 0}`);
+  log(
+    `tiers=${(cfg.tiers || []).map((t) => t.name).join(',') || '(none)'} ` +
+      `content=${cfg.contentMode} transitions=${cfg.transitions ? 1 : 0} ` +
+      `cycles=${cfg.transitionCycles} hdmi=${cfg.hdmiMotion ? 1 : 0} run_id=${runCorr.runId}`
+  );
+  log(
+    'NO_LIPSYNC_ASSERT: suite never gates on av-lock/av_drift_ms; A/V bimodal offset is ' +
+      'parent HDMI-only (tools/avsync_measure_hdmi.py).'
+  );
 
   if (cfg.tierResolveError) {
     fail('bad_e2e_tier', cfg.tierResolveError);
@@ -2330,7 +2371,16 @@ async function runTransitionScenarios(page, itemTitle, detailsUrl, _castAlreadyS
             'failure is post-select playback.'
         );
       }
-      log(`playing_ok samples=${prog.playing} advance=${prog.advance} time_max_ms=${prog.maxT}`);
+      log(
+        `playing_ok samples=${prog.playing} advance=${prog.advance} time_max_ms=${prog.maxT} ` +
+          `run_id=${runCorr.runId}`
+      );
+      await runCorr.mark('playing_ok', {
+        tier: tier.name,
+        ratingKey: String(ratingKey),
+      });
+      await runCorr.joinTelemetry(`tier_${tier.name}_playing_ok`);
+      runCorr.persist(cfg.outDir);
 
       // ── 4b. Transitions (pause/resume, seek, stop+recast, play→idle→play) ─
       // Per-tier capture base so 240p/480p frames do not mix when E2E_TIER=all.
@@ -2420,10 +2470,15 @@ async function runTransitionScenarios(page, itemTitle, detailsUrl, _castAlreadyS
     process.exit(EXIT_FAIL);
   }
   if (suitePassed && teardownResult && teardownResult.ok) {
+    await runCorr.mark('suite_pass').catch(() => {});
+    runCorr.persist(cfg.outDir);
     log('CAST_PICKER_E2E_RESULT=PASS');
     log(
       `summary ${summaryBits.join(' ') || 'ok'} teardown=ok cast=${cfg.castName} ` +
-        `lastTier=${lastTierName} lastRatingKey=${lastRatingKey}`
+        `lastTier=${lastTierName} lastRatingKey=${lastRatingKey} run_id=${runCorr.runId}`
+    );
+    log(
+      `E2E_RUN_ID=${runCorr.runId} — parent: grep e2e_mark run_id=${runCorr.runId} then origin lines`
     );
     process.exitCode = EXIT_PASS;
     return;
