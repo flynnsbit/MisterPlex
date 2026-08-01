@@ -45,7 +45,12 @@ const {
   isBankGeometry,
   mediaInfo,
 } = require('./discover_real');
-const { captureLedger, assertLedgerWindow, formatSnap } = require('./ledger');
+const {
+  captureLedger,
+  assertLedgerWindow,
+  assertPidUnchanged,
+  formatSnap,
+} = require('./ledger');
 const { createRunCorrelation } = require('./run_correlate');
 
 const EXIT_PASS = 0;
@@ -61,6 +66,30 @@ const runCorr = createRunCorrelation({
   outDir: cfg.outDir,
   log,
 });
+
+/** Baseline misterplexd PID for whole-run stability (self-exit rc=0 detection). */
+let baselineDaemonPid = -1;
+
+async function captureAndAssertPid(tag, { hardFail = true } = {}) {
+  const snap = await captureLedger(cfg);
+  const r = assertPidUnchanged(baselineDaemonPid, snap, tag);
+  if (baselineDaemonPid < 0 && snap && snap.pid > 0) {
+    baselineDaemonPid = snap.pid;
+    log(`DAEMON_PID_BASELINE pid=${baselineDaemonPid} tag=${tag} src=${snap.source}`);
+  }
+  if (!r.ok) {
+    if (hardFail) {
+      fail(r.reason || 'daemon_pid_changed', r.detail || '');
+    }
+    return { ok: false, ...r, snap };
+  }
+  if (r.softSkip) {
+    log(`DAEMON_PID_SOFT_SKIP tag=${tag} ${r.detail}`);
+  } else if (snap && snap.pid > 0) {
+    log(`DAEMON_PID_OK tag=${tag} pid=${snap.pid}`);
+  }
+  return { ok: true, ...r, snap };
+}
 
 function log(...a) {
   console.log(...a.map((x) => (typeof x === 'string' ? redact(x) : x)));
@@ -506,7 +535,21 @@ function expectedCompanionKeys(cfg) {
  * ASSERT_COMPANION=0 → log only, exit still can PASS on picker+play (lab debug).
  * Default ASSERT_COMPANION=1 when discovery traffic is expected.
  */
-function assertCompanionServer(tracker) {
+/** Best-effort friendlyName for a polled companion host (sort-order diagnostics). */
+async function probeHostFriendlyName(hostKey) {
+  if (!hostKey || hostKey === '127.0.0.1' || hostKey === 'localhost') {
+    return { host: hostKey, friendlyName: '(loopback)', status: 0 };
+  }
+  const url = `http://${hostKey}:32400/identity`;
+  const r = await httpGet(url, {}, 2500);
+  const fn =
+    (r.body && (r.body.match(/friendlyName="([^"]*)"/) || [])[1]) ||
+    (r.body && (r.body.match(/mediaServerFriendlyName="([^"]*)"/) || [])[1]) ||
+    '';
+  return { host: hostKey, friendlyName: fn || '(unknown)', status: r.status };
+}
+
+async function assertCompanionServer(tracker) {
   const urls = [...tracker.discovery];
   const hosts = [...new Set(urls.map(hostFromUrl).filter(Boolean))];
   const keys = hosts.map(normalizeHostKey);
@@ -538,6 +581,27 @@ function assertCompanionServer(tracker) {
   const expected = expectedCompanionKeys(cfg);
   log(`companion_expected_keys=${[...expected].join(',')}`);
 
+  // Always probe friendlyNames of polled hosts so sort-order is greppable.
+  const probes = [];
+  for (const k of uniqueKeys.slice(0, 8)) {
+    probes.push(await probeHostFriendlyName(k));
+  }
+  const sortedByName = [...probes].sort((a, b) =>
+    String(a.friendlyName).toLowerCase().localeCompare(String(b.friendlyName).toLowerCase())
+  );
+  for (const p of probes) {
+    log(
+      `  companion_host_identity host=${p.host} friendlyName=${JSON.stringify(p.friendlyName)} ` +
+        `http=${p.status}`
+    );
+  }
+  if (sortedByName.length) {
+    log(
+      `COMPANION_FRIENDLYNAME_SORT_HINT first_would_win=${JSON.stringify(sortedByName[0].friendlyName)} ` +
+        `order=${sortedByName.map((p) => p.friendlyName).join(' < ')}`
+    );
+  }
+
   const hit = uniqueKeys.filter((k) => expected.has(k));
   if (hit.length === 0) {
     fail(
@@ -545,15 +609,25 @@ function assertCompanionServer(tracker) {
       'Plex Web polled a companionServer that is NOT the PLEX_BASE under test.\n' +
         `  polled_norm=${uniqueKeys.join(',')}\n` +
         `  expected_norm=${[...expected].join(',')}\n` +
-        'This is the FriendlyName sort-order fragility: Web takes the first owned, ' +
-        'non-cloud, private, connected server by lowercased friendlyName.\n' +
-        'See docs/select-player-runbook.md — rename the intended PMS so it sorts first.\n' +
-        'Do not "fix" this by encoding another household server IP into CI.'
+        `  polled_friendlyNames=${probes.map((p) => `${p.host}=${p.friendlyName}`).join('; ')}\n` +
+        'ROOT CAUSE CLASS: _pickCompanionServer takes the FIRST owned, private, ' +
+        'connected, non-shared server sorted by lowercased friendlyName.\n' +
+        'Lab fix was renaming local PMS to "MiSTerPlex Studio" so it sorts before ' +
+        '"node-worker1". ANY new owned server sorting earlier silently breaks casting.\n' +
+        'Action: list owned servers by friendlyName (case-insensitive), rename/remove ' +
+        'the one that sorts first, or point PLEX_BASE at the winner.\n' +
+        'Do NOT encode another household server IP into CI. plex.tv provides=player is ' +
+        'neither necessary nor sufficient.\n' +
+        'See docs/select-player-runbook.md.'
     );
   }
 
   log(`COMPANION_ASSERT=PASS matched=${hit.join(',')} polled=${uniqueKeys.join(',')}`);
-  return { skipped: false, hosts: uniqueKeys, matched: hit, urls };
+  log(
+    'COMPANION_SORT_FRAGILITY=active rule=first_owned_private_connected_by_lowercased_friendlyName ' +
+      'lab_anchor_friendlyName=MiSTerPlex Studio — new owned server sorting earlier → silent cast break'
+  );
+  return { skipped: false, hosts: uniqueKeys, matched: hit, urls, probes };
 }
 
 /**
@@ -1808,8 +1882,24 @@ async function runOneTransitionCycle(page, itemTitle, detailsUrl, cycle, total) 
     } else {
       log(
         `LEDGER_OK cycle=${cycle}/${total} residual=${lr.residual} session=${lr.session}` +
+          ` pid=${lr.pid != null ? lr.pid : ledgerEnd.pid}` +
           (lr.note ? ` note=${lr.note}` : '')
       );
+    }
+  }
+  // Whole-run PID must match baseline (any cycle sees respawn → named fail).
+  {
+    const pr = assertPidUnchanged(baselineDaemonPid, ledgerEnd, `${ctag}_pid`);
+    if (baselineDaemonPid < 0 && ledgerEnd.pid > 0) {
+      baselineDaemonPid = ledgerEnd.pid;
+      log(`DAEMON_PID_BASELINE pid=${baselineDaemonPid} tag=${ctag}`);
+    }
+    if (pr.softSkip) {
+      log(`DAEMON_PID_SOFT_SKIP cycle=${cycle}/${total} ${pr.detail}`);
+    } else if (!pr.ok) {
+      cycleFail(cycle, total, 'pid', pr.reason || 'daemon_pid_changed', pr.detail || '');
+    } else {
+      log(`DAEMON_PID_OK cycle=${cycle}/${total} pid=${pr.pid || ledgerEnd.pid}`);
     }
   }
 
@@ -2075,9 +2165,24 @@ async function runTransitionScenarios(page, itemTitle, detailsUrl, _castAlreadyS
     await forceStopDaemon('preflight');
   }
 
+  // Baseline daemon PID before UI work — must stay constant for the whole run.
+  await captureAndAssertPid('preflight', { hardFail: false });
+  if (baselineDaemonPid > 0) {
+    log(`DAEMON_PID_TRACKING=on baseline=${baselineDaemonPid} E2E_REQUIRE_PID=${process.env.E2E_REQUIRE_PID || '1'}`);
+  } else {
+    log(
+      `DAEMON_PID_TRACKING=unprobed (need /player/telemetry pid= from deployed daemon) ` +
+        `E2E_REQUIRE_PID=${process.env.E2E_REQUIRE_PID || '1'}`
+    );
+  }
+
   // Fail loud on tier/conf before paying for Chromium when probe is required.
   for (const tier of cfg.tiers) {
     assertDaemonTier(tier);
+    log(
+      `tier_plan name=${tier.name} rk=${tier.ratingKey} title=${JSON.stringify(tier.itemTitle)} ` +
+        `arm=${tier.contentArm || '?'} expectDecode=${tier.expectDecode}`
+    );
   }
 
   const playwright = loadPlaywright();
@@ -2290,7 +2395,7 @@ async function runTransitionScenarios(page, itemTitle, detailsUrl, _castAlreadyS
       }
       await shot(page, `02_picker_open_${tier.name}`);
 
-      const companion = assertCompanionServer(tracker);
+      const companion = await assertCompanionServer(tracker);
 
       const target = await assertMisterplexInPickerDiff(page, beforePicker);
       const clickedText = ((await target.innerText().catch(() => '')) || '').trim().split('\n')[0].trim();
@@ -2381,6 +2486,7 @@ async function runTransitionScenarios(page, itemTitle, detailsUrl, _castAlreadyS
       });
       await runCorr.joinTelemetry(`tier_${tier.name}_playing_ok`);
       runCorr.persist(cfg.outDir);
+      await captureAndAssertPid(`tier_${tier.name}_playing_ok`, { hardFail: true });
 
       // ── 4b. Transitions (pause/resume, seek, stop+recast, play→idle→play) ─
       // Per-tier capture base so 240p/480p frames do not mix when E2E_TIER=all.
@@ -2470,15 +2576,31 @@ async function runTransitionScenarios(page, itemTitle, detailsUrl, _castAlreadyS
     process.exit(EXIT_FAIL);
   }
   if (suitePassed && teardownResult && teardownResult.ok) {
+    // Final PID check — catch respawn during last cycle / teardown window.
+    try {
+      await captureAndAssertPid('suite_end', { hardFail: true });
+    } catch (pe) {
+      if (pe instanceof FailError) {
+        console.error(`FAIL test_cast_picker_playwright: ${pe.reason}`);
+        if (pe.detail) console.error(pe.detail);
+        process.exit(pe.exitCode || EXIT_FAIL);
+      }
+      throw pe;
+    }
     await runCorr.mark('suite_pass').catch(() => {});
     runCorr.persist(cfg.outDir);
     log('CAST_PICKER_E2E_RESULT=PASS');
     log(
       `summary ${summaryBits.join(' ') || 'ok'} teardown=ok cast=${cfg.castName} ` +
-        `lastTier=${lastTierName} lastRatingKey=${lastRatingKey} run_id=${runCorr.runId}`
+        `lastTier=${lastTierName} lastRatingKey=${lastRatingKey} run_id=${runCorr.runId} ` +
+        `daemon_pid=${baselineDaemonPid > 0 ? baselineDaemonPid : 'NA'}`
     );
     log(
       `E2E_RUN_ID=${runCorr.runId} — parent: grep e2e_mark run_id=${runCorr.runId} then origin lines`
+    );
+    log(
+      `DAEMON_PID_STABLE=1 pid=${baselineDaemonPid > 0 ? baselineDaemonPid : 'NA'} ` +
+        `(unchanged across full suite; self-exit rc=0 would have failed daemon_pid_changed)`
     );
     process.exitCode = EXIT_PASS;
     return;

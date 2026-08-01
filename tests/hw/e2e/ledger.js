@@ -67,6 +67,8 @@ function normalizeSnap(raw, source) {
     lifetime_drops: intOr(raw.lifetime_drops, -1),
     lifetime_publish_misses: intOr(raw.lifetime_publish_misses, -1),
     session: intOr(raw.session, -1),
+    // Process identity — supervise CLEAN rc=0 exits respawn and re-zero counters.
+    pid: intOr(raw.pid, -1),
     raw: String(raw._line || '').slice(0, 300),
   };
 }
@@ -157,6 +159,7 @@ async function captureLedger(cfg) {
     lifetime_drops: -1,
     lifetime_publish_misses: -1,
     session: -1,
+    pid: -1,
     raw: '',
   };
 }
@@ -192,6 +195,17 @@ function assertLedgerWindow(start, end, tag) {
       ok: true,
       softSkip: true,
       detail: `${tag}: ledger unprobed — E2E_REQUIRE_LEDGER=0 soft-skip (NOT a pass of residual)`,
+    };
+  }
+
+  // Process PID must not change (supervise CLEAN rc=0 exit + respawn).
+  if (start.pid > 0 && end.pid > 0 && start.pid !== end.pid) {
+    return {
+      ok: false,
+      reason: 'daemon_pid_changed',
+      detail:
+        `${tag}: daemon pid ${start.pid} → ${end.pid} mid-window ` +
+        `(self-exit rc=0 / respawn — droppedFrames_/presentCount_ reset; soak counters invalid)`,
     };
   }
 
@@ -249,7 +263,7 @@ function assertLedgerWindow(start, end, tag) {
   if (!Number.isFinite(slack) || slack < 0) slack = 2;
 
   if (residual === 0) {
-    return { ok: true, residual: 0, session: end.session };
+    return { ok: true, residual: 0, session: end.session, pid: end.pid };
   }
 
   // residual == publish_misses is the product identity when publishes fail.
@@ -259,6 +273,7 @@ function assertLedgerWindow(start, end, tag) {
       residual,
       publish_misses: end.publish_misses,
       session: end.session,
+      pid: end.pid,
       note: 'residual_equals_publish_misses',
     };
   }
@@ -269,6 +284,7 @@ function assertLedgerWindow(start, end, tag) {
       ok: true,
       residual,
       session: end.session,
+      pid: end.pid,
       note: `residual_within_slack=${slack}`,
     };
   }
@@ -288,15 +304,57 @@ function assertLedgerWindow(start, end, tag) {
 function formatSnap(s) {
   if (!s) return '(null)';
   return (
-    `src=${s.source} frames=${s.frames} presents=${s.presents} drops=${s.drops} ` +
+    `src=${s.source} pid=${s.pid} frames=${s.frames} presents=${s.presents} drops=${s.drops} ` +
     `pub_miss=${s.publish_misses} residual=${s.residual} session=${s.session} ` +
     `life_f=${s.lifetime_frames}`
   );
 }
 
+/**
+ * Whole-run PID stability. baselinePid from first successful telemetry; each
+ * later snap must match. Missing pid with E2E_REQUIRE_PID=1 → fail.
+ */
+function requirePid() {
+  return /^(1|true|yes|on)$/i.test(String(process.env.E2E_REQUIRE_PID || '1'));
+}
+
+function assertPidUnchanged(baselinePid, snap, tag) {
+  if (!snap || snap.pid === undefined || snap.pid < 0) {
+    if (requirePid()) {
+      return {
+        ok: false,
+        reason: 'daemon_pid_unprobed',
+        detail:
+          `${tag}: telemetry missing pid= (deploy daemon with pid in /player/telemetry). ` +
+          `Set E2E_REQUIRE_PID=0 to soft-skip (NOT a pass of process stability).`,
+      };
+    }
+    return {
+      ok: true,
+      softSkip: true,
+      detail: `${tag}: pid unprobed — E2E_REQUIRE_PID=0 soft-skip`,
+    };
+  }
+  if (baselinePid == null || baselinePid < 0) {
+    return { ok: true, pid: snap.pid, note: 'baseline_set' };
+  }
+  if (snap.pid !== baselinePid) {
+    return {
+      ok: false,
+      reason: 'daemon_pid_changed',
+      detail:
+        `${tag}: daemon pid changed ${baselinePid} → ${snap.pid} ` +
+        `(supervise CLEAN exit rc=0 + respawn; counters reset — soak/UI stats invalid)`,
+    };
+  }
+  return { ok: true, pid: snap.pid };
+}
+
 module.exports = {
   captureLedger,
   assertLedgerWindow,
+  assertPidUnchanged,
+  requirePid,
   parseLedgerFromLogText,
   parseKv,
   formatSnap,

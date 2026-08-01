@@ -72,6 +72,8 @@ Failure messages distinguish:
 | `ledger_residual_nonzero` | frames−presents−drops not accounted |
 | `ledger_session_changed` | daemon session id changed mid-cycle (self-exit/respawn) |
 | `ledger_lifetime_regressed` | lifetime_frames went backwards mid-cycle |
+| `daemon_pid_changed` | misterplexd PID changed mid-run (self-exit rc=0 / respawn) |
+| `daemon_pid_unprobed` | telemetry missing `pid=` and `E2E_REQUIRE_PID=1` |
 
 ## Prerequisites
 
@@ -389,7 +391,7 @@ with timeline **effect** asserts. Failure names `transition_cycle_K_<transition>
 | E2E_TIER | ratingKey | item | expect DECODE |
 |----------|-----------|------|---------------|
 | `240p` (default) | 3 | MiSTerPlex Test 240p | 320x240 |
-| `480p` | **8** | MiSTerPlex Soak 480p 24fps | 624x480 |
+| `480p` | **6** (default test) or **8** soak via `E2E_480P_ARM=soak` | Test/Soak 480p | 624x480 |
 | `all` | both | sequential | parent conf per tier |
 
 Suite never edits device conf. Device may already be `DECODE=624x480` (user-owned);

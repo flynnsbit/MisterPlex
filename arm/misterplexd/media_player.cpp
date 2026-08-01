@@ -3374,7 +3374,10 @@ std::string MediaPlayer::telemetryLine() const {
     const int64_t drops = droppedFrames_.load();
     const int64_t pubMiss = publishMisses_.load();
     const int64_t residual = frames - presents - drops;
+    // pid= lets e2e assert the process did not self-exit rc=0 and respawn
+    // mid-run (supervise CLEAN exits re-zero droppedFrames_/presentCount_).
     return std::string("ok=1") +
+           " pid=" + std::to_string(static_cast<long>(::getpid())) +
            " frames=" + std::to_string(frames) +
            " presents=" + std::to_string(presents) +
            " drops=" + std::to_string(drops) +

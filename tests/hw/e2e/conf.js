@@ -30,9 +30,10 @@ const TIER_DEFS = {
   },
   '480p': {
     name: '480p',
-    // Soak 480p 24fps (TREK24) — parent-measured RK8, not short RK6 test clip.
-    ratingKey: '8',
-    itemTitle: 'MiSTerPlex Soak 480p 24fps',
+    // Default: short Test 480p RK6 (transition/UI arm). Soak TREK24 is RK8:
+    //   E2E_480P_ARM=soak  or  PLEX_RATING_KEY=8
+    ratingKey: '6',
+    itemTitle: 'MiSTerPlex Test 480p',
     expectDecode: '624x480',
     confKeys: {
       DECODE: '624x480',
@@ -43,6 +44,26 @@ const TIER_DEFS = {
     syntheticDefault: true,
   },
 };
+
+/** 480p content arm: test(rk6) vs soak(rk8). */
+function resolve480pArm(env = process.env) {
+  const arm = String(env.E2E_480P_ARM || env.E2E_480P_RK || '')
+    .trim()
+    .toLowerCase();
+  if (arm === '8' || arm === 'soak' || arm === 'trek24') {
+    return {
+      ratingKey: '8',
+      itemTitle: 'MiSTerPlex Soak 480p 24fps',
+      arm: 'soak',
+    };
+  }
+  // default + explicit 6/test/short
+  return {
+    ratingKey: '6',
+    itemTitle: 'MiSTerPlex Test 480p',
+    arm: 'test',
+  };
+}
 
 function readConfFile(confPath) {
   if (!confPath || !fs.existsSync(confPath)) return {};
@@ -110,6 +131,13 @@ function resolveTiers(env = process.env) {
     const single = names.length === 1;
     let ratingKey = def.ratingKey;
     let itemTitle = def.itemTitle;
+    let contentArm = name === '480p' ? 'test' : name === '240p' ? 'test' : '';
+    if (name === '480p' && !isReal) {
+      const a = resolve480pArm(env);
+      ratingKey = a.ratingKey;
+      itemTitle = a.itemTitle;
+      contentArm = a.arm;
+    }
     if (single || isReal) {
       if (env.PLEX_RATING_KEY)
         ratingKey = String(env.PLEX_RATING_KEY).replace(/^\/library\/metadata\//, '');
@@ -134,6 +162,7 @@ function resolveTiers(env = process.env) {
       ...def,
       ratingKey: String(ratingKey),
       itemTitle,
+      contentArm,
       expectDecode: def.expectDecode,
       requireDaemonTier,
       daemonDecodeReported: normalizeDecode(
