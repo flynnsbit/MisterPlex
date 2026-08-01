@@ -9,7 +9,8 @@ API-only checks do **not** satisfy this suite — Playwright is mandatory.
 
 1. Launch Plex Web on `PLEX_BASE` and establish a session (token injection).
 2. Dismiss Plex Home **Select User** (shell never renders until a profile is chosen).
-3. Open the tier library item (`E2E_TIER=240p` → RK3, `480p` → RK6 by default).
+3. Open the tier library item (`E2E_TIER=240p` → RK3, `480p` → **RK8** Soak 480p
+   24fps by default; never silently substitute a fixture for real-content mode).
 4. Open **Select Player** (`a[aria-label="Select Player"]` — not “Cast”).
 5. **Picker contents via BEFORE/AFTER body-text diff** — whole-page search for
    `MiSTerPlex` is a **false positive** (library / item / server names). Only lines
@@ -21,17 +22,30 @@ API-only checks do **not** satisfy this suite — Playwright is mandatory.
 7. Select **exact** `MiSTerPlex` (ghost labels like `MiSTerPlexTest` are logged and
    **rejected**), start Play, confirm companion timeline `state=playing`.
 8. **Multi-cycle transitions** (`E2E_TRANSITION_CYCLES`, default **10**): each cycle
-   asserts pause (time **frozen**), resume (time **advances**), seek (lands near
-   target then advances), stop→idle, idle→play. HTTP 200 alone is never enough.
+   asserts pause (timeline **frozen**), resume (timeline **advances**), seek (lands
+   near target then advances), stop→idle, idle→play. HTTP 200 alone is never enough.
    Failure names `transition_cycle_<N>_<transition>`.
-9. Optional **HDMI motion** (`E2E_HDMI_MOTION=1`) — parent captures `/dev/video0`;
+9. **Frame ledger** (default on): `GET /player/telemetry` or `E2E_DAEMON_LOG` —
+   `residual == frames - presents - drops`, session stable mid-cycle (daemon
+   self-exit/respawn → `ledger_session_changed`). Soft-skip ≠ residual PASS.
+10. Optional **HDMI motion** (`E2E_HDMI_MOTION=1`) — parent captures `/dev/video0`;
    suite scores with `tools/hdmi_motion_instrument.py` (MOTION_OK / FREEZE /
    COLOR_FAIL / **STRUCTURE_FAIL rc=3** / UNSCORED). Default: **per-cycle** capture
    dir + hold. Suite **never** opens the grabber. `rc=77` is hard FAIL for synthetic
    fixtures; real content uses timeline + color/structure only.
-10. **Hard teardown** — blank page, close page/context/browser, suite stop +
+11. **Hard teardown** — blank page, close page/context/browser, suite stop +
     unsubscribe. Asserts **this suite’s controller is gone** (`TEARDOWN_OK`). Does
     **not** require a globally idle daemon (a permanent user Plex Web tab may remain).
+
+### NOT pass criteria (fleet 2026-07-31 — binding)
+
+- **`clock=av-lock` and `av_drift_ms` are NOT evidence of A/V correctness.** They
+  read the servo setpoint back to itself (`AV_PRESENT_LEAD_MS` deadband). Measured:
+  three soaks with mean `av_drift_ms` within 0.8 ms of each other were **~120 ms
+  apart at HDMI**. This suite **never** gates on them and must not start.
+- **Lip-sync judge (parent only):** `tools/avsync_measure_hdmi.py` on a real capture.
+  w-plextv does not open `/dev/video0`.
+- Startup drop count alone is not a lip-sync model (H-DROP rejected).
 
 Failure messages distinguish:
 
