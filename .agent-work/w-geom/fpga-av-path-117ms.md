@@ -255,7 +255,23 @@ Also sample `swap_pending` bit in PLXD high word during wait: stuck 1 for many v
 
 ---
 
-## 5. Sim note
+## 5. Host gate + parent protocol (locked 2026-07-31)
+
+| Deliverable | Path | Role |
+|-------------|------|------|
+| RTL quanta header | `host/libmisterplex/av_phase_rtl_quanta.hpp` | Literals + pure arithmetic |
+| Unit gate | `tests/unit/test_av_phase_rtl_quanta.cpp` | RED if 3×24→117 revived; locks T_disp, a_en2, PLXD4=frames_done |
+| Parent recipe | `scripts/parent_plxd_present_lag_protocol.sh` | Δ(audio_release→frames_done++) → N; H0 same-N / H1 ΔN=7 |
+
+```bash
+make "$(pwd)/build/test_av_phase_rtl_quanta" && ./build/test_av_phase_rtl_quanta; echo "true rc=$?"
+# expect OK, true rc=0
+scripts/parent_plxd_present_lag_protocol.sh recipe
+```
+
+Proven RED-capable: asserting `!hyp3Content24RejectedForParentSep()` exits 1 while kills remain armed.
+
+## 6. Sim note
 
 No sim proposed that claims to reproduce 117 ms bimodality: **no RTL mechanism to RED against.**  
 A compile-only “phase TB” would manufacture false confidence.  
@@ -263,7 +279,7 @@ If a future audio-phase mailbox is added, TB must RED without it / GREEN with ob
 
 ---
 
-## 6. Primary citations
+## 7. Primary citations
 
 - `fpga/Plex_MiSTer/sys/alsa.sv:24,59-60,86-91,95-103,116-127,149-153`  
 - `fpga/Plex_MiSTer/sys/audio_out.sv:24,66-70,86-94,138-149,176-196,246-275`  

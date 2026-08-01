@@ -1390,3 +1390,17 @@ if (vsync_pulse && swap_pending && pending_ready_s2) begin
 No RTL bistable “0 vs 7 frames.” First picture can still lag gate-open by N display periods if prep/pending_ready is late. **Measure** frames_done on `handoff_at=` lines; do not assume N.
 
 Unit: `tests/unit/test_analyze_mraudio_handoff.sh` (self-test + pair/empty/identical).
+
+### w-geom locked quanta gate (source arithmetic)
+
+```bash
+make "$(pwd)/build/test_av_phase_rtl_quanta"
+./build/test_av_phase_rtl_quanta; echo "true rc=$?"
+# true rc=0 locks: T_disp_ns=16715600; 3×24fps=125 REJECT vs 117.10;
+# audio sample/a_en2/F2 cannot explain 117.10; PLXD4 hi=frames_done
+scripts/parent_plxd_present_lag_protocol.sh recipe
+# H0: N_A==N_B kills video lag; H1: |ΔN|==7 keeps multi-frame present open
+```
+
+Header: `host/libmisterplex/av_phase_rtl_quanta.hpp`.  
+Full RTL Q&A: `.agent-work/w-geom/fpga-av-path-117ms.md`.
