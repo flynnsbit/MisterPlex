@@ -49,6 +49,26 @@ the retracted sep.
 Audit map: `.agent-work/w-avsync/OLD_ARGV_AUDIT.md`. Artifacts:
 `.agent-work/w-avsync/residual_new_pool.txt`, `prereg_residual.txt`.
 
+### ~20 ms residual attribution (host, 2026-08-01)
+
+Full write-up: `.agent-work/w-avsync/RESIDUAL20_ATTRIBUTION.md` (pre-reg
+`prereg_residual20.md`).
+
+Measured on n=16 NEW JSONs + sixfield recs:
+- **Grid SETTLED:** NEW period 33.0 → 100% integer-ms offsets; OLD 33⅓ → 100% thirds.
+  ≤1 ms effect; **cannot** explain 20 ms.
+- **H-FIELD NULL (narrow):** varying sixfield scalars are not rank-linear correlates
+  of median (n=10). Constants uninformative. Does **not** clear capture-side or
+  post-MrAudio path.
+- **P6 MISS:** Spearman(first_pair, median)=0.22 — residual is not first-pair latch.
+- **Session common-mode:** empirical SE(median) from within σ≈14.7 ms is ≈2.75 ms →
+  E[range 16]≈9.7 ms; obs 25 ms; excess session σ≈**6.3 ms**; bootstrap
+  P(range≥25 \| no session φ)=0.
+- **No named mechanism.** CC-3 stops on ALSA period, present-lag N, and grabber
+  open-delta (not in corpus). Cheapest settler: log/compare v4l2−ALSA open delta
+  (I1) or file-mode null arm; then PLXD N / MrAudio rptr (I3/I4).
+
+
 ---
 
 ## Problems

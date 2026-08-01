@@ -393,6 +393,24 @@ def analyze_quant(runs: List[RunJson]) -> Dict[str, Any]:
     out["residual_beyond_quant_range_ms"] = residual
     out["residual_beyond_quant_range_ms_src"] = "measured_minus_derived"
 
+    # Empirical session common-mode: use within-run pair stdev when present.
+    # SE_emp = 1.2533 * median(within_stdev) / sqrt(n_pairs)
+    # excess_session_sigma = sqrt(max(0, var(medians) - SE_emp^2))
+    within = [r.stdev_ms for r in runs if r.stdev_ms is not None]
+    if within and n_pairs >= 1 and len(meds) >= 2:
+        sig_w = statistics.median(within)
+        se_emp = SE_MEDIAN_OVER_SEM * sig_w / math.sqrt(float(n_pairs))
+        var_m = statistics.pvariance(meds) if len(meds) > 1 else 0.0
+        excess_var = max(0.0, var_m - se_emp * se_emp)
+        out["within_run_stdev_ms_median"] = sig_w
+        out["within_run_stdev_ms_median_src"] = "measured"
+        out["se_median_from_within_ms"] = se_emp
+        out["se_median_from_within_ms_src"] = "derived_1.2533_within_stdev_over_sqrt_n"
+        out["expected_range_from_within_ms"] = expected_normal_range(se_emp, n)
+        out["expected_range_from_within_ms_src"] = "derived_E_range_N_normals_sigma_eq_SE_emp"
+        out["excess_session_sigma_ms"] = math.sqrt(excess_var)
+        out["excess_session_sigma_ms_src"] = "derived_sqrt_var_medians_minus_SE_emp_sq"
+
     # SUPPORT if obs range within 1.5× of SE-median expectation (finite-n slack).
     # REJECT if obs range > 2.0× expectation (clear excess beyond quant averaging).
     support_ok = e_range > 0 and rng <= e_range * 1.5 + 1e-9
@@ -572,6 +590,9 @@ def print_report(title: str, q: Dict[str, Any], f: Optional[Dict[str, Any]] = No
         "range_over_expected",
         "range_over_T",
         "residual_beyond_quant_range_ms",
+        "se_median_from_within_ms",
+        "expected_range_from_within_ms",
+        "excess_session_sigma_ms",
         "legacy_uniform_median_E_range_ms",
         "flash_onset_n_interp_total",
         "flash_onset_n_step_total",
@@ -805,7 +826,15 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     frep = None
     if field_pairs:
         frep = analyze_fields(field_pairs)
-        print_report("H-FIELD sixfield", q, frep)
+        print("=== H-FIELD sixfield ===")
+        print(f"H_FIELD={frep.get('H_FIELD', {}).get('verdict')} src={frep.get('H_FIELD', {}).get('verdict_src')}")
+        print(f"H_FIELD_detail={frep.get('H_FIELD', {}).get('detail')}")
+        for fr in frep.get("fields") or []:
+            print(
+                f"  field={fr['field']} status={fr['status']} "
+                f"n_unique={fr.get('n_unique')} unique={fr.get('unique')} "
+                f"spearman={fr.get('spearman')} src={fr.get('spearman_src')}"
+            )
     else:
         print("H_FIELD=UNSCORED src=could-not-measure detail=no_rec_pairs")
 
