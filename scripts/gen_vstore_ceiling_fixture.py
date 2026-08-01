@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 """Generate V_STORE ceiling before/after discrimination fixtures.
 
+PREFERRED publish path (no codec): scripts/gen_vstore_evenodd_i420.py +
+  build/arm/push_frame --ddr --pattern mid_grey|even_black|even_white
+  (product I420 → publishDdrFrame). Do NOT cast 1-row stripes as H.264.
+
 Coordinate with w-asset480 (fixture ownership). This script defines the
 pixel contract; packaging into a playable asset may be w-asset480's job.
 

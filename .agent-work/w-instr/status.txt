@@ -1,9 +1,21 @@
-PRIMARY glass instruments (ARM frames_done void on c5382bee)
+lane=w-instr
+tip_task=vstore_ceiling_push_frame
+branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null)
+sha=pending_commit
 
-1) tools/glass_hold_skip.py — hold hist, median/trim intervals, skip, pre-reg verdict
-2) tools/hdmi_vstore_discriminate.py — B2 n_low_phases (not period max/min)
-3) scripts/gen_vstore_ceiling_fixture.py — odd_only/even_only for ceiling before/after
-4) hdmi_source_resolution.py — period report only; B2 withdrawn to (2)
+# Delivered
+- tools/push_frame.cpp: --pattern mid_grey|even_black|even_white|odd_black|odd_white
+  --hold-ms N; product path sendYuv420pFrameDdr → publishDdrFrame
+- scripts/gen_vstore_evenodd_i420.py: 624x480 I420 fixtures (449280 B)
+- tools/hdmi_vstore_discriminate.py: --flat-suite / --classify-flat
+  control fail → rc=77 UNSCORED; identical phases → CEILING_FALSIFIED rc=2
+- PARENT_VSTORE_CEILING_PUSH.md: stop daemon, push, capture, restore, score
+- make arm-plexd / push_frame rebuild true rc=0
+- hdmi_vstore_discriminate --self-test true rc=0 (SIM_ONLY flat suite green/red)
 
-Host true rc: hold_skip --self-test 0; vstore --self-test 0; fixture gen 0
-Device p60 sample: ROWS_240_HOLD p=3 n_low=2 (matches broken V_STORE path)
+# Parent runs on device — agent does not touch hardware
+# PRE-REGISTER c5382bee: even_black→BLACK even_white→WHITE mid_grey→MID
+# Falsifier: even_black≡even_white solids → retract 240 ceiling
+
+# Host gates
+python3 tools/hdmi_vstore_discriminate.py --self-test  # expect rc=0

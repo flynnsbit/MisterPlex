@@ -34,10 +34,31 @@ Fixture (scripts/gen_vstore_ceiling_fixture.py):
 BEFORE (broken V_STORE=240 path): odd_only energy ≈ 0; even_only strong.
 AFTER  (full 480 fetch): both odd_only and even_only show comparable structure.
 
-Markers are **≥2 source rows thick** and full-width bars so they survive
-529/640 column decimation + ascal + grabber.
+Binary flat-field suite (rd-review B2 / parent preferred — immune to alias confounds)
+------------------------------------------------------------------------------------
+Publish via product path (NO H.264)::
 
-Exit: 0 RES_OK agree, 2 self-test fail, 77 UNSCORED, 1 usage.
+  push_frame --ddr --pattern mid_grey|even_black|even_white|odd_black|odd_white
+
+  even_black → solid BLACK on glass (current V_STORE=240)
+  even_white → solid WHITE
+  phase shift inverts; mid_grey CONTROL must be uniform mid-grey
+
+Score::
+
+  tools/hdmi_vstore_discriminate.py --flat-suite CAP_DIR
+  # expects mid_grey.png even_black.png even_white.png [odd_black.png odd_white.png]
+
+If CONTROL fails → rc=77 UNSCORED (never a pass).
+If even_black class == even_white class → CEILING_FALSIFIED (claim withdrawn).
+If predictions match → CEILING_240_HOLD.
+
+Markers are **≥2 source rows thick** and full-width bars so they survive
+529/640 column decimation + ascal + grabber. 1-row stripes via H.264 are VOID
+(codec destroys Nyquist vertical).
+
+Exit: 0 RES_OK / CEILING match, 2 FAIL / falsified / self-test fail,
+      77 UNSCORED, 1 usage.
 """
 from __future__ import annotations
 
@@ -62,6 +83,14 @@ PROVENANCE_MEASURED = "measured"
 PROVENANCE_CALLER = "caller_supplied"
 PROVENANCE_DEFAULT = "DEFAULT_ASSUMED"
 PROVENANCE_SIM = "SIM_ONLY"
+
+# Glass flat-field classes (after ascal+grabber; video-range mapped to 8-bit RGB).
+# Thresholds are loose enough for grabber MJPG; tight enough to reject garbage.
+FLAT_BLACK_MAX = 45.0
+FLAT_WHITE_MIN = 200.0
+FLAT_MID_LO = 85.0
+FLAT_MID_HI = 175.0
+FLAT_STD_MAX = 40.0  # solid field must be low-variance
 
 
 def load_rgb(path: Path) -> np.ndarray:
@@ -232,16 +261,24 @@ def analyze_low_phases(
     }
 
 
+def active_letterbox(L: np.ndarray) -> tuple[int, int]:
+    """Return [y0, y1) active rows; fall back to full frame if bars not found."""
+    row_m = L.mean(axis=1)
+    span = float(row_m.max() - row_m.min())
+    if span < 5.0:
+        # nearly flat — whole frame is the content (solid field case)
+        return 0, int(L.shape[0])
+    thr = 0.15 * span + float(row_m.min())
+    active = np.where(row_m > thr)[0]
+    if active.size < 32:
+        return 0, int(L.shape[0])
+    return int(active[0]), int(active[-1]) + 1
+
+
 def odd_even_energy(rgb: np.ndarray) -> dict[str, Any]:
     """Structure energy on odd vs even capture rows (ceiling probe)."""
     L = luma(rgb)
-    # active letterbox crop: drop near-black bars
-    row_m = L.mean(axis=1)
-    thr = 0.15 * (row_m.max() - row_m.min()) + row_m.min()
-    active = np.where(row_m > thr)[0]
-    if active.size < 32:
-        active = np.arange(L.shape[0])
-    y0, y1 = int(active[0]), int(active[-1]) + 1
+    y0, y1 = active_letterbox(L)
     crop = L[y0:y1]
     even = crop[0::2]
     odd = crop[1::2]
@@ -265,6 +302,213 @@ def odd_even_energy(rgb: np.ndarray) -> dict[str, Any]:
             "AFTER fix ⇒ closer to 1 on full content"
         ),
     }
+
+
+def classify_flat_field(rgb: np.ndarray) -> dict[str, Any]:
+    """Classify a capture as BLACK / WHITE / MID_GREY / OTHER from viewed pixels.
+
+    Used for the even-black / even-white / mid-grey control suite. Solid-field
+    answer only — no period, no OCR, no md5.
+    """
+    L = luma(rgb)
+    y0, y1 = active_letterbox(L)
+    crop = L[y0:y1]
+    # central 60% columns avoid pillarbox / edge grabber junk
+    x0 = int(crop.shape[1] * 0.2)
+    x1 = int(crop.shape[1] * 0.8)
+    roi = crop[:, x0:x1] if x1 > x0 + 8 else crop
+    mean_l = float(roi.mean())
+    std_l = float(roi.std())
+    solid = std_l <= FLAT_STD_MAX
+    if solid and mean_l <= FLAT_BLACK_MAX:
+        cls = "BLACK"
+    elif solid and mean_l >= FLAT_WHITE_MIN:
+        cls = "WHITE"
+    elif solid and FLAT_MID_LO <= mean_l <= FLAT_MID_HI:
+        cls = "MID_GREY"
+    else:
+        cls = "OTHER"
+    return {
+        "class": cls,
+        "mean_luma": round(mean_l, 3),
+        "std_luma": round(std_l, 3),
+        "solid": solid,
+        "active_rows": [y0, y1],
+        "roi_x": [x0, x1],
+        "src": PROVENANCE_MEASURED,
+        "thresholds": {
+            "black_max": FLAT_BLACK_MAX,
+            "white_min": FLAT_WHITE_MIN,
+            "mid_lo": FLAT_MID_LO,
+            "mid_hi": FLAT_MID_HI,
+            "std_max": FLAT_STD_MAX,
+        },
+    }
+
+
+def _find_named(cap_dir: Path, stem: str) -> Path | None:
+    for ext in (".png", ".jpg", ".jpeg", ".bmp"):
+        p = cap_dir / f"{stem}{ext}"
+        if p.is_file():
+            return p
+    # allow f_001 style dirs only if single file named stem*
+    hits = sorted(cap_dir.glob(f"{stem}*"))
+    return hits[0] if len(hits) == 1 else None
+
+
+def score_flat_suite(cap_dir: Path) -> dict[str, Any]:
+    """Score mid_grey control + even_black/even_white (+ optional odd_*).
+
+    PRE-REGISTER (current RBF, store_y=py*2):
+      mid_grey    → MID_GREY   (CONTROL — fail ⇒ whole suite UNSCORED)
+      even_black  → BLACK
+      even_white  → WHITE
+      odd_black   → WHITE      (phase invert)
+      odd_white   → BLACK
+
+    If even_black class == even_white class → CEILING_FALSIFIED.
+    """
+    required = ("mid_grey", "even_black", "even_white")
+    optional = ("odd_black", "odd_white")
+    frames: dict[str, dict[str, Any]] = {}
+    missing = []
+    for name in required:
+        p = _find_named(cap_dir, name)
+        if p is None:
+            missing.append(name)
+            continue
+        frames[name] = {"path": str(p), **classify_flat_field(load_rgb(p))}
+    for name in optional:
+        p = _find_named(cap_dir, name)
+        if p is not None:
+            frames[name] = {"path": str(p), **classify_flat_field(load_rgb(p))}
+
+    if missing:
+        return {
+            "verdict": "UNSCORED",
+            "rc": RC_UNSCORED,
+            "reason": f"missing required captures: {missing}",
+            "frames": frames,
+            "src": PROVENANCE_MEASURED,
+        }
+
+    ctrl = frames["mid_grey"]["class"]
+    if ctrl != "MID_GREY":
+        return {
+            "verdict": "UNSCORED",
+            "rc": RC_UNSCORED,
+            "reason": (
+                f"CONTROL mid_grey class={ctrl} mean={frames['mid_grey']['mean_luma']} "
+                f"std={frames['mid_grey']['std_luma']} — publish path broken or "
+                f"capture wrong; do not score ceiling"
+            ),
+            "frames": frames,
+            "pre_register": "control_must_be_MID_GREY",
+            "src": PROVENANCE_MEASURED,
+        }
+
+    eb = frames["even_black"]["class"]
+    ew = frames["even_white"]["class"]
+    # Falsifier: phases identical → no even-only fetch
+    if eb == ew and eb in ("BLACK", "WHITE", "MID_GREY"):
+        return {
+            "verdict": "CEILING_FALSIFIED",
+            "rc": RC_FAIL,
+            "reason": (
+                f"even_black={eb} even_white={ew} IDENTICAL solid class — "
+                f"240-row even-fetch claim FALSIFIED (both phases same on glass)"
+            ),
+            "frames": frames,
+            "pre_register": "even_black→BLACK even_white→WHITE",
+            "src": PROVENANCE_MEASURED,
+        }
+
+    pred = {"even_black": "BLACK", "even_white": "WHITE"}
+    opt_pred = {"odd_black": "WHITE", "odd_white": "BLACK"}
+    mismatches = []
+    for k, want in pred.items():
+        got = frames[k]["class"]
+        if got != want:
+            mismatches.append(f"{k}:got={got} want={want}")
+    for k, want in opt_pred.items():
+        if k not in frames:
+            continue
+        got = frames[k]["class"]
+        if got != want:
+            mismatches.append(f"{k}:got={got} want={want}")
+
+    if mismatches:
+        # control passed but phase prediction missed — still a real result
+        return {
+            "verdict": "CEILING_MISMATCH",
+            "rc": RC_FAIL,
+            "reason": "control OK but phase classes != pre-register: " + "; ".join(mismatches),
+            "frames": frames,
+            "pre_register": "even_black→BLACK even_white→WHITE odd_black→WHITE odd_white→BLACK",
+            "src": PROVENANCE_MEASURED,
+        }
+
+    return {
+        "verdict": "CEILING_240_HOLD",
+        "rc": RC_OK,
+        "reason": (
+            "control MID_GREY; even_black→BLACK; even_white→WHITE"
+            + ("; phase invert OK" if "odd_black" in frames or "odd_white" in frames else "")
+            + " — matches store_y=py*2 even-row fetch"
+        ),
+        "frames": frames,
+        "pre_register": "even_black→BLACK even_white→WHITE",
+        "src": PROVENANCE_MEASURED,
+    }
+
+
+def run_flat_suite_self_test() -> bool:
+    """SIM red/green for flat suite (not device accuracy)."""
+    work = Path(__file__).resolve().parents[1] / ".agent-work" / "w-instr" / "vstore-flat-sim"
+    work.mkdir(parents=True, exist_ok=True)
+    ok = True
+
+    def solid(val: int, name: str) -> None:
+        arr = np.full((720, 1280, 3), val, dtype=np.uint8)
+        Image.fromarray(arr).save(work / f"{name}.png")
+
+    # GREEN: control mid, even black, even white
+    solid(128, "mid_grey")
+    solid(10, "even_black")
+    solid(240, "even_white")
+    solid(240, "odd_black")
+    solid(10, "odd_white")
+    g = score_flat_suite(work)
+    print("FLAT_SIM_GREEN", json.dumps({k: g[k] for k in ("verdict", "rc", "reason")}, indent=2))
+    if g["verdict"] != "CEILING_240_HOLD" or g["rc"] != RC_OK:
+        print("FAIL flat green")
+        ok = False
+    else:
+        print("PASS flat green SIM_ONLY")
+
+    # RED: control broken → UNSCORED
+    solid(10, "mid_grey")  # black control
+    r = score_flat_suite(work)
+    print("FLAT_SIM_CTRL_FAIL", r["verdict"], r["rc"])
+    if r["rc"] != RC_UNSCORED or r["verdict"] != "UNSCORED":
+        print("FAIL control-fail must UNSCORED")
+        ok = False
+    else:
+        print("PASS control-fail UNSCORED SIM_ONLY")
+
+    # RED: identical phases → FALSIFIED
+    solid(128, "mid_grey")
+    solid(10, "even_black")
+    solid(10, "even_white")
+    f = score_flat_suite(work)
+    print("FLAT_SIM_FALSIFIED", f["verdict"], f["rc"])
+    if f["verdict"] != "CEILING_FALSIFIED" or f["rc"] != RC_FAIL:
+        print("FAIL identical phases must CEILING_FALSIFIED")
+        ok = False
+    else:
+        print("PASS CEILING_FALSIFIED SIM_ONLY")
+
+    return ok
 
 
 def _synth_hold(h: int, w: int, src_lines: int) -> np.ndarray:
@@ -319,6 +563,9 @@ def run_self_test() -> int:
     else:
         print("PASS flat UNSCORED")
 
+    if not run_flat_suite_self_test():
+        ok = False
+
     # device bank if present
     for cand in (
         Path("/tmp/p60/png/f_01200.png"),
@@ -351,12 +598,43 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--tau", type=float, default=0.35)
     ap.add_argument("--json", action="store_true")
     ap.add_argument("--odd-even", action="store_true", help="also print odd/even energy")
+    ap.add_argument(
+        "--classify-flat",
+        action="store_true",
+        help="classify each image as BLACK/WHITE/MID_GREY/OTHER (solid field)",
+    )
+    ap.add_argument(
+        "--flat-suite",
+        type=Path,
+        default=None,
+        help="dir with mid_grey/even_black/even_white[.png] captures; control-fail→77",
+    )
     args = ap.parse_args(argv)
 
     if args.self_test:
         return run_self_test()
+
+    if args.flat_suite is not None:
+        if not args.flat_suite.is_dir():
+            print(f"MISSING dir {args.flat_suite}", file=sys.stderr)
+            return RC_UNSCORED
+        rep = score_flat_suite(args.flat_suite)
+        if args.json:
+            print(json.dumps(rep, indent=2))
+        else:
+            print(f"VERDICT={rep['verdict']} rc={rep['rc']}")
+            print(f"  reason={rep['reason']}")
+            for name, fr in rep.get("frames", {}).items():
+                print(
+                    f"  {name}: class={fr['class']} mean={fr['mean_luma']} "
+                    f"std={fr['std_luma']} path={fr.get('path')}"
+                )
+            if "pre_register" in rep:
+                print(f"  pre_register={rep['pre_register']}")
+        return int(rep["rc"])
+
     if not args.images:
-        ap.error("images required")
+        ap.error("images required (or --flat-suite DIR or --self-test)")
         return RC_USAGE
 
     rc_out = RC_OK
@@ -366,6 +644,19 @@ def main(argv: list[str] | None = None) -> int:
             rc_out = RC_UNSCORED
             continue
         rgb = load_rgb(img)
+        if args.classify_flat:
+            fr = classify_flat_field(rgb)
+            fr["path"] = str(img)
+            if args.json:
+                print(json.dumps(fr, indent=2))
+            else:
+                print(
+                    f"FILE={img} class={fr['class']} mean={fr['mean_luma']} "
+                    f"std={fr['std_luma']} solid={fr['solid']}"
+                )
+            if fr["class"] == "OTHER":
+                rc_out = RC_UNSCORED if rc_out == RC_OK else rc_out
+            continue
         rep = analyze_low_phases(rgb, tau=args.tau)
         rep["path"] = str(img)
         if args.odd_even:
