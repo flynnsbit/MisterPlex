@@ -1,11 +1,19 @@
-w-cpu-1 status
-branch=w-avsync-hdmi-measure SHA=c8c7152d COMMITTED
+worker: w-cpu-1
+task: startup drop-count variance RCA (12 vs 15 in first ~7s)
+branch: w-avsync-hdmi-measure
+sha: b260266e
+status: DONE
+make_unit: true rc=0
 
-ERROR17 retracted — fps path correct, no change
+## Result
+- drops ONLY from avDecide Drop (resyncDropMs=80, maxDropRun=1)
+- Mechanism: residual audio lead after hold gate (held_ms/dump race), repaid then quiet
+- NOT content; NOT ERROR17 fps
+- Model: lead 588->12, 715->15; dLead=127 ms ~= parent Deltaoffset 119 ms
+- Hold race unit: held 620/745/120 -> drops 12/15/0
 
-MiSTer spin: input.cpp poll timeout=0 (Menu+FB:25); scheduler_co_poll no sleep; CPU1
-Not Plex-induced. In-tree fix without Main fork: SUSPEND only.
-Targeted idle without suspend: Main timeout>0 (lab — MISTER_TIMEOUT5_LAB.md)
-
-Headroom: never 200-busy. tools/ arm_cpu_sample headroom_sample schedstat_sample fixed_work_probe
-Deliverable: .agent-work/w-cpu-1/DELIVERABLE_MISTER_SPIN_AND_HEADROOM.md
+## Artifacts
+- .agent-work/w-cpu-1/STARTUP_DROP_VARIANCE_RCA.md
+- host/libmisterplex/av_clock.hpp
+- tests/unit/test_avclock.cpp
+- tests/unit/test_av_startup_hold_red.sh

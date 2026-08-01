@@ -25,7 +25,8 @@ green_checks() {
   if grep -q 'no auto-release without video' "$mp"; then return 1; fi
   if grep -q 'suppressStartupPrefill' "$mp"; then return 1; fi
   grep -q 'holdRingAppendDropHead' "$av" || return 1
-  grep -q 'kStartupDropReclaimMs' "$av" || return 1
+  grep -q 'kStartupDropWallMs' "$av" || return 1
+  grep -q 'grabberOffsetMs' "$av" || return 1
   grep -q 'HoldUntilVideo' "$av" || return 1
   grep -q 'handoffReArmsAudioHold' "$av" || return 1
   grep -q 'simulateMultiSessionStartup' "$av" || return 1
@@ -83,16 +84,29 @@ CXX_BIN="${CXX:-g++}"; CXX_FLAGS=(-std=c++17 -O2 -Wall -Wextra)
 "$CXX_BIN" "${CXX_FLAGS[@]}" -I"$ROOT/host" -o "$WORK/test_avclock_tip" "$ROOT/tests/unit/test_avclock.cpp"
 set +e; TIP_OUT="$("$WORK/test_avclock_tip" 2>&1)"; TIP_RC=$?; set -e
 printf '%s\n' "$TIP_OUT"; echo "tip rc=$TIP_RC"; [[ "$TIP_RC" -eq 0 ]]
-for need in 'PASS startup hold-until-video' 'PASS hold no-video' 'coarm_minus_early_real='; do
+for need in \
+  'PASS startup drop variance' \
+  'PASS hold no-video' \
+  'PRE_REGISTER HOLD_IDEAL predicted_startup_drops' \
+  'PRE_REGISTER residual_lead_ms for drops=12' \
+  'SIGN_CONVENTION grabber_offset_ms'; do
   printf '%s\n' "$TIP_OUT" | grep -q "$need" || { echo "missing $need" >&2; exit 1; }
 done
-DELTA=$(printf '%s\n' "$TIP_OUT" | sed -n 's/.*coarm_minus_early_real=\([-0-9]*\).*/\1/p' | head -1)
-[[ -n "$DELTA" && "$DELTA" -ge 150 ]]
-echo "PASS discrimination delta=$DELTA"
+# PRIMARY discrimination: exact silicon soak drop counts (12 and 15).
+DROPS12=$(printf '%s\n' "$TIP_OUT" | sed -n 's/.*drops12=\([0-9][0-9]*\).*/\1/p' | head -1)
+DROPS15=$(printf '%s\n' "$TIP_OUT" | sed -n 's/.*drops15=\([0-9][0-9]*\).*/\1/p' | head -1)
+HOLD_DROPS=$(printf '%s\n' "$TIP_OUT" | sed -n 's/.*hold_ideal_drops=\([0-9][0-9]*\).*/\1/p' | head -1)
+DLEAD=$(printf '%s\n' "$TIP_OUT" | sed -n 's/.*dLead=\([0-9][0-9]*\).*/\1/p' | head -1)
+[[ "$DROPS12" == "12" && "$DROPS15" == "15" ]]
+[[ -n "$HOLD_DROPS" && "$HOLD_DROPS" -le 2 ]]
+[[ -n "$DLEAD" && "$DLEAD" -ge 100 && "$DLEAD" -le 140 ]]
+echo "PASS discrimination drops12=$DROPS12 drops15=$DROPS15 hold_ideal_drops=$HOLD_DROPS dLead=$DLEAD"
 
+# Mutant: Drop wall ≈ content period ⇒ reclaim≈0 ⇒ cannot hit exact 12/15 map.
 mkdir -p "$WORK/inc/libmisterplex"
-sed 's/kStartupDropReclaimMs = 22/kStartupDropReclaimMs = 0/' "$AV" >"$WORK/inc/libmisterplex/av_clock.hpp"
+sed 's/kStartupDropWallMs = 0/kStartupDropWallMs = 41/' "$AV" >"$WORK/inc/libmisterplex/av_clock.hpp"
 "$CXX_BIN" "${CXX_FLAGS[@]}" -I"$WORK/inc" -I"$ROOT/host" -o "$WORK/test_avclock_zero" "$ROOT/tests/unit/test_avclock.cpp"
 set +e; ZOUT="$("$WORK/test_avclock_zero" 2>&1)"; ZRC=$?; set -e
-echo "zero_reclaim rc=$ZRC"; [[ "$ZRC" -ne 0 ]]
+printf '%s\n' "$ZOUT" | tail -20
+echo "bad_drop_wall rc=$ZRC"; [[ "$ZRC" -ne 0 ]]
 echo "OK hold B3/B4 red/green"
