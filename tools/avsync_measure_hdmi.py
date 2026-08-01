@@ -316,6 +316,49 @@ def capture_config_fingerprint(ffmpeg_argv: list[str] | None, *, mode: str) -> d
     }
 
 
+def preflight_capture_devices(video_dev: str, audio_dev: str) -> dict[str, Any]:
+    """Host-side checks before live capture. Distinct VIDEO_BUSY vs missing."""
+    meta: dict[str, Any] = {
+        "video_dev": video_dev,
+        "audio_dev": audio_dev,
+        "video_busy": False,
+        "video_busy_src": "measured",
+        "preflight_ok": True,
+        "preflight_reason": "",
+    }
+    # fuser: rc=0 means someone holds the device; rc=1 free / no fuser.
+    try:
+        fr = subprocess.run(
+            ["fuser", video_dev],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        holders = (fr.stdout or "").strip() + " " + (fr.stderr or "").strip()
+        if fr.returncode == 0 and holders.strip():
+            meta["video_busy"] = True
+            meta["video_holders"] = holders.strip()
+            meta["preflight_ok"] = False
+            meta["preflight_reason"] = (
+                f"VIDEO_BUSY device={video_dev} holders={holders.strip()} "
+                f"(not a zero; free the grabber)"
+            )
+            return meta
+        meta["video_holders"] = holders.strip() or "none"
+    except FileNotFoundError:
+        meta["video_busy_src"] = "NO-DATA"
+        meta["video_busy_note"] = "fuser_not_installed"
+    except subprocess.TimeoutExpired:
+        meta["video_busy_src"] = "NO-DATA"
+        meta["video_busy_note"] = "fuser_timeout"
+
+    if not Path(video_dev).exists():
+        meta["preflight_ok"] = False
+        meta["preflight_reason"] = f"VIDEO_MISSING path={video_dev}"
+        return meta
+    return meta
+
+
 def capture_av(
     dest: Path,
     *,
@@ -338,6 +381,9 @@ def capture_av(
     dest.parent.mkdir(parents=True, exist_ok=True)
     if dest.exists():
         dest.unlink()
+    pf = preflight_capture_devices(video_dev, audio_dev)
+    if not pf.get("preflight_ok", True):
+        raise RuntimeError(f"CAPTURE_FAILED reason={pf.get('preflight_reason')}")
     cmd = build_capture_ffmpeg_argv(
         dest,
         duration_s=duration_s,
@@ -355,6 +401,12 @@ def capture_av(
     if r.returncode != 0 or not dest.exists() or dest.stat().st_size < 1000:
         err = (r.stderr or b"").decode("utf-8", "replace").strip().splitlines()
         tail = err[-1] if err else "no_stderr"
+        low = tail.lower()
+        if "busy" in low or "resource busy" in low:
+            raise RuntimeError(
+                f"CAPTURE_FAILED reason=VIDEO_BUSY log={tail} "
+                f"(distinct from zero-measurement; fuser -v {video_dev})"
+            )
         raise RuntimeError(
             f"CAPTURE_FAILED rc={r.returncode} out={dest} size="
             f"{dest.stat().st_size if dest.exists() else 0} log={tail}"
@@ -1858,6 +1910,15 @@ def print_report(
         half_quant,
         1.0,  # prove100 file-path residual floor
     )
+    apair = "NO-DATA"
+    rbf_m = "NO-DATA"
+    dae_m = "NO-DATA"
+    dsrc = "NO-DATA"
+    if extra:
+        apair = str(extra.get("artifact_pair") or apair)
+        rbf_m = str(extra.get("rbf_md5") or rbf_m)
+        dae_m = str(extra.get("daemon_md5") or dae_m)
+        dsrc = str(extra.get("decode_src") or dsrc)
     print(
         f"SCORE offset_ms={corrected:.4f} sigma_ms={sigma:.4f} "
         f"se_median_ms={se_med:.4f} uncertainty_ms={u_ms:.4f} "
@@ -1865,7 +1926,9 @@ def print_report(
         f"residual_rms_ms={res.residual_rms_ms} "
         f"tag={corrected_tag} verdict={verdict_name} "
         f"rc={rc} src=measured "
-        f"note=no_PLXD_frames_done_presents_drops"
+        f"rbf_md5={rbf_m} daemon_md5={dae_m} artifact_pair={apair} "
+        f"decode_src={dsrc} "
+        f"note=no_PLXD_frames_done_presents_drops_no_av_drift_ms"
     )
     return rc
 
@@ -1990,6 +2053,17 @@ def build_arg_parser() -> argparse.ArgumentParser:
         type=Path,
         default=None,
         help="JSON from tools/avsync_sample_arm_cpu.sh (arm_cpu_pct concurrent with soak)",
+    )
+    ap.add_argument(
+        "--artifacts-json",
+        type=Path,
+        default=None,
+        help="JSON from tools/avsync_stamp_artifacts.sh (rbf_md5+daemon_md5 pair)",
+    )
+    ap.add_argument(
+        "--decode-src",
+        default=None,
+        help="caller_supplied|conf|… — never pool across different decode_src",
     )
     return ap
 
@@ -2395,6 +2469,43 @@ def main(argv: list[str] | None = None) -> int:
         cpu_extra["arm_cpu_pct_src"] = "NO-DATA"
         cpu_extra["arm_cpu_pct_note"] = "pass --cpu-pct-json from soak wrapper"
 
+    # Fleet rule: every measurement carries RBF+daemon md5 artifact pair.
+    art: dict[str, Any] = {}
+    if getattr(args, "artifacts_json", None) is not None:
+        try:
+            adoc = json.loads(Path(args.artifacts_json).read_text())
+            art = dict(adoc) if isinstance(adoc, dict) else {}
+            art.setdefault("artifacts_src", "measured")
+        except (OSError, json.JSONDecodeError, TypeError) as e:
+            art = {
+                "rbf_md5": "NO-DATA",
+                "daemon_md5": "NO-DATA",
+                "artifact_pair": "NO-DATA",
+                "artifacts_src": "NO-DATA",
+                "artifacts_error": str(e),
+            }
+    else:
+        art = {
+            "rbf_md5": "NO-DATA",
+            "daemon_md5": "NO-DATA",
+            "artifact_pair": "NO-DATA",
+            "artifacts_src": "NO-DATA",
+            "artifacts_note": "pass --artifacts-json from soak (avsync_stamp_artifacts.sh)",
+        }
+    if getattr(args, "decode_src", None):
+        art["decode_src"] = str(args.decode_src)
+        art["decode_src_src"] = "caller_supplied"
+    else:
+        art.setdefault("decode_src", "NO-DATA")
+        art.setdefault("decode_src_src", "NO-DATA")
+    cpu_extra["rbf_md5"] = art.get("rbf_md5")
+    cpu_extra["rbf_md5_src"] = art.get("rbf_md5_src", art.get("artifacts_src"))
+    cpu_extra["daemon_md5"] = art.get("daemon_md5")
+    cpu_extra["daemon_md5_src"] = art.get("daemon_md5_src", art.get("artifacts_src"))
+    cpu_extra["artifact_pair"] = art.get("artifact_pair")
+    cpu_extra["decode_src"] = art.get("decode_src")
+    cpu_extra["decode_src_src"] = art.get("decode_src_src")
+
     rc = print_report(
         res,
         tol_ms=tol_ms,
@@ -2450,6 +2561,12 @@ def main(argv: list[str] | None = None) -> int:
         "margin": res.margin,
         "arm_cpu_pct": cpu_extra.get("arm_cpu_pct"),
         "arm_cpu_pct_src": cpu_extra.get("arm_cpu_pct_src"),
+        "artifacts": art,
+        "rbf_md5": art.get("rbf_md5"),
+        "daemon_md5": art.get("daemon_md5"),
+        "artifact_pair": art.get("artifact_pair"),
+        "decode_src": art.get("decode_src"),
+        "decode_src_src": art.get("decode_src_src"),
         "tol_ms": tol_ms,
         "tol_ms_src": tol_src,
         "slope_tol_ms_per_s": slope_tol,

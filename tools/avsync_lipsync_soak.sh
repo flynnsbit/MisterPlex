@@ -88,14 +88,26 @@ else
 fi
 
 CPU_JSON="$OUT/arm_cpu.json"
-# Start CPU sample first and wait briefly so the JSON exists before measure ends
-# (measure reads --cpu-pct-json at report time, after capture+decode).
+ART_JSON="$OUT/artifacts.json"
+DECODE_SRC="${DECODE_SRC:-caller_supplied}"
+# Artifact pair BEFORE capture (fleet rule: no measurement without RBF+daemon md5).
+set +e
+bash "$ROOT/tools/avsync_stamp_artifacts.sh" >"$ART_JSON" 2>"$OUT/artifacts.err"
+ART_RC=$?
+set -e
+echo "artifacts_stamp true rc=$ART_RC"
+if [[ ! -s "$ART_JSON" ]]; then
+  echo '{"rbf_md5":"NO-DATA","daemon_md5":"NO-DATA","artifact_pair":"NO-DATA","artifacts_src":"NO-DATA"}' >"$ART_JSON"
+fi
+cat "$ART_JSON"
+echo
+
+# Start CPU sample concurrent with capture.
 (
   bash "$ROOT/tools/avsync_sample_arm_cpu.sh" >"$CPU_JSON" 2>"$OUT/arm_cpu.err" \
     || echo '{"arm_cpu_pct":null,"arm_cpu_pct_src":"NO-DATA","note":"sample_script_failed"}' >"$CPU_JSON"
 ) &
 CPU_PID=$!
-# Concurrent with capture: do not block 60s; only ensure sampler is running.
 sleep 0.2
 
 set +e
@@ -113,12 +125,14 @@ python3 "$ROOT/tools/avsync_measure_hdmi.py" \
   --label "$LABEL" \
   --json-out "$OUT/${LABEL}_report.json" \
   --cpu-pct-json "$CPU_JSON" \
+  --artifacts-json "$ART_JSON" \
+  --decode-src "$DECODE_SRC" \
   >"$OUT/${LABEL}_stdout.txt" 2>&1
 RC=$?
 set -e
 echo "avsync_measure_hdmi true rc=$RC"
-# Surface SCORE + discriminator for parent without opening full log
-grep -E '^(SCORE |VERDICT=|no_flash_class=|n_flashes=|n_beeps=|n_pairs=|timing_class=|median_offset)' \
+# Surface SCORE + discriminator + artifact pair for parent
+grep -E '^(SCORE |VERDICT=|no_flash_class=|n_flashes=|n_beeps=|n_pairs=|timing_class=|median_offset|rbf_md5=|daemon_md5=|artifact_pair=|decode_src=)' \
   "$OUT/${LABEL}_stdout.txt" || true
 
 wait "$CPU_PID" 2>/dev/null || true

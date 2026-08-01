@@ -1,99 +1,68 @@
-# PARENT LIPSYNC RUN CARD — ready (RBF 78eff44e rendering)
+# PARENT LIPSYNC RUN CARD
 
-Agent never touches the device. You cast + run this.
+## GATING ANSWER — AUDIO PATH EXISTS
 
-## Why not av_drift_ms (dead on arrival)
-
-`host/libmisterplex/av_clock.hpp:280-283` (quoted):
+Host enumeration (this session, direct rc):
 
 ```
-// avDecide HOLDs while drift + lead < 0, so in steady state the *observed*
-// av_drift_ms sits in approximately [-lead, drop) BY CONSTRUCTION. That band
-// is a readout of AV_PRESENT_LEAD_MS, not an independent lipsync accuracy.
-```
-
-Telemetry self-labels `av_drift_role=servo_error_not_lipsync` (`:319`).
-**This instrument never reads av_drift_ms / PLXD / presents / drops.**
-
-## Audio path — EXISTS (host-enumerated this session)
-
-```
-$ arecord -l   # true rc=0
+$ arecord -l ; echo "true rc=$?"
+**** List of CAPTURE Hardware Devices ****
 card 0: MS2109 [MS2109], device 0: USB Audio [USB Audio]
+  Subdevices: 1/1
+true rc=0
+
+$ cat /proc/asound/cards
+ 0 [MS2109         ]: USB-Audio - MS2109
+                      MacroSilicon MS2109 at usb-0000:00:14.0-3.1, high speed
+
 $ v4l2-ctl --list-devices
-UVC Camera (534d:2109): ... /dev/video0
-$ fuser -v /dev/video0   # true rc=1 → free (nothing holds it)
+UVC Camera (534d:2109): ... /dev/video0   # SAME USB bus as MS2109 audio
+
+$ arecord -D hw:0,0 -f S16_LE -r 48000 -c 2 -d 1 …/alsa_probe.wav
+true rc=0
+-rw-r--r-- 192044 bytes   # = 48000*2*2*1 + 44 header
 ```
 
-ONE ffmpeg: v4l2 `/dev/video0` + ALSA `hw:0,0`, both `-use_wallclock_as_timestamps 1`,
-`-copyts -start_at_zero`. Warmup discard **20** frames (MS2109 junk).
+**Hard positive: HDMI grabber carries audio on ALSA `hw:0,0`.**  
+Video = `/dev/video0`. One ffmpeg, shared wallclock. Not av_drift_ms.
 
-## Method
-- Video: full-frame white flash onsets (luma thr; duty 8.33% = 2/24 s per generator)
-- Audio: 1 kHz beep onset (Goertzel)
-- `offset_ms = (t_beep − t_flash)×1000` → **+ = audio LATE**
-- SCORE line: offset_ms, sigma_ms, se_median_ms, uncertainty_ms, n, timing_class, residual_rms_ms
+## NOT in scope
+- Frame loss / cadence judder (parent settled; w-geom owns RTL)
+- `av_drift_ms` (servo deadband — `av_clock.hpp` + `av_drift_role=servo_error_not_lipsync`)
 
-## 30 s asset NOW / long later
-| Asset | DURATION | MIN_PAIRS | min capture needed |
-|-------|----------|-----------|--------------------|
-| 30 s PMS (rk=6 class) | **30** | **15** | 16.67 s @30fps w20 |
-| long (w-asset480) | 60 | 40 | 41.67 s |
+## Fixture needs for w-asset480 (relay)
+Period **1.0 s** · full-frame white flash **≥2 frames @24.000** · **1 kHz 50 ms** beep file-aligned · duration ≥30 s (prefer ≥180) · fps **24/1 only**.  
+Detail: `.agent-work/w-avsync/FIXTURE_SPEC_FOR_W_ASSET480.md`
 
-## Pre-registered (score hit/miss after YOU run)
-
+## Pre-registered (score after run)
 | ID | Prediction |
 |----|------------|
-| P1 | \|SCORE offset_ms\| < 80 ms raw @ LEAD=40 (`tag=raw_uncalibrated`) |
-| P2 | n_flashes ≥ 15 and n_beeps ≥ 15 on 30 s blip play |
-| P3 | no_flash_class **absent** (not DISPLAY_FLAT — screen is rendering) |
-| P4 | timing_class STABLE or WANDER; \|slope\| gate soft if n&lt;20 |
-| P5 | uncertainty_ms ≥ half frame quant (~16.7 @30 fps) |
-| P6 | rc≠77 unless named check fails (session gate / busy grabber / wrong asset) |
+| P1 | SCORE \|offset_ms\| < 80 raw @ LEAD=40 |
+| P2 | n_flashes≥15 n_beeps≥15 on 30 s play |
+| P3 | no DISPLAY_FLAT |
+| P4 | artifact_pair = rbf_md5+daemon_md5 both measured |
+| P5 | decode_src stamped (do not pool across values) |
 
-## Exact command (paste)
+## Paste command
 
 ```bash
 cd /home/flynnsbit/Projects/MisterPlex
-
-# 0) grabber free?
-fuser -v /dev/video0 || true
-arecord -l | head -5
-
-# 1) Cast blip fixture with flash+beep (30 s asset OK). Confirm FLASH on glass.
-
-# 2) Capture+score (default DURATION=30 MIN_PAIRS=15)
+fuser -v /dev/video0 || true          # must be free; busy ≠ zero
+arecord -l | head -6
+# cast flash+beep blip (30 s asset OK)
 OUT=$PWD/avsync_hdmi_out/lipsync_$(date +%Y%m%dT%H%M%S)
-mkdir -p "$OUT" .agent-work/w-avsync
-DURATION=30 TOL_MS=42 MIN_PAIRS=15 OUT="$OUT" \
+DURATION=30 TOL_MS=42 MIN_PAIRS=15 DECODE_SRC=caller_supplied OUT="$OUT" \
   bash tools/avsync_lipsync_soak.sh >"$OUT/soak_wrap.txt" 2>&1
 echo "soak true rc=$?"
-cp -a "$OUT" .agent-work/w-avsync/last_soak 2>/dev/null || true
-
-# 3) Read the number
-grep -E '^(SCORE |VERDICT=|no_flash_class=|n_flashes=|n_beeps=|session_gate)' \
+grep -E '^(SCORE |VERDICT=|no_flash_class=|artifact_pair=|rbf_md5=|n_flashes=)' \
   "$OUT/soak_wrap.txt" "$OUT/lipsync_stdout.txt" 2>/dev/null
-echo "report=$OUT/lipsync_report.json series=$OUT/lipsync_offset_timeseries.csv"
 ```
 
-Long fixture later: `DURATION=60 MIN_PAIRS=40 OUT=... bash tools/avsync_lipsync_soak.sh`
+Long: `DURATION=60 MIN_PAIRS=40`.  
+Artifacts: `$OUT/artifacts.json` + SCORE line includes `rbf_md5` `daemon_md5` `artifact_pair` `decode_src`.
 
-Skip session gate only if broken: `SKIP_SESSION_GATE=1` (prefer fix gate).
+## Sign / tags
+`offset_ms=(t_beep−t_flash)×1000` · **+ = audio LATE** · every value tagged measured|caller_supplied|DEFAULT_ASSUMED · empty = NO-DATA never 0.
 
-## Host gates already green (no device)
-```
-self-test true rc=0
-unit test_avsync_measure_hdmi.sh true rc=0  (29/29)
-prove100: offset_ms=0 rc=0; adelay+100 → offset_ms=99 rc=2 OFFSET_FAIL
-DISPLAY_FLAT RBG: black+beeps → no_flash_class=DISPLAY_FLAT rc=77
-```
-
-## If rc=77 now
-| no_flash_class | Meaning |
-|----------------|---------|
-| DISPLAY_FLAT | glass still flat (cast idle / wrong item) |
-| WINDOW_TOO_SHORT | duration/min_pairs mismatch |
-| THRESHOLD_NO_TRIGGER | contrast OK, detector bug |
-
-## Absolute vs relative
-Without known-zero cal into grabber, SCORE offset is `raw_uncalibrated` (includes fixed grabber A/V skew B). Same-rig ΔLEAD and slope cancel B. LEAD 40→20 must move median ≈+20 ms ∈ [+12,+28].
+## Host green
+self rc=0 · unit 29/29 rc=0 · adelay100 → offset 99 rc=2 · VIDEO_BUSY is distinct error
