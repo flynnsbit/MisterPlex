@@ -7,7 +7,7 @@ between each white flash and its 1 kHz beep.
 
 The important mode is --drift: it samples TWO windows in a single playback (early
 and late) and reports the SLOPE in ms/min. A single short window cannot see a
-frame-rate pacing error -- 23.976 content paced at 24 fps drifts ~1 ms/s, which is
+frame-rate pacing error -- 23.976 (caller_supplied NTSC rate example, NOT a measurement of our asset) content paced at 24 fps drifts ~1 ms/s, which is
 ~12 ms across a 12 s window (invisible) but ~234 ms by 3:54.
 
 offset_ms = (t_beep - t_flash) * 1000

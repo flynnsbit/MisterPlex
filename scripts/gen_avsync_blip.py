@@ -224,7 +224,7 @@ def main() -> int:
                 out=od / "sync_2397fps_blip.mp4",
                 width=320,
                 height=240,
-                fps="24000/1001",
+                fps="24000/1001",  # caller_supplied NTSC film rate for this fixture (not measured HDMI)
                 duration_s=max(d, 360.0),
                 vbitrate="1500k",
                 audio_bitrate="128k",

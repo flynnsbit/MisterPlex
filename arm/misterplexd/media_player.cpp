@@ -3165,16 +3165,30 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                               : 0.0;
                 const int64_t abytes = audioBytes_.load();
                 const double a_sec = static_cast<double>(abytes) / (48000.0 * 4.0);
+                // Provenance on every rate/offset token (parent ERROR 17 class):
+                //   vfps/pfps = measured from wall clock + counters (full precision;
+                //     never substr-truncated — that hid fractional defects).
+                //   av_drift_ms = servo error inside AV_PRESENT_LEAD, NOT lip-sync.
+                //   fps=N/D = caller/container stream metadata (not measured HDMI).
+                char vfps_b[32], pfps_b[32], asec_b[32], wall_b[32];
+                std::snprintf(vfps_b, sizeof(vfps_b), "%.3f", vfps);
+                std::snprintf(pfps_b, sizeof(pfps_b), "%.3f", pfps);
+                std::snprintf(asec_b, sizeof(asec_b), "%.3f", a_sec);
+                std::snprintf(wall_b, sizeof(wall_b), "%.3f", wall2 / 1000.0);
                 log("media: frames=" + std::to_string(frameIndex) +
-                    " vfps=" + std::to_string(vfps).substr(0, 4) +
-                    " pfps=" + std::to_string(pfps).substr(0, 4) +
-                    " audio_s=" + std::to_string(a_sec).substr(0, 5) +
-                    " wall_s=" + std::to_string(wall2 / 1000.0).substr(0, 5) +
+                    " vfps=" + vfps_b + " vfps_src=measured" +
+                    " pfps=" + pfps_b + " pfps_src=measured" +
+                    " audio_s=" + asec_b + " audio_s_src=measured" +
+                    " wall_s=" + wall_b + " wall_s_src=measured" +
                     " audio=" + (audioActive_.load() ? "on" : "off") +
                     " clock=av-lock" +
                     " av_drift_ms=" + std::to_string(avDriftMs_.load()) +
+                    " av_drift_role=servo_error_not_lipsync" +
+                    " av_drift_src=measured" +
                     " drops=" + std::to_string(droppedFrames_.load()) +
+                    " drops_src=measured" +
                     " fps=" + std::to_string(fpsNum) + "/" + std::to_string(fpsDen) +
+                    " fps_src=caller_supplied" +
                     " decode=" + std::to_string(outW_) + "x" + std::to_string(outH_));
             }
 

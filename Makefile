@@ -153,6 +153,10 @@ unit-unlocked: unit-rollcall preflight $(ROOT)/build/test_cadence $(ROOT)/build/
 	python3 $(ROOT)/tests/unit/test_absence_as_zero_static_guard.py
 	python3 $(ROOT)/tests/unit/test_av_drift_not_lipsync_pass.py
 	python3 $(ROOT)/tests/unit/test_false_green_pattern_guard.py
+	python3 $(ROOT)/tests/unit/test_product_path_orphan.py --self-test
+	python3 $(ROOT)/tests/unit/test_product_path_orphan.py
+	python3 $(ROOT)/tests/unit/test_telemetry_provenance_guard.py --self-test
+	python3 $(ROOT)/tests/unit/test_telemetry_provenance_guard.py
 	$(ROOT)/tests/unit/test_timing_margin_gate.sh
 	$(ROOT)/tests/unit/test_release_rbf_hash.sh
 	$(ROOT)/tests/unit/test_sdram_startup_verilator.sh
