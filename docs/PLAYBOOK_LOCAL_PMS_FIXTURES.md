@@ -94,3 +94,6 @@ All measured CB, no-B, 24/1, AAC 48k (host ffprobe). Not bank-matched except rk3
 
 ## Rowcount 475 vs 480
 Media on disk: `MiSTerPlex Rowcount Vernier 624x480 24fps 120s` — **scan for rk**. See `docs/rowcount_475_vs_480_power.md`.
+
+## Delivery geometry matrix
+See [`docs/DELIVERY_GEOMETRY_MATRIX.md`](DELIVERY_GEOMETRY_MATRIX.md) — 12 cells covering observed 624×350 / 426×240 + bank control + 640/720/352 @ 24/1 and 30/1.

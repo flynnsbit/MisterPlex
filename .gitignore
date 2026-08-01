@@ -47,3 +47,4 @@ assets/avsync/*_1200s.mp4
 assets/avsync/*_1800s.mp4
 # Do not add new multi‑MB soaks without LFS + explicit review
 .agent-work/
+assets/avsync/delivery_geom_*.mp4

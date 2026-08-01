@@ -139,6 +139,25 @@ Glass ID: `G n=DDDDDD c=C` + Grey bars (same as rk13). Body is synthetic black+1
 
 ---
 
+
+## Delivery-geometry matrix (FORCE_SCALE / observed PMS sizes)
+
+Canonical: [`docs/DELIVERY_GEOMETRY_MATRIX.md`](DELIVERY_GEOMETRY_MATRIX.md) · probe JSON
+`docs/delivery_geometry_matrix_probe.json`.
+
+| coded | rates | bank_fit | why |
+|-------|-------|----------|-----|
+| **624×350** | 24/1, 30/1 | adversarial | **Observed live delivery** (RK6 cast → measured 624×350) |
+| **426×240** | 24/1, 30/1 | adversarial | **Observed live delivery** |
+| **624×480** | 24/1, 30/1 | favourable | Bank-exact control |
+| **640×480** | 24/1, 30/1 | adversarial | Stride / PresentedMistake width |
+| **720×480** | 24/1, 30/1 | adversarial | NTSC DV width |
+| **624×352** | 24/1, 30/1 | adversarial | +2 rows vs 350; I420 chroma discriminator |
+
+Media: `~/plex/media/movies/MiSTerPlex DeliveryGeom *` — **scan §2 for ratingKeys**.
+Generator: `scripts/gen_delivery_geometry_matrix.py --duration 90 --copy-media`.
+All 12 cells measured CB / b=0 / aac/48k / glass ID (spec_fail=0).
+
 ## Git media hazard (no history rewrite)
 
 **Measured** tracked blobs under `assets/` (not LFS):
