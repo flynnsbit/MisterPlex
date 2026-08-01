@@ -3152,6 +3152,23 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                     ++presentCount_;
                     if (profilePresent)
                         ++prof.presented;
+                    if (presentCount_ == 1) {
+                        // Extract BEFORE any log clear — parent ERROR class.
+                        const auto fv = std::chrono::steady_clock::now();
+                        const double fvWall =
+                            std::chrono::duration<double>(fv - t0).count();
+                        log("media: first_video_present wall_s=" +
+                            std::to_string(fvWall).substr(0, 6) +
+                            " av_drift_ms=" + std::to_string(avDriftMs_.load()) +
+                            " frames=" + std::to_string(frameIndex) +
+                            " presents=1"
+                            " audio=" +
+                            std::string(audioActive_.load() ? "on" : "off") +
+                            " audio_s=" +
+                            std::to_string(static_cast<double>(audioBytes_.load()) /
+                                          (48000.0 * 4.0))
+                                .substr(0, 5));
+                    }
                     if ((presentCount_ % 48) == 0) {
                         log(std::string("media: fpga frame_tx ok via ") +
                             "DDR" +
@@ -3501,12 +3518,23 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
 
             if (!present) {
                 ++dropRun;
-                droppedFrames_.fetch_add(1);
+                const int64_t dropsNow = droppedFrames_.fetch_add(1) + 1;
                 if (profilePresent)
                     ++prof.drops;
-                if ((droppedFrames_.load() % 24) == 1)
-                    log("media: A/V resync drop drift_ms=" + std::to_string(avDriftMs_.load()) +
-                        " drops=" + std::to_string(droppedFrames_.load()));
+                // Every drop (not every 24th): startup-window instrument needs
+                // wall_s of EACH drop. Steady state is zero drops so volume is
+                // ~12–17 lines per session open only.
+                {
+                    const auto dropNow = std::chrono::steady_clock::now();
+                    const double dropWallS =
+                        std::chrono::duration<double>(dropNow - t0).count();
+                    log("media: A/V resync drop wall_s=" +
+                        std::to_string(dropWallS).substr(0, 6) +
+                        " drift_ms=" + std::to_string(avDriftMs_.load()) +
+                        " drops=" + std::to_string(dropsNow) +
+                        " frames=" + std::to_string(frameIndex) +
+                        " presents=" + std::to_string(presentCount_));
+                }
             } else {
                 dropRun = 0;
                 presentCleanFrame(frame.data(), /*countPresent*/ true);

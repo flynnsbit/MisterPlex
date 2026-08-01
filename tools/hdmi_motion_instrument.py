@@ -3176,6 +3176,50 @@ def score_burst(
 # CLI
 # ---------------------------------------------------------------------------
 
+
+def _apply_strict_fps(
+    report: dict[str, Any],
+    strict: bool,
+    source_fps_src: str,
+    capture_fps_src: str,
+) -> dict[str, Any]:
+    """ERROR 17: refuse scoring when load-bearing fps is DEFAULT_ASSUMED.
+
+    When --strict-fps: if either fps is DEFAULT_ASSUMED, do not emit a green
+    MOTION_OK that could be read as a rate-validated pass. Positively measured
+    hard fails (STRUCTURE/COLOR/RATE/FREEZE) are preserved — never decay to 77.
+    """
+    report = dict(report)
+    report["strict_fps"] = bool(strict)
+    src_assumed = str(source_fps_src) == PROVENANCE_DEFAULT_ASSUMED
+    cap_assumed = str(capture_fps_src) == PROVENANCE_DEFAULT_ASSUMED
+    report["source_fps_assumed"] = src_assumed
+    report["capture_fps_assumed"] = cap_assumed
+    if not strict:
+        return report
+    if not (src_assumed or cap_assumed):
+        return report
+    rc = int(report.get("rc") or RC_UNSCORED)
+    # Preserve positively measured failures (never decay fail → 77).
+    if rc in (RC_STRUCTURE_FAIL, RC_COLOR_FAIL, RC_RATE_FAIL, RC_FREEZE):
+        report["strict_fps_note"] = (
+            "strict_fps: fps DEFAULT_ASSUMED but measured hard-fail rc="
+            f"{rc} preserved (fail never decays to 77)"
+        )
+        return report
+    report["verdict"] = "REFUSE_DEFAULT_ASSUMED"
+    report["rc"] = RC_UNSCORED
+    report["rate"] = "RATE_UNSCORED"
+    prev = report.get("reason") or ""
+    report["reason"] = (
+        "strict_fps REFUSE: src_fps_src="
+        f"{source_fps_src} cap_fps_src={capture_fps_src} — load-bearing rate "
+        "inputs are DEFAULT_ASSUMED (ERROR 17); not a score. "
+        + (f"prior={prev}" if prev else "")
+    )
+    return report
+
+
 def _print_human(report: dict[str, Any], src: str) -> None:
     print(f"src={src}")
     print(
@@ -3925,6 +3969,41 @@ def _self_test() -> int:
     # Provenance string must be caller_supplied not bare "caller"
     assert PROVENANCE_CALLER == "caller_supplied", PROVENANCE_CALLER
 
+    # ERROR 17 RED/GREEN: half-rate under DEFAULT_ASSUMED must NOT RATE_OK
+    # (wrong score). With caller fps it must RATE_FAIL (hard measured fail).
+    half = []
+    n = 1000
+    for i in range(120):
+        half.append((i, n))
+        # Advance source only every 3rd capture → unique_ratio ≈ 0.33 << 0.8 expected
+        if (i % 3) == 2:
+            n += 1
+    ri_red = analyze_counter_rate(
+        half,
+        source_fps=DEFAULT_ASSUMED_SOURCE_FPS,
+        capture_fps=DEFAULT_ASSUMED_CAPTURE_FPS,
+        source_fps_src=PROVENANCE_DEFAULT_ASSUMED,
+        capture_fps_src=PROVENANCE_DEFAULT_ASSUMED,
+    )
+    assert ri_red["rate"] == "RATE_UNSCORED", ri_red
+    assert ri_red["rate_fail"] is False, ri_red  # refuse, not wrong RATE_OK/FAIL
+    ri_grn = analyze_counter_rate(
+        half,
+        source_fps=24.0,
+        capture_fps=30.0,
+        source_fps_src=PROVENANCE_CALLER,
+        capture_fps_src=PROVENANCE_CALLER,
+    )
+    assert ri_grn["rate"] == "RATE_FAIL", ri_grn
+    assert ri_grn["rate_fail"] is True, ri_grn
+    # --strict-fps preserves STRUCTURE hard-fail (never decay to 77)
+    fake_fail = {"rc": RC_STRUCTURE_FAIL, "verdict": "STRUCTURE_FAIL", "reason": "x", "rate": "RATE_UNSCORED"}
+    out_f = _apply_strict_fps(fake_fail, True, PROVENANCE_DEFAULT_ASSUMED, PROVENANCE_DEFAULT_ASSUMED)
+    assert out_f["rc"] == RC_STRUCTURE_FAIL, out_f
+    fake_ok = {"rc": RC_MOTION_OK, "verdict": "MOTION_OK", "reason": "adv", "rate": "RATE_UNSCORED"}
+    out_o = _apply_strict_fps(fake_ok, True, PROVENANCE_DEFAULT_ASSUMED, PROVENANCE_CALLER)
+    assert out_o["rc"] == RC_UNSCORED and out_o["verdict"] == "REFUSE_DEFAULT_ASSUMED", out_o
+
     print("SELF_TEST_OK")
     return 0
 
@@ -4050,6 +4129,16 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="print per-frame reads only (no burst verdict); rc=0 if any ok decode",
     )
+    ap.add_argument(
+        "--strict-fps",
+        action="store_true",
+        help=(
+            "REFUSE to score (rc=77, verdict REFUSE_DEFAULT_ASSUMED) when src_fps "
+            "or cap_fps is DEFAULT_ASSUMED. Load-bearing rate/skip/loss must not "
+            "silently run on a guess (ERROR 17). Default off: motion/color/structure "
+            "still score; rate stays RATE_UNSCORED."
+        ),
+    )
     args = ap.parse_args(argv)
 
     if args.self_test:
@@ -4157,6 +4246,7 @@ def main(argv: list[str] | None = None) -> int:
         )
         report["src"] = str(args.counters_csv)
         report["counters_csv_meta"] = ctr_meta
+        report = _apply_strict_fps(report, args.strict_fps, source_fps_src, capture_fps_src)
         if args.json:
             print(json.dumps(report, indent=2))
         else:
@@ -4285,6 +4375,7 @@ def main(argv: list[str] | None = None) -> int:
     report["src"] = src_label
     if cap_measure_meta is not None:
         report["cap_fps_measure"] = cap_measure_meta
+    report = _apply_strict_fps(report, args.strict_fps, source_fps_src, capture_fps_src)
     if args.json:
         # Drop bulky per-frame list unless explicitly wanted — keep it, parent wants evidence.
         print(json.dumps(report, indent=2))

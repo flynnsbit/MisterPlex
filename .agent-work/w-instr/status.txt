@@ -1,86 +1,55 @@
-# w-instr status — Gap1 PTS loss split + Gap2 provenance + OCR filter harden
+# w-instr status — startup-window sampler + provenance refuse + severity proof
 updated: 2026-07-31
 branch: w-avsync-hdmi-measure
-SHA: 34664f46
+SHA: 9f148d26
 
-## Delivered this tick
+## TASK 1 — startup-window instrument
+tools/startup_window_sample.py
+- Polls local log at >=10 Hz (--live --hz 10 --duration 12) or --offline
+- Does NOT ssh; parent feeds log (tail -F misterplexd.log > local.log)
+- Session gate: wall_s advancing (sws_arm shape). Absence = NO-DATA rc=77, never 0.0
+- Per-drop wall_s events (not a total)
+- first_video_av_drift_ms extracted as lines arrive (before any clear)
+- audio release vs first video
+- residual = frames - presents - drops checked every sample
+- Self-test: empty→77, synthetic 5 drops→0, ledger break→2
 
-### Gap 1 — DEVICE_SKIP vs GRABBER_DROP (PRIMARY)
-- Primary detector: presence holes in RLE distinct-n span
-  (absent n => displayed <1 capture period or never; cap 33.4ms < hold 41.7ms).
-- Adjacent max_exp is SECONDARY only (undercounts hold-then-jump).
-- --pts-csv + analyze_presence_loss_split:
-    dt_ratio < 1.45 -> device_skip_frames
-    dt_ratio >= 1.45 -> grabber_drop_frames
-  NEVER merged. Printed separately.
-- Without PTS: loss_split_status=LOSS_UNSCORED, steady_state_loss=UNSCORED,
-  resolution_floor_frac FIRST-CLASS (blind_frac, grabber_rate_deficit_vs_30nom,
-  unsplit_presence_equals_floor). Do NOT report hedged device-loss %.
-- Flash blind-rate attack: always tesseract + template tier-6; sequence uses tier>=6.
-- uniform_capture_spacing=ASSUMED on PNG-only — stated in skip_notes.
+Daemon (parent deploy): arm/misterplexd/media_player.cpp
+- EVERY A/V resync drop logs wall_s + drift + drops + frames + presents
+- first_video_present wall_s + av_drift_ms + audio_s (once)
 
-### Gap 2 — provenance (ERROR 17)
-- PROVENANCE_CALLER = "caller_supplied" (not bare "caller")
-- Every fps print: measured | caller_supplied | DEFAULT_ASSUMED
-- RATE_OK never on DEFAULT_ASSUMED src or cap
-- avsync_measure_hdmi.py already tags DEFAULT_ASSUMED (audit OK)
+Parent recipe:
+  # on host, before cast:
+  ssh ... 'tail -n0 -F /media/fat/misterplex_v2/misterplexd.log' > /path/startup.log &
+  python3 tools/startup_window_sample.py --log /path/startup.log --live --hz 10 --duration 15 -o startup.json
+  # cast during the window; then:
+  python3 tools/startup_window_sample.py --log /path/startup.log --offline --json
 
-### OCR filter harden (startup CSV)
-- digit_count_extra only (legal decade 9->10/99->100 kept)
-- RLE SPIKE only — trough deleted real n between OCR spikes on ctr_startup
-  (was 1029 false troughs -> 51 structural rejects)
-- global mode no longer drops shorter digit lengths (1->4 growth)
+## TASK 2 — provenance (ERROR 17)
+- PROVENANCE_CALLER=caller_supplied; default src 24.000 not 23.976
+- RATE_OK never on DEFAULT_ASSUMED
+- --strict-fps → VERDICT=REFUSE_DEFAULT_ASSUMED rc=77 when fps assumed
+  BUT measured hard fails (3/2/4/1) never decay to 77
+- RED: half-rate + DEFAULT_ASSUMED → RATE_UNSCORED (not wrong RATE_OK)
+  GREEN: half-rate + caller fps → RATE_FAIL
+- scripts/source_rate_rca.sh default FPS 24/1 labelled DEFAULT_ASSUMED (was 24000/1001)
 
-## Evidence (true rc direct, never via pipe)
+## TASK 3 — severity ladder (true rc DIRECT, no pipe)
+  /tmp/cap480a --source-fps 24 --capture-fps 30
+    VERDICT=STRUCTURE_FAIL rc=3  true rc_a=3
+    (color also GREEN+CHROMA+GREYSCALE; structure wins)
+  /tmp/cap480b --source-fps 24 --capture-fps 30
+    VERDICT=MOTION_OK rc=0  true rc_b=0
+  /tmp/cap480b --strict-fps (no --source-fps)
+    VERDICT=REFUSE_DEFAULT_ASSUMED rc=77  true rc_strict=77
 
-python3 tools/hdmi_motion_instrument.py --self-test; echo "true rc=$?"
-# SELF_TEST_OK true rc=0
-# includes: no-PTS -> LOSS_UNSCORED+floor; PTS normal->DEVICE_SKIP; 2x->GRABBER_DROP
+## Self-tests
+  python3 tools/startup_window_sample.py --self-test; echo "true rc=$?"  → 0
+  python3 tools/hdmi_motion_instrument.py --self-test; echo "true rc=$?" → 0
 
-python3 tools/hdmi_motion_instrument.py --counters-csv /tmp/ctr_startup.csv \
-  --source-fps 24.0 --capture-fps 29.9068 --daemon-session-drops 13
-# head=[3,3,3,5,5,5,7,7,7,9]  <- pixel-verified odd startup pattern
-# loss_split_status=LOSS_UNSCORED steady_state_loss=UNSCORED
-# resolution_floor_frac=0.123 (blind_frac=0.123 dominant)
-# candidate_loss_frac=0.1184  BELOW FLOOR — not a device-loss claim
-# VERDICT=MOTION_OK rc=0   true rc=0
-
-python3 tools/hdmi_motion_instrument.py --counters-csv /tmp/ctr480.csv \
-  --source-fps 24.0 --capture-fps 29.9068
-# ocr_rejected=18 (13527/2917 classes), revisits=0, RATE_OK
-# floor~0.096  steady_state_loss=UNSCORED
-# VERDICT=MOTION_OK rc=0   true rc=0
-
-Resolution floor on parent 2700-frame PNG soaks: ~9-12% (blind-dominated).
-Steady-state candidate ~same order -> UNSCORED, not "0.68% hedged".
-
-## Parent capture commands (PTS-capable)
-
-OUT=$HOME/misterplex-captures/pts_$(date +%Y%m%d_%H%M%S)
-mkdir -p "$OUT"
-# 1) START GRABBER FIRST (startup window), keep v4l2 timestamps
-ffmpeg -hide_banner -f v4l2 -input_format mjpeg -video_size 1920x1080 \
-  -i /dev/video0 -vsync 0 -copyts -c:v copy -t 120 \
-  -f matroska "$OUT/cap.mkv"
-# (cast while ffmpeg runs)
-# 2) PTS sidecar (one float seconds per frame, index=line)
-ffprobe -v error -select_streams v:0 \
-  -show_entries frame=pkt_pts_time -of csv=p=0 \
-  "$OUT/cap.mkv" > "$OUT/pts.csv"
-# 3) PNG for OCR (same order)
-ffmpeg -v error -i "$OUT/cap.mkv" -vsync 0 "$OUT/f_%04d.png"
-# 4) wall measure
-WALL=$(ffprobe -v error -show_entries format=duration -of csv=p=0 "$OUT/cap.mkv")
-# 5) score with split
-python3 tools/hdmi_motion_instrument.py "$OUT" \
-  --source-fps 24/1 --capture-wall-s "$WALL" --pts-csv "$OUT/pts.csv"
-
-For each presence hole: class=DEVICE_SKIP (dpts~1x med) vs GRABBER_DROP (dpts~2x med).
-
-## Startup transient (prior RCA, unchanged)
-droppedFrames_ only on avDecide Drop when drift=audio-frameMs > resyncDropMs(80);
-early video -> Hold. Pixel odd-n pattern at open = REAL_DISPLAY_LOSS (b), not catch-up.
-
-## Files
-- tools/hdmi_motion_instrument.py  (only instrument change this commit)
+## Files this commit
+- tools/startup_window_sample.py (new)
+- tools/hdmi_motion_instrument.py (--strict-fps + ERROR17 RED/GREEN)
+- arm/misterplexd/media_player.cpp (every-drop + first_video_present)
+- scripts/source_rate_rca.sh (default 24/1 provenance)
 - .agent-work/w-instr/status.txt
