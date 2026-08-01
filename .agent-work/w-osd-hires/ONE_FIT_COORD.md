@@ -11,13 +11,19 @@
 | 2 | w-osd-hires | Add `rtl/plex_chrome.sv` to `files.qip`; wire in `sys_top.v` after shadowmask before `hdmi_osd`; expose `chrome_hw` |
 | 3 | w-geom | content window / fabric scaler if ready same slot |
 
-## Baseline (BINDING until 8fdf settled)
+## Baseline (BINDING — parent locked)
 
-`fit-t7b-prog480` / 8fdf hierarchy: **ALM 23585 · M10K 465 · DSP 44**  
+Deployed **`8fdf440f`** = `w-fit-integ/.../remote_out/fit-t7b-prog480/` only.  
+**ALM 23585 · M10K 465 · DSP 44** · `pll_hdmi` slack **+0.669 ns**  
+`output_files` / `2890baac` = **BANNED**
+
 Post-stub intent: **ALM ~14368 · M10K ~197 · free M10K ~356**  
-Chrome Δ: **M10K +12±4 (cap24) · ALM +2.5k±1k · DSP 0**
+Chrome Δ: **M10K +12±4 (cap24) · ALM +2.5k±1k · DSP 0 · HDMI slack stay >0 (target ≥+0.20 ns)**  
+Net after both: **ALM ~16–18k · M10K ~209–221**
 
-If deployed RBF matches `output_files` (21822/DSP74) instead — **stop and re-prereg**.
+**telem_flags:** gate `stub_busy` bit — **tie to 0**, never delete/shift (`Plex.sv` MSB pack + `fpga_spi.cpp` masks).
+
+**PRESENT_PROFILE=1:** overlay wall/CPU **FLAT or down** when plane=1 (not up).
 
 ## Freeze before slot
 

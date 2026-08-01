@@ -49,6 +49,17 @@ At 480p the bank path can **look** acceptable (near 1:1 with bank 480). **Do not
 
 Working core class **`c5382bee` / current product**: pause still shows transport panel; **no black frame / no hang**. Bank path remains fail-closed when `chrome_hw=0`.
 
+### Mode D — ARM cost (PRESENT_PROFILE) — must stay **FLAT**
+
+Fabric plane **removes** per-frame `renderOverlay` bake when `chromePlaneLive()`; it must **not** add ARM work.
+
+| ID | Quantity | Prediction |
+|----|----------|------------|
+| **P-FLAT** | `PRESENT_PROFILE=1` paired `*_us_p` / `*_cpu_us_p` table (`media_player.cpp` emit) | **overlay_us_p** and **overlay_cpu_us_p** ≤ baseline (plane0 bake) or drop toward **~0** on pause path when plane=1; **no new block** appears; **ddr_*** / **pixel_*** wall-vs-CPU shape stays flat ±10% noise |
+| **P-BUG** | Any sustained **rise** in overlay or total present CPU with plane=1 | **FAIL** — plane must offload, not relocate paint to ARM |
+
+Baseline capture: same title, pause HUD visible, `PRESENT_PROFILE=1`, 30s log before/after ONE-fit daemon+RBF.
+
 ---
 
 ## 2. How parent measures (exact commands)

@@ -259,9 +259,20 @@ Chrome itself does **not** need 356 blocks. PRODUCT_NO_STUB clears the **headroo
 M10K **~197 used / ~356 free** before chrome → after chrome **~209–221 used**.  
 ALM **~14.4k** after stub → +chrome **~16–18k**. Still ≪ 41,910.
 
-**Hard fail before/after map:** M10K Δ > 24 preferred / **>40 absolute**, ALM Δ > 6k, or neg HDMI slack.
+**Hard fail before/after map:** M10K Δ > 24 preferred / **>40 absolute**, ALM Δ > 6k, or **HDMI setup slack ≤ 0**.
 
-**Baseline dependency:** arguments use **t7b/8fdf 23,585/465/44**. If w-fit-1 proves deployed `8fdf440f` matches `output_files` (21,822 / DSP 74) instead, **re-prereg Δ on that row immediately** — do not mix.
+### Full ONE-fit resource arithmetic (prereg — publish misses after map)
+
+| Step | ALM | M10K | DSP | HDMI setup slack |
+|------|----:|-----:|----:|-----------------:|
+| Live `8fdf440f` / t7b | 23,585 | 465 | 44 | +0.669 ns (`pll_hdmi`) |
+| + PRODUCT_NO_STUB | **−9,217** → ~14,368 | **−268** → ~197 | −1 → ~43 | n/a (logic removed) |
+| + chrome V1 | **+2,500 ±1,000** | **+12 ±4** (cap 24) | **0** | **≥ +0.20 ns** (hold; prefer ≥ +0.40) |
+| **Net intent** | **~16–18k / 41,910** | **~209–221 / 553** (~332+ free) | **~43** | **still > 0** |
+
+**w-geom scaler Δ:** TBD by that lane — same RBF; chrome numbers above are chrome-only.
+
+**ARM PRESENT_PROFILE:** with `chromePlaneLive()`, **overlay_us_p / overlay_cpu_us_p must not rise** (P-FLAT in glass criterion). Movement up = bug.
 
 ### V2 — after stub reclaim — optional luxury
 
