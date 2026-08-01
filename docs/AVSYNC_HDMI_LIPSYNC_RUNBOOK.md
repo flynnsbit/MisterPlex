@@ -11,6 +11,22 @@ self-labelled `av_drift_role=servo_error_not_lipsync` and pinned by
 
 ---
 
+## Established facts (parent hardware, do not re-litigate)
+
+| Fact | Evidence class | Implication for THIS lane |
+|------|----------------|---------------------------|
+| **Vertical store is 240 unique rows** (`store_y=py*2`) | Product-path `push_frame` even/odd solid fields invert; std=0.00 on glass (RBF `c5382bee`) | Full-frame white flash still works (100% of visible rows). 1-px / single-row markers are forbidden. |
+| Horizontal 529-of-640 | Arithmetic only (`clk_sys=20e6` ⇒ 636 < 640); **not** glass-proven | Do not claim column loss from lipsync captures. |
+| `frames_done` on `c5382bee` | `bank_vsync_count` packed into PLXD[63:48] | **VOID for content.** Never score lipsync or health from it. |
+| `presents` / `drops` / `unaccounted` | ARM-side; `unaccounted`≡`residual`≡`publish_misses` by construction | **Not display claims.** This instrument never reads them. |
+| `p_ge50` / dual-instrument judder | Retracted / same series | Do not cite as prior for A/V offset. |
+| Mailbox liveness via `frames_done` | Advances every vsync even if swaps stuck | Freeze can look "healthy" — out of scope here; do not use as capture gate. |
+
+**Standing rule:** publish no field name without its derivation in the same breath.
+
+**Source of A/V ground truth:** MS2109 grabber only — `/dev/video0` + ALSA `hw:0,0`, one ffmpeg, wallclock timestamps. Not companion `:3005`, not PLXD.
+
+
 ## Fixture (required)
 
 | Asset | Usable for lipsync? |

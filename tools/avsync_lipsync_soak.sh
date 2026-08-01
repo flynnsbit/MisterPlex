@@ -2,7 +2,19 @@
 # Parent-run lipsync soak: concurrent ARM CPU% + HDMI A/V measure + time series.
 # Does NOT cast or deploy. Device must already be playing the blip fixture.
 # Capture true rc DIRECTLY on the measure step (never through a pipe).
+#
+# HARD EXCLUSIONS (parent fleet 2026-08-01, RBF c5382bee):
+#   - Never read PLXD frames_done / presents / drops / unaccounted
+#     (frames_done = vsync counter; unaccounted ≡ residual ≡ publish_misses).
+#   - Never gate on companion :3005 ledger fields for lipsync.
+#   - A/V GT = MS2109 /dev/video0 + ALSA only (wallclock-shared ffmpeg).
+#   - Visual marker must be full-frame (240-row ceiling proven on glass).
 set -euo pipefail
+# Refuse accidental PLXD/ledger env that would tempt a future edit:
+if [[ -n "${PLXD_SCORE:-}" || -n "${USE_PLXD_FRAMES_DONE:-}" ]]; then
+  echo "UNSCORED: PLXD-based scoring is void on c5382bee (frames_done=vsync)"
+  exit 77
+fi
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 OUT="${OUT:-$ROOT/avsync_hdmi_out/lipsync_soak}"
 DUR="${DURATION:-60}"
