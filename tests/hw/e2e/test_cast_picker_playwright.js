@@ -60,6 +60,7 @@ const {
   nsFromInstrumentJson,
   assertGlassLoss,
 } = require('./glass_counter_loss');
+const { emitGlassExpect } = require('./glass_expect');
 
 const EXIT_PASS = 0;
 const EXIT_FAIL = 1;
@@ -1357,6 +1358,32 @@ async function resolveItemForTier(tier) {
   }
 }
 
+
+/** Emit GLASS_EXPECT + e2e_mark for parent HDMI join (suite does not capture). */
+async function glassMark(cycle, transition, phase, extra = {}) {
+  const xml = extra.xml != null ? extra.xml : await pollDaemonTimeline(nextSuiteCmd());
+  const state = extra.state != null ? extra.state : xmlAttr(xml, 'state') || '';
+  const time = extra.time != null ? extra.time : parseInt(xmlAttr(xml, 'time') || '-1', 10);
+  return emitGlassExpect(
+    {
+      cycle,
+      transition,
+      phase,
+      picture: extra.picture || 'unknown',
+      counter: extra.counter || 'na',
+      daemon_state: state,
+      daemon_time_ms: time,
+      hold_ms: extra.hold_ms,
+      note: extra.note || '',
+    },
+    {
+      runId: runCorr.runId,
+      log,
+      mark: (ev, x) => runCorr.mark(ev, x),
+    }
+  );
+}
+
 async function waitTimelineState(wantStates, maxMs = 12000, label = 'wait_state') {
   const want = new Set(Array.isArray(wantStates) ? wantStates : [wantStates]);
   const deadline = Date.now() + maxMs;
@@ -2123,7 +2150,20 @@ async function runOneTransitionCycle(page, itemTitle, detailsUrl, cycle, total) 
   const ledgerStart = await captureLedger(cfg);
   log(`LEDGER_START cycle=${cycle}/${total} ${formatSnap(ledgerStart)}`);
 
+  await glassMark(cycle, 'play', 'after', {
+    picture: 'motion',
+    counter: 'advancing',
+    note: 'baseline playing before pause — parent: motion + TREK n advancing',
+    hold_ms: 2000,
+  });
+
   // ── pause: UI-first (control plane user touches), then effect asserts ───
+  await glassMark(cycle, 'pause', 'before', {
+    picture: 'motion',
+    counter: 'advancing',
+    note: 'about to pause',
+    hold_ms: 500,
+  });
   let uiPause = await clickPauseOrPlayToggle(page);
   log(`transition_pause_ui selector=${uiPause || '(none)'}`);
   let st = await waitTimelineState(['paused'], 8000, `${ctag}_pause`);
@@ -2165,6 +2205,14 @@ async function runOneTransitionCycle(page, itemTitle, detailsUrl, cycle, total) 
   log(
     `transition_pause_ok cycle=${cycle}/${total} time=${fr.time} drift_ms=${fr.drift} ui=${uiPause || 'http_fallback'}`
   );
+  await glassMark(cycle, 'pause', 'after', {
+    picture: 'frozen',
+    counter: 'pinned',
+    state: 'paused',
+    time: fr.time,
+    note: 'EXPECT glass frozen; TREK n pinned; parent score still-frame window',
+    hold_ms: 2500,
+  });
 
   // ── resume: UI-first play toggle ───────────────────────────────────────
   const pausedTime = fr.time;
@@ -2207,8 +2255,16 @@ async function runOneTransitionCycle(page, itemTitle, detailsUrl, cycle, total) 
   log(
     `transition_resume_ok cycle=${cycle}/${total} time=${adv.time} advance_ms=${adv.advance} ui=${uiResume || 'http_fallback'}`
   );
+  await glassMark(cycle, 'resume', 'after', {
+    picture: 'motion',
+    counter: 'advancing',
+    state: 'playing',
+    time: adv.time,
+    note: 'EXPECT motion resumes; counter advances from pause pin',
+    hold_ms: 2000,
+  });
 
-  // ── seek: land near target THEN advance ────────────────────────────────
+  // ── seek FORWARD: land near target THEN advance ────────────────────────
   // Short synthetic fixtures (~30s) and external controllers can drop the
   // session between resume and seek (buffering@0). Reseed if needed so seek
   // is tested on a live wantPlay session — HTTP 200 on a dead session is a false pass.
@@ -2293,6 +2349,92 @@ async function runOneTransitionCycle(page, itemTitle, detailsUrl, cycle, total) 
   log(
     `transition_seek_ok cycle=${cycle}/${total} target=${seekTo} time=${adv.time} how=${seekHow}`
   );
+  await glassMark(cycle, 'seek_fwd', 'after', {
+    picture: 'seek_discontinuity',
+    counter: 'advancing',
+    state: 'playing',
+    time: adv.time,
+    note: `EXPECT counter near source frame for ~${seekTo}ms then advances; how=${seekHow}`,
+    hold_ms: 2000,
+  });
+
+  // ── seek BACKWARD: earlier offset, land, then advance ───────────────────
+  {
+    const seekBackTo = 2000;
+    await glassMark(cycle, 'seek_back', 'before', {
+      picture: 'motion',
+      counter: 'advancing',
+      note: `about to seek back to ${seekBackTo}ms`,
+      hold_ms: 400,
+    });
+    let seekBackHow = 'ui';
+    const xmlDurB = await pollDaemonTimeline(nextSuiteCmd());
+    const durB = parseInt(xmlAttr(xmlDurB, 'duration') || '0', 10);
+    const fracB = durB > 0 ? seekBackTo / durB : 0.02;
+    const uiSeekB = await uiSeekFraction(page, fracB);
+    let stB;
+    if (uiSeekB) {
+      log(
+        `transition_seek_back_ui selector=${uiSeekB} target_ms=${seekBackTo} frac=${fracB.toFixed(4)}`
+      );
+      stB = await waitTimelineNear(seekBackTo, 4500, 15000);
+    } else {
+      seekBackHow = 'http_fallback';
+      log(`${ctag}_seek_back no UI scrubber — HTTP seekTo fallback (tagged)`);
+      await companionPlayback(`seekTo?offset=${seekBackTo}`, `${ctag}_seek_back_http`);
+      stB = await waitTimelineNear(seekBackTo, 3500, 15000);
+    }
+    if (!stB.ok) {
+      await companionPlayback(`seekTo?offset=${seekBackTo}`, `${ctag}_seek_back_http2`);
+      seekBackHow = 'http_fallback_retry';
+      stB = await waitTimelineNear(seekBackTo, 3500, 12000);
+    }
+    if (!stB.ok) {
+      cycleFail(
+        cycle,
+        total,
+        'seek_back',
+        'did_not_land',
+        `Expected timeline near offset=${seekBackTo}ms; got state=${stB.state} time=${stB.time} how=${seekBackHow}`
+      );
+    }
+    stB = await waitTimelineState(['playing'], 10000, `${ctag}_post_seek_back`);
+    if (!stB.ok) {
+      cycleFail(
+        cycle,
+        total,
+        'seek_back',
+        'not_playing_after_land',
+        `After seek_back expected playing; got ${stB.state}@${stB.time}`
+      );
+    }
+    let samplesB = await sampleTimeline(6, 400, `${ctag}_seek_back_adv`);
+    let advB = assertTimeAdvancing(samplesB, `${ctag}_seek_back`, 250);
+    if (!advB.ok) {
+      cycleFail(cycle, total, 'seek_back', 'time_not_advancing_after_seek', advB.detail);
+    }
+    // Backward seek should land earlier than the forward target (allow slack).
+    if (advB.time > seekTo + 2000) {
+      cycleFail(
+        cycle,
+        total,
+        'seek_back',
+        'not_earlier_than_fwd',
+        `seek_back time=${advB.time} still past fwd target=${seekTo}`
+      );
+    }
+    log(
+      `transition_seek_back_ok cycle=${cycle}/${total} target=${seekBackTo} time=${advB.time} how=${seekBackHow}`
+    );
+    await glassMark(cycle, 'seek_back', 'after', {
+      picture: 'seek_discontinuity',
+      counter: 'advancing',
+      state: 'playing',
+      time: advB.time,
+      note: `EXPECT counter jump back near ~${seekBackTo}ms then advance`,
+      hold_ms: 2000,
+    });
+  }
 
   // Ledger end of continuous-play window (still same demux session; before stop).
   await sleep(1100);
@@ -2353,6 +2495,14 @@ async function runOneTransitionCycle(page, itemTitle, detailsUrl, cycle, total) 
   log(
     `transition_stop_ok cycle=${cycle}/${total} state=${idle.state} ui=${uiStop ? 1 : 0}`
   );
+  await glassMark(cycle, 'stop', 'after', {
+    picture: 'idle_logo',
+    counter: 'na',
+    state: idle.state,
+    time: samples.length ? samples[samples.length - 1].time : -1,
+    note: 'EXPECT IDLE_SCREEN=logo static Plex logo; no moving decode (parent conf)',
+    hold_ms: 2500,
+  });
 
   // ── idle → play (recast exact target) ──────────────────────────────────
   await dismissFullPlayerOverlay(page);
@@ -2382,14 +2532,39 @@ async function runOneTransitionCycle(page, itemTitle, detailsUrl, cycle, total) 
   log(
     `transition_replay_ok cycle=${cycle}/${total} samples=${prog.playing} time_max_ms=${prog.maxT} advance_ms=${adv.advance}`
   );
+  await glassMark(cycle, 'play', 'after', {
+    picture: 'motion',
+    counter: 'advancing',
+    note: 'stop→play again — EXPECT motion + advancing counter',
+    hold_ms: 2000,
+  });
 
-  // ── optional HDMI at defined point: mid-cycle while playing after replay ─
+  // ── optional HDMI score (parent-filled dir) while playing after replay ─
   const hdmi = await optionalHdmiMotionStage(cycle, total);
+
+  // Leave cycle in a defined idle so N-loop / suite end never leaves mid-play.
+  await forceStopDaemon(`${ctag}_cycle_end_idle`).catch(() => false);
+  await glassMark(cycle, 'idle', 'after', {
+    picture: 'idle_logo',
+    counter: 'na',
+    note: 'cycle end forced idle — daily driver safe',
+    hold_ms: 1000,
+  });
+
   return {
     cycle,
     ok: true,
     startTime0: start.time0,
-    transitions: ['pause', 'resume', 'seek', 'ledger', 'stop', 'play_idle_play'],
+    transitions: [
+      'pause',
+      'resume',
+      'seek_fwd',
+      'seek_back',
+      'ledger',
+      'stop',
+      'play_idle_play',
+      'idle',
+    ],
     ledger: { start: ledgerStart, end: ledgerEnd },
     hdmi,
   };
@@ -2401,6 +2576,46 @@ async function runOneTransitionCycle(page, itemTitle, detailsUrl, cycle, total) 
  * 1-in-N flake cannot hide behind early abort. PASS requires pass==N fail==0.
  * Failure names WHICH cycle and WHICH transition.
  */
+
+/**
+ * Re-open Select Player and re-assert exact MiSTerPlex (cold/mid-run discovery).
+ * Parent uses this after daemon restart by re-running suite or E2E_DISCOVERY_RECHECK=1.
+ */
+async function recheckDiscoveryPicker(page, itemTitle, tag = 'discovery_recheck') {
+  const before = await bodyLineSet(page);
+  const ctl = await waitForSelectPlayerControl(page, 30000);
+  if (ctl.kind !== 'ok') {
+    fail(
+      'discovery_recheck_no_select_player',
+      `${tag}: Select Player control missing on recheck`
+    );
+  }
+  await ctl.el.click({ timeout: 5000 });
+  await sleep(1200);
+  const target = await assertMisterplexInPickerDiff(page, before);
+  const clickedText = ((await target.innerText().catch(() => '')) || '').trim().split('\n')[0].trim();
+  const exactNameRe = new RegExp(
+    `^${cfg.castName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`,
+    'i'
+  );
+  if (clickedText && !exactNameRe.test(clickedText) && clickedText !== cfg.castName) {
+    fail(
+      'discovery_recheck_ghost',
+      `${tag}: ghost/near-miss ${JSON.stringify(clickedText)}`
+    );
+  }
+  await page.keyboard.press('Escape').catch(() => {});
+  await sleep(300);
+  await glassMark(0, 'discovery', 'after', {
+    picture: 'picker_ui',
+    counter: 'na',
+    note: `${tag}: MiSTerPlex still in picker (exact)`,
+    hold_ms: 800,
+  });
+  log(`DISCOVERY_RECHECK_OK tag=${tag} exact=${cfg.castName}`);
+  return { ok: true, clickedText };
+}
+
 async function runTransitionScenarios(page, itemTitle, detailsUrl, _castAlreadySelected) {
   if (!cfg.transitions) {
     log('TRANSITIONS=off (E2E_TRANSITIONS=0)');
@@ -2948,6 +3163,12 @@ async function runTransitionScenarios(page, itemTitle, detailsUrl, _castAlreadyS
       log(
         `selected_cast_target exact=${cfg.castName} clicked_text=${JSON.stringify(clickedText || cfg.castName)}`
       );
+      await glassMark(0, 'discovery', 'after', {
+        picture: 'picker_ui',
+        counter: 'na',
+        note: 'Web picker selected exact MiSTerPlex — device glass unchanged until Play',
+        hold_ms: 1000,
+      });
       await shot(page, `03_target_selected_${tier.name}`);
 
       // ── 4. Play ───────────────────────────────────────────────────────────
@@ -3063,6 +3284,14 @@ async function runTransitionScenarios(page, itemTitle, detailsUrl, _castAlreadyS
       }
       // Transitions include multi-cycle stress + per-cycle HDMI (when enabled).
       const tr = await runTransitionScenarios(page, itemTitle, detailsUrl, true);
+      // Discovery recheck (picker still lists exact target). Cold-start is the first
+      // picker open above; this catches mid-run disappearance. After parent daemon
+      // restart, re-run the full suite — suite does not restart the daemon.
+      if (/^(1|true|yes|on)$/i.test(String(process.env.E2E_DISCOVERY_RECHECK || '1'))) {
+        await dismissFullPlayerOverlay(page);
+        await gotoDetailsClean(page, detailsUrl, itemTitle);
+        await recheckDiscoveryPicker(page, itemTitle, `tier_${tier.name}_post_transitions`);
+      }
       // If transitions off, still allow a single HDMI stage on the playing session.
       let hdmi = { enabled: false };
       if (!tr.enabled && cfg.hdmiMotion) {
@@ -3110,6 +3339,15 @@ async function runTransitionScenarios(page, itemTitle, detailsUrl, _castAlreadyS
       );
       log(`TIER_OK ${tier.name} ${summaryBits[summaryBits.length - 1]}`);
     }
+
+    // Always return daemon to idle for daily driver (UI stop may have been last tier only).
+    await forceStopDaemon('suite_end_idle').catch(() => false);
+    await glassMark(0, 'idle', 'after', {
+      picture: 'idle_logo',
+      counter: 'na',
+      note: 'suite complete — device idle for daily driver',
+      hold_ms: 1000,
+    });
 
     suitePassed = true;
     log(

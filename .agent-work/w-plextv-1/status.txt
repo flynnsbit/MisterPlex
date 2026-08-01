@@ -1,38 +1,20 @@
 lane=w-plextv
 branch=w-plextv-cast-picker-e2e-fix2
 worktree=.worktrees/w-plextv-e2e-fix
-sha=980bd3a2
+sha=PENDING
+see=STATUS.md
 
-## S6 N-loop — SHIPPED (default 10)
-E2E_TRANSITION_CYCLES=10; TRANSITION_CYCLE_ROW per cycle; pass==N only
-Parent verified transitions at older SHA 93fa0c04 N=1; tip needs parent re-run N=10
-
-## Glass loss gate — NEW (coord w-instr instrument)
-tools/hdmi_motion_instrument.py + tests/hw/e2e/glass_counter_loss.js
-1.54% skip class (22/1429) RED at E2E_GLASS_MAX_LOSS_PCT=1.0 (unit-proven)
-Timeline advance alone does NOT green-wash glass loss when glass is scored
-
-### Parent commands
+# Parent (evidence)
 cd .worktrees/w-plextv-e2e-fix
+node tests/hw/e2e/prove_red_paths.js; echo "true rc=$?"
 
-# Offline glass on your capture (no device drive by agent):
-E2E_GLASS_CAPTURE_DIR=<your_png_dir> E2E_GLASS_MAX_LOSS_PCT=1.0 \
-  node tests/hw/e2e/score_glass_capture.js; echo "true rc=$?"
-# PRE_REG: loss>=1.54% → CAST_GLASS_RESULT=FAIL true rc=1
-# PRE_REG: clean counter → CAST_GLASS_RESULT=PASS true rc=0
-
-# Full UI E2E + require glass (provide dir OR HDMI_MOTION capture):
 E2E_TIER=480p E2E_DAEMON_DECODE=624x480 E2E_TRANSITION_CYCLES=10 \
-E2E_REQUIRE_GLASS=1 E2E_GLASS_CAPTURE_DIR=<pngs> \
-E2E_REQUIRE_UI_TIMELINE=1 E2E_REQUIRE_PID=1 \
+E2E_DISCOVERY_RECHECK=1 E2E_REQUIRE_UI_TIMELINE=1 E2E_REQUIRE_PID=1 \
 PLEX_BASE=http://YOUR-PLEX-SERVER:32400 PLEX_TOKEN=<tok> PLEX_WEB_USER=<profile> \
 MISTER_HOST=<mister> ./tests/hw/e2e/run_cast_picker.sh; echo "true rc=$?"
 
-# Red paths still:
-node tests/hw/e2e/prove_red_paths.js; echo "true rc=$?"
+# Align HDMI on GLASS_EXPECT wall_ms lines; score:
+# E2E_GLASS_CAPTURE_DIR=<pngs> node tests/hw/e2e/score_glass_capture.js; echo "true rc=$?"
 
-notes=
-- exact cast + ghost reject preserved
-- waitForDetailsReady + details_never_rendered vs play_button_not_found preserved
-- teardown our controller only
-- no lipsync assert; no device touch
+PRE_REG: N=10 pass==N; DISCOVERY_RECHECK_OK; suite_end idle; TEARDOWN_OK
+PARENT_PROVEN_ONLY_AT: 93fa0c04 N=1 (tip needs re-run)

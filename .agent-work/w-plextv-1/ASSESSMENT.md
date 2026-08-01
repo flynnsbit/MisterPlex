@@ -21,6 +21,9 @@ Branch tip: see `status.txt` for SHA. Agent runs are **not** evidence; parent ru
 | Wallclock timeline series | `PLEX_TIMELINE_SAMPLE` + jsonl | **Emitted** for parent HDMI join |
 | Glass frame loss % | w-instr instrument + counter gaps; max 1% default | **Real when capture provided**; 1.54% class unit-RED |
 | S6 N=10 distribution | `TRANSITION_CYCLE_ROW` + pass==N | **Code real**; parent N=10 evidence pending |
+| Per-transition glass contract | `GLASS_EXPECT` wall_ms + picture/counter | **Markers real**; parent pixels |
+| Seek backward | seek@2s after seek@8s | **Code real** |
+| Discovery recheck | post-transitions picker exact | **Code real**; cold+restart = re-run |
 
 ## NOT covered / must not pretend
 
