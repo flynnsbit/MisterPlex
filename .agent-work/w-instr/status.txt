@@ -1,7 +1,7 @@
 # w-instr status — SIX-FIELD first-present FPGA instrument
 
 branch: w-avsync-hdmi-measure
-tip: 4388a6af
+tip: 2d5e30d9
 
 ## ARM binary (THIS BUILD — parent deploys)
 path: build/arm/misterplexd
