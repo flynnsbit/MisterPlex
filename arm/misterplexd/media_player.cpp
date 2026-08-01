@@ -3026,10 +3026,18 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
         if (onProgress_)
             onProgress_("playing", startMs, durationMs);
 
-        // Deterministic A/V origin: never start the schedule on the wall clock and then
-        // switch to the audio clock mid-stream — that step discontinuity randomises the
-        // lipsync offset by tens of ms on every play (measured spread ~67 ms across
-        // identical runs). Wait for the audio master clock to exist first.
+        // Deterministic A/V origin:
+        // 1) Wait for the audio pump to exist so we never start on wall and then
+        //    switch to audio mid-stream (that step discontinuity randomised lipsync
+        //    by tens of ms — measured spread ~67 ms across identical runs).
+        // 2) Do NOT latch the pacing origin here. The audio pump sets audioActive_
+        //    and begins MrAudio prefill immediately; by the time frame 1 is fully
+        //    read, audibleClock is already ~+159 ms (measured). Pacing against that
+        //    with resyncDropMs=80 / maxDropRun=1 alternates Drop/Present and burns
+        //    ~13 real display frames at every session open (pixel-confirmed).
+        // 3) Co-arm: latch audioClockOriginMs from audibleClock when the FIRST
+        //    complete video frame is ready (see pacing block). Startup-only; the
+        //    steady-state avDecide path is unchanged (constant offset cancels).
         if (wantAudio && apipe[0] >= 0) {
             const auto waitStart = std::chrono::steady_clock::now();
             while (!stop_.load() && !audioActive_.load() &&
@@ -3039,11 +3047,14 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
             const int64_t waited = std::chrono::duration_cast<std::chrono::milliseconds>(
                                        std::chrono::steady_clock::now() - waitStart)
                                        .count();
-            log("media: A/V origin armed audio_active=" +
+            log("media: A/V audio_active=" +
                 std::string(audioActive_.load() ? "1" : "0") +
-                " waited_ms=" + std::to_string(waited));
+                " waited_ms=" + std::to_string(waited) +
+                " — co-arm deferred until first video frame");
         }
-        t0 = std::chrono::steady_clock::now();
+        t0 = std::chrono::steady_clock::now(); // provisional; re-latched at co-arm
+        bool avCoArmDone = false;
+        int64_t audioClockOriginMs = 0;
         bool pauseClockHeld = false;
         bool pausedOverlayWasVisible = false;
         std::chrono::steady_clock::time_point pauseStarted{};
@@ -3269,6 +3280,25 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
             int64_t framePacingWaitUs = 0;
             int64_t framePacingWaitCpuUs = 0;
             {
+                // Co-arm once: snapshot audible clock at the first complete video
+                // frame so startup drift is ~0. Startup-window only (avCoArmDone).
+                if (!avCoArmDone) {
+                    avCoArmDone = true;
+                    t0 = std::chrono::steady_clock::now();
+                    lastCompleteVideoFrame = t0;
+                    if (wantAudio && audioActive_.load()) {
+                        const int64_t raw = misterplex::audibleClockMs(
+                            audioBytes_.load(), audioQueuedBytes_.load());
+                        audioClockOriginMs = raw;
+                        log("media: A/V co-arm first_frame=" + std::to_string(frameIndex) +
+                            " audio_origin_ms=" + std::to_string(audioClockOriginMs) +
+                            " (session clock zeroed at first video frame)");
+                    } else {
+                        audioClockOriginMs = 0;
+                        log("media: A/V co-arm first_frame=" + std::to_string(frameIndex) +
+                            " audio_origin_ms=0 (wall clock; audio inactive)");
+                    }
+                }
                 // Live OSD trim is read every frame so the menu takes effect at once.
                 const int64_t frameMs =
                     frameContentMs(frameIndex, fpsNum, fpsDen) + avOffsetMs_.load();
@@ -3279,9 +3309,11 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                     if (wantAudio && audioActive_.load()) {
                         // What has actually been HEARD, not what has been handed
                         // to the driver. Falls back to the submitted-byte clock
-                        // when the ring depth is unavailable.
-                        clockMs = misterplex::audibleClockMs(audioBytes_.load(),
-                                                             audioQueuedBytes_.load());
+                        // when the ring depth is unavailable. Co-arm subtracts the
+                        // origin latched at first video frame (see above).
+                        const int64_t raw = misterplex::audibleClockMs(
+                            audioBytes_.load(), audioQueuedBytes_.load());
+                        clockMs = misterplex::coArmedClockMs(raw, audioClockOriginMs);
                     } else {
                         clockMs = std::chrono::duration_cast<std::chrono::milliseconds>(
                                       std::chrono::steady_clock::now() - t0)

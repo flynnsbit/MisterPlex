@@ -152,6 +152,49 @@ int main() {
     CHECK(rawVideoTerminalSignal(false, false, false, false, true));  // known-duration stall
     CHECK(!rawVideoTerminalSignal(false, false, false, false, false)); // EAGAIN-only
 
+    // --- startup co-arm (silicon: audio +159 ms at first video frame) ---
+    // Without co-arm the pacer drops ~13 frames alternating (maxDropRun=1).
+    // With co-arm origin latched at first frame, drops collapse to ~0.
+    CHECK(coArmedClockMs(159, 159) == 0);
+    CHECK(coArmedClockMs(200, 159) == 41);
+    {
+        // Raw audible clock at first paced frame such that drift = audio - frameMs(1)
+        // equals the measured +159 ms (frameContentMs(1,24,1)=41 → audio=200).
+        const int64_t frame1Ms = frameContentMs(1, 24, 1);
+        const int64_t measuredFirstDrift = 159;
+        const int64_t audioAtFrame1 = measuredFirstDrift + frame1Ms; // 200
+        CHECK(avDriftMs(audioAtFrame1, frame1Ms) == measuredFirstDrift);
+        CHECK(avDecide(measuredFirstDrift, 40, 80, 0) == AvAction::Drop);
+
+        const auto red = simulateStartupPacer(audioAtFrame1, /*coArm=*/false, /*frames=*/26);
+        const auto green = simulateStartupPacer(audioAtFrame1, /*coArm=*/true, /*frames=*/26);
+        std::printf("startup_sim RED  drops=%d presents=%d first_drift=%d maxRun=%d\n",
+                    red.drops, red.presents, red.firstDriftMs, red.maxDropRun);
+        std::printf("startup_sim GREEN drops=%d presents=%d first_drift=%d maxRun=%d\n",
+                    green.drops, green.presents, green.firstDriftMs, green.maxDropRun);
+        // RED-before-green: defect must produce ~13 alternating drops.
+        CHECK(red.firstDriftMs == measuredFirstDrift);
+        CHECK(red.drops >= 10);
+        CHECK(red.drops <= 16); // measured 13; model slack
+        CHECK(red.maxDropRun == 1);
+        if (red.drops < 10) {
+            std::fprintf(stderr, "FAIL: red startup sim drops=%d < 10 — gate vacuous\n",
+                         red.drops);
+            return 1;
+        }
+        // GREEN-before-red: co-arm must clear the startup massacre.
+        CHECK(green.firstDriftMs < 80);
+        CHECK(green.firstDriftMs == static_cast<int>(-frame1Ms)); // clock 0 − content
+        CHECK(green.drops <= 2);
+        CHECK(green.presents >= 24);
+        if (green.drops > 2) {
+            std::fprintf(stderr, "FAIL: green co-arm still drops=%d\n", green.drops);
+            return 1;
+        }
+        std::printf("PASS startup co-arm: red drops=%d green drops=%d\n", red.drops,
+                    green.drops);
+    }
+
     if (fails) {
         std::fprintf(stderr, "test_avclock: %d failures\n", fails);
         return 1;
