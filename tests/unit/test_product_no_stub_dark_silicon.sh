@@ -154,12 +154,18 @@ pass "PRODUCT_NO_STUB stream_path scaffolding"
 
 # --- 4) QSF: macro documented but not enabled by default ---------------------
 grep -q 'PRODUCT_NO_STUB' "$QSF" || fail "Plex.qsf missing PRODUCT_NO_STUB comment"
-if grep -E '^set_global_assignment -name VERILOG_MACRO "PRODUCT_NO_STUB' "$QSF"; then
-  fail "PRODUCT_NO_STUB is ACTIVE in QSF — product default must stay commented until fit grant"
+if grep -E '^set_global_assignment -name VERILOG_MACRO "PRODUCT_NO_STUB' "$QSF" >/dev/null; then
+  # Intentional product fit: ALLOW_PRODUCT_NO_STUB_ACTIVE=1 (parent-granted slot).
+  if [[ "${ALLOW_PRODUCT_NO_STUB_ACTIVE:-0}" == "1" ]]; then
+    pass "QSF PRODUCT_NO_STUB ACTIVE (ALLOW_PRODUCT_NO_STUB_ACTIVE=1 fit mode)"
+  else
+    fail "PRODUCT_NO_STUB is ACTIVE in QSF — product default must stay commented until fit grant (or set ALLOW_PRODUCT_NO_STUB_ACTIVE=1)"
+  fi
+else
+  grep -q '# set_global_assignment -name VERILOG_MACRO "PRODUCT_NO_STUB=1"' "$QSF" \
+    || fail "commented PRODUCT_NO_STUB assignment missing from QSF"
+  pass "QSF PRODUCT_NO_STUB commented (not default-on)"
 fi
-grep -q '# set_global_assignment -name VERILOG_MACRO "PRODUCT_NO_STUB=1"' "$QSF" \
-  || fail "commented PRODUCT_NO_STUB assignment missing from QSF"
-pass "QSF PRODUCT_NO_STUB commented (not default-on)"
 
 # --- 5) Doc anchors + banned withdrawn claims --------------------------------
 grep -q 'PRODUCT_NO_STUB' "$DOC" || fail "docs/phase3-decode.md missing PRODUCT_NO_STUB section"
