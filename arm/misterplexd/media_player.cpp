@@ -962,6 +962,17 @@ void MediaPlayer::setDecodeSize(CodedWidth cw, CodedHeight ch) {
     outH_ = h;
 }
 
+void MediaPlayer::setDecodeSizeSource(const std::string& src) {
+    if (src.empty())
+        decodeSizeSource_ = "default";
+    else if (src.rfind("cli:", 0) == 0 || src == "cli:--decode" || src == "argv")
+        decodeSizeSource_ = "caller_supplied";
+    else if (src.rfind("conf:", 0) == 0)
+        decodeSizeSource_ = src; // keep conf path for audit
+    else
+        decodeSizeSource_ = src;
+}
+
 std::string MediaPlayer::lastError() const {
     std::lock_guard<std::mutex> lock(mu_);
     return lastError_;
@@ -4233,7 +4244,8 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                     " fps_src=" +
                     (fpsNum_ > 0 ? std::string("caller_supplied") : "DEFAULT_ASSUMED") +
                     " decode=" + std::to_string(outW_) + "x" + std::to_string(outH_) +
-                    " decode_src=caller_supplied" +
+                    " decode_src=" + decodeSizeSource_ +
+                    " decode_src_der=setDecodeSizeSource_not_hardcoded" +
                     " measured_delivery=" +
                     (mw > 0 ? (std::to_string(mw) + "x" + std::to_string(mh)) : "pending") +
                     " measured_delivery_src=" + (mw > 0 ? "measured" : "NO-DATA") +

@@ -26,6 +26,18 @@ import re
 import sys
 from pathlib import Path
 
+_TOOLS = Path(__file__).resolve().parent
+if str(_TOOLS) not in sys.path:
+    sys.path.insert(0, str(_TOOLS))
+
+from artifact_stamp import (  # noqa: E402
+    add_stamp_args,
+    parse_decode_src_from_log_line,
+    refuse_pool_decode_src,
+    require_stamp,
+    stamp_from_namespace,
+)
+
 RC_OK = 0
 RC_USAGE = 1
 RC_FAIL = 2
@@ -180,14 +192,21 @@ def main() -> int:
         help="rc=77 unless vsync_tag=measured (DEFECT 2 loud)",
     )
     ap.add_argument("--vsync-hz", type=float, default=None, help="caller_supplied measured Hz")
+    ap.add_argument(
+        "--require-decode-src",
+        default=None,
+        help="if set, refuse score when log decode_src differs (no pool)",
+    )
     ap.add_argument("--self-test", action="store_true")
+    add_stamp_args(ap)
     args = ap.parse_args()
 
     if args.self_test:
         print("PRE-REGISTER cadence score:")
         print("  PRIMARY=p_one_refresh_hold der=round(iv/T)==1")
         print("  p_ge50=forensic_only; sigma>=mean => not score")
-        print("  no pool across phase= classes")
+        print("  no pool across phase= / decode_src=")
+        print("  fleet: artifact pair required")
         ok = True
         r = score_kv(
             {
@@ -228,8 +247,28 @@ def main() -> int:
             print("FAIL vsync require"); ok = False
         else:
             print("PASS vsync require UNSCORED")
+        if refuse_pool_decode_src("caller_supplied", "conf:/media/fat/misterplex.conf"):
+            print("PASS decode_src pool refuse")
+        else:
+            print("FAIL decode_src pool"); ok = False
+        # unstamped score path must 77
+        args.rbf_md5 = None
+        args.daemon_md5 = None
+        st = stamp_from_namespace(args)
+        o, _, rc = require_stamp(st)
+        if o or rc != RC_UNSCORED:
+            print("FAIL unstamped"); ok = False
+        else:
+            print("PASS unstamped UNSCORED")
         print("SELF_TEST_OK" if ok else "SELF_TEST_FAIL")
         return RC_OK if ok else RC_FAIL
+
+    st = stamp_from_namespace(args)
+    print("STAMP", st.header_kv())
+    ok_pair, reason, rc_pair = require_stamp(st)
+    if not ok_pair and not args.allow_unstamped:
+        print(f"VERDICT=UNSCORED rc={RC_UNSCORED} reason={reason}")
+        return RC_UNSCORED
 
     if not args.log or not args.log.is_file():
         print("NO_DATA log missing — empty means no-data not zero")
@@ -248,13 +287,46 @@ def main() -> int:
     # Filter by termination class — NEVER pool
     matched = [ln for ln in cands if term_class(ln) == args.phase]
     if not matched:
-        # allow unknown if only one class present
         classes = sorted({term_class(ln) for ln in cands})
         print(
             f"NO_DATA phase={args.phase} lines=0 present_classes={classes} "
             f"— refuse pool; pick --phase"
         )
         return RC_UNSCORED
+
+    # decode_src partition: scan nearby media lines for decode_src
+    decode_srcs = set()
+    decodes = set()
+    for ln in lines:
+        if "decode_src=" in ln:
+            d, s = parse_decode_src_from_log_line(ln)
+            if s != "NO-DATA":
+                decode_srcs.add(s)
+            if d != "NO-DATA":
+                decodes.add(d)
+    if len(decode_srcs) > 1:
+        print(
+            f"VERDICT=UNSCORED rc={RC_UNSCORED} reason=mixed_decode_src={sorted(decode_srcs)} "
+            f"— refuse pool across decode_src"
+        )
+        return RC_UNSCORED
+    log_decode_src = next(iter(decode_srcs), "NO-DATA")
+    log_decode = next(iter(decodes), "NO-DATA")
+    if st.decode_src == "NO-DATA" and log_decode_src != "NO-DATA":
+        st.decode_src = log_decode_src
+        st.decode_src_src = "measured_log"
+    if st.decode == "NO-DATA" and log_decode != "NO-DATA":
+        st.decode = log_decode
+    if args.require_decode_src and refuse_pool_decode_src(args.require_decode_src, log_decode_src):
+        print(
+            f"VERDICT=UNSCORED rc={RC_UNSCORED} "
+            f"reason=decode_src_mismatch want={args.require_decode_src} got={log_decode_src}"
+        )
+        return RC_UNSCORED
+    print(
+        f"decode={st.decode} decode_src={st.decode_src} decode_src_src={st.decode_src_src} "
+        f"decode_src_partition=no_pool_across_values"
+    )
 
     pick = None
     for ln in reversed(matched):
@@ -285,10 +357,13 @@ def main() -> int:
         f"mean_ms={rep.get('mean_ms')} sigma_ms={rep.get('sigma_ms')} "
         f"vsync_status={rep.get('vsync_status')} "
         f"hold_d_conditional={rep.get('hold_d_conditional')} "
-        f"p_delta1={rep.get('p_delta1')} p_delta1_der={rep.get('p_delta1_der')}"
+        f"p_delta1={rep.get('p_delta1')} p_delta1_der={rep.get('p_delta1_der')} "
+        f"artifact_pair={st.artifact_pair} decode_src={st.decode_src}"
     )
     if rep.get("reason"):
         print(f"reason={rep['reason']}")
+    if not ok_pair:
+        return RC_UNSCORED
     return int(rep["rc"])
 
 

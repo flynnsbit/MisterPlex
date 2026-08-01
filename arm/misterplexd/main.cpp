@@ -579,6 +579,7 @@ int main(int argc, char** argv) {
     }
     player.setFfmpegPath(ffmpeg);
     player.setDecodeSize(decodeSize);
+    player.setDecodeSizeSource(decodeSizeSource);
     player.setPresentMode(presentMode);
     player.setDdrFrameFormat(ddrFrameFormat);
     player.setDdrMemSync(ddrMemSync);
@@ -901,14 +902,19 @@ int main(int argc, char** argv) {
         int64_t off = req.offsetMs;
         const auto contentRes = contentResolutionForNextPlay();
         player.setDecodeSize(contentRes.width, contentRes.height);
+        // Partition key for instruments: lab argv vs conf vs OSD (parent fleet rule).
+        if (player.osdApplyActive())
+            player.setDecodeSizeSource("osd_O4");
+        else
+            player.setDecodeSizeSource(decodeSizeSource);
         const auto weakForPlay =
             weakForContentResolution(weak, contentRes, weakBitrateExplicit);
         std::fprintf(stderr,
                      "misterplexd: content resolution=%s source=%s status_word=0x%04x "
-                     "weak=%s bitrate=%d\n",
+                     "weak=%s bitrate=%d decode_src=%s\n",
                      contentRes.label, player.osdApplyActive() ? "OSD O[4]" : "conf/--decode",
                      player.lastOsdWord(), weakForPlay.videoResolution.c_str(),
-                     weakForPlay.maxVideoBitrateKbps);
+                     weakForPlay.maxVideoBitrateKbps, player.decodeSizeSource().c_str());
         auto [resolved, base] = resolveAgainstServers(req, defaultPms, off, weakForPlay);
 
         if (gen != playGen.load()) {

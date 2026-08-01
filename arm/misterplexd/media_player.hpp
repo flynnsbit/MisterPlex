@@ -206,6 +206,10 @@ public:
     // test_geometry_type_safety.sh. Conf/argv must use adoptExternalCodedSize.
     void setDecodeSize(CodedWidth w, CodedHeight h);
     void setDecodeSize(CodedSize size) { setDecodeSize(size.width, size.height); }
+    // Provenance for decode= WxH (fleet partition key). Values like
+    // caller_supplied | conf:/path | cli:--decode | default | content_tier.
+    void setDecodeSizeSource(const std::string& src);
+    const std::string& decodeSizeSource() const { return decodeSizeSource_; }
     // Host recon frames presented this session (I/IDR only)
     int64_t reconFrames() const { return reconFrames_.load(); }
     bool reconPresentOk() const { return reconPresentOk_.load(); }
@@ -454,6 +458,7 @@ private:
     std::string currentHeaders_;
     int64_t durationMs_ = 0;
     int outW_ = 320;
+    std::string decodeSizeSource_{"default"};
     int outH_ = 240;
 };
 

@@ -87,6 +87,16 @@ try:
 except ImportError as e:
     raise SystemExit(f"Pillow required: {e}") from e
 
+_TOOLS = Path(__file__).resolve().parent
+if str(_TOOLS) not in sys.path:
+    sys.path.insert(0, str(_TOOLS))
+
+from artifact_stamp import (  # noqa: E402
+    add_stamp_args,
+    require_stamp,
+    stamp_from_namespace,
+)
+
 RC_OK = 0
 RC_USAGE = 1
 RC_FAIL = 2
@@ -750,10 +760,18 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="with --flat-suite: PASS only if opposite solid collapse BROKE (T7 glass proof)",
     )
+    add_stamp_args(ap)
     args = ap.parse_args(argv)
 
     if args.self_test:
         return run_self_test()
+
+    st = stamp_from_namespace(args)
+    print("STAMP", st.header_kv())
+    ok_pair, stamp_reason, _ = require_stamp(st)
+    if not ok_pair and not args.allow_unstamped:
+        print(f"VERDICT=UNSCORED rc={RC_UNSCORED} reason={stamp_reason}")
+        return RC_UNSCORED
 
     if args.flat_suite is not None:
         if not args.flat_suite.is_dir():
@@ -786,6 +804,9 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"  pre_register={rep['pre_register']}")
             if rep.get("established_fact_note"):
                 print(f"  note={rep['established_fact_note']}")
+            print(f"  artifact_pair={st.artifact_pair} decode_src={st.decode_src}")
+        if not ok_pair:
+            return RC_UNSCORED
         return int(rep["rc"])
 
     if not args.images:
@@ -830,6 +851,8 @@ def main(argv: list[str] | None = None) -> int:
             print(f"  note={rep['rd_review_note']}")
         if rep["rc"] == RC_UNSCORED:
             rc_out = RC_UNSCORED
+    if not ok_pair:
+        return RC_UNSCORED
     return rc_out
 
 

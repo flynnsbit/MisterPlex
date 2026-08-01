@@ -23,6 +23,16 @@ import time
 from collections import Counter
 from pathlib import Path
 
+_TOOLS = Path(__file__).resolve().parent
+if str(_TOOLS) not in sys.path:
+    sys.path.insert(0, str(_TOOLS))
+
+from artifact_stamp import (  # noqa: E402
+    add_stamp_args,
+    require_stamp,
+    stamp_from_namespace,
+)
+
 RC_OK = 0
 RC_USAGE = 1
 RC_BUSY = 2
@@ -159,11 +169,13 @@ def main() -> int:
     ap.add_argument("--size", default="1280x720", help="grabber size; 720p60 preferred")
     ap.add_argument("--pts-file", type=Path, help="skip capture; one pts_time per line")
     ap.add_argument("--self-test", action="store_true")
+    add_stamp_args(ap)
     args = ap.parse_args()
 
     if args.self_test:
         print("PRE-REGISTER measure_refresh_hz:")
         print("  warmup discard; busy!=zero; empty=NO_DATA; modal 1/dt = hz measured")
+        print("  fleet: artifact pair required for scoreable MEASURED")
         # synthetic 60 Hz
         pts = [i / 60.0 for i in range(80)]
         r = measure_from_pts(pts, 15)
@@ -172,8 +184,18 @@ def main() -> int:
         # empty
         r2 = measure_from_pts([0.0, 0.01], 15)
         ok = ok and r2["rc"] == RC_UNSCORED
+        st = stamp_from_namespace(args)
+        o, _, rc = require_stamp(st)
+        ok = ok and (not o) and rc == RC_UNSCORED
         print("PASS" if ok else "FAIL", "self-test")
         return RC_OK if ok else 2
+
+    st = stamp_from_namespace(args)
+    print("STAMP", st.header_kv())
+    ok_pair, reason, _rc_pair = require_stamp(st)
+    if not ok_pair and not args.allow_unstamped:
+        print(f"VERDICT=UNSCORED rc={RC_UNSCORED} reason={reason}")
+        return RC_UNSCORED
 
     if args.pts_file:
         pts = []
@@ -219,13 +241,17 @@ def main() -> int:
         f"modal_dt_s={rep.get('modal_dt_s')} "
         f"warmup_discarded={rep.get('warmup_discarded')} "
         f"dt_n={rep.get('dt_n')} "
+        f"artifact_pair={st.artifact_pair} decode_src={st.decode_src} "
         f"note={rep.get('note') or rep.get('reason')}"
     )
     if rep.get("rc") == RC_OK:
         print(
             f"USE: publish_swap_delta setVsyncHzMeasured({rep['refresh_hz']:.6f}) "
-            f"or --vsync-hz {rep['refresh_hz']:.6f} on offline scorer"
+            f"or --vsync-hz {rep['refresh_hz']:.6f} on offline scorer; "
+            f"export MISTERPLEX_VSYNC_HZ={rep['refresh_hz']:.6f}"
         )
+    if not ok_pair:
+        return RC_UNSCORED
     return int(rep["rc"])
 
 
