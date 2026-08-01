@@ -40,11 +40,15 @@ def main() -> int:
         fail('must log "pause overlay canvas=" with font=')
     if 'font=' not in body:
         fail("pause canvas log must include font=")
-    # Localization: must not regress to coarse_y = sc*2 (step 4)
-    if "coarse_y = 2" not in rb:
-        fail("readback find_string must use coarse_y = 2 (step-4 missed PAUSED y=350)")
+    # Localization: default coarse_y=2; legacy RED arm uses coarse_y=4
+    if "coarse_y: int = 2" not in rb and "coarse_y=2" not in rb:
+        fail("readback find_string default must be coarse_y=2 (step-4 missed PAUSED y=350)")
+    if "coarse_y=4" not in rb or "left_label_pass=False" not in rb:
+        fail("selftest must keep RED arm with coarse_y=4,left_label_pass=False")
     if "selftest_pause_localize" not in rb:
         fail("missing --selftest-pause-localize gate")
+    if "PAUSE_LOCALIZE_PAIR_OK" not in rb and "RED_legacy" not in rb:
+        fail("pause localize must be a RED/GREEN pair, not green-only")
     print("pause_canvas_font_static: OK")
     print("  pause=plex480p + renderYuv420p(cw,ch) + canvas/font log; readback coarse_y=2")
     return 0

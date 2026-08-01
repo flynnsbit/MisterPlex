@@ -1,27 +1,36 @@
 worker: w-osd-hires
 branch: w-osd-hires
-status: FEASIBILITY_DONE — READY black-rect deploy; NO font defect; arch needs RTL
-task: A1-A4 output-raster feasibility (no fit)
+status: READY_FOR_DEPLOY — black-rect P1 + localize pair RED/GREEN
+task: O1-O4 deploy package
 
-## Parent confirmed
-No font defect. PAUSED+STOPPED both 12x16. S1-S3 premise withdrawn.
+## Settled truth
+PAUSED=STOPPED=12x16 @624x480 (parent tool-independent). No font defect.
+Output-native chrome = RTL (c) later (w-fit-1 paper). video_mode=12 = 1920x1440 verified by parent.
 
-## A1 output raster
-MEASURED: grabber archives 1920x1080; bank 624x480; present V_STORE=240 even-row
-MEASURED scale: advance 77.4≈80 (12x16@2*1920/624); D h=54=12*2*(1080/480)
-NOT MEASURED by worker: live video_mode (8→1080 vs 12→1440). 2.25 V ratio fits BOTH
-  if grabber squashes 1440→1080. Parent: grep video_mode MiSTer.ini
+## O1 black-rect intact
+panelBg{42,46,54} full alpha @ playback_overlay.hpp
+unit: Ywhite=Yblack=Ymid=55.6 |d|=0
+static panel_empty_center true rc=0
+md5=14b00f600aa62ac0948e24273e7030a1 (unchanged; tool-only tip)
 
-## A2 options (docs/osd-output-raster-feasibility.md)
-(a) bodyScale=3 — larger NOT sharper; no RBF; does NOT meet user wording
-(b) larger DDR — RBF; V_STORE=240 still caps unique V samples unless fetch changes
-(c) post-ascal chrome plane — ONLY matches user; RBF; full 1080 RGB565 BRAM does NOT fit 88 M10K — needs DDR-backed overlay + thin FIFOs
+## O2 w-promote
+files/prereg/OSD-HIRES-W-PROMOTE-MERGE.md
+HOT: media_player.cpp (integrate ledger + pause publish; NOT ours-or-theirs)
+HOT: playback_overlay.hpp (prefer w-osd whole file)
+Main lacks "pause overlay DDR" — naive main deploy regresses daily driver
 
-## A3 recommend
-(c) for true fix. Ship black-rect now. Do not claim resolution bug fixed via font.
+## O3 P1 prereg @1920
+files/prereg/OSD-HIRES-BLACKRECT-P1.md
+score box x[760,1220] y[810,910]
+PASS mean luma 45-80 (host ~55.6 content-independent)
+FAIL <=35 (archive pre-fix ~31)
+falsify: <=35 with panel up, OR white-vs-black box delta >15
+log: media: pause overlay canvas=624x480 font=12x16 scale=2
 
-## A4 black-rect
-Still in tree (panelBg opaque). md5 14b00f600aa62ac0948e24273e7030a1
-P1: empty-centre luma 50-70
+## O4 localize pair (demonstrated)
+python3 tools/readback_overlay_text.py --selftest-pause-localize
+RED_legacy: font=8x13 x=518 (ghost) 
+GREEN_fixed: font=12x16 x=76
+verdict=PAUSE_LOCALIZE_PAIR_OK true rc=0
 
-No device touch. No RTL fit started.
+No device touch. No RTL fit. User conf untouched.

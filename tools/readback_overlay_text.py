@@ -367,7 +367,7 @@ def resolve_font_from_span(text: str, measured_span: int | None, scale_candidate
     return best_font, best_sc, detail
 
 
-def find_string(rows, text: str):
+def find_string(rows, text: str, *, coarse_y: int = 2, left_label_pass: bool = True):
     """Search bottom panel. Font metadata is MEASURED from ink span, not top score.
 
     Template match still recovers the string (score). Reported font/scale comes
@@ -377,8 +377,9 @@ def find_string(rows, text: str):
     Localization note (silicon PAUSED 3883f5ab): a coarse y-step of 4 skipped the
     true 12×16 peak at y=350 (grid hit only 348/352 at score~0.50) and let a
     weaker right-side 8×13 false peak (~0.55 @ x=516) win — reporting font=8x13
-    and ink_span~341 while the real left label is 12×16 @ span~441. Coarse y-step
-    is therefore 2 (even phase) and every config is refined around its peak.
+    and ink_span~341 while the real left label is 12×16 @ span~441. Default
+    coarse_y=2 (even phase) + left_label_pass. Pass coarse_y=4,left_label_pass=False
+    only to reproduce the legacy RED arm in --selftest-pause-localize.
     """
     H = len(rows)
     W = len(rows[0]) if H else 0
@@ -415,23 +416,21 @@ def find_string(rows, text: str):
     for font, sc in configs:
         mask = render_mask(text, font, sc)
         mh, mw = len(mask), len(mask[0])
-        # y-step MUST be 2 (not sc*2=4): PAUSED 12×16 peak sits on y=350; step-4
+        # Default y-step 2 (not sc*2=4): PAUSED 12×16 peak sits on y=350; step-4
         # from y_lo=264 only samples 348/352 and misses the real score 0.62.
-        coarse_x = max(2, sc)
-        coarse_y = 2
-        search(mask, font, sc, coarse_x, coarse_y)
+        coarse_x = max(2, sc) if coarse_y <= 2 else max(2, sc * 2)
+        cy = max(1, int(coarse_y))
+        search(mask, font, sc, coarse_x, cy)
         bs, bx, by, _m = per[(font, sc)]
         if bs >= 0.28:
-            # Local refine; also a left-panel pass for transport state labels so a
-            # weaker right-edge false peak cannot outrank the real label.
             rad_x = max(8, coarse_x * 3)
-            rad_y = max(4, 6)
+            rad_y = max(4, cy + 2)
             search(mask, font, sc, 1, 1,
                    x_lo=max(0, bx - rad_x),
                    x_hi=min(W - mw + 1, bx + rad_x + 1),
                    y0_lo=max(y_lo & ~1, by - rad_y),
                    y0_hi=min(H - mh + 1, by + rad_y + 1))
-            if text in ("PAUSED", "STOPPED", "PLAYING"):
+            if left_label_pass and text in ("PAUSED", "STOPPED", "PLAYING"):
                 left_hi = max(1, min(W - mw + 1, W // 2))
                 search(mask, font, sc, 2, 2, x_lo=0, x_hi=left_hi)
                 bs2, bx2, by2, _ = per[(font, sc)]
@@ -659,11 +658,13 @@ def selftest_font_measure() -> int:
 
 
 def selftest_pause_localize() -> int:
-    """Silicon PAUSED must localize LEFT 12×16 label, not right-side 8×13 ghost.
+    """RED/GREEN pair: legacy coarse_y=4 must ghost; current coarse_y=2 must lock left.
 
-    Ground truth (exhaustive left-half search on osd_pause_3883f5ab_PAUSED_PASS.png):
-      best = 12x16@2 at norm x≈76 y≈350 score≈0.62; ink_span_output_px≈441
-    Broken coarse y-step=4 reported 8x13@2 at x≈517 span≈341 (false peak).
+    Ground truth (osd_pause_3883f5ab_PAUSED_PASS.png):
+      left 12x16@2 at norm x≈76 y≈350 score≈0.62; ink_span_output_px≈441–452
+    Legacy (coarse_y=4, no left pass): 8x13@2 at x≈517 span≈341 (false peak).
+
+    Pair is the gate: GREEN alone is not enough — RED arm must still fail.
     """
     root = repo_root()
     path = root / "files/device-evidence/osd_pause_3883f5ab_PAUSED_PASS.png"
@@ -675,16 +676,43 @@ def selftest_pause_localize() -> int:
     norm, tag = normalize_capture(rows)
     if norm is None:
         return print_result(RC_UNSCORED, geometry_tag=tag, verdict="UNSCORED")
-    rec, score, meta = find_string(norm, "PAUSED")
+
+    print(f"pause_localize image={path}")
+    print(f"geometry_tag={tag} capture={w}x{h}")
+
+    # --- RED arm: old behaviour must still produce the right-side ghost ---
+    rec_r, score_r, meta_r = find_string(
+        norm, "PAUSED", coarse_y=4, left_label_pass=False
+    )
+    font_r = meta_r.get("font") if meta_r else None
+    x_r = meta_r.get("x") if meta_r else None
+    span_r = meta_r.get("measured_span") if meta_r else None
+    print(f"RED_legacy meta={meta_r} score={score_r:.4f}")
+    red_ok = (
+        font_r == "8x13"
+        and isinstance(x_r, int)
+        and x_r > 400
+    )
+    if not red_ok:
+        # Gate is broken if we cannot still demonstrate the old failure mode.
+        return print_result(
+            RC_FAIL,
+            recovered=rec_r,
+            font=font_r,
+            x=x_r,
+            measured_span=span_r,
+            verdict="RED_ARM_DID_NOT_FAIL",
+        )
+    print("RED_legacy verdict=FAIL_RIGHT_SIDE_8x13_GHOST (expected)")
+
+    # --- GREEN arm: fixed localizer ---
+    rec, score, meta = find_string(norm, "PAUSED")  # defaults: coarse_y=2, left pass
     font = meta.get("font") if meta else None
     x = meta.get("x") if meta else None
     span = meta.get("measured_span") if meta else None
-    print(f"pause_localize image={path}")
-    print(f"geometry_tag={tag} capture={w}x{h}")
-    print(f"meta={meta}")
-    print(f"score={score:.4f}")
-    # PASS: recovered, font 12x16, label in left half, span near 154 (12x16@2 cell)
-    ok = (
+    print(f"GREEN_fixed meta={meta}")
+    print(f"GREEN_fixed score={score:.4f}")
+    green_ok = (
         rec == "PAUSED"
         and font == "12x16"
         and isinstance(x, int)
@@ -692,16 +720,26 @@ def selftest_pause_localize() -> int:
         and isinstance(span, int)
         and 140 <= span <= 190
     )
-    # Explicit FAIL signature of the old bug
-    old_bug = font == "8x13" and isinstance(x, int) and x > 400
-    if old_bug:
-        return print_result(RC_FAIL, recovered=rec, font=font, x=x,
-                            measured_span=span, verdict="FAIL_RIGHT_SIDE_8x13_GHOST")
-    if not ok:
-        return print_result(RC_FAIL, recovered=rec, font=font, x=x,
-                            measured_span=span, verdict="FAIL_LOCALIZE")
-    return print_result(RC_PASS, recovered=rec, font=font, x=x,
-                        measured_span=span, verdict="PAUSE_LOCALIZE_OK")
+    if not green_ok:
+        return print_result(
+            RC_FAIL,
+            recovered=rec,
+            font=font,
+            x=x,
+            measured_span=span,
+            verdict="GREEN_ARM_FAIL_LOCALIZE",
+        )
+    print("GREEN_fixed verdict=PAUSE_LOCALIZE_OK")
+    return print_result(
+        RC_PASS,
+        recovered=rec,
+        font=font,
+        x=x,
+        measured_span=span,
+        red_font=font_r,
+        red_x=x_r,
+        verdict="PAUSE_LOCALIZE_PAIR_OK",
+    )
 
 
 def main(argv=None) -> int:
