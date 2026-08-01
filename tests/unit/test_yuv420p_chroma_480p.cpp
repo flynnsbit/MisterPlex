@@ -16,6 +16,7 @@
 
 #include <cstdio>
 #include <cstring>
+#include <fstream>
 #include <string>
 #include <vector>
 
@@ -327,6 +328,31 @@ int main() {
         expect(hth.mean_v > 230.0 && hth.mean_v < 241.0, "publish V still red-ish");
         std::printf("GREEN_ASSEMBLY publish mean_u=%.2f mean_v=%.2f (pipe chroma kept)\n",
                     hth.mean_u, hth.mean_v);
+    }
+
+    // --- K) B5 product wiring: arm/ must call rawPipeDesynced + byte-align assert ---
+    // RED history: helpers lived only in unit tests; users got magenta with no log.
+    {
+        const char* path = "arm/misterplexd/media_player.cpp";
+        std::ifstream in(path);
+        expect(static_cast<bool>(in), "open media_player.cpp for B5 static");
+        std::string src((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        expect(src.find("rawPipeDesynced") != std::string::npos,
+               "arm must call rawPipeDesynced (not unit-only)");
+        expect(src.find("rawPipePhaseOffset") != std::string::npos,
+               "arm must call rawPipePhaseOffset at teardown");
+        expect(src.find("rawPipeByteAligned") != std::string::npos,
+               "arm must call rawPipeByteAligned (total%frameBytes)");
+        expect(src.find("MEASURED_OUTPUT_FINAL") != std::string::npos,
+               "arm must emit MEASURED_OUTPUT_FINAL (post-vf measurement)");
+        expect(src.find("MEASURED_DELIVERY_FINAL") != std::string::npos,
+               "arm must emit MEASURED_DELIVERY_FINAL (pre-vf measurement)");
+        expect(src.find("PIPE_PHASE_DESYNC") != std::string::npos,
+               "arm must ERROR on phase desync");
+        // B4: library_media must not verify delivery in the helper.
+        expect(!deliveryGeometryVerifiedFromBasis("library_media"),
+               "B4 library_media never verifies");
+        std::printf("GREEN_B5_ARM_WIRE rawPipeDesynced+MEASURED_*_FINAL present\n");
     }
 
     if (g_fails) {

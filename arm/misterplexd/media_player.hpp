@@ -39,8 +39,10 @@ struct PlaybackSummary {
     bool pipeByteMisaligned = false;
     size_t shortReadGot = 0;
     size_t shortReadWant = 0;
-    int measuredW = 0;
+    int measuredW = 0; // pre-vf delivery (PMS/decode claim→measure)
     int measuredH = 0;
+    int measuredOutputW = 0; // post-vf rawvideo (what the reader actually consumes)
+    int measuredOutputH = 0;
 
     int64_t deliveredFrames() const {
         return rawFrames > 0 ? rawFrames : (reconFrames > 0 ? reconFrames : presentedFrames);
@@ -282,9 +284,13 @@ private:
     bool deliveryGeometryVerified_ = false;
     int ffmpegScaleSourceW_ = 0;
     int ffmpegScaleSourceH_ = 0;
-    // Runtime-measured input geometry from ffmpeg stderr (B2). 0 = not seen yet.
+    // Runtime-measured INPUT geometry from ffmpeg stderr (pre-vf delivery). 0 = none.
     std::atomic<int> measuredDeliveryW_{0};
     std::atomic<int> measuredDeliveryH_{0};
+    // Runtime-measured OUTPUT geometry (post-vf rawvideo) — the bytes on the pipe.
+    // FORCE_SCALE pins this to coded bank; identity_skip leaves it = delivery.
+    std::atomic<int> measuredOutputW_{0};
+    std::atomic<int> measuredOutputH_{0};
     std::atomic<bool> pipeDesyncRisk_{false};
     // Conf AUDIO_DELAY_MS — default 0. Applied as FFmpeg adelay on product path.
     int audioDelayMs_ = 0;

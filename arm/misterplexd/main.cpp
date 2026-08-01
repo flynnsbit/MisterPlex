@@ -857,7 +857,9 @@ int main(int argc, char** argv) {
         // - universal transcode: we *request* weakForPlay.videoResolution — NOT
         //   verified delivery. PMS client profile only sets upperBound(w/h)
         //   (plex_resolve.cpp plexClientProfileExtra). delivery_verified=0.
-        // - direct play: library Media/Stream WxH when known → verified.
+        // - direct play: library Media/Stream WxH is a PMS SCANNER CLAIM only
+        //   (B4) — deliveryGeometryVerifiedFromBasis("library_media")==false.
+        //   Only runtime "measured" (ffmpeg stderr) sets delivery_verified=1.
         // - unknown: leave 0 so skip_identity still emits scale (safe).
         // Always re-set each play so a prior session cannot leak source dims.
         int expectW = 0, expectH = 0;

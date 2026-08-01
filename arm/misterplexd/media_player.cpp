@@ -1386,8 +1386,21 @@ void MediaPlayer::ffmpegStderrPump(int errReadFd, size_t codedFrameBytes, bool i
                     continue;
                 lastOutW = g.w;
                 lastOutH = g.h;
+                measuredOutputW_.store(g.w);
+                measuredOutputH_.store(g.h);
+                const size_t outBytes = yuv420pFrameBytesWH(g.w, g.h);
+                const bool outRisk =
+                    rawPipeDesynced(outBytes, codedFrameBytes, /*frame_index=*/1) ||
+                    (outBytes != 0 && outBytes != codedFrameBytes);
+                if (outRisk)
+                    pipeDesyncRisk_.store(true);
+                // MEASUREMENT of post-vf rawvideo (what the fixed reader consumes).
+                // Not expected_delivery / library_media / decode_target.
                 log("media: MEASURED_OUTPUT " + std::to_string(g.w) + "x" +
-                    std::to_string(g.h) + " (post-vf rawvideo)");
+                    std::to_string(g.h) + " producer_bytes=" + std::to_string(outBytes) +
+                    " reader_bytes=" + std::to_string(codedFrameBytes) +
+                    " (post-vf rawvideo)" +
+                    (outRisk ? " PIPE_DESYNC_RISK=1" : " PIPE_DESYNC_RISK=0"));
                 continue;
             }
             // Input / decoded delivery geometry — the B2 permanent observable.
@@ -2588,6 +2601,8 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
         audioBytes_.store(0);
         measuredDeliveryW_.store(0);
         measuredDeliveryH_.store(0);
+        measuredOutputW_.store(0);
+        measuredOutputH_.store(0);
         pipeDesyncRisk_.store(false);
         std::vector<std::string> args;
         args.push_back(ffmpeg_);
@@ -3582,14 +3597,33 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
         if (errThr.joinable())
             errThr.join();
 
-        // B5: byte-align + measured desync risk (remainder alone cannot see
-        // producer≠reader while the read loop still fills frameBytes each time).
+        // B5: enforce pipe invariants in product code (not unit-only helpers).
+        // 1) totalBytes % reader_frame_bytes == 0 (EOF mid-frame / count bug).
+        // 2) rawPipeDesynced(post-vf producer, reader, N) — phase walk class.
+        // Remainder alone cannot see producer≠reader while the loop still reads
+        // exactly frameBytes each time; that needs measured OUTPUT size.
         const bool byteAligned = rawPipeByteAligned(totalBytes, frameBytes);
         const int mw = measuredDeliveryW_.load();
         const int mh = measuredDeliveryH_.load();
-        const size_t prodBytes = (mw > 0 && mh > 0) ? yuv420pFrameBytesWH(mw, mh) : 0;
-        const bool risk = pipeDesyncRisk_.load() ||
-                          pipeDesyncRisk(prodBytes, frameBytes, vfPlan.identity_skip);
+        const int mow = measuredOutputW_.load();
+        const int moh = measuredOutputH_.load();
+        const size_t deliveryBytes = (mw > 0 && mh > 0) ? yuv420pFrameBytesWH(mw, mh) : 0;
+        const size_t outputBytes = (mow > 0 && moh > 0) ? yuv420pFrameBytesWH(mow, moh) : 0;
+        // Prefer post-vf OUTPUT for phase model; fall back to delivery under identity_skip.
+        const size_t phaseProducerBytes =
+            outputBytes > 0 ? outputBytes
+                            : (vfPlan.identity_skip ? deliveryBytes : 0);
+        const size_t phaseFrames =
+            frameIndex > 0 ? static_cast<size_t>(frameIndex) : 0;
+        const bool phaseDesync =
+            phaseProducerBytes > 0 && phaseFrames > 0 &&
+            rawPipeDesynced(phaseProducerBytes, frameBytes, phaseFrames);
+        const size_t phaseOff =
+            phaseProducerBytes > 0
+                ? rawPipePhaseOffset(phaseProducerBytes, frameBytes, phaseFrames)
+                : 0;
+        const bool risk = pipeDesyncRisk_.load() || phaseDesync ||
+                          pipeDesyncRisk(deliveryBytes, frameBytes, vfPlan.identity_skip);
         if (!byteAligned) {
             log("ERROR media: PIPE_BYTE_MISALIGN totalBytes=" + std::to_string(totalBytes) +
                 " frameBytes=" + std::to_string(frameBytes) +
@@ -3598,19 +3632,40 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
         } else if (totalBytes > 0) {
             log("media: pipe_align ok totalBytes=" + std::to_string(totalBytes) +
                 " frameBytes=" + std::to_string(frameBytes) +
-                " frames=" + std::to_string(frameIndex));
+                " frames=" + std::to_string(frameIndex) +
+                " assert_mod=" + std::to_string(totalBytes % frameBytes));
         }
+        // MEASURED_*_FINAL are measurements (stderr banners), never expectations.
         if (mw > 0 && mh > 0) {
             log("media: MEASURED_DELIVERY_FINAL " + std::to_string(mw) + "x" +
-                std::to_string(mh) + " producer_bytes=" + std::to_string(prodBytes) +
+                std::to_string(mh) + " producer_bytes=" + std::to_string(deliveryBytes) +
                 " reader_bytes=" + std::to_string(frameBytes) +
                 " identity_skip=" + (vfPlan.identity_skip ? "1" : "0") +
-                " desync_risk=" + (risk ? "1" : "0"));
+                " desync_risk=" + (risk ? "1" : "0") +
+                " (pre-vf input measurement)");
         } else if (usedRawVideo) {
-            log("media: MEASURED_DELIVERY_FINAL none — ffmpeg banner not parsed "
-                "(check -loglevel info / stderr pipe)");
+            log("media: MEASURED_DELIVERY_FINAL none — could-not-measure input geometry "
+                "(ffmpeg banner not parsed; not the same as 0x0)");
         }
-        if (risk) {
+        if (mow > 0 && moh > 0) {
+            log("media: MEASURED_OUTPUT_FINAL " + std::to_string(mow) + "x" +
+                std::to_string(moh) + " producer_bytes=" + std::to_string(outputBytes) +
+                " reader_bytes=" + std::to_string(frameBytes) +
+                " phase_offset=" + std::to_string(phaseOff) +
+                " phase_desync=" + (phaseDesync ? "1" : "0") +
+                " (post-vf rawvideo measurement)");
+        } else if (usedRawVideo) {
+            log("media: MEASURED_OUTPUT_FINAL none — could-not-measure post-vf geometry");
+        }
+        if (phaseDesync) {
+            log("ERROR media: PIPE_PHASE_DESYNC producer_bytes=" +
+                std::to_string(phaseProducerBytes) +
+                " reader_bytes=" + std::to_string(frameBytes) +
+                " frames=" + std::to_string(frameIndex) +
+                " phase_offset=" + std::to_string(phaseOff) +
+                " — rawPipeDesynced (magenta/wrap class)");
+        }
+        if (risk && !phaseDesync) {
             log("ERROR media: PIPE_DESYNC session had producer/reader size mismatch "
                 "under identity_skip (or measured risk flag)");
         }
@@ -3620,6 +3675,8 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
             lastSummary_.pipeByteMisaligned = !byteAligned;
             lastSummary_.measuredW = mw;
             lastSummary_.measuredH = mh;
+            lastSummary_.measuredOutputW = mow;
+            lastSummary_.measuredOutputH = moh;
         }
     }
 
