@@ -1,7 +1,20 @@
 #!/usr/bin/env python3
-"""INVALIDATED for hold-length (frames_done=swaps). Fabric-side hold histogram: vsyncs between successive frames_done edges.
+"""VOID on deployed RBF c5382bee. Fabric hold hist needs real swap frames_done.
 
-WHY
+DEPLOYED RBF c5382bee (parent-verified)
+---------------------------------------
+PLXD field labelled ``frames_done`` packs **bank_vsync_count** (increments every
+vsync), not bank swaps. Derivation ≠ name. Consequences:
+
+  * This tool's hold histogram is **VOID** on that RBF (vsync−vsync ≡ 1 always).
+  * ARM ``[STALE]`` liveness (fpga_spi.cpp frames_done advance check) cannot
+    detect a frozen picture — vsync keeps the counter "live".
+  * ``drops`` / ``presents`` / ``unaccounted`` are ARM-supply claims, not display.
+
+Primary hold/skip instrument until a new RBF packs ``frames_done_d2`` (tip RTL
+comment at ddr_frame_store.sv PLXD pack): **tools/glass_hold_skip.py**.
+
+WHY (original intent — valid only when frames_done = swap counter)
 ---
 Parent HDMI plateau hist (720p60 OCR fixture)::
 
@@ -220,11 +233,16 @@ def main() -> int:
     args = ap.parse_args()
 
     print(
-        "INVALIDATED_HOLD: frames_done is swap counter (vsync&&pending&&ready only); "
-        "delta carries ZERO hold-length. Use media: publish_interval verdict=."
+        "VOID_ON_c5382bee: field name frames_done derivation=bank_vsync_count "
+        "(every vsync), NOT bank swaps. Hold hist and [STALE] liveness are void. "
+        "Primary: tools/glass_hold_skip.py. Tip RTL packs frames_done_d2 — needs fit."
+    )
+    print(
+        "INVALIDATED_HOLD: even on honest-swap RBF, vsync-delta of swap counter "
+        "is not a hold-length histogram without bank_vsync packing."
     )
     if not getattr(args, "self_test", False):
-        print("FAIL: hold-via-frames_done mode disabled", file=sys.stderr)
+        print("FAIL: fabric hold hist disabled until swap-counter RBF", file=sys.stderr)
         return 2
 
     # PRE-REGISTER first — before any compute

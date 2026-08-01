@@ -6,7 +6,14 @@ Context (parent 2026-08-01)
 Deployed RBF c5382bee packs bank_vsync_count into the field labelled frames_done
 (increment every vsync). Tip frames_done_d2 never fitted. ARM drops/presents/
 FRAME_LEDGER derived from that field are **void**. Glass OCR / captured pixels
-are the only trustworthy skip evidence until a new RBF lands.
+are the only trustworthy skip **and freeze** evidence until a new RBF lands.
+
+Also void on c5382bee: ARM ``[STALE]`` liveness (fpga_spi checks frames_done
+advance) — vsync keeps the counter live while the picture can freeze.
+``p_ge50`` / acf from one untrimmed publish series are UNSCORED/WITHDRAWN
+(parent fleet broadcast 2026-08-01). Vertical V_STORE 240 ceiling is
+**ESTABLISHED** on viewed pixels (push_frame flat suite); this tool is for
+hold/skip cadence, not ceiling.
 
 This tool is the single entry point the parent runs on a capture directory.
 It wraps tools/glass_template_skip.py (checksum + completeness + ERROR18/19

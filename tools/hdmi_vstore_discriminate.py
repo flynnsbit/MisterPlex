@@ -53,11 +53,23 @@ If CONTROL fails → rc=77 UNSCORED (never a pass).
 If even_black class == even_white class → CEILING_FALSIFIED (claim withdrawn).
 If predictions match → CEILING_240_HOLD.
 
+ESTABLISHED FACT (parent 2026-08-01, RBF c5382bee, viewed pixels — not inference)
+-------------------------------------------------------------------------------
+5/5 pre-register hit, std=0.00 on all five patterns: opposite solid fields under
+one-row phase shift. Odd rows **entirely absent**. Vertical 240-row ceiling is
+**proven**. Scope: vertical only; H 529/640 not glass-proven.
+Bank: .agent-work/w-instr/VSTORE_CEILING_BEFORE_c5382bee.json
+
+AFTER w-geom T7 (unique rows 240→480) — use ``--expect-after-fix``:
+  solid BLACK/WHITE collapse on even_black/even_white **must break**
+  (stripes, grey average, or non-opposite classes). CEILING_240_HOLD after fix
+  is a FAIL (fix did not land on glass). Control still required.
+
 Markers are **≥2 source rows thick** and full-width bars so they survive
 529/640 column decimation + ascal + grabber. 1-row stripes via H.264 are VOID
 (codec destroys Nyquist vertical).
 
-Exit: 0 RES_OK / CEILING match, 2 FAIL / falsified / self-test fail,
+Exit: 0 RES_OK / CEILING match / AFTER_FIX_OK, 2 FAIL / falsified / self-test fail,
       77 UNSCORED, 1 usage.
 """
 from __future__ import annotations
@@ -446,6 +458,7 @@ def score_flat_suite(cap_dir: Path) -> dict[str, Any]:
             "frames": frames,
             "pre_register": "even_black→BLACK even_white→WHITE odd_black→WHITE odd_white→BLACK",
             "src": PROVENANCE_MEASURED,
+            "mode": "before_ceiling",
         }
 
     return {
@@ -459,6 +472,94 @@ def score_flat_suite(cap_dir: Path) -> dict[str, Any]:
         "frames": frames,
         "pre_register": "even_black→BLACK even_white→WHITE",
         "src": PROVENANCE_MEASURED,
+        "mode": "before_ceiling",
+        "established_fact_note": (
+            "Parent 2026-08-01 on c5382bee: std=0.00 opposite solids; "
+            "vertical 240 ceiling ESTABLISHED (not inference). Vertical only."
+        ),
+    }
+
+
+def score_flat_suite_after_fix(cap_dir: Path) -> dict[str, Any]:
+    """Score AFTER w-geom T7: solid opposite-field collapse must BREAK.
+
+    Control mid_grey still required (path soundness).
+    PASS (AFTER_FIX_OK): control OK AND NOT (even_black=BLACK and even_white=WHITE).
+    FAIL: still shows CEILING_240_HOLD pattern (fix not visible on glass).
+    UNSCORED: control fail / missing.
+
+    Does not treat CEILING_FALSIFIED / MISMATCH from the before-scorer as
+    terminal — those are exactly the glass signatures we want after the fix.
+    """
+    # Load/classify without using before-mode terminal verdicts as fail.
+    required = ("mid_grey", "even_black", "even_white")
+    frames: dict[str, dict[str, Any]] = {}
+    missing = []
+    for name in required:
+        p = _find_named(cap_dir, name)
+        if p is None:
+            missing.append(name)
+            continue
+        frames[name] = {"path": str(p), **classify_flat_field(load_rgb(p))}
+    for name in ("odd_black", "odd_white"):
+        p = _find_named(cap_dir, name)
+        if p is not None:
+            frames[name] = {"path": str(p), **classify_flat_field(load_rgb(p))}
+
+    if missing:
+        return {
+            "verdict": "UNSCORED",
+            "rc": RC_UNSCORED,
+            "reason": f"missing required captures: {missing}",
+            "frames": frames,
+            "src": PROVENANCE_MEASURED,
+            "mode": "after_fix",
+        }
+
+    if frames["mid_grey"]["class"] != "MID_GREY":
+        return {
+            "verdict": "UNSCORED",
+            "rc": RC_UNSCORED,
+            "reason": (
+                f"CONTROL mid_grey class={frames['mid_grey']['class']} — "
+                f"publish path broken; do not score after-fix"
+            ),
+            "frames": frames,
+            "src": PROVENANCE_MEASURED,
+            "mode": "after_fix",
+        }
+
+    eb = frames["even_black"]["class"]
+    ew = frames["even_white"]["class"]
+    still_collapsed = eb == "BLACK" and ew == "WHITE"
+
+    if still_collapsed:
+        return {
+            "verdict": "AFTER_FIX_STILL_240",
+            "rc": RC_FAIL,
+            "reason": (
+                "control OK but even_black→BLACK and even_white→WHITE still hold — "
+                "glass still shows 240-row even-fetch; T7 not proven on glass"
+            ),
+            "frames": frames,
+            "pre_register": "after_fix: solid opposite collapse MUST break",
+            "src": PROVENANCE_MEASURED,
+            "mode": "after_fix",
+            "before_bank": "VSTORE_CEILING_BEFORE_c5382bee.json",
+        }
+
+    return {
+        "verdict": "AFTER_FIX_OK",
+        "rc": RC_OK,
+        "reason": (
+            f"control MID_GREY; even_black={eb} even_white={ew} — opposite solid "
+            f"collapse broken (glass proof of denser vertical fetch)"
+        ),
+        "frames": frames,
+        "pre_register": "after_fix: solid opposite collapse MUST break",
+        "src": PROVENANCE_MEASURED,
+        "mode": "after_fix",
+        "before_bank": "VSTORE_CEILING_BEFORE_c5382bee.json",
     }
 
 
@@ -507,6 +608,41 @@ def run_flat_suite_self_test() -> bool:
         ok = False
     else:
         print("PASS CEILING_FALSIFIED SIM_ONLY")
+
+    # AFTER-fix mode: still-collapsed (BLACK/WHITE) must FAIL
+    solid(128, "mid_grey")
+    solid(10, "even_black")
+    solid(240, "even_white")
+    af_bad = score_flat_suite_after_fix(work)
+    print("FLAT_SIM_AFTER_STILL240", af_bad["verdict"], af_bad["rc"])
+    if af_bad["verdict"] != "AFTER_FIX_STILL_240" or af_bad["rc"] != RC_FAIL:
+        print("FAIL after-fix still-collapsed must AFTER_FIX_STILL_240")
+        ok = False
+    else:
+        print("PASS AFTER_FIX_STILL_240 SIM_ONLY")
+
+    # AFTER-fix mode: collapse broken (both mid / both other) → OK
+    solid(128, "mid_grey")
+    solid(128, "even_black")  # stripes would average; mid is enough for SIM
+    solid(128, "even_white")
+    af_ok = score_flat_suite_after_fix(work)
+    print("FLAT_SIM_AFTER_OK", af_ok["verdict"], af_ok["rc"])
+    # identical mid greys → CEILING_FALSIFIED in before-scorer base, but after_fix
+    # treats non-BLACK/WHITE pair as collapse broken. score_flat_suite_after_fix
+    # returns early only on UNSCORED; FALSIFIED base still has frames — need path.
+    # even_black=MID even_white=MID → still_collapsed False → AFTER_FIX_OK
+    if af_ok.get("verdict") == "UNSCORED":
+        print("FAIL after-fix broken collapse UNSCORED unexpectedly")
+        ok = False
+    elif af_ok["rc"] == RC_OK and af_ok["verdict"] == "AFTER_FIX_OK":
+        print("PASS AFTER_FIX_OK SIM_ONLY")
+    elif af_ok["verdict"] == "CEILING_FALSIFIED":
+        # base returned falsified before after-logic — fix after_fix to continue
+        print("FAIL after_fix short-circuited on FALSIFIED; need continue-to-after")
+        ok = False
+    else:
+        print(f"FAIL after-fix unexpected {af_ok['verdict']} rc={af_ok['rc']}")
+        ok = False
 
     return ok
 
@@ -609,6 +745,11 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help="dir with mid_grey/even_black/even_white[.png] captures; control-fail→77",
     )
+    ap.add_argument(
+        "--expect-after-fix",
+        action="store_true",
+        help="with --flat-suite: PASS only if opposite solid collapse BROKE (T7 glass proof)",
+    )
     args = ap.parse_args(argv)
 
     if args.self_test:
@@ -618,11 +759,23 @@ def main(argv: list[str] | None = None) -> int:
         if not args.flat_suite.is_dir():
             print(f"MISSING dir {args.flat_suite}", file=sys.stderr)
             return RC_UNSCORED
-        rep = score_flat_suite(args.flat_suite)
+        if args.expect_after_fix:
+            print(
+                "PRE-REGISTER after_fix (before score): opposite solid "
+                "even_black=BLACK/even_white=WHITE collapse MUST break; "
+                "control MID_GREY required; BEFORE bank=c5382bee ESTABLISHED"
+            )
+            rep = score_flat_suite_after_fix(args.flat_suite)
+        else:
+            print(
+                "PRE-REGISTER before_ceiling (before score): even_black→BLACK "
+                "even_white→WHITE mid_grey→MID; ESTABLISHED on c5382bee parent 2026-08-01"
+            )
+            rep = score_flat_suite(args.flat_suite)
         if args.json:
             print(json.dumps(rep, indent=2))
         else:
-            print(f"VERDICT={rep['verdict']} rc={rep['rc']}")
+            print(f"VERDICT={rep['verdict']} rc={rep['rc']} mode={rep.get('mode')}")
             print(f"  reason={rep['reason']}")
             for name, fr in rep.get("frames", {}).items():
                 print(
@@ -631,6 +784,8 @@ def main(argv: list[str] | None = None) -> int:
                 )
             if "pre_register" in rep:
                 print(f"  pre_register={rep['pre_register']}")
+            if rep.get("established_fact_note"):
+                print(f"  note={rep['established_fact_note']}")
         return int(rep["rc"])
 
     if not args.images:

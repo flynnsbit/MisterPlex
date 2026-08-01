@@ -1,21 +1,17 @@
 lane=w-instr
-tip_task=vstore_ceiling_push_frame
-branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null)
-sha=pending_commit
+branch=w-avsync-hdmi-measure
+sha=pending
 
-# Delivered
-- tools/push_frame.cpp: --pattern mid_grey|even_black|even_white|odd_black|odd_white
-  --hold-ms N; product path sendYuv420pFrameDdr → publishDdrFrame
-- scripts/gen_vstore_evenodd_i420.py: 624x480 I420 fixtures (449280 B)
-- tools/hdmi_vstore_discriminate.py: --flat-suite / --classify-flat
-  control fail → rc=77 UNSCORED; identical phases → CEILING_FALSIFIED rc=2
-- PARENT_VSTORE_CEILING_PUSH.md: stop daemon, push, capture, restore, score
-- make arm-plexd / push_frame rebuild true rc=0
-- hdmi_vstore_discriminate --self-test true rc=0 (SIM_ONLY flat suite green/red)
+ESTABLISHED (parent device, 2026-08-01):
+  V_STORE 240 vertical ceiling via push_frame flat suite, std=0.00, 5/5
+  bank=VSTORE_CEILING_BEFORE_c5382bee.json
 
-# Parent runs on device — agent does not touch hardware
-# PRE-REGISTER c5382bee: even_black→BLACK even_white→WHITE mid_grey→MID
-# Falsifier: even_black≡even_white solids → retract 240 ceiling
+This tick:
+  --expect-after-fix gate (AFTER_FIX_OK / AFTER_FIX_STILL_240)
+  fabric VOID_ON_c5382bee banner + refuse rc=2
+  ESTABLISHED_FACTS.md + before JSON bank
+  glass_hold_skip: freeze+STALE void notes; p_ge50 retracted
 
-# Host gates
-python3 tools/hdmi_vstore_discriminate.py --self-test  # expect rc=0
+Host gates (true rc direct):
+  hdmi_vstore_discriminate --self-test → 0
+  fabric --self-test → 0 ; bare → 2 refuse

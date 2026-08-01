@@ -121,3 +121,51 @@ ssh root@$HOST '/media/fat/misterplex/push_frame --ddr --yuv420p 624x480 /tmp/ev
 Re-run **identical** card. “Before” bank lives under `.agent-work/w-instr/vstore-ceiling-caps`.  
 After fix, solid BLACK/WHITE collapse should **break** (stripes or grey average) — that is the glass proof.
 
+
+---
+
+## ESTABLISHED BEFORE (parent 2026-08-01, c5382bee) — do not re-litigate
+
+Parent-run, pre-registered, 5/5 hit, **std=0.00** all fields:
+
+| pattern | mean | std | class |
+|---------|------|-----|-------|
+| mid_grey | 137.0 | 0.00 | MID_GREY CONTROL |
+| even_black | 7.0 | 0.00 | BLACK |
+| even_white | 255.0 | 0.00 | WHITE |
+| odd_black | 255.0 | 0.00 | WHITE invert |
+| odd_white | 7.0 | 0.00 | BLACK invert |
+
+Bank: `.agent-work/w-instr/VSTORE_CEILING_BEFORE_c5382bee.json`  
+**Vertical 240 ceiling is fact.** H 529/640 not proven here.
+
+## AFTER w-geom T7 (unique rows 240→480)
+
+Identical capture protocol. Score with:
+
+```bash
+python3 tools/hdmi_vstore_discriminate.py --flat-suite "$CAP" --expect-after-fix
+echo "true rc=$?"
+# want: VERDICT=AFTER_FIX_OK rc=0  (collapse BROKE)
+# bad:  VERDICT=AFTER_FIX_STILL_240 rc=2  (still opposite solids — fix not on glass)
+# bad:  rc=77 UNSCORED (control failed)
+```
+
+BEFORE mode (reconfirm current core only):
+
+```bash
+python3 tools/hdmi_vstore_discriminate.py --flat-suite "$CAP"
+# want CEILING_240_HOLD on c5382bee
+```
+
+## STALE / freeze (related safety defect)
+
+On c5382bee, `frames_done` advances every vsync → ARM `[STALE]` cannot see a frozen picture.
+**Do not use PLXD frames_done for freeze.** Use glass:
+
+```bash
+python3 tools/glass_hold_skip.py CAP_DIR --templates T.pkl --pts pts.csv \
+  --source-fps 24 --capture-fps 60 --refresh-hz 60 --force-mode 720
+echo "true rc=$?"
+```
+
