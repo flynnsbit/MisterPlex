@@ -135,21 +135,50 @@ echo "CASE aligned true_rc=$rc"
 check_rc aligned 0 "$rc"
 check_median_near aligned 0 15
 
+# Uncalibrated |median|>>tol → ABS_OFFSET_UNSCOREABLE rc=77 (NOT OFFSET_FAIL rc=2).
+# OFFSET_FAIL only after trusted known-zero cal (w-instr / parent false-finding guard).
 rc="$(run_tool p250 --input "$OUT/inj_p250.mkv" --tol-ms 42)"
 echo "CASE p250 true_rc=$rc"
-check_rc p250 2 "$rc"
+check_rc p250 77 "$rc"
 check_median_near p250 250 15
+if grep -q 'ABS_OFFSET_UNSCOREABLE\|VERDICT=ABS_OFFSET' "$OUT/run_p250/stdout.txt"; then
+  echo "PASS p250_verdict ABS_OFFSET_UNSCOREABLE"
+  pass=$((pass + 1))
+else
+  echo "FAIL p250_verdict expected ABS_OFFSET_UNSCOREABLE"
+  fail=$((fail + 1))
+fi
+
+# Long-soak path: --no-absolute-score scores slope/wander only → PASS if stable.
+rc="$(run_tool p250_noabs --input "$OUT/inj_p250.mkv" --tol-ms 42 --no-absolute-score)"
+echo "CASE p250_noabs true_rc=$rc"
+check_rc p250_noabs 0 "$rc"
+check_median_near p250_noabs 250 15
+if grep -q 'no_absolute_score=1\|slope_wander_only' "$OUT/run_p250_noabs/stdout.txt"; then
+  echo "PASS p250_noabs slope_only"
+  pass=$((pass + 1))
+else
+  echo "FAIL p250_noabs missing slope_only note"
+  fail=$((fail + 1))
+fi
 
 rc="$(run_tool m200 --input "$OUT/inj_m200.mkv" --tol-ms 42)"
 echo "CASE m200 true_rc=$rc"
-check_rc m200 2 "$rc"
+# Large negative offset: may be WANDER_FAIL (5) or ABS_OFFSET_UNSCOREABLE (77).
+# Never silent PASS (0) and never false OFFSET_FAIL (2) without trusted cal.
+if [[ "$rc" -eq 5 || "$rc" -eq 77 ]]; then
+  echo "PASS m200 rc in {5,77} true_rc=$rc"
+  pass=$((pass + 1))
+else
+  echo "FAIL m200 rc expect=5|77 true_rc=$rc"
+  fail=$((fail + 1))
+fi
 check_median_near m200 -200 25
 
 rc="$(run_tool p250a --input "$OUT/inj_p250_adelay.mkv" --tol-ms 42)"
 echo "CASE p250_adelay true_rc=$rc"
-check_rc p250a 2 "$rc"
+check_rc p250a 77 "$rc"
 check_median_near p250a 250 15
-
 rc="$(run_tool silent --input "$OUT/silent.mkv" --tol-ms 42)"
 echo "CASE silent true_rc=$rc"
 check_rc silent 77 "$rc"
@@ -181,11 +210,12 @@ else
   fail=$((fail + 1))
 fi
 
-# ERROR 17 class: DEFAULT_ASSUMED tol must NOT silently score → rc=77
+# ERROR 17 class: banners always; DEFAULT tol only refuses when abs gate is active.
+# Cal-free PASS on slope/wander with |median| inside default tol is allowed (rc=0).
 rc="$(run_tool refuse_def --input "$OUT/inj_0.mkv")"
 echo "CASE refuse_default_tol true_rc=$rc"
-check_rc refuse_def 77 "$rc"
-if grep -q 'REFUSE_DEFAULT_ASSUMED\|CANNOT_MEASURE absolute_lipsync' "$OUT/run_refuse_def/stdout.txt" \
+check_rc refuse_def 0 "$rc"
+if grep -q 'CANNOT_MEASURE absolute_lipsync' "$OUT/run_refuse_def/stdout.txt" \
    && grep -q 'pair_window_s=.*src=DEFAULT_ASSUMED\|pair_window_s=0.9' "$OUT/run_refuse_def/stdout.txt"; then
   echo "PASS refuse_default banners+pair_window"
   pass=$((pass + 1))
@@ -194,15 +224,27 @@ else
   tail -n 30 "$OUT/run_refuse_def/stdout.txt" | sed 's/^/  | /'
   fail=$((fail + 1))
 fi
+# --calibrate without --known-zero-kind must refuse (not invent DUT-as-zero)
+set +e
+python3 "$TOOL" --input "$OUT/inj_0.mkv" --calibrate \
+  --out "$OUT/cal_refuse" --label cal_refuse \
+  --calibration-out "$OUT/cal_refuse.json" --tol-ms 42 \
+  >"$OUT/cal_refuse_stdout.txt" 2>&1
+crc_bad=$?
+set -e
+echo "CASE calibrate_no_kind true_rc=$crc_bad"
+check_rc calibrate_no_kind 77 "$crc_bad"
+
 # With --allow-default-score, same file may PASS
 rc="$(run_tool allow_def --input "$OUT/inj_0.mkv" --allow-default-score)"
 echo "CASE allow_default_score true_rc=$rc"
 check_rc allow_def 0 "$rc"
 
-# calibration round-trip: treat 0 ms file as instrument baseline, apply to +250
+# calibration round-trip: file_pts_synthetic known-zero on 0 ms file → apply to +250
 mkdir -p "$OUT/cal" "$OUT/cal_apply"
 set +e
 python3 "$TOOL" --input "$OUT/inj_0.mkv" --calibrate \
+  --known-zero-kind file_pts_synthetic \
   --out "$OUT/cal" --label cal \
   --calibration-out "$OUT/cal.json" --tol-ms 42 >"$OUT/cal/stdout.txt" 2>&1
 crc=$?
@@ -219,7 +261,7 @@ if [[ "$crc" -eq 0 && -f "$OUT/cal.json" ]]; then
   arc=$?
   set -e
   echo "CASE cal_apply true_rc=$arc"
-  # raw 250, cal ~0 → corrected ~250 → still FAIL tol 42
+  # raw 250, cal ~0 → corrected ~250 → OFFSET_FAIL tol 42 (file_pts trusted in file mode)
   check_rc cal_apply 2 "$arc"
   if grep -q 'tag=calibration_corrected' "$OUT/cal_apply/stdout.txt"; then
     echo "PASS cal_apply tagged calibration_corrected"
@@ -234,6 +276,17 @@ else
   fail=$((fail + 1))
 fi
 
+# marker-period-s surfaces in output (rk=27 = 2.0)
+rc="$(run_tool mperiod --input "$OUT/inj_0.mkv" --tol-ms 42 --marker-period-s 2.0)"
+echo "CASE marker_period true_rc=$rc"
+check_rc marker_period 0 "$rc"
+if grep -q 'marker_period_s=2.0' "$OUT/run_mperiod/stdout.txt"; then
+  echo "PASS marker_period_s printed"
+  pass=$((pass + 1))
+else
+  echo "FAIL marker_period_s not printed"
+  fail=$((fail + 1))
+fi
 # Recovery table summary (measured vs injected)
 {
   echo "injected_ms,measured_ms,error_ms,file"

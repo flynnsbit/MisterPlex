@@ -28,6 +28,7 @@ LABEL="${LABEL:-lipsync}"
 # 30 s PMS asset (rk=6 class): default min_pairs=15 (need ≥16.67 s @30fps w20).
 # Long fixture later: DURATION=60 MIN_PAIRS=40.
 MIN_PAIRS="${MIN_PAIRS:-15}"
+MARKER_PERIOD_S="${MARKER_PERIOD_S:-1.0}"  # rk=27 use 2.0
 SKIP_SESSION_GATE="${SKIP_SESSION_GATE:-0}"
 WARMUP_FRAMES="${WARMUP_FRAMES:-20}"
 mkdir -p "$OUT"
@@ -43,13 +44,13 @@ fi
 # flash_s = 2/fps @ 24.000 → 0.0833 s full-frame white every 1.0 s (duty 8.33%).
 # Host-measured assets/avsync/sync_24fps_blip.mp4: duty_hot=0.0833 contrast≈233.
 echo "=== FIXTURE CONTRACT ==="
-echo "fixture_flash_period_s=1.0 src=caller_supplied_gen_avsync_blip"
+echo "fixture_flash_period_s=$MARKER_PERIOD_S src=caller_supplied"
 echo "fixture_flash_duration_s=0.083333 src=caller_supplied_2_frames_at_24fps"
 echo "fixture_flash_duty=0.0833 src=measured_file_and_generator"
 echo "fixture_beep_ms=50 src=caller_supplied_gen_avsync_blip"
 echo "fixture_fps=24.000 src=caller_supplied_ffprobe_r_frame_rate_24/1"
 warm_s=$(awk -v w="$WARMUP_FRAMES" -v f="$CAP_FPS" 'BEGIN{printf "%.3f", w/f}')
-min_dur=$(awk -v w="$warm_s" -v n="$MIN_PAIRS" 'BEGIN{printf "%.3f", w+n+1.0}')
+min_dur=$(awk -v w="$warm_s" -v n="$MIN_PAIRS" -v p="$MARKER_PERIOD_S" 'BEGIN{printf "%.3f", w+n*p+1.0}')
 echo "warmup_frames=$WARMUP_FRAMES src=caller_supplied_or_default"
 echo "warmup_s=$warm_s src=derived_warmup_frames_over_cap_fps"
 echo "min_duration_s_for_min_pairs=$min_dur min_pairs=$MIN_PAIRS src=derived"
@@ -119,6 +120,7 @@ python3 "$ROOT/tools/avsync_measure_hdmi.py" \
   --cap-fps "$CAP_FPS" \
   --warmup-frames "$WARMUP_FRAMES" \
   --min-pairs "$MIN_PAIRS" \
+  --marker-period-s "$MARKER_PERIOD_S" \
   --tol-ms "$TOL" \
   --slope-tol-ms-per-s "$SLOPE_TOL" \
   --out "$OUT" \
