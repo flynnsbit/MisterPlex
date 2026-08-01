@@ -80,11 +80,19 @@ REFUSE HALF_RESTORE: scripts/restore_misterplexd_prev.sh requires PAIR_ID.
 
 Atomic restore (post-conditions enforced by rollback_v2.sh):
 
-  PAIR_ID=ddr-8fdf440f \
+  # Daily glass pair (core+daemon+hook+user conf). ROLLBACK_CORE required (B8).
+  PAIR_ID=ddr-8fdf440f-9ce2c2d1 \
     ROLLBACK_CORE=device:/media/fat/_Utility/Plex.rbf.bak.8fdf440f \
-    ROLLBACK_DAEMON=device:/media/fat/misterplex_v2/bin/misterplexd.bak.3883f5ab \
+    ROLLBACK_DAEMON=artifacts/daemon-pins/misterplexd.9ce2c2d1 \
     PAIR_CONF_RESTORE_FILE=/path/to/misterplex.conf.userbak \
     PAIR_IDLE_PNG=/path/to/idle.png \
+    scripts/restore_misterplexd_prev.sh
+
+  # Alternate glass core c74c6863 (viewed-pixels OK; more ALM/M10K):
+  PAIR_ID=ddr-c74c6863-9ce2c2d1 \
+    ROLLBACK_CORE=device:/media/fat/_Utility/Plex.c74c6863.bak.rbf \
+    ROLLBACK_DAEMON=artifacts/daemon-pins/misterplexd.9ce2c2d1 \
+    PAIR_CONF_RESTORE_FILE=/path/to/misterplex.conf.userbak \
     scripts/restore_misterplexd_prev.sh
 
   # SPI daily undo (core is Plex_v2.rbf pin; no product overwrite)

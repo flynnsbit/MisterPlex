@@ -46,8 +46,22 @@ RBF_LAB_NOT_DAILY_PREFIX8=(
 RBF_PIN_V2_DAILY_FULL=dfebf2bfd08dd70b473b587dd7e81848
 # Parent 2026-08-01 glass A/B: 8fdf440f cleared 240-row ceiling (row alt 1.82→58.89);
 # 480p ledger closed frames=presents drops=0. Full md5 filled when parent pins it.
+# Daily driver currently on 8fdf440f (parent 2026-08-01 evening).
 RBF_PIN_DDR_GLASS_OK_PREFIX8=8fdf440f
 RBF_PIN_DDR_GLASS_OK_FULL="${RBF_PIN_DDR_GLASS_OK_FULL:-8fdf440f}"
+# Parent 2026-08-01: c74c6863 playback-verified on viewed pixels (frames=593, av-lock,
+# no regression), then rolled back. On-device bak:
+#   /media/fat/_Utility/Plex.c74c6863.bak.rbf
+# Extra headroom vs 8fdf440f: +9217 free ALM, +356 free M10K. Both are known-good
+# DDR product cores; neither is banned. Daily remains 8fdf440f until parent promotes.
+RBF_PIN_DDR_C74C6863_PREFIX8=c74c6863
+RBF_PIN_DDR_C74C6863_FULL="${RBF_PIN_DDR_C74C6863_FULL:-c74c6863}"
+RBF_PIN_DDR_C74C6863_DEVICE_BAK=/media/fat/_Utility/Plex.c74c6863.bak.rbf
+# Glass-OK set (daily-ready / validated rollback cores). Prefix8 identity.
+RBF_PIN_DDR_GLASS_OK_PREFIXES=(
+  8fdf440f
+  c74c6863
+)
 # Historical lab pin (still in pair matrix / unit fixtures). NOT daily-ready.
 RBF_PIN_DDR_C5382_FULL=c5382bee73cecdee8220b811e529c297
 # Back-compat alias used by older gates/tests as "DDR lab candidate" (= c5382).
@@ -269,6 +283,9 @@ if [ "${BASH_SOURCE[0]-}" = "${0:-}" ]; then
       echo "DO_NOT_SHIP_PREFIX8=${RBF_DO_NOT_SHIP_PREFIX8[*]}"
       echo "PIN_V2_DAILY=$RBF_PIN_V2_DAILY_FULL"
       echo "PIN_DDR_CANDIDATE=$RBF_PIN_DDR_CANDIDATE_FULL"
+      echo "PIN_DDR_GLASS_OK=${RBF_PIN_DDR_GLASS_OK_PREFIXES[*]}"
+      echo "PIN_DDR_C74C6863=$RBF_PIN_DDR_C74C6863_PREFIX8 bak=$RBF_PIN_DDR_C74C6863_DEVICE_BAK"
+      echo "PIN_DAEMON_PRIMARY=$DAEMON_PIN_DDR_PRIMARY_FULL"
       echo "DEVICE_CORE_PRODUCT=$DEVICE_CORE_PRODUCT"
       echo "DEVICE_CORE_V2_DAILY=$DEVICE_CORE_V2_DAILY"
       echo "true rc=0"
@@ -314,8 +331,25 @@ EOF
     return 1
   fi
   echo "DAILY_PROMOTE_READY=YES core_p8=$p8"
-  if [ "$p8" = "${RBF_PIN_DDR_GLASS_OK_PREFIX8:-8fdf440f}" ]; then
-    echo "NOTE parent_glass_ab_ok=1 row_alt_1.82_to_58.89 ledger_closed=1 (still run promotion_session_verify)"
-  fi
+  case "$p8" in
+    8fdf440f)
+      echo "NOTE glass_ok=8fdf440f parent_ab row_alt_1.82_to_58.89 ledger_closed=1 (daily driver)"
+      ;;
+    c74c6863)
+      echo "NOTE glass_ok=c74c6863 playback_viewed_pixels frames=593 av-lock=1 (+9217 ALM +356 M10K vs 8fdf); bak=$RBF_PIN_DDR_C74C6863_DEVICE_BAK"
+      ;;
+  esac
   return 0
+}
+
+# True if core prefix is a validated glass-OK DDR product (rollback target).
+rbf_policy_ddr_core_glass_ok() {
+  local d p8 x
+  d=$(rbf_policy_normalize_md5 "${1:-}")
+  [ "${#d}" -ge 8 ] || return 1
+  p8="${d:0:8}"
+  for x in "${RBF_PIN_DDR_GLASS_OK_PREFIXES[@]}"; do
+    [ "$p8" = "$x" ] && return 0
+  done
+  return 1
 }

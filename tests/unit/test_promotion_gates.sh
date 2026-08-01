@@ -308,6 +308,46 @@ echo "$out" | sed 's/^/  /' | head -30
 [ "$rc" -eq 3 ] && ok "mixed-pair-rc3" || bad "mixed-pair want 3 got $rc"
 echo "$out" | grep -qi 'PAIR_REFUSE\|pair-compatibility\|spi_core_plus_ddr' && ok "mixed-pair-msg" || bad "mixed-pair-msg"
 
+
+echo "=== NO-DATA: empty V2_MD5 is not a mismatch (got='' never vs want) ==="
+sed 's/V2_MD5=dfebf2bfd08dd70b473b587dd7e81848/V2_MD5=/' \
+  "$WORK/live_ok.blob" >"$WORK/live_empty_v2.blob"
+set +e
+out=$(
+  PROMOTE_GATE_BLOB="$WORK/live_empty_v2.blob" \
+  PROMOTE_HTTP="$WORK/fake_http.sh" \
+  PROMOTE_VISUAL_CMD="$WORK/visual_ok.sh" \
+  PROMOTE_CONF_BLOB="$WORK/conf_ddr.txt" \
+  PROMOTE_CONF_PROFILE=ddr \
+  "$GATES" verify-live 2>&1
+)
+rc=$?
+set -e
+echo "  true rc=$rc"
+echo "$out" | sed 's/^/  [empty-v2] /' | head -20
+[ "$rc" -eq 4 ] && ok "empty-v2-rc4" || bad "empty-v2 want rc=4 got $rc"
+echo "$out" | grep -q 'NO-DATA v2-rollback-core' && ok "empty-v2-nodata" || bad "empty-v2-nodata"
+echo "$out" | grep -q "got='' want=" && bad "empty-v2-false-mismatch" || ok "empty-v2-no-false-mismatch"
+echo "$out" | grep -q 'FAIL v2-rollback-core got=' && bad "empty-v2-fail-got" || ok "empty-v2-no-fail-got"
+
+echo "=== NO-DATA: empty LIVE_MD5 is not a mismatch ==="
+sed 's/LIVE_MD5=.*/LIVE_MD5=/' "$WORK/live_ok.blob" >"$WORK/live_empty_live.blob"
+set +e
+out=$(
+  PROMOTE_GATE_BLOB="$WORK/live_empty_live.blob" \
+  PROMOTE_HTTP="$WORK/fake_http.sh" \
+  PROMOTE_VISUAL_CMD="$WORK/visual_ok.sh" \
+  PROMOTE_CONF_BLOB="$WORK/conf_ddr.txt" \
+  PROMOTE_CONF_PROFILE=ddr \
+  "$GATES" verify-live 2>&1
+)
+rc=$?
+set -e
+echo "  true rc=$rc"
+[ "$rc" -eq 4 ] && ok "empty-live-rc4" || bad "empty-live want rc=4 got $rc"
+echo "$out" | grep -q 'NO-DATA live' && ok "empty-live-nodata" || bad "empty-live-nodata"
+echo "$out" | grep -q "got='' want=" && bad "empty-live-false-mismatch" || ok "empty-live-no-false-mismatch"
+
 echo "=== promote_ddr_daily plan dry-run ==="
 set +e
 out=$(

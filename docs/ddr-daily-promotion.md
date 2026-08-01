@@ -7,9 +7,11 @@ Parent-owned device work only. Agents produce artifacts and commands; they must
 
 | Core | Status |
 |------|--------|
-| `8fdf440f` | **Deployed**; 240-row ceiling cleared (row-alt 1.82→58.89); 480p ledger closed `frames=presents drops=0`; conf `7f06132f` / ini `ab8398d6` byte-identical |
-| `78eff44e` / `c5382bee` | LAB-NOT-DAILY (240-row and/or STALE-blind) — bak present for rollback |
+| `8fdf440f` | **Daily driver**; 240-row ceiling cleared (row-alt 1.82→58.89); 480p ledger closed; conf/ini USER-OWNED byte-identical |
+| `c74c6863` | **Glass-OK alternate** — playback viewed-pixels OK (`frames=593`, av-lock, no regression); +9217 free ALM, +356 free M10K vs 8fdf; on-device bak `/media/fat/_Utility/Plex.c74c6863.bak.rbf`. Pair `ddr-c74c6863-9ce2c2d1`. Not current daily. |
+| `78eff44e` / `c5382bee` | LAB-NOT-DAILY (240-row and/or STALE-blind) — bak present for lab only |
 | SPI `Plex_v2.rbf` `dfebf2bf` | one-step SPI undo |
+| Daemon `9ce2c2d1` | **PRIMARY pin** `artifacts/daemon-pins/misterplexd.9ce2c2d1` (w-osd-hires lane build, glass OK) |
 
 ## Status change card (parent 2026-08-01 evening) — re-source these claims
 

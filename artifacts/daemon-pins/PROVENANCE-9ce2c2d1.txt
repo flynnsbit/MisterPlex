@@ -1,8 +1,21 @@
 prefix8=9ce2c2d1
 md5_full=9ce2c2d13d1c8712683289043e99002c
 bytes=12977432
-pinned_utc=2026-08-01T22:51:21Z
-source_path=../w-osd-hires/build/arm/misterplexd
-note=repin
-file=/home/flynnsbit/Projects/MisterPlex/.worktrees/rollback-honest/artifacts/daemon-pins/misterplexd.9ce2c2d1: ELF 32-bit LSB executable, ARM, EABI5 version 1 (GNU/Linux), statically linked, for GNU/Linux 3.2.0, with debug_info, not stripped
-policy=pin measured bytes; rebuild only if cmp-identical to this pin
+pinned_utc=2026-08-01T22:51:00Z
+source_path=.worktrees/w-osd-hires/build/arm/misterplexd
+source_lane=w-osd-hires
+source_tip_claim=13d3c191 (lane tip at pin time; binary is measured artifact)
+device_evidence=parent: live n_daemon=1 /resources=200 glass chevron OK 23.9 vfps
+policy=pin measured bytes; rebuild only if cmp-identical to this file
+note=lane build/ OK when md5 matches device live /proc/PID/exe
+
+# Relative to prior pins
+vs_e9f79de2=e9f79de217982aff44207664fdb945c5
+  role_e9f79=first silicon-correct DDR (pre-480p hist); still accepted rollback
+  role_9ce2=CURRENT live daily; w-osd-hires chevron-centering (OSD) on top of DDR path
+  size_e9f79=12925900  size_9ce2=12977432  (not byte-related; different builds)
+vs_50f4eb92=50f4eb925de10e29172999a565c87684 SPI hybrid undo only — not a DDR forward target
+
+pair_primary=ddr-8fdf440f-9ce2c2d1
+core_daily=8fdf440f
+core_alt_glass=c74c6863 (device bak Plex.c74c6863.bak.rbf; viewed-pixels OK)

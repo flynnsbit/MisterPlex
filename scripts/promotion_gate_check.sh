@@ -377,7 +377,7 @@ verify_live() {
   if [ "$shape_prod" -ne 0 ]; then
     echo "SKIP product-core equality (shape failed - fix probe capture, do not relax compare)"
   elif [ -z "$prod" ]; then
-    echo "NO-DATA product-core md5 empty"
+    echo "NO-DATA product-core md5 empty (not a mismatch against want=)"
     rc=4
   elif [ "$prod" = "MISSING" ]; then
     echo "MISSING product core $PRODUCT_CORE_PATH"
@@ -404,7 +404,8 @@ verify_live() {
   if [ "$shape_v2" -ne 0 ]; then
     echo "SKIP v2-rollback-core equality (shape failed - capture contaminated; comparison not relaxed)"
   elif [ -z "$v2" ]; then
-    echo "NO-DATA v2-rollback-core md5 empty"
+    # Empty capture (SSH drop / partial blob) is NO-DATA — never "got='' want=<md5>".
+    echo "NO-DATA v2-rollback-core md5 empty (not a mismatch against want=)"
     [ "$rc" -eq 0 ] && rc=4
   elif [ "$v2" = "MISSING" ]; then
     echo "FAIL v2-rollback-core MISSING at $V2_CORE_PATH - refuse promote without rollback path"
@@ -431,7 +432,7 @@ verify_live() {
   if [ "$shape_live" -ne 0 ]; then
     echo "SKIP live-exe-md5 equality (shape failed - fix probe capture)"
   elif [ -z "$live" ]; then
-    echo "NO-DATA live /proc/PID/exe md5 (disk-only is NOT success)"
+    echo "NO-DATA live /proc/PID/exe md5 empty (not a mismatch; disk-only is NOT success)"
     [ "$rc" -eq 0 ] && rc=4
   elif pair_policy_md5_match "$live" "$EXPECT_DAEMON_MD5"; then
     echo "OK live-exe-md5 $live (from readlink -f /proc/PID/exe; primary=$EXPECT_DAEMON_MD5)"
