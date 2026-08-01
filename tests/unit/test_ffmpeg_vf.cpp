@@ -311,6 +311,36 @@ int main() {
         expect(!rawPipeByteAligned(R * 100 + 1, R), "misaligned total");
     }
 
+    // --- FORCE_SCALE=1 output pin: no delivered INPUT size can change OUTPUT bytes ---
+    // Reader always consumes coded I420. Always-mode vf ends in pad=624:480, so
+    // post-vf producer_bytes == reader_bytes for every source in the table.
+    // (Without force, identity_skip + wrong delivery is the magenta class.)
+    {
+        const size_t R = yuv420pFrameBytesWH(624, 480);
+        expect(R == 449280u, "reader contract");
+        // Under force, scale_mode is Always — identity_skip impossible even if
+        // source later measures equal to coded (mid-stream cannot flip mode).
+        FfmpegVfRequest r;
+        r.coded_w = 624;
+        r.coded_h = 480;
+        r.display_w = 618;
+        r.display_h = 480;
+        r.scale_mode = ffmpegScaleModeForDdrYuvPresent(FfmpegScaleMode::SkipIdentity, true);
+        r.source_w = 1920;
+        r.source_h = 1080;
+        r.delivery_geometry_verified = true;
+        const auto p = buildFfmpegVideoFilter(r);
+        expect(!p.identity_skip && p.scale_applied, "force blocks identity_skip always");
+        expect(p.vf.find("pad=624:480") != std::string::npos, "output pad is coded bank");
+        // Matched OUTPUT vs reader ⇒ rawPipeDesynced false for any frame count.
+        expect(!rawPipeDesynced(R, R, 10000), "pinned output never phase-walks");
+        expect(!pipeDesyncRisk(yuv420pFrameBytesWH(1920, 1080), R, p.identity_skip),
+               "input mismatch + force(scale) is NOT pipe risk");
+        expect(pipeDesyncRisk(yuv420pFrameBytesWH(1920, 1080), R, true),
+               "same input mismatch + identity_skip IS pipe risk (RED twin)");
+        std::printf("GREEN_OUTPUT_PIN force_scale output_bytes=%zu == reader\n", R);
+    }
+
     if (g_fails) {
         std::fprintf(stderr, "test_ffmpeg_vf: %d failure(s)\n", g_fails);
         return 1;

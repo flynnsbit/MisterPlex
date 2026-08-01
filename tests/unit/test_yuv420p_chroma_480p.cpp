@@ -175,26 +175,35 @@ int main() {
         expect(deliveryGeometryVerifiedFromBasis("measured"), "measured is verified");
     }
 
-    // --- F1c) DESYNC class model (B1: 640 was WRONG as the N=2 silicon story) ---
-    // Capture evidence (cap480a f_020 vs cap480b f_049):
-    //   - N=2 TREK24 copies in one raster → S ≈ 449280/2 = 224640 = 624x240 I420 EXACT
-    //   - upright FLASH split L/R → horizontal component ⇒ producer width ≠ pure
-    //     624 vertical-only stack alone (624x240 sim stacks two complete FLASH)
-    //   - 640x480 = 460800 > 449280 cannot place two full frames in one raster
-    // True single producer size is NOT uniquely pinned from stills; B2 measures it.
-    // Gate keeps the CLASS (any S≠R under fixed reader) + N=2 candidate + risk API.
+    // --- F1c) DESYNC class model — B1 SIGN ERROR SETTLED from cap480a/f_020.png ---
+    // Viewed archive (FORCE_SCALE=0 broken silicon):
+    //   - TREK24 n=312 appears TWICE in one HDMI raster → N=2
+    //   - S_producer ≈ reader_bytes/N = 449280/2 = 224640 = I420 624x240 EXACT
+    //   - "FLASH" split ASH|FL left/right → horizontal wrap component
+    //   - full-field magenta (median RGB ≈ 255,0,255) = chroma plane walk
+    // REJECTED model: producer = 640x480 I420 = 460800 > 449280
+    //   → only 0.975 producer frames/raster — CANNOT place two counters.
+    // Alias note: RGB24 624x240 = 449280 = I420 624x480 (same byte count, wrong
+    //   layout) would pass total%R==0 yet still paint magenta — phase helpers
+    //   that only see byte counts cannot catch format alias; FORCE_SCALE+pix_fmt
+    //   pins both size and I420 layout on the product path.
+    // True single producer size at break is not unique from one still, but the
+    // N=2 discriminator KILLS the 640x480>R hypothesis. B2 measures live.
     {
         const size_t coded = yuv420pCodedFrameBytes(
             makeDdrFrameGeometry(kPlex480pCodedWidth.get(), kPlex480pCodedHeight.get()));
         const size_t s624x240 = yuv420pFrameBytesWH(624, 240); // 224640
         const size_t s320x240 = yuv420pFrameBytesWH(320, 240); // 115200
         const size_t s640x480 = yuv420pFrameBytesWH(640, 480); // 460800
+        const size_t rgb624x240 = static_cast<size_t>(624) * 240u * 3u; // 449280 alias
         expect(coded == 449280u, "coded I420 bytes");
         expect(s624x240 == 224640u, "624x240 I420 (N=2 candidate)");
         expect(coded % s624x240 == 0u, "N=2 exact divide");
         expect(coded / s624x240 == 2u, "exactly two 624x240 per coded");
-        // 640x480 cannot explain N=2 full frames in one reader raster.
+        // B1 sign: larger-than-reader producer cannot pack N=2 copies.
         expect(s640x480 > coded, "640x480 larger than reader — not N=2 packing");
+        expect(coded / s640x480 == 0u, "640x480 yields 0 full copies per raster");
+        expect(rgb624x240 == coded, "RGB24 624x240 aliases coded I420 byte count");
         expect(rawPipeDesynced(s624x240, coded, 0) == false, "aligned at 0");
         // After 1 reader frame of a smaller producer, phase may return 0 when
         // reader is an integer multiple — still two producer frames per raster.
@@ -209,8 +218,9 @@ int main() {
         expect(!pipeDesyncRisk(coded, coded, true), "GREEN match+identity");
         expect(rawPipeByteAligned(coded * 10, coded), "GREEN byte align");
         expect(!rawPipeByteAligned(coded * 10 + 100, coded), "RED byte misalign");
-        std::printf("GREEN_DESYNC coded=%zu s624x240=%zu s640x480=%zu (640 NOT N=2)\n",
-                    coded, s624x240, s640x480);
+        std::printf("GREEN_DESYNC B1_SETTLED N=2→S=%zu 640x480=%zu REJECTED as N=2 "
+                    "rgb24_alias=%zu coded=%zu\n",
+                    s624x240, s640x480, rgb624x240, coded);
     }
 
     // --- F1d) ffmpeg geometry line parser (B2) ---
