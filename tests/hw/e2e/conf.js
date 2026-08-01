@@ -437,14 +437,26 @@ function loadConfig() {
     sessionHoldSec,
     // Measured delivery (ffmpeg banner) — never assert request/library as delivered.
     // Real content / geom matrix default require=1; synthetic default 0.
+    // P7: one real title E2E + capture window for parent viewed-pixels gate.
+    p7Mode: truthy(process.env.E2E_P7 || process.env.E2E_P7_REAL_TITLE, false),
+    p7HoldSec: (() => {
+      const v = parseFloat(process.env.E2E_P7_HOLD_SEC || process.env.E2E_REAL_HOLD_SEC || '45');
+      if (!Number.isFinite(v) || v < 5) return 45;
+      if (v > 600) return 600;
+      return v;
+    })(),
     requireMeasuredDelivery: truthy(
       process.env.E2E_REQUIRE_MEASURED_DELIVERY,
-      isReal || truthy(process.env.E2E_REAL_GEOM_MATRIX, false)
+      isReal ||
+        truthy(process.env.E2E_REAL_GEOM_MATRIX, false) ||
+        truthy(process.env.E2E_P7 || process.env.E2E_P7_REAL_TITLE, false)
     ),
     // session_epoch=process_epoch.stream_seq — spanning asserts need stable epoch.
     requireSessionEpoch: truthy(
       process.env.E2E_REQUIRE_SESSION_EPOCH,
-      isReal || truthy(process.env.E2E_REAL_GEOM_MATRIX, false)
+      isReal ||
+        truthy(process.env.E2E_REAL_GEOM_MATRIX, false) ||
+        truthy(process.env.E2E_P7 || process.env.E2E_P7_REAL_TITLE, false)
     ),
     // Optional bank size to reject as measured identity on real-geom arms (e.g. 624x480).
     rejectMeasuredBankGeom: String(

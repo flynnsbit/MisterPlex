@@ -1,47 +1,40 @@
-# w-plextv — real-geom matrix + MEASURED_DELIVERY + session_epoch
+# w-plextv — P7 real-title path
 
-Parent-proven earlier: picker/transitions/TEARDOWN. **Agent-run E2E ≠ evidence — you re-run.**
+## Last finished
+P7 suite half: real title (not flash fixture), API-measured selection, ERROR-12
+correlation, CAPTURE_WINDOW for parent HDMI, N=10 transitions, our-controller teardown.
+**Viewed pixels = parent only. Green Playwright ≠ P7 closed.**
 
-## Last finished (this tip)
-1. **Real content matrix** rk=29,30,31,32 (`run_real_geom_matrix.sh`) — ratingKey only.
-2. **MEASURED_DELIVERY** gate (not request/library) + **desync_risk=1 FAIL**.
-3. **N=10** transitions (existing; matrix default 10).
-4. **session_epoch** stable across continuous pause/resume/seek (stop/recast may bump).
-5. **TEARDOWN** still closes only OUR Playwright controller.
+Tip: see `git log -1 --oneline`
 
-## Parent paste — smoke (synthetic, prior path)
+## Parent paste — P7 (you run; agent-run ≠ evidence)
 ```bash
 cd /home/flynnsbit/Projects/MisterPlex/.worktrees/w-plextv-e2e-fix
-./tests/hw/e2e/run_cast_picker.sh; echo "true rc=$?"
+
+# Optional: pause 30s before PLAY so you can truncate LIVE misterplexd.log
+# export E2E_P7_CLEAR_WAIT_SEC=30
+# During wait: : > LIVE_LOG; export E2E_LOG_CLEARED_BEFORE_CAST=1
+
+# After CAST_WINDOW_CLOSE (or during hold), snip correlated lines:
+# grep -E 'MEASURED_DELIVERY|measured_delivery=|desync_risk=|session_epoch=|GEOM |e2e_mark' LIVE_LOG | tail -200 \
+#   > build/e2e-p7/daemon_snip.txt
+# export E2E_DAEMON_LOG=$PWD/build/e2e-p7/daemon_snip.txt
+# export E2E_LOG_CLEARED_BEFORE_CAST=1
+
+E2E_P7_RATING_KEY=30 E2E_TRANSITION_CYCLES=10 E2E_P7_HOLD_SEC=45 \
+  ./tests/hw/e2e/run_p7_real_title.sh; echo "true rc=$?"
 ```
 
-## Parent paste — real geometry matrix (DoD path)
-```bash
-cd /home/flynnsbit/Projects/MisterPlex/.worktrees/w-plextv-e2e-fix
-# Feed MEASURED_DELIVERY (live :3005/player/telemetry may 404):
-#   grep -E 'MEASURED_DELIVERY|measured_delivery=|desync_risk=|session_epoch=|PIPE_DESYNC' LIVE_LOG | tail -80 \
-#     > build/e2e-artifacts-matrix/daemon_snip.txt
-export E2E_DAEMON_LOG="${E2E_DAEMON_LOG:-$PWD/build/e2e-artifacts-matrix/daemon_snip.txt}"
-E2E_REAL_GEOM_KEYS=29,30,31,32 E2E_TRANSITION_CYCLES=10 \
-  ./tests/hw/e2e/run_real_geom_matrix.sh; echo "true rc=$?"
-```
+Prefer non-bank scale path: `E2E_P7_RATING_KEY=32` (720x480) or `29` (624x352).
 
-Single interesting key:
-```bash
-E2E_CONTENT=real E2E_TIER=480p PLEX_RATING_KEY=32 \
-E2E_REQUIRE_MEASURED_DELIVERY=1 E2E_REQUIRE_SESSION_EPOCH=1 \
-E2E_TRANSITION_CYCLES=10 E2E_DAEMON_LOG=... \
-./tests/hw/e2e/run_cast_picker.sh; echo "true rc=$?"
-```
+## Artifacts
+- `build/e2e-p7/p7_cast_manifest.json` — item, windows, measured
+- `build/e2e-p7/p7_events.jsonl`
+- `build/e2e-p7/e2e_run_id.txt`
+- Log: `P7_SELECTED_ITEM`, `CAST_WINDOW_*`, `CAPTURE_WINDOW_*`, `MEASURED_DELIVERY_OK`, `TRANSITIONS_OK`, `TEARDOWN_OK`
 
-## Log markers to grep
-- `MEASURED_DELIVERY_OK delivered=WxH desync_risk=0`
-- `SESSION_EPOCH_OK epoch=…`
-- `TRANSITIONS_OK cycles=10/10`
-- `TEARDOWN_OK`
-- `REAL_GEOM_MATRIX_ROW rk=…`
+## HDMI during CAPTURE_WINDOW_OPEN..deadline
+Discard ~15 warmup frames. Suite does not open `/dev/video0`.
 
-## NOT covered
-- Pixels / overlay res / chevron / judder / lipsync (parent HDMI).
-- PLXD frames_done (void until you glass-confirm).
-- Agent-run as promotion evidence.
+## NOT covered by suite
+Viewed pixels (P7 promotion), overlay res, judder, lipsync, PLXD frames.

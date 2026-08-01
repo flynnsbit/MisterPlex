@@ -68,6 +68,7 @@ const {
 const { emitGlassExpect } = require('./glass_expect');
 const { assertDeviceIdleP4 } = require('./device_idle');
 const { createStateMarker } = require('./state_mark');
+const { createP7Window } = require('./p7_cast_window');
 
 const EXIT_PASS = 0;
 const EXIT_FAIL = 1;
@@ -1493,19 +1494,26 @@ async function resolveItemForTier(tier) {
         );
       }
       const mi = mediaInfo(m);
-      const allowBank = /^(1|true|yes|on)$/i.test(String(process.env.E2E_REAL_ALLOW_BANK_GEOM || ''));
+      // P7 may use real BBB at bank-sized library_media (rk=30 624x480) — still not a fixture.
+      // Non-P7 real content still defaults to non-bank unless E2E_REAL_ALLOW_BANK_GEOM=1.
+      const p7 = /^(1|true|yes|on)$/i.test(String(process.env.E2E_P7 || process.env.E2E_P7_REAL_TITLE || ''));
+      const allowBank =
+        p7 ||
+        /^(1|true|yes|on)$/i.test(String(process.env.E2E_REAL_ALLOW_BANK_GEOM || ''));
       if (!allowBank && isBankGeometry(mi.width, mi.height)) {
         fail(
           'real_content_bank_geometry',
-          `library_media=${mi.width}x${mi.height} is bank-sized; P7 needs non-bank geometry`
+          `library_media=${mi.width}x${mi.height} is bank-sized; set E2E_P7=1 or E2E_REAL_ALLOW_BANK_GEOM=1 for real BBB bank-sized titles`
         );
       }
       log(
-        `resolved REAL ratingKey=${ratingKey} title=${m.title} library_media=${mi.width}x${mi.height}`
+        `resolved REAL ratingKey=${ratingKey} title=${m.title} library_media=${mi.width}x${mi.height} ` +
+          `fps=${mi.frameRate || 'NA'} duration_ms=${mi.durationMs} value_kind=measured`
       );
       return {
         ratingKey: String(ratingKey),
         title: String(m.title || ''),
+        sectionTitle: String(sectionTitle || ''),
         tier: tier.name,
         ...mi,
       };
@@ -3759,6 +3767,17 @@ async function runTransitionScenarios(page, itemTitle, detailsUrl, _castAlreadyS
   let lastRatingKey = '';
   let lastTierName = '';
   let summaryBits = [];
+  const p7Enabled = !!(cfg.p7Mode || cfg.isRealContent);
+  const p7 = p7Enabled
+    ? createP7Window({ outDir: cfg.outDir, log, runId: runCorr.runId })
+    : null;
+  if (cfg.p7Mode) {
+    log(
+      `P7_MODE=1 hold_sec=${cfg.p7HoldSec} transitions=${cfg.transitions ? 1 : 0} ` +
+        `cycles=${cfg.transitionCycles} require_measured=${cfg.requireMeasuredDelivery ? 1 : 0} ` +
+        `— real title + capture window + correlated GEOM; viewed pixels = parent only`
+    );
+  }
 
   try {
     // ── 1. Launch Plex Web on LOCAL PMS ─────────────────────────────────────
@@ -3832,7 +3851,25 @@ async function runTransitionScenarios(page, itemTitle, detailsUrl, _castAlreadyS
       const detailsUrl = `${cfg.plexBase}/web/index.html#!/server/${serverSeg}/details?key=${encodeURIComponent(
         metaKey
       )}`;
-      log(`item_title=${itemTitle} ratingKey=${ratingKey} tier=${tier.name}`);
+      log(
+        `item_title=${JSON.stringify(itemTitle)} ratingKey=${ratingKey} tier=${tier.name} ` +
+          `library_media=${item.width || '?'}x${item.height || '?'} fps=${item.frameRate || 'NA'} ` +
+          `duration_ms=${item.durationMs || 'NA'} value_kind=measured`
+      );
+      if (p7) {
+        p7.bindItem(item, process.env.PLEX_RATING_KEY || process.env.PLEX_KEY ? 'explicit_rk' : cfg.isRealContent ? 'discover_or_rk' : 'tier_rk');
+        // Print clear recipe BEFORE any play so parent can truncate log (ERROR 12).
+        p7.printLogClearRecipe();
+        // Optional pause so parent can clear log before PLAY (default 0).
+        const clearWait = parseInt(process.env.E2E_P7_CLEAR_WAIT_SEC || '0', 10);
+        if (Number.isFinite(clearWait) && clearWait > 0) {
+          log(
+            `P7_CLEAR_WAIT_SEC=${clearWait} — suite pauses so parent can truncate LIVE log; ` +
+              `set E2E_LOG_CLEARED_BEFORE_CAST=1 after clear`
+          );
+          await sleep(clearWait * 1000);
+        }
+      }
 
       // ── 2. Open test item ─────────────────────────────────────────────────
       log(`goto details key=${metaKey}`);
@@ -3848,6 +3885,21 @@ async function runTransitionScenarios(page, itemTitle, detailsUrl, _castAlreadyS
       const detailsReady = await waitForDetailsReady(page, itemTitle, Math.max(cfg.timeoutMs, 90000));
       await shot(page, `01_details_${tier.name}`);
       log(`details_ready_ok playSel=${detailsReady.playSel || '-'}`);
+      // Assert DOM still names the API-selected title (no silent wrong-asset nav).
+      if (itemTitle && itemTitle.length >= 3) {
+        const body = await pageBodyText(page, 4000);
+        const titleTok = itemTitle.slice(0, Math.min(24, itemTitle.length));
+        if (!body.includes(titleTok) && !body.toLowerCase().includes(titleTok.toLowerCase())) {
+          log(
+            `WARN details_body_missing_title_token token=${JSON.stringify(titleTok)} ` +
+              `— deep link may still be correct; ratingKey=${ratingKey} is authoritative`
+          );
+        } else {
+          log(
+            `DOM_TITLE_TOKEN_OK token=${JSON.stringify(titleTok)} ratingKey=${ratingKey} value_kind=measured`
+          );
+        }
+      }
 
       // ── 3. Select Player — BEFORE snapshot, then open, then DIFF ──────────
       const ctl = await waitForSelectPlayerControl(page, 45000);
@@ -3939,6 +3991,17 @@ async function runTransitionScenarios(page, itemTitle, detailsUrl, _castAlreadyS
 
       // ── 4. Play ───────────────────────────────────────────────────────────
       const afterCast = await waitForDetailsReady(page, itemTitle, 60000);
+      if (p7) {
+        p7.openCastWindow({
+          rating_key: String(ratingKey),
+          title: itemTitle,
+          tier: tier.name,
+        });
+        log(
+          `PLAY_ISSUED_PENDING correlation_id=${p7.correlationId} ratingKey=${ratingKey} ` +
+            `library_media=${item.width || '?'}x${item.height || '?'} — parent log must already be cleared`
+        );
+      }
       const played = await clickPlay(page, afterCast.playSel || detailsReady.playSel);
       if (!played) {
         await shot(page, `fail_no_play_button_${tier.name}`);
@@ -3961,6 +4024,12 @@ async function runTransitionScenarios(page, itemTitle, detailsUrl, _castAlreadyS
         );
       }
       log(`play_clicked selector=${played}`);
+      if (p7) {
+        log(
+          `PLAY_ISSUED correlation_id=${p7.correlationId} ratingKey=${ratingKey} ` +
+            `t_wall_ms=${Date.now()} selector=${played}`
+        );
+      }
       await handleResumeDialog(page);
       await shot(page, `04_play_clicked_${tier.name}`);
 
@@ -4038,6 +4107,9 @@ async function runTransitionScenarios(page, itemTitle, detailsUrl, _castAlreadyS
         } else if (mdGate && mdGate.softSkip) {
           summaryBits.push('measured=unprobed');
         }
+        if (p7 && mdGate) {
+          p7.recordMeasured((mdGate.md && mdGate.md.ok && mdGate.md) || mdGate.md || null);
+        }
         // session_epoch from ledger snap if delivery lacked it
         const snapSe = await captureLedger(cfg);
         if (snapSe && snapSe.session_epoch && !baselineSessionEpoch) {
@@ -4059,6 +4131,55 @@ async function runTransitionScenarios(page, itemTitle, detailsUrl, _castAlreadyS
             `ledger_epoch=${snapSe && snapSe.session_epoch ? snapSe.session_epoch : 'NA'} ` +
             `content=${cfg.contentMode}`
         );
+        // Correlate parent-fed log snip (must be cleared before PLAY — ERROR 12).
+        if (p7 && process.env.E2E_DAEMON_LOG && fs.existsSync(process.env.E2E_DAEMON_LOG)) {
+          const text = fs.readFileSync(process.env.E2E_DAEMON_LOG, 'utf8');
+          const corr = p7.filterCorrelatedLogLines(text);
+          if (!corr.ok && cfg.requireMeasuredDelivery) {
+            fail('p7_geom_uncorrelated', corr.reason || 'no correlated GEOM/measured lines');
+          }
+        }
+      }
+
+      // P7: emit HDMI capture window (duration with warmup), hold for parent grab.
+      // Only when E2E_P7=1 (not every real-content / matrix key).
+      if (
+        p7 &&
+        cfg.p7Mode &&
+        /^(1|true|yes|on)$/i.test(String(process.env.E2E_P7_CAPTURE_HOLD || '1'))
+      ) {
+        const cap = p7.openCaptureWindow({
+          holdSec: cfg.p7HoldSec,
+          tag: `tier_${tier.name}_rk${ratingKey}`,
+        });
+        uiState.mark('playing', {
+          phase: 'capture_hold',
+          daemon_state: 'playing',
+          daemon_time_ms: prog.maxT,
+          rating_key: String(ratingKey),
+          glass_expect: 'motion',
+          note: `P7 capture hold ${cap.totalSec.toFixed(1)}s incl warmup`,
+          value_kind: 'measured',
+        });
+        const holdEnd = Date.now() + Math.round(cap.totalSec * 1000);
+        log(`P7_CAPTURE_HOLD_BEGIN deadline_ms=${holdEnd} correlation_id=${p7.correlationId}`);
+        while (Date.now() < holdEnd) {
+          const xml = await pollDaemonTimeline(nextSuiteCmd());
+          log(
+            `  p7_hold state=${xmlAttr(xml, 'state') || '?'} time=${xmlAttr(xml, 'time') || '?'} ` +
+              `left_ms=${Math.max(0, holdEnd - Date.now())}`
+          );
+          // Keep session alive; do not stop mid-hold.
+          if ((xmlAttr(xml, 'state') || '') === 'stopped') {
+            fail(
+              'p7_capture_hold_stopped',
+              'Session stopped during P7 capture hold — foreign controller or teardown leak?'
+            );
+          }
+          await sleep(Math.min(2000, Math.max(500, holdEnd - Date.now())));
+        }
+        p7.closeCaptureWindow(`tier_${tier.name}_rk${ratingKey}`);
+        summaryBits.push(`p7_hold=${cap.holdSec}s`);
       }
 
       // Optional glass score on parent-provided capture (no grabber). Timeline-only
@@ -4149,6 +4270,23 @@ async function runTransitionScenarios(page, itemTitle, detailsUrl, _castAlreadyS
       }
       await shot(page, `05_stopped_${tier.name}`);
 
+      if (p7) {
+        p7.closeCastWindow({ rating_key: String(ratingKey), tier: tier.name });
+        // Late re-correlate if parent updated snip during hold/transitions.
+        if (process.env.E2E_DAEMON_LOG && fs.existsSync(process.env.E2E_DAEMON_LOG)) {
+          const text = fs.readFileSync(process.env.E2E_DAEMON_LOG, 'utf8');
+          p7.filterCorrelatedLogLines(text);
+          const mdLate = await resolveMeasuredDelivery(cfg);
+          if (mdLate && mdLate.ok) p7.recordMeasured(mdLate);
+        }
+        const man = p7.persist();
+        log(
+          `P7_TIER_DONE correlation_id=${p7.correlationId} manifest=${man || 'NA'} ` +
+            `ratingKey=${ratingKey} — parent HDMI settles viewed pixels (suite cannot)`
+        );
+        summaryBits.push(`p7_corr=${p7.correlationId}`);
+      }
+
       summaryBits.push(
         `tier=${tier.name}/rk=${ratingKey}/play=ok` +
           `/tr=${tr.enabled ? 'ok' : 'off'}` +
@@ -4182,7 +4320,9 @@ async function runTransitionScenarios(page, itemTitle, detailsUrl, _castAlreadyS
         'robustness=cast_while_casting+stop_stopped+seek_past_end ' +
         'p4_idle=after_stop ' +
         'nav=ratingKey_only title_match=OFF ' +
-        'NOT_covered=pixels/rows/overlay_res/lipsync/PLXD_frames'
+        'p7=real_title+capture_window+correlated_GEOM ' +
+        'NOT_covered=pixels/rows/overlay_res/lipsync/PLXD_frames ' +
+        'P7_closed_only_when_parent_views_pixels'
     );
   } catch (e) {
     suitePassed = false;
@@ -4239,6 +4379,13 @@ async function runTransitionScenarios(page, itemTitle, detailsUrl, _castAlreadyS
     runCorr.persist(cfg.outDir);
     const seriesSum = tlSeries.summary();
     log('CAST_PICKER_E2E_RESULT=PASS');
+    if (cfg.p7Mode || (p7 && p7.correlationId)) {
+      log(
+        `P7_SUITE_RESULT=PASS correlation_id=${p7 ? p7.correlationId : 'NA'} ` +
+          `manifest=${cfg.outDir}/p7_cast_manifest.json ` +
+          `NOTE=control_plane_PASS_only — P7 promotion needs parent viewed pixels in CAPTURE_WINDOW`
+      );
+    }
     log(
       `summary ${summaryBits.join(' ') || 'ok'} teardown=ok cast=${cfg.castName} ` +
         `lastTier=${lastTierName} lastRatingKey=${lastRatingKey} run_id=${runCorr.runId} ` +
