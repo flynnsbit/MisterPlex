@@ -1,75 +1,43 @@
 #!/usr/bin/env python3
-"""Template counter decoder + display-skip detector (parent method, not OCR).
+"""Template counter decoder + completeness skip detector (parent method).
 
-WHY (parent, 2026-08-01)
-------------------------
-OCR in hdmi_motion_instrument.py inserted digits (2358→23538) and is weak on
-FLASH. Parent built a fixed-width template decoder on the OCR-proof fixture
-``G n=NNNNNN c=N`` and a skip detector that does not need gap-indexing over
-unreadable frames. This tool ships that method. Do not replace it with k-means:
-unsupervised labels produced a fictitious decreasing sequence; viewed pixels
-were perfectly monotone.
+Parent findings folded in (device-measured 2026-08-01, 720p60 bank /tmp/p60):
+  F1 Checksum gate: overlay is ``G n=NNNNNN c=D`` with
+     D == (sum of six digits) mod 10. Decode 7 cells; accept ONLY if checksum
+     closes. Replaces reliance on dist/margin alone.
+  F2 Derived cells: 1080p hardcoded coords are WRONG at 720p (only rate that
+     reaches 60 fps). Yellow-mask column runs + fixed-pitch on the n= field
+     extent; works at 1080 and 720.
+  F3 Completeness detector (bias-free): for each value v in [lo,hi] absent from
+     the accepted set, find bracketing accepted captures a<b. v is a genuine
+     display skip IFF rejected_between == []. Transition-torn rejects must not
+     count as skips (adjacent-Δ under-counts / mis-counts).
+  F4 ERROR-18 sampling-margin gate: refuse skip verdict (rc=77) when
+     max_measured_capture_interval_ms >= min_hold_ms. Intervals from pts.csv
+     (ffprobe pts_time), NEVER from di/capture_fps.
 
-METHOD (reproduce; do not reinvent)
------------------------------------
-1. Yellow mask: (R>140)&(G>140)&(B<120), rows 36..104 of 1920×1080.
-2. Six FIXED-WIDTH digit cells (parent-measured on device)::
+Also: LOO on SIM templates is labelled SIM_ONLY — never presented as device
+accuracy. Device LOO requires --bootstrap-viewed-gt / parent T60.pkl.
 
-     [(331,395),(395,460),(460,524),(524,589),(589,653),(653,718)]
-
-   Auto-run detection is available as fallback when ink is absent from those
-   cells (capture-chain sim / geometry drift) — still fixed six cells, no
-   per-frame segmentation search over the value range.
-3. Resize each cell → 24×28, flatten, nearest-neighbour Euclidean distance
-   against labelled digit templates.
-4. Labels from VIEWED / generator-ground-truth pixels only (never k-means).
-5. Confidence gate per digit: nearest < 4.5 AND (second−nearest) ≥ 0.55;
-   else reject the whole frame.
-6. Publish leave-one-FRAME-out per-digit accuracy (not optional).
-
-SKIP DETECTOR (the valuable part)
----------------------------------
-Capture 30 fps (33.33 ms) vs source 24 fps (41.67 ms). A correct display can
-only produce adjacent-capture deltas ∈ {0, 1}. Any delta ≥ 2 is a proven
-display-side skip — no assumption about unreadable frames.
-
-Sanity (must assert, not assume):
-  - no decreasing pairs
-  - no |delta| > 2 among accepted pairs (else instrument/fixture pathology)
-  - delta histogram confined to {0,1,2} on a healthy stream
-
-Grabber-drop confound (mandatory)::
-
-  r = adv/caps
-  ideal = src_fps/cap_fps
-  If grabber lost G captures: adv/(caps+G) = ideal  →  G = adv/ideal − caps
-  Report G. If the skip events were really lost captures, r would rise;
-  compare counterfactual.
-
-PROVENANCE (ERROR 17)
----------------------
-Every printed rate/fps is tagged measured | caller_supplied | DEFAULT_ASSUMED.
-Rate verdict is REFUSED (not a pass) when src_fps or cap_fps is DEFAULT_ASSUMED.
+k-means is FORBIDDEN (produced fictitious decreasing sequences).
 
 Exit codes
 ----------
-  0  SKIP_OK / CLEAN — readable, invariants hold, no delta≥2 (when fps authoritative)
-  2  SKIP_FAIL — positively detected display skip (delta≥2) or invariant breach
-  77 UNSCORED — no data / wrong fixture / fps not authoritative for rate
-  1  USAGE / internal error
+  0  SKIP_OK — margin OK, completeness finds 0 genuine skips, invariants hold
+  2  SKIP_FAIL — ≥1 genuine display skip (rejected_between=[]) or physics break
+  77 UNSCORED — no data / zero sampling margin / fps not authoritative
+  1  usage / internal
 
   rc=77 is never a pass. Capture true rc DIRECTLY (never through a pipe).
 
 Usage
 -----
-  # Bootstrap templates + LOO, then score a capture dir:
-  python3 tools/glass_template_skip.py CAP_DIR --source-fps 24 --capture-fps 30
-
-  # Self-contained red-before-green (synth G-fixture HDMI):
   python3 tools/glass_template_skip.py --self-test; echo "true rc=$?"
-
-  # Controlled pair note: /tmp/cap480a|b are TREK24 structure pair, not G n=.
-  # This tool scores G-fixture captures. Use --self-test for skip R/G.
+  python3 tools/glass_template_skip.py --p60-acceptance; echo "true rc=$?"
+  python3 tools/glass_template_skip.py /tmp/p60/png \\
+      --templates /tmp/p60/T60.pkl --pts /tmp/p60/pts.csv \\
+      --source-fps 24 --capture-fps 60 --refresh-hz 60 --force-mode 720 \\
+      ; echo "true rc=$?"
 """
 from __future__ import annotations
 
@@ -77,7 +45,7 @@ import argparse
 import json
 import sys
 from collections import Counter
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -93,60 +61,51 @@ if str(ROOT / "tools") not in sys.path:
     sys.path.insert(0, str(ROOT / "tools"))
 
 # ---------------------------------------------------------------------------
-# Parent-measured geometry (1920×1080 HDMI of OCR-proof fixture)
+# Constants
 # ---------------------------------------------------------------------------
 YELLOW_R_MIN = 140
 YELLOW_G_MIN = 140
 YELLOW_B_MAX = 120
-ROW_Y0 = 36
-ROW_Y1 = 104
-# Parent fixed cells (inclusive-exclusive x ranges for six zero-padded digits)
-# Measured on real HDMI of OCR-proof fixture (parent 2026-08-01).
-PARENT_CELLS: list[tuple[int, int]] = [
-    (331, 395),
-    (395, 460),
-    (460, 524),
-    (524, 589),
-    (589, 653),
-    (653, 718),
-]
-# Capture-chain host sim (glass_frame_id.simulate_capture_chain) — fixed pitch.
-# Measured after mono font fix (LiberationMono-Bold) on n=001099 band:
-#   digit runs ≈ (327,387)+(401,461)+… pitch≈74, width≈60.
-# Contract text is fixed-width; proportional fonts are forbidden for this path.
-SIM_DIGIT0_X0 = 325
-SIM_PITCH = 74
-SIM_CELL_W = 64  # slight pad absorbs 1–2 px mask edge jitter
-SIM_CELLS: list[tuple[int, int]] = [
-    (SIM_DIGIT0_X0 + i * SIM_PITCH, SIM_DIGIT0_X0 + i * SIM_PITCH + SIM_CELL_W)
-    for i in range(6)
-]
 CELL_W = 24
 CELL_H = 28
-DIST_MAX = 4.5
-MARGIN_MIN = 0.55
 N_DIGITS = 6
+# Soft NN gate; checksum is the hard accept (F1). Parent run60 used max_dist<8.
+DIST_MAX_SOFT = 8.0
+
+# Parent-viewed 720p anchors (dec60.py) — locked for p60 acceptance
+P720_ROWS = (26, 68)
+P720_N_BOUNDS = [221, 264, 307, 349, 392, 435, 479]
+P720_C = (592, 640)
+# Parent-viewed 1080p anchors
+P1080_ROWS = (36, 104)
+P1080_N_BOUNDS = [331, 395, 460, 524, 589, 653, 718]
+P1080_C = (780, 850)
+# Host sim (mono font + capture chain) — SIM_ONLY LOO
+SIM_ROWS = (32, 90)
+SIM_N_BOUNDS = [325, 399, 473, 547, 621, 695, 759]
+SIM_C = (980, 1060)
 
 PROVENANCE_MEASURED = "measured"
 PROVENANCE_CALLER = "caller_supplied"
 PROVENANCE_DEFAULT = "DEFAULT_ASSUMED"
+PROVENANCE_SIM_ONLY = "SIM_ONLY"
 
 RC_OK = 0
 RC_FAIL = 2
 RC_UNSCORED = 77
 RC_USAGE = 1
 
-DEFAULT_ASSUMED_SRC_FPS = 24.0  # library 24p — NOT 23.976; never score rate on this alone
+DEFAULT_ASSUMED_SRC_FPS = 24.0  # NOT 23.976
 DEFAULT_ASSUMED_CAP_FPS = 30.0
+DEFAULT_ASSUMED_REFRESH_HZ = 60.0
 
 TEMPLATE_PATH = Path(__file__).resolve().parent / "glass_digit_templates.npz"
 
 
 # ---------------------------------------------------------------------------
-# Yellow mask + cell extract
+# Yellow mask + geometry (F2)
 # ---------------------------------------------------------------------------
 def yellow_mask(rgb: np.ndarray) -> np.ndarray:
-    """Parent yellow ink mask (bool HxW)."""
     return (
         (rgb[:, :, 0] > YELLOW_R_MIN)
         & (rgb[:, :, 1] > YELLOW_G_MIN)
@@ -154,49 +113,126 @@ def yellow_mask(rgb: np.ndarray) -> np.ndarray:
     )
 
 
-def _cell_vector(gray_or_bin: np.ndarray, x0: int, x1: int, y0: int, y1: int) -> np.ndarray:
-    """Crop cell → 24×28 float32 flattened, values in {0,1} or [0,1]."""
-    h, w = gray_or_bin.shape[:2]
-    xa, xb = max(0, x0), min(w, x1)
-    ya, yb = max(0, y0), min(h, y1)
+def _column_runs(
+    col: np.ndarray, *, min_width: int = 3, gap_split: int = 3
+) -> list[tuple[int, int]]:
+    n = int(col.shape[0])
+    raw: list[tuple[int, int]] = []
+    i = 0
+    while i < n:
+        if col[i]:
+            j = i
+            while j < n and col[j]:
+                j += 1
+            raw.append((i, j))
+            i = j
+        else:
+            i += 1
+    if not raw:
+        return []
+    merged = [list(raw[0])]
+    for a, b in raw[1:]:
+        if a - merged[-1][1] < gap_split:
+            merged[-1][1] = b
+        else:
+            merged.append([a, b])
+    return [(a, b) for a, b in merged if b - a >= min_width]
+
+
+def _bounds_to_cells(bounds: list[int]) -> list[tuple[int, int]]:
+    return [(int(bounds[i]), int(bounds[i + 1])) for i in range(len(bounds) - 1)]
+
+
+def derive_overlay_geometry(
+    rgb: np.ndarray,
+    *,
+    force_mode: str | None = None,
+) -> dict[str, Any]:
+    """Derive row band, 6 n-cells, c-cell from yellow mask (F2)."""
+    h, w = rgb.shape[:2]
+    if force_mode == "720":
+        return _anchor_geometry(P720_ROWS, P720_N_BOUNDS, P720_C, w, h, "parent_dec60_720")
+    if force_mode == "1080":
+        return _anchor_geometry(
+            P1080_ROWS, P1080_N_BOUNDS, P1080_C, w, h, "parent_anchor_1080"
+        )
+    if force_mode == "sim":
+        return _anchor_geometry(SIM_ROWS, SIM_N_BOUNDS, SIM_C, w, h, "sim_fixed")
+
+    mask = yellow_mask(rgb)
+    top_lim = max(80, h // 4)
+    row_any = mask[:top_lim].any(axis=1)
+    rs = np.where(row_any)[0]
+    if rs.size < 4:
+        return _fallback_geometry(h, w, "no_yellow_rows")
+    r0, r1 = int(rs[0]), int(rs[-1]) + 1
+    col = mask[r0:r1].any(axis=0)
+    runs = _column_runs(col, min_width=3, gap_split=3)
+
+    if len(runs) >= 10:
+        # G n= DDDDDD c= C  → last run = checksum; digits after first '=' (run3)
+        n_x0 = int(runs[3][0])
+        n_x1 = int(runs[-4][1])
+        if n_x1 - n_x0 >= 6 * 20:
+            pitch = (n_x1 - n_x0) / float(N_DIGITS)
+            n_bounds = [int(round(n_x0 + i * pitch)) for i in range(N_DIGITS + 1)]
+            n_bounds[-1] = n_x1
+            c0, c1 = int(runs[-1][0]), int(runs[-1][1])
+            pad = max(2, (c1 - c0) // 10)
+            c_cell = (max(0, c0 - pad), min(w, c1 + pad))
+            return {
+                "rows": (r0, r1),
+                "n_bounds": n_bounds,
+                "cells": _bounds_to_cells(n_bounds),
+                "c_cell": c_cell,
+                "runs": runs,
+                "geometry_src": "derived_yellow_runs",
+                "frame_wh": (w, h),
+                "frame_wh_src": PROVENANCE_MEASURED,
+            }
+    return _fallback_geometry(h, w, f"runs={len(runs)}")
+
+
+def _anchor_geometry(rows, n_bounds, c_cell, w, h, src: str) -> dict[str, Any]:
+    nb = list(n_bounds)
+    return {
+        "rows": tuple(rows),
+        "n_bounds": nb,
+        "cells": _bounds_to_cells(nb),
+        "c_cell": tuple(c_cell),
+        "runs": [],
+        "geometry_src": src,
+        "frame_wh": (w, h),
+        "frame_wh_src": PROVENANCE_MEASURED,
+    }
+
+
+def _fallback_geometry(h: int, w: int, reason: str) -> dict[str, Any]:
+    if h <= 800:
+        return _anchor_geometry(
+            P720_ROWS, P720_N_BOUNDS, P720_C, w, h, f"p720_fallback:{reason}"
+        )
+    if h >= 1000:
+        return _anchor_geometry(
+            P1080_ROWS, P1080_N_BOUNDS, P1080_C, w, h, f"p1080_fallback:{reason}"
+        )
+    return _anchor_geometry(
+        P720_ROWS, P720_N_BOUNDS, P720_C, w, h, f"p720_fallback:{reason}"
+    )
+
+
+def _cell_vector_from_mask(
+    mask: np.ndarray, x0: int, x1: int, y0: int, y1: int
+) -> np.ndarray:
+    h, w = mask.shape[:2]
+    xa, xb = max(0, int(x0)), min(w, int(x1))
+    ya, yb = max(0, int(y0)), min(h, int(y1))
     if xb <= xa or yb <= ya:
         return np.zeros((CELL_H * CELL_W,), dtype=np.float32)
-    patch = gray_or_bin[ya:yb, xa:xb]
-    if patch.ndim == 3:
-        patch = patch.astype(np.float32).mean(axis=2)
-    else:
-        patch = patch.astype(np.float32)
-    # binarise lightly if continuous
-    if patch.max() > 1.5:
-        patch = (patch > 40.0).astype(np.float32)
+    patch = mask[ya:yb, xa:xb].astype(np.float32)
     im = Image.fromarray((np.clip(patch, 0, 1) * 255).astype(np.uint8))
     im = im.resize((CELL_W, CELL_H), Image.Resampling.NEAREST)
-    vec = (np.asarray(im).astype(np.float32) / 255.0).ravel()
-    return vec
-
-
-def resolve_cells(mask: np.ndarray, mode: str = "parent") -> tuple[list[tuple[int, int]], str]:
-    """Return (cells, geometry_src). Fixed-width only — no per-frame search.
-
-    parent: device-measured cells (parent 2026-08-01).
-    auto/sim: capture-chain host sim fixed pitch (SIM_CELLS).
-    """
-    if mode == "parent":
-        ink = 0
-        for x0, x1 in PARENT_CELLS:
-            ink += int(mask[ROW_Y0:ROW_Y1, max(0, x0) : min(mask.shape[1], x1)].sum())
-        if ink >= 200:
-            return list(PARENT_CELLS), "parent_fixed_measured"
-        # Host sim / geometry drift: fall back to sim fixed pitch if those have ink
-        ink_s = 0
-        for x0, x1 in SIM_CELLS:
-            ink_s += int(mask[ROW_Y0:ROW_Y1, x0:x1].sum())
-        if ink_s >= 200:
-            return list(SIM_CELLS), "sim_fixed_pitch_fallback"
-        return list(PARENT_CELLS), "parent_fixed_weak_ink"
-    if mode in ("auto", "sim"):
-        return list(SIM_CELLS), "sim_fixed_pitch"
-    raise ValueError(f"unknown cell mode {mode}")
+    return (np.asarray(im).astype(np.float32) / 255.0).ravel()
 
 
 # ---------------------------------------------------------------------------
@@ -204,11 +240,9 @@ def resolve_cells(mask: np.ndarray, mode: str = "parent") -> tuple[list[tuple[in
 # ---------------------------------------------------------------------------
 @dataclass
 class TemplateBank:
-    """Digit templates: vectors (N, 24*28), labels (N,) chars '0'..'9'."""
-
     vectors: np.ndarray
-    labels: np.ndarray  # shape (N,) unicode/int 0-9
-    frame_ids: np.ndarray  # which bootstrap frame each sample came from
+    labels: np.ndarray
+    frame_ids: np.ndarray
     meta: dict[str, Any] = field(default_factory=dict)
 
     def save(self, path: Path) -> None:
@@ -223,6 +257,9 @@ class TemplateBank:
 
     @staticmethod
     def load(path: Path) -> "TemplateBank":
+        path = Path(path)
+        if path.suffix == ".pkl":
+            return TemplateBank.from_parent_pkl(path)
         data = np.load(path, allow_pickle=True)
         meta = {}
         if "meta_json" in data.files:
@@ -234,18 +271,43 @@ class TemplateBank:
             meta=meta,
         )
 
+    @staticmethod
+    def from_parent_pkl(path: Path) -> "TemplateBank":
+        import pickle
+
+        raw = pickle.load(open(path, "rb"))
+        vectors = []
+        labels = []
+        frame_ids = []
+        fi = 0
+        # One sample id per template vector so LOO is leave-one-SAMPLE-out
+        # (parent device LOO 98.32% = 117/119 was sample-level).
+        for d, ts in sorted(raw.items(), key=lambda kv: str(kv[0])):
+            lab = int(str(d))
+            for t in ts:
+                vectors.append(np.asarray(t, dtype=np.float32).ravel())
+                labels.append(lab)
+                frame_ids.append(fi)
+                fi += 1
+        return TemplateBank(
+            vectors=np.stack(vectors, axis=0),
+            labels=np.array(labels, dtype=np.int16),
+            frame_ids=np.array(frame_ids, dtype=np.int32),
+            meta={
+                "label_src": "parent_viewed_pixels_T60",
+                "path": str(path),
+                "loo_scope": "device_templates",
+            },
+        )
+
 
 def match_digit(
     vec: np.ndarray,
     bank: TemplateBank,
     *,
     exclude_frame: int | None = None,
+    dist_max: float = DIST_MAX_SOFT,
 ) -> tuple[int | None, float, float, str]:
-    """Nearest-neighbour digit. Returns (d|None, dist, margin, status).
-
-    Margin is vs nearest *different label* (parent intent). Same-digit duplicates
-    at dist=0 must not zero the margin and reject a perfect match.
-    """
     v = vec.astype(np.float32).ravel()
     use = np.ones(len(bank.labels), dtype=bool)
     if exclude_frame is not None:
@@ -258,25 +320,30 @@ def match_digit(
     best_i = int(np.argmin(d2))
     best_d = float(d2[best_i])
     digit = int(labs[best_i])
-    # nearest different label
     rival = d2[labs != digit]
     second_d = float(rival.min()) if rival.size else 1e9
     margin = second_d - best_d
-    if best_d >= DIST_MAX or margin < MARGIN_MIN:
+    if best_d >= dist_max:
         return None, best_d, margin, "low_confidence"
     return digit, best_d, margin, "ok"
+
+
+def checksum_mod10(digits: list[int]) -> int:
+    return int(sum(digits) % 10)
 
 
 def decode_frame(
     rgb: np.ndarray,
     bank: TemplateBank,
     *,
-    cells: list[tuple[int, int]] | None = None,
-    cell_mode: str = "parent",
+    geom: dict[str, Any] | None = None,
+    force_mode: str | None = None,
     exclude_frame: int | None = None,
+    dist_max: float = DIST_MAX_SOFT,
 ) -> dict[str, Any]:
-    """Decode one 1920×1080 RGB frame → n or UNRESOLVED."""
-    if rgb.shape[0] < ROW_Y1 or rgb.shape[1] < 700:
+    """Decode one RGB frame → n via 6 digits + c checksum (F1)."""
+    h, w = rgb.shape[:2]
+    if h < 40 or w < 400:
         return {
             "ok": False,
             "n": None,
@@ -285,8 +352,13 @@ def decode_frame(
             "n_src": PROVENANCE_MEASURED,
         }
     mask = yellow_mask(rgb)
-    band_ink = int(mask[ROW_Y0:ROW_Y1].sum())
-    if band_ink < 80:
+    if geom is None:
+        geom = derive_overlay_geometry(rgb, force_mode=force_mode)
+    r0, r1 = geom["rows"]
+    cells: list[tuple[int, int]] = list(geom["cells"])
+    c_cell = tuple(geom["c_cell"])
+    band_ink = int(mask[r0:r1].sum())
+    if band_ink < 40:
         return {
             "ok": False,
             "n": None,
@@ -294,19 +366,17 @@ def decode_frame(
             "reason": "no_yellow_overlay",
             "band_ink": band_ink,
             "n_src": PROVENANCE_MEASURED,
+            "geom": geom,
         }
-    if cells is None:
-        cells, geom_src = resolve_cells(mask, mode=cell_mode)
-    else:
-        geom_src = "caller_supplied"
-    # binary ink in band for stable templates
-    bin_band = mask.astype(np.float32)
+
     digits: list[int] = []
     dists: list[float] = []
     margins: list[float] = []
     for x0, x1 in cells:
-        vec = _cell_vector(bin_band, x0, x1, ROW_Y0, ROW_Y1)
-        d, dist, margin, st = match_digit(vec, bank, exclude_frame=exclude_frame)
+        vec = _cell_vector_from_mask(mask, x0, x1, r0, r1)
+        d, dist, margin, st = match_digit(
+            vec, bank, exclude_frame=exclude_frame, dist_max=dist_max
+        )
         if d is None:
             return {
                 "ok": False,
@@ -316,13 +386,45 @@ def decode_frame(
                 "dist": dist,
                 "margin": margin,
                 "partial": digits,
-                "cells": cells,
-                "geometry_src": geom_src,
+                "geom": geom,
                 "n_src": PROVENANCE_MEASURED,
             }
-        digits.append(d)
+        digits.append(int(d))
         dists.append(dist)
         margins.append(margin)
+
+    vec_c = _cell_vector_from_mask(mask, c_cell[0], c_cell[1], r0, r1)
+    c_hat, c_dist, c_margin, c_st = match_digit(
+        vec_c, bank, exclude_frame=exclude_frame, dist_max=dist_max
+    )
+    if c_hat is None:
+        return {
+            "ok": False,
+            "n": None,
+            "status": "UNRESOLVED",
+            "reason": f"checksum_digit_{c_st}",
+            "dist": c_dist,
+            "geom": geom,
+            "digits": digits,
+            "n_src": PROVENANCE_MEASURED,
+        }
+    expect_c = checksum_mod10(digits)
+    if int(c_hat) != expect_c:
+        return {
+            "ok": False,
+            "n": None,
+            "status": "UNRESOLVED",
+            "reason": "checksum_mismatch",
+            "digits": digits,
+            "c_hat": int(c_hat),
+            "c_expect": expect_c,
+            "dists": dists + [c_dist],
+            "max_dist": float(max(dists + [c_dist])),
+            "geom": geom,
+            "n_src": PROVENANCE_MEASURED,
+            "checksum_src": PROVENANCE_MEASURED,
+        }
+
     n = 0
     for d in digits:
         n = n * 10 + d
@@ -330,20 +432,23 @@ def decode_frame(
         "ok": True,
         "n": int(n),
         "status": "OK",
-        "reason": "template_nn",
+        "reason": "template_nn_checksum_ok",
         "digits": digits,
-        "dists": dists,
-        "margins": margins,
-        "cells": cells,
-        "geometry_src": geom_src,
+        "c": int(c_hat),
+        "c_expect": expect_c,
+        "dists": dists + [c_dist],
+        "margins": margins + [c_margin],
+        "max_dist": float(max(dists + [c_dist])),
+        "min_margin": float(min(margins + [c_margin])),
+        "geom": geom,
+        "geometry_src": geom.get("geometry_src"),
         "n_src": PROVENANCE_MEASURED,
-        "max_dist": float(max(dists)),
-        "min_margin": float(min(margins)),
+        "checksum_src": PROVENANCE_MEASURED,
     }
 
 
 # ---------------------------------------------------------------------------
-# Bootstrap templates from G-fixture (labels = generator GT ≡ viewed truth)
+# Bootstrap
 # ---------------------------------------------------------------------------
 def _render_hdmi_frame(n: int) -> np.ndarray:
     from glass_frame_id import CANVAS_H, CANVAS_W, draw_id_band, simulate_capture_chain
@@ -353,26 +458,34 @@ def _render_hdmi_frame(n: int) -> np.ndarray:
     return simulate_capture_chain(rgb)
 
 
-def bootstrap_templates(
+def bootstrap_templates_sim(
     values: list[int] | None = None,
     *,
     path: Path | None = None,
 ) -> tuple[TemplateBank, dict[str, Any]]:
-    """Build templates from known n (viewed ≡ generator ground truth).
-
-    Parent: deliberately include rare digits (4,6). Default set covers 0-9.
-    """
+    """SIM_ONLY templates from generator GT (== viewed on host synth)."""
     if values is None:
-        # 32+ frames covering all digits; include *64* family for 4/6
         values = []
         values += list(range(0, 20))
         values += [64, 46, 460, 640, 146, 164, 246, 264, 346, 364, 464, 646, 664]
         values += [1000, 1099, 1101, 1103, 1104, 1106, 1107, 1110]
         values += [2352, 2358, 2377, 2378, 2491, 2521, 3024, 3025]
         values += [999999, 100000, 200000, 555555, 888888, 444444, 666666]
-        # Extra 8/7 coverage so LOO does not leave a singleton glyph shape
-        values += [8, 18, 80, 88, 800, 808, 880, 8080, 8808, 180818, 818181, 777777, 700007]
-        # unique preserve order
+        values += [
+            8,
+            18,
+            80,
+            88,
+            800,
+            808,
+            880,
+            8080,
+            8808,
+            180818,
+            818181,
+            777777,
+            700007,
+        ]
         seen: set[int] = set()
         uniq: list[int] = []
         for v in values:
@@ -385,23 +498,28 @@ def bootstrap_templates(
     vectors: list[np.ndarray] = []
     labels: list[int] = []
     frame_ids: list[int] = []
-    geom_src = None
-    cells_used = None
-    # Fixed sim cells for all bootstrap frames (parent method: no segmentation).
-    cells_used = list(SIM_CELLS)
-    geom_src = "sim_fixed_pitch"
+    geom = {
+        "rows": SIM_ROWS,
+        "n_bounds": list(SIM_N_BOUNDS),
+        "cells": _bounds_to_cells(SIM_N_BOUNDS),
+        "c_cell": SIM_C,
+        "geometry_src": "sim_fixed",
+    }
     for fi, n in enumerate(values):
         cap = _render_hdmi_frame(n)
         mask = yellow_mask(cap)
-        cells = cells_used
+        r0, r1 = geom["rows"]
         s = f"{n:06d}"
-        bin_band = mask.astype(np.float32)
         for di, ch in enumerate(s):
-            x0, x1 = cells[di]
-            vec = _cell_vector(bin_band, x0, x1, ROW_Y0, ROW_Y1)
-            vectors.append(vec)
+            x0, x1 = geom["cells"][di]
+            vectors.append(_cell_vector_from_mask(mask, x0, x1, r0, r1))
             labels.append(int(ch))
             frame_ids.append(fi)
+        c = checksum_mod10([int(ch) for ch in s])
+        cx0, cx1 = geom["c_cell"]
+        vectors.append(_cell_vector_from_mask(mask, cx0, cx1, r0, r1))
+        labels.append(c)
+        frame_ids.append(fi)
 
     bank = TemplateBank(
         vectors=np.stack(vectors, axis=0),
@@ -411,147 +529,101 @@ def bootstrap_templates(
             "n_frames": len(values),
             "n_samples": len(labels),
             "values": values,
-            "cells": cells_used,
-            "geometry_src": geom_src,
-            "cell_wh": [CELL_W, CELL_H],
-            "dist_max": DIST_MAX,
-            "margin_min": MARGIN_MIN,
+            "geometry": geom,
             "label_src": "generator_ground_truth_equals_viewed_pixels",
-            "note": "k-means forbidden; labels never unsupervised",
+            "loo_scope": PROVENANCE_SIM_ONLY,
+            "note": "k-means forbidden; LOO is SIM_ONLY not device accuracy",
         },
     )
     if path is not None:
         bank.save(path)
-    # digit coverage
     cov = sorted(set(int(x) for x in labels))
     info = {
         "n_frames": len(values),
         "n_samples": len(labels),
         "digit_coverage": cov,
         "all_digits_present": cov == list(range(10)),
-        "cells": cells_used,
-        "geometry_src": geom_src,
+        "loo_scope": PROVENANCE_SIM_ONLY,
         "path": str(path) if path else None,
     }
     return bank, info
 
 
-def bootstrap_templates_from_capture_dir(
-    src: Path,
+def bootstrap_templates_from_viewed_gt(
+    png_dir: Path,
+    gt: dict[int, str],
     *,
     path: Path | None = None,
-    cell_mode: str = "parent",
-    max_frames: int = 64,
-    stride: int = 1,
-    warmup_skip: int = 15,
+    force_mode: str | None = "720",
 ) -> tuple[TemplateBank, dict[str, Any]]:
-    """Bootstrap from real HDMI PNGs; labels = bar decoder (primary channel).
-
-    Parent rule: labels from viewed pixels, never k-means. Bars are the
-    authoritative machine ID on the G-fixture; digit cells use parent fixed
-    geometry. Prefer this over sim bootstrap before scoring device captures.
-    """
-    from glass_frame_id import decode_bars_from_rgb
-
-    files = list_pngs(Path(src))
-    if warmup_skip > 0:
-        files = files[warmup_skip:]
-    if stride > 1:
-        files = files[::stride]
-    if max_frames > 0:
-        files = files[:max_frames]
-
+    files = list_pngs(Path(png_dir))
     vectors: list[np.ndarray] = []
     labels: list[int] = []
     frame_ids: list[int] = []
-    values: list[int] = []
-    cells_used: list[tuple[int, int]] | None = None
-    geom_src = None
-    n_bar_fail = 0
-    n_used = 0
-
-    for fi, fpath in enumerate(files):
-        rgb = np.asarray(Image.open(fpath).convert("RGB"))
-        bar = decode_bars_from_rgb(rgb)
-        if not getattr(bar, "ok", False) or bar.n is None:
-            n_bar_fail += 1
+    geom = None
+    used = 0
+    for idx, val in sorted(gt.items()):
+        if idx < 0 or idx >= len(files):
             continue
-        n = int(bar.n) % 1_000_000
+        rgb = np.asarray(Image.open(files[idx]).convert("RGB"))
+        if geom is None:
+            geom = derive_overlay_geometry(rgb, force_mode=force_mode)
         mask = yellow_mask(rgb)
-        cells, gs = resolve_cells(mask, mode=cell_mode)
-        if cells_used is None:
-            cells_used = list(cells)
-            geom_src = gs
-        else:
-            cells = cells_used
-        s = f"{n:06d}"
-        bin_band = mask.astype(np.float32)
-        for di, ch in enumerate(s):
-            x0, x1 = cells[di]
-            vec = _cell_vector(bin_band, x0, x1, ROW_Y0, ROW_Y1)
-            if float(vec.sum()) < 1.0:
-                continue
-            vectors.append(vec)
+        r0, r1 = geom["rows"]
+        val_s = str(val).zfill(6)[-6:]
+        for di, ch in enumerate(val_s):
+            x0, x1 = geom["cells"][di]
+            vectors.append(_cell_vector_from_mask(mask, x0, x1, r0, r1))
             labels.append(int(ch))
-            frame_ids.append(n_used)
-        values.append(n)
-        n_used += 1
-
-    if not vectors:
-        raise RuntimeError(
-            f"no digit templates from {src}: bar_fail={n_bar_fail} files={len(files)}"
-        )
+            frame_ids.append(used)
+        chk = checksum_mod10([int(x) for x in val_s])
+        cx0, cx1 = geom["c_cell"]
+        vectors.append(_cell_vector_from_mask(mask, cx0, cx1, r0, r1))
+        labels.append(chk)
+        frame_ids.append(used)
+        used += 1
 
     bank = TemplateBank(
         vectors=np.stack(vectors, axis=0),
         labels=np.array(labels, dtype=np.int16),
         frame_ids=np.array(frame_ids, dtype=np.int32),
         meta={
-            "n_frames": n_used,
+            "n_frames": used,
             "n_samples": len(labels),
-            "values": values,
-            "cells": cells_used,
-            "geometry_src": geom_src,
-            "cell_wh": [CELL_W, CELL_H],
-            "dist_max": DIST_MAX,
-            "margin_min": MARGIN_MIN,
-            "label_src": "bar_decoder_primary_channel_equals_viewed_id",
-            "capture_dir": str(src),
-            "bar_fail": n_bar_fail,
-            "note": "k-means forbidden; labels from bars not unsupervised",
+            "gt_indices": sorted(gt.keys()),
+            "geometry": geom,
+            "label_src": "parent_viewed_pixels",
+            "loo_scope": "device_capture",
+            "note": "k-means forbidden",
         },
     )
     if path is not None:
         bank.save(path)
     cov = sorted(set(int(x) for x in labels))
-    info = {
-        "n_frames": n_used,
+    return bank, {
+        "n_frames": used,
         "n_samples": len(labels),
         "digit_coverage": cov,
         "all_digits_present": cov == list(range(10)),
-        "cells": cells_used,
-        "geometry_src": geom_src,
-        "bar_fail": n_bar_fail,
-        "label_src": "bar_decoder_primary_channel_equals_viewed_id",
+        "loo_scope": "device_capture",
+        "geometry_src": geom.get("geometry_src") if geom else None,
         "path": str(path) if path else None,
     }
-    return bank, info
 
 
 def leave_one_frame_out(bank: TemplateBank) -> dict[str, Any]:
-    """LOO by frame: each frame's 6 digits matched against templates from other frames."""
     frame_ids = sorted(set(int(x) for x in bank.frame_ids))
-    total = 0
-    correct = 0
+    total = correct = 0
+    failures: list[dict[str, Any]] = []
     per_digit = Counter()
     per_digit_ok = Counter()
-    failures: list[dict[str, Any]] = []
     for fi in frame_ids:
         idx = np.where(bank.frame_ids == fi)[0]
         for j in idx:
-            vec = bank.vectors[j]
             true = int(bank.labels[j])
-            hat, dist, margin, st = match_digit(vec, bank, exclude_frame=fi)
+            hat, dist, margin, st = match_digit(
+                bank.vectors[j], bank, exclude_frame=fi, dist_max=DIST_MAX_SOFT
+            )
             total += 1
             per_digit[true] += 1
             if hat == true and st == "ok":
@@ -569,12 +641,19 @@ def leave_one_frame_out(bank: TemplateBank) -> dict[str, Any]:
                     }
                 )
     acc = (correct / total) if total else 0.0
+    scope = bank.meta.get("loo_scope", PROVENANCE_SIM_ONLY)
     return {
         "loo_per_digit_correct": correct,
         "loo_per_digit_total": total,
         "loo_per_digit_accuracy": round(acc, 6),
         "loo_per_digit_accuracy_pct": round(100.0 * acc, 4),
         "loo_src": PROVENANCE_MEASURED,
+        "loo_scope": scope,
+        "loo_scope_note": (
+            "SIM_ONLY — not device accuracy"
+            if scope == PROVENANCE_SIM_ONLY
+            else "device_or_viewed_templates"
+        ),
         "per_digit_support": {str(k): int(per_digit[k]) for k in range(10)},
         "per_digit_correct": {str(k): int(per_digit_ok[k]) for k in range(10)},
         "n_failures": len(failures),
@@ -584,202 +663,277 @@ def leave_one_frame_out(bank: TemplateBank) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
-# Skip detector + grabber confound
+# PTS / sampling margin (F4 ERROR-18)
 # ---------------------------------------------------------------------------
-def analyze_skips(
-    pairs: list[tuple[int, int, str]],
+def load_pts_ms(pts_path: Path) -> tuple[list[float], str]:
+    pts_path = Path(pts_path)
+    pts: list[float] = []
+    with open(pts_path) as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.lower().startswith("pts"):
+                continue
+            part = line.split(",")[0].strip()
+            try:
+                pts.append(float(part))
+            except ValueError:
+                continue
+    return pts, PROVENANCE_MEASURED
+
+
+def sampling_margin_gate(
+    pts_s: list[float] | None,
+    *,
+    source_fps: float,
+    refresh_hz: float,
+    source_fps_src: str,
+    refresh_hz_src: str,
+    outlier_ms: float = 100.0,
+) -> dict[str, Any]:
+    """F4: refuse skip verdict when max interval >= min_hold_ms."""
+    min_hold_ms = (1000.0 / refresh_hz) * float(np.floor(refresh_hz / source_fps))
+    min_hold_src = (
+        PROVENANCE_MEASURED
+        if source_fps_src != PROVENANCE_DEFAULT and refresh_hz_src != PROVENANCE_DEFAULT
+        else PROVENANCE_DEFAULT
+    )
+    out: dict[str, Any] = {
+        "min_hold_ms": round(min_hold_ms, 4),
+        "min_hold_ms_src": min_hold_src,
+        "min_hold_formula": "1000/refresh_hz * floor(refresh_hz/source_fps)",
+        "source_fps": source_fps,
+        "source_fps_src": source_fps_src,
+        "refresh_hz": refresh_hz,
+        "refresh_hz_src": refresh_hz_src,
+        "pts_available": pts_s is not None and len(pts_s) >= 3,
+    }
+    if pts_s is None or len(pts_s) < 3:
+        out.update(
+            {
+                "margin_ok": False,
+                "reason": "no_pts_measured_intervals_required",
+                "refuse_skip_verdict": True,
+                "intervals_src": PROVENANCE_DEFAULT,
+            }
+        )
+        return out
+    iv_ms = np.diff(np.asarray(pts_s, dtype=np.float64)) * 1000.0
+    iv_non = iv_ms[iv_ms < outlier_ms]
+    if iv_non.size == 0:
+        out.update(
+            {
+                "margin_ok": False,
+                "reason": "all_intervals_outlier",
+                "refuse_skip_verdict": True,
+                "intervals_src": PROVENANCE_MEASURED,
+            }
+        )
+        return out
+    max_iv = float(iv_non.max())
+    med_iv = float(np.median(iv_ms))
+    hist = Counter(int(round(float(x))) for x in iv_ms)
+    margin_ok = max_iv < min_hold_ms
+    out.update(
+        {
+            "max_measured_capture_interval_ms": round(max_iv, 4),
+            "median_capture_interval_ms": round(med_iv, 4),
+            "interval_hist_ms_rounded": {str(k): int(hist[k]) for k in sorted(hist)},
+            "intervals_src": PROVENANCE_MEASURED,
+            "margin_ok": margin_ok,
+            "refuse_skip_verdict": not margin_ok,
+            "reason": (
+                "sampling_margin_ok"
+                if margin_ok
+                else (
+                    f"ERROR18_zero_margin max_iv={max_iv:.3f}ms >= "
+                    f"min_hold={min_hold_ms:.3f}ms — refuse skip verdict"
+                )
+            ),
+        }
+    )
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Completeness detector (F3)
+# ---------------------------------------------------------------------------
+def analyze_completeness(
+    per_frame: list[dict[str, Any]],
     *,
     source_fps: float,
     capture_fps: float,
     source_fps_src: str,
     capture_fps_src: str,
+    margin: dict[str, Any],
 ) -> dict[str, Any]:
-    """pairs: (cap_idx, n, path). Sorted by cap_idx."""
-    pairs = sorted(pairs, key=lambda t: t[0])
-    if len(pairs) < 3:
+    accepted = [
+        (int(r["idx"]), int(r["n"]), str(r.get("path", "")))
+        for r in per_frame
+        if r.get("ok") and r.get("n") is not None
+    ]
+    rejected_set = {
+        int(r["idx"])
+        for r in per_frame
+        if not (r.get("ok") and r.get("n") is not None)
+    }
+    path_by_idx = {int(r["idx"]): str(r.get("path", "")) for r in per_frame}
+
+    if len(accepted) < 3:
         return {
             "verdict": "UNSCORED",
             "rc": RC_UNSCORED,
-            "reason": "insufficient_reads",
-            "n_reads": len(pairs),
+            "reason": f"insufficient_accepted={len(accepted)}",
+            "n_accepted": len(accepted),
+            "n_frames": len(per_frame),
         }
 
-    deltas: list[int] = []
-    events: list[dict[str, Any]] = []
+    adj_hist: Counter = Counter()
     decreasing = 0
-    big = 0
-    for (i0, n0, p0), (i1, n1, p1) in zip(pairs, pairs[1:]):
-        # only adjacent capture indices (gap in idx means grabber hole — separate)
-        if i1 != i0 + 1:
-            # non-adjacent capture files: still measure n delta but tag gap
-            pass
-        d = int(n1) - int(n0)
-        deltas.append(d)
-        if d < 0:
-            decreasing += 1
-            events.append(
-                {
-                    "type": "DECREASING",
-                    "cap_i": i0,
-                    "cap_j": i1,
-                    "n_i": n0,
-                    "n_j": n1,
-                    "delta": d,
-                    "file_i": p0,
-                    "file_j": p1,
-                    "file_i_src": PROVENANCE_MEASURED,
-                    "file_j_src": PROVENANCE_MEASURED,
-                    "n_i_src": PROVENANCE_MEASURED,
-                    "n_j_src": PROVENANCE_MEASURED,
-                }
-            )
-        elif abs(d) > 2:
-            big += 1
-            events.append(
-                {
-                    "type": "ABS_DELTA_GT2",
-                    "cap_i": i0,
-                    "cap_j": i1,
-                    "n_i": n0,
-                    "n_j": n1,
-                    "delta": d,
-                    "file_i": p0,
-                    "file_j": p1,
-                }
-            )
-        elif d >= 2:
-            events.append(
-                {
-                    "type": "DISPLAY_SKIP",
-                    "cap_i": i0,
-                    "cap_j": i1,
-                    "n_i": n0,
-                    "n_j": n1,
-                    "delta": d,
-                    "skipped_values": list(range(n0 + 1, n1)),
-                    "file_i": p0,
-                    "file_j": p1,
-                    "file_i_src": PROVENANCE_MEASURED,
-                    "file_j_src": PROVENANCE_MEASURED,
-                    "evidence": (
-                        f"adjacent-capture delta={d}>=2 at 30fps vs 24fps source "
-                        f"is display-side skip (not grabber); files for VIEW"
-                    ),
-                }
-            )
+    for (i0, n0, _), (i1, n1, _) in zip(accepted, accepted[1:]):
+        if i1 == i0 + 1:
+            d = n1 - n0
+            adj_hist[d] += 1
+            if d < 0:
+                decreasing += 1
 
-    hist = Counter(deltas)
-    # advances: sum of positive deltas
-    adv = sum(d for d in deltas if d > 0)
-    # caps = number of capture steps between first and last read
-    caps = pairs[-1][0] - pairs[0][0]
-    if caps <= 0:
-        caps = max(1, len(pairs) - 1)
-    r = adv / float(caps) if caps else None
+    lo_n = accepted[0][1]
+    hi_n = accepted[-1][1]
+    obs = {n for _, n, _ in accepted}
+    missing = [v for v in range(lo_n, hi_n + 1) if v not in obs]
 
-    fps_auth = source_fps_src != PROVENANCE_DEFAULT and capture_fps_src != PROVENANCE_DEFAULT
+    genuine: list[dict[str, Any]] = []
+    torn_not_skip: list[dict[str, Any]] = []
+    for v in missing:
+        befores = [(i, n, p) for i, n, p in accepted if n < v]
+        afters = [(i, n, p) for i, n, p in accepted if n > v]
+        if not befores or not afters:
+            continue
+        a = befores[-1]
+        b = afters[0]
+        rej_between = [j for j in range(a[0] + 1, b[0]) if j in rejected_set]
+        rec = {
+            "v": v,
+            "bracket_a_idx": a[0],
+            "bracket_a_n": a[1],
+            "bracket_a_file": a[2] or path_by_idx.get(a[0], ""),
+            "bracket_b_idx": b[0],
+            "bracket_b_n": b[1],
+            "bracket_b_file": b[2] or path_by_idx.get(b[0], ""),
+            "rejected_between": rej_between,
+            "rejected_between_files": [path_by_idx.get(j, "") for j in rej_between],
+            "evidence_src": PROVENANCE_MEASURED,
+        }
+        if not rej_between:
+            rec["type"] = "GENUINE_DISPLAY_SKIP"
+            genuine.append(rec)
+        else:
+            rec["type"] = "TORN_TRANSITION_NOT_SKIP"
+            torn_not_skip.append(rec)
+
+    cap0, cap1 = accepted[0][0], accepted[-1][0]
+    caps = max(1, cap1 - cap0)
+    adv_span = hi_n - lo_n
+    span_ratio = adv_span / float(caps)
+    n_adj_steps = sum(
+        1
+        for (i0, _, _), (i1, _, _) in zip(accepted, accepted[1:])
+        if i1 == i0 + 1
+    )
+    adj_adv = sum(d * c for d, c in adj_hist.items() if d > 0)
+    adj_ratio = adj_adv / float(n_adj_steps or 1)
+
+    fps_auth = (
+        source_fps_src != PROVENANCE_DEFAULT
+        and capture_fps_src != PROVENANCE_DEFAULT
+    )
     ideal = source_fps / capture_fps if capture_fps > 0 else None
-    # G = adv/ideal - caps
     G = None
     G_src = PROVENANCE_DEFAULT
-    if fps_auth and ideal and ideal > 0 and r is not None:
-        G = adv / ideal - caps
+    if fps_auth and ideal and ideal > 0:
+        G = adv_span / ideal - caps
         G_src = PROVENANCE_MEASURED
-    # counterfactual: if DISPLAY_SKIP events were grabber losses instead
-    n_skip_events = sum(1 for e in events if e["type"] == "DISPLAY_SKIP")
-    skip_frames = sum(e["delta"] - 1 for e in events if e["type"] == "DISPLAY_SKIP")
-    r_if_grabber = None
-    if n_skip_events and caps:
-        # parent: if 22 events were lost captures, r would be higher
-        r_if_grabber = adv / float(caps + skip_frames)
 
-    # histogram confined?
-    bad_hist_keys = [k for k in hist if k not in (0, 1, 2) and k > 0]
-    # also negative keys
-    if any(k < 0 for k in hist):
-        bad_hist_keys = list(hist.keys())
-
-    invariant_fail = decreasing > 0 or big > 0
-    display_skips = [e for e in events if e["type"] == "DISPLAY_SKIP"]
-
-    if not fps_auth:
-        rate_note = (
-            "RATE_REFUSED: src_fps or cap_fps is DEFAULT_ASSUMED — "
-            "will not emit SKIP_OK rate verdict (ERROR 17)"
-        )
-    else:
-        rate_note = "fps_authoritative"
-
-    if invariant_fail:
+    refuse = bool(margin.get("refuse_skip_verdict", True))
+    if refuse:
+        verdict, rc = "UNSCORED", RC_UNSCORED
+        reason = str(margin.get("reason", "sampling_margin_refused"))
+    elif decreasing > 0:
         verdict, rc = "INSTRUMENT_OR_FIXTURE_FAIL", RC_FAIL
-        reason = f"decreasing={decreasing} abs_delta_gt2={big} (physics violated)"
-    elif display_skips and fps_auth:
-        verdict, rc = "SKIP_FAIL", RC_FAIL
-        reason = f"display_skips={len(display_skips)} skip_frames={skip_frames}"
-    elif display_skips and not fps_auth:
-        # still a positive defect on delta>=2 without needing fps
+        reason = f"decreasing_pairs={decreasing}"
+    elif genuine:
         verdict, rc = "SKIP_FAIL", RC_FAIL
         reason = (
-            f"display_skips={len(display_skips)} (delta>=2 needs no fps); "
-            f"{rate_note}"
+            f"genuine_display_skips={len(genuine)} "
+            f"(completeness rejected_between=[]); "
+            f"torn_not_skip={len(torn_not_skip)}"
         )
     elif not fps_auth:
         verdict, rc = "UNSCORED", RC_UNSCORED
-        reason = rate_note
+        reason = "RATE_REFUSED: src_fps or cap_fps DEFAULT_ASSUMED (ERROR 17)"
     else:
         verdict, rc = "SKIP_OK", RC_OK
-        reason = "deltas_in_0_1_only invariants_ok"
+        reason = (
+            f"completeness_clean genuine=0 torn_not_skip={len(torn_not_skip)} "
+            f"margin_ok"
+        )
 
     return {
         "verdict": verdict,
         "rc": rc,
         "reason": reason,
-        "n_reads": len(pairs),
-        "n_min": pairs[0][1],
-        "n_max": pairs[-1][1],
-        "cap_first": pairs[0][0],
-        "cap_last": pairs[-1][0],
-        "adv": adv,
-        "caps": caps,
-        "r_advance_per_capture": round(r, 6) if r is not None else None,
-        "r_src": PROVENANCE_MEASURED if r is not None else None,
+        "n_frames": len(per_frame),
+        "n_accepted": len(accepted),
+        "n_rejected": len(rejected_set),
+        "accepted_frac": round(len(accepted) / max(1, len(per_frame)), 4),
+        "accepted_frac_src": PROVENANCE_MEASURED,
+        "n_min": lo_n,
+        "n_max": hi_n,
+        "cap_first": cap0,
+        "cap_last": cap1,
+        "adv_span": adv_span,
+        "caps_span": caps,
+        "span_ratio": round(span_ratio, 6),
+        "span_ratio_src": PROVENANCE_MEASURED,
         "ideal_src_over_cap": round(ideal, 6) if ideal is not None else None,
         "ideal_src": source_fps_src if fps_auth else PROVENANCE_DEFAULT,
+        "adjacent_delta_histogram": {
+            str(k): int(adj_hist[k]) for k in sorted(adj_hist)
+        },
+        "adjacent_delta_histogram_src": PROVENANCE_MEASURED,
+        "adjacent_ratio": round(adj_ratio, 6),
+        "adjacent_ratio_note": (
+            "biased low vs span_ratio when rejects hit transitions (F3)"
+        ),
+        "missing_from_accepted": len(missing),
+        "genuine_display_skips": len(genuine),
+        "torn_transition_not_skip": len(torn_not_skip),
+        "genuine_events": genuine,
+        "torn_events_head": torn_not_skip[:8],
+        "decreasing_pairs": decreasing,
         "G_grabber_confound": round(G, 4) if G is not None else None,
         "G_src": G_src,
-        "G_formula": "G = adv/(src_fps/cap_fps) - caps",
-        "r_if_skips_were_grabber_drops": (
-            round(r_if_grabber, 6) if r_if_grabber is not None else None
-        ),
-        "delta_histogram": {str(k): int(hist[k]) for k in sorted(hist)},
-        "delta_histogram_src": PROVENANCE_MEASURED,
-        "decreasing_pairs": decreasing,
-        "abs_delta_gt2": big,
-        "display_skip_events": len(display_skips),
-        "display_skip_frames": skip_frames,
-        "events": events,
+        "G_formula": "G = adv_span/(src_fps/cap_fps) - caps_span",
         "source_fps": source_fps,
         "source_fps_src": source_fps_src,
         "capture_fps": capture_fps,
         "capture_fps_src": capture_fps_src,
         "fps_authoritative": fps_auth,
-        "rate_note": rate_note,
-        "sanity": {
-            "no_decreasing": decreasing == 0,
-            "no_abs_delta_gt2": big == 0,
-            "hist_keys": sorted(int(k) for k in hist.keys()),
-            "hist_confined_to_0_1_2": all(k in (0, 1, 2) for k in hist.keys()),
-        },
+        "sampling_margin": margin,
+        "detector": "completeness_rejected_between_empty",
+        "detector_note": (
+            "Genuine skip iff value absent from accepted set AND no rejected "
+            "capture between bracketing accepts. Adjacent-Δ alone is biased."
+        ),
     }
 
 
 # ---------------------------------------------------------------------------
-# Capture directory scoring
+# Capture scoring
 # ---------------------------------------------------------------------------
 def list_pngs(src: Path) -> list[Path]:
-    files = sorted(src.glob("f_*.png"))
+    files = sorted(Path(src).glob("f_*.png"))
     if not files:
-        files = sorted(src.glob("*.png"))
+        files = sorted(Path(src).glob("*.png"))
     return files
 
 
@@ -791,9 +945,14 @@ def score_capture_dir(
     capture_fps: float,
     source_fps_src: str,
     capture_fps_src: str,
-    cell_mode: str = "parent",
-    warmup_skip: int = 15,
+    refresh_hz: float = DEFAULT_ASSUMED_REFRESH_HZ,
+    refresh_hz_src: str = PROVENANCE_DEFAULT,
+    pts_path: Path | None = None,
+    force_mode: str | None = None,
+    warmup_skip: int = 0,
+    freeze_geom: bool = True,
     progress: bool = False,
+    dist_max: float = DIST_MAX_SOFT,
 ) -> dict[str, Any]:
     files = list_pngs(src)
     if not files:
@@ -803,233 +962,225 @@ def score_capture_dir(
             "reason": "no_pngs",
             "src": str(src),
         }
-    reads: list[tuple[int, int, str]] = []
-    unresolved = 0
+
+    pts_s = None
+    pts_src = PROVENANCE_DEFAULT
+    if pts_path is not None and Path(pts_path).is_file():
+        pts_s, pts_src = load_pts_ms(Path(pts_path))
+
+    margin = sampling_margin_gate(
+        pts_s,
+        source_fps=source_fps,
+        refresh_hz=refresh_hz,
+        source_fps_src=source_fps_src,
+        refresh_hz_src=refresh_hz_src,
+    )
+
+    geom = None
     per_frame: list[dict[str, Any]] = []
-    # freeze cells from first good frame
-    frozen_cells = None
     for i, path in enumerate(files):
         if i < warmup_skip:
-            # still try decode; warmup only skips uniform junk
-            pass
-        rgb = np.asarray(Image.open(path).convert("RGB"))
-        if float(rgb.mean()) < 2.5 and yellow_mask(rgb).sum() < 50:
-            per_frame.append({"idx": i, "path": str(path), "status": "warmup"})
+            per_frame.append(
+                {
+                    "idx": i,
+                    "path": str(path),
+                    "ok": False,
+                    "n": None,
+                    "status": "warmup_skip",
+                    "reason": "warmup",
+                }
+            )
             continue
-        r = decode_frame(rgb, bank, cells=frozen_cells, cell_mode=cell_mode)
+        rgb = np.asarray(Image.open(path).convert("RGB"))
+        if geom is None or not freeze_geom:
+            g = derive_overlay_geometry(rgb, force_mode=force_mode)
+            if freeze_geom:
+                geom = g
+        else:
+            g = geom
+        r = decode_frame(rgb, bank, geom=g, force_mode=force_mode, dist_max=dist_max)
         r["idx"] = i
         r["path"] = str(path)
+        if pts_s is not None and i < len(pts_s):
+            r["pts_s"] = pts_s[i]
+            r["pts_src"] = pts_src
         per_frame.append(r)
-        if r.get("ok") and r.get("n") is not None:
-            if frozen_cells is None and r.get("cells"):
-                frozen_cells = [tuple(c) for c in r["cells"]]
-            reads.append((i, int(r["n"]), str(path)))
-        else:
-            unresolved += 1
-        if progress and (i + 1) % 50 == 0:
-            print(f"  ... {i+1}/{len(files)} reads={len(reads)}", file=sys.stderr)
+        if progress and (i + 1) % 200 == 0:
+            ok_n = sum(1 for x in per_frame if x.get("ok"))
+            print(f"  ... {i+1}/{len(files)} accepted={ok_n}", file=sys.stderr)
 
-    if len(reads) < 3:
-        return {
-            "verdict": "UNSCORED",
-            "rc": RC_UNSCORED,
-            "reason": f"insufficient_template_reads={len(reads)} unresolved={unresolved}",
-            "frames_total": len(files),
-            "unresolved": unresolved,
-            "src": str(src),
-            "n_src": PROVENANCE_MEASURED,
-        }
-
-    skip = analyze_skips(
-        reads,
+    rep = analyze_completeness(
+        per_frame,
         source_fps=source_fps,
         capture_fps=capture_fps,
         source_fps_src=source_fps_src,
         capture_fps_src=capture_fps_src,
+        margin=margin,
     )
-    skip["frames_total"] = len(files)
-    skip["unresolved"] = unresolved
-    skip["readable_frac"] = round(len(reads) / max(1, len(files)), 4)
-    skip["readable_frac_src"] = PROVENANCE_MEASURED
-    skip["src"] = str(src)
-    skip["cells_frozen"] = frozen_cells
-    skip["warmup_skip"] = warmup_skip
-    # keep events for VIEW; drop bulky per_frame unless debug
-    skip["per_frame_head"] = per_frame[:5]
-    skip["per_frame_tail"] = per_frame[-5:]
-    return skip
+    rep["src"] = str(src)
+    rep["geometry_frozen"] = geom
+    rep["pts_path"] = str(pts_path) if pts_path else None
+    rep["pts_src"] = pts_src if pts_s is not None else PROVENANCE_DEFAULT
+    rep["warmup_skip"] = warmup_skip
+    rep["per_frame_head"] = [
+        {k: x.get(k) for k in ("idx", "ok", "n", "reason", "max_dist", "c", "path")}
+        for x in per_frame[:5]
+    ]
+    rep["per_frame_tail"] = [
+        {k: x.get(k) for k in ("idx", "ok", "n", "reason", "max_dist", "c", "path")}
+        for x in per_frame[-5:]
+    ]
+    return rep
 
 
 # ---------------------------------------------------------------------------
-# Self-test: red-before-green on synthetic G-fixture HDMI captures
+# Self-test + p60 acceptance
 # ---------------------------------------------------------------------------
-def _synth_capture_sequence(
+def _synth_sequence(
     out_dir: Path,
     *,
     n0: int,
     n_source_frames: int,
     source_fps: float = 24.0,
-    capture_fps: float = 30.0,
+    capture_fps: float = 60.0,
     skip_at_source: set[int] | None = None,
+    pts_path: Path | None = None,
 ) -> dict[str, Any]:
-    """Render HDMI PNGs as if grabber sampled source timeline.
-
-    For each capture k at t=k/cap_fps, show source frame floor(t*src_fps) unless
-    that source index is in skip_at_source (display drop → hold previous shown).
-    """
     out_dir.mkdir(parents=True, exist_ok=True)
     skip_at_source = set(skip_at_source or ())
     n_caps = int(round(n_source_frames * capture_fps / source_fps))
-    # Available source indices (display never presents skip_at_source).
     available = [
-        n0 + i
-        for i in range(n_source_frames)
-        if (n0 + i) not in skip_at_source
+        n0 + i for i in range(n_source_frames) if (n0 + i) not in skip_at_source
     ]
-    if not available:
-        raise ValueError("skip_at_source removed every source frame")
-    shown_log: list[int] = []
+    shown: list[int] = []
+    pts: list[float] = []
     for k in range(n_caps):
         t = k / capture_fps
         src_i = n0 + int(np.floor(t * source_fps + 1e-9))
         src_i = min(src_i, n0 + n_source_frames - 1)
-        # Greatest available frame ≤ ideal source index (hold through a drop;
-        # next available after the hole produces adjacent-capture delta ≥ 2).
         show = available[0]
         for a in available:
             if a <= src_i:
                 show = a
             else:
                 break
-        cap = _render_hdmi_frame(show)
-        path = out_dir / f"f_{k:04d}.png"
-        Image.fromarray(cap).save(path)
-        shown_log.append(show)
-    # How many adjacent-capture deltas ≥ 2 in the shown log?
-    adj_ge2 = sum(
-        1 for a, b in zip(shown_log, shown_log[1:]) if (b - a) >= 2
-    )
+        Image.fromarray(_render_hdmi_frame(show)).save(out_dir / f"f_{k:04d}.png")
+        shown.append(show)
+        pts.append(t)
+    if pts_path is not None:
+        pts_path.write_text("\n".join(f"{p:.6f}" for p in pts) + "\n")
     return {
         "n_caps": n_caps,
-        "n0": n0,
+        "shown_unique": len(set(shown)),
         "skip_at_source": sorted(skip_at_source),
-        "shown_head": shown_log[:20],
-        "shown_unique": len(set(shown_log)),
-        "injected_adj_delta_ge2": adj_ge2,
     }
 
 
 def run_self_test() -> int:
-    """RED: injected display skips → rc=2. GREEN: clean → rc=0. LOO published."""
     work = ROOT / ".agent-work" / "w-instr" / "template-skip-gate"
     work.mkdir(parents=True, exist_ok=True)
-    tpl_path = work / "templates_loo.npz"
-    bank, binfo = bootstrap_templates(path=tpl_path)
+    bank, binfo = bootstrap_templates_sim(path=work / "templates_sim.npz")
     loo = leave_one_frame_out(bank)
-    print("BOOTSTRAP", json.dumps(binfo, indent=2))
+    print("BOOTSTRAP_SIM", json.dumps(binfo, indent=2))
     print(
-        f"LOO per-digit accuracy={loo['loo_per_digit_correct']}/"
-        f"{loo['loo_per_digit_total']} = {loo['loo_per_digit_accuracy_pct']}% "
-        f"src={loo['loo_src']} gate={loo['gate']}"
+        f"LOO_SIM_ONLY {loo['loo_per_digit_correct']}/{loo['loo_per_digit_total']} "
+        f"= {loo['loo_per_digit_accuracy_pct']}% scope={loo['loo_scope']} "
+        f"({loo['loo_scope_note']}) gate={loo['gate']}"
     )
     if loo["gate"] != "PASS":
-        print("SELF_TEST_FAIL loo")
+        print("SELF_TEST_FAIL loo_sim")
         return RC_FAIL
-    # persist main templates next to tool when LOO passes
     bank.save(TEMPLATE_PATH)
-    print(f"WROTE {TEMPLATE_PATH}")
 
-    green_dir = work / "green_clean"
-    red_dir = work / "red_skips"
-    # clean: 48 source frames @24 → ~60 captures @30
-    gmeta = _synth_capture_sequence(
-        green_dir, n0=1000, n_source_frames=48, skip_at_source=None
+    green = work / "green60"
+    red = work / "red60"
+    g_pts = work / "green60_pts.csv"
+    r_pts = work / "red60_pts.csv"
+    _synth_sequence(green, n0=1000, n_source_frames=48, capture_fps=60.0, pts_path=g_pts)
+    _synth_sequence(
+        red,
+        n0=1000,
+        n_source_frames=72,
+        capture_fps=60.0,
+        skip_at_source={1017, 1034, 1051, 1068},
+        pts_path=r_pts,
     )
-    # red: drop every 17th source frame in a longer run
-    skips = set(range(1017, 1000 + 72, 17))
-    rmeta = _synth_capture_sequence(
-        red_dir, n0=1000, n_source_frames=72, skip_at_source=skips
-    )
-    print("GREEN_META", gmeta)
-    print("RED_META", rmeta)
 
-    green = score_capture_dir(
-        green_dir,
-        bank,
+    common = dict(
         source_fps=24.0,
-        capture_fps=30.0,
+        capture_fps=60.0,
         source_fps_src=PROVENANCE_CALLER,
         capture_fps_src=PROVENANCE_CALLER,
-        cell_mode="auto",
+        refresh_hz=60.0,
+        refresh_hz_src=PROVENANCE_CALLER,
+        force_mode="sim",
         warmup_skip=0,
     )
-    red = score_capture_dir(
-        red_dir,
-        bank,
-        source_fps=24.0,
-        capture_fps=30.0,
-        source_fps_src=PROVENANCE_CALLER,
-        capture_fps_src=PROVENANCE_CALLER,
-        cell_mode="auto",
-        warmup_skip=0,
+    g = score_capture_dir(green, bank, pts_path=g_pts, **common)
+    r = score_capture_dir(red, bank, pts_path=r_pts, **common)
+    print(
+        f"GREEN verdict={g.get('verdict')} rc={g.get('rc')} "
+        f"genuine={g.get('genuine_display_skips')} torn={g.get('torn_transition_not_skip')} "
+        f"span_ratio={g.get('span_ratio')} adj_hist={g.get('adjacent_delta_histogram')} "
+        f"margin_ok={g.get('sampling_margin', {}).get('margin_ok')}"
     )
     print(
-        f"GREEN verdict={green.get('verdict')} rc={green.get('rc')} "
-        f"skips={green.get('display_skip_events')} G={green.get('G_grabber_confound')} "
-        f"r={green.get('r_advance_per_capture')} hist={green.get('delta_histogram')}"
-    )
-    print(
-        f"RED   verdict={red.get('verdict')} rc={red.get('rc')} "
-        f"skips={red.get('display_skip_events')} events="
-        f"{json.dumps(red.get('events', [])[:5], indent=2)}"
+        f"RED   verdict={r.get('verdict')} rc={r.get('rc')} "
+        f"genuine={r.get('genuine_display_skips')} events="
+        f"{json.dumps(r.get('genuine_events', [])[:4], indent=2)}"
     )
 
-    # RED must be rc=2 with at least one DISPLAY_SKIP; GREEN rc=0 with zero
     ok = True
-    if green.get("rc") != RC_OK or green.get("display_skip_events", 1) != 0:
-        print(
-            f"FAIL GREEN expected rc=0 no skips; got rc={green.get('rc')} "
-            f"skips={green.get('display_skip_events')} reason={green.get('reason')}"
-        )
+    if g.get("rc") != RC_OK or g.get("genuine_display_skips", 1) != 0:
+        print(f"FAIL GREEN rc={g.get('rc')} genuine={g.get('genuine_display_skips')}")
         ok = False
     else:
-        print("PASS GREEN clean capture SKIP_OK")
-    if red.get("rc") != RC_FAIL or red.get("display_skip_events", 0) < 1:
-        print(
-            f"FAIL RED expected rc=2 with skips; got rc={red.get('rc')} "
-            f"skips={red.get('display_skip_events')} reason={red.get('reason')}"
-        )
+        print("PASS GREEN")
+    if r.get("rc") != RC_FAIL or r.get("genuine_display_skips", 0) < 1:
+        print(f"FAIL RED rc={r.get('rc')} genuine={r.get('genuine_display_skips')}")
         ok = False
     else:
-        print("PASS RED injected skips SKIP_FAIL")
+        print("PASS RED")
 
-    # Sanity: decreasing must be zero on both
-    if green.get("decreasing_pairs", 1) != 0 or red.get("decreasing_pairs", 1) != 0:
-        print("FAIL decreasing pairs non-zero")
+    zm = work / "zero_margin"
+    zm_pts = work / "zero_margin_pts.csv"
+    _synth_sequence(zm, n0=2000, n_source_frames=24, capture_fps=30.0, pts_path=zm_pts)
+    z = score_capture_dir(
+        zm,
+        bank,
+        source_fps=24.0,
+        capture_fps=30.0,
+        source_fps_src=PROVENANCE_CALLER,
+        capture_fps_src=PROVENANCE_CALLER,
+        refresh_hz=60.0,
+        refresh_hz_src=PROVENANCE_CALLER,
+        pts_path=zm_pts,
+        force_mode="sim",
+        warmup_skip=0,
+    )
+    if z.get("rc") != RC_UNSCORED or not z.get("sampling_margin", {}).get(
+        "refuse_skip_verdict", False
+    ):
+        print(f"FAIL ERROR18 gate rc={z.get('rc')} margin={z.get('sampling_margin')}")
         ok = False
     else:
-        print("PASS no decreasing pairs (k-means class failure absent)")
+        print(f"PASS ERROR18 refuse rc=77 reason={z.get('reason')}")
 
-    # cap480a/b are TREK24 structure pair — document fixture mismatch (not silent)
-    for label, path in ("cap480a", Path("/tmp/cap480a")), ("cap480b", Path("/tmp/cap480b")):
-        if not path.is_dir():
-            print(f"NOTE {label} missing — skip fixture probe")
-            continue
-        probe = score_capture_dir(
-            path,
-            bank,
-            source_fps=24.0,
-            capture_fps=30.0,
-            source_fps_src=PROVENANCE_CALLER,
-            capture_fps_src=PROVENANCE_CALLER,
-            cell_mode="parent",
-            warmup_skip=5,
-        )
+    p60 = Path("/tmp/p60/png")
+    if p60.is_dir():
+        sample = list_pngs(p60)[100]
+        rgb = np.asarray(Image.open(sample).convert("RGB"))
+        dg = derive_overlay_geometry(rgb)  # auto derive, not force
         print(
-            f"PROBE {label} verdict={probe.get('verdict')} rc={probe.get('rc')} "
-            f"reason={probe.get('reason')} reads={probe.get('n_reads')} "
-            f"(expect UNSCORED: archived pair is TREK24 not G n=NNNNNN)"
+            f"DERIVE720 rows={dg['rows']} n_bounds={dg['n_bounds']} "
+            f"c={dg['c_cell']} src={dg['geometry_src']}"
         )
+        nb = dg["n_bounds"]
+        if abs(nb[0] - 221) > 15 or abs(nb[-1] - 479) > 15:
+            print(f"FAIL derive720 n-field far from parent anchors: {nb}")
+            ok = False
+        else:
+            print("PASS derive720 near parent anchors")
 
     if ok:
         print("SELF_TEST_OK")
@@ -1038,84 +1189,217 @@ def run_self_test() -> int:
     return RC_FAIL
 
 
+def run_p60_acceptance() -> int:
+    """Reproduce parent p60 numbers exactly (device banked, no device touch)."""
+    png = Path("/tmp/p60/png")
+    pts = Path("/tmp/p60/pts.csv")
+    t60 = Path("/tmp/p60/T60.pkl")
+    if not png.is_dir() or not t60.is_file() or not pts.is_file():
+        print("P60_SKIP missing /tmp/p60 bank")
+        return RC_UNSCORED
+
+    bank_pkl = TemplateBank.from_parent_pkl(t60)
+    loo = leave_one_frame_out(bank_pkl)
+    print(
+        f"P60_DEVICE_LOO {loo['loo_per_digit_correct']}/{loo['loo_per_digit_total']} "
+        f"= {loo['loo_per_digit_accuracy_pct']}% scope={loo['loo_scope']} "
+        f"({loo['loo_scope_note']})"
+    )
+
+    geom = {
+        "rows": P720_ROWS,
+        "n_bounds": list(P720_N_BOUNDS),
+        "cells": _bounds_to_cells(P720_N_BOUNDS),
+        "c_cell": P720_C,
+        "geometry_src": "parent_dec60_locked",
+        "frame_wh": (1280, 720),
+    }
+    files = list_pngs(png)
+    pts_s, _ = load_pts_ms(pts)
+    per_frame: list[dict[str, Any]] = []
+    for i, path in enumerate(files):
+        rgb = np.asarray(Image.open(path).convert("RGB"))
+        r = decode_frame(rgb, bank_pkl, geom=geom, dist_max=8.0)
+        r["idx"] = i
+        r["path"] = str(path)
+        per_frame.append(r)
+        if (i + 1) % 500 == 0:
+            print(
+                f"  p60 {i+1} ok={sum(1 for x in per_frame if x.get('ok'))}",
+                file=sys.stderr,
+            )
+
+    margin = sampling_margin_gate(
+        pts_s,
+        source_fps=24.0,
+        refresh_hz=60.0,
+        source_fps_src=PROVENANCE_MEASURED,
+        refresh_hz_src=PROVENANCE_CALLER,
+    )
+    rep = analyze_completeness(
+        per_frame,
+        source_fps=24.0,
+        capture_fps=60.0,
+        source_fps_src=PROVENANCE_MEASURED,
+        capture_fps_src=PROVENANCE_MEASURED,
+        margin=margin,
+    )
+    print(
+        f"P60 accepted={rep['n_accepted']}/{rep['n_frames']} "
+        f"frac={rep['accepted_frac']} decr={rep['decreasing_pairs']}"
+    )
+    print(
+        f"P60 adj_hist={rep['adjacent_delta_histogram']} "
+        f"span_ratio={rep['span_ratio']} genuine={rep['genuine_display_skips']}"
+    )
+    print(f"P60 genuine_events={json.dumps(rep.get('genuine_events'), indent=2)}")
+    print(
+        f"P60 margin_ok={margin.get('margin_ok')} "
+        f"max_iv={margin.get('max_measured_capture_interval_ms')} "
+        f"min_hold={margin.get('min_hold_ms')} "
+        f"iv_hist={margin.get('interval_hist_ms_rounded')}"
+    )
+    print(f"P60 verdict={rep['verdict']} rc={rep['rc']} reason={rep['reason']}")
+
+    ok = True
+    if rep["n_accepted"] != 3179 or rep["n_frames"] != 3591:
+        print(
+            f"FAIL accepted want 3179/3591 got {rep['n_accepted']}/{rep['n_frames']}"
+        )
+        ok = False
+    else:
+        print("PASS accepted 3179/3591")
+    if rep["decreasing_pairs"] != 0:
+        print(f"FAIL decreasing={rep['decreasing_pairs']}")
+        ok = False
+    else:
+        print("PASS decreasing=0")
+    want_hist = {"0": 1916, "1": 1107, "2": 1}
+    if rep["adjacent_delta_histogram"] != want_hist:
+        print(
+            f"FAIL adj_hist want {want_hist} got {rep['adjacent_delta_histogram']}"
+        )
+        ok = False
+    else:
+        print("PASS adj_hist {0:1916,1:1107,2:1}")
+    if abs(float(rep["span_ratio"]) - 0.3994) > 0.0002:
+        print(f"FAIL span_ratio want ~0.3994 got {rep['span_ratio']}")
+        ok = False
+    else:
+        print("PASS span_ratio ~0.3994")
+    if rep["genuine_display_skips"] != 1:
+        print(f"FAIL genuine want 1 got {rep['genuine_display_skips']}")
+        ok = False
+    else:
+        g0 = rep["genuine_events"][0]
+        if int(g0["v"]) != 5578:
+            print(f"FAIL genuine v want 5578 got {g0['v']}")
+            ok = False
+        else:
+            print("PASS genuine skip exactly 005578")
+    if not margin.get("margin_ok"):
+        print(f"FAIL margin should be ok at 60fps: {margin}")
+        ok = False
+    else:
+        print("PASS sampling margin ok at 60fps")
+    if rep["rc"] != RC_FAIL:
+        print(f"FAIL rc want 2 got {rep['rc']}")
+        ok = False
+    else:
+        print("PASS rc=2 SKIP_FAIL")
+
+    if ok:
+        print("P60_ACCEPTANCE_OK")
+        return RC_OK
+    print("P60_ACCEPTANCE_FAIL")
+    return RC_FAIL
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    ap.add_argument("capture_dir", nargs="?", default=None, help="directory of f_*.png")
+    ap.add_argument("capture_dir", nargs="?", default=None)
     ap.add_argument("--self-test", action="store_true")
-    ap.add_argument("--bootstrap", action="store_true", help="rebuild sim templates + LOO only")
     ap.add_argument(
-        "--bootstrap-from",
+        "--p60-acceptance",
+        action="store_true",
+        help="reproduce parent /tmp/p60 numbers (3179/3591, genuine=005578)",
+    )
+    ap.add_argument("--bootstrap", action="store_true", help="rebuild SIM templates + LOO")
+    ap.add_argument(
+        "--bootstrap-viewed-gt",
         type=Path,
         default=None,
-        help="bootstrap templates from real HDMI dir; labels=bar decoder (not k-means)",
+        help="JSON {frame_index: 'NNNNnn'} viewed labels for device bootstrap",
     )
     ap.add_argument("--templates", type=Path, default=TEMPLATE_PATH)
+    ap.add_argument("--pts", type=Path, default=None, help="pts.csv from ffprobe pts_time")
+    ap.add_argument("--source-fps", type=float, default=None)
+    ap.add_argument("--capture-fps", type=float, default=None)
+    ap.add_argument("--refresh-hz", type=float, default=None)
     ap.add_argument(
-        "--source-fps",
-        type=float,
+        "--force-mode",
+        choices=("720", "1080", "sim"),
         default=None,
-        help="source content fps (required for SKIP_OK). Tagged caller_supplied.",
+        help="lock geometry anchors (720=parent dec60 cells)",
     )
-    ap.add_argument(
-        "--capture-fps",
-        type=float,
-        default=None,
-        help="grabber fps (required for SKIP_OK / G confound). Tagged caller_supplied.",
-    )
-    ap.add_argument(
-        "--cell-mode",
-        choices=("parent", "auto", "sim"),
-        default="parent",
-        help="parent=device-measured cells; sim/auto=capture-chain fixed pitch",
-    )
-    ap.add_argument("--warmup-skip", type=int, default=15)
+    ap.add_argument("--warmup-skip", type=int, default=0)
+    ap.add_argument("--dist-max", type=float, default=DIST_MAX_SOFT)
     ap.add_argument("--json", action="store_true")
     ap.add_argument("--progress", action="store_true")
     args = ap.parse_args(argv)
 
     if args.self_test:
         return run_self_test()
-
-    if args.bootstrap_from is not None:
-        bank, binfo = bootstrap_templates_from_capture_dir(
-            Path(args.bootstrap_from),
-            path=Path(args.templates),
-            cell_mode=args.cell_mode,
-            warmup_skip=int(args.warmup_skip),
-        )
-        loo = leave_one_frame_out(bank)
-        print("BOOTSTRAP_FROM_CAPTURE", json.dumps({**binfo, **loo}, indent=2))
-        if not args.capture_dir:
-            return RC_OK if loo["gate"] == "PASS" else RC_FAIL
+    if args.p60_acceptance:
+        return run_p60_acceptance()
 
     if args.bootstrap or not Path(args.templates).is_file():
-        bank, binfo = bootstrap_templates(path=Path(args.templates))
+        bank, binfo = bootstrap_templates_sim(path=Path(args.templates))
         loo = leave_one_frame_out(bank)
-        print("BOOTSTRAP", json.dumps({**binfo, **loo}, indent=2))
+        print("BOOTSTRAP_SIM", json.dumps({**binfo, **loo}, indent=2))
         if args.bootstrap and not args.capture_dir:
             return RC_OK if loo["gate"] == "PASS" else RC_FAIL
 
+    if args.bootstrap_viewed_gt is not None:
+        gt = json.loads(Path(args.bootstrap_viewed_gt).read_text())
+        gt = {int(k): str(v) for k, v in gt.items()}
+        if not args.capture_dir:
+            ap.error("--bootstrap-viewed-gt needs capture_dir of PNGs")
+        bank, binfo = bootstrap_templates_from_viewed_gt(
+            Path(args.capture_dir),
+            gt,
+            path=Path(args.templates),
+            force_mode=args.force_mode or "720",
+        )
+        loo = leave_one_frame_out(bank)
+        print("BOOTSTRAP_VIEWED", json.dumps({**binfo, **loo}, indent=2))
+        return RC_OK if loo["gate"] == "PASS" else RC_FAIL
+
     if not args.capture_dir:
-        ap.error("capture_dir required (or --self-test / --bootstrap / --bootstrap-from)")
+        ap.error("capture_dir required (or --self-test / --p60-acceptance)")
 
     bank = TemplateBank.load(args.templates)
     loo = leave_one_frame_out(bank)
 
     if args.source_fps is None:
-        source_fps = DEFAULT_ASSUMED_SRC_FPS
-        source_fps_src = PROVENANCE_DEFAULT
+        source_fps, source_fps_src = DEFAULT_ASSUMED_SRC_FPS, PROVENANCE_DEFAULT
     else:
-        source_fps = float(args.source_fps)
-        source_fps_src = PROVENANCE_CALLER
+        source_fps, source_fps_src = float(args.source_fps), PROVENANCE_CALLER
     if args.capture_fps is None:
-        capture_fps = DEFAULT_ASSUMED_CAP_FPS
-        capture_fps_src = PROVENANCE_DEFAULT
+        capture_fps, capture_fps_src = DEFAULT_ASSUMED_CAP_FPS, PROVENANCE_DEFAULT
     else:
-        capture_fps = float(args.capture_fps)
-        capture_fps_src = PROVENANCE_CALLER
+        capture_fps, capture_fps_src = float(args.capture_fps), PROVENANCE_CALLER
+    if args.refresh_hz is None:
+        refresh_hz, refresh_hz_src = DEFAULT_ASSUMED_REFRESH_HZ, PROVENANCE_DEFAULT
+    else:
+        refresh_hz, refresh_hz_src = float(args.refresh_hz), PROVENANCE_CALLER
+
+    force = args.force_mode
+    if force is None and str(args.templates).endswith("T60.pkl"):
+        force = "720"
 
     rep = score_capture_dir(
         Path(args.capture_dir),
@@ -1124,49 +1408,60 @@ def main(argv: list[str] | None = None) -> int:
         capture_fps=capture_fps,
         source_fps_src=source_fps_src,
         capture_fps_src=capture_fps_src,
-        cell_mode=args.cell_mode,
+        refresh_hz=refresh_hz,
+        refresh_hz_src=refresh_hz_src,
+        pts_path=args.pts,
+        force_mode=force,
         warmup_skip=args.warmup_skip,
         progress=args.progress,
+        dist_max=float(args.dist_max),
     )
     rep["loo"] = loo
     rep["templates"] = str(args.templates)
-    rep["templates_meta"] = bank.meta
 
     if args.json:
-        print(json.dumps(rep, indent=2))
+        print(json.dumps(rep, indent=2, default=str))
     else:
         print(
             f"VERDICT={rep.get('verdict')} rc={rep.get('rc')} reason={rep.get('reason')}"
         )
         print(
-            f"reads={rep.get('n_reads')} unresolved={rep.get('unresolved')} "
+            f"accepted={rep.get('n_accepted')}/{rep.get('n_frames')} "
+            f"frac={rep.get('accepted_frac')} src={rep.get('accepted_frac_src')} "
             f"span n={rep.get('n_min')}->{rep.get('n_max')} "
-            f"readable_frac={rep.get('readable_frac')} src={rep.get('readable_frac_src')}"
+            f"span_ratio={rep.get('span_ratio')} src={rep.get('span_ratio_src')}"
         )
         print(
             f"src_fps={rep.get('source_fps')} src={rep.get('source_fps_src')} "
-            f"cap_fps={rep.get('capture_fps')} cap={rep.get('capture_fps_src')} "
+            f"cap_fps={rep.get('capture_fps')} src={rep.get('capture_fps_src')} "
             f"fps_auth={rep.get('fps_authoritative')}"
         )
+        sm = rep.get("sampling_margin") or {}
         print(
-            f"r={rep.get('r_advance_per_capture')} src={rep.get('r_src')} "
-            f"ideal={rep.get('ideal_src_over_cap')} "
-            f"G={rep.get('G_grabber_confound')} G_src={rep.get('G_src')} "
-            f"r_if_grabber={rep.get('r_if_skips_were_grabber_drops')}"
+            f"margin_ok={sm.get('margin_ok')} "
+            f"max_iv_ms={sm.get('max_measured_capture_interval_ms')} "
+            f"min_hold_ms={sm.get('min_hold_ms')} iv_src={sm.get('intervals_src')} "
+            f"refuse={sm.get('refuse_skip_verdict')}"
         )
         print(
-            f"delta_hist={rep.get('delta_histogram')} src={rep.get('delta_histogram_src')} "
-            f"sanity={rep.get('sanity')}"
+            f"adj_hist={rep.get('adjacent_delta_histogram')} "
+            f"genuine={rep.get('genuine_display_skips')} "
+            f"torn_not_skip={rep.get('torn_transition_not_skip')} "
+            f"G={rep.get('G_grabber_confound')} G_src={rep.get('G_src')}"
         )
         print(
             f"LOO {loo['loo_per_digit_correct']}/{loo['loo_per_digit_total']} "
-            f"= {loo['loo_per_digit_accuracy_pct']}% src={loo['loo_src']}"
+            f"= {loo['loo_per_digit_accuracy_pct']}% scope={loo['loo_scope']} "
+            f"({loo['loo_scope_note']})"
         )
-        for e in rep.get("events") or []:
+        for e in rep.get("genuine_events") or []:
             print(
-                f"EVENT {e.get('type')} delta={e.get('delta')} "
-                f"n={e.get('n_i')}->{e.get('n_j')} "
-                f"files={Path(e.get('file_i','')).name},{Path(e.get('file_j','')).name}"
+                f"GENUINE_SKIP v={e.get('v')} "
+                f"a={e.get('bracket_a_n')}@"
+                f"{Path(str(e.get('bracket_a_file', '') or '')).name} "
+                f"b={e.get('bracket_b_n')}@"
+                f"{Path(str(e.get('bracket_b_file', '') or '')).name} "
+                f"rejected_between={e.get('rejected_between')}"
             )
     return int(rep.get("rc", RC_UNSCORED))
 
