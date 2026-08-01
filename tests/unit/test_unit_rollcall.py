@@ -119,6 +119,8 @@ EXPECTED_COMMANDS = [
     "python3 $(ROOT)/tests/unit/test_telem_flags_abi.py",
     "$(ROOT)/tests/unit/test_identity_resample_gate.sh",
     "$(ROOT)/tests/unit/test_deploy_deleted_exe_match.sh",
+    "$(ROOT)/tests/unit/test_make_relative_build.sh",
+    "$(ROOT)/tests/unit/test_no_large_assets.sh",
     "bash $(ROOT)/tests/unit/test_gdm_storm_ports_static.sh",
     "$(ROOT)/tests/unit/test_pms_baseline_gate.sh",
     "$(ROOT)/tests/unit/test_pms_baseline_live_gate.sh",

@@ -35,6 +35,7 @@ help:
 	@echo "  make arm-ddr-bench - cross-build DDR write microbenchmark"
 	@echo "  make arm-profile-tools - cross-build ARM decode/profile probes"
 	@echo "  make present-harness - build offline present-loop pipe/copy harness"
+	@echo "  make build/<name>  - relative alias for \$$(ROOT)/build/<name> (rebuilds; never silent no-op)"
 
 test: unit
 
@@ -80,6 +81,8 @@ unit-unlocked: unit-rollcall preflight $(ROOT)/build/test_cadence $(ROOT)/build/
 	python3 $(ROOT)/tests/unit/test_telem_flags_abi.py
 	$(ROOT)/tests/unit/test_identity_resample_gate.sh
 	$(ROOT)/tests/unit/test_deploy_deleted_exe_match.sh
+	$(ROOT)/tests/unit/test_make_relative_build.sh
+	$(ROOT)/tests/unit/test_no_large_assets.sh
 	bash $(ROOT)/tests/unit/test_gdm_storm_ports_static.sh
 	$(ROOT)/tests/unit/test_pms_baseline_gate.sh
 	$(ROOT)/tests/unit/test_pms_baseline_live_gate.sh
@@ -756,3 +759,19 @@ package:
 
 clean:
 	rm -rf $(ROOT)/build
+
+# ---------------------------------------------------------------------------
+# Relative build/<name> → absolute $(ROOT)/build/<name>
+#
+# Targets are declared as absolute paths because ROOT := $(abspath ...).
+# `make build/foo` does NOT match $(ROOT)/build/foo by string equality, so Make
+# prints "Nothing to be done for 'build/foo'" and exits 0 WITHOUT checking
+# prerequisites — leaving STALE binaries. That voids every red-before-green
+# check run via the relative form (parent 2026-08-01).
+#
+# This pattern rule makes the relative name depend on the absolute target so
+# source changes rebuild. Unknown names fail loudly (no rule for absolute).
+# ---------------------------------------------------------------------------
+build/%: $(ROOT)/build/%
+	@# Absolute target did the real work (or was already fresh).
+	@true

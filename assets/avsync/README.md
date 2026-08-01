@@ -17,6 +17,15 @@ python3 scripts/gen_avsync_blip.py --only all
 python3 scripts/gen_avsync_blip.py --only trekmatch
 ```
 
+### Media size policy (new files only)
+
+Do **not** commit new clips &gt;20 MB as git blobs (GitHub warns at 50 MB). Prefer
+this generator + on-demand lab fetch, or Git LFS if a durable large fixture is
+required. History already contains large glass clips (e.g. ~98 MB
+`sync_audio_id_glass_480p24_1800s.mp4`) — **do not rewrite history** to purge
+them without an explicit parent-authorized migration. Gate:
+`tests/unit/test_no_large_assets.sh`.
+
 ## Content
 
 - **Visual:** full-frame white flash (~2 frames) at each integer second + “FLASH” label + red mouth bar during beep.

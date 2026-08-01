@@ -20,6 +20,11 @@ incremental_db/
 c5_pin_model_dump.txt
 dist/
 
+# Agent scratch (mutations, local notes, temp trees). Not product evidence.
+# If a path under here is intentional durable evidence, promote it to
+# docs/evidence/ and track it deliberately — do not rely on .agent-work/.
+.agent-work/
+
 # Python bytecode caches
 __pycache__/
 *.pyc
