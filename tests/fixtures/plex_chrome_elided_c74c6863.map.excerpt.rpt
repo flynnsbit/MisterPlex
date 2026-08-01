@@ -1,0 +1,14 @@
+# Excerpt map.rpt c74c6863 — list_a stuck GND (clock_enable tied off via list_we=0)
+
+; plex_chrome:u_plex_chrome|list_a[0][63]                                                                                 ; Stuck at GND due to stuck port clock_enable                                                                   ;
+; plex_chrome:u_plex_chrome|list_a[0][62]                                                                                 ; Stuck at GND due to stuck port clock_enable                                                                   ;
+; plex_chrome:u_plex_chrome|list_a[0][61]                                                                                 ; Stuck at GND due to stuck port clock_enable                                                                   ;
+; plex_chrome:u_plex_chrome|list_a[0][60]                                                                                 ; Stuck at GND due to stuck port clock_enable                                                                   ;
+; plex_chrome:u_plex_chrome|list_a[0][59]                                                                                 ; Stuck at GND due to stuck port clock_enable                                                                   ;
+; plex_chrome:u_plex_chrome|list_a[0][58]                                                                                 ; Stuck at GND due to stuck port clock_enable                                                                   ;
+; plex_chrome:u_plex_chrome|list_a[0][57]                                                                                 ; Stuck at GND due to stuck port clock_enable                                                                   ;
+; plex_chrome:u_plex_chrome|list_a[0][56]                                                                                 ; Stuck at GND due to stuck port clock_enable                                                                   ;
+; plex_chrome:u_plex_chrome|list_b[7][0]                                                                                  ; Stuck at GND due to stuck port clock_enable                                                                   ;
+; plex_chrome:u_plex_chrome|list_b[0][63]                                                                                 ; Stuck at GND due to stuck port clock_enable                                                                   ;
+; plex_chrome:u_plex_chrome|list_b[0][62]                                                                                 ; Stuck at GND due to stuck port clock_enable                                                                   ;
+; plex_chrome:u_plex_chrome|list_b[0][61]                                                                                 ; Stuck at GND due to stuck port clock_enable                                                                   ;

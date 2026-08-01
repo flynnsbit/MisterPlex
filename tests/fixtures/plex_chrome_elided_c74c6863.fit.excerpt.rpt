@@ -1,0 +1,6 @@
+# Excerpt from remote_out/fit-nostub-chrome/Plex.fit.rpt (RBF md5 c74c6863…)
+# Purpose: red fixture for plex_chrome RAM elision guard.
+# Evidence: entity present but Block Memory Bits=0, M10Ks=0 (BOOT_DEMO+list_we=0).
+
+; Compilation Hierarchy Node                                                             ; ALMs needed [=A-B+C] ; [A] ALMs used in final placement ; [B] Estimate of ALMs recoverable by dense packing ; [C] Estimate of ALMs unavailable ; ALMs used for memory ; Combinational ALUTs ; Dedicated Logic Registers ; I/O Registers ; Block Memory Bits ; M10Ks ; DSP Blocks ; Pins ; Virtual Pins ; Full Hierarchy Name                                                                                                                             ; Entity Name                ; Library Name ;
+;    |plex_chrome:u_plex_chrome|                                                         ; 5.3 (5.3)            ; 23.4 (23.4)                      ; 18.1 (18.1)                                       ; 0.0 (0.0)                        ; 0.0 (0.0)            ; 0 (0)               ; 54 (54)                   ; 0 (0)         ; 0                 ; 0     ; 0          ; 0    ; 0            ; |sys_top|plex_chrome:u_plex_chrome                                                                                                              ; plex_chrome                ; work         ;
