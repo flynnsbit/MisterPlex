@@ -52,13 +52,13 @@ Severity resolution (highest wins — explicit, non-negotiable)
                    of motion scorability. More specific/actionable than colour
                    alone for the 480p identity_skip desync RCA (parent: picture
                    doubled vertically + FLASH split across L/R edges).
-  2. COLOR_FAIL  — green-cast fingerprint OR global channel-mean spread cast
-                   (magenta/green/any saturated global cast). Hard fail rc=2,
-                   **regardless of whether the counter could be OCR'd**.
-                   Colour is independent evidence; motion need not be scorable.
-                   A green/magenta field often *prevents* overlay OCR, so
-                   "decodes=0" and "colour broken" are correlated — colour
-                   must be allowed to decide alone.
+  2. COLOR_FAIL  — any of: green-cast fingerprint, channel-mean spread cast
+                   (magenta/blue/green), greyscale/chroma-constant lit field,
+                   or U/V-swap among saturated pixels (B7). Hard fail rc=2,
+                   never soft-skip. Colour is independent evidence; motion
+                   need not be scorable. A cast field often *prevents* overlay
+                   OCR, so "decodes=0" and "colour broken" are correlated —
+                   colour must be allowed to decide alone.
   3. RATE_FAIL   — counter advances (so not FREEZE) but at the wrong rate
                    relative to **caller-supplied** source/capture FPS, or
                    non-adjacent counter revisits (stale-bank ping-pong).
@@ -74,6 +74,14 @@ Severity resolution (highest wins — explicit, non-negotiable)
   6. UNSCORED    — no overlay/counter AND no colour/structure/rate verdict.
                    Soft-skip rc=77. Soft-skip is never a pass AND must never
                    report a condition we have positively measured as failure.
+
+Blind-counter rule (general — parent rchar incident)
+----------------------------------------------------
+  If the scored counter is exactly 0 / unchanging across windows while the
+  process is provably alive and doing other work, return NO-DATA / rc=77 —
+  never a defect class. See tools/instrument_blind_counter.py. Same disease
+  as hallucinated OCR digits and DEFAULT_ASSUMED fps: a confident FAIL from
+  a structurally blind meter.
 
   When multiple hard fails apply, the highest severity wins; subordinate
   dimensions stay in the report (e.g. motion=UNSCORED color=CHROMA_CAST_FAIL
@@ -126,11 +134,14 @@ discarded and never scored as FREEZE. Frames where the yellow overlay is not
 visible are also not scored as FREEZE (black content / flash without a clean
 overlay read → contribute nothing, not a pin).
 
-Bright-frame OCR (yellow on white flash): always try tesseract then digit
-templates (tier-6). Sequence analysis uses tier>=6 after structural filter so
-flash frames do not dominate the blind rate (parent: 12.3% undecodable ≈ 18×
-the steady-state effect size). Overlay-bitmap secondary still backs motion
-when OCR is thin.
+Bright-frame / low-contrast counter (ERROR 17 class for n):
+  Yellow overlay on white FLASH collapses local edge luma contrast (parent-
+  viewed /tmp/cap480b/f_049.png is TREK24 n=312; OCR previously hallucinated
+  field_inv n=322). Instrument measures hard-yellow vs local ring dY BEFORE
+  any OCR; dY < LOW_CONTRAST_DY_MAX → status=unreadable_low_contrast,
+  n_src=UNREADABLE, n=None (never a digit string). Only n_src=measured enters
+  rate/revisit/plateau. unreadable_frac > UNREADABLE_FRAC_MOTION_CAP demotes
+  MOTION_OK → UNSCORED (never a pass). Excursion filter remains belt-and-braces.
 
 Display loss vs grabber drop (Gap 1)
 ------------------------------------
