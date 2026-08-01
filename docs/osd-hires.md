@@ -258,3 +258,20 @@ score 0.55, span 341). **Not a short authoring canvas.** Fix: `coarse_y=2` + lef
 state-label pass + `--selftest-pause-localize`. Loud log:
 `media: pause overlay canvas=624x480 font=12x16 scale=2`.
 
+
+## User bug is architectural (2026-08-01)
+
+Font/canvas authoring on the product bank is **settled at 12×16@2 / 624×480** for
+both PAUSED and STOPPED. The remaining user complaint — chrome must match **MiSTer
+output resolution**, not streaming content — cannot be met by ARM paint into F1 alone.
+
+**Feasibility write-up (no fit):** [`docs/osd-output-raster-feasibility.md`](osd-output-raster-feasibility.md)
+
+| Option | Matches user? | RBF? |
+|---|---|---|
+| (a) bodyScale=3 | No — larger, not sharper | No |
+| (b) larger DDR bank | Partial; V_STORE=240 still caps V | Yes |
+| (c) post-scale chrome plane | **Yes** | **Yes** |
+
+Recommendation: **(c)** when an exclusive slot exists; ship black-rect ARM fix now;
+do not market (a) as the resolution fix.

@@ -1,39 +1,27 @@
 worker: w-osd-hires
 branch: w-osd-hires
-status: READY_FOR_PARENT_DEPLOY
-task: S1-S5 pause 8x13 was tool false peak; localize fix + pause font log
+status: FEASIBILITY_DONE — READY black-rect deploy; NO font defect; arch needs RTL
+task: A1-A4 output-raster feasibility (no fit)
 
-## S1 pause canvas (cited)
-publishPausedOverlayFrame: plex480pDdrFrameGeometry → cw/ch → renderYuv420p(yuv,cw,ch)
-Host compute(624,480) → font=12x16 scale=2
-Play path renderOverlay: rawW/rawH from ddrFrameGeometryForFpgaPresent = same bank
+## Parent confirmed
+No font defect. PAUSED+STOPPED both 12x16. S1-S3 premise withdrawn.
 
-## S2 contradiction
-Log 624x480 + glyphs "8x13" was FALSE. True left PAUSED = 12x16 span~452@1920.
-Old find_string coarse_y=sc*2=4 skipped y=350; weaker right 8x13@x517 won (span 341).
-Not intermediate blit; not bodyScale clamp; not short-H pause path.
+## A1 output raster
+MEASURED: grabber archives 1920x1080; bank 624x480; present V_STORE=240 even-row
+MEASURED scale: advance 77.4≈80 (12x16@2*1920/624); D h=54=12*2*(1080/480)
+NOT MEASURED by worker: live video_mode (8→1080 vs 12→1440). 2.25 V ratio fits BOTH
+  if grabber squashes 1440→1080. Parent: grep video_mode MiSTer.ini
 
-## S3 fix
-tools/readback_overlay_text.py: coarse_y=2, refine step1, left-label pass for PAUSED/STOPPED
---selftest-pause-localize true rc=0 on silicon archive
-media: pause overlay canvas=... font=... log added
-tests/unit/test_pause_canvas_font_static.py
+## A2 options (docs/osd-output-raster-feasibility.md)
+(a) bodyScale=3 — larger NOT sharper; no RBF; does NOT meet user wording
+(b) larger DDR — RBF; V_STORE=240 still caps unique V samples unless fetch changes
+(c) post-ascal chrome plane — ONLY matches user; RBF; full 1080 RGB565 BRAM does NOT fit 88 M10K — needs DDR-backed overlay + thin FIFOs
 
-## S4 prereg
-files/prereg/OSD-HIRES-PAUSE-12x16-DEPLOY.md
-PAUSED @1920 PASS 420-500 (archive 452); FAIL 300-360 (old 341 ghost)
-log: media: pause overlay canvas=624x480 font=12x16 scale=2
+## A3 recommend
+(c) for true fix. Ship black-rect now. Do not claim resolution bug fixed via font.
 
-## S5 black-rect
-8475a8dd opaque panelBg+title still in tree; score P1 empty-center 50-70
+## A4 black-rect
+Still in tree (panelBg opaque). md5 14b00f600aa62ac0948e24273e7030a1
+P1: empty-centre luma 50-70
 
-## Binary
-md5=14b00f600aa62ac0948e24273e7030a1
-commit: 5d175785
-
-## Parent cmds
-python3 tools/measure_overlay_word_span.py --image CAP.png --expect PAUSED; echo "true rc=$?"
-python3 tools/readback_overlay_text.py --selftest-pause-localize; echo "true rc=$?"
-grep 'pause overlay canvas=' misterplexd.log
-
-No device touch. No RTL. User conf untouched.
+No device touch. No RTL fit started.
