@@ -197,107 +197,71 @@ REMOTE_BIN="$TARGET_ROOT/bin/misterplexd"
 REMOTE_CONF="$TARGET_ROOT/misterplex.conf"
 REMOTE_LOG="$TARGET_ROOT/misterplexd.log"
 
-# DEPLOY TRAP (parent 2026-07-31 measured): NEVER rename the live binary before
-# kill. After `mv misterplexd misterplexd.bak.<md5>`, /proc/PID/exe resolves to
-# the .bak path and a `case $exe in *misterplexd)` kill loop matches NOTHING —
-# old daemon keeps running; disk looks perfect; live md5 stays old. Sibling of
-# ETXTBSY. Rule: stop/kill by /proc/comm+argv0 (and/or captured PIDs) BEFORE any
-# rename; verify AFTER by md5sum "$(readlink -f /proc/$pid/exe)". No pgrep on
-# device (busybox — missing).
-#
-# --- stop every daemon/supervisor (no kill -9 storms) --------------------------
-# Parent trap: NEVER match cmdline substring "misterplexd" — flock argv contains
-# it and yields false PIDs / false 0% CPU. Use /proc/PID/comm + argv0 basename.
-# After stop, do not readlink exe of a deleted inode (empty); match on comm/argv0.
-echo "deploy: stopping all misterplexd + supervisors (comm/argv0, not cmdline substr)"
-set +e
-ssh_m 'bash -s' <<'EOS'
-set +e
-is_daemon_pid() {
-  p="$1"
-  [ -r "/proc/$p/comm" ] || return 1
-  c=$(cat "/proc/$p/comm" 2>/dev/null || true)
-  # kernel comm is truncated to 15 chars — misterplexd fits
-  if [ "$c" = "misterplexd" ]; then return 0; fi
-  [ -r "/proc/$p/cmdline" ] || return 1
-  a0=$(tr "\0" "\n" < "/proc/$p/cmdline" 2>/dev/null | head -n1)
-  case "$a0" in
-    */misterplexd|misterplexd) return 0 ;;
-  esac
-  return 1
-}
-is_supervisor_pid() {
-  p="$1"
-  [ -r "/proc/$p/cmdline" ] || return 1
-  cmd=$(tr "\0" " " < "/proc/$p/cmdline" 2>/dev/null) || return 1
-  case "$cmd" in *plexctl.sh*) return 1 ;; esac
-  # Match supervise SCRIPT path tokens, not bare "misterplexd"
-  case "$cmd" in
-    *misterplexd_supervise.sh*|*plexctl_supervise.sh*|*dedupe_daemon.sh*) return 0 ;;
-  esac
-  return 1
-}
-list_targets() {
-  for d in /proc/[0-9]*; do
-    [ -d "$d" ] || continue
-    p=${d#/proc/}
-    if is_daemon_pid "$p" || is_supervisor_pid "$p"; then
-      echo "$p"
-    fi
-  done
-}
-for p in $(list_targets); do
-  kill "$p" 2>/dev/null || true
-done
-i=0
-while [ "$i" -lt 40 ]; do
-  left=0
-  for p in $(list_targets); do left=$((left + 1)); done
-  [ "$left" -eq 0 ] && break
-  i=$((i + 1))
-  sleep 0.25
-done
-left=0
-for p in $(list_targets); do
-  left=$((left + 1))
-  c=$(cat /proc/$p/comm 2>/dev/null || echo "?")
-  a0=$(tr "\0" "\n" < /proc/$p/cmdline 2>/dev/null | head -n1)
-  echo "STILL_UP pid=$p comm=$c argv0=$a0"
-done
-if [ "$left" -ne 0 ]; then
-  echo "STOP_FAILED n=$left"
-  exit 9
-fi
-echo "STOP_OK"
-EOS
-stop_rc=$?
-set -e
-report_rc "stop_all" "$stop_rc" || die "stop failed (rc=$stop_rc)"
+# DEPLOY ORDER (parent 2026-08-01 — supervisor-safe; races naive stop-first):
+#   1) CAPTURE daemon PIDs by /proc/comm+argv0 (NOT cmdline; NOT pgrep — busybox)
+#   2) stage new bytes to /tmp/misterplexd.deploy.$$
+#   3) cp live -> .bak.<prefix8> / .prev-deploy  (never mv live name away first)
+#   4) mv stage onto live path  (rename OK while old inode still executing)
+#   5) kill ONLY captured daemon PIDs  (leave supervisor alive)
+#   6) supervisor restarts child; do NOT kill-then-manual-start when supervise present
+#   7) verify md5sum "$(readlink -f /proc/NEWPID/exe)" == host  (never disk alone)
+# Rename-before-kill trap: if you mv misterplexd -> misterplexd.bak.* first, then
+# kill by *misterplexd exe glob, matches NOTHING and old keeps running.
+# ETXTBSY sibling: never cp/write over running binary path; use stage+mv.
+# got='' from probe = NO-DATA, never mismatch.
 
-# --- install exact bytes (stage then mv; never cp over running binary) --------
-echo "deploy: install host_md5=$HOST_MD5 -> $REMOTE_BIN (stage+mv; no rebuild)"
-# Content-addressed archive of outgoing daemon so atomic pair rollback can find
-# the previous pin. Parent: ETXTBSY on cp-over-running silently leaves old live.
-# stderr is NOT suppressed on deploy steps.
+# --- 1) capture live daemon PIDs (before any file mutate) ---------------------
+echo "deploy: capture daemon PIDs before stage/mv (supervisor stays up)"
+set +e
+CAP_OUT=$(ssh_m 'bash -s' <<'EOS'
+set +e
+pids=""
+for d in /proc/[0-9]*; do
+  [ -d "$d" ] || continue
+  p=${d#/proc/}
+  c=""; a0=""
+  [ -r "$d/comm" ] && c=$(cat "$d/comm" 2>/dev/null || true)
+  if [ "$c" = "misterplexd" ]; then
+    pids="${pids}${pids:+ }$p"
+    continue
+  fi
+  [ -r "$d/cmdline" ] || continue
+  a0=$(tr "\0" "\n" < "$d/cmdline" 2>/dev/null | head -n1)
+  case "$a0" in
+    */misterplexd|misterplexd) pids="${pids}${pids:+ }$p" ;;
+  esac
+done
+# supervisors present? (do not kill them in swap path)
+nsup=0
+for d in /proc/[0-9]*; do
+  [ -r "$d/cmdline" ] || continue
+  cmd=$(tr "\0" " " < "$d/cmdline" 2>/dev/null) || continue
+  case "$cmd" in *plexctl.sh*) continue ;; esac
+  case "$cmd" in
+    *misterplexd_supervise.sh*|*plexctl_supervise.sh*|*dedupe_daemon.sh*) nsup=$((nsup+1)) ;;
+  esac
+done
+echo "CAPTURED_PIDS=$pids"
+echo "N_SUP_LIVE=$nsup"
+EOS
+)
+cap_rc=$?
+set -e
+report_rc "capture_pids" "$cap_rc" || die "PID capture failed"
+printf '%s\n' "$CAP_OUT" | sed 's/^/  [cap] /'
+CAPTURED_PIDS=$(printf '%s\n' "$CAP_OUT" | sed -n 's/^CAPTURED_PIDS=//p' | head -1 | tr -d '\r')
+N_SUP_LIVE=$(printf '%s\n' "$CAP_OUT" | sed -n 's/^N_SUP_LIVE=//p' | head -1 | tr -d '\r')
+echo "deploy: captured_pids='${CAPTURED_PIDS:-}' n_sup_live=${N_SUP_LIVE:-0}"
+
+# --- 2-4) stage → cp bak → mv onto live (exact artifact; no rebuild) ----------
+echo "deploy: install host_md5=$HOST_MD5 -> $REMOTE_BIN (stage+cp_bak+mv; no rebuild)"
 STAGED_REMOTE="/tmp/misterplexd.deploy.$$"
 set +e
-ssh_m "echo DEPLOY_INSTALL_PREP root='$TARGET_ROOT'
-set -e
-mkdir -p '$TARGET_ROOT/bin' '$TARGET_ROOT/scripts'
-if [ -f '$REMOTE_BIN' ]; then
-  om=\$(md5sum '$REMOTE_BIN' | awk '{print \$1}')
-  cp -f '$REMOTE_BIN' '$REMOTE_BIN.prev-deploy'
-  if [ -n "\$om" ]; then
-    arch='$REMOTE_BIN.'.\${om:0:8}.bak
-    if [ ! -f "\$arch" ]; then
-      cp -f '$REMOTE_BIN' "\$arch"
-      echo "ARCHIVED_DAEMON \$arch"
-    else
-      echo "ARCHIVE_DAEMON_SKIP \$arch"
-    fi
-  fi
-fi
-echo PREP_OK"
+ssh_m "set -e
+  root='$TARGET_ROOT'
+  mkdir -p \"\$root/bin\" \"\$root/scripts\"
+  echo PREP_OK
+"
 prep_rc=$?
 set -e
 report_rc "install_prep" "$prep_rc" || die "install prep failed"
@@ -306,35 +270,48 @@ set +e
 scp_to "$BIN" "$STAGED_REMOTE"
 scp_rc=$?
 set -e
-report_rc "scp_stage" "$scp_rc" || die "scp to stage failed (stderr above; not suppressed)"
+report_rc "scp_stage" "$scp_rc" || die "scp to stage failed (stderr not suppressed)"
 
 set +e
 ssh_m "set -e
   staged='$STAGED_REMOTE'
   dst='$REMOTE_BIN'
   host_want='$HOST_MD5'
-  sm=\$(md5sum "\$staged" | awk '{print \$1}')
+  sm=\$(md5sum \"\$staged\" | awk '{print \$1}')
   echo STAGE_MD5=\$sm
-  if [ "\$sm" != "\$host_want" ]; then
-    echo "FAIL stage md5 \$sm != host \$host_want"
-    rm -f "\$staged"
+  if [ \"\$sm\" != \"\$host_want\" ]; then
+    echo \"FAIL stage md5 \$sm != host \$host_want\"
+    rm -f \"\$staged\"
     exit 7
   fi
-  # rename semantics replace destination; daemon must already be stopped
-  mv -f "\$staged" "\$dst"
-  chmod 755 "\$dst"
+  if [ -f \"\$dst\" ]; then
+    om=\$(md5sum \"\$dst\" | awk '{print \$1}')
+    cp -f \"\$dst\" \"\${dst}.prev-deploy\"
+    if [ -n \"\$om\" ]; then
+      arch=\"\${dst}.\${om:0:8}.bak\"
+      if [ ! -f \"\$arch\" ]; then
+        cp -f \"\$dst\" \"\$arch\"
+        echo \"ARCHIVED_DAEMON \$arch\"
+      else
+        echo \"ARCHIVE_DAEMON_SKIP \$arch\"
+      fi
+    fi
+  fi
+  # mv replaces directory entry; running process (if any) keeps old inode until kill
+  mv -f \"\$staged\" \"\$dst\"
+  chmod 755 \"\$dst\"
   sync
-  dm=\$(md5sum "\$dst" | awk '{print \$1}')
+  dm=\$(md5sum \"\$dst\" | awk '{print \$1}')
   echo DISK_MD5=\$dm
-  if [ "\$dm" != "\$host_want" ]; then
-    echo "FAIL disk md5 \$dm != host \$host_want after mv"
+  if [ \"\$dm\" != \"\$host_want\" ]; then
+    echo \"FAIL disk md5 \$dm != host \$host_want after mv\"
     exit 7
   fi
   echo INSTALL_OK
 "
 inst_rc=$?
 set -e
-report_rc "install_mv" "$inst_rc" || die "stage+mv install failed (rc=$inst_rc)"
+report_rc "install_mv" "$inst_rc" || die "stage+cp_bak+mv failed (rc=$inst_rc)"
 
 set +e
 DISK_MD5="$(ssh_m "md5sum '$REMOTE_BIN'" | awk '{print $1}')"
@@ -342,13 +319,47 @@ disk_rc=$?
 set -e
 report_rc "disk_md5_probe" "$disk_rc" || die "disk md5 probe failed"
 echo "deploy: disk_md5=$DISK_MD5"
+if [[ -z "$DISK_MD5" ]]; then
+  die "NO-DATA disk md5 empty (not a mismatch)"
+fi
 if [[ "$DISK_MD5" != "$HOST_MD5" ]]; then
-  die "disk md5 $DISK_MD5 != host md5 $HOST_MD5 (install corrupted; not restarting)"
+  die "disk md5 $DISK_MD5 != host md5 $HOST_MD5 (install corrupted; not killing)"
 fi
 report_rc "disk_md5_match" 0
 
-# --- restart exactly one daemon; verify LIVE exe md5 (not disk alone) ---------
-echo "deploy: restart single daemon root=$TARGET_ROOT (disk match alone is NOT success)"
+# --- 5) kill captured daemon PIDs only; leave supervisor to restart -----------
+echo "deploy: kill captured daemon PIDs only (leave supervisor); pids='${CAPTURED_PIDS:-none}'"
+set +e
+ssh_m "set +e
+  for p in $CAPTURED_PIDS; do
+    [ -n \"\$p\" ] || continue
+    if [ -d \"/proc/\$p\" ]; then
+      c=\$(cat /proc/\$p/comm 2>/dev/null || echo '?')
+      echo \"KILL_CAPTURED pid=\$p comm=\$c\"
+      kill \"\$p\" 2>/dev/null || true
+    else
+      echo \"GONE_BEFORE_KILL pid=\$p\"
+    fi
+  done
+  # brief wait for exit
+  i=0
+  while [ \$i -lt 40 ]; do
+    left=0
+    for p in $CAPTURED_PIDS; do
+      [ -d \"/proc/\$p\" ] && left=\$((left+1))
+    done
+    [ \$left -eq 0 ] && break
+    i=\$((i+1))
+    sleep 0.25
+  done
+  echo KILL_WAIT_DONE
+"
+kill_rc=$?
+set -e
+report_rc "kill_captured" "$kill_rc" || die "kill captured failed"
+
+# --- 6-7) supervisor restart (or fallback start); verify LIVE exe md5 ---------
+echo "deploy: await supervisor restart root=$TARGET_ROOT (disk match alone is NOT success)"
 set +e
 ssh_m env \
   "PLAYER_ID=$PLAYER_ID" \
@@ -384,7 +395,42 @@ if [[ "$disk_md5" != "$HOST_MD5" ]]; then
   exit 5
 fi
 
+# Prefer supervisor respawn: wait up to ~15s for n_daemon==1 with live md5=host.
+# Do not kill supervisors. Manual start only if no supervise and no daemon appears.
+wait_live_match() {
+  local i=0 p c a0 m n
+  while [ "$i" -lt 60 ]; do
+    n=0
+    m=""
+    for d in /proc/[0-9]*; do
+      [ -d "$d" ] || continue
+      p=${d#/proc/}
+      c=""; [ -r "$d/comm" ] && c=$(cat "$d/comm" 2>/dev/null || true)
+      is=0
+      [ "$c" = "misterplexd" ] && is=1
+      if [ "$is" -eq 0 ] && [ -r "$d/cmdline" ]; then
+        a0=$(tr "\0" "\n" < "$d/cmdline" 2>/dev/null | head -n1)
+        case "$a0" in */misterplexd|misterplexd) is=1 ;; esac
+      fi
+      [ "$is" -eq 1 ] || continue
+      n=$((n+1))
+      m=$(md5sum "$d/exe" 2>/dev/null | awk '{print $1}')
+    done
+    if [ "$n" -eq 1 ] && [ "$m" = "$HOST_MD5" ]; then
+      echo "SUPERVISE_RESTART_OK live_md5=$m"
+      return 0
+    fi
+    i=$((i+1))
+    sleep 0.25
+  done
+  return 1
+}
+
 started=0
+if wait_live_match; then
+  started=1
+  echo "START_PATH=supervisor_restart"
+fi
 for ctl in \
     "$TARGET_ROOT/scripts/plexctl.sh" \
     /media/fat/misterplex/scripts/plexctl.sh \

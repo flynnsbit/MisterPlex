@@ -786,3 +786,20 @@ Instrument value labels when referenced from this package:
 - `measured` — from device/capture this run
 - `caller-supplied` — parent env / pin
 - `DEFAULT_ASSUMED` — code default (never present as measurement)
+
+
+## Daemon deploy order (supervisor-safe, parent 2026-08-01)
+
+Device runs a durable supervisor that races stop-everything-then-start. Required order:
+
+1. **Capture** daemon PIDs (`/proc/PID/comm == misterplexd` or argv0 basename) — **before** any rename
+2. **Stage** new bytes → `/tmp/misterplexd.deploy.$$` (exact host artifact; `DEPLOY_REBUILD=0`)
+3. **cp** live → `.prev-deploy` / `.bak.<prefix8>` (never `mv` the live name away first)
+4. **mv** stage onto live path (OK while old inode still executing)
+5. **kill only captured PIDs** — leave supervisor alive
+6. **Supervisor restarts** child; wait until live md5 matches host
+7. **Verify** `md5sum "$(readlink -f /proc/NEWPID/exe)"` == host; `n_daemon==1`
+
+Never: kill-then-manual-start when supervise is live. Never: md5 disk alone. Never: pgrep. Never: cmdline substring.
+
+Primary pair: core `c5382bee` + daemon `edc3a46b…`. Also accepted: 5996385a, b981fd20, e9f79de2.

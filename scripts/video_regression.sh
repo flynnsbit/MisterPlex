@@ -72,17 +72,15 @@ BASE_CORE_MD5=dfebf2bfd08dd70b473b587dd7e81848
 # regression and must fail.
 BASE_DAEMON_MD5=7cd10b4d438c714a9b8c4766dc982d59
 # Daemon pin chain (do NOT weaken — unknown md5 still FAILs):
-#   5996385a  CURRENT — w-instr instrumented (parent 2026-07-31 evening).
-#             Full md5 from live readlink -f /proc/9102/exe; n_daemon=1;
-#             480p viewed OK with user conf 7f06132f (DECODE=624x480).
-#   b981fd20  PREV on-device bak — accepted DDR rollback (prefix until full pin).
-#   edc3a46b  prior DDR primary — accepted rollback.
+#   edc3a46b  CURRENT primary DDR pair with c5382bee (parent promote target).
+#   5996385a  w-instr instrumented — accepted alternate.
+#   b981fd20  on-device bak — accepted DDR rollback.
 #   e9f79de2  first silicon-correct DDR — accepted rollback.
 #   50f4eb92  SPI hybrid clamp path — accepted SPI rollback.
 #   3e2cbb98  older hybrid — accepted rollback.
 #   7cd10b4d  BASE release (above).
-HYBRID_DAEMON_PREFIX8=5996385a
-HYBRID_DAEMON_MD5_DEFAULT=5996385a57c6af142b8e732a39b36a4a
+HYBRID_DAEMON_PREFIX8=edc3a46b
+HYBRID_DAEMON_MD5_DEFAULT=edc3a46b9d1c6b86337deb90f896eb0f
 if [ -f "${REPO:-$(cd "$(dirname "$0")/.." && pwd)}/artifacts/daemon-pins/misterplexd.${HYBRID_DAEMON_PREFIX8}" ]; then
   HYBRID_DAEMON_MD5=$(md5sum "${REPO:-$(cd "$(dirname "$0")/.." && pwd)}/artifacts/daemon-pins/misterplexd.${HYBRID_DAEMON_PREFIX8}" | awk '{print $1}')
   if [ "${HYBRID_DAEMON_MD5:0:8}" != "$HYBRID_DAEMON_PREFIX8" ]; then

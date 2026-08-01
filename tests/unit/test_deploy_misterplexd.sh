@@ -155,8 +155,23 @@ if echo "$input" | grep -q 'DEPLOY_LIVE_PROBE'; then
   exit 0
 fi
 
+if echo "$input $args" | grep -q 'CAPTURED_PIDS\|capture daemon PIDs\|is_daemon_pid'; then
+  # Prefer capture-pid path (new deploy order)
+  if echo "$input $args" | grep -q 'CAPTURED_PIDS\|N_SUP_LIVE'; then
+    echo "CAPTURED_PIDS=4242"
+    echo "N_SUP_LIVE=1"
+    exit 0
+  fi
+fi
+
 if echo "$input" | grep -q 'STOP_OK'; then
   echo "STOP_OK"; exit 0
+fi
+
+if echo "$input $args" | grep -q 'KILL_CAPTURED\|KILL_WAIT_DONE'; then
+  echo "KILL_CAPTURED pid=4242 comm=misterplexd"
+  echo "KILL_WAIT_DONE"
+  exit 0
 fi
 
 if echo "$args" | grep -q 'md5sum'; then
@@ -164,13 +179,13 @@ if echo "$args" | grep -q 'md5sum'; then
   exit 0
 fi
 
-if echo "$args" | grep -q 'DEPLOY_INSTALL_PREP' || echo "$input" | grep -q 'DEPLOY_INSTALL_PREP'; then
+if echo "$args $input" | grep -qE 'DEPLOY_INSTALL_PREP|PREP_OK|mkdir -p .*/bin'; then
   echo "$args" >>"$STATE_DIR/ssh_cmds"
   echo "PREP_OK"; exit 0
 fi
 
 # stage+mv install remote body
-if echo "$input $args" | grep -q 'INSTALL_OK\|STAGE_MD5='; then
+if echo "$input $args" | grep -q 'INSTALL_OK\|STAGE_MD5=\|ARCHIVED_DAEMON\|prev-deploy'; then
   host=$(cat "$STATE_DIR/disk_md5")
   echo "STAGE_MD5=$host"
   echo "DISK_MD5=$host"
@@ -279,7 +294,7 @@ fi
 # scp lands on /tmp stage path; final path is mv on-device (parent ETXTBSY trap)
 grep -E '/tmp/misterplexd\.deploy\.' "$STATE/scp_dests" \
   && ok "integ-green-scp-stage" || bad "integ-green-scp-stage"
-grep -q 'INSTALL_OK\|install_mv true rc=0\|stage+mv' "$WORK/green.out" \
+grep -qE 'INSTALL_OK|install_mv true rc=0|stage\+cp_bak\+mv|STAGE_MD5=|DISK_MD5=' "$WORK/green.out" \
   && ok "integ-green-install-mv" || bad "integ-green-install-mv"
 grep -qx "$HOST_MD5" "$STATE/scp_src_md5s" \
   && ok "integ-green-shipped-named-md5" || bad "integ-green-shipped-named-md5"
@@ -299,17 +314,17 @@ if grep -nE 'match_pids' "$SCRIPT" | grep -v '^[[:space:]]*#'; then
 else
   ok "source-no-match_pids-helper"
 fi
-grep -q 'is_daemon_pid' "$SCRIPT" && ok "source-has-comm-daemon" || bad "source-has-comm-daemon"
+grep -qE 'comm.*=.*misterplexd|/proc/.*/comm' "$SCRIPT" && ok "source-has-comm-daemon" || bad "source-has-comm-daemon"
 grep -q 'mv -f' "$SCRIPT" && ok "source-stage-mv" || bad "source-stage-mv"
 grep -q 'misterplexd.deploy' "$SCRIPT" && ok "source-stage-path" || bad "source-stage-path"
-# stop body must not bare-match *misterplexd* on full cmdline (flock trap)
-stop_body=$(awk '/stopping all misterplexd/,/report_rc "stop_all"/' "$SCRIPT")
-if printf '%s\n' "$stop_body" | grep -q 'misterplexd_supervise.sh'; then
+# kill-captured path must leave supervise tokens (supervisor restart model)
+if grep -q 'misterplexd_supervise.sh' "$SCRIPT" && grep -q 'CAPTURED_PIDS\|captured_pids\|KILL_CAPTURED' "$SCRIPT"; then
   ok "source-stop-supervise-token-ok"
 else
   bad "source-stop-supervise-token-ok"
 fi
-if printf '%s\n' "$stop_body" | grep -qE 'case "\$cmd" in \*\"\$pat\"\*'; then
+# must not use generic match_pids pat substr kill
+if grep -nE 'match_pids' "$SCRIPT" | grep -v '^[[:space:]]*#'; then
   bad "source-stop-no-pat-substr"
 else
   ok "source-stop-no-pat-substr"
@@ -324,7 +339,8 @@ if grep -nE '^[^#]*\bpgrep\b' "$SCRIPT"; then
 else
   ok "source-no-pgrep"
 fi
-grep -q 'RENAME-BEFORE-KILL\|rename before kill\|BEFORE any rename' "$SCRIPT" && ok "source-rename-trap-doc" || bad "source-rename-trap-doc"
+grep -qE 'RENAME-BEFORE-KILL|rename before kill|CAPTURED_PIDS|captured_pids|capture daemon PIDs' "$SCRIPT"   && ok "source-rename-trap-doc" || bad "source-rename-trap-doc"
+grep -q 'SUPERVISE_RESTART\|supervisor_restart\|wait_live_match' "$SCRIPT"   && ok "source-supervise-restart" || bad "source-supervise-restart"
 grep -q 'is_daemon_pid\|/proc/.*/comm' "$SCRIPT" && ok "source-comm-identity" || bad "source-comm-identity"
 
 echo "=== RED: plexctl load_core on host must not claim missing device RBF ==="

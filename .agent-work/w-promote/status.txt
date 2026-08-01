@@ -1,13 +1,12 @@
 lane: w-promote
 branch: fix/rollback-honest
-tip: 3343ccf7
-worktree: .worktrees/rollback-honest
+tip: (post-commit)
+pair: c5382bee + edc3a46b (primary); also 5996385a/b981/e9f79 accepted
 
-## Broadcast absorbed
-~117 ms HDMI A/V bimodality = SESSION-LATCHED DEVICE defect (parent measured).
-Promote package does NOT gate on it; av-lock still RETRACTED.
-P4 OPEN/out-of-scope. P1 real power-cycle still OPEN.
+## This turn
+- deploy order: capture PID → stage → cp bak → mv → kill captured → supervise restart → live exe md5
+- primary pin edc3a46b; glue fix still on HEAD (not 961dc724)
+- P1 power cycle OPEN
 
 ## Host true rc
-test_promotion_gates.sh true rc=0 (pass=93)
-test_rollback_honest.sh / deploy — see commit message
+deploy=0 gates=0 rollback=0 boot=0 vidreg=0

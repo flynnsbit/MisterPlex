@@ -35,21 +35,20 @@ RBF_PIN_V2_DAILY_FULL=dfebf2bfd08dd70b473b587dd7e81848
 RBF_PIN_DDR_CANDIDATE_FULL=c5382bee73cecdee8220b811e529c297
 DAEMON_PIN_V2_HYBRID_FULL=50f4eb925de10e29172999a565c87684
 DAEMON_PIN_V2_RELEASE_FULL=7cd10b4d438c714a9b8c4766dc982d59
-# DDR daemon pin chain (parent 2026-07-31 evening — do NOT weaken mixed-pair gate):
-#   5996385a  CURRENT — w-instr instrumented; live /proc/9102/exe; n=1; 480p viewed OK
-#   b981fd20  PREV on-device bak (misterplexd.bak.b981fd20) — accepted rollback
-#   edc3a46b  prior DDR primary (480p FORCE_SCALE land) — accepted rollback
+# DDR daemon pin chain (do NOT weaken mixed-pair gate):
+#   edc3a46b  PRIMARY promote pair with c5382bee (parent re-task)
+#   5996385a  w-instr instrumented — accepted alternate / lab pin
+#   b981fd20  on-device bak — accepted rollback
 #   e9f79de2  first silicon-correct DDR — accepted rollback
-DAEMON_PIN_DDR_5996385A_FULL=5996385a57c6af142b8e732a39b36a4a
-DAEMON_PIN_DDR_5996385A_PREFIX8=5996385a
-# Full md5 of b981fd20 not published; prefix8 identity until pin file fetched.
-DAEMON_PIN_DDR_B981_PREFIX8=b981fd20
-DAEMON_PIN_DDR_B981_FULL="${DAEMON_PIN_DDR_B981_FULL:-b981fd20}"
 DAEMON_PIN_DDR_EDC3_PREFIX8=edc3a46b
 DAEMON_PIN_DDR_EDC3_FULL="${DAEMON_PIN_DDR_EDC3_FULL:-edc3a46b9d1c6b86337deb90f896eb0f}"
+DAEMON_PIN_DDR_5996385A_FULL=5996385a57c6af142b8e732a39b36a4a
+DAEMON_PIN_DDR_5996385A_PREFIX8=5996385a
+DAEMON_PIN_DDR_B981_PREFIX8=b981fd20
+DAEMON_PIN_DDR_B981_FULL="${DAEMON_PIN_DDR_B981_FULL:-b981fd20}"
 DAEMON_PIN_DDR_E9F79DE2_FULL=e9f79de217982aff44207664fdb945c5
-# Primary = CURRENT instrumented pin (override with DAEMON_PIN_DDR_PRIMARY_FULL).
-DAEMON_PIN_DDR_PRIMARY_FULL="${DAEMON_PIN_DDR_PRIMARY_FULL:-$DAEMON_PIN_DDR_5996385A_FULL}"
+# Primary = edc3a46b (override with DAEMON_PIN_DDR_PRIMARY_FULL).
+DAEMON_PIN_DDR_PRIMARY_FULL="${DAEMON_PIN_DDR_PRIMARY_FULL:-$DAEMON_PIN_DDR_EDC3_FULL}"
 DAEMON_PIN_DDR_PRIMARY_PREFIX8="${DAEMON_PIN_DDR_PRIMARY_FULL:0:8}"
 # Back-compat aliases
 DAEMON_PIN_DDR_CANDIDATE_FULL="${DAEMON_PIN_DDR_CANDIDATE_FULL:-}"
@@ -107,7 +106,7 @@ rbf_policy_resolve_ddr_daemon_full() {
     done
   done
   # Known full primary constant (no pin file required for gate identity).
-  printf '%s' "$(rbf_policy_normalize_md5 "${DAEMON_PIN_DDR_5996385A_FULL}")"
+  printf '%s' "$(rbf_policy_normalize_md5 "${DAEMON_PIN_DDR_PRIMARY_FULL:-$DAEMON_PIN_DDR_EDC3_FULL}")"
   return 0
 }
 
