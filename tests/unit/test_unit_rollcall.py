@@ -182,6 +182,7 @@ EXPECTED_COMMANDS = [
     "$(ROOT)/tests/unit/test_deploy_misterplexd.sh",
     "$(ROOT)/tests/unit/test_deploy_restore_mutations.sh",
     "$(ROOT)/tests/unit/test_instrument_empty_input.sh",
+    "$(ROOT)/tests/unit/test_parent_three_gate_defects.sh",
     "$(ROOT)/tests/unit/test_soak_continuity_assert.sh",
     "$(ROOT)/tests/unit/test_promotion_gates.sh",
     "python3 $(ROOT)/tests/unit/test_harness_capture_integrity.py",
