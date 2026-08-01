@@ -1,18 +1,13 @@
 worker: w-cpu-1
+lane: MiSTer spin + headroom + ERROR17 absorb
 branch: w-avsync-hdmi-measure
-tip_sha: 0910a126
-make_unit: true rc=0
-hold_red: true rc=0
-test_avclock: true rc=0
-ARM_md5: N/A (no daemon binary this turn)
+tip: 824b85ba
+status: DONE (source RCA + tools; no device)
 
-Built:
-- Startup DROP COUNT variance model (residual lead / hold dump race)
-- RCA + PRE_REGISTER; H-DROP miss published
-- Earlier: MiSTer spin RCA, headroom/schedstat tools, starvation verdict
-- Criterion REVISED: lip_sync = tools/avsync_measure_hdmi.py ONLY
+ERROR17: absorbed — no product unwind needed (false fps defect never landed)
+MiSTer spin: poll(...,0) in input.cpp L5596-5617; scheduler_co_poll no sleep
+Surgical alt to SIGSTOP: non-zero poll timeout (lab Main); stock Menu+FB already uses 25ms
+Headroom: never 200-busy; use tools/{arm_cpu,headroom,schedstat,fixed_work}_*.py
 
-Blocking:
-- HDMI A/B clusters unexplained (H-DROP rejected; not drop count)
-- audioClockPpm_=-638 vs untrimmed pacer 48000 clock: do not build on
-- No device access (parent owns hardware)
+make unit: not required for doc-only refresh this turn
+ARM md5: N/A
