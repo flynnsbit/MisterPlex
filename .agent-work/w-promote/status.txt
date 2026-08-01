@@ -1,6 +1,6 @@
 lane: w-promote
 branch: fix/rollback-honest
-tip: (post-commit)
+tip: 3343ccf7
 worktree: .worktrees/rollback-honest
 
 ## Broadcast absorbed
