@@ -1,279 +1,279 @@
-# w-geom SOURCE: FPGA A/V path vs ~117 ms bimodal HDMI offset
+# w-geom RTL SOURCE: can the FPGA make the 117.10 ms A/V bimodality?
 
-**Date:** 2026-07-31  
-**Lane:** w-geom (source only — no fit, no device)  
-**Main SHA at write:** see `git rev-parse HEAD` on report branch  
-**Integ binary (geometry, unrelated to this RCA):** `w-integ-m0-p5-osd` @ `1e01bb0b` md5 `239c6bc7…`
+**Constraint:** source + arithmetic only. NO FIT. NO device.  
+**Working core:** `c5382bee` — do not disturb.  
+**Report SHA:** see git tip on `w-avsync-hdmi-measure`.
 
-Parent measured: clusters A≈−314 ms / B≈−197 ms (audio LEADS picture), sep≈117 ms;
-daemon session-start records IDENTICAL across clusters (P5 null). Hold Δ=5 ms (falsified).
-
-This note answers four source questions. Rule 0: quotes or “unknown”.
-
----
-
-## 0. Product audio path (what is live)
-
-Product cast uses **MrAudio**, not the Plex core F2 `audio_fifo`:
-
-| Fact | Quote |
-|------|--------|
-| Daemon target | `media_player.hpp`: “FFmpeg → /dev/fb0 + /dev/MrAudio” |
-| F2 skipped when Mr works | `media_player.cpp` (~2059): “F2 SPI skipped when MrAudio works” |
-| Core tone/FIFO off | `Plex.sv:748` `.audio_en(1'b0)` |
-| Core samples still wired | `Plex.sv` `assign AUDIO_L/R = al/ar_audio` but tone gated off when `has_frame`; FIFO empty ⇒ silence on core leg |
-| Heard path | `sys_top.v` `alsa` → `audio_out(.alsa_l/r)` → I2S HDMI |
-
-F2 `audio_fifo` DEPTH=2048 @ 48 kHz ≈ **42.7 ms** (`rtl/audio_fifo.sv:11-12`) is **not** the product drain under MrAudio.
+Parent facts (accepted as measured, not re-derived):
+- HDMI offset clusters means **−314.35** and **−197.25** ms; sep **117.10** ms; n=8 balanced; interleaved in one daemon life.
+- Every daemon session-start field identical across clusters (P5 null). Hold Δ=5 ms (killed).
+- Within-cluster spread ~10–15 ms.
 
 ---
 
-## 1. Where daemon observability ENDS
+## Plain answer first
 
-```text
-ffmpeg s16le 48k stereo
-  → audioPump hold (gate closed) / writePacedChunk (gate open)
-  → ::write(/dev/MrAudio)          ← LAST userspace store  [media_player.cpp writePacedChunk]
-  → kernel DMA ring 512 KiB          [mraudio_status.hpp:4-14, :33]
-  → SPI buf_info → FPGA alsa.sv      [sys/alsa.sv]
-  → audio_out mix → i2s → HDMI       [sys/audio_out.sv, sys_top.v]
+| Q | Answer |
+|---|--------|
+| 1. FPGA audio two-phase @ ~117 ms? | **NO.** All audio-path phase quanta in-tree are **≤ 0.020833 ms** (one 48 kHz sample) or a **single ~170.667 ms post-reset mute** (not a two-state per play). **Correct negative.** |
+| 2. Readable audio phase/FIFO mailbox? | **NOT-FOUND** in DDR map. MrAudio depth only via `/dev/MrAudio` status. **PLXD4 @ 0x300FF12C is the upper half of PLXD (video `frames_done`), not audio.** |
+| 3. Video first-present two-state @ 117 ms? | **One-vsync quantum exists** (exact **16.715600 ms** NTSC @ 20 MHz). **3×24 fps content = 125.0 ms is REJECTED** (|125−117.10|=7.9 ms). **7× display frame = 117.009200 ms** matches sep to **0.091 ms**, but **no RTL bistable selects 0 vs 7 frames** — mechanism NOT-FOUND. |
+| 4. Eliminate FPGA region? | **Audio RTL region: YES, eliminated as a 117 ms two-state source.** **Video swap: not eliminated; needs `frames_done` lag measurement.** Kernel MrAudio SPI driver still **out of repo**. |
+
+---
+
+## 1. Audio path — every phase quantum from RTL literals
+
+Product heard path (MrAudio, not F2):
+
+```
+::write(/dev/MrAudio) → kernel DMA ring → SPI → sys/alsa.sv
+  → pcm_l/r → sys/audio_out.sv (mix) → sys/i2s.v → HDMI I2S
 ```
 
-### Last thing the daemon **controls**
+Core F2 path is **off** product: `Plex.sv:748` `.audio_en(1'b0)`; daemon skips F2 when Mr works.
 
-1. **Gate:** `audioStartGate_` closed until first complete video frame  
-   (`media_player.cpp` ~3442–3448, ~3691–3732). No MrAudio write while gated.
-2. **Which bytes** and **software pace** of `::write` after open  
-   (`writePacedChunk`: `audioDue` + `feedRateBytesPerSec`).
-3. **Ring depth sample** used only to servo feed rate and build `audibleClockMs`  
-   (`mraudio_status.hpp:111-117`, `:149` `kFeedTargetBytes = 19200` = **100.0 ms**).
+### 1.1 Clock
 
-### First things the daemon does **not** control
+| Item | Value | Cite |
+|------|------:|------|
+| `pll_audio` out | **24.576 MHz** | `sys/pll_audio.v` retrieval `gui_output_clock_frequency0=24.576` |
+| `alsa` / `audio_out` `CLK_RATE` | **24576000** | `alsa.sv:24`, `audio_out.sv:24` |
+| `AUDIO_RATE` | **48000** | `audio_out.sv:66` |
 
-From `mraudio_status.hpp:4-14` (in-tree driver notes):
-
-- `write()` **never blocks**, never consults `rptr` — copy + wrap.
-- Lab: 10 s PCM accepted in 116 ms (submitted ≠ heard).
-- **FPGA drain schedule** (when `rptr` advances) is not set by misterplexd.
-- HDMI A/V phase vs video scanout is outside the process.
-
-### Observability ceiling (product)
-
-| Signal | Source | Limit |
-|--------|--------|--------|
-| `audioBytes_` submitted | after `::write` | not heard time |
-| `len` / `rptr` / `wptr` | open MrAudio O_RDONLY status line | depth only; ~every 4th chunk |
-| `audibleClockMs` | `(written−queued)/192000` | assumes 48 kHz drain; **subtracts** depth ⇒ constant post-write phase cancels |
-| `av_drift_ms` | frameIndex vs that clock | **blind** to fixed HDMI offset (parent-measured) |
-| PLXD `frames_done` | DDR `0x300FF128` | **video swap count**, not audio |
-
-**Handoff where ARM stops controlling timing:** return from `::write` into the MrAudio ring. After that, timing is kernel SPI + `alsa.sv` NCO + `audio_out` + HDMI.
-
----
-
-## 2. Can FPGA audio start PHASE be two-valued near 117 ms?
-
-### Mechanisms in `sys/alsa.sv` (product consumer)
-
-**A. `got_first` snap (one-shot after `reset` only)** — `alsa.sv:86-91`, `:116-119`:
+### 1.2 `alsa.sv` sample CE (drain tick)
 
 ```verilog
+// alsa.sv:149-153
+acc <= acc + 48000 + {hurryup,6'd0};
+if(acc >= CLK_RATE) begin
+    acc <= acc - CLK_RATE;
+    ce_sample <= 1;
+end
+```
+
+**Arithmetic (hurryup=0):**  
+period = `CLK_RATE / 48000` cycles = `24576000/48000 = 512` cycles  
+**T_sample = 512 / 24576000 s = 1/48000 s = 0.020833… ms**
+
+Max start-phase uncertainty vs an async ARM release: **one sample = 0.020833 ms** — not 117 ms.
+
+`hurryup` (`alsa.sv:95-103`) adds `{hurryup,6'd0}` = hurryup×64 to the addend → rate 48000…48256 Hz. **Rate bend**, not a start-phase bistable.
+
+### 1.3 `got_first` snap — one-shot, not two-phase 117 ms
+
+```verilog
+// alsa.sv:116-119
 if(~got_first) begin
-    buf_rptr <= buf_wptr;   // discard whatever is currently queued
+    buf_rptr <= buf_wptr;  // discard current queue
     got_first <= 1;
 end
 ```
 
-- Fires once when `rptr!=wptr` after alsa `reset`.
-- Discard amount = ring contents at first notice — **continuous**, not a fixed 117 ms quantum.
-- Does **not** re-arm between plays unless alsa is reset (core reload / audio reset path).
-- **Not** a two-state 117 ms phase detector from source alone.
+Cleared only on `reset` (`alsa.sv:86-91`).  
+Effect: **variable** discard of whatever is queued at first notice — continuous size, **not** a fixed 117 ms quantum, **not** re-armed each play without alsa reset.
 
-**B. Free-running sample NCO** — `alsa.sv:145-154`, `CLK_RATE=24576000`:
+### 1.4 No fill-threshold start
+
+After `got_first`, `rptr!=wptr` immediately schedules RAM read (`alsa.sv:121-127`). **NOT-FOUND:** wait-until-N-ms-buffered state.
+
+### 1.5 `audio_out` post-reset unmute (fixed, reset-only)
 
 ```verilog
-acc <= acc + 48000 + {hurryup,6'd0};
-if(acc >= CLK_RATE) begin acc <= acc - CLK_RATE; ce_sample <= 1; end
+// audio_out.sv:176-196
+if(sample_ce) begin
+    if(!dly2[13+sample_rate]) dly2 <= dly2 + 1'd1;
+    else a_en2 <= 1;
+end
 ```
 
-| Constant | Value |
-|----------|------:|
-| Base sample period | **20.833 µs** (1/48000) |
-| NCO cycles/sample | 512 |
-| Max phase uncertainty vs ARM release | **one sample** (~21 µs), not 117 ms |
+`sample_ce` period at `sample_rate=0`: div counts 512 clk @ 24.576 MHz → 48 kHz (`audio_out.sv:138-149`).  
+Need `dly2[13]` ⇒ **8192** sample ticks.  
+**T_mute = 8192/48000 s = 0.170666… s = 170.666… ms** after **audio_out reset only** (`sys_top.v` `.reset(reset|areset)` on `audio_out`).
 
-**C. `hurryup` rate bend** — `alsa.sv:95-103`: levels 0/1/2/4 from `len` bit thresholds → rate 48000…48256 Hz. **Continuous rate**, not start-phase quantisation.
+- **≠ 117.10 ms** (|170.667−117.10|=53.6 ms).  
+- **Not** a per-session A/B two-state unless reset differs between runs (daemon does not log that).
 
-**D. No fill threshold before drain** after `got_first`: next `rptr!=wptr` issues RAM read immediately (`alsa.sv:121-127`).  
-**No** “wait until N ms buffered then start” state machine in this file.
+### 1.6 I2S bit/frame phase
 
-**E. `audio_out` post-reset mute** — `audio_out.sv:176-196`:
+`audio_out.sv:66-70,86-94` + `i2s.v:25-48`:  
+`CE_RATE = 48000*16*8 = 6144000`; `i2s_ce` half of mclk_ce; 16-bit L/R.  
+Stereo frame period = **1/48000 s = 0.020833 ms** (same sample quantum).
 
-- `a_en2` rises after `dly2[13]` @ `sample_ce` ⇒ **8192 samples ≈ 170.7 ms** mute after **audio_out reset only**.
-- Single fixed post-reset class, **not** a per-session A/B two-state unless reset differs between runs (not logged by daemon).
-- Separation parent needs is **117 ms**, not 171 ms.
+### 1.7 F2 `audio_fifo` (NOT product under MrAudio)
 
-### Verdict Q2 (plain)
+`rtl/audio_fifo.sv:11-12` DEPTH=2048 → **2048/48000 s = 42.666… ms** full depth.  
+Product: `audio_en=0`, F2 skipped — **not the heard path**.
 
-**The product MrAudio FPGA path (`alsa.sv`) cannot, from its RTL constants, produce a two-state start delay separated by ~117 ms.**
+### 1.8 Q1 verdict
 
-Closest free-running period is **20.8 µs**. Closest one-shot fixed mute is **~171 ms after audio_out reset**, not 117 ms, and not re-armed each play without reset.
+**There is no RTL mechanism in the product audio path whose start phase can take two values separated by ~117 ms.**
 
-This is a **correct negative** of the same class as “no stride shear”: source forbids that shape inside `alsa.sv`.  
-It does **not** prove the 117 ms is elsewhere — only that **this** block is not a 117 ms two-phase quantiser.
-
-Residual **unknowns** past this negative (need measurement, not more alsa reading):
-
-- Kernel MrAudio driver start / SPI push timing (source cited as `sound/drivers/MiSTer-audio-spi.c` — **not in this repo**).
-- HDMI sink / capture pipeline phase (external).
-- Video present lag (Q3).
+Falsify this negative: find an in-tree counter/divider with period ∈ (117.10 ± 5) ms on the MrAudio→I2S path. **None found.**  
+If silicon still bimodally delays **first audible sample** by 117 ms with identical `len` trajectory, the cause is **outside** this RTL (kernel driver not in repo, or external HDMI/sink).
 
 ---
 
-## 3. Video present: persistent whole-frame-multiple offset?
+## 2. Readable audio-side counters / mailboxes
 
-### Swap gate (DDR product path)
+### 2.1 EXISTS (not audio phase)
 
-`ddr_frame_store.sv:271-284`:
+| What | Where | Notes |
+|------|-------|--------|
+| MrAudio `rptr/wptr/len/comp` | `/dev/MrAudio` status line | depth; `comp` unused as phase |
+| alsa SPI return `{buf_rptr,hurryup,8'h00}` | `alsa.sv:59-60` | to **kernel** only |
+| PLXD `frames_done`, `swap_pending`, `disp_bank`, `free_bank_mask` | **0x300FF128** | **VIDEO** bank-release |
+
+### 2.2 PLXD4 @ 0x300FF12C — NOT a separate audio mailbox
+
+RTL packs **one** 64-bit word at `BANK_MAILBOX_PHYS = DOORBELL+0x128` (`ddr_frame_store.sv:27,1041-1049`):
+
+```text
+[63:48] frames_done
+[47:36] 12'b0
+[35]    swap_pending
+[34]    disp_bank
+[33:32] free_bank_mask
+[31:0]  magic "PLXD" = 0x504C5844
+```
+
+On a little-endian 32-bit `devmem` view:
+- `0x300FF128` → low 32 = magic  
+- **`0x300FF12C` → high 32 = `{frames_done[15:0], 12'b0, swap, disp, free}`**
+
+Parent’s “PLXD4 advancing monotonically” is **`frames_done` in the upper half** — video swap count, **not** audio.  
+ABI table (`mailbox_abi_spec.hpp:39,53`): offsets end at PLXD `+0x128`; DIAG `+0x120` is SDRAM diag — **NOT-FOUND: audio mailbox**.
+
+### 2.3 Could one be added cheaply?
+
+**Yes, but that is a FIT** (not authorised here). Sketch only: pack `alsa` `buf_rptr`/`len`/`hurryup` into a spare DDR qword on the existing bank-mbox heartbeat — would need RTL+ARM. **Do not implement without exclusive slot.**
+
+### 2.4 Actionable now (no fit)
+
+1. Decode **PLXD high word** already:  
+   `frames_done = (devmem 0x300FF12C) >> 16`  
+2. MrAudio status `len/rptr` trajectory at open (daemon logs).  
+3. **NOT-FOUND** audio phase reg to sample.
+
+---
+
+## 3. Video present phase — quanta, kills, residual
+
+### 3.1 Swap gate (two-state per **display** frame, quantum = 1 frame)
 
 ```verilog
+// ddr_frame_store.sv:271-284
 if (vsync_pulse && swap_pending && pending_ready_s2) begin
     disp_bank <= pending_bank;
-    ...
     frames_done <= frames_done + 16'd1;
 end
 ```
 
-- **1-cycle window** each display frame (`vsync_pulse` = `fstart` from present timing).
-- Missing the window defers to the **next** vsync (classic freeze class when `pending_ready` stuck — `9eb1431a`).
-- Display rate: `Plex.sv:435` `display_hz = status[2] ? 50 : 60` → **16.667 ms** (NTSC) or **20 ms** (PAL) per chance.
+`vsync_pulse` = `fstart` from `colorbars` (`present_core.sv` ties `.vsync_pulse(fstart)`).
 
-### Numerics vs parent sep (arithmetic only — not a cause claim)
+### 3.2 Exact display frame period from RTL
 
-| Quantum | ms |
-|---------|---:|
-| 1× 60 Hz | 16.667 |
-| **7× 60 Hz** | **116.667** |
-| Parent A−B sep | **~117.1** |
-| 3× 24 fps content | 125.000 |
-| 6× 50 Hz | 120.000 |
-| `kFeedTargetBytes` | 100.000 |
+| Constant | Value | Cite |
+|----------|------:|------|
+| `clk_sys` | **20.0 MHz** | `rtl/pll.v` `gui_output_clock_frequency0=20.0`; `Plex.sv:849` `CLK_VIDEO=clk_sys` |
+| `H_LAST` | 637 → **638** clocks/line | `colorbars.sv:39` |
+| NTSC scandouble `vc` wrap | **523** → **524** lines | `colorbars.sv:65-66,77-78` |
+| `ce_pix` scandouble | 1 (every clk) | `colorbars.sv:51-52` |
 
-**7×NTSC frame equals the measured separation within ~0.5 ms.** That is a **numerology flag**, not a finding: **no RTL counter or state machine locks present latency to 7 display frames.**
+**T_disp = 638 × 524 / 20_000_000 s = 334312 / 20e6 s**  
+**T_disp = 0.016715600 s = 16.715600 ms**  
+**fps = 59.824356 Hz** (not exactly 60).
 
-### Can a **session-constant** multi-frame video lag exist?
+Same T for progressive NTSC (`ce_pix`÷2, 262 lines): 638×262×2/20e6 = identical.
 
-**Yes, in principle, for the first picture:**
+### 3.3 Hypothesis table vs measured sep **117.10 ms**
 
-1. Audio gate opens at **first complete rawvideo frame in ARM** (`media_player.cpp` ~3691–3732) — **before** DDR publish/scanout.
-2. Picture appears only after: publish → doorbell → prep (`pending_ready`) → **vsync swap** → beam.
-3. Delay from (1) to first `frames_done++` is **integer display frames** once prep is ready (0 if swap on next vsync, +1,+2,… if `pending_ready` late).
-4. That integer, if stable after first swap, is a **constant A/V content offset** for the session (audio already running from t=0 content at gate open).
+| Hypothesis | Predicted sep | \|err\| vs 117.10 | Verdict |
+|------------|-------------:|------------------:|---------|
+| 1× display frame late | 16.715600 ms | 100.38 ms | **REJECT** as full sep |
+| 2× display | 33.431200 | 83.67 | REJECT |
+| 3× **content** @ 24 fps | **125.000000** | **7.900** | **REJECT** (parent flag correct; 7.9 ms systematic ≠ cluster noise about a 125 ms truth) |
+| 6× display | 100.293600 | 16.81 | REJECT |
+| **7× display** | **117.009200** | **0.091** | **Arithmetically compatible**; **mechanism NOT-FOUND** |
+| 8× display | 133.724800 | 16.62 | REJECT |
+| `a_en2` mute | 170.667 | 53.57 | REJECT as sep |
+| `kFeedTarget` 100 ms | 100.0 | 17.1 | REJECT as sep |
+| F2 fifo full | 42.667 | 74.43 | REJECT (not product path) |
 
-**What source does *not* show:**
+**Kill “3 content frames” properly:**  
+predicted 125.0 − measured 117.10 = **7.9 ms**. Cluster means are defined to 0.01 ms class; a true 125 ms quantum cannot produce a 117.10 ms separation as the inter-cluster gap. **Rejected.**
 
-- A bistable that prefers specifically **7** frames.
-- Cadence (`present_cadence.sv`) gating the bank swap — cadence advances `content_index` for stats; **swap is independent** on every ready doorbell at vsync.
-- Steady-state “lose 3 content frames every session start” as a coded policy.
+**Do not adopt “7 display frames” as cause:**  
+error is only 0.091 ms (tempting), but RTL has **no** state machine that chooses “wait 0 vs wait 7 vsyncs” at session start. Normal path: once `pending_ready`, next `vsync_pulse` swaps (**0..1** frame = **0..16.7156 ms** uniform-ish). Multi-frame delay requires `pending_ready` false across multiple `fstart`s — a **stall/prep** class, not a clean balanced 4/4 bistable coded in RTL.
 
-**Honest bound:**  
-one-frame late = **16.7 ms** (60 Hz); three content frames = **125 ms**; **seven display frames = 116.7 ms matches sep numerically**.  
-Whether silicon ever takes a multi-vsync first present is **unknown — check below**.
+### 3.4 Session-constant present lag is still *possible*
 
-OSD `O[9:6]` Video delay (`Plex.sv:70`) is read by the **daemon** as `avOffsetMs_` (ARM pacer), **20 ms steps** — not an FPGA two-state, and not 117 ms.
+Timeline from source:
+
+1. Gate open = first **complete rawvideo frame in ARM** (`media_player.cpp` audio_release) — audio may start.  
+2. Publish + doorbell + prep → `pending_ready` → swap on `fstart` → pixels.  
+3. Delay (1)→(2) is integer×T_disp after prep ready.
+
+If that integer differed by 7 between clusters and then held, HDMI sep would match.  
+**Source does not force that integer to be bimodal at 7.**  
+**Measurement must decide.**
+
+### 3.5 Falsifiable prediction (video)
+
+**Pre-register:**
+
+- `t0` = mono at `media: A/V audio_release`  
+- `t1` = mono when PLXD `frames_done` first increments after play start  
+- `N = round((t1-t0) / 16.715600 ms)`
+
+| Outcome | Interpretation |
+|---------|----------------|
+| Cluster A and B have **same** N (e.g. both 0 or 1) while HDMI sep stays 117 | **Video present lag is NOT the 117 ms cause** → FPGA video region weakened; look kernel/HDMI/sink |
+| Cluster A/B differ by **ΔN ≈ 7** (Δt ≈ 117 ms) | Video present **is** the discriminator; then hunt why prep/swap waits ~7 frames (still need mechanism — may be ARM publish timing vs vsync, still not a coded bistable) |
+| ΔN ≈ 1 (16.7 ms) only | Explains a slice of offset, **not** full sep |
+
+Also sample `swap_pending` bit in PLXD high word during wait: stuck 1 for many vsyncs ⇒ prep path.
 
 ---
 
-## 4. What would OBSERVE a cluster discriminator?
+## 4. Region elimination map
 
-### A. Already on ARM (use across A/B)
-
-| Measurable | How | Expect if audio-path phase |
-|------------|-----|----------------------------|
-| `ring_at_open` / `ring_after_first_write` | daemon logs (`rptr/wptr/len`) | differ if start depth/phase differs; **identical ⇒ weakens ring-depth story** (parent trajectory still useful) |
-| `held_ms` / `hold_wall_ms` | already | parent: Δ=5 — **killed** |
-| Steady `lat_ms` ~100 | servo target | same both clusters by construction |
-
-### B. Video present lag (best on-device discriminator for Q3)
-
-**PLXD bank mailbox — product address:**
-
-- Doorbell `0x300FF000` + `0x128` = **`0x300FF128`**
-- Magic `0x504C5844` (“PLXD”) low 32 bits  
-  (`mailbox_abi_spec.hpp`, `ddr_frame_store.sv:1033-1049`)
-
-Packed word (FPGA→ARM):
-
-| bits | field |
-|------|--------|
-| [31:0] | magic PLXD |
-| [33:32] | `free_bank_mask` |
-| [34] | `disp_bank` |
-| [35] | `swap_pending` |
-| [63:48] | **`frames_done`** (monotonic **swap** count) |
-
-**Parent check (device-owned):**
-
-```bash
-# After cast start, poll PLXD (busybox devmem). STRICT_DEVMEM may block dd;
-# devmem 64-bit read of 0x300FF128 if available:
-# Decode: magic==PLXD, frames_done = word[63:48]
+```text
+                    ┌─ daemon observables ── KILLED (parent P5)
+                    │
+ ARM write ─────────┼─ kernel MrAudio SPI driver ── NOT IN REPO (open)
+                    │
+                    ├─ alsa.sv + audio_out + i2s ── ELIMINATED as 117ms two-state
+                    │
+                    ├─ video swap/present ── OPEN pending frames_done lag test
+                    │
+                    └─ HDMI scaler/sink/capture ── outside this RTL
 ```
 
-**Prediction to pre-register before measuring:**
-
-- Log wall/`mono_ms` at `A/V audio_release` (daemon already).
-- Poll until `frames_done` increments from the pre-play baseline.
-- **Δt = t(first frames_done++) − t(audio_release).**
-
-| If Δt clusters at ~0–17 ms both A and B | multi-frame present lag **weak** as 117 ms cause |
-| If Δt differs by ~117 ms (e.g. ~0 vs ~7×16.7) between HDMI clusters | **video present** is the discriminator |
-| If Δt identical and HDMI still bimodal | present lag **not** the 117 ms; look **past** PLXD (HDMI/sink/capture) or kernel audio |
-
-Also sample `swap_pending` bit[35]: stuck 1 across many vsyncs ⇒ prep/path stall class (should also hurt picture).
-
-### C. Audio FPGA — **no** DDR phase register
-
-- `alsa.sv` exposes `{buf_rptr, hurryup, 8'h00}` on **SPI miso** only (`alsa.sv:59-60`) — consumed by the **kernel** into the MrAudio status line (`rptr`, and whatever it maps from the rest).
-- **No** HPS-mapped audio phase / sample-counter mailbox in the Plex DDR map.
-- `comp:` on the status line is parsed (`mraudio_status.hpp`) but **not** used as a product phase sensor.
-- Core `stat_has_audio` / `audio_underrun` reflect **F2 FIFO**, not MrAudio (`present_core.sv` + `Plex.sv:748 audio_en=0`) — **do not** treat them as MrAudio underrun evidence.
-
-### D. External (already authoritative for lipsync)
-
-`tools/avsync_measure_hdmi.py` — only valid lipsync judge (fleet broadcast).  
-Pair with (B) to split “video late” vs “audio early” vs “neither on FPGA”.
-
-### E. Kernel driver (out of tree)
-
-`sound/drivers/MiSTer-audio-spi.c` is **cited** in `mraudio_status.hpp` but **not present** in this repo.  
-Unknown without that source: buffer commit points, SPI update rate, whether open() resets FPGA-visible pointers in a two-valued way.  
-**Check that would settle it:** read that file on the MiSTer rootfs / linux tree the image was built from.
+**Honest negative (audio RTL):** same class as stride-shear negative.  
+**Not a claim the bug is “the handoff”** — only that **in-tree audio RTL cannot be the 117 ms bistable.**
 
 ---
 
-## 5. Summary table for parent
+## 5. Sim note
 
-| # | Question | Source answer |
-|---|----------|----------------|
-| 1 | Observability end | `::write(/dev/MrAudio)`; after that only `len/rptr/wptr` depth, not audible phase |
-| 2 | Audio two-state ~117 ms in FPGA? | **NO** in `alsa.sv` — periods 20.8 µs / optional ~171 ms post-reset mute / variable got_first discard. **Correct negative.** |
-| 3 | Video multi-frame present offset? | **Possible** (vsync + pending_ready); 1 frame=16.7 ms; **7×60 Hz=116.7 ms matches sep numerically** but **no coded 7-frame bistable**. Measure `frames_done` vs `audio_release`. |
-| 4 | Best new observable | **Δ(audio_release → first PLXD frames_done++)** @ `0x300FF128`; plus ring_at_open trajectory; HDMI remains ground truth |
-
-**Do not** use `av_drift_ms` / `clock=av-lock` as PASS.  
-**Do not** fit Quartus for this — no RBF change is justified by this analysis alone.
+No sim proposed that claims to reproduce 117 ms bimodality: **no RTL mechanism to RED against.**  
+A compile-only “phase TB” would manufacture false confidence.  
+If a future audio-phase mailbox is added, TB must RED without it / GREEN with observability — after FIT grant.
 
 ---
 
-## 6. Line index (primary quotes)
+## 6. Primary citations
 
-- `host/libmisterplex/mraudio_status.hpp:4-14,33,111-117,149`
-- `arm/misterplexd/media_player.cpp` `writePacedChunk` `::write`; gate ~3442+; release ~3691+
-- `fpga/Plex_MiSTer/sys/alsa.sv:59-60,86-91,95-103,116-127,145-154`
-- `fpga/Plex_MiSTer/sys/audio_out.sv:176-196,246-258` (alsa mix)
-- `fpga/Plex_MiSTer/sys/sys_top.v` `audio_out` + `alsa` instance
-- `fpga/Plex_MiSTer/Plex.sv:37,70,435,748`
-- `fpga/Plex_MiSTer/rtl/ddr_frame_store.sv:271-284,1033-1049`
-- `fpga/Plex_MiSTer/rtl/audio_fifo.sv:11-12` (F2 only)
-- `host/libmisterplex/mailbox_abi_spec.hpp` PLXD offset `0x128`, magic
+- `fpga/Plex_MiSTer/sys/alsa.sv:24,59-60,86-91,95-103,116-127,149-153`  
+- `fpga/Plex_MiSTer/sys/audio_out.sv:24,66-70,86-94,138-149,176-196,246-275`  
+- `fpga/Plex_MiSTer/sys/i2s.v:25-48`  
+- `fpga/Plex_MiSTer/sys/pll_audio.v` (24.576 MHz)  
+- `fpga/Plex_MiSTer/sys/sys_top.v` audio_out + alsa instance  
+- `fpga/Plex_MiSTer/Plex.sv:748` `audio_en=0`; `:849` `CLK_VIDEO=clk_sys`  
+- `fpga/Plex_MiSTer/rtl/pll.v` 20.0 MHz outclk_0  
+- `fpga/Plex_MiSTer/rtl/colorbars.sv:39,51-52,65-78`  
+- `fpga/Plex_MiSTer/rtl/ddr_frame_store.sv:27,271-284,1041-1049`  
+- `fpga/Plex_MiSTer/rtl/audio_fifo.sv:11-12` (F2 only)  
+- `host/libmisterplex/mailbox_abi_spec.hpp` PLXD +0x128; no audio mbox  
+- `host/libmisterplex/mraudio_status.hpp:4-14,33,149`

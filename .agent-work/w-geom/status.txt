@@ -1,19 +1,22 @@
 worker=w-geom
-branch_integ=w-integ-m0-p5-osd
-sha_integ=1e01bb0bee4f143e9f8d0c8bd62ce470265cd5f7
-md5_integ=239c6bc7f9dadfd68b2a6a9f93f35fd4
-branch_report=w-avsync-hdmi-measure
-sha_report=08e73a041968462d64e509163996de2c21dfdcb6
+task=rtl-117ms-bimodal-source
+branch=w-avsync-hdmi-measure
+note=.agent-work/w-geom/fpga-av-path-117ms.md
 
-## geometry (prior)
-T1 FORCE_SCALE Always→449280; B4/B5/B1 host-closed; make unit/arm rc=0 @1e01bb0b
+AUDIO_RTL_117ms_TWO_STATE=NO (correct negative)
+  sample_quantum_ms=0.020833333 (24576000/48000)
+  a_en2_post_reset_mute_ms=170.6666667 (8192/48000)
+  got_first=one-shot variable discard, reset only
+  fill_threshold_start=NOT_FOUND
+  F2_fifo_ms=42.666 (not product path; audio_en=0)
 
-## FPGA A/V path vs 117ms (SOURCE ONLY)
-full=.agent-work/w-geom/fpga-av-path-117ms.md
+AUDIO_MAILBOX=NOT_FOUND
+  PLXD4@0x300FF12C = high word of PLXD = frames_done VIDEO not audio
 
-Q1: control ends ::write(/dev/MrAudio); after = kernel+alsa+audio_out+HDMI
-Q2: alsa.sv NO 117ms two-state — sample 20.833us; got_first one-shot; a_en2~170.7ms post-reset only. CORRECT NEGATIVE.
-Q3: video swap vsync-gated; 7*60Hz=116.67ms ≈ sep (numerology only); measure frames_done lag
-Q4: PLXD 0x300FF128 frames_done[63:48]; Δ(audio_release→first frames_done++) ; no audio phase reg
+VIDEO:
+  T_disp_ms=16.715600 exact (638*524/20e6) NTSC@20MHz colorbars
+  H_3content_125ms=REJECTED (|125-117.10|=7.9ms)
+  H_7disp_117.009200=arith_match_err_0.091ms mechanism=NOT_FOUND
+  observe=Δ(audio_release→first frames_done++) / 16.715600
 
-updated=2026-08-01T03:50:00Z
+NO_FIT no_device

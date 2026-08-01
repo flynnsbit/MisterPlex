@@ -1314,16 +1314,17 @@ if(!len[18:10]) hurryup <= 0;
 2. Keep using **HDMI instrument Δ** as ground truth; do not promote `av_drift_ms` or origin-record equality into “in sync”.
 3. Do **not** treat hold redesign as the 117 ms fix (measurement already killed that).
 
-### w-geom FPGA path source (117 ms clusters)
+### w-geom FPGA path source (117 ms clusters) — hardened
 
-Full note: `.agent-work/w-geom/fpga-av-path-117ms.md` (source-only; no fit).
+Full note: `.agent-work/w-geom/fpga-av-path-117ms.md`.
 
-| Q | Answer (bounded) |
-|---|------------------|
-| Daemon control ends | `::write(/dev/MrAudio)` — after that kernel ring + `sys/alsa.sv` NCO + `audio_out` + HDMI |
-| FPGA audio two-state @ ~117 ms? | **NO** in `alsa.sv`: free-run sample period **20.833 µs**; `got_first` snap is one-shot variable discard; `hurryup` is rate bend; `audio_out` `a_en2` mute ≈**170.7 ms after reset only**. Correct negative. |
-| Video multi-frame present? | Swap only on `vsync_pulse && swap_pending && pending_ready_s2` (`ddr_frame_store.sv`). 1×60 Hz=16.7 ms; **7×60 Hz=116.67 ms ≈ parent sep** (numerology, not a coded bistable). First picture can lag gate-open by N display frames. |
-| Observe | PLXD **`0x300FF128`**: `frames_done[63:48]`; measure **Δ(audio_release → first frames_done++)** across clusters. No DDR audio-phase reg. MrAudio `rptr/len` only. F2 `stat_has_audio` is **not** MrAudio. |
+| Q | Answer |
+|---|--------|
+| Audio two-state @ 117 ms? | **NO (correct negative).** Quanta: sample **0.020833 ms** (`alsa.sv` 24576000/48000); I2S frame same; `a_en2` mute **170.667 ms after audio_out reset only**; `got_first` one-shot variable discard. No fill-threshold start. |
+| Audio mailbox? | **NOT-FOUND.** `0x300FF12C` (“PLXD4”) = **high word of PLXD** = `frames_done` (video), not audio. |
+| Video / 3 content frames? | **REJECTED:** 3×24 fps = **125.0 ms**, \|125−117.10\|=**7.9 ms**. |
+| Video / 1 vsync? | Exact **T_disp = 638×524/20e6 = 16.715600 ms** (colorbars+20 MHz). One-frame late ≠ 117 ms. |
+| Video / 7×T_disp? | **7×T = 117.009200 ms** (err 0.091 ms vs 117.10) — arithmetic match only; **no RTL bistable for 0 vs 7**. Measure `frames_done` lag. |
+| Observe | `frames_done=(devmem 0x300FF12C)>>16`; Δ(audio_release→first frames_done++) / 16.715600 → N; A vs B. |
 
-Kernel `MiSTer-audio-spi.c` is **not in this repo** — still an unexamined layer between `write()` and `alsa.sv`.
-
+**Audio in-tree RTL eliminated as 117 ms bistable. Video open until lag measured. Kernel MrAudio driver still out of repo.**
