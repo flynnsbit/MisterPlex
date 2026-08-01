@@ -7,7 +7,9 @@
 # Usage (parent; agents must not SSH):
 #   scripts/fetch_daemon_pins.sh              # both SPI + DDR pins
 #   scripts/fetch_daemon_pins.sh spi          # 50f4eb92 only
-#   scripts/fetch_daemon_pins.sh ddr          # e9f79de2 only
+#   scripts/fetch_daemon_pins.sh ddr          # live primary (9ce2c2d1)
+#   scripts/fetch_daemon_pins.sh 9ce2c2d1     # current glass-verified live
+# Host lane-build pin (no SSH): scripts/pin_daemon_artifact.sh <path>
 #
 # Env: MISTER_HOST (default 192.168.1.183), MISTER_PASS (default 1)
 #
@@ -31,13 +33,15 @@ scp_from() {
   sshpass -p "$PASS" scp -o StrictHostKeyChecking=no -o ConnectTimeout=12 "$USER@$HOST:$1" "$2"
 }
 
-# Pins by prefix8 (full md5 verified after fetch). Primary DDR = 3883f5ab.
+# Pins by prefix8 (full md5 verified after fetch). Primary DDR = 9ce2c2d1.
 # shellcheck disable=SC2034
 SPI_MD5=50f4eb925de10e29172999a565c87684
 SPI_PFX=50f4eb92
 DDR_HIST_MD5=e9f79de217982aff44207664fdb945c5
 DDR_HIST_PFX=e9f79de2
-DDR_LIVE_PFX=3883f5ab   # full filled after fetch; live process is source of truth
+DDR_LIVE_MD5=9ce2c2d13d1c8712683289043e99002c
+DDR_LIVE_PFX=9ce2c2d1   # current glass-verified; live /proc/exe is source of truth
+DDR_3883_PFX=3883f5ab   # prior live — accepted rollback
 DDR_EDC3_PFX=edc3a46b   # accepted rollback pin
 
 fetch_one() {
@@ -161,20 +165,24 @@ case "$WANT" in
   hist|e9f79de2|ddr-hist)
     fetch_one ddr_hist "$DDR_HIST_MD5" misterplexd.e9f79de2 || rc=$?
     ;;
-  ddr|3883f5ab|live)
-    fetch_one ddr_live "$DDR_LIVE_PFX" misterplexd.3883f5ab || rc=$?
+  ddr|live|9ce2c2d1|primary)
+    fetch_one ddr_live "$DDR_LIVE_MD5" misterplexd.9ce2c2d1 || rc=$?
+    ;;
+  3883f5ab)
+    fetch_one ddr_3883 "$DDR_3883_PFX" misterplexd.3883f5ab || rc=$?
     ;;
   edc3a46b)
     fetch_one ddr_edc3 "$DDR_EDC3_PFX" misterplexd.edc3a46b || rc=$?
     ;;
   both|all|"")
     fetch_one spi "$SPI_MD5" misterplexd.50f4eb92 || rc=$?
-    fetch_one ddr_live "$DDR_LIVE_PFX" misterplexd.3883f5ab || rc=$?
+    fetch_one ddr_live "$DDR_LIVE_MD5" misterplexd.9ce2c2d1 || rc=$?
+    fetch_one ddr_3883 "$DDR_3883_PFX" misterplexd.3883f5ab || true
     fetch_one ddr_edc3 "$DDR_EDC3_PFX" misterplexd.edc3a46b || true
     fetch_one ddr_hist "$DDR_HIST_MD5" misterplexd.e9f79de2 || true
     ;;
   *)
-    echo "usage: $0 {both|spi|ddr|3883f5ab|edc3a46b|hist|e9f79de2}" >&2
+    echo "usage: $0 {both|spi|ddr|live|9ce2c2d1|3883f5ab|edc3a46b|hist|e9f79de2}" >&2
     echo "true rc=9"
     exit 9
     ;;

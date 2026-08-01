@@ -21,7 +21,7 @@ Parent-owned device work only. Agents produce artifacts and commands; they must
 | **P7 real title** | synthetic flash fixture soaks | **OPEN.** One real title end-to-end on **viewed pixels** required. Telemetry-only play (even healthy `pfps`/`drops`) does not close P7. w-plextv-1 E2E owns the suite; acceptance below. |
 | **Soak continuity** | flat drops across N minutes | Must assert **one** `session_epoch` (`supply_bucket` / media lines). Daemon `rc=0` respawns reset per-stream counters. Tool: `tools/soak_continuity_assert.py --require-single-session-epoch`. |
 | **V2_MD5 blind-RED** | gate stuck on `…81848set +e` | Capture fixed at `23fc28d4`/`33cbac42` (single-heredoc + shape SKIP equality); **never trim comparison**. Parent must re-run from worktree HEAD (`e8f416cd`+). Pre-`2bdd18ea` SHAs still glue. |
-| **Live daemon `9ce2c2d1`** | (parent measured healthy live) | **UNKNOWN from repo pins** — not in `artifacts/daemon-pins/`, not in `rbf_policy_ddr_daemon_accepted`. Agent notes *claim* tip `bc3d3484` but no measured host binary md5 matches. **Do not treat as validated pair.** `verify-live` must FAIL live-exe until pinned. |
+| **Live daemon `9ce2c2d1`** | was unpinned lane `build/` | **PINNED PRIMARY** `9ce2c2d13d1c8712683289043e99002c` → `artifacts/daemon-pins/misterplexd.9ce2c2d1` (from w-osd-hires build; parent glass OK). Pair `ddr-8fdf440f-9ce2c2d1`. Lane build/ **OK to pin as-is** when md5==live `/proc/exe`; rebuild only if `cmp`-identical. |
 
 ## Mutation-proven gates (host: `bash tests/unit/test_promote_runbook_mutations.sh`)
 
@@ -299,23 +299,37 @@ Historical parent pins (accepted set only if full md5 matches policy):
 `7c991e47`, `36b89bcb`, `3883f5ab`, `edc3a46b`, `e9f79de2`, `b981fd20`.
 Verify live exe via `readlink -f /proc/PID/exe` — never disk alone.
 
-### Live daemon `9ce2c2d1` — UNKNOWN (rule 0)
+### Live daemon `9ce2c2d1` — PINNED PRIMARY (2026-08-01)
 
-Parent measured live `/proc/PID/exe` md5 prefix **`9ce2c2d1`** (healthy:
-`n_daemon=1`, `/resources`=200). **Repo evidence:**
+Parent identified live `/proc/PID/exe` as lane build
+`.worktrees/w-osd-hires/build/arm/misterplexd` md5
+**`9ce2c2d13d1c8712683289043e99002c`** (healthy glass). That binary is now a
+first-class pin:
 
-| Check | Result |
-|-------|--------|
-| `artifacts/daemon-pins/*` | no file / no md5 `9ce2…` |
-| `rbf_policy_ddr_daemon_accepted 9ce2c2d1` | **rc=1** (rejected) |
-| host `find` of `misterplexd` binaries under tree | **no** md5 starting `9ce2c2d1` |
-| agent notes (`.agent-work/w-cpu-1`, `w-geom`) | *claim* pair with tip `bc3d3484` — **not** a pin artifact |
+| Item | Value |
+|------|--------|
+| Pin path | `artifacts/daemon-pins/misterplexd.9ce2c2d1` (gitignored ELF) |
+| Provenance | `artifacts/daemon-pins/PROVENANCE-9ce2c2d1.txt` (tracked) |
+| Policy primary | `DAEMON_PIN_DDR_PRIMARY_FULL=9ce2c2d1…` |
+| Pair id | `ddr-8fdf440f-9ce2c2d1` / default promote |
+| Accepted? | `rbf_policy_ddr_daemon_accepted` **rc=0** |
 
-**Conclusion: unknown — not a validated promote artifact.** Do not invent
-`ddr-…+9ce2` pair. To validate: parent `md5sum $(readlink -f /proc/PID/exe)` full
-32-hex, scp to `artifacts/daemon-pins/misterplexd.9ce2c2d1`, record soak, then
-add to policy only after glass evidence. Until then `verify-live` correctly
-**FAIL live-exe-md5** if EXPECT/accepted set excludes it.
+**Lane `build/` OK to pin as-is** when md5 equals device live exe and glass
+evidence exists. Do **not** require a clean rebuild first — rebuilds often are
+not byte-identical; the rollback target is the measured working ELF. Optional
+repro: rebuild then `cmp -s rebuild pin` before replacing the pin.
+
+```bash
+# re-pin / verify (host)
+WT=/home/flynnsbit/Projects/MisterPlex/.worktrees/rollback-honest
+SRC=$WT/../w-osd-hires/build/arm/misterplexd
+md5sum "$SRC"   # 9ce2c2d13d1c8712683289043e99002c
+PIN_NOTE='w-osd-hires glass' "$WT/scripts/pin_daemon_artifact.sh" "$SRC"; echo "true rc=$?"
+# or from live device (parent):
+# "$WT/scripts/pin_daemon_artifact.sh" --from-device-live; echo "true rc=$?"
+"$WT/scripts/pair_ship_policy.sh" find-daemon 9ce2c2d1; echo "true rc=$?"
+"$WT/scripts/pair_ship_policy.sh" lookup ddr-8fdf440f-9ce2c2d1; echo "true rc=$?"
+```
 
 ## Probe capture (V2_MD5 `set +e` glue)
 

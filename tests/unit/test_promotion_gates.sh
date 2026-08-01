@@ -122,8 +122,8 @@ echo "  true rc=$rc"
 [ "$rc" -eq 3 ] && ok "policy-local-daemon-mismatch" || bad "policy-local-daemon-mismatch rc=$rc"
 
 # --- verify-live via blob inject --------------------------------------------
-# Primary DDR daemon pin is 3883f5ab (parent hand-deploy 2026-08-01).
-EDC_LIVE=3883f5ab8744e070e7b0820c6b9b4376
+# Primary DDR daemon pin is 9ce2c2d1 (parent glass 2026-08-01; w-osd-hires).
+EDC_LIVE=9ce2c2d13d1c8712683289043e99002c
 cat >"$WORK/live_ok.blob" <<BLOB
 PRODUCT_CORE=/media/fat/_Utility/Plex.rbf
 PRODUCT_MD5=c5382bee73cecdee8220b811e529c297

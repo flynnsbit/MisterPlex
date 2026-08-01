@@ -57,11 +57,17 @@ RBF_PIN_DDR_PROMOTE_FULL="${RBF_PIN_DDR_PROMOTE_FULL:-$RBF_PIN_DDR_GLASS_OK_FULL
 DAEMON_PIN_V2_HYBRID_FULL=50f4eb925de10e29172999a565c87684
 DAEMON_PIN_V2_RELEASE_FULL=7cd10b4d438c714a9b8c4766dc982d59
 # DDR daemon pin chain (do NOT weaken mixed-pair gate):
-#   3883f5ab  CURRENT live (parent hand-deploy 2026-08-01; /proc/20943/exe)
+#   9ce2c2d1  CURRENT live (parent 2026-08-01): w-osd-hires chevron fix, glass OK
+#             full 9ce2c2d13d1c8712683289043e99002c — pin artifacts/daemon-pins/
+#   3883f5ab  prior live — accepted rollback
+#   36b89bcb  integ/osd-ledger-480p — accepted rollback
+#   7c991e47  post-raster restore — accepted (prefix8; full via pin if present)
 #   edc3a46b  prior DDR primary — accepted rollback
 #   5996385a  w-instr instrumented — accepted alternate
 #   b981fd20  on-device bak — accepted rollback
 #   e9f79de2  first silicon-correct DDR — accepted rollback
+DAEMON_PIN_DDR_9CE2C2D1_FULL=9ce2c2d13d1c8712683289043e99002c
+DAEMON_PIN_DDR_9CE2C2D1_PREFIX8=9ce2c2d1
 DAEMON_PIN_DDR_3883F5AB_FULL=3883f5ab8744e070e7b0820c6b9b4376
 DAEMON_PIN_DDR_3883F5AB_PREFIX8=3883f5ab
 # integ/osd-ledger-480p @ 533a4bca — parent live 2026-08-01 (frame-ledger + pause overlay)
@@ -78,8 +84,8 @@ DAEMON_PIN_DDR_5996385A_PREFIX8=5996385a
 DAEMON_PIN_DDR_B981_PREFIX8=b981fd20
 DAEMON_PIN_DDR_B981_FULL="${DAEMON_PIN_DDR_B981_FULL:-b981fd20}"
 DAEMON_PIN_DDR_E9F79DE2_FULL=e9f79de217982aff44207664fdb945c5
-# Primary = current live pin (override with DAEMON_PIN_DDR_PRIMARY_FULL).
-DAEMON_PIN_DDR_PRIMARY_FULL="${DAEMON_PIN_DDR_PRIMARY_FULL:-$DAEMON_PIN_DDR_3883F5AB_FULL}"
+# Primary = currently-live verified pin (parent glass + pin file). Override OK.
+DAEMON_PIN_DDR_PRIMARY_FULL="${DAEMON_PIN_DDR_PRIMARY_FULL:-$DAEMON_PIN_DDR_9CE2C2D1_FULL}"
 DAEMON_PIN_DDR_PRIMARY_PREFIX8="${DAEMON_PIN_DDR_PRIMARY_FULL:0:8}"
 # Back-compat aliases
 DAEMON_PIN_DDR_CANDIDATE_FULL="${DAEMON_PIN_DDR_CANDIDATE_FULL:-}"
@@ -124,9 +130,20 @@ rbf_policy_resolve_ddr_daemon_full() {
     return 0
   fi
   root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-  for pref in     "${DAEMON_PIN_DDR_5996385A_PREFIX8}"     "${DAEMON_PIN_DDR_B981_PREFIX8}"     "${DAEMON_PIN_DDR_EDC3_PREFIX8}"
+  # Prefer pin file for PRIMARY prefix first (live verified bytes), then rollbacks.
+  for pref in \
+    "${DAEMON_PIN_DDR_9CE2C2D1_PREFIX8}" \
+    "${DAEMON_PIN_DDR_3883F5AB_PREFIX8}" \
+    "${DAEMON_PIN_DDR_36B89BCB_PREFIX8}" \
+    "${DAEMON_PIN_DDR_7C991E47_PREFIX8}" \
+    "${DAEMON_PIN_DDR_5996385A_PREFIX8}" \
+    "${DAEMON_PIN_DDR_B981_PREFIX8}" \
+    "${DAEMON_PIN_DDR_EDC3_PREFIX8}" \
+    "${DAEMON_PIN_DDR_E9F79DE2_FULL:0:8}"
   do
-    for pin in       "$root/artifacts/daemon-pins/misterplexd.${pref}"       "/home/flynnsbit/Projects/MisterPlex/artifacts/daemon-pins/misterplexd.${pref}"
+    for pin in \
+      "$root/artifacts/daemon-pins/misterplexd.${pref}" \
+      "/home/flynnsbit/Projects/MisterPlex/artifacts/daemon-pins/misterplexd.${pref}"
     do
       [ -f "$pin" ] || continue
       m=$(md5sum "$pin" | awk '{print $1}')
@@ -137,7 +154,7 @@ rbf_policy_resolve_ddr_daemon_full() {
     done
   done
   # Known full primary constant (no pin file required for gate identity).
-  printf '%s' "$(rbf_policy_normalize_md5 "${DAEMON_PIN_DDR_PRIMARY_FULL:-$DAEMON_PIN_DDR_EDC3_FULL}")"
+  printf '%s' "$(rbf_policy_normalize_md5 "${DAEMON_PIN_DDR_PRIMARY_FULL:-$DAEMON_PIN_DDR_9CE2C2D1_FULL}")"
   return 0
 }
 
@@ -148,7 +165,7 @@ rbf_policy_ddr_daemon_accepted() {
   [ "${#d}" -ge 8 ] || return 1
   p8="${d:0:8}"
   case "$p8" in
-    "$DAEMON_PIN_DDR_3883F5AB_PREFIX8"|"$DAEMON_PIN_DDR_36B89BCB_PREFIX8"|"$DAEMON_PIN_DDR_5996385A_PREFIX8"|"$DAEMON_PIN_DDR_B981_PREFIX8"|"$DAEMON_PIN_DDR_EDC3_PREFIX8"|"${DAEMON_PIN_DDR_E9F79DE2_FULL:0:8}")
+    "$DAEMON_PIN_DDR_9CE2C2D1_PREFIX8"|"$DAEMON_PIN_DDR_3883F5AB_PREFIX8"|"$DAEMON_PIN_DDR_36B89BCB_PREFIX8"|"$DAEMON_PIN_DDR_7C991E47_PREFIX8"|"$DAEMON_PIN_DDR_5996385A_PREFIX8"|"$DAEMON_PIN_DDR_B981_PREFIX8"|"$DAEMON_PIN_DDR_EDC3_PREFIX8"|"${DAEMON_PIN_DDR_E9F79DE2_FULL:0:8}")
       return 0 ;;
   esac
   return 1

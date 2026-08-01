@@ -419,14 +419,15 @@ echo "OK restore-refuse-atomic rc=10"
 
 # --- PAIR_ID=ddr-c5382bee (primary recovery) red-before-green ---------------
 DDR_CORE=c5382bee73cecdee8220b811e529c297
-echo "=== DDR pair lookup OK (primary=3883f5ab) ==="
+CUR_FULL=9ce2c2d13d1c8712683289043e99002c
+echo "=== DDR pair lookup OK (primary=9ce2c2d1 live verified) ==="
 set +e
 out=$("$ROOT/scripts/pair_ship_policy.sh" lookup ddr-c5382bee 2>&1)
 rc=$?
 set -e
 [ "$rc" -eq 0 ] || { echo "FAIL ddr lookup rc=$rc"; exit 1; }
 echo "$out" | grep -q "$DDR_CORE" || { echo "FAIL ddr core pin"; exit 1; }
-echo "$out" | grep -qiE '3883f5ab|PAIR_DAEMON_MD5=3883' || { echo "FAIL ddr daemon pin 3883f5ab: $out"; exit 1; }
+echo "$out" | grep -qiE '9ce2c2d1|PAIR_DAEMON_MD5=9ce2' || { echo "FAIL ddr daemon pin 9ce2c2d1: $out"; exit 1; }
 echo "$out" | grep -q 'PAIR_CONF_PROFILE=ddr' || { echo "FAIL conf profile"; exit 1; }
 echo "OK ddr-lookup"
 set +e
@@ -458,9 +459,9 @@ echo "$LAST_OUT" | grep -qE 'MISSING_DAEMON_PIN|fetch_daemon_pins|ATOMIC_ROLLBAC
 echo "OK ddr-preflight-refuse-no-pin rc=10"
 
 EDC_FULL=edc3a46b9d1c6b86337deb90f896eb0f
-CUR_FULL=3883f5ab8744e070e7b0820c6b9b4376
+# CUR_FULL set above = 9ce2c2d1 primary
 
-echo "=== DDR primary preflight OK when disk already 3883f5ab (green) ==="
+echo "=== DDR primary preflight OK when disk already 9ce2c2d1 (green) ==="
 write_scen <<SCEN
 product_md5=$DDR_CORE
 core_md5=$DDR_CORE
@@ -502,7 +503,7 @@ PAIR_ID=ddr-c5382bee PAIR_IDLE_PNG="$WORK/idle_ok.png" ROLLBACK_REQUIRE_VISUAL=1
 [ "$LAST_RC" -eq 0 ] || { echo "FAIL ddr-cur-vis want 0 got $LAST_RC"; exit 1; }
 echo "$LAST_OUT" | grep -q 'OK pair-compatibility' || { echo "FAIL cur pair"; exit 1; }
 echo "$LAST_OUT" | grep -q 'OK conf-profile=ddr' || { echo "FAIL ddr conf profile"; exit 1; }
-echo "OK ddr-3883f5ab-verify rc=0"
+echo "OK ddr-9ce2c2d1-verify rc=0"
 
 echo "=== DDR verify FAILS without conf keys (half-state conf) ==="
 write_scen <<SCEN

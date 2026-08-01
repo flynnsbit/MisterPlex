@@ -72,16 +72,19 @@ BASE_CORE_MD5=dfebf2bfd08dd70b473b587dd7e81848
 # regression and must fail.
 BASE_DAEMON_MD5=7cd10b4d438c714a9b8c4766dc982d59
 # Daemon pin chain (do NOT weaken — unknown md5 still FAILs):
-#   3883f5ab  CURRENT live DDR (parent 2026-08-01 hand-deploy verified).
+#   9ce2c2d1  CURRENT live DDR (parent glass 2026-08-01; w-osd-hires chevron).
+#   3883f5ab  prior live — accepted rollback.
+#   7c991e47  post-raster — accepted prefix8.
 #   edc3a46b  prior primary — accepted rollback.
 #   5996385a  w-instr instrumented — accepted alternate.
 #   b981fd20  on-device bak — accepted DDR rollback.
 #   e9f79de2  first silicon-correct DDR — accepted rollback.
-#   50f4eb92  SPI hybrid clamp path — accepted SPI rollback.
+#   50f4eb92  SPI hybrid clamp path — accepted SPI rollback (NOT current live).
 #   3e2cbb98  older hybrid — accepted rollback.
 #   7cd10b4d  BASE release (above).
-HYBRID_DAEMON_PREFIX8=3883f5ab
-HYBRID_DAEMON_MD5_DEFAULT=3883f5ab8744e070e7b0820c6b9b4376
+# Name HYBRID_* is historical; value is CURRENT expected live DDR pin.
+HYBRID_DAEMON_PREFIX8=9ce2c2d1
+HYBRID_DAEMON_MD5_DEFAULT=9ce2c2d13d1c8712683289043e99002c
 if [ -f "${REPO:-$(cd "$(dirname "$0")/.." && pwd)}/artifacts/daemon-pins/misterplexd.${HYBRID_DAEMON_PREFIX8}" ]; then
   HYBRID_DAEMON_MD5=$(md5sum "${REPO:-$(cd "$(dirname "$0")/.." && pwd)}/artifacts/daemon-pins/misterplexd.${HYBRID_DAEMON_PREFIX8}" | awk '{print $1}')
   if [ "${HYBRID_DAEMON_MD5:0:8}" != "$HYBRID_DAEMON_PREFIX8" ]; then
@@ -96,6 +99,7 @@ DDR_CUR_DAEMON_MD5="$HYBRID_DAEMON_MD5"
 DDR_B981_DAEMON_MD5="${DDR_B981_DAEMON_MD5:-b981fd20}"
 DDR_EDC3_DAEMON_MD5=edc3a46b9d1c6b86337deb90f896eb0f
 DDR_HIST_DAEMON_MD5=e9f79de217982aff44207664fdb945c5
+DDR_3883_DAEMON_MD5=3883f5ab8744e070e7b0820c6b9b4376
 PREV_HYBRID_DAEMON_MD5=50f4eb925de10e29172999a565c87684
 OLDER_HYBRID_DAEMON_MD5=3e2cbb9881b2f54b0e4cb60238655fa7
 
@@ -184,14 +188,15 @@ daemon_md5_accepted() {
   local m="${1:-}" p8
   [ -n "$m" ] || return 1
   case "$m" in
-    "$BASE_DAEMON_MD5"|"$HYBRID_DAEMON_MD5"|"$DDR_CUR_DAEMON_MD5"|"$DDR_EDC3_DAEMON_MD5"|"$DDR_HIST_DAEMON_MD5"|"$PREV_HYBRID_DAEMON_MD5"|"$OLDER_HYBRID_DAEMON_MD5")
+    "$BASE_DAEMON_MD5"|"$HYBRID_DAEMON_MD5"|"$DDR_CUR_DAEMON_MD5"|"$DDR_3883_DAEMON_MD5"|"$DDR_EDC3_DAEMON_MD5"|"$DDR_HIST_DAEMON_MD5"|"$PREV_HYBRID_DAEMON_MD5"|"$OLDER_HYBRID_DAEMON_MD5")
       return 0
       ;;
   esac
   p8="${m:0:8}"
-  # Accepted DDR prefix8 set (current + documented rollbacks). Unknown → FAIL.
+  # Accepted DDR/SPI prefix8 set (current + documented rollbacks). Unknown → FAIL.
+  # 50f4eb92 remains SPI undo only — still accepted, not "current live".
   case "$p8" in
-    3883f5ab|5996385a|b981fd20|edc3a46b|e9f79de2|50f4eb92|3e2cbb98|7cd10b4d) return 0 ;;
+    9ce2c2d1|3883f5ab|7c991e47|36b89bcb|5996385a|b981fd20|edc3a46b|e9f79de2|50f4eb92|3e2cbb98|7cd10b4d) return 0 ;;
   esac
   if [ "${#HYBRID_DAEMON_MD5}" -eq 8 ] && [ "$p8" = "$HYBRID_DAEMON_MD5" ]; then
     return 0
@@ -393,7 +398,7 @@ verify_baseline() {
   elif daemon_md5_accepted "$got_disk"; then
     echo "OK   daemon-disk $got_disk"
   else
-    echo "FAIL daemon-disk got='$got_disk' want=accepted{3883f5ab,edc3a46b,5996385a,b981fd20,e9f79de2,50f4eb92,7cd10b4d,...}"
+    echo "FAIL daemon-disk got='$got_disk' want=accepted{9ce2c2d1,3883f5ab,edc3a46b,5996385a,b981fd20,e9f79de2,50f4eb92,7cd10b4d,...}"
     rc=1
   fi
 
@@ -422,7 +427,7 @@ verify_baseline() {
     echo "     supervisor may be in backoff, but it never came back — hard FAIL"
     rc=1
   elif ! daemon_md5_accepted "$live"; then
-    echo "FAIL daemon-live md5='$live' not in accepted {3883f5ab,edc3a46b,5996385a,b981fd20,e9f79de2,50f4eb92,...} pid='$pids'"
+    echo "FAIL daemon-live md5='$live' not in accepted {9ce2c2d1,3883f5ab,edc3a46b,5996385a,b981fd20,e9f79de2,50f4eb92,...} pid='$pids'"
     rc=1
   else
     if printf '%s\n' "$wait_out" | grep -q 'LIVE_WAIT_RESULT=respawned'; then

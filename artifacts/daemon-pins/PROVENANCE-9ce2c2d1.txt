@@ -1,0 +1,8 @@
+prefix8=9ce2c2d1
+md5_full=9ce2c2d13d1c8712683289043e99002c
+bytes=12977432
+pinned_utc=2026-08-01T22:51:21Z
+source_path=../w-osd-hires/build/arm/misterplexd
+note=repin
+file=/home/flynnsbit/Projects/MisterPlex/.worktrees/rollback-honest/artifacts/daemon-pins/misterplexd.9ce2c2d1: ELF 32-bit LSB executable, ARM, EABI5 version 1 (GNU/Linux), statically linked, for GNU/Linux 3.2.0, with debug_info, not stripped
+policy=pin measured bytes; rebuild only if cmp-identical to this pin
