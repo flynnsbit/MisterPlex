@@ -181,6 +181,16 @@ SKIP_CONF_HIGH_SPAN = 600  # ~25s at 24fps; prefer minutes for user "sustained"
 # not override STRUCTURE/COLOR severity — informational dimension + note).
 SKIP_LOSS_FRAC_SUSPECT = 0.02  # 2% of source span
 SKIP_LOSS_FRAC_LOSS = 0.05  # 5%
+# Startup transient window (parent 305s soak: all session drops before wall_s~48).
+# Discriminator needs the CAST INSIDE the capture — first ~60s of content is enough
+# because ~17 drops >> single +2 sampling noise (steady-state is NOT resolvable the
+# same way; startup is).
+STARTUP_DEFAULT_WINDOW_S = 60.0  # design
+STARTUP_MIN_UNIQUE = 24  # design: ~1s of content at 24fps before we speak
+STARTUP_DROP_MATCH_TOL = 3  # design: |gaps - daemon_drops| ≤ this → match tag
+# Below this adj loss, a LOW-conf window cannot claim REAL_DISPLAY_LOSS
+# (single +2 is the steady-state ambiguity floor; startup claim needs cluster).
+STARTUP_MIN_ADJ_LOSS_CALL = 5  # design: ~17 expected on parent soak if (b)
 
 
 def parse_fps_token(token: str | float | int | None) -> float | None:
@@ -548,6 +558,224 @@ def analyze_counter_skips(
         "capture_fps_src": capture_fps_src,
         "fps_known_for_skip": bool(fps_known),
     }
+
+
+def analyze_startup_transient(
+    pairs: list[tuple[int, int]],
+    *,
+    source_fps: float = DEFAULT_ASSUMED_SOURCE_FPS,
+    capture_fps: float = DEFAULT_ASSUMED_CAPTURE_FPS,
+    source_fps_src: str = PROVENANCE_DEFAULT_ASSUMED,
+    capture_fps_src: str = PROVENANCE_DEFAULT_ASSUMED,
+    window_s: float = STARTUP_DEFAULT_WINDOW_S,
+    daemon_session_drops: int | None = None,
+    daemon_drops_src: str = PROVENANCE_DEFAULT_ASSUMED,
+) -> dict[str, Any]:
+    """Startup catch-up vs real display-loss discriminator (pixels only).
+
+    Parent dichotomy (305s soak: drops climb to 17 then FLAT; residual=0):
+      (a) catch-up / no missing content on screen
+      (b) real loss — source frames never reach the display
+
+    Source fact (av_clock.hpp avDecide): Drop fires only when
+      drift = audible_clock - frameContentMs > dropMs (video LATE vs audio).
+    Early ffmpeg dump → negative drift → Hold, NOT Drop. So daemon `drops`
+    are frames that were read (frameIndex++) and then NOT presentCleanFrame'd
+    — by construction they never hit DDR. Pixel counter gaps must match if
+    the capture window includes those presents.
+
+    Method (on outlier-filtered pairs, restricted to first window_s of capture):
+      1) Window by cap_idx: keep pairs with idx <= idx0 + window_s*cap_fps
+      2) Run the same adjacent/RLE skip arithmetic as analyze_counter_skips
+      3) Also enumerate holes in observed unique n-run sequence:
+           for successive distinct n values d=n[i+1]-n[i], if d>=2 hole+=d-1
+         (identical to frames_lost_rle on the window — labelled both ways)
+      4) If caller passes --daemon-session-drops N (from session telemetry),
+         tag match when |frames_lost_adj - N| <= STARTUP_DROP_MATCH_TOL
+
+    Labels (MEASUREMENT dimension — never a hard rc by itself):
+      STARTUP_UNSCORED          window too short / no counter
+      STARTUP_CONTIGUOUS        lost_adj==0 and lost_rle==0 in window
+      STARTUP_DISPLAY_LOSS      lost_adj>0 (or strong rle with adj support)
+      STARTUP_CONTIGUOUS_vs_DROPS  contiguous pixels but daemon_drops>0
+                                   (would falsify the Drop=missing-content
+                                   reading IF the window covered the climb)
+
+    Steady-state single +2 is ambiguous (8.4 ms margin at 30-vs-24). Startup
+    with ~17 events is far above that floor — window IS resolvable.
+    """
+    base_notes: list[str] = []
+    out: dict[str, Any] = {
+        "startup_status": "STARTUP_UNSCORED",
+        "startup_window_s": float(window_s),
+        "startup_window_s_src": "caller" if window_s != STARTUP_DEFAULT_WINDOW_S else "DEFAULT_ASSUMED",
+        "startup_cap_frames": 0,
+        "startup_unique": 0,
+        "startup_n_first": None,
+        "startup_n_last": None,
+        "startup_ctr_span": 0,
+        "startup_frames_lost_adj": None,
+        "startup_frames_lost_rle": None,
+        "startup_skip_hist_adj": {},
+        "startup_skip_hist_rle": {},
+        "startup_step_hist_rle": {},
+        "startup_confidence": "UNSCORED",
+        "daemon_session_drops": daemon_session_drops,
+        "daemon_session_drops_src": (
+            daemon_drops_src
+            if daemon_session_drops is not None
+            else PROVENANCE_DEFAULT_ASSUMED
+        ),
+        "drops_match": None,
+        "startup_notes": base_notes,
+        "startup_arithmetic": "",
+        "source_fps": source_fps,
+        "capture_fps": capture_fps,
+        "source_fps_src": source_fps_src,
+        "capture_fps_src": capture_fps_src,
+        # Parent (a)/(b) reading — labelled inference from pixels+source, not a guess
+        # about unmeasured hardware.
+        "hypothesis": "UNSCORED",
+    }
+    if not pairs or window_s <= 0 or capture_fps <= 0:
+        base_notes.append("no_pairs_or_bad_window")
+        out["startup_arithmetic"] = "n/a"
+        return out
+
+    idx0 = pairs[0][0]
+    # Inclusive capture-index end of window. cap_fps provenance printed always.
+    max_di = max(1, int(math.ceil(float(window_s) * float(capture_fps))))
+    win = [(i, n) for i, n in pairs if (i - idx0) <= max_di]
+    out["startup_cap_frames"] = len(win)
+    if len(win) < RATE_MIN_SAMPLES:
+        base_notes.append(
+            f"window_samples={len(win)}<{RATE_MIN_SAMPLES} "
+            f"(need capture running BEFORE cast; window_s={window_s} "
+            f"cap_fps={capture_fps} cap={capture_fps_src})"
+        )
+        out["startup_arithmetic"] = "n/a (window too thin)"
+        return out
+
+    sk = analyze_counter_skips(
+        win,
+        source_fps=source_fps,
+        capture_fps=capture_fps,
+        source_fps_src=source_fps_src,
+        capture_fps_src=capture_fps_src,
+    )
+    lost_adj = sk.get("frames_lost_adj")
+    lost_rle = sk.get("frames_lost_rle")
+    ctr_span = int(sk.get("ctr_span") or 0)
+    unique = int(sk.get("unique_states") or 0)
+    out["startup_unique"] = unique
+    out["startup_n_first"] = sk.get("n_first")
+    out["startup_n_last"] = sk.get("n_last")
+    out["startup_ctr_span"] = ctr_span
+    out["startup_frames_lost_adj"] = lost_adj
+    out["startup_frames_lost_rle"] = lost_rle
+    out["startup_skip_hist_adj"] = sk.get("skip_hist_adj") or {}
+    out["startup_skip_hist_rle"] = sk.get("skip_hist_rle") or {}
+    out["startup_step_hist_rle"] = sk.get("step_hist_rle") or {}
+    out["startup_confidence"] = sk.get("skip_confidence") or "UNSCORED"
+    base_notes.extend(list(sk.get("skip_notes") or []))
+
+    # Match against daemon session drops when supplied (caller_supplied only).
+    drops_match = None
+    if daemon_session_drops is not None and lost_adj is not None:
+        drops_match = abs(int(lost_adj) - int(daemon_session_drops)) <= STARTUP_DROP_MATCH_TOL
+        out["drops_match"] = bool(drops_match)
+        base_notes.append(
+            f"daemon_session_drops={daemon_session_drops} ({daemon_drops_src}) "
+            f"vs frames_lost_adj={lost_adj} tol={STARTUP_DROP_MATCH_TOL} "
+            f"match={int(bool(drops_match))}"
+        )
+
+    # Primary display evidence is lost_adj (adjacent-capture jumps).
+    # lost_rle alone with lost_adj==0 is the known OCR-miss pattern (same as
+    # skip_metrics SKIP_OK note) — do NOT call that DISPLAY_LOSS.
+    adj_loss = int(lost_adj or 0)
+    rle_loss = int(lost_rle or 0)
+    display_loss = adj_loss > 0
+
+    if unique < STARTUP_MIN_UNIQUE or ctr_span < STARTUP_MIN_UNIQUE:
+        status = "STARTUP_UNSCORED"
+        hyp = "UNSCORED"
+        base_notes.append(
+            f"startup_unique={unique} ctr_span={ctr_span}<{STARTUP_MIN_UNIQUE} "
+            f"— decline to score (capture may have missed cast / pre-play)"
+        )
+    elif display_loss:
+        conf = str(out.get("startup_confidence") or "UNSCORED")
+        strong_call = adj_loss >= STARTUP_MIN_ADJ_LOSS_CALL or (
+            conf in ("MEDIUM", "HIGH") and adj_loss >= 2
+        )
+        if strong_call:
+            status = "STARTUP_DISPLAY_LOSS"
+            hyp = "REAL_DISPLAY_LOSS"
+            base_notes.append(
+                f"display counter gaps in startup window lost_adj={adj_loss} "
+                f"lost_rle={rle_loss} conf={conf} — burned-in n skipped on "
+                f"screen (adj primary; threshold>={STARTUP_MIN_ADJ_LOSS_CALL} "
+                f"or MEDIUM+ with adj>=2)"
+            )
+            if drops_match is True:
+                base_notes.append(
+                    "gaps ≈ daemon drops → pacer Drop path explains the climb "
+                    "(video late vs audio; each Drop skips presentCleanFrame)"
+                )
+            elif drops_match is False:
+                base_notes.append(
+                    "adj gaps ≉ daemon drops — partial window, OCR residue, or "
+                    "additional loss path"
+                )
+        else:
+            status = "STARTUP_SUSPECT"
+            hyp = "AMBIGUOUS_SMALL_GAPS"
+            base_notes.append(
+                f"small adj loss lost_adj={adj_loss}<{STARTUP_MIN_ADJ_LOSS_CALL} "
+                f"conf={conf} — single/double jumps are OCR/sampling-ambiguous; "
+                f"not enough to claim the ~17-drop startup cluster. "
+                f"Re-run with cast-inside-window + longer span."
+            )
+    else:
+        # adj==0: contiguous at capture adjacency. rle>0 is OCR note only.
+        if rle_loss > 0:
+            base_notes.append(
+                f"rle_lost={rle_loss} but adjacent_lost=0 → OCR misses of "
+                f"intermediate n, not display skips (same rule as skip_metrics)"
+            )
+        if daemon_session_drops is not None and int(daemon_session_drops) > 0:
+            status = "STARTUP_CONTIGUOUS_vs_DROPS"
+            hyp = "CONTIGUOUS_DISPLAY_CHECK_WINDOW"
+            base_notes.append(
+                "counter contiguous (adj) in window while daemon_session_drops>0 — "
+                "if window covered the drops climb, that contradicts "
+                "Drop→missing-present; else window missed the transient "
+                "(most prior parent captures started AFTER settle)"
+            )
+        else:
+            status = "STARTUP_CONTIGUOUS"
+            hyp = "NO_DISPLAY_LOSS_IN_WINDOW"
+            base_notes.append(
+                "no adjacent counter jumps in startup window (lost_adj=0)"
+            )
+
+    arith = (
+        f"window: keep pairs with (cap_idx - idx0) <= ceil(window_s*cap_fps)="
+        f"{max_di} (window_s={window_s} cap_fps={capture_fps} "
+        f"cap={capture_fps_src}); then same ADJ/RLE as skip_metrics. "
+        f"lost_adj={lost_adj} lost_rle={lost_rle} ctr_span={ctr_span} "
+        f"n_first={out['startup_n_first']} n_last={out['startup_n_last']}. "
+        f"Source: Drop only when drift=audioMs-frameMs > resyncDropMs "
+        f"(default 80); maxDropRun=1 so drops interleave with presents. "
+        f"Early video → Hold not Drop. Daemon drops are present-skips."
+    )
+    out["startup_status"] = status
+    out["hypothesis"] = hyp
+    out["startup_notes"] = base_notes
+    out["startup_arithmetic"] = arith
+    out["startup_skip_status_window"] = sk.get("skip_status")
+    return out
 
 
 # Minimum strong counter samples before rate/revisit can hard-fail.
@@ -1725,6 +1953,9 @@ def score_burst(
     capture_fps: float = DEFAULT_ASSUMED_CAPTURE_FPS,
     source_fps_src: str = PROVENANCE_DEFAULT_ASSUMED,
     capture_fps_src: str = PROVENANCE_DEFAULT_ASSUMED,
+    startup_window_s: float = STARTUP_DEFAULT_WINDOW_S,
+    daemon_session_drops: int | None = None,
+    daemon_drops_src: str = PROVENANCE_DEFAULT_ASSUMED,
     progress: bool = False,
 ) -> dict[str, Any]:
     """Score a capture burst. See module docstring for verdicts."""
@@ -1852,6 +2083,16 @@ def score_burst(
         capture_fps=capture_fps,
         source_fps_src=source_fps_src,
         capture_fps_src=capture_fps_src,
+    )
+    startup_info = analyze_startup_transient(
+        pairs,
+        source_fps=source_fps,
+        capture_fps=capture_fps,
+        source_fps_src=source_fps_src,
+        capture_fps_src=capture_fps_src,
+        window_s=startup_window_s,
+        daemon_session_drops=daemon_session_drops,
+        daemon_drops_src=daemon_drops_src,
     )
     if len(ns) < min_reads:
         # Secondary: overlay bitmap motion without OCR.
@@ -2018,6 +2259,26 @@ def score_burst(
         "skip_confidence": skip_info.get("skip_confidence"),
         "skip_notes": skip_info.get("skip_notes"),
         "skip_arithmetic": skip_info.get("arithmetic"),
+        # Startup transient discriminator (measurement; not a hard rc alone).
+        "startup_status": startup_info.get("startup_status"),
+        "startup_hypothesis": startup_info.get("hypothesis"),
+        "startup_window_s": startup_info.get("startup_window_s"),
+        "startup_window_s_src": startup_info.get("startup_window_s_src"),
+        "startup_frames_lost_adj": startup_info.get("startup_frames_lost_adj"),
+        "startup_frames_lost_rle": startup_info.get("startup_frames_lost_rle"),
+        "startup_ctr_span": startup_info.get("startup_ctr_span"),
+        "startup_n_first": startup_info.get("startup_n_first"),
+        "startup_n_last": startup_info.get("startup_n_last"),
+        "startup_unique": startup_info.get("startup_unique"),
+        "startup_confidence": startup_info.get("startup_confidence"),
+        "startup_skip_hist_adj": startup_info.get("startup_skip_hist_adj"),
+        "startup_skip_hist_rle": startup_info.get("startup_skip_hist_rle"),
+        "startup_step_hist_rle": startup_info.get("startup_step_hist_rle"),
+        "daemon_session_drops": startup_info.get("daemon_session_drops"),
+        "daemon_session_drops_src": startup_info.get("daemon_session_drops_src"),
+        "startup_drops_match": startup_info.get("drops_match"),
+        "startup_notes": startup_info.get("startup_notes"),
+        "startup_arithmetic": startup_info.get("startup_arithmetic"),
         "verdict": final,
         "reason": reason,
         "rc": rc,
@@ -2117,6 +2378,31 @@ def _print_human(report: dict[str, Any], src: str) -> None:
             print(f"skip_notes={' | '.join(str(n) for n in snotes)}")
         if report.get("skip_arithmetic"):
             print(f"skip_arithmetic={report.get('skip_arithmetic')}")
+    # Startup transient (cast-in-window) discriminator — measurement only.
+    if report.get("startup_status") is not None:
+        print(
+            f"startup_metrics status={report.get('startup_status')} "
+            f"hypothesis={report.get('startup_hypothesis')} "
+            f"window_s={report.get('startup_window_s')} "
+            f"window_src={report.get('startup_window_s_src')} "
+            f"lost_adj={report.get('startup_frames_lost_adj')} "
+            f"lost_rle={report.get('startup_frames_lost_rle')} "
+            f"ctr_span={report.get('startup_ctr_span')} "
+            f"n_first={report.get('startup_n_first')} "
+            f"n_last={report.get('startup_n_last')} "
+            f"unique={report.get('startup_unique')} "
+            f"conf={report.get('startup_confidence')} "
+            f"hist_adj={report.get('startup_skip_hist_adj')} "
+            f"hist_rle={report.get('startup_skip_hist_rle')} "
+            f"daemon_drops={report.get('daemon_session_drops')} "
+            f"daemon_src={report.get('daemon_session_drops_src')} "
+            f"drops_match={report.get('startup_drops_match')}"
+        )
+        snotes = report.get("startup_notes") or []
+        if snotes:
+            print(f"startup_notes={' | '.join(str(n) for n in snotes)}")
+        if report.get("startup_arithmetic"):
+            print(f"startup_arithmetic={report.get('startup_arithmetic')}")
     print(f"reason={report['reason']}")
     print(f"VERDICT={report['verdict']} rc={report['rc']}")
 
@@ -2517,6 +2803,65 @@ def _self_test() -> int:
     assert sk_short["skip_status"] == "SKIP_UNSCORED", sk_short
     assert sk_short["skip_confidence"] == "UNSCORED", sk_short
 
+    # --- Startup transient discriminator (RED/GREEN unit) ---
+    # GREEN contiguous: healthy 24-on-30 over first 60s, daemon_drops=0.
+    st_ok = analyze_startup_transient(
+        list(enumerate(long_ns)),
+        source_fps=24.0,
+        capture_fps=30.0,
+        source_fps_src=PROVENANCE_CALLER,
+        capture_fps_src=PROVENANCE_CALLER,
+        window_s=60.0,
+        daemon_session_drops=0,
+        daemon_drops_src=PROVENANCE_CALLER,
+    )
+    assert st_ok["startup_status"] == "STARTUP_CONTIGUOUS", st_ok
+    assert st_ok["startup_frames_lost_adj"] == 0, st_ok
+    assert st_ok["hypothesis"] == "NO_DISPLAY_LOSS_IN_WINDOW", st_ok
+
+    # RED display loss: inject 17 single-frame jumps early (startup Drop shape).
+    # maxDropRun=1 → drop, present, drop, present... ≈ +2 steps interleaved.
+    su_ns = []
+    sn = 10
+    drops_injected = 0
+    for cap_i in range(900):
+        if cap_i > 0 and (cap_i % 5) != 0:
+            sn += 1
+            # First ~40 source advances: every other advance skips one n (17 times).
+            if drops_injected < 17 and sn < 80 and (sn % 2) == 0:
+                sn += 1
+                drops_injected += 1
+        su_ns.append(sn)
+    st_bad = analyze_startup_transient(
+        list(enumerate(su_ns)),
+        source_fps=24.0,
+        capture_fps=30.0,
+        source_fps_src=PROVENANCE_CALLER,
+        capture_fps_src=PROVENANCE_CALLER,
+        window_s=60.0,
+        daemon_session_drops=17,
+        daemon_drops_src=PROVENANCE_CALLER,
+    )
+    assert st_bad["startup_status"] == "STARTUP_DISPLAY_LOSS", st_bad
+    assert st_bad["startup_frames_lost_adj"] is not None
+    assert st_bad["startup_frames_lost_adj"] >= 10, st_bad
+    assert st_bad["hypothesis"] == "REAL_DISPLAY_LOSS", st_bad
+    assert st_bad["drops_match"] is True, st_bad
+
+    # Contiguous pixels + daemon_drops>0 → special tag (window/coverage check).
+    st_vs = analyze_startup_transient(
+        list(enumerate(long_ns)),
+        source_fps=24.0,
+        capture_fps=30.0,
+        source_fps_src=PROVENANCE_CALLER,
+        capture_fps_src=PROVENANCE_CALLER,
+        window_s=60.0,
+        daemon_session_drops=17,
+        daemon_drops_src=PROVENANCE_CALLER,
+    )
+    assert st_vs["startup_status"] == "STARTUP_CONTIGUOUS_vs_DROPS", st_vs
+    assert st_vs["startup_frames_lost_adj"] == 0, st_vs
+
     # measure_capture_fps via explicit wall_s
     m = measure_capture_fps_from_paths(
         [f"f_{i:03d}.png" for i in range(60)],
@@ -2593,6 +2938,26 @@ def main(argv: list[str] | None = None) -> int:
         help=(
             "optional video container path; if --capture-fps omitted, try "
             "ffprobe r_frame_rate and label cap=container on success"
+        ),
+    )
+    ap.add_argument(
+        "--startup-window-s",
+        type=float,
+        default=STARTUP_DEFAULT_WINDOW_S,
+        help=(
+            "seconds of capture (from first strong counter sample) used for the "
+            f"startup catch-up vs display-loss discriminator (default {STARTUP_DEFAULT_WINDOW_S}). "
+            "Cast MUST land inside this window — start grabber BEFORE cast."
+        ),
+    )
+    ap.add_argument(
+        "--daemon-session-drops",
+        type=int,
+        default=None,
+        help=(
+            "session drops=N from daemon telemetry for this play (caller-supplied). "
+            "Compared to startup frames_lost_adj; tagged drops_match. "
+            "Do NOT pass lifetime_drops. Inadmissible as sole evidence — pixels decide."
         ),
     )
     ap.add_argument("--json", action="store_true", help="machine-readable report")
@@ -2716,6 +3081,11 @@ def main(argv: list[str] | None = None) -> int:
                 file=sys.stderr,
             )
 
+    daemon_drops = args.daemon_session_drops
+    daemon_drops_src = (
+        PROVENANCE_CALLER if daemon_drops is not None else PROVENANCE_DEFAULT_ASSUMED
+    )
+    startup_window_s = float(args.startup_window_s)
     report = score_burst(
         frames,
         warmup_skip=args.warmup_skip,
@@ -2724,6 +3094,9 @@ def main(argv: list[str] | None = None) -> int:
         capture_fps=capture_fps,
         source_fps_src=source_fps_src,
         capture_fps_src=capture_fps_src,
+        startup_window_s=startup_window_s,
+        daemon_session_drops=daemon_drops,
+        daemon_drops_src=daemon_drops_src,
         progress=args.progress,
     )
     report["src"] = src_label

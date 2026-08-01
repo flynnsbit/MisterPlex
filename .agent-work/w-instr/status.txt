@@ -1,124 +1,102 @@
-# w-instr — display-level frame-loss + measured cap_fps + A/V sync assessment
+# w-instr status — startup transient RCA + discriminator
+updated: 2026-07-31
+branch: w-avsync-hdmi-measure
+SHA: 3517ef71
 
-branch: w-instr-motion-counter
-SHA: (post-commit)
+## Parent question
+305s soak @ 624x480 24.000: drops→17 then FLAT; residual=0 publish_misses=0;
+steady 23.95–24.02. Startup stutter = (a) cosmetic catch-up or (b) real loss?
 
-## PRE-REGISTERED PREDICTIONS (before parent long capture)
+## 1. What increments droppedFrames_? (quoted)
 
-P1. On a healthy 480p 24fps clip, long capture (≥3 min, --src-fps 24/1, measured cap):
-    frames_lost_adj ≈ 0, lost_frac_adj < 0.02, skip_status=SKIP_OK, conf=HIGH.
-    HIT/MISS: parent publishes after run.
+media_player.cpp present loop (after full frame read, ++frameIndex):
+  frameMs = frameContentMs(frameIndex, fpsNum, fpsDen) + avOffsetMs_
+  clockMs = audibleClockMs(audioBytes_, audioQueuedBytes_) if audio else (now-t0)
+  drift = avDriftMs(clockMs, frameMs)   // audio/wall − content
+  act = avDecide(drift, leadMs, dropMs, dropRun)
+  if !present: droppedFrames_.fetch_add(1)   // NO presentCleanFrame
+  else: presentCleanFrame(...); dropRun=0
 
-P2. If user-visible drops are real at the display:
-    frames_lost_adj grows roughly linear with wall time; lost_frac_adj stable >0.05
-    → skip_status=SKIP_LOSS conf=HIGH. Daemon drops/av_drift_ms may stay near 0
-    (inadmissible by construction).
+av_clock.hpp:37-64:
+  drift<0 video ahead → Hold; drift>0 video behind → Drop
+  Drop iff dropMs>0 && driftMs>dropMs && dropRun<maxDropRun(default 1)
+  Hold iff driftMs+leadMs < 0
 
-P3. Short bursts (ctr_span < 60): skip_status=SKIP_UNSCORED conf=UNSCORED —
-    refuse a defended loss number. Existing ~5s labs are conf=LOW at best.
+Defaults: presentLeadMs_=40, resyncDropMs_=80 (media_player.hpp:335-336).
+ONLY this path increments droppedFrames_. publish_misses_ is DDR fail path.
 
-P4. cap_fps from PNG mtimes on this grabber ≈ 30–31 (already measured on
-    capboot/cap480q/cap480b). If parent switches mode to 60, expected=src/cap
-    becomes ~0.4 and rate gates move with the measurement — not a hardcoded 30.
+## 2. Why 10–17 at startup then never?
 
-P5. RLE-only lost_frac ~0.12 on known-good short bursts is mostly OCR misses
-    of intermediate n (adjacent_lost=0). Trust frames_lost_adj, not frames_lost_rle.
+From source (kill/prove candidates):
 
-## Delivered
+KILL (a) early-dump-as-too-early: Drop requires drift > dropMs (video LATE).
+  Early video → negative drift → Hold (2ms sleep), never Drop.
 
-### 1. Skip / jump detection (pixels only)
-- skip_metrics: frames_lost_adj (PRIMARY), frames_lost_rle, hist, lost_frac, conf
-- Arithmetic printed on every run (skip_arithmetic=...)
-- ADJ: max_exp=max(1,ceil(di*src/cap)); dn>+max_exp → lost += excess
-  (+2 on adjacent capture = 1 lost; no plateau slack)
-- conf: UNSCORED span<60 | LOW <200 | MEDIUM <600 | HIGH ≥600 source frames
-- status: SKIP_UNSCORED | SKIP_OK | SKIP_SUSPECT (≥2%) | SKIP_LOSS (≥5%, MED/HIGH)
-- Does NOT change main rc (measurement dimension). Short window → UNSCORED conf.
+PROVE startup lateness path:
+  media_player.cpp:3020-3036 waits for audioActive_ then sets t0, THEN reads video.
+  audioPump:2048 sets audioActive_=true at start; audioBytes_ advances while
+  ffmpeg/video first frames still arriving → first paced frames often
+  audibleClock >> frameMs+80 → Drop.
 
-### 2. cap_fps MEASURED
-- Auto: (n-1)/mtime_wall labelled cap=measured
-- Better: --capture-wall-s from ffmpeg wall clock
-- Also --cap-fps caller / --probe-capture container
-- RATE_OK needs src=caller AND cap in {caller, measured, container}
-- src DEFAULT_ASSUMED → rate=RATE_UNSCORED always
+maxDropRun=1 → interleaved drop/present until drift≤80; then flat (matches
+parent: drops stuck at 17 for 7000+ frames). residual/publish_misses=0 rules
+out DDR as the drop counter.
 
-### 3. Controlled pair (true rc)
-| case | result |
-|------|--------|
-| self-test skip green/red/short + cap wall | SELF_TEST_OK rc=0 |
-| suite rate-unit skip-* + cap-fps | PASS (block rc=0) |
-| capboot --src-fps 24/1 (mtime cap≈31.1) | MOTION_OK rc=0 lost_adj=0 SKIP_OK conf=LOW |
-| cap480q | MOTION_OK rc=0 lost_adj=1 frac=0.0086 SKIP_OK conf=LOW |
-| even-n thinned RED dir | lost_adj=44 frac=0.51 SKIP_SUSPECT |
-| synth +3 jumps unit | SKIP_LOSS lost_adj=532 frac=0.40 HIGH |
+AV_PRESENT_LEAD_MS only widens Hold; does not create Drops.
 
-### 4. A/V SYNC — instrument does NOT exist yet; path is real
+Fixable? Yes (not implemented): co-arm A/V origin on first video frame;
+startup grace dropMs=0 until locked; or delay audio master until first present.
+Re-label alone without pixel proof would hide real present-skips.
 
-Grabber audio IS present on this host:
-  arecord -l → card 0: MS2109 [MS2109], device 0: USB Audio
-  /proc/asound/cards → 0 [MS2109]: USB-Audio - MS2109 (534d:2109)
+## 3. Discriminator (landed)
 
-Honest status: **no A/V sync instrument is implemented today.** Video-only
-counter tools cannot see audio. Self-reported audio_s/wall_s/av-lock share
-daemon blindness and are inadmissible as proof.
+analyze_startup_transient in tools/hdmi_motion_instrument.py
+  --startup-window-s 60
+  --daemon-session-drops N   # session drops only, caller_supplied
+  --src-fps 24/1 --capture-wall-s WALL
 
-Recommended measured approach (parent owns hardware):
-1. Add PMS asset "AVSYNC_CLICK" : white FLASH frame at known content time T
-   paired with a 1 kHz click (or single sample impulse) at the same T.
-   Burn-in TREK24 counter continues so video flash frame n is known.
-2. Capture simultaneously:
-   - video: ffmpeg v4l2 → PNG/MJPEG
-   - audio: arecord -D plughw:0,0 -f S16_LE -r 48000 -c 2 out.wav
-   (confirm device: `arecord -l`; card index may move — prefer plughw:MS2109,0)
-3. Detect:
-   - video flash: frame where mean luma jumps (or counter n at flash)
-   - audio onset: first sample energy above noise floor near expected time
-4. av_skew_ms = 1000 * (t_audio_onset - t_video_flash)
-   Bound with capture latency (USB MJPEG + ALSA) — characterise once with
-   a loopback known-good path if available.
+startup_status (measurement, not hard rc):
+  STARTUP_CONTIGUOUS | STARTUP_CONTIGUOUS_vs_DROPS | STARTUP_DISPLAY_LOSS
+  | STARTUP_SUSPECT | STARTUP_UNSCORED
+Primary: startup_frames_lost_adj (RLE-only + adj0 = OCR, not loss)
+drops_match when |adj - daemon_drops| <= 3
 
-If ALSA open races the exclusive video device, capture audio in the same
-ffmpeg graph when the MS2109 exposes an ALSA source alongside v4l2
-(`ffmpeg -f v4l2 ... -f alsa -i hw:0 ...`).
+Startup resolvable? YES — ~17 events >> single-+2 noise floor at 30-vs-24.
+Steady-state still ambiguous; startup cluster is not.
 
-## Minimum capture for defensible skip answer
+## 4. Capture — grabber BEFORE cast
 
-| goal | content time | @24fps src | @~30 cap PNGs |
-|------|--------------|------------|---------------|
-| conf LOW floor | ≥2.5 s | ctr_span≥60 | ~90 |
-| conf MEDIUM | ≥8 s | ≥200 | ~300 |
-| conf HIGH | ≥25 s | ≥600 | ~900 |
-| user "sustained" | **≥3 min** | ≥4320 | **≥5400** |
-
-Grabber rate IS limiting for rate gates if assumed 30 while running 60 —
-now measured so expected tracks. Skip ADJ needs src+cap known for HIGH conf.
-
-## Parent capture commands (do not run here)
-
-```bash
-# Timed long soak (3+ min). Pass daemon fps= token. Wall-clock for cap_fps.
-OUT=/path/cap480_long
+OUT=$HOME/misterplex-captures/startup_$(date +%Y%m%d_%H%M%S)
 mkdir -p "$OUT"
 START=$(date +%s.%N)
 ffmpeg -v error -f v4l2 -input_format mjpeg -video_size 1920x1080 \
-  -i /dev/video0 -frames:v 5400 -y "$OUT/f_%04d.png"
+  -i /dev/video0 -frames:v 2700 -y "$OUT/f_%04d.png" &
+FFPID=$!
+sleep 2
+# *** CAST rk=8 360s fixture NOW ***
+wait $FFPID
 END=$(date +%s.%N)
 WALL=$(python3 -c "print($END-$START)")
-echo "wall_s=$WALL"
-
 python3 tools/hdmi_motion_instrument.py "$OUT" \
-  --src-fps 24/1 --capture-wall-s "$WALL"
-# expect: cap_fps_measure src=measured; skip_metrics conf=HIGH; publish HIT/MISS on P1/P2
-# true rc:  cmd; echo "true rc=$?"
-```
+  --src-fps 24/1 --capture-wall-s "$WALL" \
+  --startup-window-s 60 --daemon-session-drops 17
+echo "true rc=$?"
 
-Optional audio alongside (A/V asset once added):
-```bash
-arecord -D plughw:0,0 -f S16_LE -r 48000 -c 2 -d 180 "$OUT/audio.wav" &
-# ... ffmpeg video ...
-wait
-```
+## 5. PRE-REGISTERED predictions
 
-## Commands
-python3 tools/hdmi_motion_instrument.py CAP --src-fps 24/1 --capture-wall-s WALL
-./tests/hw/test_hdmi_motion_instrument.sh
+P_STARTUP_1 (primary): NOT parent-(a) early dump. Video-late Drop present-skips.
+  IF cast inside window: STARTUP_DISPLAY_LOSS, lost_adj≈14..20, drops_match=True.
+  User sees ~0.7s missing content + holds at every episode start, then clean 24.0.
+
+P_STARTUP_2: grabber after settle → CONTIGUOUS(_vs_DROPS), lost_adj≈0 — window miss,
+  NOT proof of cosmetic (a).
+
+P_STARTUP_3 falsifier: cast-in-window + lost_adj≈0 + drops=17 conf MEDIUM+
+  → CONTIGUOUS_vs_DROPS; would force re-audit of sole fetch_add site.
+
+## Evidence
+python3 tools/hdmi_motion_instrument.py --self-test → SELF_TEST_OK true rc=0
+(includes CONTIGUOUS / DISPLAY_LOSS+match / CONTIGUOUS_vs_DROPS)
+
+## Rules
+no device; direct rc; score_i420_candidate.py untouched; drops/av_drift not sole evidence
