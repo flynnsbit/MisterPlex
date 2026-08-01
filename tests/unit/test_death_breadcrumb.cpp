@@ -61,6 +61,20 @@ int main() {
     CHECK(death_info.find("si_code=1") != std::string::npos);
     CHECK(death_info.find("si_addr=0x10") != std::string::npos);
 
+    // Crash path (siginfo + optional ucontext regs); null uctx still writes si_*.
+    misterplex::deathBreadcrumbOnCrash(&info, nullptr);
+    const std::string death_crash = slurp(death);
+    CHECK(death_crash.find("death signal=11") != std::string::npos);
+    CHECK(death_crash.find("frames=") != std::string::npos);
+
+    // Orderly product-shaped why string (main_loop_g_stop is the soak rc=0 site).
+    misterplex::deathBreadcrumbExit(
+        0, "site=main.cpp:main_loop_g_stop sig=15 si_code=0 si_pid=1 (handled→WIFEXITED 0; not WIFSIGNALED)");
+    const std::string death_term = slurp(death);
+    CHECK(death_term.find("exit_code=0") != std::string::npos);
+    CHECK(death_term.find("main_loop_g_stop") != std::string::npos);
+    CHECK(death_term.find("sig=15") != std::string::npos);
+
     if (fails) {
         std::fprintf(stderr, "test_death_breadcrumb: %d FAIL(s)\n", fails);
         return 1;

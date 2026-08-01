@@ -39,12 +39,17 @@ void deathBreadcrumbUpdate(DeathState st, int64_t frames, int64_t presents, int6
 void deathBreadcrumbExit(int code, const char* why);
 
 // Async-signal-safe: write misterplexd.death with signal number. No heap.
-// Prefer deathBreadcrumbOnSigInfo when SA_SIGINFO is available.
+// Prefer deathBreadcrumbOnCrash / OnSigInfo when SA_SIGINFO is available.
 void deathBreadcrumbOnSignal(int sig);
 
 // Async-signal-safe: record si_signo/si_code/si_pid/si_addr (+ coarse state).
 // Distinguishes crash (SEGV_MAPERR/ACCERR) from kill(2) (SI_USER/SI_TKILL).
 void deathBreadcrumbOnSigInfo(const siginfo_t* info);
+
+// Async-signal-safe crash path: siginfo + best-effort PC/LR from ucontext
+// (void* is ucontext_t* from sa_sigaction). No libc backtrace (not AS-safe).
+// Writes misterplexd.death then returns — caller must re-raise / _exit.
+void deathBreadcrumbOnCrash(const siginfo_t* info, void* ucontext);
 
 // Host/lab override paths (tests). Empty = default under confDir.
 void deathBreadcrumbSetPathsForTest(const std::string& lastPath, const std::string& deathPath);

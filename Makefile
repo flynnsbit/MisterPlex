@@ -48,7 +48,7 @@ unit:
 unit-rollcall:
 	python3 $(ROOT)/tests/unit/test_unit_rollcall.py
 
-unit-unlocked: unit-rollcall preflight $(ROOT)/build/test_cadence $(ROOT)/build/test_avclock $(ROOT)/build/test_frame_ledger $(ROOT)/build/test_mraudio_status $(ROOT)/build/test_osd_menu $(ROOT)/build/test_osd_control $(ROOT)/build/test_last_frame_latch $(ROOT)/build/test_playback_overlay $(ROOT)/build/test_input_mailbox $(ROOT)/build/test_pixel_format $(ROOT)/build/test_main_guard $(ROOT)/build/test_death_breadcrumb $(ROOT)/build/test_status_telemetry $(ROOT)/build/test_resolve $(ROOT)/build/test_log_redact $(ROOT)/build/test_pms_timeline $(ROOT)/build/test_plextv_device $(ROOT)/build/test_companion_eof $(ROOT)/build/test_companion_plant_seek $(ROOT)/build/test_gdm_resources_parity $(ROOT)/build/pms_baseline_probe $(ROOT)/build/test_h264_bitstream_source $(ROOT)/build/test_bitstream_ring_lifecycle $(ROOT)/build/test_frame_store_math $(ROOT)/build/test_coded_size_adopt $(ROOT)/build/test_ffmpeg_vf $(ROOT)/build/test_frame_store_sdram_sim $(ROOT)/build/test_frame_store_ddr_prefetch_sim $(ROOT)/build/test_ddr_want_y_hblank_thrash $(ROOT)/build/test_ddr_bank_mailbox_phys $(ROOT)/build/test_core_identity $(ROOT)/build/test_ddr_playback_bank_select $(ROOT)/build/test_ddr_scanout_multiframe $(ROOT)/build/test_sdram_memtest_sim $(ROOT)/build/test_sdram_mailbox $(ROOT)/build/test_annexb_count $(ROOT)/build/test_sps_parse $(ROOT)/build/test_slice_hdr $(ROOT)/build/test_cavlc_dc $(ROOT)/build/test_idct_quant $(ROOT)/build/test_p3_host_recon_vectors $(ROOT)/build/test_p3_idct_reference_model $(ROOT)/build/test_p3_inter_pred_vectors $(ROOT)/build/extract_h264_golden
+unit-unlocked: unit-rollcall preflight $(ROOT)/build/test_cadence $(ROOT)/build/test_avclock $(ROOT)/build/test_frame_ledger $(ROOT)/build/test_mraudio_status $(ROOT)/build/test_osd_menu $(ROOT)/build/test_osd_control $(ROOT)/build/test_last_frame_latch $(ROOT)/build/test_playback_overlay $(ROOT)/build/test_input_mailbox $(ROOT)/build/test_pixel_format $(ROOT)/build/test_main_guard $(ROOT)/build/test_death_breadcrumb $(ROOT)/build/test_crash_guard_death $(ROOT)/build/test_status_telemetry $(ROOT)/build/test_resolve $(ROOT)/build/test_log_redact $(ROOT)/build/test_pms_timeline $(ROOT)/build/test_plextv_device $(ROOT)/build/test_companion_eof $(ROOT)/build/test_companion_plant_seek $(ROOT)/build/test_gdm_resources_parity $(ROOT)/build/pms_baseline_probe $(ROOT)/build/test_h264_bitstream_source $(ROOT)/build/test_bitstream_ring_lifecycle $(ROOT)/build/test_frame_store_math $(ROOT)/build/test_coded_size_adopt $(ROOT)/build/test_ffmpeg_vf $(ROOT)/build/test_frame_store_sdram_sim $(ROOT)/build/test_frame_store_ddr_prefetch_sim $(ROOT)/build/test_ddr_want_y_hblank_thrash $(ROOT)/build/test_ddr_bank_mailbox_phys $(ROOT)/build/test_core_identity $(ROOT)/build/test_ddr_playback_bank_select $(ROOT)/build/test_ddr_scanout_multiframe $(ROOT)/build/test_sdram_memtest_sim $(ROOT)/build/test_sdram_mailbox $(ROOT)/build/test_annexb_count $(ROOT)/build/test_sps_parse $(ROOT)/build/test_slice_hdr $(ROOT)/build/test_cavlc_dc $(ROOT)/build/test_idct_quant $(ROOT)/build/test_p3_host_recon_vectors $(ROOT)/build/test_p3_idct_reference_model $(ROOT)/build/test_p3_inter_pred_vectors $(ROOT)/build/extract_h264_golden
 	$(ROOT)/build/test_cadence
 	$(ROOT)/build/test_avclock
 	$(ROOT)/build/test_mraudio_status
@@ -63,6 +63,8 @@ unit-unlocked: unit-rollcall preflight $(ROOT)/build/test_cadence $(ROOT)/build/
 	$(ROOT)/build/test_pixel_format
 	$(ROOT)/build/test_main_guard
 	$(ROOT)/build/test_death_breadcrumb
+	$(ROOT)/build/test_crash_guard_death
+	bash $(ROOT)/tests/unit/test_daemon_exit_rc0.sh
 	$(ROOT)/build/test_frame_ledger
 	$(ROOT)/build/test_status_telemetry
 	$(ROOT)/build/test_resolve
@@ -252,13 +254,15 @@ h264-golden-tools: $(ROOT)/build/extract_h264_golden $(ROOT)/build/score_h264_na
 
 $(ROOT)/build/test_status_telemetry: $(ROOT)/tests/unit/test_status_telemetry.cpp \
 		$(ROOT)/arm/misterplexd/fpga_spi.cpp $(ROOT)/arm/misterplexd/fpga_spi.hpp \
+		$(ROOT)/arm/misterplexd/death_breadcrumb.cpp $(ROOT)/arm/misterplexd/death_breadcrumb.hpp \
 		$(ROOT)/host/libmisterplex/ddr_bitstream_ring.hpp \
 		$(ROOT)/host/libmisterplex/status_telemetry.hpp \
 		$(ROOT)/host/libmisterplex/h264_residual_gold.hpp \
 		$(ROOT)/host/libmisterplex/pixel_format.hpp
 	@mkdir -p $(ROOT)/build
 	$(CXX) $(CXXFLAGS) -I$(ROOT)/arm/misterplexd -pthread -o $@ \
-		$(ROOT)/tests/unit/test_status_telemetry.cpp $(ROOT)/arm/misterplexd/fpga_spi.cpp
+		$(ROOT)/tests/unit/test_status_telemetry.cpp $(ROOT)/arm/misterplexd/fpga_spi.cpp \
+		$(ROOT)/arm/misterplexd/death_breadcrumb.cpp
 
 $(ROOT)/build/test_idct_quant: $(ROOT)/tests/unit/test_idct_quant.cpp \
 		$(ROOT)/host/libmisterplex/h264_cavlc.hpp $(ROOT)/host/libmisterplex/h264_nal.hpp \
@@ -425,16 +429,26 @@ $(ROOT)/build/test_avclock: $(ROOT)/tests/unit/test_avclock.cpp \
 
 $(ROOT)/build/test_main_guard: $(ROOT)/tests/unit/test_main_guard.cpp \
 		$(ROOT)/arm/misterplexd/fpga_spi.cpp $(ROOT)/arm/misterplexd/fpga_spi.hpp \
+		$(ROOT)/arm/misterplexd/death_breadcrumb.cpp $(ROOT)/arm/misterplexd/death_breadcrumb.hpp \
 		$(ROOT)/host/libmisterplex/pixel_format.hpp
 	@mkdir -p $(ROOT)/build
 	$(CXX) $(CXXFLAGS) -I$(ROOT)/arm/misterplexd -pthread -o $@ \
-		$(ROOT)/tests/unit/test_main_guard.cpp $(ROOT)/arm/misterplexd/fpga_spi.cpp
+		$(ROOT)/tests/unit/test_main_guard.cpp $(ROOT)/arm/misterplexd/fpga_spi.cpp \
+		$(ROOT)/arm/misterplexd/death_breadcrumb.cpp
 
 $(ROOT)/build/test_death_breadcrumb: $(ROOT)/tests/unit/test_death_breadcrumb.cpp \
 		$(ROOT)/arm/misterplexd/death_breadcrumb.cpp $(ROOT)/arm/misterplexd/death_breadcrumb.hpp
 	@mkdir -p $(ROOT)/build
 	$(CXX) $(CXXFLAGS) -I$(ROOT)/arm/misterplexd -o $@ \
 		$(ROOT)/tests/unit/test_death_breadcrumb.cpp $(ROOT)/arm/misterplexd/death_breadcrumb.cpp
+
+$(ROOT)/build/test_crash_guard_death: $(ROOT)/tests/unit/test_crash_guard_death.cpp \
+		$(ROOT)/arm/misterplexd/fpga_spi.cpp $(ROOT)/arm/misterplexd/fpga_spi.hpp \
+		$(ROOT)/arm/misterplexd/death_breadcrumb.cpp $(ROOT)/arm/misterplexd/death_breadcrumb.hpp
+	@mkdir -p $(ROOT)/build
+	$(CXX) $(CXXFLAGS) -I$(ROOT)/arm/misterplexd -pthread -o $@ \
+		$(ROOT)/tests/unit/test_crash_guard_death.cpp $(ROOT)/arm/misterplexd/fpga_spi.cpp \
+		$(ROOT)/arm/misterplexd/death_breadcrumb.cpp
 
 $(ROOT)/build/test_frame_ledger: $(ROOT)/tests/unit/test_frame_ledger.cpp \
 		$(ROOT)/host/libmisterplex/frame_ledger.cpp $(ROOT)/host/libmisterplex/frame_ledger.hpp
@@ -633,10 +647,12 @@ plexd: $(ROOT)/build/misterplexd
 
 # Standalone: push one RGB565 file to Plex frame_store via SPI ioctl
 $(ROOT)/build/push_frame: $(ROOT)/arm/misterplexd/fpga_spi.cpp \
+		$(ROOT)/arm/misterplexd/death_breadcrumb.cpp \
 		$(ROOT)/tools/push_frame.cpp $(ROOT)/arm/misterplexd/fpga_spi.hpp
 	@mkdir -p $(ROOT)/build
 	$(CXX) $(CXXFLAGS) -I$(ROOT)/arm/misterplexd -I$(ROOT)/host -o $@ \
-		$(ROOT)/tools/push_frame.cpp $(ROOT)/arm/misterplexd/fpga_spi.cpp
+		$(ROOT)/tools/push_frame.cpp $(ROOT)/arm/misterplexd/fpga_spi.cpp \
+		$(ROOT)/arm/misterplexd/death_breadcrumb.cpp
 
 push-frame: $(ROOT)/build/push_frame
 
@@ -695,10 +711,12 @@ arm-plexd: $(MPLEX_HDR) arm-ddr-bench
 	$(ARM_CXX) -std=c++17 -O2 -Wall -I$(ROOT)/arm/misterplexd -I$(ROOT)/host \
 		-o $(ROOT)/build/arm/push_frame \
 		$(ROOT)/tools/push_frame.cpp $(ROOT)/arm/misterplexd/fpga_spi.cpp \
+		$(ROOT)/arm/misterplexd/death_breadcrumb.cpp \
 		-static
 	$(ARM_CXX) -std=c++17 -O2 -Wall -I$(ROOT)/arm/misterplexd -I$(ROOT)/host \
 		-o $(ROOT)/build/arm/set_status \
 		$(ROOT)/tools/set_status.cpp $(ROOT)/arm/misterplexd/fpga_spi.cpp \
+		$(ROOT)/arm/misterplexd/death_breadcrumb.cpp \
 		-static
 	$(ARM_CXX) -std=c++17 -O2 -Wall -I$(ROOT)/host \
 		-o $(ROOT)/build/arm/input_mailbox_probe \

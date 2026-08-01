@@ -516,12 +516,11 @@ int main(int argc, char** argv) {
 
     // An SPI critical section SIGSTOPs Main for a few microseconds. If a previous
     // misterplexd died inside that window, Main is still stopped right now and
-    // F12/OSD/MiSTer_cmd are all dead — resume it before we do anything else,
-    // then arm the crash guard so we cannot strand it again.
+    // F12/OSD/MiSTer_cmd are all dead — resume it before we do anything else.
     misterplex::FpgaSpi::resumeStrandedMain();
-    misterplex::FpgaSpi::installCrashGuard();
 
     // Death breadcrumb + frame ledger live beside conf (survives restarts).
+    // MUST init before installCrashGuard so fatal handlers can open misterplexd.death.
     {
         const std::string confDir = confDirFromPath(confPath);
         misterplex::deathBreadcrumbInit(confDir);
@@ -529,6 +528,8 @@ int main(int argc, char** argv) {
         misterplex::frameLedgerInit(confDir);
         misterplex::frameLedgerProcessStart(0, 0, 0);
     }
+    // Crash guard after breadcrumb paths are live (SIGSEGV → death file + re-raise).
+    misterplex::FpgaSpi::installCrashGuard();
 
     misterplex::MediaPlayer player;
     player.setFfmpegPath(ffmpeg);

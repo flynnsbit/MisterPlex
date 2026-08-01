@@ -1,28 +1,23 @@
-# w-fit-1 — steady-state drop RCA (no device, no fit)
+# w-fit-1 — daemon rc=0 exit RCA (drop sawtooth FALSIFIED)
 BRANCH=w-fit-integ-c5382bee-dequant-swap
 NO_FIT=1 NO_DEVICE=1
+SHIPPING_CORE=c5382bee
 
-## Deliverable
-.agent-work/w-fit-1/STEADY_STATE_DROP_RCA.md
-scripts/analyze_drop_intervals.py
-tests/unit/test_avclock.cpp — drop residual ≠ full reset
+## Falsified
+Steady-state drop sawtooth RCA DEAD (parent: 0 steady drops ~353s x2).
+Do not resume CV/Fano discriminator work for that phenomenon.
 
-## Mechanism (source, not guessed)
-drift = audibleClockMs(written,queued) - (frameContentMs(frameIndex,fps)+avOffset)
-Drop iff drift > resyncDropMs (80) AND dropRun < maxDropRun (1)
-After drop: drift falls by ONE frame period (~41–42 ms), NOT to 0
-⇒ class-A τ≈30s implies R≈1.39 ms/s ≈1390 ppm, NOT 2667 ppm (full-reset false)
-audioClockPpm default -638 seeds feed servo only; audibleClock uses nominal 48kHz
--638 slow FPGA → Hold tendency, not Drop sawtooth by itself
-
-## Discriminator prereg
-CV(inter-drop) <=0.25 → REGULAR class A
-CV >=0.75 → POISSON class B
-else INCONCLUSIVE
-Also Fano(bin=mean Δt), KS vs Exp
-Parent: python3 scripts/analyze_drop_intervals.py run1.txt run2.txt run3.txt
+## Daemon exit
+Doc: .agent-work/w-fit-1/DAEMON_EXIT_RCA.md
+- Product rc=0 = main_loop_g_stop after SIGINT/SIGTERM (WIFEXITED 0)
+- No internal timer; variable run_s ⇒ external signal (si_pid settles)
+- rc=139 SIGSEGV is DIFFERENT bug (crash path re-raises)
+- Crash guard now writes death breadcrumb + pc/lr before re-raise
+- breadcrumb init BEFORE installCrashGuard
 
 ## true rc=
-test_avclock true rc=0
-analyze synthetic regular CV=0 → REGULAR
-analyze synthetic exp n=40 CV=0.98 → POISSON
+test_death_breadcrumb true rc=0
+test_crash_guard_death true rc=0
+test_main_guard true rc=0
+test_daemon_exit_rc0 true rc=0
+make unit true rc=0

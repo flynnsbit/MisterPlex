@@ -10,6 +10,13 @@
 #include <mutex>
 #include <string>
 
+#if defined(__linux__)
+#include <ucontext.h>
+#if defined(__x86_64__)
+#include <sys/ucontext.h>
+#endif
+#endif
+
 namespace misterplex {
 namespace {
 
@@ -135,12 +142,49 @@ void writeDeathSignalSafe(int sig) {
     ::close(fd);
 }
 
-void writeDeathSigInfoSafe(const siginfo_t* info) {
+// Best-effort PC/LR from ucontext — async-signal-safe (no backtrace()).
+void asAppendRegs(char* buf, size_t cap, size_t* o, void* ucontext) {
+    if (!ucontext || !o)
+        return;
+    unsigned long pc = 0, lr = 0, sp = 0;
+    int got = 0;
+#if defined(__linux__) && defined(__x86_64__)
+    const ucontext_t* uc = static_cast<const ucontext_t*>(ucontext);
+    pc = static_cast<unsigned long>(uc->uc_mcontext.gregs[REG_RIP]);
+    sp = static_cast<unsigned long>(uc->uc_mcontext.gregs[REG_RSP]);
+    got = 1;
+#elif defined(__linux__) && defined(__aarch64__)
+    const ucontext_t* uc = static_cast<const ucontext_t*>(ucontext);
+    pc = static_cast<unsigned long>(uc->uc_mcontext.pc);
+    sp = static_cast<unsigned long>(uc->uc_mcontext.sp);
+    got = 1;
+#elif defined(__linux__) && (defined(__arm__) || defined(__ARM_ARCH))
+    const ucontext_t* uc = static_cast<const ucontext_t*>(ucontext);
+    pc = static_cast<unsigned long>(uc->uc_mcontext.arm_pc);
+    lr = static_cast<unsigned long>(uc->uc_mcontext.arm_lr);
+    sp = static_cast<unsigned long>(uc->uc_mcontext.arm_sp);
+    got = 1;
+#endif
+    if (!got)
+        return;
+    asAppend(buf, cap, o, " pc=");
+    asAppendHexPtr(buf, cap, o, pc);
+    if (lr) {
+        asAppend(buf, cap, o, " lr=");
+        asAppendHexPtr(buf, cap, o, lr);
+    }
+    if (sp) {
+        asAppend(buf, cap, o, " sp=");
+        asAppendHexPtr(buf, cap, o, sp);
+    }
+}
+
+void writeDeathSigInfoSafe(const siginfo_t* info, void* ucontext) {
     if (g_deathPathC[0] == '\0' || !info) return;
     const int fd =
         ::open(g_deathPathC, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644);
     if (fd < 0) return;
-    char buf[256];
+    char buf[384];
     size_t o = 0;
     asAppend(buf, sizeof(buf), &o, "death signal=");
     asAppendInt(buf, sizeof(buf), &o, info->si_signo);
@@ -151,8 +195,11 @@ void writeDeathSigInfoSafe(const siginfo_t* info) {
     asAppend(buf, sizeof(buf), &o, " si_addr=");
     asAppendHexPtr(buf, sizeof(buf), &o,
                    static_cast<unsigned long>(reinterpret_cast<uintptr_t>(info->si_addr)));
+    asAppendRegs(buf, sizeof(buf), &o, ucontext);
     asAppend(buf, sizeof(buf), &o, " state=");
     asAppendInt(buf, sizeof(buf), &o, g_state.load(std::memory_order_relaxed));
+    asAppend(buf, sizeof(buf), &o, " frames=");
+    asAppendInt(buf, sizeof(buf), &o, static_cast<long>(g_frames.load(std::memory_order_relaxed)));
     asAppend(buf, sizeof(buf), &o, " pid=");
     asAppendInt(buf, sizeof(buf), &o, static_cast<long>(::getpid()));
     asAppend(buf, sizeof(buf), &o, "\n");
@@ -254,7 +301,15 @@ void deathBreadcrumbOnSigInfo(const siginfo_t* info) {
         writeDeathSignalSafe(-1);
         return;
     }
-    writeDeathSigInfoSafe(info);
+    writeDeathSigInfoSafe(info, nullptr);
+}
+
+void deathBreadcrumbOnCrash(const siginfo_t* info, void* ucontext) {
+    if (!info) {
+        writeDeathSignalSafe(-1);
+        return;
+    }
+    writeDeathSigInfoSafe(info, ucontext);
 }
 
 } // namespace misterplex

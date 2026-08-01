@@ -1,5 +1,6 @@
 #include "fpga_spi.hpp"
 
+#include "death_breadcrumb.hpp"
 #include "libmisterplex/status_telemetry.hpp"
 #include "libmisterplex/pixel_format.hpp"
 
@@ -362,13 +363,18 @@ void FpgaSpi::resumeStrandedMain() {
 
 namespace {
 
-// async-signal-safe enough: kill()/open()/read()/close() are all on the safe
-// list, and we re-raise with the default handler so the crash still surfaces.
-void crashGuardHandler(int sig) {
+// Fatal signals: (1) breadcrumb + PC/LR (async-signal-safe), (2) unstick Main,
+// (3) re-raise so WIFSIGNALED still reports the real signal (rc=128+sig / 139).
+// kill/open/write/close/raise are AS-safe; no heap, no printf here.
+void crashGuardHandler(int sig, siginfo_t* info, void* ucontext) {
+    misterplex::deathBreadcrumbOnCrash(info, ucontext);
     mainPauseDepth().store(0);
     for (pid_t p : findMisterPids())
         kill(p, SIGCONT);
-    std::signal(sig, SIG_DFL);
+    struct sigaction sa {};
+    sa.sa_handler = SIG_DFL;
+    sigemptyset(&sa.sa_mask);
+    sigaction(sig, &sa, nullptr);
     ::raise(sig);
 }
 
@@ -376,8 +382,15 @@ void crashGuardHandler(int sig) {
 
 void FpgaSpi::installCrashGuard() {
     // SIGKILL cannot be caught — resumeStrandedMain() at startup covers it.
+    // SA_SIGINFO so si_addr/si_code and ucontext PC land in misterplexd.death.
+    // Order vs deathBreadcrumbInit: install after init so g_deathPathC is set
+    // (main.cpp does breadcrumb init then installCrashGuard).
+    struct sigaction sa {};
+    sa.sa_sigaction = crashGuardHandler;
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = SA_SIGINFO;
     for (int sig : {SIGSEGV, SIGABRT, SIGBUS, SIGILL, SIGFPE, SIGQUIT})
-        std::signal(sig, crashGuardHandler);
+        sigaction(sig, &sa, nullptr);
 }
 
 void FpgaSpi::setErr(std::string msg) {
