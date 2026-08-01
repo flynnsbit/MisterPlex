@@ -3,7 +3,7 @@
 branch: w-fit-integ-c5382bee-dequant-swap
 worktree: .worktrees/w-fit-integ
 merge: 48df5e29 thruput RMW+area dequant onto product tip + 907e + SDC record
-tip: 24b5d4c2210e1b108d30f727838efa84c0f1df45
+tip: 5be060542e26b0f2ecfd4f5441e3ee1cc3b96906
 
 ## Parent constraints (binding)
 - NO exclusive Quartus slot. Core c5382bee CURRENT-GOOD on silicon (DDR path).
