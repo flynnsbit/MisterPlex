@@ -309,3 +309,16 @@ fix. Grant a fit only after G0 + solo-module area numbers beat the §7 ceilings.
 - `docs/osd-output-raster-feasibility.md` — option table  
 - `docs/osd-hires.md` — bank chrome / even-row history  
 - Parent: `video_mode=12` = 1920×1440; free RAM **88 M10K blocks**
+
+## 11. CPU budget (parent-measured context)
+
+Parent (playback): MiSTer 78.0 + ffmpeg 60.5 + misterplexd 24.3 → **SYSTEM_BUSY ~173/200 (~86.6%)**.
+
+| Path | Extra ARM cost | Ship? |
+|---|---|---|
+| Full-frame software composite @ 1920×1440 each UI show | Millions of pixels / show; risk multi-% spikes | **No** |
+| bodyScale↑ in bank | Cheap, **does not fix** sharpness | Not as "the fix" |
+| Display-list build (c) | ~tens of commands, **target <0.5 ms**/show, **0% when hidden** | **Yes** |
+| RTL blend | 0 ARM during scanout | Required for sharpness |
+
+Steady-state playback must not gain a per-frame overlay software path.

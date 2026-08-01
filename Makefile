@@ -48,7 +48,7 @@ unit:
 unit-rollcall:
 	python3 $(ROOT)/tests/unit/test_unit_rollcall.py
 
-unit-unlocked: unit-rollcall preflight $(ROOT)/build/test_cadence $(ROOT)/build/test_avclock $(ROOT)/build/test_mraudio_status $(ROOT)/build/test_osd_menu $(ROOT)/build/test_osd_control $(ROOT)/build/test_last_frame_latch $(ROOT)/build/test_playback_overlay $(ROOT)/build/test_input_mailbox $(ROOT)/build/test_pixel_format $(ROOT)/build/test_main_guard $(ROOT)/build/test_status_telemetry $(ROOT)/build/test_resolve $(ROOT)/build/test_log_redact $(ROOT)/build/test_pms_timeline $(ROOT)/build/test_plextv_device $(ROOT)/build/test_companion_eof $(ROOT)/build/test_companion_plant_seek $(ROOT)/build/test_gdm_resources_parity $(ROOT)/build/pms_baseline_probe $(ROOT)/build/test_h264_bitstream_source $(ROOT)/build/test_bitstream_ring_lifecycle $(ROOT)/build/test_frame_store_math $(ROOT)/build/test_coded_size_adopt $(ROOT)/build/test_ffmpeg_vf $(ROOT)/build/test_yuv420p_chroma_480p $(ROOT)/build/test_frame_store_sdram_sim $(ROOT)/build/test_frame_store_ddr_prefetch_sim $(ROOT)/build/test_ddr_want_y_hblank_thrash $(ROOT)/build/test_ddr_bank_mailbox_phys $(ROOT)/build/test_ddr_scanout_multiframe $(ROOT)/build/test_sdram_memtest_sim $(ROOT)/build/test_sdram_mailbox $(ROOT)/build/test_annexb_count $(ROOT)/build/test_sps_parse $(ROOT)/build/test_slice_hdr $(ROOT)/build/test_cavlc_dc $(ROOT)/build/test_idct_quant $(ROOT)/build/test_p3_host_recon_vectors $(ROOT)/build/test_p3_idct_reference_model $(ROOT)/build/test_p3_inter_pred_vectors $(ROOT)/build/extract_h264_golden
+unit-unlocked: unit-rollcall preflight $(ROOT)/build/test_cadence $(ROOT)/build/test_avclock $(ROOT)/build/test_mraudio_status $(ROOT)/build/test_osd_menu $(ROOT)/build/test_osd_control $(ROOT)/build/test_last_frame_latch $(ROOT)/build/test_playback_overlay $(ROOT)/build/test_mister_video_mode $(ROOT)/build/test_input_mailbox $(ROOT)/build/test_pixel_format $(ROOT)/build/test_main_guard $(ROOT)/build/test_status_telemetry $(ROOT)/build/test_resolve $(ROOT)/build/test_log_redact $(ROOT)/build/test_pms_timeline $(ROOT)/build/test_plextv_device $(ROOT)/build/test_companion_eof $(ROOT)/build/test_companion_plant_seek $(ROOT)/build/test_gdm_resources_parity $(ROOT)/build/pms_baseline_probe $(ROOT)/build/test_h264_bitstream_source $(ROOT)/build/test_bitstream_ring_lifecycle $(ROOT)/build/test_frame_store_math $(ROOT)/build/test_coded_size_adopt $(ROOT)/build/test_ffmpeg_vf $(ROOT)/build/test_yuv420p_chroma_480p $(ROOT)/build/test_frame_store_sdram_sim $(ROOT)/build/test_frame_store_ddr_prefetch_sim $(ROOT)/build/test_ddr_want_y_hblank_thrash $(ROOT)/build/test_ddr_bank_mailbox_phys $(ROOT)/build/test_ddr_scanout_multiframe $(ROOT)/build/test_sdram_memtest_sim $(ROOT)/build/test_sdram_mailbox $(ROOT)/build/test_annexb_count $(ROOT)/build/test_sps_parse $(ROOT)/build/test_slice_hdr $(ROOT)/build/test_cavlc_dc $(ROOT)/build/test_idct_quant $(ROOT)/build/test_p3_host_recon_vectors $(ROOT)/build/test_p3_idct_reference_model $(ROOT)/build/test_p3_inter_pred_vectors $(ROOT)/build/extract_h264_golden
 	$(ROOT)/build/test_cadence
 	$(ROOT)/build/test_avclock
 	$(ROOT)/build/test_mraudio_status
@@ -59,12 +59,14 @@ unit-unlocked: unit-rollcall preflight $(ROOT)/build/test_cadence $(ROOT)/build/
 	$(ROOT)/build/test_last_frame_latch
 	bash $(ROOT)/tests/unit/test_last_frame_latch_red.sh
 	$(ROOT)/build/test_playback_overlay
+	$(ROOT)/build/test_mister_video_mode
 	bash $(ROOT)/tests/unit/test_overlay_edge_measure.sh
 	bash $(ROOT)/tests/unit/test_overlay_text_readback.sh
 	python3 $(ROOT)/tools/even_row_cull_glyph_gate.py
 	python3 $(ROOT)/tests/unit/test_pause_overlay_publish_static.py
 	python3 $(ROOT)/tests/unit/test_panel_empty_center_static.py
 	python3 $(ROOT)/tests/unit/test_stop_idle_canvas_static.py
+	python3 $(ROOT)/tests/unit/test_chrome_output_layout_static.py
 	$(ROOT)/build/test_input_mailbox
 	$(ROOT)/build/test_pixel_format
 	$(ROOT)/build/test_main_guard
@@ -454,6 +456,11 @@ $(ROOT)/build/test_playback_overlay: $(ROOT)/tests/unit/test_playback_overlay.cp
 		$(ROOT)/host/libmisterplex/playback_overlay.hpp
 	@mkdir -p $(ROOT)/build
 	$(CXX) $(CXXFLAGS) -o $@ $(ROOT)/tests/unit/test_playback_overlay.cpp
+
+$(ROOT)/build/test_mister_video_mode: $(ROOT)/tests/unit/test_mister_video_mode.cpp \
+		$(ROOT)/host/libmisterplex/mister_video_mode.hpp
+	@mkdir -p $(ROOT)/build
+	$(CXX) $(CXXFLAGS) -o $@ $(ROOT)/tests/unit/test_mister_video_mode.cpp
 
 $(ROOT)/build/test_input_mailbox: $(ROOT)/tests/unit/test_input_mailbox.cpp \
 		$(ROOT)/host/libmisterplex/input_mailbox.hpp \
