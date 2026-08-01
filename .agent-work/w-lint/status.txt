@@ -1,4 +1,6 @@
 lane=w-lint
 branch=w-lint-gate-integrity
-tip=27faff4f
-focus=PLXD freeze-blindness landed
+tip=18b3b804
+facts=240-row vertical proven locked; p_ge50 high-sigma UNSCORED
+safety=plxd_liveness SWAP_STUCK; fd≠swap on c5382bee
+no_device=1
