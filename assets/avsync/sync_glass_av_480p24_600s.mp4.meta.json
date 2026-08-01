@@ -1,0 +1,40 @@
+{
+  "out": ".agent-work/fixtures-avsync/MiSTerPlex_AVSync_Glass_480p_24fps_600s.mp4",
+  "encoding_doc": "scripts/ENCODING_avsync_glass_sync.md",
+  "id_contract_doc": "docs/glass_frame_id_contract.md",
+  "n_frames_ground_truth": 14400,
+  "fps_rational_requested": "24",
+  "duration_s_requested": 600.0,
+  "geometry": "624x480",
+  "period_s": 2.0,
+  "audio_delay_ms_designed": 0.0,
+  "designed_offset_ms": 0.0,
+  "designed_offset_sign": "offset_ms=(t_audio-t_video)*1000 per avsync_measure_hdmi",
+  "ramp_frames": 4,
+  "beep_s": 0.05,
+  "attack_s": 0.001,
+  "id_bottom_y": 88,
+  "text_example": "G n=002358 c=8",
+  "checksum_rule": "C = (sum of six zero-padded digits of n) mod 10",
+  "video_marker_times_s_designed": [
+    0.0,
+    2.0,
+    4.0,
+    6.0,
+    8.0,
+    "..."
+  ],
+  "n_markers_designed": 300,
+  "src_design": "caller_supplied",
+  "audio_onset_times_s_designed": [
+    0.0,
+    2.0,
+    4.0,
+    6.0,
+    8.0,
+    "..."
+  ],
+  "n_beeps_designed": 300,
+  "ffmpeg_cmd": "ffmpeg -y -hide_banner -loglevel error -f rawvideo -pix_fmt rgb24 -s 624x480 -r 24 -i pipe:0 -f s16le -ar 48000 -ac 2 -i /home/flynnsbit/Projects/MisterPlex/.agent-work/fixtures-avsync/avgs_wa_mp8t8/a.s16 -map 0:v:0 -map 1:a:0 -c:v libx264 -profile:v baseline -bf 0 -x264-params cabac=0:ref=1:bframes=0:keyint=48 -pix_fmt yuv420p -b:v 2000k -maxrate 2000k -bufsize 4000k -r 24 -g 48 -c:a aac -b:a 128k -ar 48000 -ac 2 -shortest -movflags +faststart .agent-work/fixtures-avsync/MiSTerPlex_AVSync_Glass_480p_24fps_600s.mp4",
+  "size_bytes": 28075629
+}

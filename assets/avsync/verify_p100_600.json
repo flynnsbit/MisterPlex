@@ -1,0 +1,100 @@
+{
+  "mp4": ".agent-work/fixtures-avsync/MiSTerPlex_AVSync_Glass_480p_24fps_600s_audioPlus100ms.mp4",
+  "expect_offset_ms": 100.0,
+  "expect_offset_ms_src": "caller_supplied",
+  "tol_ms": 5.0,
+  "ffprobe": {
+    "width": 624,
+    "height": 480,
+    "r_frame_rate": "24/1",
+    "avg_frame_rate": "24/1",
+    "nb_frames": "14400",
+    "profile": "Constrained Baseline",
+    "has_b_frames": 0,
+    "duration_v": "600.000000",
+    "audio_codec": "aac",
+    "sample_rate": "48000",
+    "format_duration": "600.000000",
+    "src": "measured"
+  },
+  "fps_from_r_frame_rate": 24.0,
+  "fps_src": "measured_r_frame_rate",
+  "n_frames_decoded": 14400,
+  "flash": {
+    "onsets_s_head": [
+      0.0,
+      1.9996744791666667,
+      3.9996744791666665,
+      5.999674479166667,
+      7.999674479166667
+    ],
+    "n": 300,
+    "luma_floor": 0.0,
+    "luma_peak": 255.0,
+    "luma_contrast": 255.0,
+    "threshold": 127.5,
+    "n_flashes": 300,
+    "flash_onset_n_step": 0,
+    "flash_onset_n_interp": 299,
+    "src": "measured"
+  },
+  "beep": {
+    "onsets_s_head": [
+      0.09953056427844599,
+      2.099530514729152,
+      4.0995305666814925,
+      6.099530564278446,
+      8.099530564278446
+    ],
+    "n": 300,
+    "env_floor": 1e-12,
+    "env_peak": 0.9007072308624783,
+    "env_contrast": 0.9007072308614783,
+    "hop_s": 0.001,
+    "hop_s_src": "caller_supplied",
+    "threshold": 0.27021216925944347,
+    "n_beeps": 300,
+    "src": "measured"
+  },
+  "n_pairs": 300,
+  "offset_ms_median": 99.85608511176736,
+  "offset_ms_mean": 99.85498825577282,
+  "offset_ms_min": 99.530564278446,
+  "offset_ms_max": 99.85608751492236,
+  "offset_ms_src": "measured",
+  "bar_spot": [
+    {
+      "n": 0,
+      "ok": true,
+      "decoded": 0,
+      "status": "OK",
+      "reason": "bars_ok"
+    },
+    {
+      "n": 48,
+      "ok": true,
+      "decoded": 48,
+      "status": "OK",
+      "reason": "bars_ok"
+    },
+    {
+      "n": 2358,
+      "ok": true,
+      "decoded": 2358,
+      "status": "OK",
+      "reason": "bars_ok"
+    },
+    {
+      "n": 14399,
+      "ok": true,
+      "decoded": 14399,
+      "status": "OK",
+      "reason": "bars_ok"
+    }
+  ],
+  "bar_spot_ok": true,
+  "offset_abs_err_ms": 0.14391488823264353,
+  "expect_n_markers_approx": 300,
+  "fail": [],
+  "pass": true
+}
