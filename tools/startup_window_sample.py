@@ -41,12 +41,21 @@ Exit codes
   2   ledger identity broken (residual != frames-presents-drops) positively
   1   usage / IO error
 
-Daemon lines consumed (after parent deploys every-drop patch)
-------------------------------------------------------------
-  media: A/V resync drop wall_s=... drift_ms=... drops=... frames=... presents=...
-  media: first_video_present wall_s=... av_drift_ms=... frames=... presents=1 ...
-  media: audio release ... held_ms=... reason=...
+Daemon lines consumed (after parent deploys every-drop + cluster-axis patch)
+---------------------------------------------------------------------------
+  media: first_audio_pcm mono_ms=... wall_s=...|NO-DATA nbytes=... gate=closed|open
+  media: A/V audio_release first_frame=... mono_ms=... wall_s=0.000 ...
+  media: audio release ... held_ms=... mono_ms=... wall_s=... reason=...
+  media: first_video_present wall_s=... mono_ms=... av_drift_ms=... frames=... presents=1
+  media: A/V resync drop wall_s=... mono_ms=... drift_ms=... drops=... frames=... presents=...
   media: frames=... wall_s=... av_drift_ms=... presents=... drops=... residual=...
+
+Cluster axis (parent HDMI offset clusters ~116 ms apart; av_drift_ms is BLIND)
+------------------------------------------------------------------------------
+Every run prints ONE block with three mono_ms values on the same axis:
+  first_audio_pcm_mono_ms | audio_hold_release_mono_ms | first_video_present_mono_ms
+plus deltas (ms). Absence is NO-DATA, never 0.0. wall_s is secondary (session-
+relative; first_audio is usually pre-origin so wall_s=NO-DATA there).
 
 Rule 0: absence is NO-DATA. Hardcoded fps is never printed as a measurement.
 """
@@ -107,6 +116,8 @@ class Sample:
     host_t: float  # host monotonic seconds at observe time
     kind: str
     wall_s: Optional[float] = None
+    wall_s_raw: Optional[str] = None  # may be "NO-DATA"
+    mono_ms: Optional[int] = None
     frames: Optional[int] = None
     presents: Optional[int] = None
     drops: Optional[int] = None
@@ -119,6 +130,8 @@ class Sample:
     audio: Optional[str] = None
     session: Optional[int] = None
     drift_ms: Optional[int] = None  # on drop lines
+    held_ms: Optional[float] = None
+    gate: Optional[str] = None
     raw: str = ""
 
 
@@ -154,7 +167,33 @@ class Report:
     audio_release_held_ms: Optional[float] = None
     audio_release_held_ms_src: str = PROVENANCE_NO_DATA
     audio_release_reason: Optional[str] = None
+    audio_release_mono_ms: Optional[int] = None
+    audio_release_mono_ms_src: str = PROVENANCE_NO_DATA
+    # Cluster axis (HDMI offset clusters ~116 ms; av_drift_ms is BLIND by design)
+    first_audio_pcm_mono_ms: Optional[int] = None
+    first_audio_pcm_mono_ms_src: str = PROVENANCE_NO_DATA
+    first_audio_pcm_wall_s: Optional[float] = None
+    first_audio_pcm_wall_s_src: str = PROVENANCE_NO_DATA
+    first_audio_pcm_gate: Optional[str] = None
+    first_video_mono_ms: Optional[int] = None
+    first_video_mono_ms_src: str = PROVENANCE_NO_DATA
+    av_audio_release_mono_ms: Optional[int] = None
+    av_audio_release_mono_ms_src: str = PROVENANCE_NO_DATA
+    av_audio_release_wall_s: Optional[float] = None
+    av_audio_release_wall_s_src: str = PROVENANCE_NO_DATA
+    # Preferred hold-release mono: pump "audio release" if present else A/V gate open
+    hold_release_mono_ms: Optional[int] = None
+    hold_release_mono_ms_src: str = PROVENANCE_NO_DATA
+    hold_release_source: str = "NO-DATA"
+    # Deltas on mono axis (ms). NO-DATA if either endpoint missing — never 0.0.
+    delta_audio_pcm_to_video_ms: Optional[float] = None
+    delta_audio_pcm_to_video_ms_src: str = PROVENANCE_NO_DATA
+    delta_hold_release_to_video_ms: Optional[float] = None
+    delta_hold_release_to_video_ms_src: str = PROVENANCE_NO_DATA
+    delta_audio_pcm_to_hold_release_ms: Optional[float] = None
+    delta_audio_pcm_to_hold_release_ms_src: str = PROVENANCE_NO_DATA
     audio_vs_video: str = "NO-DATA"
+    cluster_axis: List[Dict[str, Any]] = field(default_factory=list)
     # Ledger continuity
     ledger_checks: int = 0
     ledger_failures: int = 0
@@ -172,7 +211,11 @@ def classify_line(line: str) -> Optional[str]:
         return "drop"
     if "media: first_video_present" in line:
         return "first_video"
-    if "media: audio release" in line:
+    if "media: first_audio_pcm" in line:
+        return "first_audio_pcm"
+    if "media: A/V audio_release" in line or "ERROR media: A/V audio_release" in line:
+        return "av_audio_release"
+    if "media: audio release" in line or "ERROR media: audio release" in line:
         return "audio_release"
     if "media: frames=" in line:
         return "media"
@@ -187,7 +230,12 @@ def parse_line(line: str, host_t: float) -> Optional[Sample]:
         return None
     kv = parse_kv(line)
     s = Sample(host_t=host_t, kind=kind, raw=line.rstrip())
-    s.wall_s = _f(kv, "wall_s")
+    # wall_s may be the literal token NO-DATA (do not coerce to 0.0)
+    if "wall_s" in kv:
+        s.wall_s_raw = kv["wall_s"]
+        if kv["wall_s"].upper() != "NO-DATA":
+            s.wall_s = _f(kv, "wall_s")
+    s.mono_ms = _i(kv, "mono_ms")
     s.frames = _i(kv, "frames")
     s.presents = _i(kv, "presents")
     s.drops = _i(kv, "drops")
@@ -201,6 +249,8 @@ def parse_line(line: str, host_t: float) -> Optional[Sample]:
     s.audio_s = _f(kv, "audio_s")
     s.audio = kv.get("audio")
     s.session = _i(kv, "session")
+    s.held_ms = _f(kv, "held_ms")
+    s.gate = kv.get("gate")
     # residual identity when fields present
     if s.frames is not None and s.presents is not None and s.drops is not None:
         s.residual_computed = int(s.frames) - int(s.presents) - int(s.drops)
@@ -353,8 +403,12 @@ def analyze_samples(samples: List[Sample], *, hz_req: float, hz_src: str) -> Rep
             rep.first_video_audio_s_src = (
                 PROVENANCE_MEASURED if s.audio_s is not None else PROVENANCE_NO_DATA
             )
+            rep.first_video_mono_ms = s.mono_ms
+            rep.first_video_mono_ms_src = (
+                PROVENANCE_MEASURED if s.mono_ms is not None else PROVENANCE_NO_DATA
+            )
             break
-    if rep.first_video_wall_s is None:
+    if rep.first_video_wall_s is None and rep.first_video_mono_ms is None:
         # Fallback: first media line with presents>=1
         for s in samples:
             if s.presents is not None and s.presents >= 1:
@@ -372,38 +426,153 @@ def analyze_samples(samples: List[Sample], *, hz_req: float, hz_src: str) -> Rep
                 rep.first_video_audio_s_src = (
                     PROVENANCE_MEASURED if s.audio_s is not None else PROVENANCE_NO_DATA
                 )
+                rep.first_video_mono_ms = s.mono_ms
+                rep.first_video_mono_ms_src = (
+                    PROVENANCE_MEASURED if s.mono_ms is not None else PROVENANCE_NO_DATA
+                )
                 rep.notes.append(
                     "first_video_present line absent — used first presents>=1 media line "
                     "(deploy daemon first_video_present log for hard edge)"
                 )
                 break
 
-    # Audio release
+    # First audio PCM (pump input, usually pre-gate)
+    for s in samples:
+        if s.kind == "first_audio_pcm":
+            rep.first_audio_pcm_mono_ms = s.mono_ms
+            rep.first_audio_pcm_mono_ms_src = (
+                PROVENANCE_MEASURED if s.mono_ms is not None else PROVENANCE_NO_DATA
+            )
+            rep.first_audio_pcm_wall_s = s.wall_s
+            if s.wall_s is not None:
+                rep.first_audio_pcm_wall_s_src = PROVENANCE_MEASURED
+            elif s.wall_s_raw and s.wall_s_raw.upper() == "NO-DATA":
+                rep.first_audio_pcm_wall_s_src = PROVENANCE_NO_DATA
+            else:
+                rep.first_audio_pcm_wall_s_src = PROVENANCE_NO_DATA
+            rep.first_audio_pcm_gate = s.gate
+            break
+
+    # Video-thread gate open (A/V audio_release) — physical start / t0 latch
+    for s in samples:
+        if s.kind == "av_audio_release":
+            rep.av_audio_release_mono_ms = s.mono_ms
+            rep.av_audio_release_mono_ms_src = (
+                PROVENANCE_MEASURED if s.mono_ms is not None else PROVENANCE_NO_DATA
+            )
+            rep.av_audio_release_wall_s = s.wall_s
+            rep.av_audio_release_wall_s_src = (
+                PROVENANCE_MEASURED if s.wall_s is not None else PROVENANCE_NO_DATA
+            )
+            break
+
+    # Pump audio release (held PCM flush to MrAudio)
     for s in samples:
         if s.kind == "audio_release":
             kv = parse_kv(s.raw)
-            # audio release lines may not carry wall_s; use host-relative later
-            held = _f(kv, "held_ms")
+            held = s.held_ms if s.held_ms is not None else _f(kv, "held_ms")
             rep.audio_release_held_ms = held
             rep.audio_release_held_ms_src = (
                 PROVENANCE_MEASURED if held is not None else PROVENANCE_NO_DATA
             )
             rep.audio_release_reason = kv.get("reason")
-            # If wall_s on line use it; else leave NO-DATA (do not invent 0)
+            rep.audio_release_mono_ms = s.mono_ms
+            rep.audio_release_mono_ms_src = (
+                PROVENANCE_MEASURED if s.mono_ms is not None else PROVENANCE_NO_DATA
+            )
             if s.wall_s is not None:
                 rep.audio_release_wall_s = s.wall_s
                 rep.audio_release_wall_s_src = PROVENANCE_MEASURED
             else:
                 rep.audio_release_wall_s = None
                 rep.audio_release_wall_s_src = PROVENANCE_NO_DATA
-                rep.notes.append(
-                    "audio release line has no wall_s field — held_ms measured, "
-                    "wall_s=NO-DATA (not 0.0)"
-                )
+                if not s.mono_ms:
+                    rep.notes.append(
+                        "audio release line has no wall_s/mono_ms — held_ms only; "
+                        "wall_s=NO-DATA (not 0.0). Deploy cluster-axis daemon."
+                    )
             break
 
-    # audio vs video ordering
+    # Preferred hold-release endpoint for cluster: pump release mono, else gate open
+    if rep.audio_release_mono_ms is not None:
+        rep.hold_release_mono_ms = rep.audio_release_mono_ms
+        rep.hold_release_mono_ms_src = PROVENANCE_MEASURED
+        rep.hold_release_source = "audio_release_pump"
+    elif rep.av_audio_release_mono_ms is not None:
+        rep.hold_release_mono_ms = rep.av_audio_release_mono_ms
+        rep.hold_release_mono_ms_src = PROVENANCE_MEASURED
+        rep.hold_release_source = "av_audio_release_gate_open"
+    else:
+        rep.hold_release_mono_ms = None
+        rep.hold_release_mono_ms_src = PROVENANCE_NO_DATA
+        rep.hold_release_source = "NO-DATA"
+
+    def _delta_ms(a: Optional[int], b: Optional[int]) -> Tuple[Optional[float], str]:
+        if a is None or b is None:
+            return None, PROVENANCE_NO_DATA
+        return float(b - a), PROVENANCE_MEASURED
+
+    rep.delta_audio_pcm_to_video_ms, rep.delta_audio_pcm_to_video_ms_src = _delta_ms(
+        rep.first_audio_pcm_mono_ms, rep.first_video_mono_ms
+    )
+    rep.delta_hold_release_to_video_ms, rep.delta_hold_release_to_video_ms_src = _delta_ms(
+        rep.hold_release_mono_ms, rep.first_video_mono_ms
+    )
+    rep.delta_audio_pcm_to_hold_release_ms, rep.delta_audio_pcm_to_hold_release_ms_src = (
+        _delta_ms(rep.first_audio_pcm_mono_ms, rep.hold_release_mono_ms)
+    )
+
+    # Cluster axis block — always three slots, NO-DATA never coerced to 0
+    rep.cluster_axis = [
+        {
+            "event": "first_audio_pcm",
+            "mono_ms": rep.first_audio_pcm_mono_ms,
+            "mono_ms_src": rep.first_audio_pcm_mono_ms_src,
+            "wall_s": rep.first_audio_pcm_wall_s,
+            "wall_s_src": rep.first_audio_pcm_wall_s_src,
+            "gate": rep.first_audio_pcm_gate,
+        },
+        {
+            "event": "audio_hold_release",
+            "mono_ms": rep.hold_release_mono_ms,
+            "mono_ms_src": rep.hold_release_mono_ms_src,
+            "source": rep.hold_release_source,
+            "held_ms": rep.audio_release_held_ms,
+            "held_ms_src": rep.audio_release_held_ms_src,
+            "wall_s": rep.audio_release_wall_s
+            if rep.hold_release_source == "audio_release_pump"
+            else rep.av_audio_release_wall_s,
+            "wall_s_src": (
+                rep.audio_release_wall_s_src
+                if rep.hold_release_source == "audio_release_pump"
+                else rep.av_audio_release_wall_s_src
+            ),
+        },
+        {
+            "event": "first_video_present",
+            "mono_ms": rep.first_video_mono_ms,
+            "mono_ms_src": rep.first_video_mono_ms_src,
+            "wall_s": rep.first_video_wall_s,
+            "wall_s_src": rep.first_video_wall_s_src,
+            "av_drift_ms": rep.first_video_av_drift_ms,
+            "av_drift_ms_src": rep.first_video_av_drift_ms_src,
+            "note": "av_drift_ms is servo deadband readout, NOT HDMI accuracy",
+        },
+    ]
+
+    # audio vs video ordering (prefer mono_ms; wall_s secondary)
     if (
+        rep.hold_release_mono_ms is not None
+        and rep.first_video_mono_ms is not None
+    ):
+        dv_ms = rep.first_video_mono_ms - rep.hold_release_mono_ms
+        if abs(dv_ms) < 1:
+            rep.audio_vs_video = "coincident_mono"
+        elif dv_ms > 0:
+            rep.audio_vs_video = f"hold_release_before_video_by_ms={dv_ms}"
+        else:
+            rep.audio_vs_video = f"video_before_hold_release_by_ms={-dv_ms}"
+    elif (
         rep.audio_release_wall_s is not None
         and rep.first_video_wall_s is not None
     ):
@@ -580,16 +749,48 @@ def _print_human(rep: Report) -> None:
         )
     if len(rep.drop_events) > 32:
         print(f"  ... ({len(rep.drop_events) - 32} more drop events)")
+    print("--- CLUSTER_AXIS (HDMI offset discriminator; av_drift BLIND) ---")
+    for ev in rep.cluster_axis:
+        print(
+            f"  {ev.get('event')}: mono_ms={ev.get('mono_ms')} src={ev.get('mono_ms_src')} "
+            f"wall_s={ev.get('wall_s')} wall_src={ev.get('wall_s_src')}"
+            + (f" gate={ev.get('gate')}" if ev.get("gate") is not None else "")
+            + (f" held_ms={ev.get('held_ms')}" if ev.get("held_ms") is not None else "")
+            + (f" source={ev.get('source')}" if ev.get("source") is not None else "")
+        )
+    pv(
+        "delta_audio_pcm_to_video_ms",
+        rep.delta_audio_pcm_to_video_ms,
+        rep.delta_audio_pcm_to_video_ms_src,
+    )
+    pv(
+        "delta_audio_pcm_to_hold_release_ms",
+        rep.delta_audio_pcm_to_hold_release_ms,
+        rep.delta_audio_pcm_to_hold_release_ms_src,
+    )
+    pv(
+        "delta_hold_release_to_video_ms",
+        rep.delta_hold_release_to_video_ms,
+        rep.delta_hold_release_to_video_ms_src,
+    )
     pv("first_video_wall_s", rep.first_video_wall_s, rep.first_video_wall_s_src)
+    pv("first_video_mono_ms", rep.first_video_mono_ms, rep.first_video_mono_ms_src)
     pv(
         "first_video_av_drift_ms",
         rep.first_video_av_drift_ms,
         rep.first_video_av_drift_ms_src,
     )
     pv("first_video_audio_s", rep.first_video_audio_s, rep.first_video_audio_s_src)
+    pv(
+        "first_audio_pcm_mono_ms",
+        rep.first_audio_pcm_mono_ms,
+        rep.first_audio_pcm_mono_ms_src,
+    )
     pv("audio_release_wall_s", rep.audio_release_wall_s, rep.audio_release_wall_s_src)
+    pv("audio_release_mono_ms", rep.audio_release_mono_ms, rep.audio_release_mono_ms_src)
     pv("audio_release_held_ms", rep.audio_release_held_ms, rep.audio_release_held_ms_src)
     print(f"audio_release_reason={rep.audio_release_reason}")
+    print(f"hold_release_source={rep.hold_release_source}")
     print(f"audio_vs_video={rep.audio_vs_video}")
     pv("ledger_ok", rep.ledger_ok, rep.ledger_ok_src)
     print(
@@ -623,15 +824,24 @@ def _self_test() -> int:
     finally:
         os.unlink(empty)
 
-    # GREEN: synthetic startup with 5 per-drop lines + media + first_video + audio
+    # GREEN: synthetic startup with cluster axis + 5 per-drop lines + media
+    # Cluster A: first_audio → video = 200 ms; Cluster B would be ~316 ms etc.
     lines = [
-        "media: audio release content_origin_ms=0 audio_bytes_at_release=0 held_bytes=48000 held_ms=250 reason=first_video_or_path wall_s=0.010\n",
-        "media: first_video_present wall_s=0.020 av_drift_ms=-35 frames=1 presents=1 audio=on audio_s=0.25\n",
+        "media: first_audio_pcm mono_ms=1000000 wall_s=NO-DATA nbytes=3840 gate=closed "
+        "(cluster axis; pre-MrAudio)\n",
+        "media: A/V audio_release first_frame=0 content_origin_ms=0 "
+        "audio_bytes_at_release=0 mono_ms=1000200 wall_s=0.000 "
+        "(MrAudio starts; held PCM from content t=0)\n",
+        "media: audio release content_origin_ms=0 audio_bytes_at_release=0 "
+        "held_bytes=48000 held_ms=250 reason=first_video_or_path "
+        "mono_ms=1000205 wall_s=0.005\n",
+        "media: first_video_present wall_s=0.020 mono_ms=1000220 av_drift_ms=-35 "
+        "frames=1 presents=1 audio=on audio_s=0.25\n",
     ]
     for i, d in enumerate(range(1, 6), start=1):
         lines.append(
-            f"media: A/V resync drop wall_s={0.05 + i * 0.1:.3f} drift_ms={40 + i} "
-            f"drops={d} frames={d + 1} presents={1}\n"
+            f"media: A/V resync drop wall_s={0.05 + i * 0.1:.3f} mono_ms={1000300 + i * 100} "
+            f"drift_ms={40 + i} drops={d} frames={d + 1} presents={1}\n"
         )
     # 1 Hz media after drops flat
     lines.append(
@@ -661,7 +871,39 @@ def _self_test() -> int:
         assert rep.ledger_ok is True, rep
         # residual 120-105-5=10
         assert any(r.get("residual") == 10 for r in rep.residual_series_head), rep
-        print("SELF_TEST synthetic startup SESSION_OK drop_events=5 OK")
+        # Cluster axis: three mono_ms + deltas
+        assert rep.first_audio_pcm_mono_ms == 1000000, rep
+        assert rep.first_audio_pcm_wall_s is None, rep  # NO-DATA not 0.0
+        assert rep.first_audio_pcm_wall_s_src == PROVENANCE_NO_DATA, rep
+        assert rep.first_video_mono_ms == 1000220, rep
+        assert rep.hold_release_mono_ms == 1000205, rep
+        assert rep.hold_release_source == "audio_release_pump", rep
+        assert rep.delta_audio_pcm_to_video_ms == 220.0, rep
+        assert rep.delta_audio_pcm_to_video_ms_src == PROVENANCE_MEASURED, rep
+        assert rep.delta_hold_release_to_video_ms == 15.0, rep
+        assert len(rep.cluster_axis) == 3, rep.cluster_axis
+        print("SELF_TEST synthetic startup SESSION_OK drop_events=5 cluster_axis OK")
+    finally:
+        os.unlink(path)
+
+    # RED cluster: missing first_audio → deltas NO-DATA (never invent 0.0)
+    thin = [
+        "media: first_video_present wall_s=0.1 mono_ms=5000 av_drift_ms=-30 "
+        "frames=1 presents=1 audio=off audio_s=0\n",
+        "media: frames=50 wall_s=2.0 presents=40 drops=0 residual=10 av_drift_ms=-30\n",
+        "media: frames=100 wall_s=4.0 presents=90 drops=0 residual=10 av_drift_ms=-30\n",
+    ]
+    with tempfile.NamedTemporaryFile("w", suffix=".log", delete=False) as f:
+        f.writelines(thin)
+        path = f.name
+    try:
+        rep = analyze_samples(read_log_offline(Path(path)), hz_req=10.0, hz_src=PROVENANCE_CALLER)
+        assert rep.rc == RC_OK, rep
+        assert rep.first_audio_pcm_mono_ms is None, rep
+        assert rep.delta_audio_pcm_to_video_ms is None, rep
+        assert rep.delta_audio_pcm_to_video_ms_src == PROVENANCE_NO_DATA, rep
+        assert rep.first_video_mono_ms == 5000, rep
+        print("SELF_TEST missing first_audio → delta NO-DATA (not 0.0) OK")
     finally:
         os.unlink(path)
 

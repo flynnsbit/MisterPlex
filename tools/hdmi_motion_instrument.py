@@ -3499,6 +3499,22 @@ def _self_test() -> int:
         assert rep3["rc"] in (RC_COLOR_FAIL, RC_STRUCTURE_FAIL), rep3
         assert rep3["rc"] != RC_UNSCORED, rep3
 
+        # Blue field → COLOR_FAIL via channel spread (B7 hole was green-only).
+        bdir = tdp / "blue"
+        bdir.mkdir()
+        blu = np.zeros((120, 160, 3), dtype=np.uint8)
+        blu[:, :] = (30, 40, 210)
+        for i in range(8):
+            Image.fromarray(blu).save(bdir / f"f_{i:03d}.png")
+        rep_bl = score_burst(
+            sorted(str(p) for p in bdir.glob("f_*.png")),
+            warmup_skip=0,
+            min_reads=3,
+        )
+        assert rep_bl["chroma_cast_frames"] >= GREEN_CAST_MIN_FRAMES, rep_bl
+        assert rep_bl["rc"] in (RC_COLOR_FAIL, RC_STRUCTURE_FAIL), rep_bl
+        assert rep_bl["rc"] != RC_UNSCORED, rep_bl
+
         # Greyscale lit field → COLOR_FAIL (dead chroma).
         gydir = tdp / "grey"
         gydir.mkdir()

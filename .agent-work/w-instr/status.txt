@@ -1,55 +1,48 @@
-# w-instr status — startup-window sampler + provenance refuse + severity proof
+# w-instr status — daemon drop-log build + cluster axis + B7 colour + overlay decline
 updated: 2026-07-31
 branch: w-avsync-hdmi-measure
-SHA: 9f148d26
 
-## TASK 1 — startup-window instrument
-tools/startup_window_sample.py
-- Polls local log at >=10 Hz (--live --hz 10 --duration 12) or --offline
-- Does NOT ssh; parent feeds log (tail -F misterplexd.log > local.log)
-- Session gate: wall_s advancing (sws_arm shape). Absence = NO-DATA rc=77, never 0.0
-- Per-drop wall_s events (not a total)
-- first_video_av_drift_ms extracted as lines arrive (before any clear)
-- audio release vs first video
-- residual = frames - presents - drops checked every sample
-- Self-test: empty→77, synthetic 5 drops→0, ledger break→2
+## BLOCKING — daemon build (every-drop + cluster mono_ms)
+branch: w-avsync-hdmi-measure
+daemon source: tip includes ee1cde42 (first_audio_pcm/mono_ms) + ba1ded83 (every-drop + first_video_present)
+ARM binary (rebuilt this session from tip sources):
+  path: build/arm/misterplexd
+  md5:  5996385a57c6af142b8e732a39b36a4a
+  file: ELF 32-bit LSB ARM EABI5 statically linked
+make unit: true rc=0
+make arm-plexd: true rc=0
 
-Daemon (parent deploy): arm/misterplexd/media_player.cpp
-- EVERY A/V resync drop logs wall_s + drift + drops + frames + presents
-- first_video_present wall_s + av_drift_ms + audio_s (once)
+### Per-drop log line — BOTH timestamp and frame index
+  media: A/V resync drop wall_s=<s from t0> mono_ms=<steady epoch ms>
+                       drift_ms=... drops=... frames=<frameIndex> presents=...
+first_video_present: wall_s + mono_ms + av_drift_ms + frames + presents + audio_s
+first_audio_pcm: mono_ms + wall_s|NO-DATA + nbytes + gate (pre-MrAudio)
+audio release / A/V audio_release: mono_ms + wall_s + held_ms
 
-Parent recipe:
-  # on host, before cast:
-  ssh ... 'tail -n0 -F /media/fat/misterplex_v2/misterplexd.log' > /path/startup.log &
-  python3 tools/startup_window_sample.py --log /path/startup.log --live --hz 10 --duration 15 -o startup.json
-  # cast during the window; then:
-  python3 tools/startup_window_sample.py --log /path/startup.log --offline --json
+Parent deploy (parent owns 192.168.1.183):
+  scripts/deploy_misterplexd.sh
+  # expect md5 5996385a57c6af142b8e732a39b36a4a
 
-## TASK 2 — provenance (ERROR 17)
-- PROVENANCE_CALLER=caller_supplied; default src 24.000 not 23.976
-- RATE_OK never on DEFAULT_ASSUMED
-- --strict-fps → VERDICT=REFUSE_DEFAULT_ASSUMED rc=77 when fps assumed
-  BUT measured hard fails (3/2/4/1) never decay to 77
-- RED: half-rate + DEFAULT_ASSUMED → RATE_UNSCORED (not wrong RATE_OK)
-  GREEN: half-rate + caller fps → RATE_FAIL
-- scripts/source_rate_rca.sh default FPS 24/1 labelled DEFAULT_ASSUMED (was 24000/1001)
+## CLUSTER_AXIS (startup instrument)
+tools/startup_window_sample.py every run:
+  first_audio_pcm_mono_ms | hold_release_mono_ms | first_video_present_mono_ms
+  + deltas ms; NO-DATA never 0.0
+  av_drift_ms printed but tagged BLIND for HDMI accuracy (parent: identical
+  across runs 120ms apart at HDMI; deadband of AV_PRESENT_LEAD_MS)
 
-## TASK 3 — severity ladder (true rc DIRECT, no pipe)
-  /tmp/cap480a --source-fps 24 --capture-fps 30
-    VERDICT=STRUCTURE_FAIL rc=3  true rc_a=3
-    (color also GREEN+CHROMA+GREYSCALE; structure wins)
-  /tmp/cap480b --source-fps 24 --capture-fps 30
-    VERDICT=MOTION_OK rc=0  true rc_b=0
-  /tmp/cap480b --strict-fps (no --source-fps)
-    VERDICT=REFUSE_DEFAULT_ASSUMED rc=77  true rc_strict=77
+## B7 colour
+Not green-only: green_cast | chroma_cast | greyscale_flat | uv_swap
+Self-test RED: green/magenta/blue/grey/uv → COLOR_FAIL
+cap480a true rc=3 STRUCTURE_FAIL; cap480b true rc=0 MOTION_OK
 
-## Self-tests
-  python3 tools/startup_window_sample.py --self-test; echo "true rc=$?"  → 0
-  python3 tools/hdmi_motion_instrument.py --self-test; echo "true rc=$?" → 0
+## overlay_lowres_evidence.png
+files/ + tests/unit/fixtures/overlay_readback/
+single + 40-frame burst: VERDICT=UNSCORED true rc=77 (DECLINE, not motion)
 
-## Files this commit
-- tools/startup_window_sample.py (new)
-- tools/hdmi_motion_instrument.py (--strict-fps + ERROR17 RED/GREEN)
-- arm/misterplexd/media_player.cpp (every-drop + first_video_present)
-- scripts/source_rate_rca.sh (default 24/1 provenance)
-- .agent-work/w-instr/status.txt
+## Evidence commands (rc DIRECT)
+  python3 tools/startup_window_sample.py --self-test; echo "true rc=$?"
+  python3 tools/hdmi_motion_instrument.py --self-test; echo "true rc=$?"
+  python3 tools/hdmi_motion_instrument.py /tmp/cap480a --source-fps 24 --capture-fps 30; echo "true rc=$?"
+  python3 tools/hdmi_motion_instrument.py files/overlay_lowres_evidence.png; echo "true rc=$?"
+  md5sum build/arm/misterplexd
+  make unit; echo "true rc=$?"
