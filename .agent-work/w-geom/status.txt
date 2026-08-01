@@ -1,17 +1,9 @@
 w-geom status — post-present scanout skip prove-or-kill
 branch: w-avsync-hdmi-measure
-SHA: 9c2702fd
+SHA: 46f71f8a (tip; status file may lag one amend)
 gate: tests/unit/test_ddr_frame_store_scanout_skip.sh  true rc=0
 report: .agent-work/w-geom/SCANOUT_SKIP_PROVE_OR_KILL.md
 
-VERDICT:
-- Product free-gated 24-in/60-out: never_swapped=0 glass_plus2=0 → scanout does NOT
-  skip a published frame under ARM free contract. Residual ≥14 glass skips → w-avsync supply
-  IF free contract held (parent publish_misses=0 consistent with that).
-- Hostile doorbell-while-pending on SAME product RTL: REPRO never_swapped=39/121.
-  RTL has no free check; PLXD free=0 while pending is ARM-only.
-- H1: 1-cycle vsync∩doorbell ≪ 1.54% (≈217×); 24/60 lattice is 2/5 not 1/65. KILLED as sole cause.
-- 907e5950 holds=1 product default closed; holds=0 pure+sustained still cover freeze/lost-pending.
-- NO RBF without proof free contract broken on device.
-
-Prior load-bearing: 861ae49c identical DDR canvas both tiers; f69139b4 glass death points.
+VERDICT: free-gated product never_swapped=0 → scanout does NOT skip under ARM free contract;
+hostile overwrite-while-pending REPRO 39 skips on same RTL; H1 kills 1-cycle beat as 1.54% sole cause;
+NO RBF. Residual ≥14 glass skips → w-avsync supply IF free contract held.
