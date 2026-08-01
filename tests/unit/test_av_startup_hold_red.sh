@@ -1,8 +1,5 @@
 #!/usr/bin/env bash
-# Static + mutation: tip sources MUST hold MrAudio until first video frame,
-# assert content_origin_ms=0 at release, re-arm hold on seek/auto-next sessions
-# (via play() → new audioPump), and NOT re-arm on pause/resume.
-# Functional: test_avclock models real content offset + multi-session + no-video.
+# Hold until first video + B3 timeout + B4 ring drop-head + Drop reclaim discrimination.
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
 MP="$ROOT/arm/misterplexd/media_player.cpp"
@@ -20,134 +17,82 @@ green_checks() {
   grep -q 'checkAudioReleaseOrigin' "$mp" || return 1
   grep -q 'A/V audio_release first_frame=' "$mp" || return 1
   grep -q 'audioStartGate_.store(true' "$mp" || return 1
-  grep -q 'no auto-release without video' "$mp" || return 1
-  grep -q 'kAudioHoldCapBytes' "$av" || return 1
-  grep -q 'realContentOffsetMs' "$av" || return 1
+  grep -q 'audio hold TIMEOUT' "$mp" || return 1
+  grep -q 'kAudioHoldTimeoutMs' "$mp" || return 1
+  grep -q 'kAudioHoldTimeoutMs' "$av" || return 1
+  grep -q 'ring drop HEAD' "$mp" || return 1
+  if grep -q 'keeping stream start, dropping tail' "$mp"; then return 1; fi
+  if grep -q 'no auto-release without video' "$mp"; then return 1; fi
+  if grep -q 'suppressStartupPrefill' "$mp"; then return 1; fi
+  grep -q 'holdRingAppendDropHead' "$av" || return 1
+  grep -q 'kStartupDropReclaimMs' "$av" || return 1
   grep -q 'HoldUntilVideo' "$av" || return 1
   grep -q 'handoffReArmsAudioHold' "$av" || return 1
   grep -q 'simulateMultiSessionStartup' "$av" || return 1
   grep -q 'simulatePauseResumeHold' "$av" || return 1
   grep -q 'simulateHoldNoVideo' "$av" || return 1
-  # seek restarts via play() (new session) — hold re-arms on that path.
   grep -q 'play(withUniversalOffset' "$mp" || return 1
-  # auto-next goes through doPlay → player.play (new session).
   grep -q 'tryAutoNext' "$main" || return 1
   grep -q 'doPlay' "$main" || return 1
-  # pause/resume must NOT touch audioStartGate_.
-  if grep -n 'void MediaPlayer::pause' -A20 "$mp" | grep -q 'audioStartGate_'; then
-    return 1
-  fi
-  if grep -n 'void MediaPlayer::resume' -A20 "$mp" | grep -q 'audioStartGate_'; then
-    return 1
-  fi
-  # Must not pace via co-arm origin subtract on the product path.
-  if grep -q 'coArmedClockMs(raw, audioClockOriginMs)' "$mp"; then
-    return 1
-  fi
-  if grep -q 'A/V co-arm first_frame=' "$mp"; then
-    return 1
-  fi
+  if grep -n 'void MediaPlayer::pause' -A20 "$mp" | grep -q 'audioStartGate_'; then return 1; fi
+  if grep -n 'void MediaPlayer::resume' -A20 "$mp" | grep -q 'audioStartGate_'; then return 1; fi
+  if grep -q 'coArmedClockMs(raw, audioClockOriginMs)' "$mp"; then return 1; fi
+  if grep -q 'A/V co-arm first_frame=' "$mp"; then return 1; fi
   return 0
 }
 
 if ! green_checks "$MP" "$AV" "$HPP" "$MAIN"; then
-  echo "FAIL: green A/V hold-until-video wiring checks failed on tip sources" >&2
-  exit 1
+  echo "FAIL: green checks failed" >&2; exit 1
 fi
-echo "PASS green: tip sources hold + origin assert + path policy"
+echo "PASS green"
 
-cp "$MP" "$WORK/media_player.cpp"
-cp "$AV" "$WORK/av_clock.hpp"
-cp "$HPP" "$WORK/media_player.hpp"
-cp "$MAIN" "$WORK/main.cpp"
-
-# RED TWIN A: strip content_origin_ms=0 log / gate open.
+cp "$MP" "$WORK/media_player.cpp"; cp "$AV" "$WORK/av_clock.hpp"
+cp "$HPP" "$WORK/media_player.hpp"; cp "$MAIN" "$WORK/main.cpp"
 sed -i '/content_origin_ms=0/d' "$WORK/media_player.cpp"
-sed -i 's/audioStartGate_.store(true, std::memory_order_release);/\/\*MUTANT no gate open*\//' \
-  "$WORK/media_player.cpp"
+sed -i 's/audioStartGate_.store(true, std::memory_order_release);/\/\*MUTANT*\//' "$WORK/media_player.cpp"
+set +e; green_checks "$WORK/media_player.cpp" "$WORK/av_clock.hpp" "$HPP" "$MAIN"; RED_A=$?; set -e
+echo "twin_gate rc=$RED_A"; [[ "$RED_A" -ne 0 ]]
 
-set +e
-green_checks "$WORK/media_player.cpp" "$WORK/av_clock.hpp" "$WORK/media_player.hpp" "$MAIN"
-RED_A=$?
-set -e
-echo "av_startup_hold_red_twin_gate true rc=$RED_A"
-if [[ "$RED_A" -eq 0 ]]; then
-  echo "FAIL: red twin A — green_checks still passed after stripping gate/origin" >&2
-  exit 1
-fi
-echo "PASS red twin A: green_checks fail without origin assert (rc=$RED_A)"
-
-# RED TWIN B: re-introduce co-arm origin call.
 cp "$MP" "$WORK/media_player.cpp"
-if ! grep -q 'coArmedClockMs(raw, audioClockOriginMs)' "$WORK/media_player.cpp"; then
-  echo '/* MUTANT */ clockMs = misterplex::coArmedClockMs(raw, audioClockOriginMs);' \
-    >>"$WORK/media_player.cpp"
-fi
-set +e
-green_checks "$WORK/media_player.cpp" "$WORK/av_clock.hpp" "$HPP" "$MAIN"
-RED_B=$?
-set -e
-echo "av_startup_hold_red_twin_coarm true rc=$RED_B"
-if [[ "$RED_B" -eq 0 ]]; then
-  echo "FAIL: red twin B — green_checks still passed with co-arm reintroduced" >&2
-  exit 1
-fi
-echo "PASS red twin B: green_checks fail when co-arm origin returns (rc=$RED_B)"
+echo '/* MUTANT */ clockMs = misterplex::coArmedClockMs(raw, audioClockOriginMs);' >>"$WORK/media_player.cpp"
+set +e; green_checks "$WORK/media_player.cpp" "$AV" "$HPP" "$MAIN"; RED_B=$?; set -e
+echo "twin_coarm rc=$RED_B"; [[ "$RED_B" -ne 0 ]]
 
-# RED TWIN C: pause touches audioStartGate_ (spurious re-arm).
 cp "$MP" "$WORK/media_player.cpp"
 python3 - <<'PY'
 from pathlib import Path
-p = Path("build/av-startup-hold-unit/media_player.cpp")
-t = p.read_text()
-old = "void MediaPlayer::pause() {\n    paused_.store(true);"
-new = "void MediaPlayer::pause() {\n    audioStartGate_.store(false); // MUTANT re-arm on pause\n    paused_.store(true);"
-if old not in t:
-    raise SystemExit("pause anchor missing")
-p.write_text(t.replace(old, new, 1))
+p=Path("build/av-startup-hold-unit/media_player.cpp"); t=p.read_text()
+old="void MediaPlayer::pause() {\n    paused_.store(true);"
+new="void MediaPlayer::pause() {\n    audioStartGate_.store(false);\n    paused_.store(true);"
+assert old in t; p.write_text(t.replace(old,new,1))
 PY
-set +e
-green_checks "$WORK/media_player.cpp" "$AV" "$HPP" "$MAIN"
-RED_C=$?
-set -e
-echo "av_startup_hold_red_twin_pause true rc=$RED_C"
-if [[ "$RED_C" -eq 0 ]]; then
-  echo "FAIL: red twin C — green_checks still passed with pause re-arm mutant" >&2
-  exit 1
-fi
-echo "PASS red twin C: green_checks fail when pause re-arms hold (rc=$RED_C)"
+set +e; green_checks "$WORK/media_player.cpp" "$AV" "$HPP" "$MAIN"; RED_C=$?; set -e
+echo "twin_pause rc=$RED_C"; [[ "$RED_C" -ne 0 ]]
 
-# Functional: tip test_avclock
-CXX_BIN="${CXX:-g++}"
-if [[ -n "${CXXFLAGS:-}" ]]; then
-  # shellcheck disable=SC2206
-  CXX_FLAGS=(${CXXFLAGS})
-else
-  CXX_FLAGS=(-std=c++17 -O2 -Wall -Wextra)
-fi
-"$CXX_BIN" "${CXX_FLAGS[@]}" -I"$ROOT/host" -o "$WORK/test_avclock_tip" \
-  "$ROOT/tests/unit/test_avclock.cpp"
-set +e
-TIP_OUT="$("$WORK/test_avclock_tip" 2>&1)"
-TIP_RC=$?
-set -e
-printf '%s\n' "$TIP_OUT"
-echo "test_avclock_tip true rc=$TIP_RC"
-if [[ "$TIP_RC" -ne 0 ]]; then
-  echo "FAIL: tip test_avclock failed" >&2
-  exit 1
-fi
-for need in \
-  'PASS startup hold-until-video' \
-  'PASS release origin' \
-  'PASS multisession seek/auto-next' \
-  'PASS pause/resume hold policy' \
-  'PASS hold no-video' \
-  'startup_sim COARM'; do
-  if ! printf '%s\n' "$TIP_OUT" | grep -q "$need"; then
-    echo "FAIL: tip test_avclock missing: $need" >&2
-    exit 1
-  fi
+cp "$MP" "$WORK/media_player.cpp"
+python3 - <<'PY'
+from pathlib import Path
+p=Path("build/av-startup-hold-unit/media_player.cpp"); t=p.read_text()
+t=t.replace("ring drop HEAD keep live tail (no content jump on release)","keeping stream start, dropping tail until release")
+t=t.replace("audio hold TIMEOUT","audio hold NO_TIMEOUT_MUTANT"); p.write_text(t)
+PY
+set +e; green_checks "$WORK/media_player.cpp" "$AV" "$HPP" "$MAIN"; RED_D=$?; set -e
+echo "twin_policy rc=$RED_D"; [[ "$RED_D" -ne 0 ]]
+
+CXX_BIN="${CXX:-g++}"; CXX_FLAGS=(-std=c++17 -O2 -Wall -Wextra)
+"$CXX_BIN" "${CXX_FLAGS[@]}" -I"$ROOT/host" -o "$WORK/test_avclock_tip" "$ROOT/tests/unit/test_avclock.cpp"
+set +e; TIP_OUT="$("$WORK/test_avclock_tip" 2>&1)"; TIP_RC=$?; set -e
+printf '%s\n' "$TIP_OUT"; echo "tip rc=$TIP_RC"; [[ "$TIP_RC" -eq 0 ]]
+for need in 'PASS startup hold-until-video' 'PASS hold no-video' 'coarm_minus_early_real='; do
+  printf '%s\n' "$TIP_OUT" | grep -q "$need" || { echo "missing $need" >&2; exit 1; }
 done
+DELTA=$(printf '%s\n' "$TIP_OUT" | sed -n 's/.*coarm_minus_early_real=\([-0-9]*\).*/\1/p' | head -1)
+[[ -n "$DELTA" && "$DELTA" -ge 150 ]]
+echo "PASS discrimination delta=$DELTA"
 
-echo "OK av startup hold-until-video red/green gate (paths + origin + no-video)"
+mkdir -p "$WORK/inc/libmisterplex"
+sed 's/kStartupDropReclaimMs = 22/kStartupDropReclaimMs = 0/' "$AV" >"$WORK/inc/libmisterplex/av_clock.hpp"
+"$CXX_BIN" "${CXX_FLAGS[@]}" -I"$WORK/inc" -I"$ROOT/host" -o "$WORK/test_avclock_zero" "$ROOT/tests/unit/test_avclock.cpp"
+set +e; ZOUT="$("$WORK/test_avclock_zero" 2>&1)"; ZRC=$?; set -e
+echo "zero_reclaim rc=$ZRC"; [[ "$ZRC" -ne 0 ]]
+echo "OK hold B3/B4 red/green"
