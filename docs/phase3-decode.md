@@ -168,9 +168,9 @@ Gate: `tests/unit/test_fabric_decode_inventory.sh` · `make fabric-decode-invent
 
 ## PRODUCT_NO_STUB — M10K enabler for OSD hi-res overlay (scoped, unfitted)
 
-**Primary value is not throughput ms.** PRESENT_PROFILE stays flat (control). **Primary value is M10K for user bug #2** (overlay must match HDMI output res via post-ascal plane / w-osd-hires): shipping free M10K **88** → after stub subtree reclaim **~356** (~4×). Pair PRODUCT_NO_STUB with the OSD plane in **one** exclusive fit — never alone.
+**Primary value is not throughput ms.** Combined-fit control stays **flat** (any present-ledger movement = bug). **Primary value is M10K for user bug #2** (overlay must match HDMI output res via post-ascal plane / w-osd-hires): shipping free M10K **88** → after stub subtree reclaim **~356** (~4×). Pair PRODUCT_NO_STUB with the OSD plane in **one** exclusive fit — never alone.
 
-**Motivation (honest — not 24 fps starvation):** Parent measured live 24 fps DDR playback with **0 drops**, closed ledger, and **~103 %onecpu free**. “ARM must shed decode to survive” is **retracted** at 24 fps. Throughput case for stub reclaim is weak (pacer-limited). **M10K case is strong:** user overlay bug #2 needs a post-ascal plane (w-osd-hires); fabric already has `HDMI_WIDTH`/`HEIGHT`. Direct-play remains the long-term decode case, not 24p relief.
+**Motivation (honest — not 480p24 starvation):** Parent measured product ffmpeg **flat-out** on a 624×480 CB 24 fps asset with product `-vf scale=624:480:flags=fast_bilinear -pix_fmt yuv420p -f null -`: **speed=9.57x** (pipe 2 MiB / ~4.67 frames confirmed). ⇒ Fabric H.264 decode **cannot** improve throughput at this tier. (“Pacer sleeps 16.7 ms ⇒ pacer-limited” is **STRICKEN** — `read_block+pacing_wait` is conserved by Hold-loop construction; void endpoint.) **M10K case is strong:** bug #2 needs post-ascal plane; fabric already has `HDMI_WIDTH`/`HEIGHT`. Honest remaining decode cases: **direct-play** / **higher tiers** (store contract still rejects 1280×720), not 480p24 fps.
 
 **Subtree vs own (do not confuse):** Quartus `decode_stub:stub` row is **subtree** ALM **9,216.9** / M10K **268** / DSP **1**. Own residual (parent ALMs after children, incl. flattened `h264_hybrid_mb_own`) = **1,922.1**. **Reclaim quotes the subtree only if every fitted child is exclusive to the stub path.** On `8fdf440f` fit-t7b: every fitted `h264_*` instance under stub has **0 outside-stub instances**; DPB `altsyncram:dpb_mem_rtl_0` (**256 M10K**) is stub-only (the `altsyncram` *type* appears elsewhere, e.g. ascal — instance is exclusive). ⇒ **−9,217 ALM / −268 M10K is valid subtree reclaim** for PRODUCT_NO_STUB.
 
@@ -191,7 +191,7 @@ DPB check: 2,097,152 / 256 = **8,192** bits/block. Free now: 553−465=**88** bl
 # set_global_assignment -name VERILOG_MACRO "PRODUCT_NO_STUB=1"
 ```
 
-**Already on the `8fdf440f` / tip tree (do not burn a slot alone):** `907e5950` NBA hold; comb shift-add dequant (DSP 44). **Next exclusive fit:** `PRODUCT_NO_STUB` + **OSD hi-res post-ascal plane** together — score on viewed 1080p overlay pixels (parent), PRESENT_PROFILE flat (control).
+**Already on the `8fdf440f` / tip tree (do not burn a slot alone):** `907e5950` NBA hold; comb shift-add dequant (DSP 44). **Next exclusive fit:** `PRODUCT_NO_STUB` + **OSD hi-res post-ascal plane** together — score on viewed 1080p overlay pixels (parent); present ledger flat (control; ARM already 9.57× on decode+scale at this tier).
 
 **SDC:** no new `set_false_path`.
 
