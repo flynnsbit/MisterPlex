@@ -1,5 +1,6 @@
 // Unit tests for host/libmisterplex/ffmpeg_vf.hpp — scale policy + sws_flags.
 #include "libmisterplex/ffmpeg_vf.hpp"
+#include "libmisterplex/yuv420p_chroma_health.hpp"
 
 #include <cstdio>
 #include <cstdlib>
@@ -218,6 +219,129 @@ int main() {
         r.source_h = 1080;
         const auto p = buildFfmpegVideoFilter(r);
         expect(p.scale_applied && !p.identity_skip, "mismatch scales");
+    }
+
+    // --- Product FORCE_SCALE=1 (Always): every real title geometry pins OUTPUT
+    // to coded 624x480 I420 (449280 B). Aspect via decrease + pad (letter/pillar),
+    // never stretch. PMS upperBound is a ceiling — source may be any of these.
+    {
+        const int coded_w = 624, coded_h = 480;
+        const int disp_w = 618, disp_h = 480;
+        const size_t codedBytes = yuv420pFrameBytesWH(coded_w, coded_h);
+        expect(codedBytes == 449280u, "product coded I420 is 449280");
+
+        struct Case {
+            int sw, sh;
+            const char* name;
+        };
+        // Parent residual list + exact bank + short 480p delivery + odd dims.
+        const Case cases[] = {
+            {624, 480, "exact_bank"},
+            {624, 352, "scope_2.35"},
+            {624, 350, "measured_short_480p"},
+            {640, 480, "640x480"},
+            {720, 480, "720x480"},
+            {704, 396, "704x396"},
+            {720, 576, "720x576"},
+            {1440, 1080, "1440x1080"},
+            {1920, 1080, "1920x1080"},
+            {320, 240, "320x240"},
+            {625, 481, "odd_dims"}, // scale accepts; I420 coded out is still even
+            {618, 480, "display_exact"},
+        };
+        for (const auto& c : cases) {
+            FfmpegVfRequest r;
+            r.coded_w = coded_w;
+            r.coded_h = coded_h;
+            r.display_w = disp_w;
+            r.display_h = disp_h;
+            r.crop_left = 0;
+            r.crop_top = 0;
+            r.scale_mode =
+                ffmpegScaleModeForDdrYuvPresent(FfmpegScaleMode::SkipIdentity, true);
+            r.source_w = c.sw;
+            r.source_h = c.sh;
+            r.delivery_geometry_verified = false;
+            const auto p = buildFfmpegVideoFilter(r);
+            expect(r.scale_mode == FfmpegScaleMode::Always, "force→Always");
+            expect(p.scale_applied && !p.identity_skip,
+                   (std::string("FORCE_SCALE pins scale for ") + c.name).c_str());
+            expect(p.vf.find("force_original_aspect_ratio=decrease") != std::string::npos,
+                   (std::string("aspect preserved (decrease) for ") + c.name).c_str());
+            expect(p.vf.find("pad=624:480") != std::string::npos,
+                   (std::string("pad to coded bank for ") + c.name).c_str());
+            expect(p.vf.find("scale=618:480") != std::string::npos,
+                   (std::string("scale into display box for ") + c.name).c_str());
+            expect(yuv420pFrameBytesWH(coded_w, coded_h) == codedBytes,
+                   "output byte contract is coded bank");
+            // Mid-stream source change cannot identity-skip under force: mode is Always.
+            r.source_w = 1920;
+            r.source_h = 1080;
+            r.delivery_geometry_verified = true;
+            const auto mid = buildFfmpegVideoFilter(r);
+            expect(mid.scale_applied && !mid.identity_skip,
+                   (std::string("mid-stream still scales under force for ") + c.name)
+                       .c_str());
+            if (c.sw == coded_w && c.sh == coded_h) {
+                r.scale_mode =
+                    ffmpegScaleModeForDdrYuvPresent(FfmpegScaleMode::SkipIdentity, false);
+                r.source_w = coded_w;
+                r.source_h = coded_h;
+                r.delivery_geometry_verified = true;
+                const auto skip = buildFfmpegVideoFilter(r);
+                expect(skip.identity_skip && !skip.scale_applied,
+                       "RED: force=0+verified exact may identity_skip");
+            }
+        }
+        // Odd measured dims: I420 byte helper returns 0 (not a valid plane size).
+        expect(yuv420pFrameBytesWH(625, 481) == 0u, "odd dims have no I420 packed size");
+        std::printf("GREEN_FORCE_SCALE_GEOM cases=%zu coded_bytes=%zu\n",
+                    sizeof(cases) / sizeof(cases[0]), codedBytes);
+    }
+
+    // --- B5 phase model: mismatched OUTPUT desyncs; matched does not ---
+    {
+        const size_t R = 449280u;
+        expect(rawPipeDesynced(R, R, 500) == false, "matched output never desyncs");
+        expect(rawPipeDesynced(yuv420pFrameBytesWH(624, 350), R, 2),
+               "624x350 output desyncs vs 624x480 reader");
+        expect(rawPipeDesynced(yuv420pFrameBytesWH(640, 480), R, 1),
+               "640x480 output desyncs");
+        expect(rawPipeByteAligned(R * 100, R), "aligned total");
+        expect(!rawPipeByteAligned(R * 100 + 1, R), "misaligned total");
+    }
+
+    // --- FORCE_SCALE=1 output pin: no delivered INPUT size can change OUTPUT bytes ---
+    {
+        const size_t R = yuv420pFrameBytesWH(624, 480);
+        expect(R == 449280u, "reader contract");
+        FfmpegVfRequest r;
+        r.coded_w = 624;
+        r.coded_h = 480;
+        r.display_w = 618;
+        r.display_h = 480;
+        r.scale_mode = ffmpegScaleModeForDdrYuvPresent(FfmpegScaleMode::SkipIdentity, true);
+        r.source_w = 1920;
+        r.source_h = 1080;
+        r.delivery_geometry_verified = true;
+        const auto p = buildFfmpegVideoFilter(r);
+        expect(!p.identity_skip && p.scale_applied, "force blocks identity_skip always");
+        expect(p.vf.find("pad=624:480") != std::string::npos, "output pad is coded bank");
+        expect(!rawPipeDesynced(R, R, 10000), "pinned output never phase-walks");
+        expect(!pipeDesyncRisk(yuv420pFrameBytesWH(1920, 1080), R, p.identity_skip),
+               "input mismatch + force(scale) is NOT pipe risk");
+        expect(pipeDesyncRisk(yuv420pFrameBytesWH(1920, 1080), R, true),
+               "same input mismatch + identity_skip IS pipe risk (RED twin)");
+        std::printf("GREEN_OUTPUT_PIN force_scale output_bytes=%zu == reader\n", R);
+    }
+
+    // --- B4: only measured qualifies ---
+    {
+        expect(!deliveryGeometryVerifiedFromBasis("library_media"),
+               "library_media is claim not measurement");
+        expect(!deliveryGeometryVerifiedFromBasis("transcode_request"),
+               "transcode_request not verified");
+        expect(deliveryGeometryVerifiedFromBasis("measured"), "measured qualifies");
     }
 
     if (g_fails) {

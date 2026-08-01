@@ -1377,10 +1377,14 @@ void MediaPlayer::ffmpegStderrPump(int errReadFd, size_t codedFrameBytes, bool i
             lastInH = g.h;
             measuredDeliveryW_.store(g.w);
             measuredDeliveryH_.store(g.h);
-            deliveryGeometryVerified_ = true;
+            // B4: only a runtime measurement upgrades verification (not library_media).
+            deliveryGeometryVerified_.store(true, std::memory_order_relaxed);
             ffmpegScaleSourceW_ = g.w;
             ffmpegScaleSourceH_ = g.h;
             const size_t prodBytes = yuv420pFrameBytesWH(g.w, g.h);
+            // desync_risk is real: identity_skip && measured_input_bytes != reader.
+            // Under FORCE_SCALE identity_skip=0 ⇒ risk stays 0 even if input ≠ coded
+            // (scale pins OUTPUT). Not an unwired field.
             const bool risk = pipeDesyncRisk(prodBytes, codedFrameBytes, identitySkip);
             if (risk)
                 pipeDesyncRisk_.store(true);
@@ -1389,6 +1393,7 @@ void MediaPlayer::ffmpegStderrPump(int errReadFd, size_t codedFrameBytes, bool i
                 " coded_bytes=" + std::to_string(codedFrameBytes) +
                 " identity_skip=" + (identitySkip ? "1" : "0") +
                 " desync_risk=" + (risk ? "1" : "0") +
+                " delivery_verified=1 delivery_basis=measured" +
                 (changed ? " MID_STREAM_CHANGE=1" : " MID_STREAM_CHANGE=0") +
                 " tag=measured" +
                 (changed ? " — size changed after play start" : ""));
@@ -1399,8 +1404,13 @@ void MediaPlayer::ffmpegStderrPump(int errReadFd, size_t codedFrameBytes, bool i
                     " identity_skip=1 tag=measured — raw pipe will phase-walk; force scale");
             }
             if (changed) {
+                // Play-time GEOM / vf plan is fixed for the session. FORCE_SCALE=Always
+                // keeps OUTPUT at coded bank if scale survives; identity_skip cannot
+                // rebuild. Surface loudly — parent B2 residual.
                 log("ERROR media: MEASURED_DELIVERY mid-stream change — play-time "
-                    "geometry guard cannot see this; investigate PMS/decoder");
+                    "geometry guard cannot rebuild vf; identity_skip=" +
+                    std::string(identitySkip ? "1" : "0") +
+                    " (force-scale pins OUTPUT only while scale filter stays live)");
             }
         }
     }
@@ -2724,7 +2734,8 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
     vfReq.source_w = ffmpegScaleSourceW_;
     vfReq.source_h = ffmpegScaleSourceH_;
     vfReq.assume_source_matches_coded = ffmpegScaleAssumeMatch_;
-    vfReq.delivery_geometry_verified = deliveryGeometryVerified_;
+    vfReq.delivery_geometry_verified =
+        deliveryGeometryVerified_.load(std::memory_order_relaxed);
     const FfmpegVfPlan vfPlan = buildFfmpegVideoFilter(vfReq);
     std::string vf = vfPlan.vf;
     // Actual scale decision (parent greps arm_rescale= here and on misterplexd: GEOM).
@@ -2744,7 +2755,8 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
         " mode=" + ffmpegScaleModeName(vfReq.scale_mode) +
         " conf_mode=" + ffmpegScaleModeName(confScaleMode) +
         " yuv_ddr_force_scale=" + (forceScale ? "1" : "0") +
-        " delivery_verified=" + (deliveryGeometryVerified_ ? "1" : "0") +
+        " delivery_verified=" +
+        (deliveryGeometryVerified_.load(std::memory_order_relaxed) ? "1" : "0") +
         " sws_flags=" + (ffmpegSwsFlags_.empty() ? "(default)" : ffmpegSwsFlags_) +
         " assume_match=" + (ffmpegScaleAssumeMatch_ ? "1" : "0") +
         " display=" + std::to_string(rawDisplayW) + "x" + std::to_string(rawDisplayH) +
@@ -2972,6 +2984,8 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
         audioBytes_.store(0);
         measuredDeliveryW_.store(0);
         measuredDeliveryH_.store(0);
+        // Session measure starts unverified; only MEASURED_DELIVERY sets true (B4).
+        deliveryGeometryVerified_.store(false, std::memory_order_relaxed);
         pipeDesyncRisk_.store(false);
         std::vector<std::string> args;
         args.push_back(ffmpeg_);
@@ -4060,6 +4074,9 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                     " measured_delivery=" +
                     (mw > 0 ? (std::to_string(mw) + "x" + std::to_string(mh)) : "pending") +
                     " measured_delivery_src=" + (mw > 0 ? "measured" : "NO-DATA") +
+                    // Live flag: flips to 1 only after MEASURED_DELIVERY (not play-time GEOM).
+                    " delivery_verified=" +
+                    (deliveryGeometryVerified_.load(std::memory_order_relaxed) ? "1" : "0") +
                     " desync_risk=" + (pipeDesyncRisk_.load() ? "1" : "0") +
                     " lifetime_frames=" + std::to_string(ltF) +
                     " lifetime_presents=" + std::to_string(ltP) +
@@ -4140,10 +4157,14 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                 " reader_bytes=" + std::to_string(frameBytes) +
                 " identity_skip=" + (vfPlan.identity_skip ? "1" : "0") +
                 " phase_desync=" + (phaseDesync ? "1" : "0") +
-                " desync_risk=" + (risk ? "1" : "0") + " tag=measured");
+                " desync_risk=" + (risk ? "1" : "0") +
+                " delivery_verified=1 delivery_basis=measured tag=measured");
         } else if (usedRawVideo) {
             log("media: MEASURED_DELIVERY_FINAL none — ffmpeg banner not parsed "
-                "(check -loglevel info / stderr pipe) tag=NO-DATA");
+                "(check -loglevel info / stderr pipe) delivery_verified=" +
+                std::string(deliveryGeometryVerified_.load(std::memory_order_relaxed) ? "1"
+                                                                                        : "0") +
+                " tag=NO-DATA");
         }
         if (risk) {
             log("ERROR media: PIPE_DESYNC=1 phase_desync=" +

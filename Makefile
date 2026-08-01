@@ -72,6 +72,7 @@ unit-unlocked: unit-rollcall preflight $(ROOT)/build/test_cadence $(ROOT)/build/
 	bash $(ROOT)/tests/unit/test_raw_video_pipe_red.sh
 	bash $(ROOT)/tests/unit/test_live_daemon_enum.sh
 	bash $(ROOT)/tests/unit/test_supervise_exit_classify.sh
+	bash $(ROOT)/tests/unit/test_main_rc0_paths.sh
 	$(ROOT)/build/test_status_telemetry
 	$(ROOT)/build/test_resolve
 	$(ROOT)/build/test_log_redact
@@ -89,7 +90,7 @@ unit-unlocked: unit-rollcall preflight $(ROOT)/build/test_cadence $(ROOT)/build/
 	$(ROOT)/build/test_frame_store_math
 	$(ROOT)/build/test_coded_size_adopt
 	$(ROOT)/build/test_ffmpeg_vf
-
+	bash $(ROOT)/tests/unit/test_force_scale_ffmpeg_out.sh
 	$(ROOT)/build/test_yuv420p_chroma_480p
 	bash $(ROOT)/tests/unit/test_geometry_type_safety.sh
 	$(ROOT)/build/test_frame_store_sdram_sim
@@ -368,7 +369,9 @@ $(ROOT)/build/test_coded_size_adopt: $(ROOT)/tests/unit/test_coded_size_adopt.cp
 	$(CXX) $(CXXFLAGS) -o $@ $(ROOT)/tests/unit/test_coded_size_adopt.cpp
 
 $(ROOT)/build/test_ffmpeg_vf: $(ROOT)/tests/unit/test_ffmpeg_vf.cpp \
-		$(ROOT)/host/libmisterplex/ffmpeg_vf.hpp
+		$(ROOT)/host/libmisterplex/ffmpeg_vf.hpp \
+		$(ROOT)/host/libmisterplex/yuv420p_chroma_health.hpp \
+		$(ROOT)/host/libmisterplex/ddr_frame_layout.hpp
 	@mkdir -p $(ROOT)/build
 	$(CXX) $(CXXFLAGS) -o $@ $(ROOT)/tests/unit/test_ffmpeg_vf.cpp
 
