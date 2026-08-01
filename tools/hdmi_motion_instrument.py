@@ -904,6 +904,14 @@ UV_SWAP_CYAN_MIN = 0.55  # design
 UV_SWAP_RED_MAX = 0.18  # design
 UV_SWAP_BLUE_MIN = 0.35  # design
 UV_SWAP_SAT_FRAC_MIN = 0.02  # design: need enough saturated samples
+# RK flash fixture: white field + black FLASH text + RED bar (parent-viewed).
+FLASH_LUMA_MIN = 100.0  # design / parent flash mean ~171
+FLASH_ACTIVE_FRAC_MIN = 0.05  # design
+RED_BAR_DOM_MIN = 0.25  # design; good flash red_dom ~0.73–0.75 [measured]
+RED_BAR_PX_FRAC_MIN = 0.005  # design; good ~0.019 [measured]
+MAGENTA_G_MAX = 80.0  # design
+MAGENTA_RB_MIN = 150.0  # design
+MAGENTA_SPREAD_MIN = 80.0  # design
 # Minimum frames with a structural flag before structure alone hard-fails.
 STRUCT_MIN_FRAMES = 3  # design
 
@@ -973,13 +981,17 @@ def _rgb_to_ycbcr_planes(rgb: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.nd
 def green_cast_metrics(rgb: np.ndarray) -> dict[str, Any]:
     """Colour integrity — not green-only.
 
-    Fail classes (any one → color_fail):
-      1. green_cast     — classic green-dominance fingerprint (U,V~0 / old daemon)
-      2. chroma_cast    — global channel-mean spread (magenta/blue/any axis cast)
-      3. greyscale_flat — lit active region with near-zero chroma variance
-      4. uv_swap        — saturated-pixel primary inversion (cyan/blue vs red)
+    Fail classes (any one → color_fail) — B7 full set, not green-only:
+      1. green_cast      — green-dominance fingerprint (U,V~0 / old daemon)
+      2. chroma_cast     — global channel-mean spread (any axis cast)
+      3. magenta_cast    — high R+B, crushed G (parent broken-480p magenta)
+      4. blue_cast       — blue-primary global cast (subset of chroma, labelled)
+      5. greyscale_flat  — lit active region with near-zero chroma (dead UV)
+      6. uv_swap         — saturated primary inversion (cyan/blue vs red)
+      7. red_bar_missing — flash/white field without red-dominant bar (RK fixture)
 
-    Letterbox black and mostly-black clips do not trip greyscale/uv_swap.
+    Dark mostly-black frames skip red_bar (no white field). Letterbox black
+    does not trip greyscale. All metrics tagged measured in the report.
 
     Throughput: operate on a stride-8 subsample (global cast is low-frequency).
     Full 1080p was ~0.19 s/frame — dominated ledger OCR cost for no gain.
@@ -991,8 +1003,14 @@ def green_cast_metrics(rgb: np.ndarray) -> dict[str, Any]:
         "channel_spread": 0.0,
         "channel_means": [float(rgb.mean())] * 3 if rgb.size else [0.0, 0.0, 0.0],
         "chroma_cast": False,
+        "magenta_cast": False,
+        "blue_cast": False,
         "greyscale_flat": False,
         "uv_swap": False,
+        "flash_field": False,
+        "red_bar_ok": False,
+        "red_bar_missing": False,
+        "red_px_frac": 0.0,
         "active_frac": 0.0,
         "active_chroma_mean": 0.0,
         "sat_frac": 0.0,
@@ -1000,6 +1018,7 @@ def green_cast_metrics(rgb: np.ndarray) -> dict[str, Any]:
         "blue_dom": 0.0,
         "cyan_dom": 0.0,
         "color_fail": False,
+        "color_fail_kinds": [],
     }
     if _is_uniform(rgb):
         # Near-black uniform = grabber junk. Lit uniform grey = dead chroma defect.
@@ -1065,25 +1084,110 @@ def green_cast_metrics(rgb: np.ndarray) -> dict[str, Any]:
             and mean_cb > 10.0
         )
 
-    color_fail = bool(green_cast or chroma_cast or greyscale_flat or uv_swap)
+    # Explicit magenta / blue labels (still also chroma_cast when spread fires).
+    r_m, g_m, b_m = means[0], means[1], means[2]
+    magenta_cast = (
+        channel_spread >= MAGENTA_SPREAD_MIN
+        and g_m <= MAGENTA_G_MAX
+        and r_m >= MAGENTA_RB_MIN
+        and b_m >= MAGENTA_RB_MIN
+        and g_m < min(r_m, b_m) - 40.0
+    )
+    blue_cast = (
+        chroma_cast
+        and b_m >= r_m + 40.0
+        and b_m >= g_m + 40.0
+        and b_m >= 100.0
+        and not magenta_cast
+    )
+
+    # Absolute red pixel fraction (fixture red bar geometry).
+    rch = pix[:, 0]
+    gch = pix[:, 1]
+    bch = pix[:, 2]
+    red_px = (rch > gch + 30.0) & (rch > bch + 30.0) & (rch > 80.0)
+    red_px_frac = float(red_px.mean())
+
+    # Flash / white-field: expect red bar (RK3/RK6). Dark frames skip.
+    # Do NOT require greyscale active_frac — pure white (Y>220) is outside
+    # GREYSCALE_LUMA_HI by design, but is exactly the flash paper.
+    white_frac = float((luma >= 180.0).mean())
+    flash_field = mean_rgb >= FLASH_LUMA_MIN and white_frac >= 0.15
+    red_bar_ok = False
+    red_bar_missing = False
+    if flash_field:
+        red_bar_ok = (
+            red_dom >= RED_BAR_DOM_MIN and red_px_frac >= RED_BAR_PX_FRAC_MIN
+        )
+        red_bar_missing = not red_bar_ok
+
+    kinds: list[str] = []
+    if green_cast:
+        kinds.append("GREEN")
+    if magenta_cast:
+        kinds.append("MAGENTA")
+    if blue_cast:
+        kinds.append("BLUE")
+    if chroma_cast and not magenta_cast and not blue_cast and not green_cast:
+        kinds.append("CHROMA")
+    elif chroma_cast and "CHROMA" not in kinds and not magenta_cast:
+        # keep CHROMA visible alongside green when both fire
+        if "GREEN" in kinds:
+            kinds.append("CHROMA")
+    if greyscale_flat:
+        kinds.append("GREYSCALE")
+    if uv_swap:
+        kinds.append("UV_SWAP")
+    if red_bar_missing:
+        kinds.append("RED_BAR_MISSING")
+
+    color_fail = bool(
+        green_cast
+        or chroma_cast
+        or magenta_cast
+        or blue_cast
+        or greyscale_flat
+        or uv_swap
+        or red_bar_missing
+    )
     return {
         "mean_rgb": round(mean_rgb, 3),
+        "mean_rgb_src": PROVENANCE_MEASURED,
         "green_frac": round(green_frac, 4),
+        "green_frac_src": PROVENANCE_MEASURED,
         "green_cast": bool(green_cast),
         "channel_spread": round(channel_spread, 2),
+        "channel_spread_src": PROVENANCE_MEASURED,
         "channel_means": [round(x, 1) for x in means],
+        "channel_means_src": PROVENANCE_MEASURED,
         "chroma_cast": bool(chroma_cast),
+        "magenta_cast": bool(magenta_cast),
+        "blue_cast": bool(blue_cast),
         "greyscale_flat": bool(greyscale_flat),
         "uv_swap": bool(uv_swap),
+        "flash_field": bool(flash_field),
+        "white_frac": round(white_frac, 4),
+        "white_frac_src": PROVENANCE_MEASURED,
+        "red_bar_ok": bool(red_bar_ok),
+        "red_bar_missing": bool(red_bar_missing),
+        "red_px_frac": round(red_px_frac, 4),
+        "red_px_frac_src": PROVENANCE_MEASURED,
         "active_frac": round(active_frac, 4),
+        "active_frac_src": PROVENANCE_MEASURED,
         "active_chroma_mean": round(active_chroma_mean, 3),
         "sat_frac": round(sat_frac, 4),
         "red_dom": round(red_dom, 4),
+        "red_dom_src": PROVENANCE_MEASURED,
         "blue_dom": round(blue_dom, 4),
         "cyan_dom": round(cyan_dom, 4),
         "mean_cb": round(mean_cb, 2),
         "mean_cr": round(mean_cr, 2),
         "color_fail": color_fail,
+        "color_fail_kinds": kinds,
+        "red_bar_dom_min": RED_BAR_DOM_MIN,
+        "red_bar_dom_min_src": "DEFAULT_ASSUMED",
+        "flash_luma_min": FLASH_LUMA_MIN,
+        "flash_luma_min_src": "DEFAULT_ASSUMED",
     }
 
 
@@ -2186,9 +2290,15 @@ def read_frame(
         "green_cast": False,
         "channel_spread": None,
         "chroma_cast": False,
+        "magenta_cast": False,
+        "blue_cast": False,
         "color_fail": False,
         "greyscale_flat": False,
         "uv_swap": False,
+        "flash_field": False,
+        "red_bar_ok": False,
+        "red_bar_missing": False,
+        "color_fail_kinds": [],
     }
     try:
         im = Image.open(path).convert("RGB")
@@ -3722,15 +3832,33 @@ def score_burst(
         if r.get("color_fail") and r.get("status") != "warmup"
     ]
     color_fail = len(color_hits) >= GREEN_CAST_MIN_FRAMES
+    magenta_hits = [
+        r for r in results
+        if r.get("magenta_cast") and r.get("status") != "warmup"
+    ]
+    blue_hits = [
+        r for r in results
+        if r.get("blue_cast") and r.get("status") != "warmup"
+    ]
+    redbar_hits = [
+        r for r in results
+        if r.get("red_bar_missing") and r.get("status") != "warmup"
+    ]
     color_flags: list[str] = []
     if len(green_hits) >= GREEN_CAST_MIN_FRAMES:
         color_flags.append("GREEN")
-    if len(chroma_hits) >= GREEN_CAST_MIN_FRAMES:
+    if len(magenta_hits) >= GREEN_CAST_MIN_FRAMES:
+        color_flags.append("MAGENTA")
+    if len(blue_hits) >= GREEN_CAST_MIN_FRAMES:
+        color_flags.append("BLUE")
+    if len(chroma_hits) >= GREEN_CAST_MIN_FRAMES and "MAGENTA" not in color_flags:
         color_flags.append("CHROMA")
     if len(grey_hits) >= GREEN_CAST_MIN_FRAMES:
         color_flags.append("GREYSCALE")
     if len(uv_hits) >= GREEN_CAST_MIN_FRAMES:
         color_flags.append("UV_SWAP")
+    if len(redbar_hits) >= GREEN_CAST_MIN_FRAMES:
+        color_flags.append("RED_BAR_MISSING")
     if color_flags:
         color = "+".join(color_flags) + "_CAST_FAIL"
     else:
@@ -3961,8 +4089,11 @@ def score_burst(
         "unique_overlay_fp": len(unique_fps),
         "green_cast_frames": len(green_hits),
         "chroma_cast_frames": len(chroma_hits),
+        "magenta_cast_frames": len(magenta_hits),
+        "blue_cast_frames": len(blue_hits),
         "greyscale_frames": len(grey_hits),
         "uv_swap_frames": len(uv_hits),
+        "red_bar_missing_frames": len(redbar_hits),
         "color_fail_frames": len(color_hits),
         "vertical_dup_frames": len(vdup_hits),
         "horiz_wrap_frames": len(wrap_hits),
@@ -4133,10 +4264,13 @@ def _print_human(report: dict[str, Any], src: str) -> None:
         f"unreadable_frac={_tag(report.get('unreadable_frac'), report.get('unreadable_frac_src') or PROVENANCE_MEASURED)} "
         f"unreadable_frac_cap={_tag(report.get('unreadable_frac_cap'), report.get('unreadable_frac_cap_src') or 'DEFAULT_ASSUMED')} "
         f"unique_fp={report['unique_overlay_fp']} "
-        f"green_cast_frames={report['green_cast_frames']} "
-        f"chroma_cast_frames={report.get('chroma_cast_frames', 0)} "
-        f"greyscale_frames={report.get('greyscale_frames', 0)} "
-        f"uv_swap_frames={report.get('uv_swap_frames', 0)} "
+        f"green_cast_frames={_tag(report['green_cast_frames'], PROVENANCE_MEASURED)} "
+        f"chroma_cast_frames={_tag(report.get('chroma_cast_frames', 0), PROVENANCE_MEASURED)} "
+        f"magenta_cast_frames={_tag(report.get('magenta_cast_frames', 0), PROVENANCE_MEASURED)} "
+        f"blue_cast_frames={_tag(report.get('blue_cast_frames', 0), PROVENANCE_MEASURED)} "
+        f"greyscale_frames={_tag(report.get('greyscale_frames', 0), PROVENANCE_MEASURED)} "
+        f"uv_swap_frames={_tag(report.get('uv_swap_frames', 0), PROVENANCE_MEASURED)} "
+        f"red_bar_missing_frames={_tag(report.get('red_bar_missing_frames', 0), PROVENANCE_MEASURED)} "
         f"vdup_frames={report.get('vertical_dup_frames', 0)} "
         f"wrap_frames={report.get('horiz_wrap_frames', 0)}"
     )
@@ -4307,12 +4441,34 @@ def _self_test() -> int:
     assert gc["green_cast"] is True, gc
     assert gc["color_fail"] is True, gc
 
-    # Magenta cast (luma parked in chroma planes) — channel-spread, not green.
+    # Magenta cast (luma parked in chroma planes) — explicit MAGENTA, not green-only.
     magenta = np.zeros((100, 100, 3), dtype=np.uint8)
     magenta[:, :] = (210, 40, 240)
     gc_m = green_cast_metrics(magenta)
     assert gc_m["chroma_cast"] is True and gc_m["channel_spread"] >= CHROMA_SPREAD_FAIL, gc_m
+    assert gc_m["magenta_cast"] is True, gc_m
+    assert "MAGENTA" in (gc_m.get("color_fail_kinds") or []), gc_m
     assert gc_m["color_fail"] is True, gc_m
+    assert gc_m["green_cast"] is False, gc_m  # must not need green to fail
+
+    # White flash + red bar → COLOR_OK path (red_bar_ok).
+    flash_ok = np.full((200, 320, 3), 230, dtype=np.uint8)
+    flash_ok[40:60, 40:120] = (10, 10, 10)  # FLASH text
+    flash_ok[140:170, 80:240] = (220, 30, 30)  # red bar
+    gc_rb = green_cast_metrics(flash_ok)
+    assert gc_rb["flash_field"] is True, gc_rb
+    assert gc_rb["red_bar_ok"] is True, gc_rb
+    assert gc_rb["red_bar_missing"] is False, gc_rb
+    assert gc_rb["color_fail"] is False, gc_rb
+
+    # White flash WITHOUT red bar → RED_BAR_MISSING (B7 hole closed).
+    flash_bad = np.full((200, 320, 3), 230, dtype=np.uint8)
+    flash_bad[40:60, 40:120] = (10, 10, 10)
+    gc_rb2 = green_cast_metrics(flash_bad)
+    assert gc_rb2["flash_field"] is True, gc_rb2
+    assert gc_rb2["red_bar_missing"] is True, gc_rb2
+    assert gc_rb2["color_fail"] is True, gc_rb2
+    assert "RED_BAR_MISSING" in (gc_rb2.get("color_fail_kinds") or []), gc_rb2
 
     # Blue cast — channel-spread any direction.
     blue = np.zeros((100, 100, 3), dtype=np.uint8)
