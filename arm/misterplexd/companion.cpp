@@ -286,15 +286,14 @@ std::string Companion::timelineXml(const std::string& commandId) const {
     std::lock_guard<std::mutex> lock(mu_);
 
     std::string videoState = state_;
-    // Scrubber hold only while a media plant remains (key or duration).
-    // After clearMedia (explicit stop / EOF), pendingKey is empty and duration=0:
-    // clients MUST see terminal stopped@navigation. Holding buffering forever
-    // solely because castBound_ stayed true left Plex clients on "buffering"
-    // while HDMI already painted STOPPED (parent device evidence 2026-07-31,
-    // daemon 9ce2c2d1). Not a same-day regression — holdIdle dates to 814df4a8.
-    const bool mediaPlanted = !pendingKey_.empty() || durationMs_ > 0;
+    // Intentional wire hold (NOT a screen/API desync bug): after stop while
+    // cast-bound, internal state_ is "stopped" (idle overlay / STOPPED on glass)
+    // but timeline polls report buffering@navigation so Plex Web keeps the cast
+    // Resume dialog alive without a fresh mirror (clearMediaLocked sticky hold;
+    // mirror path comment "wire shows buffering via prePlayHold_").
+    // Released when castBound_ clears — see /player/timeline/unsubscribe.
     const bool holdIdle =
-        !wantPlay_ && mediaPlanted && (prePlayHold_ || castBound_) &&
+        !wantPlay_ && (prePlayHold_ || castBound_) &&
         (videoState == "stopped" || videoState.empty() || videoState == "buffering");
     if (wantPlay_ && (videoState == "stopped" || videoState.empty()))
         videoState = "buffering";
@@ -963,11 +962,12 @@ void Companion::httpLoop() {
                 continue;
             }
             if (isStop) {
-                // Drop bind first so stop ACK is terminal stopped@navigation without
-                // keys. clearMedia before player.stop so late progress cannot re-arm
-                // wantPlay (setState ignores progress while prePlayHold && !wantPlay).
-                // Do NOT leave clients in buffering forever after stop (castBound_
-                // alone is not a media plant — see timelineXml holdIdle).
+                // Drop bind first so stop ACK is buffering@navigation without keys
+                // (video/stopped+key idles Web and freezes scrubber / Resume dialog).
+                // clearMedia before player.stop so late progress cannot re-arm wantPlay
+                // (setState ignores progress while prePlayHold && !wantPlay).
+                // Wire buffering while castBound is intentional — internal state_ is
+                // stopped (glass STOPPED); see timelineXml holdIdle + clearMediaLocked.
                 clearMedia();
                 if (onStop_)
                     onStop_();

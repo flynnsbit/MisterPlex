@@ -7,7 +7,7 @@ Branch: `w-lint-gate-integrity`. Host-only. Mutation-proven.
 | # | Hole | Fix | Mutation RED | Fixed GREEN |
 |---|------|-----|-------------:|------------:|
 | 1 | `telem_flags` no positional gate | SoT in `status_telemetry.hpp` + `test_telem_flags_abi.py` + one-hot walk in `test_status_telemetry` | drop `stub_busy` from RTL concat | product 8-field match |
-| 2 | stop → API `buffering` forever while HDMI STOPPED | `holdIdle` requires media plant (`pendingKey` or duration) | old holdIdle → `state=buffering` | `state=stopped` |
+| 2 | ~~stop API buffering vs glass STOPPED~~ | **RETRACTED** — intentional `prePlayHold_` / cast hold | n/a | contract gate encodes wire buffering |
 | 3 | identity 624×480 still full rescale | `test_identity_resample_gate.sh` (w-geom owns product fix) | parent GEOM line `arm_rescale=1 mode=always` | synthetic `identity_skip=1` |
 | 4 | `(deleted)` exe + deploy install | `*misterplexd*` + stage `.new`/`mv -f` | trailing-only glob MISS on deleted | MATCH deleted+live |
 
@@ -30,24 +30,26 @@ python3 tests/unit/test_telem_flags_abi.py --self-test; echo "true rc=$?"
 ./build/test_status_telemetry; echo "true rc=$?"
 ```
 
-## (2) Timeline stop terminal
+## (2) Timeline stop — RETRACTED as defect (parent 2026-08-01)
 
-`companion.cpp` holdIdle previously:
-`!wantPlay_ && (prePlayHold_ || castBound_)` → after `clearMedia`, `castBound_` alone forced `buffering@navigation` forever.
+Screen STOPPED + API `buffering` is **intentional**:
+- `clearMediaLocked`: `state_="stopped"`; if `castBound_` → `prePlayHold_=true`
+- `timelineXml` holdIdle: wire `buffering@navigation` so Web Resume stays alive
+- Glass follows internal stopped / idle overlay — designed disagreement
 
-**Not a same-day regression** — blame `814df4a8` (2026-07-24). Latent until castBound + clearMedia exercised on `9ce2c2d1`.
+**castBound_ lifecycle (read, not assumed):**
+| Event | castBound_ | prePlayHold_ |
+|-------|------------|--------------|
+| `/player/*`, `/resources`, timeline poll/subscribe | set true | poll may set true if !wantPlay |
+| `playMedia` | true | cleared (wantPlay true) |
+| `clearMedia` while castBound | stays true | set true |
+| `/player/timeline/unsubscribe` | **false** | false if !wantPlay |
+
+No idle timeout in-tree. Sticky until unsubscribe or new playMedia. **Correct negative: not filed as a bug** — release path exists; residual stickiness without unsubscribe is the documented hold, not proven user harm.
 
 ```
-# mutated old hold:
-.agent-work/companion-hold-mut/test_stop; echo "true rc=$?"   # → 1 state=buffering
-./build/test_companion_stop_terminal; echo "true rc=$?"       # → 0 state=stopped
-```
-
-Parent device verify (parent runs):
-```
-# after cast + play + stop:
-curl -s "http://127.0.0.1:3005/player/timeline/poll?commandID=1" | grep -o 'state="[^"]*"'
-# expect state="stopped" (not buffering) within first poll
+./build/test_companion_stop_terminal; echo "true rc=$?"
+# internal stopped + wire buffering while castBound; unsubscribe → wire stopped
 ```
 
 ## (3) Identity resample

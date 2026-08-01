@@ -1,13 +1,18 @@
-// Gate: after cast+play+stop (clearMedia), timeline must converge to a terminal
-// state (stopped@navigation) within the next poll — never stick in buffering
-// solely because castBound_ remained true.
+// Intended contract for stop + cast hold (parent retraction 2026-08-01).
 //
-// Parent device evidence (daemon 9ce2c2d1): HDMI overlay STOPPED while
-// /player/timeline/poll stayed state=buffering across two stops + ~30s.
-// holdIdle used (prePlayHold_ || castBound_) without requiring a media plant.
+// NOT a defect: after stop, internal state_ is "stopped" (idle/STOPPED on glass)
+// while the timeline WIRE reports buffering@navigation when castBound_/prePlayHold_
+// so Plex Web keeps the Resume dialog without a fresh mirror.
+//   clearMediaLocked: state_="stopped"; if (castBound_) prePlayHold_=true;
+//   timelineXml holdIdle: !wantPlay_ && (prePlayHold_ || castBound_) → wire buffering
 //
-// History: holdIdle introduced 814df4a8 (2026-07-24) — NOT a same-day regression
-// vs f3aa2443; latent until exercised with castBound after clearMedia.
+// A gate that demanded wire state=stopped after stop would FAIL on correct code
+// and tempt "fixing" a real UX feature. This gate encodes the intended contract.
+//
+// castBound_ release: cleared on /player/timeline/unsubscribe (and then prePlayHold_
+// clears when !wantPlay). No idle timeout in-tree — sticky until unsubscribe or
+// a new playMedia (which sets wantPlay and clears prePlayHold). Documented, not
+// filed as a bug without a failing product scenario.
 #include <cstdlib>
 #include <iostream>
 #include <mutex>
@@ -52,61 +57,62 @@ int main() {
 
     auto req = episodeRequest();
     comp.stagePlay(req);
-    // Simulate cast bind the way playMedia does (castBound_ + wantPlay_).
+    require(comp.bindMedia(req, 600000), "bindMedia rejected");
     {
         std::lock_guard<std::mutex> lock(comp.mu_);
         comp.castBound_ = true;
         comp.wantPlay_ = true;
         comp.prePlayHold_ = false;
-        comp.state_ = "playing";
-        comp.timeMs_ = 12000;
-        comp.durationMs_ = 600000;
-        comp.pendingKey_ = req.key;
-        comp.pendingRatingKey_ = req.ratingKey;
     }
-    require(comp.bindMedia(req, 600000), "bindMedia rejected");
     comp.setState("playing", 12000, 600000);
-    const std::string live = comp.timelineXml("live");
-    require(has(live, "state=\"playing\""), "live not playing: " + live);
-    require(has(live, "location=\"fullScreenVideo\""), "live not fullScreen: " + live);
 
-    // Explicit stop path (same as HTTP isStop → clearMedia).
+    // Explicit stop (clearMedia) while cast-bound.
     comp.clearMedia();
-    // Bounded convergence: first poll after stop must already be terminal.
-    // (No async timer in companion — "within bound" == next timelineXml.)
-    const std::string stopped = comp.timelineXml("after-stop");
-    require(has(stopped, "location=\"navigation\""),
-            "stop did not return navigation: " + stopped);
-    require(has(stopped, "state=\"stopped\""),
-            "stop must be terminal stopped, got: " + stopped);
-    require(!has(stopped, "state=\"buffering\""),
-            "stop stuck in buffering (castBound hold defect): " + stopped);
-    require(has(stopped, "duration=\"0\""), "stop retained duration: " + stopped);
-    require(!has(stopped, "key=\"/library/metadata/9\""),
-            "stop retained media key: " + stopped);
-
-    // Second poll still terminal (parent saw stickiness across ~30s / two stops).
-    const std::string again = comp.timelineXml("after-stop-2");
-    require(has(again, "state=\"stopped\""), "second poll left terminal: " + again);
-    require(!has(again, "state=\"buffering\""), "second poll re-entered buffering: " + again);
-
-    // endMediaSession (EOF) with castBound must also terminate.
-    misterplex::Companion eof;
-    eof.setMachineId("misterplex-dev");
-    req = episodeRequest();
-    eof.stagePlay(req);
-    require(eof.bindMedia(req, 1000), "eof bind");
     {
-        std::lock_guard<std::mutex> lock(eof.mu_);
-        eof.castBound_ = true;
+        std::lock_guard<std::mutex> lock(comp.mu_);
+        require(comp.state_ == "stopped",
+                "internal state_ must be stopped after clearMedia, got " + comp.state_);
+        require(comp.prePlayHold_,
+                "prePlayHold_ must stick when castBound after clearMedia");
+        require(comp.castBound_, "castBound_ still true after stop (no unsubscribe yet)");
+        require(!comp.wantPlay_, "wantPlay_ false after clearMedia");
     }
-    eof.setState("playing", 900, 1000);
-    eof.endMediaSession(1000, 1000);
-    const std::string eofXml = eof.timelineXml("eof-cast");
-    require(has(eofXml, "state=\"stopped\""), "EOF+castBound not stopped: " + eofXml);
-    require(!has(eofXml, "state=\"buffering\""), "EOF+castBound buffering: " + eofXml);
+    const std::string wire = comp.timelineXml("after-stop");
+    require(has(wire, "location=\"navigation\""),
+            "stop wire location navigation: " + wire);
+    require(has(wire, "state=\"buffering\""),
+            "intended wire hold is buffering@navigation: " + wire);
+    require(has(wire, "duration=\"0\""), "stop retained duration: " + wire);
+    require(!has(wire, "key=\"/library/metadata/9\""),
+            "stop must drop media key: " + wire);
 
-    std::cout << "test_companion_stop_terminal: OK stopped@navigation after clearMedia "
-                 "with castBound (not buffering forever)\n";
+    // Unsubscribe releases the hold → pure stopped on the wire.
+    {
+        std::lock_guard<std::mutex> lock(comp.mu_);
+        comp.castBound_ = false;
+        if (!comp.wantPlay_)
+            comp.prePlayHold_ = false;
+    }
+    const std::string released = comp.timelineXml("after-unsub");
+    require(has(released, "state=\"stopped\""),
+            "after unsubscribe wire must be stopped: " + released);
+    require(!has(released, "state=\"buffering\""),
+            "after unsubscribe must not hold buffering: " + released);
+
+    // Re-arm cast hold without media — wire buffering again (Resume UX).
+    {
+        std::lock_guard<std::mutex> lock(comp.mu_);
+        comp.state_ = "stopped";
+        comp.castBound_ = true;
+        comp.prePlayHold_ = true;
+        comp.wantPlay_ = false;
+    }
+    const std::string rehold = comp.timelineXml("rehold");
+    require(has(rehold, "state=\"buffering\""),
+            "castBound+prePlayHold must force wire buffering: " + rehold);
+
+    std::cout << "test_companion_stop_terminal: OK intended contract — "
+                 "internal stopped + wire buffering@navigation while castBound; "
+                 "unsubscribe → wire stopped\n";
     return 0;
 }
