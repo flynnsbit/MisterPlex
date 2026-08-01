@@ -1,0 +1,236 @@
+Remote host: docker
+Remote slot: /home/flynnsbit/mplex-builds/fit-nostub-chrome
+Remote project: /home/flynnsbit/mplex-builds/fit-nostub-chrome/Plex_MiSTer
+Remote processors: preserve-qsf
+Reference RBF: UNVERIFIED-OVERRIDE
+Running fast pre-synthesis gates before taking remote Quartus slot...
+DEFINE_PARITY_TABLE_BEGIN
+| macro | Quartus | Verilator/lint | Verilator targeted tests | status |
+|---|---|---|---|---|
+| `BUILD_DATE` | <generated> (fpga/Plex_MiSTer/sys/build_id.tcl:8) | lint (scripts/rtl_lint.py:qsf-macro-injection) | — | shared |
+| `CAVLC_NEGATIVE_TEST` | — | — | 1 (tests/unit/test_h264_cavlc_residual_verilator.sh) | allowed test-only: Injected CAVLC residual fault for expected-red simulation only. |
+| `DDR_FRAME_STORE` | 1 (fpga/Plex_MiSTer/Plex.qsf:82) | 1 (scripts/rtl_lint.py:qsf-macro-injection) | — | shared |
+| `DDR_FRAME_STORE_FAULT_CHROMA_LUMA_STRIDE` | — | — | 1 (tests/unit/test_ddr_frame_store_warm_reset.sh) | allowed test-only: Injected DDR frame-store expected-red fault. |
+| `DDR_FRAME_STORE_FAULT_CHROMA_VERTICAL_FULLRES` | — | — | 1 (tests/unit/test_ddr_frame_store_warm_reset.sh) | allowed test-only: Injected DDR frame-store expected-red fault. |
+| `DDR_FRAME_STORE_FAULT_HOLD_DISP_BANK` | — | — | 1 (tests/unit/test_ddr_frame_store_warm_reset.sh) | allowed test-only: Injected DDR frame-store expected-red fault. |
+| `DDR_FRAME_STORE_FAULT_SWAP_UV_READ` | — | — | 1 (tests/unit/test_ddr_frame_store_warm_reset.sh) | allowed test-only: Injected DDR frame-store expected-red fault. |
+| `DEQUANT_FAULT_QP_SWEEP` | — | — | 1 (tests/unit/test_dequant_qp_sweep.py) | allowed test-only: Injected dequant QP-sweep fault for overflow boundary verification. |
+| `FRAME_H` | 480 (fpga/Plex_MiSTer/Plex.qsf:84) | 480 (scripts/rtl_lint.py:qsf-macro-injection) | — | shared |
+| `FRAME_LINES_8` | 1 (fpga/Plex_MiSTer/Plex.qsf:85) | 1 (scripts/rtl_lint.py:qsf-macro-injection) | — | shared |
+| `FRAME_W` | 640 (fpga/Plex_MiSTer/Plex.qsf:83) | 640 (scripts/rtl_lint.py:qsf-macro-injection) | — | shared |
+| `H264_DEBLOCK_FAULT_ALPHA_BIAS` | — | — | 1 (tests/unit/test_p3_deblock_rtl_sim.sh) | allowed test-only: Injected deblock alpha-table bias expected-red fault. |
+| `H264_DEBLOCK_FAULT_FORCE_BS2` | — | — | 1 (tests/unit/test_p3_deblock_rtl_sim.sh) | allowed test-only: Injected deblock force-bS=2 expected-red fault. |
+| `H264_DEBLOCK_FAULT_MB_COMMIT_EARLY` | — | — | 1 (tests/unit/test_p3_deblock_rtl_sim.sh)<br>1 (tests/unit/test_p3_dpb_mc_rtl_sim.sh) | allowed test-only: Injected deblock/DPB seam expected-red fault. |
+| `H264_DEBLOCK_FAULT_REF_READY_EARLY` | — | — | 1 (tests/unit/test_p3_deblock_rtl_sim.sh)<br>1 (tests/unit/test_p3_dpb_mc_rtl_sim.sh) | allowed test-only: Injected deblock/DPB seam expected-red fault. |
+| `H264_DECODE_CORE_FAULT_BAD_RBSP_REQ` | — | — | 1 (tests/unit/test_h264_decode_core_p16z_rtl_sim.sh) | allowed test-only: Injected decode-core P16x16 syntax-walker RBSP request expected-red fault. |
+| `H264_DECODE_CORE_FAULT_DROP_CLIP` | — | — | 1 (tests/unit/test_h264_decode_core_p16z_rtl_sim.sh) | allowed test-only: Injected decode-core P16x16 Clip1 drop expected-red fault (wrap instead of clip). |
+| `H264_DECODE_CORE_FAULT_DROP_LAST_CHROMA_RESIDUAL` | — | — | 1 (tests/unit/test_h264_decode_core_p16z_rtl_sim.sh) | allowed test-only: Injected decode-core P16x16 final scheduled chroma residual expected-red fault. |
+| `H264_DECODE_CORE_FAULT_DROP_LAST_LUMA_RESIDUAL` | — | — | 1 (tests/unit/test_h264_decode_core_p16z_rtl_sim.sh) | allowed test-only: Injected decode-core P16x16 final scheduled luma residual expected-red fault. |
+| `H264_DECODE_CORE_FAULT_DROP_MV_NEIGHBOR` | — | — | 1 (tests/unit/test_h264_decode_core_p16z_rtl_sim.sh) | allowed test-only: Injected decode-core P16x16 MV-neighbor expected-red fault. |
+| `H264_DECODE_CORE_FAULT_DROP_PRED` | — | — | 1 (tests/unit/test_h264_decode_core_p16z_rtl_sim.sh) | allowed test-only: Injected decode-core P16x16 real-P prediction-drop expected-red fault. |
+| `H264_DECODE_CORE_FAULT_DROP_RESIDUAL` | — | — | 1 (tests/unit/test_h264_decode_core_p16z_rtl_sim.sh) | allowed test-only: Injected decode-core P16x16 real-P residual-drop expected-red fault. |
+| `H264_DECODE_CORE_FAULT_DROP_SCHEDULED_RESIDUAL` | — | — | 1 (tests/unit/test_h264_decode_core_p16z_rtl_sim.sh) | allowed test-only: Injected decode-core P16x16 scheduled CAVLC/IDCT residual expected-red fault. |
+| `H264_DECODE_CORE_FAULT_DROP_WB` | — | — | 1 (tests/unit/test_h264_decode_core_writeback_rtl_sim.sh) | allowed test-only: Injected decode-core DPB writeback expected-red fault. |
+| `H264_DECODE_CORE_FAULT_PERTURB_MV` | — | — | 1 (tests/unit/test_h264_decode_core_p16z_rtl_sim.sh) | allowed test-only: Injected decode-core P16x16 real-P motion-vector expected-red fault. |
+| `H264_DECODE_CORE_FAULT_SKIP_CHROMA_RESIDUAL` | — | — | 1 (tests/unit/test_h264_decode_core_p16z_rtl_sim.sh) | allowed test-only: Injected decode-core P16x16 chroma residual skip expected-red fault. |
+| `H264_DECODE_CORE_FAULT_SWAP_CHROMA_READ` | — | — | 1 (tests/unit/test_h264_decode_core_p16z_rtl_sim.sh)<br>1 (tests/unit/test_h264_decode_core_real_slice_rtl_sim.sh) | allowed test-only: Injected decode-core P16x16 U/V chroma reference-read expected-red fault. |
+| `H264_DECODE_CORE_FAULT_SWAP_CHROMA_RESIDUAL` | — | — | 1 (tests/unit/test_h264_decode_core_p16z_rtl_sim.sh)<br>1 (tests/unit/test_h264_decode_core_real_slice_rtl_sim.sh) | allowed test-only: Injected decode-core P16x16 U/V chroma residual expected-red fault. |
+| `H264_DECODE_CORE_FAULT_SWAP_CHROMA_SCHEDULED_COEFF` | — | — | 1 (tests/unit/test_h264_decode_core_p16z_rtl_sim.sh) | allowed test-only: Injected decode-core P16x16 chroma CAVLC scan-order expected-red fault. |
+| `H264_DECODE_CORE_FAULT_SWAP_SCHEDULED_COEFF` | — | — | 1 (tests/unit/test_h264_decode_core_p16z_rtl_sim.sh) | allowed test-only: Injected decode-core P16x16 scheduled CAVLC scan-order expected-red fault. |
+| `H264_DECODE_CORE_FAULT_WRONG_CBP_BIT` | — | — | 1 (tests/unit/test_h264_decode_core_p16z_rtl_sim.sh) | allowed test-only: Injected decode-core P16x16 CBP 8x8-group bit inversion expected-red fault. |
+| `H264_DPB_FAULT_EARLY_PROMOTE` | — | — | 1 (tests/unit/test_p3_dpb_mc_rtl_sim.sh) | allowed test-only: Injected DPB early frame-promote expected-red fault. |
+| `H264_DPB_FAULT_NO_IDR_INVALIDATE` | — | — | 1 (tests/unit/test_p3_dpb_mc_rtl_sim.sh) | allowed test-only: Injected DPB missing-IDR-invalidate expected-red fault. |
+| `H264_DPB_FAULT_SKIP_DEBLOCK` | — | — | 1 (tests/unit/test_p3_dpb_mc_rtl_sim.sh) | allowed test-only: Injected DPB skip-deblock-before-commit expected-red fault. |
+| `LAST_FRAME_LATCH_FAULT_BANK_BASE` | — | — | 1 (tests/unit/test_last_frame_latch_red.sh) | allowed test-only: Injected LastFrame expected-red fault: latch computes bank base from the wrong geometry stride. |
+| `LAST_FRAME_LATCH_FAULT_IDLE_GEOMETRY` | — | — | 1 (tests/unit/test_last_frame_latch_red.sh) | allowed test-only: Injected LastFrame expected-red fault: latch publishes idle/default geometry instead of playback geometry. |
+| `LOG_REDACT_FAULT_IDENTITY` | — | — | 1 (tests/unit/test_log_redact_red.sh) | allowed test-only: Injected log-redact expected-red fault: redactSensitive becomes a no-op so cleartext tokens would pass. |
+| `OSD_MENU_FAULT_FALLBACK_624_BITRATE` | — | — | 1 (tests/unit/test_osd_menu_red.sh) | allowed test-only: Injected OSD/fallback 624x480 bitrate mismatch expected-red fault. |
+| `OSD_MENU_FAULT_SKIP_INITIAL_IDLE` | — | — | 1 (tests/unit/test_osd_menu_red.sh) | allowed test-only: Injected OSD expected-red fault: skip first idle paint so DDR idle screen never appears. |
+| `P3_INTRA_FRAME_RARE_NEGATIVE_TEST` | — | — | 1 (tests/unit/test_p3_intra_frame_verilator.py) | allowed test-only: Injected intra-frame expected-red fault. |
+| `P3_INTRA_NEGATIVE_TEST` | — | — | 1 (tests/unit/test_p3_intra_mb0_verilator.py) | allowed test-only: Injected intra-MB0 expected-red fault. |
+| `PRODUCT_NO_STUB` | 1 (fpga/Plex_MiSTer/Plex.qsf:88) | 1 (scripts/rtl_lint.py:qsf-macro-injection) | — | shared |
+| `RAW_PIPE_FAULT_NO_SET` | — | — | 1 (tests/unit/test_raw_video_pipe_red.sh) | allowed test-only: Injected raw-video-pipe expected-red fault: F_SETPIPE_SZ becomes a no-op so capacity stays at the kernel default. |
+| `SDRAM_CL3` | 1 (fpga/Plex_MiSTer/Plex.qsf:57) | 1 (scripts/rtl_lint.py:qsf-macro-injection) | 1 (tests/unit/test_sdram_dq_turnaround_verilator.sh)<br>1 (tests/unit/test_sdram_startup_verilator.sh) | shared |
+| `SDRAM_CLK_142` | 1 (fpga/Plex_MiSTer/Plex.qsf:56) | 1 (scripts/rtl_lint.py:qsf-macro-injection) | — | shared |
+DEFINE_PARITY_TABLE_END
+DEFINE_PARITY_DDR_LAYOUT_BEGIN
+| host | rtl | host_val | rtl_val | status |
+|---|---|---|---|---|
+| `kPlex480pCodedWidth` | `DDR_FRAME_CODED_WIDTH` | 624 | 624 | shared |
+| `kPlex480pCodedHeight` | `DDR_FRAME_CODED_HEIGHT` | 480 | 480 | shared |
+| `kPlex480pDisplayWidth` | `DDR_FRAME_DISPLAY_WIDTH` | 618 | 618 | shared |
+| `kPlex480pDisplayHeight` | `DDR_FRAME_DISPLAY_HEIGHT` | 480 | 480 | shared |
+| `kPlex480pPresentedWidth` | `DDR_FRAME_PRESENTED_WIDTH` | 640 | 640 | shared |
+| `kPlex480pPresentedHeight` | `DDR_FRAME_PRESENTED_HEIGHT` | 480 | 480 | shared |
+| `kPlex480pCropLeft` | `DDR_FRAME_CROP_LEFT` | 0 | 0 | shared |
+| `kPlex480pCropRight` | `DDR_FRAME_CROP_RIGHT` | 6 | 6 | shared |
+| `kPlex480pCropTop` | `DDR_FRAME_CROP_TOP` | 0 | 0 | shared |
+| `kPlex480pCropBottom` | `DDR_FRAME_CROP_BOTTOM` | 0 | 0 | shared |
+| `kPlex480pPillarboxLeft` | `DDR_FRAME_PILLARBOX_LEFT` | 11 | 11 | shared |
+| `kPlex480pPillarboxRight` | `DDR_FRAME_PILLARBOX_RIGHT` | 11 | 11 | shared |
+| `kPlex480pRgb565LineQwords` | `DDR_FRAME_RGB565_LINE_QWORDS` | 156 | 156 | shared |
+| `kPlex480pYuvLumaLineQwords` | `DDR_FRAME_YUV_LUMA_LINE_QWORDS` | 78 | 78 | shared |
+| `kPlex480pYuvChromaLineQwords` | `DDR_FRAME_YUV_CHROMA_LINE_QWORDS` | 39 | 39 | shared |
+| `kPlex480pYStrideBytes` | `DDR_FRAME_Y_STRIDE_BYTES` | 624 | 624 | shared |
+| `kPlex480pChromaStrideBytes` | `DDR_FRAME_CHROMA_STRIDE_BYTES` | 312 | 312 | shared |
+| `kPlex480pYuv420pBytes` | `DDR_FRAME_YUV420P_BYTES` | 449280 | 449280 | shared |
+| `kPlex480pYPlaneOffset` | `DDR_FRAME_Y_PLANE_OFFSET` | 0 | 0 | shared |
+| `kPlex480pUPlaneOffset` | `DDR_FRAME_U_PLANE_OFFSET` | 299520 | 299520 | shared |
+| `kPlex480pVPlaneOffset` | `DDR_FRAME_V_PLANE_OFFSET` | 374400 | 374400 | shared |
+| `kPlex480pYuv420pBankStride` | `DDR_FRAME_YUV420P_BANK_STRIDE` | 524288 | 524288 | shared |
+| `kPlex480pYuv420pDoorbellPhys` | `DDR_FRAME_YUV420P_DOORBELL_PHYS` | 806350848 | 806350848 | shared |
+DEFINE_PARITY_DDR_LAYOUT_END
+PASS define parity: Quartus product macros match Verilator/lint; test-only macros are allowlisted; DDR host/RTL layout constants and QSF FRAME_W/H↔presented agree
+STATIC_PASS Quartus SV subset pattern scan: 43 file(s); toolchain=remote:docker; limitation=static_curated_patterns_only; paired_gate=verilator-elab_for_elaboration_errors; not_a_Quartus_analysis_or_synthesis_PASS
+Verilator elaboration: using Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
+Verilator elaboration: parsed 83 Quartus RTL/context files; checking 43 owned files
+Verilator elaboration: propagated QSF macros SDRAM_CLK_142=1 SDRAM_CL3=1 DDR_FRAME_STORE=1 FRAME_W=640 FRAME_H=480 FRAME_LINES_8=1 PRODUCT_NO_STUB=1
+Verilator elaboration: ignored 89 vendor/generated context errors; see build/verilator_elab.log
+VERILATOR_ELAB_PASS: no owned RTL elaboration errors
+Project: /home/flynnsbit/mplex-builds/fit-nostub-chrome/Plex_MiSTer
+Image: ghcr.io/raetro/quartus:mister
+NUM_PARALLEL_PROCESSORS: set_global_assignment -name NUM_PARALLEL_PROCESSORS 2
+exit_code=0
+wall_seconds=426
+peak_docker_mem_mb=1649
+available_mem_start_mb=61861
+available_mem_end_mb=62466
+stats_file=/home/flynnsbit/mplex-builds/fit-nostub-chrome/build_remote/docker_stats.tsv
+log_file=/home/flynnsbit/mplex-builds/fit-nostub-chrome/build_remote/compile.log
+FIT_HIERARCHY_TABLE_BEGIN
+| module | entity | hierarchy | comb ALUTs | registers | block bits | M10Ks | DSPs | status |
+|---|---|---|---:|---:|---:|---:|---:|---|
+| `ddr_frame_store` | `ddr_frame_store` | `|sys_top|emu:emu|present_core:present|ddr_frame_store:fstore` | 4921 | 2455 | 159744 | 96 | 6 | present |
+| `present_core` | `present_core` | `|sys_top|emu:emu|present_core:present` | 5108 | 2672 | 225280 | 103 | 9 | present |
+| `stream_path` | `stream_path` | `|sys_top|emu:emu|stream_path:spath` | 4640 | 1693 | 263104 | 35 | 1 | present |
+| `ddr_bitstream_reader` | `ddr_bitstream_reader` | `|sys_top|emu:emu|stream_path:spath|ddr_bitstream_reader:ddr_stream` | 933 | 686 | 0 | 0 | 0 | present |
+FIT_HIERARCHY_TABLE_END
+PASS fit hierarchy: critical modules present with non-trivial resource usage
+TIMING_FMAX_TABLE_BEGIN
+| clock | Fmax | Restricted Fmax |
+|---|---:|---:|
+| `emu|pll|pll_inst|altera_pll_i|general[0].gpll~PLL_OUTPUT_COUNTER|divclk` | 32.59 MHz | 32.59 MHz |
+| `pll_audio|pll_audio_inst|altera_pll_i|general[0].gpll~PLL_OUTPUT_COUNTER|divclk` | 38.82 MHz | 38.82 MHz |
+| `FPGA_CLK1_50` | 76.97 MHz | 76.97 MHz |
+| `emu|pll|pll_inst|altera_pll_i|general[2].gpll~PLL_OUTPUT_COUNTER|divclk` | 97.43 MHz | 97.43 MHz |
+| `FPGA_CLK2_50` | 130.58 MHz | 130.58 MHz |
+| `sysmem|fpga_interfaces|clocks_resets|h2f_user0_clk` | 143.68 MHz | 143.68 MHz |
+| `pll_hdmi|pll_hdmi_inst|altera_pll_i|cyclonev_pll|counter[0].output_counter|divclk` | 162.73 MHz | 162.73 MHz |
+| `spi_sck` | 218.1 MHz | 218.1 MHz |
+TIMING_FMAX_TABLE_END
+TIMING_SLACK_TABLE_BEGIN
+| section | clock | slack | endpoint TNS |
+|---|---|---:|---:|
+| Setup | `emu|pll|pll_inst|altera_pll_i|general[2].gpll~PLL_OUTPUT_COUNTER|divclk` | 0.559 | 0 |
+| Setup | `pll_hdmi|pll_hdmi_inst|altera_pll_i|cyclonev_pll|counter[0].output_counter|divclk` | 0.587 | 0 |
+| Setup | `emu|pll|pll_inst|altera_pll_i|general[0].gpll~PLL_OUTPUT_COUNTER|divclk` | 0.982 | 0 |
+| Setup | `sysmem|fpga_interfaces|clocks_resets|h2f_user0_clk` | 3.04 | 0 |
+| Setup | `spi_sck` | 5.415 | 0 |
+| Setup | `FPGA_CLK1_50` | 7.008 | 0 |
+| Setup | `FPGA_CLK2_50` | 12.342 | 0 |
+| Setup | `pll_audio|pll_audio_inst|altera_pll_i|general[0].gpll~PLL_OUTPUT_COUNTER|divclk` | 14.92 | 0 |
+| Hold | `pll_hdmi|pll_hdmi_inst|altera_pll_i|cyclonev_pll|counter[0].output_counter|divclk` | 0.211 | 0 |
+| Hold | `emu|pll|pll_inst|altera_pll_i|general[0].gpll~PLL_OUTPUT_COUNTER|divclk` | 0.246 | 0 |
+| Hold | `pll_audio|pll_audio_inst|altera_pll_i|general[0].gpll~PLL_OUTPUT_COUNTER|divclk` | 0.259 | 0 |
+| Hold | `sysmem|fpga_interfaces|clocks_resets|h2f_user0_clk` | 0.361 | 0 |
+| Hold | `spi_sck` | 0.377 | 0 |
+| Hold | `FPGA_CLK1_50` | 0.383 | 0 |
+| Hold | `emu|pll|pll_inst|altera_pll_i|general[2].gpll~PLL_OUTPUT_COUNTER|divclk` | 0.386 | 0 |
+| Hold | `FPGA_CLK2_50` | 0.419 | 0 |
+| Recovery | `emu|pll|pll_inst|altera_pll_i|general[2].gpll~PLL_OUTPUT_COUNTER|divclk` | 0.485 | 0 |
+| Recovery | `pll_hdmi|pll_hdmi_inst|altera_pll_i|cyclonev_pll|counter[0].output_counter|divclk` | 4.578 | 0 |
+| Recovery | `sysmem|fpga_interfaces|clocks_resets|h2f_user0_clk` | 6.406 | 0 |
+| Recovery | `FPGA_CLK1_50` | 17.126 | 0 |
+| Recovery | `emu|pll|pll_inst|altera_pll_i|general[0].gpll~PLL_OUTPUT_COUNTER|divclk` | 47.022 | 0 |
+| Removal | `FPGA_CLK1_50` | 0.994 | 0 |
+| Removal | `sysmem|fpga_interfaces|clocks_resets|h2f_user0_clk` | 1.064 | 0 |
+| Removal | `pll_hdmi|pll_hdmi_inst|altera_pll_i|cyclonev_pll|counter[0].output_counter|divclk` | 1.13 | 0 |
+| Removal | `emu|pll|pll_inst|altera_pll_i|general[0].gpll~PLL_OUTPUT_COUNTER|divclk` | 1.407 | 0 |
+| Removal | `emu|pll|pll_inst|altera_pll_i|general[2].gpll~PLL_OUTPUT_COUNTER|divclk` | 1.855 | 0 |
+| Minimum Pulse Width | `pll_hdmi|pll_hdmi_inst|altera_pll_i|cyclonev_pll|fpll_0|fpll|vcoph[0]` | 1.122 | 0 |
+| Minimum Pulse Width | `pll_audio|pll_audio_inst|altera_pll_i|general[0].gpll~FRACTIONAL_PLL|vcoph[0]` | 1.196 | 0 |
+| Minimum Pulse Width | `emu|pll|pll_inst|altera_pll_i|general[0].gpll~FRACTIONAL_PLL|vcoph[0]` | 1.388 | 0 |
+| Minimum Pulse Width | `pll_hdmi|pll_hdmi_inst|altera_pll_i|cyclonev_pll|counter[0].output_counter|divclk` | 1.95 | 0 |
+| Minimum Pulse Width | `sysmem|fpga_interfaces|clocks_resets|h2f_user0_clk` | 3.602 | 0 |
+| Minimum Pulse Width | `emu|pll|pll_inst|altera_pll_i|general[2].gpll~PLL_OUTPUT_COUNTER|divclk` | 4.107 | 0 |
+| Minimum Pulse Width | `spi_sck` | 4.206 | 0 |
+| Minimum Pulse Width | `FPGA_CLK1_50` | 9.206 | 0 |
+| Minimum Pulse Width | `FPGA_CLK2_50` | 9.207 | 0 |
+| Minimum Pulse Width | `FPGA_CLK3_50` | 9.73 | 0 |
+| Minimum Pulse Width | `pll_audio|pll_audio_inst|altera_pll_i|general[0].gpll~PLL_OUTPUT_COUNTER|divclk` | 18.944 | 0 |
+| Minimum Pulse Width | `emu|pll|pll_inst|altera_pll_i|general[0].gpll~PLL_OUTPUT_COUNTER|divclk` | 23.575 | 0 |
+TIMING_SLACK_TABLE_END
+PASS timing: no negative setup/hold/recovery/removal/min-pulse slack
+TIMING_MARGIN_BASELINE wtime4
+TIMING_MARGIN_THRESHOLDS max_setup_regression_ns=0.05 max_hold_regression_ns=0.05 require_tns_zero=True
+TIMING_MARGIN_TABLE_BEGIN
+| clock | role | section | ref_ns | actual_ns | delta_ns | floor_ns | tns | status |
+|---|---|---|---:|---:|---:|---:|---:|---|
+| `emu|pll|pll_inst|altera_pll_i|general[2].gpll~PLL_OUTPUT_COUNTER|divclk` | clk_ddr | Setup | 0.284 | 0.559 | 0.275 | 0.234 | 0 | ok |
+| `emu|pll|pll_inst|altera_pll_i|general[0].gpll~PLL_OUTPUT_COUNTER|divclk` | clk_sys | Hold | 0.244 | 0.246 | 0.002 | 0.194 | 0 | ok |
+TIMING_MARGIN_TABLE_END
+TIMING_MARGIN_RAW worst_setup clock=`emu|pll|pll_inst|altera_pll_i|general[2].gpll~PLL_OUTPUT_COUNTER|divclk` slack=0.559 tns=0
+TIMING_MARGIN_RAW worst_hold clock=`pll_hdmi|pll_hdmi_inst|altera_pll_i|cyclonev_pll|counter[0].output_counter|divclk` slack=0.211 tns=0
+PASS timing_margin: tracked clocks within wtime4 regression budget
+TIMING_EXCLUSION_TABLE_BEGIN
+| # | file | line | kind | fingerprint | baseline | risk |
+|---|---|---:|---|---|---|---|
+| 1 | `fpga/Plex_MiSTer/Plex.sdc` | 19 | false_path | `c61a3d15000b57d4` | yes | REVIEW: false_path on non-obvious target |
+| 2 | `fpga/Plex_MiSTer/sys/sys_top.sdc` | 13 | clock_groups | `b4edaa72e24222a6` | yes | mux-clock: legitimate if clocks are truly mux-selected |
+| 3 | `fpga/Plex_MiSTer/sys/sys_top.sdc` | 24 | false_path | `26ca632f5a39c708` | yes | io-false-path: standard for async I/O pins |
+| 4 | `fpga/Plex_MiSTer/sys/sys_top.sdc` | 25 | false_path | `219c0b4b3cfc3e93` | yes | io-false-path: standard for async I/O pins |
+| 5 | `fpga/Plex_MiSTer/sys/sys_top.sdc` | 26 | false_path | `70caf6c81060ed39` | yes | io-false-path: standard for async I/O pins |
+| 6 | `fpga/Plex_MiSTer/sys/sys_top.sdc` | 27 | false_path | `e56602696642f3cf` | yes | io-false-path: standard for async I/O pins |
+| 7 | `fpga/Plex_MiSTer/sys/sys_top.sdc` | 28 | false_path | `09e9c6ed599cb820` | yes | io-false-path: standard for async I/O pins |
+| 8 | `fpga/Plex_MiSTer/sys/sys_top.sdc` | 29 | false_path | `98c845fdf4a334e6` | yes | io-false-path: standard for async I/O pins |
+| 9 | `fpga/Plex_MiSTer/sys/sys_top.sdc` | 30 | false_path | `cf5526aff02aa20a` | yes | io-false-path: standard for async I/O pins |
+| 10 | `fpga/Plex_MiSTer/sys/sys_top.sdc` | 31 | false_path | `2a760d125614cc9f` | yes | io-false-path: standard for async I/O pins |
+| 11 | `fpga/Plex_MiSTer/sys/sys_top.sdc` | 32 | false_path | `81204f3e009c0f23` | yes | io-false-path: standard for async I/O pins |
+| 12 | `fpga/Plex_MiSTer/sys/sys_top.sdc` | 33 | false_path | `f4f108feb5aa7a37` | yes | config-register: quasi-static, acceptable if truly quasi-static |
+| 13 | `fpga/Plex_MiSTer/sys/sys_top.sdc` | 34 | false_path | `5da1be13cdb5ebf9` | yes | config-register: quasi-static, acceptable if truly quasi-static |
+| 14 | `fpga/Plex_MiSTer/sys/sys_top.sdc` | 35 | false_path | `4e093a7cb5428be8` | yes | config-register: quasi-static, acceptable if truly quasi-static |
+| 15 | `fpga/Plex_MiSTer/sys/sys_top.sdc` | 36 | false_path | `0d47e540a36233ad` | yes | REVIEW: false_path on non-obvious target |
+| 16 | `fpga/Plex_MiSTer/sys/sys_top.sdc` | 37 | false_path | `64f0ddcd2988a30e` | yes | REVIEW: false_path on non-obvious target |
+| 17 | `fpga/Plex_MiSTer/sys/sys_top.sdc` | 38 | false_path | `2d87bb37688dfe98` | yes | REVIEW: false_path on non-obvious target |
+| 18 | `fpga/Plex_MiSTer/sys/sys_top.sdc` | 40 | multicycle_path | `354221305f1a65db` | yes | multicycle: acceptable with documented evidence |
+| 19 | `fpga/Plex_MiSTer/sys/sys_top.sdc` | 41 | multicycle_path | `76eee8b0a7210516` | yes | multicycle: acceptable with documented evidence |
+| 20 | `fpga/Plex_MiSTer/sys/sys_top.sdc` | 43 | false_path | `c568a78d58708c84` | yes | osd-false-path: OSD display timing, separate domain |
+| 21 | `fpga/Plex_MiSTer/sys/sys_top.sdc` | 44 | false_path | `75ecaf3010b73e44` | yes | osd-false-path: OSD display timing, separate domain |
+| 22 | `fpga/Plex_MiSTer/sys/sys_top.sdc` | 45 | false_path | `43e58eee54af7261` | yes | osd-false-path: OSD display timing, separate domain |
+| 23 | `fpga/Plex_MiSTer/sys/sys_top.sdc` | 46 | false_path | `514a5867e63917af` | yes | osd-false-path: OSD display timing, separate domain |
+| 24 | `fpga/Plex_MiSTer/sys/sys_top.sdc` | 47 | false_path | `515ffff39016a860` | yes | osd-false-path: OSD display timing, separate domain |
+| 25 | `fpga/Plex_MiSTer/sys/sys_top.sdc` | 48 | false_path | `5575f0ecd3184a03` | yes | osd-false-path: OSD display timing, separate domain |
+| 26 | `fpga/Plex_MiSTer/sys/sys_top.sdc` | 49 | false_path | `61994da324a6141b` | yes | osd-false-path: OSD display timing, separate domain |
+| 27 | `fpga/Plex_MiSTer/sys/sys_top.sdc` | 50 | false_path | `7032918eb3237746` | yes | osd-false-path: OSD display timing, separate domain |
+| 28 | `fpga/Plex_MiSTer/sys/sys_top.sdc` | 51 | false_path | `0b7fc51e19278058` | yes | osd-false-path: OSD display timing, separate domain |
+| 29 | `fpga/Plex_MiSTer/sys/sys_top.sdc` | 52 | false_path | `f7f4330595abaf65` | yes | osd-false-path: OSD display timing, separate domain |
+| 30 | `fpga/Plex_MiSTer/sys/sys_top.sdc` | 54 | false_path | `baeb7029d7042639` | yes | config-register: quasi-static, acceptable if truly quasi-static |
+| 31 | `fpga/Plex_MiSTer/sys/sys_top.sdc` | 55 | false_path | `a57ff74e659a317a` | yes | config-register: quasi-static, acceptable if truly quasi-static |
+| 32 | `fpga/Plex_MiSTer/sys/sys_top.sdc` | 56 | false_path | `76dccb70f57c3b1a` | yes | config-register: quasi-static, acceptable if truly quasi-static |
+| 33 | `fpga/Plex_MiSTer/sys/sys_top.sdc` | 57 | false_path | `c038e11f491b1955` | yes | config-register: quasi-static, acceptable if truly quasi-static |
+| 34 | `fpga/Plex_MiSTer/sys/sys_top.sdc` | 58 | false_path | `7da989f0410ec11a` | yes | config-register: quasi-static, acceptable if truly quasi-static |
+| 35 | `fpga/Plex_MiSTer/sys/sys_top.sdc` | 59 | false_path | `d460635806b3bba4` | yes | config-register: quasi-static, acceptable if truly quasi-static |
+| 36 | `fpga/Plex_MiSTer/sys/sys_top.sdc` | 60 | false_path | `2281a302da18e2da` | yes | REVIEW: false_path on non-obvious target |
+| 37 | `fpga/Plex_MiSTer/sys/sys_top.sdc` | 61 | false_path | `16eb88bc9a1a70cc` | yes | REVIEW: false_path on non-obvious target |
+| 38 | `fpga/Plex_MiSTer/sys/sys_top.sdc` | 62 | false_path | `1581b0f57c4c2454` | yes | REVIEW: false_path on non-obvious target |
+| 39 | `fpga/Plex_MiSTer/sys/sys_top.sdc` | 63 | false_path | `07e6a1d80af0a718` | yes | REVIEW: false_path on non-obvious target |
+| 40 | `fpga/Plex_MiSTer/sys/sys_top.sdc` | 65 | false_path | `164cf9cda4e39581` | yes | scaler-false-path: scaler configuration outputs |
+| 41 | `fpga/Plex_MiSTer/sys/sys_top.sdc` | 66 | false_path | `e974407a65f84136` | yes | scaler-false-path: scaler configuration outputs |
+| 42 | `fpga/Plex_MiSTer/sys/sys_top.sdc` | 67 | false_path | `433b46429f702a1c` | yes | scaler-false-path: scaler configuration outputs |
+| 43 | `fpga/Plex_MiSTer/sys/sys_top.sdc` | 68 | false_path | `a0514e0293bad7fa` | yes | scaler-false-path: scaler configuration outputs |
+| 44 | `fpga/Plex_MiSTer/sys/sys_top.sdc` | 69 | false_path | `1df4ec7e48b80f33` | yes | scaler-false-path: scaler configuration outputs |
+| 45 | `fpga/Plex_MiSTer/sys/sys_top.sdc` | 70 | false_path | `bad44049f9d5d445` | yes | scaler-false-path: scaler configuration outputs |
+| 46 | `fpga/Plex_MiSTer/sys/sys_top.sdc` | 71 | false_path | `78090159e95a014d` | yes | scaler-false-path: scaler configuration outputs |
+| 47 | `fpga/Plex_MiSTer/sys/sys_top.sdc` | 72 | false_path | `445e4b7539cbb4df` | yes | scaler-false-path: scaler configuration outputs |
+| 48 | `fpga/Plex_MiSTer/sys/sys_top.sdc` | 73 | false_path | `ac48fbe9a34646e2` | yes | scaler-false-path: scaler configuration outputs |
+| 49 | `fpga/Plex_MiSTer/sys/sys_top.sdc` | 74 | false_path | `de1e19a50000bdd5` | yes | scaler-false-path: scaler configuration outputs |
+| 50 | `fpga/Plex_MiSTer/sys/sys_top.sdc` | 76 | false_path | `88177291f638ba21` | yes | REVIEW: false_path on non-obvious target |
+| 51 | `fpga/Plex_MiSTer/sys/sys_top.sdc` | 77 | false_path | `cec5dcaef6dfb306` | yes | REVIEW: false_path on non-obvious target |
+TIMING_EXCLUSION_TABLE_END
+STA coverage: 38 slack rows, 12 clocks (FPGA_CLK1_50, FPGA_CLK2_50, FPGA_CLK3_50, emu|pll|pll_inst|altera_pll_i|general[0].gpll~FRACTIONAL_PLL|vcoph[0], emu|pll|pll_inst|altera_pll_i|general[0].gpll~PLL_OUTPUT_COUNTER|divclk, emu|pll|pll_inst|altera_pll_i|general[2].gpll~PLL_OUTPUT_COUNTER|divclk, pll_audio|pll_audio_inst|altera_pll_i|general[0].gpll~FRACTIONAL_PLL|vcoph[0], pll_audio|pll_audio_inst|altera_pll_i|general[0].gpll~PLL_OUTPUT_COUNTER|divclk, pll_hdmi|pll_hdmi_inst|altera_pll_i|cyclonev_pll|counter[0].output_counter|divclk, pll_hdmi|pll_hdmi_inst|altera_pll_i|cyclonev_pll|fpll_0|fpll|vcoph[0], spi_sck, sysmem|fpga_interfaces|clocks_resets|h2f_user0_clk), sections: Hold, Minimum Pulse Width, Recovery, Removal, Setup
+PASS timing exclusion audit: 51 SDC exclusion(s) all in baseline; no new exclusions; blind_spot=only_checks_SDC_text_not_Quartus_internal_optimisations
+Bit-identity: UNVERIFIED (MISTER_REMOTE_ALLOW_UNVERIFIED=1)
+Artifacts: /home/flynnsbit/Projects/MisterPlex/.worktrees/w-fit-integ/fpga/Plex_MiSTer/remote_out/fit-nostub-chrome
+Plex.rbf md5: c74c6863a56ad0d9ef4a24e28af8b7e2
+Negative-slack rows: 0
+Logic utilization: ; Logic utilization (in ALMs)     ; 14,354 / 41,910 ( 34 % )                    ;

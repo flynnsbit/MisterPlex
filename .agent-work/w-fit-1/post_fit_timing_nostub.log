@@ -1,0 +1,56 @@
+/home/flynnsbit/Projects/MisterPlex/.worktrees/w-fit-integ/scripts/check_quartus_timing.py --sta-rpt "/home/flynnsbit/Projects/MisterPlex/.worktrees/w-fit-integ/fpga/Plex_MiSTer/remote_out/fit-nostub-chrome/Plex.sta.rpt"
+TIMING_FMAX_TABLE_BEGIN
+| clock | Fmax | Restricted Fmax |
+|---|---:|---:|
+| `emu|pll|pll_inst|altera_pll_i|general[0].gpll~PLL_OUTPUT_COUNTER|divclk` | 32.59 MHz | 32.59 MHz |
+| `pll_audio|pll_audio_inst|altera_pll_i|general[0].gpll~PLL_OUTPUT_COUNTER|divclk` | 38.82 MHz | 38.82 MHz |
+| `FPGA_CLK1_50` | 76.97 MHz | 76.97 MHz |
+| `emu|pll|pll_inst|altera_pll_i|general[2].gpll~PLL_OUTPUT_COUNTER|divclk` | 97.43 MHz | 97.43 MHz |
+| `FPGA_CLK2_50` | 130.58 MHz | 130.58 MHz |
+| `sysmem|fpga_interfaces|clocks_resets|h2f_user0_clk` | 143.68 MHz | 143.68 MHz |
+| `pll_hdmi|pll_hdmi_inst|altera_pll_i|cyclonev_pll|counter[0].output_counter|divclk` | 162.73 MHz | 162.73 MHz |
+| `spi_sck` | 218.1 MHz | 218.1 MHz |
+TIMING_FMAX_TABLE_END
+TIMING_SLACK_TABLE_BEGIN
+| section | clock | slack | endpoint TNS |
+|---|---|---:|---:|
+| Setup | `emu|pll|pll_inst|altera_pll_i|general[2].gpll~PLL_OUTPUT_COUNTER|divclk` | 0.559 | 0 |
+| Setup | `pll_hdmi|pll_hdmi_inst|altera_pll_i|cyclonev_pll|counter[0].output_counter|divclk` | 0.587 | 0 |
+| Setup | `emu|pll|pll_inst|altera_pll_i|general[0].gpll~PLL_OUTPUT_COUNTER|divclk` | 0.982 | 0 |
+| Setup | `sysmem|fpga_interfaces|clocks_resets|h2f_user0_clk` | 3.04 | 0 |
+| Setup | `spi_sck` | 5.415 | 0 |
+| Setup | `FPGA_CLK1_50` | 7.008 | 0 |
+| Setup | `FPGA_CLK2_50` | 12.342 | 0 |
+| Setup | `pll_audio|pll_audio_inst|altera_pll_i|general[0].gpll~PLL_OUTPUT_COUNTER|divclk` | 14.92 | 0 |
+| Hold | `pll_hdmi|pll_hdmi_inst|altera_pll_i|cyclonev_pll|counter[0].output_counter|divclk` | 0.211 | 0 |
+| Hold | `emu|pll|pll_inst|altera_pll_i|general[0].gpll~PLL_OUTPUT_COUNTER|divclk` | 0.246 | 0 |
+| Hold | `pll_audio|pll_audio_inst|altera_pll_i|general[0].gpll~PLL_OUTPUT_COUNTER|divclk` | 0.259 | 0 |
+| Hold | `sysmem|fpga_interfaces|clocks_resets|h2f_user0_clk` | 0.361 | 0 |
+| Hold | `spi_sck` | 0.377 | 0 |
+| Hold | `FPGA_CLK1_50` | 0.383 | 0 |
+| Hold | `emu|pll|pll_inst|altera_pll_i|general[2].gpll~PLL_OUTPUT_COUNTER|divclk` | 0.386 | 0 |
+| Hold | `FPGA_CLK2_50` | 0.419 | 0 |
+| Recovery | `emu|pll|pll_inst|altera_pll_i|general[2].gpll~PLL_OUTPUT_COUNTER|divclk` | 0.485 | 0 |
+| Recovery | `pll_hdmi|pll_hdmi_inst|altera_pll_i|cyclonev_pll|counter[0].output_counter|divclk` | 4.578 | 0 |
+| Recovery | `sysmem|fpga_interfaces|clocks_resets|h2f_user0_clk` | 6.406 | 0 |
+| Recovery | `FPGA_CLK1_50` | 17.126 | 0 |
+| Recovery | `emu|pll|pll_inst|altera_pll_i|general[0].gpll~PLL_OUTPUT_COUNTER|divclk` | 47.022 | 0 |
+| Removal | `FPGA_CLK1_50` | 0.994 | 0 |
+| Removal | `sysmem|fpga_interfaces|clocks_resets|h2f_user0_clk` | 1.064 | 0 |
+| Removal | `pll_hdmi|pll_hdmi_inst|altera_pll_i|cyclonev_pll|counter[0].output_counter|divclk` | 1.13 | 0 |
+| Removal | `emu|pll|pll_inst|altera_pll_i|general[0].gpll~PLL_OUTPUT_COUNTER|divclk` | 1.407 | 0 |
+| Removal | `emu|pll|pll_inst|altera_pll_i|general[2].gpll~PLL_OUTPUT_COUNTER|divclk` | 1.855 | 0 |
+| Minimum Pulse Width | `pll_hdmi|pll_hdmi_inst|altera_pll_i|cyclonev_pll|fpll_0|fpll|vcoph[0]` | 1.122 | 0 |
+| Minimum Pulse Width | `pll_audio|pll_audio_inst|altera_pll_i|general[0].gpll~FRACTIONAL_PLL|vcoph[0]` | 1.196 | 0 |
+| Minimum Pulse Width | `emu|pll|pll_inst|altera_pll_i|general[0].gpll~FRACTIONAL_PLL|vcoph[0]` | 1.388 | 0 |
+| Minimum Pulse Width | `pll_hdmi|pll_hdmi_inst|altera_pll_i|cyclonev_pll|counter[0].output_counter|divclk` | 1.95 | 0 |
+| Minimum Pulse Width | `sysmem|fpga_interfaces|clocks_resets|h2f_user0_clk` | 3.602 | 0 |
+| Minimum Pulse Width | `emu|pll|pll_inst|altera_pll_i|general[2].gpll~PLL_OUTPUT_COUNTER|divclk` | 4.107 | 0 |
+| Minimum Pulse Width | `spi_sck` | 4.206 | 0 |
+| Minimum Pulse Width | `FPGA_CLK1_50` | 9.206 | 0 |
+| Minimum Pulse Width | `FPGA_CLK2_50` | 9.207 | 0 |
+| Minimum Pulse Width | `FPGA_CLK3_50` | 9.73 | 0 |
+| Minimum Pulse Width | `pll_audio|pll_audio_inst|altera_pll_i|general[0].gpll~PLL_OUTPUT_COUNTER|divclk` | 18.944 | 0 |
+| Minimum Pulse Width | `emu|pll|pll_inst|altera_pll_i|general[0].gpll~PLL_OUTPUT_COUNTER|divclk` | 23.575 | 0 |
+TIMING_SLACK_TABLE_END
+PASS timing: no negative setup/hold/recovery/removal/min-pulse slack

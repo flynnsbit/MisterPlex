@@ -1,0 +1,12 @@
+/home/flynnsbit/Projects/MisterPlex/.worktrees/w-fit-integ/scripts/check_quartus_fit_hierarchy.py --fit-rpt "/home/flynnsbit/Projects/MisterPlex/.worktrees/w-fit-integ/fpga/Plex_MiSTer/remote_out/fit-nostub-chrome/Plex.fit.rpt" \
+	 \
+	
+FIT_HIERARCHY_TABLE_BEGIN
+| module | entity | hierarchy | comb ALUTs | registers | block bits | M10Ks | DSPs | status |
+|---|---|---|---:|---:|---:|---:|---:|---|
+| `ddr_frame_store` | `ddr_frame_store` | `|sys_top|emu:emu|present_core:present|ddr_frame_store:fstore` | 4921 | 2455 | 159744 | 96 | 6 | present |
+| `present_core` | `present_core` | `|sys_top|emu:emu|present_core:present` | 5108 | 2672 | 225280 | 103 | 9 | present |
+| `stream_path` | `stream_path` | `|sys_top|emu:emu|stream_path:spath` | 4640 | 1693 | 263104 | 35 | 1 | present |
+| `ddr_bitstream_reader` | `ddr_bitstream_reader` | `|sys_top|emu:emu|stream_path:spath|ddr_bitstream_reader:ddr_stream` | 930 | 686 | 0 | 0 | 0 | present |
+FIT_HIERARCHY_TABLE_END
+PASS fit hierarchy: critical modules present with non-trivial resource usage
