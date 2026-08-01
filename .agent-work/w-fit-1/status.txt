@@ -87,3 +87,11 @@ Next fit bar: TB RED on current shipping RTL, GREEN on this tip, elaborate-prove
 - NO FIT
 - branch=w-fit-integ-c5382bee-dequant-swap HEAD=502cf857b4d77087b57114d8559d543b584ae5c1
 
+## RTL bimodal answers (re-task, exact arithmetic)
+- Doc: `.agent-work/w-fit-1/AV_BIMODAL_RTL_ANSWERS.md`
+- Audio: NO 117ms two-state; ce_sample quantum = 20.8333… µs (24.576MHz/48000, 512 cyc)
+- 3 content frames @24fps = 125.0 ms: REJECT (err 7.9 ms vs measured 117.10)
+- NTSC display tick T=16.715600 ms (20MHz, 262*638*2); 7*T=117.0092 ms err 0.091 ms — numerical only; multi-state ladder not bimodal cause by itself
+- Observe: MrAudio rptr/len/comp + PLXD 0x300FF128/12C first-advance
+- NO FIT · w-fit-integ-c5382bee-dequant-swap @ follow-up commit
+
