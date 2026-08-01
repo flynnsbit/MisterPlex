@@ -1,9 +1,11 @@
 # HDMI lipsync measurement (true A/V offset)
 
-**Why:** Parent settled video loss at **0.070%** (1/1430). Remaining user-visible
-defect candidate is **audio sync**. Daemon `av_drift_ms` is self-labelled
-`av_drift_role=servo_error_not_lipsync` and is pinned by `AV_PRESENT_LEAD_MS`.
-Only grabber-side flash↔beep offset is ground truth.
+**Why:** Frame loss is **bounded, not measured** (parent ERROR 18/19 withdrawn —
+grabber sampling margin killed skip claims). Measured video defect is **judder**
+(adjacent holds equal ~30% where 3:2 predicts 0%). A mean-only A/V offset can
+false-PASS while instantaneous timing wanders. Daemon `av_drift_ms` is
+self-labelled `av_drift_role=servo_error_not_lipsync` and pinned by
+`AV_PRESENT_LEAD_MS`. **Only grabber flash↔beep offset is lipsync ground truth.**
 
 **Agent does not touch the device.** Parent captures and scores.
 
@@ -13,45 +15,68 @@ Only grabber-side flash↔beep offset is ground truth.
 
 | Asset | Usable for lipsync? |
 |-------|---------------------|
-| **Glass OCRProof** (`ratingKey=13`, `G n=…`) | **NO** — continuous/loud audio, no discrete 1 kHz onset at integer seconds; tool cannot pair flash↔beep |
-| **MiSTerPlex Soak 480p 24fps (2026)** (`ratingKey=8`, 624×480 @ **24.000**, TREK24) | **YES** — white flash ~2 frames + 50 ms 1 kHz beep every 1.0 s (file-aligned) |
-| `assets/avsync/sync_24fps_blip.mp4` | YES (short product 320×240) — unit-test corpus |
-| `scripts/gen_avsync_blip.py --only soak480-ramp` | YES preferred for sub-frame onset (centered ramp) |
+| **Glass OCRProof** (`ratingKey=13`, `G n=…`) | **NO** — no discrete 1 kHz onset at integer seconds |
+| **MiSTerPlex Soak 480p 24fps** (`ratingKey=8`, 624×480 @ **24.000**) | **YES** — white flash ~2 frames + 50 ms 1 kHz beep / 1.0 s |
+| `assets/avsync/sync_24fps_blip.mp4` | YES — unit corpus |
+| `scripts/gen_avsync_blip.py --only soak480-ramp` | YES preferred (sub-frame onset) |
+| Audio ID (`docs/audio_frame_id_contract.md`, `tools/audio_frame_id.py`) | Self-check FSK index+checksum; soak480 bare beep = ID **NO-DATA** not FAIL |
 
-**w-asset480:** keep ratingKey=8 (or register soak480-ramp) in Plex. Spec:
-- 624×480, `r_frame_rate=24/1` (**not** 23.976)
-- flash+beep every **1.0 s**, simultaneous at integer file time
-- counter every frame (already true for gen_avsync_blip)
-- AAC 48 kHz stereo OK (daemon path); instrument recovers PCM from capture
-
-Verify before soak:
-```bash
-ffprobe -v error -show_entries stream=width,height,r_frame_rate,nb_frames,duration,codec_type,sample_rate \
-  -of default=nw=1 "/path/to/soak480.mp4"
-# expect: 624 480 24/1 8640 360.000 video + aac 48000
-```
+fps for this RCA: **24.000 only** (`nb_frames/duration`). Never 23.976 (ERROR 17).
 
 ---
 
 ## Tool
 
-`tools/avsync_measure_hdmi.py`
+`tools/avsync_measure_hdmi.py`  
+Soak wrapper (CPU + measure): `tools/avsync_lipsync_soak.sh`  
+ARM CPU sampler: `tools/avsync_sample_arm_cpu.sh`  
+Audio ID contract: `tools/audio_frame_id.py` + `docs/audio_frame_id_contract.md`
 
-**Sign:** `offset_ms = (t_audio_onset − t_video_flash) × 1000`
+### Sign
+`offset_ms = (t_audio_onset − t_video_flash) × 1000`
 - **positive** = audio LATE (lags video)
 - **negative** = audio EARLY (leads video)
 
-**Capture:** ONE ffmpeg, ONE Matroska (MJPEG + pcm_s16le), both inputs
+### Capture
+ONE ffmpeg, ONE Matroska (MJPEG + pcm_s16le), both inputs
 `-use_wallclock_as_timestamps 1`, plus `-copyts -start_at_zero`.
-Shared wall clock at open — without that, dual-input first-packet zeroing
-creates a false ~117 ms mode (RETRACTED OLD-argv).
+Without that, dual-input first-packet zeroing creates a false ~117 ms mode
+(RETRACTED OLD-argv).
 
-Default grabber: `/dev/video0` MJPG **1920×1080@30** (parent-measured max at
-1080p; 720p@60 is optional via `--video-size 1280x720 --cap-fps 60` only if
-`v4l2-ctl` lists it). ALSA `hw:0,0` (MS2109). Warm-up discard default **20** frames.
+Default: `/dev/video0` MJPG **1920×1080@30** (1080p max), ALSA `hw:0,0`,
+warmup discard **20** frames. SPAN-LOCAL rates only (first ~12–15 frames ~32 ms).
 
-**Absolute** median without known-zero cal into the grabber is always
-`tag=raw_uncalibrated`. **Same-rig Δ** (LEAD A vs B) cancels fixed grabber skew B.
+### What every report MUST include
+- **Time series** of per-marker offsets (`*_offset_timeseries.csv` + stdout)
+- **Distribution:** min / p05 / median / mean / p95 / max / IQR / stdev
+- **`timing_class`:** `STABLE` | `MONOTONIC_DRIFT` | `WANDER` | `MARGIN_INADEQUATE`
+- **`residual_rms_ms`** after linear detrend (wander metric)
+- **`margin_verdict`** — refuses score when event < 2 capture samples (ERROR 19)
+- **`arm_cpu_pct`** when soak wrapper supplies `--cpu-pct-json` (else NO-DATA)
+
+Absolute median without known-zero cal = `tag=raw_uncalibrated`. Same-rig Δ
+(LEAD A vs B) cancels fixed grabber skew B.
+
+### Return codes (distinct — never collapse)
+
+| rc | VERDICT | Meaning |
+|----|---------|---------|
+| 0 | PASS | offset in tol AND STABLE (not drift/wander) |
+| 2 | OFFSET_FAIL | \|median\| > tol (path/device level) |
+| 3 | INSTRUMENT_BROKEN | capture/tool broken |
+| 4 | DRIFT_FAIL | monotonic clock-rate mismatch |
+| 5 | WANDER_FAIL | high residual after detrend (mean may still be OK) |
+| 6 | FIXTURE_FAIL | self-check audio/video ID failed when required |
+| 77 | UNSCORED / MARGIN_INADEQUATE / REFUSE_DEFAULT_ASSUMED | **never a pass** |
+
+Unlike `glass_template_skip.py` (rc=2 shared by skip vs instrument), each class
+has its own rc **and** a `VERDICT=` string.
+
+### Sampling margin
+- Video sample: capture frame period (measured median PTS Δ)
+- Audio sample: 48 kHz; Goertzel win ~20 ms; beep must cover ≥2 windows
+- Flash must cover **≥2 capture frames** (discrete `flash_hold_frames_median`)
+- ERROR 19 class (1-refresh hold @ 60 fps) → `VERDICT=MARGIN_INADEQUATE rc=77`
 
 ---
 
@@ -60,6 +85,9 @@ Default grabber: `/dev/video0` MJPG **1920×1080@30** (parent-measured max at
 ```bash
 bash tests/unit/test_avsync_measure_hdmi.sh; echo "true rc=$?"
 # expect AVSYNC_MEASURE_HDMI_OK, true rc=0
+
+python3 tools/avsync_measure_hdmi.py --self-test; echo "true rc=$?"
+python3 tools/audio_frame_id.py --self-test 2>/dev/null || bash tests/unit/test_audio_frame_id.sh; echo "true rc=$?"
 
 # Explicit 100 ms defect recovery (adelay):
 WORK=.agent-work/w-avsync/prove100
@@ -76,91 +104,95 @@ python3 tools/avsync_measure_hdmi.py --input "$WORK/d100.mkv" \
   --out "$WORK/r100" --label d100 --tol-ms 42; echo "d100 true rc=$?"
 ```
 
-**Banked evidence (this lane, direct rc):**
+**Banked evidence (direct rc):**
 
-| Case | median_offset_ms_raw | true rc | notes |
-|------|---------------------:|--------:|-------|
-| aligned 0 ms | **0.0000** | **0** | PASS |
-| adelay **+100 ms** | **99.0000** | **2** | FAIL tol=42; recovers defect |
-| unit p250 itsoffset | 249.0 | 2 | |
-| unit m200 | −208.3 | 2 | |
-| unit silent / static | — | **77** | UNSCORED ≠ pass |
-| adelay ladder RMSE | **0.95 ms** | 0 | 0…150 ms steps |
-
-An instrument that only ever reports ~0 is not evidence. This one reports **99 ms**
-when 100 ms is injected.
+| Case | median_offset_ms_raw | timing_class | true rc |
+|------|---------------------:|--------------|--------:|
+| aligned 0 ms | **0.0000** | STABLE | **0** |
+| adelay **+100 ms** | **99.0000** | STABLE | **2** OFFSET_FAIL |
+| unit ladder RMSE | **0.95 ms** | — | 0 |
+| silent / static | — | — | **77** |
 
 ---
 
 ## Parent live soak (you run)
 
-### A. Capture while MiSTer plays soak480 blip (ratingKey=8)
+### Preferred one-shot
+
+Device must already be playing soak480 blip (rk=8). Check exclusive grabber:
 
 ```bash
-# devices (parent-measured on this host)
-arecord -l                    # expect MS2109 → hw:CARD,0
-v4l2-ctl -d /dev/video0 --list-formats-ext | head -40
+fuser -v /dev/video0 || true
+arecord -l   # MS2109 → hw:0,0
 
-OUT=/path/you/choose/avsync_live_$(date +%Y%m%dT%H%M%S)
-mkdir -p "$OUT"
-
-# Prefer tool-owned capture (wallclock+copyts binding):
-python3 tools/avsync_measure_hdmi.py \
-  --duration 60 \
-  --video-dev /dev/video0 \
-  --audio-dev hw:0,0 \
-  --video-size 1920x1080 \
-  --cap-fps 30 \
-  --warmup-frames 20 \
-  --tol-ms 42 \
-  --out "$OUT" --label live60 \
-  --json-out "$OUT/live60_report.json"
+OUT=$PWD/avsync_hdmi_out/lipsync_$(date +%Y%m%dT%H%M%S)
+DURATION=60 TOL_MS=42 OUT="$OUT" bash tools/avsync_lipsync_soak.sh
 echo "true rc=$?"
-
-# Or manual ONE-process capture then analyse:
-# ffmpeg -hide_banner -y \
-#   -use_wallclock_as_timestamps 1 -f v4l2 -input_format mjpeg \
-#     -video_size 1920x1080 -framerate 30 -i /dev/video0 \
-#   -use_wallclock_as_timestamps 1 -f alsa -ac 2 -ar 48000 -i hw:0,0 \
-#   -c:v copy -c:a pcm_s16le -copyts -start_at_zero -t 60 "$OUT/cap.mkv"
-# python3 tools/avsync_measure_hdmi.py --input "$OUT/cap.mkv" \
-#   --warmup-frames 20 --tol-ms 42 --out "$OUT" --label file60
+# Artifacts: $OUT/lipsync_report.json, $OUT/lipsync_offset_timeseries.csv,
+#            $OUT/arm_cpu.json, $OUT/lipsync_stdout.txt
 ```
 
-Report: **distribution** (`min/median/mean/stdev/max`, `n_pairs`, early/late medians),
-not a single number. `rc=77` = could-not-measure (never PASS).
+### Manual (same binding)
+
+```bash
+python3 tools/avsync_measure_hdmi.py \
+  --duration 60 \
+  --video-dev /dev/video0 --audio-dev hw:0,0 \
+  --video-size 1920x1080 --cap-fps 30 \
+  --warmup-frames 20 --tol-ms 42 --slope-tol-ms-per-s 0.5 \
+  --out "$OUT" --label live60 \
+  --cpu-pct-json "$OUT/arm_cpu.json"
+echo "true rc=$?"
+```
+
+### Pre-registered predictions (score hit/miss after soak)
+
+| ID | Prediction | PASS band | FAIL |
+|----|------------|-----------|------|
+| P_MEDIAN | raw \|median\| on soak480 @ LEAD=40 | **< 80 ms** | ≥80 ms |
+| P_SLOPE | \|slope_ms_per_s\| over n≥40 | **< 0.5** | ≥0.5 → DRIFT |
+| P_CLASS | timing_class | STABLE or WANDER | MONOTONIC_DRIFT |
+| P_WANDER | residual_rms_ms | report only; elevated OK if judder couples | — |
+| P_CPU | arm_cpu_pct | present as `measured` | NO-DATA without reason |
+
+**Model falsifier:** if P_MEDIAN fails hard (>150 ms) with margin OK and
+STABLE class, lipsync defect is real (not judder-only). If WANDER_FAIL with
+small median, scheduling/judder couples into A/V phase — different fix than
+LEAD knob.
 
 ### B. Device falsifier — LEAD delta must move MEASURED offset
 
-Env override preferred (conf is user-owned; do not silently normalise):
+Env override preferred (conf is user-owned; never silently normalise):
 
 ```bash
 CONF=/media/fat/misterplex/misterplex.conf
-cp -a "$CONF" "/media/fat/misterplex/misterplex.conf.bak_lead_$(date +%Y%m%d%H%M%S)"
+BAK=/media/fat/misterplex/misterplex.conf.bak_lead_$(date +%Y%m%d%H%M%S)
+cp -a "$CONF" "$BAK"
 
 # Arm A
-MISTERPLEX_AV_PRESENT_LEAD_MS=40  # restart daemon; play soak480 ≥70 s wall
-# capture with tool → median_A (raw_uncalibrated OK)
+MISTERPLEX_AV_PRESENT_LEAD_MS=40   # restart daemon; play soak480 ≥70 s
+# soak → median_A (raw_uncalibrated OK)
 
-# Arm B (conf bytes must stay identical)
+# Arm B
 MISTERPLEX_AV_PRESENT_LEAD_MS=20
-# capture → median_B
+# soak → median_B
 
-cmp -s "$BACKUP" "$CONF" && echo CONF_UNCHANGED_OK
+cmp -s "$BAK" "$CONF" && echo CONF_UNCHANGED_OK
+# restore if anything wrote conf
 ```
 
 | Check | PASS | FAIL |
 |-------|------|------|
 | daemon setpoint A/B | −40 / −20 | else |
-| **Δmedian = median_B − median_A** | **∈ [+12, +28] ms** (expect ≈ +20) | outside |
+| **Δmedian = median_B − median_A** | **∈ [+12, +28] ms** (≈ +20) | outside |
 | conf cmp | identical | any write |
-| claiming absolute lipsync from one arm | **forbidden** | — |
+| absolute lipsync from one arm | **forbidden** | — |
 
-If LEAD 40→20 and grabber median does **not** move ≈+20 ms: either the knob is
-dead on the present path, or capture fingerprint changed (do not pool).
+PASS here proves the metric **tracks the setpoint**, not absolute lip-sync.
+Grabber remains the only GT.
 
-**Prediction (pre-register):** lowering lead advances video presents relative to
-audio → audio appears **later** vs flash → **positive** Δoffset_ms ≈ +Δlead.
+**Prediction:** lowering lead advances video presents → audio appears **later**
+vs flash → **positive** Δoffset_ms ≈ +Δlead.
 
 ---
 
@@ -168,8 +200,10 @@ audio → audio appears **later** vs flash → **positive** Δoffset_ms ≈ +Δl
 
 | Proves | Does not prove |
 |--------|----------------|
-| Real flash↔beep offset on HDMI capture timebase | That `av_drift_ms` is lipsync |
-| Instrument sees injected defects (100 ms → 99 ms) | Absolute device lipsync without known-zero cal |
-| LEAD delta moves true offset (if B cancels) | Video frame-loss story (already settled 0.07%) |
+| Real flash↔beep offset time series on HDMI | That `av_drift_ms` is lipsync |
+| Drift vs wander (different fixes) | Absolute device lipsync without known-zero cal |
+| Instrument sees injected defects (100→99 ms) | Confirmed video skip rate (ERROR 18/19) |
+| Margin refusal when sampling inadequate | — |
 
-fps for this RCA: **24.000** only. Never print 23.976 as a measurement.
+**If audio sync is CORRECT:** acceptable, but only with margin proof that a
+defect would have been visible (prove100 + live margin_ok).

@@ -157,15 +157,16 @@ CAL_FORMAT = "misterplex.avsync_hdmi_calibration.v1"
 SCORE_DEFAULT_KEYS = ("tol_ms",)
 
 RC_PASS = 0
-RC_FAIL = 2
-RC_UNSCORED = 77
-# PROCESS DEFECT #6 (rd-review, accepted): rc=77 conflated two different things --
-# "could not measure" and "measured, but the ABSOLUTE verdict is withheld pending
-# calibration". The first must never be reasoned past; the second always can be.
-# A broken instrument is neither: it is a HARD failure. A capture failure once
-# returned 77 and the only working A/V instrument in this project sat dead behind
-# a soft-skip. Soft-skip is never a pass and must never mask breakage.
-RC_INSTRUMENT_BROKEN = 3
+RC_OFFSET_FAIL = 2       # measured lipsync offset out of tol (path/device)
+RC_FAIL = RC_OFFSET_FAIL  # alias — unit tests / callers may still say FAIL
+RC_INSTRUMENT_BROKEN = 3  # capture/tool broken (never soft-skip)
+RC_DRIFT_FAIL = 4         # monotonic clock-rate mismatch (slope)
+RC_WANDER_FAIL = 5        # high residual wander after detrend (scheduling)
+RC_FIXTURE_FAIL = 6       # self-check audio/video ID failed when required
+RC_UNSCORED = 77          # could-not-measure / margin inadequate / refuse default
+# Distinct verdict *strings* always accompany rc — never collapse instrument vs
+# device into the same (verdict, rc) pair (glass_template_skip defect).
+# PROCESS DEFECT #6: rc=77 is NEVER a pass and never masks breakage (use 3).
 
 
 def _tag(value: Any, src: str) -> str:
@@ -575,6 +576,8 @@ def detect_flashes(
     hot = lu > thr
     onsets: list[float] = []
     interp_deltas_ms: list[float] = []
+    flash_hold_ms: list[float] = []
+    flash_hold_frames: list[int] = []
     n_step = 0
     n_interp = 0
     i = 0
@@ -582,6 +585,7 @@ def detect_flashes(
         if not hot[i]:
             i += 1
             continue
+        run_start = i
         if i == 0 or not hot[i - 1]:
             if i == 0:
                 ts = float(tt[i])
@@ -615,9 +619,32 @@ def detect_flashes(
                 interp_deltas_ms.append(d_ms)
         while i < hot.size and hot[i]:
             i += 1
+        # Hold = first-hot → first-cold (or last-hot+period). Measured event
+        # duration for margin (never assume 2/24 when PTS span is available).
+        run_end = i  # first cold index, or len
+        n_hot = int(run_end - run_start)
+        flash_hold_frames.append(n_hot)
+        t_a = float(tt[run_start])
+        if run_end < tt.size:
+            hold_ms = (float(tt[run_end]) - t_a) * 1000.0
+        elif run_end - run_start >= 1 and tt.size >= 2:
+            dt_loc = float(np.median(np.diff(tt)))
+            hold_ms = (float(tt[run_end - 1]) - t_a + dt_loc) * 1000.0
+        else:
+            hold_ms = 0.0
+        if hold_ms > 0:
+            flash_hold_ms.append(hold_ms)
     meta["n_flashes"] = len(onsets)
     meta["flash_onset_n_step"] = n_step
     meta["flash_onset_n_interp"] = n_interp
+    if flash_hold_ms:
+        meta["flash_hold_ms_median"] = float(statistics.median(flash_hold_ms))
+        meta["flash_hold_ms_min"] = float(min(flash_hold_ms))
+        meta["flash_hold_ms_src"] = "measured"
+    if flash_hold_frames:
+        meta["flash_hold_frames_median"] = float(statistics.median(flash_hold_frames))
+        meta["flash_hold_frames_min"] = int(min(flash_hold_frames))
+        meta["flash_hold_frames_src"] = "measured"
     if interp_deltas_ms:
         abs_d = [abs(x) for x in interp_deltas_ms]
         meta["flash_interp_abs_delta_ms_median"] = float(statistics.median(abs_d))
@@ -823,14 +850,191 @@ class MeasureResult:
     late_median_offset_ms: float | None = None
     late_n_pairs: int = 0
     early_minus_late_ms: float | None = None  # startup transient (parent ~+25 ms)
+    # Distribution beyond mean (parent: mean-only is a false PASS under judder)
+    p05_offset_ms: float | None = None
+    p95_offset_ms: float | None = None
+    iqr_offset_ms: float | None = None
+    # Timing class: STABLE | MONOTONIC_DRIFT | WANDER | INSUFFICIENT_SPAN
+    timing_class: str = "NO-DATA"
+    timing_class_reason: str = ""
+    residual_rms_ms: float | None = None
+    detrended_max_abs_ms: float | None = None
+    # Sampling margin (ERROR 18/19 class)
+    margin: dict[str, Any] = field(default_factory=dict)
     flash_meta: dict[str, Any] = field(default_factory=dict)
     beep_meta: dict[str, Any] = field(default_factory=dict)
     capture_path: str = ""
+    audio_sr: int = 0
 
 
 # Parent-measured common-mode startup transient windows (design defaults).
 DEFAULT_EARLY_WINDOW_S = 10.0
 DEFAULT_LATE_WINDOW_S = 60.0
+
+
+def percentile_nearest(vals: list[float], p: float) -> float:
+    """Inclusive percentile, nearest-rank (no numpy required for report path)."""
+    if not vals:
+        return float("nan")
+    s = sorted(vals)
+    if len(s) == 1:
+        return float(s[0])
+    k = (len(s) - 1) * (p / 100.0)
+    f = int(math.floor(k))
+    c = int(math.ceil(k))
+    if f == c:
+        return float(s[f])
+    return float(s[f] * (c - k) + s[c] * (k - f))
+
+
+def classify_timing(
+    pairs: list[dict[str, float]],
+    slope_ms_per_s: float,
+    r2: float,
+    *,
+    slope_tol: float,
+    wander_rms_tol_ms: float,
+    min_pairs_class: int = 8,
+) -> dict[str, Any]:
+    """Distinguish monotonic drift vs residual wander vs stable.
+
+    Mean offset alone is blind to judder-class defects (parent): exact average
+    rate with ±1–2 refresh wander still looks wrong. Residual after linear
+    detrend is the wander metric.
+    """
+    out: dict[str, Any] = {
+        "timing_class": "INSUFFICIENT_SPAN",
+        "timing_class_src": "derived",
+        "residual_rms_ms": None,
+        "residual_rms_src": "NO-DATA",
+        "detrended_max_abs_ms": None,
+        "slope_r_squared": r2,
+    }
+    if len(pairs) < min_pairs_class:
+        out["timing_class_reason"] = f"n_pairs={len(pairs)}<{min_pairs_class}"
+        return out
+    xs = [float(p["t_flash_s"]) for p in pairs]
+    ys = [float(p["offset_ms"]) for p in pairs]
+    if slope_ms_per_s is None or (isinstance(slope_ms_per_s, float) and math.isnan(slope_ms_per_s)):
+        out["timing_class"] = "UNKNOWN_SLOPE"
+        return out
+    # residual = y - (slope*x + b); b from mean
+    x_mean = sum(xs) / len(xs)
+    y_mean = sum(ys) / len(ys)
+    b = y_mean - slope_ms_per_s * x_mean
+    resid = [y - (slope_ms_per_s * x + b) for x, y in zip(xs, ys)]
+    rms = math.sqrt(sum(r * r for r in resid) / len(resid))
+    out["residual_rms_ms"] = rms
+    out["residual_rms_src"] = "measured"
+    out["detrended_max_abs_ms"] = max(abs(r) for r in resid)
+    out["detrend_intercept_ms"] = b
+    abs_slope = abs(slope_ms_per_s)
+    # High r2 + slope beyond tol → clock-rate mismatch
+    if abs_slope > slope_tol and (math.isnan(r2) or r2 >= 0.5):
+        out["timing_class"] = "MONOTONIC_DRIFT"
+        out["timing_class_reason"] = (
+            f"abs_slope={abs_slope:.4f}>{slope_tol} r2={r2}"
+        )
+        return out
+    if rms > wander_rms_tol_ms:
+        out["timing_class"] = "WANDER"
+        out["timing_class_reason"] = (
+            f"residual_rms_ms={rms:.3f}>{wander_rms_tol_ms} "
+            f"(scheduling/judder-class; mean may still look fine)"
+        )
+        return out
+    out["timing_class"] = "STABLE"
+    out["timing_class_reason"] = (
+        f"abs_slope={abs_slope:.4f}<={slope_tol} residual_rms_ms={rms:.3f}<={wander_rms_tol_ms}"
+    )
+    return out
+
+
+def check_sampling_margin(
+    *,
+    capture_frame_period_ms: float | None,
+    flash_event_ms: float,
+    flash_event_src: str,
+    audio_sr: int,
+    beep_event_ms: float,
+    beep_event_src: str,
+    goertzel_win_ms: float,
+    min_event_over_sample: float = 2.0,
+    flash_hold_frames_median: float | None = None,
+) -> dict[str, Any]:
+    """Refuse verdict when sampling cannot resolve the marker (ERROR 18/19 class).
+
+    Parent ERROR 19: 1-refresh hold (16.67 ms) vs 60 fps capture (16.67 ms) ⇒
+    zero/negative margin; a 'skip' in the gap was unsampled hold.
+
+    Gate (video): event must cover ≥2 capture samples. Prefer discrete
+    flash_hold_frames_median when measured (encoder PTS can make continuous
+    ms-ratio 1.97 for a true 2-frame flash). Continuous ratio is the fallback
+    and still refuses ERROR19-class ratio≈1.0.
+    """
+    m: dict[str, Any] = {
+        "margin_ok": True,
+        "margin_verdict": "MARGIN_OK",
+        "min_event_over_sample": min_event_over_sample,
+        "min_event_over_sample_src": "DEFAULT_ASSUMED",
+        "video_sample_period_ms": capture_frame_period_ms,
+        "video_sample_period_src": "measured" if capture_frame_period_ms else "NO-DATA",
+        "video_event_ms": flash_event_ms,
+        "video_event_src": flash_event_src,
+        "flash_hold_frames_median": flash_hold_frames_median,
+        "audio_sample_period_ms": 1000.0 / float(audio_sr) if audio_sr > 0 else None,
+        "audio_sample_rate_hz": audio_sr,
+        "audio_sample_rate_src": "caller_supplied_or_default",
+        "audio_event_ms": beep_event_ms,
+        "audio_event_src": beep_event_src,
+        "goertzel_win_ms": goertzel_win_ms,
+        "reasons": [],
+    }
+    if capture_frame_period_ms is None or capture_frame_period_ms <= 0:
+        m["margin_ok"] = False
+        m["margin_verdict"] = "MARGIN_INADEQUATE"
+        m["reasons"].append("video_sample_period_NO-DATA")
+    else:
+        v_ratio = flash_event_ms / capture_frame_period_ms
+        m["video_event_over_sample"] = v_ratio
+        m["video_margin_ms"] = flash_event_ms - min_event_over_sample * capture_frame_period_ms
+        # Discrete path: ≥2 hot frames ⇒ resolvable flash (fixture is 2 frames).
+        if flash_hold_frames_median is not None:
+            m["video_margin_basis"] = "flash_hold_frames_median"
+            if float(flash_hold_frames_median) + 1e-9 < min_event_over_sample:
+                m["margin_ok"] = False
+                m["margin_verdict"] = "MARGIN_INADEQUATE"
+                m["reasons"].append(
+                    f"flash_hold_frames_median={flash_hold_frames_median} < "
+                    f"{min_event_over_sample} (ERROR19-class single-sample hold)"
+                )
+        else:
+            m["video_margin_basis"] = "continuous_ms_ratio"
+            # 2% relative slack: encoder PTS can make 2-frame holds look 1.97×.
+            if v_ratio + 1e-9 < min_event_over_sample * 0.98:
+                m["margin_ok"] = False
+                m["margin_verdict"] = "MARGIN_INADEQUATE"
+                m["reasons"].append(
+                    f"video_event={flash_event_ms:.3f}ms < {min_event_over_sample}×"
+                    f"period={capture_frame_period_ms:.3f}ms (ratio={v_ratio:.3f})"
+                )
+    if audio_sr <= 0:
+        m["margin_ok"] = False
+        m["margin_verdict"] = "MARGIN_INADEQUATE"
+        m["reasons"].append("audio_sr_invalid")
+    else:
+        # Beep must cover ≥2 Goertzel windows for a rising-edge onset.
+        need = 2.0 * goertzel_win_ms
+        m["audio_need_ms"] = need
+        m["audio_margin_ms"] = beep_event_ms - need
+        if beep_event_ms + 1e-9 < need:
+            m["margin_ok"] = False
+            m["margin_verdict"] = "MARGIN_INADEQUATE"
+            m["reasons"].append(
+                f"beep_event={beep_event_ms:.3f}ms < 2×goertzel_win={need:.3f}ms"
+            )
+    return m
+
 
 
 def _window_median(
@@ -949,6 +1153,55 @@ def analyse_file(
     res.slope_ms_per_s = slope
     res.slope_intercept_ms = intercept
     res.slope_r_squared = r2
+    res.p05_offset_ms = percentile_nearest(offs, 5.0)
+    res.p95_offset_ms = percentile_nearest(offs, 95.0)
+    q25 = percentile_nearest(offs, 25.0)
+    q75 = percentile_nearest(offs, 75.0)
+    res.iqr_offset_ms = float(q75 - q25)
+    # Margin + timing class filled by caller with fixture event durations;
+    # analyse_file sets audio_sr and a provisional margin using defaults.
+    res.audio_sr = int(sr)
+    cap_period = fmeta.get("capture_frame_period_ms")
+    # Prefer measured flash hold (hot-run span). Fallback: 2 frames @ 24.000.
+    if fmeta.get("flash_hold_ms_median") is not None:
+        flash_event_ms = float(fmeta["flash_hold_ms_median"])
+        flash_event_src = "measured_flash_hold_median"
+    else:
+        flash_event_ms = 2.0 / 24.0 * 1000.0
+        flash_event_src = "DEFAULT_ASSUMED_2frames_at_24fps"
+    beep_event_ms = float(DEFAULT_BEEP_MS)
+    res.margin = check_sampling_margin(
+        capture_frame_period_ms=float(cap_period) if cap_period is not None else None,
+        flash_event_ms=flash_event_ms,
+        flash_event_src=flash_event_src,
+        audio_sr=int(sr),
+        beep_event_ms=beep_event_ms,
+        beep_event_src="DEFAULT_ASSUMED_fixture_50ms",
+        goertzel_win_ms=float(bmeta.get("win_ms") or 20.0),
+        flash_hold_frames_median=(
+            float(fmeta["flash_hold_frames_median"])
+            if fmeta.get("flash_hold_frames_median") is not None
+            else None
+        ),
+    )
+    if not res.margin.get("margin_ok", False):
+        res.ok = False
+        res.unscored = True
+        res.reason = (
+            "MARGIN_INADEQUATE:" + ",".join(res.margin.get("reasons") or ["unknown"])
+        )
+        res.timing_class = "MARGIN_INADEQUATE"
+        res.timing_class_reason = res.reason
+        return res
+    # timing class uses slope_tol default here; print_report reclassifies with
+    # caller slope_tol when scoring.
+    tc = classify_timing(
+        pairs, slope, r2, slope_tol=DEFAULT_SLOPE_TOL_MS_PER_S, wander_rms_tol_ms=12.0
+    )
+    res.timing_class = str(tc.get("timing_class"))
+    res.timing_class_reason = str(tc.get("timing_class_reason") or "")
+    res.residual_rms_ms = tc.get("residual_rms_ms")
+    res.detrended_max_abs_ms = tc.get("detrended_max_abs_ms")
     res.ok = True
     return res
 
@@ -1102,8 +1355,23 @@ def print_report(
     print(f"slope_tol_ms_per_s={_tag(slope_tol, slope_tol_src)}")
 
     if res.unscored or not res.ok:
-        print(f"VERDICT=UNSCORED rc={RC_UNSCORED}")
+        if res.reason and str(res.reason).startswith("MARGIN_INADEQUATE"):
+            print(f"VERDICT=MARGIN_INADEQUATE rc={RC_UNSCORED}")
+        else:
+            print(f"VERDICT=UNSCORED rc={RC_UNSCORED}")
         print(f"reason={res.reason or 'unscored'} src=measured")
+        if res.margin:
+            print(f"margin_verdict={res.margin.get('margin_verdict')} src=derived")
+            for rk in (
+                "video_sample_period_ms",
+                "video_event_ms",
+                "video_event_over_sample",
+                "audio_sample_rate_hz",
+                "audio_event_ms",
+                "audio_margin_ms",
+            ):
+                if rk in res.margin:
+                    print(f"{rk}={res.margin.get(rk)} src=derived_or_measured")
         if cal_ms is None:
             print("calibration=NONE")
         else:
@@ -1156,10 +1424,71 @@ def print_report(
     print(f"mean_offset_ms_raw={res.mean_offset_ms:.4f} src=measured")
     print(f"stdev_offset_ms={res.stdev_offset_ms:.4f} src=measured")
     print(f"min_offset_ms={res.min_offset_ms:.4f} src=measured")
+    print(f"p05_offset_ms={res.p05_offset_ms:.4f} src=measured")
+    print(f"p95_offset_ms={res.p95_offset_ms:.4f} src=measured")
+    print(f"iqr_offset_ms={res.iqr_offset_ms:.4f} src=measured")
     print(f"max_offset_ms={res.max_offset_ms:.4f} src=measured")
+    print(
+        "distribution_note: mean-only is forbidden — judder can keep mean≈0 while "
+        "instantaneous offset wanders (parent video hold equality 29.9%)"
+    )
+    # Full time series (load-bearing for drift vs wander)
+    print("offset_timeseries_ms (t_flash_s,offset_ms) src=measured:")
+    for p in res.pairs:
+        print(f"  ts={p['t_flash_s']:.6f},offset_ms={p['offset_ms']:.4f}")
     print(f"slope_ms_per_s={res.slope_ms_per_s:.6f} src=measured")
     print(f"slope_intercept_ms={res.slope_intercept_ms:.4f} src=measured")
     print(f"slope_r_squared={res.slope_r_squared:.6f} src=measured")
+    # Reclassify with caller slope_tol + wander tol
+    wander_tol = 12.0  # ms RMS after detrend; DEFAULT_ASSUMED
+    tc = classify_timing(
+        res.pairs,
+        float(res.slope_ms_per_s) if res.slope_ms_per_s is not None else float("nan"),
+        float(res.slope_r_squared) if res.slope_r_squared is not None else float("nan"),
+        slope_tol=float(slope_tol),
+        wander_rms_tol_ms=wander_tol,
+    )
+    res.timing_class = str(tc.get("timing_class"))
+    res.timing_class_reason = str(tc.get("timing_class_reason") or "")
+    res.residual_rms_ms = tc.get("residual_rms_ms")
+    res.detrended_max_abs_ms = tc.get("detrended_max_abs_ms")
+    print(f"timing_class={res.timing_class} src=derived")
+    print(f"timing_class_reason={res.timing_class_reason} src=derived")
+    print(
+        f"residual_rms_ms={res.residual_rms_ms} src="
+        f"{'measured' if res.residual_rms_ms is not None else 'NO-DATA'} "
+        f"wander_rms_tol_ms={wander_tol} src=DEFAULT_ASSUMED"
+    )
+    print(
+        f"detrended_max_abs_ms={res.detrended_max_abs_ms} src="
+        f"{'measured' if res.detrended_max_abs_ms is not None else 'NO-DATA'}"
+    )
+    if res.margin:
+        print(f"margin_verdict={res.margin.get('margin_verdict')} src=derived")
+        print(
+            f"video_sample_period_ms={res.margin.get('video_sample_period_ms')} "
+            f"src={res.margin.get('video_sample_period_src')}"
+        )
+        print(
+            f"video_event_ms={res.margin.get('video_event_ms')} "
+            f"src={res.margin.get('video_event_src')}"
+        )
+        print(
+            f"video_event_over_sample={res.margin.get('video_event_over_sample')} "
+            f"src=derived"
+        )
+        print(
+            f"audio_sample_rate_hz={res.margin.get('audio_sample_rate_hz')} "
+            f"src={res.margin.get('audio_sample_rate_src')}"
+        )
+        print(
+            f"audio_event_ms={res.margin.get('audio_event_ms')} "
+            f"src={res.margin.get('audio_event_src')}"
+        )
+        print(
+            f"audio_margin_ms={res.margin.get('audio_margin_ms')} src=derived "
+            f"goertzel_win_ms={res.margin.get('goertzel_win_ms')}"
+        )
 
     if cal_ms is None:
         print("calibration=NONE")
@@ -1237,20 +1566,50 @@ def print_report(
                 print(f"{k}={v}")
         return RC_UNSCORED
 
-    if offset_ok and slope_ok:
-        tag = "caller_supplied_score" if not default_score_keys else "DEFAULT_ASSUMED_IN_SCORE"
-        print(f"VERDICT=PASS rc={RC_PASS} score_tag={tag}")
-        rc = RC_PASS
+    tag = "caller_supplied_score" if not default_score_keys else "DEFAULT_ASSUMED_IN_SCORE"
+    # Distinct failure classes — never share one rc across instrument vs path.
+    # Priority: OFFSET (level) → DRIFT (monotonic) → WANDER (residual) → PASS.
+    if not offset_ok:
+        why = f"abs_median={abs_med:.2f}>{tol_ms}"
+        print(f"VERDICT=OFFSET_FAIL rc={RC_OFFSET_FAIL} reason={why} score_tag={tag}")
+        print(
+            "verdict_note: OFFSET_FAIL is a measured lipsync level defect on this "
+            "capture path (not instrument broken; not margin)"
+        )
+        rc = RC_OFFSET_FAIL
+    elif res.timing_class == "MONOTONIC_DRIFT" and slope_gate_active:
+        why = (
+            f"timing_class=MONOTONIC_DRIFT abs_slope={abs_slope:.4f} "
+            f"slope_tol={slope_tol} residual_rms_ms={res.residual_rms_ms}"
+        )
+        print(f"VERDICT=DRIFT_FAIL rc={RC_DRIFT_FAIL} reason={why} score_tag={tag}")
+        print(
+            "verdict_note: DRIFT_FAIL = clock-rate mismatch; fix differs from wander"
+        )
+        rc = RC_DRIFT_FAIL
+    elif res.timing_class == "WANDER":
+        why = (
+            f"timing_class=WANDER residual_rms_ms={res.residual_rms_ms} "
+            f"detrended_max_abs_ms={res.detrended_max_abs_ms} "
+            f"(mean offset may still be inside tol — still a FAIL)"
+        )
+        print(f"VERDICT=WANDER_FAIL rc={RC_WANDER_FAIL} reason={why} score_tag={tag}")
+        print(
+            "verdict_note: WANDER_FAIL = scheduling/judder-class residual after "
+            "detrend; mean-only would false-PASS"
+        )
+        rc = RC_WANDER_FAIL
+    elif slope_gate_active and not slope_ok:
+        why = f"abs_slope={abs_slope:.4f}>{slope_tol}"
+        print(f"VERDICT=DRIFT_FAIL rc={RC_DRIFT_FAIL} reason={why} score_tag={tag}")
+        rc = RC_DRIFT_FAIL
     else:
-        why = []
-        if not offset_ok:
-            why.append(f"abs_median={abs_med:.2f}>{tol_ms}")
-        if slope_gate_active and not (abs_slope <= slope_tol):
-            why.append(f"abs_slope={abs_slope:.4f}>{slope_tol}")
-        # Measured FAIL must never decay to 77 even if defaults were allowed.
-        tag = "caller_supplied_score" if not default_score_keys else "DEFAULT_ASSUMED_IN_SCORE"
-        print(f"VERDICT=FAIL rc={RC_FAIL} reason={','.join(why)} score_tag={tag}")
-        rc = RC_FAIL
+        print(f"VERDICT=PASS rc={RC_PASS} score_tag={tag}")
+        print(
+            f"pass_note: timing_class={res.timing_class} residual_rms_ms="
+            f"{res.residual_rms_ms} — PASS requires offset AND non-wander/non-drift"
+        )
+        rc = RC_PASS
 
     if extra:
         for k, v in extra.items():
@@ -1373,6 +1732,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Host-only unit checks (no /dev/video0). true rc via: ...; echo true rc=$?",
     )
+    ap.add_argument(
+        "--cpu-pct-json",
+        type=Path,
+        default=None,
+        help="JSON from tools/avsync_sample_arm_cpu.sh (arm_cpu_pct concurrent with soak)",
+    )
     return ap
 
 
@@ -1423,10 +1788,48 @@ def _self_test() -> int:
     print("SELF_TEST fingerprint differs when cap_fps differs OK")
 
     # Severity ladder constants
-    assert RC_PASS == 0 and RC_FAIL == 2 and RC_INSTRUMENT_BROKEN == 3
+    assert RC_PASS == 0 and RC_OFFSET_FAIL == 2 and RC_FAIL == 2
+    assert RC_INSTRUMENT_BROKEN == 3
+    assert RC_DRIFT_FAIL == 4 and RC_WANDER_FAIL == 5 and RC_FIXTURE_FAIL == 6
     assert RC_UNSCORED == 77
-    assert RC_INSTRUMENT_BROKEN != RC_UNSCORED
-    print("SELF_TEST RC ladder PASS=0 FAIL=2 BROKEN=3 UNSCORED=77 OK")
+    assert len({RC_PASS, RC_OFFSET_FAIL, RC_INSTRUMENT_BROKEN, RC_DRIFT_FAIL,
+                RC_WANDER_FAIL, RC_FIXTURE_FAIL, RC_UNSCORED}) == 7
+    print(
+        "SELF_TEST RC ladder PASS=0 OFFSET_FAIL=2 BROKEN=3 DRIFT=4 "
+        "WANDER=5 FIXTURE=6 UNSCORED=77 OK"
+    )
+    # Margin gate: 16.67 ms event @ 16.67 ms period must be INADEQUATE (ERROR 19)
+    bad = check_sampling_margin(
+        capture_frame_period_ms=16.67,
+        flash_event_ms=16.67,
+        flash_event_src="caller_supplied",
+        audio_sr=48000,
+        beep_event_ms=50.0,
+        beep_event_src="caller_supplied",
+        goertzel_win_ms=20.0,
+    )
+    assert bad["margin_ok"] is False and bad["margin_verdict"] == "MARGIN_INADEQUATE", bad
+    good = check_sampling_margin(
+        capture_frame_period_ms=33.33,
+        flash_event_ms=2.0 / 24.0 * 1000.0,
+        flash_event_src="caller_supplied",
+        audio_sr=48000,
+        beep_event_ms=50.0,
+        beep_event_src="caller_supplied",
+        goertzel_win_ms=20.0,
+    )
+    assert good["margin_ok"] is True, good
+    print("SELF_TEST margin ERROR19-class refuse + 24p@30cap OK")
+    # timing class: flat → STABLE; ramp → DRIFT; noise → WANDER
+    flat = [{"t_flash_s": float(i), "offset_ms": 5.0} for i in range(12)]
+    tc = classify_timing(flat, 0.0, 0.0, slope_tol=0.5, wander_rms_tol_ms=12.0)
+    assert tc["timing_class"] == "STABLE", tc
+    drift_pairs = [{"t_flash_s": float(i), "offset_ms": 2.0 * i} for i in range(12)]
+    sl, _, r2 = linreg_slope([p["t_flash_s"] for p in drift_pairs],
+                             [p["offset_ms"] for p in drift_pairs])
+    tc = classify_timing(drift_pairs, sl, r2, slope_tol=0.5, wander_rms_tol_ms=12.0)
+    assert tc["timing_class"] == "MONOTONIC_DRIFT", tc
+    print("SELF_TEST timing_class STABLE/DRIFT OK")
 
     # DEFAULT_CAP_FPS must be hardware-legal (parent-measured ≤30)
     assert DEFAULT_CAP_FPS <= 30.0 + 1e-9, DEFAULT_CAP_FPS
@@ -1670,6 +2073,23 @@ def main(argv: list[str] | None = None) -> int:
         print(f"calibration_written={cal_out} src=measured")
         print(f"instrument_offset_ms={res.median_offset_ms:.4f} src=measured")
 
+    # Concurrent CPU is parent-supplied via --cpu-pct-json (soak wrapper).
+    cpu_extra: dict[str, Any] = {}
+    if getattr(args, "cpu_pct_json", None) is not None:
+        try:
+            cdoc = json.loads(Path(args.cpu_pct_json).read_text())
+            cpu_extra["arm_cpu_pct"] = cdoc.get("arm_cpu_pct")
+            cpu_extra["arm_cpu_pct_src"] = cdoc.get("arm_cpu_pct_src", "measured")
+            cpu_extra["arm_cpu_sample_note"] = cdoc.get("note", "")
+        except (OSError, json.JSONDecodeError, TypeError) as e:
+            cpu_extra["arm_cpu_pct"] = None
+            cpu_extra["arm_cpu_pct_src"] = "NO-DATA"
+            cpu_extra["arm_cpu_pct_error"] = str(e)
+    else:
+        cpu_extra["arm_cpu_pct"] = None
+        cpu_extra["arm_cpu_pct_src"] = "NO-DATA"
+        cpu_extra["arm_cpu_pct_note"] = "pass --cpu-pct-json from soak wrapper"
+
     rc = print_report(
         res,
         tol_ms=tol_ms,
@@ -1686,7 +2106,18 @@ def main(argv: list[str] | None = None) -> int:
         cal_path=cal_path,
         mode=mode,
         allow_default_score=bool(args.allow_default_score),
+        extra=cpu_extra,
     )
+    # Time series CSV — required artifact (mean-only is forbidden)
+    ts_path = out_dir / f"{args.label}_offset_timeseries.csv"
+    with ts_path.open("w") as fts:
+        fts.write("t_flash_s,t_beep_s,offset_ms,src\n")
+        for p in res.pairs:
+            fts.write(
+                f"{p.get('t_flash_s','')},{p.get('t_beep_s','')},"
+                f"{p.get('offset_ms','')},measured\n"
+            )
+    print(f"offset_timeseries_csv={ts_path} src=measured")
 
     payload = {
         "tool": "avsync_measure_hdmi",
@@ -1706,8 +2137,14 @@ def main(argv: list[str] | None = None) -> int:
                 "pre-wallclock+start_at_zero runs INVALID for absolute compare; "
                 "re-establish bimodality on fingerprinted captures only"
             ),
+            "mean_only": "FORBIDDEN — report time series + timing_class",
         },
         "result": asdict(res),
+        "timing_class": res.timing_class,
+        "residual_rms_ms": res.residual_rms_ms,
+        "margin": res.margin,
+        "arm_cpu_pct": cpu_extra.get("arm_cpu_pct"),
+        "arm_cpu_pct_src": cpu_extra.get("arm_cpu_pct_src"),
         "tol_ms": tol_ms,
         "tol_ms_src": tol_src,
         "slope_tol_ms_per_s": slope_tol,
@@ -1720,6 +2157,7 @@ def main(argv: list[str] | None = None) -> int:
         "warmup_frames": warmup,
         "warmup_src": warmup_src,
         "decoded_frames": n_decoded,
+        "offset_timeseries_csv": str(ts_path),
     }
     if cal_ms is not None and res.median_offset_ms is not None:
         payload["median_offset_ms_corrected"] = res.median_offset_ms - cal_ms
