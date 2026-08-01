@@ -22,7 +22,8 @@
 
 | rk | title | use |
 |----|-------|-----|
-| **TBD** | **Real BBB GlassAV 624×480 24fps 1200s** | **PRIMARY long soak** — real content + glass ID + flash/beep @2s; parent assigns rk after scan |
+| **TBD** | **Bank480 FullBleed VRes AV 624×480 24fps 1200s** | **PRIMARY** unambiguous SAR=1:1 DAR=13:10 full-bleed + V-res instruments + A/V @2s |
+| **TBD** | **Real BBB GlassAV 624×480 24fps 1200s** | real-content soak (full pixel fill; scan if missing) |
 | **TBD** | Real BBB GlassAV 624×352 / 640×480 / 720×480 / 1440×1080 **90s** | geometry ladder (FORCE_SCALE / awkward sizes) |
 | **23** | AudioID Glass 480p 24fps **60s** | quick A/V + checksum audio packets |
 | **24** | AudioID … **audioPlus100ms** | instrument RED (expect ~+100 ms) |
