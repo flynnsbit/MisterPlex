@@ -1,259 +1,254 @@
-# A/B — Quiesce MiSTer Main vs publish_interval p_ge50
+# A/B — Quiesce MiSTer vs publish timing (TRIMMED scoring)
 
-**Baseline (parent-measured, authoritative):**
-- SYSTEM_BUSY 169/200 (84.5%), 60 s
-- 30 s: MiSTer **90.6**, ffmpeg **69.6**, misterplexd **25.6**
-- daemon md5 `7c991e47`, ~5 min 480p cast
-- **`p_ge50 = 0.1450`** (MISS vs pre-reg 9–11% late band — high side)
-- `acf lag1 = -0.1950` (catch-up)
-- RBF `c5382bee…`: **do not score** PLXD `frames_done` / bank_vsync-packed presents/drops
+**Status:** PRIORITY experiment for "is ARM late, or is observation late?"
+**Agent:** w-cpu · no device touch
 
-**Evidence rule:** score only `publish_interval` ledger lines + exe-resolved CPU.  
-**Agent does not touch device.**
+## Locked parent load (do not re-estimate)
+
+| metric | value | tag |
+|---|---:|---|
+| SYSTEM_BUSY | 169/200 (84.5%) | measured |
+| MiSTer | **90.6** | measured, exe-resolved |
+| ffmpeg | 69.6 | measured |
+| misterplexd | 25.6 | measured |
+| raw `p_ge50` | 0.1450 | **WITHDRAWN as sole verdict** (rd-review: common-mode with acf) |
+
+**Void on RBF c5382bee:** PLXD `frames_done`, `presents`, `drops`.
+**Also void as FPGA observe:** `unaccounted` is **`residual` printed twice** (`media_player.cpp:3576-3577`) — same `frameLedgerResidual(...)` value; **no FPGA field**.
 
 ---
 
-## What 90.6 is (source + what still needs device proof)
+## 1. What 90.6 is (evidence classes)
 
-### Source (upstream Main_MiSTer master — re-fetched; mirror `.agent-work/w-cpu-main-*`)
+### A. Source (quoted — mechanism class)
+
+Upstream + mirror `.agent-work/w-cpu-main-input.cpp:5596-5617`:
 
 ```c
-// main.cpp — pin whole process to CPU1
-CPU_SET(1, &set);
-sched_setaffinity(0, sizeof(set), &set);
-
-// input.cpp ~5596–5617
 int timeout = 0;
-if (is_menu() && video_fb_state()) timeout = 25; // ms ONLY Menu+FB
-int return_value = poll(pool, NUMDEV + 3, timeout);
-// timeout==0 → poll returns immediately when fds idle → spin
-
-// scheduler co_poll: user_io_poll; frame_timer; input_poll(0); video_poll;
-// scheduler_yield();  // libco — NOT sleep
+if (is_menu() && video_fb_state()) timeout = 25;
+poll(pool, NUMDEV + 3, timeout);  // Plex → 0 → spin when idle
 ```
 
-`pool` = input devices + inotify + `/dev/MiSTer_cmd` + LED. **Not** DDR doorbell.
+`main.cpp`: `sched_setaffinity` **CPU1** only.
+`scheduler.cpp` co_poll: **no nanosleep**.
 
-**Class (source):** timeout-free `poll` **elastic scavenger** on CPU1.  
-**Not (source):** H.264 decode, our DDR memcpy, OSD full-frame paint as primary.
-
-### Device proof still required (not assumed from %)
-
-| ID | Check | PASS |
-|---|---|---|
-| E1 | `strace -c -p $M_PID` 10 s during cast | top syscall time = `poll`/`ppoll` ≥40% |
-| E2 | `Cpus_allowed_list` | `1` |
-| E3 | schedstat wait_frac | ≤5% (running, not blocked) |
-
-If E1 fails (top ≠ poll) → mechanism **open**; quote the top syscall.
-
----
-
-## PRE-REGISTER (publish BEFORE running A/B)
-
-**Baseline this card locks:** `p_ge50_base = 0.1450` (parent soak).
-
-| Arm | Action | Predict MAIN %onecpu | Predict `p_ge50` | Predict `acf_lag1` |
-|---|---|---|---|---|
-| **B0** | Repro: 480p cast, Main running (stock) | 80–95 | **0.12–0.18** (repro 0.145) | negative (catch-up), ∈ [−0.35, −0.05] |
-| **B1** | Same cast class, Main **SIGSTOP** for soak window only, then **SIGCONT** | **≤ 2** (or NO-DATA if frozen ticks) | **≤ 0.06** if Main causal | closer to 0 than B0 (less catch-up) |
-| **B2** (optional) | Lab Main `poll` timeout=5 Plex-scoped | 15–40 | **≤ 0.08** if causal | milder negative |
-
-### Verdict rules (score after both arms)
-
-| Result | Verdict |
-|---|---|
-| B1 MAIN≈0 **and** `p_ge50_B1 ≤ 0.06` **and** Δ = p_ge50_B0 − p_ge50_B1 ≥ 0.06 | **MAIN_CAUSAL** — reclaim is product-relevant for judder |
-| B1 MAIN≈0 **and** `p_ge50_B1 ≥ 0.12` (within 0.03 of B0) | **MAIN_NOT_CAUSAL** — late publish is ffmpeg/daemon path; stop chasing Main for judder |
-| B1 MAIN≈0 **and** `p_ge50_B1 ∈ (0.06, 0.12)` | **MAIN_PARTIAL** — contributes; other tails remain |
-| B0 fails repro (`p_ge50_B0 < 0.09`) | **BASELINE_MISS** — do not interpret B1; re-soak |
-| Cannot SIGSTOP safely / left stopped | **INVALID** — restore SIGCONT; discard |
-
-**This is the standard:** predictions above are **not results**. Misses will be published.
-
-### Risk (B1 SIGSTOP)
-
-- **During STOP:** F12 / OSD / `/dev/MiSTer_cmd` / input dead.  
-- **Mandatory:** `kill -CONT $M_PID` in a `trap` and after soak.  
-- **Never** leave STOP on handback. Daily driver.  
-- Prefer B2 lab binary if STOP is too scary; B1 is strongest falsifier.
-
----
-
-## Runnable A/B (copy-paste)
-
-### 0) Resolve Main by exe (never cmdline)
+### B. Device proof (parent must still capture — not assumed from %)
 
 ```sh
+# exe resolve — never cmdline / never pgrep
+M_PID=""
+for d in /proc/[0-9]*; do
+  exe=$(readlink -f "$d/exe" 2>/dev/null) || continue
+  case "$(basename "${exe% (deleted)}")" in MiSTer|mister) M_PID=${d#/proc/};; esac
+done
+echo "M_PID=${M_PID:-NO-DATA}"
+[ -n "$M_PID" ] || { echo "true rc=77"; exit 0; }
+
+# /proc state + affinity (awk — not read a b c on cpu line)
+grep -E '^(Name|State|Cpus_allowed_list):' /proc/$M_PID/status
+awk '{print "nice="$19" rt="$18" policy="$41}' /proc/$M_PID/stat
+
+# syscall profile 10s during cast
+command -v strace >/dev/null || { echo "NO-DATA strace"; echo "true rc=77"; exit 0; }
+strace -c -f -p "$M_PID" 2>/media/fat/misterplex/lab_mister_strace.txt &
+SP=$!; sleep 10; kill -INT $SP 2>/dev/null; wait $SP 2>/dev/null
+cat /media/fat/misterplex/lab_mister_strace.txt
+echo "true rc=$?"
+```
+
+| ID | PASS | FAIL |
+|---|---|---|
+| E1 | top = `poll`/`ppoll` ≥40% | other top → quote; spin class open |
+| E2 | `Cpus_allowed_list: 1` | multi-CPU |
+| E3 | stack/wchan mostly running or poll path | long D-state |
+
+**Until E1 lands:** 90.6 is **measured load** + **source-class scavenger**, not "proven live poll".
+
+---
+
+## 2. TRIMMED scoring only (rd-review block honored)
+
+### Instrument fields (tree — use these names)
+
+`publish_interval_ledger.hpp` already emits:
+
+| field | meaning | **use for A/B?** |
+|---|---|---|
+| `mean_ms` / `sigma_ms` / raw `p_ge50` | all intervals incl. startup/outliers | **NO — report only** |
+| `median_ms` | steady window (drop first 48 + last 24 notes) | **YES** |
+| `trimmed_mean_ms` | steady, 10% each tail | **YES** |
+| `steady_sigma_ms` | σ on trimmed body | **YES** |
+| `p_ge50_steady` | P(iv>50) on steady window only | **YES — primary fat-tail** |
+| `steady_n` | must be **≥100** or arm = UNSCORED | gate |
+| `verdict` | already prefers steady when `steady_n≥100` | secondary |
+
+**Ideal period:** 1000/24 = **41.666… ms** (fixtures are 24.000 — not 23.976).
+
+### Reject raw series when
+
+- `sigma_ms ≫ mean_ms` (e.g. σ~500, mean~50) → **UNSCORED for causal claims**
+- `steady_n < 100` → **UNSCORED**
+- only raw `p_ge50` without `p_ge50_steady` → **UNSCORED** for this A/B
+
+### Current timestamp site (observation bias context)
+
+```cpp
+// media_player.cpp publishDdrFrame — stamp is POST-write only today
+const bool ok = fpga_.publishDdrFrame(...);
+if (ok) {
+  const auto tp = steady_clock::now();  // AFTER write returns
+  pubInterval_.note(us);
+}
+```
+
+So today’s intervals are **post→post**. Preemption **during** the write or **between** posts both fatten post-intervals. w-geom pre/post discriminator separates them.
+
+---
+
+## 3. PRE-REGISTER — A/B bands (commit before run)
+
+**Arms**
+
+| Arm | Action | MAIN %onecpu |
+|---|---|---|
+| **B0** | 480p cast, Main running | expect 80–95 |
+| **B1** | same cast, `kill -STOP $M_PID` for soak, **CONT after** | expect ≤2 |
+
+**Duration:** ≥60 s steady after play lock; same asset; soak_continuity pid stable.
+**Collect:** full `publish_interval ...` summary line + CPU sample + (when available) pre/post write stats.
+
+### Primary scores (TRIMMED)
+
+| metric | B0 PREDICT | B1 PREDICT if Main drives preemption | B1 if CPU **NOT** cause |
+|---|---|---|---|
+| `p_ge50_steady` | **0.08–0.18** (repro class of 0.145 raw; steady may be lower) | **≤ 0.05** and **Δ ≥ 0.05** vs B0 | **within ±0.02 of B0** while MAIN≤2 |
+| `median_ms` | **41.0–42.5** | still **41.0–42.5** (rate ok either way) | same |
+| `trimmed_mean_ms` | **41.0–43.0** | **closer to 41.67** than B0 if B0 was high | unchanged vs B0 ±0.5 ms |
+| `steady_sigma_ms` | elevated (e.g. >8 if messy) | **drops by ≥30% relative** if Main causal | **within 15% relative of B0** |
+| MAIN % | 80–95 | ≤2 | ≤2 |
+
+### Verdict table
+
+| Outcome | Label | Meaning |
+|---|---|---|
+| B1 MAIN≤2, `p_ge50_steady` ≤0.05, Δ≥0.05, steady_σ down ≥30% | **MAIN_LOAD_CAUSAL_FOR_OBSERVED_TAIL** | reclaim Main is on critical path for *observed* publish timing |
+| B1 MAIN≤2, all trimmed metrics within noise of B0 | **MAIN_NOT_CAUSAL** | 90.6 is real load but **not** the publisher-tail driver; look ffmpeg/daemon path / true arrival |
+| B1 improves p_ge50_steady but median/trimmed_mean already ~41.67 on B0 | **MAIN_CAUSAL_TAIL_ONLY** | rate fine; tail/preemption story |
+| B0 `steady_n<100` or σ_raw unusable and steady empty | **UNSCORED** | re-soak |
+| B0 `p_ge50_steady` <0.03 already | **BASELINE_CLEAN** | Main quiesce is headroom-only for this instrument |
+
+**CPU is NOT the cause** when: Main is confirmed stopped (MAIN≤2 or State=T during soak) **and** `p_ge50_steady_B1 ∈ [p_ge50_steady_B0 − 0.02, p_ge50_steady_B0 + 0.02]` **and** `steady_sigma` ratio ∈ [0.85, 1.15].
+
+---
+
+## 4. PRE-REGISTER — pre/post write discriminator (w-geom)
+
+**Definitions (when instrument lands):**
+
+- `t_pre` = steady_clock immediately **before** DDR/SPI publish write begins
+- `t_post` = steady_clock immediately **after** write returns
+- `write_us = t_post - t_pre`
+- `pre_iv_ms` = intervals between successive `t_pre`
+- `post_iv_ms` = intervals between successive `t_post` (≈ today’s ledger)
+
+### Predictions if **observation/preemption during write** dominates (Main scavenger on same CPUs)
+
+Quiescing Main (B1 vs B0):
+
+| signal | PREDICT B1 vs B0 |
+|---|---|
+| **p90/p99 `write_us`** | **shrinks ≥40%** (or p99 write_us falls below a small floor, e.g. p99 < 2× median write) |
+| long post_iv that coincide with large write_us | **decouple** — fewer long iv with large write |
+| `p_ge50_steady` on **pre_iv** | mild improve or flat |
+| `p_ge50_steady` on **post_iv** | improves **because** write gap shrinks |
+
+### Predictions if **late arrival** (publisher delayed **before** write; write itself short)
+
+| signal | PREDICT B1 vs B0 |
+|---|---|
+| **median/p90 `write_us`** | **flat** (±20% relative) |
+| `p_ge50_steady` on **pre_iv** | **drops** (≤0.05 if Main causal) |
+| `p_ge50_steady` on **post_iv** | drops in lockstep with pre_iv |
+
+### Predictions if **post-stamp-only jitter** (write short; preemption after return before note)
+
+Today’s code path is vulnerable only for the tiny post-return→note window (VDSO-class).
+**PREDICT:** `write_us` stays small; if B1 still cleans post_iv a lot with tiny write_us on B0 long ivs → not "during write"; more likely **between-frame scheduling** (arrival class).
+
+### Hard falsifiers (CPU / Main NOT explaining discriminator)
+
+1. B1: MAIN≤2, **`write_us` distribution unchanged** (±20%) **and** **pre_iv `p_ge50_steady` unchanged** (±0.02) → Main not in the publish-timing path.
+2. B0: long post_iv **without** large `write_us` **and** regular pre_iv → look elsewhere (pipe/decode), not write preemption.
+3. Discriminator shows large write_us on **idle** box (Main already low) → not the 90.6 story.
+
+**I commit:** If preemption-from-Main is the common-mode for fat tail + negative acf, **B1 must shrink the pre→post write gap on the same trials that were long**, not merely cosmetic-change raw `p_ge50`. If write gap is flat and pre_iv still late, label **late arrival**. If both flat under B1, label **MAIN_NOT_CAUSAL**.
+
+---
+
+## 5. Runnable B0/B1 (safe daily driver)
+
+```sh
+# --- shared resolve ---
 LAB=/media/fat/misterplex
 M_PID=""
 for d in /proc/[0-9]*; do
   exe=$(readlink -f "$d/exe" 2>/dev/null) || continue
-  exe=${exe% (deleted)}
-  b=$(basename "$exe")
-  case "$b" in MiSTer|mister) M_PID=${d#/proc/} ;; esac
+  case "$(basename "${exe% (deleted)}")" in MiSTer|mister) M_PID=${d#/proc/};; esac
 done
-echo "M_PID=${M_PID:-NO-DATA}"
-[ -n "$M_PID" ] || { echo "true rc=77"; exit 0; }
-grep -E '^(Name|State|Cpus_allowed_list):' /proc/$M_PID/status
-echo "true rc=$?"
-```
+echo "M_PID=${M_PID:-NO-DATA}"; [ -n "$M_PID" ] || exit 0
 
-### 1) E1 strace during cast (prove spin class)
+# B0: cast playing — CPU sample + end-of-soak publish_interval line from daemon log
+# Prefer: python3 tools/arm_cpu_sample.py --seconds 30 --label B0
+# Grep: publish_interval.*p_ge50_steady
 
-```sh
-# busybox: awk for /proc/stat — never `read a b c` on cpu line
-command -v strace >/dev/null 2>&1 || { echo "NO-DATA strace"; echo "true rc=77"; exit 0; }
-strace -c -f -p "$M_PID" 2>$LAB/lab_mister_strace_cast.txt &
-SP=$!
-sleep 10
-kill -INT "$SP" 2>/dev/null || true
-wait "$SP" 2>/dev/null
-cat $LAB/lab_mister_strace_cast.txt
-echo "true rc=$?"
-```
-
-### 2) B0 — baseline soak (Main running)
-
-Parent: start same 480p cast class as the 0.145 soak.  
-Ensure tip daemon emits `publish_interval` summary (w-geom ledger on successful publish).
-
-During steady play (~60 s+):
-
-```sh
-# CPU 30s (or host tools/arm_cpu_sample.py if present on box)
-sh /path/to/parent_t2_mister_ab.sh B
-# After soak: grep daemon log for publish_interval (NOT PLXD frames_done)
-# Example pattern (exact tag may vary — paste full line):
-#   publish_interval ... p_ge50=... verdict=...
-```
-
-Record: `MAIN_B0`, `p_ge50_B0`, `acf` if printed, daemon md5, RBF id.
-
-### 3) B1 — Main STOP during soak (strongest)
-
-```sh
-# PRE: cast playing, same asset, soak_continuity pid stable
-M_PID=... # re-resolve
-trap 'kill -CONT "$M_PID" 2>/dev/null; echo CONT_sent' EXIT INT TERM
-
+# B1:
+trap 'kill -CONT "$M_PID" 2>/dev/null; echo CONT' EXIT INT TERM
 kill -STOP "$M_PID"
-echo "STOPPED $(date -Iseconds 2>/dev/null || date)"
-# run SAME duration soak as B0; collect publish_interval + CPU
-# CPU sample while stopped: Main ticks should barely advance
-sh /path/to/parent_t2_mister_ab.sh B
-
+# same soak duration; collect publish_interval + CPU
 kill -CONT "$M_PID"
 trap - EXIT INT TERM
-echo "CONTINUED $(date -Iseconds 2>/dev/null || date)"
-grep -E '^(Name|State):' /proc/$M_PID/status
+grep State /proc/$M_PID/status   # must not stay T
 echo "true rc=$?"
 ```
 
-**Handback check:** State = `S` or `R`, not `T`. F12 works.
-
-### 4) What to paste back
-
-```
-B0: MAIN=  p_ge50=  acf_lag1=  SYSTEM_BUSY=  publish_interval_line=...
-B1: MAIN=  p_ge50=  acf_lag1=  SYSTEM_BUSY=  publish_interval_line=...
-strace_top=...
-State_after_CONT=...
-true rc each step
-```
-
-I score MAIN_CAUSAL / NOT / PARTIAL per table. **No PLXD presents/drops/frames_done.**
+**Paste back:** full `publish_interval` lines (B0+B1), MAIN%, strace top, State after CONT.
+**Do not paste PLXD presents/drops/frames_done as evidence.**
 
 ---
 
-## Headroom numbers (accounting — not “free CPU for ffmpeg”)
+## 6. Cost: T7 unique store rows 240→480
 
-| Quantity | Value | Label |
-|---|---:|---|
-| Main play (parent) | 90.6 | elastic scavenger |
-| ffmpeg + daemon | 69.6+25.6 = **95.2** | inelastic |
-| system busy | 169/200 | measured |
-| If Main → 0 (SIGSTOP) | reclaim **~90 %onecpu** of one core ≈ **45% of machine** | upper bound elastic |
-| If Main → 25 (timeout=5 lab) | reclaim **~65 %onecpu** | PREDICTION |
+**RTL:** `present_core.sv` `V_STORE=240` → 480 (w-geom). Parent: doubles Y-side **fetch** traffic.
 
-Honest “room for inelastic growth” after full Main quiesce ≈  
-`200 − (busy − Main) ≈ 200 − (169 − 90.6) ≈ **121.6 / 200**`  
-before new work — **still shared** with IRQ/kernel. Not a promise ffmpeg gets 90 points.
+**ARM path today** (`ddr_frame_layout.hpp`): publish **already** `624×480×1.5 = 449280` bytes every frame.
 
----
-
-## Cost: resolution ceiling fix (w-geom RTL)
-
-**Defect (quoted):** `present_core.sv:161-164`  
-`H_DE=529`, `V_STORE=240` while `FRAME_W/H` macros 640×480 — fetches **240 rows / ~529 cols** of store mapping.
-
-**ARM today already writes full coded bank** (`ddr_frame_layout.hpp`):  
-`624×480 yuv420p = 449280 B` every publish (`kPlex480pYuv420pBytes`).
-
-| Component | Δ if scanout fetches full 480 rows | Evidence class |
+| impact | magnitude | tag |
 |---|---|---|
-| ARM decode size | **0** — already 624×480 | code |
-| ARM memcpy/publish bytes | **0** — full bank already | code |
-| ffmpeg scale | **0** unless geometry contract changes | code |
-| FPGA DDR **read** bandwidth during scanout | **~2× vertical** | arithmetic from V_STORE 240→480 |
-| ARM CPU % from “more rows” | **~0 direct** | inference from byte path; confirm with CPU sample post-RBF |
-| Memory-controller contention ARM write vs FPGA read | **UNKNOWN** — could worsen publish tails | measure p_ge50 after ceiling RBF **without** other changes |
-| PLXD frames_done | still void on old RBF; new RBF must fix packing separately | parent |
+| ARM encode/scale/publish **bytes** | **0** | code |
+| ARM CPU % direct | **~0** | code |
+| FPGA DDR read bandwidth | **~2× on Y fetch** | arithmetic |
+| Contention ARM write vs FPGA read | **UNKNOWN** | measure `p_ge50_steady` + `write_us` post-RBF |
+| PRE_REG ceiling-only RBF | trimmed metrics **Δ ≤ 0.03** on `p_ge50_steady` if no bus fight; if **worsens ≥0.05**, run B1 on new RBF | prediction |
 
-**PRE_REG for ceiling-only RBF (when parent grants fit):**  
-- `p_ge50` change ∈ **±0.03** vs same daemon/Main if only scanout mapping changes and ARM path identical.  
-- If `p_ge50` **worsens by ≥0.05** → suspect DDR contention; re-measure with Main STOP.
-
-**Do not** attribute ceiling fix as CPU headroom win for ARM inelastic — it is a **correctness/scanout** fix. Possible second-order bus contention only.
+T7 is **not** an ARM CPU gift and **not** free of bus risk. Score with trimmed publish stats + discriminator write_us, not PLXD.
 
 ---
 
-## Cost: hi-res overlay @ 84.5% busy
+## 7. Cost: native-raster overlay @ 84.5% busy
 
-Update of `OVERLAY_COST_AND_MISTER.md` against **this** load.
+See updated `OVERLAY_COST_AND_MISTER.md`.
 
-### Host bench (NOT silicon) — measured on build host
+**One-line:** At Main 90.6 + ffmpeg 69.6 + daemon 25.6, **full-time hi-res composite can starve the publisher** (trade judder for chrome). Overlay is **burst/dirty-rect only** until Main A/B says MAIN_NOT_CAUSAL or reclaim lands. Gates: `present_us_p99<35000`, `p_ge50_steady` Δ≤0.03, `PRESENT_PROFILE=1`.
 
-| geom | renderYuv420p µs | frac of 41.67 ms | panel frac |
-|---|---:|---:|---:|
-| 624×480 panel 594×96 (scale1) | **470** | 1.1% | 19% |
-| rows×2 panel ~594×192 (scale≥2 floor) | **~940 proj** | ~2.3% | ~38% |
-| 1920×1080 panel 1824×216 | **3045** | 7.3% | 19% |
-
-### A9 absolute
-
-**UNKNOWN** — no host→A9 scale. Must use `PRESENT_PROFILE=1` → `overlay_us_*` / `present_us_p99` on device.
-
-### Affordability at SYSTEM_BUSY 169/200
-
-| Scenario | Assessment |
-|---|---|
-| Overlay **off** (no chrome) | `NEVER_CALLED` — **0** added; safe |
-| Burst chrome 3 s, dirty-rect, 624 path scale≥2 | Host says ~2% frame; on A9 at 95% inelastic+scavenger — **risk of present tail >41.7 ms** without Main reclaim |
-| Full-screen composite every frame at 800×600 / 640×480 | **Hostile** at current load: order-of-magnitude from 1080 host bench (~7% of budget on fast host) → A9 likely **multiple ms to tens of ms**; can raise `p_ge50` |
-| After Main reclaim (if MAIN_CAUSAL) | Overlay becomes **much** more plausible; still gate on `present_us_p99 < 35000` |
-
-### Binding gates before shipping hi-res overlay
-
-1. Prefer **Main reclaim A/B done** first if judder is #1.  
-2. `PRESENT_PROFILE=1`, force chrome ≥30 calls.  
-3. `present_us_p99 < 35000`, `present_us_max < 41667`.  
-4. `publish_interval` `p_ge50` not worse than baseline by **>0.03**.  
-5. **Never** gate on PLXD presents/drops/frames_done on `c5382bee`.
-
-### Scale targets user asked (800×600 / 640×480 / 240p)
-
-| Present target | Coded bank today | Overlay note |
-|---|---|---|
-| 640×480 | 624×480 YUV | match existing bench class |
-| 240p | 320×240 class | cheaper panel; scale≥2 glyphs still required if store y-scale 2 |
-| 800×600 | **not** current product bank | new geometry + more bytes — cost **unmeasured**; treat as new present path |
+Host bench (NOT A9): 624 YUV overlay ~470 µs/call; scale≥2 ~2×; 1080-class ~3 ms — A9 absolute **UNKNOWN**.
 
 ---
 
-## Priority order (product)
+## 8. Priority order
 
-1. **E1 strace + B0/B1 A/B** (this card) — settles whether 90.6 fixes judder.  
-2. If MAIN_CAUSAL → lab timeout=5 or product-safe Main sleep policy.  
-3. Ceiling RTL (correctness) — ARM CPU ~flat; watch p_ge50.  
-4. Hi-res overlay only after 1–2 and profile gates green.
+1. E1 strace (prove 90.6 class)
+2. **B0/B1 trimmed A/B** (this card)
+3. Discriminator pre/post when w-geom ships — score §4 predictions
+4. T7 RBF — watch trimmed + write_us
+5. Overlay only if publisher headroom proven
