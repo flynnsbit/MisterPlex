@@ -75,3 +75,20 @@ Markers every **2.000 s**. After excluding head+tail **30 s** each:
 ## Lock numbers to expect (file, not device)
 
 See `docs/AV_LOCK_UNCERTAINTY.md`: post-AAC median error **≈ 0.15 ms** vs design 0 / +100. Device adds unknown bias — that is the measurement.
+
+## Real-content non-bank ladder (indexed)
+
+| rk | geometry | dur | title |
+|----|----------|-----|-------|
+| **29** | 624×352 | 90s | Real BBB GlassAV |
+| **31** | 640×480 | 90s | Real BBB GlassAV |
+| **32** | 720×480 | 90s | Real BBB GlassAV |
+| **28** | 1440×1080 | 90s | Real BBB GlassAV |
+| **30** | 624×480 | 1200s | Real BBB GlassAV (bank-sized long soak) |
+| **18** | 624×352 | 360s | Real BBB GlassID |
+| **19** | 720×480 | 596.5s | Real BBB GlassID (full BBB) |
+
+All measured CB, no-B, 24/1, AAC 48k (host ffprobe). Not bank-matched except rk30.
+
+## Rowcount 475 vs 480
+Media on disk: `MiSTerPlex Rowcount Vernier 624x480 24fps 120s` — **scan for rk**. See `docs/rowcount_475_vs_480_power.md`.
