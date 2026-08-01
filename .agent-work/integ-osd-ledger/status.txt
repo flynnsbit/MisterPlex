@@ -1,0 +1,9 @@
+branch: integ/osd-ledger-480p
+worktree: .worktrees/integ-osd-ledger
+merge: 87d72720 + eab6471a -> 8984da04 (+ rollcall fix commit pending)
+merge_base: 2675c2b4
+ARM_md5: 36b89bcb87399f4681fd41ddd226e5b4
+path: build/arm/misterplexd
+make_unit: true rc=0
+GATE_SKIP: critical live-pms-baseline-profile (missing KEY); high skip-not-pass rc=77
+MOVING_TARGET: w-osd-hires still working 8x13@sub-480 canvas defect — expect rebase
