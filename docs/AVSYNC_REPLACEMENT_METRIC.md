@@ -38,6 +38,20 @@ Pre-reg bands: see `docs/AVSYNC_S3_LEAD_FALSIFIER.md`.
 
 ---
 
+
+## Parent device confirmation (2026-08-01)
+
+S3 **CONFIRMED** on silicon. See `files/prereg/RESULT_S3_av_drift_is_setpoint.md`.
+
+| LEAD | median | min | note |
+|-----:|-------:|----:|------|
+| 20 | −6 | −16 | median **missed** P_MEDIAN [−22,−12] (toward 0) |
+| 40 | −32 | −40 | in band |
+| 80 | −72 | −79 | in band |
+
+**min ≈ −LEAD** all arms — hard deadband edge. Falsifier (stuck −45…−15) did not fire.
+A/V sync status: **UNSCORED** until HDMI flash↔beep on marker fixture.
+
 ## HARD POSITIVE — grabber HAS audio (measured this host, now)
 
 Parent hypothesis “video only, no audio path” is **false on this workstation**.

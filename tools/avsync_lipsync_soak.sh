@@ -31,6 +31,8 @@ MIN_PAIRS="${MIN_PAIRS:-15}"
 MARKER_PERIOD_S="${MARKER_PERIOD_S:-1.0}"  # rk=27 use 2.0
 SKIP_SESSION_GATE="${SKIP_SESSION_GATE:-0}"
 WARMUP_FRAMES="${WARMUP_FRAMES:-20}"
+# 1 = pass --no-absolute-score (slope/Δ only; absolute stays raw_uncalibrated forensic)
+NO_ABSOLUTE_SCORE="${NO_ABSOLUTE_SCORE:-1}"
 mkdir -p "$OUT"
 
 if command -v fuser >/dev/null 2>&1; then
@@ -123,6 +125,7 @@ python3 "$ROOT/tools/avsync_measure_hdmi.py" \
   --marker-period-s "$MARKER_PERIOD_S" \
   --tol-ms "$TOL" \
   --slope-tol-ms-per-s "$SLOPE_TOL" \
+  $([[ "$NO_ABSOLUTE_SCORE" == "1" ]] && echo --no-absolute-score) \
   --out "$OUT" \
   --label "$LABEL" \
   --json-out "$OUT/${LABEL}_report.json" \
