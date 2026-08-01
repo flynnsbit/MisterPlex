@@ -1,9 +1,4 @@
-lane=w-lint GATE-INTEGRITY
+lane=w-lint
 branch=w-lint-gate-integrity
-focus=premise-before-PASS; FRAME_LEDGER scope; deploy deps; T5 keep HISTORICAL
-T1=publish_swap_delta UNSCORED when p_d1<0.5 LIKELY_VSYNC_PACKED; premise_guard rc=0
-T2=FRAME_LEDGER NOT PLXD-circular; scope=ARM_PUBLISH_NOT_DISPLAY; drops=0≠display
-T3=deploy fail-fast daemon_backup+boot_hook missing rc=2; overall AFTER hook; main still overall-before-hook
-T4=T5 real keep HISTORICAL; git-before-retract encoded
-rollcall=expected_commands=140
-no_device=1 no_quartus=1
+tip=022ba55f
+focus=premise-before-PASS landed
