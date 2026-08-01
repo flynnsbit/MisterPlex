@@ -87,20 +87,23 @@ void frameLedgerSessionEnd(uint64_t sessionId, int64_t frames, int64_t presents,
     const int n = std::snprintf(
         line, sizeof(line),
         "ts=%s event=session_end pid=%d session=%llu frames=%lld presents=%lld drops=%lld "
-        "publish_misses=%lld residual=%lld reason=%s\n",
+        "publish_misses=%lld unaccounted=%lld residual=%lld "
+        "unaccounted_eq=frames-presents-drops reason=%s tag=measured\n",
         ts, static_cast<int>(::getpid()), static_cast<unsigned long long>(sessionId),
         static_cast<long long>(frames), static_cast<long long>(presents),
         static_cast<long long>(drops), static_cast<long long>(publishMisses),
-        static_cast<long long>(residual), reason ? reason : "?");
+        static_cast<long long>(residual), static_cast<long long>(residual),
+        reason ? reason : "?");
     if (n > 0)
         appendLine(line, static_cast<size_t>(n));
     std::fprintf(stderr,
                  "misterplexd: FRAME_LEDGER event=session_end session=%llu frames=%lld "
-                 "presents=%lld drops=%lld publish_misses=%lld residual=%lld reason=%s\n",
+                 "presents=%lld drops=%lld publish_misses=%lld unaccounted=%lld "
+                 "residual=%lld reason=%s tag=measured\n",
                  static_cast<unsigned long long>(sessionId), static_cast<long long>(frames),
                  static_cast<long long>(presents), static_cast<long long>(drops),
                  static_cast<long long>(publishMisses), static_cast<long long>(residual),
-                 reason ? reason : "?");
+                 static_cast<long long>(residual), reason ? reason : "?");
 }
 
 void frameLedgerProcessExit(int code, const char* why, int64_t lifetimeFrames,

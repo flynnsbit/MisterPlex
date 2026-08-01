@@ -73,10 +73,15 @@ static void testPublishMissVsDropsAndDrift() {
     CHECK(live.residual != 0);
 
     const std::string frag = misterplex::frameLedgerTelemetryFragment(live);
+    CHECK(frag.find("frames=100") != std::string::npos);
     CHECK(frag.find("presents=97") != std::string::npos);
     CHECK(frag.find("drops=1") != std::string::npos);
     CHECK(frag.find("publish_misses=2") != std::string::npos);
     CHECK(frag.find("residual=2") != std::string::npos);
+    CHECK(frag.find("unaccounted=2") != std::string::npos);
+    CHECK(frag.find("unaccounted_eq=frames-presents-drops") != std::string::npos);
+    CHECK(frag.find("tag=measured") != std::string::npos);
+    CHECK(misterplex::sessionEpochString(1000, 3) == "1000.3");
 
     SimCounters healthy{};
     for (int i = 0; i < 50; ++i)
@@ -118,6 +123,7 @@ static void testFileLedgerAcrossRestarts() {
     CHECK(txt.find("event=session_end") != std::string::npos);
     CHECK(txt.find("event=process_exit") != std::string::npos);
     CHECK(txt.find("publish_misses=5") != std::string::npos);
+    CHECK(txt.find("unaccounted=5") != std::string::npos);
     CHECK(txt.find("why=signal-g_stop_sig=15") != std::string::npos);
     int starts = 0;
     for (size_t i = 0; (i = txt.find("event=process_start", i)) != std::string::npos; ++i)

@@ -233,6 +233,12 @@ public:
     int64_t lifetimeDrops() const { return lifetimeDrops_.load(); }
     int64_t lifetimePublishMisses() const { return lifetimePublishMisses_.load(); }
     uint64_t sessionSeq() const { return sessionSeq_.load(); }
+    // Monotonic process identity (steady mono_ms at arm). Unchanged for process life.
+    uint64_t processEpoch() const { return processEpoch_.load(); }
+    // Stream generation within this process (bumped at each play/stream start).
+    uint64_t streamSeq() const { return streamSeq_.load(); }
+    // Call once from main after construct — stamps process_epoch for soak P4.
+    void armProcessEpoch(uint64_t epochMonoMs);
     bool audioActive() const { return audioActive_.load(); }
     int64_t positionMs() const { return positionMs_.load(); }
     int64_t durationMs() const {
@@ -373,7 +379,9 @@ private:
     std::atomic<int64_t> lifetimePresents_{0};
     std::atomic<int64_t> lifetimeDrops_{0};
     std::atomic<int64_t> lifetimePublishMisses_{0};
-    std::atomic<uint64_t> sessionSeq_{0};
+    std::atomic<uint64_t> sessionSeq_{0}; // completed streams (end)
+    std::atomic<uint64_t> processEpoch_{0}; // set once: daemon start identity
+    std::atomic<uint64_t> streamSeq_{0};    // bumped at each stream START
     // FPGA presents this session (wall-clock capped)
     int64_t presentCount_ = 0;
     mutable std::mutex mu_;

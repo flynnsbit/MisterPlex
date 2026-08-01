@@ -565,6 +565,14 @@ int main(int argc, char** argv) {
     }
 
     misterplex::MediaPlayer player;
+    {
+        // P4 soak identity: process_epoch is unique per daemon life (steady mono_ms).
+        // Consumers must invalidate any window that spans a process_epoch change.
+        const auto pe = std::chrono::duration_cast<std::chrono::milliseconds>(
+                            std::chrono::steady_clock::now().time_since_epoch())
+                            .count();
+        player.armProcessEpoch(static_cast<uint64_t>(pe > 0 ? pe : 1));
+    }
     player.setFfmpegPath(ffmpeg);
     player.setDecodeSize(decodeSize);
     player.setPresentMode(presentMode);

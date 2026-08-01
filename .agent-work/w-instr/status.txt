@@ -1,32 +1,41 @@
-# w-instr status — absorb parent instrument regressions + fingerprint gate
+# w-instr — P5 frame ledger / session_epoch
 
 branch: w-avsync-hdmi-measure
-tip: (see git rev-parse HEAD)
+tip: (git rev-parse HEAD)
 
-## Parent regressions absorbed (rule-0)
-1. DEFAULT_CAP_FPS was 60 without measuring MS2109 caps → every capture failed, hid as rc=77.
-   NOW: DEFAULT_CAP_FPS=30.0; preflight _supported_cap_fps(); unsupported → INSTRUMENT_BROKEN rc=3.
-2. -copyts without -start_at_zero truncated captures (33KB vs 6.28MB) → INSTRUMENT_BROKEN on CAPTURE_FAILED.
-3. rc=77 must not mean "instrument broken". Ladder: PASS=0 FAIL=2 BROKEN=3 UNSCORED=77.
+## ARM binary
+path: build/arm/misterplexd
+md5: a9579a4294a64043ff271baebddc4f1e
+make arm-plexd true rc=0
 
-## Historical dataset INVALID
-Corrected wallclock alignment shifted median ~90 ms (-105 vs old -195/-312).
-Bimodality must be re-established on fingerprinted captures only.
+## What shipped
+1. session_epoch = process_epoch.stream_seq
+   - process_epoch: armed once at daemon start (steady mono_ms)
+   - stream_seq: bumped at every play()/stream START
+   - emitted on 1 Hz media line + session end + stream_start
+2. Per-stream counters unchanged; lifetime_* + lifetime_unaccounted on every line
+3. unaccounted = frames - presents - drops printed every telemetry line
+   (residual synonym kept). unaccounted_eq=frames-presents-drops tag=measured
+4. B5: teardown asserts totalBytes % frameBytes==0 + rawPipeDesynced;
+   ERROR media: PIPE_DESYNC=1 hard trip
+5. B2: MEASURED_DELIVERY already -loglevel info; tag=measured on lines;
+   1 Hz measured_delivery=WxH measured_delivery_src=measured|NO-DATA
 
-## Capture-config fingerprint
-JSON field capture_config.ffmpeg_argv + fingerprint=sha256:...
-avsync_bimodality HARD FAIL rc=3 MIXED_CAPTURE_CONFIG on divergent or missing fingerprints.
-Never decays to 77.
+## Host gate
+python3 tools/frame_ledger_report.py --log DAEMON.log --ledger LEDGER \
+  --require-explained; echo "true rc=$?"
+- multi session_epoch in window → LEDGER_FAIL rc=2
+- unaccounted != publish_misses with --require-explained → rc=2
+- clean → rc=0
 
-## Deploy order (supervisor-safe)
-stage → cp prev → mv onto live path → kill captured PID → SUPERVISOR restart →
-readlink -f /proc/PID/exe + md5 THAT path. No manual start by default.
-scripts/deploy_misterplexd_pid_safe.sh
+## Deploy (parent only)
+REMOTE_ROOT=/media/fat/misterplex_v2 ./scripts/deploy_misterplexd_pid_safe.sh
+# expect LIVE md5 a9579a4294a64043ff271baebddc4f1e via readlink -f /proc/PID/exe
 
-## ARM (unchanged this turn)
-md5 a9ade50b18c50feff08021ba4ab12e87 still the six-field build parent deployed.
-
-## Self-tests (true rc direct)
-python3 tools/avsync_measure_hdmi.py --self-test; echo "true rc=$?"   # 0
-python3 tools/avsync_bimodality.py --self-test; echo "true rc=$?"     # 0
-# CLI: same-fp JSON → BIMODAL rc=2; mixed-fp → MIXED_CAPTURE_CONFIG rc=3
+## Pre-registered predictions (next soak)
+- Clean single-session soak: unaccounted ≈ publish_misses (often 0);
+  session_epoch stable for whole cast; lifetime_* monotonic; process_epoch fixed.
+- If daemon self-exits mid-soak: process_epoch changes → frame_ledger_report
+  with --log MUST LEDGER_FAIL multi_session_epoch (P4 visible).
+- If ~16 frames still missing vs 24.000 source while drops=1: unaccounted grows
+  and is NOT explained by publish_misses → --require-explained FAIL (S2 named).

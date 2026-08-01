@@ -90,10 +90,23 @@ inline bool frameLedgerResidualExplainedByPublishMiss(const FrameLedgerLive& s) 
 }
 
 // Compact key=value fragment for telemetry (no leading/trailing space).
+// Parent P5: unaccounted is the free ledger identity — print every term so a
+// soak never requires hand arithmetic. residual is kept as a synonym.
 inline std::string frameLedgerTelemetryFragment(const FrameLedgerLive& s) {
-    return "presents=" + std::to_string(s.presents) + " drops=" + std::to_string(s.drops) +
+    return "frames=" + std::to_string(s.frames) + " presents=" + std::to_string(s.presents) +
+           " drops=" + std::to_string(s.drops) +
            " publish_misses=" + std::to_string(s.publish_misses) +
-           " residual=" + std::to_string(s.residual);
+           " unaccounted=" + std::to_string(s.residual) +
+           " residual=" + std::to_string(s.residual) +
+           " unaccounted_eq=frames-presents-drops" +
+           " tag=measured";
+}
+
+// session_epoch string: process_epoch + stream_seq. Changes on daemon start
+// (new process_epoch) AND every new stream (stream_seq++). A soak consumer that
+// sees session_epoch change mid-window MUST invalidate that window (P4).
+inline std::string sessionEpochString(uint64_t processEpoch, uint64_t streamSeq) {
+    return std::to_string(processEpoch) + "." + std::to_string(streamSeq);
 }
 
 } // namespace misterplex

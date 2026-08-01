@@ -1204,6 +1204,16 @@ void MediaPlayer::seekMs(int64_t ms) {
     play(withUniversalOffset(url, ms), ms, headers, dur);
 }
 
+void MediaPlayer::armProcessEpoch(uint64_t epochMonoMs) {
+    // Once per process. 0 is reserved as "unarmed".
+    uint64_t expected = 0;
+    if (processEpoch_.compare_exchange_strong(expected, epochMonoMs == 0 ? 1 : epochMonoMs,
+                                              std::memory_order_acq_rel)) {
+        log("media: process_epoch=" + std::to_string(processEpoch_.load()) +
+            " tag=measured — soak windows must not span a different process_epoch");
+    }
+}
+
 bool MediaPlayer::play(const std::string& urlOrPath, int64_t startOffsetMs,
                        const std::string& httpHeaders, int64_t durationMs) {
     // Idle painter owns fb0/F1 between sessions — retire it before we present.
@@ -1231,6 +1241,14 @@ bool MediaPlayer::play(const std::string& urlOrPath, int64_t startOffsetMs,
         reconFrames_.store(0);
         reconPresentOk_.store(false);
         cabacSkip_.store(false);
+        // Stream generation: bump at START so telemetry session_epoch is stable
+        // for the whole stream and changes on every play/seek restart.
+        const uint64_t sseq = streamSeq_.fetch_add(1, std::memory_order_acq_rel) + 1;
+        const uint64_t pep = processEpoch_.load(std::memory_order_acquire);
+        log("media: stream_start stream_seq=" + std::to_string(sseq) +
+            " process_epoch=" + std::to_string(pep) +
+            " session_epoch=" + sessionEpochString(pep, sseq) +
+            " tag=measured");
         {
             std::lock_guard<std::mutex> lock(summaryMu_);
             lastSummary_ = PlaybackSummary{};
@@ -1372,12 +1390,13 @@ void MediaPlayer::ffmpegStderrPump(int errReadFd, size_t codedFrameBytes, bool i
                 " identity_skip=" + (identitySkip ? "1" : "0") +
                 " desync_risk=" + (risk ? "1" : "0") +
                 (changed ? " MID_STREAM_CHANGE=1" : " MID_STREAM_CHANGE=0") +
+                " tag=measured" +
                 (changed ? " — size changed after play start" : ""));
             if (risk) {
                 log("ERROR media: PIPE_DESYNC_RISK measured=" + std::to_string(g.w) + "x" +
                     std::to_string(g.h) + " producer_bytes=" + std::to_string(prodBytes) +
                     " reader_bytes=" + std::to_string(codedFrameBytes) +
-                    " identity_skip=1 — raw pipe will phase-walk; force scale");
+                    " identity_skip=1 tag=measured — raw pipe will phase-walk; force scale");
             }
             if (changed) {
                 log("ERROR media: MEASURED_DELIVERY mid-stream change — play-time "
@@ -4017,28 +4036,41 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                 const auto led = frameLedgerLiveOf(frameIndex, presentCount_,
                                                    droppedFrames_.load(),
                                                    publishMisses_.load());
-                log("media: frames=" + std::to_string(frameIndex) +
+                const int64_t ltF = lifetimeFrames_.load() + frameIndex;
+                const int64_t ltP = lifetimePresents_.load() + presentCount_;
+                const int64_t ltD = lifetimeDrops_.load() + droppedFrames_.load();
+                const int64_t ltM = lifetimePublishMisses_.load() + publishMisses_.load();
+                const int64_t ltU = frameLedgerResidual(ltF, ltP, ltD);
+                const uint64_t pep = processEpoch_.load(std::memory_order_acquire);
+                const uint64_t sseq = streamSeq_.load(std::memory_order_acquire);
+                log("media: " + frameLedgerTelemetryFragment(led) +
                     " vfps=" + std::to_string(vfps).substr(0, 4) +
                     " pfps=" + std::to_string(pfps).substr(0, 4) +
                     " audio_s=" + std::to_string(a_sec).substr(0, 5) +
                     " wall_s=" + std::to_string(wall2 / 1000.0).substr(0, 5) +
+                    " mono_ms=" + std::to_string(steadyMonoMs()) +
                     " audio=" + (audioActive_.load() ? "on" : "off") +
                     " clock=av-lock" +
                     " av_drift_ms=" + std::to_string(avDriftMs_.load()) +
-                    " " + frameLedgerTelemetryFragment(led) +
                     " fps=" + std::to_string(fpsNum) + "/" + std::to_string(fpsDen) +
+                    " fps_src=" +
+                    (fpsNum_ > 0 ? std::string("caller_supplied") : "DEFAULT_ASSUMED") +
                     " decode=" + std::to_string(outW_) + "x" + std::to_string(outH_) +
-                    " measured=" +
+                    " decode_src=caller_supplied" +
+                    " measured_delivery=" +
                     (mw > 0 ? (std::to_string(mw) + "x" + std::to_string(mh)) : "pending") +
+                    " measured_delivery_src=" + (mw > 0 ? "measured" : "NO-DATA") +
                     " desync_risk=" + (pipeDesyncRisk_.load() ? "1" : "0") +
-                    " lifetime_frames=" + std::to_string(lifetimeFrames_.load() + frameIndex) +
-                    " lifetime_presents=" +
-                    std::to_string(lifetimePresents_.load() + presentCount_) +
-                    " lifetime_drops=" +
-                    std::to_string(lifetimeDrops_.load() + droppedFrames_.load()) +
-                    " lifetime_publish_misses=" +
-                    std::to_string(lifetimePublishMisses_.load() + publishMisses_.load()) +
-                    " session=" + std::to_string(sessionSeq_.load() + 1));
+                    " lifetime_frames=" + std::to_string(ltF) +
+                    " lifetime_presents=" + std::to_string(ltP) +
+                    " lifetime_drops=" + std::to_string(ltD) +
+                    " lifetime_publish_misses=" + std::to_string(ltM) +
+                    " lifetime_unaccounted=" + std::to_string(ltU) +
+                    " process_epoch=" + std::to_string(pep) +
+                    " stream_seq=" + std::to_string(sseq) +
+                    " session_epoch=" + sessionEpochString(pep, sseq) +
+                    " session_completed=" + std::to_string(sessionSeq_.load()) +
+                    " tag=measured");
             }
             // Periodic hard check (B5): measured size vs reader under identity_skip.
             if (vfPlan.identity_skip && (frameIndex % 120) == 0) {
@@ -4078,35 +4110,49 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
 
         // B5: byte-align + measured desync risk (remainder alone cannot see
         // producer≠reader while the read loop still fills frameBytes each time).
+        // Assert total_bytes % runtime frameBytes == 0 (never a literal size).
         const bool byteAligned = rawPipeByteAligned(totalBytes, frameBytes);
         const int mw = measuredDeliveryW_.load();
         const int mh = measuredDeliveryH_.load();
         const size_t prodBytes = (mw > 0 && mh > 0) ? yuv420pFrameBytesWH(mw, mh) : 0;
+        const bool phaseDesync =
+            (prodBytes > 0) &&
+            rawPipeDesynced(prodBytes, frameBytes, static_cast<size_t>(frameIndex));
         const bool risk = pipeDesyncRisk_.load() ||
-                          pipeDesyncRisk(prodBytes, frameBytes, vfPlan.identity_skip);
+                          pipeDesyncRisk(prodBytes, frameBytes, vfPlan.identity_skip) ||
+                          phaseDesync || !byteAligned;
+        if (risk)
+            pipeDesyncRisk_.store(true);
         if (!byteAligned) {
             log("ERROR media: PIPE_BYTE_MISALIGN totalBytes=" + std::to_string(totalBytes) +
                 " frameBytes=" + std::to_string(frameBytes) +
                 " remainder=" + std::to_string(frameBytes ? totalBytes % frameBytes : 0) +
-                " shortRead=" + (shortRead ? "1" : "0"));
+                " shortRead=" + (shortRead ? "1" : "0") + " tag=measured");
         } else if (totalBytes > 0) {
             log("media: pipe_align ok totalBytes=" + std::to_string(totalBytes) +
                 " frameBytes=" + std::to_string(frameBytes) +
-                " frames=" + std::to_string(frameIndex));
+                " frames=" + std::to_string(frameIndex) +
+                " total_mod_frame=0 tag=measured");
         }
         if (mw > 0 && mh > 0) {
             log("media: MEASURED_DELIVERY_FINAL " + std::to_string(mw) + "x" +
                 std::to_string(mh) + " producer_bytes=" + std::to_string(prodBytes) +
                 " reader_bytes=" + std::to_string(frameBytes) +
                 " identity_skip=" + (vfPlan.identity_skip ? "1" : "0") +
-                " desync_risk=" + (risk ? "1" : "0"));
+                " phase_desync=" + (phaseDesync ? "1" : "0") +
+                " desync_risk=" + (risk ? "1" : "0") + " tag=measured");
         } else if (usedRawVideo) {
             log("media: MEASURED_DELIVERY_FINAL none — ffmpeg banner not parsed "
-                "(check -loglevel info / stderr pipe)");
+                "(check -loglevel info / stderr pipe) tag=NO-DATA");
         }
         if (risk) {
-            log("ERROR media: PIPE_DESYNC session had producer/reader size mismatch "
-                "under identity_skip (or measured risk flag)");
+            log("ERROR media: PIPE_DESYNC=1 phase_desync=" +
+                std::string(phaseDesync ? "1" : "0") +
+                " byte_align=" + std::string(byteAligned ? "1" : "0") +
+                " producer_bytes=" + std::to_string(prodBytes) +
+                " reader_bytes=" + std::to_string(frameBytes) +
+                " frames=" + std::to_string(frameIndex) +
+                " tag=measured — hard telemetry trip (B5)");
         }
         {
             std::lock_guard<std::mutex> lock(summaryMu_);
@@ -4225,20 +4271,30 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
     frameLedgerSessionEnd(sid, sessFrames, sessPresents, sessDrops, endReason, sessPubMiss);
 
     const auto ledEnd = frameLedgerLiveOf(sessFrames, sessPresents, sessDrops, sessPubMiss);
-    log("media: session end frames=" + std::to_string(frameIndex) +
-        " " + frameLedgerTelemetryFragment(ledEnd) +
+    const int64_t ltF = lifetimeFrames_.load();
+    const int64_t ltP = lifetimePresents_.load();
+    const int64_t ltD = lifetimeDrops_.load();
+    const int64_t ltM = lifetimePublishMisses_.load();
+    const uint64_t pep = processEpoch_.load(std::memory_order_acquire);
+    const uint64_t sseq = streamSeq_.load(std::memory_order_acquire);
+    log("media: session end " + frameLedgerTelemetryFragment(ledEnd) +
         " session=" + std::to_string(sid) +
-        " lifetime_frames=" + std::to_string(lifetimeFrames_.load()) +
-        " lifetime_presents=" + std::to_string(lifetimePresents_.load()) +
-        " lifetime_drops=" + std::to_string(lifetimeDrops_.load()) +
-        " lifetime_publish_misses=" + std::to_string(lifetimePublishMisses_.load()) +
+        " process_epoch=" + std::to_string(pep) +
+        " stream_seq=" + std::to_string(sseq) +
+        " session_epoch=" + sessionEpochString(pep, sseq) +
+        " lifetime_frames=" + std::to_string(ltF) +
+        " lifetime_presents=" + std::to_string(ltP) +
+        " lifetime_drops=" + std::to_string(ltD) +
+        " lifetime_publish_misses=" + std::to_string(ltM) +
+        " lifetime_unaccounted=" + std::to_string(frameLedgerResidual(ltF, ltP, ltD)) +
         " recon=" + std::to_string(reconFrames_.load()) +
         " cabac=" + (cabacSkip_.load() ? "1" : "0") +
         " stream=" + (streamEnabled_ ? "on" : "off") +
         " rawvideo=" + (usedRawVideo ? "on" : "off") +
         " present=" + presentMode_ +
         " skip_rgb=" + (skipRgb ? "1" : "0") +
-        " reason=" + endReason);
+        " reason=" + endReason +
+        " tag=measured");
 }
 
 } // namespace misterplex
