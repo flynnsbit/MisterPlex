@@ -1,3 +1,12 @@
+# AUDIO PATH: YES (re-measured)
+
+MacroSilicon `534d:2109` = `/dev/video0` + ALSA **`hw:0,0`** (card MS2109), same USB.
+`arecord -d 1` → **192044 bytes**, rc=0. Parent “video only” claim is **false on this host**.
+Lipsync replacement = `tools/avsync_measure_hdmi.py` flash↔beep. See `docs/AVSYNC_REPLACEMENT_METRIC.md`.
+
+`av_drift_ms` **retired as accuracy** (store inside Hold loop). LEAD sweep = confirmation only.
+
+---
 # S3 LEAD FALSIFIER — RUN THIS NEXT
 
 Full card: [`docs/AVSYNC_S3_LEAD_FALSIFIER.md`](AVSYNC_S3_LEAD_FALSIFIER.md)

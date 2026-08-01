@@ -2,6 +2,17 @@
 
 ## Why this exists
 
+## Pacing-wait correction (do not build on old split)
+
+`pacing_wait_us` = sum of **2 ms Hold sleeps** in `media_player.cpp` loop
+(`avDriftMs_.store` then `avDecide` then sleep). Not an independent scheduled
+16.68 ms sleep. `read_block + pacing_wait` conserved by construction (rd-review).
+
+S3 is **source-confirmed** at the store-inside-Hold-loop site; LEAD sweep is
+**confirmation**, not discovery. Replacement metric: `docs/AVSYNC_REPLACEMENT_METRIC.md`.
+
+---
+
 Parent `PRESENT_PROFILE=1` @ 480p24: **pacing wait = 16.684 ms/frame** (~40% of
 41.67 ms period) at CPU/wall ≈ 0.009. Pipeline is **pacer-limited by design**.
 That sleep is the servo HOLD path (`avDecide`: hold while `drift + lead < 0`).

@@ -1,0 +1,4 @@
+UVC Camera (534d:2109): USB Vid (usb-0000:00:14.0-3.1):
+	/dev/video0
+	/dev/video1
+	/dev/media0
