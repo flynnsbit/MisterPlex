@@ -12,6 +12,8 @@
 #   VFPS               vfps=
 #   SOURCE_FPS         source fps (e.g. 23.97)
 #   SESSION_ESTABLISHED 0|1  — set 1 only when a real play window was scored
+#   REQUIRE_SINGLE_SESSION_EPOCH=1 — with --from-log, also run soak_continuity_assert
+#     (P4: counter soak must be one session_epoch; respawn resets drops/presents)
 #
 #   ./scripts/promotion_session_verify.sh
 #   ./scripts/promotion_session_verify.sh --from-log path/to/misterplexd.log
@@ -100,5 +102,26 @@ set +e
 promotion_assert_session_telemetry "$dv" "$md" "$drops" "$unacc" "$vfps" "$sfps" "$sess"
 rc=$?
 set -e
+
+# P4 single-session soak: optional hard gate when log path available.
+if [[ "${REQUIRE_SINGLE_SESSION_EPOCH:-0}" == "1" ]]; then
+  if [[ -z "$FROM_LOG" || ! -f "$FROM_LOG" ]]; then
+    echo "FAIL REQUIRE_SINGLE_SESSION_EPOCH=1 needs --from-log FILE (no session_epoch samples otherwise)"
+    echo "true rc=77"
+    exit 77
+  fi
+  set +e
+  python3 "$ROOT/tools/soak_continuity_assert.py" --log "$FROM_LOG" --require-single-session-epoch
+  src=$?
+  set -e
+  echo "soak_continuity_assert true rc=$src"
+  if [[ "$src" -eq 77 ]]; then
+    # NO-DATA is not PASS for a required continuity gate
+    [[ "$rc" -eq 0 ]] && rc=77
+  elif [[ "$src" -ne 0 ]]; then
+    rc="$src"
+  fi
+fi
+
 echo "true rc=$rc"
 exit "$rc"

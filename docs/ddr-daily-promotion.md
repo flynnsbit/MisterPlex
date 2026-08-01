@@ -28,6 +28,8 @@ Parent-owned device work only. Agents produce artifacts and commands; they must
 | **V2_MD5 capture** | Blind-and-RED: `V2_MD5=<32hex>set +e` from `$(frag1)$(frag2)` glue | inject contaminated blob; host-exec dump-remote | permanent RED (tempt: strip glue) | shape FAIL + **SKIP equality** (no got/want drift); sim probe pure 32-hex |
 | Boot hook ≠ live root | Cold boot starts v1 daemon/conf | v1 hook + v2 LIVE_ROOT | undetected all session | **rc=3** `BOOT_HOOK_FAIL` / hook-live-mismatch |
 | `plexctl reload-v2` host | Host `[ -f ]` on device path → false "no core" | run on lab host | **rc=4** false MISSING | **rc=4 NOT_ON_DEVICE** (honest; use `rollback_v2.sh`) |
+| **B8 core bytes** | Restore daemon only; `Plex.rbf` left wrong → unpaired after power cycle | disk core ≠ pin, no `ROLLBACK_CORE` | load_core of wrong/missing RBF | **rc=10** refuse; with `ROLLBACK_CORE=` installs then ONE menu load |
+| **session_epoch soak** | Multi-respawn soak quoted as one session (counters reset) | multi `session_epoch` in log | vacuous PASS | `soak_continuity_assert --require-single-session-epoch` **rc=2** |
 
 Also: `bash tests/unit/test_deploy_misterplexd.sh` (62 checks) — green DEPLOY_OK⇒rc0; red no DEPLOY_OK.
 

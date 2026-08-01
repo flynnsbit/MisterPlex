@@ -775,5 +775,62 @@ set -e
 echo "$out" | grep -qi 'DRY-RUN' || { echo "FAIL dry restore msg"; exit 1; }
 echo "OK restore-dry-run"
 
+echo "=== B8: install_pair_core_bytes refuses without artifact when disk wrong ==="
+# shellcheck source=/dev/null
+source "$ROOT/scripts/pair_ship_policy.sh"
+# shellcheck source=/dev/null
+source "$ROOT/scripts/pair_live_probe.inc.sh"
+# Pull helpers from rollback without executing main:
+eval "$(sed -n '/^pair_policy_md5_match()/,/^}/p;/^ts()/,/^}/p;/^log()/,/^}/p' "$ROOT/scripts/pair_ship_policy.sh")"
+# Minimal stubs for install_pair_core_bytes unit
+ts() { date -u +%Y-%m-%dT%H:%M:%SZ; }
+log() { printf '%s %s\n' "$(ts)" "$*" >&2; }
+remote_file_md5() { printf '%s' 'deadbeefdeadbeefdeadbeefdeadbeef'; return 0; }
+PAIR_ID=ddr-8fdf440f
+PAIR_MODE=ddr
+V2_CORE=/media/fat/_Utility/Plex.rbf
+CORE_MD5=8fdf440f
+DEVICE_CORE_V2_DAILY=/media/fat/_Utility/Plex_v2.rbf
+DEVICE_CORE_PRODUCT=/media/fat/_Utility/Plex.rbf
+unset ROLLBACK_CORE PAIR_CORE_ARTIFACT
+eval "$(sed -n '/^install_pair_core_bytes()/,/^}/p' "$ROOT/scripts/rollback_v2.sh")"
+set +e
+out=$(install_pair_core_bytes 2>&1)
+rc=$?
+set -e
+echo "$out" | sed 's/^/  [b8] /' | head -8
+echo "  [b8] true rc=$rc"
+[ "$rc" -eq 10 ] || { echo "FAIL b8-refuse want rc=10 got $rc"; exit 1; }
+echo "$out" | grep -q 'B8_atomic_pair_requires_core_bytes' || { echo "FAIL b8-msg"; exit 1; }
+echo "OK b8-refuse-no-artifact"
+
+echo "=== B8: host core pin match accepts install path (scp stubbed) ==="
+WORK=$(mktemp -d)
+printf 'FAKE_RBF_8FDF_BYTES________________' >"$WORK/core.rbf"
+# Force md5 by using pair_policy_md5_match on whatever we get — set CORE_MD5 to file's md5
+CORE_MD5=$(md5sum "$WORK/core.rbf" | awk '{print $1}')
+ROLLBACK_CORE="$WORK/core.rbf"
+run_scp() { cp -f "$1" "$2"; return 0; }
+run_ssh() {
+  # pretend install wrote the staged file to dest and report md5
+  printf '%s' "$CORE_MD5"
+  return 0
+}
+set +e
+out=$(install_pair_core_bytes 2>&1)
+rc=$?
+set -e
+echo "$out" | sed 's/^/  [b8ok] /'
+echo "  [b8ok] true rc=$rc"
+[ "$rc" -eq 0 ] || { echo "FAIL b8-install want 0 got $rc"; exit 1; }
+echo "$out" | grep -q 'OK core-installed' || { echo "FAIL b8-ok-msg"; exit 1; }
+rm -rf "$WORK"
+echo "OK b8-host-install"
+
+echo "=== plan mentions CORE bytes step 3c ==="
+out=$(cd "$ROOT" && PAIR_ID=ddr-8fdf440f bash scripts/rollback_v2.sh plan 2>&1)
+echo "$out" | grep -q 'install_pair_core_bytes' || { echo "FAIL plan-3c"; exit 1; }
+echo "OK plan-core-bytes"
+
 echo "ALL test_rollback_honest checks passed"
 exit 0

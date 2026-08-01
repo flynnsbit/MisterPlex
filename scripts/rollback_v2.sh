@@ -300,7 +300,7 @@ install_daemon_bytes() {
   fi
   [ -f "$spec" ] || { echo "MISSING host daemon artifact $spec"; return 2; }
   host_md5=$(md5sum "$spec" | awk '{print $1}')
-  if [ "$host_md5" != "$DAEMON_MD5" ]; then
+  if ! pair_policy_md5_match "$host_md5" "$DAEMON_MD5"; then
     echo "REFUSE host daemon md5 $host_md5 != pair pin $DAEMON_MD5"
     return 10
   fi
@@ -324,7 +324,7 @@ install_daemon_bytes() {
     sync
     md5sum \"\$dst\" | awk '{print \$1}'
   ")
-  if [ "$remote_md5" != "$DAEMON_MD5" ]; then
+  if ! pair_policy_md5_match "$remote_md5" "$DAEMON_MD5"; then
     echo "FAIL installed disk md5 '$remote_md5' != want $DAEMON_MD5"
     return 3
   fi
@@ -332,16 +332,117 @@ install_daemon_bytes() {
   return 0
 }
 
+# B8: install pair CORE bytes (Plex.rbf for DDR pairs) before load_core.
+# Without this, restore only load_core'd whatever was already on disk and could
+# never put a missing/wrong product RBF back — half-pair after power cycle.
+# Sources (first wins):
+#   ROLLBACK_CORE / PAIR_CORE_ARTIFACT = host path to RBF
+#   ROLLBACK_CORE=device:/path/on/mister = on-device bak (e.g. Plex.rbf.bak.8fdf440f)
+# If unset: require on-disk md5 already matches pair pin (prefix-aware).
+install_pair_core_bytes() {
+  local spec="${ROLLBACK_CORE:-${PAIR_CORE_ARTIFACT:-}}"
+  local got host_md5 staged remote_md5 p8
+  log "install core for pair $PAIR_ID path=$V2_CORE want=$CORE_MD5 src=${spec:-ondisk}"
+
+  # Never write the SPI undo slot when pair mode is ddr (product is Plex.rbf).
+  if [ "${PAIR_MODE:-}" = "ddr" ] && [ "$V2_CORE" = "${DEVICE_CORE_V2_DAILY:-/media/fat/_Utility/Plex_v2.rbf}" ]; then
+    echo "REFUSE install_pair_core: ddr pair must not target SPI undo slot $V2_CORE"
+    return 10
+  fi
+  # Never write product slot when pair is spi undo (load Plex_v2 only).
+  if [ "${PAIR_MODE:-}" = "spi" ] && [ "$V2_CORE" = "${DEVICE_CORE_PRODUCT:-/media/fat/_Utility/Plex.rbf}" ]; then
+    echo "REFUSE install_pair_core: spi pair must not overwrite product slot $V2_CORE"
+    return 10
+  fi
+
+  if [ -z "$spec" ]; then
+    set +e
+    got=$(remote_file_md5 "$V2_CORE")
+    rc=$?
+    set -e
+    if [ "$rc" -eq 5 ]; then return 5; fi
+    if pair_policy_md5_match "$got" "$CORE_MD5"; then
+      echo "OK core-disk already at pin path=$V2_CORE md5=$got"
+      return 0
+    fi
+    echo "REFUSE core at $V2_CORE got='$got' want=$CORE_MD5 — provide ROLLBACK_CORE=host.rbf or device:/path.bak"
+    echo "REFUSE detail=B8_atomic_pair_requires_core_bytes (load_core alone cannot invent a missing RBF)"
+    return 10
+  fi
+
+  if [[ "$spec" == device:* ]]; then
+    local devpath="${spec#device:}"
+    remote_md5=$(run_ssh "set -e
+      src=$(printf '%q' "$devpath")
+      dst=$(printf '%q' "$V2_CORE")
+      if [ ! -f \"\$src\" ]; then echo MISSING; exit 2; fi
+      mkdir -p \"\$(dirname \"\$dst\")\"
+      if [ -f \"\$dst\" ]; then
+        om=\$(md5sum \"\$dst\" | awk '{print \$1}')
+        arch=\"\${dst}.bak.\${om:0:8}\"
+        if [ ! -f \"\$arch\" ]; then cp -f \"\$dst\" \"\$arch\" || true; fi
+      fi
+      if [ \"\$src\" != \"\$dst\" ]; then cp -f \"\$src\" \"\$dst\"; fi
+      chmod 644 \"\$dst\"
+      sync
+      md5sum \"\$dst\" | awk '{print \$1}'
+    ") || return $?
+    if [ "$remote_md5" = "MISSING" ]; then
+      echo "MISSING device core artifact $devpath"
+      return 2
+    fi
+    if ! pair_policy_md5_match "$remote_md5" "$CORE_MD5"; then
+      echo "FAIL installed core md5 '$remote_md5' != want $CORE_MD5"
+      return 3
+    fi
+    echo "OK core-installed-from-device disk=$remote_md5 path=$V2_CORE"
+    return 0
+  fi
+
+  [ -f "$spec" ] || { echo "MISSING host core artifact $spec"; return 2; }
+  host_md5=$(md5sum "$spec" | awk '{print $1}')
+  if ! pair_policy_md5_match "$host_md5" "$CORE_MD5"; then
+    echo "REFUSE host core md5 $host_md5 != pair pin $CORE_MD5"
+    return 10
+  fi
+  staged="/tmp/Plex.pair.$$.rbf"
+  set +e
+  run_scp "$spec" "$staged"
+  src=$?
+  set -e
+  [ "$src" -eq 0 ] || return 5
+  remote_md5=$(run_ssh "set -e
+    dst=$(printf '%q' "$V2_CORE")
+    staged=$(printf '%q' "$staged")
+    mkdir -p \"\$(dirname \"\$dst\")\"
+    if [ -f \"\$dst\" ]; then
+      om=\$(md5sum \"\$dst\" | awk '{print \$1}')
+      arch=\"\${dst}.bak.\${om:0:8}\"
+      if [ ! -f \"\$arch\" ]; then cp -f \"\$dst\" \"\$arch\" || true; fi
+    fi
+    mv -f \"\$staged\" \"\$dst\"
+    chmod 644 \"\$dst\"
+    sync
+    md5sum \"\$dst\" | awk '{print \$1}'
+  ")
+  if ! pair_policy_md5_match "$remote_md5" "$CORE_MD5"; then
+    echo "FAIL installed core md5 '$remote_md5' != want $CORE_MD5"
+    return 3
+  fi
+  echo "OK core-installed disk=$remote_md5 path=$V2_CORE"
+  return 0
+}
+
 load_pair_core_remote() {
   log "load core: ONE menu bounce then $V2_CORE (pair $PAIR_ID mode=$PAIR_MODE)"
-  run_ssh "set -e
+  # Prefix-aware pin check on HOST after remote prints CORE_MD5= (never glue set +e).
+  local out cm rc
+  set +e
+  out=$(run_ssh "set +e
     if [ ! -e /dev/MiSTer_cmd ]; then echo 'NO-DATA missing /dev/MiSTer_cmd'; exit 4; fi
     if [ ! -f $(printf '%q' "$V2_CORE") ]; then echo 'MISSING $V2_CORE'; exit 2; fi
     cm=\$(md5sum $(printf '%q' "$V2_CORE") | awk '{print \$1}')
-    if [ \"\$cm\" != $(printf '%q' "$CORE_MD5") ]; then
-      echo \"MISMATCH core-disk got=\$cm want=$CORE_MD5 — refusing load\"
-      exit 3
-    fi
+    printf 'CORE_MD5=%s\n' \"\$cm\"
     if [ -f $(printf '%q' "$MENU_CORE") ]; then
       printf '%s\n' 'load_core $(printf '%s' "$MENU_CORE")' > /dev/MiSTer_cmd
       sleep 6
@@ -351,9 +452,19 @@ load_pair_core_remote() {
     printf '%s\n' 'load_core $(printf '%s' "$V2_CORE")' > /dev/MiSTer_cmd
     sleep 8
     echo CORE_LOAD_ISSUED
-    echo CORE_MD5=\$cm
     if [ -f /tmp/CORENAME ]; then echo CORENAME=\$(cat /tmp/CORENAME); fi
-  "
+  ")
+  rc=$?
+  set -e
+  printf '%s\n' "$out"
+  if [ "$rc" -ne 0 ]; then return "$rc"; fi
+  cm=$(printf '%s\n' "$out" | sed -n 's/^CORE_MD5=//p' | head -1 | tr -d '\r')
+  if ! pair_policy_md5_match "$cm" "$CORE_MD5"; then
+    echo "MISMATCH core-disk got=$cm want=$CORE_MD5 — refusing (install ROLLBACK_CORE first)"
+    return 3
+  fi
+  echo "OK core-disk-for-load md5=$cm path=$V2_CORE"
+  return 0
 }
 
 start_pair_bundle() {
@@ -562,10 +673,31 @@ preflight_atomic() {
   classify_hash "preflight-core-disk" "$got_core" "$CORE_MD5"
   step_rc=$?
   set -e
+  CORE_SOURCE="${ROLLBACK_CORE:-${PAIR_CORE_ARTIFACT:-}}"
   if [ "$step_rc" -ne 0 ]; then
-    echo "REFUSE: pair core at $V2_CORE not at pin $CORE_MD5 (got='$got_core')"
-    echo "REFUSE: will not load a mismatched core; fix core file first"
-    return 10
+    # B8: allow restore when parent supplies core bytes (host RBF or device bak).
+    if [ -n "$CORE_SOURCE" ]; then
+      if [[ "$CORE_SOURCE" == device:* ]]; then
+        echo "OK preflight core artifact will install from $CORE_SOURCE (disk got='$got_core')"
+      elif [ -f "$CORE_SOURCE" ]; then
+        local_hm=$(md5sum "$CORE_SOURCE" | awk '{print $1}')
+        if pair_policy_md5_match "$local_hm" "$CORE_MD5"; then
+          echo "OK preflight host core artifact $CORE_SOURCE md5=$local_hm"
+        else
+          echo "REFUSE host core $CORE_SOURCE md5=$local_hm != pin $CORE_MD5"
+          return 10
+        fi
+      else
+        echo "REFUSE ROLLBACK_CORE='$CORE_SOURCE' not a file and not device:path"
+        return 10
+      fi
+    else
+      echo "REFUSE: pair core at $V2_CORE not at pin $CORE_MD5 (got='$got_core')"
+      echo "REFUSE: set ROLLBACK_CORE=host.rbf or device:/media/fat/_Utility/Plex.rbf.bak.<p8> (B8)"
+      return 10
+    fi
+  else
+    echo "OK preflight core-disk already at pin path=$V2_CORE"
   fi
 
   set +e
@@ -1041,6 +1173,19 @@ restore_and_verify() {
     fi
   fi
 
+  # B8: CORE bytes (Plex.rbf for DDR) before load_core — atomic with daemon+hook.
+  if [ "${ROLLBACK_SKIP_CORE_INSTALL:-0}" != "1" ]; then
+    set +e
+    install_pair_core_bytes
+    rc=$?
+    set -e
+    if [ "$rc" -ne 0 ]; then
+      echo "ERROR core install rc=$rc — load_core NOT issued (atomic refuse mid-flight)"
+      echo "true rc=$rc"
+      return "$rc"
+    fi
+  fi
+
   set +e
   load_pair_core_remote
   rc=$?
@@ -1086,6 +1231,8 @@ Sequence (all-or-nothing; abort leaves prior half uncommitted when possible):
   3) conf: byte-backup user conf, then merge pair keys only (or PAIR_CONF_RESTORE_FILE exact bytes)
   3b) install $PAIR_BOOT_ROOT/bin/misterplexd_supervise.sh + rewrite REAL user-startup.sh (from S99user USER_SCRIPT)
       (strip ALL misterplex autostart lines both roots; append exactly one v2 line)
+  3c) CORE bytes: install_pair_core_bytes (ROLLBACK_CORE=host.rbf|device:bak) → $PAIR_CORE_PATH
+      (B8: without this, load_core cannot invent a missing/wrong Plex.rbf)
   4) ONE menu bounce → load $PAIR_CORE_PATH
   5) start exactly one daemon; verify n_daemon==1 via /proc/exe md5
   6) boot-hook gate: hook root == live root (FAIL if v1 hook + v2 live)

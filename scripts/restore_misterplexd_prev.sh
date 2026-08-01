@@ -10,21 +10,22 @@
 #   B) execs scripts/rollback_v2.sh restore which ENFORCES post-conditions:
 #        n_daemon==1 via /proc/[pid] + readlink -f exe (not pgrep, not cmdline)
 #        live exe md5 == pair daemon pin
-#        core disk md5 == pair core pin
+#        core disk md5 == pair core pin  (B8: installs Plex.rbf when ROLLBACK_CORE set)
 #        HTTP :3005/resources == 200|204
 #        conf byte-exact when PAIR_CONF_RESTORE_FILE is set (USER-OWNED)
 #        boot-hook root matches live pair root
 #        visual gate when required (telemetry alone is NOT success)
 #
 # Usage (parent runs on host; never agent-to-device):
-#   PAIR_ID=ddr-c5382bee \
-#     ROLLBACK_DAEMON=/media/fat/misterplex_v2/bin/misterplexd.bak.3883f5ab \
+#   PAIR_ID=ddr-8fdf440f \
+#     ROLLBACK_CORE=device:/media/fat/_Utility/Plex.rbf.bak.8fdf440f \
+#     ROLLBACK_DAEMON=device:/media/fat/misterplex_v2/bin/misterplexd.bak.<p8> \
 #     PAIR_CONF_RESTORE_FILE=./misterplex.conf.userbak \
 #     PAIR_IDLE_PNG=/path/idle.png \
 #     scripts/restore_misterplexd_prev.sh
 #
 # Legacy PREV_BIN= is mapped to ROLLBACK_DAEMON when set.
-# Exit 10 = REFUSE half-transition / missing pair identity.
+# Exit 10 = REFUSE half-transition / missing pair identity / missing core bytes.
 
 set -euo pipefail
 
@@ -79,13 +80,14 @@ REFUSE HALF_RESTORE: scripts/restore_misterplexd_prev.sh requires PAIR_ID.
 
 Atomic restore (post-conditions enforced by rollback_v2.sh):
 
-  PAIR_ID=ddr-c5382bee \
-    ROLLBACK_DAEMON=/media/fat/misterplex_v2/bin/misterplexd.bak.3883f5ab \
+  PAIR_ID=ddr-8fdf440f \
+    ROLLBACK_CORE=device:/media/fat/_Utility/Plex.rbf.bak.8fdf440f \
+    ROLLBACK_DAEMON=device:/media/fat/misterplex_v2/bin/misterplexd.bak.3883f5ab \
     PAIR_CONF_RESTORE_FILE=/path/to/misterplex.conf.userbak \
     PAIR_IDLE_PNG=/path/to/idle.png \
     scripts/restore_misterplexd_prev.sh
 
-  # SPI daily undo
+  # SPI daily undo (core is Plex_v2.rbf pin; no product overwrite)
   PAIR_ID=spi-v2-hybrid \
     ROLLBACK_DAEMON=artifacts/daemon-pins/misterplexd.50f4eb92 \
     PAIR_IDLE_PNG=/path/to/idle.png \
