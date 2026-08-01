@@ -1,12 +1,9 @@
-worker: w-osd-hires
-status: POST_UPSCALE_ARM — bank 624x480 chrome after vf scale; no RBF
-sha: (pending commit)
-
-T1 quoted in docs/osd-post-upscale-arm.md
-T2: ddrFrameGeometryForFpgaPresent + renderYuv420p @ rawW/H (already tip; hardened comments/gates)
-T3: compute(w,h) scales 800/640/240; 240p → 8x13 in-bounds
-T4: test_overlay_post_upscale + raster static RED on main (PresentedSize+Yuv break)
-T5: .agent-work/w-osd-hires/DEVICE_CARD_post_upscale.md
-
-rollcall true rc=0 | post_upscale true rc=0 | raster true rc=0
-sys/osd.v closed. No device.
+SHIP READY user-bug-2 overlay post-upscale
+branch: w-osd-hires
+base_sha: 6b1b68c7
+binary: build/arm/misterplexd md5 40170b99801bff7c743407df23cb424a
+arm-plexd true rc=0
+gates: static tip rc=0; post_upscale rc=0; red_main RED_OK rc=0; rollcall rc=0
+main contract: FAIL (PresentedSize+Yuv break)
+ceiling: 240-row still halves vertical (w-fit); no pixel-perfect HDMI claim
+runbook: .agent-work/w-osd-hires/SHIP_RUNBOOK.md
