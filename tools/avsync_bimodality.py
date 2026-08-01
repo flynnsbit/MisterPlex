@@ -15,10 +15,14 @@ Exit codes
 ----------
   0   UNIMODAL — positively one cluster (product-stable)
   2   BIMODAL  — positively two clusters with n>=min each (the defect)
+  3   MIXED_CAPTURE_CONFIG — HARD FAIL: JSON runs have differing (or missing)
+      capture_config.fingerprint. Parent: wallclock fix shifted absolute median
+      ~90 ms; pooling pre/post configs manufactures fake bimodality. Never 77.
   77  UNSCORED — n too small / cannot assign min-n per cluster (never a pass)
   1   usage
 
 A positively measured BIMODAL never decays to 77.
+MIXED_CAPTURE_CONFIG never decays to 77.
 
 Every printed value: measured | caller_supplied | DEFAULT_ASSUMED | NO-DATA.
 
@@ -45,6 +49,9 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 RC_UNIMODAL = 0
 RC_USAGE = 1
 RC_BIMODAL = 2
+# Hard fail: mixed or missing capture_config fingerprints on JSON inputs.
+# Distinct from UNSCORED (could not classify) and BIMODAL (measured defect).
+RC_MIXED_CAPTURE_CONFIG = 3
 RC_UNSCORED = 77
 
 PROVENANCE_MEASURED = "measured"
@@ -69,6 +76,20 @@ def _tag(value: Any, src: str) -> str:
     return f"{value} src={src}"
 
 
+def _extract_capture_fingerprint(doc: Dict[str, Any]) -> Optional[str]:
+    """Return capture_config.fingerprint or None if absent (legacy/invalid)."""
+    cc = doc.get("capture_config")
+    if isinstance(cc, dict):
+        fp = cc.get("fingerprint")
+        if isinstance(fp, str) and fp.strip():
+            return fp.strip()
+    # Also accept top-level stamp
+    fp2 = doc.get("capture_config_fingerprint")
+    if isinstance(fp2, str) and fp2.strip():
+        return fp2.strip()
+    return None
+
+
 def load_json_reports(paths: Sequence[Path]) -> List[Dict[str, Any]]:
     rows: List[Dict[str, Any]] = []
     for p in paths:
@@ -86,6 +107,7 @@ def load_json_reports(paths: Sequence[Path]) -> List[Dict[str, Any]]:
         pairs = res.get("pairs") or []
         if pairs:
             t0 = float(pairs[0].get("t_flash_s", pairs[0].get("t_flash", 0.0)))
+        fp = _extract_capture_fingerprint(doc)
         rows.append(
             {
                 "session": p.name,
@@ -95,9 +117,57 @@ def load_json_reports(paths: Sequence[Path]) -> List[Dict[str, Any]]:
                 "first_pair_t_flash_s": t0,
                 "first_pair_t_src": PROVENANCE_MEASURED if t0 is not None else PROVENANCE_NO_DATA,
                 "path": str(p),
+                "capture_fingerprint": fp,
+                "capture_fingerprint_src": PROVENANCE_MEASURED
+                if fp is not None
+                else PROVENANCE_NO_DATA,
             }
         )
     return rows
+
+
+def check_capture_fingerprints(rows: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """HARD FAIL report if JSON-sourced rows mix capture configs.
+
+    - Any missing fingerprint among JSON rows → MIXED_CAPTURE_CONFIG (legacy
+      historical dataset is INVALID after wallclock fix; refuse to pool).
+    - Two or more distinct fingerprints → MIXED_CAPTURE_CONFIG.
+    - Pure --values / CSV without fingerprints: skip (no capture config).
+    Returns None if OK to classify.
+    """
+    json_rows = [r for r in rows if str(r.get("path") or "").endswith(".json")]
+    if not json_rows:
+        return None
+
+    fps = [r.get("capture_fingerprint") for r in json_rows]
+    missing = [r["session"] for r, fp in zip(json_rows, fps) if not fp]
+    unique = sorted({fp for fp in fps if fp})
+    if missing or len(unique) != 1:
+        reason = (
+            "missing_capture_config_fingerprint"
+            if missing and not unique
+            else "missing_or_divergent_capture_config_fingerprint"
+            if missing
+            else "divergent_capture_config_fingerprint"
+        )
+        return {
+            "verdict": "MIXED_CAPTURE_CONFIG",
+            "rc": RC_MIXED_CAPTURE_CONFIG,
+            "reason": {"value": reason, "src": PROVENANCE_MEASURED},
+            "missing_sessions": {"value": missing, "src": PROVENANCE_MEASURED},
+            "fingerprints": {
+                "value": unique,
+                "src": PROVENANCE_MEASURED if unique else PROVENANCE_NO_DATA,
+            },
+            "n_json_runs": {"value": len(json_rows), "src": PROVENANCE_MEASURED},
+            "note": (
+                "Refuse to cluster runs under different capture ffmpeg argv. "
+                "Parent: corrected wallclock alignment shifted median ~90 ms; "
+                "pooling old+new configs invents false bimodality. "
+                "rc=3 is HARD FAIL, never soft-skip 77."
+            ),
+        }
+    return None
 
 
 def load_csv(path: Path) -> List[Dict[str, Any]]:
@@ -486,6 +556,93 @@ def _self_test() -> int:
     assert rep["cluster_lo"]["first_pair_t_flash_s"]["value"] is not None, rep
     assert rep["cluster_lo"]["first_run_index"]["value"] == 0, rep
     print("SELF_TEST first_* carries timestamp+index OK")
+
+    # RED: mixed capture fingerprints must HARD FAIL rc=3 (never 77)
+    mixed = [
+        {
+            "session": "old.json",
+            "offset_ms": -312.0,
+            "offset_src": PROVENANCE_MEASURED,
+            "path": "/tmp/old.json",
+            "capture_fingerprint": "sha256:aaa",
+            "first_pair_t_flash_s": 1.0,
+            "first_pair_t_src": PROVENANCE_MEASURED,
+        },
+        {
+            "session": "new.json",
+            "offset_ms": -105.0,
+            "offset_src": PROVENANCE_MEASURED,
+            "path": "/tmp/new.json",
+            "capture_fingerprint": "sha256:bbb",
+            "first_pair_t_flash_s": 1.0,
+            "first_pair_t_src": PROVENANCE_MEASURED,
+        },
+        {
+            "session": "new2.json",
+            "offset_ms": -106.0,
+            "offset_src": PROVENANCE_MEASURED,
+            "path": "/tmp/new2.json",
+            "capture_fingerprint": "sha256:bbb",
+            "first_pair_t_flash_s": 1.0,
+            "first_pair_t_src": PROVENANCE_MEASURED,
+        },
+        {
+            "session": "old2.json",
+            "offset_ms": -310.0,
+            "offset_src": PROVENANCE_MEASURED,
+            "path": "/tmp/old2.json",
+            "capture_fingerprint": "sha256:aaa",
+            "first_pair_t_flash_s": 1.0,
+            "first_pair_t_src": PROVENANCE_MEASURED,
+        },
+    ]
+    gate = check_capture_fingerprints(mixed)
+    assert gate is not None and gate["rc"] == RC_MIXED_CAPTURE_CONFIG, gate
+    assert gate["rc"] != RC_UNSCORED
+    print("SELF_TEST mixed fingerprints → rc=3 HARD FAIL OK")
+
+    # RED: missing fingerprint on JSON (legacy) HARD FAIL
+    legacy = [
+        {
+            "session": "legacy.json",
+            "offset_ms": -312.0,
+            "offset_src": PROVENANCE_MEASURED,
+            "path": "/tmp/legacy.json",
+            "capture_fingerprint": None,
+        },
+        {
+            "session": "legacy2.json",
+            "offset_ms": -105.0,
+            "offset_src": PROVENANCE_MEASURED,
+            "path": "/tmp/legacy2.json",
+            "capture_fingerprint": None,
+        },
+    ]
+    gate = check_capture_fingerprints(legacy)
+    assert gate is not None and gate["rc"] == RC_MIXED_CAPTURE_CONFIG, gate
+    print("SELF_TEST missing fingerprints → rc=3 HARD FAIL OK")
+
+    # GREEN: identical fingerprints pass the gate
+    same = [
+        {
+            "session": f"r{i}.json",
+            "offset_ms": v,
+            "offset_src": PROVENANCE_MEASURED,
+            "path": f"/tmp/r{i}.json",
+            "capture_fingerprint": "sha256:same",
+            "first_pair_t_flash_s": 1.0,
+            "first_pair_t_src": PROVENANCE_MEASURED,
+        }
+        for i, v in enumerate([-105.0, -104.5, -106.0, -105.2])
+    ]
+    assert check_capture_fingerprints(same) is None
+    print("SELF_TEST identical fingerprints → gate open OK")
+
+    # values-only (no JSON path) skips fingerprint gate
+    assert check_capture_fingerprints(rows) is None
+    print("SELF_TEST values-only skips fingerprint gate OK")
+
+    assert RC_MIXED_CAPTURE_CONFIG == 3 and RC_MIXED_CAPTURE_CONFIG != RC_UNSCORED
     print("SELF_TEST_OK")
     return 0
 
@@ -571,6 +728,21 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         )
         return RC_USAGE
 
+    # Capture-config fingerprint gate BEFORE classify — never invent bimodality
+    # from a tool change (parent: ~90 ms absolute shift after wallclock fix).
+    gate = check_capture_fingerprints(rows)
+    if gate is not None:
+        print(f"VERDICT={gate['verdict']} rc={gate['rc']}")
+        print(f"reason={gate['reason']['value']} src={gate['reason']['src']}")
+        if gate.get("missing_sessions"):
+            print(f"missing_sessions={gate['missing_sessions']['value']} src=measured")
+        print(f"fingerprints={gate['fingerprints']['value']} src={gate['fingerprints']['src']}")
+        print(f"note={gate.get('note')}")
+        if args.json_out:
+            Path(args.json_out).write_text(json.dumps(gate, indent=2, default=str) + "\n")
+            print(f"json_out={args.json_out} src=measured")
+        return int(gate["rc"])
+
     rep = classify(
         rows,
         min_n_per_cluster=min_n,
@@ -580,6 +752,16 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         min_sep_ms=min_sep,
         min_sep_src=min_sep_src,
     )
+    # Surface the shared fingerprint when present
+    fps = sorted(
+        {
+            r.get("capture_fingerprint")
+            for r in rows
+            if r.get("capture_fingerprint")
+        }
+    )
+    if fps:
+        print(f"capture_config_fingerprint={fps[0]} src=measured n_unique={len(fps)}")
     print_report(rep)
     if args.json_out:
         Path(args.json_out).write_text(json.dumps(rep, indent=2, default=str) + "\n")

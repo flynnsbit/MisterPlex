@@ -1,52 +1,32 @@
-# w-instr status — SIX-FIELD first-present FPGA instrument
+# w-instr status — absorb parent instrument regressions + fingerprint gate
 
 branch: w-avsync-hdmi-measure
-tip: 2d5e30d9
+tip: (see git rev-parse HEAD)
 
-## ARM binary (THIS BUILD — parent deploys)
-path: build/arm/misterplexd
-md5: a9ade50b18c50feff08021ba4ab12e87
-build: make arm-plexd ; echo "true rc=$?"   # measured true rc=0
+## Parent regressions absorbed (rule-0)
+1. DEFAULT_CAP_FPS was 60 without measuring MS2109 caps → every capture failed, hid as rc=77.
+   NOW: DEFAULT_CAP_FPS=30.0; preflight _supported_cap_fps(); unsupported → INSTRUMENT_BROKEN rc=3.
+2. -copyts without -start_at_zero truncated captures (33KB vs 6.28MB) → INSTRUMENT_BROKEN on CAPTURE_FAILED.
+3. rc=77 must not mean "instrument broken". Ladder: PASS=0 FAIL=2 BROKEN=3 UNSCORED=77.
 
-## Six fields at first present (one normalisable line)
-log needle: media: first_video_fpga_state
-  F1 plxa_used + plxd_liveness_proven (getter; sticky process lifetime)
-  F2 free_bank_mask disp_bank swap_pending published_bank (+ br_ok)
-  F3 frames_done PAIRED frames_done_mono_ms + frames_done_wall_s (same read)
-  F4 full DdrTiming: prep/copy/flush/doorbell/post/total/bank_reuse/plxa_poll(+iters)
-  F5 av_hold_count + av_hold_wait_us (at first present) AND
-     media: av_hold_first_10s at wall_s>=10 (plain counters, NOT presentProfile_)
-  F6 media: audio_queued_first_ge0 mono_ms=… when audioQueuedBytes_ first >=0
-     also echoed on first_video_fpga_state (or NO-DATA if still -1)
+## Historical dataset INVALID
+Corrected wallclock alignment shifted median ~90 ms (-105 vs old -195/-312).
+Bimodality must be re-established on fingerprinted captures only.
 
-Every value tagged measured or NO-DATA. No DEFAULT_ASSUMED scoring keys.
+## Capture-config fingerprint
+JSON field capture_config.ffmpeg_argv + fingerprint=sha256:...
+avsync_bimodality HARD FAIL rc=3 MIXED_CAPTURE_CONFIG on divergent or missing fingerprints.
+Never decays to 77.
 
-## Present-path cost (explicit)
-- F1–F4: 1× readBankRelease (SPI mailbox double-read) + struct copy of lastDdrTiming
-  already filled by the publish just completed. No extra DDR frame copy. No profile path.
-- F5: on each AvAction::Hold already sleeping ~2ms: +chrono + 2 integer adds (<< sleep).
-- F6: one CAS on first q>=0 in existing MrAudio poll path (every 4th chunk).
+## Deploy order (supervisor-safe)
+stage → cp prev → mv onto live path → kill captured PID → SUPERVISOR restart →
+readlink -f /proc/PID/exe + md5 THAT path. No manual start by default.
+scripts/deploy_misterplexd_pid_safe.sh
 
-## make unit
-true rc=2 — PRE-EXISTING from 62441302 w-geom (NOT this patch):
-  FAIL runtime DDR frame layout literals:
-  host/libmisterplex/av_phase_rtl_quanta.hpp kProductDoorbellPhys=0x300FF000
-  scripts/parent_plxd_present_lag_protocol.sh product doorbell comment
-arm-plexd build true rc=0; strings verify first_video_fpga_state / audio_queued_first_ge0 / av_hold_first_10s
+## ARM (unchanged this turn)
+md5 a9ade50b18c50feff08021ba4ab12e87 still the six-field build parent deployed.
 
-## SAFE DEPLOY (parent only — agent does NOT touch device)
-# Trap: never rename running binary before kill; no pgrep; no cmdline match (flock).
-# Capture PID BEFORE any path replace; verify readlink -f /proc/PID/exe + md5 THAT path.
-
-make arm-plexd
-md5sum build/arm/misterplexd   # expect a9ade50b18c50feff08021ba4ab12e87
-REMOTE_ROOT=/media/fat/misterplex_v2 \
-  ./scripts/deploy_misterplexd_pid_safe.sh
-# expect DEPLOY_VERIFY_OK md5=a9ade50b18c50feff08021ba4ab12e87
-
-## Pre-registered (parent)
-If F1–F4 identical across clusters → REAL NULL → state below ARM-readable interfaces
-→ hand lead to w-geom / w-fit-1. Not a disappointment.
-
-## Grep after cast (normalisable)
-grep -E 'first_video_fpga_state|av_hold_first_10s|audio_queued_first_ge0' LOG | tail -20
+## Self-tests (true rc direct)
+python3 tools/avsync_measure_hdmi.py --self-test; echo "true rc=$?"   # 0
+python3 tools/avsync_bimodality.py --self-test; echo "true rc=$?"     # 0
+# CLI: same-fp JSON → BIMODAL rc=2; mixed-fp → MIXED_CAPTURE_CONFIG rc=3

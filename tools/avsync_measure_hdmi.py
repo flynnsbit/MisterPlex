@@ -98,14 +98,16 @@ ABSOLUTE vs RELATIVE (hole 2)
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
 import os
+import re
 import statistics
 import subprocess
 import sys
 import time
-from dataclasses import dataclass, field, asdict
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -117,7 +119,15 @@ import numpy as np
 DEFAULT_VIDEO_DEV = "/dev/video0"
 DEFAULT_AUDIO_DEV = "hw:0,0"  # ALSA; MS2109 parent-measured card 0 device 0
 DEFAULT_VIDEO_SIZE = "1920x1080"
-DEFAULT_CAP_FPS = 60.0  # half the 30 fps frame quant; still MS2109-capable
+# PARENT-MEASURED against the actual grabber, do NOT raise without re-measuring:
+#   v4l2-ctl -d /dev/video0 --list-formats-ext
+#   MJPG 1920x1080 offers EXACTLY 30.000 fps and 25.000 fps. Nothing higher.
+# A previous change set this to 60.0 ("still MS2109-capable") without checking.
+# The hardware rejected it, every capture failed, and the tool reported the
+# breakage as soft-skip rc=77 -- i.e. the only working A/V instrument in this
+# project was silently dead. Frame quantisation is real but the fix is a ramped
+# flash in the fixture, NOT a capture rate the hardware cannot deliver.
+DEFAULT_CAP_FPS = 30.0
 DEFAULT_DURATION_S = 20.0
 # Parent lab: MS2109 emits ~13–15 uniform luma=7 warm-up frames. Discard 20.
 # Capture must retain >=50 frames after discard or the run is NO-DATA.
@@ -146,6 +156,13 @@ SCORE_DEFAULT_KEYS = ("tol_ms",)
 RC_PASS = 0
 RC_FAIL = 2
 RC_UNSCORED = 77
+# PROCESS DEFECT #6 (rd-review, accepted): rc=77 conflated two different things --
+# "could not measure" and "measured, but the ABSOLUTE verdict is withheld pending
+# calibration". The first must never be reasoned past; the second always can be.
+# A broken instrument is neither: it is a HARD failure. A capture failure once
+# returned 77 and the only working A/V instrument in this project sat dead behind
+# a soft-skip. Soft-skip is never a pass and must never mask breakage.
+RC_INSTRUMENT_BROKEN = 3
 
 
 def _tag(value: Any, src: str) -> str:
@@ -155,6 +172,35 @@ def _tag(value: Any, src: str) -> str:
     return f"{value} src={src}"
 
 
+def _supported_cap_fps(video_dev: str, video_size: str) -> list[float]:
+    """MEASURED list of MJPG frame rates the device offers at video_size.
+
+    Returns [] when the capability cannot be read, so an unreadable device is
+    NO-DATA (caller proceeds) rather than a false "unsupported" verdict.
+    Absence of evidence is not evidence of absence.
+    """
+    try:
+        r = subprocess.run(
+            ["v4l2-ctl", "-d", video_dev, "--list-formats-ext"],
+            capture_output=True, timeout=10,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return []
+    if r.returncode != 0:
+        return []
+    rates: list[float] = []
+    in_size = False
+    for line in r.stdout.decode("utf-8", "replace").splitlines():
+        s = line.strip()
+        if s.startswith("Size:"):
+            in_size = video_size in s
+        elif in_size and "fps)" in s:
+            m = re.search(r"\(([\d.]+)\s*fps\)", s)
+            if m:
+                rates.append(float(m.group(1)))
+    return rates
+
+
 def _run(cmd: list[str], timeout: float | None = None) -> subprocess.CompletedProcess[bytes]:
     return subprocess.run(cmd, capture_output=True, timeout=timeout)
 
@@ -162,7 +208,7 @@ def _run(cmd: list[str], timeout: float | None = None) -> subprocess.CompletedPr
 # ---------------------------------------------------------------------------
 # Capture
 # ---------------------------------------------------------------------------
-def capture_av(
+def build_capture_ffmpeg_argv(
     dest: Path,
     *,
     duration_s: float,
@@ -170,20 +216,16 @@ def capture_av(
     audio_dev: str,
     video_size: str,
     cap_fps: float,
-) -> None:
-    """Capture video+audio in ONE ffmpeg process into one MKV.
+    audio_sr: int = DEFAULT_AUDIO_SR,
+) -> list[str]:
+    """Exact live-capture ffmpeg argv (fingerprint source of truth).
 
-    Both inputs use wallclock timestamps so v4l2 and ALSA share one clock at
-    open (avoids independent first-packet→0 normalisation absorbing USB race).
-    Parent multi-capture-within-session test: within-session median spread
-    3.33 ms vs 116.89 ms cluster sep → device-latched, not capture race; wallclock
-    is still required hygiene.
+    Wallclock on BOTH inputs + -copyts -start_at_zero is load-bearing:
+    - wallclock: shared open clock (rd-review confound fix)
+    - -copyts alone with wallclock: -t compares absolute epoch → truncates
+      (parent-measured 33 KB / 6 s without -start_at_zero; 6.28 MB with it)
     """
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    if dest.exists():
-        dest.unlink()
-    # thread_queue_size avoids overruns when ALSA and v4l2 start at different rates.
-    cmd = [
+    return [
         "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
         "-thread_queue_size", "1024",
         "-use_wallclock_as_timestamps", "1",
@@ -196,17 +238,81 @@ def capture_av(
         "-use_wallclock_as_timestamps", "1",
         "-f", "alsa",
         "-ac", "2",
-        "-ar", str(DEFAULT_AUDIO_SR),
+        "-ar", str(audio_sr),
         "-i", audio_dev,
         "-map", "0:v:0",
         "-map", "1:a:0",
         "-copyts",
+        "-start_at_zero",
         "-t", f"{duration_s:.3f}",
         "-c:v", "mjpeg",
         "-q:v", "5",
         "-c:a", "pcm_s16le",
         str(dest),
     ]
+
+
+def capture_config_fingerprint(ffmpeg_argv: list[str] | None, *, mode: str) -> dict[str, Any]:
+    """Stable capture-config stamp for JSON + bimodality mixing gate.
+
+    Historical 15-run dataset is INVALID under corrected wallclock alignment
+    (parent: median shifted ~90 ms). Classifier must HARD FAIL on mixed configs.
+    Fingerprint is sha256 of the exact ffmpeg argv (or mode marker for file).
+    """
+    if ffmpeg_argv is None:
+        canon = f"mode={mode}|no_live_ffmpeg_argv"
+        argv_out: list[str] | None = None
+    else:
+        # Drop output path (last arg) so same capture recipe fingerprints equal
+        # across out dirs; keep every flag that affects A/V alignment.
+        args_for_hash = list(ffmpeg_argv)
+        if args_for_hash and not args_for_hash[-1].startswith("-"):
+            args_for_hash = args_for_hash[:-1] + ["<out>"]
+        canon = "\0".join(args_for_hash)
+        argv_out = list(ffmpeg_argv)
+    digest = hashlib.sha256(canon.encode("utf-8")).hexdigest()
+    return {
+        "mode": mode,
+        "ffmpeg_argv": argv_out,
+        "fingerprint": f"sha256:{digest}",
+        "fingerprint_src": "measured" if ffmpeg_argv is not None else "DEFAULT_ASSUMED",
+        "canon_note": (
+            "sha256 of NUL-joined argv with trailing output path replaced by <out>; "
+            "live requires wallclock+copyts+start_at_zero"
+        ),
+    }
+
+
+def capture_av(
+    dest: Path,
+    *,
+    duration_s: float,
+    video_dev: str,
+    audio_dev: str,
+    video_size: str,
+    cap_fps: float,
+) -> list[str]:
+    """Capture video+audio in ONE ffmpeg process into one MKV.
+
+    Both inputs use wallclock timestamps so v4l2 and ALSA share one clock at
+    open (avoids independent first-packet→0 normalisation absorbing USB race).
+    Parent multi-capture-within-session test: within-session median spread
+    3.33 ms vs 116.89 ms cluster sep → device-latched, not capture race; wallclock
+    is still required hygiene.
+
+    Returns the exact ffmpeg argv used (for capture_config fingerprint).
+    """
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    if dest.exists():
+        dest.unlink()
+    cmd = build_capture_ffmpeg_argv(
+        dest,
+        duration_s=duration_s,
+        video_dev=video_dev,
+        audio_dev=audio_dev,
+        video_size=video_size,
+        cap_fps=cap_fps,
+    )
     try:
         r = _run(cmd, timeout=duration_s + 90.0)
     except FileNotFoundError as e:
@@ -217,8 +323,10 @@ def capture_av(
         err = (r.stderr or b"").decode("utf-8", "replace").strip().splitlines()
         tail = err[-1] if err else "no_stderr"
         raise RuntimeError(
-            f"CAPTURE_FAILED rc={r.returncode} out={dest} log={tail}"
+            f"CAPTURE_FAILED rc={r.returncode} out={dest} size="
+            f"{dest.stat().st_size if dest.exists() else 0} log={tail}"
         )
+    return cmd
 
 
 # ---------------------------------------------------------------------------
@@ -1257,12 +1365,109 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "--json-out", type=Path, default=None,
         help="Optional explicit JSON report path (default: <out>/<label>_report.json)",
     )
+    ap.add_argument(
+        "--self-test",
+        action="store_true",
+        help="Host-only unit checks (no /dev/video0). true rc via: ...; echo true rc=$?",
+    )
     return ap
+
+
+def _self_test() -> int:
+    """RED/GREEN host checks — no grabber required."""
+    # argv must include wallclock + copyts + start_at_zero (parent regressions)
+    argv = build_capture_ffmpeg_argv(
+        Path("/tmp/out.mkv"),
+        duration_s=6.0,
+        video_dev="/dev/video0",
+        audio_dev="hw:0,0",
+        video_size="1920x1080",
+        cap_fps=30.0,
+    )
+    joined = " ".join(argv)
+    assert "-use_wallclock_as_timestamps" in argv, argv
+    assert argv.count("-use_wallclock_as_timestamps") == 2, argv
+    assert "-copyts" in argv, argv
+    assert "-start_at_zero" in argv, argv
+    assert argv.index("-copyts") < argv.index("-start_at_zero"), argv
+    assert "-framerate" in argv and "30.0" in argv, argv
+    assert "60" not in argv and "60.0" not in argv, "must not default to unsupported 60"
+    print("SELF_TEST capture_argv wallclock+copyts+start_at_zero+fps30 OK")
+
+    fp1 = capture_config_fingerprint(argv, mode="live")
+    argv2 = build_capture_ffmpeg_argv(
+        Path("/other/dir/run2.mkv"),
+        duration_s=6.0,
+        video_dev="/dev/video0",
+        audio_dev="hw:0,0",
+        video_size="1920x1080",
+        cap_fps=30.0,
+    )
+    fp2 = capture_config_fingerprint(argv2, mode="live")
+    assert fp1["fingerprint"] == fp2["fingerprint"], (fp1, fp2)
+    print("SELF_TEST fingerprint stable across out paths OK")
+
+    argv60 = build_capture_ffmpeg_argv(
+        Path("x.mkv"),
+        duration_s=6.0,
+        video_dev="/dev/video0",
+        audio_dev="hw:0,0",
+        video_size="1920x1080",
+        cap_fps=60.0,
+    )
+    fp60 = capture_config_fingerprint(argv60, mode="live")
+    assert fp60["fingerprint"] != fp1["fingerprint"], "fps must change fingerprint"
+    print("SELF_TEST fingerprint differs when cap_fps differs OK")
+
+    # Severity ladder constants
+    assert RC_PASS == 0 and RC_FAIL == 2 and RC_INSTRUMENT_BROKEN == 3
+    assert RC_UNSCORED == 77
+    assert RC_INSTRUMENT_BROKEN != RC_UNSCORED
+    print("SELF_TEST RC ladder PASS=0 FAIL=2 BROKEN=3 UNSCORED=77 OK")
+
+    # DEFAULT_CAP_FPS must be hardware-legal (parent-measured ≤30)
+    assert DEFAULT_CAP_FPS <= 30.0 + 1e-9, DEFAULT_CAP_FPS
+    print(f"SELF_TEST DEFAULT_CAP_FPS={DEFAULT_CAP_FPS} <=30 OK")
+
+    # Preflight parser on canned v4l2-ctl text (no device)
+    sample = (
+        "ioctl: VIDIOC_ENUM_FMT\n"
+        "\tType: Video Capture\n"
+        "\t[0]: 'MJPG' (Motion-JPEG, compressed)\n"
+        "\t\tSize: Discrete 1920x1080\n"
+        "\t\t\tInterval: Discrete 0.033s (30.000 fps)\n"
+        "\t\t\tInterval: Discrete 0.040s (25.000 fps)\n"
+        "\t\tSize: Discrete 1280x720\n"
+        "\t\t\tInterval: Discrete 0.016s (60.000 fps)\n"
+    )
+
+    class _Fake:
+        returncode = 0
+        stdout = sample.encode()
+
+    real_run = subprocess.run
+
+    def fake_run(cmd, capture_output=True, timeout=10):  # noqa: ARG001
+        return _Fake()
+
+    subprocess.run = fake_run  # type: ignore[assignment]
+    try:
+        rates = _supported_cap_fps("/dev/video0", "1920x1080")
+        assert 30.0 in rates and 25.0 in rates, rates
+        assert 60.0 not in rates, rates
+        print(f"SELF_TEST supported_cap_fps 1080p={rates} OK")
+    finally:
+        subprocess.run = real_run  # type: ignore[assignment]
+
+    print("SELF_TEST_OK")
+    return 0
 
 
 def main(argv: list[str] | None = None) -> int:
     ap = build_arg_parser()
     args = ap.parse_args(argv)
+    if args.self_test:
+        return _self_test()
 
     def pick(val, default, name):
         if val is None:
@@ -1318,6 +1523,7 @@ def main(argv: list[str] | None = None) -> int:
             return RC_UNSCORED
 
     # ---- obtain capture path ----
+    ffmpeg_argv: list[str] | None = None
     if args.input is not None:
         cap_path = args.input
         mode = "file"
@@ -1336,13 +1542,25 @@ def main(argv: list[str] | None = None) -> int:
         print(f"duration_s={_tag(duration, duration_src)}")
         print(f"min_capture_frames={_tag(min_cap_frames, min_cap_src)}")
         print(f"pair_window_s={_tag(pair_window, pair_window_src)}")
-        # Preflight devices
+        # Preflight devices — missing grabber is NO-DATA (UNSCORED), not broken tool.
         if not Path(video_dev).exists():
             print(f"VERDICT=UNSCORED rc={RC_UNSCORED}")
             print(f"reason=no_video_dev path={video_dev}")
             return RC_UNSCORED
+        # Preflight CAPABILITY: refuse a rate the hardware does not offer, loudly.
+        # A default of 60 fps was once asserted as "MS2109-capable" without being
+        # checked; MJPG 1920x1080 offers only ≤30, so every capture failed and the
+        # breakage hid behind soft-skip rc=77 (PROCESS DEFECT #6).
+        rates = _supported_cap_fps(video_dev, video_size)
+        if rates and not any(abs(cap_fps - r) < 0.5 for r in rates):
+            print(f"VERDICT=INSTRUMENT_BROKEN rc={RC_INSTRUMENT_BROKEN}")
+            print(
+                f"reason=cap_fps_unsupported requested={cap_fps} "
+                f"supported={sorted(rates)} src=measured dev={video_dev} size={video_size}"
+            )
+            return RC_INSTRUMENT_BROKEN
         try:
-            capture_av(
+            ffmpeg_argv = capture_av(
                 cap_path,
                 duration_s=duration,
                 video_dev=video_dev,
@@ -1351,10 +1569,24 @@ def main(argv: list[str] | None = None) -> int:
                 cap_fps=cap_fps,
             )
         except RuntimeError as e:
-            print(f"VERDICT=UNSCORED rc={RC_UNSCORED}")
+            print(f"VERDICT=INSTRUMENT_BROKEN rc={RC_INSTRUMENT_BROKEN}")
             print(f"reason={e}")
-            return RC_UNSCORED
+            return RC_INSTRUMENT_BROKEN
         print(f"capture_bytes={cap_path.stat().st_size} src=measured")
+
+    cap_cfg = capture_config_fingerprint(ffmpeg_argv, mode=mode)
+    # Extend fingerprint inputs that affect pairing/scoring of the same capture.
+    cap_cfg["cap_fps"] = float(cap_fps)
+    cap_cfg["cap_fps_src"] = fps_src
+    cap_cfg["video_size"] = str(video_size)
+    cap_cfg["duration_s"] = float(duration) if mode != "file" else None
+    cap_cfg["pair_window_s"] = float(pair_window)
+    cap_cfg["pair_window_src"] = pair_window_src
+    cap_cfg["warmup_frames"] = int(warmup)
+    cap_cfg["warmup_src"] = warmup_src
+    print(f"capture_config_fingerprint={cap_cfg['fingerprint']} src={cap_cfg['fingerprint_src']}")
+    if ffmpeg_argv is not None:
+        print(f"capture_ffmpeg_argv={' '.join(ffmpeg_argv)} src=measured")
 
     res = analyse_file(
         cap_path,
@@ -1370,10 +1602,6 @@ def main(argv: list[str] | None = None) -> int:
 
     # Live warm-up / short-burst guard: need enough decoded frames.
     n_decoded = None
-    if isinstance(res.flash_meta, dict):
-        # warmup_frames_discarded + remaining is not total; use fps_nom path via reason
-        pass
-    # Count from capture: re-probe cheaply only for live min-frames gate
     if mode != "file":
         try:
             luma_chk, _t_chk, vmeta_chk = load_video_luma(cap_path)
@@ -1381,16 +1609,42 @@ def main(argv: list[str] | None = None) -> int:
             print(f"decoded_frames={n_decoded} src=measured")
             print(f"min_capture_frames={_tag(min_cap_frames, min_cap_src)}")
             if n_decoded < int(min_cap_frames):
+                # If duration×fps should have delivered ≥ min frames, the instrument
+                # (or truncated capture) is broken — not soft-skip NO-DATA.
+                expected = float(duration) * float(cap_fps)
+                if expected >= float(min_cap_frames):
+                    print(f"VERDICT=INSTRUMENT_BROKEN rc={RC_INSTRUMENT_BROKEN}")
+                    print(
+                        f"reason=too_few_capture_frames n={n_decoded} "
+                        f"min={min_cap_frames} expected_ge={expected:.1f} "
+                        f"(truncated_or_grabber_fail; not soft-skip)"
+                    )
+                    # Still write JSON so fingerprint is on disk for forensics.
+                    jpath = args.json_out or (out_dir / f"{args.label}_report.json")
+                    write_json(
+                        jpath,
+                        {
+                            "tool": "avsync_measure_hdmi",
+                            "mode": mode,
+                            "rc": RC_INSTRUMENT_BROKEN,
+                            "capture_config": cap_cfg,
+                            "decoded_frames": n_decoded,
+                            "reason": "too_few_capture_frames",
+                        },
+                    )
+                    print(f"report_json={jpath} src=measured")
+                    return RC_INSTRUMENT_BROKEN
                 print(f"VERDICT=UNSCORED rc={RC_UNSCORED}")
                 print(
                     f"reason=too_few_capture_frames n={n_decoded} "
-                    f"min={min_cap_frames} (warm-up-only bursts are NO-DATA)"
+                    f"min={min_cap_frames} (caller duration too short for min frames)"
                 )
                 return RC_UNSCORED
         except RuntimeError as e:
-            print(f"VERDICT=UNSCORED rc={RC_UNSCORED}")
-            print(f"reason={e}")
-            return RC_UNSCORED
+            # Live capture produced a file we cannot decode → instrument broken.
+            print(f"VERDICT=INSTRUMENT_BROKEN rc={RC_INSTRUMENT_BROKEN}")
+            print(f"reason=decode_failed_after_capture err={e}")
+            return RC_INSTRUMENT_BROKEN
 
     # Calibrate mode: on success write calibration file; still report rc
     if args.calibrate and res.ok and res.median_offset_ms is not None:
@@ -1435,6 +1689,7 @@ def main(argv: list[str] | None = None) -> int:
         "tool": "avsync_measure_hdmi",
         "mode": mode,
         "rc": rc,
+        "capture_config": cap_cfg,
         "sign_convention": (
             "offset_ms=(t_audio_onset-t_video_flash)*1000; "
             "positive=audio LATE (lags); negative=audio EARLY (leads)"
@@ -1444,6 +1699,10 @@ def main(argv: list[str] | None = None) -> int:
             "raw_median_tag": "raw_uncalibrated",
             "same_rig_delta": "CAN_MEASURE (B cancels)",
             "av_drift_ms": "BLIND to ~117 ms HDMI clusters",
+            "historical_dataset": (
+                "pre-wallclock+start_at_zero runs INVALID for absolute compare; "
+                "re-establish bimodality on fingerprinted captures only"
+            ),
         },
         "result": asdict(res),
         "tol_ms": tol_ms,
