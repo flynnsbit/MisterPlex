@@ -7,6 +7,7 @@
 #include "libmisterplex/coded_size.hpp"
 #include "libmisterplex/conf_keys.hpp"
 #include "libmisterplex/ffmpeg_vf.hpp"
+#include "libmisterplex/install_paths.hpp"
 #include "libmisterplex/frame_ledger.hpp"
 #include "libmisterplex/osd_menu.hpp"
 #include "libmisterplex/raw_video_pipe.hpp"
@@ -160,43 +161,25 @@ misterplex::WeakLadder weakForContentResolution(const misterplex::WeakLadder& ba
 
 namespace {
 
-// MiSTerPlex ships its own static ffmpeg beside the daemon. Install roots that
-// predate v2 (or share a box with mistercast-linux) keep it elsewhere.
-//
-// Order matters for the v2 daily driver: probe misterplex_v2 BEFORE the legacy
-// misterplex root. A v2 daemon that fell through to /media/fat/misterplex/bin/ffmpeg
-// would exec an OLD binary while reading v2 conf (parent: strings on live v2
-// binary still contain the hardcoded v1 paths as compile-time defaults — that is
-// expected; runtime must not prefer them when v2 ffmpeg exists).
-//
-// conf-adjacent override is applied after --conf is known (see resolveFfmpegPath).
-std::string defaultFfmpegPath() {
-    for (const char* c : {"/media/fat/misterplex_v2/bin/ffmpeg",
-                          "/media/fat/misterplex/bin/ffmpeg",
-                          "/media/fat/mistercast/bin/ffmpeg"}) {
-        if (::access(c, X_OK) == 0)
-            return c;
+// Self path for install-root binding. Prefer /proc/self/exe (Linux); else argv0.
+std::string selfExePath(const char* argv0) {
+    char buf[4096];
+    const ssize_t n = ::readlink("/proc/self/exe", buf, sizeof(buf) - 1);
+    if (n > 0) {
+        buf[n] = '\0';
+        return std::string(buf);
     }
-    return "/media/fat/misterplex_v2/bin/ffmpeg";
+    if (argv0 && argv0[0])
+        return std::string(argv0);
+    return {};
 }
 
-// Prefer confDir/bin/ffmpeg when it exists (pair install root), else default probe.
-// conf FFMPEG= and CLI --ffmpeg still win (applied by caller before/after).
-std::string resolveFfmpegPath(const std::string& confPath, const std::string& current) {
-    // If caller already set a non-default explicit path that exists, keep it.
-    // We cannot know "explicit" vs default here when current equals a probe hit;
-    // conf key / CLI overwrite current before this is called when set.
-    if (!confPath.empty()) {
-        std::string dir = confDirFromPath(confPath);
-        if (!dir.empty()) {
-            const std::string beside = dir + "/bin/ffmpeg";
-            if (::access(beside.c_str(), X_OK) == 0)
-                return beside;
-        }
-    }
-    if (!current.empty() && ::access(current.c_str(), X_OK) == 0)
-        return current;
-    return defaultFfmpegPath();
+bool pathReadable(const std::string& p) {
+    return ::access(p.c_str(), R_OK) == 0;
+}
+
+bool pathExecutable(const std::string& p) {
+    return ::access(p.c_str(), X_OK) == 0;
 }
 
 } // namespace
@@ -205,9 +188,13 @@ int main(int argc, char** argv) {
     std::string name = misterplex::kPlayerDefaultName;
     std::string machineId = misterplex::kPlayerDefaultMachineId;
     int port = misterplex::kPlayerDefaultPort;
-    std::string ffmpeg = defaultFfmpegPath();
-    std::string confPath = "/media/fat/misterplex/misterplex.conf";
+    // conf/ffmpeg filled after argv parse + install-root resolve (no hardcoded v1).
+    std::string ffmpeg;
+    std::string confPath;
     std::string confToken;
+    std::string cliConf;
+    std::string cliFfmpeg;
+    bool confExplicit = false;
     // plex.tv player registration: off by default (PLEXTV_ANNOUNCE=1 to enable).
     bool plexTvAnnounce = false;
     misterplex::CodedSize decodeSize = misterplex::kDefaultCodedDecodeSize;
@@ -264,13 +251,14 @@ int main(int argc, char** argv) {
             machineId = argv[++i];
         else if (std::strcmp(argv[i], "--port") == 0 && i + 1 < argc)
             port = std::atoi(argv[++i]);
-        else if (std::strcmp(argv[i], "--ffmpeg") == 0 && i + 1 < argc)
-            ffmpeg = argv[++i];
-        else if (std::strcmp(argv[i], "--pms") == 0 && i + 1 < argc)
+        else if (std::strcmp(argv[i], "--ffmpeg") == 0 && i + 1 < argc) {
+            cliFfmpeg = argv[++i];
+        } else if (std::strcmp(argv[i], "--pms") == 0 && i + 1 < argc)
             defaultPms = argv[++i];
-        else if (std::strcmp(argv[i], "--conf") == 0 && i + 1 < argc)
-            confPath = argv[++i];
-        else if (std::strcmp(argv[i], "--decode") == 0 && i + 1 < argc) {
+        else if (std::strcmp(argv[i], "--conf") == 0 && i + 1 < argc) {
+            cliConf = argv[++i];
+            confExplicit = true;
+        } else if (std::strcmp(argv[i], "--decode") == 0 && i + 1 < argc) {
             // Defer typed adoption until after conf: allow flag may arrive via conf.
             decodeSizeRawCli = argv[++i];
         } else if (std::strcmp(argv[i], "--decode-allow-lab-480p") == 0) {
@@ -290,6 +278,38 @@ int main(int argc, char** argv) {
             return 0;
         }
     }
+
+    // --- install-root conf bind (parent 2026-08-01 silent v1 fallback trap) ---
+    // Resolution order (conf):
+    //   1) --conf PATH if given: must be readable; must share install_root with
+    //      this binary unless MISTERPLEX_ALLOW_FOREIGN_CONF=1 (lab only).
+    //   2) else $install_root/misterplex.conf if readable.
+    //   3) else FAIL loud rc=12 — NEVER adopt hardcoded /media/fat/misterplex/.
+    // install_root derives from /proc/self/exe (…/bin/misterplexd → parent of bin).
+    {
+        const std::string exe = selfExePath(argc > 0 ? argv[0] : nullptr);
+        const std::string installRoot = misterplex::installRootFromExePath(exe);
+        const bool allowForeign = [] {
+            const char* e = std::getenv("MISTERPLEX_ALLOW_FOREIGN_CONF");
+            return e && e[0] && e[0] != '0' && std::strcmp(e, "false") != 0 &&
+                   std::strcmp(e, "no") != 0;
+        }();
+        const auto confPlan = misterplex::resolveConfPath(
+            installRoot, confExplicit ? cliConf : std::string{}, allowForeign, pathReadable);
+        std::fprintf(stderr, "misterplexd: %s exe=%s install_root=%s tag=measured\n",
+                     confPlan.detail.c_str(), exe.c_str(), installRoot.c_str());
+        if (!confPlan.ok) {
+            std::fprintf(stderr,
+                         "misterplexd: FATAL conf resolve rc=%d — refusing start "
+                         "(silent foreign DECODE/ffmpeg is the daily-driver trap)\n",
+                         confPlan.exit_code);
+            misterplex::deathBreadcrumbExit(confPlan.exit_code,
+                                            "site=main.cpp:conf_resolve_fail");
+            return confPlan.exit_code;
+        }
+        confPath = confPlan.conf_path;
+    }
+
     {
         // Multi-server: PLEX_SERVERS=url1,url2 and/or repeated PLEX_BASE= lines.
         auto baseLines = loadConfAll(confPath, "PLEX_BASE");
@@ -335,14 +355,31 @@ int main(int argc, char** argv) {
                 std::fprintf(stderr, "misterplexd: unknown TRANSCODE_PROFILE=%s (keeping %s)\n",
                              profile.c_str(), weak.profileName.c_str());
         }
-        auto v = loadConf(confPath, "FFMPEG");
-        if (!v.empty()) {
-            ffmpeg = v; // conf explicit — never normalise; user-owned if they set it
-        } else {
-            // No conf FFMPEG=: bind to conf install root when that root ships ffmpeg.
-            ffmpeg = resolveFfmpegPath(confPath, ffmpeg);
+        // FFmpeg resolution order (after conf is bound to install_root):
+        //   1) --ffmpeg PATH (CLI)
+        //   2) conf FFMPEG= (user-owned; never rewritten)
+        //   3) $install_root/bin/ffmpeg if X_OK
+        //   4) else FAIL loud rc=13 — NEVER probe the other root's bin/ffmpeg
+        {
+            const std::string confFfmpeg = loadConf(confPath, "FFMPEG");
+            const std::string installRoot =
+                misterplex::installRootFromConfPath(confPath);
+            const auto ffPlan = misterplex::resolveFfmpegPath(
+                installRoot, cliFfmpeg, confFfmpeg, /*require_executable=*/true,
+                pathExecutable);
+            std::fprintf(stderr, "misterplexd: %s conf=%s tag=measured\n",
+                         ffPlan.detail.c_str(), confPath.c_str());
+            if (!ffPlan.ok) {
+                std::fprintf(stderr,
+                             "misterplexd: FATAL ffmpeg resolve rc=%d — refusing start\n",
+                             ffPlan.exit_code);
+                misterplex::deathBreadcrumbExit(ffPlan.exit_code,
+                                                "site=main.cpp:ffmpeg_resolve_fail");
+                return ffPlan.exit_code;
+            }
+            ffmpeg = ffPlan.ffmpeg_path;
         }
-        v = loadConf(confPath, "DECODE_ALLOW_LAB_480P");
+        auto v = loadConf(confPath, "DECODE_ALLOW_LAB_480P");
         if (!v.empty())
             decodeAllowLab480p = decodeAllowLab480p || confTruthy(v);
         v = loadConf(confPath, "DECODE");
@@ -610,16 +647,13 @@ int main(int argc, char** argv) {
         player.armProcessEpoch(static_cast<uint64_t>(pe > 0 ? pe : 1));
     }
     player.setFfmpegPath(ffmpeg);
-    // Derivation: conf FFMPEG= if set; else confDir/bin/ffmpeg if X_OK; else
-    // defaultFfmpegPath() probe order v2 → v1 → mistercast. Compiled-in string
-    // literals for the old root may still appear in `strings` — runtime path is this.
+    // Derivation: --ffmpeg | conf FFMPEG= | $install_root/bin/ffmpeg only.
+    // No cross-root probe. strings(1) may still show legacy literals in old bins.
     {
         const int xok = (::access(ffmpeg.c_str(), X_OK) == 0) ? 1 : 0;
         std::fprintf(stderr,
-                     "misterplexd: ffmpeg_path=%s x_ok=%d conf=%s "
-                     "ffmpeg_path_src=%s tag=measured\n",
-                     ffmpeg.c_str(), xok, confPath.c_str(),
-                     loadConf(confPath, "FFMPEG").empty() ? "resolved" : "conf_FFMPEG");
+                     "misterplexd: ffmpeg_path=%s x_ok=%d conf=%s tag=measured\n",
+                     ffmpeg.c_str(), xok, confPath.c_str());
     }
     player.setDecodeSize(decodeSize);
     player.setPresentMode(presentMode);
