@@ -2029,6 +2029,29 @@ int64_t MediaPlayer::readMrAudioQueuedBytes() {
     return misterplex::parseMrAudioQueuedBytes(buf, n);
 }
 
+// One status-line sample for handoff boundary logs. Does not claim playback phase.
+misterplex::MrAudioStatusSnap MediaPlayer::readMrAudioStatusSnap(std::string* rawOut) {
+    misterplex::MrAudioStatusSnap snap{};
+    const int fd = ::open(audioDev_.c_str(), O_RDONLY);
+    if (fd < 0)
+        return snap;
+    char buf[160];
+    const ssize_t n = ::read(fd, buf, sizeof(buf) - 1);
+    ::close(fd);
+    if (n <= 0)
+        return snap;
+    buf[n] = '\0';
+    // Trim trailing newline for log cleanliness.
+    ssize_t end = n;
+    while (end > 0 && (buf[end - 1] == '\n' || buf[end - 1] == '\r')) {
+        buf[end - 1] = '\0';
+        --end;
+    }
+    if (rawOut)
+        *rawOut = std::string(buf, static_cast<size_t>(end > 0 ? end : 0));
+    return misterplex::parseMrAudioStatusSnap(buf, end);
+}
+
 void MediaPlayer::audioPump(int afd) {
     // Drain PCM to MrAudio. Lab evidence: MrAudio write() does NOT pace realtime
     // (audio_s grew ~3× wall → jumpy audio). Pace ourselves to exact 48 kHz wall
@@ -2044,10 +2067,27 @@ void MediaPlayer::audioPump(int afd) {
         out = ::open(audioDev_.c_str(), O_WRONLY);
         if (out < 0)
             log("media: open " + audioDev_ + " failed errno=" + std::to_string(errno));
-        else
+        else {
             log("media: MrAudio open — software-paced 48kHz delay_ms=" +
                 std::to_string(audioDelayMs_) +
                 " clock_ppm=" + std::to_string(audioClockPpm_) + " (adelay in ffmpeg if >0)");
+            // Handoff boundary: last daemon-controlled store is ::write into the
+            // ring. Sample status BEFORE any write so leftover depth/rptr is
+            // visible. Does NOT locate the 117 ms cluster (hold falsified);
+            // makes post-write-unobserved phase partially greppable.
+            std::string raw;
+            const auto snap = readMrAudioStatusSnap(&raw);
+            const int64_t mono = steadyMonoMs();
+            const int64_t qms =
+                (snap.len >= 0) ? (snap.len * 1000LL) / misterplex::kMrAudioBytesPerSec : -1;
+            log("media: MrAudio ring_at_open mono_ms=" + std::to_string(mono) +
+                " rptr=" + std::to_string(snap.rptr) + " wptr=" + std::to_string(snap.wptr) +
+                " len_B=" + std::to_string(snap.len) + " len_ms=" + std::to_string(qms) +
+                " comp=" + std::to_string(snap.comp) +
+                " raw=\"" + (raw.empty() ? std::string("NO-DATA") : raw) + "\""
+                " tag=measured"
+                " (observability ends at write+len; FPGA drain phase not logged)");
+        }
     }
     if (out < 0 && !wantF2) {
         char buf[4096];
@@ -2180,6 +2220,21 @@ void MediaPlayer::audioPump(int afd) {
                     log("media: audio pace origin=now hold_drain_no_past_bias=1 "
                         "burst_lead_ms=0 (peer-aligned; held PCM realtime with video)");
                 }
+                // First MrAudio write landed — sample ring immediately (not every-4th).
+                // Parent can pair ring_at_open vs ring_after_first_write across clusters.
+                std::string raw;
+                const auto snap = readMrAudioStatusSnap(&raw);
+                const int64_t mono = steadyMonoMs();
+                const int64_t qms =
+                    (snap.len >= 0) ? (snap.len * 1000LL) / misterplex::kMrAudioBytesPerSec : -1;
+                log("media: MrAudio ring_after_first_write mono_ms=" + std::to_string(mono) +
+                    " written_B=" + std::to_string(audioBytes_.load()) +
+                    " rptr=" + std::to_string(snap.rptr) + " wptr=" + std::to_string(snap.wptr) +
+                    " len_B=" + std::to_string(snap.len) + " len_ms=" + std::to_string(qms) +
+                    " comp=" + std::to_string(snap.comp) +
+                    " raw=\"" + (raw.empty() ? std::string("NO-DATA") : raw) + "\""
+                    " tag=measured"
+                    " (post-write drain still FPGA-scheduled; not a lipsync claim)");
             }
 
             const double rate = misterplex::feedRateBytesPerSec(

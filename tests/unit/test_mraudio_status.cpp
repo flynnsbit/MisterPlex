@@ -120,6 +120,20 @@ int main() {
         CHECK(errBytes > -2000.0 && errBytes < 2000.0);
     }
 
+    // --- full status snap (handoff instrumentation; rptr/wptr/len) ---
+    {
+        const char* line = "rptr: 238120, wptr: 426576, len: 188456, comp: 4\n";
+        const auto s = parseMrAudioStatusSnap(line, static_cast<int64_t>(std::strlen(line)));
+        CHECK(s.ok);
+        CHECK(s.rptr == 238120);
+        CHECK(s.wptr == 426576);
+        CHECK(s.len == 188456);
+        CHECK(s.comp == 4);
+        const auto empty = parseMrAudioStatusSnap("", 0);
+        CHECK(!empty.ok);
+        CHECK(empty.len < 0);
+    }
+
     if (fails) {
         std::fprintf(stderr, "test_mraudio_status: %d FAILURES\n", fails);
         return 1;

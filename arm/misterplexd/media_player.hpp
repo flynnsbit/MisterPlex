@@ -320,6 +320,7 @@ private:
     // Snapshot the MrAudio ring occupancy. Returns bytes queued, or -1 if the
     // driver does not expose it. Cheap: one open/read/close, no allocation.
     int64_t readMrAudioQueuedBytes();
+    misterplex::MrAudioStatusSnap readMrAudioStatusSnap(std::string* rawOut = nullptr);
 
     static std::string hex16(uint16_t v);
 

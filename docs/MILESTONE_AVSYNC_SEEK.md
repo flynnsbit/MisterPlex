@@ -1213,6 +1213,16 @@ cluster        = HDMI median vs A≈-314 / B≈-197
 
 Do **not** use `av_drift_ms` (proven blind). Hold pairing **already ran** — falsified.
 
+**Parent measurement (instrumented daemon `5996385a`, n=2 opposite clusters) — H-HOLD miss published:**
+
+| run | HDMI offset_ms | cluster | held_ms | release→video | pcm→video | pcm_silence_head_ms |
+|-----|----------------|---------|---------|---------------|-----------|---------------------|
+| 1 | −190.67 | B | **112** | 81 | 193 | 9 |
+| 2 | −308.00 | A | **107** | 71 | 178 | 9 |
+| Δ | **117.33** | | **5** | 10 | 15 | **0** |
+
+Pre-registered H-DEV required origin delta ≈ 117±30 ms; measured hold Δ≈5 ms (~7× outside band). **Hold is not the 117 ms discriminator.** Delivery geometry / filter graph / silence head also identical (parent P5 null). Origin record fields do not separate clusters.
+
 ### MrAudio → FPGA handoff — where daemon control and observability END
 
 Product audio path (header `media_player.hpp:2-3`, arch diagram `docs/architecture.md`):
@@ -1252,14 +1262,46 @@ So: daemon chooses **byte stream + feed rate into the ring**. Hardware/driver ch
 | “Heard” clock used by pacer | `audibleClockMs(written, queued) = (written−queued)/192000` (`mraudio_status.hpp:76-82`) | same sample rate as `len`; assumes **nominal 48 kHz** drain |
 | Overwrite risk | log if `queuedEma > 3/4 ring` | coarse |
 
-**Not observed / not logged by this daemon (from source):**
+**Not observed / not logged by this daemon (from source) before handoff logs:**
 
 - Absolute **wall time of first DAC/HDMI audio sample** (no HW PTS back to userspace beyond `len`).
 - **Phase** of FPGA audio clock vs video pixel clock / vsync.
-- Per-sample SPI completion; `comp:` field is parsed only as part of the status line format comment, not used in product logic.
+- Per-sample SPI completion; `comp:` was format-only until `ring_at_open` / `ring_after_first_write` logs.
 - Anything after SPI leave (core mix, HDMI A/V relative skew in the RBF).
 
-**Implication for the 117 ms defect (bounded claim):** parent showed session-start daemon fields and hold stats do not separate clusters. The handoff model says a **fixed or session-random phase** in the **post-write** path (ring start phase, FPGA drain, HDMI) would be **invisible** to every signal built from `written`, `len`, `frameIndex`, and `av_drift_ms` **if that phase is constant for the session and similar in steady `len`** — because `audibleClockMs` subtracts depth and `av_drift_ms` only compares that clock to `frameIndex`. That is a **compatibility** statement with blindness, **not** a location of the cause. Locating it needs an observation **outside** this set (grabber already is; on-device would need a new sensor, e.g. core-side marker or external loopback).
+**FPGA consumer (in-tree `fpga/Plex_MiSTer/sys/alsa.sv`) — mechanisms the daemon does not schedule:**
+
+```verilog
+// alsa.sv:116-119 — first time rptr!=wptr after reset, SNAP rptr to wptr
+// (skip whatever was already queued), then set got_first.
+else if(buf_rptr != buf_wptr) begin
+    if(~got_first) begin
+        buf_rptr <= buf_wptr;
+        got_first <= 1;
+```
+
+```verilog
+// alsa.sv:149-153 — sample CE is free-running NCO at 48000 + hurryup
+acc <= acc + 48000 + {hurryup,6'd0};
+if(acc >= CLK_RATE) begin ... ce_sample <= 1;
+```
+
+```verilog
+// alsa.sv:95-103 — hurryup 0..4 from buffer fill bits (rate bend, not daemon-set)
+if(len[18:14] && (hurryup < 1)) hurryup <= 1;
+...
+if(!len[18:10]) hurryup <= 0;
+```
+
+`got_first` clears only on `reset` (`alsa.sv:86-91`). Across sessions without that reset, snap does not re-fire; residual ring state can persist. **These are source-visible mechanisms past the daemon write. They are NOT a measured cause of the 117 ms clusters.**
+
+`audio_out.sv` mixes `alsa_l/r` with core audio into I2S (`sys_top.v:1579-1610`). Filter enable ramps `a_en1`/`a_en2` after **audio_out reset only** (`audio_out.sv:176-196`) — another fixed post-reset path latency class, not session-logged by the daemon.
+
+**Product logs (post this instrumentation):**
+- `media: MrAudio ring_at_open mono_ms=… rptr=… wptr=… len_B=… len_ms=…`
+- `media: MrAudio ring_after_first_write mono_ms=… written_B=… rptr=… wptr=… len_B=…`
+
+**Implication for the 117 ms defect (bounded claim):** parent showed session-start daemon fields and hold stats do not separate clusters. The handoff model says a **fixed or session-random phase** in the **post-write** path (ring start phase, FPGA drain, HDMI) would be **invisible** to every signal built from `written`, steady `len`, `frameIndex`, and `av_drift_ms` **if that phase is constant for the session and similar in steady `len`** — because `audibleClockMs` subtracts depth and `av_drift_ms` only compares that clock to `frameIndex`. That is a **compatibility** statement with blindness, **not** a location of the cause. Locating it needs an observation **outside** this set (grabber already is; on-device would need a new sensor, e.g. core-side marker or external loopback). Pair `ring_at_open` / `ring_after_first_write` across A/B — if identical while HDMI sep stays 117, ring-depth path is weaker as discriminator.
 
 #### Held PCM from content t=0? / origin rebase? (unchanged)
 
