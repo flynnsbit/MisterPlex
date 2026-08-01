@@ -1,7 +1,7 @@
 lane: w-promote
 branch: fix/rollback-honest
 worktree: /home/flynnsbit/Projects/MisterPlex/.worktrees/rollback-honest
-tip: (see git rev-parse after commit)
+tip: d68363ae
 
 ## This turn
 - deploy_misterplexd: stop by /proc/comm+argv0 (not cmdline substr/flock trap)
