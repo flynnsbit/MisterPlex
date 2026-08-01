@@ -14,25 +14,37 @@ Contract (must match RK8 soak for A/B comparability):
   - 360 s duration
   - flash+beep period 1.0 s
 
-Ramp design (content domain @ 24.000 fps):
-  - RAMP_FRAMES content frames of linear black->white (default 4)
-  - peak hold 1 content frame, then black
-  - Frames are generated in Python (constant luma per content frame staircase
-    approximating a linear ramp). At capture 30 fps, 4 content frames ~ 166.7 ms
-    ~ 5 capture samples of soft edge.
-  - Per-capture-interval rise ~ contrast * (33.3/166.7) ~ 0.20*C < STEP_RISE_FRAC=0.70
-    -> instrument path is linear-interp, not step (avsync_measure_hdmi.py detect_flashes)
+Ramp design (content domain @ 24.000 fps, capture 30 fps MJPEG):
+  - RAMP_FRAMES content frames of linear black->white (default 4) CENTERED on
+    each integer second so luma=50% at phase=0 (beep attack).
+  - peak hold 1 content frame after ramp top, then black.
+  - Why 4 content frames: capture_dt = 1000/30 = 33.333 ms. Ramp duration =
+    4/24 s = 166.667 ms spans 166.667/33.333 = 5.000 capture frames — enough
+    samples to fit a rising edge (parent need: "span enough capture frames to
+    fit a line"). Per-capture rise fraction ≈ 33.333/166.667 = 0.200 of full
+    contrast < STEP_RISE_FRAC=0.70 → detect_flashes takes linear-interp path
+    (tools/avsync_measure_hdmi.py), not the step guard that pinned RK8 to
+    flash_onset_n_interp:0 on 299/299 flashes.
 
-Expected onset resolution (derivation, not a silicon measurement):
-  - Step path quant: capture_frame_period = 1000/30 ~ 33.33 ms (parent measured
-    flash_onset_n_interp:0 on RK8).
-  - Linear path: thr crossing placed within one capture interval via
-    ts = t0 + frac*(t1-t0), frac=(thr-y0)/(y1-y0).
-  - Luma is 8-bit mean; with contrast C~200, frac granularity ~ 1/C ->
-    theoretical ~ 33.33/200 ~ 0.17 ms. Practical floor is noise/compression/
-    grabber, not the frame grid — expect a few ms, well under one capture frame.
-  - State: expected_onset_resolution_ms ~ 2-5 ms practical (sub-frame); hard
-    upper bound one capture interval if interp fails and falls back to step.
+Simultaneity (by construction, same encode timeline):
+  - Content time t = n/24 for video frame n; PCM time t = i/48000.
+  - Beep attack envelope starts at every integer second (phase=0).
+  - Ramp is centered on the same integer second → instrument thr
+    (floor+0.5*contrast ≈ mid luma) crosses at phase=0 with the beep.
+  - One ffmpeg process muxes both from a single ordered frame pipe + PCM file;
+    no separate timelines, no itsoffset.
+
+Expected onset resolution (DERIVED, not HDMI-measured):
+  - Capture quant without interp: 1000/30 = 33.333 ms (parent: n_interp=0).
+  - With linear interp: ts = t0 + frac*(t1-t0), frac=(thr-y0)/(y1-y0).
+  - Per-interval rise ΔY ≈ 0.20 * C. For C≈250 (measured offline ~250),
+    ΔY≈50 luma counts. Onset time noise σ_t ≈ dt_cap * (σ_Y / ΔY).
+  - Compression/MJPEG σ_Y is not measured here; bound σ_Y ∈ [1, 5] counts →
+    σ_t ∈ [33.333/50, 5*33.333/50] = [0.67, 3.33] ms.
+  - expected_onset_resolution_ms ≈ 2 ms (central), band 1–4 ms practical.
+    Hard upper bound remains one capture interval (33.33 ms) if step fallback.
+  - Beep: 1 ms linear attack, Goertzel hop 2 ms (tool default) — do not regress
+    audio below ~2 ms; attack is 1 ms < hop.
 
 Beep: 1 kHz, 50 ms body, 1 ms linear attack envelope (sharp Goertzel edge).
 """
@@ -91,13 +103,27 @@ def write_pcm_sharp(
 
 
 def frame_luma(n: int, fps: float, ramp_frames: int, peak_frames: int) -> int:
-    """Return 0..255 full-frame luma for content frame index n."""
-    frames_per_period = int(round(fps))  # 24 at 24.000
-    k = n % frames_per_period
-    if k < ramp_frames:
-        # Linear staircase: frame 0 -> 1/R, ..., frame R-1 -> R/R = 1.0
-        return int(round(255.0 * (k + 1) / float(ramp_frames)))
-    if k < ramp_frames + peak_frames:
+    """Return 0..255 full-frame luma for content frame index n.
+
+    Ramp is CENTERED on each integer second so the 50% luma point (instrument
+    thr ≈ floor + 0.5*contrast) coincides with the beep attack at phase=0.
+    That is the simultaneity guarantee: same content timeline, beep at t=k.000s
+    (PCM sample floor(k*sr)), flash thr-crossing at the same t by construction.
+    """
+    t = n / float(fps)
+    phase = t - math.floor(t)  # [0, 1)
+    # Signed distance to nearest integer second in (-0.5, 0.5]
+    if phase > 0.5:
+        dt = phase - 1.0
+    else:
+        dt = phase
+    ramp_s = ramp_frames / float(fps)
+    half = 0.5 * ramp_s
+    peak_s = peak_frames / float(fps)
+    if -half <= dt < half:
+        # 0 at dt=-half, 1 at dt=+half → 0.5 at dt=0 (beep instant)
+        return int(round(255.0 * (dt + half) / ramp_s))
+    if half <= dt < half + peak_s:
         return 255
     return 0
 
@@ -209,7 +235,7 @@ def gen_ramp_soak(
         print("GEN", out, flush=True)
         print("CMD", " ".join(cmd), flush=True)
         print(
-            f"RAMP content_frames={ramp_frames} ramp_ms={ramp_s*1000:.3f} "
+            f"RAMP centered_on_integer_second content_frames={ramp_frames} ramp_ms={ramp_s*1000:.3f} "
             f"peak_frames={peak_frames} flash_end_ms={flash_end_s*1000:.3f} "
             f"beep_attack_ms=1.0 beep_body_ms=50 period_s=1.0 n_frames={n_frames}",
             flush=True,
