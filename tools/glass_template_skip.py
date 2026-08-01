@@ -436,6 +436,108 @@ def bootstrap_templates(
     return bank, info
 
 
+def bootstrap_templates_from_capture_dir(
+    src: Path,
+    *,
+    path: Path | None = None,
+    cell_mode: str = "parent",
+    max_frames: int = 64,
+    stride: int = 1,
+    warmup_skip: int = 15,
+) -> tuple[TemplateBank, dict[str, Any]]:
+    """Bootstrap from real HDMI PNGs; labels = bar decoder (primary channel).
+
+    Parent rule: labels from viewed pixels, never k-means. Bars are the
+    authoritative machine ID on the G-fixture; digit cells use parent fixed
+    geometry. Prefer this over sim bootstrap before scoring device captures.
+    """
+    from glass_frame_id import decode_bars_from_rgb
+
+    files = list_pngs(Path(src))
+    if warmup_skip > 0:
+        files = files[warmup_skip:]
+    if stride > 1:
+        files = files[::stride]
+    if max_frames > 0:
+        files = files[:max_frames]
+
+    vectors: list[np.ndarray] = []
+    labels: list[int] = []
+    frame_ids: list[int] = []
+    values: list[int] = []
+    cells_used: list[tuple[int, int]] | None = None
+    geom_src = None
+    n_bar_fail = 0
+    n_used = 0
+
+    for fi, fpath in enumerate(files):
+        rgb = np.asarray(Image.open(fpath).convert("RGB"))
+        bar = decode_bars_from_rgb(rgb)
+        if not getattr(bar, "ok", False) or bar.n is None:
+            n_bar_fail += 1
+            continue
+        n = int(bar.n) % 1_000_000
+        mask = yellow_mask(rgb)
+        cells, gs = resolve_cells(mask, mode=cell_mode)
+        if cells_used is None:
+            cells_used = list(cells)
+            geom_src = gs
+        else:
+            cells = cells_used
+        s = f"{n:06d}"
+        bin_band = mask.astype(np.float32)
+        for di, ch in enumerate(s):
+            x0, x1 = cells[di]
+            vec = _cell_vector(bin_band, x0, x1, ROW_Y0, ROW_Y1)
+            if float(vec.sum()) < 1.0:
+                continue
+            vectors.append(vec)
+            labels.append(int(ch))
+            frame_ids.append(n_used)
+        values.append(n)
+        n_used += 1
+
+    if not vectors:
+        raise RuntimeError(
+            f"no digit templates from {src}: bar_fail={n_bar_fail} files={len(files)}"
+        )
+
+    bank = TemplateBank(
+        vectors=np.stack(vectors, axis=0),
+        labels=np.array(labels, dtype=np.int16),
+        frame_ids=np.array(frame_ids, dtype=np.int32),
+        meta={
+            "n_frames": n_used,
+            "n_samples": len(labels),
+            "values": values,
+            "cells": cells_used,
+            "geometry_src": geom_src,
+            "cell_wh": [CELL_W, CELL_H],
+            "dist_max": DIST_MAX,
+            "margin_min": MARGIN_MIN,
+            "label_src": "bar_decoder_primary_channel_equals_viewed_id",
+            "capture_dir": str(src),
+            "bar_fail": n_bar_fail,
+            "note": "k-means forbidden; labels from bars not unsupervised",
+        },
+    )
+    if path is not None:
+        bank.save(path)
+    cov = sorted(set(int(x) for x in labels))
+    info = {
+        "n_frames": n_used,
+        "n_samples": len(labels),
+        "digit_coverage": cov,
+        "all_digits_present": cov == list(range(10)),
+        "cells": cells_used,
+        "geometry_src": geom_src,
+        "bar_fail": n_bar_fail,
+        "label_src": "bar_decoder_primary_channel_equals_viewed_id",
+        "path": str(path) if path else None,
+    }
+    return bank, info
+
+
 def leave_one_frame_out(bank: TemplateBank) -> dict[str, Any]:
     """LOO by frame: each frame's 6 digits matched against templates from other frames."""
     frame_ids = sorted(set(int(x) for x in bank.frame_ids))
@@ -943,7 +1045,13 @@ def main(argv: list[str] | None = None) -> int:
     )
     ap.add_argument("capture_dir", nargs="?", default=None, help="directory of f_*.png")
     ap.add_argument("--self-test", action="store_true")
-    ap.add_argument("--bootstrap", action="store_true", help="rebuild templates + LOO only")
+    ap.add_argument("--bootstrap", action="store_true", help="rebuild sim templates + LOO only")
+    ap.add_argument(
+        "--bootstrap-from",
+        type=Path,
+        default=None,
+        help="bootstrap templates from real HDMI dir; labels=bar decoder (not k-means)",
+    )
     ap.add_argument("--templates", type=Path, default=TEMPLATE_PATH)
     ap.add_argument(
         "--source-fps",
@@ -971,6 +1079,18 @@ def main(argv: list[str] | None = None) -> int:
     if args.self_test:
         return run_self_test()
 
+    if args.bootstrap_from is not None:
+        bank, binfo = bootstrap_templates_from_capture_dir(
+            Path(args.bootstrap_from),
+            path=Path(args.templates),
+            cell_mode=args.cell_mode,
+            warmup_skip=int(args.warmup_skip),
+        )
+        loo = leave_one_frame_out(bank)
+        print("BOOTSTRAP_FROM_CAPTURE", json.dumps({**binfo, **loo}, indent=2))
+        if not args.capture_dir:
+            return RC_OK if loo["gate"] == "PASS" else RC_FAIL
+
     if args.bootstrap or not Path(args.templates).is_file():
         bank, binfo = bootstrap_templates(path=Path(args.templates))
         loo = leave_one_frame_out(bank)
@@ -979,7 +1099,7 @@ def main(argv: list[str] | None = None) -> int:
             return RC_OK if loo["gate"] == "PASS" else RC_FAIL
 
     if not args.capture_dir:
-        ap.error("capture_dir required (or --self-test / --bootstrap)")
+        ap.error("capture_dir required (or --self-test / --bootstrap / --bootstrap-from)")
 
     bank = TemplateBank.load(args.templates)
     loo = leave_one_frame_out(bank)
