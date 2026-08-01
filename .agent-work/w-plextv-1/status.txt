@@ -1,7 +1,7 @@
 lane=w-plextv
 branch=w-plextv-cast-picker-e2e-fix2
 worktree=.worktrees/w-plextv-e2e-fix
-sha=PENDING
+sha=980bd3a2
 
 ## S6 N-loop — SHIPPED (default 10)
 E2E_TRANSITION_CYCLES=10; TRANSITION_CYCLE_ROW per cycle; pass==N only
