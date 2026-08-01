@@ -515,15 +515,34 @@ def check_present_core() -> None:
     )
 
     nt = norm(text)
+    # T7: past_last_row is V_STORE-relative (product V_STORE=FRAME_H=480), not hard 240.
+    past_ok = (
+        "past_last_row=(py>=V_STORE)" in nt
+        and (
+            "store_y_clamped=past_last_row?V_STORE_LAST:py" in nt
+            or "store_y_clamped=past_last_row?10'd239:py" in nt
+        )
+    )
     check(
-        "past_last_row=(py>=10'd240)" in nt and "store_y_clamped=past_last_row?10'd239:py" in nt,
-        "present_core past_last_row clamp is missing. It prevents fetching row 240 and stops the "
-        "241st-row/bottom-edge artifact; restore past_last_row and store_y_clamped.",
+        past_ok,
+        "present_core past_last_row clamp is missing. It prevents fetching past V_STORE and "
+        "stops the surplus-row/bottom-edge artifact; restore past_last_row and store_y_clamped "
+        "(T7: py>=V_STORE / V_STORE_LAST, not hard-coded 240).",
     )
     check(
         "vb_d=vb|past_last_row" in nt,
         "present_core VBlank no longer includes past_last_row. The bottom-edge fix blanks rows "
-        "past source row 239; restore `vb_d = vb | past_last_row` or re-verify G-VID1.",
+        "past the content window; restore `vb_d = vb | past_last_row` or re-verify G-VID1.",
+    )
+    check(
+        "NATIVE_V_1TO1" in text and "V_STORE_I" in text,
+        "present_core missing NATIVE_V_1TO1 / V_STORE_I — product FRAME_H>240 must 1:1 map "
+        "store_y to vc so all 480 rows are fetched (T7 ceiling fix).",
+    )
+    check(
+        "STORE_Y_SCALE = (FRAME_H * 65536) / V_STORE_I" in text
+        or "STORE_Y_SCALE=(FRAME_H*65536)/V_STORE_I" in nt,
+        "present_core STORE_Y_SCALE must divide by V_STORE_I (1.0 at product 480), not hard 240.",
     )
     print("PASS present_core G-VID1 scanout invariants")
 

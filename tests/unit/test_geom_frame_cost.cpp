@@ -6,8 +6,8 @@
 //   P2: product FORCE_SCALE Always emits pad=624:480 for both source tiers
 //   P3: clearYuv crop_right=6 touches strips only, not full 449280
 //   P4: drops (A/V pacer) ≠ publish_misses (DDR fail) in ledger semantics
-//   P5: V_STORE=240 + STORE_Y_SCALE with FRAME_H=480 ⇒ even store rows only
-//       (arithmetic lock; RTL cite in comment — no RBF claimed)
+//   P5: T7 NATIVE_V_1TO1 — V_STORE=FRAME_H=480, STORE_Y_SCALE=1.0 ⇒ all 480 rows
+//       (arithmetic lock; needs RBF for silicon; pre-T7 was even-rows-only)
 //
 // true rc captured by make/driver directly.
 #include "libmisterplex/ddr_frame_layout.hpp"
@@ -105,20 +105,19 @@ int main() {
         std::printf("P4_OK %s\n", frag.c_str());
     }
 
-    // --- P5: V_STORE / STORE_Y_SCALE arithmetic (present_core.sv:162-164, qsf FRAME_H=480) ---
+    // --- P5: T7 V_STORE / STORE_Y_SCALE (present_core NATIVE_V_1TO1, qsf FRAME_H=480) ---
     {
         constexpr int FRAME_H = 480; // Plex.qsf VERILOG_MACRO FRAME_H=480
-        constexpr int V_STORE = 240; // present_core.sv:162
-        constexpr int STORE_Y_SCALE = (FRAME_H * 65536) / V_STORE; // == 131072
-        expect(STORE_Y_SCALE == 131072, "P5 STORE_Y_SCALE exact 2.0 in Q16");
-        // store_y = (py * STORE_Y_SCALE) >> 16 for py in 0..239 → even rows only
+        constexpr int V_STORE = FRAME_H; // T7: V_STORE_I = FRAME_H when >240
+        constexpr int STORE_Y_SCALE = (FRAME_H * 65536) / V_STORE; // == 65536 (1.0)
+        expect(STORE_Y_SCALE == 65536, "P5 STORE_Y_SCALE exact 1.0 in Q16 after T7");
+        // store_y = (py * STORE_Y_SCALE) >> 16 for py in 0..479 → identity
         expect(((0 * STORE_Y_SCALE) >> 16) == 0, "P5 py0→0");
-        expect(((1 * STORE_Y_SCALE) >> 16) == 2, "P5 py1→2");
-        expect(((239 * STORE_Y_SCALE) >> 16) == 478, "P5 py239→478");
-        // Odd coded rows 1,3,...,479 are never fetched — vertical detail capped.
-        // This does NOT drop frames; it discards half of vertical samples at scanout.
-        std::printf("P5_OK STORE_Y_SCALE=%d even_rows_only (no frame-drop implication)\n",
-                    STORE_Y_SCALE);
+        expect(((1 * STORE_Y_SCALE) >> 16) == 1, "P5 py1→1 (odd row fetched)");
+        expect(((239 * STORE_Y_SCALE) >> 16) == 239, "P5 py239→239");
+        expect(((479 * STORE_Y_SCALE) >> 16) == 479, "P5 py479→479");
+        // Pre-T7 even-only ceiling is gone; this is scanout quality, not frame drops.
+        std::printf("P5_OK STORE_Y_SCALE=%d full_480_rows (T7 NATIVE_V_1TO1)\n", STORE_Y_SCALE);
     }
 
     // --- Host microbench: chroma inspect + memcpy + strip clear (tag=measured) ---

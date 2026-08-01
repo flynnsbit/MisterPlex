@@ -155,45 +155,51 @@ module present_core #(
 	localparam int FRAME_X_W = $clog2(FRAME_W);
 	localparam int FRAME_Y_W = $clog2(FRAME_H);
 
-	// Stretch FRAME_W×FRAME_H frame_store across full Template DE — match colorbars in_content.
-	// Prior attempts (combo ÷529, reconstructed hc Bresenham) still UVC-pillar 0.604 on
-	// solid-red F1 while bars on same RBF span 0.998. Use colorbars hc + mul-shift.
-	localparam H_DE    = 10'd529;
-	localparam V_STORE = 10'd240;
+	// Stretch FRAME_W×FRAME_H frame_store across Template DE (colorbars hc/vc).
+	//
+	// Product (Plex.qsf FRAME_W=640 FRAME_H=480, forced scandouble):
+	//   colorbars NTSC scandouble active vc=0..479 (VBlank asserts at vc==480).
+	//   NATIVE_V_1TO1 maps store_y = vc with SCALE=1.0 so ALL FRAME_H rows are
+	//   addressed (fixes the pre-T7 even-row-only ceiling: V_STORE=240 + scale 2.0).
+	//
+	// Legacy FRAME_H<=240 builds keep half-height py=(scandouble?vc>>1:vc) + scale
+	// from a 240-line content window.
+	//
+	// Horizontal: H_DE stays 529 (FBAR Template class). Full 640 unique columns
+	// require H_DE>=640, which is impossible at clk_sys=20 MHz / 60 Hz / 524 lines
+	// (20e6/60/524 ≈ 636 clocks/line max; see test_present_store_scale_math).
+	// STORE_X still samples 529 of FRAME_W via the 39647 mul-shift.
+	localparam H_DE = 10'd529;
+	localparam bit NATIVE_V_1TO1 = (FRAME_H > 240);
+	localparam int V_STORE_I = NATIVE_V_1TO1 ? FRAME_H : 240;
+	localparam [9:0] V_STORE = 10'(V_STORE_I);
+	localparam [9:0] V_STORE_LAST = 10'(V_STORE_I - 1);
+	// store_x ≈ floor(hc * FRAME_W / 529); 39647/65536 ≈ 320/529.
 	localparam int STORE_X_SCALE = (FRAME_W * 39647) / 320;
-	localparam int STORE_Y_SCALE = (FRAME_H * 65536) / 240;
+	localparam int STORE_Y_SCALE = (FRAME_H * 65536) / V_STORE_I;
 	localparam [FRAME_X_W-1:0] FRAME_LAST_X = FRAME_X_W'(FRAME_W - 1);
 	localparam [FRAME_Y_W-1:0] FRAME_LAST_Y = FRAME_Y_W'(FRAME_H - 1);
 	localparam [15:0] FRAME_LAST_X_16 = 16'(FRAME_W - 1);
 	localparam [15:0] FRAME_LAST_Y_16 = 16'(FRAME_H - 1);
-	// Exact clone of colorbars in_content (full DE paint region).
-	wire [9:0] py = scandouble ? (vc >> 1) : vc;
+	// Beam Y for content + store. Native 480: use full vc (scandouble active 0..479).
+	// Legacy 240: half when scandoubled so two display lines share one store row.
+	wire [9:0] py = NATIVE_V_1TO1 ? vc : (scandouble ? (vc >> 1) : vc);
 	wire in_content = (hc < H_DE) && (py < V_STORE) && ~hb && ~vb;
 
-	// store_x = floor(hc * 320 / 529) ≈ (hc * 39647) >> 16  (39647/65536 ≈ 0.6049)
-	// Drive the address straight from the clamped counter, with no blank-time special
-	// case. Forcing store_x to 0 during blank used to hand column 0 to any display
-	// pixel whose address was issued outside `in_content` — with the sync delayed by
-	// DE_LAG that includes the last pixels of every line, which is what wrapped the
-	// first column onto the RIGHT edge. Free-running, hc keeps counting past H_DE so
-	// the clamp naturally holds column 319 through the right overhang, and hc wraps to
-	// 0 early in the left blank so column 0 is ready before DE opens.
+	// Drive store_x from free-running hc (no blank-time force-to-0). Blank-time
+	// reset handed column 0 to DE_LAG-delayed right-edge pixels (1 px wrap).
 	wire [9:0] read_hc = hc;
 	wire [31:0] store_x_prod = read_hc * STORE_X_SCALE;
 	wire [15:0] store_x_comb = store_x_prod[31:16];
 	wire [FRAME_X_W-1:0] store_x_clamped =
 		(store_x_comb > FRAME_LAST_X_16) ? FRAME_LAST_X : store_x_comb[FRAME_X_W-1:0];
 
-	// colorbars moves the V blank edges at hc == H_SYNC_S, i.e. AFTER each line's
-	// active region, so VBlank releases a line early with respect to the content
-	// window and line 240 is still displayed -- 241 active rows instead of 240.
-	// Measured on hardware with scripts/gen_edge_markers.py's stripe pattern: the
-	// bottom stripes land on a 1080/241 = 4.4813 row pitch, not 1080/240 = 4.5.
-	// That surplus row is the "bottom line": nothing gates it on py, so it reads
-	// store_y = 240, one row past the end of the 240-row store.
-	// Blank it, and clamp the address so an out-of-range row can never be fetched.
-	wire       past_last_row = (py >= 10'd240);
-	wire [9:0] store_y_clamped = past_last_row ? 10'd239 : py;
+	// Clamp past the content window so an out-of-range row is never fetched.
+	// colorbars can expose one surplus line vs VBlank edges; past_last_row also
+	// feeds vb_d so that line is blanked (G-VID1 bottom-edge fix, generalized
+	// from the hard-coded 240-row form to V_STORE).
+	wire       past_last_row = (py >= V_STORE);
+	wire [9:0] store_y_clamped = past_last_row ? V_STORE_LAST : py;
 	wire [31:0] store_y_prod = store_y_clamped * STORE_Y_SCALE;
 	wire [15:0] store_y_comb = store_y_prod[31:16];
 	wire [FRAME_Y_W-1:0] store_y_addr =

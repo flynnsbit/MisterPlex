@@ -1,14 +1,19 @@
 #pragma once
 // Per-publish Δframes_done + interval + vsync-phase ESTIMATE (w-geom).
 //
-// frames_done is the PRODUCT swap counter (not vsync). Between consecutive
-// successful publishes under free-gated double-buffer:
-//   Δ=1 → previous frame was swapped/displayed at least once
-//   Δ=0 → no swap between publishes → pending_bank overwrite class
-//         (ddr_frame_store.sv doorbell edge) → true zero-refresh skip
-//   Δ≥2 → unexpected (log; free-gate should prevent)
+// TIP RTL packs frames_done_d2 (real swaps) into PLXD[63:48].
+// DEPLOYED RBF c5382bee packs bank_vsync_count instead (HISTORICAL FAULT live) —
+// then Δfd tracks vsyncs in the interval (p_dge2≈1), NOT per-publish swaps.
+// Runtime: if p_d1 < 0.5 → fd_semantics=LIKELY_VSYNC_PACKED, skip_verdict=UNSCORED.
+// Never emit NO_ZERO_REFRESH_SKIP when the swap-counter premise fails (T2/T6).
 //
-// vsync_toggle is NOT ARM-readable on product PLXD. Phase is therefore:
+// When fd_semantics=SWAP_COUNTER (post new RBF), free-gated double-buffer:
+//   Δ=1 → previous frame was swapped/displayed at least once
+//   Δ=0 → no swap between publishes → pending_bank overwrite (zero-refresh skip)
+//   Δ≥2 → unexpected under free-gate
+//
+// vsync_toggle is NOT a separate ARM-readable field on PLXD. On c5382bee the
+// false "frames_done" *is* the vsync counter. Phase ESTIMATE:
 //   phase_est_us = mono_us % kVsyncPeriodUs   tag=ESTIMATE (assumes 60.000 Hz)
 // Parent ERROR 21: mean-preserving ±1 hold can come from CDC even with clean
 // intervals — phase near edge is the discriminant for Mechanism 1.
