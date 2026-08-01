@@ -1,86 +1,115 @@
-# Parent card — 480p cadence / hitch (publish_swap_delta)
+# Parent card — 480p cadence / hitch (DEFECT 1–3 fixed)
 
-**Agent does not touch the device.** Capture `true rc=$?` **directly**.
+**Branch:** `w-avsync-hdmi-measure`
+**Agent does not touch the device.** Capture `true rc=$?` **directly**, never through a pipe.
+`rc=77` / UNSCORED is **never** a pass. Never pool termination classes.
 
-## Analysis push-back (read first)
+---
 
-Quoted from `host/libmisterplex/publish_swap_delta_ledger.hpp`:
+## DEFECT 1 — metric re-spec (binding)
 
-1. **`ideal_ms = 1000/src_fps` (default 41.667)** is the **mean publish** target, not a display quantum. On 60 Hz, *display* holds are multiples of ~16.667 ms (2 or 3 for 24@60). Your analysis that a perfect 3:2 never lands on 41.667 as a *single interval* is **correct for display holds**.
+| Field | Derivation (printed with name) | Role |
+|-------|--------------------------------|------|
+| **`p_one_refresh_hold`** | `round(publish_iv_ms / T_vsync) == 1` | **PRIMARY defect** — one-refresh hold hitch |
+| `p_hold_d2` / `p_hold_d3` | same round(), bins 2 and 3 | OK for 24@60 |
+| `p_hold_d_ge4` | round ≥ 4 | TOO_LONG |
+| `cad_alt_frac` | frac consecutive (2,3) pairs that alternate | pattern regularity |
+| `cadence_verdict` | HITCHY_D1 / CADENCE_32_CLEAN / … | pattern class |
+| `p_delta1` / `p_d1` | `frac(Δframes_done == 1)` | **NOT** hold length |
+| `p_ge50` | `frac(publish_iv_ms > 50)` | **FORENSIC ONLY** — not a defect score |
+| `mean_ms` | mean(publish_iv_ms) | rate only; **≠ smooth cadence** |
 
-2. **`p_ge50` is `count(iv_ms > 50) / n` on publish intervals** — it is **not** “fraction of legitimate 3-refresh holds”. A clean ARM publisher can sit near 41.667 with low sigma while the **async** display path still does 2,3,2,3. Penalising 50 ms publish gaps is about **ARM lateness**, not scoring 3:2. **Partially agree:** `p_ge50` is a bad *judder* metric; **disagree** that perfect 3:2 would put ~50% of *publish* intervals at 50 ms (publish can be steady 41.7 while display holds alternate).
+**Your p_d1≈0.0335 hitch claim:** after this daemon, read **`PRIMARY p_one_refresh_hold=`**, not `p_d1`.
+`p_d1` remains Δframes_done; alias line says `p_d1_der=delta_fd_eq1_NOT_one_refresh_hold`.
 
-3. **`p_d1` / `p_delta1` = fraction of pairs with Δframes_done==1**, not “held one refresh”. Alias line now states this. Hitch metric is **`p_hold_d1`** = `round(iv_ms/T_vsync)==1`.
+**Push-back retained:** perfect *display* 3:2 never sits on 41.667 as a single quantum — agree.
+`ideal_ms=1000/src_fps` is mean **publish** target. A metronome publisher at 41.667 can still show `CADENCE_METRONOME_OK` while glass holds 2/3; that is **not** `CADENCE_32_CLEAN` (needs alternating ~33.3/50.0 publish iv).
 
-4. Your session with `p_d1≈0.03`, `p_dge2≈0.96`, and `skip_verdict=NO_ZERO_REFRESH_SKIP` is **inconsistent with tip code** (skip requires `p_delta1>=0.5`). Either log was paraphrased or an older binary. After this deploy, expect `fd_semantics` + `skip_verdict=UNSCORED` when `p_delta1<0.5`.
+---
 
-5. **`mean_ms≈ideal` while judder exists** — **agree**. Instrument now emits `mean_vs_cadence_note=...` and scores **hold_d + cad_alt_frac**.
-
-6. **`phase_tag` / `vsync_tag=DEFAULT_ASSUMED` (60 Hz)** — all hold_d depend on it. Measure via glass 60 fps capture pts modal Δ, or lab meter; then we can add `setVsyncHzMeasured` from conf/env later. Check: modal of HDMI pts intervals at 60-cap should be ~16.67 ms.
-
-## PRE-REGISTER (before you run)
-
-| Metric | Clean 24@60 | Hitchy (user bug class) | High-sigma session |
-|--------|-------------|-------------------------|---------------------|
-| p_hold_d1 | < 0.01 | ≥ 0.02 (~1/s if ~0.03) | ignore cadence if n low |
-| cad_alt_frac | ≥ 0.85 | any | — |
-| cadence_verdict | CADENCE_32_CLEAN | HITCHY_D1 | — |
-| p_ge50 | scoreable only if sigma < mean | scoreable if sigma < mean | **UNSCORED_SIGMA_GE_MEAN** |
-| mean_ms | ~41.67 | may still be ~41.67 | misleading |
-| frames/presents/drops | close | close | — |
-
-**Prediction for your clean 30 s RK6-class session (sigma=10.5 < mean):**  
-`p_ge50` remains scoreable (~0.14 → ARM_LATE_OR_BIMODAL) **and** `p_hold_d1` is the hitch metric to watch. If user judder is 1-refresh holds, expect `cadence_verdict=HITCHY_D1`.
-
-**Prediction for stop_or_seek (sigma=65 > mean):**  
-`interval_verdict=UNSCORED_SIGMA_GE_MEAN`, `p_ge50_scoreable=0` — do not publish 14.8% as a score.
-
-## Deploy (host)
+## DEFECT 2 — measure refresh (not ESTIMATE)
 
 ```bash
-cd /path/to/MisterPlex
-make -j"$(nproc)" build/test_publish_swap_delta_ledger
-./build/test_publish_swap_delta_ledger; echo "true rc=$?"
-# expect OK, rc=0
+fuser -v /dev/video0; echo "true rc=$?"
 
-make arm-plexd; echo "true rc=$?"
-# deploy daemon only (parent): scripts/deploy_misterplexd.sh
-# core 78eff44e already live — do not thrash RBF
+python3 tools/measure_refresh_hz.py --device /dev/video0 --frames 90 --warmup 15
+echo "true rc=$?"
+# MEASURED → refresh_hz=… tag=measured
+# DEVICE_BUSY → rc=2 (never 0 Hz)
+# empty → rc=77 NO_DATA (never zero)
+
+export MISTERPLEX_VSYNC_HZ=<refresh_hz from tool>
+export MISTERPLEX_SRC_FPS=24   # only if you measured/know asset rate
+# restart daemon so play() reads env
 ```
 
-## Device run (short RK6 ~30 s OK; long fixture later)
+Without env: `vsync_hz_tag=DEFAULT_ASSUMED` and
+`phase_tag=ESTIMATE_OR_DEFAULT_vsync_hz_ALL_hold_d_CONDITIONAL`.
+Offline: `--require-measured-vsync` → rc=77 until `--vsync-hz`.
+
+---
+
+## DEFECT 3 / ERROR 17 — no bare fps “measurement”
+
+- Ledger: `src_fps=… src_fps_tag=…` + `ideal_ms_der=1000/src_fps`.
+- `hdmi_motion_instrument.py`: default **24.0**; assert rejects 23.976 lookalike.
+- Standing rule: every field name carries derivation in the same breath.
+
+---
+
+## Sigma gate (never pool)
+
+| Session | sigma vs mean | p_ge50 |
+|---------|---------------|--------|
+| clean natural-EOF sigma=10.5 mean=41.7 | scoreable forensic | tag=measured |
+| stop_or_seek sigma=65 > mean | **UNSCORED_SIGMA_GE_MEAN** | not a score |
 
 ```bash
-# natural EOF one play of 480p 24fps asset; do NOT pool with seek/stop session
-# pull log after session_end
-grep publish_swap_delta /path/to/misterplexd.log | tail -5
-```
-
-Host score:
-
-```bash
-python3 tools/publish_cadence_score.py daemon.log; echo "true rc=$?"
-# HITCHY_D1 → 2; CLEAN → 0; sigma gate → 77
-```
-
-Glass cross-check (primary display hold, independent of ARM):
-
-```bash
-# 720p60 capture of same play if overlay counter present
-python3 tools/glass_hold_skip.py CAP --templates T.pkl --pts pts.csv \
-  --source-fps 24 --capture-fps 60 --refresh-hz 60 --force-mode 720
+python3 tools/publish_cadence_score.py daemon.log --phase session_end
 echo "true rc=$?"
 ```
 
-## Measure vsync (optional, upgrades DEFAULT_ASSUMED)
+---
+
+## PRE-REGISTER (before device run)
+
+| Metric | Clean 24@60 | Hitchy (~user bug) | High-sigma |
+|--------|-------------|--------------------|------------|
+| p_one_refresh_hold | < 0.01 | ≥ 0.02 (~0.033 → ~1/s) | still report if hold_n≥50 |
+| cadence_verdict | CADENCE_32_CLEAN or METRONOME_OK | **HITCHY_D1** | — |
+| p_ge50 | forensic if sigma≪mean | forensic | **UNSCORED_SIGMA_GE_MEAN** |
+| mean_ms ~ ideal | yes | **may still be yes** | misleading |
+
+**Prediction (clean 30 s RK6-class, sigma=10.5):** PRIMARY = `p_one_refresh_hold`. User judder class → ≥0.02, `HITCHY_D1`, scorer rc=2.
+`p_ge50~0.14` forensic only — **not** the hitch answer.
+
+**Falsifier:** `p_one_refresh_hold < 0.01` and glass hold hist clean → hitch claim fails here.
+
+---
+
+## Host gates (agent-verified this commit)
 
 ```bash
-# 60 fps grabber burst; modal pts Δ → measured refresh
-ffprobe -v error -select_streams v -show_entries frame=pts_time -of csv=p=0 cap.mkv
-# parent computes modal Δ; if ~0.01667 report measured_hz=1/modal
+./build/test_publish_swap_delta_ledger; echo "true rc=$?"   # 0
+./build/test_publish_interval_ledger; echo "true rc=$?"     # 0
+./build/test_cadence_swap_path; echo "true rc=$?"           # 0
+python3 tools/publish_cadence_score.py --self-test; echo "true rc=$?"  # 0
+python3 tools/measure_refresh_hz.py --self-test; echo "true rc=$?"     # 0
 ```
 
-## Do not pool sessions
+## Deploy daemon (parent)
 
-Clean natural-EOF and stop_or_seek are separate artifacts. High-sigma never updates a p_ge50 claim.
+```bash
+make arm-plexd; echo "true rc=$?"
+# deploy misterplexd only — core 78eff44e live; do not thrash RBF
+```
 
+## Device score after natural-EOF
+
+```bash
+grep -E 'publish_swap_delta |cadence_vsync|PRIMARY' misterplexd.log | tail -20
+python3 tools/publish_cadence_score.py daemon.log --phase session_end \
+  --vsync-hz "$MISTERPLEX_VSYNC_HZ"
+echo "true rc=$?"
+# HITCHY → 2; OK → 0; missing/sigma/vsync → 77
+```

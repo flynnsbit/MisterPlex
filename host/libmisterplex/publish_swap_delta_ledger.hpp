@@ -18,8 +18,12 @@
 // mean_ms ≈ ideal while the picture judders is expected when cadence is
 // scrambled but rate-conserving — the instrument says so explicitly.
 //
-// p_ge50 gate (binding): if sigma_ms >= mean_ms, p_ge50 is NOT a score
-// (tag=UNSCORED_SIGMA_GE_MEAN). Never pool high-sigma with clean sessions.
+// p_ge50 is FORENSIC ONLY — never a defect score (parent DEFECT 1).
+// It conflates legitimate ~50 ms 3-refresh publish gaps with lateness when
+// someone treats 41.667 as a quantum. Primary defect = p_one_refresh_hold
+// (=p_hold_d1): fraction of intervals with round(iv_ms/T_vsync)==1.
+// Sigma gate: if sigma_ms >= mean_ms, p_ge50_tag=UNSCORED_SIGMA_GE_MEAN and
+// interval_verdict refuses ARM_LATE_* bands. Never pool sessions.
 //
 // TIP RTL packs frames_done_d2 (real swaps) into PLXD[63:48].
 // DEPLOYED RBF c5382bee packed bank_vsync_count (HISTORICAL) — then Δfd tracks
@@ -239,6 +243,9 @@ struct PublishSwapDeltaLedger {
 
         std::int64_t hold_n = 0;
         double p_hold_d1 = 0;
+        // Primary user-facing defect (== p_hold_d1). Name states derivation.
+        double p_one_refresh_hold = 0;
+        const char* p_one_refresh_hold_der = "round(publish_iv_ms/T_vsync)==1";
         double p_hold_d2 = 0;
         double p_hold_d3 = 0;
         double p_hold_d_ge4 = 0;
@@ -311,8 +318,10 @@ struct PublishSwapDeltaLedger {
         }
 
         s.hold_n = hold_n;
+        s.p_one_refresh_hold = 0;
         if (hold_n >= 50) {
             s.p_hold_d1 = double(hold_d1) / double(hold_n);
+            s.p_one_refresh_hold = s.p_hold_d1; // primary alias
             s.p_hold_d2 = double(hold_d2) / double(hold_n);
             s.p_hold_d3 = double(hold_d3) / double(hold_n);
             s.p_hold_d_ge4 = double(hold_d_ge4) / double(hold_n);
@@ -321,29 +330,36 @@ struct PublishSwapDeltaLedger {
             if (cad_pair_n > 0)
                 s.cad_alt_frac = double(cad_alt_n) / double(cad_pair_n);
 
-            // NOTE: steady publish at ideal_ms=41.667 rounds to hold_d=2 or 3
-            // (2.5→banker's even) for *every* sample — that is NOT display 3:2
-            // alternation; it is a metronome publisher. Do not call it IRREGULAR.
-            // True 2,3 alternation requires publish iv alternating ~33.3/50.0.
-            const double p23 = s.p_hold_d2 + s.p_hold_d3;
-            const bool near_ideal =
-                (s.mean_ms > 0.0) &&
-                (std::fabs(s.mean_ms - s.ideal_ms) <= 2.0) &&
-                (s.sigma_ms < 8.0);
-            if (s.p_hold_d1 >= 0.02)
-                s.cadence_verdict = "HITCHY_D1";
-            else if (s.p_hold_d_ge4 >= 0.05)
-                s.cadence_verdict = "LONG_HOLDS";
-            else if (p23 >= 0.95 && s.cad_alt_frac >= 0.85 && s.p_hold_d1 < 0.01)
-                s.cadence_verdict = "CADENCE_32_CLEAN";
-            else if (near_ideal && s.p_hold_d1 < 0.01 && s.p_hold_d_ge4 < 0.03)
-                s.cadence_verdict = "CADENCE_METRONOME_OK";
-            else if (p23 >= 0.90 && s.cad_alt_frac < 0.55 && s.sigma_ms >= 6.0)
-                s.cadence_verdict = "CADENCE_IRREGULAR";
-            else if (p23 >= 0.90)
-                s.cadence_verdict = "CADENCE_OK_MILD";
-            else
-                s.cadence_verdict = "CADENCE_OTHER";
+            // Binding: cadence / p_one_refresh_hold not scoreable when
+            // sigma_ms >= mean_ms (parent: stop_or_seek class). Raw fractions
+            // still emitted for forensics; verdict refuses PASS/FAIL.
+            if (s.mean_ms > 0.0 && s.sigma_ms >= s.mean_ms) {
+                s.cadence_verdict = "UNSCORED_SIGMA_GE_MEAN";
+            } else {
+                // NOTE: steady publish at ideal_ms=41.667 rounds to hold_d=2 or 3
+                // (2.5→banker's even) for *every* sample — that is NOT display 3:2
+                // alternation; it is a metronome publisher. Do not call it IRREGULAR.
+                // True 2,3 alternation requires publish iv alternating ~33.3/50.0.
+                const double p23 = s.p_hold_d2 + s.p_hold_d3;
+                const bool near_ideal =
+                    (s.mean_ms > 0.0) &&
+                    (std::fabs(s.mean_ms - s.ideal_ms) <= 2.0) &&
+                    (s.sigma_ms < 8.0);
+                if (s.p_hold_d1 >= 0.02)
+                    s.cadence_verdict = "HITCHY_D1";
+                else if (s.p_hold_d_ge4 >= 0.05)
+                    s.cadence_verdict = "LONG_HOLDS";
+                else if (p23 >= 0.95 && s.cad_alt_frac >= 0.85 && s.p_hold_d1 < 0.01)
+                    s.cadence_verdict = "CADENCE_32_CLEAN";
+                else if (near_ideal && s.p_hold_d1 < 0.01 && s.p_hold_d_ge4 < 0.03)
+                    s.cadence_verdict = "CADENCE_METRONOME_OK";
+                else if (p23 >= 0.90 && s.cad_alt_frac < 0.55 && s.sigma_ms >= 6.0)
+                    s.cadence_verdict = "CADENCE_IRREGULAR";
+                else if (p23 >= 0.90)
+                    s.cadence_verdict = "CADENCE_OK_MILD";
+                else
+                    s.cadence_verdict = "CADENCE_OTHER";
+            }
         } else {
             s.cadence_verdict = "UNSCORED";
         }
@@ -371,40 +387,60 @@ struct PublishSwapDeltaLedger {
 
     std::string formatSummaryLine(const char* tag = "measured") const {
         const Summary s = summarize();
-        char buf[1200];
+        char buf[1600];
+        // PRIMARY defect first (parent DEFECT 1). p_ge50 is forensic-only.
         std::snprintf(
             buf, sizeof(buf),
-            "publish_swap_delta notes=%lld pairs=%lld "
-            "p_delta0=%.4f p_delta1=%.4f p_delta_ge2=%.4f mean_delta=%.3f "
-            "p_ge50=%.4f p_ge50_tag=%s p_ge50_scoreable=%d "
-            "mean_ms=%.3f sigma_ms=%.3f "
-            "interval_verdict=%s skip_verdict=%s fd_semantics=%s "
-            "p_hold_d1=%.4f p_hold_d2=%.4f p_hold_d3=%.4f p_hold_d_ge4=%.4f "
-            "p_hold_defect=%.4f cad_alt_frac=%.4f cadence_verdict=%s "
-            "hold_src=%s "
-            "phase_tag=%s_vsync_hz ideal_ms=%.3f ideal_ms_tag=%s "
-            "src_fps=%.6f src_fps_tag=%s vsync_hz=%.6f vsync_tag=%s "
+            "publish_swap_delta "
+            "PRIMARY p_one_refresh_hold=%.4f "
+            "p_one_refresh_hold_der=round(publish_iv_ms/T_vsync)==1_NOT_delta_fd "
+            "p_one_refresh_hold_tag=derived cadence_verdict=%s "
+            "p_hold_d2=%.4f p_hold_d3=%.4f p_hold_d_ge4=%.4f "
+            "p_hold_defect=%.4f cad_alt_frac=%.4f hold_src=%s "
+            "notes=%lld pairs=%lld "
+            "mean_ms=%.3f mean_ms_der=mean(publish_iv_ms) mean_ms_tag=measured "
+            "sigma_ms=%.3f sigma_ms_der=stdev(publish_iv_ms) sigma_ms_tag=measured "
+            "ideal_ms=%.3f ideal_ms_der=1000/src_fps ideal_ms_tag=%s "
+            "src_fps=%.6f src_fps_tag=%s "
+            "vsync_hz=%.6f vsync_hz_der=T_for_hold_d vsync_tag=%s "
+            "phase_tag=%s "
+            "p_delta0=%.4f p_delta0_der=frac(delta_frames_done==0) "
+            "p_delta1=%.4f p_delta1_der=frac(delta_frames_done==1)_NOT_hold "
+            "p_delta_ge2=%.4f mean_delta=%.3f "
+            "fd_semantics=%s skip_verdict=%s "
+            "p_ge50=%.4f p_ge50_der=frac(publish_iv_ms>50)_FORENSIC_NOT_DEFECT "
+            "p_ge50_tag=%s p_ge50_scoreable=%d "
+            "interval_verdict=%s "
             "mean_vs_cadence_note=%s tag=%s",
-            static_cast<long long>(s.notes), static_cast<long long>(s.pairs), s.p_delta0,
-            s.p_delta1, s.p_delta_ge2, s.mean_delta, s.p_ge50, s.p_ge50_tag,
-            s.p_ge50_scoreable ? 1 : 0, s.mean_ms, s.sigma_ms, s.interval_verdict,
-            s.skip_verdict, s.fd_semantics, s.p_hold_d1, s.p_hold_d2, s.p_hold_d3,
-            s.p_hold_d_ge4, s.p_hold_defect, s.cad_alt_frac, s.cadence_verdict, s.hold_src,
-            s.vsync_tag, s.ideal_ms, s.ideal_ms_tag, s.src_fps, s.src_fps_tag, s.vsync_hz,
-            s.vsync_tag, s.mean_vs_cadence_note, tag);
+            s.p_one_refresh_hold, s.cadence_verdict, s.p_hold_d2, s.p_hold_d3,
+            s.p_hold_d_ge4, s.p_hold_defect, s.cad_alt_frac, s.hold_src,
+            static_cast<long long>(s.notes), static_cast<long long>(s.pairs), s.mean_ms,
+            s.sigma_ms, s.ideal_ms, s.ideal_ms_tag, s.src_fps, s.src_fps_tag, s.vsync_hz,
+            s.vsync_tag,
+            (std::strcmp(s.vsync_tag, "measured") == 0
+                 ? "MEASURED_vsync_hz"
+                 : "ESTIMATE_OR_DEFAULT_vsync_hz_ALL_hold_d_CONDITIONAL"),
+            s.p_delta0, s.p_delta1, s.p_delta_ge2, s.mean_delta, s.fd_semantics,
+            s.skip_verdict, s.p_ge50, s.p_ge50_tag, s.p_ge50_scoreable ? 1 : 0,
+            s.interval_verdict, s.mean_vs_cadence_note, tag);
         return std::string(buf);
     }
 
     std::string formatCompatAliasLine() const {
         const Summary s = summarize();
-        char buf[512];
+        char buf[640];
         std::snprintf(
             buf, sizeof(buf),
-            "publish_swap_delta_alias p_d0=%.4f p_d1=%.4f p_dge2=%.4f "
-            "p_d1_is=delta_frames_done_eq1_NOT_hold_refresh "
-            "p_hold_d1=%.4f p_ge50=%.4f p_ge50_tag=%s cadence_verdict=%s",
-            s.p_delta0, s.p_delta1, s.p_delta_ge2, s.p_hold_d1, s.p_ge50, s.p_ge50_tag,
-            s.cadence_verdict);
+            "publish_swap_delta_alias "
+            "p_one_refresh_hold=%.4f p_one_refresh_hold_der=round(iv_ms/T_vsync)==1 "
+            "p_d1_hold=%.4f "
+            "p_d0=%.4f p_d0_der=delta_fd_eq0 "
+            "p_d1=%.4f p_d1_der=delta_fd_eq1_NOT_one_refresh_hold "
+            "p_dge2=%.4f "
+            "p_ge50=%.4f p_ge50_tag=%s p_ge50_role=forensic_only "
+            "cadence_verdict=%s",
+            s.p_one_refresh_hold, s.p_one_refresh_hold, s.p_delta0, s.p_delta1,
+            s.p_delta_ge2, s.p_ge50, s.p_ge50_tag, s.cadence_verdict);
         return std::string(buf);
     }
 

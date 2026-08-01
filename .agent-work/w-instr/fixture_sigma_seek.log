@@ -1,0 +1,1 @@
+media: publish_swap_delta PRIMARY p_one_refresh_hold=0.01 cadence_verdict=CADENCE_OK_MILD mean_ms=42.755 sigma_ms=65.473 p_ge50=0.1479 p_ge50_tag=measured vsync_tag=measured phase=session_end tag=measured

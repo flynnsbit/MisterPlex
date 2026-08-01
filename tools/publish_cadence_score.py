@@ -1,12 +1,23 @@
 #!/usr/bin/env python3
-"""Offline score of publish_swap_delta / cadence fields from a daemon log.
+"""Score publish cadence from daemon log — PRIMARY = one-refresh hold fraction.
 
-Also synthesizes hold_d from interval lists when only mono dumps exist.
+DEFECT 1 (parent): p_ge50 is NOT a defect metric (conflates legal ~50ms gaps
+with lateness if 41.667 is treated as a quantum). Primary:
 
-Labels every value measured | caller_supplied | DEFAULT_ASSUMED | derived.
+  p_one_refresh_hold = fraction of publish intervals with
+      round(iv_ms / T_vsync) == 1
+  der printed beside name. At 24fps@60Hz this is unambiguously wrong.
 
-Exit: 0 scored OK/clean, 2 HITCHY/FAIL, 77 UNSCORED, 1 usage.
-true rc must be captured directly (never through a pipe).
+p_d1 / p_delta1 = frac(Δframes_done==1) — DIFFERENT metric; never alias silently.
+
+DEFECT 2: vsync_tag must be measured or every hold_d is CONDITIONAL.
+DEFECT 3 / ERROR 17: never print fps without src=measured|caller_supplied|DEFAULT_ASSUMED.
+
+Guards: empty log = NO_DATA not zero; do not pool termination classes;
+sigma>=mean => p_ge50 forensic unscored.
+
+Exit: 0 OK, 2 HITCHY/FAIL, 77 UNSCORED, 1 usage.
+true rc: cmd; echo "true rc=$?"  — never through a pipe.
 """
 from __future__ import annotations
 
@@ -20,6 +31,8 @@ RC_USAGE = 1
 RC_FAIL = 2
 RC_UNSCORED = 77
 
+TERM_CLASSES = ("session_end", "mid", "stop_or_seek", "unknown")
+
 
 def parse_kv(line: str) -> dict[str, str]:
     out: dict[str, str] = {}
@@ -28,156 +41,254 @@ def parse_kv(line: str) -> dict[str, str]:
     return out
 
 
-def score_from_summary_kv(kv: dict[str, str]) -> dict:
-    def f(name: str, default: float | None = None) -> float | None:
+def term_class(line: str) -> str:
+    if "phase=session_end" in line or "phase=session-end" in line:
+        return "session_end"
+    if "phase=mid" in line:
+        return "mid"
+    if "stop" in line or "seek" in line:
+        return "stop_or_seek"
+    return "unknown"
+
+
+def score_kv(kv: dict[str, str], *, require_measured_vsync: bool) -> dict:
+    def f(name: str):
         if name not in kv:
-            return default
+            return None
         try:
             return float(kv[name])
         except ValueError:
-            return default
+            return None
 
-    p_ge50 = f("p_ge50")
+    # Primary defect name (prefer new field)
+    p1 = f("p_one_refresh_hold")
+    if p1 is None:
+        p1 = f("p_hold_d1")
+    p1_der = kv.get(
+        "p_one_refresh_hold_der",
+        "round(publish_iv_ms/T_vsync)==1",
+    )
+    cad = kv.get("cadence_verdict", "ABSENT")
     mean_ms = f("mean_ms")
     sigma_ms = f("sigma_ms")
-    p_hold_d1 = f("p_hold_d1")
-    cad = kv.get("cadence_verdict", "ABSENT")
+    p_ge50 = f("p_ge50")
     p_ge50_tag = kv.get("p_ge50_tag", "ABSENT")
-    interval_verdict = kv.get("interval_verdict", kv.get("verdict", "ABSENT"))
+    vsync_tag = kv.get("vsync_tag", kv.get("phase_tag", "ABSENT"))
+    if "ESTIMATE" in str(vsync_tag) or vsync_tag == "DEFAULT_ASSUMED":
+        vsync_status = "DEFAULT_OR_ESTIMATE"
+    elif vsync_tag == "measured" or "MEASURED" in str(vsync_tag):
+        vsync_status = "measured"
+    else:
+        vsync_status = str(vsync_tag)
 
-    # Sigma gate (also recompute if tags missing — old logs)
-    if mean_ms is not None and sigma_ms is not None and mean_ms > 0:
-        if sigma_ms >= mean_ms:
-            p_ge50_tag = "UNSCORED_SIGMA_GE_MEAN"
-            interval_verdict = "UNSCORED_SIGMA_GE_MEAN"
+    # Sigma gate: p_ge50 forensic AND primary cadence both unscored when sigma>=mean
+    sigma_bad = (
+        mean_ms is not None
+        and sigma_ms is not None
+        and mean_ms > 0
+        and sigma_ms >= mean_ms
+    )
+    if sigma_bad:
+        p_ge50_tag = "UNSCORED_SIGMA_GE_MEAN"
 
     rep = {
-        "p_ge50": p_ge50,
-        "p_ge50_tag": p_ge50_tag,
-        "mean_ms": mean_ms,
-        "sigma_ms": sigma_ms,
-        "p_hold_d1": p_hold_d1,
+        "PRIMARY_p_one_refresh_hold": p1,
+        "PRIMARY_der": p1_der,
+        "PRIMARY_tag": "derived",
+        "cadence_verdict": cad,
         "p_hold_d2": f("p_hold_d2"),
         "p_hold_d3": f("p_hold_d3"),
         "p_hold_d_ge4": f("p_hold_d_ge4"),
         "cad_alt_frac": f("cad_alt_frac"),
-        "cadence_verdict": cad,
-        "interval_verdict": interval_verdict,
-        "fd_semantics": kv.get("fd_semantics", "ABSENT"),
-        "skip_verdict": kv.get("skip_verdict", "ABSENT"),
-        "src": "measured" if "p_hold_d1" in kv else "legacy_log",
+        "mean_ms": mean_ms,
+        "mean_ms_der": "mean(publish_iv_ms)",
+        "sigma_ms": sigma_ms,
+        "sigma_ms_der": "stdev(publish_iv_ms)",
+        "p_ge50": p_ge50,
+        "p_ge50_der": "frac(publish_iv_ms>50)_FORENSIC_NOT_DEFECT",
+        "p_ge50_tag": p_ge50_tag,
+        "p_delta1": f("p_delta1") if "p_delta1" in kv else f("p_d1"),
+        "p_delta1_der": "frac(delta_frames_done==1)_NOT_one_refresh_hold",
+        "vsync_tag": vsync_tag,
+        "vsync_status": vsync_status,
+        "hold_d_conditional": vsync_status != "measured",
     }
 
-    if p_ge50_tag == "UNSCORED_SIGMA_GE_MEAN":
+    if require_measured_vsync and vsync_status != "measured":
+        rep["verdict"] = "UNSCORED_VSYNC_NOT_MEASURED"
+        rep["rc"] = RC_UNSCORED
+        rep["reason"] = (
+            "hold_d/p_one_refresh_hold conditional on T_vsync; "
+            "run tools/measure_refresh_hz.py and pass --vsync-hz measured"
+        )
+        return rep
+
+    # Binding: refuse to score hitch/cadence when sigma >= mean (parent T2).
+    # Raw p_one_refresh_hold may still be printed for forensics.
+    if sigma_bad:
         rep["verdict"] = "UNSCORED_SIGMA_GE_MEAN"
         rep["rc"] = RC_UNSCORED
+        rep["reason"] = (
+            "sigma_ms>=mean_ms — refuse p_one_refresh_hold/p_ge50 as scores; "
+            "do not pool with clean natural-EOF session"
+        )
         return rep
-    if cad == "HITCHY_D1" or (p_hold_d1 is not None and p_hold_d1 >= 0.02):
-        rep["verdict"] = "HITCHY_D1"
+
+    if p1 is None and cad in ("ABSENT", "UNSCORED"):
+        rep["verdict"] = "UNSCORED"
+        rep["rc"] = RC_UNSCORED
+        rep["reason"] = "no p_one_refresh_hold — redeploy cadence daemon"
+        return rep
+
+    if p1 is not None and p1 >= 0.02:
+        rep["verdict"] = "HITCHY_ONE_REFRESH_HOLD"
+        rep["rc"] = RC_FAIL
+        return rep
+    if cad == "HITCHY_D1":
+        rep["verdict"] = "HITCHY_ONE_REFRESH_HOLD"
         rep["rc"] = RC_FAIL
         return rep
     if cad in ("CADENCE_32_CLEAN", "CADENCE_METRONOME_OK", "CADENCE_OK_MILD"):
         rep["verdict"] = cad
         rep["rc"] = RC_OK
         return rep
-    if cad in ("ABSENT", "UNSCORED") and p_hold_d1 is None:
-        rep["verdict"] = "UNSCORED"
-        rep["rc"] = RC_UNSCORED
-        rep["reason"] = "no cadence fields — redeploy daemon with cadence ledger"
+    if cad == "CADENCE_IRREGULAR":
+        rep["verdict"] = cad
+        rep["rc"] = RC_FAIL
         return rep
-    rep["verdict"] = cad
-    rep["rc"] = RC_FAIL
+    if p1 is not None and p1 < 0.02:
+        rep["verdict"] = "ONE_REFRESH_HOLD_OK"
+        rep["rc"] = RC_OK
+        return rep
+    rep["verdict"] = cad or "UNSCORED"
+    rep["rc"] = RC_UNSCORED
     return rep
 
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("log", type=Path, nargs="?", help="daemon log containing publish_swap_delta")
+    ap.add_argument("log", type=Path, nargs="?", help="daemon log")
+    ap.add_argument(
+        "--phase",
+        choices=TERM_CLASSES,
+        default="session_end",
+        help="termination class to score; refuse merge across classes",
+    )
+    ap.add_argument(
+        "--require-measured-vsync",
+        action="store_true",
+        help="rc=77 unless vsync_tag=measured (DEFECT 2 loud)",
+    )
+    ap.add_argument("--vsync-hz", type=float, default=None, help="caller_supplied measured Hz")
     ap.add_argument("--self-test", action="store_true")
     args = ap.parse_args()
 
     if args.self_test:
-        print("PRE-REGISTER offline cadence score:")
-        print("  sigma>=mean => rc=77 UNSCORED_SIGMA_GE_MEAN")
-        print("  p_hold_d1>=0.02 => rc=2 HITCHY_D1")
-        print("  CADENCE_32_CLEAN => rc=0")
+        print("PRE-REGISTER cadence score:")
+        print("  PRIMARY=p_one_refresh_hold der=round(iv/T)==1")
+        print("  p_ge50=forensic_only; sigma>=mean => not score")
+        print("  no pool across phase= classes")
         ok = True
-        r1 = score_from_summary_kv(
+        r = score_kv(
             {
-                "p_ge50": "0.14",
-                "mean_ms": "42.0",
-                "sigma_ms": "65.0",
-                "p_hold_d1": "0.03",
+                "p_one_refresh_hold": "0.0335",
+                "p_one_refresh_hold_der": "round(publish_iv_ms/T_vsync)==1",
                 "cadence_verdict": "HITCHY_D1",
-            }
+                "mean_ms": "41.659",
+                "sigma_ms": "10.506",
+                "p_ge50": "0.1403",
+                "p_ge50_tag": "measured",
+                "vsync_tag": "DEFAULT_ASSUMED",
+            },
+            require_measured_vsync=False,
         )
-        print("RED_sigma", r1)
-        if r1["rc"] != RC_UNSCORED:
-            print("FAIL sigma gate"); ok = False
+        print("LIVE_CLASS", r)
+        if r["rc"] != RC_FAIL or r["PRIMARY_p_one_refresh_hold"] != 0.0335:
+            print("FAIL hitch primary"); ok = False
         else:
-            print("PASS sigma gate")
-        r2 = score_from_summary_kv(
+            print("PASS hitch primary p_one_refresh_hold=0.0335")
+        r2 = score_kv(
+            {"p_ge50": "0.15", "mean_ms": "42", "sigma_ms": "65", "vsync_tag": "measured"},
+            require_measured_vsync=True,
+        )
+        print("SIGMA", r2)
+        if r2["rc"] != RC_UNSCORED:
+            print("FAIL sigma"); ok = False
+        else:
+            print("PASS sigma UNSCORED")
+        r3 = score_kv(
             {
-                "p_ge50": "0.14",
-                "mean_ms": "41.66",
-                "sigma_ms": "10.5",
-                "p_hold_d1": "0.034",
-                "p_hold_d2": "0.48",
-                "p_hold_d3": "0.48",
+                "p_one_refresh_hold": "0.0335",
                 "cadence_verdict": "HITCHY_D1",
-                "p_ge50_tag": "measured",
-            }
+                "vsync_tag": "DEFAULT_ASSUMED",
+            },
+            require_measured_vsync=True,
         )
-        print("RED_hitch", r2)
-        if r2["rc"] != RC_FAIL:
-            print("FAIL hitchy"); ok = False
+        if r3["rc"] != RC_UNSCORED:
+            print("FAIL vsync require"); ok = False
         else:
-            print("PASS hitchy")
-        r3 = score_from_summary_kv(
-            {
-                "p_ge50": "0.0",
-                "mean_ms": "41.67",
-                "sigma_ms": "2.0",
-                "p_hold_d1": "0.0",
-                "cadence_verdict": "CADENCE_32_CLEAN",
-                "p_ge50_tag": "measured",
-            }
-        )
-        print("GREEN_clean", r3)
-        if r3["rc"] != RC_OK:
-            print("FAIL clean"); ok = False
-        else:
-            print("PASS clean")
+            print("PASS vsync require UNSCORED")
         print("SELF_TEST_OK" if ok else "SELF_TEST_FAIL")
         return RC_OK if ok else RC_FAIL
 
     if not args.log or not args.log.is_file():
-        ap.error("log required")
-        return RC_USAGE
+        print("NO_DATA log missing — empty means no-data not zero")
+        return RC_UNSCORED
 
     lines = args.log.read_text(errors="replace").splitlines()
-    # Prefer session_end lines with p_hold_d1; else last publish_swap_delta
-    candidates = [ln for ln in lines if "publish_swap_delta" in ln and "phase_est" not in ln]
-    if not candidates:
-        print("UNSCORED no publish_swap_delta lines")
+    cands = [
+        ln
+        for ln in lines
+        if "publish_swap_delta" in ln and "phase_est" not in ln and "_alias" not in ln
+    ]
+    if not cands:
+        print("NO_DATA no publish_swap_delta lines — not zero defect")
         return RC_UNSCORED
-    # last with cadence fields else last
+
+    # Filter by termination class — NEVER pool
+    matched = [ln for ln in cands if term_class(ln) == args.phase]
+    if not matched:
+        # allow unknown if only one class present
+        classes = sorted({term_class(ln) for ln in cands})
+        print(
+            f"NO_DATA phase={args.phase} lines=0 present_classes={classes} "
+            f"— refuse pool; pick --phase"
+        )
+        return RC_UNSCORED
+
     pick = None
-    for ln in reversed(candidates):
-        if "p_hold_d1=" in ln or "cadence_verdict=" in ln:
+    for ln in reversed(matched):
+        if "p_one_refresh_hold=" in ln or "p_hold_d1=" in ln or "cadence_verdict=" in ln:
             pick = ln
             break
     if pick is None:
-        pick = candidates[-1]
-    print("LINE", pick[:240])
+        pick = matched[-1]
+
+    print(f"phase={args.phase} n_lines={len(matched)} (not pooled with other phases)")
+    print("LINE", pick[:280])
     kv = parse_kv(pick)
-    rep = score_from_summary_kv(kv)
+    if args.vsync_hz is not None:
+        kv["vsync_tag"] = "measured"
+        kv["vsync_hz"] = str(args.vsync_hz)
+        print(
+            f"vsync_hz={args.vsync_hz} vsync_hz_tag=caller_supplied "
+            f"vsync_hz_der=parent_measure_refresh_hz"
+        )
+    rep = score_kv(kv, require_measured_vsync=args.require_measured_vsync)
     print(
         f"VERDICT={rep['verdict']} rc={rep['rc']} "
-        f"p_hold_d1={rep.get('p_hold_d1')} p_ge50={rep.get('p_ge50')} "
-        f"p_ge50_tag={rep.get('p_ge50_tag')} cadence={rep.get('cadence_verdict')} "
-        f"mean={rep.get('mean_ms')} sigma={rep.get('sigma_ms')}"
+        f"PRIMARY_p_one_refresh_hold={rep.get('PRIMARY_p_one_refresh_hold')} "
+        f"PRIMARY_der={rep.get('PRIMARY_der')} "
+        f"cadence={rep.get('cadence_verdict')} "
+        f"p_ge50={rep.get('p_ge50')} p_ge50_tag={rep.get('p_ge50_tag')} "
+        f"p_ge50_role=forensic_only "
+        f"mean_ms={rep.get('mean_ms')} sigma_ms={rep.get('sigma_ms')} "
+        f"vsync_status={rep.get('vsync_status')} "
+        f"hold_d_conditional={rep.get('hold_d_conditional')} "
+        f"p_delta1={rep.get('p_delta1')} p_delta1_der={rep.get('p_delta1_der')}"
     )
+    if rep.get("reason"):
+        print(f"reason={rep['reason']}")
     return int(rep["rc"])
 
 

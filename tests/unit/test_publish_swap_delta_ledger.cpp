@@ -27,7 +27,8 @@ int main() {
     std::printf("  p_hold_d* = round(iv_ms/T_vsync): d=2|3 OK, d=1 TOO_SHORT, d>=4 TOO_LONG\n");
     std::printf("  24@60 ideal alternation 2,3,2,3; mean_ms~41.667 does NOT imply smooth\n");
     std::printf("  p_ge50 scoreable only if sigma_ms < mean_ms; else UNSCORED_SIGMA_GE_MEAN\n");
-    std::printf("  p_ge50 is publish iv>50ms fraction, NOT legitimate 3-refresh hold fraction\n");
+    std::printf("  p_ge50 FORENSIC ONLY — not defect\n");
+    std::printf("  PRIMARY p_one_refresh_hold=round(iv/T)==1\n");
     std::printf("  phase/vsync default tag=DEFAULT_ASSUMED until setVsyncHzMeasured\n");
 
     using misterplex::PublishSwapDeltaLedger;
@@ -103,6 +104,8 @@ int main() {
         const auto s = L.summarize();
         std::printf("hitchy %s\n", L.formatSummaryLine("synthetic").c_str());
         EXPECT(s.p_hold_d1 >= 0.02, "hitchy d1 elevated");
+        EXPECT(s.p_one_refresh_hold == s.p_hold_d1, "primary alias");
+        EXPECT(s.p_one_refresh_hold >= 0.02, "primary one-refresh hold");
         EXPECT(std::string(s.cadence_verdict) == "HITCHY_D1", "hitchy verdict");
         // mean still near ideal possible
         EXPECT(std::fabs(s.mean_ms - 41.667) < 5.0, "hitchy mean still near ideal");
@@ -147,6 +150,8 @@ int main() {
         EXPECT(!s.p_ge50_scoreable, "p_ge50 not scoreable");
         EXPECT(std::string(s.p_ge50_tag) == "UNSCORED_SIGMA_GE_MEAN", "sigma gate tag");
         EXPECT(std::string(s.interval_verdict) == "UNSCORED_SIGMA_GE_MEAN", "sigma gate verdict");
+        EXPECT(std::string(s.cadence_verdict) == "UNSCORED_SIGMA_GE_MEAN",
+               "cadence also unscoreable under sigma gate");
         // raw fraction still computed (for forensics) but not a score
         EXPECT(s.p_ge50 > 0.0, "raw p_ge50 still emitted");
     }

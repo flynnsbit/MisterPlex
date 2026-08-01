@@ -1303,6 +1303,46 @@ bool MediaPlayer::play(const std::string& urlOrPath, int64_t startOffsetMs,
             " process_epoch=" + std::to_string(pep) +
             " session_epoch=" + sessionEpochString(pep, sseq) +
             " tag=measured");
+        // Cadence instrument (w-instr DEFECT 2/3): T_vsync / src_fps provenance.
+        // Prefer host tools/measure_refresh_hz.py → MISTERPLEX_VSYNC_HZ=...
+        // Without env: DEFAULT_ASSUMED 60 Hz — every hold_d is CONDITIONAL.
+        pubSwapDelta_.reset();
+        pubInterval_.reset();
+        if (const char* vh = std::getenv("MISTERPLEX_VSYNC_HZ")) {
+            char* endp = nullptr;
+            const double hz = std::strtod(vh, &endp);
+            if (endp != vh && hz > 1.0 && hz < 240.0) {
+                pubSwapDelta_.setVsyncHzMeasured(hz);
+                log("media: cadence_vsync_hz=" + std::to_string(hz) +
+                    " vsync_hz_tag=measured vsync_hz_der=env_MISTERPLEX_VSYNC_HZ "
+                    "hold_d_conditional=0");
+            } else {
+                pubSwapDelta_.setVsyncHzDefaultAssumed(60.0);
+                log("media: cadence_vsync_hz=60 vsync_hz_tag=DEFAULT_ASSUMED "
+                    "vsync_hz_der=fallback_bad_env hold_d_conditional=1");
+            }
+        } else {
+            pubSwapDelta_.setVsyncHzDefaultAssumed(60.0);
+            log("media: cadence_vsync_hz=60 vsync_hz_tag=DEFAULT_ASSUMED "
+                "vsync_hz_der=no_MISTERPLEX_VSYNC_HZ hold_d_conditional=1");
+        }
+        if (const char* sf = std::getenv("MISTERPLEX_SRC_FPS")) {
+            char* endp = nullptr;
+            const double fps = std::strtod(sf, &endp);
+            if (endp != sf && fps > 1.0 && fps < 120.0) {
+                pubSwapDelta_.setSrcFpsMeasured(fps);
+                log("media: cadence_src_fps=" + std::to_string(fps) +
+                    " src_fps_tag=measured src_fps_der=env_MISTERPLEX_SRC_FPS");
+            } else {
+                pubSwapDelta_.setSrcFpsDefaultAssumed(24.0);
+                log("media: cadence_src_fps=24 src_fps_tag=DEFAULT_ASSUMED "
+                    "src_fps_der=fallback_bad_env_NOT_asset_probe");
+            }
+        } else {
+            pubSwapDelta_.setSrcFpsDefaultAssumed(24.0);
+            log("media: cadence_src_fps=24 src_fps_tag=DEFAULT_ASSUMED "
+                "src_fps_der=no_MISTERPLEX_SRC_FPS_NOT_asset_probe");
+        }
         {
             std::lock_guard<std::mutex> lock(summaryMu_);
             lastSummary_ = PlaybackSummary{};

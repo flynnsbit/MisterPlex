@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""HDMI MOTION / CORRECTNESS instrument for MiSTerPlex lab captures.
+"""DEPRECATED for display-loss / skip: use glass_hold_skip.py +
+publish_cadence_score.py. This file retains motion/OCR helpers only.
+
+HDMI MOTION / CORRECTNESS instrument for MiSTerPlex lab captures.
 
 *** DEPRECATION (display-side frame loss / G-fixture n= counter) ***
 --------------------------------------------------------------------
@@ -196,6 +199,12 @@ DEFAULT_MIN_READS = 3  # design: minimum OCR reads for motion verdict
 # Plex library clips are frameRate="24.000" / videoFrameRate="24p" — true 24.000.
 DEFAULT_ASSUMED_SOURCE_FPS = 24.0
 DEFAULT_ASSUMED_CAPTURE_FPS = 30.0
+# ERROR 17 guard: never ship a 23.976 bare default that looks measured.
+assert abs(DEFAULT_ASSUMED_SOURCE_FPS - 24000.0 / 1001.0) > 0.01, (
+    "DEFAULT_ASSUMED_SOURCE_FPS must not be 23.976 NTSC film"
+)
+FORBIDDEN_FPS_LOOKALIKES = (24000.0 / 1001.0, 23.976, 23.976023976023978)
+
 # Back-compat aliases (same values; prefer DEFAULT_ASSUMED_* in new code).
 DEFAULT_SOURCE_FPS = DEFAULT_ASSUMED_SOURCE_FPS
 DEFAULT_CAPTURE_FPS = DEFAULT_ASSUMED_CAPTURE_FPS
@@ -3849,10 +3858,13 @@ def _print_human(report: dict[str, Any], src: str) -> None:
             f"revisits={report.get('non_adjacent_revisits')} "
             f"ctr_span={report.get('ctr_span')} cap_span={report.get('cap_span')} "
             f"src_fps={report.get('source_fps')} "
-            f"src={report.get('source_fps_src', PROVENANCE_DEFAULT_ASSUMED)} "
+            f"src_fps_der=cli_or_default_NOT_asset_probe "
+            f"src_fps_tag={report.get('source_fps_src', PROVENANCE_DEFAULT_ASSUMED)} "
             f"cap_fps={report.get('capture_fps')} "
-            f"cap={report.get('capture_fps_src', PROVENANCE_DEFAULT_ASSUMED)} "
-            f"{auth_s}"
+            f"cap_fps_der=cli_or_default_or_pts "
+            f"cap_fps_tag={report.get('capture_fps_src', PROVENANCE_DEFAULT_ASSUMED)} "
+            f"{auth_s} "
+            f"NOTE_ERROR17=src_fps_tag_DEFAULT_ASSUMED_is_not_a_measurement"
         )
         notes = report.get("rate_notes") or []
         if notes:
