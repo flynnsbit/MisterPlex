@@ -686,3 +686,209 @@ is never treated as pass.
 - Beep detector is Goertzel @ 1 kHz; silence → rc=77, not a fabricated 0 ms.
 - Slope (`ms/s`) is the drift metric; a constant offset is mostly fixed latency.
 - Single-container capture is mandatory for a shared timebase; do not split A/V files.
+
+---
+
+## RCA — hardware flash↔beep findings (2026-07-31, instrument first light)
+
+Parent-run on device (rk=8, 624×480@24.000, DECODE=624x480, daemon `b981fd20`,
+core `c5382bee`), ~14 s after cast, `tools/avsync_measure_hdmi.py`:
+
+```
+n_pairs=40  median_offset_ms_raw=-168.3333  tag=raw_uncalibrated
+slope_ms_per_s=-0.270812  r²=0.065  slope_within_tol=True
+AUDIO_DELAY_MS unset → −168.3 ms
+AUDIO_DELAY_MS=150   → −135.0 ms   (Δ = +33.3 ms, not +150)
+daemon av_drift_ms   → −21…−40 both runs (UNCHANGED)
+```
+
+### Finding 1 — `av_drift_ms` is not real lip-sync (PROVEN from source)
+
+`av_drift_ms` is stored here:
+
+```cpp
+// media_player.cpp present loop
+const int64_t raw = misterplex::audibleClockMs(
+    audioBytes_.load(), audioQueuedBytes_.load());
+clockMs = misterplex::coArmedClockMs(raw, audioClockOriginMs);
+const int64_t frameMs =
+    frameContentMs(frameIndex, fpsNum, fpsDen) + avOffsetMs_.load();
+const int64_t drift = misterplex::avDriftMs(clockMs, frameMs);
+avDriftMs_.store(drift);
+```
+
+Definitions (`host/libmisterplex/av_clock.hpp`, `mraudio_status.hpp`):
+
+```cpp
+// drift = audio clock − content time of the frame about to be shown.
+inline int64_t avDriftMs(int64_t audioMs, int64_t frameMs) { return audioMs - frameMs; }
+
+// Audible playback position = bytes written − bytes still in MrAudio ring.
+inline int64_t audibleClockMs(int64_t writtenBytes, int64_t queuedBytes) {
+    int64_t played = writtenBytes;
+    if (queuedBytes >= 0)
+        played -= queuedBytes;
+    ...
+}
+```
+
+`presentCount_` does not appear in this expression. `AUDIO_DELAY_MS` /
+FFmpeg `adelay` only rearranges *content inside* the PCM byte stream; it does
+not change the rate at which `audioBytes_` advances or the `frameIndex` schedule.
+So a real lip-sync shift from `adelay` is invisible to `av_drift_ms` by
+construction. Parent A/B (real offset moved 33 ms, daemon drift band identical)
+is exactly what the code predicts.
+
+**Do not use `av_drift_ms` as evidence of acoustic-vs-photon lip-sync.** It is a
+scheduler residual (sample clock vs frameIndex), useful for drop/hold health,
+not for lips.
+
+### Finding 2 — `AUDIO_DELAY_MS` authority: parent hypothesis KILLED
+
+**Hypothesis (parent):** video is slaved to the audible clock, so delaying audio
+content drags video with it and most of `adelay` cancels.
+
+**Kill reason (quoted):** the audible clock is a **sample-count** clock, not a
+content-timestamp clock.
+
+```cpp
+// mraudio_status.hpp
+inline int64_t audibleClockMs(int64_t writtenBytes, int64_t queuedBytes);
+// = (written − queued) / (48000*4) ms
+```
+
+```cpp
+// media_player.cpp audioPump — counts every PCM byte written post-filter
+audioBytes_.fetch_add(static_cast<size_t>(n));
+```
+
+```cpp
+// media_player.cpp — adelay only on the ffmpeg audio filter graph
+args.push_back("aresample=48000,adelay=" + std::to_string(audioDelayMs_) + ":all=1");
+```
+
+`adelay` inserts silence at the head of the PCM **content**. Sample index `s`
+still maps to wall/audible time the same way; the beep that was at content time
+`C` moves to sample time `C + D`. Video frame at content `C` is still released
+when the sample clock reaches `C` (co-arm origin cancels). Model:
+
+```
+offset_content ≈ D - O_coarm     with adelay D
+offset_content ≈ 0 - O_coarm     without
+Δoffset = D                      full authority
+```
+
+**Local proof (this commit, host ffmpeg, same filter string as the daemon):**
+
+| adelay | measured median_offset_ms | error |
+|-------:|--------------------------:|------:|
+| 0 | 0.0000 | 0 |
+| 60 | 60.0000 | 0 |
+| 150 (`adelay=150:all=1`) | 150.0000 | 0 |
+| 150 (`adelay=150\|150`) | 150.0000 | 0 |
+
+So the filter string is not broken, and sample-clock slaving does **not** cancel
+content delay. **`AUDIO_DELAY_MS` is structurally capable of correcting lip-sync
+on this architecture** (full authority in the model + local recovery).
+
+**What remains unknown — why hardware showed only +33.3 ms for +150 ms:**
+
+Not explained by the killed hypothesis. Candidates that need parent evidence,
+not source claims:
+
+1. **Capture-frame quantisation of the instrument** (pre-hardening): flash onset
+   was integer capture frames. At 30 fps, one frame = 33.333 ms — exactly the
+   observed Δ. True shift could lie in roughly [0, ~67] ms for a 1-frame step in
+   the median of two independent runs, still far below 150 but the point estimate
+   is not trustworthy to better than ~one frame without sub-frame onset.
+2. **Session-to-session residual** (historical RC3 in this doc: 67 ms spread
+   pre-co-arm; post-co-arm claimed ~5–9 ms). Two separate plays are not a paired
+   difference. Unknown without N repeats of each conf.
+3. **Something outside the model** (HDMI/FPGA path interaction). Unknown —
+   check that would settle it: N≥5 repeats each of `AUDIO_DELAY_MS=0` and `=150`
+   with the hardened instrument at `--cap-fps 60`, report distribution of
+   medians and of paired differences.
+
+Until (3) is measured, **do not document `AUDIO_DELAY_MS` as inert**, and do not
+remove it. Prefer the live OSD **Video delay** (`avOffsetMs`) for mid-play trim:
+it adds directly to `frameMs` and has full authority by construction
+(`media_player.hpp` / `osd_menu.hpp`).
+
+### Where could −168 ms come from?
+
+| Term | Source evidence | Attributable? |
+|------|-----------------|---------------|
+| MrAudio ring ~100 ms (`queued≈19260B`) | `kFeedTargetBytes = 48000*4/10`; log `audio latency 100ms` | **Accounted in clock** — `audibleClockMs` subtracts `queuedBytes`. Not an extra 100 ms of "audio ahead of belief". |
+| Co-arm origin (~prefill depth) | `audioClockOriginMs = audibleClockMs(...)` at first frame | Cancels from steady-state content offset (constant). |
+| `av_drift_ms` −21…−40 | scheduler residual only | **Not** lip-sync (Finding 1). |
+| Downstream video path (DDR present, HDMI) vs audio path after ring | not instrumented in daemon | Possible device contribution; **magnitude unknown from source**. |
+| MS2109 grabber A/V skew | same doc, eyes-on in-sync read **−215 ms** on older harness | Dominant candidate for large negative raw; **not device**. |
+| Instrument raw | parent −168.3 tag=`raw_uncalibrated` | Includes grabber + device; split unknown without cal. |
+
+**Honest split:** from source we can attribute that the ~100 ms ring is *not*
+double-counted by the daemon clock. We **cannot** attribute −168 ms to a device
+defect. Historical eyes-on-in-sync ↔ instrument ≈ −215 ms implies a raw reading
+near −168 could still be "device near sync + grabber skew", or "device tens of ms
+off + grabber skew". **Only calibration or eyes-on settles absolute device offset.**
+
+### Calibration without re-cabling the daily driver
+
+**Standing position (parent), ruled on here:**
+
+- **Slope (`slope_ms_per_s`) of flash↔beep offset vs capture time:** a fixed
+  instrument latency (grabber, cable, encoder) is an additive constant on every
+  pair and **cancels exactly in the slope**. Drift-over-time is a real measured
+  quantity without calibration. Parent's slope −0.27 ms/s, r²=0.065 over ~40 s
+  is legitimately "no measurable drift" under that math. This is not a proxy:
+  it is the derivative of the same physical cross-correlation.
+- **Absolute median offset:** remains `raw_uncalibrated` without a known-zero
+  source into the grabber. **No calibration-free method exists** for absolute
+  device lip-sync while the MiSTer owns the only HDMI into the grabber.
+
+What a valid absolute cal would need (parent decides whether to ask the user):
+
+1. A known-aligned flash+beep source into the MS2109 (workstation HDMI out, or a
+   second grabber path), playing the **same** fixture file.
+2. `tools/avsync_measure_hdmi.py --calibrate --duration 15 --calibration-out cal.json`
+3. Device runs then pass `--calibration cal.json` → `tag=calibration_corrected`.
+
+Relative A/B on the device (conf changes, OSD Video delay steps) remains valid
+**as differences** if the grabber path is unchanged between runs — still subject
+to the quantisation/session caveats above.
+
+### Audibility of −168 ms *if* device-attributable
+
+ITU-R BT.1359-1 (*Relative timing of sound and vision for broadcasting*):
+
+| | Audio **lead** (sound before picture) | Audio **lag** (sound after picture) |
+|--|----------------------------------------|-------------------------------------|
+| Detectability | ≈ **+45 ms** | ≈ −125 ms |
+| Acceptability | ≈ **+90 ms** | ≈ −185 ms |
+
+(Sign in the Rec is "sound advanced w.r.t. vision" positive.)
+
+Our sign: negative = audio EARLY = audio lead. So **|−168 ms| as audio lead**
+sits **beyond the +90 ms acceptability threshold** for audio lead —
+*if and only if the raw number is device-attributable*. That premise is
+**unproven** (see above). Label any such claim:
+`audibility_if_device_attributable` — not a measured device defect.
+
+### Instrument hardening (this commit)
+
+1. **Flash onset:** `step_or_linear_luma_interp` — step edges (rise ≥70 % of
+   contrast in one interval) use first-hot-frame PTS (avoids the −½-frame
+   systematic that pure midpoint interp put on grid-aligned fixtures); softer
+   edges still linear-interpolate.
+2. **Default live `--cap-fps` 60** (was 30) — halves residual frame quant when
+   the edge is a step on the capture grid.
+3. **Beep hop 2 ms** (was 5 ms).
+4. Unit ladder `adelay` 0…150 ms: **`effective_resolution_rmse_ms=0.9487`
+   src=measured** (10-point ladder, host encode; `tests/unit/test_avsync_measure_hdmi.sh`).
+5. Slope FAIL gate only when `n_pairs >= 20` (short windows still *report* slope).
+
+Parent live command (prefer 60 fps + long window for slope):
+
+```bash
+tools/avsync_measure_hdmi.py --duration 40 --cap-fps 60 \
+  --out /tmp/avsync_hdmi --label rk8
+```

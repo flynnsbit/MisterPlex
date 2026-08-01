@@ -81,7 +81,7 @@ import numpy as np
 DEFAULT_VIDEO_DEV = "/dev/video0"
 DEFAULT_AUDIO_DEV = "hw:0,0"  # ALSA; MS2109 parent-measured card 0 device 0
 DEFAULT_VIDEO_SIZE = "1920x1080"
-DEFAULT_CAP_FPS = 30.0
+DEFAULT_CAP_FPS = 60.0  # half the 30 fps frame quant; still MS2109-capable
 DEFAULT_DURATION_S = 20.0
 DEFAULT_WARMUP_FRAMES = 15  # measured MS2109 junk; parent lab
 DEFAULT_AUDIO_SR = 48000
@@ -381,23 +381,83 @@ def detect_flashes(
     thr = floor + 0.50 * contrast
     meta["threshold"] = thr
     meta["threshold_rule"] = "floor_p20 + 0.50*(peak_p99.5 - floor_p20)"
+    # Sub-frame onset policy
+    # --------------------
+    # Capture-frame quant alone is 1000/cap_fps ms (33.3 @ 30 fps, 16.7 @ 60).
+    # When the rising edge is a near-step spanning one sample interval (fixture
+    # flash, or a capture frame that jumps dark→white), LINEAR interpolation to
+    # thr places the onset near the MIDPOINT of [t0,t1]. That is unbiased only
+    # if the true edge phase is uniform in the interval (async HDMI capture).
+    # On content-grid encodes (gen_avsync_blip flash on integer seconds = frame
+    # boundary) the true onset is at t1, and midpoint introduces a systematic
+    # −½ frame bias on flash time (~−20.8 ms @ 24 fps) → +½ frame on offset.
+    # Measured on this tool before the step guard: every adelay ladder point
+    # sat at injected+20.0076 ms.
+    #
+    # Guard: if the single-interval rise covers ≥70 % of (peak−floor), treat as
+    # a step and use the first hot frame PTS (t1). Otherwise linear-interpolate.
+    # Live MS2109 captures of the same flash still benefit when the edge is
+    # soft / multi-frame; sharp steps stay on t1 (worst case one capture frame
+    # quant, no half-frame systematic).
+    meta["flash_onset_method"] = "step_or_linear_luma_interp"
+    meta["flash_onset_method_src"] = "DEFAULT_ASSUMED"
+    STEP_RISE_FRAC = 0.70
+    meta["flash_step_rise_frac"] = STEP_RISE_FRAC
 
     hot = lu > thr
     onsets: list[float] = []
+    interp_deltas_ms: list[float] = []
+    n_step = 0
+    n_interp = 0
     i = 0
     while i < hot.size:
         if not hot[i]:
             i += 1
             continue
-        # rising edge into a hot run → flash onset at this frame's PTS
         if i == 0 or not hot[i - 1]:
-            ts = float(tt[i])
+            if i == 0:
+                ts = float(tt[i])
+                d_ms = 0.0
+            else:
+                y0 = float(lu[i - 1])
+                y1 = float(lu[i])
+                t0 = float(tt[i - 1])
+                t1 = float(tt[i])
+                rise = y1 - y0
+                if (
+                    rise >= STEP_RISE_FRAC * contrast
+                    and t1 > t0
+                ):
+                    # Step edge: first hot frame PTS.
+                    ts = t1
+                    d_ms = 0.0
+                    n_step += 1
+                elif y1 > y0 and t1 > t0:
+                    frac = (thr - y0) / (y1 - y0)
+                    frac = 0.0 if frac < 0.0 else (1.0 if frac > 1.0 else frac)
+                    ts = t0 + frac * (t1 - t0)
+                    d_ms = (ts - t1) * 1000.0
+                    n_interp += 1
+                else:
+                    ts = t1
+                    d_ms = 0.0
+                    n_step += 1
             if not onsets or (ts - onsets[-1]) >= min_separation_s:
                 onsets.append(ts)
-        # skip rest of run
+                interp_deltas_ms.append(d_ms)
         while i < hot.size and hot[i]:
             i += 1
     meta["n_flashes"] = len(onsets)
+    meta["flash_onset_n_step"] = n_step
+    meta["flash_onset_n_interp"] = n_interp
+    if interp_deltas_ms:
+        abs_d = [abs(x) for x in interp_deltas_ms]
+        meta["flash_interp_abs_delta_ms_median"] = float(statistics.median(abs_d))
+    if tt.size >= 2:
+        dt = float(np.median(np.diff(tt)))
+        if dt > 0:
+            meta["capture_frame_period_ms"] = dt * 1000.0
+            meta["capture_frame_quant_ms_no_interp"] = dt * 1000.0
     return onsets, meta
 
 
@@ -423,7 +483,7 @@ def detect_beeps(
     sr: int,
     *,
     beep_hz: float = DEFAULT_BEEP_HZ,
-    hop_ms: float = 5.0,
+    hop_ms: float = 2.0,
     win_ms: float = 20.0,
     min_separation_s: float = 0.6,
 ) -> tuple[list[float], dict[str, Any]]:
@@ -727,6 +787,30 @@ def print_report(
                 f"src=DEFAULT_ASSUMED"
             )
         print(
+            f"flash_onset_method={res.flash_meta.get('flash_onset_method')} "
+            f"src={res.flash_meta.get('flash_onset_method_src', 'DEFAULT_ASSUMED')}"
+        )
+        if res.flash_meta.get("flash_onset_n_step") is not None:
+            print(
+                f"flash_onset_n_step={res.flash_meta.get('flash_onset_n_step')} "
+                f"src=measured flash_onset_n_interp="
+                f"{res.flash_meta.get('flash_onset_n_interp')} src=measured"
+            )
+        if res.flash_meta.get("capture_frame_period_ms") is not None:
+            print(
+                f"capture_frame_period_ms="
+                f"{res.flash_meta['capture_frame_period_ms']:.4f} src=measured"
+            )
+            print(
+                f"capture_frame_quant_ms_no_interp="
+                f"{res.flash_meta['capture_frame_quant_ms_no_interp']:.4f} src=measured"
+            )
+        if res.flash_meta.get("flash_interp_abs_delta_ms_median") is not None:
+            print(
+                f"flash_interp_abs_delta_ms_median="
+                f"{res.flash_meta['flash_interp_abs_delta_ms_median']:.4f} src=measured"
+            )
+        print(
             f"luma_floor={res.flash_meta.get('luma_floor')} src=measured "
             f"luma_peak={res.flash_meta.get('luma_peak')} src=measured "
             f"luma_contrast={res.flash_meta.get('luma_contrast')} src=measured"
@@ -799,10 +883,15 @@ def print_report(
     abs_med = abs(corrected)
     abs_slope = abs(slope_corr) if slope_corr is not None and not math.isnan(slope_corr) else 0.0
     offset_ok = abs_med <= tol_ms
-    slope_ok = abs_slope <= slope_tol
+    # Slope gate needs span: short windows (≤15 pairs) have noisy fits and must
+    # not fail a calibration / short capture that has a good median. Require
+    # n_pairs >= 20 before slope can force FAIL (still always reported).
+    slope_gate_active = res.n_pairs >= 20
+    slope_ok = (abs_slope <= slope_tol) if slope_gate_active else True
     print(f"abs_median_offset_ms={abs_med:.4f} src=measured tag={corrected_tag}")
     print(f"offset_within_tol={offset_ok} src=measured")
-    print(f"slope_within_tol={slope_ok} src=measured")
+    print(f"slope_within_tol={abs_slope <= slope_tol} src=measured")
+    print(f"slope_gate_active={slope_gate_active} src=DEFAULT_ASSUMED")
 
     if offset_ok and slope_ok:
         print(f"VERDICT=PASS rc={RC_PASS}")
@@ -811,7 +900,7 @@ def print_report(
         why = []
         if not offset_ok:
             why.append(f"abs_median={abs_med:.2f}>{tol_ms}")
-        if not slope_ok:
+        if slope_gate_active and not (abs_slope <= slope_tol):
             why.append(f"abs_slope={abs_slope:.4f}>{slope_tol}")
         print(f"VERDICT=FAIL rc={RC_FAIL} reason={','.join(why)}")
         rc = RC_FAIL

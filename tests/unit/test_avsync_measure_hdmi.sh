@@ -218,6 +218,60 @@ fi
   done
 } | tee "$OUT/recovery_table.csv"
 
+# Sub-frame resolution: adelay steps finer than one 30 fps capture frame (33.3 ms).
+# Encode at 24 fps content; tool uses container PTS + linear luma interpolation.
+# Effective resolution = RMSE of (measured - injected) across the step set.
+echo "=== sub-frame adelay ladder (effective resolution) ==="
+ladder_err_sq=0
+ladder_n=0
+ladder_pass=0
+ladder_fail=0
+for ms in 0 10 20 30 40 50 60 80 100 150; do
+  name="lad_${ms}"
+  ffmpeg -hide_banner -loglevel error -y -i "$FIX" -t "$DUR" \
+    -c:v libx264 -pix_fmt yuv420p -r 24 \
+    -af "aresample=48000,adelay=${ms}|${ms}" -c:a pcm_s16le \
+    "$OUT/${name}.mkv"
+  rc="$(run_tool "$name" --input "$OUT/${name}.mkv" --tol-ms 500)"
+  med="$(median_of "$name")"
+  if [[ -z "$med" ]]; then
+    echo "FAIL ladder ms=$ms no median true_rc=$rc"
+    ladder_fail=$((ladder_fail + 1))
+    fail=$((fail + 1))
+    continue
+  fi
+  err="$(python3 -c "print(float('$med')-float('$ms'))")"
+  abserr="$(python3 -c "print(abs(float('$err')))")"
+  ladder_err_sq="$(python3 -c "print(float('$ladder_err_sq')+float('$err')**2)")"
+  ladder_n=$((ladder_n + 1))
+  # Per-step tol 12 ms: well under one 30 fps frame; catches regressions to frame-grid.
+  ok="$(python3 -c "print(1 if abs(float('$err'))<=12.0 else 0)")"
+  if [[ "$ok" == "1" ]]; then
+    echo "PASS ladder injected=$ms measured=$med err=$err true_rc=$rc"
+    ladder_pass=$((ladder_pass + 1))
+    pass=$((pass + 1))
+  else
+    echo "FAIL ladder injected=$ms measured=$med err=$err true_rc=$rc"
+    ladder_fail=$((ladder_fail + 1))
+    fail=$((fail + 1))
+  fi
+  echo "$ms,$med,$err" >>"$OUT/ladder_recovery.csv"
+done
+if [[ "$ladder_n" -gt 0 ]]; then
+  rmse="$(python3 -c "print(round((float('$ladder_err_sq')/float('$ladder_n'))**0.5, 4))")"
+  echo "effective_resolution_rmse_ms=$rmse src=measured ladder_n=$ladder_n"
+  echo "effective_resolution_rmse_ms=$rmse" >"$OUT/effective_resolution.txt"
+  # RMSE must stay under half a 30 fps frame (16.7 ms) — the point of sub-frame interp.
+  ok="$(python3 -c "print(1 if float('$rmse')<=16.7 else 0)")"
+  if [[ "$ok" == "1" ]]; then
+    echo "PASS effective_resolution_rmse_ms=$rmse <= 16.7"
+    pass=$((pass + 1))
+  else
+    echo "FAIL effective_resolution_rmse_ms=$rmse > 16.7"
+    fail=$((fail + 1))
+  fi
+fi
+
 echo "=== SUMMARY pass=$pass fail=$fail ==="
 if [[ "$fail" -ne 0 ]]; then
   echo "AVSYNC_MEASURE_HDMI_FAIL"
