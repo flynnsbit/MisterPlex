@@ -1,21 +1,11 @@
 lane: w-promote
 branch: fix/rollback-honest
-tip: 630adc0d
+tip: e5552b72
+substantive: 630adc0d pin 5996385a + rename-before-kill
 worktree: .worktrees/rollback-honest
 
-## Device pin track (parent-verified)
 CURRENT daemon 5996385a57c6af142b8e732a39b36a4a
-rollbacks: b981fd20, edc3a46b, e9f79de2
-core c5382bee; user conf 7f06132f USER-OWNED
+rollbacks b981fd20 edc3a46b e9f79de2 | core c5382bee | conf 7f06132f USER-OWNED
 
-## Encoded
-- pair/video_regression/rbf pins + SPI×DDR refuse
-- rename-before-kill trap (stop by comm before any mv)
-- no pgrep; live verify readlink exe md5
-- glue fix remains; atomic pair+conf+boot
-- power-cycle checklist in docs/ddr-daily-promotion.md
-
-## Host true rc
-test_promotion_gates.sh true rc=0
-test_rollback_honest.sh true rc=0
-pair check 5996385a/b981/edc3 OK; dfebf2bf+5996385a REFUSE rc=1
+Host true rc: promotion_gates=0 rollback_honest=0 boot_hook=0 vidreg_liveness=0 conf=0
+mix SPI+DDR REFUSE rc=1 | glue still fail-closed | green path rc=0
