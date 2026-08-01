@@ -1,13 +1,9 @@
 lane=w-plextv
 branch=w-plextv-cast-picker-e2e-fix2
 worktree=.worktrees/w-plextv-e2e-fix
-sha=cdfb401c
+sha=cae6f05d
 see=STATUS.md
 
-# API soak harness (repo — not session files/)
-# export MISTER_HOST PLEX_BASE PLEX_TOKEN PLEX_MACHINE_ID
-# ./scripts/parent_cast_local.sh play|stop|idle-check; echo "true rc=$?"
-
-# Playwright DoD
-# ./tests/hw/e2e/run_cast_picker.sh; echo "true rc=$?"
-# Expect: P4_IDLE_OK, TRANSITION pass==N, TEARDOWN_OK
+# API: ./scripts/parent_cast_local.sh play|stop|idle-check
+# E2E: ./tests/hw/e2e/run_cast_picker.sh  (true rc=$?)
+# Pre-reg: P4_IDLE_OK pass==N TEARDOWN_OK
