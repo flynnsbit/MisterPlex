@@ -59,19 +59,31 @@ def write_beep_track(
     duration_s: float,
     *,
     period_s: float,
+    audio_delay_s: float = 0.0,
     sample_rate: int = SR,
 ) -> list[float]:
-    """s16le stereo beep-only track; return designed onset times (seconds)."""
+    """s16le stereo beep-only track; return designed onset times (seconds).
+
+    Visual flash is always at k*period_s (content time). Beep onset is
+    k*period_s + audio_delay_s. Positive delay = audio LAGS video (lipsync RED).
+    """
     n = int(round(duration_s * sample_rate))
     onsets: list[float] = []
     k = 0
     while True:
-        t0 = k * period_s
-        if t0 >= duration_s:
+        t0 = k * period_s + audio_delay_s
+        if t0 >= duration_s and k * period_s >= duration_s:
             break
-        onsets.append(t0)
+        if t0 >= duration_s:
+            k += 1
+            if k * period_s >= duration_s:
+                break
+            continue
+        if t0 >= 0.0:
+            onsets.append(t0)
         k += 1
-    # Vectorized — pure-Python sample loop is multi-minute for 20 min audio.
+        if k > int(duration_s / period_s) + 8:
+            break
     mono = np.zeros(n, dtype=np.float64)
     t = np.arange(n, dtype=np.float64) / float(sample_rate)
     for t0 in onsets:
@@ -107,6 +119,12 @@ def main() -> int:
     ap.add_argument("--height", type=int, default=480)
     ap.add_argument("--duration", type=float, default=1200.0, help="output seconds (loop src)")
     ap.add_argument("--period", type=float, default=2.0, help="A/V marker period seconds")
+    ap.add_argument(
+        "--audio-delay-ms",
+        type=float,
+        default=0.0,
+        help="beep lag vs flash in ms (positive = audio late; use +100 for instrument RED)",
+    )
     ap.add_argument("--vbitrate", default="2500k")
     ap.add_argument("--work", type=Path, default=None)
     args = ap.parse_args()
@@ -120,6 +138,7 @@ def main() -> int:
     n_frames = int(round(args.duration * fps))
     geom = geometry_for(w, h)
     id_bottom = geom.bar_y1  # even; body flash below ID band
+    audio_delay_s = float(args.audio_delay_ms) / 1000.0
     bufsize = (
         str(int(args.vbitrate[:-1]) * 2) + "k"
         if args.vbitrate[-1] in "kK"
@@ -138,13 +157,22 @@ def main() -> int:
     print(
         f"OUT_PLAN w={w} h={h} fps={fps_str} duration_s={args.duration} "
         f"n_frames={n_frames} period_s={args.period} id_bottom={id_bottom} "
-        f"text0={format_text(0)} designed_av_offset_ms=0.0",
+        f"text0={format_text(0)} designed_av_offset_ms={args.audio_delay_ms}",
         flush=True,
     )
 
     beep_pcm = work / "beep.s16"
-    onsets = write_beep_track(beep_pcm, args.duration, period_s=args.period)
-    print(f"beep_onsets_n={len(onsets)} first={onsets[:3]} last={onsets[-3:]}", flush=True)
+    onsets = write_beep_track(
+        beep_pcm,
+        args.duration,
+        period_s=args.period,
+        audio_delay_s=audio_delay_s,
+    )
+    print(
+        f"beep_onsets_n={len(onsets)} first={onsets[:3]} last={onsets[-3:]} "
+        f"audio_delay_ms={args.audio_delay_ms}",
+        flush=True,
+    )
 
     # Decode looped+scaled real content as rgb24; re-encode with mixed audio.
     # stream_loop -1 before -i loops infinitely; -t on output via frame count.
@@ -231,15 +259,22 @@ def main() -> int:
             "fps": f"{FPS_NUM}/{FPS_DEN}",
             "duration_s": args.duration,
             "period_s": args.period,
-            "designed_av_offset_ms": 0.0,
+            "designed_av_offset_ms": float(args.audio_delay_ms),
+            "audio_delay_s": audio_delay_s,
             "flash_frames": FLASH_FRAMES,
             "beep_s": BEEP_S,
+            "beep_hz": BEEP_HZ,
+            "attack_s": ATTACK_S,
             "id_text_example": format_text(0),
             "id_bottom_y": id_bottom,
             "vbitrate": args.vbitrate,
             "profile": "baseline (Constrained Baseline via cabac=0)",
             "bf": 0,
             "audio": "aac 48k mix(src+beep)",
+            "marker_note": (
+                "flash = full-white body below ID band for FLASH_FRAMES at k*period; "
+                "beep onset = k*period + audio_delay; cross-correlate flash vs beep"
+            ),
         },
         "measured_ffprobe": meta,
         "frames_burned": n,

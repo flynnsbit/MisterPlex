@@ -192,3 +192,6 @@ Working tree `assets/avsync/*.mp4` on disk is larger (~792 MB) including **untra
 | 475 power | `docs/rowcount_475_vs_480_power.md` |
 | V-res instrument ceiling | `docs/bank480_instrument_ceiling.md` |
 | Playbook | `docs/PLAYBOOK_LOCAL_PMS_FIXTURES.md` |
+
+## Blocking contracts for sibling lanes
+Canonical: [`docs/CONTRACTS_AVSYNC_GEOM_REAL.md`](CONTRACTS_AVSYNC_GEOM_REAL.md) (lipsync real+twins, width≠624, long real soak).

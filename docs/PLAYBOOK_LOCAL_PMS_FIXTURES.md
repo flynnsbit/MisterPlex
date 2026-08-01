@@ -97,3 +97,6 @@ Media on disk: `MiSTerPlex Rowcount Vernier 624x480 24fps 120s` — **scan for r
 
 ## Delivery geometry matrix
 See [`docs/DELIVERY_GEOMETRY_MATRIX.md`](DELIVERY_GEOMETRY_MATRIX.md) — 12 cells covering observed 624×350 / 426×240 + bank control + 640/720/352 @ 24/1 and 30/1.
+
+## Three contracts (w-avsync / w-geom / real soak)
+See [`docs/CONTRACTS_AVSYNC_GEOM_REAL.md`](CONTRACTS_AVSYNC_GEOM_REAL.md).

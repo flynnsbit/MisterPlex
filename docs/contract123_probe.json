@@ -1,0 +1,540 @@
+[
+  {
+    "file": "MiSTerPlex Real BBB GlassAV 624x480 24fps 600s (2026).mp4",
+    "measured_w": 624,
+    "measured_h": 480,
+    "r_frame_rate": "24/1",
+    "nb_frames": "14400",
+    "duration_s": "600.000000",
+    "profile": "Constrained Baseline",
+    "has_b_frames": 0,
+    "audio": "aac/48000",
+    "size_MB": 196.71,
+    "body": {
+      "body_mean": 123.565357633438,
+      "body_p10": 79.16777374411302,
+      "body_p50": 121.77222740057562,
+      "body_p90": 174.71576277145473,
+      "frac_lt10": 0.0,
+      "n": 12
+    },
+    "host_av_offset": {
+      "flash_n": 10,
+      "beep_n": 10,
+      "lags_ms": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        -41.67,
+        0.0
+      ],
+      "median_ms": 0.0,
+      "mean_ms": -4.17
+    },
+    "ffprobe_v_rc": 0,
+    "ffprobe_a_rc": 0
+  },
+  {
+    "file": "MiSTerPlex Real BBB GlassAV 624x480 24fps 600s audioPlus100ms (2026).mp4",
+    "measured_w": 624,
+    "measured_h": 480,
+    "r_frame_rate": "24/1",
+    "nb_frames": "14400",
+    "duration_s": "600.000000",
+    "profile": "Constrained Baseline",
+    "has_b_frames": 0,
+    "audio": "aac/48000",
+    "size_MB": 196.69,
+    "body": {
+      "body_mean": 123.56463027919501,
+      "body_p10": 79.16540996206174,
+      "body_p50": 121.77156511643119,
+      "body_p90": 174.72086235936683,
+      "frac_lt10": 0.0,
+      "n": 12
+    },
+    "host_av_offset": {
+      "flash_n": 10,
+      "beep_n": 10,
+      "lags_ms": [
+        100.0,
+        100.0,
+        100.0,
+        100.0,
+        100.0,
+        100.0,
+        100.0,
+        100.0,
+        100.0,
+        100.0
+      ],
+      "median_ms": 100.0,
+      "mean_ms": 100.0
+    },
+    "ffprobe_v_rc": 0,
+    "ffprobe_a_rc": 0
+  },
+  {
+    "file": "MiSTerPlex Real BBB GlassAV 640x480 24fps 180s (2026).mp4",
+    "measured_w": 640,
+    "measured_h": 480,
+    "r_frame_rate": "24/1",
+    "nb_frames": "4320",
+    "duration_s": "180.000000",
+    "profile": "Constrained Baseline",
+    "has_b_frames": 0,
+    "audio": "aac/48000",
+    "size_MB": 59.09,
+    "body": {
+      "body_mean": 146.18820883822278,
+      "body_p10": 115.67425741390306,
+      "body_p50": 149.34548987563775,
+      "body_p90": 177.66850486288266,
+      "frac_lt10": 0.0,
+      "n": 12
+    },
+    "host_av_offset": {
+      "flash_n": 10,
+      "beep_n": 10,
+      "lags_ms": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "median_ms": 0.0,
+      "mean_ms": 0.0
+    },
+    "ffprobe_v_rc": 0,
+    "ffprobe_a_rc": 0
+  },
+  {
+    "file": "MiSTerPlex Real BBB GlassAV 640x480 24fps 180s audioPlus100ms (2026).mp4",
+    "measured_w": 640,
+    "measured_h": 480,
+    "r_frame_rate": "24/1",
+    "nb_frames": "4320",
+    "duration_s": "180.000000",
+    "profile": "Constrained Baseline",
+    "has_b_frames": 0,
+    "audio": "aac/48000",
+    "size_MB": 59.07,
+    "body": {
+      "body_mean": 146.18838588169643,
+      "body_p10": 115.67141581632653,
+      "body_p50": 149.3407525510204,
+      "body_p90": 177.67028818558674,
+      "frac_lt10": 0.0,
+      "n": 12
+    },
+    "host_av_offset": {
+      "flash_n": 10,
+      "beep_n": 10,
+      "lags_ms": [
+        100.0,
+        100.0,
+        100.0,
+        100.0,
+        100.0,
+        100.0,
+        100.0,
+        100.0,
+        100.0,
+        100.0
+      ],
+      "median_ms": 100.0,
+      "mean_ms": 100.0
+    },
+    "ffprobe_v_rc": 0,
+    "ffprobe_a_rc": 0
+  },
+  {
+    "file": "MiSTerPlex Real BBB GlassAV 720x480 24fps 180s (2026).mp4",
+    "measured_w": 720,
+    "measured_h": 480,
+    "r_frame_rate": "24/1",
+    "nb_frames": "4320",
+    "duration_s": "180.000000",
+    "profile": "Constrained Baseline",
+    "has_b_frames": 0,
+    "audio": "aac/48000",
+    "size_MB": 65.84,
+    "body": {
+      "body_mean": 146.18588642054047,
+      "body_p10": 115.67294855442177,
+      "body_p50": 149.3386408730159,
+      "body_p90": 177.6603489937642,
+      "frac_lt10": 0.0,
+      "n": 12
+    },
+    "host_av_offset": {
+      "flash_n": 10,
+      "beep_n": 10,
+      "lags_ms": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "median_ms": 0.0,
+      "mean_ms": 0.0
+    },
+    "ffprobe_v_rc": 0,
+    "ffprobe_a_rc": 0
+  },
+  {
+    "file": "MiSTerPlex Real BBB GlassAV 720x480 24fps 180s audioPlus100ms (2026).mp4",
+    "measured_w": 720,
+    "measured_h": 480,
+    "r_frame_rate": "24/1",
+    "nb_frames": "4320",
+    "duration_s": "180.000000",
+    "profile": "Constrained Baseline",
+    "has_b_frames": 0,
+    "audio": "aac/48000",
+    "size_MB": 65.83,
+    "body": {
+      "body_mean": 146.1856009070295,
+      "body_p10": 115.6752136479592,
+      "body_p50": 149.33840702947845,
+      "body_p90": 177.6599085884354,
+      "frac_lt10": 0.0,
+      "n": 12
+    },
+    "host_av_offset": {
+      "flash_n": 10,
+      "beep_n": 10,
+      "lags_ms": [
+        100.0,
+        100.0,
+        100.0,
+        100.0,
+        100.0,
+        100.0,
+        100.0,
+        100.0,
+        100.0,
+        100.0
+      ],
+      "median_ms": 100.0,
+      "mean_ms": 100.0
+    },
+    "ffprobe_v_rc": 0,
+    "ffprobe_a_rc": 0
+  },
+  {
+    "file": "MiSTerPlex Real BBB GlassAV 426x240 24fps 180s (2026).mp4",
+    "measured_w": 426,
+    "measured_h": 240,
+    "r_frame_rate": "24/1",
+    "nb_frames": "4320",
+    "duration_s": "180.000000",
+    "profile": "Constrained Baseline",
+    "has_b_frames": 0,
+    "audio": "aac/48000",
+    "size_MB": 30.53,
+    "body": {
+      "body_mean": 145.69592584441835,
+      "body_p10": 115.51782570422534,
+      "body_p50": 148.81946278364632,
+      "body_p90": 176.9186680848983,
+      "frac_lt10": 0.0,
+      "n": 12
+    },
+    "host_av_offset": {
+      "flash_n": 10,
+      "beep_n": 10,
+      "lags_ms": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "median_ms": 0.0,
+      "mean_ms": 0.0
+    },
+    "ffprobe_v_rc": 0,
+    "ffprobe_a_rc": 0
+  },
+  {
+    "file": "MiSTerPlex Real BBB GlassAV 426x240 24fps 180s audioPlus100ms (2026).mp4",
+    "measured_w": 426,
+    "measured_h": 240,
+    "r_frame_rate": "24/1",
+    "nb_frames": "4320",
+    "duration_s": "180.000000",
+    "profile": "Constrained Baseline",
+    "has_b_frames": 0,
+    "audio": "aac/48000",
+    "size_MB": 30.53,
+    "body": {
+      "body_mean": 145.70001752412625,
+      "body_p10": 115.51019292840377,
+      "body_p50": 148.82015967331768,
+      "body_p90": 176.92252176251955,
+      "frac_lt10": 0.0,
+      "n": 12
+    },
+    "host_av_offset": {
+      "flash_n": 10,
+      "beep_n": 10,
+      "lags_ms": [
+        100.0,
+        100.0,
+        100.0,
+        100.0,
+        100.0,
+        100.0,
+        100.0,
+        100.0,
+        100.0,
+        100.0
+      ],
+      "median_ms": 100.0,
+      "mean_ms": 100.0
+    },
+    "ffprobe_v_rc": 0,
+    "ffprobe_a_rc": 0
+  },
+  {
+    "file": "MiSTerPlex Real BBB GlassAV 624x352 24fps 180s (2026).mp4",
+    "measured_w": 624,
+    "measured_h": 352,
+    "r_frame_rate": "24/1",
+    "nb_frames": "4320",
+    "duration_s": "180.000000",
+    "profile": "Constrained Baseline",
+    "has_b_frames": 0,
+    "audio": "aac/48000",
+    "size_MB": 48.35,
+    "body": {
+      "body_mean": 144.08529303451178,
+      "body_p10": 115.01404671717172,
+      "body_p50": 146.3905430506993,
+      "body_p90": 175.0931963869464,
+      "frac_lt10": 0.0,
+      "n": 12
+    },
+    "host_av_offset": {
+      "flash_n": 10,
+      "beep_n": 10,
+      "lags_ms": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "median_ms": 0.0,
+      "mean_ms": 0.0
+    },
+    "ffprobe_v_rc": 0,
+    "ffprobe_a_rc": 0
+  },
+  {
+    "file": "MiSTerPlex Real BBB GlassAV 624x352 24fps 180s audioPlus100ms (2026).mp4",
+    "measured_w": 624,
+    "measured_h": 352,
+    "r_frame_rate": "24/1",
+    "nb_frames": "4320",
+    "duration_s": "180.000000",
+    "profile": "Constrained Baseline",
+    "has_b_frames": 0,
+    "audio": "aac/48000",
+    "size_MB": 48.34,
+    "body": {
+      "body_mean": 144.08504566903002,
+      "body_p10": 115.00860831876457,
+      "body_p50": 146.38935326825953,
+      "body_p90": 175.09562694250195,
+      "frac_lt10": 0.0,
+      "n": 12
+    },
+    "host_av_offset": {
+      "flash_n": 10,
+      "beep_n": 10,
+      "lags_ms": [
+        100.0,
+        100.0,
+        100.0,
+        100.0,
+        100.0,
+        100.0,
+        100.0,
+        100.0,
+        100.0,
+        100.0
+      ],
+      "median_ms": 100.0,
+      "mean_ms": 100.0
+    },
+    "ffprobe_v_rc": 0,
+    "ffprobe_a_rc": 0
+  },
+  {
+    "file": "MiSTerPlex Real BBB GlassAV 624x480 24fps 1200s (2026).mp4",
+    "measured_w": 624,
+    "measured_h": 480,
+    "r_frame_rate": "24/1",
+    "nb_frames": "28800",
+    "duration_s": "1200.000000",
+    "profile": "Constrained Baseline",
+    "has_b_frames": 0,
+    "audio": "aac/48000",
+    "size_MB": 393.17,
+    "body": {
+      "body_mean": 154.48950361394557,
+      "body_p10": 29.90184253990058,
+      "body_p50": 122.43675595238096,
+      "body_p90": 255.0,
+      "frac_lt10": 0.0,
+      "n": 12
+    },
+    "host_av_offset": null,
+    "ffprobe_v_rc": 0,
+    "ffprobe_a_rc": 0
+  },
+  {
+    "file": "MiSTerPlex DeliveryGeom 640x480 24fps 90s (2026).mp4",
+    "measured_w": 640,
+    "measured_h": 480,
+    "r_frame_rate": "24/1",
+    "nb_frames": "2160",
+    "duration_s": "90.000000",
+    "profile": "Constrained Baseline",
+    "has_b_frames": 0,
+    "audio": "aac/48000",
+    "size_MB": 3.92,
+    "body": {
+      "body_mean": 0.0,
+      "body_p10": 0.0,
+      "body_p50": 0.0,
+      "body_p90": 0.0,
+      "frac_lt10": 1.0,
+      "n": 12
+    },
+    "host_av_offset": null,
+    "ffprobe_v_rc": 0,
+    "ffprobe_a_rc": 0
+  },
+  {
+    "file": "MiSTerPlex DeliveryGeom 720x480 24fps 90s (2026).mp4",
+    "measured_w": 720,
+    "measured_h": 480,
+    "r_frame_rate": "24/1",
+    "nb_frames": "2160",
+    "duration_s": "90.000000",
+    "profile": "Constrained Baseline",
+    "has_b_frames": 0,
+    "audio": "aac/48000",
+    "size_MB": 4.08,
+    "body": {
+      "body_mean": 0.0,
+      "body_p10": 0.0,
+      "body_p50": 0.0,
+      "body_p90": 0.0,
+      "frac_lt10": 1.0,
+      "n": 12
+    },
+    "host_av_offset": null,
+    "ffprobe_v_rc": 0,
+    "ffprobe_a_rc": 0
+  },
+  {
+    "file": "MiSTerPlex DeliveryGeom 426x240 24fps 90s (2026).mp4",
+    "measured_w": 426,
+    "measured_h": 240,
+    "r_frame_rate": "24/1",
+    "nb_frames": "2160",
+    "duration_s": "90.000000",
+    "profile": "Constrained Baseline",
+    "has_b_frames": 0,
+    "audio": "aac/48000",
+    "size_MB": 2.82,
+    "body": {
+      "body_mean": 0.0,
+      "body_p10": 0.0,
+      "body_p50": 0.0,
+      "body_p90": 0.0,
+      "frac_lt10": 1.0,
+      "n": 12
+    },
+    "host_av_offset": null,
+    "ffprobe_v_rc": 0,
+    "ffprobe_a_rc": 0
+  },
+  {
+    "file": "MiSTerPlex DeliveryGeom 624x352 24fps 90s (2026).mp4",
+    "measured_w": 624,
+    "measured_h": 352,
+    "r_frame_rate": "24/1",
+    "nb_frames": "2160",
+    "duration_s": "90.000000",
+    "profile": "Constrained Baseline",
+    "has_b_frames": 0,
+    "audio": "aac/48000",
+    "size_MB": 3.77,
+    "body": {
+      "body_mean": 0.0,
+      "body_p10": 0.0,
+      "body_p50": 0.0,
+      "body_p90": 0.0,
+      "frac_lt10": 1.0,
+      "n": 12
+    },
+    "host_av_offset": null,
+    "ffprobe_v_rc": 0,
+    "ffprobe_a_rc": 0
+  },
+  {
+    "file": "MiSTerPlex AVSync Glass 480p 24fps 600s (2026).mp4",
+    "measured_w": 624,
+    "measured_h": 480,
+    "r_frame_rate": "24/1",
+    "nb_frames": "14400",
+    "duration_s": "600.000000",
+    "profile": "Constrained Baseline",
+    "has_b_frames": 0,
+    "audio": "aac/48000",
+    "size_MB": 28.08,
+    "body": {
+      "body_mean": 0.0,
+      "body_p10": 0.0,
+      "body_p50": 0.0,
+      "body_p90": 0.0,
+      "frac_lt10": 1.0,
+      "n": 12
+    },
+    "host_av_offset": null,
+    "ffprobe_v_rc": 0,
+    "ffprobe_a_rc": 0
+  }
+]
