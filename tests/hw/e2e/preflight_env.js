@@ -168,6 +168,13 @@ async function runPreflight({ requirePms = true, requireDaemon = true } = {}) {
         '  Or put PLEX_BASE=... in ~/.config/misterplex/e2e.env or tests/hw/e2e/.env.lab (gitignored).\n' +
         '  Do NOT use SHIELD or remote plex hosts.',
     });
+  } else if (/192\.168\.1\.122\b/.test(plexBase)) {
+    problems.push({
+      key: 'PLEX_BASE',
+      severity: 'fail',
+      detail:
+        `PLEX_BASE=${plexBase} is the SHIELD — FORBIDDEN. Local PMS only. Run is invalid if SHIELD is used.`,
+    });
   } else if (/plex\.nevertrustaf\.art|32401/.test(plexBase)) {
     problems.push({
       key: 'PLEX_BASE',
@@ -175,7 +182,7 @@ async function runPreflight({ requirePms = true, requireDaemon = true } = {}) {
       detail: `PLEX_BASE=${plexBase} looks remote/ignored. Use LOCAL PMS only.`,
     });
   } else {
-    notes.push(`PLEX_BASE=${plexBase}`);
+    notes.push(`PLEX_BASE=${plexBase} value_kind=caller-supplied`);
   }
 
   if (!tok.token) {

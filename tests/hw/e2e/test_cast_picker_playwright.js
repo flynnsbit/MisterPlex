@@ -220,82 +220,86 @@ function loadPlaywright() {
 }
 
 /**
- * Resolve ratingKey + canonical item title from PMS.
- * Title is required later as a deterministic details-ready signal
- * (sidebar-only paint is NOT enough — parent fail_no_play_button.png).
+ * Cast by ratingKey ONLY — never by display title.
+ * Parent: Plex agent retitles distinct files to identical names; title match
+ * selects the wrong asset. Title from metadata is a readiness signal only.
  */
+async function resolveItemByRatingKey(ratingKeyIn, label = 'item') {
+  const ratingKey = String(ratingKeyIn || '')
+    .replace(/^\/library\/metadata\//, '')
+    .trim();
+  if (!/^\d+$/.test(ratingKey)) {
+    fail(
+      'rating_key_required',
+      `${label}: cast requires numeric ratingKey (got ${JSON.stringify(ratingKeyIn)}). ` +
+        'Set PLEX_RATING_KEY or PLEX_KEY=/library/metadata/N — never select by title. ' +
+        'Useful keys: rk=27 full-bleed 480p, rk=30 BBB 624x480, rk=1 240p soak, rk=8 480p soak.'
+    );
+  }
+  const headers = {
+    'X-Plex-Token': cfg.token,
+    Accept: 'application/json',
+  };
+  const meta = await httpGet(`${cfg.plexBase}/library/metadata/${ratingKey}`, headers);
+  if (meta.status === 404 || meta.status === 400) {
+    fail(
+      'rating_key_not_found',
+      `${label}: GET /library/metadata/${ratingKey} HTTP ${meta.status} — bogus or deleted key (RED path). ` +
+        `value_kind=measured`
+    );
+  }
+  if (meta.status !== 200) {
+    fail(
+      'rating_key_unreachable',
+      `${label}: GET /library/metadata/${ratingKey} HTTP ${meta.status} value_kind=measured`
+    );
+  }
+  let m;
+  try {
+    m = (JSON.parse(meta.body).MediaContainer?.Metadata || [])[0];
+  } catch (_) {
+    fail('rating_key_bad_json', `${label}: metadata/${ratingKey} not JSON`);
+  }
+  if (!m) {
+    fail('rating_key_empty', `${label}: metadata/${ratingKey} empty MediaContainer`);
+  }
+  const title = String(m.title || '');
+  // Title is informational only — navigation always uses ratingKey deep link.
+  log(
+    `resolved ratingKey=${ratingKey} title=${JSON.stringify(title)} ` +
+      `nav=by_ratingKey_only title_match=disabled value_kind=measured`
+  );
+  return { ratingKey: String(ratingKey), title, meta: m };
+}
+
+/** @deprecated title search removed — wrapper keeps call sites on ratingKey path */
 async function resolveItem() {
   let ratingKey = '';
   if (cfg.ratingKey) ratingKey = String(cfg.ratingKey).replace(/^\/library\/metadata\//, '');
   else if (cfg.plexKey) {
     const m = String(cfg.plexKey).match(/metadata\/(\d+)/);
     if (m) ratingKey = m[1];
+  } else if (cfg.tiers && cfg.tiers[0] && cfg.tiers[0].ratingKey) {
+    ratingKey = String(cfg.tiers[0].ratingKey);
   }
+  return resolveItemByRatingKey(ratingKey, 'resolveItem');
+}
 
-  const headers = {
-    'X-Plex-Token': cfg.token,
-    Accept: 'application/json',
-  };
-
-  if (ratingKey) {
-    const meta = await httpGet(`${cfg.plexBase}/library/metadata/${ratingKey}`, headers);
-    if (meta.status === 200) {
-      try {
-        const j = JSON.parse(meta.body);
-        const m = (j.MediaContainer?.Metadata || [])[0];
-        if (m && m.title) {
-          log(`resolved ratingKey=${ratingKey} title=${m.title}`);
-          return { ratingKey: String(ratingKey), title: String(m.title) };
-        }
-      } catch (_) {
-        /* fall through to library search */
-      }
-    }
-  }
-
-  const sec = await httpGet(`${cfg.plexBase}/library/sections`, headers);
-  if (sec.status !== 200) {
-    fail('pms_sections_unreachable', `HTTP ${sec.status} from ${cfg.plexBase}/library/sections`);
-  }
-  let sections;
-  try {
-    sections = JSON.parse(sec.body);
-  } catch (_) {
-    fail('pms_sections_bad_json', 'could not parse /library/sections');
-  }
-  const dirs = sections.MediaContainer?.Directory || [];
-  const lib = dirs.find((d) => (d.title || '').includes(cfg.libraryName));
-  if (!lib) {
+/** Refuse SHIELD / remote PMS — invalid run if selected. */
+function assertLocalPmsOnly(base) {
+  const b = String(base || '');
+  if (/192\.168\.1\.122\b/.test(b)) {
     fail(
-      'library_not_found',
-      `no section title containing ${JSON.stringify(cfg.libraryName)}; have: ${dirs
-        .map((d) => d.title)
-        .join(' | ')}`
+      'refusing_shield_pms',
+      `PLEX_BASE=${b} is the SHIELD — user forbids. Local PMS only. value_kind=caller-supplied`
     );
   }
-  const all = await httpGet(`${cfg.plexBase}/library/sections/${lib.key}/all`, headers);
-  if (all.status !== 200) fail('library_all_unreachable', `HTTP ${all.status}`);
-  let items;
-  try {
-    items = JSON.parse(all.body);
-  } catch (_) {
-    fail('library_all_bad_json');
-  }
-  const metas = items.MediaContainer?.Metadata || [];
-  const hit =
-    metas.find((m) => (m.title || '') === cfg.itemTitle) ||
-    metas.find((m) => (m.title || '').includes(cfg.itemTitle));
-  if (!hit) {
+  if (/plex\.nevertrustaf\.art|32401\b/.test(b)) {
     fail(
-      'item_not_found',
-      `no item matching ${JSON.stringify(cfg.itemTitle)}; have: ${metas
-        .map((m) => m.title)
-        .slice(0, 12)
-        .join(' | ')}`
+      'refusing_remote_pms',
+      `PLEX_BASE=${b} is remote/ignored. Local PMS only. value_kind=caller-supplied`
     );
   }
-  log(`resolved library=${lib.title} ratingKey=${hit.ratingKey} title=${hit.title}`);
-  return { ratingKey: String(hit.ratingKey), title: String(hit.title || cfg.itemTitle) };
 }
 
 async function pmsIdentity() {
@@ -1329,34 +1333,16 @@ async function resolveItemForTier(tier) {
     return { ...disc.item, tier: tier.name };
   }
 
-  let ratingKey = String(tier.ratingKey || '').replace(/^\/library\/metadata\//, '');
-  if (ratingKey) {
-    const meta = await httpGet(`${cfg.plexBase}/library/metadata/${ratingKey}`, headers);
-    if (meta.status === 200) {
-      try {
-        const j = JSON.parse(meta.body);
-        const m = (j.MediaContainer?.Metadata || [])[0];
-        if (m && m.title) {
-          log(`resolved tier=${tier.name} ratingKey=${ratingKey} title=${m.title}`);
-          return { ratingKey: String(ratingKey), title: String(m.title), tier: tier.name };
-        }
-      } catch (_) {
-        /* fall through */
-      }
-    }
-  }
-  // Fall back to shared resolveItem() path by temporarily setting cfg fields.
-  const prevKey = cfg.ratingKey;
-  const prevTitle = cfg.itemTitle;
-  cfg.ratingKey = ratingKey || tier.ratingKey;
-  cfg.itemTitle = tier.itemTitle;
-  try {
-    const item = await resolveItem();
-    return { ...item, tier: tier.name };
-  } finally {
-    cfg.ratingKey = prevKey;
-    cfg.itemTitle = prevTitle;
-  }
+  // Prefer explicit env (parent bind: rk=27/30/1/8), else tier default.
+  let ratingKey = String(
+    process.env.PLEX_RATING_KEY ||
+      process.env.PLEX_KEY ||
+      tier.ratingKey ||
+      cfg.ratingKey ||
+      ''
+  ).replace(/^\/library\/metadata\//, '');
+  const item = await resolveItemByRatingKey(ratingKey, `tier_${tier.name}`);
+  return { ...item, tier: tier.name };
 }
 
 
@@ -2897,6 +2883,112 @@ async function runOverlayHoldSequence(page, itemTitle, detailsUrl, tag = 'overla
   return { ok: true, repeats, holdSec, output: `${outW}x${outH}` };
 }
 
+/**
+ * Robustness: double-cast, stop-stopped, seek-past-end.
+ * Each must leave device unwedged (P4 idle or recoverable playing).
+ * Asserts daemon-side effects, not UI colour.
+ */
+async function runRobustnessScenarios(page, itemTitle, detailsUrl, ratingKey) {
+  if (!/^(1|true|yes|on)$/i.test(String(process.env.E2E_ROBUSTNESS || '1'))) {
+    log('ROBUSTNESS=off (E2E_ROBUSTNESS=0)');
+    return { enabled: false, ok: true, cases: [] };
+  }
+  const waitSec = Math.min(cfg.playWaitSec, 15);
+  const cases = [];
+  log(
+    `ROBUSTNESS=on ratingKey=${ratingKey} value_kind=caller-supplied ` +
+      `(cases: cast_while_casting, stop_already_stopped, seek_past_end)`
+  );
+
+  // ── R1 cast while already casting (re-Play same rk) ────────────────────
+  {
+    const tag = 'rob_cast_while_casting';
+    await ensurePlayingSession(page, itemTitle, detailsUrl, tag, waitSec);
+    let prog = await waitPlayingOnDaemon(waitSec);
+    if (prog.playing < 1) {
+      fail(tag, 'baseline playing required before re-cast');
+    }
+    const tBefore = prog.maxT;
+    // Second play without stop — must not wedge; should stay/return playing.
+    await playFromDetails(page, itemTitle, null, `${tag}_replay`).catch(() => {});
+    await handleResumeDialog(page).catch(() => {});
+    prog = await waitPlayingOnDaemon(waitSec);
+    const samples = await sampleTimeline(5, 350, tag);
+    const playing = samples.filter((s) => s.state === 'playing').length;
+    const ok = playing >= 1 || prog.playing >= 1;
+    log(
+      `ROBUSTNESS_CASE name=cast_while_casting ok=${ok ? 1 : 0} ` +
+        `playing_samples=${playing} time_before=${tBefore} time_max=${prog.maxT} ` +
+        `value_kind=measured`
+    );
+    if (!ok) fail(tag, 're-cast left session not playing (wedged?)');
+    cases.push({ name: 'cast_while_casting', ok: true });
+  }
+
+  // ── R2 stop already-stopped ────────────────────────────────────────────
+  {
+    const tag = 'rob_stop_stopped';
+    await forceStopDaemon(tag);
+    await sleep(600);
+    let samples = await sampleTimeline(4, 300, `${tag}_pre`);
+    let idle = assertStoppedOrIdle(samples, tag);
+    // Second stop must not resurrect playback.
+    await forceStopDaemon(`${tag}_again`);
+    await clickStop(page).catch(() => false);
+    await sleep(500);
+    samples = await sampleTimeline(5, 300, `${tag}_post`);
+    idle = assertStoppedOrIdle(samples, `${tag}_post`);
+    const tele = await captureLedger(cfg);
+    const stillPlaying = samples.some((s) => s.state === 'playing');
+    const ok = idle.ok && !stillPlaying && !(tele && tele.playing === 1);
+    log(
+      `ROBUSTNESS_CASE name=stop_already_stopped ok=${ok ? 1 : 0} ` +
+        `states=${samples.map((s) => s.state).join(',')} telemetry_playing=${tele && tele.playing} ` +
+        `value_kind=measured`
+    );
+    if (!ok) fail(tag, `double-stop left non-idle: ${idle.detail || ''}`);
+    await assertP4DeviceIdle(tag, samples);
+    cases.push({ name: 'stop_already_stopped', ok: true });
+  }
+
+  // ── R3 seek past end ───────────────────────────────────────────────────
+  {
+    const tag = 'rob_seek_past_end';
+    await ensurePlayingSession(page, itemTitle, detailsUrl, tag, waitSec);
+    const xml = await pollDaemonTimeline(nextSuiteCmd());
+    const dur = parseInt(xmlAttr(xml, 'duration') || '0', 10);
+    const past = dur > 0 ? dur + 60000 : 99999999;
+    log(`ROBUSTNESS seek_past_end duration_ms=${dur || 'NA'} offset=${past} value_kind=measured`);
+    await companionPlayback(`seekTo?offset=${past}`, tag);
+    await sleep(1200);
+    const samples = await sampleTimeline(6, 400, tag);
+    const states = samples.map((s) => s.state);
+    const times = samples.map((s) => s.time);
+    // Acceptable: stopped/idle, or paused/playing clamped near end — not hung buffering forever.
+    const allBuffering = samples.every((s) => s.state === 'buffering');
+    const maxT = Math.max(...times.filter((t) => t >= 0), -1);
+    const ok = !allBuffering;
+    log(
+      `ROBUSTNESS_CASE name=seek_past_end ok=${ok ? 1 : 0} states=${states.join(',')} ` +
+        `max_t=${maxT} dur=${dur} value_kind=measured`
+    );
+    if (!ok) {
+      fail(tag, `seek past end stuck buffering states=${states.join(',')}`);
+    }
+    // Recover to idle for daily driver.
+    await forceStopDaemon(`${tag}_recover`);
+    await sleep(500);
+    await assertP4DeviceIdle(`${tag}_recover`);
+    cases.push({ name: 'seek_past_end', ok: true });
+  }
+
+  log(
+    `ROBUSTNESS_OK cases=${cases.map((c) => c.name).join(',')} count=${cases.length} ` +
+      `ratingKey=${ratingKey}`
+  );
+  return { enabled: true, ok: true, cases };
+}
+
 async function runTransitionScenarios(page, itemTitle, detailsUrl, _castAlreadySelected) {
   // Overlay-only mode: drive chrome windows for parent HDMI, then return (no N-loop).
   if (cfg.overlayOnly) {
@@ -3197,6 +3289,7 @@ async function runTransitionScenarios(page, itemTitle, detailsUrl, _castAlreadyS
         '(auto-tried). Never soft-skip credentials.'
     );
   }
+  assertLocalPmsOnly(cfg.plexBase);
   if (/plex\.nevertrustaf\.art|32401/.test(cfg.plexBase)) {
     fail(
       'refusing_non_local_pms',
@@ -3639,6 +3732,14 @@ async function runTransitionScenarios(page, itemTitle, detailsUrl, _castAlreadyS
       }
       // Transitions include multi-cycle stress + per-cycle HDMI (when enabled).
       const tr = await runTransitionScenarios(page, itemTitle, detailsUrl, true);
+      // ── 4b2. Robustness (double-cast, stop-stopped, seek-past-end) ───────
+      let rob = { enabled: false, cases: [] };
+      if (!cfg.overlayOnly) {
+        rob = await runRobustnessScenarios(page, itemTitle, detailsUrl, ratingKey);
+        if (rob.enabled) {
+          summaryBits.push(`rob=${rob.cases.map((c) => c.name).join('+') || 'ok'}`);
+        }
+      }
       // Discovery recheck (picker still lists exact target). Cold-start is the first
       // picker open above; this catches mid-run disappearance. After parent daemon
       // restart, re-run the full suite — suite does not restart the daemon.
@@ -3712,6 +3813,16 @@ async function runTransitionScenarios(page, itemTitle, detailsUrl, _castAlreadyS
     suitePassed = true;
     log(
       `suite_body_ok ${summaryBits.join(' ')} cast=${cfg.castName} context_requests=${tracker.all.length}`
+    );
+    log(
+      'COVERAGE_MATRIX value_kind=measured ' +
+        'discovery=Select_Player_exact_MiSTerPlex+companion ' +
+        'transport=play/pause/resume/seek/stop_daemon_effect ' +
+        'session_truth=UI_clock_vs_daemon_timeline ' +
+        'robustness=cast_while_casting+stop_stopped+seek_past_end ' +
+        'p4_idle=after_stop ' +
+        'nav=ratingKey_only title_match=OFF ' +
+        'NOT_covered=pixels/rows/overlay_res/lipsync/PLXD_frames'
     );
   } catch (e) {
     suitePassed = false;

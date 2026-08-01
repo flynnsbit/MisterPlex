@@ -16,8 +16,9 @@ const ROOT = path.resolve(__dirname, '../../..');
 const TIER_DEFS = {
   '240p': {
     name: '240p',
-    ratingKey: '3',
-    itemTitle: 'MiSTerPlex Test 240p',
+    // Parent bind: cast by ratingKey only. rk=1 = 240p soak (not title match).
+    ratingKey: '1',
+    itemTitle: '(from metadata rk — title not used for selection)',
     expectDecode: '320x240',
     confKeys: {
       DECODE: '320x240',
@@ -30,10 +31,10 @@ const TIER_DEFS = {
   },
   '480p': {
     name: '480p',
-    // Default: short Test 480p RK6 (transition/UI arm). Soak TREK24 is RK8:
-    //   E2E_480P_ARM=soak  or  PLEX_RATING_KEY=8
-    ratingKey: '6',
-    itemTitle: 'MiSTerPlex Test 480p',
+    // Default soak rk=8; parent full-bleed rk=27 / BBB rk=30 via PLEX_RATING_KEY.
+    //   E2E_480P_ARM=soak|fullbleed|bbb  or  PLEX_RATING_KEY=8|27|30
+    ratingKey: '8',
+    itemTitle: '(from metadata rk — title not used for selection)',
     expectDecode: '624x480',
     confKeys: {
       DECODE: '624x480',
@@ -50,18 +51,32 @@ function resolve480pArm(env = process.env) {
   const arm = String(env.E2E_480P_ARM || env.E2E_480P_RK || '')
     .trim()
     .toLowerCase();
-  if (arm === '8' || arm === 'soak' || arm === 'trek24') {
+  if (arm === '27' || arm === 'fullbleed' || arm === 'full-bleed' || arm === 'vres') {
     return {
-      ratingKey: '8',
-      itemTitle: 'MiSTerPlex Soak 480p 24fps',
-      arm: 'soak',
+      ratingKey: '27',
+      itemTitle: '(metadata rk=27)',
+      arm: 'fullbleed',
     };
   }
-  // default + explicit 6/test/short
+  if (arm === '30' || arm === 'bbb') {
+    return {
+      ratingKey: '30',
+      itemTitle: '(metadata rk=30)',
+      arm: 'bbb',
+    };
+  }
+  if (arm === '6' || arm === 'test' || arm === 'short') {
+    return {
+      ratingKey: '6',
+      itemTitle: '(metadata rk=6)',
+      arm: 'test',
+    };
+  }
+  // default soak rk=8
   return {
-    ratingKey: '6',
-    itemTitle: 'MiSTerPlex Test 480p',
-    arm: 'test',
+    ratingKey: '8',
+    itemTitle: '(metadata rk=8)',
+    arm: 'soak',
   };
 }
 

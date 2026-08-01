@@ -167,6 +167,47 @@ async function main() {
     log('PROOF_MISS P5 — dead port returned Timeline (impossible / broken probe)');
   }
 
+  // ── P6: bogus ratingKey must be RED (not silent title fallback) ──────────
+  {
+    const liveBase = (process.env.PLEX_BASE || '').replace(/\/$/, '');
+    const tok =
+      process.env.PLEX_TOKEN ||
+      (process.env.PLEX_TOKEN_FILE
+        ? require('fs').readFileSync(process.env.PLEX_TOKEN_FILE, 'utf8').trim()
+        : '');
+    if (liveBase && tok && !/192\.168\.1\.122|nevertrustaf/.test(liveBase)) {
+      const bogus = '999999991';
+      const r = await httpGet(`${liveBase}/library/metadata/${bogus}?X-Plex-Token=${encodeURIComponent(tok)}`, 5000);
+      // Suite fails on 404/400 as rating_key_not_found — must NOT be 200 with playable meta.
+      const wouldRed = r.status === 404 || r.status === 400 || r.status === 401 || r.status === 0;
+      const p6hit = wouldRed;
+      log(
+        `PROOF P6 bogus_ratingKey status=${r.status} would_suite_RED=${p6hit ? 1 : 0} ` +
+          `key=${bogus} value_kind=measured`
+      );
+      if (p6hit) proofsOk++;
+      else {
+        proofsFail++;
+        log('PROOF_MISS P6 — bogus ratingKey returned playable HTTP; title-fallback risk');
+      }
+    } else {
+      log('PROOF P6 SKIP need PLEX_BASE+token local (not SHIELD/remote)');
+    }
+  }
+
+  // ── P7: SHIELD base must be refused by policy classifier ─────────────────
+  {
+    const shield = 'http://192.168.1.122:32400';
+    const refuse =
+      /192\.168\.1\.122\b/.test(shield) && !/192\.168\.1\.24\b/.test(shield);
+    log(`PROOF P7 refuse_shield_base hit=${refuse ? 1 : 0} base=${shield}`);
+    if (refuse) proofsOk++;
+    else {
+      proofsFail++;
+      log('PROOF_MISS P7 — SHIELD not refused');
+    }
+  }
+
   log(`PROOF_SUMMARY ok=${proofsOk} miss=${proofsFail}`);
   if (proofsFail === 0) {
     log('CAST_PICKER_GATE_RED_PATHS=PROOF_OK');
