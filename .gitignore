@@ -35,3 +35,15 @@ artifacts/local/
 !release_artifacts/
 !release_artifacts/**
 tests/unit/test_input_mailbox
+
+# Large generated A/V fixtures — generate on demand; keep media on PMS mount.
+# Short trekmatch/blip mp4s already in history may remain tracked.
+assets/avsync/glass_ocrproof_*.mp4
+assets/avsync/real_bbb_*.mp4
+assets/avsync/bank480_*.mp4
+assets/avsync/rowcount_*.mp4
+assets/avsync/sync_glass_ledger_*.mp4
+assets/avsync/*_1200s.mp4
+assets/avsync/*_1800s.mp4
+# Do not add new multi‑MB soaks without LFS + explicit review
+.agent-work/

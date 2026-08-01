@@ -1,3 +1,5 @@
+> **Canonical inventory:** [`docs/FIXTURE_MANIFEST.md`](FIXTURE_MANIFEST.md) (measured rates, luma hazards, bank_fit).
+
 # Playbook — A/V sync & soak fixtures (local PMS only)
 
 **PMS:** `http://192.168.1.24:32400` library section **2**  

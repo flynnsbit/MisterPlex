@@ -1,0 +1,290 @@
+{
+  "1": {
+    "title": "MiSTerPlex Soak 240p 23976fps (2026)",
+    "n": 40,
+    "frac_body_lt10": 1.0,
+    "body_mean_of_samples": 0.0,
+    "body_p10": 0.0,
+    "body_p50": 0.0,
+    "body_p90": 0.0
+  },
+  "2": {
+    "title": "MiSTerPlex Test 1080p (2026)",
+    "n": 60,
+    "frac_body_lt10": 1.0,
+    "body_mean_of_samples": 0.0,
+    "body_p10": 0.0,
+    "body_p50": 0.0,
+    "body_p90": 0.0
+  },
+  "3": {
+    "title": "MiSTerPlex Test 240p (2026)",
+    "n": 60,
+    "frac_body_lt10": 1.0,
+    "body_mean_of_samples": 0.0,
+    "body_p10": 0.0,
+    "body_p50": 0.0,
+    "body_p90": 0.0
+  },
+  "4": {
+    "title": "MiSTerPlex Test 240p 30fps (2026)",
+    "n": 60,
+    "frac_body_lt10": 1.0,
+    "body_mean_of_samples": 1.18,
+    "body_p10": 1.18,
+    "body_p50": 1.18,
+    "body_p90": 1.18
+  },
+  "5": {
+    "title": "MiSTerPlex Test 240p 60fps (2026)",
+    "n": 60,
+    "frac_body_lt10": 1.0,
+    "body_mean_of_samples": 1.02,
+    "body_p10": 1.02,
+    "body_p50": 1.02,
+    "body_p90": 1.03
+  },
+  "6": {
+    "title": "MiSTerPlex Test 480p (2026)",
+    "n": 60,
+    "frac_body_lt10": 1.0,
+    "body_mean_of_samples": 0.0,
+    "body_p10": 0.0,
+    "body_p50": 0.0,
+    "body_p90": 0.0
+  },
+  "7": {
+    "title": "MiSTerPlex Test 720p (2026)",
+    "n": 60,
+    "frac_body_lt10": 1.0,
+    "body_mean_of_samples": 0.0,
+    "body_p10": 0.0,
+    "body_p50": 0.0,
+    "body_p90": 0.0
+  },
+  "8": {
+    "title": "MiSTerPlex Soak 480p 24fps (2026)",
+    "n": 40,
+    "frac_body_lt10": 1.0,
+    "body_mean_of_samples": 0.0,
+    "body_p10": 0.0,
+    "body_p50": 0.0,
+    "body_p90": 0.0
+  },
+  "9": {
+    "title": "Big Buck Bunny - https://archive.org/details/BigBuckBunny_124",
+    "n": 40,
+    "frac_body_lt10": 0.0,
+    "body_mean_of_samples": 123.41,
+    "body_p10": 75.24,
+    "body_p50": 122.56,
+    "body_p90": 177.86
+  },
+  "10": {
+    "title": "Big Buck Bunny - https://archive.org/details/BigBuckBunny_124",
+    "n": 40,
+    "frac_body_lt10": 0.0,
+    "body_mean_of_samples": 122.54,
+    "body_p10": 64.76,
+    "body_p50": 126.24,
+    "body_p90": 178.84
+  },
+  "11": {
+    "title": "MiSTerPlex Soak 480p 24fps RAMP (2026)",
+    "n": 40,
+    "frac_body_lt10": 1.0,
+    "body_mean_of_samples": 0.0,
+    "body_p10": 0.0,
+    "body_p50": 0.0,
+    "body_p90": 0.0
+  },
+  "12": {
+    "title": "MiSTerPlex Glass Ledger 480p 24fps 360s (2026)",
+    "n": 40,
+    "frac_body_lt10": 1.0,
+    "body_mean_of_samples": 2.43,
+    "body_p10": 2.43,
+    "body_p50": 2.43,
+    "body_p90": 2.43
+  },
+  "13": {
+    "title": "MiSTerPlex Glass OCRProof 480p 24fps 600s (2026)",
+    "n": 40,
+    "frac_body_lt10": 1.0,
+    "body_mean_of_samples": 0.0,
+    "body_p10": 0.0,
+    "body_p50": 0.0,
+    "body_p90": 0.0
+  },
+  "14": {
+    "title": "MiSTerPlex Glass OCRProof 240p 24fps 600s (2026)",
+    "n": 40,
+    "frac_body_lt10": 1.0,
+    "body_mean_of_samples": 0.0,
+    "body_p10": 0.0,
+    "body_p50": 0.0,
+    "body_p90": 0.0
+  },
+  "15": {
+    "title": "MiSTerPlex Glass OCRProof 624x352 24fps 180s (2026)",
+    "n": 60,
+    "frac_body_lt10": 1.0,
+    "body_mean_of_samples": 0.0,
+    "body_p10": 0.0,
+    "body_p50": 0.0,
+    "body_p90": 0.0
+  },
+  "16": {
+    "title": "MiSTerPlex Glass OCRProof 640x480 24fps 180s (2026)",
+    "n": 60,
+    "frac_body_lt10": 1.0,
+    "body_mean_of_samples": 0.0,
+    "body_p10": 0.0,
+    "body_p50": 0.0,
+    "body_p90": 0.0
+  },
+  "17": {
+    "title": "MiSTerPlex Glass OCRProof 720x480 24fps 180s (2026)",
+    "n": 60,
+    "frac_body_lt10": 1.0,
+    "body_mean_of_samples": 0.0,
+    "body_p10": 0.0,
+    "body_p50": 0.0,
+    "body_p90": 0.0
+  },
+  "18": {
+    "title": "MiSTerPlex Real BBB GlassID 624x352 24fps 360s (2026)",
+    "n": 40,
+    "frac_body_lt10": 0.0,
+    "body_mean_of_samples": 122.18,
+    "body_p10": 74.07,
+    "body_p50": 121.29,
+    "body_p90": 176.63
+  },
+  "19": {
+    "title": "MiSTerPlex Real BBB GlassID 720x480 24fps (2026)",
+    "n": 40,
+    "frac_body_lt10": 0.0,
+    "body_mean_of_samples": 121.48,
+    "body_p10": 63.49,
+    "body_p50": 127.65,
+    "body_p90": 177.57
+  },
+  "20": {
+    "title": "MiSTerPlex AVSync Glass 480p 24fps 600s (2026)",
+    "n": 40,
+    "frac_body_lt10": 1.0,
+    "body_mean_of_samples": 0.0,
+    "body_p10": 0.0,
+    "body_p50": 0.0,
+    "body_p90": 0.0
+  },
+  "21": {
+    "title": "MiSTerPlex AVSync Glass 480p 24fps 600s audioPlus100ms (2026)",
+    "n": 40,
+    "frac_body_lt10": 1.0,
+    "body_mean_of_samples": 0.0,
+    "body_p10": 0.0,
+    "body_p50": 0.0,
+    "body_p90": 0.0
+  },
+  "22": {
+    "title": "MiSTerPlex AudioID Glass 480p 24fps 1800s (2026)",
+    "n": 30,
+    "frac_body_lt10": 0.0,
+    "body_mean_of_samples": 117.33,
+    "body_p10": 64.0,
+    "body_p50": 128.0,
+    "body_p90": 128.0
+  },
+  "23": {
+    "title": "MiSTerPlex AudioID Glass 480p 24fps 60s (2026)",
+    "n": 60,
+    "frac_body_lt10": 1.0,
+    "body_mean_of_samples": 0.0,
+    "body_p10": 0.0,
+    "body_p50": 0.0,
+    "body_p90": 0.0
+  },
+  "24": {
+    "title": "MiSTerPlex AudioID Glass 480p 24fps 60s audioPlus100ms (2026)",
+    "n": 60,
+    "frac_body_lt10": 1.0,
+    "body_mean_of_samples": 0.0,
+    "body_p10": 0.0,
+    "body_p50": 0.0,
+    "body_p90": 0.0
+  },
+  "25": {
+    "title": "MiSTerPlex Disc Nyquist 240p 320x240 (2026)",
+    "n": 60,
+    "frac_body_lt10": 0.0,
+    "body_mean_of_samples": 125.49,
+    "body_p10": 125.49,
+    "body_p50": 125.49,
+    "body_p90": 125.49
+  },
+  "26": {
+    "title": "MiSTerPlex Disc Nyquist 480p 624x480 (2026)",
+    "n": 60,
+    "frac_body_lt10": 0.0,
+    "body_mean_of_samples": 124.66,
+    "body_p10": 124.66,
+    "body_p50": 124.66,
+    "body_p90": 124.66
+  },
+  "27": {
+    "title": "MiSTerPlex Bank480 FullBleed VRes AV 624x480 24fps 1200s (2026)",
+    "n": 30,
+    "frac_body_lt10": 0.0,
+    "body_mean_of_samples": 234.11,
+    "body_p10": 129.65,
+    "body_p50": 255.0,
+    "body_p90": 255.0
+  },
+  "28": {
+    "title": "MiSTerPlex Real BBB GlassAV 1440x1080 24fps 90s (2026)",
+    "n": 60,
+    "frac_body_lt10": 0.0,
+    "body_mean_of_samples": 119.34,
+    "body_p10": 63.9,
+    "body_p50": 115.87,
+    "body_p90": 164.39
+  },
+  "29": {
+    "title": "MiSTerPlex Real BBB GlassAV 624x352 24fps 90s (2026)",
+    "n": 60,
+    "frac_body_lt10": 0.0,
+    "body_mean_of_samples": 125.45,
+    "body_p10": 64.96,
+    "body_p50": 123.65,
+    "body_p90": 176.29
+  },
+  "30": {
+    "title": "MiSTerPlex Real BBB GlassAV 624x480 24fps 1200s (2026)",
+    "n": 30,
+    "frac_body_lt10": 0.0,
+    "body_mean_of_samples": 228.15,
+    "body_p10": 85.28,
+    "body_p50": 255.0,
+    "body_p90": 255.0
+  },
+  "31": {
+    "title": "MiSTerPlex Real BBB GlassAV 640x480 24fps 90s (2026)",
+    "n": 60,
+    "frac_body_lt10": 0.0,
+    "body_mean_of_samples": 126.05,
+    "body_p10": 63.55,
+    "body_p50": 120.38,
+    "body_p90": 180.79
+  },
+  "32": {
+    "title": "MiSTerPlex Real BBB GlassAV 720x480 24fps 90s (2026)",
+    "n": 60,
+    "frac_body_lt10": 0.0,
+    "body_mean_of_samples": 126.05,
+    "body_p10": 63.57,
+    "body_p50": 120.39,
+    "body_p90": 180.8
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "file": "assets/avsync/glass_ocrproof_624x480_30_120s.mp4",
+  "width": 624,
+  "height": 480,
+  "r_frame_rate": "30/1",
+  "duration_s": 120,
+  "nb_frames": 3600,
+  "profile": "Constrained Baseline",
+  "has_b_frames": 0,
+  "audio": "aac/48000",
+  "id_contract": "docs/glass_frame_id_contract.md",
+  "generator": "scripts/gen_glass_ledger_fixture.py",
+  "purpose": "Bank-geometry present-path rate test at native 624x480; burned-in glass ID",
+  "media_name": "MiSTerPlex Glass OCRProof 624x480 30fps 120s (2026).mp4",
+  "ffmpeg_equiv": "python3 scripts/gen_glass_ledger_fixture.py --out ... --duration 120 --fps-num 30 --fps-den 1 --width 624 --height 480 --vbitrate 2500k"
+}
