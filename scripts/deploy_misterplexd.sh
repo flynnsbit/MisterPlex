@@ -199,6 +199,25 @@ REMOTE_BIN="$TARGET_ROOT/bin/misterplexd"
 REMOTE_CONF="$TARGET_ROOT/misterplex.conf"
 REMOTE_LOG="$TARGET_ROOT/misterplexd.log"
 
+# Conf is USER-OWNED: snapshot md5 BEFORE any mutate; post must match exactly.
+# Never rewrite/normalise conf to make deploy succeed.
+echo "deploy: snapshot conf md5 (user-owned; must be unchanged after)"
+set +e
+CONF_PRE_OUT=$(ssh_m "set +e
+  conf='$REMOTE_CONF'
+  if [ -f \"\$conf\" ]; then
+    md5sum \"\$conf\" | awk '{print \$1}'
+  else
+    echo MISSING
+  fi
+")
+conf_pre_rc=$?
+set -e
+report_rc "conf_pre_probe" "$conf_pre_rc" || die "conf pre-md5 probe failed"
+CONF_MD5_PRE=$(printf '%s\n' "$CONF_PRE_OUT" | tr -d '\r' | tail -n1)
+[[ -n "$CONF_MD5_PRE" ]] || die "NO-DATA conf pre md5 empty"
+echo "deploy: conf_md5_pre=$CONF_MD5_PRE path=$REMOTE_CONF"
+
 # DEPLOY ORDER (parent 2026-08-01 hand sequence — supervisor-safe):
 #   1) CAPTURE daemon PIDs by /proc/comm+argv0 (NOT cmdline; NOT pgrep — busybox)
 #      pidof misterplexd is OK as supplement; never match flock via cmdline substring
@@ -385,7 +404,10 @@ report_rc "kill_captured" "$kill_rc" || die "kill captured failed"
 
 # --- 6-7) supervisor restart (or fallback start); verify LIVE exe md5 ---------
 echo "deploy: await supervisor restart root=$TARGET_ROOT (disk match alone is NOT success)"
+VERIFY_LOG="$ROOT/build/deploy-remote-verify.$$.log"
+mkdir -p "$ROOT/build"
 set +e
+set -o pipefail
 ssh_m env \
   "PLAYER_ID=$PLAYER_ID" \
   "PMS_URL=$PMS_URL" \
@@ -395,7 +417,8 @@ ssh_m env \
   "REMOTE_CONF=$REMOTE_CONF" \
   "REMOTE_LOG=$REMOTE_LOG" \
   "HOST_MD5=$HOST_MD5" \
-  bash -s <<'REMOTE'
+  "CONF_MD5_PRE=$CONF_MD5_PRE" \
+  bash -s <<'REMOTE' | tee "$VERIFY_LOG"
 echo DEPLOY_RESTART_VERIFY
 set -euo pipefail
 chmod +x "$REMOTE_BIN"
@@ -412,6 +435,21 @@ if [[ ! -f "$REMOTE_CONF" ]]; then
     echo "     set DEPLOY_ALLOW_CREATE_CONF=1 only when intentionally bootstrapping"
     exit 8
   fi
+fi
+
+# Never rewrite conf content. Compare to host-side pre snapshot.
+conf_md5_post=$(md5sum "$REMOTE_CONF" | awk '{print $1}')
+echo "POST_CONF_MD5=$conf_md5_post"
+echo "PRE_CONF_MD5=${CONF_MD5_PRE:-}"
+if [[ -n "${CONF_MD5_PRE:-}" && "${CONF_MD5_PRE}" != "MISSING" ]]; then
+  if [[ "$conf_md5_post" != "$CONF_MD5_PRE" ]]; then
+    echo "FAIL conf mutated pre=$CONF_MD5_PRE post=$conf_md5_post (USER-OWNED)"
+    exit 8
+  fi
+elif [[ "${CONF_MD5_PRE:-}" == "MISSING" && "${DEPLOY_ALLOW_CREATE_CONF:-0}" != "1" ]]; then
+  # Pre was missing; we refused create above, so we should not be here with a file
+  # unless operator dropped one mid-flight — still require stable post snapshot.
+  :
 fi
 
 # Disk check again on-device (belt and suspenders).
@@ -569,23 +607,48 @@ if command -v wget >/dev/null 2>&1; then
   code=$(wget -q -O /dev/null -S "http://127.0.0.1:${PORT:-3005}/resources" 2>&1 | awk '/HTTP\//{print $2; exit}')
   code=${code:-000}
 fi
-if [[ "$code" != "200" ]] && command -v curl >/dev/null 2>&1; then
+if [[ "$code" != "200" && "$code" != "204" ]] && command -v curl >/dev/null 2>&1; then
   code=$(curl -s -o /dev/null -w '%{http_code}' --connect-timeout 2 "http://127.0.0.1:${PORT:-3005}/resources" || echo 000)
 fi
 echo "POST_HTTP=$code"
-if [[ "$code" != "200" ]]; then
-  echo "FAIL /resources HTTP $code (daemon up but not healthy)"
+if [[ "$code" != "200" && "$code" != "204" ]]; then
+  echo "FAIL /resources HTTP $code (daemon up but not healthy; port ${PORT:-3005})"
   exit 7
 fi
-echo "DEPLOY_OK root=$TARGET_ROOT disk_md5=$disk_md5 live_md5=$live_md5 n_daemon=1 http=$code"
+# Final on-device postcondition bundle (must never exit 0 if any half fails).
+echo "POSTCOND n=$n live_md5=$live_md5 host_md5=$HOST_MD5 http=$code conf_pre=${CONF_MD5_PRE:-} conf_post=$conf_md5_post"
+echo "DEPLOY_OK root=$TARGET_ROOT disk_md5=$disk_md5 live_md5=$live_md5 n_daemon=1 http=$code conf_md5=$conf_md5_post"
 REMOTE
 start_rc=$?
+set +o pipefail
 set -e
-report_rc "restart_and_live_verify" "$start_rc" || die "restart/live verify failed (rc=$start_rc) — disk-only success is rejected"
+report_rc "restart_and_live_verify" "$start_rc" || die "restart/live verify failed (rc=$start_rc) — disk-only or partial success is rejected"
+
+# Host-side re-assert from captured POST_* (defense: remote must not exit 0 on soft fail).
+POST_N=$(sed -n 's/^POST_N_DAEMON=//p' "$VERIFY_LOG" | tail -n1)
+POST_LIVE=$(sed -n 's/^POST_LIVE_MD5=//p' "$VERIFY_LOG" | tail -n1)
+POST_CONF_PATH=$(sed -n 's/^POST_LIVE_CONF=//p' "$VERIFY_LOG" | tail -n1)
+POST_HTTP=$(sed -n 's/^POST_HTTP=//p' "$VERIFY_LOG" | tail -n1)
+POST_CONF_MD5=$(sed -n 's/^POST_CONF_MD5=//p' "$VERIFY_LOG" | tail -n1)
+set +e
+deploy_assert_postconditions \
+  "${POST_N:-0}" \
+  "${POST_LIVE:-}" \
+  "$HOST_MD5" \
+  "${POST_CONF_PATH:-}" \
+  "$TARGET_ROOT" \
+  "${POST_HTTP:-}" \
+  "$CONF_MD5_PRE" \
+  "${POST_CONF_MD5:-}"
+post_rc=$?
+set -e
+report_rc "host_postconditions" "$post_rc" || die "host postconditions failed (rc=$post_rc)"
+rm -f "$VERIFY_LOG"
 
 echo "Deployed misterplexd → $HOST"
 echo "deploy: summary host_md5=$HOST_MD5 target_root=$TARGET_ROOT remote_bin=$REMOTE_BIN"
-echo "deploy: summary LIVE process md5 verified equal to host (not disk alone)"
+echo "deploy: summary LIVE /proc/PID/exe md5 verified equal to host (not disk alone)"
+echo "deploy: summary conf_md5=$CONF_MD5_PRE (user-owned; byte-unchanged)"
 report_rc "deploy_overall" 0
 
 # --- boot path: durable supervisor + user-startup from S99user (P0 decoy fix) ---

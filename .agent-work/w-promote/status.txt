@@ -1,11 +1,8 @@
 lane: w-promote
 branch: fix/rollback-honest
-HEAD: (see git)
-blocker_fix: remote_live_blob is ONE heredoc — V2_MD5 set+e glue structurally impossible
-audit: scripts/promotion_gate_check.sh dump-remote-live | cat -A
-DO_NOT_PROMOTE_DDR_DEFAULT: parent 1.54% presentation frame loss (22/1429)
-atomic_pair: rollback_v2 includes core+daemon+conf+boot; restore_misterplexd_prev rc=10
-deploy: named artifact, live root from /proc/exe, stage+bak+mv, n_daemon==1
-plexctl: load_core NOT_ON_DEVICE rc=4 honest (no host [ -f ] false missing)
-conf: USER-OWNED byte-exact
+defect: deploy false-success + restore zero postcond (main tree) — FIXED on this branch
+deploy: live /proc/exe md5 + n_daemon==1 + HTTP:3005 + conf byte-unchanged; host re-assert
+restore: PAIR_ID required -> rollback_v2; no PAIR_ID rc=10; RESTORE_ALLOW_HALF ignored
+tests: test_deploy_misterplexd true rc=0; test_rollback_honest true rc=0
 device: parent-only
+DO_NOT_PROMOTE_DDR_DEFAULT: 1.54% frame loss bar

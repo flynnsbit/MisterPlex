@@ -4,6 +4,22 @@ Parent-owned device work only. Agents produce artifacts and commands; they must
 **not** SSH to `192.168.1.183`, deploy, cast, or capture HDMI.
 
 
+## Deploy / restore fail-loud (rd-review 2026-08-01)
+
+Main-tree defects (do **not** use `scripts/` from pre-fix main):
+- `deploy_misterplexd.sh` rebuilt/stripped, installed v1 root, no live `/proc/exe` md5,
+  could print success without post-conditions.
+- `restore_misterplexd_prev.sh` restored daemon only, **zero** post-conditions (B8).
+
+**This branch:**
+- Deploy fails non-zero on: copy/stage fail, disk md5≠host, live `/proc/PID/exe` md5≠host,
+  `n_daemon≠1`, HTTP `:3005/resources`≠200, conf md5 mutated (USER-OWNED).
+- Host re-asserts `deploy_assert_postconditions` from captured `POST_*` lines.
+- `restore_misterplexd_prev.sh` requires `PAIR_ID` and execs `rollback_v2.sh restore`
+  (atomic core+daemon+conf+boot). Without `PAIR_ID` → `true rc=10` refuse.
+
+Red-before-green: `tests/unit/test_deploy_misterplexd.sh`, `tests/unit/test_rollback_honest.sh`.
+
 ## Frame-loss bar (parent 2026-08-01) — do NOT flip daily driver
 
 Parent pixel-proven **1.54% presentation-side frame loss** on the DDR path

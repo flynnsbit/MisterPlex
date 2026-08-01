@@ -667,9 +667,47 @@ if [ -f "$PIN_DDR" ]; then
   echo "OK find-daemon-ddr"
 fi
 
-echo "=== B8: restore_misterplexd_prev HARD REFUSE half-restore ==="
+echo "=== verify FAILS when n_daemon!=1 (post-condition) ==="
+write_scen <<SCEN
+core_md5=$CORE_MD5
+disk_md5=$DAEMON_MD5
+live_md5=$DAEMON_MD5
+n_daemon=2
+http_code=200
+SCEN
+ROLLBACK_REQUIRE_VISUAL=0 run_rb ndaemon2 verify
+[ "$LAST_RC" -ne 0 ] || { echo "FAIL n_daemon=2 must be non-zero got $LAST_RC"; exit 1; }
+echo "$LAST_OUT" | grep -q 'n_daemon=2' || { echo "FAIL need n_daemon=2 msg"; exit 1; }
+echo "OK verify-n_daemon-ne1 true rc=$LAST_RC"
+
+echo "=== verify FAILS when HTTP :3005/resources != 200 ==="
+write_scen <<SCEN
+core_md5=$CORE_MD5
+disk_md5=$DAEMON_MD5
+live_md5=$DAEMON_MD5
+n_daemon=1
+http_code=503
+SCEN
+ROLLBACK_REQUIRE_VISUAL=0 run_rb http503 verify
+[ "$LAST_RC" -ne 0 ] || { echo "FAIL http 503 must be non-zero got $LAST_RC"; exit 1; }
+echo "$LAST_OUT" | grep -qiE 'http|/resources|503' || { echo "FAIL need http msg"; exit 1; }
+echo "OK verify-http-fail true rc=$LAST_RC"
+
+echo "=== verify FAILS when live exe md5 != pin (post-condition) ==="
+write_scen <<SCEN
+core_md5=$CORE_MD5
+disk_md5=$DAEMON_MD5
+live_md5=00000000000000000000000000000000
+n_daemon=1
+http_code=200
+SCEN
+ROLLBACK_REQUIRE_VISUAL=0 run_rb livebad verify
+[ "$LAST_RC" -ne 0 ] || { echo "FAIL live md5 mismatch must fail"; exit 1; }
+echo "OK verify-live-md5-mismatch true rc=$LAST_RC"
+
+echo "=== B8: restore_misterplexd_prev HARD REFUSE half-restore (no PAIR_ID) ==="
 set +e
-out=$(bash "$ROOT/scripts/restore_misterplexd_prev.sh" 2>&1)
+out=$(env -u PAIR_ID bash "$ROOT/scripts/restore_misterplexd_prev.sh" 2>&1)
 rc=$?
 set -e
 echo "$out" | sed 's/^/  [half] /' | head -20
@@ -678,6 +716,25 @@ echo "  [half] true rc=$rc"
 echo "$out" | grep -qi 'HALF_RESTORE\|REFUSE' || { echo "FAIL half msg"; exit 1; }
 echo "$out" | grep -qi 'rollback_v2' || { echo "FAIL half redirect"; exit 1; }
 echo "OK half-restore-refuse rc=10"
+
+echo "=== B8b: RESTORE_ALLOW_HALF still refused ==="
+set +e
+out=$(env -u PAIR_ID RESTORE_ALLOW_HALF=1 bash "$ROOT/scripts/restore_misterplexd_prev.sh" 2>&1)
+rc=$?
+set -e
+[ "$rc" -eq 10 ] || { echo "FAIL allow_half want 10 got $rc"; exit 1; }
+echo "OK allow-half-still-refuse rc=10"
+
+echo "=== atomic restore wrapper dry-run delegates to rollback_v2 ==="
+set +e
+out=$(PAIR_ID=ddr-c5382bee ROLLBACK_EXECUTE=0 bash "$ROOT/scripts/restore_misterplexd_prev.sh" 2>&1)
+rc=$?
+set -e
+echo "$out" | sed 's/^/  [atomic] /' | head -15
+echo "  [atomic] true rc=$rc"
+[ "$rc" -eq 0 ] || { echo "FAIL atomic dry want 0 got $rc"; exit 1; }
+echo "$out" | grep -qiE 'DRY-RUN|ATOMIC|PAIR_ID=ddr' || { echo "FAIL atomic dry msg"; exit 1; }
+echo "OK atomic-wrapper-dry-run rc=0"
 
 echo "=== pair matrix includes bank1 geometry ==="
 out=$(cd "$ROOT" && bash -c 'source scripts/pair_ship_policy.sh; pair_policy_lookup ddr-c5382bee')

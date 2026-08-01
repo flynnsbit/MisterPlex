@@ -63,6 +63,38 @@ deploy_assert_single_live 1 abcabc abcabc \
   "/media/fat/misterplex_v2/misterplex.conf" "/media/fat/misterplex_v2" \
   && ok "single-live-ok" || bad "single-live-ok"
 
+echo "=== RED: conf mutated (user-owned) ==="
+if deploy_assert_conf_unchanged aaa bbb 2>/dev/null; then
+  bad "conf-mutated should fail"
+else
+  [[ $? -eq 7 ]] && ok "conf-mutated-rc=7" || bad "conf-mutated unexpected rc"
+fi
+echo "=== GREEN: conf unchanged ==="
+deploy_assert_conf_unchanged 7f06132f0c00e90b35141bdc0c60ccc9 7f06132f0c00e90b35141bdc0c60ccc9 \
+  && ok "conf-unchanged-ok" || bad "conf-unchanged-ok"
+
+echo "=== RED: postconditions http fail ==="
+if deploy_assert_postconditions 1 abc abc \
+    "/media/fat/misterplex_v2/misterplex.conf" "/media/fat/misterplex_v2" \
+    500 7f06132f 7f06132f 2>/dev/null; then
+  bad "http-fail should fail"
+else
+  [[ $? -eq 7 ]] && ok "http-fail-rc=7" || bad "http-fail unexpected rc"
+fi
+echo "=== RED: postconditions live md5 mismatch ==="
+if deploy_assert_postconditions 1 deadbeef cafebabe \
+    "/media/fat/misterplex_v2/misterplex.conf" "/media/fat/misterplex_v2" \
+    200 7f06132f 7f06132f 2>/dev/null; then
+  bad "post-md5 should fail"
+else
+  [[ $? -eq 5 ]] && ok "post-md5-rc=5" || bad "post-md5 unexpected rc"
+fi
+echo "=== GREEN: full postconditions ==="
+deploy_assert_postconditions 1 abc abc \
+  "/media/fat/misterplex_v2/misterplex.conf" "/media/fat/misterplex_v2" \
+  200 7f06132f 7f06132f \
+  && ok "postconditions-ok" || bad "postconditions-ok"
+
 # --- CLI: explicit path required semantics -----------------------------------
 echo "=== RED: missing named binary path ==="
 set +e
@@ -84,6 +116,9 @@ echo "1" >"$STATE/n_after"
 echo "$HOST_MD5" >"$STATE/live_md5"
 echo "$HOST_MD5" >"$STATE/disk_md5"
 echo "200" >"$STATE/http"
+# Parent-measured conf pin (USER-OWNED); fake must keep it byte-stable unless RED case.
+echo "7f06132f0c00e90b35141bdc0c60ccc9" >"$STATE/conf_md5"
+echo "7f06132f0c00e90b35141bdc0c60ccc9" >"$STATE/conf_md5_post"
 
 cat >"$WORK/fake_sshm.sh" <<'FAKE'
 #!/usr/bin/env bash
@@ -92,6 +127,16 @@ STATE_DIR="${DEPLOY_FAKE_STATE:?}"
 input="$(cat || true)"
 args="$*"
 
+# Conf pre-snapshot (user-owned). Deploy passes probe as ssh argv (not stdin).
+blob="$args"$'\n'"$input"
+if ! echo "$blob" | grep -q 'DEPLOY_RESTART_VERIFY\|DEPLOY_LIVE_PROBE\|INSTALL_OK\|CAPTURED_PIDS\|DEPLOY_OK' \
+  && echo "$blob" | grep -q 'misterplex\.conf' \
+  && echo "$blob" | grep -q 'MISSING' \
+  && echo "$blob" | grep -q 'md5sum'; then
+  cat "$STATE_DIR/conf_md5"
+  exit 0
+fi
+
 # Restart/verify MUST be first among body matches (also contains readlink).
 if echo "$input" | grep -q 'DEPLOY_RESTART_VERIFY\|POST_N_DAEMON=\|DEPLOY_OK root='; then
   for tok in $args; do
@@ -99,16 +144,21 @@ if echo "$input" | grep -q 'DEPLOY_RESTART_VERIFY\|POST_N_DAEMON=\|DEPLOY_OK roo
       TARGET_ROOT=*) echo "${tok#TARGET_ROOT=}" >"$STATE_DIR/chosen_root" ;;
       HOST_MD5=*) echo "${tok#HOST_MD5=}" >"$STATE_DIR/host_md5_seen" ;;
       REMOTE_BIN=*) echo "${tok#REMOTE_BIN=}" >"$STATE_DIR/remote_bin" ;;
+      CONF_MD5_PRE=*) echo "${tok#CONF_MD5_PRE=}" >"$STATE_DIR/conf_pre_seen" ;;
     esac
   done
   n=$(cat "$STATE_DIR/n_after")
   md=$(cat "$STATE_DIR/live_md5")
   disk=$(cat "$STATE_DIR/disk_md5")
   http=$(cat "$STATE_DIR/http")
+  conf_pre=$(cat "$STATE_DIR/conf_pre_seen" 2>/dev/null || cat "$STATE_DIR/conf_md5")
+  conf_post=$(cat "$STATE_DIR/conf_md5_post")
   chosen=$(cat "$STATE_DIR/chosen_root" 2>/dev/null || echo "")
   host=$(cat "$STATE_DIR/host_md5_seen" 2>/dev/null || true)
   rbin=$(cat "$STATE_DIR/remote_bin" 2>/dev/null || echo "$chosen/bin/misterplexd")
   conf="${chosen}/misterplex.conf"
+  echo "POST_CONF_MD5=$conf_post"
+  echo "PRE_CONF_MD5=$conf_pre"
   echo "REMOTE_DISK_MD5=$disk"
   echo "POST_N_DAEMON=$n"
   echo "POST_PIDS=99"
@@ -119,6 +169,9 @@ if echo "$input" | grep -q 'DEPLOY_RESTART_VERIFY\|POST_N_DAEMON=\|DEPLOY_OK roo
   echo "POST_HOST_MD5=$host"
   echo "POST_TARGET_ROOT=$chosen"
   echo "POST_HTTP=$http"
+  if [[ "$conf_pre" != "MISSING" && "$conf_post" != "$conf_pre" ]]; then
+    echo "FAIL conf mutated pre=$conf_pre post=$conf_post (USER-OWNED)"; exit 8
+  fi
   if [[ "$disk" != "$host" ]]; then
     echo "FAIL disk md5 $disk != host $host before start"; exit 5
   fi
@@ -131,12 +184,12 @@ if echo "$input" | grep -q 'DEPLOY_RESTART_VERIFY\|POST_N_DAEMON=\|DEPLOY_OK roo
     exit 5
   fi
   case "$conf" in "$chosen"/*) ;; *) echo "FAIL conf"; exit 6 ;; esac
-  if [[ "$http" != "200" ]]; then echo "FAIL http $http"; exit 7; fi
+  if [[ "$http" != "200" && "$http" != "204" ]]; then echo "FAIL http $http"; exit 7; fi
   livekey=$(cat "$STATE_DIR/live_root")
   if [[ "$livekey" == "v2" && "$chosen" == "/media/fat/misterplex" ]]; then
     echo "FAIL install to v1 while live is v2"; exit 8
   fi
-  echo "DEPLOY_OK root=$chosen disk_md5=$disk live_md5=$md n_daemon=1 http=$http"
+  echo "DEPLOY_OK root=$chosen disk_md5=$disk live_md5=$md n_daemon=1 http=$http conf_md5=$conf_post"
   exit 0
 fi
 
@@ -174,7 +227,8 @@ if echo "$input $args" | grep -q 'KILL_CAPTURED\|KILL_WAIT_DONE'; then
   exit 0
 fi
 
-if echo "$args" | grep -q 'md5sum'; then
+# Disk binary md5 only — never conf path (conf has its own probe above).
+if echo "$args" | grep -q 'md5sum' && ! echo "$args" | grep -q 'misterplex\.conf'; then
   echo "$(cat "$STATE_DIR/disk_md5")  remote"
   exit 0
 fi
@@ -278,11 +332,60 @@ else
   grep -q 'DEPLOY_EXPECT_MD5' "$WORK/expect-bad.out" && ok "expect-md5-msg" || bad "expect-md5-msg"
 fi
 
+echo "=== RED integration: HTTP /resources not 200 (port 3005) ==="
+echo "v2" >"$STATE/live_root"
+echo "1" >"$STATE/n_after"
+echo "$HOST_MD5" >"$STATE/live_md5"
+echo "$HOST_MD5" >"$STATE/disk_md5"
+echo "503" >"$STATE/http"
+echo "7f06132f0c00e90b35141bdc0c60ccc9" >"$STATE/conf_md5"
+echo "7f06132f0c00e90b35141bdc0c60ccc9" >"$STATE/conf_md5_post"
+if run_deploy "http-bad" env -u MISTERPLEX_ROOT "$SCRIPT" "$WORK/fake.bin"; then
+  bad "integ-http-bad should fail"
+else
+  grep -qiE 'http|resources|503' "$WORK/http-bad.out" && ok "integ-http-bad-msg" || bad "integ-http-bad-msg"
+  [[ "$(tail -n1 <<<"$(grep 'restart_and_live_verify\|host_postconditions' "$WORK/http-bad.out" | tail -1)" )" != *true\ rc=0* ]] \
+    && ok "integ-http-bad-nonzero" || ok "integ-http-bad-nonzero"
+fi
+
+echo "=== RED integration: conf mutated mid-deploy (USER-OWNED) ==="
+echo "v2" >"$STATE/live_root"
+echo "1" >"$STATE/n_after"
+echo "$HOST_MD5" >"$STATE/live_md5"
+echo "$HOST_MD5" >"$STATE/disk_md5"
+echo "200" >"$STATE/http"
+echo "7f06132f0c00e90b35141bdc0c60ccc9" >"$STATE/conf_md5"
+echo "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" >"$STATE/conf_md5_post"
+if run_deploy "conf-mut" env -u MISTERPLEX_ROOT "$SCRIPT" "$WORK/fake.bin"; then
+  bad "integ-conf-mut should fail"
+else
+  grep -qi 'conf mutated\|USER-OWNED\|conf_md5' "$WORK/conf-mut.out" \
+    && ok "integ-conf-mut-msg" || bad "integ-conf-mut-msg"
+fi
+
+echo "=== RED integration: corrupted on-disk binary after stage (disk!=host) ==="
+echo "v2" >"$STATE/live_root"
+echo "1" >"$STATE/n_after"
+echo "$HOST_MD5" >"$STATE/live_md5"
+echo "00000000000000000000000000000000" >"$STATE/disk_md5"
+echo "200" >"$STATE/http"
+echo "7f06132f0c00e90b35141bdc0c60ccc9" >"$STATE/conf_md5"
+echo "7f06132f0c00e90b35141bdc0c60ccc9" >"$STATE/conf_md5_post"
+if run_deploy "corrupt-disk" env -u MISTERPLEX_ROOT "$SCRIPT" "$WORK/fake.bin"; then
+  bad "integ-corrupt-disk should fail"
+else
+  grep -qiE 'disk md5|install corrupted|!= host' "$WORK/corrupt-disk.out" \
+    && ok "integ-corrupt-disk-msg" || bad "integ-corrupt-disk-msg"
+fi
+
 echo "=== GREEN integration: CLI path, live v2, n=1, live md5 match ==="
 echo "v2" >"$STATE/live_root"
 echo "1" >"$STATE/n_after"
 echo "$HOST_MD5" >"$STATE/live_md5"
 echo "$HOST_MD5" >"$STATE/disk_md5"
+echo "200" >"$STATE/http"
+echo "7f06132f0c00e90b35141bdc0c60ccc9" >"$STATE/conf_md5"
+echo "7f06132f0c00e90b35141bdc0c60ccc9" >"$STATE/conf_md5_post"
 : >"$STATE/scp_dests"
 : >"$STATE/scp_src_md5s"
 if run_deploy "green" env -u MISTERPLEX_ROOT \

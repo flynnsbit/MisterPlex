@@ -1,41 +1,87 @@
 #!/usr/bin/env bash
-# restore_misterplexd_prev.sh — HARD REFUSE (B8 blocker).
+# restore_misterplexd_prev.sh — ATOMIC pair restore only (B8 half-restore banned).
 #
-# Parent 2026-07-31: this script restored ONLY the daemon and left the core
-# alone. A DDR daemon with the SPI core (or reverse bank geometry) is a
-# BLACK/GREEN screen that still passes file-md5 gates. 320x240 bank1 is
-# 0x30040000; 480p bank1 is 0x30080000 — mismatched pairs are silent.
+# Parent / rd-review defect (main tree lines ~50-53): the old script copied a
+# daemon backup, started it, and exited 0 with ZERO post-conditions. A power
+# cycle (or live bank mismatch) then left SPI core + DDR daemon = black screen.
 #
-# DO NOT use this script. Atomic pair restore:
-#   PAIR_ID=ddr-c5382bee PAIR_IDLE_PNG=/path/idle.png \
-#     scripts/rollback_v2.sh restore
-#   PAIR_ID=spi-v2-hybrid ROLLBACK_DAEMON=artifacts/daemon-pins/misterplexd.50f4eb92 \
-#     PAIR_IDLE_PNG=/path/idle.png scripts/rollback_v2.sh restore
+# This script NEVER half-restores. It either:
+#   A) refuses (rc=10) when PAIR_ID is unset — device untouched, no false OK
+#   B) execs scripts/rollback_v2.sh restore which ENFORCES post-conditions:
+#        n_daemon==1 via /proc/[pid] + readlink -f exe (not pgrep, not cmdline)
+#        live exe md5 == pair daemon pin
+#        core disk md5 == pair core pin
+#        HTTP :3005/resources == 200|204
+#        conf byte-exact when PAIR_CONF_RESTORE_FILE is set (USER-OWNED)
+#        boot-hook root matches live pair root
+#        visual gate when required (telemetry alone is NOT success)
 #
-# Exit 10 = REFUSE half-transition; device untouched.
+# Usage (parent runs on host; never agent-to-device):
+#   PAIR_ID=ddr-c5382bee \
+#     ROLLBACK_DAEMON=/media/fat/misterplex_v2/bin/misterplexd.bak.3883f5ab \
+#     PAIR_CONF_RESTORE_FILE=./misterplex.conf.userbak \
+#     PAIR_IDLE_PNG=/path/idle.png \
+#     scripts/restore_misterplexd_prev.sh
+#
+# Legacy PREV_BIN= is mapped to ROLLBACK_DAEMON when set.
+# Exit 10 = REFUSE half-transition / missing pair identity.
 
 set -euo pipefail
 
-cat <<'MSG' >&2
-REFUSE HALF_RESTORE: scripts/restore_misterplexd_prev.sh is disabled (B8).
-  It restored daemon bytes only and explicitly did NOT restore Plex.rbf.
-  Mixed core+daemon geometry → black/green screen; telemetry can still pass.
-  bank1 SPI 320x240 = 0x30040000 ; bank1 DDR 480p = 0x30080000
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+ROLLBACK="$ROOT/scripts/rollback_v2.sh"
 
-Use ATOMIC pair tools instead (core + daemon + conf together):
+if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+  sed -n '2,40p' "$0" | sed 's/^# \?//'
+  exit 0
+fi
 
-  # PRIMARY live DDR recovery (c5382bee + edc3a46b + DDR conf keys):
-  PAIR_ID=ddr-c5382bee PAIR_IDLE_PNG=/path/to/idle.png \
-    scripts/rollback_v2.sh restore
+# Permanently refuse the old half-restore path (even if someone sets a flag).
+if [[ "${RESTORE_ALLOW_HALF:-0}" == "1" ]]; then
+  echo "REFUSE HALF_RESTORE: RESTORE_ALLOW_HALF is ignored permanently (B8)." >&2
+  echo "true rc=10"
+  exit 10
+fi
 
-  # SPI daily undo (dfebf2bf + 50f4eb92; strips DDR_YUV_FORCE_SCALE):
+if [[ -z "${PAIR_ID:-}" ]]; then
+  cat <<'MSG' >&2
+REFUSE HALF_RESTORE: scripts/restore_misterplexd_prev.sh requires PAIR_ID.
+  Old behaviour restored daemon bytes only and did NOT restore Plex.rbf /
+  enforce live /proc/exe md5 / HTTP :3005 — a false success on the daily driver.
+
+Atomic restore (post-conditions enforced by rollback_v2.sh):
+
+  PAIR_ID=ddr-c5382bee \
+    ROLLBACK_DAEMON=/media/fat/misterplex_v2/bin/misterplexd.bak.3883f5ab \
+    PAIR_CONF_RESTORE_FILE=/path/to/misterplex.conf.userbak \
+    PAIR_IDLE_PNG=/path/to/idle.png \
+    scripts/restore_misterplexd_prev.sh
+
+  # SPI daily undo
   PAIR_ID=spi-v2-hybrid \
     ROLLBACK_DAEMON=artifacts/daemon-pins/misterplexd.50f4eb92 \
     PAIR_IDLE_PNG=/path/to/idle.png \
-    scripts/rollback_v2.sh restore
+    scripts/restore_misterplexd_prev.sh
 
-  # Dry-run power-cycle table (no device mutation):
+  # Plan only (no device):
   PAIR_ID=ddr-c5382bee scripts/rollback_v2.sh plan
 MSG
-echo "true rc=10"
-exit 10
+  echo "true rc=10"
+  exit 10
+fi
+
+# Map legacy env from the broken main-tree script.
+if [[ -n "${PREV_BIN:-}" && -z "${ROLLBACK_DAEMON:-}" && -z "${PAIR_DAEMON_ARTIFACT:-}" ]]; then
+  export ROLLBACK_DAEMON="$PREV_BIN"
+  echo "restore: mapped PREV_BIN -> ROLLBACK_DAEMON=$PREV_BIN"
+fi
+
+[[ -f "$ROLLBACK" ]] || {
+  echo "FAIL missing $ROLLBACK" >&2
+  echo "true rc=9"
+  exit 9
+}
+
+echo "restore: ATOMIC pair PAIR_ID=$PAIR_ID -> rollback_v2.sh restore (post-conditions enforced)"
+export ROLLBACK_REQUIRE_VISUAL="${ROLLBACK_REQUIRE_VISUAL:-1}"
+exec bash "$ROLLBACK" restore
