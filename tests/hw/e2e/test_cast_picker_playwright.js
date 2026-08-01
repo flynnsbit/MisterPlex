@@ -67,15 +67,25 @@ const runCorr = createRunCorrelation({
   log,
 });
 
-/** Baseline misterplexd PID for whole-run stability (self-exit rc=0 detection). */
+/** Baseline misterplexd process identity (self-reported via telemetry — not pidof). */
 let baselineDaemonPid = -1;
+let baselineDaemonExe = '';
 
 async function captureAndAssertPid(tag, { hardFail = true } = {}) {
   const snap = await captureLedger(cfg);
-  const r = assertPidUnchanged(baselineDaemonPid, snap, tag);
+  const r = assertPidUnchanged(baselineDaemonPid, snap, tag, {
+    baselineExe: baselineDaemonExe,
+  });
   if (baselineDaemonPid < 0 && snap && snap.pid > 0) {
     baselineDaemonPid = snap.pid;
-    log(`DAEMON_PID_BASELINE pid=${baselineDaemonPid} tag=${tag} src=${snap.source}`);
+    baselineDaemonExe = snap.exe || '';
+    log(
+      `DAEMON_PID_BASELINE pid=${baselineDaemonPid} exe=${baselineDaemonExe || 'NA'} ` +
+        `tag=${tag} src=${snap.source} ` +
+        `(identity=telemetry getpid+readlink/proc/self/exe — NOT host pidof/cmdline)`
+    );
+  } else if (baselineDaemonPid > 0 && !baselineDaemonExe && snap && snap.exe) {
+    baselineDaemonExe = snap.exe;
   }
   if (!r.ok) {
     if (hardFail) {
@@ -86,7 +96,9 @@ async function captureAndAssertPid(tag, { hardFail = true } = {}) {
   if (r.softSkip) {
     log(`DAEMON_PID_SOFT_SKIP tag=${tag} ${r.detail}`);
   } else if (snap && snap.pid > 0) {
-    log(`DAEMON_PID_OK tag=${tag} pid=${snap.pid}`);
+    log(
+      `DAEMON_PID_OK tag=${tag} pid=${snap.pid} exe=${(snap.exe || baselineDaemonExe || '').replace(/^.*\//, '')}`
+    );
   }
   return { ok: true, ...r, snap };
 }
@@ -2038,19 +2050,27 @@ async function runOneTransitionCycle(page, itemTitle, detailsUrl, cycle, total) 
       );
     }
   }
-  // Whole-run PID must match baseline (any cycle sees respawn → named fail).
+  // Whole-run PID/exe must match baseline (any cycle sees respawn → named fail).
   {
-    const pr = assertPidUnchanged(baselineDaemonPid, ledgerEnd, `${ctag}_pid`);
+    const pr = assertPidUnchanged(baselineDaemonPid, ledgerEnd, `${ctag}_pid`, {
+      baselineExe: baselineDaemonExe,
+    });
     if (baselineDaemonPid < 0 && ledgerEnd.pid > 0) {
       baselineDaemonPid = ledgerEnd.pid;
-      log(`DAEMON_PID_BASELINE pid=${baselineDaemonPid} tag=${ctag}`);
+      baselineDaemonExe = ledgerEnd.exe || '';
+      log(
+        `DAEMON_PID_BASELINE pid=${baselineDaemonPid} exe=${baselineDaemonExe || 'NA'} tag=${ctag}`
+      );
     }
     if (pr.softSkip) {
       log(`DAEMON_PID_SOFT_SKIP cycle=${cycle}/${total} ${pr.detail}`);
     } else if (!pr.ok) {
       cycleFail(cycle, total, 'pid', pr.reason || 'daemon_pid_changed', pr.detail || '');
     } else {
-      log(`DAEMON_PID_OK cycle=${cycle}/${total} pid=${pr.pid || ledgerEnd.pid}`);
+      log(
+        `DAEMON_PID_OK cycle=${cycle}/${total} pid=${pr.pid || ledgerEnd.pid} ` +
+          `exe=${(ledgerEnd.exe || baselineDaemonExe || '').replace(/^.*\//, '')}`
+      );
     }
   }
 
@@ -2135,28 +2155,61 @@ async function runTransitionScenarios(page, itemTitle, detailsUrl, _castAlreadyS
   if (cfg.liveConf) log(`E2E_LIVE_CONF=${cfg.liveConf}`);
   if (cfg.liveDaemonId) log(`E2E_LIVE_DAEMON_ID=${cfg.liveDaemonId}`);
   log(
-    'LIVE_DAEMON_NOTE: suite does not ssh; parent should resolve live binary/conf via ' +
-      '/proc/$(pidof misterplexd)/cmdline --conf (two install roots on device).'
+    'LIVE_DAEMON_NOTE: suite does not ssh. Process identity is GET /player/telemetry ' +
+      'pid= + exe= (daemon readlink /proc/self/exe). NEVER host pidof/cmdline — ' +
+      'flock cmdline contains misterplexd (ERROR 14 false zero). Parent conf resolve: ' +
+      'readlink -f /proc/$PID/exe and tr \\\\0 \\\\n </proc/$PID/cmdline with PID from telemetry.'
+  );
+  log(
+    `N_LOOP_RULES planned=${total} majority_pass_is_NOT_pass=1 ` +
+      `continue_on_fail=${continueOnFail ? 1 : 0} ` +
+      `taxonomy=transition_cycle_<N>_<pause|resume|seek|stop|play_idle_play|ledger|pid|cycle_reset>`
   );
 
   const results = [];
   const failures = [];
   for (let c = 1; c <= total; c++) {
     log(`════════ TRANSITION_CYCLE ${c}/${total} run_id=${runCorr.runId} ════════`);
+    // Controller must still be our Playwright page across all N (leak → iteration 7 class).
+    if (!page || page.isClosed()) {
+      cycleFail(
+        c,
+        total,
+        'controller',
+        'controller_closed_mid_nloop',
+        `Playwright page closed before cycle ${c}/${total} — controller leak / crash mid N-loop`
+      );
+    }
+    await captureAndAssertPid(`cycle_${c}_begin`, { hardFail: true });
     await runCorr.mark('cycle_start', { cycle: c });
     try {
       const r = await runOneTransitionCycle(page, itemTitle, detailsUrl, c, total);
       results.push(r);
       await runCorr.mark('cycle_ok', { cycle: c });
       await runCorr.joinTelemetry(`cycle_${c}_ok`);
-      log(`TRANSITION_CYCLE_OK ${c}/${total} start_time0_ms=${r.startTime0} run_id=${runCorr.runId}`);
+      // Mid-loop controller health (browser still ours).
+      if (page.isClosed()) {
+        cycleFail(
+          c,
+          total,
+          'controller',
+          'controller_closed_after_cycle',
+          `page closed after cycle ${c} body — TEARDOWN cannot be deferred to end only`
+        );
+      }
+      log(
+        `TRANSITION_CYCLE_OK ${c}/${total} start_time0_ms=${r.startTime0} ` +
+          `run_id=${runCorr.runId} pid=${baselineDaemonPid}`
+      );
     } catch (e) {
       if (e instanceof FailError) {
         const failedTransition = e.transition || e.reason || 'unknown';
+        const taxReason = e.failReason || e.reason;
         const row = {
           cycle: c,
           ok: false,
-          reason: e.reason,
+          reason: taxReason,
+          fullReason: e.reason,
           transition: failedTransition,
           detail: e.detail || e.message || '',
         };
@@ -2166,13 +2219,13 @@ async function runTransitionScenarios(page, itemTitle, detailsUrl, _castAlreadyS
           .mark('cycle_fail', {
             cycle: c,
             transition: failedTransition,
-            reason: e.reason,
+            reason: taxReason,
           })
           .catch(() => {});
         log(
           `TRANSITION_CYCLE_FAIL ${c}/${total} transition=${failedTransition} ` +
-            `reason=${e.reason} run_id=${runCorr.runId} ` +
-            `passed_so_far=${results.filter((x) => x.ok).length}`
+            `reason=${taxReason} full=${e.reason} run_id=${runCorr.runId} ` +
+            `pid=${baselineDaemonPid} passed_so_far=${results.filter((x) => x.ok).length}`
         );
         if (!continueOnFail) {
           log(
@@ -2201,22 +2254,26 @@ async function runTransitionScenarios(page, itemTitle, detailsUrl, _castAlreadyS
   const hdmiOk = results.filter((r) => r.ok && r.hdmi && r.hdmi.enabled && !r.hdmi.skipped).length;
 
   // Per-cycle table (always full planned N when continue_on_fail).
+  // "9/10 passed" is NOT a pass — each FAIL line names cycle + transition + reason.
   log('──────── TRANSITIONS_PER_CYCLE ────────');
   for (const r of results) {
     if (r.ok) {
       log(
         `  cycle ${r.cycle}/${total} PASS start_time0_ms=${r.startTime0} ` +
-          `transitions=${(r.transitions || []).join(',')}`
+          `pid=${baselineDaemonPid} transitions=${(r.transitions || []).join(',')}`
       );
     } else {
       log(
-        `  cycle ${r.cycle}/${total} FAIL transition=${r.transition} reason=${r.reason}`
+        `  cycle ${r.cycle}/${total} FAIL transition=${r.transition} reason=${r.reason} ` +
+          `detail=${String(r.detail || '').replace(/\s+/g, ' ').slice(0, 160)}`
       );
     }
   }
   log(
     `TRANSITIONS_SUMMARY planned=${total} attempted=${results.length} pass=${passed} fail=${failed} ` +
-      `hdmi_scored=${hdmiOk} shortened=${results.length < total ? 1 : 0}`
+      `hdmi_scored=${hdmiOk} shortened=${results.length < total ? 1 : 0} ` +
+      `daemon_pid=${baselineDaemonPid > 0 ? baselineDaemonPid : 'NA'} ` +
+      `majority_pass_is_pass=0`
   );
 
   if (failed > 0 || passed !== total || results.length !== total) {
@@ -2225,17 +2282,26 @@ async function runTransitionScenarios(page, itemTitle, detailsUrl, _castAlreadyS
       ? `first_fail cycle=${first.cycle} transition=${first.transition} reason=${first.reason}`
       : `attempted=${results.length} planned=${total}`;
     fail(
-      first ? first.reason : 'transitions_incomplete',
-      `TRANSITIONS aggregate RED: pass=${passed}/${total} fail=${failed}. ${named}\n` +
+      first ? first.fullReason || first.reason : 'transitions_incomplete',
+      `TRANSITIONS aggregate RED: pass=${passed}/${total} fail=${failed} ` +
+        `(majority is NOT a pass). ${named}\n` +
         failures
-          .map((f) => `  - cycle ${f.cycle}: ${f.transition} (${f.reason})`)
+          .map(
+            (f) =>
+              `  - cycle ${f.cycle}/${total}: transition=${f.transition} reason=${f.reason}` +
+              (f.detail ? ` | ${String(f.detail).replace(/\s+/g, ' ').slice(0, 120)}` : '')
+          )
           .join('\n')
     );
   }
 
+  // Final PID gate after full N (respawn on last cycle must not hide).
+  await captureAndAssertPid('nloop_end', { hardFail: true });
+
   log(
     `TRANSITIONS_OK cycles=${total}/${total} pause resume seek stop play_idle_play ` +
-      `hdmi_scored=${hdmiOk}`
+      `hdmi_scored=${hdmiOk} daemon_pid=${baselineDaemonPid} ` +
+      `exe=${(baselineDaemonExe || '').replace(/^.*\//, '') || 'NA'}`
   );
   return {
     enabled: true,
@@ -2758,7 +2824,9 @@ async function runTransitionScenarios(page, itemTitle, detailsUrl, _castAlreadyS
     );
     log(
       `DAEMON_PID_STABLE=1 pid=${baselineDaemonPid > 0 ? baselineDaemonPid : 'NA'} ` +
-        `(unchanged across full suite; self-exit rc=0 would have failed daemon_pid_changed)`
+        `exe=${baselineDaemonExe || 'NA'} ` +
+        `(unchanged across full N-loop; identity=telemetry readlink/proc/self/exe; ` +
+        `self-exit rc=0 → daemon_pid_changed RED — never host pidof/cmdline)`
     );
     process.exitCode = EXIT_PASS;
     return;

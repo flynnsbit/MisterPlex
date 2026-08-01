@@ -470,3 +470,25 @@ within ~30 ms if session-latched; ~117 ms split would implicate the capture path
 
 `src_fps`/`cap_fps` defaults are labeled `DEFAULT_ASSUMED` unless env overrides
 (`caller-supplied`) — never treat defaults as ffprobe measurements.
+
+
+## S6 N-loop + process identity
+
+`E2E_TRANSITION_CYCLES` default **10**. Aggregate PASS only if **pass==N** (majority
+is not a pass). Each failure is `transition_cycle_<N>_<transition>` with a distinct
+reason (`pause` time still advancing, `daemon_pid_changed`, `controller_closed_mid_nloop`, …).
+
+Daemon identity is **self-reported** on `GET /player/telemetry`:
+`pid=` from `getpid()`, `exe=` from `readlink("/proc/self/exe")`.
+Suite asserts both unchanged across the whole N-loop.
+
+**Never** resolve the daemon with host `pidof` / cmdline substring — `flock`'s cmdline
+contains `misterplexd` and produced a false zero (ERROR 14). Parent on-device recipe:
+
+```bash
+pid=$(curl -sS http://127.0.0.1:3005/player/telemetry | sed -n 's/.*pid=\([0-9]*\).*/\1/p')
+readlink -f /proc/$pid/exe
+tr '\0' ' ' < /proc/$pid/cmdline; echo
+```
+
+Teardown still asserts only OUR Playwright controller is gone after all N cycles.

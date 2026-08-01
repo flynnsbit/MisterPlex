@@ -186,7 +186,12 @@ function parentConfCommands(tier, misterHost) {
   const apply =
     `# PARENT applies conf for tier=${tier.name} (suite does NOT ssh/edit device)\n` +
     `# CAUTION: device has TWO install roots / TWO conf files. Resolve LIVE conf:\n` +
-    `#   pid=$(pidof misterplexd | awk '{print $1}')\n` +
+    `#   # PID from GET :3005/player/telemetry pid= — NEVER pidof/cmdline (flock ERROR 14)\n` +
+    `#   pid=$(curl -sS http://127.0.0.1:3005/player/telemetry | sed -n 's/.*pid=\\([0-9]*\\).*/\\1/p')\n` +
+    `#   readlink -f /proc/$pid/exe\n` +
+    `#   tr '\\0' ' ' </proc/$pid/cmdline; echo\n` +
+    `# legacy (unsafe): pid=$(pidof misterplexd | awk '{print $1}')\n` +
+
     `#   tr '\\0' ' ' < /proc/$pid/cmdline; echo\n` +
     `#   conf=$(tr '\\0' ' ' < /proc/$pid/cmdline | sed -n 's/.*--conf[= ]\\([^ ]*\\).*/\\1/p')\n` +
     `#   echo LIVE_CONF=$conf\n` +

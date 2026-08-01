@@ -35,6 +35,7 @@ function httpGet(url, timeoutMs = 4000) {
 function parseKv(text) {
   const out = {};
   const s = String(text || '');
+  // Numeric fields.
   const re = /([A-Za-z_][A-Za-z0-9_]*)=(-?\d+(?:\.\d+)?)/g;
   let m;
   while ((m = re.exec(s)) !== null) {
@@ -42,6 +43,11 @@ function parseKv(text) {
     const v = m[2].includes('.') ? parseFloat(m[2]) : parseInt(m[2], 10);
     out[k] = v;
   }
+  // String fields (exe path from readlink /proc/self/exe).
+  const exeM = s.match(/\bexe=([^\s]+)/);
+  if (exeM) out.exe = exeM[1];
+  const decM = s.match(/\bdecode=(\d+x\d+)/i);
+  if (decM) out.decode = decM[1];
   return out;
 }
 
@@ -54,6 +60,7 @@ function normalizeSnap(raw, source) {
   if (!Number.isFinite(residual) && frames >= 0 && presents >= 0 && drops >= 0) {
     residual = frames - presents - drops;
   }
+  const exe = raw.exe != null ? String(raw.exe) : '';
   return {
     ok: frames >= 0 && presents >= 0 && drops >= 0,
     source,
@@ -68,7 +75,9 @@ function normalizeSnap(raw, source) {
     lifetime_publish_misses: intOr(raw.lifetime_publish_misses, -1),
     session: intOr(raw.session, -1),
     // Process identity — supervise CLEAN rc=0 exits respawn and re-zero counters.
+    // pid/exe come from the live companion process (not host pidof/cmdline).
     pid: intOr(raw.pid, -1),
+    exe,
     raw: String(raw._line || '').slice(0, 300),
   };
 }
@@ -160,6 +169,7 @@ async function captureLedger(cfg) {
     lifetime_publish_misses: -1,
     session: -1,
     pid: -1,
+    exe: '',
     raw: '',
   };
 }
@@ -205,7 +215,17 @@ function assertLedgerWindow(start, end, tag) {
       reason: 'daemon_pid_changed',
       detail:
         `${tag}: daemon pid ${start.pid} → ${end.pid} mid-window ` +
+        `exe_start=${start.exe || '?'} exe_end=${end.exe || '?'} ` +
         `(self-exit rc=0 / respawn — droppedFrames_/presentCount_ reset; soak counters invalid)`,
+    };
+  }
+  if (start.exe && end.exe && start.exe !== end.exe) {
+    return {
+      ok: false,
+      reason: 'daemon_exe_changed',
+      detail:
+        `${tag}: daemon exe changed while pid stable? ${start.exe} → ${end.exe} ` +
+        `(unexpected binary replace mid-window)`,
     };
   }
 
@@ -303,30 +323,40 @@ function assertLedgerWindow(start, end, tag) {
 
 function formatSnap(s) {
   if (!s) return '(null)';
+  const exeShort = s.exe ? s.exe.replace(/^.*\//, '') : '?';
   return (
-    `src=${s.source} pid=${s.pid} frames=${s.frames} presents=${s.presents} drops=${s.drops} ` +
-    `pub_miss=${s.publish_misses} residual=${s.residual} session=${s.session} ` +
+    `src=${s.source} pid=${s.pid} exe=${exeShort} frames=${s.frames} presents=${s.presents} ` +
+    `drops=${s.drops} pub_miss=${s.publish_misses} residual=${s.residual} session=${s.session} ` +
     `life_f=${s.lifetime_frames}`
   );
 }
 
 /**
- * Whole-run PID stability. baselinePid from first successful telemetry; each
- * later snap must match. Missing pid with E2E_REQUIRE_PID=1 → fail.
+ * Whole-run process identity. Baseline from first successful telemetry (pid +
+ * exe from the companion process itself via getpid + readlink /proc/self/exe).
+ * Never use host pidof/cmdline — flock contains "misterplexd" (ERROR 14).
  */
 function requirePid() {
   return /^(1|true|yes|on)$/i.test(String(process.env.E2E_REQUIRE_PID || '1'));
 }
 
-function assertPidUnchanged(baselinePid, snap, tag) {
+/**
+ * @param {number} baselinePid
+ * @param {{pid?:number,exe?:string}} snap
+ * @param {string} tag
+ * @param {{baselineExe?: string}} [opts]
+ */
+function assertPidUnchanged(baselinePid, snap, tag, opts = {}) {
+  const baselineExe = opts.baselineExe || '';
   if (!snap || snap.pid === undefined || snap.pid < 0) {
     if (requirePid()) {
       return {
         ok: false,
         reason: 'daemon_pid_unprobed',
         detail:
-          `${tag}: telemetry missing pid= (deploy daemon with pid in /player/telemetry). ` +
-          `Set E2E_REQUIRE_PID=0 to soft-skip (NOT a pass of process stability).`,
+          `${tag}: telemetry missing pid= (deploy daemon with pid+exe in /player/telemetry). ` +
+          `Identity is self-reported by the HTTP process (readlink /proc/self/exe) — ` +
+          `not host pidof/cmdline. Set E2E_REQUIRE_PID=0 to soft-skip (NOT a pass).`,
       };
     }
     return {
@@ -336,7 +366,12 @@ function assertPidUnchanged(baselinePid, snap, tag) {
     };
   }
   if (baselinePid == null || baselinePid < 0) {
-    return { ok: true, pid: snap.pid, note: 'baseline_set' };
+    return {
+      ok: true,
+      pid: snap.pid,
+      exe: snap.exe || '',
+      note: 'baseline_set',
+    };
   }
   if (snap.pid !== baselinePid) {
     return {
@@ -344,10 +379,32 @@ function assertPidUnchanged(baselinePid, snap, tag) {
       reason: 'daemon_pid_changed',
       detail:
         `${tag}: daemon pid changed ${baselinePid} → ${snap.pid} ` +
-        `(supervise CLEAN exit rc=0 + respawn; counters reset — soak/UI stats invalid)`,
+        `exe_was=${baselineExe || '?'} exe_now=${snap.exe || '?'} ` +
+        `(supervise CLEAN exit rc=0 + respawn; droppedFrames_/presentCount_ reset per stream — ` +
+        `media_player.cpp present/drop counters; N-loop stats invalid if averaged over respawn)`,
     };
   }
-  return { ok: true, pid: snap.pid };
+  if (baselineExe && snap.exe && baselineExe !== snap.exe) {
+    return {
+      ok: false,
+      reason: 'daemon_exe_changed',
+      detail:
+        `${tag}: pid=${snap.pid} stable but exe changed ${baselineExe} → ${snap.exe} ` +
+        `(binary replaced under same pid? or bad baseline)`,
+    };
+  }
+  // Soft warn if exe does not look like misterplexd (mis-wired handler).
+  if (snap.exe && !/misterplexd/i.test(snap.exe) && snap.exe !== 'UNKNOWN') {
+    return {
+      ok: false,
+      reason: 'daemon_exe_not_misterplexd',
+      detail:
+        `${tag}: telemetry exe=${snap.exe} does not contain "misterplexd" ` +
+        `(refusing flock/wrapper false identity — ERROR 14 class). ` +
+        `exe must be readlink(/proc/self/exe) of the real daemon.`,
+    };
+  }
+  return { ok: true, pid: snap.pid, exe: snap.exe || baselineExe || '' };
 }
 
 module.exports = {

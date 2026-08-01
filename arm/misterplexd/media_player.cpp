@@ -3374,10 +3374,24 @@ std::string MediaPlayer::telemetryLine() const {
     const int64_t drops = droppedFrames_.load();
     const int64_t pubMiss = publishMisses_.load();
     const int64_t residual = frames - presents - drops;
-    // pid= lets e2e assert the process did not self-exit rc=0 and respawn
-    // mid-run (supervise CLEAN exits re-zero droppedFrames_/presentCount_).
+    // pid= + exe= from THIS process (the HTTP server). Do not resolve via
+    // host pidof/cmdline — flock wrappers contain "misterplexd" (ERROR 14).
+    // exe = readlink("/proc/self/exe") — canonical path of the live binary.
+    char exeBuf[512];
+    std::string exePath = "UNKNOWN";
+    const ssize_t nExe = ::readlink("/proc/self/exe", exeBuf, sizeof(exeBuf) - 1);
+    if (nExe > 0) {
+        exeBuf[nExe] = '\0';
+        exePath.assign(exeBuf, static_cast<size_t>(nExe));
+    }
+    // URL-safe: spaces unlikely; collapse whitespace for single-token field.
+    for (char& ch : exePath) {
+        if (ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r')
+            ch = '_';
+    }
     return std::string("ok=1") +
            " pid=" + std::to_string(static_cast<long>(::getpid())) +
+           " exe=" + exePath +
            " frames=" + std::to_string(frames) +
            " presents=" + std::to_string(presents) +
            " drops=" + std::to_string(drops) +
