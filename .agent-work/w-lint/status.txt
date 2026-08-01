@@ -1,8 +1,9 @@
 lane=w-lint GATE-INTEGRITY
 branch=w-lint-gate-integrity
-tip=83e88df5
-T5=REAL_FIXED_100b797d HISTORICAL kept; reintroduce→rc=1
-T1=glass SKIP_FAIL=2 INSTRUMENT=3 collision rc=0
-T3=margin+null_model+comment/retract rules
-T4=deploy live md5/n_daemon; geo→78; restore refuse 10
+focus=premise-before-PASS; FRAME_LEDGER scope; deploy deps; T5 keep HISTORICAL
+T1=publish_swap_delta UNSCORED when p_d1<0.5 LIKELY_VSYNC_PACKED; premise_guard rc=0
+T2=FRAME_LEDGER NOT PLXD-circular; scope=ARM_PUBLISH_NOT_DISPLAY; drops=0≠display
+T3=deploy fail-fast daemon_backup+boot_hook missing rc=2; overall AFTER hook; main still overall-before-hook
+T4=T5 real keep HISTORICAL; git-before-retract encoded
+rollcall=expected_commands=140
 no_device=1 no_quartus=1

@@ -19,9 +19,30 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# Required policy libs — missing file under set -e is a FALSE-NEGATIVE after a
+# successful binary deploy if sourced late. Fail FAST with rc=2 (deps).
+# shellcheck source=daemon_backup_policy.sh
+if [[ ! -f "$ROOT/scripts/daemon_backup_policy.sh" ]]; then
+  echo "FAIL deploy_misterplexd: missing scripts/daemon_backup_policy.sh" >&2
+  echo "verdict=DEPLOY_FAIL_MISSING_DEP"
+  echo "true rc=2"
+  exit 2
+fi
+# shellcheck source=daemon_backup_policy.sh
+source "$ROOT/scripts/daemon_backup_policy.sh"
 # shellcheck source=md5_shape.inc.sh
+if [[ ! -f "$ROOT/scripts/md5_shape.inc.sh" ]]; then
+  echo "FAIL deploy_misterplexd: missing scripts/md5_shape.inc.sh" >&2
+  echo "true rc=2"
+  exit 2
+fi
 source "$ROOT/scripts/md5_shape.inc.sh"
 # shellcheck source=/dev/null
+if [[ ! -f "$ROOT/scripts/deploy_misterplexd_lib.sh" ]]; then
+  echo "FAIL deploy_misterplexd: missing scripts/deploy_misterplexd_lib.sh" >&2
+  echo "true rc=2"
+  exit 2
+fi
 source "$ROOT/scripts/deploy_misterplexd_lib.sh"
 
 HOST="${MISTER_HOST:-192.168.1.183}"
@@ -471,6 +492,15 @@ echo "deploy: binary live-verify OK — final overall rc deferred until hook+geo
 # USER_SCRIPT= — hardcoding either path is the defect class.
 if [[ "${DEPLOY_SKIP_BOOT_HOOK:-0}" != "1" ]]; then
   # shellcheck source=boot_hook_policy.sh
+  # Missing policy under set -e → cryptic "No such file" AFTER live verify
+  # (parent false-negative: every POST_* PASS, true rc=1). Fail with explicit dep rc.
+  if [[ ! -f "$ROOT/scripts/boot_hook_policy.sh" ]]; then
+    echo "FAIL deploy_misterplexd: missing scripts/boot_hook_policy.sh" >&2
+    echo "detail=would_false_fail_after_live_verify" >&2
+    echo "verdict=DEPLOY_FAIL_MISSING_DEP"
+    echo "true rc=2"
+    exit 2
+  fi
   source "$ROOT/scripts/boot_hook_policy.sh"
   SUP_SRC="$ROOT/scripts/misterplexd_supervise.sh"
   [[ -f "$SUP_SRC" ]] || die "missing $SUP_SRC"
@@ -556,8 +586,8 @@ if [[ "${DEPLOY_SKIP_BOOT_HOOK:-0}" != "1" ]]; then
   report_rc "boot_hook" "$hook_rc" || die "boot hook install failed (rc=$hook_rc)"
 fi
 
-# Final post-conditions after binary live-verify. Never print deploy_overall=0
-# before these. Geometry soft-skip (rc=77) is NOT a deploy pass — exit 78
+# Final post-conditions after binary live-verify. NEVER print deploy_overall=0 before hook+geometry complete.
+# Parent false-neg: main tree printed overall=0 then sourced missing policy. Geometry soft-skip (rc=77) is NOT a deploy pass — exit 78
 # PASS_INCOMPLETE (same class as CRITICAL unit skips).
 DEPLOY_FINAL_RC=0
 DEPLOY_FINAL_VERDICT=DEPLOY_OK
