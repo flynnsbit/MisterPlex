@@ -275,6 +275,21 @@ inline EdgeStats measureEdgeRuns(const Raster& r, int scale) {
     return s;
 }
 
+// Pack one cmd into the 64-bit word layout consumed by rtl/plex_chrome.sv:
+//   [7:0]=op [23:8]=x [39:24]=y [47:40]=code  RECT:[55:48]=w [63:56]=h
+inline uint64_t encodeCmdWord(const Cmd& c) {
+    uint64_t w = 0;
+    w |= static_cast<uint64_t>(static_cast<uint8_t>(c.op));
+    w |= static_cast<uint64_t>(c.x) << 8;
+    w |= static_cast<uint64_t>(c.y) << 24;
+    w |= static_cast<uint64_t>(c.code) << 40;
+    if (c.op == Op::Rect) {
+        w |= static_cast<uint64_t>(c.w & 0xffu) << 48;
+        w |= static_cast<uint64_t>(c.h & 0xffu) << 56;
+    }
+    return w;
+}
+
 // Build a PAUSED glyph list at output coords using fabric scale (semantic ARM preview).
 inline std::vector<Cmd> makePausedList(int hdmiW, int hdmiH) {
     const int scale = fabricBodyScale(hdmiH);

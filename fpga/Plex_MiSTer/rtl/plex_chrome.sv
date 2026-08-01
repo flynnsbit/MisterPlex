@@ -1,36 +1,34 @@
-// plex_chrome — post-ascal player chrome plane (DESIGN SKELETON — not in QSF yet)
+// plex_chrome — post-ascal player chrome plane
 //
 // Owner: w-osd-hires · docs/plex-chrome-plane-rtl-proposal.md
-// Status: static review only. Do NOT add to Quartus until parent grants ONE-fit
-// with w-geom + w-fit-1. No exclusive slot claimed by this file alone.
+// Status: FIT-READY source — NOT in files.qip / QSF until parent ONE-fit with
+//   w-fit-1 PRODUCT_NO_STUB + w-geom. Do not request exclusive slot from this lane.
 //
-// Insertion (sys_top.v HDMI path):
-//   ascal → shadowmask → [plex_chrome] → osd hdmi_osd → pins
-//   clk = clk_hdmi; din/hs/vs/de from mask; dout to osd.din
+// Insertion (sys_top.v HDMI path — patch at fit time):
+//   ascal → shadowmask → plex_chrome → osd hdmi_osd → pins
 //
-// Geometry: HDMI_WIDTH / HDMI_HEIGHT (applied). Self-time DE like sys/osd.v.
-// Scale: body_scale = clamp(2..8, half_even_round(HDMI_HEIGHT/240))
-// ARM: semantic PLXC list only (doorbell+0x130). Never pixels.
+// Geometry: HDMI_WIDTH / HDMI_HEIGHT (applied). Integer NN body_scale from H/240.
+// ARM: semantic PLXC list only (doorbell + 0x130). Never pixels.
 //
-// Budget prereg (V1 vs t7b/8fdf 23585 ALM / 465 M10K / 44 DSP):
-//   M10K +12±4 (cap 24) · ALM +2.5k±1k · DSP 0 · HDMI Fmax HOLD
-// Do NOT spend decode_stub 268 M10K until w-fit-1 reclaim maps (telemetry hazard).
+// Budget prereg (BINDING baseline = t7b/8fdf class, NOT output_files alone):
+//   Baseline ALM 23,585 / M10K 465 / DSP 44
+//   PRODUCT_NO_STUB: −9,217 ALM / −268 M10K → free M10K ~356
+//   Chrome V1: M10K +12±4 (cap 24) · ALM +2.5k±1k · DSP 0 · HDMI HOLD
+// Telemetry: never shorten telem_flags; stub_busy stays 1'b0 under PRODUCT_NO_STUB.
 
 `timescale 1ns / 1ps
 
 module plex_chrome #(
-    parameter int MAX_CMDS = 256,
+    parameter int MAX_CMDS = 64,
     parameter int FONT_W   = 8,
     parameter int FONT_H   = 8
 ) (
     input  wire        clk_hdmi,
     input  wire        reset,
 
-    // Applied output (sys_top hdmi_width/height → emu HDMI_*)
     input  wire [11:0] HDMI_WIDTH,
     input  wire [11:0] HDMI_HEIGHT,
 
-    // Video pipe (after shadowmask, before hdmi_osd)
     input  wire [23:0] din,
     input  wire        hs_in,
     input  wire        vs_in,
@@ -40,40 +38,32 @@ module plex_chrome #(
     output reg         vs_out,
     output reg         de_out,
 
-    // Semantic channel (CDC from clk_sys / HPS write port — stubbed ports)
     input  wire        cfg_enable,
     input  wire [15:0] cfg_seq,
     input  wire [7:0]  cfg_cmd_count,
-    // List RAM write port (clk_sys domain in full design)
     input  wire        list_we,
     input  wire [7:0]  list_waddr,
     input  wire [63:0] list_wdata,
 
-    // Telemetry (optional PLXO)
     output reg         chrome_hw,
     output reg  [11:0] mon_width,
     output reg  [11:0] mon_height,
     output reg  [3:0]  mon_body_scale
 );
 
-    // ---- body_scale = clamp(2..8, half-even round(H/240)) ----
-    // Combinational model for review; map to registered path in fit.
     function automatic [3:0] body_scale_f(input [11:0] h);
-        reg [11:0] q;
-        reg [11:0] r;
+        reg [11:0] q, r;
         reg [4:0]  raw;
         begin
-            q = h / 12'd240;
-            r = h % 12'd240;
+            q   = h / 12'd240;
+            r   = h % 12'd240;
             raw = q[4:0];
             if (r > 12'd120)
                 raw = q[4:0] + 5'd1;
             else if (r == 12'd120)
-                raw = q[0] ? (q[4:0] + 5'd1) : q[4:0]; // half toward even
-            if (raw < 5'd2)
-                raw = 5'd2;
-            if (raw > 5'd8)
-                raw = 5'd8;
+                raw = q[0] ? (q[4:0] + 5'd1) : q[4:0];
+            if (raw < 5'd2) raw = 5'd2;
+            if (raw > 5'd8) raw = 5'd8;
             body_scale_f = raw[3:0];
         end
     endfunction
@@ -81,70 +71,185 @@ module plex_chrome #(
     wire [3:0] body_scale = body_scale_f(HDMI_HEIGHT);
 
     always @(posedge clk_hdmi) begin
-        chrome_hw      <= 1'b1; // strapped when module is in the netlist
+        chrome_hw      <= 1'b1;
         mon_width      <= HDMI_WIDTH;
         mon_height     <= HDMI_HEIGHT;
         mon_body_scale <= body_scale;
     end
 
-    // ---- DE self-time (osd pattern) — hx/hy in active area ----
-    reg        de_d;
-    reg [11:0] hx, hy;
-    reg [11:0] meas_w, meas_h;
+    function automatic [7:0] font_row(input [7:0] code, input [2:0] row);
+        reg [7:0] bits;
+        begin
+            bits = 8'h00;
+            case (code)
+                "P", "p": case (row)
+                    0: bits = 8'hFC; 1: bits = 8'hC6; 2: bits = 8'hC6; 3: bits = 8'hFC;
+                    4: bits = 8'hC0; 5: bits = 8'hC0; 6: bits = 8'hC0; default: bits = 8'h00;
+                endcase
+                "A", "a": case (row)
+                    0: bits = 8'h38; 1: bits = 8'h6C; 2: bits = 8'hC6; 3: bits = 8'hC6;
+                    4: bits = 8'hFE; 5: bits = 8'hC6; 6: bits = 8'hC6; default: bits = 8'h00;
+                endcase
+                "U", "u": case (row)
+                    0: bits = 8'hC6; 1: bits = 8'hC6; 2: bits = 8'hC6; 3: bits = 8'hC6;
+                    4: bits = 8'hC6; 5: bits = 8'hC6; 6: bits = 8'h7C; default: bits = 8'h00;
+                endcase
+                "S", "s": case (row)
+                    0: bits = 8'h7C; 1: bits = 8'hC6; 2: bits = 8'hC0; 3: bits = 8'h7C;
+                    4: bits = 8'h06; 5: bits = 8'hC6; 6: bits = 8'h7C; default: bits = 8'h00;
+                endcase
+                "E", "e": case (row)
+                    0: bits = 8'hFE; 1: bits = 8'hC0; 2: bits = 8'hC0; 3: bits = 8'hFC;
+                    4: bits = 8'hC0; 5: bits = 8'hC0; 6: bits = 8'hFE; default: bits = 8'h00;
+                endcase
+                "D", "d": case (row)
+                    0: bits = 8'hF8; 1: bits = 8'hCC; 2: bits = 8'hC6; 3: bits = 8'hC6;
+                    4: bits = 8'hC6; 5: bits = 8'hCC; 6: bits = 8'hF8; default: bits = 8'h00;
+                endcase
+                "#", 8'h23: bits = 8'hFF;
+                default: bits = 8'h00;
+            endcase
+            font_row = bits;
+        end
+    endfunction
+
+    (* ramstyle = "no_rw_check, M10K" *) reg [63:0] list_a [0:MAX_CMDS-1];
+    (* ramstyle = "no_rw_check, M10K" *) reg [63:0] list_b [0:MAX_CMDS-1];
+    reg        live_bank;
+    reg [15:0] latched_seq;
+    reg [7:0]  latched_count;
+    reg        latched_en;
+
+    integer li;
+    initial begin
+        for (li = 0; li < MAX_CMDS; li = li + 1) begin
+            list_a[li] = 64'd0;
+            list_b[li] = 64'd0;
+        end
+        live_bank     = 1'b0;
+        latched_seq   = 16'd0;
+        latched_count = 8'd0;
+        latched_en    = 1'b0;
+    end
 
     always @(posedge clk_hdmi) begin
-        if (reset) begin
-            de_d   <= 1'b0;
-            hx     <= 12'd0;
-            hy     <= 12'd0;
-            meas_w <= 12'd0;
-            meas_h <= 12'd0;
-        end else begin
-            de_d <= de_in;
-            if (de_in && !de_d) begin
-                // rising DE: new line
-                hx <= 12'd0;
-                if (!vs_in) // crude; full design uses vs edge
-                    hy <= hy + 12'd1;
-            end else if (de_in) begin
-                hx <= hx + 12'd1;
-            end
-            if (!de_in && de_d) begin
-                meas_w <= hx + 12'd1;
-            end
-            // vs falling → latch frame height (simplified)
-            // Full design: match osd.v v_cnt / dsp_width measurement.
-            if (vs_in == 1'b0 && hy != 12'd0)
-                meas_h <= hy;
+        if (list_we && (list_waddr < MAX_CMDS[7:0])) begin
+            if (live_bank)
+                list_a[list_waddr] <= list_wdata;
+            else
+                list_b[list_waddr] <= list_wdata;
         end
     end
 
-    // ---- Passthrough blend stub (Inc-1: enable solid bottom band) ----
-    // Full design: list walker + font ROM NN expand into blend.
-    // This skeleton only delays din by 1 beat and optionally tints bottom band
-    // so a hierarchical map can cost the shell without ROM yet.
-    reg [23:0] din_d;
-    reg        hs_d, vs_d, de_d2;
-    wire       in_band = cfg_enable && de_d2 &&
-                         (hy >= (HDMI_HEIGHT - (FONT_H * body_scale) - 12'd16));
+    reg vs_d;
+    always @(posedge clk_hdmi) begin
+        vs_d <= vs_in;
+        if (reset) begin
+            latched_en    <= 1'b0;
+            latched_seq   <= 16'd0;
+            latched_count <= 8'd0;
+            live_bank     <= 1'b0;
+        end else if (vs_in && !vs_d) begin
+            if (cfg_seq != latched_seq) begin
+                latched_seq   <= cfg_seq;
+                latched_count <= (cfg_cmd_count > MAX_CMDS[7:0]) ? MAX_CMDS[7:0]
+                                                                : cfg_cmd_count;
+                latched_en    <= cfg_enable;
+                live_bank     <= ~live_bank;
+            end
+        end
+    end
+
+    reg        de_d;
+    reg [11:0] hx, hy;
 
     always @(posedge clk_hdmi) begin
-        din_d <= din;
-        hs_d  <= hs_in;
-        vs_d  <= vs_in;
-        de_d2 <= de_in;
+        if (reset) begin
+            de_d <= 1'b0;
+            hx   <= 12'd0;
+            hy   <= 12'd0;
+        end else begin
+            de_d <= de_in;
+            if (de_in && !de_d) begin
+                hx <= 12'd0;
+                hy <= hy + 12'd1;
+            end else if (de_in) begin
+                hx <= hx + 12'd1;
+            end
+            if (vs_in && !vs_d)
+                hy <= 12'd0;
+        end
+    end
+
+    // Cmd pack: [7:0]=op [23:8]=x [39:24]=y [47:40]=code
+    // RECT: [55:48]=w [63:56]=h
+    reg        hit;
+    reg [23:0] hit_rgb;
+    integer    ci;
+    reg [63:0] cw;
+    reg [7:0]  op, code;
+    reg [15:0] cx, cy;
+    reg [3:0]  sc;
+    reg [11:0] gx, gy, bitx, bity;
+    reg [7:0]  fbits;
+
+    always @(*) begin
+        hit     = 1'b0;
+        hit_rgb = 24'h00_00_00;
+        sc      = body_scale;
+        for (ci = 0; ci < 8; ci = ci + 1) begin
+            if (latched_en && (ci < latched_count)) begin
+                cw   = live_bank ? list_b[ci] : list_a[ci];
+                op   = cw[7:0];
+                cx   = cw[23:8];
+                cy   = cw[39:24];
+                code = cw[47:40];
+                if (op == 8'd2) begin
+                    if (hx >= {4'd0, cx} && hy >= {4'd0, cy}) begin
+                        gx = hx - {4'd0, cx};
+                        gy = hy - {4'd0, cy};
+                        if (gx < (FONT_W * sc) && gy < (FONT_H * sc)) begin
+                            bitx  = gx / sc;
+                            bity  = gy / sc;
+                            fbits = font_row(code, bity[2:0]);
+                            if (fbits[7 - bitx[2:0]]) begin
+                                hit     = 1'b1;
+                                hit_rgb = 24'hFF_FF_FF;
+                            end
+                        end
+                    end
+                end else if (op == 8'd1) begin
+                    if (hx >= {4'd0, cx} && hy >= {4'd0, cy} &&
+                        hx < {4'd0, cx} + {4'd0, cw[55:48]} &&
+                        hy < {4'd0, cy} + {4'd0, cw[63:56]}) begin
+                        hit     = 1'b1;
+                        hit_rgb = 24'h14_14_28;
+                    end
+                end
+            end
+        end
+    end
+
+    reg [23:0] din_d;
+    reg        hs_d, vs_d2, de_d2;
+    reg        hit_d;
+    reg [23:0] hit_rgb_d;
+
+    always @(posedge clk_hdmi) begin
+        din_d     <= din;
+        hs_d      <= hs_in;
+        vs_d2     <= vs_in;
+        de_d2     <= de_in;
+        hit_d     <= hit && de_in;
+        hit_rgb_d <= hit_rgb;
 
         hs_out <= hs_d;
-        vs_out <= vs_d;
+        vs_out <= vs_d2;
         de_out <= de_d2;
-        if (in_band)
-            dout <= {din_d[23:16] >> 1, din_d[15:8] >> 1, din_d[7:0] >> 1}; // dim
+        if (hit_d)
+            dout <= hit_rgb_d;
         else
             dout <= din_d;
     end
-
-    // Silence unused in skeleton (list ports reserved for dual-clock RAM).
-    wire _unused = list_we ^ |list_waddr ^ |list_wdata ^ |cfg_seq ^ |cfg_cmd_count
-                   ^ |meas_w ^ |meas_h ^ |MAX_CMDS;
 
 endmodule

@@ -243,30 +243,42 @@ font_id   = (meas_h >= 480) ? FONT_12x16 : FONT_8x13
 **Baseline (binding):** ALM 23,585 · M10K 465 · DSP 44 · bits 2,997,709  
 Artifact: `w-fit-integ/.../remote_out/fit-t7b-prog480/Plex.fit.rpt` + `fabric_decode_fit_hierarchy_8fdf440f.excerpt.rpt`.
 
-### V1 — fits **88 M10K free** (no stub dependency) — **ship target**
+### V1 chrome — **ship target** (fits in **88 free** OR post-stub **~356 free**)
+
+Chrome itself does **not** need 356 blocks. PRODUCT_NO_STUB clears the **headroom hazard** so chrome + w-geom can share one fit without M10K panic.
 
 | Item | Pred. Δ | Notes |
 |------|--------:|-------|
-| M10K | **+8..16** (cap **24**) | consolidated ROM+list; leave ≥64 free |
+| M10K | **+8..16** (cap **24**) | 2×64×64b list + font ROM infer; leave ≥64 free even **without** stub |
 | Block bits | **+~150 kbit** | small vs 2.99 Mbit baseline |
-| ALM | **+1.5k..3.5k** | DE counters + bounded cmd walk + NN expand |
+| ALM | **+1.5k..3.5k** | DE counters + ≤8 cmd walk/pixel + NN expand |
 | DSP | **0** | ARM/logical bar fill |
-| Timing | HDMI path **HOLD** | ≤16–32 active cmds/line; 2–3 stage blend |
+| Timing | HDMI path **HOLD** | 2–3 stage blend |
+
+**Post PRODUCT_NO_STUB map intent (w-fit-1 numbers):**  
+M10K **~197 used / ~356 free** before chrome → after chrome **~209–221 used**.  
+ALM **~14.4k** after stub → +chrome **~16–18k**. Still ≪ 41,910.
 
 **Hard fail before/after map:** M10K Δ > 24 preferred / **>40 absolute**, ALM Δ > 6k, or neg HDMI slack.
 
-### V2 — after stub reclaim (w-fit-1) — optional
+**Baseline dependency:** arguments use **t7b/8fdf 23,585/465/44**. If w-fit-1 proves deployed `8fdf440f` matches `output_files` (21,822 / DSP 74) instead, **re-prereg Δ on that row immediately** — do not mix.
+
+### V2 — after stub reclaim — optional luxury
 
 | Add-on | Pred. extra |
 |--------|------------:|
-| BRAM panel band (B) | +80..120 M10K |
+| BRAM panel band (B) | +80..120 M10K (now affordable under ~356 free) |
 | 2bpp fonts / more icons | +4..12 M10K |
 
-Not required for bug #2. **Dependent on stub map.**
+Not required for bug #2 text/icons.
 
 ### Inc-1 (optional same fit)
 
 Solid bottom rect + enable: **~0 M10K, ~0.3–0.8k ALM**.
+
+### Glass criterion (falsifiable)
+
+See **`docs/plex-chrome-glass-criterion.md`**. Pre-reg 1080p: fabric `#` **32×32** run%4==0; bank-stretch **~49×36** hBad>0.
 
 ---
 

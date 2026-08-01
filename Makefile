@@ -490,7 +490,9 @@ $(ROOT)/build/test_overlay_crispness_mutation: $(ROOT)/tests/unit/test_overlay_c
 $(ROOT)/build/test_plex_chrome_sim: $(ROOT)/tests/unit/test_plex_chrome_sim.cpp \
 		$(ROOT)/host/libmisterplex/plex_chrome_sim.hpp \
 		$(ROOT)/host/libmisterplex/mister_video_mode.hpp \
-		$(ROOT)/host/libmisterplex/mailbox_abi_spec.hpp
+		$(ROOT)/host/libmisterplex/mailbox_abi_spec.hpp \
+		$(ROOT)/host/libmisterplex/playback_overlay.hpp \
+		$(ROOT)/host/libmisterplex/ddr_frame_layout.hpp
 	@mkdir -p $(ROOT)/build
 	$(CXX) $(CXXFLAGS) -o $@ $(ROOT)/tests/unit/test_plex_chrome_sim.cpp
 

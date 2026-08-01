@@ -8,6 +8,8 @@
 #include "libmisterplex/plex_chrome_sim.hpp"
 #include "libmisterplex/mister_video_mode.hpp"
 #include "libmisterplex/mailbox_abi_spec.hpp"
+#include "libmisterplex/playback_overlay.hpp"
+#include "libmisterplex/ddr_frame_layout.hpp"
 
 #include <cstdio>
 
@@ -131,6 +133,50 @@ int main() {
     checkFabricMode(320, 240, /*scale*/ 2);
 
     checkMutationEmptyIsNotPass();
+
+    // Freeze: product bank 624×480 path metrics unchanged (c5382bee class / plane=0).
+    // Fabric plane must not require changing bank authoring scale when chrome_hw=0.
+    std::fprintf(stderr, "=== FREEZE: bank 624x480 plane0 metrics ===\n");
+    {
+        using namespace misterplex;
+        const auto g = ddrFrameGeometryForFpgaPresent(320, 240);
+        CHECK(g.coded_width.get() == 624);
+        CHECK(g.coded_height.get() == 480);
+        PlaybackOverlay ov;
+        ov.showAt(PlaybackOverlayState::Paused, 12'000, 120'000, 0);
+        CHECK(!ov.outputRasterLayout());
+        const auto m = ov.activeLayoutMetrics(g.coded_width.get(), g.coded_height.get());
+        CHECK(m.bodyScale == 2);
+        CHECK(m.fontId == OverlayFontId::Large12x16);
+        // Glass criterion prereg cross-check: bank cellH vs fabric 1080 cellH
+        const int bankCellH = 16 * m.bodyScale; // 12x16 font row cells
+        const int fabCellH = 8 * fabricBodyScale(1080); // sim 8x8 * scale4
+        CHECK(bankCellH == 32);
+        CHECK(fabCellH == 32);
+        // After stretch bank solid 8x8@2 → 49x36 ≠ fabric 32x32 (already RED above)
+        std::fprintf(stderr, "FREEZE bankCellH=%d fab1080_sim8x8=%d (product 12x16@2 bank=32)\n",
+                     bankCellH, fabCellH);
+    }
+
+    // Glass prereg dump (parent captures; host states expected numbers)
+    std::fprintf(stderr,
+                 "GLASS_PREREG 1080p: fabric # bbox=32x32 run%%4==0; "
+                 "bank-stretch # bbox~49x36 hBad>0\n");
+
+    // encodeCmdWord bit layout smoke (RTL pack)
+    {
+        using namespace misterplex::plex_chrome_sim;
+        Cmd g;
+        g.op = Op::Glyph;
+        g.x = 100;
+        g.y = 200;
+        g.code = static_cast<uint8_t>('#');
+        const uint64_t w = encodeCmdWord(g);
+        CHECK((w & 0xffu) == 2u);
+        CHECK(((w >> 8) & 0xffffu) == 100u);
+        CHECK(((w >> 24) & 0xffffu) == 200u);
+        CHECK(((w >> 40) & 0xffu) == static_cast<uint8_t>('#'));
+    }
 
     if (fails) {
         std::fprintf(stderr, "test_plex_chrome_sim: %d FAIL(s)\n", fails);
