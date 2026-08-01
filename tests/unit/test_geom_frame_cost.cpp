@@ -66,16 +66,19 @@ int main() {
         };
         const auto p240 = planFor(320, 240);
         const auto p480 = planFor(624, 480);
-        expect(p240.scale_applied && p480.scale_applied, "P2 both scale");
-        expect(!p240.identity_skip && !p480.identity_skip, "P2 neither identity_skip");
+        expect(p240.scale_applied && !p240.identity_skip, "P2 240 scales");
+        // Exact 624x480: crop+pad only (no swscale decrease into 618 — V-resample defect).
+        expect(!p480.scale_applied && !p480.identity_skip, "P2 480 crop-pad no swscale");
         expect(p240.vf.find("pad=624:480") != std::string::npos, "P2 240 pad coded");
         expect(p480.vf.find("pad=624:480") != std::string::npos, "P2 480 pad coded");
         expect(p240.vf.find("force_original_aspect_ratio=decrease") != std::string::npos,
-               "P2 decrease");
-        // 624-wide source still goes through scale=618 (mild shrink) then pad — not free.
-        expect(p480.vf.find("scale=618:480") != std::string::npos, "P2 480 scales into display");
-        std::printf("P2_OK force_scale Always vf_240_len=%zu vf_480_len=%zu\n", p240.vf.size(),
-                    p480.vf.size());
+               "P2 240 decrease");
+        expect(p480.vf.find("crop=618:480") != std::string::npos, "P2 480 crops display");
+        expect(p480.vf.find("scale=") == std::string::npos, "P2 480 no scale=");
+        expect(vfPreservesBankHeightSource(p480.vf), "P2 480 preserves bank height");
+        expect(scaleDecreaseOutHeight(624, 480, 618, 480) == 475, "P2 defect arith 475");
+        std::printf("P2_OK force_scale 240=upscale 480=crop_pad vf_240_len=%zu vf_480_len=%zu\n",
+                    p240.vf.size(), p480.vf.size());
     }
 
     // --- P3: clearYuv is strip-only (crop_right=6) ---

@@ -141,19 +141,21 @@ int main() {
         r.source_h = h;
         r.delivery_geometry_verified = false; // PMS transcode_request
 
-        // Default DDR policy force ON → Always → scale_pad_crop.
+        // Default DDR policy force ON → Always → exact coded uses crop_pad_no_v_scale
+        // (not scale=618:decrease — that was the vertical-resample product defect).
         r.scale_mode = ffmpegScaleModeForDdrYuvPresent(FfmpegScaleMode::SkipIdentity);
         const auto on = buildFfmpegVideoFilter(r);
-        expect(on.scale_applied && !on.identity_skip, "default force scales at 624");
-        expect_eq_str(on.reason, "scale_pad_crop", "default force reason");
-        expect(on.vf.find("scale=618:480") != std::string::npos, "scale to display");
+        expect(!on.scale_applied && !on.identity_skip, "default force crop-pad at 624");
+        expect_eq_str(on.reason, "crop_pad_no_v_scale", "default force reason");
+        expect(on.vf.find("crop=618:480") != std::string::npos, "crop to display");
         expect(on.vf.find("pad=624:480") != std::string::npos, "pad to coded");
+        expect(on.vf.find("scale=") == std::string::npos, "no swscale on exact coded");
 
-        // Escape force=0: SkipIdentity but unverified → still must NOT skip.
+        // Escape force=0: SkipIdentity but unverified → still must NOT identity-skip.
         r.scale_mode = ffmpegScaleModeForDdrYuvPresent(FfmpegScaleMode::SkipIdentity, false);
         const auto off = buildFfmpegVideoFilter(r);
-        expect(off.scale_applied && !off.identity_skip, "escape+unverified still scales");
-        expect_eq_str(off.reason, "scale_pad_crop_unverified_delivery", "escape guard reason");
+        expect(!off.scale_applied && !off.identity_skip, "escape+unverified crop-pad not skip");
+        expect_eq_str(off.reason, "crop_pad_no_v_scale_unverified_delivery", "escape guard reason");
 
         // Escape force=0 + VERIFIED match → may identity-skip (lab/direct-play).
         r.delivery_geometry_verified = true;

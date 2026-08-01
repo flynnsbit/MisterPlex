@@ -108,10 +108,53 @@ inline std::string scaleFilterGeom(const std::string& wh, const std::string& sws
     return s;
 }
 
+// Integer model of ffmpeg scale=box_w:box_h:force_original_aspect_ratio=decrease
+// output height (no even-align). Width-limited fit:
+//   out_h = floor(src_h * box_w / src_w) when box_w/src_w <= box_h/src_h.
+// Product defect class: src 624x480 into box 618x480 → out_h = 480*618/624 = 475.
+inline int scaleDecreaseOutHeight(int src_w, int src_h, int box_w, int box_h) {
+    if (src_w <= 0 || src_h <= 0 || box_w <= 0 || box_h <= 0)
+        return 0;
+    // width-limited when box_w * src_h <= box_h * src_w  (box narrower or equal AR)
+    if (static_cast<long long>(box_w) * static_cast<long long>(src_h) <=
+        static_cast<long long>(box_h) * static_cast<long long>(src_w)) {
+        return static_cast<int>((static_cast<long long>(src_h) * box_w) / src_w);
+    }
+    // height-limited: out_h = min(box_h, src_h) under decrease with s<=1 on h
+    return box_h < src_h ? box_h : src_h;
+}
+
+// True when decrease-into-box would change vertical sample count (any axis shrink
+// that is width-limited with s<1, or height-limited with box_h < src_h).
+inline bool scaleDecreaseResamplesHeight(int src_w, int src_h, int box_w, int box_h) {
+    if (src_h <= 0)
+        return false;
+    return scaleDecreaseOutHeight(src_w, src_h, box_w, box_h) != src_h;
+}
+
+// Gate predicate: a vf string for a source already at bank height must not run
+// force_original_aspect_ratio=decrease (both axes share min(sx,sy)) and must not
+// scale= at all — crop+pad (or empty/fps-only) only. Used by unit gate so the
+// 624→618→475 class cannot regress silently.
+inline bool vfPreservesBankHeightSource(const std::string& vf) {
+    if (vf.find("force_original_aspect_ratio=decrease") != std::string::npos)
+        return false;
+    if (vf.find("scale=") != std::string::npos)
+        return false;
+    return true;
+}
+
 // Canonical product scale+pad strings — freeze tests pin these shapes.
-// 480p crop path: scale into display geometry then pad once into coded stride,
-// centering the scaled frame inside the display window (crop_left/top is the
-// display origin inside the coded bank — NOT a left-align of the content).
+// 480p crop path (upscale / non-bank source): scale into display geometry then
+// pad once into coded stride, centering inside the display window (crop_left/top
+// is the display origin inside the coded bank — NOT a left-align of content).
+//
+// 480p exact-coded source (source WxH == coded WxH): MUST NOT scale into the
+// narrower display box with force_original_aspect_ratio=decrease — that applies
+// min(display_w/src_w, display_h/src_h) to BOTH axes and turns a pure 6-px
+// horizontal crop into a ~1% vertical resample (624x480 → ~618x475 → pad).
+// Exact-coded uses crop+pad only (buildCropPadNoScale).
+//
 // Square path: scale into coded geometry with centred pad.
 //
 // Prior pad=<coded>:<crop_left>:<crop_top> left/top-aligned the scaled picture
@@ -137,6 +180,24 @@ inline std::string buildScalePadCropped(int display_w, int display_h, int coded_
     return scaleFilterGeom(displayScale, sws_flags) +
            ":force_original_aspect_ratio=decrease,pad=" + scale + ":" + padX + ":" + padY +
            ":color=black";
+}
+
+// Horizontal display crop + pad back to coded bank — zero vertical resample.
+// Source must already be coded WxH (caller enforces). crop x starts at crop_left
+// (product kPlex480pCropLeft=0 → take leftmost display_w columns; crop_right=6
+// is the discarded right strip). After crop, iw=display_w so pad x collapses to
+// crop_left.
+inline std::string buildCropPadNoScale(int display_w, int display_h, int coded_w, int coded_h,
+                                       int crop_left, int crop_top) {
+    const std::string crop = "crop=" + std::to_string(display_w) + ":" +
+                             std::to_string(display_h) + ":" + std::to_string(crop_left) + ":" +
+                             std::to_string(crop_top);
+    const std::string padX = std::to_string(crop_left) + "+(" + std::to_string(display_w) +
+                             "-iw)/2";
+    const std::string padY = std::to_string(crop_top) + "+(" + std::to_string(display_h) +
+                             "-ih)/2";
+    return crop + ",pad=" + std::to_string(coded_w) + ":" + std::to_string(coded_h) + ":" +
+           padX + ":" + padY + ":color=black";
 }
 
 inline std::string buildScalePadCentered(int coded_w, int coded_h,
@@ -306,6 +367,22 @@ inline FfmpegVfPlan buildFfmpegVideoFilter(const FfmpegVfRequest& req) {
 
     // Always, or SkipIdentity with mismatched/unknown/unverified source: scale+pad.
     const std::string flags = swsFlagsTokenOk(req.sws_flags) ? req.sws_flags : std::string();
+
+    // Exact coded source + display crop: crop+pad ONLY. Never scale into the
+    // narrower display box with force_original_aspect_ratio=decrease — that is
+    // the 624x480→~618x475 vertical-resample product defect (rd-review).
+    // 240p / other sizes still take buildScalePadCropped below (need upscale).
+    const bool exactCodedSource = req.source_w > 0 && req.source_h > 0 &&
+                                  req.source_w == req.coded_w && req.source_h == req.coded_h;
+    if (hasCrop && exactCodedSource) {
+        append(buildCropPadNoScale(dispW, dispH, req.coded_w, req.coded_h, req.crop_left,
+                                   req.crop_top));
+        // scale_applied=false: no swscale resample (arm_rescale=0). vf still set.
+        if (numericMatchUnverified)
+            return finish(false, false, "crop_pad_no_v_scale_unverified_delivery");
+        return finish(false, false, "crop_pad_no_v_scale");
+    }
+
     if (hasCrop) {
         append(buildScalePadCropped(dispW, dispH, req.coded_w, req.coded_h, req.crop_left,
                                     req.crop_top, flags));

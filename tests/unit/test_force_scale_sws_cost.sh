@@ -11,8 +11,12 @@ OUT="$ROOT/build/force_scale_sws_cost"
 mkdir -p "$OUT"
 FFMPEG="${FFMPEG:-ffmpeg}"
 NFRAMES=120
-PRODUCT_VF='scale=618:480:force_original_aspect_ratio=decrease,pad=624:480:0+(618-iw)/2:0+(480-ih)/2:color=black'
-PRODUCT_VF_FB='scale=618:480:flags=fast_bilinear:force_original_aspect_ratio=decrease,pad=624:480:0+(618-iw)/2:0+(480-ih)/2:color=black'
+# 320x240 product path still decrease-scales into display then pads coded.
+PRODUCT_VF_320='scale=618:480:force_original_aspect_ratio=decrease,pad=624:480:0+(618-iw)/2:0+(480-ih)/2:color=black'
+PRODUCT_VF_320_FB='scale=618:480:flags=fast_bilinear:force_original_aspect_ratio=decrease,pad=624:480:0+(618-iw)/2:0+(480-ih)/2:color=black'
+# Exact 624x480: crop+pad only (no vertical resample via decrease into 618).
+PRODUCT_VF_624='crop=618:480:0:0,pad=624:480:0+(618-iw)/2:0+(480-ih)/2:color=black'
+PRODUCT_VF_624_FB="$PRODUCT_VF_624"
 FB=449280
 EXPECTED=$((FB * NFRAMES))
 
@@ -84,10 +88,10 @@ PY
 }
 
 fail=0
-run "src320_default" "$SRC320" "$PRODUCT_VF" || fail=$((fail + 1))
-run "src624_default" "$SRC624" "$PRODUCT_VF" || fail=$((fail + 1))
-run "src624_fast_bilinear" "$SRC624" "$PRODUCT_VF_FB" || fail=$((fail + 1))
-run "src320_fast_bilinear" "$SRC320" "$PRODUCT_VF_FB" || fail=$((fail + 1))
+run "src320_default" "$SRC320" "$PRODUCT_VF_320" || fail=$((fail + 1))
+run "src624_default" "$SRC624" "$PRODUCT_VF_624" || fail=$((fail + 1))
+run "src624_fast_bilinear" "$SRC624" "$PRODUCT_VF_624_FB" || fail=$((fail + 1))
+run "src320_fast_bilinear" "$SRC320" "$PRODUCT_VF_320_FB" || fail=$((fail + 1))
 
 if [[ "$fail" -ne 0 ]]; then
   echo "FORCE_SCALE_SWS_COST_FAIL setup_or_bytes fail=$fail"

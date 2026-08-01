@@ -147,6 +147,7 @@ int main() {
     }
 
     // --- RED class: numeric match WITHOUT verification must NOT identity-skip ---
+    // Exact coded + crop → crop_pad_no_v_scale (not swscale decrease into 618).
     {
         FfmpegVfRequest r;
         r.coded_w = 624;
@@ -159,8 +160,10 @@ int main() {
         r.source_h = 480;
         r.delivery_geometry_verified = false; // PMS transcode_request class
         const auto p = buildFfmpegVideoFilter(r);
-        expect(p.scale_applied && !p.identity_skip, "unverified 624 must scale");
-        expect_eq(p.reason, "scale_pad_crop_unverified_delivery", "unverified reason");
+        expect(!p.identity_skip, "unverified 624 must not identity_skip");
+        expect(!p.scale_applied, "unverified exact coded uses crop not swscale");
+        expect_eq(p.reason, "crop_pad_no_v_scale_unverified_delivery", "unverified reason");
+        expect(vfPreservesBankHeightSource(p.vf), "unverified exact still preserves height");
     }
 
     // --- SkipIdentity unknown source → still scales (safe) ---
@@ -264,14 +267,29 @@ int main() {
             r.delivery_geometry_verified = false;
             const auto p = buildFfmpegVideoFilter(r);
             expect(r.scale_mode == FfmpegScaleMode::Always, "force→Always");
-            expect(p.scale_applied && !p.identity_skip,
-                   (std::string("FORCE_SCALE pins scale for ") + c.name).c_str());
-            expect(p.vf.find("force_original_aspect_ratio=decrease") != std::string::npos,
-                   (std::string("aspect preserved (decrease) for ") + c.name).c_str());
-            expect(p.vf.find("pad=624:480") != std::string::npos,
-                   (std::string("pad to coded bank for ") + c.name).c_str());
-            expect(p.vf.find("scale=618:480") != std::string::npos,
-                   (std::string("scale into display box for ") + c.name).c_str());
+            const bool exactBank = (c.sw == coded_w && c.sh == coded_h);
+            if (exactBank) {
+                // Exact coded: crop+pad only — never decrease into 618 (V-resample defect).
+                expect(!p.scale_applied && !p.identity_skip,
+                       (std::string("FORCE_SCALE exact bank crop-pad for ") + c.name)
+                           .c_str());
+                expect(vfPreservesBankHeightSource(p.vf),
+                       (std::string("exact bank preserves height for ") + c.name).c_str());
+                expect(p.vf.find("crop=618:480") != std::string::npos,
+                       (std::string("exact bank crops display for ") + c.name).c_str());
+                expect(p.vf.find("pad=624:480") != std::string::npos,
+                       (std::string("exact bank pads coded for ") + c.name).c_str());
+                expect_eq(p.reason, "crop_pad_no_v_scale", "exact bank reason");
+            } else {
+                expect(p.scale_applied && !p.identity_skip,
+                       (std::string("FORCE_SCALE pins scale for ") + c.name).c_str());
+                expect(p.vf.find("force_original_aspect_ratio=decrease") != std::string::npos,
+                       (std::string("aspect preserved (decrease) for ") + c.name).c_str());
+                expect(p.vf.find("pad=624:480") != std::string::npos,
+                       (std::string("pad to coded bank for ") + c.name).c_str());
+                expect(p.vf.find("scale=618:480") != std::string::npos,
+                       (std::string("scale into display box for ") + c.name).c_str());
+            }
             expect(yuv420pFrameBytesWH(coded_w, coded_h) == codedBytes,
                    "output byte contract is coded bank");
             // Mid-stream source change cannot identity-skip under force: mode is Always.
@@ -282,7 +300,7 @@ int main() {
             expect(mid.scale_applied && !mid.identity_skip,
                    (std::string("mid-stream still scales under force for ") + c.name)
                        .c_str());
-            if (c.sw == coded_w && c.sh == coded_h) {
+            if (exactBank) {
                 r.scale_mode =
                     ffmpegScaleModeForDdrYuvPresent(FfmpegScaleMode::SkipIdentity, false);
                 r.source_w = coded_w;
@@ -342,6 +360,64 @@ int main() {
         expect(!deliveryGeometryVerifiedFromBasis("transcode_request"),
                "transcode_request not verified");
         expect(deliveryGeometryVerifiedFromBasis("measured"), "measured qualifies");
+    }
+
+    // --- NO_V_RESAMPLE gate (rd-review / w-geom): src_h == bank_h ⇒ no vertical resample ---
+    // Arithmetic of the defect, RED mutation of the legacy string, GREEN product path.
+    {
+        // 1) Arithmetic: decrease into display 618x480 shrinks 624x480 → height 475.
+        const int out_h = scaleDecreaseOutHeight(624, 480, 618, 480);
+        expect(out_h == 475, "624x480 into 618x480 decrease out_h==475");
+        expect(scaleDecreaseResamplesHeight(624, 480, 618, 480),
+               "decrease into display resamples height");
+        expect(!scaleDecreaseResamplesHeight(320, 240, 618, 480) ||
+                   scaleDecreaseOutHeight(320, 240, 618, 480) != 240,
+               "320x240 upscale path still changes height (expected)");
+        // 320x240 → out_h = 240*618/320 = 463 (width-limited), not 240.
+        expect(scaleDecreaseOutHeight(320, 240, 618, 480) == 463, "320x240→463 under decrease");
+
+        // 2) RED mutation: legacy buildScalePadCropped string fails the preserve predicate.
+        const std::string legacy = buildScalePadCropped(618, 480, 624, 480, 0, 0, "fast_bilinear");
+        expect(legacy.find("scale=618:480") != std::string::npos, "mutation has scale=618:480");
+        expect(legacy.find("force_original_aspect_ratio=decrease") != std::string::npos,
+               "mutation has decrease");
+        expect(!vfPreservesBankHeightSource(legacy),
+               "RED: legacy decrease-into-display fails vfPreservesBankHeightSource");
+
+        // 3) GREEN: product Always/force with exact coded source → crop+pad, preserve.
+        FfmpegVfRequest r;
+        r.coded_w = 624;
+        r.coded_h = 480;
+        r.display_w = 618;
+        r.display_h = 480;
+        r.crop_left = 0;
+        r.crop_top = 0;
+        r.scale_mode = FfmpegScaleMode::Always;
+        r.source_w = 624;
+        r.source_h = 480;
+        r.sws_flags = "fast_bilinear";
+        const auto p = buildFfmpegVideoFilter(r);
+        expect(vfPreservesBankHeightSource(p.vf),
+               "GREEN: exact coded source vf preserves bank height");
+        expect(!p.scale_applied && !p.identity_skip, "GREEN: crop-pad not swscale/skip");
+        expect_eq(p.reason, "crop_pad_no_v_scale", "GREEN reason");
+        expect_eq(p.vf,
+                  "crop=618:480:0:0,pad=624:480:0+(618-iw)/2:0+(480-ih)/2:color=black",
+                  "GREEN crop-pad string");
+
+        // 4) 240p tier still upscales via decrease (must not break).
+        r.source_w = 320;
+        r.source_h = 240;
+        const auto p240 = buildFfmpegVideoFilter(r);
+        expect(p240.scale_applied && !p240.identity_skip, "240p still scales");
+        expect(p240.vf.find("scale=618:480") != std::string::npos, "240p scale into display");
+        expect(p240.vf.find("force_original_aspect_ratio=decrease") != std::string::npos,
+               "240p keeps decrease");
+        expect(!vfPreservesBankHeightSource(p240.vf),
+               "240p vf is not a bank-height preserve path (upscale)");
+
+        std::printf("GREEN_NO_V_RESAMPLE out_h_624=475 legacy_red=1 product_crop_pad=1 "
+                    "p240_upscale=1\n");
     }
 
     if (g_fails) {

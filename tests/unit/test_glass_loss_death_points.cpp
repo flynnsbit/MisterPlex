@@ -69,8 +69,11 @@ int main() {
         r.source_h = 480;
         r.delivery_geometry_verified = true;
         const auto plan = buildFfmpegVideoFilter(r);
-        expect(plan.scale_applied && !plan.identity_skip, "D3 force Always scale");
+        // Exact coded under force: crop+pad (no identity_skip; no swscale decrease).
+        expect(!plan.identity_skip, "D3 force Always not identity_skip");
         expect(plan.vf.find("pad=624:480") != std::string::npos, "D3 pad coded");
+        expect(plan.vf.find("crop=618:480") != std::string::npos || plan.scale_applied,
+               "D3 mutates into coded bank");
         std::printf("D3_OK FORCE_SCALE pins 449280; phase desync eliminated on product path\n");
     }
 
