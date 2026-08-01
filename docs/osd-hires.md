@@ -180,13 +180,30 @@ FIXED silicon fixture under measured font: **12×16@2** `measured_span=173` (pre
 
 **Source (current):** `MediaPlayer::paintIdle` uses `plex480pDdrFrameGeometry()` →
 `cw×ch = 624×480`, then `overlay_.renderRgb24(rgb, cw, ch)`. Font pick:
-`bodyScale==2 && (w>=600 || h>=480)` → **12×16**. Host ink span STOPPED@624×480 = 174
+`h >= 480 && bodyScale == 2` → **12×16** (no `w>=600` — that clause was dead on the
+product path and would mask a short-H canvas). Host ink span STOPPED@624×480 = 174
 (pred 180). Loud log: `media: idle overlay canvas=624x480 font=12x16 scale=2 chrome=0|1`.
 
 **Stopped is sticky** in `alphaFor` (same as Paused) so late captures still see STOPPED.
 
-If a capture still measures 8×13-class span, grepping the idle canvas log settles whether
-the live binary authored short — do not trust template font metadata alone.
+### R1 — parent 370 vs host FIXED span (settled for on-disk archive)
+
+| Artifact | Status |
+|---|---|
+| `osd_hires_0370af91_STOPPED_PASS.png` / `osd_pause_3883f5ab_*` | **NOT-FOUND** on worker tree |
+| `overlay_FIXED_db3d9367_stopped.png` | **FOUND** 1920×1080 |
+
+```bash
+python3 tools/measure_overlay_word_span.py \
+  --image files/device-evidence/overlay_FIXED_db3d9367_stopped.png \
+  --expect STOPPED; echo "true rc=$?"
+# ink_span_output_px=531  family=12x16
+# pred_8x13@2_via640=372.0  ← matches parent hand figure 370, NOT the FIXED pixels
+```
+
+**On FIXED: parent 370 is wrong; host 531 / 12×16 is right.** Parent 370 equals the
+8×13@2×(1920/640) *prediction*, not ink measured on that PNG. 3883f5ab STOPPED cannot
+be re-scored without the archive.
 
 ## Panel empty-center black rectangle (silicon residual after 3883f5ab)
 

@@ -1,31 +1,42 @@
 worker: w-osd-hires
 branch: w-osd-hires
+task: R1 span reconcile + R2 drop w>=600 + R3 prereg
 status: READY_FOR_PARENT_DEPLOY
 
-## Done this turn
-### 2a readback font measured (not template winner)
-- tools/readback_overlay_text.py: font/scale from ink span vs cell-span preds
-- UNRESOLVED if ambiguous; never confident wrong pick
-- --selftest-font-measure: 12x16@2 and 8x13@2 both OK (true rc=0)
-- FIXED silicon fixture now reports font=12x16 measured_span=173 (was metadata noise)
+## R1 — who is wrong
+- Named 3883f5ab/0370af91 STOPPED archives: NOT-FOUND on this tree
+- Only silicon STOPPED on disk: files/device-evidence/overlay_FIXED_db3d9367_stopped.png
+- measure_overlay_word_span.py → ink_span_output_px=531 @1920 family=12x16 (true rc=0)
+- pred_8x13@2_via640=372.0 matches parent hand 370 — that is the 8x13 *prediction*, not FIXED ink
+- VERDICT on FIXED: parent 370 is WRONG; worker 12x16/531 is RIGHT
+- Do not claim both valid. If parent has 3883 STOPPED PNG, re-run measure tool on it.
 
-### 3 STOP/idle canvas
-- Source: paintIdle already plex480pDdrFrameGeometry 624x480 + renderRgb24(cw,ch)
-- Host STOPPED@624x480 ink_span=174 = 12x16@2 (not 8x13)
-- FIXED fixture under fixed tool: 12x16 — contradicts parent 8x13 span on some other capture
-- Hardened: font pick w>=600||h>=480; Stopped sticky; log idle overlay canvas=WxH font=
-- Gate: tests/unit/test_stop_idle_canvas_static.py true rc=0
+## R2 — w>=600
+- At product 624x480, h>=480 alone selects 12x16 → w>=600 does NOT change STOP path
+- REMOVED as dead/masking code (playback_overlay.hpp font pick = h>=480 && bodyScale==2 only)
+- Gate test_stop_idle_canvas_static rejects any remaining w>=600
 
-### 4 black rect (prior commit 8475a8dd, still in tree)
-- opaque panelBg + title; panel-empty-center Y=55.6 independent of video
+## R3 prereg
+- files/prereg/OSD-HIRES-aa7776a8-DEPLOY.md (title historical; binary md5 below)
+- Log expect: media: idle overlay canvas=624x480 font=12x16 scale=2 chrome=1
+- STOPPED ink @1920 PASS 480-580 (FIXED=531); FAIL 340-400 (parent 8x13 class)
+- Falsify worker: span<=400 or log font=8x13 or canvas!=624x480
 
-## ARM
-md5 aa7776a8ffd5fe0d494053658b38d1bd
-make arm-plexd true rc=0
+## Binary
+md5sum build/arm/misterplexd = 972a7794b0616012a2f4aa074b832552
+make arm-plexd true rc=0 (worktree)
 
-## Parent deploy checks
-1) python3 tools/readback_overlay_text.py --selftest-font-measure; echo true rc=$?
-2) After deploy: stop → wait 6s → capture
-   grep 'idle overlay canvas=' log → expect 624x480 font=12x16
-   readback --expect STOPPED → font=12x16 measured_span ~170-180 (norm 640) or out-span ~520 @1920
-3) pause 6s: no black hole (empty-center luma 50-70 grey); title if resolve has one
+## Host gates (true rc=0)
+- test_stop_idle_canvas_static
+- test_panel_empty_center_static
+- test_pause_overlay_publish_static
+- readback --selftest-font-measure
+- measure_overlay_word_span on FIXED
+- test_playback_overlay
+
+## Parent commands
+python3 tools/measure_overlay_word_span.py --image CAP.png --expect STOPPED; echo "true rc=$?"
+python3 tools/readback_overlay_text.py --image CAP.png --expect STOPPED; echo "true rc=$?"
+grep 'idle overlay canvas=' misterplexd.log
+
+No device touch. No RTL.

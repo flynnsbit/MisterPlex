@@ -91,10 +91,12 @@ struct OverlayLayoutMetrics {
         m.bodyScale = std::max(kOverlayMinScale, h >= 720 ? 3 : 2);
         m.titleScale = m.bodyScale;
         m.iconScale = std::max(kOverlayMinScale, h >= 720 ? 3 : 2);
-        // Product bank is 624×480. Prefer 12×16 on any product-width canvas
-        // (w>=600) or full 480-line height at bodyScale==2. Short/narrow
-        // rasters (e.g. 320×240 unit fixtures) keep denser 8×13.
-        if (m.bodyScale == 2 && (w >= 600 || h >= 480)) {
+        // 12×16 only when h>=480 at bodyScale==2 (product bank height).
+        // w is NOT a selector: STOP/idle always authors h=480 via
+        // plex480pDdrFrameGeometry(); a w>=600 clause would only fire on a
+        // short-H wide canvas and would mask that defect. Unit fixtures at
+        // 320×240 correctly keep 8×13.
+        if (h >= 480 && m.bodyScale == 2) {
             m.fontId = OverlayFontId::Large12x16;
             m.glyphW = kOverlayFontLargeW;
             m.glyphH = kOverlayFontLargeH;

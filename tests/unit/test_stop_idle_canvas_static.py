@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Host gate: stop/idle chrome authors on product 624x480 bank, not DECODE tier.
 
-Parent measured STOPPED word span as 8x13-class on one capture; product font pick
-is 12x16 only when canvas is bank-class (w>=600 or h>=480). paintIdle must:
+Product font pick is 12x16 only when h>=480 && bodyScale==2 (no w>=600 mask).
+paintIdle must:
   - call plex480pDdrFrameGeometry()
   - pass that cw/ch into overlay_.renderRgb24
   - log idle overlay canvas=WxH font=...
@@ -38,20 +38,18 @@ def main() -> int:
     if 'idle overlay canvas=' not in body:
         fail('paintIdle must log "idle overlay canvas=" for greppable WxH')
 
-    # Font pick: product bank width or 480 height → 12x16
-    if "w >= 600 || h >= 480" not in ov and "h >= 480 && m.bodyScale == 2" not in ov:
-        # accept either new or old form if still product-correct
-        fail("OverlayLayoutMetrics::compute must pick Large12x16 on product bank")
-    if "w >= 600 || h >= 480" not in ov:
-        fail("font pick must include w>=600 (product coded width) so short-H bank still gets 12x16")
-
+    # Font pick: h>=480 && bodyScale==2 only (no w>=600 mask — that would hide short-H).
+    if "h >= 480 && m.bodyScale == 2" not in ov:
+        fail("OverlayLayoutMetrics::compute must pick Large12x16 when h>=480 && bodyScale==2")
+    if "w >= 600" in ov:
+        fail("font pick must NOT use w>=600 (dead on product path; masks h<480 defect)")
     # Stopped sticky
     af = re.search(r"static int alphaFor\(const Snapshot& s, int64_t nowMs\) \{(.*?)\n    \}", ov, re.S)
     if not af or "PlaybackOverlayState::Stopped" not in af.group(1):
         fail("Stopped must be sticky in alphaFor (stop chrome survives warm-up)")
 
     print("stop_idle_canvas_static: OK")
-    print("  paintIdle=plex480pDdrFrameGeometry → renderRgb24(cw,ch); Stopped sticky; font w>=600||h>=480")
+    print("  paintIdle=plex480pDdrFrameGeometry → renderRgb24(cw,ch); Stopped sticky; font h>=480&&scale2 only")
     return 0
 
 
