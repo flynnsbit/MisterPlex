@@ -9,6 +9,7 @@
 #include "libmisterplex/ffmpeg_vf.hpp"
 #include "libmisterplex/frame_ledger.hpp"
 #include "libmisterplex/osd_menu.hpp"
+#include "libmisterplex/raw_video_pipe.hpp"
 #include "libmisterplex/yuv420p_chroma_health.hpp"
 #include "log_redact.hpp"
 #include "media_player.hpp"
@@ -620,6 +621,29 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "misterplexd: AV_PRESENT_LEAD_MS=%s AV_RESYNC_DROP_MS=%s\n",
                      lead.empty() ? "40(default)" : lead.c_str(),
                      drop.empty() ? "80(default)" : drop.c_str());
+        // Raw video pipe capacity. Default ON (2 MiB). 0/off keeps kernel 64 KiB.
+        // Startup banner probes a throwaway pipe and prints F_GETPIPE_SZ actual —
+        // never the request alone (intent≠reality has bitten this banner before).
+        {
+            int rawPipeReq = misterplex::kDefaultRawVideoPipeBytes;
+            auto rvp = loadConf(confPath, "RAW_VIDEO_PIPE_BYTES");
+            if (!rvp.empty())
+                rawPipeReq = misterplex::parseRawVideoPipeBytesConf(rvp);
+            player.setRawVideoPipeBytes(rawPipeReq);
+            int probe[2] = {-1, -1};
+            misterplex::RawVideoPipeSizeResult probed{};
+            if (::pipe(probe) == 0) {
+                probed = misterplex::applyRawVideoPipeSize(probe[0], rawPipeReq);
+                ::close(probe[0]);
+                ::close(probe[1]);
+            } else {
+                probed.requested = rawPipeReq > 0 ? rawPipeReq : 0;
+                probed.actual = -1;
+                probed.set_errno = errno;
+            }
+            std::fprintf(stderr, "misterplexd: RAW_VIDEO_PIPE_BYTES %s\n",
+                         misterplex::formatRawVideoPipeLog(probed).c_str());
+        }
     }
     {
         // Idle/screensaver: without this the last frame of the previous video stays

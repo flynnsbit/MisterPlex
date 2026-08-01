@@ -9,6 +9,7 @@
 #include "libmisterplex/osd_menu.hpp"
 #include "libmisterplex/h264_nal_dispatch.hpp"
 #include "libmisterplex/h264_recon.hpp"
+#include "libmisterplex/raw_video_pipe.hpp"
 #include "libmisterplex/yuv420p_chroma_health.hpp"
 #include <algorithm>
 #include <atomic>
@@ -2654,6 +2655,15 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
             if (streamThr_.joinable())
                 streamThr_.join();
             return;
+        }
+        // Decouple ffmpeg producer from DDR publish latency: enlarge the raw
+        // video pipe beyond the kernel default (65536 ≈ 0.15 frames @ 624x480
+        // I420). Read back F_GETPIPE_SZ and log THAT value — never the request
+        // alone. Failure → keep default; never abort playback.
+        {
+            const auto pipeSz = applyRawVideoPipeSize(vpipe[0], rawVideoPipeBytes_);
+            lastRawVideoPipeActual_ = pipeSz.actual;
+            log(std::string("media: ") + formatRawVideoPipeLog(pipeSz));
         }
         if (wantAudio && pipe(apipe) != 0) {
             log("media: audio pipe failed — video only");

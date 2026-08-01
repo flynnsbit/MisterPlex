@@ -40,7 +40,8 @@
     "OSD_MENU_FAULT_FALLBACK_624_BITRATE": "Injected OSD/fallback 624x480 bitrate mismatch expected-red fault.",
     "OSD_MENU_FAULT_SKIP_INITIAL_IDLE": "Injected OSD expected-red fault: skip first idle paint so DDR idle screen never appears.",
     "P3_INTRA_FRAME_RARE_NEGATIVE_TEST": "Injected intra-frame expected-red fault.",
-    "P3_INTRA_NEGATIVE_TEST": "Injected intra-MB0 expected-red fault."
+    "P3_INTRA_NEGATIVE_TEST": "Injected intra-MB0 expected-red fault.",
+    "RAW_PIPE_FAULT_NO_SET": "Injected raw-video-pipe expected-red fault: F_SETPIPE_SZ becomes a no-op so capacity stays at the kernel default."
   },
   "volatile_value_macros": {
     "BUILD_DATE": "Quartus generates the date in sys/build_id.tcl; Verilator lint uses a stable placeholder value."

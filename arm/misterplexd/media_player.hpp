@@ -130,6 +130,14 @@ public:
     void setContentFps(int fps) { setContentFpsRational(fps, 1); }
     int contentFpsNum() const { return fpsNum_; }
     int contentFpsDen() const { return fpsDen_; }
+    // Raw ffmpeg video pipe capacity (bytes). Conf RAW_VIDEO_PIPE_BYTES.
+    // 0 = leave kernel default (typically 65536). Default product target is
+    // kDefaultRawVideoPipeBytes (2 MiB) — see libmisterplex/raw_video_pipe.hpp.
+    void setRawVideoPipeBytes(int bytes) { rawVideoPipeBytes_ = bytes < 0 ? 0 : bytes; }
+    int rawVideoPipeBytes() const { return rawVideoPipeBytes_; }
+    // Last F_GETPIPE_SZ read-back from the live video pipe (-1 = never applied).
+    int lastRawVideoPipeActual() const { return lastRawVideoPipeActual_; }
+
     // Present lead (ms) so the vsync path is not starved. Conf AV_PRESENT_LEAD_MS.
     void setPresentLeadMs(int ms) { presentLeadMs_ = ms < 0 ? 0 : ms; }
     // Drift (ms) past which a late frame is dropped to re-converge. Conf AV_RESYNC_DROP_MS.
@@ -334,6 +342,9 @@ private:
     int fpsDen_ = 0;
     int presentLeadMs_ = 40;
     int resyncDropMs_ = 80;
+    // F_SETPIPE_SZ target for the STREAM=0 rawvideo pipe. See raw_video_pipe.hpp.
+    int rawVideoPipeBytes_ = 2 * 1024 * 1024;
+    int lastRawVideoPipeActual_ = -1;
 
     FbPresent fb_;
     FpgaSpi fpga_;

@@ -105,6 +105,13 @@ SOURCE_FPS=auto
 # dropping (video then only ever lags on a decode stall). Default 80.
 # AV_RESYNC_DROP_MS=80
 #
+# RAW_VIDEO_PIPE_BYTES: F_SETPIPE_SZ on the STREAM=0 ffmpeg rawvideo pipe.
+# Default 2097152 (2 MiB ≈ 4.7 frames of 624x480 I420). Kernel default is 65536
+# (~0.15 frames), so a DDR publish spike backpressures the decoder. This is a
+# latency/jitter buffer, NOT a throughput fix. 0/off = leave kernel default.
+# Banner prints F_GETPIPE_SZ actual (read-back), never the request alone.
+# RAW_VIDEO_PIPE_BYTES=2097152
+#
 # AV_CONTENT_FPS: override the detected content rate. "auto" (default) uses PMS.
 # Accepts "24000/1001", "23.976", "25". Only for debugging bad metadata.
 # AV_CONTENT_FPS=auto
