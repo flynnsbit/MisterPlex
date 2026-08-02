@@ -12,36 +12,64 @@
 | HEALTHY | 0.988 | −22 | flat | |
 | COLLAPSED | 0.599 | +56 | **1065** | frames=3316 pfps=9.73 |
 | COLLAPSED | 0.824 | +81 | 619 | |
+| LIVE RK6 (void transport) | 0.999 | −24 | 4 | 272 kbit/s; markers NO-DATA → **rc=78** |
 
 - **`av_drift_ms` climbs as supply falls** while the old `clock=av-lock` string was
   meaningless (hardcoded; removed). Drift is still **servo error**, not lipsync GT
-  (`av_clock.hpp` / `AV_PRESENT_LEAD_MS` pin).
+  (`av_clock.hpp` / `AV_PRESENT_LEAD_MS` pin). Bounded closed-loop error is not lipsync.
 - **PMS Docker on the agent host** contaminates **transcode** runs
   (`complete=0 speed=0` vs healthy `complete=1 speed=19.8`). Prefer **direct-play**
   fixtures; always publish concurrent **host load**.
 - HDMI grabber may be **pixel-blind** (`Pixelclock: 0 Hz`). Instrument must verdict
   from **audio + daemon telemetry**; pixels are confirmation when lock returns.
+- **Intermittent ~25%** degradation: same asset consecutive runs supply 0.837 then
+  0.997. **Single-run A/B has no power** (fleet-wide). Within-run only for supply.
+- **rk6 272 kbit/s** sits below worst observed 1 s delivery window (~45.7 KB/s) —
+  **void endpoint** for local-vs-path / transport claims (PASS was guaranteed).
 
 ## Tool
 
 `tools/avsync_audio_telemetry_verdict.py`
 
+### Required axes (coverage printed every run)
+
+| axis | names | NO-DATA means |
+|------|-------|---------------|
+| `audio_markers` | `av_sync_verdict` | **A/V name is INSUFFICIENT** regardless of supply |
+| `supply_ratio` | `supply_verdict` | throughput unknown |
+| `ledger` | `ledger_verdict` | residual unclosable |
+| `av_drift_servo` | `servo_verdict` | servo samples missing |
+
+**Rule (rd-review, parent-agreed):** ANY required axis NO-DATA implies overall
+`INSUFFICIENT_EVIDENCE` **rc=78**. Never PASS on supply alone. One axis never
+carries a verdict named for another.
+
+### `supply_ratio` is VOID for local-vs-path
+
+Parent measured: `audio_s * 24` approx equals `frames` within **0.15%** lockstep.
+ffmpeg produces A+V from one process — video pipe back-pressure stalls audio
+production with the socket. **Socket-starved and video-consumer-blocked predict
+the same 0.837.**
+
+Tag always printed: `discriminator_role=VOID_ENDPOINT_local_vs_path`.
+Local vs path ownership: **w-instr** `recv_q` + ffmpeg `wchan` (do not duplicate).
+
 ### What it settles
 
-1. **supply_ratio** starvation (media line or reconstructed `Δaudio_s/Δwall_s`)
+1. **supply_ratio** throughput starvation only (not path vs consumer)
 2. **drops vs publish_misses vs residual** with code semantics (below)
-3. **Audio marker cadence** (1 kHz beep every `marker_period_s`, default 1.0)
-4. Whether **av_drift_ms is climbing** during collapse (telemetry fact only)
-5. **Content fps** from ffprobe of fixture (`measured`) and optional PMS
-   `frameRate` (`caller_supplied`) — never a silent 23.976 default
+3. **Audio marker cadence** (1 kHz beep every `marker_period_s`) when captured
+4. Whether **av_drift_ms is climbing** during collapse (servo fact, not lipsync)
+5. **Content fps** from ffprobe (`measured`) / PMS `frameRate` (`caller_supplied`)
 
 ### What it cannot settle (printed every run)
 
-- Glass lipsync offset without flash↔beep **video** capture
+- Glass lipsync without flash+beep **video** capture
 - Visible judder / inter-frame histogram (**w-instr**)
-- Path capacity vs local limiter (**w-cpu-1**)
-- Device defect from a transcoder-starved cast (host-load confound)
-- Using `av_drift_ms` as lipsync accuracy
+- Path capacity vs local limiter via `supply_ratio` (**VOID** — w-instr recv_q/wchan)
+- Device defect from transcoder-starved cast (host-load confound)
+- Using `av_drift_ms` as lipsync accuracy (run LEAD 40→20→40 falsifier)
+- Single-run A/B of intermittent supply collapse
 
 ## drops=1065 — code meaning (not a vibe)
 
@@ -52,17 +80,10 @@
 | **`residual`** | arithmetic | — | **`frames − presents − drops`** (`frame_ledger.hpp`) |
 
 So **drops=1065** means the pacer chose Drop 1065 times. It does **not** mean
-ffmpeg failed to produce 1065 frames, and it does not by itself prove glass
-judder. If `residual==0` and `publish_misses==0`, every non-present was a pacer
-Drop.
-
-Parent citation fix: resets are **`:3010`/`:3011`**, not `:2312`/`:2432`
-(silence-scan / ring).
+ffmpeg failed to produce 1065 frames. If `residual==0` and `publish_misses==0`,
+every non-present was a pacer Drop.
 
 ## Fixture (direct-play 480p blip)
-
-Same construction as `assets/avsync/sync_trekmatch_1080p24_blip.mp4`
-(flash + 50 ms 1 kHz beep every 1.0 s, counter every frame):
 
 ```bash
 python3 scripts/gen_avsync_blip.py --only trekmatch480 --duration 120
@@ -72,27 +93,21 @@ ffprobe -v error -select_streams v:0 -show_entries stream=width,height,r_frame_r
 # expect: 624,480,24/1   fps_src=measured
 ```
 
-Bitrate **1200k** so lab ~1.5 Mbit path can direct-play without the 2000 kbit/s
-PMS floor forcing a starved transcode. **Do not** score A/V through a
-`complete=0 speed=0` session.
+Bitrate **1200k** so lab path can direct-play. Do not score through `complete=0`.
 
-Also usable: existing `sync_glass_av_480p24_600s.mp4` (marker period **2.0 s** —
-pass `--marker-period-s 2`). Host red-before-green on the shipped +100 ms twin:
+Host RBG on shipped +100 ms twin:
 
 ```bash
 python3 tools/avsync_audio_telemetry_verdict.py \
   --audio assets/avsync/sync_glass_av_480p24_600s_audioPlus100ms.mp4 \
   --designed-offset-ms 100 --marker-period-s 2.0
-echo "true rc=$?"   # expect DESIGNED_OFFSET_DETECT rc=6 (phase≈95–100 ms)
+echo "true rc=$?"   # DESIGNED_OFFSET_DETECT rc=6
 
 python3 tools/avsync_audio_telemetry_verdict.py \
   --audio assets/avsync/sync_glass_av_480p24_600s.mp4 \
   --designed-offset-ms 0 --marker-period-s 2.0
-echo "true rc=$?"   # expect PASS rc=0
+echo "true rc=$?"   # markers-only without daemon → rc=78 INSUFFICIENT
 ```
-
-**Not** a 1 kHz blip grid: `sync_audio_id_*` (FSK frame ID). Do not score those
-with `--marker-period-s 1` expecting beeps.
 
 ## Red-before-green (host, no device)
 
@@ -100,12 +115,11 @@ with `--marker-period-s 1` expecting beeps.
 cd /path/to/worktree
 python3 tools/avsync_audio_telemetry_verdict.py --self-test
 echo "true rc=$?"
-# expect: PASS plus100 detect rc=6 path; healthy PASS; collapsed RED; respawn 79
-#         self_test OK … true rc=0
+# expect true rc=0
+# plus100 rc=6; full-axis PASS rc=0; collapsed PACER_DROPS rc=3;
+# parent-tonight / telemetry-only markers missing → INSUFFICIENT rc=78;
+# supply VOID_ENDPOINT tag; respawn rc=79
 ```
-
-Embedded collapsed anchors: `audio_s=138.4 wall_s=231.1` → ratio **0.599**,
-`drops=1065`.
 
 ## Parent device commands (agent does not run these)
 
@@ -114,12 +128,13 @@ Embedded collapsed anchors: `audio_s=138.4 wall_s=231.1` → ratio **0.599**,
 python3 -c 'import json;print(json.dumps({"loadavg":open("/proc/loadavg").read().split()[:3],"src":"measured"}))' \
   | tee host_load.json
 
-# 1) cast DIRECT-PLAY 480p trekmatch blip (not a starved transcoder session)
-# 2) capture HDMI audio only if video lock is dead:
+# 1) cast DIRECT-PLAY 480p trekmatch blip (not starved transcoder / not rk6-void)
+# 2) capture HDMI audio (video lock optional):
 arecord -D hw:0,0 -f S16_LE -r 48000 -c 2 -d 60 /tmp/hdmi_a.wav
 echo "arecord true rc=$?"
 
-# 3) pull daemon media lines for the same window
+# 3) daemon media lines — prefer atomic frames+presents+drops on one line
+#    (frameLedgerTelemetryFragment). Split stats/DDR → w-instr ledger first.
 ssh … 'grep "media:" LOG | tail -n 400' > daemon_media.txt
 
 # 4) score
@@ -136,49 +151,42 @@ echo "true rc=$?"
 
 | situation | VERDICT | rc |
 |-----------|---------|---:|
-| supply≥ok_min **and** ledger closable (frames+presents+drops) **and** markers≠FAIL | `PASS` | **0** |
-| supply collapsed, drop_frac high (parent 0.599/1065) | `PACER_DROPS` or `STARVED` | **3** or **2** |
-| beep period wrong | `AUDIO_MARKER_FAIL` | **4** |
-| drift climbing under starvation | `SERVO_DRIFT_CLIMB` | **5** |
-| file +100 ms audio delay recovered | `DESIGNED_OFFSET_DETECT` | **6** (sensitivity OK) |
-| **supply ok but markers=NO-DATA and presents/residual missing** (parent 2026-08-02 live) | `INSUFFICIENT_EVIDENCE` | **78** (never pass) |
-| respawn mid-window | `SESSION_INVALID` | **79** (aligns w-instr) |
-| no audio and no media lines | `NO-DATA` | **77** (never pass) |
+| **all 4 axes DATA** and each ok | `PASS` | **0** |
+| coverage complete + supply collapsed / high drop_frac | `STARVED` / `PACER_DROPS` | **2** / **3** |
+| coverage complete + beep period wrong | `AUDIO_MARKER_FAIL` | **4** |
+| coverage complete + drift climbing under starvation | `SERVO_DRIFT_CLIMB` | **5** |
+| file +100 ms audio delay recovered | `DESIGNED_OFFSET_DETECT` | **6** (sensitivity only) |
+| **ANY axis NO-DATA** (markers missing, ledger open, …) | `INSUFFICIENT_EVIDENCE` | **78** (never pass) |
+| respawn mid-window | `SESSION_INVALID` | **79** (= w-instr) |
+| zero axes have data | `NO-DATA` | **77** (never pass) |
 
-**PASS never means “supply alone looked fine.”** Parent live miss: `supply_ratio=0.999`
-with `audio_markers=NO-DATA`, `presents=null`, `residual=NO-DATA` is **rc=78**.
-
-Markers may be NO-DATA on PASS **only** when the ledger is closed (telemetry-only
-health with atomic `frameLedgerTelemetryFragment`).
+**Illegitimate (fixed):** `reason=supply_ok_markers_ok` with `audio_markers=NO-DATA`.
+That is now **rc=78**. Coverage block lists `nodata_axes` every run.
 
 ### Ledger ownership (do not duplicate w-instr)
 
 Split logs (`media: frames=… drops=…` without presents + separate
-`media: fpga frame_tx … presents=`) are closed by **w-instr**
-`tools/daemon_media_ledger.py` (`RC_SESSION_INVALID=79` same convention).
-This tool refuses PASS when unclosable and points there.
+`media: fpga frame_tx … presents=`) → **w-instr** `tools/daemon_media_ledger.py`
+(`RC_SESSION_INVALID=79`). This tool skips `fpga frame_tx` lines and refuses PASS
+when residual unclosable.
 
-When HDMI video lock returns, **also** run glass lipsync:
+## LEAD 40→20→40 falsifier (no grabber, no conf edit)
 
-```bash
-python3 tools/avsync_measure_hdmi.py --duration 45 --json-out /tmp/lipsync.json
-echo "true rc=$?"
-```
-
-That is the only path that settles **glass** offset; this tool says so under
-`CANNOT_SETTLE`.
+See **`docs/AVSYNC_S3_PARENT_RUN.md`**. Env only:
+`MISTERPLEX_AV_PRESENT_LEAD_MS` via supervise inherit (`main.cpp:626-633`, banner
+`AV_PRESENT_LEAD_MS=env:N` at ~`:668`). Prove banner; pre-reg Δ about ±20 ms.
 
 ## Provenance tags
 
-Every numeric field is one of: `measured` | `caller_supplied` | `DEFAULT_ASSUMED` | `NO-DATA`.  
-`ok_min=0.90` is **DEFAULT_ASSUMED**. Never promote a default to a measurement
-(ERROR 17).
+Every numeric field: `measured` | `caller_supplied` | `DEFAULT_ASSUMED` | `NO-DATA`.  
+`ok_min=0.90` is **DEFAULT_ASSUMED**. Never promote a default (ERROR 17).
 
 ## Coordination
 
 | lane | owns |
 |------|------|
-| **this** | lipsync instrument + supply/drops telemetry verdict; pixel-blind path |
-| **w-instr** | inter-frame presentation interval / judder histogram |
-| **w-cpu-1** | Recv-Q / local limiter RCA |
-| **parent** | all casts, HDMI, PMS, deploy |
+| **this** | multi-axis audio+telemetry verdict; LEAD falsifier procedure; supply VOID tag |
+| **w-instr** | split ledger reconstructor; recv_q/wchan local-vs-path; judder histogram |
+| **w-cpu-1** | root-cause of path limiter (not telemetry) |
+| **w-asset480** | CBR ladder / direct-play assets |
+| **parent** | all casts, HDMI, PMS, deploy, LEAD arms |

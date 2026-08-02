@@ -35,65 +35,56 @@ Sign HDMI: offset_ms=(t_beep-t_flash)*1000; + = audio LATE.
 session_epoch: each arm must be a single epoch (supply_bucket); never pool.
 
 === PRE-REGISTERED PREDICTIONS (publish hit/miss after run) ===
-P_SERVO_A: LEAD=40 → av_drift_ms median ∈ [-40, -15]  (setpoint -40)
-P_SERVO_B: LEAD=20 → av_drift_ms median ∈ [-20,  +5]  (setpoint -20)
-P_SERVO_Δ: median_B − median_A ∈ [+12, +28] ms  (~ +Δlead)
-           IF TRUE → av_drift_ms is CIRCULAR (tracks setpoint). Replace for lipsync claims.
-P_HDMI_Δ:  HDMI median_B − median_A
-           PREDICTION (mechanism): lowering lead advances video presents →
-           audio appears LATER vs flash → Δoffset_ms ≈ +20 ms (±15).
-           IF HDMI Δ ≈ 0 while servo Δ ≈ +20 → external path decoupled from lead
-           (servo still circular; glass may be gated elsewhere).
-P_CONF:   misterplex.conf bytes identical across arms (cmp).
-P_EPOCH:  each arm single session_epoch; A and B may differ (restart).
-P_BANNER: startup shows AV_PRESENT_LEAD_MS=env:40 / env:20
+Sequence: L40a → L20 → L40b (return-to-baseline). No conf edit.
+P_SERVO_40: LEAD=40 → av_drift_ms median ∈ [-45, -25]  (setpoint -40)
+P_SERVO_20: LEAD=20 → av_drift_ms median ∈ [-28, -10]  (setpoint -20)
+P_SERVO_Δ40→20: median_20 − median_40a ∈ [+12, +28] ms  (~ +|Δlead|)
+P_SERVO_Δ20→40b: median_40b − median_20 ∈ [-28, -12] ms
+  IF TRUE → drift TRACKS lead (setpoint readout / closed loop). NOT lipsync GT.
+  IF STATIC in [-45,-15] across LEAD → refuted as lipsync proxy; still not GT.
+P_BANNER: each arm log shows AV_PRESENT_LEAD_MS=env:N and "conf not modified"
+P_CONF:   misterplex.conf never written (daily driver)
+P_EPOCH:  single session_epoch within each arm (multi-epoch arm → UNSCORED 77)
+P_HDMI:   optional only if grabber lives; not required for S3 servo test
+See docs/AVSYNC_S3_PARENT_RUN.md for full parent card.
 BANNER
 
 if [[ "$MODE" == "card" ]]; then
   cat <<'PROC'
 
-=== PARENT PROCEDURE (exact) ===
+=== PARENT PROCEDURE (exact) — env via supervise, NO conf write ===
 
-# 0) Fixture playing (rk=27 GlassAV 2s markers OR soak480 blip). /dev/video0 free.
-fuser -v /dev/video0 || true
-CONF=/media/fat/misterplex/misterplex.conf   # on device paths via your deploy root
-# Prefer conf on live root the daemon actually uses (misterplex_v2 if that is live).
+# Device is daily driver. Prefer supervise env inherit only.
+# Quote main.cpp:626-633 MISTERPLEX_AV_PRESENT_LEAD_MS; banner ~:668 env:N
+# Supervise: /media/fat/misterplex_v2/bin/misterplexd_supervise.sh
+#   spawns "$BIN" inheriting env; flock on /tmp/misterplexd_supervise.lock
 
-# 1) Backup conf on device (ssh)
-ssh root@${MISTER_HOST:-192.168.1.183} \
-  'c=$(ls /media/fat/misterplex_v2/misterplex.conf /media/fat/misterplex/misterplex.conf 2>/dev/null | head -1);
-   cp -a "$c" "${c}.bak_lead_$(date +%Y%m%d%H%M%S)"; echo CONF=$c; md5sum "$c"'
+HOST=${MISTER_HOST:-192.168.1.183}
+OUTROOT=$PWD/.agent-work/w-avsync/s3_lead_$(date +%Y%m%dT%H%M%S)
+mkdir -p "$OUTROOT"
 
-# 2) ARM A — LEAD=40 via env (supervisor must pass env through — verify banner)
-#    Restart daemon ONLY with:
-#      MISTERPLEX_AV_PRESENT_LEAD_MS=40
-#    Confirm stderr/log: AV_PRESENT_LEAD_MS=env:40  and  conf-not-modified
-#    Play fixture ≥70 s steady. Capture:
-OUTA=$PWD/avsync_hdmi_out/leadA_$(date +%Y%m%dT%H%M%S); mkdir -p "$OUTA"
-bash tools/avsync_capture_session_epoch.sh | tee "$OUTA/epoch.txt"
-# scrape supply_bucket + av_drift while playing:
-#   ssh ... 'grep -E "av_drift_ms=|supply_bucket|session_epoch=" LOG | tail -200' > "$OUTA/daemon_tail.txt"
-DURATION=60 MARKER_PERIOD_S=2.0 MIN_PAIRS=20 TOL_MS=200 DECODE_SRC=caller_supplied \
-  OUT="$OUTA" LABEL=leadA bash tools/avsync_lipsync_soak.sh >"$OUTA/wrap.txt" 2>&1
-echo "leadA soak true rc=$?"
-# Save daemon log slice as LOG_A
+# For LEAD in 40 20 40 (tags L40a L20 L40b):
+# 1) Stop supervise cleanly (no kill -9 thrash). Export LEAD in that shell:
+#      export MISTERPLEX_AV_PRESENT_LEAD_MS=$LEAD
+#      nohup env MISTERPLEX_AV_PRESENT_LEAD_MS=$LEAD \
+#        /media/fat/misterplex_v2/bin/misterplexd_supervise.sh \
+#        >/tmp/supervise_lead.log 2>&1 &
+# 2) PROVE banner (do not assume):
+#      grep -E 'AV_PRESENT_LEAD_MS=|conf not modified' LOG | tail -5
+#      expect: AV_PRESENT_LEAD_MS=env:$LEAD
+# 3) Cast DIRECT-PLAY ≥30 s steady. One session_epoch per arm.
+# 4) Pull: grep av_drift_ms=|session_epoch= → $OUTROOT/<tag>/daemon_tail.txt
+# 5) Median n≥8; score pairwise Δ against P_SERVO_Δ*
+# 6) Optional HDMI soak only if grabber lock OK — not required for S3.
 
-# 3) ARM B — LEAD=20
-#    Restart with MISTERPLEX_AV_PRESENT_LEAD_MS=20
-#    Confirm AV_PRESENT_LEAD_MS=env:20
-OUTB=$PWD/avsync_hdmi_out/leadB_$(date +%Y%m%dT%H%M%S); mkdir -p "$OUTB"
-bash tools/avsync_capture_session_epoch.sh | tee "$OUTB/epoch.txt"
-DURATION=60 MARKER_PERIOD_S=2.0 MIN_PAIRS=20 TOL_MS=200 DECODE_SRC=caller_supplied \
-  OUT="$OUTB" LABEL=leadB bash tools/avsync_lipsync_soak.sh >"$OUTB/wrap.txt" 2>&1
-echo "leadB soak true rc=$?"
+# Score servo-only (no HDMI):
+#   LOG_A=$OUTROOT/L40a/daemon_tail.txt LOG_B=$OUTROOT/L20/daemon_tail.txt \
+#     bash tools/avsync_lead_falsifier.sh score_logs
+#   echo "true rc=$?"
+# expect: AV_DRIFT_CIRCULAR rc=0 if Δ∈[+12,+28]
 
-# 4) Conf unchanged
-ssh root@${MISTER_HOST:-192.168.1.183} 'cmp -s CONF CONF.bak_* && echo CONF_UNCHANGED_OK'
-
-# 5) Score
-LOG_A=$OUTA/daemon_tail.txt LOG_B=$OUTB/daemon_tail.txt \
-  REPORT_A=$OUTA/leadA_stdout.txt REPORT_B=$OUTB/leadB_stdout.txt \
-  bash tools/avsync_lead_falsifier.sh score_both
+# Full doc: docs/AVSYNC_S3_PARENT_RUN.md
+# Intermittent supply ~25%: do NOT use LEAD arms as supply A/B.
 
 PROC
   exit 0
