@@ -367,6 +367,104 @@ grep -q 'ALARM CLEAN_EXIT rc=0' "$ROOT/scripts/misterplexd_supervise.sh" \
 grep -q 'exit reason=signal' "$ROOT/arm/misterplexd/main.cpp" \
   && ok "main-logs-exit-signal" || bad "main-logs-exit-signal"
 
+echo "=== 11) md5 NO-DATA / glue; conf cmp; multishot power; evidence ==="
+set +e
+out=$(promotion_assert_md5_field v2 '' 'dfebf2bfd08dd70b473b587dd7e81848' 2>&1)
+rc=$?
+set -e
+[ "$rc" -eq 4 ] && ok "md5-empty-nodata-4" || bad "md5-empty-nodata-4 got=$rc"
+echo "$out" | grep -q 'NO-DATA' && ok "md5-empty-msg" || bad "md5-empty-msg"
+set +e
+out=$(promotion_assert_md5_field v2 'dfebf2bfd08dd70b473b587dd7e81848set +e' 'dfebf2bfd08dd70b473b587dd7e81848' 2>&1)
+rc=$?
+set -e
+[ "$rc" -eq 3 ] && ok "md5-glue-shape-3" || bad "md5-glue-shape-3 got=$rc"
+# Must NOT claim match when glue present
+echo "$out" | grep -q 'MATCH' && bad "md5-glue-no-match" || ok "md5-glue-no-match"
+set +e
+out=$(promotion_assert_md5_field v2 'dfebf2bfd08dd70b473b587dd7e81848' 'dfebf2bfd08dd70b473b587dd7e81848' 2>&1)
+rc=$?
+set -e
+[ "$rc" -eq 0 ] && ok "md5-pure-match-0" || bad "md5-pure-match-0 got=$rc"
+
+set +e
+out=$(promotion_assert_conf_byte_exact '7f06132f0c00e90b35141bdc0c60ccc9' '7f06132f0c00e90b35141bdc0c60ccc9' 2>&1)
+rc=$?
+set -e
+[ "$rc" -eq 0 ] && ok "conf-exact-ok" || bad "conf-exact-ok got=$rc"
+set +e
+out=$(promotion_assert_conf_byte_exact '7f06132f0c00e90b35141bdc0c60ccc9' 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' 2>&1)
+rc=$?
+set -e
+[ "$rc" -eq 1 ] && ok "conf-exact-diff" || bad "conf-exact-diff got=$rc"
+# file cmp path
+printf 'user conf DECODE=624x480\n' >"$WORK/conf_a"
+cp -f "$WORK/conf_a" "$WORK/conf_b"
+set +e
+out=$(promotion_assert_conf_byte_exact "$WORK/conf_a" "$WORK/conf_b" 2>&1)
+rc=$?
+set -e
+[ "$rc" -eq 0 ] && ok "conf-cmp-ok" || bad "conf-cmp-ok got=$rc"
+echo 'mutated' >>"$WORK/conf_b"
+set +e
+out=$(promotion_assert_conf_byte_exact "$WORK/conf_a" "$WORK/conf_b" 2>&1)
+rc=$?
+set -e
+[ "$rc" -eq 1 ] && ok "conf-cmp-diff" || bad "conf-cmp-diff got=$rc"
+
+set +e
+out=$(promotion_assert_evidence_sufficient 0 0 2>&1); rc=$?; set -e
+[ "$rc" -eq 79 ] && ok "evid-viewed0-79" || bad "evid-viewed0-79 got=$rc"
+set +e
+out=$(promotion_assert_evidence_sufficient 1 78 2>&1); rc=$?; set -e
+[ "$rc" -eq 79 ] && ok "evid-grabber78-79" || bad "evid-grabber78-79 got=$rc"
+set +e
+out=$(promotion_assert_evidence_sufficient 1 0 2>&1); rc=$?; set -e
+[ "$rc" -eq 0 ] && ok "evid-ok" || bad "evid-ok got=$rc"
+
+set +e
+out=$(promotion_assert_multishot '1' 8 power 2>&1); rc=$?; set -e
+[ "$rc" -eq 76 ] && ok "multi-oneshot-power-76" || bad "multi-oneshot-power-76 got=$rc"
+echo "$out" | grep -q 'INSUFFICIENT_POWER\|one-shot' && ok "multi-oneshot-msg" || bad "multi-oneshot-msg"
+set +e
+out=$(promotion_assert_multishot '1,1,1,1,1,1,1,1' 8 power 2>&1); rc=$?; set -e
+[ "$rc" -eq 0 ] && ok "multi-8healthy-0" || bad "multi-8healthy-0 got=$rc"
+set +e
+out=$(promotion_assert_multishot '1,0,1,1,1,1,1,1' 8 power 2>&1); rc=$?; set -e
+[ "$rc" -eq 1 ] && ok "multi-degraded-1" || bad "multi-degraded-1 got=$rc"
+set +e
+out=$(promotion_assert_multishot '' 8 declare 2>&1); rc=$?; set -e
+[ "$rc" -eq 77 ] && ok "multi-declare-77" || bad "multi-declare-77 got=$rc"
+echo "$out" | grep -q 'DOES_NOT_TEST' && ok "multi-declare-msg" || bad "multi-declare-msg"
+
+# full-check: one-shot multishot cannot claim verified (exits 76) even with green grabber+viewed
+set +e
+out=$(
+  GRABBER_INJECT_STATS=10,200,25.5 VIEWED_PIXELS=1 \
+  MULTISHOT_RESULTS=1 MULTISHOT_MIN_N=8 \
+  INSTR_MIN=10 INSTR_MAX=200 INSTR_STD=25.5 \
+  CORE_IDENTITY=VERIFIED \
+  SESSION_ESTABLISHED=1 DELIVERY_VERIFIED=1 MEASURED_DELIVERY=x \
+  DROPS=0 UNACCOUNTED=0 VFPS=24 SOURCE_FPS=24 FRAMES=100 \
+  "$ROOT/scripts/promote_cycle_gate.sh" full-check 2>&1
+)
+rc=$?
+set -e
+[ "$rc" -eq 76 ] && ok "fullcheck-oneshot-76" || bad "fullcheck-oneshot-76 got=$rc"
+echo "$out" | grep -q 'INSUFFICIENT_POWER\|multishot true rc=76' && ok "fullcheck-oneshot-msg" || bad "fullcheck-oneshot-msg"
+
+# full-check: no viewed pixels → 79
+set +e
+out=$(
+  GRABBER_INJECT_STATS=10,200,25.5 VIEWED_PIXELS=0 \
+  MULTISHOT_REQUIRED=0 \
+  INSTR_MIN=10 INSTR_MAX=200 INSTR_STD=25.5 \
+  "$ROOT/scripts/promote_cycle_gate.sh" full-check 2>&1
+)
+rc=$?
+set -e
+[ "$rc" -eq 79 ] && ok "fullcheck-noview-79" || bad "fullcheck-noview-79 got=$rc"
+
 echo "=== summary pass=$pass fail=$fail ==="
 [[ "$fail" -eq 0 ]] || exit 1
 echo "ALL test_promote_runbook_mutations passed"

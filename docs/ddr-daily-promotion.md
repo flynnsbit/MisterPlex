@@ -65,14 +65,33 @@ FRAMES=8638 ./scripts/promote_cycle_gate.sh frames; echo "true rc=$?" # rc=0
 # /tmp/CORENAME == "Plex" for every build; no software path hashes the RUNNING RBF.
 # Prefer blocked promotion over blind PROMOTE_GATES_OK.
 
-# Full aggregate (grabber + instrument required; identity blocks)
-GRABBER_INJECT_STATS=10,200,25.5 \
+# md5 empty = NO-DATA (never match)
+./scripts/promote_cycle_gate.sh md5-field v2 '' dfebf2bfd08dd70b473b587dd7e81848; echo "true rc=$?"
+# expect rc=4 NO-DATA
+./scripts/promote_cycle_gate.sh md5-field v2 'dfebf2bfd08dd70b473b587dd7e81848set +e' dfebf2bfd08dd70b473b587dd7e81848; echo "true rc=$?"
+# expect rc=3 SHAPE (glue) — comparison not run
+
+# conf byte-exact (USER-OWNED)
+./scripts/promote_cycle_gate.sh conf-byte-exact 7f06132f0c00e90b35141bdc0c60ccc9 7f06132f0c00e90b35141bdc0c60ccc9; echo "true rc=$?"
+# expect 0; mismatch → 1
+
+# evidence / multishot
+./scripts/promote_cycle_gate.sh evidence 0 0; echo "true rc=$?"          # 79 INSUFFICIENT
+./scripts/promote_cycle_gate.sh multishot 1; echo "true rc=$?"           # 76 INSUFFICIENT_POWER (n=1)
+./scripts/promote_cycle_gate.sh multishot 1,1,1,1,1,1,1,1; echo "true rc=$?"  # 0 power OK
+./scripts/promote_cycle_gate.sh multishot 1,0,1,1,1,1,1,1; echo "true rc=$?"  # 1 degraded seen
+./scripts/promote_cycle_gate.sh multishot '' 8 declare; echo "true rc=$?" # 77 DOES_NOT_TEST
+
+# Full aggregate (grabber + evidence + multishot + identity)
+GRABBER_INJECT_STATS=10,200,25.5 VIEWED_PIXELS=1 \
+MULTISHOT_RESULTS=1,1,1,1,1,1,1,1 \
 INSTR_MIN=10 INSTR_MAX=200 INSTR_STD=25.5 \
 CORE_IDENTITY=UNVERIFIED \
 SESSION_ESTABLISHED=1 DELIVERY_VERIFIED=1 MEASURED_DELIVERY=624x480 \
 DROPS=0 UNACCOUNTED=0 VFPS=23.6 SOURCE_FPS=23.6 FRAMES=8638 \
   ./scripts/promote_cycle_gate.sh full-check; echo "true rc=$?"
-# expect rc=2 (identity blocks PROMOTE_OK) even when session green
+# expect rc=2 (identity blocks) even when multishot+session green
+# Without VIEWED_PIXELS or with Multishot n=1 → INSUFFICIENT / POWER fail first
 
 # Rollback proven / A/B
 ./scripts/promote_cycle_gate.sh rollback-proven 1 1; echo "true rc=$?"  # still sick → 1
@@ -88,36 +107,69 @@ printf '%s\n' '2026-08-02T00:00:00Z EXIT pid=15565 rc=0 run_s=1543 — respawn i
 #   | ./scripts/promote_cycle_gate.sh clean-exit-alarm -; echo "true rc=$?"
 ```
 
-### RCA — periodic supervise `EXIT rc=0` (parent S1, OPEN root cause)
+### RCA — supervise `EXIT rc=0` (parent S1) — constrained, not closed
 
-**Measured (parent):**
+**Measured (parent, earlier session):**
 ```
 EXIT pid=15565 rc=0 run_s=1543 — respawn in 2s
 EXIT pid=19313 rc=0 run_s=196
 EXIT pid=24566 rc=0 run_s=514
 ```
 Clean `rc=0`, not crash. No greppable `shutdown|SIGTERM|fatal|panic` in daemon log
-(that is *absence of log*, not proof of design).
+(*absence of log*, not proof of design).
 
-**Quoted code (host tree):**
-- `main.cpp`: companion loop is `while (!g_stop.load())`; only `on_signal` sets
-  `g_stop`. Loop end → `return 0`.
-- **Was:** `on_signal` set the flag with **zero log** → SIGTERM produced silent rc=0.
-- **Now (this commit):** `g_stop_sig` + `misterplexd: exit reason=signal sig=N`
-  printed on the way out; supervise emits `ALARM CLEAN_EXIT rc=0 run_s=…`.
-- `media_player.cpp` resets `droppedFrames_` / `presentCount_` per stream start —
-  multi-respawn soak quoted as one session is **vacuous** (P4:
-  `soak_continuity_assert --require-single-session-epoch`).
+**New constraint (parent 2026-08-02 night):** same **pid 19368 held for an entire
+multi-hour session with zero respawn**. Therefore the self-exit is **not** a
+fixed-period timer under these conditions. Any RCA that claimed "exits every ~N
+minutes on a timer" is **falsified** by this observation.
 
-**What is still unknown (needs parent device log after next daemon pin with exit logging):**
-who sent SIGTERM/SIGINT (deploy kill-by-PID? OOM? user? framework?). Check:
+**Reconcile with SIGTERM/SI_USER (rd-review BLOCKING contradiction):**
+| Evidence | Says |
+|----------|------|
+| EXIT rc=0 + silent log (old builds) | Process returned 0; only `g_stop`/lab paths do that |
+| `on_signal` was silent | SIGTERM would look "graceful" with no log |
+| Same pid multi-hour | No exit at all for hours → not timer-driven |
+| SI_USER (if still claimed) | External kill from a userspace process — not kernel OOM |
+
+**Quoted code:** companion loop `while (!g_stop)`; only `on_signal` sets it;
+return 0. Now logs `exit reason=signal sig=N`; supervise `ALARM CLEAN_EXIT`.
+Counters reset per stream → multi-respawn soak vacuous without
+`session_epoch` continuity.
+
+**Still OPEN:** who sent signal in the sessions that *did* EXIT (deploy
+kill-by-PID? companion? user?). Not periodic-on-timer. Check after next pin:
 ```bash
-# on device after a CLEAN_EXIT:
 grep -E 'exit reason=|ALARM CLEAN_EXIT|EXIT pid=' \
   /media/fat/misterplex_v2/misterplexd.log \
   /media/fat/misterplex_v2/misterplexd_supervise.log | tail -40
-dmesg | tail -30
+# stable-pid check (parent):
+#   pid from /proc + uptime; if pid constant hours → no self-exit that window
 ```
+
+### Intermittent degrade class (~25% event rate) — CHOICE: power gate
+
+Parent measured identical asset, nothing changed:
+```
+run A: vfps=20.0 pfps=18.6 drops=356 supply=0.837 DEGRADED
+run B: vfps=23.9 pfps=23.8 drops=14  supply=0.997 HEALTHY
+```
+**One healthy shot has ~75% chance of missing a broken build.**
+
+**Choice encoded:** `promotion_assert_multishot` **power gate**, default
+`min_n=8` (≈90% chance to observe ≥1 degrade if p=0.25; use 11 for ≈95%).
+- All N healthy + N≥min → `multishot=PASS` for this class only
+- Any degraded → FAIL promote
+- N&lt;min all healthy → `INSUFFICIENT_POWER` rc=76 `PROMOTE_OK=0` (not PASS)
+- `MULTISHOT_MODE=declare` → rc=77 `DOES_NOT_TEST` (honest opt-out)
+
+**Never report one-shot healthy as "verified".**
+
+### INSUFFICIENT_EVIDENCE (no viewed pixels)
+
+When grabber reports Pixelclock 0 / uniform pixel=7, or parent cannot score
+viewed pixels: **`evidence=INSUFFICIENT` `PROMOTE_OK=0`** — never pass on
+telemetry/proxy alone. Grabber ACTION remains: do not rollback software on
+CAPTURE_NO_SIGNAL alone.
 
 ### Running bitstream identity (blocks blind promote)
 

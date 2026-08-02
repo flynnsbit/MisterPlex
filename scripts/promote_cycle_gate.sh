@@ -20,9 +20,15 @@
 #   scripts/promote_cycle_gate.sh core-identity STATE
 #   scripts/promote_cycle_gate.sh full-check   # all injected env; aggregate
 #   scripts/promote_cycle_gate.sh clean-exit-alarm SUPERVISE_LOG_SNIPPET
+#   scripts/promote_cycle_gate.sh md5-field NAME GOT WANT
+#   scripts/promote_cycle_gate.sh conf-byte-exact LIVE BAK
+#   scripts/promote_cycle_gate.sh evidence VIEWED GRABBER_RC
+#   scripts/promote_cycle_gate.sh multishot CSV [MIN_N] [power|declare]
 #
 # Capture true rc= directly. rc=77 UNSCORED ≠ PASS. Never weaken.
 # grabber-preflight rc=78 CAPTURE_NO_SIGNAL — do not convict device software.
+# multishot: parent ~25% DEGRADED event rate — one healthy shot ≠ verified.
+# evidence: viewed_pixels=0 or grabber dead → INSUFFICIENT_EVIDENCE (never proxy PASS).
 
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -76,6 +82,41 @@ case "$cmd" in
     fi
     set +e
     supervise_assert_clean_exit_alarm "$text"
+    rc=$?
+    set -e
+    echo "true rc=$rc"
+    exit "$rc"
+    ;;
+  md5-field)
+    set +e
+    promotion_assert_md5_field "${1:-}" "${2:-}" "${3:-}"
+    rc=$?
+    set -e
+    echo "true rc=$rc"
+    exit "$rc"
+    ;;
+  conf-byte-exact)
+    set +e
+    promotion_assert_conf_byte_exact "${1:-}" "${2:-}"
+    rc=$?
+    set -e
+    echo "true rc=$rc"
+    exit "$rc"
+    ;;
+  evidence)
+    set +e
+    promotion_assert_evidence_sufficient "${1:-${VIEWED_PIXELS:-}}" "${2:-${GRABBER_RC:-}}"
+    rc=$?
+    set -e
+    echo "true rc=$rc"
+    exit "$rc"
+    ;;
+  multishot)
+    set +e
+    promotion_assert_multishot \
+      "${1:-${MULTISHOT_RESULTS:-}}" \
+      "${2:-${MULTISHOT_MIN_N:-8}}" \
+      "${3:-${MULTISHOT_MODE:-power}}"
     rc=$?
     set -e
     echo "true rc=$rc"
@@ -170,21 +211,65 @@ case "$cmd" in
       echo "grabber-preflight true rc=$grc"
       if [[ "$grc" -eq 78 ]]; then
         echo "PROMOTE_OK=0 reason=CAPTURE_NO_SIGNAL"
+        echo "evidence=INSUFFICIENT"
         echo "true rc=78"
         exit 78
       fi
       if [[ "$grc" -eq 77 ]]; then
         echo "PROMOTE_OK=0 reason=grabber_UNSCORED"
+        echo "evidence=INSUFFICIENT"
         echo "true rc=77"
         exit 77
       fi
       if [[ "$grc" -ne 0 ]]; then
         echo "PROMOTE_OK=0 reason=grabber_preflight_fail"
+        echo "evidence=INSUFFICIENT"
         echo "true rc=$grc"
         exit "$grc"
       fi
     else
       echo "NOTE GRABBER_PREFLIGHT_SKIP=1 (host unit only — never for real promote)"
+    fi
+
+    # Viewed-pixel sufficiency (parent: Pixelclock 0 → blind — never proxy PASS).
+    # Real promote: set VIEWED_PIXELS=1 only after parent eyes-on glass.
+    # EVIDENCE_REQUIRED=0 is host-unit only.
+    if [[ "${EVIDENCE_REQUIRED:-1}" = "1" ]]; then
+      set +e
+      promotion_assert_evidence_sufficient "${VIEWED_PIXELS:-}" "${GRABBER_RC:-${grc:-}}"
+      erc=$?
+      set -e
+      echo "evidence true rc=$erc"
+      if [[ "$erc" -ne 0 ]]; then
+        echo "PROMOTE_OK=0 reason=INSUFFICIENT_EVIDENCE"
+        echo "true rc=$erc"
+        exit "$erc"
+      fi
+    else
+      echo "NOTE EVIDENCE_REQUIRED=0 (host unit only — never for real promote)"
+    fi
+
+    # Multi-shot intermittent class (parent ~25% DEGRADED).
+    # CHOICE (documented): power gate default min_n=8 (~90% at p=0.25).
+    # One healthy shot must NEVER be reported as verified for this class.
+    # MULTISHOT_MODE=declare → honest DOES_NOT_TEST (rc=77).
+    # MULTISHOT_REQUIRED=0 → host unit skip only.
+    if [[ "${MULTISHOT_REQUIRED:-1}" = "1" ]]; then
+      set +e
+      promotion_assert_multishot \
+        "${MULTISHOT_RESULTS:-}" \
+        "${MULTISHOT_MIN_N:-8}" \
+        "${MULTISHOT_MODE:-power}"
+      mrc=$?
+      set -e
+      echo "multishot true rc=$mrc"
+      if [[ "$mrc" -ne 0 ]]; then
+        echo "PROMOTE_OK=0 reason=multishot_rc=$mrc"
+        echo "true rc=$mrc"
+        exit "$mrc"
+      fi
+    else
+      echo "NOTE MULTISHOT_REQUIRED=0 (host unit only — real promote must set results or declare)"
     fi
 
     if [[ -n "${INSTR_MIN:-}" || -n "${INSTR_CLASS:-}" ]]; then
@@ -277,7 +362,7 @@ case "$cmd" in
     exit 9
     ;;
   *)
-    echo "usage: $0 {grabber-preflight|instrument|instrument-class|frames|session|rollback-proven|ab|core-identity|clean-exit-alarm|full-check}" >&2
+    echo "usage: $0 {grabber-preflight|instrument|instrument-class|frames|session|rollback-proven|ab|core-identity|clean-exit-alarm|md5-field|conf-byte-exact|evidence|multishot|full-check}" >&2
     echo "true rc=9"
     exit 9
     ;;

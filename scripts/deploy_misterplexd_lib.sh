@@ -718,3 +718,212 @@ supervise_assert_clean_exit_alarm() {
   echo "clean_exit_alarm=0"
   return 0
 }
+
+# --- md5 field: empty is NO-DATA never match (parent blind-and-RED class) ------
+# Args: name got want
+# rc: 0 match; 1 mismatch; 4 NO-DATA empty got; 3 bad want/shape
+promotion_assert_md5_field() {
+  local name="${1:-}" got="${2:-}" want="${3:-}"
+  # Strip CR only — never strip "set +e" glue (that would hide capture bugs).
+  got=$(printf '%s' "$got" | tr -d '\r\n')
+  want=$(printf '%s' "$want" | tr -d '\r\n' | tr 'A-F' 'a-f')
+  if [[ -z "$got" ]]; then
+    echo "NO-DATA $name md5 empty (absence is not a match against want=${want:-<unset>})" >&2
+    echo "${name}_result=NO-DATA"
+    return 4
+  fi
+  # Contaminated capture (set +e glue etc.) — hard fail shape, never compare.
+  if ! printf '%s' "$got" | grep -Eq '^[0-9a-fA-F]{32}$'; then
+    if [[ "$got" == "MISSING" ]]; then
+      echo "FAIL $name MISSING (not empty NO-DATA)" >&2
+      echo "${name}_result=MISSING"
+      return 2
+    fi
+    echo "FAIL $name shape got='$got' (contaminated capture — not pure 32 hex; do not relax)" >&2
+    echo "${name}_result=SHAPE"
+    return 3
+  fi
+  got=$(printf '%s' "$got" | tr 'A-F' 'a-f')
+  if [[ -z "$want" ]]; then
+    echo "NO-DATA $name want empty (cannot claim match)" >&2
+    echo "${name}_result=NO-DATA-WANT"
+    return 4
+  fi
+  if [[ "$got" != "$want" ]]; then
+    # prefix8 allow only when want is exactly 8 hex and got starts with it
+    if [[ ${#want} -eq 8 ]] && printf '%s' "$got" | grep -Eq "^${want}"; then
+      echo "OK $name prefix8=$want full=$got"
+      echo "${name}_result=PREFIX8"
+      return 0
+    fi
+    echo "FAIL $name got=$got want=$want" >&2
+    echo "${name}_result=MISMATCH"
+    return 1
+  fi
+  echo "OK $name $got"
+  echo "${name}_result=MATCH"
+  return 0
+}
+
+# --- USER-OWNED conf byte-exact (cmp / md5, never "looks the same") -----------
+# Args: live_md5 bak_md5   OR  live_path bak_path when both are files
+# rc: 0 identical; 1 differ; 4 NO-DATA
+promotion_assert_conf_byte_exact() {
+  local a="${1:-}" b="${2:-}"
+  if [[ -z "$a" || -z "$b" ]]; then
+    echo "NO-DATA conf byte-exact a='$a' b='$b' (USER-OWNED; cannot claim preserve)" >&2
+    echo "conf_byte_exact=NO-DATA"
+    return 4
+  fi
+  if [[ -f "$a" && -f "$b" ]]; then
+    if cmp -s "$a" "$b"; then
+      local m
+      m=$(md5sum "$a" | awk '{print $1}')
+      echo "OK conf_byte_exact cmp identical md5=$m (USER-OWNED)"
+      echo "conf_byte_exact=1"
+      echo "CONF_MD5=$m"
+      return 0
+    fi
+    echo "FAIL conf_byte_exact cmp DIFFERS (USER-OWNED — never normalise)" >&2
+    echo "conf_byte_exact=0"
+    return 1
+  fi
+  # md5 form
+  a=$(printf '%s' "$a" | tr 'A-F' 'a-f' | tr -cd '0-9a-f')
+  b=$(printf '%s' "$b" | tr 'A-F' 'a-f' | tr -cd '0-9a-f')
+  if [[ -z "$a" || -z "$b" ]]; then
+    echo "NO-DATA conf md5 empty after normalize" >&2
+    echo "conf_byte_exact=NO-DATA"
+    return 4
+  fi
+  if [[ "$a" != "$b" ]]; then
+    echo "FAIL conf_byte_exact live_md5=$a bak_md5=$b (USER-OWNED)" >&2
+    echo "conf_byte_exact=0"
+    return 1
+  fi
+  echo "OK conf_byte_exact md5=$a (USER-OWNED)"
+  echo "conf_byte_exact=1"
+  echo "CONF_MD5=$a"
+  return 0
+}
+
+# --- viewed-pixel / capture evidence sufficiency -----------------------------
+# Args: viewed_pixels_ok (1|0|empty) grabber_rc (0|78|77|empty)
+# rc: 0 evidence sufficient for pixel claims; 79 INSUFFICIENT_EVIDENCE;
+#     78 capture fault; 77 UNSCORED grabber; 4 NO-DATA
+promotion_assert_evidence_sufficient() {
+  local viewed="${1:-}" grabber_rc="${2:-}"
+  if [[ -z "$viewed" && -z "$grabber_rc" ]]; then
+    echo "NO-DATA evidence (no viewed_pixels / grabber_rc) — cannot claim promote on proxies" >&2
+    echo "evidence=INSUFFICIENT"
+    echo "PROMOTE_OK=0"
+    return 4
+  fi
+  if [[ "$grabber_rc" == "78" ]]; then
+    echo "INSUFFICIENT_EVIDENCE grabber CAPTURE_NO_SIGNAL (Pixelclock 0 / uniform) — do NOT pass on non-pixel proxies; do NOT rollback software on this alone" >&2
+    echo "evidence=INSUFFICIENT"
+    echo "PROMOTE_OK=0"
+    return 79
+  fi
+  if [[ "$grabber_rc" == "77" ]]; then
+    echo "INSUFFICIENT_EVIDENCE grabber UNSCORED — never promote PASS" >&2
+    echo "evidence=INSUFFICIENT"
+    echo "PROMOTE_OK=0"
+    return 77
+  fi
+  if [[ "$viewed" == "0" ]]; then
+    echo "INSUFFICIENT_EVIDENCE viewed_pixels=0 (parent blind on glass) — telemetry-only is not verified" >&2
+    echo "evidence=INSUFFICIENT"
+    echo "PROMOTE_OK=0"
+    return 79
+  fi
+  if [[ "$viewed" == "1" && ( -z "$grabber_rc" || "$grabber_rc" == "0" ) ]]; then
+    echo "OK evidence viewed_pixels=1 grabber_rc=${grabber_rc:-0}"
+    echo "evidence=SUFFICIENT"
+    return 0
+  fi
+  if [[ -z "$viewed" && "$grabber_rc" == "0" ]]; then
+    echo "INSUFFICIENT_EVIDENCE grabber OK but viewed_pixels not scored — cannot claim glass verified" >&2
+    echo "evidence=INSUFFICIENT"
+    echo "PROMOTE_OK=0"
+    return 79
+  fi
+  echo "FAIL evidence shape viewed='$viewed' grabber_rc='$grabber_rc'" >&2
+  return 1
+}
+
+# --- multi-shot playback power (parent ~25% DEGRADED event rate) --------------
+# Identical asset, nothing changed: run A DEGRADED supply=0.837 drops=356;
+# run B HEALTHY supply=0.997 drops=14. Event rate ~25%.
+# One healthy shot has ~75% chance of missing a broken build.
+#
+# Args:
+#   results_csv  — comma-separated 1=healthy 0=degraded per independent run
+#   min_n        — required independent runs (default 8 ≈ 90% power at p=0.25:
+#                  1-0.75^8 ≈ 0.90; use 11 for ≈95%)
+#   mode         — power (default) | declare
+#                  power: require min_n all-healthy; else INSUFFICIENT_POWER
+#                  declare: always rc=77 DOES_NOT_TEST_INTERMITTENT (honest)
+# rc: 0 all healthy + N>=min; 1 any degraded; 76 INSUFFICIENT_POWER (N short);
+#     77 DOES_NOT_TEST / UNSCORED; 4 NO-DATA
+promotion_assert_multishot() {
+  local csv="${1:-}" min_n="${2:-8}" mode="${3:-power}"
+  if [[ "$mode" == "declare" ]]; then
+    echo "DOES_NOT_TEST intermittent-degrade class (event rate ~25%; one-shot healthy ≠ verified)" >&2
+    echo "multishot=DOES_NOT_TEST"
+    echo "PROMOTE_INTERMITTENT=UNSCORED"
+    echo "PROMOTE_OK=0"
+    return 77
+  fi
+  if [[ -z "$csv" ]]; then
+    echo "NO-DATA multishot results empty (one-shot healthy is not verified — parent 25% event rate)" >&2
+    echo "multishot=NO-DATA"
+    echo "PROMOTE_OK=0"
+    return 4
+  fi
+  if ! [[ "$min_n" =~ ^[0-9]+$ ]] || [[ "$min_n" -lt 1 ]]; then
+    echo "FAIL multishot min_n shape '$min_n'" >&2
+    return 1
+  fi
+  local r n=0 bad=0 good=0
+  # Parse CSV without collapsing: IFS=, only for read -a
+  local -a runs=()
+  IFS=',' read -r -a runs <<<"$csv" || true
+  for r in "${runs[@]}"; do
+    r=$(printf '%s' "$r" | tr -d '[:space:]')
+    [[ -z "$r" ]] && continue
+    n=$((n + 1))
+    case "$r" in
+      1|ok|healthy|HEALTHY|pass|PASS) good=$((good + 1)) ;;
+      0|degraded|DEGRADED|fail|FAIL|bad) bad=$((bad + 1)) ;;
+      *)
+        echo "FAIL multishot result shape '$r' (want 0|1)" >&2
+        return 1
+        ;;
+    esac
+  done
+  if [[ "$n" -eq 0 ]]; then
+    echo "NO-DATA multishot n=0" >&2
+    echo "multishot=NO-DATA"
+    return 4
+  fi
+  echo "multishot_n=$n healthy=$good degraded=$bad min_n=$min_n mode=$mode"
+  if [[ "$bad" -gt 0 ]]; then
+    echo "FAIL multishot degraded=$bad of n=$n (intermittent class OBSERVED — do not promote)" >&2
+    echo "multishot=DEGRADED_SEEN"
+    echo "PROMOTE_OK=0"
+    return 1
+  fi
+  if [[ "$n" -lt "$min_n" ]]; then
+    # Honest: not enough power. Default min_n=8 → ~90% chance to see ≥1 degrade if p=0.25.
+    echo "INSUFFICIENT_POWER multishot n=$n < min_n=$min_n (at event_rate~0.25, P(miss all healthy)=$n runs ≈ $(awk -v n="$n" 'BEGIN{p=1; for(i=0;i<n;i++)p*=0.75; printf "%.3f", p}') ; one-shot healthy ≠ verified)" >&2
+    echo "multishot=INSUFFICIENT_POWER"
+    echo "PROMOTE_INTERMITTENT=UNSCORED"
+    echo "PROMOTE_OK=0"
+    return 76
+  fi
+  echo "OK multishot n=$n all healthy (power gate min_n=$min_n at assumed p≈0.25)"
+  echo "multishot=PASS"
+  echo "PROMOTE_INTERMITTENT=TESTED"
+  return 0
+}
