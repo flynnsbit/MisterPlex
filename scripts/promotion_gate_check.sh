@@ -52,9 +52,15 @@ USER="${MISTER_USER:-root}"
 PASS="${MISTER_PASS:-1}"
 PORT="${MISTERPLEX_PORT:-3005}"
 
-EXPECT_CORE_MD5="${PROMOTE_EXPECT_CORE_MD5:-$RBF_PIN_DDR_CANDIDATE_FULL}"
-EXPECT_DAEMON_MD5="${PROMOTE_EXPECT_DAEMON_MD5:-$DAEMON_PIN_DDR_CANDIDATE_FULL}"
+# Defaults = CURRENT daily glass pair (parent 2026-08-01/02): core 8fdf440f +
+# daemon 9ce2c2d1. Lab c5382bee is NOT the default (LAB-NOT-DAILY). Override
+# with PROMOTE_EXPECT_* for lab fixtures only.
+EXPECT_CORE_MD5="${PROMOTE_EXPECT_CORE_MD5:-${RBF_PIN_DDR_PROMOTE_FULL:-$RBF_PIN_DDR_GLASS_OK_FULL}}"
+EXPECT_DAEMON_MD5="${PROMOTE_EXPECT_DAEMON_MD5:-${DAEMON_PIN_DDR_PRIMARY_FULL:-$DAEMON_PIN_DDR_9CE2C2D1_FULL}}"
 EXPECT_V2_CORE_MD5="${PROMOTE_EXPECT_V2_CORE_MD5:-$RBF_PIN_V2_DAILY_FULL}"
+# USER-OWNED conf pin (optional). Parent measured 7f06132f0c00e90b35141bdc0c60ccc9.
+# When set, live conf md5 must match exactly — never "looks the same".
+EXPECT_CONF_MD5="${PROMOTE_EXPECT_CONF_MD5:-}"
 PRODUCT_CORE_PATH="${PROMOTE_PRODUCT_CORE:-$DEVICE_CORE_PRODUCT}"
 V2_CORE_PATH="${PROMOTE_V2_CORE:-$DEVICE_CORE_V2_DAILY}"
 
@@ -324,6 +330,12 @@ printf 'LIVE_EXE=%s\n' "\$exe"
 printf 'LIVE_PORT=%s\n' "\$port"
 printf 'LIVE_CONF=%s\n' "\$conf"
 printf 'LIVE_ROOT=%s\n' "\$root"
+# USER-OWNED conf md5 (empty if no conf path / missing file) — parent cmp pin
+conf_md5=
+if [ -n "\$conf" ] && [ -f "\$conf" ]; then
+  conf_md5=\$(md5sum "\$conf" 2>/dev/null | awk '{print \$1}')
+fi
+printf 'LIVE_CONF_MD5=%s\n' "\$conf_md5"
 printf 'LIVE_PROBE_DONE=%s\n' "1"
 REMOTE
 )
@@ -366,6 +378,7 @@ verify_live() {
   n=$(gate_field "$blob" N_DAEMON)
   live=$(gate_field "$blob" LIVE_MD5)
   conf=$(gate_field "$blob" LIVE_CONF)
+  conf_md5=$(gate_field "$blob" LIVE_CONF_MD5)
   root=$(gate_field "$blob" LIVE_ROOT)
 
   # Shape gates FIRST - contaminated capture must never reach md5 equality.
@@ -392,6 +405,7 @@ verify_live() {
   fi
 
   # product core (skip equality when shape already failed - do not look like pin drift)
+  # Accept full md5 OR prefix8 match (glass pin may be prefix-only until full is known).
   if [ "$shape_prod" -ne 0 ]; then
     echo "SKIP product-core equality (shape failed - fix probe capture, do not relax compare)"
   elif [ -z "$prod" ]; then
@@ -400,22 +414,21 @@ verify_live() {
   elif [ "$prod" = "MISSING" ]; then
     echo "MISSING product core $PRODUCT_CORE_PATH"
     rc=2
-  elif [ "$prod" != "$EXPECT_CORE_MD5" ]; then
+  elif pair_policy_md5_match "$prod" "$EXPECT_CORE_MD5"; then
+    set +e
+    out=$(rbf_policy_check_md5 "$prod")
+    prc=$?
+    set -e
+    printf '%s\n' "$out"
+    if [ "$prc" -ne 0 ]; then rc=$prc; else echo "OK product-core-disk $prod (expect=$EXPECT_CORE_MD5)"; fi
+  else
     echo "FAIL product-core-disk got=$prod want=$EXPECT_CORE_MD5"
-    # also refuse if product pin is banned
     set +e
     out=$(rbf_policy_check_md5 "$prod")
     prc=$?
     set -e
     printf '%s\n' "$out"
     rc=3
-  else
-    set +e
-    out=$(rbf_policy_check_md5 "$prod")
-    prc=$?
-    set -e
-    printf '%s\n' "$out"
-    if [ "$prc" -ne 0 ]; then rc=$prc; else echo "OK product-core-disk $prod"; fi
   fi
 
   # V2 rollback slot must remain intact
@@ -472,6 +485,24 @@ verify_live() {
     # conf should live under live root when root known
     if [ -n "$root" ] && [ "$conf" != "$root/misterplex.conf" ]; then
       echo "NOTE conf $conf vs root $root/misterplex.conf - operator must confirm"
+    fi
+    # USER-OWNED conf byte pin (parent 7f06132f…): exact md5 when PROMOTE_EXPECT_CONF_MD5 set.
+    # Prefer LIVE_CONF_MD5 from probe; allow host PROMOTE_CONF_MD5_LIVE inject for units.
+    conf_md5_live="${PROMOTE_CONF_MD5_LIVE:-$conf_md5}"
+    if [ -n "$EXPECT_CONF_MD5" ]; then
+      want_c=$(printf '%s' "$EXPECT_CONF_MD5" | tr 'A-F' 'a-f' | tr -cd '0-9a-f')
+      got_c=$(printf '%s' "$conf_md5_live" | tr 'A-F' 'a-f' | tr -cd '0-9a-f')
+      if [ -z "$got_c" ]; then
+        echo "NO-DATA live-conf-md5 empty (not a mismatch against want=$want_c)"
+        [ "$rc" -eq 0 ] && rc=4
+      elif ! pair_policy_md5_match "$got_c" "$want_c"; then
+        echo "FAIL live-conf-md5 got=$got_c want=$want_c (USER-OWNED; must cmp/md5 match; never normalise)"
+        rc=7
+      else
+        echo "OK live-conf-md5 $got_c (USER-OWNED pin match)"
+      fi
+    elif [ -n "$conf_md5_live" ]; then
+      echo "NOTE live-conf-md5=$conf_md5_live (set PROMOTE_EXPECT_CONF_MD5 to pin USER-OWNED bytes)"
     fi
     # Conf keys are part of the DDR pair (FORCE_SCALE + SWS flags).
     if [ -n "${PROMOTE_CONF_BLOB:-}" ] || [ -n "${PROMOTE_CONF_PATH:-}" ]; then

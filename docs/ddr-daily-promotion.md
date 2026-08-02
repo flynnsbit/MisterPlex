@@ -48,43 +48,65 @@ Parent-owned device work only. Agents produce artifacts and commands; they must
 
 Also: `bash tests/unit/test_deploy_misterplexd.sh` (73 checks) — green DEPLOY_OK⇒rc0; red no DEPLOY_OK; **truncated stage md5 refuses mv (rc=7)**.
 
-## Power-cycle rehearsal (P1 OPEN — parent asks user before any reboot)
+## Power-cycle rehearsal (P1 OPEN — only user can authorize reboot)
 
-Hook execution was rehearsed (parent: FIXED hook → BOOT_HOOK_OK). **Kernel cold boot
-has never been proven.** Agents never reboot. Safe parent sequence when user approves:
+Hook execution was rehearsed (parent: FIXED hook → `BOOT_HOOK_OK`; detached
+`post_hook_n_daemon=1` + viewed frame). **Kernel cold boot is NOT proven.**
+Agents never reboot. Run this checklist the moment the user authorizes:
 
 ```bash
-# 0) Snapshot user conf+ini (byte-exact restore later)
+cd .worktrees/rollback-honest   # need HEAD with V2_MD5 capture fix (a56e7e99+)
+
+# --- PRE (device healthy) ---
+# 0) Byte-exact user state (conf+ini). Parent pin conf=7f06132f0c00e90b35141bdc0c60ccc9
 OUT=./build/user-state-pre-reboot USER_STATE_EXECUTE=1 \
   ./scripts/user_state_snapshot.sh snapshot; echo "true rc=$?"
+# record: ls -la "$OUT"; md5sum "$OUT"/*conf* 2>/dev/null
 
-# 1) Pre-flight: live pair healthy
-./scripts/promotion_gate_check.sh verify-live; echo "true rc=$?"
-# expect: BOOT_HOOK_OK, product-core OK, v2-rollback-core OK (pure 32-hex), n_daemon=1
+# 1) verify-live must be GREEN on THIS SHA (not pre-fix glue SHA)
+PROMOTE_EXPECT_CORE_MD5=8fdf440f \
+PROMOTE_EXPECT_DAEMON_MD5=9ce2c2d13d1c8712683289043e99002c \
+PROMOTE_EXPECT_CONF_MD5=7f06132f0c00e90b35141bdc0c60ccc9 \
+  ./scripts/promotion_gate_check.sh verify-live; echo "true rc=$?"
+# EXPECT shape:
+#   OK product-core-disk …8fdf…   (or prefix match)
+#   OK v2-rollback-core dfebf2bfd08dd70b473b587dd7e81848   ← pure 32-hex, NO "set +e"
+#   OK n_daemon=1
+#   OK live-exe-md5 9ce2c2d1… (from readlink -f /proc/PID/exe)
+#   OK live-conf /media/fat/misterplex_v2/misterplex.conf
+#   OK live-conf-md5 7f06132f… (USER-OWNED pin match)
+#   OK http /resources code=200
+#   BOOT_HOOK_OK expect_root=/media/fat/misterplex_v2 N_SUP=1 HAS_V1=0 HAS_V2=1
+# If you see V2_MD5=…set +e → wrong tree; rebuild from fix/rollback-honest HEAD.
 
-# 2) Confirm hook on device is single v2 supervisor line (parent already fixed once)
-# ssh: grep -n misterplex /etc/init.d/S99user || true
-# expect: exactly one misterplex_v2 supervise line; HAS_V1=0
+# 2) Optional dump (no SSH body glue):
+./scripts/promotion_gate_check.sh dump-remote-live | grep -n 'set +e\|V2_MD5'
+# expect: one line "set +e"; one "printf 'V2_MD5=%s\n'"
 
-# 3) USER-APPROVED: power cycle MiSTer (hardware switch / clean reboot).
-#    Do NOT kill-9 storms. Do NOT thrash load_core during boot.
+# --- USER-APPROVED REBOOT (hardware) ---
+# 3) Power cycle MiSTer. No kill-9. No load_core thrash during boot.
+#    Wait ~30–45s after network returns.
 
-# 4) After boot + ~30s settle — host only:
-./scripts/promotion_gate_check.sh verify-live; echo "true rc=$?"
-# PASS criteria: n_daemon==1, live exe md5 == pin (9ce2c2d1…), LIVE_ROOT=misterplex_v2,
-# BOOT_HOOK_OK, /resources 200, conf md5 == pre-reboot snapshot (cmp).
-# FAIL → atomic pair restore (do not half-fix):
-#   PAIR_ID=ddr-8fdf440f-9ce2c2d1 \
-#     ROLLBACK_CORE=device:/media/fat/_Utility/Plex.rbf.bak.8fdf440f \
-#     ROLLBACK_DAEMON=artifacts/daemon-pins/misterplexd.9ce2c2d1 \
-#     PAIR_CONF_RESTORE_FILE=./build/user-state-pre-reboot/misterplex.conf \
-#     PAIR_CONF_MODE=restore-file \
-#     ./scripts/restore_misterplexd_prev.sh; echo "true rc=$?"
+# --- POST ---
+PROMOTE_EXPECT_CORE_MD5=8fdf440f \
+PROMOTE_EXPECT_DAEMON_MD5=9ce2c2d13d1c8712683289043e99002c \
+PROMOTE_EXPECT_CONF_MD5=7f06132f0c00e90b35141bdc0c60ccc9 \
+  ./scripts/promotion_gate_check.sh verify-live; echo "true rc=$?"
+# PASS = same OK lines as step 1 + conf md5 still 7f06132f (cmp to snapshot).
+# Soft-skip/rc=77 is NOT pass. n_daemon!=1 is FAIL.
 
-# 5) Glass: parent HDMI capture idle logo; conf DECODE untouched (cmp snapshot).
+# FAIL → ATOMIC pair restore (core+daemon together; conf restore-file):
+PAIR_ID=ddr-8fdf440f-9ce2c2d1 \
+  ROLLBACK_CORE=device:/media/fat/_Utility/Plex.rbf.bak.8fdf440f \
+  ROLLBACK_DAEMON=artifacts/daemon-pins/misterplexd.9ce2c2d1 \
+  PAIR_CONF_RESTORE_FILE=./build/user-state-pre-reboot/misterplex.conf \
+  PAIR_CONF_MODE=restore-file \
+  ./scripts/restore_misterplexd_prev.sh; echo "true rc=$?"
+
+# 4) Glass: parent HDMI idle logo; conf DECODE untouched.
 ```
 
-Until step 4 is GREEN on a real cold boot, **P1 remains OPEN**.
+Until POST verify-live is GREEN on a **real** cold boot, **P1 remains OPEN**.
 
 ## Truncated-transfer incident (parent 2026-08-01 night)
 

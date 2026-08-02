@@ -123,10 +123,14 @@ echo "  true rc=$rc"
 
 # --- verify-live via blob inject --------------------------------------------
 # Primary DDR daemon pin is 9ce2c2d1 (parent glass 2026-08-01; w-osd-hires).
+# Lab fixture still uses c5382 product bytes — override EXPECT so default glass
+# pin 8fdf440f does not false-fail the unit (LAB pair, not daily default).
 EDC_LIVE=9ce2c2d13d1c8712683289043e99002c
+LAB_CORE=c5382bee73cecdee8220b811e529c297
+export PROMOTE_EXPECT_CORE_MD5="${PROMOTE_EXPECT_CORE_MD5:-$LAB_CORE}"
 cat >"$WORK/live_ok.blob" <<BLOB
 PRODUCT_CORE=/media/fat/_Utility/Plex.rbf
-PRODUCT_MD5=c5382bee73cecdee8220b811e529c297
+PRODUCT_MD5=$LAB_CORE
 V2_CORE=/media/fat/_Utility/Plex_v2.rbf
 V2_MD5=dfebf2bfd08dd70b473b587dd7e81848
 N_DAEMON=1
@@ -134,6 +138,7 @@ PIDS=4242
 LIVE_EXE=/media/fat/misterplex_v2/bin/misterplexd
 LIVE_MD5=$EDC_LIVE
 LIVE_CONF=/media/fat/misterplex_v2/misterplex.conf
+LIVE_CONF_MD5=7f06132f0c00e90b35141bdc0c60ccc9
 LIVE_ROOT=/media/fat/misterplex_v2
 PLXS_MAGIC=0x504C5853
 PLXS_SEQ=10
@@ -622,6 +627,58 @@ echo "$out" | grep -q 'OK v2-rollback-core dfebf2bfd08dd70b473b587dd7e81848' && 
 # Visual MUST still run (aggregate) — not skip
 echo "$out" | grep -qE 'visual_hook|VISUAL_REQUIRED|visual_idle|motion_hook' && ok "glue-visual-ran" || bad "glue-visual-ran"
 echo "$out" | grep -q 'skip visual' && bad "glue-no-skip-visual" || ok "glue-no-skip-visual"
+
+echo "=== USER-OWNED conf md5 pin (parent 7f06132f) — exact match / mismatch / NO-DATA ==="
+# Green: pin matches LIVE_CONF_MD5 in blob
+set +e
+out=$(
+  PROMOTE_GATE_BLOB="$WORK/live_ok.blob" \
+  PROMOTE_HTTP="$WORK/fake_http.sh" \
+  PROMOTE_VISUAL_CMD="$WORK/visual_ok.sh" \
+  PROMOTE_CONF_BLOB="$WORK/conf_ddr.txt" \
+  PROMOTE_CONF_PROFILE=ddr \
+  PROMOTE_EXPECT_CONF_MD5=7f06132f0c00e90b35141bdc0c60ccc9 \
+  "$GATES" verify-live 2>&1
+)
+rc=$?
+set -e
+echo "  [conf-ok] true rc=$rc"
+echo "$out" | grep -q 'OK live-conf-md5 7f06132f0c00e90b35141bdc0c60ccc9' && ok "conf-md5-pin-ok" || bad "conf-md5-pin-ok"
+# RED: wrong pin
+set +e
+out=$(
+  PROMOTE_GATE_BLOB="$WORK/live_ok.blob" \
+  PROMOTE_HTTP="$WORK/fake_http.sh" \
+  PROMOTE_VISUAL_CMD="$WORK/visual_ok.sh" \
+  PROMOTE_CONF_BLOB="$WORK/conf_ddr.txt" \
+  PROMOTE_CONF_PROFILE=ddr \
+  PROMOTE_EXPECT_CONF_MD5=deadbeefdeadbeefdeadbeefdeadbeef \
+  "$GATES" verify-live 2>&1
+)
+rc=$?
+set -e
+echo "  [conf-bad] true rc=$rc"
+[ "$rc" -eq 7 ] && ok "conf-md5-mismatch-rc7" || bad "conf-md5-mismatch-rc7 got=$rc"
+echo "$out" | grep -q 'FAIL live-conf-md5' && ok "conf-md5-mismatch-msg" || bad "conf-md5-mismatch-msg"
+echo "$out" | grep -q 'USER-OWNED' && ok "conf-md5-user-owned-msg" || bad "conf-md5-user-owned-msg"
+# NO-DATA empty conf md5
+sed '/LIVE_CONF_MD5=/d' "$WORK/live_ok.blob" >"$WORK/live_noconfmd5.blob"
+set +e
+out=$(
+  PROMOTE_GATE_BLOB="$WORK/live_noconfmd5.blob" \
+  PROMOTE_HTTP="$WORK/fake_http.sh" \
+  PROMOTE_VISUAL_CMD="$WORK/visual_ok.sh" \
+  PROMOTE_CONF_BLOB="$WORK/conf_ddr.txt" \
+  PROMOTE_CONF_PROFILE=ddr \
+  PROMOTE_EXPECT_CONF_MD5=7f06132f0c00e90b35141bdc0c60ccc9 \
+  "$GATES" verify-live 2>&1
+)
+rc=$?
+set -e
+echo "  [conf-empty] true rc=$rc"
+[ "$rc" -eq 4 ] && ok "conf-md5-empty-rc4" || bad "conf-md5-empty-rc4 got=$rc"
+echo "$out" | grep -q 'NO-DATA live-conf-md5' && ok "conf-md5-empty-nodata" || bad "conf-md5-empty-nodata"
+echo "$out" | grep -qE "got='' want=" && bad "conf-md5-empty-false-mismatch" || ok "conf-md5-empty-no-false-mismatch"
 
 echo "=== REGRESSION: host-executed remote probe emits pure 32-hex V2_MD5 ==="
 # Simulate device files + run the dumped remote script under bash (no SSH).
