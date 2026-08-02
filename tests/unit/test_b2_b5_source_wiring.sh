@@ -53,9 +53,16 @@ check B5_filter_chain_loss "$MP" 'FILTER_CHAIN_LOSS'
 check B5_filter_chain_loss_final "$MP" 'FILTER_CHAIN_LOSS_FINAL'
 check B5_filter_vertical_detail "$MP" 'filter_vertical_detail_frac='
 check B5_foar_into_618_defect "$MP" 'foar_into_618='
+check B5_bank_fill "$MP" 'BANK_FILL'
+check B5_post_scale_picture "$MP" 'post_scale_picture='
+check B5_compound_v_frac "$MP" 'compound_vertical_detail_frac='
+check B5_delivered_area_frac "$MP" 'delivered_area_frac='
+check B5_loss2_half_res "$MP" 'loss2_half_res='
 VF="$ROOT/host/libmisterplex/ffmpeg_vf.hpp"
 check VF_scale_pad_center_coded "$VF" 'scale_pad_center_coded'
 check VF_no_product_foar_618 "$VF" 'never into display 618'
+check VF_compound_helper "$VF" 'compoundVerticalDetailFrac'
+check VF_delivered_area "$VF" 'deliveredAreaFrac'
 # Pump compares measured to DDR coded bank args, not DECODE tier alone.
 check B5_pump_takes_coded_wh "$MP" 'int codedW, int codedH'
 # GEOM predicts square-pixel fit from SAR/DAR (ceiling, not exact).

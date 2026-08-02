@@ -109,19 +109,53 @@ inline std::string scaleFilterGeom(const std::string& wh, const std::string& sws
 }
 
 // Integer model of ffmpeg scale=box_w:box_h:force_original_aspect_ratio=decrease
-// output height (no even-align). Width-limited fit:
-//   out_h = floor(src_h * box_w / src_w) when box_w/src_w <= box_h/src_h.
+// (fits inside box; may upscale). s = min(box_w/src_w, box_h/src_h).
+// Width-limited: out_w=box_w, out_h=floor(src_h*box_w/src_w).
+// Height-limited: out_h=box_h, out_w=floor(src_w*box_h/src_h).
 // Product defect class: src 624x480 into box 618x480 → out_h = 480*618/624 = 475.
 inline int scaleDecreaseOutHeight(int src_w, int src_h, int box_w, int box_h) {
     if (src_w <= 0 || src_h <= 0 || box_w <= 0 || box_h <= 0)
         return 0;
-    // width-limited when box_w * src_h <= box_h * src_w  (box narrower or equal AR)
+    // width-limited when box_w/src_w <= box_h/src_h
     if (static_cast<long long>(box_w) * static_cast<long long>(src_h) <=
         static_cast<long long>(box_h) * static_cast<long long>(src_w)) {
         return static_cast<int>((static_cast<long long>(src_h) * box_w) / src_w);
     }
-    // height-limited: out_h = min(box_h, src_h) under decrease with s<=1 on h
-    return box_h < src_h ? box_h : src_h;
+    return box_h;
+}
+
+inline int scaleDecreaseOutWidth(int src_w, int src_h, int box_w, int box_h) {
+    if (src_w <= 0 || src_h <= 0 || box_w <= 0 || box_h <= 0)
+        return 0;
+    if (static_cast<long long>(box_w) * static_cast<long long>(src_h) <=
+        static_cast<long long>(box_h) * static_cast<long long>(src_w)) {
+        return box_w;
+    }
+    return static_cast<int>((static_cast<long long>(src_w) * box_h) / src_h);
+}
+
+// Delivered samples as fraction of coded bank (Loss 2: PMS half-res 312x240 → 0.5 V).
+inline double deliveredVerticalDetailFrac(int delivered_h, int bank_h) {
+    if (bank_h <= 0 || delivered_h <= 0)
+        return 0.0;
+    return static_cast<double>(delivered_h) / static_cast<double>(bank_h);
+}
+
+inline double deliveredAreaFrac(int delivered_w, int delivered_h, int bank_w, int bank_h) {
+    if (bank_w <= 0 || bank_h <= 0 || delivered_w <= 0 || delivered_h <= 0)
+        return 0.0;
+    const double d = static_cast<double>(delivered_w) * static_cast<double>(delivered_h);
+    const double b = static_cast<double>(bank_w) * static_cast<double>(bank_h);
+    return d / b;
+}
+
+// Compound: real source rows retained after delivery *and* FOAR letterbox.
+// e.g. 312x240 FOAR-fills bank → delivered_v=0.5, filter_v≈1 → compound=0.5
+//      624x480 FOAR-into-618 16:9 → delivered_v=1, filter_v≈0.725 → compound≈0.725
+inline double compoundVerticalDetailFrac(double delivered_v_frac, double filter_v_frac) {
+    if (delivered_v_frac <= 0.0 || filter_v_frac <= 0.0)
+        return 0.0;
+    return delivered_v_frac * filter_v_frac;
 }
 
 // True when decrease-into-box would change vertical sample count (any axis shrink
@@ -416,7 +450,7 @@ inline FfmpegVfPlan buildFfmpegVideoFilter(const FfmpegVfRequest& req) {
     // Height already equals bank/display height and width is wide enough to
     // cover the display window: crop+pad ONLY (no FOAR decrease V-resample).
     // Covers: SkipIdentity unverified exact 624; Always/Skip 640x480 hfit; etc.
-    // 240p / shorter sources still take buildScalePadCropped (need V upscale).
+    // 240p / shorter sources still FOAR into coded bank (need V upscale).
     const bool heightAlreadyBank = req.source_h > 0 && req.source_h == req.coded_h &&
                                    req.source_h == dispH;
     const bool wideEnoughForDisplayCrop =

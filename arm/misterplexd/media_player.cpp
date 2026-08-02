@@ -4553,37 +4553,78 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
             const bool foarFinal =
                 vfPlan.vf.find("force_original_aspect_ratio=decrease") != std::string::npos;
             const bool foar618 = vfPlan.vf.find("scale=618:480") != std::string::npos;
-            double filterVfrac = 1.0;
+            const bool cropPadPath =
+                vfPlan.reason.find("crop_pad") != std::string::npos ||
+                vfPlan.reason.find("force_exact_crop_pad") != std::string::npos ||
+                vfPlan.reason.find("force_exact_pad") != std::string::npos;
+            // Post-scale *picture* area inside the bank (before black pad).
+            // FOAR: fitted WxH inside coded (or legacy 618) box.
+            // crop_pad: display window (618x480 product) — keeps all delivered rows.
+            // identity: full bank.
+            int filterPredW = codedBankW_;
             int filterPredH = codedBankH_;
-            if (foarFinal && mw > 0 && mh > 0 && codedBankH_ > 0) {
-                // Use measured producer size as FOAR input when available.
+            double filterVfrac = 1.0;
+            if (foarFinal && mw > 0 && mh > 0 && codedBankW_ > 0 && codedBankH_ > 0) {
                 const int boxW = foar618 ? 618 : codedBankW_;
                 const int boxH = foar618 ? 480 : codedBankH_;
-                filterPredH = predictFoarDecreaseHeight(mw, mh, boxW, boxH);
+                filterPredW = scaleDecreaseOutWidth(mw, mh, boxW, boxH);
+                filterPredH = scaleDecreaseOutHeight(mw, mh, boxW, boxH);
                 filterVfrac = foarVerticalDetailFrac(mw, mh, boxW, boxH, codedBankH_);
-            } else if (!foarFinal) {
-                filterVfrac = 1.0;
+            } else if (cropPadPath && codedBankW_ > 0) {
+                // Product crop_right=6 → picture cols = display width (618).
+                filterPredW = (codedBankW_ >= 6) ? (codedBankW_ - 6) : codedBankW_;
                 filterPredH = codedBankH_;
+                filterVfrac = 1.0;
+            } else if (vfPlan.identity_skip) {
+                filterPredW = codedBankW_;
+                filterPredH = codedBankH_;
+                filterVfrac = 1.0;
             }
-            log("media: MEASURED_DELIVERY_FINAL delivered_geom=" + std::to_string(mw) + "x" +
-                std::to_string(mh) + " src=ffmpeg_banner" +
+            const double dArea =
+                deliveredAreaFrac(mw, mh, codedBankW_, codedBankH_);
+            const double fArea =
+                deliveredAreaFrac(filterPredW, filterPredH, codedBankW_, codedBankH_);
+            const double compoundV = compoundVerticalDetailFrac(vfrac, filterVfrac);
+            const std::string bankStr =
+                (codedBankW_ > 0
+                     ? (std::to_string(codedBankW_) + "x" + std::to_string(codedBankH_))
+                     : "unknown");
+            const std::string picStr =
+                std::to_string(filterPredW) + "x" + std::to_string(filterPredH);
+            const std::string delivStr = std::to_string(mw) + "x" + std::to_string(mh);
+            // Always-on ledger: distinguishes Loss2 half-res (312x240) from full
+            // bank delivery (624x480) even when both pad into the same bank.
+            log("media: BANK_FILL delivered_geom=" + delivStr +
+                " post_scale_picture=" + picStr + " coded_bank=" + bankStr +
+                " delivered_v_frac=" + std::to_string(vfrac) +
+                " delivered_area_frac=" + std::to_string(dArea) +
+                " filter_picture_area_frac=" + std::to_string(fArea) +
+                " filter_vertical_detail_frac=" + std::to_string(filterVfrac) +
+                " compound_vertical_detail_frac=" + std::to_string(compoundV) +
+                " filter_reason=" + vfPlan.reason +
+                " filter_foar=" + (foarFinal ? "1" : "0") +
+                " foar_into_618=" + (foar618 ? "1" : "0") +
+                " tag=measured");
+            log("media: MEASURED_DELIVERY_FINAL delivered_geom=" + delivStr +
+                " src=ffmpeg_banner" +
                 " producer_bytes=" + std::to_string(prodBytes) +
                 " reader_bytes=" + std::to_string(frameBytes) +
                 " request_geom=" +
                 (playRequestW_ > 0
                      ? (std::to_string(playRequestW_) + "x" + std::to_string(playRequestH_))
                      : "unknown") +
-                " coded_bank=" +
-                (codedBankW_ > 0
-                     ? (std::to_string(codedBankW_) + "x" + std::to_string(codedBankH_))
-                     : "unknown") +
+                " coded_bank=" + bankStr +
+                " post_scale_picture=" + picStr +
                 " request_match=" + (matchRequest ? "1" : "0") +
                 " bank_match=" + (matchBank ? "1" : "0") +
                 " vertical_detail_frac=" + std::to_string(vfrac) +
+                " delivered_area_frac=" + std::to_string(dArea) +
                 " filter_reason=" + vfPlan.reason +
                 " filter_foar=" + (foarFinal ? "1" : "0") +
-                " filter_predicted_picture_h=" + std::to_string(filterPredH) +
+                " filter_predicted_picture=" + picStr +
                 " filter_vertical_detail_frac=" + std::to_string(filterVfrac) +
+                " filter_picture_area_frac=" + std::to_string(fArea) +
+                " compound_vertical_detail_frac=" + std::to_string(compoundV) +
                 " identity_skip=" + (vfPlan.identity_skip ? "1" : "0") +
                 " phase_offset=" + std::to_string(phaseOff) +
                 " phase_desync=" + (phaseDesync ? "1" : "0") +
@@ -4593,31 +4634,43 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
             if (!matchRequest && playRequestW_ > 0 && playRequestH_ > 0) {
                 log("ERROR media: REQUEST_VS_MEASURED request=" +
                     std::to_string(playRequestW_) + "x" + std::to_string(playRequestH_) +
-                    " measured=" + std::to_string(mw) + "x" + std::to_string(mh) +
-                    " coded_bank=" + std::to_string(codedBankW_) + "x" +
-                    std::to_string(codedBankH_) +
+                    " measured=" + delivStr + " coded_bank=" + bankStr +
+                    " post_scale_picture=" + picStr +
                     " vertical_detail_frac=" + std::to_string(vfrac) +
+                    " delivered_area_frac=" + std::to_string(dArea) +
                     " filter_vertical_detail_frac=" + std::to_string(filterVfrac) +
+                    " compound_vertical_detail_frac=" + std::to_string(compoundV) +
                     " identity_skip=" + (vfPlan.identity_skip ? "1" : "0") +
-                    " note=videoResolution_ceiling_or_source_DAR tag=measured");
+                    " note=videoResolution_ceiling_or_bitrate_tier tag=measured");
             }
-            if (!matchBank && codedBankW_ > 0) {
-                log("ERROR media: DELIVERY_MISMATCH_FINAL measured=" + std::to_string(mw) +
-                    "x" + std::to_string(mh) + " coded_bank=" + std::to_string(codedBankW_) +
-                    "x" + std::to_string(codedBankH_) +
-                    " vertical_detail_frac=" + std::to_string(vfrac) +
+            // DELIVERY_MISMATCH_FINAL: any bank underfill — PMS half-res (Loss 2),
+            // FOAR letterbox (Loss 1), or both. Always carries picture ledger.
+            const bool filterLetterbox =
+                foarFinal && filterPredH > 0 && codedBankH_ > 0 && filterPredH < codedBankH_;
+            if (codedBankW_ > 0 && (!matchBank || filterLetterbox || vfrac < 0.999)) {
+                log("ERROR media: DELIVERY_MISMATCH_FINAL measured=" + delivStr +
+                    " coded_bank=" + bankStr +
+                    " post_scale_picture=" + picStr +
+                    " delivered_v_frac=" + std::to_string(vfrac) +
+                    " delivered_area_frac=" + std::to_string(dArea) +
                     " filter_vertical_detail_frac=" + std::to_string(filterVfrac) +
+                    " filter_picture_area_frac=" + std::to_string(fArea) +
+                    " compound_vertical_detail_frac=" + std::to_string(compoundV) +
+                    " filter_reason=" + vfPlan.reason +
+                    " filter_foar=" + (foarFinal ? "1" : "0") +
+                    " foar_into_618=" + (foar618 ? "1" : "0") +
                     " force_scale_protects=" + (vfPlan.identity_skip ? "0" : "1") +
+                    " loss2_half_res=" + ((mw * 2 == codedBankW_ && mh * 2 == codedBankH_) ? "1"
+                                                                                          : "0") +
                     " tag=measured");
             }
-            // Loud when filter itself letterboxes below bank (user "not 480p" class).
-            if (foarFinal && filterPredH > 0 && codedBankH_ > 0 &&
-                filterPredH < codedBankH_) {
+            if (filterLetterbox) {
                 log("ERROR media: FILTER_CHAIN_LOSS_FINAL reason=" + vfPlan.reason +
-                    " measured_in=" + std::to_string(mw) + "x" + std::to_string(mh) +
-                    " predicted_picture_h=" + std::to_string(filterPredH) +
-                    " bank_h=" + std::to_string(codedBankH_) +
+                    " measured_in=" + delivStr +
+                    " post_scale_picture=" + picStr +
+                    " bank=" + bankStr +
                     " filter_vertical_detail_frac=" + std::to_string(filterVfrac) +
+                    " compound_vertical_detail_frac=" + std::to_string(compoundV) +
                     " foar_into_618=" + (foar618 ? "1" : "0") +
                     " note=letterbox_is_daemon_vf_not_PMS tag=measured");
             }

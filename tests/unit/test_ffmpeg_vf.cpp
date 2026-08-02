@@ -555,6 +555,36 @@ int main() {
                     "foar_coded_not_618=1\n");
     }
 
+    // --- Loss2 half-res (parent A/B: request=397 → measured=312x240) ---
+    // Compound ledger must separate PMS half-res from FOAR letterbox.
+    {
+        const int bank_w = 624, bank_h = 480;
+        const double v312 = deliveredVerticalDetailFrac(240, bank_h);
+        const double a312 = deliveredAreaFrac(312, 240, bank_w, bank_h);
+        expect(v312 > 0.49 && v312 < 0.51, "312 delivery v_frac≈0.5");
+        expect(a312 > 0.24 && a312 < 0.26, "312 delivery area_frac≈0.25");
+        // FOAR 312x240 into coded 624 fills bank (same 1.3 AR) — filter_v≈1
+        const int pic_h = scaleDecreaseOutHeight(312, 240, bank_w, bank_h);
+        const int pic_w = scaleDecreaseOutWidth(312, 240, bank_w, bank_h);
+        expect(pic_h == 480 && pic_w == 624, "312 FOAR fills bank picture");
+        const double fv = foarVerticalDetailFrac(312, 240, bank_w, bank_h, bank_h);
+        const double cmp = compoundVerticalDetailFrac(v312, fv);
+        expect(cmp > 0.49 && cmp < 0.51, "compound still 0.5 when FOAR fills");
+        // Full bank delivery + FOAR into 618 16:9 letterbox
+        const double v624 = deliveredVerticalDetailFrac(480, bank_h);
+        const double fv618 = foarVerticalDetailFrac(624, 480, 618, 480, bank_h);
+        // 4:3 624x480 into 618 → 475/480 not 350; use 1920x1080 for 16:9
+        const double fv16 = foarVerticalDetailFrac(1920, 1080, 624, 480, bank_h);
+        expect(v624 > 0.99, "full delivery v_frac=1");
+        expect(fv16 > 0.72 && fv16 < 0.74, "16:9 FOAR into 624 ~0.73");
+        expect(compoundVerticalDetailFrac(v624, fv16) > 0.72 &&
+                   compoundVerticalDetailFrac(v624, fv16) < 0.74,
+               "compound tracks FOAR letterbox alone");
+        std::printf("GREEN_LOSS2_COMPOUND v312=%.3f a312=%.3f cmp312=%.3f fv16=%.3f\n", v312,
+                    a312, cmp, fv16);
+        (void)fv618;
+    }
+
     if (g_fails) {
         std::fprintf(stderr, "test_ffmpeg_vf: %d failure(s)\n", g_fails);
         return 1;
