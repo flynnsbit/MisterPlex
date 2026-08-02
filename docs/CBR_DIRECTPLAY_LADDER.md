@@ -5,6 +5,15 @@ sustained 60 s; capacity p95 1.292 Mbit/s. Prior ~670 kbit figure was the
 **pacer**, not the link — retracted for sizing.
 
 **Design:** identical content; CBR-only axis; sources already satisfy
+
+## ⚠ STREAM=0 voids this ladder
+
+Product cast path sets `preferDirectH264=streamEnabled` (`main.cpp`).  
+**STREAM=0 → always PMS universal → `transcoded=1` → NOT a DP data point.**  
+**STREAM=1 → direct H.264 Part when source is H.264 CB → `transcoded=0`.**
+
+Full proof checklist + host-load sampler: **`docs/CBR_DP_DIRECTPLAY_PROOF.md`**  
+Sampler: `scripts/sample_host_load_for_cast.sh`
 `plex_resolve` h264/baseline/level≤3.0/aac → **Direct Play** expected
 (delivered bitrate == source). Parent confirms `transcoded=0` on GEOM.
 
