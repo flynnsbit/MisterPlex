@@ -48,7 +48,7 @@ unit:
 unit-rollcall:
 	python3 $(ROOT)/tests/unit/test_unit_rollcall.py
 
-unit-unlocked: unit-rollcall preflight $(ROOT)/build/test_cadence $(ROOT)/build/test_avclock $(ROOT)/build/test_mraudio_status $(ROOT)/build/test_osd_menu $(ROOT)/build/test_osd_control $(ROOT)/build/test_last_frame_latch $(ROOT)/build/test_playback_overlay $(ROOT)/build/test_overlay_source_stroke_hist $(ROOT)/build/test_overlay_layout_fit $(ROOT)/build/test_mister_video_mode $(ROOT)/build/test_chrome_plane_paint $(ROOT)/build/test_overlay_post_upscale $(ROOT)/build/test_overlay_crispness_mutation $(ROOT)/build/test_plex_chrome_sim $(ROOT)/build/test_input_mailbox $(ROOT)/build/test_pixel_format $(ROOT)/build/test_main_guard $(ROOT)/build/test_status_telemetry $(ROOT)/build/test_resolve $(ROOT)/build/test_log_redact $(ROOT)/build/test_pms_timeline $(ROOT)/build/test_plextv_device $(ROOT)/build/test_companion_eof $(ROOT)/build/test_companion_plant_seek $(ROOT)/build/test_gdm_resources_parity $(ROOT)/build/pms_baseline_probe $(ROOT)/build/test_h264_bitstream_source $(ROOT)/build/test_bitstream_ring_lifecycle $(ROOT)/build/test_frame_store_math $(ROOT)/build/test_coded_size_adopt $(ROOT)/build/test_ffmpeg_vf $(ROOT)/build/test_yuv420p_chroma_480p $(ROOT)/build/test_frame_store_sdram_sim $(ROOT)/build/test_frame_store_ddr_prefetch_sim $(ROOT)/build/test_ddr_want_y_hblank_thrash $(ROOT)/build/test_ddr_bank_mailbox_phys $(ROOT)/build/test_ddr_scanout_multiframe $(ROOT)/build/test_sdram_memtest_sim $(ROOT)/build/test_sdram_mailbox $(ROOT)/build/test_annexb_count $(ROOT)/build/test_sps_parse $(ROOT)/build/test_slice_hdr $(ROOT)/build/test_cavlc_dc $(ROOT)/build/test_idct_quant $(ROOT)/build/test_p3_host_recon_vectors $(ROOT)/build/test_p3_idct_reference_model $(ROOT)/build/test_p3_inter_pred_vectors $(ROOT)/build/extract_h264_golden
+unit-unlocked: unit-rollcall preflight $(ROOT)/build/test_cadence $(ROOT)/build/test_avclock $(ROOT)/build/test_mraudio_status $(ROOT)/build/test_osd_menu $(ROOT)/build/test_osd_control $(ROOT)/build/test_last_frame_latch $(ROOT)/build/test_playback_overlay $(ROOT)/build/test_overlay_source_stroke_hist $(ROOT)/build/test_overlay_layout_fit $(ROOT)/build/test_overlay_png_golden $(ROOT)/build/test_mister_video_mode $(ROOT)/build/test_chrome_plane_paint $(ROOT)/build/test_overlay_post_upscale $(ROOT)/build/test_overlay_crispness_mutation $(ROOT)/build/test_plex_chrome_sim $(ROOT)/build/test_input_mailbox $(ROOT)/build/test_pixel_format $(ROOT)/build/test_main_guard $(ROOT)/build/test_status_telemetry $(ROOT)/build/test_resolve $(ROOT)/build/test_log_redact $(ROOT)/build/test_pms_timeline $(ROOT)/build/test_plextv_device $(ROOT)/build/test_companion_eof $(ROOT)/build/test_companion_plant_seek $(ROOT)/build/test_gdm_resources_parity $(ROOT)/build/pms_baseline_probe $(ROOT)/build/test_h264_bitstream_source $(ROOT)/build/test_bitstream_ring_lifecycle $(ROOT)/build/test_frame_store_math $(ROOT)/build/test_coded_size_adopt $(ROOT)/build/test_ffmpeg_vf $(ROOT)/build/test_yuv420p_chroma_480p $(ROOT)/build/test_frame_store_sdram_sim $(ROOT)/build/test_frame_store_ddr_prefetch_sim $(ROOT)/build/test_ddr_want_y_hblank_thrash $(ROOT)/build/test_ddr_bank_mailbox_phys $(ROOT)/build/test_ddr_scanout_multiframe $(ROOT)/build/test_sdram_memtest_sim $(ROOT)/build/test_sdram_mailbox $(ROOT)/build/test_annexb_count $(ROOT)/build/test_sps_parse $(ROOT)/build/test_slice_hdr $(ROOT)/build/test_cavlc_dc $(ROOT)/build/test_idct_quant $(ROOT)/build/test_p3_host_recon_vectors $(ROOT)/build/test_p3_idct_reference_model $(ROOT)/build/test_p3_inter_pred_vectors $(ROOT)/build/extract_h264_golden
 	$(ROOT)/build/test_cadence
 	$(ROOT)/build/test_avclock
 	$(ROOT)/build/test_mraudio_status
@@ -61,6 +61,7 @@ unit-unlocked: unit-rollcall preflight $(ROOT)/build/test_cadence $(ROOT)/build/
 	$(ROOT)/build/test_playback_overlay
 	$(ROOT)/build/test_overlay_source_stroke_hist
 	$(ROOT)/build/test_overlay_layout_fit
+	$(ROOT)/build/test_overlay_png_golden
 	$(ROOT)/build/test_mister_video_mode
 	$(ROOT)/build/test_chrome_plane_paint
 	$(ROOT)/build/test_overlay_post_upscale
@@ -468,6 +469,12 @@ $(ROOT)/build/dump_overlay_png: $(ROOT)/tools/dump_overlay_png.cpp \
 	$(ROOT)/host/libmisterplex/playback_overlay.hpp \
 	$(ROOT)/host/libmisterplex/idle_screen.hpp
 	$(CXX) $(CXXFLAGS) -o $@ $(ROOT)/tools/dump_overlay_png.cpp -lz
+
+$(ROOT)/build/test_overlay_png_golden: $(ROOT)/tests/unit/test_overlay_png_golden.cpp \
+	$(ROOT)/host/libmisterplex/playback_overlay.hpp \
+	$(ROOT)/host/libmisterplex/idle_screen.hpp \
+	$(ROOT)/host/libmisterplex/ddr_frame_layout.hpp
+	$(CXX) $(CXXFLAGS) -o $@ $(ROOT)/tests/unit/test_overlay_png_golden.cpp
 
 $(ROOT)/build/test_overlay_source_stroke_hist: $(ROOT)/tests/unit/test_overlay_source_stroke_hist.cpp \
 		$(ROOT)/host/libmisterplex/playback_overlay.hpp

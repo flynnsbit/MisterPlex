@@ -1,14 +1,17 @@
-// Host-only overlay self-check: render PlaybackOverlay (+ optional idle chevron)
-// at bank 624x480 to a PNG. No device. Parent reviews layout without grabber.
+// Host-only overlay self-check using the SAME paint APIs as misterplexd:
+//   paintIdle:      plex480pDdrFrameGeometry → renderIdleRgb24 → overlay_.renderRgb24
+//   pause overlay:  same geometry → fill dark → overlay_.renderRgb24
+//                   (daemon uses renderYuv420p; draw path is shared paint())
+// Not a reimplementation of glyphs — includes playback_overlay.hpp + idle_screen.hpp.
 //
 // Usage:
 //   make "$PWD/build/dump_overlay_png"
-//   ./build/dump_overlay_png out.png
-//   ./build/dump_overlay_png out.png --state paused --title 'Big Buck Bunny' \
-//       --pos-ms 30016 --dur-ms 30016 --idle
+//   ./build/dump_overlay_png OUT.png --scenario idle|paused|paused_long|stopped
 //   echo "true rc=$?"
-#include "libmisterplex/playback_overlay.hpp"
+#include "libmisterplex/ddr_frame_layout.hpp"
 #include "libmisterplex/idle_screen.hpp"
+#include "libmisterplex/mister_video_mode.hpp"
+#include "libmisterplex/playback_overlay.hpp"
 
 #include <cstdint>
 #include <cstdlib>
@@ -23,7 +26,6 @@ static void die(const char* m) {
     std::exit(2);
 }
 
-// Minimal RGB8 PNG writer (IHDR/IDAT/IEND).
 static bool writePngRgb8(const char* path, const uint8_t* rgb, int w, int h) {
     if (!path || !rgb || w <= 0 || h <= 0)
         return false;
@@ -32,10 +34,6 @@ static bool writePngRgb8(const char* path, const uint8_t* rgb, int w, int h) {
         return false;
     const uint8_t sig[8] = {137, 80, 78, 71, 13, 10, 26, 10};
     std::fwrite(sig, 1, 8, f);
-
-    auto crc32b = [](const uint8_t* p, size_t n) -> uint32_t {
-        return crc32(0L, p, static_cast<uInt>(n));
-    };
     auto be32 = [](uint32_t v, uint8_t o[4]) {
         o[0] = static_cast<uint8_t>((v >> 24) & 0xff);
         o[1] = static_cast<uint8_t>((v >> 16) & 0xff);
@@ -53,21 +51,17 @@ static bool writePngRgb8(const char* path, const uint8_t* rgb, int w, int h) {
         std::memcpy(forcrc.data(), type, 4);
         if (n)
             std::memcpy(forcrc.data() + 4, data, n);
-        be32(crc32b(forcrc.data(), forcrc.size()), crcbuf);
+        const uint32_t c = crc32(0L, forcrc.data(), static_cast<uInt>(forcrc.size()));
+        be32(c, crcbuf);
         std::fwrite(crcbuf, 1, 4, f);
     };
-
     uint8_t ihdr[13];
     be32(static_cast<uint32_t>(w), ihdr + 0);
     be32(static_cast<uint32_t>(h), ihdr + 4);
-    ihdr[8] = 8;  // bit depth
-    ihdr[9] = 2;  // RGB
-    ihdr[10] = 0;
-    ihdr[11] = 0;
-    ihdr[12] = 0;
+    ihdr[8] = 8;
+    ihdr[9] = 2;
+    ihdr[10] = ihdr[11] = ihdr[12] = 0;
     chunk("IHDR", ihdr, 13);
-
-    // filter0 + RGB rows, zlib compress
     std::vector<uint8_t> raw(static_cast<size_t>(h) * (1 + static_cast<size_t>(w) * 3));
     for (int y = 0; y < h; ++y) {
         raw[static_cast<size_t>(y) * (1 + static_cast<size_t>(w) * 3)] = 0;
@@ -87,100 +81,133 @@ static bool writePngRgb8(const char* path, const uint8_t* rgb, int w, int h) {
     return true;
 }
 
-static misterplex::PlaybackOverlayState parseState(const char* s) {
-    if (!s)
-        return misterplex::PlaybackOverlayState::Stopped;
-    if (!std::strcmp(s, "paused") || !std::strcmp(s, "PAUSED"))
-        return misterplex::PlaybackOverlayState::Paused;
-    if (!std::strcmp(s, "playing") || !std::strcmp(s, "PLAYING"))
-        return misterplex::PlaybackOverlayState::Playing;
-    return misterplex::PlaybackOverlayState::Stopped;
+// Mirror media_player.cpp overlayOutputGeomTag provenance labels (not HDMI measure).
+static std::string outputGeomTag() {
+    misterplex::MisterVideoMode mode;
+    if (const char* p = std::getenv("MISTERPLEX_MISTER_INI")) {
+        if (p[0])
+            mode = misterplex::loadMisterVideoModeFromIni(p);
+    } else {
+        mode = misterplex::loadMisterVideoMode();
+    }
+    constexpr const char* kAuth = " authoring=624x480";
+    if (!mode.ok)
+        return std::string(" output=DEFAULT_ASSUMED mode=? source=none") + kAuth;
+    const std::string src = mode.source.empty() ? std::string("ini") : mode.source;
+    return std::string(" output=") + std::to_string(mode.width) + "x" +
+           std::to_string(mode.height) + " mode=" +
+           (mode.index >= 0 ? std::to_string(mode.index) : std::string("custom")) +
+           " source=" + src + kAuth;
+}
+
+enum class Scenario { Idle, Stopped, Paused, PausedLong };
+
+static Scenario parseScenario(const char* s) {
+    if (!s || !std::strcmp(s, "idle"))
+        return Scenario::Idle;
+    if (!std::strcmp(s, "stopped"))
+        return Scenario::Stopped;
+    if (!std::strcmp(s, "paused"))
+        return Scenario::Paused;
+    if (!std::strcmp(s, "paused_long"))
+        return Scenario::PausedLong;
+    die("scenario must be idle|stopped|paused|paused_long");
+    return Scenario::Idle;
 }
 
 int main(int argc, char** argv) {
     const char* out = "overlay_selfcheck.png";
-    const char* title = "MISTERPLEX";
-    const char* stateS = "stopped";
-    int64_t pos = 0, dur = 0;
-    int w = 624, h = 480;
-    bool idle = false;
-    bool longTitle = false;
-
+    Scenario sc = Scenario::Idle;
     for (int i = 1; i < argc; ++i) {
         if (!std::strcmp(argv[i], "--help")) {
-            std::printf("dump_overlay_png OUT.png [--idle] [--state stopped|paused|playing]\n"
-                        "  [--title STR] [--long-title] [--pos-ms N] [--dur-ms N]\n"
-                        "  [--w N] [--h N]\n");
+            std::printf("dump_overlay_png OUT.png --scenario idle|stopped|paused|paused_long\n");
             return 0;
         }
-        if (argv[i][0] != '-') {
-            out = argv[i];
+        if (!std::strcmp(argv[i], "--scenario")) {
+            if (i + 1 >= argc)
+                die("--scenario needs arg");
+            sc = parseScenario(argv[++i]);
             continue;
         }
-        auto need = [&](const char* flag) -> const char* {
-            if (i + 1 >= argc)
-                die(flag);
-            return argv[++i];
-        };
-        if (!std::strcmp(argv[i], "--title"))
-            title = need("--title");
-        else if (!std::strcmp(argv[i], "--state"))
-            stateS = need("--state");
-        else if (!std::strcmp(argv[i], "--pos-ms"))
-            pos = std::atoll(need("--pos-ms"));
-        else if (!std::strcmp(argv[i], "--dur-ms"))
-            dur = std::atoll(need("--dur-ms"));
-        else if (!std::strcmp(argv[i], "--w"))
-            w = std::atoi(need("--w"));
-        else if (!std::strcmp(argv[i], "--h"))
-            h = std::atoi(need("--h"));
-        else if (!std::strcmp(argv[i], "--idle"))
-            idle = true;
-        else if (!std::strcmp(argv[i], "--long-title"))
-            longTitle = true;
+        if (argv[i][0] != '-')
+            out = argv[i];
         else
             die("unknown flag");
     }
-    if (longTitle)
-        title = "MisterPlex The Long Title That Must Ellipsize";
 
-    if (w <= 0 || h <= 0 || (w & 1) || (h & 1))
-        die("w/h must be positive even");
+    // Exact daemon geometry source (paintIdle / publishPausedOverlayFrame).
+    const auto g = misterplex::plex480pDdrFrameGeometry();
+    const int cw = g.coded_width.get();
+    const int ch = g.coded_height.get();
+    if (cw != 624 || ch != 480)
+        die("unexpected plex480pDdrFrameGeometry (expect 624x480)");
 
-    std::vector<uint8_t> rgb(static_cast<size_t>(w) * static_cast<size_t>(h) * 3u, 0);
-    if (idle) {
-        misterplex::renderIdleRgb24(rgb.data(), w, h, misterplex::IdleMode::Logo, 0);
-    } else {
-        // studio-ish dark field
-        for (size_t i = 0; i < rgb.size(); i += 3) {
-            rgb[i] = 16;
-            rgb[i + 1] = 16;
-            rgb[i + 2] = 20;
-        }
-    }
+    std::vector<uint8_t> rgb(static_cast<size_t>(cw) * static_cast<size_t>(ch) * 3u, 0);
+
+    // IDLE_SCREEN=logo product default → IdleMode::Logo
+    misterplex::renderIdleRgb24(rgb.data(), cw, ch, misterplex::IdleMode::Logo, 0);
 
     misterplex::PlaybackOverlay ov;
-    ov.setTitle(title);
-    ov.showAt(parseState(stateS), pos, dur, /*now*/ 0);
-    if (!ov.renderRgb24At(rgb.data(), w, h, 0)) {
-        // still write canvas (idle alone)
-        std::fprintf(stderr, "dump_overlay_png: renderRgb24At returned false (empty dirty?)\n");
+    const char* title = "MISTERPLEX";
+    misterplex::PlaybackOverlayState st = misterplex::PlaybackOverlayState::Stopped;
+    int64_t pos = 0, dur = 0;
+    int chrome = 0;
+    switch (sc) {
+    case Scenario::Idle:
+        // logo only — no transport chrome (chrome=0 in idle log when !visible)
+        break;
+    case Scenario::Stopped:
+        st = misterplex::PlaybackOverlayState::Stopped;
+        title = "MISTERPLEX";
+        chrome = 1;
+        break;
+    case Scenario::Paused:
+        st = misterplex::PlaybackOverlayState::Paused;
+        title = "MISTERPLEX";
+        pos = 30016;
+        dur = 30016;
+        chrome = 1;
+        break;
+    case Scenario::PausedLong:
+        st = misterplex::PlaybackOverlayState::Paused;
+        title = "MisterPlex The Long Title That Must Ellipsize";
+        pos = 52000; // wall overrun — elapsed must clamp to 0:30
+        dur = 30016;
+        chrome = 1;
+        break;
     }
 
-    auto lm = misterplex::PlaybackOverlay::layoutMetrics(w, h);
-    auto lay = misterplex::PlaybackOverlay::computePanelLayout(
-        w, h, false, parseState(stateS), title, pos, dur);
-    const char* font = lm.fontId == misterplex::OverlayFontId::Hires24x32 ? "24x32"
-                       : lm.fontId == misterplex::OverlayFontId::Large12x16 ? "12x16"
-                                                                           : "8x13";
-    std::printf("canvas=%dx%d font=%s cell=%dx%d scale=%d\n", w, h, font, lm.textCellW(),
-                lm.textCellH(), lm.bodyScale);
-    std::printf("title_fitted='%s' secondLine=%d titleMaxW=%d panel=%dx%d@%d,%d\n",
-                lay.titleFitted, (int)lay.titleSecondLine, lay.titleMaxW, lay.panel.w,
-                lay.panel.h, lay.panel.x, lay.panel.y);
-    std::printf("elapsed='%s' total='%s'\n", lay.elapsed, lay.total);
+    if (chrome) {
+        ov.setTitle(title);
+        ov.showAt(st, pos, dur, /*nowMs*/ 0);
+        // Same entry as paintIdle composite (daemon pause uses YUV twin of this paint).
+        if (!ov.renderRgb24(rgb.data(), cw, ch))
+            std::fprintf(stderr, "dump_overlay_png: renderRgb24 false (dirty empty?)\n");
+    }
 
-    if (!writePngRgb8(out, rgb.data(), w, h))
+    const auto lm = misterplex::PlaybackOverlay::layoutMetrics(cw, ch);
+    const char* font = lm.fontId == misterplex::OverlayFontId::Hires24x32   ? "24x32"
+                       : lm.fontId == misterplex::OverlayFontId::Large12x16 ? "12x16"
+                                                                            : "8x13";
+    // Daemon-shaped log line (authoring bank + output provenance).
+    std::printf("media: dump overlay canvas=%dx%d font=%s cell=%dx%d scale=%d chrome=%d%s plane=0\n",
+                cw, ch, font, lm.textCellW(), lm.textCellH(), lm.bodyScale, chrome,
+                outputGeomTag().c_str());
+
+    if (chrome) {
+        const auto lay = misterplex::PlaybackOverlay::computePanelLayout(cw, ch, false, st, title,
+                                                                         pos, dur);
+        std::printf("title_fitted='%s' secondLine=%d elapsed='%s' total='%s'\n", lay.titleFitted,
+                    (int)lay.titleSecondLine, lay.elapsed, lay.total);
+    }
+
+    // PREREG tip Hires24x32@2
+    if (lm.fontId != misterplex::OverlayFontId::Hires24x32 || lm.bodyScale != 2) {
+        std::fprintf(stderr, "dump_overlay_png: unexpected font (want 24x32@2)\n");
+        return 1;
+    }
+
+    if (!writePngRgb8(out, rgb.data(), cw, ch))
         die("png write failed");
     std::printf("wrote %s\n", out);
     return 0;

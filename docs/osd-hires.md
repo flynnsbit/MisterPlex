@@ -349,3 +349,18 @@ Bank chrome is scanout-stretched with the frame (`present_core` full-DE stretch 
 True “match MiSTer native res” requires **post-ascal plane** (or a larger synthesis store + full DDR path retarget) = **new RBF**.
 
 ARM-only residual: sharper glyphs inside 624×480 (done: 24×32@2) and layout/ellipsis fixes — still stretched to HDMI.
+
+## Host overlay PNG self-check (no device)
+
+```bash
+make "$PWD/build/dump_overlay_png"
+./build/dump_overlay_png out.png --scenario idle|stopped|paused|paused_long
+echo "true rc=$?"
+make "$PWD/build/test_overlay_png_golden" && ./build/test_overlay_png_golden
+echo "true rc=$?"
+```
+
+Uses `plex480pDdrFrameGeometry` + `renderIdleRgb24` + `PlaybackOverlay::renderRgb24`
+(same APIs as `paintIdle`). `output=DEFAULT_ASSUMED` when no ini resolved — set
+`MISTERPLEX_MISTER_INI=/path/to/MiSTer.ini` for `source=ini:mister`. Authoring stays
+624×480 either way.
