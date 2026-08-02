@@ -3389,6 +3389,26 @@ std::string MediaPlayer::telemetryLine() const {
         if (ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r')
             ch = '_';
     }
+    // E2E media-health fields. clock=av-lock remains a product literal (ERROR 20) —
+    // suite treats value as NON_DISCRIMINATING; av_drift_ms + supply_ratio are real.
+    const int64_t driftMs = avDriftMs_.load();
+    const double aSec = static_cast<double>(audioBytes_.load()) / (48000.0 * 4.0);
+    const int fpsN = fpsNum_ > 0 ? fpsNum_ : 24;
+    const int fpsD = fpsNum_ > 0 && fpsDen_ > 0 ? fpsDen_ : 1;
+    // Cumulative present ratio vs content fps × position — coarse supply proxy when
+    // supply_bucket window is unavailable over HTTP.
+    const double tSec = static_cast<double>(positionMs_.load()) / 1000.0;
+    const double expected =
+        tSec > 0.5 ? (tSec * static_cast<double>(fpsN) / static_cast<double>(fpsD)) : 0.0;
+    const double supplyRatio =
+        expected > 1.0 ? std::min(2.0, static_cast<double>(presents) / expected) : -1.0;
+    char srBuf[32];
+    if (supplyRatio >= 0.0)
+        std::snprintf(srBuf, sizeof(srBuf), "%.3f", supplyRatio);
+    else
+        std::snprintf(srBuf, sizeof(srBuf), "NA");
+    char aBuf[32];
+    std::snprintf(aBuf, sizeof(aBuf), "%.3f", aSec);
     return std::string("ok=1") +
            " pid=" + std::to_string(static_cast<long>(::getpid())) +
            " exe=" + exePath +
@@ -3406,7 +3426,12 @@ std::string MediaPlayer::telemetryLine() const {
            " playing=" + (playing_.load() ? "1" : "0") +
            " paused=" + (paused_.load() ? "1" : "0") +
            " time_ms=" + std::to_string(positionMs_.load()) +
-           " decode=" + std::to_string(outW_) + "x" + std::to_string(outH_);
+           " decode=" + std::to_string(outW_) + "x" + std::to_string(outH_) +
+           " av_drift_ms=" + std::to_string(driftMs) +
+           " clock=av-lock" +
+           " audio_s=" + aBuf +
+           " supply_ratio=" + srBuf +
+           " fps=" + std::to_string(fpsN) + "/" + std::to_string(fpsD);
 }
 
 } // namespace misterplex

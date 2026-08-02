@@ -90,6 +90,8 @@ async function main() {
   log(`  P4 EXIT_UNVERIFIED=${EXIT_UNVERIFIED} EXIT_SKIP=${EXIT_SKIP} never equal EXIT_PASS=0`);
   log('  P5 client_truth selfCheck: play/pause/seek/rate reds + ratingKey INVALID on swap');
   log('      rate_starved(0.467)→FAIL rate_healthy(0.993)→PASS pause/seek excluded');
+  log('  P8 media_health selfCheck: collapsed supply_ratio=0.72 FAIL; healthy PASS;');
+  log('      drift+133 FAIL; pid swap INVALID; unprobed FAIL (never soft-green)');
 
   let proofsOk = 0;
   let proofsFail = 0;
@@ -104,7 +106,21 @@ async function main() {
     );
     proofsOk++;
   } catch (e) {
-    log(`PROOF P5 FAIL client_truth selfCheck: ${e.message}`);
+    log(`PROOF P5 FAIL client_truth selfCheck: ${e.message || e}`);
+    proofsFail++;
+  }
+
+  // ── P8: media_health pure red-before-green (parent collapse fixtures) ──
+  try {
+    const mh = require('./media_health');
+    mh.selfCheck();
+    log(
+      'PROOF P8 OK media_health selfCheck (collapsed supply_ratio FAIL + healthy PASS + ' +
+        'drift FAIL + pid INVALID + unprobed FAIL)'
+    );
+    proofsOk++;
+  } catch (e) {
+    log(`PROOF P8 FAIL media_health selfCheck: ${e.message || e}`);
     proofsFail++;
   }
 

@@ -1,67 +1,63 @@
-# w-plextv — rate + 480p + companion invariant
+# w-plextv — N-loop media health (S6)
 
 ## ≤10-line status
-1. **CLIENT_RATE**: media/wall ratio gate — catches starved play that still advances.
-2. Tolerance **derived**: min=0.75 from parent starved audio_s/wall_s=0.467 vs healthy=0.993; max=1.35.
-3. Pause/seek steps excluded from rate pairs (red-proofed in selfCheck).
-4. **480p arms**: fullbleed rk=27 (healthy), bbb352 rk=9 (collapse case).
-5. **COMPANION_INVARIANT**: primary discovery host must be PLEX_BASE; names offending server.
-6. TEARDOWN_OK our-controller only preserved.
-7. Agent-run E2E ≠ evidence — parent runs commands below.
-8. Pure proofs: `node client_truth.js` + `prove_red_paths.js` → expect true rc=0.
+1. **N=10 default**; one fail fails suite (no average). `TRANSITIONS_SUMMARY majority_pass_is_pass=0`.
+2. **MEDIA_HEALTH** per cycle: `supply_ratio>=0.90`, `|av_drift_ms|<=75`, `clock=` present.
+3. Tolerance **derived**: collapsed 0.72/+133 vs healthy 0.99/−30 (parent-measured).
+4. **PID change → INVALID** cycle (respawn re-zeroes drops/presents).
+5. `clock=av-lock` is still a **literal** (ERROR 20) — scored as field presence, NON_DISCRIMINATING value.
+6. COMPANION_INVARIANT + TEARDOWN_OK our-only preserved.
+7. Live device today: `/player/telemetry` **404** — need redeploy of enriched telemetry **or** `E2E_DAEMON_LOG=`.
+8. Agent-run ≠ evidence. Pure selfCheck `true rc=0` below.
 
-## Parent paste — pure red/green (no device)
+## Parent paste — pure proofs (no device)
 
 ```bash
 cd /home/flynnsbit/Projects/MisterPlex/.worktrees/w-plextv-e2e-form
+node tests/hw/e2e/media_health.js; echo "true rc=$?"
 node tests/hw/e2e/client_truth.js; echo "true rc=$?"
 node tests/hw/e2e/prove_red_paths.js; echo "true rc=$?"
 ```
 
-## Parent paste — 480p matrix (primary this session)
+## Parent paste — N=10 media health E2E (you run)
 
 ```bash
 cd /home/flynnsbit/Projects/MisterPlex/.worktrees/w-plextv-e2e-form
+
+# Optional if telemetry still 404 on device — parent-fed log snip (ERROR 12: clear before cast):
+# export E2E_DAEMON_LOG=$PWD/build/e2e-n-media-health/daemon_snip.txt
+
 PLEX_BASE=http://192.168.1.24:32400 \
 PLEX_TOKEN_FILE=/tmp/local_tok.txt \
 MISTER_HOST=192.168.1.183 \
 E2E_TRANSITION_CYCLES=10 \
-./tests/hw/e2e/run_480p_matrix.sh; echo "true rc=$?"
+./tests/hw/e2e/run_n_media_health.sh; echo "true rc=$?"
 ```
 
-Single arms:
-```bash
-# healthy FullBleed
-./tests/hw/e2e/run_480p_client_truth.sh fullbleed; echo "true rc=$?"
-# collapse-case BBB 624x352 (may FAIL CLIENT_RATE if starvation reproduces)
-./tests/hw/e2e/run_480p_client_truth.sh bbb352; echo "true rc=$?"
-```
-
-## Parent paste — generic client-truth (default tier=480p)
-
-```bash
-PLEX_BASE=http://192.168.1.24:32400 PLEX_TOKEN_FILE=/tmp/local_tok.txt \
-MISTER_HOST=192.168.1.183 E2E_TRANSITION_CYCLES=10 \
-./tests/hw/e2e/run_client_truth.sh; echo "true rc=$?"
-```
+Pins: `E2E_CLIENT_RATING_KEY=27` fullbleed · `9` collapse case · `30` long BBB.
 
 ## PRE_REGISTER
 **PASS**
-- `CLIENT_RATE_OK ratio≈0.99` continuous play
-- `COMPANION_INVARIANT=PASS` primary=PMS-under-test
-- `MISTERPLEX_IN_PICKER hitExact` ghost rejected
-- transitions N + `TEARDOWN_OK controller=closed`
+- `TRANSITION_CYCLE_OK` × N and `TRANSITIONS_OK cycles=N/N`
+- `MEDIA_HEALTH_OK` each cycle `supply_ratio≥0.90` `|drift|≤75`
+- `DAEMON_PID_OK` same pid entire run
+- `COMPANION_INVARIANT=PASS` · `TEARDOWN_OK controller=closed`
+- `CAST_PICKER_E2E_RESULT=PASS`
 
 **FAIL**
-- `client_realtime_rate_low` ratio&lt;0.75 (starved class; advance-only would pass)
-- `wrong_companion_server` names offending friendlyName/sort
-- UI stuck / seek miss / cast missing
+- any cycle `media_supply_ratio_low` / `media_drift_unbounded` / UI transition fail
+- `media_health_unprobed` without telemetry or E2E_DAEMON_LOG
+- wrong primary companion
 
-**INVALID** ratingKey swap mid-window  
-**NEVER_SCORE** daemon av-lock/drops/smoothness
+**INVALID**
+- `daemon_pid_changed` mid-suite — never score counters across respawn
 
-## Artifacts
-`build/e2e-480p-matrix-fullbleed/` · `build/e2e-480p-matrix-bbb352/` · `build/e2e-client-truth/`
+**NEVER**
+- average 9/10 as pass · kill user Plex tab · score av-lock *value* as health
+
+## Daemon note (parent deploy)
+Worktree `telemetryLine()` now emits `av_drift_ms` `supply_ratio` `clock` `audio_s` `pid`.
+Live binary currently 404s `/player/telemetry` — redeploy misterplexd from this tip OR feed log.
 
 ## SHA
 ```bash

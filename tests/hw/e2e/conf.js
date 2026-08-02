@@ -515,6 +515,18 @@ function loadConfig() {
       const v = parseInt(process.env.E2E_REALTIME_MIN_WALL_MS || '3500', 10);
       return Number.isFinite(v) && v >= 1500 ? v : 3500;
     })(),
+    // Per-cycle media health (supply_ratio + drift + pid). Catches UI-ok / path-collapsed.
+    // Default ON when E2E_REQUIRE_MEDIA_HEALTH=1 (run_n_media_health.sh). Off under pure
+    // clientTruth unless explicitly enabled — unprobed is FAIL not soft-pass.
+    requireMediaHealth: truthy(process.env.E2E_REQUIRE_MEDIA_HEALTH, false),
+    mediaMinSupplyRatio: (() => {
+      const v = parseFloat(process.env.E2E_MEDIA_MIN_SUPPLY_RATIO || '0.90');
+      return Number.isFinite(v) && v > 0 && v <= 1 ? v : 0.9;
+    })(),
+    mediaMaxAbsDriftMs: (() => {
+      const v = parseInt(process.env.E2E_MEDIA_MAX_ABS_DRIFT_MS || '75', 10);
+      return Number.isFinite(v) && v > 0 ? v : 75;
+    })(),
     // Glass integrity (w-instr counter). Parent provides capture dir; suite never grabs.
     // E2E_REQUIRE_GLASS=1 → missing/unscored glass is FAIL (not timeline-only PASS).
     requireGlass: truthy(process.env.E2E_REQUIRE_GLASS, false),

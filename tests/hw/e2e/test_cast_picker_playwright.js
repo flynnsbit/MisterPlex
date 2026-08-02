@@ -72,6 +72,12 @@ const {
   gateRatingKey,
   formatClientResult,
 } = require('./client_truth');
+const {
+  captureMediaHealth,
+  assertMediaHealth,
+  assertPidStable,
+  formatMediaHealth,
+} = require('./media_health');
 const { createTimelineSeries } = require('./timeline_series');
 const {
   analyzeCounterGaps,
@@ -3092,26 +3098,35 @@ async function runOneTransitionCycle(page, itemTitle, detailsUrl, cycle, total, 
     });
   }
 
-  // Ledger end — observational under clientTruth (daemon not health; ERROR 20).
+  // Ledger end — observational under clientTruth unless media-health/pid gates on.
   await sleep(1100);
   const ledgerEnd = await captureLedger(cfg);
   log(
     `LEDGER_END cycle=${cycle}/${total} ${formatSnap(ledgerEnd)} ` +
-      `role=${cfg.clientTruth && !cfg.requireDaemonEffects ? 'observational' : 'scoring'}`
+      `role=${cfg.clientTruth && !cfg.requireDaemonEffects && !cfg.requireMediaHealth ? 'observational' : 'scoring'}`
   );
   {
     const lr = assertLedgerWindow(ledgerStart, ledgerEnd, `${ctag}_continuous`);
     if (lr.softSkip) {
       log(`LEDGER_SOFT_SKIP cycle=${cycle}/${total} ${lr.detail}`);
     } else if (!lr.ok) {
-      daemonEffectOrObserve(
-        cycle,
-        total,
-        'ledger',
-        lr.reason || 'ledger_fail',
-        lr.detail || '',
-        false
-      );
+      // PID/session change always hard-fails when media health or pid required.
+      const hardIdentity =
+        cfg.requireMediaHealth ||
+        cfg.requireDaemonEffects ||
+        /pid_changed|session_epoch_changed|session_changed/i.test(lr.reason || '');
+      if (hardIdentity) {
+        cycleFail(cycle, total, 'ledger', lr.reason || 'ledger_fail', lr.detail || '');
+      } else {
+        daemonEffectOrObserve(
+          cycle,
+          total,
+          'ledger',
+          lr.reason || 'ledger_fail',
+          lr.detail || '',
+          false
+        );
+      }
     } else {
       log(
         `LEDGER_OK cycle=${cycle}/${total} residual=${lr.residual != null ? lr.residual : 'NA'} ` +
@@ -3119,6 +3134,62 @@ async function runOneTransitionCycle(page, itemTitle, detailsUrl, cycle, total, 
           `pid=${lr.pid != null ? lr.pid : ledgerEnd.pid}` +
           (lr.plxd_frames_void ? ' plxd_frames_void=1' : '') +
           (lr.note ? ` note=${lr.note}` : '')
+      );
+    }
+  }
+  // ── MEDIA HEALTH per cycle (supply_ratio + drift; catches UI-ok collapse) ──
+  if (cfg.requireMediaHealth) {
+    const mh = await captureMediaHealth(cfg);
+    // Prefer pid from media health or ledger.
+    const samplePid =
+      (mh && mh.pid > 0 && mh.pid) ||
+      (ledgerEnd && ledgerEnd.pid > 0 && ledgerEnd.pid) ||
+      -1;
+    const pidGate = assertPidStable(baselineDaemonPid, samplePid, `${ctag}_media_pid`);
+    log(
+      `MEDIA_PID cycle=${cycle}/${total} ${formatMediaHealth(pidGate)} ` +
+        `baseline=${baselineDaemonPid > 0 ? baselineDaemonPid : 'NA'} sample=${samplePid}`
+    );
+    if (!pidGate.ok) {
+      cycleFail(
+        cycle,
+        total,
+        'media_pid',
+        pidGate.reason || 'daemon_pid_changed',
+        `${pidGate.invalid ? 'INVALID ' : ''}${pidGate.detail || ''}`
+      );
+    }
+    if (baselineDaemonPid < 0 && samplePid > 0) {
+      baselineDaemonPid = samplePid;
+      if (ledgerEnd && ledgerEnd.exe) baselineDaemonExe = ledgerEnd.exe;
+      log(`DAEMON_PID_BASELINE pid=${baselineDaemonPid} tag=${ctag}_media_health`);
+    }
+    const healthA = assertMediaHealth(mh, `${ctag}_media_health`, {
+      minSupplyRatio: cfg.mediaMinSupplyRatio,
+      maxAbsDriftMs: cfg.mediaMaxAbsDriftMs,
+      requireClock: true,
+      requireRatio: true,
+      requireDrift: true,
+    });
+    log(
+      `MEDIA_HEALTH cycle=${cycle}/${total} ${formatMediaHealth(healthA)} ` +
+        `capture=${(mh && mh.capture) || 'NA'} src=${(mh && mh.source) || 'NA'} ` +
+        `ratio_src=${(mh && mh.supply_ratio_src) || 'NA'} value_kind=measured`
+    );
+    if (!healthA.ok) {
+      cycleFail(
+        cycle,
+        total,
+        'media_health',
+        healthA.reason || 'media_health_fail',
+        healthA.detail || ''
+      );
+    } else {
+      log(
+        `MEDIA_HEALTH_OK cycle=${cycle}/${total} supply_ratio=${
+          healthA.supply_ratio != null ? Number(healthA.supply_ratio).toFixed(3) : 'NA'
+        } av_drift_ms=${healthA.av_drift_ms} clock=${healthA.clock || 'NA'} ` +
+          `notes=${healthA.notes || ''}`
       );
     }
   }
@@ -3194,14 +3265,25 @@ async function runOneTransitionCycle(page, itemTitle, detailsUrl, cycle, total, 
     if (pr.softSkip) {
       log(`DAEMON_PID_SOFT_SKIP cycle=${cycle}/${total} ${pr.detail}`);
     } else if (!pr.ok) {
-      daemonEffectOrObserve(
-        cycle,
-        total,
-        'pid',
-        pr.reason || 'daemon_pid_changed',
-        pr.detail || '',
-        false
-      );
+      // Respawn INVALIDATES the cycle — never observational when media health / pid required.
+      if (cfg.requireMediaHealth || cfg.requireDaemonEffects || /pid_changed/i.test(pr.reason || '')) {
+        cycleFail(
+          cycle,
+          total,
+          'pid',
+          pr.reason || 'daemon_pid_changed',
+          `INVALID ${pr.detail || ''}`
+        );
+      } else {
+        daemonEffectOrObserve(
+          cycle,
+          total,
+          'pid',
+          pr.reason || 'daemon_pid_changed',
+          pr.detail || '',
+          false
+        );
+      }
       // Client-side: re-check ratingKey — swap after respawn is INVALID.
       if (cfg.clientTruth && expectedRk) {
         await clientRkGateCycle(expectedRk, `${ctag}_pid_change_rk`, cycle, total);
@@ -3734,14 +3816,32 @@ async function runTransitionScenarios(
     `TRANSITIONS=on cycles=${total} continue_on_fail=${continueOnFail ? 1 : 0} ` +
       `content=${cfg.contentMode} clientTruth=${cfg.clientTruth ? 1 : 0} ` +
       `daemonEffects=${cfg.requireDaemonEffects ? 1 : 0} ` +
+      `mediaHealth=${cfg.requireMediaHealth ? 1 : 0} ` +
+      `min_supply_ratio=${cfg.mediaMinSupplyRatio} max_abs_drift_ms=${cfg.mediaMaxAbsDriftMs} ` +
       `ratingKey=${expectedRk || 'NA'} hdmi=${cfg.hdmiMotion ? 1 : 0} ` +
       `hdmi_every=${cfg.hdmiEveryCycle ? 1 : 0} hdmi_assert=${cfg.hdmiAssertMode} ` +
       `run_id=${runCorr.runId}`
   );
   log(
-    'CLIENT_TRUTH_RULES: score Plex Web UI clock + PMS /status/sessions ratingKey only. ' +
-      'NEVER score misterplexd av-lock/drops/smoothness (ERROR 20). ' +
-      'rk_before==rk_after each phase; swap → INVALID. rc=77 never PASS.'
+    'N_LOOP_CONTRACT: planned N cycles; ONE failure fails the suite (no majority average). ' +
+      `continue_on_fail=${continueOnFail ? 1 : 0} still aggregates RED if fail>0.`
+  );
+  if (cfg.requireMediaHealth) {
+    log(
+      'MEDIA_HEALTH_RULES: per-cycle supply_ratio>=' +
+        cfg.mediaMinSupplyRatio +
+        ` |av_drift_ms|<=${cfg.mediaMaxAbsDriftMs} clock field present. ` +
+        'Derivation: collapsed supply_ratio=0.72 drift=+133 vs healthy 0.99/−30. ' +
+        'clock=av-lock is NON_DISCRIMINATING literal (ERROR 20) — field required, value not health. ' +
+        'pid change → INVALID cycle (counters re-zero). Unprobed → FAIL not skip.'
+    );
+  }
+  log(
+    'CLIENT_TRUTH_RULES: score Plex Web UI clock + PMS /status/sessions ratingKey. ' +
+      'rk_before==rk_after each phase; swap → INVALID. rc=77 never PASS. ' +
+      (cfg.requireMediaHealth
+        ? 'Media health is ADDITIONAL hard gate (UI-ok + path-collapsed is FAIL).'
+        : 'Daemon av-lock/drops not scored unless E2E_REQUIRE_MEDIA_HEALTH=1.')
   );
   log(
     'CYCLE_ISOLATION=on each cycle force-stops then plays from beginning ' +
