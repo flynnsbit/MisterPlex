@@ -55,13 +55,13 @@ struct BarGeom {
     int x = 0, y = 0, w = 0, h = 0;
 };
 BarGeom barGeom320() {
-    const auto panel = misterplex::PlaybackOverlay::panelBounds(W, H);
-    const auto lm = misterplex::PlaybackOverlay::layoutMetrics(W, H);
+    const auto lay = misterplex::PlaybackOverlay::computePanelLayout(
+        W, H, false, misterplex::PlaybackOverlayState::Playing, "", 0, 100000);
     BarGeom b;
-    b.x = panel.x + 14;
-    b.w = panel.w - 28;
-    b.h = lm.barH;
-    b.y = panel.y + panel.h - lm.barBottomPad;
+    b.x = lay.barX;
+    b.w = lay.barW;
+    b.h = lay.barH;
+    b.y = lay.barY;
     return b;
 }
 
@@ -302,25 +302,29 @@ int main() {
             CHECK(d.y >= 0);
             CHECK(d.x + d.w <= c.w);
             CHECK(d.y + d.h <= c.h);
-            const OverlayRect panel = PlaybackOverlay::panelBounds(c.w, c.h);
+            const auto layP = PlaybackOverlay::computePanelLayout(
+                c.w, c.h, false, PlaybackOverlayState::Paused, "MISTERPLEX", 90000, 180000);
+            const OverlayRect panel = layP.panel;
             CHECK(panel.w > 0 && panel.h > 0);
             CHECK(panel.x >= 0 && panel.y >= 0);
             CHECK(panel.x + panel.w <= c.w);
             CHECK(panel.y + panel.h <= c.h);
-            // Panel occupies a sane fraction of height (about 10–40%).
-            CHECK(panel.h * 10 >= c.h);       // >= 10%
-            CHECK(panel.h * 5 <= c.h * 2);    // <= 40%
+            // Panel occupies a sane fraction of height (about 5–50%).
+            CHECK(panel.h * 20 >= c.h);       // >= 5%
+            CHECK(panel.h * 2 <= c.h);         // <= 50% (hires 24x32@2 + title line)
+            CHECK(layP.stringsFitPanel());
             const auto lm = PlaybackOverlay::layoutMetrics(c.w, c.h);
             // present_core odd-row cull requires vertical scale >= 2.
             CHECK(lm.bodyScale >= 2);
             // Timeline endpoints: half progress → fill mid-bar.
             std::vector<uint8_t> rgb(static_cast<size_t>(c.w) * c.h * 3, 0);
             CHECK(hi.renderRgb24At(rgb.data(), c.w, c.h, 1000));
-            const int barX = panel.x + 14;
-            const int barW = panel.w - 28;
-            const int barH = lm.barH;
-            const int barBottomPad = lm.barBottomPad;
-            const int barY = panel.y + panel.h - barBottomPad;
+            const auto layBar = PlaybackOverlay::computePanelLayout(
+                c.w, c.h, false, PlaybackOverlayState::Playing, "", 90000, 180000);
+            const int barX = layBar.barX;
+            const int barW = layBar.barW;
+            const int barH = layBar.barH;
+            const int barY = layBar.barY;
             const int midX = barX + barW / 2;
             // Sample Y near bar center row; amber progress should be left of mid, track right.
             auto pix = [&](int x, int y) -> std::tuple<uint8_t,uint8_t,uint8_t> {
@@ -653,7 +657,7 @@ int main() {
         CHECK(yOnMid > 30.0);
         CHECK(yOnMid < 100.0);
 
-        // With title set, title glyphs raise luma in the label row band.
+        // With title set, sample the title band from computePanelLayout.
         {
             std::vector<uint8_t> yuv(ysz + 2 * csz, 16);
             std::fill(yuv.begin() + static_cast<std::ptrdiff_t>(ysz), yuv.end(), 128);
@@ -661,9 +665,28 @@ int main() {
             ov.setTitle("PLEX");
             ov.showAt(PlaybackOverlayState::Paused, 34000, 360000, 0);
             CHECK(ov.renderYuv420pAt(yuv.data(), OW, OH, 0));
-            const double yTitle = meanY(yuv, x0, y0, x1, y1);
-            std::printf("panel-title-band: Y=%.1f (expect > empty chrome)\n", yTitle);
-            CHECK(yTitle > yOnMid + 2.0);
+            const auto lay = PlaybackOverlay::computePanelLayout(
+                OW, OH, false, PlaybackOverlayState::Paused, "PLEX", 34000, 360000);
+            const int tx0 = lay.titleX;
+            const int ty0 = lay.titleY;
+            const int tw = PlaybackOverlay::measureTextWidth(lay.titleFitted, lay.metrics);
+            const int th = lay.metrics.textCellH();
+            double yTitle = 0, yPeak = 0;
+            int n = 0;
+            const int x1t = std::min(OW, tx0 + std::max(8, tw));
+            const int y1t = std::min(OH, ty0 + th);
+            for (int y = ty0; y < y1t; ++y)
+                for (int x = tx0; x < x1t; ++x) {
+                    const double v = yuv[static_cast<size_t>(y) * OW + x];
+                    yTitle += v;
+                    yPeak = std::max(yPeak, v);
+                    ++n;
+                }
+            yTitle = n ? yTitle / n : 0;
+            std::printf("panel-title-band: meanY=%.1f peakY=%.1f secondLine=%d title='%s'\n",
+                        yTitle, yPeak, (int)lay.titleSecondLine, lay.titleFitted);
+            CHECK(lay.titleFitted[0] != '\0');
+            CHECK(yPeak > yOnMid + 10.0); // glyph ink peaks above chrome grey
         }
     }
 

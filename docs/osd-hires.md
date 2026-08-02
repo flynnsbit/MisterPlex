@@ -296,3 +296,17 @@ output resolution**, not streaming content — cannot be met by ARM paint into F
 
 Recommendation: **(c)** when an exclusive slot exists; ship black-rect ARM fix now;
 do not market (a) as the resolution fix.
+
+## Host layout at cell=48×64 (post-23b2f8df regression)
+
+Silicon on `23b2f8df` showed font win but truncated title **`PAUSEDM`**: same-line
+`"PAUSED"+"MISTERPLEX"` needs 882 px at advance=52 while panelW=594.
+
+**Fix:** `PlaybackOverlay::computePanelLayout` places the title on a **second line**
+when it cannot share the state row, grows the panel upward, and right-aligns
+duration from measured `textWidth`. Gate: `tests/unit/test_overlay_layout_fit.cpp`
+(RED on old same-line clip, GREEN on fit).
+
+PREREG @624×480 Hires24x32@2: tw(PAUSED)=310, tw(MISTERPLEX)=518, panelW=594,
+secondLine=1, tw(2:14)=206. Parent glass `0:30` is **not** host total-string overflow
+(unknown without device `durationMs`).

@@ -157,7 +157,10 @@ struct OverlayLayoutMetrics {
 private:
     static void finishVertical(OverlayLayoutMetrics& m, int h) {
         const int textH = m.glyphH * m.bodyScale;
-        const int need = 8 + textH + 4 + textH + 12 + std::max(4, 6);
+        const int rowGap = std::max(4, m.bodyScale * 2);
+        // Base: label row + time row + bar. Title second-line grows panel in
+        // computePanelLayout (do not always tax 3×textH).
+        const int need = 6 + textH + rowGap + textH + 10 + std::max(4, m.barH > 0 ? m.barH : 6);
         if (m.panelH <= 0)
             m.panelH = std::max(need, std::min(h / 3, std::max(64, h / 4)));
         if (m.panelH < need)
@@ -169,7 +172,7 @@ private:
         m.labelTop = 6;
         m.labelTop &= ~1;
         m.iconCy = m.labelTop + textH / 2;
-        m.timeTop = m.labelTop + textH + 4;
+        m.timeTop = m.labelTop + textH + rowGap;
         m.timeTop &= ~1;
         m.skipBoxH = std::max(28, textH + 12);
         m.noticeBoxH = m.skipBoxH;
@@ -347,6 +350,175 @@ public:
             ph = h - py;
         return OverlayRect{m.margin, py, w - m.margin * 2, ph};
     }
+
+    // Public width (same formula as private textWidth) for host layout gates.
+    static int measureTextWidth(const char* text, const OverlayLayoutMetrics& m) {
+        if (!text)
+            return 0;
+        const int n = static_cast<int>(std::strlen(text));
+        if (n <= 0)
+            return 0;
+        const int sc = std::max(kOverlayMinScale, m.bodyScale);
+        return n * m.glyphAdvance * sc - sc;
+    }
+
+    struct PanelLayout {
+        OverlayRect panel{};
+        OverlayLayoutMetrics metrics{};
+        int iconX = 0;
+        int iconCy = 0;
+        int iconSc = 2;
+        int stateX = 0;
+        int labelY = 0;
+        int stateW = 0;
+        int titleX = 0;
+        int titleY = 0;
+        int titleMaxW = 0;
+        bool titleSecondLine = false;
+        char stateText[16]{};
+        char titleFitted[64]{};
+        char elapsed[32]{};
+        char total[32]{};
+        int timeY = 0;
+        int elapsedX = 0;
+        int elapsedW = 0;
+        int totalX = 0;
+        int totalW = 0;
+        int timeGap = 0; // totalX - (elapsedX+elapsedW); negative ⇒ overlap
+        int barX = 0, barY = 0, barW = 0, barH = 0;
+        bool ok = false;
+
+        bool stringsFitPanel() const {
+            if (!ok || panel.empty())
+                return false;
+            const int pr = panel.x + panel.w;
+            const int pb = panel.y + panel.h;
+            const int th = metrics.textCellH();
+            auto okBox = [&](int x, int y, int tw) {
+                if (tw <= 0)
+                    return true;
+                return x >= panel.x && y >= panel.y && (x + tw) <= pr && (y + th) <= pb;
+            };
+            if (!okBox(stateX, labelY, stateW))
+                return false;
+            if (titleFitted[0] != '\0') {
+                const int tw = measureTextWidth(titleFitted, metrics);
+                if (!okBox(titleX, titleY, tw))
+                    return false;
+            }
+            if (!okBox(elapsedX, timeY, elapsedW))
+                return false;
+            if (!okBox(totalX, timeY, totalW))
+                return false;
+            return timeGap >= 0;
+        }
+    };
+
+    // Derive all string boxes from W×H + metrics + content.
+    static PanelLayout computePanelLayout(int w, int h, bool outputRaster,
+                                          PlaybackOverlayState state, const char* title,
+                                          int64_t positionMs, int64_t durationMs) {
+        PanelLayout L;
+        L.metrics = OverlayLayoutMetrics::resolve(w, h, outputRaster);
+        L.panel = panelBounds(w, h, outputRaster);
+        if (L.panel.empty() || w <= 0 || h <= 0)
+            return L;
+        const OverlayLayoutMetrics& m = L.metrics;
+        const int sc = std::max(kOverlayMinScale, m.bodyScale);
+        const int textH = m.textCellH();
+        const int pad = std::max(14, 7 * sc); // sc=2 → 14 (legacy bank inset)
+        const int rowGap = std::max(4, sc * 2);
+
+        L.iconSc = std::max(kOverlayMinScale, m.iconScale);
+        L.iconX = L.panel.x + pad;
+        L.labelY = (L.panel.y + m.labelTop) & ~1;
+        L.iconCy = (L.panel.y + m.iconCy) & ~1;
+
+        const char* label = stateLabel(state);
+        std::snprintf(L.stateText, sizeof(L.stateText), "%s", label);
+        L.stateX = L.iconX + 14 + 8 * L.iconSc;
+        L.stateW = measureTextWidth(L.stateText, m);
+
+        const int rightPad = pad;
+        const int titleMaxR = L.panel.x + L.panel.w - rightPad;
+        const int sameLineGap = std::max(10, 6 * sc);
+        const int sameLineX = L.stateX + L.stateW + sameLineGap;
+        const int sameLineMaxW = titleMaxR - sameLineX;
+
+        L.titleFitted[0] = '\0';
+        L.titleSecondLine = false;
+        L.titleX = sameLineX;
+        L.titleY = L.labelY;
+        L.titleMaxW = sameLineMaxW;
+
+        if (title && title[0] != '\0') {
+            // Prefer same line only when the FULL title fits (never silent 1-char clip).
+            char trial[64];
+            fitText(title, m, sameLineMaxW, trial, sizeof(trial));
+            // fitText uppercases — compare via fitted full on huge budget
+            char fullU[64];
+            fitText(title, m, 100000, fullU, sizeof(fullU));
+            const bool sameIsFull =
+                sameLineMaxW > 0 && trial[0] && fullU[0] && std::strcmp(trial, fullU) == 0;
+
+            if (sameIsFull) {
+                std::snprintf(L.titleFitted, sizeof(L.titleFitted), "%s", trial);
+                L.titleSecondLine = false;
+                L.titleX = sameLineX;
+                L.titleY = L.labelY;
+                L.titleMaxW = sameLineMaxW;
+            } else {
+                // Second line: grow panel upward by one text band, full-width title.
+                L.titleSecondLine = true;
+                const int extra = textH + rowGap;
+                L.panel.y = std::max(0, L.panel.y - extra);
+                L.panel.y &= ~1;
+                L.panel.h += extra;
+                if (L.panel.y + L.panel.h > h)
+                    L.panel.h = h - L.panel.y;
+                // Re-pin label to top of (grown) panel with same labelTop inset.
+                L.labelY = (L.panel.y + m.labelTop) & ~1;
+                L.iconCy = (L.panel.y + m.iconCy) & ~1;
+                L.titleX = L.panel.x + pad;
+                L.titleY = (L.labelY + textH + rowGap) & ~1;
+                L.titleMaxW = L.panel.w - 2 * pad;
+                fitText(title, m, L.titleMaxW, L.titleFitted, sizeof(L.titleFitted));
+                // time row sits below title band
+                L.timeY = (L.titleY + textH + rowGap) & ~1;
+            }
+        }
+
+        formatTime(positionMs, L.elapsed);
+        formatTime(durationMs, L.total);
+        L.elapsedW = measureTextWidth(L.elapsed, m);
+        L.totalW = measureTextWidth(L.total, m);
+        if (!L.titleSecondLine)
+            L.timeY = (L.panel.y + m.timeTop) & ~1;
+        L.elapsedX = L.panel.x + pad;
+        L.totalX = L.panel.x + L.panel.w - rightPad - L.totalW;
+        L.timeGap = L.totalX - (L.elapsedX + L.elapsedW);
+        // If times would overlap, pull total left edge to elapsed+gap (may clip panel —
+        // gate fails; prefer shrinking by moving total to min gap).
+        const int minGap = std::max(8, 4 * sc);
+        if (L.timeGap < minGap) {
+            L.totalX = L.elapsedX + L.elapsedW + minGap;
+            L.timeGap = L.totalX - (L.elapsedX + L.elapsedW);
+            // If total now past right edge, clamp and report via stringsFitPanel.
+            const int maxTotalX = L.panel.x + L.panel.w - rightPad - L.totalW;
+            if (L.totalX > maxTotalX)
+                L.totalX = maxTotalX;
+            L.timeGap = L.totalX - (L.elapsedX + L.elapsedW);
+        }
+
+        L.barH = m.barH;
+        L.barX = L.panel.x + pad;
+        L.barW = L.panel.w - 2 * pad;
+        L.barY = L.panel.y + L.panel.h - m.barBottomPad;
+        L.ok = true;
+        return L;
+    }
+
+
 
 private:
     struct Color {
@@ -544,8 +716,12 @@ private:
             return {};
         const OverlayLayoutMetrics m = OverlayLayoutMetrics::resolve(w, h, outputRaster);
         OverlayRect out{};
-        if (alphaFor(s, nowMs) > 0)
-            out = panelBounds(w, h, outputRaster);
+        if (alphaFor(s, nowMs) > 0) {
+            // Include title second-line growth (panelBounds alone is base height).
+            const PanelLayout lay = computePanelLayout(w, h, outputRaster, s.state, s.titleText,
+                                                       s.positionMs, s.durationMs);
+            out = lay.panel;
+        }
         if (skipAlphaFor(s, nowMs) > 0) {
             const int sw = std::min(w - 16, std::max(116, 40 * m.titleScale + 76));
             OverlayRect skip{(w - sw) / 2, std::max(8, h / 2 - m.skipBoxH - 2), sw, m.skipBoxH};
@@ -1004,6 +1180,7 @@ private:
         }
     }
 
+
     static void formatTime(int64_t ms, char (&out)[32]) {
         int64_t sec = ms / 1000;
         const int64_t hh = sec / 3600;
@@ -1060,54 +1237,31 @@ private:
         constexpr Color muted{130, 138, 150};
         constexpr Color amber{255, 178, 32};
 
-        if (alpha > 0) {
-            const OverlayRect p = panelBounds(w, h, outputRaster);
+                if (alpha > 0) {
+            const PanelLayout lay =
+                computePanelLayout(w, h, outputRaster, s.state, s.titleText, s.positionMs,
+                                   s.durationMs);
+            const OverlayRect p = lay.panel;
             // Opaque dark-grey chrome (not pure black@170). Translucent black
-            // left the empty center (right of state label, above scrubber) as a
-            // solid black rectangle over video — silicon Test B residual hole
-            // at ~x247-397 y360-404 on 624x480. Opaque panelBg makes that band
-            // intentional chrome grey independent of underlying luma.
+            // left the empty center as a solid black hole over video — silicon
+            // Test B. Opaque panelBg keeps empty band intentional chrome grey.
             constexpr Color panelBg{42, 46, 54};
             fillRect(t, p.x, p.y, p.w, p.h, panelBg, alpha);
             strokeRect(t, p.x, p.y, p.w, p.h, panelEdge, (200 * alpha) / 255);
 
-            const int iconXFinal = p.x + 18;
-            // Even y-origins: present_core drops odd store rows.
-            const int labelY = (p.y + m.labelTop) & ~1;
-            const int iconCy = (p.y + m.iconCy) & ~1;
-            const int iconSc = std::max(kOverlayMinScale, m.iconScale);
-            drawIcon(t, s.state, iconXFinal, iconCy, alpha, iconSc);
-            const int stateX = iconXFinal + 14 + 8 * iconSc;
-            const char* label = stateLabel(s.state);
-            drawText(t, stateX, labelY, label, m, white, alpha);
+            drawIcon(t, s.state, lay.iconX, lay.iconCy, alpha, lay.iconSc);
+            drawText(t, lay.stateX, lay.labelY, lay.stateText, m, white, alpha);
 
-            // Title fills the former empty black band (right of state label).
-            if (s.titleText[0] != '\0') {
-                const int gap = std::max(10, 6 * m.bodyScale);
-                const int titleX = stateX + textWidth(label, m) + gap;
-                const int titleMaxR = p.x + p.w - 14;
-                if (titleX + m.glyphAdvance * m.bodyScale < titleMaxR) {
-                    char fitted[64];
-                    fitText(s.titleText, m, titleMaxR - titleX, fitted, sizeof(fitted));
-                    if (fitted[0] != '\0')
-                        drawText(t, titleX, labelY, fitted, m, muted, alpha);
-                }
-            }
+            if (lay.titleFitted[0] != '\0')
+                drawText(t, lay.titleX, lay.titleY, lay.titleFitted, m, muted, alpha);
 
-            char elapsed[32];
-            char total[32];
-            formatTime(s.positionMs, elapsed);
-            formatTime(s.durationMs, total);
-            const int timeY = (p.y + m.timeTop) & ~1;
-            drawText(t, p.x + 14, timeY, elapsed, m, white, alpha);
-            const int totalW = textWidth(total, m);
-            drawText(t, p.x + p.w - 14 - totalW, timeY, total, m, muted, alpha);
+            drawText(t, lay.elapsedX, lay.timeY, lay.elapsed, m, white, alpha);
+            drawText(t, lay.totalX, lay.timeY, lay.total, m, muted, alpha);
 
-            const int barX = p.x + 14;
-            const int barH = m.barH;
-            const int barBottomPad = m.barBottomPad;
-            const int barY = p.y + p.h - barBottomPad;
-            const int barW = p.w - 28;
+            const int barX = lay.barX;
+            const int barH = lay.barH;
+            const int barY = lay.barY;
+            const int barW = lay.barW;
             fillRect(t, barX, barY, barW, barH, Color{58, 63, 72}, (220 * alpha) / 255);
             int fillW = 0;
             if (s.durationMs > 0)
@@ -1122,6 +1276,7 @@ private:
             const int knobH = std::max(10, barH + 4);
             fillRect(t, knobX - knobW / 2, barY - (knobH - barH) / 2, knobW, knobH, white, alpha);
         }
+
 
         const int skipAlpha = skipAlphaFor(s, nowMs);
         if (skipAlpha > 0) {

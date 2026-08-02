@@ -140,33 +140,37 @@ int main() {
     CHECK(lm.textCellH() == 64);
 
     // Full STOPPED overlay (label + times + bar + strokes) — product path.
+    // Use non-zero duration so time row has white ink (not empty 0/0).
     std::vector<uint8_t> yuv;
     fillStudio(yuv, BW, BH);
     misterplex::PlaybackOverlay ov;
-    ov.showAt(misterplex::PlaybackOverlayState::Stopped, 0, 0, /*now*/ 0);
     ov.setTitle("MISTERPLEX");
-    // Title like device log "MISTERPLEX"
-    // (API may not expose title setter publicly — use default empty if none)
+    ov.showAt(misterplex::PlaybackOverlayState::Stopped, 134000, 360000, /*now*/ 0);
     CHECK(ov.renderYuv420pAt(yuv.data(), BW, BH, 0));
 
-    const auto panel = misterplex::PlaybackOverlay::panelBounds(BW, BH);
-    std::printf("PANEL x=%d y=%d w=%d h=%d\n", panel.x, panel.y, panel.w, panel.h);
+    // MUST use computePanelLayout (title second-line grows panel above panelBounds).
+    const auto lay = misterplex::PlaybackOverlay::computePanelLayout(
+        BW, BH, false, misterplex::PlaybackOverlayState::Stopped, "MISTERPLEX", 134000, 360000);
+    const auto panel = lay.panel;
+    std::printf("PANEL x=%d y=%d w=%d h=%d secondLine=%d labelY=%d timeY=%d\n", panel.x, panel.y,
+                panel.w, panel.h, (int)lay.titleSecondLine, lay.labelY, lay.timeY);
     CHECK(!panel.empty());
+    CHECK(lay.titleSecondLine); // MISTERPLEX cannot share STOPPED row at cell 48x64
 
     const uint8_t* Y = yuv.data();
     auto histAll = horizRunHist(Y, BW, BH, panel.x, panel.y, panel.x + panel.w, panel.y + panel.h,
                                 kInk);
     printHist("SOURCE_PANEL_HRUN", histAll);
 
-    // Label row only (top text band inside panel).
-    const int labelY0 = panel.y + lm.labelTop;
+    // Label row = state word (white). Title is muted (~Y137) — thr 140 excludes it.
+    const int labelY0 = lay.labelY;
     const int labelY1 = labelY0 + lm.textCellH();
     auto histLabel =
         horizRunHist(Y, BW, BH, panel.x, labelY0, panel.x + panel.w, labelY1, kInk);
     printHist("SOURCE_LABEL_HRUN", histLabel);
 
-    // Time row
-    const int timeY0 = panel.y + lm.timeTop;
+    // Time row (white elapsed)
+    const int timeY0 = lay.timeY;
     const int timeY1 = timeY0 + lm.textCellH();
     auto histTime = horizRunHist(Y, BW, BH, panel.x, timeY0, panel.x + panel.w, timeY1, kInk);
     printHist("SOURCE_TIME_HRUN", histTime);

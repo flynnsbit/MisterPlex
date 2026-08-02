@@ -91,6 +91,7 @@ int main() {
         // studio black-ish
         std::memset(yuv.data(), 16, static_cast<size_t>(w) * static_cast<size_t>(h));
         std::memset(yuv.data() + static_cast<size_t>(w) * h, 128, yuv.size() - static_cast<size_t>(w) * h);
+        ov.setTitle("MISTERPLEX");
         CHECK(ov.renderYuv420p(yuv.data(), w, h));
         return yuv;
     };
@@ -103,9 +104,13 @@ int main() {
     CHECK(p624.w > p320.w);
     CHECK(p624.h >= p320.h);
 
-    // Sample a mid-panel row for white-ish glyph ink (Y high).
-    const int row320 = p320.y + p320.h / 3;
-    const int row624 = p624.y + p624.h / 3;
+    // Sample label row (glyph ink), not empty mid-panel grey.
+    const auto l320 = PlaybackOverlay::computePanelLayout(
+        320, 240, false, PlaybackOverlayState::Paused, "MISTERPLEX", 34000, 360000);
+    const auto l624 = PlaybackOverlay::computePanelLayout(
+        624, 480, false, PlaybackOverlayState::Paused, "MISTERPLEX", 34000, 360000);
+    const int row320 = l320.labelY + l320.metrics.textCellH() / 2;
+    const int row624 = l624.labelY + l624.metrics.textCellH() / 2;
     const int run320 = firstInkRun(y320.data(), 320, row320, p320.x, p320.x + p320.w, 180);
     const int run624 = firstInkRun(y624.data(), 624, row624, p624.x, p624.x + p624.w, 180);
     CHECK(run320 > 0);
