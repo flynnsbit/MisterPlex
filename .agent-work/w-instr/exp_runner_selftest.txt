@@ -1,0 +1,32 @@
+SELF_TEST backup_ok md5 match OK
+SELF_TEST backup_missing ABORT-class OK
+SELF_TEST RESTORE_OK byte-exact OK
+BACKUP_OK md5=03437c6eedd616da674083984ecde160 bak=/home/flynnsbit/Projects/MisterPlex/.worktrees/w-instr-provenance/.agent-work/w-instr/exp_runner_st/exp_runner_st_2xt31n4m/bak_a
+ARM_START id=br=1200 token=09c46d07dc15
+ARM br=1200 INVALID reason=conf_write_not_landed key=WEAK_BITRATE want='1200' got='2000'
+RESTORE_OK md5=03437c6eedd616da674083984ecde160
+VERDICT=ARMS_INVALID rc=4 restore=RESTORE_OK
+SELF_TEST conf_noop → INVALID rc=4 reason="conf_write_not_landed key=WEAK_BITRATE want='1200' got='2000'" OK
+BACKUP_OK md5=03437c6eedd616da674083984ecde160 bak=/home/flynnsbit/Projects/MisterPlex/.worktrees/w-instr-provenance/.agent-work/w-instr/exp_runner_st/exp_runner_st_2xt31n4m/bak_b
+ARM_START id=br=800 token=808f0fc789cd
+ARM br=800 INVALID reason=empty_window NO-DATA (absence is not a measurement)
+RESTORE_OK md5=03437c6eedd616da674083984ecde160
+VERDICT=ARMS_INVALID rc=4 restore=RESTORE_OK
+SELF_TEST empty_window → INVALID rc=4 reason='empty_window NO-DATA (absence is not a measurement)' OK
+BACKUP_OK md5=0851014b9298bc2a2671765a5436b93d bak=/home/flynnsbit/Projects/MisterPlex/.worktrees/w-instr-provenance/.agent-work/w-instr/exp_runner_st/exp_runner_st_2xt31n4m/bak_c
+ARM_START id=br=397 token=50cde463a159
+ARM br=397 INVALID reason=multi_session maxVideoBitrate values=['2000', '397'] (marker window spans >1 session — attribution destroyed)
+RESTORE_OK md5=0851014b9298bc2a2671765a5436b93d
+VERDICT=ARMS_INVALID rc=4 restore=RESTORE_OK
+SELF_TEST multi_session → INVALID reason="multi_session maxVideoBitrate values=['2000', '397'] (marker window spans >1 session — attribution destroyed)" OK
+BACKUP_OK md5=0851014b9298bc2a2671765a5436b93d bak=/home/flynnsbit/Projects/MisterPlex/.worktrees/w-instr-provenance/.agent-work/w-instr/exp_runner_st/exp_runner_st_2xt31n4m/bak_d
+ARM_START id=br=1500 token=74e48602b17a
+ARM br=1500 VALID measurements={"maxVideoBitrate": "1500", "measured": "320x240", "videoResolution": "320x240", "frames": 200, "drops": 1, "vfps": "23.9"}
+RESTORE_OK md5=0851014b9298bc2a2671765a5436b93d
+VERDICT=EXPERIMENT_OK rc=0 restore=RESTORE_OK
+SELF_TEST happy_path VALID rc=0 meas={'maxVideoBitrate': '1500', 'measured': '320x240', 'videoResolution': '320x240', 'frames': 200, 'drops': 1, 'vfps': '23.9'} OK
+ABORT_USER_STATE rc=80 reason=cp_failed err=[Errno 17] File exists: '/home/flynnsbit/Projects/MisterPlex/.worktrees/w-instr-provenance/.agent-work/w-instr/exp_runner_st/exp_runner_st_2xt31n4m/block'
+ACTION: do NOT continue; conf was NOT modified; fix backup path/permissions before any experiment
+SELF_TEST backup_fail ABORT rc=80 conf_untouched OK
+SELF_TEST_OK ondevice_experiment_runner
+true rc_self=0

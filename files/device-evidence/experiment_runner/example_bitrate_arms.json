@@ -1,0 +1,20 @@
+{
+  "experiment_id": "bitrate_sweep_7",
+  "conf_path": "/media/fat/misterplex_v2/misterplex.conf",
+  "log_path": "/media/fat/misterplex_v2/misterplexd.log",
+  "bak_path": "/media/fat/misterplex_v2/misterplex.conf.exp_runner.bak",
+  "settle_s": 32,
+  "require_single_session": true,
+  "restart_cmd": "killall misterplexd 2>/dev/null || true; sleep 1",
+  "wait_ready_cmd": "for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do curl -fsS --connect-timeout 1 --max-time 2 http://127.0.0.1:3005/resources >/dev/null 2>&1 && exit 0; sleep 0.5; done; exit 1",
+  "cast_cmd": "curl -fsS --connect-timeout 5 --max-time 30 'http://127.0.0.1:3005/player/playback/playMedia?key=REPLACE_PLEX_KEY&offset=0&commandID=exp-{arm_id}' >/dev/null",
+  "arms": [
+    {"id": "br=400",  "conf_set": {"WEAK_BITRATE": "400"},  "expect_wire": {"maxVideoBitrate": "400"}},
+    {"id": "br=800",  "conf_set": {"WEAK_BITRATE": "800"},  "expect_wire": {"maxVideoBitrate": "800"}},
+    {"id": "br=1200", "conf_set": {"WEAK_BITRATE": "1200"}, "expect_wire": {"maxVideoBitrate": "1200"}},
+    {"id": "br=1600", "conf_set": {"WEAK_BITRATE": "1600"}, "expect_wire": {"maxVideoBitrate": "1600"}},
+    {"id": "br=2000", "conf_set": {"WEAK_BITRATE": "2000"}, "expect_wire": {"maxVideoBitrate": "2000"}},
+    {"id": "br=2500", "conf_set": {"WEAK_BITRATE": "2500"}, "expect_wire": {"maxVideoBitrate": "2500"}},
+    {"id": "br=3000", "conf_set": {"WEAK_BITRATE": "3000"}, "expect_wire": {"maxVideoBitrate": "3000"}}
+  ]
+}
