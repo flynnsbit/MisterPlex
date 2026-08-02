@@ -135,7 +135,7 @@ P_MIN_HOLDS = 15
 P_DARK_LUMA_MAX = 12.0  # mean luma; below → content may be noise-blind
 P_MIN_CHANGE_FRAC = 0.08  # if fewer than 8% pairs are "change", likely blind
 # Outlier definition relative to ideal hold
-# hold_outlier_min = ceil(ideal_hold) + 2  (e.g. ideal 1.25 → ceil 2 → outlier >= 4)
+# hold_outlier_min = ceil(ideal_hold) + 1  (first above healthy mass; 24@60 → 4)
 P_FRAC_GE_OUTLIER_FAIL = 0.05  # ≥5% of holds are outliers → FAIL
 P_OUTLIER_COUNT_FAIL = 3  # or ≥3 outlier holds in a short burst
 P_MAX_HOLD_FAIL_EXTRA = 3  # max_hold >= ceil(ideal)+this → FAIL (e.g. 1.25→5)
@@ -400,8 +400,16 @@ def pre_register(
 ) -> dict[str, Any]:
     ideal = capture_fps / source_fps if source_fps > 0 else float("nan")
     ceil_ideal = int(np.ceil(ideal - 1e-9)) if ideal == ideal else 2
-    outlier_min = ceil_ideal + 2  # e.g. 2+2=4 at 30/24
-    max_fail = ceil_ideal + P_MAX_HOLD_FAIL_EXTRA  # e.g. 5
+    floor_ideal = int(np.floor(ideal + 1e-9)) if ideal == ideal else 1
+    if floor_ideal < 1:
+        floor_ideal = 1
+    # Outlier = first hold STRICTLY above healthy mass {floor(ideal), ceil(ideal)}.
+    # Was ceil+2, which let hold=4 slip through at 24@60 (healthy {2,3}) — a pure
+    # hold=4 mass (~15 fps delivered) would wrongly PASS. True-positive for ~13 fps
+    # delivered (mean hold~4.6) requires outlier_min = ceil(ideal)+1 (=4 at 60/24).
+    # Do NOT retune outlier_min to measured delivered rate — that normalises the defect.
+    outlier_min = ceil_ideal + 1  # 24@30 → 3; 24@60 → 4
+    max_fail = ceil_ideal + P_MAX_HOLD_FAIL_EXTRA  # 24@30 → 5; 24@60 → 6
     auth = _is_auth_fps(source_fps_src) and _is_auth_fps(capture_fps_src)
     return {
         "PRE_REGISTER": True,
@@ -415,8 +423,12 @@ def pre_register(
             "derived_cap_over_src" if auth else "UNSCORED_fps_not_authoritative"
         ),
         "healthy_hold_mass_expected": (
-            f"{{{ceil_ideal - 1},{ceil_ideal}}}" if ceil_ideal >= 2 else "{1}"
+            f"{{{floor_ideal},{ceil_ideal}}}" if floor_ideal != ceil_ideal
+            else f"{{{ceil_ideal}}}"
         ),
+        "healthy_hold_min": floor_ideal,
+        "healthy_hold_max": ceil_ideal,
+        "healthy_hold_bounds_src": "derived_floor_ceil_ideal",
         "healthy_note": (
             "24@30 → holds 1–2; 24@60 → holds 2–3 (3:2). "
             "Outliers = abnormally long holds (repeat/judder) or missing changes."
@@ -520,6 +532,20 @@ def score_holds(
     if not blind and not insuff and holds:
         # Measured fail / pass
         fail = False
+        # Mass outside healthy hold set (even if below outlier_min) — e.g. all hold=4
+        # at 24@60 is defect vs healthy {2,3} though outlier_min=4 counts them.
+        hmin = int(pr.get("healthy_hold_min") or max(1, outlier_min - 2))
+        hmax = int(pr.get("healthy_hold_max") or (outlier_min - 1))
+        outside = [h for h in holds if h < hmin or h > hmax]
+        n_out_healthy = len(outside)
+        frac_out_healthy = (n_out_healthy / len(holds)) if holds else None
+        if frac_out_healthy is not None and frac_out_healthy >= float(pr["frac_ge_outlier_fail"]):
+            fail = True
+            reasons.append(
+                f"frac_outside_healthy={frac_out_healthy:.4f} [measured] >= "
+                f"{pr['frac_ge_outlier_fail']} [DEFAULT_ASSUMED] "
+                f"(healthy_holds={{{hmin},{hmax}}} hist_outside_n={n_out_healthy})"
+            )
         if n_out >= int(pr["outlier_count_fail"]):
             fail = True
             reasons.append(
@@ -581,12 +607,115 @@ def score_holds(
         "outlier_holds": outliers[:40],
         "frac_ge_outlier": None if frac_out is None else round(frac_out, 4),
         "frac_ge_outlier_src": PROVENANCE_MEASURED,
+        "frac_outside_healthy": (
+            None if not holds else round(
+                sum(1 for h in holds if h < int(pr.get("healthy_hold_min") or 1)
+                    or h > int(pr.get("healthy_hold_max") or 99)) / len(holds),
+                4,
+            )
+        ),
+        "frac_outside_healthy_src": PROVENANCE_MEASURED,
+        "healthy_hold_min": pr.get("healthy_hold_min"),
+        "healthy_hold_max": pr.get("healthy_hold_max"),
         "noise": noise,
         "pre_register": pr,
         # mean is reported but MUST NOT be the verdict alone
         "mean_note": (
             "hold_mean is informational only; verdict uses hist tail "
             "(p95/p99/max/outlier_count). mean-only is forbidden."
+        ),
+    }
+
+
+
+def content_precheck(
+    frames: Sequence[str],
+    *,
+    warmup_skip: int = DEFAULT_WARMUP_SKIP,
+    threshold_override: Optional[float] = None,
+) -> dict[str, Any]:
+    """Cheap blindness / suitability check BEFORE full judder scoring.
+
+    Reports change_frac + mean_luma_med after warmup. Does not emit JUDDER_OK/FAIL.
+    rc: 0 SUITABLE | 77 BLIND/UNSUITABLE | 1 usage-level empty
+    """
+    lumas, means, names, load_meta = load_luma_series(frames, warmup_skip=warmup_skip)
+    if len(lumas) < 3:
+        return {
+            "precheck": True,
+            "suitable": False,
+            "verdict": "PRECHECK_BLIND",
+            "rc": RC_UNSCORED,
+            "reason": f"too_few_frames_after_warmup n={len(lumas)}",
+            "change_frac": None,
+            "mean_luma_med": None,
+            "load": load_meta,
+            "n_frames_scored": len(lumas),
+        }
+    deltas = pair_deltas(lumas)
+    noise = noise_floor_from_deltas(deltas)
+    if threshold_override is not None:
+        noise = dict(noise)
+        noise["threshold"] = float(threshold_override)
+        noise["threshold_src"] = PROVENANCE_CALLER
+    thr = float(noise["threshold"])
+    n_pairs = len(deltas)
+    n_changes = int(sum(1 for d in deltas if d["block_max_mad"] > thr))
+    change_frac = (n_changes / n_pairs) if n_pairs else 0.0
+    mean_luma_med = float(np.median(means)) if means else None
+    reasons = []
+    suitable = True
+    if n_pairs < P_MIN_PAIRS:
+        suitable = False
+        reasons.append(
+            f"insufficient_pairs={n_pairs} < {P_MIN_PAIRS} [DEFAULT_ASSUMED]"
+        )
+    if change_frac < P_MIN_CHANGE_FRAC:
+        suitable = False
+        reasons.append(
+            f"change_frac={change_frac:.4f} [measured] < "
+            f"{P_MIN_CHANGE_FRAC} [DEFAULT_ASSUMED] — blind / static / black fixture "
+            f"(ERROR 13 class; rk=6/rk=1 avsync blacks are unsuitable for judder)"
+        )
+    if (
+        mean_luma_med is not None
+        and mean_luma_med < P_DARK_LUMA_MAX
+        and change_frac < P_MIN_CHANGE_FRAC
+    ):
+        suitable = False
+        reasons.append(
+            f"dark_content mean_luma_med={mean_luma_med:.3f} [measured] < "
+            f"{P_DARK_LUMA_MAX} [DEFAULT_ASSUMED] with low change_frac"
+        )
+    return {
+        "precheck": True,
+        "suitable": suitable,
+        "verdict": "PRECHECK_SUITABLE" if suitable else "PRECHECK_BLIND",
+        "rc": RC_OK if suitable else RC_UNSCORED,
+        "reason": "; ".join(reasons) if reasons else "content_energy_ok_for_judder",
+        "n_pairs": n_pairs,
+        "n_pairs_src": PROVENANCE_MEASURED,
+        "n_changes": n_changes,
+        "n_changes_src": PROVENANCE_MEASURED,
+        "change_frac": round(change_frac, 4),
+        "change_frac_src": PROVENANCE_MEASURED,
+        "mean_luma_med": None if mean_luma_med is None else round(mean_luma_med, 4),
+        "mean_luma_med_src": PROVENANCE_MEASURED,
+        "threshold": thr,
+        "threshold_src": noise.get("threshold_src"),
+        "noise_p99": noise.get("noise_p99"),
+        "noise_src": noise.get("noise_src"),
+        "warmup_skip": warmup_skip,
+        "warmup_skip_src": (
+            PROVENANCE_CALLER if warmup_skip != DEFAULT_WARMUP_SKIP else PROVENANCE_DEFAULT
+        ),
+        "n_frames_scored": len(lumas),
+        "n_frames_scored_src": PROVENANCE_MEASURED,
+        "load": load_meta,
+        "frame_names_head": names[:6],
+        "note": (
+            "PRECHECK only — not a judder PASS/FAIL. rc=77 means fixture unsuitable; "
+            "rc=0 means worth full scoring. UNSCORED is never a pass."
         ),
     }
 
@@ -1024,6 +1153,71 @@ def _self_test() -> int:
         )
         assert (ifi_r.get("max") or 0) >= 6 * (1000.0 / 30.0) - 0.1, ifi_r
 
+        # --- 24@60 pre-register: ~13 fps delivered must be TRUE POSITIVE ---
+        pr60 = pre_register(
+            source_fps=24.0,
+            capture_fps=60.0,
+            source_fps_src=PROVENANCE_CALLER_MEASURED,
+            capture_fps_src=PROVENANCE_MEASURED,
+        )
+        assert pr60["hold_outlier_min"] == 4, pr60
+        assert pr60["healthy_hold_mass_expected"] in ("{2,3}", "{2, 3}"), pr60
+        print(
+            f"PREREG_24at60 ideal={pr60['ideal_hold_captures']} "
+            f"healthy={pr60['healthy_hold_mass_expected']} "
+            f"outlier_min={pr60['hold_outlier_min']} max_fail={pr60['max_hold_fail']}"
+        )
+        # Pure hold=4 mass (15 fps) must FAIL — was a blind spot when outlier_min=5
+        holds_15fps = [4] * 40
+        # score_holds is in-module
+        noise_z = {"threshold": 2.0, "threshold_src": PROVENANCE_DEFAULT}
+        rep_15 = score_holds(
+            holds_15fps,
+            pr=pr60,
+            noise=noise_z,
+            n_pairs=160,
+            n_changes=40,
+            mean_luma_med=40.0,
+            label="sim_15fps_hold4",
+        )
+        print(
+            f"SIM_15fps_hold4 verdict={rep_15['verdict']} rc={rep_15['rc']} "
+            f"outliers={rep_15['outlier_count']} frac_out_h={rep_15.get('frac_outside_healthy')}"
+        )
+        assert rep_15["rc"] == RC_FAIL, rep_15
+        # ~13 fps: mix hold 4 and 5
+        holds_13 = [4] * 20 + [5] * 20
+        rep_13 = score_holds(
+            holds_13,
+            pr=pr60,
+            noise=noise_z,
+            n_pairs=180,
+            n_changes=40,
+            mean_luma_med=40.0,
+            label="sim_13fps",
+        )
+        print(
+            f"SIM_13fps_hold45 verdict={rep_13['verdict']} rc={rep_13['rc']} "
+            f"outliers={rep_13['outlier_count']} max={rep_13['hold_max']}"
+        )
+        assert rep_13["rc"] == RC_FAIL, rep_13
+        # Healthy 24@60 {2,3}
+        holds_ok60 = [2, 3] * 30
+        rep_ok60 = score_holds(
+            holds_ok60,
+            pr=pr60,
+            noise=noise_z,
+            n_pairs=150,
+            n_changes=60,
+            mean_luma_med=40.0,
+            label="sim_24at60_healthy",
+        )
+        print(
+            f"SIM_24at60_OK verdict={rep_ok60['verdict']} rc={rep_ok60['rc']} "
+            f"outliers={rep_ok60['outlier_count']}"
+        )
+        assert rep_ok60["rc"] == RC_OK, rep_ok60
+
         # --- Floor role relabel ---
         rep_f = analyze_capture(
             wp,
@@ -1226,6 +1420,12 @@ def main(argv: list[str] | None = None) -> int:
         help="write host exact-cadence mp4 + static PNG + parent README",
     )
     ap.add_argument("--beat-only", action="store_true", help="print beat/quant model and exit 0")
+    ap.add_argument(
+        "--precheck-only",
+        action="store_true",
+        help="cheap content suitability (change_frac, mean_luma_med) then exit; "
+        "rc=0 suitable, rc=77 blind — not a judder verdict",
+    )
     args = ap.parse_args(argv)
 
     if args.self_test:
@@ -1270,6 +1470,33 @@ def main(argv: list[str] | None = None) -> int:
     if not frames:
         print("ERROR: no PNG frames", file=sys.stderr)
         return RC_UNSCORED
+
+    if args.precheck_only:
+        pc = content_precheck(
+            frames,
+            warmup_skip=int(args.warmup_skip),
+            threshold_override=args.threshold,
+        )
+        if args.json:
+            print(json.dumps(pc, indent=2, default=str))
+        else:
+            print(f"label={label or 'precheck'}")
+            print(
+                f"precheck suitable={pc.get('suitable')} "
+                f"verdict={pc.get('verdict')} rc={pc.get('rc')}"
+            )
+            print(
+                f"change_frac={_tag(pc.get('change_frac'), pc.get('change_frac_src'))} "
+                f"mean_luma_med={_tag(pc.get('mean_luma_med'), pc.get('mean_luma_med_src'))} "
+                f"pairs={_tag(pc.get('n_pairs'), pc.get('n_pairs_src'))} "
+                f"changes={_tag(pc.get('n_changes'), pc.get('n_changes_src'))} "
+                f"threshold={_tag(pc.get('threshold'), pc.get('threshold_src'))} "
+                f"frames_scored={_tag(pc.get('n_frames_scored'), pc.get('n_frames_scored_src'))} "
+                f"warmup_skip={_tag(pc.get('warmup_skip'), pc.get('warmup_skip_src'))}"
+            )
+            print(f"reason={pc.get('reason')}")
+            print(f"NOTE={pc.get('note')}")
+        return int(pc.get("rc", RC_UNSCORED))
 
     if args.source_fps is None:
         source_fps = DEFAULT_SOURCE_FPS

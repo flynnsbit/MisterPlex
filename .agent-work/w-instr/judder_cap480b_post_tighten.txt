@@ -1,0 +1,15 @@
+label=cap480b_post_tighten
+PRE_REGISTER ideal_hold=1.25 [derived_cap_over_src] healthy_mass={1,2} outlier_min=3 [DEFAULT_ASSUMED] frac_ge_outlier_fail=0.05 [DEFAULT_ASSUMED] outlier_count_fail=3 [DEFAULT_ASSUMED] max_hold_fail=5 [DEFAULT_ASSUMED] src_fps=24 [caller_supplied_measured] cap_fps=30 [measured] fps_authoritative=True
+PRE_REGISTER_PASS_if=fps_authoritative AND n_holds>=15 AND outlier_count < 3 AND frac_ge_outlier < 0.05 AND max_hold < 5
+PRE_REGISTER_FAIL_if=outlier_count>=3 OR frac_ge_outlier>=0.05 OR max_hold>=5
+noise_floor p50=0 [measured] p99=0 [measured] threshold=2 [derived_hold_pair_noise] rule=max(2.0[DEFAULT_ASSUMED], 6.0[DEFAULT_ASSUMED]*noise_p99[measured_hold_pairs]) all_p50=16.8207 [measured] all_p99=248.028 [measured] all_max=248.028 [measured]
+pairs=74 [measured] changes=59 [measured] change_frac=0.7973 [measured] mean_luma_med=6.1982 [measured] frames_scored=75 [measured] warmup_skip=15 [DEFAULT_ASSUMED]
+hold_hist={'1': 45, '2': 15} n_holds=60 [measured] p50=1 [measured] p95=2 [measured] p99=2 [measured] max=2 [measured] mean=1.25 [measured] NOTE=hold_mean is informational only; verdict uses hist tail (p95/p99/max/outlier_count). mean-only is forbidden.
+outliers count=0 [measured] frac=0 [measured] min_hold_for_outlier=3 [DEFAULT_ASSUMED] outlier_holds_head=[]
+beat_quant t_src_ms=41.6667 [derived_1000_over_src_fps] t_cap_ms=33.3333 [derived_1000_over_cap_fps] ratio=5/4 commensurate=True pattern_period_ms=166.666667 pattern_frames_cap/src=5/4 ideal_ifi_ms=41.6667 [derived_1000_over_src_fps] discrete_ifi_ms=[33.333333, 66.666667] drop_sig_ifi_ms=83.333333 continuous_quant_rms_ms=9.6225 [derived_t_cap_over_sqrt12] continuous_quant_rms_usable=False
+quant_note=REJECT continuous floor T_cap/sqrt(12) as baseline when source and capture are commensurate (e.g. 24.000:30.000 = 4:5). Expected healthy mass is DISCRETE on the capture grid (24@30 → holds {1,2} → IFI {33.333,66.667} ms, mean 41.667). A slow STABLE/WANDER beat needs independent clock offset, not this rational locked pattern. T_cap/sqrt(12)=9.6225 ms is the wrong model here.
+ifi_ms hist={'33.333': 45, '66.667': 15} n=60 [measured] p50=33.3333 [measured] p95=66.6667 [measured] p99=66.6667 [measured] max=66.6667 [measured] mean=41.6667 [measured] frac_near_ideal=0.75 [measured] frac_ge_drop_sig=0 [measured] NOTE=ifi_mean informational only; use hist + p95/p99/max + frac_ge_drop_signature (IFI > healthy grid max). max-only headlines forbidden. hold=2@30fps=66.7ms is HEALTHY, not drop.
+role=device_under_test [caller_supplied] device_attributable=False [measured] attribution_note=floor-json is capture-timing only (or gates_content_hold_ifi=false). Content hold/IFI remains NOT ATTRIBUTABLE. Content-duplication floor still required (host HDMI recable or joint 60 Hz stamp fixture).
+reason=hold_hist={'1': 45, '2': 15} p50=1.0 p95=2.0 p99=2.0 max=2 outliers=0 frac_out=0.0
+VERDICT=JUDDER_OK rc=0
+480b true rc=0
