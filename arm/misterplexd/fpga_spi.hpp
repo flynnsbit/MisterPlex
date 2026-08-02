@@ -61,16 +61,37 @@ public:
     // sends SIGCONT and Main is left stopped forever.
     //
     // resumeStrandedMain(): SIGCONT any MiSTer left in state T while we hold no
-    // window of our own. Safe to call from anywhere — it only reads /proc and
-    // never touches SPI. Call at startup (repairs a previous death) and from a
-    // slow watchdog (repairs a hang inside the critical section).
+    // window of our own AND no session-level playback suspend. Safe to call from
+    // anywhere — it only reads /proc and never touches SPI. Call at startup
+    // (repairs a previous death) and from a slow watchdog (repairs a hang inside
+    // the critical section). Does not fight an intentional SUSPEND_MAIN_DURING_PLAY hold.
     static void resumeStrandedMain();
 
-    // installCrashGuard(): resume Main from fatal-signal handlers, then re-raise
-    // with the default disposition so the crash is still reported normally.
-    // Covers everything except SIGKILL, which resumeStrandedMain() mops up on the
-    // next start.
+    // installCrashGuard(): resume Main from fatal-signal handlers (SPI pause or
+    // session hold), write death breadcrumb, then re-raise. Also registers atexit
+    // resume. Covers everything except SIGKILL — supervisor resume-before-respawn
+    // plus resumeStrandedMain() on next start cover kill -9.
     static void installCrashGuard();
+
+    // --- Session-level Main suspend (opt-in SUSPEND_MAIN_DURING_PLAY) ----------
+    // Stock Main burns ~one full core even idle (parent measure). When enabled,
+    // SIGSTOP Main once at playback start and SIGCONT once at stop so decode can
+    // use that core. Default OFF. Not per-frame.
+    //
+    // While held: F12/OSD, /dev/MiSTer_cmd, load_core, and Main input are dead.
+    // HDMI scanout + DDR doorbell present do not need Main (FPGA-side). SPI F1
+    // still works because MainSafeWindow will not SIGCONT a session-held Main.
+    // Plex stop still works via TCP :3005 in this daemon (never stopped).
+    // Locator: exact argv0=/media/fat/MiSTer OR resolved exe path; never substring.
+    // Multi-match refuses SIGSTOP. kill -9 path: supervisor resume_stopped_main.
+    static void setSuspendMainDuringPlay(bool enabled);
+    static bool suspendMainDuringPlayEnabled();
+    // Acquire: locate unique product Main, SIGSTOP once if GPO idle. Idempotent.
+    static bool suspendMainForPlayback();
+    // Release: SIGCONT once. Idempotent. Always safe on stop/shutdown/EOF/crash.
+    static void resumeMainAfterPlayback();
+    // True while this process intentionally holds Main stopped for playback.
+    static bool mainSuspendedForPlayback();
 
     // True while this process holds Main stopped for an SPI critical section.
     static bool mainPaused();

@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cerrno>
+#include <cstdlib>
 #include <csignal>
 #include <chrono>
 #include <cstdio>
@@ -74,12 +75,74 @@ int64_t elapsedUs(std::chrono::steady_clock::time_point a,
     return std::chrono::duration_cast<std::chrono::microseconds>(b - a).count();
 }
 
-// Main_MiSTer owns the same SPI; STOP it for exclusive status/file ops.
-// Matches /media/fat/MiSTer and MiSTer_groovy-style host binaries.
-// IMPORTANT: no system()/fork here — multi-threaded misterplexd (F1+F2+F3) must
-// not call system() under load (glibc fork+malloc deadlock → silent process death).
-std::vector<pid_t> findMisterPids() {
+// Product Main binary path on the DE10-Nano. Session suspend matches this
+// path EXACTLY via argv[0] OR resolved /proc/<pid>/exe (no substring).
+// SPI short-pause also accepts basename MiSTer / MiSTer_groovy for fixtures.
+constexpr const char kProductMainPath[] = "/media/fat/MiSTer";
+
+// Scan /proc for product Main: exact argv0 OR resolved exe == kProductMainPath.
+// Vanishing pids are skipped. Empty cmdline is not a match. Never substring.
+std::vector<pid_t> findPidsProductMain() {
     std::vector<pid_t> out;
+    DIR* d = opendir("/proc");
+    if (!d)
+        return out;
+    while (dirent* e = readdir(d)) {
+        if (e->d_name[0] < '1' || e->d_name[0] > '9')
+            continue;
+        const pid_t pid = static_cast<pid_t>(std::atoi(e->d_name));
+        if (pid <= 0)
+            continue;
+
+        bool matched = false;
+
+        // Primary (device): resolved exe path — ERROR 14 lesson (never cmdline substring).
+        char exeLink[64];
+        std::snprintf(exeLink, sizeof(exeLink), "/proc/%d/exe", static_cast<int>(pid));
+        char exePath[256]{};
+        const ssize_t elen = ::readlink(exeLink, exePath, sizeof(exePath) - 1);
+        if (elen > 0) {
+            exePath[elen] = 0;
+            // Kernel may append " (deleted)" after unlink+replace.
+            char* del = std::strstr(exePath, " (deleted)");
+            if (del)
+                *del = 0;
+            if (std::strcmp(exePath, kProductMainPath) == 0)
+                matched = true;
+        }
+
+        // Secondary: exact argv0 (host unit fixtures use execv argv0 override;
+        // exe then points at /bin/sleep). Still exact equality, not substring.
+        if (!matched) {
+            char path[96];
+            std::snprintf(path, sizeof(path), "/proc/%d/cmdline", static_cast<int>(pid));
+            int fd = ::open(path, O_RDONLY | O_CLOEXEC);
+            if (fd >= 0) {
+                char buf[256]{};
+                ssize_t n = ::read(fd, buf, sizeof(buf) - 1);
+                ::close(fd);
+                if (n > 0) {
+                    buf[n < 256 ? n : 255] = 0;
+                    if (std::strcmp(buf, kProductMainPath) == 0)
+                        matched = true;
+                }
+            }
+        }
+
+        if (matched)
+            out.push_back(pid);
+    }
+    closedir(d);
+    return out;
+}
+
+// Main_MiSTer owns the same SPI; STOP it for exclusive status/file ops.
+// Product path first; basename fallback for unit fixtures / groovy.
+// IMPORTANT: no system()/fork — multi-threaded misterplexd must not fork.
+std::vector<pid_t> findMisterPids() {
+    std::vector<pid_t> out = findPidsProductMain();
+    if (!out.empty())
+        return out;
     DIR* d = opendir("/proc");
     if (!d)
         return out;
@@ -96,18 +159,52 @@ std::vector<pid_t> findMisterPids() {
         ::close(fd);
         if (n <= 0)
             continue;
-        // cmdline is NUL-separated argv; argv0 is first token
+        buf[n < 256 ? n : 255] = 0;
         const char* argv0 = buf;
         if (std::strstr(argv0, "misterplex") != nullptr)
             continue;
-        // Exact basename match for main host binaries only (avoid "mister*" false positives)
         const char* base = std::strrchr(argv0, '/');
         base = base ? base + 1 : argv0;
+        if (base[0] == 0)
+            continue;
         if (std::strcmp(base, "MiSTer") == 0 || std::strcmp(base, "MiSTer_groovy") == 0)
             out.push_back(static_cast<pid_t>(std::atoi(e->d_name)));
     }
     closedir(d);
     return out;
+}
+
+// Session suspend locator: EXACTLY one product Main. 0 → skip; >1 → refuse.
+enum class ProductMainLocate : int { None = 0, Unique = 1, Ambiguous = 2 };
+
+ProductMainLocate locateUniqueProductMain(pid_t* outPid) {
+    if (outPid)
+        *outPid = 0;
+    auto pids = findPidsProductMain();
+    if (pids.empty())
+        return ProductMainLocate::None;
+    if (pids.size() > 1) {
+        std::fprintf(stderr,
+                     "main: SUSPEND_MAIN_DURING_PLAY refuse — %zu pids path=%s",
+                     pids.size(), kProductMainPath);
+        for (pid_t p : pids)
+            std::fprintf(stderr, " pid=%d", static_cast<int>(p));
+        std::fprintf(stderr, "\n");
+        return ProductMainLocate::Ambiguous;
+    }
+    if (outPid)
+        *outPid = pids[0];
+    return ProductMainLocate::Unique;
+}
+
+// Opt-in session hold: Main stopped for whole playback (not per SPI txn).
+std::atomic<bool>& suspendMainDuringPlayEnabledFlag() {
+    static std::atomic<bool> en{false};
+    return en;
+}
+std::atomic<bool>& sessionMainHeldFlag() {
+    static std::atomic<bool> h{false};
+    return h;
 }
 
 // Bits Main sets in GPO while it owns a SPI transaction (spi.cpp EnableFpga/
@@ -224,9 +321,20 @@ struct MainSafeWindow {
         return false;
     }
 
+    bool sessionHeldMode = false;
+
     MainSafeWindow(volatile uint32_t* m, int attempts, bool enable) : map(m), enabled(enable) {
         if (!enabled)
             return;
+        // Playback already holds Main stopped for the session: drive SPI without
+        // SIGCONT on release (that would wake Main mid-decode and defeat the hold).
+        if (sessionMainHeldFlag().load()) {
+            sessionHeldMode = true;
+            if (map)
+                savedGpo = *gpoReg(map);
+            safe = true;
+            return;
+        }
         mainPauseDepth().fetch_add(1);
         for (int attempt = 0; attempt < attempts && !safe; ++attempt) {
             pids = findMisterPids();
@@ -263,6 +371,12 @@ struct MainSafeWindow {
     ~MainSafeWindow() {
         if (!enabled)
             return;
+        if (sessionHeldMode) {
+            // Session owner resumes Main at playback stop — not per SPI frame.
+            if (safe && map)
+                *gpoReg(map) = savedGpo;
+            return;
+        }
         if (safe && map)
             *gpoReg(map) = savedGpo;
         auto now = findMisterPids();
@@ -353,9 +467,132 @@ bool FpgaSpi::mainPaused() { return mainPauseDepth().load() > 0; }
 
 bool FpgaSpi::mainAlive() { return !findMisterPids().empty(); }
 
+void FpgaSpi::setSuspendMainDuringPlay(bool enabled) {
+    suspendMainDuringPlayEnabledFlag().store(enabled);
+}
+
+bool FpgaSpi::suspendMainDuringPlayEnabled() {
+    return suspendMainDuringPlayEnabledFlag().load();
+}
+
+bool FpgaSpi::mainSuspendedForPlayback() { return sessionMainHeldFlag().load(); }
+
+bool FpgaSpi::suspendMainForPlayback() {
+    if (!suspendMainDuringPlayEnabledFlag().load())
+        return false;
+    if (sessionMainHeldFlag().load())
+        return true;
+
+    // Sample GPO via /dev/mem (same manager page Main uses). Fail open if absent.
+    int memFd = ::open("/dev/mem", O_RDWR | O_SYNC | O_CLOEXEC);
+    void* mapRaw = MAP_FAILED;
+    volatile uint32_t* map = nullptr;
+    if (memFd >= 0) {
+        mapRaw = ::mmap(nullptr, 0x1000, PROT_READ | PROT_WRITE, MAP_SHARED, memFd, 0xFF706000);
+        if (mapRaw != MAP_FAILED)
+            map = static_cast<volatile uint32_t*>(mapRaw);
+    }
+
+    bool held = false;
+    pid_t mainPid = 0;
+    bool sawUnique = false;
+    for (int attempt = 0; attempt < 8 && !held; ++attempt) {
+        pid_t pid = 0;
+        const ProductMainLocate loc = locateUniqueProductMain(&pid);
+        if (loc == ProductMainLocate::Ambiguous) {
+            // Loud refuse — never SIGSTOP an arbitrary process.
+            break;
+        }
+        if (loc == ProductMainLocate::None) {
+            std::fprintf(stderr, "main: SUSPEND_MAIN_DURING_PLAY skip (no product Main path=%s)\n",
+                         kProductMainPath);
+            break;
+        }
+        sawUnique = true;
+        mainPid = pid;
+        kill(mainPid, SIGSTOP);
+        bool allT = false;
+        for (int waited = 0; waited <= 50000; waited += 200) {
+            allT = true;
+            char dir[64];
+            std::snprintf(dir, sizeof(dir), "/proc/%d/task", static_cast<int>(mainPid));
+            DIR* d = opendir(dir);
+            if (!d) {
+                allT = false; // vanished mid-wait
+                break;
+            }
+            while (dirent* e = readdir(d)) {
+                if (e->d_name[0] < '1' || e->d_name[0] > '9')
+                    continue;
+                char tpath[128];
+                std::snprintf(tpath, sizeof(tpath), "%.48s/%.16s/stat", dir, e->d_name);
+                const char st = procStateFile(tpath);
+                if (st != 'T' && st != 0) {
+                    allT = false;
+                    break;
+                }
+            }
+            closedir(d);
+            if (allT)
+                break;
+            usleep(200);
+        }
+        uint32_t gpo = 0;
+        bool gpoOk = true;
+        if (map) {
+            gpo = map[0x10 / 4]; // GPO at 0xFF706010
+            gpoOk = (gpo & kMainBusyMask) == 0;
+        }
+        if (allT && gpoOk) {
+            // Re-validate uniqueness after stop (race: second Main appeared).
+            pid_t check = 0;
+            if (locateUniqueProductMain(&check) != ProductMainLocate::Unique || check != mainPid) {
+                kill(mainPid, SIGCONT);
+                std::fprintf(stderr,
+                             "main: SUSPEND_MAIN_DURING_PLAY refuse — Main set changed after STOP\n");
+                break;
+            }
+            sessionMainHeldFlag().store(true);
+            held = true;
+            std::fprintf(stderr, "main: SUSPEND_MAIN_DURING_PLAY stop pid=%d gpo=0x%08x\n",
+                         static_cast<int>(mainPid), static_cast<unsigned>(gpo));
+            break;
+        }
+        kill(mainPid, SIGCONT);
+        usleep(500 + static_cast<unsigned>(attempt) * 500);
+    }
+
+    if (mapRaw != MAP_FAILED)
+        ::munmap(mapRaw, 0x1000);
+    if (memFd >= 0)
+        ::close(memFd);
+
+    if (!held && sawUnique)
+        std::fprintf(stderr, "main: SUSPEND_MAIN_DURING_PLAY failed (Main busy on SPI)\n");
+    return held;
+}
+
+void FpgaSpi::resumeMainAfterPlayback() {
+    const bool was = sessionMainHeldFlag().exchange(false);
+    auto pids = findPidsProductMain();
+    if (pids.empty())
+        pids = findMisterPids();
+    for (pid_t p : pids) {
+        if (was || misterProcState(p) == 'T') {
+            kill(p, SIGCONT);
+            if (was)
+                std::fprintf(stderr, "main: SUSPEND_MAIN_DURING_PLAY cont pid=%d\n",
+                             static_cast<int>(p));
+        }
+    }
+}
+
 void FpgaSpi::resumeStrandedMain() {
-    // Never fight a pause we are legitimately holding right now.
+    // Never fight a pause we are legitimately holding right now (SPI window or
+    // intentional playback suspend).
     if (mainPauseDepth().load() > 0)
+        return;
+    if (sessionMainHeldFlag().load())
         return;
     for (pid_t p : findMisterPids()) {
         if (misterProcState(p) == 'T')
@@ -372,18 +609,28 @@ namespace {
 void crashGuardHandler(int sig) {
     deathBreadcrumbOnSignal(sig);
     mainPauseDepth().store(0);
+    sessionMainHeldFlag().store(false);
     for (pid_t p : findMisterPids())
         kill(p, SIGCONT);
     std::signal(sig, SIG_DFL);
     ::raise(sig);
 }
 
+void atexitResumeMain() {
+    sessionMainHeldFlag().store(false);
+    mainPauseDepth().store(0);
+    for (pid_t p : findMisterPids())
+        kill(p, SIGCONT);
+}
+
 } // namespace
 
 void FpgaSpi::installCrashGuard() {
-    // SIGKILL cannot be caught — resumeStrandedMain() at startup covers it.
+    // SIGKILL cannot be caught — supervisor resume-before-respawn + startup
+    // resumeStrandedMain() cover it. atexit covers clean/exit_group paths.
     for (int sig : {SIGSEGV, SIGABRT, SIGBUS, SIGILL, SIGFPE, SIGQUIT})
         std::signal(sig, crashGuardHandler);
+    std::atexit(atexitResumeMain);
 }
 
 void FpgaSpi::setErr(std::string msg) {

@@ -724,6 +724,14 @@ int main(int argc, char** argv) {
         }
         std::fprintf(stderr, "misterplexd: IDLE_SCREEN=%s AV_OFFSET_MS=%d\n",
                      idle.empty() ? "logo(default)" : idle.c_str(), player.avOffsetMs());
+        // Opt-in: SIGSTOP Main for whole playback session to reclaim ~1 core.
+        // Default OFF. Tradeoff while held: F12/OSD/MiSTer_cmd/load_core dead;
+        // Plex stop via TCP :3005 still works. kill -9 covered by supervisor.
+        const bool suspendMain =
+            confTruthy(loadConf(confPath, "SUSPEND_MAIN_DURING_PLAY"));
+        player.setSuspendMainDuringPlay(suspendMain);
+        std::fprintf(stderr, "misterplexd: SUSPEND_MAIN_DURING_PLAY=%s\n",
+                     suspendMain ? "1" : "0");
     }
     player.setLog([](const std::string& s) { logDaemon(s); });
     if (streamEnabled) {

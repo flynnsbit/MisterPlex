@@ -179,6 +179,9 @@ public:
         setOsdControlMode(on ? misterplex::OsdControlMode::ForcedOn
                              : misterplex::OsdControlMode::ForcedOff);
     }
+    // Opt-in: SIGSTOP product Main for the whole playback session (default off).
+    // Conf SUSPEND_MAIN_DURING_PLAY. See FpgaSpi::setSuspendMainDuringPlay.
+    void setSuspendMainDuringPlay(bool on) { FpgaSpi::setSuspendMainDuringPlay(on); }
     misterplex::OsdControlMode osdControlMode() const { return osdMode_; }
     misterplex::OsdCapability osdCapability() const {
         return static_cast<misterplex::OsdCapability>(osdCapability_.load());
