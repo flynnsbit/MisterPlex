@@ -335,14 +335,78 @@ bool validateWeakLadder(const WeakLadder& weak, std::string* why) {
             return fail("current built-in profiles stop at " +
                         std::to_string(kDdrFrameStoreMaxWidth.get()) + "x" +
                         std::to_string(kDdrFrameStoreMaxHeight.get()));
-        if (weak.maxVideoBitrateKbps < 2000)
-            return fail("480p profile bitrate is too low");
-    } else if (weak.maxVideoBitrateKbps < 750) {
-        return fail("240p profile bitrate is too low");
+        // Bitrate floors are NOT decoder contracts. A hard maxVideoBitrate>=2000
+        // reject forced PMS requests above measured ~1.15 Mbit links and silently
+        // fell the ladder back (parent-proven 480p starvation). Positive-only below.
     }
     if (weak.videoQuality <= 0 || weak.maxVideoBitrateKbps <= 0)
         return fail("videoQuality and maxVideoBitrate must be positive");
     return true;
+}
+
+int recommendedMinVideoBitrateKbps(const WeakLadder& weak) {
+    int w = 0, h = 0;
+    if (!parseResolution(weak.videoResolution, w, h))
+        return 0;
+    // Tier *defaults* from osd_menu.hpp — quality preference, not H.264 contracts.
+    // 480p default = kPlex480pWeakBitrateKbps (2000). Used only for advisory WARN
+    // and as the pre-cap tier request, never as a hard validate fail.
+    if (w >= kPlex480pCodedWidth.get() || h >= kPlex480pCodedHeight.get())
+        return kPlex480pWeakBitrateKbps;
+    // Legacy 240p soft floor was 750 below the 1000 default.
+    return 750;
+}
+
+bool weakLadderBitrateBelowRecommended(const WeakLadder& weak, std::string* detail) {
+    const int floor = recommendedMinVideoBitrateKbps(weak);
+    if (floor <= 0 || weak.maxVideoBitrateKbps <= 0)
+        return false;
+    if (weak.maxVideoBitrateKbps >= floor)
+        return false;
+    if (detail) {
+        *detail = "maxVideoBitrateKbps=" + std::to_string(weak.maxVideoBitrateKbps) +
+                  " < recommended_min=" + std::to_string(floor) +
+                  " for videoResolution=" + weak.videoResolution +
+                  " (quality heuristic — explicit WEAK_BITRATE wins; not a decoder fail)";
+    }
+    return true;
+}
+
+BitrateSelection selectMaxVideoBitrateKbps(int tierDefaultKbps,
+                                           bool weakBitrateExplicit,
+                                           int weakBitrateKbps,
+                                           int linkCapKbit) {
+    BitrateSelection out;
+    out.tierDefaultKbps = tierDefaultKbps > 0 ? tierDefaultKbps : 0;
+    out.linkCapKbit = linkCapKbit > 0 ? linkCapKbit : 0;
+    out.weakBitrateExplicit = weakBitrateExplicit;
+
+    // Priority (documented in conf.example + RESULT_bitrate_selection.md):
+    //  1. Explicit WEAK_BITRATE — absolute operator override (never auto-clamped).
+    //  2. Else min(tier_default, LINK_CAP_KBIT) when LINK_CAP_KBIT>0.
+    //  3. Else tier_default alone.
+    // LINK_CAP_KBIT is the fixture-ladder / measured-path consumer; do not bake
+    // a lab number into the binary.
+    if (weakBitrateExplicit && weakBitrateKbps > 0) {
+        out.kbps = weakBitrateKbps;
+        out.source = "WEAK_BITRATE";
+        if (out.linkCapKbit > 0 && out.kbps > out.linkCapKbit)
+            out.clampedByLinkCap = true; // warn-only; operator wins
+        return out;
+    }
+
+    int base = out.tierDefaultKbps > 0 ? out.tierDefaultKbps : weakBitrateKbps;
+    if (base <= 0)
+        base = 1;
+    if (out.linkCapKbit > 0 && base > out.linkCapKbit) {
+        out.kbps = out.linkCapKbit;
+        out.source = "min(tier,LINK_CAP_KBIT)";
+        out.clampedByLinkCap = true;
+        return out;
+    }
+    out.kbps = base;
+    out.source = out.linkCapKbit > 0 ? "tier_default(under_LINK_CAP)" : "tier_default";
+    return out;
 }
 
 std::string plexClientProfileExtra(const WeakLadder& weak) {

@@ -156,11 +156,46 @@ int main() {
     bad480.h264Profile = "high";
     CHECK(!validateWeakLadder(bad480));
     bad480 = w480;
-    bad480.maxVideoBitrateKbps = 1000;
-    CHECK(!validateWeakLadder(bad480));
-    bad480 = w480;
     bad480.h264Level = 31;
     CHECK(!validateWeakLadder(bad480));
+
+    // 480p bitrate floor was a quality heuristic hard-fail — retired.
+    // Explicit WEAK_BITRATE=1000 on 480p must validate so slow links can request
+    // under 2000 kbps (parent: greedy path ~1.15 Mbit/s; 2000k starves).
+    {
+        WeakLadder lowBr = w480;
+        lowBr.maxVideoBitrateKbps = 1000;
+        CHECK(validateWeakLadder(lowBr));
+        CHECK(recommendedMinVideoBitrateKbps(lowBr) == kPlex480pWeakBitrateKbps);
+        CHECK(weakLadderBitrateBelowRecommended(lowBr));
+        std::string det;
+        CHECK(weakLadderBitrateBelowRecommended(lowBr, &det));
+        CHECK(det.find("recommended_min=2000") != std::string::npos);
+        CHECK(det.find("maxVideoBitrateKbps=1000") != std::string::npos);
+        CHECK(!weakLadderBitrateBelowRecommended(w480));
+        lowBr.maxVideoBitrateKbps = 0;
+        CHECK(!validateWeakLadder(lowBr));
+        WeakLadder low240 = w240;
+        low240.maxVideoBitrateKbps = 500;
+        CHECK(validateWeakLadder(low240));
+        CHECK(weakLadderBitrateBelowRecommended(low240));
+
+        // LINK_CAP_KBIT consumer: clamps tier default; WEAK_BITRATE wins absolute.
+        auto s0 = selectMaxVideoBitrateKbps(2000, false, 2000, 0);
+        CHECK(s0.kbps == 2000);
+        CHECK(!s0.clampedByLinkCap);
+        auto s1 = selectMaxVideoBitrateKbps(2000, false, 2000, 1150);
+        CHECK(s1.kbps == 1150);
+        CHECK(s1.clampedByLinkCap);
+        CHECK(std::string(s1.source).find("LINK_CAP") != std::string::npos);
+        auto s2 = selectMaxVideoBitrateKbps(2000, true, 900, 1150);
+        CHECK(s2.kbps == 900);
+        CHECK(std::string(s2.source) == "WEAK_BITRATE");
+        auto s3 = selectMaxVideoBitrateKbps(2000, true, 1500, 1150);
+        CHECK(s3.kbps == 1500); // operator above cap — warn path, not clamp
+        CHECK(s3.clampedByLinkCap);
+        std::printf("PASS bitrate select: advisory floor + LINK_CAP_KBIT + WEAK_BITRATE\n");
+    }
 
     // --- Phase 4 multi-server conf helpers (no network) ---
     CHECK(normalizePlexBase("http://pms.lan:32400/") == "http://pms.lan:32400");

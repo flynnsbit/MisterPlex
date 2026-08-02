@@ -52,6 +52,13 @@ namespace misterplex {
 // daemon and the tests cannot disagree about what a menu index means.
 constexpr int kOsdAvOffsetSteps = 16;
 constexpr int kOsdAvOffsetStepMs = 20;
+// Tier *default request* bitrates for PMS maxVideoBitrate= (quality preference).
+// NOT decoder contracts and NOT hard floors. Explicit WEAK_BITRATE wins; optional
+// LINK_CAP_KBIT clamps the non-explicit path (see selectMaxVideoBitrateKbps).
+// 2000 originated as the 480p ladder default (commit 216703b used 2500 with a
+// validate floor of 2000); later comment claimed "ARM margin until higher proven"
+// but W-FEED measured margin at ~1412 kb/s — the constant is a quality default,
+// not a measured link or decode floor. Parent greedy path ~1153 kbit/s.
 constexpr int kPlex240pWeakBitrateKbps = 1000;
 constexpr int kPlex360pWeakBitrateKbps = 1500;
 constexpr int kPlex480pWeakBitrateKbps = 2000;
@@ -144,9 +151,8 @@ inline unsigned osdContentTierFromWord(uint16_t word) {
 }
 
 inline ContentResolution contentResolutionFor480p() {
-    // 624x480 is still the 480p ladder. Use the 2000 kbps PMS/validator floor
-    // until W-FEED (or equivalent ARM-boundary profiling) proves a higher
-    // bitrate safe; this path has only millisecond-scale decode margin.
+    // 624x480 ladder. weakBitrateKbps is the *default request*, not a floor.
+    // Link/path caps belong in conf LINK_CAP_KBIT (fixture knee consumer).
     return {kPlex480pCodedWidth, kPlex480pCodedHeight, plex480pCodedResolutionLabel(),
             kPlex480pWeakBitrateKbps, ContentPresentPolicy::NativeCanvas,
             plex480pCodedResolutionLabel()};

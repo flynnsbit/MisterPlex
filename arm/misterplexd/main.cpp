@@ -78,20 +78,27 @@ void logDaemon(const std::string& s) {
 // bitrate and H.264 caps track the tier — not only videoResolution.
 misterplex::WeakLadder weakForContentResolution(const misterplex::WeakLadder& base,
                                                 const misterplex::ContentResolution& res,
-                                                bool bitrateExplicit) {
+                                                bool bitrateExplicit,
+                                                int linkCapKbit,
+                                                misterplex::BitrateSelection* selOut = nullptr) {
     misterplex::WeakLadder weak = base;
-    const int keepBitrate = base.maxVideoBitrateKbps;
+    const int operatorBitrate = base.maxVideoBitrateKbps;
+    // Tier geometry/quality first; bitrate chosen by selectMaxVideoBitrateKbps.
     if (!misterplex::applyPlexTranscodeProfile(res.label, weak)) {
         weak.profileName = "custom";
         weak.videoResolution = res.label;
-        if (!bitrateExplicit)
-            weak.maxVideoBitrateKbps = res.weakBitrateKbps;
-    } else if (bitrateExplicit) {
-        weak.maxVideoBitrateKbps = keepBitrate;
+        weak.maxVideoBitrateKbps = res.weakBitrateKbps;
     }
+    const int tierDefault = weak.maxVideoBitrateKbps;
+    const auto sel = misterplex::selectMaxVideoBitrateKbps(
+        tierDefault, bitrateExplicit,
+        bitrateExplicit ? operatorBitrate : tierDefault, linkCapKbit);
+    weak.maxVideoBitrateKbps = sel.kbps;
     weak.burnSubtitles = base.burnSubtitles;
     weak.subtitleStreamId = base.subtitleStreamId;
     weak.clientProfileName = base.clientProfileName;
+    if (selOut)
+        *selOut = sel;
     return weak;
 }
 
@@ -158,6 +165,8 @@ int main(int argc, char** argv) {
     bool transcodeProfileExplicit = false;
     bool weakResExplicit = false;
     bool weakBitrateExplicit = false;
+    // 0 = unset. Measured path / fixture knee consumer — caps non-explicit requests.
+    int linkCapKbit = 0;
     std::vector<std::string> servers;
     std::string defaultPms;
     int64_t skipForwardMs = 30000;
@@ -297,6 +306,12 @@ int main(int argc, char** argv) {
         if (!v.empty()) {
             weakBitrateExplicit = true;
             weak.maxVideoBitrateKbps = std::atoi(v.c_str());
+        }
+        v = loadConf(confPath, "LINK_CAP_KBIT");
+        if (!v.empty()) {
+            linkCapKbit = std::atoi(v.c_str());
+            if (linkCapKbit < 0)
+                linkCapKbit = 0;
         }
         v = loadConf(confPath, "PRESENT");
         if (!v.empty())
@@ -454,6 +469,33 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "misterplexd: invalid transcode profile (%s); falling back to 240p\n",
                      weakWhy.c_str());
         misterplex::applyPlexTranscodeProfile("240p", weak);
+    } else {
+        // Apply LINK_CAP / WEAK_BITRATE selection to the idle/startup ladder too.
+        const int tierOrOperator = weak.maxVideoBitrateKbps;
+        const int tierDefault = weakBitrateExplicit
+                                    ? misterplex::recommendedMinVideoBitrateKbps(weak)
+                                    : tierOrOperator;
+        const auto sel = misterplex::selectMaxVideoBitrateKbps(
+            tierDefault, weakBitrateExplicit, tierOrOperator, linkCapKbit);
+        weak.maxVideoBitrateKbps = sel.kbps;
+        std::fprintf(stderr,
+                     "misterplexd: BITRATE_SELECT kbps=%d source=%s tier_default=%d "
+                     "LINK_CAP_KBIT=%d WEAK_BITRATE_explicit=%d clamped=%d\n",
+                     sel.kbps, sel.source, sel.tierDefaultKbps, sel.linkCapKbit,
+                     sel.weakBitrateExplicit ? 1 : 0, sel.clampedByLinkCap ? 1 : 0);
+        std::string brAdv;
+        if (misterplex::weakLadderBitrateBelowRecommended(weak, &brAdv)) {
+            std::fprintf(stderr,
+                         "misterplexd: WARN bitrate_below_recommended %s "
+                         "WEAK_BITRATE_explicit=%d (honored — not rejected)\n",
+                         brAdv.c_str(), weakBitrateExplicit ? 1 : 0);
+        }
+        if (sel.weakBitrateExplicit && sel.clampedByLinkCap) {
+            std::fprintf(stderr,
+                         "misterplexd: WARN WEAK_BITRATE=%d exceeds LINK_CAP_KBIT=%d "
+                         "(operator wins; delivery may starve)\n",
+                         sel.kbps, sel.linkCapKbit);
+        }
     }
 
     std::signal(SIGINT, on_signal);
@@ -771,14 +813,28 @@ int main(int argc, char** argv) {
         int64_t off = req.offsetMs;
         const auto contentRes = contentResolutionForNextPlay();
         player.setDecodeSize(contentRes.width, contentRes.height);
-        const auto weakForPlay =
-            weakForContentResolution(weak, contentRes, weakBitrateExplicit);
+        misterplex::BitrateSelection brSel;
+        const auto weakForPlay = weakForContentResolution(
+            weak, contentRes, weakBitrateExplicit, linkCapKbit, &brSel);
         std::fprintf(stderr,
                      "misterplexd: content resolution=%s source=%s status_word=0x%04x "
-                     "weak=%s bitrate=%d\n",
+                     "weak=%s bitrate=%d bitrate_source=%s recommended_min_bitrate=%d "
+                     "LINK_CAP_KBIT=%d WEAK_BITRATE_explicit=%d clamped=%d\n",
                      contentRes.label, player.osdApplyActive() ? "OSD O[4]" : "conf/--decode",
                      player.lastOsdWord(), weakForPlay.videoResolution.c_str(),
-                     weakForPlay.maxVideoBitrateKbps);
+                     weakForPlay.maxVideoBitrateKbps, brSel.source,
+                     misterplex::recommendedMinVideoBitrateKbps(weakForPlay),
+                     brSel.linkCapKbit, brSel.weakBitrateExplicit ? 1 : 0,
+                     brSel.clampedByLinkCap ? 1 : 0);
+        {
+            std::string brAdv;
+            if (misterplex::weakLadderBitrateBelowRecommended(weakForPlay, &brAdv)) {
+                std::fprintf(stderr,
+                             "misterplexd: WARN play bitrate_below_recommended %s "
+                             "WEAK_BITRATE_explicit=%d (honored — not rejected)\n",
+                             brAdv.c_str(), weakBitrateExplicit ? 1 : 0);
+            }
+        }
         auto [resolved, base] = resolveAgainstServers(req, defaultPms, off, weakForPlay);
 
         if (gen != playGen.load()) {

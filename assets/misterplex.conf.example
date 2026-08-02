@@ -37,10 +37,21 @@ DECODE=320x240
 # sets videoResolution= from the content tier (OSD O[4] when OSD_CONTROL=1, else
 # DECODE). Startup banner prints pms_request_geometry= and decode_bank= separately
 # so profile_name=480p never looks like a second geometry next to decode=320x240.
-# 240p → 320x240 @ ~1000 kbps. 480p → coded 624x480 @ 2000 kbps (not 640x480).
-# Leave unset to follow DECODE / OSD.
+# 240p → 320x240 @ ~1000 kbps. 480p → coded 624x480 @ 2000 kbps default request
+# (not 640x480). 2000 is a quality *default*, not a decoder floor and not a link
+# measurement. Leave TRANSCODE_PROFILE unset to follow DECODE / OSD.
 # TRANSCODE_PROFILE=240p
 # TRANSCODE_PROFILE=480p
+#
+# Bitrate selection priority (see selectMaxVideoBitrateKbps):
+#   1) WEAK_BITRATE — absolute operator override (never auto-clamped; may WARN)
+#   2) min(tier_default, LINK_CAP_KBIT) when LINK_CAP_KBIT > 0
+#   3) tier_default alone
+# LINK_CAP_KBIT is how the fixture-ladder / greedy-path knee is consumed.
+# Parent measured ~1153 kbit/s greedy goodput on the daily-driver path — set
+# that (or the ladder knee) here; do not bake it into the binary.
+# LINK_CAP_KBIT=0
+# LINK_CAP_KBIT=1150
 # Legacy per-field overrides (kept for lab experiments):
 # WEAK_RES=320x240
 # WEAK_BITRATE=1000

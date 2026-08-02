@@ -110,7 +110,31 @@ struct WeakLadder {
 };
 
 // Guard rails for built-in and configured ladders.
+// Decoder contracts only (codec/profile/level/geometry/positive bitrate).
+// Bitrate *floors* are not contracts — see recommendedMin / selectMaxVideoBitrate.
 bool validateWeakLadder(const WeakLadder& weak, std::string* why = nullptr);
+
+// Quality-heuristic recommended minimum for the ladder geometry (480p→2000,
+// 240p→750). Advisory only — never a hard validate fail.
+int recommendedMinVideoBitrateKbps(const WeakLadder& weak);
+bool weakLadderBitrateBelowRecommended(const WeakLadder& weak, std::string* detail = nullptr);
+
+// Principled maxVideoBitrate selection for the PMS request.
+// Priority: explicit WEAK_BITRATE > min(tier_default, LINK_CAP_KBIT) > tier_default.
+// LINK_CAP_KBIT=0 means unset (no cap). Never invents a lab constant.
+struct BitrateSelection {
+    int kbps = 0;
+    const char* source = "unset"; // WEAK_BITRATE | tier_default | min(tier,LINK_CAP_KBIT)
+    int tierDefaultKbps = 0;
+    int linkCapKbit = 0;
+    bool weakBitrateExplicit = false;
+    bool clampedByLinkCap = false;
+};
+BitrateSelection selectMaxVideoBitrateKbps(int tierDefaultKbps,
+                                           bool weakBitrateExplicit,
+                                           int weakBitrateKbps,
+                                           int linkCapKbit);
+
 std::string plexClientProfileExtra(const WeakLadder& weak);
 std::string plexClientCapabilities(const WeakLadder& weak);
 std::string buildUniversalTranscodeUrl(const std::string& base,
