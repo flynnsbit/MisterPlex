@@ -7,6 +7,17 @@ namespace overlay_font_24x32 {
 static constexpr int kW = 24;
 static constexpr int kH = 32;
 static constexpr int kAdvance = 26;
+
+static constexpr uint32_t period[32] = {
+    0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u,
+    0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u,
+    0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u,
+    0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u,
+    0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u,
+    0x00000000u, 0x00000000u, 0x00000000u, 0x00780000u,
+    0x00FC0000u, 0x00FC0000u, 0x00FC0000u, 0x00780000u,
+    0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u,
+};
 inline const uint32_t* glyph(char ch) {
     static constexpr uint32_t space[32] = {};
     static constexpr uint32_t g_0[32] = {
@@ -433,6 +444,7 @@ inline const uint32_t* glyph(char ch) {
     case '7': return g_7;
     case '8': return g_8;
     case '9': return g_9;
+    case '.': return period;
     case ':': return colon;
     case '-': return minus;
     case '/': return slash;

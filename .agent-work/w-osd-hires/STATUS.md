@@ -1,40 +1,32 @@
-# w-osd-hires STATUS
+# w-osd-hires STATUS — post 2b44d935 silicon P2 MISS
 
-## Layout regression fix (post 23b2f8df silicon)
+## RCA (quoted host evidence)
 
-Parent scored 23b2f8df: font win (24x32@2 cell=48x64) + layout REGRESSION
-(title "PAUSEDM", duration looked like 0:30). Rolled back to 9ce2c2d1.
+1. Title MISTERP + empty band, no ellipsis
+   - overlay_font_24x32 glyph('.') had no case - default return space
+   - probe: glyph('.') == glyph(' ') and period ink_pixels=0 on 2b44d935
+   - Long media titles fitText to MISTERP... with three blank advances
+   - Visual = MISTERP + empty band (matches glass). Not advance 52 vs 32.
+   - Parent ~32 px/glyph used scale 1920/624; height-fit ~2x gives ~52 = advPx.
 
-### Fix
-- `computePanelLayout` grows panel for second-line title when MISTERPLEX cannot
-  share the state row at cell 48x64.
-- Title fit-to-width with ellipsis; duration right-aligned from measured width.
-- Gate: `test_overlay_layout_fit` RED on same-line-only, GREEN on fix.
+2. Elapsed 0:52 vs total 0:30, bar at 100%
+   - Bar: min(positionMs, durationMs)/durationMs
+   - Elapsed: formatTime(positionMs) unclamped
+   - pos=52000 dur=30016 -> elapsed 0:52, total 0:30, bar 100%
+   - Timeline poll 30016/30016 is separate (clamped); HUD elapsed was wall overrun.
 
-### PREREG (624x480 bank, Hires24x32@2)
-| metric | value |
-|---|---|
-| tw("PAUSED") | 310 |
-| tw("MISTERPLEX") | 518 |
-| BOTH same-line | 882 > panelW 594 → secondLine=1 |
-| tw("2:14")/("2:18") | 206 each; gap>=0 |
-| panel | w=594 h=154 base / h=222 with title |
+## Fix
+- Period glyph in 24x32, 8x13, 12x16
+- Elapsed display clamped to duration (same source as bar)
+- test_overlay_layout_fit PIXEL gate: period ink, 10 slots full title,
+  long title ellipsis slots ink>0 (RED when period=space)
 
-### DURATION_VERDICT
-Geometry fits 2:14/2:18 and 2:14/6:00. Parent "0:30" NOT explained by
-total-string overflow on host path (unknown — need device durationMs).
+## PREREG at 624x480 Hires24x32@2
+- advPx=52, tw(MISTERPLEX)=518, titleMaxW=566, secondLine=1
+- long -> fitted MISTERP... with visible dots
+- pos 52000/30016 -> elapsed=total=0:30
 
-### Host gates (true rc direct)
-- test_overlay_layout_fit: PASS rc=0
-- test_playback_overlay: OK rc=0 (golden regen)
-- test_overlay_post_upscale: OK rc=0
-- test_overlay_crispness_mutation: OK rc=0
-- test_overlay_source_stroke_hist: PASS rc=0
-
-### Daemon
-See DAEMON_MD5.txt — atomic deploy only (stage→md5→mv -f→kill).
-
-### Glass expect after deploy
-- Full "MISTERPLEX" on second title line (not PAUSEDM)
-- Elapsed + total both fully visible
-- Glyphs still large/smooth vs BEFORE 8fdf440f
+## Deploy
+- Match kill pattern with trailing wildcard for (deleted) exe
+- stage -> md5 -> mv -f -> kill by PID
+- md5: see DAEMON_MD5.txt

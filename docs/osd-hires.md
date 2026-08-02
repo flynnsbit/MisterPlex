@@ -310,3 +310,12 @@ duration from measured `textWidth`. Gate: `tests/unit/test_overlay_layout_fit.cp
 PREREG @624×480 Hires24x32@2: tw(PAUSED)=310, tw(MISTERPLEX)=518, panelW=594,
 secondLine=1, tw(2:14)=206. Parent glass `0:30` is **not** host total-string overflow
 (unknown without device `durationMs`).
+
+## Silicon 2b44d935 P2 MISS — blank ellipsis
+
+glyph('.') missing in 24x32 -> space. fitText long titles became MISTERP...
+with invisible dots (glass: MISTERP + empty band). Fixed: period ink in
+24x32/8x13/12x16. Gate: test_overlay_layout_fit requires ellipsis slot ink.
+
+Elapsed vs bar: bar used min(pos,dur); elapsed did not — wall positionMs past
+EOF showed 0:52/0:30. Elapsed now clamped to duration for display.

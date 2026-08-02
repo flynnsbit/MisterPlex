@@ -488,7 +488,11 @@ public:
             }
         }
 
-        formatTime(positionMs, L.elapsed);
+        // Elapsed must match bar fill source: clamp to duration (bar uses min(pos,dur)).
+        // Unclamped wall-clock position past EOF showed e.g. 0:52 with total 0:30 while bar@100%.
+        const int64_t posShow =
+            (durationMs > 0 && positionMs > durationMs) ? durationMs : positionMs;
+        formatTime(posShow, L.elapsed);
         formatTime(durationMs, L.total);
         L.elapsedW = measureTextWidth(L.elapsed, m);
         L.totalW = measureTextWidth(L.total, m);
@@ -824,6 +828,8 @@ private:
                                           0x06, 0x06, 0x0C, 0x38, 0x00, 0x00};
         static constexpr uint8_t colon[13] = {0x00, 0x00, 0x18, 0x18, 0x00, 0x00, 0x00,
                                              0x18, 0x18, 0x00, 0x00, 0x00, 0x00};
+        static constexpr uint8_t period8[13] = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                                               0x00, 0x18, 0x18, 0x00, 0x00, 0x00};
         static constexpr uint8_t lt[13] = {0x00, 0x06, 0x0C, 0x18, 0x30, 0x60, 0xC0,
                                           0x60, 0x30, 0x18, 0x0C, 0x06, 0x00};
         static constexpr uint8_t gt[13] = {0x00, 0xC0, 0x60, 0x30, 0x18, 0x0C, 0x06,
@@ -898,6 +904,7 @@ private:
         case '7': return d7;
         case '8': return d8;
         case '9': return d9;
+        case '.': return period8;
         case ':': return colon;
         case '<': return lt;
         case '>': return gt;
@@ -1119,10 +1126,15 @@ private:
             0x1800, 0x3000, 0x3000, 0x3000, 0x3FC0, 0x0000, 0x0000, 0x0000};
         if (ch >= 'a' && ch <= 'z')
             ch = static_cast<char>(ch - 'a' + 'A');
-        switch (ch) {
+        
+        static constexpr uint16_t period12[16] = {
+            0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000,
+            0x0000, 0x0000, 0x0000, 0x1800, 0x1800, 0x0000, 0x0000, 0x0000};
+switch (ch) {
         case '0': return d0; case '1': return d1; case '2': return d2; case '3': return d3;
         case '4': return d4; case '5': return d5; case '6': return d6; case '7': return d7;
-        case '8': return d8; case '9': return d9; case ':': return colon; case '<': return lt;
+        case '8': return d8; case '9': return d9; case '.': return period12;
+        case ':': return colon; case '<': return lt;
         case '>': return gt; case '-': return minus; case '/': return slash;
         case 'A': return A; case 'B': return B; case 'C': return C; case 'D': return D;
         case 'E': return E; case 'F': return F; case 'G': return G; case 'H': return H;
