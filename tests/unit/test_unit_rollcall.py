@@ -55,6 +55,7 @@ EXPECTED_PREREQS = [
     "$(ROOT)/build/test_frame_store_math",
     "$(ROOT)/build/test_coded_size_adopt",
     "$(ROOT)/build/test_ffmpeg_vf",
+    "$(ROOT)/build/test_force_scale_construction",
     "$(ROOT)/build/test_yuv420p_chroma_480p",
     "$(ROOT)/build/test_geom_frame_cost",
     "$(ROOT)/build/test_glass_loss_death_points",
