@@ -11,8 +11,12 @@ So low supply does **not** tell the operator whether:
 1. **the source/path cannot deliver** (nothing arriving), or  
 2. **we are not pulling** (our loop is the brake; path has idle capacity).
 
-`supply_regime` is the production telemetry that separates those classes.
-Root-cause work on *why* we brake stays with **w-cpu-1** (do not duplicate).
+`supply_regime` is the **pipe-fill** companion (FIONREAD path vs back-pressure).
+Parent silicon later **falsified local back-pressure** on the 480p collapse
+(ffmpeg not in `pipe_write`, daemon in `pipe_read`, `recv_q=0`) — see
+**[`docs/SUPPLY_STARVE_LOCUS.md`](SUPPLY_STARVE_LOCUS.md)** for the fuller
+`starved_transport|consumer|unknown` classifier. Root-cause on Recv-Q stays
+with **w-cpu-1** (do not duplicate).
 
 ## What the daemon can see (no root)
 

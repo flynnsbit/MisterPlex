@@ -8,6 +8,7 @@
 #include "libmisterplex/supply_bucket.hpp"
 #include "libmisterplex/supply_ratio.hpp"
 #include "libmisterplex/supply_regime.hpp"
+#include "libmisterplex/supply_starve_locus.hpp"
 #include "libmisterplex/idle_screen.hpp"
 #include "libmisterplex/last_frame_latch.hpp"
 #include "libmisterplex/osd_menu.hpp"
@@ -4313,6 +4314,24 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                 regIn.capacity_ok = pipeCap > 0;
                 regIn.pipe_capacity_bytes = pipeCap > 0 ? pipeCap : -1;
                 const auto sreg = misterplex::computeSupplyRegime(regIn);
+                // starve_locus: transport|consumer|unknown. Daemon has FIONREAD
+                // fill only — wchan/recv_q are parent-side probes. Without the
+                // full transport triad, starved → starved_unknown (honest).
+                misterplex::StarveLocusInput locIn;
+                locIn.supply_established = sratio.interval_established;
+                locIn.supply_ratio = sratio.interval_ratio;
+                locIn.ok_min = supplyRatioOkMin_;
+                locIn.ok_min_src = okMinSrc;
+                if (sreg.fill_ok) {
+                    locIn.pipe_fill_measured = true;
+                    locIn.pipe_fill_peak = sreg.fill_peak;
+                }
+                locIn.ledger_ok = true;
+                locIn.frames = frameIndex;
+                locIn.presents = presentCount_;
+                locIn.drops = droppedFrames_.load();
+                locIn.publish_misses = publishMisses_.load();
+                const auto slocus = misterplex::computeStarveLocus(locIn);
                 // Best-effort ffmpeg child /proc/pid/io rchar (no root; own child).
                 std::string rcharFrag = misterplex::formatFfmpegRcharFragment(false, 0, 0);
                 {
@@ -4343,6 +4362,7 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                     " " + misterplex::formatClockMasterFragment(audioMaster) +
                     " " + misterplex::formatSupplyRatioFragment(sratio) +
                     " " + misterplex::formatSupplyRegimeFragment(sreg) +
+                    " " + misterplex::formatStarveLocusFragment(slocus) +
                     " " + rcharFrag +
                     " " + std::string(avServoBuf) +
                     " fps=" + std::to_string(fpsNum) + "/" + std::to_string(fpsDen) +
