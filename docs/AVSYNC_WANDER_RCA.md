@@ -7,7 +7,8 @@ Instrument validated on hardware (Δ=+111.50 ms P3 HIT). Next: cause of WANDER.
 | ID | Prediction |
 |----|------------|
 | W1 | Same-window: if `daemon_vfps_mean < 22` AND `residual_rms_ms > 25` → class `WANDER_WITH_THROUGHPUT_COLLAPSE` |
-| W2 | If `vfps_mean ≥ 23.5` AND residual > 25 → `WANDER_WITHOUT_COLLAPSE` (pacer/phase, not supply) |
+| W2 | **RECAL** residual>25 too coarse (parent: 14.4 vs tol 12.44). Use `timing_class=WANDER` ∧ vfps≥23.5 ∧ drops_delta=0 → `WANDER_WITHOUT_COLLAPSE` |
+| W2b | See `docs/AVSYNC_LIPSYNC_VS_JUDDER.md` SNR; N≥6 for rate |
 | W3 | When residual high, `av_drift_ms` median still near −LEAD (servo circular) |
 | W4 | Mid-window respawn → harness rc=**79** INVALID, row not scored |
 | W5 | 240p control: residual_rms lower than 480p at matched session age (or NO-DATA if no 240 fixture) |

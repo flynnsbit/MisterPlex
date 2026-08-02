@@ -1125,6 +1125,8 @@ class MeasureResult:
     margin: dict[str, Any] = field(default_factory=dict)
     flash_meta: dict[str, Any] = field(default_factory=dict)
     beep_meta: dict[str, Any] = field(default_factory=dict)
+    flash_onset_s: list[float] = field(default_factory=list)
+    inter_flash: dict[str, Any] = field(default_factory=dict)
     capture_path: str = ""
     audio_sr: int = 0
 
@@ -1181,6 +1183,96 @@ def derive_wander_tol_ms(
         "wander_rms_tol_ms": tol,
         "wander_rms_tol_src": src,
     }
+
+
+
+def inter_event_interval_stats(
+    times_s: list[float],
+    *,
+    expected_period_s: float | None = None,
+    expected_period_src: str = "NO-DATA",
+) -> dict[str, Any]:
+    """Inter-onset interval distribution (presentation cadence of markers).
+
+    Independent of audio and of offset residuals. A 50 ms lipsync excursion does
+    NOT require an outlier interval; a multi-period gap DOES show here.
+    Single-frame drops between markers are NOT visible at marker period 2 s —
+    that needs burned-in counter / glass_template_skip (see docs).
+    """
+    out: dict[str, Any] = {
+        "n_events": len(times_s),
+        "n_intervals": 0,
+        "interval_ms_src": "NO-DATA",
+        "expected_period_s": expected_period_s,
+        "expected_period_s_src": expected_period_src,
+    }
+    if len(times_s) < 2:
+        out["reason"] = "need_ge_2_events"
+        return out
+    ts = sorted(float(x) for x in times_s)
+    dti = [(ts[i] - ts[i - 1]) * 1000.0 for i in range(1, len(ts))]
+    out["n_intervals"] = len(dti)
+    out["interval_ms_src"] = "measured"
+    out["interval_ms_list"] = dti
+    s = sorted(dti)
+    def pct(q: float) -> float:
+        if not s:
+            return float("nan")
+        k = (len(s) - 1) * q
+        f = int(math.floor(k))
+        c = min(f + 1, len(s) - 1)
+        if f == c:
+            return float(s[f])
+        return float(s[f] * (c - k) + s[c] * (k - f))
+    out["interval_ms_min"] = float(min(dti))
+    out["interval_ms_max"] = float(max(dti))
+    out["interval_ms_mean"] = float(sum(dti) / len(dti))
+    out["interval_ms_stdev"] = float(statistics.pstdev(dti)) if len(dti) > 1 else 0.0
+    out["interval_ms_p50"] = pct(0.50)
+    out["interval_ms_p95"] = pct(0.95)
+    out["interval_ms_p99"] = pct(0.99)
+    # Histogram bins: relative to expected period if known, else 100 ms bins
+    if expected_period_s and expected_period_s > 0:
+        exp_ms = float(expected_period_s) * 1000.0
+        out["expected_period_ms"] = exp_ms
+        # classify each interval
+        lo = 0.75 * exp_ms
+        hi = 1.25 * exp_ms
+        outliers = [x for x in dti if x < lo or x > hi]
+        out["interval_outlier_lo_ms"] = lo
+        out["interval_outlier_hi_ms"] = hi
+        out["interval_outlier_rule"] = "outside_[0.75,1.25]*expected_period"
+        out["interval_outlier_rule_src"] = "DEFAULT_ASSUMED"
+        out["n_interval_outliers"] = len(outliers)
+        out["interval_outliers_ms"] = outliers
+        out["n_interval_outliers_src"] = "measured"
+        # missed markers estimate: round(dt/period)-1 for long gaps
+        missed = 0
+        for x in dti:
+            k = int(round(x / exp_ms))
+            if k >= 2:
+                missed += k - 1
+        out["est_missed_markers"] = missed
+        out["est_missed_markers_src"] = "derived_round_dt_over_period"
+        out["est_missed_markers_note"] = (
+            "counts multi-period gaps in flash onsets; NOT single-frame drops"
+        )
+    # coarse histogram counts for parent paste
+    edges = [0, 1500, 1800, 1900, 1950, 2000, 2050, 2100, 2200, 2500, 3000, 4000, 6000, 1e12]
+    labels = [
+        "<1500", "1500-1800", "1800-1900", "1900-1950", "1950-2000", "2000-2050",
+        "2050-2100", "2100-2200", "2200-2500", "2500-3000", "3000-4000", "4000-6000", ">=6000",
+    ]
+    counts = [0] * (len(edges) - 1)
+    for x in dti:
+        for i in range(len(edges) - 1):
+            if edges[i] <= x < edges[i + 1]:
+                counts[i] += 1
+                break
+    out["histogram_bin_labels"] = labels
+    out["histogram_counts"] = counts
+    out["histogram_src"] = "measured"
+    return out
 
 
 def excess_wander_rms_ms(residual_rms_ms: float, quant_rms_ms: float | None) -> float:
@@ -1482,6 +1574,18 @@ def analyse_file(
         )
 
     pairs, uf, ub = pair_offsets(flashes, beeps, pair_window_s)
+    _period = float(marker_period_s) if marker_period_s is not None else float(
+        fmeta.get("fixture_flash_period_s") or FIXTURE_FLASH_PERIOD_S
+    )
+    _period_src = (
+        marker_period_src if marker_period_s is not None
+        else str(fmeta.get("fixture_flash_period_s_src") or "DEFAULT_ASSUMED")
+    )
+    _iflash = inter_event_interval_stats(
+        list(flashes),
+        expected_period_s=_period,
+        expected_period_src=_period_src,
+    )
     res = MeasureResult(
         ok=False,
         unscored=False,
@@ -1493,6 +1597,8 @@ def analyse_file(
         pairs=pairs,
         flash_meta=fmeta,
         beep_meta=bmeta,
+        flash_onset_s=[float(x) for x in flashes],
+        inter_flash=_iflash,
         capture_path=str(path),
         early_window_s=float(early_window_s),
         early_window_s_src=early_window_src,
@@ -1965,6 +2071,42 @@ def print_report(
         f"detrended_max_abs_ms={res.detrended_max_abs_ms} src="
         f"{'measured' if res.detrended_max_abs_ms is not None else 'NO-DATA'}"
     )
+    # Glass marker cadence (presentation intervals) — independent of offset residual
+    ifr = res.inter_flash or {}
+    if ifr.get("interval_ms_src") == "measured":
+        print(
+            "inter_flash_interval_ms "
+            f"n={ifr.get('n_intervals')} "
+            f"p50={ifr.get('interval_ms_p50')} "
+            f"p95={ifr.get('interval_ms_p95')} "
+            f"p99={ifr.get('interval_ms_p99')} "
+            f"max={ifr.get('interval_ms_max')} "
+            f"min={ifr.get('interval_ms_min')} "
+            f"mean={ifr.get('interval_ms_mean')} "
+            f"stdev={ifr.get('interval_ms_stdev')} "
+            "src=measured"
+        )
+        print(
+            f"inter_flash_expected_period_s={ifr.get('expected_period_s')} "
+            f"src={ifr.get('expected_period_s_src')}"
+        )
+        print(
+            f"inter_flash_n_outliers={ifr.get('n_interval_outliers')} "
+            f"src={ifr.get('n_interval_outliers_src', 'NO-DATA')} "
+            f"outliers_ms={ifr.get('interval_outliers_ms')} "
+            f"est_missed_markers={ifr.get('est_missed_markers')} "
+            f"src_missed={ifr.get('est_missed_markers_src', 'NO-DATA')}"
+        )
+        labs = ifr.get("histogram_bin_labels") or []
+        cts = ifr.get("histogram_counts") or []
+        hist = ",".join(f"{a}:{b}" for a, b in zip(labs, cts) if b)
+        print(f"inter_flash_histogram={hist} src=measured")
+        print(
+            "inter_flash_note: marker cadence only (period~2s); does NOT resolve "
+            "single-frame drops — use glass_template_skip / burned-in counter"
+        )
+    else:
+        print("inter_flash_interval_ms=NO-DATA src=NO-DATA")
     if res.margin:
         print(f"margin_verdict={res.margin.get('margin_verdict')} src=derived")
         print(
@@ -3158,6 +3300,20 @@ def main(argv: list[str] | None = None) -> int:
             )
     print(f"offset_timeseries_csv={ts_path} src=measured")
 
+    flash_csv = out_dir / f"{args.label}_flash_onsets.csv"
+    with flash_csv.open("w") as ff:
+        ff.write("t_flash_s,src\n")
+        for ts in res.flash_onset_s:
+            ff.write(f"{ts},measured\n")
+    print(f"flash_onsets_csv={flash_csv} src=measured")
+
+    iv_csv = out_dir / f"{args.label}_inter_flash_intervals.csv"
+    with iv_csv.open("w") as fi:
+        fi.write("interval_ms,src\n")
+        for iv in (res.inter_flash or {}).get("interval_ms_list") or []:
+            fi.write(f"{iv},measured\n")
+    print(f"inter_flash_intervals_csv={iv_csv} src=measured")
+
     payload = {
         "tool": "avsync_measure_hdmi",
         "mode": mode,
@@ -3203,6 +3359,10 @@ def main(argv: list[str] | None = None) -> int:
         "warmup_src": warmup_src,
         "decoded_frames": n_decoded,
         "offset_timeseries_csv": str(ts_path),
+        "flash_onsets_csv": str(flash_csv),
+        "inter_flash_intervals_csv": str(iv_csv),
+        "inter_flash": res.inter_flash,
+        "flash_onset_s": list(res.flash_onset_s),
     }
     if cal_ms is not None and res.median_offset_ms is not None:
         payload["median_offset_ms_corrected"] = res.median_offset_ms - cal_ms
