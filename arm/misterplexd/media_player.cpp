@@ -4840,7 +4840,28 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
     lifetimeDrops_.fetch_add(sessDrops, std::memory_order_relaxed);
     lifetimePublishMisses_.fetch_add(sessPubMiss, std::memory_order_relaxed);
     const uint64_t sid = sessionSeq_.fetch_add(1, std::memory_order_relaxed) + 1;
-    const char* endReason = stop_.load() ? "stop_or_seek" : "natural_eof";
+    // Field defect (parent 2026-08-02): crop=618 on 624x350 → 0 frames, log said
+    // natural_eof. Zero-frame total failure must be a distinct ERROR reason.
+    const char* endReason =
+        frameLedgerClassifyEndReason(stop_.load(), sessFrames, sessPresents);
+    if (frameLedgerIsZeroFrameFailure(endReason)) {
+        const int mw = measuredDeliveryW_.load();
+        const int mh = measuredDeliveryH_.load();
+        const size_t prodBytes =
+            (mw > 0 && mh > 0) ? yuv420pFrameBytesWH(mw, mh) : 0;
+        // Reader is coded-bank contract; prefer lastSummary when raw path ran.
+        size_t readerBytes = 0;
+        {
+            std::lock_guard<std::mutex> lock(summaryMu_);
+            if (lastSummary_.usedRawVideo && lastSummary_.shortReadWant > 0)
+                readerBytes = static_cast<size_t>(lastSummary_.shortReadWant);
+        }
+        if (readerBytes == 0) {
+            const auto g = ddrFrameGeometryForFpgaPresent(0, 0);
+            readerBytes = yuv420pCodedFrameBytes(g);
+        }
+        log(frameLedgerZeroFrameErrorLine(mw, mh, prodBytes, readerBytes, vfPlan.reason));
+    }
     frameLedgerSessionEnd(sid, sessFrames, sessPresents, sessDrops, endReason, sessPubMiss);
 
     const auto ledEnd = frameLedgerLiveOf(sessFrames, sessPresents, sessDrops, sessPubMiss);

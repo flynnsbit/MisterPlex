@@ -80,6 +80,25 @@ MAIN="$ROOT/arm/misterplexd/main.cpp"
 check FORCE_SCALE_default_true "$MAIN" 'bool ddrYuvForceScale = true'
 check FORCE_SCALE_lab_escape "$MAIN" 'DDR_YUV_FORCE_SCALE_LAB'
 
+# Zero-frame session must not report natural_eof (parent field 2026-08-02:
+# crop=618 on 624x350 → frames=0 presents=0 reason=natural_eof black screen).
+FL="$ROOT/host/libmisterplex/frame_ledger.hpp"
+check ZF_classify_helper "$FL" 'frameLedgerClassifyEndReason'
+check ZF_token "$FL" 'zero_frame_playback'
+check ZF_error_line_helper "$FL" 'frameLedgerZeroFrameErrorLine'
+check ZF_error_prefix "$FL" 'ERROR media: ZERO_FRAME_PLAYBACK'
+check ZF_arm_uses_classify "$MP" 'frameLedgerClassifyEndReason(stop_.load()'
+check ZF_arm_emits_error "$MP" 'frameLedgerZeroFrameErrorLine('
+check ZF_arm_not_naive_ternary "$MP" 'frameLedgerClassifyEndReason'
+# RED twin: naive ternary must be gone from session-end site.
+if rg -n 'stop_\.load\(\) \? "stop_or_seek" : "natural_eof"' "$MP" >/dev/null; then
+  echo "FAIL ZF_naive_ternary_still_present" >&2
+  fail=$((fail + 1))
+else
+  echo "PASS ZF_naive_ternary_removed"
+  pass=$((pass + 1))
+fi
+
 echo "SUMMARY pass=$pass fail=$fail"
 if [[ "$fail" -ne 0 ]]; then
   echo "B2_B5_SOURCE_WIRING_FAIL"

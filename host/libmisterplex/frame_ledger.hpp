@@ -25,8 +25,56 @@ void frameLedgerProcessStart(int64_t lifetimeFrames, int64_t lifetimePresents,
 // session_end: one demux/playback finished. residual = frames - presents - drops
 // (may be non-zero when paused overlays / skip-present paths apply).
 // publishMisses: present attempted but DDR/FPGA publish failed (not A/V drops).
+//
+// reason tokens (product):
+//   stop_or_seek         — user stop / seek restart
+//   natural_eof          — content ended with at least one assembled frame OR present
+//   zero_frame_playback  — frames=0 AND presents=0 without stop/seek
+// Field defect (parent 2026-08-02): crop=618:480 on fleet 624x350 → ffmpeg emits
+// 0 frames, session reported reason=natural_eof. That MUST be zero_frame_playback.
 void frameLedgerSessionEnd(uint64_t sessionId, int64_t frames, int64_t presents, int64_t drops,
                            const char* reason, int64_t publishMisses = 0);
+
+// Stable reason tokens — greppable; do not rename without soak tooling update.
+inline constexpr const char* kFrameLedgerReasonStopOrSeek = "stop_or_seek";
+inline constexpr const char* kFrameLedgerReasonNaturalEof = "natural_eof";
+inline constexpr const char* kFrameLedgerReasonZeroFrame = "zero_frame_playback";
+
+// Classify session-end reason. Zero-frame total failure is NEVER natural_eof.
+inline const char* frameLedgerClassifyEndReason(bool stopOrSeek, int64_t frames,
+                                                int64_t presents) {
+    if (stopOrSeek)
+        return kFrameLedgerReasonStopOrSeek;
+    if (frames == 0 && presents == 0)
+        return kFrameLedgerReasonZeroFrame;
+    return kFrameLedgerReasonNaturalEof;
+}
+
+inline bool frameLedgerIsZeroFrameFailure(const char* reason) {
+    return reason != nullptr &&
+           std::string(reason) == kFrameLedgerReasonZeroFrame;
+}
+
+// One greppable ERROR line for zero-frame sessions (field defect class).
+// Carries delivered_geom, producer/reader bytes, vf reason for single-line RCA.
+inline std::string frameLedgerZeroFrameErrorLine(int delivered_w, int delivered_h,
+                                                 size_t producer_input_bytes,
+                                                 size_t reader_bytes,
+                                                 const std::string& vf_reason) {
+    const std::string geom = (delivered_w > 0 && delivered_h > 0)
+                                 ? (std::to_string(delivered_w) + "x" + std::to_string(delivered_h))
+                                 : "NO-DATA";
+    const std::string vfr = vf_reason.empty() ? "NO-DATA" : vf_reason;
+    return std::string("ERROR media: ZERO_FRAME_PLAYBACK") +
+           " reason=" + kFrameLedgerReasonZeroFrame +
+           " frames=0 presents=0" +
+           " delivered_geom=" + geom +
+           " producer_input_bytes=" + std::to_string(producer_input_bytes) +
+           " reader_bytes=" + std::to_string(reader_bytes) +
+           " vf_reason=" + vfr +
+           " note=total_playback_failure_not_natural_eof" +
+           " tag=measured";
+}
 
 // process_exit: orderly daemon exit (same moment as deathBreadcrumbExit).
 void frameLedgerProcessExit(int code, const char* why, int64_t lifetimeFrames,
