@@ -643,6 +643,28 @@ int main(int argc, char** argv) {
         auto avoff = loadConf(confPath, "AV_OFFSET_MS");
         if (!avoff.empty())
             player.setAvOffsetMs(std::atoi(avoff.c_str()));
+        // supply_ratio ok floor (interval Δaudio_s/Δwall_s). See supply_ratio.hpp.
+        // Parent RCA: starved 0.46 vs healthy 0.993; default 0.90.
+        {
+            double okMin = 0.90;
+            const char* okSrc = "DEFAULT_ASSUMED";
+            auto srm = loadConf(confPath, "SUPPLY_RATIO_OK_MIN");
+            if (!srm.empty()) {
+                okMin = std::atof(srm.c_str());
+                okSrc = "conf";
+            }
+            const char* srmEnv = std::getenv("MISTERPLEX_SUPPLY_RATIO_OK_MIN");
+            if (srmEnv && srmEnv[0] != '\0') {
+                okMin = std::atof(srmEnv);
+                okSrc = "env";
+            }
+            const bool caller = (std::strcmp(okSrc, "DEFAULT_ASSUMED") != 0);
+            player.setSupplyRatioOkMin(okMin, caller);
+            std::fprintf(stderr,
+                         "misterplexd: SUPPLY_RATIO_OK_MIN=%.3f src=%s "
+                         "(interval d_audio_s/d_wall_s; starved class below floor)\n",
+                         player.supplyRatioOkMin(), okSrc);
+        }
         std::fprintf(stderr, "misterplexd: AV_PRESENT_LEAD_MS=%s AV_RESYNC_DROP_MS=%s\n",
                      leadSrc.c_str(),
                      drop.empty() ? "80(default)" : drop.c_str());

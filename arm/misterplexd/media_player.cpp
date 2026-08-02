@@ -6,6 +6,7 @@
 #include "libmisterplex/ffmpeg_vf.hpp"
 #include "libmisterplex/frame_ledger.hpp"
 #include "libmisterplex/supply_bucket.hpp"
+#include "libmisterplex/supply_ratio.hpp"
 #include "libmisterplex/idle_screen.hpp"
 #include "libmisterplex/last_frame_latch.hpp"
 #include "libmisterplex/osd_menu.hpp"
@@ -2971,6 +2972,11 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
     // Per-second supply bucket baseline (glass-loss 1/2.71s resolvable).
     misterplex::SupplyCounters supplyPrev{};
     bool supplyPrevInit = false;
+    // Interval supply_ratio baseline (Δaudio_s/Δwall_s). Session-local; reset each play.
+    double supplyRatioPrevAudioS = 0.0;
+    double supplyRatioPrevWallS = 0.0;
+    bool supplyRatioPrevInit = false;
+    bool supplyRatioPrevPaused = false;
 
     bool usedRawVideo = false;
     bool videoEof = false;
@@ -4234,15 +4240,32 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                 // only (%.4f). Decode-side deficit = expected_frames - frames (content
                 // vs wall). Presentation-side loss is a SEPARATE ledger (presents /
                 // glass) — never conflate the two (parent DEFECT 2).
+                //
+                // supply_ratio (interval): Δaudio_s/Δwall_s — stream starvation.
+                // audio_s = audioBytes_/(48000*4) (PCM written to MrAudio only).
+                // wall_s  = (now-t0) after first video. NOT av_drift (servo), NOT
+                // desync_risk (pipe geometry). See supply_ratio.hpp.
+                const double wall_s_now = static_cast<double>(wall2) / 1000.0;
+                const bool audioMaster =
+                    wantAudio && audioActive_.load(); // same branch as pacer clock
+                const bool pausedNow = paused_.load();
+                const bool pausedWindow = pausedNow || supplyRatioPrevPaused;
+                const char* okMinSrc =
+                    supplyRatioOkMinCaller_ ? "caller_supplied" : "DEFAULT_ASSUMED";
+                const auto sratio = misterplex::computeSupplyRatio(
+                    supplyRatioPrevInit, supplyRatioPrevAudioS, supplyRatioPrevWallS,
+                    a_sec, wall_s_now, audioMaster, pausedWindow, supplyRatioOkMin_,
+                    okMinSrc);
                 log("media: " + frameLedgerTelemetryFragment(led) +
                     " vfps=" + fmtFpsRate(vfps) +
                     " pfps=" + fmtFpsRate(pfps) +
                     " audio_s=" + fmtSec3(a_sec) +
-                    " wall_s=" + fmtSec3(static_cast<double>(wall2) / 1000.0) +
+                    " wall_s=" + fmtSec3(wall_s_now) +
                     " wall_ms=" + std::to_string(wall2) +
                     " mono_ms=" + std::to_string(steadyMonoMs()) +
                     " audio=" + (audioActive_.load() ? "on" : "off") +
-                    " clock=av-lock" +
+                    " " + misterplex::formatClockMasterFragment(audioMaster) +
+                    " " + misterplex::formatSupplyRatioFragment(sratio) +
                     " " + std::string(avServoBuf) +
                     " fps=" + std::to_string(fpsNum) + "/" + std::to_string(fpsDen) +
                     " fps_src=" +
@@ -4256,7 +4279,7 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                     // Live flag: flips to 1 only after MEASURED_DELIVERY (not play-time GEOM).
                     " delivery_verified=" +
                     (deliveryGeometryVerified_.load(std::memory_order_relaxed) ? "1" : "0") +
-                    " desync_risk=" + (pipeDesyncRisk_.load() ? "1" : "0") +
+                    " " + misterplex::formatDesyncRiskFragment(pipeDesyncRisk_.load()) +
                     " lifetime_frames=" + std::to_string(ltF) +
                     " lifetime_presents=" + std::to_string(ltP) +
                     " lifetime_drops=" + std::to_string(ltD) +
@@ -4277,6 +4300,13 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                          ? std::to_string(ffmpegOutFrames_.load(std::memory_order_relaxed))
                          : "NO-DATA") +
                     " tag=measured");
+                // Advance supply_ratio prev only when not paused (freeze baseline).
+                if (!pausedNow) {
+                    supplyRatioPrevAudioS = a_sec;
+                    supplyRatioPrevWallS = wall_s_now;
+                    supplyRatioPrevInit = true;
+                }
+                supplyRatioPrevPaused = pausedNow;
                 // Per-second supply bucket — resolvable at ~1 skip / 2.71 s.
                 {
                     misterplex::SupplyCounters cur;
@@ -4287,7 +4317,7 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                     cur.pipe_bytes = static_cast<int64_t>(totalBytes);
                     cur.ffmpeg_out_frames =
                         ffmpegOutFrames_.load(std::memory_order_relaxed);
-                    cur.wall_s = static_cast<double>(wall2) / 1000.0;
+                    cur.wall_s = wall_s_now;
                     if (supplyPrevInit) {
                         const auto d =
                             misterplex::supplyBucketDelta(supplyPrev, cur, fpsNum, fpsDen);

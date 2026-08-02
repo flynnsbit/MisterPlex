@@ -335,7 +335,9 @@ inline void formatAvServoTelemetry(char* buf, size_t bufLen, int64_t driftMs, in
 //
 // PARENT FLEET 2026-07-31 — H-DROP REJECTED: startup drop count does NOT set
 // HDMI lip-sync offset (12-drop and 18-drop same cluster within 0.7 ms).
-// av_drift_ms / clock=av-lock are blind to real lip-sync (servo deadband);
+// av_drift_ms is blind to real lip-sync (servo deadband). clock=av-lock was a
+// hardcoded literal (REMOVED → clock_master=audio|wall). Stream starvation is
+// supply_ratio=d_audio_s/d_wall_s (see supply_ratio.hpp), not av_drift.
 // only tools/avsync_measure_hdmi.py judges lip-sync. Do NOT map Δdrops→Δoffset.
 //
 // Product path (media_player.cpp Drop): skip present, next pipe frame ASAP.

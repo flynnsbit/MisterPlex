@@ -148,6 +148,15 @@ public:
 
     // Present lead (ms) so the vsync path is not starved. Conf AV_PRESENT_LEAD_MS.
     void setPresentLeadMs(int ms) { presentLeadMs_ = ms < 0 ? 0 : ms; }
+    // Stream supply ratio ok floor (interval Δaudio_s/Δwall_s). Conf SUPPLY_RATIO_OK_MIN.
+    // Default 0.90 — see libmisterplex/supply_ratio.hpp. Starved ⇒ class=starved on media:.
+    void setSupplyRatioOkMin(double v, bool caller_supplied = true) {
+        if (!(v > 0.0) || !(v <= 1.5))
+            v = 0.90;
+        supplyRatioOkMin_ = v;
+        supplyRatioOkMinCaller_ = caller_supplied;
+    }
+    double supplyRatioOkMin() const { return supplyRatioOkMin_; }
     // Drift (ms) past which a late frame is dropped to re-converge. Conf AV_RESYNC_DROP_MS.
     // 0 disables dropping (hold-only pacing).
     void setResyncDropMs(int ms) { resyncDropMs_ = ms < 0 ? 0 : ms; }
@@ -366,6 +375,9 @@ private:
     int fpsDen_ = 0;
     int presentLeadMs_ = 40;
     int resyncDropMs_ = 80;
+    // Interval supply_ratio ok floor (Δaudio_s/Δwall_s). See supply_ratio.hpp.
+    double supplyRatioOkMin_ = 0.90;
+    bool supplyRatioOkMinCaller_ = false; // conf/env set → caller_supplied tag
     // F_SETPIPE_SZ target for the STREAM=0 rawvideo pipe. See raw_video_pipe.hpp.
     int rawVideoPipeBytes_ = 2 * 1024 * 1024;
     int lastRawVideoPipeActual_ = -1;
