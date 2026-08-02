@@ -2,14 +2,27 @@
 # Read-only: pair supervise EXIT lines with daemon choke-points + death sender.
 # Parent runs on device. Does not kill or restart anything.
 #
+# ROOT resolution (two-roots trap): live process via readlink -f /proc/*/exe,
+# never sole hardcoded v1/v2. Override with ROOT= if needed (caller_supplied).
+#
 # Usage:
 #   sh tools/daemon_exit_correlate.sh
 #   ROOT=/media/fat/misterplex_v2 N=8 sh tools/daemon_exit_correlate.sh
 #   sh tools/daemon_exit_correlate.sh; echo "true rc=$?"
 
 set -u
-ROOT=${ROOT:-/media/fat/misterplex_v2}
+HERE=$(CDPATH= cd -- "$(dirname "$0")" && pwd)
+# shellcheck disable=SC1091
+. "$HERE/lib_live_misterplex_root.sh"
+
 N=${N:-8}
+if [ -n "${ROOT:-}" ]; then
+  : # keep caller ROOT for helper
+fi
+if ! ROOT=$(resolve_live_misterplex_root); then
+  echo "RESULT=NO-DATA reason=no_live_root"
+  exit 77
+fi
 S=${SUPLOG:-$ROOT/misterplexd_supervise.log}
 L=${DAEMON_LOG:-$ROOT/misterplexd.log}
 D=${DEATH:-$ROOT/misterplexd.death}

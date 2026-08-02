@@ -82,14 +82,15 @@ resolve_ffmpeg_pid() {
 }
 
 read_wall_s() {
-  pick="$LOG_HINT"
-  if [ -z "$pick" ] || [ ! -f "$pick" ]; then
+  # Two-roots: resolve log from live misterplexd exe, not hardcoded v1/v2 order.
+  HERE_RQ=$(CDPATH= cd -- "$(dirname "$0")" && pwd)
+  # shellcheck disable=SC1091
+  . "$HERE_RQ/lib_live_misterplex_root.sh"
+  pick=""
+  if pick=$(resolve_live_misterplex_log "${LOG_HINT:-}"); then
+    :
+  else
     pick=""
-    for f in /tmp/misterplexd.log /var/log/misterplexd.log \
-             /media/fat/misterplex/misterplexd.log \
-             /media/fat/misterplex_v2/misterplexd.log; do
-      [ -f "$f" ] && { pick=$f; break; }
-    done
   fi
   line=""
   if [ -n "$pick" ]; then

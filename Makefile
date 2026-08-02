@@ -85,8 +85,10 @@ unit-unlocked: unit-rollcall preflight $(ROOT)/build/test_cadence $(ROOT)/build/
 	$(ROOT)/build/test_raw_video_pipe
 	bash $(ROOT)/tests/unit/test_raw_video_pipe_red.sh
 	bash $(ROOT)/tests/unit/test_live_daemon_enum.sh
+	bash $(ROOT)/tests/unit/test_live_misterplex_root.sh
 	bash $(ROOT)/tests/unit/test_supervise_exit_classify.sh
 	bash $(ROOT)/tests/unit/test_main_rc0_paths.sh
+	bash $(ROOT)/tests/unit/test_crash_guard_writes_death.sh
 	bash $(ROOT)/tests/unit/test_soak_continuity_assert.sh
 	bash $(ROOT)/tests/unit/test_score_mister_contention.sh
 	bash $(ROOT)/tests/unit/test_media_fps_precision.sh

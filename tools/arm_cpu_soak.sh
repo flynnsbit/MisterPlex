@@ -56,7 +56,23 @@ RBF_PATH=${RBF_PATH:-/media/fat/_Utility/Plex.rbf}
 DECODE_SRC=${DECODE_SRC:-}
 LOG=${LOG:-}
 
-if [ -d /media/fat/misterplex_v2 ] && [ -w /media/fat/misterplex_v2 ]; then
+# Two-roots: prefer live misterplexd install root (exe), then writable fallbacks.
+HERE_SOAK=$(CDPATH= cd -- "$(dirname "$0")" && pwd)
+# shellcheck disable=SC1091
+if [ -f "$HERE_SOAK/lib_live_misterplex_root.sh" ]; then
+  . "$HERE_SOAK/lib_live_misterplex_root.sh"
+  if LR=$(resolve_live_misterplex_root 2>/dev/null) && [ -n "$LR" ] && [ -w "$LR" ]; then
+    LAB=$LR
+  elif [ -d /media/fat/misterplex_v2 ] && [ -w /media/fat/misterplex_v2 ]; then
+    LAB=/media/fat/misterplex_v2
+  elif [ -d /media/fat/misterplex ] && [ -w /media/fat/misterplex ]; then
+    LAB=/media/fat/misterplex
+  elif [ -d .agent-work/w-cpu-1 ] && [ -w .agent-work/w-cpu-1 ]; then
+    LAB=.agent-work/w-cpu-1
+  else
+    LAB=.
+  fi
+elif [ -d /media/fat/misterplex_v2 ] && [ -w /media/fat/misterplex_v2 ]; then
   LAB=/media/fat/misterplex_v2
 elif [ -d /media/fat/misterplex ] && [ -w /media/fat/misterplex ]; then
   LAB=/media/fat/misterplex
@@ -125,7 +141,15 @@ scrape_decode_src() {
   fi
   logs="$LOG"
   if [ -z "$logs" ]; then
-    logs="/media/fat/misterplex_v2/misterplexd.log /media/fat/misterplex/misterplexd.log"
+    logs=""
+    if command -v resolve_live_misterplex_log >/dev/null 2>&1 || \
+       type resolve_live_misterplex_log >/dev/null 2>&1; then
+      if lp=$(resolve_live_misterplex_log 2>/dev/null); then
+        logs=$lp
+      fi
+    fi
+    # FALLBACK_ASSUMED paths only after live miss (labelled by helper when used).
+    logs="$logs /media/fat/misterplex_v2/misterplexd.log /media/fat/misterplex/misterplexd.log"
   fi
   for lp in $logs; do
     [ -r "$lp" ] || continue
