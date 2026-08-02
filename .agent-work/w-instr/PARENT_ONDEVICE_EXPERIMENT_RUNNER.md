@@ -1,7 +1,7 @@
 # PARENT — on-device self-validating experiment runner
 
 branch: `w-instr-provenance`
-SHA: (tip after commit)
+SHA: c17d028b
 
 ## Why
 Your 7-arm bitrate sweep failed four independent ways, all producing output that *looked* like data:
