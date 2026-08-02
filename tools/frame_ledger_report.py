@@ -8,15 +8,20 @@ WHY
 or failed DDR publishes. Session counters reset per stream.
 
 Full identity (host/libmisterplex/frame_ledger.hpp):
-  unaccounted = residual = frames - presents - drops
+  residual_arm = frames - presents - drops
+  residual_unexplained = frames - presents - drops - publish_misses
   when every non-present is pacedrop or publish-miss:
-      unaccounted == publish_misses
+      residual_arm == publish_misses  and  residual_unexplained == 0
+  residual_unexplained != 0 is the user finding (uninstrumented gap).
+  Historical name "unaccounted" meant residual_arm (not unexplained).
 
 session_epoch = process_epoch.stream_seq changes on daemon start AND every new
 stream. A soak that spans two session_epoch values is NOT single-session (P4).
+rc=79 SESSION_INVALID aligns tools/frame_accounting_close.py + daemon_media_ledger.
 
 This tool prints the FULL ledger for ONE session (last session_end by default)
 with an explicit single-session assertion so a soak number is defensible.
+Prefer tools/frame_accounting_close.py for per-round d_frames/d_wall + soak.
 
 Inputs (parent pulls from device; this tool never SSHes):
   --ledger PATH   misterplexd.frame_ledger (append-only file on device confDir)
@@ -206,10 +211,15 @@ def print_row(
     print(
         "semantics: frames=pipe assembled; presents=DDR ok; "
         "drops=A/V-pacer skips ONLY; publish_misses=DDR fail; "
-        "unaccounted=residual=frames-presents-drops tag=measured"
+        "residual_arm=frames-presents-drops; "
+        "residual_unexplained=frames-presents-drops-publish_misses tag=measured"
     )
     print(
         "CANNOT_CLAIM: drops alone is full loss — ffmpeg non-produce is invisible here"
+    )
+    print(
+        f"residual_unexplained_calc={row.frames - row.presents - row.drops - row.publish_misses} "
+        f"src=measured"
     )
     print(f"source={row.source} src=measured")
     print(f"session={row.session} src=measured")

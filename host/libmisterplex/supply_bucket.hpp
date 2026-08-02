@@ -54,11 +54,17 @@ struct SupplyBucketDelta {
     bool ffmpeg_out_known = false;
 };
 
-// residual = frames - presents - drops (supply-side arithmetic only).
+// residual_arm = frames - presents - drops (supply-side; == publish_misses when closed).
 inline int64_t supplyResidual(int64_t frames, int64_t presents, int64_t drops) {
     return frames - presents - drops;
 }
-// Deprecated alias — same derivation as supplyResidual.
+// Uninstrumented gap (parent/user finding). Zero only if every non-present is
+// either a pacer Drop or a counted publish miss.
+inline int64_t supplyUnexplained(int64_t frames, int64_t presents, int64_t drops,
+                                 int64_t publishMisses) {
+    return frames - presents - drops - publishMisses;
+}
+// Deprecated alias — historical name meant residual_arm, NOT unexplained.
 inline int64_t supplyUnaccounted(int64_t frames, int64_t presents, int64_t drops) {
     return supplyResidual(frames, presents, drops);
 }
@@ -214,46 +220,65 @@ inline std::string formatSupplyBucketLine(const SupplyBucketDelta& d, double wal
                                           int64_t publishMisses, int64_t residual,
                                           int64_t ffmpegOut, int fpsNum, int fpsDen,
                                           const char* sessionEpoch) {
-    char buf[768];
+    char buf[1152];
+    const int64_t residual_unexplained =
+        supplyUnexplained(frames, presents, drops, publishMisses);
+    const int64_t d_unexplained = d.d_residual - d.d_publish_misses;
     if (ffmpegOut >= 0) {
         std::snprintf(
             buf, sizeof(buf),
             "supply_bucket wall_s=%.3f d_wall_s=%.3f d_frames=%lld d_presents=%lld "
             "d_drops=%lld d_publish_misses=%lld d_residual=%lld "
-            "d_residual_eq=frames-presents-drops residual_scope=supply_arm_only "
+            "d_residual_eq=frames-presents-drops d_residual_unexplained=%lld "
+            "d_residual_unexplained_eq=d_residual-d_publish_misses "
+            "residual_scope=supply_arm_only "
             "d_pipe_bytes=%lld expected_frames=%.3f supply_gap=%.3f d_ffmpeg_out=%lld "
             "ffmpeg_out_frames=%lld frames=%lld presents=%lld drops=%lld "
             "publish_misses=%lld residual=%lld residual_eq=frames-presents-drops "
+            "residual_unexplained=%lld residual_unexplained_eq=frames-presents-drops-publish_misses "
+            "iv_vfps=%.6f iv_pfps=%.6f "
             "fps=%d/%d fps_src=caller_supplied session_epoch=%s fpga_obs=none tag=measured",
             wall_s, d.d_wall_s, static_cast<long long>(d.d_frames),
             static_cast<long long>(d.d_presents), static_cast<long long>(d.d_drops),
             static_cast<long long>(d.d_publish_misses),
             static_cast<long long>(d.d_residual),
+            static_cast<long long>(d_unexplained),
             static_cast<long long>(d.d_pipe_bytes), d.expected_frames, d.supply_gap,
             static_cast<long long>(d.d_ffmpeg_out), static_cast<long long>(ffmpegOut),
             static_cast<long long>(frames), static_cast<long long>(presents),
             static_cast<long long>(drops), static_cast<long long>(publishMisses),
-            static_cast<long long>(residual), fpsNum, fpsDen,
-            sessionEpoch ? sessionEpoch : "NO-DATA");
+            static_cast<long long>(residual),
+            static_cast<long long>(residual_unexplained),
+            d.d_wall_s > 0.0 ? (static_cast<double>(d.d_frames) / d.d_wall_s) : 0.0,
+            d.d_wall_s > 0.0 ? (static_cast<double>(d.d_presents) / d.d_wall_s) : 0.0,
+            fpsNum, fpsDen, sessionEpoch ? sessionEpoch : "NO-DATA");
     } else {
         std::snprintf(
             buf, sizeof(buf),
             "supply_bucket wall_s=%.3f d_wall_s=%.3f d_frames=%lld d_presents=%lld "
             "d_drops=%lld d_publish_misses=%lld d_residual=%lld "
-            "d_residual_eq=frames-presents-drops residual_scope=supply_arm_only "
+            "d_residual_eq=frames-presents-drops d_residual_unexplained=%lld "
+            "d_residual_unexplained_eq=d_residual-d_publish_misses "
+            "residual_scope=supply_arm_only "
             "d_pipe_bytes=%lld expected_frames=%.3f supply_gap=%.3f d_ffmpeg_out=NO-DATA "
             "ffmpeg_out_frames=NO-DATA frames=%lld presents=%lld drops=%lld "
             "publish_misses=%lld residual=%lld residual_eq=frames-presents-drops "
+            "residual_unexplained=%lld residual_unexplained_eq=frames-presents-drops-publish_misses "
+            "iv_vfps=%.6f iv_pfps=%.6f "
             "fps=%d/%d fps_src=caller_supplied session_epoch=%s fpga_obs=none tag=measured",
             wall_s, d.d_wall_s, static_cast<long long>(d.d_frames),
             static_cast<long long>(d.d_presents), static_cast<long long>(d.d_drops),
             static_cast<long long>(d.d_publish_misses),
             static_cast<long long>(d.d_residual),
+            static_cast<long long>(d_unexplained),
             static_cast<long long>(d.d_pipe_bytes), d.expected_frames, d.supply_gap,
             static_cast<long long>(frames), static_cast<long long>(presents),
             static_cast<long long>(drops), static_cast<long long>(publishMisses),
-            static_cast<long long>(residual), fpsNum, fpsDen,
-            sessionEpoch ? sessionEpoch : "NO-DATA");
+            static_cast<long long>(residual),
+            static_cast<long long>(residual_unexplained),
+            d.d_wall_s > 0.0 ? (static_cast<double>(d.d_frames) / d.d_wall_s) : 0.0,
+            d.d_wall_s > 0.0 ? (static_cast<double>(d.d_presents) / d.d_wall_s) : 0.0,
+            fpsNum, fpsDen, sessionEpoch ? sessionEpoch : "NO-DATA");
     }
     return std::string(buf);
 }

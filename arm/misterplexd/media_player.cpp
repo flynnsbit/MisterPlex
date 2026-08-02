@@ -46,10 +46,11 @@ namespace {
 // std::to_string(23.9694) and std::to_string(23.9111) both become "23.9", which over
 // a 360 s soak is a ±36 frame ambiguity (parent DEFECT 1). Prefer exact counters
 // (frames=/presents=/wall_ms=) and print rates with enough decimals to resolve
-// single-frame deficits (1/360 s ≈ 0.0028 fps → %.4f).
+// single-frame deficits (1/360 s ≈ 0.0028 fps). Use %.6f so 23.90 vs 23.99 is
+// visible; host tools must still prefer d_frames/d_wall over cumulative vfps.
 inline std::string fmtFpsRate(double v) {
     char buf[32];
-    std::snprintf(buf, sizeof(buf), "%.4f", v);
+    std::snprintf(buf, sizeof(buf), "%.6f", v);
     return std::string(buf);
 }
 inline std::string fmtSec3(double v) {

@@ -144,10 +144,16 @@ int main() {
         CHECK(line.find("d_frames=24") != std::string::npos);
         CHECK(line.find("d_residual=") != std::string::npos);
         CHECK(line.find("residual_eq=frames-presents-drops") != std::string::npos);
+        CHECK(line.find("residual_unexplained=0") != std::string::npos);
+        CHECK(line.find("residual_unexplained_eq=frames-presents-drops-publish_misses") !=
+              std::string::npos);
+        CHECK(line.find("iv_vfps=24.000000") != std::string::npos);
         CHECK(line.find("fpga_obs=none") != std::string::npos);
         CHECK(line.find("d_unaccounted=") == std::string::npos);
         CHECK(line.find("ffmpeg_out_frames=264") != std::string::npos);
         CHECK(line.find("session_epoch=1.2") != std::string::npos);
+        CHECK(supplyUnexplained(100, 80, 4, 0) == 16);
+        CHECK(supplyUnexplained(100, 95, 3, 2) == 0);
         auto id = supplyPipeIdentity(449280u * 10u, 449280u, 10);
         const std::string td = formatSupplyTeardownLine(id, 449280u * 10u, 449280u, 10, "POST");
         CHECK(td.find("supply_ledger") != std::string::npos);

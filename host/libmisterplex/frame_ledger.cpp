@@ -81,9 +81,11 @@ void frameLedgerSessionEnd(uint64_t sessionId, int64_t frames, int64_t presents,
     if (!g_inited || g_path.empty())
         return;
     const int64_t residual = frameLedgerResidual(frames, presents, drops);
+    const int64_t residual_unexplained =
+        frameLedgerUnexplained(frames, presents, drops, publishMisses);
     char ts[32];
     wallTs(ts, sizeof(ts));
-    char line[768];
+    char line[896];
     const int n = std::snprintf(
         line, sizeof(line),
         "ts=%s event=session_end pid=%d session=%llu "
@@ -91,23 +93,27 @@ void frameLedgerSessionEnd(uint64_t sessionId, int64_t frames, int64_t presents,
         "presents=%lld presents_src=arm_publish_ok "
         "drops=%lld drops_src=av_pacer "
         "publish_misses=%lld publish_misses_src=arm_publish_fail "
-        "residual=%lld residual_eq=frames-presents-drops residual_scope=supply_arm_only "
+        "residual=%lld residual_eq=frames-presents-drops "
+        "residual_unexplained=%lld residual_unexplained_eq=frames-presents-drops-publish_misses "
+        "residual_scope=supply_arm_only "
         "fpga_obs=none reason=%s tag=measured\n",
         ts, static_cast<int>(::getpid()), static_cast<unsigned long long>(sessionId),
         static_cast<long long>(frames), static_cast<long long>(presents),
         static_cast<long long>(drops), static_cast<long long>(publishMisses),
-        static_cast<long long>(residual), reason ? reason : "?");
+        static_cast<long long>(residual), static_cast<long long>(residual_unexplained),
+        reason ? reason : "?");
     if (n > 0)
         appendLine(line, static_cast<size_t>(n));
     std::fprintf(stderr,
                  "misterplexd: FRAME_LEDGER event=session_end session=%llu "
                  "frames=%lld presents=%lld drops=%lld publish_misses=%lld "
                  "residual=%lld residual_eq=frames-presents-drops "
+                 "residual_unexplained=%lld residual_unexplained_eq=frames-presents-drops-publish_misses "
                  "residual_scope=supply_arm_only fpga_obs=none reason=%s tag=measured\n",
                  static_cast<unsigned long long>(sessionId), static_cast<long long>(frames),
                  static_cast<long long>(presents), static_cast<long long>(drops),
                  static_cast<long long>(publishMisses), static_cast<long long>(residual),
-                 reason ? reason : "?");
+                 static_cast<long long>(residual_unexplained), reason ? reason : "?");
 }
 
 void frameLedgerProcessExit(int code, const char* why, int64_t lifetimeFrames,

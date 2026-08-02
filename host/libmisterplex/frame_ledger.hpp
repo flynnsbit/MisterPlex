@@ -47,21 +47,31 @@ struct FrameLedgerTotals {
 // Returns false if path missing or unreadable; totals zeroed.
 bool frameLedgerSumFile(const std::string& path, FrameLedgerTotals* out);
 
-// residual identity: frames - presents - drops (clamped report, not forced 0).
+// residual identities (clamped report, not forced 0).
 //
-// Semantics (product present loop):
+// Semantics (product present loop — quote media_player.cpp this tree):
 //   frames         = pipe frames fully assembled (frameIndex)
-//   presents       = successful FPGA/DDR publishes (presentCount_)
-//   drops          = deliberate A/V-pacer skips ONLY (droppedFrames_)
-//   publish_misses = present attempted, DDR/FPGA publish failed
+//   presents       = successful FPGA/DDR publishes (presentCount_ ++ only on ok)
+//   drops          = deliberate A/V-pacer skips ONLY (droppedFrames_.fetch_add ~:4185)
+//   publish_misses = present attempted, DDR/FPGA publish failed (~:3641)
+//   resets         = play-path store(0) ~:3010/:3011 (NOT silence-scan)
 //
-// residual = frames - presents - drops
-//   • does NOT include av_drift_ms (drift uses frameIndex content time only)
-//   • a failed publish increments residual and publish_misses; drops stays flat
-//   • identity when every non-present is either pacedrop or publish-miss:
-//       residual == publish_misses
+// residual_arm = frames - presents - drops
+//   • a failed publish increments residual_arm and publish_misses; drops stays flat
+//   • when every non-present is pacedrop or publish-miss: residual_arm == publish_misses
+//
+// residual_unexplained = frames - presents - drops - publish_misses
+//   • PARENT/user finding: if non-zero, frames went missing on a path we do NOT
+//     instrument (neither pacer Drop nor counted publish fail). That is the
+//     "frames being dropped" complaint the drops= counter alone cannot settle.
+//   • does NOT include av_drift_ms; does NOT observe FPGA scanout/HDMI glass
 inline int64_t frameLedgerResidual(int64_t frames, int64_t presents, int64_t drops) {
     return frames - presents - drops;
+}
+
+inline int64_t frameLedgerUnexplained(int64_t frames, int64_t presents, int64_t drops,
+                                      int64_t publishMisses) {
+    return frames - presents - drops - publishMisses;
 }
 
 // Live snapshot fields emitted on the 1 Hz media telemetry line and at session_end.
@@ -70,7 +80,8 @@ struct FrameLedgerLive {
     int64_t presents = 0;
     int64_t drops = 0;
     int64_t publish_misses = 0;
-    int64_t residual = 0; // frames - presents - drops
+    int64_t residual = 0;             // frames - presents - drops
+    int64_t residual_unexplained = 0; // frames - presents - drops - publish_misses
 };
 
 inline FrameLedgerLive frameLedgerLiveOf(int64_t frames, int64_t presents, int64_t drops,
@@ -81,22 +92,21 @@ inline FrameLedgerLive frameLedgerLiveOf(int64_t frames, int64_t presents, int64
     s.drops = drops;
     s.publish_misses = publishMisses;
     s.residual = frameLedgerResidual(frames, presents, drops);
+    s.residual_unexplained =
+        frameLedgerUnexplained(frames, presents, drops, publishMisses);
     return s;
 }
 
-// True when residual is fully explained by counted publish misses (no other gap).
+// True when residual_arm is fully explained by counted publish misses (no other gap).
 inline bool frameLedgerResidualExplainedByPublishMiss(const FrameLedgerLive& s) {
     return s.residual == s.publish_misses;
 }
 
 // Compact key=value fragment for telemetry (no leading/trailing space).
 //
-// HONEST LABELS (parent 2026-08-01): every field carries its derivation.
+// HONEST LABELS: every field carries its derivation.
 // All counters below are SUPPLY-SIDE (ARM control flow). None observe the FPGA
-// scanout/swap. residual == frames-presents-drops by arithmetic; when the only
-// non-present paths are pacer-drop or publish-miss, residual == publish_misses.
-// Do NOT print a second name for residual that sounds independent (no bare
-// "unaccounted=" duplicate).
+// scanout/swap. residual_unexplained!=0 is the user-facing uninstrumented gap.
 inline std::string frameLedgerTelemetryFragment(const FrameLedgerLive& s) {
     return "frames=" + std::to_string(s.frames) + " frames_src=pipe_assemble" +
            " presents=" + std::to_string(s.presents) + " presents_src=arm_publish_ok" +
@@ -105,6 +115,8 @@ inline std::string frameLedgerTelemetryFragment(const FrameLedgerLive& s) {
            " publish_misses_src=arm_publish_fail" +
            " residual=" + std::to_string(s.residual) +
            " residual_eq=frames-presents-drops" +
+           " residual_unexplained=" + std::to_string(s.residual_unexplained) +
+           " residual_unexplained_eq=frames-presents-drops-publish_misses" +
            " residual_scope=supply_arm_only" +
            " fpga_obs=none" +
            " tag=measured";

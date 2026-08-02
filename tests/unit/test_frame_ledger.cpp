@@ -67,10 +67,15 @@ static void testPublishMissVsDropsAndDrift() {
     const auto live =
         misterplex::frameLedgerLiveOf(c.frames, c.presents, c.drops, c.publish_misses);
     CHECK(live.residual == 2);
+    CHECK(live.residual_unexplained == 0); // 100-97-1-2
     CHECK(misterplex::frameLedgerResidualExplainedByPublishMiss(live));
+    CHECK(misterplex::frameLedgerUnexplained(100, 97, 1, 2) == 0);
     CHECK(c.drops == 1);
     CHECK(c.av_drift_ms == 0);
     CHECK(live.residual != 0);
+
+    // Uninstrumented gap: frames vanish without drop or publish_miss.
+    CHECK(misterplex::frameLedgerUnexplained(100, 80, 4, 0) == 16);
 
     const std::string frag = misterplex::frameLedgerTelemetryFragment(live);
     CHECK(frag.find("frames=100") != std::string::npos);
@@ -79,6 +84,9 @@ static void testPublishMissVsDropsAndDrift() {
     CHECK(frag.find("publish_misses=2") != std::string::npos);
     CHECK(frag.find("residual=2") != std::string::npos);
     CHECK(frag.find("residual_eq=frames-presents-drops") != std::string::npos);
+    CHECK(frag.find("residual_unexplained=0") != std::string::npos);
+    CHECK(frag.find("residual_unexplained_eq=frames-presents-drops-publish_misses") !=
+          std::string::npos);
     CHECK(frag.find("residual_scope=supply_arm_only") != std::string::npos);
     CHECK(frag.find("fpga_obs=none") != std::string::npos);
     CHECK(frag.find("presents_src=arm_publish_ok") != std::string::npos);
@@ -99,6 +107,7 @@ static void testPublishMissVsDropsAndDrift() {
     CHECK(h.drops == 1);
     CHECK(h.publish_misses == 0);
     CHECK(h.residual == 0);
+    CHECK(h.residual_unexplained == 0);
     CHECK(healthy.av_drift_ms == 0);
 }
 
