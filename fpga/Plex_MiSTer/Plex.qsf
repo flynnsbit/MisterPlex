@@ -84,8 +84,9 @@ set_global_assignment -name VERILOG_MACRO "FRAME_W=640"
 set_global_assignment -name VERILOG_MACRO "FRAME_H=480"
 set_global_assignment -name VERILOG_MACRO "FRAME_LINES_8=1"
 # Product reclaim: omit decode_stub from stream_path (dark under DDR_FRAME_STORE).
-# ONE-fit 2026-08-01: PRODUCT_NO_STUB + plex_chrome (w-osd-hires). Research/STREAM leave off.
-set_global_assignment -name VERILOG_MACRO "PRODUCT_NO_STUB=1"
+# Default OFF (commented). Enable only with parent fit grant + ALLOW_PRODUCT_NO_STUB_ACTIVE=1.
+# Proven nostub RBF: c74c6863 (Fmax sys 32.59; stub 0 hierarchy rows). Research/STREAM leave off.
+# set_global_assignment -name VERILOG_MACRO "PRODUCT_NO_STUB=1"
 
 # sys/sys.tcl carries the upstream MiSTer single-stick SDRAM_* pin assignments.
 # Do not source sys/sys_dual_sdram.tcl for this lab unit: only one stick is installed.

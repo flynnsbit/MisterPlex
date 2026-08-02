@@ -149,11 +149,12 @@ module plex_chrome #(
     end
 
     always @(posedge clk_hdmi) begin
+        // MAX_CMDS=64 → 6-bit index; list_waddr is 8-bit host field
         if (list_we && (list_waddr < MAX_CMDS[7:0])) begin
             if (live_bank)
-                list_a[list_waddr] <= list_wdata;
+                list_a[list_waddr[5:0]] <= list_wdata;
             else
-                list_b[list_waddr] <= list_wdata;
+                list_b[list_waddr[5:0]] <= list_wdata;
         end
     end
 
@@ -222,18 +223,20 @@ module plex_chrome #(
         sc      = body_scale;
         for (ci = 0; ci < 8; ci = ci + 1) begin
             if (latched_en && (ci < latched_count)) begin
-                cw   = live_bank ? list_b[ci] : list_a[ci];
+                cw   = live_bank ? list_b[ci[5:0]] : list_a[ci[5:0]];
                 op   = cw[7:0];
                 cx   = cw[23:8];
                 cy   = cw[39:24];
                 code = cw[47:40];
                 if (op == 8'd2) begin
-                    if (hx >= {4'd0, cx} && hy >= {4'd0, cy}) begin
-                        gx = hx - {4'd0, cx};
-                        gy = hy - {4'd0, cy};
-                        if (gx < (FONT_W * sc) && gy < (FONT_H * sc)) begin
-                            bitx  = gx / sc;
-                            bity  = gy / sc;
+                    // hx/hy are 12b; cmd x/y are 16b — compare in 16b
+                    if ({4'd0, hx} >= cx && {4'd0, hy} >= cy) begin
+                        gx = hx - cx[11:0];
+                        gy = hy - cy[11:0];
+                        if (gx < (12'(FONT_W) * {8'd0, sc}) &&
+                            gy < (12'(FONT_H) * {8'd0, sc})) begin
+                            bitx  = gx / {8'd0, sc};
+                            bity  = gy / {8'd0, sc};
                             fbits = font_row(code, bity[2:0]);
                             if (fbits[7 - bitx[2:0]]) begin
                                 hit     = 1'b1;
@@ -242,9 +245,9 @@ module plex_chrome #(
                         end
                     end
                 end else if (op == 8'd1) begin
-                    if (hx >= {4'd0, cx} && hy >= {4'd0, cy} &&
-                        hx < {4'd0, cx} + {4'd0, cw[55:48]} &&
-                        hy < {4'd0, cy} + {4'd0, cw[63:56]}) begin
+                    if ({4'd0, hx} >= cx && {4'd0, hy} >= cy &&
+                        {4'd0, hx} < (cx + {8'd0, cw[55:48]}) &&
+                        {4'd0, hy} < (cy + {8'd0, cw[63:56]})) begin
                         hit     = 1'b1;
                         hit_rgb = 24'h14_14_28;
                     end
