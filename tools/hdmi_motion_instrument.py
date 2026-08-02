@@ -4471,9 +4471,25 @@ def _print_human(report: dict[str, Any], src: str) -> None:
             f"cap_span={_tag(report.get('cap_span'), PROVENANCE_MEASURED)} "
             f"src_fps={_tag(report.get('source_fps'), report.get('source_fps_src', PROVENANCE_DEFAULT_ASSUMED))} "
             f"cap_fps={_tag(report.get('capture_fps'), report.get('capture_fps_src', PROVENANCE_DEFAULT_ASSUMED))} "
-            f"{auth_s} "
-            f"NOTE_ERROR17=DEFAULT_ASSUMED_src_fps_is_not_a_measurement"
+            f"{auth_s}"
         )
+        src_src = str(report.get("source_fps_src") or "")
+        cap_src = str(report.get("capture_fps_src") or "")
+        if (not auth) or src_src == PROVENANCE_DEFAULT_ASSUMED or cap_src == PROVENANCE_DEFAULT_ASSUMED:
+            print(
+                "ERROR17_GUARD rate_not_authoritative "
+                f"src_fps_src={src_src or 'UNSCORED'} "
+                f"cap_fps_src={cap_src or 'UNSCORED'} "
+                "— DEFAULT_ASSUMED is NOT a measurement; rate gates refused "
+                "(pass --source-fps from daemon fps= / PMS frameRate and "
+                "--capture-fps/--capture-fps-src measured)"
+            )
+        else:
+            print(
+                "ERROR17_GUARD rate_authoritative "
+                f"src_fps_src={src_src} cap_fps_src={cap_src} "
+                "— values are caller_supplied/measured/container (not bare default)"
+            )
         notes = report.get("rate_notes") or []
         if notes:
             print(f"rate_notes={' | '.join(str(n) for n in notes)}")
@@ -4573,7 +4589,29 @@ def _print_human(report: dict[str, Any], src: str) -> None:
                 f"dt_ratio={h.get('dt_ratio')}"
             )
     print(f"reason={report['reason']}")
-    print(f"VERDICT={report['verdict']} rc={report['rc']}")
+    # VERDICT line always carries rate + fps provenance so assumed cannot
+    # look like a measured rate pass (ERROR 17).
+    v = report.get("verdict")
+    rc = report.get("rc")
+    rate = report.get("rate", "RATE_UNSCORED")
+    src_src = report.get("source_fps_src", "UNSCORED")
+    cap_src = report.get("capture_fps_src", "UNSCORED")
+    auth = bool(report.get("fps_authoritative"))
+    rate_note = (
+        "rate_AUTHORITATIVE"
+        if auth and rate == "RATE_OK"
+        else (
+            "rate_NOT_AUTHORITATIVE_do_not_cite_as_measured"
+            if not auth
+            else f"rate={rate}"
+        )
+    )
+    print(
+        f"VERDICT={v} rc={rc} rate={rate} "
+        f"src_fps={_tag(report.get('source_fps'), src_src)} "
+        f"cap_fps={_tag(report.get('capture_fps'), cap_src)} "
+        f"fps_authoritative={int(auth)} {rate_note}"
+    )
 
 
 def _self_test() -> int:
@@ -5347,6 +5385,8 @@ def _self_test() -> int:
     # _tag formatting must make DEFAULT_ASSUMED unmistakable.
     assert _tag(23.976, PROVENANCE_DEFAULT_ASSUMED).endswith("[DEFAULT_ASSUMED]")
     assert "[measured]" in _tag(24.0, PROVENANCE_MEASURED)
+    assert abs(DEFAULT_ASSUMED_SOURCE_FPS - 23.976) > 0.01
+    assert DEFAULT_ASSUMED_SOURCE_FPS == 24.0
 
     
     # --- STARVED vs FREEZE vs RATE_OK (pixel rate class) ---
