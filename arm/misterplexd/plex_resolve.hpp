@@ -32,6 +32,11 @@ struct ResolveResult {
     // direct-play identity-scale decisions and GEOM logs only.
     int mediaWidth = 0;
     int mediaHeight = 0;
+    // Media@aspectRatio (often display aspect, e.g. "1.78") and
+    // Stream@pixelAspectRatio (e.g. "160:117"). Empty = unknown.
+    // RK6: coded 624x480 + SAR 160:117 ⇒ DAR 16:9 ⇒ universal fit 624x350.
+    std::string mediaAspectRatio;
+    std::string pixelAspectRatio;
 };
 
 struct QueueItem {

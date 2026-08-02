@@ -1539,7 +1539,13 @@ void MediaPlayer::ffmpegStderrPump(int errReadFd, size_t codedFrameBytes, bool i
                 (changed ? " — size changed after play start" : ""));
             // Mismatch vs coded bank must be LOUD even when FORCE_SCALE keeps the
             // pipe safe (desync_risk may stay 0 with identity_skip=0).
+            // Parent user symptom: "480p didn't look like 480p" when measured_h
+            // is ~350 and we upscale to 480 (vertical detail fraction < 1).
             if (!geomMatch && codedW > 0 && codedH > 0) {
+                const double vfrac =
+                    (g.h > 0 && codedH > 0)
+                        ? (static_cast<double>(g.h) / static_cast<double>(codedH))
+                        : 0.0;
                 log("ERROR media: DELIVERY_MISMATCH measured=" + std::to_string(g.w) + "x" +
                     std::to_string(g.h) + " coded_bank=" + std::to_string(codedW) + "x" +
                     std::to_string(codedH) +
@@ -1549,7 +1555,8 @@ void MediaPlayer::ffmpegStderrPump(int errReadFd, size_t codedFrameBytes, bool i
                     " reader_bytes=" + std::to_string(codedFrameBytes) +
                     " identity_skip=" + (identitySkip ? "1" : "0") +
                     " force_scale_protects=" + (identitySkip ? "0" : "1") +
-                    " note=measured_ne_coded_bank tag=measured");
+                    " vertical_detail_frac=" + std::to_string(vfrac) +
+                    " note=measured_ne_coded_bank_videoResolution_is_ceiling tag=measured");
             }
             if (risk) {
                 log("ERROR media: PIPE_DESYNC_RISK measured=" + std::to_string(g.w) + "x" +

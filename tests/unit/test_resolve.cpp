@@ -1,7 +1,9 @@
 // Unit tests for slim plex_resolve (no network required for pure helpers).
 #include "libmisterplex/osd_menu.hpp"
+#include "libmisterplex/pms_delivery_geom.hpp"
 #include "plex_resolve.hpp"
 
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -124,6 +126,39 @@ int main() {
     CHECK(start480.find("videoProfile=baseline") != std::string::npos);
     CHECK(start480.find("videoLevel=30") != std::string::npos);
     CHECK(start480.find("offset=2") != std::string::npos);
+    // Universal path forces directPlay=0 — geometry comes from transcoder ceiling.
+    CHECK(start480.find("directPlay=0") != std::string::npos);
+    CHECK(start480.find("directStream=0") != std::string::npos);
+    // No exact width=/height= pin in the start URL (ceiling is videoResolution only).
+    CHECK(start480.find("&width=") == std::string::npos);
+    CHECK(start480.find("&height=") == std::string::npos);
+
+    // --- RK6 proven: SAR 160:117 on 624x480 ⇒ DAR 16:9 ⇒ fit 624x350 ---
+    // PRE-REGISTER (lab decision matrix): 624x480→624x350, 640x480→640x360,
+    // 853x480→852x480 (true 480 rows, wider than DDR bank 624).
+    {
+        const double dar =
+            displayAspectFromCodedAndSar(624, 480, 160, 117);
+        CHECK(std::fabs(dar - (16.0 / 9.0)) < 1e-9);
+        const double dar2 = resolveContentDar(624, 480, "160:117", "1.78");
+        CHECK(std::fabs(dar2 - (16.0 / 9.0)) < 1e-9);
+        const auto fit = pmsSquarePixelFitInCeiling(16.0 / 9.0, 624, 480);
+        CHECK(fit.ok);
+        CHECK(fit.w == 624);
+        CHECK(fit.h == 350); // 351 even-floored — matches PMS decision
+        const auto fit640 = pmsSquarePixelFitInCeiling(16.0 / 9.0, 640, 480);
+        CHECK(fit640.ok && fit640.w == 640 && fit640.h == 360);
+        const int w_at_480 = squarePixelWidthForHeight(16.0 / 9.0, 480);
+        CHECK(w_at_480 >= 852 && w_at_480 <= 854); // ~853.33
+        CHECK(w_at_480 > 624); // cannot fit square-pixel 16:9@480h in DDR bank
+        CHECK(std::fabs(verticalDetailFraction(350, 480) - (350.0 / 480.0)) < 1e-12);
+        CHECK(!desyncModelApplicable(false)); // identity_skip=0 kills 1.371 model
+        CHECK(desyncModelApplicable(true));
+        std::printf("GREEN_PMS_FIT dar=16/9 fit624=%dx%d fit640=%dx%d w_at_480=%d "
+                    "detail=%.3f\n",
+                    fit.w, fit.h, fit640.w, fit640.h, w_at_480,
+                    verticalDetailFraction(350, 480));
+    }
 
     const auto extra480 = plexClientProfileExtra(w480);
     CHECK(extra480.find("container=mpegts") != std::string::npos);

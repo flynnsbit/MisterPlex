@@ -455,6 +455,11 @@ std::string buildUniversalTranscodeUrl(const std::string& base,
                                        int64_t offsetMs,
                                        const WeakLadder& weak) {
     std::ostringstream q;
+    // videoResolution=WxH is a CEILING for PMS aspect-preserving square-pixel
+    // fit, not an exact coded size. There is no universal query param that pins
+    // exact delivered height (lab decision matrix, RK6). Anamorphic 16:9 DAR
+    // sources fit to ~624x350 inside 624x480. directPlay is forced off here;
+    // STREAM preferDirectH264 uses the Part path instead (can keep coded 624x480).
     q << base << "/video/:/transcode/universal/start.mp4"
       << "?hasMDE=1"
       << "&path=" << urlEncodeQuery(metadataKey)
@@ -770,6 +775,8 @@ ResolveResult resolvePlayTarget(const std::string& rawKeyOrPath, const std::stri
         r.sourceFpsHint = contentFpsHint(r.videoFrameRate, r.frameRate);
         parseExactFps(r.videoFrameRate, r.frameRate, r.fpsNum, r.fpsDen);
         // Source asset geometry (library), for direct-play identity-scale + GEOM logs.
+        // Also capture DAR/SAR — universal videoResolution is a ceiling; PMS
+        // square-pixel aspect-fit uses display aspect (see pms_delivery_geom.hpp).
         {
             auto mw = attr(xml, "Media", "width");
             auto mh = attr(xml, "Media", "height");
@@ -777,6 +784,7 @@ ResolveResult resolvePlayTarget(const std::string& rawKeyOrPath, const std::stri
                 r.mediaWidth = std::atoi(mw.c_str());
                 r.mediaHeight = std::atoi(mh.c_str());
             }
+            r.mediaAspectRatio = attr(xml, "Media", "aspectRatio");
             if (r.mediaWidth <= 0 || r.mediaHeight <= 0) {
                 size_t sp = 0;
                 while ((sp = xml.find("<Stream", sp)) != std::string::npos) {
@@ -793,6 +801,32 @@ ResolveResult resolvePlayTarget(const std::string& rawKeyOrPath, const std::stri
                             r.mediaWidth = std::atoi(sw.c_str());
                             r.mediaHeight = std::atoi(sh.c_str());
                         }
+                        auto sar = attrIn(slice, "pixelAspectRatio");
+                        if (!sar.empty())
+                            r.pixelAspectRatio = sar;
+                        if (r.mediaAspectRatio.empty()) {
+                            auto ar = attrIn(slice, "aspectRatio");
+                            if (!ar.empty())
+                                r.mediaAspectRatio = ar;
+                        }
+                        break;
+                    }
+                    sp = end + 1;
+                }
+            } else {
+                // Width/height from Media — still scan video Stream for SAR.
+                size_t sp = 0;
+                while ((sp = xml.find("<Stream", sp)) != std::string::npos) {
+                    auto end = xml.find('>', sp);
+                    if (end == std::string::npos)
+                        break;
+                    const std::string slice = xml.substr(sp, end - sp);
+                    const bool isVideo = slice.find("streamType=\"1\"") != std::string::npos ||
+                                         slice.find("type=\"video\"") != std::string::npos;
+                    if (isVideo) {
+                        auto sar = attrIn(slice, "pixelAspectRatio");
+                        if (!sar.empty())
+                            r.pixelAspectRatio = sar;
                         break;
                     }
                     sp = end + 1;

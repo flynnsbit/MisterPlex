@@ -42,8 +42,14 @@ check B5_delivery_mismatch_log "$MP" 'DELIVERY_MISMATCH'
 check B5_decode_target_match "$MP" 'decode_target_match='
 check B5_coded_bank_field "$MP" 'coded_bank='
 check B5_force_scale_protects "$MP" 'force_scale_protects='
+check B5_vertical_detail_frac "$MP" 'vertical_detail_frac='
 # Pump compares measured to DDR coded bank args, not DECODE tier alone.
 check B5_pump_takes_coded_wh "$MP" 'int codedW, int codedH'
+# GEOM predicts square-pixel fit from SAR/DAR (ceiling, not exact).
+MAIN_GEOM="$ROOT/arm/misterplexd/main.cpp"
+check GEOM_predicted_square_fit "$MAIN_GEOM" 'predicted_square_fit='
+check GEOM_videoResolution_ceiling_note "$MAIN_GEOM" 'videoResolution_is_ceiling_not_exact'
+check GEOM_pms_delivery_geom_hdr "$MAIN_GEOM" 'pms_delivery_geom.hpp'
 
 # B4 measured only
 check B4_measured_only "$YF" 'return std::string(deliveryBasis) == "measured"'

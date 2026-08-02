@@ -9,6 +9,7 @@
 #include "libmisterplex/ffmpeg_vf.hpp"
 #include "libmisterplex/frame_ledger.hpp"
 #include "libmisterplex/osd_menu.hpp"
+#include "libmisterplex/pms_delivery_geom.hpp"
 #include "libmisterplex/raw_video_pipe.hpp"
 #include "libmisterplex/yuv420p_chroma_health.hpp"
 #include "log_redact.hpp"
@@ -1038,6 +1039,8 @@ int main(int argc, char** argv) {
             resolved.fpsDen = 1;
             resolved.mediaWidth = 0;
             resolved.mediaHeight = 0;
+            resolved.mediaAspectRatio.clear();
+            resolved.pixelAspectRatio.clear();
             resolved.transcoded = false;
         } else {
             std::fprintf(stderr, "misterplexd: resolved %s title=%s dur=%lld transcode=%d base=%s\n",
@@ -1136,16 +1139,41 @@ int main(int argc, char** argv) {
                 : "unknown";
         const std::string codedTarget =
             std::to_string(codedW) + "x" + std::to_string(codedH);
+        // Predict square-pixel universal fit from library SAR/DAR (host math).
+        // videoResolution is a ceiling — predicted_fit may be e.g. 624x350.
+        const double contentDar = misterplex::resolveContentDar(
+            resolved.mediaWidth, resolved.mediaHeight, resolved.pixelAspectRatio,
+            resolved.mediaAspectRatio);
+        int predW = 0, predH = 0;
+        if (contentDar > 0.0 && codedW > 0 && codedH > 0) {
+            const auto fit =
+                misterplex::pmsSquarePixelFitInCeiling(contentDar, codedW, codedH);
+            if (fit.ok) {
+                predW = fit.w;
+                predH = fit.h;
+            }
+        }
+        const std::string predStr =
+            (predW > 0 && predH > 0) ? (std::to_string(predW) + "x" + std::to_string(predH))
+                                    : "unknown";
+        const int sq480w =
+            (contentDar > 0.0) ? misterplex::squarePixelWidthForHeight(contentDar, codedH) : 0;
         std::fprintf(stderr,
                      "misterplexd: GEOM requested_pms=%s expected_delivery=%s "
                      "delivery_basis=%s delivery_verified=%d decode_target=%s "
                      "content_tier=%s arm_rescale=%d yuv_ddr_force_scale=%d "
-                     "transcoded=%d sws=%s scale_mode=%s library_media=%s\n",
+                     "transcoded=%d sws=%s scale_mode=%s library_media=%s "
+                     "media_ar=%s sar=%s content_dar=%.4f predicted_square_fit=%s "
+                     "square_px_w_at_coded_h=%d "
+                     "note=videoResolution_is_ceiling_not_exact\n",
                      requestedPms.c_str(), expectStr.c_str(), deliveryBasis,
                      deliveryVerified ? 1 : 0, codedTarget.c_str(), decodeTarget.c_str(),
                      armRescale, forceScale ? 1 : 0, resolved.transcoded ? 1 : 0,
                      ffmpegSwsFlags.empty() ? "(ffmpeg_default)" : ffmpegSwsFlags.c_str(),
-                     misterplex::ffmpegScaleModeName(scaleMode), libraryStr.c_str());
+                     misterplex::ffmpegScaleModeName(scaleMode), libraryStr.c_str(),
+                     resolved.mediaAspectRatio.empty() ? "-" : resolved.mediaAspectRatio.c_str(),
+                     resolved.pixelAspectRatio.empty() ? "-" : resolved.pixelAspectRatio.c_str(),
+                     contentDar, predStr.c_str(), sq480w);
 
         // Wire SOURCE_FPS / MATCH_SOURCE_HZ into play path (software Content FPS hint).
         {
