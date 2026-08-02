@@ -170,6 +170,9 @@ public:
         setOsdControlMode(on ? misterplex::OsdControlMode::ForcedOn
                              : misterplex::OsdControlMode::ForcedOff);
     }
+    // Opt-in: SIGSTOP product Main for whole playback (default off).
+    // Conf SUSPEND_MAIN_DURING_PLAY.
+    void setSuspendMainDuringPlay(bool on) { FpgaSpi::setSuspendMainDuringPlay(on); }
     misterplex::OsdControlMode osdControlMode() const { return osdMode_; }
     // When true, F12-inert state flashes osdInertUserNotice() on HDMI (default false:
     // log only so IDLE_SCREEN=logo stays a clean chevron). Conf OSD_INERT_NOTICE=1.

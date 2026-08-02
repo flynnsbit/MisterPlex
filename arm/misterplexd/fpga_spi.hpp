@@ -60,16 +60,28 @@ public:
     // sends SIGCONT and Main is left stopped forever.
     //
     // resumeStrandedMain(): SIGCONT any MiSTer left in state T while we hold no
-    // window of our own. Safe to call from anywhere — it only reads /proc and
-    // never touches SPI. Call at startup (repairs a previous death) and from a
-    // slow watchdog (repairs a hang inside the critical section).
+    // window of our own AND no session-level playback suspend. Safe to call from
+    // anywhere — it only reads /proc and never touches SPI. Call at startup
+    // (repairs a previous death) and from a slow watchdog. Does not fight an
+    // intentional SUSPEND_MAIN_DURING_PLAY hold.
     static void resumeStrandedMain();
 
-    // installCrashGuard(): resume Main from fatal-signal handlers, then re-raise
-    // with the default disposition so the crash is still reported normally.
-    // Covers everything except SIGKILL, which resumeStrandedMain() mops up on the
-    // next start.
+    // installCrashGuard(): resume Main (SPI pause or session hold) from fatal
+    // handlers, then re-raise. Also registers atexit resume. SIGKILL covered by
+    // supervisor resume-before-respawn + resumeStrandedMain on next start.
     static void installCrashGuard();
+
+    // --- Session-level Main suspend (opt-in SUSPEND_MAIN_DURING_PLAY) ----------
+    // Stock Main burns ~one full core even idle. When enabled, SIGSTOP Main once
+    // at playback start and SIGCONT once at stop. Default OFF. Not per-frame.
+    // While held: F12/OSD, /dev/MiSTer_cmd, load_core, Main input dead. Plex stop
+    // via TCP :3005 still works (daemon never stopped). Locator: resolved exe
+    // OR exact argv0 == /media/fat/MiSTer (never substring). Multi-match refuse.
+    static void setSuspendMainDuringPlay(bool enabled);
+    static bool suspendMainDuringPlayEnabled();
+    static bool suspendMainForPlayback();
+    static void resumeMainAfterPlayback();
+    static bool mainSuspendedForPlayback();
 
     // True while this process holds Main stopped for an SPI critical section.
     static bool mainPaused();
