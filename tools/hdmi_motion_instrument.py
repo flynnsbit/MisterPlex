@@ -1039,11 +1039,17 @@ def green_cast_metrics(rgb: np.ndarray) -> dict[str, Any]:
         m = float(rgb.mean())
         if GREYSCALE_LUMA_LO <= m <= GREYSCALE_LUMA_HI:
             empty["mean_rgb"] = m
+            empty["mean_rgb_src"] = PROVENANCE_MEASURED
             empty["channel_means"] = [m, m, m]
+            empty["channel_means_src"] = PROVENANCE_MEASURED
+            empty["channel_spread"] = 0.0
+            empty["channel_spread_src"] = PROVENANCE_MEASURED
             empty["greyscale_flat"] = True
             empty["active_frac"] = 1.0
+            empty["active_frac_src"] = PROVENANCE_MEASURED
             empty["active_chroma_mean"] = 0.0
             empty["color_fail"] = True
+            empty["color_fail_kinds"] = ["GREYSCALE"]
         return empty
 
     # Stride subsample — cast metrics are global; full-res is pure cost.
@@ -3937,7 +3943,11 @@ def score_burst(
         for r in results
         if r.get("color_fail") and r.get("status") != "warmup"
     ]
-    color_fail = len(color_hits) >= GREEN_CAST_MIN_FRAMES
+    # Evidence floor scales with burst length so a single archived defect frame
+    # (files/device-evidence/*) can hard-fail. Full bursts still need 3 hits.
+    n_color_scored = sum(1 for r in results if r.get("status") != "warmup")
+    color_need = min(GREEN_CAST_MIN_FRAMES, max(1, n_color_scored))
+    color_fail = len(color_hits) >= color_need
     magenta_hits = [
         r for r in results
         if r.get("magenta_cast") and r.get("status") != "warmup"
@@ -3951,19 +3961,19 @@ def score_burst(
         if r.get("red_bar_missing") and r.get("status") != "warmup"
     ]
     color_flags: list[str] = []
-    if len(green_hits) >= GREEN_CAST_MIN_FRAMES:
+    if len(green_hits) >= color_need:
         color_flags.append("GREEN")
-    if len(magenta_hits) >= GREEN_CAST_MIN_FRAMES:
+    if len(magenta_hits) >= color_need:
         color_flags.append("MAGENTA")
-    if len(blue_hits) >= GREEN_CAST_MIN_FRAMES:
+    if len(blue_hits) >= color_need:
         color_flags.append("BLUE")
-    if len(chroma_hits) >= GREEN_CAST_MIN_FRAMES and "MAGENTA" not in color_flags:
+    if len(chroma_hits) >= color_need and "MAGENTA" not in color_flags:
         color_flags.append("CHROMA")
-    if len(grey_hits) >= GREEN_CAST_MIN_FRAMES:
+    if len(grey_hits) >= color_need:
         color_flags.append("GREYSCALE")
-    if len(uv_hits) >= GREEN_CAST_MIN_FRAMES:
+    if len(uv_hits) >= color_need:
         color_flags.append("UV_SWAP")
-    if len(redbar_hits) >= GREEN_CAST_MIN_FRAMES:
+    if len(redbar_hits) >= color_need:
         color_flags.append("RED_BAR_MISSING")
     if color_flags:
         color = "+".join(color_flags) + "_CAST_FAIL"
@@ -3986,11 +3996,12 @@ def score_burst(
         for r in results
         if r.get("structure_fail") and r.get("status") != "warmup"
     ]
-    structure_fail = len(struct_hits) >= STRUCT_MIN_FRAMES
+    struct_need = min(STRUCT_MIN_FRAMES, max(1, n_color_scored))
+    structure_fail = len(struct_hits) >= struct_need
     struct_flags: list[str] = []
-    if len(vdup_hits) >= STRUCT_MIN_FRAMES:
+    if len(vdup_hits) >= struct_need:
         struct_flags.append(f"VERT_DUP={len(vdup_hits)}")
-    if len(wrap_hits) >= STRUCT_MIN_FRAMES:
+    if len(wrap_hits) >= struct_need:
         struct_flags.append(f"HORIZ_WRAP={len(wrap_hits)}")
     if structure_fail and not struct_flags:
         # Combined structure_fail frames without either flag alone reaching min
@@ -4136,14 +4147,14 @@ def score_burst(
     if structure_fail:
         final, rc = "STRUCTURE_FAIL", RC_STRUCTURE_FAIL
         reason = (
-            f"structure={structure} frames={len(struct_hits)}>={STRUCT_MIN_FRAMES} "
+            f"structure={structure} frames={len(struct_hits)}>={struct_need} "
             f"(hard FAIL independent of motion={motion} color={color} "
             f"rate={rate_label}); {reason}"
         )
     elif color_fail:
         final, rc = "COLOR_FAIL", RC_COLOR_FAIL
         reason = (
-            f"color={color} frames={len(color_hits)}>={GREEN_CAST_MIN_FRAMES} "
+            f"color={color} frames={len(color_hits)}>={color_need} "
             f"green={len(green_hits)} chroma_spread={len(chroma_hits)} "
             f"(hard FAIL independent of motion={motion} rate={rate_label}); {reason}"
         )
@@ -4218,6 +4229,10 @@ def score_burst(
         "uv_swap_frames": len(uv_hits),
         "red_bar_missing_frames": len(redbar_hits),
         "color_fail_frames": len(color_hits),
+        "color_need": int(color_need),
+        "color_need_src": "derived_min_design_or_burst",
+        "struct_need": int(struct_need),
+        "struct_need_src": "derived_min_design_or_burst",
         "vertical_dup_frames": len(vdup_hits),
         "horiz_wrap_frames": len(wrap_hits),
         "structure_fail_frames": len(struct_hits),
@@ -4612,16 +4627,21 @@ def _self_test() -> int:
     assert gc_rb2["color_fail"] is True, gc_rb2
     assert "RED_BAR_MISSING" in (gc_rb2.get("color_fail_kinds") or []), gc_rb2
 
-    # Blue cast — channel-spread any direction.
+    # Blue cast — labelled BLUE, not green-only.
     blue = np.zeros((100, 100, 3), dtype=np.uint8)
     blue[:, :] = (20, 30, 180)
     gc_b = green_cast_metrics(blue)
     assert gc_b["chroma_cast"] is True and gc_b["color_fail"] is True, gc_b
+    assert gc_b["blue_cast"] is True, gc_b
+    assert "BLUE" in (gc_b.get("color_fail_kinds") or []), gc_b
+    assert gc_b["green_cast"] is False, gc_b
 
-    # Mid greyscale field (dead chroma on lit picture).
+    # Mid greyscale field (dead chroma on lit picture) — labelled GREYSCALE.
     grey = np.full((120, 160, 3), 80, dtype=np.uint8)
     gc_g = green_cast_metrics(grey)
     assert gc_g["greyscale_flat"] is True and gc_g["color_fail"] is True, gc_g
+    assert "GREYSCALE" in (gc_g.get("color_fail_kinds") or []), gc_g
+    assert gc_g["green_cast"] is False, gc_g
 
     # Clean black / dark+yellow overlay is not a cast / not greyscale-fail.
     gc2 = green_cast_metrics(dark)
@@ -4685,6 +4705,18 @@ def _self_test() -> int:
         assert rep["rc"] in (RC_COLOR_FAIL, RC_STRUCTURE_FAIL), rep
         assert rep["verdict"] in ("COLOR_FAIL", "STRUCTURE_FAIL"), rep
 
+        # Single archived defect frame must hard-fail (color_need scales to 1).
+        sdir = tdp / "single_green"
+        sdir.mkdir()
+        Image.fromarray(arr).save(sdir / "only.png")
+        rep_s = score_burst(
+            [str(sdir / "only.png")], warmup_skip=0, min_reads=1
+        )
+        assert rep_s["color_need"] == 1, rep_s
+        assert "GREEN" in rep_s["color"], rep_s
+        assert rep_s["rc"] in (RC_COLOR_FAIL, RC_STRUCTURE_FAIL), rep_s
+        assert rep_s["rc"] != RC_UNSCORED, rep_s
+
         # FREEZE + green-cast → hard colour/structure fail wins over freeze/unscored.
         gdir = tdp / "freeze_green"
         gdir.mkdir()
@@ -4713,6 +4745,8 @@ def _self_test() -> int:
             min_reads=3,
         )
         assert rep3["chroma_cast_frames"] >= GREEN_CAST_MIN_FRAMES, rep3
+        assert rep3.get("magenta_cast_frames", 0) >= GREEN_CAST_MIN_FRAMES, rep3
+        assert "MAGENTA" in rep3["color"], rep3
         assert rep3["rc"] in (RC_COLOR_FAIL, RC_STRUCTURE_FAIL), rep3
         assert rep3["rc"] != RC_UNSCORED, rep3
 
@@ -4729,6 +4763,8 @@ def _self_test() -> int:
             min_reads=3,
         )
         assert rep_bl["chroma_cast_frames"] >= GREEN_CAST_MIN_FRAMES, rep_bl
+        assert rep_bl.get("blue_cast_frames", 0) >= GREEN_CAST_MIN_FRAMES, rep_bl
+        assert "BLUE" in rep_bl["color"], rep_bl
         assert rep_bl["rc"] in (RC_COLOR_FAIL, RC_STRUCTURE_FAIL), rep_bl
         assert rep_bl["rc"] != RC_UNSCORED, rep_bl
 
@@ -5738,8 +5774,9 @@ def main(argv: list[str] | None = None) -> int:
         print("ERROR: no PNG frames found", file=sys.stderr)
         return RC_UNSCORED
 
-    if args.one or (len(frames) == 1 and Path(args.inputs[0]).is_file()):
-        # Single-frame / per-frame dump mode.
+    if args.one:
+        # Per-frame dump mode only (--one). Single files without --one score
+        # via score_burst so archived defect PNGs hard-fail colour/structure.
         any_ok = False
         rows = []
         n_jobs = max(1, int(args.jobs))
