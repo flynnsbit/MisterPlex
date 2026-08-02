@@ -1,9 +1,22 @@
 # RESULT — supersede e6a3fb2f: resolution-preserving bitrate
 
 **Status:** e6a3fb2f **FALSIFIED on hardware (parent)** — DO NOT SHIP `099635f7`.  
-**Superseding commit:** (this) resolution-preserving floor  
-**Binary md5:** `641126485abba45d215f5f0a97f5d49d`  
+**Superseding commit:** `836ad376` + follow-ups  
+**Pin path (stable):** `artifacts/daemon-pins/misterplexd.64112648`  
+**Binary md5:** `641126485abba45d215f5f0a97f5d49d` (= `836ad376` artifact; re-pin after new commits)  
 **Branch:** `w-cpu-suspend-silicon-pin`
+
+### Honest status of 2000
+
+The 2000 floor is now justified by a **measurement**, stronger than commit 216703b ever had:
+
+| request | delivered | N |
+|---|---|---|
+| 397 | 312×240 | 40 |
+| 2000 | 624×480 | 39 |
+| 397 (A') | 312×240 | 40 |
+
+Reversible A/B/A'. **PROVISIONAL** as a *minimum* — knee sweep not done; 2000 is safe full-res, not proven minimal. `kPlexResPreserveRefKbps` comment says PROVISIONAL.
 
 ## Parent miss published (mine)
 
@@ -93,9 +106,29 @@ make build/test_resolve   # or g++ … -o build/test_resolve …
 ./build/test_resolve; echo "true rc=$?"
 ```
 
-## 5. make unit
+## 5. make unit / supervisor gate RCA
 
-`make unit` → **true rc=2** on unrelated `tests/hw/test_supervisor_resume_main.sh` (`FAIL expected T got S`). Not attributed to this change without evidence. Targeted `test_resolve` green.
+### Classification: **(ii) pre-existing test design bug + (iii) race**, not a bitrate-commit regression
+
+| Evidence | Value |
+|---|---|
+| Test file content tip vs `aa80df0f^` (13d3c191) | **identical** (`git diff` empty) |
+| Standalone script @ parent | **`true rc=1`** `FAIL expected T got S` |
+| Standalone script @ tip (before fix) | **`true rc=1`** same |
+| Wired into `make unit` | **`aa80df0f`** (SUSPEND commit) — was not in Makefile at parent |
+| Bitrate commits touch this test? | **No** |
+
+**Mechanism (quoted):** supervise used `wait "$DAEMON_PID"` but daemon is the **parent’s** child → `wait: pid is not a child` → resume runs **immediately**. Race: STOP Main → resume finds `T` → CONT → assertion reads **`S`**. Assertion itself is correct; waiter arming/order was wrong.
+
+**Fix (not weakened):** STOP Main **first** and assert `T`; poll `kill -0` until daemon gone (no foreign `wait`); then resume. Assertion still requires `T` before kill -9 and non-`T` + `RESUME_MAIN` after.
+
+| After fix | |
+|---|---|
+| 5/5 runs | **`true rc=0`** each |
+
+## 5b. Knee table host test
+
+`tests/unit/test_resolve.cpp` — measured rows (397→312x240, 2000→624x480); placeholders 600/800/1200 as `measured=false` (NO-DATA). Calibrate: one-line `kPlexResPreserveRefKbps=K` + fill table rows.
 
 ## 6. Could NOT verify (host agent)
 

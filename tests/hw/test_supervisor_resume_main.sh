@@ -62,7 +62,11 @@ esac
 "$SLEEP_BIN" 3600 &
 DAEMON_PID=$!
 
-# Supervisor loop (same contract as plexctl write_supervisor resume_stopped_main)
+# Product order: Main is already T (session suspend), THEN the waiter arms,
+# THEN daemon dies. Arming the waiter before STOP races: a non-child `wait`
+# returns immediately and can CONT Main before the T assertion (FAIL expected
+# T got S). Poll for daemon death instead of wait(2) on a foreign pid — same
+# contract as "resume after kill -9", without the non-child wait bug.
 cat > "$WORKDIR/supervise.sh" <<'EOF'
 #!/bin/sh
 set -u
@@ -82,26 +86,33 @@ resume_stopped_main() {
     fi
   done
 }
-# Wait for daemon; on any exit (incl. kill -9 → 137), resume Main then exit.
-wait "$DAEMON_PID" || true
+# Poll until daemon pid is gone (works for kill -9 from the parent shell).
+# Do NOT use wait(1) here — DAEMON_PID is not our child.
+i=0
+while kill -0 "$DAEMON_PID" 2>/dev/null; do
+  i=$((i + 1))
+  # ~5s cap
+  [ "$i" -gt 100 ] && break
+  sleep 0.05
+done
 resume_stopped_main
 EOF
 chmod +x "$WORKDIR/supervise.sh"
 : > "$WORKDIR/sup.log"
-sh "$WORKDIR/supervise.sh" "$DAEMON_PID" "$WORKDIR/sup.log" &
-SUP_PID=$!
 
-# Put fake Main into T (session suspend analogue)
+# Put fake Main into T (session suspend analogue) BEFORE arming the waiter.
 kill -STOP "$FAKE_MAIN_PID"
 sleep 0.2
 ST=$(tr ')' '\n' < /proc/$FAKE_MAIN_PID/stat | tail -n1 | awk '{print $1}')
 [[ "$ST" == "T" ]] || { echo "FAIL expected T got $ST"; exit 1; }
 
+sh "$WORKDIR/supervise.sh" "$DAEMON_PID" "$WORKDIR/sup.log" &
+SUP_PID=$!
+
 # kill -9 the daemon — supervisor cannot rely on daemon atexit
 kill -9 "$DAEMON_PID"
 wait "$DAEMON_PID" 2>/dev/null || true
 wait "$SUP_PID" 2>/dev/null || true
-
 # Assert Main was CONT'd
 sleep 0.2
 ST2=$(tr ')' '\n' < /proc/$FAKE_MAIN_PID/stat | tail -n1 | awk '{print $1}')

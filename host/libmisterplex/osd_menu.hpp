@@ -57,14 +57,19 @@ constexpr int kOsdAvOffsetStepMs = 20;
 //
 // RESOLUTION-PRESERVING floor (see resolutionPreservingMinBitrateKbps):
 //   floor(W,H) = ceil(W*H * kPlexResPreserveRefKbps / (refW*refH))
-// Parent HW 2026-08-02 A/B: request 397 → delivered 312x240; request 2000 →
-// 624x480. Source bitrate is NOT a safe cap (e6a3fb2f FALSIFIED).
-// kPlexResPreserveRefKbps is the calibrated knee at ref geometry — PROVISIONAL
-// 2000 until parent knee sweep (397/600/800/1200/2000) publishes the lowest
-// request that still yields 624x480; then lower the ref kbps to that knee.
+//
+// JUSTIFIED BY MEASUREMENT (parent A/B/A' 2026-08-02, not by commit 216703b lore):
+//   request 397 → delivered 312x240 (N=40); request 2000 → 624x480 (N=39);
+//   request 397 repeat → 312x240 (N=40). Reversible. Source bitrate is NOT a
+//   safe cap (e6a3fb2f FALSIFIED).
+//
+// kPlexResPreserveRefKbps is PROVISIONAL=2000: safe (reproduces shipping full-res)
+// but NOT known minimal. Parent knee sweep (397/600/800/1200/2000) will set the
+// lowest full-res K; then change this one constant + knee table rows in
+// tests/unit/test_resolve.cpp — no redesign.
 constexpr int kPlexResPreserveRefWidth = 624;
 constexpr int kPlexResPreserveRefHeight = 480;
-constexpr int kPlexResPreserveRefKbps = 2000; // update from parent knee sweep
+constexpr int kPlexResPreserveRefKbps = 2000; // PROVISIONAL — uncalibrated knee
 constexpr int kPlex240pWeakBitrateKbps = 1000;
 constexpr int kPlex360pWeakBitrateKbps = 1500;
 constexpr int kPlex480pWeakBitrateKbps = 2000;

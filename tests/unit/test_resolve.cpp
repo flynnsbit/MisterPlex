@@ -222,6 +222,54 @@ int main() {
                         floor);
         }
 
+        // Knee observation table — host-only stand-in until parent finishes the
+        // 397/600/800/1200/2000 sweep. Calibrate by:
+        //   1) set kPlexResPreserveRefKbps = lowest full-res request K
+        //   2) append/replace rows below with measured (request -> delivered)
+        // No redesign required.
+        //
+        // Parent A/B/A' 2026-08-02 (MEASURED, N=40/39/40): 397→312x240, 2000→624x480.
+        // Intermediate knees are NO-DATA until the sweep lands.
+        {
+            struct KneeObs {
+                int requested_kbps;
+                int delivered_w;
+                int delivered_h;
+                bool measured; // false = placeholder NO-DATA row
+            };
+            const int tw = kPlex480pCodedWidth.get();
+            const int th = kPlex480pCodedHeight.get();
+            const int floor = resolutionPreservingMinBitrateKbps(tw, th);
+            const KneeObs kObs[] = {
+                // measured=
+                {397, 312, 240, true},
+                // NO-DATA placeholders for the live sweep (fill delivered_* when known)
+                {600, 0, 0, false},
+                {800, 0, 0, false},
+                {1200, 0, 0, false},
+                // measured=
+                {2000, 624, 480, true},
+            };
+            for (const auto& o : kObs) {
+                if (!o.measured)
+                    continue; // absence is NO-DATA, never treat as 0x0 fail
+                const bool fullRes = o.delivered_w >= tw && o.delivered_h >= th;
+                if (!fullRes) {
+                    // Policy must not auto-request a known under-delivering bitrate.
+                    CHECK(floor > o.requested_kbps);
+                    auto sel = selectMaxVideoBitrateKbps(2000, false, 2000, 0, /*src*/ 397, tw, th);
+                    CHECK(sel.kbps != o.requested_kbps || sel.kbps >= floor);
+                    CHECK(sel.kbps >= floor);
+                } else {
+                    // A measured full-res point must be allowed by the floor.
+                    CHECK(floor <= o.requested_kbps);
+                }
+            }
+            // floor equals the pixel-scaled ref (provisional 2000 @ 624x480).
+            CHECK(floor == kPlexResPreserveRefKbps);
+            std::printf("PASS knee table vs res-preserve floor=%d (measured rows only)\n", floor);
+        }
+
         // Metadata parse retained for logging only (not a request cap).
         const char* meta =
             "<MediaContainer><Video><Media bitrate=\"450\" width=\"624\" height=\"480\" "
