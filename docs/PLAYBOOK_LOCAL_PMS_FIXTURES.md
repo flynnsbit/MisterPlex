@@ -100,3 +100,6 @@ See [`docs/DELIVERY_GEOMETRY_MATRIX.md`](DELIVERY_GEOMETRY_MATRIX.md) — 12 cel
 
 ## Three contracts (w-avsync / w-geom / real soak)
 See [`docs/CONTRACTS_AVSYNC_GEOM_REAL.md`](CONTRACTS_AVSYNC_GEOM_REAL.md).
+
+## Promo scoreable (S5 + B6)
+Canonical: [`docs/PROMO_SCOREABLE_FIXTURES.md`](PROMO_SCOREABLE_FIXTURES.md) · colour: [`docs/colour_patch_contract.md`](colour_patch_contract.md).

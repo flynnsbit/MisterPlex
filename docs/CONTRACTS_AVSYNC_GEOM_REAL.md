@@ -170,3 +170,6 @@ Host probe evidence: `.agent-work/w-asset480/contract123_probe.json`
 | `av_drift_ms` PLXD field | circular Hold setpoint (UNSCORED) |
 | Disc Nyquist cast for tier | void for 240-vs-480 |
 | PMS width/height tags alone | claims, not measurements |
+
+## Superseding promo set
+For S5/B6/colour/freeze, prefer **PromoScoreable** [`docs/PROMO_SCOREABLE_FIXTURES.md`](PROMO_SCOREABLE_FIXTURES.md) over black AVSync and short GlassAV 90s rows.

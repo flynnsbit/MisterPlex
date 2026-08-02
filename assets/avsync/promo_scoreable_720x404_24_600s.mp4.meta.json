@@ -1,0 +1,365 @@
+{
+  "out": "assets/avsync/promo_scoreable_720x404_24_600s.mp4",
+  "src": "/home/flynnsbit/Projects/MisterPlex/.agent-work/fixtures-real/bbb_720p_src.mp4",
+  "colour_patch_contract_version": 1,
+  "colour_patch_doc": "docs/colour_patch_contract.md",
+  "glass_id_doc": "docs/glass_frame_id_contract.md",
+  "id_every_frame": true,
+  "id_enable_guard": false,
+  "caller_supplied": {
+    "width": 720,
+    "height": 404,
+    "fps_rational": "24/1",
+    "duration_s": 600.0,
+    "period_s": 2.0,
+    "designed_av_offset_ms": 0.0,
+    "flash_frames": 2,
+    "beep_s": 0.05,
+    "beep_hz": 1000.0,
+    "black_lift": 40,
+    "id_bottom_y": 76,
+    "id_text_example": "G n=000000 c=0",
+    "vbitrate": "2500k",
+    "profile": "Constrained Baseline (baseline + cabac=0)",
+    "bf": 0,
+    "audio": "aac 48k mix(src+beep)"
+  },
+  "colour_patches_px": [
+    {
+      "id": "R",
+      "rgb": [
+        255,
+        0,
+        0
+      ],
+      "fx0": 0.04,
+      "fx1": 0.18,
+      "fy0": 0.72,
+      "fy1": 0.94,
+      "x0": 28,
+      "x1": 130,
+      "y0": 312,
+      "y1": 386,
+      "inner": {
+        "x0": 53,
+        "x1": 105,
+        "y0": 330,
+        "y1": 368
+      }
+    },
+    {
+      "id": "G",
+      "rgb": [
+        0,
+        255,
+        0
+      ],
+      "fx0": 0.2,
+      "fx1": 0.34,
+      "fy0": 0.72,
+      "fy1": 0.94,
+      "x0": 144,
+      "x1": 246,
+      "y0": 312,
+      "y1": 386,
+      "inner": {
+        "x0": 169,
+        "x1": 221,
+        "y0": 330,
+        "y1": 368
+      }
+    },
+    {
+      "id": "B",
+      "rgb": [
+        0,
+        0,
+        255
+      ],
+      "fx0": 0.36,
+      "fx1": 0.5,
+      "fy0": 0.72,
+      "fy1": 0.94,
+      "x0": 258,
+      "x1": 360,
+      "y0": 312,
+      "y1": 386,
+      "inner": {
+        "x0": 283,
+        "x1": 335,
+        "y0": 330,
+        "y1": 368
+      }
+    },
+    {
+      "id": "Y",
+      "rgb": [
+        255,
+        255,
+        0
+      ],
+      "fx0": 0.52,
+      "fx1": 0.66,
+      "fy0": 0.72,
+      "fy1": 0.94,
+      "x0": 374,
+      "x1": 476,
+      "y0": 312,
+      "y1": 386,
+      "inner": {
+        "x0": 399,
+        "x1": 451,
+        "y0": 330,
+        "y1": 368
+      }
+    },
+    {
+      "id": "C",
+      "rgb": [
+        0,
+        255,
+        255
+      ],
+      "fx0": 0.68,
+      "fx1": 0.82,
+      "fy0": 0.72,
+      "fy1": 0.94,
+      "x0": 488,
+      "x1": 592,
+      "y0": 312,
+      "y1": 386,
+      "inner": {
+        "x0": 514,
+        "x1": 566,
+        "y0": 330,
+        "y1": 368
+      }
+    },
+    {
+      "id": "M",
+      "rgb": [
+        255,
+        0,
+        255
+      ],
+      "fx0": 0.84,
+      "fx1": 0.98,
+      "fy0": 0.72,
+      "fy1": 0.94,
+      "x0": 604,
+      "x1": 706,
+      "y0": 312,
+      "y1": 386,
+      "inner": {
+        "x0": 629,
+        "x1": 681,
+        "y0": 330,
+        "y1": 368
+      }
+    },
+    {
+      "id": "W",
+      "rgb": [
+        240,
+        240,
+        240
+      ],
+      "fx0": 0.04,
+      "fx1": 0.18,
+      "fy0": 0.08,
+      "fy1": 0.28,
+      "x0": 28,
+      "x1": 130,
+      "y0": 102,
+      "y1": 168,
+      "inner": {
+        "x0": 53,
+        "x1": 105,
+        "y0": 118,
+        "y1": 152
+      }
+    },
+    {
+      "id": "K",
+      "rgb": [
+        32,
+        32,
+        32
+      ],
+      "fx0": 0.2,
+      "fx1": 0.34,
+      "fy0": 0.08,
+      "fy1": 0.28,
+      "x0": 144,
+      "x1": 246,
+      "y0": 102,
+      "y1": 168,
+      "inner": {
+        "x0": 169,
+        "x1": 221,
+        "y0": 118,
+        "y1": 152
+      }
+    },
+    {
+      "id": "N18",
+      "rgb": [
+        46,
+        46,
+        46
+      ],
+      "fx0": 0.36,
+      "fx1": 0.5,
+      "fy0": 0.08,
+      "fy1": 0.28,
+      "x0": 258,
+      "x1": 360,
+      "y0": 102,
+      "y1": 168,
+      "inner": {
+        "x0": 283,
+        "x1": 335,
+        "y0": 118,
+        "y1": 152
+      }
+    }
+  ],
+  "measured_ffprobe": {
+    "programs": [],
+    "stream_groups": [],
+    "streams": [
+      {
+        "index": 0,
+        "codec_name": "h264",
+        "profile": "Constrained Baseline",
+        "codec_type": "video",
+        "width": 720,
+        "height": 404,
+        "has_b_frames": 0,
+        "pix_fmt": "yuv420p",
+        "r_frame_rate": "24/1",
+        "avg_frame_rate": "24/1",
+        "duration": "600.000000",
+        "nb_frames": "14400"
+      },
+      {
+        "index": 1,
+        "codec_name": "aac",
+        "profile": "LC",
+        "codec_type": "audio",
+        "sample_rate": "48000",
+        "channels": 2,
+        "r_frame_rate": "0/0",
+        "avg_frame_rate": "0/0",
+        "duration": "600.000000",
+        "nb_frames": "28125"
+      }
+    ],
+    "format": {
+      "duration": "600.000000",
+      "size": "196616114"
+    }
+  },
+  "host_patch_check": {
+    "ok": true,
+    "t": 5.5,
+    "patches": [
+      {
+        "id": "R",
+        "ok": true,
+        "reason": "ok",
+        "mean_rgb": [
+          252.6,
+          16.1,
+          0.4
+        ]
+      },
+      {
+        "id": "G",
+        "ok": true,
+        "reason": "ok",
+        "mean_rgb": [
+          40.1,
+          254.3,
+          0.3
+        ]
+      },
+      {
+        "id": "B",
+        "ok": true,
+        "reason": "ok",
+        "mean_rgb": [
+          0.0,
+          0.0,
+          254.0
+        ]
+      },
+      {
+        "id": "Y",
+        "ok": true,
+        "reason": "ok",
+        "mean_rgb": [
+          253.0,
+          253.0,
+          0.0
+        ]
+      },
+      {
+        "id": "C",
+        "ok": true,
+        "reason": "ok",
+        "mean_rgb": [
+          0.0,
+          255.0,
+          255.0
+        ]
+      },
+      {
+        "id": "M",
+        "ok": true,
+        "reason": "ok",
+        "mean_rgb": [
+          254.0,
+          0.0,
+          253.0
+        ]
+      },
+      {
+        "id": "W",
+        "ok": true,
+        "reason": "ok",
+        "mean_rgb": [
+          239.0,
+          239.0,
+          239.0
+        ]
+      },
+      {
+        "id": "K",
+        "ok": true,
+        "reason": "ok",
+        "mean_rgb": [
+          31.0,
+          31.0,
+          31.0
+        ]
+      },
+      {
+        "id": "N18",
+        "ok": true,
+        "reason": "ok",
+        "mean_rgb": [
+          46.0,
+          46.0,
+          46.0
+        ]
+      }
+    ]
+  },
+  "frames_burned": 14400,
+  "beep_onsets_n": 300,
+  "size_bytes": 196616114,
+  "bank_fit": "adversarial",
+  "media_filename": "MiSTerPlex PromoScoreable 720x404 24fps 600s (2026).mp4",
+  "media_host_path": "/home/flynnsbit/plex/media/movies/MiSTerPlex PromoScoreable 720x404 24fps 600s (2026).mp4"
+}

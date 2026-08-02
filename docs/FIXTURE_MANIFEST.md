@@ -195,3 +195,6 @@ Working tree `assets/avsync/*.mp4` on disk is larger (~792 MB) including **untra
 
 ## Blocking contracts for sibling lanes
 Canonical: [`docs/CONTRACTS_AVSYNC_GEOM_REAL.md`](CONTRACTS_AVSYNC_GEOM_REAL.md) (lipsync real+twins, width≠624, long real soak).
+
+## Promo scoreable ladder (preferred for promotion)
+See [`docs/PROMO_SCOREABLE_FIXTURES.md`](PROMO_SCOREABLE_FIXTURES.md) — 600s real+patches+ID+AV at non-bank geometries.
