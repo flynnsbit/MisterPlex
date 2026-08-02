@@ -58,7 +58,8 @@ SSH_BACKOFF_S="${ROLLBACK_SSH_BACKOFF_S:-1}"
 
 PAIR_ID="${PAIR_ID:-$PAIR_DEFAULT_ROLLBACK}"
 MENU_CORE="${DEVICE_CORE_MENU}"
-PLEXCTL_CANDIDATES="/media/fat/misterplex/bin/plexctl.sh /media/fat/misterplex_v2/bin/plexctl.sh /media/fat/Scripts/plexctl.sh"
+# TWO-ROOTS: v2 before v1 — first-hit must not prefer a stale v1 plexctl.
+PLEXCTL_CANDIDATES="/media/fat/misterplex_v2/bin/plexctl.sh /media/fat/misterplex/bin/plexctl.sh /media/fat/Scripts/plexctl.sh"
 PORT="${ROLLBACK_PORT:-3005}"
 ROLLBACK_REQUIRE_VISUAL="${ROLLBACK_REQUIRE_VISUAL:-}"
 

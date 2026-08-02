@@ -13,7 +13,30 @@ PORT="${MISTERPLEX_PORT:-3005}"
 STATUS_PORT="${MISTERPLEX_STATUS_PORT:-8090}"
 EVIDENCE="${MISTERPLEX_SWEEP_EVIDENCE:-$ROOT/build/misterplex-agent-W-C1B.txt}"
 DEVICE_INI="/media/fat/MiSTer.ini"
-DEVICE_LOG="/media/fat/misterplex/misterplexd.log"
+# TWO-ROOTS: never bare v1 log. Override via MISTERPLEX_DEVICE_LOG or live resolve.
+DEVICE_LOG="${MISTERPLEX_DEVICE_LOG:-}"
+
+resolve_device_log() {
+  if [[ -n "${DEVICE_LOG:-}" ]]; then
+    return 0
+  fi
+  local resolve_inc pick
+  resolve_inc="$(cat "$ROOT/tools/avsync_live_log_resolve.inc.sh")"
+  set +e
+  pick=$(ssh_m "sh -s" <<REMOTE 2>/dev/null
+${resolve_inc}
+avsync_resolve_live_log
+echo "\$pick"
+REMOTE
+)
+  set -e
+  DEVICE_LOG=$(printf '%s' "$pick" | tr -d '\r' | tail -n 1)
+  if [[ -z "$DEVICE_LOG" ]]; then
+    log "NO-DATA device log unresolved (two-roots); refuse silent v1 default"
+    return 1
+  fi
+  log "device_log=$DEVICE_LOG src=live_proc_resolve"
+}
 DEVICE_BACKUP="/media/fat/MiSTer.ini.W-C1B.pre-video-sweep.bak"
 LOCAL_INI_BACKUP="$ROOT/build/MiSTer.ini.W-C1B.device-pre-sweep"
 PLAY_KEY="${MISTERPLEX_PLAY_KEY:-testsrc}"
@@ -587,6 +610,7 @@ main() {
   log "W-C1B Plex output-mode sweep"
   log "host=$HOST user=$USER modes='$MODE_SPEC' play_key='$PLAY_KEY'"
   log "No RBF build/deploy; edit $DEVICE_INI [Plex] only; restore-to-5 trap enabled=$RESTORE_ON_EXIT"
+  resolve_device_log || die "two-roots: could not resolve live misterplexd.log"
 
   backup_ini
   fetch_mode_comments

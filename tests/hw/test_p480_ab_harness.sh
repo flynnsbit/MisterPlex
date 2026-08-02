@@ -85,9 +85,11 @@ mkdir -p "$OUT_DIR"
 SOURCE_SHA="$(git -C "$ROOT" rev-parse HEAD 2>/dev/null || echo unknown)"
 SOURCE_SHA_SHORT="$(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || echo unknown)"
 STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
-CONF_REMOTE="/media/fat/misterplex/misterplex.conf"
-CONF_BAK="/media/fat/misterplex/misterplex.conf.p480ab.bak"
-LOG_REMOTE="/media/fat/misterplex/misterplexd.log"
+# TWO-ROOTS: conf/log default empty → resolve from live process when needed.
+# Bare v1 paths are a silent stale-log trap (parent 2026-08-01).
+CONF_REMOTE="${P480_CONF_REMOTE:-}"
+CONF_BAK="${P480_CONF_BAK:-/media/fat/misterplex_v2/misterplex.conf.p480ab.bak}"
+LOG_REMOTE="${P480_LOG_REMOTE:-}"
 
 log() { printf '[p480-ab] %s\n' "$*"; }
 fail() { log "FAIL: $*"; exit 1; }
@@ -96,6 +98,46 @@ ssh_m() {
   sshpass -p "$PASS" ssh -o StrictHostKeyChecking=no -o ConnectTimeout=8 \
     -o LogLevel=ERROR "$USER@$HOST" "$@"
 }
+
+resolve_p480_live_paths() {
+  # Live exe → install root for conf+log (v2-before-v1 fallback via shared inc).
+  if [[ -n "${LOG_REMOTE:-}" && -n "${CONF_REMOTE:-}" ]]; then
+    return 0
+  fi
+  local resolve_inc blob root
+  resolve_inc="$(cat "$ROOT/tools/avsync_live_log_resolve.inc.sh")"
+  set +e
+  blob=$(ssh_m "sh -s" <<REMOTE 2>/dev/null
+${resolve_inc}
+avsync_resolve_live_log
+echo "LOG=\$pick"
+root=""
+if [ -n "\$pick" ]; then root=\$(dirname "\$pick"); fi
+if [ -z "\$root" ]; then
+  for d in /media/fat/misterplex_v2 /media/fat/misterplex; do
+    if [ -x "\$d/bin/misterplexd" ]; then root=\$d; break; fi
+  done
+fi
+echo "ROOT=\$root"
+if [ -n "\$root" ] && [ -f "\$root/misterplex.conf" ]; then echo "CONF=\$root/misterplex.conf"; fi
+REMOTE
+)
+  set -e
+  if [[ -z "${LOG_REMOTE:-}" ]]; then
+    LOG_REMOTE=$(printf '%s\n' "$blob" | sed -n 's/^LOG=//p' | tail -n1)
+  fi
+  if [[ -z "${CONF_REMOTE:-}" ]]; then
+    CONF_REMOTE=$(printf '%s\n' "$blob" | sed -n 's/^CONF=//p' | tail -n1)
+  fi
+  if [[ -z "${LOG_REMOTE:-}" ]]; then
+    fail "two-roots: live log unresolved (refusing bare v1 default)"
+  fi
+  if [[ -z "${CONF_REMOTE:-}" ]]; then
+    fail "two-roots: live conf unresolved (refusing bare v1 default)"
+  fi
+  log "live_paths conf=$CONF_REMOTE log=$LOG_REMOTE"
+}
+
 
 # --- pure helpers (host-testable) -------------------------------------------
 
@@ -446,6 +488,7 @@ fi
 
 # Mark log
 MARK="P480_AB ${TIER} ${STAMP} ${SOURCE_SHA_SHORT}"
+resolve_p480_live_paths
 ssh_m "printf '\n=== %s ===\n' '$MARK' >>'$LOG_REMOTE'"
 LOG_START="$(ssh_m "wc -l <'$LOG_REMOTE'" | tr -d '[:space:]')"
 

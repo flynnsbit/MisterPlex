@@ -3,6 +3,7 @@
 # second sample and new media frame-health lines for a fixed window.
 set -euo pipefail
 
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 HOST="${MISTER_HOST:-192.168.1.183}"
 USER="${MISTER_USER:-root}"
 PASS="${MISTER_PASS:-1}"
@@ -62,19 +63,25 @@ redact() {
   sed -E 's/X-Plex-Token=[^& ]+/X-Plex-Token=REDACTED/g; s/X-Plex-Token: [^[:space:]]+/X-Plex-Token: REDACTED/g'
 }
 
-LOG="/media/fat/misterplex/misterplexd.log"
-# Three-way count: missing log / grep error = NO_DATA, not measured 0.
-# Never `grep -c ... || echo 0` (absence-as-zero class, parent 2026-07-31).
+# TWO-ROOTS: resolve live log on device (never bare v1 default).
+# Empty/missing → NO_DATA (preserve unscoreable; do not invent 0).
 _c2_remote_count() {
   local pat="$1"
+  local resolve_inc
+  resolve_inc="$(cat "$ROOT/tools/avsync_live_log_resolve.inc.sh")"
   ssh_mister "bash -s" <<REMOTE
 set +e
-if [ ! -r '$LOG' ]; then
+${resolve_inc}
+avsync_resolve_live_log
+LOG=\$pick
+if [ -z "\$LOG" ] || [ ! -r "\$LOG" ]; then
   echo MEASURE_STATUS=NO_DATA
-  echo MEASURE_REASON=log_absent
+  echo MEASURE_REASON=log_absent_or_unresolved
+  echo log_src=\${LOG:-empty}
   exit 4
 fi
-n=\$(grep -c '$pat' '$LOG' 2>/dev/null)
+echo log_src=\$LOG
+n=\$(grep -c '$pat' "\$LOG" 2>/dev/null)
 rc=\$?
 if [ "\$rc" -ge 2 ] || [ -z "\$n" ]; then
   echo MEASURE_STATUS=NO_DATA

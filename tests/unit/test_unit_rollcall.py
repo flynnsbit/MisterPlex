@@ -186,6 +186,8 @@ EXPECTED_COMMANDS = [
     "$(ROOT)/tests/unit/test_confstr_guard.sh",
     "$(ROOT)/tests/unit/test_core_conf_geometry_gate.sh",
     "$(ROOT)/tests/unit/test_video_regression_liveness.sh",
+    "python3 $(ROOT)/tests/unit/test_two_roots_path_order.py --self-test",
+    "python3 $(ROOT)/tests/unit/test_two_roots_path_order.py",
     "python3 $(ROOT)/tests/unit/test_pipe_rc_trap.py",
     "python3 $(ROOT)/tests/unit/test_live_state_identity_audit.py",
     "$(ROOT)/tests/unit/test_rollback_honest.sh",

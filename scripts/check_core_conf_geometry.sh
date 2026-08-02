@@ -23,7 +23,8 @@
 #   MISTER_HOST MISTER_USER MISTER_PASS  — live ssh (defaults lab box)
 #   CORE_GEOMETRY_MAP  — override map path
 #   RBF_PATH_ON_DEVICE — default /media/fat/_Utility/Plex.rbf
-#   LOG_PATH_ON_DEVICE — default /media/fat/misterplex/misterplexd.log
+#   LOG_PATH_ON_DEVICE — optional override; default = LIVE /proc resolve
+#                        (tools/avsync_live_log_resolve.inc.sh). Never bare v1.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -35,7 +36,8 @@ HOST="${MISTER_HOST:-192.168.1.183}"
 USER="${MISTER_USER:-root}"
 PASS="${MISTER_PASS:-1}"
 RBF_REMOTE="${RBF_PATH_ON_DEVICE:-/media/fat/_Utility/Plex.rbf}"
-LOG_REMOTE="${LOG_PATH_ON_DEVICE:-/media/fat/misterplex/misterplexd.log}"
+# TWO-ROOTS: empty until live resolve (or caller override). Never default v1 log.
+LOG_REMOTE="${LOG_PATH_ON_DEVICE:-}"
 
 CORE_MD5="${CORE_MD5:-}"
 ADOPTED_LOG="${ADOPTED_LOG:-}"
@@ -136,10 +138,38 @@ fetch_live_md5() {
   printf '%s\n' "$actual"
 }
 
+resolve_live_log_remote() {
+  # Prefer caller override; else live /proc exe → root/misterplexd.log (v2-before-v1 fallback).
+  if [[ -n "${LOG_REMOTE:-}" ]]; then
+    printf '%s\n' "$LOG_REMOTE"
+    return 0
+  fi
+  if ! command -v sshpass >/dev/null 2>&1; then
+    hw_skip_not_pass "$NAME" "sshpass required for live log resolve"
+  fi
+  local resolve_inc pick
+  resolve_inc="$(cat "$ROOT/tools/avsync_live_log_resolve.inc.sh")"
+  set +e
+  pick=$(sshpass -p "$PASS" ssh -o StrictHostKeyChecking=no -o ConnectTimeout=8 \
+    "$USER@$HOST" "sh -s" <<REMOTE 2>/dev/null
+${resolve_inc}
+avsync_resolve_live_log
+echo "\$pick"
+REMOTE
+)
+  set -e
+  pick=$(printf '%s' "$pick" | tr -d '\r' | tail -n 1)
+  if [[ -z "$pick" ]]; then
+    hw_skip_not_pass "$NAME" "live log resolve empty (no misterplexd.log; not a pass)"
+  fi
+  printf '%s\n' "$pick"
+}
+
 fetch_live_log() {
   if ! command -v sshpass >/dev/null 2>&1; then
     hw_skip_not_pass "$NAME" "sshpass required for live adopted-log read"
   fi
+  LOG_REMOTE="$(resolve_live_log_remote)"
   mkdir -p "$ROOT/build"
   local tmp
   tmp="$(mktemp "$ROOT/build/core-conf-geometry.XXXXXX.log")"
