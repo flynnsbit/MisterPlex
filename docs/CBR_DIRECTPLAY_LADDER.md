@@ -5,8 +5,14 @@ sustained 60 s; capacity p95 1.292 Mbit/s. Prior ~670 kbit figure was the
 **pacer**, not the link — retracted for sizing.
 
 **Design:** identical content; CBR-only axis; sources already satisfy
-`plex_resolve` h264/baseline/level≤3.0/aac → **Direct Play** expected
-(delivered bitrate == source). Parent confirms `transcoded=0` on GEOM.
+`plex_resolve` h264/baseline/level≤3.0/aac so **Part Direct-Play is eligible**.
+DP is **not automatic**: default STREAM=0 always universal (`transcoded=1`).
+Set **`PREFER_DIRECT_H264=1`** (or STREAM=1) on deployed daemon — see
+`docs/CBR_DP_DIRECTPLAY_PROOF.md`. Parent must quote `transcode=0` or **VOID**.
+
+**Status note (parent 2026-08-02):** AdvReal transcoded sweep showed **no stable
+bitrate knee** (intermittent). Link hypothesis not confirmed under universal;
+re-run only under verified DP.
 
 ## supply_ratio (what to record)
 

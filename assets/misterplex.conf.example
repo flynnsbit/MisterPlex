@@ -67,6 +67,14 @@ PRESENT=fpga
 # STREAM_SKIP_RGB=auto  # skip heavy RGB only when PRESENT=fpga (audio + recon from start)
 # STREAM_SKIP_RGB=0     # always FFmpeg RGB (CABAC fallback / PRESENT=both keeps RGB anyway)
 # PRESENT=both always keeps FFmpeg RGB for continuous fb0 regardless of STREAM_SKIP_RGB.
+#
+# PREFER_DIRECT_H264 — library H.264 Part (transcode=0) vs PMS universal (transcode=1).
+# Default/auto: follows STREAM (STREAM=1 → Part; STREAM=0 → always universal).
+# Set =1 for CBR-DP / AdvReal bitrate ladders on the STREAM=0 dual-A9 path so PMS
+# Transcoder is out of the loop (host-CPU confound). Requires source H.264 Part.
+# PREFER_DIRECT_H264=1
+# PREFER_DIRECT_H264=0    # force universal even if STREAM=1
+# PREFER_DIRECT_H264=auto # explicit default (same as unset)
 
 # --- Phase 4 UX ---
 # AUTO_NEXT=1  # on media EOF, play next playQueue item when bound (default on)

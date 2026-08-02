@@ -195,6 +195,14 @@ int main(int argc, char** argv) {
     bool ddrMemFlush = false;
     bool presentProfile = false;
     bool streamEnabled = false;
+    // Prefer library H.264 Part (transcoded=0) instead of PMS universal.
+    // Default tracks STREAM (historical): STREAM=1 → direct Part; STREAM=0 → universal.
+    // Override with PREFER_DIRECT_H264=1 so STREAM=0 dual-A9 FFmpeg path can still
+    // Direct-Play compliant fixtures and remove the PMS transcoder confound.
+    // PREFER_DIRECT_H264=0 forces universal even when STREAM=1.
+    // PREFER_DIRECT_H264=auto (or unset) → preferDirectH264 == streamEnabled.
+    bool preferDirectH264ConfSet = false;
+    bool preferDirectH264 = false;
     std::string streamSkipRgb = "auto"; // auto | on | off — skip heavy RGB when PRESENT=fpga
     // STREAM=0 -vf scale: skip_identity omits scale+pad when expected delivery
     // WxH is known and equals the coded bank (or ASSUME_MATCH). Unknown delivery
@@ -385,6 +393,15 @@ int main(int argc, char** argv) {
         v = loadConf(confPath, "STREAM");
         if (!v.empty())
             streamEnabled = confTruthy(v);
+        v = loadConf(confPath, "PREFER_DIRECT_H264");
+        if (!v.empty()) {
+            preferDirectH264ConfSet = true;
+            // "auto" keeps STREAM coupling; anything confTruthy → force on; else off.
+            if (v == "auto" || v == "AUTO")
+                preferDirectH264ConfSet = false; // fall through to streamEnabled below
+            else
+                preferDirectH264 = confTruthy(v);
+        }
         v = loadConf(confPath, "STREAM_SKIP_RGB");
         if (!v.empty())
             streamSkipRgb = v;
@@ -715,12 +732,20 @@ int main(int argc, char** argv) {
                      idle.empty() ? "logo(default)" : idle.c_str(), player.avOffsetMs());
     }
     player.setLog([](const std::string& s) { logDaemon(s); });
+    // Default preferDirect tracks STREAM unless PREFER_DIRECT_H264 overrides.
+    if (!preferDirectH264ConfSet)
+        preferDirectH264 = streamEnabled;
     if (streamEnabled) {
         std::fprintf(stderr,
-                     "misterplexd: STREAM=1 (annex-B → host I-recon F1 + F3; preferDirectH264; "
+                     "misterplexd: STREAM=1 (annex-B → host I-recon F1 + F3; "
                      "PRESENT=%s STREAM_SKIP_RGB=%s — skip RGB only when PRESENT=fpga)\n",
                      presentMode.c_str(), streamSkipRgb.c_str());
     }
+    std::fprintf(stderr,
+                 "misterplexd: PREFER_DIRECT_H264=%d (conf_set=%d STREAM=%d) — "
+                 "1 => library H.264 Part transcode=0; 0 => PMS universal transcode=1\n",
+                 preferDirectH264 ? 1 : 0, preferDirectH264ConfSet ? 1 : 0,
+                 streamEnabled ? 1 : 0);
     std::fprintf(stderr, "misterplexd: DDR_MEM_SYNC=%s DDR_MEM_FLUSH=%s\n",
                  ddrMemSync ? "1" : "0", ddrMemFlush ? "1" : "0");
     std::fprintf(stderr, "misterplexd: DDR_FRAME_FORMAT=yuv420p\n");
@@ -870,11 +895,13 @@ int main(int argc, char** argv) {
             selected = preferredBase.empty() ? defaultPms : preferredBase;
 
         auto tryBase = [&](const std::string& base) -> misterplex::ResolveResult {
-            // STREAM=1: prefer direct H.264 Part for CAVLC host recon; still weakAlways for
-            // non-H.264. STREAM=0: always weak universal (dual-A9 cast path).
+            // preferDirectH264: library H.264 → Part URL, transcoded=false.
+            // Default equals STREAM (product). PREFER_DIRECT_H264=1 enables DP on
+            // STREAM=0 so dual-A9 FFmpeg casts remove the PMS transcoder confound.
+            // weakAlways still covers non-H.264 / missing Part → universal.
             return misterplex::resolvePlayTarget(req.key, base, token, off, /*weakAlways=*/true,
                                                  weakForPlay,
-                                                 /*preferDirectH264=*/streamEnabled);
+                                                 /*preferDirectH264=*/preferDirectH264);
         };
 
         auto resolved = tryBase(selected);

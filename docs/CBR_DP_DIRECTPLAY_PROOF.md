@@ -21,43 +21,65 @@ Files: `~/plex/media/movies/MiSTerPlex CBR-DP *`
 Docs/table: `docs/CBR_DIRECTPLAY_LADDER.md`  
 rks (section 2): **108=400, 109=800, 105=1200, 106=1600, 107=2000, 110=640×480@1200**
 
-## HARD GATE — STREAM mode decides DP vs universal
+## HARD GATE — `PREFER_DIRECT_H264` (or STREAM=1) decides DP vs universal
 
-Quoted from `arm/misterplexd/main.cpp` (resolve call site):
+### Root cause of AdvReal/CBR arms all showing `transcoded=1` (parent 2026-08-02)
+
+**Not asset refusal.** Host eligibility probe (metadata + Part byte range):
+
+- CBR-DP rk 108/109/105/106/107/110 and AdvReal rk 36/34/35: **all**
+  `videoCodec=h264`, profile **constrained baseline**, Part key present,
+  Part `HTTP 206` body starts with **`ftyp`**, `/transcode/sessions` size=0
+  after Part-only fetch. See `scripts/prove_directplay_host.sh`.
+- Daemon path with default cast: `preferDirectH264 = streamEnabled` and
+  **STREAM=0** → `preferDirectH264=false` → **always** `buildUniversalTranscodeUrl`
+  with `directPlay=0&directStream=0` → `r.transcoded = true`.
+- PMS never “chose” to refuse DP; **misterplexd never requested Part**.
+
+The 2000 kbit/s weak ladder floor matters **only** on the universal branch
+(`validateWeakLadder` / `maxVideoBitrate`). It does not apply when Part is taken.
+
+### Conf (after daemon build that includes PREFER_DIRECT_H264)
+
+Quoted from `arm/misterplexd/main.cpp`:
 
 ```cpp
-// STREAM=1: prefer direct H.264 Part for CAVLC host recon; still weakAlways for
-// non-H.264. STREAM=0: always weak universal (dual-A9 cast path).
-return misterplex::resolvePlayTarget(..., /*weakAlways=*/true,
-                                     ..., /*preferDirectH264=*/streamEnabled);
+// Default preferDirect tracks STREAM unless PREFER_DIRECT_H264 overrides.
+if (!preferDirectH264ConfSet)
+    preferDirectH264 = streamEnabled;
+// ...
+return misterplex::resolvePlayTarget(..., /*weakAlways=*/true, weakForPlay,
+                                     /*preferDirectH264=*/preferDirectH264);
 ```
 
-And `arm/misterplexd/plex_resolve.cpp`:
+`plex_resolve.cpp`:
 
 ```cpp
 const bool wantDirect = preferDirectH264 && key.rfind("/library", 0) == 0;
 // ...
 if (directH264) {
-    ...
     r.transcoded = false;
     r.detail = "direct H.264 Part (STREAM" + profSuffix + ")";
     return r;
 }
-// Prefer weak universal for dual A9 (STREAM=0 cast path / non-H.264 STREAM)
 if (weakAlways && key.rfind("/library", 0) == 0) {
-    ...
     r.transcoded = true;
     r.detail = "PMS universal " + ...
 }
 ```
 
-| conf | preferDirectH264 | expected for CBR-DP H.264 library asset |
-|------|------------------|----------------------------------------|
-| **STREAM=1** | true | **Direct Part** → `transcoded=0` |
-| **STREAM=0** (default cast) | false | **Always universal** → `transcoded=1` → **VOID for this ladder** |
+| conf | preferDirectH264 | expected for CBR-DP / AdvReal H.264 library asset |
+|------|------------------|--------------------------------------------------|
+| **PREFER_DIRECT_H264=1** (any STREAM) | true | **Direct Part** → `transcoded=0` |
+| **STREAM=1**, PREFER unset/auto | true | **Direct Part** → `transcoded=0` |
+| **STREAM=0**, PREFER unset/auto (old default cast) | false | **Always universal** → `transcoded=1` → **VOID** |
+| **PREFER_DIRECT_H264=0** | false | universal even if STREAM=1 |
 
-**You cannot measure link capacity with STREAM=0 on these fixtures.** The
-transcoder is back in the loop and host CPU re-contaminates every number.
+**Recommended for ladder on dual-A9 FFmpeg path:** `PREFER_DIRECT_H264=1` with
+`STREAM=0` (no host-recon requirement). Deploy updated `misterplexd` first.
+
+**You cannot measure link capacity while `transcode=1`.** Transcoder + host CPU
+re-contaminate every number.
 
 ## What to look for on EVERY rung (parent)
 
