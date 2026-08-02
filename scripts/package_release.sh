@@ -334,23 +334,23 @@ if [[ -f "$STAGE/cores/Plex.rbf" ]]; then
   fi
 fi
 
-# Capability gate (parent hardware 2026-08-02): packaged daemon must embed
-# delivery-geometry telemetry (measured=/desync_risk=/coded_bank=/DELIVERY_MISMATCH_FINAL)
-# and a git_rev stamp. The e9f79de2 release pin lacked these; live silicon
-# needed measured=624x350 while the package assumed coded bank 624x480 → green
-# field + wrapped overlay. No md5 hardcode here — markers + stamp only. No bypass.
+# Behavioural vf delivery gate (parent hardware 2026-08-02, adversarial redesign):
+# packaged daemon's vf policy must pin OUTPUT I420 to coded-bank bytes for real
+# PMS deliveries including non-bank-exact 624x350, with non-dead chroma.
+# Artifact-only (not device state). No content-md5 allow/deny. Exit 7 refuse.
+# Scope: ARM producer only — not DDR/scanout (gate output states this).
 if [[ -f "$STAGE/bin/misterplexd" ]]; then
-  if ! cap_verdict="$("$ROOT/scripts/daemon_capability_check.sh" --require-stamp "$STAGE/bin/misterplexd" 2>&1)"; then
+  if ! vf_verdict="$("$ROOT/scripts/vf_delivery_behaviour_check.sh" "$STAGE/bin/misterplexd" 2>&1)"; then
     {
-      echo "ERROR: refusing to package a daemon that fails capability/stamp check."
-      echo "$cap_verdict"
-      echo "       A daemon older than the live delivery-geometry work regresses 480p"
-      echo "       on the user's tier (viewed pixels). Rebuild a stamped ARM binary"
-      echo "       from current main and re-pin; do not ship historical unstamped pins."
+      echo "ERROR: refusing to package a daemon whose vf policy fails delivery behaviour."
+      echo "$vf_verdict"
+      echo "       Real PMS 624x350 into identity/unverified skip desyncs the raw pipe"
+      echo "       (green field / zero frames). Rebuild misterplexd with product FOAR"
+      echo "       into coded 624x480 and re-pin; do not ship a legacy identity policy."
     } >&2
     exit 7
   fi
-  echo "package_release: daemon capability OK — $(printf '%s\n' "$cap_verdict" | tail -1)"
+  echo "package_release: vf delivery behaviour OK — $(printf '%s\n' "$vf_verdict" | grep 'VF_DELIVERY_OK' | tail -1)"
 fi
 
 mkdir -p "$OUT_DIR"

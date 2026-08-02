@@ -188,7 +188,7 @@ unit-unlocked: unit-rollcall preflight $(ROOT)/build/test_cadence $(ROOT)/build/
 	$(ROOT)/tests/unit/test_release_rbf_hash.sh
 	$(ROOT)/tests/unit/test_release_pair_gate.sh
 	$(ROOT)/tests/unit/test_package_validated_pair.sh
-	$(ROOT)/tests/unit/test_release_not_older.sh
+	$(ROOT)/tests/unit/test_vf_delivery_behaviour.sh
 	$(ROOT)/tests/unit/test_release_tar_owner.sh
 	$(ROOT)/tests/unit/test_daemon_stamp_check.sh
 	$(ROOT)/tests/unit/test_daemon_build_identity.sh
@@ -426,6 +426,13 @@ $(ROOT)/build/test_yuv420p_chroma_480p: $(ROOT)/tests/unit/test_yuv420p_chroma_4
 		$(ROOT)/host/libmisterplex/ddr_frame_layout.hpp
 	@mkdir -p $(ROOT)/build
 	$(CXX) $(CXXFLAGS) -I$(ROOT)/host -o $@ $(ROOT)/tests/unit/test_yuv420p_chroma_480p.cpp
+
+$(ROOT)/build/test_vf_bank_output_health: $(ROOT)/tests/unit/test_vf_bank_output_health.cpp \
+		$(ROOT)/host/libmisterplex/yuv420p_chroma_health.hpp \
+		$(ROOT)/host/libmisterplex/ffmpeg_vf.hpp \
+		$(ROOT)/host/libmisterplex/ddr_frame_layout.hpp
+	@mkdir -p $(ROOT)/build
+	$(CXX) $(CXXFLAGS) -I$(ROOT)/host -o $@ $(ROOT)/tests/unit/test_vf_bank_output_health.cpp
 
 $(ROOT)/build/test_geom_frame_cost: $(ROOT)/tests/unit/test_geom_frame_cost.cpp \
 		$(ROOT)/host/libmisterplex/ddr_frame_layout.hpp \

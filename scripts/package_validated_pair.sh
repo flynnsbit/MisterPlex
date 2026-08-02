@@ -43,18 +43,18 @@ if [ "$dae_md5" != "$EXPECT_DAEMON" ]; then
   exit 2
 fi
 
-# Stamp+capability: historical e9f79de2 is content-md5 only and lacks
-# delivery-geometry markers (parent 2026-08-02 green-field regression).
-# Refuse to package it as a shippable release until the pair is re-pinned to a
-# stamped, capable daemon. No allow-matrix-pin bypass on the ship path.
-if ! cap_out=$("$ROOT/scripts/daemon_capability_check.sh" --require-stamp "$DAEMON" 2>&1); then
-  echo "ERROR: tracked pair daemon fails capability/stamp (will not ship):" >&2
-  echo "$cap_out" >&2
-  echo "ACTION: w-promote must produce a stamped ARM daemon from current main" >&2
+# Behavioural vf delivery (parent 2026-08-02 green-field regression, redesigned
+# artifact-only): historical pin uses legacy identity vf policy and FAILS
+# 624x350 bank-byte + chroma checks. Refuse ship until pair is re-pinned to a
+# daemon whose vf FOAR-pins coded-bank output. No md5 allow/deny; no bypass.
+if ! vf_out=$("$ROOT/scripts/vf_delivery_behaviour_check.sh" "$DAEMON" 2>&1); then
+  echo "ERROR: tracked pair daemon fails vf delivery behaviour (will not ship):" >&2
+  echo "$vf_out" >&2
+  echo "ACTION: w-promote must rebuild ARM misterplexd with product FOAR policy" >&2
   echo "        and re-pin release_artifacts/; do not weaken this check." >&2
   exit 7
 fi
-echo "$cap_out"
+echo "$vf_out"
 
 pair_out=$("$ROOT/scripts/pair_ship_policy.sh" check "$core_md5" "$dae_md5" 2>&1) || {
   echo "ERROR: pair_ship_policy refused tracked pair: $pair_out" >&2
