@@ -89,7 +89,11 @@ for d in /proc/[0-9]*; do
   x=$(readlink -f "$d/exe" 2>/dev/null) || continue
   case "$x" in *"(deleted)"*) x=${x% (deleted)};; esac
   b=$(basename "$x" 2>/dev/null) || continue
-  [ "$b" = "misterplexd" ] || continue
+  # Parent: after mv, basename may still be misterplexd; match *misterplexd*
+  case "$b" in misterplexd|misterplexd*) ;; *)
+    case "$x" in */misterplexd|*/misterplexd*) ;; *) continue ;; esac
+    ;;
+  esac
   n=$((n+1)); pids="$pids ${d#/proc/}"
   root=$(dirname "$(dirname "$x")")
 done
@@ -179,8 +183,9 @@ ssh_m "set -e
   for d in /proc/[0-9]*; do
     [ -e \"\$d/exe\" ] || continue
     x=\$(readlink -f \"\$d/exe\" 2>/dev/null) || continue
+    case \"\$x\" in *'(deleted)'*) x=\${x% (deleted)} ;; esac
     b=\$(basename \"\$x\" 2>/dev/null) || continue
-    [ \"\$b\" = misterplexd ] || continue
+    case \"\$b\" in misterplexd|misterplexd*) ;; *) continue ;; esac
     kill \${d#/proc/} 2>/dev/null || true
   done
   echo KILL_DONE
@@ -198,16 +203,17 @@ n=0; live=""; conf=""; root=""
 for d in /proc/[0-9]*; do
   [ -e "$d/exe" ] || continue
   x=$(readlink -f "$d/exe" 2>/dev/null) || continue
-  case "$x" in *"(deleted)"*) continue;; esac
+  case "$x" in *"(deleted)"*) x=${x% (deleted)};; esac
   b=$(basename "$x" 2>/dev/null) || continue
-  [ "$b" = misterplexd ] || continue
+  case "$b" in misterplexd|misterplexd*) ;; *) continue ;; esac
   m=$(md5sum "$d/exe" 2>/dev/null | awk "{print \$1}")
-  n=$((n+1)); live=$m; root=$(dirname "$(dirname "$x")")
+  n=$((n+1)); live=$m
   conf=""
   if [ -r "$d/cmdline" ]; then
     cmd=$(tr "\0" " " <"$d/cmdline")
     case "$cmd" in *--conf\ *) conf=${cmd#*--conf }; conf=${conf%% *};; esac
   fi
+  if [ -n "$conf" ]; then root=$(dirname "$conf"); else root=$(dirname "$(dirname "$x")"); fi
 done
 echo "N=$n"
 echo "LIVE=$live"

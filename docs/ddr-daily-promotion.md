@@ -48,6 +48,44 @@ Parent-owned device work only. Agents produce artifacts and commands; they must
 
 Also: `bash tests/unit/test_deploy_misterplexd.sh` (73 checks) — green DEPLOY_OK⇒rc0; red no DEPLOY_OK; **truncated stage md5 refuses mv (rc=7)**.
 
+## Power-cycle rehearsal (P1 OPEN — parent asks user before any reboot)
+
+Hook execution was rehearsed (parent: FIXED hook → BOOT_HOOK_OK). **Kernel cold boot
+has never been proven.** Agents never reboot. Safe parent sequence when user approves:
+
+```bash
+# 0) Snapshot user conf+ini (byte-exact restore later)
+OUT=./build/user-state-pre-reboot USER_STATE_EXECUTE=1 \
+  ./scripts/user_state_snapshot.sh snapshot; echo "true rc=$?"
+
+# 1) Pre-flight: live pair healthy
+./scripts/promotion_gate_check.sh verify-live; echo "true rc=$?"
+# expect: BOOT_HOOK_OK, product-core OK, v2-rollback-core OK (pure 32-hex), n_daemon=1
+
+# 2) Confirm hook on device is single v2 supervisor line (parent already fixed once)
+# ssh: grep -n misterplex /etc/init.d/S99user || true
+# expect: exactly one misterplex_v2 supervise line; HAS_V1=0
+
+# 3) USER-APPROVED: power cycle MiSTer (hardware switch / clean reboot).
+#    Do NOT kill-9 storms. Do NOT thrash load_core during boot.
+
+# 4) After boot + ~30s settle — host only:
+./scripts/promotion_gate_check.sh verify-live; echo "true rc=$?"
+# PASS criteria: n_daemon==1, live exe md5 == pin (9ce2c2d1…), LIVE_ROOT=misterplex_v2,
+# BOOT_HOOK_OK, /resources 200, conf md5 == pre-reboot snapshot (cmp).
+# FAIL → atomic pair restore (do not half-fix):
+#   PAIR_ID=ddr-8fdf440f-9ce2c2d1 \
+#     ROLLBACK_CORE=device:/media/fat/_Utility/Plex.rbf.bak.8fdf440f \
+#     ROLLBACK_DAEMON=artifacts/daemon-pins/misterplexd.9ce2c2d1 \
+#     PAIR_CONF_RESTORE_FILE=./build/user-state-pre-reboot/misterplex.conf \
+#     PAIR_CONF_MODE=restore-file \
+#     ./scripts/restore_misterplexd_prev.sh; echo "true rc=$?"
+
+# 5) Glass: parent HDMI capture idle logo; conf DECODE untouched (cmp snapshot).
+```
+
+Until step 4 is GREEN on a real cold boot, **P1 remains OPEN**.
+
 ## Truncated-transfer incident (parent 2026-08-01 night)
 
 **What happened:** `scp` directly onto live `…/bin/misterplexd` stalled on WiFi → on-disk md5 `e85682c9` (truncated ELF) → supervise `rc=126` ×12 (backoff 2…64s) → `n_daemon=0` ~2 min. Naive `cp` restore hit **ETXTBSY**; recovery was **atomic `mv -f`** + kill-by-PID.

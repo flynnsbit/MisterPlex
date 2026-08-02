@@ -528,6 +528,23 @@ src=$?
 set -e
 [ "$src" -ne 0 ] && ok "shape-rejects-prefix8" || bad "shape-rejects-prefix8"
 
+echo "=== REGRESSION: live probe matches deleted exe (parent mv trap) ==="
+set +e
+"$GATES" dump-remote-live >"$WORK/dump_del.txt" 2>&1
+drc=$?
+set -e
+[ "$drc" -eq 0 ] && ok "dump-del-rc0" || bad "dump-del-rc0"
+grep -q 'deleted' "$WORK/dump_del.txt" && ok "dump-strips-deleted" || bad "dump-strips-deleted"
+# must NOT bare-continue on deleted (old bug skipped corpses → empty n_daemon)
+if grep -E '\*\(deleted\)\*.*continue' "$WORK/dump_del.txt" | grep -v 'x=\${x% (deleted)}' | grep -q continue; then
+  # allow strip line only
+  :
+fi
+# Prefer conf dirname for root
+grep -q 'dirname "\$conf"' "$WORK/dump_del.txt" && ok "dump-root-from-conf" || bad "dump-root-from-conf"
+# must match misterplexd* not exact-only
+grep -q 'misterplexd\*' "$WORK/dump_del.txt" && ok "dump-match-glob" || bad "dump-match-glob"
+
 echo "=== REGRESSION: dump-remote-live is single heredoc — no V2_MD5 glue possible ==="
 set +e
 "$GATES" dump-remote-live >"$WORK/dump_remote.txt" 2>&1

@@ -256,6 +256,10 @@ printf 'V2_CORE=%s\n' "\$V2"
 printf 'V2_MD5=%s\n' "\$v2_md5"
 printf 'CORE_MD5_PROBE_DONE=%s\n' "1"
 # --- live daemon identity (inlined; do NOT append pair_remote_live_daemon_snippet) ---
+# Parent trap after atomic mv: /proc/PID/exe reads '.../misterplexd (deleted)'.
+# Skipping (deleted) OR requiring basename==misterplexd exactly → empty PID / n=0
+# while the corpse still holds the port. Match *misterplexd*; strip ' (deleted)'.
+# Prefer LIVE_ROOT from --conf dirname (user-owned install root) over exe path.
 n=0
 pids=
 live=
@@ -268,17 +272,25 @@ for d in /proc/[0-9]*; do
   p=\${d#/proc/}
   x=\$(readlink -f "\$d/exe" 2>/dev/null) || continue
   case "\$x" in
-    *"(deleted)"*) continue ;;
+    *"(deleted)"*) x=\${x% (deleted)} ;;
   esac
   base=\$(basename "\$x" 2>/dev/null) || continue
-  [ "\$base" = "misterplexd" ] || continue
+  case "\$base" in
+    misterplexd|misterplexd*) ;;
+    *)
+      case "\$x" in
+        */misterplexd|*/misterplexd\ *) ;;
+        *) continue ;;
+      esac
+      ;;
+  esac
+  # md5 of the still-mapped inode (works for deleted too via /proc/PID/exe)
   m=\$(md5sum "\$d/exe" 2>/dev/null | awk '{print \$1}')
   [ -n "\$m" ] || continue
   n=\$((n + 1))
   pids="\${pids}\${pids:+ }\$p"
   exe=\$x
   live=\$m
-  root=\$(dirname "\$(dirname "\$x")")
   conf=
   port=
   prev=
@@ -297,6 +309,12 @@ for d in /proc/[0-9]*; do
         *) prev= ;;
       esac
     done
+  fi
+  # Root of truth: --conf parent dir (never assume /media/fat/misterplex).
+  if [ -n "\$conf" ]; then
+    root=\$(dirname "\$conf")
+  else
+    root=\$(dirname "\$(dirname "\$x")")
   fi
 done
 printf 'N_DAEMON=%s\n' "\$n"

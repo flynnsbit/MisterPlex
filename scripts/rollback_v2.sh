@@ -497,15 +497,29 @@ resolve_live_conf_path() {
 }
 
 # Atomic conf half of the pair.
-# Parent 2026-07-31: device conf is USER-OWNED state. Never silently replace with a
-# "validated default". Always byte-backup first; merge only the pair-required keys
-# (ddr) or strip pair-forbidden keys (spi); all other lines stay untouched.
-# PAIR_CONF_RESTORE_FILE=hostpath → install those exact bytes (true rollback of conf).
+# Parent 2026-07-31/08-01: device conf is USER-OWNED state. Never silently replace
+# with a "validated default" (DECODE=624x480 was wrongly normalized once).
+# Default PAIR_CONF_MODE=preserve — do NOT write conf at all (backup path only).
+# PAIR_CONF_RESTORE_FILE=hostpath → install those exact bytes (cmp-verified).
+# PAIR_CONF_MODE=merge-keys → opt-in only; touches pair keys, never DECODE/IDLE.
 apply_pair_conf() {
   local profile="${1:-$PAIR_CONF_PROFILE}" conf_path staged body rc host_tmp remote_bak mode
   conf_path=$(resolve_live_conf_path)
-  mode="${PAIR_CONF_MODE:-merge-keys}"
-  log "apply conf mode=$mode profile=$profile path=$conf_path (user-owned; byte backup first)"
+  mode="${PAIR_CONF_MODE:-preserve}"
+  log "apply conf mode=$mode profile=$profile path=$conf_path (user-owned; default preserve)"
+
+  # preserve: never mutate conf; only report live md5 (parent cmp is the truth).
+  if [ "$mode" = "preserve" ] && { [ -z "${PAIR_CONF_RESTORE_FILE:-}" ] || [ ! -f "${PAIR_CONF_RESTORE_FILE:-}" ]; }; then
+    set +e
+    conf_md5=$(run_ssh "if [ -f $(printf '%q' "$conf_path") ]; then md5sum $(printf '%q' "$conf_path") | awk '{print \$1}'; else echo MISSING; fi")
+    rc=$?
+    set -e
+    if [ "$rc" -eq 5 ]; then return 5; fi
+    conf_md5=$(printf '%s\n' "$conf_md5" | tr -d '\r' | tail -n1)
+    echo "OK conf-preserved path=$conf_path md5=$conf_md5 (USER-OWNED; no write)"
+    echo "CONF_MODE=preserve CONF_MD5=$conf_md5"
+    return 0
+  fi
 
   host_tmp="$ROOT/build/pair-conf-${PAIR_ID}.$$.conf"
   mkdir -p "$(dirname "$host_tmp")"

@@ -25,6 +25,29 @@ ok() { echo "PASS $1"; pass=$((pass + 1)); }
 bad() { echo "FAIL $1" >&2; fail=$((fail + 1)); }
 
 # --- pure policy -------------------------------------------------------------
+echo "=== RED: bare deploy without path/pin refuses (no silent rebuild) ==="
+set +e
+out=$(env -u DEPLOY_BIN -u DEPLOY_EXPECT_MD5 -u EXPECT_MD5 DEPLOY_ALLOW_UNPINNED=0 \
+  DEPLOY_SSHM=/bin/false DEPLOY_SCPM=/bin/false \
+  "$SCRIPT" 2>&1)
+brc=$?
+set -e
+echo "  [bare] true rc=$brc"
+[[ "$brc" -eq 2 ]] && ok "bare-deploy-rc2" || bad "bare-deploy-rc2 got=$brc"
+echo "$out" | grep -qiE 'explicit artifact|DEPLOY_EXPECT_MD5|missing_artifact' && ok "bare-deploy-msg" || bad "bare-deploy-msg"
+
+echo "=== RED: DEPLOY_REBUILD=1 without pin refuses ==="
+set +e
+out=$(env -u DEPLOY_EXPECT_MD5 -u EXPECT_MD5 -u DEPLOY_BIN \
+  DEPLOY_REBUILD=1 DEPLOY_ALLOW_UNPINNED=0 \
+  DEPLOY_SSHM=/bin/false DEPLOY_SCPM=/bin/false \
+  "$SCRIPT" 2>&1)
+rrc=$?
+set -e
+echo "  [rebuild-unpinned] true rc=$rrc"
+[[ "$rrc" -eq 2 ]] && ok "rebuild-unpinned-rc2" || bad "rebuild-unpinned-rc2 got=$rrc"
+echo "$out" | grep -qiE 'DEPLOY_REBUILD|pin unreachable|DEPLOY_EXPECT' && ok "rebuild-unpinned-msg" || bad "rebuild-unpinned-msg"
+
 echo "=== RED: truncated stage md5 must refuse atomic mv (parent scp incident) ==="
 # Simulated: host wants full pin; stage got short/partial ELF hash.
 WANT_FULL=9ce2c2d13d1c8712683289043e99002c

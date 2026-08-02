@@ -95,17 +95,45 @@ EXPECT_MD5="${DEPLOY_EXPECT_MD5:-${EXPECT_MD5:-}}"
 DEPLOY_SKIP_GEOMETRY_GATE="${DEPLOY_SKIP_GEOMETRY_GATE:-0}"
 FORCE_ROOT="${MISTERPLEX_ROOT:-}"
 
-# Explicit binary path: CLI arg > DEPLOY_BIN > default build path
+# Explicit binary path: CLI arg > DEPLOY_BIN > (refused without pin).
+# Parent defect: bare deploy rebuilt/stripped and shipped stale 54f1d916 to v1
+# while live was v2 — host pin unreachable. Never default to build/arm without
+# an explicit DEPLOY_EXPECT_MD5 (or DEPLOY_ALLOW_UNPINNED=1 lab escape hatch).
 if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
-  sed -n '2,20p' "$0" | sed 's/^# \?//'
+  sed -n '2,35p' "$0" | sed 's/^# \?//'
   exit 0
+fi
+if [[ "${DEPLOY_REBUILD:-0}" == "1" && -z "${DEPLOY_EXPECT_MD5:-${EXPECT_MD5:-}}" && "${DEPLOY_ALLOW_UNPINNED:-0}" != "1" ]]; then
+  echo "FAIL DEPLOY_REBUILD=1 without DEPLOY_EXPECT_MD5 — pin unreachable after strip" >&2
+  echo "deploy: refuse_rebuild_unpinned: true rc=2"
+  exit 2
 fi
 if [[ $# -ge 1 && -n "${1:-}" ]]; then
   BIN="$1"
 elif [[ -n "${DEPLOY_BIN:-}" ]]; then
   BIN="$DEPLOY_BIN"
 else
-  BIN="$ROOT/build/arm/misterplexd"
+  if [[ -n "${DEPLOY_EXPECT_MD5:-${EXPECT_MD5:-}}" ]]; then
+    p8="$(printf '%s' "${DEPLOY_EXPECT_MD5:-$EXPECT_MD5}" | cut -c1-8)"
+    pin="$ROOT/artifacts/daemon-pins/misterplexd.${p8}"
+    if [[ -f "$pin" ]]; then
+      BIN="$pin"
+      echo "deploy: defaulting BIN to pin $pin (from DEPLOY_EXPECT_MD5)"
+    else
+      echo "FAIL no CLI path and pin missing: $pin" >&2
+      echo "deploy: missing_pin: true rc=2"
+      exit 2
+    fi
+  elif [[ "${DEPLOY_ALLOW_UNPINNED:-0}" == "1" ]]; then
+    BIN="$ROOT/build/arm/misterplexd"
+    echo "deploy: WARN DEPLOY_ALLOW_UNPINNED=1 using $BIN" >&2
+  else
+    echo "FAIL deploy_misterplexd: pass explicit artifact path or DEPLOY_EXPECT_MD5=<md5>" >&2
+    echo "  example: DEPLOY_EXPECT_MD5=9ce2c2d13d1c8712683289043e99002c \\" >&2
+    echo "    $0 artifacts/daemon-pins/misterplexd.9ce2c2d1" >&2
+    echo "deploy: missing_artifact_arg: true rc=2"
+    exit 2
+  fi
 fi
 
 # Flaky WiFi (~1/3 SSH fails). Retry transport; never leave a partial live binary
@@ -267,37 +295,47 @@ for d in /proc/[0-9]*; do
   case "$cmd" in
     *plexctl.sh*|*plexctl_supervise*|*misterplexd_supervise*|*dedupe_daemon*) continue ;;
   esac
+  # argv0 or path may be '.../misterplexd (deleted)' after atomic mv — match *misterplexd*
   case "$cmd" in
-    */misterplexd\ *|*/misterplexd) ;;
+    *misterplexd*) ;;
     *) continue ;;
   esac
+  # Exclude supervisors that mention misterplexd in argv
+  case "$cmd" in
+    *misterplexd_supervise*|*plexctl_supervise*|*dedupe_daemon*) continue ;;
+  esac
   p=${d#/proc/}
+  # Prefer /proc/comm == misterplexd (exact) when available
+  c=""
+  [ -r "$d/comm" ] && c=$(cat "$d/comm" 2>/dev/null || true)
+  a0=$(tr "\0" "\n" < "$d/cmdline" 2>/dev/null | head -n1)
+  case "$c" in
+    misterplexd) ;;
+    *)
+      case "$a0" in
+        *misterplexd*) ;;
+        *) continue ;;
+      esac
+      ;;
+  esac
   n=$((n + 1))
-  # Prefer the kernel's view of the running image (parent-measured truth).
   exe=$(readlink -f "/proc/$p/exe" 2>/dev/null || true)
-  if [ -n "$exe" ]; then
-    root=$(dirname "$(dirname "$exe")")
-  else
-    conf=""
-    set -- $cmd
-    while [ $# -gt 0 ]; do
-      if [ "$1" = "--conf" ]; then conf="${2:-}"; break; fi
-      shift
-    done
-    if [ -n "$conf" ]; then
-      root=$(dirname "$conf")
-    else
-      binpath=$(tr "\0" "\n" < "$d/cmdline" 2>/dev/null | head -n1)
-      root=$(dirname "$(dirname "$binpath")")
-      exe=$binpath
-    fi
-  fi
+  case "$exe" in *"(deleted)"*) exe=${exe% (deleted)} ;; esac
   conf=""
   set -- $cmd
   while [ $# -gt 0 ]; do
     if [ "$1" = "--conf" ]; then conf="${2:-}"; break; fi
+    case "$1" in --conf=*) conf="${1#--conf=}"; break ;; esac
     shift
   done
+  # LIVE_ROOT from --conf dirname (parent: never assume misterplex vs misterplex_v2)
+  if [ -n "$conf" ]; then
+    root=$(dirname "$conf")
+  elif [ -n "$exe" ]; then
+    root=$(dirname "$(dirname "$exe")")
+  else
+    root=$(dirname "$(dirname "$a0")")
+  fi
   live_md5=$(md5sum "/proc/$p/exe" 2>/dev/null | awk '{print $1}')
   echo "LIVE_PID=$p EXE=$exe ROOT=$root CONF=${conf:-} LIVE_MD5=${live_md5:-} CMD=$cmd"
   if [ -z "$found" ]; then
