@@ -48,24 +48,28 @@ if [ "${sz:-0}" -lt 1000 ]; then
   exit 4
 fi
 
-# Prefer a short-timeout qemu --version when available (ARM binary on x86 host).
-# Unstamped historical pins may hang or ignore --version under qemu — never block
-# the gate on that path. Fall back to strings for the stamped banner form only.
+# Probe --version. Prefer native exec when the ELF matches this host; else short
+# timeout under qemu-arm. Unstamped historical ARM pins may hang under qemu —
+# never block the gate on that path. Fall back to strings for a concrete
+# git_rev= value only (printf format "git_rev=%s" alone is NOT a stamp).
 # Never treat empty probe output as git_rev=ok.
 ver_line=""
-run_ver() {
-  local q=$1
-  # timeout is mandatory: pre-stamp ARM binaries can hang under qemu.
+run_timeout() {
   if command -v timeout >/dev/null 2>&1; then
-    timeout 3 "$q" "$path" --version 2>/dev/null | head -1 || true
+    timeout 3 "$@" 2>/dev/null || true
   else
-    "$q" "$path" --version 2>/dev/null | head -1 || true
+    "$@" 2>/dev/null || true
   fi
 }
-if command -v qemu-arm-static >/dev/null 2>&1; then
-  ver_line=$(run_ver qemu-arm-static)
-elif command -v qemu-arm >/dev/null 2>&1; then
-  ver_line=$(run_ver qemu-arm)
+ft=$(file -b "$path" 2>/dev/null || true)
+if printf '%s' "$ft" | grep -qiE 'ELF (64-bit|32-bit).*(x86-64|Intel 80386|x86_64)'; then
+  ver_line=$(run_timeout "$path" --version | head -1)
+elif printf '%s' "$ft" | grep -qiE 'ELF 32-bit.*ARM'; then
+  if command -v qemu-arm-static >/dev/null 2>&1; then
+    ver_line=$(run_timeout qemu-arm-static "$path" --version | head -1)
+  elif command -v qemu-arm >/dev/null 2>&1; then
+    ver_line=$(run_timeout qemu-arm "$path" --version | head -1)
+  fi
 fi
 
 git_rev=""
@@ -73,10 +77,10 @@ if printf '%s' "$ver_line" | grep -q 'git_rev='; then
   git_rev=$(printf '%s\n' "$ver_line" | sed -n 's/.*git_rev=\([^[:space:]]*\).*/\1/p' | head -1)
 fi
 if [ -z "$git_rev" ]; then
-  # strings fallback: stamped banner form only (not generic "unknown")
-  if strings "$path" 2>/dev/null | grep -q 'misterplexd git_rev='; then
-    git_rev=$(strings "$path" 2>/dev/null | sed -n 's/.*misterplexd git_rev=\([^[:space:]]*\).*/\1/p' | head -1)
-  fi
+  # strings: only accept a resolved rev (hex), not the printf format %s
+  git_rev=$(strings "$path" 2>/dev/null \
+    | sed -n 's/.*git_rev=\([0-9a-f]\{7,\}(-dirty)\?\).*/\1/p' \
+    | head -1 || true)
 fi
 
 md5=$(md5sum "$path" | awk '{print $1}')
