@@ -447,6 +447,34 @@ int main() {
                "320x240 upscale path still changes height (expected)");
         // 320x240 → out_h = 240*618/320 = 463 (width-limited), not 240.
         expect(scaleDecreaseOutHeight(320, 240, 618, 480) == 463, "320x240→463 under decrease");
+        // Parent rk=9: library 624x352 / measured_delivery often 624x350 (even, not MB-aligned).
+        // FOAR into display 618x480 is width-limited → out_h = floor(h*618/624); pad fills rest.
+        // OUTPUT after pad is still coded 624x480 (449280 B) — reader size unchanged.
+        expect(scaleDecreaseOutHeight(624, 350, 618, 480) == 346, "624x350→346 under decrease");
+        expect(scaleDecreaseOutHeight(624, 352, 618, 480) == 348, "624x352→348 under decrease");
+        expect(yuv420pFrameBytesWH(624, 350) == 327600u, "I420 624x350 input bytes");
+        expect(yuv420pFrameBytesWH(624, 352) == 329472u, "I420 624x352 input bytes");
+        expect((350 % 16) != 0, "350 is not H.264 MB-row aligned");
+        expect((352 % 16) == 0, "352 is MB-row aligned");
+        // FORCE_SCALE Always + 350: scale+pad pins OUTPUT bytes to bank (not input size).
+        {
+            FfmpegVfRequest r350;
+            r350.coded_w = 624;
+            r350.coded_h = 480;
+            r350.display_w = 618;
+            r350.display_h = 480;
+            r350.scale_mode = FfmpegScaleMode::Always;
+            r350.source_w = 624;
+            r350.source_h = 350;
+            r350.sws_flags = "fast_bilinear";
+            const auto p350 = buildFfmpegVideoFilter(r350);
+            expect(p350.scale_applied && !p350.identity_skip, "350 forces scale path");
+            expect(p350.vf.find("pad=624:480") != std::string::npos, "350 pads to bank");
+            expect(!pipeDesyncRisk(yuv420pFrameBytesWH(624, 350), 449280u, p350.identity_skip),
+                   "desync_risk=0 on scale path even when INPUT≠reader");
+            expect(pipeDesyncRisk(yuv420pFrameBytesWH(624, 350), 449280u, true),
+                   "desync_risk=1 only if identity_skip with 350 input");
+        }
 
         // 2) RED mutation: legacy buildScalePadCropped string fails the preserve predicate.
         const std::string legacy = buildScalePadCropped(618, 480, 624, 480, 0, 0, "fast_bilinear");
