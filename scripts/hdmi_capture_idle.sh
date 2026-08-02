@@ -26,6 +26,26 @@ DEV="${HDMI_DEV:-/dev/video0}"
 SIZE="${HDMI_SIZE:-1920x1080}"
 TRIES="${HDMI_TRIES:-3}"
 
+# Operator error must never be reported as a device observation. Passing a
+# directory here used to raise IsADirectoryError inside the stats step, which
+# then fell through to "GRABBER_NOT_READY reason=all_tries_uniform_black" -- a
+# device-shaped verdict for a bad argument. In this lab a black-screen verdict
+# gets acted on (rollbacks, agent lanes, retracted milestones), so a usage
+# mistake that renders as one is a real hazard. Exit 2: not a device claim.
+if [ -d "$OUT" ]; then
+  echo "USAGE_ERROR: OUT must be a .png FILE, not a directory: $OUT" >&2
+  echo "             usage: hdmi_capture_idle.sh OUT.png [FRAMES]" >&2
+  exit 2
+fi
+case "$OUT" in
+  */) echo "USAGE_ERROR: OUT looks like a directory path: $OUT" >&2; exit 2 ;;
+esac
+_out_dir="$(dirname "$OUT")"
+if [ ! -d "$_out_dir" ]; then
+  echo "USAGE_ERROR: output directory does not exist: $_out_dir" >&2
+  exit 2
+fi
+
 if [ ! -e "$DEV" ]; then
   echo "GRABBER_NOT_READY reason=no_device dev=$DEV" >&2
   exit 1
