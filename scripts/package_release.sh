@@ -15,7 +15,16 @@ CONF_EX="$ROOT/assets/misterplex.conf.example"
 # Static armhf ffmpeg to bundle so the package is self-contained. Override with
 # FFMPEG_ARMHF=/path/to/ffmpeg. It is GPLv3, so its licence and provenance ship
 # alongside it (see the licenses/ffmpeg staging below).
-FFMPEG_ARMHF="${FFMPEG_ARMHF:-$HOME/Projects/mistercast-linux/third_party/ffmpeg-armhf/ffmpeg}"
+# Prefer a repo-local staged binary (see scripts/fetch_release_ffmpeg.sh) over the
+# machine-local mistercast-linux path so clean checkouts fail closed with a clear
+# remedy instead of silently missing a sibling-tree dependency.
+if [[ -z "${FFMPEG_ARMHF:-}" ]]; then
+  if [[ -f "$ROOT/release_artifacts/ffmpeg-armhf/ffmpeg" ]]; then
+    FFMPEG_ARMHF="$ROOT/release_artifacts/ffmpeg-armhf/ffmpeg"
+  else
+    FFMPEG_ARMHF="$HOME/Projects/mistercast-linux/third_party/ffmpeg-armhf/ffmpeg"
+  fi
+fi
 
 echo "=== package_release $VERSION ==="
 

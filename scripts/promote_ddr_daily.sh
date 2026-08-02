@@ -50,6 +50,7 @@ EXPECT_DAEMON_MD5="${PROMOTE_EXPECT_DAEMON_MD5:-$DAEMON_PIN_DDR_CANDIDATE_FULL}"
 default_rbf() {
   local c
   for c in \
+    "$ROOT/release_artifacts/ddr-c5382bee-e9f79de2/Plex.rbf" \
     "$ROOT/fpga/Plex_MiSTer/output_files/Plex.rbf" \
     "$ROOT/fpga/Plex_MiSTer/releases/Plex.rbf" \
     "${MISTER_DEV:-$HOME/Projects/misterfpga-dev}/out/Plex_MiSTer/Plex.rbf"
@@ -81,6 +82,7 @@ default_daemon() {
   local pin want m
   want=$(printf '%s' "$EXPECT_DAEMON_MD5" | tr -d '[:space:]' | tr 'A-F' 'a-f')
   for pin in \
+    "$ROOT/release_artifacts/ddr-c5382bee-e9f79de2/misterplexd" \
     "$ROOT/artifacts/daemon-pins/misterplexd.${want:0:8}" \
     "$ROOT/artifacts/daemon-pins/misterplexd.3883f5ab" \
     "$ROOT/artifacts/daemon-pins/misterplexd.edc3a46b" \
@@ -208,6 +210,12 @@ cmd_plan() {
       echo "true rc=$prc"
       return "$prc"
     fi
+    # Stamp probe is informational on plan (rc printed); stage/activate hard-refuse.
+    set +e
+    "$ROOT/scripts/daemon_stamp_check.sh" --require-stamped "$daemon"
+    local src=$?
+    set -e
+    echo "daemon_stamp_check true rc=$src"
   else
     echo "NOTE: local artifacts not both present — plan only"
   fi
@@ -232,6 +240,16 @@ cmd_stage() {
     echo "REFUSE stage: policy-local true rc=$prc"
     echo "true rc=$prc"
     return "$prc"
+  fi
+  # Untraceable daemons (ea643e99-class content hash only) must not promote.
+  set +e
+  "$ROOT/scripts/daemon_stamp_check.sh" --require-stamped "$daemon"
+  local src=$?
+  set -e
+  if [ "$src" -ne 0 ]; then
+    echo "REFUSE stage: daemon_stamp_check true rc=$src (need git_rev stamp, not md5-only)"
+    echo "true rc=$src"
+    return "$src"
   fi
 
   if require_execute; then
@@ -266,6 +284,15 @@ cmd_activate() {
     echo "REFUSE activate: policy-local true rc=$prc"
     echo "true rc=$prc"
     return "$prc"
+  fi
+  set +e
+  "$ROOT/scripts/daemon_stamp_check.sh" --require-stamped "$daemon"
+  local src=$?
+  set -e
+  if [ "$src" -ne 0 ]; then
+    echo "REFUSE activate: daemon_stamp_check true rc=$src (need git_rev stamp, not md5-only)"
+    echo "true rc=$src"
+    return "$src"
   fi
 
   if [ "$EXECUTE" != "1" ]; then

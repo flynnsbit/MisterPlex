@@ -1,5 +1,40 @@
 # MiSTerPlex release notes (Phase 5)
 
+## Clean-checkout lab pair (ddr-c5382bee-e9f79de2)
+
+The hardware-validated lab pair is **tracked** under
+`release_artifacts/ddr-c5382bee-e9f79de2/` (force-added past the global `*.rbf`
+ignore, same precedent as `release_artifacts/v0.3.0/Plex.rbf`).
+
+Measured sizes (do not estimate):
+
+| artifact | md5 | bytes |
+|----------|-----|------:|
+| Plex.rbf | c5382bee73cecdee8220b811e529c297 | 3970492 |
+| misterplexd | e9f79de217982aff44207664fdb945c5 | 12925900 |
+| **total** | | **16896392** |
+
+```bash
+# From a clean clone/worktree — produces dist/misterplex-ddr-c5382bee-e9f79de2.tar.gz
+PACKAGE_ALLOW_NO_FFMPEG=1 ./scripts/package_validated_pair.sh
+# true rc must be 0; pair_ship_policy must print PAIR_OK id=ddr-c5382bee-e9f79de2
+```
+
+Optional ffmpeg bundle (machine-local disease otherwise):
+
+```bash
+./scripts/fetch_release_ffmpeg.sh   # md5-gated; expects John Van Sickle 7.0.2 armhf
+# then omit PACKAGE_ALLOW_NO_FFMPEG
+./scripts/package_validated_pair.sh
+```
+
+**Not daily glass:** packaging this pair is not daily-driver promotion. Promote
+requires `rbf_ship_policy.sh daily_promote_ready` and a **stamped** daemon
+(`scripts/daemon_stamp_check.sh --require-stamped`). Historical pin e9f79de2
+is md5-only (pre-d44d5d1c); live `ea643e99` is untraceable and must be refused.
+
+---
+
 Install, configure, and verify a lab or SD deploy. For packaging from source, see `make package` / [`scripts/package_release.sh`](../scripts/package_release.sh).
 
 ## Package contents
