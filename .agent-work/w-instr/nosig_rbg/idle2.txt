@@ -1,0 +1,20 @@
+cap_fps_measure method=png_mtime_(n-1)/wall wall_s=0.0003 n_frames=10 fps=None src=DEFAULT_ASSUMED reason=mtime_collapsed_batch_write
+src=files/device-evidence/capture_no_signal_idle2
+frames=10 warmup_skipped=0 decodes=0 strong=0 measured_counter_frames=0 low_confidence_counter_frames=0 unreadable_low_contrast_frames=0 overlay_present_frames=0 unreadable_frac=0 [measured] unreadable_frac_cap=0.35 [DEFAULT_ASSUMED] unique_fp=0 green_cast_frames=0 [measured] chroma_cast_frames=0 [measured] magenta_cast_frames=0 [measured] blue_cast_frames=0 [measured] greyscale_frames=0 [measured] uv_swap_frames=0 [measured] red_bar_missing_frames=0 [measured] vdup_frames=0 wrap_frames=0
+motion=UNSCORED color=COLOR_UNASSESSABLE_NO_SIGNAL structure=STRUCTURE_UNASSESSABLE_NO_SIGNAL rate=RATE_UNSCORED
+capture_path=FAULT_NO_SIGNAL device_state=UNKNOWN no_signal_frames=10 picture_frames=0 — uniform min==max is NO CAPTURE (grabber), not a black screen
+rate_metrics unique_ratio=None [measured] endpoint_rate=None [measured] expected=0.8 [UNSCORED_fps_not_authoritative] (unique_ratio and endpoint_rate comparable to expected only when fps_authoritative) max_plateau=None/3 [measured] plateau_hist={} revisits=0 [measured] ctr_span=None [measured] cap_span=None [measured] src_fps=24 [DEFAULT_ASSUMED] cap_fps=30 [DEFAULT_ASSUMED] fps_authoritative=0
+ERROR17_GUARD rate_not_authoritative src_fps_src=DEFAULT_ASSUMED cap_fps_src=DEFAULT_ASSUMED — DEFAULT_ASSUMED is NOT a measurement; rate gates refused (pass --source-fps from daemon fps= / PMS frameRate and --capture-fps/--capture-fps-src measured)
+rate_notes=rate_unscored_fps_assumed src=DEFAULT_ASSUMED cap=DEFAULT_ASSUMED (pass --source-fps/--capture-fps from daemon fps= token for RATE_OK)
+skip_metrics status=SKIP_UNSCORED conf=UNSCORED frames_lost_adj=None frames_lost_rle=None events_adj=0 events_rle=0 hist_adj={} hist_rle={} step_hist_rle={} lost_frac_adj=None lost_frac_rle=None ctr_span=None
+skip_notes=insufficient_samples=0 need>=12
+skip_arithmetic=n/a (too few samples)
+startup_metrics status=STARTUP_UNSCORED hypothesis=UNSCORED window_s=60.0 window_src=DEFAULT_ASSUMED lost_adj=None lost_rle=None ctr_span=0 n_first=None n_last=None unique=0 conf=UNSCORED hist_adj={} hist_rle={} daemon_drops=None daemon_src=DEFAULT_ASSUMED drops_match=None
+startup_notes=no_pairs_or_bad_window
+startup_arithmetic=n/a
+loss_metrics status=LOSS_UNSCORED steady_state_loss=UNSCORED presence_hole_frames=None presence_hole_events=0 device_skip_frames=None grabber_drop_frames=None device_skip_events=0 grabber_drop_events=0 candidate_loss_frac=None resolution_floor_frac=None floor_src=DEFAULT_ASSUMED floor_components=None blind_frames=0 blind_frac=None blind_src=measured pts_available=False pts_src=DEFAULT_ASSUMED median_dt_s=None median_dt_src=DEFAULT_ASSUMED
+steady_state_reason=insufficient_samples
+loss_notes=insufficient_pairs=0
+loss_arithmetic=n/a
+reason=CAPTURE_NO_SIGNAL no_signal_frames=10/10 picture_frames=0 — grabber input ABSENT (uniform min==max, stddev=0; MacroSilicon unlocked synthetic, often pixel=7). This is NOT a black screen and NOT a device fault; device_state=UNKNOWN capture_path=FAULT. Re-plug HDMI/grabber or run tools/grabber_preflight.py. prior=insufficient_decodes=0 need>=1; dark_fp=0 unique_fp=0 raw_decodes=0
+VERDICT=CAPTURE_NO_SIGNAL rc=78 rate=RATE_UNSCORED src_fps=24 [DEFAULT_ASSUMED] cap_fps=30 [DEFAULT_ASSUMED] fps_authoritative=0 rate_NOT_AUTHORITATIVE_do_not_cite_as_measured

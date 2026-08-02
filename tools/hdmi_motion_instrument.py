@@ -41,10 +41,19 @@ Verdicts / exit codes
   RATE_FAIL       rc=4   integrity rate fault (revisits / over-rate / plateau)
   STARVED         rc=5   counter advances but << source rate (bitrate/link class)
   UNSCORED        rc=77  no positive failure AND no positive pass — NEVER a pass
+  CAPTURE_NO_SIGNAL rc=78  grabber input absent (uniform synthetic frame) —
+                         capture path fault; **device state UNKNOWN** — NEVER a
+                         device FAIL and NEVER a pass
 
-  rc=77 is reserved for genuinely insufficient data (idle screensaver, pre-play
-  window, no overlay). It must never report a positively measured defect, and
-  must never be "fixed" into a pass when there is simply nothing to score.
+  rc=77 is reserved for genuinely insufficient data on a *live* capture path
+  (idle screensaver, pre-play window, no overlay). It must never report a
+  positively measured defect, and must never be "fixed" into a pass when there
+  is simply nothing to score.
+
+  rc=78 is reserved for **dead capture path** (MacroSilicon no-lock synthetic
+  grey: min==max, stddev==0, often pixel=7). Distinct from 77 so a reader under
+  pressure cannot confuse "no HDMI lock" with "device blank/idle". Sub-verdicts
+  color/structure must be UNASSESSABLE on no-signal — never COLOR_OK.
 
 Severity resolution (highest wins — explicit, non-negotiable)
 -------------------------------------------------------------
@@ -79,7 +88,13 @@ Severity resolution (highest wins — explicit, non-negotiable)
                    Hard fail rc=4. **RATE_OK never on DEFAULT_ASSUMED fps.**
   5. FREEZE      — counter pinned with colour+structure OK. Hard fail rc=1.
   6. MOTION_OK   — counter advances at rate; colour+structure OK. Pass rc=0.
-  7. UNSCORED    — no overlay/counter AND no positive failure. rc=77 never pass.
+  7. CAPTURE_NO_SIGNAL — all/nearly-all frames are perfectly uniform (min==max,
+                   stddev=0): grabber no-signal synthetic, NOT a black picture.
+                   rc=78. device_state=UNKNOWN. Outranks UNSCORED so the label
+                   cannot be missed; does not outrank device hard fails (if any
+                   real picture frames show STRUCTURE/COLOR those still win).
+  8. UNSCORED    — live path but no overlay/counter AND no positive failure.
+                   rc=77 never pass.
 
 Blind-counter rule (general — parent rchar incident)
 ----------------------------------------------------
@@ -210,6 +225,10 @@ RC_STRUCTURE_FAIL = 3
 RC_RATE_FAIL = 4
 RC_STARVED = 5  # slow advance vs measured src/cap — not FREEZE, not bank-swap
 RC_UNSCORED = 77
+# Dead grabber / no HDMI lock (parent live incident: Active 0x0, pixelclock 0,
+# every pixel exactly 7). Distinct from 77 so scripts and humans cannot confuse
+# capture-path death with device-idle UNSCORED. Not a device defect class.
+RC_CAPTURE_NO_SIGNAL = 78
 
 # STARVED gate (LOCKED pre-register): delivered content rate vs source.
 # ~0.47× realtime glass (parent 480p link-starvation table) is a TRUE POSITIVE.
@@ -953,6 +972,54 @@ def _is_uniform(rgb: np.ndarray) -> bool:
     return int(rgb.min()) == int(rgb.max())
 
 
+def classify_frame_signal(rgb: np.ndarray) -> dict[str, Any]:
+    """Distinguish grabber no-signal synthetic from a real (even black) picture.
+
+    Parent incident: MacroSilicon unlocked → every pixel exactly 7, stddev=0.
+    Standing rule already in the brief: uniform min==max means *no capture*,
+    not a black screen. This function makes that rule a measured output field.
+
+    Returns keys (all measured except thresholds tagged DEFAULT_ASSUMED):
+      no_signal: bool
+      uniform: bool
+      pixel_min/max/mean/std
+      signal_class: NO_SIGNAL | REAL_PICTURE
+    """
+    if rgb.size == 0:
+        return {
+            "no_signal": True,
+            "uniform": True,
+            "pixel_min": None,
+            "pixel_max": None,
+            "pixel_mean": None,
+            "pixel_std": None,
+            "signal_class": "NO_SIGNAL",
+            "signal_class_src": PROVENANCE_MEASURED,
+        }
+    amin = int(rgb.min())
+    amax = int(rgb.max())
+    mean = float(rgb.mean())
+    # subsample std for speed on 1080p; uniform frames stay exact
+    if rgb.shape[0] > 240 and rgb.shape[1] > 320:
+        std = float(rgb[::8, ::8].std())
+    else:
+        std = float(rgb.std())
+    uniform = amin == amax
+    # Perfect uniformity (min==max ⇒ std==0) is absent input, not content.
+    # Real dark frames (parent /tmp/capA/f_045) have stddev>0 and extrema span.
+    no_signal = bool(uniform)
+    return {
+        "no_signal": no_signal,
+        "uniform": uniform,
+        "pixel_min": amin,
+        "pixel_max": amax,
+        "pixel_mean": round(mean, 3),
+        "pixel_std": round(std, 4),
+        "signal_class": "NO_SIGNAL" if no_signal else "REAL_PICTURE",
+        "signal_class_src": PROVENANCE_MEASURED,
+    }
+
+
 def _yellow_mask(rgb: np.ndarray) -> np.ndarray:
     """Yellow burned-in overlay on dark OR flash (blue-deficit) backgrounds."""
     r = rgb[:, :, 0].astype(np.int16)
@@ -1409,10 +1476,10 @@ def find_overlay(
     """
     h, w = rgb.shape[:2]
     if _is_uniform(rgb):
-        # Near-black uniform = grabber warm-up. Lit uniform grey stays scorable.
-        if float(rgb.mean()) < 15.0:
-            return None, None, "warmup"
-        return None, None, "no_overlay"
+        # Perfectly uniform = ABSENT INPUT (grabber no-signal synthetic or
+        # warm-up junk), never a black picture. Named "no_signal" so score_burst
+        # can emit CAPTURE_NO_SIGNAL instead of a vague warmup skip.
+        return None, None, "no_signal"
 
     mean_luma = float(rgb.mean())
     flash = mean_luma > 80.0
@@ -2336,6 +2403,7 @@ def read_frame(
 
     rgb = np.asarray(im)
     mean_luma = float(rgb.mean())
+    sig = classify_frame_signal(rgb)
     if ocr_only:
         gc = dict(_color_empty)
         gc["mean_rgb"] = round(mean_luma, 3)
@@ -2346,6 +2414,13 @@ def read_frame(
 
     binary, roi, st = find_overlay(rgb)
     if binary is None:
+        # No-signal frames must not carry COLOR_OK/STRUCTURE_OK from empty metrics.
+        if st == "no_signal" or sig.get("no_signal"):
+            gc = dict(_color_empty)
+            sm = dict(_struct_empty)
+            gc["mean_rgb"] = round(float(sig.get("pixel_mean") or mean_luma), 3)
+            gc["mean_rgb_src"] = PROVENANCE_MEASURED
+            st = "no_signal"
         return {
             "path": path,
             "status": st,
@@ -2353,7 +2428,12 @@ def read_frame(
             "n_src": COUNTER_SRC_UNREADABLE,
             "n_src_reason": st,
             "tier": 0,
-            "raw": "",
+            "raw": (
+                f"NO_SIGNAL uniform pixel={sig.get('pixel_min')} "
+                f"std={sig.get('pixel_std')} (grabber absent input, NOT black picture)"
+                if st == "no_signal"
+                else ""
+            ),
             "fp": None,
             "roi": None,
             "mean_luma": round(mean_luma, 3),
@@ -2361,7 +2441,13 @@ def read_frame(
             "low_contrast": False,
             "contrast_dy": None,
             "contrast_dy_src": PROVENANCE_MEASURED,
-            "contrast_status": "NO_OVERLAY",
+            "contrast_status": "NO_SIGNAL" if st == "no_signal" else "NO_OVERLAY",
+            "no_signal": bool(st == "no_signal" or sig.get("no_signal")),
+            "signal_class": sig.get("signal_class"),
+            "signal_class_src": sig.get("signal_class_src"),
+            "pixel_min": sig.get("pixel_min"),
+            "pixel_max": sig.get("pixel_max"),
+            "pixel_std": sig.get("pixel_std"),
             **gc,
             **sm,
         }
@@ -2394,6 +2480,12 @@ def read_frame(
             "ink_y": cmet.get("ink_y"),
             "bg_y": cmet.get("bg_y"),
             "contrast_status": cmet.get("contrast_status"),
+            "no_signal": False,
+            "signal_class": sig.get("signal_class"),
+            "signal_class_src": sig.get("signal_class_src"),
+            "pixel_min": sig.get("pixel_min"),
+            "pixel_max": sig.get("pixel_max"),
+            "pixel_std": sig.get("pixel_std"),
             **gc,
             **sm,
         }
@@ -2473,6 +2565,12 @@ def read_frame(
         "fp": fp,
         "roi": roi,
         "mean_luma": round(mean_luma, 3),
+        "no_signal": False,
+        "signal_class": sig.get("signal_class"),
+        "signal_class_src": sig.get("signal_class_src"),
+        "pixel_min": sig.get("pixel_min"),
+        "pixel_max": sig.get("pixel_max"),
+        "pixel_std": sig.get("pixel_std"),
         "overlay_present": True,
         "low_contrast": False,
         "contrast_dy": cmet.get("contrast_dy"),
@@ -3846,8 +3944,16 @@ def score_burst(
         _write_counters_csv(export_counters_csv, results)
 
     warmup_n = 0
+    no_signal_n = 0
     usable: list[dict[str, Any]] = []
     for r in results:
+        if r.get("no_signal") or r.get("status") == "no_signal":
+            no_signal_n += 1
+            # Leading no-signal still counts toward warmup discard budget.
+            if r["idx"] < warmup_skip:
+                warmup_n += 1
+            # Never treat no-signal as a scorable picture frame.
+            continue
         if r["status"] == "warmup":
             warmup_n += 1
             continue
@@ -3917,97 +4023,93 @@ def score_burst(
     ]
     unique_fps = sorted(set(dark_fps))
 
-    # Colour is scored on every non-warmup frame (including those with no overlay).
+    # Colour/structure only on REAL picture frames (usable). No-signal frames
+    # are not pictures — scoring them minted false COLOR_OK (parent incident).
+    picture_frames = list(usable)
     green_hits = [
-        r
-        for r in results
-        if r.get("green_cast") and r.get("status") != "warmup"
+        r for r in picture_frames if r.get("green_cast")
     ]
     chroma_hits = [
-        r
-        for r in results
-        if r.get("chroma_cast") and r.get("status") != "warmup"
+        r for r in picture_frames if r.get("chroma_cast")
     ]
     grey_hits = [
-        r
-        for r in results
-        if r.get("greyscale_flat") and r.get("status") != "warmup"
+        r for r in picture_frames if r.get("greyscale_flat")
     ]
     uv_hits = [
-        r
-        for r in results
-        if r.get("uv_swap") and r.get("status") != "warmup"
+        r for r in picture_frames if r.get("uv_swap")
     ]
     color_hits = [
-        r
-        for r in results
-        if r.get("color_fail") and r.get("status") != "warmup"
+        r for r in picture_frames if r.get("color_fail")
     ]
     # Evidence floor scales with burst length so a single archived defect frame
     # (files/device-evidence/*) can hard-fail. Full bursts still need 3 hits.
-    n_color_scored = sum(1 for r in results if r.get("status") != "warmup")
-    color_need = min(GREEN_CAST_MIN_FRAMES, max(1, n_color_scored))
-    color_fail = len(color_hits) >= color_need
+    n_color_scored = len(picture_frames)
+    color_need = min(GREEN_CAST_MIN_FRAMES, max(1, n_color_scored)) if n_color_scored else 0
     magenta_hits = [
-        r for r in results
-        if r.get("magenta_cast") and r.get("status") != "warmup"
+        r for r in picture_frames if r.get("magenta_cast")
     ]
     blue_hits = [
-        r for r in results
-        if r.get("blue_cast") and r.get("status") != "warmup"
+        r for r in picture_frames if r.get("blue_cast")
     ]
     redbar_hits = [
-        r for r in results
-        if r.get("red_bar_missing") and r.get("status") != "warmup"
+        r for r in picture_frames if r.get("red_bar_missing")
     ]
     color_flags: list[str] = []
-    if len(green_hits) >= color_need:
-        color_flags.append("GREEN")
-    if len(magenta_hits) >= color_need:
-        color_flags.append("MAGENTA")
-    if len(blue_hits) >= color_need:
-        color_flags.append("BLUE")
-    if len(chroma_hits) >= color_need and "MAGENTA" not in color_flags:
-        color_flags.append("CHROMA")
-    if len(grey_hits) >= color_need:
-        color_flags.append("GREYSCALE")
-    if len(uv_hits) >= color_need:
-        color_flags.append("UV_SWAP")
-    if len(redbar_hits) >= color_need:
-        color_flags.append("RED_BAR_MISSING")
-    if color_flags:
-        color = "+".join(color_flags) + "_CAST_FAIL"
+    color_fail = False
+    if n_color_scored == 0:
+        color = "COLOR_UNASSESSABLE_NO_SIGNAL" if no_signal_n > 0 else "COLOR_UNASSESSABLE"
+        color_fail = False
     else:
-        color = "COLOR_OK"
+        if len(green_hits) >= color_need:
+            color_flags.append("GREEN")
+        if len(magenta_hits) >= color_need:
+            color_flags.append("MAGENTA")
+        if len(blue_hits) >= color_need:
+            color_flags.append("BLUE")
+        if len(chroma_hits) >= color_need and "MAGENTA" not in color_flags:
+            color_flags.append("CHROMA")
+        if len(grey_hits) >= color_need:
+            color_flags.append("GREYSCALE")
+        if len(uv_hits) >= color_need:
+            color_flags.append("UV_SWAP")
+        if len(redbar_hits) >= color_need:
+            color_flags.append("RED_BAR_MISSING")
+        if color_flags:
+            color = "+".join(color_flags) + "_CAST_FAIL"
+            color_fail = len(color_hits) >= color_need
+        else:
+            color = "COLOR_OK"
+            color_fail = False
 
-    # Structural integrity (vertical dup / horizontal wrap) — independent of OCR.
+    # Structural integrity (vertical dup / horizontal wrap) — real pictures only.
     vdup_hits = [
-        r
-        for r in results
-        if r.get("vertical_dup") and r.get("status") != "warmup"
+        r for r in picture_frames if r.get("vertical_dup")
     ]
     wrap_hits = [
-        r
-        for r in results
-        if r.get("horiz_wrap") and r.get("status") != "warmup"
+        r for r in picture_frames if r.get("horiz_wrap")
     ]
     struct_hits = [
-        r
-        for r in results
-        if r.get("structure_fail") and r.get("status") != "warmup"
+        r for r in picture_frames if r.get("structure_fail")
     ]
-    struct_need = min(STRUCT_MIN_FRAMES, max(1, n_color_scored))
-    structure_fail = len(struct_hits) >= struct_need
-    struct_flags: list[str] = []
-    if len(vdup_hits) >= struct_need:
-        struct_flags.append(f"VERT_DUP={len(vdup_hits)}")
-    if len(wrap_hits) >= struct_need:
-        struct_flags.append(f"HORIZ_WRAP={len(wrap_hits)}")
-    if structure_fail and not struct_flags:
-        # Combined structure_fail frames without either flag alone reaching min
-        # (e.g. 2 wrap + 2 vdup on different frames).
-        struct_flags.append(f"STRUCT={len(struct_hits)}")
-    structure = "+".join(struct_flags) if structure_fail else "STRUCTURE_OK"
+    if n_color_scored == 0:
+        struct_need = 0
+        structure_fail = False
+        structure = (
+            "STRUCTURE_UNASSESSABLE_NO_SIGNAL"
+            if no_signal_n > 0
+            else "STRUCTURE_UNASSESSABLE"
+        )
+    else:
+        struct_need = min(STRUCT_MIN_FRAMES, max(1, n_color_scored))
+        structure_fail = len(struct_hits) >= struct_need
+        struct_flags: list[str] = []
+        if len(vdup_hits) >= struct_need:
+            struct_flags.append(f"VERT_DUP={len(vdup_hits)}")
+        if len(wrap_hits) >= struct_need:
+            struct_flags.append(f"HORIZ_WRAP={len(wrap_hits)}")
+        if structure_fail and not struct_flags:
+            struct_flags.append(f"STRUCT={len(struct_hits)}")
+        structure = "+".join(struct_flags) if structure_fail else "STRUCTURE_OK"
 
     motion = "UNSCORED"
     reason = ""
@@ -4197,12 +4299,40 @@ def score_burst(
         final, rc = "FREEZE", RC_FREEZE
     elif motion == "MOTION_OK":
         final, rc = "MOTION_OK", RC_MOTION_OK
+    elif (
+        n_color_scored == 0
+        and no_signal_n > 0
+        and no_signal_n >= max(1, len(results) // 2)
+    ):
+        # Dead capture path. Not a device blank. device_state UNKNOWN.
+        final, rc = "CAPTURE_NO_SIGNAL", RC_CAPTURE_NO_SIGNAL
+        reason = (
+            f"CAPTURE_NO_SIGNAL no_signal_frames={no_signal_n}/{len(results)} "
+            f"picture_frames=0 — grabber input ABSENT (uniform min==max, "
+            f"stddev=0; MacroSilicon unlocked synthetic, often pixel=7). "
+            f"This is NOT a black screen and NOT a device fault; "
+            f"device_state=UNKNOWN capture_path=FAULT. "
+            f"Re-plug HDMI/grabber or run tools/grabber_preflight.py. "
+            f"prior={reason}"
+        )
     else:
         final, rc = "UNSCORED", RC_UNSCORED
 
     return {
         "frames_total": len(frames),
         "warmup_skipped": warmup_n,
+        "no_signal_frames": int(no_signal_n),
+        "picture_frames": int(n_color_scored),
+        "device_state": (
+            "UNKNOWN"
+            if final == "CAPTURE_NO_SIGNAL"
+            else ("ASSESSED" if n_color_scored > 0 else "UNKNOWN")
+        ),
+        "capture_path": (
+            "FAULT_NO_SIGNAL"
+            if final == "CAPTURE_NO_SIGNAL"
+            else ("LIVE" if n_color_scored > 0 else "UNKNOWN")
+        ),
         "decodes": len(ok_reads),
         "strong_decodes": len(measured_reads),
         "measured_counter_frames": len(measured_reads),
@@ -4378,7 +4508,7 @@ def _apply_strict_fps(
         return report
     rc = int(report.get("rc") or RC_UNSCORED)
     # Preserve positively measured failures (never decay fail → 77).
-    if rc in (RC_STRUCTURE_FAIL, RC_COLOR_FAIL, RC_STARVED, RC_RATE_FAIL, RC_FREEZE):
+    if rc in (RC_STRUCTURE_FAIL, RC_COLOR_FAIL, RC_STARVED, RC_RATE_FAIL, RC_FREEZE, RC_CAPTURE_NO_SIGNAL):
         report["strict_fps_note"] = (
             "strict_fps: fps DEFAULT_ASSUMED but measured hard-fail rc="
             f"{rc} preserved (fail never decays to 77)"
@@ -4439,6 +4569,14 @@ def _print_human(report: dict[str, Any], src: str) -> None:
         f"structure={report.get('structure', 'STRUCTURE_OK')} "
         f"rate={report.get('rate', 'RATE_UNSCORED')}"
     )
+    if report.get("no_signal_frames") is not None or report.get("capture_path"):
+        print(
+            f"capture_path={report.get('capture_path')} "
+            f"device_state={report.get('device_state')} "
+            f"no_signal_frames={report.get('no_signal_frames')} "
+            f"picture_frames={report.get('picture_frames')} "
+            f"— uniform min==max is NO CAPTURE (grabber), not a black screen"
+        )
     if report.get("unique_ratio") is not None or report.get("source_fps") is not None:
         # Print comparable pairs together; never mix incomparable quantities.
         # unique_ratio  ≈ expected  (= src_fps/cap_fps)   — primary gate
@@ -4618,10 +4756,13 @@ def _self_test() -> int:
     """Lightweight pure checks (no capture dir required)."""
     import tempfile
 
-    # Uniform frame → warmup
+    # Uniform frame → no_signal (grabber absent), NOT warmup/black
     uni = np.full((108, 192, 3), 7, dtype=np.uint8)
     b, roi, st = find_overlay(uni)
-    assert st == "warmup" and b is None, st
+    assert st == "no_signal" and b is None, st
+    sig = classify_frame_signal(uni)
+    assert sig["no_signal"] is True and sig["signal_class"] == "NO_SIGNAL", sig
+    assert sig["pixel_min"] == 7 and float(sig["pixel_std"]) == 0.0, sig
 
     # Synthetic yellow "blob" top-left on black → overlay found
     dark = np.zeros((270, 480, 3), dtype=np.uint8)
@@ -4675,11 +4816,17 @@ def _self_test() -> int:
     assert gc_b["green_cast"] is False, gc_b
 
     # Mid greyscale field (dead chroma on lit picture) — labelled GREYSCALE.
-    grey = np.full((120, 160, 3), 80, dtype=np.uint8)
+    # Must be NON-uniform: perfect uniformity is CAPTURE_NO_SIGNAL, not greyscale.
+    grey = np.zeros((120, 160, 3), dtype=np.uint8)
+    grey[:, :] = 80
+    grey[10:50, 10:90] = 110
+    grey[70:110, 40:140] = 55
+    # keep R=G=B so chroma is dead while luma varies
     gc_g = green_cast_metrics(grey)
     assert gc_g["greyscale_flat"] is True and gc_g["color_fail"] is True, gc_g
     assert "GREYSCALE" in (gc_g.get("color_fail_kinds") or []), gc_g
     assert gc_g["green_cast"] is False, gc_g
+    assert classify_frame_signal(grey)["no_signal"] is False, grey.std()
 
     # Clean black / dark+yellow overlay is not a cast / not greyscale-fail.
     gc2 = green_cast_metrics(dark)
@@ -4806,10 +4953,13 @@ def _self_test() -> int:
         assert rep_bl["rc"] in (RC_COLOR_FAIL, RC_STRUCTURE_FAIL), rep_bl
         assert rep_bl["rc"] != RC_UNSCORED, rep_bl
 
-        # Greyscale lit field → COLOR_FAIL (dead chroma).
+        # Greyscale lit field → COLOR_FAIL (dead chroma). Non-uniform grey.
         gydir = tdp / "grey"
         gydir.mkdir()
-        gy = np.full((120, 160, 3), 90, dtype=np.uint8)
+        gy = np.zeros((120, 160, 3), dtype=np.uint8)
+        gy[:, :] = 90
+        gy[10:50, 10:90] = 120
+        gy[70:110, 40:140] = 50
         for i in range(8):
             Image.fromarray(gy).save(gydir / f"f_{i:03d}.png")
         rep_gy = score_burst(
@@ -4817,6 +4967,7 @@ def _self_test() -> int:
             warmup_skip=0,
             min_reads=3,
         )
+        assert rep_gy["verdict"] != "CAPTURE_NO_SIGNAL", rep_gy
         assert rep_gy["greyscale_frames"] >= GREEN_CAST_MIN_FRAMES, rep_gy
         assert rep_gy["rc"] == RC_COLOR_FAIL, rep_gy
         assert "GREYSCALE" in rep_gy["color"], rep_gy
@@ -4848,6 +4999,39 @@ def _self_test() -> int:
         assert rep4["horiz_wrap_frames"] >= STRUCT_MIN_FRAMES, rep4
         assert rep4["verdict"] == "STRUCTURE_FAIL", rep4
         assert rep4["rc"] == RC_STRUCTURE_FAIL, rep4
+
+        # CAPTURE_NO_SIGNAL: all-uniform pixel=7 (MacroSilicon unlocked)
+        nsdir = tdp / "nosig"
+        nsdir.mkdir()
+        for i in range(8):
+            Image.fromarray(uni).save(nsdir / f"f_{i:03d}.png")
+        rep_ns = score_burst(
+            sorted(str(p) for p in nsdir.glob("f_*.png")),
+            warmup_skip=0,
+            min_reads=1,
+        )
+        assert rep_ns["verdict"] == "CAPTURE_NO_SIGNAL", rep_ns
+        assert rep_ns["rc"] == RC_CAPTURE_NO_SIGNAL, rep_ns
+        assert rep_ns["color"] == "COLOR_UNASSESSABLE_NO_SIGNAL", rep_ns
+        assert rep_ns["structure"] == "STRUCTURE_UNASSESSABLE_NO_SIGNAL", rep_ns
+        assert rep_ns.get("device_state") == "UNKNOWN", rep_ns
+        assert rep_ns.get("capture_path") == "FAULT_NO_SIGNAL", rep_ns
+
+        # Real dark (non-uniform) must NOT be CAPTURE_NO_SIGNAL
+        ddir = tdp / "realdark"
+        ddir.mkdir()
+        dark_pic = np.zeros((120, 160, 3), dtype=np.uint8)
+        dark_pic[20:50, 10:100] = (220, 220, 40)
+        dark_pic[80, 80] = (255, 255, 255)
+        for i in range(4):
+            Image.fromarray(dark_pic).save(ddir / f"f_{i:03d}.png")
+        rep_rd = score_burst(
+            sorted(str(p) for p in ddir.glob("f_*.png")),
+            warmup_skip=0,
+            min_reads=1,
+        )
+        assert rep_rd["verdict"] != "CAPTURE_NO_SIGNAL", rep_rd
+        assert rep_rd.get("picture_frames", 0) >= 1, rep_rd
 
     # --- Rate / revisit unit checks (no PNG OCR required) ---
     # Healthy 24-on-30: hold every 5th capture → unique_ratio ≈ 0.8, max plateau 2.

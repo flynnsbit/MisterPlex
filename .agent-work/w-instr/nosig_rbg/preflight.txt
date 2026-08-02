@@ -1,0 +1,7 @@
+dv_timings active=0x0 pixelclock_hz=0.0 locked=False [measured]
+  | Active width: 0
+  | Active height: 0
+  | Pixelclock: 0 Hz
+sample_frame signal_class=NO_SIGNAL min=7 max=7 std=0.0 mean=7.0 [measured]
+VERDICT=CAPTURE_NO_SIGNAL rc=78 device_state=UNKNOWN capture_path=FAULT — DV unlocked active=0x0 pixelclock=0.0; sample uniform pixel=7 std=0 (MacroSilicon no-signal synthetic — NOT a black screen)
+ACTION: re-plug HDMI into grabber / power-cycle MS2109; do NOT rollback device software on this symptom alone
