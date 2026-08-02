@@ -308,6 +308,16 @@ fi
 
 # Daily-driver promote readiness (HARD refuse). Lab deploy of tagged cores is still
 # allowed via deploy_plex_core (not banned); flipping daily requires override + glass.
+#
+# rc:
+#   0  glass_ok known core
+#   1  banned / do-not-ship
+#   3  bad/empty md5
+#  11  lab-not-daily (known defect class; PROMOTE_ALLOW_KNOWN_DEFECTS=1 only)
+#  12  UNKNOWN core — hard block (parent: not in records/map; never rc=77 soft-skip)
+#
+# core_conf_geometry soft-skips unknown (rc=77) — correct for THAT check.
+# THIS function must NOT treat unknown as promote-ready (parent 2026-08-02).
 rbf_policy_daily_promote_ready() {
   local md p8
   md=$(rbf_policy_normalize_md5 "${1:-}")
@@ -320,7 +330,7 @@ rbf_policy_daily_promote_ready() {
   for x in "${RBF_LAB_NOT_DAILY_PREFIX8[@]}"; do
     if [ "$p8" = "$x" ]; then
       cat <<EOF
-DAILY_PROMOTE_READY=NO core_p8=$p8
+DAILY_PROMOTE_READY=NO core_p8=$p8 reason=lab_not_daily
 BLOCKER vertical_240_row_ceiling: store_y=py*2 even-only; 50% rows absent (parent push_frame --ddr card; std=0.00 solid invert)
 BLOCKER frames_done_vsync_STALE_blind: fpga_spi.cpp:1388-1394 cannot detect frozen swaps on c5382bee-class
 BLOCKER ledger_not_display: drops/unaccounted/publish_misses are ARM-supply; no FPGA observe field
@@ -336,7 +346,19 @@ EOF
     echo "DAILY_PROMOTE_READY=NO core_p8=$p8 reason=banned_or_donotship"
     return 1
   fi
-  echo "DAILY_PROMOTE_READY=YES core_p8=$p8"
+  # HARD: only glass_ok prefixes may claim daily promote ready.
+  # Unknown md5 was previously YES (ALLOW-only) — silent promote path (parent defect).
+  if ! rbf_policy_ddr_core_glass_ok "$md"; then
+    cat <<EOF
+DAILY_PROMOTE_READY=NO core_p8=$p8 reason=unknown_core_md5
+HARD_BLOCK unknown product core — not in glass_ok set: ${RBF_PIN_DDR_GLASS_OK_PREFIXES[*]}
+NOTE core_conf_geometry soft-skip rc=77 for unmapped md5 is NOT promote permission
+NOTE add full md5 to assets/core_geometry_map.tsv AND glass_ok only after viewed-pixel proof
+PROMOTE_OK=0
+EOF
+    return 12
+  fi
+  echo "DAILY_PROMOTE_READY=YES core_p8=$p8 reason=glass_ok"
   case "$p8" in
     8fdf440f)
       echo "NOTE glass_ok=8fdf440f parent_ab row_alt_1.82_to_58.89 ledger_closed=1 (daily driver)"

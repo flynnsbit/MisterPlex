@@ -100,6 +100,16 @@ case "$cmd" in
     echo "true rc=$rc"
     exit "$rc"
     ;;
+  core-known)
+    # Unknown product core HARD block (never rc=77 soft-skip).
+    # geometry map soft-skip is separate; promotion must not proceed on unknown.
+    set +e
+    promotion_assert_core_md5_known "${1:-${CORE_MD5:-}}"
+    rc=$?
+    set -e
+    echo "true rc=$rc"
+    exit "$rc"
+    ;;
   conf-byte-exact)
     set +e
     promotion_assert_conf_byte_exact "${1:-}" "${2:-}"
@@ -277,6 +287,27 @@ case "$cmd" in
       echo "NOTE MULTISHOT_REQUIRED=0 (host unit only — real promote must set results or declare)"
     fi
 
+    # Unknown core HARD (parent: not in glass_ok → rc=12; never 77 soft-skip).
+    # Real promote must export CORE_MD5=… (prefix8 or full). Host units may omit.
+    if [[ -n "${CORE_MD5:-${PRODUCT_CORE_MD5:-}}" ]]; then
+      set +e
+      promotion_assert_core_md5_known "${CORE_MD5:-$PRODUCT_CORE_MD5}"
+      krc=$?
+      set -e
+      echo "core-known true rc=$krc"
+      if [[ "$krc" -ne 0 ]]; then
+        echo "PROMOTE_OK=0 reason=core_unknown_or_not_daily_ready rc=$krc"
+        echo "true rc=$krc"
+        exit "$krc"
+      fi
+    elif [[ "${CORE_KNOWN_REQUIRED:-0}" = "1" ]]; then
+      echo "NO-DATA CORE_MD5 unset — cannot claim known core; PROMOTE_OK=0"
+      echo "true rc=4"
+      exit 4
+    else
+      echo "NOTE CORE_MD5 unset — core-known not scored (export CORE_MD5 for real promote)"
+    fi
+
     if [[ -n "${INSTR_MIN:-}" || -n "${INSTR_CLASS:-}" ]]; then
       set +e
       if [[ -n "${INSTR_CLASS:-}" ]]; then
@@ -367,7 +398,7 @@ case "$cmd" in
     exit 9
     ;;
   *)
-    echo "usage: $0 {grabber-preflight|instrument|instrument-class|frames|session|rollback-proven|ab|core-identity|clean-exit-alarm|md5-field|conf-byte-exact|evidence|multishot|full-check}" >&2
+    echo "usage: $0 {grabber-preflight|instrument|instrument-class|frames|session|rollback-proven|ab|core-identity|clean-exit-alarm|md5-field|core-known|conf-byte-exact|evidence|multishot|full-check}" >&2
     echo "true rc=9"
     exit 9
     ;;

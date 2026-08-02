@@ -206,6 +206,7 @@ gate_field() {
 gate_assert_md5_shape() {
   local name="$1" val="$2"
   # Empty / MISSING ok (caller decides whether absence is hard fail).
+  # Empty = NO-DATA at caller — never treat as mismatch (parent ERROR 11).
   if [ -z "$val" ] || [ "$val" = "MISSING" ]; then
     return 0
   fi
@@ -214,14 +215,15 @@ gate_assert_md5_shape() {
   if printf '%s' "$val" | grep -Eq '^[0-9a-f]{32}$'; then
     return 0
   fi
+  # Distinct reason: malformed_capture — not "mismatch" (parent: do not loosen compare).
   case "$val" in
     *set*|*+*|*[[:space:]]*|*\;*|*'$'*)
-      echo "FAIL $name shape got='$val' (probe capture contaminated - not pure md5)"
+      echo "FAIL $name reason=malformed_capture got='$val' (probe capture contaminated — not pure 32 hex; comparison SKIPPED)"
       return 1
       ;;
   esac
   # prefix8 / wrong length - still fail closed
-  echo "FAIL $name shape got='$val' (want exactly 32 hex chars or MISSING; len=${#val})"
+  echo "FAIL $name reason=malformed_capture got='$val' (want exactly 32 lowercase hex or MISSING; len=${#val})"
   return 1
 }
 

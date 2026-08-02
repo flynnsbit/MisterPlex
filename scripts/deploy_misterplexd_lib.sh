@@ -719,9 +719,52 @@ supervise_assert_clean_exit_alarm() {
   return 0
 }
 
+# --- unknown product core: HARD block (parent: 8fdf440f-class must be explicit) -
+# core_conf_geometry soft-skips unmapped md5 (rc=77) — correct for geometry.
+# Promotion must NOT proceed on unknown: elevates to rc=12, never 77.
+# Args: core_md5
+# rc: 0 glass_ok; 12 unknown; 11 lab-not-daily; 1 banned; 3 bad; 4 NO-DATA
+promotion_assert_core_md5_known() {
+  local raw="${1:-}"
+  if [[ -z "$raw" ]]; then
+    echo "NO-DATA core_md5 empty (absence is not known — not a soft skip)" >&2
+    echo "core_known=NO-DATA"
+    return 4
+  fi
+  if ! type rbf_policy_daily_promote_ready >/dev/null 2>&1; then
+    # shellcheck source=/dev/null
+    source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/rbf_ship_policy.sh"
+  fi
+  local out rc
+  # Do NOT toggle set -e here — leaks into caller shells (parent harness).
+  out=$(set +e; rbf_policy_daily_promote_ready "$raw" 2>&1)
+  rc=$?
+  printf '%s\n' "$out"
+  case "$rc" in
+    0)
+      echo "core_known=YES"
+      return 0
+      ;;
+    12)
+      echo "core_known=UNKNOWN"
+      return 12
+      ;;
+    77)
+      # Must never soft-skip here — elevate.
+      echo "FAIL core_known elevated from soft-skip 77 → HARD unknown" >&2
+      echo "core_known=UNKNOWN_ELEVATED"
+      return 12
+      ;;
+    *)
+      echo "core_known=NO rc=$rc"
+      return "$rc"
+      ;;
+  esac
+}
+
 # --- md5 field: empty is NO-DATA never match (parent blind-and-RED class) ------
 # Args: name got want
-# rc: 0 match; 1 mismatch; 4 NO-DATA empty got; 3 bad want/shape
+# rc: 0 match; 1 mismatch; 4 NO-DATA empty got; 3 bad want/shape (malformed_capture)
 promotion_assert_md5_field() {
   local name="${1:-}" got="${2:-}" want="${3:-}"
   # Strip CR only — never strip "set +e" glue (that would hide capture bugs).
@@ -733,14 +776,15 @@ promotion_assert_md5_field() {
     return 4
   fi
   # Contaminated capture (set +e glue etc.) — hard fail shape, never compare.
+  # Distinct reason=malformed_capture (parent: never treat glue as mismatch).
   if ! printf '%s' "$got" | grep -Eq '^[0-9a-fA-F]{32}$'; then
     if [[ "$got" == "MISSING" ]]; then
       echo "FAIL $name MISSING (not empty NO-DATA)" >&2
       echo "${name}_result=MISSING"
       return 2
     fi
-    echo "FAIL $name shape got='$got' (contaminated capture — not pure 32 hex; do not relax)" >&2
-    echo "${name}_result=SHAPE"
+    echo "FAIL $name reason=malformed_capture got='$got' (not pure 32 hex; comparison SKIPPED — do not relax)" >&2
+    echo "${name}_result=MALFORMED_CAPTURE"
     return 3
   fi
   got=$(printf '%s' "$got" | tr 'A-F' 'a-f')

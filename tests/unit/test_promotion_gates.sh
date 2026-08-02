@@ -401,7 +401,8 @@ echo "$out" | grep -q 'Plex_v2.rbf' && ok "plan-names-v2" || bad "plan-names-v2"
 echo "$out" | grep -q 'Plex.rbf' && ok "plan-names-product" || bad "plan-names-product"
 echo "$out" | grep -qi 'NEVER overwrite' && ok "plan-never-overwrite-v2" || bad "plan-never-overwrite-v2"
 
-echo "=== promote activate dry-run does not require SSH ==="
+echo "=== promote activate dry-run: unknown synthetic core HARD refuse (no SSH) ==="
+# Synthetic RBF md5 is not glass_ok — activate must rc=12 before any device touch.
 set +e
 out=$(
   PROMOTE_EXECUTE=0 \
@@ -413,8 +414,32 @@ out=$(
 rc=$?
 set -e
 echo "  true rc=$rc"
-[ "$rc" -eq 0 ] && ok "activate-dry" || bad "activate-dry rc=$rc"
-echo "$out" | grep -q 'DRY-RUN' && ok "activate-dry-marker" || bad "activate-dry-marker"
+echo "$out" | sed 's/^/  [act-unk] /' | tail -15
+[ "$rc" -eq 12 ] && ok "activate-dry-unknown-12" || bad "activate-dry-unknown-12 got=$rc"
+echo "$out" | grep -qE 'unknown_core_md5|REFUSE_DAILY|DAILY_PROMOTE_READY=NO' && ok "activate-dry-unknown-msg" || bad "activate-dry-unknown-msg"
+# Must not claim DRY-RUN success path on unknown
+echo "$out" | grep -q 'DRY-RUN activate' && bad "activate-dry-unknown-no-dryrun" || ok "activate-dry-unknown-no-dryrun"
+
+echo "=== promote activate dry-run glass_ok expect (no SSH; policy uses matching pins) ==="
+# policy-local requires host file md5 == EXPECT. Use glass pin as EXPECT only when
+# we also override file pin match via same synthetic... can't forge 8fdf440f bytes.
+# Instead: glass EXPECT alone via plan (rc=0 READY=YES) already covered; here
+# stage/activate with glass EXPECT + synthetic files → policy-local rc=3 after ready.
+set +e
+out=$(
+  PROMOTE_EXECUTE=0 \
+  PROMOTE_EXPECT_CORE_MD5=8fdf440f \
+  PROMOTE_EXPECT_DAEMON_MD5="$DAE_MD5" \
+  PROMOTE_PAIR_CHECK=0 \
+  "$PROMOTE" activate "$WORK/fake.rbf" "$WORK/fake.daemon" 2>&1
+)
+rc=$?
+set -e
+echo "  true rc=$rc"
+# ready YES for 8fdf then policy-local md5 mismatch → 3
+[ "$rc" -eq 3 ] && ok "activate-dry-glass-policy-3" || bad "activate-dry-glass-policy-3 got=$rc"
+echo "$out" | grep -q 'DAILY_PROMOTE_READY=YES\|glass_ok' && ok "activate-dry-glass-ready-yes" || bad "activate-dry-glass-ready-yes"
+echo "$out" | grep -qE 'REFUSE activate: policy-local|host RBF md5' && ok "activate-dry-glass-policy-msg" || bad "activate-dry-glass-policy-msg"
 
 echo "=== motion rc=77 UNSCORED is HARD FAIL (not soft) ==="
 cat >"$WORK/motion77.sh" <<'M'
@@ -553,6 +578,7 @@ set -e
 echo "$out" | sed 's/^/  /'
 echo "  shape-contaminated true rc=$src"
 [ "$src" -ne 0 ] && ok "shape-rejects-glue" || bad "shape-rejects-glue"
+echo "$out" | grep -q 'malformed_capture' && ok "shape-malformed-reason" || bad "shape-malformed-reason"
 set +e
 gate_assert_md5_shape v2-rollback-core 'dfebf2bfd08dd70b473b587dd7e81848'
 src=$?
@@ -580,6 +606,82 @@ fi
 grep -q 'dirname "\$conf"' "$WORK/dump_del.txt" && ok "dump-root-from-conf" || bad "dump-root-from-conf"
 # must match misterplexd* not exact-only
 grep -q 'misterplexd\*' "$WORK/dump_del.txt" && ok "dump-match-glob" || bad "dump-match-glob"
+
+echo "=== REGRESSION: host-exec dump-remote yields pure 32-hex V2_MD5 (GREEN pair) ==="
+# Prove capture path end-to-end without device: run the dumped remote script
+# against local fake PRODUCT/V2 files. Must emit pure md5 — never ...set +e.
+mkdir -p "$WORK/host_util"
+printf 'product-core-bytes\n' >"$WORK/host_util/Plex.rbf"
+printf 'v2-daily-core-bytes\n' >"$WORK/host_util/Plex_v2.rbf"
+want_prod=$(md5sum "$WORK/host_util/Plex.rbf" | awk '{print $1}')
+want_v2=$(md5sum "$WORK/host_util/Plex_v2.rbf" | awk '{print $1}')
+set +e
+# Paths bind via PROMOTE_PRODUCT_CORE / PROMOTE_V2_CORE (not PRODUCT_CORE_PATH env).
+PROMOTE_PRODUCT_CORE="$WORK/host_util/Plex.rbf" \
+PROMOTE_V2_CORE="$WORK/host_util/Plex_v2.rbf" \
+  "$GATES" dump-remote-live >"$WORK/remote_script.sh" 2>&1
+drc=$?
+set -e
+[ "$drc" -eq 0 ] && ok "hostexec-dump-rc0" || bad "hostexec-dump-rc0 got=$drc"
+# Script must embed the host fake paths (not device /media/fat defaults).
+grep -Fq "$WORK/host_util/Plex_v2.rbf" "$WORK/remote_script.sh" && ok "hostexec-path-embedded" || bad "hostexec-path-embedded"
+set +e
+bash "$WORK/remote_script.sh" >"$WORK/remote_out.txt" 2>&1
+xrc=$?
+set -e
+echo "  host-exec remote true rc=$xrc"
+echo "  want_prod=$want_prod want_v2=$want_v2"
+sed 's/^/  [remote] /' "$WORK/remote_out.txt" | head -20
+got_v2=$(sed -n 's/^V2_MD5=//p' "$WORK/remote_out.txt" | head -1 | tr -d '\r')
+got_prod=$(sed -n 's/^PRODUCT_MD5=//p' "$WORK/remote_out.txt" | head -1 | tr -d '\r')
+echo "  got_prod=$got_prod got_v2=$got_v2"
+[ "$got_v2" = "$want_v2" ] && ok "hostexec-v2-pure-match" || bad "hostexec-v2-pure-match got='$got_v2'"
+[ "$got_prod" = "$want_prod" ] && ok "hostexec-prod-pure-match" || bad "hostexec-prod-pure-match got='$got_prod'"
+printf '%s' "$got_v2" | grep -Eq '^[0-9a-f]{32}$' && ok "hostexec-v2-shape" || bad "hostexec-v2-shape"
+echo "$got_v2" | grep -q 'set' && bad "hostexec-v2-no-set-glue" || ok "hostexec-v2-no-set-glue"
+# RED: inject contaminated value into a blob and require malformed_capture (not mismatch)
+set +e
+out=$(gate_assert_md5_shape v2-rollback-core "${got_v2}set +e" 2>&1)
+src=$?
+set -e
+[ "$src" -ne 0 ] && ok "hostexec-contam-shape-red" || bad "hostexec-contam-shape-red"
+echo "$out" | grep -q malformed_capture && ok "hostexec-contam-reason" || bad "hostexec-contam-reason"
+# GREEN verify-live path with pure blob (pair check off / visual ok)
+cat >"$WORK/live_hostexec.blob" <<BLOB
+PRODUCT_CORE=$WORK/host_util/Plex.rbf
+PRODUCT_MD5=$want_prod
+V2_CORE=$WORK/host_util/Plex_v2.rbf
+V2_MD5=$want_v2
+N_DAEMON=1
+PIDS=4242
+LIVE_EXE=/media/fat/misterplex_v2/bin/misterplexd
+LIVE_MD5=9ce2c2d13d1c8712683289043e99002c
+LIVE_CONF=/media/fat/misterplex_v2/misterplex.conf
+LIVE_CONF_MD5=7f06132f0c00e90b35141bdc0c60ccc9
+LIVE_ROOT=/media/fat/misterplex_v2
+LIVE_PORT=3005
+PLXS_MAGIC=0x504C5853
+PLXS_SEQ=10
+PLXS_SEQ2=11
+BLOB
+# Note: product md5 won't match glass pin — expect FAIL product-core unless we
+# only assert V2 OK path. Shape of V2 must be OK:
+set +e
+out=$(
+  PROMOTE_GATE_BLOB="$WORK/live_hostexec.blob" \
+  PROMOTE_HTTP="$WORK/fake_http.sh" \
+  PROMOTE_VISUAL_CMD="$WORK/visual_ok.sh" \
+  PROMOTE_CONF_BLOB="$WORK/conf_ddr.txt" \
+  PROMOTE_CONF_PROFILE=ddr \
+  PROMOTE_EXPECT_V2_CORE_MD5="$want_v2" \
+  PROMOTE_PAIR_CHECK=0 \
+  "$GATES" verify-live 2>&1
+)
+vrc=$?
+set -e
+echo "  [hostexec-verify] true rc=$vrc"
+echo "$out" | grep -q "OK v2-rollback-core $want_v2" && ok "hostexec-verify-v2-green" || bad "hostexec-verify-v2-green"
+echo "$out" | grep -qE 'got=.*set \+e want=' && bad "hostexec-verify-no-glue-mismatch" || ok "hostexec-verify-no-glue-mismatch"
 
 echo "=== REGRESSION: dump-remote-live is single heredoc — no V2_MD5 glue possible ==="
 set +e
@@ -644,7 +746,8 @@ set -e
 echo "$out" | sed 's/^/  [glue] /' | tail -25
 echo "  [glue] true rc=$rc"
 [ "$rc" -ne 0 ] && ok "glue-blob-fail" || bad "glue-blob-fail should not pass"
-echo "$out" | grep -q 'shape' && ok "glue-shape-msg" || bad "glue-shape-msg"
+echo "$out" | grep -qE 'shape|malformed_capture' && ok "glue-shape-msg" || bad "glue-shape-msg"
+echo "$out" | grep -q 'malformed_capture' && ok "glue-malformed-reason" || bad "glue-malformed-reason"
 # Contaminated capture must NOT also look like pin-drift equality failure
 # (parent blind-and-RED: got=<hex>set +e want=<hex>). Skip equality instead.
 if echo "$out" | grep -qE 'got=.*set \+e want='; then

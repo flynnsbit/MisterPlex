@@ -79,5 +79,33 @@ set -e
 echo "78eff44e daily_ready true rc=$erc"
 [[ "$erc" -eq 11 ]] && pass pre-fix-still-no || fail pre-fix-still-no "rc=$erc"
 
+# UNKNOWN core must HARD-block (rc=12), never YES and never soft-skip 77
+# (parent: silent DAILY_PROMOTE_READY=YES on unmapped md5 was a promote hole)
+set +e
+out=$(rbf_policy_daily_promote_ready deadbeefcafebabe0123456789abcdef 2>&1); urc=$?
+set -e
+echo "unknown daily_ready true rc=$urc"
+echo "$out"
+[[ "$urc" -eq 12 ]] && pass unknown-rc12 || fail unknown-rc12 "rc=$urc"
+echo "$out" | grep -q 'unknown_core_md5' && pass unknown-reason || fail unknown-reason missing
+echo "$out" | grep -q 'DAILY_PROMOTE_READY=NO' && pass unknown-no || fail unknown-no missing
+echo "$out" | grep -q 'DAILY_PROMOTE_READY=YES' && fail unknown-not-yes "leaked YES" || pass unknown-not-yes
+# lib assert elevates the same
+# shellcheck source=/dev/null
+source "$ROOT/scripts/deploy_misterplexd_lib.sh"
+set +e
+out=$(promotion_assert_core_md5_known deadbeefcafebabe0123456789abcdef 2>&1); arc=$?
+set -e
+echo "assert unknown true rc=$arc"
+[[ "$arc" -eq 12 ]] && pass assert-unknown-12 || fail assert-unknown-12 "rc=$arc"
+set +e
+out=$(promotion_assert_core_md5_known 8fdf440f 2>&1); arc=$?
+set -e
+[[ "$arc" -eq 0 ]] && pass assert-glass-0 || fail assert-glass-0 "rc=$arc"
+set +e
+out=$(promotion_assert_core_md5_known '' 2>&1); arc=$?
+set -e
+[[ "$arc" -eq 4 ]] && pass assert-empty-nodata-4 || fail assert-empty-nodata-4 "rc=$arc"
+
 echo "=== summary pass=$PASS fail=$FAIL ==="
 [[ "$FAIL" -eq 0 ]]

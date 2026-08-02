@@ -83,13 +83,25 @@ lookup_expected_geometry() {
   local md5="$1"
   [[ -f "$MAP" ]] || return 1
   # Prefer awk over cut so comments/blank lines are ignored safely.
+  # Accept full32==full32 OR prefix8↔full (parent often pins prefix8 only).
   awk -v m="$md5" '
-    BEGIN { found=0 }
+    BEGIN { found=0; ml=tolower(m) }
     /^#/ || NF==0 { next }
     {
       key=$1
       gsub(/\r/,"",key)
-      if (tolower(key)==tolower(m)) {
+      kl=tolower(key)
+      if (kl==ml) {
+        print $2
+        found=1
+        exit 0
+      }
+      if (length(kl)==8 && length(ml)>=8 && substr(ml,1,8)==kl) {
+        print $2
+        found=1
+        exit 0
+      }
+      if (length(ml)==8 && length(kl)>=8 && substr(kl,1,8)==ml) {
         print $2
         found=1
         exit 0

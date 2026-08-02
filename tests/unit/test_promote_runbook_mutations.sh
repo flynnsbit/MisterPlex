@@ -457,11 +457,43 @@ set -e
 [ "$rc" -eq 3 ] && ok "md5-glue-shape-3" || bad "md5-glue-shape-3 got=$rc"
 # Must NOT claim match when glue present
 echo "$out" | grep -q 'MATCH' && bad "md5-glue-no-match" || ok "md5-glue-no-match"
+echo "$out" | grep -q 'malformed_capture' && ok "md5-glue-malformed-reason" || bad "md5-glue-malformed-reason"
 set +e
 out=$(promotion_assert_md5_field v2 'dfebf2bfd08dd70b473b587dd7e81848' 'dfebf2bfd08dd70b473b587dd7e81848' 2>&1)
 rc=$?
 set -e
 [ "$rc" -eq 0 ] && ok "md5-pure-match-0" || bad "md5-pure-match-0 got=$rc"
+
+# core-known: unknown HARD 12; glass 0; empty NO-DATA 4 (never 77)
+set +e
+out=$(promotion_assert_core_md5_known 'deadbeefcafebabe0123456789abcdef' 2>&1); rc=$?; set -e
+[ "$rc" -eq 12 ] && ok "core-known-unknown-12" || bad "core-known-unknown-12 got=$rc"
+echo "$out" | grep -q 'unknown_core_md5' && ok "core-known-unknown-msg" || bad "core-known-unknown-msg"
+set +e
+out=$("$ROOT/scripts/promote_cycle_gate.sh" core-known deadbeefcafebabe0123456789abcdef 2>&1); rc=$?; set -e
+[ "$rc" -eq 12 ] && ok "cycle-core-known-12" || bad "cycle-core-known-12 got=$rc"
+set +e
+out=$("$ROOT/scripts/promote_cycle_gate.sh" core-known 8fdf440f 2>&1); rc=$?; set -e
+[ "$rc" -eq 0 ] && ok "cycle-core-known-glass-0" || bad "cycle-core-known-glass-0 got=$rc"
+set +e
+out=$(promotion_assert_core_md5_known '' 2>&1); rc=$?; set -e
+[ "$rc" -eq 4 ] && ok "core-known-empty-4" || bad "core-known-empty-4 got=$rc"
+# full-check with unknown CORE_MD5 blocks even when grabber/evidence/multishot green
+set +e
+out=$(
+  GRABBER_INJECT_STATS=10,200,25.5 VIEWED_PIXELS=1 \
+  MULTISHOT_RESULTS=1,1,1,1,1,1,1,1 MULTISHOT_MIN_N=8 \
+  INSTR_MIN=10 INSTR_MAX=200 INSTR_STD=25.5 \
+  CORE_MD5=deadbeefcafebabe0123456789abcdef \
+  CORE_IDENTITY=VERIFIED \
+  SESSION_ESTABLISHED=1 DELIVERY_VERIFIED=1 MEASURED_DELIVERY=x \
+  DROPS=0 UNACCOUNTED=0 VFPS=24 SOURCE_FPS=24 FRAMES=100 \
+  "$ROOT/scripts/promote_cycle_gate.sh" full-check 2>&1
+)
+rc=$?
+set -e
+[ "$rc" -eq 12 ] && ok "fullcheck-unknown-core-12" || bad "fullcheck-unknown-core-12 got=$rc"
+echo "$out" | grep -qE 'unknown_core_md5|core-known true rc=12' && ok "fullcheck-unknown-msg" || bad "fullcheck-unknown-msg"
 
 set +e
 out=$(promotion_assert_conf_byte_exact '7f06132f0c00e90b35141bdc0c60ccc9' '7f06132f0c00e90b35141bdc0c60ccc9' 2>&1)

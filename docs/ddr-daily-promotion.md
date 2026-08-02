@@ -85,9 +85,18 @@ FRAMES=8638 ./scripts/promote_cycle_gate.sh frames; echo "true rc=$?" # rc=0
 
 # md5 empty = NO-DATA (never match)
 ./scripts/promote_cycle_gate.sh md5-field v2 '' dfebf2bfd08dd70b473b587dd7e81848; echo "true rc=$?"
-# expect rc=4 NO-DATA
+# expect rc=4 NO-DATA (empty got — never mismatch)
 ./scripts/promote_cycle_gate.sh md5-field v2 'dfebf2bfd08dd70b473b587dd7e81848set +e' dfebf2bfd08dd70b473b587dd7e81848; echo "true rc=$?"
-# expect rc=3 SHAPE (glue) — comparison not run
+# expect rc=3 reason=malformed_capture — comparison SKIPPED (never trim glue to pass)
+# Host-exec proof (no device): dump-remote against local fake Plex_v2 → pure 32-hex GREEN;
+# contaminated blob → RED malformed_capture + SKIP equality (no got=…set +e want=…).
+
+# Unknown product core HARD block (never geometry soft-skip 77)
+./scripts/promote_cycle_gate.sh core-known deadbeefcafebabe0123456789abcdef; echo "true rc=$?"
+# expect rc=12 reason=unknown_core_md5 PROMOTE_OK=0
+./scripts/promote_cycle_gate.sh core-known 8fdf440f; echo "true rc=$?"
+# expect rc=0 glass_ok (current daily product prefix)
+# core_conf_geometry still soft-skips unmapped md5 (rc=77) — correct for THAT check only.
 
 # conf byte-exact (USER-OWNED)
 ./scripts/promote_cycle_gate.sh conf-byte-exact 7f06132f0c00e90b35141bdc0c60ccc9 7f06132f0c00e90b35141bdc0c60ccc9; echo "true rc=$?"

@@ -1,6 +1,13 @@
 # Resident Plex.rbf md5 → expected daemon-adopted DECODE geometry.
 # Used by scripts/check_core_conf_geometry.sh.
 # Columns (TAB-separated): md5_hex  geometry  note
-# Unknown md5 MUST soft-skip (rc=77), never silent-pass.
+# Unknown md5 MUST soft-skip (rc=77), never silent-pass — for THIS geometry check only.
+# Promotion treats unknown as HARD rc=12 via rbf_policy_daily_promote_ready /
+# promotion_assert_core_md5_known (never promote on geometry soft-skip alone).
 # bank1 yuv420p/rgb565 @ 0x40000 align: 320x240→0x30040000; 624/640x480→0x30080000
+# Prefix8 rows accepted when full md5 not yet pinned (lookup matches prefix).
 41adb98c7a630b541091c22ce291be68	320x240	v0.3.0 product (release_artifacts/v0.3.0/Plex.rbf)
+dfebf2bfd08dd70b473b587dd7e81848	320x240	SPI Plex_v2 daily/rollback pin (no ddr_frame_store)
+8fdf440f	624x480	DDR glass-OK daily (parent 2026-08-01; DECODE=624x480 user conf)
+c74c6863	624x480	DDR glass-OK alt (+ALM/M10K vs 8fdf; bak Plex.c74c6863.bak.rbf)
+c5382bee73cecdee8220b811e529c297	624x480	LAB-NOT-DAILY (vertical even-row / STALE blind) — map only, not promote
