@@ -47,14 +47,12 @@ DECODE=320x240
 #   1) WEAK_BITRATE — absolute operator override (never auto-clamped; may WARN)
 #   2) min(tier_default, LINK_CAP_KBIT) when LINK_CAP_KBIT > 0
 #   3) tier_default alone
-# LINK_CAP_KBIT is how the fixture-ladder / greedy-path knee is consumed.
-# Do NOT paste p95 alone: on unstable WiFi min can be ~3× below p95 (parent:
-# min 45.7 KB/s vs p95 161.4). Prefer host helper recommendLinkCapFromWindowBps
-# (p10 * 0.85 headroom, provisional until ≥30×1s windows). Single 60s pull is
-# provisional. Adaptive runtime must use link_cap.hpp hysteresis (3 lower /
-# 10 raise, session-sticky) — never chase RTT blips.
+# LINK_CAP_KBIT — OPTIONAL operator tooling only. Parent CBR ladder falsified
+# "2000 kbit request causes systematic drops"; do NOT set this to "fix 480p
+# drops" without a reproducible defect. Default unset = tier request unchanged.
+# If used: prefer recommendLinkCapFromWindowBps (p10*0.85), not p95 alone;
+# provisional until ≥30×1s windows. Adaptive must use hysteresis — no RTT chase.
 # LINK_CAP_KBIT=0
-# LINK_CAP_KBIT=1150
 # Legacy per-field overrides (kept for lab experiments):
 # WEAK_RES=320x240
 # WEAK_BITRATE=1000
