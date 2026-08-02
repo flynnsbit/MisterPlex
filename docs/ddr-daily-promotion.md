@@ -608,7 +608,8 @@ Matched pairs (executable: `scripts/pair_ship_policy.sh list`):
 | id | core | daemon | conf | mode |
 |----|------|--------|------|------|
 | **ddr-c5382bee** | c5382bee | **edc3a46b** | ddr keys | **PRIMARY promote** |
-| ddr-c5382bee-e9f79de2 | c5382bee | e9f79de2 | ddr keys | hist |
+| ddr-c5382bee-509b0c75 | c5382bee | 509b0c75 (stamped ba2ec313) | ddr keys | **default lab ship** |
+| ddr-c5382bee-e9f79de2 | c5382bee | e9f79de2 | ddr keys | hist — **480p REGRESS** parent HW 2026-08-02; do not default-ship |
 | spi-v2-hybrid | dfebf2bf | 50f4eb92 | strip ddr keys | SPI undo |
 | spi-v2-release | dfebf2bf | 7cd10b4d | strip ddr keys | SPI release |
 

@@ -1,3 +1,16 @@
+# HISTORICAL ONLY — DO NOT DEFAULT-SHIP
+
+**Parent HW 2026-08-02:** this daemon (`e9f79de2`) **regresses 480p** vs live
+`ea643e99` on PMS delivery **624x350** (green field, duplicated TREK24,
+climbing drops). It is unstamped (md5-only) and lacks `desync_risk=` /
+`DELIVERY_MISMATCH measured=` telemetry.
+
+Default package path is now `release_artifacts/ddr-c5382bee-509b0c75/`
+(stamped `git_rev=ba2ec3139133`). Kept here only as a matrix/history artifact.
+`package_validated_pair.sh` refuses this directory as PAIR_DIR.
+
+---
+
 # Validated lab pair: ddr-c5382bee-e9f79de2
 
 Tracked release binaries so a clean clone can assemble a shippable tarball

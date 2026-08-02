@@ -50,7 +50,10 @@ DAEMON_PIN_V2_RELEASE_FULL=7cd10b4d438c714a9b8c4766dc982d59
 #   edc3a46b  prior DDR primary — accepted rollback
 #   5996385a  w-instr instrumented — accepted alternate
 #   b981fd20  on-device bak — accepted rollback
-#   e9f79de2  first silicon-correct DDR — accepted rollback
+#   e9f79de2  first silicon-correct DDR — HISTORICAL ONLY; parent HW 2026-08-02:
+#             regresses 480p (green field + duplicated TREK24) vs live ea643e99;
+#             lacks measured=/desync_risk= delivery-geometry telemetry. Not default ship.
+#   509b0c75  stamped build from ba2ec313 (git_rev=ba2ec3139133); default lab ship pin.
 DAEMON_PIN_DDR_3883F5AB_FULL=3883f5ab8744e070e7b0820c6b9b4376
 DAEMON_PIN_DDR_3883F5AB_PREFIX8=3883f5ab
 # integ/osd-ledger-480p @ 533a4bca — parent live 2026-08-01 (frame-ledger + pause overlay)
@@ -67,6 +70,9 @@ DAEMON_PIN_DDR_5996385A_PREFIX8=5996385a
 DAEMON_PIN_DDR_B981_PREFIX8=b981fd20
 DAEMON_PIN_DDR_B981_FULL="${DAEMON_PIN_DDR_B981_FULL:-b981fd20}"
 DAEMON_PIN_DDR_E9F79DE2_FULL=e9f79de217982aff44207664fdb945c5
+# Default lab ship: stamped ba2ec313 build (release_artifacts/ddr-c5382bee-509b0c75).
+DAEMON_PIN_DDR_509B0C75_FULL=509b0c7592e0e9e38686f9eb8e2cb047
+DAEMON_PIN_DDR_509B0C75_PREFIX8=509b0c75
 # Primary = current live pin (override with DAEMON_PIN_DDR_PRIMARY_FULL).
 DAEMON_PIN_DDR_PRIMARY_FULL="${DAEMON_PIN_DDR_PRIMARY_FULL:-$DAEMON_PIN_DDR_3883F5AB_FULL}"
 DAEMON_PIN_DDR_PRIMARY_PREFIX8="${DAEMON_PIN_DDR_PRIMARY_FULL:0:8}"
@@ -137,7 +143,7 @@ rbf_policy_ddr_daemon_accepted() {
   [ "${#d}" -ge 8 ] || return 1
   p8="${d:0:8}"
   case "$p8" in
-    "$DAEMON_PIN_DDR_3883F5AB_PREFIX8"|"$DAEMON_PIN_DDR_36B89BCB_PREFIX8"|"$DAEMON_PIN_DDR_5996385A_PREFIX8"|"$DAEMON_PIN_DDR_B981_PREFIX8"|"$DAEMON_PIN_DDR_EDC3_PREFIX8"|"${DAEMON_PIN_DDR_E9F79DE2_FULL:0:8}")
+    "$DAEMON_PIN_DDR_3883F5AB_PREFIX8"|"$DAEMON_PIN_DDR_36B89BCB_PREFIX8"|"$DAEMON_PIN_DDR_5996385A_PREFIX8"|"$DAEMON_PIN_DDR_B981_PREFIX8"|"$DAEMON_PIN_DDR_EDC3_PREFIX8"|"${DAEMON_PIN_DDR_E9F79DE2_FULL:0:8}"|"$DAEMON_PIN_DDR_509B0C75_PREFIX8")
       return 0 ;;
   esac
   return 1

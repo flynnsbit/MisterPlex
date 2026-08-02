@@ -13,7 +13,8 @@
 set -uo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 CHK="$ROOT/scripts/daemon_stamp_check.sh"
-PAIR_DAE="$ROOT/release_artifacts/ddr-c5382bee-e9f79de2/misterplexd"
+HIST_DAE="$ROOT/release_artifacts/ddr-c5382bee-e9f79de2/misterplexd"
+STAMP_DAE="$ROOT/release_artifacts/ddr-c5382bee-509b0c75/misterplexd"
 HOST_BIN="$ROOT/build/misterplexd"
 fails=0
 applied=0
@@ -48,21 +49,21 @@ else
   fail "tiny non-elf must not STAMP_OK: $out"
 fi
 
-# GREEN or documented matrix pin: tracked e9f79de2 under allow-matrix-pin
-if [ -f "$PAIR_DAE" ]; then
+# GREEN or documented matrix pin: historical e9f79de2 under allow-matrix-pin only
+if [ -f "$HIST_DAE" ]; then
   set +e
-  out=$("$CHK" --allow-matrix-pin "$PAIR_DAE" 2>&1)
+  out=$("$CHK" --allow-matrix-pin "$HIST_DAE" 2>&1)
   rc=$?
   set -e
   if [ "$rc" -eq 0 ] && printf '%s' "$out" | grep -qE 'MATRIX_PIN_OK|STAMP_OK'; then
-    pass "allow-matrix-pin accepts tracked pair daemon (rc=0)"
+    pass "allow-matrix-pin accepts historical e9f79de2 (rc=0)"
   else
-    fail "allow-matrix-pin should accept pair daemon rc=$rc out=$out"
+    fail "allow-matrix-pin should accept historical pin rc=$rc out=$out"
   fi
 
   # RED-before-green: require-stamped must refuse unstamped historical pin
   set +e
-  out=$("$CHK" --require-stamped "$PAIR_DAE" 2>&1)
+  out=$("$CHK" --require-stamped "$HIST_DAE" 2>&1)
   rc=$?
   set -e
   if [ "$rc" -ne 0 ] && printf '%s' "$out" | grep -q 'STAMP_FAIL'; then
@@ -71,7 +72,23 @@ if [ -f "$PAIR_DAE" ]; then
     fail "require-stamped must refuse unstamped pair daemon rc=$rc out=$out"
   fi
 else
-  fail "tracked pair daemon missing at $PAIR_DAE (release clone-and-ship broken)"
+  fail "historical pair daemon missing at $HIST_DAE"
+fi
+
+# GREEN: default ship pin must be STAMP_OK under --require-stamped
+if [ -f "$STAMP_DAE" ]; then
+  set +e
+  out=$("$CHK" --require-stamped "$STAMP_DAE" 2>&1)
+  rc=$?
+  set -e
+  if [ "$rc" -eq 0 ] && printf '%s' "$out" | grep -q 'STAMP_OK' \
+     && printf '%s' "$out" | grep -q 'git_rev=ba2ec3139133'; then
+    pass "require-stamped STAMP_OK on 509b0c75 (git_rev=ba2ec3139133)"
+  else
+    fail "stamped ship pin must STAMP_OK rc=$rc out=$out"
+  fi
+else
+  fail "stamped pair daemon missing at $STAMP_DAE (default ship path broken)"
 fi
 
 # GREEN: host build/misterplexd when present should be stamped

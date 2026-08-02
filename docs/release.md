@@ -1,23 +1,30 @@
 # MiSTerPlex release notes (Phase 5)
 
-## Clean-checkout lab pair (ddr-c5382bee-e9f79de2)
+## Clean-checkout lab pair (ddr-c5382bee-509b0c75)
 
-The hardware-validated lab pair is **tracked** under
-`release_artifacts/ddr-c5382bee-e9f79de2/` (force-added past the global `*.rbf`
-ignore, same precedent as `release_artifacts/v0.3.0/Plex.rbf`).
+Default ship pair is **tracked** under
+`release_artifacts/ddr-c5382bee-509b0c75/` (force-added past the global `*.rbf`
+ignore). Daemon is **stamped** (`--version` → `git_rev=ba2ec3139133`) and
+includes delivery-geometry telemetry (`measured=` / `desync_risk=`).
+
+Replaces historical pin `e9f79de2`, which parent HW (2026-08-02) showed
+**regresses 480p** on real PMS delivery **624x350** (green field + duplicated
+TREK24). `package_validated_pair.sh` uses `--require-stamped` and refuses that
+historical default.
 
 Measured sizes (do not estimate):
 
 | artifact | md5 | bytes |
 |----------|-----|------:|
 | Plex.rbf | c5382bee73cecdee8220b811e529c297 | 3970492 |
-| misterplexd | e9f79de217982aff44207664fdb945c5 | 12925900 |
-| **total** | | **16896392** |
+| misterplexd | 509b0c7592e0e9e38686f9eb8e2cb047 | 13095524 |
+| **total** | | **17066016** |
 
 ```bash
-# From a clean clone/worktree — produces dist/misterplex-ddr-c5382bee-e9f79de2.tar.gz
+# From a clean clone/worktree — produces dist/misterplex-ddr-c5382bee-509b0c75.tar.gz
 PACKAGE_ALLOW_NO_FFMPEG=1 ./scripts/package_validated_pair.sh
-# true rc must be 0; pair_ship_policy must print PAIR_OK id=ddr-c5382bee-e9f79de2
+# true rc must be 0; pair_ship_policy must print PAIR_OK id=ddr-c5382bee-509b0c75
+# stamp must print STAMP_OK git_rev=ba2ec3139133
 ```
 
 Optional ffmpeg bundle (machine-local disease otherwise):
@@ -30,8 +37,9 @@ Optional ffmpeg bundle (machine-local disease otherwise):
 
 **Not daily glass:** packaging this pair is not daily-driver promotion. Promote
 requires `rbf_ship_policy.sh daily_promote_ready` and a **stamped** daemon
-(`scripts/daemon_stamp_check.sh --require-stamped`). Historical pin e9f79de2
-is md5-only (pre-d44d5d1c); live `ea643e99` is untraceable and must be refused.
+(`scripts/daemon_stamp_check.sh --require-stamped`). Live `ea643e99` remains
+untraceable until replaced on-device by a stamped build; parent must still
+HW-validate 509b0c75 480p before calling this a stable daily release.
 
 ---
 
