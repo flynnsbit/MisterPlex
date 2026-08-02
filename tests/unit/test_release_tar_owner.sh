@@ -112,8 +112,12 @@ else
   fail "root-owner flags still produced non-root entries (rc=$pos_rc)"
 fi
 
-# --- 4) end-to-end: real package_validated_pair / package_release tarball -----
-# Only when the tracked pair is present (clean-clone ship path).
+# --- 4) tracked historical pair must NOT package (capability gate) ----------
+# Parent 2026-08-02: e9f79de2 lacked delivery-geometry telemetry and regressed
+# 480p on device. package_validated_pair must refuse (rc=7 CAPABILITY_FAIL),
+# not produce a shippable tarball. Owner proof for the tar flags remains
+# sections 1–3 (same flag set as package_release); do not re-enable shipping
+# an incapable pin to exercise ownership.
 PAIR="$ROOT/release_artifacts/ddr-c5382bee-e9f79de2"
 if [ -f "$PAIR/Plex.rbf" ] && [ -f "$PAIR/misterplexd" ] \
   && [ -x "$ROOT/scripts/package_validated_pair.sh" ]; then
@@ -126,23 +130,15 @@ if [ -f "$PAIR/Plex.rbf" ] && [ -f "$PAIR/misterplexd" ] \
   e2e_pkg_rc=$?
   set -e
   TAR_E2E="$e2e_out/misterplex-tar-owner-e2e.tar.gz"
-  if [ "$e2e_pkg_rc" -ne 0 ] || [ ! -f "$TAR_E2E" ]; then
-    fail "package_validated_pair failed rc=$e2e_pkg_rc (see $e2e_out/pkg.log)"
+  if [ "$e2e_pkg_rc" -eq 7 ] && grep -q 'CAPABILITY_FAIL\|capability/stamp' "$e2e_out/pkg.log" \
+    && [ ! -f "$TAR_E2E" ]; then
+    pass "package_validated_pair refuses incapable historical pair (rc=7, no tarball)"
   else
-    set +e
-    assert_all_root_owner "$TAR_E2E" release_e2e
-    e2e_rc=$?
-    set -e
-    if [ "$e2e_rc" -eq 0 ]; then
-      pass "release tarball every entry owner/group is 0/0"
-    else
-      fail "release tarball has non-root owners (rc=$e2e_rc)"
-      # Show a few offenders (no pipe — SIGPIPE must not mask test rc)
-      tar -tvzf "$TAR_E2E" 2>/dev/null | sed -n '1,5p' || true
-    fi
+    fail "expected capability refuse rc=7 and no tarball; rc=$e2e_pkg_rc tar=$([ -f "$TAR_E2E" ] && echo yes || echo no)"
+    sed -n '1,30p' "$e2e_out/pkg.log" || true
   fi
 else
-  echo "NOTE: skip e2e release tar — tracked pair not present"
+  echo "NOTE: skip historical-pair refuse check — tracked pair not present"
 fi
 
 rm -rf "$mut_dir" "$good_dir"

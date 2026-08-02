@@ -43,8 +43,18 @@ if [ "$dae_md5" != "$EXPECT_DAEMON" ]; then
   exit 2
 fi
 
-# Historical matrix pin: allow unstamped e9f79de2 for this pair only.
-"$ROOT/scripts/daemon_stamp_check.sh" --allow-matrix-pin "$DAEMON"
+# Stamp+capability: historical e9f79de2 is content-md5 only and lacks
+# delivery-geometry markers (parent 2026-08-02 green-field regression).
+# Refuse to package it as a shippable release until the pair is re-pinned to a
+# stamped, capable daemon. No allow-matrix-pin bypass on the ship path.
+if ! cap_out=$("$ROOT/scripts/daemon_capability_check.sh" --require-stamp "$DAEMON" 2>&1); then
+  echo "ERROR: tracked pair daemon fails capability/stamp (will not ship):" >&2
+  echo "$cap_out" >&2
+  echo "ACTION: w-promote must produce a stamped ARM daemon from current main" >&2
+  echo "        and re-pin release_artifacts/; do not weaken this check." >&2
+  exit 7
+fi
+echo "$cap_out"
 
 pair_out=$("$ROOT/scripts/pair_ship_policy.sh" check "$core_md5" "$dae_md5" 2>&1) || {
   echo "ERROR: pair_ship_policy refused tracked pair: $pair_out" >&2
@@ -55,7 +65,6 @@ printf '%s\n' "$pair_out" | grep -q 'PAIR_OK' || {
   echo "ERROR: expected PAIR_OK in policy output" >&2
   exit 6
 }
-
 # ffmpeg: prefer tracked release_artifacts path, then env, then allow-no.
 if [ -z "${FFMPEG_ARMHF:-}" ]; then
   if [ -f "$ROOT/release_artifacts/ffmpeg-armhf/ffmpeg" ]; then

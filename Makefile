@@ -188,6 +188,7 @@ unit-unlocked: unit-rollcall preflight $(ROOT)/build/test_cadence $(ROOT)/build/
 	$(ROOT)/tests/unit/test_release_rbf_hash.sh
 	$(ROOT)/tests/unit/test_release_pair_gate.sh
 	$(ROOT)/tests/unit/test_package_validated_pair.sh
+	$(ROOT)/tests/unit/test_release_not_older.sh
 	$(ROOT)/tests/unit/test_release_tar_owner.sh
 	$(ROOT)/tests/unit/test_daemon_stamp_check.sh
 	$(ROOT)/tests/unit/test_daemon_build_identity.sh
