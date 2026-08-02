@@ -93,6 +93,8 @@ async function main() {
   log('  P8 media_health selfCheck: collapsed supply_ratio=0.72 FAIL; healthy PASS;');
   log('      drift+133 FAIL; pid swap INVALID; unprobed FAIL (never soft-green)');
   log('  P9 pms_control_plane: play/pause/gone reds; tc speed=0 FAIL; speed=19.8 PASS; stale FAIL');
+  log('  P10 measured_delivery: 624x480/624x480→624x350 class=pms_ceiling_desync;');
+  log('      expect=library FAIL; basis=library forbidden; desync_risk=1 FAIL');
 
   let proofsOk = 0;
   let proofsFail = 0;
@@ -135,6 +137,19 @@ async function main() {
     proofsOk++;
   } catch (e) {
     log(`PROOF P9 FAIL pms_control_plane selfCheck: ${e.message || e}`);
+    proofsFail++;
+  }
+
+  // ── P10: measured delivery / geom triple (parent 624x350 class) ────────
+  try {
+    const md = require('./measured_delivery');
+    md.selfCheck();
+    log(
+      'PROOF P10 OK measured_delivery selfCheck (pms_ceiling_desync 624x350 + library expect FAIL)'
+    );
+    proofsOk++;
+  } catch (e) {
+    log(`PROOF P10 FAIL measured_delivery selfCheck: ${e.message || e}`);
     proofsFail++;
   }
 

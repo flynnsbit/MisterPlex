@@ -57,6 +57,7 @@ const {
 const {
   resolveMeasuredDelivery,
   assertMeasuredDelivery,
+  reportGeomChain,
   assertSessionEpochUnchanged,
 } = require('./measured_delivery');
 const { createRunCorrelation } = require('./run_correlate');
@@ -158,11 +159,25 @@ async function assertMeasuredDeliveryGate(tag, opts = {}) {
     (cfg.isRealContent && cfg.rejectMeasuredBankGeom
       ? cfg.rejectMeasuredBankGeom
       : '');
+  const libraryMedia =
+    opts.libraryMedia ||
+    opts.library_media ||
+    process.env.E2E_LIBRARY_MEDIA_GEOM ||
+    '';
+  const requestedPms =
+    opts.requestedPms ||
+    opts.requested_pms ||
+    process.env.E2E_REQUESTED_PMS_GEOM ||
+    cfg.daemonDecode ||
+    '';
   const ar = assertMeasuredDelivery(md, {
     tag,
     require,
     expectGeom: opts.expectGeom || process.env.E2E_EXPECT_MEASURED_GEOM || '',
+    expectBasis: opts.expectBasis || process.env.E2E_EXPECT_GEOM_BASIS || 'measured',
     rejectBankGeom: rejectBank || '',
+    libraryMedia,
+    requestedPms,
   });
   if (ar.softSkip) {
     log(
@@ -174,10 +189,18 @@ async function assertMeasuredDeliveryGate(tag, opts = {}) {
   if (!ar.ok) {
     fail(ar.reason || 'measured_delivery_fail', ar.detail || '');
   }
+  const chain = reportGeomChain({
+    tag,
+    requested: requestedPms,
+    library: libraryMedia,
+    measured: ar.delivered,
+  });
+  log(chain.detail);
   log(
     `MEASURED_DELIVERY_OK tag=${tag} delivered=${ar.delivered} desync_risk=${ar.desync_risk} ` +
       `source=${ar.source} session_epoch=${ar.session_epoch || (md && md.session_epoch) || 'NA'} ` +
-      `value_kind=${ar.value_kind || 'measured'} ` +
+      `value_kind=${ar.value_kind || 'measured'} delivery_basis=measured ` +
+      `geom_class=${ar.geom_class || chain.class} ` +
       `(request/library geometry NOT used as delivery evidence)`
   );
   if (ar.session_epoch && !baselineSessionEpoch) {
@@ -4829,12 +4852,24 @@ async function runTransitionScenarios(
       });
 
       // Delivered geometry = MEASURED_DELIVERY only (never request / library_media).
+      // Parent 2026-08-02: requested_pms=624x480 library_media=624x480 → measured=624x350.
       {
+        const libGeom =
+          item && item.width && item.height ? `${item.width}x${item.height}` : '';
         const mdGate = await assertMeasuredDeliveryGate(`tier_${tier.name}_play`, {
           require: cfg.requireMeasuredDelivery,
+          libraryMedia: libGeom,
+          requestedPms:
+            process.env.E2E_REQUESTED_PMS_GEOM ||
+            cfg.daemonDecode ||
+            (tier && tier.decode) ||
+            '',
         });
         if (mdGate && mdGate.assert && mdGate.assert.delivered) {
           summaryBits.push(`measured=${mdGate.assert.delivered}`);
+          if (mdGate.assert.geom_class) {
+            summaryBits.push(`geom_class=${mdGate.assert.geom_class}`);
+          }
         } else if (mdGate && mdGate.softSkip) {
           summaryBits.push('measured=unprobed');
         }

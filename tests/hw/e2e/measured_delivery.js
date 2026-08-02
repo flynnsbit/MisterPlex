@@ -3,9 +3,16 @@
 /**
  * MEASURED_DELIVERY + session_epoch parsing (daemon media lines / telemetry).
  *
- * Parent fact: PMS can deliver a third geometry matching neither request nor
- * library_media (e.g. request 624x480, library 320x240 → delivered 426x240).
- * Asserting the *request* proves nothing. Gate on measured delivery only.
+ * Parent facts (do not collapse these into one number):
+ *   - PMS videoResolution is a CEILING, not an exact size.
+ *   - library_media is PMS scanner display metadata — a claim, not a measurement.
+ *   - Parent-measured 2026-08-02:
+ *       requested_pms=624x480  library_media=624x480  →  measured=624x350
+ *     request matched library and STILL was not delivery. Asserting either is a false pass.
+ *   - Older example: request 624x480, library 320x240 → delivered 426x240.
+ *
+ * Gate on measured delivery only (ffmpeg Stream banner / MEASURED_DELIVERY line /
+ * telemetry measured_delivery=). Never request, never library_media.
  *
  * Log forms (both accepted):
  *   media: MEASURED_DELIVERY delivered_geom=426x240 src=ffmpeg_banner bytes=… desync_risk=0 …
@@ -260,7 +267,21 @@ async function resolveMeasuredDelivery(cfg = {}) {
   }
 
   // 3) HTTP telemetry (may 404 on older deploys — not a soft pass).
-  const host = cfg.misterHost || process.env.MISTER_HOST || '192.168.1.183';
+  // Never default a lab IP — MISTER_HOST / cfg.misterHost required for this path.
+  const host = String(cfg.misterHost || process.env.MISTER_HOST || '').trim();
+  if (!host) {
+    return {
+      ok: false,
+      source: 'unprobed',
+      delivered_geom: null,
+      desync_risk: null,
+      session_epoch: null,
+      reason:
+        'no E2E_DELIVERED_GEOM / E2E_DAEMON_LOG MEASURED_DELIVERY and MISTER_HOST unset ' +
+        '(refusing lab-IP default; set MISTER_HOST or feed E2E_DAEMON_LOG)',
+      value_kind: 'unprobed',
+    };
+  }
   const port = parseInt(cfg.misterPort || process.env.MISTER_PORT || '3005', 10);
   const base = `http://${host}:${port}`;
   for (const path of ['/player/telemetry', '/telemetry']) {
@@ -313,6 +334,128 @@ async function resolveMeasuredDelivery(cfg = {}) {
 }
 
 /**
+ * Report request / library_media / measured as three distinct claims.
+ * Delivery PASS may only cite measured. Matching request↔library is NOT delivery proof
+ * (parent: 624x480 / 624x480 → measured 624x350).
+ *
+ * @param {{requested?:string, library?:string, measured?:string, tag?:string}} o
+ * @returns {{ok:true, class:string, detail:string, triple:object, delivery_basis:'measured'|null}}
+ */
+function reportGeomChain(o = {}) {
+  const tag = o.tag || 'geom_chain';
+  const requested = parseWxH(o.requested || o.requested_pms || '');
+  const library = parseWxH(o.library || o.library_media || '');
+  const measured = parseWxH(o.measured || o.delivered || '');
+  const triple = {
+    requested_pms: requested ? requested.text : null,
+    library_media: library ? library.text : null,
+    measured: measured ? measured.text : null,
+  };
+  const reqEqLib =
+    !!(requested && library && requested.text === library.text);
+  const measEqReq =
+    !!(measured && requested && measured.text === requested.text);
+  const measEqLib =
+    !!(measured && library && measured.text === library.text);
+
+  let klass = 'incomplete';
+  if (measured && requested && library) {
+    if (measEqReq && measEqLib) klass = 'all_three_match';
+    else if (!measEqReq && !measEqLib && reqEqLib) {
+      // Parent 2026-08-02 class: request==library still not delivery.
+      klass = 'pms_ceiling_desync';
+    } else if (!measEqReq && !measEqLib) klass = 'triple_desync';
+    else if (!measEqLib) klass = 'measured_ne_library';
+    else if (!measEqReq) klass = 'measured_ne_request';
+    else klass = 'partial_match';
+  } else if (measured) {
+    klass = library || requested ? 'measured_only_partial_claims' : 'measured_only';
+  }
+
+  const detail =
+    `${tag}: GEOM_TRIPLE requested_pms=${triple.requested_pms || 'NA'} ` +
+    `library_media=${triple.library_media || 'NA'} measured=${triple.measured || 'NA'} ` +
+    `class=${klass} req_eq_lib=${reqEqLib ? 1 : 0} meas_eq_req=${measEqReq ? 1 : 0} ` +
+    `meas_eq_lib=${measEqLib ? 1 : 0}. ` +
+    `RULE: delivery_basis=measured only — library_media is a claim; ` +
+    `videoResolution is a ceiling not an exact size. ` +
+    `Parent sample: requested_pms=624x480 library_media=624x480 measured=624x350.`;
+
+  return {
+    ok: true,
+    class: klass,
+    detail,
+    triple,
+    req_eq_lib: reqEqLib,
+    meas_eq_req: measEqReq,
+    meas_eq_lib: measEqLib,
+    delivery_basis: measured ? 'measured' : null,
+    value_kind: measured ? 'measured' : 'unprobed',
+  };
+}
+
+/**
+ * Hard-fail if caller tried to treat library_media or requested_pms as the
+ * measured delivery expectation when they disagree with measured (or when
+ * expectBasis is explicitly library/request).
+ */
+function assertDeliveryBasisMeasured(opts = {}) {
+  const tag = opts.tag || 'delivery_basis';
+  const measured = parseWxH(opts.measured || '');
+  const library = parseWxH(opts.library || opts.library_media || '');
+  const requested = parseWxH(opts.requested || opts.requested_pms || '');
+  const expect = parseWxH(opts.expectGeom || '');
+  const basis = String(opts.expectBasis || opts.delivery_basis || 'measured').toLowerCase();
+
+  if (basis === 'library' || basis === 'library_media') {
+    return {
+      ok: false,
+      reason: 'delivery_basis_library_forbidden',
+      detail:
+        `${tag}: delivery_basis=library_media is FORBIDDEN. ` +
+        `library_media is PMS scanner claim, not delivery. ` +
+        `Parent: requested=624x480 library=624x480 measured=624x350. Use measured only.`,
+    };
+  }
+  if (basis === 'request' || basis === 'requested' || basis === 'requested_pms') {
+    return {
+      ok: false,
+      reason: 'delivery_basis_request_forbidden',
+      detail:
+        `${tag}: delivery_basis=requested_pms is FORBIDDEN. ` +
+        `PMS videoResolution is a ceiling, not exact size. Use measured only.`,
+    };
+  }
+  // If expectGeom equals library (or request) but measured differs → silent false-pass class.
+  if (measured && expect && library && expect.text === library.text && measured.text !== expect.text) {
+    return {
+      ok: false,
+      reason: 'expect_geom_is_library_claim',
+      detail:
+        `${tag}: E2E_EXPECT_MEASURED_GEOM/expectGeom=${expect.text} equals library_media ` +
+        `but measured=${measured.text} differs — that expect is a library claim, not delivery. ` +
+        `Unset expect or set it to the measured value only after parent observes it.`,
+    };
+  }
+  if (
+    measured &&
+    expect &&
+    requested &&
+    expect.text === requested.text &&
+    measured.text !== expect.text
+  ) {
+    return {
+      ok: false,
+      reason: 'expect_geom_is_request_ceiling',
+      detail:
+        `${tag}: expectGeom=${expect.text} equals requested_pms but measured=${measured.text} ` +
+        `differs — request is a ceiling, not delivery proof.`,
+    };
+  }
+  return { ok: true, delivery_basis: 'measured', measured: measured && measured.text };
+}
+
+/**
  * Assert measured delivery is present and healthy.
  * @returns {{ok:true, ...}|{ok:false, reason, detail}}
  */
@@ -357,6 +500,19 @@ function assertMeasuredDelivery(md, opts = {}) {
     };
   }
 
+  // Refuse library/request as expect basis when they disagree with measured.
+  const basisGate = assertDeliveryBasisMeasured({
+    tag,
+    measured: md.delivered_geom.text,
+    library: opts.libraryMedia || opts.library_media || '',
+    requested: opts.requestedPms || opts.requested_pms || '',
+    expectGeom: expectGeom ? expectGeom.text : '',
+    expectBasis: opts.expectBasis || 'measured',
+  });
+  if (!basisGate.ok) {
+    return basisGate;
+  }
+
   if (expectGeom) {
     if (
       md.delivered_geom.w !== expectGeom.w ||
@@ -367,7 +523,8 @@ function assertMeasuredDelivery(md, opts = {}) {
         reason: 'measured_delivery_mismatch',
         detail:
           `${tag}: delivered ${md.delivered_geom.text} != expect ${expectGeom.text} ` +
-          `(source=${md.source} value_kind=${md.value_kind || 'measured'})`,
+          `(source=${md.source} value_kind=${md.value_kind || 'measured'}). ` +
+          `expect must be a prior MEASURED value, never library_media/requested_pms alone.`,
       };
     }
   }
@@ -386,6 +543,13 @@ function assertMeasuredDelivery(md, opts = {}) {
     };
   }
 
+  const chain = reportGeomChain({
+    tag,
+    requested: opts.requestedPms || opts.requested_pms || '',
+    library: opts.libraryMedia || opts.library_media || '',
+    measured: md.delivered_geom.text,
+  });
+
   return {
     ok: true,
     delivered: md.delivered_geom.text,
@@ -393,6 +557,9 @@ function assertMeasuredDelivery(md, opts = {}) {
     source: md.source,
     session_epoch: md.session_epoch || null,
     value_kind: md.value_kind || 'measured',
+    geom_class: chain.class,
+    geom_triple: chain.triple,
+    delivery_basis: 'measured',
     md,
   };
 }
@@ -480,6 +647,8 @@ function selfCheck() {
     'media: MEASURED_DELIVERY 426x240 bytes=153360 coded_bytes=449280 identity_skip=0 desync_risk=0',
     'media: frames=10 measured_delivery=624x352 desync_risk=0 session_epoch=12.3 delivery_verified=1',
     'ERROR media: PIPE_DESYNC_RISK measured=426x240 identity_skip=1 desync_risk=1',
+    // Parent 2026-08-02: request==library still not delivery.
+    'media: MEASURED_DELIVERY delivered_geom=624x350 src=ffmpeg_banner desync_risk=0 delivery_verified=1',
   ];
   const a = parseMeasuredDeliveryText(samples[0]);
   if (!a || !a.delivered_geom || a.delivered_geom.text !== '426x240' || a.desync_risk !== 0) {
@@ -493,17 +662,83 @@ function selfCheck() {
   }
   const d = parseMeasuredDeliveryText(samples[3]);
   if (!d || d.desync_risk !== 1 || !d.pipe_desync) throw new Error('selfCheck fail sample3');
+  const e = parseMeasuredDeliveryText(samples[4]);
+  if (!e || e.delivered_geom.text !== '624x350') throw new Error('selfCheck fail sample4 624x350');
+
+  const chain = reportGeomChain({
+    tag: 'parent_624x350',
+    requested: '624x480',
+    library: '624x480',
+    measured: '624x350',
+  });
+  if (chain.class !== 'pms_ceiling_desync') {
+    throw new Error('selfCheck geom class want pms_ceiling_desync got ' + chain.class);
+  }
+  if (chain.req_eq_lib !== true || chain.meas_eq_lib !== false) {
+    throw new Error('selfCheck geom flags ' + JSON.stringify(chain));
+  }
+
+  const libBasis = assertDeliveryBasisMeasured({
+    tag: 't',
+    measured: '624x350',
+    library: '624x480',
+    requested: '624x480',
+    expectGeom: '624x480',
+    expectBasis: 'measured',
+  });
+  if (libBasis.ok || libBasis.reason !== 'expect_geom_is_library_claim') {
+    throw new Error('selfCheck expect=library must FAIL got ' + JSON.stringify(libBasis));
+  }
+  const forbLib = assertDeliveryBasisMeasured({
+    tag: 't',
+    measured: '624x350',
+    library: '624x480',
+    expectBasis: 'library_media',
+  });
+  if (forbLib.ok || forbLib.reason !== 'delivery_basis_library_forbidden') {
+    throw new Error('selfCheck basis=library forbidden ' + JSON.stringify(forbLib));
+  }
+
   const ar = assertMeasuredDelivery(
     {
       ok: true,
-      delivered_geom: a.delivered_geom,
+      delivered_geom: e.delivered_geom,
       desync_risk: 0,
       source: 't',
-      raw: samples[0],
+      raw: samples[4],
     },
-    { require: true, tag: 't' }
+    {
+      require: true,
+      tag: 't',
+      libraryMedia: '624x480',
+      requestedPms: '624x480',
+    }
   );
-  if (!ar.ok) throw new Error('selfCheck assert ok fail');
+  if (!ar.ok || ar.delivered !== '624x350' || ar.geom_class !== 'pms_ceiling_desync') {
+    throw new Error('selfCheck assert 624x350 ok fail ' + JSON.stringify(ar));
+  }
+  if (ar.delivery_basis !== 'measured') throw new Error('selfCheck delivery_basis');
+
+  const badExpect = assertMeasuredDelivery(
+    {
+      ok: true,
+      delivered_geom: e.delivered_geom,
+      desync_risk: 0,
+      source: 't',
+      raw: samples[4],
+    },
+    {
+      require: true,
+      tag: 't',
+      libraryMedia: '624x480',
+      requestedPms: '624x480',
+      expectGeom: '624x480',
+    }
+  );
+  if (badExpect.ok || badExpect.reason !== 'expect_geom_is_library_claim') {
+    throw new Error('selfCheck expect library claim ' + JSON.stringify(badExpect));
+  }
+
   const bad = assertMeasuredDelivery(
     {
       ok: true,
@@ -527,6 +762,10 @@ if (require.main === module) {
   try {
     selfCheck();
     console.log('measured_delivery.js selfCheck OK');
+    console.log(
+      'GEOM_RULE: delivery_basis=measured only. Parent sample requested_pms=624x480 ' +
+        'library_media=624x480 measured=624x350 class=pms_ceiling_desync'
+    );
     process.exit(0);
   } catch (e) {
     console.error('measured_delivery.js selfCheck FAIL', e.message);
@@ -540,6 +779,8 @@ module.exports = {
   parseSessionEpochText,
   resolveMeasuredDelivery,
   assertMeasuredDelivery,
+  assertDeliveryBasisMeasured,
+  reportGeomChain,
   assertSessionEpochUnchanged,
   resolveRealGeomKeys,
   REAL_GEOM_NOTES,
