@@ -99,3 +99,17 @@ When next shipping daemon: include this crashGuard death write. Do **not** requi
 
 - Work only in own worktree (`w-cpu-segv-rca`).
 - Device-running artifacts ≠ repo HEAD; ask parent for device copy when claiming device behaviour.
+
+## Host verification (post-commit)
+
+| cmd | true rc | note |
+|-----|---------|------|
+| `./build/test_death_breadcrumb` | 0 | SEGV_MAPERR + si_addr=0x10 |
+| `bash tests/unit/test_crash_guard_writes_death.sh` | 0 | red: count_on_broken=0 + order fail |
+| `bash tests/unit/test_oom_rss_tools_static.sh` | 0 | HIT/MISS honesty lines |
+| `python3 tests/unit/test_unit_rollcall.py` | 0 | commands 162 (was 160+2) |
+| `g++ -c arm/misterplexd/fpga_spi.cpp` | 0 | |
+| `make unit` (ATTEMPTS=1) | **make rc=2** | preflight **Error 3**: SwapFree 0MB < 32MB; **not overridden** |
+
+Commits on `w-cpu-segv-rca` only: `0fe7a4ff`, `fc8bd479`.
+
