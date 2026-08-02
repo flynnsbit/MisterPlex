@@ -38,7 +38,8 @@ Verdicts / exit codes
   FREEZE          rc=1   counter pinned; colour+structure OK
   COLOR_FAIL      rc=2   chroma/cast defect positively measured (hard FAIL)
   STRUCTURE_FAIL  rc=3   vertical-duplicate and/or horizontal-wrap (hard FAIL)
-  RATE_FAIL       rc=4   wrong advance rate and/or non-adjacent counter revisits
+  RATE_FAIL       rc=4   integrity rate fault (revisits / over-rate / plateau)
+  STARVED         rc=5   counter advances but << source rate (bitrate/link class)
   UNSCORED        rc=77  no positive failure AND no positive pass — NEVER a pass
 
   rc=77 is reserved for genuinely insufficient data (idle screensaver, pre-play
@@ -59,21 +60,26 @@ Severity resolution (highest wins — explicit, non-negotiable)
                    need not be scorable. A cast field often *prevents* overlay
                    OCR, so "decodes=0" and "colour broken" are correlated —
                    colour must be allowed to decide alone.
-  3. RATE_FAIL   — counter advances (so not FREEZE) but at the wrong rate
-                   relative to **caller-supplied** source/capture FPS, or
-                   non-adjacent counter revisits (stale-bank ping-pong).
-                   Hard fail rc=4. Monotonic advance alone is NOT sufficient
-                   (pfps collapse to 10.9 on a 24.000 source still advances
-                   and would pass a pure order check).
-                   **RATE_OK is never emitted when src_fps or cap_fps is
-                   DEFAULT_ASSUMED** — that is RATE_UNSCORED (honest). A green
-                   rate built on a guess is ERROR 17 class even when labelled.
-  4. FREEZE      — counter pinned with colour+structure OK. Hard fail rc=1.
-  5. MOTION_OK   — counter advances (order OK); colour+structure OK. Pass rc=0.
-                   Rate may still be RATE_UNSCORED if fps were assumed.
-  6. UNSCORED    — no overlay/counter AND no colour/structure/rate verdict.
-                   Soft-skip rc=77. Soft-skip is never a pass AND must never
-                   report a condition we have positively measured as failure.
+  3. STARVED     — counter advances (so not FREEZE) but delivered content rate
+                   is well below **authoritative** source_fps against
+                   **authoritative** capture_fps (pixel-only starvation class:
+                   link/bitrate, not a pin). Hard fail rc=5.
+                   Pre-register (LOCKED before measure): STARVED iff
+                     fps_authoritative AND advances AND
+                     (endpoint_rate < STARVE_RATIO * expected
+                      OR unique_ratio < STARVE_RATIO * expected
+                      OR delivered_fps < STARVE_RATIO * source_fps)
+                   with STARVE_RATIO=0.55 [DEFAULT_ASSUMED design].
+                   ~11 fps on a 24.000 source (0.46×) is a TRUE POSITIVE —
+                   thresholds are vs SOURCE rate, never retuned to delivered.
+                   Plateau mass {4,5} at 24@60 is consistent with ~13 fps and
+                   is STARVED / RATE_FAIL, not FREEZE.
+  4. RATE_FAIL   — non-adjacent revisits (bank-swap), over-rate, or max_plateau
+                   above allowed — integrity faults distinct from slow starve.
+                   Hard fail rc=4. **RATE_OK never on DEFAULT_ASSUMED fps.**
+  5. FREEZE      — counter pinned with colour+structure OK. Hard fail rc=1.
+  6. MOTION_OK   — counter advances at rate; colour+structure OK. Pass rc=0.
+  7. UNSCORED    — no overlay/counter AND no positive failure. rc=77 never pass.
 
 Blind-counter rule (general — parent rchar incident)
 ----------------------------------------------------
@@ -123,6 +129,7 @@ Hardcoded constants — provenance (measured | supplied | assumed | design)
   GREEN_CAST_MIN_FRAMES=3           design (positive colour evidence floor)
   STRUCT_MIN_FRAMES=3               design (positive structure evidence floor)
   RATE_MIN_SAMPLES=12               design (rate/revisit sample floor)
+  STARVE_RATIO=0.55                 design LOCKED (true-positive ~0.47× realtime)
   Anything not measured is labelled assumed/design in the report so it can
   never again be mistaken for evidence (ERROR 17 class).
 
@@ -201,7 +208,14 @@ RC_FREEZE = 1
 RC_COLOR_FAIL = 2
 RC_STRUCTURE_FAIL = 3
 RC_RATE_FAIL = 4
+RC_STARVED = 5  # slow advance vs measured src/cap — not FREEZE, not bank-swap
 RC_UNSCORED = 77
+
+# STARVED gate (LOCKED pre-register): delivered content rate vs source.
+# ~0.47× realtime glass (parent 480p link-starvation table) is a TRUE POSITIVE.
+# Do NOT retune this to the measured delivered rate after the fact.
+# Tag in reports: starve_ratio_src=DEFAULT_ASSUMED (design constant).
+STARVE_RATIO = 0.55
 
 DEFAULT_WARMUP_SKIP = 15  # measured: MacroSilicon warm-up junk length
 DEFAULT_MIN_READS = 3  # design: minimum OCR reads for motion verdict
@@ -2929,11 +2943,21 @@ def score_counter_pairs(
     if motion == "FREEZE":
         rate_label = "RATE_PINNED"
     if motion == "MOTION_OK" and rate_fail:
+        rsn = rate_info.get("starve_reasons") or rate_info.get("rate_reasons") or []
         reason = (
-            f"rate_fail [{'; '.join(rate_info.get('rate_reasons') or [])}] "
+            f"rate_fail [{'; '.join(rsn)}] "
             f"on top of {reason}"
         )
-    if rate_fail:
+    # STRUCTURE N/A here; STARVED > RATE_FAIL > FREEZE > OK > UNSCORED
+    if rate_fail and rate_label == "STARVED":
+        final, rc = "STARVED", RC_STARVED
+        reason = (
+            f"STARVED delivered_fps={_tag(rate_info.get('delivered_fps'), rate_info.get('delivered_fps_src'))} "
+            f"unique_ratio={_tag(rate_info.get('unique_ratio'), PROVENANCE_MEASURED)} "
+            f"endpoint_rate={_tag(rate_info.get('endpoint_rate'), PROVENANCE_MEASURED)} "
+            f"starve_reasons={rate_info.get('starve_reasons')}; {reason}"
+        )
+    elif rate_fail:
         final, rc = "RATE_FAIL", RC_RATE_FAIL
     elif motion == "FREEZE":
         final, rc = "FREEZE", RC_FREEZE
@@ -2963,6 +2987,13 @@ def score_counter_pairs(
         "color": "COLOR_UNSCORED_NO_PIXELS",
         "structure": "STRUCTURE_UNSCORED_NO_PIXELS",
         "rate": rate_label,
+        "starved": bool(rate_info.get("starved")),
+        "starve_reasons": rate_info.get("starve_reasons"),
+        "integrity_reasons": rate_info.get("integrity_reasons"),
+        "delivered_fps": rate_info.get("delivered_fps"),
+        "delivered_fps_src": rate_info.get("delivered_fps_src"),
+        "starve_ratio": rate_info.get("starve_ratio"),
+        "starve_ratio_src": rate_info.get("starve_ratio_src"),
         "unique_ratio": rate_info.get("unique_ratio"),
         "endpoint_rate": rate_info.get("endpoint_rate"),
         "span_rate": rate_info.get("span_rate"),
@@ -3456,6 +3487,13 @@ def analyze_counter_rate(
     empty = {
         "rate": "RATE_UNSCORED",
         "rate_fail": False,
+        "starved": False,
+        "starve_reasons": [],
+        "integrity_reasons": [],
+        "delivered_fps": None,
+        "delivered_fps_src": "UNSCORED",
+        "starve_ratio": STARVE_RATIO,
+        "starve_ratio_src": "DEFAULT_ASSUMED",
         "unique_ratio": None,
         "endpoint_rate": None,
         "span_rate": None,  # deprecated alias of endpoint_rate
@@ -3620,18 +3658,86 @@ def analyze_counter_rate(
                 f"info_plateau_at_bound={max_plateau} under assumed fps"
             )
 
-    rate_fail = bool(reasons)
-    if rate_fail:
+    # Split STARVED (slow advance) from RATE_FAIL (integrity / over-rate / plateau).
+    # Pre-register: STARVED is a TRUE POSITIVE for ~0.47× realtime glass; do NOT
+    # retune STARVE_RATIO to the measured delivered rate after the fact.
+    starve_reasons: list[str] = []
+    integrity_reasons: list[str] = []
+    delivered_fps = None
+    delivered_fps_src = "UNSCORED"
+    if fps_authoritative and len(ns) >= RATE_MIN_SAMPLES:
+        # Two independent estimators of delivered content fps:
+        #   unique_ratio * cap_fps  ≈ distinct counter states per capture-second
+        #   endpoint_rate * cap_fps ≈ net counter advance per capture-second
+        ur_fps = unique_ratio * capture_fps
+        ep_fps = endpoint_rate * capture_fps
+        delivered_fps = min(ur_fps, ep_fps) if endpoint_rate > 0 else ur_fps
+        delivered_fps_src = PROVENANCE_MEASURED
+        starve_lo = STARVE_RATIO * expected
+        source_lo = STARVE_RATIO * source_fps
+        if unique_ratio < starve_lo:
+            starve_reasons.append(
+                f"unique_ratio={unique_ratio:.4f}<{starve_lo:.4f} "
+                f"(STARVE_RATIO={STARVE_RATIO}[DEFAULT_ASSUMED]*expected={expected:.4f})"
+            )
+        if endpoint_rate > 0 and endpoint_rate < starve_lo:
+            starve_reasons.append(
+                f"endpoint_rate={endpoint_rate:.4f}<{starve_lo:.4f} "
+                f"(STARVE_RATIO={STARVE_RATIO}[DEFAULT_ASSUMED]*expected)"
+            )
+        if delivered_fps is not None and delivered_fps < source_lo:
+            starve_reasons.append(
+                f"delivered_fps={delivered_fps:.3f}<{source_lo:.3f} "
+                f"(STARVE_RATIO*{source_fps}[src={source_fps_src}])"
+            )
+        # Remove slow-rate reasons from generic reasons — they become STARVED.
+        reasons = [
+            r
+            for r in reasons
+            if not r.startswith("unique_ratio=")
+            and not (r.startswith("endpoint_rate=") and "<" in r)
+        ]
+        integrity_reasons = list(reasons)
+        # plateau / over-rate / revisits stay integrity
+    else:
+        integrity_reasons = list(reasons)
+
+    # STARVED requires net counter advance (else FREEZE owns pinned at motion).
+    advancing = bool(ctr_span > 0 and unique_states >= 2)
+    if not advancing:
+        # Pinned / no advance: do not mint STARVED; leave integrity reasons.
+        starve_reasons = []
+    # Severity ladder: STARVED > RATE_FAIL. Revisits (bank-swap) stay RATE_FAIL.
+    # Plateau during genuine slow advance is still STARVED (true positive ~11fps).
+    if starve_reasons and fps_authoritative and not revisit_fail:
+        rate_label = "STARVED"
+    elif integrity_reasons or revisit_fail:
         rate_label = "RATE_FAIL"
+        if starve_reasons and revisit_fail:
+            integrity_reasons = integrity_reasons + [
+                "starved_metrics_present_but_revisits_dominate"
+            ] + list(starve_reasons)
     elif not fps_authoritative:
-        # Never RATE_OK on DEFAULT_ASSUMED (parent attack 2 / ERROR 17 class).
         rate_label = "RATE_UNSCORED"
     else:
         rate_label = "RATE_OK"
 
+    # rate_fail flag: any positive rate-class hard fail (STARVED or RATE_FAIL)
+    rate_fail_any = rate_label in ("RATE_FAIL", "STARVED")
+    # Expose combined reasons for printers when STARVED
+    if rate_label == "STARVED":
+        reasons = list(starve_reasons) + list(integrity_reasons)
+
     return {
         "rate": rate_label,
-        "rate_fail": rate_fail,
+        "rate_fail": rate_fail_any,
+        "starved": bool(rate_label == "STARVED"),
+        "starve_reasons": starve_reasons,
+        "integrity_reasons": integrity_reasons,
+        "delivered_fps": None if delivered_fps is None else round(float(delivered_fps), 4),
+        "delivered_fps_src": delivered_fps_src,
+        "starve_ratio": STARVE_RATIO,
+        "starve_ratio_src": "DEFAULT_ASSUMED",
         # Comparable to expected (= src_fps/cap_fps) only when fps_authoritative:
         "unique_ratio": round(unique_ratio, 4),
         "endpoint_rate": round(endpoint_rate, 4),
@@ -4025,7 +4131,7 @@ def score_burst(
         )
 
     # --- Severity resolution (see module docstring). Positive failure wins. ---
-    # STRUCTURE > COLOR > RATE > FREEZE > MOTION_OK > UNSCORED.
+    # STRUCTURE > COLOR > STARVED > RATE_FAIL > FREEZE > MOTION_OK > UNSCORED.
     # Measured failures never collapse to rc=77, even when motion is UNSCORED.
     if structure_fail:
         final, rc = "STRUCTURE_FAIL", RC_STRUCTURE_FAIL
@@ -4040,6 +4146,23 @@ def score_burst(
             f"color={color} frames={len(color_hits)}>={GREEN_CAST_MIN_FRAMES} "
             f"green={len(green_hits)} chroma_spread={len(chroma_hits)} "
             f"(hard FAIL independent of motion={motion} rate={rate_label}); {reason}"
+        )
+    elif rate_fail and rate_label == "STARVED":
+        final, rc = "STARVED", RC_STARVED
+        exp_v = rate_info.get("expected_ratio")
+        exp_s = (
+            _tag(exp_v, rate_info.get("expected_ratio_src") or "derived_src_over_cap")
+            if exp_v is not None
+            else "UNSCORED [UNSCORED_fps_not_authoritative]"
+        )
+        reason = (
+            f"STARVED delivered_fps={_tag(rate_info.get('delivered_fps'), rate_info.get('delivered_fps_src'))} "
+            f"unique_ratio={_tag(rate_info.get('unique_ratio'), PROVENANCE_MEASURED)} "
+            f"endpoint_rate={_tag(rate_info.get('endpoint_rate'), PROVENANCE_MEASURED)} "
+            f"expected={exp_s} "
+            f"starve_ratio={_tag(rate_info.get('starve_ratio'), rate_info.get('starve_ratio_src'))} "
+            f"reasons={rate_info.get('starve_reasons')} "
+            f"(hard FAIL — advances but << source; not FREEZE); {reason}"
         )
     elif rate_fail:
         final, rc = "RATE_FAIL", RC_RATE_FAIL
@@ -4102,6 +4225,13 @@ def score_burst(
         "color": color,
         "structure": structure,
         "rate": rate_label,
+        "starved": bool(rate_info.get("starved")),
+        "starve_reasons": rate_info.get("starve_reasons"),
+        "integrity_reasons": rate_info.get("integrity_reasons"),
+        "delivered_fps": rate_info.get("delivered_fps"),
+        "delivered_fps_src": rate_info.get("delivered_fps_src"),
+        "starve_ratio": rate_info.get("starve_ratio"),
+        "starve_ratio_src": rate_info.get("starve_ratio_src"),
         "unique_ratio": rate_info.get("unique_ratio"),
         "endpoint_rate": rate_info.get("endpoint_rate"),
         "span_rate": rate_info.get("span_rate"),  # alias of endpoint_rate
@@ -4233,7 +4363,7 @@ def _apply_strict_fps(
         return report
     rc = int(report.get("rc") or RC_UNSCORED)
     # Preserve positively measured failures (never decay fail → 77).
-    if rc in (RC_STRUCTURE_FAIL, RC_COLOR_FAIL, RC_RATE_FAIL, RC_FREEZE):
+    if rc in (RC_STRUCTURE_FAIL, RC_COLOR_FAIL, RC_STARVED, RC_RATE_FAIL, RC_FREEZE):
         report["strict_fps_note"] = (
             "strict_fps: fps DEFAULT_ASSUMED but measured hard-fail rc="
             f"{rc} preserved (fail never decays to 77)"
@@ -4332,6 +4462,18 @@ def _print_human(report: dict[str, Any], src: str) -> None:
         notes = report.get("rate_notes") or []
         if notes:
             print(f"rate_notes={' | '.join(str(n) for n in notes)}")
+        if report.get("starved") or report.get("rate") == "STARVED":
+            print(
+                f"starved=True "
+                f"delivered_fps={_tag(report.get('delivered_fps'), report.get('delivered_fps_src'))} "
+                f"starve_ratio={_tag(report.get('starve_ratio'), report.get('starve_ratio_src'))} "
+                f"starve_reasons={report.get('starve_reasons')}"
+            )
+        elif report.get("delivered_fps") is not None:
+            print(
+                f"delivered_fps={_tag(report.get('delivered_fps'), report.get('delivered_fps_src'))} "
+                f"starve_ratio={_tag(report.get('starve_ratio'), report.get('starve_ratio_src'))}"
+            )
     # Display-level skip measurement (pixels only; not daemon drops/av_drift).
     if report.get("skip_status") is not None or report.get("frames_lost_adj") is not None:
         print(
@@ -5061,7 +5203,7 @@ def _self_test() -> int:
     assert PROVENANCE_CALLER == "caller_supplied", PROVENANCE_CALLER
 
     # ERROR 17 RED/GREEN: half-rate under DEFAULT_ASSUMED must NOT RATE_OK
-    # (wrong score). With caller fps it must RATE_FAIL (hard measured fail).
+    # (wrong score). With caller fps it must STARVED (slow advance, not FREEZE).
     half = []
     n = 1000
     for i in range(120):
@@ -5078,6 +5220,7 @@ def _self_test() -> int:
     )
     assert ri_red["rate"] == "RATE_UNSCORED", ri_red
     assert ri_red["rate_fail"] is False, ri_red  # refuse, not wrong RATE_OK/FAIL
+    assert ri_red.get("starved") is not True, ri_red
     ri_grn = analyze_counter_rate(
         half,
         source_fps=24.0,
@@ -5085,8 +5228,13 @@ def _self_test() -> int:
         source_fps_src=PROVENANCE_CALLER,
         capture_fps_src=PROVENANCE_CALLER,
     )
-    assert ri_grn["rate"] == "RATE_FAIL", ri_grn
+    assert ri_grn["rate"] == "STARVED", ri_grn
     assert ri_grn["rate_fail"] is True, ri_grn
+    assert ri_grn.get("starved") is True, ri_grn
+    # strict_fps preserves STARVED (never decay fail → 77)
+    fake_st = {"rc": RC_STARVED, "verdict": "STARVED", "reason": "slow", "rate": "STARVED"}
+    out_st = _apply_strict_fps(fake_st, True, PROVENANCE_DEFAULT_ASSUMED, PROVENANCE_DEFAULT_ASSUMED)
+    assert out_st["rc"] == RC_STARVED, out_st
     # --strict-fps preserves STRUCTURE hard-fail (never decay to 77)
     fake_fail = {"rc": RC_STRUCTURE_FAIL, "verdict": "STRUCTURE_FAIL", "reason": "x", "rate": "RATE_UNSCORED"}
     out_f = _apply_strict_fps(fake_fail, True, PROVENANCE_DEFAULT_ASSUMED, PROVENANCE_DEFAULT_ASSUMED)
@@ -5164,6 +5312,84 @@ def _self_test() -> int:
     assert _tag(23.976, PROVENANCE_DEFAULT_ASSUMED).endswith("[DEFAULT_ASSUMED]")
     assert "[measured]" in _tag(24.0, PROVENANCE_MEASURED)
 
+    
+    # --- STARVED vs FREEZE vs RATE_OK (pixel rate class) ---
+    # Healthy 24@30: n advances every capture on average 0.8
+    healthy_pairs = [(i, int(i * 0.8)) for i in range(0, 60)]
+    # force unique plateaus of 1-2
+    healthy_pairs = []
+    n = 100
+    for i in range(60):
+        healthy_pairs.append((i, n))
+        if i % 5 != 4:  # 4 of 5 advance → ratio 0.8
+            n += 1
+    rr_ok = analyze_counter_rate(
+        healthy_pairs,
+        source_fps=24.0,
+        capture_fps=30.0,
+        source_fps_src=PROVENANCE_CALLER_MEASURED,
+        capture_fps_src=PROVENANCE_MEASURED,
+    )
+    assert rr_ok["rate"] == "RATE_OK", rr_ok
+    assert rr_ok.get("starved") is False, rr_ok
+
+    # STARVED ~0.47× realtime: advance ~11/30 per capture ≈ 0.37 endpoint
+    starved_pairs = []
+    n = 200
+    for i in range(90):
+        starved_pairs.append((i, n))
+        if i % 3 == 2:  # advance 1 per 3 captures → unique_ratio≈0.33, deliv≈10 fps
+            n += 1
+    rr_st = analyze_counter_rate(
+        starved_pairs,
+        source_fps=24.0,
+        capture_fps=30.0,
+        source_fps_src=PROVENANCE_CALLER_MEASURED,
+        capture_fps_src=PROVENANCE_MEASURED,
+    )
+    assert rr_st["rate"] == "STARVED", rr_st
+    assert rr_st.get("starved") is True, rr_st
+    assert rr_st["rate_fail"] is True, rr_st
+
+    # FREEZE path: rate analysis sees plateau but motion layer owns FREEZE;
+    # analyze_counter_rate alone: unique_ratio tiny + endpoint 0 → STARVED or reasons
+    freeze_pairs = [(i, 50) for i in range(40)]
+    rr_fr = analyze_counter_rate(
+        freeze_pairs,
+        source_fps=24.0,
+        capture_fps=30.0,
+        source_fps_src=PROVENANCE_CALLER_MEASURED,
+        capture_fps_src=PROVENANCE_MEASURED,
+    )
+    # pinned counter → no advance → STARVED cleared; integrity may RATE_FAIL;
+    # motion FREEZE wins over rate in score_burst.
+    assert rr_fr.get("starved") is not True, rr_fr
+    assert rr_fr["rate"] in ("RATE_FAIL", "RATE_OK", "RATE_UNSCORED"), rr_fr
+
+    # DEFAULT_ASSUMED fps → never STARVED hard-fail on the guess
+    rr_u = analyze_counter_rate(
+        starved_pairs,
+        source_fps=24.0,
+        capture_fps=30.0,
+        source_fps_src=PROVENANCE_DEFAULT_ASSUMED,
+        capture_fps_src=PROVENANCE_DEFAULT_ASSUMED,
+    )
+    assert rr_u["rate"] == "RATE_UNSCORED", rr_u
+    assert rr_u.get("starved") is not True, rr_u
+
+    # Revisit integrity → RATE_FAIL not STARVED
+    rev_pairs = [(0, 10), (1, 11), (2, 10), (3, 11), (4, 12), (5, 10),
+                 (6, 13), (7, 14), (8, 15), (9, 16), (10, 17), (11, 18)]
+    rr_rv = analyze_counter_rate(
+        rev_pairs,
+        source_fps=24.0,
+        capture_fps=30.0,
+        source_fps_src=PROVENANCE_CALLER_MEASURED,
+        capture_fps_src=PROVENANCE_MEASURED,
+    )
+    assert rr_rv["revisit_fail"] is True, rr_rv
+    assert rr_rv["rate"] == "RATE_FAIL", rr_rv
+
     print("SELF_TEST_OK")
     return 0
 
@@ -5237,6 +5463,23 @@ def main(argv: list[str] | None = None) -> int:
             "HDMI grabber capture rate for the burst (float or '30/1'). "
             "If omitted, try --capture-wall-s measurement, then PNG mtimes, "
             f"then DEFAULT_ASSUMED={DEFAULT_ASSUMED_CAPTURE_FPS}."
+        ),
+    )
+    ap.add_argument(
+        "--capture-fps-src",
+        dest="capture_fps_src",
+        choices=(
+            PROVENANCE_CALLER,
+            PROVENANCE_CALLER_MEASURED,
+            PROVENANCE_DEFAULT_ASSUMED,
+            PROVENANCE_MEASURED,
+            PROVENANCE_CONTAINER,
+        ),
+        default=None,
+        help=(
+            "provenance for --capture-fps. Use measured when from v4l2/pts mean "
+            "interval; caller_supplied_measured when from a trusted lab meter. "
+            "Default: caller_supplied if --capture-fps given."
         ),
     )
     ap.add_argument(
@@ -5384,7 +5627,11 @@ def main(argv: list[str] | None = None) -> int:
         cap_measure_meta: dict[str, Any] | None = None
         if cap_parsed is not None:
             capture_fps = cap_parsed
-            capture_fps_src = PROVENANCE_CALLER
+            capture_fps_src = (
+                args.capture_fps_src
+                if args.capture_fps_src is not None
+                else PROVENANCE_CALLER
+            )
         else:
             capture_fps = DEFAULT_ASSUMED_CAPTURE_FPS
             capture_fps_src = PROVENANCE_DEFAULT_ASSUMED
@@ -5560,7 +5807,11 @@ def main(argv: list[str] | None = None) -> int:
     cap_measure_meta: dict[str, Any] | None = None
     if cap_parsed is not None:
         capture_fps = cap_parsed
-        capture_fps_src = PROVENANCE_CALLER
+        capture_fps_src = (
+            args.capture_fps_src
+            if args.capture_fps_src is not None
+            else PROVENANCE_CALLER
+        )
     else:
         capture_fps = DEFAULT_ASSUMED_CAPTURE_FPS
         capture_fps_src = PROVENANCE_DEFAULT_ASSUMED
