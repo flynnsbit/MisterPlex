@@ -336,7 +336,13 @@ fi
 
 mkdir -p "$OUT_DIR"
 # Extract as misterplex-<version>/ rather than leaking the staging directory name.
+# Force uid/gid 0 in the archive. /media/fat is exfat (no UNIX ownership);
+# a tarball built as lab uid 1000 makes plain `tar xzf` fail with
+# "Cannot change ownership to uid 1000" (true rc=2) on the only supported
+# target even when every payload byte is correct. Parent-measured on device
+# 2026-08-02: --owner=0 --group=0 --numeric-owner → plain tar xzf true rc=0.
 tar -C "$STAGE/.." --transform="s|^$(basename "$STAGE")|misterplex-${VERSION}|" \
+  --owner=0 --group=0 --numeric-owner \
   -czf "$TAR" "$(basename "$STAGE")"
 ls -la "$TAR"
 echo "Packaged → $TAR"
