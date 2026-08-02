@@ -109,6 +109,11 @@ const { assertDeviceIdleP4 } = require('./device_idle');
 const { createStateMarker } = require('./state_mark');
 const { createP7Window } = require('./p7_cast_window');
 const {
+  classifyDetailsTimeout,
+  classifyPlayMissingAfterCast,
+  classifyNLoopAggregate,
+} = require('./race_taxonomy');
+const {
   EXIT_PASS,
   EXIT_FAIL,
   EXIT_INSUFFICIENT_EVIDENCE,
@@ -631,6 +636,26 @@ async function dismissUserPicker(page, preferred) {
   return { shown: true, picked: null, still_on_picker: true, names, how };
 }
 
+async function pageSpinnerVisible(page) {
+  const sels = [
+    '[class*="Spinner"]',
+    '[class*="spinner"]',
+    '[class*="Loading"]',
+    '[class*="loadingCircle"]',
+    '[role="progressbar"]',
+    '[aria-busy="true"]',
+  ];
+  for (const sel of sels) {
+    try {
+      const el = page.locator(sel).first();
+      if (await el.isVisible().catch(() => false)) return { visible: true, sel };
+    } catch (_) {
+      /* next */
+    }
+  }
+  return { visible: false, sel: null };
+}
+
 async function waitForSelectPlayerControl(page, maxMs = 60000) {
   const deadline = Date.now() + maxMs;
   // Parent-measured primary control: a[aria-label="Select Player"] — NOT "Cast".
@@ -639,18 +664,30 @@ async function waitForSelectPlayerControl(page, maxMs = 60000) {
     'button[aria-label="Select Player"]',
     '[aria-label="Select Player"]',
   ];
+  let lastSpinner = null;
+  let lastBody = '';
   while (Date.now() < deadline) {
     const t = await pageBodyText(page, 400);
+    lastBody = t;
     if (/select user/i.test(t) && parseProfileNames(t).length > 0) return { kind: 'user_picker' };
+    const sp = await pageSpinnerVisible(page);
+    if (sp.visible) lastSpinner = sp.sel;
     for (const sel of selectors) {
       try {
         const el = page.locator(sel).first();
         if (await el.isVisible().catch(() => false)) return { kind: 'ok', sel, el };
       } catch (_) {}
     }
-    await page.waitForTimeout(1000);
+    await page.waitForTimeout(400);
   }
-  return { kind: 'timeout' };
+  return {
+    kind: 'timeout',
+    reason: lastSpinner || /loading/i.test(lastBody)
+      ? 'select_player_blocked_by_spinner'
+      : 'select_player_control_not_found',
+    spinner: lastSpinner,
+    body_sample: lastBody.slice(0, 200),
+  };
 }
 
 async function handleResumeDialog(page) {
@@ -1112,7 +1149,10 @@ const PLAY_SELECTORS = [
  * Deterministic signals (any path):
  *   1. item title text visible
  *   2. a Play control from PLAY_SELECTORS visible
- * Fail distinct: details_never_rendered (timeout) vs later play_button_not_found.
+ *   3. spinner/progressbar gone (or title+play despite chrome)
+ * Fail distinct (race_taxonomy):
+ *   details_spinner_stuck | details_never_rendered | details_ready_title_only
+ *   vs later play_button_not_found (only when details actually painted).
  */
 async function waitForDetailsReady(page, itemTitle, maxMs = 90000) {
   const title = String(itemTitle || '').trim();
@@ -1120,8 +1160,16 @@ async function waitForDetailsReady(page, itemTitle, maxMs = 90000) {
   let lastBody = '';
   let sawTitle = false;
   let playSel = null;
+  let lastSpinnerSel = null;
+  let sawSpinnerDuringWait = false;
 
   while (Date.now() < deadline) {
+    const sp = await pageSpinnerVisible(page);
+    if (sp.visible) {
+      sawSpinnerDuringWait = true;
+      lastSpinnerSel = sp.sel;
+    }
+
     // Title — prefer exact, then substring (PMS titles often include year).
     if (title) {
       const exact = page.getByText(title, { exact: true }).first();
@@ -1140,10 +1188,16 @@ async function waitForDetailsReady(page, itemTitle, maxMs = 90000) {
       }
     }
 
+    playSel = null;
     for (const sel of PLAY_SELECTORS) {
       try {
         const el = page.locator(sel).first();
         if (await el.isVisible().catch(() => false)) {
+          // Prefer enabled Play — disabled during load is not ready.
+          if (!(await el.isEnabled().catch(() => true))) {
+            log(`details_play_disabled selector=${sel}`);
+            continue;
+          }
           playSel = sel;
           break;
         }
@@ -1153,35 +1207,50 @@ async function waitForDetailsReady(page, itemTitle, maxMs = 90000) {
     }
 
     lastBody = await pageBodyText(page, 500);
+    const lineCount = lastBody.split('\n').filter(Boolean).length;
+    const loadingText = /loading/i.test(lastBody);
     const spinnerOnly =
-      /loading/i.test(lastBody) &&
-      !sawTitle &&
-      !playSel &&
-      lastBody.split('\n').filter(Boolean).length < 12;
+      (sp.visible || loadingText) && !sawTitle && !playSel && lineCount < 12;
 
-    if (sawTitle && playSel) {
-      log(`details_ready title=1 play_selector=${playSel}`);
-      return { ok: true, playSel, sawTitle: true };
+    // Hard ready: title + enabled Play, and not spinner-only shell.
+    if (sawTitle && playSel && !spinnerOnly) {
+      log(
+        `details_ready title=1 play_selector=${playSel} ` +
+          `spinner_was=${sawSpinnerDuringWait ? 1 : 0} spinner_now=${sp.visible ? lastSpinnerSel || 1 : 0}`
+      );
+      return { ok: true, playSel, sawTitle: true, spinnerWas: sawSpinnerDuringWait };
     }
-    // Title alone is enough to leave "never rendered"; Play may appear after cast select.
-    if (sawTitle && !spinnerOnly) {
-      // Prefer also seeing duration/metadata chrome common on preplay
+    // Title + metadata chrome, spinner gone — Play may appear after cast select.
+    if (sawTitle && !sp.visible && !spinnerOnly) {
       if (/play|video|audio|subtitle|duration|\d+\s*min|\d+:\d+/i.test(lastBody) || playSel) {
-        log(`details_ready title=1 play_selector=${playSel || '(none-yet)'} body_hint=metadata`);
-        return { ok: true, playSel, sawTitle: true };
+        log(
+          `details_ready title=1 play_selector=${playSel || '(none-yet)'} body_hint=metadata ` +
+            `spinner_was=${sawSpinnerDuringWait ? 1 : 0}`
+        );
+        return { ok: true, playSel, sawTitle: true, spinnerWas: sawSpinnerDuringWait };
       }
     }
 
     await page.waitForTimeout(400);
   }
 
-  await shot(page, 'fail_details_never_rendered');
+  const lineCount = lastBody.split('\n').filter(Boolean).length;
+  const spFinal = await pageSpinnerVisible(page);
+  const cls = classifyDetailsTimeout({
+    sawTitle,
+    playSel,
+    spinnerVisible: spFinal.visible || !!lastSpinnerSel,
+    bodyLineCount: lineCount,
+    loadingText: /loading/i.test(lastBody),
+    maxMs,
+  });
+  await shot(page, `fail_${cls.reason}`);
   fail(
-    'details_never_rendered',
-    `Item details did not finish rendering within ${maxMs}ms.\n` +
-      `expected_title=${JSON.stringify(title)} sawTitle=${sawTitle} playSel=${playSel || '(none)'}\n` +
-      `body_sample=${JSON.stringify(lastBody.slice(0, 240))}\n` +
-      'This is a page-load race, not a missing Play selector — fix wait conditions, not product.'
+    cls.reason,
+    `${cls.detail}\n` +
+      `expected_title=${JSON.stringify(title)} sawTitle=${sawTitle} playSel=${playSel || '(none)'} ` +
+      `spinner=${spFinal.sel || lastSpinnerSel || 'none'}\n` +
+      `body_sample=${JSON.stringify(lastBody.slice(0, 240))}`
   );
 }
 
@@ -4198,6 +4267,7 @@ async function runTransitionScenarios(
   const passed = results.filter((r) => r.ok).length;
   const failed = failures.length;
   const hdmiOk = results.filter((r) => r.ok && r.hdmi && r.hdmi.enabled && !r.hdmi.skipped).length;
+  const agg = classifyNLoopAggregate({ planned: total, results });
 
   // Per-cycle table (always full planned N when continue_on_fail).
   // "9/10 passed" is NOT a pass — each FAIL line names cycle + transition + reason.
@@ -4219,7 +4289,7 @@ async function runTransitionScenarios(
     `TRANSITIONS_SUMMARY planned=${total} attempted=${results.length} pass=${passed} fail=${failed} ` +
       `hdmi_scored=${hdmiOk} shortened=${results.length < total ? 1 : 0} ` +
       `daemon_pid=${baselineDaemonPid > 0 ? baselineDaemonPid : 'NA'} ` +
-      `majority_pass_is_pass=0`
+      `majority_pass_is_pass=0 aggregate_ok=${agg.ok ? 1 : 0}`
   );
   // Per-cycle distribution (S6) — never collapse to majority-only.
   for (const r of results) {
@@ -4242,16 +4312,17 @@ async function runTransitionScenarios(
   log(
     `TRANSITION_DISTRIBUTION pass=${passed} fail=${failed} rate_fail=${
       total > 0 ? (failed / total).toFixed(3) : 'NA'
-    } pass_eq_N=${passed === total && failed === 0 ? 1 : 0}`
+    } pass_eq_N=${passed === total && failed === 0 ? 1 : 0} ` +
+      `majority_would_have_passed_wrongly=${agg.majority_would_have_passed_wrongly ? 1 : 0}`
   );
 
-  if (failed > 0 || passed !== total || results.length !== total) {
+  if (!agg.ok || failed > 0 || passed !== total || results.length !== total) {
     const first = failures[0];
     const named = first
       ? `first_fail cycle=${first.cycle} transition=${first.transition} reason=${first.reason}`
-      : `attempted=${results.length} planned=${total}`;
+      : agg.detail || `attempted=${results.length} planned=${total}`;
     fail(
-      first ? first.fullReason || first.reason : 'transitions_incomplete',
+      first ? first.fullReason || first.reason : agg.reason || 'transitions_incomplete',
       `TRANSITIONS aggregate RED: pass=${passed}/${total} fail=${failed} ` +
         `(majority is NOT a pass). ${named}\n` +
         failures
@@ -4691,25 +4762,34 @@ async function runTransitionScenarios(
       tracker.resetDiscovery();
 
       let opened = null;
+      let selectRetry = null;
       if (ctl.kind === 'ok') {
         log(`select_player_control selector=${ctl.sel}`);
         await ctl.el.click({ timeout: 5000 });
         opened = ctl.sel;
       } else {
-        const again = await waitForSelectPlayerControl(page, 15000);
-        if (again.kind === 'ok') {
-          log(`select_player_control selector=${again.sel}`);
-          await again.el.click({ timeout: 5000 });
-          opened = again.sel;
+        selectRetry = await waitForSelectPlayerControl(page, 15000);
+        if (selectRetry.kind === 'ok') {
+          log(`select_player_control selector=${selectRetry.sel}`);
+          await selectRetry.el.click({ timeout: 5000 });
+          opened = selectRetry.sel;
         }
       }
       if (!opened) {
-        await shot(page, `fail_no_select_player_control_${tier.name}`);
-        const body = await pageBodyText(page, 400);
+        const why =
+          (selectRetry && selectRetry.reason) ||
+          (ctl && ctl.reason) ||
+          'select_player_control_not_found';
+        await shot(page, `fail_${why}_${tier.name}`);
+        const body =
+          (selectRetry && selectRetry.body_sample) ||
+          (ctl && ctl.body_sample) ||
+          (await pageBodyText(page, 400));
         fail(
-          'select_player_control_not_found',
+          why,
           'Could not find Select Player control (a[aria-label="Select Player"] / button[aria-label=...]) on the details page. ' +
-            `body_sample=${JSON.stringify(body.slice(0, 200))}`
+            `spinner=${(selectRetry && selectRetry.spinner) || (ctl && ctl.spinner) || 'none'} ` +
+            `body_sample=${JSON.stringify(String(body).slice(0, 200))}`
         );
       }
 
@@ -4772,23 +4852,22 @@ async function runTransitionScenarios(
       }
       const played = await clickPlay(page, afterCast.playSel || detailsReady.playSel);
       if (!played) {
-        await shot(page, `fail_no_play_button_${tier.name}`);
         const body = await pageBodyText(page, 400);
-        const stillLoading =
-          !afterCast.sawTitle ||
-          (/loading/i.test(body) && !/play/i.test(body)) ||
-          body.split('\n').filter(Boolean).length < 12;
-        if (stillLoading) {
-          fail(
-            'details_never_rendered',
-            'After selecting MiSTerPlex, item details were not ready for Play.\n' +
-              `body_sample=${JSON.stringify(body.slice(0, 240))}`
-          );
-        }
+        const sp = await pageSpinnerVisible(page);
+        const cls = classifyPlayMissingAfterCast({
+          sawTitle: !!(afterCast && afterCast.sawTitle),
+          playSel: null,
+          spinnerVisible: sp.visible,
+          loadingText: /loading/i.test(body),
+          bodyLineCount: body.split('\n').filter(Boolean).length,
+        });
+        await shot(page, `fail_${cls.reason}_${tier.name}`);
         fail(
-          'play_button_not_found',
-          'Details rendered and MiSTerPlex was selected, but no Play control matched ' +
-            `PLAY_SELECTORS=[${PLAY_SELECTORS.join(', ')}]. body_sample=${JSON.stringify(body.slice(0, 200))}`
+          cls.reason,
+          `${cls.detail}\n` +
+            `spinner=${sp.sel || 'none'} ` +
+            `PLAY_SELECTORS=[${PLAY_SELECTORS.join(', ')}] ` +
+            `body_sample=${JSON.stringify(body.slice(0, 240))}`
         );
       }
       log(`play_clicked selector=${played}`);

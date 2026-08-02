@@ -31,6 +31,7 @@ const {
   RESULT_INSUFFICIENT_EVIDENCE,
   selfCheck: evidenceSelfCheck,
 } = require('./evidence_codes');
+const raceTaxonomy = require('./race_taxonomy');
 /** @deprecated name — value is 78 */
 const EXIT_UNVERIFIED = EXIT_INSUFFICIENT_EVIDENCE;
 
@@ -107,6 +108,7 @@ async function main() {
   log('  P10 measured_delivery: 624x480/624x480→624x350 class=pms_ceiling_desync;');
   log('      expect=library FAIL; basis=library forbidden; desync_risk=1 FAIL');
   log('  P11 evidence_codes: rc 0/1/78/79/77 disjoint; COVERAGE VERIFY_CONTROL_NOT_QUALITY');
+  log('  P12 race_taxonomy: spinner≠play_button_not_found; 9/10 N-loop FAIL (no majority pass)');
 
   let proofsOk = 0;
   let proofsFail = 0;
@@ -174,6 +176,19 @@ async function main() {
     proofsOk++;
   } catch (e) {
     log(`PROOF P11 FAIL evidence_codes: ${e.message || e}`);
+    proofsFail++;
+  }
+
+  // ── P12: details race taxonomy + S6 N-loop majority-is-not-pass ────────
+  try {
+    const r = raceTaxonomy.selfCheck();
+    log(
+      `PROOF P12 OK race_taxonomy (${(r.cases || []).join(',')}) — ` +
+        'spinner→details_spinner_stuck; post-cast load≠play_button_not_found; 9/10 RED'
+    );
+    proofsOk++;
+  } catch (e) {
+    log(`PROOF P12 FAIL race_taxonomy: ${e.message || e}`);
     proofsFail++;
   }
 
