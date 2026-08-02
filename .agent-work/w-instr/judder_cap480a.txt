@@ -1,0 +1,11 @@
+label=cap480a_broken
+PRE_REGISTER ideal_hold=1.25 [derived_cap_over_src] healthy_mass={1,2} outlier_min=4 [DEFAULT_ASSUMED] frac_ge_outlier_fail=0.05 [DEFAULT_ASSUMED] outlier_count_fail=3 [DEFAULT_ASSUMED] max_hold_fail=5 [DEFAULT_ASSUMED] src_fps=24 [caller_supplied_measured] cap_fps=30 [caller_supplied] fps_authoritative=True
+PRE_REGISTER_PASS_if=fps_authoritative AND n_holds>=15 AND outlier_count < 3 AND frac_ge_outlier < 0.05 AND max_hold < 5
+PRE_REGISTER_FAIL_if=outlier_count>=3 OR frac_ge_outlier>=0.05 OR max_hold>=5
+noise_floor p50=0 [measured] p99=0 [measured] threshold=2 [derived_hold_pair_noise] rule=max(2.0[DEFAULT_ASSUMED], 6.0[DEFAULT_ASSUMED]*noise_p99[measured_hold_pairs]) all_p50=0 [measured] all_p99=204.857 [measured] all_max=222.715 [measured]
+pairs=74 [measured] changes=21 [measured] change_frac=0.2838 [measured] mean_luma_med=75.0908 [measured] frames_scored=75 [measured] warmup_skip=15 [DEFAULT_ASSUMED]
+hold_hist={'2': 2, '3': 10, '4': 9, '5': 1} n_holds=22 [measured] p50=3 [measured] p95=4 [measured] p99=4.79 [measured] max=5 [measured] mean=3.40909 [measured] NOTE=hold_mean is informational only; verdict uses hist tail (p95/p99/max/outlier_count). mean-only is forbidden.
+outliers count=10 [measured] frac=0.4545 [measured] min_hold_for_outlier=4 [DEFAULT_ASSUMED] outlier_holds_head=[4, 4, 4, 4, 4, 4, 5, 4, 4, 4]
+reason=outlier_count=10 [measured] >= 3 [DEFAULT_ASSUMED] (hold>=4); frac_ge_outlier=0.4545 [measured] >= 0.05 [DEFAULT_ASSUMED]; max_hold=5 [measured] >= 5 [DEFAULT_ASSUMED]
+VERDICT=JUDDER_FAIL rc=2
+cap480a true rc=2

@@ -1,0 +1,14 @@
+load_luma_series type <class 'tuple'> len 4
+0 <class 'list'> 75
+1 <class 'list'> 75
+2 <class 'list'> 75
+3 <class 'dict'> ['warmup_skipped', 'load_errors']
+grabber_noise_char capture=/tmp/cap480b warmup_skip=15
+n_pairs=74 [measured]
+n_hold_like_pairs=15 [measured]
+noise_p50=0.0 [measured] noise_p99=0.0 [measured] noise_sample=hold_pairs_le_abs_floor
+threshold=2.0 [derived_hold_pair_noise]
+all_block_max_p50=16.8207 p99=248.0275 max=248.0275 [measured]
+INTERPRETATION: true-hold pairs have block_max_mad p99=0 on MS2109 TREK24 capture;
+content changes sit ~all_p50 and flash ~248. Grabber does not inject measurable hold MAD noise.
+Cadence irregularity on these fixtures is not attributable to grabber noise floor at this metric.
