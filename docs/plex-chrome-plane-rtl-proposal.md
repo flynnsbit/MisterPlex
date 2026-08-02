@@ -375,3 +375,9 @@ See **`docs/plex-chrome-glass-criterion.md`**. Pre-reg 1080p: fabric `#` **32×3
 - `ddr_frame_store.sv:27` / `mailbox_abi_spec.hpp` doorbell-relative  
 - r-misterfin: no userspace applied-HDMI read API  
 - Host gap: `bank_cellH=32` vs `hdmi1080_cellH=64`
+
+## chromePlaneHw_ probe status (2026-08-02)
+
+- `setChromePlaneHwPresent` has **no call site** that sets true (`main.cpp` leaves HW false).
+- `plex_chrome.sv` **absent from `files.qip`** → not in shipping RBF → `chrome_hw` never asserted.
+- Enabling plane=1 is a **bitstream + ARM PLXO read** change, not conf-only.

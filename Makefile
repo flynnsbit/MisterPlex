@@ -464,6 +464,11 @@ $(ROOT)/build/test_overlay_layout_fit: $(ROOT)/tests/unit/test_overlay_layout_fi
 		$(ROOT)/host/libmisterplex/playback_overlay.hpp
 	$(CXX) $(CXXFLAGS) -o $@ $(ROOT)/tests/unit/test_overlay_layout_fit.cpp
 
+$(ROOT)/build/dump_overlay_png: $(ROOT)/tools/dump_overlay_png.cpp \
+	$(ROOT)/host/libmisterplex/playback_overlay.hpp \
+	$(ROOT)/host/libmisterplex/idle_screen.hpp
+	$(CXX) $(CXXFLAGS) -o $@ $(ROOT)/tools/dump_overlay_png.cpp -lz
+
 $(ROOT)/build/test_overlay_source_stroke_hist: $(ROOT)/tests/unit/test_overlay_source_stroke_hist.cpp \
 		$(ROOT)/host/libmisterplex/playback_overlay.hpp
 	$(CXX) $(CXXFLAGS) -o $@ $(ROOT)/tests/unit/test_overlay_source_stroke_hist.cpp
