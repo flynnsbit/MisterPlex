@@ -542,7 +542,26 @@ function loadConfig() {
       return Number.isFinite(v) && v >= 0 ? v : 0.5;
     })(),
     // Direct play may yield empty /transcode/sessions — allow unless forced.
+    // Parent: maxVideoBitrate=397 often has NO TranscodeSession (DATA, not collapse).
     pmsTranscodeAllowEmpty: truthy(process.env.E2E_PMS_TRANSCODE_ALLOW_EMPTY, true),
+    // PMS delivery observation (session Media/TS WxH + hasTranscodeSession).
+    // Default on with control plane — observe always; hard-fail only when require/expect set.
+    requirePmsDelivery: truthy(
+      process.env.E2E_REQUIRE_PMS_DELIVERY,
+      truthy(process.env.E2E_REQUIRE_PMS_CONTROL_PLANE, truthy(process.env.E2E_CLIENT_TRUTH, true))
+    ),
+    // When 1, missing delivered_geom is FAIL (not soft).
+    requirePmsDeliveryGeom: truthy(process.env.E2E_REQUIRE_PMS_DELIVERY_GEOM, false),
+    // Optional hard expects for parent bitrate ladder corroboration (env only).
+    pmsExpectDeliveredGeom: String(process.env.E2E_PMS_EXPECT_GEOM || '').trim(),
+    pmsExpectHasTranscode: (() => {
+      const v = process.env.E2E_PMS_EXPECT_HAS_TRANSCODE;
+      if (v === undefined || v === null || v === '') return null;
+      if (/^(1|true|yes|on)$/i.test(String(v))) return true;
+      if (/^(0|false|no|off)$/i.test(String(v))) return false;
+      return null;
+    })(),
+    pmsExpectDecision: String(process.env.E2E_PMS_EXPECT_DECISION || '').trim(),
     // Lean Chromium (workstation CPU-contended; Playwright can perturb playback).
     leanBrowser: truthy(process.env.E2E_LEAN_BROWSER, true),
     // Glass integrity (w-instr counter). Parent provides capture dir; suite never grabs.

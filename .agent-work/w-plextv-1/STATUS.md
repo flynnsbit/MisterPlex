@@ -1,53 +1,47 @@
-# w-plextv — control-plane DoD (HDMI-blind, w-avsync exits)
+# w-plextv — PMS delivery observation (grabber dead)
 
 ## Status
-1. HDMI capture dead — Playwright is the only automated E2E channel.
-2. **QUALITY_POLICY=VERIFY_CONTROL_NOT_QUALITY** — ~25% intermittent degrade; N=1 healthy ≠ quality.
-3. Exit codes aligned with w-avsync: **0 PASS · 1 FAIL · 78 INSUFFICIENT_EVIDENCE · 79 SESSION_INVALID · 77 NO-DATA**.
-4. Soft-skip is never pass. Absence is NO-DATA, never 0.0.
-5. No lab-IP defaults (MISTER_HOST/PLEX_BASE env only).
-6. Pure proofs `true rc=0`. Agent cast E2E ≠ evidence — parent runs device path.
+1. Grabber frozen (byte-identical PNGs) — Playwright + PMS is the E2E channel.
+2. **PMS_DELIVERY** from `/status/sessions`: hasTranscodeSession + delivered_geom (not daemon logs).
+3. Parent ladder encoded: **397→312x240 hasTS=0** · **2000→624x480**.
+4. Suite **can** observe TS presence/decision/WxH across bitrate arms; **cannot** set maxVideoBitrate (daemon conf) or prove pixels.
+5. PASS_SCOPE=control_plane+pms_delivery. Picture claims → never PASS (INSUFFICIENT for glass).
 
-## Pure proofs (agent OK)
-
+## Pure proofs
 ```bash
 cd /home/flynnsbit/Projects/MisterPlex/.worktrees/w-plextv-e2e-form
-node tests/hw/e2e/evidence_codes.js; echo "true rc=$?"
+node tests/hw/e2e/pms_control_plane.js; echo "true rc=$?"
 node tests/hw/e2e/prove_red_paths.js; echo "true rc=$?"
 ```
 
-## Parent E2E (evidence — you run)
-
+## Parent — cast + PMS delivery (device)
 ```bash
 cd /home/flynnsbit/Projects/MisterPlex/.worktrees/w-plextv-e2e-form
-export PLEX_BASE="..."          # local PMS only — not SHIELD, not remote
-export PLEX_TOKEN_FILE="..."
-export MISTER_HOST="..."
-
-./tests/hw/e2e/run_control_plane_dod.sh; echo "true rc=$?"
+export PLEX_BASE="..." PLEX_TOKEN_FILE="..." MISTER_HOST="..."
+# After configuring daemon maxVideoBitrate=397:
+E2E_PMS_EXPECT_GEOM=312x240 E2E_PMS_EXPECT_HAS_TRANSCODE=0 E2E_CLIENT_RATING_KEY=36 \
+  ./tests/hw/e2e/run_pms_delivery_cast.sh; echo "true rc=$?"
+# After maxVideoBitrate=2000:
+E2E_PMS_EXPECT_GEOM=624x480 E2E_CLIENT_RATING_KEY=36 \
+  ./tests/hw/e2e/run_pms_delivery_cast.sh; echo "true rc=$?"
 ```
 
-Optional pin: `E2E_CLIENT_RATING_KEY=3` (240p) or `27` / `9` (480p).
-
-## What each assert catches (must be able to fail)
-
-| id | fails when | rc |
-|----|------------|-----|
-| pms_reachable | web/identity not OK | 78 |
-| mister_in_picker | exact name missing; ghost only | 1 |
-| companion_invariant | primary companion ≠ PMS under test | 1 |
-| session_playing_rk | PMS sessions wrong/missing rk | 1 |
-| pause_reflected | UI still advances / PMS not paused | 1 |
-| stop_gone | our session still on PMS after stop | 1 |
-| ratingKey_stable | rk swap mid-run | 79 |
-| teardown_our_only | our controller left polling | 1 |
-| playback_quality | **OUT OF SCOPE** (default) | — |
-
-## PASS means
-Control plane: browse → cast → session → transitions → stop clean + TEARDOWN_OK.
-**Not** vfps/drops/supply quality. **Not** pixels.
-
-## SHA
+## Parent — observe only while you cast (no Playwright)
 ```bash
-git -C /home/flynnsbit/Projects/MisterPlex/.worktrees/w-plextv-e2e-form rev-parse --short HEAD
+export PLEX_BASE="..." PLEX_TOKEN_FILE="..."
+E2E_OBSERVE_SEC=120 E2E_CLIENT_RATING_KEY=36 \
+  ./tests/hw/e2e/run_pms_session_observe.sh; echo "true rc=$?"
 ```
+
+## What each asserts
+| assert | fails when |
+|--------|------------|
+| picker exact | MiSTer missing / ghost only |
+| companion | wrong primary friendlyName |
+| session playing rk | no/wrong PMS session |
+| PMS_DELIVERY geom | delivered ≠ expect (312x240 vs 624x480) |
+| PMS_DELIVERY hasTS | presence ≠ expect (397→0 is DATA) |
+| pause/stop | PMS state not paused/gone |
+| teardown | our controller left |
+
+**Never:** green = pixels. rc=77/78 never pass.

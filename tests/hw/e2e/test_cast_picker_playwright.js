@@ -93,6 +93,8 @@ const {
   assertSessionPaused,
   assertSessionGone,
   assertTranscodeHealth,
+  assertPmsDeliveryObservation,
+  formatPmsDeliveryLine,
   assertStaleSessionHygiene,
   formatPmsResult,
 } = require('./pms_control_plane');
@@ -2661,6 +2663,39 @@ async function pmsControlGate(mode, tag, cycle, total, expectedRk) {
             tc.count != null ? tc.count : 'NA'
           }`
         );
+        // Independent PMS delivery channel (not daemon ffmpeg log):
+        // hasTranscodeSession + delivered_geom. Parent ladder: 397→312x240 no-TS;
+        // 2000→624x480. Absence of TS is DATA. NEVER pixels.
+        const deliv = assertPmsDeliveryObservation(st, tc, `${tag}_delivery`, {
+          castName: cast,
+          ratingKey: rk,
+          expectGeom: cfg.pmsExpectDeliveredGeom || '',
+          expectHasTranscode:
+            cfg.pmsExpectHasTranscode == null ? null : cfg.pmsExpectHasTranscode,
+          expectDecision: cfg.pmsExpectDecision || '',
+          requireGeom: !!cfg.requirePmsDeliveryGeom,
+        });
+        log(formatPmsDeliveryLine(deliv, `${tag}_delivery`));
+        if (deliv.ok && deliv.report) {
+          log(
+            `PMS_DELIVERY_OBSERVED tag=${tag} delivered=${deliv.report.delivered_geom || 'NO-DATA'} ` +
+              `hasTS=${deliv.report.hasTranscodeSession ? 1 : 0} ` +
+              `decision=${deliv.report.videoDecision || 'NA'} ` +
+              `src=${deliv.report.delivered_source || 'NA'} ` +
+              `tc_count=${deliv.report.transcode_sessions_count} ` +
+              `value_kind=measured_pms NOT_pixels`
+          );
+        }
+        if (!deliv.ok) {
+          if (cfg.requirePmsDelivery) {
+            if (cycle != null) cycleFail(cycle, total, 'pms_delivery', deliv.reason, deliv.detail);
+            else fail(deliv.reason || 'pms_delivery', deliv.detail || '');
+            return deliv;
+          }
+          log(
+            `PMS_DELIVERY_OBSERVE_FAIL tag=${tag} reason=${deliv.reason} — soft when require_pms_delivery=0`
+          );
+        }
         const th = assertTranscodeHealth(tc, `${tag}_tc`, {
           minSpeed: cfg.pmsMinTranscodeSpeed,
           allowEmpty: cfg.pmsTranscodeAllowEmpty,

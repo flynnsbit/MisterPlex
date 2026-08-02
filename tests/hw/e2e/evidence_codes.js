@@ -89,6 +89,20 @@ const ASSERTION_FAIL_CATALOG = [
     result: RESULT_FAIL,
   },
   {
+    id: 'pms_delivery_geom',
+    fail_when:
+      'PMS delivered_geom ≠ E2E_PMS_EXPECT_GEOM (parent ladder 397→312x240, 2000→624x480)',
+    rc: EXIT_FAIL,
+    result: RESULT_FAIL,
+  },
+  {
+    id: 'pms_delivery_transcode_presence',
+    fail_when:
+      'hasTranscodeSession ≠ expect (397 often 0; absence is DATA not NO-DATA)',
+    rc: EXIT_FAIL,
+    result: RESULT_FAIL,
+  },
+  {
     id: 'pause_reflected',
     fail_when: 'UI clock keeps advancing or PMS state not paused after pause',
     rc: EXIT_FAIL,
