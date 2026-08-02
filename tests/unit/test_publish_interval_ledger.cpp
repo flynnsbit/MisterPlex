@@ -185,6 +185,38 @@ int main() {
         std::printf("clean %s\n", L.formatAutocorrLine().c_str());
     }
 
+    // M2 rolling window + 1 Hz fragment (mid-session pair windows).
+    {
+        PublishIntervalLedger L;
+        fill_clean(L, 1500);
+        const auto w = L.rollWindow(1440);
+        EXPECT(w.n == 1440, "roll w60 n=1440 after 1500 clean notes");
+        EXPECT(w.p_ge50 < 0.001, "roll clean p_ge50");
+        EXPECT(std::string(w.disc) == "CLEAN", "roll clean disc");
+        const std::string hz = L.formatHzFragment();
+        std::printf("hz_clean %s\n", hz.c_str());
+        EXPECT(hz.find("pub_iv_p_ge50_w60=") != std::string::npos, "hz has p_ge50_w60");
+        EXPECT(hz.find("pub_iv_disc_w60=CLEAN") != std::string::npos, "hz disc CLEAN");
+    }
+    {
+        PublishIntervalLedger L;
+        fill_late_arrival_10pct(L, 1500);
+        const auto w = L.rollWindow(1440);
+        EXPECT(w.p_ge50 >= 0.05, "roll late_arr p_ge50 elevated");
+        EXPECT(std::string(w.disc) == "LATE_ARRIVAL", "roll late_arr disc");
+        const std::string hz = L.formatHzFragment();
+        std::printf("hz_late %s\n", hz.c_str());
+        EXPECT(hz.find("pub_iv_disc_w60=LATE_ARRIVAL") != std::string::npos, "hz LATE_ARRIVAL");
+    }
+    {
+        // RED: empty ledger fragment is NO-DATA not fake zeros.
+        PublishIntervalLedger L;
+        const std::string hz = L.formatHzFragment();
+        EXPECT(hz.find("pub_iv_n=0") != std::string::npos, "empty n=0");
+        EXPECT(hz.find("NO-DATA") != std::string::npos, "empty NO-DATA");
+        std::printf("hz_empty %s\n", hz.c_str());
+    }
+
     std::printf("FACT tip RTL: frames_done++ on swap; PLXD packs frames_done_d2.\n");
     std::printf("FACT c5382bee packs bank_vsync_count into PLXD[63:48] — skip UNSCORED.\n");
 

@@ -42,7 +42,12 @@ clock=av-lock av_drift_ms=-39 drops=70 fps=24/1 decode=624x480 measured=624x480 
 
 ## Pre-registered mechanisms (predict BEFORE paired capture)
 
-### M1 — PRIMARY — `UNDERPRODUCE_THEN_DROP` (predicted)
+### M1 — RETIRED / FALSIFIED (parent pair 2026-08-01) — `UNDERPRODUCE_THEN_DROP`
+
+**MISS published:** HDMI WANDER with `vfps=23.9` rock-flat and `drops_delta=0` (n=108).  
+M1 predicted `vfps_p50≤20` and `Δdrops≥15`. **Primary is now M2** — see `M2_PUBLISH_INTERVAL_RCA.md`.
+
+### M1 — (historical text kept for the miss record)
 
 1. Intermittent **frame under-production** (`frames/wall < 24`) for reasons **not yet split** (delivery / sched spike / present backpressure — capture decides).
 2. When audible clock pulls ahead of `frameIndex`, `avDecide` returns **Drop** (`av_clock.hpp`: `drift > dropMs && dropRun < maxDropRun`).

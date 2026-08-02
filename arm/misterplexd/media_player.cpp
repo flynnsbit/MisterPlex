@@ -4234,6 +4234,9 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                 // only (%.4f). Decode-side deficit = expected_frames - frames (content
                 // vs wall). Presentation-side loss is a SEPARATE ledger (presents /
                 // glass) — never conflate the two (parent DEFECT 2).
+                // pub_iv_* = rolling publish arrival intervals (pre-to-pre). Required for
+                // mid-session M2 WANDER pairing — session_end alone cannot score 60s windows.
+                // clock=av-lock is a HARDCODED label (not a health bit); lipsync GT is HDMI.
                 log("media: " + frameLedgerTelemetryFragment(led) +
                     " vfps=" + fmtFpsRate(vfps) +
                     " pfps=" + fmtFpsRate(pfps) +
@@ -4243,6 +4246,7 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                     " mono_ms=" + std::to_string(steadyMonoMs()) +
                     " audio=" + (audioActive_.load() ? "on" : "off") +
                     " clock=av-lock" +
+                    " " + pubInterval_.formatHzFragment() +
                     " " + std::string(avServoBuf) +
                     " fps=" + std::to_string(fpsNum) + "/" + std::to_string(fpsDen) +
                     " fps_src=" +

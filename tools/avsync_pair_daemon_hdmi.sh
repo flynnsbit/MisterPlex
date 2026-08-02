@@ -17,7 +17,8 @@
 # Env:
 #   OUT DURATION TOL_MS MIN_PAIRS MARKER_PERIOD_S LABEL
 #   MISTER_HOST MISTER_PASS MISTER_USER
-#   DAEMON_LOG_REMOTE  default /media/fat/misterplex/misterplexd.log
+#   DAEMON_LOG_REMOTE  optional override; default = LIVE proc resolve
+#                      (tools/avsync_live_log_resolve.inc.sh; v2 before v1)
 #   SKIP_SESSION_GATE=1 to skip wait_session
 #   PRESENT_PROFILE already on device if you want present_profile lines (optional)
 set -euo pipefail
@@ -28,15 +29,17 @@ TOL="${TOL_MS:-42}"
 HOST="${MISTER_HOST:-192.168.1.183}"
 PASS="${MISTER_PASS:-1}"
 USER="${MISTER_USER:-root}"
-LOG_REMOTE="${DAEMON_LOG_REMOTE:-/media/fat/misterplex/misterplexd.log}"
+# TWO-ROOTS: never default to stale v1 path. Resolve from LIVE process unless
+# caller sets DAEMON_LOG_REMOTE explicitly.
 LABEL="${LABEL:-pair}"
 mkdir -p "$OUT"
 
 echo "=== avsync_pair_daemon_hdmi ==="
-echo "out=$OUT duration=$DUR host=$HOST log_remote=$LOG_REMOTE"
+echo "out=$OUT duration=$DUR host=$HOST"
 echo "note=does_not_rebuild_avsync_measure_hdmi; wraps lipsync_soak + daemon tail"
-echo "PRE_REG_MECH=UNDERPRODUCE_THEN_DROP primary; PUBLISH_INTERVAL_JITTER secondary"
+echo "PRE_REG_MECH=M1_UNDERPRODUCE_THEN_DROP FALSIFIED_on_parent_pair; M2_PUBLISH_INTERVAL primary"
 echo "PRE_REG_FILE=$ROOT/.agent-work/w-geom/P480_THROUGHPUT_WANDER_PREREG.md"
+echo "M2_FILE=$ROOT/.agent-work/w-geom/M2_PUBLISH_INTERVAL_RCA.md"
 
 # Mark host window (ISO + mono) BEFORE anything else.
 date -Is | tee "$OUT/window_host_start.txt"
@@ -48,19 +51,34 @@ DAEMON_FILT="$OUT/daemon_window.log"
 : >"$DAEMON_RAW"
 : >"$DAEMON_FILT"
 TAIL_PID=""
-if command -v sshpass >/dev/null 2>&1; then
+LOG_REMOTE="${DAEMON_LOG_REMOTE:-}"
+if [[ -z "$LOG_REMOTE" ]]; then
+  # shellcheck disable=SC1091
+  RESOLVE_INC="$(cat "$ROOT/tools/avsync_live_log_resolve.inc.sh")"
+  set +e
+  LOG_REMOTE=$(sshpass -p "$PASS" ssh -o StrictHostKeyChecking=no -o ConnectTimeout=8 \
+    "${USER}@${HOST}" "sh -s" <<REMOTE 2>"$OUT/daemon_log_resolve.err"
+${RESOLVE_INC}
+avsync_resolve_live_log
+echo "\$pick"
+REMOTE
+)
+  set -e
+  LOG_REMOTE=$(printf '%s' "$LOG_REMOTE" | tr -d '\r' | tail -n 1)
+fi
+echo "log_remote=${LOG_REMOTE:-NO-DATA} src=${DAEMON_LOG_REMOTE:+caller_override}${DAEMON_LOG_REMOTE:-live_proc_resolve}"
+
+if command -v sshpass >/dev/null 2>&1 && [[ -n "$LOG_REMOTE" ]]; then
   set +e
   sshpass -p "$PASS" ssh -o StrictHostKeyChecking=no -o ConnectTimeout=8 \
     "${USER}@${HOST}" \
-    "test -f '$LOG_REMOTE' && tail -n 0 -F '$LOG_REMOTE' || \
-     (test -f /media/fat/misterplex_v2/misterplexd.log && tail -n 0 -F /media/fat/misterplex_v2/misterplexd.log) || \
-     (test -f /tmp/misterplexd.log && tail -n 0 -F /tmp/misterplexd.log)" \
+    "tail -n 0 -F '$LOG_REMOTE'" \
     >"$DAEMON_RAW" 2>"$OUT/daemon_tail.err" &
   TAIL_PID=$!
   set -e
-  echo "daemon_tail_pid=$TAIL_PID src=ssh_tail_F"
+  echo "daemon_tail_pid=$TAIL_PID src=ssh_tail_F_live_resolve"
 else
-  echo "daemon_tail=NO-DATA reason=no_sshpass" | tee "$OUT/daemon_tail.err"
+  echo "daemon_tail=NO-DATA reason=no_sshpass_or_empty_log" | tee "$OUT/daemon_tail.err"
 fi
 
 cleanup() {
@@ -79,7 +97,7 @@ trap cleanup EXIT
     # shellcheck disable=SC2002
     tail -n +1 -F "$DAEMON_RAW" 2>/dev/null | \
       grep -E --line-buffered \
-      'media: (frames=|A/V resync drop|present_profile|publish_interval|publish_miss|MEASURED_DELIVERY|PIPE_DESYNC)' \
+      'media: (frames=|A/V resync drop|present_profile|publish_interval|publish_miss|pub_iv_|MEASURED_DELIVERY|PIPE_DESYNC)' \
       >>"$DAEMON_FILT" || true
   fi
 ) &
@@ -111,7 +129,7 @@ trap - EXIT
 
 # If filter empty but raw has media lines, filter offline.
 if [[ ! -s "$DAEMON_FILT" && -s "$DAEMON_RAW" ]]; then
-  grep -E 'media: (frames=|A/V resync drop|present_profile|publish_interval|publish_miss|MEASURED_DELIVERY|PIPE_DESYNC)' \
+  grep -E 'media: (frames=|A/V resync drop|present_profile|publish_interval|publish_miss|pub_iv_|MEASURED_DELIVERY|PIPE_DESYNC)' \
     "$DAEMON_RAW" >"$DAEMON_FILT" || true
 fi
 

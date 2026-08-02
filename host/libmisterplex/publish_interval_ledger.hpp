@@ -69,6 +69,14 @@ struct PublishIntervalLedger {
     std::int64_t write_ge5ms_n = 0;
     std::int64_t write_max_us = 0;
 
+    // Rolling arrival intervals for mid-session 1 Hz pairing (M2 / lipsync WANDER).
+    // 1536 ≈ 64 s @ 24 fps — covers one parent pair window without session_end.
+    static constexpr std::size_t kRollCap = 1536;
+    float roll_iv_ms[kRollCap]{};
+    std::int32_t roll_write_us[kRollCap]{};
+    std::size_t roll_head = 0;
+    std::size_t roll_filled = 0;
+
     void reset() {
         count = head = filled = 0;
         last_pre_us = last_us = -1;
@@ -81,8 +89,11 @@ struct PublishIntervalLedger {
         sum_write_us_late = sum_write_us_ok = 0;
         write_ge1ms_n = write_ge5ms_n = 0;
         write_max_us = 0;
+        roll_head = roll_filled = 0;
         std::memset(pre_us, 0, sizeof(pre_us));
         std::memset(write_us, 0, sizeof(write_us));
+        std::memset(roll_iv_ms, 0, sizeof(roll_iv_ms));
+        std::memset(roll_write_us, 0, sizeof(roll_write_us));
     }
 
     // Backward-compat: single stamp treated as pre=post (write=0). Prefer note(pre,post).
@@ -137,10 +148,113 @@ struct PublishIntervalLedger {
             constexpr double kIdeal = 1000.0 / 24.0;
             if (iv_ms >= (kIdeal - 8.0) && iv_ms <= (kIdeal + 8.0))
                 ++in_band_count;
+            // Rolling window (O(1) push) for mid-session pair windows.
+            roll_iv_ms[roll_head] = static_cast<float>(iv_ms);
+            roll_write_us[roll_head] = static_cast<std::int32_t>(wus > 0x7fffffff ? 0x7fffffff : wus);
+            roll_head = (roll_head + 1) % kRollCap;
+            if (roll_filled < kRollCap)
+                ++roll_filled;
         }
         last_pre_us = pre;
         last_us = pre;
         last_write_us = wus;
+    }
+
+    // Last up-to `want` arrival intervals (most recent). O(want).
+    struct RollWin {
+        std::size_t n = 0;
+        double p_ge50 = 0;
+        double p_ge83 = 0;
+        double p_lt25 = 0;
+        double mean_ms = 0;
+        double max_ms = 0;
+        double mean_write_us = 0;
+        std::int64_t write_max_us = 0;
+        std::int64_t write_ge5ms_n = 0;
+        const char* disc = "NO-DATA"; // LATE_ARRIVAL / LATE_OBSERVATION / CLEAN / MIXED
+    };
+
+    RollWin rollWindow(std::size_t want = 1440) const {
+        RollWin w{};
+        if (roll_filled == 0 || want == 0)
+            return w;
+        const std::size_t n = std::min(want, roll_filled);
+        w.n = n;
+        double sum = 0;
+        double sumw = 0;
+        std::size_t ge50 = 0, ge83 = 0, lt25 = 0, wge5 = 0;
+        std::int64_t wmax = 0;
+        double max_iv = 0;
+        // Chronological: oldest of the window first.
+        const std::size_t start =
+            (roll_filled < kRollCap) ? (roll_filled - n) : ((roll_head + kRollCap - n) % kRollCap);
+        for (std::size_t i = 0; i < n; ++i) {
+            const std::size_t idx =
+                (roll_filled < kRollCap) ? (start + i) : ((start + i) % kRollCap);
+            const double iv = static_cast<double>(roll_iv_ms[idx]);
+            const std::int64_t wu = static_cast<std::int64_t>(roll_write_us[idx]);
+            sum += iv;
+            sumw += static_cast<double>(wu);
+            if (iv > max_iv)
+                max_iv = iv;
+            if (iv > 50.0)
+                ++ge50;
+            if (iv > 83.0)
+                ++ge83;
+            if (iv < 25.0)
+                ++lt25;
+            if (wu > wmax)
+                wmax = wu;
+            if (wu >= 5000)
+                ++wge5;
+        }
+        w.mean_ms = sum / double(n);
+        w.max_ms = max_iv;
+        w.p_ge50 = double(ge50) / double(n);
+        w.p_ge83 = double(ge83) / double(n);
+        w.p_lt25 = double(lt25) / double(n);
+        w.mean_write_us = sumw / double(n);
+        w.write_max_us = wmax;
+        w.write_ge5ms_n = static_cast<std::int64_t>(wge5);
+        const bool arrival_late = w.p_ge50 > 0.03;
+        const bool write_fat = (double(wge5) / double(n) >= 0.05) || (wmax >= 10000);
+        const bool write_flat = (double(wge5) / double(n) < 0.01) && (wmax < 5000);
+        if (arrival_late && write_flat)
+            w.disc = "LATE_ARRIVAL";
+        else if (!arrival_late && write_fat)
+            w.disc = "LATE_OBSERVATION";
+        else if (arrival_late && write_fat)
+            w.disc = "MIXED";
+        else if (!arrival_late && write_flat)
+            w.disc = "CLEAN";
+        else
+            w.disc = "UNSCORED";
+        return w;
+    }
+
+    // Compact 1 Hz fragment for media: frames= lines (mid-session M2 pairing).
+    // pub_iv_p_ge50_w60 = last ~60s @24fps arrival p(iv>50ms); O(window).
+    std::string formatHzFragment() const {
+        const RollWin w60 = rollWindow(1440);
+        const RollWin w5 = rollWindow(120); // ~5 s
+        char buf[384];
+        if (w60.n == 0) {
+            std::snprintf(buf, sizeof(buf),
+                          "pub_iv_n=0 pub_iv_p_ge50_w60=NO-DATA pub_iv_disc_w60=NO-DATA "
+                          "pub_iv_src=roll_window tag=measured");
+            return std::string(buf);
+        }
+        std::snprintf(
+            buf, sizeof(buf),
+            "pub_iv_n=%zu pub_iv_p_ge50_w60=%.4f pub_iv_mean_ms_w60=%.3f pub_iv_max_ms_w60=%.3f "
+            "pub_iv_write_max_us_w60=%lld pub_iv_disc_w60=%s "
+            "pub_iv_p_ge50_w5=%.4f pub_iv_disc_w5=%s "
+            "pub_iv_sess_n=%lld pub_iv_sess_p_ge50=%.4f "
+            "pub_iv_src=roll_window tag=measured",
+            w60.n, w60.p_ge50, w60.mean_ms, w60.max_ms, static_cast<long long>(w60.write_max_us),
+            w60.disc, w5.p_ge50, w5.disc, static_cast<long long>(iv_n),
+            iv_n > 0 ? double(ge50_count) / double(iv_n) : 0.0);
+        return std::string(buf);
     }
 
     static constexpr std::size_t kDropHeadNotes = 48;

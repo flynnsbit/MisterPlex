@@ -22,9 +22,12 @@ from typing import Any
 
 RE_NUM = re.compile(
     r"\b(frames|presents|drops|publish_misses|residual|vfps|pfps|wall_s|"
-    r"av_drift_ms|av_display_offset_ms|av_pipe_ahead_ms|audio_s)="
+    r"av_drift_ms|av_display_offset_ms|av_pipe_ahead_ms|audio_s|"
+    r"pub_iv_p_ge50_w60|pub_iv_mean_ms_w60|pub_iv_max_ms_w60|"
+    r"pub_iv_p_ge50_w5|pub_iv_sess_p_ge50|pub_iv_n|pub_iv_write_max_us_w60)="
     r"(-?\d+(?:\.\d+)?)"
 )
+RE_DISC = re.compile(r"\b(pub_iv_disc_w60|pub_iv_disc_w5)=([A-Z_]+)")
 
 
 def parse_media_frames_line(line: str) -> dict[str, float] | None:
@@ -34,9 +37,32 @@ def parse_media_frames_line(line: str) -> dict[str, float] | None:
         return None
     out: dict[str, float] = {}
     for m in RE_NUM.finditer(line):
-        out[m.group(1)] = float(m.group(2))
+        # Skip NO-DATA tokens that look numeric-less
+        try:
+            out[m.group(1)] = float(m.group(2))
+        except ValueError:
+            continue
+    for m in RE_DISC.finditer(line):
+        # encode disc as sentinel strings via side channel keys (str kept separately)
+        out["_disc_" + m.group(1)] = 0.0  # presence marker; real text in _disc_text
     if "frames" not in out or "wall_s" not in out:
         return None
+    # attach disc text
+    discs = {m.group(1): m.group(2) for m in RE_DISC.finditer(line)}
+    if discs:
+        out["_has_disc"] = 1.0
+    # stash as attributes via parallel dict key namespace is float-only; keep on row via hack:
+    for k, v in discs.items():
+        # map CLEAN=0 LATE_ARRIVAL=1 LATE_OBSERVATION=2 MIXED=3 UNSCORED=4 NO-DATA=-1
+        code = {
+            "CLEAN": 0.0,
+            "LATE_ARRIVAL": 1.0,
+            "LATE_OBSERVATION": 2.0,
+            "MIXED": 3.0,
+            "UNSCORED": 4.0,
+            "NO-DATA": -1.0,
+        }.get(v, 9.0)
+        out[k] = code
     return out
 
 
@@ -139,11 +165,13 @@ def load_hdmi(report_path: str | None, stdout_path: str | None) -> dict[str, Any
 
 
 def classify_mech(daemon: dict[str, Any], hdmi: dict[str, Any]) -> dict[str, Any]:
-    """Pre-register bands from P480_THROUGHPUT_WANDER_PREREG.md — publish miss after live."""
+    """M1 FALSIFIED on parent pair (2026-08-01). Primary is now M2 publish-interval."""
     tc = hdmi.get("timing_class")
     vfps = daemon.get("vfps") or {}
     drops = daemon.get("drops") or {}
+    pge = daemon.get("pub_iv_p_ge50_w60") or {}
     v50 = vfps.get("p50")
+    pge50 = pge.get("p50") if pge.get("src") == "measured" else None
     d_first = drops.get("first")
     d_last = drops.get("last")
     d_delta = None
@@ -151,12 +179,13 @@ def classify_mech(daemon: dict[str, Any], hdmi: dict[str, Any]) -> dict[str, Any
         d_delta = d_last - d_first
 
     out: dict[str, Any] = {
-        "primary_pred": "UNDERPRODUCE_THEN_DROP",
-        "secondary_pred": "PUBLISH_INTERVAL_JITTER",
+        "primary_pred": "M2_PUBLISH_INTERVAL_JITTER",
+        "retired_pred": "M1_UNDERPRODUCE_THEN_DROP",
+        "m1_status": "FALSIFIED_parent_pair_vfps23.9_drops_delta0",
         "hits": [],
         "misses": [],
         "verdict": "NO-DATA",
-        "bands_src": "P480_THROUGHPUT_WANDER_PREREG.md",
+        "bands_src": "M2_PUBLISH_INTERVAL_RCA.md + parent pair 2026-08-01",
     }
     if tc is None or v50 is None:
         out["verdict"] = "NO-DATA"
@@ -165,27 +194,40 @@ def classify_mech(daemon: dict[str, Any], hdmi: dict[str, Any]) -> dict[str, Any
     wander = tc == "WANDER"
     stable = tc == "STABLE"
 
-    # M1 bands
+    # M1 — keep scorer so a future underproduce resurfaces; parent miss is published.
     m1 = False
     if wander and v50 <= 20.0 and d_delta is not None and d_delta >= 15:
         m1 = True
         out["hits"].append("M1_UNDERPRODUCE_THEN_DROP")
     elif wander and v50 >= 23.5 and (d_delta is None or d_delta <= 3):
-        out["misses"].append("M1_expected_low_vfps_on_WANDER")
+        out["misses"].append("M1_FALSIFIED_high_vfps_flat_drops")
     elif stable and v50 >= 23.2 and (d_delta is None or d_delta <= 5):
         out["hits"].append("M1_STABLE_CONTROL_SHAPE")
-    elif stable and v50 is not None and v50 <= 21.0:
-        out["misses"].append("M1_STABLE_but_low_vfps")
 
-    # M2: WANDER with healthy vfps (publish jitter suspected; interval lines separate)
+    # M2 candidate: WANDER + healthy throughput (parent confirmed)
     if wander and v50 is not None and v50 >= 23.2 and (d_delta is None or d_delta <= 5):
         out["hits"].append("M2_PUBLISH_INTERVAL_JITTER_CANDIDATE")
-        out["misses"].append("M1_not_underproduce")
+
+    # M2 confirmed when rolling p_ge50 elevated in same window
+    if wander and pge50 is not None and pge50 >= 0.03:
+        out["hits"].append("M2_CONFIRMED_p_ge50_w60_ge_0.03")
+    elif wander and pge50 is not None and pge50 < 0.03:
+        out["misses"].append("M2_p_ge50_w60_clean_on_WANDER")
+    elif wander and pge50 is None:
+        out["misses"].append("M2_pub_iv_NO-DATA_deploy_tip_daemon")
+
+    if stable and pge50 is not None and pge50 < 0.03:
+        out["hits"].append("M2_STABLE_CONTROL_clean_p_ge50")
+    elif stable and pge50 is not None and pge50 >= 0.09:
+        out["misses"].append("M2_STABLE_but_high_p_ge50")
 
     if wander and not m1 and "M2_PUBLISH_INTERVAL_JITTER_CANDIDATE" not in out["hits"]:
-        out["misses"].append("WANDER_unclassified_vs_M1_M2_bands")
+        out["misses"].append("WANDER_unclassified")
 
-    if out["hits"] and not any(x.startswith("M1_expected") or x.startswith("WANDER_unclass") for x in out["misses"]):
+    if out["hits"] and not any(
+        x.startswith("M1_FALSIFIED") or x.startswith("M2_p_ge50_w60_clean") or x.startswith("M2_pub_iv")
+        for x in out["misses"]
+    ):
         out["verdict"] = "SCORED_HIT"
     elif out["misses"] and not out["hits"]:
         out["verdict"] = "SCORED_MISS"
@@ -198,6 +240,7 @@ def classify_mech(daemon: dict[str, Any], hdmi: dict[str, Any]) -> dict[str, Any
         "timing_class": tc,
         "vfps_p50": v50,
         "drops_delta": d_delta,
+        "pub_iv_p_ge50_w60_p50": pge50,
         "residual_rms_ms": hdmi.get("residual_rms_ms"),
         "detrended_max_abs_ms": hdmi.get("detrended_max_abs_ms"),
     }
@@ -232,8 +275,30 @@ def correlate(daemon_log: Path, hdmi_report: str | None, hdmi_stdout: str | None
         "publish_misses",
         "residual",
         "audio_s",
+        "pub_iv_p_ge50_w60",
+        "pub_iv_mean_ms_w60",
+        "pub_iv_max_ms_w60",
+        "pub_iv_p_ge50_w5",
+        "pub_iv_sess_p_ge50",
+        "pub_iv_write_max_us_w60",
+        "pub_iv_disc_w60",
     ):
         daemon_sum[key] = series_stats(rows, key)
+    # Explain NO-DATA on tip fields when live daemon is old schema.
+    if daemon_sum["publish_misses"].get("src") == "NO-DATA" and rows:
+        daemon_sum["publish_misses_note"] = (
+            "NO-DATA on line schema: live daemon omits frameLedgerTelemetryFragment "
+            "(tip media_player emits publish_misses=). Deploy tip ARM binary."
+        )
+    if daemon_sum["av_display_offset_ms"].get("src") == "NO-DATA" and rows:
+        daemon_sum["av_display_offset_note"] = (
+            "NO-DATA: live daemon omits formatAvServoTelemetry fields. Deploy tip ARM."
+        )
+    if daemon_sum["pub_iv_p_ge50_w60"].get("src") == "NO-DATA" and rows:
+        daemon_sum["pub_iv_note"] = (
+            "NO-DATA: need tip formatHzFragment on 1 Hz line (pub_iv_p_ge50_w60=). "
+            "M2 cannot confirm without deploy."
+        )
 
     # Construction check: mean(vfps-pfps) vs mean Δdrops/Δwall when enough points
     gap_note = "NO-DATA"
@@ -270,64 +335,85 @@ def correlate(daemon_log: Path, hdmi_report: str | None, hdmi_stdout: str | None
 
 def self_test() -> int:
     # RED: empty → NO-DATA rc path handled by main
-    # GREEN synthetic: WANDER + low vfps + rising drops → M1 hit
-    dlog = (
-        "media: frames=100 vfps=18.0 pfps=17.2 wall_s=10.0 drops=20 "
-        "av_drift_ms=-39 av_display_offset_ms=200 publish_misses=0 residual=0 audio_s=8.0\n"
-        "media: frames=280 vfps=17.5 pfps=16.8 wall_s=20.0 drops=45 "
-        "av_drift_ms=-38 av_display_offset_ms=400 publish_misses=0 residual=0 audio_s=16.0\n"
-        "media: A/V resync drop wall_s=12.0 drops=21 frames=120 presents=100\n"
-    )
-    hrep = {
-        "timing_class": "WANDER",
-        "residual_rms_ms": 46.41,
-        "detrended_max_abs_ms": 224.2,
-        "n_pairs": 20,
-        "median_offset_ms_raw": -10.0,
-    }
     td = Path(__file__).resolve().parent.parent / ".agent-work" / "w-geom" / "_pair_selftest"
     td.mkdir(parents=True, exist_ok=True)
     lp = td / "d.log"
     rp = td / "h.json"
-    lp.write_text(dlog, encoding="utf-8")
-    rp.write_text(json.dumps(hrep), encoding="utf-8")
+
+    # Parent-shaped WANDER: high vfps, flat drops, elevated p_ge50 → M2 confirm + M1 falsified
+    d_parent = (
+        "media: frames=100 vfps=23.9 pfps=23.8 wall_s=10.0 drops=11 "
+        "publish_misses=0 residual=0 av_drift_ms=-35 av_display_offset_ms=40 "
+        "pub_iv_n=240 pub_iv_p_ge50_w60=0.0800 pub_iv_mean_ms_w60=41.7 "
+        "pub_iv_max_ms_w60=62.0 pub_iv_disc_w60=LATE_ARRIVAL "
+        "pub_iv_p_ge50_w5=0.1000 pub_iv_disc_w5=LATE_ARRIVAL audio_s=10.0\n"
+        "media: frames=200 vfps=23.9 pfps=23.8 wall_s=20.0 drops=11 "
+        "publish_misses=0 residual=0 av_drift_ms=-36 av_display_offset_ms=42 "
+        "pub_iv_n=480 pub_iv_p_ge50_w60=0.0900 pub_iv_mean_ms_w60=41.8 "
+        "pub_iv_max_ms_w60=70.0 pub_iv_disc_w60=LATE_ARRIVAL "
+        "pub_iv_p_ge50_w5=0.1200 pub_iv_disc_w5=LATE_ARRIVAL audio_s=20.0\n"
+    )
+    h_w = {
+        "timing_class": "WANDER",
+        "residual_rms_ms": 14.398,
+        "detrended_max_abs_ms": 50.803,
+        "n_pairs": 30,
+        "median_offset_ms_raw": -10.0,
+    }
+    lp.write_text(d_parent, encoding="utf-8")
+    rp.write_text(json.dumps(h_w), encoding="utf-8")
     r = correlate(lp, str(rp), None)
     hits = r["mechanism"]["hits"]
-    if "M1_UNDERPRODUCE_THEN_DROP" not in hits:
-        print("FAIL self-test expected M1 hit", r["mechanism"], file=sys.stderr)
+    if "M2_PUBLISH_INTERVAL_JITTER_CANDIDATE" not in hits:
+        print("FAIL expected M2 candidate", r["mechanism"], file=sys.stderr)
         return 1
-    # STABLE high vfps control
+    if "M2_CONFIRMED_p_ge50_w60_ge_0.03" not in hits:
+        print("FAIL expected M2 confirmed", r["mechanism"], file=sys.stderr)
+        return 1
+    if "M1_UNDERPRODUCE_THEN_DROP" in hits:
+        print("FAIL M1 must not hit parent shape", r["mechanism"], file=sys.stderr)
+        return 1
+    if "M1_FALSIFIED_high_vfps_flat_drops" not in r["mechanism"]["misses"]:
+        print("FAIL expected M1 falsified miss tag", r["mechanism"], file=sys.stderr)
+        return 1
+
+    # STABLE control clean p_ge50
     d2 = (
-        "media: frames=240 vfps=23.9 pfps=23.8 wall_s=10.0 drops=12 "
-        "av_drift_ms=-40 av_display_offset_ms=50 publish_misses=0 residual=0 audio_s=10.0\n"
-        "media: frames=480 vfps=24.0 pfps=23.9 wall_s=20.0 drops=12 "
-        "av_drift_ms=-39 av_display_offset_ms=40 publish_misses=0 residual=0 audio_s=20.0\n"
+        "media: frames=240 vfps=23.9 pfps=23.9 wall_s=10.0 drops=11 "
+        "publish_misses=0 pub_iv_p_ge50_w60=0.0100 pub_iv_disc_w60=CLEAN "
+        "av_drift_ms=-40 av_display_offset_ms=40 audio_s=10.0\n"
+        "media: frames=480 vfps=24.0 pfps=24.0 wall_s=20.0 drops=11 "
+        "publish_misses=0 pub_iv_p_ge50_w60=0.0050 pub_iv_disc_w60=CLEAN "
+        "av_drift_ms=-40 av_display_offset_ms=40 audio_s=20.0\n"
     )
     h2 = {"timing_class": "STABLE", "residual_rms_ms": 8.0, "detrended_max_abs_ms": 20.0, "n_pairs": 20}
     lp.write_text(d2, encoding="utf-8")
     rp.write_text(json.dumps(h2), encoding="utf-8")
     r2 = correlate(lp, str(rp), None)
-    if "M1_STABLE_CONTROL_SHAPE" not in r2["mechanism"]["hits"]:
-        print("FAIL self-test expected STABLE control", r2["mechanism"], file=sys.stderr)
+    if "M2_STABLE_CONTROL_clean_p_ge50" not in r2["mechanism"]["hits"]:
+        print("FAIL STABLE clean p_ge50", r2["mechanism"], file=sys.stderr)
         return 1
-    # RED: WANDER + high vfps + no drops → M1 miss, M2 candidate
+
+    # RED: WANDER + high vfps + clean p_ge50 → M2 candidate but p_ge50 miss
     d3 = (
-        "media: frames=240 vfps=23.9 pfps=23.9 wall_s=10.0 drops=12 "
-        "av_drift_ms=-40 av_display_offset_ms=40 publish_misses=0 residual=0 audio_s=10.0\n"
-        "media: frames=480 vfps=24.0 pfps=24.0 wall_s=20.0 drops=12 "
-        "av_drift_ms=-40 av_display_offset_ms=40 publish_misses=0 residual=0 audio_s=20.0\n"
+        "media: frames=240 vfps=23.9 pfps=23.9 wall_s=10.0 drops=11 "
+        "publish_misses=0 pub_iv_p_ge50_w60=0.0050 pub_iv_disc_w60=CLEAN "
+        "av_drift_ms=-40 audio_s=10.0\n"
+        "media: frames=480 vfps=24.0 pfps=24.0 wall_s=20.0 drops=11 "
+        "publish_misses=0 pub_iv_p_ge50_w60=0.0050 pub_iv_disc_w60=CLEAN "
+        "av_drift_ms=-40 audio_s=20.0\n"
     )
     h3 = {"timing_class": "WANDER", "residual_rms_ms": 40.0, "detrended_max_abs_ms": 100.0, "n_pairs": 20}
     lp.write_text(d3, encoding="utf-8")
     rp.write_text(json.dumps(h3), encoding="utf-8")
     r3 = correlate(lp, str(rp), None)
     if "M2_PUBLISH_INTERVAL_JITTER_CANDIDATE" not in r3["mechanism"]["hits"]:
-        print("FAIL self-test expected M2 candidate", r3["mechanism"], file=sys.stderr)
+        print("FAIL M2 candidate on clean-pge WANDER", r3["mechanism"], file=sys.stderr)
         return 1
-    if "M1_UNDERPRODUCE_THEN_DROP" in r3["mechanism"]["hits"]:
-        print("FAIL self-test M1 must not hit on high vfps", r3["mechanism"], file=sys.stderr)
+    if "M2_p_ge50_w60_clean_on_WANDER" not in r3["mechanism"]["misses"]:
+        print("FAIL expected M2 p_ge50 clean miss", r3["mechanism"], file=sys.stderr)
         return 1
-    print("CORRELATE_SELFTEST_OK M1_hit STABLE_control M2_candidate")
+    print("CORRELATE_SELFTEST_OK M2_confirm M1_falsified STABLE_control M2_pge_miss")
     return 0
 
 
@@ -366,15 +452,26 @@ def main(argv: list[str] | None = None) -> int:
         f"av_display_offset_ms={result['daemon']['av_display_offset_ms']}",
         f"av_drift_ms={result['daemon']['av_drift_ms']}  # servo only",
         f"publish_misses={result['daemon']['publish_misses']}",
+        f"pub_iv_p_ge50_w60={result['daemon']['pub_iv_p_ge50_w60']}",
+        f"pub_iv_max_ms_w60={result['daemon']['pub_iv_max_ms_w60']}",
+        f"pub_iv_disc_w60={result['daemon']['pub_iv_disc_w60']}",
         f"gap_check={result['daemon']['vfps_pfps_gap_vs_drops']}",
         f"hdmi_src={result['hdmi']['src']} timing_class={result['hdmi']['timing_class']}",
         f"residual_rms_ms={result['hdmi']['residual_rms_ms']} "
         f"detrended_max_abs_ms={result['hdmi']['detrended_max_abs_ms']}",
+        f"m1_status={result['mechanism'].get('m1_status')}",
         f"mechanism_verdict={result['mechanism']['verdict']}",
         f"mechanism_hits={result['mechanism']['hits']}",
         f"mechanism_misses={result['mechanism']['misses']}",
         f"mechanism_inputs={result['mechanism'].get('inputs')}",
     ]
+    for nk in (
+        "publish_misses_note",
+        "av_display_offset_note",
+        "pub_iv_note",
+    ):
+        if nk in result["daemon"]:
+            text_lines.append(f"NOTE: {result['daemon'][nk]}")
     for n in result["notes"]:
         text_lines.append(f"NOTE: {n}")
     text = "\n".join(text_lines) + "\n"
