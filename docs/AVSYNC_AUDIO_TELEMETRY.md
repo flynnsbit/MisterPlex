@@ -132,17 +132,31 @@ python3 tools/avsync_audio_telemetry_verdict.py \
 echo "true rc=$?"
 ```
 
-### Expected `true rc` shapes
+### Severity ladder (PASS is strict)
 
 | situation | VERDICT | rc |
 |-----------|---------|---:|
-| healthy supply≥0.90, markers OK, drops low | `PASS` | **0** |
+| supply≥ok_min **and** ledger closable (frames+presents+drops) **and** markers≠FAIL | `PASS` | **0** |
 | supply collapsed, drop_frac high (parent 0.599/1065) | `PACER_DROPS` or `STARVED` | **3** or **2** |
 | beep period wrong | `AUDIO_MARKER_FAIL` | **4** |
 | drift climbing under starvation | `SERVO_DRIFT_CLIMB` | **5** |
 | file +100 ms audio delay recovered | `DESIGNED_OFFSET_DETECT` | **6** (sensitivity OK) |
-| respawn mid-window | `SESSION_INVALID` | **79** |
-| no audio and no media lines | `NO-DATA` | **77** (not a pass) |
+| **supply ok but markers=NO-DATA and presents/residual missing** (parent 2026-08-02 live) | `INSUFFICIENT_EVIDENCE` | **78** (never pass) |
+| respawn mid-window | `SESSION_INVALID` | **79** (aligns w-instr) |
+| no audio and no media lines | `NO-DATA` | **77** (never pass) |
+
+**PASS never means “supply alone looked fine.”** Parent live miss: `supply_ratio=0.999`
+with `audio_markers=NO-DATA`, `presents=null`, `residual=NO-DATA` is **rc=78**.
+
+Markers may be NO-DATA on PASS **only** when the ledger is closed (telemetry-only
+health with atomic `frameLedgerTelemetryFragment`).
+
+### Ledger ownership (do not duplicate w-instr)
+
+Split logs (`media: frames=… drops=…` without presents + separate
+`media: fpga frame_tx … presents=`) are closed by **w-instr**
+`tools/daemon_media_ledger.py` (`RC_SESSION_INVALID=79` same convention).
+This tool refuses PASS when unclosable and points there.
 
 When HDMI video lock returns, **also** run glass lipsync:
 

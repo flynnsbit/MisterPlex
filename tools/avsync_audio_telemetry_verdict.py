@@ -32,14 +32,39 @@ SIGN (when optional flash video present)
   offset_ms = (t_beep - t_flash)*1000; + = audio LATE
 
 Exit codes (capture DIRECTLY — never through a pipe):
-  0  PASS — supply ok, pacer drops not runaway, audio markers OK, no session invalid
+  0  PASS — supply ok AND ledger closable (frames+presents+drops) AND
+            markers not FAIL; session continuous. See severity ladder.
   2  STARVED — supply_ratio below ok_min
   3  PACER_DROPS — drops dominate residual story / high drop rate
   4  AUDIO_MARKER_FAIL — beep cadence not at designed period
   5  SERVO_DRIFT_CLIMB — av_drift rising while supply poor (telemetry; not lipsync GT)
   6  DESIGNED_OFFSET_DETECT — red fixture offset recovered (self-test / plus-ms)
-  79 SESSION_INVALID
-  77 NO-DATA / UNSCORED  (never a pass)
+  78 INSUFFICIENT_EVIDENCE — some signals present but PASS gates not met
+     (e.g. supply ok while markers=NO-DATA AND ledger unclosable). NEVER a pass.
+  79 SESSION_INVALID — session_epoch/process_epoch/pid change (align w-instr
+     tools/daemon_media_ledger.py RC_SESSION_INVALID=79)
+  77 NO-DATA — nothing usable at all (never a pass)
+
+SEVERITY LADDER (PASS is strict — parent 2026-08-02 live miss)
+-------------------------------------------------------------
+Hard fails (2–6, 79) always outrank PASS even if other channels are NO-DATA.
+PASS requires:
+  (1) supply_ratio established and >= ok_min
+  (2) ledger CLOSING: frames AND presents AND drops all integers so residual
+      = frames-presents-drops is defined (not NO-DATA)
+  (3) markers class != AUDIO_MARKER_FAIL
+  (4) not SESSION_INVALID
+Markers may be NO-DATA on PASS only when (2) holds (telemetry-only health).
+Supply-only with presents=null / residual=NO-DATA → INSUFFICIENT_EVIDENCE rc=78
+(never PASS). Same principle as rc=77: absence is not a green.
+
+LEDGER OWNERSHIP
+----------------
+Closing split-line logs (1 Hz stats without presents + separate
+`media: fpga frame_tx … presents=`) is **w-instr**
+`tools/daemon_media_ledger.py` (rc=79 same convention). This tool does not
+invent a second reconstructor; it refuses PASS when the ledger is unclosable
+and points at w-instr.
 
 Red-before-green:
   python3 tools/avsync_audio_telemetry_verdict.py --self-test
@@ -313,6 +338,11 @@ def parse_media(text: str) -> List[MediaHit]:
             continue
         if "A/V resync drop" in line:
             continue
+        # Split DDR heartbeat lines are owned by w-instr daemon_media_ledger.py.
+        # Including them here false-trips frames_reset (stats frames=699 vs DDR 676)
+        # and invents a second reconstructor — refuse; leave presents NO-DATA.
+        if "fpga frame_tx" in line or "frame_tx ok" in line:
+            continue
         h = MediaHit(line_no=i)
         for rx, attr, cast in (
             (RE_F, "frames", int),
@@ -395,8 +425,19 @@ def window_supply(hits: List[MediaHit]) -> Tuple[Optional[float], str]:
 
 
 def last_ledger(hits: List[MediaHit]) -> Dict[str, Any]:
+    """Prefer last line that can close residual; else last stats-ish line.
+
+    Does NOT reconstruct across split stats/DDR lines — that is w-instr
+    tools/daemon_media_ledger.py. Unclosable → presents/residual stay NO-DATA.
+    """
+    # Prefer atomic (frames+presents+drops)
     for h in reversed(hits):
-        if h.frames is not None:
+        if (
+            h.frames is not None
+            and h.presents is not None
+            and h.drops is not None
+        ):
+            resid = h.frames - h.presents - h.drops
             return {
                 "frames": h.frames,
                 "presents": h.presents,
@@ -404,7 +445,10 @@ def last_ledger(hits: List[MediaHit]) -> Dict[str, Any]:
                 "publish_misses": h.publish_misses
                 if h.publish_misses is not None
                 else "NO-DATA",
-                "residual": h.residual if h.residual is not None else "NO-DATA",
+                "residual": resid,
+                "residual_src": "measured",
+                "residual_eq": "frames-presents-drops",
+                "ledger_closable": True,
                 "vfps": h.vfps if h.vfps is not None else "NO-DATA",
                 "pfps": h.pfps if h.pfps is not None else "NO-DATA",
                 "av_drift_ms": h.av_drift_ms if h.av_drift_ms is not None else "NO-DATA",
@@ -412,8 +456,31 @@ def last_ledger(hits: List[MediaHit]) -> Dict[str, Any]:
                 "wall_s": h.wall_s,
                 "src": "measured",
             }
-    return {"src": "NO-DATA"}
-
+    # Partial — do not invent presents
+    for h in reversed(hits):
+        if h.frames is not None or h.drops is not None:
+            return {
+                "frames": h.frames if h.frames is not None else "NO-DATA",
+                "presents": h.presents if h.presents is not None else "NO-DATA",
+                "drops": h.drops if h.drops is not None else "NO-DATA",
+                "publish_misses": h.publish_misses
+                if h.publish_misses is not None
+                else "NO-DATA",
+                "residual": "NO-DATA",
+                "residual_src": "NO-DATA",
+                "ledger_closable": False,
+                "ledger_note": (
+                    "presents missing on stats line — deploy frameLedgerTelemetryFragment "
+                    "daemon OR run tools/daemon_media_ledger.py (w-instr) on split logs"
+                ),
+                "vfps": h.vfps if h.vfps is not None else "NO-DATA",
+                "pfps": h.pfps if h.pfps is not None else "NO-DATA",
+                "av_drift_ms": h.av_drift_ms if h.av_drift_ms is not None else "NO-DATA",
+                "audio_s": h.audio_s,
+                "wall_s": h.wall_s,
+                "src": "measured_partial",
+            }
+    return {"src": "NO-DATA", "ledger_closable": False, "residual": "NO-DATA"}
 
 def drift_series(hits: List[MediaHit]) -> List[Tuple[float, int]]:
     out = []
@@ -528,6 +595,15 @@ class Verdict:
     reasons: List[str] = field(default_factory=list)
 
 
+def ledger_closable(ledger: Dict[str, Any]) -> bool:
+    """True only when residual = frames-presents-drops is defined (not NO-DATA)."""
+    return (
+        isinstance(ledger.get("frames"), int)
+        and isinstance(ledger.get("presents"), int)
+        and isinstance(ledger.get("drops"), int)
+    )
+
+
 def classify(
     *,
     session_invalid: bool,
@@ -541,11 +617,25 @@ def classify(
     wall_s: Optional[float],
     min_wall_s: float = 5.0,
 ) -> Verdict:
+    """Severity ladder: hard fails first; PASS only with closed evidence.
+
+    Parent live miss (2026-08-02): supply_ratio=0.999 PASS while
+    audio_markers=NO-DATA, presents=null, residual=NO-DATA — that is
+    INSUFFICIENT_EVIDENCE rc=78, not PASS.
+    """
     if session_invalid:
         return Verdict("SESSION_INVALID", 79, ["session continuity broken"])
 
+    mclass = marker.get("class") or "NO-DATA"
+    closed = ledger_closable(ledger)
+    has_supply = supply is not None
+    has_markers = mclass not in ("NO-DATA", None, "")
+    has_any = has_supply or has_markers or ledger.get("src") not in (None, "NO-DATA")
+
     reasons: List[str] = []
-    # designed offset recovery (file self-test / plus-ms fixture audio)
+
+    # designed offset recovery (file self-test / plus-ms fixture audio) —
+    # instrument sensitivity path; does not claim glass lipsync / session health.
     if (
         designed_offset_ms is not None
         and recovered_phase_ms is not None
@@ -565,22 +655,26 @@ def classify(
             f"designed={designed_offset_ms:.2f}"
         )
 
-    if supply is None and ledger.get("src") == "NO-DATA" and marker.get("class") == "NO-DATA":
+    if not has_any:
         return Verdict("NO-DATA", 77, ["no audio markers and no media telemetry"])
 
-    if wall_s is not None and wall_s < min_wall_s and supply is None:
+    if wall_s is not None and wall_s < min_wall_s and not has_supply and not has_markers:
         return Verdict("NO-DATA", 77, [f"wall_s={wall_s}<{min_wall_s} and supply NO-DATA"])
 
-    # marker fail
-    if marker.get("class") == "AUDIO_MARKER_FAIL":
+    # marker fail (hard)
+    if mclass == "AUDIO_MARKER_FAIL":
         return Verdict(
             "AUDIO_MARKER_FAIL",
             4,
             [f"beep_period_err_ms={marker.get('period_err_ms')}"],
         )
 
-    # supply starved
-    if supply is not None and supply < ok_min:
+    # designed offset miss without other hard faults
+    if reasons and designed_offset_ms is not None and abs(designed_offset_ms) >= 40:
+        return Verdict("AUDIO_MARKER_FAIL", 4, reasons)
+
+    # supply starved (hard — may fire with incomplete ledger)
+    if has_supply and supply is not None and supply < ok_min:
         drops = ledger.get("drops")
         frames = ledger.get("frames")
         drop_frac = None
@@ -611,19 +705,62 @@ def classify(
                 [f"drops/frames={drops}/{frames}>=0.20 pacer Drop path"],
             )
 
-    if reasons:
-        # designed offset miss without other faults → still fail sensitivity if expected
-        if designed_offset_ms is not None and abs(designed_offset_ms) >= 40:
-            return Verdict("AUDIO_MARKER_FAIL", 4, reasons)
+    # --- PASS gates (strict) ---
+    # Parent: supply-only with markers=NO-DATA and ledger unclosable must NOT PASS.
+    missing: List[str] = []
+    if not has_supply:
+        missing.append("supply_ratio=NO-DATA")
+    if not closed:
+        missing.append(
+            "ledger_unclosable (need frames+presents+drops on one snapshot; "
+            "split stats/DDR lines → tools/daemon_media_ledger.py w-instr)"
+        )
+    # markers optional only when ledger is closed; if ledger open, markers alone
+    # cannot green a session (except DESIGNED_OFFSET_DETECT above).
+    if not closed and not has_markers:
+        missing.append("audio_markers=NO-DATA")
+    if has_supply and supply is not None and supply >= ok_min and not closed:
+        # explicit parent shape
+        missing.append(
+            f"supply_ok={supply:.4f} but residual=NO-DATA without presents"
+        )
 
-    return Verdict("PASS", 0, ["supply_ok_markers_ok"] if supply is not None else ["markers_ok_telemetry_partial"])
+    if missing:
+        # Distinguish empty vs partial
+        if not has_supply and not has_markers and not closed:
+            return Verdict("NO-DATA", 77, missing)
+        return Verdict(
+            "INSUFFICIENT_EVIDENCE",
+            78,
+            missing
+            + [
+                "PASS requires supply_ok AND ledger_closable "
+                "(frames+presents+drops); markers may be NO-DATA only if ledger closed",
+            ],
+        )
 
+    # closed ledger + supply ok + markers not fail
+    why = ["supply_ok", "ledger_closed"]
+    if mclass == "ok":
+        why.append("markers_ok")
+    else:
+        why.append("markers_NO-DATA_allowed_with_closed_ledger")
+    return Verdict("PASS", 0, why)
 
 def print_report(doc: Dict[str, Any]) -> None:
     print("=== avsync_audio_telemetry_verdict ===")
     print(f"VERDICT={doc['verdict']} gate_rc={doc['gate_rc']}")
+    print(
+        "severity_ladder: "
+        "0=PASS(supply_ok+ledger_closed) 2=STARVED 3=PACER_DROPS "
+        "4=MARKER_FAIL 5=SERVO_CLIMB 6=DESIGNED_OFFSET "
+        "78=INSUFFICIENT_EVIDENCE 79=SESSION_INVALID 77=NO-DATA "
+        "(78/77 never pass)"
+    )
     for r in doc.get("reasons", []):
         print(f"reason: {r}")
+    print("--- evidence_gates ---")
+    print(json.dumps(doc.get("evidence_gates"), indent=2, sort_keys=True))
     print("--- content_fps ---")
     print(json.dumps(doc.get("content_fps"), indent=2, sort_keys=True))
     print("--- host_load ---")
@@ -646,7 +783,13 @@ def print_report(doc: Dict[str, Any]) -> None:
         print(f"  - {x}")
     if doc.get("json_out"):
         print(f"json_out={doc['json_out']}")
-
+    if doc.get("verdict") == "INSUFFICIENT_EVIDENCE":
+        print(
+            "NOTE: close ledger with w-instr tools/daemon_media_ledger.py "
+            "on split stats/DDR logs, or deploy daemon that emits "
+            "frameLedgerTelemetryFragment (frames+presents+drops) on 1 Hz line. "
+            "rc=78 is never a pass."
+        )
 
 # --- self-test fixtures -------------------------------------------------------
 
@@ -689,6 +832,13 @@ media: frames=8638 presents=8590 drops=48 publish_misses=0 residual=0 audio_s=35
 FIXTURE_RESPAWN_LOG = """\
 media: frames=500 presents=480 drops=20 audio_s=20.0 wall_s=20.5 av_drift_ms=-20 session_epoch=3.1 process_epoch=3 pid=300
 media: frames=10 presents=9 drops=1 audio_s=0.4 wall_s=0.5 av_drift_ms=-20 session_epoch=3.2 process_epoch=4 pid=301
+"""
+
+# Parent live 2026-08-02: supply ok but split lines — presents not on 1 Hz stats.
+# Must be INSUFFICIENT_EVIDENCE rc=78, never PASS.
+FIXTURE_PARENT_TONIGHT_SPLIT = """\
+media: frames=699 vfps=23.6 pfps=23.6 audio_s=29.10 wall_s=29.12 supply_ratio=0.9994 drops=4 clock=av-lock av_drift_ms=-24 decode=624x480 measured=624x350 desync_risk=0 fps=24/1 session_epoch=9.1 process_epoch=9 pid=4242
+media: fpga frame_tx ok via DDR presents=672 frames=676 ms=4
 """
 
 
@@ -794,6 +944,66 @@ def self_test(work: Path) -> int:
     )
     check(vr.rc == 79, f"respawn rc=79 got {vr.rc}")
 
+    # PARENT TONIGHT: supply ok + markers NO-DATA + ledger unclosable → rc=78
+    hits_t = parse_media(FIXTURE_PARENT_TONIGHT_SPLIT)
+    # parse_media skips non-matching; fpga line may not be MediaHit with audio —
+    # ensure stats line without presents yields unclosable ledger
+    sup_t, _ = window_supply(hits_t)
+    led_t = last_ledger(hits_t)
+    check(sup_t is not None and sup_t >= 0.99, f"tonight supply {sup_t}")
+    check(led_t.get("ledger_closable") is False, f"tonight ledger_closable {led_t}")
+    check(
+        led_t.get("residual") in (None, "NO-DATA") or led_t.get("ledger_closable") is False,
+        f"tonight residual unclosed {led_t.get('residual')}",
+    )
+    check(
+        led_t.get("presents") in (None, "NO-DATA")
+        or not isinstance(led_t.get("drops"), int),
+        f"tonight unclosable fields presents={led_t.get('presents')} drops={led_t.get('drops')}",
+    )
+    vt = classify(
+        session_invalid=False,
+        supply=sup_t,
+        ok_min=0.90,
+        ledger=led_t,
+        marker={"class": "NO-DATA"},
+        drift_slope=0.0,
+        designed_offset_ms=None,
+        recovered_phase_ms=None,
+        wall_s=led_t.get("wall_s") if isinstance(led_t.get("wall_s"), (int, float)) else 29.0,
+    )
+    check(vt.cls == "INSUFFICIENT_EVIDENCE", f"tonight class {vt.cls}")
+    check(vt.rc == 78, f"tonight rc=78 got {vt.rc}")
+    check(vt.rc != 0, "tonight must never be PASS")
+
+    # markers-only (no daemon) without designed-offset → insufficient, not PASS
+    vm = classify(
+        session_invalid=False,
+        supply=None,
+        ok_min=0.90,
+        ledger={"src": "NO-DATA"},
+        marker={"class": "ok", "period_err_ms": 0.0},
+        drift_slope=None,
+        designed_offset_ms=None,
+        recovered_phase_ms=None,
+        wall_s=None,
+    )
+    check(vm.rc == 78 and vm.cls == "INSUFFICIENT_EVIDENCE", f"markers-only {vm.cls} rc={vm.rc}")
+
+    # supply ok + closed ledger + markers NO-DATA → PASS (telemetry-only health)
+    v_tel = classify(
+        session_invalid=False,
+        supply=0.999,
+        ok_min=0.90,
+        ledger={"frames": 699, "presents": 695, "drops": 4, "src": "measured"},
+        marker={"class": "NO-DATA"},
+        drift_slope=0.0,
+        designed_offset_ms=None,
+        recovered_phase_ms=None,
+        wall_s=30.0,
+    )
+    check(v_tel.cls == "PASS" and v_tel.rc == 0, f"telemetry-only PASS got {v_tel.cls} rc={v_tel.rc}")
+
     # drops semantics present
     check("droppedFrames_" in DROPS_SEMANTICS["drops"]["counter"], "drops counter name")
     check("4183" in DROPS_SEMANTICS["drops"]["increments"] or "4185" in DROPS_SEMANTICS["drops"]["increments"], "drops line cite")
@@ -801,7 +1011,11 @@ def self_test(work: Path) -> int:
     if fails:
         print(f"self_test FAIL count={fails}", file=sys.stderr)
         return 1
-    print("self_test OK red-before-green (plus100 detect, healthy PASS, collapsed RED, respawn 79)")
+    print(
+        "self_test OK red-before-green "
+        "(plus100, healthy PASS, collapsed RED, respawn 79, "
+        "parent-tonight INSUFFICIENT rc=78, telemetry-only PASS)"
+    )
     return 0
 
 
@@ -956,10 +1170,32 @@ def main() -> int:
             "was a pacer Drop (not an unexplained gap)",
         }
 
+    mclass = audio_markers.get("class") or "NO-DATA"
+    closed = ledger_closable(ledger)
     doc: Dict[str, Any] = {
         "verdict": v.cls,
         "gate_rc": v.rc,
         "reasons": v.reasons,
+        "evidence_gates": {
+            "supply_ok": bool(
+                supply is not None and supply >= args.ok_min
+            ),
+            "supply_established": supply is not None,
+            "ledger_closable": closed,
+            "markers_class": mclass,
+            "markers_fail": mclass == "AUDIO_MARKER_FAIL",
+            "session_invalid": inv,
+            "pass_requires": (
+                "supply_ok AND ledger_closable AND not markers_fail "
+                "AND not session_invalid; markers may be NO-DATA only if ledger_closable"
+            ),
+            "ledger_owner_split_lines": "w-instr tools/daemon_media_ledger.py",
+            "session_invalid_rc": 79,
+            "session_invalid_aligns": "w-instr RC_SESSION_INVALID=79",
+            "insufficient_rc": 78,
+            "insufficient_never_pass": True,
+            "src": "measured",
+        },
         "content_fps": content_fps,
         "host_load": host_load,
         "audio_markers": audio_markers,
@@ -989,13 +1225,15 @@ def main() -> int:
             "(publish host_load + prefer direct-play; complete=0 speed=0 is contaminated)",
             "path capacity vs local limiter (w-cpu-1 / bulk-pull)",
             "av_drift_ms as accuracy — it is servo error pinned by lead/drop",
+            "closing split stats/DDR ledger without w-instr daemon_media_ledger.py",
         ],
         "limits": [
             "audio-only grid phase is vs capture/file t=0, not vs glass flash",
             "supply_ratio uses submitted PCM bytes (audioBytes_), not audibleClockMs; "
             "trust intervals with d_wall>=3s",
             "ok_min=0.90 is DEFAULT_ASSUMED unless overridden",
-            "rc=77 is never a pass",
+            "rc=77 and rc=78 are never a pass",
+            "rc=79 SESSION_INVALID aligns w-instr tools/daemon_media_ledger.py",
         ],
         "designed_offset_ms": args.designed_offset_ms,
         "designed_offset_ms_src": "caller_supplied"

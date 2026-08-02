@@ -33,10 +33,14 @@ P_ENV = {
 H_REAL = (-45.0, -15.0)
 
 
-def load_drifts(path: Path) -> list[float]:
+def load_drifts(path: Path) -> tuple[list[float], list[str]]:
     text = path.read_text(errors="replace")
-    return [float(x) for x in re.findall(r"\bav_drift_ms=(-?[0-9]+(?:\.[0-9]+)?)", text)]
-
+    drifts = [
+        float(x)
+        for x in re.findall(r"\bav_drift_ms=(-?[0-9]+(?:\.[0-9]+)?)", text)
+    ]
+    epochs = sorted(set(re.findall(r"\bsession_epoch=(\S+)", text)))
+    return drifts, epochs
 
 def main() -> int:
     ap = argparse.ArgumentParser()
@@ -59,7 +63,14 @@ def main() -> int:
         if not path.is_file():
             print(f"VERDICT=UNSCORED rc=77 reason=missing_file lead={lead} path={path}")
             return 77
-        vals = load_drifts(path)
+        vals, epochs = load_drifts(path)
+        if len(epochs) > 1:
+            print(
+                f"VERDICT=UNSCORED rc=77 reason=session_epoch_changed "
+                f"lead={lead} epochs={epochs} "
+                f"(align w-avsync/w-instr rc=79 for soak tools; S3 arm void)"
+            )
+            return 77
         if len(vals) < 5:
             print(
                 f"VERDICT=UNSCORED rc=77 reason=too_few_av_drift samples={len(vals)} "
@@ -73,6 +84,7 @@ def main() -> int:
             "min": float(min(vals)),
             "max": float(max(vals)),
             "path": str(path),
+            "session_epochs": epochs,
         }
 
     print("=== avsync_score_lead_s3 ===")
