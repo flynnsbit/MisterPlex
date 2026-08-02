@@ -22,6 +22,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 SCAN_DIRS = (
     ROOT / "scripts",
+    ROOT / "tools",
     ROOT / "tests" / "unit",
     ROOT / "tests" / "hw",
 )
@@ -81,7 +82,10 @@ def iter_shell_files() -> list[Path]:
 
 
 def scan_file(path: Path) -> list[str]:
-    rel = path.relative_to(ROOT).as_posix()
+    try:
+        rel = path.resolve().relative_to(ROOT.resolve()).as_posix()
+    except ValueError:
+        rel = path.as_posix()
     try:
         text = path.read_text(encoding="utf-8", errors="ignore")
     except OSError as exc:
@@ -124,7 +128,46 @@ def scan_file(path: Path) -> list[str]:
     return hits
 
 
+def self_test() -> int:
+    """Red-before-green: synthetic trap RED; clean snippet GREEN."""
+    import tempfile
+
+    with tempfile.TemporaryDirectory(prefix="pipe_rc_") as td:
+        tdir = Path(td)
+        bad = tdir / "bad.sh"
+        bad.write_text(
+            "#!/bin/bash\n"
+            "false | tail -n1\n"
+            'echo "true rc=$?"\n',
+            encoding="utf-8",
+        )
+        good = tdir / "good.sh"
+        good.write_text(
+            "#!/bin/bash\n"
+            "set +e\n"
+            "out=$(false)\n"
+            "rc=$?\n"
+            "set -e\n"
+            'echo "true rc=$rc"\n',
+            encoding="utf-8",
+        )
+        bh = scan_file(bad)
+        if not bh:
+            print("FAIL pipe_rc MUTATION_BLIND: synthetic pipe+$? not flagged", file=sys.stderr)
+            return 1
+        print(f"MUTATION_RED pipe_rc sample={bh[0]}")
+        gh = scan_file(good)
+        if gh:
+            print(f"FAIL pipe_rc good snippet flagged: {gh}", file=sys.stderr)
+            return 1
+        print("MUTATION_GREEN pipe_rc direct_rc_capture")
+    print("PASS test_pipe_rc_trap self-test")
+    return 0
+
+
 def main() -> int:
+    if len(sys.argv) > 1 and sys.argv[1] == "--self-test":
+        return self_test()
     files = iter_shell_files()
     if not files:
         print("FAIL test_pipe_rc_trap: no shell scripts discovered", file=sys.stderr)
@@ -132,7 +175,7 @@ def main() -> int:
     errors: list[str] = []
     for p in files:
         errors.extend(scan_file(p))
-    print(f"pipe_rc_trap: scanned {len(files)} shell scripts")
+    print(f"pipe_rc_trap: scanned {len(files)} shell scripts (scripts+tools+tests)")
     if errors:
         print("FAIL test_pipe_rc_trap: pipeline rc traps:", file=sys.stderr)
         for e in errors:
@@ -143,7 +186,7 @@ def main() -> int:
             file=sys.stderr,
         )
         return 1
-    print("PASS test_pipe_rc_trap: no pipeline-$? traps in scripts/tests")
+    print("PASS test_pipe_rc_trap: no pipeline-$? traps in scripts/tools/tests")
     return 0
 
 
