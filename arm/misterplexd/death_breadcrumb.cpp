@@ -157,12 +157,19 @@ void writeDeathSigInfoSafe(const siginfo_t* info) {
     asAppendInt(buf, sizeof(buf), &o, info->si_signo);
     asAppend(buf, sizeof(buf), &o, " si_code=");
     asAppendInt(buf, sizeof(buf), &o, info->si_code);
-    // Linux: SI_USER=0 (kill/raise), SI_KERNEL=0x80. Highest-value race-free bit.
+    // Linux: SI_USER=0 (kill/raise), SI_KERNEL=0x80. SEGV_MAPERR=1, SEGV_ACCERR=2.
+    // Highest-value race-free discriminator for rc=139 vs external kill.
     asAppend(buf, sizeof(buf), &o, " si_code_name=");
     if (info->si_code == 0)
         asAppend(buf, sizeof(buf), &o, "SI_USER");
     else if (info->si_code == 0x80)
         asAppend(buf, sizeof(buf), &o, "SI_KERNEL");
+    else if (info->si_signo == SIGSEGV && info->si_code == 1)
+        asAppend(buf, sizeof(buf), &o, "SEGV_MAPERR");
+    else if (info->si_signo == SIGSEGV && info->si_code == 2)
+        asAppend(buf, sizeof(buf), &o, "SEGV_ACCERR");
+    else if (info->si_signo == SIGBUS && info->si_code == 1)
+        asAppend(buf, sizeof(buf), &o, "BUS_ADRALN");
     else
         asAppend(buf, sizeof(buf), &o, "OTHER");
     asAppend(buf, sizeof(buf), &o, " si_pid=");
@@ -248,6 +255,10 @@ void deathBreadcrumbExit(int code, const char* why) {
             siName = "SI_USER";
         else if (lastCode == 0x80)
             siName = "SI_KERNEL";
+        else if (lastSig == SIGSEGV && lastCode == 1)
+            siName = "SEGV_MAPERR";
+        else if (lastSig == SIGSEGV && lastCode == 2)
+            siName = "SEGV_ACCERR";
         else
             siName = "OTHER";
     }

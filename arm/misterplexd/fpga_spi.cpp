@@ -1,4 +1,5 @@
 #include "fpga_spi.hpp"
+#include "death_breadcrumb.hpp"
 
 #include "libmisterplex/ddr_bank_release_select.hpp"
 #include "libmisterplex/plxd_liveness.hpp"
@@ -364,9 +365,15 @@ void FpgaSpi::resumeStrandedMain() {
 
 namespace {
 
-// async-signal-safe enough: kill()/open()/read()/close() are all on the safe
-// list, and we re-raise with the default handler so the crash still surfaces.
-void crashGuardHandler(int sig) {
+// async-signal-safe enough: kill()/open()/write()/close() are on the safe list.
+// Write death breadcrumb BEFORE re-raise so supervise rc=139 leaves a witness
+// (signal=11 + si_code/si_addr). Pre-fix: CONT Main only → death absent/stale.
+// SIGKILL cannot run this; supervisor wait_st=137 is the only KILL witness.
+void crashGuardHandler(int sig, siginfo_t* info, void*) {
+    if (info)
+        deathBreadcrumbOnSigInfo(info);
+    else
+        deathBreadcrumbOnSignal(sig);
     mainPauseDepth().store(0);
     for (pid_t p : findMisterPids())
         kill(p, SIGCONT);
@@ -378,8 +385,12 @@ void crashGuardHandler(int sig) {
 
 void FpgaSpi::installCrashGuard() {
     // SIGKILL cannot be caught — resumeStrandedMain() at startup covers it.
+    struct sigaction sa {};
+    sa.sa_sigaction = crashGuardHandler;
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = SA_SIGINFO;
     for (int sig : {SIGSEGV, SIGABRT, SIGBUS, SIGILL, SIGFPE, SIGQUIT})
-        std::signal(sig, crashGuardHandler);
+        sigaction(sig, &sa, nullptr);
 }
 
 void FpgaSpi::setErr(std::string msg) {

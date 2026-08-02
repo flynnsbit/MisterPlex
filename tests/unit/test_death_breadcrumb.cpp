@@ -59,7 +59,7 @@ int main() {
     const std::string death_info = slurp(death);
     CHECK(death_info.find("death signal=11") != std::string::npos);
     CHECK(death_info.find("si_code=1") != std::string::npos);
-    CHECK(death_info.find("si_code_name=OTHER") != std::string::npos);
+    CHECK(death_info.find("si_code_name=SEGV_MAPERR") != std::string::npos);
     CHECK(death_info.find("si_addr=0x10") != std::string::npos);
 
     // SI_USER (kill from a process) — highest-value race-free discriminator
