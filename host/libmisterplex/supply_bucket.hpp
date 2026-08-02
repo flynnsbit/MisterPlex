@@ -159,6 +159,76 @@ inline SupplyGapScoreDecision decideSupplyGapScore(const char* fps_src, bool hav
     return r;
 }
 
+// --- Link/arrival real-time ratio (parent 480p drop RCA 2026-08-01) ---
+//
+// Derivation (fields already on media: lines):
+//   audio_s = audioBytes / (48000 * 4)     // AAC→PCM media seconds written
+//   wall_s  = wall_ms / 1000               // steady playback wall
+//   supply_ratio = audio_s / wall_s        // media seconds arrived per wall second
+//
+// Parent controlled intervention on same clip/link:
+//   collapse @2000k: audio_s/wall_s ≈ 0.467  (STARVED)
+//   healthy  @1000k: audio_s/wall_s ≈ 0.993  (OK)
+// Recv-Q EMPTY on collapse ⇒ not pipe back-pressure; this ratio is the observable.
+//
+// Thresholds locked to those measurements (not guessed fps):
+inline constexpr double kSupplyRealtimeStarvedLt = 0.85; // < → STARVED (wall≥min)
+inline constexpr double kSupplyRealtimeOkGe = 0.95;      // ≥ → OK
+inline constexpr double kSupplyRealtimeMinWallS = 5.0;   // below → WARMUP (ratio still printed)
+
+struct SupplyRealtime {
+    double ratio = 0.0;
+    bool ratio_known = false;
+    // STARVED | MARGINAL | OK | WARMUP | NO-DATA
+    const char* class_name = "NO-DATA";
+    // Always the same derivation string for greppability.
+    const char* der = "audio_s/wall_s";
+};
+
+inline SupplyRealtime classifySupplyRealtime(double audio_s, double wall_s) {
+    SupplyRealtime r;
+    if (!(wall_s > 0.0) || !(audio_s >= 0.0) || !std::isfinite(audio_s) ||
+        !std::isfinite(wall_s)) {
+        r.ratio_known = false;
+        r.class_name = "NO-DATA";
+        return r;
+    }
+    r.ratio = audio_s / wall_s;
+    r.ratio_known = std::isfinite(r.ratio);
+    if (!r.ratio_known) {
+        r.class_name = "NO-DATA";
+        return r;
+    }
+    if (wall_s < kSupplyRealtimeMinWallS) {
+        r.class_name = "WARMUP";
+        return r;
+    }
+    if (r.ratio < kSupplyRealtimeStarvedLt)
+        r.class_name = "STARVED";
+    else if (r.ratio >= kSupplyRealtimeOkGe)
+        r.class_name = "OK";
+    else
+        r.class_name = "MARGINAL";
+    return r;
+}
+
+// Format fields for media: line (no leading space). ratio=NO-DATA when unknown.
+inline std::string formatSupplyRealtimeFields(const SupplyRealtime& r) {
+    char buf[192];
+    if (!r.ratio_known) {
+        std::snprintf(buf, sizeof(buf),
+                      "supply_ratio=NO-DATA supply_class=%s supply_ratio_der=%s",
+                      r.class_name ? r.class_name : "NO-DATA",
+                      r.der ? r.der : "audio_s/wall_s");
+    } else {
+        std::snprintf(buf, sizeof(buf),
+                      "supply_ratio=%.3f supply_class=%s supply_ratio_der=%s", r.ratio,
+                      r.class_name ? r.class_name : "NO-DATA",
+                      r.der ? r.der : "audio_s/wall_s");
+    }
+    return std::string(buf);
+}
+
 // residual = frames - presents - drops (supply-side arithmetic only).
 inline int64_t supplyResidual(int64_t frames, int64_t presents, int64_t drops) {
     return frames - presents - drops;

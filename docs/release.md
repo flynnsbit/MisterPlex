@@ -140,7 +140,7 @@ from a build before this redaction, rotate the Plex token:**
 | `DECODE` | `320x240` | RGB decode size (`WxH`) |
 | `TRANSCODE_PROFILE` | `240p` \| `480p` | PMS universal profile. `240p` = 320x240@1000k; `480p` = coded 624x480@2000k for 640x480 presented scanout. Both request H.264 Baseline Level 3.0. |
 | `WEAK_RES` | `320x240` | Legacy PMS universal ladder resolution override |
-| `WEAK_BITRATE` | `1000` | Legacy ladder max video kbps override |
+| `WEAK_BITRATE` | ladder default (240p=`1000`, 480p=`2000`) | Explicit PMS `maxVideoBitrate` override. **Wins over** the recommended floor (advisory only). On links ≲2 Mbit/s set ≤ link capacity (e.g. `900`–`1000`) or 480p starves — see supply_ratio telemetry. |
 | **`PRESENT`** | `fb0` \| `fpga` \| `both` | Where RGB lands |
 | **`STREAM`** | `0` \| `1` | Annex-B → host I-recon F1 + F3 |
 | `STREAM_SKIP_RGB` | `auto` | `auto`: skip heavy RGB when `PRESENT=fpga` (keep audio); `0` always RGB |

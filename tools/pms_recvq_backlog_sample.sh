@@ -22,9 +22,13 @@
 #   7) Default WINDOW_S=6 (≥ parent ~6 s burst) to reduce aliasing; short windows
 #      print ALIAS_WARN — backlog_depth_s is the assumption-light statistic.
 #
-# PRE-REGISTER:
-#   predict_verdict=NOT_SUPPLY_LIMITED
-#   falsifier=majority live windows with recv_q==0 AND depth_s NO-DATA/low
+# PRE-REGISTER (per session — do NOT carry healthy-clip predict onto collapse):
+#   Healthy banked clip (e.g. low-bitrate 624x480): predict NOT_SUPPLY_LIMITED
+#     (held_n majority, depth_s large).
+#   Collapsing high-bitrate clip on slow link: predict SUPPLY_LIMITED / QUEUE_EMPTY
+#     — parent 2026-08-01 rk=9: empty_n=8/8 max_recv_q=0 while audio_s/wall≈0.47.
+#   MISS published: carrying predict_verdict=NOT_SUPPLY_LIMITED onto rk=9 collapse
+#     was wrong; empty Recv-Q = starved (not pipe back-pressure).
 #
 # Usage:
 #   WINDOWS=6 WINDOW_S=6 BACKLOG_MIN=100000 sh tools/pms_recvq_backlog_sample.sh
@@ -51,7 +55,7 @@ fi
 
 echo "pms_recvq_backlog_sample windows=$WINDOWS window_s=$WINDOW_S backlog_min=$BACKLOG_MIN live_min_s=$LIVE_MIN_S"
 echo "VOID_rchar=1 VOID_nominal_bps=1 pin=four_tuple note=reconnect_if_bytes_received_decreases"
-echo "PRE_REGISTER predict_verdict=NOT_SUPPLY_LIMITED"
+echo "PRE_REGISTER note=set_predict_per_session_see_header_MISS_rk9_empty_was_starved"
 if awk -v w="$WINDOW_S" -v b="$BURST_HINT_S" 'BEGIN { exit !(w+0 < b+0) }'; then
   echo "ALIAS_WARN window_s=$WINDOW_S < burst_hint_s=$BURST_HINT_S — prefer WINDOW_S>=$BURST_HINT_S; trust backlog_depth_s over short gaps"
 fi

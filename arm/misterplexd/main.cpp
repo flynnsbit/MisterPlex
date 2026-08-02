@@ -532,6 +532,17 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "misterplexd: invalid transcode profile (%s); falling back to 240p\n",
                      weakWhy.c_str());
         misterplex::applyPlexTranscodeProfile("240p", weak);
+    } else {
+        // Bitrate-below-recommended is advisory only. Parent root-cause: a hard
+        // 2000 kbps 480p floor rejected explicit WEAK_BITRATE and starved links
+        // ~1.5 Mbit/s. Log the advisory; do not rewrite the ladder.
+        std::string brAdv;
+        if (misterplex::weakLadderBitrateBelowRecommended(weak, &brAdv)) {
+            std::fprintf(stderr,
+                         "misterplexd: WARN bitrate_below_recommended %s "
+                         "WEAK_BITRATE_explicit=%d tag=caller_supplied_or_default\n",
+                         brAdv.c_str(), weakBitrateExplicit ? 1 : 0);
+        }
     }
 
     // SA_SIGINFO so si_pid/si_code survive into EXIT_REASON (who sent the kill).
@@ -911,10 +922,22 @@ int main(int argc, char** argv) {
             weakForContentResolution(weak, contentRes, weakBitrateExplicit);
         std::fprintf(stderr,
                      "misterplexd: content resolution=%s source=%s status_word=0x%04x "
-                     "weak=%s bitrate=%d decode_src=%s\n",
+                     "weak=%s bitrate=%d recommended_min_bitrate=%d "
+                     "WEAK_BITRATE_explicit=%d decode_src=%s\n",
                      contentRes.label, player.osdApplyActive() ? "OSD O[4]" : "conf/--decode",
                      player.lastOsdWord(), weakForPlay.videoResolution.c_str(),
-                     weakForPlay.maxVideoBitrateKbps, player.decodeSizeSource().c_str());
+                     weakForPlay.maxVideoBitrateKbps,
+                     misterplex::recommendedMinVideoBitrateKbps(weakForPlay),
+                     weakBitrateExplicit ? 1 : 0, player.decodeSizeSource().c_str());
+        {
+            std::string brAdv;
+            if (misterplex::weakLadderBitrateBelowRecommended(weakForPlay, &brAdv)) {
+                std::fprintf(stderr,
+                             "misterplexd: WARN play bitrate_below_recommended %s "
+                             "WEAK_BITRATE_explicit=%d (honored — not rejected)\n",
+                             brAdv.c_str(), weakBitrateExplicit ? 1 : 0);
+            }
+        }
         auto [resolved, base] = resolveAgainstServers(req, defaultPms, off, weakForPlay);
 
         if (gen != playGen.load()) {

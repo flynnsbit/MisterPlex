@@ -335,13 +335,39 @@ bool validateWeakLadder(const WeakLadder& weak, std::string* why) {
             return fail("current built-in profiles stop at " +
                         std::to_string(kDdrFrameStoreMaxWidth.get()) + "x" +
                         std::to_string(kDdrFrameStoreMaxHeight.get()));
-        if (weak.maxVideoBitrateKbps < 2000)
-            return fail("480p profile bitrate is too low");
-    } else if (weak.maxVideoBitrateKbps < 750) {
-        return fail("240p profile bitrate is too low");
+        // Bitrate floors are NOT decoder contracts (see recommendedMinVideoBitrateKbps).
+        // A hard 2000 kbps reject forced PMS requests above ~1.5 Mbit links and
+        // silently fell the ladder back — parent-proven 480p drop root cause.
     }
     if (weak.videoQuality <= 0 || weak.maxVideoBitrateKbps <= 0)
         return fail("videoQuality and maxVideoBitrate must be positive");
+    return true;
+}
+
+int recommendedMinVideoBitrateKbps(const WeakLadder& weak) {
+    int w = 0, h = 0;
+    if (!parseResolution(weak.videoResolution, w, h))
+        return 0;
+    // Defaults from osd_menu.hpp ladder constants — quality/ARM-margin heuristics,
+    // not H.264 level contracts. 480p default = kPlex480pWeakBitrateKbps (2000).
+    if (w >= kPlex480pCodedWidth.get() || h >= kPlex480pCodedHeight.get())
+        return kPlex480pWeakBitrateKbps;
+    // Legacy 240p path used a soft floor of 750 below the 1000 default.
+    return 750;
+}
+
+bool weakLadderBitrateBelowRecommended(const WeakLadder& weak, std::string* detail) {
+    const int floor = recommendedMinVideoBitrateKbps(weak);
+    if (floor <= 0 || weak.maxVideoBitrateKbps <= 0)
+        return false;
+    if (weak.maxVideoBitrateKbps >= floor)
+        return false;
+    if (detail) {
+        *detail = "maxVideoBitrateKbps=" + std::to_string(weak.maxVideoBitrateKbps) +
+                  " < recommended_min=" + std::to_string(floor) +
+                  " for videoResolution=" + weak.videoResolution +
+                  " (quality/link heuristic — explicit WEAK_BITRATE wins; not a decoder fail)";
+    }
     return true;
 }
 

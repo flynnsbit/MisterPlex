@@ -110,7 +110,18 @@ struct WeakLadder {
 };
 
 // Guard rails for built-in and configured ladders.
+// Hard fails: resolution parse, codecs, H.264 baseline, level ≤ 3.0, positive
+// quality/bitrate, coded size ≤ DDR max. Does NOT hard-fail below the ladder's
+// *recommended* bitrate defaults (2000/750) — those are quality/link heuristics
+// (osd_menu.hpp); explicit WEAK_BITRATE must be allowed for slow links.
 bool validateWeakLadder(const WeakLadder& weak, std::string* why = nullptr);
+
+// Recommended minimum maxVideoBitrateKbps for the ladder geometry (0 = unknown).
+// 480p → kPlex480pWeakBitrateKbps (2000); sub-480p → 750. Not a decoder contract.
+int recommendedMinVideoBitrateKbps(const WeakLadder& weak);
+
+// True when bitrate is positive but below recommendedMin. detail is greppable.
+bool weakLadderBitrateBelowRecommended(const WeakLadder& weak, std::string* detail = nullptr);
 std::string plexClientProfileExtra(const WeakLadder& weak);
 std::string plexClientCapabilities(const WeakLadder& weak);
 std::string buildUniversalTranscodeUrl(const std::string& base,

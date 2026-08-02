@@ -4242,6 +4242,12 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                               : 0.0;
                 const int64_t abytes = audioBytes_.load();
                 const double a_sec = static_cast<double>(abytes) / (48000.0 * 4.0);
+                const double wall_s_now = static_cast<double>(wall2) / 1000.0;
+                // Link/arrival observable: audio_s/wall_s (parent 480p RCA).
+                // STARVED ≈ 0.47 collapse; OK ≈ 0.99 healthy — not pipe back-pressure.
+                const auto supplyRt = misterplex::classifySupplyRealtime(a_sec, wall_s_now);
+                const std::string supplyRtFields =
+                    misterplex::formatSupplyRealtimeFields(supplyRt);
                 const int mw = measuredDeliveryW_.load();
                 const int mh = measuredDeliveryH_.load();
                 const auto led = frameLedgerLiveOf(frameIndex, presentCount_,
@@ -4275,7 +4281,8 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                     " vfps=" + fmtFpsRate(vfps) +
                     " pfps=" + fmtFpsRate(pfps) +
                     " audio_s=" + fmtSec3(a_sec) +
-                    " wall_s=" + fmtSec3(static_cast<double>(wall2) / 1000.0) +
+                    " wall_s=" + fmtSec3(wall_s_now) +
+                    " " + supplyRtFields +
                     " wall_ms=" + std::to_string(wall2) +
                     " mono_ms=" + std::to_string(steadyMonoMs()) +
                     " audio=" + (audioActive_.load() ? "on" : "off") +

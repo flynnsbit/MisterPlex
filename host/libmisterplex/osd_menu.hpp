@@ -144,9 +144,12 @@ inline unsigned osdContentTierFromWord(uint16_t word) {
 }
 
 inline ContentResolution contentResolutionFor480p() {
-    // 624x480 is still the 480p ladder. Use the 2000 kbps PMS/validator floor
-    // until W-FEED (or equivalent ARM-boundary profiling) proves a higher
-    // bitrate safe; this path has only millisecond-scale decode margin.
+    // 624x480 is still the 480p ladder. Default request bitrate is 2000 kbps
+    // (kPlex480pWeakBitrateKbps) as a quality/ARM-margin *heuristic* — historically
+    // described as a "PMS/validator floor" and incorrectly hard-failed in
+    // validateWeakLadder. That hard fail is retired: links below ~2 Mbit/s
+    // (parent-measured ~1.56 Mbit/s to MiSTer) starve any request near the default.
+    // Operator WEAK_BITRATE must win; recommendedMin is advisory only.
     return {kPlex480pCodedWidth, kPlex480pCodedHeight, plex480pCodedResolutionLabel(),
             kPlex480pWeakBitrateKbps, ContentPresentPolicy::NativeCanvas,
             plex480pCodedResolutionLabel()};
