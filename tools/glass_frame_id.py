@@ -164,8 +164,48 @@ def paint_even_rows(rgb: np.ndarray, y0: int, y1: int) -> None:
         rgb[y + 1] = rgb[y]
 
 
-def draw_id_band(rgb: np.ndarray, n: int, geom: IdGeometry | None = None) -> None:
-    from PIL import Image, ImageDraw, ImageFont
+_FONT_CACHE: dict[tuple[int, str], object] = {}
+
+
+def _mono_font(size: int, bold: bool = True):
+    """Cached truetype mono font (PIL load is expensive per-frame)."""
+    from PIL import ImageFont
+
+    key = (int(size), "B" if bold else "R")
+    if key in _FONT_CACHE:
+        return _FONT_CACHE[key]
+    paths_bold = (
+        "/usr/share/fonts/TTF/DejaVuSansMono-Bold.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSansMono-Bold.ttf",
+        "/usr/share/fonts/liberation/LiberationMono-Bold.ttf",
+    )
+    paths_reg = (
+        "/usr/share/fonts/TTF/DejaVuSansMono.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf",
+        "/usr/share/fonts/TTF/DejaVuSans-Bold.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+    )
+    font = None
+    for fp in (paths_bold if bold else paths_reg) + paths_reg:
+        try:
+            font = ImageFont.truetype(fp, size=size)
+            break
+        except Exception:
+            continue
+    if font is None:
+        font = ImageFont.load_default()
+    _FONT_CACHE[key] = font
+    return font
+
+
+def draw_id_band(
+    rgb: np.ndarray,
+    n: int,
+    geom: IdGeometry | None = None,
+    *,
+    rate_tag: str = "",
+) -> None:
+    from PIL import Image, ImageDraw
 
     h, w = rgb.shape[:2]
     g = geom or geometry_for(w, h)
@@ -186,24 +226,7 @@ def draw_id_band(rgb: np.ndarray, n: int, geom: IdGeometry | None = None) -> Non
     draw = ImageDraw.Draw(img)
     # Contract: fixed-width "G n=DDDDDD c=C". Proportional fonts shift digit
     # cells (thin '1') and break parent fixed-cell template decode.
-    font = None
-    for fp in (
-        "/usr/share/fonts/TTF/DejaVuSansMono-Bold.ttf",
-        "/usr/share/fonts/truetype/dejavu/DejaVuSansMono-Bold.ttf",
-        "/usr/share/fonts/liberation/LiberationMono-Bold.ttf",
-        "/usr/share/fonts/TTF/DejaVuSansMono.ttf",
-        "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf",
-        # last resort proportional — host gate may still use SIM auto cells
-        "/usr/share/fonts/TTF/DejaVuSans-Bold.ttf",
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-    ):
-        try:
-            font = ImageFont.truetype(fp, size=g.font_px)
-            break
-        except Exception:
-            continue
-    if font is None:
-        font = ImageFont.load_default()
+    font = _mono_font(g.font_px, bold=True)
     draw.text(
         (g.text_x, g.text_y),
         format_text(n),
@@ -212,6 +235,18 @@ def draw_id_band(rgb: np.ndarray, n: int, geom: IdGeometry | None = None) -> Non
         stroke_width=g.stroke_w,
         stroke_fill=BLACK,
     )
+    # Optional fps rational on plate right — ERROR 17 guard (measured rate label).
+    if rate_tag:
+        rfont = _mono_font(max(12, g.font_px // 2), bold=True)
+        label = f"fps={rate_tag}"
+        try:
+            bbox = draw.textbbox((0, 0), label, font=rfont)
+            tw = bbox[2] - bbox[0]
+        except Exception:
+            tw = 8 * len(label)
+        x = max(g.text_x, g.width - tw - 8)
+        y = max(2, g.plate_y0 + 4)
+        draw.text((x, y), label, fill=YELLOW, font=rfont, stroke_width=1, stroke_fill=BLACK)
     out = np.array(img)
     paint_even_rows(out, g.plate_y0, g.bar_y1)
     rgb[:] = out

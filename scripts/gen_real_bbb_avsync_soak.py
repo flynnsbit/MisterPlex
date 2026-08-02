@@ -30,6 +30,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tools"))
 from glass_frame_id import BAR_Y1, draw_id_band, format_text, geometry_for  # noqa: E402
 
+# Defaults; overridden by --fps-num / --fps-den (24/1 or 24000/1001).
 FPS_NUM = 24
 FPS_DEN = 1
 SR = 48000
@@ -120,6 +121,18 @@ def main() -> int:
     ap.add_argument("--duration", type=float, default=1200.0, help="output seconds (loop src)")
     ap.add_argument("--period", type=float, default=2.0, help="A/V marker period seconds")
     ap.add_argument(
+        "--fps-num",
+        type=int,
+        default=24,
+        help="content fps numerator (24 or 24000). Never assume — measured in ffprobe.",
+    )
+    ap.add_argument(
+        "--fps-den",
+        type=int,
+        default=1,
+        help="content fps denominator (1 or 1001). 24000/1001 = 23.976023…",
+    )
+    ap.add_argument(
         "--audio-delay-ms",
         type=float,
         default=0.0,
@@ -127,14 +140,27 @@ def main() -> int:
     )
     ap.add_argument("--vbitrate", default="2500k")
     ap.add_argument("--work", type=Path, default=None)
+    ap.add_argument(
+        "--rate-tag",
+        default="",
+        help="optional short tag burned on ID plate (e.g. 24/1 or 23976); default from fps",
+    )
     args = ap.parse_args()
 
     if not args.src.is_file():
         raise SystemExit(f"missing src {args.src}")
 
     w, h = args.width, args.height
-    fps = FPS_NUM / float(FPS_DEN)
-    fps_str = f"{FPS_NUM}/{FPS_DEN}" if FPS_DEN != 1 else str(FPS_NUM)
+    fps_num = int(args.fps_num)
+    fps_den = int(args.fps_den)
+    if fps_num <= 0 or fps_den <= 0:
+        raise SystemExit("fps-num/den must be positive")
+    fps = fps_num / float(fps_den)
+    fps_str = f"{fps_num}/{fps_den}"
+    # Human tag in filename/overlay — never "24" when den!=1
+    rate_tag = args.rate_tag.strip() or (
+        "24/1" if (fps_num, fps_den) == (24, 1) else f"{fps_num}/{fps_den}"
+    )
     n_frames = int(round(args.duration * fps))
     geom = geometry_for(w, h)
     id_bottom = geom.bar_y1  # even; body flash below ID band
@@ -155,9 +181,10 @@ def main() -> int:
         flush=True,
     )
     print(
-        f"OUT_PLAN w={w} h={h} fps={fps_str} duration_s={args.duration} "
-        f"n_frames={n_frames} period_s={args.period} id_bottom={id_bottom} "
-        f"text0={format_text(0)} designed_av_offset_ms={args.audio_delay_ms}",
+        f"OUT_PLAN w={w} h={h} fps={fps_str} rate_tag={rate_tag} "
+        f"duration_s={args.duration} n_frames={n_frames} period_s={args.period} "
+        f"id_bottom={id_bottom} text0={format_text(0)} "
+        f"designed_av_offset_ms={args.audio_delay_ms}",
         flush=True,
     )
 
@@ -233,7 +260,7 @@ def main() -> int:
             if g > 0.0:
                 # Opaque white body — ID band never touched here
                 rgb[id_bottom:, :, :] = 255
-            draw_id_band(rgb, n, geom)
+            draw_id_band(rgb, n, geom, rate_tag=rate_tag)
             enc.stdin.write(rgb.tobytes())
             n += 1
             if n % 500 == 0:
@@ -256,7 +283,10 @@ def main() -> int:
         "caller_supplied": {
             "width": w,
             "height": h,
-            "fps": f"{FPS_NUM}/{FPS_DEN}",
+            "fps": fps_str,
+            "fps_num": fps_num,
+            "fps_den": fps_den,
+            "rate_tag": rate_tag,
             "duration_s": args.duration,
             "period_s": args.period,
             "designed_av_offset_ms": float(args.audio_delay_ms),
