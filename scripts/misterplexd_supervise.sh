@@ -93,11 +93,30 @@ while true; do
     backoff=2
   fi
   echo "$(ts) EXIT pid=$child rc=$st run_s=$ran_s — respawn in ${backoff}s" >>"$SUPLOG"
+  # rc=126 = shell "found but not executable" / corrupt or incomplete ELF
+  # (parent 2026-08-01: truncated scp onto live path → n_daemon=0 for ~2 min).
+  if [ "$st" -eq 126 ] || [ "$st" -eq 127 ]; then
+    sz=$(wc -c <"$BIN" 2>/dev/null || echo 0)
+    m=$(md5sum "$BIN" 2>/dev/null | awk '{print $1}')
+    echo "$(ts) ALARM CORRUPT_OR_INCOMPLETE_BINARY rc=$st run_s=$ran_s bytes=$sz md5=${m:-unknown} path=$BIN" >>"$SUPLOG"
+    echo "$(ts) REMEDY never scp onto live misterplexd; use scripts/deploy_misterplexd.sh (stage+md5+mv)" >>"$SUPLOG"
+    echo "$(ts) REMEDY atomic restore: cp bak to ${BIN}.restore.\$\$ && mv -f ${BIN}.restore.\$\$ $BIN then kill PID (not name)" >>"$SUPLOG"
+    echo "$(ts) REMEDY host: PAIR_ID=ddr-8fdf440f-9ce2c2d1 ROLLBACK_DAEMON=artifacts/daemon-pins/misterplexd.9ce2c2d1 scripts/restore_misterplexd_prev.sh" >>"$SUPLOG"
+    # Cap backoff climb for corpse-respawn so recovery is not delayed 64s.
+    if [ "$backoff" -gt 8 ]; then
+      backoff=8
+    fi
+  fi
   resume_stopped_main
   sleep "$backoff"
   if [ "$ran_s" -lt "$HEALTHY_SECS" ]; then
     if [ "$backoff" -lt 60 ]; then
-      backoff=$((backoff * 2))
+      # Do not explode backoff on hard corrupt binary — stay recoverable.
+      if [ "$st" -eq 126 ] || [ "$st" -eq 127 ]; then
+        :
+      else
+        backoff=$((backoff * 2))
+      fi
     fi
   fi
 done

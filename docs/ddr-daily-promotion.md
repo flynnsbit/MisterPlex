@@ -22,8 +22,9 @@ Parent-owned device work only. Agents produce artifacts and commands; they must
 | **castBound_** | (not in package) | **BLOCKER — liveness hole only.** Latched on `/player/` **or `/resources`** (`companion.cpp`); `/resources` is LAN discovery, not a cast. Cleared only by `/player/timeline/unsubscribe`; **no expiry**. Vanished controller → indefinite `buffering` report. **Not** the intentional buffering@navigation UX. Gate owned by **w-lint** (`test_castbound_liveness`) — do not duplicate. |
 | **P7 real title** | synthetic flash fixture soaks | **OPEN.** One real title end-to-end on **viewed pixels** required. Telemetry-only play (even healthy `pfps`/`drops`) does not close P7. w-plextv-1 E2E owns the suite; acceptance below. |
 | **Soak continuity** | flat drops across N minutes | Must assert **one** `session_epoch` (`supply_bucket` / media lines). Daemon `rc=0` respawns reset per-stream counters. Tool: `tools/soak_continuity_assert.py --require-single-session-epoch`. |
-| **V2_MD5 blind-RED** | gate stuck on `…81848set +e` | Capture fixed at `23fc28d4`/`33cbac42` (single-heredoc + shape SKIP equality); **never trim comparison**. Parent must re-run from worktree HEAD (`e8f416cd`+). Pre-`2bdd18ea` SHAs still glue. |
-| **Live daemon `9ce2c2d1`** | was unpinned lane `build/` | **PINNED PRIMARY** `9ce2c2d13d1c8712683289043e99002c` → `artifacts/daemon-pins/misterplexd.9ce2c2d1` (from w-osd-hires build; parent glass OK). Pair `ddr-8fdf440f-9ce2c2d1`. Lane build/ **OK to pin as-is** when md5==live `/proc/exe`; rebuild only if `cmp`-identical. |
+| **V2_MD5 blind-RED** | gate stuck on `…81848set +e` | Capture fixed (single-heredoc + shape SKIP equality); empty capture = **NO-DATA rc=4**, never mismatch; **never trim comparison**. Re-run `verify-live` from worktree HEAD. |
+| **Live daemon `9ce2c2d1`** | was unpinned lane `build/` | **PINNED PRIMARY** `9ce2c2d13d1c8712683289043e99002c` → `artifacts/daemon-pins/misterplexd.9ce2c2d1` (w-osd-hires; glass OK). Pair `ddr-8fdf440f-9ce2c2d1`. Lane build/ **OK to pin as-is** when md5==live `/proc/exe`. |
+| **Truncated scp** | direct scp onto live path → corpse ELF | **FORBIDDEN.** Stage-only + on-device md5 gate before `mv -f`; supervise ALARM on rc=126; `rollback_daemon_atomic.sh`. |
 
 ## Mutation-proven gates (host: `bash tests/unit/test_promote_runbook_mutations.sh`)
 
@@ -45,40 +46,63 @@ Parent-owned device work only. Agents produce artifacts and commands; they must
 | **B8 core bytes** | Restore daemon only; `Plex.rbf` left wrong → unpaired after power cycle | disk core ≠ pin, no `ROLLBACK_CORE` | load_core of wrong/missing RBF | **rc=10** refuse; with `ROLLBACK_CORE=` installs then ONE menu load |
 | **session_epoch soak** | Multi-respawn soak quoted as one session (counters reset) | multi `session_epoch` in log | vacuous PASS | `soak_continuity_assert --require-single-session-epoch` **rc=2** |
 
-Also: `bash tests/unit/test_deploy_misterplexd.sh` (62 checks) — green DEPLOY_OK⇒rc0; red no DEPLOY_OK.
+Also: `bash tests/unit/test_deploy_misterplexd.sh` (73 checks) — green DEPLOY_OK⇒rc0; red no DEPLOY_OK; **truncated stage md5 refuses mv (rc=7)**.
+
+## Truncated-transfer incident (parent 2026-08-01 night)
+
+**What happened:** `scp` directly onto live `…/bin/misterplexd` stalled on WiFi → on-disk md5 `e85682c9` (truncated ELF) → supervise `rc=126` ×12 (backoff 2…64s) → `n_daemon=0` ~2 min. Naive `cp` restore hit **ETXTBSY**; recovery was **atomic `mv -f`** + kill-by-PID.
+
+**Guards now (host-unit RED-before-GREEN):**
+| Path | Guard |
+|------|--------|
+| Daemon | `scp` **only** to `.stage.<p8>`; `deploy_assert_stage_md5` host==stage or **refuse mv** (rc=7); empty stage = NO-DATA rc=4; then bak + `mv -f` + kill PID + `/proc/exe` md5 |
+| RBF | same stage+md5 **before** any rename onto `Plex.rbf` (`deploy_plex_core.sh`) |
+| Supervise | `ALARM CORRUPT_OR_INCOMPLETE_BINARY` on child rc=126/127 + remedy text |
+| Rollback | `scripts/rollback_daemon_atomic.sh` [prefix\|path] — default pin `9ce2c2d1` |
+
+**NEVER:** `scp … root@host:/media/fat/misterplex_v2/bin/misterplexd`
 
 ### Parent commands (device)
 
 ```bash
-# Preflight user state (conf+ini)
+# From worktree: .worktrees/rollback-honest  (branch fix/rollback-honest)
+
+# Preflight user state (conf+ini) — USER-OWNED; restore with cmp later
 OUT=./build/user-state-$(date -u +%Y%m%dT%H%M%SZ) USER_STATE_EXECUTE=1 \
   ./scripts/user_state_snapshot.sh snapshot; echo "true rc=$?"
 
 # Two-roots (must be rc=0 before promote)
 PREFLIGHT_EXECUTE=1 ./scripts/two_roots_preflight.sh check; echo "true rc=$?"
 
-# Daemon deploy (live /proc/exe + n_daemon + HTTP; geometry skip ≠ PASS)
-DEPLOY_SKIP_BOOT_HOOK=0 ./scripts/deploy_misterplexd.sh /path/to/misterplexd
+# SAFE daemon deploy (stage→md5→mv; never live-path scp)
+DEPLOY_EXPECT_MD5=9ce2c2d13d1c8712683289043e99002c \
+  ./scripts/deploy_misterplexd.sh artifacts/daemon-pins/misterplexd.9ce2c2d1
 echo "true rc=$?"   # DEPLOY_OK only if rc=0
 
-# ONE menu bounce (full paths — bare menu.rbf silently does nothing)
-# write to device /dev/MiSTer_cmd:
-#   load_core /media/fat/menu.rbf
-#   sleep 6
-#   load_core /media/fat/_Utility/Plex.rbf
-DEPLOY_LOAD=menu ./scripts/deploy_plex_core.sh   # preferred; one bounce
+# ONE-COMMAND daemon rollback to primary pin (conf untouched)
+./scripts/rollback_daemon_atomic.sh 9ce2c2d1
+echo "true rc=$?"
+
+# Or from on-device bak (if pin not on host):
+# ROLLBACK_DAEMON=device:/media/fat/misterplex_v2/bin/misterplexd.9ce2c2d1.bak \
+#   ./scripts/rollback_daemon_atomic.sh; echo "true rc=$?"
+
+# RBF: stage md5 must match local before mv; ONE menu bounce only
+DEPLOY_LOAD=menu ./scripts/deploy_plex_core.sh /path/to/good.rbf
+echo "true rc=$?"
+
+# verify-live (V2_MD5 shape-clean; empty=NO-DATA; boot-hook≠live)
+MISTER_HOST=192.168.1.183 ./scripts/promotion_gate_check.sh verify-live
+echo "true rc=$?"
 
 # Post-promotion session (UNSCORED if no play window)
-# after a real cast/play, from device log or env:
 DELIVERY_VERIFIED=1 MEASURED_DELIVERY=624x480 DROPS=0 UNACCOUNTED=0 \
   VFPS=23.9706 SOURCE_FPS=23.97 SESSION_ESTABLISHED=1 \
   ./scripts/promotion_session_verify.sh; echo "true rc=$?"
 
-# Restore postcond host check (after parent rollback)
-RESTORE_POST_N=1 RESTORE_POST_LIVE_MD5=<pin> RESTORE_POST_EXPECT_DAEMON=<pin> \
-  RESTORE_POST_HTTP=200 RESTORE_POST_CONF_LIVE=7f06132f RESTORE_POST_CONF_EXPECT=7f06132f \
-  RESTORE_POST_INI_LIVE=ab8398d6 RESTORE_POST_INI_EXPECT=ab8398d6 \
-  ./scripts/restore_misterplexd_prev.sh verify-post; echo "true rc=$?"
+# Host RED-before-GREEN (no device):
+bash tests/unit/test_deploy_misterplexd.sh; echo "true rc=$?"
+# expect: trunc-stage-rc7, integ-trunc-no-deploy-ok, summary pass>=73
 ```
 
 Daemon install-root bind (refuse silent v1 conf): `w-480-delivery` @ `1fa15ec8`.

@@ -101,6 +101,60 @@ deploy_assert_conf_unchanged() {
   return 0
 }
 
+# --- atomic install gates (parent 2026-08-01 truncated-scp incident) ----------
+# Incident: scp directly onto live misterplexd stalled → partial ELF md5 e85682c9
+# → supervise rc=126 loop → n_daemon=0 ~2 min. ETXTBSY blocked naive cp restore;
+# atomic mv -f was the recovery.
+#
+# Contract for ANY binary/RBF install:
+#   1) scp ONLY to a stage name (never the live path)
+#   2) on-device md5(stage) == host want — else rm stage and REFUSE (no mv)
+#   3) cp -p live → content-addressed .bak (measured outgoing md5)
+#   4) mv -f stage → live (rename; immune to ETXTBSY)
+#   5) kill by captured PID only; verify /proc/PID/exe md5 (not disk alone)
+#
+# Empty stage md5 = NO-DATA (SSH drop), never "mismatch against want".
+
+# Args: host_want_md5 stage_got_md5
+# rc: 0 match, 4 NO-DATA empty, 7 mismatch (truncated/corrupt — refuse swap)
+deploy_assert_stage_md5() {
+  local want="${1:-}" got="${2:-}"
+  if [[ -z "$got" ]]; then
+    echo "NO-DATA stage md5 empty (not a mismatch; refuse swap)" >&2
+    return 4
+  fi
+  if [[ -z "$want" ]]; then
+    echo "NO-DATA host want md5 empty (refuse swap)" >&2
+    return 4
+  fi
+  # Normalize to lowercase hex only for compare (never trim garbage to pass).
+  want=$(printf '%s' "$want" | tr 'A-F' 'a-f' | tr -cd '0-9a-f')
+  got=$(printf '%s' "$got" | tr 'A-F' 'a-f' | tr -cd '0-9a-f')
+  if [[ "${#got}" -ne 32 || "${#want}" -ne 32 ]]; then
+    echo "FAIL stage md5 shape want_len=${#want} got_len=${#got} (refuse swap)" >&2
+    return 7
+  fi
+  if [[ "$got" != "$want" ]]; then
+    echo "FAIL stage md5 $got != host $want (truncated/corrupt transfer — refuse mv onto live)" >&2
+    return 7
+  fi
+  echo "OK stage md5=$got"
+  return 0
+}
+
+# Decide whether atomic mv is allowed after stage verify.
+# Args: stage_assert_rc (from deploy_assert_stage_md5)
+# rc: 0 allow mv, else refuse (propagate)
+deploy_allow_atomic_mv() {
+  local stage_rc="${1:-1}"
+  if [[ "$stage_rc" -eq 0 ]]; then
+    echo "OK allow_atomic_mv"
+    return 0
+  fi
+  echo "REFUSE atomic_mv stage_rc=$stage_rc (live path untouched)" >&2
+  return "$stage_rc"
+}
+
 # Full post-deploy gate (host-side after remote POST_* lines).
 # Args: n live_md5 host_md5 live_conf target_root http_code conf_pre conf_post
 # Returns first failing deploy_assert_* code.

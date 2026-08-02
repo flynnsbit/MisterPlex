@@ -25,6 +25,43 @@ ok() { echo "PASS $1"; pass=$((pass + 1)); }
 bad() { echo "FAIL $1" >&2; fail=$((fail + 1)); }
 
 # --- pure policy -------------------------------------------------------------
+echo "=== RED: truncated stage md5 must refuse atomic mv (parent scp incident) ==="
+# Simulated: host wants full pin; stage got short/partial ELF hash.
+WANT_FULL=9ce2c2d13d1c8712683289043e99002c
+TRUNC=e85682c9aaaaaaaaaaaaaaaaaaaaaaaa   # 32 hex, wrong — truncated-transfer class
+set +e
+out=$(deploy_assert_stage_md5 "$WANT_FULL" "$TRUNC" 2>&1)
+rc=$?
+set -e
+[[ "$rc" -eq 7 ]] && ok "trunc-stage-rc7" || bad "trunc-stage-rc7 got=$rc"
+echo "$out" | grep -q 'refuse mv' && ok "trunc-stage-msg" || bad "trunc-stage-msg"
+set +e
+deploy_allow_atomic_mv "$rc" >/dev/null 2>&1
+arc=$?
+set -e
+[[ "$arc" -eq 7 ]] && ok "trunc-refuse-mv" || bad "trunc-refuse-mv got=$arc"
+
+echo "=== RED: empty stage md5 is NO-DATA not mismatch ==="
+set +e
+out=$(deploy_assert_stage_md5 "$WANT_FULL" "" 2>&1)
+rc=$?
+set -e
+[[ "$rc" -eq 4 ]] && ok "empty-stage-rc4" || bad "empty-stage-rc4 got=$rc"
+echo "$out" | grep -q 'NO-DATA' && ok "empty-stage-nodata" || bad "empty-stage-nodata"
+echo "$out" | grep -q "got='' want=" && bad "empty-stage-false-mismatch" || ok "empty-stage-no-false-mismatch"
+
+echo "=== GREEN: stage md5 match allows mv ==="
+set +e
+deploy_assert_stage_md5 "$WANT_FULL" "$WANT_FULL" >/dev/null
+rc=$?
+set -e
+[[ "$rc" -eq 0 ]] && ok "stage-match-rc0" || bad "stage-match-rc0 got=$rc"
+set +e
+deploy_allow_atomic_mv 0 >/dev/null
+arc=$?
+set -e
+[[ "$arc" -eq 0 ]] && ok "allow-mv-rc0" || bad "allow-mv-rc0 got=$arc"
+
 echo "=== RED: force v1 while live is v2 ==="
 if out=$(deploy_resolve_target_root "/media/fat/misterplex_v2" "/media/fat/misterplex" 2>&1); then
   bad "cross-root-resolve-should-fail got='$out'"
@@ -403,6 +440,30 @@ else
   grep -qi 'conf mutated\|USER-OWNED\|conf_md5' "$WORK/conf-mut.out" \
     && ok "integ-conf-mut-msg" || bad "integ-conf-mut-msg"
 fi
+
+echo "=== RED integration: truncated stage md5 aborts before kill (live untouched class) ==="
+# After scp to stage, on-device md5 probe returns garbage (partial transfer).
+# Deploy must refuse before INSTALL_OK / kill.
+echo "deadbeefdeadbeefdeadbeefdeadbeef" >"$STATE/disk_md5"
+echo "$HOST_MD5" >"$STATE/live_md5"
+export DEPLOY_SCP_TRIES=1
+export DEPLOY_SSH_TRIES=1
+export DEPLOY_RETRY_BACKOFF_S=0
+if run_deploy "trunc" env -u MISTERPLEX_ROOT DEPLOY_SKIP_BOOT_HOOK=1 DEPLOY_SKIP_GEOMETRY_GATE=1 \
+    DEPLOY_EXPECT_MD5="$HOST_MD5" "$SCRIPT" "$WORK/fake.bin"
+then
+  bad "integ-trunc should fail"
+else
+  trc=$?
+  [[ "$trc" -ne 0 ]] && ok "integ-trunc-nonzero" || bad "integ-trunc-nonzero"
+fi
+grep -qiE 'stage md5|truncated|scp_stage|refuse' "$WORK/trunc.out" && ok "integ-trunc-msg" || {
+  echo "---- trunc.out ----"; head -40 "$WORK/trunc.out"; bad "integ-trunc-msg"
+}
+# Must NOT claim DEPLOY_OK
+grep -q 'DEPLOY_OK' "$WORK/trunc.out" && bad "integ-trunc-no-deploy-ok" || ok "integ-trunc-no-deploy-ok"
+# Restore disk md5 for later greens
+echo "$HOST_MD5" >"$STATE/disk_md5"
 
 echo "=== RED integration: corrupted on-disk binary after stage (disk!=host) ==="
 echo "v2" >"$STATE/live_root"

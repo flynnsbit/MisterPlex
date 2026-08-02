@@ -5,19 +5,29 @@
 #   ./scripts/deploy_misterplexd.sh /path/to/misterplexd
 #   DEPLOY_EXPECT_MD5=<md5> ./scripts/deploy_misterplexd.sh /path/to/misterplexd
 #
-# Contract (parent-measured defects 2026-07-30/31):
+# NEVER: scp ... root@host:/media/fat/misterplex_v2/bin/misterplexd
+#   Parent incident 2026-08-01: direct scp stalled → truncated ELF (e85682c9) →
+#   supervise rc=126 loop → n_daemon=0 ~2 min. ETXTBSY blocked naive cp restore.
+# ALWAYS use this script (or rollback_daemon_atomic.sh). Path:
+#   stage name → on-device md5 == host → cp -p bak → mv -f → kill PID →
+#   verify /proc/PID/exe md5 + n_daemon==1 + /resources 200.
+#
+# Contract (parent-measured defects 2026-07-30/31 + 2026-08-01 truncate):
 #   1) Ships the EXACT file named on the CLI (byte-for-byte). Never rebuilds
 #      unless DEPLOY_REBUILD=1 (opt-in only).
 #   2) Install root = live process root from readlink -f /proc/<pid>/exe
 #      (not a hardcoded /media/fat/misterplex guess).
-#   3) Stop → install → start ONE daemon → verify:
-#        disk md5 == host md5 AND live /proc/PID/exe md5 == host md5
-#        AND n_daemon == 1. Disk-only match is NOT success (ETXTBSY / no restart).
-#   4) Every gate prints "true rc=N" captured directly (never through a pipe).
-#   5) DEPLOY_OK is emitted ONLY as the final line of a successful run. Final rc
-#      is a pure function of post-conditions. Never DEPLOY_OK then fail (parent
-#      2026-08-01 false rc=1 after live verify — missing late source).
-#   6) All policy deps are resolved BEFORE any device I/O (missing file = rc=2).
+#   3) scp ONLY to .stage.<p8>; md5 gate BEFORE any mv onto live path.
+#   4) Atomic mv -f (immune to ETXTBSY); kill by captured PID only (no name kill).
+#   5) Post: live /proc/PID/exe md5 == host AND n_daemon==1 AND /resources 200.
+#      Disk-only match is NOT success.
+#   6) Conf is USER-OWNED — snapshot md5 pre/post; never rewrite DECODE/etc.
+#   7) DEPLOY_OK only as final success line. Deps resolved before device I/O.
+#   8) Flaky SSH/SCP: retry stage+verify; never leave partial bytes on live path.
+#
+# One-command daemon rollback (pin 9ce2c2d1 default):
+#   scripts/rollback_daemon_atomic.sh
+#   scripts/rollback_daemon_atomic.sh 9ce2c2d1
 #
 # Host unit tests inject DEPLOY_SSHM / DEPLOY_SCPM — never touches the real box.
 set -euo pipefail
@@ -98,26 +108,121 @@ else
   BIN="$ROOT/build/arm/misterplexd"
 fi
 
+# Flaky WiFi (~1/3 SSH fails). Retry transport; never leave a partial live binary
+# (stage path only — live path is never an scp destination).
+DEPLOY_SSH_TRIES="${DEPLOY_SSH_TRIES:-5}"
+DEPLOY_SCP_TRIES="${DEPLOY_SCP_TRIES:-5}"
+DEPLOY_RETRY_BACKOFF_S="${DEPLOY_RETRY_BACKOFF_S:-1}"
+
+# Pass-through stdin (heredoc remote scripts). Do NOT wrap in $() — that
+# disconnects stdin and breaks `ssh_m bash -s <<'REMOTE'`.
 ssh_m() {
-  if [[ -n "${DEPLOY_SSHM:-}" ]]; then
-    # shellcheck disable=SC2086
-    $DEPLOY_SSHM "$@"
-    return
+  local attempt=0 delay="${DEPLOY_RETRY_BACKOFF_S}" rc
+  # When stdin is a terminal, safe to retry. When stdin is a pipe/heredoc,
+  # only one attempt (body cannot be rewound).
+  local can_retry=1
+  if [[ ! -t 0 ]]; then
+    can_retry=0
   fi
-  sshpass -p "$PASS" ssh -o StrictHostKeyChecking=no -o ConnectTimeout=8 "$USER@$HOST" "$@"
+  while [[ "$attempt" -lt "$DEPLOY_SSH_TRIES" ]]; do
+    attempt=$((attempt + 1))
+    set +e
+    if [[ -n "${DEPLOY_SSHM:-}" ]]; then
+      # shellcheck disable=SC2086
+      $DEPLOY_SSHM "$@"
+      rc=$?
+    else
+      sshpass -p "$PASS" ssh -o StrictHostKeyChecking=no -o ConnectTimeout=8 \
+        -o ServerAliveInterval=2 -o ServerAliveCountMax=2 "$USER@$HOST" "$@"
+      rc=$?
+    fi
+    set -e
+    if [[ "$rc" -eq 0 ]]; then
+      return 0
+    fi
+    if [[ "$can_retry" -eq 0 ]]; then
+      echo "deploy: ssh failed rc=$rc (stdin not rewindable — no retry)" >&2
+      return "$rc"
+    fi
+    echo "deploy: ssh-retry attempt=$attempt/${DEPLOY_SSH_TRIES} rc=$rc" >&2
+    sleep "$delay"
+    delay=$((delay * 2))
+    [[ "$delay" -gt 16 ]] && delay=16
+  done
+  echo "deploy: ssh FAILED after ${DEPLOY_SSH_TRIES} attempts" >&2
+  return 5
 }
 
-scp_to() {
+scp_to_once() {
   local src="$1" dst="$2"
   if [[ -n "${DEPLOY_SCPM:-}" ]]; then
     # shellcheck disable=SC2086
     $DEPLOY_SCPM "$src" "$dst"
     return
   fi
-  sshpass -p "$PASS" scp -o StrictHostKeyChecking=no "$src" "$USER@$HOST:$dst"
+  sshpass -p "$PASS" scp -o StrictHostKeyChecking=no -o ConnectTimeout=12 "$src" "$USER@$HOST:$dst"
 }
 
-die() { echo "FAIL deploy_misterplexd: $*" >&2; exit 1; }
+# scp ONLY to stage names. Refuse if destination looks like the live binary path.
+scp_to() {
+  local src="$1" dst="$2"
+  case "$dst" in
+    */misterplexd|*/misterplexd/)
+      echo "FAIL scp destination is live binary path '$dst' — use stage name only (parent truncated-scp incident)" >&2
+      return 9
+      ;;
+  esac
+  scp_to_once "$src" "$dst"
+}
+
+# Stage transfer with on-device md5 verify + retry. Never mv on failure.
+# Args: local_bin staged_remote host_md5
+# Prints STAGE_MD5=... ; returns 0 only when stage md5 == host.
+scp_stage_verified() {
+  local src="$1" staged="$2" want="$3"
+  local attempt=0 delay="${DEPLOY_RETRY_BACKOFF_S}" scp_rc sm rc
+  while [[ "$attempt" -lt "$DEPLOY_SCP_TRIES" ]]; do
+    attempt=$((attempt + 1))
+    echo "deploy: scp-stage attempt=$attempt/${DEPLOY_SCP_TRIES} -> $staged"
+    set +e
+    scp_to "$src" "$staged"
+    scp_rc=$?
+    set -e
+    if [[ "$scp_rc" -ne 0 ]]; then
+      echo "deploy: scp-stage transport rc=$scp_rc" >&2
+      sleep "$delay"
+      delay=$((delay * 2)); [[ "$delay" -gt 16 ]] && delay=16
+      continue
+    fi
+    set +e
+    sm=$(ssh_m "md5sum $(printf '%q' "$staged") 2>/dev/null" | awk '{print $1}')
+    rc=$?
+    set -e
+    if [[ "$rc" -ne 0 || -z "$sm" ]]; then
+      echo "deploy: stage md5 probe NO-DATA rc=$rc" >&2
+      ssh_m "rm -f $(printf '%q' "$staged")" >/dev/null 2>&1 || true
+      sleep "$delay"
+      delay=$((delay * 2)); [[ "$delay" -gt 16 ]] && delay=16
+      continue
+    fi
+    echo "STAGE_MD5=$sm"
+    set +e
+    deploy_assert_stage_md5 "$want" "$sm"
+    rc=$?
+    set -e
+    if [[ "$rc" -eq 0 ]]; then
+      echo "deploy: scp_stage_verified: true rc=0"
+      return 0
+    fi
+    echo "deploy: stage md5 mismatch (truncated?) — rm stage and retry" >&2
+    ssh_m "rm -f $(printf '%q' "$staged")" >/dev/null 2>&1 || true
+    sleep "$delay"
+    delay=$((delay * 2)); [[ "$delay" -gt 16 ]] && delay=16
+  done
+  echo "FAIL scp_stage_verified exhausted tries want=$want (live path never written)" >&2
+  echo "deploy: scp_stage_verified: true rc=7"
+  return 7
+}
 
 report_rc() {
   # Usage: report_rc LABEL RC — prints true rc= without piping the command.
@@ -125,6 +230,8 @@ report_rc() {
   echo "deploy: ${label}: true rc=${rc}"
   return "$rc"
 }
+
+die() { echo "FAIL deploy_misterplexd: $*" >&2; exit 1; }
 
 # --- host artifact ------------------------------------------------------------
 if [[ "$DEPLOY_REBUILD" == "1" ]]; then
@@ -335,11 +442,12 @@ prep_rc=$?
 set -e
 report_rc "install_prep" "$prep_rc" || die "install prep failed"
 
+# Host-side stage+verify with retry (flaky link). Truncated stage never reaches mv.
 set +e
-scp_to "$BIN" "$STAGED_REMOTE"
+scp_stage_verified "$BIN" "$STAGED_REMOTE" "$HOST_MD5"
 scp_rc=$?
 set -e
-report_rc "scp_stage" "$scp_rc" || die "scp to stage failed (stderr not suppressed)"
+report_rc "scp_stage" "$scp_rc" || die "scp stage verified failed (truncated/transport; live untouched)"
 
 set +e
 ssh_m "set -e
@@ -347,16 +455,22 @@ ssh_m "set -e
   dst='$REMOTE_BIN'
   host_want='$HOST_MD5'
   host_p8='${HOST_P8}'
-  # 1) md5 the STAGED file first (parent sequence)
+  # 1) re-md5 STAGED on device immediately before bak+mv (belt; host already verified)
   sm=\$(md5sum \"\$staged\" | awk '{print \$1}')
   echo STAGE_MD5=\$sm
+  if [ -z \"\$sm\" ]; then
+    echo \"NO-DATA stage md5 empty — refuse mv\"
+    rm -f \"\$staged\"
+    exit 4
+  fi
   if [ \"\$sm\" != \"\$host_want\" ]; then
-    echo \"FAIL stage md5 \$sm != host \$host_want\"
+    echo \"FAIL stage md5 \$sm != host \$host_want (truncated — refuse mv)\"
     rm -f \"\$staged\"
     exit 7
   fi
   if [ \"\${sm:0:8}\" != \"\$host_p8\" ]; then
     echo \"FAIL stage prefix \${sm:0:8} != \$host_p8\"
+    rm -f \"\$staged\"
     exit 7
   fi
   # 2) backup LIVE bytes labeled with md5 they ACTUALLY are (cp -p; never mv live away)

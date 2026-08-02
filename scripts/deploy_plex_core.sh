@@ -190,36 +190,99 @@ else
   else
     # Stage then atomic replace (never scp onto the open/running name mid-read).
     # FINAL is always PRODUCT Plex.rbf — never Plex_v2.rbf (rollback daily).
+    # NEVER scp onto live Plex.rbf — truncated RBF bricks the daily driver.
+    # Stage → on-device md5 must equal LOCAL_MD5 → archive outgoing → atomic mv.
     STAGED="/media/fat/_Utility/Plex.new.$$.rbf"
     FINAL="$PRODUCT_CORE_REMOTE"
-    echo "SCP → $STAGED"
-    "${SCP[@]}" "$RBF" "$USER@$HOST:$STAGED"
+    WANT_MD5="$LOCAL_MD5"
+    echo "SCP → $STAGED (stage only; md5-gate before any mv onto $FINAL)"
+    scp_ok=0
+    scp_try=0
+    scp_tries="${DEPLOY_SCP_TRIES:-5}"
+    while [[ "$scp_try" -lt "$scp_tries" ]]; do
+      scp_try=$((scp_try + 1))
+      set +e
+      "${SCP[@]}" "$RBF" "$USER@$HOST:$STAGED"
+      scp_rc=$?
+      set -e
+      if [[ "$scp_rc" -ne 0 ]]; then
+        echo "SCP stage attempt $scp_try/$scp_tries rc=$scp_rc" >&2
+        sleep $((scp_try < 4 ? scp_try : 4))
+        continue
+      fi
+      set +e
+      stage_md5=$("${SSH[@]}" "md5sum $STAGED 2>/dev/null" | awk '{print $1}')
+      set -e
+      if [[ -z "${stage_md5:-}" ]]; then
+        echo "NO-DATA stage md5 empty attempt=$scp_try (not a mismatch)" >&2
+        "${SSH[@]}" "rm -f $STAGED" >/dev/null 2>&1 || true
+        sleep 1
+        continue
+      fi
+      if [[ "$stage_md5" != "$WANT_MD5" ]]; then
+        echo "FAIL stage md5 $stage_md5 != host $WANT_MD5 (truncated RBF — refuse mv; live untouched)" >&2
+        "${SSH[@]}" "rm -f $STAGED" >/dev/null 2>&1 || true
+        sleep 1
+        continue
+      fi
+      echo "OK stage md5=$stage_md5 attempt=$scp_try"
+      scp_ok=1
+      break
+    done
+    if [[ "$scp_ok" -ne 1 ]]; then
+      echo "FAIL RBF stage verify exhausted — $FINAL not modified" >&2
+      echo "true rc=7"
+      exit 7
+    fi
     "${SSH[@]}" "bash -s" <<REMOTE
 set -e
 sync
-# Prefer rename over in-place overwrite of a core that may still be mapped.
-# ".bak" is single-generation and is clobbered by the NEXT deploy, so archive the
-# outgoing core content-addressed as well. Two deploys used to destroy the original
-# (see 3304c50 / destroyed 00eebd5e). Ported forward after HEAD lost the ancestry.
-if [ -f "$FINAL" ]; then
-  OUT_MD5=\$(md5sum "$FINAL" 2>/dev/null | awk '{print \$1}')
+staged="$STAGED"
+final="$FINAL"
+want="$WANT_MD5"
+sm=\$(md5sum "\$staged" 2>/dev/null | awk '{print \$1}')
+if [ -z "\$sm" ]; then
+  echo "NO-DATA recheck stage md5 empty — refuse mv"
+  rm -f "\$staged"
+  exit 4
+fi
+if [ "\$sm" != "\$want" ]; then
+  echo "FAIL recheck stage md5 \$sm != \$want — refuse mv (truncated RBF)"
+  rm -f "\$staged"
+  exit 7
+fi
+# Archive outgoing content-addressed (".bak" alone is single-generation).
+if [ -f "\$final" ]; then
+  OUT_MD5=\$(md5sum "\$final" 2>/dev/null | awk '{print \$1}')
   if [ -n "\$OUT_MD5" ]; then
     ARCHIVE="/media/fat/_Utility/Plex.\${OUT_MD5:0:8}.bak.rbf"
     if [ ! -f "\$ARCHIVE" ]; then
-      cp -f "$FINAL" "\$ARCHIVE" 2>/dev/null && echo "ARCHIVED \$ARCHIVE" || echo "ARCHIVE_WARN could not archive \$OUT_MD5" >&2
+      cp -f "\$final" "\$ARCHIVE" 2>/dev/null && echo "ARCHIVED \$ARCHIVE" || echo "ARCHIVE_WARN could not archive \$OUT_MD5" >&2
     else
       echo "ARCHIVE_SKIP \$ARCHIVE already present"
     fi
   else
-    echo "ARCHIVE_WARN could not md5 outgoing $FINAL" >&2
+    echo "ARCHIVE_WARN could not md5 outgoing \$final" >&2
   fi
-  mv -f "$FINAL" "${FINAL}.bak" 2>/dev/null || true
+  mv -f "\$final" "\${final}.bak" 2>/dev/null || true
 fi
-mv -f "$STAGED" "$FINAL"
-chmod 755 "$FINAL"
+mv -f "\$staged" "\$final"
+chmod 644 "\$final" 2>/dev/null || chmod 755 "\$final" || true
 sync
-md5sum "$FINAL"
+dm=\$(md5sum "\$final" | awk '{print \$1}')
+echo "FINAL_MD5=\$dm"
+if [ "\$dm" != "\$want" ]; then
+  echo "FAIL final md5 \$dm != \$want after mv"
+  exit 7
+fi
+echo "INSTALL_RBF_OK md5=\$dm"
 REMOTE
+    rbf_inst_rc=$?
+    if [[ "$rbf_inst_rc" -ne 0 ]]; then
+      echo "FAIL RBF atomic install rc=$rbf_inst_rc" >&2
+      echo "true rc=$rbf_inst_rc"
+      exit "$rbf_inst_rc"
+    fi
   fi
 fi
 
