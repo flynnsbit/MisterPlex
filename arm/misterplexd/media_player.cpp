@@ -4268,6 +4268,14 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                 // pub_iv_* = rolling publish arrival intervals (pre-to-pre). Required for
                 // mid-session M2 WANDER pairing — session_end alone cannot score 60s windows.
                 // clock=av-lock is a HARDCODED label (not a health bit); lipsync GT is HDMI.
+                // Collapse/intermittency discriminator ledger (parent paired casts).
+                // identity_skip/arm_rescale freeze at play-time vfPlan; measured may
+                // arrive later. producer_bytes from banner; reader_bytes = coded bank.
+                // pipe_total_mod: live B5 remainder (0 while read loop fills full frames).
+                const size_t prodHz =
+                    (mw > 0 && mh > 0) ? yuv420pFrameBytesWH(mw, mh) : 0;
+                const size_t pipeMod =
+                    frameBytes ? (totalBytes % frameBytes) : 0;
                 log("media: " + frameLedgerTelemetryFragment(led) +
                     " vfps=" + fmtFpsRate(vfps) +
                     " pfps=" + fmtFpsRate(pfps) +
@@ -4292,6 +4300,12 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                     // Live flag: flips to 1 only after MEASURED_DELIVERY (not play-time GEOM).
                     " delivery_verified=" +
                     (deliveryGeometryVerified_.load(std::memory_order_relaxed) ? "1" : "0") +
+                    " identity_skip=" + (vfPlan.identity_skip ? "1" : "0") +
+                    " arm_rescale=" + (vfPlan.scale_applied ? "1" : "0") +
+                    " vf_reason=" + vfPlan.reason +
+                    " producer_bytes=" + std::to_string(prodHz) +
+                    " reader_bytes=" + std::to_string(frameBytes) +
+                    " pipe_total_mod=" + std::to_string(pipeMod) +
                     " desync_risk=" + (pipeDesyncRisk_.load() ? "1" : "0") +
                     " lifetime_frames=" + std::to_string(ltF) +
                     " lifetime_presents=" + std::to_string(ltP) +
@@ -4466,6 +4480,38 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                 " reader_bytes=" + std::to_string(frameBytes) +
                 " frames=" + std::to_string(frameIndex) +
                 " tag=measured — hard telemetry trip (B5)");
+        }
+        // One-line intermittency discriminator for collapsed vs healthy casts.
+        // Parent greps SESSION_COLLAPSE_LEDGER across N runs — do not invent mechanism.
+        {
+            const double wallEnd = supplyPrevInit ? supplyPrev.wall_s : 0.0;
+            const int64_t abytesEnd = audioBytes_.load();
+            const double aSecEnd = static_cast<double>(abytesEnd) / (48000.0 * 4.0);
+            const auto rtEnd = misterplex::classifySupplyRealtime(aSecEnd, wallEnd);
+            log(std::string("media: SESSION_COLLAPSE_LEDGER ") +
+                "measured_delivery=" +
+                (mw > 0 ? (std::to_string(mw) + "x" + std::to_string(mh)) : "NO-DATA") +
+                " identity_skip=" + (vfPlan.identity_skip ? "1" : "0") +
+                " arm_rescale=" + (vfPlan.scale_applied ? "1" : "0") +
+                " vf_reason=" + vfPlan.reason +
+                " producer_bytes=" + std::to_string(prodBytes) +
+                " reader_bytes=" + std::to_string(frameBytes) +
+                " pipe_total_mod=" +
+                std::to_string(frameBytes ? (totalBytes % frameBytes) : 0) +
+                " byte_align=" + (byteAligned ? "1" : "0") +
+                " phase_desync=" + (phaseDesync ? "1" : "0") +
+                " desync_risk=" + (risk ? "1" : "0") +
+                " frames=" + std::to_string(frameIndex) +
+                " presents=" + std::to_string(presentCount_) +
+                " drops=" + std::to_string(droppedFrames_.load()) +
+                " publish_misses=" + std::to_string(publishMisses_.load()) +
+                " total_bytes=" + std::to_string(totalBytes) +
+                " supply_ratio=" +
+                (rtEnd.ratio_known ? fmtSec3(rtEnd.ratio) : "NO-DATA") +
+                " supply_class=" +
+                (rtEnd.class_name ? rtEnd.class_name : "NO-DATA") +
+                " wall_s=" + fmtSec3(wallEnd) +
+                " tag=measured");
         }
         {
             std::lock_guard<std::mutex> lock(summaryMu_);

@@ -34,9 +34,14 @@ check B2_do_not_error_comment "$MP" 'DO NOT change to error — breaks delivered
 check B5_byte_align "$MP" 'rawPipeByteAligned(totalBytes, frameBytes)'
 check B5_phase_desync "$MP" 'rawPipeDesynced(prodBytes, frameBytes'
 check B5_pipe_desync_log "$MP" 'PIPE_DESYNC=1'
+check B5_pipe_byte_misalign_log "$MP" 'PIPE_BYTE_MISALIGN'
+check B5_total_mod_frame_ok "$MP" 'total_mod_frame=0'
+check B5_pipe_total_mod_hz "$MP" 'pipe_total_mod='
+check B5_session_collapse_ledger "$MP" 'SESSION_COLLAPSE_LEDGER'
 
 # B4 measured only
 check B4_measured_only "$YF" 'return std::string(deliveryBasis) == "measured"'
+check B4_reject_library_media "$YF" 'library_media is PMS *scanner display metadata*'
 
 echo "SUMMARY pass=$pass fail=$fail"
 if [[ "$fail" -ne 0 ]]; then
