@@ -1,0 +1,60 @@
+{
+  "out": "assets/avsync/real_bbb_glass_av_720x480_24_180s.mp4",
+  "src": "/home/flynnsbit/Projects/MisterPlex/.agent-work/fixtures-real/bbb_720p_src.mp4",
+  "caller_supplied": {
+    "width": 720,
+    "height": 480,
+    "fps": "24/1",
+    "duration_s": 180.0,
+    "period_s": 2.0,
+    "designed_av_offset_ms": 0.0,
+    "audio_delay_s": 0.0,
+    "flash_frames": 2,
+    "beep_s": 0.05,
+    "beep_hz": 1000.0,
+    "attack_s": 0.001,
+    "id_text_example": "G n=000000 c=0",
+    "id_bottom_y": 88,
+    "vbitrate": "2800k",
+    "profile": "baseline (Constrained Baseline via cabac=0)",
+    "bf": 0,
+    "audio": "aac 48k mix(src+beep)",
+    "marker_note": "flash = full-white body below ID band for FLASH_FRAMES at k*period; beep onset = k*period + audio_delay; cross-correlate flash vs beep"
+  },
+  "measured_ffprobe": {
+    "programs": [],
+    "stream_groups": [],
+    "streams": [
+      {
+        "index": 0,
+        "codec_name": "h264",
+        "profile": "Constrained Baseline",
+        "codec_type": "video",
+        "width": 720,
+        "height": 480,
+        "has_b_frames": 0,
+        "r_frame_rate": "24/1",
+        "avg_frame_rate": "24/1",
+        "duration": "180.000000",
+        "nb_frames": "4320"
+      },
+      {
+        "index": 1,
+        "codec_name": "aac",
+        "profile": "LC",
+        "codec_type": "audio",
+        "sample_rate": "48000",
+        "r_frame_rate": "0/0",
+        "avg_frame_rate": "0/0",
+        "duration": "180.000000",
+        "nb_frames": "8439"
+      }
+    ],
+    "format": {
+      "duration": "180.000000"
+    }
+  },
+  "frames_burned": 4320,
+  "beep_onsets_n": 90,
+  "size_bytes": 65843964
+}

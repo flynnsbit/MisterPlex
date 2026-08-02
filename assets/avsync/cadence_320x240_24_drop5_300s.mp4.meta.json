@@ -1,0 +1,69 @@
+{
+  "tier": "p240",
+  "label": "drop5",
+  "mode": "drop",
+  "media_filename": "MiSTerPlex Cadence 320x240 24fps drop5 300s (2026).mp4",
+  "asset_path": "/home/flynnsbit/Projects/MisterPlex/.worktrees/w-asset480-manifest/assets/avsync/cadence_320x240_24_drop5_300s.mp4",
+  "ground_truth": {
+    "mode": "drop",
+    "k_param": 5,
+    "seed": 561,
+    "n_slots_requested": 7200,
+    "dup_slot_indices": [],
+    "drop_after_indices": [
+      993,
+      1533,
+      5036,
+      5110,
+      5737
+    ],
+    "n_dups": 0,
+    "n_drops": 5,
+    "content_id_first": 0,
+    "content_id_last": 7199,
+    "n_unique_ids": 7195,
+    "n_encoded_frames": 7195,
+    "duration_shorten_s": 0.20833333333333334,
+    "measured_consecutive_holds": 0,
+    "measured_id_jumps_gt1": 5
+  },
+  "encode": {
+    "out": "/home/flynnsbit/Projects/MisterPlex/.worktrees/w-asset480-manifest/assets/avsync/cadence_320x240_24_drop5_300s.mp4",
+    "n_frames_encoded": 7195,
+    "duration_s_design": 299.7916666666667,
+    "fps_rational": "24",
+    "ffmpeg_rc": 0,
+    "measured": {
+      "ffprobe_v_rc": 0,
+      "ffprobe_a_rc": 0,
+      "width": 320,
+      "height": 240,
+      "r_frame_rate": "24/1",
+      "avg_frame_rate": "24/1",
+      "nb_frames": "7195",
+      "profile": "Constrained Baseline",
+      "has_b_frames": 0,
+      "v_codec": "h264",
+      "format_duration": "299.791667",
+      "size_bytes": 45234765,
+      "a_codec": "aac",
+      "a_sample_rate": "48000"
+    }
+  },
+  "spec_ok": true,
+  "spec_fails": [],
+  "anti_beat": {
+    "content_identity_period_s": 0.041666666666666664,
+    "independent_marker_period_s": null,
+    "capture_30_note": "24:30=4:5 commensurate; healthy holds {1,2} on capture grid; injected dups add hold>=2 mass / ~83ms content IFI",
+    "capture_60_note": "24:60=2:5; healthy holds {2,3}; injected dups lengthen holds"
+  },
+  "w_instr": {
+    "consumer": "tools/glass_motion_judder.py",
+    "source_fps": 24,
+    "source_fps_src": "caller_supplied_measured",
+    "expect_n_dups": 0,
+    "expect_n_drops": 5,
+    "red_before_green": "Score dup20/periodic BEFORE control; instrument must recover elevated outlier/hold tail on known-N clips"
+  }
+}

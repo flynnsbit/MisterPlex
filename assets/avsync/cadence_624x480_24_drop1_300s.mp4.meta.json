@@ -1,0 +1,65 @@
+{
+  "tier": "bank480",
+  "label": "drop1",
+  "mode": "drop",
+  "media_filename": "MiSTerPlex Cadence 624x480 24fps drop1 300s (2026).mp4",
+  "asset_path": "/home/flynnsbit/Projects/MisterPlex/.worktrees/w-asset480-manifest/assets/avsync/cadence_624x480_24_drop1_300s.mp4",
+  "ground_truth": {
+    "mode": "drop",
+    "k_param": 1,
+    "seed": 1105,
+    "n_slots_requested": 7200,
+    "dup_slot_indices": [],
+    "drop_after_indices": [
+      6930
+    ],
+    "n_dups": 0,
+    "n_drops": 1,
+    "content_id_first": 0,
+    "content_id_last": 7199,
+    "n_unique_ids": 7199,
+    "n_encoded_frames": 7199,
+    "duration_shorten_s": 0.041666666666666664,
+    "measured_consecutive_holds": 0,
+    "measured_id_jumps_gt1": 1
+  },
+  "encode": {
+    "out": "/home/flynnsbit/Projects/MisterPlex/.worktrees/w-asset480-manifest/assets/avsync/cadence_624x480_24_drop1_300s.mp4",
+    "n_frames_encoded": 7199,
+    "duration_s_design": 299.9583333333333,
+    "fps_rational": "24",
+    "ffmpeg_rc": 0,
+    "measured": {
+      "ffprobe_v_rc": 0,
+      "ffprobe_a_rc": 0,
+      "width": 624,
+      "height": 480,
+      "r_frame_rate": "24/1",
+      "avg_frame_rate": "24/1",
+      "nb_frames": "7199",
+      "profile": "Constrained Baseline",
+      "has_b_frames": 0,
+      "v_codec": "h264",
+      "format_duration": "299.958333",
+      "size_bytes": 90621317,
+      "a_codec": "aac",
+      "a_sample_rate": "48000"
+    }
+  },
+  "spec_ok": true,
+  "spec_fails": [],
+  "anti_beat": {
+    "content_identity_period_s": 0.041666666666666664,
+    "independent_marker_period_s": null,
+    "capture_30_note": "24:30=4:5 commensurate; healthy holds {1,2} on capture grid; injected dups add hold>=2 mass / ~83ms content IFI",
+    "capture_60_note": "24:60=2:5; healthy holds {2,3}; injected dups lengthen holds"
+  },
+  "w_instr": {
+    "consumer": "tools/glass_motion_judder.py",
+    "source_fps": 24,
+    "source_fps_src": "caller_supplied_measured",
+    "expect_n_dups": 0,
+    "expect_n_drops": 1,
+    "red_before_green": "Score dup20/periodic BEFORE control; instrument must recover elevated outlier/hold tail on known-N clips"
+  }
+}
