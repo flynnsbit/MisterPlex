@@ -225,8 +225,23 @@ int main() {
         expect(!pipeDesyncRisk(coded, coded, true), "GREEN match+identity");
         expect(rawPipeByteAligned(coded * 10, coded), "GREEN byte align");
         expect(!rawPipeByteAligned(coded * 10 + 100, coded), "RED byte misalign");
-        std::printf("GREEN_DESYNC coded=%zu s624x240=%zu s640x480=%zu (640 NOT N=2)\n",
-                    coded, s624x240, s640x480);
+        // Parent RK6 silicon: measured 624x350 → S=327600. R/S = 449280/327600 = 1.371…
+        // That is NOT an integer N of full producer frames per raster.
+        // N=2 TREK24 copies require S=224640 (624x240), not 327600 (624x350).
+        // 350 is the FORCE_SCALE / letterbox class (S<R, correct sign for phase walk
+        // *if* identity_skip) but does NOT predict two legible full counters.
+        const size_t s624x350 = yuv420pFrameBytesWH(624, 350); // 327600
+        expect(s624x350 == 327600u, "624x350 I420");
+        expect(s624x350 < coded, "350 producer smaller than reader (S<R correct sign)");
+        expect(coded % s624x350 != 0u, "350 does not tile reader exactly");
+        expect(producerBytesFromCounterCopies(coded, 2) != s624x350,
+               "N=2 discriminator is NOT 624x350");
+        expect(rawPipeDesynced(s624x350, coded, 1), "350 identity path desyncs");
+        expect(!pipeDesyncRisk(s624x350, coded, false), "350 + scale path: no risk flag");
+        expect(pipeDesyncRisk(s624x350, coded, true), "350 + identity: risk");
+        std::printf("GREEN_DESYNC coded=%zu s624x240=%zu s624x350=%zu s640x480=%zu "
+                    "(640 NOT N=2; 350 NOT N=2 either)\n",
+                    coded, s624x240, s624x350, s640x480);
     }
 
     // --- F1d) ffmpeg geometry line parser (B2) ---

@@ -285,7 +285,8 @@ private:
     // errWriteFd: optional pipe for ffmpeg stderr (geometry banners). -1 → lab file//null.
     pid_t spawnFfmpeg(const std::vector<std::string>& args, int vWriteFd, int aWriteFd,
                       int errWriteFd = -1);
-    void ffmpegStderrPump(int errReadFd, size_t codedFrameBytes, bool identitySkip);
+    void ffmpegStderrPump(int errReadFd, size_t codedFrameBytes, bool identitySkip, int codedW,
+                          int codedH);
     pid_t spawnStreamDemux(const std::string& url, const std::string& headers, int64_t startMs,
                            int writeFd);
     pid_t spawnAudioOnly(const std::string& url, const std::string& headers, int64_t startMs,

@@ -38,10 +38,21 @@ check B5_pipe_byte_misalign_log "$MP" 'PIPE_BYTE_MISALIGN'
 check B5_total_mod_frame_ok "$MP" 'total_mod_frame=0'
 check B5_pipe_total_mod_hz "$MP" 'pipe_total_mod='
 check B5_session_collapse_ledger "$MP" 'SESSION_COLLAPSE_LEDGER'
+check B5_delivery_mismatch_log "$MP" 'DELIVERY_MISMATCH'
+check B5_decode_target_match "$MP" 'decode_target_match='
+check B5_coded_bank_field "$MP" 'coded_bank='
+check B5_force_scale_protects "$MP" 'force_scale_protects='
+# Pump compares measured to DDR coded bank args, not DECODE tier alone.
+check B5_pump_takes_coded_wh "$MP" 'int codedW, int codedH'
 
 # B4 measured only
 check B4_measured_only "$YF" 'return std::string(deliveryBasis) == "measured"'
 check B4_reject_library_media "$YF" 'library_media is PMS *scanner display metadata*'
+
+# FORCE_SCALE product default ON (not opt-in) — parent "should default 1?" = already true
+MAIN="$ROOT/arm/misterplexd/main.cpp"
+check FORCE_SCALE_default_true "$MAIN" 'bool ddrYuvForceScale = true'
+check FORCE_SCALE_lab_escape "$MAIN" 'DDR_YUV_FORCE_SCALE_LAB'
 
 echo "SUMMARY pass=$pass fail=$fail"
 if [[ "$fail" -ne 0 ]]; then

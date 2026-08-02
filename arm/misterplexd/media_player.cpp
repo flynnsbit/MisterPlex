@@ -1432,7 +1432,8 @@ pid_t MediaPlayer::spawnFfmpeg(const std::vector<std::string>& args, int vWriteF
     return pid;
 }
 
-void MediaPlayer::ffmpegStderrPump(int errReadFd, size_t codedFrameBytes, bool identitySkip) {
+void MediaPlayer::ffmpegStderrPump(int errReadFd, size_t codedFrameBytes, bool identitySkip,
+                                   int codedW, int codedH) {
     if (errReadFd < 0)
         return;
     std::string acc;
@@ -1493,8 +1494,8 @@ void MediaPlayer::ffmpegStderrPump(int errReadFd, size_t codedFrameBytes, bool i
             lastInH = g.h;
             measuredDeliveryW_.store(g.w);
             measuredDeliveryH_.store(g.h);
-            // B4: only a runtime measurement upgrades verification (not library_media).
-            deliveryGeometryVerified_.store(true, std::memory_order_relaxed);
+            // B4: verification store is set below only when measured == coded bank.
+            // library_media / transcode_request claims never set this true.
             ffmpegScaleSourceW_ = g.w;
             ffmpegScaleSourceH_ = g.h;
             const size_t prodBytes = yuv420pFrameBytesWH(g.w, g.h);
@@ -1511,17 +1512,45 @@ void MediaPlayer::ffmpegStderrPump(int errReadFd, size_t codedFrameBytes, bool i
             // Derivation: parseFfmpegGeometryLine on -loglevel info "Stream #… Video: … WxH".
             // Not library metadata, not PMS /status/sessions, not the requested
             // videoResolution= query. src=ffmpeg_banner is permanent observability (B2).
+            // Compare measured vs DDR *coded bank* (rawW×rawH passed in), never DECODE
+            // tier alone — 320×240 DECODE still publishes into a 624×480 bank.
+            const bool geomMatch =
+                (codedW > 0 && codedH > 0 && g.w == codedW && g.h == codedH);
+            // B4: delivery_verified is a FACT that we measured (basis=="measured"),
+            // not "measured equals bank". Match is decode_target_match / DELIVERY_MISMATCH.
+            // Play-time GEOM stays delivery_verified=0 until this banner (claim basis).
+            const bool verified = deliveryGeometryVerifiedFromBasis("measured");
+            if (verified)
+                deliveryGeometryVerified_.store(true, std::memory_order_relaxed);
             log(std::string("media: MEASURED_DELIVERY delivered_geom=") +
                 std::to_string(g.w) + "x" + std::to_string(g.h) +
                 " src=ffmpeg_banner" +
-                " bytes=" + std::to_string(prodBytes) +
-                " coded_bytes=" + std::to_string(codedFrameBytes) +
+                " producer_bytes=" + std::to_string(prodBytes) +
+                " reader_bytes=" + std::to_string(codedFrameBytes) +
+                " coded_bank=" + std::to_string(codedW) + "x" + std::to_string(codedH) +
+                " decode_tier=" + std::to_string(outW_) + "x" + std::to_string(outH_) +
+                " decode_target_match=" + (geomMatch ? "1" : "0") +
                 " identity_skip=" + (identitySkip ? "1" : "0") +
                 " desync_risk=" + (risk ? "1" : "0") +
-                " delivery_verified=1 delivery_basis=measured" +
+                " delivery_verified=" + (verified ? "1" : "0") +
+                " delivery_basis=measured" +
                 (changed ? " MID_STREAM_CHANGE=1" : " MID_STREAM_CHANGE=0") +
                 " tag=measured" +
                 (changed ? " — size changed after play start" : ""));
+            // Mismatch vs coded bank must be LOUD even when FORCE_SCALE keeps the
+            // pipe safe (desync_risk may stay 0 with identity_skip=0).
+            if (!geomMatch && codedW > 0 && codedH > 0) {
+                log("ERROR media: DELIVERY_MISMATCH measured=" + std::to_string(g.w) + "x" +
+                    std::to_string(g.h) + " coded_bank=" + std::to_string(codedW) + "x" +
+                    std::to_string(codedH) +
+                    " decode_tier=" + std::to_string(outW_) + "x" +
+                    std::to_string(outH_) +
+                    " producer_bytes=" + std::to_string(prodBytes) +
+                    " reader_bytes=" + std::to_string(codedFrameBytes) +
+                    " identity_skip=" + (identitySkip ? "1" : "0") +
+                    " force_scale_protects=" + (identitySkip ? "0" : "1") +
+                    " note=measured_ne_coded_bank tag=measured");
+            }
             if (risk) {
                 log("ERROR media: PIPE_DESYNC_RISK measured=" + std::to_string(g.w) + "x" +
                     std::to_string(g.h) + " producer_bytes=" + std::to_string(prodBytes) +
@@ -3319,8 +3348,9 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
             ::close(epipe[1]);
         std::thread errThr;
         if (pid >= 0 && epipe[0] >= 0) {
-            errThr = std::thread([this, efd = epipe[0], frameBytes, idSkip = vfPlan.identity_skip] {
-                ffmpegStderrPump(efd, frameBytes, idSkip);
+            errThr = std::thread([this, efd = epipe[0], frameBytes, idSkip = vfPlan.identity_skip,
+                                  cw = rawW, ch = rawH] {
+                ffmpegStderrPump(efd, frameBytes, idSkip, cw, ch);
             });
         } else if (epipe[0] >= 0) {
             ::close(epipe[0]);
