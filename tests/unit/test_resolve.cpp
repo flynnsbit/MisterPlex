@@ -207,7 +207,17 @@ int main() {
         CHECK(!starveStepdownReady(7));
         CHECK(starveStepdownReady(8));
         CHECK(starveStepdownReady(3, 3));
-        std::printf("PASS 480p WEAK_BITRATE below recommended validates + stepdown ladder\n");
+        // Optional link capacity clamp — capacity unset must not invent a floor.
+        CHECK(applyLinkCapacityCapKbps(2000, 0, 85) == 2000);
+        CHECK(applyLinkCapacityCapKbps(2000, -1, 85) == 2000);
+        // Parent greedy goodput ~1153 kbit/s → 85% headroom = 980; clamps 2000→980.
+        CHECK(applyLinkCapacityCapKbps(2000, 1153, 85) == 980);
+        CHECK(applyLinkCapacityCapKbps(900, 1153, 85) == 900); // already under cap
+        CHECK(applyLinkCapacityCapKbps(2000, 1153, 100) == 1153);
+        // Bad headroom falls back to default 85.
+        CHECK(applyLinkCapacityCapKbps(2000, 1000, 0) == 850);
+        CHECK(applyLinkCapacityCapKbps(2000, 1000, 200) == 850);
+        std::printf("PASS 480p WEAK_BITRATE below recommended + link capacity clamp\n");
     }
 
     // --- Phase 4 multi-server conf helpers (no network) ---

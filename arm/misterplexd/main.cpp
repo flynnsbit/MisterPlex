@@ -244,6 +244,10 @@ int main(int argc, char** argv) {
     // When supply_class=STARVED is sustained, apply nextLowerLadderBitrate and
     // restart the same title (geometry unchanged). Default off — log-only is safe.
     bool autoLadderStepdown = false;
+    // Optional measured path capacity (kbit/s). 0 = unset — never invent a link speed.
+    // When set, maxVideoBitrate is clamped to capacity * headroom/100 before PMS URL.
+    int linkCapacityKbps = 0;
+    int linkCapacityHeadroomPct = misterplex::kLinkCapacityHeadroomPctDefault;
     std::vector<std::string> servers;
     std::string defaultPms;
     int64_t skipForwardMs = 30000;
@@ -395,6 +399,16 @@ int main(int argc, char** argv) {
         v = loadConf(confPath, "AUTO_LADDER_STEPDOWN");
         if (!v.empty())
             autoLadderStepdown = confTruthy(v);
+        // Measured path capacity (parent greedy goodput). Unset = 0 = no clamp.
+        v = loadConf(confPath, "LINK_CAPACITY_KBIT");
+        if (!v.empty())
+            linkCapacityKbps = std::max(0, std::atoi(v.c_str()));
+        v = loadConf(confPath, "LINK_CAPACITY_HEADROOM_PCT");
+        if (!v.empty()) {
+            const int p = std::atoi(v.c_str());
+            if (p > 0 && p <= 100)
+                linkCapacityHeadroomPct = p;
+        }
         v = loadConf(confPath, "PRESENT");
         if (!v.empty())
             presentMode = v; // fb0 | fpga | both | none(test/lab)
@@ -559,6 +573,30 @@ int main(int argc, char** argv) {
                      ffmpegScaleMode.c_str(),
                      ffmpegSwsFlags.empty() ? "(ffmpeg_default)" : ffmpegSwsFlags.c_str());
     }
+    auto applyLinkCapacityToWeak = [&](misterplex::WeakLadder& w, const char* where) {
+        if (linkCapacityKbps <= 0)
+            return;
+        const int before = w.maxVideoBitrateKbps;
+        const int after = misterplex::applyLinkCapacityCapKbps(before, linkCapacityKbps,
+                                                              linkCapacityHeadroomPct);
+        if (after != before) {
+            w.maxVideoBitrateKbps = after;
+            std::fprintf(stderr,
+                         "misterplexd: WARN link_capacity_clamp where=%s "
+                         "requested_kbps=%d capacity_kbps=%d headroom_pct=%d "
+                         "applied_kbps=%d tag=caller_supplied_capacity "
+                         "(not a hardcoded floor; unset LINK_CAPACITY_KBIT to disable)\n",
+                         where ? where : "?", before, linkCapacityKbps, linkCapacityHeadroomPct,
+                         after);
+        } else {
+            std::fprintf(stderr,
+                         "misterplexd: link_capacity_ok where=%s requested_kbps=%d "
+                         "capacity_kbps=%d headroom_pct=%d applied_kbps=%d\n",
+                         where ? where : "?", before, linkCapacityKbps, linkCapacityHeadroomPct,
+                         after);
+        }
+    };
+
     std::string weakWhy;
     if (!misterplex::validateWeakLadder(weak, &weakWhy)) {
         std::fprintf(stderr, "misterplexd: invalid transcode profile (%s); falling back to 240p\n",
@@ -575,6 +613,13 @@ int main(int argc, char** argv) {
                          "WEAK_BITRATE_explicit=%d tag=caller_supplied_or_default\n",
                          brAdv.c_str(), weakBitrateExplicit ? 1 : 0);
         }
+    }
+    applyLinkCapacityToWeak(weak, "startup");
+    if (linkCapacityKbps > 0) {
+        std::fprintf(stderr,
+                     "misterplexd: LINK_CAPACITY_KBIT=%d HEADROOM_PCT=%d "
+                     "(optional physical cap; 0/unset = no clamp)\n",
+                     linkCapacityKbps, linkCapacityHeadroomPct);
     }
 
     // SA_SIGINFO so si_pid/si_code survive into EXIT_REASON (who sent the kill).
@@ -950,17 +995,21 @@ int main(int argc, char** argv) {
             player.setDecodeSizeSource("osd_O4");
         else
             player.setDecodeSizeSource(decodeSizeSource);
-        const auto weakForPlay =
+        auto weakForPlay =
             weakForContentResolution(weak, contentRes, weakBitrateExplicit);
+        // Physical cap after tier/WEAK_BITRATE — never invents capacity when unset.
+        applyLinkCapacityToWeak(weakForPlay, "play");
         std::fprintf(stderr,
                      "misterplexd: content resolution=%s source=%s status_word=0x%04x "
                      "weak=%s bitrate=%d recommended_min_bitrate=%d "
-                     "WEAK_BITRATE_explicit=%d decode_src=%s\n",
+                     "WEAK_BITRATE_explicit=%d link_capacity_kbps=%d "
+                     "decode_src=%s\n",
                      contentRes.label, player.osdApplyActive() ? "OSD O[4]" : "conf/--decode",
                      player.lastOsdWord(), weakForPlay.videoResolution.c_str(),
                      weakForPlay.maxVideoBitrateKbps,
                      misterplex::recommendedMinVideoBitrateKbps(weakForPlay),
-                     weakBitrateExplicit ? 1 : 0, player.decodeSizeSource().c_str());
+                     weakBitrateExplicit ? 1 : 0, linkCapacityKbps,
+                     player.decodeSizeSource().c_str());
         {
             std::string brAdv;
             if (misterplex::weakLadderBitrateBelowRecommended(weakForPlay, &brAdv)) {

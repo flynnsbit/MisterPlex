@@ -391,6 +391,21 @@ bool starveStepdownReady(int consecutiveStarvedSamples, int minConsecutive) {
     return consecutiveStarvedSamples >= minConsecutive;
 }
 
+int applyLinkCapacityCapKbps(int requestedKbps, int capacityKbps, int headroomPct) {
+    if (requestedKbps <= 0)
+        return requestedKbps;
+    if (capacityKbps <= 0)
+        return requestedKbps; // unset — do not invent capacity
+    int pct = headroomPct;
+    if (pct <= 0 || pct > 100)
+        pct = kLinkCapacityHeadroomPctDefault;
+    // Integer kbps; parent measured ~1153 kbit/s goodput — never hardcoded here.
+    int cap = (capacityKbps * pct) / 100;
+    if (cap < 1)
+        cap = 1;
+    return requestedKbps < cap ? requestedKbps : cap;
+}
+
 std::string plexClientProfileExtra(const WeakLadder& weak) {
     int w = 0, h = 0;
     parseResolution(weak.videoResolution, w, h);

@@ -134,6 +134,15 @@ inline constexpr int kStarveStepdownMinConsecutive = 8;
 bool starveStepdownReady(int consecutiveStarvedSamples,
                          int minConsecutive = kStarveStepdownMinConsecutive);
 
+// Optional physical cap once a *measured* path capacity exists (conf/probe).
+// capacity_kbps<=0 → no clamp (never invents a link speed).
+// headroom_pct in (0,100]; product default 85 when conf omits.
+// applied = min(requested, capacity*headroom/100), at least 1 if clamping.
+// Does NOT replace decoder contracts or WEAK_BITRATE semantics — only an upper bound.
+inline constexpr int kLinkCapacityHeadroomPctDefault = 85;
+int applyLinkCapacityCapKbps(int requestedKbps, int capacityKbps,
+                             int headroomPct = kLinkCapacityHeadroomPctDefault);
+
 std::string plexClientProfileExtra(const WeakLadder& weak);
 std::string plexClientCapabilities(const WeakLadder& weak);
 std::string buildUniversalTranscodeUrl(const std::string& base,
