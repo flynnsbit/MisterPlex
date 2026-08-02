@@ -1121,6 +1121,8 @@ class MeasureResult:
     timing_class_reason: str = ""
     residual_rms_ms: float | None = None
     detrended_max_abs_ms: float | None = None
+    detrended_p95_abs_ms: float | None = None
+    detrended_p50_abs_ms: float | None = None
     # Sampling margin (ERROR 18/19 class)
     margin: dict[str, Any] = field(default_factory=dict)
     flash_meta: dict[str, Any] = field(default_factory=dict)
@@ -1379,8 +1381,14 @@ def classify_timing(
     rms = math.sqrt(sum(r * r for r in resid) / len(resid))
     out["residual_rms_ms"] = rms
     out["residual_rms_src"] = "measured"
-    out["detrended_max_abs_ms"] = max(abs(r) for r in resid)
+    abs_r = [abs(r) for r in resid]
+    out["detrended_max_abs_ms"] = max(abs_r)  # fragile n=1 tail — prefer p95 for headlines
+    out["detrended_max_abs_ms_note"] = "max_over_n_fragile_prefer_p95"
+    out["detrended_p95_abs_ms"] = percentile_nearest(abs_r, 95.0)
+    out["detrended_p95_abs_ms_src"] = "measured"
+    out["detrended_p50_abs_ms"] = percentile_nearest(abs_r, 50.0)
     out["detrend_intercept_ms"] = b
+    out["detrended_residual_series_n"] = len(resid)
     ex = excess_wander_rms_ms(rms, video_quant_rms)
     out["excess_wander_rms_ms"] = ex
     out["excess_wander_rms_src"] = "derived"
@@ -1708,6 +1716,8 @@ def analyse_file(
     res.timing_class_reason = str(tc.get("timing_class_reason") or "")
     res.residual_rms_ms = tc.get("residual_rms_ms")
     res.detrended_max_abs_ms = tc.get("detrended_max_abs_ms")
+    res.detrended_p95_abs_ms = tc.get("detrended_p95_abs_ms")
+    res.detrended_p50_abs_ms = tc.get("detrended_p50_abs_ms")
     res.ok = True
     return res
 
@@ -2041,6 +2051,8 @@ def print_report(
     res.timing_class_reason = str(tc.get("timing_class_reason") or "")
     res.residual_rms_ms = tc.get("residual_rms_ms")
     res.detrended_max_abs_ms = tc.get("detrended_max_abs_ms")
+    res.detrended_p95_abs_ms = tc.get("detrended_p95_abs_ms")
+    res.detrended_p50_abs_ms = tc.get("detrended_p50_abs_ms")
     print(f"timing_class={res.timing_class} src=derived")
     print(f"timing_class_reason={res.timing_class_reason} src=derived")
     print(
@@ -2068,8 +2080,18 @@ def print_report(
         f"def=sqrt(max(0,residual^2-quant^2))"
     )
     print(
+        f"detrended_p95_abs_ms={res.detrended_p95_abs_ms} src="
+        f"{'measured' if res.detrended_p95_abs_ms is not None else 'NO-DATA'} "
+        f"note=headline_prefer_p95_over_max"
+    )
+    print(
+        f"detrended_p50_abs_ms={res.detrended_p50_abs_ms} src="
+        f"{'measured' if res.detrended_p50_abs_ms is not None else 'NO-DATA'}"
+    )
+    print(
         f"detrended_max_abs_ms={res.detrended_max_abs_ms} src="
-        f"{'measured' if res.detrended_max_abs_ms is not None else 'NO-DATA'}"
+        f"{'measured' if res.detrended_max_abs_ms is not None else 'NO-DATA'} "
+        f"note=fragile_n1_tail_not_headline"
     )
     # Glass marker cadence (presentation intervals) — independent of offset residual
     ifr = res.inter_flash or {}
@@ -2381,6 +2403,7 @@ def print_report(
         f"se_median_ms={se_med:.4f} uncertainty_ms={u_ms:.4f} "
         f"n={res.n_pairs} timing_class={res.timing_class} "
         f"residual_rms_ms={res.residual_rms_ms} "
+        f"detrended_p95_abs_ms={res.detrended_p95_abs_ms} "
         f"tag={corrected_tag} verdict={verdict_name} "
         f"rc={rc} src=measured "
         f"rbf_md5={rbf_m} daemon_md5={dae_m} artifact_pair={apair} "

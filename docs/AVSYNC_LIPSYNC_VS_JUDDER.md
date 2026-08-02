@@ -1,5 +1,8 @@
 # Lipsync wander ≠ motion judder ≠ frame drops
 
+> **ERROR 21 retraction:** pair_run2/3 residual 10.9 vs 14.4 are **not distinguishable** (parent p≈0.14). No device lipsync defect from those windows. W2 “too coarse” criticism **withdrawn**. Need **instrument floor** (`docs/AVSYNC_INSTRUMENT_FLOOR.md`) before any device A/V claim. Beat T_cap=33ms × mark=2s → **66 s** phase beat.
+
+
 ## Binding scope (do not stretch)
 
 | User complaint | Channel | Instrument | What it can prove |

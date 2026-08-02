@@ -1,5 +1,8 @@
 # PARENT — glass cadence + N≥6 + 240p (post pair_run2/3)
 
+> **ERROR 21 retraction:** pair_run2/3 residual 10.9 vs 14.4 are **not distinguishable** (parent p≈0.14). No device lipsync defect from those windows. W2 “too coarse” criticism **withdrawn**. Need **instrument floor** (`docs/AVSYNC_INSTRUMENT_FLOOR.md`) before any device A/V claim. Beat T_cap=33ms × mark=2s → **66 s** phase beat.
+
+
 ## Pre-reg scored (yours → mine)
 
 | ID | Result |

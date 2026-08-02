@@ -1,5 +1,8 @@
 # PARENT — Wander RCA + external LEAD + 240p control
 
+> **ERROR 21 retraction:** pair_run2/3 residual 10.9 vs 14.4 are **not distinguishable** (parent p≈0.14). No device lipsync defect from those windows. W2 “too coarse” criticism **withdrawn**. Need **instrument floor** (`docs/AVSYNC_INSTRUMENT_FLOOR.md`) before any device A/V claim. Beat T_cap=33ms × mark=2s → **66 s** phase beat.
+
+
 Instrument validated on hardware (Δ=+111.50 ms P3 HIT). Next: cause of WANDER.
 
 ## Pre-register (publish hit/miss)
