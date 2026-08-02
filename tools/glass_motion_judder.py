@@ -1209,7 +1209,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--json", action="store_true")
     ap.add_argument(
         "--role",
-        choices=("device_under_test", "instrument_floor"),
+        choices=("device_under_test", "instrument_floor", "instrument_floor_capture_timing"),
         default="device_under_test",
         help="instrument_floor = MS2109 path floor (non-device source); "
         "device_under_test requires --floor-json for attribution",

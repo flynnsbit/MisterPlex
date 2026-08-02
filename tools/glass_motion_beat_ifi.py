@@ -221,6 +221,18 @@ def apply_role_attribution(
     rep = dict(rep)
     rep["role"] = role
     rep["role_src"] = PROVENANCE_CALLER
+    if role == "instrument_floor_capture_timing":
+        rep["verdict"] = "UNSCORED"
+        rep["rc"] = 77
+        rep["attribution_note"] = (
+            "role=instrument_floor_capture_timing is pts-interval only. "
+            "Use tools/glass_capture_timing_floor.py on a showinfo pts dump — "
+            "not PNG content analysis."
+        )
+        rep["device_attributable"] = False
+        rep["gates_content_hold_ifi"] = False
+        rep["content_duplication_floor"] = "UNMEASURED"
+        return rep
     if role == "instrument_floor":
         if rep.get("verdict") == "JUDDER_OK":
             rep["verdict"] = "FLOOR_OK"
@@ -228,8 +240,9 @@ def apply_role_attribution(
             rep["verdict"] = "FLOOR_IRREGULAR"
         rep["attribution"] = "instrument_floor_ms2109_path"
         rep["attribution_note"] = (
-            "INSTRUMENT FLOOR (non-device source or static through same grabber). "
-            "Publish hist+tail as floor. Do NOT cite as device motion health."
+            "INSTRUMENT FLOOR content path (requires non-device source or "
+            "acknowledged joint device fixture). Publish hist+tail as floor. "
+            "Host mpv floor needs HDMI recable — grabber is on DE10, not host."
         )
         rep["device_attributable"] = False
         rep["device_attributable_src"] = PROVENANCE_MEASURED
@@ -251,6 +264,25 @@ def apply_role_attribution(
         )
         return rep
 
+    fb = floor_baseline
+    # Capture-timing floor must never green-light content attribution.
+    if fb.get("role") == "instrument_floor_capture_timing" or fb.get("gates_content_hold_ifi") is False:
+        if fb.get("role") == "instrument_floor_capture_timing" or (
+            fb.get("content_duplication_floor") == "UNMEASURED"
+            and fb.get("gates_content_hold_ifi") is False
+            and "hold_hist" not in fb
+        ):
+            rep["floor_baseline_label"] = fb.get("label")
+            rep["floor_baseline_role"] = fb.get("role")
+            rep["device_attributable"] = False
+            rep["device_attributable_src"] = "measured"
+            rep["attribution_note"] = (
+                "floor-json is capture-timing only (or gates_content_hold_ifi=false). "
+                "Content hold/IFI remains NOT ATTRIBUTABLE. Content-duplication floor "
+                "still required (host HDMI recable or joint 60 Hz stamp fixture)."
+            )
+            rep["content_duplication_floor"] = "UNMEASURED"
+            return rep
     fb = floor_baseline
     rep["floor_baseline_label"] = fb.get("label")
     rep["floor_hold_hist"] = fb.get("hold_hist")

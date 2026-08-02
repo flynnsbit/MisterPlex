@@ -1,0 +1,35 @@
+{
+  "ok": true,
+  "source_fps": 24.0,
+  "source_fps_src": "caller_supplied_measured",
+  "capture_fps": 60.0,
+  "capture_fps_src": "caller_supplied",
+  "t_src_ms": 41.666667,
+  "t_cap_ms": 16.666667,
+  "t_src_ms_src": "derived_1000_over_src_fps",
+  "t_cap_ms_src": "derived_1000_over_cap_fps",
+  "cap_over_src_ratio": "5/2",
+  "cap_over_src_float": 2.5,
+  "ratio_rational_error": 0.0,
+  "commensurate": true,
+  "pattern_period_capture_frames": 5,
+  "pattern_period_source_frames": 2,
+  "pattern_period_ms": 83.333333,
+  "ideal_content_ifi_ms": 41.666667,
+  "ideal_content_ifi_ms_src": "derived_1000_over_src_fps",
+  "discrete_ifi_ms_on_capture_grid": [
+    33.333333,
+    50.0
+  ],
+  "discrete_ifi_ms_src": "derived_k_times_t_cap",
+  "healthy_hold_mass_expected": [
+    2,
+    3
+  ],
+  "drop_signature_ifi_ms": 83.333333,
+  "drop_signature_hold_approx": 5.0,
+  "continuous_quant_rms_ms": 4.811252,
+  "continuous_quant_rms_ms_src": "derived_t_cap_over_sqrt12",
+  "continuous_quant_rms_usable": false,
+  "quant_note": "REJECT continuous floor T_cap/sqrt(12) as baseline when source and capture are commensurate (e.g. 24.000:30.000 = 4:5). Expected healthy mass is DISCRETE on the capture grid (24@30 \u2192 holds {1,2} \u2192 IFI {33.333,66.667} ms, mean 41.667). A slow STABLE/WANDER beat needs independent clock offset, not this rational locked pattern. T_cap/sqrt(12)=4.8113 ms is the wrong model here."
+}

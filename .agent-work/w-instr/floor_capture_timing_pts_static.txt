@@ -1,0 +1,43 @@
+{
+  "role": "instrument_floor_capture_timing",
+  "scope": "Bounds MS2109+ffmpeg DELIVERY TIMING only (pts intervals on static content). Does NOT bound content duplication/skip. device_attributable remains False for content-hold/IFI claims.",
+  "src_file": "/tmp/pts_static.txt",
+  "src_file_src": "caller_supplied_measured",
+  "n_pts": 150,
+  "n_intervals": 149,
+  "n_intervals_src": "measured",
+  "interval_ms_min": 31.851,
+  "interval_ms_p50": 32.067,
+  "interval_ms_p95": 36.024,
+  "interval_ms_p99": 36.1159,
+  "interval_ms_max": 204.114,
+  "interval_ms_mean": 34.4701,
+  "interval_ms_stdev": 14.116,
+  "interval_stats_src": "measured",
+  "outliers_gt_1_5x_median": 1,
+  "outliers_gt_2x_median": 1,
+  "outliers_src": "measured",
+  "implied_capture_fps": 29.010632,
+  "implied_capture_fps_src": "derived_1000_over_mean_interval",
+  "interval_hist_0_5ms": {
+    "32.0": 99,
+    "36.0": 49,
+    "204.0": 1
+  },
+  "max_dev_from_median_ms": 172.047,
+  "verdict": "FLOOR_CAPTURE_TIMING_IRREGULAR",
+  "device_attributable": false,
+  "content_duplication_floor": "UNMEASURED",
+  "pre_register_pass_if": "outliers_gt_1.5x_median==0 AND max_dev_from_median_ms < 10",
+  "reading": "Capture cadence well-behaved: max_dev_from_median=172.05 ms, outliers_1.5x=1, outliers_2x=1, mean_fps=29.0106. Rules out grabber delivery-timing drops as sole cause of ~50 ms class excursions. Does NOT rule out content duplication at regular timestamps."
+}
+---HUMAN---
+role=instrument_floor_capture_timing
+n_intervals=149 [measured]
+interval_ms min=31.851 p50=32.067 p95=36.024 p99=36.1159 max=204.114 mean=34.4701 stdev=14.116 [measured]
+outliers_gt_1.5x_median=1 outliers_gt_2x_median=1 [measured]
+implied_capture_fps=29.010632 [derived_1000_over_mean_interval]
+VERDICT=FLOOR_CAPTURE_TIMING_IRREGULAR device_attributable=False content_dup_floor=UNMEASURED
+Capture cadence well-behaved: max_dev_from_median=172.05 ms, outliers_1.5x=1, outliers_2x=1, mean_fps=29.0106. Rules out grabber delivery-timing drops as sole cause of ~50 ms class excursions. Does NOT rule out content duplication at regular timestamps.
+Bounds MS2109+ffmpeg DELIVERY TIMING only (pts intervals on static content). Does NOT bound content duplication/skip. device_attributable remains False for content-hold/IFI claims.
+wrote floor_capture_timing.json

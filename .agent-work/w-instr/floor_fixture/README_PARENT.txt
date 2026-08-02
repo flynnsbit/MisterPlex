@@ -37,3 +37,9 @@ C) DEVICE (only AFTER floor JSON exists)
 
 BEAT (24.000 @ 30.000): commensurate 4:5, pattern period 5 cap frames = 166.667 ms.
 Discrete IFI on grid: 33.333 and 66.667 ms (mean 41.667). Reject T_cap/sqrt(12).
+
+AMENDMENT (parent 2026-08-01): host mpv → grabber CANNOT work on this rig.
+Grabber HDMI is cabled to DE10-Nano; host HDMI-A-1 is disconnected.
+Content-dup floor requires USER physical cable move, or a joint 60 Hz
+frame-stamp fixture on device (not pure instrument floor).
+Use tools/glass_capture_timing_floor.py on static-logo pts for timing-only floor.
