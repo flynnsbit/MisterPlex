@@ -54,3 +54,5 @@ assets/avsync/bitrate_ladder_*.mp4
 assets/avsync/adv_real_*.mp4
 assets/avsync/vbr_stair_*.mp4
 assets/avsync/cbr_dp_*.mp4
+assets/avsync/decload_*.mp4
+assets/avsync/dp_control_*.mp4
