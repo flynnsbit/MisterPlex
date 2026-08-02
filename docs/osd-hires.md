@@ -364,3 +364,22 @@ Uses `plex480pDdrFrameGeometry` + `renderIdleRgb24` + `PlaybackOverlay::renderRg
 (same APIs as `paintIdle`). `output=DEFAULT_ASSUMED` when no ini resolved — set
 `MISTERPLEX_MISTER_INI=/path/to/MiSTer.ini` for `source=ini:mister`. Authoring stays
 624×480 either way.
+
+## Host overlay gallery (grabber-independent)
+
+Visual before/after and multi-mode **host** renders live under
+`.agent-work/w-osd-hires/gallery/` (see that README). Tool:
+
+```bash
+make "$PWD/build/dump_overlay_png"
+./build/dump_overlay_png out.png --scenario paused|paused_long|idle|stopped \
+  [--path bank|output] [--before-12x16] [--nn-scale 1920x1080]
+# cmd; echo "true rc=$?"
+```
+
+- `--path bank` = product plane=0 authoring (real daemon path).
+- `--before-12x16` = pre-hires font class proxy at bank size.
+- `--nn-scale` = **SIMULATED** stretch only — not ascal/device.
+- `--path output --size 1920x1080` = plane=1 metrics **hypothetical** (not shipping).
+
+**Host PNG ≠ device verification.**
