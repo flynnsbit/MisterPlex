@@ -1,6 +1,6 @@
 # Playbook — A/V sync & soak fixtures (local PMS only)
 
-**PMS:** `http://192.168.1.24:32400` library section **2**  
+**PMS:** `http://YOUR-PLEX-SERVER:32400` library section **2**  
 **Ignore:** `192.168.1.122` (SHIELD), `plex.nevertrustaf.art`  
 **Token:** `$TOK` (lab file only — never commit)  
 **Device:** parent only. Agent does not ssh/cast.
@@ -38,8 +38,8 @@ Generator: `scripts/gen_real_bbb_avsync_soak.py` · report: `.agent-work/w-asset
 If rk missing, re-copy from `assets/avsync/` → `~/plex/media/movies/` and:
 
 ```bash
-curl -sS "http://192.168.1.24:32400/library/sections/2/refresh?X-Plex-Token=$TOK"
-curl -sS "http://192.168.1.24:32400/library/sections/2/all?X-Plex-Token=$TOK" | rg "AudioID|AVSync|OCRProof"
+curl -sS "http://YOUR-PLEX-SERVER:32400/library/sections/2/refresh?X-Plex-Token=$TOK"
+curl -sS "http://YOUR-PLEX-SERVER:32400/library/sections/2/all?X-Plex-Token=$TOK" | rg "AudioID|AVSync|OCRProof"
 ```
 
 Cast by **ratingKey** with your companion path to the MiSTer. Prefer Direct Play.

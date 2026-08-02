@@ -1,7 +1,7 @@
 # Host instrument ceiling — rk27 bank480 fullbleed (post-H.264)
 
 **File:** `assets/avsync/bank480_fullbleed_vres_av_24_1200s.mp4`  
-**Live:** `/library/metadata/27` on `192.168.1.24:32400`  
+**Live:** `/library/metadata/27` on `YOUR-PLEX-SERVER:32400`  
 **Frames measured (non-flash):** [100, 200, 500, 1000, 2358]  
 **Noise floor:** std ≥ **8.0** (`caller_supplied`) on column-mean vertical profile  
 **Decode:** `ffmpeg` frame extract → luma (**post-encode**, what ARM feeds after decode)  

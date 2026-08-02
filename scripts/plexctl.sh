@@ -43,8 +43,22 @@ V3_CORE=/media/fat/_Utility/Plex_v3.rbf
 # that as the "the core really reloaded" signal. Confirming *which* core is live
 # requires an HDMI capture fingerprint (tools/measure_edges.py) and is the
 # caller's job, not this function's.
+# This script only makes sense running ON the MiSTer: every path it tests is a
+# DEVICE path. Run from a host workstation, `[ -f "$core" ]` evaluates the device
+# path against the HOST filesystem and reports the daily driver's core as missing
+# when it is present and healthy. A rollback tool that falsely claims the core is
+# destroyed is dangerous, so refuse up front instead of guessing.
+require_on_device() {
+  [ -w /dev/MiSTer_cmd ] || {
+    echo "ERROR not on MiSTer (no writable /dev/MiSTer_cmd) — device paths cannot be" \
+         "checked on-device from a host; run this script on the MiSTer" >&2
+    return 3
+  }
+}
+
 load_core() {
   core="$1"
+  require_on_device || return 3
   [ -f "$core" ] || { echo "ERROR no core at $core"; return 2; }
   before=$(stat -c %Y /tmp/RBFNAME 2>/dev/null || echo 0)
   printf 'load_core %s\n' "$core" > /dev/MiSTer_cmd

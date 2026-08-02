@@ -67,7 +67,7 @@ Span-only (two ends): z≈6.3 still OK; prefer full 13-point slope.
 - **ratingKey:** not in §2 until parent scans (was not present when inventoried)
 
 ```bash
-curl -sS "http://192.168.1.24:32400/library/sections/2/refresh?X-Plex-Token=$TOK"
+curl -sS "http://YOUR-PLEX-SERVER:32400/library/sections/2/refresh?X-Plex-Token=$TOK"
 ```
 
 ## Answer to “is it impossible?”

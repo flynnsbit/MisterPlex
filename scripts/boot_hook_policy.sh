@@ -1,188 +1,39 @@
 #!/usr/bin/env bash
-# boot_hook_policy.sh — pure policy for the MiSTer boot hook the init system RUNS.
+# boot_hook_policy.sh — pure policy for MiSTer user-startup + pair root.
 #
-# LIVE path (parent HW 2026-07-31 INSTANCE 1 — THE DECOY FILE):
-#   /etc/init.d/S99user sets USER_SCRIPT="/media/fat/linux/user-startup.sh"
-#   That path (NO leading underscore) is what the system actually executes.
-#   /media/fat/linux/_user-startup.sh (leading underscore) is a DECOY — never
-#   executed by S99user. Gating BOOT_HOOK_OK on the decoy while the live file
-#   still pointed at v1 + stale pre-PLXD daemon 54f1d916 produced a green gate
-#   on a broken boot.
+# Parent 2026-07-31 P0: gate was GREEN against DECOY file
+#   /media/fat/linux/_user-startup.sh
+# while MiSTer init actually runs (from /etc/init.d/S99user):
+#   USER_SCRIPT="/media/fat/linux/user-startup.sh"
+# The real boot file still had v1 supervise → cold boot would start stale
+# 54f1d916. A gate that validates a decoy manufactures confidence.
 #
-# Always resolve BOOT_HOOK_DEVICE_PATH → user-startup.sh (no underscore).
-# When both files exist, check LIVE body; if decoy diverges, FAIL decoy class.
+# RULE: never hardcode the startup path. Derive USER_SCRIPT from S99user.
+# If S99user is missing/unparseable → hard FAIL (no guess fallback).
 #
-# Other cold-boot defects:
-#   hook pointed at v1 while live pair is misterplex_v2 + edc3a46b
-#   grepping only misterplex/bin/misterplexd misses misterplex_v2 → double daemon
+# DECOY POLICY: _user-startup.sh (underscore) is NOT executed by MiSTer.
+# It must be INERT for MiSTerPlex autostart (no misterplexd lines). Two files
+# that look identical and behave differently is the trap that caught us.
 #
 # Source or run:
 #   source scripts/boot_hook_policy.sh
+#   boot_hook_parse_user_script <s99_body>
 #   boot_hook_check_body <hook_text> <expect_root>
-#   boot_hook_check_live_and_decoy <live_body> <decoy_body|empty> <expect_root>
+#   boot_hook_check_decoy_body <decoy_text>
 #   boot_hook_render_body <expect_root> <old_hook_text>
 #
-# Exit codes: 0 OK, 1 mismatch/refuse, 3 bad args
+# Exit codes: 0 OK, 1 mismatch/refuse, 3 bad args / unresolvable
 
-# Defaults only used when S99user cannot be read (host unit inject / missing file).
-# Production consumers MUST call boot_hook_resolve_from_s99* — hardcoding is the defect.
-BOOT_HOOK_S99_PATH="${BOOT_HOOK_S99_PATH:-/etc/init.d/S99user}"
-BOOT_HOOK_FALLBACK_LIVE="${BOOT_HOOK_FALLBACK_LIVE:-/media/fat/linux/user-startup.sh}"
-BOOT_HOOK_DEVICE_PATH="${BOOT_HOOK_DEVICE_PATH:-$BOOT_HOOK_FALLBACK_LIVE}"
+# Observed defaults on this lab (documentation only — live resolve must use S99user).
+BOOT_HOOK_INIT_PATH="${BOOT_HOOK_INIT_PATH:-/etc/init.d/S99user}"
 BOOT_HOOK_DECOY_PATH="${BOOT_HOOK_DECOY_PATH:-/media/fat/linux/_user-startup.sh}"
+# Legacy mistaken default — kept as the known decoy name for tests/docs.
+BOOT_HOOK_LEGACY_DECOY_PATH="/media/fat/linux/_user-startup.sh"
+# Populated only after successful parse; empty means unresolved.
+BOOT_HOOK_DEVICE_PATH="${BOOT_HOOK_DEVICE_PATH:-}"
 BOOT_HOOK_V1_ROOT="${BOOT_HOOK_V1_ROOT:-/media/fat/misterplex}"
 BOOT_HOOK_V2_ROOT="${BOOT_HOOK_V2_ROOT:-/media/fat/misterplex_v2}"
-# Default daily-driver pair root (DDR + SPI hybrid on this lab both use v2).
 BOOT_HOOK_DEFAULT_ROOT="${BOOT_HOOK_DEFAULT_ROOT:-$BOOT_HOOK_V2_ROOT}"
-BOOT_HOOK_RESOLVE_SOURCE="${BOOT_HOOK_RESOLVE_SOURCE:-unresolved}"
-
-# Parse USER_SCRIPT= from S99user body. Prints absolute path or empty.
-# Accepts USER_SCRIPT="/path" | USER_SCRIPT='/path' | USER_SCRIPT=/path
-boot_hook_parse_user_script_from_s99_body() {
-  local body="${1:-}" line val
-  while IFS= read -r line || [ -n "$line" ]; do
-    case "$line" in
-      \#*) continue ;;
-    esac
-    case "$line" in
-      *USER_SCRIPT=*)
-        val="${line#*USER_SCRIPT=}"
-        val="${val%%#*}"
-        val=$(printf '%s' "$val" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
-        val="${val#\"}"
-        val="${val%\"}"
-        val="${val#\'}"
-        val="${val%\'}"
-        if [ -n "$val" ]; then
-          printf '%s\n' "$val"
-          return 0
-        fi
-        ;;
-    esac
-  done <<<"$body"
-  return 1
-}
-
-# Decoy sibling: dirname + "_" + basename (user-startup.sh → _user-startup.sh).
-boot_hook_decoy_path_for_live() {
-  local live="${1:-}" base dir
-  [ -n "$live" ] || return 3
-  base=$(basename "$live")
-  dir=$(dirname "$live")
-  case "$base" in
-    _*) printf '%s\n' "$live" ;;  # already underscore
-    *) printf '%s/_%s\n' "$dir" "$base" ;;
-  esac
-}
-
-# Resolve LIVE + DECOY from S99 body. Prints:
-#   BOOT_HOOK_LIVE_PATH=...
-#   BOOT_HOOK_DECOY_PATH=...
-#   BOOT_HOOK_RESOLVE_SOURCE=s99user|fallback_default|inject
-# rc 0 always when a path is produced; rc 1 if empty body and no fallback allowed.
-boot_hook_resolve_from_s99_body() {
-  local body="${1:-}" allow_fallback="${2:-1}" live decoy
-  live=$(boot_hook_parse_user_script_from_s99_body "$body" 2>/dev/null || true)
-  if [ -n "$live" ]; then
-    case "$live" in
-      /*) ;;
-      *)
-        echo "BOOT_HOOK_RESOLVE_FAIL reason=user_script_not_absolute got='$live'"
-        return 1
-        ;;
-    esac
-    decoy=$(boot_hook_decoy_path_for_live "$live")
-    BOOT_HOOK_DEVICE_PATH="$live"
-    BOOT_HOOK_DECOY_PATH="$decoy"
-    BOOT_HOOK_RESOLVE_SOURCE=s99user
-    echo "BOOT_HOOK_LIVE_PATH=$live"
-    echo "BOOT_HOOK_DECOY_PATH=$decoy"
-    echo "BOOT_HOOK_RESOLVE_SOURCE=s99user"
-    return 0
-  fi
-  if [ "$allow_fallback" = "1" ]; then
-    live="$BOOT_HOOK_FALLBACK_LIVE"
-    decoy=$(boot_hook_decoy_path_for_live "$live")
-    BOOT_HOOK_DEVICE_PATH="$live"
-    BOOT_HOOK_DECOY_PATH="$decoy"
-    BOOT_HOOK_RESOLVE_SOURCE=fallback_default
-    echo "BOOT_HOOK_LIVE_PATH=$live"
-    echo "BOOT_HOOK_DECOY_PATH=$decoy"
-    echo "BOOT_HOOK_RESOLVE_SOURCE=fallback_default"
-    echo "BOOT_HOOK_RESOLVE_NOTE S99user USER_SCRIPT missing — using fallback (not proof of device truth)"
-    return 0
-  fi
-  echo "BOOT_HOOK_RESOLVE_FAIL reason=no_USER_SCRIPT_in_S99user"
-  return 1
-}
-
-# Resolve from file path to S99user (host or mounted).
-boot_hook_resolve_from_s99_file() {
-  local path="${1:-$BOOT_HOOK_S99_PATH}" allow_fallback="${2:-1}" body
-  if [ ! -f "$path" ]; then
-    if [ "$allow_fallback" = "1" ]; then
-      boot_hook_resolve_from_s99_body "" 1
-      return $?
-    fi
-    echo "BOOT_HOOK_RESOLVE_FAIL reason=s99_missing path=$path"
-    return 1
-  fi
-  body=$(cat "$path")
-  boot_hook_resolve_from_s99_body "$body" "$allow_fallback"
-}
-
-# Extract the supervise/install root from a hook body (first misterplex root found).
-# Prefers supervise line; falls back to bare daemon path dirname/dirname.
-boot_hook_root_from_body() {
-  local body="${1:-}" line
-  while IFS= read -r line || [ -n "$line" ]; do
-    case "$line" in
-      ''|\#*) continue ;;
-    esac
-    if printf '%s\n' "$line" | grep -q 'misterplexd_supervise\.sh'; then
-      # .../ROOT/bin/misterplexd_supervise.sh
-      if printf '%s\n' "$line" | grep -qoE '/media/fat/misterplex_v2|/media/fat/misterplex'; then
-        printf '%s\n' "$line" | grep -oE '/media/fat/misterplex_v2|/media/fat/misterplex' | head -1
-        return 0
-      fi
-    fi
-    if boot_hook_line_is_misterplex "$line"; then
-      if printf '%s\n' "$line" | grep -qoE '/media/fat/misterplex_v2|/media/fat/misterplex'; then
-        printf '%s\n' "$line" | grep -oE '/media/fat/misterplex_v2|/media/fat/misterplex' | head -1
-        return 0
-      fi
-    fi
-  done <<<"$body"
-  return 1
-}
-
-# FAIL when hook autostart root != live daemon root (session-long undetected class).
-# Usage: boot_hook_assert_bundle_match "$hook_body" "$live_root"
-# rc 0 match, 1 mismatch, 3 bad args / unproven
-boot_hook_assert_bundle_match() {
-  local body="${1:-}" live_root="${2:-}" hook_root
-  if [ -z "$body" ] || [ "$body" = "MISSING" ]; then
-    echo "BOOT_HOOK_BUNDLE_FAIL reason=hook_body_unproven"
-    return 3
-  fi
-  if [ -z "$live_root" ]; then
-    echo "BOOT_HOOK_BUNDLE_FAIL reason=live_root_unproven"
-    return 3
-  fi
-  hook_root=$(boot_hook_root_from_body "$body" || true)
-  if [ -z "$hook_root" ]; then
-    echo "BOOT_HOOK_BUNDLE_FAIL reason=no_misterplex_root_in_hook"
-    return 1
-  fi
-  echo "BOOT_HOOK_BUNDLE hook_root=$hook_root live_root=$live_root"
-  if [ "$hook_root" != "$live_root" ]; then
-    echo "BOOT_HOOK_BUNDLE_FAIL reason=hook_live_root_mismatch"
-    echo "BOOT_HOOK_BUNDLE_FAIL detail=cold_boot_starts_different_bundle_than_running_daemon"
-    return 1
-  fi
-  echo "BOOT_HOOK_BUNDLE_OK hook_root=$hook_root live_root=$live_root"
-  return 0
-}
 
 boot_hook_supervise_relpath() {
   printf 'bin/misterplexd_supervise.sh'
@@ -191,12 +42,112 @@ boot_hook_supervise_relpath() {
 boot_hook_line_for_root() {
   local root="${1:-}"
   [ -n "$root" ] || return 3
-  # Single line boot starts the durable supervisor (which flock-guards itself).
   printf 'nohup %s/%s >>%s/misterplexd_supervise.log 2>&1 &\n' \
     "$root" "$(boot_hook_supervise_relpath)" "$root"
 }
 
-# True if a hook line is any MiSTerPlex boot autostart (supervise or bare daemon).
+# Parse USER_SCRIPT= from S99user body. Prints path on stdout; rc 0/1/3.
+# Accepts USER_SCRIPT="..." or USER_SCRIPT='...' or unquoted.
+boot_hook_parse_user_script() {
+  local body="${1:-}" line val
+  if [ -z "$body" ]; then
+    echo "BOOT_HOOK_RESOLVE_FAIL reason=empty_init_body" >&2
+    return 3
+  fi
+  if [ "$body" = "MISSING" ]; then
+    echo "BOOT_HOOK_RESOLVE_FAIL reason=init_missing path=${BOOT_HOOK_INIT_PATH}" >&2
+    return 3
+  fi
+  # Prefer the assignment form used by MiSTer S99user.
+  line=$(printf '%s\n' "$body" | grep -E '^[[:space:]]*USER_SCRIPT=' | tail -1 || true)
+  if [ -z "$line" ]; then
+    echo "BOOT_HOOK_RESOLVE_FAIL reason=USER_SCRIPT_unparseable" >&2
+    return 3
+  fi
+  val=${line#USER_SCRIPT=}
+  val=${val#${val%%[![:space:]]*}}  # ltrim
+  # strip quotes
+  if [[ "$val" == \"*\" ]]; then val=${val:1:${#val}-2}; fi
+  if [[ "$val" == \'*\' ]]; then val=${val:1:${#val}-2}; fi
+  val=${val%%[[:space:]#]*}
+  if [ -z "$val" ] || [[ "$val" != /* ]]; then
+    echo "BOOT_HOOK_RESOLVE_FAIL reason=USER_SCRIPT_not_absolute got='$val'" >&2
+    return 3
+  fi
+  # Hard refuse if someone points USER_SCRIPT at the known decoy name by mistake
+  # — still "derived", but call it out; MiSTer can legally point anywhere, so
+  # we only WARN via stdout tag when it equals the legacy decoy path.
+  printf '%s\n' "$val"
+  return 0
+}
+
+# Given init body, set BOOT_HOOK_DEVICE_PATH and print BOOT_HOOK_PATH=...
+boot_hook_resolve_from_init_body() {
+  local body="${1:-}" path rc
+  set +e
+  path=$(boot_hook_parse_user_script "$body" 2>/dev/null)
+  rc=$?
+  set -e
+  if [ "$rc" -ne 0 ] || [ -z "$path" ]; then
+    boot_hook_parse_user_script "$body" >/dev/null || true
+    echo "BOOT_HOOK_PATH="
+    echo "BOOT_HOOK_RESOLVED=0"
+    return 3
+  fi
+  BOOT_HOOK_DEVICE_PATH="$path"
+  echo "BOOT_HOOK_PATH=$path"
+  echo "BOOT_HOOK_RESOLVED=1"
+  echo "BOOT_HOOK_INIT=$BOOT_HOOK_INIT_PATH"
+  echo "BOOT_HOOK_DECOY=$BOOT_HOOK_DECOY_PATH"
+  if [ "$path" = "$BOOT_HOOK_LEGACY_DECOY_PATH" ]; then
+    echo "BOOT_HOOK_WARN reason=USER_SCRIPT_is_legacy_decoy_name"
+  fi
+  # Gate must never silently use underscore decoy as "the" path without init.
+  return 0
+}
+
+# Remote snippet: observe what the system actually consults (like /proc/exe).
+# Prints BOOT_HOOK_PATH= / BOOT_HOOK_RESOLVED= / INIT body markers / decoy scan.
+boot_hook_remote_resolve_snippet() {
+  cat <<'REMOTE'
+set +e
+INIT=/etc/init.d/S99user
+DECOY=/media/fat/linux/_user-startup.sh
+echo "BOOT_HOOK_INIT=$INIT"
+if [ ! -f "$INIT" ]; then
+  echo "BOOT_HOOK_PATH="
+  echo "BOOT_HOOK_RESOLVED=0"
+  echo "BOOT_HOOK_RESOLVE_FAIL reason=init_missing"
+else
+  line=$(grep -E '^[[:space:]]*USER_SCRIPT=' "$INIT" | tail -1)
+  echo "BOOT_HOOK_INIT_LINE=$line"
+  val=${line#USER_SCRIPT=}
+  # trim
+  val=$(printf '%s' "$val" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+  val=$(printf '%s' "$val" | sed 's/^"//;s/"$//;s/^'\''//;s/'\''$//')
+  if [ -z "$val" ] || [ "${val#/}" = "$val" ]; then
+    echo "BOOT_HOOK_PATH="
+    echo "BOOT_HOOK_RESOLVED=0"
+    echo "BOOT_HOOK_RESOLVE_FAIL reason=USER_SCRIPT_unparseable"
+  else
+    echo "BOOT_HOOK_PATH=$val"
+    echo "BOOT_HOOK_RESOLVED=1"
+    if [ -f "$val" ]; then
+      echo "BOOT_HOOK_REAL_PRESENT=1"
+    else
+      echo "BOOT_HOOK_REAL_PRESENT=0"
+    fi
+  fi
+fi
+echo "BOOT_HOOK_DECOY=$DECOY"
+if [ -f "$DECOY" ]; then
+  echo "BOOT_HOOK_DECOY_PRESENT=1"
+else
+  echo "BOOT_HOOK_DECOY_PRESENT=0"
+fi
+REMOTE
+}
+
 boot_hook_line_is_misterplex() {
   local line="${1:-}"
   case "$line" in
@@ -207,10 +158,8 @@ boot_hook_line_is_misterplex() {
   esac
 }
 
-# Count supervise lines and report which roots they target.
-# Prints: N_SUP= ROOTS= HAS_V1= HAS_V2= HAS_BARE=
 boot_hook_scan_body() {
-  local body="${1:-}" line n=0 roots="" has_v1=0 has_v2=0 has_bare=0 r
+  local body="${1:-}" line n=0 roots="" has_v1=0 has_v2=0 has_bare=0
   while IFS= read -r line || [ -n "$line" ]; do
     case "$line" in
       ''|\#*) continue ;;
@@ -223,7 +172,6 @@ boot_hook_scan_body() {
         *) roots="${roots}${roots:+ }UNKNOWN" ;;
       esac
     elif boot_hook_line_is_misterplex "$line"; then
-      # bare daemon autostart (legacy package_release / old deploy)
       has_bare=1
       n=$((n + 1))
       case "$line" in
@@ -240,7 +188,27 @@ boot_hook_scan_body() {
   echo "HAS_BARE=$has_bare"
 }
 
-# rc 0 if hook body autostarts exactly one supervise for expect_root, nothing else.
+# Decoy must be inert: zero MiSTerPlex autostart lines.
+boot_hook_check_decoy_body() {
+  local body="${1:-}" scan n
+  if [ -z "$body" ] || [ "$body" = "MISSING" ] || [ "$body" = "ABSENT" ]; then
+    echo "BOOT_HOOK_DECOY_OK reason=absent_or_empty"
+    return 0
+  fi
+  scan=$(boot_hook_scan_body "$body")
+  n=$(printf '%s\n' "$scan" | sed -n 's/^N_SUP=//p')
+  printf '%s\n' "$scan" | sed 's/^/DECOY_/'
+  if [ "${n:-0}" -gt 0 ]; then
+    echo "BOOT_HOOK_DECOY_FAIL reason=decoy_has_misterplex_autostart n=$n"
+    echo "BOOT_HOOK_DECOY_FAIL detail=underscore_file_is_not_executed_by_S99user_but_looks_live"
+    echo "BOOT_HOOK_DECOY_FAIL detail=strip_misterplex_lines_from_${BOOT_HOOK_DECOY_PATH}"
+    return 1
+  fi
+  echo "BOOT_HOOK_DECOY_OK reason=inert_no_misterplex_autostart"
+  return 0
+}
+
+# rc 0 if REAL hook body autostarts exactly one supervise for expect_root.
 boot_hook_check_body() {
   local body="${1:-}" expect="${2:-$BOOT_HOOK_DEFAULT_ROOT}"
   local scan n has_v1 has_v2 has_bare want_line
@@ -268,14 +236,12 @@ boot_hook_check_body() {
     echo "BOOT_HOOK_FAIL reason=multiple_autostart_lines n=$n (v1+v2 double-daemon class)"
     return 1
   fi
-  # Exactly one line — must be supervise under expect root.
   want_line=$(boot_hook_line_for_root "$expect" | tr -d '\n')
   if ! printf '%s\n' "$body" | grep -F "$expect/bin/misterplexd_supervise.sh" >/dev/null 2>&1; then
     echo "BOOT_HOOK_FAIL reason=supervise_root_mismatch expect=$expect"
     echo "BOOT_HOOK_FAIL detail=hook_does_not_match_live_pair_root"
     return 1
   fi
-  # If expect is v2, v1 must be absent (and vice versa).
   if [ "$expect" = "$BOOT_HOOK_V2_ROOT" ] && [ "${has_v1:-0}" = "1" ]; then
     echo "BOOT_HOOK_FAIL reason=v1_hook_present_while_expect_v2"
     return 1
@@ -288,54 +254,7 @@ boot_hook_check_body() {
   return 0
 }
 
-# Compare LIVE body (must pass) vs optional DECOY body.
-# Decoy-only green while live is bad → BOOT_HOOK_FAIL reason=decoy_not_live.
-boot_hook_check_live_and_decoy() {
-  local live="${1:-}" decoy="${2:-}" expect="${3:-$BOOT_HOOK_DEFAULT_ROOT}"
-  local rc=0 out
-  echo "BOOT_HOOK_LIVE_PATH=$BOOT_HOOK_DEVICE_PATH"
-  echo "BOOT_HOOK_DECOY_PATH=$BOOT_HOOK_DECOY_PATH"
-  if [ -z "$live" ] || [ "$live" = "MISSING" ]; then
-    echo "BOOT_HOOK_FAIL reason=live_user_startup_missing path=$BOOT_HOOK_DEVICE_PATH"
-    echo "BOOT_HOOK_FAIL detail=S99user_USER_SCRIPT_points_here_not_underscore_decoy"
-    return 1
-  fi
-  set +e
-  out=$(boot_hook_check_body "$live" "$expect")
-  rc=$?
-  set -e
-  printf '%s\n' "$out"
-  if [ "$rc" -ne 0 ]; then
-    # If decoy alone would pass, call out the decoy class explicitly.
-    if [ -n "$decoy" ] && [ "$decoy" != "MISSING" ]; then
-      set +e
-      boot_hook_check_body "$decoy" "$expect" >/dev/null 2>&1
-      drc=$?
-      set -e
-      if [ "$drc" -eq 0 ]; then
-        echo "BOOT_HOOK_FAIL reason=decoy_ok_live_bad"
-        echo "BOOT_HOOK_FAIL detail=underscore__user-startup.sh_is_not_executed_by_S99user"
-      fi
-    fi
-    return 1
-  fi
-  # Live OK — still refuse if decoy diverges in a way that confuses operators.
-  if [ -n "$decoy" ] && [ "$decoy" != "MISSING" ] && [ "$decoy" != "$live" ]; then
-    set +e
-    boot_hook_check_body "$decoy" "$expect" >/dev/null 2>&1
-    drc=$?
-    set -e
-    if [ "$drc" -ne 0 ]; then
-      echo "BOOT_HOOK_NOTE decoy_diverges path=$BOOT_HOOK_DECOY_PATH (live OK; decoy not executed)"
-    else
-      echo "BOOT_HOOK_NOTE decoy_also_ok path=$BOOT_HOOK_DECOY_PATH (not executed; live is authority)"
-    fi
-  fi
-  echo "BOOT_HOOK_LIVE_OK path=$BOOT_HOOK_DEVICE_PATH expect_root=$expect"
-  return 0
-}
-
-# Render new hook body: strip all MiSTerPlex autostart lines, append exactly one.
+# Render new REAL hook body: strip all MiSTerPlex autostart lines, append exactly one.
 boot_hook_render_body() {
   local expect="${1:-$BOOT_HOOK_DEFAULT_ROOT}" old="${2:-}" line
   local -a kept=()
@@ -343,14 +262,12 @@ boot_hook_render_body() {
     if boot_hook_line_is_misterplex "$line"; then
       continue
     fi
-    # drop previous marker-only lines we own
     case "$line" in
       '# MiSTerPlex pair autostart'*) continue ;;
       '# MiSTerPlex companion'*) continue ;;
     esac
     kept+=("$line")
   done <<<"$old"
-  # trim trailing empty lines
   local i=${#kept[@]}
   while [ "$i" -gt 0 ]; do
     i=$((i - 1))
@@ -364,7 +281,28 @@ boot_hook_render_body() {
   boot_hook_line_for_root "$expect"
 }
 
-# Idempotence patterns that MUST match BOTH roots (the old bug).
+# Render inert decoy: strip ALL misterplex autostart; keep other lines.
+boot_hook_render_inert_decoy() {
+  local old="${1:-}" line
+  local -a kept=()
+  while IFS= read -r line || [ -n "$line" ]; do
+    if boot_hook_line_is_misterplex "$line"; then
+      continue
+    fi
+    case "$line" in
+      '# MiSTerPlex pair autostart'*) continue ;;
+      '# MiSTerPlex companion'*) continue ;;
+      '# MiSTerPlex DECOY'*) continue ;;
+    esac
+    kept+=("$line")
+  done <<<"$old"
+  if [ "${#kept[@]}" -gt 0 ]; then
+    printf '%s\n' "${kept[@]}"
+  fi
+  printf '\n# MiSTerPlex DECOY: this underscore file is NOT run by S99user.\n'
+  printf '# Real boot hook is USER_SCRIPT from /etc/init.d/S99user (user-startup.sh).\n'
+}
+
 boot_hook_idempotence_patterns() {
   cat <<'EOF'
 misterplexd_supervise\.sh
@@ -375,25 +313,37 @@ misterplex_v2/bin/misterplexd
 EOF
 }
 
-# CLI
+# Static audit: source files must not hardcode decoy as the sole boot path
+# without going through resolve. Used by unit tests.
+boot_hook_audit_source_hardcodes() {
+  local root="${1:-}"
+  local f hits=0
+  [ -n "$root" ] || return 3
+  for f in \
+    "$root/scripts/promotion_gate_check.sh" \
+    "$root/scripts/rollback_v2.sh" \
+    "$root/scripts/deploy_misterplexd.sh"
+  do
+    [ -f "$f" ] || continue
+    # Flag lines that cat/write the decoy path as the primary hook without resolve nearby.
+    if grep -n "linux/_user-startup\.sh" "$f" | grep -vE 'DECOY|decoy|legacy|WARN|NOT run|underscore' >/dev/null 2>&1; then
+      echo "AUDIT_HIT file=$f"
+      grep -n "linux/_user-startup\.sh" "$f" | grep -vE 'DECOY|decoy|legacy|WARN|NOT run|underscore' | sed 's/^/  /'
+      hits=$((hits + 1))
+    fi
+  done
+  if [ "$hits" -gt 0 ]; then
+    echo "BOOT_HOOK_AUDIT_FAIL hits=$hits"
+    return 1
+  fi
+  echo "BOOT_HOOK_AUDIT_OK"
+  return 0
+}
+
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
   set -euo pipefail
   cmd="${1:-}"
   case "$cmd" in
-    resolve-s99)
-      # resolve-s99 [s99_file_or_body] — prints LIVE/DECOY paths
-      src="${2:-}"
-      if [ -z "$src" ]; then
-        boot_hook_resolve_from_s99_file "$BOOT_HOOK_S99_PATH" 1
-      elif [ -f "$src" ]; then
-        boot_hook_resolve_from_s99_file "$src" "${3:-1}"
-      else
-        boot_hook_resolve_from_s99_body "$src" "${3:-1}"
-      fi
-      rc=$?
-      echo "true rc=$rc"
-      exit "$rc"
-      ;;
     check)
       body="${2:-}"
       expect="${3:-$BOOT_HOOK_DEFAULT_ROOT}"
@@ -405,26 +355,32 @@ if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
       echo "true rc=$rc"
       exit "$rc"
       ;;
-    check-live-decoy)
-      live="${2:-}"
-      decoy="${3:-}"
-      expect="${4:-$BOOT_HOOK_DEFAULT_ROOT}"
-      if [ -f "$live" ]; then live=$(cat "$live"); fi
-      if [ -f "$decoy" ]; then decoy=$(cat "$decoy"); fi
+    check-decoy)
+      body="${2:-}"
+      if [ -f "$body" ]; then body=$(cat "$body"); fi
       set +e
-      boot_hook_check_live_and_decoy "$live" "$decoy" "$expect"
+      boot_hook_check_decoy_body "$body"
       rc=$?
       set -e
       echo "true rc=$rc"
       exit "$rc"
       ;;
-    assert-bundle)
-      # assert-bundle <hook_body|file> <live_root>
+    parse-init)
       body="${2:-}"
-      live_root="${3:-}"
       if [ -f "$body" ]; then body=$(cat "$body"); fi
       set +e
-      boot_hook_assert_bundle_match "$body" "$live_root"
+      path=$(boot_hook_parse_user_script "$body")
+      rc=$?
+      set -e
+      echo "USER_SCRIPT=$path"
+      echo "true rc=$rc"
+      exit "$rc"
+      ;;
+    resolve)
+      body="${2:-}"
+      if [ -f "$body" ]; then body=$(cat "$body"); fi
+      set +e
+      boot_hook_resolve_from_init_body "$body"
       rc=$?
       set -e
       echo "true rc=$rc"
@@ -438,12 +394,26 @@ if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
       echo "true rc=0" >&2
       exit 0
       ;;
+    render-decoy)
+      old="${2:-}"
+      if [ -f "$old" ]; then old=$(cat "$old"); fi
+      boot_hook_render_inert_decoy "$old"
+      exit 0
+      ;;
     line)
       boot_hook_line_for_root "${2:-$BOOT_HOOK_DEFAULT_ROOT}"
       exit 0
       ;;
+    audit)
+      set +e
+      boot_hook_audit_source_hardcodes "${2:-$(cd "$(dirname "$0")/.." && pwd)}"
+      rc=$?
+      set -e
+      echo "true rc=$rc"
+      exit "$rc"
+      ;;
     *)
-      echo "usage: $0 {resolve-s99|check|check-live-decoy|assert-bundle|render|line} ..." >&2
+      echo "usage: $0 {check|check-decoy|parse-init|resolve|render|render-decoy|line|audit} ..." >&2
       echo "true rc=9"
       exit 9
       ;;

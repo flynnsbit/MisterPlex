@@ -44,6 +44,10 @@ static_assert(kPlex480pChromaStrideBytes == kPlex480pCodedWidth.get() / 2,
               "chroma stride must equal coded width/2");
 constexpr uint32_t kPlex480pRgb565BankStride = 0x000C0000u;
 constexpr uint32_t kPlex480pYuv420pBankStride = 0x00080000u;
+// Legacy SPI frame-store (320x240 RGB565) bank stride. Named here so ship/rollback
+// policy tooling derives the SPI bank-1 base from one source instead of re-hardcoding
+// it; a SPI/DDR bank-1 mismatch is the mixed-pair black/green screen failure.
+constexpr uint32_t kPlex240pSpiRgb565BankStride = 0x00040000u;
 constexpr uint32_t kPlex480pRgb565DoorbellPhys = 0x3017F000u;
 constexpr uint32_t kPlex480pYuv420pDoorbellPhys = 0x300FF000u;
 constexpr uint32_t kDdrFrameDoorbellMagic = 0x504C584Bu; // PLXK

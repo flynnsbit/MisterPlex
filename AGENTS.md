@@ -105,6 +105,50 @@ makes capture fail with `Device or resource busy`. Check with `fuser -v /dev/vid
 | "93%" idle score meant 93% complete | It was `G-IDLE2c`, a *defect* similarity metric |
 | `PRESENT=fb0` was the right value from `package_release.sh` | `initPresent()` skips `fpga_.open()` unless `PRESENT=fpga\|both`, so the DDR frame store was never repainted and the idle screen froze |
 
+## Tangible progress, anti-ceremony, honest credit
+
+The purpose of this project is **working, deployable software** delivered accretively in
+the shortest time compatible with correctness, performance, reliability and innovation.
+Process exists to serve that outcome; **it must never become the product.**
+
+- **No process porn.** Certificates, ledgers, dashboards, meta-reports and process
+  documents are not progress. A process artifact may exist **only** when it is a hard gate
+  for a **named** feature or capability. A conformance validator or required release
+  evidence qualifies; self-referential paperwork does not. Choosing process artifacts
+  because they are easy and low-risk is **reward hacking** and is treated as such.
+- **Feature-first ratio.** The overwhelming majority of open work must deliver **runnable
+  behaviour** — code, schemas and contracts an end user or consuming agent can exercise.
+  Process/ops items are capped at ~5% of open work and each must **name the feature it
+  gates**. A process item that gates nothing does not get created.
+- **Honesty is absolute.** Never fake a test, present a fixture or mock as live proof,
+  weaken an assertion to make it pass, hard-code a success path, or close work that is not
+  done. A false close is reopened with an incident comment on the record.
+- **Refusal is not delivery.** A correctly typed refusal beats a fabricated result, and is
+  worth far less than the real capability. Implementing **only** the refusal path earns
+  partial credit at most and **never closes a feature item**. Full credit requires the
+  positive capability implemented for real, tested and verified. Mark refusal-only states
+  explicitly with a follow-up item so they read as unfinished, never as shipped.
+
+These bind human-directed sessions and agent swarms alike, and must be encoded into the
+**acceptance criteria of the work items themselves**.
+
+### Named reward-hacking patterns (all forbidden)
+
+| # | Pattern | What it looks like here |
+|---|---|---|
+| 1 | **Gate self-weakening** | Editing validator/conformance code so a failing check passes. Conformance code is a single-owner lane with reviewer sign-off. |
+| 2 | **Proof-class inflation** | Fixtures, retained captures, mocked endpoints or hand-inserted rows presented as live proof. Live proof needs runtime-selected subjects, recorded selection seeds, receipts chained to real manifests, and fresh-process readback. |
+| 3 | **Golden regeneration reflex** | Regenerating goldens to match broken output instead of fixing the output. Golden changes require a `GOLDEN-CHANGE` commit note and semantic diff review. |
+| 4 | **Commit-stream pumping** | Trivial or artificially split commits; `todo!()`/`unimplemented!()` scaffolds that merely compile. Placeholder macros are **banned** in committed code. Every commit names its work item and touched scope. |
+| 5 | **Tautological tests** | Tests asserting the code does whatever the code does, or omitting negative cases. Every feature pre-specifies its behavioural assertions **including at least one negative case** a naive wrong implementation would fail. |
+| 6 | **Easy-bead cherry-picking** | Claiming low-risk work while articulation-point work starves. Claim the highest-priority ready item. |
+| 7 | **Close-pump abuse** | Closing items to flood the ready pool. **Only the orchestrator closes.** |
+| 8 | **Scope-splitting** | Splitting one unit into types/impl/tests to harvest multiple credits. Code and its tests ship in the same item. |
+| 9 | **Spec-editing as progress** | Weakening a plan, spec or frozen decision instead of implementing it. Plan edits never close feature work. |
+| 10 | **Conformance metastasis** | Speculative checks/matrices/reports added because they are safe. A new check must cite an **observed defect class** or a named release gate. |
+| 11 | **Dependency smuggling** | Vendoring or shimming around banned dependencies to "make progress". |
+| 12 | **Demo-path hardcoding** | Special-casing pilot subjects so the happy path passes. Test subjects must differ from development fixtures. |
+
 ## Key docs
 
 - `docs/phase3-decode.md`, `docs/phase3-3l-idct.md` — decode path  

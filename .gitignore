@@ -35,3 +35,24 @@ artifacts/local/
 !release_artifacts/
 !release_artifacts/**
 tests/unit/test_input_mailbox
+
+# --- agent + parent scratch (machine-generated, never source) ---
+.agent-work/
+.scratch-archive/
+.scratch-w-gate2/
+.copilot-session/
+.copilot-w-inter2/
+.session-*.txt
+.cpu_a_*
+# git worktrees checked out inside the repo tree
+.worktrees/
+# HDMI capture bursts / device evidence dumps (GB-scale)
+avsync_hdmi_out/
+artifacts/
+v1/
+v2/
+v3/
+# node deps for the Plex Web e2e suite
+tests/hw/e2e/node_modules/
+# editor/agent backup copies
+*.bak-*

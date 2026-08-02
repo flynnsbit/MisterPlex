@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Generate I420 frames for V_STORE even-row ceiling test (no codec).
 
-Product DDR path is planar YUV420p (I420), coded 624×480 (kPlex480pYuv420pBytes
-= 449280). RGB24 is refused by push_frame/publishDdrFrame.
+Product DDR path is planar YUV420p (I420), coded 624×480 (kPlex480pYuv420pBytes).
+RGB24 is refused by push_frame/publishDdrFrame.
 
 PRE-REGISTER (current RBF c5382bee, store_y=py*2 → even store rows only)
 ----------------------------------------------------------------------
@@ -90,7 +90,7 @@ def main() -> int:
     readme = args.out_dir / "README.txt"
     readme.write_text(
         f"""V_STORE even/odd I420 fixtures — coded {W}x{H} planar YUV420p
-bytes/frame = {W*H*3//2} (kPlex480pYuv420pBytes=449280)
+bytes/frame = {W*H*3//2} (kPlex480pYuv420pBytes)
 
 PRE-REGISTER on c5382bee (store_y=py*2, even rows only):
   even_black → solid BLACK

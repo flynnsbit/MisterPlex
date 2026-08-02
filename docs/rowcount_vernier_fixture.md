@@ -45,6 +45,6 @@ FFT pitch cannot resolve 475 vs 480 (parent: 4.03 vs 3.99 vs measured 4.06 bin).
 
 ## PMS (parent)
 ```bash
-curl -sS "http://192.168.1.24:32400/library/sections/2/refresh?X-Plex-Token=$TOK"
+curl -sS "http://YOUR-PLEX-SERVER:32400/library/sections/2/refresh?X-Plex-Token=$TOK"
 # ratingKey after scan — unknown until you scan
 ```
