@@ -245,8 +245,6 @@ EXPECTED_COMMANDS = [
 ]
 
 IGNORED_COMMANDS = [
-    # Suite setup/helper commands, not tests. Everything else in unit-unlocked's
-    # recipe must be registered above or the guard fails with UNREGISTERED_*.
     "mkdir -p $(ROOT)/build",
     "python3 $(ROOT)/scripts/gen_test_annexb_real.py $(UNIT_ANNEXB)",
     "chmod +x $(ROOT)/tests/unit/*.sh $(ROOT)/tests/unit/*.py $(ROOT)/tests/hw/*.sh 2>/dev/null || true",
@@ -310,42 +308,79 @@ def _format_list(name: str, items: list[str]) -> str:
     return f"{name} = [\n{body},\n]\n"
 
 
-def write_expected(makefile: Path, path: Path) -> None:
-    """Rewrite EXPECTED_* in this file from Makefile reality (intentional sync).
+def _replace_list_literal(src: str, name: str, items: list[str]) -> str:
+    """Replace `NAME = [ ... ]` list literal. Matches bare closing `]` on its own line."""
+    pat = re.compile(
+        rf"^{re.escape(name)} = \[.*?^\]\n",
+        re.MULTILINE | re.DOTALL,
+    )
+    m = pat.search(src)
+    if not m:
+        raise SystemExit(f"write-expected: could not find {name} list")
+    return src[: m.start()] + _format_list(name, items) + src[m.end() :]
 
-    Does not invent counts: lists are derived from parse_unit_unlocked().
+
+def write_expected(makefile: Path, path: Path) -> int:
+    """Sync EXPECTED_* additions from Makefile; REFUSE removals.
+
+    Observed defect class: unregistered Makefile tests (w-geom). Sync may ADD
+    entries that appear in the recipe. It must NOT drop EXPECTED entries when a
+    test is deleted from the Makefile — that would launder coverage loss into a
+    green gate (forbidden "edit expected to match reality").
+
+    Returns 0 on successful write, 1 if removals would be required (no write).
     """
     prereqs, commands = parse_unit_unlocked(makefile)
     ignored_set = set(IGNORED_COMMANDS)
     protected = [c for c in commands if c not in ignored_set]
-    ignored = [c for c in commands if c in ignored_set]
-    # Keep ignored registry order stable from current IGNORED_COMMANDS ∩ actual
-    ignored_ordered = [c for c in IGNORED_COMMANDS if c in ignored]
-    for c in ignored:
+    ignored_actual = [c for c in commands if c in ignored_set]
+    ignored_ordered = [c for c in IGNORED_COMMANDS if c in ignored_actual]
+    for c in ignored_actual:
         if c not in ignored_ordered:
             ignored_ordered.append(c)
 
-    text = path.read_text(encoding="utf-8")
-    # Replace the three list literals by name (first occurrence each).
-    def repl_list(src: str, name: str, items: list[str]) -> str:
-        pat = re.compile(
-            rf"^{re.escape(name)} = \[.*?^\\]\n",
-            re.MULTILINE | re.DOTALL,
+    # Removals = still registered but gone from Makefile (must refuse).
+    remove_prereqs = [p for p in EXPECTED_PREREQS if p not in prereqs]
+    remove_commands = [c for c in EXPECTED_COMMANDS if c not in protected]
+    remove_ignored = [c for c in IGNORED_COMMANDS if c not in ignored_actual]
+    if remove_prereqs or remove_commands or remove_ignored:
+        print("UNIT_ROLLCALL_WRITE_EXPECTED_REFUSED_REMOVAL")
+        print(
+            "UNIT_ROLLCALL_WRITE_EXPECTED_REMOVAL_COUNTS "
+            f"prereqs={len(remove_prereqs)} commands={len(remove_commands)} "
+            f"ignored={len(remove_ignored)}"
         )
-        m = pat.search(src)
-        if not m:
-            raise SystemExit(f"write-expected: could not find {name} list")
-        return src[: m.start()] + _format_list(name, items) + src[m.end() :]
+        for item in remove_prereqs:
+            print(f"WRITE_EXPECTED_WOULD_REMOVE_PREREQ {item}")
+        for item in remove_commands:
+            print(f"WRITE_EXPECTED_WOULD_REMOVE_COMMAND {item}")
+        for item in remove_ignored:
+            print(f"WRITE_EXPECTED_WOULD_REMOVE_IGNORED {item}")
+        print(
+            "write-expected refuses to drop registry entries; restore the Makefile "
+            "recipe/prereqs or edit EXPECTED_* deliberately by hand with review."
+        )
+        return 1
 
-    text = repl_list(text, "EXPECTED_PREREQS", prereqs)
-    text = repl_list(text, "EXPECTED_COMMANDS", protected)
-    text = repl_list(text, "IGNORED_COMMANDS", ignored_ordered)
+    add_prereqs = [p for p in prereqs if p not in EXPECTED_PREREQS]
+    add_commands = [c for c in protected if c not in EXPECTED_COMMANDS]
+    # Preserve existing order; append new entries at end.
+    new_prereqs = list(EXPECTED_PREREQS) + add_prereqs
+    new_commands = list(EXPECTED_COMMANDS) + add_commands
+    new_ignored = list(ignored_ordered)
+
+    text = path.read_text(encoding="utf-8")
+    text = _replace_list_literal(text, "EXPECTED_PREREQS", new_prereqs)
+    text = _replace_list_literal(text, "EXPECTED_COMMANDS", new_commands)
+    text = _replace_list_literal(text, "IGNORED_COMMANDS", new_ignored)
     path.write_text(text, encoding="utf-8")
     print(
         "UNIT_ROLLCALL_WROTE_EXPECTED "
-        f"prereqs={len(prereqs)} commands={len(protected)} ignored={len(ignored_ordered)} "
-        f"path={path}"
+        f"added_prereqs={len(add_prereqs)} added_commands={len(add_commands)} "
+        f"prereqs={len(new_prereqs)} commands={len(new_commands)} "
+        f"ignored={len(new_ignored)} path={path}"
     )
+    return 0
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -362,7 +397,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if write:
         self_path = Path(__file__).resolve()
-        write_expected(MAKEFILE, self_path)
+        wrc = write_expected(MAKEFILE, self_path)
+        if wrc != 0:
+            return wrc
         # Module-level EXPECTED_* are stale until reload — verify via fresh process.
         rc = subprocess.run([sys.executable, str(self_path)], check=False).returncode
         return rc

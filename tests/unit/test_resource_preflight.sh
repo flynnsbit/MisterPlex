@@ -5,15 +5,10 @@ PREFLIGHT="$ROOT/scripts/test_resource_preflight.sh"
 FIX="$ROOT/tests/fixtures/preflight"
 
 run_preflight() {
-<<<<<<< HEAD
   # Pin floors so a host-side MISTERPLEX_PREFLIGHT_MIN_SWAPFREE_MB=0 (used when
   # swap is historically full but MemAvailable is huge) cannot weaken fixtures.
-=======
-  # Fixture path must ignore a parent-shell override; otherwise
-  # MISTERPLEX_ALLOW_LOW_MEMORY_TESTS=1 makes the refuse fixture return 0
-  # and the suite cannot prove the hard floor still works.
-  MISTERPLEX_ALLOW_LOW_MEMORY_TESTS=0 \
->>>>>>> 0103da05 (fix(unit): register force_scale build prereq; isolate preflight fixtures)
+  # Also force ALLOW_LOW_MEMORY=0: a parent-shell override must not turn the
+  # refuse fixture into rc=0 (prove-fail still works).
   MISTERPLEX_PREFLIGHT_SAMPLE_SECONDS=1 \
   MISTERPLEX_PREFLIGHT_MIN_AVAIL_MB=4096 \
   MISTERPLEX_PREFLIGHT_MIN_SWAPFREE_MB=32 \
