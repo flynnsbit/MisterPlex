@@ -42,10 +42,13 @@ while (( SECONDS < end )); do
       plex_mem=$(awk '{gsub(/%/,"",$3); print $3}' <<<"$line")
     fi
   fi
-  # count Plex Transcoder processes (host-visible)
-  tc=$(pgrep -c -f 'Plex Transcoder' 2>/dev/null || echo 0)
+  # count Plex Transcoder processes (host-visible). pgrep -c exits 1 when 0 matches.
+  tc=$(pgrep -c -f 'Plex Transcoder' 2>/dev/null || true)
+  tc=${tc:-0}
+  tc=${tc//$'\n'/}
   # optional: heaviest copilot/cli-ish process CPU (best-effort, may be 0)
-  agent_cpu=$(ps -eo pcpu,comm --sort=-pcpu 2>/dev/null | awk 'NR>1 && ($2 ~ /node|copilot|claude|python|chrome/){print $1; exit}' || echo 0)
+  agent_cpu=$(ps -eo pcpu,comm --sort=-pcpu 2>/dev/null | awk 'NR>1 && ($2 ~ /node|copilot|claude|python|chrome/){printf "%s",$1; exit}')
+  agent_cpu=${agent_cpu:-0}
   printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
     "$ts" "$load1" "$load5" "$nproc" "$mem_avail_mb" "$plex_cpu" "$plex_mem" "$tc" "$agent_cpu" >>"$OUT"
   sleep "$INT"
