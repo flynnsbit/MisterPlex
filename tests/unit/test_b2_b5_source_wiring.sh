@@ -43,6 +43,11 @@ check B5_decode_target_match "$MP" 'decode_target_match='
 check B5_coded_bank_field "$MP" 'coded_bank='
 check B5_force_scale_protects "$MP" 'force_scale_protects='
 check B5_vertical_detail_frac "$MP" 'vertical_detail_frac='
+check B5_request_vs_measured "$MP" 'REQUEST_VS_MEASURED'
+check B5_delivery_mismatch_final "$MP" 'DELIVERY_MISMATCH_FINAL'
+check B5_phase_offset_field "$MP" 'phase_offset='
+check B5_rawPipePhaseOffset_call "$MP" 'rawPipePhaseOffset('
+check B5_play_request_freeze "$MP" 'playRequestW_'
 # Pump compares measured to DDR coded bank args, not DECODE tier alone.
 check B5_pump_takes_coded_wh "$MP" 'int codedW, int codedH'
 # GEOM predicts square-pixel fit from SAR/DAR (ceiling, not exact).

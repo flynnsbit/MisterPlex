@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<MediaContainer size="1" allowSync="1" directPlayDecisionCode="3000" directPlayDecisionText="App cannot direct play this item. Direct play is disabled." generalDecisionCode="1001" generalDecisionText="Direct play not available; Conversion OK." identifier="com.plexapp.plugins.library" librarySectionID="2" librarySectionTitle="MiSTerPlex Tests" librarySectionUUID="c97f403c-4a89-4620-a388-a7a88c9a6c1c" mediaTagPrefix="/system/bundle/media/flags/" mediaTagVersion="1783932891" resourceSession="w-geom-cmp-advreal624x352" transcodeDecisionCode="1001" transcodeDecisionText="Direct play not available; Conversion OK.">
+<Video addedAt="1785651067" art="/library/metadata/33/art/1785669900" createdAtAccuracy="epoch" createdAtTZOffset="-18000" duration="300000" guid="tv.plex.agents.none://33" key="/library/metadata/33" librarySectionID="2" librarySectionKey="/library/sections/2" librarySectionTitle="MiSTerPlex Tests" ratingKey="33" subtype="clip" thumb="/library/metadata/33/thumb/1785669900" title="MiSTerPlex AdvReal 624x352 24fps 500kbit ref1 300s (2026)" type="movie" updatedAt="1785669900">
+<Media id="33" videoProfile="constrained baseline" audioChannels="1" audioCodec="aac" bitrate="582" container="mkv" duration="300000" height="352" videoCodec="h264" videoFrameRate="24p" videoResolution="SD" width="624" selected="1">
+<Part deepAnalysisVersion="6" id="33" requiredBandwidths="540,540,540,540,540,540,540,540" videoProfile="constrained baseline" bitrate="582" container="mkv" duration="300000" height="352" width="624" decision="transcode" selected="1">
+<Stream bitDepth="8" bitrate="533" codec="h264" default="1" displayTitle="SD" extendedDisplayTitle="SD (H.264 Constrained Baseline)" frameRate="24" height="352" id="65" requiredBandwidths="492,492,492,492,492,492,492,492" streamType="1" width="624" decision="transcode" location="direct" />
+<Stream bitrate="49" bitrateMode="cbr" channels="1" codec="aac" default="1" displayTitle="Unknown (AAC Mono)" extendedDisplayTitle="Unknown (AAC Mono)" id="66" requiredBandwidths="49,49,49,49,49,49,49,49" samplingRate="48000" selected="1" streamType="2" decision="copy" location="direct" />
+</Part>
+</Media>
+<UltraBlurColors bottomLeft="54652f" bottomRight="315937" topLeft="0a2031" topRight="30618d" />
+</Video>
+</MediaContainer>

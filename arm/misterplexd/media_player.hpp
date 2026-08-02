@@ -314,6 +314,13 @@ private:
     std::atomic<bool> deliveryGeometryVerified_{false};
     int ffmpegScaleSourceW_ = 0;
     int ffmpegScaleSourceH_ = 0;
+    // Frozen at play-time: PMS request / expected_delivery claim (not overwritten
+    // by MEASURED banner). Used for REQUEST_VS_MEASURED at teardown.
+    int playRequestW_ = 0;
+    int playRequestH_ = 0;
+    // Silicon coded bank for this session (rawW/rawH), set in threadMain.
+    int codedBankW_ = 0;
+    int codedBankH_ = 0;
     // Runtime-measured input geometry from ffmpeg stderr (B2). 0 = not seen yet.
     std::atomic<int> measuredDeliveryW_{0};
     std::atomic<int> measuredDeliveryH_{0};

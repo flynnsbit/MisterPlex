@@ -154,10 +154,23 @@ int main() {
         CHECK(std::fabs(verticalDetailFraction(350, 480) - (350.0 / 480.0)) < 1e-12);
         CHECK(!desyncModelApplicable(false)); // identity_skip=0 kills 1.371 model
         CHECK(desyncModelApplicable(true));
+        // Asset-class split (lab library): AdvReal 624x480 ar=1.33 → fit stays ~480;
+        // rk6 ar=1.78+SAR → 350; genuine 4:3 square SAR must not be letterboxed.
+        const auto fit43 = pmsSquarePixelFitInCeiling(4.0 / 3.0, 624, 480);
+        CHECK(fit43.ok);
+        CHECK(fit43.h >= 468 && fit43.h <= 480); // full-height class, not 350
+        CHECK(fit43.h != 350);
+        const double dar_rk6 = resolveContentDar(624, 480, "160:117", "1.78");
+        const auto fit_rk6 = pmsSquarePixelFitInCeiling(dar_rk6, 624, 480);
+        CHECK(fit_rk6.h == 350);
+        const double dar_adv = resolveContentDar(624, 480, "", "1.33");
+        const auto fit_adv = pmsSquarePixelFitInCeiling(dar_adv, 624, 480);
+        CHECK(fit_adv.h >= 468); // AdvReal class
         std::printf("GREEN_PMS_FIT dar=16/9 fit624=%dx%d fit640=%dx%d w_at_480=%d "
-                    "detail=%.3f\n",
+                    "detail=%.3f fit43=%dx%d fit_adv=%dx%d\n",
                     fit.w, fit.h, fit640.w, fit640.h, w_at_480,
-                    verticalDetailFraction(350, 480));
+                    verticalDetailFraction(350, 480), fit43.w, fit43.h, fit_adv.w,
+                    fit_adv.h);
     }
 
     const auto extra480 = plexClientProfileExtra(w480);

@@ -1494,10 +1494,8 @@ void MediaPlayer::ffmpegStderrPump(int errReadFd, size_t codedFrameBytes, bool i
             lastInH = g.h;
             measuredDeliveryW_.store(g.w);
             measuredDeliveryH_.store(g.h);
-            // B4: verification store is set below only when measured == coded bank.
-            // library_media / transcode_request claims never set this true.
-            ffmpegScaleSourceW_ = g.w;
-            ffmpegScaleSourceH_ = g.h;
+            // Do NOT overwrite ffmpegScaleSourceW_/H_ (play-time claim / request).
+            // Measured lives in measuredDeliveryW_/H_ only — FINAL compares them.
             const size_t prodBytes = yuv420pFrameBytesWH(g.w, g.h);
             // desync_risk is real: identity_skip && measured_input_bytes != reader.
             // Product FORCE_SCALE (Always) at play-time plan uses crop+pad for an
@@ -2878,6 +2876,14 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
     const int rawH = ddrGeometry.coded_height.get();
     const int rawDisplayW = ddrGeometry.display_width.get();
     const int rawDisplayH = ddrGeometry.display_height.get();
+    // Freeze request claim + coded bank for teardown REQUEST_VS_MEASURED (B4 durable).
+    playRequestW_ = ffmpegScaleSourceW_;
+    playRequestH_ = ffmpegScaleSourceH_;
+    codedBankW_ = rawW;
+    codedBankH_ = rawH;
+    measuredDeliveryW_.store(0, std::memory_order_relaxed);
+    measuredDeliveryH_.store(0, std::memory_order_relaxed);
+    pipeDesyncRisk_.store(false, std::memory_order_relaxed);
     LastFrameLatch lastFrameLatch;
 
     // Force CFR at the exact content rate FIRST in the chain: frameIndex ↔ content
@@ -4493,25 +4499,75 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                     " delta=" + std::to_string(id.delta_frames_vs_bytes) + " tag=measured");
             }
         }
+        // B5 phase offset (explicit greppable) — arm product path, not unit-only.
+        const size_t phaseOff =
+            (prodBytes > 0)
+                ? rawPipePhaseOffset(prodBytes, frameBytes, static_cast<size_t>(frameIndex))
+                : 0;
         if (mw > 0 && mh > 0) {
+            const bool matchRequest =
+                (playRequestW_ > 0 && playRequestH_ > 0 && mw == playRequestW_ &&
+                 mh == playRequestH_);
+            const bool matchBank =
+                (codedBankW_ > 0 && codedBankH_ > 0 && mw == codedBankW_ && mh == codedBankH_);
+            const double vfrac =
+                (mh > 0 && codedBankH_ > 0)
+                    ? (static_cast<double>(mh) / static_cast<double>(codedBankH_))
+                    : 0.0;
             log("media: MEASURED_DELIVERY_FINAL delivered_geom=" + std::to_string(mw) + "x" +
                 std::to_string(mh) + " src=ffmpeg_banner" +
                 " producer_bytes=" + std::to_string(prodBytes) +
                 " reader_bytes=" + std::to_string(frameBytes) +
+                " request_geom=" +
+                (playRequestW_ > 0
+                     ? (std::to_string(playRequestW_) + "x" + std::to_string(playRequestH_))
+                     : "unknown") +
+                " coded_bank=" +
+                (codedBankW_ > 0
+                     ? (std::to_string(codedBankW_) + "x" + std::to_string(codedBankH_))
+                     : "unknown") +
+                " request_match=" + (matchRequest ? "1" : "0") +
+                " bank_match=" + (matchBank ? "1" : "0") +
+                " vertical_detail_frac=" + std::to_string(vfrac) +
                 " identity_skip=" + (vfPlan.identity_skip ? "1" : "0") +
+                " phase_offset=" + std::to_string(phaseOff) +
                 " phase_desync=" + (phaseDesync ? "1" : "0") +
                 " desync_risk=" + (risk ? "1" : "0") +
                 " delivery_verified=1 delivery_basis=measured tag=measured");
+            // Durable loud path: requested/claimed vs measured — never silent.
+            if (!matchRequest && playRequestW_ > 0 && playRequestH_ > 0) {
+                log("ERROR media: REQUEST_VS_MEASURED request=" +
+                    std::to_string(playRequestW_) + "x" + std::to_string(playRequestH_) +
+                    " measured=" + std::to_string(mw) + "x" + std::to_string(mh) +
+                    " coded_bank=" + std::to_string(codedBankW_) + "x" +
+                    std::to_string(codedBankH_) +
+                    " vertical_detail_frac=" + std::to_string(vfrac) +
+                    " identity_skip=" + (vfPlan.identity_skip ? "1" : "0") +
+                    " note=videoResolution_ceiling_or_source_DAR tag=measured");
+            }
+            if (!matchBank && codedBankW_ > 0) {
+                log("ERROR media: DELIVERY_MISMATCH_FINAL measured=" + std::to_string(mw) +
+                    "x" + std::to_string(mh) + " coded_bank=" + std::to_string(codedBankW_) +
+                    "x" + std::to_string(codedBankH_) +
+                    " vertical_detail_frac=" + std::to_string(vfrac) +
+                    " force_scale_protects=" + (vfPlan.identity_skip ? "0" : "1") +
+                    " tag=measured");
+            }
         } else if (usedRawVideo) {
             log("media: MEASURED_DELIVERY_FINAL delivered_geom=NO-DATA src=ffmpeg_banner "
                 "— banner not parsed (need -loglevel info + stderr pipe) delivery_verified=" +
                 std::string(deliveryGeometryVerified_.load(std::memory_order_relaxed) ? "1"
                                                                                         : "0") +
+                " request_geom=" +
+                (playRequestW_ > 0
+                     ? (std::to_string(playRequestW_) + "x" + std::to_string(playRequestH_))
+                     : "unknown") +
                 " tag=NO-DATA");
         }
         if (risk) {
             log("ERROR media: PIPE_DESYNC=1 phase_desync=" +
                 std::string(phaseDesync ? "1" : "0") +
+                " phase_offset=" + std::to_string(phaseOff) +
                 " byte_align=" + std::string(byteAligned ? "1" : "0") +
                 " producer_bytes=" + std::to_string(prodBytes) +
                 " reader_bytes=" + std::to_string(frameBytes) +
