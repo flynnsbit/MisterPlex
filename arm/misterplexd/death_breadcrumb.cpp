@@ -5,6 +5,7 @@
 
 #include <chrono>
 #include <cstdio>
+#include <cstdlib>
 #include <ctime>
 #include <cstring>
 #include <mutex>
@@ -28,8 +29,75 @@ std::atomic<int64_t> g_lastWriteMs{0};
 std::atomic<int> g_lastSig{0};
 std::atomic<int> g_lastSiCode{0};
 std::atomic<int> g_lastSiPid{0};
+// Sender attribution captured outside signal context (CaptureSender).
+// Fixed buffers — written once per exit, read by Exit.
+char g_senderStatus[16] = "UNSET";
+char g_senderCmd[256] = {};
+char g_senderComm[64] = {};
+char g_senderChain[512] = {};
 std::mutex g_pathMu;
 bool g_inited = false;
+
+// Collapse whitespace / NULs to single spaces; truncate into dst.
+void copyFlat(char* dst, size_t dstCap, const char* src, size_t srcLen) {
+    if (!dst || dstCap == 0)
+        return;
+    size_t o = 0;
+    bool sp = false;
+    for (size_t i = 0; i < srcLen && o + 1 < dstCap; ++i) {
+        unsigned char c = static_cast<unsigned char>(src[i]);
+        if (c == '\0' || c == '\n' || c == '\r' || c == '\t' || c == ' ') {
+            if (o > 0)
+                sp = true;
+            continue;
+        }
+        if (sp && o + 1 < dstCap) {
+            dst[o++] = ' ';
+            sp = false;
+        }
+        // Keep printable-ish argv; drop control bytes.
+        if (c >= 32 && c < 127)
+            dst[o++] = static_cast<char>(c);
+    }
+    dst[o] = '\0';
+}
+
+bool readFileFlat(const char* path, char* dst, size_t dstCap) {
+    if (!dst || dstCap == 0)
+        return false;
+    dst[0] = '\0';
+    const int fd = ::open(path, O_RDONLY | O_CLOEXEC);
+    if (fd < 0)
+        return false;
+    char buf[512];
+    const ssize_t n = ::read(fd, buf, sizeof(buf));
+    ::close(fd);
+    if (n <= 0)
+        return false;
+    copyFlat(dst, dstCap, buf, static_cast<size_t>(n));
+    return dst[0] != '\0';
+}
+
+int readPpid(int pid) {
+    char path[64];
+    std::snprintf(path, sizeof(path), "/proc/%d/status", pid);
+    const int fd = ::open(path, O_RDONLY | O_CLOEXEC);
+    if (fd < 0)
+        return -1;
+    char buf[256];
+    const ssize_t n = ::read(fd, buf, sizeof(buf) - 1);
+    ::close(fd);
+    if (n <= 0)
+        return -1;
+    buf[n] = '\0';
+    const char* p = std::strstr(buf, "PPid:");
+    if (!p)
+        return -1;
+    p += 5;
+    while (*p == ' ' || *p == '\t')
+        ++p;
+    return static_cast<int>(std::strtol(p, nullptr, 10));
+}
 
 int64_t nowMs() {
     using namespace std::chrono;
@@ -234,6 +302,100 @@ int64_t deathBreadcrumbUptimeS() {
     return (nowMs() - startMs) / 1000;
 }
 
+void deathBreadcrumbCaptureSender(int sender_pid) {
+    // Outside signal context — may use stdio and /proc. Call ASAP after g_stop.
+    // Note: parameter must NOT be named si_pid — glibc signal.h macros that name.
+    std::lock_guard<std::mutex> lk(g_pathMu);
+    g_senderCmd[0] = '\0';
+    g_senderComm[0] = '\0';
+    g_senderChain[0] = '\0';
+    if (sender_pid <= 0) {
+        std::snprintf(g_senderStatus, sizeof(g_senderStatus), "NONE");
+        std::snprintf(g_senderCmd, sizeof(g_senderCmd), "(no_si_pid)");
+        std::snprintf(g_senderChain, sizeof(g_senderChain), "(none)");
+    } else {
+        char path[64];
+        std::snprintf(path, sizeof(path), "/proc/%d/cmdline", sender_pid);
+        const bool liveCmd = readFileFlat(path, g_senderCmd, sizeof(g_senderCmd));
+        std::snprintf(path, sizeof(path), "/proc/%d/comm", sender_pid);
+        (void)readFileFlat(path, g_senderComm, sizeof(g_senderComm));
+        if (!liveCmd && g_senderComm[0] == '\0') {
+            // pid gone before capture — NO-DATA, never invent "nobody".
+            std::snprintf(g_senderStatus, sizeof(g_senderStatus), "GONE");
+            std::snprintf(g_senderCmd, sizeof(g_senderCmd), "(pid_gone si_pid=%d)",
+                          sender_pid);
+            std::snprintf(g_senderChain, sizeof(g_senderChain), "%d:(gone)", sender_pid);
+        } else {
+            std::snprintf(g_senderStatus, sizeof(g_senderStatus), "LIVE");
+            if (g_senderCmd[0] == '\0' && g_senderComm[0] != '\0')
+                std::snprintf(g_senderCmd, sizeof(g_senderCmd), "(%s)", g_senderComm);
+            // Walk PPid chain (operator ssh/bash vs resident killer).
+            size_t o = 0;
+            auto append = [&](const char* s) {
+                while (s && *s && o + 1 < sizeof(g_senderChain))
+                    g_senderChain[o++] = *s++;
+            };
+            char num[16];
+            std::snprintf(num, sizeof(num), "%d", sender_pid);
+            append(num);
+            append(":");
+            append(g_senderCmd[0] ? g_senderCmd : "?");
+            int walk = readPpid(sender_pid);
+            for (int depth = 0; depth < 6 && walk > 1; ++depth) {
+                char ccmd[128] = {};
+                char ccomm[64] = {};
+                std::snprintf(path, sizeof(path), "/proc/%d/cmdline", walk);
+                const bool ok = readFileFlat(path, ccmd, sizeof(ccmd));
+                std::snprintf(path, sizeof(path), "/proc/%d/comm", walk);
+                (void)readFileFlat(path, ccomm, sizeof(ccomm));
+                append(" <- ");
+                std::snprintf(num, sizeof(num), "%d", walk);
+                append(num);
+                append(":");
+                if (ok && ccmd[0])
+                    append(ccmd);
+                else if (ccomm[0])
+                    append(ccomm);
+                else {
+                    append("(gone)");
+                    break;
+                }
+                walk = readPpid(walk);
+            }
+            g_senderChain[o] = '\0';
+        }
+    }
+    // Immediate witness on disk — survives if later teardown hangs.
+    if (g_deathPath.empty())
+        return;
+    char ts[32];
+    wallTs(ts, sizeof(ts));
+    char line[1536];
+    const int n = std::snprintf(
+        line, sizeof(line),
+        "ts=%s sender_capture si_pid=%d sender_status=%s sender_comm=%s sender_cmd=%s "
+        "sender_chain=%s pid=%d\n",
+        ts, sender_pid, g_senderStatus, g_senderComm[0] ? g_senderComm : "?",
+        g_senderCmd[0] ? g_senderCmd : "?", g_senderChain[0] ? g_senderChain : "?",
+        static_cast<int>(::getpid()));
+    if (n <= 0)
+        return;
+    // Append-style second line would race; write dedicated sender file + stderr.
+    std::fprintf(stderr, "misterplexd: SENDER_CAPTURE %s", line);
+    const std::string senderPath = g_deathPath + ".sender";
+    const int fd = ::open(senderPath.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644);
+    if (fd >= 0) {
+        (void)::write(fd, line, static_cast<size_t>(n));
+        ::close(fd);
+    }
+}
+
+const char* deathBreadcrumbSenderStatus() { return g_senderStatus; }
+const char* deathBreadcrumbSenderCmd() { return g_senderCmd[0] ? g_senderCmd : "(unset)"; }
+const char* deathBreadcrumbSenderChain() {
+    return g_senderChain[0] ? g_senderChain : "(unset)";
+}
+
 void deathBreadcrumbExit(int code, const char* why) {
     std::lock_guard<std::mutex> lk(g_pathMu);
     char ts[32];
@@ -251,39 +413,47 @@ void deathBreadcrumbExit(int code, const char* why) {
         else
             siName = "OTHER";
     }
+    const char* senderSt = g_senderStatus;
+    const char* senderCmd = g_senderCmd[0] ? g_senderCmd : "(unset)";
+    const char* senderComm = g_senderComm[0] ? g_senderComm : "(unset)";
+    const char* senderChain = g_senderChain[0] ? g_senderChain : "(unset)";
     // Choke-point log: ALWAYS to stderr so a missing death file cannot hide exits.
     // why must name call site + signal/context (never empty "clean").
-    // Keep si_* as first-class fields (not only inside why=) so SUPERVISE_EXIT
-    // still sees them after this overwrite of the signal-safe death line.
+    // Keep si_* + sender_* as first-class fields for SUPERVISE_EXIT / operator vs 3p.
     std::fprintf(stderr,
                  "misterplexd: EXIT_REASON code=%d why=%s state=%s frames=%lld presents=%lld "
                  "pos_ms=%lld uptime_s=%lld pid=%d signal=%d si_code=%d si_code_name=%s "
-                 "si_pid=%d death_path=%s\n",
+                 "si_pid=%d sender_status=%s sender_comm=%s sender_cmd=%s sender_chain=%s "
+                 "death_path=%s\n",
                  code, why ? why : "?",
                  stateName(g_state.load(std::memory_order_relaxed)),
                  static_cast<long long>(g_frames.load(std::memory_order_relaxed)),
                  static_cast<long long>(g_presents.load(std::memory_order_relaxed)),
                  static_cast<long long>(g_posMs.load(std::memory_order_relaxed)),
                  static_cast<long long>(uptimeS), static_cast<int>(::getpid()), lastSig,
-                 lastCode, siName, lastPid,
+                 lastCode, siName, lastPid, senderSt, senderComm, senderCmd, senderChain,
                  g_deathPath.empty() ? "(unset)" : g_deathPath.c_str());
-    if (g_deathPath.empty()) return;
-    char line[640];
+    if (g_deathPath.empty())
+        return;
+    char line[1536];
     const int n = std::snprintf(
         line, sizeof(line),
         "ts=%s exit_code=%d why=%s state=%s frames=%lld presents=%lld pos_ms=%lld "
-        "uptime_s=%lld pid=%d signal=%d si_code=%d si_code_name=%s si_pid=%d\n",
+        "uptime_s=%lld pid=%d signal=%d si_code=%d si_code_name=%s si_pid=%d "
+        "sender_status=%s sender_comm=%s sender_cmd=%s sender_chain=%s\n",
         ts, code, why ? why : "?",
         stateName(g_state.load(std::memory_order_relaxed)),
         static_cast<long long>(g_frames.load(std::memory_order_relaxed)),
         static_cast<long long>(g_presents.load(std::memory_order_relaxed)),
         static_cast<long long>(g_posMs.load(std::memory_order_relaxed)),
         static_cast<long long>(uptimeS), static_cast<int>(::getpid()), lastSig, lastCode,
-        siName, lastPid);
-    if (n <= 0) return;
+        siName, lastPid, senderSt, senderComm, senderCmd, senderChain);
+    if (n <= 0)
+        return;
     const int fd = ::open(g_deathPath.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644);
-    if (fd < 0) return;
-    (void)::write(fd, line, static_cast<size_t>(n));
+    if (fd < 0)
+        return;
+    (void)::write(fd, line, static_cast<size_t>(n > 0 ? static_cast<size_t>(n) : 0));
     ::close(fd);
     writeLastUnlocked(true);
 }

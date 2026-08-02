@@ -38,13 +38,30 @@ void deathBreadcrumbUpdate(DeathState st, int64_t frames, int64_t presents, int6
 // Orderly exit (SIGTERM path / main return). Not async-signal-safe.
 // Preserves last SA_SIGINFO fields (si_signo/si_code/si_pid) so SUPERVISE_EXIT
 // can still attribute the sender after overwriting the signal-safe death line.
+// Includes sender_cmd/sender_chain if deathBreadcrumbCaptureSender ran first.
 void deathBreadcrumbExit(int code, const char* why);
 
 // Steady-clock seconds since deathBreadcrumbInit (0 if never inited).
 int64_t deathBreadcrumbUptimeS();
 
+// Immediately after main observes g_stop (outside signal context): read
+// /proc/<si_pid>/{cmdline,comm,status} and walk PPid a few levels. Call BEFORE
+// any long teardown (player.stop) — the sender may die within milliseconds.
+//
+// Results land in misterplexd.death + stderr as:
+//   sender_status=LIVE|GONE|NONE  sender_cmd=… sender_comm=… sender_chain=…
+// GONE is NO-DATA (pid recycled or already reaped) — never "nobody".
+void deathBreadcrumbCaptureSender(int sender_pid);
+
+// Test/observability: last capture status token (LIVE|GONE|NONE|UNSET).
+const char* deathBreadcrumbSenderStatus();
+const char* deathBreadcrumbSenderCmd();
+const char* deathBreadcrumbSenderChain();
+
 // Async-signal-safe: write misterplexd.death with signal number. No heap.
 // Prefer deathBreadcrumbOnSigInfo when SA_SIGINFO is available.
+// Used by crashGuard (SIGSEGV/etc.) before re-raise — without this, rc=139
+// leaves death absent/stale because the crash handler only CONT'd Main.
 void deathBreadcrumbOnSignal(int sig);
 
 // Async-signal-safe: record si_signo/si_code/si_pid/si_addr (+ coarse state).

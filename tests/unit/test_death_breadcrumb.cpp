@@ -87,6 +87,34 @@ int main() {
     CHECK(death_orderly.find("si_pid=4242") != std::string::npos);
     CHECK(misterplex::deathBreadcrumbUptimeS() >= 0);
 
+    // Sender capture: LIVE for self, GONE for dead pid, NONE for si_pid<=0.
+    misterplex::deathBreadcrumbCaptureSender(static_cast<int>(::getpid()));
+    CHECK(std::string(misterplex::deathBreadcrumbSenderStatus()) == "LIVE");
+    CHECK(std::string(misterplex::deathBreadcrumbSenderCmd()).find("(unset)") ==
+          std::string::npos);
+    CHECK(std::string(misterplex::deathBreadcrumbSenderChain()).find("(unset)") ==
+          std::string::npos);
+    const std::string sender_file = death + ".sender";
+    const std::string sender_txt = slurp(sender_file);
+    CHECK(sender_txt.find("sender_status=LIVE") != std::string::npos);
+    CHECK(sender_txt.find("sender_capture") != std::string::npos);
+
+    misterplex::deathBreadcrumbCaptureSender(2147483646); // almost certainly gone
+    CHECK(std::string(misterplex::deathBreadcrumbSenderStatus()) == "GONE");
+    CHECK(std::string(misterplex::deathBreadcrumbSenderCmd()).find("pid_gone") !=
+          std::string::npos);
+
+    misterplex::deathBreadcrumbCaptureSender(0);
+    CHECK(std::string(misterplex::deathBreadcrumbSenderStatus()) == "NONE");
+
+    // Orderly exit after capture must carry sender_* into death file.
+    misterplex::deathBreadcrumbCaptureSender(static_cast<int>(::getpid()));
+    misterplex::deathBreadcrumbExit(0, "site=main.cpp:sender_chain_test");
+    const std::string death_sender = slurp(death);
+    CHECK(death_sender.find("sender_status=LIVE") != std::string::npos);
+    CHECK(death_sender.find("sender_cmd=") != std::string::npos);
+    CHECK(death_sender.find("sender_chain=") != std::string::npos);
+
     if (fails) {
         std::fprintf(stderr, "test_death_breadcrumb: %d FAIL(s)\n", fails);
         return 1;

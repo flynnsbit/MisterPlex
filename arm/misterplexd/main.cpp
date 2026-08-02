@@ -1509,15 +1509,21 @@ int main(int argc, char** argv) {
     const int stopSig = g_stopSig.load(std::memory_order_relaxed);
     const int stopCode = g_stopSiCode.load(std::memory_order_relaxed);
     const int stopPid = g_stopSiPid.load(std::memory_order_relaxed);
+    // FIRST: capture sender argv/chain while si_pid may still be alive.
+    // player.stop() can take seconds — by then the killer is often GONE.
+    misterplex::deathBreadcrumbCaptureSender(stopPid);
     char why[192];
     std::snprintf(why, sizeof(why),
                   "site=main.cpp:main_loop_g_stop sig=%d si_code=%d si_pid=%d "
                   "(handled→WIFEXITED 0; not WIFSIGNALED)",
                   stopSig, stopCode, stopPid);
     std::fprintf(stderr,
-                 "misterplexd: main_loop exit pending — %s lifetime_frames=%lld "
-                 "lifetime_presents=%lld lifetime_drops=%lld\n",
-                 why, static_cast<long long>(player.lifetimeFrames()),
+                 "misterplexd: main_loop exit pending — %s sender_status=%s "
+                 "sender_cmd=%s lifetime_frames=%lld lifetime_presents=%lld "
+                 "lifetime_drops=%lld\n",
+                 why, misterplex::deathBreadcrumbSenderStatus(),
+                 misterplex::deathBreadcrumbSenderCmd(),
+                 static_cast<long long>(player.lifetimeFrames()),
                  static_cast<long long>(player.lifetimePresents()),
                  static_cast<long long>(player.lifetimeDrops()));
 
