@@ -319,3 +319,33 @@ with invisible dots (glass: MISTERP + empty band). Fixed: period ink in
 
 Elapsed vs bar: bar used min(pos,dur); elapsed did not — wall positionMs past
 EOF showed 0:52/0:30. Elapsed now clamped to duration for display.
+
+## User ask: scale overlay to MiSTer native res — ARM-unfixable at HDMI native
+
+### Where pixels are drawn (quoted)
+
+| Path | File:lines | What happens |
+|------|------------|--------------|
+| Idle | `media_player.cpp` `paintIdle` ~877–905 | `plex480pDdrFrameGeometry()` → `cw×ch`; `renderIdleRgb24` + `overlay_.renderRgb24(rgb, cw, ch)` |
+| Pause | `publishPausedOverlayFrame` ~783–873 | same geometry; `overlay_.renderYuv420p(yuv, cw, ch)`; `publishDdrFrame` |
+| Play | `renderOverlay` lambda ~3021–3040 | `overlay_.render*(data, rawW, rawH)` into bank after vf scale |
+| Geometry | `ddr_frame_layout_params.svh:5-10` | coded **624×480**, presented **640×480** (compile-time) |
+| Host twin | `ddr_frame_layout.hpp:15-20` | `kPlex480pCodedWidth{624}` / Height{480} |
+
+Logs always carry `plane=0` unless both conf and HW bit:  
+`chromePlaneLive() = chromePlaneConf_ && chromePlaneHw_` (`media_player.hpp:69-73`).  
+Defaults: both **false**. `CHROME_PLANE=1` alone stays off (`main.cpp` notes RBF bit required).  
+When live, pause path **skips** F1 bake (`:838-841` "native path TBD doorbell") — product still bakes bank.
+
+RTL `plex_chrome.sv` is designed post-ascal (`HDMI_WIDTH`/`HEIGHT`) but is **not** the live product path while `plane=0`.
+
+### Stretch
+
+Bank chrome is scanout-stretched with the frame (`present_core` full-DE stretch of store; then MiSTer `ascal` to `video_mode`). Overlay is **not** redrawn at HDMI W×H on ARM.
+
+### Achievable without new RBF?
+
+**No — not true output-native resolution.** ARM can only author inside the fixed **624×480** store. Knowing `video_mode` from ini (`source=ini:mister`) labels intent; it does **not** add authoring pixels.  
+True “match MiSTer native res” requires **post-ascal plane** (or a larger synthesis store + full DDR path retarget) = **new RBF**.
+
+ARM-only residual: sharper glyphs inside 624×480 (done: 24×32@2) and layout/ellipsis fixes — still stretched to HDMI.
