@@ -71,19 +71,34 @@ done
 decode="NO-DATA"
 decode_src="NO-DATA"
 decode_src_src="NO-DATA"
-# Prefer latest journal/log crumbs if present (best-effort; not required)
-for log in /tmp/misterplexd.log /var/log/misterplexd.log /media/fat/misterplex/misterplexd.log \
-           /media/fat/misterplex_v2/log/misterplexd.log; do
-  if [ -f "$log" ]; then
-    line=$(grep -E 'decode_src=' "$log" 2>/dev/null | tail -1)
-    if [ -n "$line" ]; then
-      decode=$(printf '%s\n' "$line" | sed -n 's/.*decode=\([^ ]*\).*/\1/p' | head -1)
-      decode_src=$(printf '%s\n' "$line" | sed -n 's/.*decode_src=\([^ ]*\).*/\1/p' | head -1)
-      decode_src_src="measured_log:$(basename "$log")"
-      break
-    fi
-  fi
+# Prefer LIVE daemon log (two-roots: never v1-first). Best-effort crumb only.
+pick=""
+for d in /proc/[0-9]*; do
+  e=$(readlink -f "$d/exe" 2>/dev/null || readlink "$d/exe" 2>/dev/null || true)
+  e=${e% (deleted)}
+  case "$e" in
+    */bin/misterplexd) root=${e%/bin/misterplexd} ;;
+    */misterplexd) root=$(dirname "$e") ;;
+    *) continue ;;
+  esac
+  if [ -f "$root/misterplexd.log" ]; then pick="$root/misterplexd.log"; break; fi
+  if [ -f "$root/log/misterplexd.log" ]; then pick="$root/log/misterplexd.log"; break; fi
 done
+if [ -z "$pick" ]; then
+  for log in /tmp/misterplexd.log /var/log/misterplexd.log \
+             /media/fat/misterplex_v2/misterplexd.log /media/fat/misterplex_v2/log/misterplexd.log \
+             /media/fat/misterplex/misterplexd.log /media/fat/misterplex/log/misterplexd.log; do
+    if [ -f "$log" ]; then pick=$log; break; fi
+  done
+fi
+if [ -n "$pick" ] && [ -f "$pick" ]; then
+  line=$(grep -E 'decode_src=' "$pick" 2>/dev/null | tail -1)
+  if [ -n "$line" ]; then
+    decode=$(printf '%s\n' "$line" | sed -n 's/.*decode=\([^ ]*\).*/\1/p' | head -1)
+    decode_src=$(printf '%s\n' "$line" | sed -n 's/.*decode_src=\([^ ]*\).*/\1/p' | head -1)
+    decode_src_src="measured_log_live:$(basename "$pick")"
+  fi
+fi
 
 jesc() { printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'; }
 

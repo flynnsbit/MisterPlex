@@ -93,6 +93,21 @@ fi
 CPU_JSON="$OUT/arm_cpu.json"
 ART_JSON="$OUT/artifacts.json"
 DECODE_SRC="${DECODE_SRC:-caller_supplied}"
+# Optional stable-epoch gate (daemon self-exit / respawn → INVALID not data).
+REQUIRE_STABLE_EPOCH="${REQUIRE_STABLE_EPOCH:-0}"
+EPOCH_BEFORE=""
+if [[ "$REQUIRE_STABLE_EPOCH" == "1" ]]; then
+  set +e
+  bash "$ROOT/tools/avsync_capture_session_epoch.sh" >"$OUT/epoch_before.txt" 2>&1
+  set -e
+  EPOCH_BEFORE=$(sed -n 's/^session_epoch=//p' "$OUT/epoch_before.txt" | head -1 || true)
+  if [[ -z "$EPOCH_BEFORE" || "$EPOCH_BEFORE" == "NO-DATA" ]]; then
+    echo "VERDICT=UNSCORED rc=77 reason=epoch_before_absent"
+    exit 77
+  fi
+  echo "session_epoch_before=$EPOCH_BEFORE src=measured"
+fi
+
 # Artifact pair BEFORE capture (fleet rule: no measurement without RBF+daemon md5).
 set +e
 bash "$ROOT/tools/avsync_stamp_artifacts.sh" >"$ART_JSON" 2>"$OUT/artifacts.err"
@@ -152,5 +167,19 @@ echo "=== MEASURE TAIL ==="
 tail -n 80 "$OUT/${LABEL}_stdout.txt" || true
 echo "report_json=$OUT/${LABEL}_report.json"
 echo "timeseries=$OUT/${LABEL}_offset_timeseries.csv"
+if [[ "$REQUIRE_STABLE_EPOCH" == "1" ]]; then
+  set +e
+  bash "$ROOT/tools/avsync_capture_session_epoch.sh" >"$OUT/epoch_after.txt" 2>&1
+  set -e
+  EPOCH_AFTER=$(sed -n 's/^session_epoch=//p' "$OUT/epoch_after.txt" | head -1 || true)
+  echo "session_epoch_after=${EPOCH_AFTER:-NO-DATA} src=measured"
+  if [[ -z "$EPOCH_AFTER" || "$EPOCH_AFTER" == "NO-DATA" || "$EPOCH_AFTER" != "$EPOCH_BEFORE" ]]; then
+    echo "VERDICT=INVALID_SESSION_RESPAWN rc=79 epoch_before=$EPOCH_BEFORE epoch_after=${EPOCH_AFTER:-NO-DATA}"
+    echo "SOAK_RC=79"
+    exit 79
+  fi
+  echo "session_epoch_stable=1 src=measured"
+fi
+
 echo "SOAK_RC=$RC"
 exit "$RC"

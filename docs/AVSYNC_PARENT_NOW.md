@@ -169,6 +169,10 @@ Conf key: `AV_PRESENT_LEAD_MS`. Backup/restore conf **byte-exact `cmp`** (same p
 
 Black mean luma ~7 with **zero** flashes after 60 s ≠ healthy flash duty.
 
+## Validated on hardware (parent 2026-08-01)
+P1–P6 **HIT**. Live Δ(rk21−rk20)=**+111.50 ms**. Instrument validated through full path.
+**WANDER** observed (residual up to 224 ms) while daemon still `av-lock av_drift_ms=-39` at vfps 18.3 — next work: `docs/AVSYNC_WANDER_RCA.md`.
+
 ## Host re-check (no device)
 ```bash
 cd /home/flynnsbit/Projects/MisterPlex/.worktrees/w-avsync-lane

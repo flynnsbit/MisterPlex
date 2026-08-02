@@ -4,39 +4,38 @@
 #
 # session_epoch uniquely IDs a stream session. drops/presents reset per stream
 # (media_player.cpp). Any A/V claim spanning time must assert one epoch.
+#
+# Log path: live process resolve (avsync_live_log_resolve.inc.sh) — never
+# v1-first hardcoded list (two-roots trap).
 set -euo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 HOST="${MISTER_HOST:-192.168.1.183}"
 PASS="${MISTER_PASS:-1}"
 USER="${MISTER_USER:-root}"
 
-REMOTE='
-set -e
-pick=""
-for f in /tmp/misterplexd.log /var/log/misterplexd.log /tmp/misterplex.log \
-         /media/fat/misterplex/misterplexd.log /media/fat/misterplex_v2/misterplexd.log; do
-  if [ -f "$f" ]; then pick=$f; break; fi
-done
-if [ -z "$pick" ]; then
-  line=$(logread 2>/dev/null | grep "session_epoch=" | tail -n 1 || true)
-  echo "log_src=logread"
+RESOLVE_INC="$(cat "$ROOT/tools/avsync_live_log_resolve.inc.sh")"
+REMOTE="${RESOLVE_INC}
+avsync_resolve_live_log
+if [ -z \"\$pick\" ]; then
+  line=\$(logread 2>/dev/null | grep \"session_epoch=\" | tail -n 1 || true)
+  echo \"log_src=logread\"
 else
-  line=$(grep "session_epoch=" "$pick" 2>/dev/null | tail -n 1 || true)
-  echo "log_src=$pick"
+  line=\$(grep \"session_epoch=\" \"\$pick\" 2>/dev/null | tail -n 1 || true)
+  echo \"log_src=\$pick\"
 fi
-echo "line=$line"
-# Prefer supply_bucket / media lines
-echo "$line" | sed -n "s/.*session_epoch=\([0-9.][0-9.]*\).*/session_epoch=\1/p" | tail -n 1
-# Also surface fps_src if present on same or recent supply line
-if [ -n "$pick" ]; then
-  sl=$(grep "supply_bucket" "$pick" 2>/dev/null | tail -n 1 || true)
-  echo "supply_line=$sl"
-  echo "$sl" | sed -n "s/.*fps_src=\([^ ]*\).*/fps_src=\1/p" | tail -n 1
-  echo "$sl" | sed -n "s/.*fps=\([^ ]*\).*/fps=\1/p" | tail -n 1
+echo \"line=\$line\"
+echo \"\$line\" | sed -n \"s/.*session_epoch=\\([0-9.][0-9.]*\\).*/session_epoch=\\1/p\" | tail -n 1
+if [ -n \"\$pick\" ]; then
+  sl=\$(grep \"supply_bucket\" \"\$pick\" 2>/dev/null | tail -n 1 || true)
+  echo \"supply_line=\$sl\"
+  echo \"\$sl\" | sed -n \"s/.*fps_src=\\([^ ]*\\).*/fps_src=\\1/p\" | tail -n 1
+  echo \"\$sl\" | sed -n \"s/.*fps=\\([^ ]*\\).*/fps=\\1/p\" | tail -n 1
 fi
-'
+"
 
 echo "=== avsync_capture_session_epoch ==="
 echo "host=$HOST src=DEFAULT_ASSUMED_or_env"
+echo "log_resolve=live_proc_exe_then_v2_before_v1_fallback src=caller_supplied"
 out=$(sshpass -p "$PASS" ssh -o StrictHostKeyChecking=no -o ConnectTimeout=8 \
   "${USER}@${HOST}" "sh -s" <<<"$REMOTE" 2>/dev/null || true)
 printf '%s\n' "$out"
