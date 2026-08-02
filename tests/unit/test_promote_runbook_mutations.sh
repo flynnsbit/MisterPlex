@@ -304,6 +304,69 @@ else
   ok "deploy-no-swallow-77"
 fi
 
+echo "=== 10) grabber_preflight inject + clean-exit alarm ==="
+set +e
+out=$(python3 "$ROOT/tools/grabber_preflight.py" --inject-stats 7,7,0 2>&1)
+rc=$?
+set -e
+[ "$rc" -eq 78 ] && ok "grabber-inject-flat-rc78" || bad "grabber-inject-flat-rc78 got=$rc"
+echo "$out" | grep -q 'CAPTURE_NO_SIGNAL' && ok "grabber-nosignal-msg" || bad "grabber-nosignal-msg"
+set +e
+out=$(python3 "$ROOT/tools/grabber_preflight.py" --inject-stats 10,200,25.5 2>&1)
+rc=$?
+set -e
+[ "$rc" -eq 0 ] && ok "grabber-inject-alive-rc0" || bad "grabber-inject-alive-rc0 got=$rc"
+set +e
+out=$(python3 "$ROOT/tools/grabber_preflight.py" --inject-dv 0,0,0 2>&1)
+rc=$?
+set -e
+[ "$rc" -eq 78 ] && ok "grabber-dv-unlock-rc78" || bad "grabber-dv-unlock-rc78 got=$rc"
+
+# cycle gate wrapper
+set +e
+out=$("$ROOT/scripts/promote_cycle_gate.sh" grabber-preflight --inject-stats 7,7,0 2>&1)
+rc=$?
+set -e
+[ "$rc" -eq 78 ] && ok "cycle-grabber-rc78" || bad "cycle-grabber-rc78 got=$rc"
+
+set +e
+out=$(supervise_assert_clean_exit_alarm "2026-08-02T00:00:00Z EXIT pid=15565 rc=0 run_s=1543 — respawn in 2s" 2>&1)
+rc=$?
+set -e
+[ "$rc" -eq 1 ] && ok "clean-exit-alarm-rc1" || bad "clean-exit-alarm-rc1 got=$rc"
+echo "$out" | grep -q 'clean_exit_alarm=1' && ok "clean-exit-flag" || bad "clean-exit-flag"
+set +e
+out=$(supervise_assert_clean_exit_alarm "2026-08-02T00:00:00Z SPAWN ok" 2>&1)
+rc=$?
+set -e
+[ "$rc" -eq 0 ] && ok "clean-exit-clear-rc0" || bad "clean-exit-clear-rc0 got=$rc"
+set +e
+out=$(supervise_assert_clean_exit_alarm "" 2>&1)
+rc=$?
+set -e
+[ "$rc" -eq 4 ] && ok "clean-exit-nodata-rc4" || bad "clean-exit-nodata-rc4 got=$rc"
+
+# full-check blocks on grabber NO_SIGNAL before identity
+set +e
+out=$(
+  GRABBER_INJECT_STATS=7,7,0 \
+  INSTR_MIN=10 INSTR_MAX=200 INSTR_STD=25.5 \
+  CORE_IDENTITY=VERIFIED \
+  SESSION_ESTABLISHED=1 DELIVERY_VERIFIED=1 MEASURED_DELIVERY=x \
+  DROPS=0 UNACCOUNTED=0 VFPS=24 SOURCE_FPS=24 FRAMES=100 \
+  "$ROOT/scripts/promote_cycle_gate.sh" full-check 2>&1
+)
+rc=$?
+set -e
+[ "$rc" -eq 78 ] && ok "fullcheck-grabber-blocks-78" || bad "fullcheck-grabber-blocks-78 got=$rc"
+echo "$out" | grep -q 'CAPTURE_NO_SIGNAL\|grabber-preflight true rc=78' && ok "fullcheck-grabber-msg" || bad "fullcheck-grabber-msg"
+
+# supervise script encodes CLEAN_EXIT ALARM
+grep -q 'ALARM CLEAN_EXIT rc=0' "$ROOT/scripts/misterplexd_supervise.sh" \
+  && ok "supervise-has-clean-exit-alarm" || bad "supervise-has-clean-exit-alarm"
+grep -q 'exit reason=signal' "$ROOT/arm/misterplexd/main.cpp" \
+  && ok "main-logs-exit-signal" || bad "main-logs-exit-signal"
+
 echo "=== summary pass=$pass fail=$fail ==="
 [[ "$fail" -eq 0 ]] || exit 1
 echo "ALL test_promote_runbook_mutations passed"

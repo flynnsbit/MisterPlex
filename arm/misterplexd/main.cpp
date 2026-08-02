@@ -30,7 +30,15 @@
 namespace {
 
 std::atomic<bool> g_stop{false};
-void on_signal(int) { g_stop.store(true); }
+// Parent 2026-08-02: supervise EXIT rc=0 run_s=1543/196/514 with no daemon log
+// line. on_signal used to set g_stop silently — SIGTERM produced clean rc=0 and
+// zero greppable "shutdown|SIGTERM|fatal". Store signo; log only from main after
+// the loop (printf is not async-signal-safe).
+std::atomic<int> g_stop_sig{0};
+void on_signal(int sig) {
+    g_stop_sig.store(sig);
+    g_stop.store(true);
+}
 
 std::string loadConf(const std::string& path, const char* key) {
     std::ifstream in(path);
@@ -1291,6 +1299,21 @@ int main(int argc, char** argv) {
         misterplex::FpgaSpi::resumeStrandedMain();
     }
 
+    {
+        const int sig = g_stop_sig.load();
+        if (sig != 0) {
+            // SIGINT=2 SIGTERM=15 — only paths that set g_stop outside lab play-file.
+            std::fprintf(stderr,
+                         "misterplexd: exit reason=signal sig=%d "
+                         "(SIGINT=2 SIGTERM=15) — clean process rc=0; "
+                         "supervisor will respawn and per-stream counters reset\n",
+                         sig);
+        } else {
+            std::fprintf(stderr,
+                         "misterplexd: exit reason=main_loop_end g_stop=1 sig=0 "
+                         "(unexpected without signal — investigate)\n");
+        }
+    }
     player.stop();
     pmsTimeline.stopAndFlush();
     plexTv.stop();

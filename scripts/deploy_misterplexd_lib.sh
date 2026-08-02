@@ -691,3 +691,30 @@ promotion_menu_bounce_cmd() {
   echo "# sleep ~6s then:"
   printf 'load_core %s\n' "$core_path"
 }
+
+# --- supervise CLEAN_EXIT rc=0 alarm (parent S1 / periodic self-exit) ----------
+# Args: supervise log text (or empty)
+# rc: 0 no clean-exit after real run; 1 ALARM seen (respawn reset counters);
+#     4 NO-DATA empty log
+supervise_assert_clean_exit_alarm() {
+  local text="${1:-}"
+  if [[ -z "$text" ]]; then
+    echo "NO-DATA supervise log empty (cannot score CLEAN_EXIT)" >&2
+    echo "clean_exit_alarm=NO-DATA"
+    return 4
+  fi
+  # Match ALARM CLEAN_EXIT or EXIT ... rc=0 run_s>=5 (same class)
+  if printf '%s\n' "$text" | grep -qE 'ALARM CLEAN_EXIT rc=0'; then
+    echo "FAIL clean_exit_alarm=1 (supervise ALARM CLEAN_EXIT — soak counters reset on respawn)" >&2
+    echo "clean_exit_alarm=1"
+    return 1
+  fi
+  if printf '%s\n' "$text" | grep -qE 'EXIT pid=[0-9]+ rc=0 run_s=([5-9]|[1-9][0-9]+)'; then
+    echo "FAIL clean_exit_alarm=1 (EXIT rc=0 run_s>=5 without crash — signal or lab exit; S1 soak risk)" >&2
+    echo "clean_exit_alarm=1"
+    return 1
+  fi
+  echo "OK clean_exit_alarm=0 (no CLEAN_EXIT / long rc=0 in supervise snippet)"
+  echo "clean_exit_alarm=0"
+  return 0
+}

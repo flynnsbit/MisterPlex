@@ -10,6 +10,7 @@
 #   + CORE_IDENTITY_UNVERIFIED → rc=2 PROMOTE_OK=0 fail-closed (never relax)
 #
 # Usage (parent; agents never SSH):
+#   scripts/promote_cycle_gate.sh grabber-preflight [--inject-stats MIN,MAX,STD]
 #   scripts/promote_cycle_gate.sh instrument min max stddev
 #   scripts/promote_cycle_gate.sh instrument-class grabber_not_ready
 #   scripts/promote_cycle_gate.sh frames N
@@ -18,8 +19,10 @@
 #   scripts/promote_cycle_gate.sh ab CAND_OK PREV_OK
 #   scripts/promote_cycle_gate.sh core-identity STATE
 #   scripts/promote_cycle_gate.sh full-check   # all injected env; aggregate
+#   scripts/promote_cycle_gate.sh clean-exit-alarm SUPERVISE_LOG_SNIPPET
 #
 # Capture true rc= directly. rc=77 UNSCORED ≠ PASS. Never weaken.
+# grabber-preflight rc=78 CAPTURE_NO_SIGNAL — do not convict device software.
 
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -30,6 +33,54 @@ cmd="${1:-}"
 shift || true
 
 case "$cmd" in
+  grabber-preflight)
+    # Mandatory before any capture-based promote evidence (parent dead grabber).
+    # Live: no args → tools/grabber_preflight.py --device ${HDMI_DEV:-/dev/video0}
+    # Host inject RED: --inject-stats 7,7,0  → expect true rc=78
+    set +e
+    if [[ "${1:-}" == "--inject-stats" || "${1:-}" == "--inject-dv" || -n "${GRABBER_INJECT_STATS:-}" ]]; then
+      if [[ -n "${GRABBER_INJECT_STATS:-}" && "${1:-}" != "--inject-stats" ]]; then
+        python3 "$ROOT/tools/grabber_preflight.py" --inject-stats "$GRABBER_INJECT_STATS"
+        rc=$?
+      else
+        python3 "$ROOT/tools/grabber_preflight.py" "$@"
+        rc=$?
+      fi
+    else
+      python3 "$ROOT/tools/grabber_preflight.py" --device "${HDMI_DEV:-/dev/video0}" "$@"
+      rc=$?
+    fi
+    set -e
+    case "$rc" in
+      0) echo "grabber_preflight=SIGNAL_OK" ;;
+      78) echo "grabber_preflight=CAPTURE_NO_SIGNAL — do NOT rollback software on this alone" ;;
+      77) echo "grabber_preflight=UNSCORED — never promote PASS" ;;
+      *) echo "grabber_preflight=ERR rc=$rc" ;;
+    esac
+    echo "true rc=$rc"
+    exit "$rc"
+    ;;
+  clean-exit-alarm)
+    # Parse supervise log lines for CLEAN_EXIT / EXIT rc=0 (S1 soak counter reset).
+    # Prefer CLEAN_EXIT_BLOB= env, else file path arg, else stdin.
+    text=""
+    if [[ -n "${CLEAN_EXIT_BLOB:-}" ]]; then
+      text=$CLEAN_EXIT_BLOB
+    elif [[ -n "${1:-}" && -f "${1}" && "${1}" != "/dev/stdin" && "${1}" != "-" ]]; then
+      text=$(cat -- "${1}")
+    elif [[ -n "${1:-}" && "${1}" != "-" && "${1}" != "/dev/stdin" ]]; then
+      text=$1
+    else
+      # stdin (parent: cat suplog | … clean-exit-alarm -)
+      text=$(cat)
+    fi
+    set +e
+    supervise_assert_clean_exit_alarm "$text"
+    rc=$?
+    set -e
+    echo "true rc=$rc"
+    exit "$rc"
+    ;;
   instrument)
     set +e
     instrument_assert_capture_alive "${1:-}" "${2:-}" "${3:-}"
@@ -96,10 +147,45 @@ case "$cmd" in
     exit "$rc"
     ;;
   full-check)
-    # Aggregate: instrument → core identity → frames/session → optional rollback/ab
+    # Aggregate: grabber-preflight → instrument → core identity → frames/session
     # Missing optional halves do not soft-pass required ones.
     rc=0
     echo "== promote_cycle full-check =="
+
+    # Grabber preflight HARD (parent: dead grabber → innocent rollback).
+    # Skip only with GRABBER_PREFLIGHT_SKIP=1 (host units); never for real promote.
+    if [[ "${GRABBER_PREFLIGHT_SKIP:-0}" != "1" ]]; then
+      set +e
+      if [[ -n "${GRABBER_INJECT_STATS:-}" ]]; then
+        python3 "$ROOT/tools/grabber_preflight.py" --inject-stats "$GRABBER_INJECT_STATS"
+        grc=$?
+      elif [[ -n "${GRABBER_INJECT_DV:-}" ]]; then
+        python3 "$ROOT/tools/grabber_preflight.py" --inject-dv "$GRABBER_INJECT_DV"
+        grc=$?
+      else
+        python3 "$ROOT/tools/grabber_preflight.py" --device "${HDMI_DEV:-/dev/video0}"
+        grc=$?
+      fi
+      set -e
+      echo "grabber-preflight true rc=$grc"
+      if [[ "$grc" -eq 78 ]]; then
+        echo "PROMOTE_OK=0 reason=CAPTURE_NO_SIGNAL"
+        echo "true rc=78"
+        exit 78
+      fi
+      if [[ "$grc" -eq 77 ]]; then
+        echo "PROMOTE_OK=0 reason=grabber_UNSCORED"
+        echo "true rc=77"
+        exit 77
+      fi
+      if [[ "$grc" -ne 0 ]]; then
+        echo "PROMOTE_OK=0 reason=grabber_preflight_fail"
+        echo "true rc=$grc"
+        exit "$grc"
+      fi
+    else
+      echo "NOTE GRABBER_PREFLIGHT_SKIP=1 (host unit only — never for real promote)"
+    fi
 
     if [[ -n "${INSTR_MIN:-}" || -n "${INSTR_CLASS:-}" ]]; then
       set +e
@@ -191,7 +277,7 @@ case "$cmd" in
     exit 9
     ;;
   *)
-    echo "usage: $0 {instrument|instrument-class|frames|session|rollback-proven|ab|core-identity|full-check}" >&2
+    echo "usage: $0 {grabber-preflight|instrument|instrument-class|frames|session|rollback-proven|ab|core-identity|clean-exit-alarm|full-check}" >&2
     echo "true rc=9"
     exit 9
     ;;

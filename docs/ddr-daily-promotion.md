@@ -41,10 +41,17 @@ kill by explicit PID only — name-based killing banned
 ### Promote cycle gates (host)
 
 ```bash
-# Instrument preflight (BEFORE cast / promote decision)
+# 0) Grabber preflight FIRST (parent: Pixelclock 0 / pixel=7 → innocent rollback)
+./scripts/promote_cycle_gate.sh grabber-preflight --inject-stats 7,7,0; echo "true rc=$?"
+# expect rc=78 CAPTURE_NO_SIGNAL — do NOT convict device software
+./scripts/promote_cycle_gate.sh grabber-preflight --inject-stats 10,200,25.5; echo "true rc=$?"
+# expect rc=0 SIGNAL_OK
+# Live hardware (parent only):
+#   ./scripts/promote_cycle_gate.sh grabber-preflight; echo "true rc=$?"
+
+# Instrument stats path (same NO_CAPTURE rule)
 ./scripts/promote_cycle_gate.sh instrument 7 7 0.00; echo "true rc=$?"
 # expect rc=10 NO_CAPTURE  — dead grabber class
-
 ./scripts/promote_cycle_gate.sh instrument 10 200 25.5; echo "true rc=$?"
 # expect rc=0 ALIVE
 
@@ -52,11 +59,14 @@ kill by explicit PID only — name-based killing banned
 FRAMES=0 ./scripts/promote_cycle_gate.sh frames; echo "true rc=$?"   # rc=1
 FRAMES=8638 ./scripts/promote_cycle_gate.sh frames; echo "true rc=$?" # rc=0
 
-# CORE_IDENTITY fail-closed (never relax)
+# CORE_IDENTITY fail-closed (never relax) — disk md5 ≠ running bitstream
 ./scripts/promote_cycle_gate.sh core-identity UNVERIFIED; echo "true rc=$?"
 # expect rc=2 PROMOTE_OK=0
+# /tmp/CORENAME == "Plex" for every build; no software path hashes the RUNNING RBF.
+# Prefer blocked promotion over blind PROMOTE_GATES_OK.
 
-# Full aggregate (instrument required)
+# Full aggregate (grabber + instrument required; identity blocks)
+GRABBER_INJECT_STATS=10,200,25.5 \
 INSTR_MIN=10 INSTR_MAX=200 INSTR_STD=25.5 \
 CORE_IDENTITY=UNVERIFIED \
 SESSION_ESTABLISHED=1 DELIVERY_VERIFIED=1 MEASURED_DELIVERY=624x480 \
@@ -69,7 +79,53 @@ DROPS=0 UNACCOUNTED=0 VFPS=23.6 SOURCE_FPS=23.6 FRAMES=8638 \
 ./scripts/promote_cycle_gate.sh rollback-proven 1 0; echo "true rc=$?"  # cleared → 0
 ./scripts/promote_cycle_gate.sh ab 0 0; echo "true rc=$?"  # both sick → refuse convict
 ./scripts/promote_cycle_gate.sh ab 0 1; echo "true rc=$?"  # convict candidate
+
+# Clean EXIT rc=0 (S1 soak counter reset) — host parse of supervise log
+printf '%s\n' '2026-08-02T00:00:00Z EXIT pid=15565 rc=0 run_s=1543 — respawn in 2s' \
+  | ./scripts/promote_cycle_gate.sh clean-exit-alarm -; echo "true rc=$?"
+# expect 1 ALARM
+# Live: ssh … 'tail -200 /media/fat/misterplex_v2/misterplexd_supervise.log' \
+#   | ./scripts/promote_cycle_gate.sh clean-exit-alarm -; echo "true rc=$?"
 ```
+
+### RCA — periodic supervise `EXIT rc=0` (parent S1, OPEN root cause)
+
+**Measured (parent):**
+```
+EXIT pid=15565 rc=0 run_s=1543 — respawn in 2s
+EXIT pid=19313 rc=0 run_s=196
+EXIT pid=24566 rc=0 run_s=514
+```
+Clean `rc=0`, not crash. No greppable `shutdown|SIGTERM|fatal|panic` in daemon log
+(that is *absence of log*, not proof of design).
+
+**Quoted code (host tree):**
+- `main.cpp`: companion loop is `while (!g_stop.load())`; only `on_signal` sets
+  `g_stop`. Loop end → `return 0`.
+- **Was:** `on_signal` set the flag with **zero log** → SIGTERM produced silent rc=0.
+- **Now (this commit):** `g_stop_sig` + `misterplexd: exit reason=signal sig=N`
+  printed on the way out; supervise emits `ALARM CLEAN_EXIT rc=0 run_s=…`.
+- `media_player.cpp` resets `droppedFrames_` / `presentCount_` per stream start —
+  multi-respawn soak quoted as one session is **vacuous** (P4:
+  `soak_continuity_assert --require-single-session-epoch`).
+
+**What is still unknown (needs parent device log after next daemon pin with exit logging):**
+who sent SIGTERM/SIGINT (deploy kill-by-PID? OOM? user? framework?). Check:
+```bash
+# on device after a CLEAN_EXIT:
+grep -E 'exit reason=|ALARM CLEAN_EXIT|EXIT pid=' \
+  /media/fat/misterplex_v2/misterplexd.log \
+  /media/fat/misterplex_v2/misterplexd_supervise.log | tail -40
+dmesg | tail -30
+```
+
+### Running bitstream identity (blocks blind promote)
+
+No software path names the **running** RBF content hash without a fabric ID register.
+Gate md5s **files** (`Plex.rbf` on disk); `/tmp/CORENAME` is always `Plex`.
+A DDR daemon + SPI core is a black screen that can still look GREEN on disk gates.
+**`CORE_IDENTITY_UNVERIFIED` → rc=2 / `PROMOTE_OK=0` fail-closed — do not relax.**
+PLXS_SEQ advance proves *some* executing core publishes the mailbox, not which hash.
 
 ## Status change card (parent 2026-08-01 evening) — re-source these claims
 

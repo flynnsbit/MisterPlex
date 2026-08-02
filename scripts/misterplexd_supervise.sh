@@ -93,6 +93,17 @@ while true; do
     backoff=2
   fi
   echo "$(ts) EXIT pid=$child rc=$st run_s=$ran_s — respawn in ${backoff}s" >>"$SUPLOG"
+  # rc=0 after a real run: process returned cleanly. main.cpp only reaches
+  # return 0 from the companion loop after g_stop (SIGINT/SIGTERM) or the lab
+  # play-file path. Parent saw EXIT rc=0 run_s=1543/196/514 with no daemon
+  # "shutdown|SIGTERM" lines — on_signal was silent until exit-reason logging.
+  # Clean exit REZEROES droppedFrames_/presentCount_ on next stream (media_player
+  # start path) → soak continuity must assert one session_epoch (P4/S1).
+  if [ "$st" -eq 0 ] && [ "$ran_s" -ge 5 ]; then
+    echo "$(ts) ALARM CLEAN_EXIT rc=0 run_s=$ran_s pid=$child — not a crash; SIGINT/SIGTERM or lab play-file" >>"$SUPLOG"
+    echo "$(ts) REMEDY grep daemon log for 'exit reason=signal'; dmesg; who sent kill (deploy kill-by-PID?); do not quote multi-respawn soak as one session" >>"$SUPLOG"
+    echo "$(ts) REMEDY host: REQUIRE_SINGLE_SESSION_EPOCH=1 scripts/promotion_session_verify.sh --from-log \$LOG" >>"$SUPLOG"
+  fi
   # rc=126 = shell "found but not executable" / corrupt or incomplete ELF
   # (parent 2026-08-01: truncated scp onto live path → n_daemon=0 for ~2 min).
   if [ "$st" -eq 126 ] || [ "$st" -eq 127 ]; then
