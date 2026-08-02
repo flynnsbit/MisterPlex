@@ -2,6 +2,7 @@
 #include "log_redact.hpp"
 
 #include "libmisterplex/av_clock.hpp"
+#include "libmisterplex/ffmpeg_stderr.hpp"
 #include "libmisterplex/ffmpeg_vf.hpp"
 #include "libmisterplex/idle_screen.hpp"
 #include "libmisterplex/last_frame_latch.hpp"
@@ -1457,6 +1458,8 @@ void MediaPlayer::ffmpegStderrPump(int errReadFd, size_t codedFrameBytes, bool i
     char buf[512];
     int lastInW = 0, lastInH = 0;
     int lastOutW = 0, lastOutH = 0;
+    int diagnosticN = 0;
+    int fatalN = 0;
     for (;;) {
         const ssize_t n = ::read(errReadFd, buf, sizeof(buf));
         if (n < 0) {
@@ -1468,17 +1471,39 @@ void MediaPlayer::ffmpegStderrPump(int errReadFd, size_t codedFrameBytes, bool i
             break;
         acc.append(buf, static_cast<size_t>(n));
         for (;;) {
-            const auto nl = acc.find('\n');
-            if (nl == std::string::npos)
+            // Split on '\n' and bare '\r' (-stats CR progress). Never silently
+            // drop non-geometry lines: ce727a43-class failures can leave only a
+            // single Error line after banners (parent lead).
+            std::string line;
+            if (!misterplex::takeFfmpegStderrLine(acc, &line))
                 break;
-            std::string line = acc.substr(0, nl);
-            acc.erase(0, nl + 1);
-            // Drop progress noise if any slipped past -nostats.
-            if (line.rfind("frame=", 0) == 0 || line.find("fps=") != std::string::npos)
+            if (line.empty())
                 continue;
+            const auto cls = misterplex::classifyFfmpegStderrLine(line);
+            if (cls == misterplex::FfmpegStderrClass::ProgressNoise ||
+                cls == misterplex::FfmpegStderrClass::Empty)
+                continue;
+            if (cls == misterplex::FfmpegStderrClass::Diagnostic) {
+                ++diagnosticN;
+                const bool fatal = misterplex::ffmpegStderrLooksFatal(line);
+                if (fatal)
+                    ++fatalN;
+                // Cap spam but never hide the first fatals (zero-frame RCA).
+                if (diagnosticN <= 32 || fatal) {
+                    log(std::string(fatal ? "ERROR media: ffmpeg " : "media: ffmpeg ") + line);
+                }
+                continue;
+            }
+            // GeometryCandidate — parse Stream Video WxH banners.
             const auto g = parseFfmpegGeometryLine(line);
-            if (!g.ok)
+            if (!g.ok) {
+                // Classified as geometry-ish but no WxH — still surface once.
+                if (diagnosticN < 8) {
+                    ++diagnosticN;
+                    log("media: ffmpeg " + line);
+                }
                 continue;
+            }
             // Classify: lines under Output # are post-filter; Input/Stream Video
             // without Output are pre-filter delivery.
             const bool outish =
@@ -1494,6 +1519,7 @@ void MediaPlayer::ffmpegStderrPump(int errReadFd, size_t codedFrameBytes, bool i
                 continue;
             }
             // Input / decoded delivery geometry — the B2 permanent observable.
+            // PMS videoResolution is a ceiling, not exact (parent: 624x480 → 624x350).
             if (g.w == lastInW && g.h == lastInH)
                 continue;
             const bool changed = (lastInW > 0 || lastInH > 0);
@@ -1513,6 +1539,7 @@ void MediaPlayer::ffmpegStderrPump(int errReadFd, size_t codedFrameBytes, bool i
                 " coded_bytes=" + std::to_string(codedFrameBytes) +
                 " identity_skip=" + (identitySkip ? "1" : "0") +
                 " desync_risk=" + (risk ? "1" : "0") +
+                " note=pms_resolution_is_ceiling_not_exact" +
                 (changed ? " MID_STREAM_CHANGE=1" : " MID_STREAM_CHANGE=0") +
                 (changed ? " — size changed after play start" : ""));
             if (risk) {
@@ -1526,6 +1553,11 @@ void MediaPlayer::ffmpegStderrPump(int errReadFd, size_t codedFrameBytes, bool i
                     "geometry guard cannot see this; investigate PMS/decoder");
             }
         }
+    }
+    if (fatalN > 0 || diagnosticN > 0) {
+        log("media: ffmpeg_stderr_summary diagnostic_n=" + std::to_string(diagnosticN) +
+            " fatal_n=" + std::to_string(fatalN) +
+            " (non-geometry lines are logged; progress noise dropped)");
     }
     ::close(errReadFd);
 }

@@ -48,8 +48,11 @@ DECODE=320x240
 #   2) min(tier_default, LINK_CAP_KBIT) when LINK_CAP_KBIT > 0
 #   3) tier_default alone
 # LINK_CAP_KBIT is how the fixture-ladder / greedy-path knee is consumed.
-# Parent measured ~1153 kbit/s greedy goodput on the daily-driver path — set
-# that (or the ladder knee) here; do not bake it into the binary.
+# Do NOT paste p95 alone: on unstable WiFi min can be ~3× below p95 (parent:
+# min 45.7 KB/s vs p95 161.4). Prefer host helper recommendLinkCapFromWindowBps
+# (p10 * 0.85 headroom, provisional until ≥30×1s windows). Single 60s pull is
+# provisional. Adaptive runtime must use link_cap.hpp hysteresis (3 lower /
+# 10 raise, session-sticky) — never chase RTT blips.
 # LINK_CAP_KBIT=0
 # LINK_CAP_KBIT=1150
 # Legacy per-field overrides (kept for lab experiments):
