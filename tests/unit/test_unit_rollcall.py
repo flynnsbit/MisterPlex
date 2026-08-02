@@ -117,6 +117,8 @@ EXPECTED_COMMANDS = [
     "bash $(ROOT)/tests/unit/test_supervise_exit_classify.sh",
     "bash $(ROOT)/tests/unit/test_main_rc0_paths.sh",
     "bash $(ROOT)/tests/unit/test_soak_continuity_assert.sh",
+    "bash $(ROOT)/tests/unit/test_soak_ledger_report.sh",
+    "bash $(ROOT)/tests/unit/test_supervise_death_snap_static.sh",
     "bash $(ROOT)/tests/unit/test_score_mister_contention.sh",
     "bash $(ROOT)/tests/unit/test_media_fps_precision.sh",
     "$(ROOT)/build/test_status_telemetry",
