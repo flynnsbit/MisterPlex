@@ -1,0 +1,395 @@
+{
+  "title": "MiSTerPlex VBRStair 640x480 24fps stairVBR_max2000 360s (2026).mp4",
+  "role": "staircase_vbr_nonbank",
+  "seg_s": 20.0,
+  "transitions": [
+    {
+      "index": 0,
+      "kind": "LOW",
+      "t0_s": 0.0,
+      "t1_s": 20.0,
+      "duration_s": 20.0
+    },
+    {
+      "index": 1,
+      "kind": "HIGH",
+      "t0_s": 20.0,
+      "t1_s": 40.0,
+      "duration_s": 20.0
+    },
+    {
+      "index": 2,
+      "kind": "LOW",
+      "t0_s": 40.0,
+      "t1_s": 60.0,
+      "duration_s": 20.0
+    },
+    {
+      "index": 3,
+      "kind": "HIGH",
+      "t0_s": 60.0,
+      "t1_s": 80.0,
+      "duration_s": 20.0
+    },
+    {
+      "index": 4,
+      "kind": "LOW",
+      "t0_s": 80.0,
+      "t1_s": 100.0,
+      "duration_s": 20.0
+    },
+    {
+      "index": 5,
+      "kind": "HIGH",
+      "t0_s": 100.0,
+      "t1_s": 120.0,
+      "duration_s": 20.0
+    },
+    {
+      "index": 6,
+      "kind": "LOW",
+      "t0_s": 120.0,
+      "t1_s": 140.0,
+      "duration_s": 20.0
+    },
+    {
+      "index": 7,
+      "kind": "HIGH",
+      "t0_s": 140.0,
+      "t1_s": 160.0,
+      "duration_s": 20.0
+    },
+    {
+      "index": 8,
+      "kind": "LOW",
+      "t0_s": 160.0,
+      "t1_s": 180.0,
+      "duration_s": 20.0
+    },
+    {
+      "index": 9,
+      "kind": "HIGH",
+      "t0_s": 180.0,
+      "t1_s": 200.0,
+      "duration_s": 20.0
+    },
+    {
+      "index": 10,
+      "kind": "LOW",
+      "t0_s": 200.0,
+      "t1_s": 220.0,
+      "duration_s": 20.0
+    },
+    {
+      "index": 11,
+      "kind": "HIGH",
+      "t0_s": 220.0,
+      "t1_s": 240.0,
+      "duration_s": 20.0
+    },
+    {
+      "index": 12,
+      "kind": "LOW",
+      "t0_s": 240.0,
+      "t1_s": 260.0,
+      "duration_s": 20.0
+    },
+    {
+      "index": 13,
+      "kind": "HIGH",
+      "t0_s": 260.0,
+      "t1_s": 280.0,
+      "duration_s": 20.0
+    },
+    {
+      "index": 14,
+      "kind": "LOW",
+      "t0_s": 280.0,
+      "t1_s": 300.0,
+      "duration_s": 20.0
+    },
+    {
+      "index": 15,
+      "kind": "HIGH",
+      "t0_s": 300.0,
+      "t1_s": 320.0,
+      "duration_s": 20.0
+    },
+    {
+      "index": 16,
+      "kind": "LOW",
+      "t0_s": 320.0,
+      "t1_s": 340.0,
+      "duration_s": 20.0
+    },
+    {
+      "index": 17,
+      "kind": "HIGH",
+      "t0_s": 340.0,
+      "t1_s": 360.0,
+      "duration_s": 20.0
+    }
+  ],
+  "segment_bitrates": [
+    {
+      "index": 0,
+      "kind": "LOW",
+      "t0_s": 0.0,
+      "t1_s": 20.0,
+      "duration_s": 20.0,
+      "meas_v_kbit_s": 125.48,
+      "packet_bytes": 313702
+    },
+    {
+      "index": 1,
+      "kind": "HIGH",
+      "t0_s": 20.0,
+      "t1_s": 40.0,
+      "duration_s": 20.0,
+      "meas_v_kbit_s": 2152.28,
+      "packet_bytes": 5380703
+    },
+    {
+      "index": 2,
+      "kind": "LOW",
+      "t0_s": 40.0,
+      "t1_s": 60.0,
+      "duration_s": 20.0,
+      "meas_v_kbit_s": 123.58,
+      "packet_bytes": 308952
+    },
+    {
+      "index": 3,
+      "kind": "HIGH",
+      "t0_s": 60.0,
+      "t1_s": 80.0,
+      "duration_s": 20.0,
+      "meas_v_kbit_s": 2145.45,
+      "packet_bytes": 5363615
+    },
+    {
+      "index": 4,
+      "kind": "LOW",
+      "t0_s": 80.0,
+      "t1_s": 100.0,
+      "duration_s": 20.0,
+      "meas_v_kbit_s": 126.51,
+      "packet_bytes": 316274
+    },
+    {
+      "index": 5,
+      "kind": "HIGH",
+      "t0_s": 100.0,
+      "t1_s": 120.0,
+      "duration_s": 20.0,
+      "meas_v_kbit_s": 2155.6,
+      "packet_bytes": 5389009
+    },
+    {
+      "index": 6,
+      "kind": "LOW",
+      "t0_s": 120.0,
+      "t1_s": 140.0,
+      "duration_s": 20.0,
+      "meas_v_kbit_s": 125.28,
+      "packet_bytes": 313192
+    },
+    {
+      "index": 7,
+      "kind": "HIGH",
+      "t0_s": 140.0,
+      "t1_s": 160.0,
+      "duration_s": 20.0,
+      "meas_v_kbit_s": 2156.38,
+      "packet_bytes": 5390958
+    },
+    {
+      "index": 8,
+      "kind": "LOW",
+      "t0_s": 160.0,
+      "t1_s": 180.0,
+      "duration_s": 20.0,
+      "meas_v_kbit_s": 125.55,
+      "packet_bytes": 313882
+    },
+    {
+      "index": 9,
+      "kind": "HIGH",
+      "t0_s": 180.0,
+      "t1_s": 200.0,
+      "duration_s": 20.0,
+      "meas_v_kbit_s": 2161.4,
+      "packet_bytes": 5403490
+    },
+    {
+      "index": 10,
+      "kind": "LOW",
+      "t0_s": 200.0,
+      "t1_s": 220.0,
+      "duration_s": 20.0,
+      "meas_v_kbit_s": 123.99,
+      "packet_bytes": 309982
+    },
+    {
+      "index": 11,
+      "kind": "HIGH",
+      "t0_s": 220.0,
+      "t1_s": 240.0,
+      "duration_s": 20.0,
+      "meas_v_kbit_s": 2159.87,
+      "packet_bytes": 5399677
+    },
+    {
+      "index": 12,
+      "kind": "LOW",
+      "t0_s": 240.0,
+      "t1_s": 260.0,
+      "duration_s": 20.0,
+      "meas_v_kbit_s": 124.27,
+      "packet_bytes": 310681
+    },
+    {
+      "index": 13,
+      "kind": "HIGH",
+      "t0_s": 260.0,
+      "t1_s": 280.0,
+      "duration_s": 20.0,
+      "meas_v_kbit_s": 2156.2,
+      "packet_bytes": 5390512
+    },
+    {
+      "index": 14,
+      "kind": "LOW",
+      "t0_s": 280.0,
+      "t1_s": 300.0,
+      "duration_s": 20.0,
+      "meas_v_kbit_s": 125.96,
+      "packet_bytes": 314893
+    },
+    {
+      "index": 15,
+      "kind": "HIGH",
+      "t0_s": 300.0,
+      "t1_s": 320.0,
+      "duration_s": 20.0,
+      "meas_v_kbit_s": 2154.65,
+      "packet_bytes": 5386617
+    },
+    {
+      "index": 16,
+      "kind": "LOW",
+      "t0_s": 320.0,
+      "t1_s": 340.0,
+      "duration_s": 20.0,
+      "meas_v_kbit_s": 124.73,
+      "packet_bytes": 311831
+    },
+    {
+      "index": 17,
+      "kind": "HIGH",
+      "t0_s": 340.0,
+      "t1_s": 360.0,
+      "duration_s": 20.0,
+      "meas_v_kbit_s": 2087.25,
+      "packet_bytes": 5218135
+    }
+  ],
+  "mean_v_kbit_s": 1136.357,
+  "vbr_maxrate_k": 2000,
+  "vbr_crf": 23,
+  "fps_rational": "24/1",
+  "measured": {
+    "width": 640,
+    "height": 480,
+    "r_frame_rate": "24/1",
+    "avg_frame_rate": "24/1",
+    "nb_frames": "8640",
+    "profile": "Constrained Baseline",
+    "level": 30,
+    "has_b_frames": 0,
+    "v_bit_rate": 1136357,
+    "v_bit_rate_k": 1136.357,
+    "format_duration": "360.000000",
+    "format_bit_rate": 1236155,
+    "format_bit_rate_k": 1236.155,
+    "size_bytes": 55627016,
+    "a_codec": "aac",
+    "a_sample_rate": "48000",
+    "a_channels": 2,
+    "a_bit_rate": 95725,
+    "a_bit_rate_k": 95.725,
+    "sps": {
+      "max_num_ref_frames": 1,
+      "level_idc": 30,
+      "profile_idc": 66
+    }
+  },
+  "fails": [],
+  "prereg": {
+    "role": "staircase_vbr",
+    "expected": "HEALTHY on LOW segments (supply\u22480.95\u20131.0, pfps\u224823\u201324, drops flat); COLLAPSE or stress on HIGH segments if high_seg instantaneous > path (supply dips, drops climb, pfps falls) aligned to published t0 transitions.",
+    "expected_supply_ratio_LOW": "\u22480.95\u20131.00",
+    "expected_supply_ratio_HIGH": "\u226a1 if high_seg_kbit \u226b 670 (e.g. 0.7\u20130.9)",
+    "expected_pfps_LOW": "\u224823.3\u201324.0",
+    "expected_pfps_HIGH": "dip if starved",
+    "expected_drops_trend": "flat on LOW; climb during HIGH if hypothesis holds",
+    "path_kbit_s": 670.0,
+    "note": "Align collapse clock to HIGH t0_s in transitions table."
+  },
+  "ffmpeg_cmd": [
+    "ffmpeg",
+    "-y",
+    "-hide_banner",
+    "-loglevel",
+    "error",
+    "-f",
+    "rawvideo",
+    "-pix_fmt",
+    "rgb24",
+    "-s",
+    "640x480",
+    "-r",
+    "24",
+    "-i",
+    "pipe:0",
+    "-i",
+    "/home/flynnsbit/Projects/MisterPlex/.worktrees/w-asset480-manifest/assets/avsync/.work_vbr_stair_640x480_24_vbrmax2000_360s/a.wav",
+    "-map",
+    "0:v:0",
+    "-map",
+    "1:a:0",
+    "-c:v",
+    "libx264",
+    "-profile:v",
+    "baseline",
+    "-level:v",
+    "3.0",
+    "-bf",
+    "0",
+    "-x264-params",
+    "cabac=0:ref=1:bframes=0:keyint=48:level=30:vbv-maxrate=2000:vbv-bufsize=4000",
+    "-pix_fmt",
+    "yuv420p",
+    "-crf",
+    "23",
+    "-maxrate",
+    "2000k",
+    "-bufsize",
+    "4000k",
+    "-r",
+    "24",
+    "-c:a",
+    "aac",
+    "-b:a",
+    "96k",
+    "-ar",
+    "48000",
+    "-ac",
+    "2",
+    "-shortest",
+    "-movflags",
+    "+faststart",
+    "/home/flynnsbit/Projects/MisterPlex/.worktrees/w-asset480-manifest/assets/avsync/vbr_stair_640x480_24_vbrmax2000_360s.mp4"
+  ],
+  "bank_fit": "adversarial"
+}

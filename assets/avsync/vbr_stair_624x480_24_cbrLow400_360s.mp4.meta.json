@@ -1,0 +1,174 @@
+{
+  "title": "MiSTerPlex VBRStair 624x480 24fps cbrLow400k 360s (2026).mp4",
+  "role": "cbr_low",
+  "cbr_kbit": 400,
+  "cbr_mode": "minrate=maxrate=b:v nal-hrd=cbr",
+  "source_staircase": "assets/avsync/vbr_stair_624x480_24_vbrmax2000_360s.mp4",
+  "seg_s": 20.0,
+  "transitions": [
+    {
+      "index": 0,
+      "kind": "LOW",
+      "t0_s": 0.0,
+      "t1_s": 20.0,
+      "duration_s": 20.0
+    },
+    {
+      "index": 1,
+      "kind": "HIGH",
+      "t0_s": 20.0,
+      "t1_s": 40.0,
+      "duration_s": 20.0
+    },
+    {
+      "index": 2,
+      "kind": "LOW",
+      "t0_s": 40.0,
+      "t1_s": 60.0,
+      "duration_s": 20.0
+    },
+    {
+      "index": 3,
+      "kind": "HIGH",
+      "t0_s": 60.0,
+      "t1_s": 80.0,
+      "duration_s": 20.0
+    },
+    {
+      "index": 4,
+      "kind": "LOW",
+      "t0_s": 80.0,
+      "t1_s": 100.0,
+      "duration_s": 20.0
+    },
+    {
+      "index": 5,
+      "kind": "HIGH",
+      "t0_s": 100.0,
+      "t1_s": 120.0,
+      "duration_s": 20.0
+    },
+    {
+      "index": 6,
+      "kind": "LOW",
+      "t0_s": 120.0,
+      "t1_s": 140.0,
+      "duration_s": 20.0
+    },
+    {
+      "index": 7,
+      "kind": "HIGH",
+      "t0_s": 140.0,
+      "t1_s": 160.0,
+      "duration_s": 20.0
+    },
+    {
+      "index": 8,
+      "kind": "LOW",
+      "t0_s": 160.0,
+      "t1_s": 180.0,
+      "duration_s": 20.0
+    },
+    {
+      "index": 9,
+      "kind": "HIGH",
+      "t0_s": 180.0,
+      "t1_s": 200.0,
+      "duration_s": 20.0
+    },
+    {
+      "index": 10,
+      "kind": "LOW",
+      "t0_s": 200.0,
+      "t1_s": 220.0,
+      "duration_s": 20.0
+    },
+    {
+      "index": 11,
+      "kind": "HIGH",
+      "t0_s": 220.0,
+      "t1_s": 240.0,
+      "duration_s": 20.0
+    },
+    {
+      "index": 12,
+      "kind": "LOW",
+      "t0_s": 240.0,
+      "t1_s": 260.0,
+      "duration_s": 20.0
+    },
+    {
+      "index": 13,
+      "kind": "HIGH",
+      "t0_s": 260.0,
+      "t1_s": 280.0,
+      "duration_s": 20.0
+    },
+    {
+      "index": 14,
+      "kind": "LOW",
+      "t0_s": 280.0,
+      "t1_s": 300.0,
+      "duration_s": 20.0
+    },
+    {
+      "index": 15,
+      "kind": "HIGH",
+      "t0_s": 300.0,
+      "t1_s": 320.0,
+      "duration_s": 20.0
+    },
+    {
+      "index": 16,
+      "kind": "LOW",
+      "t0_s": 320.0,
+      "t1_s": 340.0,
+      "duration_s": 20.0
+    },
+    {
+      "index": 17,
+      "kind": "HIGH",
+      "t0_s": 340.0,
+      "t1_s": 360.0,
+      "duration_s": 20.0
+    }
+  ],
+  "fps_rational": "24/1",
+  "measured": {
+    "width": 624,
+    "height": 480,
+    "r_frame_rate": "24/1",
+    "avg_frame_rate": "24/1",
+    "nb_frames": "8640",
+    "profile": "Constrained Baseline",
+    "level": 30,
+    "has_b_frames": 0,
+    "v_bit_rate": 400436,
+    "v_bit_rate_k": 400.436,
+    "format_duration": "360.000000",
+    "format_bit_rate": 500311,
+    "format_bit_rate_k": 500.311,
+    "size_bytes": 22514015,
+    "a_codec": "aac",
+    "a_sample_rate": "48000",
+    "a_channels": 2,
+    "a_bit_rate": 95802,
+    "a_bit_rate_k": 95.802,
+    "sps": {
+      "max_num_ref_frames": 1,
+      "level_idc": 30,
+      "profile_idc": 66
+    }
+  },
+  "fails": [],
+  "bank_fit": "favourable",
+  "media_path": "/home/flynnsbit/plex/media/movies/MiSTerPlex VBRStair 624x480 24fps cbrLow400k 360s (2026).mp4",
+  "prereg": {
+    "role": "cbr_low",
+    "path_kbit_s": 670,
+    "expected_supply_ratio": "\u22480.97\u20131.0",
+    "expected_pfps": "\u224823.5\u201324 if under path; dip if over",
+    "expected_drops_trend": "flat forever",
+    "discriminator": "stair collapses @ HIGH t0 AND cbr_mean does not show same transition lock \u2192 VBR confirmed"
+  }
+}
