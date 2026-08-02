@@ -92,6 +92,7 @@ async function main() {
   log('      rate_starved(0.467)→FAIL rate_healthy(0.993)→PASS pause/seek excluded');
   log('  P8 media_health selfCheck: collapsed supply_ratio=0.72 FAIL; healthy PASS;');
   log('      drift+133 FAIL; pid swap INVALID; unprobed FAIL (never soft-green)');
+  log('  P9 pms_control_plane: play/pause/gone reds; tc speed=0 FAIL; speed=19.8 PASS; stale FAIL');
 
   let proofsOk = 0;
   let proofsFail = 0;
@@ -121,6 +122,19 @@ async function main() {
     proofsOk++;
   } catch (e) {
     log(`PROOF P8 FAIL media_health selfCheck: ${e.message || e}`);
+    proofsFail++;
+  }
+
+  // ── P9: PMS control-plane pure red-before-green (no device) ────────────
+  try {
+    const pms = require('./pms_control_plane');
+    pms.selfCheck();
+    log(
+      'PROOF P9 OK pms_control_plane selfCheck (session play/pause/gone + tc collapse + stale)'
+    );
+    proofsOk++;
+  } catch (e) {
+    log(`PROOF P9 FAIL pms_control_plane selfCheck: ${e.message || e}`);
     proofsFail++;
   }
 

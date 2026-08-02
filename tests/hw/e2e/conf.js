@@ -527,6 +527,23 @@ function loadConfig() {
       const v = parseInt(process.env.E2E_MEDIA_MAX_ABS_DRIFT_MS || '75', 10);
       return Number.isFinite(v) && v > 0 ? v : 75;
     })(),
+    // PMS control-plane (status/sessions + transcode/sessions). Independent of HDMI.
+    // Default ON with clientTruth — HDMI-blind path still verifies cast/session.
+    requirePmsControlPlane: truthy(
+      process.env.E2E_REQUIRE_PMS_CONTROL_PLANE,
+      truthy(process.env.E2E_CLIENT_TRUTH, true)
+    ),
+    // After stop: leftover sessions/transcoders fail (orphan hygiene parent hit).
+    requireStaleSessionClean: truthy(process.env.E2E_REQUIRE_STALE_SESSION_CLEAN, true),
+    // Transcode speed floor (parent: collapsed speed=0, healthy ≈19.8).
+    pmsMinTranscodeSpeed: (() => {
+      const v = parseFloat(process.env.E2E_PMS_MIN_TRANSCODE_SPEED || '0.5');
+      return Number.isFinite(v) && v >= 0 ? v : 0.5;
+    })(),
+    // Direct play may yield empty /transcode/sessions — allow unless forced.
+    pmsTranscodeAllowEmpty: truthy(process.env.E2E_PMS_TRANSCODE_ALLOW_EMPTY, true),
+    // Lean Chromium (workstation CPU-contended; Playwright can perturb playback).
+    leanBrowser: truthy(process.env.E2E_LEAN_BROWSER, true),
     // Glass integrity (w-instr counter). Parent provides capture dir; suite never grabs.
     // E2E_REQUIRE_GLASS=1 → missing/unscored glass is FAIL (not timeline-only PASS).
     requireGlass: truthy(process.env.E2E_REQUIRE_GLASS, false),

@@ -78,6 +78,17 @@ const {
   assertPidStable,
   formatMediaHealth,
 } = require('./media_health');
+const {
+  BOUNDARY_BANNER,
+  fetchStatusSessions,
+  fetchTranscodeSessions,
+  assertSessionPlaying,
+  assertSessionPaused,
+  assertSessionGone,
+  assertTranscodeHealth,
+  assertStaleSessionHygiene,
+  formatPmsResult,
+} = require('./pms_control_plane');
 const { createTimelineSeries } = require('./timeline_series');
 const {
   analyzeCounterGaps,
@@ -2547,6 +2558,73 @@ function daemonEffectOrObserve(cycle, total, transition, reason, detail, effectO
 }
 
 /**
+ * PMS control-plane sample + assert (independent of HDMI / misterplexd self-report).
+ * @param {'playing'|'paused'|'gone'|'stale'|'transcode'} mode
+ */
+async function pmsControlGate(mode, tag, cycle, total, expectedRk) {
+  if (!cfg.requirePmsControlPlane) {
+    log(`PMS_CONTROL_PLANE tag=${tag} skipped require=0`);
+    return { ok: true, skipped: true };
+  }
+  const rk = expectedRk != null ? String(expectedRk) : '';
+  const cast = cfg.castName || 'MiSTerPlex';
+  if (mode === 'playing' || mode === 'paused' || mode === 'gone' || mode === 'stale') {
+    const st = await fetchStatusSessions(cfg.plexBase, cfg.token);
+    log(
+      `PMS_STATUS_SESSIONS tag=${tag} http=${st.http_status || 'NA'} count=${st.count != null ? st.count : 'NA'} ` +
+        `ok=${st.ok ? 1 : 0}`
+    );
+    let r;
+    if (mode === 'playing') {
+      r = assertSessionPlaying(st, tag, { ratingKey: rk, castName: cast });
+      if (r.ok) {
+        const tc = await fetchTranscodeSessions(cfg.plexBase, cfg.token);
+        log(
+          `PMS_TRANSCODE_SESSIONS tag=${tag} http=${tc.http_status || 'NA'} count=${
+            tc.count != null ? tc.count : 'NA'
+          }`
+        );
+        const th = assertTranscodeHealth(tc, `${tag}_tc`, {
+          minSpeed: cfg.pmsMinTranscodeSpeed,
+          allowEmpty: cfg.pmsTranscodeAllowEmpty,
+        });
+        log(`PMS_TRANSCODE ${formatPmsResult(th)} tag=${tag}`);
+        if (!th.ok && !th.soft) {
+          if (cycle != null) cycleFail(cycle, total, 'pms_transcode', th.reason, th.detail);
+          else fail(th.reason || 'pms_transcode', th.detail || '');
+          return th;
+        }
+      }
+    } else if (mode === 'paused') {
+      r = assertSessionPaused(st, tag, { ratingKey: rk, castName: cast });
+    } else if (mode === 'gone') {
+      r = assertSessionGone(st, tag, { castName: cast });
+    } else {
+      const tc = await fetchTranscodeSessions(cfg.plexBase, cfg.token);
+      r = assertStaleSessionHygiene(st, tc, tag, {
+        castName: cast,
+        failOnLeftover: cfg.requireStaleSessionClean,
+      });
+      log(`PMS_STALE_HYGIENE ${formatPmsResult(r)} tag=${tag}`);
+      if (!r.ok) {
+        if (cycle != null) cycleFail(cycle, total, 'pms_stale', r.reason, r.detail);
+        else fail(r.reason || 'pms_stale', r.detail || '');
+      } else if (r.softReport) {
+        log(`PMS_STALE_REPORT tag=${tag} ${r.detail}`);
+      }
+      return r;
+    }
+    log(`PMS_SESSION ${formatPmsResult(r)} tag=${tag} mode=${mode}`);
+    if (!r.ok) {
+      if (cycle != null) cycleFail(cycle, total, `pms_${mode}`, r.reason, r.detail);
+      else fail(r.reason || `pms_${mode}`, r.detail || '');
+    }
+    return r;
+  }
+  return { ok: true, skipped: true };
+}
+
+/**
  * One stress cycle: pause/resume/seek/stop-idle-play.
  * CLIENT truth (UI clock + session ratingKey) is the scorer when clientTruth=1.
  * Daemon timeline/telemetry is observational only (ERROR 20: av-lock is a literal).
@@ -2641,6 +2719,8 @@ async function runOneTransitionCycle(page, itemTitle, detailsUrl, cycle, total, 
     }
     log(`CLIENT_PLAY_OK cycle=${cycle}/${total} advance_ms=${playA.advance_ms}`);
   }
+  // PMS control plane: session playing + ratingKey + transcoder not collapsed.
+  await pmsControlGate('playing', `${ctag}_pms_play`, cycle, total, expectedRk);
 
   await glassMark(cycle, 'play', 'after', {
     picture: 'motion',
@@ -2709,6 +2789,7 @@ async function runOneTransitionCycle(page, itemTitle, detailsUrl, cycle, total, 
     if (frUi.time_ms != null) fr = { ok: true, time: frUi.time_ms, drift: frUi.drift_ms };
     log(`CLIENT_PAUSE_OK cycle=${cycle}/${total} drift_ms=${frUi.drift_ms}`);
   }
+  await pmsControlGate('paused', `${ctag}_pms_pause`, cycle, total, expectedRk);
   let uiPauseClock = null;
   {
     const uiR = await assertUiMatchesDaemon(page, `${ctag}_pause_ui_clock`);
@@ -3349,6 +3430,10 @@ async function runOneTransitionCycle(page, itemTitle, detailsUrl, cycle, total, 
       }
     }
   }
+  // PMS: our player session must disappear; report orphan transcoder rows.
+  await sleep(800);
+  await pmsControlGate('gone', `${ctag}_pms_gone`, cycle, total, expectedRk);
+  await pmsControlGate('stale', `${ctag}_pms_stale`, cycle, total, expectedRk);
   log(
     `transition_stop_ok cycle=${cycle}/${total} state=${idle.state} ui=${uiStop ? 1 : 0}`
   );
@@ -4086,6 +4171,13 @@ async function runTransitionScenarios(
 
 (async () => {
   log('test_cast_picker_playwright: BEGIN');
+  log(BOUNDARY_BANNER);
+  log(
+    'EVIDENCE_CLASS=playwright_pms_control_plane ' +
+      'SETTLES=cast_target_visible+session_start+ratingKey+pause/resume/stop_reflected+stale_hygiene ' +
+      'DOES_NOT_SETTLE=pixels_on_glass+row_coverage+overlay_res+lipsync+hdmi_lock ' +
+      'HDMI_STATUS=parent_reports_capture_card_unlocked — do not over-read green here as pixel PASS'
+  );
   runCorr.emitBanner();
   await runCorr.mark('suite_begin');
   runCorr.persist(cfg.outDir);
@@ -4098,6 +4190,9 @@ async function runTransitionScenarios(
   log(
     `GATES require_measured_delivery=${cfg.requireMeasuredDelivery ? 1 : 0} ` +
       `require_session_epoch=${cfg.requireSessionEpoch ? 1 : 0} ` +
+      `require_pms_control_plane=${cfg.requirePmsControlPlane ? 1 : 0} ` +
+      `require_stale_clean=${cfg.requireStaleSessionClean ? 1 : 0} ` +
+      `pms_min_tc_speed=${cfg.pmsMinTranscodeSpeed} lean_browser=${cfg.leanBrowser ? 1 : 0} ` +
       `plxd_frames_void=${process.env.E2E_PLXD_FRAMES_VOID == null ? 'DEFAULT_1' : process.env.E2E_PLXD_FRAMES_VOID} ` +
       `daemon_log=${process.env.E2E_DAEMON_LOG || '(unset)'} ` +
       `rating_key=${process.env.PLEX_RATING_KEY || cfg.ratingKey || 'tier_default'} ` +
@@ -4111,6 +4206,11 @@ async function runTransitionScenarios(
   log(
     'NO_LIPSYNC_ASSERT: suite never gates on av-lock/av_drift_ms; A/V bimodal offset is ' +
       'parent HDMI-only (tools/avsync_measure_hdmi.py).'
+  );
+  log(
+    'PMS_CONTROL_PLANE: /status/sessions + /transcode/sessions. ' +
+      'PRE_REGISTER healthy tc speed≈19.8 complete=1; collapsed speed=0 complete=0 progress≈68.6. ' +
+      'Stale leftover sessions after stop = FAIL when require_stale_clean=1.'
   );
 
   if (cfg.tierResolveError) {
@@ -4230,14 +4330,39 @@ async function runTransitionScenarios(
 
   let browser;
   try {
+    // Lean browser: workstation is CPU-contended (agent fleet + Plex Transcoder).
+    // Extra Chromium features can themselves degrade the playback under test.
+    const leanArgs = cfg.leanBrowser
+      ? [
+          '--no-sandbox',
+          '--disable-dev-shm-usage',
+          '--disable-gpu',
+          '--disable-extensions',
+          '--disable-background-networking',
+          '--disable-sync',
+          '--disable-translate',
+          '--mute-audio',
+          '--metrics-recording-only',
+          '--no-first-run',
+          '--disable-default-apps',
+          '--disable-hang-monitor',
+          '--disable-component-update',
+          '--renderer-process-limit=2',
+          '--js-flags=--max-old-space-size=256',
+        ]
+      : ['--no-sandbox', '--disable-dev-shm-usage'];
     const launchOpts = {
       headless: cfg.headless,
-      args: ['--no-sandbox', '--disable-dev-shm-usage'],
+      args: leanArgs,
     };
     if (cfg.chromiumPath) {
       launchOpts.executablePath = cfg.chromiumPath;
       log(`chromium_path ${cfg.chromiumPath}`);
     }
+    log(
+      `BROWSER_LAUNCH headless=${cfg.headless ? 1 : 0} lean=${cfg.leanBrowser ? 1 : 0} ` +
+        `args=${leanArgs.length} note=Playwright shares CPU with PMS transcoder — lean to limit self-perturbation`
+    );
     browser = await chromium.launch(launchOpts);
   } catch (e) {
     skip(
@@ -4674,6 +4799,8 @@ async function runTransitionScenarios(
             `rk=${ratingKey} value_kind=measured`
         );
       }
+      // PMS control plane (HDMI-independent): session + ratingKey + transcoder health.
+      await pmsControlGate('playing', `tier_${tier.name}_pms_play`, null, null, ratingKey);
       {
         // Control-plane: UI clock vs daemon — observational under clientTruth (ERROR 20).
         const uiR = await assertUiMatchesDaemon(page, `tier_${tier.name}_playing_ui_clock`);
@@ -4926,6 +5053,9 @@ async function runTransitionScenarios(
 
     // Always return daemon to idle for daily driver (UI stop may have been last tier only).
     await forceStopDaemon('suite_end_idle').catch(() => false);
+    await sleep(1000);
+    // Final stale-session hygiene (orphan transcoder class parent hit today).
+    await pmsControlGate('stale', 'suite_end_stale', null, null, '');
     await glassMark(0, 'idle', 'after', {
       picture: 'idle_logo',
       counter: 'na',
@@ -4938,17 +5068,18 @@ async function runTransitionScenarios(
     log(
       `suite_body_ok ${summaryBits.join(' ')} cast=${cfg.castName} context_requests=${tracker.all.length}`
     );
+    log(BOUNDARY_BANNER);
     log(
       'COVERAGE_MATRIX value_kind=measured ' +
         'discovery=Select_Player_exact_MiSTerPlex+companion ' +
-        'transport=play/pause/resume/seek/stop_daemon_effect ' +
-        'session_truth=UI_clock_vs_daemon_timeline ' +
+        'transport=play/pause/resume/seek/stop ' +
+        'pms_control=/status/sessions+/transcode/sessions+stale_hygiene ' +
+        'session_truth=UI_clock+PMS_ratingKey ' +
         'robustness=cast_while_casting+stop_stopped+seek_past_end ' +
         'p4_idle=after_stop ' +
         'nav=ratingKey_only title_match=OFF ' +
-        'p7=real_title+capture_window+correlated_GEOM ' +
-        'NOT_covered=pixels/rows/overlay_res/lipsync/PLXD_frames ' +
-        'P7_closed_only_when_parent_views_pixels'
+        'NOT_covered=pixels/rows/overlay_res/lipsync/hdmi_lock/PLXD_frames ' +
+        'green_playwright_is_NOT_viewed_pixel_PASS'
     );
   } catch (e) {
     suitePassed = false;
