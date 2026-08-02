@@ -1,23 +1,34 @@
 #!/usr/bin/env bash
-# Capability gate: real PMS delivery geometry 624x350 (parent device, RK6).
+# Capability gate: identity_skip x delivered geometry (parent 2026-08-02 HW).
 #
-# Observed defect class (parent hardware 2026-08-02):
-#   RELEASE daemon e9f79de2 → green field + horizontal wrap (raw-pipe desync)
-#   LIVE daemon ea643e99    → measured=624x350 desync_risk=0, clean picture
-# Same core/conf/asset/PMS; only daemon differed. Packaged release lacked
-# delivery measurement + FOAR-into-coded handling of non-bank height.
+# Mechanism (binary strings, parent-measured):
+#   RELEASE e9f79de2: identity_skip present, NO GEOM_GUARD / MEASURED_DELIVERY /
+#     desync_risk / measured=  -> fail-OPEN green+wrap on non-bank delivery (pfps>0)
+#   LIVE ea643e99: GEOM_GUARD refused identity_skip + MEASURED_DELIVERY +
+#     green-cast class naming -> handles 624x350 (pfps healthy)
 #
-# This gate does NOT hardcode md5s. It keys on CAPABILITY markers that the
-# broken release binary lacks and current main has, plus a live ffmpeg probe
-# on real 624x350 (not a coded-bank-sized fixture).
+# Two OPPOSITE failure modes, same root (delivered H != coded H):
+#   fail-CLOSED: crop=618:480 on 350 -> ffmpeg rc=234, total bytes=0, pfps 0
+#   fail-OPEN:   identity_skip + producer 327600 vs reader 449280 -> desync;
+#                total%449280 stays 0 (read loop) so remainder alone is blind;
+#                pipeDesyncRisk(identity_skip) + non-zero total catch it.
+#
+# 2x2 host matrix (real geometries, not bank-only fixtures):
+#   624x350 non-bank  x  guarded scale   -> GREEN product path
+#   624x350 non-bank  x  identity/crop   -> RED both modes
+#   624x480 bank-exact x identity OK when verified
+#
+# Does NOT hardcode md5s. Capability keys + path overrides for both binaries.
 set -u
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 MP="$ROOT/arm/misterplexd/media_player.cpp"
 VF="$ROOT/host/libmisterplex/ffmpeg_vf.hpp"
+CH="$ROOT/host/libmisterplex/yuv420p_chroma_health.hpp"
 OUT="$ROOT/build/test_delivered_350_capability"
 mkdir -p "$OUT"
 FFMPEG="${FFMPEG:-ffmpeg}"
 FB=449280
+PROD_350=327600
 N=3
 WANT=$((FB * N))
 fail=0
@@ -28,184 +39,125 @@ check_src() {
   local name="$1" file="$2" pat="$3"
   if rg -n --fixed-strings "$pat" "$file" >/dev/null; then
     echo "PASS_SRC $name"
-    pass=$((pass + 1))
-    applied=$((applied + 1))
+    pass=$((pass + 1)); applied=$((applied + 1))
   else
     echo "FAIL_SRC $name missing: $pat" >&2
     fail=$((fail + 1))
   fi
 }
 
-# --- A: source capability pins (main must keep these) ---
-check_src SRC_MEASURED_DELIVERY "$MP" 'media: MEASURED_DELIVERY delivered_geom='
-check_src SRC_MEASURED_OUTPUT "$MP" 'media: MEASURED_OUTPUT '
-check_src SRC_desync_risk_field "$MP" 'desync_risk='
-check_src SRC_DELIVERY_MISMATCH "$MP" 'DELIVERY_MISMATCH measured='
-check_src SRC_force_unverified_reason "$VF" 'force_unverified_claim_scale_pad_coded'
-check_src SRC_fleet_mode_350_comment "$VF" 'measured=624x350 is the MOST COMMON'
-check_src SRC_never_identity_unverified "$VF" 'Never identity_skip on unverified claims'
-check_src SRC_FOAR_into_coded_not_618 "$VF" 'FOAR into the CODED bank'
-check_src SRC_FOAR_decrease_token "$VF" 'force_original_aspect_ratio=decrease'
-# Negative: legacy reason must be gone from product planner
-if rg -n --fixed-strings 'force_exact_crop_pad_unverified' "$VF" >/dev/null; then
-  echo "FAIL_SRC legacy force_exact_crop_pad_unverified still in ffmpeg_vf.hpp" >&2
-  fail=$((fail + 1))
-else
-  echo "PASS_SRC legacy_crop_pad_reason_gone"
-  pass=$((pass + 1))
-  applied=$((applied + 1))
-fi
-
-# --- B: binary capability — packaged release MUST fail; current MUST pass ---
-# Capability keys (not md5): MEASURED_DELIVERY + force_unverified_claim_scale_pad_coded
 bin_has() {
   local bin="$1" needle="$2"
   strings "$bin" 2>/dev/null | grep -F -q -- "$needle"
 }
 
+bin_count() {
+  local bin="$1" needle="$2"
+  strings "$bin" 2>/dev/null | grep -F -c -- "$needle" || true
+}
+
+check_src SRC_MEASURED_DELIVERY "$MP" 'media: MEASURED_DELIVERY delivered_geom='
+check_src SRC_MEASURED_OUTPUT "$MP" 'media: MEASURED_OUTPUT '
+check_src SRC_desync_risk_field "$MP" 'desync_risk='
+check_src SRC_DELIVERY_MISMATCH "$MP" 'DELIVERY_MISMATCH measured='
+check_src SRC_GEOM_GUARD_log "$MP" 'GEOM_GUARD refused identity_skip'
+check_src SRC_green_cast_class "$MP" 'green-cast class; check identity_skip'
+check_src SRC_green_cast_header "$CH" 'green-cast class'
+check_src SRC_force_unverified_reason "$VF" 'force_unverified_claim_scale_pad_coded'
+check_src SRC_never_identity_unverified "$VF" 'Never identity_skip on unverified claims'
+check_src SRC_sourceMatchesCoded_guard "$VF" 'delivery_geometry_verified || req.assume_source_matches_coded'
+check_src SRC_FOAR_coded "$VF" 'FOAR into the CODED bank'
+if rg -n --fixed-strings 'force_exact_crop_pad_unverified' "$VF" >/dev/null; then
+  echo "FAIL_SRC legacy force_exact_crop_pad_unverified still present" >&2
+  fail=$((fail + 1))
+else
+  echo "PASS_SRC legacy_crop_pad_reason_gone"
+  pass=$((pass + 1)); applied=$((applied + 1))
+fi
+if rg -n 'reason\.find\("unverified_delivery"\)' "$MP" >/dev/null; then
+  echo "FAIL_SRC GEOM_GUARD still matches only unverified_delivery (dead on rename)" >&2
+  fail=$((fail + 1))
+else
+  echo "PASS_SRC GEOM_GUARD_not_dead_token"
+  pass=$((pass + 1)); applied=$((applied + 1))
+fi
+
 REL="${DELIVERED_350_RELEASE_DAEMON:-$ROOT/release_artifacts/ddr-c5382bee-e9f79de2/misterplexd}"
+LIVE="${DELIVERED_350_LIVE_DAEMON:-}"
+if [[ -z "$LIVE" ]]; then
+  for cand in \
+    "$ROOT/../MisterPlex/.worktrees/w-cpu-fps-measure/artifacts/daemon-pins/misterplexd.ea643e99" \
+    "/home/flynnsbit/Projects/MisterPlex/.worktrees/w-cpu-fps-measure/artifacts/daemon-pins/misterplexd.ea643e99" \
+    "$ROOT/artifacts/daemon-pins/misterplexd.ea643e99"
+  do
+    if [[ -x "$cand" ]]; then LIVE="$cand"; break; fi
+  done
+fi
 CUR="${DELIVERED_350_CURRENT_DAEMON:-$ROOT/build/misterplexd}"
 
 if [[ -x "$REL" ]]; then
-  # RED twin: release pin must LACK delivery telemetry (parent: no measured= line)
-  if bin_has "$REL" 'MEASURED_DELIVERY'; then
-    echo "FAIL_RED_REL release binary unexpectedly HAS MEASURED_DELIVERY" >&2
-    fail=$((fail + 1))
+  for needle in 'MEASURED_DELIVERY' 'GEOM_GUARD refused identity_skip' 'desync_risk=' 'measured='; do
+    if bin_has "$REL" "$needle"; then
+      echo "FAIL_RED_REL release HAS $needle (expected absent)" >&2
+      fail=$((fail + 1))
+    else
+      echo "PASS_RED_REL release lacks $needle"
+      pass=$((pass + 1)); applied=$((applied + 1))
+    fi
+  done
+  isc=$(bin_count "$REL" 'identity_skip')
+  if [[ "${isc:-0}" -ge 1 ]]; then
+    echo "PASS_RED_REL release has identity_skip count=$isc without GEOM_GUARD"
+    pass=$((pass + 1)); applied=$((applied + 1))
   else
-    echo "PASS_RED_REL release lacks MEASURED_DELIVERY (capability hole)"
-    pass=$((pass + 1))
-    applied=$((applied + 1))
-  fi
-  if bin_has "$REL" 'force_unverified_claim_scale_pad_coded'; then
-    echo "FAIL_RED_REL release unexpectedly HAS force_unverified_claim_scale_pad_coded" >&2
+    echo "FAIL_RED_REL release missing identity_skip entirely (unexpected)" >&2
     fail=$((fail + 1))
-  else
-    echo "PASS_RED_REL release lacks force_unverified_claim_scale_pad_coded"
-    pass=$((pass + 1))
-    applied=$((applied + 1))
-  fi
-  if bin_has "$REL" 'desync_risk='; then
-    echo "FAIL_RED_REL release unexpectedly HAS desync_risk=" >&2
-    fail=$((fail + 1))
-  else
-    echo "PASS_RED_REL release lacks desync_risk="
-    pass=$((pass + 1))
-    applied=$((applied + 1))
   fi
 else
-  echo "FAIL_RED_REL missing packaged daemon at $REL — cannot prove release hole" >&2
+  echo "FAIL_RED_REL missing $REL" >&2
+  fail=$((fail + 1))
+fi
+
+if [[ -n "${LIVE:-}" && -x "$LIVE" ]]; then
+  for needle in 'MEASURED_DELIVERY' 'GEOM_GUARD refused identity_skip' 'green-cast class' 'desync_risk'; do
+    if bin_has "$LIVE" "$needle"; then
+      echo "PASS_GREEN_LIVE live HAS $needle"
+      pass=$((pass + 1)); applied=$((applied + 1))
+    else
+      echo "FAIL_GREEN_LIVE live missing $needle" >&2
+      fail=$((fail + 1))
+    fi
+  done
+  lc=$(bin_count "$LIVE" 'identity_skip')
+  rc=$(bin_count "$REL" 'identity_skip')
+  if [[ "${lc:-0}" -gt "${rc:-0}" ]]; then
+    echo "PASS_GREEN_LIVE identity_skip count live=$lc > release=$rc"
+    pass=$((pass + 1)); applied=$((applied + 1))
+  else
+    echo "FAIL_GREEN_LIVE identity_skip counts live=$lc release=$rc" >&2
+    fail=$((fail + 1))
+  fi
+else
+  echo "FAIL_GREEN_LIVE live daemon not found (set DELIVERED_350_LIVE_DAEMON)" >&2
   fail=$((fail + 1))
 fi
 
 if [[ -x "$CUR" ]]; then
-  if bin_has "$CUR" 'MEASURED_DELIVERY'; then
-    echo "PASS_GREEN_CUR current HAS MEASURED_DELIVERY"
-    pass=$((pass + 1))
-    applied=$((applied + 1))
-  else
-    echo "FAIL_GREEN_CUR current missing MEASURED_DELIVERY" >&2
-    fail=$((fail + 1))
-  fi
-  if bin_has "$CUR" 'force_unverified_claim_scale_pad_coded'; then
-    echo "PASS_GREEN_CUR current HAS force_unverified_claim_scale_pad_coded"
-    pass=$((pass + 1))
-    applied=$((applied + 1))
-  else
-    echo "FAIL_GREEN_CUR current missing force_unverified_claim_scale_pad_coded" >&2
-    fail=$((fail + 1))
-  fi
-  if bin_has "$CUR" 'desync_risk='; then
-    echo "PASS_GREEN_CUR current HAS desync_risk="
-    pass=$((pass + 1))
-    applied=$((applied + 1))
-  else
-    echo "FAIL_GREEN_CUR current missing desync_risk=" >&2
-    fail=$((fail + 1))
-  fi
+  for needle in 'MEASURED_DELIVERY' 'GEOM_GUARD refused identity_skip' 'desync_risk=' \
+                'force_unverified_claim_scale_pad_coded' 'green-cast class'; do
+    if bin_has "$CUR" "$needle"; then
+      echo "PASS_GREEN_CUR current HAS $needle"
+      pass=$((pass + 1)); applied=$((applied + 1))
+    else
+      echo "FAIL_GREEN_CUR current missing $needle" >&2
+      fail=$((fail + 1))
+    fi
+  done
 else
-  echo "FAIL_GREEN_CUR missing $CUR — build misterplexd first" >&2
+  echo "FAIL_GREEN_CUR missing $CUR - build misterplexd first" >&2
   fail=$((fail + 1))
 fi
 
-# --- C: live ffmpeg on REAL 624x350 (not bank-sized fixture) ---
-if ! command -v "$FFMPEG" >/dev/null 2>&1; then
-  echo "FAIL ffmpeg missing" >&2
-  fail=$((fail + 1))
-else
-  # RED: crop=618:480 (legacy unverified claim) on 350 → must not produce product bytes
-  set +e
-  "$FFMPEG" -hide_banner -loglevel error -f lavfi -i "testsrc2=size=624x350:rate=24" \
-    -an -vf "crop=618:480:0:0,pad=624:480:0+(618-iw)/2:0+(480-ih)/2:color=black" \
-    -pix_fmt yuv420p -frames:v "$N" -f rawvideo -y "$OUT/red_crop.yuv" 2>"$OUT/red_crop.err"
-  red_rc=$?
-  set -e
-  red_b=0
-  [[ -f "$OUT/red_crop.yuv" ]] && red_b=$(wc -c <"$OUT/red_crop.yuv" | tr -d ' ')
-  if [[ "$red_rc" -ne 0 || "$red_b" -ne "$WANT" ]]; then
-    echo "PASS_RED_FF crop_pad_on_real_350 rc=$red_rc bytes=$red_b"
-    pass=$((pass + 1))
-    applied=$((applied + 1))
-  else
-    echo "FAIL_RED_FF crop_pad produced product bytes on 350" >&2
-    fail=$((fail + 1))
-  fi
-  echo "red_crop true rc=$red_rc"
-
-  # GREEN: product FOAR into coded 624 on real 350 → 449280/frame
-  set +e
-  "$FFMPEG" -hide_banner -loglevel error -f lavfi -i "testsrc2=size=624x350:rate=24" \
-    -an -vf "scale=624:480:force_original_aspect_ratio=decrease,pad=624:480:(ow-iw)/2:(oh-ih)/2" \
-    -pix_fmt yuv420p -frames:v "$N" -f rawvideo -y "$OUT/green_foar.yuv" 2>"$OUT/green_foar.err"
-  gr_rc=$?
-  set -e
-  gr_b=0
-  [[ -f "$OUT/green_foar.yuv" ]] && gr_b=$(wc -c <"$OUT/green_foar.yuv" | tr -d ' ')
-  if [[ "$gr_rc" -eq 0 && "$gr_b" -eq "$WANT" ]]; then
-    echo "PASS_GREEN_FF foar_coded_on_real_350 rc=0 bytes=$gr_b"
-    pass=$((pass + 1))
-    applied=$((applied + 1))
-  else
-    echo "FAIL_GREEN_FF foar rc=$gr_rc bytes=$gr_b want=$WANT" >&2
-    fail=$((fail + 1))
-  fi
-  echo "green_foar true rc=$gr_rc"
-
-  # Geometry of picture region: FOAR keeps 350 rows (letterbox) — not V-upsample.
-  # Measure non-black luma row span roughly via python on first frame.
-  python3 - "$OUT/green_foar.yuv" "$FB" <<'PY' || true
-import sys, struct
-path, fb = sys.argv[1], int(sys.argv[2])
-with open(path, "rb") as f:
-    y = f.read(624 * 480)
-if len(y) < 624 * 480:
-    print("FAIL_GEOM short y plane", len(y)); sys.exit(1)
-rows = []
-for r in range(480):
-    row = y[r * 624:(r + 1) * 624]
-    # non-near-black
-    if sum(1 for b in row if b > 16) > 624 // 8:
-        rows.append(r)
-if not rows:
-    print("FAIL_GEOM no content rows"); sys.exit(1)
-span = rows[-1] - rows[0] + 1
-# Expect ~350 content rows (letterbox), not ~480 full-frame upsample
-if 330 <= span <= 370:
-    print(f"PASS_GEOM content_row_span={span} first={rows[0]} last={rows[-1]} (letterbox ~350)")
-    sys.exit(0)
-print(f"FAIL_GEOM content_row_span={span} first={rows[0]} last={rows[-1]} want~350")
-sys.exit(1)
-PY
-  geom_rc=$?
-  echo "geom_span true rc=$geom_rc"
-  if [[ "$geom_rc" -eq 0 ]]; then
-    pass=$((pass + 1))
-    applied=$((applied + 1))
-  else
-    fail=$((fail + 1))
-  fi
-fi
-
-# --- D: planner unit (if built) — unverified 624x480 claim must FOAR-code ---
 if [[ -x "$ROOT/build/test_ffmpeg_vf" ]]; then
   set +e
   "$ROOT/build/test_ffmpeg_vf" >"$OUT/vf.out" 2>"$OUT/vf.err"
@@ -214,8 +166,7 @@ if [[ -x "$ROOT/build/test_ffmpeg_vf" ]]; then
   echo "test_ffmpeg_vf true rc=$vf_rc"
   if [[ "$vf_rc" -eq 0 ]]; then
     echo "PASS_UNIT test_ffmpeg_vf"
-    pass=$((pass + 1))
-    applied=$((applied + 1))
+    pass=$((pass + 1)); applied=$((applied + 1))
   else
     echo "FAIL_UNIT test_ffmpeg_vf rc=$vf_rc" >&2
     fail=$((fail + 1))
@@ -225,7 +176,149 @@ else
   fail=$((fail + 1))
 fi
 
-want=16
+python3 - <<'PY'
+FB = 449280
+PROD = 327600
+def phase(prod, reader, idx):
+    if prod == 0: return 0
+    return (idx * reader) % prod
+def desynced(prod, reader, idx):
+    if prod == reader: return False
+    return phase(prod, reader, idx) != 0 or idx > 0
+def risk(prod, reader, identity_skip):
+    if prod == 0 or reader == 0 or prod == reader: return False
+    return identity_skip
+fail = 0
+total = FB * 100
+if total % FB != 0:
+    print("FAIL model remainder"); fail += 1
+else:
+    print("PASS_MODEL remainder_blind_under_fixed_reads total%FB=0")
+if not risk(PROD, FB, True):
+    print("FAIL risk identity+350"); fail += 1
+else:
+    print("PASS_MODEL fail_OPEN risk identity_skip+350")
+if risk(PROD, FB, False):
+    print("FAIL risk scale path"); fail += 1
+else:
+    print("PASS_MODEL scale_path risk=0 on 350")
+if risk(FB, FB, True):
+    print("FAIL risk bank-exact"); fail += 1
+else:
+    print("PASS_MODEL bank_exact identity risk=0")
+if not desynced(PROD, FB, 1):
+    print("FAIL phase"); fail += 1
+else:
+    print("PASS_MODEL phase_walk f1 offset=%d" % phase(PROD, FB, 1))
+print("PASS_MODEL fail_CLOSED zero_total distinguishes crop death")
+raise SystemExit(fail)
+PY
+model_rc=$?
+echo "model true rc=$model_rc"
+if [[ "$model_rc" -eq 0 ]]; then
+  pass=$((pass + 1)); applied=$((applied + 1))
+else
+  fail=$((fail + 1))
+fi
+
+if ! command -v "$FFMPEG" >/dev/null 2>&1; then
+  echo "FAIL ffmpeg missing" >&2
+  fail=$((fail + 1))
+else
+  set +e
+  "$FFMPEG" -hide_banner -loglevel error -f lavfi -i "testsrc2=size=624x350:rate=24" \
+    -an -vf "crop=618:480:0:0,pad=624:480:0+(618-iw)/2:0+(480-ih)/2:color=black" \
+    -pix_fmt yuv420p -frames:v "$N" -f rawvideo -y "$OUT/red_crop350.yuv" 2>"$OUT/red_crop350.err"
+  red_rc=$?
+  set -e
+  red_b=0; [[ -f "$OUT/red_crop350.yuv" ]] && red_b=$(wc -c <"$OUT/red_crop350.yuv" | tr -d ' ')
+  if [[ "$red_rc" -ne 0 && "$red_b" -eq 0 ]]; then
+    echo "PASS_RED_FF fail_CLOSED crop_on_350 rc=$red_rc bytes=0"
+    pass=$((pass + 1)); applied=$((applied + 1))
+  else
+    echo "FAIL_RED_FF crop_on_350 rc=$red_rc bytes=$red_b" >&2
+    fail=$((fail + 1))
+  fi
+  echo "red_crop350 true rc=$red_rc"
+
+  set +e
+  "$FFMPEG" -hide_banner -loglevel error -f lavfi -i "testsrc2=size=624x350:rate=24" \
+    -an -pix_fmt yuv420p -frames:v "$N" -f rawvideo -y "$OUT/red_id350.yuv" 2>"$OUT/red_id350.err"
+  id_rc=$?
+  set -e
+  id_b=0; [[ -f "$OUT/red_id350.yuv" ]] && id_b=$(wc -c <"$OUT/red_id350.yuv" | tr -d ' ')
+  id_want=$((PROD_350 * N))
+  if [[ "$id_rc" -eq 0 && "$id_b" -eq "$id_want" && "$id_b" -ne "$WANT" ]]; then
+    echo "PASS_RED_FF fail_OPEN identity_350 bytes=$id_b != reader_want=$WANT"
+    pass=$((pass + 1)); applied=$((applied + 1))
+  else
+    echo "FAIL_RED_FF identity_350 rc=$id_rc bytes=$id_b" >&2
+    fail=$((fail + 1))
+  fi
+  echo "red_id350 true rc=$id_rc"
+  if [[ "$id_b" -gt 0 && "$red_b" -eq 0 ]]; then
+    echo "PASS_RED_FF discriminator open_bytes=$id_b closed_bytes=$red_b"
+    pass=$((pass + 1)); applied=$((applied + 1))
+  else
+    echo "FAIL_RED_FF discriminator open=$id_b closed=$red_b" >&2
+    fail=$((fail + 1))
+  fi
+
+  set +e
+  "$FFMPEG" -hide_banner -loglevel error -f lavfi -i "testsrc2=size=624x350:rate=24" \
+    -an -vf "scale=624:480:force_original_aspect_ratio=decrease,pad=624:480:(ow-iw)/2:(oh-ih)/2" \
+    -pix_fmt yuv420p -frames:v "$N" -f rawvideo -y "$OUT/green_foar350.yuv" 2>/dev/null
+  gr_rc=$?
+  set -e
+  gr_b=0; [[ -f "$OUT/green_foar350.yuv" ]] && gr_b=$(wc -c <"$OUT/green_foar350.yuv" | tr -d ' ')
+  if [[ "$gr_rc" -eq 0 && "$gr_b" -eq "$WANT" ]]; then
+    echo "PASS_GREEN_FF foar_350 bytes=$gr_b"
+    pass=$((pass + 1)); applied=$((applied + 1))
+  else
+    echo "FAIL_GREEN_FF foar_350 rc=$gr_rc bytes=$gr_b" >&2
+    fail=$((fail + 1))
+  fi
+  echo "green_foar350 true rc=$gr_rc"
+
+  set +e
+  "$FFMPEG" -hide_banner -loglevel error -f lavfi -i "testsrc2=size=624x480:rate=24" \
+    -an -pix_fmt yuv420p -frames:v "$N" -f rawvideo -y "$OUT/green_id480.yuv" 2>/dev/null
+  id480_rc=$?
+  set -e
+  id480_b=0; [[ -f "$OUT/green_id480.yuv" ]] && id480_b=$(wc -c <"$OUT/green_id480.yuv" | tr -d ' ')
+  if [[ "$id480_rc" -eq 0 && "$id480_b" -eq "$WANT" ]]; then
+    echo "PASS_GREEN_FF bank_exact_identity_480 bytes=$id480_b"
+    pass=$((pass + 1)); applied=$((applied + 1))
+  else
+    echo "FAIL_GREEN_FF bank_exact_480 rc=$id480_rc bytes=$id480_b" >&2
+    fail=$((fail + 1))
+  fi
+  echo "green_id480 true rc=$id480_rc"
+
+  python3 - "$OUT/green_foar350.yuv" <<'PY'
+import sys
+path = sys.argv[1]
+with open(path, "rb") as f:
+    y = f.read(624 * 480)
+rows = [r for r in range(480) if sum(1 for b in y[r*624:(r+1)*624] if b > 16) > 624//8]
+if not rows:
+    print("FAIL_GEOM no content"); sys.exit(1)
+span = rows[-1] - rows[0] + 1
+if 330 <= span <= 370:
+    print("PASS_GEOM letterbox_span=%d first=%d last=%d" % (span, rows[0], rows[-1]))
+    sys.exit(0)
+print("FAIL_GEOM span=%d" % span); sys.exit(1)
+PY
+  geom_rc=$?
+  echo "geom true rc=$geom_rc"
+  if [[ "$geom_rc" -eq 0 ]]; then
+    pass=$((pass + 1)); applied=$((applied + 1))
+  else
+    fail=$((fail + 1))
+  fi
+fi
+
+want=28
 if [[ "$applied" -lt "$want" ]]; then
   echo "FAIL applied_match=$applied want>=$want" >&2
   fail=$((fail + 1))
