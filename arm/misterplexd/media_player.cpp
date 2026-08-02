@@ -2938,6 +2938,42 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
         " assume_match=" + (ffmpegScaleAssumeMatch_ ? "1" : "0") +
         " display=" + std::to_string(rawDisplayW) + "x" + std::to_string(rawDisplayH) +
         " vf=" + (vf.empty() ? "(none)" : vf));
+    // FILTER_CHAIN_LOSS: row destruction from OUR -vf FOAR, not PMS (parent miss
+    // 2026-08-02: PMS scale=w=624:h=480 for rk6/rk36; daemon FOAR into 618 made
+    // ~350 real rows). Crop/pad paths keep bank height → frac=1.0.
+    {
+        const bool foar =
+            vf.find("force_original_aspect_ratio=decrease") != std::string::npos;
+        const bool foarInto618 = vf.find("scale=618:480") != std::string::npos;
+        double filterFrac = 1.0;
+        int predH = rawH;
+        if (foar && ffmpegScaleSourceW_ > 0 && ffmpegScaleSourceH_ > 0 && rawH > 0) {
+            // Product FOAR targets coded bank; legacy 618 is a hard defect class.
+            const int boxW = foarInto618 ? rawDisplayW : rawW;
+            const int boxH = foarInto618 ? rawDisplayH : rawH;
+            predH = predictFoarDecreaseHeight(ffmpegScaleSourceW_, ffmpegScaleSourceH_, boxW,
+                                              boxH);
+            filterFrac = foarVerticalDetailFrac(ffmpegScaleSourceW_, ffmpegScaleSourceH_, boxW,
+                                               boxH, rawH);
+        } else if (!foar &&
+                   (vfPlan.reason.find("crop_pad") != std::string::npos ||
+                    vfPlan.reason.find("force_exact_crop_pad") != std::string::npos ||
+                    vfPlan.reason.find("force_exact_pad") != std::string::npos ||
+                    vfPlan.identity_skip)) {
+            filterFrac = 1.0;
+            predH = rawH;
+        }
+        log(std::string("media: FILTER_CHAIN_LOSS reason=") + vfPlan.reason +
+            " foar=" + (foar ? "1" : "0") + " foar_into_618=" + (foarInto618 ? "1" : "0") +
+            " source=" + srcStr + " coded=" + codedStr +
+            " predicted_picture_h=" + std::to_string(predH) +
+            " filter_vertical_detail_frac=" + std::to_string(filterFrac) +
+            " note=FOAR_letterbox_is_filter_not_PMS tag=predicted");
+        if (foarInto618) {
+            log("ERROR media: FILTER_CHAIN_DEFECT foar_into_618=1 — product must FOAR "
+                "into coded 624 not display 618 (kPlex480pDisplayWidth is present crop)");
+        }
+    }
 
     const bool testPattern = (url == "testsrc" || url.rfind("lavfi", 0) == 0);
     // STREAM=0 + local file: optional FFmpeg subtitles filter (burn-in). Network/PMS
@@ -4514,6 +4550,21 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                 (mh > 0 && codedBankH_ > 0)
                     ? (static_cast<double>(mh) / static_cast<double>(codedBankH_))
                     : 0.0;
+            const bool foarFinal =
+                vfPlan.vf.find("force_original_aspect_ratio=decrease") != std::string::npos;
+            const bool foar618 = vfPlan.vf.find("scale=618:480") != std::string::npos;
+            double filterVfrac = 1.0;
+            int filterPredH = codedBankH_;
+            if (foarFinal && mw > 0 && mh > 0 && codedBankH_ > 0) {
+                // Use measured producer size as FOAR input when available.
+                const int boxW = foar618 ? 618 : codedBankW_;
+                const int boxH = foar618 ? 480 : codedBankH_;
+                filterPredH = predictFoarDecreaseHeight(mw, mh, boxW, boxH);
+                filterVfrac = foarVerticalDetailFrac(mw, mh, boxW, boxH, codedBankH_);
+            } else if (!foarFinal) {
+                filterVfrac = 1.0;
+                filterPredH = codedBankH_;
+            }
             log("media: MEASURED_DELIVERY_FINAL delivered_geom=" + std::to_string(mw) + "x" +
                 std::to_string(mh) + " src=ffmpeg_banner" +
                 " producer_bytes=" + std::to_string(prodBytes) +
@@ -4529,6 +4580,10 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                 " request_match=" + (matchRequest ? "1" : "0") +
                 " bank_match=" + (matchBank ? "1" : "0") +
                 " vertical_detail_frac=" + std::to_string(vfrac) +
+                " filter_reason=" + vfPlan.reason +
+                " filter_foar=" + (foarFinal ? "1" : "0") +
+                " filter_predicted_picture_h=" + std::to_string(filterPredH) +
+                " filter_vertical_detail_frac=" + std::to_string(filterVfrac) +
                 " identity_skip=" + (vfPlan.identity_skip ? "1" : "0") +
                 " phase_offset=" + std::to_string(phaseOff) +
                 " phase_desync=" + (phaseDesync ? "1" : "0") +
@@ -4542,6 +4597,7 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                     " coded_bank=" + std::to_string(codedBankW_) + "x" +
                     std::to_string(codedBankH_) +
                     " vertical_detail_frac=" + std::to_string(vfrac) +
+                    " filter_vertical_detail_frac=" + std::to_string(filterVfrac) +
                     " identity_skip=" + (vfPlan.identity_skip ? "1" : "0") +
                     " note=videoResolution_ceiling_or_source_DAR tag=measured");
             }
@@ -4550,8 +4606,20 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                     "x" + std::to_string(mh) + " coded_bank=" + std::to_string(codedBankW_) +
                     "x" + std::to_string(codedBankH_) +
                     " vertical_detail_frac=" + std::to_string(vfrac) +
+                    " filter_vertical_detail_frac=" + std::to_string(filterVfrac) +
                     " force_scale_protects=" + (vfPlan.identity_skip ? "0" : "1") +
                     " tag=measured");
+            }
+            // Loud when filter itself letterboxes below bank (user "not 480p" class).
+            if (foarFinal && filterPredH > 0 && codedBankH_ > 0 &&
+                filterPredH < codedBankH_) {
+                log("ERROR media: FILTER_CHAIN_LOSS_FINAL reason=" + vfPlan.reason +
+                    " measured_in=" + std::to_string(mw) + "x" + std::to_string(mh) +
+                    " predicted_picture_h=" + std::to_string(filterPredH) +
+                    " bank_h=" + std::to_string(codedBankH_) +
+                    " filter_vertical_detail_frac=" + std::to_string(filterVfrac) +
+                    " foar_into_618=" + (foar618 ? "1" : "0") +
+                    " note=letterbox_is_daemon_vf_not_PMS tag=measured");
             }
         } else if (usedRawVideo) {
             log("media: MEASURED_DELIVERY_FINAL delivered_geom=NO-DATA src=ffmpeg_banner "

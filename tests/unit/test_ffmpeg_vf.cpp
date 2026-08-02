@@ -58,7 +58,8 @@ int main() {
         expect_eq(p.reason, "scale_pad_center", "reason center");
     }
 
-    // --- shipping Always @ 624x480 crop path (center inside display window) ---
+    // --- shipping Always @ 624x480: FOAR into CODED bank (not display 618) ---
+    // Parent 2026-08-02: scale=618:480:FOAR was the user-visible row destroyer.
     {
         FfmpegVfRequest r;
         r.coded_w = 624;
@@ -69,15 +70,16 @@ int main() {
         r.crop_top = 0;
         r.scale_mode = FfmpegScaleMode::Always;
         const auto p = buildFfmpegVideoFilter(r);
-        expect(p.scale_applied, "480p always scales");
+        expect(p.scale_applied, "480p always scales when source unknown");
         expect_eq(p.vf,
-                  "scale=618:480:force_original_aspect_ratio=decrease,pad=624:480:3+(618-iw)/"
-                  "2:0+(480-ih)/2:color=black",
-                  "480p crop pad centers inside display window");
-        expect_eq(p.reason, "scale_pad_crop", "reason crop");
+                  "scale=624:480:force_original_aspect_ratio=decrease,pad=624:480:(ow-iw)/"
+                  "2:(oh-ih)/2",
+                  "480p FOAR into coded bank not display 618");
+        expect_eq(p.reason, "scale_pad_center_coded", "reason coded FOAR");
+        expect(p.vf.find("scale=618:480") == std::string::npos, "must not FOAR into 618");
     }
 
-    // --- product silicon crop_left=0: 320 delivery scales into 618 then centers ---
+    // --- product silicon: 320 delivery FOAR into coded 624 then center pad ---
     {
         FfmpegVfRequest r;
         r.coded_w = 624;
@@ -92,9 +94,10 @@ int main() {
         const auto p = buildFfmpegVideoFilter(r);
         expect(p.scale_applied && !p.identity_skip, "320→624 must scale (not identity)");
         expect_eq(p.vf,
-                  "scale=618:480:force_original_aspect_ratio=decrease,pad=624:480:0+(618-iw)/"
-                  "2:0+(480-ih)/2:color=black",
-                  "320 into silicon canvas centered pad string");
+                  "scale=624:480:force_original_aspect_ratio=decrease,pad=624:480:(ow-iw)/"
+                  "2:(oh-ih)/2",
+                  "320 into silicon coded bank FOAR string");
+        expect(p.vf.find("scale=618:480") == std::string::npos, "320 path no 618 FOAR");
     }
 
     // --- Always + fps prefix ---
@@ -306,8 +309,10 @@ int main() {
                        (std::string("aspect preserved (decrease) for ") + c.name).c_str());
                 expect(p.vf.find("pad=624:480") != std::string::npos,
                        (std::string("pad to coded bank for ") + c.name).c_str());
-                expect(p.vf.find("scale=618:480") != std::string::npos,
-                       (std::string("scale into display box for ") + c.name).c_str());
+                expect(p.vf.find("scale=624:480") != std::string::npos,
+                       (std::string("scale into coded box for ") + c.name).c_str());
+                expect(p.vf.find("scale=618:480") == std::string::npos,
+                       (std::string("no FOAR into display 618 for ") + c.name).c_str());
             }
             expect(yuv420pFrameBytesWH(coded_w, coded_h) == codedBytes,
                    "output byte contract is coded bank");
@@ -442,12 +447,13 @@ int main() {
         expect(pv.vf.empty() || pv.vf.rfind("fps=", 0) == 0, "GREEN verified empty/fps");
         r.delivery_geometry_verified = false;
 
-        // 4) 240p tier still upscales via decrease (must not break).
+        // 4) 240p tier still upscales via decrease into CODED (not display 618).
         r.source_w = 320;
         r.source_h = 240;
         const auto p240 = buildFfmpegVideoFilter(r);
         expect(p240.scale_applied && !p240.identity_skip, "240p still scales");
-        expect(p240.vf.find("scale=618:480") != std::string::npos, "240p scale into display");
+        expect(p240.vf.find("scale=624:480") != std::string::npos, "240p scale into coded");
+        expect(p240.vf.find("scale=618:480") == std::string::npos, "240p must not FOAR 618");
         expect(p240.vf.find("force_original_aspect_ratio=decrease") != std::string::npos,
                "240p keeps decrease");
         expect(!vfPreservesBankHeightSource(p240.vf),
@@ -528,14 +534,25 @@ int main() {
         rv.source_h = 350;
         const auto pv = buildFfmpegVideoFilter(rv);
         expect(pv.scale_applied && !pv.identity_skip, "V-mismatch 624x350 scales");
-        expect(pv.vf.find("scale=618:480") != std::string::npos, "V-mismatch scales into display");
+        expect(pv.vf.find("scale=624:480") != std::string::npos, "V-mismatch FOAR into coded");
+        expect(pv.vf.find("scale=618:480") == std::string::npos, "V-mismatch no 618 FOAR");
         // 426x240 (parent measured PMS tier): must scale.
         rv.source_w = 426;
         rv.source_h = 240;
         const auto p426 = buildFfmpegVideoFilter(rv);
         expect(p426.scale_applied && !p426.identity_skip, "426x240 scales under force");
         expect(p426.vf.find("pad=624:480") != std::string::npos, "426x240 pads coded");
-        std::printf("GREEN_WIDTH_MISMATCH w640=hfit w720=hfit v350=scale d426=scale\n");
+        expect(p426.vf.find("scale=618:480") == std::string::npos, "426 no 618 FOAR");
+        // Parent FOAR loss arithmetic: 16:9 into 618 vs 624.
+        expect(predictFoarDecreaseHeight(624, 350, 618, 480) > 0, "foar pred");
+        expect(scaleDecreaseOutHeight(624, 480, 618, 480) == 475, "4:3 into 618 → 475");
+        expect(scaleDecreaseOutHeight(624, 480, 624, 480) == 480, "4:3 into 624 → 480 keep");
+        // 16:9 square-pixel into coded: ~350 rows (letterbox class).
+        expect(scaleDecreaseOutHeight(1920, 1080, 624, 480) == 351 ||
+                   scaleDecreaseOutHeight(1920, 1080, 624, 480) == 350,
+               "16:9 1080p into 624 → ~350");
+        std::printf("GREEN_WIDTH_MISMATCH w640=hfit w720=hfit v350=scale d426=scale "
+                    "foar_coded_not_618=1\n");
     }
 
     if (g_fails) {

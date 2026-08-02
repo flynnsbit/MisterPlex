@@ -11,10 +11,10 @@ OUT="$ROOT/build/force_scale_sws_cost"
 mkdir -p "$OUT"
 FFMPEG="${FFMPEG:-ffmpeg}"
 NFRAMES=120
-# 320x240 product path still decrease-scales into display then pads coded.
-PRODUCT_VF_320='scale=618:480:force_original_aspect_ratio=decrease,pad=624:480:0+(618-iw)/2:0+(480-ih)/2:color=black'
-PRODUCT_VF_320_FB='scale=618:480:flags=fast_bilinear:force_original_aspect_ratio=decrease,pad=624:480:0+(618-iw)/2:0+(480-ih)/2:color=black'
-# Exact 624x480: crop+pad only (no vertical resample via decrease into 618).
+# 320x240 product path: FOAR into CODED 624 (not display 618), then center pad.
+PRODUCT_VF_320='scale=624:480:force_original_aspect_ratio=decrease,pad=624:480:(ow-iw)/2:(oh-ih)/2'
+PRODUCT_VF_320_FB='scale=624:480:flags=fast_bilinear:force_original_aspect_ratio=decrease,pad=624:480:(ow-iw)/2:(oh-ih)/2'
+# Exact 624x480: crop+pad only (no FOAR; display crop_right=6 at present).
 PRODUCT_VF_624='crop=618:480:0:0,pad=624:480:0+(618-iw)/2:0+(480-ih)/2:color=black'
 PRODUCT_VF_624_FB="$PRODUCT_VF_624"
 FB=449280

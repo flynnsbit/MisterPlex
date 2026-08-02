@@ -145,27 +145,17 @@ inline bool vfPreservesBankHeightSource(const std::string& vf) {
 }
 
 // Canonical product scale+pad strings — freeze tests pin these shapes.
-// 480p crop path (upscale / non-bank source): scale into display geometry then
-// pad once into coded stride, centering inside the display window (crop_left/top
-// is the display origin inside the coded bank — NOT a left-align of content).
+// LEGACY: FOAR-decrease into the *display* box (product 618x480) then pad to
+// coded 624x480. Kept for unit mutation/red tests and historical string pins.
 //
-// 480p exact-coded source (source WxH == coded WxH): MUST NOT scale into the
-// narrower display box with force_original_aspect_ratio=decrease — that applies
-// min(display_w/src_w, display_h/src_h) to BOTH axes and turns a pure 6-px
-// horizontal crop into a ~1% vertical resample (624x480 → ~618x475 → pad).
-// Under Always/FORCE_SCALE: unverified exact → crop+pad pin (product hot path);
-// verified exact → true identity. SkipIdentity+unverified → crop+pad. Non-exact
-// bank-height (e.g. 640x480) uses buildCropPadNoScale (hfit).
+// PRODUCT MUST NOT use this for the non-exact Always path anymore (see
+// buildFfmpegVideoFilter): FOAR into 618 applies min(sx,sy) and destroys rows —
+// parent 2026-08-02: PMS delivers 624x480 for rk6 AND rk36; our vf
+// scale=618:480:FOAR=decrease is what produces ~350 real rows for 16:9 DAR
+// (and ~464 for 4:3). Display crop_right=6 belongs at present/RTL
+// (clearYuv420pCropPadding), not as a swscale target.
 //
-// Square path: scale into coded geometry with centred pad.
-//
-// Prior pad=<coded>:<crop_left>:<crop_top> left/top-aligned the scaled picture
-// at the crop origin. For any source that does not fill the display box that
-// put the entire pillar/letter box on the right/bottom and shoved content into
-// the top-left — wrong vs force_original_aspect_ratio=decrease + pad intent,
-// and it disagreed with packYuv420pCenteredIntoCodedBank (constant center).
-// FFmpeg expressions keep the margin constant per frame (iw/ih are filter-graph
-// constants for a given frame, not recomputed per scanline).
+// 480p exact-coded source: crop+pad only (buildCropPadNoScale) — never FOAR.
 inline std::string buildScalePadCropped(int display_w, int display_h, int coded_w, int coded_h,
                                         int crop_left, int crop_top,
                                         const std::string& sws_flags) {
@@ -173,8 +163,6 @@ inline std::string buildScalePadCropped(int display_w, int display_h, int coded_
         std::to_string(display_w) + ":" + std::to_string(display_h);
     const std::string scale = std::to_string(coded_w) + ":" + std::to_string(coded_h);
     // pad x = crop_left + (display_w - iw)/2 ; y = crop_top + (display_h - ih)/2
-    // so a full-bleed decrease into display_w lands at x=crop_left (product
-    // crop_left=0 → x=0), and a narrower frame is pillarboxed inside display.
     const std::string padX = std::to_string(crop_left) + "+(" + std::to_string(display_w) +
                              "-iw)/2";
     const std::string padY = std::to_string(crop_top) + "+(" + std::to_string(display_h) +
@@ -443,13 +431,40 @@ inline FfmpegVfPlan buildFfmpegVideoFilter(const FfmpegVfRequest& req) {
         return finish(false, false, "crop_pad_no_v_scale_hfit");
     }
 
+    // Non-exact / unknown source that needs resample: FOAR into the CODED bank
+    // (624x480), never into display 618. Parent miss correction: PMS rk6/rk36
+    // both emit scale=w=624:h=480; the 350-row loss was OUR
+    // scale=618:480:FOAR=decrease. 618 is kPlex480pDisplayWidth (crop_right=6)
+    // — deliberate for RTL/present crop, not an FOAR target.
+    //
+    // 16:9 DAR still letterboxes inside 624x480 (~350 rows) when FOAR runs —
+    // that is the honest aspect tradeoff when source is not bank-exact. Bank-
+    // exact 624x480 takes crop_pad above and keeps all 480 rows (anamorphic
+    // SAR is a present/display concern, not a reason to destroy samples here).
     if (hasCrop) {
-        append(buildScalePadCropped(dispW, dispH, req.coded_w, req.coded_h, req.crop_left,
-                                    req.crop_top, flags));
-        return finish(true, false, flags.empty() ? "scale_pad_crop" : "scale_pad_crop_flags");
+        append(buildScalePadCentered(req.coded_w, req.coded_h, flags));
+        return finish(true, false,
+                      flags.empty() ? "scale_pad_center_coded" : "scale_pad_center_coded_flags");
     }
     append(buildScalePadCentered(req.coded_w, req.coded_h, flags));
     return finish(true, false, flags.empty() ? "scale_pad_center" : "scale_pad_center_flags");
+}
+
+// Predict FOAR-decrease output height into a box (storage aspect, SAR=1).
+// For 16:9 content into 624x480 → 350; into 618x480 → 348. Used for
+// FILTER_CHAIN_LOSS telemetry (not a desync model).
+inline int predictFoarDecreaseHeight(int src_w, int src_h, int box_w, int box_h) {
+    return scaleDecreaseOutHeight(src_w, src_h, box_w, box_h);
+}
+
+// Vertical detail retained if FOAR-decrease fits src into box then pad to bank_h.
+inline double foarVerticalDetailFrac(int src_w, int src_h, int box_w, int box_h, int bank_h) {
+    if (bank_h <= 0)
+        return 0.0;
+    const int out_h = predictFoarDecreaseHeight(src_w, src_h, box_w, box_h);
+    if (out_h <= 0)
+        return 0.0;
+    return static_cast<double>(out_h) / static_cast<double>(bank_h);
 }
 
 } // namespace misterplex

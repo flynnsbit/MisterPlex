@@ -48,6 +48,14 @@ check B5_delivery_mismatch_final "$MP" 'DELIVERY_MISMATCH_FINAL'
 check B5_phase_offset_field "$MP" 'phase_offset='
 check B5_rawPipePhaseOffset_call "$MP" 'rawPipePhaseOffset('
 check B5_play_request_freeze "$MP" 'playRequestW_'
+# Filter-chain loss (parent miss: FOAR into 618 is ours, not PMS).
+check B5_filter_chain_loss "$MP" 'FILTER_CHAIN_LOSS'
+check B5_filter_chain_loss_final "$MP" 'FILTER_CHAIN_LOSS_FINAL'
+check B5_filter_vertical_detail "$MP" 'filter_vertical_detail_frac='
+check B5_foar_into_618_defect "$MP" 'foar_into_618='
+VF="$ROOT/host/libmisterplex/ffmpeg_vf.hpp"
+check VF_scale_pad_center_coded "$VF" 'scale_pad_center_coded'
+check VF_no_product_foar_618 "$VF" 'never into display 618'
 # Pump compares measured to DDR coded bank args, not DECODE tier alone.
 check B5_pump_takes_coded_wh "$MP" 'int codedW, int codedH'
 # GEOM predicts square-pixel fit from SAR/DAR (ceiling, not exact).

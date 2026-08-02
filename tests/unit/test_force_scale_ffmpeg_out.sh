@@ -18,9 +18,10 @@ CODED_H=480
 DISP_W=618
 DISP_H=480
 # Product silicon paths (media_player + ffmpeg_vf.hpp):
-#   non-bank-height / narrow: buildScalePadCropped (FOAR decrease into display)
+#   non-bank-height / narrow: FOAR decrease into CODED bank (never display 618)
 #   bank-height wide or exact-unverified: buildCropPadNoScale (no FOAR V-resample)
-PRODUCT_VF="scale=${DISP_W}:${DISP_H}:force_original_aspect_ratio=decrease,pad=${CODED_W}:${CODED_H}:0+(${DISP_W}-iw)/2:0+(${DISP_H}-ih)/2:color=black"
+# Parent 2026-08-02: scale=618:480:FOAR was the measured row-destroyer on rk6.
+PRODUCT_VF="scale=${CODED_W}:${CODED_H}:force_original_aspect_ratio=decrease,pad=${CODED_W}:${CODED_H}:(ow-iw)/2:(oh-ih)/2"
 # Center-crop when source_w > coded (640/720); left crop when source_w == coded.
 CROP_PAD_EXACT="crop=${DISP_W}:${DISP_H}:0:0,pad=${CODED_W}:${CODED_H}:0+(${DISP_W}-iw)/2:0+(${DISP_H}-ih)/2:color=black"
 CROP_PAD_HFIT="crop=${DISP_W}:${DISP_H}:(iw-${DISP_W})/2:0,pad=${CODED_W}:${CODED_H}:0+(${DISP_W}-iw)/2:0+(${DISP_H}-ih)/2:color=black"
