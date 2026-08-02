@@ -108,6 +108,7 @@ unit-unlocked: unit-rollcall preflight $(ROOT)/build/test_cadence $(ROOT)/build/
 	$(ROOT)/build/test_force_scale_construction
 	bash $(ROOT)/tests/unit/test_force_scale_ffmpeg_out.sh
 	bash $(ROOT)/tests/unit/test_force_scale_sws_cost.sh
+	bash $(ROOT)/tests/unit/test_fabric_scaler_delta.sh
 	bash $(ROOT)/tests/unit/test_b2_b5_source_wiring.sh
 	$(ROOT)/build/test_yuv420p_chroma_480p
 	$(ROOT)/build/test_geom_frame_cost
