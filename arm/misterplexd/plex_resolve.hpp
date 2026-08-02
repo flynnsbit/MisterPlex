@@ -33,12 +33,11 @@ struct ResolveResult {
     int mediaWidth = 0;
     int mediaHeight = 0;
     // Library video Stream@bitrate (kbps) when present, else Media@bitrate (0=unknown).
-    // Used to anti-inflate maxVideoBitrate on the universal ladder (parent: 2000
-    // request → PMS -maxrate ~1527k on a 397k source → pointless re-encode).
+    // Diagnostic only — must NOT cap maxVideoBitrate (parent: 397 cap → 312x240).
     int sourceVideoBitrateKbps = 0;
-    // maxVideoBitrate actually placed on the universal URL (after source clamp).
+    // maxVideoBitrate actually placed on the universal URL (after res-preserve).
     int requestedMaxVideoBitrateKbps = 0;
-    bool bitrateClampedToSource = false;
+    bool bitrateRaisedToResPreserve = false;
 };
 
 struct QueueItem {
@@ -114,8 +113,8 @@ struct WeakLadder {
     // Phase 4: ask PMS to burn subtitles into the universal ladder when set.
     bool burnSubtitles = false;
     int subtitleStreamId = -1; // -1 = PMS default / first
-    // True when maxVideoBitrateKbps came from explicit WEAK_BITRATE (operator wins;
-    // source anti-inflate does not override).
+    // True when maxVideoBitrateKbps came from explicit WEAK_BITRATE (operator may
+    // go below the resolution-preserving floor for lab knee sweeps).
     bool bitrateOperatorOverride = false;
 };
 
@@ -131,33 +130,41 @@ bool weakLadderBitrateBelowRecommended(const WeakLadder& weak, std::string* deta
 
 // Principled maxVideoBitrate selection for the PMS request.
 // Priority:
-//   1. Explicit WEAK_BITRATE (operator; not auto-clamped by source/link)
-//   2. Else min(tier_default, LINK_CAP_KBIT?, source_video_kbps?)
-// sourceVideoKbps=0 means unknown (no source clamp at this stage; resolve may
-// still clamp once metadata arrives). LINK_CAP_KBIT=0 means unset.
-// Never invents a lab constant; source clamp is min(request, source) only.
+//   1. Explicit WEAK_BITRATE (operator absolute; may go below res-preserve floor for lab)
+//   2. Else start from tier_default, optional LINK_CAP_KBIT upper clamp, then
+//      RAISE to resolutionPreservingMinBitrateKbps(targetW,targetH) if needed.
+//
+// Parent HW 2026-08-02: source-bitrate CAP is FALSIFIED — request 397 on a
+// 624x480 target made PMS deliver 312x240. Resolution-preserving floor is
+// required. sourceVideoKbps is logged only (not a cap).
 struct BitrateSelection {
     int kbps = 0;
-    const char* source = "unset"; // WEAK_BITRATE | tier_default | min(...)
+    const char* source = "unset"; // WEAK_BITRATE | tier_default | min(...) | res_preserve_floor
     int tierDefaultKbps = 0;
     int linkCapKbit = 0;
-    int sourceVideoKbps = 0;
+    int sourceVideoKbps = 0; // diagnostic only
+    int targetW = 0;
+    int targetH = 0;
+    int resPreserveFloorKbps = 0;
     bool weakBitrateExplicit = false;
     bool clampedByLinkCap = false;
-    bool clampedBySource = false;
+    bool raisedToResPreserve = false;
 };
 BitrateSelection selectMaxVideoBitrateKbps(int tierDefaultKbps,
                                            bool weakBitrateExplicit,
                                            int weakBitrateKbps,
                                            int linkCapKbit,
-                                           int sourceVideoKbps = 0);
+                                           int sourceVideoKbps = 0,
+                                           int targetW = 0,
+                                           int targetH = 0);
 
-// Cap a non-operator maxVideoBitrate at the library video bitrate (kbps).
-// Identity: returns requested when source unknown, operator override, or source >= requested.
-int sourceRelativeMaxVideoBitrateKbps(int requestedKbps, int sourceVideoKbps,
-                                      bool operatorOverride);
+// Minimum maxVideoBitrate so PMS MDE keeps delivered resolution at target WxH.
+// floor = ceil(W*H * refKbps / (refW*refH)); ref calibrated by parent knee sweep.
+// See kPlexResPreserveRef* in osd_menu.hpp. NOT a source-bitrate cap.
+int resolutionPreservingMinBitrateKbps(int targetW, int targetH);
 
 // Plex metadata: video Stream@bitrate (kbps) preferred, else Media@bitrate. 0 = unknown.
+// Logging / diagnostics only — must not cap the PMS request (parent falsified that).
 int parseSourceVideoBitrateKbps(const std::string& plexMetadataXml);
 
 std::string plexClientProfileExtra(const WeakLadder& weak);

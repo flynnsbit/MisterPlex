@@ -92,7 +92,8 @@ misterplex::WeakLadder weakForContentResolution(const misterplex::WeakLadder& ba
     const int tierDefault = weak.maxVideoBitrateKbps;
     const auto sel = misterplex::selectMaxVideoBitrateKbps(
         tierDefault, bitrateExplicit,
-        bitrateExplicit ? operatorBitrate : tierDefault, linkCapKbit);
+        bitrateExplicit ? operatorBitrate : tierDefault, linkCapKbit,
+        /*sourceVideoKbps=*/0, res.width.get(), res.height.get());
     weak.maxVideoBitrateKbps = sel.kbps;
     weak.bitrateOperatorOverride = bitrateExplicit;
     weak.burnSubtitles = base.burnSubtitles;
@@ -476,13 +477,19 @@ int main(int argc, char** argv) {
         const int tierDefault = weakBitrateExplicit
                                     ? misterplex::recommendedMinVideoBitrateKbps(weak)
                                     : tierOrOperator;
+        int tw = 0, th = 0;
+        std::sscanf(weak.videoResolution.c_str(), "%dx%d", &tw, &th);
         const auto sel = misterplex::selectMaxVideoBitrateKbps(
-            tierDefault, weakBitrateExplicit, tierOrOperator, linkCapKbit);
+            tierDefault, weakBitrateExplicit, tierOrOperator, linkCapKbit,
+            /*sourceVideoKbps=*/0, tw, th);
         weak.maxVideoBitrateKbps = sel.kbps;
+        weak.bitrateOperatorOverride = weakBitrateExplicit;
         std::fprintf(stderr,
                      "misterplexd: BITRATE_SELECT kbps=%d source=%s tier_default=%d "
-                     "LINK_CAP_KBIT=%d WEAK_BITRATE_explicit=%d clamped=%d\n",
+                     "LINK_CAP_KBIT=%d res_floor=%d raised_res=%d "
+                     "WEAK_BITRATE_explicit=%d clamped=%d\n",
                      sel.kbps, sel.source, sel.tierDefaultKbps, sel.linkCapKbit,
+                     sel.resPreserveFloorKbps, sel.raisedToResPreserve ? 1 : 0,
                      sel.weakBitrateExplicit ? 1 : 0, sel.clampedByLinkCap ? 1 : 0);
         std::string brAdv;
         if (misterplex::weakLadderBitrateBelowRecommended(weak, &brAdv)) {
@@ -844,17 +851,16 @@ int main(int argc, char** argv) {
             return;
         }
 
-        // Source-relative clamp is applied inside resolve once metadata is known.
-        // Log final request so parent can match PMS -maxrate without guessing.
-        if (resolved.sourceVideoBitrateKbps > 0 || resolved.bitrateClampedToSource ||
+        // Final request after resolve (res-preserve floor; source kbps is diagnostic).
+        if (resolved.sourceVideoBitrateKbps > 0 || resolved.bitrateRaisedToResPreserve ||
             resolved.requestedMaxVideoBitrateKbps > 0) {
             std::fprintf(stderr,
                          "misterplexd: bitrate_final requested_max=%d source_video_kbps=%d "
-                         "clamped_to_source=%d tier_request=%d operator_override=%d "
+                         "raised_res_preserve=%d tier_request=%d operator_override=%d "
                          "transcoded=%d detail=%s\n",
                          resolved.requestedMaxVideoBitrateKbps,
                          resolved.sourceVideoBitrateKbps,
-                         resolved.bitrateClampedToSource ? 1 : 0,
+                         resolved.bitrateRaisedToResPreserve ? 1 : 0,
                          weakForPlay.maxVideoBitrateKbps,
                          weakForPlay.bitrateOperatorOverride ? 1 : 0,
                          resolved.transcoded ? 1 : 0,

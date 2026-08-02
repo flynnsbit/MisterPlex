@@ -348,12 +348,10 @@ int recommendedMinVideoBitrateKbps(const WeakLadder& weak) {
     int w = 0, h = 0;
     if (!parseResolution(weak.videoResolution, w, h))
         return 0;
-    // Tier *defaults* from osd_menu.hpp — quality preference, not H.264 contracts.
-    // 480p default = kPlex480pWeakBitrateKbps (2000). Used only for advisory WARN
-    // and as the pre-cap tier request, never as a hard validate fail.
-    if (w >= kPlex480pCodedWidth.get() || h >= kPlex480pCodedHeight.get())
-        return kPlex480pWeakBitrateKbps;
-    // Legacy 240p soft floor was 750 below the 1000 default.
+    // Advisory floor tracks resolution-preserving policy (same formula as select).
+    const int resFloor = resolutionPreservingMinBitrateKbps(w, h);
+    if (resFloor > 0)
+        return resFloor;
     return 750;
 }
 
@@ -372,12 +370,17 @@ bool weakLadderBitrateBelowRecommended(const WeakLadder& weak, std::string* deta
     return true;
 }
 
-int sourceRelativeMaxVideoBitrateKbps(int requestedKbps, int sourceVideoKbps,
-                                      bool operatorOverride) {
-    if (operatorOverride || sourceVideoKbps <= 0 || requestedKbps <= 0)
-        return requestedKbps;
-    // Anti-inflate only: never raise above the tier/operator request.
-    return requestedKbps < sourceVideoKbps ? requestedKbps : sourceVideoKbps;
+int resolutionPreservingMinBitrateKbps(int targetW, int targetH) {
+    if (targetW <= 0 || targetH <= 0)
+        return 0;
+    // ceil(W*H * refKbps / (refW*refH)) — scales the calibrated knee with pixels.
+    const int64_t num = static_cast<int64_t>(targetW) * static_cast<int64_t>(targetH) *
+                        static_cast<int64_t>(kPlexResPreserveRefKbps);
+    const int64_t den = static_cast<int64_t>(kPlexResPreserveRefWidth) *
+                        static_cast<int64_t>(kPlexResPreserveRefHeight);
+    if (den <= 0)
+        return 0;
+    return static_cast<int>((num + den - 1) / den);
 }
 
 int parseSourceVideoBitrateKbps(const std::string& plexMetadataXml) {
@@ -416,18 +419,23 @@ BitrateSelection selectMaxVideoBitrateKbps(int tierDefaultKbps,
                                            bool weakBitrateExplicit,
                                            int weakBitrateKbps,
                                            int linkCapKbit,
-                                           int sourceVideoKbps) {
+                                           int sourceVideoKbps,
+                                           int targetW,
+                                           int targetH) {
     BitrateSelection out;
     out.tierDefaultKbps = tierDefaultKbps > 0 ? tierDefaultKbps : 0;
     out.linkCapKbit = linkCapKbit > 0 ? linkCapKbit : 0;
     out.sourceVideoKbps = sourceVideoKbps > 0 ? sourceVideoKbps : 0;
+    out.targetW = targetW > 0 ? targetW : 0;
+    out.targetH = targetH > 0 ? targetH : 0;
+    out.resPreserveFloorKbps = resolutionPreservingMinBitrateKbps(out.targetW, out.targetH);
     out.weakBitrateExplicit = weakBitrateExplicit;
 
     // Priority:
-    //  1. Explicit WEAK_BITRATE — operator override (not auto-clamped).
-    //  2. Else min(tier_default, LINK_CAP_KBIT?, source_video_kbps?).
-    // Source clamp is anti-inflate only (parent: 2000 floor → 3.85× re-encode of
-    // a 397k stream). No new magic floor; unknown source leaves tier alone.
+    //  1. Explicit WEAK_BITRATE — operator absolute (lab knee sweep may go below floor).
+    //  2. Else tier_default, optional LINK_CAP upper clamp, then RAISE to
+    //     resolution-preserving floor for target WxH.
+    // Parent HW: source-bitrate CAP FALSIFIED (397 → 312x240 on 624x480 target).
     if (weakBitrateExplicit && weakBitrateKbps > 0) {
         out.kbps = weakBitrateKbps;
         out.source = "WEAK_BITRATE";
@@ -440,26 +448,25 @@ BitrateSelection selectMaxVideoBitrateKbps(int tierDefaultKbps,
     if (base <= 0)
         base = 1;
     bool usedLink = false;
-    bool usedSource = false;
     if (out.linkCapKbit > 0 && base > out.linkCapKbit) {
         base = out.linkCapKbit;
         usedLink = true;
         out.clampedByLinkCap = true;
     }
-    const int afterSource =
-        sourceRelativeMaxVideoBitrateKbps(base, out.sourceVideoKbps, /*operatorOverride=*/false);
-    if (afterSource < base) {
-        base = afterSource;
-        usedSource = true;
-        out.clampedBySource = true;
+    // Resolution-preserving floor wins over LINK_CAP when they conflict: a
+    // full-res stream on a tight link is preferable to a silent half-res deliver.
+    // e6a3fb2f source-bitrate CAP removed (parent: 397 → delivered 312x240).
+    if (out.resPreserveFloorKbps > 0 && base < out.resPreserveFloorKbps) {
+        base = out.resPreserveFloorKbps;
+        out.raisedToResPreserve = true;
     }
     out.kbps = base;
-    if (usedLink && usedSource)
-        out.source = "min(tier,LINK_CAP,source)";
+    if (out.raisedToResPreserve && usedLink)
+        out.source = "res_preserve_floor(over_LINK_CAP)";
+    else if (out.raisedToResPreserve)
+        out.source = "res_preserve_floor";
     else if (usedLink)
         out.source = "min(tier,LINK_CAP_KBIT)";
-    else if (usedSource)
-        out.source = "min(tier,source)";
     else
         out.source = out.linkCapKbit > 0 ? "tier_default(under_LINK_CAP)" : "tier_default";
     return out;
@@ -865,18 +872,16 @@ ResolveResult resolvePlayTarget(const std::string& rawKeyOrPath, const std::stri
         r.sourceVideoBitrateKbps = parseSourceVideoBitrateKbps(xml);
     }
 
-    // Anti-inflate maxVideoBitrate using library video bitrate when known.
-    // Live defect (parent-measured): tier default 2000 + hard floor → PMS
-    // -maxrate ~1527k on a 397k source (identity 624x480 scale). Cap is
-    // source-relative only — not a new magic constant.
+    // Apply resolution-preserving floor to the ladder actually put on the wire.
+    // Do NOT cap at source bitrate (e6a3fb2f FALSIFIED: 397 → half-res 312x240).
     WeakLadder weakUse = weak;
-    if (r.sourceVideoBitrateKbps > 0) {
-        const int before = weakUse.maxVideoBitrateKbps;
-        const int after = sourceRelativeMaxVideoBitrateKbps(
-            before, r.sourceVideoBitrateKbps, weakUse.bitrateOperatorOverride);
-        if (after < before) {
-            weakUse.maxVideoBitrateKbps = after;
-            r.bitrateClampedToSource = true;
+    if (!weakUse.bitrateOperatorOverride) {
+        int tw = 0, th = 0;
+        parseResolution(weakUse.videoResolution, tw, th);
+        const int floor = resolutionPreservingMinBitrateKbps(tw, th);
+        if (floor > 0 && weakUse.maxVideoBitrateKbps < floor) {
+            weakUse.maxVideoBitrateKbps = floor;
+            r.bitrateRaisedToResPreserve = true;
         }
     }
     r.requestedMaxVideoBitrateKbps = weakUse.maxVideoBitrateKbps;
@@ -954,9 +959,11 @@ ResolveResult resolvePlayTarget(const std::string& rawKeyOrPath, const std::stri
             r.httpHeaders = plexFfmpegHeaders(session, token, weakUse);
             r.detail = "PMS universal " + weakUse.profileName + " " + weakUse.videoResolution +
                        " br=" + std::to_string(weakUse.maxVideoBitrateKbps) + " " + key;
-            if (r.bitrateClampedToSource) {
-                r.detail += " (maxVideoBitrate clamped to source_video_kbps=" +
-                            std::to_string(r.sourceVideoBitrateKbps) + ")";
+            if (r.bitrateRaisedToResPreserve) {
+                r.detail += " (maxVideoBitrate raised to res_preserve_floor)";
+            }
+            if (r.sourceVideoBitrateKbps > 0) {
+                r.detail += " source_video_kbps=" + std::to_string(r.sourceVideoBitrateKbps);
             }
             // STREAM preferDirect fallthrough: operator can see why recon may hit CABAC.
             if (preferDirectH264) {

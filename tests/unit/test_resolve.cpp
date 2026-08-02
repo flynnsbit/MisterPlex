@@ -195,26 +195,34 @@ int main() {
         CHECK(s3.kbps == 1500); // operator above cap — warn path, not clamp
         CHECK(s3.clampedByLinkCap);
 
-        // Source anti-inflate (parent rk36: 397k video, tier 2000 → request 397).
-        CHECK(sourceRelativeMaxVideoBitrateKbps(2000, 397, false) == 397);
-        CHECK(sourceRelativeMaxVideoBitrateKbps(2000, 397, true) == 2000); // operator wins
-        CHECK(sourceRelativeMaxVideoBitrateKbps(2000, 0, false) == 2000);  // unknown source
-        CHECK(sourceRelativeMaxVideoBitrateKbps(900, 397, false) == 397);
-        CHECK(sourceRelativeMaxVideoBitrateKbps(300, 397, false) == 300); // already under source
-        auto s4 = selectMaxVideoBitrateKbps(2000, false, 2000, 0, 397);
-        CHECK(s4.kbps == 397);
-        CHECK(s4.clampedBySource);
-        CHECK(std::string(s4.source).find("source") != std::string::npos);
-        auto s5 = selectMaxVideoBitrateKbps(2000, false, 2000, 1150, 397);
-        CHECK(s5.kbps == 397); // source tighter than LINK_CAP
-        CHECK(s5.clampedBySource);
-        auto s6 = selectMaxVideoBitrateKbps(2000, false, 2000, 0, 5000);
-        CHECK(s6.kbps == 2000); // source above tier — tier remains the cap
-        CHECK(!s6.clampedBySource);
-        auto s7 = selectMaxVideoBitrateKbps(2000, true, 1500, 0, 397);
-        CHECK(s7.kbps == 1500); // WEAK_BITRATE not source-clamped
+        // RED-before-GREEN gate (parent HW 2026-08-02):
+        // maxVideoBitrate=397 on 624x480 target → PMS delivered 312x240 (HALF).
+        // maxVideoBitrate=2000 → 624x480. Source bitrate is NOT a safe cap.
+        // Auto select for 624x480 decode target must never request below the
+        // resolution-preserving floor (provisional = ref knee @ 624x480).
+        {
+            const int tw = kPlex480pCodedWidth.get();
+            const int th = kPlex480pCodedHeight.get();
+            CHECK(tw == 624);
+            CHECK(th == 480);
+            const int floor = resolutionPreservingMinBitrateKbps(tw, th);
+            CHECK(floor > 397); // must exceed the falsified source-cap value
+            // Simulate e6a3fb2f defect path: tier 2000 + known source 397.
+            auto bad = selectMaxVideoBitrateKbps(2000, false, 2000, 0, 397, tw, th);
+            CHECK(bad.kbps >= floor);
+            CHECK(bad.kbps != 397); // must NOT anti-inflate to source
+            // Even LINK_CAP below floor must not win over resolution preserve.
+            auto vsLink = selectMaxVideoBitrateKbps(2000, false, 2000, 1150, 397, tw, th);
+            CHECK(vsLink.kbps >= floor);
+            // Operator WEAK_BITRATE may still force below floor (knee sweep / lab).
+            auto op = selectMaxVideoBitrateKbps(2000, true, 397, 0, 397, tw, th);
+            CHECK(op.kbps == 397);
+            CHECK(std::string(op.source) == "WEAK_BITRATE");
+            std::printf("PASS resolution-preserving bitrate floor @ %dx%d floor=%d\n", tw, th,
+                        floor);
+        }
 
-        // Metadata parse: video Stream bitrate preferred over Media.
+        // Metadata parse retained for logging only (not a request cap).
         const char* meta =
             "<MediaContainer><Video><Media bitrate=\"450\" width=\"624\" height=\"480\" "
             "videoCodec=\"h264\">"
@@ -225,7 +233,7 @@ int main() {
         CHECK(parseSourceVideoBitrateKbps(meta) == 397);
         CHECK(parseSourceVideoBitrateKbps("") == 0);
         CHECK(parseSourceVideoBitrateKbps("<Media bitrate=\"450\"/>") == 450);
-        std::printf("PASS bitrate select: advisory floor + LINK_CAP + source anti-inflate\n");
+        std::printf("PASS bitrate select: LINK_CAP + resolution-preserving floor\n");
     }
 
     // --- Phase 4 multi-server conf helpers (no network) ---

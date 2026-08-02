@@ -53,15 +53,18 @@ namespace misterplex {
 constexpr int kOsdAvOffsetSteps = 16;
 constexpr int kOsdAvOffsetStepMs = 20;
 // Tier *default request* bitrates for PMS maxVideoBitrate= (quality preference).
-// NOT decoder contracts and NOT hard floors. Explicit WEAK_BITRATE wins; optional
-// LINK_CAP_KBIT and library source_video_kbps clamp the non-explicit path
-// (see selectMaxVideoBitrateKbps / sourceRelativeMaxVideoBitrateKbps).
-// 2000 originated as the 480p ladder default (commit 216703b used 2500 with a
-// validate floor of 2000); later comment claimed "ARM margin until higher proven"
-// but W-FEED measured margin at ~1412 kb/s — the constant is a quality default,
-// not a measured link or decode floor. Parent encoder evidence: requesting 2000
-// against a 397k source yields PMS -maxrate ~1527k (pointless re-encode).
-// Product anti-inflate: min(tier, source_video_kbps) when source known.
+// NOT H.264 decoder contracts. Explicit WEAK_BITRATE wins (lab may go lower).
+//
+// RESOLUTION-PRESERVING floor (see resolutionPreservingMinBitrateKbps):
+//   floor(W,H) = ceil(W*H * kPlexResPreserveRefKbps / (refW*refH))
+// Parent HW 2026-08-02 A/B: request 397 → delivered 312x240; request 2000 →
+// 624x480. Source bitrate is NOT a safe cap (e6a3fb2f FALSIFIED).
+// kPlexResPreserveRefKbps is the calibrated knee at ref geometry — PROVISIONAL
+// 2000 until parent knee sweep (397/600/800/1200/2000) publishes the lowest
+// request that still yields 624x480; then lower the ref kbps to that knee.
+constexpr int kPlexResPreserveRefWidth = 624;
+constexpr int kPlexResPreserveRefHeight = 480;
+constexpr int kPlexResPreserveRefKbps = 2000; // update from parent knee sweep
 constexpr int kPlex240pWeakBitrateKbps = 1000;
 constexpr int kPlex360pWeakBitrateKbps = 1500;
 constexpr int kPlex480pWeakBitrateKbps = 2000;
