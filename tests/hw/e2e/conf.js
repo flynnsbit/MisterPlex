@@ -395,7 +395,8 @@ function loadConfig() {
     castName: process.env.CAST_TARGET_NAME || 'MiSTerPlex',
     playerId: process.env.CAST_PLAYER_ID || 'misterplex-dev',
     webUser: process.env.PLEX_WEB_USER || conf.PLEX_WEB_USER || '',
-    misterHost: process.env.MISTER_HOST || conf.MISTER_HOST || '192.168.1.183',
+    // No lab-IP default (test_no_private_data). Caller/env or conf file only.
+    misterHost: process.env.MISTER_HOST || conf.MISTER_HOST || '',
     misterPort: parseInt(process.env.MISTER_PORT || conf.MISTER_PORT || '3005', 10),
     headless: process.env.PW_HEADED !== '1',
     timeoutMs: parseInt(process.env.PW_TIMEOUT_MS || '45000', 10),

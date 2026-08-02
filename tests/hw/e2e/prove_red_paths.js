@@ -22,10 +22,17 @@
 const http = require('http');
 const https = require('https');
 
-const EXIT_PASS = 0;
-const EXIT_FAIL = 1;
-const EXIT_UNVERIFIED = 2; // suite convention — never green
-const EXIT_SKIP = 77; // never green
+const {
+  EXIT_PASS,
+  EXIT_FAIL,
+  EXIT_INSUFFICIENT_EVIDENCE,
+  EXIT_SESSION_INVALID,
+  EXIT_SKIP,
+  RESULT_INSUFFICIENT_EVIDENCE,
+  selfCheck: evidenceSelfCheck,
+} = require('./evidence_codes');
+/** @deprecated name — value is 78 */
+const EXIT_UNVERIFIED = EXIT_INSUFFICIENT_EVIDENCE;
 
 function log(...a) {
   console.log(...a);
@@ -72,11 +79,12 @@ function classifyPmsWeb(status) {
   if (status >= 200 && status < 400) {
     return { ok: true, reason: 'pms_ok', exitCode: EXIT_PASS };
   }
-  // Configured base but unreachable/unusable → UNVERIFIED (not PASS, not soft-skip green)
+  // Configured base but unreachable → INSUFFICIENT_EVIDENCE rc=78 (w-avsync)
   return {
     ok: false,
     reason: 'PMS_UNREACHABLE',
-    exitCode: EXIT_UNVERIFIED,
+    exitCode: EXIT_INSUFFICIENT_EVIDENCE,
+    result: RESULT_INSUFFICIENT_EVIDENCE,
     detail: `HTTP ${status}`,
   };
 }
@@ -85,9 +93,12 @@ async function main() {
   log('prove_red_paths: BEGIN');
   log('PRE_REGISTER:');
   log('  P1 wrong daemon port → daemon_unreachable class, exit would be FAIL(1) not PASS');
-  log('  P2 bogus PMS host → PMS_UNREACHABLE class, exit would be UNVERIFIED(2) not PASS');
-  log('  P3 missing deps class remains SKIP(77) — never scored as pass');
-  log(`  P4 EXIT_UNVERIFIED=${EXIT_UNVERIFIED} EXIT_SKIP=${EXIT_SKIP} never equal EXIT_PASS=0`);
+  log('  P2 bogus PMS host → PMS_UNREACHABLE class, exit would be INSUFFICIENT_EVIDENCE(78) not PASS');
+  log('  P3 missing deps class remains SKIP(77) NO-DATA — never scored as pass');
+  log(
+    `  P4 EXIT_INSUFFICIENT=${EXIT_INSUFFICIENT_EVIDENCE} EXIT_SESSION_INVALID=${EXIT_SESSION_INVALID} ` +
+      `EXIT_SKIP=${EXIT_SKIP} never equal EXIT_PASS=0`
+  );
   log('  P5 client_truth selfCheck: play/pause/seek/rate reds + ratingKey INVALID on swap');
   log('      rate_starved(0.467)→FAIL rate_healthy(0.993)→PASS pause/seek excluded');
   log('  P8 media_health selfCheck: collapsed supply_ratio=0.72 FAIL; healthy PASS;');
@@ -95,6 +106,7 @@ async function main() {
   log('  P9 pms_control_plane: play/pause/gone reds; tc speed=0 FAIL; speed=19.8 PASS; stale FAIL');
   log('  P10 measured_delivery: 624x480/624x480→624x350 class=pms_ceiling_desync;');
   log('      expect=library FAIL; basis=library forbidden; desync_risk=1 FAIL');
+  log('  P11 evidence_codes: rc 0/1/78/79/77 disjoint; COVERAGE VERIFY_CONTROL_NOT_QUALITY');
 
   let proofsOk = 0;
   let proofsFail = 0;
@@ -153,6 +165,18 @@ async function main() {
     proofsFail++;
   }
 
+  // ── P11: evidence codes / coverage (w-avsync align) ────────────────────
+  try {
+    evidenceSelfCheck();
+    log(
+      'PROOF P11 OK evidence_codes (78 INSUFFICIENT / 79 SESSION_INVALID / control≠quality)'
+    );
+    proofsOk++;
+  } catch (e) {
+    log(`PROOF P11 FAIL evidence_codes: ${e.message || e}`);
+    proofsFail++;
+  }
+
   // ── P1: deliberately wrong companion endpoint ────────────────────────────
   const badDaemon = 'http://127.0.0.1:1/player/timeline/poll?commandID=1&wait=0';
   const d1 = await httpGet(badDaemon, 1500);
@@ -182,7 +206,7 @@ async function main() {
   if (p2hit) proofsOk++;
   else {
     proofsFail++;
-    log('PROOF_MISS P2 — wrong PMS did not classify as PMS_UNREACHABLE UNVERIFIED(2)');
+    log('PROOF_MISS P2 — wrong PMS did not classify as PMS_UNREACHABLE INSUFFICIENT_EVIDENCE(78)');
   }
 
   // ── P3: constants — 77 and 2 are never 0 ─────────────────────────────────
@@ -210,7 +234,7 @@ async function main() {
       } else {
         log(
           `PROOF P4_NOTE live PMS not reachable status=${live.status} — ` +
-            `full suite would exit UNVERIFIED(2); red-path classes still proven`
+            `full suite would exit INSUFFICIENT_EVIDENCE(78); red-path classes still proven`
         );
       }
     }
@@ -273,9 +297,11 @@ async function main() {
   if (proofsFail === 0) {
     log('CAST_PICKER_GATE_RED_PATHS=PROOF_OK');
     log(
-      'SUITE_CONTRACT: unreachable PMS → CAST_PICKER_E2E_RESULT=UNVERIFIED rc=2; ' +
+      'SUITE_CONTRACT: unreachable PMS → CAST_PICKER_E2E_RESULT=INSUFFICIENT_EVIDENCE rc=78; ' +
         'unreachable daemon when required → FAIL daemon_unreachable rc=1; ' +
-        'missing token/chromium → SKIP-NOT-PASS rc=77; none of these are PASS'
+        'mid-run rk/pid swap → SESSION_INVALID rc=79; ' +
+        'missing token/chromium → SKIP-NOT-PASS/NO-DATA rc=77; none of these are PASS. ' +
+        'PASS settles control plane only — NOT playback quality (~25% intermittent degrade).'
     );
     process.exit(EXIT_PASS);
   }

@@ -1,59 +1,51 @@
-# w-plextv — household-hardened + measured geom (HDMI-blind)
+# w-plextv — control-plane DoD (HDMI-blind, w-avsync exits)
 
-## ≤10-line status
-1. HDMI capture hard-faulted (parent) — Playwright is the working DoD half.
-2. **COMPANION_INVARIANT** names selected host + friendlyName; fails with DIAGNOSIS when sort order breaks.
-3. **N=10** transitions; one fail fails suite (`majority_pass_is_pass=0`).
-4. **GEOM_TRIPLE**: requested_pms / library_media / measured — delivery_basis=measured only.
-5. Parent class encoded: `624x480/624x480 → measured=624x350` = `pms_ceiling_desync`.
-6. expectGeom=library while measured differs → FAIL (false-pass class).
-7. TEARDOWN_OK our-controller only; user Plex tab must not fail suite.
-8. Pure proofs `true rc=0`. Agent-run E2E ≠ evidence.
+## Status
+1. HDMI capture dead — Playwright is the only automated E2E channel.
+2. **QUALITY_POLICY=VERIFY_CONTROL_NOT_QUALITY** — ~25% intermittent degrade; N=1 healthy ≠ quality.
+3. Exit codes aligned with w-avsync: **0 PASS · 1 FAIL · 78 INSUFFICIENT_EVIDENCE · 79 SESSION_INVALID · 77 NO-DATA**.
+4. Soft-skip is never pass. Absence is NO-DATA, never 0.0.
+5. No lab-IP defaults (MISTER_HOST/PLEX_BASE env only).
+6. Pure proofs `true rc=0`. Agent cast E2E ≠ evidence — parent runs device path.
 
-## Parent paste — pure proofs
+## Pure proofs (agent OK)
 
 ```bash
 cd /home/flynnsbit/Projects/MisterPlex/.worktrees/w-plextv-e2e-form
-node tests/hw/e2e/measured_delivery.js; echo "true rc=$?"
+node tests/hw/e2e/evidence_codes.js; echo "true rc=$?"
 node tests/hw/e2e/prove_red_paths.js; echo "true rc=$?"
 ```
 
-Expect P10 OK + `class=pms_ceiling_desync` rule line; all `true rc=0`.
-
-## Parent paste — household-hardened E2E (you run)
+## Parent E2E (evidence — you run)
 
 ```bash
 cd /home/flynnsbit/Projects/MisterPlex/.worktrees/w-plextv-e2e-form
-export PLEX_BASE="..."          # local PMS only
+export PLEX_BASE="..."          # local PMS only — not SHIELD, not remote
 export PLEX_TOKEN_FILE="..."
 export MISTER_HOST="..."
-# Optional: EXPECT_COMPANION_FRIENDLYNAME="MiSTerPlex Studio"
-# Optional pin real title: E2E_CLIENT_RATING_KEY=27|9|30
-# Optional measured feed if telemetry 404:
-#   E2E_DAEMON_LOG=...  E2E_LOG_CLEARED_BEFORE_CAST=1
 
-E2E_TRANSITION_CYCLES=10 \
-./tests/hw/e2e/run_household_hardened.sh; echo "true rc=$?"
+./tests/hw/e2e/run_control_plane_dod.sh; echo "true rc=$?"
 ```
 
-Also: `./tests/hw/e2e/run_p7_real_title.sh` · `./tests/hw/e2e/run_pms_control_plane.sh` · `./tests/hw/e2e/run_n_media_health.sh`
+Optional pin: `E2E_CLIENT_RATING_KEY=3` (240p) or `27` / `9` (480p).
 
-## PRE_REGISTER
-**PASS**
-- `COMPANION_INVARIANT=PASS` + `COMPANION_SELECTED ... friendlyName=...`
-- `TRANSITION_CYCLE_OK` × N and `TRANSITIONS_SUMMARY ... fail=0 majority_pass_is_pass=0`
-- `MEASURED_DELIVERY_OK ... delivery_basis=measured` + `GEOM_TRIPLE ...`
-- Real/P7 title path (not flash fixture) when content=real
-- `TEARDOWN_OK controller=closed` · `CAST_PICKER_E2E_RESULT=PASS`
+## What each assert catches (must be able to fail)
 
-**FAIL**
-- `wrong_companion_server` with offending friendlyName DIAGNOSIS
-- any cycle fail · measured unprobed when require=1
-- `expect_geom_is_library_claim` (624x350 class)
+| id | fails when | rc |
+|----|------------|-----|
+| pms_reachable | web/identity not OK | 78 |
+| mister_in_picker | exact name missing; ghost only | 1 |
+| companion_invariant | primary companion ≠ PMS under test | 1 |
+| session_playing_rk | PMS sessions wrong/missing rk | 1 |
+| pause_reflected | UI still advances / PMS not paused | 1 |
+| stop_gone | our session still on PMS after stop | 1 |
+| ratingKey_stable | rk swap mid-run | 79 |
+| teardown_our_only | our controller left polling | 1 |
+| playback_quality | **OUT OF SCOPE** (default) | — |
 
-**NEVER**
-- score library_media or requested_pms as delivery
-- majority of N as pass · kill user tab · imply pixels from green Playwright
+## PASS means
+Control plane: browse → cast → session → transitions → stop clean + TEARDOWN_OK.
+**Not** vfps/drops/supply quality. **Not** pixels.
 
 ## SHA
 ```bash

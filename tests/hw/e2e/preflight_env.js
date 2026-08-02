@@ -11,9 +11,16 @@ const os = require('os');
 const http = require('http');
 const https = require('https');
 
-const EXIT_FAIL = 1;
-const EXIT_UNVERIFIED = 2;
-const EXIT_SKIP = 77;
+const {
+  EXIT_FAIL,
+  EXIT_INSUFFICIENT_EVIDENCE,
+  EXIT_SKIP,
+  RESULT_INSUFFICIENT_EVIDENCE,
+  RESULT_FAIL,
+  RESULT_SKIP_NOT_PASS,
+  formatCoverageBanner,
+  emitResult,
+} = require('./evidence_codes');
 
 function log(...a) {
   console.log(...a);
@@ -134,15 +141,14 @@ async function runPreflight({ requirePms = true, requireDaemon = true } = {}) {
   const loaded = applyLabEnvFiles();
   const tok = resolveToken();
 
-  // Sensible lab defaults (MISTER_HOST allowed by test_no_private_data).
-  if (!process.env.MISTER_HOST) process.env.MISTER_HOST = '192.168.1.183';
+  // No lab-IP defaults (test_no_private_data). Callers must export MISTER_HOST.
   if (!process.env.MISTER_PORT) process.env.MISTER_PORT = '3005';
   if (!process.env.E2E_PLXD_FRAMES_VOID) process.env.E2E_PLXD_FRAMES_VOID = '1';
   if (!process.env.E2E_REQUIRE_PID) process.env.E2E_REQUIRE_PID = '1';
   if (!process.env.E2E_TIER) process.env.E2E_TIER = '240p';
 
   const plexBase = (process.env.PLEX_BASE || '').replace(/\/$/, '');
-  const misterHost = process.env.MISTER_HOST;
+  const misterHost = process.env.MISTER_HOST || '';
   const misterPort = process.env.MISTER_PORT || '3005';
   const webUser = process.env.PLEX_WEB_USER || '';
   const chromium =
@@ -210,7 +216,18 @@ async function runPreflight({ requirePms = true, requireDaemon = true } = {}) {
     );
   }
 
-  notes.push(`MISTER_HOST=${misterHost} MISTER_PORT=${misterPort}`);
+  if (!misterHost) {
+    problems.push({
+      key: 'MISTER_HOST',
+      severity: 'fail',
+      detail:
+        'MISTER_HOST is unset (no lab-IP default).\n' +
+        '  Remediation: export MISTER_HOST=<cast-target-host>\n' +
+        '  Or put MISTER_HOST= in ~/.config/misterplex/e2e.env (gitignored).',
+    });
+  } else {
+    notes.push(`MISTER_HOST=${misterHost} MISTER_PORT=${misterPort} value_kind=caller-supplied`);
+  }
   notes.push(
     `E2E_TIER=${process.env.E2E_TIER} E2E_TRANSITION_CYCLES=${process.env.E2E_TRANSITION_CYCLES || '10'} ` +
       `E2E_OVERLAY_ONLY=${process.env.E2E_OVERLAY_ONLY || '0'} ` +
@@ -241,12 +258,12 @@ async function runPreflight({ requirePms = true, requireDaemon = true } = {}) {
   const skips = problems.filter((p) => p.severity === 'skip');
   if (hard.length) {
     log('PREFLIGHT_ENV RESULT=FAIL — fix PREFLIGHT_BAD items; not running suite');
-    log('CAST_PICKER_E2E_RESULT=FAIL');
+    log(emitResult(RESULT_FAIL));
     process.exit(EXIT_FAIL);
   }
   if (skips.length) {
     log('PREFLIGHT_ENV RESULT=SKIP-NOT-PASS — deps missing (never a pass)');
-    log('CAST_PICKER_E2E_RESULT=SKIP-NOT-PASS');
+    log(emitResult(RESULT_SKIP_NOT_PASS));
     process.exit(EXIT_SKIP);
   }
 
@@ -256,23 +273,31 @@ async function runPreflight({ requirePms = true, requireDaemon = true } = {}) {
     log(`PREFLIGHT_PMS web_status=${web.status} url=${plexBase}/web/index.html`);
     if (web.status < 200 || web.status >= 400) {
       log(
-        'PREFLIGHT_ENV RESULT=UNVERIFIED — PLEX_BASE set but PMS Web unreachable\n' +
-          `  Check host/port/firewall. GET ${plexBase}/web/index.html → HTTP ${web.status}`
+        'PREFLIGHT_ENV RESULT=INSUFFICIENT_EVIDENCE — PLEX_BASE set but PMS Web unreachable\n' +
+          `  Check host/port/firewall. GET ${plexBase}/web/index.html → HTTP ${web.status}\n` +
+          '  w-avsync-aligned rc=78 — required axis NO-DATA, never a pass.'
       );
-      log('CAST_PICKER_E2E_RESULT=UNVERIFIED');
-      process.exit(EXIT_UNVERIFIED);
+      log(emitResult(RESULT_INSUFFICIENT_EVIDENCE, 'reason=PMS_UNREACHABLE'));
+      process.exit(EXIT_INSUFFICIENT_EVIDENCE);
     }
     const idn = await httpGet(`${plexBase}/identity`);
     const mid = (idn.body.match(/machineIdentifier="([^"]+)"/) || [])[1] || '';
     log(`PREFLIGHT_PMS identity_status=${idn.status} machineId=${mid || '?'}`);
     if (idn.status < 200 || !mid) {
-      log('PREFLIGHT_ENV RESULT=UNVERIFIED — /identity failed');
-      log('CAST_PICKER_E2E_RESULT=UNVERIFIED');
-      process.exit(EXIT_UNVERIFIED);
+      log(
+        'PREFLIGHT_ENV RESULT=INSUFFICIENT_EVIDENCE — /identity failed (axis NO-DATA rc=78)'
+      );
+      log(emitResult(RESULT_INSUFFICIENT_EVIDENCE, 'reason=PMS_IDENTITY_NO_DATA'));
+      process.exit(EXIT_INSUFFICIENT_EVIDENCE);
     }
   }
 
   if (requireDaemon) {
+    if (!misterHost) {
+      log('PREFLIGHT_ENV RESULT=FAIL — MISTER_HOST required for daemon preflight');
+      log(emitResult(RESULT_FAIL, 'reason=mister_host_missing'));
+      process.exit(EXIT_FAIL);
+    }
     const tl = await httpGet(
       `http://${misterHost}:${misterPort}/player/timeline/poll?commandID=1&wait=0`
     );
@@ -287,16 +312,17 @@ async function runPreflight({ requirePms = true, requireDaemon = true } = {}) {
       const res = await httpGet(`http://${misterHost}:${misterPort}/resources`);
       log(`PREFLIGHT_DAEMON resources_status=${res.status}`);
       log(
-        'PREFLIGHT_ENV RESULT=FAIL — companion :3005 unreachable (daemon_unreachable class)\n' +
-          `  Remediation: confirm misterplexd on ${misterHost}, curl http://${misterHost}:3005/resources → 200\n` +
+        'PREFLIGHT_ENV RESULT=FAIL — companion unreachable (daemon_unreachable class)\n' +
+          `  Remediation: confirm misterplexd on MISTER_HOST, curl http://$MISTER_HOST:$MISTER_PORT/resources → 200\n` +
           '  Parent owns device; this suite does not ssh/restart.'
       );
-      log('CAST_PICKER_E2E_RESULT=FAIL');
+      log(emitResult(RESULT_FAIL, 'reason=daemon_unreachable'));
       process.exit(EXIT_FAIL);
     }
   }
 
   log('PREFLIGHT_ENV RESULT=OK — starting suite');
+  log(formatCoverageBanner().split('\n')[0]);
   return {
     ok: true,
     plexBase,
@@ -313,7 +339,9 @@ module.exports = {
   runPreflight,
   loadDotEnvFile,
   EXIT_FAIL,
-  EXIT_UNVERIFIED,
+  EXIT_INSUFFICIENT_EVIDENCE,
+  /** @deprecated alias of EXIT_INSUFFICIENT_EVIDENCE (was 2; now 78) */
+  EXIT_UNVERIFIED: EXIT_INSUFFICIENT_EVIDENCE,
   EXIT_SKIP,
 };
 

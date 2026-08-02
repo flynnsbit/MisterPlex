@@ -2,8 +2,8 @@
 # run_cast_picker.sh — single entrypoint for Plex Web cast-picker Playwright suite.
 #
 # Self-diagnosing: missing required env → FAIL rc=1 with remediation;
-# PMS unreachable → UNVERIFIED rc=2; missing playwright/chromium → SKIP-NOT-PASS rc=77.
-# Never soft-passes a missing token/base.
+# PMS unreachable → INSUFFICIENT_EVIDENCE rc=78 (w-avsync); missing playwright/chromium → SKIP-NOT-PASS rc=77.
+# Never soft-passes a missing token/base. Control plane only — not playback quality.
 #
 # Optional gitignored lab env (does not override existing exports):
 #   $E2E_ENV_FILE | tests/hw/e2e/.env.lab | ~/.config/misterplex/e2e.env
@@ -11,7 +11,7 @@
 # Overlay-only (parent HDMI chrome grab):
 #   E2E_OVERLAY_ONLY=1 E2E_OVERLAY_HOLD_SEC=10 ./tests/hw/e2e/run_cast_picker.sh
 #
-# Exit: 0 PASS | 1 FAIL | 2 UNVERIFIED | 77 SKIP-NOT-PASS
+# Exit: 0 PASS | 1 FAIL | 78 INSUFFICIENT_EVIDENCE | 79 SESSION_INVALID | 77 SKIP-NOT-PASS
 
 set -u
 ROOT="$(cd "$(dirname "$0")" && pwd)"

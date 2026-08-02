@@ -16,11 +16,17 @@
  *   7. Optional HDMI motion (parent captures /dev/video0; suite scores)
  *   8. Hard teardown: close OUR browser controller only (not global quiescence)
  *
- * Exit codes:
+ * Exit codes (w-avsync-aligned — do not invent a second convention):
  *   0  PASS
- *   1  FAIL — picker / companion / playback / daemon unreachable when required
- *   2  UNVERIFIED — PLEX_BASE set but PMS unreachable/unusable (never green; w-lint style)
- *  77  SKIP-NOT-PASS — missing env/deps/chromium (never a green gate)
+ *   1  FAIL — assertion disproved (picker/companion/session/control broken)
+ *  78  INSUFFICIENT_EVIDENCE — configured but required axis NO-DATA (PMS unreachable)
+ *  79  SESSION_INVALID — mid-run ratingKey/pid swap (never score as data)
+ *  77  SKIP-NOT-PASS / NO-DATA — missing env/deps/chromium (never a green gate)
+ * Legacy UNVERIFIED rc=2 is retired; use 78.
+ *
+ * COVERAGE: verifies reachability + cast control plane ONLY.
+ * Does NOT verify playback quality (parent ~25% intermittent degrade; N=1 healthy
+ * misses ~75% of real defects). Never claim "playback verified" from one pass.
  *
  * Credentials: PLEX_BASE + PLEX_TOKEN env, or MISTERPLEX_CONF / ~/.config/...
  * NEVER hardcode private PMS :32400 or tokens (test_no_private_data).
@@ -100,12 +106,20 @@ const { emitGlassExpect } = require('./glass_expect');
 const { assertDeviceIdleP4 } = require('./device_idle');
 const { createStateMarker } = require('./state_mark');
 const { createP7Window } = require('./p7_cast_window');
-
-const EXIT_PASS = 0;
-const EXIT_FAIL = 1;
-/** Configured but cannot verify claim (PMS down) — never PASS (match CORE_IDENTITY_UNVERIFIED). */
-const EXIT_UNVERIFIED = 2;
-const EXIT_SKIP = 77;
+const {
+  EXIT_PASS,
+  EXIT_FAIL,
+  EXIT_INSUFFICIENT_EVIDENCE,
+  EXIT_SESSION_INVALID,
+  EXIT_SKIP,
+  RESULT_PASS,
+  RESULT_FAIL,
+  RESULT_INSUFFICIENT_EVIDENCE,
+  RESULT_SESSION_INVALID,
+  RESULT_SKIP_NOT_PASS,
+  formatCoverageBanner,
+  emitResult,
+} = require('./evidence_codes');
 
 const cfg = loadConfig();
 
@@ -248,21 +262,42 @@ function log(...a) {
 
 function skip(reason) {
   console.error(`SKIP-NOT-PASS test_cast_picker_playwright: ${reason}`);
-  console.error('CAST_PICKER_E2E_RESULT=SKIP-NOT-PASS');
+  console.error(emitResult(RESULT_SKIP_NOT_PASS));
+  console.error(
+    'EVIDENCE_NOTE: rc=77 NO-DATA/SKIP-NOT-PASS is never a pass (w-avsync-aligned).'
+  );
   process.exit(EXIT_SKIP);
 }
 
 /**
- * Configured target cannot be verified (e.g. PMS unreachable).
- * Never PASS. Distinct from FAIL (assertion disproved) and SKIP (deps missing).
+ * Configured target cannot be verified (e.g. PMS unreachable / axis NO-DATA).
+ * Never PASS. w-avsync: rc=78 INSUFFICIENT_EVIDENCE (not legacy UNVERIFIED=2).
  */
 function unresolved(reason, detail) {
-  console.error(`UNVERIFIED test_cast_picker_playwright: ${reason}`);
+  console.error(`INSUFFICIENT_EVIDENCE test_cast_picker_playwright: ${reason}`);
   if (detail) console.error(detail);
-  console.error('CAST_PICKER_E2E_RESULT=UNVERIFIED');
+  console.error(emitResult(RESULT_INSUFFICIENT_EVIDENCE, `reason=${reason}`));
+  console.error(
+    'EVIDENCE_NOTE: rc=78 INSUFFICIENT_EVIDENCE — required axis NO-DATA. Never a pass.'
+  );
   const err = new FailError(reason, detail || '');
-  err.exitCode = EXIT_UNVERIFIED;
+  err.exitCode = EXIT_INSUFFICIENT_EVIDENCE;
   err.unverified = true;
+  err.insufficientEvidence = true;
+  throw err;
+}
+
+/** Mid-run session identity break — never score spanning metrics as data. */
+function sessionInvalid(reason, detail) {
+  console.error(`SESSION_INVALID test_cast_picker_playwright: ${reason}`);
+  if (detail) console.error(detail);
+  console.error(emitResult(RESULT_SESSION_INVALID, `reason=${reason}`));
+  console.error(
+    'EVIDENCE_NOTE: rc=79 SESSION_INVALID — mid-run swap/respawn. Never a pass.'
+  );
+  const err = new FailError(reason, detail || '');
+  err.exitCode = EXIT_SESSION_INVALID;
+  err.sessionInvalid = true;
   throw err;
 }
 
@@ -280,7 +315,7 @@ class FailError extends Error {
 function fail(reason, detail) {
   console.error(`FAIL test_cast_picker_playwright: ${reason}`);
   if (detail) console.error(detail);
-  console.error('CAST_PICKER_E2E_RESULT=FAIL');
+  console.error(emitResult(RESULT_FAIL, `reason=${reason}`));
   throw new FailError(reason, detail);
 }
 
@@ -1948,12 +1983,30 @@ function assertStoppedOrIdle(samples, tag) {
   };
 }
 
-function cycleFail(cycle, total, transition, reason, detail) {
+function cycleFail(cycle, total, transition, reason, detail, opts = {}) {
   const fullReason = `transition_cycle_${cycle}_${transition}`;
   const fullDetail =
     `CYCLE ${cycle}/${total} FAILED at transition=${transition} reason=${reason}\n${detail || ''}`;
+  const invalid =
+    opts.sessionInvalid === true ||
+    opts.invalid === true ||
+    /\bINVALID\b/i.test(String(detail || '')) ||
+    /daemon_pid_changed|session_epoch_changed|rk_swap/i.test(String(reason || ''));
+  if (invalid) {
+    console.error(`SESSION_INVALID test_cast_picker_playwright: ${fullReason}`);
+    console.error(fullDetail);
+    console.error(emitResult(RESULT_SESSION_INVALID, `cycle=${cycle} transition=${transition}`));
+    const err = new FailError(fullReason, fullDetail);
+    err.cycle = cycle;
+    err.transition = transition;
+    err.failReason = reason;
+    err.exitCode = EXIT_SESSION_INVALID;
+    err.sessionInvalid = true;
+    throw err;
+  }
   console.error(`FAIL test_cast_picker_playwright: ${fullReason}`);
   console.error(fullDetail);
+  console.error(emitResult(RESULT_FAIL, `cycle=${cycle} transition=${transition}`));
   const err = new FailError(fullReason, fullDetail);
   err.cycle = cycle;
   err.transition = transition;
@@ -2558,7 +2611,8 @@ async function clientRkGateCycle(expectedRk, tag, cycle, total) {
       total,
       'rating_key',
       g.reason || 'rating_key_gate',
-      `${g.invalid ? 'INVALID ' : ''}${g.detail || tag}`
+      `${g.invalid ? 'INVALID ' : ''}${g.detail || tag}`,
+      { sessionInvalid: !!g.invalid }
     );
   }
   return g;
@@ -4195,11 +4249,13 @@ async function runTransitionScenarios(
 (async () => {
   log('test_cast_picker_playwright: BEGIN');
   log(BOUNDARY_BANNER);
+  log(formatCoverageBanner());
   log(
     'EVIDENCE_CLASS=playwright_pms_control_plane ' +
       'SETTLES=cast_target_visible+session_start+ratingKey+pause/resume/stop_reflected+stale_hygiene ' +
-      'DOES_NOT_SETTLE=pixels_on_glass+row_coverage+overlay_res+lipsync+hdmi_lock ' +
-      'HDMI_STATUS=parent_reports_capture_card_unlocked — do not over-read green here as pixel PASS'
+      'DOES_NOT_SETTLE=pixels_on_glass+playback_quality+supply_ratio+lipsync+hdmi_lock ' +
+      'QUALITY_POLICY=VERIFY_CONTROL_NOT_QUALITY ' +
+      'HDMI_STATUS=parent_reports_capture_card_dead — green here is NOT pixel PASS'
   );
   runCorr.emitBanner();
   await runCorr.mark('suite_begin');
@@ -4276,12 +4332,13 @@ async function runTransitionScenarios(
 
   const web = await httpGet(`${cfg.plexBase}/web/index.html`);
   if (web.status < 200 || web.status >= 400) {
-    // PLEX_BASE is set but PMS/Web is not usable — UNVERIFIED (rc=2), never PASS.
+    // PLEX_BASE set but PMS/Web unusable → rc=78 INSUFFICIENT_EVIDENCE (w-avsync).
     // Missing token/chromium stays SKIP(77). Prove path: prove_red_paths.js P2.
     unresolved(
       'PMS_UNREACHABLE',
       `Plex Web unreachable at ${cfg.plexBase}/web/index.html HTTP ${web.status}. ` +
-        'CAST_PICKER_E2E_RESULT=UNVERIFIED — cannot claim cast lifecycle without a reachable local PMS.'
+        'CAST_PICKER_E2E_RESULT=INSUFFICIENT_EVIDENCE rc=78 — cannot claim cast lifecycle ' +
+        'without a reachable local PMS. Absence is NO-DATA, never PASS.'
     );
   }
 
@@ -4291,9 +4348,10 @@ async function runTransitionScenarios(
   );
   if (idn.status < 200 || idn.status >= 400 || !idn.machineId) {
     unresolved(
-      'PMS_IDENTITY_UNVERIFIED',
+      'PMS_IDENTITY_NO_DATA',
       `GET ${cfg.plexBase}/identity status=${idn.status} machineId=${idn.machineId || '(empty)'}. ` +
-        'Cannot bind details URL or trust companion without PMS identity.'
+        'Cannot bind details URL or trust companion without PMS identity. ' +
+        'INSUFFICIENT_EVIDENCE rc=78 (axis NO-DATA).'
     );
   }
 
@@ -5170,7 +5228,11 @@ async function runTransitionScenarios(
     await runCorr.mark('suite_pass').catch(() => {});
     runCorr.persist(cfg.outDir);
     const seriesSum = tlSeries.summary();
-    log('CAST_PICKER_E2E_RESULT=PASS');
+    log(emitResult(RESULT_PASS));
+    log(
+      'PASS_SCOPE=control_plane_only NOT_playback_quality ' +
+        'NOT_pixels_on_glass (HDMI card dead does not upgrade this to pixel PASS)'
+    );
     if (cfg.p7Mode || (p7 && p7.correlationId)) {
       log(
         `P7_SUITE_RESULT=PASS correlation_id=${p7 ? p7.correlationId : 'NA'} ` +
@@ -5182,7 +5244,7 @@ async function runTransitionScenarios(
       `summary ${summaryBits.join(' ') || 'ok'} teardown=ok cast=${cfg.castName} ` +
         `lastTier=${lastTierName} lastRatingKey=${lastRatingKey} run_id=${runCorr.runId} ` +
         `daemon_pid=${baselineDaemonPid > 0 ? baselineDaemonPid : 'NA'} ` +
-        `timeline_samples=${seriesSum.n}`
+        `timeline_samples=${seriesSum.n} quality_claim=none`
     );
     log(
       `E2E_RUN_ID=${runCorr.runId} — parent: grep e2e_mark run_id=${runCorr.runId} then origin lines`
@@ -5202,7 +5264,8 @@ async function runTransitionScenarios(
   }
   process.exit(EXIT_FAIL);
 })().catch((e) => {
-  // fail()/unresolved() before the inner try/finally — honor exitCode (1 or 2), never 77-as-pass.
+  // fail()/unresolved()/sessionInvalid before inner try/finally — honor exitCode
+  // (1 FAIL | 78 INSUFFICIENT | 79 SESSION_INVALID). Never map 77→PASS.
   if (e instanceof FailError) {
     try {
       tlSeries.summary();
