@@ -710,7 +710,11 @@ $(ROOT)/build/test_bitstream_ring_lifecycle: $(ROOT)/tests/unit/test_bitstream_r
 # not be mapped to a commit and the parent spent a session reasoning off a stale
 # pair. Stamped into the binary and printed by --version and the startup banner.
 MPLEX_GIT_REV := $(shell git -C $(ROOT) rev-parse --short=12 HEAD 2>/dev/null || echo unknown)
-MPLEX_GIT_DIRTY := $(shell test -n "$$(git -C $(ROOT) status --porcelain 2>/dev/null)" && echo -dirty || echo)
+# --untracked-files=no on purpose: dirtiness must mean "built source differs from
+# the commit". Untracked files (lab captures, media assets) do not enter the
+# build, and counting them would pin every build to -dirty forever, destroying
+# the signal this stamp exists to provide.
+MPLEX_GIT_DIRTY := $(shell test -n "$$(git -C $(ROOT) status --porcelain --untracked-files=no 2>/dev/null)" && echo -dirty || echo)
 MPLEX_BUILD_ID_H := $(ROOT)/build/generated/misterplex_build_id.h
 
 # Rewritten ONLY when the revision actually changes, so it is a real dependency

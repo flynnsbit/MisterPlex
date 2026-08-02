@@ -68,7 +68,9 @@ fi
 reported="$(printf '%s' "$out" | sed -n 's/.*git_rev=\([^ ]*\).*/\1/p')"
 if git -C "$ROOT" rev-parse --short=12 HEAD >/dev/null 2>&1; then
   want="$(git -C "$ROOT" rev-parse --short=12 HEAD)"
-  [ -n "$(git -C "$ROOT" status --porcelain 2>/dev/null)" ] && want="${want}-dirty"
+  # Tracked changes only -- must match the Makefile's definition of dirty.
+  # Untracked lab captures and media assets do not enter the build.
+  [ -n "$(git -C "$ROOT" status --porcelain --untracked-files=no 2>/dev/null)" ] && want="${want}-dirty"
   if [ "$reported" = "$want" ]; then
     pass "reported revision matches git HEAD ($want)"
   else
