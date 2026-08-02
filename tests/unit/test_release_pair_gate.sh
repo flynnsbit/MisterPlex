@@ -50,7 +50,7 @@ fi
 
 # 4) the gate must run BEFORE the tarball is created, or a refused pair still
 #    lands on disk as a shippable artifact.
-gate_line=$(grep -n 'pair_ship_policy.sh" check' "$PKG" | head -1 | cut -d: -f1)
+gate_line=$(grep -n 'pair_ship_policy.sh" check' "$PKG" | tail -1 | cut -d: -f1)
 tar_line=$(grep -n '^tar -C' "$PKG" | head -1 | cut -d: -f1)
 if [ -n "$gate_line" ] && [ -n "$tar_line" ] && [ "$gate_line" -lt "$tar_line" ]; then
   pass "pair gate (line $gate_line) runs before tar (line $tar_line)"
@@ -60,11 +60,41 @@ fi
 
 # 5) no environment bypass. A gate you can switch off from the environment is
 #    not a gate; the supported path is hardware-validating a new matrix row.
-if awk "NR>=${gate_line:-0} && NR<=${gate_line:-0}+34" "$PKG" \
-     | grep -qE '\$\{(PAIR_[A-Z_]*(SKIP|FORCE|BYPASS|ALLOW)|SKIP_PAIR|FORCE_PAIR|ALLOW_BAD_PAIR)[A-Z_]*:?-'; then
-  fail "package_release.sh pair gate exposes an environment bypass"
+#    Scanned over the WHOLE file on purpose: this previously scanned a 34-line
+#    window from the first pair check, so adding an earlier check would silently
+#    move the window off the real gate and stop testing it.
+if grep -qE '\$\{(PAIR_[A-Z_]*(SKIP|FORCE|BYPASS|ALLOW)|SKIP_PAIR|FORCE_PAIR|ALLOW_BAD_PAIR)[A-Z_]*:?-' "$PKG"; then
+  fail "package_release.sh exposes an environment bypass for the pair gate"
 else
   pass "pair gate has no environment bypass"
+fi
+
+# 6) POSITIVE CAPABILITY. A packager that can only ever refuse is not a shipping
+#    path ("refusal is not delivery"): before DAEMON_PATH existed this script
+#    rebuilt the daemon every run, so its md5 could never match a validated row
+#    while the core stayed pinned, and `make package` refused unconditionally.
+#    A hardware-validated pair MUST be authorised.
+if "$ROOT/scripts/pair_ship_policy.sh" check \
+     c5382bee73cecdee8220b811e529c297 e9f79de217982aff44207664fdb945c5 >/dev/null 2>&1; then
+  pass "a hardware-validated pair is authorised (shipping path exists)"
+else
+  fail "no validated pair is authorised; package_release can only refuse"
+fi
+
+# 7) that path must be reachable from the packager: it has to be able to ship a
+#    pre-validated daemon rather than one it just built.
+if grep -qE '\$\{DAEMON_PATH:-|\$\{DAEMON_PATH\}' "$PKG"; then
+  pass "package_release.sh can ship a pre-validated daemon (DAEMON_PATH)"
+else
+  fail "package_release.sh cannot ship a validated daemon; it can never satisfy the matrix"
+fi
+
+# 8) a core that is not the static pin must be authorised by the PAIR policy,
+#    never blanket-accepted.
+if awk '/RBF_MD5_ACTUAL" != "\$RBF_MD5_EXPECTED/,/^fi$/' "$PKG" | grep -q 'pair_ship_policy.sh" check'; then
+  pass "non-pin cores are authorised via the pair policy, not blanket-accepted"
+else
+  fail "non-pin core path does not consult the pair policy"
 fi
 
 if [ "$fails" -eq 0 ]; then

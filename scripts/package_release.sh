@@ -27,7 +27,21 @@ echo "=== package_release $VERSION ==="
 # packaging an unrelated build.
 echo "Building arm misterplexd…"
 export PATH="${PATH}:${ARM_TOOLCHAIN_BIN:-$HOME/Projects/mistercast-linux/third_party/arm-gnu-toolchain/bin}"
-make -C "$ROOT" arm-plexd
+# DAEMON_PATH ships a specific, already-validated daemon binary instead of a
+# fresh build. Without it this script could never produce a shippable release:
+# it rebuilds the daemon on every run, so its md5 changes with any source edit
+# and can therefore never match a hardware-validated row in the pair matrix,
+# while the core stayed pinned to a fixed md5. The two could not both be
+# satisfied, so `make package` refused unconditionally. A gate that can only
+# ever say no is not a shipping path.
+DAEMON_SRC="${DAEMON_PATH:-}"
+if [[ -n "$DAEMON_SRC" ]]; then
+  [[ -f "$DAEMON_SRC" ]] || { echo "ERROR: DAEMON_PATH not found: $DAEMON_SRC" >&2; exit 1; }
+  echo "Using pre-validated daemon: $DAEMON_SRC (md5=$(md5sum "$DAEMON_SRC" | awk '{print $1}'))"
+  ARM_BIN="$DAEMON_SRC"
+else
+  make -C "$ROOT" arm-plexd
+fi
 [[ -f "$ARM_BIN" ]] || { echo "missing $ARM_BIN"; exit 1; }
 
 rm -rf "$STAGE"
@@ -119,11 +133,26 @@ if [[ ! -f "$RBF_SRC" ]]; then
 fi
 RBF_MD5_ACTUAL="$(md5sum "$RBF_SRC" | awk '{print $1}')"
 if [[ "$RBF_MD5_ACTUAL" != "$RBF_MD5_EXPECTED" ]]; then
-  echo "ERROR: refusing to package unverified Plex.rbf: $RBF_SRC" >&2
-  echo "       expected md5: $RBF_MD5_EXPECTED" >&2
-  echo "       actual md5:   $RBF_MD5_ACTUAL" >&2
-  echo "       v0.3.0 ships only the Phase A playback-controls core validated on hardware." >&2
-  exit 1
+  # Not the historical v0.3.0 pin. Authorised ONLY if this exact (core, daemon)
+  # combination is a hardware-validated row in the pair matrix -- which is a
+  # stronger statement than the single-core pin, because it is the PAIRING that
+  # black-screened the device, not either artifact alone. Fail-closed: anything
+  # the matrix does not know about is still refused, and the authoritative pair
+  # gate below re-checks the staged bytes.
+  _cand_daemon_md5="$(md5sum "$ARM_BIN" | awk '{print $1}')"
+  if _pair_ok="$("$ROOT/scripts/pair_ship_policy.sh" check "$RBF_MD5_ACTUAL" "$_cand_daemon_md5" 2>&1)"; then
+    echo "Core $RBF_MD5_ACTUAL is not the v0.3.0 pin but the pair is validated — $_pair_ok"
+  else
+    echo "ERROR: refusing to package unverified Plex.rbf: $RBF_SRC" >&2
+    echo "       expected md5: $RBF_MD5_EXPECTED (v0.3.0 pin)" >&2
+    echo "       actual md5:   $RBF_MD5_ACTUAL" >&2
+    echo "       daemon md5:   $_cand_daemon_md5" >&2
+    echo "       and the pair policy does not validate this combination:" >&2
+    echo "       $_pair_ok" >&2
+    echo "       Ship a hardware-validated pair: set RBF_PATH and DAEMON_PATH to a" >&2
+    echo "       row in scripts/pair_ship_policy.sh (PAIR_MATRIX_ROWS)." >&2
+    exit 1
+  fi
 fi
 cp -a "$RBF_SRC" "$STAGE/cores/Plex.rbf"
 echo "Included verified cores/Plex.rbf from $RBF_SRC ($(wc -c <"$STAGE/cores/Plex.rbf") bytes, md5=$RBF_MD5_ACTUAL)"
