@@ -168,3 +168,11 @@ At index time PMS often leaves `frameRate=None`. **Asset truth is ffprobe
 - Assert DP happened without your GEOM/resolve quote.
 
 Agent **did**: encode CB/L30/B=0/AAC ladder, index rks, document gates, ship sampler.
+
+## A/V markers (HDMI optional)
+
+- Glass ID every frame: `G n=DDDDDD c=C`
+- Body white flash 2 frames @ period **2.000 s** (ID band never flashed)
+- Audio **1 kHz** beep 50 ms, designed offset **0 ms**
+- Primary metric without pixels: `supply_ratio=audio_s/wall_s`
+- Geometry: coded size exact on disk; PMS `videoResolution` is a **ceiling** (RK6: requested 624x480 → measured 624x350). On DP expect `library_media` claim = coded; always log `measured=`.

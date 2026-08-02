@@ -5,15 +5,6 @@ sustained 60 s; capacity p95 1.292 Mbit/s. Prior ~670 kbit figure was the
 **pacer**, not the link — retracted for sizing.
 
 **Design:** identical content; CBR-only axis; sources already satisfy
-
-## ⚠ STREAM=0 voids this ladder
-
-Product cast path sets `preferDirectH264=streamEnabled` (`main.cpp`).  
-**STREAM=0 → always PMS universal → `transcoded=1` → NOT a DP data point.**  
-**STREAM=1 → direct H.264 Part when source is H.264 CB → `transcoded=0`.**
-
-Full proof checklist + host-load sampler: **`docs/CBR_DP_DIRECTPLAY_PROOF.md`**  
-Sampler: `scripts/sample_host_load_for_cast.sh`
 `plex_resolve` h264/baseline/level≤3.0/aac → **Direct Play** expected
 (delivered bitrate == source). Parent confirms `transcoded=0` on GEOM.
 
@@ -42,12 +33,12 @@ All five ≥ 0.95 ⇒ bitrate/VBR account **dead** (publish miss).
 
 | title | W×H | fps | tgt_v | meas_v | total_k | refs | CB/L/B | aac | bank | prereg_sr | spec |
 |-------|-----|-----|------:|-------:|--------:|-----:|--------|-----|------|-----------|------|
-| `MiSTerPlex CBR-DP 624x480 24fps 400kbit 180s (2026).mp4` | **624×480** | **24/1** | 400 | **400.4** | **532.5** | **1** | Constrained Baseline/L30/B0 | 128k/2ch | favourable | ≥ 0.95 | YES |
-| `MiSTerPlex CBR-DP 624x480 24fps 800kbit 180s (2026).mp4` | **624×480** | **24/1** | 800 | **802.6** | **934.6** | **1** | Constrained Baseline/L30/B0 | 128k/2ch | favourable | ≥ 0.95 | YES |
-| `MiSTerPlex CBR-DP 624x480 24fps 1200kbit 180s (2026).mp4` | **624×480** | **24/1** | 1200 | **1204.1** | **1336.2** | **1** | Constrained Baseline/L30/B0 | 128k/2ch | favourable | 0.90–1.00 knee | YES |
-| `MiSTerPlex CBR-DP 624x480 24fps 1600kbit 180s (2026).mp4` | **624×480** | **24/1** | 1600 | **1604.9** | **1737.0** | **1** | Constrained Baseline/L30/B0 | 128k/2ch | favourable | ≈ 0.72 | YES |
-| `MiSTerPlex CBR-DP 624x480 24fps 2000kbit 180s (2026).mp4` | **624×480** | **24/1** | 2000 | **2006.8** | **2138.9** | **1** | Constrained Baseline/L30/B0 | 128k/2ch | favourable | ≈ 0.58 | YES |
-| `MiSTerPlex CBR-DP 640x480 24fps 1200kbit 180s (2026).mp4` | **640×480** | **24/1** | 1200 | **1204.0** | **1336.1** | **1** | Constrained Baseline/L30/B0 | 128k/2ch | adversarial | 0.90–1.00 knee | YES |
+| `MiSTerPlex CBR-DP 624x480 24fps 400kbit 180s (2026).mp4` | **624×480** | **24/1** | 400 | **400.4** | **532.4** | **1** | Constrained Baseline/L30/B0 | 128k/2ch | favourable | ≥ 0.95 | YES |
+| `MiSTerPlex CBR-DP 624x480 24fps 800kbit 180s (2026).mp4` | **624×480** | **24/1** | 800 | **800.8** | **932.7** | **1** | Constrained Baseline/L30/B0 | 128k/2ch | favourable | ≥ 0.95 | YES |
+| `MiSTerPlex CBR-DP 624x480 24fps 1200kbit 180s (2026).mp4` | **624×480** | **24/1** | 1200 | **1201.1** | **1333.0** | **1** | Constrained Baseline/L30/B0 | 128k/2ch | favourable | 0.90–1.00 knee | YES |
+| `MiSTerPlex CBR-DP 624x480 24fps 1600kbit 180s (2026).mp4` | **624×480** | **24/1** | 1600 | **1603.2** | **1735.1** | **1** | Constrained Baseline/L30/B0 | 128k/2ch | favourable | ≈ 0.72 | YES |
+| `MiSTerPlex CBR-DP 624x480 24fps 2000kbit 180s (2026).mp4` | **624×480** | **24/1** | 2000 | **2005.3** | **2137.2** | **1** | Constrained Baseline/L30/B0 | 128k/2ch | favourable | ≈ 0.58 | YES |
+| `MiSTerPlex CBR-DP 640x480 24fps 1200kbit 180s (2026).mp4` | **640×480** | **24/1** | 1200 | **1201.2** | **1333.2** | **1** | Constrained Baseline/L30/B0 | 128k/2ch | adversarial | 0.90–1.00 knee | YES |
 
 ## PMS ingest
 
@@ -78,15 +69,3 @@ Within-session VBR staircase: `docs/VBR_MOTION_STAIRCASE.md` (rk≈101–104).
 python3 scripts/gen_cbr_directplay_ladder.py --duration 180 --copy-media
 ```
 
-## Indexed ratingKeys
-
-| rk | title | PMS frameRate |
-|---:|-------|---------------|
-| **105** | MiSTerPlex CBR DP 624x480 24fps 1200kbit 180s | `None` |
-| **106** | MiSTerPlex CBR DP 624x480 24fps 1600kbit 180s | `None` |
-| **107** | MiSTerPlex CBR DP 624x480 24fps 2000kbit 180s | `None` |
-| **108** | MiSTerPlex CBR-DP 624x480 24fps 400kbit 180s (2026) | `None` |
-| **109** | MiSTerPlex CBR DP 624x480 24fps 800kbit 180s | `None` |
-| **110** | MiSTerPlex CBR DP 640x480 24fps 1200kbit 180s | `None` |
-
-Asset ffprobe **24/1**. Parent confirms Direct Play via GEOM `transcoded=0`.

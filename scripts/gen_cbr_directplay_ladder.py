@@ -46,10 +46,16 @@ A_BITRATE = "128k"
 RUNGS_K = [400, 800, 1200, 1600, 2000]
 # Parent path: GREEDY GOODPUT 1.153 Mbit/s; capacity p95 1.292
 PATH_GOODPUT_KBIT = 1153.0
+# A/V markers (scoreable without HDMI via audio; pixels when grabber returns)
+MARKER_PERIOD_S = 2.0
+FLASH_FRAMES = 2
+BEEP_S = 0.050
+BEEP_HZ = 1000.0
+ATTACK_S = 0.001
 
 
 def render_frame(n: int, w: int, h: int, geom) -> np.ndarray:
-    """Always-bright structured motion so CBR can fill high rungs."""
+    """Always-bright structured motion so CBR can fill high rungs + A/V flash."""
     rgb = np.empty((h, w, 3), dtype=np.uint8)
     id_bottom = geom.bar_y1
     # base gradient
@@ -88,14 +94,34 @@ def render_frame(n: int, w: int, h: int, geom) -> np.ndarray:
             (240, 240, 240) if on else (30, 30, 30)
         )
     rgb[id_bottom + 4 : id_bottom + 12, w // 10 : 9 * w // 10] = (220, 30, 30)
-    draw_id_band(rgb, n, geom)
+    # body flash at marker (ID band drawn AFTER — never flashed)
+    t = n / FPS
+    k = int(round(t / MARKER_PERIOD_S))
+    t_m = k * MARKER_PERIOD_S
+    dn = int(round((t - t_m) * FPS))
+    if 0 <= dn < FLASH_FRAMES:
+        rgb[id_bottom:, :, :] = 255
+    draw_id_band(rgb, n, geom)  # EVERY frame — no enable=
     return rgb
 
 
 def write_audio(path: Path, duration_s: float) -> None:
+    """Soft 440 bed + 1 kHz beeps at MARKER_PERIOD_S (designed A/V offset 0)."""
     n = int(round(duration_s * SR))
     t = np.arange(n, dtype=np.float64) / SR
-    mono = 0.08 * np.sin(2 * np.pi * 440.0 * t)
+    mono = 0.05 * np.sin(2 * np.pi * 440.0 * t)
+    k = 0
+    while True:
+        t0 = k * MARKER_PERIOD_S
+        if t0 >= duration_s:
+            break
+        i0 = int(round(t0 * SR))
+        i1 = min(n, i0 + int(round(BEEP_S * SR)))
+        if i0 < n and i1 > i0:
+            phase = t[i0:i1] - t0
+            env = np.where(phase < ATTACK_S, phase / max(ATTACK_S, 1e-9), 1.0)
+            mono[i0:i1] = 0.9 * env * np.sin(2 * np.pi * BEEP_HZ * t[i0:i1])
+        k += 1
     s16 = np.clip(mono * 32767, -32768, 32767).astype(np.int16)
     stereo = np.column_stack([s16, s16])
     with wave.open(str(path), "w") as wf:
@@ -345,6 +371,19 @@ def main() -> int:
             "ffmpeg_cmd": enc["cmd"],
             "id_every_frame": True,
             "id_example": format_text(0),
+            "av_markers": {
+                "period_s": MARKER_PERIOD_S,
+                "beep_hz": BEEP_HZ,
+                "beep_s": BEEP_S,
+                "flash_frames": FLASH_FRAMES,
+                "designed_av_offset_ms": 0.0,
+                "note": "body flash + 1kHz beep; glass ID never flashed",
+            },
+            "geometry_note": (
+                "Coded size is exact on disk. PMS videoResolution is a ceiling; "
+                "on DP library_media claim should match coded; measured_delivery "
+                "may still differ — parent logs measured=."
+            ),
         }
         (out.with_suffix(out.suffix + ".meta.json")).write_text(
             json.dumps(meta, indent=2) + "\n"

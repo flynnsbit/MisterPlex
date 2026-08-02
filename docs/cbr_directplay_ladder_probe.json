@@ -36,7 +36,7 @@
         "expected_supply_ratio": "\u2265 0.95",
         "note": "well under 1.15 Mbit path",
         "path_goodput_kbit_s": 1153.0,
-        "total_kbit_if_known": 532.503,
+        "total_kbit_if_known": 532.36,
         "kill_criterion": "all five rungs supply_ratio\u22650.95 \u21d2 bitrate account dead"
       },
       "measured": {
@@ -49,14 +49,14 @@
         "profile": "Constrained Baseline",
         "level": 30,
         "has_b_frames": 0,
-        "v_bit_rate_k": 400.415,
+        "v_bit_rate_k": 400.412,
         "format_duration": "180.000000",
-        "format_bit_rate_k": 532.503,
-        "size_bytes": 11981333,
+        "format_bit_rate_k": 532.36,
+        "size_bytes": 11978107,
         "a_codec": "aac",
         "a_sample_rate": "48000",
         "a_channels": 2,
-        "a_bit_rate_k": 127.981,
+        "a_bit_rate_k": 127.841,
         "sps": {
           "trace_rc": 0,
           "profile_idc": 66,
@@ -126,9 +126,16 @@
       ],
       "id_every_frame": true,
       "id_example": "G n=000000 c=0",
-      "media_path": "/home/flynnsbit/plex/media/movies/MiSTerPlex CBR-DP 624x480 24fps 400kbit 180s (2026).mp4",
-      "ratingKey": 108,
-      "pms_frameRate_claim": null
+      "av_markers": {
+        "period_s": 2.0,
+        "beep_hz": 1000.0,
+        "beep_s": 0.05,
+        "flash_frames": 2,
+        "designed_av_offset_ms": 0.0,
+        "note": "body flash + 1kHz beep; glass ID never flashed"
+      },
+      "geometry_note": "Coded size is exact on disk. PMS videoResolution is a ceiling; on DP library_media claim should match coded; measured_delivery may still differ \u2014 parent logs measured=.",
+      "media_path": "/home/flynnsbit/plex/media/movies/MiSTerPlex CBR-DP 624x480 24fps 400kbit 180s (2026).mp4"
     },
     {
       "title": "MiSTerPlex CBR-DP 624x480 24fps 800kbit 180s (2026).mp4",
@@ -156,7 +163,7 @@
         "expected_supply_ratio": "\u2265 0.95",
         "note": "under path",
         "path_goodput_kbit_s": 1153.0,
-        "total_kbit_if_known": 934.65,
+        "total_kbit_if_known": 932.71,
         "kill_criterion": "all five rungs supply_ratio\u22650.95 \u21d2 bitrate account dead"
       },
       "measured": {
@@ -169,14 +176,14 @@
         "profile": "Constrained Baseline",
         "level": 30,
         "has_b_frames": 0,
-        "v_bit_rate_k": 802.562,
+        "v_bit_rate_k": 800.763,
         "format_duration": "180.000000",
-        "format_bit_rate_k": 934.65,
-        "size_bytes": 21029632,
+        "format_bit_rate_k": 932.71,
+        "size_bytes": 20985991,
         "a_codec": "aac",
         "a_sample_rate": "48000",
         "a_channels": 2,
-        "a_bit_rate_k": 127.981,
+        "a_bit_rate_k": 127.841,
         "sps": {
           "trace_rc": 0,
           "profile_idc": 66,
@@ -246,6 +253,15 @@
       ],
       "id_every_frame": true,
       "id_example": "G n=000000 c=0",
+      "av_markers": {
+        "period_s": 2.0,
+        "beep_hz": 1000.0,
+        "beep_s": 0.05,
+        "flash_frames": 2,
+        "designed_av_offset_ms": 0.0,
+        "note": "body flash + 1kHz beep; glass ID never flashed"
+      },
+      "geometry_note": "Coded size is exact on disk. PMS videoResolution is a ceiling; on DP library_media claim should match coded; measured_delivery may still differ \u2014 parent logs measured=.",
       "media_path": "/home/flynnsbit/plex/media/movies/MiSTerPlex CBR-DP 624x480 24fps 800kbit 180s (2026).mp4"
     },
     {
@@ -274,7 +290,7 @@
         "expected_supply_ratio": "0.90\u20131.00 knee",
         "note": "discriminating rung vs 1.15 Mbit goodput",
         "path_goodput_kbit_s": 1153.0,
-        "total_kbit_if_known": 1336.175,
+        "total_kbit_if_known": 1333.018,
         "kill_criterion": "all five rungs supply_ratio\u22650.95 \u21d2 bitrate account dead"
       },
       "measured": {
@@ -287,14 +303,14 @@
         "profile": "Constrained Baseline",
         "level": 30,
         "has_b_frames": 0,
-        "v_bit_rate_k": 1204.087,
+        "v_bit_rate_k": 1201.07,
         "format_duration": "180.000000",
-        "format_bit_rate_k": 1336.175,
-        "size_bytes": 30063956,
+        "format_bit_rate_k": 1333.018,
+        "size_bytes": 29992916,
         "a_codec": "aac",
         "a_sample_rate": "48000",
         "a_channels": 2,
-        "a_bit_rate_k": 127.981,
+        "a_bit_rate_k": 127.841,
         "sps": {
           "trace_rc": 0,
           "profile_idc": 66,
@@ -364,6 +380,15 @@
       ],
       "id_every_frame": true,
       "id_example": "G n=000000 c=0",
+      "av_markers": {
+        "period_s": 2.0,
+        "beep_hz": 1000.0,
+        "beep_s": 0.05,
+        "flash_frames": 2,
+        "designed_av_offset_ms": 0.0,
+        "note": "body flash + 1kHz beep; glass ID never flashed"
+      },
+      "geometry_note": "Coded size is exact on disk. PMS videoResolution is a ceiling; on DP library_media claim should match coded; measured_delivery may still differ \u2014 parent logs measured=.",
       "media_path": "/home/flynnsbit/plex/media/movies/MiSTerPlex CBR-DP 624x480 24fps 1200kbit 180s (2026).mp4"
     },
     {
@@ -392,7 +417,7 @@
         "expected_supply_ratio": "\u2248 0.72",
         "note": "over path",
         "path_goodput_kbit_s": 1153.0,
-        "total_kbit_if_known": 1737.022,
+        "total_kbit_if_known": 1735.148,
         "kill_criterion": "all five rungs supply_ratio\u22650.95 \u21d2 bitrate account dead"
       },
       "measured": {
@@ -405,14 +430,14 @@
         "profile": "Constrained Baseline",
         "level": 30,
         "has_b_frames": 0,
-        "v_bit_rate_k": 1604.934,
+        "v_bit_rate_k": 1603.2,
         "format_duration": "180.000000",
-        "format_bit_rate_k": 1737.022,
-        "size_bytes": 39083010,
+        "format_bit_rate_k": 1735.148,
+        "size_bytes": 39040838,
         "a_codec": "aac",
         "a_sample_rate": "48000",
         "a_channels": 2,
-        "a_bit_rate_k": 127.981,
+        "a_bit_rate_k": 127.841,
         "sps": {
           "trace_rc": 0,
           "profile_idc": 66,
@@ -482,6 +507,15 @@
       ],
       "id_every_frame": true,
       "id_example": "G n=000000 c=0",
+      "av_markers": {
+        "period_s": 2.0,
+        "beep_hz": 1000.0,
+        "beep_s": 0.05,
+        "flash_frames": 2,
+        "designed_av_offset_ms": 0.0,
+        "note": "body flash + 1kHz beep; glass ID never flashed"
+      },
+      "geometry_note": "Coded size is exact on disk. PMS videoResolution is a ceiling; on DP library_media claim should match coded; measured_delivery may still differ \u2014 parent logs measured=.",
       "media_path": "/home/flynnsbit/plex/media/movies/MiSTerPlex CBR-DP 624x480 24fps 1600kbit 180s (2026).mp4"
     },
     {
@@ -510,7 +544,7 @@
         "expected_supply_ratio": "\u2248 0.58",
         "note": "over path ~1.6\u00d7",
         "path_goodput_kbit_s": 1153.0,
-        "total_kbit_if_known": 2138.934,
+        "total_kbit_if_known": 2137.22,
         "kill_criterion": "all five rungs supply_ratio\u22650.95 \u21d2 bitrate account dead"
       },
       "measured": {
@@ -523,14 +557,14 @@
         "profile": "Constrained Baseline",
         "level": 30,
         "has_b_frames": 0,
-        "v_bit_rate_k": 2006.846,
+        "v_bit_rate_k": 2005.272,
         "format_duration": "180.000000",
-        "format_bit_rate_k": 2138.934,
-        "size_bytes": 48126016,
+        "format_bit_rate_k": 2137.22,
+        "size_bytes": 48087454,
         "a_codec": "aac",
         "a_sample_rate": "48000",
         "a_channels": 2,
-        "a_bit_rate_k": 127.981,
+        "a_bit_rate_k": 127.841,
         "sps": {
           "trace_rc": 0,
           "profile_idc": 66,
@@ -600,6 +634,15 @@
       ],
       "id_every_frame": true,
       "id_example": "G n=000000 c=0",
+      "av_markers": {
+        "period_s": 2.0,
+        "beep_hz": 1000.0,
+        "beep_s": 0.05,
+        "flash_frames": 2,
+        "designed_av_offset_ms": 0.0,
+        "note": "body flash + 1kHz beep; glass ID never flashed"
+      },
+      "geometry_note": "Coded size is exact on disk. PMS videoResolution is a ceiling; on DP library_media claim should match coded; measured_delivery may still differ \u2014 parent logs measured=.",
       "media_path": "/home/flynnsbit/plex/media/movies/MiSTerPlex CBR-DP 624x480 24fps 2000kbit 180s (2026).mp4"
     },
     {
@@ -628,7 +671,7 @@
         "expected_supply_ratio": "0.90\u20131.00 knee",
         "note": "discriminating rung vs 1.15 Mbit goodput",
         "path_goodput_kbit_s": 1153.0,
-        "total_kbit_if_known": 1336.065,
+        "total_kbit_if_known": 1333.151,
         "kill_criterion": "all five rungs supply_ratio\u22650.95 \u21d2 bitrate account dead"
       },
       "measured": {
@@ -641,14 +684,14 @@
         "profile": "Constrained Baseline",
         "level": 30,
         "has_b_frames": 0,
-        "v_bit_rate_k": 1203.977,
+        "v_bit_rate_k": 1201.203,
         "format_duration": "180.000000",
-        "format_bit_rate_k": 1336.065,
-        "size_bytes": 30061466,
+        "format_bit_rate_k": 1333.151,
+        "size_bytes": 29995905,
         "a_codec": "aac",
         "a_sample_rate": "48000",
         "a_channels": 2,
-        "a_bit_rate_k": 127.981,
+        "a_bit_rate_k": 127.841,
         "sps": {
           "trace_rc": 0,
           "profile_idc": 66,
@@ -718,15 +761,16 @@
       ],
       "id_every_frame": true,
       "id_example": "G n=000000 c=0",
+      "av_markers": {
+        "period_s": 2.0,
+        "beep_hz": 1000.0,
+        "beep_s": 0.05,
+        "flash_frames": 2,
+        "designed_av_offset_ms": 0.0,
+        "note": "body flash + 1kHz beep; glass ID never flashed"
+      },
+      "geometry_note": "Coded size is exact on disk. PMS videoResolution is a ceiling; on DP library_media claim should match coded; measured_delivery may still differ \u2014 parent logs measured=.",
       "media_path": "/home/flynnsbit/plex/media/movies/MiSTerPlex CBR-DP 640x480 24fps 1200kbit 180s (2026).mp4"
     }
-  ],
-  "ratingKeys": {
-    "MiSTerPlex CBR DP 624x480 24fps 800kbit 180s": 109,
-    "MiSTerPlex CBR DP 624x480 24fps 1200kbit 180s": 105,
-    "MiSTerPlex CBR DP 624x480 24fps 1600kbit 180s": 106,
-    "MiSTerPlex CBR DP 624x480 24fps 2000kbit 180s": 107,
-    "MiSTerPlex CBR DP 640x480 24fps 1200kbit 180s": 110,
-    "MiSTerPlex CBR-DP 624x480 24fps 400kbit 180s (2026)": 108
-  }
+  ]
 }
