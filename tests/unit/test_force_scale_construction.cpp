@@ -27,8 +27,10 @@ int main() {
         bool expect_scale; // true => scale_applied; false => crop/pad path ok
     };
     // Parent residual set + WIDTH class + measured PMS tiers.
+    // exact_bank unverified → FOAR coded (crop_pad dies on fleet 624x350).
+    // bank-height WIDE (640/720) still crop/hfit (no V resample).
     const Case cases[] = {
-        {624, 480, "exact_bank", false},
+        {624, 480, "exact_bank", true},
         {624, 352, "624x352", true},
         {624, 350, "624x350", true},
         {640, 480, "640x480", false},

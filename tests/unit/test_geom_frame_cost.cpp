@@ -3,7 +3,8 @@
 // Pre-register (must hold or this is RED):
 //   P1: ddrFrameGeometryForFpgaPresent(320,240) == ForFpgaPresent(624,480)
 //       (same coded bank, same crop, same frame_bytes=449280)
-//   P2: product FORCE_SCALE Always emits pad=624:480 for both source tiers
+//   P2: product FORCE_SCALE Always FOAR-scales into coded 624x480 (unverified
+//       claim and 624x350); pad=624:480. Never crop=618:480 on that path.
 //   P3: clearYuv crop_right=6 touches strips only, not full 449280
 //   P4: drops (A/V pacer) ≠ publish_misses (DDR fail) in ledger semantics
 //   P5: T7 NATIVE_V_1TO1 — V_STORE=FRAME_H=480, STORE_Y_SCALE=1.0 ⇒ all 480 rows
@@ -66,21 +67,36 @@ int main() {
         };
         const auto p240 = planFor(320, 240);
         const auto p480 = planFor(624, 480);
+        const auto p350 = planFor(624, 350);
         expect(p240.scale_applied && !p240.identity_skip, "P2 240 scales");
-        // Exact 624x480 under FORCE_SCALE Always unverified: crop+pad pin (no FOAR).
-        expect(!p480.scale_applied && !p480.identity_skip, "P2 480 crop-pad pin");
+        // Unverified 624x480 claim under FORCE_SCALE: FOAR into coded (not crop_pad).
+        // crop=618:480 dies on fleet-mode 624x350 (ffmpeg rc=234, 0 bytes).
+        expect(p480.scale_applied && !p480.identity_skip, "P2 480 unverified FOAR-scales");
         expect(p240.vf.find("pad=624:480") != std::string::npos, "P2 240 pad coded");
         expect(p240.vf.find("force_original_aspect_ratio=decrease") != std::string::npos,
                "P2 240 decrease");
         expect(p480.vf.find("pad=624:480") != std::string::npos, "P2 480 pad coded");
-        expect(p480.vf.find("crop=618:480") != std::string::npos, "P2 480 crops display");
-        expect(p480.vf.find("scale=") == std::string::npos, "P2 480 no scale=");
-        expect(p480.vf.find("force_original_aspect_ratio") == std::string::npos,
-               "P2 480 no FOAR");
-        expect(vfPreservesBankHeightSource(p480.vf), "P2 480 preserves bank height");
-        expect(scaleDecreaseOutHeight(624, 480, 618, 480) == 475, "P2 defect arith 475");
-        std::printf("P2_OK force_scale 240=upscale 480=crop_pad vf_240_len=%zu vf_480_len=%zu\n",
-                    p240.vf.size(), p480.vf.size());
+        expect(p480.vf.find("scale=624:480") != std::string::npos, "P2 480 FOAR coded W");
+        expect(p480.vf.find("force_original_aspect_ratio=decrease") != std::string::npos,
+               "P2 480 FOAR decrease");
+        expect(p480.vf.find("crop=618:480") == std::string::npos, "P2 480 no fixed crop");
+        expect(p480.reason.find("unverified_claim_scale_pad_coded") != std::string::npos ||
+                   p480.reason.find("force_unverified_claim_scale_pad_coded") != std::string::npos,
+               "P2 480 unverified reason");
+        expect(p350.scale_applied && !p350.identity_skip, "P2 350 scales");
+        expect(p350.vf.find("scale=624:480") != std::string::npos, "P2 350 FOAR coded");
+        // vfPreservesBankHeightSource is for crop/hfit only — FOAR always returns false.
+        expect(!vfPreservesBankHeightSource(p480.vf), "P2 FOAR path is not crop-preserve");
+        expect(vfPreservesBankHeightSource("crop=618:480,pad=624:480:0:0:black"),
+               "P2 crop_pad helper still true");
+        // Old FOAR-into-618 defect arith still true as a cautionary constant.
+        expect(scaleDecreaseOutHeight(624, 480, 618, 480) == 475, "P2 defect arith FOAR618=475");
+        // FOAR into coded 624 keeps full bank height on true 624x480 input.
+        expect(scaleDecreaseOutHeight(624, 480, 624, 480) == 480, "P2 FOAR coded keeps H=480");
+        expect(scaleDecreaseOutHeight(624, 350, 624, 480) == 350, "P2 FOAR 350→picture_h=350");
+        std::printf("P2_OK force_scale 240=upscale 480=FOAR_coded 350=FOAR_coded "
+                    "vf_240_len=%zu vf_480_len=%zu vf_350_len=%zu\n",
+                    p240.vf.size(), p480.vf.size(), p350.vf.size());
     }
 
     // --- P3: clearYuv is strip-only (crop_right=6) ---

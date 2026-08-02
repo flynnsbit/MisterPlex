@@ -18,11 +18,13 @@ CODED_H=480
 DISP_W=618
 DISP_H=480
 # Product silicon paths (media_player + ffmpeg_vf.hpp):
-#   non-bank-height / narrow: FOAR decrease into CODED bank (never display 618)
-#   bank-height wide or exact-unverified: buildCropPadNoScale (no FOAR V-resample)
+#   non-bank-height / narrow / exact-unverified: FOAR decrease into CODED bank
+#   bank-height WIDE only (640/720): buildCropPadNoScale hfit (no FOAR V-resample)
 # Parent 2026-08-02: scale=618:480:FOAR was the measured row-destroyer on rk6.
+# Parent 2026-08-02: crop=618:480 dies on fleet-mode 624x350 (ffmpeg rc=234).
 PRODUCT_VF="scale=${CODED_W}:${CODED_H}:force_original_aspect_ratio=decrease,pad=${CODED_W}:${CODED_H}:(ow-iw)/2:(oh-ih)/2"
-# Center-crop when source_w > coded (640/720); left crop when source_w == coded.
+# crop_pad still valid on true bank-height inputs (hfit / verified); not product
+# hot path for unverified exact claim.
 CROP_PAD_EXACT="crop=${DISP_W}:${DISP_H}:0:0,pad=${CODED_W}:${CODED_H}:0+(${DISP_W}-iw)/2:0+(${DISP_H}-ih)/2:color=black"
 CROP_PAD_HFIT="crop=${DISP_W}:${DISP_H}:(iw-${DISP_W})/2:0,pad=${CODED_W}:${CODED_H}:0+(${DISP_W}-iw)/2:0+(${DISP_H}-ih)/2:color=black"
 FRAME_BYTES=$((CODED_W * CODED_H * 3 / 2)) # 449280
@@ -98,8 +100,8 @@ run_case "g_426x240" 426 240 "$PRODUCT_VF" "$EXPECTED" 1
 run_case "g_odd" 625 481 "$PRODUCT_VF" "$EXPECTED" 1
 run_case "g_618x480" 618 480 "$PRODUCT_VF" "$EXPECTED" 1
 
-# GREEN: product bank-height path is crop+pad (WIDTH≠624 and exact-unverified)
-# — still pins 449280, and is the FOAR-free path tip ships.
+# GREEN: hfit crop+pad still pins 449280 on true bank-height WIDE sources.
+# exact crop_pad still works on genuine 624x480 (not product unverified path).
 run_case "g_exact_crop_pad" 624 480 "$CROP_PAD_EXACT" "$EXPECTED" 1
 run_case "g_640_crop_pad" 640 480 "$CROP_PAD_HFIT" "$EXPECTED" 1
 run_case "g_720_crop_pad" 720 480 "$CROP_PAD_HFIT" "$EXPECTED" 1

@@ -138,6 +138,8 @@ EXPECTED_COMMANDS = [
     "$(ROOT)/build/test_ffmpeg_vf",
     "bash $(ROOT)/tests/unit/test_force_scale_ffmpeg_out.sh",
     "bash $(ROOT)/tests/unit/test_force_scale_sws_cost.sh",
+    "bash $(ROOT)/tests/unit/test_fabric_scaler_delta.sh",
+    "bash $(ROOT)/tests/unit/test_624x350_force_scale_out.sh",
     "$(ROOT)/build/test_yuv420p_chroma_480p",
     "$(ROOT)/build/test_geom_frame_cost",
     "$(ROOT)/build/test_glass_loss_death_points",

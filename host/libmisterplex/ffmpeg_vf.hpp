@@ -189,7 +189,8 @@ inline bool vfPreservesBankHeightSource(const std::string& vf) {
 // (and ~464 for 4:3). Display crop_right=6 belongs at present/RTL
 // (clearYuv420pCropPadding), not as a swscale target.
 //
-// 480p exact-coded source: crop+pad only (buildCropPadNoScale) — never FOAR.
+// LEGACY string builder only. Product Always+unverified exact claim uses
+// buildScalePadCoded (FOAR into coded). crop+pad is for verified exact or hfit.
 inline std::string buildScalePadCropped(int display_w, int display_h, int coded_w, int coded_h,
                                         int crop_left, int crop_top,
                                         const std::string& sws_flags) {

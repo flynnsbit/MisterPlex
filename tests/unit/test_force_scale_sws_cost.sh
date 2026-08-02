@@ -14,9 +14,9 @@ NFRAMES=120
 # 320x240 product path: FOAR into CODED 624 (not display 618), then center pad.
 PRODUCT_VF_320='scale=624:480:force_original_aspect_ratio=decrease,pad=624:480:(ow-iw)/2:(oh-ih)/2'
 PRODUCT_VF_320_FB='scale=624:480:flags=fast_bilinear:force_original_aspect_ratio=decrease,pad=624:480:(ow-iw)/2:(oh-ih)/2'
-# Exact 624x480: crop+pad only (no FOAR; display crop_right=6 at present).
-PRODUCT_VF_624='crop=618:480:0:0,pad=624:480:0+(618-iw)/2:0+(480-ih)/2:color=black'
-PRODUCT_VF_624_FB="$PRODUCT_VF_624"
+# Unverified exact claim product path: FOAR into coded (not crop=618 — dies on 624x350).
+PRODUCT_VF_624='scale=624:480:force_original_aspect_ratio=decrease,pad=624:480:(ow-iw)/2:(oh-ih)/2'
+PRODUCT_VF_624_FB='scale=624:480:flags=fast_bilinear:force_original_aspect_ratio=decrease,pad=624:480:(ow-iw)/2:(oh-ih)/2'
 FB=449280
 EXPECTED=$((FB * NFRAMES))
 

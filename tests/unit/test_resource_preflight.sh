@@ -5,7 +5,12 @@ PREFLIGHT="$ROOT/scripts/test_resource_preflight.sh"
 FIX="$ROOT/tests/fixtures/preflight"
 
 run_preflight() {
+  # Pin floors so a host-side MISTERPLEX_PREFLIGHT_MIN_SWAPFREE_MB=0 (used when
+  # swap is historically full but MemAvailable is huge) cannot weaken fixtures.
   MISTERPLEX_PREFLIGHT_SAMPLE_SECONDS=1 \
+  MISTERPLEX_PREFLIGHT_MIN_AVAIL_MB=4096 \
+  MISTERPLEX_PREFLIGHT_MIN_SWAPFREE_MB=32 \
+  MISTERPLEX_ALLOW_LOW_MEMORY_TESTS=0 \
   MISTERPLEX_PREFLIGHT_VMSTAT="$FIX/vmstat_quiet" \
   MISTERPLEX_PREFLIGHT_MEMINFO="$1" \
   "$PREFLIGHT"

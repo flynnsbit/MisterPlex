@@ -58,8 +58,8 @@ int main() {
         expect(pipeDesyncRisk(460800u, bank, /*identity_skip=*/true), "D3 risk under skip");
         expect(!pipeDesyncRisk(460800u, bank, /*identity_skip=*/false),
                "D3 no risk flag when not identity_skip (scale path)");
-        // FORCE_SCALE Always + unverified exact: crop+pad pin (product hot path).
-        // Verified exact: true identity. Mismatch still scales.
+        // FORCE_SCALE Always + unverified exact: FOAR into coded (not crop_pad).
+        // crop=618:480 dies on fleet 624x350 (ffmpeg rc=234). Verified exact: identity.
         FfmpegVfRequest r;
         r.coded_w = 624;
         r.coded_h = 480;
@@ -70,9 +70,15 @@ int main() {
         r.source_h = 480;
         r.delivery_geometry_verified = false;
         const auto unv = buildFfmpegVideoFilter(r);
-        expect(!unv.identity_skip && !unv.scale_applied, "D3 unverified exact = crop-pad");
+        expect(unv.scale_applied && !unv.identity_skip, "D3 unverified exact = FOAR-scale");
         expect(unv.vf.find("pad=624:480") != std::string::npos, "D3 unverified pads coded");
-        expect(unv.vf.find("force_original_aspect_ratio") == std::string::npos, "D3 no FOAR");
+        expect(unv.vf.find("scale=624:480") != std::string::npos, "D3 FOAR coded W");
+        expect(unv.vf.find("force_original_aspect_ratio=decrease") != std::string::npos,
+               "D3 FOAR decrease");
+        expect(unv.vf.find("crop=618:480") == std::string::npos, "D3 no fixed crop");
+        // FOAR path still pins OUTPUT to bank bytes → no phase desync.
+        expect(!pipeDesyncRisk(bank, bank, unv.identity_skip),
+               "D3 FOAR path identity_skip=0 ⇒ no pipe risk flag");
         r.delivery_geometry_verified = true;
         const auto plan = buildFfmpegVideoFilter(r);
         expect(plan.identity_skip && !plan.scale_applied, "D3 verified exact = identity");
@@ -83,8 +89,19 @@ int main() {
         const auto mis = buildFfmpegVideoFilter(r);
         expect(mis.scale_applied && !mis.identity_skip, "D3 mismatch still scales under force");
         expect(mis.vf.find("pad=624:480") != std::string::npos, "D3 mismatch pads coded bank");
-        std::printf("D3_OK FORCE_SCALE unverified=crop_pad verified=identity mismatch=scale; "
-                    "bank=%zu\n",
+        // Fleet mode 624x350 also FOAR-codes; OUTPUT still bank bytes.
+        r.source_w = 624;
+        r.source_h = 350;
+        r.delivery_geometry_verified = false;
+        const auto m350 = buildFfmpegVideoFilter(r);
+        expect(m350.scale_applied && !m350.identity_skip, "D3 350 FOAR-scales");
+        expect(m350.vf.find("scale=624:480") != std::string::npos, "D3 350 FOAR coded");
+        expect(!pipeDesyncRisk(327600u, bank, m350.identity_skip),
+               "D3 350+scale: no desync risk (identity_skip=0)");
+        expect(pipeDesyncRisk(327600u, bank, /*identity_skip=*/true),
+               "D3 350+identity would desync");
+        std::printf("D3_OK FORCE_SCALE unverified=FOAR_coded verified=identity "
+                    "mismatch=scale 350=FOAR_coded; bank=%zu\n",
                     bank);
     }
 
