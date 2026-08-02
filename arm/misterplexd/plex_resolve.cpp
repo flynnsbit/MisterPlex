@@ -335,14 +335,60 @@ bool validateWeakLadder(const WeakLadder& weak, std::string* why) {
             return fail("current built-in profiles stop at " +
                         std::to_string(kDdrFrameStoreMaxWidth.get()) + "x" +
                         std::to_string(kDdrFrameStoreMaxHeight.get()));
-        if (weak.maxVideoBitrateKbps < 2000)
-            return fail("480p profile bitrate is too low");
-    } else if (weak.maxVideoBitrateKbps < 750) {
-        return fail("240p profile bitrate is too low");
+        // Bitrate floors are NOT decoder contracts (see recommendedMinVideoBitrateKbps).
+        // A hard 2000 kbps reject forced PMS requests above slow links and silently
+        // fell the ladder back to 240p — parent-proven 480p drop root cause.
+        // Decoder contracts remain: h264 baseline + level ≤ 3.0 above.
     }
     if (weak.videoQuality <= 0 || weak.maxVideoBitrateKbps <= 0)
         return fail("videoQuality and maxVideoBitrate must be positive");
     return true;
+}
+
+int recommendedMinVideoBitrateKbps(const WeakLadder& weak) {
+    int w = 0, h = 0;
+    if (!parseResolution(weak.videoResolution, w, h))
+        return 0;
+    // Defaults from osd_menu.hpp ladder constants — quality/ARM-margin heuristics,
+    // not H.264 level contracts. 480p default = kPlex480pWeakBitrateKbps (2000).
+    if (w >= kPlex480pCodedWidth.get() || h >= kPlex480pCodedHeight.get())
+        return kPlex480pWeakBitrateKbps;
+    // Legacy 240p path used a soft floor of 750 below the 1000 default.
+    return 750;
+}
+
+bool weakLadderBitrateBelowRecommended(const WeakLadder& weak, std::string* detail) {
+    const int floor = recommendedMinVideoBitrateKbps(weak);
+    if (floor <= 0 || weak.maxVideoBitrateKbps <= 0)
+        return false;
+    if (weak.maxVideoBitrateKbps >= floor)
+        return false;
+    if (detail) {
+        *detail = "maxVideoBitrateKbps=" + std::to_string(weak.maxVideoBitrateKbps) +
+                  " < recommended_min=" + std::to_string(floor) +
+                  " for videoResolution=" + weak.videoResolution +
+                  " (quality/link heuristic — explicit WEAK_BITRATE wins; not a decoder fail)";
+    }
+    return true;
+}
+
+int nextLowerLadderBitrateKbps(int currentKbps) {
+    // Fixed descending steps — no link-speed constant. Geometry unchanged.
+    // Absolute floor 400 keeps validateWeakLadder positive without inventing capacity.
+    static constexpr int kSteps[] = {2000, 1500, 1000, 750, 500, 400};
+    if (currentKbps <= kSteps[sizeof(kSteps) / sizeof(kSteps[0]) - 1])
+        return 0; // already at floor — cannot step
+    for (int s : kSteps) {
+        if (s < currentKbps)
+            return s;
+    }
+    return 0;
+}
+
+bool starveStepdownReady(int consecutiveStarvedSamples, int minConsecutive) {
+    if (minConsecutive <= 0)
+        minConsecutive = kStarveStepdownMinConsecutive;
+    return consecutiveStarvedSamples >= minConsecutive;
 }
 
 std::string plexClientProfileExtra(const WeakLadder& weak) {

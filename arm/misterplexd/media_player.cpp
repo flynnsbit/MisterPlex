@@ -1,5 +1,6 @@
 #include "media_player.hpp"
 #include "log_redact.hpp"
+#include "plex_resolve.hpp"
 
 #include "libmisterplex/audio_delay.hpp"
 #include "libmisterplex/av_clock.hpp"
@@ -2823,6 +2824,9 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                              int64_t durationMs) {
     playing_.store(true);
     positionMs_.store(startMs);
+    starveStreak_ = 0;
+    ladderStepdownLogged_ = false;
+    // Do not clear ladderStepdownKbps_ here — main may take it after stop.
     if (onProgress_)
         onProgress_("buffering", startMs, durationMs);
 
@@ -4205,6 +4209,33 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                               : 0.0;
                 const int64_t abytes = audioBytes_.load();
                 const double a_sec = static_cast<double>(abytes) / (48000.0 * 4.0);
+                const double wall_s_now = static_cast<double>(wall2) / 1000.0;
+                // Link/arrival observable: audio_s/wall_s (parent 480p RCA).
+                // STARVED ≈ 0.47 collapse; OK ≈ 0.99 healthy — single signal, not a 2nd meter.
+                const auto supplyRt = misterplex::classifySupplyRealtime(a_sec, wall_s_now);
+                const std::string supplyRtFields =
+                    misterplex::formatSupplyRealtimeFields(supplyRt);
+                if (supplyRt.ratio_known && std::strcmp(supplyRt.class_name, "STARVED") == 0)
+                    ++starveStreak_;
+                else
+                    starveStreak_ = 0;
+                if (!ladderStepdownLogged_ &&
+                    misterplex::starveStepdownReady(starveStreak_)) {
+                    const int curBr = ladderBitrateKbps_.load(std::memory_order_relaxed);
+                    const int nextBr = misterplex::nextLowerLadderBitrateKbps(curBr > 0 ? curBr : 0);
+                    ladderStepdownLogged_ = true;
+                    if (nextBr > 0)
+                        ladderStepdownKbps_.store(nextBr, std::memory_order_relaxed);
+                    log(std::string("ERROR media: LADDER_STEPDOWN_RECOMMENDED ") +
+                        "supply_class=STARVED supply_ratio=" +
+                        (supplyRt.ratio_known ? fmtSec3(supplyRt.ratio) : "NO-DATA") +
+                        " consecutive_starved=" + std::to_string(starveStreak_) +
+                        " current_bitrate_kbps=" + std::to_string(curBr) +
+                        " next_bitrate_kbps=" + std::to_string(nextBr) +
+                        " geometry_unchanged=1 " +
+                        "note=not_a_link_speed_guess;operator_or_AUTO_LADDER_STEPDOWN " +
+                        "tag=measured");
+                }
                 const int mw = measuredDeliveryW_.load();
                 const int mh = measuredDeliveryH_.load();
                 const auto led = frameLedgerLiveOf(frameIndex, presentCount_,
@@ -4241,7 +4272,8 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                     " vfps=" + fmtFpsRate(vfps) +
                     " pfps=" + fmtFpsRate(pfps) +
                     " audio_s=" + fmtSec3(a_sec) +
-                    " wall_s=" + fmtSec3(static_cast<double>(wall2) / 1000.0) +
+                    " wall_s=" + fmtSec3(wall_s_now) +
+                    " " + supplyRtFields +
                     " wall_ms=" + std::to_string(wall2) +
                     " mono_ms=" + std::to_string(steadyMonoMs()) +
                     " audio=" + (audioActive_.load() ? "on" : "off") +

@@ -110,7 +110,30 @@ struct WeakLadder {
 };
 
 // Guard rails for built-in and configured ladders.
+// Hard fails: resolution parse, codecs, H.264 baseline, level ≤ 3.0, positive
+// quality/bitrate, coded size ≤ DDR max. Does NOT hard-fail below the ladder's
+// *recommended* bitrate defaults (2000/750) — those are quality/link heuristics
+// (osd_menu.hpp); explicit WEAK_BITRATE must be allowed for slow links.
 bool validateWeakLadder(const WeakLadder& weak, std::string* why = nullptr);
+
+// Recommended minimum maxVideoBitrateKbps for the ladder geometry (0 = unknown).
+// 480p → kPlex480pWeakBitrateKbps (2000); sub-480p → 750. Not a decoder contract.
+int recommendedMinVideoBitrateKbps(const WeakLadder& weak);
+
+// True when bitrate is positive but below recommendedMin. detail is greppable.
+bool weakLadderBitrateBelowRecommended(const WeakLadder& weak, std::string* detail = nullptr);
+
+// Next lower maxVideoBitrate on sustained STARVED. Geometry unchanged.
+// Returns 0 if already at absolute floor (400). Steps: 2000→1500→1000→750→500→400.
+// Does NOT encode a link speed — only a discrete ladder.
+int nextLowerLadderBitrateKbps(int currentKbps);
+
+// Sustained under-supply gate for step-down (1 Hz supply_class samples).
+// Default min = kStarveStepdownMinConsecutive (~8 s after WARMUP).
+inline constexpr int kStarveStepdownMinConsecutive = 8;
+bool starveStepdownReady(int consecutiveStarvedSamples,
+                         int minConsecutive = kStarveStepdownMinConsecutive);
+
 std::string plexClientProfileExtra(const WeakLadder& weak);
 std::string plexClientCapabilities(const WeakLadder& weak);
 std::string buildUniversalTranscodeUrl(const std::string& base,

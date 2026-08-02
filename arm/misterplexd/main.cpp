@@ -241,6 +241,9 @@ int main(int argc, char** argv) {
     bool transcodeProfileExplicit = false;
     bool weakResExplicit = false;
     bool weakBitrateExplicit = false;
+    // When supply_class=STARVED is sustained, apply nextLowerLadderBitrate and
+    // restart the same title (geometry unchanged). Default off — log-only is safe.
+    bool autoLadderStepdown = false;
     std::vector<std::string> servers;
     std::string defaultPms;
     int64_t skipForwardMs = 30000;
@@ -389,6 +392,9 @@ int main(int argc, char** argv) {
             weakBitrateExplicit = true;
             weak.maxVideoBitrateKbps = std::atoi(v.c_str());
         }
+        v = loadConf(confPath, "AUTO_LADDER_STEPDOWN");
+        if (!v.empty())
+            autoLadderStepdown = confTruthy(v);
         v = loadConf(confPath, "PRESENT");
         if (!v.empty())
             presentMode = v; // fb0 | fpga | both | none(test/lab)
@@ -558,6 +564,17 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "misterplexd: invalid transcode profile (%s); falling back to 240p\n",
                      weakWhy.c_str());
         misterplex::applyPlexTranscodeProfile("240p", weak);
+    } else {
+        // Bitrate-below-recommended is advisory only. A hard 2000 kbps 480p floor
+        // used to reject explicit WEAK_BITRATE and silently fall back to 240p.
+        // Log the advisory; do not rewrite the ladder.
+        std::string brAdv;
+        if (misterplex::weakLadderBitrateBelowRecommended(weak, &brAdv)) {
+            std::fprintf(stderr,
+                         "misterplexd: WARN bitrate_below_recommended %s "
+                         "WEAK_BITRATE_explicit=%d tag=caller_supplied_or_default\n",
+                         brAdv.c_str(), weakBitrateExplicit ? 1 : 0);
+        }
     }
 
     // SA_SIGINFO so si_pid/si_code survive into EXIT_REASON (who sent the kill).
@@ -937,10 +954,22 @@ int main(int argc, char** argv) {
             weakForContentResolution(weak, contentRes, weakBitrateExplicit);
         std::fprintf(stderr,
                      "misterplexd: content resolution=%s source=%s status_word=0x%04x "
-                     "weak=%s bitrate=%d decode_src=%s\n",
+                     "weak=%s bitrate=%d recommended_min_bitrate=%d "
+                     "WEAK_BITRATE_explicit=%d decode_src=%s\n",
                      contentRes.label, player.osdApplyActive() ? "OSD O[4]" : "conf/--decode",
                      player.lastOsdWord(), weakForPlay.videoResolution.c_str(),
-                     weakForPlay.maxVideoBitrateKbps, player.decodeSizeSource().c_str());
+                     weakForPlay.maxVideoBitrateKbps,
+                     misterplex::recommendedMinVideoBitrateKbps(weakForPlay),
+                     weakBitrateExplicit ? 1 : 0, player.decodeSizeSource().c_str());
+        {
+            std::string brAdv;
+            if (misterplex::weakLadderBitrateBelowRecommended(weakForPlay, &brAdv)) {
+                std::fprintf(stderr,
+                             "misterplexd: WARN play bitrate_below_recommended %s "
+                             "WEAK_BITRATE_explicit=%d (honored — not rejected)\n",
+                             brAdv.c_str(), weakBitrateExplicit ? 1 : 0);
+            }
+        }
         auto [resolved, base] = resolveAgainstServers(req, defaultPms, off, weakForPlay);
 
         if (gen != playGen.load()) {
@@ -1214,7 +1243,10 @@ int main(int argc, char** argv) {
         // resolved.playable keeps the real token for FFmpeg; only the log line is scrubbed.
         logDaemon("misterplexd: PLAY " + misterplex::redactSensitive(resolved.playable) +
                   " off=" + std::to_string(startAt) +
-                  " dur=" + std::to_string(resolved.durationMs));
+                  " dur=" + std::to_string(resolved.durationMs) +
+                  " maxVideoBitrate=" + std::to_string(weakForPlay.maxVideoBitrateKbps) +
+                  " WEAK_BITRATE_explicit=" + std::to_string(weakBitrateExplicit ? 1 : 0));
+        player.setLadderBitrateKbps(weakForPlay.maxVideoBitrateKbps);
         player.play(resolved.playable, startAt, resolved.httpHeaders, resolved.durationMs);
     };
 
@@ -1520,6 +1552,36 @@ int main(int argc, char** argv) {
         if (++tick % 3 != 0)
             continue;
         misterplex::FpgaSpi::resumeStrandedMain();
+        // Optional auto ladder step-down: consumes LADDER_STEPDOWN_RECOMMENDED.
+        // Geometry unchanged; bitrate only. Not a hardcoded link speed.
+        if (autoLadderStepdown) {
+            const int nextBr = player.takeLadderStepdownKbps();
+            if (nextBr > 0 && player.playing()) {
+                misterplex::PlayRequest cur;
+                {
+                    std::lock_guard<std::mutex> lock(sessionMu);
+                    cur = lastPlay;
+                }
+                const int64_t pos = player.positionMs();
+                weak.maxVideoBitrateKbps = nextBr;
+                weakBitrateExplicit = true;
+                cur.offsetMs = pos > 0 ? pos : 0;
+                cur.offsetPresent = true;
+                std::fprintf(stderr,
+                             "misterplexd: AUTO_LADDER_STEPDOWN apply next_bitrate_kbps=%d "
+                             "pos_ms=%lld geometry_unchanged=1 tag=measured\n",
+                             nextBr, static_cast<long long>(pos));
+                player.stop();
+                doPlay(cur);
+            } else if (nextBr > 0) {
+                // Not playing — still adopt for the next cast.
+                weak.maxVideoBitrateKbps = nextBr;
+                weakBitrateExplicit = true;
+                std::fprintf(stderr,
+                             "misterplexd: AUTO_LADDER_STEPDOWN adopt_idle next_bitrate_kbps=%d\n",
+                             nextBr);
+            }
+        }
         // Throttled heartbeat so misterplexd.last is never hours-stale after a kill.
         if ((tick % 25) == 0) {
             misterplex::deathBreadcrumbUpdate(

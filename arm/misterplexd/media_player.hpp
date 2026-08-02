@@ -210,6 +210,15 @@ public:
     // caller_supplied | conf:/path | cli:--decode | default | content_tier.
     void setDecodeSizeSource(const std::string& src);
     const std::string& decodeSizeSource() const { return decodeSizeSource_; }
+    // PMS maxVideoBitrate for this play — used only for LADDER_STEPDOWN_RECOMMENDED.
+    void setLadderBitrateKbps(int kbps) {
+        ladderBitrateKbps_.store(kbps > 0 ? kbps : 0, std::memory_order_relaxed);
+    }
+    // Non-zero once sustained STARVED recommends a lower bitrate (geometry unchanged).
+    // Cleared on take. Main may apply with AUTO_LADDER_STEPDOWN or leave as log-only.
+    int takeLadderStepdownKbps() {
+        return ladderStepdownKbps_.exchange(0, std::memory_order_relaxed);
+    }
     // Host recon frames presented this session (I/IDR only)
     int64_t reconFrames() const { return reconFrames_.load(); }
     bool reconPresentOk() const { return reconPresentOk_.load(); }
@@ -391,6 +400,11 @@ private:
     std::atomic<int64_t> droppedFrames_{0};
     // Present attempted but DDR/FPGA publish failed (per stream). NOT in drops.
     std::atomic<int64_t> publishMisses_{0};
+    // Ladder bitrate for STARVED step-down recommendation (not a link-speed guess).
+    std::atomic<int> ladderBitrateKbps_{0};
+    std::atomic<int> ladderStepdownKbps_{0};
+    int starveStreak_ = 0;
+    bool ladderStepdownLogged_ = false;
     // Last ffmpeg -stats/-progress frame= count (-1 = never seen). Supply split.
     std::atomic<int64_t> ffmpegOutFrames_{-1};
     // Lifetime (process) totals — soak-auditable across stream resets / restarts

@@ -159,6 +159,38 @@ int main() {
     CHECK(kSupplyGapFlatFrames < 15 && kSupplyGapHitFrames <= 15);
     CHECK(kSupplyGapFlatFrames + 1 < kSupplyGapHitFrames);
 
+    // --- supply_ratio = audio_s/wall_s (parent 480p link RCA; single starvation signal) ---
+    {
+        // Parent collapse: audio_s/wall ≈ 0.467 → STARVED
+        const auto starved = classifySupplyRealtime(0.467 * 20.0, 20.0);
+        CHECK(starved.ratio_known);
+        CHECK(std::fabs(starved.ratio - 0.467) < 1e-9);
+        CHECK(std::strcmp(starved.class_name, "STARVED") == 0);
+        CHECK(std::strcmp(starved.der, "audio_s/wall_s") == 0);
+        const auto ok = classifySupplyRealtime(0.993 * 30.0, 30.0);
+        CHECK(ok.ratio_known);
+        CHECK(std::fabs(ok.ratio - 0.993) < 1e-9);
+        CHECK(std::strcmp(ok.class_name, "OK") == 0);
+        const auto marg = classifySupplyRealtime(0.90 * 10.0, 10.0);
+        CHECK(std::strcmp(marg.class_name, "MARGINAL") == 0);
+        const auto warm = classifySupplyRealtime(1.0, 2.0);
+        CHECK(std::strcmp(warm.class_name, "WARMUP") == 0);
+        CHECK(warm.ratio_known && std::fabs(warm.ratio - 0.5) < 1e-9);
+        const auto nod = classifySupplyRealtime(1.0, 0.0);
+        CHECK(!nod.ratio_known);
+        CHECK(std::strcmp(nod.class_name, "NO-DATA") == 0);
+        const auto fmt = formatSupplyRealtimeFields(starved);
+        CHECK(fmt.find("supply_ratio=0.467") != std::string::npos);
+        CHECK(fmt.find("supply_class=STARVED") != std::string::npos);
+        CHECK(fmt.find("supply_ratio_der=audio_s/wall_s") != std::string::npos);
+        const auto fmtNd = formatSupplyRealtimeFields(nod);
+        CHECK(fmtNd.find("supply_ratio=NO-DATA") != std::string::npos);
+        CHECK(kSupplyRealtimeStarvedLt == 0.85);
+        CHECK(kSupplyRealtimeOkGe == 0.95);
+        CHECK(kSupplyRealtimeMinWallS == 5.0);
+        std::printf("PASS supply_ratio audio_s/wall_s class\n");
+    }
+
     if (fails) {
         std::fprintf(stderr, "test_supply_bucket: %d FAIL(s)\n", fails);
         return 1;

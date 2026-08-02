@@ -156,11 +156,59 @@ int main() {
     bad480.h264Profile = "high";
     CHECK(!validateWeakLadder(bad480));
     bad480 = w480;
-    bad480.maxVideoBitrateKbps = 1000;
-    CHECK(!validateWeakLadder(bad480));
-    bad480 = w480;
     bad480.h264Level = 31;
     CHECK(!validateWeakLadder(bad480));
+
+    // 480p bitrate floor was a quality/link heuristic hard-fail — retired.
+    // Explicit WEAK_BITRATE=1000 (or 900) on 480p must validate so slow links
+    // can request under 2000 kbps. Decoder contracts (baseline / L3.0) stay hard.
+    {
+        WeakLadder lowBr = w480;
+        lowBr.maxVideoBitrateKbps = 1000;
+        CHECK(validateWeakLadder(lowBr));
+        CHECK(recommendedMinVideoBitrateKbps(lowBr) == kPlex480pWeakBitrateKbps);
+        CHECK(weakLadderBitrateBelowRecommended(lowBr));
+        std::string det;
+        CHECK(weakLadderBitrateBelowRecommended(lowBr, &det));
+        CHECK(det.find("recommended_min=2000") != std::string::npos);
+        CHECK(det.find("maxVideoBitrateKbps=1000") != std::string::npos);
+        // Wire URL must carry the explicit bitrate (not silently 2000).
+        const auto url900 = buildUniversalTranscodeUrl("http://pms:32400", "/library/metadata/1",
+                                                       "tok", "sess", 0, [&] {
+                                                           WeakLadder w = w480;
+                                                           w.maxVideoBitrateKbps = 900;
+                                                           return w;
+                                                       }());
+        CHECK(url900.find("maxVideoBitrate=900") != std::string::npos);
+        CHECK(url900.find("maxVideoBitrate=2000") == std::string::npos);
+        CHECK(validateWeakLadder([&] {
+            WeakLadder w = w480;
+            w.maxVideoBitrateKbps = 900;
+            return w;
+        }()));
+        // Default 480p is at the recommended floor — not below.
+        CHECK(!weakLadderBitrateBelowRecommended(w480));
+        // Zero still hard-fails (positive required).
+        lowBr.maxVideoBitrateKbps = 0;
+        CHECK(!validateWeakLadder(lowBr));
+        // 240p below legacy soft 750 is advisory only, not a hard fail.
+        WeakLadder low240 = w240;
+        low240.maxVideoBitrateKbps = 500;
+        CHECK(validateWeakLadder(low240));
+        CHECK(weakLadderBitrateBelowRecommended(low240));
+        // Ladder step-down (geometry unchanged) — discrete steps, no link speed.
+        CHECK(nextLowerLadderBitrateKbps(2000) == 1500);
+        CHECK(nextLowerLadderBitrateKbps(1500) == 1000);
+        CHECK(nextLowerLadderBitrateKbps(1000) == 750);
+        CHECK(nextLowerLadderBitrateKbps(750) == 500);
+        CHECK(nextLowerLadderBitrateKbps(500) == 400);
+        CHECK(nextLowerLadderBitrateKbps(400) == 0);
+        CHECK(nextLowerLadderBitrateKbps(900) == 750); // between steps → next below
+        CHECK(!starveStepdownReady(7));
+        CHECK(starveStepdownReady(8));
+        CHECK(starveStepdownReady(3, 3));
+        std::printf("PASS 480p WEAK_BITRATE below recommended validates + stepdown ladder\n");
+    }
 
     // --- Phase 4 multi-server conf helpers (no network) ---
     CHECK(normalizePlexBase("http://pms.lan:32400/") == "http://pms.lan:32400");
