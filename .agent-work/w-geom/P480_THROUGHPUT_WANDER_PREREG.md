@@ -42,10 +42,16 @@ clock=av-lock av_drift_ms=-39 drops=70 fps=24/1 decode=624x480 measured=624x480 
 
 ## Pre-registered mechanisms (predict BEFORE paired capture)
 
-### M1 — RETIRED / FALSIFIED (parent pair 2026-08-01) — `UNDERPRODUCE_THEN_DROP`
+### M1 — FALSIFIED (parent pair 2026-08-01) — `UNDERPRODUCE_THEN_DROP` — STANDS
 
-**MISS published:** HDMI WANDER with `vfps=23.9` rock-flat and `drops_delta=0` (n=108).  
-M1 predicted `vfps_p50≤20` and `Δdrops≥15`. **Primary is now M2** — see `M2_PUBLISH_INTERVAL_RCA.md`.
+**MISS published:** HDMI residual class WANDER with `vfps=23.9` rock-flat and `drops_delta=0` (n=108).  
+M1 predicted `vfps_p50≤20` and `Δdrops≥15`.
+
+### M2 — RETRACTED (parent ERROR 21) — do not promote
+
+`drops_delta=0` does **not** measure publish intervals (pacer-only counter).  
+M1-false⇏M2. Window STABLE/WANDER flip statistically weak. Lipsync residual ≠ user judder.  
+See `ERROR_21_M2_RETRACTION.md`. Mechanism for residual RMS near tol: **UNKNOWN**.
 
 ### M1 — (historical text kept for the miss record)
 

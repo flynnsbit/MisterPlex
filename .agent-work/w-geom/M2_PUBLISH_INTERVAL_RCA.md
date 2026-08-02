@@ -1,14 +1,15 @@
-# M2 — Publish-interval jitter at constant throughput (w-geom)
+# M2 — RETRACTED as named mechanism (see ERROR_21_M2_RETRACTION.md)
 
-**Branch tip:** see `git rev-parse HEAD`  
-**Parent pair (2026-08-01, rk=20, DECODE=624x480):**  
-- HDMI WANDER `residual_rms=14.398` `detrended_max_abs=50.803`  
-- Daemon same window: **vfps 23.9 flat**, **drops_delta=0**, pfps 23.8–23.9  
-- Second window same session: **STABLE** at same throughput  
+**Do not treat this file as an active RCA.** Parent ERROR 21 (2026-08-01) retracted
+M2 as the surviving mechanism. Historical text below is retained only as a miss
+record and design notes for optional telemetry — **not** a device defect claim.
+
+**Active position:** no device-side lipsync/judder defect established from the
+two paired windows; unknown is correct. Standing lane = FORCE_SCALE / B1 / B5.
 
 ---
 
-## M1 MISS (published)
+## M1 MISS (published — STILL VALID)
 
 | Pre-reg M1 | Measured |
 |------------|----------|

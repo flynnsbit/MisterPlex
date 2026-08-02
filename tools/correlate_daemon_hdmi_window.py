@@ -165,7 +165,11 @@ def load_hdmi(report_path: str | None, stdout_path: str | None) -> dict[str, Any
 
 
 def classify_mech(daemon: dict[str, Any], hdmi: dict[str, Any]) -> dict[str, Any]:
-    """M1 FALSIFIED on parent pair (2026-08-01). Primary is now M2 publish-interval."""
+    """ERROR 21: no named device mechanism. M1 falsify is observational only.
+
+    drops= is pacer-only — never treat drops_delta as publish-interval evidence.
+    pub_iv_* is optional telemetry, not a defect score (ERROR_21_M2_RETRACTION.md).
+    """
     tc = hdmi.get("timing_class")
     vfps = daemon.get("vfps") or {}
     drops = daemon.get("drops") or {}
@@ -179,63 +183,40 @@ def classify_mech(daemon: dict[str, Any], hdmi: dict[str, Any]) -> dict[str, Any
         d_delta = d_last - d_first
 
     out: dict[str, Any] = {
-        "primary_pred": "M2_PUBLISH_INTERVAL_JITTER",
-        "retired_pred": "M1_UNDERPRODUCE_THEN_DROP",
-        "m1_status": "FALSIFIED_parent_pair_vfps23.9_drops_delta0",
+        "primary_pred": "UNKNOWN",
+        "device_defect": "NOT_ESTABLISHED",
+        "m1_status": "FALSIFIED_when_high_vfps_flat_drops",
+        "m2_status": "RETRACTED_ERROR_21",
         "hits": [],
         "misses": [],
+        "notes": [
+            "drops_delta is pacer Drop only — not publish interval",
+            "lipsync residual RMS is not user judder; w-instr owns IFI histogram",
+            "ERROR_21_M2_RETRACTION.md",
+        ],
         "verdict": "NO-DATA",
-        "bands_src": "M2_PUBLISH_INTERVAL_RCA.md + parent pair 2026-08-01",
+        "bands_src": "ERROR_21_M2_RETRACTION.md",
     }
     if tc is None or v50 is None:
         out["verdict"] = "NO-DATA"
         return out
 
-    wander = tc == "WANDER"
-    stable = tc == "STABLE"
+    # Observational M1 shape tags only (no promotion to another mechanism).
+    if v50 >= 23.5 and (d_delta is None or d_delta <= 3):
+        out["hits"].append("OBS_throughput_nominal")
+        if tc in ("WANDER", "STABLE"):
+            out["misses"].append("M1_UNDERPRODUCE_THEN_DROP_falsified_this_shape")
+    elif v50 <= 20.0 and d_delta is not None and d_delta >= 15:
+        out["hits"].append("OBS_underproduce_and_pacer_drops")
+        out["notes"].append("M1 shape present — still not a lipsync mechanism claim")
 
-    # M1 — keep scorer so a future underproduce resurfaces; parent miss is published.
-    m1 = False
-    if wander and v50 <= 20.0 and d_delta is not None and d_delta >= 15:
-        m1 = True
-        out["hits"].append("M1_UNDERPRODUCE_THEN_DROP")
-    elif wander and v50 >= 23.5 and (d_delta is None or d_delta <= 3):
-        out["misses"].append("M1_FALSIFIED_high_vfps_flat_drops")
-    elif stable and v50 >= 23.2 and (d_delta is None or d_delta <= 5):
-        out["hits"].append("M1_STABLE_CONTROL_SHAPE")
-
-    # M2 candidate: WANDER + healthy throughput (parent confirmed)
-    if wander and v50 is not None and v50 >= 23.2 and (d_delta is None or d_delta <= 5):
-        out["hits"].append("M2_PUBLISH_INTERVAL_JITTER_CANDIDATE")
-
-    # M2 confirmed when rolling p_ge50 elevated in same window
-    if wander and pge50 is not None and pge50 >= 0.03:
-        out["hits"].append("M2_CONFIRMED_p_ge50_w60_ge_0.03")
-    elif wander and pge50 is not None and pge50 < 0.03:
-        out["misses"].append("M2_p_ge50_w60_clean_on_WANDER")
-    elif wander and pge50 is None:
-        out["misses"].append("M2_pub_iv_NO-DATA_deploy_tip_daemon")
-
-    if stable and pge50 is not None and pge50 < 0.03:
-        out["hits"].append("M2_STABLE_CONTROL_clean_p_ge50")
-    elif stable and pge50 is not None and pge50 >= 0.09:
-        out["misses"].append("M2_STABLE_but_high_p_ge50")
-
-    if wander and not m1 and "M2_PUBLISH_INTERVAL_JITTER_CANDIDATE" not in out["hits"]:
-        out["misses"].append("WANDER_unclassified")
-
-    if out["hits"] and not any(
-        x.startswith("M1_FALSIFIED") or x.startswith("M2_p_ge50_w60_clean") or x.startswith("M2_pub_iv")
-        for x in out["misses"]
-    ):
-        out["verdict"] = "SCORED_HIT"
-    elif out["misses"] and not out["hits"]:
-        out["verdict"] = "SCORED_MISS"
-    elif out["hits"] and out["misses"]:
-        out["verdict"] = "SCORED_MIXED"
+    # pub_iv telemetry only — never a hit/miss for device defect
+    if pge50 is not None:
+        out["notes"].append(f"pub_iv_p_ge50_w60_p50={pge50:.4f} (telemetry_only_not_defect)")
     else:
-        out["verdict"] = "SCORED_NEUTRAL"
+        out["notes"].append("pub_iv_p_ge50_w60=NO-DATA (telemetry_only)")
 
+    out["verdict"] = "UNKNOWN_NO_DEFECT_CLAIM"
     out["inputs"] = {
         "timing_class": tc,
         "vfps_p50": v50,
@@ -340,18 +321,14 @@ def self_test() -> int:
     lp = td / "d.log"
     rp = td / "h.json"
 
-    # Parent-shaped WANDER: high vfps, flat drops, elevated p_ge50 → M2 confirm + M1 falsified
+    # Parent shape: nominal throughput + flat drops → M1 falsified; mechanism UNKNOWN
     d_parent = (
         "media: frames=100 vfps=23.9 pfps=23.8 wall_s=10.0 drops=11 "
         "publish_misses=0 residual=0 av_drift_ms=-35 av_display_offset_ms=40 "
-        "pub_iv_n=240 pub_iv_p_ge50_w60=0.0800 pub_iv_mean_ms_w60=41.7 "
-        "pub_iv_max_ms_w60=62.0 pub_iv_disc_w60=LATE_ARRIVAL "
-        "pub_iv_p_ge50_w5=0.1000 pub_iv_disc_w5=LATE_ARRIVAL audio_s=10.0\n"
+        "pub_iv_n=240 pub_iv_p_ge50_w60=0.0800 audio_s=10.0\n"
         "media: frames=200 vfps=23.9 pfps=23.8 wall_s=20.0 drops=11 "
         "publish_misses=0 residual=0 av_drift_ms=-36 av_display_offset_ms=42 "
-        "pub_iv_n=480 pub_iv_p_ge50_w60=0.0900 pub_iv_mean_ms_w60=41.8 "
-        "pub_iv_max_ms_w60=70.0 pub_iv_disc_w60=LATE_ARRIVAL "
-        "pub_iv_p_ge50_w5=0.1200 pub_iv_disc_w5=LATE_ARRIVAL audio_s=20.0\n"
+        "pub_iv_n=480 pub_iv_p_ge50_w60=0.0900 audio_s=20.0\n"
     )
     h_w = {
         "timing_class": "WANDER",
@@ -363,57 +340,35 @@ def self_test() -> int:
     lp.write_text(d_parent, encoding="utf-8")
     rp.write_text(json.dumps(h_w), encoding="utf-8")
     r = correlate(lp, str(rp), None)
-    hits = r["mechanism"]["hits"]
-    if "M2_PUBLISH_INTERVAL_JITTER_CANDIDATE" not in hits:
-        print("FAIL expected M2 candidate", r["mechanism"], file=sys.stderr)
+    if r["mechanism"]["verdict"] != "UNKNOWN_NO_DEFECT_CLAIM":
+        print("FAIL expected UNKNOWN_NO_DEFECT_CLAIM", r["mechanism"], file=sys.stderr)
         return 1
-    if "M2_CONFIRMED_p_ge50_w60_ge_0.03" not in hits:
-        print("FAIL expected M2 confirmed", r["mechanism"], file=sys.stderr)
+    if r["mechanism"]["primary_pred"] != "UNKNOWN":
+        print("FAIL primary must be UNKNOWN", r["mechanism"], file=sys.stderr)
         return 1
-    if "M1_UNDERPRODUCE_THEN_DROP" in hits:
-        print("FAIL M1 must not hit parent shape", r["mechanism"], file=sys.stderr)
+    if "M1_UNDERPRODUCE_THEN_DROP_falsified_this_shape" not in r["mechanism"]["misses"]:
+        print("FAIL expected M1 falsified tag", r["mechanism"], file=sys.stderr)
         return 1
-    if "M1_FALSIFIED_high_vfps_flat_drops" not in r["mechanism"]["misses"]:
-        print("FAIL expected M1 falsified miss tag", r["mechanism"], file=sys.stderr)
+    if any(h.startswith("M2_") for h in r["mechanism"]["hits"]):
+        print("FAIL M2 must not be a hit after ERROR 21", r["mechanism"], file=sys.stderr)
         return 1
 
-    # STABLE control clean p_ge50
+    # Underproduce shape is observational only
     d2 = (
-        "media: frames=240 vfps=23.9 pfps=23.9 wall_s=10.0 drops=11 "
-        "publish_misses=0 pub_iv_p_ge50_w60=0.0100 pub_iv_disc_w60=CLEAN "
-        "av_drift_ms=-40 av_display_offset_ms=40 audio_s=10.0\n"
-        "media: frames=480 vfps=24.0 pfps=24.0 wall_s=20.0 drops=11 "
-        "publish_misses=0 pub_iv_p_ge50_w60=0.0050 pub_iv_disc_w60=CLEAN "
-        "av_drift_ms=-40 av_display_offset_ms=40 audio_s=20.0\n"
+        "media: frames=100 vfps=18.0 pfps=17.0 wall_s=10.0 drops=20 audio_s=8.0\n"
+        "media: frames=180 vfps=17.5 pfps=16.5 wall_s=20.0 drops=40 audio_s=16.0\n"
     )
-    h2 = {"timing_class": "STABLE", "residual_rms_ms": 8.0, "detrended_max_abs_ms": 20.0, "n_pairs": 20}
+    h2 = {"timing_class": "WANDER", "residual_rms_ms": 40.0, "detrended_max_abs_ms": 100.0, "n_pairs": 20}
     lp.write_text(d2, encoding="utf-8")
     rp.write_text(json.dumps(h2), encoding="utf-8")
     r2 = correlate(lp, str(rp), None)
-    if "M2_STABLE_CONTROL_clean_p_ge50" not in r2["mechanism"]["hits"]:
-        print("FAIL STABLE clean p_ge50", r2["mechanism"], file=sys.stderr)
+    if "OBS_underproduce_and_pacer_drops" not in r2["mechanism"]["hits"]:
+        print("FAIL expected underproduce observation", r2["mechanism"], file=sys.stderr)
         return 1
-
-    # RED: WANDER + high vfps + clean p_ge50 → M2 candidate but p_ge50 miss
-    d3 = (
-        "media: frames=240 vfps=23.9 pfps=23.9 wall_s=10.0 drops=11 "
-        "publish_misses=0 pub_iv_p_ge50_w60=0.0050 pub_iv_disc_w60=CLEAN "
-        "av_drift_ms=-40 audio_s=10.0\n"
-        "media: frames=480 vfps=24.0 pfps=24.0 wall_s=20.0 drops=11 "
-        "publish_misses=0 pub_iv_p_ge50_w60=0.0050 pub_iv_disc_w60=CLEAN "
-        "av_drift_ms=-40 audio_s=20.0\n"
-    )
-    h3 = {"timing_class": "WANDER", "residual_rms_ms": 40.0, "detrended_max_abs_ms": 100.0, "n_pairs": 20}
-    lp.write_text(d3, encoding="utf-8")
-    rp.write_text(json.dumps(h3), encoding="utf-8")
-    r3 = correlate(lp, str(rp), None)
-    if "M2_PUBLISH_INTERVAL_JITTER_CANDIDATE" not in r3["mechanism"]["hits"]:
-        print("FAIL M2 candidate on clean-pge WANDER", r3["mechanism"], file=sys.stderr)
+    if r2["mechanism"]["verdict"] != "UNKNOWN_NO_DEFECT_CLAIM":
+        print("FAIL underproduce still not a defect claim", r2["mechanism"], file=sys.stderr)
         return 1
-    if "M2_p_ge50_w60_clean_on_WANDER" not in r3["mechanism"]["misses"]:
-        print("FAIL expected M2 p_ge50 clean miss", r3["mechanism"], file=sys.stderr)
-        return 1
-    print("CORRELATE_SELFTEST_OK M2_confirm M1_falsified STABLE_control M2_pge_miss")
+    print("CORRELATE_SELFTEST_OK UNKNOWN_primary M1_falsify_obs no_M2_hit")
     return 0
 
 
@@ -460,11 +415,16 @@ def main(argv: list[str] | None = None) -> int:
         f"residual_rms_ms={result['hdmi']['residual_rms_ms']} "
         f"detrended_max_abs_ms={result['hdmi']['detrended_max_abs_ms']}",
         f"m1_status={result['mechanism'].get('m1_status')}",
+        f"m2_status={result['mechanism'].get('m2_status')}",
+        f"device_defect={result['mechanism'].get('device_defect')}",
+        f"primary_pred={result['mechanism'].get('primary_pred')}",
         f"mechanism_verdict={result['mechanism']['verdict']}",
         f"mechanism_hits={result['mechanism']['hits']}",
         f"mechanism_misses={result['mechanism']['misses']}",
         f"mechanism_inputs={result['mechanism'].get('inputs')}",
     ]
+    for n in result["mechanism"].get("notes") or []:
+        text_lines.append(f"MECH_NOTE: {n}")
     for nk in (
         "publish_misses_note",
         "av_display_offset_note",

@@ -37,9 +37,9 @@ mkdir -p "$OUT"
 echo "=== avsync_pair_daemon_hdmi ==="
 echo "out=$OUT duration=$DUR host=$HOST"
 echo "note=does_not_rebuild_avsync_measure_hdmi; wraps lipsync_soak + daemon tail"
-echo "PRE_REG_MECH=M1_UNDERPRODUCE_THEN_DROP FALSIFIED_on_parent_pair; M2_PUBLISH_INTERVAL primary"
-echo "PRE_REG_FILE=$ROOT/.agent-work/w-geom/P480_THROUGHPUT_WANDER_PREREG.md"
-echo "M2_FILE=$ROOT/.agent-work/w-geom/M2_PUBLISH_INTERVAL_RCA.md"
+echo "PRE_REG_MECH=UNKNOWN (ERROR 21: no device defect established from pair)"
+echo "PRE_REG_FILE=$ROOT/.agent-work/w-geom/ERROR_21_M2_RETRACTION.md"
+echo "NOTE=M1_underproduce_falsified_on_parent_pair_still_stands; M2_retracted"
 
 # Mark host window (ISO + mono) BEFORE anything else.
 date -Is | tee "$OUT/window_host_start.txt"

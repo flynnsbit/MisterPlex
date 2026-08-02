@@ -30,9 +30,9 @@ mkdir -p "$OUT_ROOT"
 
 echo "=== avsync_pair_n_windows ==="
 echo "n=$N duration=$DUR tier=$TIER out_root=$OUT_ROOT gap_s=$GAP_S"
-echo "PRE_REG M1=FALSIFIED_parent_pair primary=M2_PUBLISH_INTERVAL"
-echo "PRE_REG WANDER+p_ge50_w60>=0.03 => M2a/c; WANDER+CLEAN p_ge50 => M2e; STABLE+p_ge50>=0.09 => MISS"
-echo "PRE_REG_FILE=$ROOT/.agent-work/w-geom/M2_PUBLISH_INTERVAL_RCA.md"
+echo "PRE_REG mechanism=UNKNOWN (ERROR 21 retraction)"
+echo "PRE_REG_FILE=$ROOT/.agent-work/w-geom/ERROR_21_M2_RETRACTION.md"
+echo "NOTE=optional telemetry only; judder IFI histogram is w-instr"
 
 SUMMARY="$OUT_ROOT/n_windows_summary.txt"
 {
