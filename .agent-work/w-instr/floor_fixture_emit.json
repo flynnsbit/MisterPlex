@@ -1,0 +1,13 @@
+{
+  "out_dir": ".agent-work/w-instr/floor_fixture",
+  "n_source": 240,
+  "fps": 24.0,
+  "mp4": ".agent-work/w-instr/floor_fixture/cadence_24.000.mp4",
+  "mp4_exists": true,
+  "ffmpeg_rc": 0,
+  "ffmpeg_err": "",
+  "static": ".agent-work/w-instr/floor_fixture/static_frame.png",
+  "readme": ".agent-work/w-instr/floor_fixture/README_PARENT.txt",
+  "png_count": 240
+}
+emit true rc=0

@@ -86,3 +86,7 @@ Daemon `output=DEFAULT_ASSUMED` on OSD — keep label until measured/ini (w-osd-
 
 ## Colour B7 (second priority, already shipped `40c7d515`)
 Magenta/red-bar/UV_SWAP etc. remain; this card is motion/judder primary.
+
+
+## SUPERSEDED IN PART
+See PARENT_JUDDER_FLOOR_BEAT.md — floor blocking + IFI/beat. Prior device JUDDER_OK rows are NOT ATTRIBUTABLE until floor capture.

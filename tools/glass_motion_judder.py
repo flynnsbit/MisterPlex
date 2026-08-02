@@ -64,7 +64,24 @@ Usage
 
 true rc MUST be captured directly (cmd; echo "true rc=$?") — never through a pipe.
 Does NOT touch the device. Does NOT use daemon motion/av-lock strings.
+
+Instrument floor (BLOCKING before device attribution)
+----------------------------------------------------
+MS2109 + host ffmpeg inject cadence irregularity. Until a floor is measured on
+a NON-device source (host-generated exact cadence, or static through the same
+grabber), no device number is attributable.
+
+  python3 tools/glass_motion_judder.py --emit-floor-fixture OUTDIR
+  # PARENT (owns grabber): play OUTDIR/cadence_24.000.mp4 to HDMI feeding MS2109;
+  # capture PNGs; score with --role instrument_floor. See PARENT card.
+
+Beat / quantisation
+-------------------
+Always prints capture vs source period, commensurate flag, pattern period.
+T_cap/sqrt(12) is REJECTED as floor when rates are commensurate (24:30=4:5).
+IFI histogram in ms on distinct-content intervals (rd-review form).
 """
+
 from __future__ import annotations
 
 import argparse
@@ -76,6 +93,18 @@ from pathlib import Path
 from typing import Any, Optional, Sequence
 
 import numpy as np
+
+# Allow `python3 tools/glass_motion_judder.py` without package install
+import sys as _sys
+from pathlib import Path as _Path
+_tools = str(_Path(__file__).resolve().parent)
+if _tools not in _sys.path:
+    _sys.path.insert(0, _tools)
+from glass_motion_beat_ifi import (  # noqa: E402
+    apply_role_attribution,
+    beat_quantisation_model,
+    ifi_stats_from_holds,
+)
 
 try:
     from PIL import Image
@@ -572,6 +601,8 @@ def analyze_capture(
     capture_fps_src: str = PROVENANCE_DEFAULT,
     label: str = "",
     threshold_override: Optional[float] = None,
+    role: str = "device_under_test",
+    floor_baseline: Optional[dict[str, Any]] = None,
 ) -> dict[str, Any]:
     pr = pre_register(
         source_fps=source_fps,
@@ -630,6 +661,18 @@ def analyze_capture(
     rep["frame_names_head"] = names[:8]
     rep["holds_head"] = list(holds[:30])
     rep["holds_head_src"] = PROVENANCE_MEASURED
+    beat = beat_quantisation_model(
+        source_fps=source_fps,
+        capture_fps=capture_fps,
+        source_fps_src=source_fps_src,
+        capture_fps_src=capture_fps_src,
+    )
+    ifi = ifi_stats_from_holds(
+        holds, capture_fps=capture_fps, source_fps=source_fps
+    )
+    rep["beat_quant"] = beat
+    rep["ifi"] = ifi
+    rep = apply_role_attribution(rep, role=role, floor_baseline=floor_baseline)
     return rep
 
 
@@ -695,6 +738,130 @@ def write_png_dir(frames: Sequence[np.ndarray], directory: Path) -> list[str]:
         Image.fromarray(fr).save(p)
         paths.append(str(p))
     return paths
+
+
+
+def emit_floor_fixture(out_dir: Path, *, n_source: int = 240, fps: float = 24.0) -> dict[str, Any]:
+    """Host-generated exact-cadence + static fixtures for MS2109 floor capture.
+
+    Produces:
+      OUT/png_src/f_XXXX.png  — one PNG per source frame (counter bar)
+      OUT/cadence_24.000.mp4 — CFR ffmpeg encode at exact fps
+      OUT/static_frame.png   — single frame for static-hold floor
+      OUT/README_PARENT.txt  — exact parent capture commands
+
+    Agent does NOT play or capture; parent owns /dev/video0.
+    """
+    import subprocess
+
+    out_dir = Path(out_dir)
+    png_dir = out_dir / "png_src"
+    png_dir.mkdir(parents=True, exist_ok=True)
+    w, h = 1280, 720
+    paths = []
+    for s in range(n_source):
+        img = np.zeros((h, w, 3), dtype=np.uint8)
+        img[:] = (12, 14, 18)
+        # high-contrast moving block keyed by frame index (not dark-fixture trap)
+        x = 40 + (s * 9) % (w - 200)
+        img[200:360, x : x + 120] = (240, 220, 40)
+        # frame index as block ticks (binary-ish bars) — content-aware change
+        for bit in range(12):
+            on = (s >> bit) & 1
+            col = 40 + bit * 90
+            img[40:140, col : col + 60] = (230, 230, 230) if on else (30, 30, 30)
+        # red bar reference
+        img[500:560, 100:700] = (220, 30, 30)
+        p = png_dir / f"f_{s:04d}.png"
+        Image.fromarray(img).save(p)
+        paths.append(p)
+    static_path = out_dir / "static_frame.png"
+    Image.fromarray(
+        np.array(Image.open(paths[n_source // 2]))
+    ).save(static_path)
+
+    mp4 = out_dir / f"cadence_{fps:.3f}.mp4"
+    # Exact CFR: -framerate in, -r out, +cfr via vsync cfr
+    cmd = [
+        "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+        "-framerate", str(fps),
+        "-i", str(png_dir / "f_%04d.png"),
+        "-c:v", "libx264", "-pix_fmt", "yuv420p",
+        "-crf", "18",
+        "-vf", f"fps={fps}",
+        "-an",
+        str(mp4),
+    ]
+    proc = subprocess.run(cmd, capture_output=True, text=True)
+    readme = out_dir / "README_PARENT.txt"
+    readme.write_text(
+        f"""PARENT — MS2109 instrument-floor capture (agent does not touch device)
+
+Fixture: exact source cadence fps={fps} n_source={n_source}
+mp4={mp4.name}  static={static_path.name}
+ffmpeg_rc={proc.returncode}
+
+PRE_REGISTER floor expectation (locked):
+  Host plays exact {fps} fps CFR into display → HDMI → MS2109 → ffmpeg PNG burst.
+  After warmup_skip=15, content-aware holds should cluster on healthy mass for
+  capture_fps/source_fps (30/24 → holds {{1,2}}). Floor TAIL (p95/p99/max,
+  outlier_count) is the instrument envelope. Device claims require device tail
+  exceeding this floor by margin (see --floor-json).
+
+A) CADENCE FLOOR (known-exact motion through grabber path)
+  1. fuser -v /dev/video0   # must be free
+  2. On the display that feeds the MS2109 HDMI input:
+       mpv --fs --no-osc --loop=no {mp4.name}
+     (or ffplay -fs {mp4.name})
+  3. While playing:
+       mkdir -p floor_cap_cadence
+       ffmpeg -v error -f v4l2 -input_format mjpeg -video_size 1920x1080 \
+         -i /dev/video0 -frames:v 120 -y floor_cap_cadence/f_%03d.png
+       echo "true rc=$?"
+  4. Score:
+       python3 tools/glass_motion_judder.py floor_cap_cadence --role instrument_floor \
+         --source-fps {fps} --source-fps-src caller_supplied_measured \
+         --capture-fps 30 --capture-fps-src caller_supplied \
+         --label floor_cadence_host --json > floor_cadence.json
+       python3 tools/glass_motion_judder.py floor_cap_cadence --role instrument_floor \
+         --source-fps {fps} --source-fps-src caller_supplied_measured \
+         --capture-fps 30 --capture-fps-src caller_supplied \
+         --label floor_cadence_host; echo "true rc=$?"
+
+B) STATIC FLOOR (grabber duplication/noise only — no source motion)
+  1. Pause on one frame or display static_frame.png fullscreen.
+  2. mkdir -p floor_cap_static
+     ffmpeg -v error -f v4l2 -input_format mjpeg -video_size 1920x1080 \
+       -i /dev/video0 -frames:v 90 -y floor_cap_static/f_%03d.png
+     echo "true rc=$?"
+  3. Score (expect near-zero changes; UNSCORED-or-floor with holds≈all-one-run):
+       python3 tools/glass_motion_judder.py floor_cap_static --role instrument_floor \
+         --source-fps {fps} --source-fps-src caller_supplied_measured \
+         --capture-fps 30 --capture-fps-src caller_supplied \
+         --label floor_static; echo "true rc=$?"
+
+C) DEVICE (only AFTER floor JSON exists)
+       python3 tools/glass_motion_judder.py /tmp/cap480b --role device_under_test \
+         --floor-json floor_cadence.json \
+         --source-fps 24 --source-fps-src caller_supplied_measured \
+         --capture-fps 30 --capture-fps-src caller_supplied; echo "true rc=$?"
+
+BEAT (24.000 @ 30.000): commensurate 4:5, pattern period 5 cap frames = 166.667 ms.
+Discrete IFI on grid: 33.333 and 66.667 ms (mean 41.667). Reject T_cap/sqrt(12).
+"""
+    )
+    return {
+        "out_dir": str(out_dir),
+        "n_source": n_source,
+        "fps": fps,
+        "mp4": str(mp4),
+        "mp4_exists": mp4.is_file(),
+        "ffmpeg_rc": proc.returncode,
+        "ffmpeg_err": (proc.stderr or "")[:500],
+        "static": str(static_path),
+        "readme": str(readme),
+        "png_count": len(paths),
+    }
 
 
 def _self_test() -> int:
@@ -823,6 +990,83 @@ def _self_test() -> int:
         assert rep_b["rc"] == RC_UNSCORED, rep_b
         print(f"BLACK_UNSCORED verdict={rep_b['verdict']} rc={rep_b['rc']}")
 
+        # --- Beat model (24@30 commensurate) ---
+        b = beat_quantisation_model(
+            source_fps=24.0,
+            capture_fps=30.0,
+            source_fps_src=PROVENANCE_CALLER_MEASURED,
+            capture_fps_src=PROVENANCE_CALLER,
+        )
+        assert b["commensurate"] is True, b
+        assert b["continuous_quant_rms_usable"] is False, b
+        assert abs(b["ideal_content_ifi_ms"] - (1000.0 / 24.0)) < 1e-6, b
+        assert b["cap_over_src_ratio"] == "5/4", b
+        print(
+            f"BEAT commensurate={b['commensurate']} ratio={b['cap_over_src_ratio']} "
+            f"pattern_ms={b['pattern_period_ms']} "
+            f"discrete_ifi={b['discrete_ifi_ms_on_capture_grid']} "
+            f"cont_rms_usable={b['continuous_quant_rms_usable']} "
+            f"cont_rms_ms={b['continuous_quant_rms_ms']}"
+        )
+
+        # --- IFI on healthy synth: only 33.333 and 66.667 ---
+        ifi_g = rep_g.get("ifi") or {}
+        print(
+            f"IFI_GREEN hist={ifi_g.get('ifi_ms_hist')} p50={ifi_g.get('p50')} "
+            f"p95={ifi_g.get('p95')} max={ifi_g.get('max')} "
+            f"frac_ge_drop={ifi_g.get('frac_ge_drop_signature')}"
+        )
+        assert ifi_g.get("frac_ge_drop_signature", 1) == 0.0, ifi_g
+        ifi_r = rep_r.get("ifi") or {}
+        print(
+            f"IFI_RED hist={ifi_r.get('ifi_ms_hist')} p95={ifi_r.get('p95')} "
+            f"max={ifi_r.get('max')} frac_ge_drop={ifi_r.get('frac_ge_drop_signature')}"
+        )
+        assert (ifi_r.get("max") or 0) >= 6 * (1000.0 / 30.0) - 0.1, ifi_r
+
+        # --- Floor role relabel ---
+        rep_f = analyze_capture(
+            wp,
+            warmup_skip=15,
+            source_fps=24.0,
+            capture_fps=30.0,
+            source_fps_src=PROVENANCE_CALLER_MEASURED,
+            capture_fps_src=PROVENANCE_CALLER,
+            label="synth_as_floor",
+            role="instrument_floor",
+        )
+        assert rep_f["verdict"] == "FLOOR_OK", rep_f
+        assert rep_f["device_attributable"] is False, rep_f
+        print(
+            f"FLOOR_ROLE verdict={rep_f['verdict']} "
+            f"attributable={rep_f['device_attributable']}"
+        )
+
+        # Device without floor → not attributable flag
+        assert rep_g.get("device_attributable") is False, rep_g
+        print(
+            f"DEVICE_NO_FLOOR attributable={rep_g.get('device_attributable')} "
+            f"note={rep_g.get('attribution_note')}"
+        )
+
+        # Device with floor baseline that is clean → attributable True (envelope)
+        rep_d = analyze_capture(
+            wp,
+            warmup_skip=15,
+            source_fps=24.0,
+            capture_fps=30.0,
+            source_fps_src=PROVENANCE_CALLER_MEASURED,
+            capture_fps_src=PROVENANCE_CALLER,
+            label="synth_device_with_floor",
+            role="device_under_test",
+            floor_baseline=rep_f,
+        )
+        assert rep_d.get("device_attributable") is True, rep_d
+        print(
+            f"DEVICE_WITH_FLOOR attributable={rep_d.get('device_attributable')} "
+            f"exceeds={rep_d.get('floor_compare_exceeds')}"
+        )
+
     print("SELF_TEST_OK glass_motion_judder")
     return RC_OK
 
@@ -881,6 +1125,46 @@ def _print_human(rep: dict[str, Any]) -> None:
         f"min_hold_for_outlier={_tag(rep.get('hold_outlier_min'), rep.get('hold_outlier_min_src', PROVENANCE_DEFAULT))} "
         f"outlier_holds_head={rep.get('outlier_holds')}"
     )
+    beat = rep.get("beat_quant") or {}
+    if beat:
+        print(
+            "beat_quant "
+            f"t_src_ms={_tag(beat.get('t_src_ms'), beat.get('t_src_ms_src'))} "
+            f"t_cap_ms={_tag(beat.get('t_cap_ms'), beat.get('t_cap_ms_src'))} "
+            f"ratio={beat.get('cap_over_src_ratio')} "
+            f"commensurate={beat.get('commensurate')} "
+            f"pattern_period_ms={beat.get('pattern_period_ms')} "
+            f"pattern_frames_cap/src="
+            f"{beat.get('pattern_period_capture_frames')}/"
+            f"{beat.get('pattern_period_source_frames')} "
+            f"ideal_ifi_ms={_tag(beat.get('ideal_content_ifi_ms'), beat.get('ideal_content_ifi_ms_src'))} "
+            f"discrete_ifi_ms={beat.get('discrete_ifi_ms_on_capture_grid')} "
+            f"drop_sig_ifi_ms={beat.get('drop_signature_ifi_ms')} "
+            f"continuous_quant_rms_ms={_tag(beat.get('continuous_quant_rms_ms'), beat.get('continuous_quant_rms_ms_src'))} "
+            f"continuous_quant_rms_usable={beat.get('continuous_quant_rms_usable')}"
+        )
+        print(f"quant_note={beat.get('quant_note')}")
+    ifi = rep.get("ifi") or {}
+    if ifi:
+        print(
+            "ifi_ms "
+            f"hist={ifi.get('ifi_ms_hist')} "
+            f"n={_tag(ifi.get('n_ifi'), PROVENANCE_MEASURED)} "
+            f"p50={_tag(ifi.get('p50'), PROVENANCE_MEASURED)} "
+            f"p95={_tag(ifi.get('p95'), PROVENANCE_MEASURED)} "
+            f"p99={_tag(ifi.get('p99'), PROVENANCE_MEASURED)} "
+            f"max={_tag(ifi.get('max'), PROVENANCE_MEASURED)} "
+            f"mean={_tag(ifi.get('mean'), PROVENANCE_MEASURED)} "
+            f"frac_near_ideal={_tag(ifi.get('frac_near_ideal'), PROVENANCE_MEASURED)} "
+            f"frac_ge_drop_sig={_tag(ifi.get('frac_ge_drop_signature'), PROVENANCE_MEASURED)} "
+            f"NOTE={ifi.get('mean_note')}"
+        )
+    print(
+        f"role={_tag(rep.get('role'), rep.get('role_src', PROVENANCE_CALLER))} "
+        f"device_attributable={rep.get('device_attributable')} "
+        f"[{rep.get('device_attributable_src', PROVENANCE_DEFAULT)}] "
+        f"attribution_note={rep.get('attribution_note')}"
+    )
     print(f"reason={rep.get('reason')}")
     print(f"VERDICT={rep.get('verdict')} rc={rep.get('rc')}")
 
@@ -923,13 +1207,52 @@ def main(argv: list[str] | None = None) -> int:
         help="override change threshold (caller_supplied); default=derived from noise tail",
     )
     ap.add_argument("--json", action="store_true")
+    ap.add_argument(
+        "--role",
+        choices=("device_under_test", "instrument_floor"),
+        default="device_under_test",
+        help="instrument_floor = MS2109 path floor (non-device source); "
+        "device_under_test requires --floor-json for attribution",
+    )
+    ap.add_argument(
+        "--floor-json",
+        default=None,
+        help="JSON report from a prior --role instrument_floor run",
+    )
+    ap.add_argument(
+        "--emit-floor-fixture",
+        default=None,
+        metavar="DIR",
+        help="write host exact-cadence mp4 + static PNG + parent README",
+    )
+    ap.add_argument("--beat-only", action="store_true", help="print beat/quant model and exit 0")
     args = ap.parse_args(argv)
 
     if args.self_test:
         return _self_test()
 
+    if args.beat_only:
+        src = float(args.source_fps) if args.source_fps is not None else DEFAULT_SOURCE_FPS
+        cap = float(args.capture_fps) if args.capture_fps is not None else DEFAULT_CAPTURE_FPS
+        ss = args.source_fps_src or (
+            PROVENANCE_CALLER if args.source_fps is not None else PROVENANCE_DEFAULT
+        )
+        cs = args.capture_fps_src or (
+            PROVENANCE_CALLER if args.capture_fps is not None else PROVENANCE_DEFAULT
+        )
+        b = beat_quantisation_model(
+            source_fps=src, capture_fps=cap, source_fps_src=ss, capture_fps_src=cs
+        )
+        print(json.dumps(b, indent=2))
+        return RC_OK
+
+    if args.emit_floor_fixture:
+        info = emit_floor_fixture(Path(args.emit_floor_fixture))
+        print(json.dumps(info, indent=2))
+        return RC_OK if info.get("ffmpeg_rc") == 0 else RC_INSTRUMENT
+
     if not args.inputs:
-        ap.error("provide capture dir or --self-test")
+        ap.error("provide capture dir, --self-test, --emit-floor-fixture, or --beat-only")
 
     frames: list[str] = []
     label = args.label
@@ -961,6 +1284,14 @@ def main(argv: list[str] | None = None) -> int:
         capture_fps = float(args.capture_fps)
         capture_fps_src = args.capture_fps_src or PROVENANCE_CALLER
 
+    floor_baseline = None
+    if args.floor_json:
+        fp = Path(args.floor_json)
+        if not fp.is_file():
+            print(f"ERROR: --floor-json not found: {fp}", file=sys.stderr)
+            return RC_UNSCORED
+        floor_baseline = json.loads(fp.read_text())
+
     rep = analyze_capture(
         frames,
         warmup_skip=int(args.warmup_skip),
@@ -970,6 +1301,8 @@ def main(argv: list[str] | None = None) -> int:
         capture_fps_src=capture_fps_src,
         label=label,
         threshold_override=args.threshold,
+        role=str(args.role),
+        floor_baseline=floor_baseline,
     )
     if args.json:
         print(json.dumps(rep, indent=2, default=str))
