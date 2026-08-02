@@ -1222,6 +1222,194 @@ def structure_metrics(rgb: np.ndarray) -> dict[str, Any]:
     }
 
 
+
+def idle_screen_metrics(rgb: np.ndarray) -> dict[str, Any]:
+    """Detect Plex idle chevron (orange) on dark slate — not playback.
+
+    Parent incident (2026-08-02): capture raced end-of-clip; instrument returned
+    UNSCORED without naming IDLE_SCREEN, wasting a release cycle.
+    Measured on real idle frame: orange_px≈30k, centroid mid-frame.
+    Correct TREK24 playback: orange_px≈0–few (yellow overlay is not orange).
+    """
+    out: dict[str, Any] = {
+        "idle_screen": False,
+        "orange_frac": 0.0,
+        "orange_px": 0,
+        "orange_centroid_yx": None,
+    }
+    if rgb.size == 0 or _is_uniform(rgb):
+        return out
+    s = rgb
+    if s.shape[0] > 240 and s.shape[1] > 320:
+        s = s[::4, ::4]
+    r = s[:, :, 0].astype(np.int16)
+    g = s[:, :, 1].astype(np.int16)
+    b = s[:, :, 2].astype(np.int16)
+    orange = (
+        (r > 180)
+        & (g > 80)
+        & (g < 210)
+        & (b < 120)
+        & (r > g + 20)
+        & (g > b + 20)
+    )
+    orange_px = int(orange.sum())
+    scale = (rgb.shape[0] * rgb.shape[1]) / float(s.shape[0] * s.shape[1])
+    orange_px_est = int(round(orange_px * scale))
+    orange_frac = float(orange.mean())
+    out["orange_frac"] = round(orange_frac, 5)
+    out["orange_px"] = orange_px_est
+    if orange_px >= 80:
+        ys, xs = np.where(orange)
+        cy = float(ys.mean()) * (rgb.shape[0] / s.shape[0])
+        cx = float(xs.mean()) * (rgb.shape[1] / s.shape[1])
+        out["orange_centroid_yx"] = (round(cy, 1), round(cx, 1))
+        h, w = rgb.shape[:2]
+        central = (0.25 * h < cy < 0.80 * h) and (0.20 * w < cx < 0.80 * w)
+        mean_l = float(rgb.mean())
+        out["idle_screen"] = bool(
+            central and orange_frac >= 0.004 and 12.0 <= mean_l <= 90.0
+        )
+    return out
+
+
+def overlay_duplication_metrics(rgb: np.ndarray) -> dict[str, Any]:
+    """Same burned-in overlay appearing more than once / wrapped.
+
+    Extends structure_metrics for green-field cases where the yellow mask finds
+    0 px (parent RELEASE broken: TREK24 bottom-left + faint duplicates mid-frame).
+    """
+    base = structure_metrics(rgb)
+    out: dict[str, Any] = {
+        **base,
+        "overlay_duplicated": bool(base.get("structure_fail")),
+        "overlay_cluster_count": 0,
+        "overlay_dup_path": base.get("vdup_path")
+        or ("horiz_wrap" if base.get("horiz_wrap") else ""),
+    }
+    if rgb.size == 0 or _is_uniform(rgb):
+        return out
+    s = rgb
+    if s.shape[0] >= 720 and s.shape[1] >= 1280:
+        s = s[::2, ::2]
+    h, w = s.shape[:2]
+    r = s[:, :, 0].astype(np.float32)
+    g = s[:, :, 1].astype(np.float32)
+    b = s[:, :, 2].astype(np.float32)
+    gray = (r + g + b) / 3.0
+    gx = np.zeros_like(gray)
+    gx[:, 1:-1] = np.abs(gray[:, 2:] - gray[:, :-2])
+    row_e = gx.mean(axis=1)
+    g_dom = (g > r + 20) & (g > b + 20) & (g > 40)
+    thr = max(0.35, float(np.percentile(row_e, 97)))
+    peaks = np.where(row_e >= thr)[0]
+    clusters: list[list[int]] = []
+    if len(peaks):
+        cur = [int(peaks[0])]
+        for p in peaks[1:]:
+            p = int(p)
+            if p - cur[-1] < 18:
+                cur.append(p)
+            else:
+                if len(cur) >= 2:
+                    clusters.append(cur)
+                cur = [p]
+        if len(cur) >= 2:
+            clusters.append(cur)
+    kept: list[tuple[int, int, float]] = []
+    for c in clusters:
+        y0, y1 = c[0], c[-1]
+        band = gx[y0 : y1 + 1, : max(32, w // 2)]
+        if float(band.mean()) >= 0.25 and (y1 - y0) >= 2:
+            kept.append((y0, y1, float(band.mean())))
+    out["overlay_cluster_count"] = len(kept)
+    if len(kept) >= 2:
+        kept_s = sorted(kept, key=lambda t: t[0])
+        sep_ok = any(
+            kept_s[i + 1][0] - kept_s[i][1] >= 40 for i in range(len(kept_s) - 1)
+        )
+        if sep_ok:
+            out["overlay_duplicated"] = True
+            if not out["overlay_dup_path"]:
+                out["overlay_dup_path"] = f"row_clusters={len(kept)}"
+            out["structure_fail"] = True
+            out["vertical_dup"] = True
+            if not out.get("vdup_path"):
+                out["vdup_path"] = out["overlay_dup_path"]
+    ew = max(24, int(0.08 * w))
+    col_e = gx.mean(axis=0)
+    left_e = float(col_e[:ew].mean())
+    right_e = float(col_e[-ew:].mean())
+    mid_e = float(col_e[w // 2 - ew : w // 2 + ew].mean())
+    if (
+        min(left_e, right_e) >= 0.45
+        and mid_e < min(left_e, right_e) * 0.55
+        and float(g_dom.mean()) >= 0.5
+    ):
+        out["overlay_duplicated"] = True
+        out["horiz_wrap"] = True
+        out["structure_fail"] = True
+        prev = out.get("overlay_dup_path") or ""
+        bit = "green_lr_wrap"
+        out["overlay_dup_path"] = (prev + "+" + bit) if prev else bit
+    return out
+
+
+def classify_frame_display(rgb: np.ndarray) -> dict[str, Any]:
+    """Single-frame display class: GREEN_FIELD / OVERLAY_DUPLICATED / IDLE / OK."""
+    gc = green_cast_metrics(rgb)
+    od = overlay_duplication_metrics(rgb)
+    idle = idle_screen_metrics(rgb)
+    nosig = _is_uniform(rgb)
+    label = "UNKNOWN"
+    if nosig:
+        label = "NO_SIGNAL"
+    elif bool(gc.get("green_cast")):
+        label = "GREEN_FIELD"
+        if od.get("overlay_duplicated"):
+            label = "GREEN_FIELD+OVERLAY_DUPLICATED"
+    elif od.get("overlay_duplicated") or od.get("structure_fail"):
+        label = "OVERLAY_DUPLICATED"
+    elif idle.get("idle_screen"):
+        label = "IDLE_SCREEN"
+    elif not gc.get("color_fail") and not od.get("structure_fail"):
+        label = "OK_CANDIDATE"
+    return {
+        "display_class": label,
+        "color": gc,
+        "structure": od,
+        "idle": idle,
+        "no_signal": nosig,
+    }
+
+
+def emit_verdict_line(
+    *,
+    display: str,
+    reason: str,
+    frames: int,
+    rc: int,
+    applied_matches: int | None = None,
+    legacy_verdict: str | None = None,
+) -> str:
+    """ALWAYS one machine-readable VERDICT line on every exit path."""
+    rs = reason.replace("\n", " ").replace("\r", " ")
+    parts = [
+        f"VERDICT={display}",
+        f"rc={rc}",
+        f"reason={rs}",
+        f"frames={frames}",
+    ]
+    if applied_matches is not None:
+        parts.append(f"applied_matches={applied_matches}")
+    if legacy_verdict:
+        parts.append(f"legacy={legacy_verdict}")
+    line = " ".join(parts)
+    print(line, flush=True)
+    return line
+
+
+
 def find_overlay(
     rgb: np.ndarray,
 ) -> tuple[np.ndarray | None, tuple[int, int, int, int] | None, str]:
@@ -1996,6 +2184,13 @@ def read_frame(
         "wrap_ratio": 0.0,
         "wrap_both_e": 0.0,
         "wrap_mid_e": 0.0,
+        "overlay_duplicated": False,
+        "overlay_cluster_count": 0,
+        "overlay_dup_path": "",
+        "idle_screen": False,
+        "orange_frac": 0.0,
+        "orange_px": 0,
+        "display_class": "UNKNOWN",
     }
     _color_empty = {
         "mean_rgb": None,
@@ -2029,7 +2224,26 @@ def read_frame(
         sm = dict(_struct_empty)
     else:
         gc = green_cast_metrics(rgb)
-        sm = structure_metrics(rgb)
+        sm = overlay_duplication_metrics(rgb)
+        idle = idle_screen_metrics(rgb)
+        sm["idle_screen"] = bool(idle.get("idle_screen"))
+        sm["orange_frac"] = idle.get("orange_frac", 0.0)
+        sm["orange_px"] = idle.get("orange_px", 0)
+        # Single-frame display class (release glass)
+        if _is_uniform(rgb):
+            sm["display_class"] = "NO_SIGNAL"
+        elif gc.get("green_cast"):
+            sm["display_class"] = (
+                "GREEN_FIELD+OVERLAY_DUPLICATED"
+                if sm.get("overlay_duplicated")
+                else "GREEN_FIELD"
+            )
+        elif sm.get("overlay_duplicated") or sm.get("structure_fail"):
+            sm["display_class"] = "OVERLAY_DUPLICATED"
+        elif idle.get("idle_screen"):
+            sm["display_class"] = "IDLE_SCREEN"
+        else:
+            sm["display_class"] = "OK_CANDIDATE"
 
     binary, roi, st = find_overlay(rgb)
     if binary is None:
@@ -3446,18 +3660,25 @@ def score_burst(
         for r in results
         if r.get("color_fail") and r.get("status") != "warmup"
     ]
-    color_fail = len(color_hits) >= GREEN_CAST_MIN_FRAMES
+    # Adaptive floor: a 1-frame release check must still COLOR_FAIL on green.
+    # GREEN_CAST_MIN_FRAMES remains the floor for long bursts; never require
+    # more hits than non-warmup frames scored.
+    n_scored = sum(1 for r in results if r.get("status") != "warmup")
+    color_need = max(1, min(GREEN_CAST_MIN_FRAMES, n_scored)) if n_scored else GREEN_CAST_MIN_FRAMES
+    color_fail = len(color_hits) >= color_need
     color_flags: list[str] = []
-    if len(green_hits) >= GREEN_CAST_MIN_FRAMES:
+    if len(green_hits) >= color_need:
         color_flags.append("GREEN")
-    if len(chroma_hits) >= GREEN_CAST_MIN_FRAMES:
+    if len(chroma_hits) >= color_need:
         color_flags.append("CHROMA")
-    if len(grey_hits) >= GREEN_CAST_MIN_FRAMES:
+    if len(grey_hits) >= color_need:
         color_flags.append("GREYSCALE")
-    if len(uv_hits) >= GREEN_CAST_MIN_FRAMES:
+    if len(uv_hits) >= color_need:
         color_flags.append("UV_SWAP")
     if color_flags:
         color = "+".join(color_flags) + "_CAST_FAIL"
+    elif n_scored == 0:
+        color = "COLOR_UNASSESSABLE"
     else:
         color = "COLOR_OK"
 
@@ -3477,17 +3698,32 @@ def score_burst(
         for r in results
         if r.get("structure_fail") and r.get("status") != "warmup"
     ]
-    structure_fail = len(struct_hits) >= STRUCT_MIN_FRAMES
+    struct_need = max(1, min(STRUCT_MIN_FRAMES, n_scored)) if n_scored else STRUCT_MIN_FRAMES
+    odup_hits = [
+        r
+        for r in results
+        if r.get("overlay_duplicated") and r.get("status") != "warmup"
+    ]
+    idle_hits = [
+        r
+        for r in results
+        if r.get("idle_screen") and r.get("status") != "warmup"
+    ]
+    structure_fail = len(struct_hits) >= struct_need or len(odup_hits) >= struct_need
     struct_flags: list[str] = []
-    if len(vdup_hits) >= STRUCT_MIN_FRAMES:
+    if len(vdup_hits) >= struct_need:
         struct_flags.append(f"VERT_DUP={len(vdup_hits)}")
-    if len(wrap_hits) >= STRUCT_MIN_FRAMES:
+    if len(wrap_hits) >= struct_need:
         struct_flags.append(f"HORIZ_WRAP={len(wrap_hits)}")
+    if len(odup_hits) >= struct_need:
+        struct_flags.append(f"OVERLAY_DUP={len(odup_hits)}")
     if structure_fail and not struct_flags:
         # Combined structure_fail frames without either flag alone reaching min
         # (e.g. 2 wrap + 2 vdup on different frames).
         struct_flags.append(f"STRUCT={len(struct_hits)}")
-    structure = "+".join(struct_flags) if structure_fail else "STRUCTURE_OK"
+    structure = "+".join(struct_flags) if structure_fail else (
+        "STRUCTURE_UNASSESSABLE" if n_scored == 0 else "STRUCTURE_OK"
+    )
 
     motion = "UNSCORED"
     reason = ""
@@ -3556,9 +3792,17 @@ def score_burst(
         mode_n, mode_c = Counter(ns).most_common(1)[0]
         mode_frac = mode_c / len(ns)
 
-        if n_max == n_min:
+        if n_max == n_min and len(ns) >= max(3, min_reads):
             motion = "FREEZE"
             reason = f"counter_pinned n={n_min} reads={len(ns)}"
+        elif n_max == n_min and len(ns) < max(3, min_reads):
+            # Single/dual clean decode is NOT a freeze (parent: CORRECT one-frame
+            # must be OK, not FREEZE). Need a burst to prove pin.
+            motion = "MOTION_OK"
+            reason = (
+                f"single_frame_counter_ok n={n_min} reads={len(ns)} "
+                f"(not enough samples to claim FREEZE)"
+            )
         elif last_med > first_med and (last_med - first_med) >= 1 and (n_max - n_min) >= 2:
             motion = "MOTION_OK"
             reason = (
@@ -3602,19 +3846,34 @@ def score_burst(
         )
 
     # --- Severity resolution (see module docstring). Positive failure wins. ---
-    # STRUCTURE > COLOR > RATE > FREEZE > MOTION_OK > UNSCORED.
+    # STRUCTURE > COLOR > RATE > FREEZE > IDLE > MOTION_OK > UNSCORED.
     # Measured failures never collapse to rc=77, even when motion is UNSCORED.
+    idle_need = max(1, min(3, n_scored)) if n_scored else 3
+    idle_fail = len(idle_hits) >= idle_need and not structure_fail and not color_fail
+    # applied_matches: how many positive classifiers fired (mutation→NO-DATA if 0)
+    applied_matches = 0
+    if structure_fail:
+        applied_matches += 1
+    if color_fail:
+        applied_matches += 1
+    if rate_fail:
+        applied_matches += 1
+    if motion in ("FREEZE", "MOTION_OK"):
+        applied_matches += 1
+    if idle_fail:
+        applied_matches += 1
+
     if structure_fail:
         final, rc = "STRUCTURE_FAIL", RC_STRUCTURE_FAIL
         reason = (
-            f"structure={structure} frames={len(struct_hits)}>={STRUCT_MIN_FRAMES} "
+            f"structure={structure} frames={len(struct_hits) or len(odup_hits)}>={struct_need} "
             f"(hard FAIL independent of motion={motion} color={color} "
             f"rate={rate_label}); {reason}"
         )
     elif color_fail:
         final, rc = "COLOR_FAIL", RC_COLOR_FAIL
         reason = (
-            f"color={color} frames={len(color_hits)}>={GREEN_CAST_MIN_FRAMES} "
+            f"color={color} frames={len(color_hits)}>={color_need} "
             f"green={len(green_hits)} chroma_spread={len(chroma_hits)} "
             f"(hard FAIL independent of motion={motion} rate={rate_label}); {reason}"
         )
@@ -3632,16 +3891,63 @@ def score_burst(
         )
     elif motion == "FREEZE":
         final, rc = "FREEZE", RC_FREEZE
+    elif idle_fail:
+        final, rc = "IDLE_SCREEN", RC_UNSCORED  # not a device playback pass
+        reason = (
+            f"idle_screen orange_hits={len(idle_hits)}>={idle_need} "
+            f"(capture raced idle / not playback — not MOTION_OK); {reason}"
+        )
     elif motion == "MOTION_OK":
         final, rc = "MOTION_OK", RC_MOTION_OK
     else:
         final, rc = "UNSCORED", RC_UNSCORED
+
+    # Parent display vocabulary (always emitted): GREEN_FIELD / OVERLAY_DUPLICATED /
+    # IDLE_SCREEN / OK / NO_SIGNAL / UNKNOWN
+    if final == "STRUCTURE_FAIL" and (len(odup_hits) >= struct_need or "OVERLAY_DUP" in structure):
+        display_verdict = "OVERLAY_DUPLICATED"
+        if len(green_hits) >= color_need:
+            display_verdict = "GREEN_FIELD+OVERLAY_DUPLICATED"
+    elif final == "COLOR_FAIL" and len(green_hits) >= color_need:
+        display_verdict = "GREEN_FIELD"
+        if len(odup_hits) >= 1:
+            display_verdict = "GREEN_FIELD+OVERLAY_DUPLICATED"
+    elif final == "COLOR_FAIL":
+        display_verdict = "COLOR_FAIL"
+    elif final == "STRUCTURE_FAIL":
+        display_verdict = "OVERLAY_DUPLICATED" if "WRAP" in structure or "DUP" in structure else "STRUCTURE_FAIL"
+    elif final == "IDLE_SCREEN":
+        display_verdict = "IDLE_SCREEN"
+    elif final == "MOTION_OK" and not color_fail and not structure_fail:
+        display_verdict = "OK"
+    elif final == "FREEZE":
+        display_verdict = "FREEZE"
+    elif final == "RATE_FAIL":
+        display_verdict = "RATE_FAIL"
+    else:
+        display_verdict = "UNKNOWN"
+        if n_scored == 0:
+            display_verdict = "UNKNOWN"
+        # single-frame path may put display_class on rows
+        classes = [
+            str(r.get("display_class") or "")
+            for r in results
+            if r.get("status") != "warmup" and r.get("display_class")
+        ]
+        if classes and all(c == "NO_SIGNAL" for c in classes):
+            display_verdict = "NO_SIGNAL"
 
     return {
         "frames_total": len(frames),
         "warmup_skipped": warmup_n,
         "decodes": len(ok_reads),
         "strong_decodes": len(strong),
+        "display_verdict": display_verdict,
+        "applied_matches": applied_matches,
+        "idle_screen_frames": len(idle_hits),
+        "overlay_dup_frames": len(odup_hits),
+        "color_need": color_need,
+        "struct_need": struct_need,
         "ns_head": ns[:10],
         "ns_tail": ns[-10:],
         "n_min": (min(ns) if ns else None),
@@ -3953,7 +4259,22 @@ def _print_human(report: dict[str, Any], src: str) -> None:
                 f"dt_ratio={h.get('dt_ratio')}"
             )
     print(f"reason={report['reason']}")
-    print(f"VERDICT={report['verdict']} rc={report['rc']}")
+    # Always emit parent display vocabulary + applied_matches (mutation → NO-DATA).
+    display = str(report.get("display_verdict") or report.get("verdict") or "UNKNOWN")
+    emit_verdict_line(
+        display=display,
+        reason=str(report.get("reason") or ""),
+        frames=int(report.get("frames_total") or 0),
+        rc=int(report.get("rc") if report.get("rc") is not None else RC_UNSCORED),
+        applied_matches=report.get("applied_matches"),
+        legacy_verdict=str(report.get("verdict") or ""),
+    )
+    if report.get("applied_matches") == 0 and int(report.get("rc") or 0) == 0:
+        # Safety: zero matches must never look like a silent pass.
+        print(
+            "NOTE: applied_matches=0 with rc=0 is inconsistent — treat as NO-DATA",
+            file=sys.stderr,
+        )
 
 
 def _self_test() -> int:
@@ -4615,13 +4936,31 @@ def _self_test() -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    # Ownership note (not a silent no-op): this tool OWNS TREK24 OCR + COLOR/
+    # STRUCTURE + display class (GREEN_FIELD/OVERLAY_DUPLICATED/IDLE_SCREEN).
+    # Display-loss G-fixture skip scoring is glass_template_skip.py — named below
+    # only when that dimension is requested and absent.
     print(
-        "DEPRECATED_FOR_DISPLAY_LOSS: use tools/glass_template_skip.py "
-        "for G-fixture completeness skip scoring "
-        "(this tool kept for TREK24 OCR + COLOR/STRUCTURE only)",
+        "NOTE: hdmi_motion_instrument owns TREK24 OCR + COLOR/STRUCTURE + "
+        "display VERDICT (GREEN_FIELD|OVERLAY_DUPLICATED|IDLE_SCREEN|OK|…). "
+        "For G-fixture completeness skip scoring use tools/glass_template_skip.py",
         file=sys.stderr,
     )
-    ap = argparse.ArgumentParser(
+
+    class _ArgParser(argparse.ArgumentParser):
+        def error(self, message: str) -> None:  # type: ignore[override]
+            emit_verdict_line(
+                display="UNKNOWN",
+                reason=f"argparse_error: {message}",
+                frames=0,
+                rc=2,
+                applied_matches=0,
+                legacy_verdict="USAGE",
+            )
+            self.print_usage(sys.stderr)
+            raise SystemExit(2)
+
+    ap = _ArgParser(
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -4629,6 +4968,12 @@ def main(argv: list[str] | None = None) -> int:
         "inputs",
         nargs="*",
         help="capture directory and/or PNG frames",
+    )
+    ap.add_argument(
+        "--dir",
+        dest="dir_input",
+        default=None,
+        help="capture directory (alias; same as positional dir)",
     )
     ap.add_argument(
         "--warmup-skip",
@@ -4780,7 +5125,20 @@ def main(argv: list[str] | None = None) -> int:
     args = ap.parse_args(argv)
 
     if args.self_test:
-        return _self_test()
+        rc_st = _self_test()
+        emit_verdict_line(
+            display="OK" if rc_st == 0 else "UNKNOWN",
+            reason="self_test_ok" if rc_st == 0 else "self_test_fail",
+            frames=0,
+            rc=rc_st,
+            applied_matches=1 if rc_st == 0 else 0,
+            legacy_verdict="SELF_TEST",
+        )
+        return rc_st
+
+    # Merge --dir alias (parent invocation used --dir and got bare argparse rc=2)
+    if getattr(args, "dir_input", None):
+        args.inputs = list(args.inputs or []) + [args.dir_input]
 
     # --- shared fps provenance resolution (used by CSV and PNG paths) ---
     def _resolve_fps(
@@ -4834,6 +5192,7 @@ def main(argv: list[str] | None = None) -> int:
             pts_by_idx = load_pts_csv(args.pts_csv)
         except (OSError, ValueError) as e:
             print(f"ERROR: --pts-csv: {e}", file=sys.stderr)
+            emit_verdict_line(display="UNKNOWN", reason="pts_csv_error", frames=0, rc=RC_UNSCORED, applied_matches=0)
             return RC_UNSCORED
         if not pts_by_idx:
             print(
@@ -4847,6 +5206,7 @@ def main(argv: list[str] | None = None) -> int:
             pairs_raw, ctr_meta = load_counters_csv(args.counters_csv)
         except (OSError, ValueError) as e:
             print(f"ERROR: --counters-csv: {e}", file=sys.stderr)
+            emit_verdict_line(display="UNKNOWN", reason="counters_csv_error", frames=0, rc=RC_UNSCORED, applied_matches=0)
             return RC_UNSCORED
         source_fps, source_fps_src, capture_fps, capture_fps_src, _meta = _resolve_fps(
             None
@@ -4910,10 +5270,21 @@ def main(argv: list[str] | None = None) -> int:
 
     if not frames:
         print("ERROR: no PNG frames found", file=sys.stderr)
+        emit_verdict_line(
+            display="UNKNOWN",
+            reason="no_png_frames_found",
+            frames=0,
+            rc=RC_UNSCORED,
+            applied_matches=0,
+            legacy_verdict="UNSCORED",
+        )
         return RC_UNSCORED
 
-    if args.one or (len(frames) == 1 and Path(args.inputs[0]).is_file()):
-        # Single-frame / per-frame dump mode.
+    # Single PNG without --one: still run burst score (warmup_skip=0) so colour/
+    # structure/idle decide. Parent: BROKEN green single frame must COLOR_FAIL,
+    # not dump-mode rc=77 undecoded. --one remains explicit per-frame dump.
+    if args.one:
+        # Explicit per-frame dump mode.
         any_ok = False
         rows = []
         n_jobs = max(1, int(args.jobs))
@@ -4946,8 +5317,37 @@ def main(argv: list[str] | None = None) -> int:
             _write_counters_csv(args.export_counters_csv, rows)
         if args.json:
             print(json.dumps(rows, indent=2))
-        # Single-frame: ok decode → 0; undecoded → 77; never claim FREEZE from 1 frame.
-        return RC_MOTION_OK if any_ok else RC_UNSCORED
+        # --one dump still emits a display VERDICT from per-frame classifiers.
+        # Colour/structure/idle on the rows decide; OCR-only undecoded is not OK.
+        n_green = sum(1 for r in rows if r.get("green_cast"))
+        n_odup = sum(1 for r in rows if r.get("overlay_duplicated") or r.get("structure_fail"))
+        n_idle = sum(1 for r in rows if r.get("idle_screen"))
+        n_color = sum(1 for r in rows if r.get("color_fail"))
+        applied = int(n_green > 0) + int(n_odup > 0) + int(n_idle > 0) + int(any_ok)
+        if n_odup and n_green:
+            disp, rc_one, why = "GREEN_FIELD+OVERLAY_DUPLICATED", RC_STRUCTURE_FAIL, "one_mode structure+green"
+        elif n_odup:
+            disp, rc_one, why = "OVERLAY_DUPLICATED", RC_STRUCTURE_FAIL, "one_mode structure_fail"
+        elif n_green or (n_color and any(r.get("green_cast") for r in rows)):
+            disp, rc_one, why = "GREEN_FIELD", RC_COLOR_FAIL, "one_mode green_cast"
+        elif n_color:
+            disp, rc_one, why = "COLOR_FAIL", RC_COLOR_FAIL, "one_mode color_fail"
+        elif n_idle and not any_ok:
+            disp, rc_one, why = "IDLE_SCREEN", RC_UNSCORED, "one_mode idle_screen"
+        elif any_ok and not n_color and not n_odup:
+            disp, rc_one, why = "OK", RC_MOTION_OK, "one_mode counter_ok"
+        else:
+            disp, rc_one, why = "UNKNOWN", RC_UNSCORED, "one_mode unscored"
+            applied = max(applied, 0)
+        emit_verdict_line(
+            display=disp,
+            reason=why,
+            frames=len(rows),
+            rc=rc_one,
+            applied_matches=applied,
+            legacy_verdict="ONE_MODE",
+        )
+        return rc_one
 
     # Provenance: anything not supplied on the CLI is DEFAULT_ASSUMED (ERROR 17).
     # RATE_OK requires BOTH caller-supplied (or container-probed capture).
@@ -5009,10 +5409,18 @@ def main(argv: list[str] | None = None) -> int:
         PROVENANCE_CALLER if daemon_drops is not None else PROVENANCE_DEFAULT_ASSUMED
     )
     startup_window_s = float(args.startup_window_s)
+    # Small bursts / single release frames: do not discard the only evidence
+    # as grabber warmup (parent 1-frame GREEN must score).
+    warmup_skip = int(args.warmup_skip)
+    if len(frames) <= warmup_skip:
+        warmup_skip = 0
+    min_reads = int(args.min_reads)
+    if len(frames) < min_reads:
+        min_reads = max(1, len(frames))
     report = score_burst(
         frames,
-        warmup_skip=args.warmup_skip,
-        min_reads=args.min_reads,
+        warmup_skip=warmup_skip,
+        min_reads=min_reads,
         source_fps=source_fps,
         capture_fps=capture_fps,
         source_fps_src=source_fps_src,
@@ -5033,6 +5441,15 @@ def main(argv: list[str] | None = None) -> int:
     if args.json:
         # Drop bulky per-frame list unless explicitly wanted — keep it, parent wants evidence.
         print(json.dumps(report, indent=2))
+        # Still emit one-line VERDICT (parent: never exit with only bulk JSON).
+        emit_verdict_line(
+            display=str(report.get("display_verdict") or report.get("verdict") or "UNKNOWN"),
+            reason=str(report.get("reason") or ""),
+            frames=int(report.get("frames_total") or 0),
+            rc=int(report.get("rc") if report.get("rc") is not None else RC_UNSCORED),
+            applied_matches=report.get("applied_matches"),
+            legacy_verdict=str(report.get("verdict") or ""),
+        )
     else:
         if cap_measure_meta is not None:
             print(

@@ -218,6 +218,7 @@ EXPECTED_COMMANDS = [
     "$(ROOT)/tests/unit/test_daemon_stamp_check.sh",
     "$(ROOT)/tests/unit/test_daemon_build_identity.sh",
     "$(ROOT)/tests/unit/test_hdmi_capture_usage_guard.sh",
+    "$(ROOT)/tests/unit/test_hdmi_motion_display_verdict.sh",
     "$(ROOT)/tests/unit/test_sdram_startup_verilator.sh",
     "$(ROOT)/tests/unit/test_sdram_dq_turnaround_verilator.sh",
     "$(ROOT)/tests/unit/test_h264_cavlc_residual_verilator.sh",
