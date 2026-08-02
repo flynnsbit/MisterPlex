@@ -43,9 +43,14 @@ case "$cmd" in
     # Mandatory before any capture-based promote evidence (parent dead grabber).
     # Live: no args → tools/grabber_preflight.py --device ${HDMI_DEV:-/dev/video0}
     # Host inject RED: --inject-stats 7,7,0  → expect true rc=78
+    #   WARNING: inject BYPASSES sample_frame / load_png_rgb (parent 2026-08-02).
+    # Real PIL path: --png PATH | --self-test  (must exercise Image.open module API)
     set +e
-    if [[ "${1:-}" == "--inject-stats" || "${1:-}" == "--inject-dv" || -n "${GRABBER_INJECT_STATS:-}" ]]; then
-      if [[ -n "${GRABBER_INJECT_STATS:-}" && "${1:-}" != "--inject-stats" ]]; then
+    if [[ "${1:-}" == "--inject-stats" || "${1:-}" == "--inject-dv" \
+       || "${1:-}" == "--png" || "${1:-}" == "--self-test" \
+       || -n "${GRABBER_INJECT_STATS:-}" ]]; then
+      if [[ -n "${GRABBER_INJECT_STATS:-}" && "${1:-}" != "--inject-stats" \
+         && "${1:-}" != "--png" && "${1:-}" != "--self-test" && "${1:-}" != "--inject-dv" ]]; then
         python3 "$ROOT/tools/grabber_preflight.py" --inject-stats "$GRABBER_INJECT_STATS"
         rc=$?
       else

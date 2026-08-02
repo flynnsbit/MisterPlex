@@ -304,13 +304,79 @@ else
   ok "deploy-no-swallow-77"
 fi
 
-echo "=== 10) grabber_preflight inject + clean-exit alarm ==="
+echo "=== 10) grabber_preflight inject + PNG path + self-test + clean-exit alarm ==="
+# NOTE (parent 2026-08-02): --inject-stats BYPASSES sample_frame. A green inject
+# does NOT prove the PIL open path. --png / --self-test exercise load_png_rgb.
+
+# Static ban: broken dunder-import PIL class-open must not be live executable.
+# Exit 0 = pattern absent (PASS); exit 1 = pattern live (FAIL).
+set +e
+python3 -c '
+import re, sys
+from pathlib import Path
+src = Path(sys.argv[1]).read_text()
+src = re.sub(r"def run_self_test\([\s\S]*?\ndef main\(", "def main(", src, count=1)
+code = re.sub(r"\"\"\"[\s\S]*?\"\"\"", "\"\"", src)
+code = re.sub(r"#.*", "", code)
+dunder = "__" + "import" + "__"
+pil = "PIL" + "." + "Image"
+sys.exit(1 if (dunder in code and pil in code) else 0)
+' "$ROOT/tools/grabber_preflight.py"
+ban_rc=$?
+set -e
+if [[ "$ban_rc" -eq 0 ]]; then
+  ok "grabber-forbidden-pil-pattern-absent"
+else
+  bad "grabber-forbidden-pil-pattern-live rc=$ban_rc"
+fi
+
+set +e
+out=$(python3 "$ROOT/tools/grabber_preflight.py" --self-test 2>&1)
+rc=$?
+set -e
+[ "$rc" -eq 0 ] && ok "grabber-self-test-rc0" || bad "grabber-self-test-rc0 got=$rc out=$(echo "$out" | tail -3)"
+echo "$out" | grep -q 'png_path_exercised=1' && ok "grabber-self-test-png-path" || bad "grabber-self-test-png-path"
+echo "$out" | grep -q 'do NOT rollback device software' && ok "grabber-self-test-action" || bad "grabber-self-test-action"
+
+# Real PIL path via uniform PNG (NOT inject)
+UNI_PNG="$ROOT/artifacts/grabber_preflight_uniform7.png"
+if [[ ! -f "$UNI_PNG" ]]; then
+  python3 - <<PY
+import numpy as np
+from PIL import Image
+from pathlib import Path
+p = Path("$UNI_PNG"); p.parent.mkdir(parents=True, exist_ok=True)
+Image.fromarray(__import__('numpy').full((64,64,3),7,dtype='uint8'), mode='RGB').save(p)
+PY
+fi
+set +e
+out=$(python3 "$ROOT/tools/grabber_preflight.py" --png "$UNI_PNG" 2>&1)
+rc=$?
+set -e
+[ "$rc" -eq 78 ] && ok "grabber-png-uniform-rc78" || bad "grabber-png-uniform-rc78 got=$rc"
+echo "$out" | grep -q 'CAPTURE_NO_SIGNAL' && ok "grabber-png-nosignal-msg" || bad "grabber-png-nosignal-msg"
+echo "$out" | grep -q 'do NOT rollback device software' && ok "grabber-png-action" || bad "grabber-png-action"
+echo "$out" | grep -q '\[png' && ok "grabber-png-tag" || bad "grabber-png-tag"
+
+# Broken PNG must be VERDICT=ERR rc=2, never traceback
+BAD_PNG="$ROOT/artifacts/grabber_preflight_notpng.bin"
+printf 'not-a-png' > "$BAD_PNG"
+set +e
+out=$(python3 "$ROOT/tools/grabber_preflight.py" --png "$BAD_PNG" 2>&1)
+rc=$?
+set -e
+[ "$rc" -eq 2 ] && ok "grabber-bad-png-rc2" || bad "grabber-bad-png-rc2 got=$rc"
+echo "$out" | grep -q 'VERDICT=ERR' && ok "grabber-bad-png-verdict" || bad "grabber-bad-png-verdict"
+echo "$out" | grep -qi 'Traceback' && bad "grabber-bad-png-traceback" || ok "grabber-bad-png-no-traceback"
+
 set +e
 out=$(python3 "$ROOT/tools/grabber_preflight.py" --inject-stats 7,7,0 2>&1)
 rc=$?
 set -e
 [ "$rc" -eq 78 ] && ok "grabber-inject-flat-rc78" || bad "grabber-inject-flat-rc78 got=$rc"
 echo "$out" | grep -q 'CAPTURE_NO_SIGNAL' && ok "grabber-nosignal-msg" || bad "grabber-nosignal-msg"
+echo "$out" | grep -q 'do NOT rollback' && ok "grabber-inject-action" || bad "grabber-inject-action"
+echo "$out" | grep -q 'BYPASSES sample_frame' && ok "grabber-inject-bypass-note" || bad "grabber-inject-bypass-note"
 set +e
 out=$(python3 "$ROOT/tools/grabber_preflight.py" --inject-stats 10,200,25.5 2>&1)
 rc=$?
@@ -328,6 +394,16 @@ out=$("$ROOT/scripts/promote_cycle_gate.sh" grabber-preflight --inject-stats 7,7
 rc=$?
 set -e
 [ "$rc" -eq 78 ] && ok "cycle-grabber-rc78" || bad "cycle-grabber-rc78 got=$rc"
+set +e
+out=$("$ROOT/scripts/promote_cycle_gate.sh" grabber-preflight --png "$UNI_PNG" 2>&1)
+rc=$?
+set -e
+[ "$rc" -eq 78 ] && ok "cycle-grabber-png-rc78" || bad "cycle-grabber-png-rc78 got=$rc"
+set +e
+out=$("$ROOT/scripts/promote_cycle_gate.sh" grabber-preflight --self-test 2>&1)
+rc=$?
+set -e
+[ "$rc" -eq 0 ] && ok "cycle-grabber-self-test-rc0" || bad "cycle-grabber-self-test-rc0 got=$rc"
 
 set +e
 out=$(supervise_assert_clean_exit_alarm "2026-08-02T00:00:00Z EXIT pid=15565 rc=0 run_s=1543 — respawn in 2s" 2>&1)

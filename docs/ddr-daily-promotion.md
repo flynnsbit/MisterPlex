@@ -42,12 +42,30 @@ kill by explicit PID only — name-based killing banned
 
 ```bash
 # 0) Grabber preflight FIRST (parent: Pixelclock 0 / pixel=7 → innocent rollback)
+#
+# CRITICAL (parent 2026-08-02 @ f9ad2797): --inject-stats BYPASSES sample_frame
+# and load_png_rgb entirely. A green inject does NOT prove the real capture path.
+# Real PIL open path MUST be covered by --self-test / --png (or live /dev/video0).
+#
+# BEFORE (crash on real dead grabber):
+#   __import__("PIL.Image", fromlist=["Image"]).Image.open(path)
+#   # MODULE.Image → CLASS — AttributeError; rc=1 ERR; ACTION printed 0 times
+# AFTER:
+#   from PIL import Image; Image.open(path)
+#   # sample_frame/classify_png_file never raise; main → VERDICT not traceback
+#   # real dead grabber → rc=78 + ACTION "do NOT rollback device software"
+#
+./scripts/promote_cycle_gate.sh grabber-preflight --self-test; echo "true rc=$?"
+# expect rc=0 — exercises load_png_rgb via uniform+varied PNG + bans broken PIL form
+./scripts/promote_cycle_gate.sh grabber-preflight --png artifacts/grabber_preflight_uniform7.png; echo "true rc=$?"
+# expect rc=78 CAPTURE_NO_SIGNAL + ACTION line (real PIL path, NOT inject)
 ./scripts/promote_cycle_gate.sh grabber-preflight --inject-stats 7,7,0; echo "true rc=$?"
-# expect rc=78 CAPTURE_NO_SIGNAL — do NOT convict device software
+# expect rc=78 — inject path only (bypasses sample_frame; still must print ACTION)
 ./scripts/promote_cycle_gate.sh grabber-preflight --inject-stats 10,200,25.5; echo "true rc=$?"
 # expect rc=0 SIGNAL_OK
-# Live hardware (parent only):
+# Live hardware (parent only) — dead grabber must be 78 not 1:
 #   ./scripts/promote_cycle_gate.sh grabber-preflight; echo "true rc=$?"
+#   # expect: VERDICT=CAPTURE_NO_SIGNAL rc=78 + ACTION do NOT rollback...
 
 # Instrument stats path (same NO_CAPTURE rule)
 ./scripts/promote_cycle_gate.sh instrument 7 7 0.00; echo "true rc=$?"
