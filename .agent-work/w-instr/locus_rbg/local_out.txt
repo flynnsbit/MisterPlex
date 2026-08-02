@@ -1,0 +1,32 @@
+threshold degrade_supply=0.9 src=DEFAULT_ASSUMED
+threshold sustained_frac=0.2 src=DEFAULT_ASSUMED
+threshold min_degraded_s=5 src=DEFAULT_ASSUMED
+=== locus480_local_vs_supply verdict ===
+PRE_REGISTER LOCAL=recv_q>0 sustained + ffmpeg pipe_write; SUPPLY=recv_q~0 + not pipe_write during degrade
+VOID_ENDPOINT supply_ratio_alone — identical under LOCAL and SUPPLY; use recv_q + wchan discrimination
+n_rows=29
+n_degraded_s=20
+frac_near_zero=0.6896551724137931
+frac_near_zero_src=measured
+frac_near_zero_n=20
+frac_near_zero_den=29
+mean_interval_supply=0.6520689655172414
+mean_interval_supply_src=measured
+recv_q_gt0_frac=1.0
+recv_q_gt0_frac_src=measured
+recv_q_max=50000
+ffmpeg_pipe_write_frac=1.0
+ffmpeg_pipe_write_frac_src=measured
+ffmpeg_socket_readish_frac=0.0
+coverage_recv_q=1.0
+coverage_ffmpeg_wchan=1.0
+frames=290
+presents=232
+drops=29
+residual=29
+residual_src=measured
+residual_calc=29
+ledger=closable
+reason=recv_q_gt0_frac=1.000>=0.2 AND ffmpeg_pipe_write_frac=1.000>=0.2 during_degraded_or_focus n_focus=20
+VERDICT=LOCAL_ESTABLISHED rc=3
+NOTE: LOCAL=consumer too slow (pipe backpressure); not link capacity
