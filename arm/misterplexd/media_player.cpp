@@ -5,6 +5,7 @@
 #include "libmisterplex/ffmpeg_stderr.hpp"
 #include "libmisterplex/ffmpeg_vf.hpp"
 #include "libmisterplex/idle_screen.hpp"
+#include "libmisterplex/present_window.hpp"
 #include "libmisterplex/last_frame_latch.hpp"
 #include "libmisterplex/mister_video_mode.hpp"
 #include "libmisterplex/osd_menu.hpp"
@@ -2959,70 +2960,58 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
             int64_t ddrCpuUs = 0;
             int64_t ddrUnaccountedUs = 0;
             int64_t drops = 0;
+            int64_t holds = 0;
         } prof;
         const bool profilePresent = presentProfile_;
-        auto logProfile = [&]() {
-            if (!profilePresent || prof.frames <= 0)
+        auto windowStart = std::chrono::steady_clock::now();
+        // 1 Hz present_window lines when PRESENT_PROFILE=1 (off → zero cost).
+        // Within-run samples beat session A/B (parent: ~25% event rate).
+        auto logPresentWindow = [&](bool force) {
+            if (!profilePresent)
                 return;
-            const int64_t presented = prof.presented > 0 ? prof.presented : 1;
-            const int64_t readOk = prof.readOkCalls > 0 ? prof.readOkCalls : 1;
-            auto avgFrame = [&](int64_t us) { return us / prof.frames; };
-            auto avgFrameX100 = [&](int64_t v) { return (v * 100) / prof.frames; };
-            auto avgPresented = [&](int64_t us) { return us / presented; };
-            auto avgRead = [&](int64_t v) { return v / readOk; };
-            const int64_t readLoopUs =
-                std::max<int64_t>(0, prof.readWallUs - prof.readSyscallUs - prof.readSleepUs);
-            const int64_t ddrWaitUs = prof.ddrPrepWaitUs + prof.ddrPostWaitUs;
-            const int64_t ddrAccountedUs =
-                ddrWaitUs + prof.ddrCopyUs + prof.ddrFlushUs + prof.ddrDoorbellUs;
-            log("media: present_profile frames=" + std::to_string(prof.frames) +
-                " presented=" + std::to_string(prof.presented) +
-                " drops=" + std::to_string(prof.drops) +
-                " read_us_f=" + std::to_string(avgFrame(prof.readWallUs)) +
-                " read_cpu_us_f=" + std::to_string(avgFrame(prof.readCpuUs)) +
-                " read_syscall_us_f=" + std::to_string(avgFrame(prof.readSyscallUs)) +
-                " read_eagain_sleep_us_f=" + std::to_string(avgFrame(prof.readSleepUs)) +
-                " read_loop_overhead_us_f=" + std::to_string(avgFrame(readLoopUs)) +
-                " read_calls_f=" + std::to_string(prof.readCalls / prof.frames) +
-                " read_calls_x100_f=" + std::to_string(avgFrameX100(prof.readCalls)) +
-                " read_ok_calls_f=" + std::to_string(prof.readOkCalls / prof.frames) +
-                " read_ok_calls_x100_f=" + std::to_string(avgFrameX100(prof.readOkCalls)) +
-                " read_eagain_f=" + std::to_string(prof.readEagain / prof.frames) +
-                " read_eagain_x100_f=" + std::to_string(avgFrameX100(prof.readEagain)) +
-                " read_eintr_f=" + std::to_string(prof.readEintr / prof.frames) +
-                " read_zero=" + std::to_string(prof.readZero) +
-                " read_bytes_f=" + std::to_string(prof.readBytes / prof.frames) +
-                " read_avg_bytes_call=" + std::to_string(avgRead(prof.readBytes)) +
-                " read_max_bytes_call=" + std::to_string(prof.readMaxBytes) +
-                " pacing_wait_us_f=" + std::to_string(avgFrame(prof.pacingWaitUs)) +
-                " pacing_wait_cpu_us_f=" + std::to_string(avgFrame(prof.pacingWaitCpuUs)) +
-                " overlay_us_p=" + std::to_string(avgPresented(prof.overlayUs)) +
-                " overlay_cpu_us_p=" + std::to_string(avgPresented(prof.overlayCpuUs)) +
-                " fb_us_p=" + std::to_string(avgPresented(prof.fbUs)) +
-                " fb_cpu_us_p=" + std::to_string(avgPresented(prof.fbCpuUs)) +
-                " pixel_us_p=" + std::to_string(avgPresented(prof.pixelUs)) +
-                " pixel_cpu_us_p=" + std::to_string(avgPresented(prof.pixelCpuUs)) +
-                " ddr_wait_us_p=" + std::to_string(avgPresented(ddrWaitUs)) +
-                " ddr_prep_wait_us_p=" + std::to_string(avgPresented(prof.ddrPrepWaitUs)) +
-                " ddr_copy_us_p=" + std::to_string(avgPresented(prof.ddrCopyUs)) +
-                " ddr_flush_us_p=" + std::to_string(avgPresented(prof.ddrFlushUs)) +
-                " ddr_doorbell_us_p=" + std::to_string(avgPresented(prof.ddrDoorbellUs)) +
-                " ddr_post_wait_us_p=" + std::to_string(avgPresented(prof.ddrPostWaitUs)) +
-                " ddr_bank_reuse_wait_us_p=" +
-                    std::to_string(avgPresented(prof.ddrBankReuseWaitUs)) +
-                " ddr_plxd_poll_us_p=" + std::to_string(avgPresented(prof.ddrPlxdPollUs)) +
-                " ddr_plxd_poll_iters_x100_p=" +
-                    std::to_string((prof.ddrPlxdPollIters * 100) / presented) +
-                " ddr_plxd_used_x100_p=" +
-                    std::to_string((prof.ddrPlxdUsed * 100) / presented) +
-                " ddr_accounted_us_p=" + std::to_string(avgPresented(ddrAccountedUs)) +
-                " ddr_unaccounted_us_p=" +
-                    std::to_string(avgPresented(prof.ddrUnaccountedUs)) +
-                " ddr_total_us_p=" + std::to_string(avgPresented(prof.ddrTotalUs)) +
-                " ddr_cpu_us_p=" + std::to_string(avgPresented(prof.ddrCpuUs)) +
-                " frame_bytes=" + std::to_string(frameBytes) +
-                " fmt=" + ffmpegPixFmt(videoFmt));
+            const auto now = std::chrono::steady_clock::now();
+            const int64_t wallUs = std::chrono::duration_cast<std::chrono::microseconds>(
+                                      now - windowStart)
+                                      .count();
+            if (!force && wallUs < 900000) // ~1s; allow first tick with media: log
+                return;
+            if (prof.frames <= 0 && prof.presented <= 0 && prof.drops <= 0 && !force)
+                return;
+            PresentWindowSample ws;
+            ws.frames = prof.frames;
+            ws.presented = prof.presented;
+            ws.drops = prof.drops;
+            ws.holds = prof.holds;
+            ws.read_eagain = prof.readEagain;
+            ws.read_sleep_us = prof.readSleepUs;
+            ws.read_wall_us = prof.readWallUs;
+            ws.pacing_wait_us = prof.pacingWaitUs;
+            ws.ddr_total_us = prof.ddrTotalUs;
+            ws.ddr_copy_us = prof.ddrCopyUs;
+            ws.ddr_prep_wait_us = prof.ddrPrepWaitUs;
+            ws.ddr_plxd_poll_us = prof.ddrPlxdPollUs;
+            ws.wall_us = wallUs > 0 ? wallUs : 0;
+            const int64_t wallS = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                      now - t0)
+                                      .count() /
+                                  1000;
+            log(formatPresentWindowLine(ws, wallS, droppedFrames_.load(), avDriftMs_.load()));
+            // Keep legacy dense avg line occasionally for deep DDR split.
+            if (prof.presented > 0) {
+                const int64_t presented = prof.presented;
+                auto avgP = [&](int64_t us) { return us / presented; };
+                log("media: present_profile_ddr_split presented=" +
+                    std::to_string(presented) +
+                    " ddr_copy_us_p=" + std::to_string(avgP(prof.ddrCopyUs)) +
+                    " ddr_flush_us_p=" + std::to_string(avgP(prof.ddrFlushUs)) +
+                    " ddr_prep_wait_us_p=" + std::to_string(avgP(prof.ddrPrepWaitUs)) +
+                    " ddr_plxd_poll_us_p=" + std::to_string(avgP(prof.ddrPlxdPollUs)) +
+                    " ddr_doorbell_us_p=" + std::to_string(avgP(prof.ddrDoorbellUs)) +
+                    " ddr_total_us_p=" + std::to_string(avgP(prof.ddrTotalUs)) +
+                    " bank_reuse_us_p=" + std::to_string(avgP(prof.ddrBankReuseWaitUs)));
+            }
             prof = PresentProfileAccum{};
+            windowStart = now;
         };
 
         auto blitFrame = [&](const uint8_t* data) {
@@ -3588,6 +3577,7 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                     const AvAction act = avDecide(drift, leadMs, dropMs, dropRun);
                     if (act == AvAction::Hold) {
                         if (profilePresent) {
+                            ++prof.holds;
                             const auto hold0 = std::chrono::steady_clock::now();
                             const int64_t holdCpu0 = threadCpuMicros();
                             std::this_thread::sleep_for(std::chrono::milliseconds(2));
@@ -3654,6 +3644,7 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                     " measured=" +
                     (mw > 0 ? (std::to_string(mw) + "x" + std::to_string(mh)) : "pending") +
                     " desync_risk=" + (pipeDesyncRisk_.load() ? "1" : "0"));
+                logPresentWindow(false);
             }
             // Periodic hard check (B5): measured size vs reader under identity_skip.
             if (vfPlan.identity_skip && (frameIndex % 120) == 0) {
@@ -3678,12 +3669,10 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                 if ((frameIndex % 15) == 0 && onProgress_)
                     onProgress_("playing", tms, durationMs);
             }
-            if (profilePresent && prof.frames >= 300)
-                logProfile();
         }
 
         if (profilePresent)
-            logProfile();
+            logPresentWindow(true);
         if (rfd >= 0)
             ::close(rfd);
         // Close video first so ffmpeg can exit and EOF stderr for the pump join.
