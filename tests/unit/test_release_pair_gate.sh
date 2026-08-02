@@ -73,12 +73,12 @@ fi
 #    path ("refusal is not delivery"): before DAEMON_PATH existed this script
 #    rebuilt the daemon every run, so its md5 could never match a validated row
 #    while the core stayed pinned, and `make package` refused unconditionally.
-#    A hardware-validated pair MUST be authorised.
+#    Default ship = stamped ba2ec313 daemon 509b0c75 (not regressing e9f79de2).
 if "$ROOT/scripts/pair_ship_policy.sh" check \
-     c5382bee73cecdee8220b811e529c297 e9f79de217982aff44207664fdb945c5 >/dev/null 2>&1; then
-  pass "a hardware-validated pair is authorised (shipping path exists)"
+     c5382bee73cecdee8220b811e529c297 509b0c7592e0e9e38686f9eb8e2cb047 >/dev/null 2>&1; then
+  pass "stamped lab pair c5382bee/509b0c75 is authorised (shipping path exists)"
 else
-  fail "no validated pair is authorised; package_release can only refuse"
+  fail "no stamped pair is authorised; package_release can only refuse"
 fi
 
 # 7) that path must be reachable from the packager: it has to be able to ship a

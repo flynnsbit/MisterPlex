@@ -114,7 +114,7 @@ fi
 
 # --- 4) end-to-end: real package_validated_pair / package_release tarball -----
 # Only when the tracked pair is present (clean-clone ship path).
-PAIR="$ROOT/release_artifacts/ddr-c5382bee-e9f79de2"
+PAIR="$ROOT/release_artifacts/ddr-c5382bee-509b0c75"
 if [ -f "$PAIR/Plex.rbf" ] && [ -f "$PAIR/misterplexd" ] \
   && [ -x "$ROOT/scripts/package_validated_pair.sh" ]; then
   e2e_out="$ROOT/build/unit-tar-owner-e2e"

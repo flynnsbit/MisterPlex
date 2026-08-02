@@ -50,6 +50,7 @@ EXPECT_DAEMON_MD5="${PROMOTE_EXPECT_DAEMON_MD5:-$DAEMON_PIN_DDR_CANDIDATE_FULL}"
 default_rbf() {
   local c
   for c in \
+    "$ROOT/release_artifacts/ddr-c5382bee-509b0c75/Plex.rbf" \
     "$ROOT/release_artifacts/ddr-c5382bee-e9f79de2/Plex.rbf" \
     "$ROOT/fpga/Plex_MiSTer/output_files/Plex.rbf" \
     "$ROOT/fpga/Plex_MiSTer/releases/Plex.rbf" \
@@ -82,10 +83,12 @@ default_daemon() {
   local pin want m
   want=$(printf '%s' "$EXPECT_DAEMON_MD5" | tr -d '[:space:]' | tr 'A-F' 'a-f')
   for pin in \
-    "$ROOT/release_artifacts/ddr-c5382bee-e9f79de2/misterplexd" \
+    "$ROOT/release_artifacts/ddr-c5382bee-509b0c75/misterplexd" \
     "$ROOT/artifacts/daemon-pins/misterplexd.${want:0:8}" \
     "$ROOT/artifacts/daemon-pins/misterplexd.3883f5ab" \
     "$ROOT/artifacts/daemon-pins/misterplexd.edc3a46b" \
+    "$ROOT/artifacts/daemon-pins/misterplexd.509b0c75" \
+    "$ROOT/release_artifacts/ddr-c5382bee-e9f79de2/misterplexd" \
     "$ROOT/artifacts/daemon-pins/misterplexd.e9f79de2" \
     "$ROOT/build/arm/misterplexd"
   do

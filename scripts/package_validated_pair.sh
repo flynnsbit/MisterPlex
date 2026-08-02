@@ -1,21 +1,34 @@
 #!/usr/bin/env bash
-# Package the tracked hardware-validated lab pair ddr-c5382bee-e9f79de2.
+# Package the tracked lab pair ddr-c5382bee-509b0c75 (stamped daemon from ba2ec313).
 #
-# Observed defect: the only binaries that satisfy pair_ship_policy lived under
-# gitignored paths (.agent-work/*.rbf, artifacts/daemon-pins/*), so a clean
-# clone could never assemble a release. This wrapper points package_release.sh
-# at release_artifacts/ddr-c5382bee-e9f79de2/ (tracked) and fails closed if the
-# manifest md5s drift.
+# Observed defect (parent HW 2026-08-02): the prior default pin e9f79de2 lacks
+# delivery-geometry measurement (measured=/desync_risk=) and regresses 480p on
+# real PMS delivery 624x350 (green field + duplicated TREK24). Shipping that
+# pin as "validated" is a user-visible release defect.
 #
-# This is LAB pair packaging, not daily-driver glass promotion.
+# This wrapper points package_release.sh at
+# release_artifacts/ddr-c5382bee-509b0c75/ (tracked, force-added) and fails
+# closed unless:
+#   - MANIFEST.md5 matches on-disk binaries
+#   - daemon_stamp_check --require-stamped (no historical unstamped allow)
+#   - capability strings for measured delivery are present in the binary
+#   - pair_ship_policy → PAIR_OK
+#
+# LAB pair packaging, not daily-driver glass promotion.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-PAIR_DIR="${PAIR_DIR:-$ROOT/release_artifacts/ddr-c5382bee-e9f79de2}"
+PAIR_DIR="${PAIR_DIR:-$ROOT/release_artifacts/ddr-c5382bee-509b0c75}"
 RBF="$PAIR_DIR/Plex.rbf"
 DAEMON="$PAIR_DIR/misterplexd"
 MANIFEST="$PAIR_DIR/MANIFEST.md5"
 EXPECT_CORE=c5382bee73cecdee8220b811e529c297
-EXPECT_DAEMON=e9f79de217982aff44207664fdb945c5
+EXPECT_DAEMON=509b0c7592e0e9e38686f9eb8e2cb047
+EXPECT_STAMP_REV=ba2ec3139133
+# Capability markers the 480p regression lacked (parent-measured defect class).
+CAP_MARKERS=(
+  "desync_risk="
+  "DELIVERY_MISMATCH measured="
+)
 
 echo "=== package_validated_pair ==="
 echo "PAIR_DIR=$PAIR_DIR"
@@ -43,8 +56,38 @@ if [ "$dae_md5" != "$EXPECT_DAEMON" ]; then
   exit 2
 fi
 
-# Historical matrix pin: allow unstamped e9f79de2 for this pair only.
-"$ROOT/scripts/daemon_stamp_check.sh" --allow-matrix-pin "$DAEMON"
+# Refuse unstamped / historical md5-only pins as the default ship path.
+# Do NOT use --allow-matrix-pin here — that is how e9f79de2 slipped through.
+stamp_out=$("$ROOT/scripts/daemon_stamp_check.sh" --require-stamped "$DAEMON" 2>&1) || {
+  echo "ERROR: daemon must be stamped (git_rev=…); refuse md5-only pin: $stamp_out" >&2
+  exit 7
+}
+echo "$stamp_out"
+printf '%s\n' "$stamp_out" | grep -q "git_rev=${EXPECT_STAMP_REV}" || {
+  echo "ERROR: expected git_rev=${EXPECT_STAMP_REV} in stamp output" >&2
+  echo "got: $stamp_out" >&2
+  exit 7
+}
+
+# Capability gate: binary must contain delivery-geometry markers (not md5-keyed).
+# Use grep -aF on the file directly — `strings | grep -q` under `set -o pipefail`
+# returns 141 (SIGPIPE) when grep exits early on a match, which falsely looks like CAP_MISS.
+cap_ok=0
+cap_miss=0
+for m in "${CAP_MARKERS[@]}"; do
+  if grep -aF -q -- "$m" "$DAEMON"; then
+    cap_ok=$((cap_ok + 1))
+    echo "CAP_OK marker='$m'"
+  else
+    cap_miss=$((cap_miss + 1))
+    echo "CAP_MISS marker='$m'" >&2
+  fi
+done
+echo "CAP_APPLIED ok=$cap_ok miss=$cap_miss want=${#CAP_MARKERS[@]}"
+if [ "$cap_miss" -ne 0 ] || [ "$cap_ok" -ne "${#CAP_MARKERS[@]}" ]; then
+  echo "ERROR: daemon lacks delivery-geometry capability markers (480p regression class)" >&2
+  exit 8
+fi
 
 pair_out=$("$ROOT/scripts/pair_ship_policy.sh" check "$core_md5" "$dae_md5" 2>&1) || {
   echo "ERROR: pair_ship_policy refused tracked pair: $pair_out" >&2
@@ -53,6 +96,10 @@ pair_out=$("$ROOT/scripts/pair_ship_policy.sh" check "$core_md5" "$dae_md5" 2>&1
 echo "$pair_out"
 printf '%s\n' "$pair_out" | grep -q 'PAIR_OK' || {
   echo "ERROR: expected PAIR_OK in policy output" >&2
+  exit 6
+}
+printf '%s\n' "$pair_out" | grep -q 'id=ddr-c5382bee-509b0c75' || {
+  echo "ERROR: expected pair id=ddr-c5382bee-509b0c75" >&2
   exit 6
 }
 
@@ -76,7 +123,7 @@ fi
 
 export RBF_PATH="$RBF"
 export DAEMON_PATH="$DAEMON"
-export VERSION="${VERSION:-ddr-c5382bee-e9f79de2}"
+export VERSION="${VERSION:-ddr-c5382bee-509b0c75}"
 export OUT_DIR="${OUT_DIR:-$ROOT/dist}"
 
 echo "Invoking package_release.sh VERSION=$VERSION"
