@@ -70,18 +70,17 @@ Source: `v4l2-ctl --device=/dev/video0 --list-formats-ext` → `.agent-work/w-in
 
 ### Recommendation (highest leverage)
 
-1. **Primary experiment: 1080p @ 25 fps** (`-framerate 25` / v4l2 interval 25).  
-   - Beat vs 24.000: ratio **25/24**, pattern period **1000 ms** (25 cap / 24 src).  
-   - `commensurate=True` still (rational), but **ideal hold ≈ 1.0417** → healthy mass almost all **hold=1**, rare hold=2 every ~24 source frames.  
-   - Drop signature (hold≥3 / IFI≥120 ms) separates from healthy much more cleanly than 30 fps 5/4 bimodal {1,2}.  
-   - Keeps full HD for OCR/colour instruments.
+1. **Best drop-separation on this stick: 720p @ 60 fps** (resolution trade).  
+   - ratio **60/24=5/2**, ideal hold=2.5, healthy mass **{2,3}** (3:2 visible).  
+   - Single source drop ≈ +2.5 holds → tail at hold≥5 (IFI≥83 ms) **above** healthy max=3.  
+   - 1080p60 **not offered** (v4l2 measured).
 
-2. **Secondary: 720p @ 60 fps** if you accept resolution drop.  
-   - ratio **60/24=5/2**, ideal hold=2.5, healthy mass **{2,3}** — classic 3:2 visible directly.  
-   - Drop → hold≥5 (IFI≥83 ms at 60) clearer tail.  
-   - 1080p60 **not offered** by this MS2109.
+2. **1080p @ 25 fps — use with care.**  
+   - ratio **25/24**, pattern 1000 ms; healthy ≈ hold=1 plus **one hold=2 per second** (beat double).  
+   - Single source drop also lands near hold=2 (80 ms ≈ 83 ms) — **aliases with the natural beat double**.  
+   - Still useful to shrink bimodal mass vs 30 fps, but **not** cleaner for single-frame drop detection. Multi-frame stalls (hold≥3) still pop.
 
-3. **Keep 30 fps** only as legacy comparable to existing bursts; beat analysis already solid there.
+3. **1080p @ 30 fps** — keep for legacy compare; healthy {1,2}, drop hold≥3 works; beat 5/4 already confirmed on hardware (mean interval 33.31 ms).
 
 ```bash
 # 1080p25 content burst (parent)
