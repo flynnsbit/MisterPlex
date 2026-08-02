@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# pre-push: fail if unit-unlocked registry drifts from Makefile.
+# Observed defect: lanes add tests to Makefile but skip EXPECTED_* for days
+# (UNIT_ROLLCALL_FAIL / UNREGISTERED_COMMAND) because full `make unit` is slow.
+set -euo pipefail
+ROOT="$(git rev-parse --show-toplevel)"
+cd "$ROOT"
+echo "pre-push: make rollcall (unit-unlocked registry)"
+make -C "$ROOT" rollcall
+echo "pre-push: rollcall OK"
+exit 0

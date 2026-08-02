@@ -214,6 +214,7 @@ EXPECTED_COMMANDS = [
     "$(ROOT)/tests/unit/test_release_rbf_hash.sh",
     "$(ROOT)/tests/unit/test_release_pair_gate.sh",
     "$(ROOT)/tests/unit/test_daemon_build_identity.sh",
+    "bash $(ROOT)/tests/unit/test_rollcall_hole.sh",
     "$(ROOT)/tests/unit/test_hdmi_capture_usage_guard.sh",
     "$(ROOT)/tests/unit/test_sdram_startup_verilator.sh",
     "$(ROOT)/tests/unit/test_sdram_dq_turnaround_verilator.sh",
@@ -254,10 +255,19 @@ IGNORED_COMMANDS = [
 def normalize_command(line: str) -> str:
     line = line.strip()
     line = line[1:] if line.startswith("@") else line
+    # Recipe backslash continuations are joined before normalize; strip leftover \
+    line = line.rstrip("\\").strip()
     return re.sub(r"\s+", " ", line.strip())
 
 
 def parse_unit_unlocked(makefile: Path) -> tuple[list[str], list[str]]:
+    """Parse unit-unlocked prereqs + recipe commands.
+
+    Recipe lines ending in \\ are joined (Make continuation). Without that join,
+    continuation fragments become false UNREGISTERED_COMMAND entries and the
+    real multi-arg command never matches EXPECTED_COMMANDS (observed on
+    w-cast-o5 / w-decode-o5 with check_rtl_module_instantiations --require…).
+    """
     lines = makefile.read_text(encoding="utf-8").splitlines()
     try:
         start = next(i for i, line in enumerate(lines) if line.startswith("unit-unlocked:"))
@@ -275,15 +285,87 @@ def parse_unit_unlocked(makefile: Path) -> tuple[list[str], list[str]]:
     prereqs = target_text.split(":", 1)[1].split()
 
     commands: list[str] = []
+    pending: list[str] = []
     for line in lines[i + 1 :]:
         if line and not line.startswith("\t") and re.match(r"^[^#\s].*:", line):
             break
-        if line.startswith("\t"):
-            commands.append(normalize_command(line))
+        if not line.startswith("\t"):
+            continue
+        pending.append(line)
+        if line.rstrip().endswith("\\"):
+            continue
+        # Collapse physical recipe lines into one logical Make command.
+        logical = " ".join(part.rstrip("\\").strip() for part in pending)
+        commands.append(normalize_command(logical))
+        pending = []
+    if pending:
+        logical = " ".join(part.rstrip("\\").strip() for part in pending)
+        commands.append(normalize_command(logical))
     return prereqs, commands
 
 
-def main() -> int:
+def _format_list(name: str, items: list[str]) -> str:
+    body = ",\n".join(f'    "{item}"' for item in items)
+    return f"{name} = [\n{body},\n]\n"
+
+
+def write_expected(makefile: Path, path: Path) -> None:
+    """Rewrite EXPECTED_* in this file from Makefile reality (intentional sync).
+
+    Does not invent counts: lists are derived from parse_unit_unlocked().
+    """
+    prereqs, commands = parse_unit_unlocked(makefile)
+    ignored_set = set(IGNORED_COMMANDS)
+    protected = [c for c in commands if c not in ignored_set]
+    ignored = [c for c in commands if c in ignored_set]
+    # Keep ignored registry order stable from current IGNORED_COMMANDS ∩ actual
+    ignored_ordered = [c for c in IGNORED_COMMANDS if c in ignored]
+    for c in ignored:
+        if c not in ignored_ordered:
+            ignored_ordered.append(c)
+
+    text = path.read_text(encoding="utf-8")
+    # Replace the three list literals by name (first occurrence each).
+    def repl_list(src: str, name: str, items: list[str]) -> str:
+        pat = re.compile(
+            rf"^{re.escape(name)} = \[.*?^\\]\n",
+            re.MULTILINE | re.DOTALL,
+        )
+        m = pat.search(src)
+        if not m:
+            raise SystemExit(f"write-expected: could not find {name} list")
+        return src[: m.start()] + _format_list(name, items) + src[m.end() :]
+
+    text = repl_list(text, "EXPECTED_PREREQS", prereqs)
+    text = repl_list(text, "EXPECTED_COMMANDS", protected)
+    text = repl_list(text, "IGNORED_COMMANDS", ignored_ordered)
+    path.write_text(text, encoding="utf-8")
+    print(
+        "UNIT_ROLLCALL_WROTE_EXPECTED "
+        f"prereqs={len(prereqs)} commands={len(protected)} ignored={len(ignored_ordered)} "
+        f"path={path}"
+    )
+
+
+def main(argv: list[str] | None = None) -> int:
+    import subprocess
+
+    argv = list(sys.argv[1:] if argv is None else argv)
+    write = False
+    if "--write-expected" in argv:
+        write = True
+        argv = [a for a in argv if a != "--write-expected"]
+    if argv:
+        print(f"usage: {sys.argv[0]} [--write-expected]", file=sys.stderr)
+        return 2
+
+    if write:
+        self_path = Path(__file__).resolve()
+        write_expected(MAKEFILE, self_path)
+        # Module-level EXPECTED_* are stale until reload — verify via fresh process.
+        rc = subprocess.run([sys.executable, str(self_path)], check=False).returncode
+        return rc
+
     prereqs, commands = parse_unit_unlocked(MAKEFILE)
     ignored_command_set = set(IGNORED_COMMANDS)
     ignored_commands = [c for c in commands if c in ignored_command_set]
