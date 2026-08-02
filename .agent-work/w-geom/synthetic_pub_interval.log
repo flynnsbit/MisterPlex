@@ -1,3 +1,0 @@
-media: publish_interval notes=500 intervals=499 mean_ms=41.629 sigma_ms=8.166 p_ge50=0.0982 p_ge83=0.0000 p_lt25=0.1002 p_in_band=0.8016 verdict=ARM_LATE_MATCH_HOLD45 ideal_ms=41.667 tag=synthetic phase=session_end
-media: publish_interval_hist n=499 lt25=50 b25_33=0 b33_42=400 b42_50=0 b50_67=49 b67_83=0 b83_100=0 ge100=0 tag=derived
-media: publish_interval_acf lag1=-0.4500 tag=derived

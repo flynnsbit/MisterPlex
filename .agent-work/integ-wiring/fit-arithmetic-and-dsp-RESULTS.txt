@@ -1,9 +1,0 @@
-FIT ARITHMETIC + DSP BASELINES
-==============================
-Parent ~29k ALMs = INVALID (ALMs_needed - sink_comb + 4k). Proxy sink-only diet ~38.5k ALMs.
-~29k only if sink≤4k AND traverse≤3k ALMs AND RFS fixed together.
-DSP: map-tree 149-64+12=97; product-intent 74+12+1=87; both <112 if sink≤12.
-M10K: now 3.06M/5.66M (54%); +RFS 921600 → ~70.5%; headroom ~29.5% — not the wall.
-dequant isolated: DSP=17 ALMs=240 rc=0 (pre-reg 16 near-HIT)
-had isolated: DSP=3 ALMs=247 rc=0 (pre-reg 32 MISS — entity 32 inflated)
-Map slot held for sink freeze.

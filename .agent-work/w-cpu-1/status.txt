@@ -1,4 +1,0 @@
-FLEET: 240-row ceiling FACT (glass). raw p_ge50 UNSCORED. 
-SHIPPED: plxd_liveness bank-identity (not frames_done-only) — freeze STALE fix ARM-side
-PRIORITY still: trimmed Main A/B SOAK_AB + E1 strace
-No PLXD presents/drops/frames_done as evidence on c5382bee

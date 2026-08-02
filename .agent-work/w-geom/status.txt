@@ -1,9 +1,0 @@
-w-geom status 2026-08-01 post fleet broadcast
-HEAD: see git
-FACT: vertical 240-row ceiling proven on glass (parent push_frame patterns)
-T7 RTL: on branch (91c22999 / w-fit-ceiling-fd-min) — await fit+post card
-PLXD freeze-blindness: bank-identity liveness on branch (7b6815a3)
-disc+ledger honesty: fc58f7d1
-p_ge50 prior UNSCORED — re-soak only
-H640: costed, not implemented
-No device / no fit from this lane

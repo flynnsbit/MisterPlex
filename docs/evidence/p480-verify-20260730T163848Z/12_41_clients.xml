@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <MediaContainer size="2">
 <Server name="MiSTerPlex" host="192.168.1.183" address="192.168.1.183" port="3005" machineIdentifier="misterplex-dev" version="0.2.0" protocol="plex" product="MiSTerPlex" deviceClass="stb" protocolVersion="1" protocolCapabilities="timeline,playback,navigation,mirror,playqueues" />
-<Server name="" host="192.168.1.24" address="192.168.1.24" port="3000" version="" />
+<Server name="" host="YOUR-PLEX-SERVER" address="YOUR-PLEX-SERVER" port="3000" version="" />
 </MediaContainer>

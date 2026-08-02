@@ -1,8 +1,0 @@
-FAIL B2_loglevel_info_present
-FAIL B2_do_not_error_comment missing: DO NOT change to error — breaks delivered_geom
-PASS B5_byte_align
-PASS B5_phase_desync
-PASS B5_pipe_desync_log
-PASS B4_measured_only
-SUMMARY pass=4 fail=2
-B2_B5_SOURCE_WIRING_FAIL

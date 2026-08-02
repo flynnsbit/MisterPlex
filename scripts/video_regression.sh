@@ -82,7 +82,7 @@ PREV_HYBRID_DAEMON_MD5=3e2cbb9881b2f54b0e4cb60238655fa7
 # Test clip: the 240p burned-in-telemetry ladder entry. Its overlay text makes
 # left-edge clipping obvious to the eye as well as to the measurement.
 PMS_ID="${PMS_ID:-bf36a3ad8d4f6810ab3f69ec9f1adb22a7a9dc8a}"
-PMS_HOST="${PMS_HOST:-192.168.1.24}"
+PMS_HOST="${PMS_HOST:-YOUR-PLEX-SERVER}"   # site-specific: export PMS_HOST=<your PMS ip> to cast
 RATING_KEY="${RATING_KEY:-3}"
 TOKEN_FILE="${TOKEN_FILE:-/tmp/.tok}"
 
