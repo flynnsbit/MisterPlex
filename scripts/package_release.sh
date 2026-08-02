@@ -261,6 +261,41 @@ cp -a "$STAGE/README.txt" "$STAGE/docs/INSTALL.txt"
   sha256sum -c SHA256SUMS
 )
 
+# Ship-safety gate. The packaged (core, daemon) pair must be one the project's
+# own ship policy accepts, and this runs BEFORE the tarball exists so a refused
+# pair never becomes a downloadable artifact.
+#
+# Measured on hardware 2026-08-02 (parent, viewed pixels): packaging silently
+# produced core 41adb98c + daemon 88e292fd, a combination pair_policy_check
+# REFUSES. Installed on the device that tarball renders a BLACK SCREEN — the
+# v0.3.0 core never frees a DDR bank for the DDR-era daemon, so every publish is
+# dropped ("PLXD bank-select swap_pending, free_mask=0", frames_done frozen) and
+# the idle paint fails. 90/90 captured frames had mean luma 0.00; rolling back to
+# the stable pair on the same capture chain immediately restored the chevron.
+#
+# There is deliberately NO environment bypass. The supported way to ship a new
+# pair is to hardware-validate it and add a row to scripts/pair_ship_policy.sh.
+if [[ -f "$STAGE/cores/Plex.rbf" ]]; then
+  pair_core_md5="$(md5sum "$STAGE/cores/Plex.rbf" | awk '{print $1}')"
+  pair_daemon_md5="$(md5sum "$STAGE/bin/misterplexd" | awk '{print $1}')"
+  if pair_verdict="$("$ROOT/scripts/pair_ship_policy.sh" check "$pair_core_md5" "$pair_daemon_md5" 2>&1)"; then
+    echo "package_release: pair policy OK — $pair_verdict"
+  else
+    {
+      echo "ERROR: refusing to package a (core, daemon) pair the ship policy rejects."
+      echo "       $pair_verdict"
+      echo "       core   = $pair_core_md5 ($STAGE/cores/Plex.rbf)"
+      echo "       daemon = $pair_daemon_md5 ($STAGE/bin/misterplexd)"
+      echo "       A mixed core/daemon pair black-screens the device; this was"
+      echo "       reproduced on hardware, so it is not a theoretical risk."
+      echo "       Fix the pairing instead of bypassing: point RBF_PATH at the core"
+      echo "       that matches this daemon, or hardware-validate the pair and add a"
+      echo "       row to scripts/pair_ship_policy.sh (PAIR_MATRIX_ROWS)."
+    } >&2
+    exit 6
+  fi
+fi
+
 mkdir -p "$OUT_DIR"
 # Extract as misterplex-<version>/ rather than leaking the staging directory name.
 tar -C "$STAGE/.." --transform="s|^$(basename "$STAGE")|misterplex-${VERSION}|" \

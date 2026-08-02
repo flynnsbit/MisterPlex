@@ -182,6 +182,7 @@ unit-unlocked: unit-rollcall preflight $(ROOT)/build/test_cadence $(ROOT)/build/
 	$(ROOT)/tests/unit/test_video_regression_liveness.sh
 	$(ROOT)/tests/unit/test_timing_margin_gate.sh
 	$(ROOT)/tests/unit/test_release_rbf_hash.sh
+	$(ROOT)/tests/unit/test_release_pair_gate.sh
 	$(ROOT)/tests/unit/test_sdram_startup_verilator.sh
 	$(ROOT)/tests/unit/test_sdram_dq_turnaround_verilator.sh
 	$(ROOT)/tests/unit/test_h264_cavlc_residual_verilator.sh

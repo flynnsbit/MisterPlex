@@ -67,9 +67,19 @@ actually sees.
 Capture the idle/playback screen with:
 
 ```bash
-ffmpeg -v error -f v4l2 -input_format mjpeg -video_size 1920x1080 \
-  -i /dev/video0 -frames:v 1 -y /tmp/live.png
+scripts/hdmi_capture_idle.sh /tmp/live.png
 ```
+
+**Never use a bare `ffmpeg -frames:v 1`.** The MJPEG grabber needs ~15 frames to
+lock, so a single-frame grab returns a **false black** no matter what the MiSTer is
+really showing — that recipe has already produced false REDs in this lab. The helper
+discards the warm-up, retries, and prints `MEAN/STD/ORANGE_PX/ACTIVE` so a frame can
+be scored rather than eyeballed. It exits `GRABBER_NOT_READY` (rc=1) instead of
+handing back a black frame that could be misread as a device failure.
+
+A genuine sustained black (helper retries exhausted, and the stable pair still
+renders on the *same* capture chain) is a real result: it is the mixed core/daemon
+failure where the core never frees a DDR bank.
 
 `/dev/video0` is exclusive — a desktop app (OBS, `xdg-open`, nautilus preview) holding it
 makes capture fail with `Device or resource busy`. Check with `fuser -v /dev/video0`.
