@@ -27,6 +27,10 @@ fail=0
 ok() { echo "PASS $1"; pass=$((pass + 1)); }
 bad() { echo "FAIL $1" >&2; fail=$((fail + 1)); }
 
+# Blob inject tests are not fabric-ID tests. Identity fail-closed is covered
+# explicitly below; green paths set VERIFIED so PROMOTE_GATES_OK remains reachable.
+export PROMOTE_CORE_IDENTITY="${PROMOTE_CORE_IDENTITY:-VERIFIED}"
+
 # --- policy -----------------------------------------------------------------
 
 echo "=== pair_ship_policy DDR pair OK / mixed REFUSE ==="
@@ -127,7 +131,9 @@ echo "  true rc=$rc"
 # pin 8fdf440f does not false-fail the unit (LAB pair, not daily default).
 EDC_LIVE=9ce2c2d13d1c8712683289043e99002c
 LAB_CORE=c5382bee73cecdee8220b811e529c297
-export PROMOTE_EXPECT_CORE_MD5="${PROMOTE_EXPECT_CORE_MD5:-$LAB_CORE}"
+# Force lab fixture (do not inherit ambient PROMOTE_EXPECT_* from parent shell).
+export PROMOTE_EXPECT_CORE_MD5="$LAB_CORE"
+export PROMOTE_EXPECT_DAEMON_MD5="$EDC_LIVE"
 cat >"$WORK/live_ok.blob" <<BLOB
 PRODUCT_CORE=/media/fat/_Utility/Plex.rbf
 PRODUCT_MD5=$LAB_CORE
@@ -195,6 +201,7 @@ out=$(
   PROMOTE_VISUAL_CMD="$WORK/visual_ok.sh" \
   PROMOTE_CONF_BLOB="$WORK/conf_ddr.txt" \
   PROMOTE_CONF_PROFILE=ddr \
+  PROMOTE_CORE_IDENTITY=VERIFIED \
   "$GATES" verify-live 2>&1
 )
 rc=$?
@@ -205,6 +212,30 @@ echo "$out" | sed 's/^/  /' | tail -15
 echo "$out" | grep -q 'PROMOTE_GATES_OK' && ok "gates-ok" || bad "gates-ok"
 echo "$out" | grep -q 'PLXS_SEQ advanced' && ok "plxs-seq-advance" || bad "plxs-seq-advance"
 echo "$out" | grep -q 'OK conf-profile=ddr' && ok "conf-ddr-ok" || bad "conf-ddr-ok"
+
+echo "=== RED: CORE_IDENTITY_UNVERIFIED blocks PROMOTE_GATES_OK (fail-closed) ==="
+# Match blob product md5 so ONLY identity fails (not product-disk ALLOW path).
+set +e
+out=$(
+  PROMOTE_GATE_BLOB="$WORK/live_ok.blob" \
+  PROMOTE_HTTP="$WORK/fake_http.sh" \
+  PROMOTE_VISUAL_CMD="$WORK/visual_ok.sh" \
+  PROMOTE_CONF_BLOB="$WORK/conf_ddr.txt" \
+  PROMOTE_CONF_PROFILE=ddr \
+  PROMOTE_EXPECT_CORE_MD5=c5382bee73cecdee8220b811e529c297 \
+  PROMOTE_EXPECT_DAEMON_MD5=9ce2c2d13d1c8712683289043e99002c \
+  PROMOTE_CORE_IDENTITY=UNVERIFIED \
+  "$GATES" verify-live 2>&1
+)
+rc=$?
+set -e
+echo "  [core-id] true rc=$rc"
+echo "$out" | sed 's/^/  [core-id] /' | tail -12
+[ "$rc" -eq 2 ] && ok "core-id-blocks-rc2" || bad "core-id-blocks-rc2 got=$rc"
+echo "$out" | grep -q 'PROMOTE_OK=0' && ok "core-id-promote-ok0" || bad "core-id-promote-ok0"
+# Match the success marker line only — FAIL text also contains the substring.
+echo "$out" | grep -qx 'PROMOTE_GATES_OK' && bad "core-id-no-gates-ok" || ok "core-id-no-gates-ok"
+echo "$out" | grep -q 'CORE_IDENTITY_UNVERIFIED' && ok "core-id-msg" || bad "core-id-msg"
 
 echo "=== verify-live RED when DDR conf keys missing ==="
 cat >"$WORK/conf_spi.txt" <<'CONF'

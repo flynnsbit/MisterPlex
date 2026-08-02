@@ -72,7 +72,8 @@ BASE_CORE_MD5=dfebf2bfd08dd70b473b587dd7e81848
 # regression and must fail.
 BASE_DAEMON_MD5=7cd10b4d438c714a9b8c4766dc982d59
 # Daemon pin chain (do NOT weaken — unknown md5 still FAILs):
-#   9ce2c2d1  CURRENT live DDR (parent glass 2026-08-01; w-osd-hires chevron).
+#   ea643e99  CURRENT live DDR (parent 2026-08-02; BBB frames=8638 viewed OK).
+#   9ce2c2d1  known-good pin + rollback (chevron).
 #   3883f5ab  prior live — accepted rollback.
 #   7c991e47  post-raster — accepted prefix8.
 #   edc3a46b  prior primary — accepted rollback.
@@ -83,8 +84,12 @@ BASE_DAEMON_MD5=7cd10b4d438c714a9b8c4766dc982d59
 #   3e2cbb98  older hybrid — accepted rollback.
 #   7cd10b4d  BASE release (above).
 # Name HYBRID_* is historical; value is CURRENT expected live DDR pin.
-HYBRID_DAEMON_PREFIX8=9ce2c2d1
-HYBRID_DAEMON_MD5_DEFAULT=9ce2c2d13d1c8712683289043e99002c
+# Default expect = CURRENT live prefix; pin file may still be 9ce2 until parent
+# runs pin_daemon_artifact for ea643e99.
+HYBRID_DAEMON_PREFIX8=ea643e99
+HYBRID_DAEMON_MD5_DEFAULT="${HYBRID_DAEMON_MD5_DEFAULT:-ea643e99}"
+HYBRID_DAEMON_ROLLBACK_PREFIX8=9ce2c2d1
+HYBRID_DAEMON_ROLLBACK_MD5=9ce2c2d13d1c8712683289043e99002c
 if [ -f "${REPO:-$(cd "$(dirname "$0")/.." && pwd)}/artifacts/daemon-pins/misterplexd.${HYBRID_DAEMON_PREFIX8}" ]; then
   HYBRID_DAEMON_MD5=$(md5sum "${REPO:-$(cd "$(dirname "$0")/.." && pwd)}/artifacts/daemon-pins/misterplexd.${HYBRID_DAEMON_PREFIX8}" | awk '{print $1}')
   if [ "${HYBRID_DAEMON_MD5:0:8}" != "$HYBRID_DAEMON_PREFIX8" ]; then
@@ -196,7 +201,7 @@ daemon_md5_accepted() {
   # Accepted DDR/SPI prefix8 set (current + documented rollbacks). Unknown → FAIL.
   # 50f4eb92 remains SPI undo only — still accepted, not "current live".
   case "$p8" in
-    9ce2c2d1|3883f5ab|7c991e47|36b89bcb|5996385a|b981fd20|edc3a46b|e9f79de2|50f4eb92|3e2cbb98|7cd10b4d) return 0 ;;
+    ea643e99|9ce2c2d1|3883f5ab|7c991e47|36b89bcb|5996385a|b981fd20|edc3a46b|e9f79de2|50f4eb92|3e2cbb98|7cd10b4d) return 0 ;;
   esac
   if [ "${#HYBRID_DAEMON_MD5}" -eq 8 ] && [ "$p8" = "$HYBRID_DAEMON_MD5" ]; then
     return 0

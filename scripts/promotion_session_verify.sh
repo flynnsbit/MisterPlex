@@ -12,6 +12,7 @@
 #   VFPS               vfps=
 #   SOURCE_FPS         source fps (e.g. 23.97)
 #   SESSION_ESTABLISHED 0|1  — set 1 only when a real play window was scored
+#   FRAMES               device-observed frames= (HARD: must be >0 — ce727a43 class)
 #   REQUIRE_SINGLE_SESSION_EPOCH=1 — with --from-log, also run soak_continuity_assert
 #     (P4: counter soak must be one session_epoch; respawn resets drops/presents)
 #
@@ -64,6 +65,7 @@ unacc=$(pick UNACCOUNTED "")
 vfps=$(pick VFPS "")
 sfps=$(pick SOURCE_FPS "")
 sess=$(pick SESSION_ESTABLISHED "")
+frames=$(pick FRAMES "")
 
 if [[ -n "$blob" ]]; then
   line=$(parse_last 'delivery_verified=')
@@ -76,6 +78,13 @@ if [[ -n "$blob" ]]; then
   [[ -z "$unacc" && -n "$line" ]] && unacc=$(printf '%s' "$line" | sed -n 's/.*unaccounted=\([0-9][0-9]*\).*/\1/p')
   line=$(parse_last 'vfps=')
   [[ -z "$vfps" && -n "$line" ]] && vfps=$(printf '%s' "$line" | sed -n 's/.*vfps=\([0-9.][0-9.]*\).*/\1/p')
+  # frames= from ledger / supply lines (device-observed decode count)
+  line=$(parse_last '[[:space:]]frames=')
+  [[ -z "$frames" && -n "$line" ]] && frames=$(printf '%s' "$line" | sed -n 's/.*[[:space:]]frames=\([0-9][0-9]*\).*/\1/p')
+  if [[ -z "$frames" ]]; then
+    line=$(parse_last '^frames=')
+    [[ -n "$line" ]] && frames=$(printf '%s' "$line" | sed -n 's/^frames=\([0-9][0-9]*\).*/\1/p')
+  fi
 fi
 
 # Session established: explicit env wins; else infer from delivery_verified=1 + measured_delivery present.
@@ -96,10 +105,10 @@ if [[ -z "$sfps" && -n "$vfps" ]]; then
   sfps="$vfps"
 fi
 
-echo "promotion_session_verify: dv=$dv md=$md drops=$drops unacc=$unacc vfps=$vfps sfps=$sfps sess=$sess"
+echo "promotion_session_verify: dv=$dv md=$md drops=$drops unacc=$unacc vfps=$vfps sfps=$sfps sess=$sess frames=$frames"
 
 set +e
-promotion_assert_session_telemetry "$dv" "$md" "$drops" "$unacc" "$vfps" "$sfps" "$sess"
+promotion_assert_session_telemetry "$dv" "$md" "$drops" "$unacc" "$vfps" "$sfps" "$sess" "$frames"
 rc=$?
 set -e
 

@@ -158,32 +158,100 @@ echo "  ini mismatch true rc=$rc_i"
 
 echo "=== 7) Post-promotion session — cannot pass vacuously ==="
 set +e
-promotion_assert_session_telemetry 1 624x480 0 0 23.97 23.97 0
+promotion_assert_session_telemetry 1 624x480 0 0 23.97 23.97 0 100
 rc_unscored=$?
 set -e
 echo "  no session true rc=$rc_unscored"
 [[ "$rc_unscored" -eq 77 ]] && ok "session-unscored-rc77" || bad "session-unscored got=$rc_unscored"
 
 set +e
-promotion_assert_session_telemetry 1 624x480 0 0 23.9706 23.97 1
+promotion_assert_session_telemetry 1 624x480 0 0 23.9706 23.97 1 8638
 rc_pass=$?
 set -e
 echo "  full session true rc=$rc_pass"
 [[ "$rc_pass" -eq 0 ]] && ok "session-pass-rc0" || bad "session-pass got=$rc_pass"
 
 set +e
-promotion_assert_session_telemetry 0 624x480 0 0 23.97 23.97 1
+promotion_assert_session_telemetry 0 624x480 0 0 23.97 23.97 1 100
 rc_dv=$?
 set -e
 echo "  delivery_verified=0 true rc=$rc_dv"
 [[ "$rc_dv" -eq 1 ]] && ok "session-dv0-rc1" || bad "session-dv0 got=$rc_dv"
 
 set +e
-promotion_assert_session_telemetry 1 624x480 2 0 23.97 23.97 1
+promotion_assert_session_telemetry 1 624x480 2 0 23.97 23.97 1 100
 rc_drops=$?
 set -e
 echo "  drops=2 true rc=$rc_drops"
 [[ "$rc_drops" -eq 1 ]] && ok "session-drops-rc1" || bad "session-drops got=$rc_drops"
+
+# ce727a43 class: host-green metrics but frames=0
+set +e
+promotion_assert_session_telemetry 1 624x480 0 0 23.97 23.97 1 0
+rc_f0=$?
+set -e
+echo "  frames=0 true rc=$rc_f0"
+[[ "$rc_f0" -eq 1 ]] && ok "session-frames0-rc1" || bad "session-frames0 got=$rc_f0"
+
+set +e
+promotion_assert_session_telemetry 1 624x480 0 0 23.97 23.97 1 ""
+rc_fn=$?
+set -e
+echo "  frames empty true rc=$rc_fn"
+[[ "$rc_fn" -eq 1 ]] && ok "session-frames-nodata-rc1" || bad "session-frames-nodata got=$rc_fn"
+
+echo "=== 7b) Instrument / rollback proven / A/B / CORE_IDENTITY ==="
+set +e
+instrument_assert_capture_alive 7 7 0.00
+rc_i=$?
+set -e
+[[ "$rc_i" -eq 10 ]] && ok "instr-flat-rc10" || bad "instr-flat got=$rc_i"
+
+set +e
+instrument_assert_capture_alive 10 200 25.5
+rc_i=$?
+set -e
+[[ "$rc_i" -eq 0 ]] && ok "instr-alive-rc0" || bad "instr-alive got=$rc_i"
+
+set +e
+instrument_assert_capture_alive grabber_not_ready
+rc_i=$?
+set -e
+[[ "$rc_i" -eq 10 ]] && ok "instr-class-rc10" || bad "instr-class got=$rc_i"
+
+set +e
+rollback_assert_proven 1 1
+rc_r=$?
+set -e
+[[ "$rc_r" -eq 1 ]] && ok "rollback-not-proven" || bad "rollback-not-proven got=$rc_r"
+
+set +e
+rollback_assert_proven 1 0
+rc_r=$?
+set -e
+[[ "$rc_r" -eq 0 ]] && ok "rollback-proven" || bad "rollback-proven got=$rc_r"
+
+set +e
+ab_assert_two_sided 0 0
+rc_a=$?
+set -e
+[[ "$rc_a" -eq 1 ]] && ok "ab-both-sick" || bad "ab-both-sick got=$rc_a"
+
+set +e
+ab_assert_two_sided 0 1
+rc_a=$?
+set -e
+[[ "$rc_a" -eq 0 ]] && ok "ab-convict" || bad "ab-convict got=$rc_a"
+
+set +e
+core_identity_assert UNVERIFIED
+rc_c=$?
+set -e
+[[ "$rc_c" -eq 2 ]] && ok "core-id-unverified-rc2" || bad "core-id-unverified got=$rc_c"
+set +e
+out=$(core_identity_assert UNVERIFIED 2>&1)
+set -e
+echo "$out" | grep -q 'PROMOTE_OK=0' && ok "core-id-promote-ok0" || bad "core-id-promote-ok0"
 
 echo "=== 8) Menu bounce full path ==="
 cmds=$(promotion_menu_bounce_cmd "/media/fat/_Utility/Plex.rbf")

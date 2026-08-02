@@ -46,6 +46,8 @@ source "$ROOT/scripts/pair_ship_policy.sh"
 source "$ROOT/scripts/pair_live_probe.inc.sh"
 # shellcheck source=boot_hook_policy.sh
 source "$ROOT/scripts/boot_hook_policy.sh"
+# shellcheck source=deploy_misterplexd_lib.sh
+source "$ROOT/scripts/deploy_misterplexd_lib.sh"
 
 HOST="${MISTER_HOST:-192.168.1.183}"
 USER="${MISTER_USER:-root}"
@@ -953,8 +955,26 @@ REMOTE
     fi
   fi
 
+  # CORE_IDENTITY_UNVERIFIED fail-closed (parent 2026-08-02): no software path
+  # names the running RBF content hash without a fabric ID register. Prefer blocked
+  # promotion over blind PROMOTE_GATES_OK. Override only with
+  # PROMOTE_CORE_IDENTITY=<hex|VERIFIED> when fabric ID exists.
+  if [ "${PROMOTE_SKIP_CORE_IDENTITY:-0}" != "1" ]; then
+    set +e
+    core_identity_assert "${PROMOTE_CORE_IDENTITY:-UNVERIFIED}"
+    idrc=$?
+    set -e
+    if [ "$idrc" -ne 0 ]; then
+      echo "FAIL CORE_IDENTITY blocks PROMOTE_GATES_OK (rc=$idrc) — do not relax"
+      if [ "$rc" -eq 0 ]; then rc=$idrc; fi
+    fi
+  fi
+
   if [ "$rc" -eq 0 ]; then
     echo "PROMOTE_GATES_OK"
+    echo "PROMOTE_OK=1"
+  else
+    echo "PROMOTE_OK=0"
   fi
   echo "true rc=$rc"
   return "$rc"

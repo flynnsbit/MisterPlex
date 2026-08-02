@@ -3,15 +3,73 @@
 Parent-owned device work only. Agents produce artifacts and commands; they must
 **not** SSH to `192.168.1.183`, deploy, cast, or capture HDMI.
 
-## Glass status (parent 2026-08-01)
+## Glass status (parent 2026-08-02 cycle)
 
-| Core | Status |
+| Core / daemon | Status |
 |------|--------|
-| `8fdf440f` | **Daily driver**; 240-row ceiling cleared (row-alt 1.82→58.89); 480p ledger closed; conf/ini USER-OWNED byte-identical |
-| `c74c6863` | **Glass-OK alternate** — playback viewed-pixels OK (`frames=593`, av-lock, no regression); +9217 free ALM, +356 free M10K vs 8fdf; on-device bak `/media/fat/_Utility/Plex.c74c6863.bak.rbf`. Pair `ddr-c74c6863-9ce2c2d1`. Not current daily. |
-| `78eff44e` / `c5382bee` | LAB-NOT-DAILY (240-row and/or STALE-blind) — bak present for lab only |
+| `8fdf440f` | **Daily core**; glass OK |
+| Daemon **`ea643e99`** | **CURRENT live** — suspend rebased; BBB `frames=8638 pfps=23.6` viewed-pixels PASS. Pin host bytes → `artifacts/daemon-pins/misterplexd.ea643e99` when available. |
+| Daemon `9ce2c2d1` | **Known-good pin + rollback** (on-device bak + `artifacts/daemon-pins/`) |
+| `ce727a43` | **REJECT** — host gates green, `frames=0` / short read (encode lesson 1) |
+| `4936d886` | Overlay lane; black screen was **dead grabber** (`Pixelclock: 0`, stddev=0) — do not convict without A/B |
 | SPI `Plex_v2.rbf` `dfebf2bf` | one-step SPI undo |
-| Daemon `9ce2c2d1` | **PRIMARY pin** `artifacts/daemon-pins/misterplexd.9ce2c2d1` (w-osd-hires lane build, glass OK) |
+| Conf md5 `7f06132f…` | **USER-OWNED** (`DECODE=624x480`, `PRESENT=fpga`, `SUSPEND_MAIN_DURING_PLAY=0`) — cmp/md5 only |
+
+## Four lessons (parent 2026-08-02 — encode verbatim)
+
+1. **A green gate set is not a working build.** `ce727a43` passed everything and could not play. Promotion **requires device-observed `frames > 0`** with a real session.
+2. **Pre-flight instrument check is mandatory** before any promote decision. `min == max` / `stddev == 0` ⇒ **NO CAPTURE**, not device black. Dead grabber must never convict a build.
+3. **Rollback must be proven, not assumed.** Verify symptom-free state restored under the **same** instrument. `"Rolled back"` is a claim requiring evidence.
+4. **Two-sided A/B.** Before convicting a build, confirm the previous build is healthy under the same conditions.
+
+### Proven mechanics (cost real minutes — keep)
+
+```
+cp over a live binary -> ETXTBSY;  use  mv -f
+after mv -f, /proc/<pid>/exe reads ".../misterplexd (deleted)"
+  -> matcher */misterplexd STOPS MATCHING → empty PID
+  -> match *misterplexd*
+rc=126 -> truncated / non-executable binary
+TWO ROOTS: /media/fat/misterplex/ STALE; live /media/fat/misterplex_v2/
+  -> resolve from live /proc/<pid>/cmdline --conf, NEVER assume
+verify LIVE md5 from /proc/<pid>/exe, not on-disk file
+kill by explicit PID only — name-based killing banned
+/tmp on device does NOT survive reboot -> persist rollback to SD
+  (/media/fat/misterplex_v2/bak/{misterplexd.9ce2c2d1,misterplex.conf.known_good})
+```
+
+### Promote cycle gates (host)
+
+```bash
+# Instrument preflight (BEFORE cast / promote decision)
+./scripts/promote_cycle_gate.sh instrument 7 7 0.00; echo "true rc=$?"
+# expect rc=10 NO_CAPTURE  — dead grabber class
+
+./scripts/promote_cycle_gate.sh instrument 10 200 25.5; echo "true rc=$?"
+# expect rc=0 ALIVE
+
+# frames>0 (ce727a43 class)
+FRAMES=0 ./scripts/promote_cycle_gate.sh frames; echo "true rc=$?"   # rc=1
+FRAMES=8638 ./scripts/promote_cycle_gate.sh frames; echo "true rc=$?" # rc=0
+
+# CORE_IDENTITY fail-closed (never relax)
+./scripts/promote_cycle_gate.sh core-identity UNVERIFIED; echo "true rc=$?"
+# expect rc=2 PROMOTE_OK=0
+
+# Full aggregate (instrument required)
+INSTR_MIN=10 INSTR_MAX=200 INSTR_STD=25.5 \
+CORE_IDENTITY=UNVERIFIED \
+SESSION_ESTABLISHED=1 DELIVERY_VERIFIED=1 MEASURED_DELIVERY=624x480 \
+DROPS=0 UNACCOUNTED=0 VFPS=23.6 SOURCE_FPS=23.6 FRAMES=8638 \
+  ./scripts/promote_cycle_gate.sh full-check; echo "true rc=$?"
+# expect rc=2 (identity blocks PROMOTE_OK) even when session green
+
+# Rollback proven / A/B
+./scripts/promote_cycle_gate.sh rollback-proven 1 1; echo "true rc=$?"  # still sick → 1
+./scripts/promote_cycle_gate.sh rollback-proven 1 0; echo "true rc=$?"  # cleared → 0
+./scripts/promote_cycle_gate.sh ab 0 0; echo "true rc=$?"  # both sick → refuse convict
+./scripts/promote_cycle_gate.sh ab 0 1; echo "true rc=$?"  # convict candidate
+```
 
 ## Status change card (parent 2026-08-01 evening) — re-source these claims
 

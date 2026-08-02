@@ -429,8 +429,10 @@ user_state_assert_byte_exact() {
 }
 
 # --- post-promotion session telemetry (cannot pass vacuously) ---------------
+# Parent 2026-08-02: ce727a43 passed every host gate and could not decode a
+# single frame (short read got=0 frames=0). Green gates ≠ working build.
 # Args: delivery_verified measured_delivery drops unaccounted vfps source_fps
-#   session_established 0|1
+#   session_established 0|1  [frames]
 # Returns: 0 PASS; 77 UNSCORED (no session); 1 FAIL metrics.
 promotion_assert_session_telemetry() {
   local delivery_verified="${1:-}"
@@ -440,6 +442,7 @@ promotion_assert_session_telemetry() {
   local vfps="${5:-}"
   local source_fps="${6:-}"
   local session_established="${7:-0}"
+  local frames="${8:-}"
 
   if [[ "$session_established" != "1" ]]; then
     echo "UNSCORED promotion session: daemon never established a scored session (not PASS)" >&2
@@ -452,6 +455,19 @@ promotion_assert_session_telemetry() {
   fi
   if [[ -z "$measured_delivery" ]]; then
     echo "FAIL measured_delivery empty" >&2
+    return 1
+  fi
+  # HARD: device-observed frames>0 (parent ce727a43: host green, frames=0 twice).
+  if [[ -z "$frames" ]]; then
+    echo "FAIL frames NO-DATA (require device-observed frames>0; host gates alone are not enough)" >&2
+    return 1
+  fi
+  if ! [[ "$frames" =~ ^[0-9]+$ ]]; then
+    echo "FAIL frames shape got='$frames' (want non-negative integer)" >&2
+    return 1
+  fi
+  if [[ "$frames" -le 0 ]]; then
+    echo "FAIL frames=$frames want>0 (ce727a43 class: green host gates, zero decode)" >&2
     return 1
   fi
   # drops/unaccounted: require numeric and zero for promote hard gate.
@@ -488,9 +504,183 @@ promotion_assert_session_telemetry() {
     echo "FAIL vfps=$vfps vs source_fps=$source_fps (tol 0.05)" >&2
     return 1
   fi
-  echo "OK promotion_session delivery_verified=1 measured_delivery=$measured_delivery drops=0 unaccounted=0 vfps=$vfps source_fps=$source_fps"
+  echo "OK promotion_session delivery_verified=1 measured_delivery=$measured_delivery frames=$frames drops=0 unaccounted=0 vfps=$vfps source_fps=$source_fps"
   echo "promotion_session=PASS"
   return 0
+}
+
+# --- instrument preflight (parent 2026-08-02 dead grabber) -------------------
+# A perfectly uniform frame (min==max OR stddev==0) means NO CAPTURE, not a
+# black device screen. Parent rolled back an innocent build on Pixelclock: 0 Hz.
+# Args: min max stddev   (luma or any channel; numeric)
+#   or: CLASS=grabber_not_ready|uniform_frame|... as single arg when from visual
+# rc: 0 capture alive; 10 NO_CAPTURE / instrument dead; 4 NO-DATA; 1 bad shape
+instrument_assert_capture_alive() {
+  local a="${1:-}" b="${2:-}" c="${3:-}"
+  # CLASS= form
+  case "$a" in
+    CLASS=grabber_not_ready|grabber_not_ready|CLASS=uniform_frame|uniform_frame)
+      echo "FAIL instrument NO_CAPTURE class=$a (min==max/stddev=0 is dead grabber, not device black)" >&2
+      echo "instrument=NO_CAPTURE"
+      return 10
+      ;;
+    CLASS=*)
+      echo "OK instrument class=${a#CLASS=} (not uniform/no-signal)"
+      echo "instrument=ALIVE"
+      return 0
+      ;;
+  esac
+  if [[ -z "$a" || -z "$b" || -z "$c" ]]; then
+    echo "NO-DATA instrument min/max/std empty (not a device verdict)" >&2
+    echo "instrument=NO-DATA"
+    return 4
+  fi
+  # numeric compare via awk
+  local verdict
+  verdict=$(awk -v mn="$a" -v mx="$b" -v sd="$c" 'BEGIN{
+    if (mn+0!=mn || mx+0!=mx || sd+0!=sd) { print "nan"; exit }
+    if (mn==mx) { print "flat_minmax"; exit }
+    if (sd==0 || sd<0.0001) { print "flat_std"; exit }
+    print "ok"
+  }')
+  case "$verdict" in
+    nan)
+      echo "FAIL instrument shape min='$a' max='$b' std='$c'" >&2
+      return 1
+      ;;
+    flat_minmax|flat_std)
+      echo "FAIL instrument NO_CAPTURE min=$a max=$b stddev=$c (uniform frame = dead grabber / Pixelclock 0 — not device black)" >&2
+      echo "instrument=NO_CAPTURE"
+      return 10
+      ;;
+  esac
+  echo "OK instrument capture alive min=$a max=$b stddev=$c"
+  echo "instrument=ALIVE"
+  return 0
+}
+
+# --- frames>0 alone (device-observed decode) --------------------------------
+# Args: frames
+promotion_assert_frames_gt0() {
+  local frames="${1:-}"
+  if [[ -z "$frames" ]]; then
+    echo "NO-DATA frames empty (not PASS; host gates alone insufficient — ce727a43 class)" >&2
+    return 4
+  fi
+  if ! [[ "$frames" =~ ^[0-9]+$ ]]; then
+    echo "FAIL frames shape got='$frames'" >&2
+    return 1
+  fi
+  if [[ "$frames" -le 0 ]]; then
+    echo "FAIL frames=$frames want>0 (green host gates are not a working build)" >&2
+    return 1
+  fi
+  echo "OK frames=$frames (>0 device-observed)"
+  return 0
+}
+
+# --- rollback must be proven (parent: rollback did not fix black = dead grabber)
+# Args: before_symptom after_symptom expect_cleared=1
+# before/after: 1=symptom present, 0=healthy, empty=NO-DATA
+# rc: 0 proven cleared; 1 still sick (rollback did not restore); 4 NO-DATA; 2 worse
+rollback_assert_proven() {
+  local before="${1:-}" after="${2:-}" expect_cleared="${3:-1}"
+  if [[ -z "$before" || -z "$after" ]]; then
+    echo "NO-DATA rollback proof before='$before' after='$after' (claim 'rolled back' requires evidence)" >&2
+    echo "rollback_proven=NO-DATA"
+    return 4
+  fi
+  if [[ "$expect_cleared" == "1" ]]; then
+    if [[ "$before" != "1" ]]; then
+      echo "NOTE rollback proof: before_symptom=$before (not 1) — A/B baseline weak" >&2
+    fi
+    if [[ "$after" == "1" ]]; then
+      echo "FAIL rollback NOT proven: symptom still present after restore (after=1) — do not convict the new build; check instrument" >&2
+      echo "rollback_proven=0"
+      return 1
+    fi
+    if [[ "$after" == "0" ]]; then
+      echo "OK rollback_proven symptom cleared before=$before after=0"
+      echo "rollback_proven=1"
+      return 0
+    fi
+    echo "FAIL rollback after_symptom shape '$after'" >&2
+    return 1
+  fi
+  echo "OK rollback_proven mode=custom before=$before after=$after"
+  echo "rollback_proven=1"
+  return 0
+}
+
+# --- two-sided A/B (convict a build only if prev is healthy under same conditions)
+# Args: cand_ok prev_ok   (1=healthy 0=sick empty=NO-DATA)
+# PASS convict only when cand=0 and prev=1. Otherwise refuse attribution.
+ab_assert_two_sided() {
+  local cand="${1:-}" prev="${2:-}"
+  if [[ -z "$cand" || -z "$prev" ]]; then
+    echo "NO-DATA A/B cand='$cand' prev='$prev' (cannot attribute)" >&2
+    echo "ab_attribution=NO-DATA"
+    return 4
+  fi
+  if [[ "$cand" == "0" && "$prev" == "1" ]]; then
+    echo "OK ab_attribution cand_sick prev_healthy — convict candidate"
+    echo "ab_attribution=CONVICT_CANDIDATE"
+    return 0
+  fi
+  if [[ "$cand" == "0" && "$prev" == "0" ]]; then
+    echo "FAIL ab_attribution both sick — do not convict candidate (instrument or env)" >&2
+    echo "ab_attribution=BOTH_SICK"
+    return 1
+  fi
+  if [[ "$cand" == "1" && "$prev" == "1" ]]; then
+    echo "OK ab_attribution both healthy — candidate not worse"
+    echo "ab_attribution=BOTH_HEALTHY"
+    return 0
+  fi
+  if [[ "$cand" == "1" && "$prev" == "0" ]]; then
+    echo "OK ab_attribution cand healthy prev sick — candidate improves"
+    echo "ab_attribution=CAND_IMPROVES"
+    return 0
+  fi
+  echo "FAIL ab_attribution shape cand='$cand' prev='$prev'" >&2
+  return 1
+}
+
+# --- running core identity (no software path to running RBF content hash)
+# Parent: keep CORE_IDENTITY_UNVERIFIED rc=2 / PROMOTE_OK=0 fail-closed.
+# Args: identity_state  (VERIFIED|<hash>|UNVERIFIED|empty)
+# rc: 0 VERIFIED; 2 UNVERIFIED (PROMOTE_OK=0); 4 NO-DATA
+core_identity_assert() {
+  local st="${1:-}"
+  if [[ -z "$st" ]]; then
+    echo "CORE_IDENTITY_UNVERIFIED (NO-DATA) — no fabric ID; PROMOTE_OK=0" >&2
+    echo "CORE_IDENTITY=UNVERIFIED"
+    echo "PROMOTE_OK=0"
+    return 2
+  fi
+  case "$st" in
+    UNVERIFIED|unverified|unknown|UNKNOWN)
+      echo "CORE_IDENTITY_UNVERIFIED — no software path to running RBF content hash without fabric ID; PROMOTE_OK=0" >&2
+      echo "CORE_IDENTITY=UNVERIFIED"
+      echo "PROMOTE_OK=0"
+      return 2
+      ;;
+    VERIFIED|verified)
+      echo "OK CORE_IDENTITY=VERIFIED"
+      echo "PROMOTE_OK=1"
+      return 0
+      ;;
+  esac
+  # hex hash form = verified identity string
+  if printf '%s' "$st" | grep -Eq '^[0-9a-fA-F]{8,64}$'; then
+    echo "OK CORE_IDENTITY=$st"
+    echo "PROMOTE_OK=1"
+    return 0
+  fi
+  echo "CORE_IDENTITY_UNVERIFIED got='$st' — PROMOTE_OK=0" >&2
+  echo "CORE_IDENTITY=UNVERIFIED"
+  echo "PROMOTE_OK=0"
+  return 2
 }
 
 # Menu bounce command builder — full path only (bare menu.rbf silently no-ops).
