@@ -19,32 +19,47 @@ media: frames=798 vfps=10.9 pfps=6.24 audio_s=33.42 wall_s=72.58 audio=on
 
 ## Derivation (quoted from product code)
 
-### `audio_s` — NOT a setpoint
+### `audio_s` — NOT a setpoint (but submitted, not played)
 
 ```
-// media_player.cpp ~4206-4207
+// media_player.cpp media line
 const int64_t abytes = audioBytes_.load();
 const double a_sec = static_cast<double>(abytes) / (48000.0 * 4.0);
+// audioBytes_.fetch_add(n) on MrAudio ::write (audioPump)
+// audioBytes_.store(0) at pump start :2301 and raw play-path :3134
 ```
 
 `audioBytes_` increments **only** on MrAudio `::write` of PCM after the start
-gate (`media_player.cpp` audioPump `audioBytes_.fetch_add`). Hold-buffered PCM
-is not counted until released. **Not** pinned inside `AV_PRESENT_LEAD_MS`.
-The pump paces writes toward wall-48 kHz, so under full supply `audio_s≈wall_s`;
-under starved ffmpeg input, fewer bytes arrive and `audio_s` lags. That lag is
-the signal. (Contrast: `av_drift_ms` is stored inside the Hold loop vs `leadMs`
-and **is** a setpoint readout — S3 closed.)
+gate. Hold-buffered PCM is not counted until released. **Not** pinned inside
+`AV_PRESENT_LEAD_MS` (rd-review independent agree). The pump paces writes toward
+wall-48 kHz, so under full supply `audio_s≈wall_s`; under starved ffmpeg input,
+fewer bytes arrive and `audio_s` lags. That lag is the signal.
+
+**Caveat A — submitted vs played:** pacer uses
+`audibleClockMs(audioBytes_, audioQueuedBytes_)` (submitted − queue).
+`audio_s` does **not** subtract queue depth → can **overstate** supply on short
+windows while the ring fills (≤~512 KiB ≈ 2.67 s PCM). A 100 ms ring swing on a
+1 s tick moves ratio by ~0.10. **Min trustworthy single-interval hard call:
+d_wall ≥ 3 s**, or N consecutive 1 s starved ticks. Cumulative ≥10 s dilutes.
+
+**Caveat B — per-stream only:** resets at `:2301` / `:3134`. Never compare
+`audio_s` across streams without re-base.
 
 ### `wall_s` — session relative
 
 ```
-// media_player.cpp ~4181-4183, t0 armed at first complete video (~4055)
+// media_player.cpp, t0 armed at first complete video (A/V audio_release)
 const int64_t wall2 = duration_cast<milliseconds>(now - t0).count();
 // wall_s = wall2 / 1000.0
 ```
 
 `t0` / `sessionOriginMonoMs_` arm at A/V audio_release (first video frame).
 Not process uptime. Startup before arm → no media line yet / NO-DATA.
+
+### Localisation — see `docs/SUPPLY_REGIME.md`
+
+Low `supply_ratio` alone does not separate path-starved from back-pressure.
+Companion fields: `pipe_Bps`, `pipe_fill_peak`, `supply_regime=…`.
 
 ### Interval (product field)
 

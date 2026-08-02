@@ -7,6 +7,7 @@
 #include "libmisterplex/frame_ledger.hpp"
 #include "libmisterplex/supply_bucket.hpp"
 #include "libmisterplex/supply_ratio.hpp"
+#include "libmisterplex/supply_regime.hpp"
 #include "libmisterplex/idle_screen.hpp"
 #include "libmisterplex/last_frame_latch.hpp"
 #include "libmisterplex/osd_menu.hpp"
@@ -31,6 +32,7 @@
 
 #include <fcntl.h>
 #include <poll.h>
+#include <sys/ioctl.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/wait.h>
@@ -2977,6 +2979,13 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
     double supplyRatioPrevWallS = 0.0;
     bool supplyRatioPrevInit = false;
     bool supplyRatioPrevPaused = false;
+    // supply_regime: pipe byte rate + FIONREAD peak (path vs back-pressure).
+    int64_t regimePrevPipeBytes = 0;
+    bool regimePrevPipeInit = false;
+    int pipeAvailPeakBytes = -1; // max FIONREAD since last media log; -1 = never sampled
+    bool pipeAvailEverOk = false;
+    int64_t regimePrevRchar = -1;
+    bool regimePrevRcharInit = false;
 
     bool usedRawVideo = false;
     bool videoEof = false;
@@ -3895,6 +3904,18 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                     }
                     if (errno == EAGAIN || errno == EWOULDBLOCK) {
                         ++frameReadEagain;
+                        // Back-pressure probe: FIONREAD while producer has nothing
+                        // for us yet OR while we wait. Peak over the media-log
+                        // interval feeds supply_regime (path vs our brake).
+                        {
+                            int avail = 0;
+                            if (::ioctl(rfd, FIONREAD, &avail) == 0) {
+                                pipeAvailEverOk = true;
+                                if (avail >= 0 &&
+                                    (pipeAvailPeakBytes < 0 || avail > pipeAvailPeakBytes))
+                                    pipeAvailPeakBytes = avail;
+                            }
+                        }
                         const auto now = std::chrono::steady_clock::now();
                         const int64_t elapsedMs =
                             std::chrono::duration_cast<std::chrono::milliseconds>(now - t0)
@@ -4242,9 +4263,15 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                 // glass) — never conflate the two (parent DEFECT 2).
                 //
                 // supply_ratio (interval): Δaudio_s/Δwall_s — stream starvation.
-                // audio_s = audioBytes_/(48000*4) (PCM written to MrAudio only).
+                // audio_s = audioBytes_/(48000*4) (PCM SUBMITTED to MrAudio only;
+                // not audibleClockMs — see supply_ratio trust note / ring bias).
                 // wall_s  = (now-t0) after first video. NOT av_drift (servo), NOT
                 // desync_risk (pipe geometry). See supply_ratio.hpp.
+                //
+                // drops vs publish_misses (SEPARATE; both emitted via ledger):
+                //   droppedFrames_  reset play-path :3009 — pacer Drop only
+                //   publishMisses_  reset play-path :3010 — DDR/FPGA publish fail
+                //   (parent: do NOT cite :2312/:2432 — those are audio silence/ring)
                 const double wall_s_now = static_cast<double>(wall2) / 1000.0;
                 const bool audioMaster =
                     wantAudio && audioActive_.load(); // same branch as pacer clock
@@ -4256,6 +4283,55 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                     supplyRatioPrevInit, supplyRatioPrevAudioS, supplyRatioPrevWallS,
                     a_sec, wall_s_now, audioMaster, pausedWindow, supplyRatioOkMin_,
                     okMinSrc);
+                // FIONREAD sample at log boundary (also peaked on EAGAIN waits).
+                {
+                    int avail = 0;
+                    if (rfd >= 0 && ::ioctl(rfd, FIONREAD, &avail) == 0) {
+                        pipeAvailEverOk = true;
+                        if (avail >= 0 &&
+                            (pipeAvailPeakBytes < 0 || avail > pipeAvailPeakBytes))
+                            pipeAvailPeakBytes = avail;
+                    }
+                }
+                misterplex::SupplyRegimeInput regIn;
+                regIn.supply_interval_ok = sratio.interval_established;
+                regIn.supply_ratio = sratio.interval_ratio;
+                regIn.supply_starved =
+                    sratio.interval_established &&
+                    sratio.cls == misterplex::SupplyRatioClass::Starved;
+                regIn.prev_pipe_valid = regimePrevPipeInit;
+                regIn.prev_pipe_bytes = regimePrevPipeBytes;
+                regIn.pipe_bytes = static_cast<int64_t>(totalBytes);
+                regIn.d_wall_s = sratio.interval_established ? sratio.d_wall_s
+                                                             : (supplyRatioPrevInit
+                                                                    ? (wall_s_now - supplyRatioPrevWallS)
+                                                                    : 0.0);
+                regIn.fionread_ok = pipeAvailEverOk && pipeAvailPeakBytes >= 0;
+                regIn.pipe_avail_peak_bytes = pipeAvailPeakBytes;
+                regIn.pipe_avail_bytes = pipeAvailPeakBytes;
+                const int pipeCap = lastRawVideoPipeActual_;
+                regIn.capacity_ok = pipeCap > 0;
+                regIn.pipe_capacity_bytes = pipeCap > 0 ? pipeCap : -1;
+                const auto sreg = misterplex::computeSupplyRegime(regIn);
+                // Best-effort ffmpeg child /proc/pid/io rchar (no root; own child).
+                std::string rcharFrag = misterplex::formatFfmpegRcharFragment(false, 0, 0);
+                {
+                    const pid_t ffp = childPid_.load();
+                    int64_t rchar = -1;
+                    if (ffp > 0 && misterplex::readProcPidIoRchar(static_cast<int>(ffp), &rchar)) {
+                        if (regimePrevRcharInit && sratio.interval_established &&
+                            sratio.d_wall_s >= misterplex::kRegimeMinDWallS &&
+                            rchar >= regimePrevRchar) {
+                            const int64_t dr = rchar - regimePrevRchar;
+                            const double bps =
+                                static_cast<double>(dr) / sratio.d_wall_s;
+                            rcharFrag =
+                                misterplex::formatFfmpegRcharFragment(true, bps, dr);
+                        }
+                        regimePrevRchar = rchar;
+                        regimePrevRcharInit = true;
+                    }
+                }
                 log("media: " + frameLedgerTelemetryFragment(led) +
                     " vfps=" + fmtFpsRate(vfps) +
                     " pfps=" + fmtFpsRate(pfps) +
@@ -4266,6 +4342,8 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                     " audio=" + (audioActive_.load() ? "on" : "off") +
                     " " + misterplex::formatClockMasterFragment(audioMaster) +
                     " " + misterplex::formatSupplyRatioFragment(sratio) +
+                    " " + misterplex::formatSupplyRegimeFragment(sreg) +
+                    " " + rcharFrag +
                     " " + std::string(avServoBuf) +
                     " fps=" + std::to_string(fpsNum) + "/" + std::to_string(fpsDen) +
                     " fps_src=" +
@@ -4300,13 +4378,18 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                          ? std::to_string(ffmpegOutFrames_.load(std::memory_order_relaxed))
                          : "NO-DATA") +
                     " tag=measured");
-                // Advance supply_ratio prev only when not paused (freeze baseline).
+                // Advance supply_ratio / regime prev only when not paused.
                 if (!pausedNow) {
                     supplyRatioPrevAudioS = a_sec;
                     supplyRatioPrevWallS = wall_s_now;
                     supplyRatioPrevInit = true;
+                    regimePrevPipeBytes = static_cast<int64_t>(totalBytes);
+                    regimePrevPipeInit = true;
                 }
                 supplyRatioPrevPaused = pausedNow;
+                // Reset FIONREAD peak window after each media log sample.
+                pipeAvailPeakBytes = -1;
+                pipeAvailEverOk = false;
                 // Per-second supply bucket — resolvable at ~1 skip / 2.71 s.
                 {
                     misterplex::SupplyCounters cur;

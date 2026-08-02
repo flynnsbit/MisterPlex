@@ -12,17 +12,36 @@
 // DERIVATION OF INPUTS (must stay honest — quote media_player.cpp):
 //   audio_s = audioBytes_ / (48000 * 4)
 //     audioBytes_ increments ONLY on MrAudio ::write of PCM (S16_LE stereo)
-//     after the start gate opens (hold path does not count held bytes).
-//     NOT a servo setpoint. NOT pinned to wall by construction of the counter
-//     itself. The pump *paces* writes to ~48 kHz wall so under full supply
+//     after the start gate opens (hold path does not count held bytes)
+//     (fetch_add at audioPump write path; print at media line ~a_sec).
+//     NOT a servo setpoint. NOT pinned to AV_PRESENT_LEAD_MS.
+//     The pump *paces* writes to ~48 kHz wall so under full supply
 //     audio_s tracks wall; under starved ffmpeg input, fewer bytes arrive and
 //     audio_s lags wall. That lag is the signal.
+//
+//   CAVEAT submitted-vs-played (rd-review / parent):
+//     audio_s counts bytes HANDED to MrAudio. The pacer elsewhere uses
+//     audibleClockMs(audioBytes_, audioQueuedBytes_) = submitted − queue.
+//     supply_ratio does NOT subtract queue depth, so it can OVERSTATE supply
+//     on short windows when the ring is filling. Ring ≤ ~512 KiB ≈ 2.67 s PCM.
+//     A 100 ms ring swing on a 1 s tick moves ratio by ~0.10.
+//     Minimum trustworthy single-interval hard call: d_wall_s ≥ 3.0 s
+//     (kSupplyRatioMinTrustWallS in supply_regime.hpp), or N consecutive
+//     1 s starved ticks. Cumulative ≥10 s dilutes ring swing.
+//
+//   CAVEAT per-stream reset:
+//     audioBytes_.store(0) at audioPump start and rawvideo play-path start
+//     (~:2298, ~:3119). Valid as a rate WITHIN one stream only — never compare
+//     audio_s across streams/sessions without re-basing.
+//
 //   wall_s  = (steady_now - t0).count() seconds, t0 armed at first complete
 //     video frame (A/V audio_release). Session-relative, not process uptime.
 //
 // NOT A/V LIPSYNC. This is content-supply vs wall. Orthogonal to
 // av_drift_ms (servo deadband / AV_PRESENT_LEAD_MS readout) and to
 // desync_risk (raw pipe geometry identity_skip mismatch).
+// Ambiguous alone for localisation: low ratio can be path-starved OR our
+// back-pressure — see supply_regime.hpp (pipe_Bps + FIONREAD fill).
 //
 // Rule 0: missing/not-established → NO-DATA, never 0.0.
 // Every emitted field tagged measured | caller_supplied | DEFAULT_ASSUMED | NO-DATA.
