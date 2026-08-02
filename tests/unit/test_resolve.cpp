@@ -194,7 +194,38 @@ int main() {
         auto s3 = selectMaxVideoBitrateKbps(2000, true, 1500, 1150);
         CHECK(s3.kbps == 1500); // operator above cap — warn path, not clamp
         CHECK(s3.clampedByLinkCap);
-        std::printf("PASS bitrate select: advisory floor + LINK_CAP_KBIT + WEAK_BITRATE\n");
+
+        // Source anti-inflate (parent rk36: 397k video, tier 2000 → request 397).
+        CHECK(sourceRelativeMaxVideoBitrateKbps(2000, 397, false) == 397);
+        CHECK(sourceRelativeMaxVideoBitrateKbps(2000, 397, true) == 2000); // operator wins
+        CHECK(sourceRelativeMaxVideoBitrateKbps(2000, 0, false) == 2000);  // unknown source
+        CHECK(sourceRelativeMaxVideoBitrateKbps(900, 397, false) == 397);
+        CHECK(sourceRelativeMaxVideoBitrateKbps(300, 397, false) == 300); // already under source
+        auto s4 = selectMaxVideoBitrateKbps(2000, false, 2000, 0, 397);
+        CHECK(s4.kbps == 397);
+        CHECK(s4.clampedBySource);
+        CHECK(std::string(s4.source).find("source") != std::string::npos);
+        auto s5 = selectMaxVideoBitrateKbps(2000, false, 2000, 1150, 397);
+        CHECK(s5.kbps == 397); // source tighter than LINK_CAP
+        CHECK(s5.clampedBySource);
+        auto s6 = selectMaxVideoBitrateKbps(2000, false, 2000, 0, 5000);
+        CHECK(s6.kbps == 2000); // source above tier — tier remains the cap
+        CHECK(!s6.clampedBySource);
+        auto s7 = selectMaxVideoBitrateKbps(2000, true, 1500, 0, 397);
+        CHECK(s7.kbps == 1500); // WEAK_BITRATE not source-clamped
+
+        // Metadata parse: video Stream bitrate preferred over Media.
+        const char* meta =
+            "<MediaContainer><Video><Media bitrate=\"450\" width=\"624\" height=\"480\" "
+            "videoCodec=\"h264\">"
+            "<Part><Stream streamType=\"1\" codec=\"h264\" bitrate=\"397\" width=\"624\" "
+            "height=\"480\"/>"
+            "<Stream streamType=\"2\" codec=\"aac\" bitrate=\"49\"/>"
+            "</Part></Media></Video></MediaContainer>";
+        CHECK(parseSourceVideoBitrateKbps(meta) == 397);
+        CHECK(parseSourceVideoBitrateKbps("") == 0);
+        CHECK(parseSourceVideoBitrateKbps("<Media bitrate=\"450\"/>") == 450);
+        std::printf("PASS bitrate select: advisory floor + LINK_CAP + source anti-inflate\n");
     }
 
     // --- Phase 4 multi-server conf helpers (no network) ---

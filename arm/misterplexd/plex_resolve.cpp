@@ -372,21 +372,62 @@ bool weakLadderBitrateBelowRecommended(const WeakLadder& weak, std::string* deta
     return true;
 }
 
+int sourceRelativeMaxVideoBitrateKbps(int requestedKbps, int sourceVideoKbps,
+                                      bool operatorOverride) {
+    if (operatorOverride || sourceVideoKbps <= 0 || requestedKbps <= 0)
+        return requestedKbps;
+    // Anti-inflate only: never raise above the tier/operator request.
+    return requestedKbps < sourceVideoKbps ? requestedKbps : sourceVideoKbps;
+}
+
+int parseSourceVideoBitrateKbps(const std::string& plexMetadataXml) {
+    if (plexMetadataXml.empty())
+        return 0;
+    // Prefer video Stream@bitrate (kbps). Media@bitrate includes audio.
+    size_t sp = 0;
+    while ((sp = plexMetadataXml.find("<Stream", sp)) != std::string::npos) {
+        auto end = plexMetadataXml.find('>', sp);
+        if (end == std::string::npos)
+            break;
+        const std::string slice = plexMetadataXml.substr(sp, end - sp);
+        const bool isVideo = slice.find("streamType=\"1\"") != std::string::npos ||
+                             slice.find("type=\"video\"") != std::string::npos;
+        if (isVideo) {
+            auto br = attrIn(slice, "bitrate");
+            if (!br.empty()) {
+                const long v = std::strtol(br.c_str(), nullptr, 10);
+                if (v > 0 && v < 1000000) // sanity: kbps, not bps
+                    return static_cast<int>(v);
+            }
+            break;
+        }
+        sp = end + 1;
+    }
+    auto mbr = attr(plexMetadataXml, "Media", "bitrate");
+    if (!mbr.empty()) {
+        const long v = std::strtol(mbr.c_str(), nullptr, 10);
+        if (v > 0 && v < 1000000)
+            return static_cast<int>(v);
+    }
+    return 0;
+}
+
 BitrateSelection selectMaxVideoBitrateKbps(int tierDefaultKbps,
                                            bool weakBitrateExplicit,
                                            int weakBitrateKbps,
-                                           int linkCapKbit) {
+                                           int linkCapKbit,
+                                           int sourceVideoKbps) {
     BitrateSelection out;
     out.tierDefaultKbps = tierDefaultKbps > 0 ? tierDefaultKbps : 0;
     out.linkCapKbit = linkCapKbit > 0 ? linkCapKbit : 0;
+    out.sourceVideoKbps = sourceVideoKbps > 0 ? sourceVideoKbps : 0;
     out.weakBitrateExplicit = weakBitrateExplicit;
 
-    // Priority (documented in conf.example + RESULT_bitrate_selection.md):
-    //  1. Explicit WEAK_BITRATE — absolute operator override (never auto-clamped).
-    //  2. Else min(tier_default, LINK_CAP_KBIT) when LINK_CAP_KBIT>0.
-    //  3. Else tier_default alone.
-    // LINK_CAP_KBIT is the fixture-ladder / measured-path consumer; do not bake
-    // a lab number into the binary.
+    // Priority:
+    //  1. Explicit WEAK_BITRATE — operator override (not auto-clamped).
+    //  2. Else min(tier_default, LINK_CAP_KBIT?, source_video_kbps?).
+    // Source clamp is anti-inflate only (parent: 2000 floor → 3.85× re-encode of
+    // a 397k stream). No new magic floor; unknown source leaves tier alone.
     if (weakBitrateExplicit && weakBitrateKbps > 0) {
         out.kbps = weakBitrateKbps;
         out.source = "WEAK_BITRATE";
@@ -398,14 +439,29 @@ BitrateSelection selectMaxVideoBitrateKbps(int tierDefaultKbps,
     int base = out.tierDefaultKbps > 0 ? out.tierDefaultKbps : weakBitrateKbps;
     if (base <= 0)
         base = 1;
+    bool usedLink = false;
+    bool usedSource = false;
     if (out.linkCapKbit > 0 && base > out.linkCapKbit) {
-        out.kbps = out.linkCapKbit;
-        out.source = "min(tier,LINK_CAP_KBIT)";
+        base = out.linkCapKbit;
+        usedLink = true;
         out.clampedByLinkCap = true;
-        return out;
+    }
+    const int afterSource =
+        sourceRelativeMaxVideoBitrateKbps(base, out.sourceVideoKbps, /*operatorOverride=*/false);
+    if (afterSource < base) {
+        base = afterSource;
+        usedSource = true;
+        out.clampedBySource = true;
     }
     out.kbps = base;
-    out.source = out.linkCapKbit > 0 ? "tier_default(under_LINK_CAP)" : "tier_default";
+    if (usedLink && usedSource)
+        out.source = "min(tier,LINK_CAP,source)";
+    else if (usedLink)
+        out.source = "min(tier,LINK_CAP_KBIT)";
+    else if (usedSource)
+        out.source = "min(tier,source)";
+    else
+        out.source = out.linkCapKbit > 0 ? "tier_default(under_LINK_CAP)" : "tier_default";
     return out;
 }
 
@@ -806,7 +862,24 @@ ResolveResult resolvePlayTarget(const std::string& rawKeyOrPath, const std::stri
             if (r.mediaHeight < 0)
                 r.mediaHeight = 0;
         }
+        r.sourceVideoBitrateKbps = parseSourceVideoBitrateKbps(xml);
     }
+
+    // Anti-inflate maxVideoBitrate using library video bitrate when known.
+    // Live defect (parent-measured): tier default 2000 + hard floor → PMS
+    // -maxrate ~1527k on a 397k source (identity 624x480 scale). Cap is
+    // source-relative only — not a new magic constant.
+    WeakLadder weakUse = weak;
+    if (r.sourceVideoBitrateKbps > 0) {
+        const int before = weakUse.maxVideoBitrateKbps;
+        const int after = sourceRelativeMaxVideoBitrateKbps(
+            before, r.sourceVideoBitrateKbps, weakUse.bitrateOperatorOverride);
+        if (after < before) {
+            weakUse.maxVideoBitrateKbps = after;
+            r.bitrateClampedToSource = true;
+        }
+    }
+    r.requestedMaxVideoBitrateKbps = weakUse.maxVideoBitrateKbps;
 
     // STREAM product path: prefer direct H.264 Part (elementary after demux) so host
     // CAVLC recon can work on Baseline/Main. PMS Chrome universal often emits High/CABAC.
@@ -873,13 +946,18 @@ ResolveResult resolvePlayTarget(const std::string& rawKeyOrPath, const std::stri
     if (weakAlways && key.rfind("/library", 0) == 0) {
         const std::string session = makeSessionId();
         const std::string start = buildUniversalTranscodeUrl(plexBase, key, token, session,
-                                                             offsetMs > 0 ? offsetMs : 0, weak);
-        if (ensureUniversalDecision(start, session, token, weak)) {
+                                                             offsetMs > 0 ? offsetMs : 0, weakUse);
+        if (ensureUniversalDecision(start, session, token, weakUse)) {
             r.ok = true;
             r.transcoded = true;
             r.playable = start;
-            r.httpHeaders = plexFfmpegHeaders(session, token, weak);
-            r.detail = "PMS universal " + weak.profileName + " " + weak.videoResolution + " " + key;
+            r.httpHeaders = plexFfmpegHeaders(session, token, weakUse);
+            r.detail = "PMS universal " + weakUse.profileName + " " + weakUse.videoResolution +
+                       " br=" + std::to_string(weakUse.maxVideoBitrateKbps) + " " + key;
+            if (r.bitrateClampedToSource) {
+                r.detail += " (maxVideoBitrate clamped to source_video_kbps=" +
+                            std::to_string(r.sourceVideoBitrateKbps) + ")";
+            }
             // STREAM preferDirect fallthrough: operator can see why recon may hit CABAC.
             if (preferDirectH264) {
                 if (!metaOk)

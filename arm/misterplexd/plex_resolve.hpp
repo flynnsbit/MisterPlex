@@ -32,6 +32,13 @@ struct ResolveResult {
     // direct-play identity-scale decisions and GEOM logs only.
     int mediaWidth = 0;
     int mediaHeight = 0;
+    // Library video Stream@bitrate (kbps) when present, else Media@bitrate (0=unknown).
+    // Used to anti-inflate maxVideoBitrate on the universal ladder (parent: 2000
+    // request → PMS -maxrate ~1527k on a 397k source → pointless re-encode).
+    int sourceVideoBitrateKbps = 0;
+    // maxVideoBitrate actually placed on the universal URL (after source clamp).
+    int requestedMaxVideoBitrateKbps = 0;
+    bool bitrateClampedToSource = false;
 };
 
 struct QueueItem {
@@ -107,6 +114,9 @@ struct WeakLadder {
     // Phase 4: ask PMS to burn subtitles into the universal ladder when set.
     bool burnSubtitles = false;
     int subtitleStreamId = -1; // -1 = PMS default / first
+    // True when maxVideoBitrateKbps came from explicit WEAK_BITRATE (operator wins;
+    // source anti-inflate does not override).
+    bool bitrateOperatorOverride = false;
 };
 
 // Guard rails for built-in and configured ladders.
@@ -120,20 +130,35 @@ int recommendedMinVideoBitrateKbps(const WeakLadder& weak);
 bool weakLadderBitrateBelowRecommended(const WeakLadder& weak, std::string* detail = nullptr);
 
 // Principled maxVideoBitrate selection for the PMS request.
-// Priority: explicit WEAK_BITRATE > min(tier_default, LINK_CAP_KBIT) > tier_default.
-// LINK_CAP_KBIT=0 means unset (no cap). Never invents a lab constant.
+// Priority:
+//   1. Explicit WEAK_BITRATE (operator; not auto-clamped by source/link)
+//   2. Else min(tier_default, LINK_CAP_KBIT?, source_video_kbps?)
+// sourceVideoKbps=0 means unknown (no source clamp at this stage; resolve may
+// still clamp once metadata arrives). LINK_CAP_KBIT=0 means unset.
+// Never invents a lab constant; source clamp is min(request, source) only.
 struct BitrateSelection {
     int kbps = 0;
-    const char* source = "unset"; // WEAK_BITRATE | tier_default | min(tier,LINK_CAP_KBIT)
+    const char* source = "unset"; // WEAK_BITRATE | tier_default | min(...)
     int tierDefaultKbps = 0;
     int linkCapKbit = 0;
+    int sourceVideoKbps = 0;
     bool weakBitrateExplicit = false;
     bool clampedByLinkCap = false;
+    bool clampedBySource = false;
 };
 BitrateSelection selectMaxVideoBitrateKbps(int tierDefaultKbps,
                                            bool weakBitrateExplicit,
                                            int weakBitrateKbps,
-                                           int linkCapKbit);
+                                           int linkCapKbit,
+                                           int sourceVideoKbps = 0);
+
+// Cap a non-operator maxVideoBitrate at the library video bitrate (kbps).
+// Identity: returns requested when source unknown, operator override, or source >= requested.
+int sourceRelativeMaxVideoBitrateKbps(int requestedKbps, int sourceVideoKbps,
+                                      bool operatorOverride);
+
+// Plex metadata: video Stream@bitrate (kbps) preferred, else Media@bitrate. 0 = unknown.
+int parseSourceVideoBitrateKbps(const std::string& plexMetadataXml);
 
 std::string plexClientProfileExtra(const WeakLadder& weak);
 std::string plexClientCapabilities(const WeakLadder& weak);

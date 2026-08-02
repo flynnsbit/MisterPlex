@@ -94,6 +94,7 @@ misterplex::WeakLadder weakForContentResolution(const misterplex::WeakLadder& ba
         tierDefault, bitrateExplicit,
         bitrateExplicit ? operatorBitrate : tierDefault, linkCapKbit);
     weak.maxVideoBitrateKbps = sel.kbps;
+    weak.bitrateOperatorOverride = bitrateExplicit;
     weak.burnSubtitles = base.burnSubtitles;
     weak.subtitleStreamId = base.subtitleStreamId;
     weak.clientProfileName = base.clientProfileName;
@@ -841,6 +842,23 @@ int main(int argc, char** argv) {
             std::fprintf(stderr, "misterplexd: PLAY superseded during resolve key=%s\n",
                          req.key.c_str());
             return;
+        }
+
+        // Source-relative clamp is applied inside resolve once metadata is known.
+        // Log final request so parent can match PMS -maxrate without guessing.
+        if (resolved.sourceVideoBitrateKbps > 0 || resolved.bitrateClampedToSource ||
+            resolved.requestedMaxVideoBitrateKbps > 0) {
+            std::fprintf(stderr,
+                         "misterplexd: bitrate_final requested_max=%d source_video_kbps=%d "
+                         "clamped_to_source=%d tier_request=%d operator_override=%d "
+                         "transcoded=%d detail=%s\n",
+                         resolved.requestedMaxVideoBitrateKbps,
+                         resolved.sourceVideoBitrateKbps,
+                         resolved.bitrateClampedToSource ? 1 : 0,
+                         weakForPlay.maxVideoBitrateKbps,
+                         weakForPlay.bitrateOperatorOverride ? 1 : 0,
+                         resolved.transcoded ? 1 : 0,
+                         misterplex::redactSensitive(resolved.detail).c_str());
         }
 
         if (!resolved.ok) {
