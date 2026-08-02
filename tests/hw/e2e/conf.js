@@ -447,23 +447,41 @@ function loadConfig() {
       if (v > 600) return 600;
       return v;
     })(),
+    // ERROR 20: measured delivery / session_epoch are daemon-side. Client-truth
+    // DoD defaults them OFF; set E2E_REQUIRE_MEASURED_DELIVERY=1 only when parent
+    // supplies correlated log (observational geometry), never as sole health bit.
     requireMeasuredDelivery: truthy(
       process.env.E2E_REQUIRE_MEASURED_DELIVERY,
-      isReal ||
-        truthy(process.env.E2E_REAL_GEOM_MATRIX, false) ||
-        truthy(process.env.E2E_P7 || process.env.E2E_P7_REAL_TITLE, false)
+      !truthy(process.env.E2E_CLIENT_TRUTH, true) &&
+        (isReal ||
+          truthy(process.env.E2E_REAL_GEOM_MATRIX, false) ||
+          truthy(process.env.E2E_P7 || process.env.E2E_P7_REAL_TITLE, false))
     ),
-    // session_epoch=process_epoch.stream_seq — spanning asserts need stable epoch.
+    // session_epoch=process_epoch.stream_seq — daemon-only; client uses ratingKey.
     requireSessionEpoch: truthy(
       process.env.E2E_REQUIRE_SESSION_EPOCH,
-      isReal ||
-        truthy(process.env.E2E_REAL_GEOM_MATRIX, false) ||
-        truthy(process.env.E2E_P7 || process.env.E2E_P7_REAL_TITLE, false)
+      !truthy(process.env.E2E_CLIENT_TRUTH, true) &&
+        (isReal ||
+          truthy(process.env.E2E_REAL_GEOM_MATRIX, false) ||
+          truthy(process.env.E2E_P7 || process.env.E2E_P7_REAL_TITLE, false))
     ),
     // Optional bank size to reject as measured identity on real-geom arms (e.g. 624x480).
     rejectMeasuredBankGeom: String(
       process.env.E2E_REJECT_MEASURED_BANK || process.env.E2E_EXPECT_DECODE || ''
     ).trim(),
+    // CLIENT truth (Plex Web UI + PMS session ratingKey) — primary DoD scorer.
+    // Daemon telemetry (av-lock literal, drops, etc.) is observational only when this is on.
+    // ERROR 20: never score misterplexd self-report as health.
+    clientTruth: truthy(process.env.E2E_CLIENT_TRUTH, true),
+    // When clientTruth=1, daemon effect/session_epoch gates default OFF unless explicitly required.
+    requireDaemonEffects: truthy(
+      process.env.E2E_REQUIRE_DAEMON_EFFECTS,
+      !truthy(process.env.E2E_CLIENT_TRUTH, true)
+    ),
+    requireSessionRatingKey: truthy(
+      process.env.E2E_REQUIRE_SESSION_RK,
+      truthy(process.env.E2E_CLIENT_TRUTH, true)
+    ),
     // Glass integrity (w-instr counter). Parent provides capture dir; suite never grabs.
     // E2E_REQUIRE_GLASS=1 → missing/unscored glass is FAIL (not timeline-only PASS).
     requireGlass: truthy(process.env.E2E_REQUIRE_GLASS, false),

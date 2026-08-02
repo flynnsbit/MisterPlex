@@ -61,6 +61,16 @@ const {
 } = require('./measured_delivery');
 const { createRunCorrelation } = require('./run_correlate');
 const { readUiPlayerTimeline, assertUiDaemonTimeline } = require('./ui_timeline');
+const {
+  sampleUiClock,
+  assertClientPlayingAdvances,
+  assertClientPausedFrozen,
+  assertClientSeekNear,
+  assertClientSeekThenAdvances,
+  assertClientStoppedIdle,
+  gateRatingKey,
+  formatClientResult,
+} = require('./client_truth');
 const { createTimelineSeries } = require('./timeline_series');
 const {
   analyzeCounterGaps,
@@ -2434,23 +2444,78 @@ async function optionalHdmiMotionStage(cycle, totalCycles) {
   return scoreHdmiCaptureDir(capDir, tag);
 }
 
+/** cycle-aware RK gate (PMS sessions — not misterplexd). Mid-run swap → INVALID. */
+async function clientRkGateCycle(expectedRk, tag, cycle, total) {
+  if (!cfg.clientTruth && !cfg.requireSessionRatingKey) {
+    log(`CLIENT_RK_GATE tag=${tag} skipped clientTruth=0`);
+    return { ok: true, skipped: true };
+  }
+  if (!expectedRk) {
+    log(`CLIENT_RK_GATE tag=${tag} skipped expectedRk empty`);
+    return { ok: true, skipped: true };
+  }
+  const g = await gateRatingKey(cfg.plexBase, cfg.token, expectedRk, tag, {
+    castName: cfg.castName,
+  });
+  log(
+    `CLIENT_RK_GATE tag=${tag} cycle=${cycle}/${total} ${formatClientResult(g)} ` +
+      `rk_before=${expectedRk} rk_after=${g.observed || 'NA'} ` +
+      `player=${(g.session && g.session.player) || 'NA'} state=${(g.session && g.session.state) || 'NA'} ` +
+      `value_kind=measured`
+  );
+  if (!g.ok) {
+    cycleFail(
+      cycle,
+      total,
+      'rating_key',
+      g.reason || 'rating_key_gate',
+      `${g.invalid ? 'INVALID ' : ''}${g.detail || tag}`
+    );
+  }
+  return g;
+}
+
 /**
- * One stress cycle: pause/resume/seek/stop-idle-play with EFFECT asserts + optional HDMI.
- * Always begins with resetCycleStartState so prior-cycle seek@8s cannot accumulate.
+ * Daemon timeline effect: scoring only when requireDaemonEffects; else observational.
  */
-async function runOneTransitionCycle(page, itemTitle, detailsUrl, cycle, total) {
+function daemonEffectOrObserve(cycle, total, transition, reason, detail, effectOk) {
+  if (effectOk) return;
+  if (cfg.clientTruth && !cfg.requireDaemonEffects) {
+    log(
+      `DAEMON_EFFECT_OBSERVE_FAIL cycle=${cycle}/${total} transition=${transition} ` +
+        `reason=${reason} detail=${String(detail || '').slice(0, 200)} ` +
+        `role=observational (clientTruth=1; ERROR20 never score av-lock/daemon as health)`
+    );
+    return;
+  }
+  cycleFail(cycle, total, transition, reason, detail);
+}
+
+/**
+ * One stress cycle: pause/resume/seek/stop-idle-play.
+ * CLIENT truth (UI clock + session ratingKey) is the scorer when clientTruth=1.
+ * Daemon timeline/telemetry is observational only (ERROR 20: av-lock is a literal).
+ * Always begins with resetCycleStartState so prior-cycle seek@8s cannot accumulate.
+ * @param {string} expectedRk ratingKey locked for this cast (session survival)
+ */
+async function runOneTransitionCycle(page, itemTitle, detailsUrl, cycle, total, expectedRkIn) {
   const ctag = `c${cycle}`;
   const waitSec = Math.min(cfg.playWaitSec, 12);
+  const expectedRk = String(expectedRkIn || process.env.PLEX_RATING_KEY || '')
+    .replace(/^\/library\/metadata\//, '');
 
   // ── controlled baseline (no residual seek from previous cycle) ─────────
   const start = await resetCycleStartState(page, itemTitle, detailsUrl, cycle, total);
   let adv = { ok: true, time: start.time0, advance: 0, detail: '' };
 
-  // Ledger at start of continuous-play window (after baseline, before pause).
-  await sleep(1100); // allow ≥1 Hz media telemetry tick when using log source
+  // Ledger observational only under clientTruth (never scores av-lock / drops).
+  await sleep(1100);
   const ledgerStart = await captureLedger(cfg);
-  log(`LEDGER_START cycle=${cycle}/${total} ${formatSnap(ledgerStart)}`);
-  // Continuous-play session_epoch baseline for this cycle (stop/recast may bump later).
+  log(
+    `LEDGER_START cycle=${cycle}/${total} ${formatSnap(ledgerStart)} ` +
+      `role=${cfg.clientTruth ? 'observational_only' : 'scoring'} ` +
+      `(ERROR20: daemon clock=av-lock is NOT health)`
+  );
   let cycleSessionEpoch =
     (ledgerStart && ledgerStart.session_epoch) || baselineSessionEpoch || '';
   if (!cycleSessionEpoch) {
@@ -2459,23 +2524,46 @@ async function runOneTransitionCycle(page, itemTitle, detailsUrl, cycle, total) 
   }
   if (cycleSessionEpoch) {
     log(
-      `SESSION_EPOCH_CYCLE_START cycle=${cycle}/${total} epoch=${cycleSessionEpoch} value_kind=measured`
+      `SESSION_EPOCH_CYCLE_START cycle=${cycle}/${total} epoch=${cycleSessionEpoch} ` +
+        `value_kind=measured role=${cfg.requireDaemonEffects && cfg.requireSessionEpoch ? 'gate' : 'observational'}`
     );
-  } else if (cfg.requireSessionEpoch) {
+  } else if (cfg.requireSessionEpoch && cfg.requireDaemonEffects) {
     cycleFail(
       cycle,
       total,
       'session_epoch',
       'session_epoch_unprobed',
-      `${ctag}: session_epoch required but unprobed at cycle start ` +
-        `(need E2E_DAEMON_LOG with session_epoch= or telemetry). ` +
-        `Spanning pause/resume/seek without epoch compares unknown sessions.`
+      `${ctag}: session_epoch required but unprobed at cycle start`
     );
   } else {
     log(
-      `SESSION_EPOCH_UNPROBED cycle=${cycle}/${total} — NOT a pass of single-session ` +
-        `(set E2E_REQUIRE_SESSION_EPOCH=1 + log/telemetry to gate)`
+      `SESSION_EPOCH_UNPROBED cycle=${cycle}/${total} role=observational ` +
+        `(clientTruth uses PMS session ratingKey, not daemon epoch)`
     );
+  }
+
+  // CLIENT: baseline play must show advancing UI position + stable ratingKey.
+  if (cfg.clientTruth) {
+    log(
+      `CLIENT_TRUTH_PREREG cycle=${cycle}/${total} rk=${expectedRk || 'NA'} ` +
+        `PASS=ui_advances+rk_stable  FAIL=ui_stuck|rk_swap|chrome_missing  ` +
+        `NEVER_SCORE=daemon_av-lock|drops|smoothness`
+    );
+    if (expectedRk) {
+      await clientRkGateCycle(expectedRk, `${ctag}_play_rk_before`, cycle, total);
+    }
+    const uiPlay = await sampleUiClock(page, 6, 400);
+    const playA = assertClientPlayingAdvances(uiPlay, `${ctag}_client_play`, {
+      minAdvanceMs: 500,
+    });
+    log(`CLIENT_PLAY ${formatClientResult(playA)} cycle=${cycle}/${total}`);
+    if (!playA.ok) {
+      cycleFail(cycle, total, 'client_play', playA.reason, playA.detail);
+    }
+    if (expectedRk) {
+      await clientRkGateCycle(expectedRk, `${ctag}_play_rk_after`, cycle, total);
+    }
+    log(`CLIENT_PLAY_OK cycle=${cycle}/${total} advance_ms=${playA.advance_ms}`);
   }
 
   await glassMark(cycle, 'play', 'after', {
@@ -2513,27 +2601,52 @@ async function runOneTransitionCycle(page, itemTitle, detailsUrl, cycle, total) 
     }
   }
   if (!st.ok) {
-    cycleFail(
+    daemonEffectOrObserve(
       cycle,
       total,
       'pause',
       'state_not_paused',
-      `Expected state=paused after UI pause; got state=${st.state} time=${st.time} ui=${uiPause || 'none'}`
+      `Expected state=paused after UI pause; got state=${st.state} time=${st.time} ui=${uiPause || 'none'}`,
+      false
     );
   }
   let samples = await sampleTimeline(6, 400, `${ctag}_paused`);
   let fr = assertTimeFrozen(samples, `${ctag}_pause`);
-  if (!fr.ok) cycleFail(cycle, total, 'pause', 'time_still_advancing', fr.detail);
+  if (!fr.ok) {
+    daemonEffectOrObserve(cycle, total, 'pause', 'time_still_advancing', fr.detail, false);
+    fr = { ok: false, time: samples.length ? samples[samples.length - 1].time : -1, drift: -1 };
+  }
   // Nudge player chrome so scrubber/timeline is visible (user overlay defect window).
   await page.mouse.move(640, 600).catch(() => {});
   await page.mouse.click(640, 600).catch(() => {});
   await sleep(400);
+  // CLIENT pause freeze (primary when clientTruth).
+  if (cfg.clientTruth) {
+    await clientRkGateCycle(expectedRk, `${ctag}_pause_rk_before`, cycle, total);
+    const uiPauseSamples = await sampleUiClock(page, 6, 400);
+    const frUi = assertClientPausedFrozen(uiPauseSamples, `${ctag}_client_pause`, {
+      maxDriftMs: 1500,
+    });
+    log(`CLIENT_PAUSE ${formatClientResult(frUi)} cycle=${cycle}/${total}`);
+    if (!frUi.ok) cycleFail(cycle, total, 'client_pause', frUi.reason, frUi.detail);
+    await clientRkGateCycle(expectedRk, `${ctag}_pause_rk_after`, cycle, total);
+    if (frUi.time_ms != null) fr = { ok: true, time: frUi.time_ms, drift: frUi.drift_ms };
+    log(`CLIENT_PAUSE_OK cycle=${cycle}/${total} drift_ms=${frUi.drift_ms}`);
+  }
   let uiPauseClock = null;
   {
     const uiR = await assertUiMatchesDaemon(page, `${ctag}_pause_ui_clock`);
     uiPauseClock = uiR;
+    // UI↔daemon skew is observational under clientTruth (daemon clock not health).
     if (!uiR.ok && !uiR.softSkip) {
-      cycleFail(cycle, total, 'ui_timeline', uiR.reason || 'ui_daemon_skew', uiR.detail || '');
+      daemonEffectOrObserve(
+        cycle,
+        total,
+        'ui_timeline',
+        uiR.reason || 'ui_daemon_skew',
+        uiR.detail || '',
+        false
+      );
     }
   }
   log(
@@ -2599,31 +2712,58 @@ async function runOneTransitionCycle(page, itemTitle, detailsUrl, cycle, total) 
     st = await waitTimelineState(['playing'], 8000, `${ctag}_resume_http`);
   }
   if (!st.ok) {
-    cycleFail(
+    daemonEffectOrObserve(
       cycle,
       total,
       'resume',
       'state_not_playing',
-      `Expected playing after UI resume; got state=${st.state} time=${st.time} ui=${uiResume || 'none'}`
+      `Expected playing after UI resume; got state=${st.state} time=${st.time} ui=${uiResume || 'none'}`,
+      false
     );
   }
   samples = await sampleTimeline(7, 400, `${ctag}_resumed`);
   adv = assertTimeAdvancing(samples, `${ctag}_resume`, 400);
-  if (!adv.ok) cycleFail(cycle, total, 'resume', 'time_not_advancing', adv.detail);
-  // Soft check: time should move past paused anchor (allow small equality if sample early).
-  if (pausedTime >= 0 && adv.time + 50 < pausedTime) {
-    cycleFail(
+  if (!adv.ok) {
+    daemonEffectOrObserve(cycle, total, 'resume', 'time_not_advancing', adv.detail, false);
+  }
+  if (pausedTime >= 0 && adv.ok && adv.time + 50 < pausedTime) {
+    daemonEffectOrObserve(
       cycle,
       total,
       'resume',
       'time_regressed',
-      `resume time=${adv.time} < paused time=${pausedTime}`
+      `resume time=${adv.time} < paused time=${pausedTime}`,
+      false
     );
+  }
+  if (cfg.clientTruth) {
+    await clientRkGateCycle(expectedRk, `${ctag}_resume_rk_before`, cycle, total);
+    const uiResSamples = await sampleUiClock(page, 6, 400);
+    const resUi = assertClientPlayingAdvances(uiResSamples, `${ctag}_client_resume`, {
+      minAdvanceMs: 400,
+    });
+    log(`CLIENT_RESUME ${formatClientResult(resUi)} cycle=${cycle}/${total}`);
+    if (!resUi.ok) cycleFail(cycle, total, 'client_resume', resUi.reason, resUi.detail);
+    await clientRkGateCycle(expectedRk, `${ctag}_resume_rk_after`, cycle, total);
+    adv = {
+      ok: true,
+      time: resUi.last_ms,
+      advance: resUi.advance_ms,
+      detail: '',
+    };
+    log(`CLIENT_RESUME_OK cycle=${cycle}/${total} advance_ms=${resUi.advance_ms}`);
   }
   {
     const uiR = await assertUiMatchesDaemon(page, `${ctag}_resume_ui_clock`);
     if (!uiR.ok && !uiR.softSkip) {
-      cycleFail(cycle, total, 'ui_timeline', uiR.reason || 'ui_daemon_skew', uiR.detail || '');
+      daemonEffectOrObserve(
+        cycle,
+        total,
+        'ui_timeline',
+        uiR.reason || 'ui_daemon_skew',
+        uiR.detail || '',
+        false
+      );
     }
   }
   log(
@@ -2689,35 +2829,82 @@ async function runOneTransitionCycle(page, itemTitle, detailsUrl, cycle, total) 
     st = await waitTimelineNear(seekTo, 3500, 15000);
   }
   if (!st.ok) {
-    cycleFail(
+    daemonEffectOrObserve(
       cycle,
       total,
       'seek',
       'did_not_land',
-      `Expected timeline near offset=${seekTo}ms; got state=${st.state} time=${st.time} how=${seekHow}`
+      `Expected timeline near offset=${seekTo}ms; got state=${st.state} time=${st.time} how=${seekHow}`,
+      false
+    );
+  } else {
+    log(
+      `transition_seek_land_ok cycle=${cycle}/${total} target=${seekTo} time=${st.time} how=${seekHow}`
     );
   }
-  log(
-    `transition_seek_land_ok cycle=${cycle}/${total} target=${seekTo} time=${st.time} how=${seekHow}`
-  );
   // Wait until playing after possible buffering.
   st = await waitTimelineState(['playing'], 12000, `${ctag}_post_seek`);
   if (!st.ok) {
-    cycleFail(
+    daemonEffectOrObserve(
       cycle,
       total,
       'seek',
       'not_playing_after_land',
-      `After seek land expected playing; got ${st.state}@${st.time}`
+      `After seek land expected playing; got ${st.state}@${st.time}`,
+      false
     );
   }
   samples = await sampleTimeline(7, 400, `${ctag}_seek_adv`);
   adv = assertTimeAdvancing(samples, `${ctag}_seek`, 300);
-  if (!adv.ok) cycleFail(cycle, total, 'seek', 'time_not_advancing_after_seek', adv.detail);
+  if (!adv.ok) {
+    daemonEffectOrObserve(
+      cycle,
+      total,
+      'seek',
+      'time_not_advancing_after_seek',
+      adv.detail,
+      false
+    );
+  }
+  // CLIENT seek: UI position near target, then advances; rk stable.
+  if (cfg.clientTruth) {
+    await clientRkGateCycle(expectedRk, `${ctag}_seek_rk_before`, cycle, total);
+    // Nudge chrome so clock/scrubber visible after seek.
+    await page.mouse.move(700, 620).catch(() => {});
+    await page.mouse.click(700, 620).catch(() => {});
+    await sleep(500);
+    const uiLand = await readUiPlayerTimeline(page);
+    const near = assertClientSeekNear(uiLand, seekTo, `${ctag}_client_seek`, { tolMs: 4500 });
+    log(`CLIENT_SEEK_LAND ${formatClientResult(near)} cycle=${cycle}/${total}`);
+    if (!near.ok) cycleFail(cycle, total, 'client_seek', near.reason, near.detail);
+    const uiSeekAdv = await sampleUiClock(page, 6, 400);
+    const seekAdv = assertClientSeekThenAdvances(uiSeekAdv, `${ctag}_client_seek_adv`, {
+      minAdvanceMs: 300,
+    });
+    log(`CLIENT_SEEK_ADV ${formatClientResult(seekAdv)} cycle=${cycle}/${total}`);
+    if (!seekAdv.ok) cycleFail(cycle, total, 'client_seek', seekAdv.reason, seekAdv.detail);
+    await clientRkGateCycle(expectedRk, `${ctag}_seek_rk_after`, cycle, total);
+    adv = {
+      ok: true,
+      time: seekAdv.last_ms != null ? seekAdv.last_ms : near.ui_ms,
+      advance: seekAdv.advance_ms || 0,
+      detail: '',
+    };
+    log(
+      `CLIENT_SEEK_OK cycle=${cycle}/${total} target=${seekTo} ui_ms=${near.ui_ms} advance_ms=${seekAdv.advance_ms}`
+    );
+  }
   {
     const uiR = await assertUiMatchesDaemon(page, `${ctag}_seek_ui_clock`);
     if (!uiR.ok && !uiR.softSkip) {
-      cycleFail(cycle, total, 'ui_timeline', uiR.reason || 'ui_daemon_skew', uiR.detail || '');
+      daemonEffectOrObserve(
+        cycle,
+        total,
+        'ui_timeline',
+        uiR.reason || 'ui_daemon_skew',
+        uiR.detail || '',
+        false
+      );
     }
   }
   log(
@@ -2823,16 +3010,26 @@ async function runOneTransitionCycle(page, itemTitle, detailsUrl, cycle, total) 
     });
   }
 
-  // Ledger end of continuous-play window (still same demux session; before stop).
+  // Ledger end — observational under clientTruth (daemon not health; ERROR 20).
   await sleep(1100);
   const ledgerEnd = await captureLedger(cfg);
-  log(`LEDGER_END cycle=${cycle}/${total} ${formatSnap(ledgerEnd)}`);
+  log(
+    `LEDGER_END cycle=${cycle}/${total} ${formatSnap(ledgerEnd)} ` +
+      `role=${cfg.clientTruth && !cfg.requireDaemonEffects ? 'observational' : 'scoring'}`
+  );
   {
     const lr = assertLedgerWindow(ledgerStart, ledgerEnd, `${ctag}_continuous`);
     if (lr.softSkip) {
       log(`LEDGER_SOFT_SKIP cycle=${cycle}/${total} ${lr.detail}`);
     } else if (!lr.ok) {
-      cycleFail(cycle, total, 'ledger', lr.reason || 'ledger_fail', lr.detail || '');
+      daemonEffectOrObserve(
+        cycle,
+        total,
+        'ledger',
+        lr.reason || 'ledger_fail',
+        lr.detail || '',
+        false
+      );
     } else {
       log(
         `LEDGER_OK cycle=${cycle}/${total} residual=${lr.residual != null ? lr.residual : 'NA'} ` +
@@ -2843,21 +3040,22 @@ async function runOneTransitionCycle(page, itemTitle, detailsUrl, cycle, total) 
       );
     }
   }
-  // Single-session: session_epoch unchanged across pause/resume/seek (before stop).
+  // Daemon session_epoch — only gate when requireDaemonEffects; client uses ratingKey.
   {
     let endEpoch = (ledgerEnd && ledgerEnd.session_epoch) || '';
     if (!endEpoch) {
       const mdE = await resolveMeasuredDelivery(cfg);
       if (mdE && mdE.session_epoch) endEpoch = String(mdE.session_epoch);
       if (mdE && (mdE.desync_risk === 1 || mdE.pipe_desync)) {
-        cycleFail(
+        daemonEffectOrObserve(
           cycle,
           total,
           'desync',
           'pipe_desync_risk',
-          `${ctag}: desync_risk=1 during continuous window delivered=${
+          `${ctag}: desync_risk=1 delivered=${
             mdE.delivered_geom ? mdE.delivered_geom.text : 'NA'
-          }`
+          }`,
+          false
         );
       }
     }
@@ -2866,10 +3064,10 @@ async function runOneTransitionCycle(page, itemTitle, detailsUrl, cycle, total) 
       endEpoch || null,
       `${ctag}_session_epoch`
     );
-    // Honour suite require flag (module defaults soft when both null unless env set).
     if (
       seR.softSkip &&
       cfg.requireSessionEpoch &&
+      cfg.requireDaemonEffects &&
       !cycleSessionEpoch &&
       !endEpoch
     ) {
@@ -2883,21 +3081,23 @@ async function runOneTransitionCycle(page, itemTitle, detailsUrl, cycle, total) 
     } else if (seR.softSkip) {
       log(`SESSION_EPOCH_SOFT_SKIP cycle=${cycle}/${total} ${seR.detail}`);
     } else if (!seR.ok) {
-      cycleFail(
+      daemonEffectOrObserve(
         cycle,
         total,
         'session_epoch',
         seR.reason || 'session_epoch_changed',
-        seR.detail || ''
+        seR.detail || '',
+        false
       );
     } else {
       log(
         `SESSION_EPOCH_OK cycle=${cycle}/${total} epoch=${seR.session_epoch} ` +
-          `value_kind=measured (pause/resume/seek same session)`
+          `value_kind=measured role=${cfg.requireDaemonEffects ? 'gate' : 'observational'}`
       );
     }
   }
-  // Whole-run PID/exe must match baseline (any cycle sees respawn → named fail).
+  // PID: respawn is INVALID for client session if ratingKey also breaks; daemon PID
+  // alone is observational under clientTruth (parent ERROR: curl 7 leftover content).
   {
     const pr = assertPidUnchanged(baselineDaemonPid, ledgerEnd, `${ctag}_pid`, {
       baselineExe: baselineDaemonExe,
@@ -2912,7 +3112,18 @@ async function runOneTransitionCycle(page, itemTitle, detailsUrl, cycle, total) 
     if (pr.softSkip) {
       log(`DAEMON_PID_SOFT_SKIP cycle=${cycle}/${total} ${pr.detail}`);
     } else if (!pr.ok) {
-      cycleFail(cycle, total, 'pid', pr.reason || 'daemon_pid_changed', pr.detail || '');
+      daemonEffectOrObserve(
+        cycle,
+        total,
+        'pid',
+        pr.reason || 'daemon_pid_changed',
+        pr.detail || '',
+        false
+      );
+      // Client-side: re-check ratingKey — swap after respawn is INVALID.
+      if (cfg.clientTruth && expectedRk) {
+        await clientRkGateCycle(expectedRk, `${ctag}_pid_change_rk`, cycle, total);
+      }
     } else {
       log(
         `DAEMON_PID_OK cycle=${cycle}/${total} pid=${pr.pid || ledgerEnd.pid} ` +
@@ -2934,7 +3145,46 @@ async function runOneTransitionCycle(page, itemTitle, detailsUrl, cycle, total) 
     samples = await sampleTimeline(5, 350, `${ctag}_stopped2`);
     idle = assertStoppedOrIdle(samples, `${ctag}_stop2`);
   }
-  if (!idle.ok) cycleFail(cycle, total, 'stop', 'not_idle', idle.detail);
+  if (!idle.ok) {
+    daemonEffectOrObserve(cycle, total, 'stop', 'not_idle', idle.detail, false);
+  }
+  // CLIENT stop: UI must not keep advancing (chrome gone or frozen).
+  if (cfg.clientTruth) {
+    const stopUi = await assertClientStoppedIdle(page, `${ctag}_client_stop`, {
+      n: 4,
+      gapMs: 350,
+    });
+    log(`CLIENT_STOP ${formatClientResult(stopUi)} cycle=${cycle}/${total}`);
+    if (!stopUi.ok) cycleFail(cycle, total, 'client_stop', stopUi.reason, stopUi.detail);
+    log(`CLIENT_STOP_OK cycle=${cycle}/${total} reason=${stopUi.reason}`);
+    // After stop, session may clear — rk gate optional; if session still present must match.
+    if (expectedRk && cfg.requireSessionRatingKey) {
+      const sessAfterStop = await gateRatingKey(
+        cfg.plexBase,
+        cfg.token,
+        expectedRk,
+        `${ctag}_stop_rk`,
+        { castName: cfg.castName }
+      );
+      log(
+        `CLIENT_RK_AFTER_STOP ${formatClientResult(sessAfterStop)} ` +
+          `(missing session after stop is OK; swap would be INVALID)`
+      );
+      if (
+        sessAfterStop.ok === false &&
+        sessAfterStop.reason === 'rating_key_changed' &&
+        sessAfterStop.invalid
+      ) {
+        cycleFail(
+          cycle,
+          total,
+          'rating_key',
+          'rating_key_changed',
+          `INVALID after stop: ${sessAfterStop.detail}`
+        );
+      }
+    }
+  }
   log(
     `transition_stop_ok cycle=${cycle}/${total} state=${idle.state} ui=${uiStop ? 1 : 0}`
   );
@@ -2946,8 +3196,12 @@ async function runOneTransitionCycle(page, itemTitle, detailsUrl, cycle, total) 
     note: 'EXPECT IDLE_SCREEN=logo static Plex logo; no moving decode (parent conf)',
     hold_ms: 2500,
   });
-  // P4: device-side idle (timeline + resources + telemetry playing≠1) — not UI-only.
-  await assertP4DeviceIdle(`${ctag}_stop`, samples);
+  // P4: device-side idle — observational under clientTruth unless daemon effects required.
+  if (cfg.requireDaemonEffects || !cfg.clientTruth) {
+    await assertP4DeviceIdle(`${ctag}_stop`, samples);
+  } else {
+    log(`P4_DEVICE_IDLE role=observational_skip clientTruth=1 (client stop already scored)`);
+  }
 
   // ── idle → play (recast exact target) ──────────────────────────────────
   await dismissFullPlayerOverlay(page);
@@ -2963,17 +3217,39 @@ async function runOneTransitionCycle(page, itemTitle, detailsUrl, cycle, total) 
     prog = await waitPlayingOnDaemon(waitSec);
   }
   if (prog.playing < 2) {
-    cycleFail(
+    daemonEffectOrObserve(
       cycle,
       total,
       'play_idle_play',
       'not_playing',
-      `samples=${prog.playing} buffering=${prog.buffering || 0}`
+      `samples=${prog.playing} buffering=${prog.buffering || 0}`,
+      false
     );
   }
   samples = await sampleTimeline(6, 400, `${ctag}_replay_adv`);
   adv = assertTimeAdvancing(samples, `${ctag}_replay`, 400);
-  if (!adv.ok) cycleFail(cycle, total, 'play_idle_play', 'time_not_advancing', adv.detail);
+  if (!adv.ok) {
+    daemonEffectOrObserve(
+      cycle,
+      total,
+      'play_idle_play',
+      'time_not_advancing',
+      adv.detail,
+      false
+    );
+  }
+  if (cfg.clientTruth) {
+    await clientRkGateCycle(expectedRk, `${ctag}_replay_rk_before`, cycle, total);
+    const uiRep = await sampleUiClock(page, 6, 400);
+    const repA = assertClientPlayingAdvances(uiRep, `${ctag}_client_replay`, {
+      minAdvanceMs: 400,
+    });
+    log(`CLIENT_REPLAY ${formatClientResult(repA)} cycle=${cycle}/${total}`);
+    if (!repA.ok) cycleFail(cycle, total, 'client_replay', repA.reason, repA.detail);
+    await clientRkGateCycle(expectedRk, `${ctag}_replay_rk_after`, cycle, total);
+    adv = { ok: true, time: repA.last_ms, advance: repA.advance_ms, detail: '' };
+    log(`CLIENT_REPLAY_OK cycle=${cycle}/${total} advance_ms=${repA.advance_ms}`);
+  }
   log(
     `transition_replay_ok cycle=${cycle}/${total} samples=${prog.playing} time_max_ms=${prog.maxT} advance_ms=${adv.advance}`
   );
@@ -3345,7 +3621,15 @@ async function runRobustnessScenarios(page, itemTitle, detailsUrl, ratingKey) {
   return { enabled: true, ok: true, cases };
 }
 
-async function runTransitionScenarios(page, itemTitle, detailsUrl, _castAlreadySelected) {
+async function runTransitionScenarios(
+  page,
+  itemTitle,
+  detailsUrl,
+  _castAlreadySelected,
+  expectedRkIn
+) {
+  const expectedRk = String(expectedRkIn || process.env.PLEX_RATING_KEY || '')
+    .replace(/^\/library\/metadata\//, '');
   // Overlay-only mode: drive chrome windows for parent HDMI, then return (no N-loop).
   if (cfg.overlayOnly) {
     log('E2E_OVERLAY_ONLY=1 — running deterministic overlay hold sequence (skip N-loop transitions)');
@@ -3366,9 +3650,16 @@ async function runTransitionScenarios(page, itemTitle, detailsUrl, _castAlreadyS
   const continueOnFail = cfg.transitionContinueOnFail !== false;
   log(
     `TRANSITIONS=on cycles=${total} continue_on_fail=${continueOnFail ? 1 : 0} ` +
-      `content=${cfg.contentMode} hdmi=${cfg.hdmiMotion ? 1 : 0} ` +
+      `content=${cfg.contentMode} clientTruth=${cfg.clientTruth ? 1 : 0} ` +
+      `daemonEffects=${cfg.requireDaemonEffects ? 1 : 0} ` +
+      `ratingKey=${expectedRk || 'NA'} hdmi=${cfg.hdmiMotion ? 1 : 0} ` +
       `hdmi_every=${cfg.hdmiEveryCycle ? 1 : 0} hdmi_assert=${cfg.hdmiAssertMode} ` +
       `run_id=${runCorr.runId}`
+  );
+  log(
+    'CLIENT_TRUTH_RULES: score Plex Web UI clock + PMS /status/sessions ratingKey only. ' +
+      'NEVER score misterplexd av-lock/drops/smoothness (ERROR 20). ' +
+      'rk_before==rk_after each phase; swap → INVALID. rc=77 never PASS.'
   );
   log(
     'CYCLE_ISOLATION=on each cycle force-stops then plays from beginning ' +
@@ -3452,7 +3743,14 @@ async function runTransitionScenarios(page, itemTitle, detailsUrl, _castAlreadyS
     await captureAndAssertPid(`cycle_${c}_begin`, { hardFail: true });
     await runCorr.mark('cycle_start', { cycle: c });
     try {
-      const r = await runOneTransitionCycle(page, itemTitle, detailsUrl, c, total);
+      const r = await runOneTransitionCycle(
+        page,
+        itemTitle,
+        detailsUrl,
+        c,
+        total,
+        expectedRk
+      );
       results.push(r);
       await runCorr.mark('cycle_ok', { cycle: c });
       await runCorr.joinTelemetry(`cycle_${c}_ok`);
@@ -4083,11 +4381,18 @@ async function runTransitionScenarios(page, itemTitle, detailsUrl, _castAlreadyS
       if (!daemonUp) {
         const againTl = await pollDaemonTimeline(nextSuiteCmd());
         if (!(againTl.includes('Timeline') || againTl.includes('MediaContainer'))) {
-          await shot(page, `fail_daemon_down_after_play_${tier.name}`);
-          fail(
-            'daemon_unreachable',
-            `Play was clicked in Plex Web but companion at ${daemonBase(cfg)} is unreachable — cannot confirm playing state.`
-          );
+          if (cfg.clientTruth && !cfg.requireDaemonEffects) {
+            log(
+              `DAEMON_EFFECT_OBSERVE_FAIL tag=after_play reason=daemon_unreachable ` +
+                `companion=${daemonBase(cfg)} — clientTruth scores UI+PMS sessions only`
+            );
+          } else {
+            await shot(page, `fail_daemon_down_after_play_${tier.name}`);
+            fail(
+              'daemon_unreachable',
+              `Play was clicked in Plex Web but companion at ${daemonBase(cfg)} is unreachable — cannot confirm playing state.`
+            );
+          }
         }
       }
 
@@ -4103,34 +4408,81 @@ async function runTransitionScenarios(page, itemTitle, detailsUrl, _castAlreadyS
         prog = await waitPlayingOnDaemon(cfg.playWaitSec);
       }
       if (prog.playing < 2) {
-        await shot(page, `fail_not_playing_${tier.name}`);
-        fail(
-          'playback_did_not_start',
-          `UI play clicked but daemon timeline never stayed in state=playing ` +
-            `(playing_samples=${prog.playing} buffering_samples=${prog.buffering || 0} ` +
-            `time_max_ms=${prog.maxT}). ` +
-            `Picker contained ${cfg.castName}; companion=${(companion.hosts || []).join(',')}; ` +
-            'failure is post-select playback.'
-        );
+        if (cfg.clientTruth && !cfg.requireDaemonEffects) {
+          log(
+            `DAEMON_PLAY_OBSERVE_FAIL samples=${prog.playing} — scoring CLIENT_PLAY UI advance only ` +
+              '(ERROR 20: do not treat daemon timeline as health)'
+          );
+        } else {
+          await shot(page, `fail_not_playing_${tier.name}`);
+          fail(
+            'playback_did_not_start',
+            `UI play clicked but daemon timeline never stayed in state=playing ` +
+              `(playing_samples=${prog.playing} buffering_samples=${prog.buffering || 0} ` +
+              `time_max_ms=${prog.maxT}). ` +
+              `Picker contained ${cfg.castName}; companion=${(companion.hosts || []).join(',')}; ` +
+              'failure is post-select playback.'
+          );
+        }
       }
       log(
         `playing_ok samples=${prog.playing} advance=${prog.advance} time_max_ms=${prog.maxT} ` +
-          `run_id=${runCorr.runId}`
+          `run_id=${runCorr.runId} clientTruth=${cfg.clientTruth ? 1 : 0}`
       );
       uiState.mark('playing', {
         phase: 'enter',
-        daemon_state: 'playing',
+        daemon_state: prog.playing >= 2 ? 'playing' : 'unknown',
         daemon_time_ms: prog.maxT,
         rating_key: String(ratingKey),
         glass_expect: 'motion',
         note: 'playback started — parent HDMI may grab motion',
         value_kind: 'measured',
       });
+      if (cfg.clientTruth) {
+        const rkInit = await gateRatingKey(cfg.plexBase, cfg.token, ratingKey, `tier_${tier.name}_initial_play`, {
+          castName: cfg.castName,
+        });
+        log(
+          `CLIENT_RK_GATE tag=tier_${tier.name}_initial_play ${formatClientResult(rkInit)} ` +
+            `rk_before=${ratingKey} rk_after=${rkInit.observed || 'NA'} value_kind=measured`
+        );
+        if (!rkInit.ok) {
+          await shot(page, `fail_client_rk_${tier.name}`);
+          fail(
+            rkInit.reason || 'rating_key_gate',
+            `${rkInit.invalid ? 'INVALID ' : ''}${rkInit.detail || 'session ratingKey gate failed'}`
+          );
+        }
+        const uiInit = await sampleUiClock(page, 6, 450);
+        const initPlay = assertClientPlayingAdvances(uiInit, `tier_${tier.name}_initial_play`, {
+          minAdvanceMs: 800,
+        });
+        log(`CLIENT_PLAY_GATE tier=${tier.name} ${formatClientResult(initPlay)}`);
+        if (!initPlay.ok) {
+          await shot(page, `fail_client_play_${tier.name}`);
+          fail(
+            initPlay.reason || 'client_play_no_advance',
+            initPlay.detail ||
+              'CLIENT_PLAY: UI position did not advance after Play (client-observed).'
+          );
+        }
+        log(
+          `CLIENT_PLAY_OK tier=${tier.name} advance_ms=${initPlay.advance_ms} ` +
+            `rk=${ratingKey} value_kind=measured`
+        );
+      }
       {
-        // Control-plane truthfulness: UI clock vs daemon (parent measured glass ~0:34/6:00).
+        // Control-plane: UI clock vs daemon — observational under clientTruth (ERROR 20).
         const uiR = await assertUiMatchesDaemon(page, `tier_${tier.name}_playing_ui_clock`);
         if (!uiR.ok && !uiR.softSkip) {
-          fail(uiR.reason || 'ui_daemon_timeline_skew', uiR.detail || '');
+          if (cfg.clientTruth && !cfg.requireDaemonEffects) {
+            log(
+              `UI_DAEMON_SKEW_OBSERVE_FAIL ${uiR.reason || 'skew'} ${uiR.detail || ''} ` +
+                '— not scoring daemon match under clientTruth'
+            );
+          } else {
+            fail(uiR.reason || 'ui_daemon_timeline_skew', uiR.detail || '');
+          }
         }
         if (uiR.ok && !uiR.softSkip) {
           log(`UI_TIMELINE_TRUTHFUL=1 tier=${tier.name}`);
@@ -4142,7 +4494,9 @@ async function runTransitionScenarios(page, itemTitle, detailsUrl, _castAlreadyS
       });
       await runCorr.joinTelemetry(`tier_${tier.name}_playing_ok`);
       runCorr.persist(cfg.outDir);
-      await captureAndAssertPid(`tier_${tier.name}_playing_ok`, { hardFail: true });
+      await captureAndAssertPid(`tier_${tier.name}_playing_ok`, {
+        hardFail: !(cfg.clientTruth && !cfg.requireDaemonEffects),
+      });
 
       // Delivered geometry = MEASURED_DELIVERY only (never request / library_media).
       {
@@ -4167,10 +4521,17 @@ async function runTransitionScenarios(page, itemTitle, detailsUrl, _castAlreadyS
           );
         }
         if (snapSe && snapSe.desync_risk === 1) {
-          fail(
-            'pipe_desync_risk',
-            `tier_${tier.name}: ledger desync_risk=1 measured_delivery=${snapSe.measured_delivery || 'NA'}`
-          );
+          if (cfg.clientTruth && !cfg.requireDaemonEffects) {
+            log(
+              `DAEMON_EFFECT_OBSERVE_FAIL tag=tier_${tier.name}_play reason=pipe_desync_risk ` +
+                `measured_delivery=${snapSe.measured_delivery || 'NA'} role=observational`
+            );
+          } else {
+            fail(
+              'pipe_desync_risk',
+              `tier_${tier.name}: ledger desync_risk=1 measured_delivery=${snapSe.measured_delivery || 'NA'}`
+            );
+          }
         }
         log(
           `SESSION_EPOCH_GATE require=${cfg.requireSessionEpoch ? 1 : 0} ` +
@@ -4259,7 +4620,22 @@ async function runTransitionScenarios(page, itemTitle, detailsUrl, _castAlreadyS
         cfg.hdmiCaptureDir = `${String(hdmiDirBase).replace(/\/$/, '')}_${tier.name}`;
       }
       // Transitions include multi-cycle stress + per-cycle HDMI (when enabled).
-      const tr = await runTransitionScenarios(page, itemTitle, detailsUrl, true);
+      // ratingKey locked for CLIENT_RK_GATE before/after every phase.
+      log(
+        `CLIENT_CAST_RATING_KEY=${ratingKey} value_kind=measured ` +
+          `title=${JSON.stringify(itemTitle)} — before transitions`
+      );
+      const tr = await runTransitionScenarios(
+        page,
+        itemTitle,
+        detailsUrl,
+        true,
+        ratingKey
+      );
+      log(
+        `CLIENT_CAST_RATING_KEY_AFTER_TRANSITIONS=${ratingKey} value_kind=caller_expected ` +
+          `(session gates logged per phase as rk_before/rk_after)`
+      );
       // ── 4b2. Robustness (double-cast, stop-stopped, seek-past-end) ───────
       let rob = { enabled: false, cases: [] };
       if (!cfg.overlayOnly) {

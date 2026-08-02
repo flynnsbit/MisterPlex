@@ -1,41 +1,59 @@
-# w-plextv — P7 last blocker handoff
+# w-plextv — client-truth DoD + P7 handoff
 
 ## ≤10-line status
-1. **Real titles ARE on local PMS** (measured 2026-08-01) — parent “section 2 = only synthetic” is **stale**.
-2. Section 1 "Other Videos" = **size=0** (confirmed empty).
-3. Section 2 has Contract 3 real BBB/FullBleed beside fixtures (rk 9–10,18–19,27–32).
-4. Suite @ tip below: Plex Web cast + N=10 + CAPTURE_WINDOW + MEASURED_DELIVERY only + TEARDOWN_OK our-only.
-5. Default discover → **rk=10 BBB 720×480 ~597s** (real, long, non-bank scale path).
-6. **Green Playwright ≠ P7 closed** — you must VIEW pixels in CAPTURE_WINDOW.
-7. B2 `-loglevel info` **already in this tree** `media_player.cpp` (DELIVERED_GEOM). Deploy if live daemon still has `error`.
-8. B4: suite never accepts `library_media` as delivered; daemon `delivery_basis=library_media` is expect/scale only — flag for arm owner if GEOM confuses ops.
+1. Playwright half of DoD: **client-observed** cast + transport (UI clock + PMS sessions rk).
+2. **ERROR 20:** never score daemon `av-lock`/drops/smoothness — observational only.
+3. Real BBB on local PMS section 2 (rk 9–10,18–19,27–32); Other Videos empty.
+4. Default P7 discover → long BBB (often rk=10 720×480 ~597s); pins 28/30/32 available.
+5. `run_client_truth.sh` = N=10 transitions, clientTruth=1, daemon effects OFF.
+6. Red-before-green: `node client_truth.js` + `prove_red_paths.js` (selfCheck).
+7. TEARDOWN_OK our-controller only; force idle end (daily driver / logo).
+8. **Green suite ≠ P7 closed** — parent must VIEW pixels in CAPTURE_WINDOW.
 
-## PMS inventory (measured API, LOCAL only)
-
-| rk | library_media | dur | what |
-|----|---------------|-----|------|
-| 10 | 720×480 | ~597s | **Real BBB** (default P7) |
-| 30 | 624×480 | 1200s | Real BBB GlassAV long bank |
-| 28 | 1440×1080 | 90s | Real BBB full-frame short |
-| 27 | 624×480 | 1200s | FullBleed VRes AV (asset480) |
-| 9/18/19/29/31/32 | various | 90–596s | BBB ladder |
-| 1–8,11–17,20–26 | synth | — | Test/Soak/OCR — **not P7** |
-
-Other Videos: empty. No restore needed if section 2 BBB stays scanned.
-
-## Parent paste (you run; agent-run ≠ evidence)
+## Parent paste — CLIENT TRUTH (primary DoD run)
 
 ```bash
 cd /home/flynnsbit/Projects/MisterPlex/.worktrees/w-plextv-e2e-form
 
-# ERROR-12: optional clear window
-# export E2E_P7_CLEAR_WAIT_SEC=30
-# during wait: truncate LIVE misterplexd.log; export E2E_LOG_CLEARED_BEFORE_CAST=1
-# after CAST_WINDOW_CLOSE:
-#   grep -E 'MEASURED_DELIVERY|measured_delivery=|DELIVERED_GEOM|desync_risk=|session_epoch=|GEOM ' LIVE \
-#     | tail -200 > build/e2e-p7/daemon_snip.txt
-#   export E2E_DAEMON_LOG=$PWD/build/e2e-p7/daemon_snip.txt
+# Pure red proofs (no device) — expect true rc=0
+node tests/hw/e2e/client_truth.js; echo "true rc=$?"
+node tests/hw/e2e/prove_red_paths.js; echo "true rc=$?"
 
+# Full client-truth E2E (you run; agent-run ≠ evidence)
+PLEX_BASE=http://192.168.1.24:32400 \
+PLEX_TOKEN_FILE=/tmp/local_tok.txt \
+MISTER_HOST=192.168.1.183 \
+E2E_TRANSITION_CYCLES=10 \
+./tests/hw/e2e/run_client_truth.sh; echo "true rc=$?"
+```
+
+Pins: `E2E_CLIENT_RATING_KEY=30` long bank · `28` 1440 short · `32` 720×480 scale path.
+
+## PRE_REGISTER (client truth)
+**PASS**
+- `MISTERPLEX_IN_PICKER=true hitExact=true` (ghost MiSTerPlexTest REJECTED)
+- `CLIENT_PLAY_OK` UI position advances; `CLIENT_PAUSE` frozen; seek near+advances
+- `CLIENT_STOP` UI idle; `CLIENT_RK_GATE` rk_before==rk_after each phase
+- `TRANSITIONS_OK` N cycles; `TEARDOWN_OK controller=closed browser=closed stop_ok=1`
+- `CAST_PICKER_E2E_RESULT=PASS`
+
+**FAIL**
+- UI stuck / seek miss / still advancing after stop / cast missing from picker
+- Companion sort collision diagnosis if MiSTer absent (name before "misterplex studio")
+
+**INVALID (never data)**
+- `rating_key_changed` / session unprobed mid-window (respawn/content swap)
+
+**NEVER_SCORE**
+- daemon av-lock, drops, pfps, smoothness, A/V sync, PLXD frames
+
+**IDLE_END**
+- suite force-stops cast; daily driver returns to static logo (not screensaver)
+
+## Parent paste — P7 capture window (viewed pixels)
+
+```bash
+cd /home/flynnsbit/Projects/MisterPlex/.worktrees/w-plextv-e2e-form
 PLEX_BASE=http://192.168.1.24:32400 \
 PLEX_TOKEN_FILE=/tmp/local_tok.txt \
 MISTER_HOST=192.168.1.183 \
@@ -44,22 +62,10 @@ E2E_P7_HOLD_SEC=45 \
 ./tests/hw/e2e/run_p7_real_title.sh; echo "true rc=$?"
 ```
 
-Pins: `E2E_P7_RATING_KEY=30` long bank · `28` 1440 short · `E2E_P7_ARM=fullbleed` → 27
-
-## PREREGISTER (what you should see)
-- Log: `P7_SELECTED_ITEM` / `P7_PREREGISTER` / `discover_p7_ok` with rk+title+file (measured)
-- `CAST_WINDOW_OPEN/CLOSE` + `CAPTURE_WINDOW_OPEN`..deadline (~45s + 15-frame warmup)
-- Glass: **not** flash-black mean luma ~3–7; recognizable BBB/FullBleed content
-- Delivered geom: only from MEASURED_DELIVERY / DELIVERED_GEOM / measured_delivery= inside window
-- `TRANSITIONS_OK` N=10 · `TEARDOWN_OK controller=closed` (user Plex tab untouched)
-
-## Artifacts
-`build/e2e-p7/p7_cast_manifest.json` · `p7_events.jsonl` · `e2e_run_id.txt`
-
-## Free win flag (B2)
-`arm/misterplexd/media_player.cpp` rawvideo spawn already uses `-loglevel info` + `DELIVERED_GEOM` re-log in **this branch**. If device still suppresses Stream banners, live binary is stale — redeploy misterplexd (parent owns deploy).
+Artifacts: `build/e2e-client-truth/` · `build/e2e-p7/p7_cast_manifest.json` · `p7_events.jsonl`
 
 ## SHA
 ```bash
 git -C /home/flynnsbit/Projects/MisterPlex/.worktrees/w-plextv-e2e-form rev-parse --short HEAD
+git -C /home/flynnsbit/Projects/MisterPlex/.worktrees/w-plextv-e2e-form branch --show-current
 ```

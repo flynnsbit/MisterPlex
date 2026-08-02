@@ -88,9 +88,21 @@ async function main() {
   log('  P2 bogus PMS host → PMS_UNREACHABLE class, exit would be UNVERIFIED(2) not PASS');
   log('  P3 missing deps class remains SKIP(77) — never scored as pass');
   log(`  P4 EXIT_UNVERIFIED=${EXIT_UNVERIFIED} EXIT_SKIP=${EXIT_SKIP} never equal EXIT_PASS=0`);
+  log('  P5 client_truth selfCheck: play/pause/seek reds + ratingKey INVALID on swap');
 
   let proofsOk = 0;
   let proofsFail = 0;
+
+  // ── P5: client_truth pure red-before-green (no device, no cast) ──────────
+  try {
+    const ct = require('./client_truth');
+    ct.selfCheck();
+    log('PROOF P5 OK client_truth selfCheck (play_red/pause_red/seek_red/rk_swap INVALID)');
+    proofsOk++;
+  } catch (e) {
+    log(`PROOF P5 FAIL client_truth selfCheck: ${e.message}`);
+    proofsFail++;
+  }
 
   // ── P1: deliberately wrong companion endpoint ────────────────────────────
   const badDaemon = 'http://127.0.0.1:1/player/timeline/poll?commandID=1&wait=0';
