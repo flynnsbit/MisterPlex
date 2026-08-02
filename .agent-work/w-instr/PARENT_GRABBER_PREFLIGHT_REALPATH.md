@@ -1,7 +1,7 @@
 # PARENT — grabber_preflight real-path harden + locus v2 status
 
 branch: w-instr-provenance
-SHA: (see git log after commit)
+SHA: 15505f10
 
 ## 1. Parent crash — verified class
 
