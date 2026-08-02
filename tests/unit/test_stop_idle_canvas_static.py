@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Host gate: stop/idle chrome authors on product 624x480 bank, not DECODE tier.
 
-Product font pick is 12x16 only when h>=480 && bodyScale==2 (no w>=600 mask).
+Product font pick is 24x32 only when h>=480 && bodyScale==2 (no w>=600 mask).
 paintIdle must:
   - call plex480pDdrFrameGeometry()
   - pass that cw/ch into overlay_.renderRgb24
@@ -40,7 +40,7 @@ def main() -> int:
 
     # Font pick: h>=480 && bodyScale==2 only (no w>=600 mask — that would hide short-H).
     if "h >= 480 && m.bodyScale == 2" not in ov:
-        fail("OverlayLayoutMetrics::compute must pick Large12x16 when h>=480 && bodyScale==2")
+        fail("OverlayLayoutMetrics::compute must pick Large24x32 when h>=480 && bodyScale==2")
     if "w >= 600" in ov:
         fail("font pick must NOT use w>=600 (dead on product path; masks h<480 defect)")
     # Stopped sticky

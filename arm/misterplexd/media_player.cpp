@@ -824,11 +824,14 @@ bool MediaPlayer::publishPausedOverlayFrame() {
     {
         const auto lm = PlaybackOverlay::layoutMetrics(cw, ch);
         const char* font =
-            lm.fontId == OverlayFontId::Large12x16 ? "12x16" : "8x13";
+            lm.fontId == OverlayFontId::Hires24x32 ? "24x32"
+            : lm.fontId == OverlayFontId::Large12x16 ? "12x16" : "8x13";
         // canvas= is the AUTHORING bank (DECODE/DDR), not HDMI. output= is the
         // resolved MiSTer video_mode raster. plane=0 → chrome still in bank (user bug).
         log(std::string("media: pause overlay canvas=") + std::to_string(cw) + "x" +
             std::to_string(ch) + " font=" + font +
+            " cell=" + std::to_string(lm.textCellW()) + "x" +
+            std::to_string(lm.textCellH()) +
             " scale=" + std::to_string(lm.bodyScale) + overlayOutputGeomTag() +
             (chromePlaneLive() ? " plane=1" : " plane=0"));
     }
@@ -887,10 +890,12 @@ void MediaPlayer::paintIdle() {
     {
         const auto lm = PlaybackOverlay::layoutMetrics(cw, ch);
         const char* font =
-            lm.fontId == OverlayFontId::Large12x16 ? "12x16" : "8x13";
+            lm.fontId == OverlayFontId::Hires24x32 ? "24x32"
+            : lm.fontId == OverlayFontId::Large12x16 ? "12x16" : "8x13";
         // canvas= bank authoring size; output= HDMI video_mode; plane=0 until (c).
         log("media: idle overlay canvas=" + std::to_string(cw) + "x" + std::to_string(ch) +
-            " font=" + font + " scale=" + std::to_string(lm.bodyScale) +
+            " font=" + font + " cell=" + std::to_string(lm.textCellW()) + "x" +
+            std::to_string(lm.textCellH()) + " scale=" + std::to_string(lm.bodyScale) +
             (overlay_.visible() ? " chrome=1" : " chrome=0") + overlayOutputGeomTag() +
             (chromePlaneLive() ? " plane=1" : " plane=0"));
     }

@@ -77,7 +77,7 @@ int main() {
         CHECK(!ov.outputRasterLayout());
         const auto m = ov.activeLayoutMetrics(624, 480);
         CHECK(m.bodyScale == 2);
-        CHECK(m.fontId == OverlayFontId::Large12x16);
+        CHECK(m.fontId == OverlayFontId::Hires24x32);
         const auto bank = OverlayLayoutMetrics::compute(624, 480);
         const auto out = OverlayLayoutMetrics::fromOutputLayout(1920, 1440);
         CHECK(bank.bodyScale == 2);

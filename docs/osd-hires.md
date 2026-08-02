@@ -6,6 +6,27 @@ Related: `host/libmisterplex/playback_overlay.hpp`, `arm/misterplexd/media_playe
 `fpga/Plex_MiSTer/rtl/present_core.sv`, `tools/readback_overlay_text.py`,
 `docs/display-resolution.md`.
 
+
+## ERROR-18 retract (parent 2026-08-01) + source stroke falsifier
+
+Parent retracted the claim that a uniform 1px stroke non-integer-upscaled to ~1.89×
+produces display bins `{7,8,9,10}`. **Impossible by construction** for `fillRect` block
+fonts: source runs are integer multiples of `bodyScale`.
+
+Zero-device gate: `tests/unit/test_overlay_source_stroke_hist.cpp`
+
+| Claim | Evidence on tip |
+|---|---|
+| Glyph is 5×7 (`row<7`,`col<5`) | **STALE** — tip has 8×13 / 12×16 / **24×32**; no 5×7 loop |
+| `font=12x16` label lie | Was true for prior tip; product bank now logs **`font=24x32 cell=48x64`** |
+| Source multi-width 7–10 | **FAIL** — LABEL hist multiples of scale only; odd runs = 0 |
+| Display multi-bin | Stretch + bar/icons; NN 2.25× of even source → e.g. bin 9 from width 4 |
+
+**Product font (plane=0 bank):** `OverlayFontId::Hires24x32` stroke-raster (not NN of
+12×16) @ `bodyScale=2` → `textCellH=64` → ~32 unique store rows after even-row cull
+(vs 16 for 12×16@2). Still capped by 240-line present ceiling + ascal; fabric plane
+remains required for true output-native chrome.
+
 ## Output resolution: gap vs ceiling (settled)
 
 Split two questions that were conflated:

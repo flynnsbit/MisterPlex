@@ -20,6 +20,7 @@
 // without scanning the frame.
 
 #include "libmisterplex/mister_video_mode.hpp"
+#include "libmisterplex/overlay_font_24x32.hpp"
 
 #include <algorithm>
 #include <atomic>
@@ -54,7 +55,7 @@ struct OverlayRect {
 // row (scale=1) deletes every other glyph row → silent character corruption
 // (e.g. 8→0, 6→C). bodyScale must be >= 2 so each glyph row occupies ≥2 content
 // rows and one always survives. Text y-origins are snapped to even rows.
-enum class OverlayFontId : uint8_t { Small8x13 = 0, Large12x16 = 1 };
+enum class OverlayFontId : uint8_t { Small8x13 = 0, Large12x16 = 1, Hires24x32 = 2 };
 
 static constexpr int kOverlayFontSmallW = 8;
 static constexpr int kOverlayFontSmallH = 13;
@@ -62,6 +63,9 @@ static constexpr int kOverlayFontSmallAdvance = 9;
 static constexpr int kOverlayFontLargeW = 12;
 static constexpr int kOverlayFontLargeH = 16;
 static constexpr int kOverlayFontLargeAdvance = 13;
+static constexpr int kOverlayFontHiresW = overlay_font_24x32::kW;
+static constexpr int kOverlayFontHiresH = overlay_font_24x32::kH;
+static constexpr int kOverlayFontHiresAdvance = overlay_font_24x32::kAdvance;
 static constexpr int kOverlayMinScale = 2; // vertical (and default body) floor
 
 // Resolution-scaled chrome metrics from buffer W×H (present/coded canvas).
@@ -101,11 +105,13 @@ struct OverlayLayoutMetrics {
         // plex480pDdrFrameGeometry(); a w>=600 clause would only fire on a
         // short-H wide canvas and would mask that defect. Unit fixtures at
         // 320×240 correctly keep 8×13.
+        // Product bank 624×480: 24×32 @ scale2 → textCellH=64 → ~32 unique
+        // store rows after even-row cull (vs 16 for 12×16@2). Not NN-of-12x16.
         if (h >= 480 && m.bodyScale == 2) {
-            m.fontId = OverlayFontId::Large12x16;
-            m.glyphW = kOverlayFontLargeW;
-            m.glyphH = kOverlayFontLargeH;
-            m.glyphAdvance = kOverlayFontLargeAdvance;
+            m.fontId = OverlayFontId::Hires24x32;
+            m.glyphW = kOverlayFontHiresW;
+            m.glyphH = kOverlayFontHiresH;
+            m.glyphAdvance = kOverlayFontHiresAdvance;
         } else {
             m.fontId = OverlayFontId::Small8x13;
             m.glyphW = kOverlayFontSmallW;
@@ -963,7 +969,17 @@ private:
         // Snap origin to even content row — surviving phase is deterministic.
         y &= ~1;
         for (const char* p = text; *p; ++p) {
-            if (m.fontId == OverlayFontId::Large12x16) {
+            if (m.fontId == OverlayFontId::Hires24x32) {
+                const uint32_t* g = overlay_font_24x32::glyph(*p);
+                for (int row = 0; row < m.glyphH; ++row) {
+                    const uint32_t bits = g[row];
+                    for (int col = 0; col < m.glyphW; ++col) {
+                        if ((bits & (1u << (31 - col))) == 0)
+                            continue;
+                        fillRect(t, x + col * sc, y + row * sc, sc, sc, c, alpha);
+                    }
+                }
+            } else if (m.fontId == OverlayFontId::Large12x16) {
                 const uint16_t* g = glyph12(*p);
                 for (int row = 0; row < m.glyphH; ++row) {
                     const uint16_t bits = g[row];

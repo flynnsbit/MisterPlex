@@ -147,14 +147,14 @@ int main() {
         CHECK(!ov.outputRasterLayout());
         const auto m = ov.activeLayoutMetrics(g.coded_width.get(), g.coded_height.get());
         CHECK(m.bodyScale == 2);
-        CHECK(m.fontId == OverlayFontId::Large12x16);
+        CHECK(m.fontId == OverlayFontId::Hires24x32);
         // Glass criterion prereg cross-check: bank cellH vs fabric 1080 cellH
-        const int bankCellH = 16 * m.bodyScale; // 12x16 font row cells
+        const int bankCellH = 32 * m.bodyScale; // 24x32 font row cells
         const int fabCellH = 8 * fabricBodyScale(1080); // sim 8x8 * scale4
-        CHECK(bankCellH == 32);
+        CHECK(bankCellH == 64);
         CHECK(fabCellH == 32);
         // After stretch bank solid 8x8@2 → 49x36 ≠ fabric 32x32 (already RED above)
-        std::fprintf(stderr, "FREEZE bankCellH=%d fab1080_sim8x8=%d (product 12x16@2 bank=32)\n",
+        std::fprintf(stderr, "FREEZE bankCellH=%d fab1080_sim8x8=%d (product 24x32@2 bank=64)\n",
                      bankCellH, fabCellH);
     }
 

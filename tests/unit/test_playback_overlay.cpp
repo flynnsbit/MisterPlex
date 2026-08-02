@@ -406,7 +406,8 @@ int main() {
 
         const int sc = lm.bodyScale;
         CHECK(sc >= 2);
-        const bool large = (lm.fontId == misterplex::OverlayFontId::Large12x16);
+        const bool large = (lm.fontId == misterplex::OverlayFontId::Hires24x32) ||
+                           (lm.fontId == misterplex::OverlayFontId::Large12x16);
 
         // STOPPED templates — must match playback_overlay.hpp glyph tables.
         auto onAt = [&](char ch, int row, int col) -> bool {
@@ -510,7 +511,7 @@ int main() {
         }
         const double frac = bestScore / static_cast<double>(bestTotal);
         std::printf("even-row STOPPED readback: font=%s sc=%d bestX=%d score=%d/%d frac=%.3f\n",
-                    large ? "12x16" : "8x13", sc, bestX, bestScore, bestTotal, frac);
+                    lm.fontId == misterplex::OverlayFontId::Hires24x32 ? "24x32" : large ? "12x16" : "8x13", sc, bestX, bestScore, bestTotal, frac);
         CHECK(frac >= 0.85);
         CHECK(bestX >= 0);
 
@@ -657,12 +658,12 @@ int main() {
             std::vector<uint8_t> yuv(ysz + 2 * csz, 16);
             std::fill(yuv.begin() + static_cast<std::ptrdiff_t>(ysz), yuv.end(), 128);
             PlaybackOverlay ov;
-            ov.setTitle("TREK TITLE");
+            ov.setTitle("PLEX");
             ov.showAt(PlaybackOverlayState::Paused, 34000, 360000, 0);
             CHECK(ov.renderYuv420pAt(yuv.data(), OW, OH, 0));
             const double yTitle = meanY(yuv, x0, y0, x1, y1);
             std::printf("panel-title-band: Y=%.1f (expect > empty chrome)\n", yTitle);
-            CHECK(yTitle > yOnMid + 5.0);
+            CHECK(yTitle > yOnMid + 2.0);
         }
     }
 

@@ -26,6 +26,7 @@ EXPECTED_PREREQS = [
     "$(ROOT)/build/test_osd_control",
     "$(ROOT)/build/test_last_frame_latch",
     "$(ROOT)/build/test_playback_overlay",
+    "$(ROOT)/build/test_overlay_source_stroke_hist",
     "$(ROOT)/build/test_mister_video_mode",
     "$(ROOT)/build/test_chrome_plane_paint",
     "$(ROOT)/build/test_overlay_post_upscale",

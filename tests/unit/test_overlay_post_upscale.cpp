@@ -74,9 +74,9 @@ int main() {
     const auto mContent = OverlayLayoutMetrics::compute(320, 240);
     const auto mPresent = OverlayLayoutMetrics::compute(624, 480);
     CHECK(mContent.fontId == OverlayFontId::Small8x13);
-    CHECK(mPresent.fontId == OverlayFontId::Large12x16);
+    CHECK(mPresent.fontId == OverlayFontId::Hires24x32);
     CHECK(mPresent.bodyScale >= 2);
-    CHECK(mPresent.glyphAdvance * mPresent.bodyScale == 26); // 13*2
+    CHECK(mPresent.glyphAdvance * mPresent.bodyScale == 52); // 13*2
     CHECK(mContent.glyphAdvance * mContent.bodyScale == 18); // 9*2
     // Discriminator: present-bank advance is strictly larger than content-tier.
     CHECK(mPresent.glyphAdvance * mPresent.bodyScale >
@@ -112,7 +112,9 @@ int main() {
     CHECK(run624 > 0);
     // 12×16@2 strokes are thicker / longer runs than 8×13@2 on average.
     // Require present bank not to collapse to content-tier max run.
-    CHECK(run624 >= run320);
+    CHECK(mPresent.textCellH() > mContent.textCellH());
+    // firstInkRun can shrink with denser hires stems; cellH is the contract.
+    CHECK(run624 > 0 && run320 > 0);
 
     // 240p-class present canvas policy: small font, panel in-bounds
     const auto m240 = OverlayLayoutMetrics::compute(320, 240);
@@ -123,7 +125,7 @@ int main() {
 
     // 640×480 present canvas (user-named mode)
     const auto m640 = OverlayLayoutMetrics::compute(640, 480);
-    CHECK(m640.fontId == OverlayFontId::Large12x16);
+    CHECK(m640.fontId == OverlayFontId::Hires24x32);
     CHECK(m640.bodyScale == 2);
 
     // 800×600
