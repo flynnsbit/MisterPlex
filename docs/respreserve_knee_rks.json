@@ -1,0 +1,134 @@
+[
+  {
+    "rk": 120,
+    "title": "MiSTerPlex DecLoad cb_gop24 624x480 24fps 800k 180s (2026)",
+    "w": "624",
+    "h": "480",
+    "br": "936",
+    "vfr": "24p",
+    "frameRate": null,
+    "prof": "constrained baseline",
+    "dur_ms": "180000"
+  },
+  {
+    "rk": 121,
+    "title": "MiSTerPlex DecLoad cb_gop240 624x480 24fps 800k 180s (2026)",
+    "w": "624",
+    "h": "480",
+    "br": "921",
+    "vfr": "24p",
+    "frameRate": null,
+    "prof": "constrained baseline",
+    "dur_ms": "180000"
+  },
+  {
+    "rk": 122,
+    "title": "MiSTerPlex DecLoad cb_slices4 624x480 24fps 800k 180s (2026)",
+    "w": "624",
+    "h": "480",
+    "br": "921",
+    "vfr": "24p",
+    "frameRate": null,
+    "prof": "constrained baseline",
+    "dur_ms": "180000"
+  },
+  {
+    "rk": 123,
+    "title": "MiSTerPlex DecLoad cb_slices8 624x480 24fps 800k 180s (2026)",
+    "w": "624",
+    "h": "480",
+    "br": "922",
+    "vfr": "24p",
+    "frameRate": null,
+    "prof": "constrained baseline",
+    "dur_ms": "180000"
+  },
+  {
+    "rk": 124,
+    "title": "MiSTerPlex ResKnee 320x240 24fps src400k CB ref1 90s (2026)",
+    "w": "320",
+    "h": "240",
+    "br": "531",
+    "vfr": "24p",
+    "frameRate": null,
+    "prof": "constrained baseline",
+    "dur_ms": "90000"
+  },
+  {
+    "rk": 125,
+    "title": "MiSTerPlex ResKnee 624x352 24fps src800k CB ref1 90s (2026)",
+    "w": "624",
+    "h": "352",
+    "br": "924",
+    "vfr": "24p",
+    "frameRate": null,
+    "prof": "constrained baseline",
+    "dur_ms": "90000"
+  },
+  {
+    "rk": 130,
+    "title": "MiSTerPlex ResKnee 624x480 24fps src400k CB ref1 90s (2026)",
+    "w": "624",
+    "h": "480",
+    "br": "524",
+    "vfr": "24p",
+    "frameRate": null,
+    "prof": "constrained baseline",
+    "dur_ms": "90000"
+  },
+  {
+    "rk": 131,
+    "title": "MiSTerPlex ResKnee 624x480 24fps src800k CB ref1 90s (2026)",
+    "w": "624",
+    "h": "480",
+    "br": "920",
+    "vfr": "24p",
+    "frameRate": null,
+    "prof": "constrained baseline",
+    "dur_ms": "90000"
+  },
+  {
+    "rk": 126,
+    "title": "MiSTerPlex ResKnee 624x480 24fps src1200k CB ref1 90s (2026)",
+    "w": "624",
+    "h": "480",
+    "br": "1311",
+    "vfr": "24p",
+    "frameRate": null,
+    "prof": "constrained baseline",
+    "dur_ms": "90000"
+  },
+  {
+    "rk": 127,
+    "title": "MiSTerPlex ResKnee 624x480 24fps src1600k CB ref1 90s (2026)",
+    "w": "624",
+    "h": "480",
+    "br": "1704",
+    "vfr": "24p",
+    "frameRate": null,
+    "prof": "constrained baseline",
+    "dur_ms": "90000"
+  },
+  {
+    "rk": 128,
+    "title": "MiSTerPlex ResKnee 624x480 24fps src2000k CB ref1 90s (2026)",
+    "w": "624",
+    "h": "480",
+    "br": "2096",
+    "vfr": "24p",
+    "frameRate": null,
+    "prof": "constrained baseline",
+    "dur_ms": "90000"
+  },
+  {
+    "rk": 129,
+    "title": "MiSTerPlex ResKnee 624x480 24fps src2500k CB ref1 90s (2026)",
+    "w": "624",
+    "h": "480",
+    "br": "2584",
+    "vfr": "24p",
+    "frameRate": null,
+    "prof": "constrained baseline",
+    "dur_ms": "90000"
+  }
+]
