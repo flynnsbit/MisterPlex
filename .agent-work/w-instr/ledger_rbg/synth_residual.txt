@@ -1,0 +1,4 @@
+media: frames=50 vfps=20 wall_s=2.0 drops=0 fps=24/1
+media: fpga frame_tx ok via DDR presents=40 frames=52 ms=4
+media: frames=100 vfps=22 wall_s=4.0 drops=0 fps=24/1
+media: fpga frame_tx ok via DDR presents=80 frames=100 ms=4

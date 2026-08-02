@@ -1,0 +1,9 @@
+SELF_TEST atomic LEDGER_OK rc=0 OK
+SELF_TEST atomic residual LOUD rc=2 OK
+SELF_TEST residual==publish_misses OK rc=0
+SELF_TEST split reconstruct residual=0 rc=0 OK
+SELF_TEST split residual LOUD rc=2 OK
+SELF_TEST session invalid rc=79 OK
+SELF_TEST EXIT marker rc=79 OK
+SELF_TEST stats-only NO-DATA rc=77 OK
+SELF_TEST_OK

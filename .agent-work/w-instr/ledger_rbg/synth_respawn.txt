@@ -1,0 +1,3 @@
+media: frames=500 presents=496 drops=4 residual=0 wall_s=20 session_epoch=1.1 process_epoch=1 pid=10
+EXIT pid=10 rc=0 run_s=1543
+media: frames=20 presents=20 drops=0 residual=0 wall_s=1 session_epoch=2.1 process_epoch=2 pid=11

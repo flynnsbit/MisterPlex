@@ -1,0 +1,26 @@
+=== daemon_media_ledger ===
+semantics: frames=pipe assembled; presents=DDR publish ok; drops=A/V-pacer skips ONLY; publish_misses=DDR fail; residual=frames-presents-drops
+CANNOT_CLAIM: drops alone is full loss; cross-line residual confounds sampling lag with true residual — prefer atomic 1 Hz fragment
+n_stats=2 n_ddr=2 n_atomic=0 n_exit=0 n_snaps=2 src=measured
+continuity_ok=1 reason=continuous src=measured
+session_epochs=NO-DATA src=NO-DATA
+process_epochs=NO-DATA src=NO-DATA
+pids=NO-DATA src=NO-DATA
+NOTE: cross_line_naive frames_stats=100 presents_ddr=80 drops_stats=0 residual_cross=20 frames_skew=0 src=reconstructed — residual_cross confounds true residual with sampling lag; prefer ddr-snapshot residual (20)
+NOTE: reconstructed n_snaps=2 from n_ddr=2 n_stats=2 src=reconstructed — NOT measured; deploy atomic 1 Hz fragment to upgrade
+--- ledger (last closed snapshot) ---
+frames=100 src=measured_ddr_line
+presents=80 src=measured_ddr_line
+drops=0 src=reconstructed_nearest_stats_line
+publish_misses=NO-DATA src=NO-DATA
+residual=20 src=reconstructed
+residual_eq=frames-presents-drops src=measured
+frames_skew=0 src=reconstructed
+pair_method=ddr_presents+nearest_stats_drops src=measured
+wall_s=4.0 src=measured
+line_no=4 src=measured
+residual_series_n=2 min=12 max=20 last=20 src=reconstructed
+unexplained_residual_count=2 src=measured
+reason=unexplained_residual=20 frames=100 presents=80 drops=0 publish_misses=None residual_src=reconstructed pair=ddr_presents+nearest_stats_drops
+VERDICT=LEDGER_RESIDUAL rc=2
+NOTE: non-zero residual is unexplained supply loss (not equal to publish_misses). Do not promote on drops alone.

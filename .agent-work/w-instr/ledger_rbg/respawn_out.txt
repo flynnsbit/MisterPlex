@@ -1,0 +1,25 @@
+=== daemon_media_ledger ===
+semantics: frames=pipe assembled; presents=DDR publish ok; drops=A/V-pacer skips ONLY; publish_misses=DDR fail; residual=frames-presents-drops
+CANNOT_CLAIM: drops alone is full loss; cross-line residual confounds sampling lag with true residual — prefer atomic 1 Hz fragment
+n_stats=0 n_ddr=0 n_atomic=2 n_exit=1 n_snaps=2 src=measured
+continuity_ok=0 reason=session_restart_marker exit_lines=1 src=measured
+session_epochs=['1.1', '2.1'] src=measured
+process_epochs=['1', '2'] src=measured
+pids=['10', '11'] src=measured
+NOTE: used n_atomic=2 single-line snapshots src=measured
+--- ledger (last closed snapshot) ---
+frames=20 src=measured
+presents=20 src=measured
+drops=0 src=measured
+publish_misses=NO-DATA src=NO-DATA
+residual=0 src=measured
+residual_eq=frames-presents-drops src=measured
+frames_skew=0 src=measured
+pair_method=atomic_single_line src=measured
+wall_s=1.0 src=measured
+line_no=3 src=measured
+residual_series_n=2 min=0 max=0 last=0 src=measured
+unexplained_residual_count=0 src=measured
+reason=session_restart_marker exit_lines=1
+VERDICT=SESSION_INVALID rc=79
+NOTE: rc=79 SESSION_INVALID aligns w-avsync (session_epoch_changed / process respawn); ledger spanning a restart is void — never a pass

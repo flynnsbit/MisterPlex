@@ -1,0 +1,65 @@
+media: idle overlay canvas=624x480 font=12x16 scale=2 chrome=1 output=DEFAULT_ASSUMED mode=? source=none authoring=624x480 plane=0
+misterplexd: GEOM requested_pms=624x480 expected_delivery=624x480 delivery_basis=transcode_request delivery_verified=0 decode_target=624x480 content_tier=624x480 arm_rescale=1 yuv_ddr_force_scale=1 transcoded=1 sws=fast_bilinear scale_mode=always library_media=624x480
+media: FPGA frame path OK (PRESENT=fpga → DDR YUV420p)
+media: DDR bitstream CTRL=PLXD (STREAM=0, producer dormant)
+media: park OSD — Pattern=None, audio tone Off, force bars No
+media: audio device /dev/MrAudio OK (s16le stereo @ 48k → FPGA)
+media: GEOM expected_delivery=624x480 decode_target=624x480 arm_rescale=1 reason=scale_pad_crop_flags identity_skip=0 mode=always conf_mode=skip_identity yuv_ddr_force_scale=1 delivery_verified=0 sws_flags=fast_bilinear assume_match=0 display=618x480 vf=fps=24/1,scale=618:480:flags=fast_bilinear:force_original_aspect_ratio=decrease,pad=624:480:0+(618-iw)/2:0+(480-ih)/2:color=black
+media: content fps=24/1 lead_ms=40 resync_drop_ms=80
+media: STREAM=0 rawvideo(yuv420p)→F1 PRESENT=fpga decode=624x480 coded=624x480 display=618x480 clock=wall-48k-audio+every-frame-present
+media: spawn single-process /media/fat/misterplex_v2/bin/ffmpeg -hide_banner -nostats -loglevel info -nostdin -headers [...] -reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5 -i http://192.168.1.24:32400/video/:/transcode/universal/start.mp4?hasMDE=1&path=%2Flibrary%2Fmetadata%2F6&mediaIndex=0&partIndex=0&protocol=http&fastSeek=1&directPlay=0&directStream=0&subtitleSize=100&audioBoost=100&location=lan&copyts=1&session=mplex-daa66d13&videoQuality=60&videoResolution=624x480&maxVideoBitrate=2000&videoCodec=h264&audioCodec=aac&videoProfile=baseline&videoLevel=30&X-Plex-Token=REDACTED -map 0:v:0 -an -f rawvideo -pix_fmt yuv420p -vf fps=24/1,scale=618:480:flags=fast_bilinear:force_original_aspect_ratio=decrease,pad=624:480:0+(618-iw)/2:0+(480-ih)/2:color=black pipe:1 -map 0:a:0? -vn -af aresample=48000 -f s16le -ac 2 -ar 48000 pipe:3
+media: MrAudio open — software-paced 48kHz delay_ms=0 clock_ppm=-638 (adelay in ffmpeg if >0)
+media: A/V origin armed audio_active=1 waited_ms=2
+media: MEASURED_DELIVERY 624x350 bytes=327600 coded_bytes=449280 identity_skip=0 desync_risk=0 MID_STREAM_CHANGE=0
+media: MrAudio playback position available — video now paces off what is HEARD, not what is sent
+media: audio latency 17ms queued=3328B
+media: MEASURED_OUTPUT 624x480 (post-vf rawvideo)
+media: A/V resync drop drift_ms=103 drops=1
+media: frames=14 vfps=14.5 pfps=10.3 audio_s=0.760 wall_s=0.963 audio=on clock=av-lock av_drift_ms=47 drops=4 fps=24/1 decode=624x480 measured=624x350 desync_risk=0
+media: frames=40 vfps=20.3 pfps=18.3 audio_s=1.760 wall_s=1.966 audio=on clock=av-lock av_drift_ms=-25 drops=4 fps=24/1 decode=624x480 measured=624x350 desync_risk=0
+media: fpga frame_tx ok via DDR presents=48 frames=52 ms=5
+media: frames=65 vfps=21.6 pfps=20.3 audio_s=2.780 wall_s=3.000 audio=on clock=av-lock av_drift_ms=-29 drops=4 fps=24/1 decode=624x480 measured=624x350 desync_risk=0
+media: frames=89 vfps=22.2 pfps=21.2 audio_s=3.800 wall_s=4.005 audio=on clock=av-lock av_drift_ms=-28 drops=4 fps=24/1 decode=624x480 measured=624x350 desync_risk=0
+media: fpga frame_tx ok via DDR presents=96 frames=100 ms=16
+media: frames=113 vfps=22.5 pfps=21.7 audio_s=4.800 wall_s=5.008 audio=on clock=av-lock av_drift_ms=-28 drops=4 fps=24/1 decode=624x480 measured=624x350 desync_risk=0
+media: audio latency 99ms queued=19175B
+media: frames=138 vfps=22.8 pfps=22.2 audio_s=5.820 wall_s=6.031 audio=on clock=av-lock av_drift_ms=-31 drops=4 fps=24/1 decode=624x480 measured=624x350 desync_risk=0
+media: fpga frame_tx ok via DDR presents=144 frames=148 ms=23
+media: frames=162 vfps=22.9 pfps=22.3 audio_s=6.840 wall_s=7.057 audio=on clock=av-lock av_drift_ms=-31 drops=4 fps=24/1 decode=624x480 measured=624x350 desync_risk=0
+media: frames=187 vfps=23.1 pfps=22.6 audio_s=7.860 wall_s=8.082 audio=on clock=av-lock av_drift_ms=-31 drops=4 fps=24/1 decode=624x480 measured=624x350 desync_risk=0
+media: fpga frame_tx ok via DDR presents=192 frames=196 ms=12
+media: frames=211 vfps=23.2 pfps=22.7 audio_s=8.860 wall_s=9.085 audio=on clock=av-lock av_drift_ms=-32 drops=4 fps=24/1 decode=624x480 measured=624x350 desync_risk=0
+media: frames=235 vfps=23.2 pfps=22.8 audio_s=9.880 wall_s=10.09 audio=on clock=av-lock av_drift_ms=-32 drops=4 fps=24/1 decode=624x480 measured=624x350 desync_risk=0
+media: audio latency 100ms queued=19267B
+media: fpga frame_tx ok via DDR presents=240 frames=244 ms=4
+media: frames=260 vfps=23.3 pfps=23.0 audio_s=10.90 wall_s=11.12 audio=on clock=av-lock av_drift_ms=-33 drops=4 fps=24/1 decode=624x480 measured=624x350 desync_risk=0
+media: frames=285 vfps=23.4 pfps=23.1 audio_s=11.94 wall_s=12.16 audio=on clock=av-lock av_drift_ms=-36 drops=4 fps=24/1 decode=624x480 measured=624x350 desync_risk=0
+media: fpga frame_tx ok via DDR presents=288 frames=292 ms=4
+media: frames=309 vfps=23.4 pfps=23.1 audio_s=12.94 wall_s=13.16 audio=on clock=av-lock av_drift_ms=-35 drops=4 fps=24/1 decode=624x480 measured=624x350 desync_risk=0
+media: frames=334 vfps=23.4 pfps=23.2 audio_s=14.00 wall_s=14.21 audio=on clock=av-lock av_drift_ms=-37 drops=4 fps=24/1 decode=624x480 measured=624x350 desync_risk=0
+media: fpga frame_tx ok via DDR presents=336 frames=340 ms=24
+media: frames=359 vfps=23.5 pfps=23.2 audio_s=15.04 wall_s=15.25 audio=on clock=av-lock av_drift_ms=-38 drops=4 fps=24/1 decode=624x480 measured=624x350 desync_risk=0
+media: audio latency 100ms queued=19224B
+media: frames=384 vfps=23.5 pfps=23.3 audio_s=16.06 wall_s=16.27 audio=on clock=av-lock av_drift_ms=-40 drops=4 fps=24/1 decode=624x480 measured=624x350 desync_risk=0
+media: fpga frame_tx ok via DDR presents=384 frames=388 ms=12
+media: frames=408 vfps=23.6 pfps=23.3 audio_s=17.06 wall_s=17.27 audio=on clock=av-lock av_drift_ms=-39 drops=4 fps=24/1 decode=624x480 measured=624x350 desync_risk=0
+media: frames=432 vfps=23.6 pfps=23.4 audio_s=18.06 wall_s=18.27 audio=on clock=av-lock av_drift_ms=-40 drops=4 fps=24/1 decode=624x480 measured=624x350 desync_risk=0
+media: fpga frame_tx ok via DDR presents=432 frames=436 ms=4
+media: frames=456 vfps=23.6 pfps=23.4 audio_s=19.06 wall_s=19.28 audio=on clock=av-lock av_drift_ms=-40 drops=4 fps=24/1 decode=624x480 measured=624x350 desync_risk=0
+media: frames=480 vfps=23.6 pfps=23.4 audio_s=20.06 wall_s=20.28 audio=on clock=av-lock av_drift_ms=-40 drops=4 fps=24/1 decode=624x480 measured=624x350 desync_risk=0
+media: audio latency 99ms queued=19150B
+media: fpga frame_tx ok via DDR presents=480 frames=484 ms=12
+media: frames=504 vfps=23.6 pfps=23.4 audio_s=21.08 wall_s=21.31 audio=on clock=av-lock av_drift_ms=-21 drops=4 fps=24/1 decode=624x480 measured=624x350 desync_risk=0
+media: frames=529 vfps=23.6 pfps=23.5 audio_s=22.10 wall_s=22.32 audio=on clock=av-lock av_drift_ms=-40 drops=4 fps=24/1 decode=624x480 measured=624x350 desync_risk=0
+media: fpga frame_tx ok via DDR presents=528 frames=532 ms=5
+media: frames=553 vfps=23.6 pfps=23.5 audio_s=23.12 wall_s=23.34 audio=on clock=av-lock av_drift_ms=-22 drops=4 fps=24/1 decode=624x480 measured=624x350 desync_risk=0
+media: frames=577 vfps=23.6 pfps=23.5 audio_s=24.12 wall_s=24.34 audio=on clock=av-lock av_drift_ms=-22 drops=4 fps=24/1 decode=624x480 measured=624x350 desync_risk=0
+media: fpga frame_tx ok via DDR presents=576 frames=580 ms=4
+media: frames=601 vfps=23.7 pfps=23.5 audio_s=25.12 wall_s=25.35 audio=on clock=av-lock av_drift_ms=-21 drops=4 fps=24/1 decode=624x480 measured=624x350 desync_risk=0
+media: audio latency 100ms queued=19226B
+media: frames=625 vfps=23.7 pfps=23.5 audio_s=26.14 wall_s=26.36 audio=on clock=av-lock av_drift_ms=-22 drops=4 fps=24/1 decode=624x480 measured=624x350 desync_risk=0
+media: fpga frame_tx ok via DDR presents=624 frames=628 ms=4
+media: frames=650 vfps=23.7 pfps=23.5 audio_s=27.16 wall_s=27.39 audio=on clock=av-lock av_drift_ms=-23 drops=4 fps=24/1 decode=624x480 measured=624x350 desync_risk=0
+media: frames=674 vfps=23.7 pfps=23.5 audio_s=28.18 wall_s=28.40 audio=on clock=av-lock av_drift_ms=-24 drops=4 fps=24/1 decode=624x480 measured=624x350 desync_risk=0
+media: fpga frame_tx ok via DDR presents=672 frames=676 ms=4
+media: frames=699 vfps=23.7 pfps=23.6 audio_s=29.20 wall_s=29.42 audio=on clock=av-lock av_drift_ms=-24 drops=4 fps=24/1 decode=624x480 measured=624x350 desync_risk=0
