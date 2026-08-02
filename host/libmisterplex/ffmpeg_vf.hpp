@@ -412,57 +412,56 @@ inline FfmpegVfPlan buildFfmpegVideoFilter(const FfmpegVfRequest& req) {
     // Exact coded *claim* at plan time is almost always UNVERIFIED: source WxH
     // is PMS transcode_request / library_media (main.cpp setFfmpegScaleSourceSize),
     // and delivery_geometry_verified stays 0 until the ffmpeg banner arrives —
-    // after the vf plan is frozen for the session. Unverified is the product
-    // hot path, not an edge case.
+    // after the vf plan is frozen for the session.
     //
-    // Unverified + Always: crop+pad (NO swscale, NO FOAR decrease). Pins OUTPUT
-    // geometry to coded bank the way old Always-scale did.
+    // Fleet log mode (parent 2026-08-02): measured=624x350 is the MOST COMMON
+    // delivery while request still claims 624x480. crop=618:480 on a 624x350
+    // input fails hard (host ffmpeg: "Invalid too big ... height '480'", rc=234,
+    // 0 output bytes). FOAR into *coded* 624 pins OUTPUT 449280 for BOTH:
+    //   - true 624x480: scaleDecreaseOutHeight→480 (no letterbox)
+    //   - 624x350: upscale/letterbox then pad (bytes safe; detail loss is Loss2)
+    // Never identity_skip on unverified claims (MILESTONE 4 pipe desync).
     //
-    // FOAR=decrease is a PICTURE-QUALITY defect, not merely CPU waste: it applies
-    // min(sx,sy) to BOTH axes, so scale into display 618x480 turns a bank-exact
-    // 624x480 source into ~618x475 then pad — a ~1% vertical resample of every
-    // frame (scaleDecreaseOutHeight(624,480,618,480)==475). crop+pad kills that.
-    //
-    // identity_skip=false so a wrong PMS claim cannot silent-phase-walk the raw
-    // reader (MILESTONE 4). Claims are unreliable predictors of delivery
-    // (parent: request 624x480 → measured 624x350; also 426x240 tiers).
-    //
-    // Verified + Always (lab / measured-before-plan): true identity no-op;
-    // display crop cols cleared by clearYuv420pCropPadding on present.
-    //
-    // Non-exact / unknown under Always: still scale+pad below (byte pin).
+    // Verified + Always: true identity; clearYuv420pCropPadding on present.
+    // FOAR into display 618 remains forbidden (row destroyer) — coded only.
     if (req.scale_mode == FfmpegScaleMode::Always && exactCodedSource) {
         if (!exactUnverified) {
             return finish(false, true, hasCrop ? "force_exact_identity_crop_clear"
                                                : "force_exact_identity");
         }
-        // Unverified claim of exact coded — pin via crop+pad, never identity_skip.
-        append(buildCropPadNoScale(dispW, dispH, req.coded_w, req.coded_h, req.crop_left,
-                                   req.crop_top, req.source_w));
-        return finish(false, false,
-                      hasCrop ? "force_exact_crop_pad_unverified"
-                              : "force_exact_pad_unverified");
+        const std::string flagsExact =
+            swsFlagsTokenOk(req.sws_flags) ? req.sws_flags : std::string();
+        append(buildScalePadCentered(req.coded_w, req.coded_h, flagsExact));
+        return finish(true, false,
+                      flagsExact.empty() ? "force_unverified_claim_scale_pad_coded"
+                                         : "force_unverified_claim_scale_pad_coded_flags");
     }
 
     // Always (non-exact), or SkipIdentity with mismatched/unknown/unverified: scale+pad.
     const std::string flags = swsFlagsTokenOk(req.sws_flags) ? req.sws_flags : std::string();
 
     // Height already equals bank/display height and width is wide enough to
-    // cover the display window: crop+pad ONLY (no FOAR decrease V-resample).
-    // Covers: SkipIdentity unverified exact 624; Always/Skip 640x480 hfit; etc.
-    // 240p / shorter sources still FOAR into coded bank (need V upscale).
+    // cover the display window: crop+pad ONLY when the height claim is not an
+    // unverified bank-exact guess (those take FOAR above / below). Hfit path
+    // (e.g. 640x480 claim) still crop-pads when H matches bank.
+    // 240p / shorter sources FOAR into coded bank (need V upscale).
     const bool heightAlreadyBank = req.source_h > 0 && req.source_h == req.coded_h &&
                                    req.source_h == dispH;
     const bool wideEnoughForDisplayCrop =
         req.source_w > 0 && req.source_w >= dispW;
-    if (hasCrop && heightAlreadyBank && wideEnoughForDisplayCrop) {
+    if (hasCrop && heightAlreadyBank && wideEnoughForDisplayCrop && !exactUnverified) {
         append(buildCropPadNoScale(dispW, dispH, req.coded_w, req.coded_h, req.crop_left,
                                    req.crop_top, req.source_w));
-        if (exactUnverified && req.scale_mode == FfmpegScaleMode::SkipIdentity)
-            return finish(false, false, "crop_pad_no_v_scale_unverified_delivery");
         if (exactCodedSource)
             return finish(false, false, "crop_pad_no_v_scale");
         return finish(false, false, "crop_pad_no_v_scale_hfit");
+    }
+    // SkipIdentity + unverified exact claim (force escape): same FOAR pin as Always.
+    if (exactUnverified) {
+        append(buildScalePadCentered(req.coded_w, req.coded_h, flags));
+        return finish(true, false,
+                      flags.empty() ? "unverified_claim_scale_pad_coded"
+                                    : "unverified_claim_scale_pad_coded_flags");
     }
 
     // Non-exact / unknown source that needs resample: FOAR into the CODED bank

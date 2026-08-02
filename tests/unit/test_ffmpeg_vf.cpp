@@ -150,7 +150,7 @@ int main() {
     }
 
     // --- RED class: numeric match WITHOUT verification must NOT identity-skip ---
-    // Exact coded + crop → crop_pad_no_v_scale (not swscale decrease into 618).
+    // Unverified claim → FOAR coded (crop=618:480 dies on real 624x350 delivery).
     {
         FfmpegVfRequest r;
         r.coded_w = 624;
@@ -164,9 +164,10 @@ int main() {
         r.delivery_geometry_verified = false; // PMS transcode_request class
         const auto p = buildFfmpegVideoFilter(r);
         expect(!p.identity_skip, "unverified 624 must not identity_skip");
-        expect(!p.scale_applied, "unverified exact coded uses crop not swscale");
-        expect_eq(p.reason, "crop_pad_no_v_scale_unverified_delivery", "unverified reason");
-        expect(vfPreservesBankHeightSource(p.vf), "unverified exact still preserves height");
+        expect(p.scale_applied, "unverified claim FOAR-scales into coded");
+        expect_eq(p.reason, "unverified_claim_scale_pad_coded", "unverified reason");
+        expect(p.vf.find("scale=624:480") != std::string::npos, "FOAR coded");
+        expect(p.vf.find("crop=618:480") == std::string::npos, "no fixed crop");
     }
 
     // --- SkipIdentity unknown source → still scales (safe) ---
@@ -278,20 +279,20 @@ int main() {
             const bool bankHeightWideNonExact =
                 !exactBank && (c.sh == coded_h && c.sw >= disp_w);
             if (exactBank) {
-                // Unverified exact under Always: crop+pad pin, NOT identity_skip.
-                expect(!p.scale_applied && !p.identity_skip,
-                       (std::string("FORCE_SCALE exact crop-pad pin for ") + c.name).c_str());
-                expect(p.vf.find("scale=") == std::string::npos,
-                       (std::string("exact no scale= for ") + c.name).c_str());
-                expect(p.vf.find("force_original_aspect_ratio") == std::string::npos,
-                       (std::string("exact no FOAR for ") + c.name).c_str());
-                expect(p.vf.find("crop=618:480") != std::string::npos,
-                       (std::string("exact crops display for ") + c.name).c_str());
-                expect(p.vf.find("pad=624:480") != std::string::npos,
-                       (std::string("exact pads coded for ") + c.name).c_str());
-                expect(vfPreservesBankHeightSource(p.vf),
-                       (std::string("exact preserves height for ") + c.name).c_str());
-                expect_eq(p.reason, "force_exact_crop_pad_unverified", "exact bank reason");
+                // Unverified exact CLAIM under Always: FOAR into coded (not crop).
+                // Host: crop=618:480 on real 624x350 delivery → ffmpeg EINVAL.
+                // FOAR into 624 keeps 480 rows when delivery truly is 624x480.
+                expect(p.scale_applied && !p.identity_skip,
+                       (std::string("FORCE_SCALE unverified claim scales for ") + c.name)
+                           .c_str());
+                expect(p.vf.find("scale=624:480") != std::string::npos,
+                       (std::string("exact claim FOAR coded for ") + c.name).c_str());
+                expect(p.vf.find("scale=618:480") == std::string::npos,
+                       (std::string("exact claim no FOAR 618 for ") + c.name).c_str());
+                expect(p.vf.find("crop=618:480") == std::string::npos,
+                       (std::string("exact claim no fixed crop for ") + c.name).c_str());
+                expect_eq(p.reason, "force_unverified_claim_scale_pad_coded",
+                          "exact bank reason");
             } else if (bankHeightWideNonExact) {
                 expect(!p.scale_applied && !p.identity_skip,
                        (std::string("FORCE_SCALE bank-h crop-pad for ") + c.name).c_str());
@@ -415,7 +416,8 @@ int main() {
         expect(!vfPreservesBankHeightSource(legacy),
                "RED: legacy decrease-into-display fails vfPreservesBankHeightSource");
 
-        // 3) GREEN product hot path: Always + unverified exact → crop+pad pin (no FOAR).
+        // 3) GREEN product hot path: Always + unverified exact CLAIM → FOAR coded.
+        //    crop=618:480 is RED on fleet-mode 624x350 (ffmpeg EINVAL, 0 bytes).
         FfmpegVfRequest r;
         r.coded_w = 624;
         r.coded_h = 480;
@@ -429,15 +431,18 @@ int main() {
         r.sws_flags = "fast_bilinear";
         r.delivery_geometry_verified = false;
         const auto p = buildFfmpegVideoFilter(r);
-        expect(vfPreservesBankHeightSource(p.vf),
-               "GREEN: exact coded source vf preserves bank height");
-        expect(!p.scale_applied && !p.identity_skip, "GREEN: crop-pad pin not identity_skip");
-        expect_eq(p.reason, "force_exact_crop_pad_unverified", "GREEN reason");
-        expect(p.vf.find("scale=") == std::string::npos, "GREEN no scale=");
-        expect(p.vf.find("force_original_aspect_ratio") == std::string::npos, "GREEN no FOAR");
-        expect_eq(p.vf,
-                  "crop=618:480:0:0,pad=624:480:0+(618-iw)/2:0+(480-ih)/2:color=black",
-                  "GREEN crop-pad string");
+        expect(p.scale_applied && !p.identity_skip, "GREEN: unverified claim scales");
+        expect_eq(p.reason, "force_unverified_claim_scale_pad_coded_flags", "GREEN reason");
+        expect(p.vf.find("scale=624:480") != std::string::npos, "GREEN FOAR coded");
+        expect(p.vf.find("flags=fast_bilinear") != std::string::npos, "GREEN flags");
+        expect(p.vf.find("crop=618:480") == std::string::npos, "GREEN no fixed crop");
+        expect(p.vf.find("scale=618:480") == std::string::npos, "GREEN no FOAR 618");
+        // Arithmetic: true 480 keeps rows; 350 would letterbox; identity would desync.
+        expect(scaleDecreaseOutHeight(624, 480, 624, 480) == 480, "FOAR 480 keeps h");
+        expect(scaleDecreaseOutHeight(624, 350, 624, 480) == 350, "FOAR 350 pic h");
+        expect(yuv420pFrameBytesWH(624, 350) == 327600u, "350 producer B");
+        expect(rawPipeDesynced(327600u, 449280u, 1), "350 identity desyncs");
+        expect(!rawPipeDesynced(449280u, 449280u, 999), "pinned never desyncs");
 
         // 3b) Verified exact under Always: true identity (lab / measured-before-plan).
         r.delivery_geometry_verified = true;

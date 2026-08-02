@@ -141,23 +141,22 @@ int main() {
         r.source_h = h;
         r.delivery_geometry_verified = false; // PMS transcode_request
 
-        // Default DDR policy force ON → Always → unverified exact is crop+pad pin
-        // (not scale=618:decrease FOAR; not identity_skip — MILESTONE 4).
+        // Default DDR policy force ON → Always → unverified exact CLAIM FOAR-codes
+        // (not crop=618:480 — fails on fleet-mode 624x350; not identity_skip).
         r.scale_mode = ffmpegScaleModeForDdrYuvPresent(FfmpegScaleMode::SkipIdentity);
         const auto on = buildFfmpegVideoFilter(r);
-        expect(!on.scale_applied && !on.identity_skip, "default force crop-pad at 624");
-        expect_eq_str(on.reason, "force_exact_crop_pad_unverified", "default force reason");
-        expect(on.vf.find("scale=") == std::string::npos, "no swscale on exact coded");
-        expect(on.vf.find("force_original_aspect_ratio") == std::string::npos, "no FOAR");
-        expect(on.vf.find("crop=618:480") != std::string::npos, "crop to display");
-        expect(on.vf.find("pad=624:480") != std::string::npos, "pad to coded");
-        expect(on.vf.rfind("fps=24/1,", 0) == 0, "fps then crop-pad");
+        expect(on.scale_applied && !on.identity_skip, "default force scales unverified claim");
+        expect_eq_str(on.reason, "force_unverified_claim_scale_pad_coded", "default force reason");
+        expect(on.vf.find("scale=624:480") != std::string::npos, "FOAR into coded");
+        expect(on.vf.find("scale=618:480") == std::string::npos, "no FOAR 618");
+        expect(on.vf.find("crop=618:480") == std::string::npos, "no fixed crop claim");
+        expect(on.vf.rfind("fps=24/1,", 0) == 0, "fps then scale-pad");
 
         // Escape force=0: SkipIdentity but unverified → still must NOT identity-skip.
         r.scale_mode = ffmpegScaleModeForDdrYuvPresent(FfmpegScaleMode::SkipIdentity, false);
         const auto off = buildFfmpegVideoFilter(r);
-        expect(!off.scale_applied && !off.identity_skip, "escape+unverified crop-pad not skip");
-        expect_eq_str(off.reason, "crop_pad_no_v_scale_unverified_delivery", "escape guard reason");
+        expect(off.scale_applied && !off.identity_skip, "escape+unverified still scales");
+        expect_eq_str(off.reason, "unverified_claim_scale_pad_coded", "escape guard reason");
 
         // Escape force=0 + VERIFIED match → may identity-skip (lab/direct-play).
         r.delivery_geometry_verified = true;
