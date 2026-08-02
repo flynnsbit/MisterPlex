@@ -27,6 +27,10 @@ export E2E_CONTENT="${E2E_CONTENT:-real}"
 export E2E_TIER="${E2E_TIER:-480p}"
 export E2E_P7="${E2E_P7:-1}"
 export E2E_REAL_ALLOW_BANK_GEOM="${E2E_REAL_ALLOW_BANK_GEOM:-1}"
+export E2E_REQUIRE_REALTIME_RATE="${E2E_REQUIRE_REALTIME_RATE:-1}"
+export E2E_REALTIME_MIN_RATIO="${E2E_REALTIME_MIN_RATIO:-0.75}"
+export E2E_REALTIME_MAX_RATIO="${E2E_REALTIME_MAX_RATIO:-1.35}"
+export ASSERT_COMPANION="${ASSERT_COMPANION:-1}"
 export E2E_OUT="${E2E_OUT:-$REPO/build/e2e-client-truth}"
 mkdir -p "$E2E_OUT"
 
@@ -39,13 +43,15 @@ elif [[ -z "${PLEX_RATING_KEY:-}" && -z "${PLEX_KEY:-}" && -n "${E2E_P7_RATING_K
   export PLEX_KEY="/library/metadata/${PLEX_RATING_KEY}"
 fi
 
-echo "CLIENT_TRUTH_RUN begin cycles=${E2E_TRANSITION_CYCLES} rk=${PLEX_RATING_KEY:-auto} out=${E2E_OUT}"
+echo "CLIENT_TRUTH_RUN begin cycles=${E2E_TRANSITION_CYCLES} tier=${E2E_TIER} rk=${PLEX_RATING_KEY:-auto} out=${E2E_OUT}"
 echo "CLIENT_TRUTH_PREREG:"
-echo "  PASS: MiSTerPlex in picker; UI position advances on play; frozen on pause;"
-echo "        seek lands near target then advances; stop → UI idle; rk_before==rk_after each phase"
-echo "  FAIL: UI stuck / seek miss / still advancing after stop / cast missing"
-echo "  INVALID: ratingKey changes mid-window (respawn/content swap) — never score as data"
+echo "  PASS: MiSTerPlex in picker; UI advances; media/wall ratio in [0.75,1.35];"
+echo "        pause frozen; seek near+advances; stop idle; rk stable; COMPANION_INVARIANT=PASS"
+echo "  FAIL: starved-class rate (parent collapse ratio~0.467 still advances timeline);"
+echo "        UI stuck / seek miss / cast missing / wrong primary companion"
+echo "  INVALID: ratingKey changes mid-window — never score as data"
 echo "  NEVER_SCORE: daemon av-lock, drops, smoothness, A/V sync"
+echo "  RATE_DERIVATION: min=0.75 from starved audio_s/wall_s=0.467 vs healthy=0.993"
 echo "  IDLE_END: suite force-stops; daily driver must return to static logo"
 
 # Red-before-green pure proofs (no device)

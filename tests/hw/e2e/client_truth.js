@@ -63,6 +63,187 @@ function readableSamples(samples) {
 }
 
 /**
+ * Realtime rate gate — media timeline vs wall clock during continuous play.
+ *
+ * WHY THIS EXISTS (parent-measured 480p collapse, same session):
+ *   starved: vfps 11.1 pfps 6.4 drops climbing  audio_s/wall_s = 0.467
+ *   healthy: vfps 23.8 pfps 23.6 drops flat     audio_s/wall_s = 0.993
+ * Timeline still advanced in both cases — advance-only gates called both PASS.
+ *
+ * DERIVED TOLERANCE (do not invent loosely):
+ *   target rate = 1.0 media_ms / wall_ms
+ *   measured healthy = 0.993, measured starved = 0.467, gap = 0.526
+ *   min_ratio default = 0.75
+ *     — above starved (0.467) so collapse fails
+ *     — below healthy (0.993) so real-time passes
+ *     — slightly above midpoint 0.730 toward healthy to absorb UI sample jitter
+ *   max_ratio default = 1.35
+ *     — allows brief UI catch-up after buffer; free-run / double-speed fails
+ *
+ * EXCLUSIONS (caller + sample filter):
+ *   - pause: media_delta≈0 → ratio≈0 — only sample while playing
+ *   - seek: discontinuous media jump — drop steps where media moves backward
+ *     or media_step > wall_step * max_ratio * seekRejectFactor
+ *   - startup: require minWallMs of usable contiguous play before scoring
+ *
+ * value_kind=measured (from samples). Soft-skip is never a pass for callers.
+ */
+function assertClientRealtimeRate(samples, tag, opts = {}) {
+  const minRatio = opts.minRatio != null ? opts.minRatio : 0.75;
+  const maxRatio = opts.maxRatio != null ? opts.maxRatio : 1.35;
+  const minWallMs = opts.minWallMs != null ? opts.minWallMs : 3000;
+  const minPairs = opts.minPairs != null ? opts.minPairs : 3;
+  const seekRejectFactor = opts.seekRejectFactor != null ? opts.seekRejectFactor : 1.5;
+  const good = readableSamples(samples).filter((s) => s.wall_ms > 0);
+  if (good.length < 2) {
+    return {
+      ok: false,
+      reason: 'client_rate_unreadable',
+      detail:
+        `${tag}: need ≥2 readable UI clocks with wall_ms for realtime rate; ` +
+        `got readable=${good.length}. PRE_REGISTER fail: cannot score rate.`,
+      samples: summarizeSamples(samples),
+      min_ratio: minRatio,
+      max_ratio: maxRatio,
+      value_kind: 'measured',
+    };
+  }
+
+  // Build contiguous play pairs; drop seek/pause-like discontinuities.
+  const pairs = [];
+  let rejectedSeek = 0;
+  let rejectedPause = 0;
+  for (let i = 1; i < good.length; i++) {
+    const a = good[i - 1];
+    const b = good[i];
+    const dWall = b.wall_ms - a.wall_ms;
+    const dMedia = b.currentMs - a.currentMs;
+    if (dWall <= 0) continue;
+    if (dMedia < 0) {
+      rejectedSeek++;
+      continue; // rewind / scrub backward
+    }
+    if (dMedia === 0) {
+      rejectedPause++;
+      continue; // frozen step (pause or stall) — not a rate sample
+    }
+    const stepRatio = dMedia / dWall;
+    if (stepRatio > maxRatio * seekRejectFactor) {
+      rejectedSeek++;
+      continue; // discontinuous seek jump forward
+    }
+    pairs.push({ dWall, dMedia, stepRatio, from: a.currentMs, to: b.currentMs });
+  }
+
+  if (pairs.length < minPairs) {
+    return {
+      ok: false,
+      reason: 'client_rate_insufficient_pairs',
+      detail:
+        `${tag}: usable play pairs=${pairs.length} < min=${minPairs} ` +
+        `(rejected_seekish=${rejectedSeek} rejected_frozen=${rejectedPause}). ` +
+        `PRE_REGISTER fail: window too short or dominated by pause/seek.`,
+      pairs: pairs.length,
+      rejected_seekish: rejectedSeek,
+      rejected_frozen: rejectedPause,
+      min_ratio: minRatio,
+      max_ratio: maxRatio,
+      samples: summarizeSamples(samples),
+      value_kind: 'measured',
+    };
+  }
+
+  const sumWall = pairs.reduce((s, p) => s + p.dWall, 0);
+  const sumMedia = pairs.reduce((s, p) => s + p.dMedia, 0);
+  if (sumWall < minWallMs) {
+    return {
+      ok: false,
+      reason: 'client_rate_window_short',
+      detail:
+        `${tag}: usable wall_ms=${sumWall} < minWallMs=${minWallMs}. ` +
+        `PRE_REGISTER fail: hold continuous play longer before scoring rate.`,
+      wall_ms: sumWall,
+      media_ms: sumMedia,
+      pairs: pairs.length,
+      min_ratio: minRatio,
+      max_ratio: maxRatio,
+      value_kind: 'measured',
+    };
+  }
+
+  const ratio = sumMedia / sumWall;
+  const base = {
+    ratio,
+    wall_ms: sumWall,
+    media_ms: sumMedia,
+    pairs: pairs.length,
+    rejected_seekish: rejectedSeek,
+    rejected_frozen: rejectedPause,
+    min_ratio: minRatio,
+    max_ratio: maxRatio,
+    samples: summarizeSamples(samples),
+    value_kind: 'measured',
+    derivation:
+      'min_ratio=0.75 from parent starved audio_s/wall_s=0.467 vs healthy=0.993 (midpoint 0.730 + jitter margin); max_ratio=1.35 catch-up band',
+  };
+
+  if (ratio < minRatio) {
+    return {
+      ok: false,
+      reason: 'client_realtime_rate_low',
+      detail:
+        `${tag}: media/wall ratio=${ratio.toFixed(3)} < min=${minRatio} ` +
+        `(media_ms=${sumMedia} wall_ms=${sumWall} pairs=${pairs.length}). ` +
+        `PRE_REGISTER fail: starved-class (parent collapse audio_s/wall_s=0.467). ` +
+        `Advance-only would have passed — rate gate catches under-realtime play.`,
+      ...base,
+    };
+  }
+  if (ratio > maxRatio) {
+    return {
+      ok: false,
+      reason: 'client_realtime_rate_high',
+      detail:
+        `${tag}: media/wall ratio=${ratio.toFixed(3)} > max=${maxRatio} ` +
+        `(media_ms=${sumMedia} wall_ms=${sumWall}). ` +
+        `PRE_REGISTER fail: free-run / double-speed / seek residue in window.`,
+      ...base,
+    };
+  }
+  return {
+    ok: true,
+    reason: 'client_realtime_rate_ok',
+    detail:
+      `${tag}: ratio=${ratio.toFixed(3)} in [${minRatio},${maxRatio}] ` +
+      `media_ms=${sumMedia} wall_ms=${sumWall} pairs=${pairs.length}`,
+    ...base,
+  };
+}
+
+/**
+ * Build synthetic samples for red/green rate proofs (no browser).
+ * rate = media_ms per wall_ms (e.g. 0.467 starved, 0.993 healthy).
+ */
+function synthesizeRateSamples(rate, opts = {}) {
+  const n = opts.n != null ? opts.n : 8;
+  const gapWall = opts.gapWallMs != null ? opts.gapWallMs : 500;
+  const t0 = opts.t0Media != null ? opts.t0Media : 10000;
+  const w0 = opts.w0 != null ? opts.w0 : 1_000_000;
+  const out = [];
+  for (let i = 0; i < n; i++) {
+    out.push({
+      ok: true,
+      wall_ms: w0 + i * gapWall,
+      currentMs: Math.round(t0 + i * gapWall * rate),
+      durationMs: 600000,
+      raw: `synth rate=${rate}`,
+      source: 'synth',
+    });
+  }
+  return out;
+}
+
+/**
  * PLAYING: client clock must advance by ≥ minAdvanceMs across the sample window.
  */
 function assertClientPlayingAdvances(samples, tag, opts = {}) {
@@ -442,6 +623,9 @@ function formatClientResult(r) {
     `reason=${r.reason || 'NA'}`,
     r.invalid ? 'INVALID=1' : '',
     r.advance_ms != null ? `advance_ms=${r.advance_ms}` : '',
+    r.ratio != null && Number.isFinite(r.ratio) ? `ratio=${Number(r.ratio).toFixed(3)}` : '',
+    r.wall_ms != null ? `wall_ms=${r.wall_ms}` : '',
+    r.media_ms != null ? `media_ms=${r.media_ms}` : '',
     r.drift_ms != null ? `drift_ms=${r.drift_ms}` : '',
     r.ui_ms != null ? `ui_ms=${r.ui_ms}` : '',
     r.ratingKey ? `rk=${r.ratingKey}` : '',
@@ -516,6 +700,59 @@ function selfCheck() {
   const rkDead = assertRatingKeyUnchanged('30', '', 't_rk_dead');
   if (rkDead.ok || !rkDead.invalid) errs.push('rk_dead_expected_INVALID');
 
+  // Realtime rate — fixture data from parent-measured collapse session.
+  // healthy audio_s/wall_s=0.993 → PASS; starved 0.467 → FAIL client_realtime_rate_low
+  const rateHealthy = assertClientRealtimeRate(
+    synthesizeRateSamples(0.993, { n: 10, gapWallMs: 500 }),
+    't_rate_healthy',
+    { minRatio: 0.75, maxRatio: 1.35, minWallMs: 3000, minPairs: 3 }
+  );
+  if (!rateHealthy.ok) {
+    errs.push(`rate_healthy_should_pass got ${rateHealthy.reason} ratio=${rateHealthy.ratio}`);
+  }
+  const rateStarved = assertClientRealtimeRate(
+    synthesizeRateSamples(0.467, { n: 10, gapWallMs: 500 }),
+    't_rate_starved',
+    { minRatio: 0.75, maxRatio: 1.35, minWallMs: 3000, minPairs: 3 }
+  );
+  if (rateStarved.ok || rateStarved.reason !== 'client_realtime_rate_low') {
+    errs.push(
+      `rate_starved_expected_fail got ok=${rateStarved.ok} reason=${rateStarved.reason} ratio=${rateStarved.ratio}`
+    );
+  }
+  // Pause-dominated window: all frozen steps → insufficient pairs (not a false PASS)
+  const paused = synthesizeRateSamples(0, { n: 8, gapWallMs: 500 });
+  const ratePause = assertClientRealtimeRate(paused, 't_rate_pause', {
+    minRatio: 0.75,
+    minWallMs: 1000,
+    minPairs: 3,
+  });
+  if (ratePause.ok || ratePause.reason !== 'client_rate_insufficient_pairs') {
+    errs.push(`rate_pause_expected_insufficient got ${ratePause.reason}`);
+  }
+  // Seek jump then steady: large media step rejected; remaining pairs still healthy
+  const seekish = synthesizeRateSamples(1.0, { n: 8, gapWallMs: 500, t0Media: 1000 });
+  seekish[3] = {
+    ...seekish[3],
+    currentMs: seekish[2].currentMs + 60000, // +60s jump on 500ms wall
+  };
+  // repair subsequent samples to continue from jump at rate 1.0
+  for (let i = 4; i < seekish.length; i++) {
+    seekish[i].currentMs = seekish[3].currentMs + (i - 3) * 500;
+  }
+  const rateSeek = assertClientRealtimeRate(seekish, 't_rate_seek_filter', {
+    minRatio: 0.75,
+    maxRatio: 1.35,
+    minWallMs: 2000,
+    minPairs: 3,
+  });
+  if (!rateSeek.ok) {
+    errs.push(`rate_seek_filter_should_pass got ${rateSeek.reason} ratio=${rateSeek.ratio}`);
+  }
+  if (!(rateSeek.rejected_seekish >= 1)) {
+    errs.push(`rate_seek_filter_expected_rejected_seekish got ${rateSeek.rejected_seekish}`);
+  }
+
   // parse helpers still work
   if (parseClockToMs('1:05') !== 65000) errs.push('parseClockToMs');
   if (!parseClockPair('0:34 / 6:00')) errs.push('parseClockPair');
@@ -535,6 +772,8 @@ module.exports = {
   assertClientSeekNear,
   assertClientSeekThenAdvances,
   assertClientStoppedIdle,
+  assertClientRealtimeRate,
+  synthesizeRateSamples,
   assertRatingKeyUnchanged,
   readPmsSessionRatingKey,
   gateRatingKey,
@@ -549,7 +788,10 @@ if (require.main === module) {
   try {
     selfCheck();
     console.log('client_truth.js selfCheck OK');
-    console.log('PRE_REGISTER: play_red/pause_red/seek_red/rk_swap → ok=0 INVALID where noted');
+    console.log(
+      'PRE_REGISTER: play_red/pause_red/seek_red/rk_swap INVALID; ' +
+        'rate_starved(0.467) FAIL; rate_healthy(0.993) PASS; pause/seek excluded'
+    );
     process.exit(0);
   } catch (e) {
     console.error('client_truth.js selfCheck FAIL', e.message);

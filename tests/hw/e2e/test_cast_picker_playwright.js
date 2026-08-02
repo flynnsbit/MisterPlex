@@ -68,6 +68,7 @@ const {
   assertClientSeekNear,
   assertClientSeekThenAdvances,
   assertClientStoppedIdle,
+  assertClientRealtimeRate,
   gateRatingKey,
   formatClientResult,
 } = require('./client_truth');
@@ -827,29 +828,45 @@ async function assertCompanionServer(tracker) {
 
   const hit = uniqueKeys.filter((k) => expected.has(k));
   // Which host did Web actually poll first / primarily?
+  // First discovery host is the companionServer _pickCompanionServer chose.
   const primaryHost = uniqueKeys[0] || '';
   const primaryProbe = probes.find((p) => p.host === primaryHost) || probes[0];
+  const primaryIsExpected = !!(primaryHost && expected.has(primaryHost));
+  const foreignHosts = uniqueKeys.filter((k) => !expected.has(k));
   log(
     `COMPANION_SELECTED host=${primaryHost || 'NA'} ` +
       `friendlyName=${JSON.stringify(primaryProbe && primaryProbe.friendlyName)} ` +
       `pms_under_test_fn=${JSON.stringify(effectiveFn)} ` +
-      `matched_expected=${hit.length ? 1 : 0} value_kind=measured`
+      `primary_is_expected=${primaryIsExpected ? 1 : 0} ` +
+      `matched_expected=${hit.length ? 1 : 0} ` +
+      `foreign=${foreignHosts.join(',') || '(none)'} value_kind=measured`
   );
 
-  if (hit.length === 0) {
+  const failWrongCompanion = (why) => {
     const winnerFn = primaryProbe && primaryProbe.friendlyName;
+    const offending =
+      foreignHosts.length > 0
+        ? foreignHosts
+            .map((h) => {
+              const p = probes.find((x) => x.host === h);
+              return `${h} fn=${JSON.stringify(p && p.friendlyName)}`;
+            })
+            .join('; ')
+        : `${primaryHost} fn=${JSON.stringify(winnerFn)}`;
     const sortNote =
       winnerFn &&
       effectiveFn &&
       String(winnerFn).toLowerCase() < effectiveFnLower
-        ? `DIAGNOSIS: polled winner friendlyName=${JSON.stringify(winnerFn)} sorts BEFORE ` +
-          `PMS-under-test ${JSON.stringify(effectiveFn)} — rename the earlier server or ` +
+        ? `DIAGNOSIS: offending companion friendlyName=${JSON.stringify(winnerFn)} sorts BEFORE ` +
+          `PMS-under-test ${JSON.stringify(effectiveFn)} — rename the earlier owned server or ` +
           `give local PMS a name that sorts first (lab used "MiSTerPlex Studio").`
-        : `DIAGNOSIS: Web polled ${uniqueKeys.join(',')} not PLEX_BASE host keys ${[...expected].join(',')}. ` +
-          'Check owned-server list sort by lowercased friendlyName.';
+        : `DIAGNOSIS: ${why} Web companion discovery hosts=${uniqueKeys.join(',')} ` +
+          `expected_keys=${[...expected].join(',')}. Check owned-server sort by lowercased friendlyName.`;
     fail(
       'wrong_companion_server',
-      'Plex Web polled a companionServer that is NOT the PLEX_BASE under test.\n' +
+      'COMPANION_INVARIANT=FAIL — Plex Web companionServer is NOT the PLEX_BASE under test.\n' +
+        `  offending_server(s)=${offending}\n` +
+        `  primary_host=${primaryHost} primary_fn=${JSON.stringify(winnerFn)}\n` +
         `  polled_norm=${uniqueKeys.join(',')}\n` +
         `  expected_norm=${[...expected].join(',')}\n` +
         `  polled_friendlyNames=${probes.map((p) => `${p.host}=${p.friendlyName}`).join('; ')}\n` +
@@ -857,17 +874,48 @@ async function assertCompanionServer(tracker) {
         `  ${sortNote}\n` +
         'ROOT CAUSE CLASS: _pickCompanionServer = first owned private connected non-shared ' +
         'server sorted by (isShared?"1":"0")+lowercased friendlyName.\n' +
+        'INVARIANT: primary discovery host MUST be PLEX_BASE (or loopback of that PMS). ' +
+        'Matching a secondary poll is not enough if the primary companion is foreign.\n' +
         'Do NOT encode other household server IPs into CI. ' +
         'plex.tv provides=player is neither necessary nor sufficient.\n' +
         'See docs/select-player-runbook.md. value_kind=measured'
+    );
+  };
+
+  // First-class invariant: primary companion must be expected PMS (not merely "any poll hit").
+  if (!primaryIsExpected) {
+    failWrongCompanion(
+      hit.length
+        ? 'primary companion is foreign even though a later poll hit expected keys — '
+        : 'no discovery host matched expected keys — '
+    );
+  }
+  if (hit.length === 0) {
+    failWrongCompanion('no discovery host matched expected keys — ');
+  }
+  // Foreign hosts also polled: warn loudly; fail if any foreign sorts before PMS-under-test.
+  if (foreignHosts.length) {
+    for (const fh of foreignHosts) {
+      const fp = probes.find((p) => p.host === fh);
+      const ffn = fp && fp.friendlyName ? String(fp.friendlyName) : '';
+      if (ffn && effectiveFn && ffn.toLowerCase() < effectiveFnLower && ffn !== '(loopback)') {
+        failWrongCompanion(
+          `foreign host ${fh} fn=${JSON.stringify(ffn)} sorts before PMS-under-test — `
+        );
+      }
+    }
+    log(
+      `COMPANION_FOREIGN_OBSERVED hosts=${foreignHosts.join(',')} ` +
+        `— primary still expected; sort-fragility active value_kind=measured`
     );
   }
 
   log(
     `COMPANION_ASSERT=PASS matched=${hit.join(',')} polled=${uniqueKeys.join(',')} ` +
-      `selected_fn=${JSON.stringify(primaryProbe && primaryProbe.friendlyName)} ` +
+      `primary=${primaryHost} selected_fn=${JSON.stringify(primaryProbe && primaryProbe.friendlyName)} ` +
       `pms_fn=${JSON.stringify(effectiveFn)}`
   );
+  log(`COMPANION_INVARIANT=PASS primary=${primaryHost} pms_fn=${JSON.stringify(effectiveFn)}`);
   log(
     'COMPANION_SORT_FRAGILITY=active rule=first_owned_private_connected_by_lowercased_friendlyName ' +
       `anchor_fn=${JSON.stringify(effectiveFn)} — any new owned server sorting earlier → silent cast break`
@@ -881,6 +929,7 @@ async function assertCompanionServer(tracker) {
     selectedHost: primaryHost,
     selectedFriendlyName: primaryProbe && primaryProbe.friendlyName,
     pmsFriendlyName: effectiveFn,
+    invariant: 'PASS',
   };
 }
 
@@ -2552,13 +2601,34 @@ async function runOneTransitionCycle(page, itemTitle, detailsUrl, cycle, total, 
     if (expectedRk) {
       await clientRkGateCycle(expectedRk, `${ctag}_play_rk_before`, cycle, total);
     }
-    const uiPlay = await sampleUiClock(page, 6, 400);
+    // Longer window for rate: advance-only can PASS on starved streams (parent 0.467).
+    const uiPlay = await sampleUiClock(page, 10, 450);
     const playA = assertClientPlayingAdvances(uiPlay, `${ctag}_client_play`, {
       minAdvanceMs: 500,
     });
     log(`CLIENT_PLAY ${formatClientResult(playA)} cycle=${cycle}/${total}`);
     if (!playA.ok) {
       cycleFail(cycle, total, 'client_play', playA.reason, playA.detail);
+    }
+    if (cfg.requireRealtimeRate) {
+      const rateA = assertClientRealtimeRate(uiPlay, `${ctag}_client_rate`, {
+        minRatio: cfg.realtimeMinRatio,
+        maxRatio: cfg.realtimeMaxRatio,
+        minWallMs: cfg.realtimeMinWallMs,
+        minPairs: 3,
+      });
+      log(
+        `CLIENT_RATE ${formatClientResult(rateA)} cycle=${cycle}/${total} ` +
+          `min=${cfg.realtimeMinRatio} max=${cfg.realtimeMaxRatio} value_kind=measured`
+      );
+      if (!rateA.ok) {
+        cycleFail(cycle, total, 'client_rate', rateA.reason, rateA.detail);
+      } else {
+        log(
+          `CLIENT_RATE_OK cycle=${cycle}/${total} ratio=${Number(rateA.ratio).toFixed(3)} ` +
+            `media_ms=${rateA.media_ms} wall_ms=${rateA.wall_ms}`
+        );
+      }
     }
     if (expectedRk) {
       await clientRkGateCycle(expectedRk, `${ctag}_play_rk_after`, cycle, total);
@@ -2738,12 +2808,24 @@ async function runOneTransitionCycle(page, itemTitle, detailsUrl, cycle, total, 
   }
   if (cfg.clientTruth) {
     await clientRkGateCycle(expectedRk, `${ctag}_resume_rk_before`, cycle, total);
-    const uiResSamples = await sampleUiClock(page, 6, 400);
+    const uiResSamples = await sampleUiClock(page, 10, 450);
     const resUi = assertClientPlayingAdvances(uiResSamples, `${ctag}_client_resume`, {
       minAdvanceMs: 400,
     });
     log(`CLIENT_RESUME ${formatClientResult(resUi)} cycle=${cycle}/${total}`);
     if (!resUi.ok) cycleFail(cycle, total, 'client_resume', resUi.reason, resUi.detail);
+    if (cfg.requireRealtimeRate) {
+      const resRate = assertClientRealtimeRate(uiResSamples, `${ctag}_client_resume_rate`, {
+        minRatio: cfg.realtimeMinRatio,
+        maxRatio: cfg.realtimeMaxRatio,
+        minWallMs: Math.min(cfg.realtimeMinWallMs, 3000),
+        minPairs: 3,
+      });
+      log(`CLIENT_RESUME_RATE ${formatClientResult(resRate)} cycle=${cycle}/${total}`);
+      if (!resRate.ok) {
+        cycleFail(cycle, total, 'client_resume_rate', resRate.reason, resRate.detail);
+      }
+    }
     await clientRkGateCycle(expectedRk, `${ctag}_resume_rk_after`, cycle, total);
     adv = {
       ok: true,
@@ -4453,7 +4535,7 @@ async function runTransitionScenarios(
             `${rkInit.invalid ? 'INVALID ' : ''}${rkInit.detail || 'session ratingKey gate failed'}`
           );
         }
-        const uiInit = await sampleUiClock(page, 6, 450);
+        const uiInit = await sampleUiClock(page, 10, 450);
         const initPlay = assertClientPlayingAdvances(uiInit, `tier_${tier.name}_initial_play`, {
           minAdvanceMs: 800,
         });
@@ -4464,6 +4546,27 @@ async function runTransitionScenarios(
             initPlay.reason || 'client_play_no_advance',
             initPlay.detail ||
               'CLIENT_PLAY: UI position did not advance after Play (client-observed).'
+          );
+        }
+        if (cfg.requireRealtimeRate) {
+          const initRate = assertClientRealtimeRate(uiInit, `tier_${tier.name}_initial_rate`, {
+            minRatio: cfg.realtimeMinRatio,
+            maxRatio: cfg.realtimeMaxRatio,
+            minWallMs: cfg.realtimeMinWallMs,
+            minPairs: 3,
+          });
+          log(`CLIENT_RATE_GATE tier=${tier.name} ${formatClientResult(initRate)}`);
+          if (!initRate.ok) {
+            await shot(page, `fail_client_rate_${tier.name}`);
+            fail(
+              initRate.reason || 'client_realtime_rate_low',
+              initRate.detail ||
+                'CLIENT_RATE: media/wall ratio outside band (starved play still advances).'
+            );
+          }
+          log(
+            `CLIENT_RATE_OK tier=${tier.name} ratio=${Number(initRate.ratio).toFixed(3)} ` +
+              `media_ms=${initRate.media_ms} wall_ms=${initRate.wall_ms} value_kind=measured`
           );
         }
         log(

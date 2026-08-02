@@ -54,15 +54,30 @@ function resolve480pArm(env = process.env) {
   if (arm === '27' || arm === 'fullbleed' || arm === 'full-bleed' || arm === 'vres') {
     return {
       ratingKey: '27',
-      itemTitle: '(metadata rk=27)',
+      itemTitle: '(metadata rk=27 FullBleed Bank480)',
       arm: 'fullbleed',
     };
   }
-  if (arm === '30' || arm === 'bbb') {
+  // Parent collapse case: BBB 624x352 (delivered bitrate stress) — NOT the healthy fullbleed.
+  if (arm === '9' || arm === 'bbb352' || arm === 'bbb_352' || arm === 'collapse') {
+    return {
+      ratingKey: '9',
+      itemTitle: '(metadata rk=9 BBB 624x352)',
+      arm: 'bbb352',
+    };
+  }
+  if (arm === '30' || arm === 'bbb' || arm === 'bbb480') {
     return {
       ratingKey: '30',
-      itemTitle: '(metadata rk=30)',
+      itemTitle: '(metadata rk=30 BBB bank)',
       arm: 'bbb',
+    };
+  }
+  if (arm === '32' || arm === 'bbb720') {
+    return {
+      ratingKey: '32',
+      itemTitle: '(metadata rk=32 BBB 720x480)',
+      arm: 'bbb720',
     };
   }
   if (arm === '6' || arm === 'test' || arm === 'short') {
@@ -72,7 +87,7 @@ function resolve480pArm(env = process.env) {
       arm: 'test',
     };
   }
-  // default soak rk=8
+  // default soak rk=8 (synthetic); parent 480p DoD prefers fullbleed/bbb pins
   return {
     ratingKey: '8',
     itemTitle: '(metadata rk=8)',
@@ -482,6 +497,24 @@ function loadConfig() {
       process.env.E2E_REQUIRE_SESSION_RK,
       truthy(process.env.E2E_CLIENT_TRUTH, true)
     ),
+    // Realtime rate (media/wall). Default ON with clientTruth — catches starved play
+    // that still advances the timeline (parent 480p collapse audio_s/wall_s=0.467).
+    requireRealtimeRate: truthy(
+      process.env.E2E_REQUIRE_REALTIME_RATE,
+      truthy(process.env.E2E_CLIENT_TRUTH, true)
+    ),
+    realtimeMinRatio: (() => {
+      const v = parseFloat(process.env.E2E_REALTIME_MIN_RATIO || '0.75');
+      return Number.isFinite(v) && v > 0 && v < 1 ? v : 0.75;
+    })(),
+    realtimeMaxRatio: (() => {
+      const v = parseFloat(process.env.E2E_REALTIME_MAX_RATIO || '1.35');
+      return Number.isFinite(v) && v > 1 ? v : 1.35;
+    })(),
+    realtimeMinWallMs: (() => {
+      const v = parseInt(process.env.E2E_REALTIME_MIN_WALL_MS || '3500', 10);
+      return Number.isFinite(v) && v >= 1500 ? v : 3500;
+    })(),
     // Glass integrity (w-instr counter). Parent provides capture dir; suite never grabs.
     // E2E_REQUIRE_GLASS=1 → missing/unscored glass is FAIL (not timeline-only PASS).
     requireGlass: truthy(process.env.E2E_REQUIRE_GLASS, false),

@@ -88,7 +88,8 @@ async function main() {
   log('  P2 bogus PMS host → PMS_UNREACHABLE class, exit would be UNVERIFIED(2) not PASS');
   log('  P3 missing deps class remains SKIP(77) — never scored as pass');
   log(`  P4 EXIT_UNVERIFIED=${EXIT_UNVERIFIED} EXIT_SKIP=${EXIT_SKIP} never equal EXIT_PASS=0`);
-  log('  P5 client_truth selfCheck: play/pause/seek reds + ratingKey INVALID on swap');
+  log('  P5 client_truth selfCheck: play/pause/seek/rate reds + ratingKey INVALID on swap');
+  log('      rate_starved(0.467)→FAIL rate_healthy(0.993)→PASS pause/seek excluded');
 
   let proofsOk = 0;
   let proofsFail = 0;
@@ -97,7 +98,10 @@ async function main() {
   try {
     const ct = require('./client_truth');
     ct.selfCheck();
-    log('PROOF P5 OK client_truth selfCheck (play_red/pause_red/seek_red/rk_swap INVALID)');
+    log(
+      'PROOF P5 OK client_truth selfCheck (play/pause/seek reds + rk_swap INVALID + ' +
+        'rate_starved FAIL + rate_healthy PASS)'
+    );
     proofsOk++;
   } catch (e) {
     log(`PROOF P5 FAIL client_truth selfCheck: ${e.message}`);
