@@ -151,7 +151,17 @@ def main() -> int:
     ap.add_argument("--duration", type=float, default=30.0)
     ap.add_argument(
         "--only",
-        choices=("all", "product", "trekmatch", "24", "30", "60", "2397", "soak480-ramp"),
+        choices=(
+            "all",
+            "product",
+            "trekmatch",
+            "trekmatch480",
+            "24",
+            "30",
+            "60",
+            "2397",
+            "soak480-ramp",
+        ),
         default="all",
     )
     ap.add_argument(
@@ -226,6 +236,23 @@ def main() -> int:
                 vbitrate="1500k",
                 audio_bitrate="128k",
                 label="TREK24p",
+            )
+        )
+    # 480p DECODE-path twin of trekmatch blip: same flash+beep construction as
+    # sync_trekmatch_1080p24_blip.mp4, geometry 624x480 @ 24.000 for direct-play
+    # under the measured ~1.5 Mbit lab link (bitrate floor below PMS 2000k request
+    # so parent can force direct play / lower tier without transcoder starvation).
+    if args.only in ("all", "trekmatch480"):
+        jobs.append(
+            dict(
+                out=od / "sync_trekmatch_624x480_24_blip.mp4",
+                width=624,
+                height=480,
+                fps=24,
+                duration_s=d,
+                vbitrate="1200k",
+                audio_bitrate="128k",
+                label="TREK480",
             )
         )
     if args.only in ("all", "2397"):
