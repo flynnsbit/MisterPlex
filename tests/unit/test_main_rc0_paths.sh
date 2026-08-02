@@ -14,6 +14,7 @@ FAIL=0
 # ---- Catalog of allowed return-0 sites (must match source) ----
 # Lab-only early paths:
 #   return 0  after --help  (site=main.cpp:--help via deathBreadcrumbExit)
+#   return 0  after --version (site=main.cpp:--version via deathBreadcrumbExit)
 #   exitReported(0, "site=main.cpp:lab-play-file-done", ...)
 # Product loop:
 #   exitReported(0, why, ...) where why embeds main_loop_g_stop (SIGINT/SIGTERM only)
@@ -21,6 +22,7 @@ FAIL=0
 # Any NEW "return 0" / exitReported(0 in main.cpp must be added here intentionally.
 
 help_sites=$(grep -c 'site=main.cpp:--help' "$MAIN" || true)
+version_sites=$(grep -c 'site=main.cpp:--version' "$MAIN" || true)
 play_done=$(grep -c 'site=main.cpp:lab-play-file-done' "$MAIN" || true)
 g_stop_site=$(grep -c 'site=main.cpp:main_loop_g_stop' "$MAIN" || true)
 exit0_calls=$(grep -cE 'exitReported\(0,' "$MAIN" || true)
@@ -33,12 +35,16 @@ bare_n=$(printf '%s\n' "$bare_ret0" | grep -c . || true)
 echo "catalog help_sites=$help_sites play_done=$play_done g_stop_site=$g_stop_site exit0_calls=$exit0_calls bare_return_0=$bare_n"
 
 [ "$help_sites" -eq 1 ] || { echo "FAIL expected 1 --help site, got $help_sites"; FAIL=$((FAIL+1)); }
+# --version must be an explicit, breadcrumbed, catalogued exit -- never an
+# uncatalogued bare return 0 (that is the soak-corruption class this gate exists for).
+[ "$version_sites" -eq 1 ] || { echo "FAIL expected 1 --version site, got $version_sites"; FAIL=$((FAIL+1)); }
 [ "$play_done" -eq 1 ] || { echo "FAIL expected 1 lab-play-file-done site, got $play_done"; FAIL=$((FAIL+1)); }
 [ "$g_stop_site" -ge 1 ] || { echo "FAIL expected main_loop_g_stop site"; FAIL=$((FAIL+1)); }
 # Exactly two exitReported(0,...): lab-play-file-done + main_loop_g_stop
 [ "$exit0_calls" -eq 2 ] || { echo "FAIL expected exactly 2 exitReported(0,), got $exit0_calls"; FAIL=$((FAIL+1)); }
-# Exactly one bare return 0 (the --help path)
-[ "$bare_n" -eq 1 ] || { echo "FAIL expected exactly 1 bare return 0;, got $bare_n:"; printf '%s\n' "$bare_ret0"; FAIL=$((FAIL+1)); }
+# Exactly two bare return 0 (the --help and --version paths), each breadcrumbed
+# and asserted by name above. A THIRD, uncatalogued one still trips this gate.
+[ "$bare_n" -eq 2 ] || { echo "FAIL expected exactly 2 bare return 0;, got $bare_n:"; printf '%s\n' "$bare_ret0"; FAIL=$((FAIL+1)); }
 
 # g_stop writers: only on_signal_info may store true
 g_stop_stores=$(grep -nE 'g_stop\.store\(' "$MAIN" || true)

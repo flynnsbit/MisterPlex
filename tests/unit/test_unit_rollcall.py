@@ -74,6 +74,7 @@ EXPECTED_PREREQS = [
     "$(ROOT)/build/test_p3_idct_reference_model",
     "$(ROOT)/build/test_p3_inter_pred_vectors",
     "$(ROOT)/build/extract_h264_golden",
+    "$(ROOT)/build/misterplexd",
 ]
 
 EXPECTED_COMMANDS = [
@@ -208,6 +209,7 @@ EXPECTED_COMMANDS = [
     "$(ROOT)/tests/unit/test_timing_margin_gate.sh",
     "$(ROOT)/tests/unit/test_release_rbf_hash.sh",
     "$(ROOT)/tests/unit/test_release_pair_gate.sh",
+    "$(ROOT)/tests/unit/test_daemon_build_identity.sh",
     "$(ROOT)/tests/unit/test_sdram_startup_verilator.sh",
     "$(ROOT)/tests/unit/test_sdram_dq_turnaround_verilator.sh",
     "$(ROOT)/tests/unit/test_h264_cavlc_residual_verilator.sh",

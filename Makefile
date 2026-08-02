@@ -48,7 +48,7 @@ unit:
 unit-rollcall:
 	python3 $(ROOT)/tests/unit/test_unit_rollcall.py
 
-unit-unlocked: unit-rollcall preflight $(ROOT)/build/test_cadence $(ROOT)/build/test_cadence_swap_path $(ROOT)/build/test_publish_interval_ledger $(ROOT)/build/test_publish_swap_delta_ledger $(ROOT)/build/test_plxd_liveness $(ROOT)/build/test_present_store_scale_math $(ROOT)/build/test_fabric_content_window_math $(ROOT)/build/test_avclock $(ROOT)/build/test_audio_delay $(ROOT)/build/test_mraudio_status $(ROOT)/build/test_av_phase_rtl_quanta $(ROOT)/build/test_osd_menu $(ROOT)/build/test_osd_control $(ROOT)/build/test_last_frame_latch $(ROOT)/build/test_playback_overlay $(ROOT)/build/test_input_mailbox $(ROOT)/build/test_pixel_format $(ROOT)/build/test_main_guard $(ROOT)/build/test_death_breadcrumb $(ROOT)/build/test_frame_ledger $(ROOT)/build/test_supply_bucket $(ROOT)/build/test_raw_video_pipe $(ROOT)/build/test_status_telemetry $(ROOT)/build/test_resolve $(ROOT)/build/test_log_redact $(ROOT)/build/test_pms_timeline $(ROOT)/build/test_plextv_device $(ROOT)/build/test_companion_eof $(ROOT)/build/test_companion_plant_seek $(ROOT)/build/test_gdm_resources_parity $(ROOT)/build/pms_baseline_probe $(ROOT)/build/test_h264_bitstream_source $(ROOT)/build/test_bitstream_ring_lifecycle $(ROOT)/build/test_frame_store_math $(ROOT)/build/test_coded_size_adopt $(ROOT)/build/test_ffmpeg_vf $(ROOT)/build/test_yuv420p_chroma_480p $(ROOT)/build/test_geom_frame_cost $(ROOT)/build/test_glass_loss_death_points $(ROOT)/build/test_frame_store_sdram_sim $(ROOT)/build/test_frame_store_ddr_prefetch_sim $(ROOT)/build/test_ddr_want_y_hblank_thrash $(ROOT)/build/test_ddr_bank_mailbox_phys $(ROOT)/build/test_ddr_scanout_multiframe $(ROOT)/build/test_sdram_memtest_sim $(ROOT)/build/test_sdram_mailbox $(ROOT)/build/test_annexb_count $(ROOT)/build/test_sps_parse $(ROOT)/build/test_slice_hdr $(ROOT)/build/test_cavlc_dc $(ROOT)/build/test_idct_quant $(ROOT)/build/test_p3_host_recon_vectors $(ROOT)/build/test_p3_idct_reference_model $(ROOT)/build/test_p3_inter_pred_vectors $(ROOT)/build/extract_h264_golden
+unit-unlocked: unit-rollcall preflight $(ROOT)/build/test_cadence $(ROOT)/build/test_cadence_swap_path $(ROOT)/build/test_publish_interval_ledger $(ROOT)/build/test_publish_swap_delta_ledger $(ROOT)/build/test_plxd_liveness $(ROOT)/build/test_present_store_scale_math $(ROOT)/build/test_fabric_content_window_math $(ROOT)/build/test_avclock $(ROOT)/build/test_audio_delay $(ROOT)/build/test_mraudio_status $(ROOT)/build/test_av_phase_rtl_quanta $(ROOT)/build/test_osd_menu $(ROOT)/build/test_osd_control $(ROOT)/build/test_last_frame_latch $(ROOT)/build/test_playback_overlay $(ROOT)/build/test_input_mailbox $(ROOT)/build/test_pixel_format $(ROOT)/build/test_main_guard $(ROOT)/build/test_death_breadcrumb $(ROOT)/build/test_frame_ledger $(ROOT)/build/test_supply_bucket $(ROOT)/build/test_raw_video_pipe $(ROOT)/build/test_status_telemetry $(ROOT)/build/test_resolve $(ROOT)/build/test_log_redact $(ROOT)/build/test_pms_timeline $(ROOT)/build/test_plextv_device $(ROOT)/build/test_companion_eof $(ROOT)/build/test_companion_plant_seek $(ROOT)/build/test_gdm_resources_parity $(ROOT)/build/pms_baseline_probe $(ROOT)/build/test_h264_bitstream_source $(ROOT)/build/test_bitstream_ring_lifecycle $(ROOT)/build/test_frame_store_math $(ROOT)/build/test_coded_size_adopt $(ROOT)/build/test_ffmpeg_vf $(ROOT)/build/test_yuv420p_chroma_480p $(ROOT)/build/test_geom_frame_cost $(ROOT)/build/test_glass_loss_death_points $(ROOT)/build/test_frame_store_sdram_sim $(ROOT)/build/test_frame_store_ddr_prefetch_sim $(ROOT)/build/test_ddr_want_y_hblank_thrash $(ROOT)/build/test_ddr_bank_mailbox_phys $(ROOT)/build/test_ddr_scanout_multiframe $(ROOT)/build/test_sdram_memtest_sim $(ROOT)/build/test_sdram_mailbox $(ROOT)/build/test_annexb_count $(ROOT)/build/test_sps_parse $(ROOT)/build/test_slice_hdr $(ROOT)/build/test_cavlc_dc $(ROOT)/build/test_idct_quant $(ROOT)/build/test_p3_host_recon_vectors $(ROOT)/build/test_p3_idct_reference_model $(ROOT)/build/test_p3_inter_pred_vectors $(ROOT)/build/extract_h264_golden $(ROOT)/build/misterplexd
 	$(ROOT)/build/test_cadence
 	$(ROOT)/build/test_cadence_swap_path
 	$(ROOT)/tests/unit/test_cadence_swap_path_source.sh
@@ -183,6 +183,7 @@ unit-unlocked: unit-rollcall preflight $(ROOT)/build/test_cadence $(ROOT)/build/
 	$(ROOT)/tests/unit/test_timing_margin_gate.sh
 	$(ROOT)/tests/unit/test_release_rbf_hash.sh
 	$(ROOT)/tests/unit/test_release_pair_gate.sh
+	$(ROOT)/tests/unit/test_daemon_build_identity.sh
 	$(ROOT)/tests/unit/test_sdram_startup_verilator.sh
 	$(ROOT)/tests/unit/test_sdram_dq_turnaround_verilator.sh
 	$(ROOT)/tests/unit/test_h264_cavlc_residual_verilator.sh
@@ -703,6 +704,26 @@ $(ROOT)/build/test_bitstream_ring_lifecycle: $(ROOT)/tests/unit/test_bitstream_r
 	@mkdir -p $(ROOT)/build
 	$(CXX) $(CXXFLAGS) -o $@ $(ROOT)/tests/unit/test_bitstream_ring_lifecycle.cpp
 
+# Build identity. A running misterplexd must be able to name the source it was
+# built from: the daily driver's daemon was only ever identifiable by binary md5
+# (e.g. ea643e99), which `git cat-file` cannot resolve, so the live device could
+# not be mapped to a commit and the parent spent a session reasoning off a stale
+# pair. Stamped into the binary and printed by --version and the startup banner.
+MPLEX_GIT_REV := $(shell git -C $(ROOT) rev-parse --short=12 HEAD 2>/dev/null || echo unknown)
+MPLEX_GIT_DIRTY := $(shell test -n "$$(git -C $(ROOT) status --porcelain 2>/dev/null)" && echo -dirty || echo)
+MPLEX_BUILD_ID_H := $(ROOT)/build/generated/misterplex_build_id.h
+
+# Rewritten ONLY when the revision actually changes, so it is a real dependency
+# (a bare -D would not retrigger a link and the stamp would silently go stale --
+# which is exactly how a binary ends up claiming a revision it was not built from).
+.PHONY: $(ROOT)/build/generated/.build-id-stamp
+$(MPLEX_BUILD_ID_H): $(ROOT)/build/generated/.build-id-stamp
+	@mkdir -p $(dir $@)
+	@printf '#pragma once\n#define MISTERPLEX_GIT_REV "%s%s"\n' \
+		'$(MPLEX_GIT_REV)' '$(MPLEX_GIT_DIRTY)' > $@.tmp
+	@if ! cmp -s $@.tmp $@; then mv $@.tmp $@; else rm -f $@.tmp; fi
+$(ROOT)/build/generated/.build-id-stamp: ;
+
 # Native host daemon for local smoke
 MPLEX_SRC := \
 	$(ROOT)/arm/misterplexd/main.cpp \
@@ -715,7 +736,7 @@ MPLEX_SRC := \
 	$(ROOT)/arm/misterplexd/plex_resolve.cpp \
 	$(ROOT)/arm/misterplexd/fpga_spi.cpp \
 	$(ROOT)/host/libmisterplex/frame_ledger.cpp
-MPLEX_INC := -I$(ROOT)/arm/misterplexd -I$(ROOT)/host
+MPLEX_INC := -I$(ROOT)/arm/misterplexd -I$(ROOT)/host -I$(ROOT)/build/generated
 # Host recon headers (Phase 3.3i STREAM path)
 MPLEX_HDR := \
 	$(ROOT)/host/libmisterplex/h264_recon.hpp \
@@ -730,7 +751,8 @@ MPLEX_HDR := \
 	$(ROOT)/host/libmisterplex/idle_screen.hpp \
 	$(ROOT)/host/libmisterplex/input_mailbox.hpp \
 	$(ROOT)/host/libmisterplex/playback_overlay.hpp \
-	$(ROOT)/host/libmisterplex/pixel_format.hpp
+	$(ROOT)/host/libmisterplex/pixel_format.hpp \
+	$(MPLEX_BUILD_ID_H)
 
 $(ROOT)/build/misterplexd: $(MPLEX_SRC) \
 		$(ROOT)/arm/misterplexd/companion.hpp \

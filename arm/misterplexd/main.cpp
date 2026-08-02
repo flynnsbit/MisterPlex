@@ -34,6 +34,26 @@
 
 namespace {
 
+// Build identity, stamped by the Makefile into a generated header
+// (build/generated/misterplex_build_id.h). A deployed daemon was previously
+// identifiable only by its binary md5, which git cannot resolve to a commit, so
+// nobody could say what source the daily driver was running. Printed by
+// --version and in the startup banner.
+//
+// A generated header, not a bare -D: a -D does not participate in dependency
+// tracking, so the binary would silently keep a stale revision across a rebuild.
+// "unknown" is the honest answer for a build with no stamp; it must never claim
+// a revision it does not have.
+#if !defined(MISTERPLEX_GIT_REV) && defined(__has_include)
+#  if __has_include("misterplex_build_id.h")
+#    include "misterplex_build_id.h"
+#  endif
+#endif
+#ifndef MISTERPLEX_GIT_REV
+#define MISTERPLEX_GIT_REV "unknown"
+#endif
+constexpr const char* kMisterplexGitRev = MISTERPLEX_GIT_REV;
+
 // Product main loop exits ONLY when g_stop is set. The only writers are the
 // SIGINT/SIGTERM handlers below (lab --help / --play-file return earlier).
 // Handled signals yield process exit status 0 (WIFEXITED), NOT WIFSIGNALED —
@@ -230,6 +250,12 @@ int main(int argc, char** argv) {
     int playSeconds = 25;
 
     for (int i = 1; i < argc; ++i) {
+        if (std::strcmp(argv[i], "--version") == 0) {
+            std::printf("misterplexd git_rev=%s\n", kMisterplexGitRev);
+            // Pre-init version query: no confDir yet — still choke-point log to stderr.
+            misterplex::deathBreadcrumbExit(0, "site=main.cpp:--version");
+            return 0;
+        }
         if (std::strcmp(argv[i], "--name") == 0 && i + 1 < argc)
             name = argv[++i];
         else if (std::strcmp(argv[i], "--id") == 0 && i + 1 < argc)
@@ -256,7 +282,7 @@ int main(int argc, char** argv) {
         } else if (std::strcmp(argv[i], "--help") == 0) {
             std::printf("misterplexd [--name N] [--id ID] [--port N] [--ffmpeg PATH] [--pms URL] "
                         "[--conf PATH] [--decode WxH] [--decode-allow-lab-480p] [--transcode-profile 240p|480p] "
-                        "[--play-file PATH] [--play-seconds N]\n");
+                        "[--play-file PATH] [--play-seconds N] [--version]\n");
             // Pre-init help: no confDir yet — still choke-point log to stderr.
             misterplex::deathBreadcrumbExit(0, "site=main.cpp:--help");
             return 0;
@@ -1466,10 +1492,11 @@ int main(int argc, char** argv) {
     // Banner: never print profile_name as if it were a second geometry next to
     // decode_bank (that read as "weak=480p/624x480" vs "decode=320x240").
     std::fprintf(stderr,
-                 "misterplexd: running name=%s id=%s port=%d pms=%s servers=%zu "
+                 "misterplexd: running git_rev=%s name=%s id=%s port=%d pms=%s servers=%zu "
                  "decode_bank=%s decode_source=%s pms_request_geometry=%s "
                  "pms_bitrate_kbps=%d profile_name=%s h264=%s@L%d present=%s "
                  "auto_next=%d subs=%s\n",
+                 kMisterplexGitRev,
                  name.c_str(), machineId.c_str(), port,
                  defaultPms.empty() ? "(unset)" : defaultPms.c_str(), servers.size(),
                  decodeSize.wxh().c_str(), decodeSizeSource.c_str(),
