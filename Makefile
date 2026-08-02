@@ -88,6 +88,7 @@ unit-unlocked: unit-rollcall preflight $(ROOT)/build/test_cadence $(ROOT)/build/
 	bash $(ROOT)/tests/unit/test_live_misterplex_root.sh
 	bash $(ROOT)/tests/unit/test_present_loop_budget_log.sh
 	bash $(ROOT)/tests/unit/test_correlate_delivery_height.sh
+	bash $(ROOT)/tests/unit/test_playback_rate_limiter_probe.sh
 	bash $(ROOT)/tests/unit/test_supervise_exit_classify.sh
 	bash $(ROOT)/tests/unit/test_main_rc0_paths.sh
 	bash $(ROOT)/tests/unit/test_crash_guard_writes_death.sh
