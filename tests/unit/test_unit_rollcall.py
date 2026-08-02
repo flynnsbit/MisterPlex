@@ -91,6 +91,7 @@ EXPECTED_COMMANDS = [
     "$(ROOT)/build/test_fabric_content_window_math",
     "$(ROOT)/build/test_force_scale_construction",
     "bash $(ROOT)/tests/unit/test_b2_b5_source_wiring.sh",
+    "bash $(ROOT)/tests/unit/test_vf_plan_vs_banner_sequence.sh",
     "$(ROOT)/build/test_avclock",
     "bash $(ROOT)/tests/unit/test_av_startup_hold_red.sh",
     "$(ROOT)/build/test_audio_delay",

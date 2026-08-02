@@ -99,6 +99,10 @@ else
   pass=$((pass + 1))
 fi
 
+# Plan freezes before banner (root-cause sequencing).
+check SEQ_spawn_vf_frozen "$MP" 'SPAWN_VF_FROZEN'
+check SEQ_spawn_to_banner "$MP" 'spawn_to_banner_ms='
+
 echo "SUMMARY pass=$pass fail=$fail"
 if [[ "$fail" -ne 0 ]]; then
   echo "B2_B5_SOURCE_WIRING_FAIL"

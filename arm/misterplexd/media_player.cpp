@@ -1520,6 +1520,15 @@ void MediaPlayer::ffmpegStderrPump(int errReadFd, size_t codedFrameBytes, bool i
             const bool verified = deliveryGeometryVerifiedFromBasis("measured");
             if (verified)
                 deliveryGeometryVerified_.store(true, std::memory_order_relaxed);
+            // spawn→banner latency: settles whether a preflight probe is cheap.
+            // Host lavfi ~25–40 ms; device PMS is UNKNOWN until parent greps this.
+            const int64_t bannerMono = steadyMonoMs();
+            const int64_t spawnMono =
+                ffmpegSpawnMonoMs_.load(std::memory_order_relaxed);
+            const std::string spawnToBanner =
+                (spawnMono > 0 && bannerMono >= spawnMono)
+                    ? std::to_string(bannerMono - spawnMono)
+                    : "NO-DATA";
             log(std::string("media: MEASURED_DELIVERY delivered_geom=") +
                 std::to_string(g.w) + "x" + std::to_string(g.h) +
                 " src=ffmpeg_banner" +
@@ -1532,6 +1541,9 @@ void MediaPlayer::ffmpegStderrPump(int errReadFd, size_t codedFrameBytes, bool i
                 " desync_risk=" + (risk ? "1" : "0") +
                 " delivery_verified=" + (verified ? "1" : "0") +
                 " delivery_basis=measured" +
+                " spawn_mono_ms=" + std::to_string(spawnMono) +
+                " banner_mono_ms=" + std::to_string(bannerMono) +
+                " spawn_to_banner_ms=" + spawnToBanner +
                 (changed ? " MID_STREAM_CHANGE=1" : " MID_STREAM_CHANGE=0") +
                 " tag=measured" +
                 (changed ? " — size changed after play start" : ""));
@@ -2883,6 +2895,7 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
     codedBankH_ = rawH;
     measuredDeliveryW_.store(0, std::memory_order_relaxed);
     measuredDeliveryH_.store(0, std::memory_order_relaxed);
+    ffmpegSpawnMonoMs_.store(0, std::memory_order_relaxed);
     pipeDesyncRisk_.store(false, std::memory_order_relaxed);
     LastFrameLatch lastFrameLatch;
 
@@ -3201,6 +3214,7 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
         audioBytes_.store(0);
         measuredDeliveryW_.store(0);
         measuredDeliveryH_.store(0);
+        ffmpegSpawnMonoMs_.store(0, std::memory_order_relaxed);
         // Session measure starts unverified; only MEASURED_DELIVERY sets true (B4).
         deliveryGeometryVerified_.store(false, std::memory_order_relaxed);
         pipeDesyncRisk_.store(false);
@@ -3387,6 +3401,16 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
         // DECODE tier alone — under-read would leave chroma at init value and
         // desync the pipe (parent defect A/B hypothesis). Product: 624*480*3/2.
         const size_t frameBytes = rawVideoFrameBytes(videoFmt, rawW, rawH);
+
+        // VF plan is already frozen into args (-vf). Banner arrives only after
+        // spawn (stderr pump). spawn_to_banner_ms settles preflight-probe cost.
+        const int64_t spawnMono = steadyMonoMs();
+        ffmpegSpawnMonoMs_.store(spawnMono, std::memory_order_relaxed);
+        log("media: SPAWN_VF_FROZEN mono_ms=" + std::to_string(spawnMono) +
+            " vf_reason=" + vfPlan.reason +
+            " delivery_verified=" +
+            (deliveryGeometryVerified_.load(std::memory_order_relaxed) ? "1" : "0") +
+            " note=banner_arrives_after_spawn_cannot_rebuild_vf tag=measured");
 
         pid_t pid =
             spawnFfmpeg(args, vpipe[1], apipe[1] >= 0 ? apipe[1] : -1, epipe[1]);

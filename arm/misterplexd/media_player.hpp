@@ -324,6 +324,9 @@ private:
     // Runtime-measured input geometry from ffmpeg stderr (B2). 0 = not seen yet.
     std::atomic<int> measuredDeliveryW_{0};
     std::atomic<int> measuredDeliveryH_{0};
+    // steadyMonoMs() at spawnFfmpeg of the session rawvideo process. 0 = not spawned.
+    // MEASURED_DELIVERY logs spawn_to_banner_ms = now - this (parent device cost).
+    std::atomic<int64_t> ffmpegSpawnMonoMs_{0};
     std::atomic<bool> pipeDesyncRisk_{false};
     // Conf AUDIO_DELAY_MS — default 0. Applied as FFmpeg adelay on product path.
     int audioDelayMs_ = 0;
