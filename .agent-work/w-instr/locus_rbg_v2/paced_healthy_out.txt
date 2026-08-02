@@ -1,0 +1,56 @@
+threshold degrade_supply=0.9 src=DEFAULT_ASSUMED
+threshold sustained_frac=0.2 src=DEFAULT_ASSUMED
+threshold min_degraded_s=5 src=DEFAULT_ASSUMED
+=== locus480_local_vs_supply verdict ===
+MISS_v1_PUBLISHED: binary recv_q>0 + any-pipe_write SATURATED on healthy paced playback (parent hardware recv_q_gt0_frac=1.0 pipe_write_frac=1.0) — DISABLED for locus
+PRE_REGISTER_v2: LOCAL=recv_q median_deg/median_h high OR d_recv_q>0; SUPPLY=recv_q median collapses; pipe_write THREAD frac delta; within-run healthy baseline required
+VOID_ENDPOINT supply_ratio_alone; VOID_ENDPOINT binary_recv_q_gt0; VOID_ENDPOINT binary_any_pipe_write under intentional pacing
+n_rows=39
+n_degraded_s=0
+n_healthy_s=39
+frac_near_zero=0.0
+frac_near_zero_src=measured
+frac_near_zero_n=0
+frac_near_zero_den=39
+mean_interval_supply=0.99
+mean_interval_supply_src=measured
+recv_q_gt0_frac_all=1.0
+recv_q_gt0_frac_healthy=1.0
+recv_q_gt0_frac_degraded=NO-DATA
+sat_binary_recv_q_gt0=SATURATED_HIGH
+ffmpeg_pipe_write_any_frac_all=1.0
+ffmpeg_pipe_write_any_frac_healthy=1.0
+sat_binary_pipe_write_any=SATURATED_HIGH
+recv_q_median_healthy=50000.0
+recv_q_median_degraded=NO-DATA
+recv_q_median_ratio_deg_over_h=NO-DATA
+recv_q_p90_healthy=57500.0
+recv_q_p90_degraded=NO-DATA
+recv_q_max_all=59500
+d_recv_q_mean_healthy=500.0
+d_recv_q_mean_degraded=NO-DATA
+channel_recv_q_magnitude=NO-DATA_BASELINE
+pipe_write_thread_frac_mean_healthy=0.25
+pipe_write_thread_frac_mean_degraded=NO-DATA
+pipe_write_thread_frac_delta_deg_minus_h=NO-DATA
+sat_pipe_write_thread_frac=OK
+channel_pipe_write_thread_frac=NO-DATA_BASELINE
+finding_socket_never_empty_healthy=1
+coverage_recv_q=1.0
+coverage_ffmpeg_wchan=1.0
+frames=936
+presents=933
+drops=2
+residual=1
+residual_src=measured
+residual_calc=1
+residual_class=near_closed_abs_le_1
+ledger=closable
+NOTE: no_degraded_seconds
+NOTE: residual=1 exact — NOT rounded to 0; |r|<=1 on frames=936 is near-closed but still reported
+NOTE: MISS_v1: binary recv_q>0 / any-pipe_write saturated on healthy portion (rq_h=1.0 pw_h=1.0) — intentional pacing back-pressure; DISABLED for locus (parent 2026-08-02 hardware)
+NOTE: FINDING: healthy recv_q_gt0_frac=1.0 median=50000.0 — socket never empty under intentional pacing; steady-state link/sender-short refuted for this run
+NOTE: no_degraded_seconds
+reason=healthy_run_binary_discriminators_SATURATED n_degraded=0<5 recv_q_gt0_h=1.0 pipe_write_any_h=1.0 recv_q_median_h=50000.0 — extend soak for degraded window; v1 LOCAL indicators disabled
+VERDICT=INSUFFICIENT_EVIDENCE rc=78
+NOTE: rc=78 INSUFFICIENT_EVIDENCE aligns w-avsync — never a pass

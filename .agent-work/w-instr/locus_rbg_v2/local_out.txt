@@ -1,0 +1,53 @@
+threshold degrade_supply=0.9 src=DEFAULT_ASSUMED
+threshold sustained_frac=0.2 src=DEFAULT_ASSUMED
+threshold min_degraded_s=5 src=DEFAULT_ASSUMED
+=== locus480_local_vs_supply verdict ===
+MISS_v1_PUBLISHED: binary recv_q>0 + any-pipe_write SATURATED on healthy paced playback (parent hardware recv_q_gt0_frac=1.0 pipe_write_frac=1.0) — DISABLED for locus
+PRE_REGISTER_v2: LOCAL=recv_q median_deg/median_h high OR d_recv_q>0; SUPPLY=recv_q median collapses; pipe_write THREAD frac delta; within-run healthy baseline required
+VOID_ENDPOINT supply_ratio_alone; VOID_ENDPOINT binary_recv_q_gt0; VOID_ENDPOINT binary_any_pipe_write under intentional pacing
+n_rows=39
+n_degraded_s=25
+n_healthy_s=14
+frac_near_zero=0.6410256410256411
+frac_near_zero_src=measured
+frac_near_zero_n=25
+frac_near_zero_den=39
+mean_interval_supply=0.6438461538461538
+mean_interval_supply_src=measured
+recv_q_gt0_frac_all=1.0
+recv_q_gt0_frac_healthy=1.0
+recv_q_gt0_frac_degraded=1.0
+sat_binary_recv_q_gt0=SATURATED_HIGH
+ffmpeg_pipe_write_any_frac_all=1.0
+ffmpeg_pipe_write_any_frac_healthy=1.0
+sat_binary_pipe_write_any=SATURATED_HIGH
+recv_q_median_healthy=20400.0
+recv_q_median_degraded=72800.0
+recv_q_median_ratio_deg_over_h=3.5686274509803924
+recv_q_p90_healthy=20800.0
+recv_q_p90_degraded=112800.0
+recv_q_max_all=120000
+d_recv_q_mean_healthy=46.15384615384615
+d_recv_q_mean_degraded=3968.0
+channel_recv_q_magnitude=USABLE
+pipe_write_thread_frac_mean_healthy=0.25
+pipe_write_thread_frac_mean_degraded=0.625
+pipe_write_thread_frac_delta_deg_minus_h=0.375
+sat_pipe_write_thread_frac=OK
+channel_pipe_write_thread_frac=USABLE
+finding_socket_never_empty_healthy=1
+coverage_recv_q=1.0
+coverage_ffmpeg_wchan=1.0
+frames=390
+presents=312
+drops=39
+residual=39
+residual_src=measured
+residual_calc=39
+residual_class=open
+ledger=closable
+NOTE: MISS_v1: binary recv_q>0 / any-pipe_write saturated on healthy portion (rq_h=1.0 pw_h=1.0) — intentional pacing back-pressure; DISABLED for locus (parent 2026-08-02 hardware)
+NOTE: FINDING: healthy recv_q_gt0_frac=1.0 median=20400.0 — socket never empty under intentional pacing; steady-state link/sender-short refuted for this run
+reason=v2_magnitude recv_q_median_ratio=3.569>=2.0 (deg=72800.0 h=20400.0); d_recv_q_mean_deg=3968.0>h=46.15384615384615; pipe_write_thread_frac_delta=0.375>=0.1
+VERDICT=LOCAL_ESTABLISHED rc=3
+NOTE: LOCAL=consumer too slow vs same-run healthy baseline (magnitude)

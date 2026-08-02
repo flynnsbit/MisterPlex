@@ -10,47 +10,65 @@ Degraded 480p run (quoted):
   supply_ratio alone is a VOID endpoint (socket-starved vs consumer-blocked
   both predict the same ratio). Event rate ~25% → single-run A/B has no power.
 
-PRE-REGISTERED discrimination (both channels must flip together):
+MISS (parent hardware 2026-08-02 — published, do not reintroduce)
+----------------------------------------------------------------
+v1 pre-register used binary indicators:
+  LOCAL = recv_q>0 sustained AND any ffmpeg thread in pipe_write
+  SUPPLY = recv_q~0 AND not pipe_write
+Healthy soak (supply=0.993 drops=16) measured BOTH at ceiling:
+  recv_q_gt0_frac=1.0  recv_q_max=83549
+  ffmpeg_pipe_write_frac=1.0
+Cause BY DESIGN: audio pacer back-pressures ffmpeg at 1x
+(media_player.cpp audioPump / present loop) — normal paced playback
+holds a full pipe and a non-empty socket. Binary LOCAL is saturated
+and cannot rise in degradation. Shape (a) in w-lint audit.
 
-  | hypothesis | recv_q during degrade | ffmpeg threads        |
-  |------------|----------------------|------------------------|
-  | LOCAL      | >0 sustained         | blocked in pipe_write  |
-  | SUPPLY     | ~0                   | socket read; daemon
-  |            |                      | readers in pipe_read   |
+FINDING THAT STANDS: recv_q>0 with tens of KB unread throughout a healthy
+run independently refutes steady-state link/sender-short (socket never empty).
 
-Healthy baseline on record: recv_q=0 in 9/10; zero threads in pipe_write.
+v2 PRE-REGISTER (magnitude / dynamics — within-run healthy baseline)
+--------------------------------------------------------------------
+Split each run into non-degraded (healthy portion) vs degraded seconds.
+Channels (all compared degrade vs healthy baseline of THE SAME run):
+
+  | hypothesis | recv_q magnitude / d_recv_q     | pipe_write THREAD frac   |
+  |------------|----------------------------------|--------------------------|
+  | LOCAL      | median_deg >> median_h OR        | mean thread_frac_deg     |
+  |            | mean d_recv_q_deg > 0 sustained  | significantly > healthy  |
+  | SUPPLY     | median_deg << median_h           | thread_frac not rising;  |
+  |            | (collapse toward empty)          | often flat/down          |
+
+SATURATION GUARD (generalises to every gate):
+  If an indicator is at ceiling/floor on the *non-degraded* portion of the
+  same run, it is marked SATURATED and MUST NOT be used for a verdict.
+  Binary recv_q>0 and binary any-pipe_write are expected SATURATED under
+  intentional pacing — reported for provenance, never as locus proof.
+  If no unsaturated discriminative channel remains → INSUFFICIENT_EVIDENCE.
+
+residual: never rounded. residual=1 on a multi-k frame run is reported as 1
+with note residual_near_closed (|r|<=1) but NOT coerced to 0.
 
 MODES
 -----
-  sample   ON-DEVICE. Write JSONL to a local file at 1 Hz. Parent fetches once
-           at end. NEVER poll over SSH mid-run (parent measured +7.61 KB/s
-           contamination on rx_bytes).
-  verdict  HOST. Score a fetched JSONL (+ optional media log). Emits
-           frac_near_zero, ledger residual, LOCAL/SUPPLY/… with coverage.
-  self-test  Host RBG: synthetic LOCAL and SUPPLY both must score correctly.
+  sample   ON-DEVICE JSONL @ 1 Hz local file only (no SSH mid-run).
+  verdict  HOST score + saturation guard + magnitude locus.
+  self-test  RBG: LOCAL, SUPPLY, saturated-healthy refuse, insufficient, session.
 
-One monotonic timebase: t_mono_ms from time.monotonic()*1000 (sample) and
-carried on every row. Slice degraded intervals AFTER the run.
-
-Exit codes (align w-avsync; capture DIRECTLY — never through a pipe):
-   0  HEALTHY_OR_LOCAL_CLEAR / SUPPLY clear — see VERDICT (HEALTHY=0,
-      LOCAL=3, SUPPLY=2 to match score_supply_starve consumer/transport)
-   2  SUPPLY_ESTABLISHED   (starved_transport)
-   3  LOCAL_ESTABLISHED    (starved_consumer)
-   4  LOCUS_UNKNOWN        positively degraded; probes conflict/partial
-  78  INSUFFICIENT_EVIDENCE  (w-avsync) — channel missing / coverage low
+Exit codes (w-avsync aligned; capture DIRECTLY — never through a pipe):
+   0  HEALTHY
+   2  SUPPLY_ESTABLISHED
+   3  LOCAL_ESTABLISHED
+   4  LOCUS_UNKNOWN
+  78  INSUFFICIENT_EVIDENCE (incl. saturated discriminators)
   79  SESSION_INVALID
   77  NO-DATA
    1  usage
 
-Absence is NO-DATA, never 0.0. Negative counter deltas → NO-DATA (never a
-fake Mbit/s). Non-zero rc + explicit coverage when a required channel is
-missing.
+Absence is NO-DATA, never 0.0. Negative counter deltas → NO-DATA.
 
 Related:
-  tools/pms_recvq_backlog_sample.sh  — folded Recv-Q method (four-tuple pin)
-  tools/daemon_media_ledger.py       — frames-presents-drops residual
-  tools/score_supply_starve.py       — locus class names (w-avsync)
+  tools/pms_recvq_backlog_sample.sh, tools/daemon_media_ledger.py,
+  tools/score_supply_starve.py (w-avsync locus names)
 """
 from __future__ import annotations
 
@@ -58,12 +76,13 @@ import argparse
 import json
 import os
 import re
+import statistics
 import subprocess
 import sys
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 # --- exit codes (w-avsync aligned) ------------------------------------------------
 RC_OK = 0
@@ -94,12 +113,19 @@ SS_BIN_CANDIDATES = ("/usr/sbin/ss", "/sbin/ss", "ss")
 
 # Thresholds — labelled DEFAULT_ASSUMED where not caller-supplied
 DEFAULT_HZ = 1.0
-DEFAULT_DEGRADE_SUPPLY = 0.90          # interval supply below → degraded second
-DEFAULT_NEAR_ZERO_VFPS = 1.0           # interval vfps < this → near-zero bin
-DEFAULT_RECV_Q_LOCAL_MIN = 1           # any unread byte is signal
-DEFAULT_SUSTAINED_FRAC = 0.20          # ≥20% of degraded seconds must show signal
-DEFAULT_MIN_DEGRADED_S = 5             # need ≥5 degraded seconds to claim locus
-DEFAULT_MIN_COVERAGE = 0.50            # channel present on ≥50% of degraded rows
+DEFAULT_DEGRADE_SUPPLY = 0.90
+DEFAULT_NEAR_ZERO_VFPS = 1.0
+DEFAULT_RECV_Q_LOCAL_MIN = 1          # legacy binary (reported only; SATURATED under pace)
+DEFAULT_SUSTAINED_FRAC = 0.20
+DEFAULT_MIN_DEGRADED_S = 5
+DEFAULT_MIN_COVERAGE = 0.50
+DEFAULT_SAT_CEILING = 0.95            # frac >= this on healthy → SATURATED high
+DEFAULT_SAT_FLOOR = 0.05              # frac <= this on healthy → SATURATED low
+DEFAULT_RQ_RATIO_LOCAL = 2.0          # median_deg / median_h >= → LOCAL magnitude
+DEFAULT_RQ_RATIO_SUPPLY = 0.5         # median_deg / median_h <= → SUPPLY collapse
+DEFAULT_PW_FRAC_DELTA = 0.10          # thread_frac_deg - thread_frac_h >= → LOCAL wchan
+DEFAULT_D_RQ_LOCAL = 0.0              # mean d_recv_q during deg > this → backlog growing
+DEFAULT_MIN_HEALTHY_S = 5             # need healthy baseline seconds for within-run compare
 
 
 def _nodata(reason: str) -> Dict[str, Any]:
@@ -712,10 +738,11 @@ def cmd_sample(args: argparse.Namespace) -> int:
 class Agg:
     n_rows: int = 0
     n_degraded: int = 0
+    n_healthy: int = 0
     n_recv_q_meas: int = 0
     n_recv_q_gt0: int = 0
     n_ff_wchan_meas: int = 0
-    n_ff_pipe_write: int = 0
+    n_ff_pipe_write: int = 0  # binary any-thread (legacy; often SATURATED)
     n_ff_sockish: int = 0
     n_daemon_wchan_meas: int = 0
     n_daemon_pipe_read: int = 0
@@ -724,7 +751,19 @@ class Agg:
     n_vfps_near_zero: int = 0
     supply_vals: List[float] = field(default_factory=list)
     vfps_vals: List[float] = field(default_factory=list)
-    recv_q_vals: List[int] = field(default_factory=list)
+    # split pools
+    recv_q_healthy: List[int] = field(default_factory=list)
+    recv_q_degraded: List[int] = field(default_factory=list)
+    recv_q_all: List[int] = field(default_factory=list)
+    d_recv_q_healthy: List[float] = field(default_factory=list)
+    d_recv_q_degraded: List[float] = field(default_factory=list)
+    pw_thread_frac_healthy: List[float] = field(default_factory=list)
+    pw_thread_frac_degraded: List[float] = field(default_factory=list)
+    pw_thread_frac_all: List[float] = field(default_factory=list)
+    binary_rq_gt0_healthy: List[int] = field(default_factory=list)  # 0/1
+    binary_pw_any_healthy: List[int] = field(default_factory=list)
+    binary_rq_gt0_degraded: List[int] = field(default_factory=list)
+    binary_pw_any_degraded: List[int] = field(default_factory=list)
     residual_last: Optional[int] = None
     residual_src: str = PROV_NODATA
     frames_last: Optional[int] = None
@@ -755,17 +794,38 @@ def frac(num: int, den: int) -> Optional[float]:
     return num / den
 
 
+def _median(xs: List[float]) -> Optional[float]:
+    if not xs:
+        return None
+    return float(statistics.median(xs))
+
+
+def _mean(xs: List[float]) -> Optional[float]:
+    if not xs:
+        return None
+    return float(sum(xs) / len(xs))
+
+
+def _p90(xs: List[float]) -> Optional[float]:
+    if not xs:
+        return None
+    s = sorted(xs)
+    idx = min(len(s) - 1, max(0, int(round(0.9 * (len(s) - 1)))))
+    return float(s[idx])
+
+
 def analyze_rows(
     rows: List[Dict[str, Any]],
     *,
     degrade_supply: float,
     near_zero_vfps: float,
     recv_q_local_min: int,
-    use_all_if_no_degraded: bool = True,
 ) -> Agg:
     samples = [r for r in rows if r.get("record") == "sample"]
     a = Agg(n_rows=len(samples))
     degraded_idx: List[int] = []
+    healthy_idx: List[int] = []
+    prev_rq: Optional[int] = None
 
     for i, r in enumerate(samples):
         iv = r.get("interval") or {}
@@ -790,55 +850,105 @@ def analyze_rows(
                 and isinstance(media.get("drops"), int)
             ):
                 a.residual_last = (
-                    media["frames"] - media["presents"] - media["drops"]
+                    int(media["frames"]) - int(media["presents"]) - int(media["drops"])
                 )
                 a.residual_src = PROV_MEAS
 
         sup = iv.get("interval_supply")
         vfps = iv.get("interval_vfps")
         is_deg = False
+        has_rate = False
         if isinstance(sup, (int, float)) and iv.get("interval_supply_src") == PROV_MEAS:
             a.n_supply_meas += 1
             a.supply_vals.append(float(sup))
-            if sup < degrade_supply:
+            has_rate = True
+            if float(sup) < degrade_supply:
                 is_deg = True
         if isinstance(vfps, (int, float)) and iv.get("interval_vfps_src") == PROV_MEAS:
             a.n_vfps_meas += 1
             a.vfps_vals.append(float(vfps))
-            if vfps < near_zero_vfps:
+            has_rate = True
+            if float(vfps) < near_zero_vfps:
                 a.n_vfps_near_zero += 1
                 is_deg = True
         if is_deg:
             degraded_idx.append(i)
+        elif has_rate:
+            healthy_idx.append(i)
 
-    # If no degraded seconds found, optionally score whole run (coverage still required)
-    focus = degraded_idx
-    if not focus and use_all_if_no_degraded:
-        focus = list(range(len(samples)))
-        a.notes.append("no_degraded_seconds_scored_full_run")
-    a.n_degraded = len(degraded_idx)
-
-    for i in focus:
-        r = samples[i]
+        # channels every sample (split later)
         rq = r.get("recv_q") or {}
+        rq_v = None
         if rq.get("src") == PROV_MEAS and isinstance(rq.get("v"), int):
             a.n_recv_q_meas += 1
-            a.recv_q_vals.append(int(rq["v"]))
-            if int(rq["v"]) >= recv_q_local_min:
+            rq_v = int(rq["v"])
+            a.recv_q_all.append(rq_v)
+            if rq_v >= recv_q_local_min:
                 a.n_recv_q_gt0 += 1
+            if prev_rq is not None:
+                d_rq = float(rq_v - prev_rq)
+                # store on this sample's bucket below
+                r.setdefault("_d_recv_q", d_rq)
+            prev_rq = rq_v
+            r["_rq"] = rq_v
+
         fw = r.get("ffmpeg_wchan") or {}
         if fw.get("src") == PROV_MEAS and isinstance(fw.get("v"), dict):
             a.n_ff_wchan_meas += 1
             v = fw["v"]
-            if int(v.get("pipe_write_n") or 0) > 0:
+            pw_n = int(v.get("pipe_write_n") or 0)
+            n_th = int(v.get("n_threads") or 0)
+            if pw_n > 0:
                 a.n_ff_pipe_write += 1
             if int(v.get("socket_readish_n") or 0) > 0:
                 a.n_ff_sockish += 1
+            thr = (pw_n / n_th) if n_th > 0 else None
+            if thr is not None:
+                a.pw_thread_frac_all.append(thr)
+                r["_pw_thr"] = thr
+            r["_pw_any"] = 1 if pw_n > 0 else 0
         dw = r.get("daemon_wchan") or {}
         if dw.get("src") == PROV_MEAS and isinstance(dw.get("v"), dict):
             a.n_daemon_wchan_meas += 1
             if int(dw["v"].get("pipe_read_n") or 0) > 0:
                 a.n_daemon_pipe_read += 1
+
+    a.n_degraded = len(degraded_idx)
+    a.n_healthy = len(healthy_idx)
+
+    def absorb(idxs: List[int], kind: str) -> None:
+        for i in idxs:
+            r = samples[i]
+            if "_rq" in r:
+                rq_v = int(r["_rq"])
+                if kind == "h":
+                    a.recv_q_healthy.append(rq_v)
+                    a.binary_rq_gt0_healthy.append(1 if rq_v >= recv_q_local_min else 0)
+                else:
+                    a.recv_q_degraded.append(rq_v)
+                    a.binary_rq_gt0_degraded.append(1 if rq_v >= recv_q_local_min else 0)
+            if "_d_recv_q" in r:
+                if kind == "h":
+                    a.d_recv_q_healthy.append(float(r["_d_recv_q"]))
+                else:
+                    a.d_recv_q_degraded.append(float(r["_d_recv_q"]))
+            if "_pw_thr" in r:
+                if kind == "h":
+                    a.pw_thread_frac_healthy.append(float(r["_pw_thr"]))
+                else:
+                    a.pw_thread_frac_degraded.append(float(r["_pw_thr"]))
+            if "_pw_any" in r:
+                if kind == "h":
+                    a.binary_pw_any_healthy.append(int(r["_pw_any"]))
+                else:
+                    a.binary_pw_any_degraded.append(int(r["_pw_any"]))
+
+    absorb(healthy_idx, "h")
+    absorb(degraded_idx, "d")
+    if a.n_degraded == 0:
+        a.notes.append("no_degraded_seconds")
+    if a.n_healthy == 0:
+        a.notes.append("no_healthy_baseline_seconds")
     return a
 
 
@@ -849,11 +959,18 @@ def classify_locus(
     min_degraded_s: int,
     min_coverage: float,
     degrade_supply: float,
+    sat_ceiling: float,
+    sat_floor: float,
+    rq_ratio_local: float,
+    rq_ratio_supply: float,
+    pw_frac_delta: float,
+    d_rq_local: float,
+    min_healthy_s: int,
 ) -> Tuple[str, int, str, Dict[str, Any]]:
     """Return verdict, rc, reason, metrics dict."""
     metrics: Dict[str, Any] = {}
+    notes: List[str] = list(a.notes)
 
-    # Session invalid
     if len(a.session_epochs) > 1 or len(a.process_epochs) > 1:
         return (
             "SESSION_INVALID",
@@ -866,168 +983,355 @@ def classify_locus(
     if a.n_rows < 2:
         return "NO-DATA", RC_NO_DATA, "need_ge_2_samples", metrics
 
-    # frac_near_zero first-class
     fnz = frac(a.n_vfps_near_zero, a.n_vfps_meas)
     metrics["frac_near_zero"] = fnz if fnz is not None else PROV_NODATA
     metrics["frac_near_zero_src"] = PROV_MEAS if fnz is not None else PROV_NODATA
     metrics["frac_near_zero_n"] = a.n_vfps_near_zero
     metrics["frac_near_zero_den"] = a.n_vfps_meas
     metrics["n_degraded_s"] = a.n_degraded
+    metrics["n_healthy_s"] = a.n_healthy
     metrics["n_rows"] = a.n_rows
 
-    # ledger
+    # ledger — never round residual
     metrics["frames"] = a.frames_last if a.frames_last is not None else PROV_NODATA
-    metrics["presents"] = (
-        a.presents_last if a.presents_last is not None else PROV_NODATA
-    )
+    metrics["presents"] = a.presents_last if a.presents_last is not None else PROV_NODATA
     metrics["drops"] = a.drops_last if a.drops_last is not None else PROV_NODATA
-    metrics["residual"] = (
-        a.residual_last if a.residual_last is not None else PROV_NODATA
-    )
+    metrics["residual"] = a.residual_last if a.residual_last is not None else PROV_NODATA
     metrics["residual_src"] = a.residual_src
     if (
         isinstance(a.frames_last, int)
         and isinstance(a.presents_last, int)
         and isinstance(a.drops_last, int)
     ):
+        rc_calc = a.frames_last - a.presents_last - a.drops_last
         metrics["ledger"] = "closable"
-        metrics["residual_calc"] = a.frames_last - a.presents_last - a.drops_last
+        metrics["residual_calc"] = rc_calc
+        if a.residual_last is None:
+            metrics["residual"] = rc_calc
+            metrics["residual_src"] = PROV_MEAS
+        # exact residual; near-closed is a label only
+        if abs(int(metrics["residual"])) <= 1:
+            metrics["residual_class"] = "near_closed_abs_le_1"
+            notes.append(
+                f"residual={metrics['residual']} exact — NOT rounded to 0; "
+                f"|r|<=1 on frames={a.frames_last} is near-closed but still reported"
+            )
+        else:
+            metrics["residual_class"] = "open"
     else:
         metrics["ledger"] = "unclosable"
         metrics["residual_calc"] = PROV_NODATA
+        metrics["residual_class"] = PROV_NODATA
 
-    # Coverage on focus set size
-    focus_n = a.n_degraded if a.n_degraded > 0 else a.n_rows
-    cov_rq = frac(a.n_recv_q_meas, focus_n)
-    cov_ff = frac(a.n_ff_wchan_meas, focus_n)
+    mean_supply = _mean(a.supply_vals)
+    metrics["mean_interval_supply"] = mean_supply if mean_supply is not None else PROV_NODATA
+    metrics["mean_interval_supply_src"] = PROV_MEAS if mean_supply is not None else PROV_NODATA
+
+    # --- coverage (whole run) ---
+    cov_rq = frac(a.n_recv_q_meas, a.n_rows)
+    cov_ff = frac(a.n_ff_wchan_meas, a.n_rows)
     metrics["coverage_recv_q"] = cov_rq if cov_rq is not None else PROV_NODATA
     metrics["coverage_ffmpeg_wchan"] = cov_ff if cov_ff is not None else PROV_NODATA
-    metrics["coverage_recv_q_src"] = PROV_MEAS if cov_rq is not None else PROV_NODATA
-    metrics["coverage_ffmpeg_wchan_src"] = (
-        PROV_MEAS if cov_ff is not None else PROV_NODATA
-    )
 
-    # Channel fractions among measured
-    rq_pos = frac(a.n_recv_q_gt0, a.n_recv_q_meas)
-    pw_pos = frac(a.n_ff_pipe_write, a.n_ff_wchan_meas)
-    sk_pos = frac(a.n_ff_sockish, a.n_ff_wchan_meas)
-    metrics["recv_q_gt0_frac"] = rq_pos if rq_pos is not None else PROV_NODATA
-    metrics["recv_q_gt0_frac_src"] = PROV_MEAS if rq_pos is not None else PROV_NODATA
-    metrics["ffmpeg_pipe_write_frac"] = pw_pos if pw_pos is not None else PROV_NODATA
-    metrics["ffmpeg_pipe_write_frac_src"] = (
-        PROV_MEAS if pw_pos is not None else PROV_NODATA
-    )
-    metrics["ffmpeg_socket_readish_frac"] = (
-        sk_pos if sk_pos is not None else PROV_NODATA
-    )
-    metrics["recv_q_max"] = max(a.recv_q_vals) if a.recv_q_vals else PROV_NODATA
-    metrics["recv_q_max_src"] = PROV_MEAS if a.recv_q_vals else PROV_NODATA
-
-    mean_supply = (
-        sum(a.supply_vals) / len(a.supply_vals) if a.supply_vals else None
-    )
-    metrics["mean_interval_supply"] = (
-        mean_supply if mean_supply is not None else PROV_NODATA
-    )
-    metrics["mean_interval_supply_src"] = (
-        PROV_MEAS if mean_supply is not None else PROV_NODATA
-    )
-
-    # Insufficient evidence: missing channels
-    if cov_rq is None or cov_ff is None:
+    if cov_rq is None or cov_ff is None or cov_rq < min_coverage or cov_ff < min_coverage:
         return (
             "INSUFFICIENT_EVIDENCE",
             RC_INSUFFICIENT,
-            "recv_q_or_wchan_coverage_NO-DATA",
-            metrics,
-        )
-    if cov_rq < min_coverage or cov_ff < min_coverage:
-        return (
-            "INSUFFICIENT_EVIDENCE",
-            RC_INSUFFICIENT,
-            f"coverage_below_min cov_rq={cov_rq:.3f} cov_ff={cov_ff:.3f} "
-            f"min={min_coverage} src={PROV_DEFAULT}",
+            f"coverage_below_min cov_rq={cov_rq} cov_ff={cov_ff} min={min_coverage}",
             metrics,
         )
 
-    # Healthy: little degradation
+    # --- legacy binary (always printed; saturation-checked on HEALTHY portion) ---
+    bin_rq_h = frac(sum(a.binary_rq_gt0_healthy), len(a.binary_rq_gt0_healthy))
+    bin_pw_h = frac(sum(a.binary_pw_any_healthy), len(a.binary_pw_any_healthy))
+    bin_rq_d = frac(sum(a.binary_rq_gt0_degraded), len(a.binary_rq_gt0_degraded))
+    bin_pw_d = frac(sum(a.binary_pw_any_degraded), len(a.binary_pw_any_degraded))
+    bin_rq_all = frac(a.n_recv_q_gt0, a.n_recv_q_meas)
+    bin_pw_all = frac(a.n_ff_pipe_write, a.n_ff_wchan_meas)
+    metrics["recv_q_gt0_frac_all"] = bin_rq_all if bin_rq_all is not None else PROV_NODATA
+    metrics["recv_q_gt0_frac_healthy"] = bin_rq_h if bin_rq_h is not None else PROV_NODATA
+    metrics["recv_q_gt0_frac_degraded"] = bin_rq_d if bin_rq_d is not None else PROV_NODATA
+    metrics["ffmpeg_pipe_write_any_frac_all"] = (
+        bin_pw_all if bin_pw_all is not None else PROV_NODATA
+    )
+    metrics["ffmpeg_pipe_write_any_frac_healthy"] = (
+        bin_pw_h if bin_pw_h is not None else PROV_NODATA
+    )
+    metrics["ffmpeg_pipe_write_any_frac_degraded"] = (
+        bin_pw_d if bin_pw_d is not None else PROV_NODATA
+    )
+
+    sat_binary_rq = bin_rq_h is not None and bin_rq_h >= sat_ceiling
+    sat_binary_pw = bin_pw_h is not None and bin_pw_h >= sat_ceiling
+    metrics["sat_binary_recv_q_gt0"] = (
+        "SATURATED_HIGH" if sat_binary_rq else ("OK" if bin_rq_h is not None else PROV_NODATA)
+    )
+    metrics["sat_binary_pipe_write_any"] = (
+        "SATURATED_HIGH" if sat_binary_pw else ("OK" if bin_pw_h is not None else PROV_NODATA)
+    )
+    if sat_binary_rq or sat_binary_pw:
+        notes.append(
+            "MISS_v1: binary recv_q>0 / any-pipe_write saturated on healthy portion "
+            f"(rq_h={bin_rq_h} pw_h={bin_pw_h}) — intentional pacing back-pressure; "
+            "DISABLED for locus (parent 2026-08-02 hardware)"
+        )
+
+    # --- magnitude / dynamics (v2) ---
+    med_h = _median([float(x) for x in a.recv_q_healthy])
+    med_d = _median([float(x) for x in a.recv_q_degraded])
+    p90_h = _p90([float(x) for x in a.recv_q_healthy])
+    p90_d = _p90([float(x) for x in a.recv_q_degraded])
+    mean_drq_h = _mean(a.d_recv_q_healthy)
+    mean_drq_d = _mean(a.d_recv_q_degraded)
+    metrics["recv_q_median_healthy"] = med_h if med_h is not None else PROV_NODATA
+    metrics["recv_q_median_degraded"] = med_d if med_d is not None else PROV_NODATA
+    metrics["recv_q_p90_healthy"] = p90_h if p90_h is not None else PROV_NODATA
+    metrics["recv_q_p90_degraded"] = p90_d if p90_d is not None else PROV_NODATA
+    metrics["recv_q_max_all"] = max(a.recv_q_all) if a.recv_q_all else PROV_NODATA
+    metrics["d_recv_q_mean_healthy"] = mean_drq_h if mean_drq_h is not None else PROV_NODATA
+    metrics["d_recv_q_mean_degraded"] = mean_drq_d if mean_drq_d is not None else PROV_NODATA
+
+    rq_ratio = None
+    if med_h is not None and med_d is not None and med_h > 0:
+        rq_ratio = med_d / med_h
+    elif med_h == 0 and med_d is not None:
+        rq_ratio = float("inf") if med_d > 0 else 1.0
+    metrics["recv_q_median_ratio_deg_over_h"] = (
+        rq_ratio if rq_ratio is not None else PROV_NODATA
+    )
+
+    # magnitude channel saturation: uninformative if both sides missing or ratio~1
+    # with no degraded window to compare
+    mag_usable = (
+        a.n_healthy >= min_healthy_s
+        and a.n_degraded >= min_degraded_s
+        and med_h is not None
+        and med_d is not None
+    )
+    # If healthy median is 0 and degraded also ~0, magnitude cannot show LOCAL growth
+    # but CAN show SUPPLY (already empty). Still usable for SUPPLY collapse check.
+    metrics["channel_recv_q_magnitude"] = "USABLE" if mag_usable else "NO-DATA_BASELINE"
+
+    thr_h = _mean(a.pw_thread_frac_healthy)
+    thr_d = _mean(a.pw_thread_frac_degraded)
+    metrics["pipe_write_thread_frac_mean_healthy"] = (
+        thr_h if thr_h is not None else PROV_NODATA
+    )
+    metrics["pipe_write_thread_frac_mean_degraded"] = (
+        thr_d if thr_d is not None else PROV_NODATA
+    )
+    thr_delta = None
+    if thr_h is not None and thr_d is not None:
+        thr_delta = thr_d - thr_h
+    metrics["pipe_write_thread_frac_delta_deg_minus_h"] = (
+        thr_delta if thr_delta is not None else PROV_NODATA
+    )
+
+    # thread-frac saturation: if healthy mean already >= ceiling, cannot rise
+    sat_thr = thr_h is not None and thr_h >= sat_ceiling
+    sat_thr_floor = thr_h is not None and thr_h <= sat_floor
+    metrics["sat_pipe_write_thread_frac"] = (
+        "SATURATED_HIGH"
+        if sat_thr
+        else (
+            "SATURATED_LOW"
+            if sat_thr_floor
+            else ("OK" if thr_h is not None else PROV_NODATA)
+        )
+    )
+    thr_usable = (
+        a.n_healthy >= min_healthy_s
+        and a.n_degraded >= min_degraded_s
+        and thr_h is not None
+        and thr_d is not None
+        and not sat_thr
+    )
+    metrics["channel_pipe_write_thread_frac"] = (
+        "USABLE" if thr_usable else ("SATURATED" if sat_thr else "NO-DATA_BASELINE")
+    )
+
+    # FINDING: healthy non-empty socket
+    if bin_rq_h is not None and bin_rq_h >= sat_ceiling and med_h is not None and med_h > 0:
+        metrics["finding_socket_never_empty_healthy"] = 1
+        notes.append(
+            f"FINDING: healthy recv_q_gt0_frac={bin_rq_h} median={med_h} — "
+            f"socket never empty under intentional pacing; steady-state "
+            f"link/sender-short refuted for this run"
+        )
+    else:
+        metrics["finding_socket_never_empty_healthy"] = 0
+
+    metrics["notes_internal"] = notes
+
+    # --- HEALTHY run (too few degraded) ---
     if a.n_degraded < min_degraded_s and (
         mean_supply is None or mean_supply >= degrade_supply
     ):
-        # still require channels measured
-        if (fnz is not None and fnz < 0.10) and (
-            rq_pos is not None and rq_pos < sustained_frac
-        ) and (pw_pos is not None and pw_pos < sustained_frac):
-            return (
-                "HEALTHY",
-                RC_OK,
-                f"n_degraded={a.n_degraded}<{min_degraded_s} "
-                f"frac_near_zero={fnz} recv_q_gt0_frac={rq_pos} "
-                f"pipe_write_frac={pw_pos}",
-                metrics,
-            )
-        if a.n_degraded < min_degraded_s:
+        # Publish saturation state; do not claim LOCAL from binary ceilings
+        if sat_binary_rq and sat_binary_pw:
             return (
                 "INSUFFICIENT_EVIDENCE",
                 RC_INSUFFICIENT,
-                f"too_few_degraded_seconds n={a.n_degraded} need>={min_degraded_s} "
-                f"(intermittent ~25% — extend soak)",
+                "healthy_run_binary_discriminators_SATURATED "
+                f"n_degraded={a.n_degraded}<{min_degraded_s} "
+                f"recv_q_gt0_h={bin_rq_h} pipe_write_any_h={bin_pw_h} "
+                f"recv_q_median_h={med_h} — extend soak for degraded window; "
+                f"v1 LOCAL indicators disabled",
                 metrics,
             )
-
-    # LOCAL: both recv_q sustained AND pipe_write
-    local_rq = rq_pos is not None and rq_pos >= sustained_frac
-    local_pw = pw_pos is not None and pw_pos >= sustained_frac
-    supply_rq = rq_pos is not None and rq_pos < sustained_frac
-    # SUPPLY wants socket-ish activity without pipe_write; sock_n is soft
-    supply_pw = pw_pos is not None and pw_pos < sustained_frac
-
-    if local_rq and local_pw:
+        if fnz is not None and fnz < 0.10:
+            return (
+                "HEALTHY",
+                RC_OK,
+                f"n_degraded={a.n_degraded}<{min_degraded_s} frac_near_zero={fnz} "
+                f"mean_supply={mean_supply}",
+                metrics,
+            )
         return (
-            "LOCAL_ESTABLISHED",
-            RC_LOCAL,
-            f"recv_q_gt0_frac={rq_pos:.3f}>={sustained_frac} AND "
-            f"ffmpeg_pipe_write_frac={pw_pos:.3f}>={sustained_frac} "
-            f"during_degraded_or_focus n_focus={focus_n}",
+            "INSUFFICIENT_EVIDENCE",
+            RC_INSUFFICIENT,
+            f"too_few_degraded_seconds n={a.n_degraded} need>={min_degraded_s}",
             metrics,
         )
 
-    if supply_rq and supply_pw and a.n_degraded >= min_degraded_s:
-        # Prefer stronger SUPPLY if socket_readish elevated OR daemon pipe_read
-        dpr = frac(a.n_daemon_pipe_read, a.n_daemon_wchan_meas)
-        metrics["daemon_pipe_read_frac"] = dpr if dpr is not None else PROV_NODATA
+    # --- need healthy baseline for within-run magnitude ---
+    if a.n_healthy < min_healthy_s:
         return (
-            "SUPPLY_ESTABLISHED",
-            RC_SUPPLY,
-            f"recv_q_gt0_frac={rq_pos:.3f}<{sustained_frac} AND "
-            f"ffmpeg_pipe_write_frac={pw_pos:.3f}<{sustained_frac} "
-            f"with n_degraded={a.n_degraded} (pre-register SUPPLY table)",
+            "INSUFFICIENT_EVIDENCE",
+            RC_INSUFFICIENT,
+            f"no_within_run_healthy_baseline n_healthy={a.n_healthy} "
+            f"need>={min_healthy_s} (cannot saturation-guard or ratio-test)",
             metrics,
         )
 
-    # Degraded but not both channels
-    if a.n_degraded >= min_degraded_s:
-        if local_rq ^ local_pw:
+    # Discriminative signals (unsaturated only)
+    local_mag = False
+    supply_mag = False
+    local_thr = False
+    supply_thr = False
+    reasons = []
+
+    if mag_usable and rq_ratio is not None:
+        if rq_ratio >= rq_ratio_local:
+            local_mag = True
+            reasons.append(
+                f"recv_q_median_ratio={rq_ratio:.3f}>={rq_ratio_local} "
+                f"(deg={med_d} h={med_h})"
+            )
+        if rq_ratio <= rq_ratio_supply:
+            supply_mag = True
+            reasons.append(
+                f"recv_q_median_ratio={rq_ratio:.3f}<={rq_ratio_supply} "
+                f"(collapse deg={med_d} h={med_h})"
+            )
+        # dynamics: growing backlog during degrade
+        if mean_drq_d is not None and mean_drq_d > d_rq_local and (
+            mean_drq_h is None or mean_drq_d > mean_drq_h + 1e-6
+        ):
+            local_mag = True
+            reasons.append(
+                f"d_recv_q_mean_deg={mean_drq_d:.1f}>h={mean_drq_h}"
+            )
+        if mean_drq_d is not None and mean_drq_d < -1.0 and (
+            med_d is not None and med_h is not None and med_d < med_h * rq_ratio_supply
+        ):
+            supply_mag = True
+            reasons.append(f"d_recv_q_mean_deg={mean_drq_d:.1f} draining")
+    elif not mag_usable:
+        reasons.append("recv_q_magnitude_channel_not_usable")
+
+    if thr_usable and thr_delta is not None:
+        if thr_delta >= pw_frac_delta:
+            local_thr = True
+            reasons.append(
+                f"pipe_write_thread_frac_delta={thr_delta:.3f}>={pw_frac_delta}"
+            )
+        if thr_delta <= -pw_frac_delta:
+            supply_thr = True
+            reasons.append(
+                f"pipe_write_thread_frac_delta={thr_delta:.3f} falling"
+            )
+    elif sat_thr:
+        reasons.append("pipe_write_thread_frac_SATURATED_HIGH_on_healthy")
+
+    # Hard refuse: if BOTH magnitude and thread channels unusable → 78
+    if not mag_usable and not thr_usable:
+        return (
+            "INSUFFICIENT_EVIDENCE",
+            RC_INSUFFICIENT,
+            "all_locus_channels_SATURATED_or_NO-DATA " + "; ".join(reasons),
+            metrics,
+        )
+
+    # LOCAL needs magnitude growth (primary); thread frac optional boost
+    # Do NOT use saturated binary channels.
+    if local_mag and (local_thr or not thr_usable or sat_thr):
+        # if thr usable and moves opposite, conflict
+        if thr_usable and supply_thr and not local_thr:
             return (
                 "LOCUS_UNKNOWN",
                 RC_UNKNOWN,
-                f"partial_local_signal rq={local_rq} pipe_write={local_pw} "
-                f"rq_frac={rq_pos} pw_frac={pw_pos}",
+                "conflict local_mag vs supply_thr " + "; ".join(reasons),
                 metrics,
+            )
+        return (
+            "LOCAL_ESTABLISHED",
+            RC_LOCAL,
+            "v2_magnitude " + "; ".join(reasons),
+            metrics,
+        )
+
+    if supply_mag and not local_mag:
+        if thr_usable and local_thr:
+            return (
+                "LOCUS_UNKNOWN",
+                RC_UNKNOWN,
+                "conflict supply_mag vs local_thr " + "; ".join(reasons),
+                metrics,
+            )
+        return (
+            "SUPPLY_ESTABLISHED",
+            RC_SUPPLY,
+            "v2_magnitude " + "; ".join(reasons),
+            metrics,
+        )
+
+    if local_thr and not supply_mag and thr_usable and not local_mag:
+        # thread-only LOCAL is weaker; require magnitude agree or ratio unavailable
+        if mag_usable:
+            return (
+                "LOCUS_UNKNOWN",
+                RC_UNKNOWN,
+                "thread_frac_local_without_recv_q_magnitude " + "; ".join(reasons),
+                metrics,
+            )
+        return (
+            "LOCAL_ESTABLISHED",
+            RC_LOCAL,
+            "v2_thread_frac_only " + "; ".join(reasons),
+            metrics,
+        )
+
+    if a.n_degraded >= min_degraded_s:
+        # Explicit: binary would have said LOCAL — refuse
+        if sat_binary_rq and sat_binary_pw:
+            notes.append(
+                "refused_v1_LOCAL_despite_binary_ceiling_on_degraded_too"
             )
         return (
             "LOCUS_UNKNOWN",
             RC_UNKNOWN,
-            f"degraded_but_locus_unproven rq_frac={rq_pos} pw_frac={pw_pos}",
+            "degraded_but_v2_locus_unproven " + "; ".join(reasons),
             metrics,
         )
 
     return (
         "INSUFFICIENT_EVIDENCE",
         RC_INSUFFICIENT,
-        "no_clear_healthy_or_locus",
+        "no_clear_healthy_or_locus " + "; ".join(reasons),
         metrics,
     )
+
 
 
 def print_verdict(
@@ -1039,28 +1343,51 @@ def print_verdict(
 ) -> int:
     print("=== locus480_local_vs_supply verdict ===")
     print(
-        "PRE_REGISTER LOCAL=recv_q>0 sustained + ffmpeg pipe_write; "
-        "SUPPLY=recv_q~0 + not pipe_write during degrade"
+        "MISS_v1_PUBLISHED: binary recv_q>0 + any-pipe_write SATURATED on healthy "
+        "paced playback (parent hardware recv_q_gt0_frac=1.0 pipe_write_frac=1.0) "
+        "— DISABLED for locus"
     )
     print(
-        "VOID_ENDPOINT supply_ratio_alone — identical under LOCAL and SUPPLY; "
-        "use recv_q + wchan discrimination"
+        "PRE_REGISTER_v2: LOCAL=recv_q median_deg/median_h high OR d_recv_q>0; "
+        "SUPPLY=recv_q median collapses; pipe_write THREAD frac delta; "
+        "within-run healthy baseline required"
+    )
+    print(
+        "VOID_ENDPOINT supply_ratio_alone; VOID_ENDPOINT binary_recv_q_gt0; "
+        "VOID_ENDPOINT binary_any_pipe_write under intentional pacing"
     )
     for k in (
         "n_rows",
         "n_degraded_s",
+        "n_healthy_s",
         "frac_near_zero",
         "frac_near_zero_src",
         "frac_near_zero_n",
         "frac_near_zero_den",
         "mean_interval_supply",
         "mean_interval_supply_src",
-        "recv_q_gt0_frac",
-        "recv_q_gt0_frac_src",
-        "recv_q_max",
-        "ffmpeg_pipe_write_frac",
-        "ffmpeg_pipe_write_frac_src",
-        "ffmpeg_socket_readish_frac",
+        "recv_q_gt0_frac_all",
+        "recv_q_gt0_frac_healthy",
+        "recv_q_gt0_frac_degraded",
+        "sat_binary_recv_q_gt0",
+        "ffmpeg_pipe_write_any_frac_all",
+        "ffmpeg_pipe_write_any_frac_healthy",
+        "sat_binary_pipe_write_any",
+        "recv_q_median_healthy",
+        "recv_q_median_degraded",
+        "recv_q_median_ratio_deg_over_h",
+        "recv_q_p90_healthy",
+        "recv_q_p90_degraded",
+        "recv_q_max_all",
+        "d_recv_q_mean_healthy",
+        "d_recv_q_mean_degraded",
+        "channel_recv_q_magnitude",
+        "pipe_write_thread_frac_mean_healthy",
+        "pipe_write_thread_frac_mean_degraded",
+        "pipe_write_thread_frac_delta_deg_minus_h",
+        "sat_pipe_write_thread_frac",
+        "channel_pipe_write_thread_frac",
+        "finding_socket_never_empty_healthy",
         "coverage_recv_q",
         "coverage_ffmpeg_wchan",
         "frames",
@@ -1069,11 +1396,15 @@ def print_verdict(
         "residual",
         "residual_src",
         "residual_calc",
+        "residual_class",
         "ledger",
     ):
         if k in metrics:
             print(f"{k}={metrics[k]}")
-    for n in notes:
+    extra_notes = list(notes)
+    if isinstance(metrics.get("notes_internal"), list):
+        extra_notes = list(metrics["notes_internal"]) + extra_notes
+    for n in extra_notes:
         print(f"NOTE: {n}")
     print(f"reason={reason}")
     print(f"VERDICT={verdict} rc={rc}")
@@ -1084,10 +1415,11 @@ def print_verdict(
     if rc == RC_NO_DATA:
         print("NOTE: rc=77 NO-DATA is never a pass")
     if rc == RC_LOCAL:
-        print("NOTE: LOCAL=consumer too slow (pipe backpressure); not link capacity")
+        print("NOTE: LOCAL=consumer too slow vs same-run healthy baseline (magnitude)")
     if rc == RC_SUPPLY:
-        print("NOTE: SUPPLY=sender/link short; recv_q empty, producer not pipe_write blocked")
+        print("NOTE: SUPPLY=backlog collapse vs same-run healthy baseline")
     return rc
+
 
 
 def cmd_verdict(args: argparse.Namespace) -> int:
@@ -1132,6 +1464,13 @@ def cmd_verdict(args: argparse.Namespace) -> int:
         min_degraded_s=int(args.min_degraded_s),
         min_coverage=float(args.min_coverage),
         degrade_supply=float(args.degrade_supply),
+        sat_ceiling=float(args.sat_ceiling),
+        sat_floor=float(args.sat_floor),
+        rq_ratio_local=float(args.rq_ratio_local),
+        rq_ratio_supply=float(args.rq_ratio_supply),
+        pw_frac_delta=float(args.pw_frac_delta),
+        d_rq_local=float(args.d_rq_local),
+        min_healthy_s=int(args.min_healthy_s),
     )
     # provenance labels on thresholds
     print(
@@ -1158,6 +1497,7 @@ def _synth_row(
     vfps: float,
     recv_q: Optional[int],
     pipe_write_n: int,
+    n_threads: int = 8,
     sock_n: int = 0,
     daemon_pipe_read_n: int = 0,
     frames: int = 0,
@@ -1176,7 +1516,7 @@ def _synth_row(
         "recv_q": rq,
         "ffmpeg_wchan": _meas(
             {
-                "n_threads": 8,
+                "n_threads": n_threads,
                 "pipe_write_n": pipe_write_n,
                 "pipe_read_n": 0,
                 "socket_readish_n": sock_n,
@@ -1218,49 +1558,81 @@ def _synth_row(
     }
 
 
-def cmd_self_test() -> int:
-    # GREEN HEALTHY: high supply, recv_q=0, no pipe_write
-    healthy = [
-        _synth_row(
-            t=1000 * i,
-            supply=0.99,
-            vfps=23.5,
-            recv_q=0,
-            pipe_write_n=0,
-            frames=24 * i,
-            presents=24 * i - 2,
-            drops=2,
-        )
-        for i in range(1, 20)
-    ]
-    a = analyze_rows(
-        healthy,
-        degrade_supply=DEFAULT_DEGRADE_SUPPLY,
-        near_zero_vfps=DEFAULT_NEAR_ZERO_VFPS,
-        recv_q_local_min=1,
-    )
-    v, rc, reason, m = classify_locus(
+def _kw_classify(a: Agg) -> Tuple[str, int, str, Dict[str, Any]]:
+    return classify_locus(
         a,
         sustained_frac=DEFAULT_SUSTAINED_FRAC,
         min_degraded_s=DEFAULT_MIN_DEGRADED_S,
         min_coverage=DEFAULT_MIN_COVERAGE,
         degrade_supply=DEFAULT_DEGRADE_SUPPLY,
+        sat_ceiling=DEFAULT_SAT_CEILING,
+        sat_floor=DEFAULT_SAT_FLOOR,
+        rq_ratio_local=DEFAULT_RQ_RATIO_LOCAL,
+        rq_ratio_supply=DEFAULT_RQ_RATIO_SUPPLY,
+        pw_frac_delta=DEFAULT_PW_FRAC_DELTA,
+        d_rq_local=DEFAULT_D_RQ_LOCAL,
+        min_healthy_s=DEFAULT_MIN_HEALTHY_S,
     )
-    assert v == "HEALTHY" and rc == RC_OK, (v, rc, reason, m)
-    assert m["frac_near_zero"] == 0.0 or m["frac_near_zero"] < 0.05
-    print("SELF_TEST HEALTHY rc=0 OK")
 
-    # RED→GREEN LOCAL: degraded + recv_q>0 + pipe_write
+
+def cmd_self_test() -> int:
+    # --- MISS demonstration: healthy paced run saturates binary LOCAL ---
+    # Like parent hardware: recv_q always >0, always some pipe_write, high supply
+    paced = []
+    rq = 40000
+    for i in range(1, 40):
+        rq = min(90000, rq + 500)  # mild wander, always >>0
+        paced.append(
+            _synth_row(
+                t=1000 * i,
+                supply=0.99,
+                vfps=23.5,
+                recv_q=rq,
+                pipe_write_n=2,
+                n_threads=8,
+                frames=24 * i,
+                presents=24 * i - 3,  # residual = frames - presents - drops = 1
+                drops=2,
+            )
+        )
+    a = analyze_rows(
+        paced,
+        degrade_supply=DEFAULT_DEGRADE_SUPPLY,
+        near_zero_vfps=DEFAULT_NEAR_ZERO_VFPS,
+        recv_q_local_min=1,
+    )
+    v, rc, reason, m = _kw_classify(a)
+    assert rc == RC_INSUFFICIENT, (v, rc, reason, m)
+    assert m.get("sat_binary_recv_q_gt0") == "SATURATED_HIGH", m
+    assert m.get("sat_binary_pipe_write_any") == "SATURATED_HIGH", m
+    assert m.get("finding_socket_never_empty_healthy") == 1, m
+    print("SELF_TEST paced_healthy SATURATED refuse rc=78 OK finding_socket_never_empty")
+
+    # residual=1 never rounded
+    assert m.get("residual") == 1, m
+    assert m.get("residual_calc") == 1, m
+    assert m.get("residual_class") == "near_closed_abs_le_1", m
+    print("SELF_TEST residual=1 near_closed NOT rounded OK")
+
+    # --- LOCAL v2: healthy baseline backlog ~20k; degrade climbs to ~80k ---
     local_rows = []
-    for i in range(1, 30):
-        deg = i >= 10  # degrade second half
+    rq = 20000
+    for i in range(1, 40):
+        deg = i >= 15
+        if deg:
+            rq = min(120000, rq + 4000)  # growing backlog
+            supply, vfps, pw_n = 0.45, 0.4, 5
+        else:
+            rq = 20000 + (i % 5) * 200
+            supply, vfps, pw_n = 0.99, 23.0, 2
         local_rows.append(
             _synth_row(
                 t=1000 * i,
-                supply=0.50 if deg else 0.99,
-                vfps=0.5 if deg else 23.0,
-                recv_q=50000 if deg else 0,
-                pipe_write_n=3 if deg else 0,
+                supply=supply,
+                vfps=vfps,
+                recv_q=rq,
+                pipe_write_n=pw_n,
+                n_threads=8,
                 frames=10 * i,
                 presents=8 * i,
                 drops=i,
@@ -1272,28 +1644,30 @@ def cmd_self_test() -> int:
         near_zero_vfps=DEFAULT_NEAR_ZERO_VFPS,
         recv_q_local_min=1,
     )
-    v, rc, reason, m = classify_locus(
-        a,
-        sustained_frac=DEFAULT_SUSTAINED_FRAC,
-        min_degraded_s=DEFAULT_MIN_DEGRADED_S,
-        min_coverage=DEFAULT_MIN_COVERAGE,
-        degrade_supply=DEFAULT_DEGRADE_SUPPLY,
-    )
+    v, rc, reason, m = _kw_classify(a)
     assert v == "LOCAL_ESTABLISHED" and rc == RC_LOCAL, (v, rc, reason, m)
-    assert m["frac_near_zero"] is not PROV_NODATA and m["frac_near_zero"] > 0.2
-    print("SELF_TEST LOCAL_ESTABLISHED rc=3 OK frac_near_zero=", m["frac_near_zero"])
+    assert m["frac_near_zero"] != PROV_NODATA and float(m["frac_near_zero"]) > 0.2
+    print("SELF_TEST LOCAL_ESTABLISHED rc=3 OK ratio=", m.get("recv_q_median_ratio_deg_over_h"))
 
-    # RED→GREEN SUPPLY: degraded + recv_q=0 + no pipe_write
+    # --- SUPPLY v2: healthy backlog ~40k; degrade collapses toward 0 ---
     supply_rows = []
-    for i in range(1, 30):
-        deg = i >= 10
+    rq = 40000
+    for i in range(1, 40):
+        deg = i >= 15
+        if deg:
+            rq = max(0, rq - 3000)
+            supply, vfps, pw_n = 0.45, 0.4, 1
+        else:
+            rq = 40000 + (i % 3) * 500
+            supply, vfps, pw_n = 0.99, 23.0, 2
         supply_rows.append(
             _synth_row(
                 t=1000 * i,
-                supply=0.50 if deg else 0.99,
-                vfps=0.5 if deg else 23.0,
-                recv_q=0,
-                pipe_write_n=0,
+                supply=supply,
+                vfps=vfps,
+                recv_q=rq,
+                pipe_write_n=pw_n,
+                n_threads=8,
                 sock_n=4 if deg else 1,
                 daemon_pipe_read_n=2 if deg else 0,
                 frames=10 * i,
@@ -1307,15 +1681,37 @@ def cmd_self_test() -> int:
         near_zero_vfps=DEFAULT_NEAR_ZERO_VFPS,
         recv_q_local_min=1,
     )
-    v, rc, reason, m = classify_locus(
-        a,
-        sustained_frac=DEFAULT_SUSTAINED_FRAC,
-        min_degraded_s=DEFAULT_MIN_DEGRADED_S,
-        min_coverage=DEFAULT_MIN_COVERAGE,
-        degrade_supply=DEFAULT_DEGRADE_SUPPLY,
-    )
+    v, rc, reason, m = _kw_classify(a)
     assert v == "SUPPLY_ESTABLISHED" and rc == RC_SUPPLY, (v, rc, reason, m)
-    print("SELF_TEST SUPPLY_ESTABLISHED rc=2 OK")
+    print("SELF_TEST SUPPLY_ESTABLISHED rc=2 OK ratio=", m.get("recv_q_median_ratio_deg_over_h"))
+
+    # --- false LOCAL trap: binary would fire, magnitude does not (flat backlog) ---
+    trap = []
+    for i in range(1, 40):
+        deg = i >= 15
+        trap.append(
+            _synth_row(
+                t=1000 * i,
+                supply=0.45 if deg else 0.99,
+                vfps=0.4 if deg else 23.0,
+                recv_q=50000,  # flat non-zero always
+                pipe_write_n=2,  # always some pipe_write
+                n_threads=8,
+                frames=10 * i,
+                presents=10 * i - 4,
+                drops=4,
+            )
+        )
+    a = analyze_rows(
+        trap,
+        degrade_supply=DEFAULT_DEGRADE_SUPPLY,
+        near_zero_vfps=DEFAULT_NEAR_ZERO_VFPS,
+        recv_q_local_min=1,
+    )
+    v, rc, reason, m = _kw_classify(a)
+    assert rc != RC_LOCAL, (v, rc, reason, m)
+    assert rc in (RC_UNKNOWN, RC_INSUFFICIENT, RC_SUPPLY), (v, rc, reason)
+    print("SELF_TEST false_LOCAL_trap refused rc=", rc, v)
 
     # INSUFFICIENT: no recv_q channel
     thin = [
@@ -1337,13 +1733,7 @@ def cmd_self_test() -> int:
         near_zero_vfps=DEFAULT_NEAR_ZERO_VFPS,
         recv_q_local_min=1,
     )
-    v, rc, reason, m = classify_locus(
-        a,
-        sustained_frac=DEFAULT_SUSTAINED_FRAC,
-        min_degraded_s=DEFAULT_MIN_DEGRADED_S,
-        min_coverage=DEFAULT_MIN_COVERAGE,
-        degrade_supply=DEFAULT_DEGRADE_SUPPLY,
-    )
+    v, rc, reason, m = _kw_classify(a)
     assert v == "INSUFFICIENT_EVIDENCE" and rc == RC_INSUFFICIENT, (v, rc, reason)
     print("SELF_TEST INSUFFICIENT_EVIDENCE rc=78 OK")
 
@@ -1353,8 +1743,8 @@ def cmd_self_test() -> int:
             t=1000,
             supply=0.9,
             vfps=23,
-            recv_q=0,
-            pipe_write_n=0,
+            recv_q=100,
+            pipe_write_n=1,
             session_epoch="1.1",
             frames=10,
             presents=10,
@@ -1364,8 +1754,8 @@ def cmd_self_test() -> int:
             t=2000,
             supply=0.9,
             vfps=23,
-            recv_q=0,
-            pipe_write_n=0,
+            recv_q=100,
+            pipe_write_n=1,
             session_epoch="2.1",
             frames=20,
             presents=20,
@@ -1378,40 +1768,13 @@ def cmd_self_test() -> int:
         near_zero_vfps=DEFAULT_NEAR_ZERO_VFPS,
         recv_q_local_min=1,
     )
-    v, rc, reason, m = classify_locus(
-        a,
-        sustained_frac=DEFAULT_SUSTAINED_FRAC,
-        min_degraded_s=DEFAULT_MIN_DEGRADED_S,
-        min_coverage=DEFAULT_MIN_COVERAGE,
-        degrade_supply=DEFAULT_DEGRADE_SUPPLY,
-    )
+    v, rc, reason, m = _kw_classify(a)
     assert v == "SESSION_INVALID" and rc == RC_SESSION_INVALID, (v, rc, reason)
     print("SELF_TEST SESSION_INVALID rc=79 OK")
 
-    # Negative delta → NO-DATA never 0.0 rate (unit on interval builder)
-    prev = {
-        "t_mono_ms": 1000,
-        "media": _meas({"frames": 100, "wall_s": 10.0, "audio_s": 10.0}),
-        "rx_bytes": _meas(1_000_000, iface="eth0"),
-        "cpu_snap": {
-            "sys_total": 1000,
-            "sys_idle": 500,
-            "ncpu": 2,
-            "ffmpeg_ticks": 100,
-            "daemon_ticks": 50,
-            "src": PROV_MEAS,
-        },
-    }
-    # craft row with lower counters via sample_once path is heavy; direct check:
-    dlt = 500 - 1000
-    assert dlt < 0
-    # document contract
-    print("SELF_TEST negative_delta_contract: must emit NO-DATA not 0.0 OK")
-
-    # frac_near_zero first-class on LOCAL fixture
-    assert m is not None
-    print("SELF_TEST_OK both_directions LOCAL rc=3 and SUPPLY rc=2")
+    print("SELF_TEST_OK v2 magnitude LOCAL/SUPPLY + saturation guard")
     return 0
+
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
@@ -1442,8 +1805,15 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     vp.add_argument("--sustained-frac", type=float, default=DEFAULT_SUSTAINED_FRAC)
     vp.add_argument("--min-degraded-s", type=int, default=DEFAULT_MIN_DEGRADED_S)
     vp.add_argument("--min-coverage", type=float, default=DEFAULT_MIN_COVERAGE)
+    vp.add_argument("--sat-ceiling", type=float, default=DEFAULT_SAT_CEILING)
+    vp.add_argument("--sat-floor", type=float, default=DEFAULT_SAT_FLOOR)
+    vp.add_argument("--rq-ratio-local", type=float, default=DEFAULT_RQ_RATIO_LOCAL)
+    vp.add_argument("--rq-ratio-supply", type=float, default=DEFAULT_RQ_RATIO_SUPPLY)
+    vp.add_argument("--pw-frac-delta", type=float, default=DEFAULT_PW_FRAC_DELTA)
+    vp.add_argument("--d-rq-local", type=float, default=DEFAULT_D_RQ_LOCAL)
+    vp.add_argument("--min-healthy-s", type=int, default=DEFAULT_MIN_HEALTHY_S)
 
-    sub.add_parser("self-test", help="RBG LOCAL + SUPPLY + insufficient + session")
+    sub.add_parser("self-test", help="RBG LOCAL + SUPPLY + saturated + insufficient + session")
 
     args = ap.parse_args(list(argv) if argv is not None else None)
     if args.cmd == "sample":
