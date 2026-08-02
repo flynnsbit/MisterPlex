@@ -52,18 +52,31 @@ else
   echo "OK SIGKILL limit documented"
 fi
 
-# --- RED: strip OnSigInfo ---
+# --- RED: rename OnSigInfo out; same gate on BROKEN must NOT pass ---
 BROKEN="$ROOT/build/crash_guard_broken_$$.cpp"
 mkdir -p "$ROOT/build"
 sed 's/deathBreadcrumbOnSigInfo/deathBreadcrumbOnXigInfo/g' "$SPI" >"$BROKEN"
 bn=$(grep -cE 'deathBreadcrumbOnSigInfo' "$BROKEN" 2>/dev/null || true)
 [ -z "$bn" ] && bn=0
 echo "red_mutation deathBreadcrumbOnSigInfo count_on_broken=$bn"
-if [ "$bn" -ne 0 ]; then
-  echo "FAIL red mutation still has deathBreadcrumbOnSigInfo"
+# Gate that green requires: n_siginfo >= 1. Broken must violate it.
+if [ "$bn" -ge 1 ]; then
+  echo "FAIL red mutation ineffective: broken still has deathBreadcrumbOnSigInfo count=$bn"
   FAIL=$((FAIL+1))
 else
-  echo "OK negative: OnSigInfo-drop would fail gate (red path live)"
+  echo "OK negative: broken fails n_siginfo>=1 gate (count_on_broken=$bn)"
+fi
+# Order gate on broken must also fail (no OnSigInfo before raise)
+if awk '
+  /void crashGuardHandler/ {in_h=1}
+  in_h && /deathBreadcrumbOnSigInfo/ {saw=1}
+  in_h && saw && /raise\(/ {ok=1}
+  in_h && /^}/ {if(!ok) exit 2; exit 0}
+' "$BROKEN"; then
+  echo "FAIL red: broken still has OnSigInfo-before-raise order"
+  FAIL=$((FAIL+1))
+else
+  echo "OK negative: broken fails OnSigInfo-before-raise order"
 fi
 rm -f "$BROKEN"
 
