@@ -1050,7 +1050,7 @@ localparam bit PLXC_DDR_EN = 1'b0;
 
 plex_chrome_ddr_loader #(
 	.ENABLE(PLXC_DDR_EN),
-	.MAX_CMDS(48)
+	.MAX_CMDS(112)
 ) u_plxc_ddr_loader (
 	.clk(clk_sys),
 	.reset(reset),

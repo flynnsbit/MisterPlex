@@ -79,7 +79,7 @@ module plex_chrome_e2e_tb (
 
     plex_chrome_ddr_loader #(
         .ENABLE(1'b1),
-        .MAX_CMDS(48),
+        .MAX_CMDS(112),
         .DOORBELL_PHYS(32'h0),
         .POLL_DIV(16'd4)
     ) u_loader (
@@ -119,7 +119,7 @@ module plex_chrome_e2e_tb (
     assign cfg_enable_mon = cfg_enable;
     assign idle_en_mon = idle_en;
 
-    plex_chrome_host_if #(.MAX_CMDS(48)) u_if (
+    plex_chrome_host_if #(.MAX_CMDS(112)) u_if (
         .clk(clk),
         .reset(reset),
         .host_we(host_we),
@@ -145,8 +145,8 @@ module plex_chrome_e2e_tb (
 
     plex_chrome #(
         .BOOT_DEMO(0),
-        .MAX_CMDS(48),
-        .HIT_SCAN(48)
+        .MAX_CMDS(112),
+        .HIT_SCAN(112)
     ) u_chrome (
         .clk_hdmi(clk),
         .reset(reset),

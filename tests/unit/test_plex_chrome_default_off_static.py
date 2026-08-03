@@ -104,7 +104,7 @@ def main() -> int:
     else:
         fail("no plxc_ext product path nets found")
 
-    # --- 4) PLXC owns +0x130; PLXG at +0x280 in ABI ---
+    # --- 4) PLXC owns +0x130; PLXG at +0x4C0 in ABI ---
     if not ABI.is_file():
         fail(f"missing {ABI}")
     else:
@@ -113,10 +113,10 @@ def main() -> int:
             fail("kPlxcOffset is not 0x130")
         else:
             ok("PLXC owns +0x130")
-        if not re.search(r"kPlxgOffset\s*=\s*0x2C0u", abi):
-            fail("kPlxgOffset missing or not 0x2C0 (after 48×8 list)")
+        if not re.search(r"kPlxgOffset\s*=\s*0x4C0u", abi):
+            fail("kPlxgOffset missing or not 0x4C0 (after 112×8 list)")
         else:
-            ok("PLXG reserved at +0x2C0")
+            ok("PLXG reserved at +0x4C0")
         if re.search(r"kPlxgOffset\s*=\s*0x130u", abi):
             fail("PLXG illegally at +0x130")
         if "static_assert(kPlxgOffset != kPlxcOffset" not in abi:

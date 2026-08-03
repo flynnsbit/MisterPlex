@@ -41,17 +41,22 @@
 //   RECT_PAL:[47:40]=w8  [55:48]=h8  [63:56]=pal_idx
 //            pal 0=panel 1=track 2=amber 3=white 4=edge
 //
-// Budget (prereg, post nostub reclaim free M10K ~356):
-//   list 2×48×64b ≈ 6 kbit → 1–2 M10K consolidated (not 48 tiny RAMs)
-//   font ROM combinational (no M10K)
-//   idle chevron pure math (0 M10K)
-//   ALM: hit scan + idle ~1.5–3k (HIT_SCAN=MAX_CMDS so 720p HUD is fully visible)
+// Budget (yosys generic cell counts, proc+opt_clean+memory -nomap; NOT Quartus ALM/Fmax):
+//   list 2×N×64b dual-buffer (consolidated M10K, not N tiny RAMs):
+//     N=48  → 6.0 kbit   yosys cells=35509
+//     N=80  → 10.0 kbit  yosys cells=56629  (Δ +59% vs 48)
+//     N=104 → 13.3 kbit  yosys cells=72469  (Δ +104% vs 48)
+//     N=112 → ~14.3 kbit  (product; between 104 and 128)
+//     N=128 → 16.0 kbit  yosys cells=88309  (Δ +149% vs 48)
+//   font ROM combinational (no M10K); idle chevron pure math (0 M10K)
+//   Fmax on clk_hdmi: UNKNOWN without Quartus — HIT_SCAN is per-pixel combo depth.
+//   Evidence: .agent-work/chrome-area/stat_n{48,80,104,128}.txt
 
 `timescale 1ns / 1ps
 
 module plex_chrome #(
-    parameter int MAX_CMDS = 48,
-    parameter int HIT_SCAN = 48, // == MAX_CMDS: full list visible @720p HUD budget
+    parameter int MAX_CMDS = 112, // true worst simultaneous UI ~102 @720p (was 48; overflow residual)
+    parameter int HIT_SCAN = 112, // == MAX_CMDS: full list visible; yosys cell cost scales ~linear
     parameter int FONT_W   = 8,
     parameter int FONT_H   = 8,
     parameter bit BOOT_DEMO = 1'b0,

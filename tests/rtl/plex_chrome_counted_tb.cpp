@@ -5,7 +5,7 @@
 //   green       — 38-cmd core HUD via list_we; locate panel/track/fill; passthrough exact
 //   wrong_off   — cmds written past MAX_CMDS; chrome must NOT paint (red twin expects fail if paint)
 //   hit_bleed   — FAULT_HIT_BLEED build: +1px bleed outside rect must be chrome (red twin)
-//   trunc79     — 79 cmds into MAX_CMDS=48; cmd[50] marker absent; first 48 visible; no wrap
+//   trunc79     — 130 cmds into MAX_CMDS=112; cmd[120] marker absent; first 112 visible; no wrap
 //
 // Markers: EXECUTED <case>, PASS/FAIL lines. Soft-skip is not a pass.
 
@@ -245,8 +245,8 @@ static int run_green() {
     auto cmds = buildCoreHud38(g);
     std::fprintf(stderr, "HUD cmds=%zu geom panel=(%d,%d)%dx%d bar=(%d,%d)%dx%d fillW=%d\n",
                  cmds.size(), g.px, g.py, g.pw, g.ph, g.barX, g.barY, g.barW, g.barH, g.fillW);
-    if (cmds.size() < 30 || cmds.size() > 48)
-        fail("core hud size not in 30..48");
+    if (cmds.size() < 30 || cmds.size() > 112)
+        fail("core hud size not in 30..112");
 
     loadList(t, cmds, /*seq*/ 1, true, /*base*/ 0);
 
@@ -347,7 +347,7 @@ static int run_green() {
     return g_fails ? 1 : 0;
 }
 
-// Red twin: write list at base=80 (beyond MAX_CMDS=48) so list_we never accepts.
+// Red twin: write list at base=200 (beyond MAX_CMDS=112) so list_we never accepts.
 // Expect NO panel paint — if panel appears, host layout checks would still pass but fabric silent.
 static int run_wrong_off() {
     std::fprintf(stderr, "EXECUTED wrong_off\n");
@@ -369,8 +369,8 @@ static int run_wrong_off() {
 
     HudGeom g{};
     auto cmds = buildCoreHud38(g);
-    // Wrong mailbox-style offset: host_addr starts at 80 ≥ MAX_CMDS → no list_we
-    loadList(t, cmds, 2, true, /*base*/ 80);
+    // Wrong mailbox-style offset: host_addr starts at 200 ≥ MAX_CMDS → no list_we
+    loadList(t, cmds, 2, true, /*base*/ 200);
     if (t->cfg_enable_mon != 1)
         fail("cfg should still enable (ctrl @0xFF works)");
 
@@ -442,7 +442,7 @@ static int run_hit_bleed() {
     return g_fails ? 1 : 0;
 }
 
-// Feed 79 cmds to MAX_CMDS=48: marker only in slot 50 must not appear; slot 0 panel must.
+// Feed 130 cmds to MAX_CMDS=112: marker only in slot 120 must not appear; slot 0 panel must.
 static int run_trunc79() {
     std::fprintf(stderr, "EXECUTED trunc79\n");
     auto* t = new Vplex_chrome_counted_tb;
@@ -462,39 +462,40 @@ static int run_trunc79() {
         tick(t);
 
     std::vector<uint64_t> cmds;
+    const int kMax = 112;
+    const int kOver = 130;
     // cmd0: large panel
     cmds.push_back(packRect(40, 572, 1200, 108));
-    // cmds 1..47: tiny dummy glyphs off to the side (still within list)
-    for (int i = 1; i < 48; ++i)
+    // cmds 1..111: tiny dummy glyphs (within list)
+    for (int i = 1; i < kMax; ++i)
         cmds.push_back(packGlyph(uint16_t(10 + (i % 8) * 10), uint16_t(10 + (i / 8) * 10), 'A'));
-    // cmds 48..78: should be DROPPED by host_if (addr>=48) — include huge white-ish marker rect
-    // Use distinctive amber rect at (200,200) only in dropped region
-    for (int i = 48; i < 79; ++i) {
-        if (i == 50)
+    // cmds 112..129: DROPPED by host_if (addr>=112) — amber marker only past the cap
+    for (int i = kMax; i < kOver; ++i) {
+        if (i == 120)
             cmds.push_back(packRectPal(200, 200, 80, 80, /*Amber*/ 2));
         else
             cmds.push_back(packGlyph(300, 300, 'Z'));
     }
-    if (cmds.size() != 79)
+    if (static_cast<int>(cmds.size()) != kOver)
         fail("trunc79 setup size");
 
-    // Write all 79 at base 0 — host_if ignores addr>=48 for list_we
+    // Write all at base 0 — host_if ignores addr>=MAX_CMDS for list_we
     int pulses = 0;
     for (size_t i = 0; i < cmds.size(); ++i) {
         if (hostWrite(t, uint8_t(i & 0xFF), cmds[i]))
             pulses++;
     }
-    hostWrite(t, 0xFF, packPlxc(true, 79, 9)); // count field 79 → clamp to 48
+    hostWrite(t, 0xFF, packPlxc(true, static_cast<unsigned>(kOver), 9)); // clamp to 112
     t->vs_in = 0;
     tick(t);
     t->vs_in = 1;
     for (int i = 0; i < 4; ++i)
         tick(t);
-    std::fprintf(stderr, "trunc79 list_we_pulses=%d cfg_cnt=%u (want pulses=48 cnt<=48)\n", pulses,
-                 unsigned(t->cfg_count_mon));
-    if (pulses != 48)
-        fail("trunc79 list_we accepted != 48");
-    if (t->cfg_count_mon > 48)
+    std::fprintf(stderr, "trunc79 list_we_pulses=%d cfg_cnt=%u (want pulses=%d cnt<=%d)\n", pulses,
+                 unsigned(t->cfg_count_mon), kMax, kMax);
+    if (pulses != kMax)
+        fail("trunc79 list_we accepted != MAX_CMDS");
+    if (t->cfg_count_mon > kMax)
         fail("trunc79 cfg_count not clamped");
 
     std::vector<uint32_t> fb;
@@ -502,15 +503,15 @@ static int run_trunc79() {
     // Panel from cmd0 present
     if (!isPanel(fb[620 * 1280 + 640]))
         fail("trunc79 panel from cmd0 missing");
-    // Marker amber at (200,200) from cmd50 must NOT appear
+    // Marker amber at (200,200) from cmd120 must NOT appear
     int amber_zone = 0;
     for (int y = 200; y < 280; ++y)
         for (int x = 200; x < 280; ++x)
             if (isAmber(fb[static_cast<size_t>(y) * 1280 + x]))
                 amber_zone++;
-    std::fprintf(stderr, "trunc79 amber_at_cmd50_zone=%d (want 0)\n", amber_zone);
+    std::fprintf(stderr, "trunc79 amber_at_cmd120_zone=%d (want 0)\n", amber_zone);
     if (amber_zone != 0)
-        fail("trunc79 wrapped/accepted cmd50 marker — corruption");
+        fail("trunc79 wrapped/accepted cmd120 marker — corruption");
     // Pass-through at marker centre
     if (fb[240 * 1280 + 240] != videoAt(240, 240))
         fail("trunc79 marker zone not passthrough");

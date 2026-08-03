@@ -26,27 +26,20 @@ ARM never blends HUD pixels into the content bank when `chromePlaneLive()`.
 | Buffering chip | progress log only | box+9 glyphs | Now expressible |
 | Volume | not drawn on HDMI HUD | 0 | N/A |
 
-### Budget vs `MAX_CMDS=48` / `HIT_SCAN=48`
+### Budget vs `MAX_CMDS=112` / `HIT_SCAN=112`
 
-Measured by `countHudBudget()` / `test_plex_chrome_cmds` (uncapped builder):
+| Scenario | `totalUncapped` | Fits 112? |
+|----------|-----------------|-----------|
+| Core STOPPED + 19-char title + bar | **38** | yes |
+| Short simultaneous (skip+notice+buf) | **79** | yes |
+| **True worst** (title19+notice31+H:MM:SS+huge skip+buf) | **102** | yes |
+| True worst @1080p canvas | **104** | yes |
 
-Measured (`test_plex_chrome_cmds`, true rc=0):
+**79 was not the ceiling.** Product depth is **112**. Yosys cell Δ 48→112 =
+**+119%** (see `docs/fab-chrome-max-cmds-cost.md`). Fmax on `clk_hdmi` is
+**unknown without Quartus**.
 
-| Scenario | `totalUncapped` | Fits 48? |
-|----------|-----------------|----------|
-| Core STOPPED + 19-char title + bar | **38** | **yes** |
-| PLAYING worst title + full bar | **45** | **yes** |
-| Core + skip + notice + buffering **simultaneous** | **79** | **no** — need `MAX_CMDS≥79` |
-
-Per-layer add-on (same run): skip=+7, notice=+24, buffering=+10.
-
-**Policy:** if simultaneous full UI needs N>48, **raise `MAX_CMDS`/`HIT_SCAN` to N**
-(list is 2×N×64b BRAM — deep/wide, not many small RAMs). **Do not trim the UI**
-to make the gate pass. Product `buildPlaybackHud` still truncates at 48 so RTL is
-never overfed; truncation is a **visible residual**, not a silent feature cut.
-
-List M10K cost at N=48 today: ~6 kbit → 1–2 M10K. Doubling N≈96 stays small vs
-decode RAMs.
+Mailbox: list +0x140..+0x4BF, **PLXG +0x4C0** (moved from +0x2C0).
 
 ## ARM writes commands, not pixels (evidence)
 
@@ -104,9 +97,9 @@ tests/unit/test_plex_chrome_counted_rtl_sim.sh
 
 3. **OPEN — Volume** is not a glass HUD element in the current design.
 
-4. **OPEN — Simultaneous full UI** needs `MAX_CMDS ≥ 79` (measured 79 vs product
-   48). Truncation is **visible and bounded** (`trunc79` sim: cmd50 absent, no
-   wrap). Raise list depth (w-nostub/fit) rather than cutting elements.
+4. **CLOSED (depth) / OPEN (Fmax)** — `MAX_CMDS=HIT_SCAN=112` absorbs true worst
+   102. Yosys +119% cells vs 48. **Quartus Fmax on clk_hdmi still unknown.**
+   PLXG moved to **+0x4C0** — w-mem must follow.
 
 ## Tests
 

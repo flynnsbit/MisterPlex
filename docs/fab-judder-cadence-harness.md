@@ -84,3 +84,27 @@ Must distinguish on synthetic moving-bar frames, true rc=0:
 - PLAYING gate: `scripts/parent_playing_gate.sh` (geometry/motion, not pulldown)
 - Chrome paint domain: `docs/fab-chrome-paint-domain.md` (post-ascal HDMI_OUT)
 - Parent plan: 960×540@24 fits decode budget; @30 fails by ~1.17 ms; 640×360@30 fits
+
+## Real-capture pitfalls (read before first glass run)
+
+These are easy to misread. The harness is fail-closed where it can be; the rest
+is annotation, not a silent pass.
+
+| Symptom | Fields | Meaning | Do **not** conclude |
+|---------|--------|---------|---------------------|
+| Too few frames / empty dir | exit **4**, no `PATTERN=` | DEGENERATE — not a cadence claim | “clean 2:1” |
+| Device missing/busy / decode fail | exit **3** `UNKNOWN_GRABBER` / IO | grabber problem | fabric judder |
+| One long hold, `FROZEN=1` | `PATTERN=FROZEN`, `JUDDER=0` | static/paused content | “perfectly smooth 2:1” (JUDDER ties cleans at 0; FROZEN is the flag) |
+| `DROPPED_HINT>0` | isolated `1`s or `≥5` holds in RUN_LENGTHS | *hint* of missing capture slots or glitch | definitive dropped-frame count |
+| `IRREGULAR` | residuals high to all clean classes | mixed/unknown cadence | force-fit to 3:2 or 2:1 |
+| Partial capture (window shorter than a few pulldown cycles) | short `RUN_LENGTHS` | classifier may pick wrong phase | trust PATTERN without looking at RUN_LENGTHS |
+| Warm-up not discarded | black / locked frames at start | false NEW/repeat edges | any PATTERN from a bare `-frames:v 1` path |
+
+**Ranking 24 vs 30:** use `HOLD_STDEV` / `HOLD_MAXDEV`, not `JUDDER`.
+Clean 3:2 and clean 2:1 both have `JUDDER≈0`.
+
+**Minimum useful window:** ≥ ~1 s at 60 Hz (≥8 frames after warm-up; prefer
+3 s (`hdmi_capture_cadence.sh OUT 3`) so several 3:2 periods are visible.
+
+**Always paste:** `RUN_LENGTHS=`, `PATTERN=`, `HOLD_STDEV=`, `HOLD_MAXDEV=`,
+`FROZEN=`, `DROPPED_HINT=`, and the process `true rc=`.

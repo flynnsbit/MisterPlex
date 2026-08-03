@@ -112,9 +112,10 @@ static void checkPlayerUiCommandBudget() {
     HudBudget bCore = countHudBudget(core);
     std::fprintf(stderr,
                  "UI_BUDGET core total=%d panel=%d state=%d title=%d time=%d track=%d fill=%d "
-                 "fits48=%d\n",
+                 "fits=%d max=%d\n",
                  bCore.totalUncapped, bCore.panel, bCore.stateGlyphs, bCore.titleGlyphs,
-                 bCore.timeGlyphs, bCore.track, bCore.fillChunks, bCore.fitsProductList ? 1 : 0);
+                 bCore.timeGlyphs, bCore.track, bCore.fillChunks, bCore.fitsProductList ? 1 : 0,
+                 kMaxCmds);
     CHECK(bCore.panel == 1);
     CHECK(bCore.track == 1);
     CHECK(bCore.stateGlyphs == 7); // STOPPED
@@ -131,21 +132,15 @@ static void checkPlayerUiCommandBudget() {
     full.buffering = true;
     HudBudget bFull = countHudBudget(full);
     std::fprintf(stderr,
-                 "UI_BUDGET full total=%d skip=%d notice=%d buf=%d fits48=%d max=%d\n",
+                 "UI_BUDGET full total=%d skip=%d notice=%d buf=%d fits=%d max=%d\n",
                  bFull.totalUncapped, bFull.skip, bFull.notice, bFull.buffering,
                  bFull.fitsProductList ? 1 : 0, bFull.maxCmds);
     CHECK(bFull.skip > 0);
     CHECK(bFull.notice > 0);
     CHECK(bFull.buffering > 0);
-    // Honest: if full UI exceeds 48, report — do NOT pretend it fits.
-    if (!bFull.fitsProductList) {
-        std::fprintf(stderr,
-                     "UI_BUDGET_NEED max_cmds_ge=%d (product kMaxCmds=%d) — raise list depth; "
-                     "do not trim UI\n",
-                     bFull.totalUncapped, kMaxCmds);
-    }
-    // Core-only product path must still fit today.
-    CHECK(bCore.fitsProductList);
+    // Product list depth must absorb the simultaneous full UI (no silent trim).
+    CHECK(bFull.fitsProductList);
+    CHECK(bFull.totalUncapped <= kMaxCmds);
 
     // PLAYING worst title + full bar fill
     BuildArgs play;
@@ -154,9 +149,34 @@ static void checkPlayerUiCommandBudget() {
     play.durationMs = 3600000;
     play.title = "0123456789012345678"; // 19
     HudBudget bPlay = countHudBudget(play);
-    std::fprintf(stderr, "UI_BUDGET playing_worst total=%d fits48=%d\n", bPlay.totalUncapped,
+    std::fprintf(stderr, "UI_BUDGET playing_worst total=%d fits=%d\n", bPlay.totalUncapped,
                  bPlay.fitsProductList ? 1 : 0);
     CHECK(bPlay.fitsProductList);
+
+    // --- True worst case under current API caps (title19 + notice31 + long times + skip + buf) ---
+    BuildArgs worst;
+    worst.outW = kHdmiOutW;
+    worst.outH = kHdmiOutH;
+    worst.state = misterplex::PlaybackOverlayState::Playing;
+    worst.positionMs = 359999000; // forces H:MM:SS
+    worst.durationMs = 359999000;
+    char title19[20];
+    std::memset(title19, 'X', 19);
+    title19[19] = 0;
+    worst.title = title19;
+    worst.skipDeltaMs = 999999000; // long skip string
+    char notice31[32];
+    std::memset(notice31, 'N', 31);
+    notice31[31] = 0;
+    worst.notice = notice31;
+    worst.buffering = true;
+    HudBudget bW = countHudBudget(worst);
+    std::fprintf(stderr, "UI_BUDGET true_worst_720p total=%d max=%d fits=%d\n",
+                 bW.totalUncapped, kMaxCmds, bW.fitsProductList ? 1 : 0);
+    CHECK(bW.totalUncapped >= 79); // prior short-simultaneous under-count
+    CHECK(bW.totalUncapped <= kMaxCmds);
+    CHECK(bW.fitsProductList);
+    // Growth ceiling note: new HUD elements or longer caps raise this; kMaxCmds is the hard gate.
 
     // Volume: not a drawn player-HUD element today (no glyph/rect). Residual: N/A.
 }
@@ -390,6 +410,87 @@ static void checkCodedSizeRejectedForChrome() {
     CHECK(!isHdmiChromeRaster(bad.outW, bad.outH));
 }
 
+// Chrome layout is HDMI_OUT-only: content/core geometry must not move commands.
+// Product path uses chrome canvas (1280×720), never STORAGE/CORE_DE sizes.
+static void checkChromeLayoutInvariantToContentGeom() {
+    using namespace misterplex::plex_chrome_cmds;
+    // Three content geometries parent measured on PMS (decode/core). Canvas fixed.
+    const int contents[][2] = {{320, 240}, {640, 360}, {960, 540}};
+    std::vector<uint64_t> ref;
+    for (int i = 0; i < 3; ++i) {
+        const int cw = contents[i][0], ch = contents[i][1];
+        // Product builder: outW/outH = HDMI glass only. Content is not an input.
+        BuildArgs a;
+        a.outW = kHdmiOutW;
+        a.outH = kHdmiOutH;
+        a.state = misterplex::PlaybackOverlayState::Playing;
+        a.positionMs = 125000;
+        a.durationMs = 600000;
+        a.title = "BIG BUCK BUNNY TITLE";
+        auto cmds = buildPlaybackHud(a);
+        // Sanity: content sizes are coded/storage class — refused as chrome canvas.
+        CHECK(isCodedBankSizeNotHdmi(cw, ch) || (cw == 640 && ch == 360));
+        CHECK(!isHdmiChromeRaster(cw, ch));
+        if (i == 0)
+            ref = cmds;
+        else {
+            CHECK(cmds.size() == ref.size());
+            for (size_t k = 0; k < ref.size(); ++k)
+                CHECK(cmds[k] == ref[k]);
+        }
+        std::fprintf(stderr, "INVARIANT content=%dx%d hud_cmds=%zu identical=%d\n", cw, ch,
+                     cmds.size(), i == 0 ? 1 : 1);
+    }
+    // setChromeOutputSize product refuse: coded sizes must not replace HDMI defaults.
+    // (media_player.hpp — tested via isCodedBankSizeNotHdmi which gates the setter)
+    CHECK(isCodedBankSizeNotHdmi(320, 240));
+    CHECK(isCodedBankSizeNotHdmi(960, 540));
+    CHECK(!isCodedBankSizeNotHdmi(1280, 720));
+}
+
+// Red twin: injecting content geometry into outW/outH MUST break byte-identity.
+static void checkChromeLayoutContentLeakRedTwin() {
+    using namespace misterplex::plex_chrome_cmds;
+    BuildArgs hdmi;
+    hdmi.outW = kHdmiOutW;
+    hdmi.outH = kHdmiOutH;
+    hdmi.state = misterplex::PlaybackOverlayState::Stopped;
+    hdmi.positionMs = 125000;
+    hdmi.durationMs = 600000;
+    hdmi.title = "TITLE";
+    const auto good = buildPlaybackHud(hdmi);
+
+    const int leaks[][2] = {{320, 240}, {640, 360}, {960, 540}};
+    std::vector<std::vector<uint64_t>> bad;
+    for (auto& g : leaks) {
+        BuildArgs a = hdmi;
+        a.outW = g[0]; // FAULT: content/core as chrome canvas
+        a.outH = g[1];
+        bad.push_back(buildPlaybackHud(a));
+    }
+    // At least one leak must differ from HDMI product list (else red twin is toothless).
+    bool any_diff = false;
+    for (auto& b : bad) {
+        if (b.size() != good.size()) {
+            any_diff = true;
+            break;
+        }
+        for (size_t i = 0; i < good.size(); ++i) {
+            if (b[i] != good[i]) {
+                any_diff = true;
+                break;
+            }
+        }
+        if (any_diff)
+            break;
+    }
+    CHECK(any_diff);
+    // The three leaked canvases must not all match each other either (geom-dependent).
+    CHECK(!(bad[0].size() == bad[1].size() && bad[0] == bad[1] && bad[1] == bad[2]));
+    std::fprintf(stderr, "RED_TWIN content-leak: HDMI cmds=%zu leak320=%zu leak640=%zu leak960=%zu\n",
+                 good.size(), bad[0].size(), bad[1].size(), bad[2].size());
+}
+
 // R2 closed: flashPlaybackSkip must publish PLXC when plane live (not ARM pixels).
 // Negative: absence of publishPlxcHud under flashPlaybackSkip is FAIL.
 static void checkFlashSkipPublishesPlxc() {
@@ -437,6 +538,8 @@ int main() {
     checkRedTwinArmPixelBakeCaught();
     checkZeroPerPixelArmWhenLiveSource();
     checkFlashSkipPublishesPlxc();
+    checkChromeLayoutInvariantToContentGeom();
+    checkChromeLayoutContentLeakRedTwin();
     checkWriteChromeIsListNotPixels();
     checkStoppedHudHasBarAndState();
     checkPlayerUiCommandBudget();

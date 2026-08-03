@@ -21,8 +21,8 @@ module plex_chrome_fabchrome_tb #(
 
     plex_chrome #(
         .BOOT_DEMO(0),
-        .MAX_CMDS(48),
-        .HIT_SCAN(48),
+        .MAX_CMDS(112),
+        .HIT_SCAN(112),
         .FAULT_LEGACY_480P_LAYOUT(FAULT_LEGACY_480P_LAYOUT)
     ) u_chrome (
         .clk_hdmi(clk),

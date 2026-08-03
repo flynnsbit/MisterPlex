@@ -4,7 +4,7 @@
 
 module plex_chrome_counted_tb #(
     parameter bit FAULT_HIT_BLEED = 1'b0,
-    parameter int MAX_CMDS = 48
+    parameter int MAX_CMDS = 112
 ) (
     input  wire        clk,
     input  wire        reset,

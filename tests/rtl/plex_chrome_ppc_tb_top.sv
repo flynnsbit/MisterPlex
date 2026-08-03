@@ -29,7 +29,7 @@ module plex_chrome_ppc_tb (
     wire [1:0] idle_mode;
     wire [15:0] idle_phase;
 
-    plex_chrome_host_if #(.MAX_CMDS(48)) u_if (
+    plex_chrome_host_if #(.MAX_CMDS(112)) u_if (
         .clk(clk),
         .reset(reset),
         .host_we(host_we),
@@ -55,8 +55,8 @@ module plex_chrome_ppc_tb (
 
     plex_chrome #(
         .BOOT_DEMO(0),
-        .MAX_CMDS(48),
-        .HIT_SCAN(48),
+        .MAX_CMDS(112),
+        .HIT_SCAN(112),
         .PX_PER_CLK(2)
     ) u_chrome (
         .clk_hdmi(clk),

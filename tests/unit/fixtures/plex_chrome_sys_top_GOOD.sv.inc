@@ -10,7 +10,7 @@
 
 	plex_chrome #(
 		.BOOT_DEMO(0),
-		.MAX_CMDS(48)
+		.MAX_CMDS(112)
 	) u_plex_chrome (
 		.clk_hdmi(clk_hdmi),
 		.reset(reset_req),

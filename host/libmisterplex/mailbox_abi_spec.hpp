@@ -37,7 +37,7 @@ struct MailboxEntry {
 // RTL places the control page relative to DOORBELL_PHYS:
 //   PLXK +0x000, PLXS +0x100, PLXI +0x108, PLXM +0x110,
 //   PLXF +0x118, DIAG +0x120, PLXD +0x128, PLXC +0x130, PLXO +0x138, list +0x140
-//   PLXG +0x2C0  (present geometry — MUST NOT use +0x130; PLXC owns +0x130)
+//   PLXG +0x4C0  (present geometry — after 112-cmd list; MUST NOT use +0x130)
 // Product 480p YUV doorbell is 0x300FF000 → PLXD live at 0x300FF128.
 // The 0x3007F000 family below is the *legacy example base* (older packed-320
 // map). Consumers MUST resolve via frameStoreMailboxPhys(doorbell, offset),
@@ -58,10 +58,13 @@ constexpr uint32_t kPlxdOffset = 0x128u;
 constexpr uint32_t kPlxcOffset = 0x130u;
 constexpr uint32_t kPlxoOffset = 0x138u;
 constexpr uint32_t kPlxlOffset = 0x140u; // list payload base (64-bit cmds)
-// List payload: 48 × 8B = 0x180 bytes → occupies +0x140 .. +0x2BF inclusive.
+// List depth must match plex_chrome_cmds::kMaxCmds / RTL MAX_CMDS (112).
+// 112 × 8B = 0x380 bytes → occupies +0x140 .. +0x4BF inclusive.
 // Next free qword-aligned slot for present geometry (w-scaler / w-mem):
-constexpr uint32_t kPlxgOffset = 0x2C0u; // = kPlxlOffset + 48*8
+constexpr uint32_t kPlxcListMaxCmds = 112u;
+constexpr uint32_t kPlxgOffset = 0x4C0u; // = kPlxlOffset + kPlxcListMaxCmds*8
 // HARD RULE: PLXG must never be placed at kPlxcOffset (0x130). PLXC owns it.
+// HARD RULE: PLXG must sit exactly after the chrome list (no hole, no overlap).
 
 // Legacy example doorbell base (historical 0x3007F000 control page).
 constexpr uint32_t kLegacyFrameStoreDoorbellPhys = 0x3007F000u;
@@ -125,11 +128,14 @@ constexpr uint32_t kPlxoAddr  = 0x3007F138u;
 constexpr uint32_t kPlxoMagic = 0x504C584Fu; // "PLXO"
 
 // PLXG — Present / glass geometry (ARM→FPGA). Coded + display window for scaler.
-// Offset +0x2C0 only (after 48-cmd list). Magic "PLXG". w-scaler/w-mem; not w-osd.
-constexpr uint32_t kPlxgAddr  = 0x3007F2C0u;
+// Offset +0x4C0 only (after 112-cmd list). Magic "PLXG". w-scaler/w-mem; not w-osd.
+// Moved from +0x2C0 when MAX_CMDS 48→112 (full simultaneous UI needs ~102).
+constexpr uint32_t kPlxgAddr  = 0x3007F4C0u;
 constexpr uint32_t kPlxgMagic = 0x504C5847u; // "PLXG"
 static_assert(kPlxgOffset != kPlxcOffset, "PLXG must not collide with PLXC +0x130");
-static_assert(kPlxgOffset == kPlxlOffset + 48u * 8u, "PLXG must sit exactly after 48-cmd list");
+static_assert(kPlxgOffset == kPlxlOffset + kPlxcListMaxCmds * 8u,
+              "PLXG must sit exactly after chrome list");
+static_assert(kPlxcListMaxCmds == 112u, "list depth must match kMaxCmds/RTL MAX_CMDS");
 // Bit-field positions (in the upper 32 bits, i.e. offset from bit 32):
 constexpr unsigned kPlxdFreeBankMaskBit = 0;  // bits [33:32] → [1:0] of upper word
 constexpr unsigned kPlxdFreeBankMaskWidth = 2;

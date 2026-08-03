@@ -56,7 +56,7 @@ module plex_chrome_idle720_tb #(
     assign idle_en_mon    = idle_en;
     assign idle_phase_mon = idle_phase;
 
-    plex_chrome_host_if #(.MAX_CMDS(48)) u_if (
+    plex_chrome_host_if #(.MAX_CMDS(112)) u_if (
         .clk(clk),
         .reset(reset),
         .host_we(1'b0),
@@ -82,8 +82,8 @@ module plex_chrome_idle720_tb #(
 
     plex_chrome #(
         .BOOT_DEMO(0),
-        .MAX_CMDS(48),
-        .HIT_SCAN(48),
+        .MAX_CMDS(112),
+        .HIT_SCAN(112),
         .PX_PER_CLK(PX_PER_CLK),
         .FAULT_LEGACY_480P_LAYOUT(FAULT_LEGACY_480P_LAYOUT),
         .FAULT_HDMI_LAYOUT_ON_CORE_DE(FAULT_HDMI_LAYOUT_ON_CORE_DE)

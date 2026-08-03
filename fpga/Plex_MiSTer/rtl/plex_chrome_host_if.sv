@@ -12,7 +12,7 @@
 `timescale 1ns / 1ps
 
 module plex_chrome_host_if #(
-    parameter int MAX_CMDS = 48
+    parameter int MAX_CMDS = 112
 ) (
     input  wire        clk,
     input  wire        reset,

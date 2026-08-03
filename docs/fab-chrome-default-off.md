@@ -18,7 +18,7 @@ Also: `PLEX_FAB_IDLE` hardwired `has_frame_chrome=0` (steals video forever);
 | `PLEX_FAB_IDLE` | idle capability + phase; `has_frame` from **CDC(`HAS_FRAME`)** |
 | `PLEX_FAB_IDLE_FORCE` | ARM-off milestone only — hardwire `has_frame=0` |
 | `plxc_ext_*` | emu ports `PLXC_EXT_*` from `plex_chrome_ddr_loader` (ENABLE=0 default) |
-| Mailbox | **PLXC +0x130**, list +0x140..+0x2BF, **PLXG +0x2C0** |
+| Mailbox | **PLXC +0x130**, list +0x140..+0x4BF, **PLXG +0x4C0** |
 
 ## Macros (fit)
 

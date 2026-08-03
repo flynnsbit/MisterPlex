@@ -32,8 +32,8 @@ namespace plex_chrome_cmds {
 inline constexpr uint32_t kMagic = mailbox_abi::kPlxcMagic;
 inline constexpr uint32_t kOffset = mailbox_abi::kPlxcOffset;
 inline constexpr uint32_t kListOffset = mailbox_abi::kPlxlOffset;
-inline constexpr int kMaxCmds = 48;
-inline constexpr int kHitScan = 48; // match RTL HIT_SCAN
+inline constexpr int kMaxCmds = 112; // true worst ~102 @720p full UI; see countHudBudget
+inline constexpr int kHitScan = 112; // match RTL HIT_SCAN (== MAX_CMDS)
 inline constexpr int kFontW = 8;
 inline constexpr int kFontH = 8;
 inline constexpr int kFontAdvance = 9; // 8 + 1 gap
