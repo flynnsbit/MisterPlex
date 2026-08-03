@@ -1,14 +1,20 @@
 // Present core: color bars OR external frame_store, cadence, tone + audio FIFO.
 // Display owns VSync; unique content advances only when present_cadence says so.
 //
-// 720p / ascal-native present path (landed on main; DEFAULT OFF):
+// 720p / ascal-native present path (landed; DEFAULT OFF):
+//   `define PLEX_PRESENT_720P_L4 — L4 product 720p24 path:
+//       present_beam_content_de DE 1280×720, H_TOTAL=1312, V_TOTAL=762
+//       (w-clock measured: 24e6/(1312*762)=24.006 Hz @ preferred 24 MHz clk_sys;
+//        at default 20 MHz beam runs ~20.005 Hz until fit grants 24 MHz PLL).
+//       Instantiates present_content_window (store map). Requires FRAME_W=1280
+//       FRAME_H=720 in the same QSF enable recipe. Plex.sv wires geom_latch+mux.
 //   `define PRESENT_BEAM_960     — present_beam_content_de true-DE (max tier 960×540)
 //   `define PRESENT_MULTI_PIXEL  — CEA 720p beam + present_npx_path (PPC path)
 //   `define PRESENT_PX_PER_CLK N — 1|2|4 with MULTI_PIXEL (product land uses 1 until
 //                                  ddr_frame_store grows N-wide RGB ports)
 //   `define PRESENT_CLK_PIX_PLL  — separate clk_pix + rate-match (optional)
 // Macros off → bit-identical Template H_DE=529 / DE_LAG=3 path (v0.3.0 baseline).
-// Mutually exclusive: BEAM_960 vs MULTI_PIXEL. Parent enables in fit QSF only.
+// Mutually exclusive: L4 vs BEAM_960 vs MULTI_PIXEL. Parent enables in fit QSF only.
 
 `ifdef PRESENT_MULTI_PIXEL
 	`ifndef PRESENT_PX_PER_CLK
@@ -208,7 +214,88 @@ module present_core #(
 		.needs_wide_fifo(keep_960_wide_fifo)
 	);
 
+`ifdef PLEX_PRESENT_720P_L4
+	// =====================================================================
+	// L4 720p24 true-DE beam (DEFAULT OFF). w-clock: H=1312 V=762 @ 24 MHz
+	// → 24.006 Hz (1:1 with measured PMS 24/1 asset; no pulldown).
+	// =====================================================================
+	// synthesis translate_off
+	initial begin
+		if (FRAME_W != 1280 || FRAME_H != 720)
+			$error("PLEX_PRESENT_720P_L4 requires FRAME_W=1280 FRAME_H=720 (got %0d x %0d)",
+				FRAME_W, FRAME_H);
 `ifdef PRESENT_BEAM_960
+		$error("PLEX_PRESENT_720P_L4 and PRESENT_BEAM_960 are mutually exclusive");
+`endif
+`ifdef PRESENT_MULTI_PIXEL
+		$error("PLEX_PRESENT_720P_L4 and PRESENT_MULTI_PIXEL are mutually exclusive");
+`endif
+	end
+	// synthesis translate_on
+
+	// w-clock NATIVE_720P_GO_NOGO / Plex_native720p24.sdc
+	localparam int L4_H_DE    = 1280;
+	localparam int L4_V_ACT   = 720;
+	localparam int L4_H_TOTAL = 1312;
+	localparam int L4_V_TOTAL = 762;
+	localparam int L4_H_SYNC_S = 1280 + 8;
+	localparam int L4_H_SYNC_E = 1280 + 8 + 8;
+	localparam int L4_V_SYNC_S = 720 + 8;
+	localparam int L4_V_SYNC_E = 720 + 8 + 6;
+
+	wire [10:0] hc11, vc11, vtot_act11;
+	wire [10:0] hde_act11, htot_act11, vact_act11;
+	wire [10:0] beam_hde_req =
+		(content_w == 11'd0) ? 11'(L4_H_DE) :
+		(content_w > 11'(FRAME_W)) ? 11'(FRAME_W) : content_w;
+	wire [10:0] beam_vact_req =
+		(content_h == 11'd0) ? 11'(L4_V_ACT) :
+		(content_h > 11'(FRAME_H)) ? 11'(FRAME_H) : content_h;
+	wire [10:0] beam_htot_req = 11'(L4_H_TOTAL);
+	wire [10:0] beam_vtot_req = 11'(L4_V_TOTAL);
+
+	(* noprune *) present_beam_content_de #(
+		.H_DE(L4_H_DE),
+		.V_ACTIVE(L4_V_ACT),
+		.H_TOTAL(L4_H_TOTAL),
+		.V_TOTAL(L4_V_TOTAL),
+		.H_SYNC_S(L4_H_SYNC_S),
+		.H_SYNC_E(L4_H_SYNC_E),
+		.V_SYNC_S(L4_V_SYNC_S),
+		.V_SYNC_E(L4_V_SYNC_E)
+	) u_beam_720p24 (
+		.clk(clk),
+		.reset(reset),
+		.use_rt_vtotal(1'b1),
+		.rt_vtotal(beam_vtot_req),
+		.use_rt_geom(1'b1),
+		.rt_h_de(beam_hde_req),
+		.rt_h_total(beam_htot_req),
+		.rt_v_active(beam_vact_req),
+		.ce_pix(ce_pix_i),
+		.HBlank(hb),
+		.HSync(hs),
+		.VBlank(vb),
+		.VSync(vs),
+		.frame_start(fstart),
+		.hc_out(hc11),
+		.vc_out(vc11),
+		.vtot_active(vtot_act11),
+		.hde_active(hde_act11),
+		.htot_active(htot_act11),
+		.vact_active(vact_act11)
+	);
+	assign hc = hc11[9:0];
+	assign vc = vc11[9:0];
+	assign br = 8'd0;
+	assign bg = 8'd0;
+	assign bb = 8'd0;
+	wire _unused_beam_scandouble = scandouble;
+	wire _unused_beam_pal = pal;
+	wire _unused_eff_pattern = |eff_pattern;
+	wire _unused_l4_beam = (|vtot_act11) | (|htot_act11) | (|hde_act11) | (|vact_act11);
+
+`elsif PRESENT_BEAM_960
 	// =====================================================================
 	// Ascal-native TRUE content DE. Default OFF. Replaces colorbars Template.
 	// =====================================================================
@@ -313,7 +400,43 @@ module present_core #(
 	localparam int STORE_Y_SCALE = (FRAME_H * 65536) / 240;
 	// Exact clone of colorbars in_content (full DE paint region).
 	wire [9:0] py = scandouble ? (vc >> 1) : vc;
-`ifdef PRESENT_BEAM_960
+`ifdef PLEX_PRESENT_720P_L4
+	// L4: present_content_window owns store map (identity when content==DE).
+	wire in_content_l4 = ~hb & ~vb & (hc11 < hde_act11) & (vc11 < vact_act11);
+	wire past_last_row; // driven by content_window
+	wire [FRAME_X_W-1:0] store_x_clamped;
+	wire [FRAME_Y_W-1:0] store_y_addr;
+	wire de_r_win;
+	(* noprune *) present_content_window #(
+		.FRAME_W(FRAME_W),
+		.FRAME_H(FRAME_H),
+		.STORE_W(1280),
+		.STORE_H(720),
+		.H_DE_DEFAULT(L4_H_DE),
+		.V_DE_DEFAULT(L4_V_ACT)
+	) u_content_window (
+		.clk(clk),
+		.reset(reset),
+		.ce_pix(ce_pix_i),
+		.hc(hc11),
+		.py(vc11),
+		.in_content(in_content_l4),
+		.win_enable(1'b1),
+		.content_w(beam_hde_req),
+		.content_h(beam_vact_req),
+		.content_x0(11'd0),
+		.content_y0(11'd0),
+		.h_de(hde_act11),
+		.v_de(vact_act11),
+		.store_x(store_x_clamped),
+		.store_y(store_y_addr),
+		.de_r(de_r_win),
+		.past_last_row(past_last_row)
+	);
+	wire in_content = in_content_l4;
+	wire [9:0] store_y_clamped = past_last_row ? 10'd239 : py; // G-VID1 text anchor
+	wire _unused_l4_win = de_r_win | |store_y_clamped;
+`elsif PRESENT_BEAM_960
 	wire in_content = ~hb & ~vb & (hc11 < hde_act11) & (vc11 < vact_act11);
 	wire       past_last_row = (py >= 10'd240); // kept for vb_d invariant text; beam blanks via DE
 	wire [9:0] store_y_clamped = past_last_row ? 10'd239 : py;

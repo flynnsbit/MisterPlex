@@ -84,7 +84,19 @@ set_global_assignment -name VERILOG_MACRO "FRAME_W=640"
 set_global_assignment -name VERILOG_MACRO "FRAME_H=480"
 set_global_assignment -name VERILOG_MACRO "FRAME_LINES_8=1"
 # 720p / ascal-native present path — DEFAULT OFF (v0.3.0 baseline must not change).
-# Parent enables one of these in a granted fit QSF only:
+# Parent enables in a granted fit QSF only.
+#
+# --- L4 720p24 product path (preferred first glass) ---
+# Measured PMS asset: 1280x720 @ 24/1. w-clock beam: H=1312 V=762.
+# At clk_sys=24 MHz → 24.006 Hz (1:1, no pulldown). Default product clk_sys is
+# still 20 MHz until fit grants 24 MHz PLL — beam math is correct either way.
+#set_global_assignment -name VERILOG_MACRO "PLEX_PRESENT_720P_L4=1"
+#set_global_assignment -name VERILOG_MACRO "FABRIC_NATIVE_720P_GEOM=1"
+#set_global_assignment -name VERILOG_MACRO "FRAME_W=1280"
+#set_global_assignment -name VERILOG_MACRO "FRAME_H=720"
+# (comment out the FRAME_W=640 / FRAME_H=480 lines above when enabling L4)
+#
+# --- Alternate tiers (mutually exclusive with L4) ---
 #set_global_assignment -name VERILOG_MACRO "PRESENT_BEAM_960=1"
 #set_global_assignment -name VERILOG_MACRO "PRESENT_MULTI_PIXEL=1"
 #set_global_assignment -name VERILOG_MACRO "PRESENT_PX_PER_CLK=1"
