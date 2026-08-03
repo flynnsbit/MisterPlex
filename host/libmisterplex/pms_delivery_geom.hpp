@@ -269,6 +269,34 @@ struct SourceAwarePmsRequest {
     const char* policy = "none";
 };
 
+// Direct Play Part: container samples ARE delivery (no PMS AR-fit). Bank =
+// pad-only align-up of media WxH — NEVER floor-snap (that is the universal
+// request path; floor 426→416 would mismatch Part 426×240 samples).
+//   320×240 → store 320×240
+//   426×240 → store 432×240  (pad; 426%16=10)
+//   720×480 → store 720×480
+// rd-duck 2026-08-03: DP early-return must set store_* or main keeps tier canvas.
+inline SourceAwarePmsRequest selectDirectPartStoreGeometry(int media_w, int media_h) {
+    SourceAwarePmsRequest o;
+    if (media_w <= 0 || media_h <= 0) {
+        o.policy = "direct_part_no_media";
+        return o;
+    }
+    o.request_w = media_w;
+    o.request_h = media_h;
+    o.host_may_need_pad = !isFabricStoreAligned(media_w, media_h);
+    if (!o.host_may_need_pad) {
+        o.store_w = media_w;
+        o.store_h = media_h;
+        o.policy = "direct_part_native";
+    } else {
+        alignGeometryForFabricStore(media_w, media_h, o.store_w, o.store_h);
+        o.policy = "direct_part_native_pad";
+    }
+    o.videoResolution = std::to_string(media_w) + "x" + std::to_string(media_h);
+    return o;
+}
+
 // src_* = library Media/Stream size (0 = unknown).
 // max_* = product ceiling from content tier (e.g. 960x540). 0 = no clamp.
 inline SourceAwarePmsRequest selectSourceAwarePmsRequest(int src_w, int src_h, int max_w,

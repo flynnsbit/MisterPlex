@@ -1,4 +1,5 @@
 // Unit tests for slim plex_resolve (no network required for pure helpers).
+#include "libmisterplex/ddr_frame_layout.hpp"
 #include "libmisterplex/osd_menu.hpp"
 #include "libmisterplex/pms_delivery_geom.hpp"
 #include "plex_resolve.hpp"
@@ -727,6 +728,49 @@ int main() {
         CHECK(std::string(sFb.policy).find("max_box") != std::string::npos);
 
         std::printf("GREEN_PATH_source_aware_snap16_store_align\n");
+    }
+
+    // Direct Part native bank (rd-duck): DP returns before PMS source-aware;
+    // pad-only align-up so raw bank matches Part samples (not tier canvas).
+    {
+        const auto d320 = selectDirectPartStoreGeometry(320, 240);
+        CHECK(d320.request_w == 320 && d320.request_h == 240);
+        CHECK(d320.store_w == 320 && d320.store_h == 240);
+        CHECK(isFabricStoreAligned(d320.store_w, d320.store_h));
+        {
+            const auto g = ddrStorageGeometryForContent(d320.store_w, d320.store_h);
+            CHECK(g.coded_width.get() == 320 && g.coded_height.get() == 240);
+        }
+
+        // 426 Part samples stay 426; bank pads UP to 432 — never floor 416 (PMS path).
+        const auto d426 = selectDirectPartStoreGeometry(426, 240);
+        CHECK(d426.request_w == 426 && d426.request_h == 240);
+        CHECK(d426.store_w == 432 && d426.store_h == 240);
+        CHECK(d426.store_w != 416);
+        CHECK(d426.request_w != 416); // red: must not reuse universal floor-snap
+        CHECK(isFabricStoreAligned(d426.store_w, d426.store_h));
+        {
+            const auto g = ddrStorageGeometryForContent(d426.store_w, d426.store_h);
+            CHECK(g.coded_width.get() == 432 && g.coded_height.get() == 240);
+            // And storage geom from raw media also pads the same way.
+            const auto gMedia = ddrStorageGeometryForContent(426, 240);
+            CHECK(gMedia.coded_width.get() == 432 && gMedia.coded_height.get() == 240);
+        }
+
+        const auto d720 = selectDirectPartStoreGeometry(720, 480);
+        CHECK(d720.request_w == 720 && d720.request_h == 480);
+        CHECK(d720.store_w == 720 && d720.store_h == 480);
+        CHECK(isFabricStoreAligned(d720.store_w, d720.store_h));
+        {
+            const auto g = ddrStorageGeometryForContent(d720.store_w, d720.store_h);
+            CHECK(g.coded_width.get() == 720 && g.coded_height.get() == 480);
+        }
+
+        // NEG: empty media → no store (main must not treat as applied).
+        const auto d0 = selectDirectPartStoreGeometry(0, 0);
+        CHECK(d0.store_w == 0 && d0.store_h == 0);
+
+        std::printf("GREEN_PATH_direct_part_native_pad_bank\n");
     }
 
     if (fails) {

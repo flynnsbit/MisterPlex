@@ -1118,7 +1118,11 @@ int main(int argc, char** argv) {
             resolved.storeHeight > 0) {
             player.setDecodeSize(misterplex::CodedWidth{resolved.storeWidth},
                                  misterplex::CodedHeight{resolved.storeHeight});
-            player.setDecodeSizeSource("source_aware_store");
+            // DP pad-only vs universal source-aware — both set store_*; distinguish logs.
+            const bool directPartNative =
+                resolved.sourceAwarePolicy.find("direct_part") != std::string::npos;
+            player.setDecodeSizeSource(directPartNative ? "direct_part_store"
+                                                        : "source_aware_store");
             if (resolved.requestWidth > 0 && resolved.requestHeight > 0) {
                 weakForPlay.videoResolution = std::to_string(resolved.requestWidth) + "x" +
                                               std::to_string(resolved.requestHeight);
@@ -1126,7 +1130,7 @@ int main(int argc, char** argv) {
             std::fprintf(stderr,
                          "misterplexd: SOURCE_AWARE policy=%s media=%dx%d "
                          "request=%dx%d store=%dx%d host_pad_class=%d "
-                         "legacy_bank_fit=%d\n",
+                         "legacy_bank_fit=%d transcode=%d\n",
                          resolved.sourceAwarePolicy.c_str(), resolved.mediaWidth,
                          resolved.mediaHeight, resolved.requestWidth, resolved.requestHeight,
                          resolved.storeWidth, resolved.storeHeight,
@@ -1134,7 +1138,8 @@ int main(int argc, char** argv) {
                          misterplex::i420FitsLegacyBank(resolved.storeWidth,
                                                         resolved.storeHeight)
                              ? 1
-                             : 0);
+                             : 0,
+                         resolved.transcoded ? 1 : 0);
         }
 
         // Expected delivery geometry for identity-scale decisions:

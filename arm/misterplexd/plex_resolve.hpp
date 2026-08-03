@@ -37,15 +37,17 @@ struct ResolveResult {
     // RK6: coded 624x480 + SAR 160:117 ⇒ DAR 16:9 ⇒ universal fit 624x350.
     std::string mediaAspectRatio;
     std::string pixelAspectRatio;
-    // Source-aware universal request (after media dims known). 0 = not applied
-    // (direct path / no meta / weakAlways off). request_* goes in videoResolution=;
-    // store_* is the fabric-aligned bank (may pad when source W%16!=0).
+    // Geometry for bank/decode after media dims known. 0 = not applied
+    // (no meta / weakAlways off without dims).
+    // - Universal: request_* = source-aware videoResolution=; store_* pad/snap.
+    // - Direct Part: request_* = media samples; store_* = pad-only align-up
+    //   (never floor-snap — Part samples are exact).
     int requestWidth = 0;
     int requestHeight = 0;
     int storeWidth = 0;
     int storeHeight = 0;
     bool sourceAwareApplied = false;
-    std::string sourceAwarePolicy; // e.g. source_clamp_snap16
+    std::string sourceAwarePolicy; // e.g. source_clamp_snap16 / direct_part_native
 };
 
 struct QueueItem {

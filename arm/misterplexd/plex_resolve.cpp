@@ -954,6 +954,24 @@ ResolveResult resolvePlayTarget(const std::string& rawKeyOrPath, const std::stri
             p = attr(xml, "Media", "videoCodec");
         return p;
     };
+    // Direct Part bank geometry: pad-only align-up of media samples (rd-duck).
+    // Must run BEFORE any DP return — source-aware PMS selection below is skipped
+    // on preferDirect H.264 Part, which previously left storeWidth=0 and main kept
+    // the configured tier canvas (ARM scale of 320×240 into 624×480).
+    auto applyDirectPartNativeStore = [&]() {
+        if (r.mediaWidth <= 0 || r.mediaHeight <= 0)
+            return;
+        const auto sel = selectDirectPartStoreGeometry(r.mediaWidth, r.mediaHeight);
+        if (sel.store_w <= 0 || sel.store_h <= 0)
+            return;
+        r.requestWidth = sel.request_w;
+        r.requestHeight = sel.request_h;
+        r.storeWidth = sel.store_w;
+        r.storeHeight = sel.store_h;
+        r.sourceAwareApplied = true;
+        r.sourceAwarePolicy = sel.policy ? sel.policy : "direct_part_native";
+    };
+
     if (directH264) {
         const std::string prof = videoProfileNote();
         const std::string profSuffix = prof.empty() ? "" : (" profile=" + prof);
@@ -968,6 +986,7 @@ ResolveResult resolvePlayTarget(const std::string& rawKeyOrPath, const std::stri
             r.ok = true;
             r.transcoded = false;
             r.detail = "direct H.264 Part (STREAM" + profSuffix + ")";
+            applyDirectPartNativeStore();
             return r;
         }
         auto file = attr(xml, "Part", "file");
@@ -976,6 +995,7 @@ ResolveResult resolvePlayTarget(const std::string& rawKeyOrPath, const std::stri
             r.ok = true;
             r.transcoded = false;
             r.detail = "direct H.264 Part file (STREAM" + profSuffix + ")";
+            applyDirectPartNativeStore();
             return r;
         }
         // Fall through to universal if Part missing
@@ -1050,6 +1070,7 @@ ResolveResult resolvePlayTarget(const std::string& rawKeyOrPath, const std::stri
                               std::string("X-Plex-Token=") + urlEncodeQuery(token);
             r.ok = true;
             r.detail = "direct Part stream";
+            applyDirectPartNativeStore();
             return r;
         }
         auto file = attr(xml, "Part", "file");
@@ -1057,6 +1078,7 @@ ResolveResult resolvePlayTarget(const std::string& rawKeyOrPath, const std::stri
             r.playable = urlDecode(file);
             r.ok = true;
             r.detail = "Part file path";
+            applyDirectPartNativeStore();
             return r;
         }
     }

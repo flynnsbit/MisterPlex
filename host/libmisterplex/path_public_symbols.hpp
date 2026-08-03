@@ -40,8 +40,9 @@ inline constexpr DdrFrameGeometryForFpgaPresentFn kSymDdrFrameGeometryForFpgaPre
 static_assert(kPlxgQ5ByteOffset == 0x828u, "PLXG q5 offset");
 static_assert(kPlxgRecordQwordsAspectCadence == 6u, "PLXG 6-qword record");
 
-// --- Source-aware PMS request ---
-// selectSourceAwarePmsRequest must remain greppable in pms_delivery_geom.hpp
+// --- Source-aware PMS request + DP native store ---
+// selectSourceAwarePmsRequest / selectDirectPartStoreGeometry must remain
+// greppable in pms_delivery_geom.hpp (rd-duck: DP early-return bank).
 
 inline const char* pathPublicSymbolRollCall() {
     // Touch every symbol so -O2 cannot DCE the references in the unit test TU.
@@ -58,6 +59,7 @@ inline const char* pathPublicSymbolRollCall() {
     (void)packPlxgQ5(c, &q);
     (void)selectPlxgAspectCadence(0, 0, "", "", 0, 0);
     (void)selectSourceAwarePmsRequest(624, 480, 960, 540);
+    (void)selectDirectPartStoreGeometry(320, 240);
     return "path_public_symbols_ok";
 }
 

@@ -19,6 +19,7 @@ need=(
   "kPlxgQ5ByteOffset"
   "packPlxgQ5"
   "selectSourceAwarePmsRequest"
+  "selectDirectPartStoreGeometry"
   "selectPlxgAspectCadence"
 )
 for s in "${need[@]}"; do

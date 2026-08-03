@@ -63,6 +63,13 @@ int main() {
     expect(sa.request_w == 624 && sa.request_h == 480 && sa.store_w == 624,
            "source-aware 624x480");
 
+    // DP pad-only bank (rd-duck: preferDirect must not skip store geometry).
+    const auto dp426 = selectDirectPartStoreGeometry(426, 240);
+    expect(dp426.store_w == 432 && dp426.store_h == 240 && dp426.request_w == 426,
+           "DP 426 → bank 432 pad-only");
+    const auto dp320 = selectDirectPartStoreGeometry(320, 240);
+    expect(dp320.store_w == 320 && dp320.request_w == 320, "DP 320 identity bank");
+
     if (g_fails) {
         std::fprintf(stderr, "test_path_public_symbols: %d FAIL\n", g_fails);
         return 1;
