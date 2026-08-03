@@ -16,6 +16,8 @@ module ddr_m1_subarb_tb_top (
 	output wire [31:0] stream_we_count,
 	output wire [31:0] plxg_rd_count,
 	output wire [31:0] plxg_cnt_commit,
+	output wire [31:0] plxg_cnt_baseline,
+	output wire        plxg_boot_baseline_done,
 	output wire [31:0] plxg_cnt_torn,
 	output wire [31:0] plxg_cnt_bad,
 	output wire [15:0] plxg_last_seq,
@@ -103,10 +105,14 @@ module ddr_m1_subarb_tb_top (
 		.wr_data(plxg_wr_data),
 		.commit(plxg_commit),
 		.last_seq(plxg_last_seq),
+		.last_epoch(),
+		.boot_baseline_done(plxg_boot_baseline_done),
 		.busy_poll(plxg_busy_poll),
 		.cnt_commit(plxg_cnt_commit),
+		.cnt_baseline(plxg_cnt_baseline),
 		.cnt_bad_magic(plxg_cnt_bad),
-		.cnt_torn(plxg_cnt_torn)
+		.cnt_torn(plxg_cnt_torn),
+		.cnt_bad_epoch()
 	);
 
 	ddr_m1_subarb u_sub (
@@ -157,15 +163,16 @@ module ddr_m1_subarb_tb_top (
 	reg        commit_r;
 
 	localparam [28:0] Q0_W = 29'((32'h300F_F000 + 32'h800) >> 3);
-	// seq=1, win+geom enables, magic PLXG
-	localparam [63:0] PLXG_Q0 = {16'h0001, 16'h0003, 32'h504C5847};
-	localparam [63:0] PLXG_Q1 = {11'd0, 11'd0, 11'd540, 11'd960}; // pack order differs — use raw
-	// Use exact host pack helpers values:
-	// q1: w | h<<16 | x<<32 | y<<48
+	// q0: seq | epoch=1,win,geom | magic. Host default epoch=1 is NOT a boot nonce.
+	// After poller boot-baseline of seq=1, TB bumps to seq=2 (post-reset publish).
+	reg [15:0] plxg_seq_mem;
+	// flags hi16: [15:2]=epoch=1, [1]=geom, [0]=win → 0x0007
+	wire [63:0] PLXG_Q0 = {plxg_seq_mem, 16'h0007, 32'h504C5847};
 	localparam [63:0] PLXG_Q1B = 64'(960) | (64'(540) << 16);
 	localparam [63:0] PLXG_Q2B = 64'(1280) | (64'(720) << 16) | (64'(960) << 32) | (64'(540) << 48);
 	localparam [63:0] PLXG_Q3B = 64'(960) | (64'(480) << 16) | (64'(960) << 32) | (64'(540) << 48);
 	localparam [63:0] PLXG_Q4B = 64'd0;
+	localparam [63:0] PLXG_Q5B = 64'd0;
 
 	function automatic [63:0] mem_rd(input [28:0] a);
 		begin
@@ -174,6 +181,7 @@ module ddr_m1_subarb_tb_top (
 			else if (a == Q0_W + 29'd2) mem_rd = PLXG_Q2B;
 			else if (a == Q0_W + 29'd3) mem_rd = PLXG_Q3B;
 			else if (a == Q0_W + 29'd4) mem_rd = PLXG_Q4B;
+			else if (a == Q0_W + 29'd5) mem_rd = PLXG_Q5B;
 			else                        mem_rd = 64'd0;
 		end
 	endfunction
@@ -198,9 +206,13 @@ module ddr_m1_subarb_tb_top (
 			rd_cnt       <= 32'd0;
 			got_q0_r     <= 1'b0;
 			commit_r     <= 1'b0;
+			plxg_seq_mem <= 16'd1; // retained epoch=1,seq=1 across "FPGA reset"
 		end else begin
 			dout_ready_r <= 1'b0;
 			commit_r     <= plxg_commit;
+			// Post-baseline host publication: bump seq so poller may promote.
+			if (plxg_boot_baseline_done && plxg_seq_mem == 16'd1 && plxg_cnt_commit == 32'd0)
+				plxg_seq_mem <= 16'd2;
 			busy_r       <= 1'b0;
 
 			if (rd_pend) begin

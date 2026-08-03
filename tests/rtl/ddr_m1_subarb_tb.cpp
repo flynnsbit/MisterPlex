@@ -26,30 +26,34 @@ int main(int argc, char** argv) {
     top->reset = 0;
     top->stream_enable = 1;
 
-    // Run long enough for: stream 9× WE telemetry + PLXG poll (POLL_DIV=4) +
-    // q0..q4 + q0 re-read + commit.
+    // Stream 9× WE + PLXG: boot-baseline of retained seq=1 (no commit), then
+    // TB bumps mem to seq=2 (post-reset publish) → commit.
     int fails = 0;
     bool saw_we9 = false;
+    bool saw_baseline = false;
     bool saw_commit = false;
     bool saw_q0 = false;
-    for (int cyc = 0; cyc < 20000; ++cyc) {
+    for (int cyc = 0; cyc < 40000; ++cyc) {
         if (top->stream_we_count >= 9)
             saw_we9 = true;
         if (top->plxg_got_q0)
             saw_q0 = true;
+        if (top->plxg_cnt_baseline > 0 || top->plxg_boot_baseline_done)
+            saw_baseline = true;
         if (top->plxg_cnt_commit > 0 || top->plxg_commit_pulse)
             saw_commit = true;
-        if (saw_we9 && saw_q0 && saw_commit)
+        if (saw_we9 && saw_q0 && saw_baseline && saw_commit)
             break;
         tick(top);
     }
 
-    std::printf("subarb_tb we=%u plxg_rd=%u commit=%u torn=%u bad=%u last_seq=%u "
-                "got_q0=%d grant=%u\n",
+    std::printf("subarb_tb we=%u plxg_rd=%u baseline=%u commit=%u torn=%u bad=%u "
+                "last_seq=%u got_q0=%d grant=%u\n",
                 (unsigned)top->stream_we_count, (unsigned)top->plxg_rd_count,
-                (unsigned)top->plxg_cnt_commit, (unsigned)top->plxg_cnt_torn,
-                (unsigned)top->plxg_cnt_bad, (unsigned)top->plxg_last_seq,
-                (int)top->plxg_got_q0, (unsigned)top->grant);
+                (unsigned)top->plxg_cnt_baseline, (unsigned)top->plxg_cnt_commit,
+                (unsigned)top->plxg_cnt_torn, (unsigned)top->plxg_cnt_bad,
+                (unsigned)top->plxg_last_seq, (int)top->plxg_got_q0,
+                (unsigned)top->grant);
 
     if (!saw_we9) {
         std::fprintf(stderr, "FAIL: stream reset telemetry did not complete 9 WEs (got %u)\n",
@@ -60,16 +64,21 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "FAIL: PLXG never received q0 response during/after stream WE\n");
         ++fails;
     }
+    if (!saw_baseline) {
+        std::fprintf(stderr, "FAIL: PLXG never baselined retained seq (boot handshake)\n");
+        ++fails;
+    }
     if (!saw_commit) {
-        std::fprintf(stderr, "FAIL: PLXG poller never committed (deadlock class)\n");
+        std::fprintf(stderr, "FAIL: PLXG poller never committed post-baseline publish\n");
         ++fails;
     }
     if (top->plxg_cnt_torn != 0) {
         std::fprintf(stderr, "FAIL: unexpected torn count %u\n", (unsigned)top->plxg_cnt_torn);
         ++fails;
     }
-    if (top->plxg_last_seq != 1) {
-        std::fprintf(stderr, "FAIL: last_seq=%u want 1\n", (unsigned)top->plxg_last_seq);
+    if (top->plxg_last_seq != 2) {
+        std::fprintf(stderr, "FAIL: last_seq=%u want 2 (post-reset publication)\n",
+                     (unsigned)top->plxg_last_seq);
         ++fails;
     }
 

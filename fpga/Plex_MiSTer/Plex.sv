@@ -774,7 +774,8 @@ wire        plxg_dout_ready;
 wire [15:0] plxg_last_seq;
 wire [13:0] plxg_last_epoch;
 wire        plxg_busy_poll;
-wire [31:0] plxg_cnt_commit, plxg_cnt_bad, plxg_cnt_torn, plxg_cnt_bad_epoch;
+wire [31:0] plxg_cnt_commit, plxg_cnt_baseline, plxg_cnt_bad, plxg_cnt_torn, plxg_cnt_bad_epoch;
+wire        plxg_boot_baseline_done;
 wire  [1:0] m1_sub_grant;
 wire        m1c_want, m1c_busy, m1c_rd, m1c_we;
 wire  [7:0] m1c_burstcnt, m1c_be;
@@ -901,17 +902,19 @@ plxg_ddr_poller #(
 	.commit(plxg_commit),
 	.last_seq(plxg_last_seq),
 	.last_epoch(plxg_last_epoch),
+	.boot_baseline_done(plxg_boot_baseline_done),
 	.busy_poll(plxg_busy_poll),
 	.cnt_commit(plxg_cnt_commit),
+	.cnt_baseline(plxg_cnt_baseline),
 	.cnt_bad_magic(plxg_cnt_bad),
 	.cnt_torn(plxg_cnt_torn),
 	.cnt_bad_epoch(plxg_cnt_bad_epoch)
 );
 (* keep = 1 *) wire _keep_plxg =
 	plxg_geom_en | plxg_live_valid | |plxg_live_seq | plxg_want |
-	|plxg_cnt_commit | |plxg_cnt_bad | |plxg_cnt_torn | plxg_busy_poll |
+	|plxg_cnt_commit | |plxg_cnt_baseline | |plxg_cnt_bad | |plxg_cnt_torn | plxg_busy_poll |
 	|plxg_last_seq | |plxg_last_epoch | plxg_win_en | |plxg_cw | |plxg_ch | |m1_sub_grant |
-	|plxg_cnt_bad_epoch |
+	|plxg_cnt_bad_epoch | plxg_boot_baseline_done |
 	plxg_dar_valid | plxg_fps_valid | |plxg_dar_x | |plxg_content_fps |
 	plxg_q5_reserved_reject;
 `else

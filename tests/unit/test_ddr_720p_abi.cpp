@@ -990,6 +990,11 @@ int main() {
             CHECK(plxgAbaIncrementSeqRejectsTornThenFreshCommits(7));
         }
         std::fprintf(stderr, "  PLXG_TEAR_SUBARB_DISABLE OK\n");
+        // rd-duck: retained epoch=1 after FPGA-only reset must NOT go live.
+        CHECK(plxgBootBaselineFaultPromotesRetained(7)); // REPRO no-baseline
+        CHECK(plxgBootBaselineHoldsRetainedUntilPostResetPublish(7));
+        CHECK(plxgBootBaselineHoldsRetainedUntilPostResetPublish(1));
+        std::fprintf(stderr, "  PLXG_BOOT_BASELINE_RETAINED OK\n");
         std::fprintf(stderr, "  PLXG_SEQLOCK_RETAINED_DDR_RESET OK\n");
         std::fprintf(stderr, "  PLXG_SEQ_RESTART_SAFE OK\n");
         std::fprintf(stderr, "  PLXG_ABA_SEQ_TEAR OK\n");

@@ -14,7 +14,13 @@
 //   2) Store body q[1]..q[5]
 //   3) Store q0 high32, then q0 low32 = magic LAST (commit)
 //   Poller reads q0..q5 then RE-READS q0; commit only if magic+seq match.
-// Without step 1, post-reset last_seq=0 + retained q0 seq=1 lets the poller
+// Without step 1, a mid-write body can be accepted under old q0.
+// Separately (rd-duck boot baseline): FPGA reset alone does NOT make retained
+// (epoch=1,seq=N) safe — host default epoch=1 is NOT a boot nonce. Fabric
+// poller baselines first verified snapshot without promote; only a later NEW
+// (epoch,seq) pair (post-reset publication) may commit. See PlxgPollerModel.
+// Without step 1, post-reset last_seq=0 + retained q0 seq=1 lets a NO-BASELINE
+// poller
 // accept a mixed body while reread still sees the old q0. Never three temporal
 // beats to one slot. Legacy path must publish geom_enable=0.
 
@@ -204,6 +210,7 @@ inline uint16_t plxgNextSeqFaultIgnoreRetained(uint16_t softwareLast) {
 }
 
 // Host-side model of poller tear check: after q0..q4 snap, q0 must still match.
+
 inline bool plxgPollerAcceptsSnapshot(const uint64_t snap[6], uint64_t q0_reread,
                                       uint16_t lastSeq) {
     if (static_cast<uint32_t>(snap[0]) != mailbox_abi::kPlxgMagic)
@@ -304,6 +311,94 @@ inline uint16_t plxgHostWriteRecordRestartSafe(uint8_t* ctrlPage, PlxgRecord rec
         *softwareLastInOut = use;
     return use;
 }
+
+
+// Behavioral poller (matches plxg_ddr_poller.sv boot baseline).
+// fault_no_baseline=true → FAULT_PLXG_NO_BASELINE (immediate promote retained).
+struct PlxgPollerModel {
+    uint16_t last_seq = 0;
+    uint16_t last_epoch = 0;
+    bool boot_baseline_done = false;
+    uint32_t cnt_commit = 0;
+    uint32_t cnt_baseline = 0;
+    bool fault_no_baseline = false;
+};
+
+// Try one verified snapshot against poller state. Returns true if commit pulse
+// would fire (push to latch). Baseline-only success returns false but updates last_*.
+inline bool plxgPollerObserveVerified(PlxgPollerModel& p, const uint64_t snap[6],
+                                      uint64_t q0_reread) {
+    if (static_cast<uint32_t>(snap[0]) != mailbox_abi::kPlxgMagic)
+        return false;
+    if (q0_reread != snap[0])
+        return false; // torn
+    const uint16_t seq = static_cast<uint16_t>(snap[0] >> 48);
+    const uint16_t epoch = plxgQ0Epoch(snap[0]);
+    if (epoch == 0)
+        return false;
+    if (epoch == p.last_epoch && seq == p.last_seq)
+        return false; // stale
+    if (!p.fault_no_baseline && !p.boot_baseline_done) {
+        p.last_seq = seq;
+        p.last_epoch = epoch;
+        p.boot_baseline_done = true;
+        ++p.cnt_baseline;
+        return false; // NO commit
+    }
+    p.last_seq = seq;
+    p.last_epoch = epoch;
+    p.boot_baseline_done = true;
+    ++p.cnt_commit;
+    return true;
+}
+
+// rd-duck retained-DDR reset proof (product):
+// preseed epoch=1,seq=N → FPGA reset (poller last=0,baseline=0) → observe retained
+// → must NOT commit → host post-reset publication seq=N+1 → commit.
+inline bool plxgBootBaselineHoldsRetainedUntilPostResetPublish(uint16_t retainedSeq = 7) {
+    std::uint8_t page[0x1000]{};
+    const PlxgRecord oldR = makePlxgRecord960x540Native(retainedSeq);
+    for (int i = 0; i < 6; ++i)
+        plxgCtrlStoreQ(page, static_cast<unsigned>(i), oldR.q[i]);
+    PlxgPollerModel p; // FPGA reset
+    uint64_t snap[6];
+    for (int i = 0; i < 6; ++i)
+        snap[i] = plxgCtrlLoadQ(page, static_cast<unsigned>(i));
+    if (plxgPollerObserveVerified(p, snap, snap[0]))
+        return false; // must not promote retained
+    if (p.cnt_baseline != 1 || p.cnt_commit != 0 || !p.boot_baseline_done)
+        return false;
+    if (p.last_seq != retainedSeq)
+        return false;
+    // Post-reset host publication (seq bump).
+    uint16_t sw = 0;
+    const uint16_t used =
+        plxgHostWriteRecordRestartSafe(page, makePlxgRecordDisable(1), &sw, true);
+    if (used == retainedSeq)
+        return false;
+    for (int i = 0; i < 6; ++i)
+        snap[i] = plxgCtrlLoadQ(page, static_cast<unsigned>(i));
+    if (!plxgPollerObserveVerified(p, snap, snap[0]))
+        return false;
+    return p.cnt_commit == 1 && p.last_seq == used;
+}
+
+// FAULT twin: no baseline → retained promotes on first observe after reset.
+inline bool plxgBootBaselineFaultPromotesRetained(uint16_t retainedSeq = 7) {
+    std::uint8_t page[0x1000]{};
+    const PlxgRecord oldR = makePlxgRecord960x540Native(retainedSeq);
+    for (int i = 0; i < 6; ++i)
+        plxgCtrlStoreQ(page, static_cast<unsigned>(i), oldR.q[i]);
+    PlxgPollerModel p;
+    p.fault_no_baseline = true;
+    uint64_t snap[6];
+    for (int i = 0; i < 6; ++i)
+        snap[i] = plxgCtrlLoadQ(page, static_cast<unsigned>(i));
+    if (!plxgPollerObserveVerified(p, snap, snap[0]))
+        return false;
+    return p.cnt_commit == 1 && p.cnt_baseline == 0 && p.last_seq == retainedSeq;
+}
+
 
 // Daemon restart + FPGA still live: retained q0 seq=N, FPGA last_seq=N,
 // new software object last=0, one disable publish must commit (seq != N).

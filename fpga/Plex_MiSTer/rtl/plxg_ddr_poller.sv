@@ -5,8 +5,17 @@
 // Atomic snapshot (rd-duck): host publishes q1..q5 then q0 last. Poller reads
 // q0..q5 then RE-READS q0; commit only if magic+seq match the first q0 sample
 // (rejects torn mid-write snapshots). q5 reserved must be zero (latch enforces).
-// Stale check is (epoch,seq) pair — seq-only would suppress epoch bump same seq
-// and accept retained epoch=0 after reset (rd-duck B4/poller gap).
+//
+// Boot baseline (rd-duck retained-DDR reset):
+//   After FPGA reset last=(0,0). Retained DDR may still hold a valid (epoch,seq)
+//   e.g. (1,N). Pair-compare alone PROMOTES that retained record immediately —
+//   epoch!=0 does NOT prove fresh-this-boot (host defaults epoch to constant 1).
+//   Product: first successful verified snapshot after reset BASELINES last_*
+//   WITHOUT commit/push (no live_valid). Only a later NEW (epoch,seq) pair
+//   (post-reset host publication) may promote. Cold empty DDR: first host
+//   write baselines; second bumped-seq write promotes (daemon always bumps).
+//
+// FAULT_PLXG_NO_BASELINE: skip baseline (pre-fix immediate promote of retained).
 //
 // Master port matches ddr_bus_arbiter m1 (single-beat RD). Share m1 only via
 // ddr_m1_subarb (latched owner through response) — never combinational mux.
@@ -41,8 +50,10 @@ module plxg_ddr_poller #(
 
 	output reg  [15:0] last_seq,
 	output reg  [13:0] last_epoch,
+	output reg         boot_baseline_done,
 	output reg         busy_poll,
 	output reg  [31:0] cnt_commit,
+	output reg  [31:0] cnt_baseline,
 	output reg  [31:0] cnt_bad_magic,
 	output reg  [31:0] cnt_torn,
 	output reg  [31:0] cnt_bad_epoch
@@ -55,13 +66,14 @@ module plxg_ddr_poller #(
 	localparam [31:0] MAGIC = 32'h504C_5847; // PLXG
 	localparam [28:0] Q0_W = 29'((BOOT_DOORBELL + PLXG_OFF) >> 3);
 
-	localparam [2:0] S_IDLE    = 3'd0;
-	localparam [2:0] S_ISSUE   = 3'd1;
-	localparam [2:0] S_WAIT    = 3'd2;
-	localparam [2:0] S_VRF_Q0  = 3'd3; // re-read q0
-	localparam [2:0] S_WAIT_V  = 3'd4;
-	localparam [2:0] S_PUSH    = 3'd5;
-	localparam [2:0] S_COMMIT  = 3'd6;
+	localparam [2:0] S_IDLE     = 3'd0;
+	localparam [2:0] S_ISSUE    = 3'd1;
+	localparam [2:0] S_WAIT     = 3'd2;
+	localparam [2:0] S_VRF_Q0   = 3'd3;
+	localparam [2:0] S_WAIT_V   = 3'd4;
+	localparam [2:0] S_PUSH     = 3'd5;
+	localparam [2:0] S_COMMIT   = 3'd6;
+	localparam [2:0] S_BASELINE = 3'd7;
 
 	reg [2:0]  st;
 	reg [15:0] poll_ctr;
@@ -69,7 +81,7 @@ module plxg_ddr_poller #(
 	reg [63:0] snap [0:5];
 	reg [15:0] snap_seq;
 	reg [13:0] snap_epoch;
-	reg        verify_phase; // 1 = issuing q0 re-read
+	reg        verify_phase;
 
 	integer ti;
 	always @(posedge clk) begin
@@ -87,8 +99,10 @@ module plxg_ddr_poller #(
 			commit      <= 1'b0;
 			last_seq    <= 16'd0;
 			last_epoch  <= 14'd0;
+			boot_baseline_done <= 1'b0;
 			busy_poll   <= 1'b0;
 			cnt_commit  <= 32'd0;
+			cnt_baseline <= 32'd0;
 			cnt_bad_magic <= 32'd0;
 			cnt_torn    <= 32'd0;
 			cnt_bad_epoch <= 32'd0;
@@ -141,8 +155,6 @@ module plxg_ddr_poller #(
 								want <= 1'b0;
 								st   <= S_IDLE;
 								busy_poll <= 1'b0;
-							// rd-duck: epoch==0 is illegal (B4 ABA); do NOT advance
-							// last_seq on reject — else epoch=1 same seq is suppressed.
 							end else if (dout[47:34] == 14'd0) begin
 								cnt_bad_epoch <= cnt_bad_epoch + 32'd1;
 								want <= 1'b0;
@@ -150,7 +162,6 @@ module plxg_ddr_poller #(
 								busy_poll <= 1'b0;
 							end else if ({dout[47:34], dout[63:48]} ==
 							             {last_epoch, last_seq}) begin
-								// stale (epoch,seq) pair — nothing new
 								want <= 1'b0;
 								st   <= S_IDLE;
 								busy_poll <= 1'b0;
@@ -161,7 +172,6 @@ module plxg_ddr_poller #(
 								st <= S_ISSUE;
 							end
 						end else if (qi == 3'd5) begin
-							// Finished q1..q5; re-read q0 for tear check
 							qi <= 3'd0;
 							verify_phase <= 1'b1;
 							st <= S_VRF_Q0;
@@ -173,7 +183,7 @@ module plxg_ddr_poller #(
 				end
 				S_VRF_Q0: begin
 					want <= 1'b1;
-					addr <= Q0_W; // q0 again
+					addr <= Q0_W;
 					if (!busy) begin
 						rd <= 1'b1;
 						st <= S_WAIT_V;
@@ -182,18 +192,37 @@ module plxg_ddr_poller #(
 				S_WAIT_V: begin
 					want <= 1'b1;
 					if (dout_ready) begin
-						// Must match first q0 sample (magic+seq+flags)
 						if (dout != snap[0]) begin
 							cnt_torn <= cnt_torn + 32'd1;
 							want <= 1'b0;
 							st   <= S_IDLE;
 							busy_poll <= 1'b0;
+`ifdef FAULT_PLXG_NO_BASELINE
+						end else begin
+							// RED twin: always push+commit (retained promotes).
+							qi <= 3'd0;
+							st <= S_PUSH;
+							want <= 1'b0;
+`else
+						end else if (!boot_baseline_done) begin
+							want <= 1'b0;
+							st   <= S_BASELINE;
 						end else begin
 							qi <= 3'd0;
 							st <= S_PUSH;
 							want <= 1'b0;
+`endif
 						end
 					end
+				end
+				S_BASELINE: begin
+					want       <= 1'b0;
+					last_seq   <= snap_seq;
+					last_epoch <= snap_epoch;
+					boot_baseline_done <= 1'b1;
+					cnt_baseline <= cnt_baseline + 32'd1;
+					st         <= S_IDLE;
+					busy_poll  <= 1'b0;
 				end
 				S_PUSH: begin
 					want    <= 1'b0;
@@ -211,6 +240,7 @@ module plxg_ddr_poller #(
 					commit     <= 1'b1;
 					last_seq   <= snap_seq;
 					last_epoch <= snap_epoch;
+					boot_baseline_done <= 1'b1;
 					cnt_commit <= cnt_commit + 32'd1;
 					st         <= S_IDLE;
 					busy_poll  <= 1'b0;
