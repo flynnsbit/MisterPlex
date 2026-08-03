@@ -133,7 +133,9 @@ RTL = ROOT / "fpga" / "Plex_MiSTer" / "rtl"
 # real fixes land (then mutation expects absence + a paired RED twin that re-injects).
 # Parent 2026-08-03: per-token mutation must prove each claimed check still fires.
 LIVE_OPEN_BLOCKER_TOKENS = (
-    "B1_NO_COMPILE_TIME_OPTC",
+    # B1_NO_COMPILE_TIME_OPTC RETIRED (rd-duck): requiring OPTION_C compile rebase
+    # breaks geom_enable=0 legacy publish (host makeDdrPublishPlan → legacy phys).
+    # Live open remains layout-not-960 until runtime capacity path is merged.
     "B1_LAYOUT_NOT_960",
     "B2_FPS_INT_OVERFLOW",
     # B2_NO_RASTER_GENERATOR retired: w-clock deliberately made timing_960
@@ -732,13 +734,11 @@ def scan_sibling_attribution() -> tuple[dict[str, dict[str, str]], list[str]]:
                 [r"\bepoch\b", r"session|generation"],
             )
         ],
-        "B1_NO_COMPILE_TIME_OPTC": [
-            (
-                "w-mem",
-                "fpga/Plex_MiSTer/rtl/ddr_frame_store.sv",
-                [r"`ifdef\s+OPTION_C", r"PHYS_BASE_720P"],
-            )
-        ],
+        # B1_OPTION_C_REBASES_LEGACY: no sibling "fix tip" — the fix is *absence*
+        # of OPTION_C LEG→720P rebase (geom-off legacy contract). Positive greps
+        # for LEG_BASE=PHYS_BASE false-match the `else` branch of defective trees
+        # (wt-mem). When B1 fires → unimplemented / remove the rebase (new work
+        # or un-do lane mistake). B1_NO_COMPILE_TIME_OPTC retired.
         "B1_LAYOUT_NOT_960": [
             (
                 "w-mem",
@@ -1104,7 +1104,18 @@ B20_HIER_REGISTRY: tuple[dict[str, str], ...] = (
         "script": "tests/unit/test_b20_hier_a_plxg_explicit_disable.sh",
         "case": "CASE B20_HIER_A EXECUTED",
         "pass": "PASS B20_HIER_A",
-        "why": "explicit PLXG disable under PRESENT_BEAM_960 (mux must not silently re-enable fallback)",
+        "why": (
+            "explicit PLXG disable under PRESENT_BEAM_960 (mux must not silently "
+            "re-enable fallback); geom_enable=0 must poll LEGACY map/doorbell "
+            "(host makeDdrPublishPlan → kDdrFramePhysBase / 0x300FF000), NOT "
+            "compile-time OPTION_C rebased LEG_*"
+        ),
+        # Extra stdout tokens the runner must print after measuring DUT map.
+        "extra_require": (
+            "geom_enable=0",
+            "map=LEGACY",
+            "doorbell_phys=0x300FF000",
+        ),
     },
     {
         "token": "B20_HIER_B_COMMIT_FRAME_BOUNDARY",
@@ -1243,15 +1254,19 @@ def run_b20_hierarchy_exec_gate(
         dut_touch = bool(
             re.search(
                 r"(DUT_TOUCHED=1|VERILATOR_RUN=1|SIM_RUN=1|HIER_TB_RUN=1|"
-                r"measured_|true_de=|bank_id=|frame_boundary=|host_we=)",
+                r"measured_|true_de=|bank_id=|frame_boundary=|host_we=|"
+                r"map=LEGACY|doorbell_phys=)",
                 out,
             )
         )
         if not dut_touch:
             missing.append(
                 "missing DUT evidence token "
-                "(DUT_TOUCHED=1|VERILATOR_RUN=1|SIM_RUN=1|HIER_TB_RUN=1|measured_*)"
+                "(DUT_TOUCHED=1|VERILATOR_RUN=1|SIM_RUN=1|HIER_TB_RUN=1|map=LEGACY|…)"
             )
+        for extra in spec.get("extra_require", ()) or ():
+            if extra not in out:
+                missing.append(f"missing required evidence '{extra}'")
         if missing:
             tail = out.strip().splitlines()[-8:] if out.strip() else []
             errors.append(
@@ -1434,20 +1449,74 @@ def leg0_arch_blockers() -> tuple[int, list[str]]:
     else:
         msgs.append(
             "LEG0_EVIDENCE geom_enable=0 assigns LEG_BASE_W0/LEG_DOORBELL_W "
-            "(ddr_frame_store.sv) — no compile-time Option-C bank map"
+            "(ddr_frame_store.sv)"
         )
-    # Compile-time Option-C does not exist: no ifdef selecting OPTC_* as localparam defaults.
-    if re.search(r"`ifdef\s+FABRIC_NATIVE_720P_GEOM", store) is None and re.search(
-        r"`ifdef\s+OPTION_C", store
-    ) is None:
-        if pw == "640" and ph == "480":
-            errors.append(
-                "B1_NO_COMPILE_TIME_OPTC: ddr_frame_layout_params.svh still "
-                f"PRESENTED={pw}x{ph} CODED={cw}x{ch}; ddr_frame_store has no "
-                "`ifdef FABRIC_NATIVE_720P_GEOM/OPTION_C compile-time bank path; "
-                "geom_enable=0 stays legacy PHYS/stride/doorbell. FRAME_W=960 QSF "
-                "alone does not re-base the store (rd-duck #3)."
-            )
+
+    # --- B1 OPTION_C compile rebase vs geom-off legacy contract (rd-duck) ---
+    # Architecture error: requiring QSF/RTL `OPTION_C` so LEG_* re-bases to
+    # PHYS_BASE_720P/DOORBELL_720P makes explicit PLXG disable nonfunctional.
+    # Host makeDdrPublishPlan (ddr_present_bank.hpp) mode-exit writes *legacy*
+    # phys/doorbell + PLXG disable; FPGA must poll that map when geom_enable=0.
+    # Option-C must be selected at runtime by rt_need_optc (B7), not by compile
+    # rebase of LEG_* under `ifdef OPTION_C`.
+    msgs.append("LEG0_B1_OPTION_C_LEGACY_CONTRACT_SCAN_EXECUTED")
+    optc_ifdef = bool(re.search(r"`ifdef\s+OPTION_C\b", store))
+    # Detect LEG_* rebound to Option-C bases inside OPTION_C (or always).
+    leg_rebased = bool(
+        re.search(
+            r"`ifdef\s+OPTION_C\b[\s\S]{0,800}?"
+            r"LEG_BASE_W0\s*=\s*PHYS_BASE_720P",
+            store,
+        )
+        or re.search(
+            r"`ifdef\s+OPTION_C\b[\s\S]{0,800}?"
+            r"LEG_DOORBELL_W\s*=\s*DOORBELL_PHYS_720P",
+            store,
+        )
+    )
+    # Default (non-ifdef) LEG must be true legacy PHYS_BASE / DOORBELL_PHYS.
+    leg_default_legacy = bool(
+        re.search(r"LEG_BASE_W0\s*=\s*PHYS_BASE\s*\[\s*31\s*:\s*3\s*\]", store)
+        or re.search(r"LEG_BASE_W0\s*=\s*PHYS_BASE\[31:3\]", store)
+    )
+    if leg_rebased:
+        errors.append(
+            "B1_OPTION_C_REBASES_LEGACY: ddr_frame_store.sv `ifdef OPTION_C` rebinds "
+            "LEG_BASE_W0/LEG_DOORBELL_W to PHYS_BASE_720P/DOORBELL_PHYS_720P. "
+            "geom_enable=0 then polls Option-C map while host makeDdrPublishPlan "
+            "writes legacy phys/doorbell after PLXG disable — frames ignored "
+            "(rd-duck). Runtime rt_need_optc must select OPTC_*; LEG_* must stay "
+            "legacy (PHYS_BASE / DOORBELL_PHYS) for the geom-off contract."
+        )
+    elif optc_ifdef and not leg_rebased:
+        msgs.append(
+            "LEG0_B1_OPTION_C_IFDEF_PRESENT but LEG_* not rebound to 720P "
+            "(manual audit — prefer removing OPTION_C LEG rebase entirely)"
+        )
+    else:
+        msgs.append(
+            "LEG0_B1_OK no OPTION_C LEG_* rebase "
+            "(geom_enable=0 legacy contract intact at source)"
+        )
+    if store and not leg_default_legacy and not leg_rebased:
+        # Store may use different formatting — soft evidence only if LEG path missing.
+        if "LEG_BASE_W0" in store and "PHYS_BASE_720P" in store:
+            # If LEG always equals OPTC without ifdef, same class.
+            if re.search(
+                r"LEG_BASE_W0\s*=\s*PHYS_BASE_720P", store
+            ) and not re.search(
+                r"LEG_BASE_W0\s*=\s*PHYS_BASE\[", store
+            ):
+                errors.append(
+                    "B1_OPTION_C_REBASES_LEGACY: LEG_BASE_W0 permanently bound to "
+                    "PHYS_BASE_720P (no legacy PHYS_BASE default) — geom_enable=0 "
+                    "cannot honor host legacy publish plan."
+                )
+    msgs.append(
+        "LEG0_B1_POLICY Option-C via rt_need_optc only; "
+        "forbid compile LEG_* rebase; host legacy publish remains geom-off SoT "
+        "(B1_NO_COMPILE_TIME_OPTC retired — demanding OPTION_C was the defect)"
+    )
     if cand and cand.get("architecture") == "ascal_true_de_960":
         # Max tier 960×540 must be storable; legacy-only 640×480 is not enough.
         # Runtime-variable DE means layout must support the max tier (or dynamic
@@ -3532,9 +3601,69 @@ def _mutation_per_blocker_clear_restore() -> list[str]:
         )
         return txt
 
-    def clear_store_optc_ifdef(txt: str) -> str:
-        # Satisfy B1_NO_COMPILE_TIME_OPTC ifdef scan (not a product fix).
-        return "`ifdef OPTION_C\n// mut\n`endif\n" + txt
+    def clear_store_optc_leg_rebase(txt: str) -> str:
+        """Remove OPTION_C LEG_* → 720P rebase (geom-off legacy contract)."""
+        # Collapse `ifdef OPTION_C ... LEG_*=720P ... `else ... LEG_*=legacy ... `endif
+        # into the legacy-only defaults.
+        txt2 = re.sub(
+            r"`ifdef\s+OPTION_C\b[\s\S]*?`else\b([\s\S]*?)`endif",
+            r"\1",
+            txt,
+            count=1,
+        )
+        # If LEG still permanently 720P, force legacy.
+        txt2 = re.sub(
+            r"LEG_BASE_W0\s*=\s*PHYS_BASE_720P(?:\[31:3\])?",
+            "LEG_BASE_W0 = PHYS_BASE[31:3]",
+            txt2,
+        )
+        txt2 = re.sub(
+            r"LEG_DOORBELL_W\s*=\s*DOORBELL_PHYS_720P(?:\[31:3\])?",
+            "LEG_DOORBELL_W = DOORBELL_PHYS[31:3]",
+            txt2,
+        )
+        return txt2
+
+    def inject_store_optc_leg_rebase(txt: str) -> str:
+        """Inject the rd-duck defect: OPTION_C rebinds LEG_* to 720P bases."""
+        if re.search(
+            r"`ifdef\s+OPTION_C\b[\s\S]{0,800}?LEG_BASE_W0\s*=\s*PHYS_BASE_720P",
+            txt,
+        ):
+            return txt  # already defective
+        inject = (
+            "\n// fitgate mut: B1_OPTION_C_REBASES_LEGACY reinject\n"
+            "`ifdef OPTION_C\n"
+            "\tlocalparam [28:0] LEG_BASE_W0 = PHYS_BASE_720P[31:3];\n"
+            "\tlocalparam [28:0] LEG_DOORBELL_W = DOORBELL_PHYS_720P[31:3];\n"
+            "`else\n"
+            "\tlocalparam [28:0] LEG_BASE_W0 = PHYS_BASE[31:3];\n"
+            "\tlocalparam [28:0] LEG_DOORBELL_W = DOORBELL_PHYS[31:3];\n"
+            "`endif\n"
+        )
+        # Prefer splice before first existing LEG_BASE_W0 so the ifdef wins last-wins
+        # is not an issue for localparam — duplicate localparam would break elab;
+        # replace existing LEG_BASE block if present.
+        if re.search(r"localparam\s+\[28:0\]\s+LEG_BASE_W0\s*=", txt):
+            txt2 = re.sub(
+                r"localparam\s+\[28:0\]\s+LEG_BASE_W0\s*=\s*[^;]+;",
+                "localparam [28:0] LEG_BASE_W0 = PHYS_BASE_720P[31:3]; // mut rebase",
+                txt,
+                count=1,
+            )
+            txt2 = re.sub(
+                r"localparam\s+\[28:0\]\s+LEG_DOORBELL_W\s*=\s*[^;]+;",
+                "localparam [28:0] LEG_DOORBELL_W = DOORBELL_PHYS_720P[31:3]; // mut rebase",
+                txt2,
+                count=1,
+            )
+            # Wrap with ifdef so the gate's leg_rebased regex matches.
+            return (
+                "`ifdef OPTION_C\n"
+                + txt2
+                + "\n`endif // mut OPTION_C wrap for B1 reinject\n"
+            )
+        return inject + txt
 
     def clear_store_capacity(txt: str) -> str:
         # Remove width-only and inject capacity markers the gate accepts.
@@ -3663,10 +3792,8 @@ def _mutation_per_blocker_clear_restore() -> list[str]:
     # Each entry: token, list of (path, transform) applied together for clear.
     specs: list[tuple[str, list[tuple[Path, object]]]] = [
         ("B1_LAYOUT_NOT_960", [(layout, clear_layout_960)]),
-        (
-            "B1_NO_COMPILE_TIME_OPTC",
-            [(layout, clear_layout_960), (store, clear_store_optc_ifdef)],
-        ),
+        # B1_NO_COMPILE_TIME_OPTC retired. B1_OPTION_C_REBASES_LEGACY is closed
+        # on this tree (no LEG rebase) — proven via closed-class reinject below.
         ("B2_FPS_INT_OVERFLOW", [(t960, clear_fps_longint)]),
         # B2_NO_RASTER_GENERATOR retired — timing_960 constants-only is intentional.
         # B2_NO_PRODUCT_RASTER: only fires when beam lacks hc/vc or qip entry;
@@ -3930,7 +4057,39 @@ def _mutation_b20_hier_exec() -> list[str]:
             if rest is not None:
                 rest()
 
+        # 2b) If scenario has extra_require (B20_HIER_A map/doorbell), DUT+PASS
+        # without those tokens must NOT clear (rd-duck OPTION_C/legacy contract).
+        extras = list(spec.get("extra_require", ()) or ())
+        if extras:
+            missing_extra_run = (
+                "#!/usr/bin/env bash\n"
+                f"echo '{case_tok}'\n"
+                f"echo '{pass_tok}'\n"
+                "echo 'DUT_TOUCHED=1'\n"
+                "echo 'HIER_TB_RUN=1'\n"
+                "exit 0\n"
+            )
+            rest = None
+            try:
+                rest = _with_file_backup(script, missing_extra_run)
+                os.chmod(script, 0o755)
+                toks = _leg0_toks()
+                if tok not in toks:
+                    fails.append(
+                        f"{tok}: runner missing extra_require {extras!r} cleared "
+                        "blocker — HOLE (map/doorbell assertion required)"
+                    )
+                else:
+                    print(f"  MUT_OK {tok} extra_require_enforced=1")
+            finally:
+                if rest is not None:
+                    rest()
+
         # 3) Full contract runner clears; remove restores fire.
+        # Include any scenario extra_require tokens (e.g. B20_HIER_A map/doorbell).
+        extra_echo = ""
+        for extra in spec.get("extra_require", ()) or ():
+            extra_echo += f"echo '{extra}'\n"
         good = (
             "#!/usr/bin/env bash\n"
             "set -euo pipefail\n"
@@ -3939,6 +4098,7 @@ def _mutation_b20_hier_exec() -> list[str]:
             "echo 'DUT_TOUCHED=1'\n"
             "echo 'HIER_TB_RUN=1'\n"
             "echo 'SIM_RUN=1'\n"
+            f"{extra_echo}"
             # Minimal DUT touch: prove we can read product RTL (not prose-only).
             "ROOT=\"${MISTERPLEX_ROOT:-$(cd \"$(dirname \"$0\")/../..\" && pwd)}\"\n"
             "test -f \"$ROOT/fpga/Plex_MiSTer/Plex.sv\"\n"
@@ -3982,6 +4142,9 @@ def _mutation_b20_hier_exec() -> list[str]:
     spec_a = B20_HIER_REGISTRY[0]
     tok_a = spec_a["token"]
     script_a = ROOT / spec_a["script"]
+    extra_a = "".join(
+        f"echo '{ex}'\n" for ex in (spec_a.get("extra_require") or ())
+    )
     good_a = (
         "#!/usr/bin/env bash\n"
         "set -euo pipefail\n"
@@ -3989,6 +4152,7 @@ def _mutation_b20_hier_exec() -> list[str]:
         f"echo '{spec_a['pass']}'\n"
         "echo 'DUT_TOUCHED=1'\n"
         "echo 'HIER_TB_RUN=1'\n"
+        f"{extra_a}"
         "ROOT=\"${MISTERPLEX_ROOT:-$(cd \"$(dirname \"$0\")/../..\" && pwd)}\"\n"
         "test -f \"$ROOT/fpga/Plex_MiSTer/Plex.sv\"\n"
         "exit 0\n"
@@ -4351,6 +4515,35 @@ def _mutation_closed_class_reinject() -> list[str]:
                     print("  MUT_OK B21_HDMI_BLACKOUT_DISABLED reinject_fire=1")
             finally:
                 rest()
+
+    # B1_OPTION_C_REBASES_LEGACY (rd-duck): closed when LEG_* stay legacy.
+    # Reinject OPTION_C LEG→720P rebase; must fire. Ancestry alone never clears.
+    store_p = RTL / "ddr_frame_store.sv"
+    if store_p.is_file():
+        old_st = store_p.read_text()
+        # Minimal defect shape matching leg0 regex (ifdef + LEG_BASE_W0=PHYS_BASE_720P).
+        bad_st = (
+            "`ifdef OPTION_C\n"
+            "\tlocalparam [28:0] LEG_BASE_W0 = PHYS_BASE_720P[31:3];\n"
+            "\tlocalparam [28:0] LEG_DOORBELL_W = DOORBELL_PHYS_720P[31:3];\n"
+            "`else\n"
+            "\tlocalparam [28:0] LEG_BASE_W0 = PHYS_BASE[31:3];\n"
+            "\tlocalparam [28:0] LEG_DOORBELL_W = DOORBELL_PHYS[31:3];\n"
+            "`endif\n"
+            "// fitgate mut B1_OPTION_C_REBASES_LEGACY\n"
+        ) + old_st
+        rest = _with_file_backup(store_p, bad_st)
+        try:
+            _rc, msgs = leg0_arch_blockers()
+            toks = _leg0_error_tokens(msgs)
+            if "B1_OPTION_C_REBASES_LEGACY" not in toks:
+                fails.append(
+                    "B1_OPTION_C_REBASES_LEGACY: LEG rebase reinject did not fire — HOLE"
+                )
+            else:
+                print("  MUT_OK B1_OPTION_C_REBASES_LEGACY reinject_fire=1")
+        finally:
+            rest()
 
     # B2_NO_PRODUCT_RASTER: strip beam raster evidence.
     beam_p = RTL / "present_beam_content_de.sv"

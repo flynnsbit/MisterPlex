@@ -28,6 +28,13 @@ MERGE=/path/to/merged-tree
 **B10:** `discover_design(macro_qsf=)` must actually run (`LEG0_DISCOVER_DESIGN EXECUTED`); TypeError/stale `rtl_lint` → `B10_DISCOVER_DESIGN_DID_NOT_RUN` (check did not execute).  
 **B14:** `coded_w` 16-align reject required (`rt_coded_w[3:0]==0`); PMS AR-fit 468/638/626 is an observed defect class.  
 
+**B1 OPTION_C vs geom-off legacy (rd-duck — architecture):**  
+Host `makeDdrPublishPlan` (ddr_present_bank.hpp) on mode-exit / PLXG disable programs **legacy** phys base + doorbell **`0x300FF000`**. FPGA `geom_enable=0` must poll that map.  
+**Forbidden:** `` `ifdef OPTION_C `` rebinding `LEG_BASE_W0`/`LEG_DOORBELL_W` to `PHYS_BASE_720P`/`DOORBELL_PHYS_720P` — then geom-off still polls Option-C and **ignores host legacy frames**. Gate token **`B1_OPTION_C_REBASES_LEGACY`**.  
+**Required:** Option-C bank only via **runtime `rt_need_optc`** (B7 capacity); `LEG_*` stay `PHYS_BASE` / `DOORBELL_PHYS`.  
+**Retired:** `B1_NO_COMPILE_TIME_OPTC` (demanding OPTION_C compile path was the defect).  
+**B20_HIER_A** must print measured `geom_enable=0`, `map=LEGACY`, `doorbell_phys=0x300FF000` (not PASS prose).  
+
 **Max-tier measured (beam+window TB):** `true_de=1 de_w=960 de_lines=540 de_pixels=518400 store_req=518400 store_oracle=1 store_x_range=0..959` @ `H_TOT=1182 V_TOT=564` (`fps@20M=30.0008`) — **not** product hierarchy proof (inspect `Plex.sv`).  
 **RED:** `PRESENT_BEAM_FAULT_ISLAND_1280` → `de=1280x720 true_de=0` rc≠0 + EXECUTED  
 **Also RED (rd-duck):** DE-only greenwash — `de_pixels=518400` with `store_req=517860` (959×540, x=0 dropped) is **not** fit-ready. Beam blank/sync must use **same counter epoch** as registered `hc`/`vc` (`hc_next`).
