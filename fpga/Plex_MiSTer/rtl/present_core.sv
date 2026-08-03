@@ -462,11 +462,7 @@ module present_core #(
 	present_pix_rate_match #(
 		.F_SYS_HZ(20_000_000),
 		.F_PIX_HZ(MP_RATE_PIX_HZ),
-		.PX_PER_CLK(PRESENT_PPC),
-		// Option-C banks (capacity select + compile-time OPTION_C LEG re-base)
-		.PHYS_BASE_720P(DDR_FRAME_720P_PHYS_BASE),
-		.HPS_BANK_STRIDE_BYTES_720P(DDR_FRAME_720P_YUV420P_BANK_STRIDE),
-		.DOORBELL_PHYS_720P(DDR_FRAME_720P_YUV420P_DOORBELL_PHYS)
+		.PX_PER_CLK(PRESENT_PPC)
 	) u_mp_rate (
 		.clk(clk),
 		.reset(reset),
@@ -576,7 +572,9 @@ module present_core #(
 		.PHYS_BASE(32'h3000_0000),
 		.HPS_BANK_STRIDE_BYTES(DDR_FRAME_YUV420P_BANK_STRIDE),
 		.DOORBELL_PHYS(DDR_FRAME_YUV420P_DOORBELL_PHYS),
-		.PX_PER_CLK(PRESENT_PPC)
+		.PHYS_BASE_720P(DDR_FRAME_720P_PHYS_BASE),
+		.HPS_BANK_STRIDE_BYTES_720P(DDR_FRAME_720P_YUV420P_BANK_STRIDE),
+		.DOORBELL_PHYS_720P(DDR_FRAME_720P_YUV420P_DOORBELL_PHYS)
 	) fstore (
 		.clk(clk),
 		.clk_ddr(clk_ddr),
@@ -587,22 +585,17 @@ module present_core #(
 		.rd_r(fr),
 		.rd_g(fg),
 		.rd_b(fb),
-		.rd_r_n(fs_r_n),
-		.rd_g_n(fs_g_n),
-		.rd_b_n(fs_b_n),
-		.rd_lane_valid_n(fs_lane_v_n),
-		.rd_n_valid(fs_n_valid),
 		.geom_enable(geom_enable),
-				.rt_coded_w(geom_coded_w),
-				.rt_coded_h(geom_coded_h),
-				.rt_y_stride(geom_y_stride),
-				.rt_chroma_stride(geom_chroma_stride),
-				.rt_display_w(geom_display_w),
-				.rt_display_h(geom_display_h),
-				.rt_present_x(geom_present_x),
-				.rt_present_y(geom_present_y),
-				.rt_crop_left(geom_crop_left),
-				.rt_crop_top(geom_crop_top),
+		.rt_coded_w(geom_coded_w),
+		.rt_coded_h(geom_coded_h),
+		.rt_y_stride(geom_y_stride),
+		.rt_chroma_stride(geom_chroma_stride),
+		.rt_display_w(geom_display_w),
+		.rt_display_h(geom_display_h),
+		.rt_present_x(geom_present_x),
+		.rt_present_y(geom_present_y),
+		.rt_crop_left(geom_crop_left),
+		.rt_crop_top(geom_crop_top),
 		.start_req(ddr_start_req),
 		.bank_sel(ddr_bank_sel),
 		.status_osd(ddr_status_osd),
