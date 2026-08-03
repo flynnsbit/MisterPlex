@@ -1,48 +1,23 @@
-# Risk list — why paper 32.59 does not auto-pass native 720p24
+# Risks — native 720p ~24 Hz beam fit
 
-## R1 — Different netlist than Fmax sample (CRITICAL)
-**32.59 MHz** was measured on **fit-nostub-chrome** (`c74c6863`) — ARM-present,
-stub-out, **not** today’s main+w-osd L4 present path, **not** native 1280 beam RTL,
-**not** clk_sys=24.
+## BLOCKER-CDC-24-90 (NEW — closes prior unquantified hazard)
+clk_sys=24 / clk_ddr=90 → min related setup Δ **2.778 ns** (edge family 4:15).  
+Measured meta data delay **~3.5–4.9 ns**. Expect **related-edge SETUP HARD_FAIL**  
+on y_line/c_line→v1 class (same class as inventory 25 MHz kill).  
+**Primary fit uses 30 MHz (3:1), not 24.** Detail: `CDC_RATIO_24_90_AUDIT.md`.
 
-Adding/enabling present path, geom mux/latch, 1280 DE, B20 logic, or any decode
-change **moves placement and the critical path**. Paper margin is a **prior**, not
-a guarantee.
+## R1 — 32.59 is prior netlist only
+fit-nostub-chrome ≠ L4 present + native DE. Fmax may fall below 30.
 
-## R2 — L4 not actually on (false STA green)
-If `FRAME_W/H` stay 640×480 or beam stays behind a dead ifdef, STA may pass 24 MHz
-on a **480p** netlist while the user-visible mode is unchanged.  
-**Hierarchy + capture must prove 1280 DE** (H1–H3).
+## R2 — L4 not on → false green
+640×480 with 30 MHz is not native 720p24.
 
-## R3 — L2 dead code / strip
-Modules in `files.qip` with **INSTANTIATED=0** are stripped — they do not stress Fmax
-and do not deliver function. Parent already saw mux/latch/window at 0 refs.
+## R3 — Hold at 3:1
+30/90 setup easy; **hold** same-edge must pass (inventory).
 
-## R4 — CDC ratio 24:90 = 4:15
-Not the clean 3:1 of 30/90. Related-edge setup/hold can surprise; async_fifo cut is
-only mem→rd_data_r. Other sys↔ddr paths stay timed. Prior 20/90 had fragile
-related-edge holds (product SDC comments).
+## R4 — Throughput RD-TP
+input_fifo AW=2; line prep vs faster sys scan at 1280.
 
-## R5 — residual_csum keep-cone still present
-Prior nostub owner is **real** product logic. If it worsens under new place/route,
-Fmax can fall below 24. Cutting keep without parent residual-protocol grant is
-forbidden gate-weakening.
+## R5 — Fabric decode not in 32.59 sample
 
-## R6 — Fabric H.264 not in the 32.59 netlist
-If this fit accidentally includes heavy decode, Fmax is **unmeasured**. Keep
-nostub/ARM-present scope unless parent explicitly combines (not recommended).
-
-## R7 — PLL string vs actual VCO
-We set frequency strings; Quartus chooses counters. Confirm STA clocks panel shows
-**exactly 24.000 / 90.000** (not a nearby fractional).
-
-## R8 — Beam totals not SDC
-H=1312 V=762 are RTL/runtime. Wrong defaults → wrong fps even if STA passes.
-
-## R9 — ascal / HDMI still ~60
-Core ~24 Hz into ascal; glass 60. Capture must not demand panel-native 24 Hz.
-Judder is ascal class, not Bresenham (1:1 content).
-
-## R10 — Collision with w-osd structural edits
-PLL + QSF + present instantiate must be **one sequenced fit**, not parallel edits
-to the same files mid-compile.
+## R6 — Parallel structural edits mid-fit

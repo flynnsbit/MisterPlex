@@ -188,3 +188,13 @@ Directory: `.agent-work/w-clock/fit-native-720p24/`
 
 **Corner that counts:** Slow **1100mV 100C Final**. Fast-only → reject.  
 **Fmax floor:** clk_sys ≥ **24.000** MHz; path owner named; not `decode_stub`.
+
+---
+
+## 11. CDC revision (24 MHz demoted)
+
+**BLOCKER-CDC-24-90:** 24/90 min related setup Δ **2.778 ns** < meta data-delay  
+class ~3.8 ns → do not primary-fit 24 MHz.  
+
+**PRIMARY:** PLL **30 MHz**, H=1312 V=**953**, fps≈23.994, CDC **3:1**.  
+Audit: `fit-native-720p24/CDC_RATIO_24_90_AUDIT.md`.

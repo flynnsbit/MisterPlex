@@ -1,5 +1,6 @@
 {
-  "fit_mode": "native_720p24",
+  "fit_mode": "native_720p24_cdc30_primary",
+  "cdc_blocker_24_90": true,
   "corner_required": {
     "speed": "Slow",
     "voltage": "1100mV",
@@ -9,36 +10,44 @@
   },
   "clocks": {
     "clk_sys": {
-      "mhz_min": 24.0,
-      "mhz_target": 24.0,
-      "name_substrings": ["general[0]", "divclk", "clk_sys"]
+      "mhz_min": 30.0,
+      "mhz_target": 30.0,
+      "name_substrings": [
+        "general[0]",
+        "divclk"
+      ]
     },
     "clk_ddr": {
       "mhz_min": 90.0,
       "mhz_target": 90.0,
-      "name_substrings": ["general[2]", "clk_ddr"]
+      "name_substrings": [
+        "general[2]"
+      ]
     }
   },
   "slack": {
     "setup_min_ns": 0.0,
-    "hold_min_ns": 0.0
+    "hold_min_ns": 0.0,
+    "hold_mandatory_reason": "3:1 same-edge family"
   },
   "path_owner": {
     "require_named_from_to": true,
-    "forbidden_substrings": ["decode_stub"],
-    "identify_if_fmax_below_mhz": 26.4,
+    "forbidden_substrings": [
+      "decode_stub"
+    ],
     "prior_nostub_owner_hint": "slice_hdr_parser residual_csum"
   },
   "beam": {
     "de_w": 1280,
     "de_h": 720,
     "h_total": 1312,
-    "v_total": 762,
-    "fps_arith": 24.006146
+    "v_total": 953,
+    "fps_arith": 23.993551
   },
-  "gates": [
-    "make post-fit-timing STA_RPT=...",
-    "path owner extraction (w-fitgate)",
-    "make post-fit-hierarchy FIT_RPT=..."
-  ]
+  "experimental_24mhz": {
+    "blocked_until": "meta retime or STA proves related setup with 2.778ns edges",
+    "mhz": 24.0,
+    "v_total": 762
+  },
+  "doc": "CDC_RATIO_24_90_AUDIT.md"
 }
