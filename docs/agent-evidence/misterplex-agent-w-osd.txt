@@ -239,3 +239,26 @@ Proves: ARM writeChromeCommandList shape (mem@0x140 then PLXC@0x130) becomes
   fabric composite with zero ARM pixel bake. Product still needs ddr arbiter wire.
 
 ========================================================================
+(j) PX_PER_CLK multi-lane chrome (w-clock integration ready)
+========================================================================
+plex_chrome.sv parameter PX_PER_CLK ∈ {1,2,4}, default 1 (sys_top unchanged).
+  din/dout = PX_PER_CLK×24 packed LE; each lane hit-tests hx0+lane.
+Evidence:
+  test_plex_chrome_rtl_sim (PPC=1): true rc=0  passthrough/glyph/idle
+  test_plex_chrome_e2e_rtl_sim:      true rc=0
+  test_plex_chrome_ppc_rtl_sim (PPC=2): true rc=0
+    PASS ppc2-passthrough
+    PASS ppc2-lane-split  rect w=1 → lane0=141428 lane1=video only
+    PASS ppc2-outside
+
+INTEGRATION FIT readiness (honest):
+  SAFE default-on today: plex_chrome @ PPC=1 already in sys_top (passthrough when
+    cfg off). Boot one-shot list only until loader arbitrated.
+  DEFAULT-OFF modules (do not enable without arbiter wire + parent gate):
+    present_pace_seq ENABLE=0
+    plex_chrome_ddr_loader ENABLE=0
+  BLOCKED for product plane=1 on glass:
+    ddr_frame_store must grant loader beats; has_frame CDC; PLXO path live.
+  Nostub d1b24e0c on glass = room is there (356 free M10K).
+
+========================================================================

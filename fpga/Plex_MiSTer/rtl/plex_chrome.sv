@@ -12,11 +12,11 @@
 // ARM: semantic PLXC list only (doorbell + 0x130 / list @ +0x140). Never pixels.
 // When cfg_enable=0 and idle_en=0, video passes through unmodified (1-cycle delay).
 //
-// Multi-pixel present (w-clock present_beam_ppc): this module sits post-ascal on
-// clk_hdmi and composites ONE HDMI pixel per clock today. Pre-ascal PPC on clk_sys
-// does not fan out into this plane. If a future N-lane HDMI path lands here, hit
-// detection must OR glyph/rect coverage across x0..x0+N-1 in the same cycle — do
-// not assume single-x scans once multi-pixel reaches clk_hdmi.
+// Multi-pixel (w-clock present_beam_ppc / route-B 720p scanout):
+//   parameter PX_PER_CLK ∈ {1,2,4}. Default 1 = product path today (sys_top 1ppc).
+//   din/dout are PX_PER_CLK×24b packed little-endian lane0 in [23:0].
+//   Each lane composites at hx0+lane independently (glyph/rect/idle). Pre-ascal
+//   PPC on clk_sys does not require this module until N-pixel reaches clk_hdmi.
 //
 // Cmd pack (64-bit LE, host + RTL):
 //   [7:0]   op     0=END 1=RECT 2=GLYPH 3=RECT_PAL
@@ -40,7 +40,8 @@ module plex_chrome #(
     parameter int HIT_SCAN = 48, // == MAX_CMDS: full list visible @720p HUD budget
     parameter int FONT_W   = 8,
     parameter int FONT_H   = 8,
-    parameter bit BOOT_DEMO = 1'b0
+    parameter bit BOOT_DEMO = 1'b0,
+    parameter int PX_PER_CLK = 1  // 1|2|4 — default 1 product-safe
 ) (
     input  wire        clk_hdmi,
     input  wire        reset,
@@ -48,11 +49,11 @@ module plex_chrome #(
     input  wire [11:0] HDMI_WIDTH,
     input  wire [11:0] HDMI_HEIGHT,
 
-    input  wire [23:0] din,
+    input  wire [PX_PER_CLK*24-1:0] din,
     input  wire        hs_in,
     input  wire        vs_in,
     input  wire        de_in,
-    output reg  [23:0] dout,
+    output reg  [PX_PER_CLK*24-1:0] dout,
     output reg         hs_out,
     output reg         vs_out,
     output reg         de_out,
@@ -360,12 +361,13 @@ module plex_chrome #(
         end
     end
 
-    // Pixel coords aligned with *current* din/de_in (comb), so the 1-cycle
-    // dout pipeline pairs hit with the same din sample.
+    // Pixel coords: hx0 is leftmost lane of this beat. Advance by PX_PER_CLK.
+    // 1-cycle dout pipeline pairs hit with the same din sample.
+    localparam [11:0] PPC = PX_PER_CLK[11:0];
     reg        de_d;
     reg [11:0] x_cnt, y_cnt;
-    wire [11:0] hx = de_in ? (de_d ? (x_cnt + 12'd1) : 12'd0) : 12'd0;
-    wire [11:0] hy = y_cnt;
+    wire [11:0] hx0 = de_in ? (de_d ? (x_cnt + PPC) : 12'd0) : 12'd0;
+    wire [11:0] hy  = y_cnt;
 
     always @(posedge clk_hdmi) begin
         if (reset) begin
@@ -381,9 +383,8 @@ module plex_chrome #(
                 if (!de_d)
                     x_cnt <= 12'd0;
                 else
-                    x_cnt <= x_cnt + 12'd1;
+                    x_cnt <= x_cnt + PPC;
             end else if (de_d) begin
-                // DE falling: advance line for next active row
                 y_cnt <= y_cnt + 12'd1;
                 x_cnt <= 12'd0;
             end
@@ -415,16 +416,13 @@ module plex_chrome #(
         end
     endfunction
 
-    reg        idle_hit;
-    reg [23:0] idle_rgb;
+    // Shared idle geometry (not per-lane).
     reg [11:0] idle_size, idle_ox, idle_oy;
     reg [11:0] span_x, span_y;
     reg [15:0] ph, tri_w, half_ph;
     reg [31:0] drift;
 
     always @(*) begin
-        idle_hit  = 1'b0;
-        idle_rgb  = 24'h00_00_00;
         span_x    = 12'd0;
         span_y    = 12'd0;
         ph        = 16'd0;
@@ -435,138 +433,154 @@ module plex_chrome #(
         if (idle_size < 12'd4) idle_size = 12'd4;
         idle_ox = (HDMI_WIDTH  - idle_size) >> 1;
         idle_oy = (HDMI_HEIGHT - idle_size) >> 1;
-        if (idle_en && idle_mode != 2'd3) begin
-            if (idle_mode == 2'd1) begin
-                idle_rgb = 24'h00_00_00;
-                idle_hit = 1'b1;
-            end else begin
-                if (idle_mode == 2'd2) begin
-                    span_x = (HDMI_WIDTH > idle_size + 12'd16) ?
-                             (HDMI_WIDTH - idle_size - 12'd16) : 12'd0;
-                    span_y = (HDMI_HEIGHT > idle_size + 12'd16) ?
-                             (HDMI_HEIGHT - idle_size - 12'd16) : 12'd0;
-                    ph = idle_phase % 16'd1200;
-                    half_ph = 16'd600;
-                    tri_w = (ph < half_ph) ? ph : (16'd1200 - ph);
-                    drift = ({16'd0, tri_w} * {20'd0, span_x}) / 32'd600;
-                    idle_ox = 12'd8 + drift[11:0];
-                    ph = (idle_phase + 16'd300) % 16'd1200;
-                    tri_w = (ph < half_ph) ? ph : (16'd1200 - ph);
-                    drift = ({16'd0, tri_w} * {20'd0, span_y}) / 32'd600;
-                    idle_oy = 12'd8 + drift[11:0];
-                end
-                if (idle_chevron(hx, hy, idle_ox, idle_oy, idle_size)) begin
-                    idle_hit = 1'b1;
-                    idle_rgb = 24'hE5_A0_0D;
-                end else begin
-                    idle_hit = 1'b1;
-                    idle_rgb = 24'h1F_23_26;
-                end
-            end
+        if (idle_en && idle_mode == 2'd2) begin
+            span_x = (HDMI_WIDTH > idle_size + 12'd16) ?
+                     (HDMI_WIDTH - idle_size - 12'd16) : 12'd0;
+            span_y = (HDMI_HEIGHT > idle_size + 12'd16) ?
+                     (HDMI_HEIGHT - idle_size - 12'd16) : 12'd0;
+            ph = idle_phase % 16'd1200;
+            half_ph = 16'd600;
+            tri_w = (ph < half_ph) ? ph : (16'd1200 - ph);
+            drift = ({16'd0, tri_w} * {20'd0, span_x}) / 32'd600;
+            idle_ox = 12'd8 + drift[11:0];
+            ph = (idle_phase + 16'd300) % 16'd1200;
+            tri_w = (ph < half_ph) ? ph : (16'd1200 - ph);
+            drift = ({16'd0, tri_w} * {20'd0, span_y}) / 32'd600;
+            idle_oy = 12'd8 + drift[11:0];
         end
     end
 
-    reg        hit;
-    reg [23:0] hit_rgb;
-    integer    ci;
-    reg [63:0] cw;
-    reg [7:0]  op, code, pal;
-    reg [15:0] cx, cy;
-    reg [11:0] rw, rh;
-    reg [3:0]  sc;
-    reg [11:0] gx, gy, bitx, bity, gw, gh;
-    reg [7:0]  fbits;
-    reg [7:0]  scan_n;
-
-    always @(*) begin
-        hit     = 1'b0;
-        hit_rgb = 24'h00_00_00;
-        sc      = body_scale;
-        gw      = 12'(FONT_W) * {8'd0, sc};
-        gh      = 12'(FONT_H) * {8'd0, sc};
-        scan_n  = (latched_count > HIT_SCAN[7:0]) ? HIT_SCAN[7:0] : latched_count;
-        cw      = 64'd0;
-        op      = 8'd0;
-        cx      = 16'd0;
-        cy      = 16'd0;
-        code    = 8'd0;
-        gx      = 12'd0;
-        gy      = 12'd0;
-        bitx    = 12'd0;
-        bity    = 12'd0;
-        fbits   = 8'd0;
-        rw      = 12'd0;
-        rh      = 12'd0;
-        pal     = 8'd0;
-
-        for (ci = 0; ci < HIT_SCAN; ci = ci + 1) begin
-            if (latched_en && (ci < scan_n)) begin
-                cw   = live_bank ? list_b[ci] : list_a[ci];
-                op   = cw[7:0];
-                cx   = cw[23:8];
-                cy   = cw[39:24];
-                code = cw[47:40];
-                if (op == 8'd2) begin
-                    if ({4'd0, hx} >= cx && {4'd0, hy} >= cy) begin
-                        gx = hx - cx[11:0];
-                        gy = hy - cy[11:0];
-                        if (gx < gw && gy < gh) begin
-                            bitx  = div_by_scale(gx, sc);
-                            bity  = div_by_scale(gy, sc);
-                            fbits = font_row(code, bity[2:0]);
-                            if (bitx < 12'(FONT_W) && fbits[7 - bitx[2:0]]) begin
-                                hit     = 1'b1;
-                                hit_rgb = 24'hFF_FF_FF;
+    // Per-pixel chrome hit (cmd list scan). Returns {hit, rgb}.
+    function automatic [24:0] chrome_at;
+        input [11:0] px, py;
+        integer    ci;
+        reg [63:0] cw;
+        reg [7:0]  op, code, pal;
+        reg [15:0] cx, cy;
+        reg [11:0] rw, rh;
+        reg [3:0]  sc;
+        reg [11:0] gx, gy, bitx, bity, gw, gh;
+        reg [7:0]  fbits;
+        reg [7:0]  scan_n;
+        reg        hit_l;
+        reg [23:0] rgb_l;
+        begin
+            hit_l  = 1'b0;
+            rgb_l  = 24'h00_00_00;
+            sc     = body_scale;
+            gw     = 12'(FONT_W) * {8'd0, sc};
+            gh     = 12'(FONT_H) * {8'd0, sc};
+            scan_n = (latched_count > HIT_SCAN[7:0]) ? HIT_SCAN[7:0] : latched_count;
+            for (ci = 0; ci < HIT_SCAN; ci = ci + 1) begin
+                if (latched_en && (ci < scan_n)) begin
+                    cw   = live_bank ? list_b[ci] : list_a[ci];
+                    op   = cw[7:0];
+                    cx   = cw[23:8];
+                    cy   = cw[39:24];
+                    code = cw[47:40];
+                    if (op == 8'd2) begin
+                        if ({4'd0, px} >= cx && {4'd0, py} >= cy) begin
+                            gx = px - cx[11:0];
+                            gy = py - cy[11:0];
+                            if (gx < gw && gy < gh) begin
+                                bitx  = div_by_scale(gx, sc);
+                                bity  = div_by_scale(gy, sc);
+                                fbits = font_row(code, bity[2:0]);
+                                if (bitx < 12'(FONT_W) && fbits[7 - bitx[2:0]]) begin
+                                    hit_l = 1'b1;
+                                    rgb_l = 24'hFF_FF_FF;
+                                end
                             end
                         end
-                    end
-                end else if (op == 8'd1) begin
-                    rw = cw[51:40];
-                    rh = cw[63:52];
-                    if ({4'd0, hx} >= cx && {4'd0, hy} >= cy &&
-                        {4'd0, hx} < (cx + {4'd0, rw}) &&
-                        {4'd0, hy} < (cy + {4'd0, rh})) begin
-                        hit     = 1'b1;
-                        hit_rgb = 24'h14_14_28;
-                    end
-                end else if (op == 8'd3) begin
-                    rw  = {4'd0, cw[47:40]};
-                    rh  = {4'd0, cw[55:48]};
-                    pal = cw[63:56];
-                    if ({4'd0, hx} >= cx && {4'd0, hy} >= cy &&
-                        {4'd0, hx} < (cx + {4'd0, rw}) &&
-                        {4'd0, hy} < (cy + {4'd0, rh})) begin
-                        hit     = 1'b1;
-                        hit_rgb = pal_rgb(pal);
+                    end else if (op == 8'd1) begin
+                        rw = cw[51:40];
+                        rh = cw[63:52];
+                        if ({4'd0, px} >= cx && {4'd0, py} >= cy &&
+                            {4'd0, px} < (cx + {4'd0, rw}) &&
+                            {4'd0, py} < (cy + {4'd0, rh})) begin
+                            hit_l = 1'b1;
+                            rgb_l = 24'h14_14_28;
+                        end
+                    end else if (op == 8'd3) begin
+                        rw  = {4'd0, cw[47:40]};
+                        rh  = {4'd0, cw[55:48]};
+                        pal = cw[63:56];
+                        if ({4'd0, px} >= cx && {4'd0, py} >= cy &&
+                            {4'd0, px} < (cx + {4'd0, rw}) &&
+                            {4'd0, py} < (cy + {4'd0, rh})) begin
+                            hit_l = 1'b1;
+                            rgb_l = pal_rgb(pal);
+                        end
                     end
                 end
             end
+            chrome_at = {hit_l, rgb_l};
+        end
+    endfunction
+
+    function automatic [23:0] idle_rgb_at;
+        input [11:0] px, py;
+        begin
+            idle_rgb_at = 24'h00_00_00;
+            if (idle_en && idle_mode != 2'd3) begin
+                if (idle_mode == 2'd1)
+                    idle_rgb_at = 24'h00_00_00;
+                else if (idle_chevron(px, py, idle_ox, idle_oy, idle_size))
+                    idle_rgb_at = 24'hE5_A0_0D;
+                else
+                    idle_rgb_at = 24'h1F_23_26;
+            end
+        end
+    endfunction
+
+    // Comb per-lane composite colors for this beat.
+    reg [PX_PER_CLK*24-1:0] lane_rgb;
+    reg [PX_PER_CLK-1:0]    lane_hit;
+    reg [PX_PER_CLK-1:0]    lane_idle;
+    integer lane_i;
+    reg [11:0] lx;
+    reg [24:0] ch;
+    reg [23:0] ir;
+
+    always @(*) begin
+        lane_rgb  = {PX_PER_CLK*24{1'b0}};
+        lane_hit  = {PX_PER_CLK{1'b0}};
+        lane_idle = {PX_PER_CLK{1'b0}};
+        for (lane_i = 0; lane_i < PX_PER_CLK; lane_i = lane_i + 1) begin
+            lx = hx0 + lane_i[11:0];
+            ch = chrome_at(lx, hy);
+            ir = idle_rgb_at(lx, hy);
+            lane_hit[lane_i]  = ch[24];
+            lane_idle[lane_i] = idle_en && (idle_mode != 2'd3);
+            if (ch[24])
+                lane_rgb[lane_i*24 +: 24] = ch[23:0];
+            else if (idle_en && (idle_mode != 2'd3))
+                lane_rgb[lane_i*24 +: 24] = ir;
+            else
+                lane_rgb[lane_i*24 +: 24] = din[lane_i*24 +: 24];
         end
     end
 
-    reg [23:0] din_d;
+    reg [PX_PER_CLK*24-1:0] din_d, lane_rgb_d;
     reg        hs_d, vs_d2, de_d2;
-    reg        hit_d, idle_en_d;
-    reg [23:0] hit_rgb_d, idle_rgb_d;
+    reg [PX_PER_CLK-1:0] lane_hit_d, lane_idle_d;
+    reg        idle_en_d;
 
     always @(posedge clk_hdmi) begin
-        din_d      <= din;
-        hs_d       <= hs_in;
-        vs_d2      <= vs_in;
-        de_d2      <= de_in;
-        hit_d      <= hit && de_in;
-        hit_rgb_d  <= hit_rgb;
-        // Keep idle_en sticky across blanking so DE-start has no 1-cycle video leak.
-        idle_en_d  <= idle_en;
-        idle_rgb_d <= idle_rgb;
+        din_d       <= din;
+        lane_rgb_d  <= lane_rgb;
+        lane_hit_d  <= lane_hit;
+        lane_idle_d <= lane_idle;
+        hs_d        <= hs_in;
+        vs_d2       <= vs_in;
+        de_d2       <= de_in;
+        idle_en_d   <= idle_en;
 
         hs_out <= hs_d;
         vs_out <= vs_d2;
         de_out <= de_d2;
-        if (de_d2 && hit_d)
-            dout <= hit_rgb_d;
-        else if (de_d2 && idle_en_d)
-            dout <= idle_rgb_d;
+        if (de_d2)
+            dout <= lane_rgb_d; // already per-lane: hit / idle / din
         else
             dout <= din_d;
     end

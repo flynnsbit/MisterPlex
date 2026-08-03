@@ -209,6 +209,7 @@ EXPECTED_COMMANDS = [
     "$(ROOT)/tests/unit/test_present_pace_rtl_sim.sh",
     "$(ROOT)/tests/unit/test_plex_chrome_ddr_loader_rtl_sim.sh",
     "$(ROOT)/tests/unit/test_plex_chrome_e2e_rtl_sim.sh",
+    "$(ROOT)/tests/unit/test_plex_chrome_ppc_rtl_sim.sh",
     "$(ROOT)/tests/unit/test_mister_ini_plex_guard.sh",
     "$(ROOT)/tests/unit/test_confstr_guard.sh",
     "$(ROOT)/tests/unit/test_core_conf_geometry_gate.sh",
