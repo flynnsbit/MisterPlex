@@ -1,8 +1,8 @@
 // Geometry-side frame cost lock: 240p vs 480p DECODE on the FPGA DDR path.
 //
 // Pre-register (must hold or this is RED):
-//   P1: ddrFrameGeometryForFpgaPresent(320,240) == ForFpgaPresent(624,480)
-//       (same coded bank, same crop, same frame_bytes=449280)
+//   P1: ddrFrameGeometryForFpgaPresent(320,240) is identity 320×240 storage
+//       (source-aware; NOT forced 624×480 canvas — PLXG must match payload)
 //   P2: product FORCE_SCALE Always FOAR-scales into coded 624x480 (unverified
 //       claim and 624x350); pad=624:480. Never crop=618:480 on that path.
 //   P3: clearYuv crop_right=6 touches strips only, not full 449280
@@ -34,17 +34,17 @@ int main() {
     using namespace misterplex;
     using clock = std::chrono::steady_clock;
 
-    // --- P1: publish geometry identical for 240 and 480 DECODE tiers ---
+    // --- P1: source-aware identity storage (320≠624); 480 product separate ---
     const auto g240 = ddrFrameGeometryForFpgaPresent(320, 240);
     const auto g480 = ddrFrameGeometryForFpgaPresent(624, 480);
-    expect(g240.coded_width.get() == 624 && g240.coded_height.get() == 480, "P1 240→coded 624x480");
+    expect(g240.coded_width.get() == 320 && g240.coded_height.get() == 240, "P1 240→identity 320x240");
     expect(g480.coded_width.get() == 624 && g480.coded_height.get() == 480, "P1 480→coded 624x480");
-    expect(g240.display_width.get() == 618 && g240.crop_right == 6, "P1 240 display/crop");
     expect(g480.display_width.get() == 618 && g480.crop_right == 6, "P1 480 display/crop");
     const size_t fb240 = yuv420pCodedFrameBytes(g240);
     const size_t fb480 = yuv420pCodedFrameBytes(g480);
-    expect(fb240 == 449280u && fb480 == 449280u, "P1 same frame_bytes 449280");
-    expect(fb240 == fb480, "P1 240 decode does NOT shrink DDR publish");
+    expect(fb240 == 115200u, "P1 240 identity frame_bytes 115200");
+    expect(fb480 == 449280u, "P1 480 frame_bytes 449280");
+    expect(fb240 != fb480, "P1 240 decode MUST shrink DDR publish vs 480 canvas");
     // P1b: 960x540 is tight storage (777600), not 480 canvas and not 1280 canvas.
     const auto g540 = ddrFrameGeometryForFpgaPresent(960, 540);
     expect(g540.coded_width.get() == 960 && g540.coded_height.get() == 540, "P1b 540 storage");
@@ -57,9 +57,9 @@ int main() {
     expect(yuv420pCodedFrameBytes(g360) == 345600u, "P1c 360 frame_bytes");
     expect(!(g360.coded_width.get() == 624 && g360.coded_height.get() == 480),
            "P1c 360 must NOT collapse to 480 canvas");
-    std::printf("P1_OK coded=624x480 display=618 crop_right=6 frame_bytes=%zu (both tiers); "
+    std::printf("P1_OK 320x240 identity bytes=%zu; 624x480 product bytes=%zu; "
                 "540p storage=960x540 bytes=777600; 360p storage=640x360 bytes=345600\n",
-                fb240);
+                fb240, fb480);
 
     // --- P2: FORCE_SCALE Always for both source sizes ---
     {
@@ -112,16 +112,16 @@ int main() {
                     p240.vf.size(), p480.vf.size(), p350.vf.size());
     }
 
-    // --- P3: clearYuv is strip-only (crop_right=6) ---
+    // --- P3: clearYuv is strip-only (crop_right=6) on product 480 canvas ---
     {
         // Bytes touched if only right pad: Y: 480*6 + U/V: 240*3 each = 2880+720+720=4320
         const int yTouch = 480 * 6;
         const int cTouch = 240 * 3;
         const int strip = yTouch + 2 * cTouch;
         expect(strip == 4320, "P3 strip arithmetic 4320");
-        expect(strip * 100 < static_cast<int>(fb240), "P3 strip << full frame");
-        std::printf("P3_OK clearYuv strip_bytes=%d full=%zu ratio_x1000=%zu\n", strip, fb240,
-                    (static_cast<size_t>(strip) * 1000u) / fb240);
+        expect(strip * 100 < static_cast<int>(fb480), "P3 strip << full 480 frame");
+        std::printf("P3_OK clearYuv strip_bytes=%d full480=%zu ratio_x1000=%zu\n", strip, fb480,
+                    (static_cast<size_t>(strip) * 1000u) / fb480);
     }
 
     // --- P4: ledger semantics drops vs publish_misses ---
@@ -157,8 +157,9 @@ int main() {
     }
 
     // --- Host microbench: chroma inspect + memcpy + strip clear (tag=measured) ---
+    // Uses product 480 canvas (fb480); fb240 is now identity 320 storage.
     {
-        std::vector<uint8_t> buf(fb240);
+        std::vector<uint8_t> buf(fb480);
         fillYuv420pStudioBlack(buf.data(), 624, 480);
         // paint non-dead chroma so repair returns false after full scan
         std::memset(buf.data() + 624 * 480, 90, 624 * 480 / 4);
@@ -172,13 +173,13 @@ int main() {
             std::chrono::duration<double, std::micro>(t1 - t0).count() / N;
 
         t0 = clock::now();
-        std::vector<uint8_t> dst(fb240);
+        std::vector<uint8_t> dst(fb480);
         uint64_t sink = 0;
         for (int i = 0; i < N; ++i) {
-            std::memcpy(dst.data(), buf.data(), fb240);
+            std::memcpy(dst.data(), buf.data(), fb480);
             sink += dst[0];
-            sink += dst[fb240 / 2];
-            sink += dst[fb240 - 1];
+            sink += dst[fb480 / 2];
+            sink += dst[fb480 - 1];
             asm volatile("" : "+r"(sink) : : "memory");
         }
         if (sink == 0xdeadbeefULL)

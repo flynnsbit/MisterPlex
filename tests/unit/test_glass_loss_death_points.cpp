@@ -81,9 +81,12 @@ int main() {
                "D3 FOAR path identity_skip=0 ⇒ no pipe risk flag");
         r.delivery_geometry_verified = true;
         const auto plan = buildFfmpegVideoFilter(r);
-        expect(plan.identity_skip && !plan.scale_applied, "D3 verified exact = identity");
+        // Verified exact uses fixed_output_barrier (neighbor scale pin), not raw
+        // identity_skip — stderr geom race cannot interlock stdout publishes.
+        expect(plan.fixed_output_barrier && !plan.identity_skip && !plan.scale_applied,
+               "D3 verified exact = fixed_output_barrier");
         expect(!pipeDesyncRisk(bank, bank, plan.identity_skip),
-               "D3 exact+identity is not pipe risk");
+               "D3 barrier path identity_skip=0 ⇒ no pipe risk");
         r.source_w = 1920;
         r.source_h = 1080;
         const auto mis = buildFfmpegVideoFilter(r);
@@ -157,13 +160,15 @@ int main() {
         std::printf("D6_OK maxDropRun=1 paces sparse pacedrops (not free-run skip storms)\n");
     }
 
-    // --- Geometry identity (load-bearing from 861ae49c) ---
+    // --- Geometry source-aware (320 identity ≠ 480 product canvas) ---
     {
         const auto a = ddrFrameGeometryForFpgaPresent(320, 240);
         const auto b = ddrFrameGeometryForFpgaPresent(624, 480);
-        expect(yuv420pCodedFrameBytes(a) == yuv420pCodedFrameBytes(b), "geom same bytes");
-        expect(yuv420pCodedFrameBytes(a) == 449280u, "geom 449280");
-        std::printf("GEOM_OK identical canvas 449280 both tiers\n");
+        expect(yuv420pCodedFrameBytes(a) == 115200u, "geom 320 identity 115200");
+        expect(yuv420pCodedFrameBytes(b) == 449280u, "geom 480 product 449280");
+        expect(yuv420pCodedFrameBytes(a) != yuv420pCodedFrameBytes(b),
+               "geom 320 must not force 480 canvas bytes");
+        std::printf("GEOM_OK source-aware 320=115200 480=449280\n");
     }
 
     if (g_fails) {

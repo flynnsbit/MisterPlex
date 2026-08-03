@@ -1,17 +1,10 @@
-w-path STATUS 2026-08-03
-tip: pending commit ffmpeg pad oracle mandatory
-branch: w-path-720p
+w-path STATUS tip=pending PLXG publish geometry
+branch=w-path-720p
 
-DONE this turn:
-- rd-duck: FFmpeg pad oracle soft-skip hole CLOSED
-  - missing/failing ffmpeg → hard FAIL (true rc=1)
-  - live ok path → true rc=0 + GREEN_FFMPEG_PAD_ORACLE L=2
-  - soft-skip string removed; stderr retained
+CLOSED (rd-duck):
+- makeDdrPublishPlan PLXG from frame.geometry (no Legacy480 shear on 320)
+- test_plxg_publish_geometry 320/416/624/720 e2e
+- stale 320→624 canvas expectations updated (source-aware)
 
-PRIOR tips on branch:
-- d140add5 identity fixed_output_barrier
-- d53a8789 DP+bitstream fabric gate (miss #15)
-- fit layout 88a7f811 on w-path-fit-layout-fix
-
-HELD: q5 bit34 RESERVED (fps_1001 draft only); no Quartus; no MiSTer
-STILL OWED: q5 mailbox publish if not already on tip
+Prior: aa35ec80 ffmpeg oracle mandatory; d140add5 barrier; d53a8789 DP gate
+HELD: q5 bit34 RESERVED; no Quartus; no MiSTer

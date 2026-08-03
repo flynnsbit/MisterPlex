@@ -329,31 +329,41 @@ int main() {
     checkConversion(320, 240);
     checkConversion(640, 480);
 
-    // Product silicon canvas is compile-time 624-stride. Every supported content
-    // tier (DECODE/OSD) must still produce a writer layout whose line stride
-    // equals RTL ddr_frame_layout_params.svh — otherwise HDMI shears.
+    // Source-aware storage: identity tiers keep their own stride; PLXG must match
+    // (rd-duck shear: 320 payload + Legacy480 PLXG is forbidden). Product 480
+    // tier alone matches compile-time silicon 624-stride canvas.
     {
-        const int tiers[][2] = {{320, 240}, {624, 480}, {640, 480}};
-        for (const auto& tier : tiers) {
+        const auto g480 = misterplex::ddrFrameGeometryForFpgaPresent(624, 480);
+        const auto lay480 = misterplex::makeDdrFrameLayout(g480);
+        CHECK(misterplex::ddrFrameLayoutMatchesProductSilicon(lay480));
+        CHECK(lay480.line_bytes == misterplex::kPlex480pYStrideBytes);
+        CHECK(lay480.line_qwords == misterplex::kPlex480pYuvLumaLineQwords);
+        CHECK(lay480.chroma_line_bytes == misterplex::kPlex480pChromaStrideBytes);
+        CHECK(lay480.chroma_line_qwords == misterplex::kPlex480pYuvChromaLineQwords);
+
+        // Identity tiers: layout stride == coded_w (not forced 624).
+        const int idTiers[][2] = {{320, 240}, {416, 240}, {640, 480}, {720, 480}};
+        for (const auto& tier : idTiers) {
             const auto g = misterplex::ddrFrameGeometryForFpgaPresent(tier[0], tier[1]);
             const auto layout = misterplex::makeDdrFrameLayout(g);
-            if (!misterplex::ddrFrameLayoutMatchesProductSilicon(layout)) {
-                std::fprintf(stderr,
-                             "FPGA present geometry for decode %dx%d diverges from product "
-                             "silicon (line_bytes=%d bank=0x%x doorbell=0x%x coded=%dx%d)\n",
-                             tier[0], tier[1], layout.line_bytes,
-                             static_cast<unsigned>(layout.bank_stride),
-                             static_cast<unsigned>(layout.doorbell_phys), layout.width,
-                             layout.height);
-                ++fails;
-            }
-            CHECK(layout.line_bytes == misterplex::kPlex480pYStrideBytes);
-            CHECK(layout.line_qwords == misterplex::kPlex480pYuvLumaLineQwords);
-            CHECK(layout.chroma_line_bytes == misterplex::kPlex480pChromaStrideBytes);
-            CHECK(layout.chroma_line_qwords == misterplex::kPlex480pYuvChromaLineQwords);
+            CHECK(misterplex::ddrFrameLayoutValid(layout));
+            CHECK(layout.line_bytes == tier[0]);
+            CHECK(layout.height == tier[1]);
+            CHECK(!misterplex::ddrFrameLayoutMatchesProductSilicon(layout));
+            // Publish plan PLXG coded/stride must equal payload (no Legacy480 shear).
+            std::vector<uint8_t> yuv(misterplex::yuv420pFrameBytes(tier[0], tier[1]), 0x10);
+            misterplex::DdrPublishFrame fr{yuv.data(), yuv.size(), g,
+                                           misterplex::DdrFrameFormat::Yuv420p};
+            misterplex::DdrPublishPlan pl{};
+            std::string perr;
+            CHECK(misterplex::makeDdrPublishPlan(fr, 0, pl, &perr));
+            int cw = 0, ch = 0, ys = 0;
+            misterplex::unpackPlxgQ2(pl.plxg_q[2], nullptr, nullptr, &cw, &ch);
+            misterplex::unpackPlxgQ3(pl.plxg_q[3], &ys, nullptr, nullptr, nullptr);
+            CHECK(cw == tier[0] && ch == tier[1] && ys == tier[0]);
         }
-        // Identity-320 layout is valid math but MUST NOT match silicon — the
-        // shear defect is exactly "publish this against a 624-stride reader".
+        // Identity-320 layout is valid math but MUST NOT match silicon canvas alone
+        // without matching PLXG — shear is 320 payload + 624-stride reader.
         const auto bad320 = misterplex::makeDdrFrameLayout(320, 240);
         CHECK(misterplex::ddrFrameLayoutValid(bad320));
         CHECK(!misterplex::ddrFrameLayoutMatchesProductSilicon(bad320));

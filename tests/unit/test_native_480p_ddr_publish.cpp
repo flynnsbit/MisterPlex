@@ -50,16 +50,17 @@ int main() {
     CHECK(kFrame <= kPlex480pYuv420pBankStride);
     CHECK(kPlex480pYuv420pBankStride - static_cast<uint32_t>(kFrame) == 75008u);
 
-    // --- Legacy tiers stay product 480p canvas; 540p is identity storage --------
+    // --- Source-aware storage: aligned tiers are identity; 480 product separate ---
     const auto gFrom240 = ddrFrameGeometryForFpgaPresent(320, 240);
     const auto gFrom480 = ddrFrameGeometryForFpgaPresent(624, 480);
     const auto gProduct = productDdrFrameStoreGeometry();
-    CHECK(gFrom240.coded_width.get() == 624);
-    CHECK(gFrom240.coded_height.get() == 480);
+    // 320×240 is fabric-aligned → identity storage (NOT forced 624 canvas).
+    CHECK(gFrom240.coded_width.get() == 320);
+    CHECK(gFrom240.coded_height.get() == 240);
     CHECK(gFrom480.coded_width.get() == 624);
     CHECK(gFrom480.coded_height.get() == 480);
-    CHECK(gFrom240.coded_width == gProduct.coded_width);
     CHECK(gFrom480.coded_height == gProduct.coded_height);
+    CHECK(gFrom240.coded_width.get() != gProduct.coded_width.get());
     // Product 540→720-glass: STORAGE == 960x540 (777600), NEVER 1280x720 canvas.
     const auto g540 = ddrFrameGeometryForFpgaPresent(960, 540);
     CHECK(g540.coded_width.get() == 960);
