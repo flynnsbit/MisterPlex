@@ -1,23 +1,16 @@
-worker: w-osd
+w-osd status 2026-08-03T07:45:18-05:00
 branch: w-osd-fabric-plane
-status: rd-duck PLXC doorbell hollow FIXED
+HEAD: d894da87
 
-blocker: loader default 0x3007_F000 + Plex no override; ARM wrote runtime door
-  (product 0x300FF000 / Option-C 0x3047F000) → fabric polled empty page.
+rd-duck review response:
+- full-list CDC conservation: 112 list + ctrl-last = 113 beats
+  test_plex_chrome_plxc_cdc_rtl_sim true rc=0
+  full_list prod_beats=113 list_we=112 cfg_cnt=112 cfg_seq=99 PASS
+- CDC DEPTH=128 (was 16) on module default + sys_top + TB
+- loader MAX_CMDS default 112
+- HOLLOW product gate: Plex.sv m_gnt(1'b0) + "HOLLOW until w-mem"
+  shell asserts hollow still present — address/bank ≠ live OSD
+- R1 still needs w-mem real grant; do not claim live OSD
 
-fix:
-  plex_chrome_ddr_loader.sv default DOORBELL_PHYS = 32'h300F_F000
-  Plex.sv u_plxc_ddr_loader .DOORBELL_PHYS(32'h300F_F000)
-  mailbox_abi: kProductYuv480pDoorbellPhys=0x300FF000,
-    kPacked320ExampleDoorbellPhys=0x3007F000 (NOT product legacy),
-    kOptionC720pDoorbellPhys=0x3047F000,
-    kPlxcBootstrapPhys=0x300FF130
-  ARM writeChromeCommandList always publishes bootstrap; mirrors runtime if !=
-  readChromeHwPresent samples bootstrap PLXO
-  host model kDoor = product YUV
-
-evidence:
-  host test_plex_chrome_ddr_loader true rc=0 (bootstrap gate PASS)
-  test_ddr_720p_abi true rc=0
-  test_plex_chrome_ddr_loader_rtl_sim true rc=0
-no Quartus / no device
+Prior accepted: bank b5d582ec, halfword ee2894a5, door 5f58f2f9
+no Quartus, no device
