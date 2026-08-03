@@ -95,31 +95,41 @@ constexpr uint32_t kDdrFramePlxgOffset = 0x130u;
 constexpr uint32_t kDdrFramePlxgMagic = 0x504C5847u; // "PLXG"
 
 // ---- Product ship path (960×540 source → fabric 1280×720 OUTPUT) ----
-// ARM decodes Constrained Baseline 960×540; fabric present_scale_4_3 upscales.
-// Display height 540 drives exact 4/3 (SRC_H=540). H.264 MB alignment may code
-// height 544 (ceil(540/16)*16); bank plane bases use coded_h, scale uses display_h.
-// Crop of bottom (coded_h - display_h) lines is the content_h/display contract
-// (ARM publish crop or PLXG display_h + crop_top) — NOT inside 4/3 math.
+// Parent SPS measurement (proxy_960x540.mp4, ffmpeg -bsf:v trace_headers):
+//   pic_width_in_mbs_minus1=59  → coded W = 960
+//   pic_height_in_map_units_minus1=33, frame_mbs_only=1 → coded H = 544
+//   frame_crop_bottom_offset=2, CropUnitY=2 → bottom crop 4 → display H = 540
+// ffprobe coded_height=540 is post-crop — do not trust it as bitstream coded size.
 //
-// Option-C bank map selection is CAPACITY-based (I420 payload > legacy 512 KiB),
-// NOT coded_w >= 1280. Product 960×540 = 777600 B and 960×544 = 783360 B both
-// overflow legacy 0x80000 and MUST select Option-C (rd-duck / parent defect).
+// ARM product path: libavcodec applies SPS crop before AVFrame, so publish is
+// already 960×540 / 777600 B. Fabric 4/3 uses SRC_H=540; **no vertical crop**
+// in present/scaler. Frozen bank payload 777600 B stands (w-mem ABI).
+//
+// 544 / 783360 B matter only for paths that consume *coded* frames: future
+// fabric decoder and bitstream-ring feed (see ddr_bitstream_ring.hpp pins).
+//
+// Option-C bank map: CAPACITY (I420 > legacy 512 KiB), NOT coded_w>=1280.
+// Product 777600 B overflows legacy 0x80000 → must select Option-C.
 constexpr int kPlexProductSrcW = 960;
 constexpr int kPlexProductDisplayH = 540;
-constexpr int kPlexProductCodedHMbAligned = 544; // ceil(540/16)*16
+constexpr int kPlexProductCodedHMbAligned = 544; // SPS coded; not ARM AVFrame h
+constexpr int kPlexProductSpsCropBottomLines = 4; // frame_crop_bottom_offset*CropUnitY
 constexpr int kPlexProductYStrideBytes = 960;
 constexpr int kPlexProductChromaStrideBytes = 480;
-constexpr int kPlexProductDisplayI420Bytes = 960 * 540 * 3 / 2; // 777600
-constexpr int kPlexProductCodedMbI420Bytes = 960 * 544 * 3 / 2; // 783360
+constexpr int kPlexProductDisplayI420Bytes = 960 * 540 * 3 / 2; // 777600 ARM publish
+constexpr int kPlexProductCodedMbI420Bytes = 960 * 544 * 3 / 2; // 783360 coded path
 static_assert(kPlexProductDisplayI420Bytes == 777600, "product display I420");
 static_assert(kPlexProductCodedMbI420Bytes == 783360, "product coded-MB I420");
+static_assert(kPlexProductCodedHMbAligned - kPlexProductSpsCropBottomLines ==
+                  kPlexProductDisplayH,
+              "SPS crop: 544-4=540");
 static_assert(kPlexProductDisplayI420Bytes > int(kPlex480pYuv420pBankStride),
               "product display must not fit legacy bank → Option-C");
 static_assert(kPlexProductCodedMbI420Bytes > int(kPlex480pYuv420pBankStride),
               "product coded-MB must not fit legacy bank → Option-C");
 static_assert(kPlexProductSrcW * 4 == 1280 * 3, "product W exact 4/3 to glass");
 static_assert(kPlexProductDisplayH * 4 == 720 * 3, "product H exact 4/3 to glass");
-// 540 is NOT MB-aligned — scale must not silently treat coded 544 as SRC_H.
+// 540 is NOT MB-aligned — never treat SPS coded 544 as 4/3 SRC_H on product path.
 static_assert((kPlexProductDisplayH & 15) == 12, "540 & 15 == 12 (not MB-aligned)");
 static_assert((kPlexProductCodedHMbAligned & 15) == 0, "544 is MB-aligned");
 

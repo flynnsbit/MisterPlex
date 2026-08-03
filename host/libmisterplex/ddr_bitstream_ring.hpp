@@ -19,6 +19,23 @@ constexpr uint32_t kStat5Phys = 0x30140040u;
 constexpr uint32_t kStat6Phys = 0x30140048u;
 constexpr size_t kRingBytes = 262144u;
 
+// ---- Product SPS geometry for fabric-decoder / ring consumers (parent measured) ----
+// Bitstream is MB-coded 960×544 with SPS bottom crop 4 → display 540.
+// libavcodec applies crop before AVFrame, so the ARM *frame-bank* path sees 540.
+// Any consumer of *coded* NALs from this ring (fabric decoder, future recon)
+// must size DPB/recon for 544 and apply the 4-line bottom crop itself.
+// Do not re-derive from ffprobe coded_height (post-crop).
+constexpr int kProductSpsCodedW = 960;
+constexpr int kProductSpsCodedH = 544;
+constexpr int kProductSpsDisplayH = 540;
+constexpr int kProductSpsCropBottomLines = 4;
+constexpr int kProductSpsCodedI420Bytes = 960 * 544 * 3 / 2; // 783360
+constexpr int kProductSpsDisplayI420Bytes = 960 * 540 * 3 / 2; // 777600
+static_assert(kProductSpsCodedH - kProductSpsCropBottomLines == kProductSpsDisplayH,
+              "SPS crop 544-4=540");
+static_assert(kProductSpsCodedI420Bytes == 783360, "coded I420");
+static_assert(kProductSpsDisplayI420Bytes == 777600, "display I420");
+
 constexpr uint32_t kCtrlMagic = mailbox_abi::kPlxbMagic;
 constexpr uint32_t kCtrlDormantMagic = mailbox_abi::kPlxbDormantMagic;
 constexpr uint32_t kReadMagic = 0x504C5852u; // PLXR, FPGA -> HPS

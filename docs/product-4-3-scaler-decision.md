@@ -41,7 +41,7 @@ Free M10K post-nostub: **356**. Area is not the constraint — **wiring complexi
 | Product bank stride | **960** | w-mem WRITE / w-scaler READ |
 | Product bank bytes | **777600** | I420 |
 | Option-C bank map | base `0x30180000` stride `0x180000` doorbell `0x3047F000`; select when I420 **> legacy 512 KiB** (product 960×540=777600 B). Not `coded_w≥1280`. | w-mem WRITE / w-scaler READ |
-| Coded vs display H | Display **540** = 4/3 SRC_H; coded may be **544** (MB). Crop bottom 4 owned by content_h/display contract. | w-mem + w-scaler |
+| Coded vs display H | **SETTLED:** SPS coded 544 + crop 4 → display 540. ARM path already 540/777600; 4/3 SRC_H=540, no fabric V-crop. 544 only for ring/fabric-decoder. | parent SPS dump; pins in `ddr_frame_layout.hpp` + `ddr_bitstream_ring.hpp` |
 | Glass DE | **1280×720** | w-clock `PRESENT_MULTI_PIXEL` |
 | HUD canvas | **1280×720** | w-osd `kTargetOut` |
 | Scale | exact **4/3** | w-scaler `present_scale_4_3` |
