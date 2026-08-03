@@ -1181,33 +1181,62 @@ cyclonev_hps_interface_peripheral_i2c hdmi_i2c
 	// Product write path via plex_chrome_host_if — list_we is a real net (not 1'b0).
 	// Composite: ascal → shadowmask → plex_chrome → osd → pins.
 	// When cfg_enable=0 and idle_en=0, din passes through unmodified (1-cycle delay).
+	// DEFAULT-OFF (rd-duck audit): macros unset → boot PLXC enable=0, no FAB idle
+	// steal, no demo HUD. Video is pass-through aside from 1-cycle delay + blanking
+	// keep-sink (DE=0 only).
 	wire [23:0] hdmi_data_chrome;
 	wire        hdmi_de_chrome, hdmi_vs_chrome, hdmi_hs_chrome;
 	wire        plex_chrome_hw;
 	wire [11:0] plex_chrome_mon_w, plex_chrome_mon_h;
 	wire [3:0]  plex_chrome_mon_scale;
 
-	// PLXC host interface (ARM/DDR loader or TB drives host_we).
-	// Keepalive: OR with a never-const net from HDMI DE so Quartus cannot
-	// prove list RAM unreachable (c74c6863 class). Real ARM path ORs in.
+	// PLXC host interface. Product ext path is emu.PLXC_EXT_* (from core DDR
+	// loader) CDC'd into clk_hdmi — never a local assign-0 that hid a dead path.
+	// has_frame_sys / plxc_ext_*_sys are module-scope (see near user_out).
 	wire        plxc_host_we;
 	wire [7:0]  plxc_host_addr;
 	wire [63:0] plxc_host_wdata;
-	// External product drivers (DDR loader / CDC). Default-tie below is OR-merged.
+	// 2FF CDC into clk_hdmi (level for has_frame; we/addr/data held one HDMI cycle).
+	reg  [1:0]  has_frame_cdc;
+	reg         plxc_ext_we_d1, plxc_ext_we_d2, plxc_ext_we_d3;
+	reg  [7:0]  plxc_ext_addr_d1, plxc_ext_addr_d2;
+	reg  [63:0] plxc_ext_wdata_d1, plxc_ext_wdata_d2;
 	wire        plxc_ext_we;
 	wire [7:0]  plxc_ext_addr;
 	wire [63:0] plxc_ext_wdata;
-	// Until ddr_frame_store PLXC loader is threaded to sys_top, ext is 0 but
-	// OR'd with a sticky demo commit so list_we is not const-folded.
+	always @(posedge clk_hdmi) begin
+		if (reset_req) begin
+			has_frame_cdc    <= 2'b00;
+			plxc_ext_we_d1   <= 1'b0;
+			plxc_ext_we_d2   <= 1'b0;
+			plxc_ext_we_d3   <= 1'b0;
+			plxc_ext_addr_d1 <= 8'd0;
+			plxc_ext_addr_d2 <= 8'd0;
+			plxc_ext_wdata_d1<= 64'd0;
+			plxc_ext_wdata_d2<= 64'd0;
+		end else begin
+			has_frame_cdc    <= {has_frame_cdc[0], has_frame_sys};
+			plxc_ext_we_d1   <= plxc_ext_we_sys;
+			plxc_ext_we_d2   <= plxc_ext_we_d1;
+			plxc_ext_we_d3   <= plxc_ext_we_d2;
+			plxc_ext_addr_d1 <= plxc_ext_addr_sys;
+			plxc_ext_addr_d2 <= plxc_ext_addr_d1;
+			plxc_ext_wdata_d1<= plxc_ext_wdata_sys;
+			plxc_ext_wdata_d2<= plxc_ext_wdata_d1;
+		end
+	end
+	// Rising edge of sys we → single HDMI-domain pulse (may stretch if sys>>hdmi).
+	assign plxc_ext_we    = plxc_ext_we_d2 & ~plxc_ext_we_d3;
+	assign plxc_ext_addr  = plxc_ext_addr_d2;
+	assign plxc_ext_wdata = plxc_ext_wdata_d2;
+	wire has_frame_hdmi = has_frame_cdc[1];
+
+	// Boot keepalive: list_we must toggle (anti-elision). PLXC enable bit is 0
+	// unless PLEX_FAB_BOOT_PLXC — default-OFF is honest pass-through.
 	reg         plxc_boot_we;
 	reg  [7:0]  plxc_boot_addr;
 	reg  [63:0] plxc_boot_wdata;
 	reg  [1:0]  plxc_boot_st;
-	// has_frame_chrome: 0 → fabric idle. Default OFF fail-opens to 1 (no idle
-	// takeover) so macros-at-reset match nostub glass. PLEX_FAB_IDLE: fabric
-	// owns idle; until present has_frame is CDC'd into clk_hdmi, force 0 so
-	// ARM-off idle paints (parent 720p idle milestone). Integration replaces
-	// force-0 with CDC(present_core.stat_has_frame / pace.has_frame).
 	wire        has_frame_chrome;
 	wire [1:0]  osd_idle_chrome;
 	wire        fab_idle_phase_en;
@@ -1219,19 +1248,24 @@ cyclonev_hps_interface_peripheral_i2c hdmi_i2c
 	// If both defined, IDLE wins (parent should enable one fit at a time).
 	// PLEX_FAB_PLAY_BEACON: lime 32×32 vsync-toggle marker for content-independent
 	// PLAYING motion. Allowed with CHROME or default path; forced off under IDLE.
+	//
+	// IDLE has_frame policy (rd-duck): never hardwire 0 forever on product IDLE —
+	// that steals video for the whole session. Product IDLE uses CDC(has_frame).
+	// PLEX_FAB_IDLE_FORCE = ARM-off capture milestone only (always paint idle).
 `ifdef PLEX_FAB_IDLE
-	// ARM-off milestone: fabric idle always (until has_frame CDC). Mode 2 =
-	// screensaver — chevron drifts with vsync phase (moving pattern). Cyan
-	// corner signature distinguishes from ARM idle. No boot PLXC glyph.
-	assign has_frame_chrome  = 1'b0;
 	assign fab_idle_phase_en = 1'b1;
 	assign osd_idle_chrome   = 2'b10; // screensaver
 	assign fab_idle_sig_en   = 1'b1;
 	assign fab_chrome_sig_en = 1'b0;
 	assign fab_chrome_demo_en= 1'b0;
 	assign fab_play_beacon_en= 1'b0;
+`ifdef PLEX_FAB_IDLE_FORCE
+	assign has_frame_chrome  = 1'b0; // ARM-off milestone only
+`else
+	assign has_frame_chrome  = has_frame_hdmi; // idle only when !has_frame
+`endif
 `elsif PLEX_FAB_CHROME
-	// Playback chrome off ARM: built-in STOPPED HUD + magenta TR/BL signature.
+	// Playback chrome demo: built-in STOPPED HUD + magenta TR/BL signature.
 	// has_frame=1 so idle plane stays off; video/din shows under the bar.
 	assign has_frame_chrome  = 1'b1;
 	assign fab_idle_phase_en = 1'b0;
@@ -1245,9 +1279,10 @@ cyclonev_hps_interface_peripheral_i2c hdmi_i2c
 	assign fab_play_beacon_en= 1'b0;
 `endif
 `else
+	// Macros unset: fail-open video (has_frame=1 → idle_en=0). No FAB paint.
 	assign has_frame_chrome  = 1'b1;
 	assign fab_idle_phase_en = 1'b0;
-	assign osd_idle_chrome   = 2'b00; // logo (unused while has_frame=1)
+	assign osd_idle_chrome   = 2'b00;
 	assign fab_idle_sig_en   = 1'b0;
 	assign fab_chrome_sig_en = 1'b0;
 	assign fab_chrome_demo_en= 1'b0;
@@ -1257,13 +1292,10 @@ cyclonev_hps_interface_peripheral_i2c hdmi_i2c
 	assign fab_play_beacon_en= 1'b0;
 `endif
 `endif
-	assign plxc_ext_we    = 1'b0;
-	assign plxc_ext_addr  = 8'd0;
-	assign plxc_ext_wdata = 64'd0;
 
 	// One-shot boot list push so list_we toggles after reset (RAM retention /
-	// anti-elision). Under PLEX_FAB_IDLE still touch list RAM but PLXC enable=0
-	// so no glyph sits on the fabric idle plane.
+	// anti-elision). Ctrl enable bit is 0 by default — only PLEX_FAB_BOOT_PLXC
+	// commits enable=1 (fit diagnostic glyph). Product ARM path uses PLXC_EXT_*.
 	always @(posedge clk_hdmi) begin
 		if (reset_req) begin
 			plxc_boot_st    <= 2'd0;
@@ -1276,17 +1308,20 @@ cyclonev_hps_interface_peripheral_i2c hdmi_i2c
 				2'd0: begin
 					plxc_boot_we    <= 1'b1;
 					plxc_boot_addr  <= 8'd0;
+					// Glyph payload retained in list RAM for anti-elision; not shown
+					// unless enable=1 (BOOT_PLXC) or ARM/ext re-enables with count.
 					plxc_boot_wdata <= {8'h00, 8'h00, 8'h23, 16'd64, 16'd64, 8'd2};
 					plxc_boot_st    <= 2'd1;
 				end
 				2'd1: begin
 					plxc_boot_we    <= 1'b1;
 					plxc_boot_addr  <= 8'hFF;
-`ifdef PLEX_FAB_IDLE
-					// enable=0 — list retained, overlay off (idle owns glass)
-					plxc_boot_wdata <= {16'd1, 14'd0, 1'b0, 1'b0, 32'h504C_5843};
-`else
+`ifdef PLEX_FAB_BOOT_PLXC
+					// Explicit fit macro: enable=1 count=1 (visible '#' diagnostic).
 					plxc_boot_wdata <= {16'd1, 14'd1, 1'b0, 1'b1, 32'h504C_5843};
+`else
+					// DEFAULT-OFF: magic+seq for list path exercise, enable=0.
+					plxc_boot_wdata <= {16'd1, 14'd0, 1'b0, 1'b0, 32'h504C_5843};
 `endif
 					plxc_boot_st    <= 2'd2;
 				end
@@ -1926,6 +1961,12 @@ sync_fix sync_h(clk_vid, hs_emu, hs_fix);
 
 wire  [6:0] user_out, user_in;
 
+// MiSTerPlex chrome sideband — module scope (chrome sits under NOHDMI ifdef).
+wire        has_frame_sys;
+wire        plxc_ext_we_sys;
+wire  [7:0] plxc_ext_addr_sys;
+wire [63:0] plxc_ext_wdata_sys;
+
 assign clk_ihdmi= clk_vid;
 assign ce_hpix  = vga_ce_sl;
 assign hr_out   = vga_data_sl[23:16];
@@ -2089,7 +2130,13 @@ emu emu
 	.UART_DSR(uart_dtr),
 
 	.USER_OUT(user_out),
-	.USER_IN(user_in)
+	.USER_IN(user_in),
+
+	// MiSTerPlex chrome sideband (emu_ports.vh extensions)
+	.HAS_FRAME(has_frame_sys),
+	.PLXC_EXT_WE(plxc_ext_we_sys),
+	.PLXC_EXT_ADDR(plxc_ext_addr_sys),
+	.PLXC_EXT_WDATA(plxc_ext_wdata_sys)
 );
 
 endmodule

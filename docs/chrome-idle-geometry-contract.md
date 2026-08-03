@@ -28,12 +28,12 @@ when `idle_en`.
 |-------|------------------------|-------|--------|
 | **PLXC** `0x504C5843` | **+0x130** | w-osd chrome list ctrl | **Landed** (`mailbox_abi_spec.hpp`) |
 | **PLXO** `0x504C584F` | **+0x138** | w-osd chrome telemetry | Landed |
-| list payload | **+0x140** | w-osd cmds | Landed |
-| **PLXG** `0x504C5847` | proposed +0x130 in scaler RTL comment | w-scaler geom | **CONFLICT** |
+| list payload | **+0x140** .. **+0x2BF** | w-osd cmds (48×8B) | Landed |
+| **PLXG** `0x504C5847` | **+0x2C0** | w-scaler / w-mem present geom | **FORCED MAP** |
 
-**Resolution required before dual-wire:** PLXG must **not** use +0x130. Proposed
-free slot after chrome list: **+0x280** (after 48×8B list ≈ +0x140..+0x27F), or
-another page owned by w-mem. w-osd will not move PLXC; it is already in ARM + RTL.
+**FORCED MAP (rd-duck audit):** PLXC owns **+0x130**. PLXG is **+0x2C0 only**
+(= list_base + 48×8). `static_assert` in `mailbox_abi_spec.hpp`. Any scaler/mem
+RTL still decoding geom at +0x130 is a hard integration blocker.
 
 ## 3. Native 1280×720 fabric idle
 
@@ -145,6 +145,6 @@ needs DMA (w-path) to drop the 14.97 ms copy.
 - [ ] `PLEX_FAB_IDLE` / `PLEX_FAB_CHROME` **undefined** in shipping QSF (default OFF)
 - [ ] `u_plex_chrome` on path: ascal → shadowmask → chrome → osd
 - [ ] `make post-fit-fab-idle` rc=0 (M10K/regs/ALUTs + stuck list)
-- [ ] PLXG **not** at +0x130 (PLXC owns it)
+- [x] PLXG **not** at +0x130 (PLXC owns it); PLXG = +0x2C0 in ABI
 - [ ] Glass: vs control `CYAN=0 ACTIVE=923×717` → fabric `CYAN≥2000` + ACTIVE growth + motion
 - [ ] ARM-out: `kill <PID>` still cyan+motion (partial: cyan no motion = phase stuck)

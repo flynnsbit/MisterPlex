@@ -39,6 +39,16 @@ assign LED_DISK = 0;
 assign LED_POWER = 0;
 assign BUTTONS = 0;
 
+// PLXC host beats toward sys_top chrome (see emu_ports.vh). Quiet until
+// plex_chrome_ddr_loader is ENABLE=1 *and* holds a real DDR master grant.
+// Do not tie these in sys_top — that hid a dead product path (rd-duck audit).
+wire        plxc_core_we;
+wire  [7:0] plxc_core_addr;
+wire [63:0] plxc_core_wdata;
+assign PLXC_EXT_WE    = plxc_core_we;
+assign PLXC_EXT_ADDR  = plxc_core_addr;
+assign PLXC_EXT_WDATA = plxc_core_wdata;
+
 //////////////////////////////////////////////////////////////////
 
 wire [1:0] ar = status[122:121];
@@ -103,6 +113,8 @@ wire ioctl_wait = is_frame_dl && (sdram_startup_busy || !fs_wr_ready);
 wire [127:0] status_in;
 reg          status_set;
 wire         has_frame, has_audio, has_stream, audio_underrun;
+// HDMI chrome idle gate (sys_top CDC). Product path: idle only when !has_frame.
+assign HAS_FRAME = has_frame;
 wire         has_idr, stub_busy, sps_valid, pps_valid, slice_valid, slice_is_i, has_mb_type;
 wire         residual_ok;
 wire [15:0]  nalu_count, stub_frames, sps_width, sps_height;
@@ -1019,6 +1031,51 @@ always @(posedge clk_sys) begin
 	end
 end
 
+// --- PLXC DDR loader (ARM semantic list → host_if beats) ---------------------
+// Default ENABLE=0: zero DDR traffic, host_we stuck 0 (nostub-safe).
+// PLEX_CHROME_DDR: ENABLE=1 but m_gnt stays 0 until w-mem gives an arbiter
+// slot — host beats remain 0 until that lands (honest: not fake-live).
+wire        plxc_m_req, plxc_m_we;
+wire [28:0] plxc_m_addr;
+wire [63:0] plxc_m_wdata;
+wire        plxc_ld_busy;
+wire [15:0] plxc_ld_seq;
+wire [31:0] plxc_ld_loads, plxc_ld_plxo, plxc_ld_bad;
+
+`ifdef PLEX_CHROME_DDR
+localparam bit PLXC_DDR_EN = 1'b1;
+`else
+localparam bit PLXC_DDR_EN = 1'b0;
+`endif
+
+plex_chrome_ddr_loader #(
+	.ENABLE(PLXC_DDR_EN),
+	.MAX_CMDS(48)
+) u_plxc_ddr_loader (
+	.clk(clk_sys),
+	.reset(reset),
+	.m_req(plxc_m_req),
+	.m_we(plxc_m_we),
+	.m_addr(plxc_m_addr),
+	.m_wdata(plxc_m_wdata),
+	// No grant until w-mem mailbox arbiter owns a PLXC slot (shared map).
+	.m_gnt(1'b0),
+	.m_rd_valid(1'b0),
+	.m_rdata(64'd0),
+	.host_we(plxc_core_we),
+	.host_addr(plxc_core_addr),
+	.host_wdata(plxc_core_wdata),
+	.chrome_hw(1'b1),
+	.mon_w(12'd1280),
+	.mon_h(12'd720),
+	.mon_scale(4'd3),
+	.last_seq(plxc_ld_seq),
+	.busy(plxc_ld_busy),
+	.cnt_loads(plxc_ld_loads),
+	.cnt_plxo_wr(plxc_ld_plxo),
+	.cnt_bad_magic(plxc_ld_bad)
+);
+
 // Silence unused
 wire _unused = |{disp_i, cont_i, advance, ingest_pixels, ingest_dl, af_active, ioctl_addr,
 	sps_count, pps_count, slice_count, wr_count, stream_bytes_seen, sps_profile, sps_level,
@@ -1031,6 +1088,8 @@ wire _unused = |{disp_i, cont_i, advance, ingest_pixels, ingest_dl, af_active, i
 	stream_fifo_level, ddr_frames, stream_ddr_active, stream_ddr_bytes_out,
 	stream_ddr_underruns, stream_ddr_overruns, stream_ddr_host_write,
 	stream_ddr_fpga_read, stream_ddr_bus_want, stream_ddr_burstcnt, stream_ddr_addr,
-	stream_ddr_rd, stream_ddr_din, stream_ddr_be, stream_ddr_we, _host_wr_unused};
+	stream_ddr_rd, stream_ddr_din, stream_ddr_be, stream_ddr_we, _host_wr_unused,
+	plxc_m_req, plxc_m_we, plxc_m_addr, plxc_m_wdata, plxc_ld_busy, plxc_ld_seq,
+	plxc_ld_loads, plxc_ld_plxo, plxc_ld_bad};
 
 endmodule

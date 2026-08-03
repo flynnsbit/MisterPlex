@@ -41,5 +41,6 @@ set_global_assignment -name SYSTEMVERILOG_FILE rtl/stream_path.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/present_core.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/plex_chrome.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/plex_chrome_host_if.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/plex_chrome_ddr_loader.sv
 set_global_assignment -name SDC_FILE Plex.sdc
 set_global_assignment -name SYSTEMVERILOG_FILE Plex.sv
