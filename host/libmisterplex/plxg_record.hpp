@@ -19,6 +19,12 @@
 
 namespace misterplex {
 
+// Forward decls — keep call order independent of definition order (rd-duck:
+// plxgRawGeomOk must not compile-fail if helpers are reordered in this header).
+inline bool plxgGeomDimsOk(int codedW, int codedH, int yStride, int chromaStride);
+inline bool plxgRawGeomOk(int codedW, int codedH, int yStride, int chromaStride,
+                          int maxW = 1280, int maxH = 720);
+
 constexpr uint32_t kPlxgRecordQwords = 5u;
 constexpr uint32_t kPlxgRecordBytes = kPlxgRecordQwords * 8u; // 40
 
@@ -264,8 +270,9 @@ inline bool plxgGeomDimsOk(int codedW, int codedH, int yStride, int chromaStride
 }
 
 // Raw geometry accepted by ddr_frame_store (nonzero, ≤MAX, aligned) — no clamp.
+// Defaults live on the forward declaration above (not repeated here).
 inline bool plxgRawGeomOk(int codedW, int codedH, int yStride, int chromaStride,
-                          int maxW = 1280, int maxH = 720) {
+                          int maxW, int maxH) {
     if (!plxgGeomDimsOk(codedW, codedH, yStride, chromaStride))
         return false;
     if (codedW > maxW || codedH > maxH || yStride > maxW || chromaStride > (maxW / 2))
