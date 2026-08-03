@@ -6,9 +6,19 @@
 //   m3 — PLXC chrome loader (clk_m3 domain, async FIFO responses).
 //
 // Priority (product STARVE_VIDEO=0):
-//   1) m0_cmd always wins idle slots and preempts m3 want.
+//   1) m0_cmd always wins idle slots and preempts m1/m3 (registered + comb).
 //   2) else m1_want
 //   3) else m3_want
+//
+// Launch-edge contract (lost-read race, rd-duck):
+//   Product ddr_frame_store issues a one-shot RD pulse on S_LINE_ISSUE→WAIT and
+//   only re-issues after DOUT_READY completes the burst. If grant_m3/m1 NBA lands
+//   on the same clk_ddr edge as that pulse (arbiter saw old m0_rd=0), a pure
+//   registered grant mux masks m0_rd while m3_rd is still 0 — no DDR command —
+//   and WAIT hangs forever. Product therefore:
+//     (a) combinationally overrides the grant mux whenever m0_cmd,
+//     (b) atomically accepts m0 (rsp_left/owner) when preempting grant_m1/m3.
+//   Comment "m0 preempts" is false without both; see ddr_plxc_lost_read TB.
 //
 // STARVE_VIDEO=1 (red twin only): m3 sticky over m0 — must produce underrun
 // in the concurrent-load TB. Never synthesize product with STARVE_VIDEO=1.
@@ -18,7 +28,11 @@
 
 module ddr_bus_arbiter_plxc #(
 	// Compile-time default; runtime starve_video overrides when driven 1 in TB.
-	parameter bit STARVE_VIDEO = 1'b0
+	parameter bit STARVE_VIDEO = 1'b0,
+	// Red twin only: disable comb m0 mux override + atomic preempt accept.
+	// Reproduces launch-edge lost-read hang with store-like one-shot RD.
+	// Never synthesize product with FAULT_LOST_READ=1.
+	parameter bit FAULT_LOST_READ = 1'b0
 ) (
 	input  wire        clk,      // DDR bridge clock (90 MHz)
 	input  wire        clk_m1,   // m1 consumer clock (20 MHz)
@@ -119,21 +133,27 @@ module ddr_bus_arbiter_plxc #(
 	wire m1_cmd = m1_rd | m1_we;
 	wire m3_cmd = m3_rd | m3_we;
 
-	wire use_m1 = grant_m1;
-	wire use_m3 = grant_m3 && !grant_m1;
+	// Comb m0 override: launch-edge m0_rd must reach DDR even if grant_m* is 1.
+	// STARVE / FAULT_LOST_READ keep registered grants sticky (no override).
+	wire m0_ov = !starve && !FAULT_LOST_READ && m0_cmd;
+	wire use_m1 = grant_m1 && !m0_ov;
+	wire use_m3 = grant_m3 && !grant_m1 && !m0_ov;
 	wire [7:0] selected_burst =
 		use_m1 ? m1_burstcnt :
 		use_m3 ? m3_burstcnt : m0_burstcnt;
 
 	assign grant_m3_live = grant_m3;
 
-	// m0 blocked only by other owners / their responses — never by m3 sticky
-	// when STARVE_VIDEO=0 and m0 is commanding (see grant logic).
+	// Hold m0_busy while other grants are registered so the store's
+	// clear-on-!busy keeps the one-shot RD high through the preempt cycle.
+	// (Mux override still passes m0_cmd to DDR; accept is atomic below.)
 	assign m0_busy = DDRAM_BUSY | grant_m1 | grant_m3 |
 	                 (rsp_active & (rsp_owner_m1 | rsp_owner_m3)) |
 	                 (rsp_valid_r & (rsp_owner_m1_r | rsp_owner_m3_r));
 
-	wire m1_busy_comb = DDRAM_BUSY | !grant_m1 |
+	// While product m0_cmd overrides the mux, keep m1/m3 busy so their
+	// bridges do not false-accept a beat that will not be issued.
+	wire m1_busy_comb = DDRAM_BUSY | !grant_m1 | m0_ov |
 	                    (rsp_active & !rsp_owner_m1) |
 	                    (rsp_valid_r & !rsp_owner_m1_r);
 	reg m1_busy_r;
@@ -153,7 +173,7 @@ module ddr_bus_arbiter_plxc #(
 	end
 	assign m1_busy = m1_busy_s2;
 
-	wire m3_busy_comb = DDRAM_BUSY | !grant_m3 |
+	wire m3_busy_comb = DDRAM_BUSY | !grant_m3 | m0_ov |
 	                    (rsp_active & !rsp_owner_m3) |
 	                    (rsp_valid_r & !rsp_owner_m3_r);
 	reg m3_busy_r;
@@ -244,7 +264,21 @@ module ddr_bus_arbiter_plxc #(
 
 			if (!DDRAM_BUSY && !rsp_pipe_active) begin
 				if (grant_m1) begin
-					if (m1_rd) begin
+					if (!starve && !FAULT_LOST_READ && m0_cmd) begin
+						// Product: atomic m0 accept + drop m1 (launch-edge safe).
+						grant_m1 <= 1'b0;
+						if (m0_rd) begin
+							rsp_owner_m1 <= 1'b0;
+							rsp_owner_m3 <= 1'b0;
+							rsp_left <= {1'b0, m0_burstcnt};
+							cnt_grant_m0 <= cnt_grant_m0 + 32'd1;
+						end else begin
+							cnt_grant_m0 <= cnt_grant_m0 + 32'd1;
+						end
+					end else if (!starve && FAULT_LOST_READ && m0_cmd) begin
+						// Old bug: revoke grant only — no rsp accept this edge.
+						grant_m1 <= 1'b0;
+					end else if (m1_rd) begin
 						rsp_owner_m1 <= 1'b1;
 						rsp_owner_m3 <= 1'b0;
 						rsp_left <= {1'b0, selected_burst};
@@ -270,10 +304,34 @@ module ddr_bus_arbiter_plxc #(
 						end else if (!m3_want_s2) begin
 							grant_m3 <= 1'b0;
 						end
-					end else begin
-						// Product: m0 preempts m3 immediately when commanding.
+					end else if (FAULT_LOST_READ) begin
+						// Old bug: revoke-only on m0_cmd; mux still masks launch
+						// edge (m0_ov=0). Store WAIT can hang with no DDR beat.
 						if (m0_cmd) begin
 							grant_m3 <= 1'b0;
+						end else if (m3_rd) begin
+							rsp_owner_m1 <= 1'b0;
+							rsp_owner_m3 <= 1'b1;
+							rsp_left <= {1'b0, selected_burst};
+							grant_m3 <= 1'b0;
+							cnt_grant_m3 <= cnt_grant_m3 + 32'd1;
+						end else if (m3_we || !m3_want_s2) begin
+							grant_m3 <= 1'b0;
+							if (m3_we)
+								cnt_grant_m3 <= cnt_grant_m3 + 32'd1;
+						end
+					end else begin
+						// Product: m0 preempts m3 + atomic accept (not revoke-only).
+						if (m0_cmd) begin
+							grant_m3 <= 1'b0;
+							if (m0_rd) begin
+								rsp_owner_m1 <= 1'b0;
+								rsp_owner_m3 <= 1'b0;
+								rsp_left <= {1'b0, m0_burstcnt};
+								cnt_grant_m0 <= cnt_grant_m0 + 32'd1;
+							end else begin
+								cnt_grant_m0 <= cnt_grant_m0 + 32'd1;
+							end
 						end else if (m3_rd) begin
 							rsp_owner_m1 <= 1'b0;
 							rsp_owner_m3 <= 1'b1;
