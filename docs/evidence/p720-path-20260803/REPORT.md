@@ -73,8 +73,10 @@ Artifacts: `docs/evidence/p720-path-20260803/decision_*.xml`, `probe_*.txt`, `cp
 | Universal 1280×720 maxBR≤3000 | 720×404 | **must scale** | yes | wrong geometry | **FAIL true-720** |
 | Universal on SD source + 720 ceiling | ≤852×480 | upscale | yes | — | **Not genuine 720p** |
 
-**Recommendation:** Prefer `preferDirectH264` / Direct Play for native 720p baseline assets.  
-For non-DP titles, request **720p ladder @ maxVideoBitrate=4000** (floor measured 3500) and **require measured coded 1280×720** before identity_skip. Never trust `videoResolution=` alone.
+**Recommendation:** Prefer `preferDirectH264` / Direct Play of **~1500k native 720p CB** assets (parent decode 32.427 ms/f).  
+For non-DP titles, request **720p ladder @ maxVideoBitrate=3500** (lab geometry floor; product weak pin) and **require measured coded 1280×720** before identity_skip. Never trust `videoResolution=` alone. **Never set universal maxBR=1500** expecting true 720 — lab returns **720×404**.
+
+See `BITRATE_1500_VS_GEOMETRY.md`.
 
 ---
 
@@ -82,9 +84,9 @@ For non-DP titles, request **720p ladder @ maxVideoBitrate=4000** (floor measure
 
 | Area | Change |
 |---|---|
-| `osd_menu.hpp` | `contentResolutionFor720p()`, `kPlex720pWeakBitrateKbps=4000`, `Path720p` policy; `DECODE=1280x720` maps to 720p ladder; OSD tier 11 stays safe 480p; **`preferDirectH264ForContent`** — Path720p defaults DP when conf unset |
+| `osd_menu.hpp` | `contentResolutionFor720p()`, dual pin `kPlex720pDecodeOptimalBitrateKbps=1500` + `kPlex720pWeakBitrateKbps=3500`, `Path720p`; `DECODE=1280x720` maps to 720p ladder; OSD tier 11 behind `OSD_TIER11_720P` default 0; **`preferDirectH264ForContent`** — Path720p defaults DP when conf unset |
 | `ddr_frame_layout.hpp` | `kPlex720pCodedWidth/Height`, `kPlex720pYuv420pBytes=1382400`; **DDR accept still rejects 720** (w-mem) |
-| `plex_resolve.{hpp,cpp}` | Profile `720p` → 1280x720 / 4000 kbps / q70 / baseline / L31; validate allows exact path-720; bitrate step ladder includes 4000/3500 |
+| `plex_resolve.{hpp,cpp}` | Profile `720p` → 1280x720 / **3500** kbps / q70 / baseline / L31; validate allows exact path-720; ladder steps 4000…400 incl. 2500 |
 | `pms_delivery_geom.hpp` | `isGenuine720pDelivery`, `pmsBitrateLikelyTrue720p` (≥3500); **`deliveryBasisForResolve`** → `direct_play_part` when !transcoded |
 | `yuv420p_chroma_health.hpp` | `deliveryGeometryVerifiedFromBasis` accepts **`measured` + `direct_play_part`** (not library_media) |
 | `main.cpp` | `PREFER_DIRECT_H264` conf; per-play preferDirect via content policy; DP sets verified basis at plan time |
@@ -120,18 +122,23 @@ Chose **“ARM out of the scale loop entirely”** over “cheaper ARM scale”:
 
 Source: parent `/tmp/misterplex-parent-720p-decode-verdict.txt` (device `ffmpeg_cpu_probe`, 300f/arm, CB ref=1 bframes=0 cabac=0 @24fps; re-encode of true-HD PromoScoreable — **not** synthetic blip).
 
-| Arm | wall ms/f | fps ceiling |
-|---|---:|---:|
-| 1280×720 @4000k default threads | **41.073** | 24.35 |
-| 1280×720 @4000k threads=1 | 52.158 | 19.17 |
-| 624×480 @1800k default threads | 15.969 | 62.62 |
+| Arm | wall ms/f | fps ceiling | budget% |
+|---|---:|---:|---:|
+| 1280×720 @**1500**k default threads | **32.427** | 30.84 | 77.8% |
+| 1280×720 @2500k | 36.845 | 27.14 | 88.4% |
+| 1280×720 @3500k | 38.751 | 25.81 | 93.0% |
+| 1280×720 @4000k default threads | **41.073** | 24.35 | 98.6% |
+| 1280×720 @4000k threads=1 | 52.158 | 19.17 | — |
+| 624×480 @1800k default threads | 15.969 | 62.62 | — |
 
-- Budget 41.667 ms @24 fps → decode alone **98.6%** (margin **0.59 ms / 1.4%**).
+- Budget 41.667 ms @24 fps. At 4000k decode alone **98.6%**; at **1500k content** headroom **9.24 ms (22.2%)**.
+- **Tier choice worth 8.65 ms/f** (1500 vs 4000) — more than archived 480p present/DDR bucket.
 - Discard synthetic 1080p blip 32.4 ms/f — not representative.
 - 480p CPU-time 22.02 vs archived 21.562 (2.1%) — harness OK.
-- Decode wall scales **0.836× linear-in-pixels** → bitrate/tier is a first-class lever (path 4000 / floor 3500 geometry gate stands).
+- Decode wall scales **0.836× linear-in-pixels** and **sub-linear in bitrate** (2.67× kbit → 1.267× time).
+- **Dual product pin:** content/DP optimal **1500**; universal weak **3500** (geometry). Parent 1500 curve is of *already* 1280×720 — not PMS maxBR=1500 (which codes 720×404).
 
-**Invalidated by this measurement:** any plan that leaves present/pipe/scale on ARM at 720p; host “~70–120% if scale skipped” as a ship path without fabric offload.
+**Invalidated:** any plan that leaves present/pipe/scale on ARM at 720p; host “~70–120% if scale skipped” without fabric offload; pinning universal maxBR=1500 as true-720.
 
 ### Host `ffmpeg_cpu_probe` (x86 lab, **not** dual-A9)
 
@@ -229,6 +236,12 @@ PROFILE_SAMPLE=... WIDTH=1280 HEIGHT=720 FRAMES=300 \
 Parent hand requests returned HTTP 400 at both 720 and 480 — **request construction**, not PMS refusing 720.
 Daemon `buildUniversalTranscodeUrl` + full Chrome/MiSTerPlex headers + **unique session** → **HTTP 200**.
 
-See `LAB_PMS_720_DAEMON_PATH.md` for the coded-size matrix and bitrate pin (product **4000**, geometry min **3500**).
+See `LAB_PMS_720_DAEMON_PATH.md` + `BITRATE_1500_VS_GEOMETRY.md`.
+
+**Dual pin (landed `eb4a832e`):** `kPlex720pDecodeOptimalBitrateKbps=1500` (DP/content); `kPlex720pWeakBitrateKbps=3500` (universal geometry floor). Lab: maxBR=1500 any quality → coded **720×404**.
 
 OSD product: `OSD_TIER11_720P` default **0**; when 1, O[5:4]=11 → Path720p.
+
+### Commit tip (w-path-720p)
+- `eb4a832e` dual bitrate pin + 1500 geometry NEG probes
+- prior: lab 720 daemon path, OSD tier11 flag, Path720p ladder, DP identity

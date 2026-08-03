@@ -1,7 +1,12 @@
 lane=w-path
-status=DUAL_BITRATE_PIN_LANDED
-decode_optimal_content_DP_kbit=1500 (parent 32.427 ms/f)
-universal_maxBR_pin_kbit=3500 (lab geometry floor true 1280x720)
-NEG: universal@1500 → coded 720x404 (measured, any quality)
-preferDirect Path720p remains default for 1500k content win
-tests resolve/osd true_rc=0
+status=LANDED_DUAL_BITRATE
+tip=eb4a832e (+REPORT refresh pending)
+LANDED:
+- PMS 200 + coded proof: universal>=3500 → 1280x720; <=3000/1500 → 720x404
+- Path720p ladder + genuine delivery + identity_skip; DP preferDirect default
+- OSD_TIER11_720P default 0
+- Dual pin: DecodeOptimal=1500 (DP/content); Weak=3500 (universal geometry)
+tests: resolve/osd/vf true_rc=0; no_private_data OK
+ARM_ms_removed_by_path: scale identity_skip on true 720 — host x86 Δ~2.6ms 404-trap; device dual-A9 scale-evac ms UNKNOWN (parent measure)
+blocker: none code-side; parent device measure DP~1500k identity present path once w-mem accepts 720 banks
+INVALIDATED_by_parent: universal maxBR=1500 as true-720; "skip scale alone ships 24fps"

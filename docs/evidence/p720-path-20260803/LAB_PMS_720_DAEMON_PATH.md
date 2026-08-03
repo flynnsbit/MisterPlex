@@ -24,16 +24,21 @@ Artifacts: `probe_run/uniq_rk2_br*_ffprobe.txt`, `uniq_rk7_br4000_ffprobe.txt`, 
 
 ## Bitrate pin recommendation (decode cost lever)
 
-Parent device: 720p@**4000k** decode = **41.073 ms/f** (98.6% of 41.667 budget).
+Parent device (decode of *already* 1280×720 CB @ N kbit):
+
+| content kbit | ms/f | budget% |
+|---:|---:|---:|
+| 1500 | 32.427 | 77.8% |
+| 3500 | 38.751 | 93.0% |
+| 4000 | 41.073 | 98.6% |
+
+Lab universal maxBR (any quality):
 
 | maxVideoBitrate | Geometry (16:9 lab rk2) | Role |
 |---:|---|---|
-| **4000** | true 1280×720 | **Product pin** (margin above gate; matches parent measure) |
-| **3500** | true 1280×720 | Geometry **minimum** — parent should measure decode ms/f |
-| ≤3000 | **720×404** | FAIL true-720 — do not pin |
+| **3500** | true 1280×720 | **Universal product weak pin** (geometry floor) |
+| **4000** | true 1280×720 | Ladder step above floor |
+| **1500** (universal) | **720×404** | FAIL true-720 — do not pin as universal maxBR |
+| ≤3000 | **720×404** | FAIL true-720 |
 
-**Ask parent to measure on device:** 3500 vs 4000 CB 1280×720 real content wall ms/f.
-If 3500 saves meaningful decode ms without leaving geometry, consider product pin 3500;
-until then keep **4000**. Do not go ≤3000.
-
-Direct Play native 720 remains cheapest when Part is CB-eligible.
+**Dual product pin:** `kPlex720pWeakBitrateKbps=3500` (universal); `kPlex720pDecodeOptimalBitrateKbps=1500` (content/DP already-true-720). Prefer Direct Play of ~1500k native 720p CB for the +8.65 ms/f decode win. See `BITRATE_1500_VS_GEOMETRY.md`.

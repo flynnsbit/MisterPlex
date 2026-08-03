@@ -1,10 +1,12 @@
-worker=w-path
-todo=p720-path
-branch=w-path-720p
-status=DONE
-summary=PMS delivers genuine 1280x720 at maxBR>=3500 (rk7); DP cheapest; host 720p ladder+vf+tests; profile CB L31; DDR still rejects; ARM device profile parent-owned
-report=.agent-work/w-path/REPORT.md
-tests=test_resolve:0 test_ffmpeg_vf:0 test_osd_menu:0
-cheapest=direct_play_native_720p_CB
-true_720_gate=maxVideoBitrate>=3500 (default 4000)
-ddr_accepts_720=0
+lane=w-path
+status=LANDED_DUAL_BITRATE
+tip=eb4a832e (+REPORT refresh pending)
+LANDED:
+- PMS 200 + coded proof: universal>=3500 → 1280x720; <=3000/1500 → 720x404
+- Path720p ladder + genuine delivery + identity_skip; DP preferDirect default
+- OSD_TIER11_720P default 0
+- Dual pin: DecodeOptimal=1500 (DP/content); Weak=3500 (universal geometry)
+tests: resolve/osd/vf true_rc=0; no_private_data OK
+ARM_ms_removed_by_path: scale identity_skip on true 720 — host x86 Δ~2.6ms 404-trap; device dual-A9 scale-evac ms UNKNOWN (parent measure)
+blocker: none code-side; parent device measure DP~1500k identity present path once w-mem accepts 720 banks
+INVALIDATED_by_parent: universal maxBR=1500 as true-720; "skip scale alone ships 24fps"
