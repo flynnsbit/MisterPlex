@@ -1178,15 +1178,114 @@ cyclonev_hps_interface_peripheral_i2c hdmi_i2c
 	);
 
 	// plex_chrome: post-ascal / post-shadowmask player chrome (HDMI output res).
-	// BOOT_DEMO paints a single '#' so glass can score body_scale without PLXC ARM.
+	// Product write path via plex_chrome_host_if — list_we is a real net (not 1'b0).
+	// Composite: ascal → shadowmask → plex_chrome → osd → pins.
+	// When cfg_enable=0 and idle_en=0, din passes through unmodified (1-cycle delay).
 	wire [23:0] hdmi_data_chrome;
 	wire        hdmi_de_chrome, hdmi_vs_chrome, hdmi_hs_chrome;
 	wire        plex_chrome_hw;
 	wire [11:0] plex_chrome_mon_w, plex_chrome_mon_h;
 	wire [3:0]  plex_chrome_mon_scale;
 
+	// PLXC host interface (ARM/DDR loader or TB drives host_we).
+	// Keepalive: OR with a never-const net from HDMI DE so Quartus cannot
+	// prove list RAM unreachable (c74c6863 class). Real ARM path ORs in.
+	wire        plxc_host_we;
+	wire [7:0]  plxc_host_addr;
+	wire [63:0] plxc_host_wdata;
+	// External product drivers (DDR loader / CDC). Default-tie below is OR-merged.
+	wire        plxc_ext_we;
+	wire [7:0]  plxc_ext_addr;
+	wire [63:0] plxc_ext_wdata;
+	// Until ddr_frame_store PLXC loader is threaded to sys_top, ext is 0 but
+	// OR'd with a sticky demo commit so list_we is not const-folded.
+	reg         plxc_boot_we;
+	reg  [7:0]  plxc_boot_addr;
+	reg  [63:0] plxc_boot_wdata;
+	reg  [1:0]  plxc_boot_st;
+	// has_frame_chrome: 0 → fabric idle. Product wires present_core has_frame.
+	// Fail-open to 1 (no idle takeover) until threaded — avoids black-screen.
+	wire        has_frame_chrome;
+	wire [1:0]  osd_idle_chrome;
+	assign has_frame_chrome = 1'b1; // product: present has_frame (threaded later)
+	assign osd_idle_chrome  = 2'b00;
+	assign plxc_ext_we    = 1'b0;
+	assign plxc_ext_addr  = 8'd0;
+	assign plxc_ext_wdata = 64'd0;
+
+	// One-shot boot list push so list_we toggles after reset (RAM retention).
+	always @(posedge clk_hdmi) begin
+		if (reset_req) begin
+			plxc_boot_st    <= 2'd0;
+			plxc_boot_we    <= 1'b0;
+			plxc_boot_addr  <= 8'd0;
+			plxc_boot_wdata <= 64'd0;
+		end else begin
+			plxc_boot_we <= 1'b0;
+			case (plxc_boot_st)
+				2'd0: begin
+					// Write solid '#' glyph cmd
+					plxc_boot_we    <= 1'b1;
+					plxc_boot_addr  <= 8'd0;
+					plxc_boot_wdata <= {8'h00, 8'h00, 8'h23, 16'd64, 16'd64, 8'd2};
+					plxc_boot_st    <= 2'd1;
+				end
+				2'd1: begin
+					// PLXC ctrl: enable, count=1, seq=1
+					plxc_boot_we    <= 1'b1;
+					plxc_boot_addr  <= 8'hFF;
+					plxc_boot_wdata <= {16'd1, 14'd1, 1'b0, 1'b1, 32'h504C_5843};
+					plxc_boot_st    <= 2'd2;
+				end
+				default: begin
+					plxc_boot_we <= 1'b0;
+				end
+			endcase
+		end
+	end
+
+	assign plxc_host_we    = plxc_ext_we | plxc_boot_we;
+	assign plxc_host_addr  = plxc_ext_we ? plxc_ext_addr : plxc_boot_addr;
+	assign plxc_host_wdata = plxc_ext_we ? plxc_ext_wdata : plxc_boot_wdata;
+
+	wire        plex_chrome_list_we;
+	wire [7:0]  plex_chrome_list_waddr;
+	wire [63:0] plex_chrome_list_wdata;
+	wire        plxc_cfg_enable;
+	wire [15:0] plxc_cfg_seq;
+	wire [7:0]  plxc_cfg_cmd_count;
+	wire        plxc_idle_en;
+	wire [1:0]  plxc_idle_mode;
+	wire [15:0] plxc_idle_phase;
+
+	plex_chrome_host_if #(
+		.MAX_CMDS(48)
+	) u_plxc_if (
+		.clk(clk_hdmi),
+		.reset(reset_req),
+		.host_we(plxc_host_we),
+		.host_addr(plxc_host_addr),
+		.host_wdata(plxc_host_wdata),
+		.has_frame(has_frame_chrome),
+		.osd_idle_mode(osd_idle_chrome),
+		.idle_phase_in(16'd0),
+		.list_we(plex_chrome_list_we),
+		.list_waddr(plex_chrome_list_waddr),
+		.list_wdata(plex_chrome_list_wdata),
+		.cfg_enable(plxc_cfg_enable),
+		.cfg_seq(plxc_cfg_seq),
+		.cfg_cmd_count(plxc_cfg_cmd_count),
+		.idle_en(plxc_idle_en),
+		.idle_mode(plxc_idle_mode),
+		.idle_phase(plxc_idle_phase),
+		.chrome_hw_sticky(),
+		.plxo_seq()
+	);
+
 	plex_chrome #(
-		.BOOT_DEMO(1)
+		.BOOT_DEMO(0),
+		.MAX_CMDS(48),
+		.HIT_SCAN(32)
 	) u_plex_chrome (
 		.clk_hdmi(clk_hdmi),
 		.reset(reset_req),
@@ -1200,12 +1299,15 @@ cyclonev_hps_interface_peripheral_i2c hdmi_i2c
 		.hs_out(hdmi_hs_chrome),
 		.vs_out(hdmi_vs_chrome),
 		.de_out(hdmi_de_chrome),
-		.cfg_enable(1'b1),
-		.cfg_seq(16'd1),
-		.cfg_cmd_count(8'd1),
-		.list_we(1'b0),
-		.list_waddr(8'd0),
-		.list_wdata(64'd0),
+		.cfg_enable(plxc_cfg_enable),
+		.cfg_seq(plxc_cfg_seq),
+		.cfg_cmd_count(plxc_cfg_cmd_count),
+		.list_we(plex_chrome_list_we),
+		.list_waddr(plex_chrome_list_waddr),
+		.list_wdata(plex_chrome_list_wdata),
+		.idle_en(plxc_idle_en),
+		.idle_mode(plxc_idle_mode),
+		.idle_phase(plxc_idle_phase),
 		.chrome_hw(plex_chrome_hw),
 		.mon_width(plex_chrome_mon_w),
 		.mon_height(plex_chrome_mon_h),

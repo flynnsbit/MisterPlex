@@ -1,4 +1,5 @@
 #include "media_player.hpp"
+#include "libmisterplex/plex_chrome_cmds.hpp"
 #include "log_redact.hpp"
 
 #include "libmisterplex/audio_delay.hpp"
@@ -799,6 +800,20 @@ void MediaPlayer::paintIdle() {
     const IdleMode m = idleMode();
     if (m == IdleMode::LastFrame)
         return;
+    // Fabric idle plane owns Logo/Black/Screensaver when chrome HW is live.
+    // Skipping DDR paint eliminates "idle paint DDR failed" (bank never freed).
+    if (chromePlaneLive() && m != IdleMode::LastFrame) {
+        log("media: idle fabric plane=1 skip DDR paint mode=" + std::to_string(static_cast<int>(m)));
+        // Still allow fb0 notice chrome for lab when overlay visible — no DDR.
+        if (fb_.ok() && overlay_.visible()) {
+            const int w = 320, h = 240;
+            std::vector<uint8_t> buf(static_cast<size_t>(w) * h * 3);
+            renderIdleRgb24(buf.data(), w, h, m, idlePhase_.load());
+            overlay_.renderRgb24(buf.data(), w, h);
+            (void)fb_.blitRgb24(buf.data(), w, h);
+        }
+        return;
+    }
     const int w = 320;
     const int h = 240;
     std::vector<uint8_t> buf(static_cast<size_t>(w) * h * 3);
@@ -1212,6 +1227,27 @@ void MediaPlayer::resume() {
 void MediaPlayer::showPlaybackOverlay(PlaybackOverlayState state, int64_t positionMs,
                                       int64_t durationMs) {
     overlay_.show(state, positionMs, durationMs);
+    // plane=1: emit PLXC semantic list (no pixel bake). Fabric composites.
+    if (chromePlaneLive()) {
+        plex_chrome_cmds::BuildArgs a;
+        a.outW = 640; // product applied HDMI; refine when PLXO publishes W/H
+        a.outH = 480;
+        a.state = state;
+        a.positionMs = positionMs;
+        a.durationMs = durationMs;
+        a.title = nullptr;
+        const auto cmds = plex_chrome_cmds::buildPlaybackHud(a);
+        ++chromePlxcSeq_;
+        if (fpga_.ok() || fpga_.open()) {
+            if (!fpga_.writeChromeCommandList(cmds.data(), cmds.size(), /*enable*/ true,
+                                              chromePlxcSeq_)) {
+                log("media: PLXC publish failed: " + fpga_.lastError());
+            } else {
+                log("media: PLXC publish cmds=" + std::to_string(cmds.size()) +
+                    " seq=" + std::to_string(chromePlxcSeq_) + " plane=1");
+            }
+        }
+    }
 }
 
 void MediaPlayer::flashPlaybackSkip(int64_t deltaMs) {
@@ -3472,7 +3508,8 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
         auto presentCleanFrame = [&](uint8_t* cleanFrame, bool countPresent) {
             const OverlayRect dirty = overlay_.dirtyBounds(rawW, rawH);
             backupOverlayDirty(cleanFrame, dirty);
-            if (!dirty.empty()) {
+            // plane=1: fabric plex_chrome composites PLXC list — do not bake pixels.
+            if (!dirty.empty() && !chromePlaneLive()) {
                 if (profilePresent) {
                     const auto overlay0 = std::chrono::steady_clock::now();
                     const int64_t overlayCpu0 = threadCpuMicros();

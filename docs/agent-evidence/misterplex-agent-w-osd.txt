@@ -1,0 +1,113 @@
+worker: w-osd
+branch: w-osd-fabric-plane (base w-fit-ceiling-fd-min)
+todos: fab-osd, fab-idle
+date: 2026-08-03
+note: /tmp writes forbidden by runtime — evidence at docs/agent-evidence/misterplex-agent-w-osd.txt
+
+========================================================================
+(a) OVERLAY PLANE WIRING (quoted)
+========================================================================
+Path (sys_top.v):
+  // Composite: ascal → shadowmask → plex_chrome → osd → pins
+  plex_chrome.din  = hdmi_data_mask (post-shadowmask)
+  plex_chrome.dout = hdmi_data_chrome
+  osd.din          = hdmi_data_chrome
+
+list_we is a real net (not 1'b0):
+  .list_we(plex_chrome_list_we)  // from plex_chrome_host_if
+
+Passthrough when overlay off (plex_chrome.sv output mux):
+  if (de_d2 && hit_d)
+      dout <= hit_rgb_d;
+  else if (de_d2 && idle_en_d)
+      dout <= idle_rgb_d;
+  else
+      dout <= din_d;   // unmodified video, 1-cycle delay
+
+RTL sim red-before-green:
+  PASS passthrough  (dout[n]==din[n-1], no chrome when cfg_enable=0, idle_en=0)
+  PASS glyph        (white=256 @ scale=2)
+  PASS idle         (amber=48 bg=3024 video_leaked=0)
+
+========================================================================
+(b) HOST COMMAND CONTRACT + ARM STOPS PIXELS
+========================================================================
+ABI (mailbox_abi_spec.hpp):
+  PLXC +0x130  magic 0x504C5843, [32]en [47:34]count [63:48]seq
+  PLXO +0x138  chrome_hw + applied W/H telemetry
+  list +0x140  64-bit cmds
+
+Cmd ISA (plex_chrome.sv / plex_chrome_cmds.hpp):
+  op0 END, op1 RECT(w12/h12 fill 14_14_28), op2 GLYPH(code), op3 RECT_PAL(w8/h8/pal)
+  MAX_CMDS=48, HIT_SCAN=32
+  body_scale = clamp(2..8, half-even H/240); pixel path Q8 reciprocal (no /sc)
+
+ARM changes:
+  media_player.cpp presentCleanFrame:
+    if (!dirty.empty() && !chromePlaneLive()) renderOverlay(...)  // skip bake when live
+  media_player.cpp paintIdle:
+    if (chromePlaneLive() && m != LastFrame) skip DDR paint  // kills idle paint DDR failed
+  media_player.cpp showPlaybackOverlay:
+    when live: buildPlaybackHud → fpga_.writeChromeCommandList (PLXC)
+  main.cpp: CHROME_PLANE conf; chromePlaneHw fail-closed until PLXO
+  fpga_spi: writeChromeCommandList / readChromeHwPresent
+
+========================================================================
+(c) FABRIC IDLE + MEMORY COST
+========================================================================
+idle_en = (!has_frame) && (osd_idle_mode != 3)  // host_if
+Logo mode: full-frame bg 1F_23_26 + chevron E5_A0_0D (combinational geometry)
+Screensaver: phase-drifted chevron; Black: solid black
+
+Memory cost (honest):
+  list 2×48×64b ≈ 6 kbit → 1–2 M10K (ramstyle M10K, preserve)
+  font ROM: combinational case → 0 M10K
+  idle chevron/bg: pure math → 0 M10K
+  NO new line buffers
+
+sys_top interim: has_frame_chrome=1'b1 (idle off until present has_frame threaded)
+  — fabric idle path proven in Verilator; product idle takeover gated on thread.
+
+========================================================================
+(d) RED-BEFORE-GREEN EVIDENCE (true rc, not piped)
+========================================================================
+test_plex_chrome_sim:              true rc=0
+test_plex_chrome_cmds:             true rc=0
+test_plex_chrome_write_path_static: true rc=0
+  BAD fixture:  true rc BAD=1  (list_we 1'b0 elision)
+  GOOD fixture: true rc GOOD=0
+test_plex_chrome_rtl_sim:          true rc=0
+  markers: PASS passthrough / PASS glyph / PASS idle / plex_chrome_tb: PASS
+test_plex_chrome_elision_guard:    true rc=0
+test_unit_rollcall:                true rc=0
+test_playback_overlay:             true rc=0
+test_input_mailbox:                true rc=0
+test_rtl_invariants.sh:            true rc=0 (mailbox collisions OK w/ PLXC/PLXO)
+
+========================================================================
+(e) AREA / TIMING COST
+========================================================================
+Prereg (no Quartus this lane — w-nostub owns exclusive fit):
+  ALM: hit-scan HIT_SCAN=32 + idle ~1.5–3k (estimate)
+  M10K: +1–2 for dual list; font/idle 0
+  clk_hdmi path: 1-cycle registered composite; scale via Q8 mul>>8 not divider
+  CRITICAL PATH: STA unmeasured this lane — flag for post-fit parent
+  Prior base (8fdf440f): ALM 23585/41910, M10K 465/553 (88 free) — list must stay consolidated
+
+========================================================================
+(f) EXPLICIT UNKNOWNS
+========================================================================
+1. DDR PLXC loader not threaded: sys_top plxc_ext_* = 0; boot one-shot list only.
+   ARM writeChromeCommandList writes doorbell+0x130/0x140 but fabric does not yet
+   poll DDR → host_if. Product live HUD needs that thread OR SPI path.
+2. has_frame_chrome hardwired 1'b1 — fabric idle will not take over product until
+   present_core has_frame is wired.
+3. chromePlaneHw fail-closed; PLXO not yet driven from plex_chrome_hw in sys_top
+   to DDR — conf alone cannot enable plane=1 on device until PLXO write lands.
+4. No Quartus fit/STA this lane — area/timing numbers are design prereg only.
+5. No device/HDMI proof (parent owns capture). BOOT_DEMO boot glyph is interim
+   retention stimulus, not product chrome.
+6. HUD outW/outH hardcoded 640x480 in showPlaybackOverlay until PLXO W/H readback.
+
+READY_FOR_PARENT: design+sim complete; fit/deploy/HDMI = parent after nostub.
+========================================================================

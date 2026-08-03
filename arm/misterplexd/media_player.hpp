@@ -166,6 +166,10 @@ public:
     int avOffsetMs() const { return avOffsetMs_.load(); }
     // Idle/screensaver painting. Without this the frame store keeps the last frame
     // of the previous video on screen forever.
+    void setChromePlaneConf(bool confWants) { chromePlaneConf_ = confWants; }
+    void setChromePlaneHwPresent(bool hw) { chromePlaneHw_ = hw; }
+    bool chromePlaneLive() const { return chromePlaneConf_ && chromePlaneHw_; }
+
     void setIdleMode(IdleMode m) { idleMode_.store(static_cast<int>(m)); }
     IdleMode idleMode() const { return static_cast<IdleMode>(idleMode_.load()); }
     void startIdle();
@@ -447,6 +451,9 @@ private:
     std::atomic<int64_t> seekReqMs_{-1};
     std::atomic<int64_t> positionMs_{0};
     PlaybackOverlay overlay_;
+    bool chromePlaneConf_ = false; // conf CHROME_PLANE wants plane=1
+    bool chromePlaneHw_ = false;   // PLXO chrome_hw — fail closed until set
+    uint16_t chromePlxcSeq_ = 0;   // PLXC seq edge for fabric latch
     std::atomic<pid_t> childPid_{-1};
     std::atomic<pid_t> streamPid_{-1};
     std::string lastError_;
