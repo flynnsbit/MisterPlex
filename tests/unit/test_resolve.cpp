@@ -107,20 +107,44 @@ int main() {
     CHECK(w720.maxVideoBitrateKbps == kPlex720pWeakBitrateKbps);
     CHECK(w720.videoQuality == 70);
     CHECK(w720.h264Profile == "baseline");
+    CHECK(w720.h264Level == 30);
     CHECK(w720.h264Level == kPlex720pH264Level);
     CHECK(validateWeakLadder(w720));
     WeakLadder byRes720;
     CHECK(applyPlexTranscodeProfile("1280x720", byRes720));
     CHECK(byRes720.profileName == "720p");
     checkProfileMatchesContentResolution("resolution alias 720p", byRes720, path720);
-    // 480p must not accept L3.1; 720p must not accept L4.0.
+    // NEG: 480p and 720p must not accept L>3.0; 720p must not accept L4.0 / high.
     {
         WeakLadder bad480lvl = w480;
         bad480lvl.h264Level = 31;
         CHECK(!validateWeakLadder(bad480lvl));
         WeakLadder bad720lvl = w720;
+        bad720lvl.h264Level = 31;
+        CHECK(!validateWeakLadder(bad720lvl));
+        bad720lvl = w720;
         bad720lvl.h264Level = 40;
         CHECK(!validateWeakLadder(bad720lvl));
+        WeakLadder bad720hi = w720;
+        bad720hi.h264Profile = "high";
+        CHECK(!validateWeakLadder(bad720hi));
+        // NEG: 1920x1080 above product ceiling
+        WeakLadder bad1080 = w720;
+        bad1080.videoResolution = "1920x1080";
+        std::string why1080;
+        CHECK(!validateWeakLadder(bad1080, &why1080));
+        CHECK(why1080.find("1280x720") != std::string::npos);
+        // NEG: bitrate below measured true-720 knee must hard-fail (not advisory)
+        WeakLadder lowBr = w720;
+        lowBr.maxVideoBitrateKbps = 1500;
+        std::string whyBr;
+        CHECK(!validateWeakLadder(lowBr, &whyBr));
+        CHECK(whyBr.find("3100") != std::string::npos);
+        lowBr.maxVideoBitrateKbps = 3000;
+        CHECK(!validateWeakLadder(lowBr));
+        // POS: floor accepted
+        lowBr.maxVideoBitrateKbps = 3100;
+        CHECK(validateWeakLadder(lowBr));
     }
 
     // Content-tier full re-apply (doPlay weakForContentResolution contract): an
@@ -377,8 +401,9 @@ int main() {
     CHECK(applySourceFpsConf("24", 0) == 24);
     CHECK(applySourceFpsConf("auto", 0) == 0);
 
-    // --- Two-regime + DP default + full identity headers (parent miss #13) ---
-    // rd-duck Route-B: host cap 960×540 @1ppc; 1280 DE is RED (≈20.7 Hz).
+    // --- Two-regime + DP default + full identity headers (parent 720p content) ---
+    // PMS content ceiling 1280×720; native 720 DP-eligible; >720 → xcode 720p tier.
+    // 1ppc beam math remains honest (routeBContentDeFitsFps) but does not block PMS.
     {
         using misterplex::PlayDeliveryRegime;
         using misterplex::clampCodedSizeToRouteBHostCap;
@@ -390,11 +415,10 @@ int main() {
         using misterplex::selectPlayDeliveryRegime;
         CHECK(!mediaIsHdAbove720p(624, 480));
         CHECK(!mediaIsHdAbove720p(960, 540));
-        CHECK(mediaIsHdAbove720p(1280, 720)); // Route-B: exact 1280 exceeds host cap
+        CHECK(!mediaIsHdAbove720p(1280, 720)); // exact 720 is DP content, not "above"
         CHECK(mediaIsHdAbove720p(1920, 1080));
         CHECK(mediaIsHdAbove720p(1440, 1080));
         CHECK(!mediaIsHdAbove720p(0, 0));
-        // multi-pixel fitted restores legacy >720-only threshold
         CHECK(!mediaExceedsRouteBHostContentCap(1280, 720, /*multi*/ true));
         CHECK(mediaExceedsRouteBHostContentCap(1920, 1080, /*multi*/ true));
         CHECK(selectPlayDeliveryRegime(624, 480, true, true) ==
@@ -403,15 +427,14 @@ int main() {
               PlayDeliveryRegime::DirectPlaySd);
         CHECK(selectPlayDeliveryRegime(960, 540, true, true) ==
               PlayDeliveryRegime::DirectPlaySd);
-        // POS: HD → xcode regime (target 540 under Route-B, not silent 1280 DE)
+        // POS: native 720 → DP (rk=7 cheapest); full-HD → xcode 720 tier
         CHECK(selectPlayDeliveryRegime(1280, 720, true, true) ==
-              PlayDeliveryRegime::TranscodeHd720);
+              PlayDeliveryRegime::DirectPlaySd);
         CHECK(selectPlayDeliveryRegime(1920, 1080, true, true) ==
               PlayDeliveryRegime::TranscodeHd720);
-        // multi-pixel: exact 1280 stays DP-eligible
         CHECK(selectPlayDeliveryRegime(1280, 720, true, true, /*multi*/ true) ==
               PlayDeliveryRegime::DirectPlaySd);
-        // NEG: never hardcode rk — geometry alone selects HD xcode.
+        // NEG: never hardcode rk — geometry alone selects HD xcode for >720.
         CHECK(selectPlayDeliveryRegime(1920, 1080, true, true) !=
               PlayDeliveryRegime::DirectPlaySd);
         CHECK(selectPlayDeliveryRegime(624, 480, false, true) ==
@@ -421,21 +444,15 @@ int main() {
         CHECK(std::string(playDeliveryRegimeName(PlayDeliveryRegime::DirectPlaySd)) ==
               "direct_play_sd");
         CHECK(std::string(playDeliveryRegimeName(PlayDeliveryRegime::TranscodeHd720)) ==
-              "transcode_hd_540");
-        // Cross-gate: every host-emittable DE must fit clk with blanking mins.
+              "transcode_hd_720");
+        // Beam math still honest (1ppc cannot scan full 1280@24) — separate from PMS.
         CHECK(routeBContentDeFitsFps(960, 540, 24));
         CHECK(routeBContentDeFitsFps(960, 540, 30));
         CHECK(routeBContentDeFitsFps(624, 480, 24));
-        // NEG RED: 1280×720 under Route-B 1ppc (active 22.118M + totals ~20.7 Hz)
         CHECK(!routeBContentDeFitsFps(1280, 720, 24));
         CHECK(!routeBContentDeFitsFps(1280, 720, 30));
-        CHECK(!routeBContentDeFitsFps(1280, 720, 24, /*multi*/ false));
-        // Pre-registered: totals 1312*736*24 > 20e6
         CHECK(routeBTotalPixelsPerSec(1280, 720, 24) > 20000000LL);
         CHECK(routeBTotalPixelsPerSec(960, 540, 24) <= 20000000LL);
-        // multi_pixel lifts size ceiling check only when caller models multi rate;
-        // still fails pure 1ppc pixel budget for 1280@24 (honest).
-        CHECK(!routeBContentDeFitsFps(1280, 720, 24, /*multi*/ true));
         int cw = 1280, ch = 720;
         CHECK(clampCodedSizeToRouteBHostCap(cw, ch, false));
         CHECK(cw == 960 && ch == 540);
@@ -444,25 +461,24 @@ int main() {
         CHECK(!clampCodedSizeToRouteBHostCap(cw, ch, /*multi*/ true));
         CHECK(cw == 1280 && ch == 720);
 
-        // resolve → target size (no silent 1280 under 1ppc)
+        // resolve → PMS target is always real 720p tier
         using misterplex::routeBDefaultDecisionResolution;
         using misterplex::routeBHdTranscodeTargetSize;
         using misterplex::routeBResolvedSizeLegal;
         int tw = 0, th = 0;
-        CHECK(std::string(routeBHdTranscodeTargetSize(false, &tw, &th)) == "540p");
-        CHECK(tw == 960 && th == 540);
+        CHECK(std::string(routeBHdTranscodeTargetSize(false, &tw, &th)) == "720p");
+        CHECK(tw == 1280 && th == 720);
         CHECK(routeBResolvedSizeLegal(tw, th, 24, false));
-        CHECK(std::string(routeBDefaultDecisionResolution(false)) == "960x540");
+        CHECK(std::string(routeBDefaultDecisionResolution(false)) == "1280x720");
         CHECK(std::string(routeBDefaultDecisionResolution(true)) == "1280x720");
-        // NEG: lab 720 tier only with multi; bare 1280 illegal on Route-B 1ppc
-        CHECK(!routeBResolvedSizeLegal(1280, 720, 24, false));
+        CHECK(routeBResolvedSizeLegal(1280, 720, 24, false));
+        // NEG: 1080 content size illegal on product ladder
+        CHECK(!routeBResolvedSizeLegal(1920, 1080, 24, false));
         tw = th = 0;
         CHECK(std::string(routeBHdTranscodeTargetSize(true, &tw, &th)) == "720p");
         CHECK(tw == 1280 && th == 720);
-        // multi lifts size ceiling; pure 1ppc pixel budget still fails @24 (honest)
-        CHECK(!routeBContentDeFitsFps(1280, 720, 24, true));
 
-        // Cross-contract: HD target → storage geom → beam ceiling (publish side).
+        // Cross-contract: HD target → storage geom (content 720)
         {
             using misterplex::DdrPublishFrame;
             using misterplex::DdrPublishPlan;
@@ -472,9 +488,9 @@ int main() {
             using misterplex::yuv420pFrameBytes;
             int rw = 0, rh = 0;
             routeBHdTranscodeTargetSize(false, &rw, &rh);
-            CHECK(rw == 960 && rh == 540);
+            CHECK(rw == 1280 && rh == 720);
             const auto g = ddrFrameGeometryForFpgaPresent(rw, rh);
-            CHECK(g.coded_width.get() == 960 && g.coded_height.get() == 540);
+            CHECK(g.coded_width.get() == 1280 && g.coded_height.get() == 720);
             CHECK(routeBResolvedSizeLegal(g.coded_width.get(), g.coded_height.get(), 24, false));
             const size_t bytes = yuv420pFrameBytes(g.coded_width, g.coded_height);
             std::vector<uint8_t> yuv(bytes, 0x10);
@@ -484,12 +500,11 @@ int main() {
             CHECK(makeDdrPublishPlan(f, 0, plan, &err));
             int pcw = 0, pch = 0, deW = 0, deH = 0;
             unpackPlxgQ2(plan.plxg_q[2], &deW, &deH, &pcw, &pch);
-            CHECK(pcw == 960 && pch == 540);
-            CHECK(deW == 960 && deH == 540);
-            CHECK(routeBContentDeFitsFps(deW, deH, 24, false));
-            // NEG: publishing 1280 DE must fail beam ceiling under Route-B 1ppc
+            CHECK(pcw == 1280 && pch == 720);
+            CHECK(deW == 1280 && deH == 720);
+            // Beam 1ppc still cannot scan 1280@24 — honest, separate contract
             CHECK(!routeBContentDeFitsFps(1280, 720, 24, false));
-            CHECK(!routeBResolvedSizeLegal(1280, 720, 24, false));
+            CHECK(!routeBResolvedSizeLegal(1920, 1080, 24, false));
         }
 
         // miss #15: HD xcode class is ARM for fabric even if attr says CB
@@ -504,7 +519,7 @@ int main() {
         CHECK(thin.find("X-Plex-Product:") == std::string::npos);
         CHECK(thin.find("X-Plex-Client-Identifier:") == std::string::npos);
 
-        // Lab 720 profile still builds URLs (multi/lab-only); product default is 540.
+        // Product 720 profile builds universal URLs (parent top priority).
         WeakLadder w720;
         applyPlexTranscodeProfile("720p", w720);
         const auto decDp =
@@ -521,8 +536,8 @@ int main() {
         const auto decDef =
             buildUniversalDecisionUrl("http://pms.example:32400", "/library/metadata/36", "tok",
                                       "sid-def", wDef, /*allow_direct=*/true);
-        CHECK(decDef.find("videoResolution=960x540") != std::string::npos);
-        CHECK(decDef.find("videoResolution=1280x720") == std::string::npos);
+        CHECK(decDef.find("videoResolution=1280x720") != std::string::npos);
+        CHECK(decDef.find("videoResolution=960x540") == std::string::npos);
         const auto decXc =
             buildUniversalDecisionUrl("http://pms.example:32400", "/library/metadata/2", "tok",
                                       "sid-xc", w720, /*allow_direct=*/false);
@@ -630,7 +645,7 @@ int main() {
                                        "sess720", 0, w720);
         CHECK(start720.find("videoResolution=1280x720") != std::string::npos);
         CHECK(start720.find("maxVideoBitrate=3100") != std::string::npos);
-        CHECK(start720.find("videoLevel=31") != std::string::npos);
+        CHECK(start720.find("videoLevel=30") != std::string::npos);
         CHECK(start720.find("videoProfile=baseline") != std::string::npos);
         CHECK(start720.find("directPlay=0") != std::string::npos);
         // Request pin string stays baseline; delivery truth is bitstream gate route.
@@ -658,13 +673,12 @@ int main() {
         CHECK(recommendedMinVideoBitrateKbps(w720) == kPlex720pWeakBitrateKbps);
         CHECK(kPlex720pWeakBitrateKbps == 3100);
         CHECK(kPlex720pDecodeOptimalBitrateKbps == 1500);
-        // Explicit low bitrate still validates (link heuristic) but is below recommended
-        // — and is the class that PMS answers with 720x404, not true 720p.
-        // Parent decode-optimal 1500 is content/DP only — universal @1500 is NOT 1280x720.
+        CHECK(kPlex720pH264Level == 30);
+        // Universal @1500 is the 720x404 trap class — HARD reject on validateWeakLadder.
+        // Decode-optimal 1500 remains a DP/content constant only (not a universal pin).
         WeakLadder low720 = w720;
         low720.maxVideoBitrateKbps = kPlex720pDecodeOptimalBitrateKbps;
-        CHECK(validateWeakLadder(low720));
-        CHECK(weakLadderBitrateBelowRecommended(low720));
+        CHECK(!validateWeakLadder(low720));
         CHECK(!pmsBitrateLikelyTrue720p(kPlex720pDecodeOptimalBitrateKbps));
         CHECK(!pmsBitrateLikelyTrue720p(2000));
         CHECK(!pmsBitrateLikelyTrue720p(3000));

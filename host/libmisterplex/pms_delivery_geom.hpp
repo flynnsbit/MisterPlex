@@ -278,22 +278,23 @@ inline bool pathMayBeFabricNative(const char* delivery_basis, bool delivery_veri
 // Library census N=142: 98.6% constrained baseline; PMS never transcodes *to*
 // baseline, but DP preserves source profile. SD majority → DP native.
 //
-// rd-duck 2026-08-03 BLOCKING (Route-B / w-clock first-fit):
-//   1ppc @ 20 MHz, H_TOTAL≥h_de+32, V_TOTAL≥v_de+16.
-//   1280×720 active alone @24 = 22.118 Mpix/s > 20e6.
-//   Clamped totals 1312×736 → 20e6/(1312*736) = 20.712 Hz for BOTH 24 and 30.
-//   PRESENT_BEAM_960 forbids multi-pixel with this path. So automatic HD→1280
-//   silently plays at ~20.7 unique fps / drops. Host first-fit cap is **960×540**
-//   unless PRESENT_MULTI_PIXEL is actually enabled/fitted.
+// Parent 2026-08-03 FACT: glass is already video_mode=0 1280×720@60 via ascal.
+// Product target is CONTENT 1280×720 (PMS request + bank), not "make HDMI 720p".
+//
+// Split two contracts that were conflated under "Route-B 540":
+//   A) PMS / content ladder ceiling = 1280×720 (this file's HD xcode target).
+//   B) Present 1ppc beam DE budget (w-clock) — may still clamp scanout; does NOT
+//      forbid asking PMS for a real 720p tier. Bank stride for 1.38 MiB frames
+//      is w-mem (HELD). Do not silently down-request 540 forever.
 //
 // miss #15: ANY transcode is ARM-fallback for fabric decode (bytes = Main+B=2).
-// HD regime is ARM pixel class (xcode to Route-B cap), never fabric-bitstream.
+// Native ≤1280×720 H.264 tries Direct Play first (rk=7 cheapest path).
 //
-// Enum tag TranscodeHd720 is historical; product name/target is Route-B 540.
+// Enum tag TranscodeHd720 = source above 720 → PMS xcode to 1280×720 tier.
 enum class PlayDeliveryRegime : uint8_t {
     Unknown = 0,
-    DirectPlaySd = 1,   // native ≤Route-B host cap H.264 Part — fabric iff CB
-    TranscodeHd720 = 2, // source above host cap → PMS xcode ≤960×540 (Route-B)
+    DirectPlaySd = 1,   // native ≤1280×720 H.264 Part — fabric iff CB/CAVLC/no-B
+    TranscodeHd720 = 2, // source above 720 → PMS universal 1280×720 tier
     ForceUniversal = 3, // conf / non-H.264 / missing Part — ARM decode class
 };
 
@@ -301,9 +302,13 @@ enum class PlayDeliveryRegime : uint8_t {
 inline constexpr int kRouteBPixelClockHz = 20000000;
 inline constexpr int kRouteBMinHBlank = 32;
 inline constexpr int kRouteBMinVBlank = 16;
-// Host-emittable content DE ceiling without PRESENT_MULTI_PIXEL.
+// Legacy 1ppc present-DE soft ceiling (w-clock Route-B analysis). Kept for
+// beam math helpers; PMS content ladder uses kPlex720p* (1280×720) instead.
 inline constexpr int kRouteBHostContentMaxW = 960;
 inline constexpr int kRouteBHostContentMaxH = 540;
+// Product content / PMS request ceiling (parent 720p programme).
+inline constexpr int kPmsContentMaxW = 1280;
+inline constexpr int kPmsContentMaxH = 720;
 
 inline long long routeBActivePixelsPerSec(int h_de, int v_de, int fps) {
     if (h_de <= 0 || v_de <= 0 || fps <= 0)
@@ -359,8 +364,7 @@ inline const char* playDeliveryRegimeName(PlayDeliveryRegime r) {
     case PlayDeliveryRegime::DirectPlaySd:
         return "direct_play_sd";
     case PlayDeliveryRegime::TranscodeHd720:
-        // Honest product name: Route-B 540 host cap (not true 1280 DE).
-        return "transcode_hd_540";
+        return "transcode_hd_720";
     case PlayDeliveryRegime::ForceUniversal:
         return "force_universal";
     default:
@@ -368,19 +372,18 @@ inline const char* playDeliveryRegimeName(PlayDeliveryRegime r) {
     }
 }
 
-// True when library media exceeds Route-B host content DE (needs xcode tier).
-// Default (multi_pixel=false): >960×540 — includes exact 1280×720 (beam RED).
-// multi_pixel fitted: legacy >1280×720 full-HD DP still allowed at 1280 tier.
+// True when library media exceeds product content ceiling (needs down-xcode).
+// >1280×720 → universal 720p tier. Exact 1280×720 is DP-eligible (rk=7).
+// present_multi_pixel retained for API compat; ceiling is always kPmsContent*.
 inline bool mediaExceedsRouteBHostContentCap(int media_w, int media_h,
                                              bool present_multi_pixel = false) {
+    (void)present_multi_pixel;
     if (media_w <= 0 || media_h <= 0)
         return false;
-    if (present_multi_pixel)
-        return media_w > 1280 || media_h > 720;
-    return media_w > kRouteBHostContentMaxW || media_h > kRouteBHostContentMaxH;
+    return media_w > kPmsContentMaxW || media_h > kPmsContentMaxH;
 }
 
-// Backward-compatible name: Route-B host-cap test (not "strictly above 720p").
+// True when media is strictly above 1280×720 (full-HD+ needs down-xcode).
 inline bool mediaIsHdAbove720p(int media_w, int media_h) {
     return mediaExceedsRouteBHostContentCap(media_w, media_h, /*multi*/ false);
 }
@@ -400,35 +403,34 @@ inline PlayDeliveryRegime selectPlayDeliveryRegime(int media_w, int media_h,
     return PlayDeliveryRegime::ForceUniversal;
 }
 
-// Product HD xcode target under Route-B first-fit (rd-duck + w-clock 4f1a6a28).
-// multi_pixel=0 → 960×540 only (never silent 1280 DE). multi=1 → lab 1280×720.
-// Returns profile name applied ("540p" / "720p"); fills request/store WxH.
+// Product HD xcode target = real 720p PMS tier (parent top priority 2026-08-03).
+// present_multi_pixel ignored for target size — always 1280×720 / "720p".
+// Returns profile name; fills request/store WxH.
 inline const char* routeBHdTranscodeTargetSize(bool present_multi_pixel, int* out_w,
                                               int* out_h) {
-    if (present_multi_pixel) {
-        if (out_w)
-            *out_w = 1280;
-        if (out_h)
-            *out_h = 720;
-        return "720p";
-    }
+    (void)present_multi_pixel;
     if (out_w)
-        *out_w = kRouteBHostContentMaxW;
+        *out_w = kPmsContentMaxW;
     if (out_h)
-        *out_h = kRouteBHostContentMaxH;
-    return "540p";
+        *out_h = kPmsContentMaxH;
+    return "720p";
 }
 
-// Default decision/start ceiling when conf left videoResolution empty.
-// Must not default to 1280 under Route-B 1ppc (beam clamp + Option-C diverge).
+// Default decision/start ceiling when conf left videoResolution empty = 720p.
 inline const char* routeBDefaultDecisionResolution(bool present_multi_pixel) {
-    return present_multi_pixel ? "1280x720" : "960x540";
+    (void)present_multi_pixel;
+    return "1280x720";
 }
 
-// True when a resolved/publish coded size is legal under the beam contract.
+// Content/store size legal for product PMS ladder (≤1280×720). Separate from
+// 1ppc beam DE math (routeBContentDeFitsFps) — do not conflate.
 inline bool routeBResolvedSizeLegal(int coded_w, int coded_h, int fps = 24,
                                     bool present_multi_pixel = false) {
-    return routeBHostMayEmitContentSize(coded_w, coded_h, fps, present_multi_pixel);
+    (void)fps;
+    (void)present_multi_pixel;
+    if (coded_w <= 0 || coded_h <= 0)
+        return false;
+    return coded_w <= kPmsContentMaxW && coded_h <= kPmsContentMaxH;
 }
 
 // PMS may tweak an already 16-aligned request by ±2 (MB) — measured class:

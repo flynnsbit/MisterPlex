@@ -283,11 +283,46 @@ StreamProbe probeAnnexBInBytes(const std::string& data) {
 int usage(const char* argv0) {
     std::cerr << "usage: " << argv0
               << " --base URL --token TOKEN --key /library/metadata/N [--seconds N]\n"
+              << "       [--profile 240p|360p|480p|540p|720p]  (default 480p; env "
+                 "MISTERPLEX_BASELINE_PROFILE)\n"
               << "       " << argv0 << " --annexb delivered.264\n"
               << "       Env equivalents: PLEX_BASE, PLEX_TOKEN, MISTERPLEX_BASELINE_KEY\n"
               << "       Defaults enforce profile_idc=66, entropy_cabac=0, max_num_ref_frames=1,\n"
-              << "       B-slices=0, coded=624x480, display=618x480.\n";
+              << "       B-slices=0. Geometry defaults follow --profile (480p→624x480,\n"
+              << "       720p→1280x720). Override with --expect-coded / --expect-display.\n"
+              << "       Never pass tokens on a shared command line in committed scripts.\n";
     return 2;
+}
+
+// Apply built-in profile defaults for geometry expectations (overridable later).
+void applyProfileGeometryDefaults(const std::string& profileName, Expectations& expect) {
+    if (profileName == "720p" || profileName == "1280x720") {
+        expect.coded_width = 1280;
+        expect.coded_height = 720;
+        expect.display_width = 1280;
+        expect.display_height = 720;
+    } else if (profileName == "540p" || profileName == "960x540") {
+        expect.coded_width = 960;
+        expect.coded_height = 540;
+        expect.display_width = 960;
+        expect.display_height = 540;
+    } else if (profileName == "360p" || profileName == "640x360") {
+        expect.coded_width = 640;
+        expect.coded_height = 360;
+        expect.display_width = 640;
+        expect.display_height = 360;
+    } else if (profileName == "240p" || profileName == "320x240") {
+        expect.coded_width = 320;
+        expect.coded_height = 240;
+        expect.display_width = 320;
+        expect.display_height = 240;
+    } else {
+        // 480p product default — lab PMS often delivers 624x480 coded / 618 display.
+        expect.coded_width = 624;
+        expect.coded_height = 480;
+        expect.display_width = 618;
+        expect.display_height = 480;
+    }
 }
 
 } // namespace
@@ -297,8 +332,13 @@ int main(int argc, char** argv) {
     std::string token = envOrEmpty("PLEX_TOKEN");
     std::string key = envOrEmpty("MISTERPLEX_BASELINE_KEY");
     std::string annexbPath;
+    // Default remains 480p so existing gates do not change behaviour.
+    std::string profileName = envOrEmpty("MISTERPLEX_BASELINE_PROFILE");
+    if (profileName.empty())
+        profileName = "480p";
     int seconds = 14;
     Expectations expect;
+    bool geometryOverridden = false;
 
     for (int i = 1; i < argc; ++i) {
         std::string a = argv[i];
@@ -316,6 +356,9 @@ int main(int argc, char** argv) {
                 return usage(argv[0]);
         } else if (a == "--key") {
             if (!needValue(key))
+                return usage(argv[0]);
+        } else if (a == "--profile") {
+            if (!needValue(profileName))
                 return usage(argv[0]);
         } else if (a == "--seconds") {
             std::string v;
@@ -349,10 +392,12 @@ int main(int argc, char** argv) {
             std::string v;
             if (!needValue(v) || !parseSizeSpec(v, expect.coded_width, expect.coded_height))
                 return usage(argv[0]);
+            geometryOverridden = true;
         } else if (a == "--expect-display") {
             std::string v;
             if (!needValue(v) || !parseSizeSpec(v, expect.display_width, expect.display_height))
                 return usage(argv[0]);
+            geometryOverridden = true;
         } else if (a == "--no-geometry-check") {
             expect.check_geometry = false;
         } else if (a == "--help" || a == "-h") {
@@ -363,11 +408,14 @@ int main(int argc, char** argv) {
         }
     }
 
+    if (!geometryOverridden)
+        applyProfileGeometryDefaults(profileName, expect);
+
     std::string body;
     std::string sourceDesc;
     if (!annexbPath.empty()) {
         body = readFileBytes(annexbPath);
-        sourceDesc = "annexb=" + annexbPath;
+        sourceDesc = "annexb=" + annexbPath + " profile=" + profileName;
     } else {
         base = misterplex::normalizePlexBase(base);
         if (base.empty() || token.empty() || key.empty()) {
@@ -381,8 +429,15 @@ int main(int argc, char** argv) {
             seconds = 30;
 
         misterplex::WeakLadder weak;
-        if (!misterplex::applyPlexTranscodeProfile("480p", weak)) {
-            std::cerr << "FAIL pms_baseline_profile: built-in 480p transcode profile missing\n";
+        if (!misterplex::applyPlexTranscodeProfile(profileName, weak)) {
+            std::cerr << "FAIL pms_baseline_profile: built-in profile missing: " << profileName
+                      << " (try 240p|360p|480p|540p|720p)\n";
+            return 1;
+        }
+        std::string why;
+        if (!misterplex::validateWeakLadder(weak, &why)) {
+            std::cerr << "FAIL pms_baseline_profile: weak ladder invalid for profile "
+                      << profileName << ": " << why << "\n";
             return 1;
         }
         const std::string session = "mplex-baseline-check";
@@ -396,7 +451,9 @@ int main(int argc, char** argv) {
 
         const std::string headerBlock = misterplex::plexFfmpegHeaders(session, token, weak);
         body = ffmpegExtractH264(startUrl, headerBlock, seconds);
-        sourceDesc = "live_pms=" + base + " key=" + key;
+        sourceDesc = "live_pms=" + base + " key=" + key + " profile=" + profileName +
+                     " req=" + weak.videoResolution +
+                     " maxBR=" + std::to_string(weak.maxVideoBitrateKbps);
     }
     if (body.empty()) {
         std::cerr << "FAIL pms_baseline_profile: no H.264 bytes from " << sourceDesc
@@ -474,8 +531,8 @@ int main(int argc, char** argv) {
         }
     }
     if (!problems.empty()) {
-        std::cerr << "FAIL pms_baseline_profile: delivered stream violates MiSTerPlex 480p "
-                     "FPGA contract:";
+        std::cerr << "FAIL pms_baseline_profile: delivered stream violates MiSTerPlex "
+                  << profileName << " FPGA contract:";
         for (const auto& p : problems)
             std::cerr << " " << p << ";";
         std::cerr << " is MiSTerPlex.xml still installed in the PMS Profiles directory and has "
@@ -483,6 +540,8 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    std::cout << "test_pms_baseline_profile: OK delivered Baseline/CAVLC/ref=1/no-B 624x480 stream\n";
+    std::cout << "test_pms_baseline_profile: OK delivered Baseline/CAVLC/ref=1/no-B "
+              << expect.coded_width << "x" << expect.coded_height << " stream (profile="
+              << profileName << ")\n";
     return 0;
 }

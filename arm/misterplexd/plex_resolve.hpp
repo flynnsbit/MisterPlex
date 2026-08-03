@@ -104,8 +104,8 @@ std::string buildPlexBase(const std::string& protocol, const std::string& addres
 // bitstream gate (h264_fabric_stream_gate.hpp) selects fabric vs ARM route.
 // Refuse* ⇒ ArmFfmpegFallback (product continues). Not a defense-in-depth claim.
 inline constexpr const char* kPlexH264ProfilePin = "baseline";
-// Plex integer level form: 31 == Level 3.1 (MaxFS covers 1280x720).
-inline constexpr int kPlexH264LevelPin720 = 31;
+// Plex integer level form: 30 == Level 3.0 (product decoder ceiling; rk=7 SoT).
+inline constexpr int kPlexH264LevelPin720 = 30;
 inline constexpr int kPlexH264LevelPin480 = 30;
 
 struct PlexTranscodeProfile {
@@ -166,15 +166,16 @@ struct WeakLadder {
 inline constexpr int kPlex540pMaxVideoFrameRate = 24;
 
 // Guard rails for built-in and configured ladders.
-// Hard fails: resolution parse, codecs, H.264 baseline, level ≤ 3.0, positive
-// quality/bitrate, coded size ≤ DDR max. Does NOT hard-fail below the ladder's
-// *recommended* bitrate defaults (2000/750) — those are quality/link heuristics
-// (osd_menu.hpp); explicit WEAK_BITRATE must be allowed for slow links.
+// Hard fails: resolution parse, codecs, H.264 baseline, level ≤ product pin,
+// positive quality/bitrate, coded size ≤ 1280x720 path ceiling.
+// Geometry knees (720/540/360) HARD-FAIL below measured true-tier bitrate so
+// WEAK_BITRATE cannot silently reopen the 720x404 / sub-360 traps.
+// 480p/240p recommended floors stay advisory (slow-link WEAK_BITRATE allowed).
 bool validateWeakLadder(const WeakLadder& weak, std::string* why = nullptr);
 
 // Recommended minimum maxVideoBitrateKbps for the ladder geometry (0 = unknown).
-// 720p → 4000 (measured true-720 gate); 480p → 2000; sub-480p → 750.
-// Not a decoder contract — advisory for WEAK_BITRATE / starve logs.
+// 720p → 3100 (measured true-720 gate); 480p → 2000; sub-480p → 750.
+// Advisory for starve logs; 720p also enforces the same floor in validateWeakLadder.
 int recommendedMinVideoBitrateKbps(const WeakLadder& weak);
 
 // True when bitrate is positive but below recommendedMin. detail is greppable.

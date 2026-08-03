@@ -350,19 +350,23 @@ bool validateWeakLadder(const WeakLadder& weak, std::string* why) {
     const bool isPath720 = (w == kPlex720pCodedWidth.get() && h == kPlex720pCodedHeight.get());
     const bool isPath540 = (w == kPlex540pCodedWidth.get() && h == kPlex540pCodedHeight.get());
     const bool isPath360 = (w == kPlex360pCodedWidth.get() && h == kPlex360pCodedHeight.get());
-    // 480p/360p stay ≤L3.0 request; 540p/720p ladders request L3.1 (MaxFS).
-    const int maxLevel = (isPath720 || isPath540) ? kPlex720pH264Level : 30;
-    if (weak.h264Level > maxLevel)
-        return fail((isPath720 || isPath540)
-                        ? "H.264 level must not exceed 3.1 for the 540p/720p path tier"
-                        : "H.264 level must not exceed 3.0 for the current decoder");
+    // Product decoder ceiling is L3.0 (parent rk=7 SoT). 540p still allows L3.1
+    // request pin for MaxFS on that tier only; 720p is L3.0.
+    const int maxLevel = isPath540 ? kPlex540pH264Level : 30;
+    if (weak.h264Level > maxLevel) {
+        if (isPath540)
+            return fail("H.264 level must not exceed 3.1 for the 540p path tier");
+        return fail("H.264 level must not exceed 3.0 for the current decoder");
+    }
+    // Geometry ceiling is exact path-720 (1280x720) — lifted from the old
+    // 640x480-only table on main. Do NOT delete this guard (gate self-weakening).
     if (w > kPlex720pCodedWidth.get() || h > kPlex720pCodedHeight.get())
         return fail("built-in path profiles stop at " +
                     std::to_string(kPlex720pCodedWidth.get()) + "x" +
                     std::to_string(kPlex720pCodedHeight.get()));
     if (w >= kPlex480pCodedWidth.get() || h >= kPlex480pCodedHeight.get() || isPath360) {
-        // Legacy DDR max 640x480. Exact path-720/540/360 (fabric→720 glass)
-        // are the only allowed geometries above / outside the 480 canvas contract.
+        // Legacy DDR max 640x480. Exact path-720/540/360 are the only allowed
+        // geometries above / outside the 480 canvas contract.
         if (w > kDdrFrameStoreMaxWidth.get() || h > kDdrFrameStoreMaxHeight.get()) {
             if (!isPath720 && !isPath540 && !isPath360)
                 return fail("current DDR-backed profiles stop at " +
@@ -374,8 +378,12 @@ bool validateWeakLadder(const WeakLadder& weak, std::string* why) {
         // once forced PMS above slow links and silently fell the ladder to 240p.
     }
     // Geometry knees (lab-measured): below these PMS returns the wrong *raster*
-    // (540→720x404, 360→480x270/320x180), not merely a softer picture. Enforce
-    // on the request path so WEAK_BITRATE cannot silently re-open the trap.
+    // (720→720x404, 540→720x404, 360→sub-360), not merely a softer picture.
+    // Enforce so WEAK_BITRATE cannot silently re-open the trap.
+    if (isPath720 && weak.maxVideoBitrateKbps < kPmsTrue720pMinBitrateKbpsMeasured)
+        return fail("720p maxVideoBitrate must be >=" +
+                    std::to_string(kPmsTrue720pMinBitrateKbpsMeasured) +
+                    " (lab knee; lower yields 720x404 not 1280x720)");
     if (isPath540 && weak.maxVideoBitrateKbps < kPmsTrue540pMinBitrateKbpsMeasured)
         return fail("540p maxVideoBitrate must be >=" +
                     std::to_string(kPmsTrue540pMinBitrateKbpsMeasured) +
@@ -994,9 +1002,8 @@ ResolveResult resolvePlayTarget(const std::string& rawKeyOrPath, const std::stri
         }
     }
 
-    // Two-regime (miss #13 + rd-duck Route-B): SD H.264 → DP Part (profile preserved).
-    // Above Route-B host cap (960×540 @1ppc) → universal 540 — NOT auto 1280 DE
-    // (beam totals only ~20.7 Hz). presentMultiPixel restores 1280 tier when fitted.
+    // Two-regime (miss #13 + parent 720p): ≤1280×720 H.264 → try DP Part first
+    // (rk=7 cheapest). Above 720 → universal 1280×720 tier (real PMS 720p profile).
     // preferDirectH264 is the conf allow flag (default true); geometry overrides.
     const bool metaOk = metaFound;
     const bool isH264 = metaOk && mediaVideoIsH264(xml);
@@ -1063,8 +1070,8 @@ ResolveResult resolvePlayTarget(const std::string& rawKeyOrPath, const std::stri
         std::string dpDecisionDetail;
         {
             WeakLadder weakDp = weak;
-            // Decision ceiling only — PMS never upscales. Route-B default is
-            // 960×540 (not 1280) so conf-empty cannot advertise a RED DE tier.
+            // Decision ceiling only — PMS never upscales. Default 1280×720 so
+            // native 720p assets stay DP-eligible (parent FACT content 720).
             if (weakDp.videoResolution.empty())
                 weakDp.videoResolution =
                     routeBDefaultDecisionResolution(multiPixel);
@@ -1156,7 +1163,7 @@ ResolveResult resolvePlayTarget(const std::string& rawKeyOrPath, const std::stri
         // rd-duck: universal remains arm_scale_fallback (delivery_verified=0,
         // force-scale, vf frozen pre-banner; PMS ±2 tweak can unalign delivery).
         // Do NOT treat this as fabric-native / ARM-scale-removed.
-        // HD above Route-B host cap: pin 960×540 unless multi-pixel fitted (then 1280).
+        // HD above 720 → real 720p PMS tier (never silent 540 forever).
         WeakLadder weakEff = weak;
         if (regime == PlayDeliveryRegime::TranscodeHd720) {
             r.playRegime = playDeliveryRegimeName(PlayDeliveryRegime::TranscodeHd720);
@@ -1168,33 +1175,27 @@ ResolveResult resolvePlayTarget(const std::string& rawKeyOrPath, const std::stri
             r.storeWidth = tw;
             r.storeHeight = th;
             r.sourceAwareApplied = true;
-            if (multiPixel) {
-                r.sourceAwarePolicy = "transcode_hd_720_multi_pixel";
-            } else {
-                // LOUD fallback: never silently emit 1280 DE on Route-B 1ppc.
-                r.sourceAwarePolicy = "transcode_hd_route_b_540";
-                if (!r.detail.empty())
-                    r.detail += "; ";
-                r.detail += "ROUTE_B_HOST_CAP media=" + std::to_string(r.mediaWidth) + "x" +
-                            std::to_string(r.mediaHeight) +
-                            " → request 960x540 (1280 DE forbidden @1ppc/20MHz; "
-                            "PRESENT_MULTI_PIXEL=0)";
-            }
-            // Hard invariant: product HD target must fit beam without multi.
+            r.sourceAwarePolicy = "transcode_hd_720";
+            if (!r.detail.empty())
+                r.detail += "; ";
+            r.detail += "PMS_HD_720 media=" + std::to_string(r.mediaWidth) + "x" +
+                        std::to_string(r.mediaHeight) + " → request 1280x720";
             if (!routeBResolvedSizeLegal(r.requestWidth, r.requestHeight, 24, multiPixel)) {
                 r.ok = false;
-                r.detail = "ROUTE_B_HOST_CAP refuse: HD target " +
+                r.detail = "PMS_CONTENT_CAP refuse: HD target " +
                            std::to_string(r.requestWidth) + "x" +
                            std::to_string(r.requestHeight) +
-                           " exceeds beam (PRESENT_MULTI_PIXEL required for 1280)";
+                           " exceeds 1280x720 content ceiling";
                 return r;
             }
         } else if (r.mediaWidth > 0 && r.mediaHeight > 0) {
             int maxW = 0, maxH = 0;
             parseResolution(weak.videoResolution, maxW, maxH);
-            // Ceiling itself must not exceed Route-B host cap when multi-pixel off.
-            if (!multiPixel)
-                clampCodedSizeToRouteBHostCap(maxW, maxH, /*multi*/ false);
+            // Ceiling itself must not exceed product content max (1280×720).
+            if (maxW > kPmsContentMaxW)
+                maxW = kPmsContentMaxW;
+            if (maxH > kPmsContentMaxH)
+                maxH = kPmsContentMaxH;
             const auto sel = selectSourceAwarePmsRequest(r.mediaWidth, r.mediaHeight, maxW, maxH);
             if (sel.request_w > 0 && sel.request_h > 0) {
                 weakEff.videoResolution = sel.videoResolution;
@@ -1209,11 +1210,13 @@ ResolveResult resolvePlayTarget(const std::string& rawKeyOrPath, const std::stri
             // No media meta — still snap the configured ceiling for store safety.
             int maxW = 0, maxH = 0;
             if (parseResolution(weak.videoResolution, maxW, maxH) && maxW > 0 && maxH > 0) {
-                if (!multiPixel && clampCodedSizeToRouteBHostCap(maxW, maxH, false)) {
-                    applyPlexTranscodeProfile("540p", weakEff);
+                if (maxW > kPmsContentMaxW || maxH > kPmsContentMaxH) {
+                    applyPlexTranscodeProfile("720p", weakEff);
+                    maxW = kPmsContentMaxW;
+                    maxH = kPmsContentMaxH;
                     if (!r.detail.empty())
                         r.detail += "; ";
-                    r.detail += "ROUTE_B_HOST_CAP conf ladder → 960x540 (was 1280-class)";
+                    r.detail += "PMS_CONTENT_CAP conf ladder → 1280x720";
                 }
                 const auto sel = selectSourceAwarePmsRequest(0, 0, maxW, maxH);
                 weakEff.videoResolution = sel.videoResolution;

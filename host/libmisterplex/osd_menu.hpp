@@ -72,11 +72,17 @@ constexpr int kPlex480pWeakBitrateKbps = 2000;
 //
 // Prefer Path720p Direct Play of ~1500k native 720p assets for ARM budget;
 // universal keeps the geometry-safe weak bitrate below.
+// Decode-optimal ~1500 kbps is for *already-native* 720p Direct Play only.
+// Universal maxVideoBitrate MUST stay at the geometry floor or PMS returns
+// shorter coded height (lab: 3000→720x404; 3100→1280x720 on rk=7 class).
 constexpr int kPlex720pDecodeOptimalBitrateKbps = 1500;
 constexpr int kPlex720pWeakBitrateKbps = 3100; // universal maxVideoBitrate pin (lab floor)
-// H.264 Level 3.1 is required for general 1280x720 (MaxFS). Lab source is
-// oddly tagged L3.0; product ladder requests L3.1 for the 720p tier.
-constexpr int kPlex720pH264Level = 31;
+// Parent 2026-08-03: rk=7 bytes are Level 3.0 Constrained Baseline; fabric
+// contract is ≤L3.0 (not L3.1). Request videoLevel=30 so PMS does not open
+// L3.1/CABAC-adjacent ladders. MaxFS vs tag mismatch is a PMS encoder quirk
+// the lab already ships on native 720p assets.
+constexpr int kPlex720pH264Level = 30;
+static_assert(kPlex720pH264Level == 30, "720p product level pin is L3.0");
 static_assert(kPlex720pWeakBitrateKbps >= 3100,
               "universal 720p weak bitrate must stay at geometry floor (lab ≥3100)");
 static_assert(kPlex720pDecodeOptimalBitrateKbps < kPlex720pWeakBitrateKbps,
