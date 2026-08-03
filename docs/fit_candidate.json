@@ -1,6 +1,6 @@
 {
   "architecture": "ascal_true_de_960",
-  "git_tree_hash": "ca3652dab1ffb371bf90c056c67dba9d50e0cc40",
+  "git_tree_hash": "debb88f77b2321ef161d89f7de779245e0274d87",
   "git_head_at_lock": "f0656362a7eca6571e8081d179c1ed9923fe61b4",
   "required_macros": {
     "FRAME_W": "960",

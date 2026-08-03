@@ -2,6 +2,7 @@
 
 #include "libmisterplex/geometry_units.hpp"
 #include "libmisterplex/ddr_mem_map_policy.hpp"
+#include "libmisterplex/mailbox_abi_spec.hpp"
 #include "libmisterplex/plxg_record.hpp"
 
 #include <cstddef>
@@ -161,12 +162,28 @@ constexpr uint32_t kPlex720pMapBytes2Bank = 0x00300000u; // 2 * 0x180000
 constexpr uint32_t kPlex720pMapBytes3Bank = 0x00480000u; // 3 * 0x180000
 // Candidate only: base + 3*stride - 0x1000. Not product until bank field >1 bit.
 constexpr uint32_t kPlex720pTripleDoorbellPhys = 0x305FF000u;
-// PLXG — 5-qword atomic record @ doorbell+0x2C0 (PLXC owns +0x130).
-// Bootstrap always at product doorbell 0x300FF2C0 — see plxg_record.hpp.
-constexpr uint32_t kDdrFramePlxgOffset = 0x2C0u;
+// PLXG — FIXED wire ABI at doorbell+0x800 (parent freeze). Literals here so
+// source-text invariant parsers resolve them; static_assert ties to mailbox_abi
+// (reachable compile-time guard — not test-only). Never re-derive from MAX_CMDS.
+// PLXC owns +0x130; list +0x140.. must not grow into PLXG (bound assert).
+constexpr uint32_t kDdrFramePlxgOffset = 0x800u;
 constexpr uint32_t kDdrFramePlxgMagic = 0x504C5847u; // "PLXG"
 constexpr uint32_t kDdrFramePlxgBytes = 40u;
-constexpr uint32_t kDdrFramePlxgBootstrapPhys = 0x300FF2C0u;
+constexpr uint32_t kDdrFramePlxgBootstrapPhys = 0x300FF800u;
+static_assert(kDdrFramePlxgOffset == mailbox_abi::kPlxgOffset,
+              "ddr_frame_layout PLXG offset must equal mailbox_abi (reachable guard)");
+static_assert(kDdrFramePlxgMagic == mailbox_abi::kPlxgMagic,
+              "PLXG magic must match mailbox_abi");
+static_assert(kDdrFramePlxgBytes == mailbox_abi::kPlxgBytes,
+              "PLXG size must match mailbox_abi (5 qwords)");
+static_assert(kDdrFramePlxgBootstrapPhys == mailbox_abi::kPlxgBootstrapPhys,
+              "PLXG bootstrap phys must match mailbox_abi");
+static_assert(kDdrFramePlxgOffset == 0x800u, "PLXG wire ABI FIXED at +0x800");
+static_assert(kDdrFramePlxgOffset != mailbox_abi::kPlxcOffset,
+              "PLXG must not collide with PLXC +0x130");
+static_assert(mailbox_abi::kPlxlOffset + mailbox_abi::kPlxcListMaxCmds * 8u <=
+                  kDdrFramePlxgOffset,
+              "chrome list must not grow into fixed PLXG +0x800");
 
 enum class DdrFramePlacement {
     None,
@@ -1309,7 +1326,7 @@ struct DdrFabricOwnedPresentPlan {
     // Bytes ARM may memcpy — NEVER canvas frame_bytes on this path.
     size_t publish_bytes = 0;
     // Atomic 5-qword PLXG record (present_geom_latch). NOT three temporal beats.
-    // q[0..4] written contiguously at bootstrap phys 0x300FF2C0 before doorbell.
+    // q[0..4] written contiguously at bootstrap phys 0x300FF800 before doorbell.
     uint64_t plxg_q[5]{};
     uint16_t plxg_seq = 1;
     // Legacy single-word fields retained for tests that decode Q0/window-shaped

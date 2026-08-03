@@ -157,15 +157,27 @@ int main() {
     CHECK(dst320[115199] == 0x41);
     CHECK(!copyYuv420pNativeOrigin(src320.data(), 320, 240, dst320.data(), 100)); // cap fail
 
-    // --- PLXG mailbox contract (5-qword @ +0x2C0; PLXC owns +0x130) ---
+    // --- PLXG mailbox contract (FIXED +0x800; PLXC owns +0x130) ---
+    // Parent ABI freeze: offset is NOT derived from MAX_CMDS / list depth.
     CHECK(kDdrFramePlxgOffset == mailbox_abi::kPlxgOffset);
     CHECK(kDdrFramePlxgMagic == mailbox_abi::kPlxgMagic);
-    CHECK(kDdrFramePlxgOffset == 0x2C0u);
-    CHECK(mailbox_abi::kPlxgBootstrapPhys == 0x300FF2C0u);
-    CHECK(plxgMailboxPhys(kPlex480pYuv420pDoorbellPhys) == 0x300FF000u + 0x2C0u);
-    CHECK(plxgMailboxPhys(kPlex720pYuv420pDoorbellPhys) == 0x3047F000u + 0x2C0u);
-    // NEG: +0x130 is PLXC chrome ctrl — must not be PLXG.
+    CHECK(kDdrFramePlxgOffset == 0x800u);
+    CHECK(mailbox_abi::kPlxgOffset == 0x800u);
+    CHECK(mailbox_abi::kPlxgBootstrapPhys == 0x300FF800u);
+    CHECK(kDdrFramePlxgBootstrapPhys == 0x300FF800u);
+    CHECK(plxgMailboxPhys(kPlex480pYuv420pDoorbellPhys) == 0x300FF000u + 0x800u);
+    CHECK(plxgMailboxPhys(kPlex720pYuv420pDoorbellPhys) == 0x3047F000u + 0x800u);
+    // NEG: +0x130 is PLXC chrome ctrl — must not be PLXG (scaler 0x130 bug class).
     CHECK(kDdrFramePlxgOffset != 0x130u);
+    CHECK(kDdrFramePlxgOffset != mailbox_abi::kPlxcOffset);
+    CHECK(mailbox_abi::kPlxcOffset == 0x130u);
+    // Bound (not equality): list end <= PLXG; room to grow without ABI move.
+    CHECK(mailbox_abi::kPlxlOffset + mailbox_abi::kPlxcListMaxCmds * 8u <=
+          mailbox_abi::kPlxgOffset);
+    CHECK(mailbox_abi::kPlxcListMaxCmds == 112u);
+    // Historical values must not reappear as product offset.
+    CHECK(kDdrFramePlxgOffset != 0x2C0u);
+    CHECK(kDdrFramePlxgOffset != 0x4C0u);
 
     // Parent-verified reserved window (2026-08-02 device evidence).
     CHECK(kPlexDdrReservedWindowStart == 0x1FF00000u);
@@ -616,7 +628,7 @@ int main() {
             CHECK(lm.content_x0 == 0 && lm.content_y0 == 0);
             CHECK(lm.y_stride == 960 && lm.chroma_stride == 480);
             CHECK(lm.h_de == 1280 && lm.v_de == 720);
-            // Record lives at +0x2C0 on control page image.
+            // Record lives at FIXED +0x800 on control page image.
             uint64_t q0le = 0;
             std::memcpy(&q0le, page.data() + mailbox_abi::kPlxgOffset, 8);
             CHECK(static_cast<uint32_t>(q0le) == mailbox_abi::kPlxgMagic);

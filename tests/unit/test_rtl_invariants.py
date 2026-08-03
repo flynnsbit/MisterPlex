@@ -1471,8 +1471,8 @@ def check_ddr_frame_layout_contract() -> None:
         "ddr_m1_subarb must track outstanding on RD only (not WE) and count rsp beats",
     )
     check(
-        cpp_const(host, "kDdrFramePlxgOffset") == 0x2C0,
-        "host PLXG offset must be 0x2C0 (not PLXC 0x130)",
+        cpp_const(host, "kDdrFramePlxgOffset") == 0x800,
+        "host PLXG offset must be FIXED 0x800 (not PLXC 0x130, not 0x2C0/0x4C0)",
     )
     check(
         cpp_const(host, "kPlex480pYuv420pBankUsableBytes") == 520192,
@@ -1495,17 +1495,17 @@ def check_ddr_frame_layout_contract() -> None:
         "RTL DDR_FRAME_LEGACY_BANK_USABLE_BYTES must be 520192",
     )
     check(
-        sv_const(layout_svh, "DDR_FRAME_PLXG_OFFSET") == 0x2C0
+        sv_const(layout_svh, "DDR_FRAME_PLXG_OFFSET") == 0x800
         and cpp_const(host, "kDdrFramePlxgOffset")
         == sv_const(layout_svh, "DDR_FRAME_PLXG_OFFSET"),
-        "host/RTL PLXG offset lockstep at 0x2C0 (PLXC owns 0x130)",
+        "host/RTL PLXG offset lockstep at FIXED 0x800 (PLXC owns 0x130)",
     )
     print("PASS DDR frame layout ARM/RTL contract")
     print(
         "PASS DDR stride parity red-check: RTL CODED_WIDTH/Y_STRIDE 624→320 diverges from host"
     )
     print("PASS DDR Option-C bank map usable-capacity select (not width>=1280, not full stride)")
-    print("PASS PLXG latch+poller wired; offset 0x2C0 host/RTL lockstep")
+    print("PASS PLXG latch+poller wired; FIXED offset 0x800 host/RTL lockstep")
 
 
 def check_runtime_ddr_layout_literal_sweep() -> None:

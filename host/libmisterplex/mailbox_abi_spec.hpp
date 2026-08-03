@@ -36,7 +36,8 @@ struct MailboxEntry {
 //
 // RTL places the control page relative to DOORBELL_PHYS:
 //   PLXK +0x000, PLXS +0x100, PLXI +0x108, PLXM +0x110,
-//   PLXF +0x118, DIAG +0x120, PLXD +0x128
+//   PLXF +0x118, DIAG +0x120, PLXD +0x128, PLXC +0x130, PLXO +0x138, list +0x140
+//   PLXG +0x800  (FIXED present-geometry — independent of MAX_CMDS; never +0x130)
 // Product 480p YUV doorbell is 0x300FF000 → PLXD live at 0x300FF128.
 // The 0x3007F000 family below is the *legacy example base* (older packed-320
 // map). Consumers MUST resolve via frameStoreMailboxPhys(doorbell, offset),
@@ -52,17 +53,32 @@ constexpr uint32_t kPlxmOffset = 0x110u;
 constexpr uint32_t kPlxfOffset = 0x118u;
 constexpr uint32_t kSdramDiagOffset = 0x120u;
 constexpr uint32_t kPlxdOffset = 0x128u;
+// plex_chrome semantic list (ARM→FPGA) and HDMI mirror (FPGA→ARM).
+constexpr uint32_t kPlxcOffset = 0x130u;
+constexpr uint32_t kPlxoOffset = 0x138u;
+constexpr uint32_t kPlxlOffset = 0x140u; // list payload base (64-bit cmds)
+// List depth matches plex_chrome_cmds::kMaxCmds / RTL MAX_CMDS (112).
+// 112 × 8B = 0x380 → +0x140 .. +0x4BF. Bound only vs PLXG (not equality).
+//
+// PLXG is a FIXED wire ABI at +0x800 — NOT derived from list depth.
+// (Parent freeze: UI tuning must not relocate present-geometry mailbox.)
+// History: +0x2C0 @48-cmd, briefly +0x4C0 when list grew with MAX_CMDS.
+constexpr uint32_t kPlxcListMaxCmds = 112u;
 // PLXG — 5-qword atomic geometry record (ARM→FPGA). Matches present_geom_latch.sv.
-// Offset +0x2C0 (NOT +0x130): PLXC chrome list ctrl owns +0x130 when present.
-// Bootstrap phys = product doorbell 0x300FF000 + 0x2C0 = 0x300FF2C0 (fixed);
-// fabric poller always reads bootstrap so Option-C bank remap cannot hide PLXG.
 // Layout: q0 magic|win|geom|seq, q1 content, q2 DE+coded, q3 strides+disp, q4 present+crop.
 // Size 40 bytes (q0..q4). See host/libmisterplex/plxg_record.hpp.
-constexpr uint32_t kPlxgOffset = 0x2C0u;
+constexpr uint32_t kPlxgOffset = 0x800u; // FIXED — do not re-derive from MAX_CMDS
 constexpr uint32_t kPlxgMagic = 0x504C5847u; // "PLXG"
 constexpr uint32_t kPlxgBytes = 40u; // 5 qwords
 constexpr uint32_t kPlxgBootstrapDoorbellPhys = 0x300FF000u; // product YUV doorbell
-constexpr uint32_t kPlxgBootstrapPhys = 0x300FF2C0u; // bootstrap + kPlxgOffset
+constexpr uint32_t kPlxgBootstrapPhys = 0x300FF800u; // bootstrap doorbell + FIXED 0x800
+static_assert(kPlxgOffset != kPlxcOffset, "PLXG must not collide with PLXC +0x130");
+static_assert(kPlxgOffset == 0x800u, "PLXG wire ABI is FIXED at +0x800");
+static_assert(kPlxlOffset + kPlxcListMaxCmds * 8u <= kPlxgOffset,
+              "chrome list must not grow into fixed PLXG +0x800");
+static_assert(kPlxcListMaxCmds == 112u, "list depth must match kMaxCmds/RTL MAX_CMDS");
+static_assert(kPlxgBootstrapPhys == kPlxgBootstrapDoorbellPhys + kPlxgOffset,
+              "bootstrap phys must be product doorbell + FIXED PLXG offset");
 
 // Legacy example doorbell base (historical 0x3007F000 control page).
 constexpr uint32_t kLegacyFrameStoreDoorbellPhys = 0x3007F000u;
@@ -114,6 +130,18 @@ constexpr uint32_t kSdramDiagAddr = 0x3007F120u;
 // Legacy absolute (example base only) — product live addr is doorbell+0x128:
 constexpr uint32_t kPlxdAddr  = 0x3007F128u;
 constexpr uint32_t kPlxdMagic = 0x504C5844u; // "PLXD"
+
+// PLXC — Chrome list control (ARM→FPGA). Semantic cmds; fabric owns scale.
+constexpr uint32_t kPlxcAddr  = 0x3007F130u;
+constexpr uint32_t kPlxcMagic = 0x504C5843u; // "PLXC"
+
+// PLXO — Chrome telemetry (FPGA→ARM). Applied HDMI_W/H mirror + chrome_hw.
+constexpr uint32_t kPlxoAddr  = 0x3007F138u;
+constexpr uint32_t kPlxoMagic = 0x504C584Fu; // "PLXO"
+
+// PLXG — Present geometry (ARM→FPGA). FIXED +0x800 (parent ABI freeze).
+constexpr uint32_t kPlxgAddr = 0x3007F800u; // legacy example base + FIXED 0x800
+
 // Bit-field positions (in the upper 32 bits, i.e. offset from bit 32):
 constexpr unsigned kPlxdFreeBankMaskBit = 0;  // bits [33:32] → [1:0] of upper word
 constexpr unsigned kPlxdFreeBankMaskWidth = 2;
@@ -139,7 +167,7 @@ struct MagicEntry {
     uint32_t magic;
 };
 
-constexpr std::array<MagicEntry, 8> kAllMagics = {{
+constexpr std::array<MagicEntry, 10> kAllMagics = {{
     {"PLXK", kPlxkMagic},
     {"PLXS", kPlxsMagic},
     {"PLXI", kPlxiMagic},
@@ -147,15 +175,14 @@ constexpr std::array<MagicEntry, 8> kAllMagics = {{
     {"PLXF", kPlxfMagic},
     {"PLXD", kPlxdMagic},
     {"PLXB", kPlxbMagic},
+    {"PLXC", kPlxcMagic},
+    {"PLXO", kPlxoMagic},
     {"PLXG", kPlxgMagic},
 }};
 
-// Absolute PLXG on legacy example base (collision gate only).
-constexpr uint32_t kPlxgAddr = 0x3007F2C0u; // kLegacyFrameStoreDoorbellPhys + 0x2C0
-
 // ---- All addressed mailboxes (for address-collision detection) ----
 // Every occupied DDR mailbox slot. Gate rejects overlapping addresses.
-constexpr std::array<MailboxEntry, 9> kAllMailboxes = {{
+constexpr std::array<MailboxEntry, 11> kAllMailboxes = {{
     {"PLXK", kPlxkAddr,     kPlxkMagic,     8, "arm_to_fpga",  true},
     {"PLXS", kPlxsAddr,     kPlxsMagic,     8, "fpga_to_arm",  true},
     {"PLXI", kPlxiAddr,     kPlxiMagic,     8, "fpga_to_arm",  true},
@@ -163,8 +190,10 @@ constexpr std::array<MailboxEntry, 9> kAllMailboxes = {{
     {"PLXF", kPlxfAddr,     kPlxfMagic,     8, "fpga_to_arm",  true},
     {"DIAG", kSdramDiagAddr, 0,             8, "fpga_to_arm",  false},
     {"PLXD", kPlxdAddr,     kPlxdMagic,     8, "fpga_to_arm",  true},
-    {"PLXB", kPlxbAddr,     kPlxbMagic,     8, "arm_to_fpga",  true},
+    {"PLXC", kPlxcAddr,     kPlxcMagic,     8, "arm_to_fpga",  true},
+    {"PLXO", kPlxoAddr,     kPlxoMagic,     8, "fpga_to_arm",  true},
     {"PLXG", kPlxgAddr,     kPlxgMagic,     kPlxgBytes, "arm_to_fpga", true},
+    {"PLXB", kPlxbAddr,     kPlxbMagic,     8, "arm_to_fpga",  true},
 }};
 
 // ---- Bitstream ring additional magics (not address-mapped; in-band) ----

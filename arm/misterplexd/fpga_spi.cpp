@@ -918,7 +918,7 @@ bool FpgaSpi::writePlxgRecord(const uint64_t q[5], uint16_t seq) {
         setErr("writePlxgRecord: cache clean failed");
         return false;
     }
-    // Optional mirror onto active doorbell+0x2C0 when Option-C map covers it.
+    // Optional mirror onto active doorbell+0x800 when Option-C map covers it.
     if (ddrMap_ && ddrLayout_.doorbell_phys != 0) {
         const uint32_t act = plxgMailboxPhys(ddrLayout_.doorbell_phys);
         if (act >= ddrLayout_.phys_base) {
@@ -1741,8 +1741,8 @@ bool FpgaSpi::sendDdrFrame(const DdrPublishFrame& frame, const DdrPublishPlan& p
         timing.flush_us = elapsedUs(tFlush0, tFlush1);
     }
 
-    // PLXG atomic 5-qword record at bootstrap phys 0x300FF2C0 (legacy doorbell
-    // +0x2C0). Fabric poller always reads this fixed page — chicken-egg safe when
+    // PLXG atomic 5-qword record at bootstrap phys 0x300FF800 (legacy doorbell
+    // +0x800). Fabric poller always reads this fixed page — chicken-egg safe when
     // Option-C moves the active doorbell. Never three temporal writes to one slot.
     if (plan.program_plxg) {
         if (!writePlxgRecord(plan.plxg_q, plan.plxg_seq))

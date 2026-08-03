@@ -83,7 +83,7 @@ module ddr_m1_subarb_tb_top (
 	plxg_ddr_poller #(
 		.ENABLE(1'b1),
 		.BOOT_DOORBELL(32'h300F_F000),
-		.PLXG_OFF(32'h2C0),
+		.PLXG_OFF(32'h800),
 		.POLL_DIV(16'd4)
 	) u_plxg (
 		.clk(clk),
@@ -156,7 +156,7 @@ module ddr_m1_subarb_tb_top (
 	reg        got_q0_r;
 	reg        commit_r;
 
-	localparam [28:0] Q0_W = 29'((32'h300F_F000 + 32'h2C0) >> 3);
+	localparam [28:0] Q0_W = 29'((32'h300F_F000 + 32'h800) >> 3);
 	// seq=1, win+geom enables, magic PLXG
 	localparam [63:0] PLXG_Q0 = {16'h0001, 16'h0003, 32'h504C5847};
 	localparam [63:0] PLXG_Q1 = {11'd0, 11'd0, 11'd540, 11'd960}; // pack order differs — use raw

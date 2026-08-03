@@ -1,6 +1,6 @@
 // plxg_ddr_poller — read 5-qword PLXG record from DDR and feed present_geom_latch.
 //
-// Bootstrap address FIXED at product legacy doorbell + 0x2C0 (0x300FF2C0).
+// Bootstrap address FIXED at product legacy doorbell + 0x800 (0x300FF800).
 //
 // Atomic snapshot (rd-duck): host publishes q1..q4 then q0 last. Poller reads
 // q0..q4 then RE-READS q0; commit only if magic+seq match the first q0 sample
@@ -15,7 +15,7 @@
 module plxg_ddr_poller #(
 	parameter bit        ENABLE        = 1'b0,
 	parameter [31:0]     BOOT_DOORBELL = 32'h300F_F000,
-	parameter [31:0]     PLXG_OFF      = 32'h2C0,
+	parameter [31:0]     PLXG_OFF      = 32'h800,
 	parameter [15:0]     POLL_DIV      = 16'd512
 )(
 	input  wire        clk,

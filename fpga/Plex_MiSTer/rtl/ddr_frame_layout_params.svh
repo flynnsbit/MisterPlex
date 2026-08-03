@@ -97,7 +97,8 @@ localparam int DDR_FRAME_720P_MAP_BYTES_3BANK = 32'h0048_0000; // 3*0x180000 tri
 // ddr_frame_store bank field widens beyond 1 bit.
 localparam int DDR_FRAME_720P_TRIPLE_DOORBELL_PHYS = 32'h305F_F000;
 // PLXG geometry mailbox offset from active doorbell (ARM→FPGA program word).
-localparam int DDR_FRAME_PLXG_OFFSET = 32'h2C0;
+// FIXED wire ABI (parent freeze) — independent of chrome MAX_CMDS / list depth.
+localparam int DDR_FRAME_PLXG_OFFSET = 32'h800;
 
 // ---- Compressed bitstream ring (fabric-decode ingest; product PLXB path) ----
 // Must stay clear of Option-C banks and PL330 scratch. Host mirror:

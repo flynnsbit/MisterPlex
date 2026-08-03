@@ -1,8 +1,8 @@
 #pragma once
 // PLXG 5-qword atomic geometry record — lockstep with present_geom_latch.sv.
 //
-// Offset: doorbell + 0x2C0 (NOT +0x130 — PLXC chrome ctrl owns +0x130).
-// Bootstrap phys: product legacy doorbell 0x300FF000 + 0x2C0 = 0x300FF2C0.
+// Offset: doorbell + FIXED 0x800 (parent ABI freeze; NOT +0x130 PLXC; NOT
+// derived from MAX_CMDS). Bootstrap phys: 0x300FF000 + 0x800 = 0x300FF800.
 // Fabric poller always reads the bootstrap page (chicken-egg with Option-C).
 //
 // Write model — seqlock (rd-duck retained-DDR/reset + ABA):
@@ -486,7 +486,7 @@ inline bool plxgLatchCommit(PlxgLatchModel& m) {
 }
 
 // Simulate host seqlock write (invalidate q0, body, magic-last) + latch.
-inline bool plxgProgramRecord(uint8_t* ctrlPage /* at least 0x2C0+40 */,
+inline bool plxgProgramRecord(uint8_t* ctrlPage /* at least 0x800+40 */,
                               const PlxgRecord& rec, PlxgLatchModel& latch) {
     if (!rec.valid || !ctrlPage)
         return false;

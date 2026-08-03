@@ -733,7 +733,7 @@ wire  [7:0] present_ddr_be;
 wire        present_ddr_we;
 
 // PLXG latch + bootstrap DDR poller (w-mem). geom_enable=0 until host programs
-// 5-qword record at 0x300FF2C0 and poller commits.
+// 5-qword record at FIXED 0x300FF800 and poller commits.
 // m1 shared with bitstream via ddr_m1_subarb (latched owner through response) —
 // NOT a combinational stream|plxg mux (rd-duck: mid-beat flip drops PLXG data).
 wire        plxg_wr_en, plxg_commit;
@@ -837,7 +837,7 @@ present_geom_latch u_plxg_latch (
 plxg_ddr_poller #(
 	.ENABLE(1'b1),
 	.BOOT_DOORBELL(32'h300F_F000),
-	.PLXG_OFF(32'h2C0),
+	.PLXG_OFF(32'h800),
 	.POLL_DIV(16'd512)
 ) u_plxg_poll (
 	.clk(clk_sys),

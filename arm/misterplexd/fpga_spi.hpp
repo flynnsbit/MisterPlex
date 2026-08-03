@@ -374,7 +374,7 @@ private:
     void releaseDdrMap();
     bool ensurePlxgBootstrapMap();
     void releasePlxgBootstrapMap();
-    // Write atomic 5-qword PLXG at bootstrap phys 0x300FF2C0 (fence each qword).
+    // Write atomic 5-qword PLXG at bootstrap phys 0x300FF800 (fence each qword).
     bool writePlxgRecord(const uint64_t q[5], uint16_t seq);
     bool ensureBitstreamDdrMap();
     void releaseBitstreamDdrMap();
@@ -405,7 +405,7 @@ private:
     static constexpr uint32_t SSPI_STROBE = (1u << 17);
 
     // Fixed bootstrap control page (legacy doorbell 0x300FF000) for PLXG.
-    // Option-C map starts at 0x30180000 and does NOT cover 0x300FF2C0.
+    // Option-C map starts at 0x30180000 and does NOT cover 0x300FF800.
     int plxgBootFd_ = -1;
     uint8_t* plxgBootMap_ = nullptr;
     size_t plxgBootMapLen_ = 0;

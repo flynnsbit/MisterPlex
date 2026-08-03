@@ -37,7 +37,7 @@ struct DdrPublishPlan {
     size_t copy_bytes = 0;
     bool native_push = false;
     bool program_plxg = false;
-    // Atomic 5-qword PLXG at bootstrap phys (0x300FF2C0). Not 3 temporal beats.
+    // Atomic 5-qword PLXG at bootstrap phys (0x300FF800). Not 3 temporal beats.
     uint64_t plxg_q[5]{};
     uint16_t plxg_seq = 0;
 };
