@@ -1,0 +1,40 @@
+{
+  "schema": 1,
+  "name": "misterplex-ascal-native-sta-prereg",
+  "description": "STA cuts for first ascal-native 960x540@30 fit. Locked before fit.",
+  "hard_rule": "negative_slack_equals_hard_fail",
+  "stage_ascal_native_960_30": {
+    "macros": ["PRESENT_BEAM_960 (when wired)", "PRESENT_MULTI_PIXEL OFF", "PRESENT_CLK_PIX_PLL OFF"],
+    "clocks": {
+      "clk_sys_mhz": 20.0,
+      "clk_ddr_mhz": 90.0,
+      "clk_pix": "tied_to_clk_sys_or_absent"
+    },
+    "pass": {
+      "fmax_clk_sys_mhz_min": 20.0,
+      "setup_slack_all_constrained_ns_min": 0.0,
+      "hierarchy_beam_960_nonzero_if_macro": true
+    },
+    "fail": [
+      "fmax_clk_sys < 20.0",
+      "any constrained setup slack < 0",
+      "PRESENT_CLK_PIX_PLL accidentally ON without grant",
+      "H_DE still 529 while claiming 960 beam"
+    ],
+    "explicitly_unknown_until_fit": [
+      "exact Fmax MHz",
+      "worst path names",
+      "ascal polyphase quality vs custom 4/3 (glass, not STA)"
+    ],
+    "not_in_scope": [
+      "fmax_clk_pix >= 29.7",
+      "wide-group FIFO pix cone"
+    ]
+  },
+  "prediction_preregistered": {
+    "beam_fps": 30.0008,
+    "active_mpix": 15.552,
+    "b1_required": false,
+    "reason": "1px CE=1 peak 20 Mpix/s > 15.552; serialize 13.33 only if MULTI_PIXEL serialize path ON"
+  }
+}

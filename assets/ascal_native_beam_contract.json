@@ -1,0 +1,50 @@
+{
+  "schema": 1,
+  "name": "misterplex-ascal-native-960-beam",
+  "status": "PROPOSED_FIRST_FIT",
+  "doc": ".agent-work/w-clock/ASCAL_BEAM_960_30.md",
+  "fit_strategy": "core DE 960x540 @ ~30 Hz into ascal; HDMI 1280x720@60 from HPS",
+  "clk_sys_mhz": 20.0,
+  "ce_pixel": 1,
+  "present_clk_pix_pll": "OFF default — upgrade path only",
+  "present_multi_pixel": "OFF default — B1 not required at 15.55 on 1px path",
+  "primary_30hz": {
+    "h_de": 960,
+    "v_active": 540,
+    "h_total": 1182,
+    "v_total": 564,
+    "h_blank": 222,
+    "v_blank": 24,
+    "fps": 30.0008,
+    "formula": "20e6/(1182*564)",
+    "active_mpix_s": 15.552,
+    "peak_1px_mpix_s": 20.0,
+    "margin_vs_peak": 1.286
+  },
+  "alternate_30hz": {
+    "h_total": 1190,
+    "v_total": 560,
+    "h_blank": 230,
+    "v_blank": 20,
+    "fps": 30.012
+  },
+  "film_24hz_option": {
+    "h_total": 1389,
+    "v_total": 600,
+    "h_blank": 429,
+    "v_blank": 60,
+    "fps": 23.997,
+    "note": "ascal triple-buffer does not require 24|60; 3:2 display of unique frames is normal film-on-60"
+  },
+  "tier_alignment": {
+    "film_le_25": "960x540 content; beam 30 still OK (content cadence via bank swap)",
+    "tv_ge_28": "640x360@30 native exact 2x; same 30 Hz beam class scaled DE"
+  },
+  "ascal": {
+    "triple_buffer_when": "mode[3]=1 when lowlat=0 (sys_top default)",
+    "input_output_decoupled": true,
+    "needs_integer_divisor_of_60": false
+  },
+  "rtl": "fpga/Plex_MiSTer/rtl/present_video_timing_960.sv",
+  "macro_to_wire": "PRESENT_BEAM_960 — not wired into present_core until parent grant"
+}
