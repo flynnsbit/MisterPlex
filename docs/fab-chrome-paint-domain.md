@@ -55,10 +55,11 @@ Host API:
 | `FAULT_LEGACY_480P_LAYOUT` | 1280×720 | 624×480 | amber at (232,160) not (520,240) |
 | `FAULT_HDMI_LAYOUT_ON_CORE_DE` | **960×540** | **1280×720** | amber at (520,240) not CORE_DE (390,180) |
 
-The second is the **likely** mistake after the ascal pivot: “HUD must be output
-pixels” misread as “always use 1280×720 constants” while the module is wired on a
-960×540 beam. Product wiring is post-ascal, so beam **is** 1280×720; the fault
-still guards any future pre-ascal insertion and any TB that drives CORE_DE ports.
+**Parent retraction (sweep 38):** product chrome is post-ascal; there is no
+product overflow from HDMI layout on a 960 DE. Keep this fault anyway — it
+**pins the paint domain** so a future lane cannot silently move chrome
+*pre*-ascal and soften every glyph ~1.333× without a red-twin trip. It defends
+sharpness / domain honesty, not a nonexistent overflow.
 
 Green optional: `CORE_DE_BEAM=1` + product layout tracks beam → chevron at (390,180).
 

@@ -60,10 +60,13 @@ module plex_chrome #(
     // 624×480 while the DE beam is still true HDMI (1280×720). mon_* always
     // reports the real paint beam. Default 0 = product bit-identical.
     parameter bit FAULT_LEGACY_480P_LAYOUT = 1'b0,
-    // Red-twin (ascal-pivot class): paint with HDMI_OUT 1280×720 layout math
-    // while the *beam* ports are CORE_DE 960×540. Catches "layout from glass
-    // while chrome sits on core DE" — 1.333× overflow / wrong origin.
-    // Mutually exclusive with FAULT_LEGACY_480P_LAYOUT in tests.
+    // Red-twin / domain pin: force HDMI_OUT 1280×720 layout math while the
+    // *beam* ports are CORE_DE 960×540. Product chrome is post-ascal on
+    // HDMI_OUT (sys_top: ascal→shadowmask→plex_chrome) — there is no product
+    // overflow. This fault defends the opposite mistake: a future lane
+    // silently relocating chrome *pre*-ascal so ascal softens every glyph
+    // ~1.333× without anyone noticing. Pin: paint domain must track the beam
+    // the module is wired into. Mutually exclusive with FAULT_LEGACY_480P_LAYOUT.
     parameter bit FAULT_HDMI_LAYOUT_ON_CORE_DE = 1'b0
 ) (
     input  wire        clk_hdmi,
@@ -132,7 +135,8 @@ module plex_chrome #(
     // Product: layout == paint beam (HDMI_WIDTH/HEIGHT). Faults force a wrong
     // domain so red-twins catch silent geometry bugs:
     //   FAULT_LEGACY_480P_LAYOUT     → 624×480 math on true beam
-    //   FAULT_HDMI_LAYOUT_ON_CORE_DE → 1280×720 math on CORE_DE beam (960×540)
+    //   FAULT_HDMI_LAYOUT_ON_CORE_DE → 1280 math on CORE_DE beam (domain pin;
+    //                                  guards pre-ascal soften, not product overflow)
     wire [11:0] layout_w =
         FAULT_LEGACY_480P_LAYOUT     ? 12'd624  :
         FAULT_HDMI_LAYOUT_ON_CORE_DE ? 12'd1280 :
