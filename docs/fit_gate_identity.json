@@ -1,5 +1,5 @@
 {
-  "gate_identity_hash": "f988b1063c84a2988030ffa0b973aedc8065b2a9",
+  "gate_identity_hash": "2128b46587b5fdb0427eded85ef501a293e5a2b3",
   "paths": [
     "scripts/fit_release_gate.py",
     "scripts/fit_release_gate.sh",
@@ -9,10 +9,10 @@
   ],
   "locked_by": "w-fitgate",
   "locked_date": "2026-08-03",
-  "reason": "INTENTIONAL REBASE: B20 hierarchy = manifest+run only; kill 846b7f1b keyword theatre \u2014 not a bypass",
+  "reason": "selftest intentional identity lock after gate edits \u2014 not a bypass",
   "notes": [
     "INTENTIONAL REBASE of ruler identity after gate script change \u2014 not a bypass.",
-    "B20: tests/unit/B20_HIER_MANIFEST.json + run/rc/CASE/PASS/SIM_RUN/measured_* + real script body.",
-    "Prose PLXC_EXT_WE keywords never clear G. DUT_TOUCHED alone never clears."
+    "Lanes must run this same identity; divergent fit_release_gate.py/rtl_lint.py must not report LEG0 counts (LEG0_COUNT_REFUSED).",
+    "Refresh only when scripts/fit_release_gate.py or companions change on purpose."
   ]
 }

@@ -1,8 +1,8 @@
 {
   "architecture": "ascal_true_de_960",
-  "git_tree_hash": "4f6422f63c4d2bdde17a129be41a6678e0f8d56b",
-  "gate_identity_hash": "f988b1063c84a2988030ffa0b973aedc8065b2a9",
-  "git_head_at_lock": "c4d26d33cd5e6a5132f5ba94e11e025fc1ea71aa",
+  "git_tree_hash": "0e55c95ae4af1ea40c24130e9b681f4104e59dda",
+  "gate_identity_hash": "2128b46587b5fdb0427eded85ef501a293e5a2b3",
+  "git_head_at_lock": "e232cc118a1f3037e68afe752c45fc13d9f2909a",
   "required_macros": {
     "FRAME_W": "960",
     "FRAME_H": "540",
@@ -28,8 +28,9 @@
   "locked_date": "2026-08-03",
   "rationale": "Core emits true DE equal to content; ascal (iauto=1) upscales to 1280x720. 960x540 is the maximum content tier, not a fixed raster. Content rate at max tier ~15.55 Mpix/s @30 \u2014 not mp_cea_1280; 40 Mpix/s is not headroom.",
   "notes": [
-    "INTENTIONAL hash refresh after ruler change is a rebase, not a bypass.",
-    "B20 hierarchy executable manifest only (no text scan).",
-    "B22 present_core merge-semantics; B1 OPTION_C LEG rebase forbidden."
+    "git_tree_hash binds gated artefacts via compute_gated_tree_hash() and excludes this file.",
+    "INTENTIONAL hash refresh after gated artefact change is a rebase, not a bypass \u2014 candidate cannot clear blockers by editing only this JSON.",
+    "gate_identity_hash must match docs/fit_gate_identity.json; divergent lane rulers refuse LEG0 count (LEG0_COUNT_REFUSED).",
+    "fix=unmerged in leg0 output names sibling lane+commit; do not re-implement those."
   ]
 }

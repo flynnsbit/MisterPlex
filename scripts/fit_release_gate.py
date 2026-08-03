@@ -1267,18 +1267,26 @@ def run_b20_hierarchy_exec_gate(
     msgs: list[str] = []
     errors: list[str] = []
 
-    # Anti-regression: this module must not reintroduce text-scan hierarchy.
+    # Anti-regression: live *definition* of text-scan helper (not this comment).
+    # 846b7f1b class — keyword regex must not return as a callable.
     gate_src = Path(__file__).read_text(errors="replace")
-    if re.search(r"def\s+_is_hierarchy_test\s*\(", gate_src) or re.search(
-        r"LEG0_B20_HIER_SCAN_EXECUTED", gate_src
-    ):
+    if re.search(r"(?m)^\s*def\s+_is_hierarchy_test\s*\(", gate_src):
         errors.append(
             "B20_HIER_GATE_REGRESSION: fit_release_gate.py still defines "
-            "_is_hierarchy_test / LEG0_B20_HIER_SCAN text-scan path "
-            "(846b7f1b class). Keyword regex must not clear hierarchy tokens."
+            "def _is_hierarchy_test (846b7f1b keyword-scan class). "
+            "Hierarchy tokens must only clear via manifest+run."
         )
         msgs.append("LEG0_B20_HIER_REGRESSION_TEXT_SCAN_PRESENT")
-
+    # Live msgs.append of the old scan token (not a mention in a string check).
+    if re.search(
+        r"""(?m)^\s*msgs\.append\(\s*f?['"]LEG0_B20_HIER_SCAN_EXECUTED""",
+        gate_src,
+    ):
+        errors.append(
+            "B20_HIER_GATE_REGRESSION: live LEG0_B20_HIER_SCAN_EXECUTED append "
+            "still present — text-scan path not fully removed."
+        )
+        msgs.append("LEG0_B20_HIER_REGRESSION_SCAN_APPEND_PRESENT")
     scenarios, m_msgs = load_b20_hier_manifest(root)
     msgs.extend(m_msgs)
     if not scenarios:
