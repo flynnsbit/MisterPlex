@@ -299,6 +299,7 @@ module ddr_plxc_grant_tb_top (
 		.cnt_bad_magic()
 	);
 
+	wire m3_accept;
 	ddr_plxc_master_bridge u_bridge (
 		.clk(clk),
 		.reset(reset),
@@ -311,6 +312,7 @@ module ddr_plxc_grant_tb_top (
 		.c_rdata(c_rdata),
 		.a_want(a_want),
 		.a_busy(a_busy),
+		.a_accept(m3_accept),
 		.a_burstcnt(a_burstcnt),
 		.a_addr(a_addr),
 		.a_dout(a_dout),
@@ -352,6 +354,7 @@ module ddr_plxc_grant_tb_top (
 		.m1_din(m1_din),
 		.m1_be(m1_be),
 		.m1_we(m1_we),
+		.m1_accept(),
 		.m3_busy(m3_busy),
 		.m3_burstcnt(m3_burst_mux),
 		.m3_addr(m3_addr_mux),
@@ -361,6 +364,7 @@ module ddr_plxc_grant_tb_top (
 		.m3_din(m3_din_mux),
 		.m3_be(m3_be_mux),
 		.m3_we(m3_we_mux),
+		.m3_accept(m3_accept),
 		.grant_m3_live(grant_m3_live),
 		.cnt_grant_m0(arb_cnt_m0),
 		.cnt_grant_m1(arb_cnt_m1),

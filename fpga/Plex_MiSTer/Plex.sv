@@ -1305,6 +1305,8 @@ wire        plxc_c_req, plxc_c_we, plxc_c_gnt, plxc_c_rd_valid;
 wire [28:0] plxc_c_addr;
 wire [63:0] plxc_c_wdata, plxc_c_rdata;
 wire        plxc_a_want, plxc_a_busy, plxc_a_rd, plxc_a_we, plxc_a_dout_ready;
+wire        plxc_a_accept; // arbiter m3_accept → bridge (not !busy)
+wire        m1c_accept;    // arbiter m1_accept (future PLXG bridge)
 wire  [7:0] plxc_a_burstcnt, plxc_a_be;
 wire [28:0] plxc_a_addr;
 wire [63:0] plxc_a_din, plxc_a_dout;
@@ -1367,6 +1369,8 @@ ddr_plxc_master_bridge u_plxc_bridge (
 	.c_rdata(plxc_c_rdata),
 	.a_want(plxc_a_want),
 	.a_busy(plxc_a_busy),
+	// rd-duck: !busy is not acceptance — use arbiter m3_accept pulse.
+	.a_accept(plxc_a_accept),
 	.a_burstcnt(plxc_a_burstcnt),
 	.a_addr(plxc_a_addr),
 	.a_dout(plxc_a_dout),
@@ -1408,6 +1412,7 @@ ddr_bus_arbiter_plxc #(
 	.m1_din(m1c_din),
 	.m1_be(m1c_be),
 	.m1_we(m1c_we),
+	.m1_accept(m1c_accept),
 	.m3_busy(plxc_a_busy),
 	.m3_burstcnt(plxc_a_burstcnt),
 	.m3_addr(plxc_a_addr),
@@ -1417,6 +1422,7 @@ ddr_bus_arbiter_plxc #(
 	.m3_din(plxc_a_din),
 	.m3_be(plxc_a_be),
 	.m3_we(plxc_a_we),
+	.m3_accept(plxc_a_accept),
 	.grant_m3_live(plxc_grant_m3_live),
 	.cnt_grant_m0(plxc_arb_m0),
 	.cnt_grant_m1(plxc_arb_m1),

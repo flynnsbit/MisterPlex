@@ -1,4 +1,4 @@
-// Verilator TB: store-like m0 vs sticky m3_want launch-edge lost-read
+// Verilator TB: m0 vs m1/m3 issued-cmd collision must not hang either side
 #include "Vddr_plxc_lost_read_tb_top.h"
 #include "verilated.h"
 
@@ -40,36 +40,50 @@ int main(int argc, char** argv) {
     reset_dut(t);
     t->run_enable = 1;
 
-    for (int i = 0; i < 8000; ++i) {
+    for (int i = 0; i < 30000; ++i) {
         tick(t);
-        if (t->fill_ok >= 32 && t->m3_beats >= 8)
+        if (t->fill_ok >= 24 && t->m3_beats >= 12 && t->m1_beats >= 8 &&
+            t->fill_hang == 0 && t->m1_hang == 0 && t->m3_hang == 0)
+            break;
+        // FAULT twin: exit once hang observed
+        if (t->fill_hang != 0 || t->m1_hang != 0 || t->m3_hang != 0)
             break;
     }
 
     std::fprintf(stderr,
-                 "lost_read: fill_ok=%u fill_hang=%u arb_m0=%u arb_m3=%u "
-                 "m3_beats=%u collisions=%u\n",
-                 t->fill_ok, t->fill_hang, t->arb_m0, t->arb_m3, t->m3_beats,
-                 t->collision_edges);
+                 "lost_read: fill_ok=%u fill_hang=%u arb_m0=%u arb_m1=%u arb_m3=%u "
+                 "m1_beats=%u m3_beats=%u m1_gnt=%u m3_gnt=%u "
+                 "m1_hang=%u m3_hang=%u coll_m0m3=%u coll_m0m1=%u\n",
+                 t->fill_ok, t->fill_hang, t->arb_m0, t->arb_m1, t->arb_m3,
+                 t->m1_beats, t->m3_beats, t->m1_gnts, t->m3_gnts,
+                 t->m1_hang, t->m3_hang, t->collision_m0_m3, t->collision_m0_m1);
 
-    if (t->fill_ok < 16)
-        fail("too few completed store-like fills");
-    if (t->fill_hang != 0) {
-        fail("store WAIT hang (lost-read race)");
-        std::fprintf(stderr, "REPRO lost-read-hang hang=%u\n", t->fill_hang);
-    } else {
-        std::fprintf(stderr, "PASS lost-read hang=0 fill_ok=%u\n", t->fill_ok);
-    }
-    if (t->arb_m3 < 1)
-        fail("m3 never granted — collision not exercised");
-    if (t->m3_beats < 1)
-        fail("m3 never completed a beat");
-    // Prefer evidence that launch edges overlapped grant_m3 at least once.
-    if (t->collision_edges < 1) {
+    const bool any_hang =
+        t->fill_hang != 0 || t->m1_hang != 0 || t->m3_hang != 0;
+
+    if (any_hang) {
         std::fprintf(stderr,
-                     "WARN collision_edges=0 (grant rise during ISSUE/WAIT not "
-                     "sampled); arb_m3=%u still proves concurrent m3\n",
-                     t->arb_m3);
+                     "REPRO hang fill=%u m1=%u m3=%u\n",
+                     t->fill_hang, t->m1_hang, t->m3_hang);
+        // Binary fails on hang so product build is rc=1; shell FAULT treats as REPRO.
+        fail("hang nonzero");
+    } else {
+        if (t->fill_ok < 12)
+            fail("too few completed store-like fills");
+        if (t->arb_m3 < 1)
+            fail("m3 never granted");
+        if (t->m3_beats < 4 || t->m3_gnts < 4)
+            fail("m3 did not complete enough accept/beat pairs");
+        if (t->m1_beats < 2 || t->m1_gnts < 2)
+            fail("m1 did not complete enough accept/beat pairs");
+        if (t->collision_m0_m3 < 1)
+            fail("no exact m0_rd&m3_rd same-edge collision");
+        if (t->collision_m0_m1 < 1)
+            fail("no exact m0_rd&m1_rd same-edge collision");
+        std::fprintf(stderr,
+                     "PASS no-hang fill_ok=%u m1=%u m3=%u coll_m3=%u coll_m1=%u\n",
+                     t->fill_ok, t->m1_beats, t->m3_beats, t->collision_m0_m3,
+                     t->collision_m0_m1);
     }
 
     if (fails) {
