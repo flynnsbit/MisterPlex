@@ -6,7 +6,7 @@ code_sha=774482905798807619af902f527d5f7c17da96eb
 branch=w-fitgate
 worktree=/home/flynnsbit/Projects/MisterPlex-wt-fitgate
 origin=origin/w-fitgate
-pushed=PENDING
+pushed=yes tip=4ffb76bc origin/w-fitgate
 
 SELFTEST=PASS
 SELFTEST_MATRIX rows=47 red=47 fail_holes=0
