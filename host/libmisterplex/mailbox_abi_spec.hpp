@@ -1,6 +1,7 @@
 // mailbox_abi_spec.hpp — SINGLE SOURCE OF TRUTH for MiSTerPlex DDR mailbox ABI.
 // OWNER: w-mem (parent arbitration #3). kPlxgOffset 0x800 frozen; q5 at +0x828.
 // Non-owners: patch contract only — never whole-file adopt.
+// Parent #4: q5[63:34] RESERVED (bit34 fps_1001 #2.1 VACATED).
 //
 // Every mailbox in the DDR address map is defined here ONCE. Both the RTL
 // (SystemVerilog parameters/localparams) and the ARM C++ (constexpr constants)

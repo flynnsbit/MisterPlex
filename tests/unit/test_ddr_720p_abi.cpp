@@ -865,6 +865,12 @@ int main() {
             // Nonzero reserved [63:34] must fail product latch + poller.
             const uint64_t badQ5 = packPlxgQ5(16, 9, 24, true, true) | (1ull << 34);
             CHECK(!plxgQ5ReservedOk(badQ5));
+            // Parent #4 / rd-duck: cross-impl packed words (path #2.1 vacated)
+            CHECK(kPlxgQ5ReservedShift == 34u);
+            CHECK(plxgQ5CrossImplFilmPackAbi2Accepted());
+            CHECK(plxgQ5CrossImplFaultFps1001Rejected()); // dirty film bit34
+            CHECK(plxgQ5CrossImplFaultReservedFrom35AcceptsBit34());
+            std::fprintf(stderr, "  PLXG_Q5_CROSS_IMPL_PACKED_WORD OK\n");
             PlxgRecord good = makePlxgRecord960x540Native(1);
             good.q[5] = packPlxgQ5(16, 9, 30, true, true);
             unsigned dx=0,dy=0,fps=0; bool dv=false,fv=false;

@@ -110,6 +110,17 @@ inline uint64_t packPlxgQ4(int presentX, int presentY, int cropLeft, int cropTop
 //   [11:0]  dar_x       [23:12] dar_y       [31:24] content_fps
 //   [32]    dar_valid   [33]    fps_valid   [63:34] RESERVED must be 0
 // Receiver MUST reject nonzero reserved (forward-compat trap).
+//
+// Parent arbitration #4 (2026-08-03): unilateral #2.1 fps_1001 on bit34 is
+// VACATED. Bit34 stays RESERVED. w-path f31a6eb9 packs must not land — latch
+// |sh5[63:34] + PLXF E4 reject the *entire* q5 (DAR+fps), worse than integer
+// film bucketing. Future fps_1001 lands only as a single-window freeze after
+// parent signs; until then host keeps 1001 off-wire.
+// First reserved bit index (inclusive). Latch: |q5[63:34].
+constexpr unsigned kPlxgQ5ReservedShift = 34u;
+// Vacated #2.1 film flag bit — must NEVER be set on product packs.
+constexpr unsigned kPlxgQ5VacatedFps1001Bit = 34u;
+
 inline uint64_t packPlxgQ5(unsigned darX, unsigned darY, unsigned contentFps,
                            bool darValid, bool fpsValid) {
     uint64_t w = 0;
@@ -120,12 +131,28 @@ inline uint64_t packPlxgQ5(unsigned darX, unsigned darY, unsigned contentFps,
         w |= 1ull << 32;
     if (fpsValid)
         w |= 1ull << 33;
-    // reserved [63:34] left zero
+    // reserved [63:34] left zero — includes vacated bit34 fps_1001
+    return w;
+}
+
+// Historical w-path #2.1 packer (f31a6eb9) — FOR CROSS-IMPL REPRO ONLY.
+// Sets bit34=fps_1001; reserved moved to [63:35]. Product latch rejects.
+inline uint64_t packPlxgQ5FaultFps1001OnWire(unsigned darX, unsigned darY,
+                                             unsigned contentFps, bool darValid,
+                                             bool fpsValid, bool fps1001) {
+    uint64_t w = packPlxgQ5(darX, darY, contentFps, darValid, fpsValid);
+    if (fps1001)
+        w |= 1ull << kPlxgQ5VacatedFps1001Bit;
     return w;
 }
 
 inline bool plxgQ5ReservedOk(uint64_t q5) {
-    return ((q5 >> 34) & 0x3FFFFFFFull) == 0;
+    return (q5 >> kPlxgQ5ReservedShift) == 0;
+}
+
+// Cross-impl: product receiver (latch) vs a packed wire word.
+inline bool plxgQ5ReceiverAccepts(uint64_t q5) {
+    return plxgQ5ReservedOk(q5);
 }
 
 inline void plxgQ5Unpack(uint64_t q5, unsigned* darX, unsigned* darY,
@@ -480,6 +507,43 @@ inline bool plxgBootBaselineHoldsRetainedUntilPostResetPublish(uint16_t retained
     if (!plxgPollerObserveVerified(p, snap, snap[0]))
         return false;
     return p.cnt_commit == 1 && p.last_seq == used;
+}
+
+// Cross-implementation packed-word gate (rd-duck / parent #4):
+// w-path f31a6eb9 set bit34=fps_1001 while w-mem rejects |q5[63:34].
+// Film 23.976 packs must use clean ABI#2 (fps=24 integer family, bit34=0).
+// Dirty #2.1 packs are rejected wholesale (not ignored) — REPRO proves E4 class.
+inline bool plxgQ5CrossImplFilmPackAbi2Accepted() {
+    // Path-side film family under ABI#2: content_fps=24, fps_1001 host-only off wire.
+    const uint64_t clean =
+        packPlxgQ5(/*dar*/16, 9, /*fps*/24, /*dar_v*/true, /*fps_v*/true);
+    if (!plxgQ5ReceiverAccepts(clean))
+        return false;
+    if ((clean >> 34) != 0)
+        return false;
+    unsigned dx = 0, dy = 0, fps = 0;
+    bool dv = false, fv = false;
+    plxgQ5Unpack(clean, &dx, &dy, &fps, &dv, &fv);
+    return dx == 16 && dy == 9 && fps == 24 && dv && fv;
+}
+
+// REPRO: vacated #2.1 pack with bit34=1 is rejected by product receiver.
+inline bool plxgQ5CrossImplFaultFps1001Rejected() {
+    const uint64_t dirty = packPlxgQ5FaultFps1001OnWire(16, 9, 24, true, true,
+                                                        /*fps1001*/ true);
+    if ((dirty & (1ull << 34)) == 0)
+        return false;
+    // Product latch rejects entire word (DAR would be lost if accepted then
+    // ignored — we reject so host must pack clean).
+    return !plxgQ5ReceiverAccepts(dirty) && !plxgQ5ReservedOk(dirty);
+}
+
+// FAULT twin: reserved starts at 35 (would accept bit34) — must NOT ship.
+inline bool plxgQ5CrossImplFaultReservedFrom35AcceptsBit34() {
+    const uint64_t dirty = packPlxgQ5FaultFps1001OnWire(16, 9, 24, true, true, true);
+    // Wrong boundary: only [63:35] reserved
+    const bool wrongOk = ((dirty >> 35) == 0);
+    return wrongOk && !plxgQ5ReservedOk(dirty); // product still rejects
 }
 
 // FAULT twin: no baseline → retained promotes on first observe after reset.

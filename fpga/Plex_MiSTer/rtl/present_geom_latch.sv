@@ -7,6 +7,7 @@
 //      promote at frame start). Mid-active commit must NOT change pitch/base
 //      (or DAR/fps) inside a raster.
 // ABI #2: q5 carries DAR + content_fps; reserved[63:34] MUST be zero or reject.
+// Parent #4: bit34 fps_1001 (#2.1) VACATED — still inside reserved; E4 rejects.
 // DAR blackout: same WxH/stride DAR change never hits store geom_layout_chg
 // (store compares enable/W/H/stride/map only). Hold dar_hold_black on the
 // aspect path for N frame starts. Compare DAR tuple only — NOT PLXG seq
