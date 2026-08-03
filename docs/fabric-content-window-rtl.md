@@ -113,6 +113,22 @@ Legacy table (logical fields):
 
 Threat: pixel-path divide; keep SX/SY registered. Fill-path `fill_y * pitch` is 29b — watch clk_ddr STA after nostub fit (not this lane).
 
+## Quality — first fit vs phase 2 (parent ask)
+
+| Filter | Extra M10K | DSP | Fmax risk | Visual | Ship? |
+|--------|----------:|----:|-----------|--------|-------|
+| **NN (V1)** | **0** | **0** | none (mul+>>16) | shimmer on motion; worst = 720×404→1280×720 | **YES — this fit** |
+| Bilinear V only | ~2 (Y line pair @1280) | 2–4 | low | kills most vertical shimmer | phase 2 if glass ugly |
+| Bilinear H+V | ~2–3 | 4–8 | mod (H taps from qword) | TV-acceptable soft | phase 2 |
+| 4-tap poly V | ~4+ | ascal-class | high on clk_sys | near-ascal | **NO** — ascal already on HDMI |
+
+**Decision for integration:** NN is good enough for the first fit. Free M10K went
+88→356; bilinear is affordable but gold-plating before a moving-720p glass proof
+is the wrong order. ascal does not re-filter when core DE already equals glass.
+
+Red-before-green scale faults (sim `+define`):
+`PRESENT_WINDOW_FAULT_IDENTITY_SCALE` · `…_FLOOR_SCALE` · `…_INVERT_RATIO`.
+
 ---
 
 ## Sim evidence (true rc)

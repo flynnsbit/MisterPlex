@@ -7,13 +7,17 @@
 //   win_enable=0 → legacy full-bank FRAME_W×FRAME_H (bit-compatible 480p path)
 //   win_enable=1 → stretch content_w×content_h at (content_x0,content_y0) across DE
 //
-// Quality V1: nearest-neighbour only.
-//   Honest tradeoff: NN is free on the pixel path (one 11×20 mul + >>16) and
-//   needs zero extra M10K. Motion shimmer is real on high-contrast edges; the
-//   HDMI ascal polyphase still runs on the core DE, so when DE==output raster
-//   (w-clock 1280×720 mode) ascal does not re-filter our NN. Bilinear V2 would
-//   cost ~2 M10K (prev+curr Y lines @1280) + 4 DSPs of lerp — affordable after
-//   nostub (356 free M10K) but not this commit. Do not build a second polyphase.
+// Quality V1: nearest-neighbour only — SHIPS first fit (parent: no gold-plate).
+//   Cost: 0 extra M10K, 0 DSP, pixel path = one 11×20 mul + >>16 + clamp.
+//   Visual: motion shimmer / stair-step on edges; worst case is PMS 720×404
+//   upscaled to 1280×720 (large NN magnify). HDMI ascal does NOT re-filter when
+//   core DE already equals the glass raster (w-clock PRESENT_MULTI_PIXEL).
+//
+//   Affordable later (356 free M10K post-nostub) — NOT this fit:
+//     bilinear V  : ~2 M10K (Y line pair @1280) + 2–4 DSP lerp, low Fmax risk
+//     bilinear H+V: ~2–3 M10K + 4–8 DSP, needs 2-tap H from qword pair
+//     4-tap poly V: ~4 M10K + ascal-class DSP — DO NOT; ascal already on HDMI
+//   Phase-2 decision: only if glass shimmer is unacceptable after NN milestone.
 //
 // Pixel path = mul-shift + add + clamp only. Scale dividers run when window
 // regs change and land in sx_r/sy_r — off the ce_pix critical path.
@@ -111,11 +115,24 @@ module present_content_window #(
 	wire [31:0] sy_num_ceil = sy_num_gen + {21'd0, vd_m1} - 32'd1;
 	wire [19:0] sx_win_true = sx_num_ceil[31:0] / {21'd0, hd_m1};
 	wire [19:0] sy_win_true = sy_num_ceil[31:0] / {21'd0, vd_m1};
-	// FAULT: force identity Q16 scale (sx=65536) — red twin for wrong-scale gate.
-	// A green checker that only tests endpoints can miss this; midpoint fails.
+	// FAULT twins (sim-only +define) — green must be capable of going red:
+	//   IDENTITY_SCALE — sx=sy=65536 (midpoint fails on 720→1280)
+	//   FLOOR_SCALE    — floor Q16 instead of ceil (last DE pixel undershoots)
+	//   INVERT_RATIO   — (de-1)/(cw-1) instead of (cw-1)/(de-1) (ratio inverted)
 `ifdef PRESENT_WINDOW_FAULT_IDENTITY_SCALE
 	wire [19:0] sx_win = 20'd65536;
 	wire [19:0] sy_win = 20'd65536;
+`elsif PRESENT_WINDOW_FAULT_FLOOR_SCALE
+	wire [19:0] sx_win = sx_num_gen[31:0] / {21'd0, hd_m1};
+	wire [19:0] sy_win = sy_num_gen[31:0] / {21'd0, vd_m1};
+`elsif PRESENT_WINDOW_FAULT_INVERT_RATIO
+	// Invert: map as if content were the DE size — huge sx, wrong mid & last.
+	wire [31:0] sx_inv_num = {21'd0, hd_m1} * 32'd65536 + {21'd0, cw_m1} - 32'd1;
+	wire [31:0] sy_inv_num = {21'd0, vd_m1} * 32'd65536 + {21'd0, ch_m1} - 32'd1;
+	wire [10:0] cw_den = (cw_m1 == 11'd0) ? 11'd1 : cw_m1;
+	wire [10:0] ch_den = (ch_m1 == 11'd0) ? 11'd1 : ch_m1;
+	wire [19:0] sx_win = sx_inv_num / {21'd0, cw_den};
+	wire [19:0] sy_win = sy_inv_num / {21'd0, ch_den};
 `else
 	wire [19:0] sx_win = sx_win_true;
 	wire [19:0] sy_win = sy_win_true;

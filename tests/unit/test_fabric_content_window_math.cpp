@@ -293,6 +293,38 @@ int main() {
         std::printf("PASS math pms404→720p sx=%d sy=%d mid=%d\n", sx, sy, mid);
     }
 
+
+    // NEG: floor Q16 (not ceil) undershoots last DE pixel — off-by-one class.
+    {
+        constexpr int CW = 720, HDE = 1280;
+        const int sx_ceil = win_store_x_scale(CW, HDE);
+        const int64_t num = int64_t(CW - 1) * 65536;
+        const int sx_floor = int(num / (HDE - 1));
+        EXPECT(sx_floor < sx_ceil, "floor sx < ceil sx");
+        const int x_last_floor = store_x_at(HDE - 1, sx_floor, 0, CW - 1);
+        const int x_last_ceil = store_x_at(HDE - 1, sx_ceil, 0, CW - 1);
+        EXPECT(x_last_ceil == CW - 1, "ceil hits last content col");
+        EXPECT(x_last_floor == CW - 2, "floor undershoots last col (off-by-one)");
+        std::printf("NEG_floor_undershoot sx_floor=%d sx_ceil=%d x_last_f=%d x_last_c=%d\n",
+                    sx_floor, sx_ceil, x_last_floor, x_last_ceil);
+    }
+    // NEG: inverted ratio (de-1)/(cw-1) is not product scale.
+    {
+        constexpr int CW = 720, HDE = 1280;
+        const int sx_ok = win_store_x_scale(CW, HDE);
+        const int64_t inv_num = int64_t(HDE - 1) * 65536 + (CW - 2);
+        const int sx_inv = int(inv_num / (CW - 1));
+        EXPECT(sx_inv != sx_ok, "invert sx != product sx");
+        const int mid_ok = store_x_at((HDE - 1) / 2, sx_ok, 0, CW - 1);
+        const int mid_inv = store_x_at((HDE - 1) / 2, sx_inv, 0, CW - 1);
+        EXPECT(mid_ok != mid_inv, "invert mid differs");
+        EXPECT(mid_ok > 300 && mid_ok < 400, "product mid in content half");
+        // inverted mid clamps near content end
+        EXPECT(mid_inv >= CW - 5, "invert mid near clamp end");
+        std::printf("NEG_invert_ratio sx_ok=%d sx_inv=%d mid_ok=%d mid_inv=%d\n",
+                    sx_ok, sx_inv, mid_ok, mid_inv);
+    }
+
 if (g_fails) {
         std::fprintf(stderr, "test_fabric_content_window_math: %d failure(s)\n", g_fails);
         return 1;

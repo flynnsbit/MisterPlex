@@ -163,25 +163,34 @@ if grep -q 'quarter_class=1' <<<"$WINDOW_OUT"; then
   exit 1
 fi
 
-# RED twin: FAULT_IDENTITY_SCALE must make pms404/neg_scale go red.
-echo "=== RED twin PRESENT_WINDOW_FAULT_IDENTITY_SCALE ===" >&2
-BUILD_RED="$ROOT/build/verilator/present_content_window_fault_idscale"
-mkdir -p "$BUILD_RED"
-"$RUN_VERILATOR" "${vflags[@]}" --Mdir "$BUILD_RED" \
-  +define+PRESENT_WINDOW_FAULT_IDENTITY_SCALE \
-  "${common_sv[@]}"
-set +e
-RED_OUT="$(WINDOW_MODE=pms404 "$BUILD_RED/Vpresent_content_window_tb" 2>&1)"
-RED_RC=$?
-set -e
-printf '%s\n' "$RED_OUT"
-echo "fault_idscale_pms404 true rc=$RED_RC"
-assert_sim_executed "fault_idscale" "$RED_OUT" "CASE pms404 EXECUTED"
-if [[ "$RED_RC" -eq 0 ]]; then
-  echo "FAIL: FAULT_IDENTITY_SCALE pms404 must fail (wrong-scale red twin dead)" >&2
-  exit 1
-fi
-echo "PASS red-check FAULT_IDENTITY_SCALE pms404 true_rc=$RED_RC"
+run_fault_red() {
+  local define="$1"
+  local label="$2"
+  local build_dir="$ROOT/build/verilator/present_content_window_${label}"
+  echo "=== RED twin ${define} ===" >&2
+  mkdir -p "$build_dir"
+  "$RUN_VERILATOR" "${vflags[@]}" --Mdir "$build_dir" \
+    +define+"${define}" \
+    "${common_sv[@]}"
+  set +e
+  local out rc
+  out="$(WINDOW_MODE=pms404 "$build_dir/Vpresent_content_window_tb" 2>&1)"
+  rc=$?
+  set -e
+  printf '%s\n' "$out"
+  echo "${label}_pms404 true rc=$rc"
+  assert_sim_executed "$label" "$out" "CASE pms404 EXECUTED"
+  if [[ "$rc" -eq 0 ]]; then
+    echo "FAIL: ${define} pms404 must fail (red twin dead — green cannot go red)" >&2
+    exit 1
+  fi
+  echo "PASS red-check ${define} pms404 true_rc=$rc"
+}
 
-echo "OK present_content_window_rtl_sim: REPRO legacy + PASS 320/480id/720 + pms404/letterbox/neg_scale + RED idscale"
+# RED twins: wrong scale must fail pms404 (midpoint / last-pixel / ratio).
+run_fault_red PRESENT_WINDOW_FAULT_IDENTITY_SCALE fault_idscale
+run_fault_red PRESENT_WINDOW_FAULT_FLOOR_SCALE fault_floor
+run_fault_red PRESENT_WINDOW_FAULT_INVERT_RATIO fault_invert
+
+echo "OK present_content_window_rtl_sim: REPRO legacy + PASS 320/480id/720 + pms404/letterbox/neg_scale + RED idscale/floor/invert"
 exit 0
