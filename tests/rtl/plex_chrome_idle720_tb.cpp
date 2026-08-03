@@ -90,6 +90,7 @@ int main(int argc, char** argv) {
     t->has_frame = 1;
     t->osd_idle_mode = 0;
     t->fab_phase_en = 0;
+    t->idle_phase_in = 0;
     for (int i = 0; i < 4; ++i)
         tick(t);
     t->reset = 0;
@@ -200,6 +201,46 @@ int main(int argc, char** argv) {
         fail("phase did not advance on vsync");
     if (fails == 0)
         std::fprintf(stderr, "PASS idle720-phase\n");
+
+    // ---- screensaver drift: two pinned phases → chevron origin moves ----
+    // RTL: size=240, span_x=1280-240-16=1024, ox=8+tri*span/600
+    // phase 0 → tri=0 → ox=8; phase 600 → tri=600 → ox=8+1024=1032
+    std::fprintf(stderr, "=== idle720 screensaver motion ===\n");
+    t->osd_idle_mode = 2;
+    t->fab_phase_en = 0; // pin phase via idle_phase_in
+    t->has_frame = 0;
+    t->idle_phase_in = 0;
+    for (int i = 0; i < 4; ++i)
+        tick(t);
+    // oy at ph0 and ph600 both 240 (y-phase offset +300 → same tri); ox 8 vs 1032
+    constexpr int kSsY = 240;
+    const uint32_t ss0 = sampleAt(t, 8, kSsY, 0x00FF00);       // ox=8 → amber
+    const uint32_t ss0b = sampleAt(t, 1032, kSsY, 0x00FF00);   // far → bg
+    t->idle_phase_in = 600;
+    for (int i = 0; i < 4; ++i)
+        tick(t);
+    const uint32_t ss1 = sampleAt(t, 8, kSsY, 0x00FF00);       // left → bg
+    const uint32_t ss1b = sampleAt(t, 1032, kSsY, 0x00FF00);   // ox=1032 → amber
+    std::fprintf(stderr,
+                 "ss ph0 (8,240)=%06x (1032,240)=%06x | ph600 (8,240)=%06x (1032,240)=%06x\n",
+                 ss0, ss0b, ss1, ss1b);
+    if (ss0 != 0xE5A00D)
+        fail("ss phase0 origin not amber");
+    if (ss0b == 0xE5A00D)
+        fail("ss phase0 far x must not be amber");
+    if (ss1 == 0xE5A00D)
+        fail("ss phase600 left origin must leave (not amber)");
+    if (ss1b != 0xE5A00D)
+        fail("ss phase600 drifted origin not amber");
+    if (fails == 0)
+        std::fprintf(stderr, "PASS idle720-screensaver-motion\n");
+
+    // Restore logo mode for subsample
+    t->osd_idle_mode = 0;
+    t->idle_phase_in = 0;
+    t->fab_phase_en = 0;
+    for (int i = 0; i < 4; ++i)
+        tick(t);
 
     // ---- subsample scan: no video, some amber ----
     std::fprintf(stderr, "=== idle720 subsample ===\n");

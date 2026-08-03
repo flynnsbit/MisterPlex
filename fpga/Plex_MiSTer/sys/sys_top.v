@@ -1212,13 +1212,17 @@ cyclonev_hps_interface_peripheral_i2c hdmi_i2c
 	wire [1:0]  osd_idle_chrome;
 	wire        fab_idle_phase_en;
 `ifdef PLEX_FAB_IDLE
+	// ARM-off milestone: fabric idle always (until has_frame CDC). Mode 2 =
+	// screensaver — chevron drifts with vsync phase so glass shows *motion*
+	// with zero ARM pixels (integration fit visual: moving 1280×720 pattern).
 	assign has_frame_chrome  = 1'b0;
 	assign fab_idle_phase_en = 1'b1;
+	assign osd_idle_chrome   = 2'b10; // screensaver
 `else
 	assign has_frame_chrome  = 1'b1;
 	assign fab_idle_phase_en = 1'b0;
+	assign osd_idle_chrome   = 2'b00; // logo (unused while has_frame=1)
 `endif
-	assign osd_idle_chrome  = 2'b00;
 	assign plxc_ext_we    = 1'b0;
 	assign plxc_ext_addr  = 8'd0;
 	assign plxc_ext_wdata = 64'd0;

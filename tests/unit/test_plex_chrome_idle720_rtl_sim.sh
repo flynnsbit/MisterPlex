@@ -68,8 +68,8 @@ set -e
 printf '%s\n' "$OUT_G"
 echo "idle720_green true rc=$RC_G"
 assert_sim_executed "idle720-green" "$OUT_G" \
-  "PASS idle720-geom" "PASS idle720-phase" "PASS idle720-subsample" \
-  "plex_chrome_idle720_tb: PASS"
+  "PASS idle720-geom" "PASS idle720-phase" "PASS idle720-screensaver-motion" \
+  "PASS idle720-subsample" "plex_chrome_idle720_tb: PASS"
 [[ "$RC_G" -eq 0 ]] || { echo "FAIL green rc=$RC_G" >&2; exit "$RC_G"; }
 
 echo "test_plex_chrome_idle720_rtl_sim: PASS"

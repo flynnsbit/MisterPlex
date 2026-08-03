@@ -325,3 +325,13 @@ goal: idle screen entirely in fabric at 1280×720; ARM paints nothing; PPC-safe;
   - ARM ms exact number
 
 Memory: unchanged — idle pure comb (0 M10K); list 1–2 M10K.
+
+========================================================================
+PARENT #3 decode correction absorbed + moving idle
+========================================================================
+product-tier decode 36.27 ms/f (margin 5.40 ms) — serial+copy still FAIL.
+FAB_IDLE ON now uses screensaver mode=2 + vsync phase → moving chevron
+(integration visual: fabric motion, ARM 0 pixels). Default still OFF.
+
+Sim: PASS idle720-screensaver-motion
+  ph0 (8,240)=e5a00d (1032,240)=bg | ph600 swapped  true rc=0

@@ -69,9 +69,12 @@ From w-clock `MULTI_PIXEL_PRESENT_DESIGN.md` + `present_beam_ppc`:
 | `has_frame` | `idle_en = !has_frame && mode!=3` |
 | pace `cnt_*` | Parent-readable present stats — separate from chrome |
 
-Default: `PLEX_FAB_IDLE` off → `has_frame_chrome=1` (no idle takeover), phase=0.
-When on without CDC'd present flag: `has_frame_chrome=0` so idle always shows
-(ARM-off milestone). Integration replaces that with CDC of
+Default: `PLEX_FAB_IDLE` off → `has_frame_chrome=1` (no idle takeover), phase=0,
+mode=logo (unused).
+When on without CDC'd present flag: `has_frame_chrome=0`, **mode=screensaver (2)**,
+`fab_phase_en=1` so the chevron **drifts every vsync** — fabric-generated moving
+1280×720 pattern, ARM touches zero pixels (integration visual milestone).
+Integration later replaces force-0 `has_frame` with CDC of
 `present_core.stat_has_frame` / pace `has_frame`.
 
 ## 6. Synthesis survival
