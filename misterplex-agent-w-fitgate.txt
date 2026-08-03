@@ -1,6 +1,6 @@
 lane=w-fitgate
 branch=w-fitgate
-sha=PENDING
+sha=b6c4ad0e
 GRANT=NO
 status=B42_BANK_STRIDE_720P_FIT_HOLD
 
