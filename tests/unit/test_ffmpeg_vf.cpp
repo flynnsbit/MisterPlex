@@ -1,5 +1,7 @@
 // Unit tests for host/libmisterplex/ffmpeg_vf.hpp — scale policy + sws_flags.
+#include "libmisterplex/ddr_frame_layout.hpp"
 #include "libmisterplex/ffmpeg_vf.hpp"
+#include "libmisterplex/plxg_record.hpp"
 #include "libmisterplex/pms_delivery_geom.hpp"
 #include "libmisterplex/yuv420p_chroma_health.hpp"
 
@@ -276,11 +278,13 @@ int main() {
             const auto p = buildFfmpegVideoFilter(r);
             expect(r.scale_mode == FfmpegScaleMode::Always, "force→Always");
             const bool exactBank = (c.sw == coded_w && c.sh == coded_h);
-            // Non-exact bank-height wide deliveries (WIDTH mismatch, H==480):
-            // crop+pad hfit, no V resample. Exact unverified: crop+pad pin.
-            // Verified exact identity is covered outside this loop.
+            // source==display < coded (e.g. display_exact 618→624): pad-up only,
+            // never crop= from source (rd-duck FIX-COLLISION class).
+            const bool bankHeightPadUp =
+                !exactBank && c.sh == coded_h && c.sw == disp_w && c.sw < coded_w;
+            // Wider than display at bank height (640/720): crop+pad hfit.
             const bool bankHeightWideNonExact =
-                !exactBank && (c.sh == coded_h && c.sw >= disp_w);
+                !exactBank && c.sh == coded_h && c.sw > disp_w;
             if (exactBank) {
                 // Unverified exact CLAIM under Always: FOAR into coded (not crop).
                 // Host: crop=618:480 on real 624x350 delivery → ffmpeg EINVAL.
@@ -296,6 +300,16 @@ int main() {
                        (std::string("exact claim no fixed crop for ") + c.name).c_str());
                 expect_eq(p.reason, "force_unverified_claim_scale_pad_coded",
                           "exact bank reason");
+            } else if (bankHeightPadUp) {
+                expect(!p.scale_applied && !p.identity_skip,
+                       (std::string("FORCE_SCALE bank-h pad-up for ") + c.name).c_str());
+                expect(p.vf.find("crop=") == std::string::npos,
+                       (std::string("bank-h pad-up no source crop for ") + c.name).c_str());
+                expect(p.vf.find("pad=624:480") != std::string::npos,
+                       (std::string("bank-h pad-up pads coded for ") + c.name).c_str());
+                expect(p.vf.find("scale=") == std::string::npos,
+                       (std::string("bank-h pad-up no scale for ") + c.name).c_str());
+                expect_eq(p.reason, "pad_up_no_source_crop", "bank-h pad-up reason");
             } else if (bankHeightWideNonExact) {
                 expect(!p.scale_applied && !p.identity_skip,
                        (std::string("FORCE_SCALE bank-h crop-pad for ") + c.name).c_str());
@@ -548,6 +562,46 @@ int main() {
         const auto pProd2 = buildFfmpegVideoFilter(rProd);
         expect(!pProd2.scale_applied && pProd2.vf == "pad=432:240:2:0:color=black",
                "SkipIdentity product DE=426 also pad x=2");
+
+        // rd-duck FIX-COLLISION: corrected geom coded432/display426/cropL=2 must
+        // still be pad-only when UNVERIFIED — crop_pad branch is OOB on 426 src.
+        FfmpegVfRequest rUnv = rProd;
+        rUnv.scale_mode = FfmpegScaleMode::Always;
+        rUnv.delivery_geometry_verified = false;
+        const auto pUnv = buildFfmpegVideoFilter(rUnv);
+        expect(pUnv.vf.find("crop=") == std::string::npos,
+               "UNVERIFIED product 426: no crop= (pad-up structural)");
+        expect_eq(pUnv.vf, "pad=432:240:2:0:color=black", "UNVERIFIED product pad x=2");
+        expect(!pUnv.scale_applied, "UNVERIFIED product no scale");
+        expect_eq(pUnv.reason, "pad_up_no_source_crop", "UNVERIFIED pad-up reason");
+
+        // Geom→VF→PLXG metadata oracle (daemon field mapping).
+        const auto g = ddrStorageGeometryForContent(426, 240);
+        expect(g.coded_width.get() == 432 && g.display_width.get() == 426 &&
+                   g.crop_left == 2 && g.crop_right == 4 && g.present_x == 2,
+               "geom product 426→432 for VF mapping");
+        FfmpegVfRequest rGeom;
+        rGeom.coded_w = g.coded_width.get();
+        rGeom.coded_h = g.coded_height.get();
+        rGeom.display_w = g.display_width.get();
+        rGeom.display_h = g.display_height.get();
+        rGeom.crop_left = g.crop_left;
+        rGeom.crop_top = g.crop_top;
+        rGeom.source_w = 426;
+        rGeom.source_h = 240;
+        rGeom.scale_mode = FfmpegScaleMode::Always;
+        rGeom.delivery_geometry_verified = true;
+        const auto pGeom = buildFfmpegVideoFilter(rGeom);
+        expect_eq(pGeom.vf, "pad=432:240:2:0:color=black", "geom→VF pad-only");
+        expect(pGeom.vf.find("crop=") == std::string::npos, "geom→VF no source crop");
+        const auto lay = makeDdrFrameLayout(g);
+        const auto rec = makePlxgRecordFromGeometry(g, lay, /*seq*/ 1);
+        expect(rec.valid && plxgMuxIsPad426In432(plxgMuxLatchVisual(rec)),
+               "geom→PLXG mux keeps display426 present_x=2 (metadata not identity432)");
+        // NEG: if VF had emitted crop=426:240:2 that would be OOB — assert string.
+        expect(std::string("crop=426:240:2:0").find("crop=") == 0, "NEG string exists");
+        expect(pGeom.vf.find("crop=426:240:2") == std::string::npos,
+               "NEG: must not emit crop=426:240:2 on 426 source");
     }
 
     // Live FFmpeg oracle — MANDATORY (rd-duck fit-release gate).
@@ -637,8 +691,43 @@ int main() {
                        "ffmpeg Y at x=2..4 is source X=0,1,2");
             }
         }
-        if (rc_expr == 0 && rc2 == 0 && L2 == 2) {
-            std::printf("GREEN_FFMPEG_PAD_ORACLE expr_rc=0 explicit_rc=0 L=2 mandatory\n");
+        // Product metadata path: geom→VF string must run live and place at x=2.
+        FfmpegVfRequest rMeta;
+        rMeta.coded_w = 432;
+        rMeta.coded_h = 240;
+        rMeta.display_w = 426;
+        rMeta.display_h = 240;
+        rMeta.crop_left = 2;
+        rMeta.crop_top = 0;
+        rMeta.source_w = 426;
+        rMeta.source_h = 240;
+        rMeta.scale_mode = FfmpegScaleMode::Always;
+        rMeta.delivery_geometry_verified = true;
+        const auto pMeta = buildFfmpegVideoFilter(rMeta);
+        expect(pMeta.vf.find("crop=") == std::string::npos, "meta VF no crop");
+        const int rc_meta = run_oracle(pMeta.vf.c_str(), "product_meta");
+        expect(rc_meta == 0, "ffmpeg oracle product_meta (coded432/disp426/cropL2) rc=0");
+        int Lmeta = -1;
+        if (rc_meta == 0) {
+            FILE* f = std::fopen(outp, "rb");
+            expect(f != nullptr, "ffmpeg oracle product_meta open");
+            if (f) {
+                uint8_t row[432];
+                expect(std::fread(row, 1, 432, f) == 432u, "ffmpeg product_meta read Y");
+                std::fclose(f);
+                Lmeta = find_content_x(row, 432);
+                expect(Lmeta == 2, "ffmpeg product_meta content at x=2");
+            }
+        }
+        // NEG live: crop width past source (428>426) fails — proves source-crop
+        // of display-sized window with inset is the lethal class (ffmpeg may
+        // clamp crop=426:240:2:0, so assert the too-wide form).
+        const int rc_oob = run_oracle("crop=428:240:0:0", "oob_crop");
+        expect(rc_oob != 0, "NEG live: crop=428:240 on 426-wide source must fail");
+
+        if (rc_expr == 0 && rc2 == 0 && L2 == 2 && rc_meta == 0 && Lmeta == 2 && rc_oob != 0) {
+            std::printf("GREEN_FFMPEG_PAD_ORACLE expr_rc=0 explicit_rc=0 meta_rc=0 "
+                        "oob_crop_fail L=2 mandatory\n");
         }
     }
     // NEG: unverified 426 claim must still FOAR-scale (not trust pad-only)

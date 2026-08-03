@@ -653,11 +653,16 @@ inline FfmpegVfPlan buildFfmpegVideoFilter(const FfmpegVfRequest& req) {
     // Always (non-exact), or SkipIdentity with mismatched/unknown/unverified: scale+pad.
     const std::string flags = swsFlagsTokenOk(req.sws_flags) ? req.sws_flags : std::string();
 
-    // Verified pad-only FIRST (Direct Part 426 content → 432 store).
-    // Must precede hasCrop crop_pad: crop=426:240:2 on a 426-wide source is invalid;
-    // pure pad places content at chroma-even x and PLXG keeps DE=display=426.
+    // Pad-up FIRST (Direct Part 426 content → 432 store) — before hasCrop crop_pad.
     //
-    // Two equivalent geometry claims that both mean pad-up, no scale:
+    // rd-duck FIX-COLLISION: corrected metadata is coded=432 display=426 crop_left=2.
+    // If pad-up is gated only on verified, the later branch
+    //   hasCrop && source_h==coded_h && source_w>=dispW
+    // calls buildCropPadNoScale → crop=426:240:2:0 on a 426-wide input (OOB).
+    // Rule: when source == display < coded, there is NO source crop — only
+    // destination pad at inset; crop_left/right travel to PLXG, not FFmpeg crop=.
+    //
+    // Two equivalent geometry claims (both pad-up, no scale):
     //   A) product: source==display=426, coded=432, crop_left=2
     //   B) legacy:  display==coded=432, source=426 (pre-DE split)
     {
@@ -665,7 +670,7 @@ inline FfmpegVfPlan buildFfmpegVideoFilter(const FfmpegVfRequest& req) {
                                (req.coded_w % 2) == 0 && (req.coded_h % 2) == 0 &&
                                (dispW % 2) == 0 && (dispH % 2) == 0;
         const bool srcOk = req.source_w > 0 && req.source_h > 0;
-        // A: content fills visible DE; store may be larger.
+        // A: content fills visible DE; store larger — NEVER crop from source.
         const bool contentFillsDisplay =
             srcOk && req.source_w == dispW && req.source_h == dispH &&
             req.source_w <= req.coded_w && req.source_h <= req.coded_h &&
@@ -675,10 +680,14 @@ inline FfmpegVfPlan buildFfmpegVideoFilter(const FfmpegVfRequest& req) {
             srcOk && req.source_h == req.coded_h && req.source_h == dispH &&
             req.source_w <= req.coded_w && req.source_w <= dispW &&
             req.source_w < req.coded_w;
-        const bool verifiedPadUp =
-            req.delivery_geometry_verified && yuvEvenOk &&
-            (contentFillsDisplay || legacySameHeightPad);
-        if (verifiedPadUp) {
+        // Product pad-up (source==display < coded): STRUCTURAL — never crop from
+        // source. Do not require verified (unverified product geom must not hit
+        // crop_pad OOB). Legacy display==coded pad still needs verified so an
+        // unverified 426-into-432-bank claim keeps FOAR (universal ceiling trap).
+        const bool productPadUp = yuvEvenOk && contentFillsDisplay;
+        const bool legacyVerifiedPad =
+            yuvEvenOk && legacySameHeightPad && req.delivery_geometry_verified;
+        if (productPadUp || legacyVerifiedPad) {
             // Explicit chroma-even x/y (426→432 → pad=432:240:2:0, not (ow-iw)/2).
             // Prefer crop_left when geometry already computed it (must match pad).
             int px = 0, py = 0;
@@ -689,23 +698,28 @@ inline FfmpegVfPlan buildFfmpegVideoFilter(const FfmpegVfRequest& req) {
                 padOnlyInsets(req.source_w, req.source_h, req.coded_w, req.coded_h, &px, &py);
             }
             append(buildPadOnlyNoScale(req.coded_w, req.coded_h, px, py));
-            return finish(false, false, "verified_same_height_pad_only");
+            const char* why = "verified_same_height_pad_only";
+            if (productPadUp && !req.delivery_geometry_verified)
+                why = "pad_up_no_source_crop";
+            else if (productPadUp && req.delivery_geometry_verified)
+                why = "verified_same_height_pad_only";
+            return finish(false, false, why);
         }
     }
 
-    // Height already equals bank/display height and width is wide enough to
-    // cover the display window: crop+pad ONLY when the height claim is not an
-    // unverified bank-exact guess (those take FOAR above / below). Hfit path
-    // (e.g. 640x480 claim) still crop-pads when H matches bank.
+    // Height already equals bank/display height and width is STRICTLY wide enough
+    // to crop a display window FROM the source, then pad to coded.
     // 240p / shorter sources FOAR into coded bank (need V upscale).
-    // NOT pad-up (source==display < coded) — that is verifiedPadUp above.
+    // NOT pad-up (source==display < coded) — returned above.
     const bool heightAlreadyBank = req.source_h > 0 && req.source_h == req.coded_h &&
                                    req.source_h == dispH;
-    const bool wideEnoughForDisplayCrop =
-        req.source_w > 0 && req.source_w >= dispW;
-    // Note: verified pad-up (source==display < coded with crop inset) already
-    // returned above. Unverified display_exact (618→624) still uses crop+pad here.
-    if (hasCrop && heightAlreadyBank && wideEnoughForDisplayCrop && !exactUnverified) {
+    // Must be able to take crop_left + display_w samples from source (or center
+    // crop when source_w > coded). source_w == dispW with crop_left>0 is OOB.
+    const bool canCropDisplayFromSource =
+        req.source_w > 0 &&
+        ((req.source_w > req.coded_w && req.source_w > dispW) ||
+         (req.source_w >= dispW + std::max(0, req.crop_left) && req.source_w > dispW));
+    if (hasCrop && heightAlreadyBank && canCropDisplayFromSource && !exactUnverified) {
         append(buildCropPadNoScale(dispW, dispH, req.coded_w, req.coded_h, req.crop_left,
                                    req.crop_top, req.source_w));
         if (exactCodedSource)
