@@ -61,6 +61,14 @@ If someone restores mode 8 mid-session, re-do control before scoring fabric.
 - Ini: prefer `video_mode=0` so bottom panel sits on 720p
 - Expect: magenta TR+BL, STOPPED bar, **no** cyan — see `fab-chrome-parent-capture-contract.md`
 
+### Step 4 — PLAYING product path (960×540 → 1280×720 **output**)
+
+- **FAB_IDLE off.** Cast moving 960×540. Beam stays `video_mode=0`.
+- Score with **`docs/fab-playing-parent-capture-contract.md`** + `scripts/hdmi_score_pair.sh`
+- PASS class **A**: ACTIVE≥1100×680, DIFF_PX≥8000 over 1 s, CYAN≤200, ORANGE≤4000
+- Control class stays RED (ACTIVE≈923×717, high ORANGE)
+- Partials: **C1** letterbox, **B2** static full raster, **D2** upscale geom — see taxonomy
+
 ## What parent should NOT do
 
 - Change ini + two macros + daemon conf in one deploy

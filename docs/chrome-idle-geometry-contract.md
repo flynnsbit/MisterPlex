@@ -134,6 +134,10 @@ from the beam, not coded size.
 **Honesty label:** this ships **720p output**, not 720p source. True 1280×720 source
 needs DMA (w-path) to drop the 14.97 ms copy.
 
+**Parent glass score for this path:**  
+`docs/fab-playing-parent-capture-contract.md` + `scripts/hdmi_score_pair.sh`  
+(not the idle cyan contract).
+
 ## 10. rd-duck fit audit checklist (w-osd claims)
 
 - [ ] `PLEX_FAB_IDLE` / `PLEX_FAB_CHROME` **undefined** in shipping QSF (default OFF)

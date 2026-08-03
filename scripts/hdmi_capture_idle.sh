@@ -19,6 +19,8 @@
 #   CYAN_PX: fabric-idle signature (00C8FF L-brackets). ARM idle ⇒ 0.
 #   FAB_IDLE PASS (pre-reg): CYAN_PX>=2000, ORANGE_PX>=500, motion across 2 snaps.
 #   FAB_CHROME PASS (pre-reg): MAGENTA_PX>=1500, ORANGE_PX>=200, CYAN_PX~0.
+#   PLAYING PASS (pre-reg): docs/fab-playing-parent-capture-contract.md
+#     ACTIVE>=1100x680, CYAN~0, ORANGE<=4000, pair DIFF via hdmi_score_pair.sh
 #   MEAN >= 100 near-uniform is the documented mixed-pair GREEN failure.
 #   MEAN == 0 with STD == 0 across all tries is a genuine black screen — which
 #   is the mixed-pair failure mode where the core never frees a DDR bank.

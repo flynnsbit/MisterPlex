@@ -123,6 +123,32 @@ scripts/hdmi_capture_idle.sh docs/agent-evidence/fab-idle-nodaemon-t1.png
 | Hierarchy PASS, glass CYAN=0 | Elision of **function** despite rows, or macro OFF, or wrong RBF — void glass claim |
 | Hierarchy FAIL, glass looks good | **Do not trust** — possible ARM residual / wrong interpretation |
 
+### PLAYING taxonomy (product 960→720 path)
+
+Idle cyan gates above do **not** score a cast. Use the dedicated card:
+
+**`docs/fab-playing-parent-capture-contract.md`**
+
+| ID | One-line |
+|----|----------|
+| **A** | Fabric play OK — ACTIVE≥1100×680 ∧ DIFF high ∧ CYAN≈0 ∧ ORANGE not chevron |
+| **B1** | One frame then dead (later black) |
+| **B2** | Full raster but static (not live video) |
+| **B3** | Idle plane (cyan) — not PLAYING |
+| **C1** | ARM letterbox — ACTIVE still ~923×717 with video-like MEAN/DIFF |
+| **C2** | ARM overlay bake — HUD survives kill without magenta plane |
+| **D1** | Cyan during cast (wrong state) |
+| **D2** | Upscale geom fail — content OK, ACTIVE stuck control-class |
+| **D3** | Pillar / partial window |
+
+```bash
+scripts/hdmi_capture_idle.sh docs/agent-evidence/play-t0.png
+sleep 1
+scripts/hdmi_capture_idle.sh docs/agent-evidence/play-t1.png
+scripts/hdmi_score_pair.sh docs/agent-evidence/play-t0.png docs/agent-evidence/play-t1.png
+# VERDICT=A_FABRIC_PLAY_OK | B2_... | C1_... | ...
+```
+
 ---
 
 ## 4. Negative test you can actually fail (ARM still alive)
