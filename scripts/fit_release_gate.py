@@ -157,6 +157,14 @@ LIVE_OPEN_BLOCKER_TOKENS = (
     "B8_FORCE_GEOM_1280_NOT_960",
     "B9_ASPECT_ORIGINAL_4_3",
     "B9_NO_AR_TOPLEVEL_TEST",
+    # rd-duck: same-size DAR needs sys_top plex_ar_out_hold + post-ascal (not HDMI_BLACKOUT OR)
+    "B9_SYS_TOP_AR_OUT_HOLD_MISSING",
+    "B9_POST_ASCAL_DAR_BLACKOUT_MISSING",
+    "B9_HDMI_BO_OR_NOT_SAME_SIZE_DAR",
+    # rd-duck: runtime crop+display window bounds in store (not port presence alone)
+    "B26_STORE_CROP_DISPLAY_BOUNDS_MISSING",
+    # rd-duck: FFmpeg 426→432 pad x=2 chroma-even (naive x=3 fails real yuv420p)
+    "B27_FFMPEG_PAD_CHROMA_EVEN_ORACLE",
     "B12_DE_LAG_RGB_LATENCY_UNPROVEN",
     "B13_FIXED_RASTER_NO_RUNTIME_DE",
     "B14_CODED_W_16_ALIGN_UNENFORCED",
@@ -2536,6 +2544,272 @@ def run_single_owner_table_gate(root: Path) -> tuple[list[str], list[str]]:
     return msgs, errors
 
 
+
+def run_b9_ar_hold_post_ascal(root: Path) -> tuple[list[str], list[str]]:
+    """B9: sys_top plex_ar_out_hold + post-ascal same-size DAR blackout/data assoc.
+
+    rd-duck: ascal swblack only fires on ih/iv size change. HDMI_BLACKOUT OR of
+    geom/dar into emu.HDMI_BLACKOUT is NOT evidence of same-size DAR blanking —
+    need plex_ar_out_hold (out_vs commit) + plex_ar_post_ascal (pixel black after
+    ascal) wired in sys_top. Port/search presence of VIDEO_ARX alone is hollow.
+    """
+    msgs: list[str] = []
+    errors: list[str] = []
+    sys_top = root / "fpga" / "Plex_MiSTer" / "sys" / "sys_top.v"
+    plex = root / "fpga" / "Plex_MiSTer" / "Plex.sv"
+    qip = root / "fpga" / "Plex_MiSTer" / "files.qip"
+    hold_sv = root / "fpga" / "Plex_MiSTer" / "rtl" / "plex_ar_out_hold.sv"
+    post_sv = root / "fpga" / "Plex_MiSTer" / "rtl" / "plex_ar_post_ascal.sv"
+
+    sys_txt = sys_top.read_text(errors="replace") if sys_top.is_file() else ""
+    plex_txt = plex.read_text(errors="replace") if plex.is_file() else ""
+    qip_txt = qip.read_text(errors="replace") if qip.is_file() else ""
+
+    hold_inst = bool(
+        re.search(r"\bu_plex_ar_out_hold\b", sys_txt)
+        or re.search(r"\bplex_ar_out_hold\s+#", sys_txt)
+        or re.search(r"\bplex_ar_out_hold\s+\w+", sys_txt)
+    )
+    # Live commit pins: want AR in, live AR out, out_vs, ar_hold_black.
+    hold_ports = _extract_sv_instance_ports(sys_txt, "plex_ar_out_hold") if hold_inst else ""
+    if not hold_ports and hold_inst:
+        # fallback: window after u_plex_ar_out_hold
+        m = re.search(r"u_plex_ar_out_hold\s*\(([\s\S]{0,1200}?)\)\s*;", sys_txt)
+        hold_ports = m.group(1) if m else ""
+    want_ar = bool(re.search(r"\.(want_arx|ARX_want)\s*\(", hold_ports, re.I)) or bool(
+        re.search(r"\.want_arx\s*\(", hold_ports)
+    )
+    live_ar = bool(re.search(r"\.(live_arx|live_ary)\s*\(", hold_ports))
+    out_vs = bool(re.search(r"\.out_vs\s*\(", hold_ports))
+    hold_black_out = bool(re.search(r"\.ar_hold_black\s*\(", hold_ports))
+    # Reject hard-tied src_vs(0) / out_vs(0) hollow wiring.
+    tied_dead = bool(
+        re.search(r"\.src_vs\s*\(\s*1\'b0\s*\)", hold_ports)
+        or re.search(r"\.out_vs\s*\(\s*1\'b0\s*\)", hold_ports)
+    )
+    hold_qip = bool(re.search(r"plex_ar_out_hold\.sv", qip_txt))
+    hold_disk = hold_sv.is_file()
+
+    msgs.append(
+        f"LEG0_B9_AR_HOLD inst={int(hold_inst)} want={int(want_ar)} live={int(live_ar)} "
+        f"out_vs={int(out_vs)} ar_hold_black={int(hold_black_out)} tied_dead={int(tied_dead)} "
+        f"qip={int(hold_qip)} disk={int(hold_disk)}"
+    )
+    if not (hold_inst and hold_disk and hold_qip and want_ar and live_ar and out_vs and hold_black_out and not tied_dead):
+        errors.append(
+            "B9_SYS_TOP_AR_OUT_HOLD_MISSING: sys_top must instantiate plex_ar_out_hold "
+            "(u_plex_ar_out_hold) with want_arx/ary, live_arx/ary, out_vs (hdmi_vs), "
+            "ar_hold_black — files.qip + rtl present. Same-size DAR commit is HDMI "
+            "out_vs domain; VIDEO_ARX pin search alone is hollow (rd-duck / w-scaler B9)."
+        )
+
+    post_inst = bool(
+        re.search(r"\bu_plex_ar_post_ascal\b", sys_txt)
+        or re.search(r"\bplex_ar_post_ascal\s+\w+", sys_txt)
+    )
+    post_ports = _extract_sv_instance_ports(sys_txt, "plex_ar_post_ascal") if post_inst else ""
+    if not post_ports and post_inst:
+        m = re.search(r"u_plex_ar_post_ascal\s*\(([\s\S]{0,1200}?)\)\s*;", sys_txt)
+        post_ports = m.group(1) if m else ""
+    post_ar_hold = bool(re.search(r"\.ar_hold_black\s*\(", post_ports))
+    post_rgb_in = bool(
+        re.search(r"\.in_r\s*\(", post_ports) and re.search(r"\.out_r\s*\(", post_ports)
+    )
+    # Data association: hold black CDC'd into hdmi domain (ar_post_ascal_black).
+    cdc_assoc = bool(
+        re.search(r"ar_post_ascal_black|ar_hold_black_hdmi_sync", sys_txt)
+    )
+    post_qip = bool(re.search(r"plex_ar_post_ascal\.sv", qip_txt))
+    post_disk = post_sv.is_file()
+    msgs.append(
+        f"LEG0_B9_POST_ASCAL inst={int(post_inst)} ar_hold={int(post_ar_hold)} "
+        f"rgb_io={int(post_rgb_in)} cdc_assoc={int(cdc_assoc)} "
+        f"qip={int(post_qip)} disk={int(post_disk)}"
+    )
+    if not (
+        post_inst and post_disk and post_qip and post_ar_hold and post_rgb_in and cdc_assoc
+    ):
+        errors.append(
+            "B9_POST_ASCAL_DAR_BLACKOUT_MISSING: sys_top must wire plex_ar_post_ascal "
+            "after ascal RGB (in_r/g/b → out_*) with ar_hold_black (CDC'd from "
+            "plex_ar_out_hold). Same-size DAR blackout is pixel-path, not swblack "
+            "(ascal.vhd: swblack only when ih/iv size changes). files.qip+rtl required "
+            "(rd-duck)."
+        )
+
+    # HDMI_BLACKOUT OR alone is not same-size DAR evidence (swblack = size-only).
+    bo_or_only = bool(
+        re.search(
+            r"assign\s+HDMI_BLACKOUT\s*=\s*[^;]*(geom_hold_black|dar_hold_black|ar_hold_black)",
+            plex_txt,
+        )
+    )
+    hdmi_bo_one = bool(re.search(r"assign\s+HDMI_BLACKOUT\s*=\s*1\s*;", plex_txt))
+    same_size_path = bool(post_inst and hold_inst and post_ar_hold and cdc_assoc)
+    if not same_size_path:
+        errors.append(
+            "B9_HDMI_BO_OR_NOT_SAME_SIZE_DAR: HDMI_BLACKOUT alone (or OR of "
+            "geom_hold_black/dar_hold_black into emu.HDMI_BLACKOUT) is NOT evidence "
+            "of same-size DAR blanking — ascal swblack only triggers on ih/iv size "
+            "change (ascal.vhd). Require sys_top plex_ar_out_hold + plex_ar_post_ascal "
+            "pixel black + CDC assoc (rd-duck). "
+            f"bo_or={int(bo_or_only)} bo1={int(hdmi_bo_one)} post={int(post_inst)} "
+            f"hold={int(hold_inst)} cdc={int(cdc_assoc)}."
+        )
+    else:
+        msgs.append("LEG0_B9_OK same-size DAR path = hold+post-ascal (not HDMI_BO alone)")
+
+    return msgs, errors
+
+
+def run_b26_store_crop_display_bounds(root: Path) -> tuple[list[str], list[str]]:
+    """B26: ddr_frame_store must enforce runtime crop+display window bounds.
+
+    rd-duck: port presence of rt_crop_*/rt_display_* is hollow without the
+    window predicate (crop+disp <= coded; present+disp <= frame max) feeding
+    rt_raw_ok / geom accept. Overflow reads unfilled line RAM while geom stays
+    'valid'.
+    """
+    msgs: list[str] = []
+    errors: list[str] = []
+    store = root / "fpga" / "Plex_MiSTer" / "rtl" / "ddr_frame_store.sv"
+    core = root / "fpga" / "Plex_MiSTer" / "rtl" / "present_core.sv"
+    store_txt = store.read_text(errors="replace") if store.is_file() else ""
+    core_txt = core.read_text(errors="replace") if core.is_file() else ""
+
+    ports = {
+        "rt_display_w": bool(re.search(r"\brt_display_w\b", store_txt)),
+        "rt_display_h": bool(re.search(r"\brt_display_h\b", store_txt)),
+        "rt_crop_left": bool(re.search(r"\brt_crop_left\b", store_txt)),
+        "rt_crop_top": bool(re.search(r"\brt_crop_top\b", store_txt)),
+    }
+    # Window sums + compare to coded (mem contract).
+    crop_sum = bool(
+        re.search(r"rt_crop_disp_w_sum|crop_left.*display_w|rt_crop_left.*rt_dw", store_txt)
+        and re.search(r"rt_crop_disp_h_sum|crop_top.*display_h|rt_crop_top.*rt_dh", store_txt)
+    )
+    # Explicit bound into raw_ok / window wire.
+    window_ok = bool(
+        re.search(r"\brt_raw_window\b", store_txt)
+        and re.search(r"rt_raw_ok\s*=\s*[^;]*rt_raw_window", store_txt)
+    )
+    # Pixel path uses crop: src_x = display_x + crop_left (not display-only).
+    src_uses_crop = bool(
+        re.search(r"src_x\s*=\s*[^;]*crop", store_txt, re.I)
+        or re.search(r"display_x\s*\+\s*CROP_LEFT", store_txt)
+        or re.search(r"display_x\s*\+\s*.*crop", store_txt, re.I)
+    )
+    # present_core must drive the ports (not tied 0 wholesale).
+    core_drive = bool(
+        re.search(r"\.rt_display_w\s*\(", core_txt)
+        and re.search(r"\.rt_crop_left\s*\(", core_txt)
+    )
+    msgs.append(
+        f"LEG0_B26_CROP_DISP ports={ports} crop_sum={int(crop_sum)} "
+        f"rt_raw_window={int(window_ok)} src_uses_crop={int(src_uses_crop)} "
+        f"core_drive={int(core_drive)}"
+    )
+    if not store.is_file():
+        errors.append(
+            "B26_STORE_CROP_DISPLAY_BOUNDS_MISSING: ddr_frame_store.sv absent — "
+            "cannot enforce runtime crop/display window (rd-duck)."
+        )
+    elif not (all(ports.values()) and crop_sum and window_ok and src_uses_crop and core_drive):
+        errors.append(
+            "B26_STORE_CROP_DISPLAY_BOUNDS_MISSING: ddr_frame_store must (1) take "
+            "rt_display_w/h + rt_crop_left/top, (2) compute crop+display <= coded "
+            "and present+display <= frame max (rt_raw_window → rt_raw_ok), "
+            "(3) index src_x = display_x + crop_left, (4) present_core must drive "
+            "the ports. Port presence alone is hollow — overflow stays 'valid' "
+            "(rd-duck / w-mem window check)."
+        )
+    else:
+        msgs.append("LEG0_B26_OK runtime crop/display window bounds on rt_raw_ok")
+    return msgs, errors
+
+
+def run_b27_ffmpeg_pad_chroma_even(root: Path) -> tuple[list[str], list[str]]:
+    """B27: 426→432 pad oracle must be chroma-even x=2, not naive center x=3.
+
+    rd-duck: helper predicting pad_x=(432-426)/2=3 fails real FFmpeg yuv420p
+    output (content at x=2). Require padInsetChromaEven + padOnlyInsets in
+    host header, unit NEG pad_x!=3, and a live arithmetic EXECUTED check here.
+    """
+    msgs: list[str] = []
+    errors: list[str] = []
+    hdr = root / "host" / "libmisterplex" / "ffmpeg_vf.hpp"
+    test = root / "tests" / "unit" / "test_ffmpeg_vf.cpp"
+    hdr_txt = hdr.read_text(errors="replace") if hdr.is_file() else ""
+    test_txt = test.read_text(errors="replace") if test.is_file() else ""
+
+    has_fn = bool(re.search(r"\bpadInsetChromaEven\b", hdr_txt)) and bool(
+        re.search(r"\bpadOnlyInsets\b", hdr_txt)
+    )
+    # Formula: ideal & ~1 (floor even)
+    has_even = bool(
+        re.search(r"padInsetChromaEven[\s\S]{0,200}?&\s*~?\s*1", hdr_txt)
+        or re.search(r"return\s+ideal_inset\s*&\s*~1", hdr_txt)
+    )
+    # Must not emit expr pad (ow-iw)/2 alone as product pad-only path for DP.
+    # (Historical FOAR path may still contain it — require explicit even helper.)
+    test_pos = bool(
+        re.search(r"pad_x\s*==\s*2|pad_x\s*=\s*2|pad=432:240:2:0", test_txt)
+    )
+    test_neg = bool(
+        re.search(r"pad_x\s*!=\s*3|must not be math-center 3|NEG:.*pad_x", test_txt)
+    )
+
+    # Live EXECUTED arithmetic (gate-owned oracle — not search-only).
+    def pad_inset_chroma_even(ideal: int) -> int:
+        if ideal < 0:
+            return 0
+        return ideal & ~1
+
+    ideal = (432 - 426) // 2  # 3
+    got = pad_inset_chroma_even(ideal)
+    naive = ideal
+    msgs.append(
+        f"LEG0_B27_PAD_ORACLE_EXECUTED src=426 coded=432 ideal_center={naive} "
+        f"chroma_even={got} (need 2, reject 3)"
+    )
+    if got != 2 or naive == got:
+        # naive==got would mean we forgot even snap
+        errors.append(
+            f"B27_FFMPEG_PAD_CHROMA_EVEN_ORACLE: gate arithmetic failed "
+            f"padInsetChromaEven((432-426)/2)={got} want 2 (naive center={naive})."
+        )
+    if not hdr.is_file() or not has_fn or not has_even:
+        errors.append(
+            "B27_FFMPEG_PAD_CHROMA_EVEN_ORACLE: host/libmisterplex/ffmpeg_vf.hpp must "
+            "define padInsetChromaEven (ideal&~1) and padOnlyInsets. FFmpeg yuv420p "
+            "426→432 places content at x=2, not math-center x=3 (rd-duck measured)."
+        )
+    if not test.is_file() or not (test_pos and test_neg):
+        errors.append(
+            "B27_FFMPEG_PAD_CHROMA_EVEN_ORACLE: tests/unit/test_ffmpeg_vf.cpp must "
+            "assert 426→432 pad_x==2 AND NEG pad_x!=3 (and preferably live ffmpeg "
+            "raw oracle). Helper search alone is hollow (rd-duck)."
+        )
+    if not errors:
+        msgs.append(
+            "LEG0_B27_OK pad chroma-even oracle (426→432 x=2; NEG x!=3) in header+test"
+        )
+    # If header implements wrong formula (returns ideal unsnapped), catch it.
+    if has_fn and re.search(
+        r"padOnlyInsets[\s\S]{0,400}?\*\s*pad_x\s*=\s*\(\s*coded_w\s*-\s*src_w\s*\)\s*/\s*2\s*;",
+        hdr_txt,
+    ) and not re.search(
+        r"padOnlyInsets[\s\S]{0,400}?padInsetChromaEven\s*\(\s*\(\s*coded_w",
+        hdr_txt,
+    ):
+        errors.append(
+            "B27_FFMPEG_PAD_CHROMA_EVEN_ORACLE: padOnlyInsets assigns "
+            "(coded-src)/2 without padInsetChromaEven — naive x=3 on 426→432 "
+            "(rd-duck defect)."
+        )
+    return msgs, errors
+
+
 def leg0_arch_blockers() -> tuple[int, list[str]]:
     """rd-duck fit blockers — FAIL until a coherent candidate clears each.
 
@@ -3209,6 +3483,21 @@ def leg0_arch_blockers() -> tuple[int, list[str]]:
             )
         else:
             msgs.append("LEG0_AR_TESTS " + " ".join(ar_tests[:8]))
+
+        # B9 same-size DAR: sys_top hold + post-ascal (not HDMI_BLACKOUT OR).
+        b9h_msgs, b9h_errs = run_b9_ar_hold_post_ascal(ROOT)
+        msgs.extend(b9h_msgs)
+        errors.extend(b9h_errs)
+
+    # --- B26 runtime crop/display bounds (rd-duck; not port-presence alone) ---
+    b26_msgs, b26_errs = run_b26_store_crop_display_bounds(ROOT)
+    msgs.extend(b26_msgs)
+    errors.extend(b26_errs)
+
+    # --- B27 FFmpeg pad chroma-even 426→432 x=2 (rd-duck; naive x=3 fails) ---
+    b27_msgs, b27_errs = run_b27_ffmpeg_pad_chroma_even(ROOT)
+    msgs.extend(b27_msgs)
+    errors.extend(b27_errs)
 
     # --- B10: beam RTL must be on Quartus files.qip (not only Verilator hand-list) ---
     # rd-duck 34ddf: files.qip had present_content_window but not present_beam_content_de;
@@ -5415,6 +5704,7 @@ present_core u_mut_b22_core (
     fails.extend(_mutation_b24_q5_fps_1001())
     # B25 PLXC dual-map host→loader (CDC-only must not clear).
     fails.extend(_mutation_b25_plxc_dual_map())
+    fails.extend(_mutation_b9_b26_b27_rd_duck())
 
     return fails
 
@@ -6159,6 +6449,218 @@ exit "$rc"
             r()
     else:
         print("  MUT_OK B25_PLXC_STALE_DEFAULT_3007F000 skip_no_loader=1")
+
+    return fails
+
+
+
+def _mutation_b9_b26_b27_rd_duck() -> list[str]:
+    """B9 hold/post-ascal, B26 crop window, B27 pad x=2 — clear/restore + RED."""
+    fails: list[str] = []
+    sys_top = ROOT / "fpga" / "Plex_MiSTer" / "sys" / "sys_top.v"
+    store = RTL / "ddr_frame_store.sv"
+    hdr = ROOT / "host" / "libmisterplex" / "ffmpeg_vf.hpp"
+    test = ROOT / "tests" / "unit" / "test_ffmpeg_vf.cpp"
+    qip = ROOT / "fpga" / "Plex_MiSTer" / "files.qip"
+    rtl = ROOT / "fpga" / "Plex_MiSTer" / "rtl"
+
+    def _toks() -> set[str]:
+        _rc, msgs = leg0_arch_blockers()
+        return _leg0_error_tokens(msgs)
+
+    # --- B9: inject hold+post-ascal minimal wiring must clear all three tokens ---
+    hold_sv = rtl / "plex_ar_out_hold.sv"
+    post_sv = rtl / "plex_ar_post_ascal.sv"
+    hold_body = """module plex_ar_out_hold #(parameter DEPTH=3, parameter BLACK_OUT_FRAMES=3) (
+  input clk_src, input rst_src, input [11:0] want_arx, input [11:0] want_ary,
+  input src_vs, input [15:0] bank_gen, input clk_out, input rst_out, input out_vs,
+  output reg [11:0] live_arx, output reg [11:0] live_ary, output reg ar_hold_black,
+  output dbg_disp_gen, output dbg_disp_match, output dbg_assoc_fail
+);
+  initial begin live_arx=0; live_ary=0; ar_hold_black=0; end
+endmodule
+"""
+    post_body = """module plex_ar_post_ascal (
+  input clk_hdmi, input rst_hdmi, input ce_hdmi, input ar_hold_black,
+  input [7:0] in_r, in_g, in_b, input in_hs, in_vs, in_de,
+  output reg [7:0] out_r, out_g, out_b, output reg out_hs, out_vs, out_de,
+  output black_viol
+);
+  assign black_viol = 0;
+endmodule
+"""
+    sys_snip = """
+// fitgate mut B9 hold+post-ascal
+wire ar_hold_black;
+wire ar_post_ascal_black;
+reg [1:0] ar_hold_black_hdmi_sync;
+wire [11:0] ARX_want, ARY_want, ARX, ARY;
+wire hdmi_vs;
+wire clk_vid, clk_hdmi, clk_sys, reset, vs_emu;
+plex_ar_out_hold #(.DEPTH(3), .BLACK_OUT_FRAMES(3)) u_plex_ar_out_hold (
+  .clk_src(clk_sys), .rst_src(reset), .want_arx(ARX_want), .want_ary(ARY_want),
+  .src_vs(vs_emu), .bank_gen(16'd0), .clk_out(clk_vid), .rst_out(reset),
+  .out_vs(hdmi_vs), .live_arx(ARX), .live_ary(ARY), .ar_hold_black(ar_hold_black),
+  .dbg_disp_gen(), .dbg_disp_match(), .dbg_assoc_fail()
+);
+always @(posedge clk_hdmi) ar_hold_black_hdmi_sync <= {ar_hold_black_hdmi_sync[0], ar_hold_black};
+assign ar_post_ascal_black = ar_hold_black_hdmi_sync[1];
+wire [7:0] hdmi_r_post, hdmi_g_post, hdmi_b_post;
+plex_ar_post_ascal u_plex_ar_post_ascal (
+  .clk_hdmi(clk_hdmi), .rst_hdmi(reset), .ce_hdmi(1'b1),
+  .ar_hold_black(ar_post_ascal_black),
+  .in_r(8'd0), .in_g(8'd0), .in_b(8'd0), .in_hs(1'b0), .in_vs(1'b0), .in_de(1'b0),
+  .out_r(hdmi_r_post), .out_g(hdmi_g_post), .out_b(hdmi_b_post),
+  .out_hs(), .out_vs(), .out_de(), .black_viol()
+);
+"""
+    restorers = []
+    try:
+        if sys_top.is_file():
+            old_sys = sys_top.read_text()
+            restorers.append(_with_file_backup(sys_top, old_sys + "\n" + sys_snip))
+        else:
+            fails.append("B9 mut: sys_top missing")
+        restorers.append(_with_file_backup(hold_sv, hold_body))
+        restorers.append(_with_file_backup(post_sv, post_body))
+        if qip.is_file():
+            old_q = qip.read_text()
+            restorers.append(
+                _with_file_backup(
+                    qip,
+                    old_q
+                    + '\nset_global_assignment -name SYSTEMVERILOG_FILE rtl/plex_ar_out_hold.sv\n'
+                    + 'set_global_assignment -name SYSTEMVERILOG_FILE rtl/plex_ar_post_ascal.sv\n',
+                )
+            )
+        t = _toks()
+        need = {
+            "B9_SYS_TOP_AR_OUT_HOLD_MISSING",
+            "B9_POST_ASCAL_DAR_BLACKOUT_MISSING",
+            "B9_HDMI_BO_OR_NOT_SAME_SIZE_DAR",
+        }
+        still = need & t
+        if still:
+            fails.append(f"B9 hold+post inject did not clear {still} — HOLE")
+        else:
+            print("  MUT_OK B9_AR_HOLD_POST_ASCAL clear_drop=1")
+    finally:
+        for r in reversed(restorers):
+            r()
+    t2 = _toks()
+    for tok in (
+        "B9_SYS_TOP_AR_OUT_HOLD_MISSING",
+        "B9_POST_ASCAL_DAR_BLACKOUT_MISSING",
+        "B9_HDMI_BO_OR_NOT_SAME_SIZE_DAR",
+    ):
+        if tok not in t2:
+            fails.append(f"{tok}: vanished after restore — HOLE")
+        else:
+            print(f"  MUT_OK {tok} restore_fire=1")
+
+    # --- B26: inject rt_raw_window bounds into store ---
+    if store.is_file():
+        old = store.read_text()
+        inject = """
+	// fitgate mut B26 window bounds
+	wire [11:0] rt_crop_disp_w_sum = {1'b0, rt_crop_left} + {1'b0, rt_dw_nz};
+	wire [11:0] rt_crop_disp_h_sum = {1'b0, rt_crop_top} + {1'b0, rt_dh_nz};
+	wire [11:0] rt_pres_disp_w_sum = 12'd0;
+	wire [11:0] rt_pres_disp_h_sum = 12'd0;
+	wire rt_raw_window =
+		(rt_crop_disp_w_sum <= {1'b0, rt_cw_nz}) &&
+		(rt_crop_disp_h_sum <= {1'b0, rt_ch_nz});
+	wire rt_raw_ok = rt_raw_nonzero && rt_raw_in_range && rt_raw_aligned && rt_raw_window;
+"""
+        # Prefer splice near rt_raw_ok if present, else append.
+        if re.search(r"\brt_raw_ok\b", old):
+            new = re.sub(
+                r"wire\s+rt_raw_ok\s*=\s*[^;]+;",
+                inject + "\t// mut replaced rt_raw_ok\n",
+                old,
+                count=1,
+            )
+        else:
+            new = old + "\n" + inject
+        r = _with_file_backup(store, new)
+        try:
+            if "B26_STORE_CROP_DISPLAY_BOUNDS_MISSING" in _toks():
+                fails.append("B26: window inject did not clear — HOLE")
+            else:
+                print("  MUT_OK B26_STORE_CROP_DISPLAY_BOUNDS_MISSING clear_drop=1")
+        finally:
+            r()
+        if "B26_STORE_CROP_DISPLAY_BOUNDS_MISSING" not in _toks():
+            fails.append("B26: vanished after restore — HOLE")
+        else:
+            print("  MUT_OK B26_STORE_CROP_DISPLAY_BOUNDS_MISSING restore_fire=1")
+    else:
+        fails.append("B26 mut: store missing")
+
+    # --- B27: inject chroma-even helper + test asserts ---
+    hdr_body = """
+#pragma once
+#include <cstdint>
+inline int padInsetChromaEven(int ideal_inset) {
+    if (ideal_inset < 0) return 0;
+    return ideal_inset & ~1;
+}
+inline bool padOnlyInsets(int src_w, int src_h, int coded_w, int coded_h, int* pad_x, int* pad_y) {
+    if (!pad_x || !pad_y) return false;
+    *pad_x = padInsetChromaEven((coded_w - src_w) / 2);
+    *pad_y = padInsetChromaEven((coded_h - src_h) / 2);
+    return true;
+}
+"""
+    test_snip = """
+// fitgate mut B27
+// pad_x == 2 for 426→432; NEG: pad_x must not be math-center 3
+// pad=432:240:2:0
+"""
+    rh = _with_file_backup(hdr, (hdr.read_text() if hdr.is_file() else "") + hdr_body)
+    rt = _with_file_backup(test, (test.read_text() if test.is_file() else "") + test_snip)
+    try:
+        if "B27_FFMPEG_PAD_CHROMA_EVEN_ORACLE" in _toks():
+            fails.append("B27: chroma-even inject did not clear — HOLE")
+        else:
+            print("  MUT_OK B27_FFMPEG_PAD_CHROMA_EVEN_ORACLE clear_drop=1")
+    finally:
+        rt()
+        rh()
+    if "B27_FFMPEG_PAD_CHROMA_EVEN_ORACLE" not in _toks():
+        fails.append("B27: vanished after restore — HOLE")
+    else:
+        print("  MUT_OK B27_FFMPEG_PAD_CHROMA_EVEN_ORACLE restore_fire=1")
+
+    # B27 RED: naive (coded-src)/2 without even snap must fire.
+    bad_hdr = """
+#pragma once
+inline bool padOnlyInsets(int src_w, int src_h, int coded_w, int coded_h, int* pad_x, int* pad_y) {
+    *pad_x = (coded_w - src_w) / 2; // naive center — DEFECT
+    *pad_y = (coded_h - src_h) / 2;
+    return true;
+}
+inline int padInsetChromaEven(int ideal_inset) { return ideal_inset; } // no-op even
+"""
+    # Need tests to still claim pad_x==2 so only formula defect fires... actually
+    # gate fires if header lacks even formula OR test lacks asserts.
+    # Inject naive formula WITH padInsetChromaEven name but wrong body + good tests.
+    good_test = """
+// pad_x == 2
+// NEG: pad_x must not be math-center 3
+// pad=432:240:2:0
+"""
+    rh = _with_file_backup(hdr, bad_hdr)
+    rt = _with_file_backup(test, good_test)
+    try:
+        # naive assign without padInsetChromaEven call in padOnlyInsets
+        if "B27_FFMPEG_PAD_CHROMA_EVEN_ORACLE" not in _toks():
+            fails.append("B27: naive /2 padOnlyInsets did not fire — HOLE")
+        else:
+            print("  MUT_OK B27_FFMPEG_PAD_CHROMA_EVEN_ORACLE naive_center_rejected=1")
+    finally:
+        rt()
+        rh()
 
     return fails
 

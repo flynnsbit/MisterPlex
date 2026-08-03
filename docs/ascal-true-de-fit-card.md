@@ -55,6 +55,12 @@ w-mem product: **legacy 0x300FF000**, **Option-C 0x3047F000**. ARM PLXC writes r
 **B20_HIER_G CDC multi-beat alone does not clear** — gate requires executable host-write→loader-read on **both** maps (`tests/unit/B25_PLXC_DOORBELL_DUAL_MAP_MANIFEST.json`):  
 `measured_host_write_{legacy,optc}=1` + `measured_loader_read_{legacy,optc}=1` + `measured_stale_3007F000_used=0` + green/fault simulator twins.  
 Static: `B25_PLXC_STALE_DEFAULT_3007F000` / `B25_PLXC_INST_STALE_3007F000` when default/inst is packed-320.  
+
+**B9 same-size DAR (rd-duck gap):** ascal `swblack` only on **ih/iv size change**. `HDMI_BLACKOUT` OR of `geom_hold_black`/`dar_hold_black` is **not** same-size DAR evidence. Require **sys_top** `u_plex_ar_out_hold` (want→live AR on `out_vs`, `ar_hold_black`) **and** `u_plex_ar_post_ascal` (post-ascal RGB black + CDC `ar_post_ascal_black`). Tokens: `B9_SYS_TOP_AR_OUT_HOLD_MISSING`, `B9_POST_ASCAL_DAR_BLACKOUT_MISSING`, `B9_HDMI_BO_OR_NOT_SAME_SIZE_DAR`. Port-search of `VIDEO_ARX` alone is hollow.  
+
+**B26 store crop/display bounds (rd-duck):** `ddr_frame_store` must take `rt_display_*`/`rt_crop_*`, enforce `rt_raw_window` (crop+disp ≤ coded; present+disp ≤ frame) into `rt_raw_ok`, and `src_x = display_x + crop`. Port presence without window predicate is hollow.  
+
+**B27 FFmpeg pad chroma-even (rd-duck):** Direct Part **426→432** must use `padInsetChromaEven` → **pad_x=2**, not naive center **x=3** (live FFmpeg yuv420p). Header + unit NEG `pad_x!=3`; gate arithmetic EXECUTED.  
 **Static q5@0x828 / B17 presence is insufficient.** Gate requires executable  
 `tests/unit/test_b24_q5_fps_1001_merged_path.sh` (manifest `B24_Q5_FPS_1001_MANIFEST.json`):  
 host-pack canonical 24000/1001 → merged **poller+latch+consumer** → prove  

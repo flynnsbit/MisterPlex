@@ -1,8 +1,8 @@
 {
   "architecture": "ascal_true_de_960",
-  "git_tree_hash": "8498372f75d3fa04ac953a7c6dc32b1acb7e6f1a",
-  "gate_identity_hash": "ce5026a63974d81c080e54be649ec5aa4205d3cb",
-  "git_head_at_lock": "6fa93d97f6ec921d597a841200a477c108f2735e",
+  "git_tree_hash": "07cf4f870ead7cebc37019943668ae27c5b3af4f",
+  "gate_identity_hash": "0c35b19d59c5771deb03dba1d18a3e2351a7e6c9",
+  "git_head_at_lock": "4362b4f4da14df69084fca60ea18098b4cfd9602",
   "required_macros": {
     "FRAME_W": "960",
     "FRAME_H": "540",
