@@ -1,6 +1,7 @@
 // Red-before-green: zero-copy / overlapped DDR ingest contract (w-path).
 
 #include "libmisterplex/ddr_zero_copy_ingest.hpp"
+#include "libmisterplex/misterplex_bank_kabi.hpp"
 #include "libmisterplex/pl330_mem2mem.hpp"
 
 #include <cstdio>
@@ -41,7 +42,7 @@ int main() {
         CHECK(s.phase() == DdrIngestPhase::DoorbellRung, "phase rung");
     }
 
-    // NEG: require PLXD credit
+    // NEG: require PLXD credit — must stay AwaitBankCredit (NOT Failed overwrite).
     {
         DdrIngestContract c;
         c.require_bank_credit = true;
@@ -54,8 +55,14 @@ int main() {
         j.bank = 1;
         j.plxd_credit_held = false;
         CHECK(!s.begin(j), "NEG begin without credit");
-        CHECK(s.phase() == DdrIngestPhase::Failed || s.phase() == DdrIngestPhase::AwaitBankCredit,
-              "credit fail phase");
+        CHECK(s.phase() == DdrIngestPhase::AwaitBankCredit, "sticky AwaitBankCredit");
+        CHECK(s.phase() != DdrIngestPhase::Failed, "NEG must not collapse to Failed");
+        CHECK(!s.continueAfterBankCredit(false), "NEG still no credit");
+        CHECK(s.phase() == DdrIngestPhase::AwaitBankCredit, "still awaiting");
+        CHECK(s.continueAfterBankCredit(true), "credit granted");
+        CHECK(s.phase() == DdrIngestPhase::PayloadMoving, "moving after credit");
+        CHECK(s.completeCpuMemcpy(), "copy after credit");
+        CHECK(s.mayRingDoorbell(), "doorbell after barrier");
     }
 
     // DecodeIntoBank path
@@ -103,9 +110,19 @@ int main() {
     CHECK(kParentDecode720pCleanAloneMs + kParentBankCopy720pMs > kIngestBudget24fpsMs,
           "NEG serial over budget");
 
-    // Mode conf parse
-    CHECK(ddrIngestModeFromConf("pl330") == DdrIngestMode::Pl330Overlap, "conf pl330");
+    // Mode conf parse — "dma" means kernel owner; raw pl330 is lab-only alias.
+    CHECK(ddrIngestModeFromConf("pl330") == DdrIngestMode::Pl330Userspace, "conf pl330 lab");
+    CHECK(ddrIngestModeFromConf("dma") == DdrIngestMode::KernelDma, "conf dma kernel");
+    CHECK(ddrIngestModeFromConf("kernel_dma") == DdrIngestMode::KernelDma, "conf kernel_dma");
+    CHECK(ddrIngestModeFromConf("wc") == DdrIngestMode::CpuWriteCombine, "conf wc");
     CHECK(ddrIngestModeFromConf(nullptr) == DdrIngestMode::CpuSerial, "conf default");
+    CHECK(ddrIngestModeIsLabOnly(DdrIngestMode::Pl330Userspace), "pl330 lab");
+    CHECK(ddrIngestModeIsProductCandidate(DdrIngestMode::KernelDma), "kernel product");
+    CHECK(ddrIngestModeIsProductCandidate(DdrIngestMode::CpuWriteCombine), "wc product");
+    CHECK(kParentCpuBankCopyCeilingIsDevMemOnly, "ceiling scoped to /dev/mem");
+    CHECK(!ddrIngestTrue720pSerialCopyRateFits(88.045), "NEG /dev/mem rate insufficient");
+    CHECK(ddrIngestTrue720pSerialCopyRateFits(230.2), "WC bar");
+    ddrIngestPayloadVisibilityBarrier(); // must compile/link; real DMB on ARM
 
     // Double-buffer advance
     {
@@ -237,11 +254,31 @@ int main() {
     CHECK(pl330PhysInStaging(kPl330StagingPhys, kPlex720pYuv420pBytes), "frame in staging");
     CHECK(Pl330Mem2Mem::abiProgScratchPhys() == kPl330ProgScratchPhys, "abi helper");
 
+    // Kernel bank ABI (product DMA/WC — no raw unbind)
+    {
+        MisterplexBankInfo info{};
+        info.api_version = kMisterplexBankApiVersion;
+        info.n_banks = 2;
+        info.bank0_phys = kMisterplexBank0PhysDefault;
+        info.bank1_phys = kMisterplexBank1PhysDefault;
+        info.bank_bytes = kMisterplexBankBytesDefault;
+        info.map_prot = kMpbMapProtWriteCombine;
+        info.dma_capable = 1;
+        CHECK(misterplexBankInfoSane(info), "kabi info sane");
+        info.bank0_phys = info.bank1_phys;
+        CHECK(!misterplexBankInfoSane(info), "NEG kabi same bank phys");
+        CHECK(std::strcmp(misterplexBankMapProtName(kMpbMapProtWriteCombine), "write_combine") == 0,
+              "prot name");
+        CHECK(misterplexBankWcRateIsProductCandidate(230.2), "wc candidate");
+        CHECK(!misterplexBankWcRateIsProductCandidate(88.0), "NEG wc below bar");
+        CHECK(kMpbIocInfoCmd != 0 && kMpbIocDmaMemcpyCmd != 0, "ioctl cmds nonzero");
+    }
+
     if (g_fails) {
         std::cerr << "test_ddr_zero_copy_ingest: " << g_fails << " fails\n";
         return 1;
     }
-    std::cout << "GREEN_ZERO_COPY_INGEST contract+pl330_encode+budget\n";
+    std::cout << "GREEN_ZERO_COPY_INGEST contract+kabi+barrier+credit\n";
     std::cout << "test_ddr_zero_copy_ingest: OK\n";
     return 0;
 }

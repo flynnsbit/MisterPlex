@@ -1,3 +1,6 @@
+> **STATUS:** Lab diagnostic only. Parent unbind incident showed raw PL330 is not
+> product path. Prefer `KERNEL_DMA_AND_WC_DESIGN.md`. Do **not** unbind `dma-pl330`.
+
 # Parent commands — PL330 FTR0 + NS CCR (w-path)
 
 ## Context

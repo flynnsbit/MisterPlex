@@ -1,25 +1,26 @@
 #pragma once
 
-// HPS bank ingest (w-path). Parent 2026-08-03 architecture lock:
+// HPS bank ingest (w-path). Parent 2026-08-03 architecture lock (+ incident pivot):
 //
-// STRUCTURAL: bank at 0x30xx_xxxx is OUTSIDE kernel System RAM (cmdline
-// mem=511M memmap=513M$511M; iomem System RAM ends 0x1fefffff). /dev/mem maps
-// it uncached/device regardless of O_SYNC. Measured CPU store ceiling ~88 MiB/s
-// (~14.97 ms/f for 720p I420). --no-sync/--flush do NOT help (0/5 pre-reg).
-// ⇒ decode(35.94)+CPU full-frame move(>=14.97) >= 50.9 ms vs 41.667 — CLOSED FAIL.
+// /dev/mem STRUCTURAL (narrow claim): bank at 0x30xx_xxxx is OUTSIDE kernel
+// System RAM (mem=511M memmap=513M$511M; iomem RAM ends 0x1fefffff). pfn_valid
+// is false → kernel forces pgprot_noncached; O_SYNC is inert. Measured CPU
+// store ceiling ~88 MiB/s (~14.97 ms/f for 720p I420) applies to **/dev/mem
+// mappings of the reserved region only** — not to a dedicated driver that maps
+// pgprot_writecombine (rd-duck; parent accepted).
 //
 // Modes (product default remains CpuSerial via existing sendDdrFrame):
-//   CpuSerial       — memcpy then doorbell (DEAD for 720p24; 480p only)
-//   DecodeIntoBank  — SUSPECT not a win: decoder would store+reload refs from
-//                     same uncached bank. Do NOT productize until measured.
-//   Pl330Overlap    — CRITICAL PATH for any ARM-side 720p24: PL330 via L3 is
-//                     not subject to CPU uncached-store stall. Concurrency with
-//                     decode still UNMEASURED (bench c4cf0392 must verify bytes).
+//   CpuSerial         — memcpy into /dev/mem bank (DEAD for true 720p24 source)
+//   DecodeIntoBank    — SUSPECT on noncached map; do not productize yet
+//   Pl330Userspace    — LAB ONLY. Raw DMAGO fights live dma-pl330; unbind hung
+//                       the SoC. Not a product path (parent incident 2026-08-03).
+//   KernelDma         — PRODUCT DMA route: dmaengine client / small module
+//   CpuWriteCombine   — PRODUCT serial upgrade: driver WC map + CPU memcpy
 //
-// Endgame (mandate): fabric owns pixels / h264_decode_top — stop crossing the
-// uncached boundary with frame payloads at all.
+// Ship product glass path is still 960×540 source → fabric upscale → 720p out.
+// True 720p *source* needs KernelDma and/or CpuWriteCombine ≥ ~230 MiB/s.
 //
-// Doorbell ordering (absolute): payload FPGA-visible → then one doorbell.
+// Doorbell ordering (absolute): payload FPGA-visible → real barrier → doorbell.
 // Coordinate w-mem: bank/doorbell ABI; fabric_ddr_writer = fabric producer.
 
 #include "libmisterplex/ddr_frame_layout.hpp"
@@ -35,14 +36,17 @@ namespace misterplex {
 enum class DdrIngestMode : uint8_t {
     CpuSerial = 0,
     DecodeIntoBank = 1,
-    Pl330Overlap = 2,
+    Pl330Overlap = 2,       // alias: Pl330Userspace (lab/diagnostic only)
+    Pl330Userspace = 2,     // same value — raw register poke; NOT product
+    KernelDma = 3,          // dmaengine owner (product DMA)
+    CpuWriteCombine = 4,    // WC-mapped bank + CPU memcpy (product serial upgrade)
 };
 
 enum class DdrIngestPhase : uint8_t {
     Idle = 0,
-    AwaitBankCredit = 1,
+    AwaitBankCredit = 1, // soft wait — must NOT collapse to Failed
     PayloadMoving = 2,
-    PayloadVisible = 3, // safe to ring doorbell
+    PayloadVisible = 3, // safe to ring doorbell after visibility barrier
     DoorbellRung = 4,
     Failed = 5,
 };
@@ -84,17 +88,36 @@ constexpr double kIngestBudget24fpsMs = 41.667;
 constexpr double kParentBankCopy720pMs = 14.978;
 constexpr double kParentBankCopy720pMiBps = 88.045; // --sync control, structural
 constexpr double kParentDecode720pCleanAloneMs = 35.94;
-// true: CPU full-frame bank move cannot be tuned past uncached ceiling on this map
+// true ONLY for /dev/mem noncached maps of reserved banks (parent narrowed claim).
+// A driver WC map is a separate falsifiable route (target ≥ kParentTrue720pCopyMiBpsNeed).
 constexpr bool kParentCpuBankCopyIsStructuralCeiling = true;
+constexpr bool kParentCpuBankCopyCeilingIsDevMemOnly = true;
+// True 720p source serial: need copy ≤ (41.667 - 35.94) = 5.727 ms → ≥230.2 MiB/s.
+constexpr double kParentTrue720pCopyBudgetMs = 5.727;
+constexpr double kParentTrue720pCopyMiBpsNeed = 230.2; // parent; ~2.615× /dev/mem rate
 constexpr double kParentDecode720p2500kMs = 35.87; // earlier same-session arm
 constexpr double kParentDecode720pProduct2600kMs = kParentDecode720pCleanAloneMs;
 constexpr double kParentDecode720pApprox2600kMs = kParentDecode720pProduct2600kMs;
 // Universal geometry floor content ~2585k after maxBR=3100 (w-path fine matrix).
 
+// Hardware + compiler barrier before doorbell. atomic_signal_fence is NOT enough
+// (compiler-only; rd-duck audit). Match fpga_spi.cpp __sync_synchronize() → ARM DMB.
+inline void ddrIngestPayloadVisibilityBarrier() {
+#if defined(__GNUC__) || defined(__clang__)
+    __sync_synchronize();
+#else
+    std::atomic_thread_fence(std::memory_order_seq_cst);
+#endif
+}
+
 inline bool ddrIngestSerialDecodePlusCopyFits(double decodeMs,
                                               double copyMs = kParentBankCopy720pMs,
                                               double budgetMs = kIngestBudget24fpsMs) {
     return (decodeMs + copyMs) <= budgetMs;
+}
+
+inline bool ddrIngestTrue720pSerialCopyRateFits(double copyMiBps) {
+    return copyMiBps >= kParentTrue720pCopyMiBpsNeed;
 }
 
 // Route A sketch: throughput ~ max(decode, copy). NOT proven under DDR contention.
@@ -110,18 +133,39 @@ inline const char* ddrIngestModeName(DdrIngestMode m) {
         return "cpu_serial";
     case DdrIngestMode::DecodeIntoBank:
         return "decode_into_bank";
-    case DdrIngestMode::Pl330Overlap:
-        return "pl330_overlap";
+    case DdrIngestMode::Pl330Overlap: // Pl330Userspace
+        return "pl330_userspace_lab";
+    case DdrIngestMode::KernelDma:
+        return "kernel_dma";
+    case DdrIngestMode::CpuWriteCombine:
+        return "cpu_write_combine";
     }
     return "unknown";
+}
+
+inline bool ddrIngestModeIsProductCandidate(DdrIngestMode m) {
+    return m == DdrIngestMode::KernelDma || m == DdrIngestMode::CpuWriteCombine ||
+           m == DdrIngestMode::CpuSerial; // CpuSerial product for 480/540 only
+}
+
+inline bool ddrIngestModeIsLabOnly(DdrIngestMode m) {
+    return m == DdrIngestMode::Pl330Userspace || m == DdrIngestMode::DecodeIntoBank;
 }
 
 inline DdrIngestMode ddrIngestModeFromConf(const char* s) {
     if (!s || !*s)
         return DdrIngestMode::CpuSerial;
+    if (std::strcmp(s, "kernel_dma") == 0 || std::strcmp(s, "dmaengine") == 0)
+        return DdrIngestMode::KernelDma;
+    if (std::strcmp(s, "write_combine") == 0 || std::strcmp(s, "wc") == 0 ||
+        std::strcmp(s, "cpu_wc") == 0)
+        return DdrIngestMode::CpuWriteCombine;
+    // Raw PL330 still parseable for lab benches — never the product default.
     if (std::strcmp(s, "pl330") == 0 || std::strcmp(s, "pl330_overlap") == 0 ||
-        std::strcmp(s, "dma") == 0)
-        return DdrIngestMode::Pl330Overlap;
+        std::strcmp(s, "pl330_userspace") == 0)
+        return DdrIngestMode::Pl330Userspace;
+    if (std::strcmp(s, "dma") == 0)
+        return DdrIngestMode::KernelDma; // "dma" now means kernel owner, not raw poke
     if (std::strcmp(s, "decode_into_bank") == 0 || std::strcmp(s, "into_bank") == 0)
         return DdrIngestMode::DecodeIntoBank;
     return DdrIngestMode::CpuSerial;
@@ -149,15 +193,32 @@ public:
             return false;
         }
         if (c_.require_bank_credit && !job_.plxd_credit_held) {
+            // Soft wait — do NOT call fail() (that collapsed this to Failed; rd-duck).
             phase_ = DdrIngestPhase::AwaitBankCredit;
-            fail("begin: PLXD bank credit required but not held");
+            err_ = "begin: PLXD bank credit required but not held";
             return false;
         }
         phase_ = DdrIngestPhase::PayloadMoving;
         return true;
     }
 
-    // CpuSerial backend: blocking memcpy + DMB.
+    // Resume after AwaitBankCredit once PLXD credit is held.
+    bool continueAfterBankCredit(bool credit_held) {
+        if (phase_ != DdrIngestPhase::AwaitBankCredit) {
+            fail("continueAfterBankCredit: not awaiting credit");
+            return false;
+        }
+        if (!credit_held) {
+            err_ = "continueAfterBankCredit: credit still not held";
+            return false; // stay AwaitBankCredit
+        }
+        job_.plxd_credit_held = true;
+        err_.clear();
+        phase_ = DdrIngestPhase::PayloadMoving;
+        return true;
+    }
+
+    // CpuSerial / CpuWriteCombine backend: blocking memcpy + real DMB.
     bool completeCpuMemcpy() {
         if (phase_ != DdrIngestPhase::PayloadMoving) {
             fail("completeCpuMemcpy: bad phase");
@@ -168,8 +229,7 @@ public:
             return false;
         }
         std::memcpy(job_.bank_virt, job_.src_virt, job_.len);
-        // Compiler barrier; device uses __sync_synchronize in fpga_spi.
-        std::atomic_signal_fence(std::memory_order_seq_cst);
+        ddrIngestPayloadVisibilityBarrier();
         timing_.move_us = 0; // caller may overwrite with wall time
         timing_.used_dma = false;
         phase_ = DdrIngestPhase::PayloadVisible;
@@ -182,19 +242,22 @@ public:
             fail("completeDecodeIntoBankBarrier: bad phase");
             return false;
         }
-        std::atomic_signal_fence(std::memory_order_seq_cst);
+        ddrIngestPayloadVisibilityBarrier();
         timing_.decode_into_bank = true;
         timing_.used_dma = false;
         phase_ = DdrIngestPhase::PayloadVisible;
         return true;
     }
 
-    // Pl330 backend success path (DMA engine reports done).
+    // KernelDma (or lab PL330) success path after engine reports completion.
     bool completeDmaDone() {
         if (phase_ != DdrIngestPhase::PayloadMoving) {
             fail("completeDmaDone: bad phase");
             return false;
         }
+        // DMA completion ≠ doorbell-safe without a visibility barrier on weakly
+        // ordered observers; match fpga_spi publish path.
+        ddrIngestPayloadVisibilityBarrier();
         timing_.used_dma = true;
         phase_ = DdrIngestPhase::PayloadVisible;
         return true;

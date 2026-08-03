@@ -1,4 +1,4 @@
-w-path STATUS — 540p→720 glass (corrected budget)
+w-path STATUS — 540p→720 glass + kernel/WC pivot
 
 PRODUCT budget (parent, decode+sws+copy):
   26.08 + 8.42 = 34.50 ms/f   margin +7.16 PASS
@@ -7,8 +7,13 @@ PRODUCT budget (parent, decode+sws+copy):
 TRAP: ARM downscale from 720 = FAIL 1.74× worse — never product fallback.
 
 Host: 540p ladder + Source540pFabric720p + genuine gate (8e62f61b+)
-DMA: upgrade only. Burst ladder ruled out burst-width (all fault at cpc+6).
-  Fix in flight: NS CCR AxPROT + raw FTR0 + prog disasm.
-  Parent cmd: docs/evidence/p720-path-20260803/PARENT_COMMANDS_PL330_FTR0.md
-  Deploy: build/arm/ddr_pl330_ingest_bench
-  Run: --len 4096 --loops 1 --bank 1 --burst 1
+
+DMA pivot (parent unbind incident — device needs power cycle):
+  STOP product investment in raw userspace PL330 / unbind.
+  Route K: arm/kmod/misterplex_bank (dmaengine client)
+  Route W: WC mmap via same module; pass ≥230.2 MiB/s
+  Design: docs/evidence/p720-path-20260803/KERNEL_DMA_AND_WC_DESIGN.md
+  ABI: host/libmisterplex/misterplex_bank_kabi.hpp
+  Fixed: AwaitBankCredit no longer → Failed; real __sync_synchronize barrier
+  88 MiB/s claim narrowed to /dev/mem noncached only (rd-duck)
+  Lab PL330 FTR0 bench kept as diagnostic only (b211afce)
