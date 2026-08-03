@@ -70,3 +70,24 @@ Order: w-mem-720p-abi → w-clock-bump → w-scaler-window → w-osd-fabric-plan
 | Makefile / invariants / rollcall | **scaler** | matches scaler product tests |
 
 **Note:** scaler list depth may still be pre-osd MAX_CMDS; osd merge must re-assert 112 + freeze 0x800 without relocating PLXG.
+## Merge `w-osd-fabric-plane` (4c379a84)
+- result: CONFLICT
+  - unresolved: `Makefile`
+  - unresolved: `arm/misterplexd/fpga_spi.cpp`
+  - unresolved: `arm/misterplexd/main.cpp`
+  - unresolved: `host/libmisterplex/mailbox_abi_spec.hpp`
+  - unresolved: `scripts/hdmi_capture_idle.sh`
+  - unresolved: `tests/unit/test_ddr_720p_abi.cpp`
+  - unresolved: `tests/unit/test_unit_rollcall.py`
+
+### Resolution policy for `w-osd-fabric-plane`
+
+| File | Choice | Why |
+|------|--------|-----|
+| `Makefile` | **UNION** | unit-unlocked token merge; both RTL sim lists; osd post-fit chrome gates |
+| `mailbox_abi_spec.hpp` | **scaler clean tip** | PLXG FIXED 0x800, list 112, PLXG bytes 40 |
+| `test_ddr_720p_abi.cpp` | **scaler (ours)** | fuller Option-C + freeze checks |
+| `hdmi_capture_idle.sh` | **osd** | cyan/magenta/lime fabric scoring |
+| `fpga_spi.cpp` / `main.cpp` | **UNION** | plxd_liveness + chrome cmds; decode size + chrome plane conf |
+| `test_unit_rollcall.py` | **osd adds** | chrome RTL inventory entries |
+

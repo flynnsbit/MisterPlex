@@ -12,6 +12,7 @@
 #include "libmisterplex/osd_control.hpp"
 #include "libmisterplex/osd_menu.hpp"
 #include "libmisterplex/playback_overlay.hpp"
+#include "libmisterplex/plex_chrome_cmds.hpp"
 #include "libmisterplex/publish_interval_ledger.hpp"
 #include "libmisterplex/publish_swap_delta_ledger.hpp"
 
@@ -167,6 +168,22 @@ public:
     int avOffsetMs() const { return avOffsetMs_.load(); }
     // Idle/screensaver painting. Without this the frame store keeps the last frame
     // of the previous video on screen forever.
+    void setChromePlaneConf(bool confWants) { chromePlaneConf_ = confWants; }
+    void setChromePlaneHwPresent(bool hw) { chromePlaneHw_ = hw; }
+    bool chromePlaneLive() const { return chromePlaneConf_ && chromePlaneHw_; }
+    // Applied HDMI raster for PLXC geometry (720p-first defaults).
+    // Refuses coded/bank sizes (960×540, 624×480, …) — those are source, not glass.
+    void setChromeOutputSize(int w, int h) {
+        if (w > 0 && h > 0 &&
+            misterplex::plex_chrome_cmds::isCodedBankSizeNotHdmi(w, h)) {
+            return; // keep prior HDMI defaults; never adopt coded as chrome canvas
+        }
+        if (w > 0)
+            chromeOutW_ = w;
+        if (h > 0)
+            chromeOutH_ = h;
+    }
+
     void setIdleMode(IdleMode m) { idleMode_.store(static_cast<int>(m)); }
     IdleMode idleMode() const { return static_cast<IdleMode>(idleMode_.load()); }
     void startIdle();
@@ -479,6 +496,13 @@ private:
     std::atomic<int64_t> seekReqMs_{-1};
     std::atomic<int64_t> positionMs_{0};
     PlaybackOverlay overlay_;
+    bool chromePlaneConf_ = false; // conf CHROME_PLANE wants plane=1
+    bool chromePlaneHw_ = false;   // PLXO chrome_hw — fail closed until set
+    uint16_t chromePlxcSeq_ = 0;   // PLXC seq edge for fabric latch
+    int chromeOutW_ = 1280;        // 720p-first; PLXO may refine
+    int chromeOutH_ = 720;
+    void publishPlxcHud(PlaybackOverlayState state, int64_t positionMs, int64_t durationMs,
+                        const char* title, int64_t skipDeltaMs = 0);
     std::atomic<pid_t> childPid_{-1};
     std::atomic<pid_t> streamPid_{-1};
     std::string lastError_;

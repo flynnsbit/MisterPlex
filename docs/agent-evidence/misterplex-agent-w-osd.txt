@@ -1,0 +1,14 @@
+lane=w-osd tip=parent_playing_gate runbook
+beacon=5c498b29 PLEX_FAB_PLAY_BEACON
+hunt=6431aaa3 coded-size refuse
+sps=e218fed6 544→540 display
+
+## parent_playing_gate.sh
+EXPECT_RBF_MD5=… scripts/parent_playing_gate.sh full
+rc: 0=A 1=scored-non-A 3=UNKNOWN_GRABBER 4=PRECOND(not fabric) 5=B1
+offline-selftest true rc=0
+docs/fab-playing-parent-runbook.md
+pair cards: docs/evidence/p720-path-20260803/
+
+## Fit
+w-mem Option-C capacity. Beacon ready. No device/Quartus from this lane.

@@ -1,0 +1,22 @@
+Auto-merging Makefile
+CONFLICT (content): Merge conflict in Makefile
+Auto-merging arm/misterplexd/fpga_spi.cpp
+CONFLICT (content): Merge conflict in arm/misterplexd/fpga_spi.cpp
+Auto-merging arm/misterplexd/fpga_spi.hpp
+Auto-merging arm/misterplexd/main.cpp
+CONFLICT (content): Merge conflict in arm/misterplexd/main.cpp
+Auto-merging arm/misterplexd/media_player.cpp
+Auto-merging arm/misterplexd/media_player.hpp
+Auto-merging fpga/Plex_MiSTer/Plex.qsf
+Auto-merging fpga/Plex_MiSTer/Plex.sv
+Auto-merging fpga/Plex_MiSTer/files.qip
+Auto-merging host/libmisterplex/ddr_frame_layout.hpp
+Auto-merging host/libmisterplex/mailbox_abi_spec.hpp
+CONFLICT (content): Merge conflict in host/libmisterplex/mailbox_abi_spec.hpp
+Auto-merging scripts/hdmi_capture_idle.sh
+CONFLICT (add/add): Merge conflict in scripts/hdmi_capture_idle.sh
+Auto-merging tests/unit/test_ddr_720p_abi.cpp
+CONFLICT (add/add): Merge conflict in tests/unit/test_ddr_720p_abi.cpp
+Auto-merging tests/unit/test_unit_rollcall.py
+CONFLICT (content): Merge conflict in tests/unit/test_unit_rollcall.py
+Automatic merge failed; fix conflicts and then commit the result.

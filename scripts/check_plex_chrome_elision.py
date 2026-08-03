@@ -72,6 +72,18 @@ def main(argv: list[str]) -> int:
     )
     ap.add_argument("--min-m10k", type=float, default=DEFAULT_MIN_M10K)
     ap.add_argument("--min-block-bits", type=float, default=DEFAULT_MIN_BLOCK_BITS)
+    ap.add_argument(
+        "--min-registers",
+        type=float,
+        default=40.0,
+        help="Reject entity-present / regs=0 ghost (anti-elision keep-sink must live)",
+    )
+    ap.add_argument(
+        "--min-comb-aluts",
+        type=float,
+        default=50.0,
+        help="Reject empty ALUT shell — idle/sig/HUD comb must show up",
+    )
     args = ap.parse_args(argv[1:])
 
     if not args.fit_rpt.exists():
@@ -126,6 +138,17 @@ def main(argv: list[str]) -> int:
                     f"{ENTITY}: block_bits={chrome.block_memory_bits:g} < required "
                     f"{args.min_block_bits:g} (M10Ks={chrome.m10ks:g})"
                 )
+        # Logic shell: mon keep-sink + hit/idle comb must leave regs/ALUTs.
+        if chrome.registers < args.min_registers:
+            errors.append(
+                f"{ENTITY}: registers={chrome.registers:g} < required {args.min_registers:g} "
+                "(ghost entity / mon+dout path elided)"
+            )
+        if chrome.comb_aluts < args.min_comb_aluts:
+            errors.append(
+                f"{ENTITY}: comb_aluts={chrome.comb_aluts:g} < required {args.min_comb_aluts:g} "
+                "(idle/sig/HUD combinational path missing — void FAB_IDLE claim)"
+            )
 
     stuck = scan_map_stuck(args.map_rpt)
     if stuck:
@@ -143,9 +166,11 @@ def main(argv: list[str]) -> int:
         return 1
 
     print(
-        f"PASS plex_chrome RAM retained: M10Ks={chrome.m10ks:g} "
+        f"PASS plex_chrome retained: M10Ks={chrome.m10ks:g} "
         f"block_bits={chrome.block_memory_bits:g} "
-        f"(mins {args.min_m10k:g}/{args.min_block_bits:g})"
+        f"regs={chrome.registers:g} aluts={chrome.comb_aluts:g} "
+        f"(mins m10k={args.min_m10k:g} bits={args.min_block_bits:g} "
+        f"regs={args.min_registers:g} aluts={args.min_comb_aluts:g})"
     )
     return 0
 

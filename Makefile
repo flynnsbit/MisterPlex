@@ -18,7 +18,11 @@ help:
 	@echo "  make quartus-sv-subset - curated Quartus SV subset guard plus fast Verilator elaboration"
 	@echo "  make define-parity - Quartus↔Verilator macros + host/RTL DDR geometry constants"
 	@echo "  make pre-synth-gates - run define parity + fast pre-Quartus RTL buildability gates"
-	@echo "  make post-fit-hierarchy FIT_RPT=... [MAP_RPT=...] [COMPILE_LOG=...] - critical fitted-module guard"
+	@echo "  make post-fit-hierarchy FIT_RPT=... [MAP_RPT=...] [COMPILE_LOG=...] [CONFIG=...] - critical fitted-module guard"
+	@echo "  make post-fit-fab-idle FIT_RPT=... [MAP_RPT=...] - chrome+present anti-elision hard gate"
+	@echo "  make post-fit-multi-pixel FIT_RPT=... - PRESENT_MULTI_PIXEL u_mp_* hierarchy gate"
+	@echo "  make post-fit-chrome-elision FIT_RPT=... [MAP_RPT=...] - plex_chrome list RAM must survive fit (c74c6863 class)"
+	@echo "  make fabric-decode-inventory FIT_RPT=... - H.264 fabric present/absent vs phase3-decode.md"
 	@echo "  make post-fit-timing STA_RPT=... - fail negative Quartus timing slack"
 	@echo "  make post-fit-timing-margin STA_RPT=... - fail STA margin regression vs wtime4 baseline"
 	@echo "  make timing-exclusion [STA_RPT=...] - detect timing closed by exclusion not design"
@@ -48,7 +52,7 @@ unit:
 unit-rollcall:
 	python3 $(ROOT)/tests/unit/test_unit_rollcall.py
 
-unit-unlocked: unit-rollcall preflight $(ROOT)/build/test_cadence $(ROOT)/build/test_cadence_swap_path $(ROOT)/build/test_publish_interval_ledger $(ROOT)/build/test_publish_swap_delta_ledger $(ROOT)/build/test_plxd_liveness $(ROOT)/build/test_present_store_scale_math $(ROOT)/build/test_fabric_content_window_math $(ROOT)/build/test_ddr_720p_abi $(ROOT)/build/test_present_scale_4_3_math $(ROOT)/build/test_present_scale_4_3_phase_oracle $(ROOT)/build/test_scale_4_3_vs_general $(ROOT)/build/test_present_scale_2x_math $(ROOT)/build/test_true_content_de_contract $(ROOT)/build/test_avclock $(ROOT)/build/test_audio_delay $(ROOT)/build/test_mraudio_status $(ROOT)/build/test_av_phase_rtl_quanta $(ROOT)/build/test_osd_menu $(ROOT)/build/test_osd_control $(ROOT)/build/test_last_frame_latch $(ROOT)/build/test_playback_overlay $(ROOT)/build/test_input_mailbox $(ROOT)/build/test_pixel_format $(ROOT)/build/test_main_guard $(ROOT)/build/test_death_breadcrumb $(ROOT)/build/test_frame_ledger $(ROOT)/build/test_supply_bucket $(ROOT)/build/test_raw_video_pipe $(ROOT)/build/test_status_telemetry $(ROOT)/build/test_resolve $(ROOT)/build/test_log_redact $(ROOT)/build/test_pms_timeline $(ROOT)/build/test_plextv_device $(ROOT)/build/test_companion_eof $(ROOT)/build/test_companion_plant_seek $(ROOT)/build/test_gdm_resources_parity $(ROOT)/build/pms_baseline_probe $(ROOT)/build/test_h264_bitstream_source $(ROOT)/build/test_bitstream_ring_lifecycle $(ROOT)/build/test_frame_store_math $(ROOT)/build/test_720p_geometry_lane_agree $(ROOT)/build/test_coded_size_adopt $(ROOT)/build/test_ffmpeg_vf $(ROOT)/build/test_force_scale_construction $(ROOT)/build/test_yuv420p_chroma_480p $(ROOT)/build/test_geom_frame_cost $(ROOT)/build/test_glass_loss_death_points $(ROOT)/build/test_frame_store_sdram_sim $(ROOT)/build/test_frame_store_ddr_prefetch_sim $(ROOT)/build/test_ddr_want_y_hblank_thrash $(ROOT)/build/test_ddr_bank_mailbox_phys $(ROOT)/build/test_ddr_scanout_multiframe $(ROOT)/build/test_sdram_memtest_sim $(ROOT)/build/test_sdram_mailbox $(ROOT)/build/test_annexb_count $(ROOT)/build/test_sps_parse $(ROOT)/build/test_slice_hdr $(ROOT)/build/test_cavlc_dc $(ROOT)/build/test_idct_quant $(ROOT)/build/test_p3_host_recon_vectors $(ROOT)/build/test_p3_idct_reference_model $(ROOT)/build/test_p3_inter_pred_vectors $(ROOT)/build/extract_h264_golden $(ROOT)/build/misterplexd
+unit-unlocked: unit-rollcall preflight $(ROOT)/build/test_cadence $(ROOT)/build/test_cadence_swap_path $(ROOT)/build/test_publish_interval_ledger $(ROOT)/build/test_publish_swap_delta_ledger $(ROOT)/build/test_plxd_liveness $(ROOT)/build/test_present_store_scale_math $(ROOT)/build/test_fabric_content_window_math $(ROOT)/build/test_ddr_720p_abi $(ROOT)/build/test_present_scale_4_3_math $(ROOT)/build/test_present_scale_4_3_phase_oracle $(ROOT)/build/test_scale_4_3_vs_general $(ROOT)/build/test_present_scale_2x_math $(ROOT)/build/test_true_content_de_contract $(ROOT)/build/test_avclock $(ROOT)/build/test_audio_delay $(ROOT)/build/test_mraudio_status $(ROOT)/build/test_av_phase_rtl_quanta $(ROOT)/build/test_osd_menu $(ROOT)/build/test_osd_control $(ROOT)/build/test_last_frame_latch $(ROOT)/build/test_playback_overlay $(ROOT)/build/test_input_mailbox $(ROOT)/build/test_pixel_format $(ROOT)/build/test_main_guard $(ROOT)/build/test_death_breadcrumb $(ROOT)/build/test_frame_ledger $(ROOT)/build/test_supply_bucket $(ROOT)/build/test_raw_video_pipe $(ROOT)/build/test_status_telemetry $(ROOT)/build/test_resolve $(ROOT)/build/test_log_redact $(ROOT)/build/test_pms_timeline $(ROOT)/build/test_plextv_device $(ROOT)/build/test_companion_eof $(ROOT)/build/test_companion_plant_seek $(ROOT)/build/test_gdm_resources_parity $(ROOT)/build/pms_baseline_probe $(ROOT)/build/test_h264_bitstream_source $(ROOT)/build/test_bitstream_ring_lifecycle $(ROOT)/build/test_frame_store_math $(ROOT)/build/test_720p_geometry_lane_agree $(ROOT)/build/test_coded_size_adopt $(ROOT)/build/test_ffmpeg_vf $(ROOT)/build/test_force_scale_construction $(ROOT)/build/test_yuv420p_chroma_480p $(ROOT)/build/test_geom_frame_cost $(ROOT)/build/test_glass_loss_death_points $(ROOT)/build/test_frame_store_sdram_sim $(ROOT)/build/test_frame_store_ddr_prefetch_sim $(ROOT)/build/test_ddr_want_y_hblank_thrash $(ROOT)/build/test_ddr_bank_mailbox_phys $(ROOT)/build/test_ddr_scanout_multiframe $(ROOT)/build/test_sdram_memtest_sim $(ROOT)/build/test_sdram_mailbox $(ROOT)/build/test_annexb_count $(ROOT)/build/test_sps_parse $(ROOT)/build/test_slice_hdr $(ROOT)/build/test_cavlc_dc $(ROOT)/build/test_idct_quant $(ROOT)/build/test_p3_host_recon_vectors $(ROOT)/build/test_p3_idct_reference_model $(ROOT)/build/test_p3_inter_pred_vectors $(ROOT)/build/extract_h264_golden $(ROOT)/build/misterplexd $(ROOT)/build/test_plex_chrome_sim $(ROOT)/build/test_plex_chrome_cmds $(ROOT)/build/test_present_pace $(ROOT)/build/test_plex_chrome_ddr_loader
 	$(ROOT)/build/test_cadence
 	$(ROOT)/build/test_cadence_swap_path
 	$(ROOT)/tests/unit/test_cadence_swap_path_source.sh
@@ -88,6 +92,12 @@ unit-unlocked: unit-rollcall preflight $(ROOT)/build/test_cadence $(ROOT)/build/
 	$(ROOT)/build/test_last_frame_latch
 	bash $(ROOT)/tests/unit/test_last_frame_latch_red.sh
 	$(ROOT)/build/test_playback_overlay
+	$(ROOT)/build/test_plex_chrome_sim
+	$(ROOT)/build/test_plex_chrome_cmds
+	$(ROOT)/build/test_ddr_720p_abi
+	python3 $(ROOT)/tests/unit/test_plex_chrome_write_path_static.py
+	$(ROOT)/build/test_present_pace
+	$(ROOT)/build/test_plex_chrome_ddr_loader
 	$(ROOT)/build/test_input_mailbox
 	$(ROOT)/build/test_pixel_format
 	$(ROOT)/build/test_main_guard
@@ -233,6 +243,14 @@ unit-unlocked: unit-rollcall preflight $(ROOT)/build/test_cadence $(ROOT)/build/
 	$(ROOT)/tests/unit/test_ddr_frame_store_scanout_skip.sh
 	$(ROOT)/tests/unit/test_ddr_frame_store_plxd_handshake.sh
 	$(ROOT)/tests/unit/test_ddr_frame_store_scanout_colour.sh
+	$(ROOT)/tests/unit/test_plex_chrome_rtl_sim.sh
+	$(ROOT)/tests/unit/test_present_pace_rtl_sim.sh
+	$(ROOT)/tests/unit/test_plex_chrome_ddr_loader_rtl_sim.sh
+	$(ROOT)/tests/unit/test_plex_chrome_e2e_rtl_sim.sh
+	$(ROOT)/tests/unit/test_plex_chrome_ppc_rtl_sim.sh
+	$(ROOT)/tests/unit/test_plex_chrome_idle720_rtl_sim.sh
+	$(ROOT)/tests/unit/test_plex_chrome_counted_rtl_sim.sh
+	$(ROOT)/tests/unit/test_plex_chrome_fabchrome_rtl_sim.sh
 	$(ROOT)/scripts/rtl_lint.py
 	$(ROOT)/tests/unit/test_h264_syntax_primitives_rtl_sim.sh
 	$(ROOT)/tests/unit/test_h264_sps_geometry_rtl_sim.sh
@@ -262,6 +280,14 @@ rtl-sim-unlocked:
 	$(ROOT)/tests/unit/test_ddr_runtime_stride_rtl_sim.sh
 	$(ROOT)/tests/unit/test_present_geom_latch_rtl_sim.sh
 	$(ROOT)/tests/unit/test_ddr_qword_export_rtl_sim.sh
+	$(ROOT)/tests/unit/test_plex_chrome_rtl_sim.sh
+	$(ROOT)/tests/unit/test_present_pace_rtl_sim.sh
+	$(ROOT)/tests/unit/test_plex_chrome_ddr_loader_rtl_sim.sh
+	$(ROOT)/tests/unit/test_plex_chrome_e2e_rtl_sim.sh
+	$(ROOT)/tests/unit/test_plex_chrome_ppc_rtl_sim.sh
+	$(ROOT)/tests/unit/test_plex_chrome_idle720_rtl_sim.sh
+	$(ROOT)/tests/unit/test_plex_chrome_counted_rtl_sim.sh
+	$(ROOT)/tests/unit/test_plex_chrome_fabchrome_rtl_sim.sh
 	$(ROOT)/tests/unit/test_stream_path_recon_integration.sh
 	$(ROOT)/tests/unit/test_stream_path_full_frame_compare.sh
 	$(ROOT)/tests/unit/test_ddram_frame_rd_bank_select.sh
@@ -295,8 +321,40 @@ pre-synth-gates: define-parity quartus-sv-subset
 post-fit-hierarchy:
 	@if [ -z "$(FIT_RPT)" ]; then echo "FIT_RPT is required" >&2; exit 2; fi
 	$(ROOT)/scripts/check_quartus_fit_hierarchy.py --fit-rpt "$(FIT_RPT)" \
+		$(if $(CONFIG),--config "$(CONFIG)",) \
 		$(if $(MAP_RPT),--map-rpt "$(MAP_RPT)",) \
 		$(if $(COMPILE_LOG),--log "$(COMPILE_LOG)",)
+
+# FAB_IDLE / chrome plane gate (void fit if chrome or present chain elided).
+post-fit-fab-idle:
+	@if [ -z "$(FIT_RPT)" ]; then echo "FIT_RPT is required" >&2; exit 2; fi
+	$(MAKE) post-fit-hierarchy FIT_RPT="$(FIT_RPT)" MAP_RPT="$(MAP_RPT)" COMPILE_LOG="$(COMPILE_LOG)" \
+		CONFIG="$(ROOT)/tests/fixtures/critical_fit_hierarchy_fab_idle.json"
+	$(MAKE) post-fit-chrome-elision FIT_RPT="$(FIT_RPT)" MAP_RPT="$(MAP_RPT)"
+	@echo "PASS post-fit-fab-idle (hierarchy + chrome elision)"
+
+# Multi-pixel present chain (only when PRESENT_MULTI_PIXEL=1 in the fit).
+post-fit-multi-pixel:
+	@if [ -z "$(FIT_RPT)" ]; then echo "FIT_RPT is required" >&2; exit 2; fi
+	$(MAKE) post-fit-hierarchy FIT_RPT="$(FIT_RPT)" MAP_RPT="$(MAP_RPT)" COMPILE_LOG="$(COMPILE_LOG)" \
+		CONFIG="$(ROOT)/tests/fixtures/critical_fit_hierarchy_multi_pixel.json"
+
+# plex_chrome command-list RAM retention (c74c6863: entity present, M10K/bits=0 ⇒ NO-DATA).
+# HARD FAIL when list RAM elided or map marks list_a/list_b Stuck at GND.
+post-fit-chrome-elision:
+	@if [ -z "$(FIT_RPT)" ]; then echo "FIT_RPT is required" >&2; exit 2; fi
+	$(ROOT)/scripts/check_plex_chrome_elision.py --fit-rpt "$(FIT_RPT)" \
+		$(if $(MAP_RPT),--map-rpt "$(MAP_RPT)",)
+
+# Shipping H.264 fabric inventory: fit.rpt PRESENT/ABSENT + phase3-decode.md table.
+# Default is the checked-in 8fdf440f excerpt (offline unit green). After BUILD_OK:
+#   make fabric-decode-inventory FIT_RPT=path/to/Plex.fit.rpt
+FABRIC_FIT_RPT ?= $(ROOT)/tests/fixtures/fabric_decode_fit_hierarchy_8fdf440f.excerpt.rpt
+fabric-decode-inventory:
+	$(ROOT)/scripts/check_fabric_decode_inventory.py \
+		--fit-rpt "$(if $(FIT_RPT),$(FIT_RPT),$(FABRIC_FIT_RPT))" \
+		--fixture $(ROOT)/tests/fixtures/fabric_decode_inventory.json \
+		--doc $(ROOT)/docs/phase3-decode.md --require-doc
 
 post-fit-timing:
 	@if [ -z "$(STA_RPT)" ]; then echo "STA_RPT is required" >&2; exit 2; fi
@@ -676,6 +734,42 @@ $(ROOT)/build/test_playback_overlay: $(ROOT)/tests/unit/test_playback_overlay.cp
 		$(ROOT)/host/libmisterplex/playback_overlay.hpp
 	@mkdir -p $(ROOT)/build
 	$(CXX) $(CXXFLAGS) -o $@ $(ROOT)/tests/unit/test_playback_overlay.cpp
+
+$(ROOT)/build/test_plex_chrome_sim: $(ROOT)/tests/unit/test_plex_chrome_sim.cpp \
+		$(ROOT)/host/libmisterplex/plex_chrome_sim.hpp \
+		$(ROOT)/host/libmisterplex/plex_chrome_cmds.hpp \
+		$(ROOT)/host/libmisterplex/mister_video_mode.hpp \
+		$(ROOT)/host/libmisterplex/mailbox_abi_spec.hpp
+	@mkdir -p $(ROOT)/build
+	$(CXX) $(CXXFLAGS) -o $@ $(ROOT)/tests/unit/test_plex_chrome_sim.cpp
+
+$(ROOT)/build/test_plex_chrome_cmds: $(ROOT)/tests/unit/test_plex_chrome_cmds.cpp \
+		$(ROOT)/host/libmisterplex/plex_chrome_cmds.hpp \
+		$(ROOT)/host/libmisterplex/playback_overlay.hpp \
+		$(ROOT)/host/libmisterplex/mailbox_abi_spec.hpp
+	@mkdir -p $(ROOT)/build
+	$(CXX) $(CXXFLAGS) -o $@ $(ROOT)/tests/unit/test_plex_chrome_cmds.cpp
+
+
+$(ROOT)/build/test_ddr_720p_abi: $(ROOT)/tests/unit/test_ddr_720p_abi.cpp \
+		$(ROOT)/host/libmisterplex/ddr_frame_layout.hpp \
+		$(ROOT)/host/libmisterplex/mailbox_abi_spec.hpp \
+		$(ROOT)/host/libmisterplex/plex_chrome_cmds.hpp
+	@mkdir -p $(ROOT)/build
+	$(CXX) $(CXXFLAGS) -o $@ $(ROOT)/tests/unit/test_ddr_720p_abi.cpp
+
+$(ROOT)/build/test_present_pace: $(ROOT)/tests/unit/test_present_pace.cpp \
+		$(ROOT)/host/libmisterplex/present_pace.hpp \
+		$(ROOT)/host/libmisterplex/cadence.hpp
+	@mkdir -p $(ROOT)/build
+	$(CXX) $(CXXFLAGS) -o $@ $(ROOT)/tests/unit/test_present_pace.cpp
+
+$(ROOT)/build/test_plex_chrome_ddr_loader: $(ROOT)/tests/unit/test_plex_chrome_ddr_loader.cpp \
+		$(ROOT)/host/libmisterplex/plex_chrome_ddr_loader.hpp \
+		$(ROOT)/host/libmisterplex/plex_chrome_cmds.hpp \
+		$(ROOT)/host/libmisterplex/mailbox_abi_spec.hpp
+	@mkdir -p $(ROOT)/build
+	$(CXX) $(CXXFLAGS) -o $@ $(ROOT)/tests/unit/test_plex_chrome_ddr_loader.cpp
 
 $(ROOT)/build/test_input_mailbox: $(ROOT)/tests/unit/test_input_mailbox.cpp \
 		$(ROOT)/host/libmisterplex/input_mailbox.hpp \

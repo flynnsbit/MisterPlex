@@ -212,6 +212,13 @@ public:
     // DDR-only and never falls back to the HPS<->FPGA SPI bus.
     bool readInputMailbox(PlaybackCommand& command);
 
+    // PLXC chrome list (ARM→FPGA): semantic cmds at doorbell+0x140, ctrl at +0x130.
+    // Fabric host_if/ddr loader must consume; writing alone does not composite until
+    // sys_top plxc_ext_* is threaded from DDR. Never pixel payloads.
+    bool writeChromeCommandList(const uint64_t* cmds, size_t count, bool enable, uint16_t seq);
+    // PLXO chrome_hw sticky (FPGA→ARM). Fail-closed when absent.
+    bool readChromeHwPresent(bool& present);
+
     // Push raw s16le stereo PCM chunk to audio_fifo (F2 / index 2). Appends.
     bool sendPcmChunk(const uint8_t* pcm, size_t len, uint8_t index = 2);
 

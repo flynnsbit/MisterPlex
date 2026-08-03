@@ -210,6 +210,7 @@ int main(int argc, char** argv) {
     // Product default: FPGA DDR frame store is what the Plex core scans to HDMI.
     // PRESENT=fb0 alone used to skip fpga_.open() and freeze the idle screen
     // (user-reported twice). Conf PRESENT= still overrides.
+    bool chromePlaneConf = false;
     std::string presentMode = "fpga";
     misterplex::DdrFrameFormat ddrFrameFormat = misterplex::DdrFrameFormat::Yuv420p;
     bool ddrMemSync = true;
@@ -413,6 +414,9 @@ int main(int argc, char** argv) {
         v = loadConf(confPath, "PRESENT");
         if (!v.empty())
             presentMode = v; // fb0 | fpga | both | none(test/lab)
+        v = loadConf(confPath, "CHROME_PLANE");
+        if (!v.empty())
+            chromePlaneConf = confTruthy(v); // 1 → fabric PLXC; fail-closed until PLXO hw
         v = loadConf(confPath, "DDR_FRAME_FORMAT");
         if (!v.empty() && v != "yuv420p" && v != "yuv420" && v != "i420") {
             std::fprintf(stderr,
@@ -669,6 +673,8 @@ int main(int argc, char** argv) {
     player.setFfmpegPath(ffmpeg);
     player.setDecodeSize(decodeSize);
     player.setDecodeSizeSource(decodeSizeSource);
+    player.setChromePlaneConf(chromePlaneConf);
+    // chromePlaneHw stays false until PLXO chrome_hw — fail closed.
     player.setPresentMode(presentMode);
     player.setDdrFrameFormat(ddrFrameFormat);
     // Cached map path (DDR_MEM_SYNC=0) requires explicit flush before doorbell.

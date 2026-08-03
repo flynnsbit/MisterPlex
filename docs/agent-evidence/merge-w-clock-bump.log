@@ -1,0 +1,22 @@
+Auto-merging Makefile
+Auto-merging fpga/Plex_MiSTer/Plex.qsf
+Auto-merging fpga/Plex_MiSTer/Plex.sv
+CONFLICT (content): Merge conflict in fpga/Plex_MiSTer/Plex.sv
+Auto-merging fpga/Plex_MiSTer/files.qip
+Auto-merging fpga/Plex_MiSTer/rtl/ddr_frame_store.sv
+CONFLICT (content): Merge conflict in fpga/Plex_MiSTer/rtl/ddr_frame_store.sv
+Auto-merging fpga/Plex_MiSTer/rtl/frame_store.sv
+Auto-merging fpga/Plex_MiSTer/rtl/line_buf_ram.sv
+CONFLICT (content): Merge conflict in fpga/Plex_MiSTer/rtl/line_buf_ram.sv
+Auto-merging fpga/Plex_MiSTer/rtl/present_beam_content_de.sv
+CONFLICT (add/add): Merge conflict in fpga/Plex_MiSTer/rtl/present_beam_content_de.sv
+Auto-merging fpga/Plex_MiSTer/rtl/present_core.sv
+CONFLICT (content): Merge conflict in fpga/Plex_MiSTer/rtl/present_core.sv
+Auto-merging host/libmisterplex/input_mailbox.hpp
+CONFLICT (content): Merge conflict in host/libmisterplex/input_mailbox.hpp
+Auto-merging tests/unit/test_present_store_scale_math.cpp
+CONFLICT (content): Merge conflict in tests/unit/test_present_store_scale_math.cpp
+Auto-merging tests/unit/test_rtl_invariants.py
+CONFLICT (content): Merge conflict in tests/unit/test_rtl_invariants.py
+Auto-merging tests/unit/test_unit_rollcall.py
+Automatic merge failed; fix conflicts and then commit the result.

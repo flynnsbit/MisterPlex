@@ -1,0 +1,30 @@
+{
+  "schema": "misterplex.critical_fit_hierarchy.v1",
+  "description": "PRESENT_MULTI_PIXEL chain only. Run when that macro is ON. Void fit if u_mp_* rows are 0.",
+  "modules": [
+    {
+      "name": "present_beam_ppc",
+      "entity": "present_beam_ppc",
+      "hierarchy_contains": "present_beam_ppc",
+      "log_contains": "u_mp_beam|present_beam",
+      "min_comb_aluts": 5,
+      "min_registers": 5
+    },
+    {
+      "name": "present_npx_path",
+      "entity": "present_npx_path",
+      "hierarchy_contains": "present_npx_path",
+      "log_contains": "u_mp_npx|present_npx",
+      "min_comb_aluts": 5,
+      "min_registers": 5
+    },
+    {
+      "name": "present_video_timing_720p",
+      "entity": "present_video_timing_720p",
+      "hierarchy_contains": "present_video_timing_720p",
+      "log_contains": "u_mp_timing|video_timing_720p",
+      "min_comb_aluts": 1,
+      "min_registers": 1
+    }
+  ]
+}

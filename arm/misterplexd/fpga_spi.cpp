@@ -2,6 +2,7 @@
 
 #include "libmisterplex/ddr_bank_release_select.hpp"
 #include "libmisterplex/plxd_liveness.hpp"
+#include "libmisterplex/plex_chrome_cmds.hpp"
 #include "libmisterplex/status_telemetry.hpp"
 #include "libmisterplex/pixel_format.hpp"
 
@@ -1080,6 +1081,74 @@ bool FpgaSpi::readInputMailbox(PlaybackCommand& command) {
         if (inputMboxEdge_.accept(sample, command))
             return true;
         return false;
+    }
+    return false;
+}
+
+bool FpgaSpi::writeChromeCommandList(const uint64_t* cmds, size_t count, bool enable,
+                                     uint16_t seq) {
+    if (!cmds && count > 0)
+        return false;
+    if (!ok() && !open())
+        return false;
+    if (!ensureDdrMap())
+        return false;
+    const uint32_t door = ddrLayout_.doorbell_phys;
+    const uint32_t listPhys = mailbox_abi::frameStoreMailboxPhys(door, mailbox_abi::kPlxlOffset);
+    const uint32_t ctrlPhys = mailbox_abi::frameStoreMailboxPhys(door, mailbox_abi::kPlxcOffset);
+    if (listPhys < ddrLayout_.phys_base || ctrlPhys < ddrLayout_.phys_base) {
+        setErr("writeChromeCommandList: PLXC outside frame window");
+        return false;
+    }
+    const size_t listOff = static_cast<size_t>(listPhys - ddrLayout_.phys_base);
+    const size_t ctrlOff = static_cast<size_t>(ctrlPhys - ddrLayout_.phys_base);
+    const size_t n = std::min(count, static_cast<size_t>(plex_chrome_cmds::kMaxCmds));
+    if (listOff + n * sizeof(uint64_t) > ddrMapLen_ || ctrlOff + 8 > ddrMapLen_) {
+        setErr("writeChromeCommandList: PLXC/list outside mapped window");
+        return false;
+    }
+    // Payload first, then PLXC ctrl (seq edge) so fabric never latches empty list.
+    auto* list = reinterpret_cast<volatile uint64_t*>(ddrMap_ + listOff);
+    for (size_t i = 0; i < n; ++i)
+        list[i] = cmds[i];
+    __sync_synchronize();
+    const uint64_t ctrl = plex_chrome_cmds::packPlxcCtrl(enable, static_cast<unsigned>(n), seq);
+    auto* cw = reinterpret_cast<volatile uint32_t*>(ddrMap_ + ctrlOff);
+    cw[0] = static_cast<uint32_t>(ctrl);
+    cw[1] = static_cast<uint32_t>(ctrl >> 32);
+    __sync_synchronize();
+    clearErr();
+    return true;
+}
+
+bool FpgaSpi::readChromeHwPresent(bool& present) {
+    present = false;
+    if (!ok() && !open())
+        return false;
+    if (!ensureDdrMap())
+        return false;
+    const uint32_t door = ddrLayout_.doorbell_phys;
+    const uint32_t plxoPhys = mailbox_abi::frameStoreMailboxPhys(door, mailbox_abi::kPlxoOffset);
+    if (plxoPhys < ddrLayout_.phys_base)
+        return false;
+    const size_t off = static_cast<size_t>(plxoPhys - ddrLayout_.phys_base);
+    if (off + 8 > ddrMapLen_)
+        return false;
+    volatile uint32_t* mw = reinterpret_cast<volatile uint32_t*>(ddrMap_ + off);
+    for (int attempt = 0; attempt < 4; ++attempt) {
+        const uint32_t lo0 = mw[0];
+        const uint32_t hi0 = mw[1];
+        __sync_synchronize();
+        const uint32_t lo1 = mw[0];
+        const uint32_t hi1 = mw[1];
+        if (lo0 != lo1 || hi0 != hi1)
+            continue;
+        if (lo0 != mailbox_abi::kPlxoMagic)
+            return false;
+        // PLXO: [32] chrome_hw (bit0 of hi)
+        present = (hi0 & 0x1u) != 0;
+        clearErr();
+        return true;
     }
     return false;
 }
