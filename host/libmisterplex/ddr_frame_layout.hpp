@@ -56,6 +56,44 @@ constexpr uint8_t kYuv420BlackY = 16;
 constexpr uint8_t kYuv420BlackU = 128;
 constexpr uint8_t kYuv420BlackV = 128;
 
+// ---- Aggressive 720p tier (opt-in; mirror ddr_frame_layout_params.svh) ----
+// Shipping product remains 480p. 720p requires matching RBF + PLXG handshake.
+// Phys base is Option-C (after bitstream ring), NOT 0x30000000.
+constexpr CodedWidth kPlex720pCodedWidth{1280};
+constexpr CodedHeight kPlex720pCodedHeight{720};
+constexpr DisplayWidth kPlex720pDisplayWidth{1280};
+constexpr DisplayHeight kPlex720pDisplayHeight{720};
+constexpr PresentedWidth kPlex720pPresentedWidth{1280};
+constexpr PresentedHeight kPlex720pPresentedHeight{720};
+constexpr int kPlex720pCropLeft = 0;
+constexpr int kPlex720pCropRight = 0;
+constexpr int kPlex720pCropTop = 0;
+constexpr int kPlex720pCropBottom = 0;
+constexpr int kPlex720pPillarboxLeft = 0;
+constexpr int kPlex720pPillarboxRight = 0;
+constexpr int kPlex720pYuvLumaLineQwords = 160;
+constexpr int kPlex720pYuvChromaLineQwords = 80;
+constexpr int kPlex720pYuv420pBytes = 1382400;
+constexpr int kPlex720pYPlaneOffset = 0;
+constexpr int kPlex720pUPlaneOffset = 921600;
+constexpr int kPlex720pVPlaneOffset = 1152000;
+constexpr int kPlex720pYStrideBytes = 1280;
+constexpr int kPlex720pChromaStrideBytes = 640;
+static_assert(kPlex720pYStrideBytes == kPlex720pCodedWidth.get(),
+              "720p Y stride must equal coded width");
+static_assert(kPlex720pChromaStrideBytes == kPlex720pCodedWidth.get() / 2,
+              "720p chroma stride must equal coded width/2");
+static_assert(kPlex720pYuv420pBytes == 1280 * 720 * 3 / 2,
+              "720p I420 byte count");
+constexpr uint32_t kPlex720pYuv420pBankStride = 0x00180000u;
+constexpr uint32_t kPlex720pDdrFramePhysBase = 0x30180000u;
+constexpr uint32_t kPlex720pYuv420pDoorbellPhys = 0x3047F000u;
+constexpr uint32_t kPlexDdrReservedWindowStart = 0x1FF00000u;
+constexpr uint32_t kPlexDdrReservedWindowEnd = 0x40000000u;
+constexpr uint32_t kPlex720pMapBytes2Bank = 0x00300000u;
+constexpr uint32_t kDdrFramePlxgOffset = 0x130u;
+constexpr uint32_t kDdrFramePlxgMagic = 0x504C5847u; // "PLXG"
+
 enum class DdrFramePlacement {
     None,
     Pillarbox,
@@ -235,7 +273,6 @@ inline DdrFrameGeometry ddrFrameGeometryForPresentedSize(int width, int height) 
 inline DdrFrameGeometry productDdrFrameStoreGeometry() {
     return plex480pDdrFrameGeometry();
 }
-
 // FPGA-present geometry for any content/decode tier. Decode WxH is intentionally
 // ignored: a 320x240 source still occupies the 624-byte-stride coded bank after
 // force_original_aspect_ratio=decrease + pad. Returning identity-320 here is the
@@ -326,6 +363,29 @@ inline DdrFrameLayout makeDdrFrameLayout(int width, int height,
     return makeDdrFrameLayout(CodedWidth{width}, CodedHeight{height}, physBase, strideAlign,
                               format);
 }
+
+// Aggressive 720p canvas (identity 16:9). Not product silicon until RBF + PLXG.
+inline DdrFrameGeometry plex720pDdrFrameGeometry() {
+    DdrFrameGeometry g = makeDdrFrameGeometry(
+        kPlex720pCodedWidth, kPlex720pCodedHeight, kPlex720pDisplayWidth,
+        kPlex720pDisplayHeight, kPlex720pPresentedWidth, kPlex720pPresentedHeight,
+        DdrFramePlacement::None);
+    g.crop_left = kPlex720pCropLeft;
+    g.crop_right = kPlex720pCropRight;
+    g.crop_top = kPlex720pCropTop;
+    g.crop_bottom = kPlex720pCropBottom;
+    g.present_x = kPlex720pPillarboxLeft;
+    g.present_y = 0;
+    return g;
+}
+
+// 720p tier layout at Option-C phys base (not product 0x30000000).
+inline DdrFrameLayout makePlex720pDdrFrameLayout(
+    DdrFrameFormat format = DdrFrameFormat::Yuv420p) {
+    return makeDdrFrameLayout(plex720pDdrFrameGeometry(), kPlex720pDdrFramePhysBase,
+                              kDdrFrameStrideAlign, format);
+}
+
 
 inline bool ddrFrameLayoutValid(const DdrFrameLayout& l) {
     if (l.phys_base == 0 || l.width <= 0 || l.height <= 0 || l.frame_bytes == 0)

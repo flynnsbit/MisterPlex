@@ -6,9 +6,10 @@
 // up to MAX_CODED 1280×720 (one M10K per luma line). Line RAMs are synthesis-
 // sized to the max; active line qwords/pitch come from registers.
 //
-// geom_enable=0 (reset): bit-exact parameter path (CODED_W/H, stride=CODED_W).
-// Bank phys base/stride remain parameters — Option-C (w-mem) is a param set,
-// not a unilateral redefine of the bank contract here.
+// geom_enable=0 (reset): bit-exact parameter path (CODED_W/H, stride=CODED_W,
+// bank map PHYS_BASE/0x80000/doorbell product).
+// geom_enable=1 && coded_w>=1280: Option-C bank map (0x30180000/0x180000/0x3047F000)
+// + runtime plane pitch — contract with w-mem fabric_ddr_writer 720p tier.
 
 module ddr_frame_store #(
 	parameter int FRAME_W = 640,
@@ -29,6 +30,11 @@ module ddr_frame_store #(
 	parameter [31:0] PHYS_BASE = 32'h3000_0000,
 	parameter int HPS_BANK_STRIDE_BYTES = 524288,
 	parameter [31:0] DOORBELL_PHYS = PHYS_BASE + (2 * HPS_BANK_STRIDE_BYTES) - 32'h1000,
+	// Option-C 720p map (parent-verified 0x30180000 / 0x180000 / 0x3047F000).
+	// Runtime-selected when geom_enable && coded_w>=1280. Default path uses PHYS_*.
+	parameter [31:0] PHYS_BASE_720P = 32'h3018_0000,
+	parameter int HPS_BANK_STRIDE_BYTES_720P = 32'h0018_0000,
+	parameter [31:0] DOORBELL_PHYS_720P = 32'h3047_F000,
 	parameter [31:0] MAILBOX_PHYS  = DOORBELL_PHYS + 32'h100,
 	parameter [31:0] INPUT_MAILBOX_PHYS = DOORBELL_PHYS + 32'h108,
 	parameter [31:0] SDRAM_MAILBOX_PHYS = DOORBELL_PHYS + 32'h110,
@@ -150,10 +156,20 @@ module ddr_frame_store #(
 	localparam [Y_W-1:0] LEG_PRESENT_END_Y = Y_W'(PRESENT_Y + DISPLAY_H);
 	localparam [CODED_X_W-1:0] LEG_CROP_LEFT = CODED_X_W'(CROP_LEFT);
 	localparam [CODED_Y_W-1:0] LEG_CROP_TOP = CODED_Y_W'(CROP_TOP);
-	localparam [28:0] BASE_W0 = PHYS_BASE[31:3];
-	localparam [28:0] HPS_BANK_STRIDE_QWORDS = 29'(HPS_BANK_STRIDE_BYTES / 8);
-	localparam [28:0] BASE_W1 = PHYS_BASE[31:3] + HPS_BANK_STRIDE_QWORDS;
-	localparam [28:0] DOORBELL_W = DOORBELL_PHYS[31:3];
+	localparam [28:0] LEG_BASE_W0 = PHYS_BASE[31:3];
+	localparam [28:0] LEG_BANK_STRIDE_QWORDS = 29'(HPS_BANK_STRIDE_BYTES / 8);
+	localparam [28:0] LEG_BASE_W1 = PHYS_BASE[31:3] + LEG_BANK_STRIDE_QWORDS;
+	localparam [28:0] LEG_DOORBELL_W = DOORBELL_PHYS[31:3];
+	localparam [28:0] OPTC_BASE_W0 = PHYS_BASE_720P[31:3];
+	localparam [28:0] OPTC_BANK_STRIDE_QWORDS = 29'(HPS_BANK_STRIDE_BYTES_720P / 8);
+	localparam [28:0] OPTC_BASE_W1 = PHYS_BASE_720P[31:3] + OPTC_BANK_STRIDE_QWORDS;
+	localparam [28:0] OPTC_DOORBELL_W = DOORBELL_PHYS_720P[31:3];
+	// Legacy names kept for MAILBOX_* offsets (product control page on 480p doorbell).
+	// Runtime fill/poll use eff_*/d_* bank map (LEG vs Option-C).
+	localparam [28:0] BASE_W0 = LEG_BASE_W0;
+	localparam [28:0] BASE_W1 = LEG_BASE_W1;
+	localparam [28:0] DOORBELL_W = LEG_DOORBELL_W;
+	localparam [28:0] HPS_BANK_STRIDE_QWORDS = LEG_BANK_STRIDE_QWORDS;
 	localparam [28:0] MAILBOX_W  = MAILBOX_PHYS[31:3];
 	localparam [28:0] INPUT_MAILBOX_W = INPUT_MAILBOX_PHYS[31:3];
 	localparam [28:0] SDRAM_MAILBOX_W = SDRAM_MAILBOX_PHYS[31:3];
@@ -194,6 +210,10 @@ module ddr_frame_store #(
 	reg [7:0]  eff_c_pitch_qw;   // chroma_stride/8
 	reg [28:0] eff_u_base_qw;
 	reg [28:0] eff_v_base_qw;
+	reg        eff_optc_map;
+	reg [28:0] eff_base_w0;
+	reg [28:0] eff_base_w1;
+	reg [28:0] eff_doorbell_w;
 
 	wire [10:0] rt_cw_nz = (rt_coded_w == 11'd0) ? 11'(CODED_W) : rt_coded_w;
 	wire [10:0] rt_ch_nz = (rt_coded_h == 11'd0) ? 11'(CODED_H) : rt_coded_h;
@@ -237,6 +257,10 @@ module ddr_frame_store #(
 			eff_c_pitch_qw <= 8'(C_LINE_QWORDS);
 			eff_u_base_qw  <= LEG_U_PLANE_BASE;
 			eff_v_base_qw  <= LEG_V_PLANE_BASE;
+			eff_optc_map   <= 1'b0;
+			eff_base_w0    <= LEG_BASE_W0;
+			eff_base_w1    <= LEG_BASE_W1;
+			eff_doorbell_w <= LEG_DOORBELL_W;
 		end else if (!geom_enable_eff) begin
 			geom_en_r      <= 1'b0;
 			eff_coded_w    <= 11'(CODED_W);
@@ -255,6 +279,10 @@ module ddr_frame_store #(
 			eff_c_pitch_qw <= 8'(C_LINE_QWORDS);
 			eff_u_base_qw  <= LEG_U_PLANE_BASE;
 			eff_v_base_qw  <= LEG_V_PLANE_BASE;
+			eff_optc_map   <= 1'b0;
+			eff_base_w0    <= LEG_BASE_W0;
+			eff_base_w1    <= LEG_BASE_W1;
+			eff_doorbell_w <= LEG_DOORBELL_W;
 		end else begin
 			geom_en_r      <= 1'b1;
 			eff_coded_w    <= rt_cw_cl;
@@ -273,6 +301,25 @@ module ddr_frame_store #(
 			eff_c_pitch_qw <= rt_cs_cl[10:3];
 			eff_u_base_qw  <= rt_y_bytes_qw;
 			eff_v_base_qw  <= rt_y_bytes_qw + rt_c_bytes_qw;
+			// Option-C banks for native 720p coded width (w-mem writer contract).
+`ifdef DDR_FRAME_STORE_FAULT_FORCE_LEGACY_BANK_MAP
+			eff_optc_map   <= 1'b0;
+			eff_base_w0    <= LEG_BASE_W0;
+			eff_base_w1    <= LEG_BASE_W1;
+			eff_doorbell_w <= LEG_DOORBELL_W;
+`else
+			if (rt_cw_cl >= 11'd1280) begin
+				eff_optc_map   <= 1'b1;
+				eff_base_w0    <= OPTC_BASE_W0;
+				eff_base_w1    <= OPTC_BASE_W1;
+				eff_doorbell_w <= OPTC_DOORBELL_W;
+			end else begin
+				eff_optc_map   <= 1'b0;
+				eff_base_w0    <= LEG_BASE_W0;
+				eff_base_w1    <= LEG_BASE_W1;
+				eff_doorbell_w <= LEG_DOORBELL_W;
+			end
+`endif
 		end
 	end
 
@@ -941,10 +988,12 @@ module ddr_frame_store #(
 	reg [7:0]  d_c_fetch_qw, d_c_pitch_qw;
 	reg [28:0] d_u_base_qw, d_v_base_qw;
 	reg [10:0] d_coded_h;
+	reg [28:0] d_base_w0, d_base_w1, d_doorbell_w;
 	reg [8:0]  d_y_fetch_qw_m, d_y_pitch_qw_m;
 	reg [7:0]  d_c_fetch_qw_m, d_c_pitch_qw_m;
 	reg [28:0] d_u_base_qw_m, d_v_base_qw_m;
 	reg [10:0] d_coded_h_m;
+	reg [28:0] d_base_w0_m, d_base_w1_m, d_doorbell_w_m;
 	always @(posedge clk_ddr) begin
 		if (reset_ddr) begin
 			d_y_fetch_qw_m <= 9'(Y_LINE_QWORDS);
@@ -954,6 +1003,9 @@ module ddr_frame_store #(
 			d_u_base_qw_m  <= LEG_U_PLANE_BASE;
 			d_v_base_qw_m  <= LEG_V_PLANE_BASE;
 			d_coded_h_m    <= 11'(CODED_H);
+			d_base_w0_m    <= LEG_BASE_W0;
+			d_base_w1_m    <= LEG_BASE_W1;
+			d_doorbell_w_m <= LEG_DOORBELL_W;
 			d_y_fetch_qw   <= 9'(Y_LINE_QWORDS);
 			d_c_fetch_qw   <= 8'(C_LINE_QWORDS);
 			d_y_pitch_qw   <= 9'(Y_LINE_QWORDS);
@@ -961,6 +1013,9 @@ module ddr_frame_store #(
 			d_u_base_qw    <= LEG_U_PLANE_BASE;
 			d_v_base_qw    <= LEG_V_PLANE_BASE;
 			d_coded_h      <= 11'(CODED_H);
+			d_base_w0      <= LEG_BASE_W0;
+			d_base_w1      <= LEG_BASE_W1;
+			d_doorbell_w   <= LEG_DOORBELL_W;
 		end else begin
 			d_y_fetch_qw_m <= eff_y_fetch_qw;
 			d_c_fetch_qw_m <= eff_c_fetch_qw;
@@ -969,6 +1024,9 @@ module ddr_frame_store #(
 			d_u_base_qw_m  <= eff_u_base_qw;
 			d_v_base_qw_m  <= eff_v_base_qw;
 			d_coded_h_m    <= eff_coded_h;
+			d_base_w0_m    <= eff_base_w0;
+			d_base_w1_m    <= eff_base_w1;
+			d_doorbell_w_m <= eff_doorbell_w;
 			d_y_fetch_qw   <= d_y_fetch_qw_m;
 			d_c_fetch_qw   <= d_c_fetch_qw_m;
 			d_y_pitch_qw   <= d_y_pitch_qw_m;
@@ -976,10 +1034,21 @@ module ddr_frame_store #(
 			d_u_base_qw    <= d_u_base_qw_m;
 			d_v_base_qw    <= d_v_base_qw_m;
 			d_coded_h      <= d_coded_h_m;
+			d_base_w0      <= d_base_w0_m;
+			d_base_w1      <= d_base_w1_m;
+			d_doorbell_w   <= d_doorbell_w_m;
 		end
 	end
 
-	wire [28:0] fill_bank_base = fill_bank ? BASE_W1 : BASE_W0;
+	// Runtime bank map: legacy 0x30000000 or Option-C 0x30180000.
+	wire [28:0] fill_bank_base = fill_bank ? d_base_w1 : d_base_w0;
+	// Control page is doorbell-relative (0x100..0x128 bytes → +0x20..+0x25 qwords).
+	wire [28:0] poll_doorbell_w = d_doorbell_w;
+	wire [28:0] poll_mailbox_w  = d_doorbell_w + 29'h20; // +0x100
+	wire [28:0] poll_imbox_w    = d_doorbell_w + 29'h21; // +0x108
+	wire [28:0] poll_sdram_w    = d_doorbell_w + 29'h22; // +0x110
+	wire [28:0] poll_frame_w    = d_doorbell_w + 29'h23; // +0x118
+	wire [28:0] poll_bank_w     = d_doorbell_w + 29'h25; // +0x128 PLXD
 	// Pitch from runtime y_stride/chroma_stride (legacy: pitch == fetch == CODED_W/8).
 	wire [28:0] y_pitch_qw_w = {20'd0, d_y_pitch_qw};
 	wire [28:0] c_pitch_qw_w = {21'd0, d_c_pitch_qw};
@@ -1267,7 +1336,7 @@ module ddr_frame_store #(
 					poll_div <= poll_div + 16'd1;
 					if (frame_mbox_req && (!frame_mbox_valid || poll_div[7:0] == 8'd224)
 					    && !DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE) begin
-						DDRAM_ADDR <= FRAME_MAILBOX_W;
+						DDRAM_ADDR <= poll_frame_w;
 						DDRAM_BURSTCNT <= 8'd1;
 						DDRAM_DIN <= {frame_status_ddr, frame_mbox_seq + 8'd1, MAGIC_F};
 						DDRAM_WE <= 1'b1;
@@ -1286,7 +1355,7 @@ module ddr_frame_store #(
 						// swaps stuck — ARM stale detector could not fire
 						// (playback freeze class on c5382bee). ARM now also
 						// gates on free/disp identity; keep ABI honest.
-						DDRAM_ADDR <= BANK_MAILBOX_W;
+						DDRAM_ADDR <= poll_bank_w;
 						DDRAM_BURSTCNT <= 8'd1;
 						DDRAM_DIN <= {frames_done_d2,                       // [63:48] real swaps (CDC)
 						              12'd0,                                // [47:36] reserved
@@ -1364,13 +1433,13 @@ module ddr_frame_store #(
 							state_ddr <= S_LINE_ISSUE;
 						end
 					end else if (!poll_pending && poll_div[7:0] == 8'd0 && !DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE) begin
-						DDRAM_ADDR <= DOORBELL_W;
+						DDRAM_ADDR <= poll_doorbell_w;
 						DDRAM_BURSTCNT <= 8'd1;
 						DDRAM_RD <= 1'b1;
 						poll_pending <= 1'b1;
 						state_ddr <= S_POLL_WAIT;
 					end else if (!cmd_empty && poll_div[7:0] == 8'd64 && !DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE) begin
-						DDRAM_ADDR <= INPUT_MAILBOX_W;
+						DDRAM_ADDR <= poll_imbox_w;
 						DDRAM_BURSTCNT <= 8'd1;
 						DDRAM_DIN <= {imbox_seq + 16'd1, imbox_cmd_seq + 8'd1, cmd_rdata, MAGIC_I};
 						DDRAM_WE <= 1'b1;
@@ -1379,7 +1448,7 @@ module ddr_frame_store #(
 						imbox_cmd_seq <= imbox_cmd_seq + 8'd1;
 						state_ddr <= S_WRITE_WAIT;
 					end else if (mbox_req && poll_div[7:0] == 8'd128 && !DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE) begin
-						DDRAM_ADDR <= MAILBOX_W;
+						DDRAM_ADDR <= poll_mailbox_w;
 						DDRAM_BURSTCNT <= 8'd1;
 						DDRAM_DIN <= {mbox_seq + 16'd1, status_osd_safe, MAGIC_S};
 						DDRAM_WE <= 1'b1;
@@ -1389,7 +1458,7 @@ module ddr_frame_store #(
 						mbox_req <= 1'b0;
 						state_ddr <= S_WRITE_WAIT;
 					end else if (sdram_mbox_req && poll_div[7:0] == 8'd192 && !DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE) begin
-						DDRAM_ADDR <= SDRAM_MAILBOX_W;
+						DDRAM_ADDR <= poll_sdram_w;
 						DDRAM_BURSTCNT <= 8'd1;
 						DDRAM_DIN <= {sdram_status_safe, sdram_mbox_seq + 8'd1, MAGIC_M};
 						DDRAM_WE <= 1'b1;

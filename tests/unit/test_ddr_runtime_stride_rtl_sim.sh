@@ -79,6 +79,7 @@ assert_sim_executed "green" "$GOUT" \
   "CASE neg_geom0_expect720 EXECUTED" \
   "PASS legacy624" \
   "PASS rt720" \
+  "Option-C bank map" \
   "PASS red-check neg_geom0_expect720" \
   "RUNTIME_STRIDE_GREEN_DONE"
 if [[ "$GRC" -ne 0 ]]; then
@@ -113,6 +114,34 @@ if [[ "$RRC" -ne 0 ]]; then
   exit "$RRC"
 fi
 echo "OK red twin ignore-geom true rc=0"
+
+echo "=== RED twin FAULT_FORCE_LEGACY_BANK_MAP ==="
+BUILD_R2="$ROOT/build/verilator/ddr_runtime_stride_red_bank"
+mkdir -p "$BUILD_R2"
+set +e
+"$RUN_VERILATOR" "${COMMON[@]}" -Mdir "$BUILD_R2" \
+  +define+DDR_FRAME_STORE_FAULT_FORCE_LEGACY_BANK_MAP >"$BUILD_R2/build.log" 2>&1
+R2BRC=$?
+set -e
+if [[ "$R2BRC" -ne 0 ]]; then
+  tail -40 "$BUILD_R2/build.log" >&2
+  echo "FAIL red-bank build true rc=$R2BRC" >&2
+  exit "$R2BRC"
+fi
+set +e
+R2OUT="$("$BUILD_R2/Vddr_frame_store_runtime_stride_tb" 2>&1)"
+R2RC=$?
+set -e
+echo "$R2OUT"
+if grep -q "PASS rt720 Option-C bank map" <<<"$R2OUT"; then
+  echo "FAIL red-bank: Option-C Y matched under FORCE_LEGACY_BANK_MAP" >&2
+  exit 1
+fi
+if [[ "$R2RC" -eq 0 ]]; then
+  echo "FAIL red-bank: expected rt720 Option-C check to fail true rc=$R2RC" >&2
+  exit 1
+fi
+echo "OK red twin FORCE_LEGACY_BANK_MAP true rc=$R2RC (expected non-zero)"
 
 echo "PASS test_ddr_runtime_stride_rtl_sim all gates"
 exit 0

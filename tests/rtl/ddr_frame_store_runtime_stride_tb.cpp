@@ -25,6 +25,10 @@ namespace {
 constexpr uint32_t kBasePhys = 0x30000000u;
 constexpr uint32_t kBankStrideBytes = 524288u;
 constexpr uint32_t kDoorbellPhys = 0x300FF000u;
+// Option-C 720p (must match ddr_frame_store PHYS_BASE_720P / w-mem contract)
+constexpr uint32_t kOptcBasePhys = 0x30180000u;
+constexpr uint32_t kOptcBankStride = 0x180000u;
+constexpr uint32_t kOptcDoorbellPhys = 0x3047F000u;
 constexpr uint32_t kMagic = 0x504C584Bu;
 
 constexpr int kLegW = 624;
@@ -87,6 +91,11 @@ struct Sim {
 	int cls_v_end = kLegVQ + (kLegW * kLegH) / 32;
 	int frame_w = 640;
 	int frame_h = 480;
+	uint32_t base_phys = kBasePhys;
+	uint32_t doorbell_phys = kDoorbellPhys;
+	bool expect_optc = false;
+	uint64_t first_y_addr = 0;
+	bool saw_y = false;
 
 	Sim() : mem(kMemQ, 0) {
 		top.clk = 0;
@@ -114,13 +123,19 @@ struct Sim {
 		top.DDRAM_DOUT_READY = 0;
 	}
 
-	uint32_t offQ(uint32_t phys) const { return (phys - kBasePhys) / 8; }
-	uint32_t addrOffQ(uint32_t addr) const { return addr - (kBasePhys >> 3); }
+	uint32_t offQ(uint32_t phys) const { return (phys - base_phys) / 8; }
+	uint32_t addrOffQ(uint32_t addr) const { return addr - (base_phys >> 3); }
 
 	void clearStats() {
 		y_reads = u_reads = v_reads = 0;
-		first_u_addr = first_v_addr = 0;
-		saw_u = saw_v = false;
+		first_u_addr = first_v_addr = first_y_addr = 0;
+		saw_u = saw_v = saw_y = false;
+	}
+
+	void setBankMap(bool optc) {
+		expect_optc = optc;
+		base_phys = optc ? kOptcBasePhys : kBasePhys;
+		doorbell_phys = optc ? kOptcDoorbellPhys : kDoorbellPhys;
 	}
 
 	void setGeom(bool en, int cw, int ch, int ys, int cs, int dw, int dh, int px) {
@@ -168,7 +183,13 @@ struct Sim {
 	}
 
 	void ringDoorbell(int bank, uint32_t seq) {
-		const uint32_t off = offQ(kDoorbellPhys);
+		// Place doorbell at absolute phys; mem is indexed from base_phys.
+		// For Option-C, expand: store doorbell relative to optc base.
+		const uint32_t off = (doorbell_phys - base_phys) / 8;
+		if (off >= mem.size()) {
+			std::cerr << "FAIL doorbell off out of range\n";
+			return;
+		}
 		mem[off] = (static_cast<uint64_t>(doorbellHi(seq, bank)) << 32) | kMagic;
 	}
 
@@ -185,10 +206,14 @@ struct Sim {
 			top.DDRAM_DOUT = (idx < mem.size()) ? mem[idx] : 0;
 			top.DDRAM_DOUT_READY = 1;
 			const uint64_t rel = idx;
-			const uint32_t db_rel = offQ(kDoorbellPhys);
+			const uint32_t db_rel = (doorbell_phys - base_phys) / 8;
 			if (rel < db_rel || rel > db_rel + 64) {
 				if (rel < static_cast<uint64_t>(cls_u)) {
 					++y_reads;
+					if (!saw_y) {
+						saw_y = true;
+						first_y_addr = rel;
+					}
 				} else if (rel < static_cast<uint64_t>(cls_v)) {
 					++u_reads;
 					if (!saw_u) {
@@ -268,6 +293,7 @@ int run_case(const char* name, bool geom, int cw, int ch, int ys, int cs, int dw
 	sim.frame_w = std::max(dw + px + 8, 64);
 	sim.frame_h = std::min(std::max(dh, 48), 64);
 	sim.setGeom(geom, cw, ch, ys, cs, dw, dh, px);
+	sim.setBankMap(geom && cw >= 1280);
 	sim.setClassify(exp_u, exp_v, exp_v + std::max(c_pitch_q * 4, 256));
 
 	sim.resetCore();
@@ -290,8 +316,11 @@ int run_case(const char* name, bool geom, int cw, int ch, int ys, int cs, int dw
 	const bool v_ok = sim.saw_v && static_cast<int>(sim.first_v_addr) == exp_v;
 	const bool pass = u_ok && v_ok;
 
+	// Absolute phys of first Y beat (base + rel*8)
+	const uint64_t y_phys = uint64_t(sim.base_phys) + sim.first_y_addr * 8ull;
 	std::cout << "CASE " << name << " EXECUTED geom=" << (geom ? 1 : 0) << " coded=" << cw << "x"
-	          << ch << " y_stride=" << ys << " first_u_q=" << sim.first_u_addr
+	          << ch << " y_stride=" << ys << " bank_base=0x" << std::hex << sim.base_phys
+	          << " first_y_phys=0x" << y_phys << std::dec << " first_u_q=" << sim.first_u_addr
 	          << " expect_u_q=" << exp_u << " first_v_q=" << sim.first_v_addr
 	          << " expect_v_q=" << exp_v << " y_reads=" << sim.y_reads << " u_reads=" << sim.u_reads
 	          << " v_reads=" << sim.v_reads << " frames_done=" << int(sim.top.frames_done)
@@ -307,6 +336,14 @@ int run_case(const char* name, bool geom, int cw, int ch, int ys, int cs, int dw
 			std::cerr << "FAIL " << name << ": plane base mismatch u_ok=" << u_ok
 			          << " v_ok=" << v_ok << "\n";
 			return 1;
+		}
+		if (sim.expect_optc) {
+			if (!sim.saw_y || y_phys != kOptcBasePhys) {
+				std::cerr << "FAIL " << name << ": Option-C first Y phys 0x" << std::hex
+				          << y_phys << " expected 0x" << kOptcBasePhys << std::dec << "\n";
+				return 1;
+			}
+			std::cout << "PASS " << name << " Option-C bank map (first Y @ 0x30180000)\n";
 		}
 		std::cout << "PASS " << name << " plane_bases OK\n";
 		return 0;

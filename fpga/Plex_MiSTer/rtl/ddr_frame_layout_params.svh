@@ -31,3 +31,32 @@ localparam int DDR_FRAME_YUV420P_DOORBELL_PHYS = 32'h300F_F000;
 localparam int DDR_FRAME_YUV_BLACK_Y = 16;
 localparam int DDR_FRAME_YUV_BLACK_U = 128;
 localparam int DDR_FRAME_YUV_BLACK_V = 128;
+
+// ---- Opt-in 720p / Option-C tier (mirror kPlex720p* in ddr_frame_layout.hpp) ----
+// Product synthesis still uses DDR_FRAME_* 480p above. 720p banks live at
+// Option-C phys (after bitstream ring). Reader selects this map only when
+// runtime geom_enable + coded_w>=1280 (or FABRIC_NATIVE_720P_READ demo macro).
+localparam int DDR_FRAME_720P_CODED_WIDTH = 1280;
+localparam int DDR_FRAME_720P_CODED_HEIGHT = 720;
+localparam int DDR_FRAME_720P_DISPLAY_WIDTH = 1280;
+localparam int DDR_FRAME_720P_DISPLAY_HEIGHT = 720;
+localparam int DDR_FRAME_720P_PRESENTED_WIDTH = 1280;
+localparam int DDR_FRAME_720P_PRESENTED_HEIGHT = 720;
+localparam int DDR_FRAME_720P_CROP_LEFT = 0;
+localparam int DDR_FRAME_720P_CROP_RIGHT = 0;
+localparam int DDR_FRAME_720P_CROP_TOP = 0;
+localparam int DDR_FRAME_720P_CROP_BOTTOM = 0;
+localparam int DDR_FRAME_720P_PILLARBOX_LEFT = 0;
+localparam int DDR_FRAME_720P_PILLARBOX_RIGHT = 0;
+localparam int DDR_FRAME_720P_YUV_LUMA_LINE_QWORDS = 160;
+localparam int DDR_FRAME_720P_YUV_CHROMA_LINE_QWORDS = 80;
+localparam int DDR_FRAME_720P_YUV420P_BYTES = 1382400;
+localparam int DDR_FRAME_720P_Y_PLANE_OFFSET = 0;
+localparam int DDR_FRAME_720P_U_PLANE_OFFSET = 921600;
+localparam int DDR_FRAME_720P_V_PLANE_OFFSET = 1152000;
+localparam int DDR_FRAME_720P_Y_STRIDE_BYTES = 1280;
+localparam int DDR_FRAME_720P_CHROMA_STRIDE_BYTES = 640;
+localparam int DDR_FRAME_720P_YUV420P_BANK_STRIDE = 32'h0018_0000;
+localparam int DDR_FRAME_720P_PHYS_BASE = 32'h3018_0000;
+localparam int DDR_FRAME_720P_YUV420P_DOORBELL_PHYS = 32'h3047_F000;
+

@@ -494,40 +494,76 @@ def check_present_core() -> None:
         "simulation/hardware sweep and update this test with the new measured value.",
     )
 
+    # G-VID1 edge-wrap: store_x must track free-running beam (no blank force-to-0).
+    # Legacy: present_core `store_x <= store_x_clamped` on ce_pix.
+    # Fabric window path: present_content_window owns that reg; present_core wires
+    # store_x from the window (still no blank-time reset).
     assigns = re.findall(r"\bstore_x\s*<=\s*([^;]+);", text)
     rhs = [norm(a) for a in assigns]
-    check(
-        "store_x_clamped" in rhs,
-        "present_core no longer assigns store_x <= store_x_clamped on ce_pix. The edge-wrap "
-        "fix depends on store_x following the clamped counter through blank/overhang pixels.",
+    win_path = (
+        "present_content_window" in text
+        and re.search(r"\bstore_x\s*=\s*store_x_win", text) is not None
     )
-    zero_assigns = [x for x in rhs if x in {"10'd0", "0", "10'h0"}]
-    check(
-        len(zero_assigns) == 1 and all(x in {"10'd0", "0", "10'h0", "store_x_clamped"} for x in rhs),
-        "present_core store_x has a non-reset or extra zero assignment. Do not reset store_x "
-        "during blank time: that handed source column 0 to delayed right-edge pixels and caused "
-        "the visible 1-pixel wrap. Keep only reset=>0 and ce_pix=>store_x_clamped.",
-    )
-    check(
-        not any("in_content" in x or "?" in x for x in rhs),
-        "present_core store_x assignment is conditional on content/blank. The G-VID1 fix requires "
-        "no blank-time store_x reset; store_x must follow store_x_clamped on every ce_pix.",
-    )
+    if win_path:
+        win_path_file = ROOT / "fpga/Plex_MiSTer/rtl/present_content_window.sv"
+        wtext = strip_comments(read(win_path_file))
+        wassign = re.findall(r"\bstore_x\s*<=\s*([^;]+);", wtext)
+        wrhs = [norm(a) for a in wassign]
+        check(
+            "store_x_clamped" in wrhs,
+            "present_content_window must assign store_x <= store_x_clamped on ce_pix "
+            "(G-VID1 edge-wrap; free-running hc, no blank force-0).",
+        )
+        wzero = [x for x in wrhs if x in {"10'd0", "0", "10'h0", "'0"}]
+        check(
+            len(wzero) == 1 and all(
+                x in {"10'd0", "0", "10'h0", "'0", "store_x_clamped"} for x in wrhs
+            ),
+            "present_content_window store_x has non-reset zero or extra assigns — "
+            "blank-time reset reintroduces the 1px wrap.",
+        )
+        check(
+            not any("in_content" in x or "?" in x for x in wrhs),
+            "present_content_window store_x must not be gated on in_content/blank.",
+        )
+    else:
+        check(
+            "store_x_clamped" in rhs,
+            "present_core no longer assigns store_x <= store_x_clamped on ce_pix. The edge-wrap "
+            "fix depends on store_x following the clamped counter through blank/overhang pixels.",
+        )
+        zero_assigns = [x for x in rhs if x in {"10'd0", "0", "10'h0"}]
+        check(
+            len(zero_assigns) == 1 and all(x in {"10'd0", "0", "10'h0", "store_x_clamped"} for x in rhs),
+            "present_core store_x has a non-reset or extra zero assignment. Do not reset store_x "
+            "during blank time: that handed source column 0 to delayed right-edge pixels and caused "
+            "the visible 1-pixel wrap. Keep only reset=>0 and ce_pix=>store_x_clamped.",
+        )
+        check(
+            not any("in_content" in x or "?" in x for x in rhs),
+            "present_core store_x assignment is conditional on content/blank. The G-VID1 fix requires "
+            "no blank-time store_x reset; store_x must follow store_x_clamped on every ce_pix.",
+        )
 
     nt = norm(text)
     # T7: past_last_row is V_STORE-relative (product V_STORE=FRAME_H=480), not hard 240.
+    # Window path: past_last_row output from present_content_window; present_core ORs into vb_d.
     past_ok = (
         "past_last_row=(py>=V_STORE)" in nt
         and (
             "store_y_clamped=past_last_row?V_STORE_LAST:py" in nt
             or "store_y_clamped=past_last_row?10'd239:py" in nt
         )
+    ) or (
+        "present_content_window" in text
+        and "past_last_row" in text
+        and "vb_d=vb|past_last_row" in nt
     )
     check(
         past_ok,
         "present_core past_last_row clamp is missing. It prevents fetching past V_STORE and "
         "stops the surplus-row/bottom-edge artifact; restore past_last_row and store_y_clamped "
-        "(T7: py>=V_STORE / V_STORE_LAST, not hard-coded 240).",
+        "(T7: py>=V_STORE / V_STORE_LAST, not hard-coded 240) or window-path past_last_row|vb_d.",
     )
     check(
         "vb_d=vb|past_last_row" in nt,
@@ -737,8 +773,8 @@ def check_frame_store_cdc_contract() -> None:
             "DDR-to-present pending-ready flag must be two-flop synchronised",
         ),
         (
-            "line_buf_ram#(.WIDTH(Y_LINE_QWORDS),.AW(Y_QW_AW),.DATA_W(64))yram(.wr_clk(clk_ddr)",
-            "frame line-buffer RAM writes must remain in clk_ddr",
+            "line_buf_ram#(.WIDTH(Y_LINE_QWORDS_MAX),.AW(Y_QW_AW),.DATA_W(64))yram(.wr_clk(clk_ddr)",
+            "frame line-buffer RAM writes must remain in clk_ddr (runtime-stride max width)",
         ),
         (
             ".rd_clk(clk),.rd_addr(y_rd_addr)",
@@ -1268,6 +1304,22 @@ def check_ddr_frame_layout_contract() -> None:
         ("kYuv420BlackY", "DDR_FRAME_YUV_BLACK_Y"),
         ("kYuv420BlackU", "DDR_FRAME_YUV_BLACK_U"),
         ("kYuv420BlackV", "DDR_FRAME_YUV_BLACK_V"),
+        # Opt-in 720p / Option-C tier (must not drift vs host)
+        ("kPlex720pCodedWidth", "DDR_FRAME_720P_CODED_WIDTH"),
+        ("kPlex720pCodedHeight", "DDR_FRAME_720P_CODED_HEIGHT"),
+        ("kPlex720pDisplayWidth", "DDR_FRAME_720P_DISPLAY_WIDTH"),
+        ("kPlex720pDisplayHeight", "DDR_FRAME_720P_DISPLAY_HEIGHT"),
+        ("kPlex720pPresentedWidth", "DDR_FRAME_720P_PRESENTED_WIDTH"),
+        ("kPlex720pPresentedHeight", "DDR_FRAME_720P_PRESENTED_HEIGHT"),
+        ("kPlex720pYuv420pBytes", "DDR_FRAME_720P_YUV420P_BYTES"),
+        ("kPlex720pYPlaneOffset", "DDR_FRAME_720P_Y_PLANE_OFFSET"),
+        ("kPlex720pUPlaneOffset", "DDR_FRAME_720P_U_PLANE_OFFSET"),
+        ("kPlex720pVPlaneOffset", "DDR_FRAME_720P_V_PLANE_OFFSET"),
+        ("kPlex720pYStrideBytes", "DDR_FRAME_720P_Y_STRIDE_BYTES"),
+        ("kPlex720pChromaStrideBytes", "DDR_FRAME_720P_CHROMA_STRIDE_BYTES"),
+        ("kPlex720pYuv420pBankStride", "DDR_FRAME_720P_YUV420P_BANK_STRIDE"),
+        ("kPlex720pDdrFramePhysBase", "DDR_FRAME_720P_PHYS_BASE"),
+        ("kPlex720pYuv420pDoorbellPhys", "DDR_FRAME_720P_YUV420P_DOORBELL_PHYS"),
     ]
     for host_name, rtl_name in pairs:
         hv = cpp_const(host, host_name)
@@ -1313,6 +1365,19 @@ def check_ddr_frame_layout_contract() -> None:
             f"(fault_coded={fault_coded} fault_stride={fault_stride} host_stride={host_stride})"
         )
     print("PASS DDR frame layout ARM/RTL contract")
+    check(
+        cpp_const(host, "kPlex720pDdrFramePhysBase") == 0x30180000,
+        "Option-C phys base must be 0x30180000",
+    )
+    check(
+        cpp_const(host, "kPlex720pYuv420pDoorbellPhys") == 0x3047F000,
+        "Option-C doorbell must be 0x3047F000",
+    )
+    check(
+        cpp_const(host, "kPlex720pYuv420pBankStride") == 0x180000,
+        "Option-C bank stride must be 0x180000",
+    )
+    print("PASS DDR Option-C 720p map constants")
     print(
         "PASS DDR stride parity red-check: RTL CODED_WIDTH/Y_STRIDE 624→320 diverges from host"
     )
@@ -1408,26 +1473,28 @@ def check_ddr_frame_store_yuv_read_contract() -> None:
                 "C_LINE_QWORDS=CODED_W/16",
                 "chroma line fetch stride must be CODED_W/16 qwords (half-width bytes)",
             ),
+            # Legacy 480p plane packing (reset/default geom). Runtime path uses
+            # LEG_* + d_u/v_base_qw CDC; product defaults must stay tight-pack.
             (
-                "Y_PLANE_QWORDS=29'((CODED_W*CODED_H)/8)",
-                "Y plane size in qwords must be coded_width*coded_height/8",
+                "LEG_Y_PLANE_QWORDS=29'((CODED_W*CODED_H)/8)",
+                "legacy Y plane size in qwords must be coded_width*coded_height/8",
             ),
             (
-                "C_PLANE_QWORDS=29'((CODED_W*CODED_H)/32)",
-                "U/V plane size in qwords must be coded_width*coded_height/32",
+                "LEG_C_PLANE_QWORDS=29'((CODED_W*CODED_H)/32)",
+                "legacy U/V plane size in qwords must be coded_width*coded_height/32",
             ),
-            ("U_PLANE_BASE=Y_PLANE_QWORDS", "U read base must immediately follow Y"),
+            ("LEG_U_PLANE_BASE=LEG_Y_PLANE_QWORDS", "U read base must immediately follow Y (legacy)"),
             (
-                "V_PLANE_BASE=Y_PLANE_QWORDS+C_PLANE_QWORDS",
-                "V read base must immediately follow U",
-            ),
-            (
-                "u_addr=fill_bank_base+U_PLANE_BASE+fill_cy_qword+fill_qword_c",
-                "U fetch address must use U_PLANE_BASE",
+                "LEG_V_PLANE_BASE=LEG_Y_PLANE_QWORDS+LEG_C_PLANE_QWORDS",
+                "V read base must immediately follow U (legacy)",
             ),
             (
-                "v_addr=fill_bank_base+V_PLANE_BASE+fill_cy_qword+fill_qword_c",
-                "V fetch address must use V_PLANE_BASE",
+                "u_addr=fill_bank_base+d_u_base_qw+fill_cy_qword+fill_qword_c",
+                "U fetch address must use runtime d_u_base_qw (CDC from LEG_/rt plane bases)",
+            ),
+            (
+                "v_addr=fill_bank_base+d_v_base_qw+fill_cy_qword+fill_qword_c",
+                "V fetch address must use runtime d_v_base_qw",
             ),
             (
                 "chroma_addr=fill_plane_v?v_addr:u_addr",
@@ -1486,8 +1553,8 @@ def check_ddr_frame_store_yuv_read_contract() -> None:
             ),
             ("c_sel_r<=src_x[3:1]", "chroma byte select must halve the source X"),
             (
-                "fill_cy_qword={{(30-Y_W){1'b0}},fill_cy}*C_LINE_QWORDS_W",
-                "chroma DDR line address must stride by the chroma line width",
+                "fill_cy_qword={{(30-Y_W){1'b0}},fill_cy}*c_pitch_qw_w",
+                "chroma DDR line address must stride by runtime chroma pitch (c_pitch_qw_w)",
             ),
             ("u_pix=pick_byte(selected_u_q,c_sel_r)", "YUV converter U input must come from U RAM"),
             ("v_pix=pick_byte(selected_v_q,c_sel_r)", "YUV converter V input must come from V RAM"),
@@ -1508,12 +1575,12 @@ def check_ddr_frame_store_yuv_read_contract() -> None:
     # byte-exact I420 but the RTL reads U from the V plane and V from the U plane.
     swapped = (
         nt.replace(
-            "u_addr=fill_bank_base+U_PLANE_BASE+fill_cy_qword+fill_qword_c",
-            "u_addr=fill_bank_base+V_PLANE_BASE+fill_cy_qword+fill_qword_c",
+            "u_addr=fill_bank_base+d_u_base_qw+fill_cy_qword+fill_qword_c",
+            "u_addr=fill_bank_base+d_v_base_qw+fill_cy_qword+fill_qword_c",
         )
         .replace(
-            "v_addr=fill_bank_base+V_PLANE_BASE+fill_cy_qword+fill_qword_c",
-            "v_addr=fill_bank_base+U_PLANE_BASE+fill_cy_qword+fill_qword_c",
+            "v_addr=fill_bank_base+d_v_base_qw+fill_cy_qword+fill_qword_c",
+            "v_addr=fill_bank_base+d_u_base_qw+fill_cy_qword+fill_qword_c",
         )
     )
     if not missing_requirements(swapped):
@@ -1533,8 +1600,8 @@ def check_ddr_frame_store_yuv_read_contract() -> None:
         nt.replace("rd_cy=src_y_line[CODED_Y_W-1:1]", "rd_cy=src_y_line[CODED_Y_W-2:0]")
         .replace("c_sel_r<=src_x[3:1]", "c_sel_r<=src_x[2:0]")
         .replace(
-            "fill_cy_qword={{(30-Y_W){1'b0}},fill_cy}*C_LINE_QWORDS_W",
-            "fill_cy_qword={{(30-Y_W){1'b0}},fill_cy}*Y_LINE_QWORDS_W",
+            "fill_cy_qword={{(30-Y_W){1'b0}},fill_cy}*c_pitch_qw_w",
+            "fill_cy_qword={{(30-Y_W){1'b0}},fill_cy}*y_pitch_qw_w",
         )
     )
     if not missing_requirements(bad_geometry):
@@ -1763,8 +1830,8 @@ def check_present_geometry_stride_contract() -> None:
                 # match ARM line_bytes. Default CODED_W=FRAME_W (640) would walk 640 B/line
                 # while the writer lays 624 B/line → 16 px leftward creep per scanline.
                 frame_norm,
-                "fill_y_qword={{(29-Y_W){1'b0}},fill_y}*Y_LINE_QWORDS_W",
-                "RTL DDR Y fill address must step by Y_LINE_QWORDS (CODED_W/8), never FRAME_W",
+                "fill_y_qword={{(29-Y_W){1'b0}},fill_y}*y_pitch_qw_w",
+                "RTL DDR Y fill address must step by runtime y_pitch_qw_w (legacy=CODED_W/8)",
             ),
             (
                 frame_norm,
@@ -1778,15 +1845,15 @@ def check_present_geometry_stride_contract() -> None:
             ),
             (
                 frame_norm,
-                "fill_cy_qword={{(30-Y_W){1'b0}},fill_cy}*C_LINE_QWORDS_W",
-                "RTL chroma fetch address must stride by 312-byte chroma lines",
+                "fill_cy_qword={{(30-Y_W){1'b0}},fill_cy}*c_pitch_qw_w",
+                "RTL chroma fetch address must stride by runtime c_pitch_qw_w (legacy=312 B)",
             ),
             (
                 # Product path is planar YUV420p. RGB565_LINE_QWORDS must not appear in
                 # the store body (kills the "640 px RGB565 vs 624 pitch" theory for DDR).
                 frame_norm,
-                "Y_PLANE_QWORDS=29'((CODED_W*CODED_H)/8)",
-                "RTL product DDR store is YUV planar (Y plane qwords from CODED_W*CODED_H), not RGB565",
+                "LEG_Y_PLANE_QWORDS=29'((CODED_W*CODED_H)/8)",
+                "RTL product DDR store is YUV planar (legacy Y plane qwords from CODED_W*CODED_H), not RGB565",
             ),
             (
                 frame_norm,
