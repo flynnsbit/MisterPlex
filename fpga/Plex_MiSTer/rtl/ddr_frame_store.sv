@@ -67,7 +67,13 @@ module ddr_frame_store #(
 	//    NBA order cleared swap_pending after setting it, dropping the doorbell
 	//    under sustained high-rate publish (playback ~24 fps) while idle's slow
 	//    presents rarely collide with the 1-cycle vsync window.
-	parameter bit SWAP_REQ_HOLDS_PENDING_ACROSS_VSYNC = 1'b1
+	parameter bit SWAP_REQ_HOLDS_PENDING_ACROSS_VSYNC = 1'b1,
+	// 1 (product): line-cache tags carry a per-bank frame generation. Each
+	//    accepted doorbell/SPI publish bumps that bank's gen and clears slots
+	//    tagged with it; fill commit requires gen still match. Without this,
+	//    tags are only {bank,line}: bank0→1→0 reuses prep top lines and shows
+	//    two-frames-stale pixels (rd-duck). 0 = fault twin for red TB.
+	parameter bit LINE_CACHE_FRAME_GEN = 1'b1
 )(
 	input  wire        clk,
 	input  wire        clk_ddr,
@@ -774,6 +780,11 @@ module ddr_frame_store #(
 	reg [LINE_SLOTS-1:0] y_bank, c_bank;
 	reg [Y_W-1:0] y_line [0:LINE_SLOTS-1];
 	reg [Y_W-2:0] c_line [0:LINE_SLOTS-1];
+	// Per-bank publish generation (rd-duck stale top-row). Tags are not only
+	// {bank,line}: each accepted new frame for bank B bumps bank_gen[B] and
+	// invalidates slots still tagged B so prep cannot hit two-frames-stale data.
+	reg [7:0] bank_gen0, bank_gen1;
+	reg [7:0] fill_gen;
 	reg disp_bank_d1, disp_bank_d2;
 	reg disp_buf_d1, disp_buf_d2;
 	reg has_frame_d1, has_frame_d2;
@@ -1147,6 +1158,9 @@ module ddr_frame_store #(
 			c_valid <= '0;
 			y_bank <= '0;
 			c_bank <= '0;
+			bank_gen0 <= 8'd0;
+			bank_gen1 <= 8'd0;
+			fill_gen <= 8'd0;
 			for (ti = 0; ti < LINE_SLOTS; ti = ti + 1) begin
 				y_line[ti] <= '0;
 				c_line[ti] <= '0;
@@ -1343,13 +1357,53 @@ module ddr_frame_store #(
 				swap_req_t_ddr <= ~swap_req_t_ddr;
 				doorbell_ok <= 1'b1;
 				stale_db_polls <= '0;
+				// Frame-gen: bump published bank and drop any slot still tagged
+				// with it. Without this, prep top lines {bank,line} hit after
+				// bank0→1→0 reuse and never re-read overwritten DDR (rd-duck).
+				if (LINE_CACHE_FRAME_GEN) begin
+					if (DDRAM_DOUT[63])
+						bank_gen1 <= bank_gen1 + 8'd1;
+					else
+						bank_gen0 <= bank_gen0 + 8'd1;
+					for (ti = 0; ti < LINE_SLOTS; ti = ti + 1) begin
+						if (y_bank[ti] == DDRAM_DOUT[63])
+							y_valid[ti] <= 1'b0;
+						if (c_bank[ti] == DDRAM_DOUT[63])
+							c_valid[ti] <= 1'b0;
+					end
+				end
 			end
 			if (spi_edge_ddr) begin
 				start_seen <= start_d2;
 				if (!STRICT_YUV_DOORBELL || (have_seq && !format_error)) begin
 					pending_bank_ddr <= bank_sel_d2;
 					swap_req_t_ddr <= ~swap_req_t_ddr;
+					if (LINE_CACHE_FRAME_GEN) begin
+						if (bank_sel_d2)
+							bank_gen1 <= bank_gen1 + 8'd1;
+						else
+							bank_gen0 <= bank_gen0 + 8'd1;
+						for (ti = 0; ti < LINE_SLOTS; ti = ti + 1) begin
+							if (y_bank[ti] == bank_sel_d2)
+								y_valid[ti] <= 1'b0;
+							if (c_bank[ti] == bank_sel_d2)
+								c_valid[ti] <= 1'b0;
+						end
+					end
 				end
+			end
+			// Geom/map epoch: any settled change of pitch/base/doorbell kills
+			// all line tags (stride/base reuse would otherwise look like hits).
+			if (LINE_CACHE_FRAME_GEN &&
+			    ((d_base_w0 != d_base_w0_m) || (d_base_w1 != d_base_w1_m) ||
+			     (d_doorbell_w != d_doorbell_w_m) ||
+			     (d_y_pitch_qw != d_y_pitch_qw_m) || (d_c_pitch_qw != d_c_pitch_qw_m) ||
+			     (d_u_base_qw != d_u_base_qw_m) || (d_v_base_qw != d_v_base_qw_m) ||
+			     (d_coded_h != d_coded_h_m))) begin
+				bank_gen0 <= bank_gen0 + 8'd1;
+				bank_gen1 <= bank_gen1 + 8'd1;
+				y_valid <= '0;
+				c_valid <= '0;
 			end
 
 			case (state_ddr)
@@ -1411,6 +1465,7 @@ module ddr_frame_store #(
 						state_ddr <= S_WRITE_WAIT;
 					end else if (PIPELINE_REFILL_SCHEDULER && sched_valid) begin
 						fill_bank <= sched_bank;
+						fill_gen <= sched_bank ? bank_gen1 : bank_gen0;
 						fill_idx <= sched_idx;
 						fill_plane_v <= 1'b0;
 						fill_qword <= '0;
@@ -1440,6 +1495,8 @@ module ddr_frame_store #(
 							sched_pending_ready <= pending_ready_c;
 						end else begin
 							fill_bank <= (swap_pending_d2 && need_y_prep_c) ? pending_bank_d2 : disp_bank_d2;
+							fill_gen <= ((swap_pending_d2 && need_y_prep_c) ? pending_bank_d2 : disp_bank_d2)
+							            ? bank_gen1 : bank_gen0;
 							fill_y <= (swap_pending_d2 && need_y_prep_c) ? target_y_prep_c : target_y_cur_c;
 							fill_idx <= (swap_pending_d2 && need_y_prep_c) ? target_y_idx_prep_c : target_y_idx_cur_c;
 							y_valid[(swap_pending_d2 && need_y_prep_c) ? target_y_idx_prep_c : target_y_idx_cur_c] <= 1'b0;
@@ -1461,6 +1518,8 @@ module ddr_frame_store #(
 							sched_pending_ready <= pending_ready_c;
 						end else begin
 							fill_bank <= (swap_pending_d2 && need_c_prep_c) ? pending_bank_d2 : disp_bank_d2;
+							fill_gen <= ((swap_pending_d2 && need_c_prep_c) ? pending_bank_d2 : disp_bank_d2)
+							            ? bank_gen1 : bank_gen0;
 							fill_cy <= (swap_pending_d2 && need_c_prep_c) ? target_c_prep_c : target_c_cur_c;
 							fill_idx <= (swap_pending_d2 && need_c_prep_c) ? target_c_idx_prep_c : target_c_idx_cur_c;
 							c_valid[(swap_pending_d2 && need_c_prep_c) ? target_c_idx_prep_c : target_c_idx_cur_c] <= 1'b0;
@@ -1545,14 +1604,25 @@ module ddr_frame_store #(
 								qwords_remaining <= {{(Y_QW_AW+1-8){1'b0}}, d_c_fetch_qw}; // ddr-domain c fetch
 								state_ddr <= S_LINE_ISSUE;
 							end else begin
-								if (fill_is_chroma) begin
-									c_line[fill_idx] <= fill_cy;
-									c_bank[fill_idx] <= fill_bank;
-									c_valid[fill_idx] <= 1'b1;
+								// Commit only if bank gen still matches fill start —
+								// a doorbell during the burst invalidates the bank.
+								if (!LINE_CACHE_FRAME_GEN ||
+								    (fill_gen == (fill_bank ? bank_gen1 : bank_gen0))) begin
+									if (fill_is_chroma) begin
+										c_line[fill_idx] <= fill_cy;
+										c_bank[fill_idx] <= fill_bank;
+										c_valid[fill_idx] <= 1'b1;
+									end else begin
+										y_line[fill_idx] <= fill_y;
+										y_bank[fill_idx] <= fill_bank;
+										y_valid[fill_idx] <= 1'b1;
+									end
 								end else begin
-									y_line[fill_idx] <= fill_y;
-									y_bank[fill_idx] <= fill_bank;
-									y_valid[fill_idx] <= 1'b1;
+									// Stale in-flight fill — leave slot invalid.
+									if (fill_is_chroma)
+										c_valid[fill_idx] <= 1'b0;
+									else
+										y_valid[fill_idx] <= 1'b0;
 								end
 								state_ddr <= S_IDLE;
 							end

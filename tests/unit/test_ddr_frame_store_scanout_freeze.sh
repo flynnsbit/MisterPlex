@@ -56,9 +56,12 @@ vflags=(--cc --exe --build --top-module ddr_frame_store_scanout_freeze_tb
   -Wno-fatal -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-SELRANGE -Wno-UNSIGNED
   -CFLAGS "-std=c++17 -O2")
 
-echo "=== A) BROKEN: src_y_line + sticky=0 recycle=0 (expect REPRO_OK freeze / 9eb1431a) ===" >&2
+# LINE_CACHE_FRAME_GEN=0 on broken isolates sticky/recycle freeze class.
+# Gen-invalidate punches prep holes and can mask 9eb1431a (see RCA w-mem).
+echo "=== A) BROKEN: sticky=0 recycle=0 gen=0 (expect REPRO_OK freeze / 9eb1431a) ===" >&2
 "$RUN_VERILATOR" "${vflags[@]}" --Mdir "$BROKEN_BUILD" \
   -GWANT_Y_LINE_ONLY=1 -GPENDING_READY_STICKY_PREP=0 -GPREP_SLOT_RECYCLE=0 \
+  -GLINE_CACHE_FRAME_GEN=0 \
   "${common_sv[@]}"
 set +e
 BROKEN_OUT="$("$BROKEN_BUILD/Vddr_frame_store_scanout_freeze_tb" 2>&1)"
@@ -67,9 +70,10 @@ set -e
 printf '%s\n' "$BROKEN_OUT"
 echo "broken rc=$BROKEN_RC"
 
-echo "=== B) GOOD: src_y_line + sticky=1 recycle=1 (expect PASS motion) ===" >&2
+echo "=== B) GOOD: sticky=1 recycle=1 gen=1 (expect PASS motion) ===" >&2
 "$RUN_VERILATOR" "${vflags[@]}" --Mdir "$GOOD_BUILD" \
   -GWANT_Y_LINE_ONLY=1 -GPENDING_READY_STICKY_PREP=1 -GPREP_SLOT_RECYCLE=1 \
+  -GLINE_CACHE_FRAME_GEN=1 \
   "${common_sv[@]}"
 set +e
 GOOD_OUT="$("$GOOD_BUILD/Vddr_frame_store_scanout_freeze_tb" 2>&1)"

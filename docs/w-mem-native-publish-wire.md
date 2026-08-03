@@ -15,6 +15,8 @@ rd-duck STOP items addressed in source (await rd-duck re-audit before fit):
 2. **PLXG seqlock** — invalidate q0 magic (`low32=0`) + DMB → body q1..q4 → q0 high then magic-last; poller re-reads q0 (`cnt_torn`). Without invalidate, retained-DDR + FPGA `last_seq=0` accepts torn body under old q0 (red twin in `test_ddr_720p_abi`).
 3. **Mode exit** — legacy `makeDdrPublishPlan` programs `geom_enable=0` (seq-bumped).
 4. **Raw geom** — over-max/unaligned rejected (`rt_raw_ok`); coded_w %16; no clamp-then-accept.
+5. **Line-cache frame gen** — tags are not only `{bank,line}`: each accepted doorbell/SPI bumps that bank's gen and clears matching slots; fill commit requires gen match; geom/map change bumps both gens and clears all. Without this, same-bank re-publish while pending (or bank0→1→0 with top lines still cached) swaps stale prep pixels. Gate: `tests/unit/test_ddr_frame_store_line_gen.sh` (FAULT `LINE_CACHE_FRAME_GEN=0` → stale Y; GOOD gen=1 → fresh Y + geom gen bump).
+6. **Freeze twin isolation** — gen-invalidate punches holes in a full prep set, which can mask the sticky/recycle freeze class (9eb1431a). `test_ddr_frame_store_scanout_freeze.sh` builds broken with `LINE_CACHE_FRAME_GEN=0` and good with gen=1 so both gates stay honest.
 
 **Do not claim glass-proven native E2E until parent runs device. Do not grant fit until rd-duck clears.**
 
