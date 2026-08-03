@@ -126,20 +126,44 @@ shallow RAMs (`docs/linebuf-repack-and-qpel-scope.md`).
 
 ---
 
-## 5. fab-dma — native-geometry push
+## 5. fab-dma — **fabric-owned present** (ARM out of the loop)
 
-| Mode | Bytes/frame | @59.521 MiB/s | Save vs canvas |
-|------|------------:|--------------:|---------------:|
-| Product canvas 624×480 | 449280 | 7.20 ms | — |
-| Native 320×240 into fabric window | **115200** | **1.85 ms** | **74.4%** bytes / ~5.3 ms |
-| Native 624×480 into 720p canvas | 449280 | 7.20 ms | 67.5% vs 1382400 |
-| Native 1280×720 | 1382400 | 22.15 ms | 0% |
+**Choice (mandate):** Prefer the uglier split where fabric owns scale + black-pad
++ placement and ARM only tight-writes decoder output, over an elegant path where
+ARM still scale/pads a cheaper canvas. 720p is the reward for evacuating ARM.
 
-**Implemented (host):** `makeDdrNativePushPlan`, `copyYuv420pNativeOrigin`,  
-`ddrPushMsAtRate`, PLXG encode/decode.  
-**Not implemented (needs RBF + daemon wire):** fabric `native_push` consume,  
-PL330 DMA descriptor path (design only: DMA moves same bytes — saves CPU  
-cycles, not bus volume; product hotspot is often scale not memcpy).
+| ARM job today | Fabric-owned path | ARM ms removed | How known |
+|---------------|-------------------|----------------|-----------|
+| ffmpeg `vf` scale/pad | **FabricScale** (w-scaler window) | **2.95 ms/f** | FEED archive scale bucket (`SCALE_SKIP_PREREG.md`) — **480p figure**; 720p scale wall **unknown** until parent remeasures |
+| `packYuv420pCentered` | **FabricPlacement** PLXG x0/y0 | **unknown** | not separately profiled — settle with present_profile before/after |
+| `clearYuv` crop black | **FabricBlackPad** | **unknown** (≤ strip 4320 B ≪ frame) | byte upper bound only |
+| `memcpy` full canvas | tight `publish_bytes` only | **copy projection** | `(canvas−native) @ 59.521 MiB/s` from `p480-bandwidth.md` |
+| decode + tight write | still ARM until FPGA decode | **0 removed** (remaining) | parent 1080p blip 32.4 ms/f is decode-bound evidence, not present |
+
+### Quantified floors (host unit `test_ddr_720p_abi`)
+
+| Scenario | ARM push B | copy ms @59.521 | copy ms removed | +FEED scale | **known_ms_removed_floor** |
+|----------|-----------:|----------------:|----------------:|------------:|---------------------------:|
+| 320×240 content, 480p canvas fabric-owned | 115200 | 1.846 | **5.353** | 2.95 | **≈8.30 ms/f** |
+| 1280×720 content, 720p canvas fabric-owned | 1382400 | 22.149 | 0 | 2.95† | **≈2.95 ms/f** † |
+| 624×480 content, 720p canvas fabric-owned | 449280 | 7.199 | **≈14.95** | 2.95 | **≈17.9 ms/f** |
+
+† 2.95 is the **480p FEED** scale bucket. Claiming it at 720p would be a guess —
+unit still adds it only as `scale_ms_removed_feed480` named field. Parent must
+remeasure vf wall on real 720p to replace it.
+
+**Not claimed:** full present 10.41 → 10.41−8.30 (fixed PLXD/doorbell do not
+scale with pad bytes). Settle with `ddr_copy_us` vs `ddr_total_us` split on device.
+
+**PL330 DMA:** design-only. Moves the same `publish_bytes` — frees CPU cycles,
+not bus volume. Inferior to fabric-owned byte reduction; do not prioritize over
+FabricScale/BlackPad.
+
+**Implemented (host):** `makeDdrFabricOwnedPresentPlan`, `makeDdrFabricOwnedPublishPlan`,
+`DdrArmPresentBudget`, PLXG geometry + content window + origin beats,
+forbids-ARM helpers.  
+**Not implemented:** RTL consume of PLXG, daemon path that skips ffmpeg scale_pad,
+device wire.
 
 ---
 

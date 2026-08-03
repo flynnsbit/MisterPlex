@@ -154,6 +154,60 @@ int main() {
     CHECK(decodePlxgGeometryWord(word, dw, dh, en, nat));
     CHECK(dw == 1280 && dh == 720 && en && nat);
     CHECK(!decodePlxgGeometryWord(0, dw, dh, en, nat));
+    const uint64_t win = encodePlxgContentWindow(320, 240, 0, 0);
+    int cw = 0, ch = 0;
+    CHECK(decodePlxgContentWindow(win, cw, ch));
+    CHECK(cw == 320 && ch == 240);
+    CHECK(!decodePlxgGeometryWord(win, dw, dh, en, nat)); // window beat ≠ geometry
+    const uint64_t org = encodePlxgContentOrigin(148, 120);
+    int ox = 0, oy = 0;
+    CHECK(decodePlxgContentOrigin(org, ox, oy));
+    CHECK(ox == 148 && oy == 120);
+
+    // --- Fabric-owned present: ARM out of scale/pad/pack (preferred) ---
+    CHECK(fabricOwnedForbidsArmCanvasPack());
+    CHECK(fabricOwnedForbidsArmFfmpegScalePad());
+    CHECK(fabricOwnedForbidsArmClearYuvCropPad());
+    // 320 content on product 480p canvas — evacuate pad copy + FEED scale bucket.
+    const auto fab320 =
+        makeDdrFabricOwnedPresentPlan(320, 240, plex480pDdrFrameGeometry(), kDdrFramePhysBase);
+    CHECK(fab320.valid);
+    CHECK(fab320.publish_bytes == 115200u);
+    CHECK(fab320.publish_bytes != 449280u);
+    CHECK(fab320.budget.fabric_owned);
+    CHECK(fab320.budget.arm_still_pushes_pixels); // until FPGA decode
+    CHECK(fab320.budget.copy_ms_removed > 5.3 && fab320.budget.copy_ms_removed < 5.4);
+    CHECK(fab320.budget.scale_ms_removed_feed480 == kFeedArchiveScaleMs);
+    // known floor = copy projection + FEED scale ≈ 5.35 + 2.95 = 8.30 ms
+    CHECK(fab320.budget.known_ms_removed_floor > 8.2 &&
+          fab320.budget.known_ms_removed_floor < 8.4);
+    std::vector<uint8_t> natPay(fab320.publish_bytes, 0x22);
+    DdrFabricOwnedPublishPlan fpub{};
+    CHECK(makeDdrFabricOwnedPublishPlan(natPay.data(), 0, fab320, fpub, &err));
+    CHECK(fpub.payload_bytes == 115200u);
+    CHECK(fpub.publish.layout.frame_bytes == 449280u); // tier bank still 480p
+    CHECK(fpub.payload_bytes < fpub.publish.layout.frame_bytes);
+
+    // 720p tier + full 720p content: pad savings 0; scale removal still counted
+    // when ARM skips vf (FEED 2.95 is 480p anchor — flagged as such).
+    const auto fab720 = makeDdrFabricOwnedPresentPlan(
+        1280, 720, plex720pDdrFrameGeometry(), kPlex720pDdrFramePhysBase);
+    CHECK(fab720.valid);
+    CHECK(fab720.publish_bytes == 1382400u);
+    CHECK(fab720.budget.copy_ms_removed == 0.0);
+    CHECK(fab720.budget.scale_ms_removed_feed480 == kFeedArchiveScaleMs);
+    CHECK(fab720.budget.known_ms_removed_floor == kFeedArchiveScaleMs);
+    CHECK(fab720.canvas_layout.doorbell_phys == 0x3047F000u);
+
+    // 480p content on 720p canvas: large pad evacuation if ARM had been
+    // forced to fill 720p banks (ugly path we refuse to keep on ARM).
+    const auto fab480on720 = makeDdrFabricOwnedPresentPlan(
+        624, 480, plex720pDdrFrameGeometry(), kPlex720pDdrFramePhysBase);
+    CHECK(fab480on720.valid);
+    CHECK(fab480on720.publish_bytes == 449280u);
+    CHECK(fab480on720.budget.copy_ms_removed > 14.0); // 22.15-7.20 class
+    CHECK(fab480on720.budget.known_ms_removed_floor >
+          fab480on720.budget.copy_ms_removed); // includes scale floor
 
     // Tier mismatch guard: 720p layout must never claim product silicon match.
     CHECK(!ddrFrameLayoutMatchesProductSilicon(t720));
@@ -171,5 +225,13 @@ int main() {
     std::printf("  native320 save_ratio=%.4f ms_native=%.3f ms_canvas=%.3f (@%.3f MiB/s)\n",
                 native320.save_ratio, msNative320, msCanvas480, kNoSyncMibps);
     std::printf("  push_MBps 24=%.3f 30=%.3f copy_ms720=%.3f\n", push24, push30, ms720);
+    std::printf("  FABRIC_OWNED 320on480 known_ms_removed_floor=%.3f "
+                "(copy=%.3f + feed_scale=%.3f)\n",
+                fab320.budget.known_ms_removed_floor, fab320.budget.copy_ms_removed,
+                fab320.budget.scale_ms_removed_feed480);
+    std::printf("  FABRIC_OWNED 720 native known_ms_removed_floor=%.3f "
+                "(copy=%.3f; arm_still_pushes=%d)\n",
+                fab720.budget.known_ms_removed_floor, fab720.budget.copy_ms_removed,
+                fab720.budget.arm_still_pushes_pixels ? 1 : 0);
     return 0;
 }

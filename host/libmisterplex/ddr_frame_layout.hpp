@@ -643,10 +643,33 @@ inline bool ddrFrameStoreAccepts720pTier(int codedWidth, int codedHeight) {
     return ddrFrameStoreAccepts720pTier(CodedWidth{codedWidth}, CodedHeight{codedHeight});
 }
 
-// ---- fab-dma: native-geometry push cost (content bytes vs canvas pad) ----
-// Product today always memcpy's layout.frame_bytes (full coded bank). With a
-// fabric content window (w-scaler runtime content_w/h) ARM can push only the
-// tight I420 rectangle and let fabric scale across DE — saving the black pad.
+// ---- fab-dma / fabric-owned present (evacuate ARM, not just cheapen it) ----
+//
+// Mandate: 720p is the reward for moving work into the FPGA. Prefer designs
+// where ARM does *none* of scale/pad/pillar/black-fill/centered-pack over
+// designs where ARM still does a smaller version of the same job.
+//
+// Product today (ARM still in the loop):
+//   ffmpeg scale+pad → full coded canvas I420 → optional packYuv centered →
+//   clearYuv crop pad → memcpy(layout.frame_bytes) → doorbell.
+// Fabric-owned present (ARM out of pad/scale/pack):
+//   decode (or PMS-native) tight I420 → memcpy(native_bytes only) → PLXG
+//   content window + native_push → doorbell. Fabric scales across DE, emits
+//   studio black for non-content columns/rows, owns pillar/letterbox.
+//
+// Measured anchors (do not invent new numbers):
+//   FEED archive full-stack (docs/evidence/p480-scale-skip/SCALE_SKIP_PREREG.md):
+//     decode_null ~21.56 + scale ~2.95 + pipe ~5.26 + present ~10.41 ms/f
+//   DDR pure fill (docs/evidence/p480/p480-bandwidth.md): 59.521 MiB/s no-sync
+//   Product present wall mean ~10.41 ms/f includes prep/PLXD/doorbell, not only copy.
+
+// Archive no-sync bank-fill rate used for *copy-term* projections only.
+constexpr double kDdrArchiveNoSyncMibps = 59.521;
+// FEED archive scale-stage wall bucket (ms/f) — recovered only when ARM stops vf scale.
+constexpr double kFeedArchiveScaleMs = 2.95;
+// FEED archive product present wall mean (ms/f) — not equal to pure copy.
+constexpr double kFeedArchivePresentMs = 10.41;
+
 struct DdrNativePushPlan {
     size_t native_bytes = 0;  // tight content I420
     size_t canvas_bytes = 0;  // full coded-bank payload product memcpy uses
@@ -678,11 +701,7 @@ inline DdrNativePushPlan makeDdrNativePushPlan(int contentW, int contentH,
     return p;
 }
 
-// Tight plane-wise copy of srcW×srcH I420 into dst bank at (0,0). Does NOT
-// black-fill the rest of a larger canvas — caller must either use fabric window
-// mode (content == bank geometry) or clear the bank first. dstCap must hold at
-// least yuv420pFrameBytes(srcW,srcH); when writing into a larger bank, dstCap
-// must be the full bank size and planes use src strides packed at origin.
+// Tight I420 → bank origin. Fabric-owned path: no black-fill of canvas remainder.
 inline bool copyYuv420pNativeOrigin(const uint8_t* src, int srcW, int srcH, uint8_t* dst,
                                     size_t dstCap) {
     if (!src || !dst || srcW <= 0 || srcH <= 0 || (srcW & 1) || (srcH & 1))
@@ -690,13 +709,12 @@ inline bool copyYuv420pNativeOrigin(const uint8_t* src, int srcW, int srcH, uint
     const size_t need = yuv420pFrameBytes(srcW, srcH);
     if (need == 0 || dstCap < need)
         return false;
-    // Contiguous tight I420: one memcpy of the whole payload.
     std::memcpy(dst, src, need);
     return true;
 }
 
 // Projected wall-ms for a pure DDR bank fill at a measured MiB/s rate.
-// rate_mib_s must come from a measured artifact (e.g. 59.521 no-sync archive).
+// rate_mib_s must come from a measured artifact (e.g. kDdrArchiveNoSyncMibps).
 inline double ddrPushMsAtRate(size_t bytes, double rate_mib_s) {
     if (bytes == 0 || rate_mib_s <= 0.0)
         return 0.0;
@@ -705,8 +723,8 @@ inline double ddrPushMsAtRate(size_t bytes, double rate_mib_s) {
 }
 
 // PLXG geometry-program word (ARM→FPGA). enable=0 keeps synthesis-fixed product
-// geometry. When enable=1, fabric latches coded_w/h (and optional content window)
-// before the next doorbell; mismatched core/daemon tier must refuse publish.
+// geometry. When enable=1, fabric latches coded_w/h (tier bank) before doorbell.
+// native_push=1 ⇒ payload is tight content I420; window beats supply WxH/x0/y0.
 inline uint64_t encodePlxgGeometryWord(int codedW, int codedH, bool enable,
                                        bool nativePush) {
     const uint32_t w = static_cast<uint32_t>(codedW) & 0xFFFu;
@@ -721,12 +739,204 @@ inline bool decodePlxgGeometryWord(uint64_t raw, int& codedW, int& codedH, bool&
     if (static_cast<uint32_t>(raw) != kDdrFramePlxgMagic)
         return false;
     const uint32_t hi = static_cast<uint32_t>(raw >> 32);
+    if ((hi >> 26) & 1u)
+        return false; // window/origin beat, not geometry
     codedW = static_cast<int>(hi & 0xFFFu);
     codedH = static_cast<int>((hi >> 12) & 0xFFFu);
     enable = ((hi >> 24) & 1u) != 0;
     nativePush = ((hi >> 25) & 1u) != 0;
     return true;
 }
+
+// Which present-path jobs fabric takes so ARM stops doing them.
+enum class DdrPresentOffload : uint8_t {
+    None = 0,
+    // Fabric scales content_w×content_h across DE (w-scaler window). ARM must NOT
+    // run ffmpeg scale/pad into the coded canvas for present.
+    FabricScale = 1u << 0,
+    // Fabric emits studio black outside the content window. ARM must NOT
+    // black-fill the coded bank or clearYuv crop padding for present.
+    FabricBlackPad = 1u << 1,
+    // Fabric places content (x0,y0) / pillar. ARM must NOT packYuv420pCentered.
+    FabricPlacement = 1u << 2,
+};
+
+inline constexpr DdrPresentOffload operator|(DdrPresentOffload a, DdrPresentOffload b) {
+    return static_cast<DdrPresentOffload>(static_cast<uint8_t>(a) | static_cast<uint8_t>(b));
+}
+inline constexpr bool ddrPresentOffloadHas(DdrPresentOffload set, DdrPresentOffload bit) {
+    return (static_cast<uint8_t>(set) & static_cast<uint8_t>(bit)) != 0;
+}
+
+// Full fabric-owned present: scale + black + placement — ARM only tight write.
+constexpr DdrPresentOffload kDdrPresentOffloadFabricOwned =
+    DdrPresentOffload::FabricScale | DdrPresentOffload::FabricBlackPad |
+    DdrPresentOffload::FabricPlacement;
+
+// ARM wall-ms budget for one present path choice. Every field is either a
+// measured anchor, a rate×bytes projection from a measured rate, or NaN-style
+// unknown (negative) with a named settling check in comments/docs.
+struct DdrArmPresentBudget {
+    // Bytes ARM still memcpy's into the DDR window this path.
+    size_t arm_push_bytes = 0;
+    // Copy-term ms @ kDdrArchiveNoSyncMibps for arm_push_bytes (projection).
+    double arm_copy_ms = 0.0;
+    // Copy-term ms if ARM still pushed full canvas (for delta).
+    double canvas_copy_ms = 0.0;
+    // canvas_copy_ms - arm_copy_ms (pad bytes evacuated). Known projection.
+    double copy_ms_removed = 0.0;
+    // FEED scale bucket removed when FabricScale is on and ARM skips vf scale.
+    // 2.95 ms is the 480p FEED archive figure — NOT remeasured at 720p.
+    double scale_ms_removed_feed480 = 0.0;
+    // True when path asks fabric to own scale+black+placement.
+    bool fabric_owned = false;
+    // ARM still participates in pixel push (true until FPGA decode owns pixels).
+    bool arm_still_pushes_pixels = true;
+    // Sum of *known* removed walls (copy projection + optional FEED scale).
+    // Does NOT claim packYuv/clearYuv/PLXD overhead — those are unknown.
+    double known_ms_removed_floor = 0.0;
+    bool valid = false;
+};
+
+// Build the fabric-owned present contract for a content rectangle inside a tier
+// canvas. publish_bytes == native I420 only; PLXG must carry the window.
+struct DdrFabricOwnedPresentPlan {
+    DdrNativePushPlan native{};
+    DdrArmPresentBudget budget{};
+    DdrPresentOffload offload = DdrPresentOffload::None;
+    // Bank geometry (tier) — fabric still double-buffers at this stride.
+    DdrFrameGeometry canvas{};
+    DdrFrameLayout canvas_layout{};
+    // Content rectangle ARM actually writes (tight, origin in bank via PLXG).
+    int content_w = 0;
+    int content_h = 0;
+    int content_x0 = 0; // even-aligned; fabric placement
+    int content_y0 = 0;
+    // Bytes ARM may memcpy — NEVER canvas frame_bytes on this path.
+    size_t publish_bytes = 0;
+    // PLXG word to program before doorbell (enable + native_push + coded tier).
+    uint64_t plxg_word = 0;
+    bool valid = false;
+};
+
+inline DdrArmPresentBudget makeDdrArmPresentBudget(const DdrNativePushPlan& native,
+                                                   DdrPresentOffload offload,
+                                                   bool countFeedScaleRemoval) {
+    DdrArmPresentBudget b{};
+    if (!native.valid)
+        return b;
+    b.arm_push_bytes = native.native_bytes;
+    b.arm_copy_ms = ddrPushMsAtRate(native.native_bytes, kDdrArchiveNoSyncMibps);
+    b.canvas_copy_ms = ddrPushMsAtRate(native.canvas_bytes, kDdrArchiveNoSyncMibps);
+    b.copy_ms_removed = b.canvas_copy_ms - b.arm_copy_ms;
+    if (b.copy_ms_removed < 0.0)
+        b.copy_ms_removed = 0.0;
+    b.fabric_owned = ddrPresentOffloadHas(offload, DdrPresentOffload::FabricScale) &&
+                     ddrPresentOffloadHas(offload, DdrPresentOffload::FabricBlackPad) &&
+                     ddrPresentOffloadHas(offload, DdrPresentOffload::FabricPlacement);
+    if (countFeedScaleRemoval &&
+        ddrPresentOffloadHas(offload, DdrPresentOffload::FabricScale))
+        b.scale_ms_removed_feed480 = kFeedArchiveScaleMs;
+    b.arm_still_pushes_pixels = true; // pixel push until FPGA decode
+    b.known_ms_removed_floor = b.copy_ms_removed + b.scale_ms_removed_feed480;
+    b.valid = true;
+    return b;
+}
+
+// Fabric-owned present plan. canvasGeom is the *tier* bank (480p product or 720p
+// Option-C). content is what ARM writes. x0/y0 default to origin; non-zero when
+// fabric placement should inset (even-aligned for 4:2:0).
+inline DdrFabricOwnedPresentPlan makeDdrFabricOwnedPresentPlan(
+    int contentW, int contentH, const DdrFrameGeometry& canvasGeom,
+    uint32_t canvasPhysBase = kDdrFramePhysBase, int contentX0 = 0, int contentY0 = 0,
+    bool countFeedScaleRemoval = true) {
+    DdrFabricOwnedPresentPlan p{};
+    p.canvas = canvasGeom;
+    p.content_w = contentW;
+    p.content_h = contentH;
+    p.content_x0 = contentX0 & ~1;
+    p.content_y0 = contentY0 & ~1;
+    p.offload = kDdrPresentOffloadFabricOwned;
+    p.native = makeDdrNativePushPlan(contentW, contentH, canvasGeom);
+    if (!p.native.valid)
+        return p;
+    if (p.content_x0 < 0 || p.content_y0 < 0)
+        return p;
+    if (p.content_x0 + contentW > canvasGeom.coded_width.get() ||
+        p.content_y0 + contentH > canvasGeom.coded_height.get())
+        return p;
+    p.canvas_layout =
+        makeDdrFrameLayout(canvasGeom, canvasPhysBase, kDdrFrameStrideAlign);
+    if (!ddrFrameLayoutValid(p.canvas_layout))
+        return p;
+    p.publish_bytes = p.native.native_bytes;
+    p.budget = makeDdrArmPresentBudget(p.native, p.offload, countFeedScaleRemoval);
+    // PLXG coded size = tier canvas (bank stride/doorbell family); native_push=1
+    // tells fabric the payload is content_w×content_h tight at (x0,y0).
+    // Content window words are a second mailbox beat (see encodePlxgContentWindow).
+    p.plxg_word = encodePlxgGeometryWord(canvasGeom.coded_width.get(),
+                                         canvasGeom.coded_height.get(),
+                                         /*enable=*/true, /*nativePush=*/true);
+    p.valid = p.budget.valid;
+    return p;
+}
+
+// Second PLXG beat: content window inside the tier bank. Magic still PLXG;
+// bit26 distinguishes window beat from geometry beat (bit26=1 → window).
+inline uint64_t encodePlxgContentWindow(int contentW, int contentH, int x0, int y0) {
+    const uint32_t w = static_cast<uint32_t>(contentW) & 0xFFFu;
+    const uint32_t h = static_cast<uint32_t>(contentH) & 0xFFFu;
+    const uint32_t x = static_cast<uint32_t>(x0) & 0xFFFu;
+    const uint32_t y = static_cast<uint32_t>(y0) & 0xFFFu;
+    // hi: [11:0]w [23:12]h [24]=0 [25]=0 [26]=1 window [27:28] unused
+    // Extended x/y need a third word on wire; pack x in lo magic replacement?
+    // Keep lo=magic; put x in hi[27:30] limited — instead use hi fully for w/h
+    // and a dedicated packing: hi = w | h<<12 | x<<24 (x only 8 bits) — too small
+    // for 1280. Use: hi = w | (h<<12) | (1u<<26); x/y in a *second* uint64 via
+    // encodePlxgContentOrigin. Here encode w/h + window flag only.
+    const uint64_t hi = static_cast<uint64_t>(w) | (static_cast<uint64_t>(h) << 12) |
+                        (1ull << 26);
+    (void)x;
+    (void)y;
+    return (hi << 32) | static_cast<uint64_t>(kDdrFramePlxgMagic);
+}
+
+// Origin beat: hi = x0 | (y0<<12) | (1<<26)|(1<<27); lo = PLXG magic.
+inline uint64_t encodePlxgContentOrigin(int x0, int y0) {
+    const uint32_t x = static_cast<uint32_t>(x0) & 0xFFFu;
+    const uint32_t y = static_cast<uint32_t>(y0) & 0xFFFu;
+    const uint64_t hi =
+        static_cast<uint64_t>(x) | (static_cast<uint64_t>(y) << 12) | (1ull << 26) | (1ull << 27);
+    return (hi << 32) | static_cast<uint64_t>(kDdrFramePlxgMagic);
+}
+
+inline bool decodePlxgContentWindow(uint64_t raw, int& contentW, int& contentH) {
+    if (static_cast<uint32_t>(raw) != kDdrFramePlxgMagic)
+        return false;
+    const uint32_t hi = static_cast<uint32_t>(raw >> 32);
+    if (((hi >> 26) & 1u) == 0 || ((hi >> 27) & 1u) != 0)
+        return false; // not window beat
+    contentW = static_cast<int>(hi & 0xFFFu);
+    contentH = static_cast<int>((hi >> 12) & 0xFFFu);
+    return true;
+}
+
+inline bool decodePlxgContentOrigin(uint64_t raw, int& x0, int& y0) {
+    if (static_cast<uint32_t>(raw) != kDdrFramePlxgMagic)
+        return false;
+    const uint32_t hi = static_cast<uint32_t>(raw >> 32);
+    if (((hi >> 26) & 1u) == 0 || ((hi >> 27) & 1u) == 0)
+        return false;
+    x0 = static_cast<int>(hi & 0xFFFu);
+    y0 = static_cast<int>((hi >> 12) & 0xFFFu);
+    return true;
+}
+
+// Jobs fabric-owned present **forbids** on ARM (compile-time documentation via
+// tests). Returning true means the named ARM helper must not run on this path.
+inline bool fabricOwnedForbidsArmCanvasPack() { return true; }
+inline bool fabricOwnedForbidsArmFfmpegScalePad() { return true; }
+inline bool fabricOwnedForbidsArmClearYuvCropPad() { return true; }
 
 inline uint32_t plxgMailboxPhys(uint32_t doorbellPhys) {
     return doorbellPhys + kDdrFramePlxgOffset;
