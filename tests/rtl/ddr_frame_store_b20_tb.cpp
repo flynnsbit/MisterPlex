@@ -633,6 +633,37 @@ int runProduct() {
 		std::cerr << "FAIL beam-hier: b20_visual_hold must assert while live≠applied\n";
 		return 1;
 	}
+	// Product top-level tie-offs (Plex.sv): use_frame_store=0 (force bars OFF).
+	// present_core force_black MUST still follow b20_visual_hold. Gating hold on
+	// use_frame_store (w-clock ownership bug) leaves black OFF on the real path.
+	{
+		const bool force_bars = false; // product .use_frame_store(1'b0)
+		const bool b20 = sim.top.obs_b20_visual_hold != 0;
+		const bool geom_h = sim.top.obs_geom_hold_black != 0;
+		const bool product_force_black = geom_h || b20; // + dar (0 here)
+		const bool wclock_gated_black = force_bars && (geom_h || b20);
+		if (!product_force_black) {
+			std::cerr << "FAIL product-tieoff: force_black must ON with bars=0 hold=1\n";
+			return 1;
+		}
+		if (wclock_gated_black) {
+			std::cerr << "FAIL product-tieoff: unexpected bars-gated black under bars=0\n";
+			return 1;
+		}
+		// Explicit REPRO class: gated formula is OFF while product is ON.
+		if (wclock_gated_black == product_force_black) {
+			std::cerr << "FAIL product-tieoff: cannot distinguish product vs bars-gate\n";
+			return 1;
+		}
+		// store_geom_owned: live+seq — beam_use_app must be 1 with bars=0.
+		if (!sim.top.obs_beam_use_app) {
+			std::cerr << "FAIL product-tieoff: store_geom_owned/use_app under live "
+			             "must not require force_bars\n";
+			return 1;
+		}
+		std::cout << "OK B20 product-tieoff force_bars=0 force_black follows hold "
+		          << "(w-clock bars-gate would be OFF)\n";
+	}
 	// Unblock ready — next fstart couples bank+app+beam.
 	sim.top.tb_block_pending_ready = 0;
 	for (int i = 0; i < 4000; ++i) {

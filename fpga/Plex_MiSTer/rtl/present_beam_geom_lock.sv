@@ -5,8 +5,13 @@
 // at (swap_pending && pending_ready) bank swap. If prep misses that boundary,
 // next raster used NEW DE map while store kept OLD bank/app pitch.
 //
-// Product: under live PLXG seq!=0, window/DE dims come from store app_beam_*
-// (snapshotted at doorbell, applied with bank). FAULT_B20_BEAM_FREE_RUN uses live.
+// Product: under live PLXG seq!=0 (store_geom_owned), window/DE dims come from
+// store app_beam_* (snapshotted at doorbell, applied with bank).
+// FAULT_B20_BEAM_FREE_RUN uses live.
+//
+// Ownership gate is PLXG live+seq — NEVER present_core.use_frame_store (that
+// pin is OSD force-bars; product Plex.sv hardwires 0). Gating beam/hold on
+// use_frame_store free-runs DE on the real DDR path (rd-duck / w-clock).
 //
 // OWNER: w-mem (handshake with store app_*).
 

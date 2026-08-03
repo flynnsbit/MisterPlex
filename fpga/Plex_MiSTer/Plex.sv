@@ -1026,6 +1026,7 @@ present_core #(
 	// defaults (Pattern=None, Audio tone=Off, Force bars=No).
 	.pattern(2'd0),
 	.audio_en(1'b0),
+	// Force bars OFF. Not a store-ownership pin — B20 uses PLXG live+seq.
 	.use_frame_store(1'b0),
 	.win_enable(present_win_enable),
 	.content_w(content_width),

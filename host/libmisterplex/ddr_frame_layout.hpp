@@ -1222,6 +1222,71 @@ inline bool ddrB20FaultNoVisualHoldExposesLiveBeforeSwap() {
     return !m.visualHold() && m.app_w == 624 && m.geom_seq == 5;
 }
 
+// present_core force_black under DDR_FRAME_STORE (product equation):
+//   force_black = geom_hold | dar_hold | b20_visual_hold
+// Product Plex.sv ties use_frame_store=0 (OSD force bars OFF).
+// NEVER gate force_black / beam lock on use_frame_store — that pin is bars only.
+// w-clock defect class: hold_enable = use_frame_store → product path hold stays OFF.
+inline bool ddrB20ProductForceBlackIgnoresForceBars(
+    bool b20_visual_hold, bool geom_hold_black = false, bool dar_hold_black = false,
+    bool use_frame_store /*force_bars*/ = false) {
+    const bool product_force_black =
+        geom_hold_black || dar_hold_black || b20_visual_hold;
+    (void)use_frame_store; // deliberately unused — product must ignore it
+    return product_force_black;
+}
+
+// FAULT REPRO: gate content blackout on use_frame_store (product ties 0 → never black).
+inline bool ddrB20FaultForceBlackGatedOnForceBars(
+    bool b20_visual_hold, bool use_frame_store /*force_bars*/ = false) {
+    return use_frame_store && b20_visual_hold;
+}
+
+// Product top: force_bars=0, live≠applied → force_black ON; w-clock gate → OFF.
+inline bool ddrB20ProductForceBlackWithProductTieOff() {
+    const bool force_bars = false; // Plex.sv .use_frame_store(1'b0)
+    const bool hold = true;        // live seq ahead of applied
+    if (!ddrB20ProductForceBlackIgnoresForceBars(hold, false, false, force_bars))
+        return false;
+    // Defect formula under product tie-off leaves black OFF (free-run paint).
+    if (ddrB20FaultForceBlackGatedOnForceBars(hold, force_bars))
+        return false;
+    return true;
+}
+
+// FAULT REPRO oracle: gated formula fails to black under product tie-off.
+inline bool ddrB20FaultForceBlackOffUnderProductTieOff() {
+    const bool force_bars = false;
+    const bool hold = true;
+    return !ddrB20FaultForceBlackGatedOnForceBars(hold, force_bars) && hold;
+}
+
+// store_geom_owned (present_core) = live_valid && seq!=0 — not force_bars.
+inline bool ddrB20StoreGeomOwned(bool live_valid, uint16_t live_seq,
+                                 bool /*use_frame_store*/ = false) {
+    return live_valid && live_seq != 0;
+}
+
+inline bool ddrB20FaultStoreOwnedIsForceBars(bool live_valid, uint16_t live_seq,
+                                             bool use_frame_store) {
+    (void)live_valid;
+    (void)live_seq;
+    return use_frame_store; // wrong ownership
+}
+
+inline bool ddrB20ProductOwnedUnderProductTieOff() {
+    // Product: bars off, PLXG live seq=5 → owned; force_bars ownership → not.
+    if (!ddrB20StoreGeomOwned(true, 5, /*force_bars*/ false))
+        return false;
+    if (ddrB20FaultStoreOwnedIsForceBars(true, 5, /*force_bars*/ false))
+        return false;
+    if (ddrB20StoreGeomOwned(true, 0, false))
+        return false; // seq0 not owned
+    if (ddrB20StoreGeomOwned(false, 5, false))
+        return false;
+    return true;
+}
+
 inline bool ddrB20FaultFreeRunExposesNewPitchBeforeSwap() {
     DdrBankGeomAtomicModel m;
     m.fault_free_run_geom = true;

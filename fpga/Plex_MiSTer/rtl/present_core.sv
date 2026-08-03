@@ -36,7 +36,11 @@ module present_core #(
 	input  wire [7:0]  display_hz,
 	input  wire [1:0]  pattern,
 	input  wire        audio_en,        // OSD tone enable (when no FIFO audio)
-	input  wire        use_frame_store, // OSD force bars when 1
+	// OSD "Force bars" only. Product Plex.sv ties 1'b0.
+	// NEVER use this as DDR/store ownership or B20 hold enable (rd-duck):
+	// w-clock gating visual apply/black on use_frame_store leaves hold OFF on
+	// the real path. Ownership = PLXG live+seq / store applied (below).
+	input  wire        use_frame_store,
 
 	// Fabric content window (runtime). win_enable=0 → legacy full FRAME map.
 	// When 1, NN-stretch content_w×content_h at (content_x0,content_y0) across DE.
@@ -308,6 +312,7 @@ module present_core #(
 
 	// B20 beam lock: under live PLXG seq, content window uses store-applied
 	// beam dims (bank-coupled), not free-running latch promote (rd-duck).
+	// store_geom_owned = PLXG live+seq — NOT use_frame_store (product ties 0).
 `ifdef DDR_FRAME_STORE
 	wire [10:0] app_beam_cw, app_beam_ch, app_beam_hde, app_beam_vde;
 	wire [10:0] app_disp_w_o, app_disp_h_o;
@@ -316,6 +321,10 @@ module present_core #(
 	wire        b20_visual_hold;
 	wire        beam_use_app;
 	wire [10:0] locked_cw, locked_ch, locked_hde, locked_vde;
+	// Real ownership gate (integration must match product top tie-offs).
+	// Equals beam_use_app inside present_beam_geom_lock — not force_bars.
+	(* keep = 1 *) wire store_geom_owned =
+		geom_live_valid && (geom_live_seq != 16'd0);
 	present_beam_geom_lock beam_lock (
 		.live_valid(geom_live_valid),
 		.live_seq(geom_live_seq),
@@ -550,11 +559,12 @@ module present_core #(
 `endif
 `endif
 
-	// Product: once a frame is ingested, always show frame_store unless O[9] Force bars.
-	// Pattern no longer steals cast (old pattern!=0 force caused bars/grid under video).
-	// Pattern=None (0) + no frame → black (nothing “runs” behind cast).
-	wire use_ext = has_frame && !use_frame_store;
-	wire show_pattern = !use_ext && (use_frame_store || (pattern != 2'd0));
+	// Product: once a frame is ingested, always show DDR/store pixels unless
+	// OSD Force bars (use_frame_store=1). Product top ties use_frame_store=0.
+	// force_bars is NOT store ownership — do not gate B20 hold/beam on it.
+	wire force_bars = use_frame_store;
+	wire use_ext = has_frame && !force_bars;
+	wire show_pattern = !use_ext && (force_bars || (pattern != 2'd0));
 	// --- Align sync/blank to the pixel pipeline -------------------------------
 	// hc -> fr costs 5 clk: store_x registers on ce_pix (2 clk) then frame_store
 	// does rd_addr_r -> rd_q -> rd_r (3 clk). hc -> hb/hs costs only 1 clk. So the
@@ -604,6 +614,8 @@ module present_core #(
 	// also force here so same-size DAR / pre-swap live PLXG cannot leak.
 	// (ascal.swblack is size-only — do not rely on HDMI_BLACKOUT alone.)
 	// b20_visual_hold: live seq ahead of applied bank/app (rd-duck B20 broader).
+	// MUST NOT be masked by force_bars/use_frame_store (product ties 0 → would
+	// disable hold on the real DDR path — w-clock ownership bug class).
 `ifdef DDR_FRAME_STORE
 	wire force_black = geom_hold_black | dar_hold_black | b20_visual_hold;
 `else

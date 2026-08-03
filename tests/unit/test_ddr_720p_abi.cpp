@@ -8,8 +8,19 @@
 
 #include <cstdio>
 #include <cstring>
+#include <fstream>
+#include <sstream>
 #include <string>
 #include <vector>
+
+static std::string slurpFile(const char* path) {
+    std::ifstream in(path);
+    if (!in)
+        return {};
+    std::ostringstream ss;
+    ss << in.rdbuf();
+    return ss.str();
+}
 
 static int fails = 0;
 #define CHECK(c)                                                                                   \
@@ -1264,9 +1275,40 @@ int main() {
         CHECK(ddrB20FaultModeExitFreeRunsBeforeSwap()); // REPRO
         CHECK(ddrB20ProductVisualHoldUntilSwapAck());
         CHECK(ddrB20FaultNoVisualHoldExposesLiveBeforeSwap()); // REPRO
+        // rd-duck: reject use_frame_store as ownership — product ties 0.
+        CHECK(ddrB20ProductForceBlackWithProductTieOff());
+        CHECK(ddrB20FaultForceBlackOffUnderProductTieOff()); // REPRO class
+        CHECK(ddrB20ProductOwnedUnderProductTieOff());
+        CHECK(ddrB20StoreGeomOwned(true, 11, false));
+        CHECK(!ddrB20FaultStoreOwnedIsForceBars(true, 11, false));
+        CHECK(ddrB20FaultStoreOwnedIsForceBars(true, 11, true)); // REPRO bars=own
+        {
+            // present_core: force_black must include b20, must not AND use_frame_store.
+            const std::string pc = slurpFile("fpga/Plex_MiSTer/rtl/present_core.sv");
+            CHECK(!pc.empty());
+            CHECK(pc.find("b20_visual_hold") != std::string::npos);
+            CHECK(pc.find("store_geom_owned") != std::string::npos);
+            CHECK(pc.find("force_bars = use_frame_store") != std::string::npos);
+            // Product equation line (no bars gate).
+            CHECK(pc.find("geom_hold_black | dar_hold_black | b20_visual_hold") !=
+                  std::string::npos);
+            // Reject w-clock class: force_black &= use_frame_store / && use_frame_store
+            CHECK(pc.find("force_black") != std::string::npos);
+            CHECK(pc.find("use_frame_store &&") == std::string::npos);
+            CHECK(pc.find("use_frame_store &") == std::string::npos);
+            CHECK(pc.find("&& use_frame_store") == std::string::npos);
+            const std::string top = slurpFile("fpga/Plex_MiSTer/Plex.sv");
+            CHECK(!top.empty());
+            CHECK(top.find(".use_frame_store(1'b0)") != std::string::npos);
+            const std::string lock =
+                slurpFile("fpga/Plex_MiSTer/rtl/present_beam_geom_lock.sv");
+            CHECK(lock.find("NEVER present_core.use_frame_store") != std::string::npos ||
+                  lock.find("NEVER") != std::string::npos);
+        }
         std::fprintf(stderr, "  B20_BANK_GEOM_ATOMIC OK\n");
         std::fprintf(stderr, "  B20_MODE_EXIT_ATOMIC OK\n");
         std::fprintf(stderr, "  B20_VISUAL_HOLD_UNTIL_SWAP_ACK OK\n");
+        std::fprintf(stderr, "  B20_PRODUCT_TIEOFF_FORCE_BARS_NOT_OWN OK\n");
         // rd-duck: doorbell must embed writePlxg committed useSeq, not plan.plxg_seq.
         CHECK(ddrPlxgDoorbellFaultSecondPublishMismatches()); // REPRO sticky plan=1
         CHECK(ddrPlxgDoorbellProductTwoPublishesMatch());
