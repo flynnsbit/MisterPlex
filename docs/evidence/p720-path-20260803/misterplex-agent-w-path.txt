@@ -1,9 +1,13 @@
 lane=w-path
-status=PL330_SCRATCH_ABI_LANDED
-tip=e8f1710a
-ABI: kPl330ProgScratchPhys=0x30600000 staging=0x30601000 (after Option-C triple end)
-open() maps scratch via /dev/mem — no pagemap/CMA
-bench uses Option-C banks + staging→bank DMA
-PRE: started=1; dma_ms; burn inflate
-PARENT: re-run arm ddr_pl330_ingest_bench --len 1382400 --loops 50 --bank 1
-tests: zero_copy true_rc=0 frame_store_math true_rc=0
+status=DMA_ONLY_BANK_SWEEP_LANDED
+tip=pending
+DMA: pure --dma-only --duration-s N (no serial); default no restage
+PL330: auto burst16 nested full-frame encode (unit n=31)
+BANK: --bank-sweep serial 0x30200000 vs Option-C 0x30300000
+PRE: P1 started=1 burst16; P2 pure_dma<serial; P3 |delta|<=1.5ms harness; P4 duration
+PARENT_GATE:
+  ddr_pl330_ingest_bench --dma-only --duration-s 25 --bank 1
+  + ffmpeg_cpu_probe 300f 2600k → decode ? 41.667
+PARENT_SWEEP:
+  ddr_pl330_ingest_bench --bank-sweep --len 1382400 --loops 40
+tests: zero_copy true_rc=0 arm bench static rebuilt

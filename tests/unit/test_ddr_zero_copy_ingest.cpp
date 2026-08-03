@@ -118,11 +118,28 @@ int main() {
         // NEG: odd length
         CHECK(!Pl330Mem2Mem::encodeProgramForTest(prog, sizeof(prog), &n, 0x1000, 0x30000000, 3),
               "NEG odd len");
+        // Full 720p frame must factor into one nested program (burst 8 or 16).
+        unsigned burst = 0;
+        uint32_t inner = 0, outer = 0;
+        CHECK(pl330PickBurstAndLoops(kPlex720pYuv420pBytes, &burst, &inner, &outer),
+              "720p burst+loops");
+        CHECK(burst >= 8, "720p prefers burst>=8");
+        CHECK(inner >= 1 && inner <= 256 && outer >= 1 && outer <= 256, "loop bounds");
+        n = pl330BuildMem2MemProgramAuto(prog, sizeof(prog), kPl330StagingPhys,
+                                         kPlex720pDdrFramePhysBase + kPlex720pYuv420pBankStride,
+                                         kPlex720pYuv420pBytes, &burst);
+        CHECK(n > 20 && n < 64, "720p full-frame prog");
+        // NEG: length that cannot factor even with burst1 nested (257 words? 257*4)
+        // 257 is prime-ish for factor: 257 > 256 and prime → no factor
+        CHECK(!pl330FactorLoops(257, &inner, &outer), "NEG 257 words no factor");
     }
 
     // CCR builder
     CHECK(pl330BuildCcr(0) == 0, "ccr zero");
     CHECK(pl330BuildCcr(4) != 0, "ccr 4");
+    CHECK(pl330BuildCcrBurst(16) != 0, "ccr burst16");
+    CHECK(pl330BuildCcrBurst(0) == 0, "NEG burst0");
+    CHECK(pl330BuildCcrBurst(17) == 0, "NEG burst17");
 
     // 720p frame bytes constant still 1382400
     CHECK(kPlex720pYuv420pBytes == 1382400u || kPlex720pYuv420pBytes == 1280 * 720 * 3 / 2,

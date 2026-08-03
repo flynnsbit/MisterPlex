@@ -21,6 +21,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 #include <fcntl.h>
 #include <string>
@@ -63,29 +64,78 @@ struct Pl330Mem2MemResult {
     uint32_t cr0 = 0;
 };
 
-// Build MFIFO-friendly CCR for 32-bit src/dst incrementing, burst 1..16.
-// Returns 0 on bad len.
+// CCR: SA/DA inc, SS32/DS32, symmetric burst_len in 1..16 (encoded as len-1).
+// Returns 0 on bad args. See ARM DDI0424 CCR.
+inline uint32_t pl330BuildCcrBurst(unsigned burst_len) {
+    if (burst_len < 1 || burst_len > 16)
+        return 0;
+    const uint32_t SRC_INC = 1u << 0;
+    const uint32_t DST_INC = 1u << 14;
+    const uint32_t SRC_BURST_SIZE_32 = 2u << 1; // 2^2 = 4 bytes
+    const uint32_t DST_BURST_SIZE_32 = 2u << 15;
+    const uint32_t bl = burst_len - 1u;
+    const uint32_t SRC_BURST_LEN = bl << 4;
+    const uint32_t DST_BURST_LEN = bl << 18;
+    return SRC_INC | DST_INC | SRC_BURST_SIZE_32 | DST_BURST_SIZE_32 | SRC_BURST_LEN |
+           DST_BURST_LEN;
+}
+
+// Back-compat: burst-1 CCR when len is 4-byte aligned (len only validates).
 inline uint32_t pl330BuildCcr(size_t len) {
     if (len == 0 || (len % 4) != 0)
         return 0;
-    // CCR fields (simplified): src/dst burst size 32-bit, inc, burst len 1
-    // See DDI0424 CCR format. 0x0 = safest single 32-bit transfers.
-    // SA/DA increment, SS32/DS32, burst_len=1 → many loops.
-    const uint32_t SRC_INC = 1u << 0;
-    const uint32_t DST_INC = 1u << 14;
-    const uint32_t SRC_BURST_SIZE_32 = 2u << 1; // size = 2^2 = 4 bytes
-    const uint32_t DST_BURST_SIZE_32 = 2u << 15;
-    const uint32_t SRC_BURST_LEN_1 = 0u << 4;
-    const uint32_t DST_BURST_LEN_1 = 0u << 18;
-    return SRC_INC | DST_INC | SRC_BURST_SIZE_32 | DST_BURST_SIZE_32 | SRC_BURST_LEN_1 |
-           DST_BURST_LEN_1;
+    return pl330BuildCcrBurst(1);
 }
 
-// Encode a tiny channel program into out[32] (bytes). Returns byte length.
-// DMAMOV SAR / DAR / CCR; DMALP loops of DMALD+DMAST; DMASEV 0; DMAEND.
-inline size_t pl330BuildMem2MemProgram(uint8_t* out, size_t out_cap, uint32_t src, uint32_t dst,
-                                       uint32_t ccr, uint32_t n_words) {
-    if (!out || out_cap < 32 || n_words == 0 || n_words > 256u * 256u)
+// Factor n_iters into inner*outer with both in 1..256. Prefer larger outer.
+inline bool pl330FactorLoops(uint32_t n_iters, uint32_t* inner, uint32_t* outer) {
+    if (!inner || !outer || n_iters == 0)
+        return false;
+    if (n_iters <= 256u) {
+        *inner = n_iters;
+        *outer = 1;
+        return true;
+    }
+    if (n_iters > 256u * 256u)
+        return false;
+    for (uint32_t o = 256u; o >= 1u; --o) {
+        if (n_iters % o)
+            continue;
+        const uint32_t i = n_iters / o;
+        if (i >= 1u && i <= 256u) {
+            *inner = i;
+            *outer = o;
+            return true;
+        }
+    }
+    return false;
+}
+
+// Pick largest burst in {16,8,4,2,1} that divides len and factors loop count.
+inline bool pl330PickBurstAndLoops(size_t len, unsigned* burst_len, uint32_t* inner,
+                                   uint32_t* outer) {
+    if (!burst_len || !inner || !outer || len == 0 || (len % 4) != 0)
+        return false;
+    const unsigned cands[] = {16, 8, 4, 2, 1};
+    for (unsigned b : cands) {
+        const uint32_t bpb = 4u * b;
+        if ((len % bpb) != 0)
+            continue;
+        const uint32_t n_iters = static_cast<uint32_t>(len / bpb);
+        if (pl330FactorLoops(n_iters, inner, outer)) {
+            *burst_len = b;
+            return true;
+        }
+    }
+    return false;
+}
+
+// Encode channel program. Loop body is one DMALD+DMAST per burst beat set.
+// Nested LC1 (outer) then LC0 (inner). Returns byte length or 0.
+inline size_t pl330BuildMem2MemProgramLoops(uint8_t* out, size_t out_cap, uint32_t src,
+                                            uint32_t dst, uint32_t ccr, uint32_t inner,
+                                            uint32_t outer) {
+    if (!out || out_cap < 40 || inner == 0 || inner > 256 || outer == 0 || outer > 256)
         return 0;
     size_t o = 0;
     auto emit = [&](uint8_t b) {
@@ -98,58 +148,62 @@ inline size_t pl330BuildMem2MemProgram(uint8_t* out, size_t out_cap, uint32_t sr
         emit(static_cast<uint8_t>(v >> 16));
         emit(static_cast<uint8_t>(v >> 24));
     };
-    // DMAMOV SAR, imm32  — 0xBC, rd=0
+    // DMAMOV SAR / CCR / DAR
     emit(0xBC);
     emit(0x00);
     emit32(src);
-    // DMAMOV CCR, imm32 — rd=1
     emit(0xBC);
     emit(0x01);
     emit32(ccr);
-    // DMAMOV DAR, imm32 — rd=2
     emit(0xBC);
     emit(0x02);
     emit32(dst);
 
-    // Split n_words into LC1*LC0 nested loops (each 1..256 encoded as 0..255).
-    uint32_t outer = 1;
-    uint32_t inner = n_words;
-    if (n_words > 256) {
-        outer = (n_words + 255) / 256;
-        inner = 256;
-        if (outer > 256)
-            return 0;
-        // Only exact fit for first cut — require divisible.
-        if (outer * inner != n_words)
-            return 0;
-    }
-    // DMALP LC0, inner-1
-    emit(0x20);
-    emit(static_cast<uint8_t>(inner - 1));
+    // Outer first when nested (LC1), then LC0.
     if (outer > 1) {
         emit(0x22); // DMALP LC1
         emit(static_cast<uint8_t>(outer - 1));
     }
-    // DMALD
-    emit(0x04);
-    // DMAST
-    emit(0x08);
-    // DMALPEND for LC0 (backward 2 bytes to DMALD) — encoding 0x38 | (1<<1) with bjump
-    // Simplified: DMALPEND infinite-safe short form 0x28, bjump=2 (size of DMALD+DMAST)
+    emit(0x20); // DMALP LC0
+    emit(static_cast<uint8_t>(inner - 1));
+    emit(0x04); // DMALD
+    emit(0x08); // DMAST
+    // LPEND LC0: bjump over DMALD+DMAST = 2
     emit(0x38);
-    emit(0x02); // backward jump over DMALD+DMAST
+    emit(0x02);
     if (outer > 1) {
-        // Additional LPEND LC1 — treat as single-level if outer==1 only for v1.
-        // For outer>1 we used nested; emit LC1 pend (same jump spans inner body).
+        // LPEND LC1: body = DMALP_LC0(2)+DMALD(1)+DMAST(1)+LPEND_LC0(2) = 6
         emit(0x3C);
         emit(0x06);
     }
-    // DMASEV 0
-    emit(0x34);
+    emit(0x34); // DMASEV 0
     emit(0x00);
-    // DMAEND
-    emit(0x00);
+    emit(0x00); // DMAEND
     return o;
+}
+
+// Back-compat: n_words of burst-1 (4 B) transfers.
+inline size_t pl330BuildMem2MemProgram(uint8_t* out, size_t out_cap, uint32_t src, uint32_t dst,
+                                       uint32_t ccr, uint32_t n_words) {
+    uint32_t inner = 0, outer = 0;
+    if (!pl330FactorLoops(n_words, &inner, &outer))
+        return 0;
+    return pl330BuildMem2MemProgramLoops(out, out_cap, src, dst, ccr, inner, outer);
+}
+
+// Full-frame encode: auto burst + nested loops. out_burst receives chosen burst.
+inline size_t pl330BuildMem2MemProgramAuto(uint8_t* out, size_t out_cap, uint32_t src, uint32_t dst,
+                                           size_t len, unsigned* out_burst = nullptr) {
+    unsigned burst = 1;
+    uint32_t inner = 0, outer = 0;
+    if (!pl330PickBurstAndLoops(len, &burst, &inner, &outer))
+        return 0;
+    const uint32_t ccr = pl330BuildCcrBurst(burst);
+    if (!ccr)
+        return 0;
+    if (out_burst)
+        *out_burst = burst;
+    return pl330BuildMem2MemProgramLoops(out, out_cap, src, dst, ccr, inner, outer);
 }
 
 class Pl330Mem2Mem {
@@ -261,7 +315,8 @@ public:
     }
 
     // Execute blocking mem2mem. len must be multiple of 4.
-    // On failure, leaves DMA idle if possible.
+    // Prefers one microcode program (burst 8/16 + nested LC1/LC0). Falls back to
+    // burst-1 1 KiB chunks only if auto encode fails.
     Pl330Mem2MemResult transferBlocking(const Pl330Mem2MemRequest& req, int timeout_ms = 50) {
         Pl330Mem2MemResult r = probe();
         if (!r.hardware_present)
@@ -271,40 +326,46 @@ public:
             r.detail = "bad src/dst/len";
             return r;
         }
-        const uint32_t ccr = pl330BuildCcr(req.len);
-        if (!ccr) {
-            r.ok = false;
-            r.detail = "ccr";
-            return r;
-        }
-        const uint32_t n_words = static_cast<uint32_t>(req.len / 4);
-        // v1: only support n_words <= 256 (single LC0) for predictable microcode.
-        if (n_words > 256) {
-            // Chunk into 256-word pieces sequentially (still off-CPU per chunk).
-            size_t done = 0;
-            int ch = req.channel;
-            while (done < req.len) {
-                size_t chunk = req.len - done;
-                if (chunk > 256u * 4u)
-                    chunk = 256u * 4u;
-                Pl330Mem2MemRequest sub = req;
-                sub.src_phys = req.src_phys + static_cast<uint32_t>(done);
-                sub.dst_phys = req.dst_phys + static_cast<uint32_t>(done);
-                sub.len = chunk;
-                sub.channel = ch;
-                auto one = transferOneBlock(sub, timeout_ms);
-                if (!one.ok) {
-                    r = one;
-                    return r;
-                }
-                done += chunk;
-                r = one;
+        // Full-frame / large: single program when burst+loops factor.
+        {
+            auto one = transferOneBlockAuto(req, timeout_ms);
+            if (one.ok || one.channel_started) {
+                if (one.ok)
+                    one.detail = std::string("auto ") + one.detail;
+                return one;
             }
-            r.ok = true;
-            r.detail = "chunked ok";
-            return r;
+            // Fall through to chunked if encode/start failed before DMA.
+            if (one.detail.find("program") == std::string::npos &&
+                one.detail != "needs_prog_scratch_phys") {
+                // Fault/timeout on auto — do not silently chunk (could double-write).
+                return one;
+            }
+            if (one.detail == "needs_prog_scratch_phys")
+                return one;
         }
-        return transferOneBlock(req, timeout_ms);
+        // Chunked burst-1 fallback (256 words = 1024 B).
+        size_t done = 0;
+        int ch = req.channel;
+        while (done < req.len) {
+            size_t chunk = req.len - done;
+            if (chunk > 256u * 4u)
+                chunk = 256u * 4u;
+            Pl330Mem2MemRequest sub = req;
+            sub.src_phys = req.src_phys + static_cast<uint32_t>(done);
+            sub.dst_phys = req.dst_phys + static_cast<uint32_t>(done);
+            sub.len = chunk;
+            sub.channel = ch;
+            auto one = transferOneBlock(sub, timeout_ms);
+            if (!one.ok) {
+                r = one;
+                return r;
+            }
+            done += chunk;
+            r = one;
+        }
+        r.ok = true;
+        r.detail = "chunked ok";
+        return r;
     }
 
 private:
@@ -322,22 +383,16 @@ private:
     // We expose descriptor build + probe; transferOneBlock attempts DMAGO with
     // inline DMAMOV sequence via debug for very small transfers only, else
     // returns not-implemented for full frame so bench reports honestly.
-    Pl330Mem2MemResult transferOneBlock(const Pl330Mem2MemRequest& req, int timeout_ms) {
+    Pl330Mem2MemResult goProgram(const uint8_t* prog, size_t plen, int channel, int timeout_ms,
+                                 const char* tag) {
         Pl330Mem2MemResult r;
         r.hardware_present = true;
         r.cr0 = read32(kPl330_CR0);
         r.dsr = read32(kPl330_DSR);
-
-        uint8_t prog[64];
-        const uint32_t ccr = pl330BuildCcr(req.len);
-        const uint32_t n_words = static_cast<uint32_t>(req.len / 4);
-        const size_t plen =
-            pl330BuildMem2MemProgram(prog, sizeof(prog), req.src_phys, req.dst_phys, ccr, n_words);
-        if (plen == 0) {
+        if (!prog || plen == 0) {
             r.detail = "program encode failed";
             return r;
         }
-
         if (prog_scratch_phys_ == 0 || !prog_scratch_virt_) {
             r.ok = false;
             r.detail = "needs_prog_scratch_phys";
@@ -349,13 +404,11 @@ private:
             return r;
         }
         std::memcpy(prog_scratch_virt_, prog, plen);
-        // Clear rest of page so stale bytes never execute if PC walks
         if (plen < 64)
             std::memset(static_cast<uint8_t*>(prog_scratch_virt_) + plen, 0, 64 - plen);
         __sync_synchronize();
 
-        const int ch = (req.channel >= 0 && req.channel < 8) ? req.channel : 0;
-        // Wait debug busy clear
+        const int ch = (channel >= 0 && channel < 8) ? channel : 0;
         for (int i = 0; i < 10000; ++i) {
             if ((read32(kPl330_DBGSTATUS) & 1u) == 0)
                 break;
@@ -364,37 +417,60 @@ private:
                 return r;
             }
         }
-        // Linux pl330: DBGINST0 = (0<<16)|(ch<<8)|(CMD_DMAGO|ns), DBGINST1 = PC LE
-        const uint32_t ns = 0; // non-secure manager on NS base
+        const uint32_t ns = 0;
         const uint32_t inst0 = (0u << 16) | (static_cast<uint32_t>(ch) << 8) | (0xA0u | (ns << 1));
         write32(kPl330_DBGINST0, inst0);
         write32(kPl330_DBGINST1, prog_scratch_phys_);
-        write32(kPl330_DBGCMD, 0); // execute
+        write32(kPl330_DBGCMD, 0);
         r.channel_started = true;
         r.channel_used = ch;
 
-        // Poll CSR for stopped
         const uint32_t csr_off = kPl330_CSR0 + static_cast<uint32_t>(ch) * 8u;
-        const int spins = timeout_ms * 100; // ~10us units rough
+        // Busy-spin first ~2 ms, then usleep — full-frame must not pay 10us/chunk tax.
+        const int spins = timeout_ms * 200;
         for (int i = 0; i < spins; ++i) {
             const uint32_t csr = read32(csr_off);
-            // channel status encoding: 0 = stopped
             if ((csr & 0xFu) == 0) {
                 r.ok = true;
-                r.detail = "dma stopped ok";
+                r.detail = tag ? tag : "dma stopped ok";
                 return r;
             }
-            // fault?
             if (read32(kPl330_FSRC) & (1u << ch)) {
                 r.detail = "channel fault";
                 r.ok = false;
                 return r;
             }
-            usleep(10);
+            if (i > 400)
+                usleep(10);
         }
         r.detail = "timeout";
         r.ok = false;
         return r;
+    }
+
+    Pl330Mem2MemResult transferOneBlock(const Pl330Mem2MemRequest& req, int timeout_ms) {
+        uint8_t prog[64];
+        const uint32_t ccr = pl330BuildCcr(req.len);
+        const uint32_t n_words = static_cast<uint32_t>(req.len / 4);
+        const size_t plen =
+            pl330BuildMem2MemProgram(prog, sizeof(prog), req.src_phys, req.dst_phys, ccr, n_words);
+        return goProgram(prog, plen, req.channel, timeout_ms, "burst1 stopped ok");
+    }
+
+    Pl330Mem2MemResult transferOneBlockAuto(const Pl330Mem2MemRequest& req, int timeout_ms) {
+        uint8_t prog[64];
+        unsigned burst = 0;
+        const size_t plen = pl330BuildMem2MemProgramAuto(prog, sizeof(prog), req.src_phys,
+                                                         req.dst_phys, req.len, &burst);
+        if (plen == 0) {
+            Pl330Mem2MemResult r;
+            r.hardware_present = true;
+            r.detail = "program encode failed";
+            return r;
+        }
+        char tag[40];
+        std::snprintf(tag, sizeof(tag), "burst%u stopped ok", burst);
+        return goProgram(prog, plen, req.channel, timeout_ms, tag);
     }
 
 public:
@@ -406,15 +482,24 @@ public:
     // Descriptor-only path for unit tests (no /dev/mem).
     static bool encodeProgramForTest(uint8_t* out, size_t cap, size_t* out_len, uint32_t src,
                                      uint32_t dst, size_t len) {
-        const uint32_t ccr = pl330BuildCcr(len);
-        if (!ccr)
-            return false;
-        const size_t n = pl330BuildMem2MemProgram(out, cap, src, dst, ccr,
-                                                  static_cast<uint32_t>(len / 4));
-        if (!n)
-            return false;
+        unsigned burst = 0;
+        const size_t n = pl330BuildMem2MemProgramAuto(out, cap, src, dst, len, &burst);
+        if (!n) {
+            // Tiny lens may only fit burst-1 single LC0.
+            const uint32_t ccr = pl330BuildCcr(len);
+            if (!ccr)
+                return false;
+            const size_t n2 = pl330BuildMem2MemProgram(out, cap, src, dst, ccr,
+                                                       static_cast<uint32_t>(len / 4));
+            if (!n2)
+                return false;
+            if (out_len)
+                *out_len = n2;
+            return true;
+        }
         if (out_len)
             *out_len = n;
+        (void)burst;
         return true;
     }
 
