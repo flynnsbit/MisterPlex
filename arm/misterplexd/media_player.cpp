@@ -501,6 +501,11 @@ void MediaPlayer::setContentAspectMeta(std::string pixelAspectRatio,
     refreshPlxgAspectCadence();
 }
 
+void MediaPlayer::setPlxgDarProvenanceTranscode(bool transcode) {
+    plxgDarTranscode_ = transcode;
+    refreshPlxgAspectCadence();
+}
+
 void MediaPlayer::refreshPlxgAspectCadence() {
     // Prefer measured delivery (ffmpeg banner); else play-time scale-source claim.
     int w = measuredDeliveryW_.load(std::memory_order_relaxed);

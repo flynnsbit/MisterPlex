@@ -1322,11 +1322,13 @@ int main(int argc, char** argv) {
             int fnum = resolved.fpsNum;
             int fden = resolved.fpsDen;
             misterplex::applyContentFpsConf(loadConf(confPath, "AV_CONTENT_FPS"), fnum, fden);
-            player.setContentFpsRational(fnum, fden);
-            // PLXG q5 sources: PMS SAR/Media AR + content fps. DAR uses measured
-            // coded size once ffmpeg_banner lands; until then scale-source dims.
-            player.setContentAspectMeta(resolved.pixelAspectRatio, resolved.mediaAspectRatio);
+            // PLXG q5: provenance MUST be set before aspect/fps refresh (rd-duck).
+            // setContentAspectMeta/setContentFpsRational call refreshPlxgAspectCadence;
+            // if provenance is still default DirectPlay, transcode 624x350 + source
+            // SAR 160:117 double-applies → 256:105 instead of Media 16:9 family.
             player.setPlxgDarProvenanceTranscode(resolved.transcoded);
+            player.setContentFpsRational(fnum, fden);
+            player.setContentAspectMeta(resolved.pixelAspectRatio, resolved.mediaAspectRatio);
             std::fprintf(stderr, "misterplexd: content fps exact=%d/%d (pms frameRate=%s vfr=%s)\n",
                          fnum, fden,
                          resolved.frameRate.empty() ? "-" : resolved.frameRate.c_str(),

@@ -150,9 +150,9 @@ public:
     // Empty = unknown → dar_valid=0 (never invent storage AR).
     void setContentAspectMeta(std::string pixelAspectRatio, std::string mediaAspectRatio);
     // rd-duck: Transcode must not apply source SAR to delivered square-pixel dims.
-    void setPlxgDarProvenanceTranscode(bool transcode) {
-        plxgDarTranscode_ = transcode;
-    }
+    // Always refresh q5 — main must also call this *before* aspect/fps setters
+    // that refresh, but a late call must not leave a stale DirectPlay pack.
+    void setPlxgDarProvenanceTranscode(bool transcode);
     // Rebuild PLXG q5 from PMS meta + measured/claimed geometry + content fps.
     // Logs greppable media: PLXG_Q5 … Offsets: doorbell+0x828. Wire write is
     // owned with w-mem record store (B16); path owns the value source.

@@ -137,6 +137,88 @@ static void test_media_aspect_decimal() {
     expect(c.fps_valid && c.content_fps == 24, "integer 24");
 }
 
+// Mirrors MediaPlayer field refresh order used by main.cpp (rd-duck ordering bug).
+// Old main: fps refresh → aspect refresh → provenance assign (NO refresh)
+// left q5 packed as DirectPlay 256:105. Require initial pack 89:50 (Media 1.78).
+struct PlxgQ5PublishSim {
+    bool transcode = false;
+    std::string sar;
+    std::string mar;
+    int w = 0, h = 0, fn = 0, fd = 0;
+    PlxgAspectCadence last{};
+    uint64_t q5 = 0;
+
+    void refresh() {
+        const auto prov =
+            transcode ? PlxgDarProvenance::Transcode : PlxgDarProvenance::DirectPlay;
+        last = selectPlxgAspectCadence(w, h, transcode ? std::string{} : sar, mar, fn, fd,
+                                      prov);
+        q5 = 0;
+        (void)packPlxgQ5(last, &q5);
+    }
+    void setProvenanceTranscode(bool t) {
+        transcode = t;
+        refresh(); // product setter must refresh
+    }
+    void setFps(int n, int d) {
+        fn = n;
+        fd = d;
+        refresh();
+    }
+    void setAspect(std::string s, std::string m) {
+        sar = std::move(s);
+        mar = std::move(m);
+        refresh();
+    }
+};
+
+static void test_main_call_order_624x350_transcode() {
+    // Coded delivery claim before banner (scale-source / measured later).
+    constexpr int kW = 624, kH = 350;
+
+    // --- RED twin: old main order without provenance refresh ---
+    {
+        PlxgQ5PublishSim s;
+        s.w = kW;
+        s.h = kH;
+        s.setFps(24000, 1001);                         // refresh as DP
+        s.setAspect("160:117", "1.78");                // still DP → 256:105
+        s.transcode = true;                            // assign only, NO refresh
+        // Stale pack must be the double-applied wrong DAR:
+        expect(s.last.dar_valid && s.last.dar_x == 256 && s.last.dar_y == 105,
+               "RED old-order stale pack is 256:105 (double SAR)");
+        // If someone forgets refresh, last stays wrong — product forbids this.
+    }
+
+    // --- GREEN: main order provenance → fps → aspect (each refresh) ---
+    {
+        PlxgQ5PublishSim s;
+        s.w = kW;
+        s.h = kH;
+        s.setProvenanceTranscode(true); // FIRST
+        s.setFps(24000, 1001);
+        s.setAspect("160:117", "1.78");
+        expect(s.last.dar_valid && s.last.dar_x == 89 && s.last.dar_y == 50,
+               "main order: initial q5 DAR 89:50 (Media 1.78) not 256:105");
+        expect(!(s.last.dar_x == 256 && s.last.dar_y == 105),
+               "main order must not publish 256:105");
+        expect(s.last.fps_valid && s.last.content_fps == 24, "main order fps 24");
+    }
+
+    // --- GREEN: late provenance still heals if setter refreshes ---
+    {
+        PlxgQ5PublishSim s;
+        s.w = kW;
+        s.h = kH;
+        s.setFps(24000, 1001);
+        s.setAspect("160:117", "1.78"); // wrong DP pack
+        expect(s.last.dar_x == 256 && s.last.dar_y == 105, "precondition DP 256:105");
+        s.setProvenanceTranscode(true); // must refresh
+        expect(s.last.dar_valid && s.last.dar_x == 89 && s.last.dar_y == 50,
+               "late provenance refresh heals to 89:50");
+    }
+}
+
 static void test_fps_families() {
     uint8_t f = 0;
     expect(contentFpsIntegerForPlxg(24, 1, &f) && f == 24, "24/1");
@@ -155,6 +237,7 @@ int main() {
     test_unknown_no_invent_red_twin();
     test_no_storage_aspect_fallback_720x480();
     test_lab_624x350_dar_provenance();
+    test_main_call_order_624x350_transcode();
     test_media_aspect_decimal();
     test_fps_families();
     if (g_fails) {
