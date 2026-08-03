@@ -903,40 +903,36 @@ bool FpgaSpi::readInputMailbox(PlaybackCommand& command) {
     return false;
 }
 
-bool FpgaSpi::writeChromeCommandList(const uint64_t* cmds, size_t count, bool enable,
-                                     uint16_t seq) {
-    if (!cmds && count > 0)
+// Seqlock publish PLXC list+ctrl into one doorbell page (byte-mapped window).
+// Returns false if door control/list is outside [mapPhysBase, mapPhysBase+mapLen).
+static bool publishPlxcSeqlockToMap(uint8_t* map, size_t mapLen, uint32_t mapPhysBase,
+                                    uint32_t door, const uint64_t* cmds, size_t n, bool enable,
+                                    uint16_t seq) {
+    if (!map || (n > 0 && !cmds))
         return false;
-    if (!ok() && !open())
-        return false;
-    if (!ensureDdrMap())
-        return false;
-    const uint32_t door = ddrLayout_.doorbell_phys;
     const uint32_t listPhys = mailbox_abi::frameStoreMailboxPhys(door, mailbox_abi::kPlxlOffset);
     const uint32_t ctrlPhys = mailbox_abi::frameStoreMailboxPhys(door, mailbox_abi::kPlxcOffset);
-    if (listPhys < ddrLayout_.phys_base || ctrlPhys < ddrLayout_.phys_base) {
-        setErr("writeChromeCommandList: PLXC outside frame window");
+    const uint32_t listEnd = listPhys + static_cast<uint32_t>(n * sizeof(uint64_t));
+    if (listPhys < mapPhysBase || ctrlPhys < mapPhysBase)
         return false;
-    }
-    const size_t listOff = static_cast<size_t>(listPhys - ddrLayout_.phys_base);
-    const size_t ctrlOff = static_cast<size_t>(ctrlPhys - ddrLayout_.phys_base);
-    const size_t n = std::min(count, static_cast<size_t>(plex_chrome_cmds::kMaxCmds));
-    if (listOff + n * sizeof(uint64_t) > ddrMapLen_ || ctrlOff + 8 > ddrMapLen_) {
-        setErr("writeChromeCommandList: PLXC/list outside mapped window");
+    if (listEnd < listPhys) // overflow
         return false;
-    }
+    if (ctrlPhys + 8u < ctrlPhys)
+        return false;
+    const size_t listOff = static_cast<size_t>(listPhys - mapPhysBase);
+    const size_t ctrlOff = static_cast<size_t>(ctrlPhys - mapPhysBase);
+    if (listOff + n * sizeof(uint64_t) > mapLen || ctrlOff + 8 > mapLen)
+        return false;
     // PLXC seqlock (rd-duck / PLXG-style), 32-bit half order matters:
     //   1) Invalidate both halves so fabric cannot pair OLD ctrl with NEW body.
     //   2) Write list body.
     //   3) Write ctrl HIGH half first (enable/count/seq) while magic still 0.
     //   4) DMB, then magic LOW last.
-    // Magic-then-hi leaves a window where a re-read sees stable magic + stale/zero
-    // hi and can accept a transient empty/old control (rd-duck hole 1).
-    auto* cw = reinterpret_cast<volatile uint32_t*>(ddrMap_ + ctrlOff);
+    auto* cw = reinterpret_cast<volatile uint32_t*>(map + ctrlOff);
     cw[0] = 0;
     cw[1] = 0;
     __sync_synchronize();
-    auto* list = reinterpret_cast<volatile uint64_t*>(ddrMap_ + listOff);
+    auto* list = reinterpret_cast<volatile uint64_t*>(map + listOff);
     for (size_t i = 0; i < n; ++i)
         list[i] = cmds[i];
     __sync_synchronize();
@@ -945,6 +941,66 @@ bool FpgaSpi::writeChromeCommandList(const uint64_t* cmds, size_t count, bool en
     __sync_synchronize();
     cw[0] = static_cast<uint32_t>(ctrl); // magic LAST
     __sync_synchronize();
+    return true;
+}
+
+bool FpgaSpi::writeChromeCommandList(const uint64_t* cmds, size_t count, bool enable,
+                                     uint16_t seq) {
+    if (!cmds && count > 0)
+        return false;
+    if (!ok() && !open())
+        return false;
+    if (!ensureDdrMap())
+        return false;
+    const size_t n = std::min(count, static_cast<size_t>(plex_chrome_cmds::kMaxCmds));
+    // Fabric loader is fixed on product YUV bootstrap door (0x300FF000). Runtime
+    // frame doorbell may be Option-C 0x3047F000 — always publish bootstrap; mirror
+    // runtime door when it differs and is inside the frame map.
+    const uint32_t bootDoor = kDdrFramePlxcBootstrapDoorbellPhys;
+    const uint32_t runDoor = ddrLayout_.doorbell_phys;
+    bool boot_ok = false;
+    if (bootDoor >= ddrLayout_.phys_base) {
+        const uint64_t bootEnd =
+            static_cast<uint64_t>(bootDoor) + 0x1000ull; // full control page
+        const uint64_t mapEnd =
+            static_cast<uint64_t>(ddrLayout_.phys_base) + static_cast<uint64_t>(ddrMapLen_);
+        if (bootEnd <= mapEnd) {
+            boot_ok = publishPlxcSeqlockToMap(ddrMap_, ddrMapLen_, ddrLayout_.phys_base, bootDoor,
+                                             cmds, n, enable, seq);
+        }
+    }
+    if (!boot_ok) {
+        // Option-C / foreign map: open the bootstrap 4 KiB page alone.
+        int flags = O_RDWR | O_CLOEXEC;
+        if (ddrMemSync_)
+            flags |= O_SYNC;
+        const int fd = ::open("/dev/mem", flags);
+        if (fd < 0) {
+            setErr("writeChromeCommandList: open bootstrap /dev/mem failed");
+            return false;
+        }
+        constexpr size_t kPage = 0x1000u;
+        void* p = mmap(nullptr, kPage, PROT_READ | PROT_WRITE, MAP_SHARED, fd,
+                       static_cast<off_t>(bootDoor));
+        if (p == MAP_FAILED) {
+            ::close(fd);
+            setErr("writeChromeCommandList: mmap PLXC bootstrap page failed");
+            return false;
+        }
+        boot_ok = publishPlxcSeqlockToMap(static_cast<uint8_t*>(p), kPage, bootDoor, bootDoor,
+                                          cmds, n, enable, seq);
+        munmap(p, kPage);
+        ::close(fd);
+        if (!boot_ok) {
+            setErr("writeChromeCommandList: bootstrap PLXC publish failed");
+            return false;
+        }
+    }
+    if (runDoor != bootDoor) {
+        // Best-effort mirror onto runtime door (SW readers); fabric ignores this page.
+        (void)publishPlxcSeqlockToMap(ddrMap_, ddrMapLen_, ddrLayout_.phys_base, runDoor, cmds, n,
+                                      enable, seq);
+    }
     clearErr();
     return true;
 }
@@ -953,32 +1009,50 @@ bool FpgaSpi::readChromeHwPresent(bool& present) {
     present = false;
     if (!ok() && !open())
         return false;
-    if (!ensureDdrMap())
-        return false;
-    const uint32_t door = ddrLayout_.doorbell_phys;
+    // PLXO is written by fabric loader on bootstrap product door.
+    const uint32_t door = kDdrFramePlxcBootstrapDoorbellPhys;
     const uint32_t plxoPhys = mailbox_abi::frameStoreMailboxPhys(door, mailbox_abi::kPlxoOffset);
-    if (plxoPhys < ddrLayout_.phys_base)
+    auto sample = [&](volatile uint32_t* mw) -> bool {
+        for (int attempt = 0; attempt < 4; ++attempt) {
+            const uint32_t lo0 = mw[0];
+            const uint32_t hi0 = mw[1];
+            __sync_synchronize();
+            const uint32_t lo1 = mw[0];
+            const uint32_t hi1 = mw[1];
+            if (lo0 != lo1 || hi0 != hi1)
+                continue;
+            if (lo0 != mailbox_abi::kPlxoMagic)
+                return false;
+            present = (hi0 & 0x1u) != 0;
+            clearErr();
+            return true;
+        }
         return false;
-    const size_t off = static_cast<size_t>(plxoPhys - ddrLayout_.phys_base);
-    if (off + 8 > ddrMapLen_)
-        return false;
-    volatile uint32_t* mw = reinterpret_cast<volatile uint32_t*>(ddrMap_ + off);
-    for (int attempt = 0; attempt < 4; ++attempt) {
-        const uint32_t lo0 = mw[0];
-        const uint32_t hi0 = mw[1];
-        __sync_synchronize();
-        const uint32_t lo1 = mw[0];
-        const uint32_t hi1 = mw[1];
-        if (lo0 != lo1 || hi0 != hi1)
-            continue;
-        if (lo0 != mailbox_abi::kPlxoMagic)
-            return false;
-        // PLXO: [32] chrome_hw (bit0 of hi)
-        present = (hi0 & 0x1u) != 0;
-        clearErr();
-        return true;
+    };
+    if (ensureDdrMap() && plxoPhys >= ddrLayout_.phys_base) {
+        const size_t off = static_cast<size_t>(plxoPhys - ddrLayout_.phys_base);
+        if (off + 8 <= ddrMapLen_)
+            return sample(reinterpret_cast<volatile uint32_t*>(ddrMap_ + off));
     }
-    return false;
+    int flags = O_RDWR | O_CLOEXEC;
+    if (ddrMemSync_)
+        flags |= O_SYNC;
+    const int fd = ::open("/dev/mem", flags);
+    if (fd < 0)
+        return false;
+    constexpr size_t kPage = 0x1000u;
+    void* p = mmap(nullptr, kPage, PROT_READ | PROT_WRITE, MAP_SHARED, fd,
+                   static_cast<off_t>(door));
+    if (p == MAP_FAILED) {
+        ::close(fd);
+        return false;
+    }
+    const size_t off = static_cast<size_t>(plxoPhys - door);
+    const bool ok_s = (off + 8 <= kPage) &&
+                      sample(reinterpret_cast<volatile uint32_t*>(static_cast<uint8_t*>(p) + off));
+    munmap(p, kPage);
+    ::close(fd);
+    return ok_s;
 }
 
 bool FpgaSpi::kickDdrSpi(int bank, bool first_verify, bool& saw_busy, bool& saw_kick,

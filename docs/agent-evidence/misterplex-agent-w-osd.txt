@@ -1,22 +1,23 @@
 worker: w-osd
 branch: w-osd-fabric-plane
-status: rd-duck halfword_magic_first tautology FIXED
+status: rd-duck PLXC doorbell hollow FIXED
 
-rd-duck: halfword_magic_first accepted saw_wrong OR stayed; PASS only on seq88.
-Fix:
-  - force_poll_window (POLL_DIV=4, deterministic N polls) — no "maybe missed"
-  - product halfword: baseline seq=50; after HI-only loads/seq MUST stay
-    Observation that fails if halves reversed: incomplete-half commit
-  - halfword_magic_first: REQUIRE wrong_accept seq0 (last_seq==0 && loads++)
-    with seed_seq!=0; no stayed-ok path
-  - mutation twin -DHALFWORD_PRODUCT_MAGIC_FIRST: product order reversed →
-    FAIL "halfword accepted after incomplete ctrl half" rc=1
+blocker: loader default 0x3007_F000 + Plex no override; ARM wrote runtime door
+  (product 0x300FF000 / Option-C 0x3047F000) → fabric polled empty page.
+
+fix:
+  plex_chrome_ddr_loader.sv default DOORBELL_PHYS = 32'h300F_F000
+  Plex.sv u_plxc_ddr_loader .DOORBELL_PHYS(32'h300F_F000)
+  mailbox_abi: kProductYuv480pDoorbellPhys=0x300FF000,
+    kPacked320ExampleDoorbellPhys=0x3007F000 (NOT product legacy),
+    kOptionC720pDoorbellPhys=0x3047F000,
+    kPlxcBootstrapPhys=0x300FF130
+  ARM writeChromeCommandList always publishes bootstrap; mirrors runtime if !=
+  readChromeHwPresent samples bootstrap PLXO
+  host model kDoor = product YUV
 
 evidence:
-  product: PASS halfword; halfword_magic_first wrong_accept=1 PASS; true rc=0
-  mutate:  FAIL incomplete ctrl half; true rc=1
-  suite:   test_plex_chrome_ddr_loader_rtl_sim: PASS true rc=0
-  host:    test_plex_chrome_ddr_loader PASS (mutation seq0 + magic_first required)
-
-prior: bank map b5d582ec still good
+  host test_plex_chrome_ddr_loader true rc=0 (bootstrap gate PASS)
+  test_ddr_720p_abi true rc=0
+  test_plex_chrome_ddr_loader_rtl_sim true rc=0
 no Quartus / no device

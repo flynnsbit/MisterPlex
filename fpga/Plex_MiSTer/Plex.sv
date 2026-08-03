@@ -1048,9 +1048,13 @@ localparam bit PLXC_DDR_EN = 1'b1;
 localparam bit PLXC_DDR_EN = 1'b0;
 `endif
 
+// PLXC bootstrap doorbell = product YUV 0x300FF000 (not packed-320 0x3007F000,
+// not Option-C 0x3047F000). ARM mirrors chrome list to this page so HUD lives
+// even when runtime frame doorbell moves with bank map.
 plex_chrome_ddr_loader #(
 	.ENABLE(PLXC_DDR_EN),
-	.MAX_CMDS(112)
+	.MAX_CMDS(112),
+	.DOORBELL_PHYS(32'h300F_F000)
 ) u_plxc_ddr_loader (
 	.clk(clk_sys),
 	.reset(reset),

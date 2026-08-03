@@ -58,6 +58,10 @@ int main() {
     // --- Product doorbell + FIXED offset ---
     CHECK(kPlex480pYuv420pDoorbellPhys == 0x300FF000u);
     CHECK(kDdrFramePlxgBootstrapPhys == 0x300FF000u + 0x800u);
+    CHECK(mailbox_abi::kProductYuv480pDoorbellPhys == 0x300FF000u);
+    CHECK(mailbox_abi::kOptionC720pDoorbellPhys == 0x3047F000u);
+    CHECK(misterplex::kDdrFramePlxcBootstrapPhys == 0x300FF130u);
+    CHECK(misterplex::kDdrFramePlxcBootstrapDoorbellPhys != 0x3007F000u);
     CHECK(kDdrFramePlxgBootstrapPhys == 0x300FF800u);
     CHECK(mailbox_abi::frameStoreMailboxPhys(kPlex480pYuv420pDoorbellPhys,
                                              mailbox_abi::kPlxgOffset) == 0x300FF800u);

@@ -27,6 +27,8 @@ localparam int DDR_FRAME_CHROMA_STRIDE_BYTES = 312;
 localparam int DDR_FRAME_RGB565_BANK_STRIDE = 32'h000C_0000;
 localparam int DDR_FRAME_YUV420P_BANK_STRIDE = 32'h0008_0000;
 localparam int DDR_FRAME_RGB565_DOORBELL_PHYS = 32'h3017_F000;
+// Product YUV doorbell + PLXC/PLXG fabric bootstrap page. NOT packed-320
+// 0x3007_F000. Option-C frame door may be 0x3047_F000; chrome stays here.
 localparam int DDR_FRAME_YUV420P_DOORBELL_PHYS = 32'h300F_F000;
 localparam int DDR_FRAME_YUV_BLACK_Y = 16;
 localparam int DDR_FRAME_YUV_BLACK_U = 128;

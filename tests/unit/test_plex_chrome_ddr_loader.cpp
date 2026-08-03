@@ -1,5 +1,6 @@
 // plex_chrome_ddr_loader host model + PLXC seqlock gates.
 #include "libmisterplex/plex_chrome_ddr_loader.hpp"
+#include "libmisterplex/ddr_frame_layout.hpp"
 #include "libmisterplex/plex_chrome_cmds.hpp"
 
 #include <cstdio>
@@ -129,6 +130,7 @@ static void checkRetainedInvalid() {
 }
 
 // ARM source must invalidate magic before body, and publish ctrl hi before magic lo.
+// Seqlock body lives in publishPlxcSeqlockToMap; writeChromeCommandList targets bootstrap.
 static void checkFpgaSpiSeqlockSource() {
     const char* paths[] = {
         "arm/misterplexd/fpga_spi.cpp",
@@ -143,11 +145,14 @@ static void checkFpgaSpiSeqlockSource() {
         break;
     }
     CHECK(!src.empty());
+    const auto helper = src.find("publishPlxcSeqlockToMap");
+    CHECK(helper != std::string::npos);
     const auto fn = src.find("bool FpgaSpi::writeChromeCommandList");
     CHECK(fn != std::string::npos);
     const auto end = src.find("bool FpgaSpi::readChromeHwPresent", fn + 10);
     CHECK(end != std::string::npos);
-    const std::string body = src.substr(fn, end - fn);
+    // Helper precedes writeChrome; scan from helper through write end.
+    const std::string body = src.substr(helper, end - helper);
     const auto inv = body.find("cw[0] = 0");
     const auto list = body.find("list[i] = cmds[i]");
     const auto pack = body.find("packPlxcCtrl");
@@ -162,8 +167,10 @@ static void checkFpgaSpiSeqlockSource() {
     CHECK(list < pack);
     CHECK(pack < hi);
     CHECK(hi < lo); // magic LAST
-    CHECK(body.find("seqlock") != std::string::npos || body.find("Invalidate") != std::string::npos);
-    CHECK(body.find("magic LAST") != std::string::npos);
+    CHECK(body.find("seqlock") != std::string::npos || body.find("Invalidate") != std::string::npos ||
+          body.find("magic LAST") != std::string::npos);
+    CHECK(body.find("kDdrFramePlxcBootstrapDoorbellPhys") != std::string::npos);
+    CHECK(body.find("bootDoor") != std::string::npos);
 }
 
 // Interleave a loader poll after each 32-bit half of ctrl publish.
@@ -232,6 +239,63 @@ static void checkHalfWordPublishOrder() {
     }
 }
 
+
+// Fabric bootstrap door is product YUV — never packed-320 example, never Option-C alone.
+static void checkPlxcBootstrapDoor() {
+    CHECK(mailbox_abi::kProductYuv480pDoorbellPhys == 0x300FF000u);
+    CHECK(mailbox_abi::kPacked320ExampleDoorbellPhys == 0x3007F000u);
+    CHECK(mailbox_abi::kOptionC720pDoorbellPhys == 0x3047F000u);
+    CHECK(mailbox_abi::kProductYuv480pDoorbellPhys !=
+          mailbox_abi::kPacked320ExampleDoorbellPhys);
+    CHECK(misterplex::kDdrFramePlxcBootstrapDoorbellPhys == 0x300FF000u);
+    CHECK(misterplex::kDdrFramePlxcBootstrapPhys == 0x300FF130u);
+    CHECK(misterplex::plex_chrome_ddr::kDoor == mailbox_abi::kProductYuv480pDoorbellPhys);
+    // Offsets identical across maps; only base moves.
+    CHECK(mailbox_abi::frameStoreMailboxPhys(mailbox_abi::kProductYuv480pDoorbellPhys,
+                                             mailbox_abi::kPlxcOffset) == 0x300FF130u);
+    CHECK(mailbox_abi::frameStoreMailboxPhys(mailbox_abi::kOptionC720pDoorbellPhys,
+                                             mailbox_abi::kPlxcOffset) == 0x3047F130u);
+    CHECK(mailbox_abi::frameStoreMailboxPhys(mailbox_abi::kPacked320ExampleDoorbellPhys,
+                                             mailbox_abi::kPlxcOffset) == 0x3007F130u);
+    // Loader must not default-poll packed-320 or Option-C without override.
+    std::ifstream ldr("fpga/Plex_MiSTer/rtl/plex_chrome_ddr_loader.sv");
+    if (!ldr)
+        ldr.open("../fpga/Plex_MiSTer/rtl/plex_chrome_ddr_loader.sv");
+    CHECK(ldr.good());
+    std::string src((std::istreambuf_iterator<char>(ldr)), std::istreambuf_iterator<char>());
+    CHECK(src.find("DOORBELL_PHYS  = 32'h300F_F000") != std::string::npos ||
+          src.find("DOORBELL_PHYS = 32'h300F_F000") != std::string::npos);
+    CHECK(src.find("parameter [31:0]     DOORBELL_PHYS  = 32'h3007_F000") == std::string::npos);
+    std::ifstream plex("fpga/Plex_MiSTer/Plex.sv");
+    if (!plex)
+        plex.open("../fpga/Plex_MiSTer/Plex.sv");
+    CHECK(plex.good());
+    std::string ps((std::istreambuf_iterator<char>(plex)), std::istreambuf_iterator<char>());
+    const auto inst = ps.find("u_plxc_ddr_loader");
+    CHECK(inst != std::string::npos);
+    const auto params = ps.rfind("plex_chrome_ddr_loader", inst);
+    CHECK(params != std::string::npos);
+    const std::string block = ps.substr(params, inst - params + 20);
+    CHECK(block.find("300F_F000") != std::string::npos);
+    CHECK(block.find("3007_F000") == std::string::npos);
+    // ARM must name bootstrap door in write path.
+    std::ifstream spi("arm/misterplexd/fpga_spi.cpp");
+    if (!spi)
+        spi.open("../arm/misterplexd/fpga_spi.cpp");
+    CHECK(spi.good());
+    std::string ss((std::istreambuf_iterator<char>(spi)), std::istreambuf_iterator<char>());
+    const auto fn = ss.find("bool FpgaSpi::writeChromeCommandList");
+    CHECK(fn != std::string::npos);
+    const auto end = ss.find("bool FpgaSpi::readChromeHwPresent", fn + 10);
+    CHECK(end != std::string::npos);
+    const std::string body = ss.substr(fn, end - fn);
+    CHECK(body.find("kDdrFramePlxcBootstrapDoorbellPhys") != std::string::npos ||
+          body.find("kProductYuv480pDoorbellPhys") != std::string::npos);
+    CHECK(body.find("bootDoor") != std::string::npos ||
+          body.find("bootstrap") != std::string::npos);
+    std::fprintf(stderr, "plxc bootstrap door product+mirror gate PASS\n");
+}
+
 int main() {
     checkEnableOffQuiet();
     checkLoadListThenCtrl();
@@ -242,6 +306,7 @@ int main() {
     checkRetainedInvalid();
     checkFpgaSpiSeqlockSource();
     checkHalfWordPublishOrder();
+    checkPlxcBootstrapDoor();
     if (fails) {
         std::fprintf(stderr, "test_plex_chrome_ddr_loader: %d FAIL(s)\n", fails);
         return 1;

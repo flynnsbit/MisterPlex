@@ -95,7 +95,7 @@ module plex_chrome_ddr_loader_tb (
         end
     end
 
-    // DOORBELL 0x3007F000 → qword base = 0x600FE00 — too large for 512.
+    // DOORBELL product 0x300FF000 (TB uses 0) → qword base = 0x600FE00 — too large for 512.
     // Use DOORBELL_PHYS=0 so offsets map 0x130/8 etc. into small mem.
     plex_chrome_ddr_loader #(
         .ENABLE(1'b1),

@@ -12,7 +12,8 @@
 namespace misterplex {
 namespace plex_chrome_ddr {
 
-inline constexpr uint32_t kDoor = mailbox_abi::kLegacyFrameStoreDoorbellPhys;
+// Fabric bootstrap door (product YUV). Not packed-320 example 0x3007F000.
+inline constexpr uint32_t kDoor = mailbox_abi::kProductYuv480pDoorbellPhys;
 
 struct HostBeat {
     uint8_t addr = 0;
