@@ -36,9 +36,11 @@ wire geom_hold_black;
 wire geom_hollow_fault;
 // B16 blackout:
 //   geom_hold_black — store layout change (enable/W/H/stride/map) + epoch.
-//   dar_hold_black  — aspect path: same WxH/stride DAR change (q5). Store does
-//                     NOT see DAR; ascal swblack is size-only. OR both here.
-// (rd-duck: prior comment claiming store covered same-size SAR was false.)
+//   dar_hold_black  — aspect path: same WxH/stride DAR change (q5).
+// Content RGB black is the real same-size effect (store + present_core).
+// HDMI_BLACKOUT → ascal.swblack only arms o_newres when *input size* changes
+// (ascal.vhd ~1951); OR still helps size transitions, not 4:3→16:9 same WxH.
+// (rd-duck: flag-only tests greenlit dead ascal path — fixed via content black.)
 wire dar_hold_black;
 `ifdef PRESENT_BEAM_960
 assign HDMI_BLACKOUT = geom_hold_black | dar_hold_black;
@@ -1049,6 +1051,7 @@ present_core #(
 	.geom_live_seq(plxg_live_seq),
 	.geom_live_valid(plxg_live_valid),
 	.q5_reserved_reject(plxg_q5_reserved_reject),
+	.dar_hold_black(dar_hold_black),
 	.geom_coded_w(present_geom_coded_w),
 	.geom_coded_h(present_geom_coded_h),
 	.geom_y_stride(present_geom_y_stride),

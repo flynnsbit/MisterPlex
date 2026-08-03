@@ -84,9 +84,9 @@ printf '%s\n' "$GOOD_OUT"
 echo "product true rc=$GOOD_RC"
 assert_sim_executed "b20-product" "$GOOD_OUT" \
   "OK delayed-promotion" "OK B20 product" "OK B20 mode-exit" \
-  "OK B20 mode-exit pixel oracle" \
+  "OK B20 mode-exit pixel oracle" "OK B20 dar_hold content RGB black" \
   "MEASURED after_promote" "MEASURED after_swap" "MEASURED mode_exit" \
-  "MEASURED mode_exit_scan"
+  "MEASURED mode_exit_scan" "MEASURED dar_hold_rgb"
 if [[ "$GOOD_RC" -ne 0 ]]; then
   echo "FAIL b20 product rc=$GOOD_RC" >&2
   exit "$GOOD_RC"
@@ -112,6 +112,31 @@ if [[ "$SPI_RC" -ne 2 ]]; then
   echo "FAIL b20 spi fault twin expected rc=2 got $SPI_RC" >&2
   exit 2
 fi
+
+# --- D) FAULT ascal-only DAR: content RGB stays lit under dar_hold (REPRO) ---
+DAR_BUILD="$ROOT/build/verilator/ddr_b20_dar_fault"
+rm -rf "$DAR_BUILD"
+mkdir -p "$DAR_BUILD"
+echo "=== D) FAULT_DAR_BLACK_ASCAL_ONLY (expect held maxRGB!=0) ===" >&2
+"$RUN_VERILATOR" "${vflags[@]}" --Mdir "$DAR_BUILD" \
+  -DDDR_FRAME_STORE_FAULT_DAR_BLACK_ASCAL_ONLY \
+  "${common_sv[@]}"
+set +e
+DAR_OUT="$(B20_MODE=product "$DAR_BUILD/Vddr_frame_store_b20_tb" 2>&1)"
+DAR_RC=$?
+set -e
+printf '%s\n' "$DAR_OUT" | tail -25
+echo "dar_fault true rc=$DAR_RC"
+if [[ "$DAR_RC" -eq 0 ]]; then
+  echo "FAIL FAULT twin should not pass product dar RGB check" >&2
+  exit 1
+fi
+if ! grep -q "FAIL product: dar_hold_black must force content RGB=0" <<<"$DAR_OUT"; then
+  echo "FAIL expected dar content-RGB REPRO marker" >&2
+  printf '%s\n' "$DAR_OUT" >&2
+  exit 1
+fi
+echo "REPRO_OK FAULT_DAR_BLACK_ASCAL_ONLY held RGB non-zero"
 
 echo "OK test_ddr_frame_store_b20"
 exit 0

@@ -56,6 +56,9 @@ module present_core #(
 	input  wire [15:0] geom_live_seq = 16'd0,
 	input  wire        geom_live_valid = 1'b0,
 	input  wire        q5_reserved_reject = 1'b0,
+	// Same-size DAR blackout from present_geom_latch (content RGB path).
+	// ascal.swblack/HDMI_BLACKOUT alone does not black same-size DAR.
+	input  wire        dar_hold_black = 1'b0,
 	input  wire [10:0] geom_coded_w,
 	input  wire [10:0] geom_coded_h,
 	input  wire [11:0] geom_y_stride,
@@ -442,7 +445,8 @@ module present_core #(
 		.debug_state(frame_sdram_state),
 		.geom_hold_black(geom_hold_black),
 		.geom_hollow_fault(geom_hollow_fault),
-		.q5_reserved_reject(q5_reserved_reject)
+		.q5_reserved_reject(q5_reserved_reject),
+		.dar_hold_black(dar_hold_black)
 	);
 `else
 	frame_store #(
@@ -542,9 +546,13 @@ module present_core #(
 
 	// Gate the frame pixels with EXACTLY the delayed signal that drives VGA_DE.
 	wire de_out = ~hb_d & ~vb_d;
-	assign r = use_ext ? (de_out ? fr : 8'd0) : (show_pattern ? br : 8'd0);
-	assign g = use_ext ? (de_out ? fg : 8'd0) : (show_pattern ? bg : 8'd0);
-	assign b = use_ext ? (de_out ? fb : 8'd0) : (show_pattern ? bb : 8'd0);
+	// Content-path blackout: store already zeros fr/fg/fb on geom/dar hold;
+	// also force here so same-size DAR cannot leak if store path is lagging.
+	// (ascal.swblack is size-only — do not rely on HDMI_BLACKOUT alone.)
+	wire force_black = geom_hold_black | dar_hold_black;
+	assign r = force_black ? 8'd0 : (use_ext ? (de_out ? fr : 8'd0) : (show_pattern ? br : 8'd0));
+	assign g = force_black ? 8'd0 : (use_ext ? (de_out ? fg : 8'd0) : (show_pattern ? bg : 8'd0));
+	assign b = force_black ? 8'd0 : (use_ext ? (de_out ? fb : 8'd0) : (show_pattern ? bb : 8'd0));
 
 	assign ce_pix = ce_pix_i;
 	assign HBlank = hb_d;

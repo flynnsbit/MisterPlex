@@ -68,7 +68,8 @@ module present_geom_latch (
 	// Sticky: rejected commit due to q5 reserved nonzero (debug).
 	output reg         q5_reserved_reject,
 	// Aspect-path blackout: DAR tuple changed at promote (same-size SAR/DAR).
-	// OR into HDMI_BLACKOUT at top — store geom_hold_black does NOT see DAR.
+	// Product: wire into ddr_frame_store/present_core content RGB black.
+	// HDMI_BLACKOUT→ascal.swblack is size-only (no-op for same WxH DAR).
 	output reg         dar_hold_black
 );
 

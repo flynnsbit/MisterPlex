@@ -23,6 +23,7 @@ module ddr_frame_store_b20_tb (
 	input  wire  [6:0] rd_x,
 	input  wire  [5:0] rd_y,
 	input  wire        rd_active,
+	input  wire        dar_hold_black,
 	input  wire        DDRAM_BUSY,
 	input  wire [63:0] DDRAM_DOUT,
 	input  wire        DDRAM_DOUT_READY,
@@ -133,7 +134,8 @@ module ddr_frame_store_b20_tb (
 		.doorbell_ok(doorbell_ok),
 		.debug_state(debug_state),
 		.geom_hold_black(geom_hold_black),
-		.geom_hollow_fault(geom_hollow_fault)
+		.geom_hollow_fault(geom_hollow_fault),
+		.dar_hold_black(dar_hold_black)
 	);
 
 	assign obs_eff_coded_w    = dut.eff_coded_w;

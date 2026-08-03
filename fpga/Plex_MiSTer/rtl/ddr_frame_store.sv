@@ -151,12 +151,17 @@ module ddr_frame_store #(
 	output reg  [15:0] frames_done,
 	output reg         doorbell_ok,
 	output wire  [7:0] debug_state,
-	// B16: geometry transition hold (ascal HDMI_BLACKOUT / local RGB black).
+	// B16: geometry transition hold (local RGB black; also HDMI_BLACKOUT).
 	output reg         geom_hold_black,
 	// B16: hollow/silent-legacy after prior live geom (PLXF 0xE3).
 	output wire        geom_hollow_fault,
 	// ABI#2: PLXG q5 reserved nonzero (sticky from latch) → PLXF 0xE4.
-	input  wire        q5_reserved_reject = 1'b0
+	input  wire        q5_reserved_reject = 1'b0,
+	// Aspect-path blackout from present_geom_latch (same-size DAR/SAR).
+	// ascal.swblack only arms o_newres when *input size* changes (ascal.vhd
+	// ~1951) — HDMI_BLACKOUT alone is a no-op for 720×480 4:3→16:9.
+	// Product blacks content RGB here. FAULT_DAR_BLACK_ASCAL_ONLY = red twin.
+	input  wire        dar_hold_black = 1'b0
 );
 	// Port/scan domain: cover presentation FRAME and max content.
 	localparam int RD_W_MAX = (FRAME_W > MAX_CODED_W) ? FRAME_W : MAX_CODED_W;
@@ -477,8 +482,9 @@ module ddr_frame_store #(
 	// stale valid bit under a new pitch cannot resolve (counting oracles stay green
 	// on mixed frames otherwise).
 	// NOTE (rd-duck): geom_layout_chg is bank layout only (enable/W/H/stride/map).
-	// Same-size DAR/SAR changes do NOT assert geom_hold_black — aspect blackout
-	// is present_geom_latch.dar_hold_black ORed at Plex HDMI_BLACKOUT.
+	// Same-size DAR/SAR changes do NOT assert geom_hold_black — aspect path is
+	// present_geom_latch.dar_hold_black → store RGB black (and HDMI_BLACKOUT
+	// for size-change ascal assist only; swblack ignores same-size).
 	reg  [3:0] geom_epoch_r;
 	reg        geom_inv_tog;
 	reg        geom_hollow_r;
@@ -1125,8 +1131,14 @@ module ddr_frame_store #(
 				frame_miss_toggle <= ~frame_miss_toggle;
 			end
 
-			// geom_reject / B16 hold-black / hollow: force black (no mixed-pitch scan).
+			// geom_reject / B16 hold-black / hollow / DAR: force black.
+			// dar_hold_black MUST black here — ascal swblack is size-only
+			// (rd-duck: HDMI_BLACKOUT OR is hollow for same-size DAR).
+`ifdef DDR_FRAME_STORE_FAULT_DAR_BLACK_ASCAL_ONLY
 			if (geom_reject_r || geom_hold_black || geom_hollow_r) begin
+`else
+			if (geom_reject_r || geom_hold_black || geom_hollow_r || dar_hold_black) begin
+`endif
 				rd_r <= 8'd0;
 				rd_g <= 8'd0;
 				rd_b <= 8'd0;

@@ -63,6 +63,7 @@ struct Sim {
 		top.rd_x = 0;
 		top.rd_y = 0;
 		top.rd_active = 0;
+		top.dar_hold_black = 0;
 		top.DDRAM_BUSY = 0;
 		top.DDRAM_DOUT = 0;
 		top.DDRAM_DOUT_READY = 0;
@@ -511,6 +512,38 @@ int runProduct() {
 	}
 	std::cout << "OK B20 mode-exit holds pitch until bank swap (no free-run)\n";
 	std::cout << "OK B20 mode-exit pixel oracle nonblack legacy (no hollow black)\n";
+
+	// ---- Same-size DAR blackout must zero content RGB (not ascal-only) ----
+	// rd-duck: HDMI_BLACKOUT→ascal.swblack is size-only; flag-only tests greenlit
+	// a dead path. Observe store rd_* under dar_hold_black.
+	const int baseRgb = sim.scanMaxLumaRgb(/*frames*/2);
+	if (baseRgb < 40) {
+		std::cerr << "FAIL dar-rgb setup: expected nonblack before hold got "
+		          << baseRgb << "\n";
+		return 1;
+	}
+	sim.top.dar_hold_black = 1;
+	for (int i = 0; i < 8; ++i)
+		sim.tick();
+	const int heldRgb = sim.scanMaxLumaRgb(/*frames*/2);
+	std::cout << "MEASURED dar_hold_rgb base=" << baseRgb
+	          << " held=" << heldRgb << "\n";
+	if (heldRgb != 0) {
+		std::cerr << "FAIL product: dar_hold_black must force content RGB=0 "
+		          << "(ascal swblack is size-only) got maxRGB=" << heldRgb << "\n";
+		return 1;
+	}
+	sim.top.dar_hold_black = 0;
+	for (int i = 0; i < 16; ++i)
+		sim.tick();
+	const int afterRgb = sim.scanMaxLumaRgb(/*frames*/2);
+	std::cout << "MEASURED dar_release_rgb=" << afterRgb << "\n";
+	if (afterRgb < 40) {
+		std::cerr << "FAIL dar-rgb: content stayed black after release got "
+		          << afterRgb << "\n";
+		return 1;
+	}
+	std::cout << "OK B20 dar_hold content RGB black (not ascal-only)\n";
 	return 0;
 }
 
