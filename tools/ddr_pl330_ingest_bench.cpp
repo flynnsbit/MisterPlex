@@ -209,7 +209,7 @@ int main(int argc, char** argv) {
     // Budget line for parent paste
     using misterplex::ddrIngestOverlapMaxFits;
     using misterplex::ddrIngestSerialDecodePlusCopyFits;
-    const double dec = misterplex::kParentDecode720p2500kMs;
+    const double dec = misterplex::kParentDecode720pProduct2600kMs;
     std::printf("budget_serial_2500k_fits=%d budget_overlap_max_2500k_fits=%d "
                 "copy_ms_measured=%.3f\n",
                 ddrIngestSerialDecodePlusCopyFits(dec, serial_ms) ? 1 : 0,

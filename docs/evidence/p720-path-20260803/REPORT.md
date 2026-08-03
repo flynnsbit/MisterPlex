@@ -125,7 +125,9 @@ Source: parent `/tmp/misterplex-parent-720p-decode-verdict.txt` (device `ffmpeg_
 | Arm | wall ms/f | fps ceiling | budget% |
 |---|---:|---:|---:|
 | 1280×720 @**1500**k default threads | **32.427** | 30.84 | 77.8% |
-| 1280×720 @2500k | 36.845 | 27.14 | 88.4% |
+| 1280×720 @2500k (cross-session archive) | 36.845 | 27.14 | 88.4% |
+| 1280×720 @2500k **in-session re-anchor** | **35.87** | 27.88 | 86.1% |
+| 1280×720 @**2600k product** (maxBR3100 content) | **36.27** | 27.57 | 87.0% |
 | 1280×720 @3500k | 38.751 | 25.81 | 93.0% |
 | 1280×720 @4000k default threads | **41.073** | 24.35 | 98.6% |
 | 1280×720 @4000k threads=1 | 52.158 | 19.17 | — |

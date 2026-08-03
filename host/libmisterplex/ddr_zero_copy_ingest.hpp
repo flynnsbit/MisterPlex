@@ -79,8 +79,14 @@ struct DdrIngestContract {
 
 constexpr double kIngestBudget24fpsMs = 41.667;
 constexpr double kParentBankCopy720pMs = 15.283; // best mapped bank, Sweep-3/4
-constexpr double kParentDecode720p2500kMs = 36.845;
-constexpr double kParentDecode720pApprox2600kMs = 37.0; // PLACEHOLDER — parent remeasures
+// Parent device 2026-08-03 in-session re-anchor (300f/arm, exit=0):
+//   2500k mean 35.87 ms/f (was 36.845 cross-session — do not interpolate sessions)
+//   2600k mean 36.27 ms/f  ← product tier (~maxBR=3100 delivers ~2585k content)
+//   budget margin @2600k = 5.40 ms (13.0%). Parent miss vs pre-reg 36.8–37.4.
+constexpr double kParentDecode720p2500kMs = 35.87;
+constexpr double kParentDecode720pProduct2600kMs = 36.27;
+// Alias kept for call sites that said "approx 2600".
+constexpr double kParentDecode720pApprox2600kMs = kParentDecode720pProduct2600kMs;
 // Universal geometry floor content ~2585k after maxBR=3100 (w-path fine matrix).
 
 inline bool ddrIngestSerialDecodePlusCopyFits(double decodeMs,

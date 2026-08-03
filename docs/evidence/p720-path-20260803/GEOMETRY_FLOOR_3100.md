@@ -25,8 +25,10 @@ Artifacts: `probe_run/vf_rk2_br*_decision.xml`, `*_ffprobe.txt`, `lowbr_verify.t
 ## Product impact
 - Coarse matrix (3000 jump to 3500) **overstated** geometry floor.
 - Product `kPlex720pWeakBitrateKbps` / `kPmsTrue720pMinBitrateKbpsMeasured` → **3100**.
-- PMS **under-runs** the cap: maxBR=3100 → ~**2585** kbps content. Parent should
-  measure decode of already-1280×720 @ ~2600k (between 2500=36.845 and 3500=38.751).
+- PMS **under-runs** the cap: maxBR=3100 → ~**2585** kbps content.
+- **Parent measured (in-session, 2026-08-03):** already-1280×720 @**2600k** =
+  **36.27 ms/f** (margin 5.40 ms @24fps). Same-session 2500k = 35.87 ms/f
+  (archived cross-session 36.845 was ~0.8 ms high — do not interpolate sessions).
 - Still **no** universal path to true 720 at ≤3000 / 1500. DP of ~1500k native
   720 remains the only way to that decode tier.
 

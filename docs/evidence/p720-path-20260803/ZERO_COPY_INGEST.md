@@ -1,8 +1,9 @@
 # Zero-CPU-copy / overlapped bank ingest (w-path Route A)
 
 ## Why
-Parent: serial decode + best bank copy fails every true-720 tier  
-(`36.845 + 15.283 = 52.1 > 41.667` at 2500k content).  
+Parent (in-session 2026-08-03): product tier decode @2600k = **36.27 ms/f**
+(margin 5.40 ms). Serial + bank copy `36.27 + 15.283 = 51.55` **FAIL** (−9.88).
+Overlap max sketch = 36.27 **PASS** if concurrency holds — unproven until PL330 bench.
 Fabric owns pixels long-term; Route A is the bridge if DMA overlaps decode.
 
 ## Landed code (default-safe)
