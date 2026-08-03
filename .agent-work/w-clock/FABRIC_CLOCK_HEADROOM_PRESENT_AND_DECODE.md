@@ -154,7 +154,9 @@ Parent moved the programme bottleneck from uncached **pixel** move to **decode**
 | Is 720p24 fabric decode *clocked away* at 20–32 MHz with today’s serial cost class (~2k–4k cy/MB)? | **NO. Wall.** Need ~100–350 MHz class — unreachable as full-decode `clk_sys` on this part. |
 | Is it *buildable at all* on DE10-Nano Cyclone V? | **Only if average ≤ ~231 cy/MB @20 (or ≤ ~371 @32 nostub optimistic).** That is a **≥10× architecture** problem (parallel MB/transform/MC, coalesced DPB, strip the diagnostic paint tax), **not** a PLL story. |
 | Does free bitstream / ring ABI make the wall softer? | **No.** 0.66 ms/f worst AU leaves almost the entire 41.667 ms for fabric. The wall is **cycles/MB**, not bytes across HPS. |
-| Does bit-exact `h264_decode_top` (`0fe67f0e`) close realtime? | **No.** Correctness ≠ throughput. Intra-only also understates full PMS cost (inter + deblock + CABAC add, not subtract). |
+| Does existing RTL *feature-match* PMS Constrained Baseline (CAVLC, I/P, no B, no CABAC)? | **Yes on paper** (parent inventory: syntax/CAVLC/intra/inter/MC/deblock/DPB/IQ-IDCT; CABAC=0). **Not** realtime or fit proof. |
+| Does existing `.sv` / bit-exact close realtime 720p24? | **No.** Correctness ≠ cycles. None fitted/timed vs real stream yet (parent). |
+| Is missing CABAC the clock wall? | **No for current PMS path.** Wall remains **≤231 cy/MB @20**. Profile pin = **w-path**. |
 | Should the fleet invest weeks on “raise clk_sys”? | **No.** Invest on **cy/MB architecture** inside a **20–32 MHz** band. Clock is a secondary lever after path cuts, not the plan. |
 
 | Claim | Verdict |
@@ -164,7 +166,8 @@ Parent moved the programme bottleneck from uncached **pixel** move to **decode**
 | Fabric 720p24 decode fits in 20 MHz at today’s measured ~4k cy/MB | **FALSE — wall** |
 | Fabric 720p24 decode fits if we only “raise clock to nostub 32” | **FALSE** unless cost ≤ ~371 cy/MB (**~11×** better than measured paint class) |
 | 720p24 fabric decode is impossible forever on DE10-Nano | **Not proven** — but it is **impossible without a redesign that buys ~10×+ throughput**, not a PLL tweak |
-| Bit-exact `h264_decode_top` (parent `0fe67f0e`) proves realtime 720p24 | **FALSE** — correctness ≠ cycles |
+| Bit-exact / existing decode RTL proves realtime 720p24 | **FALSE** — correctness ≠ cycles; fit/STA/stream still open |
+| Feature set matches PMS Constrained Baseline (no CABAC needed) | **TRUE on inventory** — does **not** remove cy/MB wall |
 | Bitstream free ⇒ decode clock problem is solved | **FALSE** — movement ≠ decode |
 
 **If the fleet is about to invest weeks assuming “clock it up and 720p24 fabric decode closes,” stop.** The arithmetic says the investment must be **parallel architecture and memory subsystem**, with clock as a secondary lever inside a ~20–32 MHz band.
@@ -192,4 +195,4 @@ make post-fit-timing-margin STA_RPT=path/to/Plex.sta.rpt
 
 ## 5) Bottom line (one paragraph)
 
-**Present:** shipping **20 MHz is enough** for 720p24 fabric work at 2 ppc and for CEA 720p60 *work rate* at 4 ppc; DDR 33–83 MB/s is not the clk_sys driver; true 24/60 Hz glass still wants a faster **clk_pix**, not a clk_sys hero bump. **Decode:** 86 400 MB/s @720p24 leaves **~231 cy/MB @20 MHz**; measured/analytical serial costs are **thousands** of cy/MB → **order-of-magnitude short**. Do not plan 720p24 fabric decode as an overclock story.
+**Present:** shipping **20 MHz is enough** for 720p24 fabric work at 2 ppc and for CEA 720p60 *work rate* at 4 ppc; DDR 33–83 MB/s is not the clk_sys driver; true 24/60 Hz glass still wants a faster **clk_pix**, not a clk_sys hero bump. **Decode:** PMS Constrained Baseline **feature-matches** existing CAVLC RTL (no CABAC needed) — that is good architecture news and **does not** clear the rate wall. 86 400 MB/s @720p24 still leaves **~231 cy/MB @20 MHz**; measured/analytical serial costs are **thousands** of cy/MB → **order-of-magnitude short**. Do not plan 720p24 fabric decode as an overclock story.
