@@ -122,17 +122,49 @@ int main() {
                                       (static_cast<uint64_t>(0x7Fu) << 32),
                                   s));
 
+    // Sample A: format-error debug path. Finish ALL assertions on this sample
+    // before any later decode into another FrameStoreStatus (rd-duck: do not
+    // overwrite debug_state before nonYuvDoorbellRejected).
     FrameStoreStatus fs;
     CHECK(decodeFrameStoreStatusWord(frameWord(4, kFrameStoreDebugFormatError, 17), fs));
     CHECK(fs.seq == 4);
     CHECK(fs.debug_state == kFrameStoreDebugFormatError);
     CHECK(fs.underrun_count == 17);
+    CHECK(!fs.pixUnderrunSticky());
+    CHECK(fs.underrunEventCount() == 17);
     CHECK(fs.nonYuvDoorbellRejected());
     CHECK(std::string(frameStoreDebugDescription(fs.debug_state)) ==
           "frame store refused non-YUV doorbell (0xE1)");
     CHECK(std::string(frameStoreStatusUnavailableDescription()) ==
           "frame store status unavailable (PLXF mailbox absent/unwritten)");
     CHECK(!decodeFrameStoreStatusWord(frameWord(4, kFrameStoreDebugFormatError, 17, 0), fs));
+
+    // Sample B: separate object — pix sticky + low event count (does not touch fs).
+    {
+        FrameStoreStatus fs_pix;
+        CHECK(decodeFrameStoreStatusWord(frameWord(9, 0, 0x8005), fs_pix));
+        CHECK(fs_pix.seq == 9);
+        CHECK(fs_pix.debug_state == 0);
+        CHECK(fs_pix.underrun_count == 0x8005);
+        CHECK(fs_pix.pixUnderrunSticky());
+        CHECK(fs_pix.underrunEventCount() == 5);
+        CHECK(!fs_pix.nonYuvDoorbellRejected());
+    }
+
+    // Sample C: packed-field helpers only (no decode). Documents RTL must sat
+    // store 0x8000→0x7fff before packing; bare 0x8000 word is sticky+count0 alias.
+    {
+        FrameStoreStatus fs_sat{};
+        fs_sat.underrun_count = 0x7FFFu; // saturated low field, sticky clear
+        CHECK(!fs_sat.pixUnderrunSticky());
+        CHECK(fs_sat.underrunEventCount() == 0x7FFFu);
+        fs_sat.underrun_count = static_cast<uint16_t>(0x8000u | 0x7FFFu); // sticky + sat
+        CHECK(fs_sat.pixUnderrunSticky());
+        CHECK(fs_sat.underrunEventCount() == 0x7FFFu);
+        fs_sat.underrun_count = 0x8000u; // sticky set, count field 0 (alias class)
+        CHECK(fs_sat.pixUnderrunSticky());
+        CHECK(fs_sat.underrunEventCount() == 0);
+    }
     CHECK(decodeStableFrameStoreStatus(lo(frameWord(5, 0x23, 7)),
                                        hi(frameWord(5, 0x23, 7)),
                                        lo(frameWord(5, 0x23, 7)),

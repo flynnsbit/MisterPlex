@@ -1,0 +1,21 @@
+# w-clock agent report — collision #5 follow-up
+
+## Delivered this turn
+1. **E2E mux→beam** `tests/unit/test_present_b13_mux_e2e.sh` true rc=0
+   - GREEN product `plex_present_geom_mux` + beam: PLXG 624×480, **416×234**, 320×240, 960×540
+     exact whole-frame pix + line_acc=W..W; idle !live → 960 fallback
+   - RED `-DFAULT_B8_FORCE_ALWAYS`: pins 960 over live 624 (collision #5 regression class)
+2. **416×234** in oracle green+red (measured PMS aligned delivery)
+3. **H_TOTAL=1182 line-rate arithmetic** gate + doc — f_h constant 16.920 kHz
+4. **STA prereg schema4** V705 + B13 ON + overclock honesty
+5. Did **not** edit mux force logic (w-mem SoT). Tree carries mux copy for E2E/qip.
+
+## Counts (evidence)
+624×480×2=599040 line 624..624
+416×234×2=194688 line 416..416
+320×240×2=153600; 960×540×2=1036800
+
+## Outstanding (parent/fit)
+- STA Fmax for BEAM_960+B13+V705 — UNKNOWN until exclusive fit
+- Plex.sv still ladder-wires content_w/h until full PLXG merge (E2E proves mux path)
+- PLL unapplied 20/90; 25 MHz blocked on stub 23.46

@@ -1,5 +1,19 @@
 // Present core: color bars OR external frame_store, cadence, tone + audio FIFO.
 // Display owns VSync; unique content advances only when present_cadence says so.
+//
+// Multi-pixel present (720p path): see .agent-work/w-clock/MULTI_PIXEL_PRESENT_DESIGN.md
+// and assets/multi_pixel_present_contract.json. Product default is 1 px/clk.
+// `define PRESENT_MULTI_PIXEL  — connect beam → ddr N-wide → present_npx_path → RGB/CE
+// `define PRESENT_PX_PER_CLK N — 1|2|4 (only meaningful with PRESENT_MULTI_PIXEL)
+// `define PRESENT_CLK_PIX_PLL — separate clk_pix (outclk_3); rate-match + sync sideband
+// `define PRESENT_BEAM_960 — ascal-native true-DE beam; 960×540 is MAX tier, runtime content_w/h
+// Macros default OFF. Parent/w-nostub enables in fit grant QSF — not default shipping.
+
+`ifdef PRESENT_MULTI_PIXEL
+	`ifndef PRESENT_PX_PER_CLK
+		`define PRESENT_PX_PER_CLK 2
+	`endif
+`endif
 
 module present_core #(
 	parameter int FRAME_W = 320,
@@ -28,6 +42,9 @@ module present_core #(
 	input  wire        clk,
 	input  wire        clk_sdram,
 	input  wire        clk_audio,
+	// Optional separate pixel clock (PRESENT_CLK_PIX_PLL). When the macro is
+	// off, Plex ties this to clk_sys; port exists so hierarchy stays stable.
+	input  wire        clk_pix,
 	input  wire        reset,
 
 	input  wire        pal,
@@ -38,31 +55,18 @@ module present_core #(
 	input  wire        audio_en,        // OSD tone enable (when no FIFO audio)
 	input  wire        use_frame_store, // OSD force bars when 1
 
-	// Fabric content window (runtime). win_enable=0 → legacy full FRAME map.
-	// When 1, NN-stretch content_w×content_h at (content_x0,content_y0) across DE.
-	// 11-bit geometry is 720p-native (1280×720); host programs before ARM drops scale.
-	input  wire        win_enable,
+	// Delivered content geometry (PLXG / plex_present_geom_mux). B13 true-DE.
+	// 0 → fall back to max-tier 960×540. w-mem owns mailbox; we only consume.
 	input  wire [10:0] content_w,
 	input  wire [10:0] content_h,
+	// Fabric content window (runtime). win_enable=0 → legacy full FRAME map.
+	// When 1, NN-stretch content_w×content_h at (content_x0,content_y0) across DE.
+	input  wire        win_enable,
 	input  wire [10:0] content_x0,
 	input  wire [10:0] content_y0,
 	// 0 → defaults (h=529 FBAR, v=480). 720p DE is a reg write, not a redesign.
 	input  wire [10:0] win_h_de,
 	input  wire [10:0] win_v_de,
-
-	// Runtime DDR bank geometry (PLXW). geom_enable=0 → legacy CODED 624 path.
-	// Sized for 1280×720 (y_stride bytes). Safe default = all zero / disable.
-	input  wire        geom_enable,
-	input  wire [10:0] geom_coded_w,
-	input  wire [10:0] geom_coded_h,
-	input  wire [11:0] geom_y_stride,
-	input  wire [10:0] geom_chroma_stride,
-	input  wire [10:0] geom_display_w,
-	input  wire [10:0] geom_display_h,
-	input  wire [10:0] geom_present_x,
-	input  wire [10:0] geom_present_y,
-	input  wire [10:0] geom_crop_left,
-	input  wire [10:0] geom_crop_top,
 
 	// frame_store write (from ingest)
 	input  wire        fs_wr_en,
@@ -133,10 +137,24 @@ module present_core #(
 	output wire        stat_swap_pending,
 	output wire [15:0] stat_frame_underruns,
 	output wire  [7:0] stat_frame_sdram_state,
-	// B16: geometry transition blackout (raise HDMI_BLACKOUT)
-	output wire        stat_geom_hold_black,
-	output wire        stat_geom_hollow
+	// Runtime coded/display geometry → ddr_frame_store (w-mem Option-C path)
+	input  wire        geom_enable,
+	input  wire [10:0] geom_coded_w,
+	input  wire [10:0] geom_coded_h,
+	input  wire [11:0] geom_y_stride,
+	input  wire [10:0] geom_chroma_stride,
+	input  wire [10:0] geom_display_w,
+	input  wire [10:0] geom_display_h,
+	input  wire [10:0] geom_present_x,
+	input  wire [10:0] geom_present_y,
+	input  wire [10:0] geom_crop_left,
+	input  wire [10:0] geom_crop_top,
 );
+`ifdef PRESENT_MULTI_PIXEL
+	localparam int PRESENT_PPC = `PRESENT_PX_PER_CLK;
+`else
+	localparam int PRESENT_PPC = 1;
+`endif
 
 	wire frame_start;
 	wire advance;
@@ -155,52 +173,142 @@ module present_core #(
 
 	wire [7:0] br, bg, bb;
 	wire       ce_pix_i, hb, hs, vb, vs, fstart;
-`ifdef PRESENT_BEAM_960
-	// ascal-native true content DE (w-clock 1182×564 @20 MHz ≈ 30.0008 Hz).
-	// Default OFF. FAULT: PRESENT_BEAM_FAULT_ISLAND_1280 → DE 1280×720 (must RED).
-	wire [10:0] hc, vc;
-	assign br = 8'd0; assign bg = 8'd0; assign bb = 8'd0;
-	// Pattern unused on beam path (no colorbars paint); keep for port parity.
+	// Pattern encoding (status[7:6]): 0=None, 1=Bars, 2=Bars+Block, 3=Grid.
+	// O[9] Force bars=Yes → always Bars (1), never None.
 	wire [1:0] eff_pattern = use_frame_store ? 2'd1 : pattern;
-	(* keep = 1 *) wire _beam960_keep_pat = |eff_pattern;
-`ifdef PRESENT_BEAM_FAULT_ISLAND_1280
-	present_beam_content_de #(
-		.H_DE(1280), .V_ACTIVE(720),
-		.H_TOTAL(1650), .V_TOTAL(750),
-		.H_SYNC_S(1280 + 32), .H_SYNC_E(1280 + 32 + 64),
-		.V_SYNC_S(720 + 8), .V_SYNC_E(720 + 8 + 6)
-	) beam960 (
-`else
-	present_beam_content_de #(
-		.H_DE(960), .V_ACTIVE(540),
-		.H_TOTAL(1182), .V_TOTAL(564),
-		.H_SYNC_S(960 + 32), .H_SYNC_E(960 + 32 + 64),
-		.V_SYNC_S(540 + 8), .V_SYNC_E(540 + 8 + 6)
-	) beam960 (
+	wire _unused_scandouble_port = scandouble;
+	wire _unused_pal = pal;
+
+	localparam int FRAME_X_W = $clog2(FRAME_W);
+	localparam int FRAME_Y_W = $clog2(FRAME_H);
+	localparam [FRAME_X_W-1:0] FRAME_LAST_X = FRAME_X_W'(FRAME_W - 1);
+	localparam [FRAME_Y_W-1:0] FRAME_LAST_Y = FRAME_Y_W'(FRAME_H - 1);
+	localparam [15:0] FRAME_LAST_X_16 = 16'(FRAME_W - 1);
+	localparam [15:0] FRAME_LAST_Y_16 = 16'(FRAME_H - 1);
+
+	reg [FRAME_X_W-1:0] store_x;
+	reg [FRAME_Y_W-1:0] store_y;
+	reg       de_r;
+	wire       past_last_row;
+	wire       in_content;
+
+`ifdef PRESENT_BEAM_960
+	// =====================================================================
+	// Ascal-native TRUE content DE (w-clock / w-scaler). Default OFF.
+	// Do NOT implement BEAM_960 by parameterizing MULTI_PIXEL/npx (rd-duck):
+	// that path has FIFO LAT+prefill; this path is 1px CE=1 + DE_LAG only.
+	// Replaces colorbars Template H_DE=529. Identity store: rd_x=hc, rd_y=vc.
+	// Requires FRAME_W=960, FRAME_H=540 (QSF `FRAME_W=960` etc.).
+	// Bank swap uses this beam's fstart (not colorbars).
+	// Mutually exclusive with PRESENT_MULTI_PIXEL for first-fit (ascal path).
+	// =====================================================================
+	// synthesis translate_off
+	initial begin
+		if (FRAME_W != 960 || FRAME_H != 540)
+			$error("PRESENT_BEAM_960 requires FRAME_W=960 FRAME_H=540 (got %0d x %0d)",
+				FRAME_W, FRAME_H);
+`ifdef PRESENT_MULTI_PIXEL
+		$error("PRESENT_BEAM_960 and PRESENT_MULTI_PIXEL are mutually exclusive (first fit ascal path)");
 `endif
+	end
+	// synthesis translate_on
+
+	// B2b: present_beam_content_de is the ONLY raster SoT.
+	// B13: runtime true-DE from content_w/h (PLXG-delivered). 960×540 = max tier
+	// defaults only — not a fixed product raster (96.5% of library is smaller).
+	// Frame-boundary latch inside beam (rd-duck). Totals stay 1182×564@30 /
+	// 1182×705@24 for ascal-friendly blanking independent of active size.
+	wire [10:0] hc11, vc11, vtot_act11;
+	wire [10:0] hde_act11, htot_act11, vact_act11;
+
+	// Clamp delivered geom into bank max; 0 → max-tier fallback (idle/bars).
+	wire [10:0] beam_hde_req =
+		(content_w == 11'd0) ? 11'd960 :
+		(content_w > 11'(FRAME_W)) ? 11'(FRAME_W) : content_w;
+	wire [10:0] beam_vact_req =
+		(content_h == 11'd0) ? 11'd540 :
+		(content_h > 11'(FRAME_H)) ? 11'(FRAME_H) : content_h;
+	// Fixed line class @20 MHz: 1182 clocks/line. V_TOTAL selects 30 vs 24 Hz.
+	// B15/ABI#2: content_fps from PLXG q5 (fps_valid+fps). <=25 → V=705 (~24.0007);
+	// else V=564 (~30.0008). Unspecified fps_valid=0 → film 24 via plex_content_fps_sel.
+	wire [10:0] beam_htot_req = 11'd1182;
+	wire [10:0] beam_vtot_req = (content_fps <= 8'd25) ? 11'd705 : 11'd564;
+
+	(* noprune *) present_beam_content_de #(
+		.H_DE(960),
+		.V_ACTIVE(540),
+		.H_TOTAL(1182),
+		.V_TOTAL(564),
+		.H_SYNC_S(992),
+		.H_SYNC_E(1056),
+		.V_SYNC_S(548),
+		.V_SYNC_E(554)
+	) u_beam_960 (
 		.clk(clk),
 		.reset(reset),
+		// B13 ON: drive runtime ports from delivered content_w/h.
+		.use_rt_vtotal(1'b1),
+		.rt_vtotal(beam_vtot_req),
+		.use_rt_geom(1'b1),
+		.rt_h_de(beam_hde_req),
+		.rt_h_total(beam_htot_req),
+		.rt_v_active(beam_vact_req),
 		.ce_pix(ce_pix_i),
 		.HBlank(hb),
 		.HSync(hs),
 		.VBlank(vb),
 		.VSync(vs),
 		.frame_start(fstart),
-		.hc_out(hc),
-		.vc_out(vc)
+		.hc_out(hc11),
+		.vc_out(vc11),
+		.vtot_active(vtot_act11),
+		.hde_active(hde_act11),
+		.htot_active(htot_act11),
+		.vact_active(vact_act11)
 	);
-`else
-	wire [9:0] hc, vc; // from colorbars — same counters as full-DE bar paint
 
-	// Pattern encoding (status[7:6]): 0=None, 1=Bars, 2=Bars+Block, 3=Grid.
-	// O[9] Force bars=Yes → always Bars (1), never None.
-	wire [1:0] eff_pattern = use_frame_store ? 2'd1 : pattern;
+	// Identity map: DE extent == latched content (true_de). No /529 stretch.
+	// hde_act/vact_act track content_w/h via use_rt_geom (B13).
+	assign in_content = (hc11 < hde_act11) && (vc11 < vact_act11) && ~hb && ~vb;
+	assign past_last_row = (vc11 >= vact_act11);
+	wire [FRAME_X_W-1:0] store_x_id =
+		(hc11 >= 11'(FRAME_W)) ? FRAME_LAST_X : FRAME_X_W'(hc11);
+	wire [FRAME_Y_W-1:0] store_y_id =
+		(vc11 >= 11'(FRAME_H)) ? FRAME_LAST_Y : FRAME_Y_W'(vc11);
+
+	always @(posedge clk) begin
+		if (reset) begin
+			store_x <= '0;
+			store_y <= '0;
+			de_r    <= 1'b0;
+		end else if (ce_pix_i) begin
+			de_r    <= in_content;
+			store_x <= store_x_id;
+			store_y <= store_y_id;
+		end
+	end
+
+	// Pattern RGB without colorbars (force-bars / idle).
+	assign br = hc11[7:0] ^ {6'b0, eff_pattern};
+	assign bg = vc11[7:0];
+	assign bb = 8'h40;
+	// Anti-DCE: beam counters + active vtotal must survive map.
+	wire _unused_beam960 = (|hc11) | (|vc11) | (|vtot_act11)
+		| (|hde_act11) | (|htot_act11) | (|vact_act11) | ce_pix_i
+		| (|content_w) | (|content_h) | (|beam_hde_req) | (|beam_vact_req);
+
+`else
+	// ---- Legacy Template path: colorbars H_DE=529 (FBAR) ----
+	wire _unused_content_geom = |content_w | |content_h;
+	wire [9:0] hc, vc;
+
+	localparam bit PRODUCT_V_480 = 1'b1;
 
 	colorbars bars (
 		.clk(clk),
 		.reset(reset),
 		.pal(pal),
-		.scandouble(scandouble),
+		.scandouble(PRODUCT_V_480),
 		.content_index(cont_i),
 		.pattern(eff_pattern),
 		.ce_pix(ce_pix_i),
@@ -215,138 +323,45 @@ module present_core #(
 		.g(bg),
 		.b(bb)
 	);
-`endif
 
-	localparam int FRAME_X_W = $clog2(FRAME_W);
-	localparam int FRAME_Y_W = $clog2(FRAME_H);
-
-	// Stretch store content across Template DE (colorbars hc/vc).
-	//
-	// Product (Plex.qsf FRAME_W=640 FRAME_H=480, forced scandouble):
-	//   colorbars NTSC scandouble active vc=0..479 (VBlank asserts at vc==480).
-	//   NATIVE_V_1TO1 maps store_y = vc with SCALE=1.0 so ALL FRAME_H rows are
-	//   addressed (fixes the pre-T7 even-row-only ceiling: V_STORE=240 + scale 2.0).
-	//
-	// Legacy FRAME_H<=240 builds keep half-height py=(scandouble?vc>>1:vc) + scale
-	// from a 240-line content window.
-	//
-	// Horizontal: H_DE stays 529 (FBAR Template class). Full 640 unique columns
-	// require H_DE>=640, which is impossible at clk_sys=20 MHz / 60 Hz / 524 lines
-	// (20e6/60/524 ≈ 636 clocks/line max; see test_present_store_scale_math).
-	// STORE_X still samples 529 of FRAME_W via the 39647 mul-shift.
-	//
-	// ASCAL NEAR-TERM FIT (true content DE — NOT this Template path):
-	// Core must emit DE extent == content (960×540 or 640×360), identity store
-	// map, no pad inside DE. Island-in-529/1280 is the quarter-glass dead end.
-	// Integrator gate: tests/unit/test_true_content_de_contract.sh
-	// Counted RTL gate: tests/unit/test_present_true_de_count_rtl_sim.sh
-	// Contract doc: docs/product-4-3-scaler-decision.md § True 960×540 DE.
-	// Fit macro: PRESENT_BEAM_960 + runtime win_* below (default OFF).
-	//
-	// Fabric content window (win_enable): when 1, SX/SY come from runtime
-	// content_w/h instead of FRAME_* so ARM publishes native WxH (320…1280) and
-	// fabric NN-stretches across DE — ARM scale path goes to zero, not "cheaper".
-	// win_enable=0 is bit-compatible legacy. STORE_W=1280 sized for 720p (1 M10K/line).
-	// Mapping lives in present_content_window (NN V1; ascal remains HDMI scaler).
-`ifdef PRESENT_BEAM_960
-`ifdef PRESENT_BEAM_FAULT_ISLAND_1280
-	localparam int H_DE_I = 1280;
-	localparam int V_STORE_I = 720;
-`else
-	localparam int H_DE_I = 960;
-	localparam int V_STORE_I = 540;
-`endif
-	localparam bit NATIVE_V_1TO1 = 1'b1;
-	localparam [10:0] H_DE = 11'(H_DE_I);
-	localparam [10:0] V_STORE = 11'(V_STORE_I);
-	localparam int STORE_X_SCALE = 65536; // identity placeholder (window owns map)
-	localparam int STORE_Y_SCALE = 65536;
-	wire [10:0] py = vc;
-	wire in_content = (hc < H_DE) && (py < V_STORE) && ~hb && ~vb;
-	wire [10:0] read_hc = hc;
-	localparam int WIN_H_DE_DEFAULT = H_DE_I;
-	localparam int WIN_V_DE_DEFAULT = V_STORE_I;
-`else
-	localparam H_DE = 10'd529;
-	localparam bit NATIVE_V_1TO1 = (FRAME_H > 240);
-	localparam int V_STORE_I = NATIVE_V_1TO1 ? FRAME_H : 240;
-	localparam [9:0] V_STORE = 10'(V_STORE_I);
-	// Legacy scale constants retained for source-lock tests + documentation.
-	// Runtime path uses present_content_window registered scales.
-	// store_x ≈ floor(hc * FRAME_W / 529); 39647/65536 ≈ 320/529.
+	// Stretch FRAME_W×FRAME_H across Template DE=529.
+	localparam H_DE    = 10'd529;
+	localparam int V_STORE = FRAME_H;
 	localparam int STORE_X_SCALE = (FRAME_W * 39647) / 320;
-	localparam int STORE_Y_SCALE = (FRAME_H * 65536) / V_STORE_I;
-	// Beam Y for content + store. Native 480: use full vc (scandouble active 0..479).
-	// Legacy 240: half when scandoubled so two display lines share one store row.
-	wire [9:0] py = NATIVE_V_1TO1 ? vc : (scandouble ? (vc >> 1) : vc);
-	wire in_content = (hc < H_DE) && (py < V_STORE) && ~hb && ~vb;
+	localparam int STORE_Y_SCALE = (FRAME_H * 65536) / V_STORE;
 
-	// Drive store_x from free-running hc (no blank-time force-to-0). Blank-time
-	// reset handed column 0 to DE_LAG-delayed right-edge pixels (1 px wrap).
-	// Identity hc→read_hc kept at this layer for source-lock + DE_LAG docs;
-	// present_content_window also treats hc as free-running (no blank force-0).
+	wire [9:0] py = vc;
+	wire [9:0] v_store = 10'(V_STORE);
+	assign in_content = (hc < H_DE) && (py < v_store) && ~hb && ~vb;
 	wire [9:0] read_hc = hc;
-	localparam int WIN_H_DE_DEFAULT = 529;
-	localparam int WIN_V_DE_DEFAULT = V_STORE_I;
+	wire [31:0] store_x_prod = read_hc * STORE_X_SCALE;
+	wire [15:0] store_x_comb = store_x_prod[31:16];
+	wire [FRAME_X_W-1:0] store_x_clamped =
+		(store_x_comb > FRAME_LAST_X_16) ? FRAME_LAST_X : store_x_comb[FRAME_X_W-1:0];
+
+	assign past_last_row = (py >= v_store);
+	wire [9:0] store_y_clamped = past_last_row ? (v_store - 10'd1) : py;
+	wire [31:0] store_y_scale = 32'(STORE_Y_SCALE);
+	wire [31:0] store_y_prod = store_y_clamped * store_y_scale;
+	wire [15:0] store_y_comb = store_y_prod[31:16];
+	wire [FRAME_Y_W-1:0] store_y_addr =
+		(store_y_comb > FRAME_LAST_Y_16) ? FRAME_LAST_Y : store_y_comb[FRAME_Y_W-1:0];
+
+	always @(posedge clk) begin
+		if (reset) begin
+			store_x <= 0;
+			store_y <= '0;
+			de_r    <= 1'b0;
+		end else if (ce_pix_i) begin
+			de_r    <= in_content;
+			store_y <= store_y_addr;
+			store_x <= store_x_clamped;
+		end
+	end
 `endif
-	// Window emits full store coords (STORE 1280×720). ddr_frame_store rd_x/y
-	// accept max(FRAME, MAX_CODED); legacy SDRAM frame_store still gets FRAME slice.
-	localparam int STORE_W_MAX = 1280;
-	localparam int STORE_H_MAX = 720;
-	localparam int WIN_X_W = $clog2(STORE_W_MAX);
-	localparam int WIN_Y_W = $clog2(STORE_H_MAX);
-	wire [WIN_X_W-1:0] store_x_win;
-	wire [WIN_Y_W-1:0] store_y_win;
-	wire                 de_r; // registered in_content for frame_store read align
-	wire                 past_last_row;
-
-	present_content_window #(
-		.FRAME_W(FRAME_W),
-		.FRAME_H(FRAME_H),
-		.STORE_W(STORE_W_MAX),
-		.STORE_H(STORE_H_MAX),
-		.H_DE_DEFAULT(WIN_H_DE_DEFAULT),
-		.V_DE_DEFAULT(WIN_V_DE_DEFAULT)
-	) content_win (
-		.clk(clk),
-		.reset(reset),
-		.ce_pix(ce_pix_i),
-`ifdef PRESENT_BEAM_960
-		.hc(read_hc),
-		.py(py),
-`else
-		.hc({1'b0, read_hc}),
-		.py({1'b0, py}),
-`endif
-		.in_content(in_content),
-		.win_enable(win_enable),
-		.content_w(content_w),
-		.content_h(content_h),
-		.content_x0(content_x0),
-		.content_y0(content_y0),
-		.h_de(win_h_de),
-		.v_de(win_v_de),
-		.store_x(store_x_win),
-		.store_y(store_y_win),
-		.de_r(de_r),
-		.past_last_row(past_last_row)
-	);
-
-	// Full-width for DDR path (runtime geom / content window up to 1280×720).
-	wire [WIN_X_W-1:0] store_x_full = store_x_win;
-	wire [WIN_Y_W-1:0] store_y_full = store_y_win;
-	// FRAME-sliced for legacy SDRAM frame_store ports.
-	wire [FRAME_X_W-1:0] store_x = store_x_win[FRAME_X_W-1:0];
-	wire [FRAME_Y_W-1:0] store_y = store_y_win[FRAME_Y_W-1:0];
-
-	// Keep legacy scale localparams live for elab/source-lock (child has its own).
-	(* keep = 1 *) wire [31:0] _keep_legacy_store_scale =
-		32'(STORE_X_SCALE) ^ {16'd0, 16'(STORE_Y_SCALE)};
 
 	wire [7:0] fr, fg, fb;
 	wire       has_frame;
-	wire       geom_hold_black;
-	wire       geom_hollow_fault;
 	wire       swap_pending;
 	wire [31:0] wr_count;
 	wire        wr_done;
@@ -367,9 +382,184 @@ module present_core #(
 
 `include "ddr_frame_layout_params.svh"
 
-	// B1: under PRESENT_BEAM_960 / OPTION_C the store compile-time LEG map is
-	// Option-C (see ddr_frame_store `ifdef OPTION_C). PHYS_BASE_720P params are
-	// always passed so capacity select and OPTION_C re-base share one source.
+	// N-wide frame-store ports (PPC=1 ⇒ rd_*_n is scalar passthrough).
+	wire [PRESENT_PPC*8-1:0] fs_r_n, fs_g_n, fs_b_n;
+	wire [PRESENT_PPC-1:0]   fs_lane_v_n;
+	wire                     fs_n_valid;
+
+`ifdef PRESENT_MULTI_PIXEL
+	// ------------------------------------------------------------------
+	// Multi-pixel 1280×720 video mode (macro ON only).
+	// Default build leaves this ifdef off → colorbars H_DE=529 Template
+	// (FBAR/DE_LAG) is UNTOUCHED. Do not move H_DE=529 without parent grant.
+	//
+	// Beam (CEA 720p geometry) → store read at glass_x0 → N-wide RGB →
+	// present_npx_path wide-group FIFO → 1 px/clk (prefill+skid).
+	// Same-clock bring-up: clk_pix==clk, beam backpressured by in_ready.
+	// PRESENT_CLK_PIX_PLL: Bresenham rate-match to F_PIX + FIFO sync sideband
+	// so line time matches clk_pix (see CLK_PIX_PLL_PLAN.md).
+	//
+	// H ownership: beam steps glass_x0 by PPC (w-clock). w-scaler maps
+	// glass→store and supplies Y qword+1 for straddle; active 1280 DE with
+	// x0%PPC==0 does not straddle for PPC in {2,4}.
+	// ------------------------------------------------------------------
+	wire                mp_in_ready;
+	wire                mp_beam_ce;
+	wire [11:0]         mp_glass_x0, mp_glass_y;
+	wire [PRESENT_PPC-1:0] mp_lane_de;
+	wire                mp_hb, mp_hs, mp_vb, mp_vs, mp_fstart;
+	wire                mp_out_ce;
+	wire [7:0]          mp_out_r, mp_out_g, mp_out_b;
+	wire                mp_out_hb, mp_out_hs, mp_out_vb, mp_out_vs, mp_out_fs;
+	wire                mp_wr_full, mp_wr_af, mp_rd_ur, mp_rd_empty;
+
+`ifdef PRESENT_CLK_PIX_PLL
+`ifdef PRESENT_CLK_PIX_30
+	// PIX30 glass content rate (not held fit). Requires PRESENT_CLK_PIX_PLL.
+	localparam int MP_CLK_PIX_HZ = 37_125_000;
+`else
+	localparam int MP_CLK_PIX_HZ = 29_700_000; // PIX24 held fit
+`endif
+`else
+	localparam int MP_CLK_PIX_HZ = 20_000_000;
+`endif
+	// ALWAYS pack H/V/fstart with RGB through the FIFO (rd-duck same-clock trap).
+	// INCLUDE_SYNC=0 + direct mp_hb/mp_vs left H/V leading RGB by LAT+PREFILL.
+	// Same-clock and PLL both consume FIFO sidebands — never beam-direct sync.
+	localparam bit MP_INCLUDE_SYNC = 1'b1;
+
+	// Timing constants + effective refresh at CLK_PIX_HZ.
+	// keep/noprune: mode must survive map for post-fit hierarchy checks.
+	(* noprune *) wire [11:0] mp_h_de, mp_h_total, mp_v_act, mp_v_total;
+	(* noprune *) wire [11:0] mp_hs_s, mp_hs_e, mp_vs_s, mp_vs_e;
+	(* noprune *) wire [15:0] mp_fps_milli;
+	(* noprune *) wire        mp_needs_fast_pix;
+	present_video_timing_720p #(
+		.CLK_PIX_HZ(MP_CLK_PIX_HZ)
+	) u_mp_timing (
+		.h_de(mp_h_de),
+		.h_total(mp_h_total),
+		.v_active(mp_v_act),
+		.v_total(mp_v_total),
+		.h_sync_s(mp_hs_s),
+		.h_sync_e(mp_hs_e),
+		.v_sync_s(mp_vs_s),
+		.v_sync_e(mp_vs_e),
+		.fps_eff_milli(mp_fps_milli),
+		.cea_24_needs_faster_pix(mp_needs_fast_pix)
+	);
+
+`ifdef PRESENT_CLK_PIX_PLL
+	// Producer LEAD: average slightly above nominal clk_pix so the FIFO runs
+	// near the high-water / backpressure side. Equal averages + ppm drift will
+	// eventually underrun a finite FIFO; overflow can throttle via in_ready,
+	// underflow cannot. Lead is absorbed by skid/async almost_full.
+	// 1000 ppm lead: PIX24 → 29_729_700; PIX30 → 37_162_125 px/s equiv.
+	localparam int MP_PROD_LEAD_PPM = 1000;
+	localparam int MP_RATE_PIX_HZ =
+		MP_CLK_PIX_HZ + (MP_CLK_PIX_HZ / (1_000_000 / MP_PROD_LEAD_PPM));
+	wire mp_rate_fire;
+	present_pix_rate_match #(
+		.F_SYS_HZ(20_000_000),
+		.F_PIX_HZ(MP_RATE_PIX_HZ),
+		.PX_PER_CLK(PRESENT_PPC),
+		// Option-C banks (capacity select + compile-time OPTION_C LEG re-base)
+		.PHYS_BASE_720P(DDR_FRAME_720P_PHYS_BASE),
+		.HPS_BANK_STRIDE_BYTES_720P(DDR_FRAME_720P_YUV420P_BANK_STRIDE),
+		.DOORBELL_PHYS_720P(DDR_FRAME_720P_YUV420P_DOORBELL_PHYS)
+	) u_mp_rate (
+		.clk(clk),
+		.reset(reset),
+		.in_ready(mp_in_ready),
+		.fire(mp_rate_fire)
+	);
+	wire mp_beam_en = ~reset & mp_in_ready & mp_rate_fire;
+`else
+	wire mp_beam_en = ~reset & mp_in_ready;
+`endif
+
+	present_beam_ppc #(
+		.PX_PER_CLK(PRESENT_PPC),
+		.H_DE(1280),
+		.H_TOTAL(1650),
+		.V_ACTIVE(720),
+		.V_TOTAL(750),
+		.H_SYNC_S(1390),
+		.H_SYNC_E(1430),
+		.V_SYNC_S(725),
+		.V_SYNC_E(730)
+	) u_mp_beam (
+		.clk(clk),
+		.reset(reset),
+		.enable(mp_beam_en),
+		.beam_ce(mp_beam_ce),
+		.glass_x0(mp_glass_x0),
+		.glass_y(mp_glass_y),
+		.lane_de(mp_lane_de),
+		.HBlank(mp_hb),
+		.HSync(mp_hs),
+		.VBlank(mp_vb),
+		.VSync(mp_vs),
+		.frame_start(mp_fstart)
+	);
+
+	// Store map: IDENTITY glass→store clamp.
+	// Glass DE is always 1280×720 under this arm. FRAME_* is the *store/source*
+	// canvas (product path: 960×540, not 1280). Identity is valid ONLY when
+	// FRAME_W==1280 && FRAME_H==720 (native-source banks). Otherwise glass x/y
+	// past FRAME_LAST clamp → right/bottom smear — NOT a 4/3 upscale.
+	// w-scaler owns non-identity maps (present_content_window). Do NOT naive-scale
+	// only glass_x0: ddr N-wide yuv extracts consecutive store px src_x0..+PPC-1.
+	// See .agent-work/w-clock/SOURCE_VS_OUTPUT_GEOM_SWEEP.md
+	// MP_IDENTITY_FRAME_EQ_GLASS (gate string — do not rename lightly)
+	localparam int MP_GLASS_W = 1280;
+	localparam int MP_GLASS_H = 720;
+	localparam bit MP_IDENTITY_FRAME_EQ_GLASS =
+		(FRAME_W == MP_GLASS_W) && (FRAME_H == MP_GLASS_H);
+	// synthesis translate_off
+	initial begin
+		if (!MP_IDENTITY_FRAME_EQ_GLASS)
+			$error("PRESENT_MULTI_PIXEL identity store map requires FRAME %0dx%0d (glass); got %0dx%0d — need w-scaler glass→store (product 960x540 source)",
+				MP_GLASS_W, MP_GLASS_H, FRAME_W, FRAME_H);
+	end
+	// synthesis translate_on
+	(* noprune *) wire mp_identity_geom_ok = MP_IDENTITY_FRAME_EQ_GLASS;
+	wire [FRAME_X_W-1:0] mp_store_x =
+		(mp_glass_x0 > 12'(FRAME_LAST_X)) ? FRAME_LAST_X
+			: mp_glass_x0[FRAME_X_W-1:0];
+	wire [FRAME_Y_W-1:0] mp_store_y =
+		(mp_glass_y > 12'(FRAME_LAST_Y)) ? FRAME_LAST_Y
+			: mp_glass_y[FRAME_Y_W-1:0];
+	wire mp_de_any = |mp_lane_de;
+
+	// Register beam→store one cycle (align with product store_x style).
+	reg [FRAME_X_W-1:0] mp_store_x_r;
+	reg [FRAME_Y_W-1:0] mp_store_y_r;
+	reg                 mp_de_r;
+	reg [PRESENT_PPC-1:0] mp_lane_de_r;
+	always @(posedge clk) begin
+		if (reset) begin
+			mp_store_x_r <= '0;
+			mp_store_y_r <= '0;
+			mp_de_r      <= 1'b0;
+			mp_lane_de_r <= '0;
+		end else if (mp_beam_ce) begin
+			mp_store_x_r <= mp_store_x;
+			mp_store_y_r <= mp_store_y;
+			mp_de_r      <= mp_de_any;
+			mp_lane_de_r <= mp_lane_de;
+		end
+	end
+
+	wire [FRAME_X_W-1:0] fstore_rd_x = mp_store_x_r;
+	wire [FRAME_Y_W-1:0] fstore_rd_y = mp_store_y_r;
+	wire                 fstore_rd_a = mp_de_r;
+`else
+	wire [FRAME_X_W-1:0] fstore_rd_x = store_x;
+	wire [FRAME_Y_W-1:0] fstore_rd_y = store_y;
+	wire                 fstore_rd_a = de_r;
+`endif
+
 	ddr_frame_store #(
 		.FRAME_W(FRAME_W),
 		.FRAME_H(FRAME_H),
@@ -386,31 +576,33 @@ module present_core #(
 		.PHYS_BASE(32'h3000_0000),
 		.HPS_BANK_STRIDE_BYTES(DDR_FRAME_YUV420P_BANK_STRIDE),
 		.DOORBELL_PHYS(DDR_FRAME_YUV420P_DOORBELL_PHYS),
-		// Option-C banks (capacity select + compile-time OPTION_C LEG re-base)
-		.PHYS_BASE_720P(DDR_FRAME_720P_PHYS_BASE),
-		.HPS_BANK_STRIDE_BYTES_720P(DDR_FRAME_720P_YUV420P_BANK_STRIDE),
-		.DOORBELL_PHYS_720P(DDR_FRAME_720P_YUV420P_DOORBELL_PHYS)
+		.PX_PER_CLK(PRESENT_PPC)
 	) fstore (
 		.clk(clk),
 		.clk_ddr(clk_ddr),
 		.reset(reset),
-		.rd_x(store_x_full),
-		.rd_y(store_y_full),
-		.rd_active(de_r),
+		.rd_x(fstore_rd_x),
+		.rd_y(fstore_rd_y),
+		.rd_active(fstore_rd_a),
 		.rd_r(fr),
 		.rd_g(fg),
 		.rd_b(fb),
+		.rd_r_n(fs_r_n),
+		.rd_g_n(fs_g_n),
+		.rd_b_n(fs_b_n),
+		.rd_lane_valid_n(fs_lane_v_n),
+		.rd_n_valid(fs_n_valid),
 		.geom_enable(geom_enable),
-		.rt_coded_w(geom_coded_w),
-		.rt_coded_h(geom_coded_h),
-		.rt_y_stride(geom_y_stride),
-		.rt_chroma_stride(geom_chroma_stride),
-		.rt_display_w(geom_display_w),
-		.rt_display_h(geom_display_h),
-		.rt_present_x(geom_present_x),
-		.rt_present_y(geom_present_y),
-		.rt_crop_left(geom_crop_left),
-		.rt_crop_top(geom_crop_top),
+				.rt_coded_w(geom_coded_w),
+				.rt_coded_h(geom_coded_h),
+				.rt_y_stride(geom_y_stride),
+				.rt_chroma_stride(geom_chroma_stride),
+				.rt_display_w(geom_display_w),
+				.rt_display_h(geom_display_h),
+				.rt_present_x(geom_present_x),
+				.rt_present_y(geom_present_y),
+				.rt_crop_left(geom_crop_left),
+				.rt_crop_top(geom_crop_top),
 		.start_req(ddr_start_req),
 		.bank_sel(ddr_bank_sel),
 		.status_osd(ddr_status_osd),
@@ -429,15 +621,19 @@ module present_core #(
 		.DDRAM_DIN(DDRAM_DIN),
 		.DDRAM_BE(DDRAM_BE),
 		.DDRAM_WE(DDRAM_WE),
+`ifdef PRESENT_MULTI_PIXEL
+		// Bank swap on FIFO-aligned frame_start (not raw beam mp_fstart).
+		// Raw beam fstart leads RGB by LAT+prefill → mid-frame bank tear.
+		.vsync_pulse(mp_out_fs),
+`else
 		.vsync_pulse(fstart),
+`endif
 		.has_frame(has_frame),
 		.swap_pending(swap_pending),
 		.underrun_count(frame_underruns),
 		.frames_done(ddr_frames_done),
 		.doorbell_ok(ddr_doorbell_ok),
-		.debug_state(frame_sdram_state),
-		.geom_hold_black(geom_hold_black),
-		.geom_hollow_fault(geom_hollow_fault)
+		.debug_state(frame_sdram_state)
 	);
 `else
 	frame_store #(
@@ -481,9 +677,238 @@ module present_core #(
 		.underrun_count(frame_underruns),
 		.debug_state(frame_sdram_state)
 	);
-`ifndef PRESENT_BEAM_960
-	assign geom_hold_black = 1'b0;
-	assign geom_hollow_fault = 1'b0;
+`endif
+
+`ifdef PRESENT_MULTI_PIXEL
+`ifdef DDR_FRAME_STORE
+	// N-wide store RGB → wide-group npx FIFO → 1 px/clk.
+	//
+	// rd-duck integration fixes (quoted intent):
+	// 1) Tag sync at *beam request*; delay MP_STORE_LAT sys clk to meet fs_n_valid.
+	//    Sampling mp_hb_sam at response time skews line-edge RGB vs HS/DE.
+	// 2) Every beam group → npx push after LAT: blank=black+sync; DE+fs=store RGB;
+	//    DE without fs (no frame / miss)=black. No-frame still runs continuous raster.
+	// 3) Mode-on H/V/ce always from mp path — never legacy hb_d while CLK_VIDEO=clk_pix.
+	// 4) ddr vsync_pulse = mp_out_fs (FIFO-aligned fstart; not raw beam mp_fstart).
+	// 5) FORBIDDEN: dual-latency OR (blank@1 | fs_n_valid@LAT). Same-cycle collision
+	//    drops a raster group; blank can overtake trailing DE. All groups share one
+	//    ordered pipe; mp_npx_valid = mp_push only (see RED_DUAL_OR TB).
+	//
+	// LAT: beam_ce→mp_de_r(1) + rd_active_r(1) + rd_active_d(1) + yuv(1) = 4.
+	localparam int MP_STORE_LAT = 4;
+
+	reg [MP_STORE_LAT-1:0]          mp_tq_v;
+	reg                             mp_tq_hb [0:MP_STORE_LAT-1];
+	reg                             mp_tq_hs [0:MP_STORE_LAT-1];
+	reg                             mp_tq_vb [0:MP_STORE_LAT-1];
+	reg                             mp_tq_vs [0:MP_STORE_LAT-1];
+	reg                             mp_tq_fs [0:MP_STORE_LAT-1];
+	reg [PRESENT_PPC-1:0]           mp_tq_lde [0:MP_STORE_LAT-1];
+	integer                         mp_ti;
+
+	always @(posedge clk) begin
+		if (reset) begin
+			mp_tq_v <= '0;
+			for (mp_ti = 0; mp_ti < MP_STORE_LAT; mp_ti = mp_ti + 1) begin
+				mp_tq_hb[mp_ti]  <= 1'b1;
+				mp_tq_hs[mp_ti]  <= 1'b0;
+				mp_tq_vb[mp_ti]  <= 1'b1;
+				mp_tq_vs[mp_ti]  <= 1'b0;
+				mp_tq_fs[mp_ti]  <= 1'b0;
+				mp_tq_lde[mp_ti] <= '0;
+			end
+		end else begin
+			// Shift toward [LAT-1]; load [0] on beam_ce, else bubble (v=0).
+			for (mp_ti = MP_STORE_LAT-1; mp_ti > 0; mp_ti = mp_ti - 1) begin
+				mp_tq_v[mp_ti]   <= mp_tq_v[mp_ti-1];
+				mp_tq_hb[mp_ti]  <= mp_tq_hb[mp_ti-1];
+				mp_tq_hs[mp_ti]  <= mp_tq_hs[mp_ti-1];
+				mp_tq_vb[mp_ti]  <= mp_tq_vb[mp_ti-1];
+				mp_tq_vs[mp_ti]  <= mp_tq_vs[mp_ti-1];
+				mp_tq_fs[mp_ti]  <= mp_tq_fs[mp_ti-1];
+				mp_tq_lde[mp_ti] <= mp_tq_lde[mp_ti-1];
+			end
+			mp_tq_v[0]   <= mp_beam_ce;
+			mp_tq_hb[0]  <= mp_beam_ce ? mp_hb : 1'b1;
+			mp_tq_hs[0]  <= mp_beam_ce ? mp_hs : 1'b0;
+			mp_tq_vb[0]  <= mp_beam_ce ? mp_vb : 1'b1;
+			mp_tq_vs[0]  <= mp_beam_ce ? mp_vs : 1'b0;
+			mp_tq_fs[0]  <= mp_beam_ce ? mp_fstart : 1'b0;
+			mp_tq_lde[0] <= mp_beam_ce ? mp_lane_de : '0;
+		end
+	end
+
+	wire                    mp_push     = mp_tq_v[MP_STORE_LAT-1];
+	wire                    mp_push_hb  = mp_tq_hb[MP_STORE_LAT-1];
+	wire                    mp_push_hs  = mp_tq_hs[MP_STORE_LAT-1];
+	wire                    mp_push_vb  = mp_tq_vb[MP_STORE_LAT-1];
+	wire                    mp_push_vs  = mp_tq_vs[MP_STORE_LAT-1];
+	wire                    mp_push_fs  = mp_tq_fs[MP_STORE_LAT-1];
+	wire [PRESENT_PPC-1:0]  mp_push_lde = mp_tq_lde[MP_STORE_LAT-1];
+	wire                    mp_push_de  = |mp_push_lde;
+	// Store RGB only when response aligns with a DE-tagged slot.
+	wire                    mp_use_fs   = mp_push && mp_push_de && fs_n_valid;
+
+	wire mp_npx_valid = mp_push;
+	wire [PRESENT_PPC*8-1:0] mp_npx_r =
+		mp_use_fs ? fs_r_n : {PRESENT_PPC{8'd0}};
+	wire [PRESENT_PPC*8-1:0] mp_npx_g =
+		mp_use_fs ? fs_g_n : {PRESENT_PPC{8'd0}};
+	wire [PRESENT_PPC*8-1:0] mp_npx_b =
+		mp_use_fs ? fs_b_n : {PRESENT_PPC{8'd0}};
+	// Any push → all lanes valid black or store RGB (PPC-aligned product groups).
+	wire [PRESENT_PPC-1:0] mp_npx_lane_q = mp_push ? {PRESENT_PPC{1'b1}} : {PRESENT_PPC{1'b0}};
+	wire mp_npx_hb = mp_push_hb;
+	wire mp_npx_hs = mp_push_hs;
+	wire mp_npx_vb = mp_push_vb;
+	wire mp_npx_vs = mp_push_vs;
+	wire mp_npx_fs = mp_push_fs;
+
+	// clk_pix reset: async assert / sync deassert (never raw `reset` in pix domain).
+	(* noprune *) reg mp_rst_pix0, mp_rst_pix1;
+	always @(posedge clk_pix or posedge reset) begin
+		if (reset) begin
+			mp_rst_pix0 <= 1'b1;
+			mp_rst_pix1 <= 1'b1;
+		end else begin
+			mp_rst_pix0 <= 1'b0;
+			mp_rst_pix1 <= mp_rst_pix0;
+		end
+	end
+	wire mp_reset_pix = mp_rst_pix1;
+
+	present_npx_path #(
+		.PX_PER_CLK(PRESENT_PPC),
+		.FIFO_AW(6),
+		.INCLUDE_SYNC(MP_INCLUDE_SYNC),
+		.PREFILL_GROUPS(16)  // startup watermark (rd-duck long-haul)
+	) u_mp_npx_path (
+		.clk_sys(clk),
+		.reset_sys(reset),
+		.clk_pix(clk_pix),
+		.reset_pix(mp_reset_pix),
+		.in_valid(mp_npx_valid),
+		.in_r(mp_npx_r),
+		.in_g(mp_npx_g),
+		.in_b(mp_npx_b),
+		.in_lane_valid(mp_npx_lane_q),
+		.in_hblank(mp_npx_hb),
+		.in_hsync(mp_npx_hs),
+		.in_vblank(mp_npx_vb),
+		.in_vsync(mp_npx_vs),
+		.in_fstart(mp_npx_fs),
+		.in_ready(mp_in_ready),
+		.out_ce(mp_out_ce),
+		.out_r(mp_out_r),
+		.out_g(mp_out_g),
+		.out_b(mp_out_b),
+		.out_hblank(mp_out_hb),
+		.out_hsync(mp_out_hs),
+		.out_vblank(mp_out_vb),
+		.out_vsync(mp_out_vs),
+		.out_fstart(mp_out_fs),
+		.wr_full(mp_wr_full),
+		.wr_almost_full(mp_wr_af),
+		.rd_underrun(mp_rd_ur),
+		.rd_empty(mp_rd_empty)
+	);
+
+	// --- Observable pix underrun (anti-DCE) — rd-duck 2e ---
+	// Toggle CDC undercounts paired/back-to-back empty pixels (every other
+	// pulse lost when two empties land before sys samples). Level-sync a
+	// pix-domain sticky; Gray-code a free-running pix counter and accumulate
+	// binary deltas on sys. PLXF bit15 = sticky, [14:0] = store+pix counts.
+	function automatic [7:0] mp_ur_bin2gray8(input [7:0] b);
+		mp_ur_bin2gray8 = b ^ (b >> 1);
+	endfunction
+	function automatic [7:0] mp_ur_gray2bin8(input [7:0] g);
+		integer uk;
+		begin
+			mp_ur_gray2bin8[7] = g[7];
+			for (uk = 6; uk >= 0; uk = uk - 1)
+				mp_ur_gray2bin8[uk] = mp_ur_gray2bin8[uk+1] ^ g[uk];
+		end
+	endfunction
+
+	(* noprune *) reg        mp_rd_ur_sticky_pix;
+	(* noprune *) reg [7:0]  mp_rd_ur_bin_pix;
+	(* noprune *) reg [7:0]  mp_rd_ur_gray_pix;
+	(* noprune *) reg [2:0]  mp_rd_ur_sticky_sync;
+	(* noprune *) reg [7:0]  mp_rd_ur_g0, mp_rd_ur_g1;
+	(* noprune *) reg [7:0]  mp_rd_ur_bin_last;
+	(* noprune *) reg        mp_rd_ur_sticky;
+	(* noprune *) reg [14:0] mp_rd_ur_count;
+
+	wire [7:0] mp_rd_ur_bin_now = mp_ur_gray2bin8(mp_rd_ur_g1);
+	wire [7:0] mp_rd_ur_delta   = mp_rd_ur_bin_now - mp_rd_ur_bin_last;
+
+	always @(posedge clk_pix) begin
+		if (mp_reset_pix) begin
+			mp_rd_ur_sticky_pix <= 1'b0;
+			mp_rd_ur_bin_pix    <= 8'd0;
+			mp_rd_ur_gray_pix   <= 8'd0;
+		end else if (mp_rd_ur) begin
+			mp_rd_ur_sticky_pix <= 1'b1;
+			mp_rd_ur_bin_pix    <= mp_rd_ur_bin_pix + 8'd1;
+			mp_rd_ur_gray_pix   <= mp_ur_bin2gray8(mp_rd_ur_bin_pix + 8'd1);
+		end
+	end
+
+	always @(posedge clk) begin
+		if (reset) begin
+			mp_rd_ur_sticky_sync <= 3'b0;
+			mp_rd_ur_g0          <= 8'd0;
+			mp_rd_ur_g1          <= 8'd0;
+			mp_rd_ur_bin_last    <= 8'd0;
+			mp_rd_ur_sticky      <= 1'b0;
+			mp_rd_ur_count       <= 15'd0;
+		end else begin
+			mp_rd_ur_sticky_sync <= {mp_rd_ur_sticky_sync[1:0], mp_rd_ur_sticky_pix};
+			mp_rd_ur_g0          <= mp_rd_ur_gray_pix;
+			mp_rd_ur_g1          <= mp_rd_ur_g0;
+			mp_rd_ur_bin_last    <= mp_rd_ur_bin_now;
+			// Sticky latches once (host-visible); level-sync so sustained empty
+			// keeps the bit set without needing edges.
+			if (mp_rd_ur_sticky_sync[2])
+				mp_rd_ur_sticky <= 1'b1;
+			// Saturate with 16-bit sum (rd-duck): 15-bit add wraps before compare
+			// e.g. 15'h7ffe + 2 = 0 in 15 bits → falsely took non-sat path.
+			if (mp_rd_ur_delta != 8'd0) begin
+				if (16'({1'b0, mp_rd_ur_count}) + 16'(mp_rd_ur_delta) < 16'h7fff)
+					mp_rd_ur_count <= mp_rd_ur_count + 15'(mp_rd_ur_delta);
+				else
+					mp_rd_ur_count <= 15'h7fff;
+			end
+		end
+	end
+	// Combine store underruns (low) with mp pix underrun count; bit15 = sticky.
+	// MP_UR_STICKY — host PLXF bit15 anti-elision marker (rd-duck 2e).
+	// Store underrun is 16-bit; status [14:0] is a 15-bit field with bit15=sticky.
+	// Truncating frame_underruns[14:0] aliases 0x8000→0 (rd-duck). Saturate store
+	// into 15 bits first, then saturating-add pix count.
+	wire [14:0] mp_store_ur15 =
+		(frame_underruns >= 16'h7fff) ? 15'h7fff : frame_underruns[14:0];
+	wire [15:0] mp_ur_sum16 =
+		{1'b0, mp_store_ur15} + {1'b0, mp_rd_ur_count};
+	wire [14:0] mp_ur_sum =
+		(mp_ur_sum16 >= 16'h7fff) ? 15'h7fff : mp_ur_sum16[14:0];
+	wire [15:0] mp_stat_frame_underruns = {mp_rd_ur_sticky, mp_ur_sum};
+
+	// FIFO sideband owns H/V/fstart always (same-clock and PLL).
+	// rd-duck: direct mp_hb with INCLUDE_SYNC=0 left DE leading RGB by queue.
+	wire mp_hb_d = mp_out_hb;
+	wire mp_hs_d = mp_out_hs;
+	wire mp_vb_d = mp_out_vb;
+	wire mp_vs_d = mp_out_vs;
+	// mp_out_fs drives frame_start + ddr vsync_pulse (FIFO-aligned).
+	wire mp_de_out = ~mp_hb_d & ~mp_vb_d;
+	wire mp_mode_ok = (mp_h_de == 12'd1280) && (mp_v_act == 12'd720)
+		&& (mp_h_total == 12'd1650) && (mp_v_total == 12'd750);
+	// Keep hierarchy roots referenced; underrun sticky is status-visible (not only here).
+	wire _unused_mp_flags = mp_beam_ce | mp_wr_full | mp_wr_af | mp_rd_empty
+		| (|mp_lane_de_r) | (|fs_lane_v_n) | (MP_STORE_LAT == 4)
+		| mp_mode_ok | mp_needs_fast_pix | (|mp_fps_milli) | mp_identity_geom_ok
+		| mp_use_fs | mp_rd_ur_sticky | (|mp_rd_ur_count) | mp_reset_pix;
 `endif
 `endif
 
@@ -516,14 +941,13 @@ module present_core #(
 	// Each extra clk of lag eats ~0.6 of a source column off the left and repeats it
 	// on the right, which is precisely the right-edge "bar".
 	//
-	// B12 DE_LAG @ DDR_FRAME_STORE + 960 max tier (build-host Verilator measure):
-	//   tests/unit/test_ddr_store_rgb_lag.sh → store rd_active→RGB lag_cycles=1
-	//   at both coded_w=960 (Option-C) and coded_w=624 (legacy). Geometry does
-	//   NOT change store RGB pipeline depth (B12_COMPARE lag960=lag624).
-	//   DE_LAG=3 keeps HBlank/HSync delayed past store RGB + content_window de_r
-	//   on PRESENT_BEAM_960 / FRAME_W=960 the same way as 640-class.
-	//   Evidence: DE_LAG 960 store lag_cycles=1 (script true rc=0).
-	// Parent HDMI edge paint remains the glass-level confirmation after fit.
+	// REQUIRES_FIT (DDR_FRAME_STORE @ FRAME_W=640): DE_LAG has NOT been re-swept for
+	// ddr_frame_store's deeper path (rd_visible pipeline + YUV + BRAM). A too-small
+	// lag wraps previous-line right columns onto the left edge (ragged boundary +
+	// left clip). Parent HDMI after ARM stride fix still saw ~44 px per-line left
+	// wander — retune with gen_edge_markers.py on an authorised fit; do not guess
+	// a new constant here without that sweep. Keep the frame_store-proven value
+	// until then so we do not silently eat left columns.
 	localparam DE_LAG = 3'd3;
 	reg [DE_LAG-1:0] hb_sr, hs_sr;
 	always @(posedge clk) begin
@@ -537,6 +961,76 @@ module present_core #(
 
 	// Gate the frame pixels with EXACTLY the delayed signal that drives VGA_DE.
 	wire de_out = ~hb_d & ~vb_d;
+
+`ifdef PRESENT_MULTI_PIXEL
+`ifdef DDR_FRAME_STORE
+	// Multi-pixel takeover for frame path. Pattern/bars still use colorbars.
+	// ce_pix stays 1 (product scandouble class) so CLK_VIDEO pacing is stable.
+	// During active DE: hold last serializer pixel across out_ce gaps (same-clock
+	// backpressure). Black only in blank — never flash black mid-line on CE holes.
+	// Outputs r/g/b/H*/V* are driven from this path whenever use_ext (runtime
+	// has_frame) so Quartus cannot DCE the beam→store→npx chain as dead.
+	// Hold on clk_pix (output domain). Reset must be pix-synced (mp_reset_pix),
+	// never raw clk_sys `reset` sampled as data on clk_pix.
+	reg [7:0] mp_r_hold, mp_g_hold, mp_b_hold;
+	always @(posedge clk_pix) begin
+		if (mp_reset_pix) begin
+			mp_r_hold <= 8'd0;
+			mp_g_hold <= 8'd0;
+			mp_b_hold <= 8'd0;
+		end else if (mp_out_ce) begin
+			mp_r_hold <= mp_out_r;
+			mp_g_hold <= mp_out_g;
+			mp_b_hold <= mp_out_b;
+		end else if (!mp_de_out) begin
+			mp_r_hold <= 8'd0;
+			mp_g_hold <= 8'd0;
+			mp_b_hold <= 8'd0;
+		end
+	end
+	wire [7:0] mp_r_px = mp_out_ce ? mp_out_r : mp_r_hold;
+	wire [7:0] mp_g_px = mp_out_ce ? mp_out_g : mp_g_hold;
+	wire [7:0] mp_b_px = mp_out_ce ? mp_out_b : mp_b_hold;
+	// Mode-on (PRESENT_MULTI_PIXEL+DDR): mp path owns H/V always.
+	// CLK_VIDEO may be clk_pix — never fall back to legacy hb_d/br (20 MHz state).
+	// PLL mode: do NOT gate RGB on unsynchronised clk_sys has_frame/use_frame_store.
+	// Npx path already pushes black on !has_frame / store miss; a second gate on
+	// async status tears DE. Pass mp_* pixels straight out.
+`ifdef PRESENT_CLK_PIX_PLL
+	assign r = mp_de_out ? mp_r_px : 8'd0;
+	assign g = mp_de_out ? mp_g_px : 8'd0;
+	assign b = mp_de_out ? mp_b_px : 8'd0;
+	assign ce_pix = 1'b1; // CLK_VIDEO==clk_pix; CE always
+	assign HBlank = mp_hb_d;
+	assign HSync  = mp_hs_d;
+	assign VBlank = mp_vb_d;
+	assign VSync  = mp_vs_d;
+	assign frame_start = mp_out_fs;
+`else
+	assign r = use_ext ? (mp_de_out ? mp_r_px : 8'd0) : (show_pattern ? br : 8'd0);
+	assign g = use_ext ? (mp_de_out ? mp_g_px : 8'd0) : (show_pattern ? bg : 8'd0);
+	assign b = use_ext ? (mp_de_out ? mp_b_px : 8'd0) : (show_pattern ? bb : 8'd0);
+	assign ce_pix = 1'b1;
+	// Same-clock: still prefer mp timing when multi-pixel mode is on so DE matches beam.
+	assign HBlank = mp_hb_d;
+	assign HSync  = mp_hs_d;
+	assign VBlank = mp_vb_d;
+	assign VSync  = mp_vs_d;
+	assign frame_start = mp_out_fs;
+`endif
+`else
+	// Multi-pixel macro without DDR store: keep legacy 1ppc path.
+	assign r = use_ext ? (de_out ? fr : 8'd0) : (show_pattern ? br : 8'd0);
+	assign g = use_ext ? (de_out ? fg : 8'd0) : (show_pattern ? bg : 8'd0);
+	assign b = use_ext ? (de_out ? fb : 8'd0) : (show_pattern ? bb : 8'd0);
+	assign ce_pix = ce_pix_i;
+	assign HBlank = hb_d;
+	assign HSync  = hs_d;
+	assign VBlank = vb_d;
+	assign VSync  = vs_d;
+	assign frame_start = fstart;
+`endif
+`else
 	assign r = use_ext ? (de_out ? fr : 8'd0) : (show_pattern ? br : 8'd0);
 	assign g = use_ext ? (de_out ? fg : 8'd0) : (show_pattern ? bg : 8'd0);
 	assign b = use_ext ? (de_out ? fb : 8'd0) : (show_pattern ? bb : 8'd0);
@@ -547,6 +1041,7 @@ module present_core #(
 	assign VBlank = vb_d;
 	assign VSync  = vs_d;
 	assign frame_start = fstart;
+`endif
 
 	// --- Audio: FIFO preferred, else OSD tone ---
 	wire [15:0] tone_l, tone_r;
@@ -596,9 +1091,16 @@ module present_core #(
 	assign stat_has_audio     = has_audio;
 	assign stat_audio_underrun = fifo_underrun;
 	assign stat_swap_pending  = swap_pending;
+`ifdef PRESENT_MULTI_PIXEL
+`ifdef DDR_FRAME_STORE
+	// bit15 = mp_rd_ur_sticky; [14:0] = store underruns + mp pix underrun count
+	assign stat_frame_underruns = mp_stat_frame_underruns;
+`else
 	assign stat_frame_underruns = frame_underruns;
+`endif
+`else
+	assign stat_frame_underruns = frame_underruns;
+`endif
 	assign stat_frame_sdram_state = frame_sdram_state;
-	assign stat_geom_hold_black = geom_hold_black;
-	assign stat_geom_hollow     = geom_hollow_fault;
 
 endmodule

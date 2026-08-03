@@ -1,4 +1,7 @@
 `timescale 1ns/10ps
+// Product PLL SoT. PRESENT_CLK_PIX_PLL (default OFF) adds outclk_3 @ 29.7 MHz
+// as clk_pix. Shipping/default keeps number_of_clocks=3, fractional=false —
+// bit-identical intent to proven cores when the macro is unset.
 module  pll_0002(
 
 	// interface 'refclk'
@@ -15,6 +18,11 @@ module  pll_0002(
 
 	// interface 'outclk2'
 	output wire outclk_2,
+
+`ifdef PRESENT_CLK_PIX_PLL
+	// interface 'outclk3' — clk_pix (CEA 720p24 pixel rate)
+	output wire outclk_3,
+`endif
 
 	// interface 'locked'
 	output wire locked
@@ -39,10 +47,17 @@ module  pll_0002(
 `endif
 
 	altera_pll #(
+`ifdef PRESENT_CLK_PIX_PLL
+		.fractional_vco_multiplier("true"),
+		.reference_clock_frequency("50.0 MHz"),
+		.operation_mode("direct"),
+		.number_of_clocks(4),
+`else
 		.fractional_vco_multiplier("false"),
 		.reference_clock_frequency("50.0 MHz"),
 		.operation_mode("direct"),
 		.number_of_clocks(3),
+`endif
 		.output_clock_frequency0("20.000000 MHz"),
 		.phase_shift0("0 ps"),
 		.duty_cycle0(50),
@@ -52,7 +67,16 @@ module  pll_0002(
 		.output_clock_frequency2("90.000000 MHz"),
 		.phase_shift2("0 ps"),
 		.duty_cycle2(50),
+`ifdef PRESENT_CLK_PIX_PLL
+`ifdef PRESENT_CLK_PIX_30
+		// PIX30: 1650*750*30 — second STA grant only; default remains PIX24.
+		.output_clock_frequency3("37.125000 MHz"),
+`else
+		.output_clock_frequency3("29.700000 MHz"),
+`endif
+`else
 		.output_clock_frequency3("0 MHz"),
+`endif
 		.phase_shift3("0 ps"),
 		.duty_cycle3(50),
 		.output_clock_frequency4("0 MHz"),
@@ -101,7 +125,11 @@ module  pll_0002(
 		.pll_subtype("General")
 	) altera_pll_i (
 		.rst	(rst),
+`ifdef PRESENT_CLK_PIX_PLL
+		.outclk	({outclk_3, outclk_2, outclk_1, outclk_0}),
+`else
 		.outclk	({outclk_2, outclk_1, outclk_0}),
+`endif
 		.locked	(locked),
 		.fboutclk	( ),
 		.fbclk	(1'b0),

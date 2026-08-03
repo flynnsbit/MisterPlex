@@ -1,0 +1,89 @@
+{
+  "schema": 2,
+  "name": "misterplex-ascal-native-960-beam",
+  "status": "LOCKED_FOR_FIT",
+  "cadence_decision": "30_Hz_core_raster",
+  "rationale": "ascal FB decouples clocks but NOT field-repeat: 24→60=5:2 judder; 30→60=2:1 clean. Source: w-scaler ascal vbuf + parent decision 2026-08-03.",
+  "doc": ".agent-work/w-clock/ASCAL_BEAM_960_30.md",
+  "qsf_card": ".agent-work/w-clock/W_NOSTUB_QSF_BEAM_CONSTANTS.md",
+  "fit_strategy": "core DE 960x540 @ ~30.0008 Hz into ascal; HDMI 1280x720@60 from HPS",
+  "clk_sys_mhz": 20.0,
+  "ce_pixel": 1,
+  "present_clk_pix_pll": "OFF default — upgrade path only",
+  "present_multi_pixel": "OFF default for first fit",
+  "true_de": {
+    "required": 1,
+    "evidence": [
+      "w-scaler test_true_content_de_contract product true_de=1 rc=0; island true_de=0 rc=1",
+      "w-scaler test_present_true_de_count_rtl_sim PRODUCT_30_V564: true_de=1 de_w_max=960 de_lines=540 fps=30.0008 rc=0",
+      "finding=DE_extent_must_equal_content_ascal_iauto_from_i_de"
+    ],
+    "h_de_must_equal_content_w": 960,
+    "v_active_must_equal_content_h": 540,
+    "forbidden": ["H_DE=529 Template", "H_DE=1280 canvas with 960 island"]
+  },
+  "primary_30hz": {
+    "name": "30A",
+    "h_de": 960,
+    "v_active": 540,
+    "h_total": 1182,
+    "v_total": 564,
+    "h_blank": 222,
+    "v_blank": 24,
+    "h_sync_s": 992,
+    "h_sync_e": 1056,
+    "v_sync_s": 548,
+    "v_sync_e": 554,
+    "fps": 30.0008,
+    "clks_per_frame": 666648,
+    "formula": "20e6/(1182*564)",
+    "active_mpix_s": 15.552,
+    "peak_1px_mpix_s": 20.0,
+    "margin_vs_1px_peak": 1.286,
+    "why_not_1111x600": "Hblank only 151 — tight for ascal; 222 preferred",
+    "why_not_exact_666666": "1221x546 leaves Vblank=6 — too thin for VS"
+  },
+  "alternate_30hz": {
+    "name": "30B",
+    "h_total": 1190,
+    "v_total": 560,
+    "h_blank": 230,
+    "v_blank": 20,
+    "fps": 30.012,
+    "note": "roomier H; primary 30A preferred (more Vblank for VS)"
+  },
+  "film_24hz_companion": {
+    "preferred_fixed_h": {
+      "h_total": 1182,
+      "v_total": 705,
+      "fps": 24.0007,
+      "note": "w-scaler runtime V_TOTAL select; same H as 30A"
+    },
+    "legacy_mode2": {
+      "h_total": 1389,
+      "v_total": 600,
+      "fps": 23.997,
+      "note": "present_video_timing_960 MODE=2; prefer 1182x705 if runtime select lands"
+    }
+  },
+  "b1_wide_fifo": {
+    "first_fit_1px_path": "NOT required — 15.552 < 20.0 peak CE=1",
+    "if_multi_pixel_serialize_on": "REQUIRED — 15.552 > 13.33 serialize ceiling; wide-group gives 40",
+    "status": "B1 verified green; default OFF; load-bearing only if PPC serialize enabled",
+    "parent_note": "15.55>13.33 matters only on serialize PPC path; ascal-native 1px does not use it"
+  },
+  "tier_alignment": {
+    "film_le_25": "960x540 content @ bank cadence; beam 30 → display 2:1 of scans (unique frames still content-rate)",
+    "tv_ge_28": "640x360@30 native exact 2x; same 30 Hz beam class with content DE 640x360 OR scale via ascal from 960"
+  },
+  "ascal": {
+    "triple_buffer_when": "mode[3]=1 when lowlat=0 (sys_top default)",
+    "input_output_decoupled": true,
+    "needs_integer_divisor_of_60": false,
+    "field_repeat_24_to_60": "5:2",
+    "field_repeat_30_to_60": "2:1"
+  },
+  "rtl_timing_constants": "fpga/Plex_MiSTer/rtl/present_video_timing_960.sv",
+  "rtl_beam_impl": "w-scaler present_beam_content_de.sv (aligned 1182x564)",
+  "macro_to_wire": "PRESENT_BEAM_960 — parent grant + w-nostub QSF; not wired until fit"
+}

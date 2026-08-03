@@ -235,8 +235,8 @@ int run_c1_source_facts() {
     std::printf("  ddr_frame_store swap: vsync_pulse && swap_pending && pending_ready_s2\n");
     std::printf("  vsync_pulse = colorbars.frame_start (fstart), not cadence\n");
     std::printf("  cadence.hpp: no arm/ references (test-only product path)\n");
-    std::printf("  Plex.sv: \"Legacy cadence input is now fixed; the daemon handles "
-                "exact content pacing.\" content_fps=24 hardwired\n");
+    std::printf("  Plex.sv: B15 ABI#2 q5 fps_valid+content_fps via plex_content_fps_sel "
+                "(unspecified=24; no invent 30)\n");
     std::printf("PASS C1: claim shape locked (see companion shell file greps)\n");
     return 0;
 }

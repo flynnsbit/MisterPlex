@@ -1,0 +1,83 @@
+{
+  "schema": 1,
+  "name": "misterplex-present-720p-fit-contract",
+  "description": "Pre-fit survival checks for multi-pixel 720p mode: SDC async_fifo cut, RTL CDC structure, H/edge arithmetic, 4ppc rates. Slack is NOT claimed here.",
+  "macro_default_off": "PRESENT_MULTI_PIXEL",
+  "sdc": {
+    "plex_sdc": "fpga/Plex_MiSTer/Plex.sdc",
+    "require_false_path_substrings": [
+      "async_fifo*mem",
+      "async_fifo*rd_data_r"
+    ],
+    "forbid_whole_domain_cut_comment": "Do not false_path entire general[0] vs general[2]; only FIFO data keepers."
+  },
+  "rtl_markers": {
+    "present_core": "fpga/Plex_MiSTer/rtl/present_core.sv",
+    "must_contain": [
+      "u_mp_timing",
+      "u_mp_beam",
+      "u_mp_npx_path",
+      "localparam H_DE    = 10'd529",
+      "H_DE(1280)",
+      "clk_pix(clk_pix)"
+    ],
+    "present_npx_path": "fpga/Plex_MiSTer/rtl/present_npx_path.sv",
+    "npx_must_contain": [
+      "async_fifo",
+      "in_ready"
+    ],
+    "line_buf": "fpga/Plex_MiSTer/rtl/line_buf_ram.sv",
+    "line_buf_must_contain": [
+      "rd_addr_b",
+      "rd_data_b"
+    ]
+  },
+  "edge_arith": {
+    "h_de": 1280,
+    "h_total": 1650,
+    "v_active": 720,
+    "v_total": 750,
+    "h_de_mod_8": 0,
+    "h_de_mod_2": 0,
+    "h_de_mod_4": 0,
+    "h_total_mod_2": 0,
+    "h_total_mod_4": 2,
+    "last_y_qword_index": 159,
+    "note": "Aligned PPC 2/4 active groups never straddle Y qword; 1650%4=2 needs short beam step."
+  },
+  "rates_mhz": {
+    "cea_720p60": 74.25,
+    "cea_720p60_ppc2": 37.125,
+    "cea_720p60_ppc4": 18.5625,
+    "content_720p60_ppc4": 13.824,
+    "ship_clk_sys": 20.0,
+    "nostub_fmax_parent": 32.04,
+    "verdict_cea60_ppc2_vs_nostub": "FAIL",
+    "verdict_cea60_ppc4_vs_ship20": "OK_FABRIC_ONLY",
+    "verdict_same_clock_out_74": "FAIL_NEED_CLK_PIX"
+  },
+  "ddr_bw_mib_s": {
+    "yuv420_720p24": 33.1776,
+    "yuv420_720p60": 82.944,
+    "clk_ddr_peak_90x8": 720.0
+  },
+  "hierarchy_must_survive_when_macro_on": [
+    "u_mp_timing",
+    "u_mp_beam",
+    "u_mp_npx_path"
+  ],
+  "h_ownership": {
+    "glass_under_multi_pixel": "w-clock present_beam_ppc",
+    "glass_geometry": "1280x720",
+    "source_geometry_product": "960x540",
+    "source_display_h_product": 540,
+    "source_coded_h_bitstream": 544,
+    "source_scale_v": "540*(4/3)=720 exact; no fabric vertical crop on ARM path",
+    "store_map": "identity clamp ONLY if FRAME==1280x720; else w-scaler glass→store (product 960x540 display). present_content_window not in tree yet.",
+    "identity_guard_marker": "MP_IDENTITY_FRAME_EQ_GLASS",
+    "template_h_de_when_macro_off": 529,
+    "doc": ".agent-work/w-clock/H_OWNERSHIP_W_SCALER.md",
+    "geom_sweep_doc": ".agent-work/w-clock/SOURCE_VS_OUTPUT_GEOM_SWEEP.md"
+  },
+  "tolerance_mhz": 0.001
+}

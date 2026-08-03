@@ -1,0 +1,5 @@
+# Synthetic green fixture: plex_chrome with dual-list M10K retained.
+# 2 * 64 * 64-bit cmds = 8192 block bits, 2 M10Ks. Not from a real fit.
+
+; Compilation Hierarchy Node                                                             ; ALMs needed [=A-B+C] ; [A] ALMs used in final placement ; [B] Estimate of ALMs recoverable by dense packing ; [C] Estimate of ALMs unavailable ; ALMs used for memory ; Combinational ALUTs ; Dedicated Logic Registers ; I/O Registers ; Block Memory Bits ; M10Ks ; DSP Blocks ; Pins ; Virtual Pins ; Full Hierarchy Name                                                                                                                             ; Entity Name                ; Library Name ;
+; |plex_chrome:u_plex_chrome| ; 250.0 (250.0) ; 250.0 (250.0) ; 18.1 (18.1) ; 0.0 (0.0) ; 0.0 (0.0) ; 120 (120) ; 200 (200) ; 0 (0) ; 8192 (8192) ; 2 (2) ; 0 ; 0 ; 0 ; |sys_top|plex_chrome:u_plex_chrome ; plex_chrome ; work ;

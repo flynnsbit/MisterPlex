@@ -1,0 +1,152 @@
+{
+  "schema": 4,
+  "name": "misterplex-ascal-native-sta-prereg",
+  "description": "STA cuts for ascal-native beam @20 MHz. Fixed max-tier 960x540@30 (V=564) and film V_TOTAL=705 both required. B13 runtime H/V geom ON (content_w/h \u2192 DE); exact Fmax UNKNOWN until fit \u2014 do not invent BUILD_OK.",
+  "hard_rule": "negative_slack_equals_hard_fail",
+  "prediction_preregistered_before_fit": {
+    "timestamp_note": "updated 2026-08-03 w-clock collision#5 E2E; still no fit by this lane",
+    "fixed_beam_564": {
+      "expect_pass_at_20mhz": true,
+      "confidence": "medium",
+      "basis": "clk_sys 20 MHz; counters+muxes; nostub Fmax history ~32 MHz"
+    },
+    "film_vtotal_705": {
+      "expect_pass_at_20mhz": true,
+      "confidence": "medium",
+      "basis": "same 11-bit compares; only latch constant changes; no new multi-cycle path",
+      "explicit": "V_TOTAL width already runtime via vtot_act \u2014 705 vs 564 is data not structure"
+    },
+    "runtime_h_v_geom_ON": {
+      "expect_pass_at_20mhz": "UNKNOWN_UNTIL_STA",
+      "status": "B13_ON_product_path",
+      "confidence": "low-medium structural",
+      "structural_note": "Registered compares same class as vtot_act. Expect +0..1 LUT on blanking cone. stub Fmax 23.46 leaves ~17% at 20 MHz \u2014 if runtime lengthens shared critical path, FAIL.",
+      "stub_margin_warning": "23.46 MHz stub-in; 25 MHz blocked. Nostub 32.59 more room.",
+      "miss_policy": "if fmax_clk_sys < 20.0 or setup slack < 0 \u2192 HARD FAIL; publish miss"
+    },
+    "explicit_unknown": "exact Fmax/worst path \u2014 unknown until Plex.sta.rpt Fmax Summary",
+    "miss_policy": "if fmax_clk_sys < 20.0 or any setup slack < 0 \u2192 HARD FAIL; no invented BUILD_OK"
+  },
+  "stage_ascal_native_960_30": {
+    "macros": {
+      "PRESENT_BEAM_960": "ON for fit",
+      "PRESENT_MULTI_PIXEL": "OFF",
+      "PRESENT_CLK_PIX_PLL": "OFF",
+      "PRESENT_CLK_PIX_30": "OFF"
+    },
+    "clocks": {
+      "clk_sys_mhz": 20.0,
+      "clk_ddr_mhz": 90.0,
+      "clk_pix": "absent_or_tied_clk_sys"
+    },
+    "geometry": {
+      "h_de": 960,
+      "v_active": 540,
+      "h_total": 1182,
+      "v_total": 564,
+      "true_de": 1,
+      "v_total_film_companion": 705,
+      "runtime_geom_default": "ON_B13",
+      "h_total_rationale": "fixed 1182 \u2192 f_h\u224816.920 kHz all DE; blanking absorbs W span (see H_TOTAL_1182_LINE_RATE.md)"
+    },
+    "pass": {
+      "fmax_clk_sys_mhz_min": 20.0,
+      "setup_slack_all_constrained_ns_min": 0.0,
+      "hold_slack_min_ns": 0.0,
+      "h_de_not_529": true,
+      "v_total_705_supported_via_rt_vtotal": true,
+      "hierarchy_present_beam_survives": true
+    },
+    "fail": [
+      "fmax_clk_sys < 20.0",
+      "any constrained setup slack < 0",
+      "PRESENT_CLK_PIX_PLL accidentally ON",
+      "H_DE still 529 while claiming 960 beam",
+      "true_de contract red (island DE)"
+    ],
+    "not_in_scope": [
+      "fmax_clk_pix >= 29.7",
+      "wide-group FIFO pix cone",
+      "glass capture / ascal visual quality"
+    ]
+  },
+  "active_rate": {
+    "mpix_s": 15.552,
+    "vs_1px_peak_20": "PASS margin 1.286x",
+    "vs_serialize_13_33": "N/A on 1px path; FAIL if MULTI_PIXEL serialize ON without B1"
+  },
+  "b2b_ownership": {
+    "raster_sot": "present_beam_content_de.sv",
+    "math_pack_only": "present_video_timing_960.sv",
+    "present_core_instantiates_timing_960": false
+  },
+  "overclock_honesty": {
+    "pll_applied": false,
+    "clk_sys_mhz": 20.0,
+    "clk_ddr_mhz": 90.0,
+    "stub_fmax_8fdf440f_mhz": 23.46,
+    "nostub_fmax_c74c6863_mhz": 32.59,
+    "target_a_25mhz_stub": "FAIL_STA_class \u2014 25 > 23.46",
+    "target_a_25mhz_nostub": "plausible intra-sys only; CDC 25/90 edge ~2.22ns needs STA",
+    "target_b_30mhz_nostub": "tight (~2.6 MHz margin vs 32.59); placement risk",
+    "realistic_ceiling": "unknown beyond measured Fmax without new BEAM_960 fit",
+    "sources": [
+      ".agent-work/w-clock/FABRIC_CLOCK_HEADROOM_PRESENT_AND_DECODE.md",
+      "assets/fabric_clock_headroom_contract.json"
+    ]
+  },
+  "v705_film_companion": {
+    "v_total": 705,
+    "h_total": 1182,
+    "clk_sys_mhz": 20.0,
+    "fps_hz_arithmetic": 24.000672018816527,
+    "sim_exact_de": "PROVEN present_beam_960_oracle V705_960x540",
+    "timing_closure": "NOT_PROVEN",
+    "prediction_preregistered_before_fit": {
+      "expect_pass_at_20mhz": true,
+      "confidence": "medium",
+      "basis": "V_TOTAL is data in existing vtot_act latch/compare; same path class as 564",
+      "explicit_unknown": "exact Fmax/slack until Plex.sta.rpt Fmax Summary on BEAM_960+runtime netlist",
+      "miss_policy": "fmax_clk_sys < 20.0 OR any setup slack < 0 \u2192 HARD FAIL; publish miss; no BUILD_OK"
+    },
+    "recorded_by": "w-clock",
+    "recorded_note": "parent 2026-08-03: sim exact OK \u2260 closure; prereg before fit for publishable miss",
+    "sim_exact": "PROVEN oracle",
+    "sta_closure": "UNKNOWN_UNTIL_FIT",
+    "prereg_expect_pass_20mhz": true,
+    "confidence": "medium",
+    "basis": "data value in existing vtot_act path, not new structure"
+  },
+  "b13_runtime_de": {
+    "use_rt_geom": true,
+    "h_total_fixed": 1182,
+    "prediction_preregistered_before_fit": {
+      "expect_pass_at_20mhz": true,
+      "confidence": "low-medium",
+      "stub_fmax_mhz": 23.46,
+      "stub_margin_pct": 17.3,
+      "miss_policy": "fmax < 20 \u2192 wall; publish miss"
+    }
+  },
+  "collision5_e2e": {
+    "mux_owner": "w-mem",
+    "w_clock_edits_mux": false,
+    "product_force": "force_native_960 = ~plxg_live under PRESENT_BEAM_960",
+    "green": "tests/unit/test_present_b13_mux_e2e.sh product mux\u2192beam 624/416/320/960 exact + idle 960",
+    "red": "FAULT_B8_FORCE_ALWAYS pins 960 over live PLXG 624"
+  },
+  "b15_runtime_content_fps": {
+    "abi": "parent arbitration #2 PLXG q5 @ +0x828",
+    "q5": {
+      "content_fps": "[31:24]",
+      "fps_valid": "[33]",
+      "reserved": "[63:34]=0"
+    },
+    "consumer": "plex_content_fps_sel.sv",
+    "unspecified": "fps_valid=0 \u2192 film-class 24 (do not invent 30)",
+    "green": "valid=1 fps=30 \u2192 5 unique frames in 4*1182*705 window",
+    "red": "FAULT_B15_IGNORE_FPS_VALID: valid=1 fps=30 \u2192 4 frames",
+    "w_mem": "q5 latch/poller/B16 atomic; staged wires 0 until merge",
+    "v705_sta": "UNKNOWN until fit"
+  }
+}

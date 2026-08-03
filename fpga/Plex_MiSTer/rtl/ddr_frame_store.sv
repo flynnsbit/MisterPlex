@@ -554,7 +554,9 @@ module ddr_frame_store #(
 	wire [CODED_Y_W-1:0] src_y_line = rd_y_visible ? (display_y + CROP_TOP_L) : '0;
 	wire [CODED_Y_W-1:0] pref_y = WANT_Y_LINE_ONLY ? src_y_line : src_y;
 	wire [Y_QW_AW-1:0] y_rd_addr = src_x[CODED_X_W-1:3];
-	// Next Y qword for multi-pixel lanes that cross an 8-byte boundary.
+	// Next Y qword for multi-pixel lanes that cross an 8-byte boundary (w-scaler
+	// dual-port + w-clock yuv_bt601_npx.y_qword_hi). Beam x0%PPC==0 on 1280 DE
+	// avoids active straddle for PPC in {2,4}; hi remains the safety net.
 	wire [Y_QW_AW-1:0] y_rd_addr_hi = y_rd_addr + Y_QW_AW'(1'b1);
 	wire [C_QW_AW-1:0] c_rd_addr = src_x[CODED_X_W-1:4];
 
@@ -715,6 +717,12 @@ module ddr_frame_store #(
 	reg [SLOT_W-1:0] y_hit_idx_r, c_hit_idx_r;
 	reg [2:0] y_sel_r, c_sel_r;
 	reg [10:0] src_x_d;  // aligns with y_sel_r (one beam cycle)
+	// N-pixel snapshot of beam qwords (aligned to scalar RGB commit cycle).
+	reg [63:0] npx_y_q_r, npx_y_q_hi_r, npx_u_q_r, npx_v_q_r;
+	reg [CODED_X_W-1:0] npx_src_x_r;
+	reg npx_commit_r;
+	reg npx_y_hi_valid_r;
+	reg [CODED_X_W-1:0] src_x_r;
 
 	integer vi;
 	reg y_hit_now, c_hit_now;
@@ -816,6 +824,14 @@ module ddr_frame_store #(
 			rd_qword_valid <= 1'b0;
 `endif
 			src_x_d <= 11'd0;
+			npx_y_q_r <= 64'd0;
+			npx_y_q_hi_r <= 64'd0;
+			npx_u_q_r <= 64'd0;
+			npx_v_q_r <= 64'd0;
+			npx_src_x_r <= '0;
+			npx_commit_r <= 1'b0;
+			npx_y_hi_valid_r <= 1'b0;
+			src_x_r <= '0;
 		end else begin
 			y_valid_v1 <= y_valid_hold;
 			y_valid_v2 <= y_valid_v1;

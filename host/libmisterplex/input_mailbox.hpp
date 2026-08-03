@@ -84,6 +84,13 @@ struct FrameStoreStatus {
     bool geomHollow() const {
         return debug_state == kFrameStoreDebugGeomHollow;
     }
+
+    // Fabric multi-pixel bridge reported at least one mid-stream empty (clk_pix).
+    bool pixUnderrunSticky() const { return (underrun_count & 0x8000u) != 0; }
+    // Low 15 bits only (store underruns + counted pix underrun events).
+    uint16_t underrunEventCount() const {
+        return static_cast<uint16_t>(underrun_count & 0x7FFFu);
+    }
 };
 
 inline const char* frameStoreDebugDescription(uint8_t debug) {

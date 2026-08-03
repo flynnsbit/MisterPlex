@@ -1,0 +1,111 @@
+{
+  "schema": 1,
+  "name": "misterplex-clk-pix-pll-plan-contract",
+  "description": "Separate clk_pix PLL out for true CEA 720p refresh. clk_sys stays 20. NOT applied until parent fit grant.",
+  "plan_doc": ".agent-work/w-clock/CLK_PIX_PLL_PLAN.md",
+  "pll_source": "fpga/Plex_MiSTer/rtl/pll/pll_0002.v",
+  "status": "LANDED_IFDEF_DEFAULT_OFF",
+  "shipping_untouched": {
+    "clk_sys_mhz": 20.0,
+    "clk_ddr_mhz": 90.0,
+    "clk_pix_tied_to_sys": true,
+    "number_of_clocks": 3,
+    "note": "pll_0002 keeps 3 clocks when PRESENT_CLK_PIX_PLL unset; PIX24 strings live under ifdef"
+  },
+  "arithmetic": {
+    "h_total": 1650,
+    "v_total": 750,
+    "pix_per_frame": 1237500,
+    "cea_720p24_mhz": 29.7,
+    "cea_720p60_mhz": 74.25,
+    "same_clock_20_fps": 16.161616,
+    "content_720p24_mpix": 22.1184
+  },
+  "targets": {
+    "PIX24": {
+      "status": "LANDED_IFDEF_DEFAULT_OFF",
+      "clk_pix_mhz": 29.7,
+      "clk_sys_mhz": 20.0,
+      "clk_ddr_mhz": 90.0,
+      "fractional_vco": true,
+      "number_of_clocks": 4,
+      "pll_strings": {
+        "reference_clock_frequency": "50.0 MHz",
+        "output_clock_frequency0": "20.000000 MHz",
+        "output_clock_frequency2": "90.000000 MHz",
+        "output_clock_frequency3": "29.700000 MHz"
+      },
+      "min_ppc": 2,
+      "peak_fabric_mpix_at_min_ppc": 40.0,
+      "out_mpix": 29.7,
+      "balance_ok": true
+    },
+    "PIX24i": {
+      "status": "PROPOSED_NOT_APPLIED",
+      "clk_pix_mhz": 30.0,
+      "fractional_vco": false,
+      "pll_strings": {
+        "output_clock_frequency3": "30.000000 MHz"
+      },
+      "min_ppc": 2,
+      "fps_eff": 24.242424,
+      "note": "Integer interim +1% vs CEA 24"
+    },
+    "PIX60": {
+      "status": "PROPOSED_NOT_APPLIED",
+      "clk_pix_mhz": 74.25,
+      "clk_sys_mhz": 20.0,
+      "fractional_vco": true,
+      "pll_strings": {
+        "output_clock_frequency3": "74.250000 MHz"
+      },
+      "min_ppc": 4,
+      "peak_fabric_mpix_at_min_ppc": 80.0,
+      "out_mpix": 74.25,
+      "balance_ok": true
+    },
+    "PIX30": {
+      "status": "LANDED_IFDEF_DEFAULT_OFF",
+      "clk_pix_mhz": 37.125,
+      "formula": "1650*750*30 = 37125000",
+      "macros": ["PRESENT_CLK_PIX_PLL", "PRESENT_CLK_PIX_30"],
+      "note": "Nested under PRESENT_CLK_PIX_PLL; default OFF. Held fit remains PIX24 only. Fabric peak 40 vs 37.125 = 1.077x thin margin.",
+      "min_ppc": 2,
+      "peak_fabric_mpix_at_min_ppc": 40.0,
+      "out_mpix": 37.125,
+      "producer_lead_ppm": 1000,
+      "producer_target_mpix": 37.162125,
+      "balance_ok": true,
+      "balance_margin_ratio": 1.077,
+      "pll_strings": {
+        "reference_clock_frequency": "50.0 MHz",
+        "output_clock_frequency0": "20.000000 MHz",
+        "output_clock_frequency2": "90.000000 MHz",
+        "output_clock_frequency3": "37.125000 MHz"
+      },
+      "plan_doc": ".agent-work/w-clock/NPX_PEAK_VS_SUSTAINED_AND_PIX30.md",
+      "forbidden_on_held_fit": true
+    }
+  },
+  "forbidden": {
+    "clk_sys_bump_for_scanout": true,
+    "clk_ddr_bump": true,
+    "claim_applied_without_grant": true,
+    "whole_domain_false_path_sys_pix": true
+  },
+  "macros": {
+    "PRESENT_MULTI_PIXEL": "OFF default",
+    "PRESENT_CLK_PIX_PLL": "OFF default \u2014 gates outclk_3 wiring"
+  },
+  "cdc": {
+    "load_bearing": "async_fifo gray + mem\u2192rd_data_r false_path only",
+    "extends": "e0f23e5a"
+  },
+  "rules": {
+    "do_not_apply_pll_without_parent_fit_grant": true,
+    "shipping_pll_must_remain_3_clocks_until_grant": true,
+    "no_false_path_to_hide_cdc": true
+  },
+  "content_fps_cadence_doc": ".agent-work/w-clock/CONTENT_FPS_CADENCE_AND_CLK_PIX.md",
+  "fit_scope_unchanged": "960x540/24 + PIX24 29.7 only"
+}
