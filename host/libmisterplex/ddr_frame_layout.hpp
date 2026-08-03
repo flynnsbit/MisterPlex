@@ -753,9 +753,47 @@ inline bool packYuv420pCenteredIntoCodedBank(const uint8_t* src, int srcW, int s
     return true;
 }
 
+// PLXK hi packing (host half of B20 couple — rd-duck):
+//   [31]    bank
+//   [30:29] format
+//   [28:0]  seq field = (frame_gen[15:0] << 13) | expected_plxg_seq[12:0]
+//                       when expected_plxg_seq != 0
+//                     = legacy plain frame_gen when expected_plxg_seq == 0
+// Store (w-mem) must match expected_plxg_seq against committed PLXG before DMA;
+// host refuses kick without a non-reserved PLXG seq on the product path.
+constexpr uint32_t kDdrDoorbellPlxgSeqMask = 0x1FFFu; // [12:0]
+constexpr unsigned kDdrDoorbellFrameGenShift = 13;
+constexpr uint32_t kDdrDoorbellFrameGenMask = 0xFFFFu;
+
+inline uint32_t ddrDoorbellPackSeqField(uint32_t frame_gen, uint16_t expected_plxg_seq) {
+    if (expected_plxg_seq == 0)
+        return frame_gen & kDdrFrameDoorbellSeqMask;
+    const uint32_t plxg = static_cast<uint32_t>(expected_plxg_seq) & kDdrDoorbellPlxgSeqMask;
+    const uint32_t gen =
+        (frame_gen & kDdrDoorbellFrameGenMask) << kDdrDoorbellFrameGenShift;
+    return (gen | plxg) & kDdrFrameDoorbellSeqMask;
+}
+
+inline uint16_t ddrDoorbellUnpackPlxgSeq(uint32_t seq_field) {
+    return static_cast<uint16_t>(seq_field & kDdrDoorbellPlxgSeqMask);
+}
+
+inline uint32_t ddrDoorbellUnpackFrameGen(uint32_t seq_field) {
+    return (seq_field >> kDdrDoorbellFrameGenShift) & kDdrDoorbellFrameGenMask;
+}
+
+// Legacy: plain monotonic seq (no PLXG couple). Prefer ddrDoorbellHiCoupled.
 inline uint32_t ddrDoorbellHi(uint32_t seq, int bank, DdrFrameFormat format) {
     return (static_cast<uint32_t>(bank & 1) << 31) |
            ((ddrFrameFormatCode(format) & 0x3u) << 29) | (seq & kDdrFrameDoorbellSeqMask);
+}
+
+// B20: doorbell carries expected PLXG seq in seq_field[12:0] + frame_gen[28:13].
+inline uint32_t ddrDoorbellHiCoupled(uint32_t frame_gen, int bank, DdrFrameFormat format,
+                                    uint16_t expected_plxg_seq) {
+    const uint32_t seq = ddrDoorbellPackSeqField(frame_gen, expected_plxg_seq);
+    return (static_cast<uint32_t>(bank & 1) << 31) |
+           ((ddrFrameFormatCode(format) & 0x3u) << 29) | seq;
 }
 
 inline bool decodeDdrDoorbell(uint32_t lo, uint32_t hi, DdrFrameFormat expectedFormat,
@@ -767,6 +805,17 @@ inline bool decodeDdrDoorbell(uint32_t lo, uint32_t hi, DdrFrameFormat expectedF
         return false;
     bank = static_cast<int>((hi >> 31) & 0x1u);
     seq = hi & kDdrFrameDoorbellSeqMask;
+    return true;
+}
+
+inline bool decodeDdrDoorbellCoupled(uint32_t lo, uint32_t hi, DdrFrameFormat expectedFormat,
+                                     uint32_t& frame_gen, uint16_t& expected_plxg_seq,
+                                     int& bank) {
+    uint32_t seq = 0;
+    if (!decodeDdrDoorbell(lo, hi, expectedFormat, seq, bank))
+        return false;
+    expected_plxg_seq = ddrDoorbellUnpackPlxgSeq(seq);
+    frame_gen = ddrDoorbellUnpackFrameGen(seq);
     return true;
 }
 

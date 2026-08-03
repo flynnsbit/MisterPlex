@@ -293,14 +293,33 @@ inline bool plxgSeqlockPublishToPage(uint8_t* ctrlPage, size_t pageBytes, const 
     return true;
 }
 
-// Minimal poller: promote only when q0 magic+seq stable and seq != last.
+// Models plxg_ddr_poller reset baseline (rd-duck B20): first valid record after
+// reset is BASELINED (latched + last_seq set) — not a "promote" edge. Later
+// seq changes PROMOTES. Same-seq never re-reads body (q5-only poke skipped).
+// Prior sim treated first valid as a promote; that could not prove reset behavior.
+enum class PlxgPollerEvent : uint8_t { None = 0, Baseline = 1, Promote = 2 };
+
 struct PlxgPollerSim {
     uint16_t last_seq = 0;
-    bool has_last = false;
+    bool has_last = false;     // true after first baseline
+    bool baselined = false;    // alias of has_last after first valid
     uint64_t latched_q[6]{};
     bool latched = false;
+    PlxgPollerEvent last_event = PlxgPollerEvent::None;
 
+    void reset() {
+        last_seq = 0;
+        has_last = false;
+        baselined = false;
+        latched = false;
+        last_event = PlxgPollerEvent::None;
+        for (int i = 0; i < 6; ++i)
+            latched_q[i] = 0;
+    }
+
+    // Returns true when body was applied (baseline OR promote). Check last_event.
     bool tryCommit(const uint8_t* ctrlPage, size_t pageBytes) {
+        last_event = PlxgPollerEvent::None;
         if (!ctrlPage || pageBytes < kPlxgRecordByteOffset + kPlxgRecordBytes)
             return false;
         const uint32_t* base = reinterpret_cast<const uint32_t*>(
@@ -310,8 +329,11 @@ struct PlxgPollerSim {
         if (lo0 != kPlxgMagic)
             return false;
         const uint16_t seq = static_cast<uint16_t>(hi0 >> 16);
+        if (seq == 0)
+            return false;
+        // After baseline: skip unchanged seq (no body re-read).
         if (has_last && seq == last_seq)
-            return false; // skip body — q5-only write never reaches here
+            return false;
         // re-read q0
         const uint32_t lo1 = base[0];
         const uint32_t hi1 = base[1];
@@ -328,8 +350,15 @@ struct PlxgPollerSim {
         for (int i = 0; i < 6; ++i)
             latched_q[i] = body[i];
         last_seq = seq;
-        has_last = true;
         latched = true;
+        if (!has_last) {
+            // First valid after reset → baseline (RTL), not promote edge.
+            has_last = true;
+            baselined = true;
+            last_event = PlxgPollerEvent::Baseline;
+            return true;
+        }
+        last_event = PlxgPollerEvent::Promote;
         return true;
     }
 };

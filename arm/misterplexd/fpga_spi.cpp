@@ -1027,17 +1027,23 @@ bool FpgaSpi::waitCoreFlag(bool clearBusy, bool clearPending, int maxUs) {
     return false;
 }
 
-bool FpgaSpi::kickDdrDoorbell(int bank) {
+bool FpgaSpi::kickDdrDoorbell(int bank, uint16_t expected_plxg_seq) {
     if (!ddrMap_ || bank < 0 || bank > 1)
         return false;
+    // B20 host half: refuse uncoupled kick (independent doorbellSeq_ alone).
+    if (expected_plxg_seq == 0 ||
+        misterplex::plxgSeqDoorbellFieldIsReservedUngated(expected_plxg_seq)) {
+        setErr("kickDdrDoorbell: expected_plxg_seq required (B20 couple; no bare frame gen)");
+        return false;
+    }
     const size_t kOff = static_cast<size_t>(ddrLayout_.doorbell_phys - ddrLayout_.phys_base);
     if (kOff + 8 > ddrMapLen_)
         return false;
     volatile uint32_t* dw = reinterpret_cast<volatile uint32_t*>(ddrMap_ + kOff);
     ++doorbellSeq_;
-    // Pack: [31:0]=magic, high=[31]=bank, [30:29]=format, [28:0]=sequence.
-    const uint32_t seq = doorbellSeq_ & 0x1FFFFFFFu;
-    const uint32_t hi = ddrDoorbellHi(seq, bank, ddrLayout_.format);
+    // Pack: magic | hi=[31]bank [30:29]fmt [28:13]frame_gen [12:0]expected_plxg_seq
+    const uint32_t hi = misterplex::ddrDoorbellHiCoupled(doorbellSeq_, bank, ddrLayout_.format,
+                                                        expected_plxg_seq);
     // Publish the complete token before magic. On a cold mailbox this prevents
     // the reader from seeing PLXK paired with a zero/old format; on a warm
     // mailbox the already-valid magic may expose the new token immediately,
@@ -1046,6 +1052,11 @@ bool FpgaSpi::kickDdrDoorbell(int bank) {
     __sync_synchronize();
     dw[0] = kDdrDoorbellMagic;
     __sync_synchronize();
+    lastCouple_.doorbell_lo = kDdrDoorbellMagic;
+    lastCouple_.doorbell_hi = hi;
+    lastCouple_.frame_gen = misterplex::ddrDoorbellUnpackFrameGen(hi & kDdrFrameDoorbellSeqMask);
+    lastCouple_.plxg_seq = expected_plxg_seq;
+    lastCouple_.bank = bank;
     return true;
 }
 
@@ -1846,28 +1857,47 @@ lab_after_prep:
         setErr("sendDdrFrame: plan.program_plxg=0 (PLXG body required before kick)");
         return false;
     }
+    uint16_t committedPlxgSeq = 0;
     {
-        uint16_t committedPlxgSeq = 0;
         if (!writePlxgRecord(plan.plxg_q, plan.plxg_seq, &committedPlxgSeq))
             return false;
         if (plxgQ5PendingValid_ && plxgQ5ReservedOk(plan.plxg_q[5]))
             plxgQ5LastWritten_ = plan.plxg_q[5];
-        (void)committedPlxgSeq;
+        if (committedPlxgSeq == 0 ||
+            misterplex::plxgSeqDoorbellFieldIsReservedUngated(committedPlxgSeq)) {
+            setErr("sendDdrFrame: PLXG committed seq unusable for B20 doorbell couple");
+            return false;
+        }
+        // Snapshot full visual tuple BEFORE kick (same transaction as doorbell).
+        lastCouple_ = {};
+        lastCouple_.plxg_seq = committedPlxgSeq;
+        for (int i = 0; i < 6; ++i)
+            lastCouple_.plxg_q[i] = plan.plxg_q[i];
+        // q0 on wire carries committed seq+magic; rebuild snapshot to match.
+        uint64_t flags = (plan.plxg_q[0] >> 32) & 0xFFFFull;
+        if (((flags >> 2) & 0x3FFFull) == 0)
+            flags |= (1ull << 2);
+        lastCouple_.plxg_epoch = static_cast<uint16_t>((flags >> 2) & 0x3FFFull);
+        lastCouple_.plxg_q[0] = (static_cast<uint64_t>(committedPlxgSeq) << 48) |
+                                (flags << 32) | static_cast<uint64_t>(kPlxgMagic);
     }
     bool kicked = false;
     auto tKick0 = std::chrono::steady_clock::now();
     // Lab maps: doorbell kick alone is success (no SPI status probe).
+    // B20: kick carries expected_plxg_seq = committed generation (not bare frame gen).
     if (labMapsAttached_) {
-        if (!kickDdrDoorbell(bank)) {
-            setErr("sendDdrFrame: lab doorbell kick failed");
+        if (!kickDdrDoorbell(bank, committedPlxgSeq)) {
+            setErr(std::string("sendDdrFrame: lab doorbell kick failed: ") + lastError());
             return false;
         }
+        lastCouple_.valid = true;
         kicked = true;
         ddrKickMode_ = 1;
         saw_kick = true;
         saw_frame = true;
     } else if (ddrKickMode_ == 1 || ddrKickMode_ == 0) {
-        if (kickDdrDoorbell(bank)) {
+        if (kickDdrDoorbell(bank, committedPlxgSeq)) {
+            lastCouple_.valid = true;
             kicked = true;
             if (first) {
                 // Give poller time to see seq; expect busy / pending / has_frame.

@@ -49,6 +49,13 @@ if "wantSkipRgbVideo" not in src:
 spi = FPGA_SPI.read_text()
 if not re.search(r"writePlxgRecord\s*\(\s*plan\.plxg_q", spi):
     fail("sendDdrFrame must call writePlxgRecord(plan.plxg_q, ...) before kick")
+# B20: kick must carry committed PLXG seq — not bare kickDdrDoorbell(bank).
+if not re.search(r"kickDdrDoorbell\s*\(\s*bank\s*,\s*committedPlxgSeq\s*\)", spi):
+    fail("sendDdrFrame must kickDdrDoorbell(bank, committedPlxgSeq) for B20 couple")
+if re.search(r"kickDdrDoorbell\s*\(\s*bank\s*\)\s*;", spi):
+    fail("bare kickDdrDoorbell(bank) forbidden — uncoupled frame gen")
+if "ddrDoorbellHiCoupled" not in spi:
+    fail("kick must pack expected_plxg_seq via ddrDoorbellHiCoupled")
 # writePlxgQ5 body must be pending-only (no wire store at doorbell+0x828).
 m_q5 = re.search(r"bool\s+FpgaSpi::writePlxgQ5\s*\([\s\S]*?\n\}", spi)
 if not m_q5 or "plxgQ5Pending_" not in m_q5.group(0):
@@ -61,5 +68,5 @@ print(
     f"publish_call_sites={len(contexts)} contexts={','.join(contexts)} "
     "use centralized publishDdrFrame + lastPublishedBank; "
     "STREAM0=playback DDR STREAM1=recon DDR idle=idle DDR; "
-    "sendDdrFrame=writePlxgRecord(plan.plxg_q)"
+    "sendDdrFrame=writePlxgRecord+B20_kick(committedPlxgSeq)"
 )

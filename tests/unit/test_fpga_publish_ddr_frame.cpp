@@ -74,7 +74,7 @@ int main() {
     // Trailing pad in bank stays zero beyond frame.
     expect(ddr[frameBytes] == 0, "pad after frame zero");
 
-    // Doorbell at LEG offset kicked with magic.
+    // Doorbell at LEG offset kicked with magic + B20 PLXG couple in hi[12:0].
     const size_t doorOff =
         static_cast<size_t>(kPlex480pYuv420pDoorbellPhys - kDdrFramePhysBase);
     const uint32_t* door = reinterpret_cast<const uint32_t*>(ddr.data() + doorOff);
@@ -88,6 +88,24 @@ int main() {
     expect(qwords[0] == kPlxgMagic, "q0 magic last");
     const uint16_t seq = static_cast<uint16_t>(qwords[1] >> 16);
     expect(seq != 0 && !plxgSeqDoorbellFieldIsReservedUngated(seq), "monotonic seq");
+
+    // B20 host couple: doorbell expected_plxg_seq == committed PLXG generation.
+    {
+        uint32_t fgen = 0;
+        uint16_t exp_plxg = 0;
+        int dbank = -1;
+        expect(decodeDdrDoorbellCoupled(door[0], door[1], DdrFrameFormat::Yuv420p, fgen,
+                                        exp_plxg, dbank),
+               "decode coupled doorbell");
+        expect(exp_plxg == seq, "B20 doorbell[12:0] == PLXG seq");
+        expect(dbank == 0, "doorbell bank 0");
+        const auto couple = spi.lastPublishCouple();
+        expect(couple.valid, "lastPublishCouple valid");
+        expect(couple.plxg_seq == seq, "couple.plxg_seq");
+        expect(couple.plxg_q[5] == q5, "couple visual tuple includes q5");
+        expect(ddrDoorbellUnpackPlxgSeq(couple.doorbell_hi & kDdrFrameDoorbellSeqMask) == seq,
+               "couple.doorbell_hi packs plxg seq");
+    }
 
     auto loadQ = [&](int qi) -> uint64_t {
         const uint32_t lo = qwords[qi * 2 + 0];
@@ -108,18 +126,31 @@ int main() {
     expect(q5w == q5, "q5 survived full record");
     expect(spi.lastWrittenPlxgQ5() == q5, "lastWrittenPlxgQ5 after commit");
 
-    // Poller model promotes body when q0 changes.
+    // Poller: first valid after reset is BASELINE (not promote); body still latched.
     PlxgPollerSim pol{};
-    expect(pol.tryCommit(plxgPage.data(), plxgPage.size()), "poller commit");
-    expect(pol.latched_q[5] == q5, "poller latched q5");
-    expect(static_cast<int>(pol.latched_q[2] >> 32 & 0x7FF) == 320 || true, "q2 present");
+    expect(pol.tryCommit(plxgPage.data(), plxgPage.size()), "poller baseline");
+    expect(pol.last_event == PlxgPollerEvent::Baseline, "first event=Baseline");
+    expect(pol.baselined && pol.latched_q[5] == q5, "poller baselined q5");
+    expect(!pol.tryCommit(plxgPage.data(), plxgPage.size()), "same seq no re-commit");
 
-    // Second publish: seq advances; q5 sticky in new generation.
+    // Second publish: seq advances; q5 sticky in new generation; poller PROMOTES.
     expect(spi.publishDdrFrame(frame, /*bank=*/1), "second publish bank1");
     expect(spi.lastPublishedBank() == 1, "bank1");
     const uint16_t seq2 = static_cast<uint16_t>(qwords[1] >> 16);
     expect(seq2 != seq && seq2 != 0, "seq advanced");
     expect(loadQ(5) == q5, "q5 still in gen2");
+    {
+        uint16_t exp2 = 0;
+        uint32_t fg2 = 0;
+        int b2 = -1;
+        expect(decodeDdrDoorbellCoupled(door[0], door[1], DdrFrameFormat::Yuv420p, fg2, exp2, b2),
+               "decode couple gen2");
+        expect(exp2 == seq2 && b2 == 1, "B20 gen2 doorbell packs new plxg+bank1");
+        expect(spi.lastPublishCouple().plxg_seq == seq2, "couple tracks gen2");
+    }
+    expect(pol.tryCommit(plxgPage.data(), plxgPage.size()), "poller promote gen2");
+    expect(pol.last_event == PlxgPollerEvent::Promote, "second event=Promote");
+    expect(pol.latched_q[5] == q5, "promote keeps q5");
     // Bank1 payload at LEG stride.
     expect(std::memcmp(ddr.data() + kPlex480pYuv420pBankStride, yuv.data(), frameBytes) == 0,
            "bank1 payload at LEG stride");
@@ -140,6 +171,6 @@ int main() {
         return 1;
     }
     std::printf("PASS test_fpga_publish_ddr_frame 320 LEG+PLXG_seqlock+q5 "
-                "doorbell+bank1\n");
+                "B20_couple+baseline_poller+bank1\n");
     return 0;
 }

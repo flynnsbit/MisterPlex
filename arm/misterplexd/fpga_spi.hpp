@@ -129,6 +129,23 @@ public:
     // seq is advisory; *committedSeqOut is the generation actually written.
     bool writePlxgRecord(const uint64_t q[6], uint16_t seq,
                          uint16_t* committedSeqOut = nullptr);
+
+    // B20 host couple: last successful publish's PLXG generation + doorbell token.
+    // expected_plxg_seq is packed into PLXK hi[12:0]; frame_gen in hi[28:13].
+    // Full store wait/match is w-mem RTL-owed — host guarantees same-transaction
+    // publish of the visual tuple (plxg_q[0..5]) with the kicked token.
+    struct DdrPublishCouple {
+        bool valid = false;
+        int bank = 0;
+        uint16_t plxg_seq = 0;
+        uint16_t plxg_epoch = 0;
+        uint32_t frame_gen = 0;
+        uint32_t doorbell_lo = 0;
+        uint32_t doorbell_hi = 0;
+        uint64_t plxg_q[6]{};
+    };
+    DdrPublishCouple lastPublishCouple() const { return lastCouple_; }
+    uint16_t lastCommittedPlxgSeq() const { return lastCouple_.plxg_seq; }
     // DDR frame mmap policy. Default true keeps the proven strongly-ordered/device
     // mapping; false is a lab knob for write-combine/cacheable /dev/mem tests.
     // If a lab proves the no-sync mapping is cacheable, enable flush so the FPGA
@@ -417,7 +434,10 @@ private:
     void publishBitstreamCtrl();
     bool waitCoreFlag(bool wantBusy, bool wantPending, int maxUs);
     bool kickDdrSpi(int bank, bool first_verify, bool& saw_busy, bool& saw_kick, bool& saw_frame);
-    bool kickDdrDoorbell(int bank);
+    // B20: expected_plxg_seq required (non-zero, non-reserved field). Independent
+    // doorbellSeq_ alone is forbidden on product path — couples PLXG gen to kick.
+    bool kickDdrDoorbell(int bank, uint16_t expected_plxg_seq);
+    DdrPublishCouple lastCouple_{};
     uint32_t ddrStatusMailboxPhys() const {
         return ddrLayout_.doorbell_phys + (kDdrMailboxPhys - kDdrDoorbellPhys);
     }
