@@ -101,8 +101,6 @@ static_assert(kPlex720pYuv420pBytes == 1280 * 720 * 3 / 2,
 constexpr uint32_t kPlex720pYuv420pBankStride = 0x00180000u;
 constexpr uint32_t kPlex720pDdrFramePhysBase = 0x30180000u;
 constexpr uint32_t kPlex720pYuv420pDoorbellPhys = 0x3047F000u;
-constexpr int kPlex540pSpsMbYuv420pBytes = 960 * 544 * 3 / 2; // 783360 — do NOT size banks to this
-
 
 // Compressed bitstream ring (fabric-decode ingest) — mirror ddr_bitstream_ring.hpp
 // and ddr_frame_layout_params.svh. Collision fence vs Option-C + PL330.
@@ -187,6 +185,52 @@ static_assert(kDdrFramePlxgOffset != mailbox_abi::kPlxcOffset,
 static_assert(mailbox_abi::kPlxlOffset + mailbox_abi::kPlxcListMaxCmds * 8u <=
                   kDdrFramePlxgOffset,
               "chrome list must not grow into fixed PLXG +0x800");
+
+// --- w-path 360p tier (collision #8 content-merge) ---
+// 640x360 motion tier for 29.97/30 → exact 2× fabric double to 1280x720 glass.
+// PMS (lab 2026-08-03): ceiling 640x360 + maxBR≥1000 → display 640x360 SAR 1:1 CB;
+// maxBR=750 → 480x270; maxBR=400 → 320x180. Uncapped rate pass-through on rk142.
+// SPS: pic_width_mbs=40 → 640; pic_height_map=23 → 368; crop_bottom_offset=4 →
+// CropUnitY=2 → 8 luma lines cropped → **display 360**. ARM I420 = 345600 after crop.
+// 360 is NOT MB-aligned (360&15=8) — do not use display height in MB-only guards.
+constexpr CodedWidth kPlex360pCodedWidth{640};
+constexpr CodedHeight kPlex360pCodedHeight{360};
+constexpr int kPlex360pYuv420pBytes = 345600;
+constexpr int kPlex360pSpsMbHeight = 368;
+constexpr int kPlex360pSpsCropBottomLuma = 8; // frame_crop_bottom_offset=4 × 2
+constexpr int kPlex360pSpsMbYuv420pBytes = 640 * 368 * 3 / 2; // 353280
+static_assert(kPlex360pYuv420pBytes ==
+                  kPlex360pCodedWidth.get() * kPlex360pCodedHeight.get() * 3 / 2,
+              "360p I420 byte count");
+static_assert(kPlex360pSpsMbHeight - kPlex360pSpsCropBottomLuma == kPlex360pCodedHeight.get(),
+              "SPS MB height minus crop must equal display 360");
+static_assert(kPlex360pSpsMbYuv420pBytes == 353280, "360p SPS MB I420");
+static_assert(kPlex360pYuv420pBytes < kPlex540pYuv420pBytes, "360p smaller than 540p");
+static_assert(kPlex360pYuv420pBytes != kPlex360pSpsMbYuv420pBytes,
+              "360p display I420 must differ from uncropped MB I420");
+// Fits legacy 480p bank usable (520192) — no Option-C required for 345600 payload.
+static_assert(kPlex360pYuv420pBytes < 520192, "360p fits legacy bank usable");
+
+constexpr int kPlex480pCropLeft = 0;
+constexpr int kPlex480pCropRight = 6;
+constexpr int kPlex480pCropTop = 0;
+constexpr int kPlex480pCropBottom = 0;
+constexpr int kPlex480pPillarboxLeft = 11;
+constexpr int kPlex480pPillarboxRight = 11;
+constexpr uint32_t kDdrFramePhysBase = 0x30000000u;
+constexpr uint32_t kDdrFrameStrideAlign = 0x40000u;
+constexpr int kPlex480pRgb565LineQwords = 156;
+constexpr int kPlex480pYuvLumaLineQwords = 78;
+constexpr int kPlex480pYuvChromaLineQwords = 39;
+constexpr int kPlex480pRgb565Bytes = 599040;
+constexpr int kPlex480pYuv420pBytes = 449280;
+constexpr int kPlex480pYPlaneOffset = 0;
+constexpr int kPlex480pUPlaneOffset = 299520;
+constexpr int kPlex480pVPlaneOffset = 374400;
+// Stride bytes follow coded width, never presented scanout width.
+// Literals kept parseable by scripts/hw_visual_compare.py; locked to coded width.
+constexpr int kPlex480pYStrideBytes = 624;
+
 
 enum class DdrFramePlacement {
     None,
