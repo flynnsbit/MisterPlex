@@ -1,6 +1,6 @@
 lane=w-path
 status=AWAITING_CLEAN_DMA_GATE
-tip=c4cf0392
+tip=7bb2d270
 PARENT_CLEAN: decode alone 35.94 ms/f margin 5.73; any ARM peer destroys margin
 PARENT_RETRACT: bank anomaly / bank-sweep / CPU-theft headline / DMA 23.8 — awk PID12021
 INSTRUMENT: c4cf0392 linux DMAGO + content verify + 3.2GB/s ceiling (no false fps)
