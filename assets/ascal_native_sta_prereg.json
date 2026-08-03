@@ -104,7 +104,18 @@
     "prereg_expect_pass_20mhz": true,
     "confidence": "medium",
     "miss_if": "fmax_clk_sys < 20.0 OR any setup slack < 0",
-    "basis": "705 is data in existing vtot_act path"
+    "basis": "705 is data in existing vtot_act path — no new multi-cycle structure vs 564",
+    "parent_fit_gate": "REQUIRED before release; w-clock does not run Quartus",
+    "parent_check": "make post-fit-timing STA_RPT=... && make post-fit-timing-margin; publish Fmax Summary L128-class line for clk_sys",
+    "prediction_locked": "PASS @20 MHz medium; MISS publishable if Fmax_sys<20 or slack<0"
+  },
+  "ascal_vsync_dither_option_d": {
+    "priority": "c_after_fit_and_720p_present",
+    "arithmetic_exact_long_run": true,
+    "ascal_absorb_default": true,
+    "evidence": ".agent-work/w-clock/ASCAL_VSYNC_DITHER_ABSORB.md",
+    "implemented": false,
+    "sta_impact": "UNKNOWN_UNTIL_IMPLEMENTED — dither FSM not in netlist yet; V705 fixed-constant STA is the current film gate"
   },
   "b13_runtime_de": {
     "use_rt_geom": true,
@@ -125,11 +136,11 @@
     "red": "FAULT_B8_FORCE_ALWAYS pins 960 over live PLXG 624"
   },
   "b15_runtime_content_fps": {
-    "abi": "parent arbitration #2 PLXG q5 @ +0x828",
+    "abi": "parent arbitration #2 + #4 PLXG q5 @ +0x828",
     "q5": {
       "content_fps": "[31:24]",
       "fps_valid": "[33]",
-      "reserved": "[63:34]=0"
+      "reserved": "[63:34]=0 (#4: bit34 stays RESERVED; path #2.1 VACATED)"
     },
     "consumer": "plex_content_fps_sel.sv",
     "unspecified": "fps_valid=0 \u2192 film-class 24 (do not invent 30)",

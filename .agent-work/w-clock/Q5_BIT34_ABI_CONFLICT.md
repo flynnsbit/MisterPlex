@@ -1,7 +1,9 @@
 # PLXG q5 bit34 — three-way ABI conflict (rd-duck 2026-08-03)
 
-**Status: BLOCKED on parent arbitration.** w-clock will not claim NTSC/rational
-cadence fixed and will not ship a unilateral `fps_1001` consumer.
+**Status: RESOLVED by parent arbitration #4 — bit34 STAYS RESERVED.**
+w-path "#2.1" VACATED. `fps_1001` concept provisional for a future freeze only
+as a single-window five-site merge. w-clock still has no consumer and must not
+add one until that freeze. See `PARENT_ABI_ARBITRATION_4.md`.
 
 ## Parent freeze (ABI arbitration #2 — still the only parent-signed wire)
 

@@ -45,16 +45,25 @@ assert c["drift"]["film_slip_s"] > 40 and c["drift"]["film_slip_s"] < 41.5
 assert "source-locked for 23.976/29.97" in c["claims_forbidden_until_fix"]
 assert "fps_1001 / bit34 rational cadence fixed (unilateral w-path #2.1)" in c["claims_forbidden_until_fix"]
 assert c.get("cross_lane_bit34", {}).get("rational_cadence_fixed") is False
-assert "THREE_WAY_CONFLICT" in c.get("status", "") or "OPEN_ABI" in c.get("status", "")
+st = c.get("status", "")
+assert "OPEN_CADENCE" in st or "OPEN_ABI" in st or "RESERVED" in st
+assert c.get("parent_arbitration_4", {}).get("bit34", "").find("RESERVED") >= 0
 b34 = c["cross_lane_bit34"]
-assert "RESERVED" in b34["parent_abi_2"]
-assert "fps_1001" in b34["w_path_f31a6eb9"]
+assert "RESERVED" in b34.get("parent_abi_2_and_4", b34.get("parent_abi_2", ""))
+assert "VACATED" in b34["w_path_f31a6eb9"] or "fps_1001" in b34["w_path_f31a6eb9"]
 assert "63:34" in b34["w_mem_latch"]
 assert "NO fps_1001" in b34["w_clock"] or "no fps_1001" in b34["w_clock"].lower()
+# Option D correction: 2-value dither exact long-run; single fixed is not
+od = c.get("option_d_vtotal_dither", {})
+assert od.get("two_value_dither_long_run_exact") is True
+assert od.get("single_fixed_vtotal_exact_ntsc") is False
+assert od.get("implemented") is False
 conf = root / ".agent-work/w-clock/Q5_BIT34_ABI_CONFLICT.md"
 assert conf.is_file(), "missing Q5_BIT34_ABI_CONFLICT.md"
-assert "parent arbitration" in conf.read_text().lower()
-print("OK json wall contract + bit34 three-way conflict fence")
+assert "arbitration #4" in conf.read_text().lower() or "parent arbitration" in conf.read_text().lower()
+arb4 = root / ".agent-work/w-clock/PARENT_ABI_ARBITRATION_4.md"
+assert arb4.is_file(), "missing PARENT_ABI_ARBITRATION_4.md"
+print("OK json wall + parent #4 bit34 RESERVED + D dither arithmetic fence")
 
 # Product path still integer-only fps — no unilateral fps_1001 consumer
 sel = (root / "fpga/Plex_MiSTer/rtl/plex_content_fps_sel.sv").read_text()

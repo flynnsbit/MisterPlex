@@ -324,6 +324,8 @@ present-720p-fit-contract:
 	$(ROOT)/scripts/check_present_720p_fit_contract.py --root $(ROOT)
 	$(ROOT)/tests/unit/test_runtime_beam_ascal_guards.sh
 	$(ROOT)/tests/unit/test_ntsc_rational_cadence_wall.sh
+	$(ROOT)/tests/unit/test_ascal_iauto_de_only.sh
+	$(ROOT)/tests/unit/test_ascal_vsync_dither_absorb.sh
 	$(ROOT)/tests/unit/test_present_core_owner_merge.sh
 	$(ROOT)/tests/unit/test_b15_product_fps_wiring.sh
 
