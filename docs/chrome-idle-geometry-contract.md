@@ -134,6 +134,8 @@ from the beam, not coded size.
 **Honesty label:** this ships **720p output**, not 720p source. True 1280×720 source
 needs DMA (w-path) to drop the 14.97 ms copy.
 
+**SPS (parent measured):** coded height **544** with bottom crop → **540 display** before ARM bank copy. Product chrome/idle stay on **HDMI 1280×720**; bank is **960×540 display** (777,600 B). Bitstream/fabric-decode paths must size for **544**.
+
 **Parent glass score for this path:**  
 `docs/fab-playing-parent-capture-contract.md` + `scripts/hdmi_score_pair.sh`  
 (not the idle cyan contract).

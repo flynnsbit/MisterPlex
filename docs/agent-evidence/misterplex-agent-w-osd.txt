@@ -1,11 +1,12 @@
-lane=w-osd tip=pending hunt+guards
-beacon=5c498b29 PLEX_FAB_PLAY_BEACON already landed
+lane=w-osd tip=follow parent SPS settle
+beacon=5c498b29 PLEX_FAB_PLAY_BEACON
+hunt=6431aaa3 coded-size refuse
 
-## Hunt: source≥1280 defect class in chrome path
-docs/chrome-source-vs-output-hunt.md
-- fabric RTL: CLEAN (HDMI_* only, no coded_w>=1280)
-- PLXC ARM: defaults 1280x720; never used outW_ decode; hardened refuse 960x540
-- ACTIVE PASS-A (>=680): does NOT catch 5-line crop — honest
+## Parent SPS settle (ACK)
+Product path: coded 544 crop→540 display, bank 777600 B, 540*4/3=720 exact.
+No 5-line glass crop for w-osd ACTIVE design on ARM path.
+544 remains for bitstream/fabric-decode (w-mem) — not our plane.
 
-## w-nostub
-Still merge 5c498b29+ for PLAY_BEACON; enable PLEX_FAB_PLAY_BEACON=1 on fit
+## Fit
+w-mem owns Option-C bank predicate. w-osd does not duplicate.
+Merge PLAY_BEACON for PLAYING score when fit resumes.

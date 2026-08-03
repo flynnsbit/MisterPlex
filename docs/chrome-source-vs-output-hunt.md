@@ -44,19 +44,21 @@ must feed HDMI mon_* only, never coded.)
 - `checkHudIsOutputNotCoded` — HUD y on 720p bottom band  
 - `checkCodedSizeRejectedForChrome` — coded sizes flagged; 960×540 HUD maxY&lt;540  
 
-## ACTIVE gate vs ~5-line crop (parent coded-540 → 16-align 544 question)
+## ACTIVE gate vs coded 544 (SETTLED by parent SPS measurement 2026-08-03)
 
-PASS-A requires `ACTIVE_H >= 680`. A **5-line** shortfall on a true 720 content
-height (e.g. 715 vs 720) **still PASSes** with large margin (35 lines).  
+**Product path (ARM decode → bank):** libavcodec applies SPS crop before AVFrame.
+Parent bitstream dump: coded height **544**, `frame_crop_bottom_offset=2` →
+**4 lines** cropped → **540 display**. Payload **777,600 B**.  
+**540 × 4/3 = 720 exactly** — no vertical crop on glass for this path.  
+w-osd PASS-A does **not** need to design around a 5-line shortfall **on this path**.
 
-`FULLFILL` (scorer flag: ACTIVE ≥1240×700) is a coarse near-full hint only —
-still will not reliably flag 5 lines after grabber scale into 1920×1080.  
+**Where 544 still matters (not w-osd product glass):** fabric decoder / bitstream
+ring consuming **coded** coefficients sees 544 lines / 783,360 B and must crop
+4 bottom lines. That is w-mem ring ABI + future fabric decode — record only.
 
-**Honest answer:** this contract distinguishes control letterbox (923×717) from
-full-ish fill (≥1100×680). It does **not** distinguish correct 720 from
-nearly-correct 715. A MB-align crop bug that only drops a few lines is
-**invisible** to PASS-A. Owning that precision is w-scaler/w-mem geom + a
-tighter glass metric (or known pattern edges), not the loose PLAYING A gate.
+**General measurement honesty (unchanged):** PASS-A floor `ACTIVE_H≥680` still
+cannot distinguish correct-720 from nearly-correct-715 after grabber scale.
+That is a scorer precision limit, not a product-path crop bug.
 
 ## Beacon
 
