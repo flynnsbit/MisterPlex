@@ -52,8 +52,23 @@ assign PLXC_EXT_WDATA = plxc_core_wdata;
 //////////////////////////////////////////////////////////////////
 
 wire [1:0] ar = status[122:121];
-assign VIDEO_ARX = (!ar) ? 12'd4 : (ar - 1'd1);
-assign VIDEO_ARY = (!ar) ? 12'd3 : 12'd0;
+// Parent ABI #2 q5 nets — CANONICAL names plxg_* (w-mem producer authority).
+// B9: plxg_dar_* → plex_video_ar. Unspecified dar_valid=0 + menu Original →
+// deliberate legacy 4:3 fallback (plex_video_ar.sv). Full Screen remains 0:0.
+// B15: plxg_fps_* → plex_content_fps_sel → present_core (never invent 30).
+wire        plxg_dar_valid;
+wire [11:0] plxg_dar_x;
+wire [11:0] plxg_dar_y;
+wire        plxg_fps_valid;
+wire [7:0]  plxg_content_fps;
+plex_video_ar u_plex_video_ar (
+	.ar_menu(ar),
+	.host_dar_valid(plxg_dar_valid),
+	.host_dar_x(plxg_dar_x),
+	.host_dar_y(plxg_dar_y),
+	.VIDEO_ARX(VIDEO_ARX),
+	.VIDEO_ARY(VIDEO_ARY)
+);
 
 `include "build_id.v"
 localparam CONF_STR = {
@@ -239,8 +254,19 @@ wire        content_res_640x480 = status[4];
 wire [9:0]  content_width       = content_res_640x480 ? 10'd640 : 10'd320;
 wire [9:0]  content_height      = content_res_640x480 ? 10'd480 : 10'd240;
 
-// Legacy cadence input is now fixed; the daemon handles exact content pacing.
+// B15: content_fps from PLXG q5 via plex_content_fps_sel (w-clock owner).
+// fps_valid && fps!=0 → q5 value; else unspecified → film 24. Never invent 30.
+// FAULT_B15_FPS_HARDWIRE_24: red twin restores pre-B15 permanent 24.
+`ifdef FAULT_B15_FPS_HARDWIRE_24
 wire [7:0] content_fps = 8'd24;
+`else
+wire [7:0] content_fps;
+plex_content_fps_sel u_content_fps_sel (
+	.fps_valid(plxg_fps_valid),
+	.content_fps_q5(plxg_content_fps),
+	.content_fps_eff(content_fps)
+);
+`endif
 
 // Refresh interval = floor((f_MHz * 64_000us / 8192 rows) - 1). The
 // counter toggles refresh after REFRESH_CYCLES+1 clocks, so every option
@@ -1032,6 +1058,59 @@ always @(posedge clk_sys) begin
 end
 
 // --- PLXC DDR loader (ARM semantic list → host_if beats) ---------------------
+// PLXG q5 producer (w-mem owns full poller). Integration: latch present and
+// wired to plxg_* so B9/B15 consumers are never undriven. Host writes via
+// w-mem poller land later; idle inputs keep dar_valid=0 → deliberate 4:3.
+// frame_boundary tied 0 until present VS is routed (B16 promote still correct
+// once poller+VS land — connectivity gate is the parent miss #11 class).
+wire        plxg_win_en, plxg_geom_en, plxg_live_valid, plxg_pending_valid, plxg_promote_pulse;
+wire [10:0] plxg_cw, plxg_ch, plxg_cx0, plxg_cy0;
+wire [11:0] plxg_hde, plxg_vde, plxg_y_stride;
+wire [10:0] plxg_coded_w, plxg_coded_h, plxg_c_stride, plxg_dw, plxg_dh;
+wire [10:0] plxg_px, plxg_py, plxg_cl, plxg_ct;
+wire [15:0] plxg_live_seq;
+wire [13:0] plxg_live_epoch;
+present_geom_latch u_plxg_latch (
+	.clk(clk_sys),
+	.reset(reset),
+	.wr_en(1'b0),
+	.wr_idx(3'd0),
+	.wr_data(64'd0),
+	.commit(1'b0),
+	.frame_boundary(1'b0),
+	.win_enable(plxg_win_en),
+	.geom_enable(plxg_geom_en),
+	.content_w(plxg_cw),
+	.content_h(plxg_ch),
+	.content_x0(plxg_cx0),
+	.content_y0(plxg_cy0),
+	.h_de(plxg_hde),
+	.v_de(plxg_vde),
+	.coded_w(plxg_coded_w),
+	.coded_h(plxg_coded_h),
+	.y_stride(plxg_y_stride),
+	.chroma_stride(plxg_c_stride),
+	.display_w(plxg_dw),
+	.display_h(plxg_dh),
+	.present_x(plxg_px),
+	.present_y(plxg_py),
+	.crop_left(plxg_cl),
+	.crop_top(plxg_ct),
+	.dar_valid(plxg_dar_valid),
+	.dar_x(plxg_dar_x),
+	.dar_y(plxg_dar_y),
+	.fps_valid(plxg_fps_valid),
+	.content_fps(plxg_content_fps),
+	.live_valid(plxg_live_valid),
+	.live_seq(plxg_live_seq),
+	.live_epoch(plxg_live_epoch),
+	.pending_valid(plxg_pending_valid),
+	.promote_pulse(plxg_promote_pulse)
+);
+(* keep = "true" *) wire _keep_plxg_q5 =
+	plxg_dar_valid | plxg_fps_valid | |plxg_dar_x | |plxg_dar_y | |plxg_content_fps |
+	plxg_live_valid | plxg_promote_pulse | |plxg_live_seq;
+
 // Default ENABLE=0: zero DDR traffic, host_we stuck 0 (nostub-safe).
 // PLEX_CHROME_DDR: ENABLE=1 but m_gnt stays 0 until w-mem gives an arbiter
 // slot — host beats remain 0 until that lands (honest: not fake-live).

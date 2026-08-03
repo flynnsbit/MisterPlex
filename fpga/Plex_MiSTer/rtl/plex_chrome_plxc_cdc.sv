@@ -66,7 +66,7 @@ module plex_chrome_plxc_cdc #(
 	assign wr_full = (bin2gray(wr_ptr_bin_next) ==
 		{ ~rd_gray_sync[AW:AW-1], rd_gray_sync[AW-2:0] });
 	// almost full: two slots or fewer free (conservative)
-	wire [AW:0] wr_ptr_bin_p2 = wr_ptr_bin + 2'd2;
+	wire [AW:0] wr_ptr_bin_p2 = wr_ptr_bin + (AW+1)'(2);
 	assign wr_almost_full = wr_full ||
 		(bin2gray(wr_ptr_bin_p2) == { ~rd_gray_sync[AW:AW-1], rd_gray_sync[AW-2:0] }) ||
 		(bin2gray(wr_ptr_bin_next) == { ~rd_gray_sync[AW:AW-1], rd_gray_sync[AW-2:0] });

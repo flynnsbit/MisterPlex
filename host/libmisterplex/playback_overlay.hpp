@@ -49,6 +49,11 @@ public:
         showAt(state, positionMs, durationMs, monotonicMs());
     }
 
+    PlaybackOverlayState state() const {
+        std::lock_guard<std::mutex> lock(mu_);
+        return state_;
+    }
+
     void showAt(PlaybackOverlayState state, int64_t positionMs, int64_t durationMs,
                 int64_t nowMs) {
         std::lock_guard<std::mutex> lock(mu_);

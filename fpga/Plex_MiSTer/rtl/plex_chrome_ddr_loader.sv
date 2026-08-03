@@ -62,9 +62,9 @@ module plex_chrome_ddr_loader #(
     localparam [31:0] MAGIC_C = 32'h504C_5843; // PLXC
     localparam [31:0] MAGIC_O = 32'h504C_584F; // PLXO
 
-    localparam [28:0] PLXC_W = (DOORBELL_PHYS + PLXC_OFF) >> 3;
-    localparam [28:0] PLXO_W = (DOORBELL_PHYS + PLXO_OFF) >> 3;
-    localparam [28:0] PLXL_W = (DOORBELL_PHYS + PLXL_OFF) >> 3;
+    localparam [28:0] PLXC_W = 29'((DOORBELL_PHYS + PLXC_OFF) >> 3);
+    localparam [28:0] PLXO_W = 29'((DOORBELL_PHYS + PLXO_OFF) >> 3);
+    localparam [28:0] PLXL_W = 29'((DOORBELL_PHYS + PLXL_OFF) >> 3);
 
     localparam [3:0] S_IDLE        = 4'd0;
     localparam [3:0] S_RD_CTRL     = 4'd1;
@@ -213,7 +213,7 @@ module plex_chrome_ddr_loader #(
 
                 S_WAIT_LIST: begin
                     if (m_rd_valid) begin
-                        list_q[li] <= m_rdata;
+                        list_q[li[$clog2(MAX_CMDS)-1:0]] <= m_rdata;
                         if (li + 8'd1 >= snap_count) begin
                             li <= 8'd0;
 `ifdef FAULT_NO_CTRL_REREAD
@@ -262,7 +262,7 @@ module plex_chrome_ddr_loader #(
                 S_PUSH_LIST: begin
                     host_we    <= 1'b1;
                     host_addr  <= li;
-                    host_wdata <= list_q[li];
+                    host_wdata <= list_q[li[$clog2(MAX_CMDS)-1:0]];
                     if (li + 8'd1 >= snap_count)
                         st <= S_PUSH_CTRL;
                     else

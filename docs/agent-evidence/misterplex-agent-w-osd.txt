@@ -1,16 +1,38 @@
-w-osd status 2026-08-03T07:45:18-05:00
+w-osd status 2026-08-03T08:44:20-05:00
 branch: w-osd-fabric-plane
-HEAD: d894da87
+HEAD: pending-commit
 
-rd-duck review response:
-- full-list CDC conservation: 112 list + ctrl-last = 113 beats
-  test_plex_chrome_plxc_cdc_rtl_sim true rc=0
-  full_list prod_beats=113 list_we=112 cfg_cnt=112 cfg_seq=99 PASS
-- CDC DEPTH=128 (was 16) on module default + sys_top + TB
-- loader MAX_CMDS default 112
-- HOLLOW product gate: Plex.sv m_gnt(1'b0) + "HOLLOW until w-mem"
-  shell asserts hollow still present — address/bank ≠ live OSD
-- R1 still needs w-mem real grant; do not claim live OSD
+PARENT asks: rollcall + make unit verdict + q5 registered + MISSING reconciliation
 
-Prior accepted: bank b5d582ec, halfword ee2894a5, door 5f58f2f9
+1) UNIT_ROLLCALL_OK prereqs=60 cmds=169  true rc=0
+   Registered: test_ddr_720p_abi, counted, vs_bank, plxc_cdc, q5_product_wire
+
+2) test_plex_q5_product_wire_rtl_sim REGISTERED in Makefile unit-unlocked + rtl-sim
+   + rollcall EXPECTED_COMMANDS
+   Ran in make unit: PASS (static plxg_* + green 16:9/fps30 + DROP twin)
+
+3) make unit true rc=0  (log: docs/agent-evidence/w-osd-make-unit-20260803h.log)
+   q5 PASS · rtl_lint PASS · gate_false_green PASS
+
+4) MISSING_COMMAND reconciliation (w-osd tree):
+   - At start: 0 MISSING_COMMAND; 4 UNREGISTERED (osd chrome + ddr_720p_abi) → REGISTERED
+   - Parent's "26 MISSING" was integ-product-v2 (registry claimed scripts absent there).
+     On w-osd EXPECTED does not list those 26/59 integ-only commands — honest: NOT
+     restored here (lane-owned: w-clock/w-mem/w-scaler/w-fitgate). w-osd does not
+     invent empty stubs. 720p guards live on integ/owner trees until coordinated merge.
+   - Worktree-local restores (not code invent): leftedge3 freeze artifact, avsync
+     capture symlink, fabric_decode fit excerpt fixture.
+
+5) q5 product wire on this branch:
+   Ported present_geom_latch + plex_video_ar + plex_content_fps_sel
+   Plex.sv: plxg_* → video_ar + fps_sel → present_core.content_fps
+   Latch idle (wr_en=0) until w-mem poller; connectivity real (parent miss #11)
+   HOLLOW PLXC m_gnt=0 remains until w-mem R1
+
+6) Other fixes this pass:
+   PlaybackOverlay::state() public (misterplexd compile)
+   cadence_swap_path greps B15 fps_sel (not hardwire-as-product)
+   assert_sim_executed rename for false-green guard
+   chrome WIDTH lint clean
+
 no Quartus, no device

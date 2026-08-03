@@ -614,8 +614,8 @@ module plex_chrome #(
                         rh = cw[63:52];
                         // FAULT_HIT_BLEED: inclusive +1 on right/bottom edges
                         if ({4'd0, px} >= cx && {4'd0, py} >= cy &&
-                            {4'd0, px} < (cx + {4'd0, rw} + (FAULT_HIT_BLEED ? 12'd1 : 12'd0)) &&
-                            {4'd0, py} < (cy + {4'd0, rh} + (FAULT_HIT_BLEED ? 12'd1 : 12'd0))) begin
+                            {4'd0, px} < (cx + {4'd0, rw} + (FAULT_HIT_BLEED ? 16'd1 : 16'd0)) &&
+                            {4'd0, py} < (cy + {4'd0, rh} + (FAULT_HIT_BLEED ? 16'd1 : 16'd0))) begin
                             hit_l = 1'b1;
                             rgb_l = 24'h14_14_28;
                         end
@@ -624,8 +624,8 @@ module plex_chrome #(
                         rh  = {4'd0, cw[55:48]};
                         pal = cw[63:56];
                         if ({4'd0, px} >= cx && {4'd0, py} >= cy &&
-                            {4'd0, px} < (cx + {4'd0, rw} + (FAULT_HIT_BLEED ? 12'd1 : 12'd0)) &&
-                            {4'd0, py} < (cy + {4'd0, rh} + (FAULT_HIT_BLEED ? 12'd1 : 12'd0))) begin
+                            {4'd0, px} < (cx + {4'd0, rw} + (FAULT_HIT_BLEED ? 16'd1 : 16'd0)) &&
+                            {4'd0, py} < (cy + {4'd0, rh} + (FAULT_HIT_BLEED ? 16'd1 : 16'd0))) begin
                             hit_l = 1'b1;
                             rgb_l = pal_rgb(pal);
                         end

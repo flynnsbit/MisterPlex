@@ -5,7 +5,7 @@
 # Mutation twin (+HALFWORD_PRODUCT_MAGIC_FIRST): reverse product half order → RED.
 set -euo pipefail
 
-assert_exec() {
+assert_sim_executed() {
   local label="$1"; shift
   local log="$1"; shift
   local missing=0 m
@@ -57,7 +57,7 @@ run_one() {
   set -e
   printf '%s\n' "$out"
   echo "ddr_loader_${name} true rc=$rc"
-  assert_exec "ddr_loader-$name" "$out" "$@"
+  assert_sim_executed "ddr_loader-$name" "$out" "$@"
   if [[ "$rc" -ne "$expect_rc" ]]; then
     echo "FAIL ddr_loader_$name want rc=$expect_rc got $rc" >&2
     exit 1

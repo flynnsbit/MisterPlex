@@ -45,12 +45,27 @@ check "vsync_pulse from fstart" \
 check "advance tied unused at top" \
   "$ROOT/fpga/Plex_MiSTer/Plex.sv" \
   '_unused = \|\{[^}]*advance'
-check "daemon paces content comment" \
+check "B15 fps_sel instantiated" \
   "$ROOT/fpga/Plex_MiSTer/Plex.sv" \
-  'daemon handles exact content pacing'
-check "content_fps hardwired 24" \
+  'plex_content_fps_sel[[:space:]]+u_content_fps_sel'
+check "B15 never invent 30" \
   "$ROOT/fpga/Plex_MiSTer/Plex.sv" \
-  'content_fps = 8.d24|content_fps = 8'\''d24'
+  'Never invent 30'
+check "present_core takes content_fps net" \
+  "$ROOT/fpga/Plex_MiSTer/Plex.sv" \
+  '\.content_fps\(content_fps\)'
+# Product must NOT hardwire 24 outside FAULT_B15 red twin (rule #10).
+if awk '
+  /FAULT_B15_FPS_HARDWIRE_24/ { fault=1; next }
+  /`endif/ && fault { fault=0; next }
+  !fault && /wire[[:space:]]*\[7:0\][[:space:]]*content_fps[[:space:]]*=[[:space:]]*8.d24/ { found=1 }
+  END { exit found?0:1 }
+' "$ROOT/fpga/Plex_MiSTer/Plex.sv"; then
+  echo "FAIL C1: product hardwires content_fps=8'd24 outside FAULT_B15" >&2
+  FAIL=1
+else
+  echo "OK C1: product content_fps via fps_sel (hardwire only in FAULT_B15 twin)"
+fi
 
 # cadence.hpp not included from arm/
 if grep -rn --include='*.cpp' --include='*.hpp' 'cadence.hpp' "$ROOT/arm" >/dev/null 2>&1; then

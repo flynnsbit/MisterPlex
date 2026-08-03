@@ -2,7 +2,7 @@
 # plex_chrome bank map: live-hold oracle + VS coincidence + invert red twin.
 set -euo pipefail
 
-assert_exec() {
+assert_sim_executed() {
   local label="$1"; shift
   local log="$1"; shift
   local missing=0 m
@@ -52,7 +52,7 @@ run_one() {
   set -e
   printf "%s\n" "$out"
   echo "vs_bank_${name} true rc=$rc"
-  assert_exec "vs_bank-$name" "$out" "$@"
+  assert_sim_executed "vs_bank-$name" "$out" "$@"
   if [[ "$rc" -ne "$expect_rc" ]]; then
     echo "FAIL vs_bank_$name want rc=$expect_rc got $rc" >&2
     exit 1
