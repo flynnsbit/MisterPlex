@@ -56,3 +56,4 @@ v3/
 tests/hw/e2e/node_modules/
 # editor/agent backup copies
 *.bak-*
+.build-wmem/
