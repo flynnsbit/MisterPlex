@@ -1,0 +1,85 @@
+w-path LANDING / ORPHAN REPORT (parent mandatory field)
+========================================================
+lane: w-path (p720-path)
+HEAD: 33e939620bc1ec7a4f641436fdab09d5b9aafe4f
+branch: w-path-720p
+main: 035fae51 (GREEN per parent)
+date: 2026-08-03
+rule: do NOT merge unilaterally — parent sequences landings
+
+A) PRODUCT RTL MODULES owned by w-path
+--------------------------------------
+1) host_bank_ingest_credit.sv
+   path: fpga/Plex_MiSTer/rtl/host_bank_ingest_credit.sv
+   introduced: e580f41c feat(path): Route A zero-copy bank ingest contract + PL330 bench
+   ON_MAIN=no
+   IN_FILES_QIP=no   (neither HEAD nor main files.qip)
+   status: ORPHAN — not product until QIP + main
+   to land:
+     - parent review of Route-A PL330 contract (optional path; not Route-B critical path)
+     - add to files.qip ONLY if product-instantiated (currently contract/bench support)
+     - coordinate after w-osd 720p present path (already on main per 035fae51)
+     - make rtl-lint gate (not quartus-sv-subset)
+   note: w-path does NOT own present_video_timing_720p.sv (w-osd; already ON_MAIN=yes IN_FILES_QIP=yes on main)
+
+B) RTL on this branch history but NOT w-path owned (do not land via w-path)
+--------------------------------------------------------------------------
+h264_*, decode_stub, ddr_frame_store, present_core, stream_path, etc. appear in
+branch diff vs ancient merge-base because branch accumulated fleet history.
+Ownership: w-nostub / w-mem / w-scaler / w-osd. Parent merges those lanes.
+
+C) HOST "modules" (not .sv — no files.qip; product = on main + packaged daemon)
+------------------------------------------------------------------------------
+These are the actual w-path deliverables. ON_MAIN / IN_FILES_QIP:
+
+host/libmisterplex/h264_fabric_stream_gate.hpp
+  ON_MAIN=no  IN_FILES_QIP=n/a (host)
+host/libmisterplex/pms_delivery_geom.hpp
+  ON_MAIN=no  IN_FILES_QIP=n/a
+host/libmisterplex/ddr_present_bank.hpp
+  ON_MAIN=no  IN_FILES_QIP=n/a
+host/libmisterplex/plxg_record.hpp
+  ON_MAIN=no  IN_FILES_QIP=n/a
+host/libmisterplex/ffmpeg_vf.hpp
+  ON_MAIN=no  IN_FILES_QIP=n/a
+host/libmisterplex/path_public_symbols.hpp
+  ON_MAIN=no  IN_FILES_QIP=n/a
+host/libmisterplex/plxg_q5_aspect_cadence.hpp
+  ON_MAIN=no  IN_FILES_QIP=n/a
+host/libmisterplex/ddr_frame_layout.hpp
+  ON_MAIN=yes (base) DIFFERS (branch has pad/LEG/Route-B)  IN_FILES_QIP=n/a
+arm/misterplexd/fpga_spi.cpp|.hpp
+  ON_MAIN=yes DIFFERS (writePlxgRecord hot path)  IN_FILES_QIP=n/a
+arm/misterplexd/plex_resolve.cpp|.hpp
+  ON_MAIN=yes DIFFERS (DP default, Route-B 960)  IN_FILES_QIP=n/a
+arm/misterplexd/media_player.cpp|.hpp
+  ON_MAIN=yes DIFFERS (plan trust, q5 inject)  IN_FILES_QIP=n/a
+arm/misterplexd/main.cpp
+  ON_MAIN=yes DIFFERS  IN_FILES_QIP=n/a
+
+D) What it would take to land w-path host stack (parent sequences)
+-----------------------------------------------------------------
+1. Parent cherry-pick / PR series AFTER w-osd present path stable on main (done).
+2. Split reviewable stacks (suggested order):
+   a) geometry+pad: ddr_frame_layout, ffmpeg_vf, plxg_record, tests (426/pad/LEG)
+   b) publish path: ddr_present_bank, fpga_spi writePlxgRecord, static+lab tests
+   c) resolve policy: pms_delivery_geom Route-B 960, plex_resolve DP/two-regime,
+      h264_fabric_stream_gate miss#15
+   d) media_player plan-trust + q5 pending inject
+3. Gates before merge: make unit; make rtl-lint (no new RTL expected in host land);
+   test_no_private_data; no secrets.
+4. Do NOT land host_bank_ingest_credit.sv with host stack unless Route-A is
+   product-scheduled — keep it out of files.qip until instantiated.
+5. Rebase onto current main (035fae51+) first — branch files.qip is BEHIND main
+   (missing 720p present modules already on main).
+
+E) HEAD files.qip lag warning
+-----------------------------
+main files.qip has present_video_timing_720p.sv + 960 + beam modules (w-osd).
+w-path HEAD files.qip does NOT — branch is stale vs main on QIP.
+Landing must rebase onto main, not overwrite main's QIP with branch QIP.
+
+F) Tests (latest)
+-----------------
+make unit; echo "make unit true rc=$?"  → 0 (prior run on c423052e/c399fbc6 stack)
+targeted path tests true rc=0 each (see RD_DUCK_REAUDIT_HEAD.txt)
