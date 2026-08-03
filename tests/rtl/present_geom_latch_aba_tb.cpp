@@ -20,7 +20,7 @@ static uint64_t pack_q0(bool win, bool geom, uint16_t seq, uint16_t epoch) {
 	if (geom) hi |= 2ull;
 	hi |= (uint64_t)(epoch & 0x3FFF) << 2;
 	hi |= (uint64_t)seq << 16;
-	return (hi << 32) | 0x47584C50ull;
+	return (hi << 32) | 0x504C5847ull;
 }
 
 static void promote(Vpresent_geom_latch_aba_tb_top* t) {
@@ -45,6 +45,9 @@ static void write_record(Vpresent_geom_latch_aba_tb_top* t, uint64_t q0,
 		tick(t);
 		t->wr_en = 0; tick(t);
 	}
+	// q5 DAR/fps unspecified, reserved=0
+	t->wr_en = 1; t->wr_idx = 5; t->wr_data = 0;
+	tick(t); t->wr_en = 0; tick(t);
 	t->commit = 1; tick(t); t->commit = 0; tick(t); tick(t);
 	if (do_promote)
 		promote(t);

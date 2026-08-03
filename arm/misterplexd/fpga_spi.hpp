@@ -375,7 +375,7 @@ private:
     bool ensurePlxgBootstrapMap();
     void releasePlxgBootstrapMap();
     // Write atomic 5-qword PLXG at bootstrap phys 0x300FF800 (fence each qword).
-    bool writePlxgRecord(const uint64_t q[5], uint16_t seq);
+    bool writePlxgRecord(const uint64_t q[6], uint16_t seq);
     bool ensureBitstreamDdrMap();
     void releaseBitstreamDdrMap();
     bool readBitstreamFpgaCount(uint32_t& readCount);

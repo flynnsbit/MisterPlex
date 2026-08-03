@@ -1,5 +1,5 @@
 #pragma once
-// PLXG 5-qword atomic geometry record — lockstep with present_geom_latch.sv.
+// PLXG 6-qword atomic geometry record — lockstep with present_geom_latch.sv.
 //
 // Offset: doorbell + FIXED 0x800 (parent ABI freeze; NOT +0x130 PLXC; NOT
 // derived from MAX_CMDS). Bootstrap phys: 0x300FF000 + 0x800 = 0x300FF800.
@@ -11,9 +11,9 @@
 //      FPGA reset last_seq=0 + daemon restart emitting same seq1 lets poller
 //      sample q0=1, host update body, recommit q0=1; reread matches → torn ABA.
 //   1) Invalidate q0 low32 = 0 (clear magic) + DMB
-//   2) Store body q[1]..q[4]
+//   2) Store body q[1]..q[5]
 //   3) Store q0 high32, then q0 low32 = magic LAST (commit)
-//   Poller reads q0..q4 then RE-READS q0; commit only if magic+seq match.
+//   Poller reads q0..q5 then RE-READS q0; commit only if magic+seq match.
 // Without step 1, post-reset last_seq=0 + retained q0 seq=1 lets the poller
 // accept a mixed body while reread still sees the old q0. Never three temporal
 // beats to one slot. Legacy path must publish geom_enable=0.
@@ -31,8 +31,10 @@ inline bool plxgGeomDimsOk(int codedW, int codedH, int yStride, int chromaStride
 inline bool plxgRawGeomOk(int codedW, int codedH, int yStride, int chromaStride,
                           int maxW = 1280, int maxH = 720);
 
-constexpr uint32_t kPlxgRecordQwords = 5u;
-constexpr uint32_t kPlxgRecordBytes = kPlxgRecordQwords * 8u; // 40
+constexpr uint32_t kPlxgRecordQwords = mailbox_abi::kPlxgQwords; // 6
+constexpr uint32_t kPlxgRecordBytes = kPlxgRecordQwords * 8u; // 48
+static_assert(kPlxgRecordQwords == 6u, "PLXG is 6 qwords after q5 DAR/fps");
+static_assert(kPlxgRecordBytes == mailbox_abi::kPlxgBytes, "record bytes lockstep");
 
 // Bit pack matches present_geom_latch.sv shadow decode.
 struct PlxgRecord {
@@ -42,9 +44,9 @@ struct PlxgRecord {
 };
 
 // Body indices after q0 invalidate; q0 commit is separate (magic-last).
-inline constexpr int kPlxgBodyOrder[4] = {1, 2, 3, 4};
+inline constexpr int kPlxgBodyOrder[5] = {1, 2, 3, 4, 5};
 // Legacy name: body then logical q0 slot (invalidate is step 0, not in this list).
-inline constexpr int kPlxgPublishOrder[5] = {1, 2, 3, 4, 0};
+inline constexpr int kPlxgPublishOrder[6] = {1, 2, 3, 4, 5, 0};
 
 // q0 pack lockstep present_geom_latch.sv:
 //   [31:0] magic  [32] win  [33] geom  [47:34] epoch/session  [63:48] seq
@@ -98,6 +100,42 @@ inline uint64_t packPlxgQ4(int presentX, int presentY, int cropLeft, int cropTop
     return px | (py << 16) | (cl << 32) | (ct << 48);
 }
 
+// q5 @ +0x828 (parent ABI arbitration #2) — DAR + content_fps.
+//   [11:0]  dar_x       [23:12] dar_y       [31:24] content_fps
+//   [32]    dar_valid   [33]    fps_valid   [63:34] RESERVED must be 0
+// Receiver MUST reject nonzero reserved (forward-compat trap).
+inline uint64_t packPlxgQ5(unsigned darX, unsigned darY, unsigned contentFps,
+                           bool darValid, bool fpsValid) {
+    uint64_t w = 0;
+    w |= static_cast<uint64_t>(darX & 0xFFFu);
+    w |= static_cast<uint64_t>(darY & 0xFFFu) << 12;
+    w |= static_cast<uint64_t>(contentFps & 0xFFu) << 24;
+    if (darValid)
+        w |= 1ull << 32;
+    if (fpsValid)
+        w |= 1ull << 33;
+    // reserved [63:34] left zero
+    return w;
+}
+
+inline bool plxgQ5ReservedOk(uint64_t q5) {
+    return ((q5 >> 34) & 0x3FFFFFFFull) == 0;
+}
+
+inline void plxgQ5Unpack(uint64_t q5, unsigned* darX, unsigned* darY,
+                         unsigned* fps, bool* darValid, bool* fpsValid) {
+    if (darX)
+        *darX = static_cast<unsigned>(q5 & 0xFFFu);
+    if (darY)
+        *darY = static_cast<unsigned>((q5 >> 12) & 0xFFFu);
+    if (fps)
+        *fps = static_cast<unsigned>((q5 >> 24) & 0xFFu);
+    if (darValid)
+        *darValid = ((q5 >> 32) & 1ull) != 0;
+    if (fpsValid)
+        *fpsValid = ((q5 >> 33) & 1ull) != 0;
+}
+
 // Product 960×540 storage → Option-C canvas DE 1280×720, native_push geom.
 inline PlxgRecord makePlxgRecord960x540Native(uint16_t seq) {
     PlxgRecord r{};
@@ -109,6 +147,7 @@ inline PlxgRecord makePlxgRecord960x540Native(uint16_t seq) {
     r.q[2] = packPlxgQ2(/*h_de*/ 1280, /*v_de*/ 720, /*coded*/ 960, /*ch*/ 540);
     r.q[3] = packPlxgQ3(/*y*/ 960, /*c*/ 480, /*dw*/ 960, /*dh*/ 540);
     r.q[4] = packPlxgQ4(/*px*/ 0, /*py*/ 0, /*cl*/ 0, /*ct*/ 0);
+    r.q[5] = packPlxgQ5(0, 0, 0, false, false);
     r.valid = true;
     return r;
 }
@@ -123,6 +162,7 @@ inline PlxgRecord makePlxgRecordDisable(uint16_t seq) {
     r.q[2] = 0;
     r.q[3] = 0;
     r.q[4] = 0;
+    r.q[5] = 0;
     r.valid = true;
     return r;
 }
@@ -164,7 +204,7 @@ inline uint16_t plxgNextSeqFaultIgnoreRetained(uint16_t softwareLast) {
 }
 
 // Host-side model of poller tear check: after q0..q4 snap, q0 must still match.
-inline bool plxgPollerAcceptsSnapshot(const uint64_t snap[5], uint64_t q0_reread,
+inline bool plxgPollerAcceptsSnapshot(const uint64_t snap[6], uint64_t q0_reread,
                                       uint16_t lastSeq) {
     if (static_cast<uint32_t>(snap[0]) != mailbox_abi::kPlxgMagic)
         return false;
@@ -192,9 +232,9 @@ inline void plxgHostInvalidateQ0(uint8_t* ctrlPage) {
     std::memset(ctrlPage + off, 0, 4);
 }
 
-// Step 2: body q1..q4.
+// Step 2: body q1..q5.
 inline void plxgHostStoreBody(uint8_t* ctrlPage, const PlxgRecord& rec) {
-    for (int k = 0; k < 4; ++k) {
+    for (int k = 0; k < 5; ++k) {
         const int qi = kPlxgBodyOrder[k];
         plxgCtrlStoreQ(ctrlPage, qi, rec.q[qi]);
     }
@@ -227,17 +267,20 @@ inline void plxgHostStoreFaultNoInvalidate(uint8_t* ctrlPage, const PlxgRecord& 
     plxgHostCommitQ0(ctrlPage, rec.q[0]);
 }
 
-// Poller one-shot snapshot model (q0..q4 then reread q0).
+// Poller one-shot snapshot model (q0..q5 then reread q0).
 inline bool plxgPollerTryCommit(const uint8_t* ctrlPage, uint16_t lastSeq,
-                                uint64_t snapOut[5] = nullptr) {
-    uint64_t snap[5];
-    for (int i = 0; i < 5; ++i)
+                                uint64_t snapOut[6] = nullptr) {
+    uint64_t snap[6];
+    for (int i = 0; i < 6; ++i)
         snap[i] = plxgCtrlLoadQ(ctrlPage, i);
     const uint64_t q0b = plxgCtrlLoadQ(ctrlPage, 0); // reread
     if (snapOut) {
-        for (int i = 0; i < 5; ++i)
+        for (int i = 0; i < 6; ++i)
             snapOut[i] = snap[i];
     }
+    // Reserved nonzero on q5 is torn/illegal — refuse (matches latch).
+    if (!plxgQ5ReservedOk(snap[5]))
+        return false;
     return plxgPollerAcceptsSnapshot(snap, q0b, lastSeq);
 }
 
@@ -267,7 +310,7 @@ inline uint16_t plxgHostWriteRecordRestartSafe(uint8_t* ctrlPage, PlxgRecord rec
 inline bool plxgDaemonRestartDisableCommits(uint16_t liveSeq, bool honorRetained) {
     std::uint8_t page[0x1000]{};
     const PlxgRecord live = makePlxgRecord960x540Native(liveSeq);
-    for (int i = 0; i < 5; ++i)
+    for (int i = 0; i < 6; ++i)
         plxgCtrlStoreQ(page, i, live.q[i]);
     uint16_t swLast = 0; // new FpgaSpi
     const PlxgRecord dis = makePlxgRecordDisable(1); // advisory seq ignored
@@ -285,13 +328,13 @@ inline bool plxgRetainedDdrResetTornAcceptedWithFaultWriter(const PlxgRecord& ol
                                                             const PlxgRecord& newRec) {
     std::uint8_t page[0x1000]{};
     // Install complete old record (retained DDR across FPGA reset).
-    for (int i = 0; i < 5; ++i)
+    for (int i = 0; i < 6; ++i)
         plxgCtrlStoreQ(page, i, oldRec.q[i]);
     // Host FAULT path starts body rewrite without invalidating q0.
     plxgHostStoreBody(page, newRec); // q0 still old valid seq
     // Poller after FPGA reset (last_seq=0): sees old q0 + new body, reread old q0.
-    uint64_t snap[5];
-    for (int i = 0; i < 5; ++i)
+    uint64_t snap[6];
+    for (int i = 0; i < 6; ++i)
         snap[i] = plxgCtrlLoadQ(page, i);
     // q0 still old (host has not committed new q0 yet)
     return plxgPollerAcceptsSnapshot(snap, snap[0], /*lastSeq=*/0);
@@ -300,13 +343,13 @@ inline bool plxgRetainedDdrResetTornAcceptedWithFaultWriter(const PlxgRecord& ol
 inline bool plxgRetainedDdrResetRejectedWithSeqlockWriter(const PlxgRecord& oldRec,
                                                           const PlxgRecord& newRec) {
     std::uint8_t page[0x1000]{};
-    for (int i = 0; i < 5; ++i)
+    for (int i = 0; i < 6; ++i)
         plxgCtrlStoreQ(page, i, oldRec.q[i]);
     // GOOD: invalidate q0 first, then body — poller mid-update must not accept.
     plxgHostInvalidateQ0(page);
     plxgHostStoreBody(page, newRec);
-    uint64_t snap[5];
-    for (int i = 0; i < 5; ++i)
+    uint64_t snap[6];
+    for (int i = 0; i < 6; ++i)
         snap[i] = plxgCtrlLoadQ(page, i);
     // First q0 sample has magic cleared → reject; reread also invalid.
     if (plxgPollerAcceptsSnapshot(snap, snap[0], /*lastSeq=*/0))
@@ -324,7 +367,7 @@ inline bool plxgRetainedDdrResetRejectedWithSeqlockWriter(const PlxgRecord& oldR
 inline bool plxgAbaSameSeqRecommitAcceptsTorn(uint16_t retainedSeq = 1) {
     std::uint8_t page[0x1000]{};
     const PlxgRecord oldR = makePlxgRecord960x540Native(retainedSeq);
-    for (int i = 0; i < 5; ++i)
+    for (int i = 0; i < 6; ++i)
         plxgCtrlStoreQ(page, i, oldR.q[i]);
     // Poller (post FPGA reset, last_seq=0) samples q0 first.
     const uint64_t snap0 = plxgCtrlLoadQ(page, 0);
@@ -340,9 +383,9 @@ inline bool plxgAbaSameSeqRecommitAcceptsTorn(uint16_t retainedSeq = 1) {
     plxgHostStoreBody(page, neu);
     plxgHostCommitQ0(page, neu.q[0]); // == snap0
     // Poller finishes: body is disable, q0 reread equals snap0 (ABA).
-    uint64_t snap[5];
+    uint64_t snap[6];
     snap[0] = snap0;
-    for (int i = 1; i < 5; ++i)
+    for (int i = 1; i < 6; ++i)
         snap[i] = plxgCtrlLoadQ(page, i);
     const uint64_t q0b = plxgCtrlLoadQ(page, 0);
     // Body must actually differ or this is not a tear.
@@ -356,7 +399,7 @@ inline bool plxgAbaSameSeqRecommitAcceptsTorn(uint16_t retainedSeq = 1) {
 inline bool plxgAbaIncrementSeqRejectsTornThenFreshCommits(uint16_t retainedSeq = 1) {
     std::uint8_t page[0x1000]{};
     const PlxgRecord oldR = makePlxgRecord960x540Native(retainedSeq);
-    for (int i = 0; i < 5; ++i)
+    for (int i = 0; i < 6; ++i)
         plxgCtrlStoreQ(page, i, oldR.q[i]);
     const uint64_t snap0 = plxgCtrlLoadQ(page, 0);
     uint16_t sw = 0; // new daemon
@@ -365,9 +408,9 @@ inline bool plxgAbaIncrementSeqRejectsTornThenFreshCommits(uint16_t retainedSeq 
     if (used == retainedSeq || sw != used)
         return false;
     // In-flight poller: first q0 was old retained; reread is new seq → torn reject.
-    uint64_t snap[5];
+    uint64_t snap[6];
     snap[0] = snap0;
-    for (int i = 1; i < 5; ++i)
+    for (int i = 1; i < 6; ++i)
         snap[i] = plxgCtrlLoadQ(page, i);
     const uint64_t q0b = plxgCtrlLoadQ(page, 0);
     if (plxgPollerAcceptsSnapshot(snap, q0b, /*lastSeq=*/0))
@@ -422,6 +465,7 @@ struct DdrM1SubarbModel {
 
 // Behavioral latch (host/TB) — same promotion rules as present_geom_latch.sv.
 // fault_no_epoch=true models PRESENT_GEOM_LATCH_FAULT_NO_EPOCH (B4 red twin).
+// fault_ignore_q5_reserved=true models pre-q5 reserved accept (ABI #2 red twin).
 struct PlxgLatchModel {
     bool win_enable = false;
     bool geom_enable = false;
@@ -429,17 +473,22 @@ struct PlxgLatchModel {
     int h_de = 0, v_de = 0, coded_w = 0, coded_h = 0;
     int y_stride = 0, chroma_stride = 0, display_w = 0, display_h = 0;
     int present_x = 0, present_y = 0, crop_left = 0, crop_top = 0;
+    // q5 DAR / cadence (promoted atomically with geometry under B16).
+    unsigned dar_x = 0, dar_y = 0, content_fps = 0;
+    bool dar_valid = false, fps_valid = false;
     bool live_valid = false;
     uint16_t live_seq = 0;
     uint16_t last_seq = 0;
     uint16_t live_epoch = 0;
     uint16_t last_epoch = 0;
     bool fault_no_epoch = false; // red twin: seq-only accept
-    uint64_t sh[5]{};
+    bool fault_ignore_q5_reserved = false; // red twin: accept nonzero reserved
+    bool pending_valid = false;
+    uint64_t sh[6]{};
 };
 
 inline void plxgLatchWrite(PlxgLatchModel& m, unsigned idx, uint64_t data) {
-    if (idx < 5)
+    if (idx < kPlxgRecordQwords)
         m.sh[idx] = data;
 }
 
@@ -448,6 +497,8 @@ inline bool plxgLatchCommit(PlxgLatchModel& m) {
         return false;
     const uint16_t seq = static_cast<uint16_t>(m.sh[0] >> 48);
     const uint16_t epoch = plxgQ0Epoch(m.sh[0]);
+    if (!m.fault_ignore_q5_reserved && !plxgQ5ReservedOk(m.sh[5]))
+        return false; // loud reject nonzero reserved
     if (m.fault_no_epoch) {
         // Pre-B4: seq != last_seq only — accepts epoch=0 after reset (ABA).
         if (seq == m.last_seq)
@@ -482,11 +533,20 @@ inline bool plxgLatchCommit(PlxgLatchModel& m) {
     m.present_y = static_cast<int>((m.sh[4] >> 16) & 0x7FFu);
     m.crop_left = static_cast<int>((m.sh[4] >> 32) & 0x7FFu);
     m.crop_top = static_cast<int>((m.sh[4] >> 48) & 0x7FFu);
+    unsigned dx = 0, dy = 0, fps = 0;
+    bool dv = false, fv = false;
+    plxgQ5Unpack(m.sh[5], &dx, &dy, &fps, &dv, &fv);
+    m.dar_x = dx;
+    m.dar_y = dy;
+    m.content_fps = fps;
+    m.dar_valid = dv;
+    m.fps_valid = fv;
+    m.pending_valid = false;
     return true;
 }
 
 // Simulate host seqlock write (invalidate q0, body, magic-last) + latch.
-inline bool plxgProgramRecord(uint8_t* ctrlPage /* at least 0x800+40 */,
+inline bool plxgProgramRecord(uint8_t* ctrlPage /* at least 0x800+48 */,
                               const PlxgRecord& rec, PlxgLatchModel& latch) {
     if (!rec.valid || !ctrlPage)
         return false;

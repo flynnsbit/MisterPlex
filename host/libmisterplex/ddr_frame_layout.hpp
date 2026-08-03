@@ -168,7 +168,9 @@ constexpr uint32_t kPlex720pTripleDoorbellPhys = 0x305FF000u;
 // PLXC owns +0x130; list +0x140.. must not grow into PLXG (bound assert).
 constexpr uint32_t kDdrFramePlxgOffset = 0x800u;
 constexpr uint32_t kDdrFramePlxgMagic = 0x504C5847u; // "PLXG"
-constexpr uint32_t kDdrFramePlxgBytes = 40u;
+constexpr uint32_t kDdrFramePlxgQwords = 6u;
+constexpr uint32_t kDdrFramePlxgBytes = 48u; // q0..q5
+constexpr uint32_t kDdrFramePlxgQ5Offset = 0x828u;
 constexpr uint32_t kDdrFramePlxgBootstrapPhys = 0x300FF800u;
 static_assert(kDdrFramePlxgOffset == mailbox_abi::kPlxgOffset,
               "ddr_frame_layout PLXG offset must equal mailbox_abi (reachable guard)");
@@ -176,6 +178,12 @@ static_assert(kDdrFramePlxgMagic == mailbox_abi::kPlxgMagic,
               "PLXG magic must match mailbox_abi");
 static_assert(kDdrFramePlxgBytes == mailbox_abi::kPlxgBytes,
               "PLXG size must match mailbox_abi (5 qwords)");
+static_assert(kDdrFramePlxgQ5Offset == mailbox_abi::kPlxgQ5Offset,
+              "PLXG q5 offset lockstep (+0x828)");
+static_assert(kDdrFramePlxgQwords == mailbox_abi::kPlxgQwords,
+              "PLXG qword count lockstep");
+static_assert(kDdrFramePlxgQ5Offset == 0x828u, "PLXG q5 FIXED at +0x828");
+
 static_assert(kDdrFramePlxgBootstrapPhys == mailbox_abi::kPlxgBootstrapPhys,
               "PLXG bootstrap phys must match mailbox_abi");
 static_assert(kDdrFramePlxgOffset == 0x800u, "PLXG wire ABI FIXED at +0x800");
@@ -1327,7 +1335,7 @@ struct DdrFabricOwnedPresentPlan {
     size_t publish_bytes = 0;
     // Atomic 5-qword PLXG record (present_geom_latch). NOT three temporal beats.
     // q[0..4] written contiguously at bootstrap phys 0x300FF800 before doorbell.
-    uint64_t plxg_q[5]{};
+    uint64_t plxg_q[6]{};
     uint16_t plxg_seq = 1;
     // Legacy single-word fields retained for tests that decode Q0/window-shaped
     // views — populated as aliases of the atomic record, not separate wire beats.
@@ -1450,6 +1458,8 @@ inline DdrFabricOwnedPresentPlan makeDdrFabricOwnedPresentPlan(
     p.plxg_q[3] = packPlxgQ3(p.content_layout.y_stride, p.content_layout.chroma_stride,
                              contentW, contentH);
     p.plxg_q[4] = packPlxgQ4(0, 0, 0, 0);
+    p.plxg_q[5] = packPlxgQ5(/*dar_x*/0, /*dar_y*/0, /*fps*/0,
+                           /*dar_valid*/false, /*fps_valid*/false);
     // Aliases for older tests (not separate wire beats).
     p.plxg_word = p.plxg_q[0];
     p.plxg_window_word = p.plxg_q[1];

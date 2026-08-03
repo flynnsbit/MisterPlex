@@ -1,10 +1,10 @@
-// plxg_ddr_poller — read 5-qword PLXG record from DDR and feed present_geom_latch.
+// plxg_ddr_poller — read 6-qword PLXG record from DDR and feed present_geom_latch.
 //
 // Bootstrap address FIXED at product legacy doorbell + 0x800 (0x300FF800).
 //
-// Atomic snapshot (rd-duck): host publishes q1..q4 then q0 last. Poller reads
-// q0..q4 then RE-READS q0; commit only if magic+seq match the first q0 sample
-// (rejects torn mid-write snapshots).
+// Atomic snapshot (rd-duck): host publishes q1..q5 then q0 last. Poller reads
+// q0..q5 then RE-READS q0; commit only if magic+seq match the first q0 sample
+// (rejects torn mid-write snapshots). q5 reserved must be zero (latch enforces).
 //
 // Master port matches ddr_bus_arbiter m1 (single-beat RD). Share m1 only via
 // ddr_m1_subarb (latched owner through response) — never combinational mux.
@@ -62,7 +62,7 @@ module plxg_ddr_poller #(
 	reg [2:0]  st;
 	reg [15:0] poll_ctr;
 	reg [2:0]  qi;
-	reg [63:0] snap [0:4];
+	reg [63:0] snap [0:5];
 	reg [15:0] snap_seq;
 	reg        verify_phase; // 1 = issuing q0 re-read
 
@@ -87,7 +87,7 @@ module plxg_ddr_poller #(
 			cnt_torn    <= 32'd0;
 			snap_seq    <= 16'd0;
 			verify_phase <= 1'b0;
-			for (ti = 0; ti < 5; ti = ti + 1)
+			for (ti = 0; ti < 6; ti = ti + 1)
 				snap[ti] <= 64'd0;
 		end else begin
 			wr_en  <= 1'b0;
@@ -143,8 +143,8 @@ module plxg_ddr_poller #(
 								qi <= 3'd1;
 								st <= S_ISSUE;
 							end
-						end else if (qi == 3'd4) begin
-							// Finished q1..q4; re-read q0 for tear check
+						end else if (qi == 3'd5) begin
+							// Finished q1..q5; re-read q0 for tear check
 							qi <= 3'd0;
 							verify_phase <= 1'b1;
 							st <= S_VRF_Q0;
@@ -183,7 +183,7 @@ module plxg_ddr_poller #(
 					wr_en   <= 1'b1;
 					wr_idx  <= qi;
 					wr_data <= snap[qi];
-					if (qi == 3'd4) begin
+					if (qi == 3'd5) begin
 						qi <= 3'd0;
 						st <= S_COMMIT;
 					end else

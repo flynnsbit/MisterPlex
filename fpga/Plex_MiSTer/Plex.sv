@@ -756,6 +756,10 @@ wire [10:0] plxg_hde, plxg_vde, plxg_coded_w, plxg_coded_h;
 wire [11:0] plxg_y_stride;
 wire [10:0] plxg_c_stride, plxg_dw, plxg_dh;
 wire [10:0] plxg_px, plxg_py, plxg_cl, plxg_ct;
+wire [11:0] plxg_dar_x, plxg_dar_y;
+wire  [7:0] plxg_content_fps;
+wire        plxg_dar_valid, plxg_fps_valid;
+wire        plxg_q5_reserved_reject;
 wire [15:0] plxg_live_seq;
 wire [13:0] plxg_live_epoch;
 wire        plxg_want, plxg_rd;
@@ -842,11 +846,17 @@ present_geom_latch u_plxg_latch (
 	.present_y(plxg_py),
 	.crop_left(plxg_cl),
 	.crop_top(plxg_ct),
+	.dar_x(plxg_dar_x),
+	.dar_y(plxg_dar_y),
+	.content_fps(plxg_content_fps),
+	.dar_valid(plxg_dar_valid),
+	.fps_valid(plxg_fps_valid),
 	.live_valid(plxg_live_valid),
 	.live_seq(plxg_live_seq),
 	.live_epoch(plxg_live_epoch),
 	.pending_valid(plxg_pending_valid),
-	.promote_pulse(plxg_promote_pulse)
+	.promote_pulse(plxg_promote_pulse),
+	.q5_reserved_reject(plxg_q5_reserved_reject)
 );
 
 plxg_ddr_poller #(
@@ -880,7 +890,9 @@ plxg_ddr_poller #(
 (* keep = 1 *) wire _keep_plxg =
 	plxg_geom_en | plxg_live_valid | |plxg_live_seq | plxg_want |
 	|plxg_cnt_commit | |plxg_cnt_bad | |plxg_cnt_torn | plxg_busy_poll |
-	|plxg_last_seq | plxg_win_en | |plxg_cw | |plxg_ch | |m1_sub_grant;
+	|plxg_last_seq | plxg_win_en | |plxg_cw | |plxg_ch | |m1_sub_grant |
+	plxg_dar_valid | plxg_fps_valid | |plxg_dar_x | |plxg_content_fps |
+	plxg_q5_reserved_reject;
 `else
 // Non-DDR builds: stub PLXG outputs so content mux still elaborates.
 wire        plxg_win_en = 1'b0;

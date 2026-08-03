@@ -1,6 +1,4 @@
-// B16: PLXG stage-on-commit, promote-on-frame_boundary.
-// Product: mid-active commit must not change live outputs.
-// FAULT_IMMEDIATE_COMMIT: promote on commit (pre-B16) — red twin must FAIL product checks.
+// B16 + ABI#2 q5: stage-on-commit, promote-on-frame_boundary, reserved reject.
 `timescale 1ns/1ps
 `default_nettype none
 module present_geom_latch_b16_tb_top (
@@ -21,8 +19,14 @@ module present_geom_latch_b16_tb_top (
 	output wire [10:0] coded_h,
 	output wire [11:0] y_stride,
 	output wire [10:0] chroma_stride,
+	output wire [11:0] dar_x,
+	output wire [11:0] dar_y,
+	output wire [7:0]  content_fps,
+	output wire        dar_valid,
+	output wire        fps_valid,
 	output wire        pending_valid,
-	output wire        promote_pulse
+	output wire        promote_pulse,
+	output wire        q5_reserved_reject
 );
 	present_geom_latch u (
 		.clk(clk), .reset(reset),
@@ -35,8 +39,11 @@ module present_geom_latch_b16_tb_top (
 		.y_stride(y_stride), .chroma_stride(chroma_stride),
 		.display_w(), .display_h(), .present_x(), .present_y(),
 		.crop_left(), .crop_top(),
+		.dar_x(dar_x), .dar_y(dar_y), .content_fps(content_fps),
+		.dar_valid(dar_valid), .fps_valid(fps_valid),
 		.live_valid(live_valid), .live_seq(live_seq), .live_epoch(live_epoch),
-		.pending_valid(pending_valid), .promote_pulse(promote_pulse)
+		.pending_valid(pending_valid), .promote_pulse(promote_pulse),
+		.q5_reserved_reject(q5_reserved_reject)
 	);
 endmodule
 `default_nettype wire

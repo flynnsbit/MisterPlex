@@ -38,7 +38,7 @@ struct DdrPublishPlan {
     bool native_push = false;
     bool program_plxg = false;
     // Atomic 5-qword PLXG at bootstrap phys (0x300FF800). Not 3 temporal beats.
-    uint64_t plxg_q[5]{};
+    uint64_t plxg_q[6]{};
     uint16_t plxg_seq = 0;
 };
 
@@ -95,7 +95,7 @@ inline bool makeDdrPublishPlan(const DdrPublishFrame& frame, int bank, DdrPublis
     out.plxg_seq = 0;
     {
         const PlxgRecord dis = makePlxgRecordDisable(/*seq=*/0);
-        for (int i = 0; i < 5; ++i)
+        for (int i = 0; i < 6; ++i)
             out.plxg_q[i] = dis.q[i];
     }
     return true;
@@ -182,7 +182,7 @@ inline bool makeDdrFabricOwnedPublishPlan(const uint8_t* payload, int bank,
     out.publish.native_push = true;
     out.publish.program_plxg = true;
     out.publish.plxg_seq = present.plxg_seq;
-    for (int i = 0; i < 5; ++i)
+    for (int i = 0; i < 6; ++i)
         out.publish.plxg_q[i] = present.plxg_q[i];
     (void)payload; // caller/sendDdrFrame memcpy's copy_bytes at bank_offset
     return true;
@@ -217,7 +217,7 @@ inline bool ddrNativeOptionCPublishReadbackOk(std::string* err = nullptr) {
     PlxgRecord rec{};
     rec.valid = true;
     rec.seq = present.plxg_seq ? present.plxg_seq : 1;
-    for (int i = 0; i < 5; ++i)
+    for (int i = 0; i < 6; ++i)
         rec.q[i] = present.plxg_q[i];
     if (!plxgProgramRecord(ctrl.data(), rec, latch) || !latch.geom_enable ||
         latch.coded_w != 960 || latch.coded_h != 540 || latch.y_stride != 960 ||
@@ -226,7 +226,7 @@ inline bool ddrNativeOptionCPublishReadbackOk(std::string* err = nullptr) {
             *err = "native readback: PLXG latch did not accept storage 960x540";
         return false;
     }
-    // NEG: three temporal writes to one slot must NOT be our path (q1..q4 distinct).
+    // NEG: three temporal writes to one slot must NOT be our path (q1..q5 distinct).
     if (present.plxg_q[1] == present.plxg_q[0] || present.plxg_q[2] == present.plxg_q[0]) {
         if (err)
             *err = "native readback: PLXG qwords collapsed (temporal overwrite class)";

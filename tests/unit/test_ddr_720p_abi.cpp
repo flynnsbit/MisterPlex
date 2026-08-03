@@ -178,6 +178,22 @@ int main() {
     // Historical values must not reappear as product offset.
     CHECK(kDdrFramePlxgOffset != 0x2C0u);
     CHECK(kDdrFramePlxgOffset != 0x4C0u);
+    // ABI arbitration #2: q5 DAR/fps FIXED at +0x828 (record end exclusive +0x830).
+    CHECK(mailbox_abi::kPlxgQwords == 6u);
+    CHECK(mailbox_abi::kPlxgBytes == 48u);
+    CHECK(kDdrFramePlxgQwords == 6u);
+    CHECK(kDdrFramePlxgBytes == 48u);
+    CHECK(mailbox_abi::kPlxgQ5Offset == 0x828u);
+    CHECK(kDdrFramePlxgQ5Offset == 0x828u);
+    CHECK(kDdrFramePlxgQ5Offset == mailbox_abi::kPlxgQ5Offset);
+    CHECK(mailbox_abi::kPlxgOffset + 5u * 8u == 0x828u);
+    CHECK(mailbox_abi::kPlxgOffset + mailbox_abi::kPlxgBytes == 0x830u);
+    // NEG: wrong q5 offsets must not be product (collision class).
+    CHECK(mailbox_abi::kPlxgQ5Offset != 0x130u);
+    CHECK(mailbox_abi::kPlxgQ5Offset != 0x2C0u);
+    CHECK(mailbox_abi::kPlxgQ5Offset != 0x4C0u);
+    CHECK(mailbox_abi::kPlxgQ5Offset != 0x820u); // would be q4
+    CHECK(mailbox_abi::kPlxgQ5Offset != 0x830u); // exclusive end, not q5
 
     // Parent-verified reserved window (2026-08-02 device evidence).
     CHECK(kPlexDdrReservedWindowStart == 0x1FF00000u);
@@ -567,13 +583,13 @@ int main() {
         CHECK(out.content_layout.frame_bytes == 777600u);
         CHECK(out.content_layout.u_offset == 518400u);
         CHECK(out.content_layout.v_offset == 648000u);
-        // Atomic 5-qword PLXG → latch: STORAGE 960x540, DE 1280x720, Option-C.
+        // Atomic 6-qword PLXG → latch: STORAGE 960x540, DE 1280x720, Option-C.
         PlxgLatchModel latch{};
         std::vector<uint8_t> ctrl(0x1000, 0);
         PlxgRecord rec{};
         rec.valid = true;
         rec.seq = out.plxg_seq;
-        for (int i = 0; i < 5; ++i)
+        for (int i = 0; i < 6; ++i)
             rec.q[i] = out.plxg_q[i];
         CHECK(plxgProgramRecord(ctrl.data(), rec, latch));
         CHECK(latch.geom_enable);
@@ -635,7 +651,7 @@ int main() {
             PlxgRecord r{};
             r.valid = true;
             r.seq = out540.plxg_seq ? out540.plxg_seq : 1;
-            for (int i = 0; i < 5; ++i)
+            for (int i = 0; i < 6; ++i)
                 r.q[i] = out540.plxg_q[i];
             CHECK(plxgProgramRecord(page.data(), r, lm));
             CHECK(lm.geom_enable && lm.coded_w == 960 && lm.coded_h == 540);
@@ -657,7 +673,7 @@ int main() {
             PlxgRecord r{};
             r.valid = true;
             r.seq = inset.plxg_seq ? inset.plxg_seq : 1;
-            for (int i = 0; i < 5; ++i)
+            for (int i = 0; i < 6; ++i)
                 r.q[i] = inset.plxg_q[i];
             CHECK(plxgProgramRecord(page.data(), r, lm));
             CHECK(lm.content_x0 == 32 && lm.content_y0 == 16);
@@ -744,15 +760,16 @@ int main() {
                      static_cast<unsigned>(pub.publish.layout.phys_base));
     }
 
-    // ---- rd-duck: q1..q4 then q0, tear reject, native→legacy disable, subarb ----
+    // ---- rd-duck: q1..q5 then q0, tear reject, native→legacy disable, subarb ----
     {
-        CHECK(kPlxgPublishOrder[0] == 1 && kPlxgPublishOrder[4] == 0);
+        CHECK(kPlxgPublishOrder[0] == 1 && kPlxgPublishOrder[5] == 0);
+        CHECK(kPlxgPublishOrder[4] == 5); // body ends at q5 before q0 commit
         PlxgRecord en = makePlxgRecord960x540Native(1);
         PlxgRecord dis = makePlxgRecordDisable(2);
         CHECK(((en.q[0] >> 33) & 1ull) == 1ull);  // geom_enable
         CHECK(((dis.q[0] >> 33) & 1ull) == 0ull); // disabled
         // Tear: first q0 snap vs mismatched re-read → reject.
-        uint64_t snap[5] = {en.q[0], en.q[1], en.q[2], en.q[3], en.q[4]};
+        uint64_t snap[6] = {en.q[0], en.q[1], en.q[2], en.q[3], en.q[4], en.q[5]};
         CHECK(plxgPollerAcceptsSnapshot(snap, en.q[0], /*lastSeq=*/0));
         CHECK(!plxgPollerAcceptsSnapshot(snap, en.q[0] ^ 0x10000ull, 0)); // torn
         CHECK(!plxgPollerAcceptsSnapshot(snap, en.q[0], /*lastSeq=*/1));  // stale
@@ -834,6 +851,58 @@ int main() {
         }
         // Publish order constant is body-then-q0 (not q0-first).
         CHECK(kPlxgPublishOrder[0] != 0);
+        // ---- ABI #2 q5 DAR/fps + reserved-must-be-zero ----
+        {
+            CHECK(plxgQ5ReservedOk(packPlxgQ5(16, 9, 24, true, true)));
+            CHECK(plxgQ5ReservedOk(0));
+            // Nonzero reserved [63:34] must fail product latch + poller.
+            const uint64_t badQ5 = packPlxgQ5(16, 9, 24, true, true) | (1ull << 34);
+            CHECK(!plxgQ5ReservedOk(badQ5));
+            PlxgRecord good = makePlxgRecord960x540Native(1);
+            good.q[5] = packPlxgQ5(16, 9, 30, true, true);
+            unsigned dx=0,dy=0,fps=0; bool dv=false,fv=false;
+            plxgQ5Unpack(good.q[5], &dx, &dy, &fps, &dv, &fv);
+            CHECK(dx == 16 && dy == 9 && fps == 30 && dv && fv);
+            {
+                PlxgLatchModel lm{};
+                std::vector<uint8_t> page(0x1000, 0);
+                CHECK(plxgProgramRecord(page.data(), good, lm));
+                CHECK(lm.dar_x == 16 && lm.dar_y == 9 && lm.content_fps == 30);
+                CHECK(lm.dar_valid && lm.fps_valid);
+                // q5 lives at FIXED +0x828 on the control page image.
+                uint64_t q5le = 0;
+                std::memcpy(&q5le, page.data() + mailbox_abi::kPlxgQ5Offset, 8);
+                CHECK(q5le == good.q[5]);
+            }
+            // Product: nonzero reserved rejected (no live_valid).
+            {
+                PlxgRecord bad = good;
+                bad.seq = 2;
+                bad.q[0] = packPlxgQ0(true, true, 2);
+                bad.q[5] = badQ5;
+                PlxgLatchModel lm{};
+                std::vector<uint8_t> page(0x1000, 0);
+                CHECK(!plxgProgramRecord(page.data(), bad, lm));
+                CHECK(!lm.live_valid);
+                CHECK(!plxgPollerTryCommit(page.data(), 0)); // after store would need store
+                // Store then poller:
+                plxgHostStoreAtomic(page.data(), bad);
+                CHECK(!plxgPollerTryCommit(page.data(), 0));
+            }
+            // RED twin: fault_ignore_q5_reserved accepts (proves test catches old code).
+            {
+                PlxgRecord bad = good;
+                bad.seq = 3;
+                bad.q[0] = packPlxgQ0(true, true, 3);
+                bad.q[5] = badQ5;
+                PlxgLatchModel lm{};
+                lm.fault_ignore_q5_reserved = true;
+                std::vector<uint8_t> page(0x1000, 0);
+                CHECK(plxgProgramRecord(page.data(), bad, lm));
+                CHECK(lm.live_valid);
+                std::fprintf(stderr, "  REPRO Q5_RESERVED_ACCEPTED_HOST twin OK\n");
+            }
+        }
         // ---- Retained-DDR / FPGA-reset seqlock (rd-duck) ----
         // Old q0 seq=1 lives in DDR; FPGA last_seq resets to 0. Without
         // invalidate-first, body rewrite + reread of unchanged old q0 accepts torn.
@@ -849,7 +918,7 @@ int main() {
                 PlxgLatchModel lm{};
                 std::vector<uint8_t> page(0x1000, 0);
                 // Retain old first
-                for (int i = 0; i < 5; ++i)
+                for (int i = 0; i < 6; ++i)
                     plxgCtrlStoreQ(page.data(), i, oldR.q[i]);
                 CHECK(plxgProgramRecord(page.data(), newR, lm));
                 CHECK(!lm.geom_enable);
@@ -858,7 +927,7 @@ int main() {
             // Invalidate alone clears magic.
             {
                 std::vector<uint8_t> page(0x1000, 0);
-                for (int i = 0; i < 5; ++i)
+                for (int i = 0; i < 6; ++i)
                     plxgCtrlStoreQ(page.data(), i, oldR.q[i]);
                 plxgHostInvalidateQ0(page.data());
                 CHECK(static_cast<uint32_t>(plxgCtrlLoadQ(page.data(), 0)) == 0u);
@@ -894,7 +963,7 @@ int main() {
                     page.data(), makePlxgRecordDisable(1), &swB, true);
                 CHECK(bDis == 2);
                 CHECK(swB == 2);
-                for (unsigned i = 0; i < 5; ++i)
+                for (unsigned i = 0; i < 6; ++i)
                     plxgLatchWrite(lm, i, plxgCtrlLoadQ(page.data(), static_cast<int>(i)));
                 CHECK(plxgLatchCommit(lm));
                 CHECK(!lm.geom_enable);
@@ -905,7 +974,7 @@ int main() {
                 const uint16_t c3 = plxgHostWriteRecordRestartSafe(
                     page.data(), makePlxgRecord960x540Native(1), &swC, true);
                 CHECK(c3 == 3 && swC == 3);
-                for (unsigned i = 0; i < 5; ++i)
+                for (unsigned i = 0; i < 6; ++i)
                     plxgLatchWrite(lm, i, plxgCtrlLoadQ(page.data(), static_cast<int>(i)));
                 CHECK(plxgLatchCommit(lm));
                 CHECK(lm.geom_enable && lm.live_seq == 3);

@@ -64,21 +64,30 @@ constexpr uint32_t kPlxlOffset = 0x140u; // list payload base (64-bit cmds)
 // (Parent freeze: UI tuning must not relocate present-geometry mailbox.)
 // History: +0x2C0 @48-cmd, briefly +0x4C0 when list grew with MAX_CMDS.
 constexpr uint32_t kPlxcListMaxCmds = 112u;
-// PLXG — 5-qword atomic geometry record (ARM→FPGA). Matches present_geom_latch.sv.
-// Layout: q0 magic|win|geom|seq, q1 content, q2 DE+coded, q3 strides+disp, q4 present+crop.
-// Size 40 bytes (q0..q4). See host/libmisterplex/plxg_record.hpp.
+// PLXG — 6-qword atomic geometry record (ARM→FPGA). Matches present_geom_latch.sv.
+// Layout: q0 magic|win|geom|epoch|seq, q1 content, q2 DE+coded, q3 strides+disp,
+//         q4 present+crop, q5 DAR+content_fps (parent ABI arbitration #2).
+// Size 48 bytes (q0..q5) at FIXED +0x800 .. +0x82F. See plxg_record.hpp.
 constexpr uint32_t kPlxgOffset = 0x800u; // FIXED — do not re-derive from MAX_CMDS
 constexpr uint32_t kPlxgMagic = 0x504C5847u; // "PLXG"
-constexpr uint32_t kPlxgBytes = 40u; // 5 qwords
+constexpr uint32_t kPlxgQwords = 6u;
+constexpr uint32_t kPlxgBytes = 48u; // 6 qwords (was 40 / 5 before q5)
+// q5 lives at doorbell + 0x828 (offset of 5th body qword after q0).
+constexpr uint32_t kPlxgQ5Offset = kPlxgOffset + 5u * 8u; // 0x828
 constexpr uint32_t kPlxgBootstrapDoorbellPhys = 0x300FF000u; // product YUV doorbell
 constexpr uint32_t kPlxgBootstrapPhys = 0x300FF800u; // bootstrap doorbell + FIXED 0x800
 static_assert(kPlxgOffset != kPlxcOffset, "PLXG must not collide with PLXC +0x130");
 static_assert(kPlxgOffset == 0x800u, "PLXG wire ABI is FIXED at +0x800");
+static_assert(kPlxgQ5Offset == 0x828u, "PLXG q5 wire ABI FIXED at +0x828");
+static_assert(kPlxgBytes == kPlxgQwords * 8u, "PLXG byte size");
+static_assert(kPlxgOffset + kPlxgBytes == 0x830u, "PLXG exclusive end +0x830");
 static_assert(kPlxlOffset + kPlxcListMaxCmds * 8u <= kPlxgOffset,
               "chrome list must not grow into fixed PLXG +0x800");
 static_assert(kPlxcListMaxCmds == 112u, "list depth must match kMaxCmds/RTL MAX_CMDS");
 static_assert(kPlxgBootstrapPhys == kPlxgBootstrapDoorbellPhys + kPlxgOffset,
               "bootstrap phys must be product doorbell + FIXED PLXG offset");
+// Control page is 4 KiB; record must fit.
+static_assert(kPlxgOffset + kPlxgBytes <= 0x1000u, "PLXG must fit 4 KiB control page");
 
 // Legacy example doorbell base (historical 0x3007F000 control page).
 constexpr uint32_t kLegacyFrameStoreDoorbellPhys = 0x3007F000u;

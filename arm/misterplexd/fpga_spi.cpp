@@ -842,7 +842,7 @@ void FpgaSpi::releasePlxgBootstrapMap() {
     }
 }
 
-bool FpgaSpi::writePlxgRecord(const uint64_t q[5], uint16_t seq) {
+bool FpgaSpi::writePlxgRecord(const uint64_t q[6], uint16_t seq) {
     if (!q) {
         setErr("writePlxgRecord: null q");
         return false;
@@ -876,8 +876,8 @@ bool FpgaSpi::writePlxgRecord(const uint64_t q[5], uint16_t seq) {
     }
     const uint16_t useSeq =
         misterplex::plxgNextSeq(plxgLastSeq_, retainedValid, retainedSeq);
-    uint64_t words[5];
-    for (int i = 0; i < 5; ++i)
+    uint64_t words[6];
+    for (int i = 0; i < 6; ++i)
         words[i] = q[i];
     // Force Q0 magic + seq (geom/win/epoch flags preserved from packed plan).
     // B4: epoch in q0[47:34] must be nonzero — default to 1 if caller left 0.
@@ -890,7 +890,7 @@ bool FpgaSpi::writePlxgRecord(const uint64_t q[5], uint16_t seq) {
 
     // Seqlock publish (rd-duck retained-DDR/reset):
     //   1) invalidate q0 low32=0 (clear magic) + DMB
-    //   2) body q1..q4
+    //   2) body q1..q5
     //   3) q0 high32, then q0 low32=magic LAST
     // Without (1), post-reset last_seq=0 + retained q0 seq=1 accepts mixed body.
     auto dmb = []() { __sync_synchronize(); };
@@ -905,7 +905,7 @@ bool FpgaSpi::writePlxgRecord(const uint64_t q[5], uint16_t seq) {
         basep[0] = 0u; // q0 low32
         dmb();
         // 2) Body
-        for (int i = 1; i < 5; ++i)
+        for (int i = 1; i < 6; ++i)
             storeBodyQ(basep, i, words[i]);
         // 3) q0 high then magic-last
         basep[1] = static_cast<uint32_t>(words[0] >> 32);
