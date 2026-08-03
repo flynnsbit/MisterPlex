@@ -443,7 +443,16 @@ bool FpgaSpi::reopenPresentPath() {
 
 void FpgaSpi::close() {
     releasePlxgBootstrapMap();
-    releaseDdrMap();
+    if (labMapsAttached_) {
+        // Caller-owned lab buffers — drop pointers only.
+        ddrMap_ = nullptr;
+        ddrMapLen_ = 0;
+        plxgBootMap_ = nullptr;
+        plxgBootMapLen_ = 0;
+        labMapsAttached_ = false;
+    } else {
+        releaseDdrMap();
+    }
     releaseBitstreamDdrMap();
     if (map_) {
         munmap((void*)map_, kMapSize);
@@ -675,6 +684,13 @@ bool FpgaSpi::publishBitstreamDormant() {
 }
 
 bool FpgaSpi::ensureDdrMap() {
+    if (labMapsAttached_) {
+        if (!ddrMap_ || ddrMapLen_ < ddrLayout_.map_bytes) {
+            setErr("ensureDdrMap: lab DDR window too small for layout");
+            return false;
+        }
+        return true;
+    }
     if (ddrMap_ && ddrMemFd_ >= 0)
         return true;
     releaseDdrMap();
@@ -775,6 +791,10 @@ void FpgaSpi::releaseDdrMap() {
     mboxInit_ = false;
     mboxAlive_ = false;
     inputMboxEdge_.reset();
+    if (labMapsAttached_) {
+        // Lab buffers stay attached across layout changes (setDdrFrameLayout).
+        return;
+    }
     if (ddrMap_) {
         munmap(ddrMap_, ddrMapLen_);
         ddrMap_ = nullptr;
@@ -787,6 +807,49 @@ void FpgaSpi::releaseDdrMap() {
     // Bootstrap PLXG page is independent of active bank map; keep it across
     // layout changes so seq continuity survives Option-C toggles. Only close()
     // tears it down via releasePlxgBootstrapMap.
+}
+
+bool FpgaSpi::attachLabPublishMaps(uint8_t* ddrWindow, size_t ddrBytes, uint8_t* plxgPage,
+                                   size_t plxgPageBytes) {
+    if (!ddrWindow || !plxgPage || ddrBytes < kPlex480pMapBytes2Bank || plxgPageBytes < 0x1000u) {
+        setErr("attachLabPublishMaps: need LEG 2-bank window + 4KiB PLXG page");
+        return false;
+    }
+    // Drop any real /dev/mem maps first (not lab).
+    if (!labMapsAttached_) {
+        if (ddrMap_) {
+            munmap(ddrMap_, ddrMapLen_);
+            ddrMap_ = nullptr;
+            ddrMapLen_ = 0;
+        }
+        if (ddrMemFd_ >= 0) {
+            ::close(ddrMemFd_);
+            ddrMemFd_ = -1;
+        }
+        if (plxgBootMap_) {
+            munmap(plxgBootMap_, plxgBootMapLen_);
+            plxgBootMap_ = nullptr;
+            plxgBootMapLen_ = 0;
+        }
+        if (plxgBootFd_ >= 0) {
+            ::close(plxgBootFd_);
+            plxgBootFd_ = -1;
+        }
+    }
+    std::memset(ddrWindow, 0, ddrBytes);
+    std::memset(plxgPage, 0, plxgPageBytes);
+    ddrMap_ = ddrWindow;
+    ddrMapLen_ = ddrBytes;
+    plxgBootMap_ = plxgPage;
+    plxgBootMapLen_ = plxgPageBytes;
+    labMapsAttached_ = true;
+    ddrKickMode_ = 0;
+    ddrKickFailMs_ = -1.0;
+    doorbellSeq_ = 0;
+    plxgLastSeq_ = 0;
+    plxgQ5LastWritten_ = 0;
+    clearErr();
+    return true;
 }
 
 void FpgaSpi::seedPlxgLastSeqFromRetainedLocked() {
@@ -804,6 +867,14 @@ void FpgaSpi::seedPlxgLastSeqFromRetainedLocked() {
 }
 
 bool FpgaSpi::ensurePlxgBootstrapMap() {
+    if (labMapsAttached_) {
+        if (plxgBootMap_ && plxgBootMapLen_ >= 0x1000u) {
+            seedPlxgLastSeqFromRetainedLocked();
+            return true;
+        }
+        setErr("ensurePlxgBootstrapMap: lab PLXG page missing");
+        return false;
+    }
     if (plxgBootMap_ && plxgBootFd_ >= 0)
         return true;
     releasePlxgBootstrapMap();
@@ -831,6 +902,12 @@ bool FpgaSpi::ensurePlxgBootstrapMap() {
 }
 
 void FpgaSpi::releasePlxgBootstrapMap() {
+    if (labMapsAttached_) {
+        // Detach only; caller owns the buffer. close() clears labMapsAttached_.
+        plxgBootMap_ = nullptr;
+        plxgBootMapLen_ = 0;
+        return;
+    }
     if (plxgBootMap_) {
         munmap(plxgBootMap_, plxgBootMapLen_);
         plxgBootMap_ = nullptr;
@@ -1534,8 +1611,11 @@ bool FpgaSpi::sendDdrFrame(const DdrPublishFrame& frame, const DdrPublishPlan& p
         }
         ddrKickMode_ = 0;
     }
-    if (!ok() && !open())
-        return false;
+    // Lab maps: no FPGA manager SPI map required. Product still needs open().
+    if (!labMapsAttached_) {
+        if (!ok() && !open())
+            return false;
+    }
     if (!ensureDdrMap())
         return false;
 
@@ -1549,6 +1629,13 @@ bool FpgaSpi::sendDdrFrame(const DdrPublishFrame& frame, const DdrPublishPlan& p
     // fallback for pre-PLXD cores, mailbox absence, or stale DDR residue.
     auto tPrep0 = std::chrono::steady_clock::now();
     bool plxdUsed = false;
+    // Lab publish: skip PLXD/SPI; fixed bank from plan + doorbell kick only.
+    if (labMapsAttached_) {
+        bank = plan.bank & 1;
+        auto tPrep1lab = std::chrono::steady_clock::now();
+        timing.prep_wait_us = elapsedUs(tPrep0, tPrep1lab);
+        goto lab_after_prep;
+    }
     {
         BankReleaseStatus brs;
         constexpr int kPlxdPollMaxIters = 50;  // 50 × 1ms = 50ms max
@@ -1705,8 +1792,11 @@ bool FpgaSpi::sendDdrFrame(const DdrPublishFrame& frame, const DdrPublishPlan& p
             }
         }
     }
-    auto tPrep1 = std::chrono::steady_clock::now();
-    timing.prep_wait_us = elapsedUs(tPrep0, tPrep1);
+    {
+        auto tPrep1 = std::chrono::steady_clock::now();
+        timing.prep_wait_us = elapsedUs(tPrep0, tPrep1);
+    }
+lab_after_prep:
 
     // Copy frame into bank (persistent map).
     const size_t bankOff = static_cast<size_t>(bank) * plan.layout.bank_stride;
@@ -1750,7 +1840,13 @@ bool FpgaSpi::sendDdrFrame(const DdrPublishFrame& frame, const DdrPublishPlan& p
     // Full PLXG 6-qword seqlock at bootstrap 0x300FF800 BEFORE kick (rd-duck).
     // q5 already injected into plan.plxg_q[5] by publishDdrFrame; never poke
     // standalone +0x828 (poller would skip body when q0 seq unchanged).
-    if (plan.program_plxg) {
+    // HARD: program_plxg must be true on every capacity-selected plan — hollow
+    // publish without q0..q5 is a product bug (rd-duck 1465a7ea follow-up).
+    if (!plan.program_plxg) {
+        setErr("sendDdrFrame: plan.program_plxg=0 (PLXG body required before kick)");
+        return false;
+    }
+    {
         uint16_t committedPlxgSeq = 0;
         if (!writePlxgRecord(plan.plxg_q, plan.plxg_seq, &committedPlxgSeq))
             return false;
@@ -1760,7 +1856,17 @@ bool FpgaSpi::sendDdrFrame(const DdrPublishFrame& frame, const DdrPublishPlan& p
     }
     bool kicked = false;
     auto tKick0 = std::chrono::steady_clock::now();
-    if (ddrKickMode_ == 1 || ddrKickMode_ == 0) {
+    // Lab maps: doorbell kick alone is success (no SPI status probe).
+    if (labMapsAttached_) {
+        if (!kickDdrDoorbell(bank)) {
+            setErr("sendDdrFrame: lab doorbell kick failed");
+            return false;
+        }
+        kicked = true;
+        ddrKickMode_ = 1;
+        saw_kick = true;
+        saw_frame = true;
+    } else if (ddrKickMode_ == 1 || ddrKickMode_ == 0) {
         if (kickDdrDoorbell(bank)) {
             kicked = true;
             if (first) {

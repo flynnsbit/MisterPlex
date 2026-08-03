@@ -107,6 +107,14 @@ public:
     bool publishDdrFrame(const DdrPublishFrame& frame, int bank = 0);
     int lastPublishedBank() const { return lastPublishedBank_; }
 
+    // Host/unit lab: attach anonymous DDR window + PLXG bootstrap page so
+    // publishDdrFrame/sendDdrFrame/writePlxgRecord run without /dev/mem.
+    // Buffers are NOT owned (caller frees). Product open() path unchanged.
+    // ddrBytes must cover layout.map_bytes (LEG 0x100000); plxgPageBytes ≥ 0x1000.
+    bool attachLabPublishMaps(uint8_t* ddrWindow, size_t ddrBytes, uint8_t* plxgPage,
+                              size_t plxgPageBytes);
+    bool labPublishMapsAttached() const { return labMapsAttached_; }
+
     // PLXG q5 (ABI #2 DAR+content_fps). Reserved [63:34] must be zero (parent
     // arb #4). Pending only — wire commit is writePlxgRecord (full 6-qword
     // seqlock at bootstrap 0x300FF800). Standalone +0x828 product writes are
@@ -373,6 +381,8 @@ private:
     uint8_t* plxgBootMap_ = nullptr;
     size_t plxgBootMapLen_ = 0;
     uint16_t plxgLastSeq_ = 0;
+    // When true, ddrMap_/plxgBootMap_ are caller-owned lab buffers (no munmap).
+    bool labMapsAttached_ = false;
     double lastDdrBankDoorbellMs_[2] = {-1.0, -1.0};
     int lastPublishedBank_ = 0;
     DdrBankSelectState ddrBankSelect_{};

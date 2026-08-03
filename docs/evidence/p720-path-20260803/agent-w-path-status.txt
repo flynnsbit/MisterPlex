@@ -1,18 +1,15 @@
 w-path p720-path STATUS
-tip: pending commit (DP 426 display DE)
-prior: 9ca8198c Route-B 960 cap
+tip: pending (FpgaSpi publish PLXG wire)
+prior: 69b01b16 DP 426 display DE
 
-DONE this tick:
-- DP 426→432: content-driven geom (display=426, coded=432, crop_left=2 chroma-even)
-- main: direct_part setDecodeSize(media) not store-only
-- GEOM predict uses media+store for DP
-- VF: verified pad-only BEFORE crop_pad (product DE=426 + legacy display==coded)
-- PLXG oracle: q1/q2 DE=426 coded=432 q4 crop_left=2
-- NEG: identity-on-432 alone loses DE
+DONE this tick (rd-duck hollow publish):
+- sendDdrFrame HARD-requires plan.program_plxg + writePlxgRecord(plan.plxg_q)
+  before doorbell kick (bootstrap 0x300FF800 seqlock)
+- writePlxgQ5 remains pending-only; inject on publishDdrFrame
+- setDdrFrameLayout pins LEG/Option-C (not 0x40000 geom)
+- attachLabPublishMaps + test_fpga_publish_ddr_frame:
+  true FpgaSpi::publishDdrFrame(320) → bank payload + PLXG q0..q5 + q5 + door
+- static gate: writePlxgRecord(plan.plxg_q) must appear in fpga_spi.cpp
 - make unit true rc=0
 
-COORD:
-- w-mem: PLXG display≠coded with crop_left; bank LEG/Option-C unchanged
-- w-scaler: ascal content DE=426 not full 432 pad raster
-
-HELD: bit34 RESERVED; fps_1001 draft only; no Quartus/MiSTer
+HELD: bit34 RESERVED; fps_1001 draft; no Quartus/MiSTer

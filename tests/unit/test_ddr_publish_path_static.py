@@ -6,6 +6,7 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[2]
 MEDIA = ROOT / "arm" / "misterplexd" / "media_player.cpp"
+FPGA_SPI = ROOT / "arm" / "misterplexd" / "fpga_spi.cpp"
 
 
 def fail(msg: str) -> None:
@@ -43,9 +44,22 @@ if "packYuv420pCenteredIntoCodedBank" not in src:
 if "wantSkipRgbVideo" not in src:
     fail("STREAM_SKIP_RGB path must exist (skip RGB → recon-only F1)")
 
+# rd-duck: plan.plxg_q must reach writePlxgRecord on the sendDdrFrame hot path
+# (not plan-only / helper-only). Hollow 1465a7ea class: fields filled, never read.
+spi = FPGA_SPI.read_text()
+if not re.search(r"writePlxgRecord\s*\(\s*plan\.plxg_q", spi):
+    fail("sendDdrFrame must call writePlxgRecord(plan.plxg_q, ...) before kick")
+# writePlxgQ5 body must be pending-only (no wire store at doorbell+0x828).
+m_q5 = re.search(r"bool\s+FpgaSpi::writePlxgQ5\s*\([\s\S]*?\n\}", spi)
+if not m_q5 or "plxgQ5Pending_" not in m_q5.group(0):
+    fail("writePlxgQ5 must be pending-only (inject on publish), not wire poke")
+if "attachLabPublishMaps" not in spi:
+    fail("lab publish maps hook required for host FpgaSpi::publishDdrFrame integration")
+
 print(
     "test_ddr_publish_path_static: OK "
     f"publish_call_sites={len(contexts)} contexts={','.join(contexts)} "
     "use centralized publishDdrFrame + lastPublishedBank; "
-    "STREAM0=playback DDR STREAM1=recon DDR idle=idle DDR"
+    "STREAM0=playback DDR STREAM1=recon DDR idle=idle DDR; "
+    "sendDdrFrame=writePlxgRecord(plan.plxg_q)"
 )
