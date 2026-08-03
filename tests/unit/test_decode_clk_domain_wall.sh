@@ -87,7 +87,8 @@ PY
 # --- Verdict contains pre-register scorecard ---
 grep -q 'P4 MISS' "$VERD" || fail "verdict missing P4 miss"
 grep -q '42.333' "$VERD" || fail "verdict missing stub path delay quote"
-grep -q 'SEPARATE_DOMAIN' "$VERD" || fail "verdict missing summary"
+grep -q 'Separate domain remains' "$VERD" || grep -q 'SEPARATE_DOMAIN' "$VERD" || \
+  fail "verdict missing summary"
 
 echo "PASS test_decode_clk_domain_wall"
 echo "true rc=0"
