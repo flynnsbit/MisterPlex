@@ -90,20 +90,26 @@ module present_npx_path #(
 	wire skid_full  = (skid_level == SKID_D[SKID_AW:0]);
 	wire skid_af    = (skid_level >= SKID_AF_LEVEL[SKID_AW:0]);
 
-	reg          wr_en;
-	reg [W-1:0]  wr_data;
 	wire         fifo_full, fifo_almost, fifo_empty;
 	wire [W-1:0] rd_data;
 	reg          rd_en;
 
+	// Combo write into async_fifo (rd-duck): never advance skid_rp on a
+	// registered wr_en that can later be rejected at full. Old path set
+	// wr_en<=1 and skid_rp++ together; FIFO saw wr_en one cycle later and
+	// could drop the beat. Fire and data are combinatorial with skid head.
+	wire        fifo_wr_fire = !reset_sys && !skid_empty && !fifo_full;
+	wire [W-1:0] fifo_wr_data = skid_mem[skid_rp[SKID_AW-1:0]];
+
 	async_fifo #(
 		.WIDTH(W),
-		.AW(FIFO_AW)
+		.AW(FIFO_AW),
+		.AF_HEADROOM(4)
 	) u_pix_fifo (
 		.wr_clk(clk_sys),
 		.wr_reset(reset_sys),
-		.wr_en(wr_en),
-		.wr_data(wr_data),
+		.wr_en(fifo_wr_fire),
+		.wr_data(fifo_wr_data),
 		.wr_full(fifo_full),
 		.wr_almost_full(fifo_almost),
 		.rd_clk(clk_pix),
@@ -114,10 +120,9 @@ module present_npx_path #(
 	);
 
 	assign wr_full = fifo_full;
+	// Soft AF for beam: async AF band OR skid AF. Hard full still blocks fire.
 	assign wr_almost_full = fifo_almost || skid_af;
 	assign rd_empty = fifo_empty;
-	// Soft backpressure for beam: keep 4 slots for in-flight store/blank.
-	// Hard accept path still uses !skid_full inside the always block.
 	assign in_ready = !reset_sys && !skid_af;
 
 	reg [PRE_W-1:0] wr_group_count;
@@ -128,28 +133,22 @@ module present_npx_path #(
 		in_vsync, in_hsync, in_vblank, in_hblank,
 		in_lane_valid, in_r, in_g, in_b);
 
-	// Capture even when soft-not-ready if hard space remains (in-flight store).
 	wire skid_accept = in_valid && !skid_full;
 
 	always @(posedge clk_sys) begin
 		if (reset_sys) begin
 			skid_wp <= '0;
 			skid_rp <= '0;
-			wr_en <= 1'b0;
-			wr_data <= '0;
 			wr_group_count <= '0;
 			prefill_go_sys <= (PREFILL_GROUPS == 0);
 		end else begin
-			wr_en <= 1'b0;
-
 			if (skid_accept) begin
 				skid_mem[skid_wp[SKID_AW-1:0]] <= in_packed;
 				skid_wp <= skid_wp + 1'b1;
 			end
 
-			if (!skid_empty && !fifo_almost) begin
-				wr_en   <= 1'b1;
-				wr_data <= skid_mem[skid_rp[SKID_AW-1:0]];
+			// Pop skid only when FIFO accepts this cycle (combo fire).
+			if (fifo_wr_fire) begin
 				skid_rp <= skid_rp + 1'b1;
 				if (wr_group_count != {PRE_W{1'b1}})
 					wr_group_count <= wr_group_count + 1'b1;

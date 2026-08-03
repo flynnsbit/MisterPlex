@@ -1,6 +1,6 @@
-// Long-haul CDC: producer lead + prefill + ±pix ppm + phase.
-// Equal average rates underrun under drift; lead + backpressure must hold.
 `timescale 1ps/1ps
+// Long-haul CDC: producer lead + prefill + ±pix ppm + phase.
+// Exact active-pixel conservation (not act>=half). Mid-window ur must stay 0.
 `default_nettype none
 
 module present_npx_longhaul_tb #(
@@ -10,20 +10,18 @@ module present_npx_longhaul_tb #(
 	parameter int V_ACTIVE = 16,
 	parameter int V_TOTAL = 20,
 	parameter int PREFILL = 16,
-	// Nominal pix half-period ps = 16835 (29.7 MHz). PPM_OFF shifts it.
-	parameter int PPM_OFF = 0,     // e.g. +1000 or -1000
-	parameter int PHASE_PS = 0,    // ns start delay for pix clk
+	parameter int PPM_OFF = 0,
+	parameter int PHASE_PS = 0,
 	parameter int FRAMES = 4
 );
 	localparam int PPC = PX_PER_CLK;
-	// half_ps = 16835 * (1e6 + ppm) / 1e6 ≈ 16835 + 16835*ppm/1e6
 	localparam int HALF_NOM = 16835;
 	localparam int HALF_PS = HALF_NOM + (HALF_NOM * PPM_OFF) / 1000000;
-
-	// Producer lead ~1000 ppm via Bresenham integers (2973/2000 vs 2970/2000)
-	localparam int F_PIX = 2973; // lead
+	// Producer lead ~1000 ppm (product MP_PROD_LEAD_PPM)
+	localparam int F_PIX = 2973;
 	localparam int F_SYS = 2000;
 	localparam int THRESH = F_SYS * PPC;
+	localparam int ACT_EXPECT = H_DE * V_ACTIVE * FRAMES;
 
 	reg clk_sys = 1'b0;
 	reg clk_pix = 1'b0;
@@ -34,7 +32,6 @@ module present_npx_longhaul_tb #(
 	end
 
 	reg reset_sys = 1'b1;
-	// separate pix reset release (mirrors product 2FF)
 	reg r0 = 1'b1, r1 = 1'b1;
 	always @(posedge clk_pix or posedge reset_sys) begin
 		if (reset_sys) begin r0 <= 1'b1; r1 <= 1'b1; end
@@ -70,20 +67,32 @@ module present_npx_longhaul_tb #(
 	);
 
 	integer hc, vc, acc, frames, li, step, remain;
-	integer ur_mid, act, hs_r;
-	reg out_hs_d, active_run;
+	integer ur_mid, act, hs_r, mism, exp_x, exp_y;
+	reg out_hs_d, active_run, producing;
 
 	task automatic sys_tick; begin @(posedge clk_sys); #1; end endtask
 
 	always @(posedge clk_pix) begin
 		if (!reset_pix) begin
 			if (out_ce) begin
-				active_run = 1'b1;
-				if (!out_hb && !out_vb) act = act + 1;
+				if (!out_hb && !out_vb) begin
+					active_run = 1'b1;
+					if (out_r !== exp_x[7:0] || out_g !== exp_y[7:0])
+						mism = mism + 1;
+					act = act + 1;
+					exp_x = exp_x + 1;
+					if (exp_x >= H_DE) begin
+						exp_x = 0;
+						exp_y = exp_y + 1;
+						if (exp_y >= V_ACTIVE)
+							exp_y = 0;
+					end
+				end
 				if (out_hs && !out_hs_d) hs_r = hs_r + 1;
 				out_hs_d = out_hs;
 			end
-			if (rd_ur && active_run && frames < FRAMES)
+			// Only score underrun while producer still supplying / mid-frame window
+			if (rd_ur && producing)
 				ur_mid = ur_mid + 1;
 		end
 	end
@@ -92,10 +101,12 @@ module present_npx_longhaul_tb #(
 		in_valid = 0; in_r = 0; in_g = 0; in_b = 0; in_lv = 0;
 		in_hb = 1; in_hs = 0; in_vb = 1; in_vs = 0;
 		hc = 0; vc = 0; acc = 0; frames = 0;
-		ur_mid = 0; act = 0; hs_r = 0; out_hs_d = 0; active_run = 0;
+		ur_mid = 0; act = 0; hs_r = 0; out_hs_d = 0;
+		active_run = 0; producing = 0; mism = 0; exp_x = 0; exp_y = 0;
 		repeat (40) sys_tick;
 		reset_sys = 0;
 		repeat (40) sys_tick;
+		producing = 1;
 
 		while (frames < FRAMES) begin
 			acc = acc + F_PIX;
@@ -110,10 +121,10 @@ module present_npx_longhaul_tb #(
 				in_vs = (vc >= V_TOTAL - 3) && (vc < V_TOTAL - 1);
 				in_r = '0; in_g = '0; in_b = '0; in_lv = {PPC{1'b1}};
 				for (li = 0; li < PPC; li = li + 1) begin
-					if (li < step && (hc+li) < H_DE && vc < V_ACTIVE) begin
-						in_r[li*8+:8] = (hc + li) & 255;
-						in_g[li*8+:8] = vc[7:0];
-						in_b[li*8+:8] = 8'h5A;
+					if (li < step && (hc + li) < H_DE && vc < V_ACTIVE) begin
+						in_r[li*8 +: 8] = (hc + li) & 255;
+						in_g[li*8 +: 8] = vc[7:0];
+						in_b[li*8 +: 8] = 8'h5A;
 					end
 				end
 				in_valid = 1;
@@ -131,18 +142,35 @@ module present_npx_longhaul_tb #(
 				sys_tick;
 			end
 		end
-		active_run = 0;
-		repeat (5000) sys_tick;
+		producing = 0;
+		// Drain residual FIFO (lead leaves groups in flight)
+		begin : drain
+			integer d;
+			d = 0;
+			while (d < 200000) begin
+				sys_tick;
+				d = d + 1;
+				if (rd_empty && act >= ACT_EXPECT) begin
+					repeat (200) sys_tick;
+					disable drain;
+				end
+			end
+		end
 
 		if (ur_mid != 0) begin
-			$display("FAIL longhaul ur=%0d ppm=%0d ph=%0d", ur_mid, PPM_OFF, PHASE_PS);
+			$display("FAIL longhaul ur_mid=%0d ppm=%0d ph=%0d", ur_mid, PPM_OFF, PHASE_PS);
 			$fatal(1);
 		end
-		if (act < (H_DE * V_ACTIVE * FRAMES) / 2) begin
-			$display("FAIL longhaul act=%0d", act);
+		if (act != ACT_EXPECT) begin
+			$display("FAIL longhaul act=%0d want=%0d ppm=%0d ph=%0d (drop/underrun pad?)",
+				act, ACT_EXPECT, PPM_OFF, PHASE_PS);
 			$fatal(1);
 		end
-		$display("PASS present_npx_longhaul act=%0d ur=0 ppm=%0d ph=%0d frames=%0d half=%0d",
+		if (mism != 0) begin
+			$display("FAIL longhaul coord mism=%0d", mism);
+			$fatal(1);
+		end
+		$display("PASS present_npx_longhaul act=%0d ur=0 mism=0 ppm=%0d ph=%0d frames=%0d half=%0d",
 			act, PPM_OFF, PHASE_PS, FRAMES, HALF_PS);
 		$finish;
 	end

@@ -1,0 +1,38 @@
+RTL SIM: Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
+OK nom0 rc=0
+OK p1000 rc=0
+OK m1000 rc=0
+OK ph18 rc=0
+OK p1000_ph16 rc=0
+OK m1000_ph34 rc=0
+PASS test_present_npx_longhaul
+lh true rc=0
+PASS test_present_npx_af_conserve rc=0
+af true rc=0
+RTL SIM: Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
+OK no_frame rc=0
+OK with_frame rc=0
+OK red_dual_or rc=0
+OK red_bad_lat rc=0
+PASS test_present_mp_integrated
+mp true rc=0
+RTL SIM: Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
+OK green rc=0
+OK red rc=0
+PASS test_present_npx_full_raster
+fr true rc=0
+RTL SIM: Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
+OK green_cea rc=0
+OK red_cea rc=0
+OK ph0_s0 rc=0
+OK ph0_s200 rc=0
+OK ph10_s0 rc=0
+OK ph10_s200 rc=0
+OK ph16_s0 rc=0
+OK ph16_s200 rc=0
+OK ph18_s0 rc=0
+OK ph18_s200 rc=0
+OK ph34_s0 rc=0
+OK ph34_s200 rc=0
+PASS test_present_npx_cea_raster
+cea true rc=0

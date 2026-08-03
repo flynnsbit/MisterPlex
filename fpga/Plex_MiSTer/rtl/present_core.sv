@@ -679,35 +679,73 @@ module present_core #(
 		.rd_empty(mp_rd_empty)
 	);
 
-	// --- Observable pix underrun (anti-DCE): sticky + count into stat_frame_underruns
-	// mp_rd_ur is clk_pix; toggle-sync to clk, then sticky/count on sys.
-	// status bit15 of stat_frame_underruns = mp_rd_ur_sticky (MP_UR_STICKY marker).
-	(* noprune *) reg        mp_rd_ur_toggle_pix;
-	(* noprune *) reg [2:0]  mp_rd_ur_sync_sys;
+	// --- Observable pix underrun (anti-DCE) — rd-duck 2e ---
+	// Toggle CDC undercounts paired/back-to-back empty pixels (every other
+	// pulse lost when two empties land before sys samples). Level-sync a
+	// pix-domain sticky; Gray-code a free-running pix counter and accumulate
+	// binary deltas on sys. PLXF bit15 = sticky, [14:0] = store+pix counts.
+	function automatic [7:0] mp_ur_bin2gray8(input [7:0] b);
+		mp_ur_bin2gray8 = b ^ (b >> 1);
+	endfunction
+	function automatic [7:0] mp_ur_gray2bin8(input [7:0] g);
+		integer uk;
+		begin
+			mp_ur_gray2bin8[7] = g[7];
+			for (uk = 6; uk >= 0; uk = uk - 1)
+				mp_ur_gray2bin8[uk] = mp_ur_gray2bin8[uk+1] ^ g[uk];
+		end
+	endfunction
+
+	(* noprune *) reg        mp_rd_ur_sticky_pix;
+	(* noprune *) reg [7:0]  mp_rd_ur_bin_pix;
+	(* noprune *) reg [7:0]  mp_rd_ur_gray_pix;
+	(* noprune *) reg [2:0]  mp_rd_ur_sticky_sync;
+	(* noprune *) reg [7:0]  mp_rd_ur_g0, mp_rd_ur_g1;
+	(* noprune *) reg [7:0]  mp_rd_ur_bin_last;
 	(* noprune *) reg        mp_rd_ur_sticky;
 	(* noprune *) reg [14:0] mp_rd_ur_count;
-	always @(posedge clk_pix or posedge mp_reset_pix) begin
-		if (mp_reset_pix)
-			mp_rd_ur_toggle_pix <= 1'b0;
-		else if (mp_rd_ur)
-			mp_rd_ur_toggle_pix <= ~mp_rd_ur_toggle_pix;
+
+	wire [7:0] mp_rd_ur_bin_now = mp_ur_gray2bin8(mp_rd_ur_g1);
+	wire [7:0] mp_rd_ur_delta   = mp_rd_ur_bin_now - mp_rd_ur_bin_last;
+
+	always @(posedge clk_pix) begin
+		if (mp_reset_pix) begin
+			mp_rd_ur_sticky_pix <= 1'b0;
+			mp_rd_ur_bin_pix    <= 8'd0;
+			mp_rd_ur_gray_pix   <= 8'd0;
+		end else if (mp_rd_ur) begin
+			mp_rd_ur_sticky_pix <= 1'b1;
+			mp_rd_ur_bin_pix    <= mp_rd_ur_bin_pix + 8'd1;
+			mp_rd_ur_gray_pix   <= mp_ur_bin2gray8(mp_rd_ur_bin_pix + 8'd1);
+		end
 	end
-	wire mp_rd_ur_sys_pulse = mp_rd_ur_sync_sys[2] ^ mp_rd_ur_sync_sys[1];
+
 	always @(posedge clk) begin
 		if (reset) begin
-			mp_rd_ur_sync_sys <= 3'b0;
-			mp_rd_ur_sticky   <= 1'b0;
-			mp_rd_ur_count    <= 15'd0;
+			mp_rd_ur_sticky_sync <= 3'b0;
+			mp_rd_ur_g0          <= 8'd0;
+			mp_rd_ur_g1          <= 8'd0;
+			mp_rd_ur_bin_last    <= 8'd0;
+			mp_rd_ur_sticky      <= 1'b0;
+			mp_rd_ur_count       <= 15'd0;
 		end else begin
-			mp_rd_ur_sync_sys <= {mp_rd_ur_sync_sys[1:0], mp_rd_ur_toggle_pix};
-			if (mp_rd_ur_sys_pulse) begin
+			mp_rd_ur_sticky_sync <= {mp_rd_ur_sticky_sync[1:0], mp_rd_ur_sticky_pix};
+			mp_rd_ur_g0          <= mp_rd_ur_gray_pix;
+			mp_rd_ur_g1          <= mp_rd_ur_g0;
+			mp_rd_ur_bin_last    <= mp_rd_ur_bin_now;
+			// Sticky latches once (host-visible); level-sync so sustained empty
+			// keeps the bit set without needing edges.
+			if (mp_rd_ur_sticky_sync[2])
 				mp_rd_ur_sticky <= 1'b1;
-				if (mp_rd_ur_count != 15'h7fff)
-					mp_rd_ur_count <= mp_rd_ur_count + 15'd1;
+			if (mp_rd_ur_delta != 8'd0) begin
+				if (15'(mp_rd_ur_count) + 15'(mp_rd_ur_delta) < 15'h7fff)
+					mp_rd_ur_count <= mp_rd_ur_count + 15'(mp_rd_ur_delta);
+				else
+					mp_rd_ur_count <= 15'h7fff;
 			end
 		end
 	end
-	// Combine store underruns (low) with mp pix underrun sticky (bit15).
+	// Combine store underruns (low) with mp pix underrun count; bit15 = sticky.
 	wire [14:0] mp_ur_sum =
 		(frame_underruns[14:0] > (15'h7fff - mp_rd_ur_count))
 			? 15'h7fff

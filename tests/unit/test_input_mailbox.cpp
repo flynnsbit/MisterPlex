@@ -127,6 +127,16 @@ int main() {
     CHECK(fs.seq == 4);
     CHECK(fs.debug_state == kFrameStoreDebugFormatError);
     CHECK(fs.underrun_count == 17);
+    CHECK(!fs.pixUnderrunSticky());
+    CHECK(fs.underrunEventCount() == 17);
+    {
+        FrameStoreStatus fs_pix;
+        CHECK(decodeFrameStoreStatusWord(frameWord(9, 0, 0x8005), fs_pix));
+        CHECK(fs_pix.pixUnderrunSticky());
+        CHECK(fs_pix.underrunEventCount() == 5);
+        CHECK(fs_pix.underrun_count == 0x8005);
+        CHECK(fs_pix.debug_state == 0);
+    }
     CHECK(fs.nonYuvDoorbellRejected());
     CHECK(std::string(frameStoreDebugDescription(fs.debug_state)) ==
           "frame store refused non-YUV doorbell (0xE1)");

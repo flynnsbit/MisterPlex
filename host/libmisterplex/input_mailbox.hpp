@@ -69,10 +69,18 @@ struct InputMailboxSample {
 struct FrameStoreStatus {
     uint8_t seq = 0;
     uint8_t debug_state = 0;
+    // Full PLXF underrun word: bit15 = mp pix-bridge sticky (PRESENT_MULTI_PIXEL),
+    // [14:0] = saturating store + pix underrun event count.
     uint16_t underrun_count = 0;
 
     bool nonYuvDoorbellRejected() const {
         return debug_state == kFrameStoreDebugFormatError;
+    }
+    // Fabric multi-pixel bridge reported at least one mid-stream empty (clk_pix).
+    bool pixUnderrunSticky() const { return (underrun_count & 0x8000u) != 0; }
+    // Low 15 bits only (store underruns + counted pix underrun events).
+    uint16_t underrunEventCount() const {
+        return static_cast<uint16_t>(underrun_count & 0x7FFFu);
     }
 };
 

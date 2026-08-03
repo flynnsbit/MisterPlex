@@ -58,8 +58,12 @@ module async_fifo #(
 	// almost_full for free <= AF_HEADROOM (occ >= DEPTH - AF_HEADROOM), and when full.
 	// Old bug: only (wr_bin+4) gray == full → true at exactly 4 free, false at 3/2/1.
 	wire [AW:0] rd_bin_wsync = gray2bin(rd_gray_w2);
+	// Occupancy from binary pointers (rd gray synced). FWFT may hold one extra
+	// word already removed from rd_bin — bias AF by +1 so free<=AF still sticky
+	// at 3/2/1 free (rd-duck: old wr_bin+4 gray only hit exactly 4 free).
 	wire [AW:0] wr_occ = wr_bin - rd_bin_wsync;
-	localparam int OCC_AF = (DEPTH > AF_HEADROOM) ? (DEPTH - AF_HEADROOM) : 0;
+	localparam int OCC_AF = (DEPTH > (AF_HEADROOM + 1))
+		? (DEPTH - AF_HEADROOM - 1) : 0;
 	wire wr_af_level = (wr_occ >= OCC_AF[AW:0]);
 
 	assign wr_full = wr_full_now;
