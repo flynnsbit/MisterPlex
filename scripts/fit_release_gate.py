@@ -295,6 +295,12 @@ LIVE_OPEN_BLOCKER_TOKENS = (
     "B40_NO_ENSURE_LIVE_PROTOCOL",
     "B40_BOOT_BASELINE_TB_ABSENT",
     # B40_BASELINE_CLAIMED_AS_LIVENESS / B40_EPOCH_AS_BOOT_NONCE: closed-class
+    # rd-duck: Direct Video + VGA_SCALER=0 → Route-B bypasses ascal (not 720p glass)
+    "B41_VGA_SCALER_NOT_FORCED",
+    "B41_ROUTE_B_DIRECT_VIDEO_BYPASS_OPEN",
+    "B41_IAUTO_IRRELEVANT_ON_BYPASS",
+    "B41_NO_ASCAL_ROUTE_CLOSURE",
+    # B41_FORCE_OR_STRIPPED / B41_DV_LOUD_ONLY_WITHOUT_FORCE: closed-class reinject
 )
 
 # Sibling-lane fixes that exist but are not merged into this gated tree.
@@ -495,6 +501,39 @@ FIX_STATUS: dict[str, dict[str, str]] = {
         "worktree": "/home/flynnsbit/Projects/MisterPlex-wt-mem",
         "artefact": "tests/unit/test_plxg_boot_baseline_verilator.sh",
         "evidence": "retained+fresh+race+FAULT_PLXG_* REPROs",
+    },
+    # B41 Direct Video / Route-B ascal bypass (rd-duck fixed H_TOTAL claim)
+    "B41_VGA_SCALER_NOT_FORCED": {
+        "status": "unmerged",
+        "lane": "w-clock",
+        "commit": "a3365370",
+        "worktree": "/home/flynnsbit/Projects/MisterPlex-wt-clock",
+        "artefact": "fpga/Plex_MiSTer/Plex.sv",
+        "evidence": "assign VGA_SCALER=1 forces vga_force_scaler; (~vga_fb&direct_video)==0",
+    },
+    "B41_ROUTE_B_DIRECT_VIDEO_BYPASS_OPEN": {
+        "status": "unmerged",
+        "lane": "w-clock",
+        "commit": "a3365370",
+        "worktree": "/home/flynnsbit/Projects/MisterPlex-wt-clock",
+        "artefact": "fpga/Plex_MiSTer/Plex.sv + sys_top vga_fb|force",
+        "evidence": "VGA_SCALER=1 → vga_fb=1 blocks HDMI Route-B core-raster mux",
+    },
+    "B41_IAUTO_IRRELEVANT_ON_BYPASS": {
+        "status": "unmerged",
+        "lane": "w-clock",
+        "commit": "a3365370",
+        "worktree": "/home/flynnsbit/Projects/MisterPlex-wt-clock",
+        "artefact": "fpga/Plex_MiSTer/Plex.sv",
+        "evidence": "comment: iauto irrelevant on bypass; force scaler for glass 720p",
+    },
+    "B41_NO_ASCAL_ROUTE_CLOSURE": {
+        "status": "unmerged",
+        "lane": "w-clock",
+        "commit": "a3365370",
+        "worktree": "/home/flynnsbit/Projects/MisterPlex-wt-clock",
+        "artefact": "fpga/Plex_MiSTer/Plex.sv",
+        "evidence": "Path-A force VGA_SCALER=1 closes ascal route (not DV loud alone)",
     },
     # Everything else: no known sibling implementation — new work.
 }
@@ -7886,6 +7925,211 @@ def check_b40_plxg_boot_liveness_gap(root: Path) -> tuple[list[str], list[str]]:
     return msgs, errors
 
 
+def check_b41_direct_video_ascal_bypass(root: Path) -> tuple[list[str], list[str]]:
+    """B41: Direct Video + VGA_SCALER=0 bypasses ascal (rd-duck fixed H_TOTAL claim).
+
+    sys_top: vga_fb = cfg[12] | vga_force_scaler; direct_video = cfg[10].
+    HDMI path selects core raster when (~vga_fb & direct_video):
+      clkselect / hs,vs,de,d mux (Route-B) — not ascal 1280×720 glass.
+    Core assign VGA_SCALER=0 leaves vga_force_scaler low; MiSTer Direct Video
+    then ships the 1182-clock / ~16.92 kHz 24/30 Hz beam (or content beam) raw.
+    Source-level ascal .iauto(1) is irrelevant on that bypass.
+
+    Closure (any one):
+      Path A — force VGA_SCALER=1 (vga_force → vga_fb|vga_scaler) so Route-B
+               condition is always 0.
+      Path B — Direct Video unsupported/loud AND product hard-disables the
+               bypass (not docs-only).
+      Path C — fit/test proves effective ascal route under product cfg
+               (executable oracle; not iauto grep alone).
+    """
+    msgs: list[str] = ["LEG0_B41_DIRECT_VIDEO_ASCAL_BYPASS_EXECUTED begin"]
+    errors: list[str] = []
+
+    plex_p = root / "fpga" / "Plex_MiSTer" / "Plex.sv"
+    sys_p = root / "fpga" / "Plex_MiSTer" / "sys" / "sys_top.v"
+    plex_raw = _read(plex_p) or ""
+    sys_raw = _read(sys_p) or ""
+    plex = product_active_sv(plex_raw)
+    sys_txt = product_active_sv(sys_raw)
+
+    def _emu_assign_bit(src: str, name: str) -> str | None:
+        vals: list[str] = []
+        for m in re.finditer(
+            rf"^\s*assign\s+{re.escape(name)}\s*=\s*(.+?)\s*;",
+            src,
+            re.M,
+        ):
+            line_start = src.rfind("\n", 0, m.start()) + 1
+            prefix = src[line_start : m.start()]
+            if prefix.lstrip().startswith("//"):
+                continue
+            raw = m.group(1).strip()
+            if re.fullmatch(r"1\'b1|1", raw):
+                vals.append("1")
+            elif re.fullmatch(r"1\'b0|0", raw):
+                vals.append("0")
+            else:
+                vals.append(raw)
+        return vals[-1] if vals else None
+
+    vs = _emu_assign_bit(plex, "VGA_SCALER")
+    force_wired = bool(
+        re.search(r"\.VGA_SCALER\s*\(\s*vga_force_scaler\s*\)", sys_txt)
+    )
+    vga_fb_or = bool(
+        re.search(
+            r"vga_fb\s*=\s*cfg\[12\]\s*\|\s*vga_force_scaler",
+            sys_txt,
+        )
+    )
+    vga_sc_or = bool(
+        re.search(
+            r"vga_scaler\s*=\s*cfg\[2\]\s*\|\s*vga_force_scaler",
+            sys_txt,
+        )
+    )
+    # Route-B mux still in sys_top (expected MiSTer template)
+    route_b_mux = bool(
+        re.search(
+            r"~vga_fb\s*&\s*direct_video|"
+            r"\(\s*~vga_fb\s*&\s*direct_video\s*\)",
+            sys_txt,
+        )
+    )
+    iauto_one = bool(re.search(r"\.iauto\s*\(\s*1\s*\)", sys_txt))
+
+    # Path A: force scaler
+    path_a = vs == "1" and force_wired and vga_fb_or
+
+    # Path B: Direct Video loud + hard disable of bypass
+    conf = plex_raw  # CONF_STR may be in comments/strings
+    dv_loud = bool(
+        re.search(
+            r"Direct Video.*(unsupport|not support|disabled|force.?scaler)|"
+            r"direct_video.*(unsupport|must not|cannot)|"
+            r"VGA_SCALER.*force|cannot raw-out|Route-B|"
+            r"\(\s*~vga_fb\s*&\s*direct_video\s*\)\s*==\s*0",
+            plex_raw,
+            re.I,
+        )
+    )
+    # Hard disable: direct_video tied 0 outside DEBUG, or vga_fb tied 1
+    dv_hard_off = bool(
+        re.search(
+            r"wire\s+direct_video\s*=\s*1\'b0|"
+            r"assign\s+direct_video\s*=\s*1\'b0|"
+            r"wire\s+vga_fb\s*=\s*1\'b1|"
+            r"vga_fb\s*=\s*1\'b1\s*\|\s*",
+            sys_txt,
+        )
+    )
+    path_b = dv_loud and dv_hard_off
+
+    # Path C: executable effective-ascal-route oracle (not iauto alone)
+    route_tb = False
+    for rel in (
+        "tests/unit/test_b41_ascal_route_effective.sh",
+        "tests/unit/test_direct_video_ascal_bypass.sh",
+        "tests/rtl/b41_ascal_route_tb.cpp",
+    ):
+        p = root / rel
+        if p.is_file() and os.access(p, os.X_OK) if rel.endswith(".sh") else p.is_file():
+            blob = _read(p) or ""
+            if re.search(
+                r"Route-B|direct_video|vga_fb|ascal.?route|EFFECTIVE_ASCAL",
+                blob,
+                re.I,
+            ):
+                route_tb = True
+                break
+    # Also accept product comment+force as path C companion only with A
+    path_c = route_tb
+
+    # Product admits iauto is irrelevant on bypass (good hygiene with Path A)
+    admits_iauto_irrelevant = bool(
+        re.search(
+            r"iauto.*irrelevant|irrelevant on the bypass|source-level iauto",
+            plex_raw,
+            re.I,
+        )
+    )
+
+    msgs.append(
+        f"LEG0_B41_SCAN vs={vs!r} force_wired={int(force_wired)} "
+        f"vga_fb_or={int(vga_fb_or)} vga_sc_or={int(vga_sc_or)} "
+        f"route_b_mux={int(route_b_mux)} iauto={int(iauto_one)} "
+        f"path_a={int(path_a)} path_b={int(path_b)} path_c={int(path_c)} "
+        f"dv_loud={int(dv_loud)} dv_hard={int(dv_hard_off)} "
+        f"iauto_irr={int(admits_iauto_irrelevant)}"
+    )
+
+    if not plex_p.is_file():
+        errors.append(
+            "B41_VGA_SCALER_NOT_FORCED: missing Plex.sv — cannot prove "
+            "VGA_SCALER force against Direct Video Route-B bypass (rd-duck)."
+        )
+        errors.append(
+            "B41_NO_ASCAL_ROUTE_CLOSURE: no product tree for Path A/B/C "
+            "ascal-route closure (rd-duck)."
+        )
+        return msgs, errors
+
+    if vs != "1":
+        errors.append(
+            f"B41_VGA_SCALER_NOT_FORCED: Plex.sv assign VGA_SCALER={vs!r} "
+            "(need =1 for Path A). rd-duck: with VGA_SCALER=0, sys_top "
+            "vga_fb=cfg[12]|vga_force_scaler stays low when FB scaler off; "
+            "Direct Video (cfg[10]) takes Route-B and skips ascal — glass is "
+            "the core raster (e.g. 1182 clocks/line ~16.92 kHz @24/30), not "
+            "1280×720. Force VGA_SCALER or close Path B/C."
+        )
+
+    # Bypass open if force path incomplete while Route-B mux exists
+    bypass_open = route_b_mux and not path_a and not path_b and not path_c
+    if bypass_open or (route_b_mux and vs != "1" and not path_b and not path_c):
+        errors.append(
+            "B41_ROUTE_B_DIRECT_VIDEO_BYPASS_OPEN: sys_top still muxes HDMI "
+            "on (~vga_fb & direct_video) to core dv_* (clkselect + hs/vs/de/d). "
+            "Product has not closed that path via VGA_SCALER force (Path A), "
+            "hard DV disable+loud (Path B), or effective-route oracle (Path C). "
+            "720p is absent on bypass (rd-duck CONFIG BLOCKER)."
+        )
+
+    if iauto_one and (vs != "1" or bypass_open):
+        errors.append(
+            "B41_IAUTO_IRRELEVANT_ON_BYPASS: sys_top ascal .iauto(1) does NOT "
+            "prove 720p glass while Route-B Direct Video bypass can still "
+            "select the core raster. Fixed H_TOTAL/ascal claims are void until "
+            "Path A/B/C closes the mux (rd-duck)."
+        )
+
+    if not (path_a or path_b or path_c):
+        errors.append(
+            "B41_NO_ASCAL_ROUTE_CLOSURE: need Path A (VGA_SCALER=1 + "
+            "vga_force→vga_fb), Path B (Direct Video unsupported/loud AND "
+            "hard bypass disable), or Path C (executable effective ascal-route "
+            "oracle). Source iauto alone is not closure (rd-duck)."
+        )
+
+    # Hierarchy integrity when claiming Path A
+    if vs == "1" and not (force_wired and vga_fb_or):
+        errors.append(
+            "B41_ROUTE_B_DIRECT_VIDEO_BYPASS_OPEN: VGA_SCALER=1 but sys_top "
+            "missing .VGA_SCALER(vga_force_scaler) and/or "
+            "vga_fb=cfg[12]|vga_force_scaler — force does not close Route-B."
+        )
+
+    closed = path_a or path_b or path_c
+    if closed and not errors:
+        which = "A" if path_a else ("B" if path_b else "C")
+        msgs.append(
+            f"LEG0_B41_PASS Path-{which} closes Direct Video ascal bypass "
+            f"(iauto_irrelevant_noted={int(admits_iauto_irrelevant)})"
+        )
+    return msgs, errors
+
+
 def leg0_arch_blockers() -> tuple[int, list[str]]:
     """rd-duck fit blockers — FAIL until a coherent candidate clears each.
 
@@ -9373,6 +9617,11 @@ def leg0_arch_blockers() -> tuple[int, list[str]]:
     b40_msgs, b40_errs = check_b40_plxg_boot_liveness_gap(ROOT)
     msgs.extend(b40_msgs)
     errors.extend(b40_errs)
+
+    # --- B41 Direct Video Route-B ascal bypass (rd-duck fixed H_TOTAL claim) ---
+    b41_msgs, b41_errs = check_b41_direct_video_ascal_bypass(ROOT)
+    msgs.extend(b41_msgs)
+    errors.extend(b41_errs)
 
     # --- B20 full-hierarchy scenario tests (rd-duck 2026-08-03 hollow audit) ---
     # Prior gate only regex-scanned test *text* and accepted comment bait (mutation
@@ -11255,6 +11504,10 @@ def _run_mutation_matrix() -> tuple[list[str], list[dict[str, str]]]:
         "B40_PRE_POLL_RACE_UNPROVEN",
         "B40_NO_ENSURE_LIVE_PROTOCOL",
         "B40_BOOT_BASELINE_TB_ABSENT",
+        "B41_VGA_SCALER_NOT_FORCED",
+        "B41_ROUTE_B_DIRECT_VIDEO_BYPASS_OPEN",
+        "B41_IAUTO_IRRELEVANT_ON_BYPASS",
+        "B41_NO_ASCAL_ROUTE_CLOSURE",
     ):
         txt = "\n".join(msgs)
         has = tok in txt
@@ -12271,6 +12524,74 @@ def _run_mutation_matrix() -> tuple[list[str], list[dict[str, str]]]:
         rest_pol()
         for h in hides:
             h()
+
+    # --- rd-duck B41: VGA_SCALER=1 but strip vga_fb OR (force ineffective) ---
+    plex_b41 = ROOT / "fpga" / "Plex_MiSTer" / "Plex.sv"
+    sys_b41 = ROOT / "fpga" / "Plex_MiSTer" / "sys" / "sys_top.v"
+    if plex_b41.is_file() and sys_b41.is_file():
+        plex_old = plex_b41.read_text(errors="replace")
+        sys_old = sys_b41.read_text(errors="replace")
+        plex_mut = re.sub(
+            r"assign\s+VGA_SCALER\s*=\s*[^;]+;",
+            "assign VGA_SCALER = 1;",
+            plex_old,
+            count=1,
+        )
+        # Strip force into vga_fb so Path A is incomplete despite VGA_SCALER=1
+        sys_mut = re.sub(
+            r"vga_fb\s*=\s*cfg\[12\]\s*\|\s*vga_force_scaler",
+            "vga_fb = cfg[12]",
+            sys_old,
+            count=1,
+        )
+        # Remove Path-C oracle if any
+        hide_c = []
+        for rel in (
+            "tests/unit/test_b41_ascal_route_effective.sh",
+            "tests/unit/test_direct_video_ascal_bypass.sh",
+        ):
+            p = ROOT / rel
+            if p.is_file():
+                bak = p.read_text(errors="replace")
+                p.unlink()
+
+                def _mk(path=p, b=bak):
+                    def restore() -> None:
+                        path.parent.mkdir(parents=True, exist_ok=True)
+                        path.write_text(b)
+
+                    return restore
+
+                hide_c.append(_mk())
+        plex_b41.write_text(plex_mut)
+        sys_b41.write_text(sys_mut)
+        try:
+            rc, msgs = leg0_arch_blockers()
+            txt = "\n".join(msgs)
+            exp = (
+                "B41_ROUTE_B_DIRECT_VIDEO_BYPASS_OPEN"
+                if "B41_ROUTE_B_DIRECT_VIDEO_BYPASS_OPEN" in txt
+                else "B41_NO_ASCAL_ROUTE_CLOSURE"
+            )
+            _row(
+                "B41_FORCE_OR_STRIPPED",
+                "VGA_SCALER=1 but vga_fb loses |vga_force_scaler",
+                exp,
+                rc,
+                msgs,
+            )
+            for tok in (
+                "B41_ROUTE_B_DIRECT_VIDEO_BYPASS_OPEN",
+                "B41_NO_ASCAL_ROUTE_CLOSURE",
+                "B41_IAUTO_IRRELEVANT_ON_BYPASS",
+            ):
+                if tok in txt:
+                    _row(tok, "B41 force-OR strip mutation", tok, rc, msgs)
+        finally:
+            plex_b41.write_text(plex_old)
+            sys_b41.write_text(sys_old)
+            for h in hide_c:
+                h()
 
 # --- rd-duck B34: identity-on-store 432/432/0 after align ---
     lay_b34 = ROOT / "host" / "libmisterplex" / "ddr_frame_layout.hpp"

@@ -1,22 +1,28 @@
 lane=w-fitgate
 branch=w-fitgate
-sha=c612858c
-ref_measured=w-fitgate@c612858c
+sha=PENDING
+ref_measured=w-fitgate@PENDING
 GRANT=NO
-status=B40_COMPLETE_PUSHED
+status=B41_DIRECT_VIDEO_ASCAL_BYPASS_PUSHED
 
-B40 PLXG boot liveness gap (rd-duck) CLOSED in gate:
-  check_b40_plxg_boot_liveness_gap wired after B39
-  LIVE_OPEN tokens RED on hollow fitgate:
-    B40_POLLER_ABSENT B40_NO_BASELINE_PATH B40_PRE_POLL_RACE_UNPROVEN
-    B40_NO_ENSURE_LIVE_PROTOCOL B40_BOOT_BASELINE_TB_ABSENT
-  closed-class mutation RED: B40_BASELINE_CLAIMED_AS_LIVENESS
-  FIX_STATUS: w-mem@cbe31c4c unmerged
-  probe wt-mem: LEG0_B40_PASS (ensure_live=1 seed_race=1 claims_closed=0)
+B41 rd-duck CONFIG: Direct Video + VGA_SCALER=0 → Route-B bypasses ascal.
+  sys_top: vga_fb=cfg[12]|vga_force; (~vga_fb & direct_video) muxes core raster
+  not 720p glass. .iauto(1) irrelevant on bypass.
+  Closure Path A: VGA_SCALER=1 + force→vga_fb (w-clock@a3365370)
+  Path B: DV loud+hard off; Path C: effective-route oracle.
+
+LIVE_OPEN RED on hollow fitgate:
+  B41_VGA_SCALER_NOT_FORCED
+  B41_ROUTE_B_DIRECT_VIDEO_BYPASS_OPEN
+  B41_IAUTO_IRRELEVANT_ON_BYPASS
+  B41_NO_ASCAL_ROUTE_CLOSURE
+Mutation RED: B41_FORCE_OR_STRIPPED (VGA=1 but vga_fb loses |force)
+FIX_STATUS: w-clock@a3365370 unmerged
+probe clock: LEG0_B41_PASS Path-A
 
 SELFTEST true rc=0
   FIT_RELEASE_GATE_SELFTEST_PASS EXECUTED
-  MUTATION_MATRIX_SUMMARY rows=106 red=106 fail_holes=0
+  MUTATION_MATRIX_SUMMARY rows=114 red=114 fail_holes=0
 
 Parent:
   git fetch origin w-fitgate
@@ -24,9 +30,6 @@ Parent:
   "$RULER/scripts/fit_release_gate.sh" --root "$MERGE" --qsf "$MERGE/fpga/Plex_MiSTer/Plex.qsf"
   echo "true rc=$?"
 
-LANDING inventory (scripts/docs only):
-  product RTL modules authored by this lane: 0
+LANDING: 0 product RTL; scripts/docs only
   ON_MAIN=no IN_FILES_QIP=n/a INSTANTIATED=n/a ENABLED=n/a
-  measured_ref=w-fitgate@c612858c
-
-NO Quartus. NO device. GRANT=NO. No unilateral main merge.
+NO Quartus. NO device. GRANT=NO.

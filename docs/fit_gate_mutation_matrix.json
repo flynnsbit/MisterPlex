@@ -481,6 +481,38 @@
       "token_hit": "1"
     },
     {
+      "check": "B41_VGA_SCALER_NOT_FORCED",
+      "inject": "live hollow / missing product TB",
+      "expect": "B41_VGA_SCALER_NOT_FORCED",
+      "verdict": "RED",
+      "true_rc": "1",
+      "token_hit": "1"
+    },
+    {
+      "check": "B41_ROUTE_B_DIRECT_VIDEO_BYPASS_OPEN",
+      "inject": "live hollow / missing product TB",
+      "expect": "B41_ROUTE_B_DIRECT_VIDEO_BYPASS_OPEN",
+      "verdict": "RED",
+      "true_rc": "1",
+      "token_hit": "1"
+    },
+    {
+      "check": "B41_IAUTO_IRRELEVANT_ON_BYPASS",
+      "inject": "live hollow / missing product TB",
+      "expect": "B41_IAUTO_IRRELEVANT_ON_BYPASS",
+      "verdict": "RED",
+      "true_rc": "1",
+      "token_hit": "1"
+    },
+    {
+      "check": "B41_NO_ASCAL_ROUTE_CLOSURE",
+      "inject": "live hollow / missing product TB",
+      "expect": "B41_NO_ASCAL_ROUTE_CLOSURE",
+      "verdict": "RED",
+      "true_rc": "1",
+      "token_hit": "1"
+    },
+    {
       "check": "B9_SYS_TOP_AR_OUT_HOLD_MISSING",
       "inject": "live defective/hollow tree (no inject)",
       "expect": "B9_SYS_TOP_AR_OUT_HOLD_MISSING",
@@ -825,6 +857,38 @@
       "token_hit": "1"
     },
     {
+      "check": "B41_FORCE_OR_STRIPPED",
+      "inject": "VGA_SCALER=1 but vga_fb loses |vga_force_scaler",
+      "expect": "B41_ROUTE_B_DIRECT_VIDEO_BYPASS_OPEN",
+      "verdict": "RED",
+      "true_rc": "1",
+      "token_hit": "1"
+    },
+    {
+      "check": "B41_ROUTE_B_DIRECT_VIDEO_BYPASS_OPEN",
+      "inject": "B41 force-OR strip mutation",
+      "expect": "B41_ROUTE_B_DIRECT_VIDEO_BYPASS_OPEN",
+      "verdict": "RED",
+      "true_rc": "1",
+      "token_hit": "1"
+    },
+    {
+      "check": "B41_NO_ASCAL_ROUTE_CLOSURE",
+      "inject": "B41 force-OR strip mutation",
+      "expect": "B41_NO_ASCAL_ROUTE_CLOSURE",
+      "verdict": "RED",
+      "true_rc": "1",
+      "token_hit": "1"
+    },
+    {
+      "check": "B41_IAUTO_IRRELEVANT_ON_BYPASS",
+      "inject": "B41 force-OR strip mutation",
+      "expect": "B41_IAUTO_IRRELEVANT_ON_BYPASS",
+      "verdict": "RED",
+      "true_rc": "1",
+      "token_hit": "1"
+    },
+    {
       "check": "B34_IDENTITY_ON_STORE",
       "inject": "align then makeDdrFrameGeometry(store) loses display 426/crop_left=2",
       "expect": "B34_IDENTITY_ON_STORE",
@@ -850,6 +914,6 @@
     }
   ],
   "failures": [],
-  "n_red": 106,
-  "head": "33684e479365"
+  "n_red": 114,
+  "head": "771f10d510fe"
 }
