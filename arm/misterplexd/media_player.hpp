@@ -470,7 +470,7 @@ private:
     int chromeOutW_ = 1280;        // 720p-first; PLXO may refine
     int chromeOutH_ = 720;
     void publishPlxcHud(PlaybackOverlayState state, int64_t positionMs, int64_t durationMs,
-                        const char* title);
+                        const char* title, int64_t skipDeltaMs = 0);
     std::atomic<pid_t> childPid_{-1};
     std::atomic<pid_t> streamPid_{-1};
     std::string lastError_;

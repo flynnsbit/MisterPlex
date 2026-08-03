@@ -67,7 +67,10 @@ module plex_chrome #(
     // silently relocating chrome *pre*-ascal so ascal softens every glyph
     // ~1.333× without anyone noticing. Pin: paint domain must track the beam
     // the module is wired into. Mutually exclusive with FAULT_LEGACY_480P_LAYOUT.
-    parameter bit FAULT_HDMI_LAYOUT_ON_CORE_DE = 1'b0
+    parameter bit FAULT_HDMI_LAYOUT_ON_CORE_DE = 1'b0,
+    // Red-twin: expand rect/glyph hit by +1 px on right/bottom (classic off-by-one).
+    // Bleeds one pixel of chrome into neighbouring video. Default 0 = product.
+    parameter bit FAULT_HIT_BLEED = 1'b0
 ) (
     input  wire        clk_hdmi,
     input  wire        reset,
@@ -557,9 +560,10 @@ module plex_chrome #(
                     end else if (op == 8'd1) begin
                         rw = cw[51:40];
                         rh = cw[63:52];
+                        // FAULT_HIT_BLEED: inclusive +1 on right/bottom edges
                         if ({4'd0, px} >= cx && {4'd0, py} >= cy &&
-                            {4'd0, px} < (cx + {4'd0, rw}) &&
-                            {4'd0, py} < (cy + {4'd0, rh})) begin
+                            {4'd0, px} < (cx + {4'd0, rw} + (FAULT_HIT_BLEED ? 12'd1 : 12'd0)) &&
+                            {4'd0, py} < (cy + {4'd0, rh} + (FAULT_HIT_BLEED ? 12'd1 : 12'd0))) begin
                             hit_l = 1'b1;
                             rgb_l = 24'h14_14_28;
                         end
@@ -568,8 +572,8 @@ module plex_chrome #(
                         rh  = {4'd0, cw[55:48]};
                         pal = cw[63:56];
                         if ({4'd0, px} >= cx && {4'd0, py} >= cy &&
-                            {4'd0, px} < (cx + {4'd0, rw}) &&
-                            {4'd0, py} < (cy + {4'd0, rh})) begin
+                            {4'd0, px} < (cx + {4'd0, rw} + (FAULT_HIT_BLEED ? 12'd1 : 12'd0)) &&
+                            {4'd0, py} < (cy + {4'd0, rh} + (FAULT_HIT_BLEED ? 12'd1 : 12'd0))) begin
                             hit_l = 1'b1;
                             rgb_l = pal_rgb(pal);
                         end

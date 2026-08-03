@@ -390,11 +390,53 @@ static void checkCodedSizeRejectedForChrome() {
     CHECK(!isHdmiChromeRaster(bad.outW, bad.outH));
 }
 
+// R2 closed: flashPlaybackSkip must publish PLXC when plane live (not ARM pixels).
+// Negative: absence of publishPlxcHud under flashPlaybackSkip is FAIL.
+static void checkFlashSkipPublishesPlxc() {
+    FILE* f = std::fopen("arm/misterplexd/media_player.cpp", "r");
+    CHECK(f != nullptr);
+    if (!f)
+        return;
+    std::string src;
+    char buf[4096];
+    while (std::fgets(buf, sizeof(buf), f))
+        src += buf;
+    std::fclose(f);
+
+    const auto flash_pos = src.find("void MediaPlayer::flashPlaybackSkip");
+    CHECK(flash_pos != std::string::npos);
+    if (flash_pos == std::string::npos)
+        return;
+    // Bound the function body roughly (next top-level MediaPlayer:: after flash)
+    const auto next_fn = src.find("void MediaPlayer::", flash_pos + 10);
+    const std::string body = src.substr(flash_pos,
+                                        next_fn == std::string::npos ? std::string::npos
+                                                                     : next_fn - flash_pos);
+    // Must call publish under chromePlaneLive — not render/blit
+    CHECK(body.find("chromePlaneLive()") != std::string::npos);
+    CHECK(body.find("publishPlxcHud") != std::string::npos);
+    CHECK(body.find("skipDeltaMs") != std::string::npos ||
+          body.find("deltaMs") != std::string::npos);
+    // Negative: no pixel bake *calls* inside flash (comments may mention blit).
+    CHECK(body.find("renderPlaybackOverlay(") == std::string::npos);
+    CHECK(body.find("->blit") == std::string::npos);
+    CHECK(body.find(".blit") == std::string::npos);
+    CHECK(body.find("writeChromePixels") == std::string::npos);
+    CHECK(body.find("paintIdle") == std::string::npos);
+    // RED twin shape: flash that only updates overlay_ without PLXC is incomplete
+    // (R2 residual). Must not be "flashSkip(...);" alone without publish.
+    CHECK(body.find("overlay_.flashSkip") != std::string::npos);
+    const auto pub = body.find("publishPlxcHud");
+    const auto flash = body.find("overlay_.flashSkip");
+    CHECK(pub != std::string::npos && flash != std::string::npos && pub > flash);
+}
+
 int main() {
     checkPackRoundtrip();
     checkNoPixelBakeWhenLive();
     checkRedTwinArmPixelBakeCaught();
     checkZeroPerPixelArmWhenLiveSource();
+    checkFlashSkipPublishesPlxc();
     checkWriteChromeIsListNotPixels();
     checkStoppedHudHasBarAndState();
     checkPlayerUiCommandBudget();

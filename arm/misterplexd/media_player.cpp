@@ -1219,7 +1219,7 @@ void MediaPlayer::resume() {
 }
 
 void MediaPlayer::publishPlxcHud(PlaybackOverlayState state, int64_t positionMs,
-                                 int64_t durationMs, const char* title) {
+                                 int64_t durationMs, const char* title, int64_t skipDeltaMs) {
     // Semantic list only — never pixels. Cheap vs full-frame bake; still ARM
     // until a single progress-fraction register lands (see agent evidence).
     // PLXC coords are HDMI/output only. If chromeOut was ever poisoned with a
@@ -1241,6 +1241,7 @@ void MediaPlayer::publishPlxcHud(PlaybackOverlayState state, int64_t positionMs,
     a.positionMs = positionMs;
     a.durationMs = durationMs;
     a.title = title;
+    a.skipDeltaMs = skipDeltaMs; // R2: skip flash is PLXC, not pixel bake
     const auto cmds = plex_chrome_cmds::buildPlaybackHud(a);
     ++chromePlxcSeq_;
     if (!(fpga_.ok() || fpga_.open()))
@@ -1262,6 +1263,10 @@ void MediaPlayer::showPlaybackOverlay(PlaybackOverlayState state, int64_t positi
 
 void MediaPlayer::flashPlaybackSkip(int64_t deltaMs) {
     overlay_.flashSkip(deltaMs, positionMs_.load(), durationMs());
+    // R2 closed: plane-live skip is a PLXC list update, not an ARM pixel bake.
+    if (chromePlaneLive()) {
+        publishPlxcHud(overlay_.state(), positionMs_.load(), durationMs(), nullptr, deltaMs);
+    }
 }
 
 void MediaPlayer::seekMs(int64_t ms) {
