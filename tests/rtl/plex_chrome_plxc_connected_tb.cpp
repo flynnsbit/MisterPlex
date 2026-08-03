@@ -330,6 +330,81 @@ int main(int argc, char** argv) {
     if (fails == 0)
         std::fprintf(stderr, "PASS connected_reset_while_rd_frozen\n");
 
+    // --- rd-duck: raw reset deassert near local clock edges ---
+    // Pointer async pins are local_rst_sync only. Raw deassert walks through
+    // the 2-FF chain and must release on the domain clock — not race a
+    // simultaneous pointer clock edge via a raw async clear pin.
+    // Stress: assert reset with both clocks live, then drop raw reset one
+    // time-unit before the next clk_hdmi rise (and similarly stress wr via
+    // free-running clk_sys). A following short xact must be bit-exact once.
+    std::fprintf(stderr, "EXECUTED connected_reset_deassert_near_clk_edge\n");
+    out.clear();
+    t->reset = 1;
+    for (int i = 0; i < 8; ++i)
+        run_sys(t, 1, /*freeze*/ 0, &out);
+    // Advance until 1 tick before hdmi would rise (nh == HDMI_HALF-1 → next tick nh=0 low? )
+    // clk_hdmi high when (main_time % 14) < 7. Rising when entering 0.
+    // Park at main_time % 14 == 13 (one before 0).
+    for (int guard = 0; guard < 28; ++guard) {
+        if (static_cast<int>(main_time % 14) == 13)
+            break;
+        main_time++;
+        eval_clks(t, 0);
+    }
+    if (static_cast<int>(main_time % 14) != 13)
+        fail("deassert-near-edge: could not align pre-hdmi-rise");
+    t->reset = 0; // raw deassert one tick before hdmi rise
+    main_time++;
+    eval_clks(t, 0); // this tick: hdmi rises with raw already low; sync still high
+    if (static_cast<int>(main_time % 14) != 0)
+        fail("deassert-near-edge: post-step not on hdmi-rise phase");
+    // Drain sync deassert (2+ edges each domain) with clocks running
+    out.clear();
+    for (int i = 0; i < 20; ++i)
+        run_sys(t, 1, 0, &out);
+    if (!out.empty())
+        fail("deassert-near-edge: unexpected rd_we during sync release");
+    if (!t->cdc_empty)
+        fail("deassert-near-edge: not empty after sync release");
+
+    // Fresh short record must apply exactly once
+    out.clear();
+    constexpr int N5 = 2;
+    std::vector<Beat> exp5;
+    for (int i = 0; i < N5; ++i) {
+        const uint64_t d = glyph('E', 3 + i, 4);
+        exp5.push_back({static_cast<uint8_t>(i), d});
+        mem_wr(t, 0x140 + static_cast<uint32_t>(i) * 8, d);
+    }
+    const uint64_t ctrl5 = pack_ctrl(true, N5, 111);
+    exp5.push_back({0xFF, ctrl5});
+    mem_wr(t, 0x130, 0);
+    mem_wr(t, 0x130, ctrl5);
+    for (int i = 0; i < 2000; ++i) {
+        run_sys(t, 1, 0, &out);
+        if (t->last_seq == 111 && !t->busy && t->cdc_empty)
+            break;
+    }
+    run_sys(t, 40, 0, &out);
+    if (t->last_seq != 111)
+        fail("deassert-near-edge: fresh last_seq want 111");
+    if (out.size() != exp5.size()) {
+        std::fprintf(stderr, "deassert-near-edge out=%zu want=%zu\n", out.size(), exp5.size());
+        fail("deassert-near-edge: fresh beat count");
+    }
+    for (size_t i = 0; i < exp5.size() && i < out.size(); ++i) {
+        if (out[i].addr != exp5[i].addr || out[i].data != exp5[i].data) {
+            fail("deassert-near-edge: fresh data");
+            break;
+        }
+    }
+    out.clear();
+    run_sys(t, 80, 0, &out);
+    if (!out.empty())
+        fail("deassert-near-edge: fresh applied more than once");
+    if (fails == 0)
+        std::fprintf(stderr, "PASS connected_reset_deassert_near_clk_edge\n");
+
     delete t;
     if (fails) {
         std::fprintf(stderr, "plex_chrome_plxc_connected_tb: %d FAIL(s)\n", fails);

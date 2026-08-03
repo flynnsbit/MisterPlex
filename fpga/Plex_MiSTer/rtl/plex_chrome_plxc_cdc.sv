@@ -14,14 +14,20 @@
 // advance only on valid&&ready same edge as wr_en&&!wr_full. Registered we +
 // advance-on-ready drops the fill-last-slot beat (rd-duck on 96e4a50d).
 //
-// Reset (rd-duck stopped-clock boundary): each domain uses ASYNC assert /
-// SYNC deassert. Sync-only `if (rst)` inside `always @(posedge clk)` never
-// samples when clk_hdmi is frozen through a RESET pulse — rd_ptr/gray would
-// retain pre-reset state while wr_ptr restarts at 0, draining stale PLXC.
-// Deassert: 2-FF chain per domain so release is local-clock-safe; if the
-// domain clock is still stopped, the FF chain holds asserted until the first
-// post-resume edges (documented requirement: hold external *_rst until both
-// clocks will run again, or accept residual local-reset until they do).
+// Reset (rd-duck CDC silicon boundary):
+//   Canonical async-assert / sync-deassert:
+//     1) 2-FF synchronizer: always @(posedge clk or posedge raw_rst)
+//        — raw_rst ASYNC-asserts the chain; deassert walks out on local clk.
+//     2) Pointer / data FFs: always @(posedge clk or posedge local_rst_sync)
+//        if (local_rst_sync) clear;
+//        — async clear pin is local_rst_sync ONLY, never raw_rst.
+//   Using raw_rst on pointer async pins leaves raw deassertion asynchronous
+//   at those pins (recovery/removal risk) even if the body also checks
+//   *_rst_sync. Sync-only `if (rst)` inside always @(posedge clk) never
+//   samples when clk_hdmi is frozen through RESET — that was the prior
+//   stopped-clock drain bug. With the canonical form, frozen rd_clk still
+//   async-clears via local_rst_sync rising with raw; deassert waits for
+//   post-resume edges.
 //
 // FAULT_EDGE_DETECT: compile the broken edge path for the red twin TB only.
 
@@ -83,7 +89,8 @@ module plex_chrome_plxc_cdc #(
 
 	assign rd_empty = (rd_ptr_gray == wr_gray_sync);
 
-	// --- domain-local reset: async assert, 2-FF sync deassert ---
+	// --- domain-local reset: async assert on raw, 2-FF sync deassert ---
+	// ONLY these blocks touch raw *_rst on an async pin.
 	reg wr_rst_meta, wr_rst_sync;
 	always @(posedge wr_clk or posedge wr_rst) begin
 		if (wr_rst) begin
@@ -106,15 +113,11 @@ module plex_chrome_plxc_cdc #(
 		end
 	end
 
-	// Write domain — async wr_rst so a pulse lands even if wr_clk is gated
-	always @(posedge wr_clk or posedge wr_rst) begin
-		if (wr_rst) begin
-			wr_ptr_bin      <= '0;
-			wr_ptr_gray     <= '0;
-			rd_ptr_gray_w1  <= '0;
-			rd_ptr_gray_w2  <= '0;
-		end else if (wr_rst_sync) begin
-			// Hold cleared through sync-deassert tail (recovery-safe)
+	// Write domain pointers: async pin = wr_rst_sync (never raw wr_rst).
+	// Assert: wr_rst async-sets wr_rst_sync → this block clears async.
+	// Deassert: wr_rst_sync falls on wr_clk only → recovery-safe vs wr_clk.
+	always @(posedge wr_clk or posedge wr_rst_sync) begin
+		if (wr_rst_sync) begin
 			wr_ptr_bin      <= '0;
 			wr_ptr_gray     <= '0;
 			rd_ptr_gray_w1  <= '0;
@@ -130,17 +133,10 @@ module plex_chrome_plxc_cdc #(
 		end
 	end
 
-	// Read domain — async rd_rst: critical when clk_hdmi is frozen through RESET
-	always @(posedge rd_clk or posedge rd_rst) begin
-		if (rd_rst) begin
-			rd_ptr_bin      <= '0;
-			rd_ptr_gray     <= '0;
-			wr_ptr_gray_r1  <= '0;
-			wr_ptr_gray_r2  <= '0;
-			rd_we           <= 1'b0;
-			rd_addr         <= 8'd0;
-			rd_data         <= 64'd0;
-		end else if (rd_rst_sync) begin
+	// Read domain pointers/outputs: async pin = rd_rst_sync (never raw rd_rst).
+	// Frozen clk_hdmi still clears when raw rd_rst asserts (sync chain async-sets).
+	always @(posedge rd_clk or posedge rd_rst_sync) begin
+		if (rd_rst_sync) begin
 			rd_ptr_bin      <= '0;
 			rd_ptr_gray     <= '0;
 			wr_ptr_gray_r1  <= '0;
