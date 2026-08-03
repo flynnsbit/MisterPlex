@@ -26,6 +26,7 @@ constexpr int kDdrBeatsBytes = 8; // 64-bit f2sdram beat
 // Theoretical peak if every clk_ddr cycle moves one beat (upper bound).
 constexpr double kFabricDdrPeakMBps = (kClkDdrHz * static_cast<double>(kDdrBeatsBytes)) / 1.0e6;
 // 720.0 MB/s
+inline double fabricDdrPeakMBps() { return kFabricDdrPeakMBps; }
 
 // I420 frame bytes (Option-C / 720p tier).
 constexpr int kFabric720pFrameBytes = kPlex720pYuv420pBytes; // 1382400
@@ -118,6 +119,24 @@ inline double stickyM2FullFrameLockoutMs() { return kFabric720pFrameMinMsAtPeak;
 // With per-beat release, m0 can interleave every other cycle in steady WE stream
 // → writer gets ~50% when both always-want (lower bound model).
 inline double writerShareWhenM0AlwaysWants() { return 0.5; }
+
+// Fabric H.264 decode DDR traffic (order-of-magnitude budget, not measured).
+// Scan-out: full I420 read once/frame. Writer: full I420 write once/frame when
+// fabric produces pixels. Decoder refs: up to ~1–2 frame reads per reconstructed
+// frame for MC (Baseline) — model as ref_factor * frame_bytes * fps.
+// ref_factor=1.5 mid; worst ~2.0. Bitstream ring read ≈ compressed rate (tiny).
+inline double fabricBitstreamRingReadMBps(double kbit = 2585.0) {
+    return (kbit * 1000.0 / 8.0) / 1.0e6; // continuous
+}
+inline double fabricDecodeRefReadMBps(double fps, double ref_factor = 1.5) {
+    return fabricWriterMBps(fps) * ref_factor;
+}
+// Combined when fabric owns decode+present (no ARM pixel path):
+//   bitstream RD + ref RD + recon write + scanout RD
+inline double fabricDecodePresentCombinedMBps(double fps, double ref_factor = 1.5) {
+    return fabricBitstreamRingReadMBps() + fabricDecodeRefReadMBps(fps, ref_factor) +
+           fabricWriterMBps(fps) + fabricScanoutReadMBps(fps);
+}
 
 inline bool writerClosesAtFpsWithHalfShare(double fps) {
     // Need writer_mbps <= 0.5 * peak_efficient. Use theoretical peak * half.

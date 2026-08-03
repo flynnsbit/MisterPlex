@@ -1,17 +1,31 @@
-agent=w-mem
-branch=w-mem-720p-abi
-status=READY_FOR_INTEGRATION_FIT (macro OFF)
+w-mem STATUS — bitstream ingest ring ABI (fabric-decode path)
 
-## Parent structural ceiling ACK
-- CPU→bank ~88 MiB/s STRUCTURAL (uncached; outside System RAM); map flags inert
-- decode+CPU move DEAD for 720p24; "faster copy" family closed
-- Route A into bank SUSPECT (w-path); PL330 open (w-path); fabric decode endgame
-- Fit path UNCHANGED — fabric owns pixels
+HEAD: (pending commit) bitstream ring map + PLXN model + NEG tests
 
-## Clean budget
-deadline 41.667 | decode 35.94 (+5.73) | CPU move 14.974 @ 88.045 MiB/s
+LANDED THIS TICK
+- Formalized compressed-bitstream ring map vs Option-C / doorbell / PL330
+  ring data 0x30100000 size 256KiB | PLXB 0x30140000 | Option-C 0x30180000
+  doorbell 0x3047F000 | PL330 0x30600000
+- .svh + .hpp lockstep: DDR_BITSTREAM_RING_* / kDdrBitstreamRing*
+- BitstreamRingModel: PLXN pack, wrap, head/tail; NEG skip-seq, partial publish, full
+- BW: fabricDecodePresentCombinedMBps — @60 mid-ref ~290.6 MB/s (40% of 720 peak)
+- Bitrate: 2585k@24 → 13463.5 B/f → 0.146 ms @88.045 MiB/s (~103× vs I420)
+- docs/fabric-bitstream-ring-abi.md
 
-## Fit enable
-FABRIC_DDR_WRITER=1 + writer/pattern/path/attach/bank_credit/
-host_bank_ingest_credit/arbiter3/luma_linebuf
-post-fit-hierarchy + hdmi_capture_idle vs control CYAN_PX=0
+PARENT VERIFY (no device for this lane)
+  cd /home/flynnsbit/Projects/MisterPlex-wt-mem
+  make $(pwd)/build/test_bitstream_ring_abi $(pwd)/build/test_ddr_720p_abi \
+       $(pwd)/build/test_fabric_ddr_bandwidth
+  ./build/test_bitstream_ring_abi; echo "true rc=$?"
+  ./build/test_ddr_720p_abi; echo "true rc=$?"
+  ./build/test_fabric_ddr_bandwidth; echo "true rc=$?"
+
+EXPECT
+  test_bitstream_ring_abi true rc=0 (NEG skip-seq + partial underrun)
+  bpf≈13463.5 ms@88≈0.146 decode_present60≈290.6
+
+STRUCTURAL (unchanged)
+  CPU I420 bank store DEAD (88 MiB/s). Fabric decode endgame. PL330=w-path.
+  Device fabric BW still unknown until parent fit.
+
+DEFAULT OFF — no Quartus from this lane.

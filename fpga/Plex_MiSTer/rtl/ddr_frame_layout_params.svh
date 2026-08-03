@@ -77,3 +77,15 @@ localparam int DDR_FRAME_720P_MAP_BYTES_3BANK = 32'h0048_0000; // 3*0x180000 tri
 localparam int DDR_FRAME_720P_TRIPLE_DOORBELL_PHYS = 32'h305F_F000;
 // PLXG geometry mailbox offset from active doorbell (ARM→FPGA program word).
 localparam int DDR_FRAME_PLXG_OFFSET = 32'h130;
+
+// ---- Compressed bitstream ring (fabric-decode ingest; product PLXB path) ----
+// Must stay clear of Option-C banks and PL330 scratch. Host mirror:
+// host/libmisterplex/ddr_bitstream_ring.hpp
+localparam int DDR_BITSTREAM_RING_DATA_PHYS = 32'h3010_0000;
+localparam int DDR_BITSTREAM_RING_BYTES     = 262144; // 256 KiB, power-of-two
+localparam int DDR_BITSTREAM_RING_CTRL_PHYS = 32'h3014_0000; // PLXB
+localparam int DDR_BITSTREAM_RING_READ_PHYS = 32'h3014_0008; // PLXR
+localparam int DDR_BITSTREAM_RING_ERR_PHYS  = 32'h3014_0010; // PLXE
+localparam int DDR_BITSTREAM_RECORD_HEADER_BYTES = 32;
+// PL330 after Option-C triple end (w-path) — collision fence only
+localparam int DDR_PL330_SCRATCH_PHYS = 32'h3060_0000;

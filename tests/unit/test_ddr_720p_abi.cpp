@@ -66,6 +66,12 @@ int main() {
     CHECK(t720.line_qwords == 160);
     CHECK(t720.chroma_line_qwords == 80);
     // Banks clear of bitstream ring [0x30100000, 0x30140000) and PLXB.
+    CHECK(kDdrBitstreamRingDataPhys == 0x30100000u);
+    CHECK(kDdrBitstreamRingBytes == 262144u);
+    CHECK(kDdrBitstreamRingCtrlPhys == 0x30140000u);
+    CHECK(kDdrBitstreamRingDataPhys + kDdrBitstreamRingBytes == kDdrBitstreamRingCtrlPhys);
+    CHECK(kDdrBitstreamRingCtrlPhys + 0x50u <= t720.phys_base);
+    CHECK(t720.doorbell_phys + 0x1000u <= kDdrPl330ScratchPhys);
     CHECK(t720.phys_base >= 0x30180000u);
     CHECK(t720.phys_base + t720.frame_bytes <= t720.phys_base + t720.bank_stride);
     CHECK(t720.phys_base + t720.bank_stride + t720.frame_bytes <= t720.doorbell_phys);

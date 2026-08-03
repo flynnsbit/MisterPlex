@@ -41,6 +41,14 @@ int main() {
     CHECK(kParentBankCpuStoreStructuralCeiling);
     CHECK(near(kParentCleanBankStoreMibps, 88.045));
 
+    // Fabric decode+present (bitstream ring + refs + recon + scan) — theoretical.
+    const double dec24 = fabricDecodePresentCombinedMBps(24.0, 1.5);
+    const double dec60 = fabricDecodePresentCombinedMBps(60.0, 1.5);
+    CHECK(dec24 > 100.0 && dec24 < 150.0);
+    CHECK(dec60 > 250.0 && dec60 < 350.0);
+    CHECK(dec60 < kFabricDdrPeakMBps * 0.5);
+    CHECK(fabricBitstreamRingReadMBps(2585.0) < 0.5);
+
     // IMPORTANT: theoretical peak fit ≠ device PASS. Mark unknown for glass.
     // Device sustained fabric BW: parent post-fit only.
 
@@ -55,6 +63,8 @@ int main() {
     std::printf("  clk_sys_2ppc_24=%.3fMHz clk_sys_2ppc_60=%.3fMHz clk_sys_4ppc_60=%.3fMHz\n",
                 clkSysHzForPpc(24.0, 2) / 1e6, clkSysHzForPpc(60.0, 2) / 1e6,
                 clkSysHzForPpc(60.0, 4) / 1e6);
+    std::printf("  decode_present24=%.1f decode_present60=%.1f bitstream_rd=%.3f\n",
+                dec24, dec60, fabricBitstreamRingReadMBps(2585.0));
     std::printf("  THEORETICAL_ONLY device_fabric_BW=unknown_until_parent_fit\n");
     return 0;
 }

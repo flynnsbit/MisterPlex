@@ -2,6 +2,8 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
+#include <vector>
 #include "mailbox_abi_spec.hpp"
 
 namespace misterplex::ddr_bitstream_ring {
@@ -156,5 +158,229 @@ inline bool decodeStat6StatusWord(uint64_t word, Status& status) {
 // STAT0..6 expose ring level/capacity-derived status, consumer seq,
 // underrun/overrun/desync counters, last_bad_seq, active/paused/fatal flags,
 // and the FPGA-visible session_id for low-cost host polling.
+
+
+// ---------------------------------------------------------------------------
+// Fabric-decode ingest map (w-mem). Default product ring kept; this documents
+// the reserved-window placement so Option-C / PL330 collisions are compile-time
+// impossible to miss. Mirror constants live in ddr_frame_layout_params.svh.
+// ---------------------------------------------------------------------------
+
+// Reserved DDR window (parent-verified memmap=513M$511M).
+constexpr uint32_t kReservedWindowStart = 0x1FF00000u;
+constexpr uint32_t kReservedWindowEnd = 0x40000000u;
+
+// Legacy/product compressed bitstream ring (already shipping path).
+constexpr uint32_t kRingDataEndPhys = kDataPhys + static_cast<uint32_t>(kRingBytes); // 0x30140000
+static_assert(kRingDataEndPhys == kCtrlPhys, "PLXB ctrl sits at ring data end");
+static_assert(kRingBytes == 262144u && (kRingBytes & (kRingBytes - 1u)) == 0,
+              "ring must be power-of-two");
+
+// Option-C frame banks (ddr_frame_layout.hpp) — must not overlap ring.
+constexpr uint32_t kOptionCBasePhys = 0x30180000u;
+constexpr uint32_t kOptionCStride = 0x00180000u;
+constexpr uint32_t kOptionCDoorbellPhys = 0x3047F000u;
+constexpr uint32_t kOptionCMapEnd2Bank = kOptionCBasePhys + 2u * kOptionCStride; // 0x30480000
+// PL330 ABI after triple Option-C (w-path).
+constexpr uint32_t kPl330ScratchPhys = 0x30600000u;
+
+// Full published map (low → high). Gaps intentional.
+//   [0x30100000, 0x30140000)  ring data 256 KiB
+//   [0x30140000, 0x30140050)  PLXB/PLXR/PLXE + STAT0..6 (mailbox page)
+//   [0x30140050, 0x30180000)  reserved gap (do not place producers)
+//   [0x30180000, 0x30480000)  Option-C I420 banks (2 x 0x180000)
+//   [0x3047F000, 0x30480000)  YUV doorbell page (inside map end)
+//   [0x30480000, 0x30600000)  headroom / triple-buffer room
+//   [0x30600000, ...)         PL330 scratch+staging
+
+inline bool rangesOverlap(uint32_t a0, uint32_t a1, uint32_t b0, uint32_t b1) {
+    return a0 < b1 && b0 < a1;
+}
+
+inline bool bitstreamRingClearsOptionC() {
+    return kRingDataEndPhys <= kOptionCBasePhys && kCtrlPhys < kOptionCBasePhys;
+}
+
+inline bool bitstreamRingClearsPl330() {
+    return kRingDataEndPhys <= kPl330ScratchPhys && kOptionCDoorbellPhys + 0x1000u <= kPl330ScratchPhys;
+}
+
+inline bool bitstreamRingInsideReserved() {
+    return kDataPhys >= kReservedWindowStart && kRingDataEndPhys <= kReservedWindowEnd &&
+           kCtrlPhys >= kReservedWindowStart && (kCtrlPhys + 0x50u) <= kReservedWindowEnd;
+}
+
+// Bitrate arithmetic @ product tier (~2585 kbit content, 24 fps).
+constexpr double kFabricIngestBitrateKbit = 2585.0;
+constexpr double kFabricIngestFps = 24.0;
+// Bytes/frame compressed ≈ bitrate/8/fps
+inline double bitstreamBytesPerFrame(double kbit, double fps) {
+    return (kbit * 1000.0 / 8.0) / fps;
+}
+inline double bitstreamCpuPushMsAtBankRate(double kbit = kFabricIngestBitrateKbit,
+                                          double fps = kFabricIngestFps,
+                                          double mibps = 88.045) {
+    const double bytes = bitstreamBytesPerFrame(kbit, fps);
+    const double mib = bytes / (1024.0 * 1024.0);
+    return (mib / mibps) * 1000.0;
+}
+// ~0.15 ms/f at 2585k/24 @ 88 MiB/s — uncached ceiling stops mattering.
+
+// PLXN record header pack/unpack (host-visible framing). Little-endian on wire.
+// Why uncached ordering helps: ARM store buffer drains to device memory in
+// program order for strongly-ordered/device mappings; publish producer count
+// ONLY after the full record (header+payload) stores are issued. FPGA never
+// reads past published count → no partial-record parse. No dcache clean needed
+// on product O_SYNC path (structural uncached).
+
+inline void packPlxnHeader(uint8_t out[32], Event ev, uint8_t nal_type, uint64_t session,
+                           uint32_t seq, uint32_t payload_len) {
+    std::memset(out, 0, 32);
+    out[0] = static_cast<uint8_t>(kRecordMagic);
+    out[1] = static_cast<uint8_t>(kRecordMagic >> 8);
+    out[2] = static_cast<uint8_t>(kRecordMagic >> 16);
+    out[3] = static_cast<uint8_t>(kRecordMagic >> 24);
+    out[4] = static_cast<uint8_t>(ev);
+    out[5] = nal_type;
+    for (int i = 0; i < 8; ++i)
+        out[8 + i] = static_cast<uint8_t>(session >> (8 * i));
+    for (int i = 0; i < 4; ++i)
+        out[16 + i] = static_cast<uint8_t>(seq >> (8 * i));
+    for (int i = 0; i < 4; ++i)
+        out[20 + i] = static_cast<uint8_t>(payload_len >> (8 * i));
+}
+
+inline bool unpackPlxnHeader(const uint8_t in[32], Event& ev, uint8_t& nal_type,
+                             uint64_t& session, uint32_t& seq, uint32_t& payload_len) {
+    const uint32_t mag = static_cast<uint32_t>(in[0]) | (static_cast<uint32_t>(in[1]) << 8) |
+                         (static_cast<uint32_t>(in[2]) << 16) | (static_cast<uint32_t>(in[3]) << 24);
+    if (mag != kRecordMagic)
+        return false;
+    ev = static_cast<Event>(in[4]);
+    nal_type = in[5];
+    session = 0;
+    for (int i = 0; i < 8; ++i)
+        session |= static_cast<uint64_t>(in[8 + i]) << (8 * i);
+    seq = 0;
+    payload_len = 0;
+    for (int i = 0; i < 4; ++i) {
+        seq |= static_cast<uint32_t>(in[16 + i]) << (8 * i);
+        payload_len |= static_cast<uint32_t>(in[20 + i]) << (8 * i);
+    }
+    return true;
+}
+
+// Software ring model — unit-testable wrap + seq (no /dev/mem).
+// Producer: append header+payload, then advance write_count by record bytes.
+// Consumer: may only read [read_count, write_count). Seq must be monotonic +1
+// for Event::Nal after Begin. Wrong wrap or skipped seq → Desync/Fatal.
+
+class BitstreamRingModel {
+public:
+    explicit BitstreamRingModel(size_t cap = kRingBytes) : cap_(cap), mem_(cap, 0) {}
+
+    size_t capacity() const { return cap_; }
+    uint32_t writeCount() const { return write_count_; }
+    uint32_t readCount() const { return read_count_; }
+    size_t level() const {
+        return static_cast<size_t>(write_count_ - read_count_);
+    }
+    bool underrunSticky() const { return underrun_sticky_; }
+    bool overrunSticky() const { return overrun_sticky_; }
+    bool desyncSticky() const { return desync_sticky_; }
+    uint32_t lastBadSeq() const { return last_bad_seq_; }
+    uint32_t expectSeq() const { return expect_seq_; }
+
+    PushResult pushRecord(Event ev, uint8_t nal_type, uint64_t session, uint32_t seq,
+                          const uint8_t* payload, uint32_t payload_len) {
+        if (fatal_)
+            return PushResult::Fatal;
+        const size_t rec = kRecordHeaderBytes + static_cast<size_t>(payload_len);
+        if (level() + rec > cap_) {
+            overrun_sticky_ = true;
+            return PushResult::Full;
+        }
+        uint8_t hdr[32];
+        packPlxnHeader(hdr, ev, nal_type, session, seq, payload_len);
+        writeBytesAt(write_count_, hdr, 32);
+        if (payload_len && payload)
+            writeBytesAt(write_count_ + 32u, payload, payload_len);
+        write_count_ += static_cast<uint32_t>(rec);
+        return PushResult::Ok;
+    }
+
+    // Consumer pulls one record. Returns false on underrun (honest starve).
+    bool pullRecord(Event& ev, uint8_t& nal_type, uint64_t& session, uint32_t& seq,
+                    std::vector<uint8_t>& payload) {
+        payload.clear();
+        if (level() < kRecordHeaderBytes) {
+            underrun_sticky_ = true;
+            return false;
+        }
+        uint8_t hdr[32];
+        peekBytes(0, hdr, 32);
+        if (!unpackPlxnHeader(hdr, ev, nal_type, session, seq, payload_len_tmp_)) {
+            desync_sticky_ = true;
+            fatal_ = true;
+            return false;
+        }
+        const size_t need = kRecordHeaderBytes + static_cast<size_t>(payload_len_tmp_);
+        if (level() < need) {
+            // Partial publish — leave read_count; sticky underrun (no silent splice).
+            underrun_sticky_ = true;
+            return false;
+        }
+        payload.resize(payload_len_tmp_);
+        if (payload_len_tmp_)
+            peekBytes(kRecordHeaderBytes, payload.data(), payload_len_tmp_);
+        read_count_ += static_cast<uint32_t>(need);
+
+        if (ev == Event::Begin) {
+            expect_seq_ = 0;
+            session_ = session;
+        } else if (ev == Event::Nal) {
+            if (seq != expect_seq_) {
+                last_bad_seq_ = seq;
+                desync_sticky_ = true;
+                return false; // honest fail — do not silently splice
+            }
+            ++expect_seq_;
+        }
+        return true;
+    }
+
+    // NEG helper: force write_count ahead without payload (partial publish).
+    void corruptAdvanceWrite(uint32_t bytes) { write_count_ += bytes; }
+
+    // NEG helper: poke ring bytes at absolute producer offset (wrap bug inject).
+    void pokeAtWriteOffset(uint32_t abs_off, const uint8_t* p, size_t n) {
+        for (size_t i = 0; i < n; ++i)
+            mem_[(abs_off + static_cast<uint32_t>(i)) & (cap_ - 1)] = p[i];
+    }
+
+private:
+    void writeBytesAt(uint32_t abs_off, const uint8_t* p, size_t n) {
+        for (size_t i = 0; i < n; ++i)
+            mem_[(abs_off + static_cast<uint32_t>(i)) & (cap_ - 1)] = p[i];
+    }
+    void peekBytes(size_t off, uint8_t* p, size_t n) const {
+        for (size_t i = 0; i < n; ++i)
+            p[i] = mem_[(read_count_ + static_cast<uint32_t>(off + i)) & (cap_ - 1)];
+    }
+
+    size_t cap_;
+    std::vector<uint8_t> mem_;
+    uint32_t write_count_ = 0;
+    uint32_t read_count_ = 0;
+    uint32_t expect_seq_ = 0;
+    uint32_t last_bad_seq_ = 0;
+    uint32_t payload_len_tmp_ = 0;
+    uint64_t session_ = 0;
+    bool underrun_sticky_ = false;
+    bool overrun_sticky_ = false;
+    bool desync_sticky_ = false;
+    bool fatal_ = false;
+};
+
 
 } // namespace misterplex::ddr_bitstream_ring

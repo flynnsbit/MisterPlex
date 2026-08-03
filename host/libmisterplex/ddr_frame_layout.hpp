@@ -92,12 +92,36 @@ static_assert(kPlex720pYuv420pBytes == 1280 * 720 * 3 / 2,
 constexpr uint32_t kPlex720pYuv420pBankStride = 0x00180000u;
 constexpr uint32_t kPlex720pDdrFramePhysBase = 0x30180000u;
 constexpr uint32_t kPlex720pYuv420pDoorbellPhys = 0x3047F000u;
+
+// Compressed bitstream ring (fabric-decode ingest) — mirror ddr_bitstream_ring.hpp
+// and ddr_frame_layout_params.svh. Collision fence vs Option-C + PL330.
+constexpr uint32_t kDdrBitstreamRingDataPhys = 0x30100000u;
+constexpr uint32_t kDdrBitstreamRingBytes = 262144u;
+constexpr uint32_t kDdrBitstreamRingCtrlPhys = 0x30140000u;
+constexpr uint32_t kDdrBitstreamRingReadPhys = 0x30140008u;
+constexpr uint32_t kDdrBitstreamRingErrPhys = 0x30140010u;
+constexpr uint32_t kDdrPl330ScratchPhys = 0x30600000u;
+constexpr int kDdrBitstreamRecordHeaderBytes = 32;
+
 // Parent-verified 2026-08-02 on device: cmdline mem=511M memmap=513M$511M
 // reserves 0x1FF00000..0x40000000; /proc/iomem claims nothing in 0x3xxxxxxx.
 // Option-C base/doorbell/end all inside reserved → treat as confirmed free.
 // Headroom doorbell→0x40000000 ≈ 251.5 MB — take triple-buffer/prefetch freely.
 constexpr uint32_t kPlexDdrReservedWindowStart = 0x1FF00000u;
 constexpr uint32_t kPlexDdrReservedWindowEnd = 0x40000000u;
+
+static_assert(kDdrBitstreamRingDataPhys + kDdrBitstreamRingBytes == kDdrBitstreamRingCtrlPhys,
+              "PLXB sits at ring data end");
+static_assert(kDdrBitstreamRingDataPhys + kDdrBitstreamRingBytes <= kPlex720pDdrFramePhysBase,
+              "bitstream ring must not overlap Option-C banks");
+static_assert(kDdrBitstreamRingCtrlPhys + 0x50u <= kPlex720pDdrFramePhysBase,
+              "PLXB mailbox page must not overlap Option-C");
+static_assert(kPlex720pYuv420pDoorbellPhys + 0x1000u <= kDdrPl330ScratchPhys,
+              "doorbell page must not reach PL330");
+static_assert(kDdrBitstreamRingDataPhys >= kPlexDdrReservedWindowStart &&
+                  kDdrBitstreamRingCtrlPhys + 0x50u <= kPlexDdrReservedWindowEnd,
+              "bitstream ring inside reserved window");
+
 constexpr uint32_t kPlex720pMapBytes2Bank = 0x00300000u; // 2 * 0x180000
 constexpr uint32_t kPlex720pMapBytes3Bank = 0x00480000u; // 3 * 0x180000
 // Candidate only: base + 3*stride - 0x1000. Not product until bank field >1 bit.
