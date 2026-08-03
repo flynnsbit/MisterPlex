@@ -1,3 +1,8 @@
+# CORRECTION ACK
+Parent retracted “45 qip / L2 on main”. **main_local** pin below
+already showed **L0** for 720p present @ `ad928cb1` (qip 34). No dead-code-on-main hunt.
+Physics fit kit unchanged.
+
 # L0–L4 verify (pinned commits via git show/grep — no dirty shared main)
 
 Parent note: live main may move during w-osd land; these pins are frozen.
