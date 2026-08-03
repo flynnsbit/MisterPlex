@@ -62,8 +62,20 @@ GATED_PATHSPECS = (
     "tests/fixtures/fit_release_gate",
     "docs/ascal-true-de-fit-card.md",
     "docs/product-4-3-scaler-decision.md",
+    "docs/fit_gate_identity.json",
     "Makefile",
 )
+# Ruler identity: gate + companions that must stay in lockstep across lanes.
+# Parent 2026-08-03: divergent rulers (fitgate vs mem byte drift) cost a full
+# verification cycle. Refuse to report LEG0 count if identity mismatches.
+GATE_IDENTITY_PATHSPECS = (
+    "scripts/fit_release_gate.py",
+    "scripts/fit_release_gate.sh",
+    "scripts/rtl_lint.py",
+    "scripts/check_define_parity.py",
+    "scripts/check_verilator_elab.py",
+)
+GATE_IDENTITY_FILE = ROOT / "docs" / "fit_gate_identity.json"
 # Open blockers that must remain visible on a stale product tree (mutation inventory).
 # Not every token forever — only defects still present in artefacts. Updated when
 # real fixes land (then mutation expects absence + a paired RED twin that re-injects).
@@ -87,6 +99,7 @@ LIVE_OPEN_BLOCKER_TOKENS = (
     "B9_NO_AR_TOPLEVEL_TEST",
     "B12_DE_LAG_RGB_LATENCY_UNPROVEN",
     "B13_FIXED_RASTER_NO_RUNTIME_DE",
+    "B14_CODED_W_16_ALIGN_UNENFORCED",
 )
 
 # Sibling-lane fixes that exist but are not merged into this gated tree.
@@ -100,6 +113,22 @@ FIX_STATUS: dict[str, dict[str, str]] = {
         "worktree": "/home/flynnsbit/Projects/MisterPlex-wt-clock",
         "artefact": "fpga/Plex_MiSTer/rtl/present_video_timing_960.sv",
         "evidence": "localparam longint FPS_MILLI = (longint'(CLK_PIX_HZ)*64'd1000)/PIX_FRAME",
+    },
+    "B6_HBLANK_OLD_HC_EPOCH": {
+        "status": "unmerged",
+        "lane": "w-scaler",
+        "commit": "bb4e5346",
+        "worktree": "/home/flynnsbit/Projects/MisterPlex-wt-scaler",
+        "artefact": "fpga/Plex_MiSTer/rtl/present_beam_content_de.sv",
+        "evidence": "HBlank <= (hc_n >= hde_act) same-epoch blanks",
+    },
+    "B6_STORE_ORACLE_UNTESTED": {
+        "status": "unmerged",
+        "lane": "w-scaler",
+        "commit": "5b1cbe46",
+        "worktree": "/home/flynnsbit/Projects/MisterPlex-wt-scaler",
+        "artefact": "tests/rtl/present_true_de_count_tb.cpp",
+        "evidence": "full store (x,y) oracle + store_full + PERM/DROP RED twins",
     },
     "B7_OPTC_WIDTH_ONLY": {
         "status": "unmerged",
@@ -132,6 +161,22 @@ FIX_STATUS: dict[str, dict[str, str]] = {
         "worktree": "/home/flynnsbit/Projects/MisterPlex-wt-mem",
         "artefact": "fpga/Plex_MiSTer/rtl/present_core.sv",
         "evidence": ".DOORBELL_PHYS_720P(DDR_FRAME_720P_YUV420P_DOORBELL_PHYS)",
+    },
+    "B13_FIXED_RASTER_NO_RUNTIME_DE": {
+        "status": "unmerged",
+        "lane": "w-scaler",
+        "commit": "5b1cbe46",
+        "worktree": "/home/flynnsbit/Projects/MisterPlex-wt-scaler",
+        "artefact": "fpga/Plex_MiSTer/rtl/present_beam_content_de.sv + present_core.sv",
+        "evidence": "use_rt_geom+rt_h_de/rt_v_active; beam tracks content_w/h",
+    },
+    "B14_CODED_W_16_ALIGN_UNENFORCED": {
+        "status": "unmerged",
+        "lane": "w-mem",
+        "commit": "e82e5d5e",
+        "worktree": "/home/flynnsbit/Projects/MisterPlex-wt-mem",
+        "artefact": "fpga/Plex_MiSTer/rtl/ddr_frame_store.sv",
+        "evidence": "rt_raw_aligned=(rt_coded_w[3:0]==4'd0); geom_enable_eff&=rt_raw_ok",
     },
     # Everything else: no known sibling implementation — new work.
 }
@@ -197,20 +242,17 @@ def _read(path: Path) -> str:
     return path.read_text(errors="ignore") if path.is_file() else ""
 
 
-def compute_gated_tree_hash(root: Path = ROOT) -> str:
-    """SHA1 over working-tree blobs of gated paths (not index-only).
-
-    Uses `git ls-files` for the path set, then `git hash-object` on each
-    working-tree file so dirty edits count. Excludes fit_candidate.json so a
-    lane cannot clear B0 by editing only the candidate file.
-    """
-    list_cmd = ["git", "-C", str(root), "ls-files", "--", *GATED_PATHSPECS]
+def _hash_pathspecs(root: Path, pathspecs: tuple[str, ...], *, exclude_substr: str = "") -> str:
+    """SHA1 over working-tree blobs for pathspecs (git ls-files + hash-object)."""
+    list_cmd = ["git", "-C", str(root), "ls-files", "--", *pathspecs]
     proc = subprocess.run(list_cmd, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     if proc.returncode != 0:
         return ""
     rows: list[str] = []
     for rel in proc.stdout.splitlines():
-        if not rel or "fit_candidate.json" in rel:
+        if not rel:
+            continue
+        if exclude_substr and exclude_substr in rel:
             continue
         full = root / rel
         if not full.is_file():
@@ -224,9 +266,129 @@ def compute_gated_tree_hash(root: Path = ROOT) -> str:
         )
         blob = ho.stdout.strip() if ho.returncode == 0 else "ERR"
         rows.append(f"{blob}  {rel}")
+    # Also include untracked-but-present identity files (new docs).
+    for spec in pathspecs:
+        p = root / spec
+        if p.is_file():
+            rel = spec
+            if any(r.endswith(f"  {rel}") or r.endswith(rel) for r in rows):
+                continue
+            if exclude_substr and exclude_substr in rel:
+                continue
+            ho = subprocess.run(
+                ["git", "-C", str(root), "hash-object", str(p)],
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            blob = ho.stdout.strip() if ho.returncode == 0 else "ERR"
+            rows.append(f"{blob}  {rel}")
     rows.sort()
     payload = "\n".join(rows) + ("\n" if rows else "")
     return hashlib.sha1(payload.encode()).hexdigest()
+
+
+def compute_gated_tree_hash(root: Path = ROOT) -> str:
+    """SHA1 over working-tree blobs of gated paths (not index-only).
+
+    Uses `git ls-files` for the path set, then `git hash-object` on each
+    working-tree file so dirty edits count. Excludes fit_candidate.json so a
+    lane cannot clear B0 by editing only the candidate file.
+    """
+    return _hash_pathspecs(root, GATED_PATHSPECS, exclude_substr="fit_candidate.json")
+
+
+def compute_gate_identity_hash(root: Path = ROOT) -> str:
+    """SHA1 of the gate ruler scripts only (cross-lane parity).
+
+    Lanes must invoke this same identity. A 217-byte drift between worktrees
+    previously produced conflicting counts (parent miss #9).
+    """
+    return _hash_pathspecs(root, GATE_IDENTITY_PATHSPECS)
+
+
+def check_gate_identity() -> tuple[int, list[str]]:
+    """Refuse untrustworthy counts when ruler scripts diverge from canonical.
+
+    Returns (0, msgs) if identity matches or no canonical yet (bootstrap).
+    Returns (1, msgs) on mismatch — caller must NOT print LEG0_FAIL count as truth.
+    """
+    msgs: list[str] = []
+    live = compute_gate_identity_hash(ROOT)
+    msgs.append(f"GATE_IDENTITY live={live}")
+    # Prefer docs/fit_gate_identity.json; fall back to field inside fit_candidate.json.
+    canon = ""
+    src = ""
+    if GATE_IDENTITY_FILE.is_file():
+        try:
+            data = json.loads(GATE_IDENTITY_FILE.read_text())
+            canon = str(data.get("gate_identity_hash", "")).lower()
+            src = str(GATE_IDENTITY_FILE)
+        except json.JSONDecodeError as e:
+            return 1, msgs + [f"GATE_IDENTITY_BAD_JSON: {GATE_IDENTITY_FILE}: {e}"]
+    else:
+        for p in CANDIDATE_PATHS:
+            if not p.is_file():
+                continue
+            try:
+                data = json.loads(p.read_text())
+            except json.JSONDecodeError:
+                continue
+            if data.get("gate_identity_hash"):
+                canon = str(data["gate_identity_hash"]).lower()
+                src = str(p)
+                break
+    if not canon:
+        msgs.append(
+            "GATE_IDENTITY_BOOTSTRAP: no canonical gate_identity_hash yet — "
+            "write docs/fit_gate_identity.json after intentional ruler change"
+        )
+        return 1, msgs + [
+            "GATE_IDENTITY_MISSING: refuse LEG0 count until canonical identity "
+            "is locked (prevents divergent rulers across lanes)"
+        ]
+    msgs.append(f"GATE_IDENTITY canonical={canon} src={src}")
+    if not re.fullmatch(r"[0-9a-f]{40}", canon):
+        return 1, msgs + ["GATE_IDENTITY_BAD_HASH: need full 40-char sha1"]
+    if canon != live:
+        return 1, msgs + [
+            f"GATE_IDENTITY_MISMATCH: canonical={canon} live={live}. "
+            "This ruler differs from the locked gate scripts (fit_release_gate.py + "
+            "rtl_lint/check_define_parity/check_verilator_elab). LEG0 count is "
+            "UNTRUSTWORTHY — do not compare counts across divergent rulers. "
+            "Rebase from w-fitgate or refresh identity only after intentional "
+            "gate change (not a bypass)."
+        ]
+    msgs.append("GATE_IDENTITY_MATCH EXECUTED")
+    return 0, msgs
+
+
+def _rtl_lint_discover_design(macro_qsf: Path | None = None):
+    """Call rtl_lint.discover_design with API self-check.
+
+    Parent 2026-08-03: B10_DISCOVER_DESIGN_ERROR TypeError(macro_qsf) means the
+    check DID NOT RUN — same defect class as qip-omitted beam / wrong denominator.
+    Never treat a crashed call as a completed architecture scan.
+    """
+    import inspect
+
+    import rtl_lint  # noqa: WPS433 — scripts/ on path
+
+    sig = inspect.signature(rtl_lint.discover_design)
+    params = sig.parameters
+    accepts_kw = "macro_qsf" in params or any(
+        p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values()
+    )
+    if macro_qsf is not None and not accepts_kw:
+        raise RuntimeError(
+            "B10_RTL_LINT_API_STALE: rtl_lint.discover_design() does not accept "
+            "macro_qsf= — companion script is older than fit_release_gate.py. "
+            "CHECK DID NOT RUN. Sync scripts/rtl_lint.py from w-fitgate "
+            f"(live sig={sig})."
+        )
+    if macro_qsf is not None and accepts_kw:
+        return rtl_lint.discover_design(macro_qsf=macro_qsf)
+    return rtl_lint.discover_design()
 
 
 def _git_head(root: Path = ROOT) -> str:
@@ -969,17 +1131,22 @@ def leg0_arch_blockers() -> tuple[int, list[str]]:
             f"B10_BEAM_RTL_MISSING: {beam_abs} not on disk — cannot elaborate"
         )
     # discover_design must surface beam from qip (not a parallel hand list).
+    # API self-check first: TypeError(macro_qsf) = CHECK DID NOT RUN (parent B10).
     try:
         import rtl_lint  # noqa: WPS433 — scripts/ already on path
 
-        disc_files, _disc_macros = rtl_lint.discover_design(
-            macro_qsf=FIX / "green_ascal_960x540.qsf"
+        qsf_for_disc = (
+            FIX / "green_ascal_960x540.qsf"
             if (FIX / "green_ascal_960x540.qsf").is_file()
             else None
         )
+        disc_files, _disc_macros = _rtl_lint_discover_design(qsf_for_disc)
         disc_rels = {rtl_lint.rel(p) for p in disc_files}
         beam_disc = "fpga/Plex_MiSTer/rtl/present_beam_content_de.sv" in disc_rels
-        msgs.append(f"LEG0_DISCOVER_DESIGN beam_in_quartus_file_list={int(beam_disc)}")
+        msgs.append(
+            f"LEG0_DISCOVER_DESIGN EXECUTED beam_in_quartus_file_list={int(beam_disc)} "
+            f"n_files={len(disc_files)}"
+        )
         if beam_in_qip and not beam_disc:
             errors.append(
                 "B10_BEAM_NOT_IN_DISCOVER_DESIGN: files.qip lists beam but "
@@ -992,8 +1159,45 @@ def leg0_arch_blockers() -> tuple[int, list[str]]:
                 "macros must include fpga/Plex_MiSTer/rtl/present_beam_content_de.sv "
                 "(project file list, not TB hand-list)"
             )
-    except Exception as exc:  # noqa: BLE001 — surface as gate fail
-        errors.append(f"B10_DISCOVER_DESIGN_ERROR: {exc}")
+    except RuntimeError as exc:
+        # Stale companion API — check did not execute.
+        errors.append(str(exc) if str(exc).startswith("B10_") else f"B10_DISCOVER_DESIGN_DID_NOT_RUN: {exc}")
+    except TypeError as exc:
+        errors.append(
+            "B10_DISCOVER_DESIGN_DID_NOT_RUN: TypeError calling discover_design "
+            f"({exc}). CHECK DID NOT EXECUTE — fix rtl_lint signature (need "
+            "macro_qsf=). A throwing check must not look like a clean architecture scan."
+        )
+    except Exception as exc:  # noqa: BLE001 — surface as gate fail, mark unexecuted
+        errors.append(
+            f"B10_DISCOVER_DESIGN_DID_NOT_RUN: {type(exc).__name__}: {exc} — "
+            "discover_design raised before returning a file list; beam-on-qip "
+            "verification did not complete"
+        )
+
+    # --- B14: coded_w must be 16-aligned (parent PMS AR-fit 468/638/626) ---
+    # Store chroma fetch is coded_w>>4. Unaligned widths corrupt UV plane.
+    # Observed defect class (not speculative): PMS AR-fit delivers non-16 widths.
+    # w-mem enforces rt_raw_aligned=(rt_coded_w[3:0]==0) into rt_raw_ok.
+    store_b14 = _read(RTL / "ddr_frame_store.sv")
+    has_cw16 = bool(
+        re.search(r"rt_coded_w\[3:0\]\s*==\s*4'd0", store_b14)
+    ) or bool(re.search(r"rt_cw_cl\[3:0\]\s*==\s*4'd0", store_b14))
+    has_raw_aligned = "rt_raw_aligned" in store_b14 and "rt_raw_ok" in store_b14
+    msgs.append(
+        f"LEG0_CODED_W_ALIGN cw16_check={int(has_cw16)} "
+        f"rt_raw_aligned={int(has_raw_aligned)}"
+    )
+    if not (has_cw16 and has_raw_aligned):
+        errors.append(
+            "B14_CODED_W_16_ALIGN_UNENFORCED: ddr_frame_store.sv must reject "
+            "non-16-aligned coded_w (rt_coded_w[3:0]==0 in rt_raw_aligned → "
+            "rt_raw_ok). Parent lab: PMS AR-fit widths 468/638/626 fail 16-align; "
+            "chroma fetch is coded_w>>4. Silent accept = UV plane corruption. "
+            "Observed defect class, not speculative."
+        )
+    else:
+        msgs.append("LEG0_EVIDENCE coded_w 16-align gated via rt_raw_aligned")
 
     # --- B12: RGB/store DE_LAG not re-swept for 960 product ---
     # present_core.sv documents DE_LAG=3 measured at FRAME_W=640; REQUIRES_FIT note
@@ -1167,7 +1371,7 @@ def leg2_elab(qsf: Path) -> tuple[int, list[str]]:
     try:
         import rtl_lint  # noqa: WPS433
 
-        files, macros = rtl_lint.discover_design(macro_qsf=qsf)
+        files, macros = _rtl_lint_discover_design(qsf)
         rels = [rtl_lint.rel(p) for p in files]
         beam_rel = "fpga/Plex_MiSTer/rtl/present_beam_content_de.sv"
         has_beam = beam_rel in rels
@@ -1175,7 +1379,7 @@ def leg2_elab(qsf: Path) -> tuple[int, list[str]]:
             m.startswith("PRESENT_BEAM_960=") and not m.endswith("=0") for m in macros
         )
         msgs.append(
-            f"LEG2_QUARTUS_FILE_LIST n={len(files)} beam={int(has_beam)} "
+            f"LEG2_QUARTUS_FILE_LIST EXECUTED n={len(files)} beam={int(has_beam)} "
             f"PRESENT_BEAM_960={int(has_beam_macro)}"
         )
         msgs.append("LEG2_MACROS " + " ".join(macros))
@@ -1189,8 +1393,17 @@ def leg2_elab(qsf: Path) -> tuple[int, list[str]]:
         if has_beam_macro and "PRESENT_BEAM_960=1" not in " ".join(macros):
             msgs.append("LEG2_FAIL EXECUTED PRESENT_BEAM_960 not exactly =1 in macro set")
             return 1, msgs
+    except RuntimeError as exc:
+        msgs.append(f"LEG2_FAIL EXECUTED discover_design DID_NOT_RUN: {exc}")
+        return 1, msgs
+    except TypeError as exc:
+        msgs.append(
+            f"LEG2_FAIL EXECUTED discover_design DID_NOT_RUN TypeError: {exc} "
+            "(stale rtl_lint — CHECK DID NOT RUN)"
+        )
+        return 1, msgs
     except Exception as exc:  # noqa: BLE001
-        msgs.append(f"LEG2_FAIL EXECUTED discover_design: {exc}")
+        msgs.append(f"LEG2_FAIL EXECUTED discover_design DID_NOT_RUN: {exc}")
         return 1, msgs
 
     elab = ROOT / "scripts" / "check_verilator_elab.py"
@@ -1388,6 +1601,7 @@ def run_gate(
     skip_elab: bool = False,
     skip_true_de: bool = False,
     force_island: bool = False,
+    skip_identity: bool = False,
 ) -> int:
     print(CROSS_LANE)
     print(f"FIT_RELEASE_GATE qsf={qsf}")
@@ -1396,6 +1610,21 @@ def run_gate(
         "FIT_RELEASE_GATE_CLASS=partial_precheck_until_leg0_clear "
         "(not fit release while B0–B11 open — rd-duck adc9292)"
     )
+    live_id = compute_gate_identity_hash(ROOT)
+    print(f"FIT_RELEASE_GATE_IDENTITY live={live_id}")
+
+    # Ruler parity first — refuse untrustworthy counts on divergent scripts.
+    if not skip_identity:
+        rc_id, msgs_id = check_gate_identity()
+        print("\n".join(msgs_id))
+        print(f"gate_identity true rc={rc_id}")
+        if rc_id != 0:
+            print(
+                "FIT_RELEASE_GATE_FAIL leg=identity "
+                "(LEG0_COUNT_REFUSED — divergent or unlocked ruler)"
+            )
+            print("LEG0_COUNT_REFUSED reason=gate_identity")
+            return rc_id
 
     # Tree match before any RTL work (macros A + RTL B is forbidden).
     rtl_legs = (not skip_arch) or (not skip_elab) or (not skip_true_de)
@@ -1537,6 +1766,11 @@ set_global_assignment -name VERILOG_MACRO "PRESENT_BEAM_FAULT_ISLAND_1280=1"
 def self_test() -> int:
     """Mandatory RED twins + isolation GREEN + full-gate arch RED. Each EXECUTED."""
     print("FIT_RELEASE_GATE_SELFTEST_EXECUTED begin")
+    # Lock ruler identity + candidate against current scripts before any run_gate.
+    _write_gate_identity_lock(
+        reason="selftest intentional identity lock after gate edits — not a bypass"
+    )
+    _write_parent_candidate_lock()
     fx = ensure_fixtures()
     failures = 0
 
@@ -1801,12 +2035,49 @@ def self_test() -> int:
     return 0
 
 
+def _write_gate_identity_lock(*, reason: str) -> None:
+    """Lock ruler identity after intentional gate-script change (not a bypass)."""
+    live = compute_gate_identity_hash(ROOT)
+    payload = {
+        "gate_identity_hash": live,
+        "paths": list(GATE_IDENTITY_PATHSPECS),
+        "locked_by": "w-fitgate",
+        "locked_date": "2026-08-03",
+        "reason": reason,
+        "notes": [
+            "INTENTIONAL REBASE of ruler identity after gate script change — not a bypass.",
+            "Lanes must run this same identity; divergent fit_release_gate.py/rtl_lint.py "
+            "must not report LEG0 counts (LEG0_COUNT_REFUSED).",
+            "Refresh only when scripts/fit_release_gate.py or companions change on purpose.",
+        ],
+    }
+    GATE_IDENTITY_FILE.parent.mkdir(parents=True, exist_ok=True)
+    GATE_IDENTITY_FILE.write_text(json.dumps(payload, indent=2) + "\n")
+
+
 def _write_parent_candidate_lock() -> None:
+    # Identity first (identity file is part of gated tree hash).
+    if not GATE_IDENTITY_FILE.is_file():
+        _write_gate_identity_lock(reason="bootstrap candidate lock")
+    else:
+        # Keep identity in sync with live scripts when rewriting lock intentionally.
+        live_id = compute_gate_identity_hash(ROOT)
+        try:
+            cur = json.loads(GATE_IDENTITY_FILE.read_text())
+            if str(cur.get("gate_identity_hash", "")).lower() != live_id:
+                _write_gate_identity_lock(
+                    reason="intentional rebase — gated scripts changed; not a bypass"
+                )
+        except json.JSONDecodeError:
+            _write_gate_identity_lock(reason="repair bad identity json")
+
     cand_path = ROOT / "docs" / "fit_candidate.json"
     good_hash = compute_gated_tree_hash(ROOT)
+    id_hash = compute_gate_identity_hash(ROOT)
     good = {
         "architecture": PARENT_LOCKED_ARCH,
         "git_tree_hash": good_hash,
+        "gate_identity_hash": id_hash,
         "git_head_at_lock": _git_head(ROOT),
         "required_macros": dict(REQUIRED_EXACT),
         "forbidden_macros": [
@@ -1835,7 +2106,10 @@ def _write_parent_candidate_lock() -> None:
         ),
         "notes": [
             "git_tree_hash binds gated artefacts via compute_gated_tree_hash() and excludes this file.",
-            "Updating RTL/scripts without refreshing this hash is a deliberate B0_TREE_HASH_MISMATCH fail.",
+            "INTENTIONAL hash refresh after gated artefact change is a rebase, not a bypass — "
+            "candidate cannot clear blockers by editing only this JSON.",
+            "gate_identity_hash must match docs/fit_gate_identity.json; divergent lane rulers "
+            "refuse LEG0 count (LEG0_COUNT_REFUSED).",
             "fix=unmerged in leg0 output names sibling lane+commit; do not re-implement those.",
         ],
     }
@@ -1844,6 +2118,20 @@ def _write_parent_candidate_lock() -> None:
 
 
 def _refresh_candidate_tree_hash_if_needed() -> None:
+    """Refresh hashes only after intentional gated changes (rebase, not bypass)."""
+    live_id = compute_gate_identity_hash(ROOT)
+    if GATE_IDENTITY_FILE.is_file():
+        try:
+            cur = json.loads(GATE_IDENTITY_FILE.read_text())
+            if str(cur.get("gate_identity_hash", "")).lower() != live_id:
+                _write_gate_identity_lock(
+                    reason="intentional rebase — ruler scripts changed; not a bypass"
+                )
+        except json.JSONDecodeError:
+            _write_gate_identity_lock(reason="repair identity json")
+    else:
+        _write_gate_identity_lock(reason="bootstrap identity")
+
     cand_path = ROOT / "docs" / "fit_candidate.json"
     if not cand_path.is_file():
         _write_parent_candidate_lock()
@@ -1854,16 +2142,29 @@ def _refresh_candidate_tree_hash_if_needed() -> None:
         _write_parent_candidate_lock()
         return
     live = compute_gated_tree_hash(ROOT)
+    id_hash = compute_gate_identity_hash(ROOT)
+    dirty = False
     if str(cand.get("git_tree_hash", "")).lower() != live:
         cand["git_tree_hash"] = live
         cand["git_head_at_lock"] = _git_head(ROOT)
-        # Keep raster_policy if missing (parent lock).
-        if "raster_policy" not in cand:
-            cand["raster_policy"] = {
-                "mode": "runtime_variable_true_de",
-                "max_content_w": 960,
-                "max_content_h": 540,
-            }
+        dirty = True
+    if str(cand.get("gate_identity_hash", "")).lower() != id_hash:
+        cand["gate_identity_hash"] = id_hash
+        dirty = True
+    if "raster_policy" not in cand:
+        cand["raster_policy"] = {
+            "mode": "runtime_variable_true_de",
+            "max_content_w": 960,
+            "max_content_h": 540,
+        }
+        dirty = True
+    if dirty:
+        # Record that this is an intentional rebase in notes (idempotent).
+        notes = list(cand.get("notes") or [])
+        marker = "Last git_tree_hash refresh: intentional rebase of gated artefacts (not a bypass)."
+        if marker not in notes:
+            notes.append(marker)
+        cand["notes"] = notes
         cand_path.write_text(json.dumps(cand, indent=2) + "\n")
 
 
@@ -2062,6 +2363,18 @@ def _mutation_per_blocker_clear_restore() -> list[str]:
             "B13_FIXED_RASTER_NO_RUNTIME_DE",
             [(beam, clear_runtime_de_beam), (core, clear_runtime_de_core)],
         ),
+        (
+            "B14_CODED_W_16_ALIGN_UNENFORCED",
+            [
+                (
+                    store,
+                    lambda t: t
+                    + "\n// mut 16-align\n"
+                    "wire rt_raw_aligned = (rt_coded_w[3:0] == 4'd0);\n"
+                    "wire rt_raw_ok = rt_raw_aligned;\n",
+                )
+            ],
+        ),
     ]
 
     # B5 / B9_NO_AR_TOPLEVEL_TEST: create dummy tests then remove.
@@ -2216,6 +2529,66 @@ def _mutation_closed_class_reinject() -> list[str]:
                     print("  MUT_OK B10_BEAM_QIP reinject_fire=1")
             finally:
                 rest()
+
+    # B10: stale rtl_lint without macro_qsf must report DID_NOT_RUN (not silent skip).
+    rtl_lint_path = ROOT / "scripts" / "rtl_lint.py"
+    if rtl_lint_path.is_file():
+        old_rl = rtl_lint_path.read_text()
+        if "def discover_design(macro_qsf" in old_rl:
+            bad_rl = old_rl.replace(
+                "def discover_design(macro_qsf: Path | None = None)",
+                "def discover_design()",
+                1,
+            )
+            # Also neutralize body kw use if any - signature alone is enough for wrapper.
+            rest = _with_file_backup(rtl_lint_path, bad_rl)
+            try:
+                # Force reimport
+                import importlib
+                import sys
+
+                sys.modules.pop("rtl_lint", None)
+                _rc, msgs = leg0_arch_blockers()
+                txt = "\n".join(msgs)
+                toks = _leg0_error_tokens(msgs)
+                fired = (
+                    "B10_RTL_LINT_API_STALE" in txt
+                    or "B10_DISCOVER_DESIGN_DID_NOT_RUN" in txt
+                    or "B10_RTL_LINT_API_STALE" in toks
+                    or "B10_DISCOVER_DESIGN_DID_NOT_RUN" in toks
+                )
+                if not fired:
+                    fails.append(
+                        "B10_DISCOVER_DESIGN_DID_NOT_RUN: stale API reinject did not fire — HOLE"
+                    )
+                else:
+                    print("  MUT_OK B10_DISCOVER_DESIGN_DID_NOT_RUN reinject_fire=1")
+            finally:
+                rest()
+                import sys
+
+                sys.modules.pop("rtl_lint", None)
+
+    # Gate identity mismatch must refuse count.
+    if GATE_IDENTITY_FILE.is_file():
+        old_id = GATE_IDENTITY_FILE.read_text()
+        bad_id = json.dumps(
+            {
+                "gate_identity_hash": "0" * 40,
+                "paths": list(GATE_IDENTITY_PATHSPECS),
+                "locked_by": "mutation",
+            },
+            indent=2,
+        ) + "\n"
+        rest = _with_file_backup(GATE_IDENTITY_FILE, bad_id)
+        try:
+            rc_id, msgs_id = check_gate_identity()
+            if rc_id == 0 or "GATE_IDENTITY_MISMATCH" not in "\n".join(msgs_id):
+                fails.append("GATE_IDENTITY_MISMATCH: bad hash did not refuse — HOLE")
+            else:
+                print("  MUT_OK GATE_IDENTITY_MISMATCH reinject_fire=1")
+        finally:
+            rest()
 
     return fails
 

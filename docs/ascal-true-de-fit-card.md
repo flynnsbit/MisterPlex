@@ -3,6 +3,10 @@
 **Architecture lock:** `ascal_true_de_960` — core emits **true DE == content extent**; ascal (`iauto=1`) upscales DE to 1280×720.  
 **Raster policy (parent 2026-08-03):** **runtime-variable** DE tracking PMS-delivered geometry. **960×540 is the maximum tier, not a fixed raster.** PMS does **not** upscale (lab: `/library/metadata/1` 320×240 source stays 320×240 at rung 540). Gate **B13** fails fixed-only beam/core binds.  
 **Gate:** `make fit-gate` / `scripts/fit_release_gate.sh` — leg0 architecture + macros + elab + counted true_de.  
+**Ruler identity:** `docs/fit_gate_identity.json` binds gate scripts; divergent lane copies get `LEG0_COUNT_REFUSED` (do not compare counts across rulers).  
+**B10:** `discover_design(macro_qsf=)` must actually run (`LEG0_DISCOVER_DESIGN EXECUTED`); TypeError/stale `rtl_lint` → `B10_DISCOVER_DESIGN_DID_NOT_RUN` (check did not execute).  
+**B14:** `coded_w` 16-align reject required (`rt_coded_w[3:0]==0`); PMS AR-fit 468/638/626 is an observed defect class.  
+
 **Max-tier measured (beam+window TB):** `true_de=1 de_w=960 de_lines=540 de_pixels=518400 store_req=518400 store_oracle=1 store_x_range=0..959` @ `H_TOT=1182 V_TOT=564` (`fps@20M=30.0008`) — **not** product hierarchy proof (inspect `Plex.sv`).  
 **RED:** `PRESENT_BEAM_FAULT_ISLAND_1280` → `de=1280x720 true_de=0` rc≠0 + EXECUTED  
 **Also RED (rd-duck):** DE-only greenwash — `de_pixels=518400` with `store_req=517860` (959×540, x=0 dropped) is **not** fit-ready. Beam blank/sync must use **same counter epoch** as registered `hc`/`vc` (`hc_next`).

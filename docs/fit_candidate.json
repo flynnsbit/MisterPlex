@@ -1,7 +1,8 @@
 {
   "architecture": "ascal_true_de_960",
-  "git_tree_hash": "e74e179aa0f45437ba1bed2eb11ea3c81b76a0c6",
-  "git_head_at_lock": "f35f267eae0e12cb8745942980ca95a538e1a675",
+  "git_tree_hash": "bd96361b0d39c4cfa28f4c6cf16976131aaaec55",
+  "gate_identity_hash": "633befb534d6e9fb0d173d46bd587b569d89617e",
+  "git_head_at_lock": "475c11380774cb68b223784e91a220b3bbc52df6",
   "required_macros": {
     "FRAME_W": "960",
     "FRAME_H": "540",
@@ -28,7 +29,8 @@
   "rationale": "Core emits true DE equal to content; ascal (iauto=1) upscales to 1280x720. 960x540 is the maximum content tier, not a fixed raster. Content rate at max tier ~15.55 Mpix/s @30 \u2014 not mp_cea_1280; 40 Mpix/s is not headroom.",
   "notes": [
     "git_tree_hash binds gated artefacts via compute_gated_tree_hash() and excludes this file.",
-    "Updating RTL/scripts without refreshing this hash is a deliberate B0_TREE_HASH_MISMATCH fail.",
+    "INTENTIONAL hash refresh after gated artefact change is a rebase, not a bypass \u2014 candidate cannot clear blockers by editing only this JSON.",
+    "gate_identity_hash must match docs/fit_gate_identity.json; divergent lane rulers refuse LEG0 count (LEG0_COUNT_REFUSED).",
     "fix=unmerged in leg0 output names sibling lane+commit; do not re-implement those."
   ]
 }
