@@ -1,13 +1,14 @@
 `timescale 1ps/1ps
 // B15 + ABI#2 + rd-duck adversarial:
 // - Count beam frame_start (raster completes), NOT "unique content banks".
-// - present_cadence display_hz = CORE 24/30 (source-locked), not HDMI 60.
-// - fps=25 → TV V=564 (film is <=24 only).
+// - present_cadence display_hz = CORE 24/30, not HDMI 60.
+// - fps=24/30: content_fps == core Hz → 1:1 advance (source-locked).
+// - fps=25: TV raster V=564 @30; cadence floor(n*25/30) → NOT 1:1.
+//   Short window (5 raster): advances 4. Long window (30 raster): advances 25.
 // - RED IGNORE_FPS_VALID: 30-title stays film 4 frames.
-// - RED CADENCE_HDMI60: advances ~half of raster (30/60 floor).
+// - RED CADENCE_HDMI60: advances 3 of 5 (30/60 floor).
 //
-// frame_start pulses once per completed frame (v_wrap). Window = 4*1182*705
-// ce clocks from (0,0) after reset → film:4 completes, TV:5 completes.
+// frame_start pulses once per completed frame (v_wrap).
 `default_nettype none
 module b15_cadence_framecount_tb;
 	localparam int CLK_PS = 25000;
@@ -15,7 +16,11 @@ module b15_cadence_framecount_tb;
 	localparam int V30 = 564;
 	localparam int V24 = 705;
 	localparam int FRAMES_WIN = 4;
-	localparam int WINDOW_CLKS = FRAMES_WIN * H_TOT * V24; // 4 film frames wall
+	// Wall clock of 4 film frames — film→4 completes, TV→5 completes.
+	localparam int WINDOW_CLKS = FRAMES_WIN * H_TOT * V24;
+	// Exact 6:5 proof: 30 TV raster ticks @ core 30 with content_fps=25 → 25 advances.
+	localparam int LONG_RASTER = 30;
+	localparam int LONG_CLKS = LONG_RASTER * H_TOT * V30;
 
 	function automatic [63:0] pack_q5;
 		input [11:0] dar_x, dar_y;
@@ -51,6 +56,7 @@ module b15_cadence_framecount_tb;
 
 	wire beam_film = film_class(content_fps_eff);
 	wire [10:0] beam_vtot_req = beam_film ? 11'(V24) : 11'(V30);
+	// Core raster Hz only — NOT equal to content_fps when fps=25 (TV 30 holds).
 	wire [7:0] cadence_hz_core = beam_film ? 8'd24 : 8'd30;
 `ifdef FAULT_B15_CADENCE_HDMI60
 	wire [7:0] cadence_hz = 8'd60;
@@ -104,10 +110,11 @@ module b15_cadence_framecount_tb;
 		end
 	endtask
 
-	// Run WINDOW_CLKS free-running ce clocks after reset; count fstart + advances.
-	task automatic run_window;
+	// Run exactly n_clks free-running clocks after reset; count fstart + advances.
+	task automatic run_clks;
 		input bit fv;
 		input integer fps;
+		input integer n_clks;
 		output integer o_raster;
 		output integer o_swap;
 		output integer o_adv;
@@ -120,8 +127,7 @@ module b15_cadence_framecount_tb;
 			o_raster = 0; o_swap = 0; o_adv = 0; clks = 0;
 			repeat (8) @(posedge clk);
 			reset = 0;
-			// First free-running edge starts beam at (0,0)→next
-			while (clks < WINDOW_CLKS) begin
+			while (clks < n_clks) begin
 				@(posedge clk);
 				#1; // settle NBA (frame_start / advance_unique)
 				if (fstart) begin
@@ -133,6 +139,18 @@ module b15_cadence_framecount_tb;
 			end
 			#1;
 			o_vtot = vtot_act;
+		end
+	endtask
+
+	task automatic run_window;
+		input bit fv;
+		input integer fps;
+		output integer o_raster;
+		output integer o_swap;
+		output integer o_adv;
+		output integer o_vtot;
+		begin
+			run_clks(fv, fps, WINDOW_CLKS, o_raster, o_swap, o_adv, o_vtot);
 		end
 	endtask
 
@@ -177,7 +195,7 @@ module b15_cadence_framecount_tb;
 `else
 		$display("GREEN B15 raster+cadence (honest claims)");
 
-		// fps=25 threshold: TV class, not film
+		// fps=25 threshold: TV class raster, not film — still cadence 25≠30
 		drive_q5(1'b1, 25);
 		#1;
 		if (film_class(content_fps_eff)) begin
@@ -186,9 +204,15 @@ module b15_cadence_framecount_tb;
 		if (beam_vtot_req !== 11'(V30)) begin
 			$display("FAIL fps=25 vtot not 564 got %0d", beam_vtot_req); $fatal(1);
 		end
-		$display("OK fps=25 -> TV class V=564 (not 24.0007)");
+		if (cadence_hz_core !== 8'd30) begin
+			$display("FAIL fps=25 core hz not 30 got %0d", cadence_hz_core); $fatal(1);
+		end
+		if (content_fps_eff === cadence_hz_core) begin
+			$display("FAIL fps=25 wrongly equals core hz (would imply false 1:1)"); $fatal(1);
+		end
+		$display("OK fps=25 -> TV class V=564 core_hz=30 content!=core (not 24.0007)");
 
-		// valid 24 → film 4
+		// valid 24 → film 4; content_fps==core → 1:1
 		run_window(1'b1, 24, r, s, a, vt);
 		$display("B15 RASTER fps_valid=1 fps=24 eff=%0d film=1 vtot=%0d frame_start=%0d exp=4 swap_opp=%0d adv=%0d",
 			content_fps_eff, vt, r, s, a);
@@ -200,7 +224,7 @@ module b15_cadence_framecount_tb;
 		end
 		$display("OK B15 raster frame_start=4 swap_opp=4 vtot=%0d (not unique-bank claim)", vt);
 
-		// valid 30 → TV 5 + 1:1 advance
+		// valid 30 → TV 5; content_fps==core → 1:1
 		run_window(1'b1, 30, r, s, a, vt);
 		$display("B15 RASTER fps_valid=1 fps=30 eff=%0d film=0 vtot=%0d frame_start=%0d exp=5 swap_opp=%0d adv=%0d",
 			content_fps_eff, vt, r, s, a);
@@ -208,19 +232,34 @@ module b15_cadence_framecount_tb;
 			$display("FAIL tv30 r/s/a=%0d/%0d/%0d", r, s, a); $fatal(1);
 		end
 		$display("OK B15 raster frame_start=5 swap_opp=5 vtot=%0d (not unique-bank claim)", vt);
-		$display("OK ADV_PROOF source-locked 1:1 raster=5 advances=5");
+		$display("OK ADV_PROOF source-locked 1:1 raster=5 advances=5 (fps==core only)");
 
-		// valid 25 → TV raster 5; cadence 25/30 → 4 advances (not 1:1)
-		// floor ticks: adv on di 0,2,3,4 = 4 of 5 (hold one display tick)
+		// valid 25 short: TV raster 5; cadence floor → advances at di 0,2,3,4 = 4 NOT 5
 		run_window(1'b1, 25, r, s, a, vt);
 		$display("B15 RASTER fps_valid=1 fps=25 frame_start=%0d adv=%0d", r, a);
 		if (r !== 5) begin
 			$display("FAIL fps25 raster %0d", r); $fatal(1);
 		end
 		if (a !== 4) begin
-			$display("FAIL fps25 advances %0d exp 4 (25/30)", a); $fatal(1);
+			$display("FAIL fps25 advances %0d exp 4 (25/30 short)", a); $fatal(1);
 		end
-		$display("OK B15 fps=25 raster frame_start=5 advances=4 (25/30 hold)");
+		if (a === r) begin
+			$display("FAIL fps25 wrongly 1:1 with core"); $fatal(1);
+		end
+		$display("OK B15 fps=25 raster frame_start=5 advances=4 (25/30 hold, not 1:1)");
+
+		// Long exact 6:5 window: 30 raster @30 core, content_fps=25 → exactly 25 advances
+		// (rd-duck: over 30 ticks floor(n*25/30) visits 0..24 ⇒ 25 advances).
+		run_clks(1'b1, 25, LONG_CLKS, r, s, a, vt);
+		$display("B15 LONG25 raster=%0d exp=%0d advances=%0d exp=25 vtot=%0d",
+			r, LONG_RASTER, a, vt);
+		if (r !== LONG_RASTER) begin
+			$display("FAIL long25 raster %0d != %0d", r, LONG_RASTER); $fatal(1);
+		end
+		if (a !== 25) begin
+			$display("FAIL long25 advances %0d != 25 (6:5 over 30 ticks)", a); $fatal(1);
+		end
+		$display("OK B15 fps=25 LONG 30-raster advances=25 (exact 6:5 / 25-of-30)");
 
 		// unspecified valid=0 fps=30 → film default 24 → 4
 		run_window(1'b0, 30, r, s, a, vt);
@@ -233,7 +272,8 @@ module b15_cadence_framecount_tb;
 		end
 		$display("OK B15 unspecified->24 raster frame_start=4 (no invent 30)");
 
-		$display("NOTE: advance_unique = cadence at core Hz; DDR swap = fstart&&swap_pending (C1).");
+		$display("NOTE: 1:1 only when content_fps>=core_hz (24/24, 30/30). fps=25 is 25/30 hold.");
+		$display("NOTE: advance_unique = cadence; DDR swap = fstart&&swap_pending (C1).");
 		$display("NOTE: swap_opp with pending=1 tracks raster — NOT ARM unique-bank proof.");
 		$display("PASS b15_cadence_framecount GREEN");
 `endif

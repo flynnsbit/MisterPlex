@@ -148,7 +148,8 @@ module present_core #(
 	// Cadence display_hz must match the *tick source* rate (rd-duck B15).
 	// BEAM_960: frame_start is core raster @24/30, NOT HDMI 50/60. Passing 60
 	// with content_fps=30 yields advance_unique ~15/s (wrong). Ascal owns glass
-	// 2:1/5:2 repeat. Source-locked core → pass core Hz so fps>=hz ⇒ 1:1 advance.
+	// 2:1/5:2 repeat. Pass core Hz: fps==24/30 ⇒ 1:1; fps=25 on 30-core is
+	// floor(n*25/30) hold (NOT 1:1 — content_fps != cadence_display_hz).
 	// Legacy non-beam: keep top-level display_hz (50/60).
 	// NOTE: DDR bank swap uses vsync_pulse=fstart && swap_pending — NOT advance.
 	// advance still feeds colorbars content_index + stat_advance only (C1).

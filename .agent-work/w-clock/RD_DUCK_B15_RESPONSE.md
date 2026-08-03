@@ -14,3 +14,14 @@
 ## Claim limits
 - `swap_opp` with pending held high = fabric upper bound on swaps, **not** ARM unique-bank proof.
 - Unique content banks need parent/device or store cosim with real publish traffic.
+
+## rd-duck follow-up: 25fps is NOT 1:1
+
+Accepted. Design keeps **25 → TV raster 30** (V=564), not a ~25 Hz V_TOTAL.
+
+| Window | raster | advances | math |
+|--------|--------|----------|------|
+| short (5 TV frames) | 5 | **4** | di 0,2,3,4 |
+| long (30 TV frames) | 30 | **25** | floor(n·25/30) over n=0..29 |
+
+`content_fps == cadence_display_hz` only for 24 and 30. Comments/tests no longer claim 1:1 for 25.

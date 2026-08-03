@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# B15 ABI#2: q5 fps → raster rate + source-locked cadence; honest claims (rd-duck).
+# B15 ABI#2: q5 fps → raster + cadence; 24/30 1:1; 25 is 25/30 (not 1:1); honest claims.
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 RV="$ROOT/scripts/run_verilator.sh"
@@ -59,8 +59,11 @@ grep -q "OK B15 raster frame_start=5" "$OUT/green/run.log" || { echo "FAIL r30";
 grep -q "OK ADV_PROOF source-locked 1:1 raster=5 advances=5" "$OUT/green/run.log" \
   || { echo "FAIL adv30"; exit 1; }
 grep -q "OK B15 fps=25 raster frame_start=5 advances=4" "$OUT/green/run.log" \
-  || { echo "FAIL adv25"; exit 1; }
+  || { echo "FAIL adv25 short"; exit 1; }
+grep -q "OK B15 fps=25 LONG 30-raster advances=25" "$OUT/green/run.log" \
+  || { echo "FAIL adv25 long 6:5"; exit 1; }
 grep -q "not unique-bank claim" "$OUT/green/run.log" || { echo "FAIL honesty"; exit 1; }
+grep -q "content!=core" "$OUT/green/run.log" || { echo "FAIL 25 equals core claim"; exit 1; }
 echo "OK GREEN"
 
 run_one red_ignore -DFAULT_B15_IGNORE_FPS_VALID
