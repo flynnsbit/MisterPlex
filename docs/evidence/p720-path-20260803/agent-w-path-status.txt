@@ -1,16 +1,11 @@
 w-path STATUS
-branch=w-path-720p sha_pre_commit=5df76ae8
-TASK1 DONE: metadata fabric Direct Play (Part without /universal/decision)
-- evaluateFabricDirectPlayMeta + parseFabricDirectPlayMetaFromPlexXml
-- resolve short-circuit: metadataFabricDirectPlay=true, decisionAttr=metadata_fabric_direct
-- attr() Media vs MediaContainer boundary fix
-- NEGs: high, L>30, B-frames, 1080p, bitrate, chroma 4:4:4, baseline B-unknown
-- tests: test_h264_fabric_stream_gate true rc=0; test_resolve true rc=0
-- parent live: docs/evidence/p720-path-20260803/PARENT_LIVE_METADATA_FABRIC_DP.md
-TASK3 (HTTP 400 universal): deferred — DP routes around for fabric-ready Parts
-TASK4 (720 profile/ceiling): already on branch from prior commit
-TASK5 (mode=?): prior glass/canvas work; authoring tracks content bank still open
-main baseline quote: parent 035fae51 (do not measure shared tree)
-ON_MAIN: NO (branch only) | RTL N/A this change
-HOLD: no Quartus, no device
+branch=w-path-720p sha=de9d9d42
+STREAM_TARGET profiles: 240p-spi / 480p-ddr / 720p-ddr
+- DECODE+PMS+present transport bound in stream_target_profile.hpp
+- SPI budget 5.5 MiB/s; 480p on spi_f1 startup FATAL rc=2
+- STREAM_TARGET log line with payload/budget/fits
+- PMS evidence decision→start; videoResolution=ceiling; subjects≠rk7
+- test_stream_target_profile true rc=0
+- report: docs/evidence/p720-path-20260803/pms_profile_contract/REPORT.md
+ON_MAIN=NO
 
