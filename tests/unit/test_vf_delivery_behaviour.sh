@@ -171,22 +171,54 @@ else
   fail "vf gate must run before tar (gate=$cap_line tar=$tar_line)"
 fi
 
-# --- package_validated_pair refuses historical pair (behavioural) ----------
+# --- the vf gate actually EXECUTES in the package path (behavioural) -------
+# Parent 2026-08-02: mutation testing showed the historical-pair e2e below does
+# NOT cover the vf gate at all — the daemon md5 pin refuses that pair first
+# (rc=2, zero VF_ lines emitted), so disabling BOTH vf gate call sites left the
+# assertion green. An assertion that survives deletion of the thing it claims to
+# test is tautological. Replaced with a POSITIVE proof: packaging the good pair
+# must emit the gate's own VF_ output. Deleting the gate call removes those
+# lines and turns this RED, which is the discrimination the old check lacked.
+if [ -x "$ROOT/scripts/package_validated_pair.sh" ]; then
+  good="$ROOT/build/unit-vf-delivery-good"
+  rm -rf "$good"
+  mkdir -p "$good"
+  set +e
+  OUT_DIR="$good" VERSION=vf-good PACKAGE_ALLOW_NO_FFMPEG=1 \
+    "$ROOT/scripts/package_validated_pair.sh" >"$good/pkg.log" 2>&1
+  good_rc=$?
+  set -e
+  vf_lines=$(grep -c '^VF_' "$good/pkg.log" || true)
+  echo "package_validated_pair good true rc=$good_rc vf_lines=$vf_lines"
+  if [ "$good_rc" -eq 0 ] && [ "$vf_lines" -gt 0 ]; then
+    pass "vf gate executes in package path (vf_lines=$vf_lines, pair shipped)"
+  else
+    fail "vf gate did not run during good-pair packaging (rc=$good_rc vf_lines=$vf_lines)"
+    sed -n '1,40p' "$good/pkg.log" || true
+  fi
+  rm -rf "$good"
+fi
+
+# --- package_validated_pair refuses the historical pair --------------------
+# NOTE: this pair is refused by the daemon md5 / stamp pin BEFORE the vf gate is
+# reached (measured: rc=2, 0 VF_ lines). It therefore proves "an unshippable
+# historical pair never yields a tarball" — a real safety property — and is
+# deliberately NOT presented as vf-gate coverage. That lives in the check above.
 if [ -f "$PAIR_DAEMON" ] && [ -x "$ROOT/scripts/package_validated_pair.sh" ]; then
   e2e="$ROOT/build/unit-vf-delivery-e2e"
   rm -rf "$e2e"
   mkdir -p "$e2e"
   set +e
   OUT_DIR="$e2e" VERSION=vf-delivery-e2e PACKAGE_ALLOW_NO_FFMPEG=1 \
+    PAIR_DIR="$ROOT/release_artifacts/ddr-c5382bee-e9f79de2" \
     "$ROOT/scripts/package_validated_pair.sh" >"$e2e/pkg.log" 2>&1
   e2e_rc=$?
   set -e
   echo "package_validated_pair hist true rc=$e2e_rc"
-  if [ "$e2e_rc" -eq 7 ] && grep -q 'VF_DELIVERY_FAIL\|vf delivery' "$e2e/pkg.log" \
-    && [ ! -f "$e2e/misterplex-vf-delivery-e2e.tar.gz" ]; then
-    pass "package_validated_pair refuses legacy-vf pair (rc=7, no tarball)"
+  if [ "$e2e_rc" -ne 0 ] && [ ! -f "$e2e/misterplex-vf-delivery-e2e.tar.gz" ]; then
+    pass "historical pair refused, no tarball (rc=$e2e_rc; refused pre-vf by md5/stamp pin)"
   else
-    fail "expected package refuse rc=7; rc=$e2e_rc"
+    fail "expected refusal + no tarball for legacy-vf pair; rc=$e2e_rc"
     sed -n '1,40p' "$e2e/pkg.log" || true
   fi
 else

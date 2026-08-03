@@ -17,7 +17,7 @@
 #        - 624x350  (REAL measured PMS delivery for asset RK6)
 #        - 624x480  (bank-exact; must still pass)
 #   3. Assert on raw I420 output:
-#        - total_bytes > 0 and total_bytes % 449280 == 0
+#        - total_bytes > 0 and total_bytes % kPlex480pYuv420pBytes == 0
 #        - chroma not dead (zero_frac_u/v >= 0.95 → FAIL green-field class)
 #          via host/libmisterplex/yuv420p_chroma_health.hpp
 #
@@ -38,9 +38,22 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 FFMPEG="${FFMPEG:-ffmpeg}"
-BANK_W=624
-BANK_H=480
-FRAME_BYTES=$((BANK_W * BANK_H * 3 / 2)) # 449280
+
+# Bank geometry and frame size are DERIVED from the single source of truth,
+# host/libmisterplex/ddr_frame_layout.hpp. Re-hardcoding these literals is what
+# the runtime-DDR-literal invariant gate forbids (tests/unit/test_rtl_invariants.sh).
+_VF_LAYOUT_HPP="$ROOT/host/libmisterplex/ddr_frame_layout.hpp"
+_vf_layout_int() {
+  # $1 = constexpr identifier -> decimal value
+  local v
+  v="$(grep -oE "${1}(\{|[[:space:]]*=[[:space:]]*)[0-9]+" "$_VF_LAYOUT_HPP" \
+       | head -n1 | grep -oE '[0-9]+$')"
+  [ -n "$v" ] || { echo "vf_delivery_behaviour_check: missing $1 in $_VF_LAYOUT_HPP" >&2; exit 3; }
+  printf '%d' "$v"
+}
+BANK_W=$(_vf_layout_int kPlex480pCodedWidth)
+BANK_H=$(_vf_layout_int kPlex480pCodedHeight)
+FRAME_BYTES=$(_vf_layout_int kPlex480pYuv420pBytes)
 NFRAMES=3
 OUT_DIR="${VF_DELIVERY_OUT:-$ROOT/build/vf_delivery_behaviour}"
 HEALTH="$ROOT/build/test_vf_bank_output_health"
@@ -192,7 +205,7 @@ run_geom "g_624x480" 624 480
 if [ "$fail" -ne 0 ]; then
   echo "VF_DELIVERY_FAIL policy=$policy failed_cases=$fail frame_bytes=$FRAME_BYTES"
   echo "VF_DELIVERY_FAIL_HINT legacy_identity on non-bank delivery (e.g. 624x350) yields"
-  echo "VF_DELIVERY_FAIL_HINT total%449280!=0 (desync) or zero total (fail-closed crop)."
+  echo "VF_DELIVERY_FAIL_HINT total%${FRAME_BYTES}!=0 (desync) or zero total (fail-closed crop)."
   echo "VF_DELIVERY_FAIL_HINT Product policy must FOAR-scale+pad into coded 624x480."
   exit 2
 fi
