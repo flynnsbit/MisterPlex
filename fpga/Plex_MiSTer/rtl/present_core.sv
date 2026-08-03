@@ -170,6 +170,8 @@ module present_core #(
 `ifdef PRESENT_BEAM_960
 	// =====================================================================
 	// Ascal-native TRUE content DE (w-clock / w-scaler). Default OFF.
+	// Do NOT implement BEAM_960 by parameterizing MULTI_PIXEL/npx (rd-duck):
+	// that path has FIFO LAT+prefill; this path is 1px CE=1 + DE_LAG only.
 	// Replaces colorbars Template H_DE=529. Identity store: rd_x=hc, rd_y=vc.
 	// Requires FRAME_W=960, FRAME_H=540 (QSF `FRAME_W=960` etc.).
 	// Bank swap uses this beam's fstart (not colorbars).
@@ -376,7 +378,7 @@ module present_core #(
 	wire                mp_hb, mp_hs, mp_vb, mp_vs, mp_fstart;
 	wire                mp_out_ce;
 	wire [7:0]          mp_out_r, mp_out_g, mp_out_b;
-	wire                mp_out_hb, mp_out_hs, mp_out_vb, mp_out_vs;
+	wire                mp_out_hb, mp_out_hs, mp_out_vb, mp_out_vs, mp_out_fs;
 	wire                mp_wr_full, mp_wr_af, mp_rd_ur, mp_rd_empty;
 
 `ifdef PRESENT_CLK_PIX_PLL
@@ -386,11 +388,13 @@ module present_core #(
 `else
 	localparam int MP_CLK_PIX_HZ = 29_700_000; // PIX24 held fit
 `endif
-	localparam bit MP_INCLUDE_SYNC = 1'b1;
 `else
 	localparam int MP_CLK_PIX_HZ = 20_000_000;
-	localparam bit MP_INCLUDE_SYNC = 1'b0;
 `endif
+	// ALWAYS pack H/V/fstart with RGB through the FIFO (rd-duck same-clock trap).
+	// INCLUDE_SYNC=0 + direct mp_hb/mp_vs left H/V leading RGB by LAT+PREFILL.
+	// Same-clock and PLL both consume FIFO sidebands — never beam-direct sync.
+	localparam bit MP_INCLUDE_SYNC = 1'b1;
 
 	// Timing constants + effective refresh at CLK_PIX_HZ.
 	// keep/noprune: mode must survive map for post-fit hierarchy checks.
@@ -571,8 +575,9 @@ module present_core #(
 		.DDRAM_BE(DDRAM_BE),
 		.DDRAM_WE(DDRAM_WE),
 `ifdef PRESENT_MULTI_PIXEL
-		// Bank swap on multi-pixel beam frame boundary — not legacy colorbars fstart.
-		.vsync_pulse(mp_fstart),
+		// Bank swap on FIFO-aligned frame_start (not raw beam mp_fstart).
+		// Raw beam fstart leads RGB by LAT+prefill → mid-frame bank tear.
+		.vsync_pulse(mp_out_fs),
 `else
 		.vsync_pulse(fstart),
 `endif
@@ -637,7 +642,7 @@ module present_core #(
 	// 2) Every beam group → npx push after LAT: blank=black+sync; DE+fs=store RGB;
 	//    DE without fs (no frame / miss)=black. No-frame still runs continuous raster.
 	// 3) Mode-on H/V/ce always from mp path — never legacy hb_d while CLK_VIDEO=clk_pix.
-	// 4) ddr vsync_pulse = mp_fstart (bank swap on 720 beam, not colorbars fstart).
+	// 4) ddr vsync_pulse = mp_out_fs (FIFO-aligned fstart; not raw beam mp_fstart).
 	// 5) FORBIDDEN: dual-latency OR (blank@1 | fs_n_valid@LAT). Same-cycle collision
 	//    drops a raster group; blank can overtake trailing DE. All groups share one
 	//    ordered pipe; mp_npx_valid = mp_push only (see RED_DUAL_OR TB).
@@ -650,6 +655,7 @@ module present_core #(
 	reg                             mp_tq_hs [0:MP_STORE_LAT-1];
 	reg                             mp_tq_vb [0:MP_STORE_LAT-1];
 	reg                             mp_tq_vs [0:MP_STORE_LAT-1];
+	reg                             mp_tq_fs [0:MP_STORE_LAT-1];
 	reg [PRESENT_PPC-1:0]           mp_tq_lde [0:MP_STORE_LAT-1];
 	integer                         mp_ti;
 
@@ -661,6 +667,7 @@ module present_core #(
 				mp_tq_hs[mp_ti]  <= 1'b0;
 				mp_tq_vb[mp_ti]  <= 1'b1;
 				mp_tq_vs[mp_ti]  <= 1'b0;
+				mp_tq_fs[mp_ti]  <= 1'b0;
 				mp_tq_lde[mp_ti] <= '0;
 			end
 		end else begin
@@ -671,6 +678,7 @@ module present_core #(
 				mp_tq_hs[mp_ti]  <= mp_tq_hs[mp_ti-1];
 				mp_tq_vb[mp_ti]  <= mp_tq_vb[mp_ti-1];
 				mp_tq_vs[mp_ti]  <= mp_tq_vs[mp_ti-1];
+				mp_tq_fs[mp_ti]  <= mp_tq_fs[mp_ti-1];
 				mp_tq_lde[mp_ti] <= mp_tq_lde[mp_ti-1];
 			end
 			mp_tq_v[0]   <= mp_beam_ce;
@@ -678,6 +686,7 @@ module present_core #(
 			mp_tq_hs[0]  <= mp_beam_ce ? mp_hs : 1'b0;
 			mp_tq_vb[0]  <= mp_beam_ce ? mp_vb : 1'b1;
 			mp_tq_vs[0]  <= mp_beam_ce ? mp_vs : 1'b0;
+			mp_tq_fs[0]  <= mp_beam_ce ? mp_fstart : 1'b0;
 			mp_tq_lde[0] <= mp_beam_ce ? mp_lane_de : '0;
 		end
 	end
@@ -687,6 +696,7 @@ module present_core #(
 	wire                    mp_push_hs  = mp_tq_hs[MP_STORE_LAT-1];
 	wire                    mp_push_vb  = mp_tq_vb[MP_STORE_LAT-1];
 	wire                    mp_push_vs  = mp_tq_vs[MP_STORE_LAT-1];
+	wire                    mp_push_fs  = mp_tq_fs[MP_STORE_LAT-1];
 	wire [PRESENT_PPC-1:0]  mp_push_lde = mp_tq_lde[MP_STORE_LAT-1];
 	wire                    mp_push_de  = |mp_push_lde;
 	// Store RGB only when response aligns with a DE-tagged slot.
@@ -705,6 +715,7 @@ module present_core #(
 	wire mp_npx_hs = mp_push_hs;
 	wire mp_npx_vb = mp_push_vb;
 	wire mp_npx_vs = mp_push_vs;
+	wire mp_npx_fs = mp_push_fs;
 
 	// clk_pix reset: async assert / sync deassert (never raw `reset` in pix domain).
 	(* noprune *) reg mp_rst_pix0, mp_rst_pix1;
@@ -738,6 +749,7 @@ module present_core #(
 		.in_hsync(mp_npx_hs),
 		.in_vblank(mp_npx_vb),
 		.in_vsync(mp_npx_vs),
+		.in_fstart(mp_npx_fs),
 		.in_ready(mp_in_ready),
 		.out_ce(mp_out_ce),
 		.out_r(mp_out_r),
@@ -747,6 +759,7 @@ module present_core #(
 		.out_hsync(mp_out_hs),
 		.out_vblank(mp_out_vb),
 		.out_vsync(mp_out_vs),
+		.out_fstart(mp_out_fs),
 		.wr_full(mp_wr_full),
 		.wr_almost_full(mp_wr_af),
 		.rd_underrun(mp_rd_ur),
@@ -827,18 +840,13 @@ module present_core #(
 			: (frame_underruns[14:0] + mp_rd_ur_count);
 	wire [15:0] mp_stat_frame_underruns = {mp_rd_ur_sticky, mp_ur_sum};
 
-	// Dual-clock: FIFO sideband owns H/V. Same-clock: beam direct (low LAT).
-`ifdef PRESENT_CLK_PIX_PLL
+	// FIFO sideband owns H/V/fstart always (same-clock and PLL).
+	// rd-duck: direct mp_hb with INCLUDE_SYNC=0 left DE leading RGB by queue.
 	wire mp_hb_d = mp_out_hb;
 	wire mp_hs_d = mp_out_hs;
 	wire mp_vb_d = mp_out_vb;
 	wire mp_vs_d = mp_out_vs;
-`else
-	wire mp_hb_d = mp_hb;
-	wire mp_hs_d = mp_hs;
-	wire mp_vb_d = mp_vb;
-	wire mp_vs_d = mp_vs;
-`endif
+	// mp_out_fs drives frame_start + ddr vsync_pulse (FIFO-aligned).
 	wire mp_de_out = ~mp_hb_d & ~mp_vb_d;
 	wire mp_mode_ok = (mp_h_de == 12'd1280) && (mp_v_act == 12'd720)
 		&& (mp_h_total == 12'd1650) && (mp_v_total == 12'd750);
@@ -943,7 +951,7 @@ module present_core #(
 	assign HSync  = mp_hs_d;
 	assign VBlank = mp_vb_d;
 	assign VSync  = mp_vs_d;
-	assign frame_start = mp_fstart;
+	assign frame_start = mp_out_fs;
 `else
 	assign r = use_ext ? (mp_de_out ? mp_r_px : 8'd0) : (show_pattern ? br : 8'd0);
 	assign g = use_ext ? (mp_de_out ? mp_g_px : 8'd0) : (show_pattern ? bg : 8'd0);
@@ -954,7 +962,7 @@ module present_core #(
 	assign HSync  = mp_hs_d;
 	assign VBlank = mp_vb_d;
 	assign VSync  = mp_vs_d;
-	assign frame_start = mp_fstart;
+	assign frame_start = mp_out_fs;
 `endif
 `else
 	// Multi-pixel macro without DDR store: keep legacy 1ppc path.

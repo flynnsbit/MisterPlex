@@ -18,7 +18,9 @@
 //   ddr_frame_store rd_n_valid (multi-cycle) is not dropped when the async
 //   FIFO is almost full. See IN_READY_UPSTREAM.md.
 //
-// INCLUDE_SYNC=1 packs {vs,hs,vb,hb,lane_valid,r,g,b}.
+// INCLUDE_SYNC=1 packs {fs,vs,hs,vb,hb,lane_valid,r,g,b}.
+//   fs = frame_start; must ride FIFO with RGB so bank-swap/cadence match DE
+//   (same-clock with INCLUDE_SYNC=0 + direct beam H/V is a known trap — H/V lead).
 // rd_underrun: real mid-stream empty after stream_seen. Never hard-tied 0.
 // Product default: NOT instantiated (PRESENT_MULTI_PIXEL undefined).
 // CDC: async_fifo gray + 2FF prefill_go only.
@@ -44,6 +46,7 @@ module present_npx_path #(
 	input  wire                 in_hsync  = 1'b0,
 	input  wire                 in_vblank = 1'b0,
 	input  wire                 in_vsync  = 1'b0,
+	input  wire                 in_fstart = 1'b0,
 	output wire                 in_ready,
 
 	output reg                  out_ce,
@@ -54,6 +57,7 @@ module present_npx_path #(
 	output reg                  out_hsync,
 	output reg                  out_vblank,
 	output reg                  out_vsync,
+	output reg                  out_fstart,
 
 	output wire                 wr_full,
 	output wire                 wr_almost_full,
@@ -62,7 +66,7 @@ module present_npx_path #(
 );
 	localparam int LANE_W = (PX_PER_CLK <= 1) ? 1 : $clog2(PX_PER_CLK);
 	localparam int RGB_N  = PX_PER_CLK * 8;
-	localparam int SYNC_W = 4;
+	localparam int SYNC_W = 5; // fs,vs,hs,vb,hb
 	localparam int W = (INCLUDE_SYNC ? SYNC_W : 0) + PX_PER_CLK + 3 * RGB_N;
 	localparam int SKID_D = 1 << SKID_AW;
 	// Leave ≥4 slots when deasserting in_ready (store pipe ~3: core reg +
@@ -71,13 +75,13 @@ module present_npx_path #(
 	localparam int PRE_W = 8;
 
 	function automatic [W-1:0] pack_group(
-		input vs, hs, vb, hb,
+		input fs, vs, hs, vb, hb,
 		input [PX_PER_CLK-1:0] lv,
 		input [RGB_N-1:0] r, g, b
 	);
 		begin
 			if (INCLUDE_SYNC)
-				pack_group = {vs, hs, vb, hb, lv, r, g, b};
+				pack_group = {fs, vs, hs, vb, hb, lv, r, g, b};
 			else
 				pack_group = {lv, r, g, b};
 		end
@@ -130,7 +134,7 @@ module present_npx_path #(
 	reg             prefill_go_p1, prefill_go_pix;
 
 	wire [W-1:0] in_packed = pack_group(
-		in_vsync, in_hsync, in_vblank, in_hblank,
+		in_fstart, in_vsync, in_hsync, in_vblank, in_hblank,
 		in_lane_valid, in_r, in_g, in_b);
 
 	wire skid_accept = in_valid && !skid_full;
@@ -174,7 +178,7 @@ module present_npx_path #(
 	reg [LANE_W-1:0]      lane_idx;
 	reg [RGB_N-1:0]       hold_r, hold_g, hold_b;
 	reg [PX_PER_CLK-1:0]  hold_lv;
-	reg                   hold_hb, hold_hs, hold_vb, hold_vs;
+	reg                   hold_hb, hold_hs, hold_vb, hold_vs, hold_fs;
 	reg                   stream_seen;
 
 	wire [7:0] lane_r = hold_r[lane_idx*8 +: 8];
@@ -190,6 +194,7 @@ module present_npx_path #(
 	wire pop_vb = INCLUDE_SYNC ? rd_data[3*RGB_N+PX_PER_CLK+1] : 1'b0;
 	wire pop_hs = INCLUDE_SYNC ? rd_data[3*RGB_N+PX_PER_CLK+2] : 1'b0;
 	wire pop_vs = INCLUDE_SYNC ? rd_data[3*RGB_N+PX_PER_CLK+3] : 1'b0;
+	wire pop_fs = INCLUDE_SYNC ? rd_data[3*RGB_N+PX_PER_CLK+4] : 1'b0;
 
 	localparam logic [LANE_W-1:0] LANE_LAST = LANE_W'(PX_PER_CLK - 1);
 
@@ -205,6 +210,7 @@ module present_npx_path #(
 			out_hsync   <= 1'b0;
 			out_vblank  <= 1'b1;
 			out_vsync   <= 1'b0;
+			out_fstart  <= 1'b0;
 			rd_underrun <= 1'b0;
 			hold_busy   <= 1'b0;
 			lane_idx    <= '0;
@@ -216,6 +222,7 @@ module present_npx_path #(
 			hold_hs     <= 1'b0;
 			hold_vb     <= 1'b1;
 			hold_vs     <= 1'b0;
+			hold_fs     <= 1'b0;
 			stream_seen <= 1'b0;
 			rd_en       <= 1'b0;
 		end else begin
@@ -229,6 +236,8 @@ module present_npx_path #(
 				out_vblank <= hold_vb;
 				out_hsync  <= hold_hs;
 				out_vsync  <= hold_vs;
+				// fstart is a group-level pulse: assert only on first unpacked lane
+				out_fstart <= 1'b0;
 				stream_seen <= 1'b1;
 				if (lane_v) begin
 					out_r <= lane_r;
@@ -255,6 +264,7 @@ module present_npx_path #(
 				hold_hs  <= pop_hs;
 				hold_vb  <= pop_vb;
 				hold_vs  <= pop_vs;
+				hold_fs  <= pop_fs;
 				if (PX_PER_CLK > 1) begin
 					lane_idx  <= LANE_W'(1);
 					hold_busy <= 1'b1;
@@ -267,6 +277,7 @@ module present_npx_path #(
 				out_vblank <= pop_vb;
 				out_hsync  <= pop_hs;
 				out_vsync  <= pop_vs;
+				out_fstart <= pop_fs;
 				stream_seen <= 1'b1;
 				if (pop_lv[0]) begin
 					out_r <= pop_r[7:0];
@@ -281,6 +292,7 @@ module present_npx_path #(
 				out_r <= 8'd0;
 				out_g <= 8'd0;
 				out_b <= 8'd0;
+				out_fstart <= 1'b0;
 				if (stream_seen && fifo_empty)
 					rd_underrun <= 1'b1;
 			end
