@@ -853,6 +853,23 @@ inline bool ddrDoorbellGeomCoupledOk(uint16_t doorbellPlxgSeq, uint16_t livePlxg
     return doorbellPlxgSeq == plxgSeqDoorbellField(livePlxgSeq);
 }
 
+// Doorbell PLXG field for a publish (rd-duck mode-exit hole):
+//   program_plxg=false → 0 (true legacy, no PLXG programmed this frame)
+//   program_plxg=true  → *committed* writePlxg useSeq (enable OR disable)
+// Never pass plan.plxg_seq: full-canvas disable plans used to seed 0, which
+// is the ungated encoding and lets bank swap before disable promotes.
+inline uint16_t ddrDoorbellPlxgSeqForPublish(bool programPlxg, uint16_t committedSeq) {
+    if (!programPlxg)
+        return 0;
+    return committedSeq;
+}
+
+// True when a program_plxg publish would illegally pack doorbell field 0.
+inline bool ddrDoorbellPlxgSeqPublishIllegalUngated(bool programPlxg,
+                                                    uint16_t doorbellPlxgSeq) {
+    return programPlxg && plxgSeqDoorbellFieldIsReservedUngated(doorbellPlxgSeq);
+}
+
 // rd-duck: independent PLXG vs doorbell observers without generation coupling.
 struct DdrGeomBankCouplingModel {
     bool geom_live = false;
@@ -1084,6 +1101,80 @@ inline bool ddrPlxgDoorbellFaultDaemonRestartMismatches() {
     const uint16_t c = m.writePlxg(kPlanSeq);
     m.kickDoorbell(kPlanSeq, c, true);
     return c == 8 && m.last_doorbell_plxg == 1 && !m.coupledOk(8, true);
+}
+
+// rd-duck: full-canvas/mode-exit plans set program_plxg=true but used to leave
+// plxg_seq=0. Embedding that 0 ungates the doorbell so legacy bank can swap
+// while old runtime pitch is still live (B20 bank+geom mix).
+// Model: native geom live at seq=5; disable commits seq=6.
+struct DdrModeExitDoorbellModel {
+    uint16_t live_geom_seq = 5;
+    bool live_geom = true; // still native Option-C until disable promotes
+    uint16_t software_last = 5;
+    uint16_t bank_req_plxg = 0;
+    bool bank_accepted = false;
+    bool fault_embed_plan_zero = false; // REPRO: plan.plxg_seq=0 on disable
+
+    uint16_t publishDisable() {
+        // writePlxg bumps regardless of advisory plan seed
+        const uint16_t committed =
+            plxgNextSeq(software_last, /*ret*/ true, live_geom_seq);
+        software_last = committed;
+        const uint16_t planSeq = 0; // historical full-canvas seed
+        const uint16_t door = fault_embed_plan_zero
+                                  ? planSeq
+                                  : ddrDoorbellPlxgSeqForPublish(/*program*/ true, committed);
+        bank_req_plxg = door;
+        // Bank accept under current live geom (disable not yet promoted).
+        bank_accepted =
+            ddrDoorbellGeomCoupledOk(bank_req_plxg, live_geom_seq, live_geom, false);
+        return committed;
+    }
+
+    void promoteDisable(uint16_t committed) {
+        live_geom_seq = committed;
+        live_geom = true; // disable is still a live PLXG record (geom_enable=0)
+        bank_accepted =
+            ddrDoorbellGeomCoupledOk(bank_req_plxg, live_geom_seq, live_geom, false);
+    }
+};
+
+// FAULT REPRO: plan.plxg_seq=0 on mode-exit → doorbell ungated → bank accepts
+// under still-live native seq=5 before disable promotes.
+inline bool ddrModeExitDoorbellFaultPlanZeroUngates() {
+    DdrModeExitDoorbellModel m;
+    m.fault_embed_plan_zero = true;
+    const uint16_t c = m.publishDisable();
+    if (c != 6)
+        return false;
+    if (m.bank_req_plxg != 0)
+        return false;
+    if (!ddrDoorbellPlxgSeqPublishIllegalUngated(true, m.bank_req_plxg))
+        return false;
+    // Defect: bank accepted while live is still native seq=5
+    return m.bank_accepted;
+}
+
+// PRODUCT: mode-exit embeds committed disable seq; bank held until promote.
+inline bool ddrModeExitDoorbellProductCoupledUntilPromote() {
+    DdrModeExitDoorbellModel m;
+    const uint16_t c = m.publishDisable();
+    if (c != 6 || m.bank_req_plxg != 6)
+        return false;
+    if (ddrDoorbellPlxgSeqPublishIllegalUngated(true, m.bank_req_plxg))
+        return false;
+    // Held: live still 5, doorbell wants 6
+    if (m.bank_accepted)
+        return false;
+    m.promoteDisable(c);
+    return m.bank_accepted && m.live_geom_seq == 6;
+}
+
+// True legacy (no PLXG this frame): ungated is legal.
+inline bool ddrModeExitDoorbellLegacyNoPlxgUngatedOk() {
+    const uint16_t door = ddrDoorbellPlxgSeqForPublish(/*program*/ false, /*committed*/ 99);
+    return door == 0 && !ddrDoorbellPlxgSeqPublishIllegalUngated(false, door) &&
+           ddrDoorbellGeomCoupledOk(door, /*live*/ 5, true, false);
 }
 
 // Maximum coded width the *shipping* RTL frame store can present (FRAME_W=640).

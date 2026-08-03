@@ -36,9 +36,13 @@ struct DdrPublishPlan {
     // describes the Option-C map window (stride/doorbell/phys).
     size_t copy_bytes = 0;
     bool native_push = false;
+    // true ⇒ writePlxg then embed *committed* useSeq in doorbell (enable or
+    // disable). false ⇒ doorbell field 0 (true legacy, no PLXG this frame).
     bool program_plxg = false;
-    // Atomic 5-qword PLXG at bootstrap phys (0x300FF800). Not 3 temporal beats.
+    // Atomic 6-qword PLXG at bootstrap phys (0x300FF800). Not 3 temporal beats.
     uint64_t plxg_q[6]{};
+    // Advisory seed for writePlxg only — NEVER the doorbell field. Doorbell
+    // must use committed useSeq when program_plxg (0 here means ungated ABI).
     uint16_t plxg_seq = 0;
 };
 
@@ -90,11 +94,14 @@ inline bool makeDdrPublishPlan(const DdrPublishFrame& frame, int bank, DdrPublis
     out.native_push = false;
     // Always program a seq-bumped PLXG *disable* on the full-canvas path so a
     // prior native Option-C geom_enable cannot stick after mode exit (rd-duck).
-    // writePlxgRecord bumps seq if caller leaves 0 / stale.
+    // program_plxg=true ⇒ doorbell MUST carry writePlxg committed useSeq
+    // (including disable). plxg_seq is advisory seed only — NEVER 0 here:
+    // doorbell field 0 means intentional *ungated* legacy (no PLXG), which
+    // would let bank swap under still-live native pitch (B20 hole).
     out.program_plxg = true;
-    out.plxg_seq = 0;
+    out.plxg_seq = 1; // advisory; writePlxgRecord ignores and bumps
     {
-        const PlxgRecord dis = makePlxgRecordDisable(/*seq=*/0);
+        const PlxgRecord dis = makePlxgRecordDisable(/*seq=*/1);
         for (int i = 0; i < 6; ++i)
             out.plxg_q[i] = dis.q[i];
     }

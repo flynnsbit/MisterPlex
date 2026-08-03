@@ -784,6 +784,7 @@ int main() {
             CHECK(!lm.geom_enable); // mode exit clears sticky Option-C
         }
         // Legacy full-canvas publish MUST program PLXG disable (not leave sticky).
+        // rd-duck: plan.plxg_seq must NOT be 0 (0 = doorbell ungated encoding).
         {
             std::vector<uint8_t> payload(449280u, 0);
             DdrPublishFrame fr{payload.data(), payload.size(), plex480pDdrFrameGeometry(),
@@ -793,7 +794,13 @@ int main() {
             CHECK(makeDdrPublishPlan(fr, 0, plan, &err));
             CHECK(plan.program_plxg);
             CHECK(!plan.native_push);
+            CHECK(plan.plxg_seq != 0); // advisory non-zero; 0 would ungate
             CHECK(((plan.plxg_q[0] >> 33) & 1ull) == 0ull);
+            // Doorbell field for this publish uses committed, never plan seed 0.
+            CHECK(ddrDoorbellPlxgSeqForPublish(true, /*committed*/6) == 6);
+            CHECK(ddrDoorbellPlxgSeqPublishIllegalUngated(true, 0));
+            CHECK(!ddrDoorbellPlxgSeqPublishIllegalUngated(true, 6));
+            CHECK(ddrDoorbellPlxgSeqForPublish(false, 99) == 0); // true legacy
         }
         // Raw geom: over-max rejected (no silent clamp-accept).
         CHECK(plxgRawGeomOk(960, 540, 960, 480));
@@ -1032,6 +1039,11 @@ int main() {
         CHECK(ddrPlxgDoorbellFaultDaemonRestartMismatches()); // REPRO restart
         CHECK(ddrPlxgDoorbellProductDaemonRestartMatches());
         std::fprintf(stderr, "  PLXG_DOORBELL_COMMITTED_SEQ OK\n");
+        // rd-duck: mode-exit/disable must couple; plan.plxg_seq=0 must not ungate
+        CHECK(ddrModeExitDoorbellFaultPlanZeroUngates()); // REPRO
+        CHECK(ddrModeExitDoorbellProductCoupledUntilPromote());
+        CHECK(ddrModeExitDoorbellLegacyNoPlxgUngatedOk());
+        std::fprintf(stderr, "  PLXG_MODE_EXIT_DOORBELL_COUPLE OK\n");
         // rd-duck: 13-bit doorbell field 0 = ungated; allocator must skip 8192…
         {
             CHECK(plxgSeqDoorbellFieldIsReservedUngated(0));

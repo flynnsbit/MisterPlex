@@ -974,9 +974,10 @@ bool FpgaSpi::kickDdrDoorbell(int bank, uint16_t plxgSeq) {
     volatile uint32_t* dw = reinterpret_cast<volatile uint32_t*>(ddrMap_ + kOff);
     ++doorbellSeq_;
     // Pack: lo=magic; hi=[31]bank [30:29]fmt [28:16]plxg_seq [15:0]frame_seq.
-    // plxg_seq couples bank accept to PLXG promote (rd-duck); 0 = ungated legacy.
-    // plxgSeq==0 is intentional ungated legacy. Do not substitute plxgLastSeq_
-    // (that would silently couple every bank kick after first PLXG write).
+    // plxg_seq couples bank accept to PLXG promote (rd-duck). Field 0 = ungated
+    // ONLY for program_plxg=false (true legacy). Mode-exit disable still
+    // programs PLXG and must pass the committed disable seq — never 0.
+    // Do not substitute plxgLastSeq_ here (would couple unrelated kicks).
     const uint32_t seq = doorbellSeq_ & 0xFFFFu;
     const uint32_t hi = misterplex::ddrDoorbellHi(seq, bank, ddrLayout_.format, plxgSeq);
     // Publish the complete token before magic. On a cold mailbox this prevents
@@ -1757,11 +1758,21 @@ bool FpgaSpi::sendDdrFrame(const DdrPublishFrame& frame, const DdrPublishPlan& p
     // rd-duck: embed the *committed* useSeq in the doorbell, not plan.plxg_seq
     // (native plans seed seq=1 every construction; second publish commits seq=2
     // while doorbell-with-plan still carries 1 → db_geom_coupled rejects forever).
+    // Mode-exit/full-canvas also program_plxg (disable): must couple to that
+    // committed seq too — plan.plxg_seq was historically 0 (= doorbell ungated)
+    // which let bank swap under still-live native pitch (B20).
     uint16_t committedPlxgSeq = 0;
     if (plan.program_plxg) {
         if (!writePlxgRecord(plan.plxg_q, plan.plxg_seq, &committedPlxgSeq))
             return false;
+        if (misterplex::ddrDoorbellPlxgSeqPublishIllegalUngated(true, committedPlxgSeq)) {
+            setErr("sendDdrFrame: committed PLXG seq packs doorbell field 0 "
+                   "(ungated); refusing coupled publish");
+            return false;
+        }
     }
+    const uint16_t doorbellPlxgSeq =
+        misterplex::ddrDoorbellPlxgSeqForPublish(plan.program_plxg, committedPlxgSeq);
 
     bool saw_busy = false;
     bool saw_kick = false;
@@ -1787,7 +1798,7 @@ bool FpgaSpi::sendDdrFrame(const DdrPublishFrame& frame, const DdrPublishPlan& p
     bool kicked = false;
     auto tKick0 = std::chrono::steady_clock::now();
     if (ddrKickMode_ == 1 || ddrKickMode_ == 0) {
-        if (kickDdrDoorbell(bank, plan.program_plxg ? committedPlxgSeq : static_cast<uint16_t>(0))) {
+        if (kickDdrDoorbell(bank, doorbellPlxgSeq)) {
             kicked = true;
             if (first) {
                 // Give poller time to see seq; expect busy / pending / has_frame.
