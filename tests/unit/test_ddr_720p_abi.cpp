@@ -828,9 +828,19 @@ int main() {
                 CHECK(lm.live_seq == 2);
             }
         }
+        // ---- ABA tear: FPGA reset last_seq=0 + daemon restart same seq=1 ----
+        // Invalidate alone is insufficient if commit seq equals retained q0.
+        // Poller snap q0=1, host body-update + recommit q0=1 → reread matches, mixed body.
+        {
+            CHECK(plxgAbaSameSeqRecommitAcceptsTorn(1)); // FAULT REPRO
+            CHECK(plxgAbaIncrementSeqRejectsTornThenFreshCommits(1)); // GOOD
+            CHECK(plxgAbaSameSeqRecommitAcceptsTorn(7));
+            CHECK(plxgAbaIncrementSeqRejectsTornThenFreshCommits(7));
+        }
         std::fprintf(stderr, "  PLXG_TEAR_SUBARB_DISABLE OK\n");
         std::fprintf(stderr, "  PLXG_SEQLOCK_RETAINED_DDR_RESET OK\n");
         std::fprintf(stderr, "  PLXG_SEQ_RESTART_SAFE OK\n");
+        std::fprintf(stderr, "  PLXG_ABA_SEQ_TEAR OK\n");
     }
 
     if (fails) {

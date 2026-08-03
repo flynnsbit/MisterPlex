@@ -5,7 +5,11 @@
 // Bootstrap phys: product legacy doorbell 0x300FF000 + 0x2C0 = 0x300FF2C0.
 // Fabric poller always reads the bootstrap page (chicken-egg with Option-C).
 //
-// Write model — seqlock (rd-duck retained-DDR/reset):
+// Write model — seqlock (rd-duck retained-DDR/reset + ABA):
+//   0) Read retained q0 seq (magic-valid); next seq = max(sw,retained)+1
+//      Commit seq MUST differ from retained — invalidate alone is insufficient:
+//      FPGA reset last_seq=0 + daemon restart emitting same seq1 lets poller
+//      sample q0=1, host update body, recommit q0=1; reread matches → torn ABA.
 //   1) Invalidate q0 low32 = 0 (clear magic) + DMB
 //   2) Store body q[1]..q[4]
 //   3) Store q0 high32, then q0 low32 = magic LAST (commit)
@@ -300,6 +304,66 @@ inline bool plxgRetainedDdrResetRejectedWithSeqlockWriter(const PlxgRecord& oldR
         return false; // should have rejected
     // After full commit, accept once.
     plxgHostCommitQ0(page, newRec.q[0]);
+    return plxgPollerTryCommit(page, /*lastSeq=*/0);
+}
+
+// ABA tear (rd-duck): FPGA reset → poller last_seq=0; retained q0 still seq=1.
+// Poller samples q0=seq1, then host invalidate+new body+recommit *bit-identical*
+// q0 (same seq and flags). q0 reread matches first sample despite mixed body —
+// invalidation alone is NOT enough; commit seq MUST differ from retained q0.
+// Returns true if FAULT same-q0 recommit accepts torn snapshot.
+inline bool plxgAbaSameSeqRecommitAcceptsTorn(uint16_t retainedSeq = 1) {
+    std::uint8_t page[0x1000]{};
+    const PlxgRecord oldR = makePlxgRecord960x540Native(retainedSeq);
+    for (int i = 0; i < 5; ++i)
+        plxgCtrlStoreQ(page, i, oldR.q[i]);
+    // Poller (post FPGA reset, last_seq=0) samples q0 first.
+    const uint64_t snap0 = plxgCtrlLoadQ(page, 0);
+    uint16_t s0 = 0;
+    if (!plxgQ0Seq(snap0, &s0) || s0 != retainedSeq)
+        return false;
+    // Host FAULT: body rewrite under seqlock but recommit identical q0 word
+    // (daemon restart reusing seq1 without bump — ABA).
+    PlxgRecord neu = makePlxgRecordDisable(retainedSeq);
+    // Keep neu body; force q0 bit-identical to retained (seq+flags).
+    neu.q[0] = oldR.q[0];
+    plxgHostInvalidateQ0(page);
+    plxgHostStoreBody(page, neu);
+    plxgHostCommitQ0(page, neu.q[0]); // == snap0
+    // Poller finishes: body is disable, q0 reread equals snap0 (ABA).
+    uint64_t snap[5];
+    snap[0] = snap0;
+    for (int i = 1; i < 5; ++i)
+        snap[i] = plxgCtrlLoadQ(page, i);
+    const uint64_t q0b = plxgCtrlLoadQ(page, 0);
+    // Body must actually differ or this is not a tear.
+    if (snap[1] == oldR.q[1] && snap[2] == oldR.q[2])
+        return false;
+    return plxgPollerAcceptsSnapshot(snap, q0b, /*lastSeq=*/0);
+}
+
+// GOOD twin: same interleaving, but commit seq = retained+1. Poller that already
+// sampled old q0 sees reread mismatch → reject torn; a fresh poll then commits.
+inline bool plxgAbaIncrementSeqRejectsTornThenFreshCommits(uint16_t retainedSeq = 1) {
+    std::uint8_t page[0x1000]{};
+    const PlxgRecord oldR = makePlxgRecord960x540Native(retainedSeq);
+    for (int i = 0; i < 5; ++i)
+        plxgCtrlStoreQ(page, i, oldR.q[i]);
+    const uint64_t snap0 = plxgCtrlLoadQ(page, 0);
+    uint16_t sw = 0; // new daemon
+    const uint16_t used =
+        plxgHostWriteRecordRestartSafe(page, makePlxgRecordDisable(1), &sw, true);
+    if (used == retainedSeq || sw != used)
+        return false;
+    // In-flight poller: first q0 was old retained; reread is new seq → torn reject.
+    uint64_t snap[5];
+    snap[0] = snap0;
+    for (int i = 1; i < 5; ++i)
+        snap[i] = plxgCtrlLoadQ(page, i);
+    const uint64_t q0b = plxgCtrlLoadQ(page, 0);
+    if (plxgPollerAcceptsSnapshot(snap, q0b, /*lastSeq=*/0))
+        return false; // must not accept ABA
+    // Fresh poll after host finished: last_seq=0, clean disable record.
     return plxgPollerTryCommit(page, /*lastSeq=*/0);
 }
 
