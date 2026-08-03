@@ -41,9 +41,8 @@ assign BUTTONS = 0;
 
 //////////////////////////////////////////////////////////////////
 
-wire [1:0] ar = status[122:121];
-assign VIDEO_ARX = (!ar) ? 12'd4 : (ar - 1'd1);
-assign VIDEO_ARY = (!ar) ? 12'd3 : 12'd0;
+// VIDEO_ARX/ARY original aspect is assigned after FRAME_W/FRAME_H so the
+// advertised ratio cannot disagree with the configured geometry (see below).
 
 `include "build_id.v"
 localparam CONF_STR = {
@@ -400,6 +399,18 @@ localparam int SDRAM_REFRESH_CYCLES = 780;
 `endif
 localparam int FRAME_W = `FRAME_W;
 localparam int FRAME_H = `FRAME_H;
+// Original aspect tracks store geometry (w-clock). MiSTer accepts unreduced
+// ratios; 1280:720 == 16:9, 640:480 == 4:3, 320:240 == 4:3. Hardcoding 4:3
+// made 720p advertise the wrong DAR. OSD ar!=0 still selects Full/ARC.
+// FAULT_ASPECT_FORCE_4_3: lab-only RED twin for test_present_aspect_geometry.
+wire [1:0] ar = status[122:121];
+`ifdef FAULT_ASPECT_FORCE_4_3
+assign VIDEO_ARX = (!ar) ? 12'd4 : (ar - 1'd1);
+assign VIDEO_ARY = (!ar) ? 12'd3 : 12'd0;
+`else
+assign VIDEO_ARX = (!ar) ? 12'(FRAME_W) : (ar - 1'd1);
+assign VIDEO_ARY = (!ar) ? 12'(FRAME_H) : 12'd0;
+`endif
 `ifdef FRAME_STRIDE
 localparam int FRAME_STRIDE = `FRAME_STRIDE;
 `else
@@ -966,7 +977,15 @@ ddr_bus_arbiter ddr_arb (
 );
 `endif
 
+// CLK_VIDEO must share the domain of VGA_* / CE_PIXEL. Product default is
+// clk_sys. PRESENT_CLK_PIX_PLL (default OFF) drives present RGB/sync on
+// clk_pix (MULTI path); route CLK_VIDEO to match. L4 beam stays on clk_sys
+// and must not enable this macro (L4 ⊥ MULTI).
+`ifdef PRESENT_CLK_PIX_PLL
+assign CLK_VIDEO = clk_pix_pll;
+`else
 assign CLK_VIDEO = clk_sys;
+`endif
 assign CE_PIXEL  = ce_pix;
 assign VGA_DE = ~(HBlank | VBlank);
 assign VGA_HS = HSync;
