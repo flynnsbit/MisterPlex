@@ -108,3 +108,8 @@ localparam int DDR_H264_DELIVERED_LEVEL_720P = 31;
 localparam int DDR_H264_720P_FRAME_SIZE_MBS = 3600; // 80*45
 localparam int DDR_H264_L31_MAX_DPB_FRAMES_720P = 5; // 18000/3600
 localparam int DDR_H264_OPTIONC_PRESENT_BANKS = 2;   // display double-buffer != DPB
+// Product 720p OUTPUT path (parent 2026-08-03): ARM source 960x540 native push,
+// fabric upscales to 1280x720 canvas. NOT 720p source. PLXG native_push=1.
+localparam int DDR_FRAME_720P_OUTPUT_SOURCE_WIDTH = 960;
+localparam int DDR_FRAME_720P_OUTPUT_SOURCE_HEIGHT = 540;
+localparam int DDR_FRAME_720P_OUTPUT_SOURCE_BYTES = 777600;

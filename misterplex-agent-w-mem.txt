@@ -1,21 +1,22 @@
-w-mem STATUS — delivered level 3.1 sizes DPB
+w-mem STATUS — 960x540 -> 720p OUTPUT product path locked
 
-HEAD: (pending) h264_level_limits.hpp
+HEAD: (pending) product path constants + plan
 
-PARENT
-  Profile pin ALREADY exists (baseline + videoLevel=30).
-  PMS delivers level 31 for 720p (MaxFS). DPB uses DELIVERED not REQUESTED.
-  True 720p source FAIL with CPU copy; DMA = true 720p source path.
-  Near-term glass = 720p OUTPUT from affordable source + fabric scale.
+PARENT PRODUCT (5/5 HIT, control OK):
+  960x540 decode 22.75 + copy 8.42 = 31.17 margin +10.49 PASS
+  1024x576 margin 6.05 REJECT (<10 peer-tax floor)
+  true 720p source+CPU copy FAIL
 
 LANDED
-  h264_level_limits.hpp: L3.0/3.1 MaxFS/MaxDpbMbs; NEG request vs deliver
-  720p @ L30 -> 0 DPB slots; @ L31 -> 5 frames / 6.91 MB bound
-  Option-C present banks=2 != DPB; svh mirrors; test_h264_level_limits
+  kPlex720pOutputSource 960x540 / 777600 B
+  makePlex720pOutputFrom540pSourcePlan + ddr720pOutputProductPathAccepts
+  zero-arm ship gate UNCHANGED (true source / FPGA banks)
+  DPB still delivered L31 (32542695)
+  docs/p720-output-product-path.md
 
 PARENT VERIFY
   cd /home/flynnsbit/Projects/MisterPlex-wt-mem
-  make $(pwd)/build/test_h264_level_limits && ./build/test_h264_level_limits; echo "true rc=$?"
-  # expect: dpb_L30=0 dpb_L31=5 present_banks=2
+  make $(pwd)/build/test_ddr_720p_abi && ./build/test_ddr_720p_abi; echo "true rc=$?"
+  # expect: 720p_OUTPUT 960x540 publish=777600 ACCEPT
 
 No device. No Quartus.

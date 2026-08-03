@@ -321,6 +321,49 @@ int main() {
     CHECK(!ddrFrameLayoutMatchesProductSilicon(t720));
     CHECK(!ddrFrameLayoutMatches720pTier(p480));
 
+    // --- Product 720p OUTPUT path: 960x540 native → Option-C canvas (parent 5/5) ---
+    CHECK(kPlex720pOutputSourceWidth == 960);
+    CHECK(kPlex720pOutputSourceHeight == 540);
+    CHECK(kPlex720pOutputSourceBytes == 777600u || kPlex720pOutputSourceBytes == 777600);
+    CHECK(static_cast<size_t>(kPlex720pOutputSourceBytes) == yuv420pFrameBytes(960, 540));
+    CHECK(kDdr720pOutputSourceWidth == 960);
+    const auto out540 = makePlex720pOutputFrom540pSourcePlan();
+    CHECK(out540.valid);
+    CHECK(out540.publish_bytes == 777600u);
+    CHECK(out540.content_w == 960 && out540.content_h == 540);
+    CHECK(out540.canvas_layout.phys_base == kPlex720pDdrFramePhysBase);
+    CHECK(out540.canvas_layout.coded_width == 1280 ||
+          out540.native.canvas_w == 1280);
+    CHECK(out540.budget.arm_still_pushes_pixels);
+    CHECK(out540.budget.fabric_owned);
+    CHECK(!out540.budget.zero_arm_per_pixel); // NOT the FPGA-written path
+    // Projected copy @ structural rate should land near parent 8.42 ms
+    CHECK(out540.budget.arm_copy_ms > 8.0 && out540.budget.arm_copy_ms < 9.0);
+    CHECK(ddr720pOutputProductPathAccepts(out540.budget, kParent960x540DecodeMs));
+    // Parent totals: 22.75+8.42=31.17 margin 10.49
+    {
+        const double total = kParent960x540DecodeMs + out540.budget.arm_copy_ms;
+        const double margin = kFrameBudget24fpsMs - total;
+        CHECK(total > 30.0 && total < 32.5);
+        CHECK(margin >= kPlex720pOutputMinMarginMs);
+    }
+    // True 720p source with CPU copy still fails ship (zero-arm gate)
+    CHECK(kParent720pSourceMarginMs < 0.0);
+    CHECK(!ddr720p24ShipAcceptsZeroArmPerPixel(out540.budget));
+    // 1024x576 margin below peer-tax floor if we used parent decode+copy
+    {
+        auto p1024 = makeDdrFabricOwnedPresentPlan(1024, 576, plex720pDdrFrameGeometry(),
+                                                   kPlex720pDdrFramePhysBase, 0, 0, false);
+        CHECK(p1024.valid);
+        // Parent margin 6.05 < 10 floor → reject as product source
+        CHECK(!ddr720pOutputProductPathAccepts(p1024.budget, kParent1024x576DecodeMs));
+    }
+    std::fprintf(stderr,
+                 "  720p_OUTPUT 960x540 publish=%zu copy_ms=%.3f decode=%.2f margin~%.2f ACCEPT\n",
+                 out540.publish_bytes, out540.budget.arm_copy_ms, kParent960x540DecodeMs,
+                 kFrameBudget24fpsMs - (kParent960x540DecodeMs + out540.budget.arm_copy_ms));
+
+
     if (fails) {
         std::fprintf(stderr, "test_ddr_720p_abi: %d fails\n", fails);
         return 1;

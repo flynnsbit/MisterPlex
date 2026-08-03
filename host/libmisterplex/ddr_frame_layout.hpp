@@ -123,6 +123,10 @@ constexpr int kDdrH264DeliveredLevel720p = 31;
 constexpr uint32_t kDdrH264720pFrameSizeMbs = 3600u;
 constexpr uint32_t kDdrH264L31MaxDpbFrames720p = 5u;
 constexpr uint32_t kDdrH264OptionCPresentBanks = 2u;
+constexpr int kDdr720pOutputSourceWidth = 960;
+constexpr int kDdr720pOutputSourceHeight = 540;
+constexpr int kDdr720pOutputSourceBytes = 777600;
+
 
 
 
@@ -756,6 +760,42 @@ constexpr double kParent720pDecodeMs4000k = 41.073;
 constexpr double kParent720pDecodeMsDefaultThreads = kParent720pDecodeMs4000k;
 constexpr double kParent480pDecodeMsDefaultThreads = 15.969;
 constexpr double kFrameBudget24fpsMs = 41.667;
+
+// ---- Product path: 720p OUTPUT from intermediate source (parent 2026-08-03) ----
+// Measured proxies (Constrained Baseline, real PMS content re-encode), 300 frames,
+// instrument control 1280x720 proxy within 0.4% of genuine PMS decode. 5/5 HIT.
+// This is 720p *output* (fabric upscale to Option-C 1280x720 canvas). NOT 720p source.
+// DMA (w-path) remains the upgrade to true 1280x720 source (~kill 14.97 ms copy).
+// Caveat (parent): -f null is decode-only upper bound on headroom — not E2E promise.
+constexpr int kPlex720pOutputSourceWidth = 960;
+constexpr int kPlex720pOutputSourceHeight = 540;
+constexpr int kPlex720pOutputSourceBytes = 960 * 540 * 3 / 2; // 777600
+// Parent wall ms (proxy table):
+constexpr double kParent960x540DecodeMs = 22.75;
+constexpr double kParent960x540CopyMs = 8.42;   // native I420 @ structural ~88 MiB/s
+constexpr double kParent960x540TotalMs = 31.17; // decode+copy
+constexpr double kParent960x540MarginMs = 10.49; // vs 41.667
+// Sibling probes (same session) — 1024x576 margin too thin vs concurrent-peer tax.
+constexpr double kParent1024x576DecodeMs = 26.03;
+constexpr double kParent1024x576CopyMs = 9.58;
+constexpr double kParent1024x576TotalMs = 35.61;
+constexpr double kParent1024x576MarginMs = 6.05;
+constexpr double kParent854x480DecodeMs = 20.70;
+constexpr double kParent854x480CopyMs = 6.66;
+constexpr double kParent854x480TotalMs = 27.36;
+constexpr double kParent854x480MarginMs = 14.31;
+// True 720p source still FAIL with CPU copy (control + PMS):
+constexpr double kParent720pSourceDecodeProxyMs = 35.33;
+constexpr double kParent720pSourceCopyMs = 14.97;
+constexpr double kParent720pSourceTotalMs = 50.31;
+constexpr double kParent720pSourceMarginMs = -8.64;
+// Minimum margin we refuse to ship for intermediate source (peer tax ~10+ ms class).
+constexpr double kPlex720pOutputMinMarginMs = 10.0;
+
+static_assert(kPlex720pOutputSourceBytes == 777600, "960x540 I420 bytes");
+static_assert(kPlex720pOutputSourceWidth < 1280 && kPlex720pOutputSourceHeight < 720,
+              "source is intermediate; canvas is 720p");
+
 // PMS maxBR floor for real 1280x720 (w-path). Content bitrate ~2600k class.
 constexpr int kPlex720pCandidateBitrateKbit = 3100;
 constexpr int kPlex720pCandidateContentBitrateKbit = 2600;
@@ -907,6 +947,20 @@ inline bool ddr720p24ShipAcceptsZeroArmPerPixel(const DdrArmPresentBudget& b) {
            b.arm_copy_ms == 0.0 && !b.arm_still_pushes_pixels;
 }
 
+// Accept 720p-OUTPUT product path: native push of intermediate source into Option-C
+// canvas with fabric scale. Distinct from ddr720p24ShipAcceptsZeroArmPerPixel (true
+// 720p source / FPGA-written banks).
+inline bool ddr720pOutputProductPathAccepts(const DdrArmPresentBudget& b, double decodeMs,
+                                            double marginFloorMs = kPlex720pOutputMinMarginMs) {
+    if (!b.valid || !b.arm_still_pushes_pixels || b.arm_push_bytes == 0)
+        return false;
+    if (!b.fabric_owned)
+        return false; // must not ARM scale/pad into canvas
+    const double total = decodeMs + b.arm_copy_ms;
+    const double margin = kFrameBudget24fpsMs - total;
+    return margin >= marginFloorMs;
+}
+
 // Build the fabric-owned present contract for a content rectangle inside a tier
 // canvas. publish_bytes == native I420 only; PLXG must carry the window.
 struct DdrFabricOwnedPresentPlan {
@@ -994,6 +1048,16 @@ inline DdrFabricOwnedPresentPlan makeDdrFabricOwnedPresentPlan(
                                          /*enable=*/true, /*nativePush=*/true);
     p.valid = p.budget.valid;
     return p;
+}
+
+
+// Product 720p-OUTPUT plan: ARM decodes 960x540 tight I420, native-pushes into
+// Option-C 1280x720 bank; fabric scales (w-scaler). publish_bytes = 777600.
+inline DdrFabricOwnedPresentPlan makePlex720pOutputFrom540pSourcePlan(
+    uint32_t canvasPhysBase = kPlex720pDdrFramePhysBase, bool countFeedScaleRemoval = false) {
+    return makeDdrFabricOwnedPresentPlan(
+        kPlex720pOutputSourceWidth, kPlex720pOutputSourceHeight, plex720pDdrFrameGeometry(),
+        canvasPhysBase, 0, 0, countFeedScaleRemoval);
 }
 
 // FPGA-written banks: ARM publishes **zero** pixel bytes. Fabric decode/MC/IDCT
