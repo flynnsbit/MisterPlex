@@ -1,5 +1,7 @@
 w-clock STATUS
-==============
-PRODUCT: 960x540 ARM (34.50 ms, +7.16) → fabric 1280x720 glass
-GATE: clk_pix PIX24=29.7 outclk_3 — scaffolded, PLL NOT applied
-Macros OFF; rate_match+sync sideband ready under PRESENT_CLK_PIX_PLL
+branch: w-clock-bump
+top: npx wide-group FIFO + real rd_underrun (rd-duck 13.33 confirmed+fixed)
+tests: full_raster GREEN+RED PASS; path/sync/cdc/rate_match PASS
+macros: PRESENT_* default OFF
+fit: NOT run (parent HELD)
+device: none

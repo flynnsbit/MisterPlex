@@ -37,22 +37,32 @@
       "clk_sys_unchanged": "20.000000 MHz",
       "clk_ddr_unchanged": "90.000000 MHz"
     },
+    "npx_fifo": {
+      "architecture": "wide_group_async_fifo",
+      "note": "Groups cross CDC; unpack on clk_pix. Old sys-domain serialize peak was F_sys*PPC/(1+PPC)=13.33@20/2 — insufficient for 29.7. New peak F_sys*PPC=40.",
+      "word_includes_sync_when": "INCLUDE_SYNC=1 under PRESENT_CLK_PIX_PLL",
+      "rd_underrun": "real mid-stream empty pulse — never hard-tied 0",
+      "evidence": ".agent-work/w-clock/NPX_WIDE_FIFO_PRODUCER_FIX.md"
+    },
     "pass": {
       "fmax_clk_sys_mhz_min": 20.0,
       "fmax_clk_pix_mhz_min": 29.7,
       "setup_slack_all_constrained_ns_min": 0.0,
       "hierarchy_nonzero": ["u_mp_timing", "u_mp_beam", "u_mp_npx_path", "u_mp_rate"],
       "async_fifo_mem_false_path_still_present": true,
-      "no_whole_domain_false_path_sys_pix": true
+      "no_whole_domain_false_path_sys_pix": true,
+      "wider_fifo_word_same_gray_cdc": true
     },
     "fail": [
       "fmax_clk_pix < 29.7",
       "fmax_clk_sys < 20.0",
       "neg setup slack on gray pointer / pix cone",
       "new whole-domain false_path clk_sys↔clk_pix",
-      "u_mp_rate elided"
+      "u_mp_rate elided",
+      "rd_underrun hard-tied or stripped from hierarchy"
     ],
-    "on_fmax_pix_short": "pipeline pix domain — do not false_path; do not bump clk_sys"
+    "on_fmax_pix_short": "pipeline pix domain — do not false_path; do not bump clk_sys",
+    "on_fmax_sys_short_from_wide_fifo": "narrow MLAB packing or AW — do not re-introduce sys-side serialize"
   },
   "stage2_pix60": {
     "pll_output_clock_frequency3": "74.250000 MHz",
@@ -63,7 +73,7 @@
     },
     "fail": ["fmax_clk_pix < 74.25", "PPC < 4 with PIX60"]
   },
-  "cdc_risky_pair": "async_fifo gray dual-clock + Bresenham rate balance (underrun → mid-line black/tear)",
+  "cdc_risky_pair": "wide-group async_fifo gray dual-clock + Bresenham rate balance (underrun → mid-line black/tear; rd_underrun must report)",
   "parent_commands": [
     "make post-fit-timing STA_RPT=path/to/Plex.sta.rpt",
     "make post-fit-timing-margin STA_RPT=path/to/Plex.sta.rpt",

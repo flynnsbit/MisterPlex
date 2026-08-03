@@ -98,7 +98,9 @@
     "product_wired": false,
     "cea_h_total_notes": "1650 is EVEN (1650%2=0). 1650%4=2 so PPC=4 needs short final step of 2.",
     "structurally_connected": true,
-    "connection_note": "present_core under PRESENT_MULTI_PIXEL: u_mp_timing+beam(H_DE=1280)->ddr PX_PER_CLK->present_npx_path->RGB/CE/H*/V*. Template H_DE=529 untouched when macro OFF. clk_pix=clk until PLL grant.",
+    "connection_note": "present_core under PRESENT_MULTI_PIXEL: u_mp_timing+beam(H_DE=1280)->ddr PX_PER_CLK->present_npx_path(wide group FIFO)->RGB/CE/H*/V*. Template H_DE=529 untouched when macro OFF. clk_pix=clk until PLL grant.",
+    "npx_producer_peak_mpix_s": "F_sys*PPC (wide group FIFO). NOT F_sys*PPC/(1+PPC) serialize. @20/PPC2 peak=40 >= 29.7. See NPX_WIDE_FIFO_PRODUCER_FIX.md.",
+    "rd_underrun": "real mid-stream empty on clk_pix — never forced 0",
     "template_h_de_lock": 529,
     "video_mode_720p": {
       "h_de": 1280,
