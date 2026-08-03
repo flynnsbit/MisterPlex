@@ -275,6 +275,14 @@ LIVE_OPEN_BLOCKER_TOKENS = (
     "B37_DEAD_CODE_IN_QIP",
     "B37_L3_NOT_ENABLED",
     "B37_LADDER_NOT_L4",
+    # rd-duck: integrated B20 app/beam one-frame non-atomic (fstart NBA lag)
+    "B38_NO_VISUAL_SWAP_ACK",
+    "B38_NO_SWAP_ARMED_FEEDFORWARD",
+    "B38_NO_BEAM_DISP_SEQ",
+    "B38_HOLD_LIVE_VS_APP_ONLY",
+    "B38_NO_FAULT_TWINS",
+    "B38_INTEGRATED_TB_ABSENT",
+    # B38_INTEGRATED_TB_BLIND / B38_BEAM_DE_HOLD_TB_ONLY / TB_NO_FF_HOLD: closed-class reinject
 )
 
 # Sibling-lane fixes that exist but are not merged into this gated tree.
@@ -352,6 +360,55 @@ FIX_STATUS: dict[str, dict[str, str]] = {
         "worktree": "/home/flynnsbit/Projects/MisterPlex-wt-mem",
         "artefact": "fpga/Plex_MiSTer/rtl/ddr_frame_store.sv",
         "evidence": "rt_raw_aligned=(rt_coded_w[3:0]==4'd0); geom_enable_eff&=rt_raw_ok",
+    },
+    # B38 integrated app/beam atomic — w-clock feed-forward + beam_disp hold + TB
+    "B38_NO_VISUAL_SWAP_ACK": {
+        "status": "unmerged",
+        "lane": "w-clock",
+        "commit": "a3365370",
+        "worktree": "/home/flynnsbit/Projects/MisterPlex-wt-clock",
+        "artefact": "fpga/Plex_MiSTer/rtl/present_core.sv",
+        "evidence": "visual_swap_ack = frame_start && swap_pending && store_pending_ready",
+    },
+    "B38_NO_SWAP_ARMED_FEEDFORWARD": {
+        "status": "unmerged",
+        "lane": "w-clock",
+        "commit": "a3365370",
+        "worktree": "/home/flynnsbit/Projects/MisterPlex-wt-clock",
+        "artefact": "fpga/Plex_MiSTer/rtl/present_core.sv",
+        "evidence": "beam_src_w = b20_swap_armed ? content_w : app_content_w",
+    },
+    "B38_NO_BEAM_DISP_SEQ": {
+        "status": "unmerged",
+        "lane": "w-clock",
+        "commit": "a3365370",
+        "worktree": "/home/flynnsbit/Projects/MisterPlex-wt-clock",
+        "artefact": "fpga/Plex_MiSTer/rtl/present_core.sv",
+        "evidence": "beam_disp_seq <= beam_src_seq_d on frame_start",
+    },
+    "B38_HOLD_LIVE_VS_APP_ONLY": {
+        "status": "unmerged",
+        "lane": "w-clock",
+        "commit": "a3365370",
+        "worktree": "/home/flynnsbit/Projects/MisterPlex-wt-clock",
+        "artefact": "fpga/Plex_MiSTer/rtl/present_core.sv",
+        "evidence": "b20_visual_hold = (live!=app) | b20_beam_hold(beam_disp_seq!=app)",
+    },
+    "B38_NO_FAULT_TWINS": {
+        "status": "unmerged",
+        "lane": "w-clock",
+        "commit": "a3365370",
+        "worktree": "/home/flynnsbit/Projects/MisterPlex-wt-clock",
+        "artefact": "fpga/Plex_MiSTer/rtl/present_core.sv",
+        "evidence": "FAULT_B20_NO_BEAM_FEEDFORWARD + FAULT_B20_NO_BEAM_HOLD",
+    },
+    "B38_INTEGRATED_TB_ABSENT": {
+        "status": "unmerged",
+        "lane": "w-clock",
+        "commit": "a3365370",
+        "worktree": "/home/flynnsbit/Projects/MisterPlex-wt-clock",
+        "artefact": "tests/rtl/b20_integrated_app_beam_tb.sv + test_b20_integrated_app_beam.sh",
+        "evidence": "GREEN FF + GREEN hold-cover + RED island REPRO; not b20_beam_de_hold_tb",
     },
     # Everything else: no known sibling implementation — new work.
 }
@@ -6798,6 +6855,309 @@ def check_b37_integration_ladder(root: Path) -> tuple[list[str], list[str]]:
     return msgs, errors
 
 
+def check_b38_integrated_app_beam_atomic(root: Path) -> tuple[list[str], list[str]]:
+    """B38: integrated B20 swap/app/beam must be same-frame atomic (rd-duck).
+
+    Defect class (measured mechanism, not guess):
+      present_beam_content_de raises registered frame_start via NBA at v_wrap.
+      present_core visual_swap_ack = frame_start && swap_pending && pending_ready
+      → store/app always-blocks see fstart on NEXT clk (hc already 1) and update
+      app_content_*/bank then. Beam samples rt_* at v_wrap, so if rt_*=app_* only,
+      DE stays OLD for the whole post-swap frame. b20_visual_hold that is only
+      live_seq!=app_live_seq clears at that hc=1 app update → one full frame of
+      NEW bank/store geometry under OLD DE (island, e.g. 320 inside 624).
+
+    Closure requires ONE of:
+      (A) swap-armed feed-forward so beam latches NEW DE at the same v_wrap as
+          bank will flip (b20_swap_armed ? cand : app), OR
+      (B) blackout held until beam-applied epoch catches app
+          (b20_beam_hold: beam_disp_seq != app_live_seq),
+      and product hold must OR that beam term — live-vs-app alone is NOT enough.
+
+    b20_beam_de_hold_tb is STRUCTURALLY BLIND: it drives candidates with level
+    apply before v_wrap and does not instantiate integrated app-shadow timing.
+    Do not claim B20 closure from that TB alone.
+    """
+    msgs: list[str] = ["LEG0_B38_INTEGRATED_APP_BEAM_ATOMIC_EXECUTED begin"]
+    errors: list[str] = []
+
+    core_p = root / "fpga" / "Plex_MiSTer" / "rtl" / "present_core.sv"
+    beam_p = root / "fpga" / "Plex_MiSTer" / "rtl" / "present_beam_content_de.sv"
+    tb_int = root / "tests" / "rtl" / "b20_integrated_app_beam_tb.sv"
+    sh_int = root / "tests" / "unit" / "test_b20_integrated_app_beam.sh"
+    tb_old = root / "tests" / "rtl" / "b20_beam_de_hold_tb.sv"
+    sh_old = root / "tests" / "unit" / "test_b20_beam_de_hold.sh"
+
+    if not core_p.is_file():
+        errors.append(
+            "B38_CORE_ABSENT: missing present_core.sv — cannot prove integrated "
+            "app/beam swap atomicity (rd-duck: visual_swap_ack/frame_start NBA lag)."
+        )
+        errors.append(
+            "B38_NO_SWAP_ARMED_FEEDFORWARD: no core — beam cannot feed-forward "
+            "armed candidate at v_wrap (rd-duck)."
+        )
+        errors.append(
+            "B38_HOLD_LIVE_VS_APP_ONLY: no core — cannot prove beam-applied-seq "
+            "hold term (rd-duck: live-vs-app alone clears at hc=1)."
+        )
+        errors.append(
+            "B38_INTEGRATED_TB_ABSENT: missing b20_integrated_app_beam_tb — "
+            "b20_beam_de_hold_tb is blind to app NBA lag (rd-duck)."
+        )
+        return msgs, errors
+
+    core_raw = _read(core_p) or ""
+    core = product_active_sv(core_raw)
+    beam_txt = product_active_sv(_read(beam_p) or "") if beam_p.is_file() else ""
+    tb_int_txt = _read(tb_int) or ""
+    sh_int_txt = _read(sh_int) or ""
+    int_blob = "\n".join([tb_int_txt, sh_int_txt])
+
+    # Product path markers
+    has_visual_swap_ack = bool(
+        re.search(
+            r"visual_swap_ack\s*=\s*frame_start\s*&&\s*swap_pending",
+            core,
+        )
+    )
+    has_swap_armed = bool(re.search(r"\bb20_swap_armed\b", core))
+    # Feed-forward: beam_src_w = armed ? content_w : app_content_w (or content_h)
+    feedforward_w = bool(
+        re.search(
+            r"b20_swap_armed\s*\?\s*content_w\s*:\s*app_content_w|"
+            r"beam_src_w\s*=\s*b20_swap_armed\s*\?\s*content_w",
+            core,
+        )
+    )
+    feedforward_h = bool(
+        re.search(
+            r"b20_swap_armed\s*\?\s*content_h\s*:\s*app_content_h|"
+            r"beam_src_h\s*=\s*b20_swap_armed\s*\?\s*content_h",
+            core,
+        )
+    )
+    feedforward_seq = bool(
+        re.search(
+            r"b20_swap_armed\s*\?\s*geom_live_seq\s*:\s*app_live_seq|"
+            r"beam_src_seq\s*=\s*b20_swap_armed\s*\?\s*geom_live_seq",
+            core,
+        )
+    )
+    has_feedforward = feedforward_w and (feedforward_h or feedforward_seq)
+
+    has_beam_disp_seq = bool(re.search(r"\bbeam_disp_seq\b", core))
+    # Beam-applied hold term (not live-vs-app)
+    beam_hold_term = bool(
+        re.search(
+            r"beam_disp_seq\s*!=\s*app_live_seq|"
+            r"app_live_seq\s*!=\s*beam_disp_seq",
+            core,
+        )
+    )
+    has_b20_beam_hold = bool(re.search(r"\bb20_beam_hold\b", core))
+    # Product visual hold must OR beam hold (not live-only)
+    hold_ors_beam = bool(
+        re.search(
+            r"b20_visual_hold\s*=[\s\S]{0,400}?b20_beam_hold|"
+            r"b20_live_hold\s*\|\s*b20_beam_hold|"
+            r"\(\s*b20_ext_store_path[\s\S]{0,200}?app_live_seq\s*\)\s*\|\s*b20_beam_hold",
+            core,
+        )
+    )
+    # Live-vs-app only defect: hold keys only geom_live_seq != app_live_seq
+    # and does NOT include beam_disp / b20_beam_hold in product path.
+    live_only_hold = bool(
+        re.search(
+            r"b20_visual_hold\s*=\s*"
+            r"(?:b20_ext_store_path\s*&&\s*)?geom_live_valid\s*&&\s*"
+            r"\(\s*geom_live_seq\s*!=\s*app_live_seq\s*\)\s*;",
+            core,
+        )
+    ) or (
+        bool(
+            re.search(
+                r"geom_live_seq\s*!=\s*app_live_seq",
+                core,
+            )
+        )
+        and not beam_hold_term
+        and not hold_ors_beam
+    )
+
+    # RED twins in raw (stripped from product_active)
+    fault_no_ff = bool(re.search(r"FAULT_B20_NO_BEAM_FEEDFORWARD", core_raw))
+    fault_no_hold = bool(re.search(r"FAULT_B20_NO_BEAM_HOLD", core_raw))
+
+    # Beam module documents registered frame_start at v_wrap
+    beam_nba = bool(
+        beam_txt
+        and re.search(r"frame_start", beam_txt)
+        and (
+            re.search(r"v_wrap", beam_txt)
+            or re.search(r"NBA|next clk|hc\s*=\s*1", beam_txt, re.I)
+        )
+    )
+
+    msgs.append(
+        f"LEG0_B38_CORE swap_ack={int(has_visual_swap_ack)} armed={int(has_swap_armed)} "
+        f"ff_w={int(feedforward_w)} ff_h={int(feedforward_h)} ff_seq={int(feedforward_seq)} "
+        f"feedforward={int(has_feedforward)} beam_disp_seq={int(has_beam_disp_seq)} "
+        f"beam_hold_term={int(beam_hold_term)} b20_beam_hold={int(has_b20_beam_hold)} "
+        f"hold_ors_beam={int(hold_ors_beam)} live_only_hold={int(live_only_hold)} "
+        f"fault_no_ff={int(fault_no_ff)} fault_no_hold={int(fault_no_hold)} "
+        f"beam_nba_doc={int(beam_nba)}"
+    )
+
+    if not has_visual_swap_ack and not has_swap_armed:
+        errors.append(
+            "B38_NO_VISUAL_SWAP_ACK: present_core must define visual_swap_ack = "
+            "frame_start && swap_pending && store_pending_ready (rd-duck integrated "
+            "B20; fstart is registered NBA at beam v_wrap)."
+        )
+
+    if not has_feedforward:
+        errors.append(
+            "B38_NO_SWAP_ARMED_FEEDFORWARD: present_core must feed-forward armed "
+            "candidate into beam rt_* at v_wrap (b20_swap_armed ? content_w : "
+            "app_content_w and matching h/seq). App-only beam_src keeps OLD DE for "
+            "one full frame after fstart promotes app/bank at hc=1 (rd-duck island "
+            "624→320 class)."
+        )
+
+    if not has_beam_disp_seq:
+        errors.append(
+            "B38_NO_BEAM_DISP_SEQ: present_core must capture beam_disp_seq (src "
+            "delayed into registered frame_start) so hold can key beam-applied "
+            "epoch, not only live-vs-app (rd-duck)."
+        )
+
+    if live_only_hold or not (beam_hold_term and hold_ors_beam and has_b20_beam_hold):
+        errors.append(
+            "B38_HOLD_LIVE_VS_APP_ONLY: b20_visual_hold must include beam-applied "
+            "term (b20_beam_hold: beam_disp_seq != app_live_seq) OR'd with "
+            "live-vs-app. live_seq!=app_live_seq alone clears at hc=1 when app "
+            "updates on visual_swap_ack, exposing NEW bank under OLD DE for one "
+            "frame (rd-duck). Do not claim B20 closure with live-vs-app seq alone."
+        )
+
+    if not (fault_no_ff and fault_no_hold):
+        errors.append(
+            "B38_NO_FAULT_TWINS: present_core must define FAULT_B20_NO_BEAM_FEEDFORWARD "
+            "and FAULT_B20_NO_BEAM_HOLD RED twins so integrated TB can REPRO island "
+            "(no FF + live-only hold) vs GREEN FF/hold-cover (rd-duck)."
+        )
+
+    # Integrated TB required; old beam_de_hold alone is bait
+    has_int_tb = tb_int.is_file()
+    has_int_sh = sh_int.is_file()
+    has_old_tb = tb_old.is_file() or sh_old.is_file()
+    models_app_shadow = bool(
+        re.search(r"app_content_w|app_live_seq|visual_swap_ack", int_blob)
+    )
+    models_nba_lag = bool(
+        re.search(
+            r"NBA|hc\s*=\s*1|v_wrap|frame_start.*next|one.?frame|island",
+            int_blob,
+            re.I,
+        )
+    )
+    scores_island = bool(
+        re.search(r"island_px|island=|NEW bank|OLD DE|REPRO_OK", int_blob)
+    )
+    has_ff_green = bool(
+        re.search(r"feed.?forward|FEEDFORWARD|green_ff|GREEN feed", int_blob, re.I)
+    )
+    has_red_repro = bool(
+        re.search(
+            r"FAULT_B20_NO_BEAM_FEEDFORWARD|FAULT_B20_NO_BEAM_HOLD|red_island|REPRO",
+            int_blob,
+        )
+    )
+    rejects_old_tb = bool(
+        re.search(
+            r"b20_beam_de_hold_tb.*blind|NOT the older b20_beam_de_hold|structurally blind",
+            int_blob,
+            re.I,
+        )
+    )
+
+    msgs.append(
+        f"LEG0_B38_TB int_tb={int(has_int_tb)} int_sh={int(has_int_sh)} "
+        f"old_tb={int(has_old_tb)} app_shadow={int(models_app_shadow)} "
+        f"nba_lag={int(models_nba_lag)} island={int(scores_island)} "
+        f"ff_green={int(has_ff_green)} red={int(has_red_repro)} "
+        f"rejects_old={int(rejects_old_tb)}"
+    )
+
+    if not has_int_tb or not has_int_sh:
+        errors.append(
+            "B38_INTEGRATED_TB_ABSENT: need tests/rtl/b20_integrated_app_beam_tb.sv "
+            "+ tests/unit/test_b20_integrated_app_beam.sh that instantiate app-shadow "
+            "timing (visual_swap_ack → app_* next clk) with real present_beam_content_de. "
+            "b20_beam_de_hold_tb drives cand with level apply and is blind (rd-duck)."
+        )
+    else:
+        if not (models_app_shadow and models_nba_lag and scores_island):
+            errors.append(
+                "B38_INTEGRATED_TB_BLIND: integrated TB/shell present but does not "
+                "model app-shadow NBA lag AND score island (NEW bank + OLD DE + "
+                "!black). Name visual_swap_ack/app_*/frame_start lag and island_px/"
+                "REPRO_OK (rd-duck)."
+            )
+        if not has_ff_green or not has_red_repro:
+            errors.append(
+                "B38_INTEGRATED_TB_NO_FF_HOLD_TWINS: TB must GREEN feed-forward "
+                "(and/or hold-cover without FF) and RED REPRO island under "
+                "FAULT_B20_NO_BEAM_FEEDFORWARD + FAULT_B20_NO_BEAM_HOLD (rd-duck)."
+            )
+        if not rejects_old_tb and has_old_tb:
+            # Soft requirement: prefer explicit blind note; if missing still OK
+            # when integrated is real — only warn in msgs.
+            msgs.append(
+                "LEG0_B38_NOTE integrated TB should document b20_beam_de_hold_tb "
+                "blind spot (optional if island oracle is strong)"
+            )
+
+    if has_old_tb and not (has_int_tb and has_int_sh):
+        errors.append(
+            "B38_BEAM_DE_HOLD_TB_ONLY: b20_beam_de_hold_tb/test_b20_beam_de_hold "
+            "exists without integrated app-beam TB. That TB drives candidates "
+            "directly with beam_de_apply high before v_wrap — structurally blind "
+            "to one-frame non-atomic app/bank vs DE (rd-duck). Not B20 closure."
+        )
+
+    # Closure predicate
+    closed = (
+        has_feedforward
+        and has_beam_disp_seq
+        and beam_hold_term
+        and hold_ors_beam
+        and has_b20_beam_hold
+        and not live_only_hold
+        and fault_no_ff
+        and fault_no_hold
+        and has_int_tb
+        and has_int_sh
+        and models_app_shadow
+        and models_nba_lag
+        and scores_island
+        and has_ff_green
+        and has_red_repro
+    )
+    if closed and not errors:
+        msgs.append(
+            "LEG0_B38_PASS integrated app/beam atomic: feed-forward + beam_disp "
+            "hold + FAULT twins + integrated island TB (not live-vs-app alone)"
+        )
+    elif not errors:
+        # Should not happen if closed false implies errors — belt
+        errors.append(
+            "B38_HOLD_LIVE_VS_APP_ONLY: integrated B20 path incomplete "
+            "(internal closed=0 without specific token — re-audit)."
+        )
+    return msgs, errors
+
 
 def leg0_arch_blockers() -> tuple[int, list[str]]:
     """rd-duck fit blockers — FAIL until a coherent candidate clears each.
@@ -6825,6 +7185,7 @@ def leg0_arch_blockers() -> tuple[int, list[str]]:
         "B33_plxc_arb_issued_lower_safe(44981ab0 req/accept+per-req TB),"
         "B34_host_plxg_pad_display(426→432 display+crop+q1/q3 g++),"
         "B35_ascal_simultaneous_tag_bypass(in_*+full_tag_TB+RED),B36_merged_hierarchy_live(qsf+qip+poller→latch→mux→store+PLXC→3way_arb),B37_integration_ladder(L2_qip/L3_inst/L4_enable;dead_code≠shipped),"
+        "B38_integrated_app_beam_atomic(ff+beam_disp_hold+island_TB;live-vs-app≠closure),"
         "leg_unit_make_unit,leg_rtl_lint,leg2_elab,leg3_true_de; "
         "B20_PRODUCT_UFS_TIE=elaborate Plex.sv .use_frame_store(1'b0) + reject "
         "ownership-on-ufs (w-clock free-run) + H require product-ufs0 hold measured_* "
@@ -8268,6 +8629,11 @@ def leg0_arch_blockers() -> tuple[int, list[str]]:
     b37_msgs, b37_errs = check_b37_integration_ladder(ROOT)
     msgs.extend(b37_msgs)
     errors.extend(b37_errs)
+
+    # --- B38 integrated app/beam atomic (rd-duck: fstart NBA one-frame island) ---
+    b38_msgs, b38_errs = check_b38_integrated_app_beam_atomic(ROOT)
+    msgs.extend(b38_msgs)
+    errors.extend(b38_errs)
 
     # --- B20 full-hierarchy scenario tests (rd-duck 2026-08-03 hollow audit) ---
     # Prior gate only regex-scanned test *text* and accepted comment bait (mutation
@@ -10136,6 +10502,12 @@ def _run_mutation_matrix() -> tuple[list[str], list[dict[str, str]]]:
         "B37_DEAD_CODE_IN_QIP",
         "B37_L3_NOT_ENABLED",
         "B37_LADDER_NOT_L4",
+        "B38_NO_VISUAL_SWAP_ACK",
+        "B38_NO_SWAP_ARMED_FEEDFORWARD",
+        "B38_NO_BEAM_DISP_SEQ",
+        "B38_HOLD_LIVE_VS_APP_ONLY",
+        "B38_NO_FAULT_TWINS",
+        "B38_INTEGRATED_TB_ABSENT",
     ):
         txt = "\n".join(msgs)
         has = tok in txt
@@ -10934,6 +11306,93 @@ def _run_mutation_matrix() -> tuple[list[str], list[dict[str, str]]]:
                     f.unlink()
             except OSError:
                 pass
+
+    # --- rd-duck B38: integrated app/beam one-frame non-atomic ---
+    # Mutation: present_core with visual_swap_ack + live-vs-app hold ONLY
+    # (no feed-forward, no beam_disp_seq) + only blind old TB — island class.
+    core_b38 = ROOT / "fpga" / "Plex_MiSTer" / "rtl" / "present_core.sv"
+    core_b38.parent.mkdir(parents=True, exist_ok=True)
+    bad_core_live_only = (
+        "// fitgate B38 mutation — live-vs-app hold only (rd-duck island class)\n"
+        "module present_core;\n"
+        "  wire visual_swap_ack = frame_start && swap_pending && store_pending_ready;\n"
+        "  // NO b20_swap_armed feed-forward — beam_src = app only\n"
+        "  wire [10:0] beam_src_w = app_content_w;\n"
+        "  wire [10:0] beam_src_h = app_content_h;\n"
+        "  assign b20_visual_hold =\n"
+        "    b20_ext_store_path && geom_live_valid && (geom_live_seq != app_live_seq);\n"
+        "endmodule\n"
+    )
+    rest_c38 = _with_file_backup(core_b38, bad_core_live_only)
+
+    def _hide_file(path: Path):
+        if not path.is_file():
+            return lambda: None
+        bak = path.read_text(errors="replace")
+        path.unlink()
+
+        def restore() -> None:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(bak)
+
+        return restore
+
+    tb_b38 = ROOT / "tests" / "rtl" / "b20_integrated_app_beam_tb.sv"
+    sh_b38 = ROOT / "tests" / "unit" / "test_b20_integrated_app_beam.sh"
+    rest_tb = _hide_file(tb_b38)
+    rest_sh = _hide_file(sh_b38)
+    old_tb_b38 = ROOT / "tests" / "rtl" / "b20_beam_de_hold_tb.sv"
+    old_sh_b38 = ROOT / "tests" / "unit" / "test_b20_beam_de_hold.sh"
+    old_tb_b38.parent.mkdir(parents=True, exist_ok=True)
+    old_sh_b38.parent.mkdir(parents=True, exist_ok=True)
+    rest_old_tb = _with_file_backup(
+        old_tb_b38,
+        "// fitgate B38 old blind TB\nmodule b20_beam_de_hold_tb; endmodule\n",
+    )
+    rest_old_sh = _with_file_backup(
+        old_sh_b38,
+        "#!/bin/bash\necho PASS b20_beam_de_hold bait\n",
+    )
+    try:
+        rc, msgs = leg0_arch_blockers()
+        txt = "\n".join(msgs)
+        exp = (
+            "B38_HOLD_LIVE_VS_APP_ONLY"
+            if "B38_HOLD_LIVE_VS_APP_ONLY" in txt
+            else (
+                "B38_NO_SWAP_ARMED_FEEDFORWARD"
+                if "B38_NO_SWAP_ARMED_FEEDFORWARD" in txt
+                else "B38_INTEGRATED_TB_ABSENT"
+            )
+        )
+        _row(
+            "B38_HOLD_LIVE_VS_APP_ONLY",
+            "core live-vs-app hold only + no FF + only blind b20_beam_de_hold_tb",
+            exp,
+            rc,
+            msgs,
+        )
+        for tok in (
+            "B38_NO_SWAP_ARMED_FEEDFORWARD",
+            "B38_INTEGRATED_TB_ABSENT",
+            "B38_BEAM_DE_HOLD_TB_ONLY",
+            "B38_NO_FAULT_TWINS",
+            "B38_NO_BEAM_DISP_SEQ",
+        ):
+            if tok in txt:
+                _row(
+                    tok,
+                    "B38 live-only hold / blind old TB mutation",
+                    tok,
+                    rc,
+                    msgs,
+                )
+    finally:
+        rest_c38()
+        rest_tb()
+        rest_sh()
+        rest_old_tb()
+        rest_old_sh()
 
 # --- rd-duck B34: identity-on-store 432/432/0 after align ---
     lay_b34 = ROOT / "host" / "libmisterplex" / "ddr_frame_layout.hpp"

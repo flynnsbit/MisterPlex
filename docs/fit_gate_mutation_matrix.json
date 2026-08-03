@@ -369,6 +369,54 @@
       "token_hit": "1"
     },
     {
+      "check": "B38_NO_VISUAL_SWAP_ACK",
+      "inject": "live hollow / missing product TB",
+      "expect": "B38_NO_VISUAL_SWAP_ACK",
+      "verdict": "RED",
+      "true_rc": "1",
+      "token_hit": "1"
+    },
+    {
+      "check": "B38_NO_SWAP_ARMED_FEEDFORWARD",
+      "inject": "live hollow / missing product TB",
+      "expect": "B38_NO_SWAP_ARMED_FEEDFORWARD",
+      "verdict": "RED",
+      "true_rc": "1",
+      "token_hit": "1"
+    },
+    {
+      "check": "B38_NO_BEAM_DISP_SEQ",
+      "inject": "live hollow / missing product TB",
+      "expect": "B38_NO_BEAM_DISP_SEQ",
+      "verdict": "RED",
+      "true_rc": "1",
+      "token_hit": "1"
+    },
+    {
+      "check": "B38_HOLD_LIVE_VS_APP_ONLY",
+      "inject": "live hollow / missing product TB",
+      "expect": "B38_HOLD_LIVE_VS_APP_ONLY",
+      "verdict": "RED",
+      "true_rc": "1",
+      "token_hit": "1"
+    },
+    {
+      "check": "B38_NO_FAULT_TWINS",
+      "inject": "live hollow / missing product TB",
+      "expect": "B38_NO_FAULT_TWINS",
+      "verdict": "RED",
+      "true_rc": "1",
+      "token_hit": "1"
+    },
+    {
+      "check": "B38_INTEGRATED_TB_ABSENT",
+      "inject": "live hollow / missing product TB",
+      "expect": "B38_INTEGRATED_TB_ABSENT",
+      "verdict": "RED",
+      "true_rc": "1",
+      "token_hit": "1"
+    },
+    {
       "check": "B9_SYS_TOP_AR_OUT_HOLD_MISSING",
       "inject": "live defective/hollow tree (no inject)",
       "expect": "B9_SYS_TOP_AR_OUT_HOLD_MISSING",
@@ -609,6 +657,54 @@
       "token_hit": "1"
     },
     {
+      "check": "B38_HOLD_LIVE_VS_APP_ONLY",
+      "inject": "core live-vs-app hold only + no FF + only blind b20_beam_de_hold_tb",
+      "expect": "B38_HOLD_LIVE_VS_APP_ONLY",
+      "verdict": "RED",
+      "true_rc": "1",
+      "token_hit": "1"
+    },
+    {
+      "check": "B38_NO_SWAP_ARMED_FEEDFORWARD",
+      "inject": "B38 live-only hold / blind old TB mutation",
+      "expect": "B38_NO_SWAP_ARMED_FEEDFORWARD",
+      "verdict": "RED",
+      "true_rc": "1",
+      "token_hit": "1"
+    },
+    {
+      "check": "B38_INTEGRATED_TB_ABSENT",
+      "inject": "B38 live-only hold / blind old TB mutation",
+      "expect": "B38_INTEGRATED_TB_ABSENT",
+      "verdict": "RED",
+      "true_rc": "1",
+      "token_hit": "1"
+    },
+    {
+      "check": "B38_BEAM_DE_HOLD_TB_ONLY",
+      "inject": "B38 live-only hold / blind old TB mutation",
+      "expect": "B38_BEAM_DE_HOLD_TB_ONLY",
+      "verdict": "RED",
+      "true_rc": "1",
+      "token_hit": "1"
+    },
+    {
+      "check": "B38_NO_FAULT_TWINS",
+      "inject": "B38 live-only hold / blind old TB mutation",
+      "expect": "B38_NO_FAULT_TWINS",
+      "verdict": "RED",
+      "true_rc": "1",
+      "token_hit": "1"
+    },
+    {
+      "check": "B38_NO_BEAM_DISP_SEQ",
+      "inject": "B38 live-only hold / blind old TB mutation",
+      "expect": "B38_NO_BEAM_DISP_SEQ",
+      "verdict": "RED",
+      "true_rc": "1",
+      "token_hit": "1"
+    },
+    {
       "check": "B34_IDENTITY_ON_STORE",
       "inject": "align then makeDdrFrameGeometry(store) loses display 426/crop_left=2",
       "expect": "B34_IDENTITY_ON_STORE",
@@ -634,6 +730,6 @@
     }
   ],
   "failures": [],
-  "n_red": 79,
-  "head": "307f868501f3"
+  "n_red": 91,
+  "head": "f4e34905c1d5"
 }

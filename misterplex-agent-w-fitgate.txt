@@ -1,53 +1,40 @@
 lane=w-fitgate
 branch=w-fitgate
 worktree=/home/flynnsbit/Projects/MisterPlex-wt-fitgate
-tip=844ba93c full=844ba93c8e74585916929b5addb7c4683bb938de
-origin=origin/w-fitgate (pushed)
+tip=fd88baa1 full=fd88baa15e28acf2a3431d522e196ab1c2560bfe
+origin=origin/w-fitgate
 GRANT=NO
-FIT_SLOT=HELD (parent only; this lane never takes Quartus)
+FIT_SLOT=HELD
 
-=== PARENT CORRECTION ACKNOWLEDGED (retraction) ===
-Parent retracted the claim that main@ad928cb1 has 720p present modules
-at L2/L3 dead-code. That claim was false (measured on wrong branch).
+=== B38 NEW (rd-duck integrated B20 one-frame non-atomic) ===
+Mechanism (quoted from w-clock present_core + beam):
+  visual_swap_ack = frame_start && swap_pending && pending_ready
+  frame_start registered NBA at v_wrap → app/bank update next clk (hc=1)
+  beam samples rt_* at v_wrap; app-only src → OLD DE full frame
+  live-vs-app hold clears at hc=1 → NEW bank under OLD DE (island)
 
-TRUE main@ad928cb1 (pinned detached worktree MisterPlex-wt-fitgate-meas-main):
-  git rev-parse --abbrev-ref HEAD = HEAD (detached)
-  git rev-parse --short HEAD     = ad928cb1
-  files.qip ~34 entries
-  present_video_timing_720p  ON_DISK=0 IN_QIP=0 INST=0 ENABLED=0 level=ABSENT
-  present_content_window     ON_DISK=0 IN_QIP=0 INST=0 ENABLED=0 level=ABSENT
-  present_geom_latch         ON_DISK=0 IN_QIP=0 INST=0 ENABLED=0 level=ABSENT
-  present_beam_content_de    ON_DISK=0 IN_QIP=0 INST=0 ENABLED=0 level=ABSENT
-  plex_present_geom_mux      ON_DISK=0 IN_QIP=0 INST=0 ENABLED=0 level=ABSENT
-  h264_intra_nb_ctx          ON_DISK=1 IN_QIP=0 INST=0 ENABLED=0 level=L0
-  ddr_frame_store            IN_QIP=1  INST=0 → real L2 DEAD (pre-existing on main)
-  FRAME_W=640 FRAME_H=480; PRESENT_BEAM_960 commented; use_frame_store(1'b0)
-  720p present path is L0/L1 on w-osd-land-720p-present — NOT L2/L3 on main.
+Gate requires:
+  A) b20_swap_armed feed-forward into beam rt_* at v_wrap, AND
+  B) b20_beam_hold (beam_disp_seq != app_live_seq) OR'd into b20_visual_hold
+  + FAULT_B20_NO_BEAM_FEEDFORWARD / FAULT_B20_NO_BEAM_HOLD twins
+  + b20_integrated_app_beam_tb (NOT b20_beam_de_hold_tb alone — blind)
 
-GATE FIX commits:
-  307f8685 B37: ABSENT≠dead; LEG0_B37_MEASURED_REF branch+sha required
-  2679d3bd candidate lock; 844ba93c status tip
+Tokens (live hollow RED): B38_NO_VISUAL_SWAP_ACK, NO_SWAP_ARMED_FEEDFORWARD,
+  NO_BEAM_DISP_SEQ, HOLD_LIVE_VS_APP_ONLY, NO_FAULT_TWINS, INTEGRATED_TB_ABSENT
+Mutation also: B38_BEAM_DE_HOLD_TB_ONLY
 
-SELFTEST (true rc direct):
-  python3 scripts/fit_release_gate.py --self-test; echo "true rc=$?"
-  true rc=0
-  MUTATION_MATRIX_SUMMARY rows=79 red=79 fail_holes=0
-  FIT_RELEASE_GATE_SELFTEST_PASS EXECUTED
-  GATE_IDENTITY_MATCH live=358a05bcb8b9080eefbd223e19fe8013e6ba7b97
+Probe:
+  fitgate tree: 6 B38 errs RED
+  --root MisterPlex-wt-clock@a3365370: LEG0_B38_PASS (0 errs)
+  fix=unmerged lane=w-clock tip=a3365370
 
-PARENT INDEPENDENT RUN:
-  git fetch origin w-fitgate
+SELFTEST: true rc=0 rows=91 red=91 fail_holes=0 SELFTEST_PASS
+IDENTITY live=242f04fdc6aa7ab905d68a0056319d54ba73bc27
+
+Parent run:
   RULER=/home/flynnsbit/Projects/MisterPlex-wt-fitgate
-  # or: git worktree add --detach /path/wt-fitgate-ro origin/w-fitgate
   "$RULER/scripts/fit_release_gate.sh" --root "$MERGE" --qsf "$MERGE/fpga/Plex_MiSTer/Plex.qsf"
   echo "true rc=$?"
-  Expect GRANT=NO while product not L4.
 
-OPEN: B9 bank+VS sideband, B31 HIT_SCAN, B32 PLXG↔bank, B33 arb accept,
-B34 host pad geom, B35 ascal tag, B36 hollow hierarchy, B37 L4 ladder.
-
-LANDING INVENTORY (this lane — scripts/docs only, 0 product RTL):
-  fit_release_gate.py/.sh  ON_MAIN=no IN_FILES_QIP=n/a INST=n/a ENABLED=n/a level=L0
-  To land: parent sequences merge; lane will NOT merge unilaterally.
-
-NO Quartus. NO device. NO main merge by this lane.
+LANDING: 0 product RTL; scripts ON_MAIN=no. No Quartus. No device. No main merge.
+Prior B37 retraction stands (main@ad928cb1 present path ABSENT not L2 dead).
