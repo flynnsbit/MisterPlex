@@ -139,3 +139,25 @@ timing + HDMI capture MEAN/ACTIVE — parent-owned.
 | min clocks/frame if 1 clk/pix active | 518_400 (+ blanking) |
 | 1280×720×24 Mpix/s | 22.118 |
 | 960×540×24 Mpix/s | 12.441 |
+
+## Exact 2× tier (640×360 → 1280×720) — TV / 30 fps
+
+Frame-rate-aware select (parent):
+```
+24 fps film  → 960×540 + present_scale_4_3 (detail)
+30 fps TV    → 640×360 + present_scale_2x  (motion, no judder)
+```
+
+`present_scale_2x.sv`: `store = dst >> 1`, NN weights 256/0, **no phase ROM**.
+General Q16 NN also matches floors exactly (sx=32768) — specialised still ships
+because: 0 muls, bilin cannot soften, explicit tier select.
+
+Resources: ~tens of ALMs, 0 M10K, 0 DSP — **coexist with 4/3**.
+RBG: `test_present_scale_2x_rtl_sim.sh` (RED IDENTITY / PLUS1).
+
+### Outstanding: why max_diff=1 hid 4/3 phase bug
+
+**Answered in `35927575` / `test_scale_4_3_vs_general` diagnosis (all P1–P4 HIT):**
+- General path uses **Q16 residue** `frac=prod[15:8]`, **not** dst-mod-4 — no shared bug.
+- Old `vs_general` compared **floors only** → blind to weight swap.
+- Unit ramp hides phase error at ≤1 LSB; high-contrast shows |Δ|=128 at dst1.
