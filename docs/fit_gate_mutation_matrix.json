@@ -193,6 +193,38 @@
       "token_hit": "1"
     },
     {
+      "check": "B34_STORAGE_GEOM_ABSENT",
+      "inject": "live hollow / missing product TB",
+      "expect": "B34_STORAGE_GEOM_ABSENT",
+      "verdict": "RED",
+      "true_rc": "1",
+      "token_hit": "1"
+    },
+    {
+      "check": "B34_PAD_ONLY_GEOM_ABSENT",
+      "inject": "live hollow / missing product TB",
+      "expect": "B34_PAD_ONLY_GEOM_ABSENT",
+      "verdict": "RED",
+      "true_rc": "1",
+      "token_hit": "1"
+    },
+    {
+      "check": "B34_PLXG_FROM_GEOM_ABSENT",
+      "inject": "live hollow / missing product TB",
+      "expect": "B34_PLXG_FROM_GEOM_ABSENT",
+      "verdict": "RED",
+      "true_rc": "1",
+      "token_hit": "1"
+    },
+    {
+      "check": "B34_HOST_RECORD_ORACLE_MISSING",
+      "inject": "live hollow / missing product TB",
+      "expect": "B34_HOST_RECORD_ORACLE_MISSING",
+      "verdict": "RED",
+      "true_rc": "1",
+      "token_hit": "1"
+    },
+    {
       "check": "B9_SYS_TOP_AR_OUT_HOLD_MISSING",
       "inject": "live defective/hollow tree (no inject)",
       "expect": "B9_SYS_TOP_AR_OUT_HOLD_MISSING",
@@ -361,6 +393,14 @@
       "token_hit": "1"
     },
     {
+      "check": "B34_IDENTITY_ON_STORE",
+      "inject": "align then makeDdrFrameGeometry(store) loses display 426/crop_left=2",
+      "expect": "B34_IDENTITY_ON_STORE",
+      "verdict": "RED",
+      "true_rc": "1",
+      "token_hit": "1"
+    },
+    {
       "check": "STA_PATH_OWNER_UNRESOLVABLE",
       "inject": "STA present (Fmax summary) but path owner unresolvable",
       "expect": "STA_PATH_OWNER_UNRESOLVABLE",
@@ -378,6 +418,6 @@
     }
   ],
   "failures": [],
-  "n_red": 47,
-  "head": "65bfa2503920"
+  "n_red": 52,
+  "head": "e7f21021342b"
 }

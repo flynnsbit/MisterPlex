@@ -242,6 +242,12 @@ LIVE_OPEN_BLOCKER_TOKENS = (
     "B33_BRIDGE_BUSY_ACCEPT_RACE",
     "B33_LOST_READ_TB_WEAK",
     # B33_M0_OV_MASKS_ISSUED_LOWER: closed-class when arb present with m0_ov
+    # rd-duck: 426→432 host must keep display=426 crop_left=2 (not identity 432/432)
+    "B34_STORAGE_GEOM_ABSENT",
+    "B34_PAD_ONLY_GEOM_ABSENT",
+    "B34_PLXG_FROM_GEOM_ABSENT",
+    "B34_HOST_RECORD_ORACLE_MISSING",
+    # B34_IDENTITY_ON_STORE / B34_PLXG_Q1Q3_NOT_DISPLAY: closed-class reinject
 )
 
 # Sibling-lane fixes that exist but are not merged into this gated tree.
@@ -2843,6 +2849,369 @@ def check_b33_plxc_arb_issued_lower_safe(root: Path) -> tuple[list[str], list[st
 
 
 # ---------------------------------------------------------------------------
+# B34 — host 426→432 pad geometry must keep display=426 + crop_left=2 (rd-duck)
+#
+# Observed half-closure: FFmpeg pads source at x=2 (B27), but
+# ddrStorageGeometryForContent(426,240) may align to 432 then return
+# makeDdrFrameGeometry(432,240) → coded=display=presented=432, crop=0.
+# makePlxgRecordFromGeometry then packs q1 content=dw=432 and q3 dw=432,
+# losing visible 426 and x=2; fabric treats pad columns as content and
+# cannot preserve true DAR/window. Mux 624/618 tests cannot catch a
+# producer that emits 432/432.
+#
+# Contract (product):
+#   coded/stride = 432, display/H_DE/q1/q3 = 426, crop_left=2, crop_right=4
+#   present_x is output placement (0 for pad-only DE), NOT a substitute for crop
+# ---------------------------------------------------------------------------
+
+
+def _b34_pad_insets(content_w: int, content_h: int, store_w: int, store_h: int) -> tuple[int, int, int, int]:
+    """Gate-owned chroma-even pad insets (must match padInsetChromaEven / FFmpeg)."""
+    ideal_x = (store_w - content_w) // 2
+    ideal_y = (store_h - content_h) // 2
+    cl = ideal_x & ~1 if ideal_x >= 0 else 0
+    ct = ideal_y & ~1 if ideal_y >= 0 else 0
+    cr = store_w - content_w - cl
+    cb = store_h - content_h - ct
+    return cl, cr, ct, cb
+
+
+def check_b34_host_plxg_pad_display_geom(root: Path) -> tuple[list[str], list[str]]:
+    """Fail until 426→432 host→PLXG keeps display=426 crop_left=2 (not 432/432/0)."""
+    msgs: list[str] = ["LEG0_B34_HOST_PLXG_PAD_DISPLAY_EXECUTED begin"]
+    errors: list[str] = []
+
+    # --- Gate arithmetic oracle (always EXECUTED; not search-only) ---
+    cl, cr, ct, cb = _b34_pad_insets(426, 240, 432, 240)
+    msgs.append(
+        f"LEG0_B34_PAD_ORACLE_EXECUTED content=426x240 store=432x240 "
+        f"crop_left={cl} crop_right={cr} crop_top={ct} crop_bottom={cb} "
+        f"(need cl=2 cr=4; reject identity 432/432/0 and naive cl=3)"
+    )
+    if cl != 2 or cr != 4 or ct != 0 or cb != 0:
+        errors.append(
+            f"B34_PAD_ORACLE_ARITH: gate insets cl={cl} cr={cr} ct={ct} cb={cb} "
+            f"want 2/4/0/0 for 426→432 (rd-duck FFmpeg x=2)."
+        )
+    if cl == 3:
+        errors.append(
+            "B34_PAD_ORACLE_ARITH: naive center x=3 must not be product crop_left "
+            "(B27/chroma-even; rd-duck)."
+        )
+
+    layout_h = root / "host" / "libmisterplex" / "ddr_frame_layout.hpp"
+    plxg_h = root / "host" / "libmisterplex" / "plxg_record.hpp"
+    layout_txt = layout_h.read_text(errors="replace") if layout_h.is_file() else ""
+    plxg_txt = plxg_h.read_text(errors="replace") if plxg_h.is_file() else ""
+
+    has_storage_fn = bool(re.search(r"\bddrStorageGeometryForContent\b", layout_txt))
+    has_pad_fn = bool(re.search(r"\bddrPadOnlyStorageGeometry\b", layout_txt))
+    has_plxg_from_geom = bool(re.search(r"\bmakePlxgRecordFromGeometry\b", plxg_txt))
+
+    msgs.append(
+        f"LEG0_B34_HOST storage_fn={int(has_storage_fn)} pad_fn={int(has_pad_fn)} "
+        f"plxg_from_geom={int(has_plxg_from_geom)} "
+        f"layout={int(layout_h.is_file())} plxg={int(plxg_h.is_file())}"
+    )
+
+    if not layout_h.is_file() or not has_storage_fn:
+        errors.append(
+            "B34_STORAGE_GEOM_ABSENT: host/libmisterplex/ddr_frame_layout.hpp must "
+            "define ddrStorageGeometryForContent. Without it, 426→432 pad metadata "
+            "cannot be published (rd-duck q3 half-closure class)."
+        )
+    if not has_pad_fn:
+        errors.append(
+            "B34_PAD_ONLY_GEOM_ABSENT: missing ddrPadOnlyStorageGeometry — "
+            "unaligned content must set coded=store display=content crop=chroma-even "
+            "pad (426→432: display 426, crop_left 2), not identity-on-store "
+            "(rd-duck)."
+        )
+
+    # Hollow defect: after align, return makeDdrFrameGeometry(aw,ah) only —
+    # no DisplayWidth{content} / no pad-only call.
+    identity_on_store = False
+    if has_storage_fn:
+        # Strip comments lightly for body scan
+        body = layout_txt
+        calls_pad = bool(
+            re.search(
+                r"ddrStorageGeometryForContent[\s\S]{0,2500}?ddrPadOnlyStorageGeometry\s*\(",
+                body,
+            )
+        )
+        # Direct hollow: align then makeDdrFrameGeometry(CodedWidth{aw} without pad branch
+        hollow_align = bool(
+            re.search(
+                r"ddrAlignGeometryForFabricStore[\s\S]{0,400}?"
+                r"return\s+makeDdrFrameGeometry\s*\(\s*CodedWidth\s*\{\s*aw\s*\}",
+                body,
+            )
+        ) or bool(
+            re.search(
+                r"ddrAlignGeometryForFabricStore[\s\S]{0,400}?"
+                r"return\s+makeDdrFrameGeometry\s*\(\s*aw\s*,\s*ah\s*\)",
+                body,
+            )
+        )
+        # pad-only must set DisplayWidth{content_w} (or contentW)
+        pad_sets_display = bool(
+            re.search(
+                r"ddrPadOnlyStorageGeometry[\s\S]{0,800}?"
+                r"DisplayWidth\s*\{\s*content_w\s*\}|DisplayWidth\s*\{\s*w\s*\}",
+                body,
+            )
+        )
+        msgs.append(
+            f"LEG0_B34_PATH calls_pad={int(calls_pad)} hollow_align={int(hollow_align)} "
+            f"pad_sets_display={int(pad_sets_display)}"
+        )
+        if hollow_align and not calls_pad:
+            identity_on_store = True
+            errors.append(
+                "B34_IDENTITY_ON_STORE: ddrStorageGeometryForContent aligns then "
+                "returns makeDdrFrameGeometry(store_w,store_h) — coded=display="
+                "presented=432 crop=0 for 426 content. FFmpeg still pads x=2; PLXG "
+                "loses visible 426 (rd-duck half-closure)."
+            )
+        if has_pad_fn and not pad_sets_display:
+            errors.append(
+                "B34_PAD_ONLY_DISPLAY_NOT_CONTENT: ddrPadOnlyStorageGeometry must "
+                "set display/presented = content (426), not store (432) (rd-duck)."
+            )
+        if has_pad_fn and not calls_pad:
+            errors.append(
+                "B34_STORAGE_SKIPS_PAD_ONLY: ddrStorageGeometryForContent never "
+                "calls ddrPadOnlyStorageGeometry for unaligned content (rd-duck)."
+            )
+
+    # PLXG packer: q1/q3 from display, q2 coded from coded, q4 crop_left
+    if not plxg_h.is_file() or not has_plxg_from_geom:
+        errors.append(
+            "B34_PLXG_FROM_GEOM_ABSENT: plxg_record.hpp must define "
+            "makePlxgRecordFromGeometry packing q1/q3 from display_width and q4 "
+            "crop_left (not coded-as-display) (rd-duck)."
+        )
+    else:
+        # Extract function body roughly
+        mfn = re.search(
+            r"makePlxgRecordFromGeometry\s*\([^{]*\{([\s\S]{0,2500}?)^\s*\}",
+            plxg_txt,
+            re.M,
+        )
+        fn_body = mfn.group(1) if mfn else plxg_txt
+        packs_q1_dw = bool(
+            re.search(r"packPlxgQ1\s*\(\s*dw\s*,\s*dh\b", fn_body)
+        )
+        packs_q3_dw = bool(
+            re.search(r"packPlxgQ3\s*\([^;]*\bdw\s*,\s*dh\s*\)", fn_body)
+        )
+        packs_q1_cw = bool(
+            re.search(r"packPlxgQ1\s*\(\s*cw\s*,\s*ch\b", fn_body)
+        )
+        packs_q4_crop = bool(
+            re.search(r"packPlxgQ4\s*\([^;]*crop_left", fn_body)
+        )
+        dw_from_display = bool(
+            re.search(
+                r"\bdw\s*=\s*[^;]*display_width",
+                fn_body,
+            )
+        )
+        msgs.append(
+            f"LEG0_B34_PLXG q1_dw={int(packs_q1_dw)} q3_dw={int(packs_q3_dw)} "
+            f"q1_cw={int(packs_q1_cw)} q4_crop={int(packs_q4_crop)} "
+            f"dw_from_display={int(dw_from_display)}"
+        )
+        if packs_q1_cw and not packs_q1_dw:
+            errors.append(
+                "B34_PLXG_Q1_USES_CODED: makePlxgRecordFromGeometry packs q1 from "
+                "coded (cw/ch) — 432/432 producer; must pack display (dw/dh) so "
+                "content window stays 426 (rd-duck)."
+            )
+        if not packs_q1_dw or not packs_q3_dw or not dw_from_display:
+            errors.append(
+                "B34_PLXG_Q1Q3_NOT_DISPLAY: makePlxgRecordFromGeometry must set "
+                "dw from g.display_width and packPlxgQ1/Q3(dw,dh). Mux 624/618 "
+                "oracles cannot catch 432/432 (rd-duck)."
+            )
+        if not packs_q4_crop:
+            errors.append(
+                "B34_PLXG_Q4_NO_CROP: makePlxgRecordFromGeometry must pack "
+                "q4 crop_left from g.crop_left (pad x=2), not leave crop=0 while "
+                "stuffing pad into present_x only (rd-duck)."
+            )
+
+    # Unit / oracle tests: require 426→432 chain assertions + NEG all-432.
+    # 624/618-only is insufficient.
+    test_blob = ""
+    test_hits: list[str] = []
+    tests_root = root / "tests"
+    if tests_root.is_dir():
+        for path in tests_root.rglob("*"):
+            if not path.is_file():
+                continue
+            if path.suffix not in {".cpp", ".cc", ".hpp", ".h", ".sh", ".py"}:
+                continue
+            try:
+                t = path.read_text(errors="replace")
+            except OSError:
+                continue
+            if "426" in t and (
+                "432" in t or "crop_left" in t or "makePlxgRecord" in t
+            ):
+                test_blob += "\n" + t
+                test_hits.append(str(path.relative_to(root)))
+    only_618 = False
+    if test_blob:
+        has_426_display = bool(
+            re.search(
+                r"display_width.*==\s*426|display_width\.get\(\)\s*==\s*426|"
+                r"q1w\s*==\s*426|dw\s*==\s*426|426.*display",
+                test_blob,
+            )
+        )
+        has_crop2 = bool(
+            re.search(
+                r"crop_left\s*==\s*2|q4cl\s*==\s*2|cl\s*==\s*2",
+                test_blob,
+            )
+        )
+        has_crop4 = bool(re.search(r"crop_right\s*==\s*4", test_blob))
+        has_coded432 = bool(
+            re.search(
+                r"coded_width.*==\s*432|q2cw\s*==\s*432|coded.*432",
+                test_blob,
+            )
+        )
+        has_neg_all432 = bool(
+            re.search(
+                r"q1w\s*==\s*432.*q4cl\s*==\s*0|all-432|identity-on-432|"
+                r"!\s*\(\s*q1w\s*==\s*432",
+                test_blob,
+            )
+        )
+        has_618 = bool(re.search(r"\b618\b", test_blob))
+        only_618 = has_618 and not (has_426_display and has_crop2)
+        msgs.append(
+            f"LEG0_B34_TESTS n={len(test_hits)} display426={int(has_426_display)} "
+            f"crop2={int(has_crop2)} crop4={int(has_crop4)} coded432={int(has_coded432)} "
+            f"neg_all432={int(has_neg_all432)} hits={','.join(test_hits[:6])}"
+        )
+        if not (has_426_display and has_crop2 and has_coded432):
+            errors.append(
+                "B34_HOST_RECORD_ORACLE_MISSING: tests must assert host→record "
+                "426→432 chain: coded=432, display/q1=426, crop_left=2 "
+                f"(and preferably crop_right=4). Found hits={test_hits[:8]} "
+                "(rd-duck: 624/618 mux-only cannot catch 432/432 producer)."
+            )
+        if not has_neg_all432:
+            errors.append(
+                "B34_NEG_ALL432_MISSING: unit oracle must NEG all-432 PLXG "
+                "(q1w==432 && crop_left==0) — positive 618 checks are hollow "
+                "for this defect class (rd-duck)."
+            )
+        if only_618:
+            errors.append(
+                "B34_MUX_ONLY_618_ORACLE: geometry tests only exercise 624/618 "
+                "legacy path — add 432/426/x2 host→record→mux→store oracle "
+                "(rd-duck)."
+            )
+    else:
+        errors.append(
+            "B34_HOST_RECORD_ORACLE_MISSING: no tests mention 426 pad geometry / "
+            "PLXG. Require host→record→mux→store oracle for 432/426/crop_left=2 "
+            "(rd-duck; 624/618 insufficient)."
+        )
+
+    # Optional g++ host→record oracle when headers present (EXECUTABLE, not prose).
+    if has_storage_fn and has_pad_fn and has_plxg_from_geom and layout_h.is_file() and plxg_h.is_file():
+        work = root / ".agent-work" / "b34_pad_display_geom"
+        work.mkdir(parents=True, exist_ok=True)
+        src = work / "pad_display_oracle.cpp"
+        bin_p = work / "pad_display_oracle"
+        src.write_text(
+            r"""#include <cstdio>
+#include "libmisterplex/ddr_frame_layout.hpp"
+#include "libmisterplex/plxg_record.hpp"
+int main() {
+  using namespace misterplex;
+  const auto g = ddrStorageGeometryForContent(426, 240);
+  std::printf("CASE B34_HOST_PLXG_PAD_DISPLAY EXECUTED\n");
+  std::printf("measured_coded_w=%d\n", g.coded_width.get());
+  std::printf("measured_display_w=%d\n", g.display_width.get());
+  std::printf("measured_crop_left=%d\n", g.crop_left);
+  std::printf("measured_crop_right=%d\n", g.crop_right);
+  std::printf("measured_present_x=%d\n", g.present_x);
+  if (g.coded_width.get() != 432 || g.coded_height.get() != 240) return 2;
+  if (g.display_width.get() != 426 || g.display_height.get() != 240) return 3;
+  if (g.crop_left != 2 || g.crop_right != 4) return 4;
+  // present_x is placement, not storage crop substitute
+  if (g.crop_left == 0 && g.present_x == 2) return 5;
+  const auto layout = makeDdrFrameLayout(g);
+  if (!ddrFrameLayoutValid(layout)) return 6;
+  const auto rec = makePlxgRecordFromGeometry(g, layout, /*seq*/ 1);
+  if (!rec.valid) return 7;
+  int q1w=0,q1h=0,q2deW=0,q2deH=0,q2cw=0,q2ch=0,q3dw=0,q3dh=0;
+  int q4px=0,q4py=0,q4cl=0,q4ct=0;
+  unpackPlxgQ1(rec.q[1], &q1w, &q1h, nullptr, nullptr);
+  unpackPlxgQ2(rec.q[2], &q2deW, &q2deH, &q2cw, &q2ch);
+  unpackPlxgQ3(rec.q[3], nullptr, nullptr, &q3dw, &q3dh);
+  unpackPlxgQ4(rec.q[4], &q4px, &q4py, &q4cl, &q4ct);
+  std::printf("measured_q1w=%d measured_q2cw=%d measured_q3dw=%d measured_q4cl=%d\n",
+              q1w, q2cw, q3dw, q4cl);
+  if (q1w != 426 || q1h != 240) return 8;
+  if (q2cw != 432 || q2ch != 240) return 9;
+  if (q3dw != 426 || q3dh != 240) return 10;
+  if (q4cl != 2) return 11;
+  if (q1w == 432 && q2cw == 432 && q4cl == 0) return 12; // NEG all-432
+  std::printf("PASS B34_HOST_PLXG_PAD_DISPLAY\n");
+  return 0;
+}
+"""
+        )
+        cmd = [
+            "g++",
+            "-std=c++17",
+            "-O0",
+            f"-I{root / 'host'}",
+            str(src),
+            "-o",
+            str(bin_p),
+        ]
+        rc_c, out_c = _run(cmd, cwd=root)
+        msgs.append(f"LEG0_B34_ORACLE_COMPILE true_rc={rc_c}")
+        if rc_c != 0:
+            tail = "\n".join((out_c or "").splitlines()[-12:])
+            errors.append(
+                "B34_HOST_RECORD_COMPILE_FAIL: g++ host→record 426 pad oracle "
+                f"true_rc={rc_c}. Headers present but not compilable into the "
+                f"432/426/x2 contract. tail={tail!r}"
+            )
+        else:
+            rc_r, out_r = _run([str(bin_p)], cwd=root)
+            msgs.append((out_r or "").rstrip())
+            msgs.append(f"LEG0_B34_ORACLE_RUN true_rc={rc_r}")
+            if rc_r != 0 or "PASS B34_HOST_PLXG_PAD_DISPLAY" not in (out_r or ""):
+                errors.append(
+                    f"B34_HOST_RECORD_ORACLE_FAIL: pad display oracle true_rc={rc_r} "
+                    f"— need coded=432 display=426 crop_left=2 crop_right=4 and "
+                    f"PLXG q1/q3=426 q2cw=432 q4cl=2 (not 432/432/0). "
+                    f"out={(out_r or '')[-300:]!r}"
+                )
+            else:
+                msgs.append(
+                    "LEG0_B34_OK g++ host→record oracle 432/426/crop_left=2 EXECUTED"
+                )
+
+    if not errors:
+        msgs.append(
+            "LEG0_B34_PASS host 426→432 display=426 crop_left=2 PLXG q1/q3 locked"
+        )
+    return msgs, errors
+
+
+# ---------------------------------------------------------------------------
 # B24 — PLXG q5 bit34 fps_1001 ABI merge-loss (rd-duck 2026-08-03)
 # w-path f31a6eb9: q5[34]=fps_1001, reserved[63:35], pack 24000/1001 → 24+flag
 # w-mem latch: q5_reserved_nz=|sh5[63:34] → E4 / wholesale geom reject
@@ -4836,6 +5205,7 @@ def leg0_arch_blockers() -> tuple[int, list[str]]:
         "B32_plxg_bank_atomic_couple(host+store+tuple+poller_rtl),"
         "B9_dar_bank_gen_match(bank_gen+DAR∧bank+ascal_obuf),"
         "B33_plxc_arb_issued_lower_safe(m0_ov+bridge+TB),"
+        "B34_host_plxg_pad_display(426→432 display+crop+q1/q3 g++),"
         "leg_unit_make_unit,leg_rtl_lint,leg2_elab,leg3_true_de; "
         "B20_PRODUCT_UFS_TIE=elaborate Plex.sv .use_frame_store(1'b0) + reject "
         "ownership-on-ufs (w-clock free-run) + H require product-ufs0 hold measured_* "
@@ -6259,6 +6629,11 @@ def leg0_arch_blockers() -> tuple[int, list[str]]:
     b33_msgs, b33_errs = check_b33_plxc_arb_issued_lower_safe(ROOT)
     msgs.extend(b33_msgs)
     errors.extend(b33_errs)
+
+    # --- B34 host 426→432 display/crop PLXG (rd-duck q3 half-closure) ---
+    b34_msgs, b34_errs = check_b34_host_plxg_pad_display_geom(ROOT)
+    msgs.extend(b34_msgs)
+    errors.extend(b34_errs)
 
     # --- B20 full-hierarchy scenario tests (rd-duck 2026-08-03 hollow audit) ---
     # Prior gate only regex-scanned test *text* and accepted comment bait (mutation
@@ -8105,6 +8480,10 @@ def _run_mutation_matrix() -> tuple[list[str], list[dict[str, str]]]:
         "B33_PLXC_ARB_ABSENT",
         "B33_BRIDGE_BUSY_ACCEPT_RACE",
         "B33_LOST_READ_TB_WEAK",
+        "B34_STORAGE_GEOM_ABSENT",
+        "B34_PAD_ONLY_GEOM_ABSENT",
+        "B34_PLXG_FROM_GEOM_ABSENT",
+        "B34_HOST_RECORD_ORACLE_MISSING",
     ):
         txt = "\n".join(msgs)
         has = tok in txt
@@ -8538,6 +8917,43 @@ def _run_mutation_matrix() -> tuple[list[str], list[dict[str, str]]]:
         )
     finally:
         rest_arb()
+
+    # --- rd-duck B34: identity-on-store 432/432/0 after align ---
+    lay_b34 = ROOT / "host" / "libmisterplex" / "ddr_frame_layout.hpp"
+    plxg_b34 = ROOT / "host" / "libmisterplex" / "plxg_record.hpp"
+    lay_b34.parent.mkdir(parents=True, exist_ok=True)
+    bad_lay = (
+        "// fitgate B34 mutation — identity-on-store after align (rd-duck half-closure)\n"
+        "#pragma once\n"
+        "namespace misterplex {\n"
+        "struct CodedWidth { int v; int get() const { return v; } };\n"
+        "struct CodedHeight { int v; int get() const { return v; } };\n"
+        "inline void ddrAlignGeometryForFabricStore(int w, int h, int& aw, int& ah) {\n"
+        "  aw = (w + 15) & ~15; ah = h;\n"
+        "}\n"
+        "inline auto makeDdrFrameGeometry(CodedWidth aw, CodedHeight ah) {\n"
+        "  struct G { int coded_width=0, display_width=0, crop_left=0; };\n"
+        "  G g; g.coded_width = aw.get(); g.display_width = aw.get(); return g;\n"
+        "}\n"
+        "inline auto ddrStorageGeometryForContent(int w, int h) {\n"
+        "  int aw=0, ah=0;\n"
+        "  ddrAlignGeometryForFabricStore(w, h, aw, ah);\n"
+        "  return makeDdrFrameGeometry(CodedWidth{aw}, CodedHeight{ah});\n"
+        "}\n"
+        "} // namespace\n"
+    )
+    rest_lay = _with_file_backup(lay_b34, bad_lay)
+    try:
+        rc, msgs = leg0_arch_blockers()
+        _row(
+            "B34_IDENTITY_ON_STORE",
+            "align then makeDdrFrameGeometry(store) loses display 426/crop_left=2",
+            "B34_IDENTITY_ON_STORE",
+            rc,
+            msgs,
+        )
+    finally:
+        rest_lay()
 
     # --- Parent 2026-08-03: POST-FIT STA path owner + Fmax floor ---
     fix = RULER_ROOT / "tests" / "fixtures" / "fit_release_gate"
