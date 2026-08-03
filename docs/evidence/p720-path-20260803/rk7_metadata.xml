@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<MediaContainer size="1" allowSync="1" identifier="com.plexapp.plugins.library" librarySectionID="2" librarySectionTitle="MiSTerPlex Tests" librarySectionUUID="c97f403c-4a89-4620-a388-a7a88c9a6c1c" mediaTagPrefix="/system/bundle/media/flags/" mediaTagVersion="1783932891">
+<Video ratingKey="7" key="/library/metadata/7" guid="tv.plex.agents.none://7" type="movie" title="MiSTerPlex Test 720p (2026)" librarySectionTitle="MiSTerPlex Tests" librarySectionID="2" librarySectionKey="/library/sections/2" subtype="clip" summary="" thumb="/library/metadata/7/thumb/1785730073" art="/library/metadata/7/art/1785730073" duration="30016" addedAt="1785436059" updatedAt="1785730073" createdAtAccuracy="epoch" createdAtTZOffset="-18000">
+<Media id="7" duration="30016" bitrate="508" width="1280" height="720" aspectRatio="1.78" audioChannels="2" audioCodec="aac" videoCodec="h264" videoResolution="720" container="mp4" videoFrameRate="24p" optimizedForStreaming="1" has64bitOffsets="0" videoProfile="constrained baseline">
+<Part id="7" key="/library/parts/7/1785436059/file.mp4" duration="30016" file="/data/movies/MiSTerPlex Test 720p (2026).mp4" size="1905005" container="mp4" has64bitOffsets="0" optimizedForStreaming="1" videoProfile="constrained baseline">
+<Stream id="5" streamType="1" default="1" codec="h264" index="0" bitrate="488" bitDepth="8" chromaLocation="left" chromaSubsampling="4:2:0" codedHeight="720" codedWidth="1280" frameRate="24.000" hasScalingMatrix="0" height="720" level="30" profile="constrained baseline" refFrames="1" scanType="progressive" streamIdentifier="1" width="1280" displayTitle="720p" extendedDisplayTitle="720p (H.264 Constrained Baseline)">
+</Stream>
+<Stream id="6" streamType="2" selected="1" default="1" codec="aac" index="1" channels="2" bitrate="16" samplingRate="48000" streamIdentifier="2" displayTitle="Unknown (AAC Stereo)" extendedDisplayTitle="Unknown (AAC Stereo)">
+</Stream>
+</Part>
+</Media>
+<Image alt="MiSTerPlex Test 720p (2026)" type="coverPoster" url="/library/metadata/7/thumb/1785730073" />
+<Image alt="MiSTerPlex Test 720p (2026)" type="background" url="/library/metadata/7/art/1785730073" />
+<UltraBlurColors topLeft="342e0f" topRight="400384" bottomRight="b20101" bottomLeft="b00c11" />
+</Video>
+</MediaContainer>

@@ -1,0 +1,10 @@
+worker=w-path
+todo=p720-path
+branch=w-path-720p
+status=DONE
+summary=PMS delivers genuine 1280x720 at maxBR>=3500 (rk7); DP cheapest; host 720p ladder+vf+tests; profile CB L31; DDR still rejects; ARM device profile parent-owned
+report=.agent-work/w-path/REPORT.md
+tests=test_resolve:0 test_ffmpeg_vf:0 test_osd_menu:0
+cheapest=direct_play_native_720p_CB
+true_720_gate=maxVideoBitrate>=3500 (default 4000)
+ddr_accepts_720=0

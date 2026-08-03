@@ -64,11 +64,12 @@ int main() {
     CHECK(h.find("X-Plex-Session-Identifier: sess1") != std::string::npos);
     CHECK(h.find("X-Plex-Token: tok") != std::string::npos);
 
-    // --- PMS universal transcode profile table / 480p guard ---
+    // --- PMS universal transcode profile table / 480p+720p guard ---
     const auto& profiles = plexTranscodeProfiles();
-    CHECK(profiles.size() == 2);
+    CHECK(profiles.size() == 3);
     const auto osd240 = contentResolutionFromOsdWord(0);
     const auto osd480 = contentResolutionFromOsdWord(1u << 4);
+    const auto path720 = contentResolutionFor720p();
     WeakLadder w240;
     CHECK(applyPlexTranscodeProfile("240p", w240));
     CHECK(w240.profileName == "240p");
@@ -93,6 +94,31 @@ int main() {
     CHECK(applyPlexTranscodeProfile(osd480.label, byRes));
     CHECK(byRes.profileName == "480p");
     checkProfileMatchesContentResolution("resolution alias 480p", byRes, osd480);
+
+    // Path-720p aggressive tier (DECODE/TRANSCODE_PROFILE — not OSD reserved bit).
+    WeakLadder w720;
+    CHECK(applyPlexTranscodeProfile("720p", w720));
+    CHECK(w720.profileName == "720p");
+    checkProfileMatchesContentResolution("built-in profile 720p", w720, path720);
+    CHECK(w720.videoResolution == "1280x720");
+    CHECK(w720.maxVideoBitrateKbps == kPlex720pWeakBitrateKbps);
+    CHECK(w720.videoQuality == 70);
+    CHECK(w720.h264Profile == "baseline");
+    CHECK(w720.h264Level == kPlex720pH264Level);
+    CHECK(validateWeakLadder(w720));
+    WeakLadder byRes720;
+    CHECK(applyPlexTranscodeProfile("1280x720", byRes720));
+    CHECK(byRes720.profileName == "720p");
+    checkProfileMatchesContentResolution("resolution alias 720p", byRes720, path720);
+    // 480p must not accept L3.1; 720p must not accept L4.0.
+    {
+        WeakLadder bad480lvl = w480;
+        bad480lvl.h264Level = 31;
+        CHECK(!validateWeakLadder(bad480lvl));
+        WeakLadder bad720lvl = w720;
+        bad720lvl.h264Level = 40;
+        CHECK(!validateWeakLadder(bad720lvl));
+    }
 
     // Content-tier full re-apply (doPlay weakForContentResolution contract): an
     // explicit 480p conf ladder must not leave quality/name sticky when OSD/DECODE
@@ -245,6 +271,9 @@ int main() {
         CHECK(validateWeakLadder(low240));
         CHECK(weakLadderBitrateBelowRecommended(low240));
         // Ladder step-down (geometry unchanged) — discrete steps, no link speed.
+        CHECK(nextLowerLadderBitrateKbps(4000) == 3500);
+        CHECK(nextLowerLadderBitrateKbps(3500) == 3000);
+        CHECK(nextLowerLadderBitrateKbps(3000) == 2000);
         CHECK(nextLowerLadderBitrateKbps(2000) == 1500);
         CHECK(nextLowerLadderBitrateKbps(1500) == 1000);
         CHECK(nextLowerLadderBitrateKbps(1000) == 750);
@@ -413,6 +442,51 @@ int main() {
         CHECK(applyContentFpsConf("29.97", n, d) && n == 30000 && d == 1001);
         n = 24; d = 1;
         CHECK(applyContentFpsConf("junk", n, d) == false && n == 24 && d == 1);
+    }
+
+    // --- Path-720p: URL + genuine delivery gate (measured lab PMS rk7) ---
+    {
+        WeakLadder w720;
+        CHECK(applyPlexTranscodeProfile("720p", w720));
+        const auto start720 =
+            buildUniversalTranscodeUrl("http://pms.example:32400", "/library/metadata/7", "tok",
+                                       "sess720", 0, w720);
+        CHECK(start720.find("videoResolution=1280x720") != std::string::npos);
+        CHECK(start720.find("maxVideoBitrate=4000") != std::string::npos);
+        CHECK(start720.find("videoLevel=31") != std::string::npos);
+        CHECK(start720.find("videoProfile=baseline") != std::string::npos);
+        CHECK(start720.find("directPlay=0") != std::string::npos);
+        CHECK(recommendedMinVideoBitrateKbps(w720) == kPlex720pWeakBitrateKbps);
+        // Explicit low bitrate still validates (link heuristic) but is below recommended
+        // — and is the class that PMS answers with 720x404, not true 720p.
+        WeakLadder low720 = w720;
+        low720.maxVideoBitrateKbps = 2000;
+        CHECK(validateWeakLadder(low720));
+        CHECK(weakLadderBitrateBelowRecommended(low720));
+        CHECK(!pmsBitrateLikelyTrue720p(2000));
+        CHECK(!pmsBitrateLikelyTrue720p(3000));
+        CHECK(pmsBitrateLikelyTrue720p(3500));
+        CHECK(pmsBitrateLikelyTrue720p(4000));
+        // NEGATIVE: shorter coded height must NOT be treated as true 720p.
+        // Lab: maxBR=2000 → decision/ffprobe 720x404; maxBR=4000 → 1280x720.
+        CHECK(isGenuine720pDelivery(1280, 720));
+        CHECK(!isGenuine720pDelivery(720, 404));
+        CHECK(!isGenuine720pDelivery(624, 350));
+        CHECK(!isGenuine720pDelivery(1280, 718));
+        CHECK(!isGenuine720pDelivery(1278, 720));
+        CHECK(!isGenuine720pDelivery(0, 720));
+        // 16:9 square-pixel fit into 1280x720 ceiling stays full tier.
+        const auto fit720 = pmsSquarePixelFitInCeiling(16.0 / 9.0, 1280, 720);
+        CHECK(fit720.ok && fit720.w == 1280 && fit720.h == 720);
+        // Content-tier re-apply must not leave 720 sticky when returning to 480p.
+        WeakLadder sticky720 = w720;
+        WeakLadder play480 = sticky720;
+        CHECK(applyPlexTranscodeProfile(osd480.label, play480));
+        CHECK(play480.profileName == "480p");
+        CHECK(play480.h264Level == 30);
+        checkProfileMatchesContentResolution("content-tier reapply 480p from 720", play480,
+                                             osd480);
+        std::printf("GREEN_PATH_720p url+genuine_delivery+bitrate_gate\n");
     }
 
     if (fails) {

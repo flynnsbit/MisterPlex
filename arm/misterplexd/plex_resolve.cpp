@@ -162,9 +162,12 @@ const std::vector<PlexTranscodeProfile>& plexTranscodeProfiles() {
     static const std::vector<PlexTranscodeProfile> profiles = [] {
         const auto p240 = contentResolutionFor240p();
         const auto p480 = contentResolutionFor480p();
+        const auto p720 = contentResolutionFor720p();
         return std::vector<PlexTranscodeProfile>{
             {"240p", p240.label, p240.weakBitrateKbps, 40, "baseline", 30},
             {"480p", p480.label, p480.weakBitrateKbps, 60, "baseline", 30},
+            // quality 70: lab decision matrix used 60–70; bitrate is the geometry gate.
+            {"720p", p720.label, p720.weakBitrateKbps, 70, "baseline", kPlex720pH264Level},
         };
     }();
     return profiles;
@@ -328,17 +331,29 @@ bool validateWeakLadder(const WeakLadder& weak, std::string* why) {
         return fail("audioCodec must be aac");
     if (weak.h264Profile != "baseline")
         return fail("H.264 profile must be baseline for the current decoder");
-    if (weak.h264Level > 30)
-        return fail("H.264 level must not exceed 3.0 for the current decoder");
+    const bool isPath720 = (w == kPlex720pCodedWidth.get() && h == kPlex720pCodedHeight.get());
+    // 480p path stays L3.0; path-720p ladder may request L3.1 (kPlex720pH264Level).
+    const int maxLevel = isPath720 ? kPlex720pH264Level : 30;
+    if (weak.h264Level > maxLevel)
+        return fail(isPath720 ? "H.264 level must not exceed 3.1 for the 720p path tier"
+                              : "H.264 level must not exceed 3.0 for the current decoder");
+    if (w > kPlex720pCodedWidth.get() || h > kPlex720pCodedHeight.get())
+        return fail("built-in path profiles stop at " +
+                    std::to_string(kPlex720pCodedWidth.get()) + "x" +
+                    std::to_string(kPlex720pCodedHeight.get()));
     if (w >= kPlex480pCodedWidth.get() || h >= kPlex480pCodedHeight.get()) {
-        if (w > kDdrFrameStoreMaxWidth.get() || h > kDdrFrameStoreMaxHeight.get())
-            return fail("current built-in profiles stop at " +
-                        std::to_string(kDdrFrameStoreMaxWidth.get()) + "x" +
-                        std::to_string(kDdrFrameStoreMaxHeight.get()));
+        // DDR bank max is still 640x480 (w-mem). Path-720p is the only allowed
+        // ladder geometry above that ceiling; other sizes hard-fail.
+        if (w > kDdrFrameStoreMaxWidth.get() || h > kDdrFrameStoreMaxHeight.get()) {
+            if (!isPath720)
+                return fail("current DDR-backed profiles stop at " +
+                            std::to_string(kDdrFrameStoreMaxWidth.get()) + "x" +
+                            std::to_string(kDdrFrameStoreMaxHeight.get()) +
+                            " (path 720p is exact 1280x720 only)");
+        }
         // Bitrate floors are NOT decoder contracts (see recommendedMinVideoBitrateKbps).
         // A hard 2000 kbps reject forced PMS requests above slow links and silently
         // fell the ladder back to 240p — parent-proven 480p drop root cause.
-        // Decoder contracts remain: h264 baseline + level ≤ 3.0 above.
     }
     if (weak.videoQuality <= 0 || weak.maxVideoBitrateKbps <= 0)
         return fail("videoQuality and maxVideoBitrate must be positive");
@@ -350,7 +365,10 @@ int recommendedMinVideoBitrateKbps(const WeakLadder& weak) {
     if (!parseResolution(weak.videoResolution, w, h))
         return 0;
     // Defaults from osd_menu.hpp ladder constants — quality/ARM-margin heuristics,
-    // not H.264 level contracts. 480p default = kPlex480pWeakBitrateKbps (2000).
+    // not H.264 level contracts. 720p floor is measured (true 1280x720 needs ≥3500).
+    if (w == kPlex720pCodedWidth.get() && h == kPlex720pCodedHeight.get())
+        return kPlex720pWeakBitrateKbps;
+    // 480p default = kPlex480pWeakBitrateKbps (2000).
     if (w >= kPlex480pCodedWidth.get() || h >= kPlex480pCodedHeight.get())
         return kPlex480pWeakBitrateKbps;
     // Legacy 240p path used a soft floor of 750 below the 1000 default.
@@ -374,8 +392,9 @@ bool weakLadderBitrateBelowRecommended(const WeakLadder& weak, std::string* deta
 
 int nextLowerLadderBitrateKbps(int currentKbps) {
     // Fixed descending steps — no link-speed constant. Geometry unchanged.
+    // 4000/3500 added for path-720p (lab: <3500 drops coded height off 720).
     // Absolute floor 400 keeps validateWeakLadder positive without inventing capacity.
-    static constexpr int kSteps[] = {2000, 1500, 1000, 750, 500, 400};
+    static constexpr int kSteps[] = {4000, 3500, 3000, 2000, 1500, 1000, 750, 500, 400};
     if (currentKbps <= kSteps[sizeof(kSteps) / sizeof(kSteps[0]) - 1])
         return 0; // already at floor — cannot step
     for (int s : kSteps) {

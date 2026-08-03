@@ -18,6 +18,15 @@ constexpr DisplayWidth kPlex480pDisplayWidth{618};
 constexpr DisplayHeight kPlex480pDisplayHeight{480};
 constexpr PresentedWidth kPlex480pPresentedWidth{640};
 constexpr PresentedHeight kPlex480pPresentedHeight{480};
+// Path-tier 720p (PMS/vf ladder). DDR bank acceptance remains w-mem owned —
+// ddrFrameStoreAcceptsResolution still rejects until the ABI remap lands.
+constexpr CodedWidth kPlex720pCodedWidth{1280};
+constexpr CodedHeight kPlex720pCodedHeight{720};
+// YUV420p bytes = 1280*720*3/2 = 1_382_400 (host push arithmetic).
+constexpr int kPlex720pYuv420pBytes = 1382400;
+static_assert(kPlex720pYuv420pBytes ==
+                  kPlex720pCodedWidth.get() * kPlex720pCodedHeight.get() * 3 / 2,
+              "720p I420 byte count");
 constexpr int kPlex480pCropLeft = 0;
 constexpr int kPlex480pCropRight = 6;
 constexpr int kPlex480pCropTop = 0;

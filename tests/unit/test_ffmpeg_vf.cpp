@@ -590,6 +590,50 @@ int main() {
         (void)fv618;
     }
 
+    // --- Path-720p: identity_skip when verified 1280x720; never on shorter coded ---
+    {
+        FfmpegVfRequest r;
+        r.coded_w = 1280;
+        r.coded_h = 720;
+        r.display_w = 1280;
+        r.display_h = 720;
+        r.scale_mode = FfmpegScaleMode::SkipIdentity;
+        r.source_w = 1280;
+        r.source_h = 720;
+        r.delivery_geometry_verified = true;
+        const auto id = buildFfmpegVideoFilter(r);
+        expect(id.identity_skip && !id.scale_applied, "720p verified identity_skip");
+        expect(id.vf.empty(), "720p identity vf empty");
+        expect_eq(id.reason, "identity_skip", "720p identity reason");
+
+        // NEGATIVE (lab rk7 br=2000): PMS answers 720x404 for a 1280x720 *request*.
+        // Must scale into the bank — must NOT identity_skip as if true 720p.
+        r.source_w = 720;
+        r.source_h = 404;
+        r.delivery_geometry_verified = true; // measured short delivery
+        const auto shortH = buildFfmpegVideoFilter(r);
+        expect(!shortH.identity_skip, "720x404 must not identity_skip as 720p");
+        expect(shortH.scale_applied, "720x404 scales into 1280x720 bank");
+        expect(shortH.vf.find("scale=1280:720") != std::string::npos ||
+                   shortH.vf.find("pad=1280:720") != std::string::npos,
+               "720x404 vf targets 1280x720");
+
+        // Unverified claim of 1280x720 must still FOAR-scale (same class as 624).
+        r.source_w = 1280;
+        r.source_h = 720;
+        r.delivery_geometry_verified = false;
+        r.assume_source_matches_coded = false;
+        const auto unv = buildFfmpegVideoFilter(r);
+        expect(!unv.identity_skip, "unverified 1280x720 claim not identity");
+        expect(unv.scale_applied, "unverified 720p claim scales");
+
+        // Direct-play class: assume_match + exact dims → skip (no ARM scale).
+        r.assume_source_matches_coded = true;
+        const auto dp = buildFfmpegVideoFilter(r);
+        expect(dp.identity_skip && !dp.scale_applied, "720p DP assume_match skips scale");
+        std::printf("GREEN_PATH_720p_VF identity=verified short404=scale unv=scale dp=skip\n");
+    }
+
     if (g_fails) {
         std::fprintf(stderr, "test_ffmpeg_vf: %d failure(s)\n", g_fails);
         return 1;

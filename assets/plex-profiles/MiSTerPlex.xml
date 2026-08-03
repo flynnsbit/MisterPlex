@@ -1,13 +1,16 @@
 <?xml version="1.0" encoding="utf-8"?>
 <Client name="MiSTerPlex">
-  <!-- MiSTerPlex 480p hardware-decode profile; see docs/pms-baseline-profile.md
-       for install, restore, rollback, and delivered-SPS evidence. -->
+  <!-- MiSTerPlex path profile (480p shipping + 720p aggressive path tier).
+       See docs/pms-baseline-profile.md and .agent-work/w-path/REPORT.md.
+       720p encode uses level 3.1 (MaxFS); 480p still fits under 3.1. -->
   <TranscodeTargets>
     <VideoProfile protocol="http" container="mpegts" codec="h264" audioCodec="aac" context="streaming">
-      <!-- Force x264 into the narrow subset the FPGA decoder is scoped for:
+      <!-- Force x264 into the narrow subset the FPGA/host decoder is scoped for:
            Baseline/CAVLC, no B-slices, one reference, no weighted P prediction,
-           no 8x8 DCT, and no sub-macroblock inter partitions. -->
-      <Setting name="VideoEncodeFlags" value="-profile:v baseline -level 3.0 -x264opts cabac=0:bframes=0:ref=1:weightp=0:8x8dct=0:partitions=none:keyint=50:min-keyint=25:scenecut=0" />
+           no 8x8 DCT, and no sub-macroblock inter partitions.
+           Level 3.1 required for 1280x720 path tier (lab: decision said baseline
+           but unbounded encode produced Main when profile caps blocked 720). -->
+      <Setting name="VideoEncodeFlags" value="-profile:v baseline -level 3.1 -x264opts cabac=0:bframes=0:ref=1:weightp=0:8x8dct=0:partitions=none:keyint=50:min-keyint=25:scenecut=0" />
       <Setting name="SubtitleSize" value="100" />
     </VideoProfile>
     <MusicProfile container="mp3" codec="mp3" />
@@ -21,8 +24,8 @@
   <CodecProfiles>
     <VideoCodec name="*">
       <Limitations>
-        <UpperBound name="video.width" value="640" isRequired="true" />
-        <UpperBound name="video.height" value="480" isRequired="true" />
+        <UpperBound name="video.width" value="1280" isRequired="true" />
+        <UpperBound name="video.height" value="720" isRequired="true" />
         <UpperBound name="video.frameRate" value="30" isRequired="true" />
         <UpperBound name="video.bitDepth" value="8" isRequired="true" />
       </Limitations>
@@ -30,7 +33,7 @@
     <VideoCodec name="h264">
       <Limitations>
         <Match name="video.profile" list="baseline" isRequired="true" />
-        <UpperBound name="video.level" value="30" isRequired="true" />
+        <UpperBound name="video.level" value="31" isRequired="true" />
         <UpperBound name="video.refFrames" value="1" isRequired="true" />
       </Limitations>
     </VideoCodec>
@@ -46,7 +49,7 @@
       <VideoCodec name="h264">
         <Limitations>
           <Match name="video.profile" list="baseline" onlyTranscodes="true" isRequired="true" />
-          <UpperBound name="video.level" value="30" onlyTranscodes="true" isRequired="true" />
+          <UpperBound name="video.level" value="31" onlyTranscodes="true" isRequired="true" />
           <UpperBound name="video.refFrames" value="1" onlyTranscodes="true" isRequired="true" />
         </Limitations>
       </VideoCodec>

@@ -138,4 +138,27 @@ inline double verticalDetailFraction(int delivered_h, int requested_h) {
 // use producer/reader byte ratios as a desync model (parent correction).
 inline bool desyncModelApplicable(bool identity_skip) { return identity_skip; }
 
+// Genuine tier delivery: PMS videoResolution is a CEILING. A 720p *request* that
+// lands as 720x404 (bitrate-starved) or 624x350 (16:9 fit into 480 ceiling) is
+// NOT true 720p — ARM must not identity_skip or claim path-720 success.
+// Exact WxH match only (no "close enough" / no SAR compensation here).
+inline bool isGenuineTierDelivery(int delivered_w, int delivered_h, int tier_w, int tier_h) {
+    if (delivered_w <= 0 || delivered_h <= 0 || tier_w <= 0 || tier_h <= 0)
+        return false;
+    return delivered_w == tier_w && delivered_h == tier_h;
+}
+
+inline bool isGenuine720pDelivery(int delivered_w, int delivered_h) {
+    return isGenuineTierDelivery(delivered_w, delivered_h, 1280, 720);
+}
+
+// Lab-measured maxVideoBitrate gate for true 1280x720 on native 720p source
+// (rk7, 2026-08-03): <=3000 → 720x404; >=3500 → 1280x720. Exposed for tests /
+// logs — product default remains kPlex720pWeakBitrateKbps (4000).
+inline constexpr int kPmsTrue720pMinBitrateKbpsMeasured = 3500;
+
+inline bool pmsBitrateLikelyTrue720p(int maxVideoBitrateKbps) {
+    return maxVideoBitrateKbps >= kPmsTrue720pMinBitrateKbpsMeasured;
+}
+
 } // namespace misterplex

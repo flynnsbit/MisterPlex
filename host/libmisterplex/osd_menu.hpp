@@ -55,6 +55,13 @@ constexpr int kOsdAvOffsetStepMs = 20;
 constexpr int kPlex240pWeakBitrateKbps = 1000;
 constexpr int kPlex360pWeakBitrateKbps = 1500;
 constexpr int kPlex480pWeakBitrateKbps = 2000;
+// Measured lab PMS (rk7, 2026-08-03): maxVideoBitrate<=3000 → coded 720x404;
+// >=3500 → genuine 1280x720. Default 4000 is an honest tier above that step —
+// not a proportional formula fitted to two points.
+constexpr int kPlex720pWeakBitrateKbps = 4000;
+// H.264 Level 3.1 is required for general 1280x720 (MaxFS). Lab source is
+// oddly tagged L3.0; product ladder requests L3.1 for the 720p tier.
+constexpr int kPlex720pH264Level = 31;
 
 // Menu index 0 is the power-on default. The present loop waits for the audio
 // clock to reach `frameContentMs + avOffsetMs`, so POSITIVE holds the frame back
@@ -79,14 +86,16 @@ constexpr unsigned kOsdContentTierShift = 4;
 constexpr uint16_t kOsdContentTierMask = 0x0030;
 
 // How the host presents into the current RBF DDR canvas.
-// Native720pPresent is intentionally absent: native 720p needs an RBF rebuild
-// and is CPU-blocked on ARM at content rate (see p720 ARM/FPGA scopes).
+// Native720pPresent is path-ready (PMS/vf) but DDR bank present is still w-mem.
 enum class ContentPresentPolicy : uint8_t {
     // Coded size == PMS ladder == decode target == canvas (240p or 480p).
     NativeCanvas = 0,
     // Same 624x480 DDR canvas as 480p; 16:9 sources letterbox via host scale/pad.
     // User-facing name must say "16:9-framed 480p", never "720p".
     Widescreen480pCanvas = 1,
+    // Path-tier 1280x720. PMS URL + vf identity_skip target. DDR publish still
+    // refuses until w-mem remaps banks — do not claim glass-ready.
+    Path720p = 2,
 };
 
 struct ContentResolution {
@@ -110,6 +119,14 @@ inline const char* plex480pCodedResolutionLabel() {
     static_assert(kPlex480pCodedHeight.get() == 480,
                   "update plex480pCodedResolutionLabel when coded height changes");
     return "624x480";
+}
+
+inline const char* plex720pCodedResolutionLabel() {
+    static_assert(kPlex720pCodedWidth.get() == 1280,
+                  "update plex720pCodedResolutionLabel when coded width changes");
+    static_assert(kPlex720pCodedHeight.get() == 720,
+                  "update plex720pCodedResolutionLabel when coded height changes");
+    return "1280x720";
 }
 
 // Honest product name for tier 10 — never "720p".
@@ -168,6 +185,13 @@ inline ContentResolution contentResolutionForWidescreen480pCanvas() {
             plexWidescreen480pCanvasUserLabel()};
 }
 
+// Aggressive path target: genuine 1280x720 PMS tier (see p720-path evidence).
+inline ContentResolution contentResolutionFor720p() {
+    return {kPlex720pCodedWidth, kPlex720pCodedHeight, plex720pCodedResolutionLabel(),
+            kPlex720pWeakBitrateKbps, ContentPresentPolicy::Path720p,
+            plex720pCodedResolutionLabel()};
+}
+
 inline ContentResolution contentResolutionFromOsdWord(uint16_t word) {
     switch (osdContentTierFromWord(word)) {
     case 0:
@@ -177,7 +201,8 @@ inline ContentResolution contentResolutionFromOsdWord(uint16_t word) {
     case 2:
         return contentResolutionForWidescreen480pCanvas();
     default:
-        // 11 = reserved. Safe canvas, never invent native 720p.
+        // 11 = reserved. Safe 480p canvas until an RBF/OSD ABI claims 720p.
+        // Path 720p is selected via DECODE=1280x720 / TRANSCODE_PROFILE=720p.
         return contentResolutionFor480p();
     }
 }
@@ -185,9 +210,11 @@ inline ContentResolution contentResolutionFromOsdWord(uint16_t word) {
 // Tier selection from a *coded* size. Presented scanout width must not be
 // passed here without an explicit CodedWidth{presented.get()} claim at the
 // call site — that claim is the bug we want reviewers to see.
-// Sizes at/above 480p coded map to the 480p canvas (including 1280x720 conf
-// mistakes) — native 720p is not a conf decode target on this host path.
+// Exact 1280x720 selects the path-720p ladder. Other at/above-480p sizes keep
+// the 480p canvas (including 640x480 presented mistakes mapped via callers).
 inline ContentResolution contentResolutionFromCodedSize(CodedWidth w, CodedHeight h) {
+    if (w.get() == kPlex720pCodedWidth.get() && h.get() == kPlex720pCodedHeight.get())
+        return contentResolutionFor720p();
     if (w.get() >= kPlex480pCodedWidth.get() || h.get() >= kPlex480pCodedHeight.get())
         return contentResolutionFor480p();
     return contentResolutionFor240p();
@@ -198,6 +225,8 @@ inline ContentResolution contentResolutionFromSize(int w, int h) {
 }
 
 inline int weakBitrateKbpsForCodedSize(CodedWidth w, CodedHeight h) {
+    if (w.get() == kPlex720pCodedWidth.get() && h.get() == kPlex720pCodedHeight.get())
+        return kPlex720pWeakBitrateKbps;
     if (w.get() >= kPlex480pCodedWidth.get() || h.get() >= kPlex480pCodedHeight.get()) {
 #ifdef OSD_MENU_FAULT_FALLBACK_624_BITRATE
         return kPlex360pWeakBitrateKbps;

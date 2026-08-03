@@ -19,6 +19,19 @@ Full evidence report (tables, layout math, device recipes, verdict):
 | DDR ABI `0x30000000` | Still hard-blocks 720p banks — required remap |
 | DDR push @24 fps | Marginal ~29/42 ms |
 | 480p gate | **PASS** (ARM soak) |
-| Default | Unchanged **320×240**; no tier implemented |
+| Default | Unchanged **320×240** shipping; **path-720p ladder implemented** (see below) |
 
 v2 “~276% linear totals” arithmetic stands **as arithmetic**; product method invalidated when most cost is scale not decode. See report §0.
+
+## Path tier (w-path, 2026-08-03) — aggressive target
+
+Full evidence: **[`evidence/p720-path-20260803/REPORT.md`](evidence/p720-path-20260803/REPORT.md)**
+
+| Item | Measured |
+|---|---|
+| PMS true 720p | **Yes** — rk7 `videoResolution=1280x720` + maxBR≥**3500** → coded **1280×720** CB (after MiSTerPlex.xml 1280/L31) |
+| maxBR≤3000 trap | coded **720×404** — **not** true 720p |
+| Direct Play | **1280×720** CB L30 — **cheapest** route |
+| Host ladder | profile `720p`, bitrate **4000**, L31, `isGenuine720pDelivery` |
+| DDR present | still **rejects** 1280×720 (`ddrFrameStoreAcceptsResolution=0`) — w-mem |
+| ARM 24fps fit | host probe only; bucket-lift projection **does not fit** 41.7 ms; device profile **parent** |

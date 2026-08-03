@@ -152,9 +152,14 @@ inline CodedSizeParseResult parseCodedSizeString(const std::string& text) {
         return r;
     }
     if (!ddrFrameStoreAcceptsResolution(CodedWidth{w}, CodedHeight{h})) {
-        r.status = CodedSizeParseStatus::NotFrameStoreAccepted;
-        r.reason = "size not accepted by DDR frame-store contract";
-        return r;
+        // Path-tier 720p: host PMS/vf ladder target. DDR present still refuses
+        // until w-mem remaps banks (ddrFrameStoreAcceptsResolution stays false).
+        // MediaPlayer::setDecodeSize already clamps to 1280x720 max.
+        if (!(w == kPlex720pCodedWidth.get() && h == kPlex720pCodedHeight.get())) {
+            r.status = CodedSizeParseStatus::NotFrameStoreAccepted;
+            r.reason = "size not accepted by DDR frame-store contract";
+            return r;
+        }
     }
     r.status = CodedSizeParseStatus::Ok;
     r.size = CodedSize{CodedWidth{w}, CodedHeight{h}};

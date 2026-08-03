@@ -89,7 +89,8 @@ struct PlexTranscodeProfile {
 };
 
 // Built-in PMS universal transcode profiles. 240p is the legacy shipping profile;
-// 480p requests 624x480 coded (39 MB columns) to match the proven DDR frame-store geometry.
+// 480p requests 624x480 coded to match the proven DDR frame-store geometry;
+// 720p requests 1280x720 path-tier (bitrate floor measured — see kPlex720pWeakBitrateKbps).
 const std::vector<PlexTranscodeProfile>& plexTranscodeProfiles();
 
 // Match by profile name ("240p"/"480p") or exact WxH resolution.
@@ -122,14 +123,17 @@ struct WeakLadder {
 bool validateWeakLadder(const WeakLadder& weak, std::string* why = nullptr);
 
 // Recommended minimum maxVideoBitrateKbps for the ladder geometry (0 = unknown).
-// 480p → kPlex480pWeakBitrateKbps (2000); sub-480p → 750. Not a decoder contract.
+// 720p → 4000 (measured true-720 gate); 480p → 2000; sub-480p → 750.
+// Not a decoder contract — advisory for WEAK_BITRATE / starve logs.
 int recommendedMinVideoBitrateKbps(const WeakLadder& weak);
 
 // True when bitrate is positive but below recommendedMin. detail is greppable.
 bool weakLadderBitrateBelowRecommended(const WeakLadder& weak, std::string* detail = nullptr);
 
 // Next lower maxVideoBitrate on sustained STARVED. Geometry unchanged.
-// Returns 0 if already at absolute floor (400). Steps: 2000→1500→1000→750→500→400.
+// Returns 0 if already at absolute floor (400).
+// Steps: 4000→3500→3000→2000→1500→1000→750→500→400.
+// Note: stepping 720p below 3500 loses genuine 1280x720 on lab PMS (→720x404).
 // Does NOT encode a link speed — only a discrete ladder.
 int nextLowerLadderBitrateKbps(int currentKbps);
 

@@ -1,0 +1,8 @@
+codec_name=h264
+profile=High
+width=720
+height=404
+sample_aspect_ratio=404:405
+display_aspect_ratio=16:9
+level=30
+r_frame_rate=24/1
