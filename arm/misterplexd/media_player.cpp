@@ -800,18 +800,12 @@ void MediaPlayer::paintIdle() {
     const IdleMode m = idleMode();
     if (m == IdleMode::LastFrame)
         return;
-    // Fabric idle plane owns Logo/Black/Screensaver when chrome HW is live.
-    // Skipping DDR paint eliminates "idle paint DDR failed" (bank never freed).
+    // Fabric idle owns Logo/Black/Screensaver when chrome HW is live.
+    // ARM paints zero pixels (no DDR, no fb0) — 720p budget stays with decode.
+    // Eliminates "idle paint DDR failed" (bank never freed).
     if (chromePlaneLive() && m != IdleMode::LastFrame) {
-        log("media: idle fabric plane=1 skip DDR paint mode=" + std::to_string(static_cast<int>(m)));
-        // Still allow fb0 notice chrome for lab when overlay visible — no DDR.
-        if (fb_.ok() && overlay_.visible()) {
-            const int w = 320, h = 240;
-            std::vector<uint8_t> buf(static_cast<size_t>(w) * h * 3);
-            renderIdleRgb24(buf.data(), w, h, m, idlePhase_.load());
-            overlay_.renderRgb24(buf.data(), w, h);
-            (void)fb_.blitRgb24(buf.data(), w, h);
-        }
+        log("media: idle fabric plane=1 skip ALL ARM paint mode=" +
+            std::to_string(static_cast<int>(m)));
         return;
     }
     const int w = 320;
@@ -1224,30 +1218,34 @@ void MediaPlayer::resume() {
         onProgress_("playing", positionMs_.load(), durationMs_);
 }
 
+void MediaPlayer::publishPlxcHud(PlaybackOverlayState state, int64_t positionMs,
+                                 int64_t durationMs, const char* title) {
+    // Semantic list only — never pixels. Cheap vs full-frame bake; still ARM
+    // until a single progress-fraction register lands (see agent evidence).
+    plex_chrome_cmds::BuildArgs a;
+    a.outW = chromeOutW_;
+    a.outH = chromeOutH_;
+    a.state = state;
+    a.positionMs = positionMs;
+    a.durationMs = durationMs;
+    a.title = title;
+    const auto cmds = plex_chrome_cmds::buildPlaybackHud(a);
+    ++chromePlxcSeq_;
+    if (!(fpga_.ok() || fpga_.open()))
+        return;
+    if (!fpga_.writeChromeCommandList(cmds.data(), cmds.size(), /*enable*/ true, chromePlxcSeq_))
+        log("media: PLXC publish failed: " + fpga_.lastError());
+    else
+        log("media: PLXC publish cmds=" + std::to_string(cmds.size()) +
+            " seq=" + std::to_string(chromePlxcSeq_) + " out=" + std::to_string(chromeOutW_) +
+            "x" + std::to_string(chromeOutH_) + " plane=1");
+}
+
 void MediaPlayer::showPlaybackOverlay(PlaybackOverlayState state, int64_t positionMs,
                                       int64_t durationMs) {
     overlay_.show(state, positionMs, durationMs);
-    // plane=1: emit PLXC semantic list (no pixel bake). Fabric composites.
-    if (chromePlaneLive()) {
-        plex_chrome_cmds::BuildArgs a;
-        a.outW = 640; // product applied HDMI; refine when PLXO publishes W/H
-        a.outH = 480;
-        a.state = state;
-        a.positionMs = positionMs;
-        a.durationMs = durationMs;
-        a.title = nullptr;
-        const auto cmds = plex_chrome_cmds::buildPlaybackHud(a);
-        ++chromePlxcSeq_;
-        if (fpga_.ok() || fpga_.open()) {
-            if (!fpga_.writeChromeCommandList(cmds.data(), cmds.size(), /*enable*/ true,
-                                              chromePlxcSeq_)) {
-                log("media: PLXC publish failed: " + fpga_.lastError());
-            } else {
-                log("media: PLXC publish cmds=" + std::to_string(cmds.size()) +
-                    " seq=" + std::to_string(chromePlxcSeq_) + " plane=1");
-            }
-        }
-    }
+    if (chromePlaneLive())
+        publishPlxcHud(state, positionMs, durationMs, nullptr);
 }
 
 void MediaPlayer::flashPlaybackSkip(int64_t deltaMs) {
@@ -4279,6 +4277,10 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                 int64_t tms = startMs + wall2;
                 positionMs_.store(tms);
                 overlay_.setProgress(tms, durationMs);
+                // plane=1: refresh PLXC bar/timecode without pixel bake.
+                // Throttle: every 15 frames (~0.5s @30fps) — not per-present.
+                if (chromePlaneLive() && (frameIndex % 15) == 0)
+                    publishPlxcHud(PlaybackOverlayState::Playing, tms, durationMs, nullptr);
                 if ((frameIndex % 15) == 0 && onProgress_)
                     onProgress_("playing", tms, durationMs);
             }

@@ -1,8 +1,10 @@
 #pragma once
 // plex_chrome_cmds — ARM→FPGA semantic command list (PLXC).
 //
-// Fabric owns body_scale from HDMI_HEIGHT. ARM emits geometry in OUTPUT pixels
-// (preview with same formula) and never writes overlay pixels when plane is live.
+// 720p-first: default geometry is 1280×720. Fabric owns body_scale from
+// HDMI_HEIGHT. ARM emits geometry in OUTPUT pixels and never writes overlay
+// pixels when plane is live — the whole point is evacuating ARM ms/frame so
+// decode can spend the 41.7 ms budget on 720p content, not HUD bake.
 //
 // Packing MUST match fpga/Plex_MiSTer/rtl/plex_chrome.sv.
 
@@ -22,9 +24,13 @@ inline constexpr uint32_t kMagic = mailbox_abi::kPlxcMagic;
 inline constexpr uint32_t kOffset = mailbox_abi::kPlxcOffset;
 inline constexpr uint32_t kListOffset = mailbox_abi::kPlxlOffset;
 inline constexpr int kMaxCmds = 48;
+inline constexpr int kHitScan = 48; // match RTL HIT_SCAN
 inline constexpr int kFontW = 8;
 inline constexpr int kFontH = 8;
 inline constexpr int kFontAdvance = 9; // 8 + 1 gap
+// Product target raster (parameter, not a 480p-era leftover).
+inline constexpr int kTargetOutW = 1280;
+inline constexpr int kTargetOutH = 720;
 
 enum class Op : uint8_t { End = 0, Rect = 1, Glyph = 2, RectPal = 3 };
 
@@ -134,8 +140,8 @@ inline const char* stateLabel(PlaybackOverlayState st) {
 // Build the live HUD the parent captured: state + title + two timecodes + bar.
 // Coordinates are OUTPUT pixels; scale from HDMI_H.
 struct BuildArgs {
-    int outW = 640;
-    int outH = 480;
+    int outW = kTargetOutW; // 1280 — 720p-first
+    int outH = kTargetOutH; // 720
     PlaybackOverlayState state = PlaybackOverlayState::Stopped;
     int64_t positionMs = 0;
     int64_t durationMs = 0;

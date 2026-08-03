@@ -2,7 +2,11 @@ worker: w-osd
 branch: w-osd-fabric-plane (base w-fit-ceiling-fd-min)
 todos: fab-osd, fab-idle
 date: 2026-08-03
+commit: follow-up 720p-first ARM-evacuation tighten (see git log)
 note: /tmp writes forbidden by runtime — evidence at docs/agent-evidence/misterplex-agent-w-osd.txt
+
+MANDATE: "move as much into the fpga so we can do 720p"
+  720p is the reward for evacuating ARM. Prefer ARM=0 work over cheaper ARM work.
 
 ========================================================================
 (a) OVERLAY PLANE WIRING (quoted)
@@ -88,11 +92,42 @@ test_rtl_invariants.sh:            true rc=0 (mailbox collisions OK w/ PLXC/PLXO
 (e) AREA / TIMING COST
 ========================================================================
 Prereg (no Quartus this lane — w-nostub owns exclusive fit):
-  ALM: hit-scan HIT_SCAN=32 + idle ~1.5–3k (estimate)
-  M10K: +1–2 for dual list; font/idle 0
+  ALM: hit-scan HIT_SCAN=48 + idle ~1.5–3k (estimate; +HIT_SCAN may add comb)
+  M10K: +1–2 for dual list; font/idle 0 — deliberately NO 720p line buffer
+        (1280 B = 1 M10K/line would be the wrong trade for chrome)
   clk_hdmi path: 1-cycle registered composite; scale via Q8 mul>>8 not divider
   CRITICAL PATH: STA unmeasured this lane — flag for post-fit parent
-  Prior base (8fdf440f): ALM 23585/41910, M10K 465/553 (88 free) — list must stay consolidated
+  Prior base (8fdf440f): ALM 23585/41910, M10K 465/553 (88 free)
+
+720p sizing (parameter, not redesign):
+  coords 12-bit; HDMI_W/H ports; body_scale(720)=3 (unit-proven)
+  HIT_SCAN=MAX_CMDS=48; 720p STOPPED+long title = 38 cmds (unit rc=0)
+
+========================================================================
+(e2) ARM ms/frame REMOVED — honest quantification
+========================================================================
+What ARM no longer does when chromePlaneLive() (quoted code paths):
+  1) presentCleanFrame: skips renderOverlay pixel bake into content buffer
+  2) paintIdle: returns with ZERO ARM paint (no DDR, no fb0) — was full idle
+     RGB + optional DDR publish ("idle paint DDR failed" class)
+  3) Progress path: no per-frame pixel composite; PLXC list refresh ≤ every 15 frames
+
+What ARM still does when live (not zero yet):
+  - buildPlaybackHud + writeChromeCommandList (~30–48 qwords) on show + every 15 frames
+  - overlay_.show/setProgress state bookkeeping (no pixels)
+
+ARM milliseconds removed per frame:
+  UNKNOWN — no host-side overlay_us_p capture under plane=1 was taken this lane.
+  Measurement that would settle it (parent owns device):
+    A) Run PRESENT_PROFILE=1 playback plane=0; read log overlay_us_p / overlay_cpu_us_p
+    B) Same title with CHROME_PLANE=1 + PLXO hw once threaded; compare overlay_* 
+    C) Idle: time paintIdle DDR path plane=0 vs plane=1 skip (should be ~0 ARM)
+  Code already accumulates prof.overlayUs around renderOverlay — gate is plane live.
+
+Why we chose "ARM out" over "cheaper ARM":
+  Fabric composite + fabric idle + skip all pixel paths when live. Remaining ARM
+  is semantic list only (not a reduced-resolution bake). Next evacuation step is
+  a fabric progress-fraction register so even list rebuild goes away mid-play.
 
 ========================================================================
 (f) EXPLICIT UNKNOWNS
@@ -107,7 +142,8 @@ Prereg (no Quartus this lane — w-nostub owns exclusive fit):
 4. No Quartus fit/STA this lane — area/timing numbers are design prereg only.
 5. No device/HDMI proof (parent owns capture). BOOT_DEMO boot glyph is interim
    retention stimulus, not product chrome.
-6. HUD outW/outH hardcoded 640x480 in showPlaybackOverlay until PLXO W/H readback.
+6. ARM overlay_us delta plane0→plane1: unknown until parent profiles (see e2).
+7. Mid-play list rebuild every 15 frames still uses ARM; progress-fraction reg TBD.
 
-READY_FOR_PARENT: design+sim complete; fit/deploy/HDMI = parent after nostub.
+READY_FOR_PARENT: design+sim complete; fit/deploy/HDMI/profile = parent after nostub.
 ========================================================================

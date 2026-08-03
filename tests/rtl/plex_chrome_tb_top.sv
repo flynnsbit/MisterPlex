@@ -64,7 +64,7 @@ module plex_chrome_tb (
     plex_chrome #(
         .BOOT_DEMO(0),
         .MAX_CMDS(48),
-        .HIT_SCAN(32)
+        .HIT_SCAN(48)
     ) u_chrome (
         .clk_hdmi(clk),
         .reset(reset),

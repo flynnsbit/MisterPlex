@@ -169,6 +169,13 @@ public:
     void setChromePlaneConf(bool confWants) { chromePlaneConf_ = confWants; }
     void setChromePlaneHwPresent(bool hw) { chromePlaneHw_ = hw; }
     bool chromePlaneLive() const { return chromePlaneConf_ && chromePlaneHw_; }
+    // Applied HDMI raster for PLXC geometry (720p-first defaults).
+    void setChromeOutputSize(int w, int h) {
+        if (w > 0)
+            chromeOutW_ = w;
+        if (h > 0)
+            chromeOutH_ = h;
+    }
 
     void setIdleMode(IdleMode m) { idleMode_.store(static_cast<int>(m)); }
     IdleMode idleMode() const { return static_cast<IdleMode>(idleMode_.load()); }
@@ -454,6 +461,10 @@ private:
     bool chromePlaneConf_ = false; // conf CHROME_PLANE wants plane=1
     bool chromePlaneHw_ = false;   // PLXO chrome_hw — fail closed until set
     uint16_t chromePlxcSeq_ = 0;   // PLXC seq edge for fabric latch
+    int chromeOutW_ = 1280;        // 720p-first; PLXO may refine
+    int chromeOutH_ = 720;
+    void publishPlxcHud(PlaybackOverlayState state, int64_t positionMs, int64_t durationMs,
+                        const char* title);
     std::atomic<pid_t> childPid_{-1};
     std::atomic<pid_t> streamPid_{-1};
     std::string lastError_;

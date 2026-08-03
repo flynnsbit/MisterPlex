@@ -84,13 +84,42 @@ static void checkStoppedHudHasBarAndState() {
     CHECK(glyphs >= 7);  // STOPPED
     CHECK(rects >= 2);   // panel + track
     CHECK(pals >= 1);    // amber fill (position > 0)
-    CHECK(cmds.size() <= 32u);
+    CHECK(cmds.size() <= static_cast<size_t>(kHitScan));
+}
+
+// 720p-first: default BuildArgs and a full STOPPED HUD must fit the list.
+static void check720pHudBudget() {
+    using namespace misterplex::plex_chrome_cmds;
+    CHECK(kTargetOutW == 1280);
+    CHECK(kTargetOutH == 720);
+    CHECK(bodyScale(720) == 3);
+    BuildArgs a; // defaults 1280×720
+    CHECK(a.outW == 1280);
+    CHECK(a.outH == 720);
+    a.state = misterplex::PlaybackOverlayState::Stopped;
+    a.positionMs = 125000;
+    a.durationMs = 600000;
+    a.title = "BIG BUCK BUNNY TITLE";
+    auto cmds = buildPlaybackHud(a);
+    std::fprintf(stderr, "720p HUD cmds=%zu max=%d scale=%d\n", cmds.size(), kMaxCmds,
+                 bodyScale(720));
+    CHECK(!cmds.empty());
+    CHECK(cmds.size() <= static_cast<size_t>(kMaxCmds));
+    CHECK(cmds.size() <= static_cast<size_t>(kHitScan));
+    // x coords must stay within 12-bit / 1280
+    for (uint64_t w : cmds) {
+        const unsigned x = static_cast<unsigned>((w >> 8) & 0xFFFF);
+        const unsigned y = static_cast<unsigned>((w >> 24) & 0xFFFF);
+        CHECK(x < 1280u);
+        CHECK(y < 720u);
+    }
 }
 
 int main() {
     checkPackRoundtrip();
     checkNoPixelBakeWhenLive();
     checkStoppedHudHasBarAndState();
+    check720pHudBudget();
     if (fails) {
         std::fprintf(stderr, "test_plex_chrome_cmds: %d FAIL(s)\n", fails);
         return 1;

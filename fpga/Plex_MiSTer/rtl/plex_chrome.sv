@@ -1,8 +1,13 @@
 // plex_chrome — post-ascal player chrome + fabric idle plane
 //
-// Owner: w-osd · docs/plex-chrome-plane-rtl-proposal.md
+// Owner: w-osd · 720p is the target, not a later bolt-on.
 // Insertion (sys_top.v HDMI path):
 //   ascal → shadowmask → plex_chrome → osd hdmi_osd → pins
+//
+// Geometry: HDMI_WIDTH/HEIGHT are 12-bit (0..4095) — covers 1280×720 and 1920×1080.
+// No line buffers: a 720p luma line is exactly one M10K; we refuse that cost by
+// scanning the command list per pixel instead of buffering a scanline.
+// body_scale from HDMI_HEIGHT (half-even /240, clamp 2..8) → scale=3 @720p.
 //
 // ARM: semantic PLXC list only (doorbell + 0x130 / list @ +0x140). Never pixels.
 // When cfg_enable=0 and idle_en=0, video passes through unmodified (1-cycle delay).
@@ -17,16 +22,16 @@
 //            pal 0=panel 1=track 2=amber 3=white 4=edge
 //
 // Budget (prereg, post nostub reclaim free M10K ~356):
-//   list 2×48×64b ≈ 6 kbit → 1–2 M10K consolidated
+//   list 2×48×64b ≈ 6 kbit → 1–2 M10K consolidated (not 48 tiny RAMs)
 //   font ROM combinational (no M10K)
 //   idle chevron pure math (0 M10K)
-//   ALM: hit scan + idle ~1.5–3k (HIT_SCAN caps comb depth)
+//   ALM: hit scan + idle ~1.5–3k (HIT_SCAN=MAX_CMDS so 720p HUD is fully visible)
 
 `timescale 1ns / 1ps
 
 module plex_chrome #(
     parameter int MAX_CMDS = 48,
-    parameter int HIT_SCAN = 32,
+    parameter int HIT_SCAN = 48, // == MAX_CMDS: full list visible @720p HUD budget
     parameter int FONT_W   = 8,
     parameter int FONT_H   = 8,
     parameter bit BOOT_DEMO = 1'b0

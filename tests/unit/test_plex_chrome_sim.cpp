@@ -62,17 +62,19 @@ static void checkBankStretchFailsAt1080() {
 static void checkHudCmdBudget() {
     using namespace misterplex::plex_chrome_cmds;
     BuildArgs a;
-    a.outW = 640;
-    a.outH = 480;
+    a.outW = kTargetOutW;
+    a.outH = kTargetOutH;
     a.state = misterplex::PlaybackOverlayState::Stopped;
     a.positionMs = 0;
     a.durationMs = 0;
     a.title = "BIG BUCK B";
     const auto cmds = buildPlaybackHud(a);
-    std::fprintf(stderr, "HUD cmds=%zu max=%d\n", cmds.size(), kMaxCmds);
+    std::fprintf(stderr, "HUD cmds=%zu max=%d hit=%d @%dx%d scale=%d\n", cmds.size(),
+                 kMaxCmds, kHitScan, a.outW, a.outH, bodyScale(a.outH));
     CHECK(!cmds.empty());
     CHECK(cmds.size() <= static_cast<size_t>(kMaxCmds));
-    CHECK(cmds.size() <= 32u); // HIT_SCAN
+    CHECK(cmds.size() <= static_cast<size_t>(kHitScan));
+    CHECK(bodyScale(720) == 3);
     // Must include STOPPED glyphs
     bool hasS = false;
     for (uint64_t w : cmds) {
