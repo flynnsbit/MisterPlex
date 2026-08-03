@@ -5,12 +5,14 @@
 // Bootstrap phys: product legacy doorbell 0x300FF000 + 0x2C0 = 0x300FF2C0.
 // Fabric poller always reads the bootstrap page (chicken-egg with Option-C).
 //
-// Write model (rd-duck atomic snapshot):
-//   host stores q[1], q[2], q[3], q[4], THEN q[0] last (seq+magic commit).
-//   poller reads q0..q4 then RE-READS q0; commit only if q0 matches.
-// q[0] seq must change every mode/frame transition. Never overwrite a single
-// 8-byte slot with three temporal "beats". Legacy path must publish
-// geom_enable=0 (makePlxgRecordDisable) so Option-C does not stick.
+// Write model — seqlock (rd-duck retained-DDR/reset):
+//   1) Invalidate q0 low32 = 0 (clear magic) + DMB
+//   2) Store body q[1]..q[4]
+//   3) Store q0 high32, then q0 low32 = magic LAST (commit)
+//   Poller reads q0..q4 then RE-READS q0; commit only if magic+seq match.
+// Without step 1, post-reset last_seq=0 + retained q0 seq=1 lets the poller
+// accept a mixed body while reread still sees the old q0. Never three temporal
+// beats to one slot. Legacy path must publish geom_enable=0.
 
 #include "libmisterplex/mailbox_abi_spec.hpp"
 
@@ -35,7 +37,9 @@ struct PlxgRecord {
     bool valid = false;
 };
 
-// Publish order indices: body first, q0 last.
+// Body indices after q0 invalidate; q0 commit is separate (magic-last).
+inline constexpr int kPlxgBodyOrder[4] = {1, 2, 3, 4};
+// Legacy name: body then logical q0 slot (invalidate is step 0, not in this list).
 inline constexpr int kPlxgPublishOrder[5] = {1, 2, 3, 4, 0};
 
 inline uint64_t packPlxgQ0(bool winEnable, bool geomEnable, uint16_t seq) {
@@ -121,13 +125,105 @@ inline bool plxgPollerAcceptsSnapshot(const uint64_t snap[5], uint64_t q0_reread
     return q0_reread == snap[0];
 }
 
-// Simulate q1..q4 then q0 host write into a control page (matches writePlxgRecord).
-inline void plxgHostStoreAtomic(uint8_t* ctrlPage, const PlxgRecord& rec) {
+// Read one little-endian qword from control page at PLXG slot qi.
+inline uint64_t plxgCtrlLoadQ(const uint8_t* ctrlPage, int qi) {
+    uint64_t w = 0;
+    std::memcpy(&w, ctrlPage + mailbox_abi::kPlxgOffset + static_cast<size_t>(qi) * 8u, 8);
+    return w;
+}
+
+inline void plxgCtrlStoreQ(uint8_t* ctrlPage, int qi, uint64_t w) {
+    std::memcpy(ctrlPage + mailbox_abi::kPlxgOffset + static_cast<size_t>(qi) * 8u, &w, 8);
+}
+
+// Step 1: invalidate retained q0 magic (low32=0). Poller must reject in-progress.
+inline void plxgHostInvalidateQ0(uint8_t* ctrlPage) {
     const size_t off = mailbox_abi::kPlxgOffset;
-    for (int k = 0; k < 5; ++k) {
-        const int qi = kPlxgPublishOrder[k];
-        std::memcpy(ctrlPage + off + static_cast<size_t>(qi) * 8u, &rec.q[qi], 8);
+    // Little-endian qword: clear low32 (magic) only; high may be stale until commit.
+    std::memset(ctrlPage + off, 0, 4);
+}
+
+// Step 2: body q1..q4.
+inline void plxgHostStoreBody(uint8_t* ctrlPage, const PlxgRecord& rec) {
+    for (int k = 0; k < 4; ++k) {
+        const int qi = kPlxgBodyOrder[k];
+        plxgCtrlStoreQ(ctrlPage, qi, rec.q[qi]);
     }
+}
+
+// Step 3: q0 high then magic-last low32 (commit).
+inline void plxgHostCommitQ0(uint8_t* ctrlPage, uint64_t q0) {
+    const size_t off = mailbox_abi::kPlxgOffset;
+    const uint32_t lo = static_cast<uint32_t>(q0);
+    const uint32_t hi = static_cast<uint32_t>(q0 >> 32);
+    std::memcpy(ctrlPage + off + 4, &hi, 4); // high first
+    std::memcpy(ctrlPage + off + 0, &lo, 4); // magic last
+}
+
+// Full seqlock write (matches writePlxgRecord).
+inline void plxgHostStoreAtomic(uint8_t* ctrlPage, const PlxgRecord& rec) {
+    plxgHostInvalidateQ0(ctrlPage);
+    plxgHostStoreBody(ctrlPage, rec);
+    plxgHostCommitQ0(ctrlPage, rec.q[0]);
+}
+
+// FAULT twin: body then q0 without invalidate — retained-DDR/reset accepts torn.
+inline void plxgHostStoreFaultNoInvalidate(uint8_t* ctrlPage, const PlxgRecord& rec) {
+    plxgHostStoreBody(ctrlPage, rec);
+    plxgHostCommitQ0(ctrlPage, rec.q[0]);
+}
+
+// Poller one-shot snapshot model (q0..q4 then reread q0).
+inline bool plxgPollerTryCommit(const uint8_t* ctrlPage, uint16_t lastSeq,
+                                uint64_t snapOut[5] = nullptr) {
+    uint64_t snap[5];
+    for (int i = 0; i < 5; ++i)
+        snap[i] = plxgCtrlLoadQ(ctrlPage, i);
+    const uint64_t q0b = plxgCtrlLoadQ(ctrlPage, 0); // reread
+    if (snapOut) {
+        for (int i = 0; i < 5; ++i)
+            snapOut[i] = snap[i];
+    }
+    return plxgPollerAcceptsSnapshot(snap, q0b, lastSeq);
+}
+
+// Retained-DDR / FPGA-reset interleaving oracle.
+// old rec seq=1 live in DDR; FPGA last_seq=0; host rewrites to new rec mid-poll.
+// FAULT (no invalidate): poller can accept mixed body under old q0.
+// GOOD (invalidate first): same window rejects.
+inline bool plxgRetainedDdrResetTornAcceptedWithFaultWriter(const PlxgRecord& oldRec,
+                                                            const PlxgRecord& newRec) {
+    std::uint8_t page[0x1000]{};
+    // Install complete old record (retained DDR across FPGA reset).
+    for (int i = 0; i < 5; ++i)
+        plxgCtrlStoreQ(page, i, oldRec.q[i]);
+    // Host FAULT path starts body rewrite without invalidating q0.
+    plxgHostStoreBody(page, newRec); // q0 still old valid seq
+    // Poller after FPGA reset (last_seq=0): sees old q0 + new body, reread old q0.
+    uint64_t snap[5];
+    for (int i = 0; i < 5; ++i)
+        snap[i] = plxgCtrlLoadQ(page, i);
+    // q0 still old (host has not committed new q0 yet)
+    return plxgPollerAcceptsSnapshot(snap, snap[0], /*lastSeq=*/0);
+}
+
+inline bool plxgRetainedDdrResetRejectedWithSeqlockWriter(const PlxgRecord& oldRec,
+                                                          const PlxgRecord& newRec) {
+    std::uint8_t page[0x1000]{};
+    for (int i = 0; i < 5; ++i)
+        plxgCtrlStoreQ(page, i, oldRec.q[i]);
+    // GOOD: invalidate q0 first, then body — poller mid-update must not accept.
+    plxgHostInvalidateQ0(page);
+    plxgHostStoreBody(page, newRec);
+    uint64_t snap[5];
+    for (int i = 0; i < 5; ++i)
+        snap[i] = plxgCtrlLoadQ(page, i);
+    // First q0 sample has magic cleared → reject; reread also invalid.
+    if (plxgPollerAcceptsSnapshot(snap, snap[0], /*lastSeq=*/0))
+        return false; // should have rejected
+    // After full commit, accept once.
+    plxgHostCommitQ0(page, newRec.q[0]);
+    return plxgPollerTryCommit(page, /*lastSeq=*/0);
 }
 
 // Transaction-safe m1 sub-owner model (ddr_m1_subarb.sv): owner latched through
@@ -223,7 +319,7 @@ inline bool plxgLatchCommit(PlxgLatchModel& m) {
     return true;
 }
 
-// Simulate host multi-slot write (q1..q4 then q0) into control page + latch.
+// Simulate host seqlock write (invalidate q0, body, magic-last) + latch.
 inline bool plxgProgramRecord(uint8_t* ctrlPage /* at least 0x2C0+40 */,
                               const PlxgRecord& rec, PlxgLatchModel& latch) {
     if (!rec.valid || !ctrlPage)

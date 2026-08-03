@@ -12,9 +12,9 @@
 rd-duck STOP items addressed in source (await rd-duck re-audit before fit):
 
 1. **m1 share** — `ddr_m1_subarb` latches stream/PLXG owner through response (no comb mux).
-2. **Atomic PLXG** — host writes **q1..q4 then q0**; poller re-reads q0 (`cnt_torn`).
+2. **PLXG seqlock** — invalidate q0 magic (`low32=0`) + DMB → body q1..q4 → q0 high then magic-last; poller re-reads q0 (`cnt_torn`). Without invalidate, retained-DDR + FPGA `last_seq=0` accepts torn body under old q0 (red twin in `test_ddr_720p_abi`).
 3. **Mode exit** — legacy `makeDdrPublishPlan` programs `geom_enable=0` (seq-bumped).
-4. **Raw geom** — over-max/unaligned rejected (`rt_raw_ok`); no clamp-then-accept.
+4. **Raw geom** — over-max/unaligned rejected (`rt_raw_ok`); coded_w %16; no clamp-then-accept.
 
 **Do not claim glass-proven native E2E until parent runs device. Do not grant fit until rd-duck clears.**
 

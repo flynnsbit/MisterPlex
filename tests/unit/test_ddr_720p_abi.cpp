@@ -764,7 +764,39 @@ int main() {
         }
         // Publish order constant is body-then-q0 (not q0-first).
         CHECK(kPlxgPublishOrder[0] != 0);
+        // ---- Retained-DDR / FPGA-reset seqlock (rd-duck) ----
+        // Old q0 seq=1 lives in DDR; FPGA last_seq resets to 0. Without
+        // invalidate-first, body rewrite + reread of unchanged old q0 accepts torn.
+        {
+            PlxgRecord oldR = makePlxgRecord960x540Native(1);
+            PlxgRecord newR = makePlxgRecordDisable(2);
+            // Red: fault writer (no invalidate) MUST be shown to accept torn.
+            CHECK(plxgRetainedDdrResetTornAcceptedWithFaultWriter(oldR, newR));
+            // Green: seqlock invalidate → reject mid-update; commit → accept.
+            CHECK(plxgRetainedDdrResetRejectedWithSeqlockWriter(oldR, newR));
+            // Complete seqlock program still latches.
+            {
+                PlxgLatchModel lm{};
+                std::vector<uint8_t> page(0x1000, 0);
+                // Retain old first
+                for (int i = 0; i < 5; ++i)
+                    plxgCtrlStoreQ(page.data(), i, oldR.q[i]);
+                CHECK(plxgProgramRecord(page.data(), newR, lm));
+                CHECK(!lm.geom_enable);
+                CHECK(lm.live_seq == 2);
+            }
+            // Invalidate alone clears magic.
+            {
+                std::vector<uint8_t> page(0x1000, 0);
+                for (int i = 0; i < 5; ++i)
+                    plxgCtrlStoreQ(page.data(), i, oldR.q[i]);
+                plxgHostInvalidateQ0(page.data());
+                CHECK(static_cast<uint32_t>(plxgCtrlLoadQ(page.data(), 0)) == 0u);
+                CHECK(!plxgPollerTryCommit(page.data(), 0));
+            }
+        }
         std::fprintf(stderr, "  PLXG_TEAR_SUBARB_DISABLE OK\n");
+        std::fprintf(stderr, "  PLXG_SEQLOCK_RETAINED_DDR_RESET OK\n");
     }
 
     if (fails) {

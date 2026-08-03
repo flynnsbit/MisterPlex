@@ -851,20 +851,34 @@ bool FpgaSpi::writePlxgRecord(const uint64_t q[5], uint16_t seq) {
                (flags << 32) |
                static_cast<uint64_t>(mailbox_abi::kPlxgMagic);
 
-    // Atomic publish order (rd-duck): write q1..q4 FIRST, then q0 LAST.
-    // Poller snapshots q0..q4 then re-reads q0; q0-last makes torn snapshots
-    // fail the verify compare instead of latching a half-written record.
-    auto storeQword = [](volatile uint32_t* base, int qi, uint64_t w) {
+    // Seqlock publish (rd-duck retained-DDR/reset):
+    //   1) invalidate q0 low32=0 (clear magic) + DMB
+    //   2) body q1..q4
+    //   3) q0 high32, then q0 low32=magic LAST
+    // Without (1), post-reset last_seq=0 + retained q0 seq=1 accepts mixed body.
+    auto dmb = []() { __sync_synchronize(); };
+    auto storeBodyQ = [&](volatile uint32_t* base, int qi, uint64_t w) {
         base[qi * 2 + 1] = static_cast<uint32_t>(w >> 32);
-        __sync_synchronize(); // DMB — hardware barrier, not compiler fence
+        dmb();
         base[qi * 2 + 0] = static_cast<uint32_t>(w);
-        __sync_synchronize();
+        dmb();
+    };
+    auto seqlockPublish = [&](volatile uint32_t* base) {
+        // 1) Invalidate retained magic so in-progress poller aborts.
+        base[0] = 0u; // q0 low32
+        dmb();
+        // 2) Body
+        for (int i = 1; i < 5; ++i)
+            storeBodyQ(base, i, words[i]);
+        // 3) q0 high then magic-last
+        base[1] = static_cast<uint32_t>(words[0] >> 32);
+        dmb();
+        base[0] = static_cast<uint32_t>(words[0]); // magic
+        dmb();
     };
     volatile uint32_t* base =
         reinterpret_cast<volatile uint32_t*>(plxgBootMap_ + off);
-    for (int i = 1; i < 5; ++i)
-        storeQword(base, i, words[i]);
-    storeQword(base, 0, words[0]);
+    seqlockPublish(base);
     if (ddrMemFlush_ && !cleanDcacheRange(plxgBootMap_ + off, mailbox_abi::kPlxgBytes)) {
         setErr("writePlxgRecord: cache clean failed");
         return false;
@@ -877,9 +891,7 @@ bool FpgaSpi::writePlxgRecord(const uint64_t q[5], uint16_t seq) {
             if (aoff + mailbox_abi::kPlxgBytes <= ddrMapLen_) {
                 volatile uint32_t* ab =
                     reinterpret_cast<volatile uint32_t*>(ddrMap_ + aoff);
-                for (int i = 1; i < 5; ++i)
-                    storeQword(ab, i, words[i]);
-                storeQword(ab, 0, words[0]);
+                seqlockPublish(ab);
             }
         }
     }
