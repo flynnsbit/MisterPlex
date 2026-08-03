@@ -923,9 +923,12 @@ module ddr_frame_store #(
 	localparam [3:0] S_LINE_WAIT  = 4'd2;
 	localparam [3:0] S_POLL_WAIT  = 4'd3;
 	localparam [3:0] S_WRITE_WAIT = 4'd4;
+	// rd-duck: accepted burst cannot be cancelled — drain remaining DOUT beats
+	// without RAM write/tag before any new RD (no response tags on this bus).
+	localparam [3:0] S_LINE_DRAIN = 4'd5;
 
 	reg [3:0] state_ddr;
-	// rd-duck: sticky poison so a completing burst cannot tag new epoch.
+	// FAULT_NO_FILL_DRAIN only: sticky poison (product uses S_LINE_DRAIN).
 	reg        fill_abort;
 	reg [LINE_SLOTS-1:0] y_valid, c_valid;
 	reg [LINE_SLOTS-1:0] y_bank, c_bank;
@@ -1545,19 +1548,61 @@ module ddr_frame_store #(
 			if (!bank_mbox_valid || (bank_mbox_hb == 18'd0))
 				bank_mbox_req <= 1'b1;
 
-			// B16/rd-duck: invalidate MUST dominate case(state_ddr). Same-cycle
-			// case NBA can re-enter S_LINE_ISSUE and tag an old fill with the
-			// *new* geom_epoch. Abort+poison: clear tags, force IDLE, skip case.
+			// B16/rd-duck: invalidate MUST dominate case(state_ddr). Clear line
+			// tags immediately, but an *accepted* DDR burst cannot be cancelled.
+			// Drain remaining DOUT beats (no RAM write/tag) before any new RD —
+			// this bus has no response tags; early RD corrupts the next fill.
 			if (d_geom_invalidate) begin
 				d_inv_seen <= d_inv_s2;
 				y_valid <= '0;
 				c_valid <= '0;
 				sched_valid <= 1'b0;
-				poll_pending <= 1'b0;
 				DDRAM_RD <= 1'b0;
 				DDRAM_WE <= 1'b0;
+`ifdef DDR_FRAME_STORE_FAULT_NO_FILL_DRAIN
+				// RED TWIN: old force-IDLE + sticky abort (protocol poison).
+				poll_pending <= 1'b0;
 				fill_abort <= 1'b1;
 				state_ddr <= S_IDLE;
+`else
+				fill_abort <= 1'b0;
+				// Consume same-cycle DOUT if WAIT/DRAIN so burst_left stays honest.
+				if (state_ddr == S_LINE_WAIT || state_ddr == S_LINE_DRAIN) begin
+					poll_pending <= 1'b0;
+					if (DDRAM_DOUT_READY) begin
+						if (burst_left <= 1) begin
+							burst_left <= '0;
+							state_ddr <= S_IDLE;
+						end else begin
+							burst_left <= burst_left - 1'b1;
+							state_ddr <= S_LINE_DRAIN;
+						end
+					end else if (burst_left != 0) begin
+						state_ddr <= S_LINE_DRAIN;
+					end else begin
+						state_ddr <= S_IDLE;
+					end
+				end else if (state_ddr == S_POLL_WAIT) begin
+					// Single-beat doorbell poll may still be in flight.
+					if (DDRAM_DOUT_READY) begin
+						poll_pending <= 1'b0;
+						burst_left <= '0;
+						state_ddr <= S_IDLE;
+					end else begin
+						poll_pending <= 1'b0;
+						burst_left <= 1;
+						state_ddr <= S_LINE_DRAIN;
+					end
+				end else if (state_ddr == S_WRITE_WAIT) begin
+					// WE in flight: finish write path via case next cycles.
+					poll_pending <= 1'b0;
+				end else begin
+					// S_IDLE / S_LINE_ISSUE (RD not yet accepted): clean stop.
+					poll_pending <= 1'b0;
+					burst_left <= '0;
+					state_ddr <= S_IDLE;
+				end
+`endif
 			end
 			if (db_bad_format) begin
 				format_error <= 1'b1;
@@ -1757,8 +1802,23 @@ module ddr_frame_store #(
 					end
 				end
 
+				S_LINE_DRAIN: begin
+					// Consume exactly remaining returned beats; never write/tag;
+					// never schedule a new RD until drain_left hits 0.
+					if (DDRAM_DOUT_READY) begin
+						if (burst_left <= 1) begin
+							burst_left <= '0;
+							state_ddr <= S_IDLE;
+						end else begin
+							burst_left <= burst_left - 1'b1;
+						end
+					end
+				end
+
 				S_LINE_WAIT: begin
 					if (DDRAM_DOUT_READY) begin
+`ifdef DDR_FRAME_STORE_FAULT_NO_FILL_DRAIN
+						// Old bug: always write RAM; only skip final tag on abort.
 						if (fill_is_chroma) begin
 							c_wr_addr <= fill_qword[C_QW_AW-1:0];
 							if (fill_plane_v) begin
@@ -1773,6 +1833,24 @@ module ddr_frame_store #(
 							y_wr_data <= DDRAM_DOUT;
 							y_wr[fill_idx] <= 1'b1;
 						end
+`else
+						// Product: WAIT means live fill (invalidate would have
+						// moved us to DRAIN). Safe to write.
+						if (fill_is_chroma) begin
+							c_wr_addr <= fill_qword[C_QW_AW-1:0];
+							if (fill_plane_v) begin
+								v_wr_data <= DDRAM_DOUT;
+								v_wr[fill_idx] <= 1'b1;
+							end else begin
+								u_wr_data <= DDRAM_DOUT;
+								u_wr[fill_idx] <= 1'b1;
+							end
+						end else begin
+							y_wr_addr <= fill_qword[Y_QW_AW-1:0];
+							y_wr_data <= DDRAM_DOUT;
+							y_wr[fill_idx] <= 1'b1;
+						end
+`endif
 						fill_qword <= fill_qword + 1'b1;
 						qwords_remaining <= qwords_remaining - 1'b1;
 						burst_left <= burst_left - 1'b1;
@@ -1783,21 +1861,24 @@ module ddr_frame_store #(
 								qwords_remaining <= {{(Y_QW_AW+1-8){1'b0}}, d_c_fetch_qw}; // ddr-domain c fetch
 								state_ddr <= S_LINE_ISSUE;
 							end else begin
-								// Never tag a poisoned/aborted fill with current epoch.
+`ifdef DDR_FRAME_STORE_FAULT_NO_FILL_DRAIN
 								if (!fill_abort) begin
-									if (fill_is_chroma) begin
-										c_line[fill_idx] <= fill_cy;
-										c_bank[fill_idx] <= fill_bank;
-										c_epoch[fill_idx] <= d_geom_epoch;
-										c_valid[fill_idx] <= 1'b1;
-									end else begin
-										y_line[fill_idx] <= fill_y;
-										y_bank[fill_idx] <= fill_bank;
-										y_epoch[fill_idx] <= d_geom_epoch;
-										y_valid[fill_idx] <= 1'b1;
-									end
+`endif
+								if (fill_is_chroma) begin
+									c_line[fill_idx] <= fill_cy;
+									c_bank[fill_idx] <= fill_bank;
+									c_epoch[fill_idx] <= d_geom_epoch;
+									c_valid[fill_idx] <= 1'b1;
+								end else begin
+									y_line[fill_idx] <= fill_y;
+									y_bank[fill_idx] <= fill_bank;
+									y_epoch[fill_idx] <= d_geom_epoch;
+									y_valid[fill_idx] <= 1'b1;
+								end
+`ifdef DDR_FRAME_STORE_FAULT_NO_FILL_DRAIN
 								end
 								fill_abort <= 1'b0;
+`endif
 								state_ddr <= S_IDLE;
 							end
 						end else if (burst_left == 1) begin
@@ -1821,11 +1902,8 @@ module ddr_frame_store #(
 
 				default: state_ddr <= S_IDLE;
 			endcase
-			end else begin
-				// Invalidate cycle: do not accept new fills; clear abort once IDLE.
-				if (fill_abort && !DDRAM_DOUT_READY)
-					fill_abort <= 1'b0;
 			end
+			// else: invalidate cycle — drain/idle already decided above; no case.
 		end
 	end
 endmodule
