@@ -958,12 +958,30 @@ ddr_bus_arbiter3 ddr_arb (
 	.DDRAM_WE(DDRAM_WE)
 );
 
-// Force hierarchy retention: WE path + credit + phase must not prune
+// w-path scoreboard twin: free_mask + doorbell order (async PL330 safe)
+wire hbic_err_no_credit, hbic_err_double;
+wire [1:0] hbic_may_fill;
+host_bank_ingest_credit hbic (
+	.clk(clk_ddr),
+	.reset(reset),
+	.bank_free_mask(fabric_free_mask),
+	.doorbell_pulse(fabric_frame_done),
+	.doorbell_bank(fabric_dbg_bank[0]),
+	// Only retire when a pending swap completes (same predicate as credit)
+	.retire_pulse(fabric_vsync_swap & fabric_swap_pending),
+	.retire_bank(fabric_disp_bank),
+	.host_may_fill_mask(hbic_may_fill),
+	.err_doorbell_without_credit(hbic_err_no_credit),
+	.err_double_publish(hbic_err_double)
+);
+
+// Force hierarchy retention: WE path + credit + phase + hbic must not prune
 (* keep = 1 *) wire _keep_fabric_ddr =
 	fabric_busy | fabric_frame_done | fabric_m2_want | fabric_m2_we |
 	|fabric_dbg_seq | |fabric_free_mask | fabric_disp_bank |
 	fabric_swap_pending | |fabric_frames_done | |fabric_phase |
-	|FAB_BASE[15:0] | |FAB_DB[15:0];
+	|FAB_BASE[15:0] | |FAB_DB[15:0] |
+	|hbic_may_fill | hbic_err_no_credit | hbic_err_double;
 `else
 ddr_bus_arbiter ddr_arb (
 	.clk(clk_ddr),

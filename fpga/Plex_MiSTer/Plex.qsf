@@ -91,6 +91,7 @@ set_global_assignment -name VERILOG_MACRO "DDR_FRAME_STORE=1"
 #set_global_assignment -name SYSTEMVERILOG_FILE rtl/fabric_ddr_write_path.sv
 #set_global_assignment -name SYSTEMVERILOG_FILE rtl/fabric_ddr_attach.sv
 #set_global_assignment -name SYSTEMVERILOG_FILE rtl/fabric_bank_credit.sv
+#set_global_assignment -name SYSTEMVERILOG_FILE rtl/host_bank_ingest_credit.sv
 #set_global_assignment -name SYSTEMVERILOG_FILE rtl/ddr_bus_arbiter3.sv
 #set_global_assignment -name SYSTEMVERILOG_FILE rtl/fabric_luma_linebuf.sv
 set_global_assignment -name VERILOG_MACRO "FRAME_W=640"

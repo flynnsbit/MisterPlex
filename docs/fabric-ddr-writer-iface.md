@@ -122,3 +122,35 @@ scripts/hdmi_capture_idle.sh /path/to/frame.png
 
 `ddr720p24ShipAcceptsZeroArmPerPixel` requires `publish_bytes=0` — fabric-written
 banks are the path that makes that true. Pattern is fit/bring-up proof, not ship.
+
+## Async producer (PL330 / HPS) — shared with w-path
+
+Ordering (absolute): **credit → fill (chunks OK) → payload_visible → ONE doorbell**.
+
+| Module | Role |
+|--------|------|
+| `fabric_bank_credit.sv` | free_mask, filling_mask, visible_mask; sticky `err_doorbell_before_visible` |
+| `host_bank_ingest_credit.sv` | w-path scoreboard twin on free_mask + doorbell/retire |
+| `bank_producer_order.hpp` | host unit scoreboard (same phases as `ddr_zero_copy_ingest.hpp`) |
+
+Internal pattern writer still uses claim → fill+drain → `commit_pulse` (doorbell already ordered in `fabric_ddr_writer`).
+
+External path ports on credit: `ext_payload_visible_pulse`, `ext_doorbell_pulse`.
+
+NEG test: `./tests/unit/test_fabric_bank_credit_async_verilator.sh`
+
+## Option-C bank alignment facts (copy-rate anomaly — cause unknown)
+
+| Addr | role | mod 1MiB | mod 2MiB |
+|------|------|----------|----------|
+| `0x30180000` | bank0 | `0x80000` | `0x180000` |
+| `0x30300000` | bank1 | `0` | `0x100000` |
+| `0x30200000` | parent A/B probe | `0` | `0` |
+
+Parent saw ~15 ms @ `0x30200000` vs ~21 ms @ bank1. **Do not name a cause** until A/B:
+```bash
+# on device (parent): same len, three destinations
+ddr_write_bench --len 1382400 --bank-phys 0x30180000
+ddr_write_bench --len 1382400 --bank-phys 0x30300000
+ddr_write_bench --len 1382400 --bank-phys 0x30200000
+```

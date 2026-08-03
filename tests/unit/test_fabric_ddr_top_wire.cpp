@@ -45,6 +45,8 @@ int main() {
     CHECK(top.find("fabric_bank_credit") != std::string::npos ||
           top.find("fabric_free_mask") != std::string::npos);
     CHECK(qsf.find("rtl/fabric_bank_credit.sv") != std::string::npos);
+    CHECK(qsf.find("rtl/host_bank_ingest_credit.sv") != std::string::npos);
+    CHECK(top.find("host_bank_ingest_credit") != std::string::npos);
     CHECK(qsf.find("FABRIC_DDR_WRITER_480P=1") != std::string::npos);
     if (fails) { std::fprintf(stderr,"test_fabric_ddr_top_wire: %d fails\n", fails); return 1; }
     std::printf("test_fabric_ddr_top_wire: OK default_off=1 arb3_wired=1 optionc_default=1\n");

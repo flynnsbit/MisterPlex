@@ -1,16 +1,12 @@
 // fabric_bank_credit — dual-bank free_mask / claim / commit (w-mem).
 //
-// Mirrors product PLXD semantics (mailbox_abi_spec.hpp) so fabric writer and
-// external DMA (PL330 / ARM) share one contract with the scanout reader
-// (w-scaler owns read of the same banks):
+// Agrees with w-path host_bank_ingest_credit + ddr_zero_copy_ingest ordering:
+//   credit (free_mask) → exclusive claim/fill → payload_visible → doorbell/commit
+//   → vsync retire frees old disp. Never scan a bank mid-fill.
 //
-//   free_mask bit i = 1  → producer may fill bank i
-//   claim(bank)          → clear free bit (exclusive fill)
-//   commit(bank)         → payload+doorbell done; bank becomes pending display
-//   vsync_swap           → pending becomes disp; old disp returns to free
-//
-// Corruption class (rd-duck): never claim/commit the bank that is disp while
-// scanout is live — free_mask enforces that. swap_pending ⇒ free_mask=0.
+// Internal fabric_ddr_writer: claim → fill+drain → commit_pulse (= doorbell done).
+// External async (PL330): claim → chunks → payload_visible_pulse → doorbell_pulse.
+// Doorbell before payload_visible is sticky-error (tearing class).
 //
 // Macro FABRIC_DDR_WRITER default OFF.
 //
@@ -20,24 +16,37 @@ module fabric_bank_credit (
 	input  wire       clk,
 	input  wire       reset,
 
-	// Scanout domain event (already synced to clk if needed)
-	input  wire       vsync_swap,   // pulse: present flipped to pending bank
+	input  wire       vsync_swap,
 
-	// Producer claim/commit (fabric writer or external via fabric bridge)
+	// Exclusive claim (fabric or host bridge)
 	input  wire       claim_req,
 	output reg        claim_ack,
-	output reg  [1:0] claim_bank,   // bank granted (valid with claim_ack)
-	input  wire       commit_pulse, // after last payload + doorbell ordered
+	output reg  [1:0] claim_bank,
+
+	// Internal writer path: single pulse after drain+doorbell ordered
+	input  wire       commit_pulse,
 	input  wire [1:0] commit_bank,
 
-	// PLXD-compatible status (combinational + registered publish)
+	// External async path (PL330 / HPS) — optional; leave 0 if unused
+	input  wire       ext_payload_visible_pulse,
+	input  wire [1:0] ext_visible_bank,
+	input  wire       ext_doorbell_pulse,
+	input  wire [1:0] ext_doorbell_bank,
+
 	output reg  [1:0] free_mask,
 	output reg        disp_bank,
 	output reg        swap_pending,
 	output reg        pending_bank,
 	output reg [15:0] frames_done,
 
-	// Convenience: next free bank or 2'b11 if none
+	// Mid-fill mask: claimed, not yet doorbell-committed
+	output reg  [1:0] filling_mask,
+	// Visible but doorbell not yet rung (ext path)
+	output reg  [1:0] visible_mask,
+
+	output reg        err_doorbell_before_visible,
+	output reg        err_doorbell_without_credit,
+
 	output wire [1:0] next_free_bank,
 	output wire       any_free
 );
@@ -46,50 +55,85 @@ module fabric_bank_credit (
 	assign any_free = |free_mask;
 	assign next_free_bank = free0 ? 2'd0 : (free1 ? 2'd1 : 2'd3);
 
-	// Pack helper for host-side tests (same bit layout as PLXD upper word)
-	// free[1:0] | disp<<2 | swap<<3 | frames<<16  — exposed via dbg
 	(* keep = 1 *) wire [31:0] plxd_hi_keep = {
 		frames_done,
-		12'd0,
+		8'd0,
+		err_doorbell_before_visible,
+		err_doorbell_without_credit,
+		visible_mask,
+		filling_mask,
 		swap_pending,
 		disp_bank,
 		free_mask
 	};
 
+	wire [1:0] cbank = commit_bank;
+	wire [1:0] vbank = ext_visible_bank;
+	wire [1:0] dbank = ext_doorbell_bank;
+
 	always @(posedge clk) begin
 		if (reset) begin
-			// Both banks free, displaying 0 conceptually but free_mask allows 1
-			// first (product: free = ~disp when !swap_pending → free bank1 if disp0)
 			disp_bank     <= 1'b0;
 			pending_bank  <= 1'b0;
 			swap_pending  <= 1'b0;
-			free_mask     <= 2'b10; // bank1 free (disp holds 0) — product rule
+			free_mask     <= 2'b10;
 			frames_done   <= 16'd0;
 			claim_ack     <= 1'b0;
 			claim_bank    <= 2'd0;
+			filling_mask  <= 2'b00;
+			visible_mask  <= 2'b00;
+			err_doorbell_before_visible <= 1'b0;
+			err_doorbell_without_credit <= 1'b0;
 		end else begin
 			claim_ack <= 1'b0;
 
-			// Claim: exclusive take of one free bank
+			// Claim: exclusive take of one free bank → filling
 			if (claim_req && any_free && !claim_ack) begin
 				claim_bank <= next_free_bank;
 				claim_ack  <= 1'b1;
-				if (next_free_bank == 2'd0)
-					free_mask[0] <= 1'b0;
-				else if (next_free_bank == 2'd1)
-					free_mask[1] <= 1'b0;
+				if (next_free_bank == 2'd0) begin
+					free_mask[0]    <= 1'b0;
+					filling_mask[0] <= 1'b1;
+				end else if (next_free_bank == 2'd1) begin
+					free_mask[1]    <= 1'b0;
+					filling_mask[1] <= 1'b1;
+				end
 			end
 
-			// Commit: producer finished write+doorbell → pending display
+			// External: payload fully visible (DMA done / barrier)
+			if (ext_payload_visible_pulse) begin
+				if (filling_mask[vbank[0]]) begin
+					filling_mask[vbank[0]] <= 1'b0;
+					visible_mask[vbank[0]] <= 1'b1;
+				end
+			end
+
+			// External doorbell — require visible_mask (NEG if still filling)
+			if (ext_doorbell_pulse) begin
+				if (!visible_mask[dbank[0]] && !filling_mask[dbank[0]])
+					err_doorbell_without_credit <= 1'b1;
+				if (filling_mask[dbank[0]] || !visible_mask[dbank[0]])
+					err_doorbell_before_visible <= 1'b1;
+				else begin
+					visible_mask[dbank[0]] <= 1'b0;
+					pending_bank <= dbank[0];
+					swap_pending <= 1'b1;
+					free_mask    <= 2'b00;
+				end
+			end
+
+			// Internal writer commit: drain+doorbell already ordered in writer
 			if (commit_pulse) begin
-				pending_bank <= commit_bank[0];
+				filling_mask[cbank[0]] <= 1'b0;
+				visible_mask[cbank[0]] <= 1'b0;
+				pending_bank <= cbank[0];
 				swap_pending <= 1'b1;
-				free_mask    <= 2'b00; // both in use until vsync
+				free_mask    <= 2'b00;
 			end
 
-			// Vsync swap: pending → disp; old disp free (full-mask write)
+			// Vsync swap: pending → disp; old disp free
 			if (vsync_swap && swap_pending) begin
-				free_mask    <= (2'b01 << disp_bank); // only old disp becomes free
+				free_mask    <= (2'b01 << disp_bank);
 				disp_bank    <= pending_bank;
 				swap_pending <= 1'b0;
 				frames_done  <= frames_done + 16'd1;

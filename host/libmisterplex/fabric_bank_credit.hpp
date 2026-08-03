@@ -17,6 +17,8 @@
 //   vsync → disp←pending, free old disp, frames_done++
 //
 // Overlap path: fill free bank while scanning disp is legal iff free_mask holds.
+// Async PL330/HPS: use bank_producer_order.hpp (credit→fill→visible→doorbell).
+// Fabric twin scoreboard: host_bank_ingest_credit.sv (w-path).
 
 #include "libmisterplex/input_mailbox.hpp"
 

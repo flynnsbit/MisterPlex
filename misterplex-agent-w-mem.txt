@@ -1,23 +1,29 @@
 agent=w-mem
 branch=w-mem-720p-abi
-status=READY_FOR_INTEGRATION_FIT (macro OFF default)
+status=READY_FOR_INTEGRATION_FIT (macro OFF)
 
-## Budget re-anchor (parent HW evidence #3)
-- maxBR floor 3100; content ~2600k decode 36.27 ms/f; residual 5.40 ms
-- serial still FAIL; overlap sketch PASS (contention unproven)
-- constants: kPlex720pCandidateBitrateKbit=3100, decode 36.27
-
-## RTL (prior commit 7365998e)
-- fabric_bank_credit + Option-C writer + moving pattern
-- FABRIC_DDR_WRITER default OFF; 480P opt-out
+## This delivery
+- Async credit: filling_mask + visible_mask + err_doorbell_before_visible
+- host_bank_ingest_credit.sv wired under FABRIC_DDR_WRITER (keep)
+- bank_producer_order.hpp agrees w-path credit→fill→visible→doorbell
+- Option-C align FACTS only (no causal claim on 15 vs 21 ms)
+- Moving pattern still drives writer (frame_phase); hierarchy keep expanded
 
 ## true rc
-- test_ddr_720p_abi: 0 (residual_candidate_2600k=5.397)
-- test_ddr_mem_map_policy: 0
-- arbiter3 / writer / path / top_wire / bank_credit: 0 (prior)
+- test_bank_producer_order: 0
+- test_optionc_bank_align: 0
+- fabric_bank_credit_async_verilator: 0
+- arbiter3 / writer / path / top_wire / bank_credit: 0
 
-## Parent fit enable
-Uncomment FABRIC_DDR_WRITER=1 + SV stack incl fabric_bank_credit.sv
+## Fit enable (parent)
+FABRIC_DDR_WRITER=1 + SV:
+  fabric_ddr_writer, i420_pattern_src, write_path, attach,
+  fabric_bank_credit, host_bank_ingest_credit, arbiter3, luma_linebuf
 Optional FABRIC_DDR_WRITER_480P=1 without scaler
-post-fit-hierarchy non-zero: attach credit writer arbiter3
-hdmi_capture_idle.sh for motion; ARM idle
+
+## Parent measure
+1. post-fit-hierarchy non-zero: attach, fabric_bank_credit, host_bank_ingest_credit,
+   fabric_ddr_writer, fabric_i420_pattern_src, ddr_bus_arbiter3
+2. hdmi_capture_idle.sh — motion, ARM idle
+3. Copy anomaly A/B (cause unknown):
+   ddr_write_bench --len 1382400 @ 0x30180000 / 0x30300000 / 0x30200000

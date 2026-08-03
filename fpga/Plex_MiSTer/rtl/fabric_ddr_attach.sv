@@ -59,6 +59,9 @@ module fabric_ddr_attach #(
 	wire path_busy, path_done;
 	wire [7:0] phase_out;
 
+	wire err_db_before_vis, err_db_no_credit;
+	wire [1:0] filling_mask, visible_mask;
+
 	fabric_bank_credit credit (
 		.clk(clk),
 		.reset(reset),
@@ -68,11 +71,19 @@ module fabric_ddr_attach #(
 		.claim_bank(claim_bank),
 		.commit_pulse(path_done),
 		.commit_bank(bank_r),
+		.ext_payload_visible_pulse(1'b0),
+		.ext_visible_bank(2'd0),
+		.ext_doorbell_pulse(1'b0),
+		.ext_doorbell_bank(2'd0),
 		.free_mask(free_mask),
 		.disp_bank(disp_bank),
 		.swap_pending(swap_pending),
 		.pending_bank(),
 		.frames_done(frames_done),
+		.filling_mask(filling_mask),
+		.visible_mask(visible_mask),
+		.err_doorbell_before_visible(err_db_before_vis),
+		.err_doorbell_without_credit(err_db_no_credit),
 		.next_free_bank(),
 		.any_free()
 	);
@@ -163,7 +174,8 @@ module fabric_ddr_attach #(
 
 	// Hierarchy keep: credit + phase must survive fit when enabled
 	(* keep = 1 *) wire _keep_attach =
-		|free_mask | disp_bank | swap_pending | |frames_done | |phase_out | busy;
+		|free_mask | disp_bank | swap_pending | |frames_done | |phase_out | busy |
+		|filling_mask | |visible_mask | err_db_before_vis | err_db_no_credit;
 
 endmodule
 
