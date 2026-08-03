@@ -1,0 +1,9 @@
+GREEN_FORCE_SCALE_GEOM cases=13 coded_bytes=449280
+GREEN_OUTPUT_PIN force_scale output_bytes=449280 == reader
+GREEN_FFMPEG_PAD_ORACLE expr_rc=0 explicit_rc=0 L=2 mandatory
+GREEN_NO_V_RESAMPLE out_h_624=475 legacy_red=1 product_crop_pad=1 verified_identity=1 p240_upscale=1 p640_hfit=1
+GREEN_WIDTH_MISMATCH w640=hfit w720=hfit v350=scale d426=scale foar_coded_not_618=1
+GREEN_LOSS2_COMPOUND v312=0.500 a312=0.250 cmp312=0.500 fv16=0.731
+GREEN_PATH_720p_VF identity=verified short404=scale unv=scale dp=skip
+GREEN_PATH_identity_fixed_out_barrier race_model+policy
+PASS test_ffmpeg_vf

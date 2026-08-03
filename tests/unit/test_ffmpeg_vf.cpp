@@ -525,35 +525,65 @@ int main() {
                "SkipIdentity 426→432 also explicit pad x=2");
     }
 
-    // Live FFmpeg oracle (when present): expr (ow-iw)/2 AND explicit :2:0 both place
-    // content at L=2 on yuv420p. Gates the model against real filter output.
-    // Note: pad color=black on yuv420p is studio black Y=16, not 0. Content from
-    // geq lum=X starts Y=0,1,2… so detect content start as the 0,1,2 ramp, not
-    // "first non-zero" (that would hit the pad).
+    // Live FFmpeg oracle — MANDATORY (rd-duck fit-release gate).
+    // Soft-skip of missing/failing ffmpeg was a hole: placement evidence fell
+    // back to the self-model. Require rc=0 before accepting L=2 placement.
+    // pad color=black on yuv420p is studio black Y=16; geq lum=X content is 0,1,2…
     {
         const char* ff = std::getenv("FFMPEG");
         if (!ff || !*ff)
             ff = "ffmpeg";
+        // Availability: must resolve on PATH (or absolute FFMPEG=).
+        {
+            std::string which = std::string("command -v ") + ff + " >/dev/null 2>&1";
+            const int rc_which = std::system(which.c_str());
+            expect(rc_which == 0,
+                   "ffmpeg oracle: FFMPEG binary required on PATH (fit-release; no soft-skip)");
+            if (rc_which != 0) {
+                std::fprintf(stderr,
+                             "FAIL ffmpeg oracle: binary missing (set FFMPEG= or install ffmpeg)\n");
+            }
+        }
         const char* outp = "build/pad_oracle_426_432.yuv";
+        const char* errp = "build/pad_oracle_426_432.err";
+        ::system("mkdir -p build");
         auto find_content_x = [](const uint8_t* row, int w) -> int {
-            // Expect pad Y=16 then content ramp 0,1,2… (geq lum=X).
             for (int x = 0; x + 2 < w; ++x) {
                 if (row[x] == 0 && row[x + 1] == 1 && row[x + 2] == 2)
                     return x;
             }
             return -1;
         };
-        std::string cmd = std::string(ff) +
-            " -hide_banner -loglevel error -y "
-            "-f lavfi -i color=c=black:s=426x240:d=0.04:r=25,"
-            "format=yuv420p,geq=lum='X':cb=128:cr=128 "
-            "-vf pad=432:240:\\(ow-iw\\)/2:\\(oh-ih\\)/2:color=black "
-            "-frames:v 1 -f rawvideo -pix_fmt yuv420p " +
-            outp + " 2>/dev/null";
-        const int rc_expr = std::system(cmd.c_str());
+        auto run_oracle = [&](const char* vf, const char* tag) -> int {
+            // Keep stderr for diagnosis; never silence into a green skip.
+            std::string cmd = std::string(ff) +
+                " -hide_banner -loglevel error -y "
+                "-f lavfi -i color=c=black:s=426x240:d=0.04:r=25,"
+                "format=yuv420p,geq=lum='X':cb=128:cr=128 "
+                "-vf " +
+                vf + " -frames:v 1 -f rawvideo -pix_fmt yuv420p " + outp + " 2>" + errp;
+            const int rc = std::system(cmd.c_str());
+            if (rc != 0) {
+                std::fprintf(stderr, "FAIL ffmpeg oracle %s: system_rc=%d cmd=%s\n", tag, rc,
+                             cmd.c_str());
+                FILE* ef = std::fopen(errp, "r");
+                if (ef) {
+                    char buf[512];
+                    size_t n = std::fread(buf, 1, sizeof(buf) - 1, ef);
+                    buf[n] = 0;
+                    std::fclose(ef);
+                    std::fprintf(stderr, "FAIL ffmpeg oracle %s stderr: %s\n", tag, buf);
+                }
+            }
+            return rc;
+        };
+
+        const int rc_expr =
+            run_oracle("pad=432:240:\\(ow-iw\\)/2:\\(oh-ih\\)/2:color=black", "expr");
+        expect(rc_expr == 0, "ffmpeg oracle expr pad rc=0 (mandatory; no soft-skip)");
         if (rc_expr == 0) {
             FILE* f = std::fopen(outp, "rb");
-            expect(f != nullptr, "ffmpeg oracle: open yuv");
+            expect(f != nullptr, "ffmpeg oracle: open yuv after rc=0");
             if (f) {
                 uint8_t row[432];
                 const size_t n = std::fread(row, 1, 432, f);
@@ -563,28 +593,27 @@ int main() {
                 expect(L == 2, "ffmpeg expr (ow-iw)/2 yuv420p → content at x=2");
                 expect(row[0] == 16 && row[1] == 16, "ffmpeg pad left is Y=16 studio black");
                 expect(row[428] == 16 && row[431] == 16, "ffmpeg pad right is Y=16");
-                // Explicit pad must match the same placement.
-                std::string cmd2 = std::string(ff) +
-                    " -hide_banner -loglevel error -y "
-                    "-f lavfi -i color=c=black:s=426x240:d=0.04:r=25,"
-                    "format=yuv420p,geq=lum='X':cb=128:cr=128 "
-                    "-vf pad=432:240:2:0:color=black "
-                    "-frames:v 1 -f rawvideo -pix_fmt yuv420p " +
-                    outp + " 2>/dev/null";
-                const int rc2 = std::system(cmd2.c_str());
-                expect(rc2 == 0, "ffmpeg explicit :2:0 rc=0");
-                f = std::fopen(outp, "rb");
-                if (f) {
-                    std::fread(row, 1, 432, f);
-                    std::fclose(f);
-                    const int L2 = find_content_x(row, 432);
-                    expect(L2 == 2, "ffmpeg explicit pad=432:240:2:0 → content at x=2");
-                    expect(row[2] == 0 && row[3] == 1 && row[4] == 2,
-                           "ffmpeg Y at x=2..4 is source X=0,1,2");
-                }
             }
-        } else {
-            std::fprintf(stderr, "NOTE: ffmpeg oracle skipped (rc=%d)\n", rc_expr);
+        }
+
+        const int rc2 = run_oracle("pad=432:240:2:0:color=black", "explicit");
+        expect(rc2 == 0, "ffmpeg oracle explicit pad=432:240:2:0 rc=0 (mandatory)");
+        int L2 = -1;
+        if (rc2 == 0) {
+            FILE* f = std::fopen(outp, "rb");
+            expect(f != nullptr, "ffmpeg oracle: open yuv explicit");
+            if (f) {
+                uint8_t row[432];
+                expect(std::fread(row, 1, 432, f) == 432u, "ffmpeg oracle explicit read Y");
+                std::fclose(f);
+                L2 = find_content_x(row, 432);
+                expect(L2 == 2, "ffmpeg explicit pad=432:240:2:0 → content at x=2");
+                expect(row[2] == 0 && row[3] == 1 && row[4] == 2,
+                       "ffmpeg Y at x=2..4 is source X=0,1,2");
+            }
+        }
+        if (rc_expr == 0 && rc2 == 0 && L2 == 2) {
+            std::printf("GREEN_FFMPEG_PAD_ORACLE expr_rc=0 explicit_rc=0 L=2 mandatory\n");
         }
     }
     // NEG: unverified 426 claim must still FOAR-scale (not trust pad-only)

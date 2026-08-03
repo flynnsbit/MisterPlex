@@ -1,0 +1,11 @@
+FAIL: ffmpeg oracle: FFMPEG binary required on PATH (fit-release; no soft-skip)
+FAIL ffmpeg oracle: binary missing (set FFMPEG= or install ffmpeg)
+FAIL ffmpeg oracle expr: system_rc=32512 cmd=/nonexistent/ffmpeg_missing -hide_banner -loglevel error -y -f lavfi -i color=c=black:s=426x240:d=0.04:r=25,format=yuv420p,geq=lum='X':cb=128:cr=128 -vf pad=432:240:\(ow-iw\)/2:\(oh-ih\)/2:color=black -frames:v 1 -f rawvideo -pix_fmt yuv420p build/pad_oracle_426_432.yuv 2>build/pad_oracle_426_432.err
+FAIL ffmpeg oracle expr stderr: sh: line 1: /nonexistent/ffmpeg_missing: No such file or directory
+
+FAIL: ffmpeg oracle expr pad rc=0 (mandatory; no soft-skip)
+FAIL ffmpeg oracle explicit: system_rc=32512 cmd=/nonexistent/ffmpeg_missing -hide_banner -loglevel error -y -f lavfi -i color=c=black:s=426x240:d=0.04:r=25,format=yuv420p,geq=lum='X':cb=128:cr=128 -vf pad=432:240:2:0:color=black -frames:v 1 -f rawvideo -pix_fmt yuv420p build/pad_oracle_426_432.yuv 2>build/pad_oracle_426_432.err
+FAIL ffmpeg oracle explicit stderr: sh: line 1: /nonexistent/ffmpeg_missing: No such file or directory
+
+FAIL: ffmpeg oracle explicit pad=432:240:2:0 rc=0 (mandatory)
+test_ffmpeg_vf: 3 failure(s)
