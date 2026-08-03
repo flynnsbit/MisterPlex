@@ -61,15 +61,9 @@
 // back buffer must not be overwritten before the vsync flip. Queue one held
 // start (latest doorbell/SPI) and launch when pending clears.
 
-module ddram_frame_rd #(
+module ddram_frame_rd_prerefactor #(
 	parameter int WIDTH      = 320,
 	parameter int HEIGHT     = 240,
-	// Bank pitch in bytes between bank0 and bank1.
-	// Default 256 KiB (0x40000) is bit-identical to the legacy hardcode
-	// BASE_W1 = PHYS_BASE[31:3] + 32768 qwords (0x8000 qwords × 8 bytes).
-	// YUV480p product uses 512 KiB via ddr_frame_store; 720p needs 1.5 MiB.
-	// Do NOT change the default — product RGB SPI path depends on it.
-	parameter int BANK_STRIDE_BYTES = 32'h0004_0000,
 	parameter [31:0] PHYS_BASE = 32'h3000_0000,
 	parameter [31:0] DOORBELL_PHYS = 32'h3007_F000,
 	parameter [31:0] MAILBOX_PHYS  = 32'h3007_F100,
@@ -128,14 +122,8 @@ module ddram_frame_rd #(
 
 	localparam int PIXELS = WIDTH * HEIGHT;
 	localparam int QWORDS = PIXELS / 4;
-	// Qword counters were [15:0] — overflows at 640×480 RGB (76800 qwords) and
-	// at 1280×720 (230400). Width tracks QWORDS; floor 16 preserves default path
-	// reset/compare width for WIDTH=320 HEIGHT=240 (19200 qwords).
-	localparam int QW_NEED = (QWORDS < 1) ? 1 : $clog2(QWORDS + 1);
-	localparam int QCNT_W  = (QW_NEED < 16) ? 16 : QW_NEED;
 	localparam [28:0] BASE_W0 = PHYS_BASE[31:3];
-	localparam [28:0] BANK_STRIDE_QWORDS = 29'(BANK_STRIDE_BYTES / 8);
-	localparam [28:0] BASE_W1 = PHYS_BASE[31:3] + BANK_STRIDE_QWORDS;
+	localparam [28:0] BASE_W1 = PHYS_BASE[31:3] + 29'h8000;
 	localparam [28:0] DOORBELL_W = DOORBELL_PHYS[31:3];
 	localparam [28:0] MAILBOX_W  = MAILBOX_PHYS[31:3];
 	localparam [28:0] INPUT_MAILBOX_W = INPUT_MAILBOX_PHYS[31:3];
@@ -165,9 +153,9 @@ module ddram_frame_rd #(
 	wire [FIFO_AW-1:0] fifo_rix = fifo_rd[FIFO_AW-1:0];
 
 	reg [28:0] rd_addr;
-	reg [QCNT_W-1:0] qwords_issued;
-	reg [QCNT_W-1:0] qwords_written;
-	reg [QCNT_W-1:0] inflight;
+	reg [15:0] qwords_issued;
+	reg [15:0] qwords_written;
+	reg [15:0] inflight;
 	reg        start_d;
 	reg        active;
 	reg [1:0]  pix_i;
@@ -230,22 +218,20 @@ module ddram_frame_rd #(
 
 	wire [FIFO_AW:0] space = FIFO_N[FIFO_AW:0] - fifo_level;
 	wire can_issue = active && !DDRAM_BUSY && !DDRAM_RD && !DDRAM_WE
-		&& (qwords_issued < QCNT_W'(QWORDS))
+		&& (qwords_issued < QWORDS[15:0])
 		&& (inflight == 0)
 		&& (space >= BURST[FIFO_AW:0])
 		&& !need_reset
 		&& !poll_pending;
 
-	wire [QCNT_W-1:0] remain = QCNT_W'(QWORDS) - qwords_issued;
-	wire [7:0]  this_burst =
-		(remain >= QCNT_W'(BURST)) ? BURST[7:0] : remain[7:0];
+	wire [15:0] remain = QWORDS[15:0] - qwords_issued;
+	wire [7:0]  this_burst = (remain >= BURST[15:0]) ? BURST[7:0] : remain[7:0];
 
 	wire        do_issue = can_issue;
-	wire [QCNT_W-1:0] inf_after_issue =
-		do_issue ? (inflight + QCNT_W'(this_burst)) : inflight;
+	wire [15:0] inf_after_issue = do_issue ? (inflight + {8'd0, this_burst}) : inflight;
 	wire        do_ready_frame = DDRAM_DOUT_READY && active && !poll_pending;
-	wire [QCNT_W-1:0] inf_next =
-		do_ready_frame ? (inf_after_issue != 0 ? inf_after_issue - QCNT_W'(1) : QCNT_W'(0))
+	wire [15:0] inf_next =
+		do_ready_frame ? (inf_after_issue != 0 ? inf_after_issue - 16'd1 : 16'd0)
 		               : inf_after_issue;
 
 	// SPI start edge or doorbell new-seq (detected even if we cannot launch yet)
@@ -467,7 +453,7 @@ module ddram_frame_rd #(
 					DDRAM_BURSTCNT <= this_burst;
 					DDRAM_RD       <= 1'b1;
 					rd_addr        <= rd_addr + {21'd0, this_burst};
-					qwords_issued  <= qwords_issued + QCNT_W'(this_burst);
+					qwords_issued  <= qwords_issued + {8'd0, this_burst};
 				end
 
 				if (do_ready_frame) begin
@@ -490,8 +476,8 @@ module ddram_frame_rd #(
 						wr_en    <= 1'b1;
 						if (pix_i == 2'd3) begin
 							have_beat <= 1'b0;
-							qwords_written <= qwords_written + QCNT_W'(1);
-							if (qwords_written + QCNT_W'(1) == QCNT_W'(QWORDS)) begin
+							qwords_written <= qwords_written + 16'd1;
+							if (qwords_written + 16'd1 == QWORDS[15:0]) begin
 								swap_req    <= 1'b1;
 								frames_done <= frames_done + 16'd1;
 								active      <= 1'b0;

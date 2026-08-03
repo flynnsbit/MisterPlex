@@ -256,10 +256,29 @@ def check_present_core() -> None:
     )
 
     nt = norm(text)
+    # Template path: past_last_row/store_y_clamped derive from TPL_V_STORE (default 240).
+    # Legacy form was py>=10'd240 / clamp 10'd239. Parameterized form must keep default=240.
+    legacy_clamp = (
+        "past_last_row=(py>=10'd240)" in nt
+        and "store_y_clamped=past_last_row?10'd239:py" in nt
+    )
+    param_clamp = (
+        "past_last_row=(py>=10'(TPL_V_STORE))" in nt
+        and "TPL_V_STORE=240" in nt
+        and (
+            "store_y_clamped=past_last_row?10'(TPL_V_STORE>0?TPL_V_STORE-1:0):py" in nt
+            or "store_y_clamped=past_last_row?10'(TPL_V_STORE-1):py" in nt
+        )
+    )
     check(
-        "past_last_row=(py>=10'd240)" in nt and "store_y_clamped=past_last_row?10'd239:py" in nt,
+        legacy_clamp or param_clamp,
         "present_core past_last_row clamp is missing. It prevents fetching row 240 and stops the "
-        "241st-row/bottom-edge artifact; restore past_last_row and store_y_clamped.",
+        "241st-row/bottom-edge artifact; restore past_last_row/store_y_clamped with TPL_V_STORE=240 "
+        "default (or legacy 10'd240/10'd239).",
+    )
+    check(
+        "TPL_H_DE=529" in nt or "H_DE=10'd529" in nt or "localparamH_DE=10'd529" in nt,
+        "present_core Template H_DE default is not 529 (FBAR/G-VID1 contract).",
     )
     check(
         "vb_d=vb|past_last_row" in nt,
