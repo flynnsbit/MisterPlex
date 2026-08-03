@@ -229,6 +229,107 @@ int main(int argc, char** argv) {
     if (fails == 0)
         std::fprintf(stderr, "PASS connected_second_xact\n");
 
+    // --- rd-duck: reset while rd_clk frozen must not drain pre-reset beats ---
+    // After a completed xact both pointers sit at K>0. Sync-only rd reset leaves
+    // rd_ptr=K while wr_ptr restarts at 0 → on resume empty=0 and ghost drains
+    // until rd wraps. Async rd_rst clears rd_ptr even with clk_hdmi held.
+    std::fprintf(stderr, "EXECUTED connected_reset_while_rd_frozen\n");
+    out.clear();
+
+    constexpr int N3 = 4;
+    for (int i = 0; i < N3; ++i) {
+        const uint64_t d = glyph('R', 10 + i, 20);
+        mem_wr(t, 0x140 + static_cast<uint32_t>(i) * 8, d);
+    }
+    const uint64_t ctrl_stale = pack_ctrl(true, N3, 77);
+    mem_wr(t, 0x130, 0);
+    mem_wr(t, 0x130, ctrl_stale);
+    // Both clocks: fully drain so rd_ptr == wr_ptr == N3+1 (>0).
+    for (int i = 0; i < 2000; ++i) {
+        run_sys(t, 1, /*freeze*/ 0, &out);
+        if (t->last_seq == 77 && !t->busy && t->cdc_empty)
+            break;
+    }
+    run_sys(t, 40, 0, &out);
+    if (out.size() != static_cast<size_t>(N3 + 1))
+        fail("reset-frozen: setup drain count");
+    if (!t->cdc_empty)
+        fail("reset-frozen: setup not empty");
+
+    // Freeze rd with pointers parked mid-range; scrub mem under reset so loader
+    // cannot re-push — isolates FIFO pointer reset from reload.
+    out.clear();
+    t->reset = 1;
+    for (int i = 0; i < 4; ++i)
+        run_sys(t, 1, /*freeze*/ 1, &out);
+    t->freeze_rd = 1;
+    mem_wr(t, 0x130, 0);
+    for (int i = 0; i < N3; ++i)
+        mem_wr(t, 0x140 + static_cast<uint32_t>(i) * 8, 0);
+    for (int i = 0; i < 16; ++i)
+        run_sys(t, 1, /*freeze*/ 1, &out);
+    t->reset = 0;
+    for (int i = 0; i < 10; ++i)
+        run_sys(t, 1, /*freeze*/ 1, &out);
+    if (out.size() != 0)
+        fail("reset-frozen: rd_we during/after reset while freeze");
+
+    // Resume: must NOT emit ghost beats; empty must converge.
+    out.clear();
+    int empty_ok = 0;
+    for (int i = 0; i < 200; ++i) {
+        run_sys(t, 1, /*freeze*/ 0, &out);
+        if (t->cdc_empty)
+            empty_ok = 1;
+    }
+    if (!out.empty()) {
+        std::fprintf(stderr, "reset-frozen: ghost beats after resume n=%zu first a=%u\n",
+                     out.size(), (unsigned)out[0].addr);
+        fail("reset-frozen: zero old rd_we after resume (stale drain)");
+    }
+    if (!empty_ok)
+        fail("reset-frozen: cdc_empty did not converge after resume");
+
+    // Fresh record applies exactly once.
+    out.clear();
+    constexpr int N4 = 3;
+    std::vector<Beat> exp4;
+    for (int i = 0; i < N4; ++i) {
+        const uint64_t d = glyph('F', 1 + i, 2);
+        exp4.push_back({static_cast<uint8_t>(i), d});
+        mem_wr(t, 0x140 + static_cast<uint32_t>(i) * 8, d);
+    }
+    const uint64_t ctrl4 = pack_ctrl(true, N4, 99);
+    exp4.push_back({0xFF, ctrl4});
+    mem_wr(t, 0x130, 0);
+    mem_wr(t, 0x130, ctrl4);
+    for (int i = 0; i < 2000; ++i) {
+        run_sys(t, 1, 0, &out);
+        if (t->last_seq == 99 && !t->busy && t->cdc_empty)
+            break;
+    }
+    run_sys(t, 40, 0, &out);
+
+    if (t->last_seq != 99)
+        fail("reset-frozen: fresh last_seq want 99");
+    if (out.size() != exp4.size()) {
+        std::fprintf(stderr, "reset-frozen fresh out=%zu want=%zu\n", out.size(), exp4.size());
+        fail("reset-frozen: fresh record beat count (exactly once)");
+    }
+    for (size_t i = 0; i < exp4.size() && i < out.size(); ++i) {
+        if (out[i].addr != exp4[i].addr || out[i].data != exp4[i].data) {
+            fail("reset-frozen: fresh record data");
+            break;
+        }
+    }
+    out.clear();
+    run_sys(t, 80, 0, &out);
+    if (!out.empty())
+        fail("reset-frozen: fresh record applied more than once");
+
+    if (fails == 0)
+        std::fprintf(stderr, "PASS connected_reset_while_rd_frozen\n");
+
     delete t;
     if (fails) {
         std::fprintf(stderr, "plex_chrome_plxc_connected_tb: %d FAIL(s)\n", fails);

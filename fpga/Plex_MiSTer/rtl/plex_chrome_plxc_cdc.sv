@@ -14,6 +14,15 @@
 // advance only on valid&&ready same edge as wr_en&&!wr_full. Registered we +
 // advance-on-ready drops the fill-last-slot beat (rd-duck on 96e4a50d).
 //
+// Reset (rd-duck stopped-clock boundary): each domain uses ASYNC assert /
+// SYNC deassert. Sync-only `if (rst)` inside `always @(posedge clk)` never
+// samples when clk_hdmi is frozen through a RESET pulse — rd_ptr/gray would
+// retain pre-reset state while wr_ptr restarts at 0, draining stale PLXC.
+// Deassert: 2-FF chain per domain so release is local-clock-safe; if the
+// domain clock is still stopped, the FF chain holds asserted until the first
+// post-resume edges (documented requirement: hold external *_rst until both
+// clocks will run again, or accept residual local-reset until they do).
+//
 // FAULT_EDGE_DETECT: compile the broken edge path for the red twin TB only.
 
 `timescale 1ns / 1ps
@@ -74,10 +83,38 @@ module plex_chrome_plxc_cdc #(
 
 	assign rd_empty = (rd_ptr_gray == wr_gray_sync);
 
-	// Write domain
-	integer wi;
-	always @(posedge wr_clk) begin
+	// --- domain-local reset: async assert, 2-FF sync deassert ---
+	reg wr_rst_meta, wr_rst_sync;
+	always @(posedge wr_clk or posedge wr_rst) begin
 		if (wr_rst) begin
+			wr_rst_meta <= 1'b1;
+			wr_rst_sync <= 1'b1;
+		end else begin
+			wr_rst_meta <= 1'b0;
+			wr_rst_sync <= wr_rst_meta;
+		end
+	end
+
+	reg rd_rst_meta, rd_rst_sync;
+	always @(posedge rd_clk or posedge rd_rst) begin
+		if (rd_rst) begin
+			rd_rst_meta <= 1'b1;
+			rd_rst_sync <= 1'b1;
+		end else begin
+			rd_rst_meta <= 1'b0;
+			rd_rst_sync <= rd_rst_meta;
+		end
+	end
+
+	// Write domain — async wr_rst so a pulse lands even if wr_clk is gated
+	always @(posedge wr_clk or posedge wr_rst) begin
+		if (wr_rst) begin
+			wr_ptr_bin      <= '0;
+			wr_ptr_gray     <= '0;
+			rd_ptr_gray_w1  <= '0;
+			rd_ptr_gray_w2  <= '0;
+		end else if (wr_rst_sync) begin
+			// Hold cleared through sync-deassert tail (recovery-safe)
 			wr_ptr_bin      <= '0;
 			wr_ptr_gray     <= '0;
 			rd_ptr_gray_w1  <= '0;
@@ -93,9 +130,17 @@ module plex_chrome_plxc_cdc #(
 		end
 	end
 
-	// Read domain — one beat per cycle when not empty
-	always @(posedge rd_clk) begin
+	// Read domain — async rd_rst: critical when clk_hdmi is frozen through RESET
+	always @(posedge rd_clk or posedge rd_rst) begin
 		if (rd_rst) begin
+			rd_ptr_bin      <= '0;
+			rd_ptr_gray     <= '0;
+			wr_ptr_gray_r1  <= '0;
+			wr_ptr_gray_r2  <= '0;
+			rd_we           <= 1'b0;
+			rd_addr         <= 8'd0;
+			rd_data         <= 64'd0;
+		end else if (rd_rst_sync) begin
 			rd_ptr_bin      <= '0;
 			rd_ptr_gray     <= '0;
 			wr_ptr_gray_r1  <= '0;
@@ -140,7 +185,7 @@ module plex_chrome_plxc_cdc_edge_fault (
 	reg we_d1, we_d2, we_d3;
 	reg [7:0] a_d1, a_d2;
 	reg [63:0] d_d1, d_d2;
-	always @(posedge rd_clk) begin
+	always @(posedge rd_clk or posedge rd_rst) begin
 		if (rd_rst) begin
 			we_d1 <= 1'b0; we_d2 <= 1'b0; we_d3 <= 1'b0;
 			a_d1 <= 8'd0; a_d2 <= 8'd0;

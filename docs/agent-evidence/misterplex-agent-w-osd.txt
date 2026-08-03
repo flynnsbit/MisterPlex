@@ -185,3 +185,9 @@ HEAD=16000c7d
 host_we/addr/data COMB valid; advance li/last_seq only on ready same edge FIFO accepts.
 connected TB: freeze saw_full=1 last_seq=0 we_held; resume out=13/13 seq42 PASS
 true rc=0: connected, cdc, loader product, e2e
+
+== PLXC CDC async reset (rd-duck freeze+RESET) ==
+BEFORE: always @(posedge rd_clk) if (rd_rst) — rd domain misses RESET when clk_hdmi frozen
+AFTER:  always @(posedge rd_clk or posedge rd_rst) + 2FF sync deassert per domain
+TB: connected_reset_while_rd_frozen — drain xact (rd_ptr>0), freeze, RESET, scrub mem, resume
+  good true rc=0; full sync-only mutant ghost n=8 true rc!=0

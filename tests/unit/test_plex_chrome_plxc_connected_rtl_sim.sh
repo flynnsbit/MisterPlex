@@ -58,7 +58,21 @@ assert_exec "plxc-connected" "$OUT" \
   "PASS connected_near_full" \
   "EXECUTED connected_second_xact" \
   "PASS connected_second_xact" \
+  "EXECUTED connected_reset_while_rd_frozen" \
+  "PASS connected_reset_while_rd_frozen" \
   "plex_chrome_plxc_connected_tb: PASS"
+
+# Async assert required so freeze+RESET clears rd domain (rd-duck)
+if ! grep -q 'posedge wr_clk or posedge wr_rst' \
+  "$ROOT/fpga/Plex_MiSTer/rtl/plex_chrome_plxc_cdc.sv"; then
+  echo "FAIL plxc_cdc missing async wr domain reset" >&2
+  exit 1
+fi
+if ! grep -q 'posedge rd_clk or posedge rd_rst' \
+  "$ROOT/fpga/Plex_MiSTer/rtl/plex_chrome_plxc_cdc.sv"; then
+  echo "FAIL plxc_cdc missing async rd domain reset" >&2
+  exit 1
+fi
 
 # Product loader must use comb host_we (not reg advance-before-accept)
 if grep -nE 'output\s+reg\s+.*host_we' "$ROOT/fpga/Plex_MiSTer/rtl/plex_chrome_ddr_loader.sv"; then
