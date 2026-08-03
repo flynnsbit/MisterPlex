@@ -73,7 +73,9 @@ module ddr_store_rgb_lag_tb #(
 		.DDRAM_RD(DDRAM_RD), .DDRAM_DIN(DDRAM_DIN), .DDRAM_BE(DDRAM_BE),
 		.DDRAM_WE(DDRAM_WE), .vsync_pulse(vsync_pulse),
 		.has_frame(has_frame), .swap_pending(), .underrun_count(underrun_count),
-		.frames_done(), .doorbell_ok(), .debug_state()
+		.frames_done(), .doorbell_ok(), .debug_state(),
+		.geom_hold_black(),
+		.geom_hollow_fault()
 	);
 endmodule
 `default_nettype wire

@@ -1,4 +1,5 @@
 // B4 red twin + product: FPGA reset last_seq=0 + retained seq=N epoch=0 ABA.
+// B16: promote only after frame_boundary.
 #include "Vpresent_geom_latch_aba_tb_top.h"
 #include "verilated.h"
 #include <cstdint>
@@ -19,11 +20,16 @@ static uint64_t pack_q0(bool win, bool geom, uint16_t seq, uint16_t epoch) {
 	if (geom) hi |= 2ull;
 	hi |= (uint64_t)(epoch & 0x3FFF) << 2;
 	hi |= (uint64_t)seq << 16;
-	return (hi << 32) | 0x504C5847ull;
+	return (hi << 32) | 0x47584C50ull;
+}
+
+static void promote(Vpresent_geom_latch_aba_tb_top* t) {
+	t->frame_boundary = 1; tick(t);
+	t->frame_boundary = 0; tick(t); tick(t);
 }
 
 static void write_record(Vpresent_geom_latch_aba_tb_top* t, uint64_t q0,
-                         bool geom_on) {
+                         bool geom_on, bool do_promote = true) {
 	uint64_t q[5] = {
 		q0,
 		/*q1*/ (960ull) | (540ull << 16),
@@ -40,6 +46,8 @@ static void write_record(Vpresent_geom_latch_aba_tb_top* t, uint64_t q0,
 		t->wr_en = 0; tick(t);
 	}
 	t->commit = 1; tick(t); t->commit = 0; tick(t); tick(t);
+	if (do_promote)
+		promote(t);
 }
 
 int main(int argc, char** argv) {
@@ -47,6 +55,7 @@ int main(int argc, char** argv) {
 	const bool fault = (std::getenv("FAULT_NO_EPOCH") != nullptr);
 	auto* t = new Vpresent_geom_latch_aba_tb_top;
 	t->reset = 1; t->wr_en = 0; t->commit = 0; t->wr_idx = 0; t->wr_data = 0;
+	t->frame_boundary = 0;
 	for (int i = 0; i < 4; i++) tick(t);
 	t->reset = 0; tick(t);
 
@@ -57,11 +66,11 @@ int main(int argc, char** argv) {
 	const unsigned seq = t->live_seq;
 	const unsigned ep = t->live_epoch;
 
-	std::printf("B4_ABA fault=%d accepted=%d live_seq=%u live_epoch=%u geom=%u\n",
-	            (int)fault, accepted, seq, ep, (unsigned)t->geom_enable);
+	std::printf("B4_ABA fault=%d accepted=%d live_seq=%u live_epoch=%u geom=%u pend=%u\n",
+	            (int)fault, accepted, seq, ep, (unsigned)t->geom_enable,
+	            (unsigned)t->pending_valid);
 
 	if (fault) {
-		// Red twin MUST accept ABA (seq=7 != last_seq=0, epoch ignored).
 		if (!accepted || seq != 7) {
 			std::fprintf(stderr, "FAIL red twin: expected ABA accept seq=7 got acc=%d seq=%u\n",
 			             accepted, seq);
@@ -72,13 +81,13 @@ int main(int argc, char** argv) {
 		return 0;
 	}
 
-	// Product MUST reject epoch=0 after reset.
-	if (accepted) {
-		std::fprintf(stderr, "FAIL product: epoch=0 seq=7 accepted after reset (ABA open)\n");
+	// Product MUST reject epoch=0 after reset (no pending either).
+	if (accepted || t->pending_valid) {
+		std::fprintf(stderr, "FAIL product: epoch=0 seq=7 accepted/staged after reset (ABA open)\n");
 		return 1;
 	}
 
-	// Product accepts epoch=1 seq=7.
+	// Product accepts epoch=1 seq=7 after promote.
 	write_record(t, pack_q0(true, true, 7, 1), true);
 	if (!t->live_valid || t->live_seq != 7 || t->live_epoch != 1 || !t->geom_enable) {
 		std::fprintf(stderr, "FAIL product: epoch=1 seq=7 not committed valid=%u seq=%u ep=%u geom=%u\n",
@@ -88,7 +97,6 @@ int main(int argc, char** argv) {
 	}
 
 	// Same (epoch,seq) rejected.
-	t->live_valid = t->live_valid; // keep
 	write_record(t, pack_q0(false, false, 7, 1), false);
 	if (!t->geom_enable || t->live_seq != 7) {
 		std::fprintf(stderr, "FAIL product: same pair should not replace live\n");
@@ -103,7 +111,27 @@ int main(int argc, char** argv) {
 		return 1;
 	}
 
-	std::printf("PASS B4 product epoch rejects ABA; accepts new pair\n");
+	// B16: commit without boundary must NOT promote live.
+	write_record(t, pack_q0(true, true, 9, 1), true, /*do_promote=*/false);
+	if (t->live_seq == 9 || !t->pending_valid) {
+		std::fprintf(stderr, "FAIL B16: commit promoted without frame_boundary seq=%u pend=%u\n",
+		             (unsigned)t->live_seq, (unsigned)t->pending_valid);
+		return 1;
+	}
+	if (t->live_seq != 8) {
+		std::fprintf(stderr, "FAIL B16: live moved before promote live_seq=%u\n",
+		             (unsigned)t->live_seq);
+		return 1;
+	}
+	promote(t);
+	if (t->live_seq != 9 || t->pending_valid || !t->geom_enable) {
+		std::fprintf(stderr, "FAIL B16: promote failed seq=%u pend=%u geom=%u\n",
+		             (unsigned)t->live_seq, (unsigned)t->pending_valid,
+		             (unsigned)t->geom_enable);
+		return 1;
+	}
+
+	std::printf("PASS B4 product epoch rejects ABA; B16 stage-then-promote ok\n");
 	delete t;
 	return 0;
 }

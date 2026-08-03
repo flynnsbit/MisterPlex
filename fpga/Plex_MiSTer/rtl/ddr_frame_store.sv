@@ -135,7 +135,11 @@ module ddr_frame_store #(
 	output reg  [15:0] underrun_count,
 	output reg  [15:0] frames_done,
 	output reg         doorbell_ok,
-	output wire  [7:0] debug_state
+	output wire  [7:0] debug_state,
+	// B16: geometry transition hold (ascal HDMI_BLACKOUT / local RGB black).
+	output reg         geom_hold_black,
+	// B16: hollow/silent-legacy after prior live geom (PLXF 0xE3).
+	output wire        geom_hollow_fault
 );
 	// Port/scan domain: cover presentation FRAME and max content.
 	localparam int RD_W_MAX = (FRAME_W > MAX_CODED_W) ? FRAME_W : MAX_CODED_W;
@@ -389,6 +393,88 @@ module ddr_frame_store #(
 		end
 	end
 
+	// ---- B16: atomic geom epoch, hold-black, hollow loud-reject --------------------
+	// Layout change (eff_* / geom_en_r) bumps geom_epoch_r, asserts geom_hold_black,
+	// and pulses geom_inv_tog for clk_ddr line-cache invalidate + fill abort.
+	// Epoch is also tagged on each line fill; video hits require epoch match so a
+	// stale valid bit under a new pitch cannot resolve (counting oracles stay green
+	// on mixed frames otherwise).
+	reg  [3:0] geom_epoch_r;
+	reg        geom_inv_tog;
+	reg        geom_hollow_r;
+	reg        had_geom_r;
+	reg  [1:0] black_vs_left;
+	reg        geom_en_r_d;
+	reg [10:0] eff_cw_d, eff_ch_d;
+	reg [11:0] eff_ys_d;
+	reg [10:0] eff_cs_d;
+	reg        eff_optc_d;
+
+	wire geom_layout_chg =
+		(geom_en_r != geom_en_r_d) ||
+		(eff_coded_w != eff_cw_d) ||
+		(eff_coded_h != eff_ch_d) ||
+		(eff_y_stride != eff_ys_d) ||
+		(eff_c_stride != eff_cs_d) ||
+		(eff_optc_map != eff_optc_d);
+
+	assign geom_hollow_fault = geom_hollow_r;
+
+	always @(posedge clk) begin
+		if (reset) begin
+			geom_epoch_r    <= 4'd0;
+			geom_inv_tog    <= 1'b0;
+			geom_hold_black <= 1'b0;
+			geom_hollow_r   <= 1'b0;
+			had_geom_r      <= 1'b0;
+			black_vs_left   <= 2'd0;
+			geom_en_r_d     <= 1'b0;
+			eff_cw_d        <= 11'(CODED_W);
+			eff_ch_d        <= 11'(CODED_H);
+			eff_ys_d        <= 12'(CODED_W);
+			eff_cs_d        <= 11'(CODED_W/2);
+			eff_optc_d      <= 1'b0;
+		end else begin
+			if (geom_en_r)
+				had_geom_r <= 1'b1;
+`ifdef DDR_FRAME_STORE_FAULT_SILENT_HOLLOW
+			// red twin: never raise hollow
+			geom_hollow_r <= 1'b0;
+`else
+			// Loud when prior live geom is lost while a frame is on-screen and
+			// not already in geom_reject — silent legacy is the defect class.
+			if (had_geom_r && !geom_en_r && !geom_reject_r && has_frame)
+				geom_hollow_r <= 1'b1;
+			else if (geom_en_r)
+				geom_hollow_r <= 1'b0;
+`endif
+			if (geom_layout_chg) begin
+				geom_epoch_r    <= geom_epoch_r + 4'd1;
+				geom_inv_tog    <= ~geom_inv_tog;
+				geom_hold_black <= 1'b1;
+				// Hold black across the transition frame and the first full new
+				// frame start (vsync edges). Same-size SAR still needs this —
+				// ascal swblack is size-only.
+				black_vs_left   <= 2'd2;
+			end
+			geom_en_r_d <= geom_en_r;
+			eff_cw_d    <= eff_coded_w;
+			eff_ch_d    <= eff_coded_h;
+			eff_ys_d    <= eff_y_stride;
+			eff_cs_d    <= eff_c_stride;
+			eff_optc_d  <= eff_optc_map;
+
+			if (vsync_pulse && geom_hold_black) begin
+				if (black_vs_left <= 2'd1) begin
+					black_vs_left   <= 2'd0;
+					geom_hold_black <= 1'b0;
+				end else begin
+					black_vs_left <= black_vs_left - 2'd1;
+				end
+			end
+		end
+	end
+
 	wire [X_W-1:0] PRESENT_X_L = X_W'(eff_pres_x);
 	wire [Y_W-1:0] PRESENT_Y_L = Y_W'(eff_pres_y);
 	wire [X_W-1:0] PRESENT_END_X = X_W'(eff_pres_x + eff_disp_w);
@@ -406,6 +492,8 @@ module ddr_frame_store #(
 	// PLXF frame-debug: geom_enable=1 but rt_raw_ok=0 (unaligned/over-max/zero).
 	// Was silent legacy fallback → sheared picture. Now sticky + black + 0xE2.
 	localparam [7:0] DEBUG_GEOM_REJECT = 8'hE2;
+	// PLXF: geom was live then dropped → silent legacy fallback (hollow / missing commit).
+	localparam [7:0] DEBUG_GEOM_HOLLOW = 8'hE3;
 
 	// Gray-code conversions for safe multi-bit CDC (want_y crossing)
 	function automatic [Y_W-1:0] y_bin2gray(input [Y_W-1:0] b);
@@ -610,6 +698,10 @@ module ddr_frame_store #(
 	reg [Y_W-1:0] y_line_v2 [0:LINE_SLOTS-1];
 	reg [Y_W-2:0] c_line_v1 [0:LINE_SLOTS-1];
 	reg [Y_W-2:0] c_line_v2 [0:LINE_SLOTS-1];
+	reg [3:0] y_epoch_v1 [0:LINE_SLOTS-1];
+	reg [3:0] y_epoch_v2 [0:LINE_SLOTS-1];
+	reg [3:0] c_epoch_v1 [0:LINE_SLOTS-1];
+	reg [3:0] c_epoch_v2 [0:LINE_SLOTS-1];
 	reg [Y_W-1:0] want_y_sys;
 	reg [Y_W-1:0] want_y_gray;  // Gray-encoded want_y for safe CDC
 
@@ -647,12 +739,14 @@ module ddr_frame_store #(
 			video_slot = (disp_buf ? SECOND_SET_BASE : '0) + vi[SLOT_W-1:0];
 			// Match beam line via pref_y (product: src_y_line; thrash control: src_y).
 			if (y_valid_v2[video_slot] && (y_bank_v2[video_slot] == disp_bank)
-			    && (y_line_v2[video_slot] == Y_W'(pref_y)) && !y_hit_now) begin
+			    && (y_line_v2[video_slot] == Y_W'(pref_y))
+			    && (y_epoch_v2[video_slot] == geom_epoch_r) && !y_hit_now) begin
 				y_hit_now = 1'b1;
 				y_hit_idx_now = video_slot;
 			end
 			if (c_valid_v2[video_slot] && (c_bank_v2[video_slot] == disp_bank)
-			    && (c_line_v2[video_slot] == (Y_W-1)'(rd_cy)) && !c_hit_now) begin
+			    && (c_line_v2[video_slot] == (Y_W-1)'(rd_cy))
+			    && (c_epoch_v2[video_slot] == geom_epoch_r) && !c_hit_now) begin
 				c_hit_now = 1'b1;
 				c_hit_idx_now = video_slot;
 			end
@@ -736,6 +830,17 @@ module ddr_frame_store #(
 				y_line_v2[vi] <= y_line_v1[vi];
 				c_line_v1[vi] <= c_line_hold[vi];
 				c_line_v2[vi] <= c_line_v1[vi];
+				y_epoch_v1[vi] <= y_epoch[vi];
+				y_epoch_v2[vi] <= y_epoch_v1[vi];
+				c_epoch_v1[vi] <= c_epoch[vi];
+				c_epoch_v2[vi] <= c_epoch_v1[vi];
+			end
+			// B16: on layout change, drop video-side valids immediately (no 2-beat stale hit).
+			if (geom_layout_chg) begin
+				y_valid_v1 <= '0;
+				y_valid_v2 <= '0;
+				c_valid_v1 <= '0;
+				c_valid_v2 <= '0;
 			end
 
 			// want_y: product uses pref_y=src_y_line (Y beam only). Thrash control
@@ -789,8 +894,8 @@ module ddr_frame_store #(
 				frame_miss_toggle <= ~frame_miss_toggle;
 			end
 
-			// geom_reject_r: force black — never scan legacy pitch over a native buffer.
-			if (geom_reject_r) begin
+			// geom_reject / B16 hold-black / hollow: force black (no mixed-pitch scan).
+			if (geom_reject_r || geom_hold_black || geom_hollow_r) begin
 				rd_r <= 8'd0;
 				rd_g <= 8'd0;
 				rd_b <= 8'd0;
@@ -817,6 +922,12 @@ module ddr_frame_store #(
 	reg [LINE_SLOTS-1:0] y_bank, c_bank;
 	reg [Y_W-1:0] y_line [0:LINE_SLOTS-1];
 	reg [Y_W-2:0] c_line [0:LINE_SLOTS-1];
+	// B16: geom epoch tag per line slot (invalidates stale pitch under same bank/line).
+	reg [3:0] y_epoch [0:LINE_SLOTS-1];
+	reg [3:0] c_epoch [0:LINE_SLOTS-1];
+	reg [3:0] d_geom_epoch, d_geom_epoch_m;
+	reg        d_inv_s1, d_inv_s2, d_inv_seen;
+	wire       d_geom_invalidate = (d_inv_s2 != d_inv_seen);
 	reg disp_bank_d1, disp_bank_d2;
 	reg disp_buf_d1, disp_buf_d2;
 	reg has_frame_d1, has_frame_d2;
@@ -943,7 +1054,7 @@ module ddr_frame_store #(
 			found_line = 1'b0;
 			for (tj = 0; tj < LINE_COUNT; tj = tj + 1) begin
 				if (y_valid[cur_base_idx + tj[SLOT_W-1:0]] && (y_bank[cur_base_idx + tj[SLOT_W-1:0]] == disp_bank_d2)
-				    && (y_line[cur_base_idx + tj[SLOT_W-1:0]] == desired_y))
+				    && (y_line[cur_base_idx + tj[SLOT_W-1:0]] == desired_y) && (y_epoch[cur_base_idx + tj[SLOT_W-1:0]] == d_geom_epoch))
 					found_line = 1'b1;
 			end
 			if (!found_line && !need_y_cur_c) begin
@@ -954,7 +1065,7 @@ module ddr_frame_store #(
 			found_line = 1'b0;
 			for (tj = 0; tj < LINE_COUNT; tj = tj + 1) begin
 				if (c_valid[cur_base_idx + tj[SLOT_W-1:0]] && (c_bank[cur_base_idx + tj[SLOT_W-1:0]] == disp_bank_d2)
-				    && (c_line[cur_base_idx + tj[SLOT_W-1:0]] == desired_c))
+				    && (c_line[cur_base_idx + tj[SLOT_W-1:0]] == desired_c) && (c_epoch[cur_base_idx + tj[SLOT_W-1:0]] == d_geom_epoch))
 					found_line = 1'b1;
 			end
 			if (!found_line && !need_c_cur_c) begin
@@ -965,7 +1076,7 @@ module ddr_frame_store #(
 			found_line = 1'b0;
 			for (tj = 0; tj < LINE_COUNT; tj = tj + 1) begin
 				if (y_valid[prep_base_idx + tj[SLOT_W-1:0]] && (y_bank[prep_base_idx + tj[SLOT_W-1:0]] == pending_bank_d2)
-				    && (y_line[prep_base_idx + tj[SLOT_W-1:0]] == ti[Y_W-1:0]))
+				    && (y_line[prep_base_idx + tj[SLOT_W-1:0]] == ti[Y_W-1:0]) && (y_epoch[prep_base_idx + tj[SLOT_W-1:0]] == d_geom_epoch))
 					found_line = 1'b1;
 			end
 			if (swap_pending_d2 && !found_line) begin
@@ -979,7 +1090,7 @@ module ddr_frame_store #(
 			found_line = 1'b0;
 			for (tj = 0; tj < LINE_COUNT; tj = tj + 1) begin
 				if (c_valid[prep_base_idx + tj[SLOT_W-1:0]] && (c_bank[prep_base_idx + tj[SLOT_W-1:0]] == pending_bank_d2)
-				    && (c_line[prep_base_idx + tj[SLOT_W-1:0]] == ti[Y_W-1:1]))
+				    && (c_line[prep_base_idx + tj[SLOT_W-1:0]] == ti[Y_W-1:1]) && (c_epoch[prep_base_idx + tj[SLOT_W-1:0]] == d_geom_epoch))
 					found_line = 1'b1;
 			end
 			if (swap_pending_d2 && !found_line) begin
@@ -995,7 +1106,7 @@ module ddr_frame_store #(
 			slot_keep = 1'b0;
 			for (tk = 0; tk < LINE_COUNT; tk = tk + 1) begin
 				if (y_valid[cur_base_idx + tj[SLOT_W-1:0]] && (y_bank[cur_base_idx + tj[SLOT_W-1:0]] == disp_bank_d2)
-				    && (y_line[cur_base_idx + tj[SLOT_W-1:0]] == desired_y_r[tk]))
+				    && (y_line[cur_base_idx + tj[SLOT_W-1:0]] == desired_y_r[tk]) && (y_epoch[cur_base_idx + tj[SLOT_W-1:0]] == d_geom_epoch))
 					slot_keep = 1'b1;
 			end
 			if ((!y_valid[cur_base_idx + tj[SLOT_W-1:0]] || !slot_keep) && !found_slot_y_cur) begin
@@ -1006,7 +1117,7 @@ module ddr_frame_store #(
 			slot_keep = 1'b0;
 			for (tk = 0; tk < LINE_COUNT; tk = tk + 1) begin
 				if (c_valid[cur_base_idx + tj[SLOT_W-1:0]] && (c_bank[cur_base_idx + tj[SLOT_W-1:0]] == disp_bank_d2)
-				    && (c_line[cur_base_idx + tj[SLOT_W-1:0]] == desired_y_r[tk][Y_W-1:1]))
+				    && (c_line[cur_base_idx + tj[SLOT_W-1:0]] == desired_y_r[tk][Y_W-1:1]) && (c_epoch[cur_base_idx + tj[SLOT_W-1:0]] == d_geom_epoch))
 					slot_keep = 1'b1;
 			end
 			if ((!c_valid[cur_base_idx + tj[SLOT_W-1:0]] || !slot_keep) && !found_slot_c_cur) begin
@@ -1023,7 +1134,7 @@ module ddr_frame_store #(
 				for (tk = 0; tk < LINE_COUNT; tk = tk + 1) begin
 					if (y_valid[prep_base_idx + tj[SLOT_W-1:0]]
 					    && (y_bank[prep_base_idx + tj[SLOT_W-1:0]] == pending_bank_d2)
-					    && (y_line[prep_base_idx + tj[SLOT_W-1:0]] == tk[Y_W-1:0]))
+					    && (y_line[prep_base_idx + tj[SLOT_W-1:0]] == tk[Y_W-1:0]) && (y_epoch[prep_base_idx + tj[SLOT_W-1:0]] == d_geom_epoch))
 						slot_keep = 1'b1;
 				end
 				if ((!y_valid[prep_base_idx + tj[SLOT_W-1:0]] || !slot_keep) && !found_slot_y_prep) begin
@@ -1034,7 +1145,7 @@ module ddr_frame_store #(
 				for (tk = 0; tk < LINE_COUNT; tk = tk + 1) begin
 					if (c_valid[prep_base_idx + tj[SLOT_W-1:0]]
 					    && (c_bank[prep_base_idx + tj[SLOT_W-1:0]] == pending_bank_d2)
-					    && (c_line[prep_base_idx + tj[SLOT_W-1:0]] == tk[Y_W-1:1]))
+					    && (c_line[prep_base_idx + tj[SLOT_W-1:0]] == tk[Y_W-1:1]) && (c_epoch[prep_base_idx + tj[SLOT_W-1:0]] == d_geom_epoch))
 						slot_keep = 1'b1;
 				end
 				if ((!c_valid[prep_base_idx + tj[SLOT_W-1:0]] || !slot_keep) && !found_slot_c_prep) begin
@@ -1098,6 +1209,10 @@ module ddr_frame_store #(
 			d_base_w0      <= LEG_BASE_W0;
 			d_base_w1      <= LEG_BASE_W1;
 			d_doorbell_w   <= LEG_DOORBELL_W;
+			d_geom_epoch_m <= 4'd0;
+			d_geom_epoch   <= 4'd0;
+			d_inv_s1       <= 1'b0;
+			d_inv_s2       <= 1'b0;
 		end else begin
 			d_y_fetch_qw_m <= eff_y_fetch_qw;
 			d_c_fetch_qw_m <= eff_c_fetch_qw;
@@ -1119,6 +1234,10 @@ module ddr_frame_store #(
 			d_base_w0      <= d_base_w0_m;
 			d_base_w1      <= d_base_w1_m;
 			d_doorbell_w   <= d_doorbell_w_m;
+			d_geom_epoch_m <= geom_epoch_r;
+			d_geom_epoch   <= d_geom_epoch_m;
+			d_inv_s1       <= geom_inv_tog;
+			d_inv_s2       <= d_inv_s1;
 		end
 	end
 
@@ -1179,13 +1298,26 @@ module ddr_frame_store #(
 			geom_reject_s2 <= geom_reject_s1;
 		end
 	end
+	// hollow CDC
+	reg geom_hollow_s1, geom_hollow_s2;
+	always @(posedge clk_ddr) begin
+		if (reset_ddr) begin
+			geom_hollow_s1 <= 1'b0;
+			geom_hollow_s2 <= 1'b0;
+		end else begin
+			geom_hollow_s1 <= geom_hollow_r;
+			geom_hollow_s2 <= geom_hollow_s1;
+		end
+	end
 	assign debug_state = format_error ? DEBUG_FORMAT_ERROR :
 	                     (geom_reject_s2 ? DEBUG_GEOM_REJECT :
-	                      {LINE_COUNT[2:0], |y_valid, state_ddr});
+	                     (geom_hollow_s2 ? DEBUG_GEOM_HOLLOW :
+	                      {LINE_COUNT[2:0], |y_valid, state_ddr}));
 
 	always @(posedge clk_ddr) begin
 		if (reset_ddr) begin
 			state_ddr <= S_IDLE;
+			d_inv_seen <= 1'b0;
 			DDRAM_RD <= 1'b0;
 			DDRAM_WE <= 1'b0;
 			DDRAM_ADDR <= 29'd0;
@@ -1378,6 +1510,17 @@ module ddr_frame_store #(
 			if (!bank_mbox_valid || (bank_mbox_hb == 18'd0))
 				bank_mbox_req <= 1'b1;
 
+			// B16: layout invalidate — drop line tags, abort in-flight DDR line fills.
+			if (d_geom_invalidate) begin
+				d_inv_seen <= d_inv_s2;
+				y_valid <= '0;
+				c_valid <= '0;
+				sched_valid <= 1'b0;
+				poll_pending <= 1'b0;
+				DDRAM_RD <= 1'b0;
+				DDRAM_WE <= 1'b0;
+				state_ddr <= S_IDLE;
+			end
 			if (db_bad_format) begin
 				format_error <= 1'b1;
 				doorbell_ok <= 1'b0;
@@ -1604,10 +1747,12 @@ module ddr_frame_store #(
 								if (fill_is_chroma) begin
 									c_line[fill_idx] <= fill_cy;
 									c_bank[fill_idx] <= fill_bank;
+									c_epoch[fill_idx] <= d_geom_epoch;
 									c_valid[fill_idx] <= 1'b1;
 								end else begin
 									y_line[fill_idx] <= fill_y;
 									y_bank[fill_idx] <= fill_bank;
+									y_epoch[fill_idx] <= d_geom_epoch;
 									y_valid[fill_idx] <= 1'b1;
 								end
 								state_ddr <= S_IDLE;

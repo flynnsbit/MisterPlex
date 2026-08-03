@@ -31,7 +31,17 @@ assign VGA_F1 = 0;
 assign VGA_SCALER  = 0;
 assign VGA_DISABLE = 0;
 assign HDMI_FREEZE = 0;
+// Forward decl: driven by present_core under PRESENT_BEAM_960 (else tied 0 in core).
+wire geom_hold_black;
+wire geom_hollow_fault;
+// B16: raise during geometry transition. ascal swblack is size-only; same-size
+// SAR and mid-session pitch changes need an explicit blackout. Driven from
+// ddr_frame_store.geom_hold_black (pending PLXG promote + epoch invalidate).
+`ifdef PRESENT_BEAM_960
+assign HDMI_BLACKOUT = geom_hold_black;
+`else
 assign HDMI_BLACKOUT = 0;
+`endif
 assign HDMI_BOB_DEINT = 0;
 
 assign AUDIO_MIX = 0;
@@ -737,6 +747,7 @@ wire        present_ddr_we;
 // m1 shared with bitstream via ddr_m1_subarb (latched owner through response) —
 // NOT a combinational stream|plxg mux (rd-duck: mid-beat flip drops PLXG data).
 wire        plxg_wr_en, plxg_commit;
+wire        plxg_pending_valid, plxg_promote_pulse;
 wire  [2:0] plxg_wr_idx;
 wire [63:0] plxg_wr_data;
 wire        plxg_win_en, plxg_geom_en, plxg_live_valid;
@@ -811,6 +822,8 @@ present_geom_latch u_plxg_latch (
 	.wr_idx(plxg_wr_idx),
 	.wr_data(plxg_wr_data),
 	.commit(plxg_commit),
+	// B16: promote pending PLXG only at fabric vsync (frame start) — never mid-raster.
+	.frame_boundary(fabric_vsync_swap),
 	.win_enable(plxg_win_en),
 	.geom_enable(plxg_geom_en),
 	.content_w(plxg_cw),
@@ -831,7 +844,9 @@ present_geom_latch u_plxg_latch (
 	.crop_top(plxg_ct),
 	.live_valid(plxg_live_valid),
 	.live_seq(plxg_live_seq),
-	.live_epoch(plxg_live_epoch)
+	.live_epoch(plxg_live_epoch),
+	.pending_valid(plxg_pending_valid),
+	.promote_pulse(plxg_promote_pulse)
 );
 
 plxg_ddr_poller #(
@@ -1041,7 +1056,9 @@ present_core #(
 	.stat_audio_underrun(audio_underrun),
 	.stat_swap_pending(swap_pending),
 	.stat_frame_underruns(frame_underruns),
-	.stat_frame_sdram_state(frame_sdram_state)
+	.stat_frame_sdram_state(frame_sdram_state),
+	.stat_geom_hold_black(geom_hold_black),
+	.stat_geom_hollow(geom_hollow_fault)
 );
 
 `ifdef DDR_FRAME_STORE

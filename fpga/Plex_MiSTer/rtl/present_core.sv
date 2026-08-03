@@ -132,7 +132,10 @@ module present_core #(
 	output wire        stat_audio_underrun,
 	output wire        stat_swap_pending,
 	output wire [15:0] stat_frame_underruns,
-	output wire  [7:0] stat_frame_sdram_state
+	output wire  [7:0] stat_frame_sdram_state,
+	// B16: geometry transition blackout (raise HDMI_BLACKOUT)
+	output wire        stat_geom_hold_black,
+	output wire        stat_geom_hollow
 );
 
 	wire frame_start;
@@ -342,6 +345,8 @@ module present_core #(
 
 	wire [7:0] fr, fg, fb;
 	wire       has_frame;
+	wire       geom_hold_black;
+	wire       geom_hollow_fault;
 	wire       swap_pending;
 	wire [31:0] wr_count;
 	wire        wr_done;
@@ -430,7 +435,9 @@ module present_core #(
 		.underrun_count(frame_underruns),
 		.frames_done(ddr_frames_done),
 		.doorbell_ok(ddr_doorbell_ok),
-		.debug_state(frame_sdram_state)
+		.debug_state(frame_sdram_state),
+		.geom_hold_black(geom_hold_black),
+		.geom_hollow_fault(geom_hollow_fault)
 	);
 `else
 	frame_store #(
@@ -474,6 +481,10 @@ module present_core #(
 		.underrun_count(frame_underruns),
 		.debug_state(frame_sdram_state)
 	);
+`ifndef PRESENT_BEAM_960
+	assign geom_hold_black = 1'b0;
+	assign geom_hollow_fault = 1'b0;
+`endif
 `endif
 
 	// Product: once a frame is ingested, always show frame_store unless O[9] Force bars.
@@ -587,5 +598,7 @@ module present_core #(
 	assign stat_swap_pending  = swap_pending;
 	assign stat_frame_underruns = frame_underruns;
 	assign stat_frame_sdram_state = frame_sdram_state;
+	assign stat_geom_hold_black = geom_hold_black;
+	assign stat_geom_hollow     = geom_hollow_fault;
 
 endmodule

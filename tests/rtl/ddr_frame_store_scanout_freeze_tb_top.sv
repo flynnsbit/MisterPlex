@@ -120,7 +120,9 @@ module ddr_frame_store_scanout_freeze_tb #(
 		.underrun_count(underrun_count),
 		.frames_done(frames_done),
 		.doorbell_ok(doorbell_ok),
-		.debug_state(debug_state)
+		.debug_state(debug_state),
+		.geom_hold_black(),
+		.geom_hollow_fault()
 	);
 
 	assign debug_want_y = dut.want_y_sys[5:0];

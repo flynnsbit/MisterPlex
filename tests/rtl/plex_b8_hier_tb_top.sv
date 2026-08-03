@@ -228,7 +228,9 @@ module plex_b8_hier_tb_top (
 		.stat_audio_underrun(au),
 		.stat_swap_pending(sp),
 		.stat_frame_underruns(fu),
-		.stat_frame_sdram_state(fss)
+		.stat_frame_sdram_state(fss),
+		.stat_geom_hold_black(),
+		.stat_geom_hollow()
 	);
 
 	assign obs_ce_pix = ce_pix;

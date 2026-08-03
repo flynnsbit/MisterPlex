@@ -100,7 +100,9 @@ module ddr_frame_store_warm_reset_tb #(
 		.underrun_count(underrun_count),
 		.frames_done(frames_done),
 		.doorbell_ok(doorbell_ok),
-		.debug_state(debug_state)
+		.debug_state(debug_state),
+		.geom_hold_black(),
+		.geom_hollow_fault()
 	);
 	assign debug_sched_valid = dut.sched_valid;
 	assign debug_disp_bank = dut.disp_bank;

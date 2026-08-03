@@ -29,6 +29,8 @@ constexpr uint32_t kBankReleaseMailboxMagic = mailbox_abi::kPlxdMagic;
 constexpr uint8_t kFrameStoreDebugFormatError = 0xE1;
 // geom_enable=1 but rt_raw_ok=0 (unaligned/over-max). Loud reject — not silent legacy.
 constexpr uint8_t kFrameStoreDebugGeomReject = 0xE2;
+// B16: geom was live then dropped while has_frame (hollow/missing PLXG commit).
+constexpr uint8_t kFrameStoreDebugGeomHollow = 0xE3;
 
 // Offsets from live DOORBELL_PHYS (RTL: DOORBELL_PHYS + offset).
 constexpr uint32_t kDdrStatusMailboxOffset = mailbox_abi::kPlxsOffset;
@@ -79,6 +81,9 @@ struct FrameStoreStatus {
     bool geomRejected() const {
         return debug_state == kFrameStoreDebugGeomReject;
     }
+    bool geomHollow() const {
+        return debug_state == kFrameStoreDebugGeomHollow;
+    }
 };
 
 inline const char* frameStoreDebugDescription(uint8_t debug) {
@@ -86,6 +91,8 @@ inline const char* frameStoreDebugDescription(uint8_t debug) {
         return "frame store refused non-YUV doorbell (0xE1)";
     if (debug == kFrameStoreDebugGeomReject)
         return "frame store rejected runtime geom (0xE2 unaligned/over-max/zero)";
+    if (debug == kFrameStoreDebugGeomHollow)
+        return "frame store hollow geom (0xE3 prior live geom lost → silent legacy)";
     return "frame store debug state";
 }
 
