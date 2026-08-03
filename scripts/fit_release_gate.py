@@ -283,6 +283,11 @@ LIVE_OPEN_BLOCKER_TOKENS = (
     "B38_NO_FAULT_TWINS",
     "B38_INTEGRATED_TB_ABSENT",
     # B38_INTEGRATED_TB_BLIND / B38_BEAM_DE_HOLD_TB_ONLY / TB_NO_FF_HOLD: closed-class reinject
+    # rd-duck FIX-COLLISION: B34 metadata + crop_pad-first → OOB crop on 426 source
+    "B39_NO_PRODUCT_PAD_UP_FIRST",
+    "B39_CROP_PAD_OOB_ON_DISPLAY_EQ_SOURCE",
+    "B39_PAD_META_ORACLE_MISSING",
+    # B39_FFMPEG_VF_ABSENT / B39_FILTER_ORACLE_FAIL: closed-class reinject
 )
 
 # Sibling-lane fixes that exist but are not merged into this gated tree.
@@ -409,6 +414,39 @@ FIX_STATUS: dict[str, dict[str, str]] = {
         "worktree": "/home/flynnsbit/Projects/MisterPlex-wt-clock",
         "artefact": "tests/rtl/b20_integrated_app_beam_tb.sv + test_b20_integrated_app_beam.sh",
         "evidence": "GREEN FF + GREEN hold-cover + RED island REPRO; not b20_beam_de_hold_tb",
+    },
+    # B39 FIX-COLLISION: pad-up before crop_pad when source==display<coded
+    "B39_FFMPEG_VF_ABSENT": {
+        "status": "unmerged",
+        "lane": "w-path",
+        "commit": "640e790a",
+        "worktree": "/home/flynnsbit/Projects/MisterPlex-wt-path",
+        "artefact": "host/libmisterplex/ffmpeg_vf.hpp",
+        "evidence": "productPadUp / contentFillsDisplay before hasCrop crop_pad",
+    },
+    "B39_NO_PRODUCT_PAD_UP_FIRST": {
+        "status": "unmerged",
+        "lane": "w-path",
+        "commit": "640e790a",
+        "worktree": "/home/flynnsbit/Projects/MisterPlex-wt-path",
+        "artefact": "host/libmisterplex/ffmpeg_vf.hpp",
+        "evidence": "pad_up_no_source_crop / verified_same_height_pad_only first",
+    },
+    "B39_CROP_PAD_OOB_ON_DISPLAY_EQ_SOURCE": {
+        "status": "unmerged",
+        "lane": "w-path",
+        "commit": "640e790a",
+        "worktree": "/home/flynnsbit/Projects/MisterPlex-wt-path",
+        "artefact": "host/libmisterplex/ffmpeg_vf.hpp",
+        "evidence": "canCropDisplayFromSource requires source_w > dispW",
+    },
+    "B39_PAD_META_ORACLE_MISSING": {
+        "status": "unmerged",
+        "lane": "w-path",
+        "commit": "640e790a",
+        "worktree": "/home/flynnsbit/Projects/MisterPlex-wt-path",
+        "artefact": "tests/unit/test_ffmpeg_vf.cpp",
+        "evidence": "426/426/432 crop_left=2 → pad=432:240:2:0 no crop=",
     },
     # Everything else: no known sibling implementation — new work.
 }
@@ -7159,6 +7197,316 @@ def check_b38_integrated_app_beam_atomic(root: Path) -> tuple[list[str], list[st
     return msgs, errors
 
 
+def check_b39_ffmpeg_pad_meta_collision(root: Path) -> tuple[list[str], list[str]]:
+    """B39: FIX-COLLISION — B34 metadata must not OOB-crop 426 sources (rd-duck).
+
+    B34 corrects ddrStorageGeometry to coded=432 display=426 crop_left=2.
+    With that metadata, buildFfmpegVideoFilter's earlier branch
+      hasCrop && heightAlreadyBank && source_w >= dispW
+    calls buildCropPadNoScale → crop=426:240:2:0 on a 426-wide input (OOB).
+    Today's filter "works" only while geometry is still identity 432/432
+    (verified_same_height_pad_only). Fix geometry + filter together:
+      when source == display < coded → NO source crop; pad-only at destination
+      inset; crop_left/right travel to PLXG metadata only.
+    Require pad-up FIRST, canCrop only when source_w > dispW, and an oracle
+    that builds the actual filter string for 426x240→432x240 + metadata.
+    """
+    msgs: list[str] = ["LEG0_B39_FFMPEG_PAD_META_COLLISION_EXECUTED begin"]
+    errors: list[str] = []
+
+    vf_h = root / "host" / "libmisterplex" / "ffmpeg_vf.hpp"
+    layout_h = root / "host" / "libmisterplex" / "ddr_frame_layout.hpp"
+    if not vf_h.is_file():
+        errors.append(
+            "B39_FFMPEG_VF_ABSENT: missing host/libmisterplex/ffmpeg_vf.hpp — "
+            "cannot prove pad-up-before-crop for corrected 426/432 metadata "
+            "(rd-duck FIX-COLLISION)."
+        )
+        errors.append(
+            "B39_NO_PRODUCT_PAD_UP_FIRST: no ffmpeg_vf — product source==display"
+            "<coded pad-up path absent (rd-duck)."
+        )
+        errors.append(
+            "B39_CROP_PAD_OOB_ON_DISPLAY_EQ_SOURCE: no ffmpeg_vf — cannot prove "
+            "crop_pad rejects source_w==dispW with crop_left>0 (rd-duck)."
+        )
+        errors.append(
+            "B39_PAD_META_ORACLE_MISSING: no filter header — need 426→432 filter "
+            "+ metadata oracle (rd-duck)."
+        )
+        return msgs, errors
+
+    vf_txt = vf_h.read_text(errors="replace")
+    # Locate buildFfmpegVideoFilter body
+    mfn = re.search(
+        r"buildFfmpegVideoFilter\s*\([^{]*\{([\s\S]+)\n\}",
+        vf_txt,
+    )
+    body = mfn.group(1) if mfn else vf_txt
+
+    has_pad_only_fn = bool(re.search(r"\bbuildPadOnlyNoScale\b", vf_txt))
+    has_crop_pad_fn = bool(re.search(r"\bbuildCropPadNoScale\b", vf_txt))
+    has_content_fills = bool(
+        re.search(r"\bcontentFillsDisplay\b|\bproductPadUp\b", body)
+    )
+    has_pad_up_why = bool(
+        re.search(
+            r"pad_up_no_source_crop|verified_same_height_pad_only",
+            body,
+        )
+    )
+    # Product rule text
+    has_rule_comment = bool(
+        re.search(
+            r"source\s*==\s*display\s*<\s*coded|NO source crop|FIX-COLLISION",
+            vf_txt,
+            re.I,
+        )
+    )
+
+    # Order: pad-up / contentFills must appear before hasCrop crop_pad call
+    idx_pad = -1
+    for pat in (
+        r"contentFillsDisplay",
+        r"productPadUp",
+        r"buildPadOnlyNoScale\s*\(",
+        r"verified_same_height_pad_only",
+    ):
+        m = re.search(pat, body)
+        if m and (idx_pad < 0 or m.start() < idx_pad):
+            idx_pad = m.start()
+    m_crop = re.search(
+        r"hasCrop\s*&&\s*heightAlreadyBank[\s\S]{0,200}?buildCropPadNoScale",
+        body,
+    )
+    idx_crop = m_crop.start() if m_crop else -1
+    pad_before_crop = (
+        idx_pad >= 0 and idx_crop >= 0 and idx_pad < idx_crop
+    ) or (idx_pad >= 0 and idx_crop < 0)
+
+    # OOB-prone wideEnough: source_w >= dispW without requiring source_w > dispW
+    wide_ge_only = bool(
+        re.search(
+            r"wideEnoughForDisplayCrop\s*=\s*[^;]*source_w\s*>=\s*dispW\s*;",
+            body,
+        )
+    ) and not bool(
+        re.search(
+            r"canCropDisplayFromSource|source_w\s*>\s*dispW",
+            body,
+        )
+    )
+    # Good: canCrop requires source strictly wider than display
+    can_crop_strict = bool(
+        re.search(
+            r"canCropDisplayFromSource[\s\S]{0,300}?source_w\s*>\s*dispW|"
+            r"source_w\s*>=\s*dispW\s*\+\s*std::max\s*\(\s*0\s*,\s*req\.crop_left\s*\)"
+            r"[\s\S]{0,80}?source_w\s*>\s*dispW",
+            body,
+        )
+    )
+    # Defect: hasCrop && heightAlreadyBank && (wideEnough|source_w >= dispW)
+    # without pad-up-first — classic collision
+    crop_first_collision = (
+        bool(
+            re.search(
+                r"hasCrop\s*&&\s*heightAlreadyBank\s*&&\s*"
+                r"(wideEnoughForDisplayCrop|canCropDisplayFromSource)",
+                body,
+            )
+        )
+        and not pad_before_crop
+    )
+
+    msgs.append(
+        f"LEG0_B39_VF pad_fn={int(has_pad_only_fn)} crop_fn={int(has_crop_pad_fn)} "
+        f"content_fills={int(has_content_fills)} pad_why={int(has_pad_up_why)} "
+        f"rule_cmt={int(has_rule_comment)} pad_before_crop={int(pad_before_crop)} "
+        f"wide_ge_only={int(wide_ge_only)} can_crop_strict={int(can_crop_strict)} "
+        f"crop_first={int(crop_first_collision)} idx_pad={idx_pad} idx_crop={idx_crop}"
+    )
+
+    if not has_pad_only_fn:
+        errors.append(
+            "B39_NO_PRODUCT_PAD_UP_FIRST: missing buildPadOnlyNoScale — product "
+            "426→432 must emit pad=432:240:2:0 with no scale/crop (rd-duck "
+            "FIX-COLLISION)."
+        )
+
+    if not has_content_fills or not has_pad_up_why or not pad_before_crop:
+        errors.append(
+            "B39_NO_PRODUCT_PAD_UP_FIRST: buildFfmpegVideoFilter must take "
+            "source==display<coded (contentFillsDisplay/productPadUp) to "
+            "pad-only BEFORE hasCrop&&heightAlreadyBank crop_pad. Otherwise "
+            "B34 display=426 crop_left=2 yields crop=426:240:2:0 on 426-wide "
+            "source (OOB) (rd-duck FIX-COLLISION)."
+        )
+
+    if wide_ge_only or crop_first_collision or (
+        has_crop_pad_fn and not can_crop_strict and not pad_before_crop
+    ):
+        errors.append(
+            "B39_CROP_PAD_OOB_ON_DISPLAY_EQ_SOURCE: crop_pad path must not fire "
+            "when source_w == display_w (even with crop_left>0). Require "
+            "canCropDisplayFromSource with source_w > dispW (and enough samples "
+            "for crop_left+dispW). source_w>=dispW alone is OOB under B34 "
+            "metadata (rd-duck)."
+        )
+
+    # Unit/test oracle presence
+    test_blob = ""
+    test_hits: list[str] = []
+    tests_root = root / "tests"
+    if tests_root.is_dir():
+        for path in tests_root.rglob("*"):
+            if not path.is_file() or path.suffix not in {".cpp", ".cc", ".hpp", ".h"}:
+                continue
+            try:
+                t = path.read_text(errors="replace")
+            except OSError:
+                continue
+            if "buildFfmpegVideoFilter" in t and "426" in t and "432" in t:
+                test_blob += "\n" + t
+                test_hits.append(str(path.relative_to(root)))
+
+    has_prod_req = bool(
+        re.search(
+            r"display_w\s*=\s*426[\s\S]{0,200}?coded_w\s*=\s*432|"
+            r"coded_w\s*=\s*432[\s\S]{0,200}?display_w\s*=\s*426",
+            test_blob,
+        )
+    )
+    has_no_crop_assert = bool(
+        re.search(
+            r'find\s*\(\s*"crop="\s*\).*npos|no crop=|pad-up not crop',
+            test_blob,
+        )
+    )
+    has_pad_str = bool(
+        re.search(
+            r'pad=432:240:2:0|expect_eq\s*\([^;]*pad=432:240:2',
+            test_blob,
+        )
+    )
+    has_collision_cite = bool(
+        re.search(r"FIX-COLLISION|crop=426:240:2|pad-only must win", test_blob, re.I)
+    )
+
+    msgs.append(
+        f"LEG0_B39_TESTS n={len(test_hits)} prod_req={int(has_prod_req)} "
+        f"no_crop={int(has_no_crop_assert)} pad_str={int(has_pad_str)} "
+        f"cite={int(has_collision_cite)} hits={','.join(test_hits[:5])}"
+    )
+
+    if not (has_prod_req and has_no_crop_assert and has_pad_str):
+        errors.append(
+            "B39_PAD_META_ORACLE_MISSING: tests must buildFfmpegVideoFilter with "
+            "source=426 display=426 coded=432 crop_left=2 and assert "
+            "vf==pad=432:240:2:0:color=black (or equiv) AND no crop=. "
+            "Metadata-only B34 oracles are insufficient (rd-duck FIX-COLLISION)."
+        )
+
+    # Executable g++ filter oracle (actual filter string + optional geom couple)
+    if has_pad_only_fn or has_crop_pad_fn:
+        work = root / ".agent-work" / "b39_pad_meta_collision"
+        work.mkdir(parents=True, exist_ok=True)
+        src = work / "pad_meta_oracle.cpp"
+        bin_p = work / "pad_meta_oracle"
+        src.write_text(
+            r"""#include <cstdio>
+#include <cstring>
+#include <string>
+#include "libmisterplex/ffmpeg_vf.hpp"
+int main() {
+  using namespace misterplex;
+  std::printf("CASE B39_PAD_META_COLLISION EXECUTED\n");
+  FfmpegVfRequest r{};
+  r.coded_w = 432; r.coded_h = 240;
+  r.display_w = 426; r.display_h = 240;
+  r.crop_left = 2; r.crop_top = 0;
+  r.source_w = 426; r.source_h = 240;
+  r.scale_mode = FfmpegScaleMode::Always;
+  r.delivery_geometry_verified = true;
+  const auto p = buildFfmpegVideoFilter(r);
+  std::printf("measured_vf=%s\n", p.vf.c_str());
+  std::printf("measured_reason=%s\n", p.reason.c_str());
+  std::printf("measured_scale=%d\n", int(p.scale_applied));
+  // Must be pad-only at inset; never crop from 426-wide source.
+  if (p.scale_applied) return 2;
+  if (p.vf.find("crop=") != std::string::npos) return 3;
+  if (p.vf.find("scale=") != std::string::npos) return 4;
+  if (p.vf.find("pad=432:240:2:0") == std::string::npos) return 5;
+  // Unverified product geom must still pad-up (not FOAR/crop OOB)
+  r.delivery_geometry_verified = false;
+  const auto pu = buildFfmpegVideoFilter(r);
+  std::printf("measured_unverified_vf=%s\n", pu.vf.c_str());
+  if (pu.vf.find("crop=") != std::string::npos) return 6;
+  if (pu.vf.find("pad=432:240:2:0") == std::string::npos &&
+      pu.vf.find("pad=432:240") == std::string::npos) return 7;
+  std::printf("PASS B39_PAD_META_COLLISION\n");
+  return 0;
+}
+"""
+        )
+        cmd = [
+            "g++",
+            "-std=c++17",
+            "-O0",
+            f"-I{root / 'host'}",
+            str(src),
+            "-o",
+            str(bin_p),
+        ]
+        rc_c, out_c = _run(cmd, cwd=root)
+        msgs.append(f"LEG0_B39_ORACLE_COMPILE true_rc={rc_c}")
+        if rc_c != 0:
+            tail = "\n".join((out_c or "").splitlines()[-10:])
+            errors.append(
+                "B39_FILTER_ORACLE_FAIL: g++ filter oracle compile true_rc="
+                f"{rc_c} (need ffmpeg_vf.hpp buildable for 426/426/432). "
+                f"tail={tail!r}"
+            )
+        else:
+            rc_r, out_r = _run([str(bin_p)], cwd=root)
+            msgs.append((out_r or "").rstrip())
+            msgs.append(f"LEG0_B39_ORACLE_RUN true_rc={rc_r}")
+            if rc_r != 0 or "PASS B39_PAD_META_COLLISION" not in (out_r or ""):
+                errors.append(
+                    f"B39_FILTER_ORACLE_FAIL: product 426→432 filter oracle "
+                    f"true_rc={rc_r} — need pad=432:240:2:0 and NO crop= under "
+                    f"coded432/display426/crop_left2 (B34+filter together). "
+                    f"out={(out_r or '')[-350:]!r}"
+                )
+            else:
+                msgs.append(
+                    "LEG0_B39_OK g++ filter oracle pad-only 426→432 EXECUTED"
+                )
+
+    # Couple note: B34 geom must not be identity while filter pad-only relies on it
+    if layout_h.is_file():
+        lay = layout_h.read_text(errors="replace")
+        hollow_geom = bool(
+            re.search(
+                r"ddrAlignGeometryForFabricStore[\s\S]{0,400}?"
+                r"return\s+makeDdrFrameGeometry\s*\(\s*CodedWidth\s*\{\s*aw\s*\}",
+                lay,
+            )
+        ) and not bool(re.search(r"ddrPadOnlyStorageGeometry", lay))
+        if hollow_geom and not errors:
+            # Filter alone green while geom hollow is the pre-B34 state — still
+            # fail collision class if filter would break once geom lands.
+            msgs.append(
+                "LEG0_B39_NOTE layout still identity-on-store; B34+B39 both open"
+            )
+
+    if not errors:
+        msgs.append(
+            "LEG0_B39_PASS pad-up-first + strict canCrop + filter oracle "
+            "(B34 metadata safe with ffmpeg)"
+        )
+    return msgs, errors
+
+
 def leg0_arch_blockers() -> tuple[int, list[str]]:
     """rd-duck fit blockers — FAIL until a coherent candidate clears each.
 
@@ -7186,6 +7534,7 @@ def leg0_arch_blockers() -> tuple[int, list[str]]:
         "B34_host_plxg_pad_display(426→432 display+crop+q1/q3 g++),"
         "B35_ascal_simultaneous_tag_bypass(in_*+full_tag_TB+RED),B36_merged_hierarchy_live(qsf+qip+poller→latch→mux→store+PLXC→3way_arb),B37_integration_ladder(L2_qip/L3_inst/L4_enable;dead_code≠shipped),"
         "B38_integrated_app_beam_atomic(ff+beam_disp_hold+island_TB;live-vs-app≠closure),"
+        "B39_ffmpeg_pad_meta_collision(pad-up-first+strict canCrop+filter oracle),"
         "leg_unit_make_unit,leg_rtl_lint,leg2_elab,leg3_true_de; "
         "B20_PRODUCT_UFS_TIE=elaborate Plex.sv .use_frame_store(1'b0) + reject "
         "ownership-on-ufs (w-clock free-run) + H require product-ufs0 hold measured_* "
@@ -8634,6 +8983,11 @@ def leg0_arch_blockers() -> tuple[int, list[str]]:
     b38_msgs, b38_errs = check_b38_integrated_app_beam_atomic(ROOT)
     msgs.extend(b38_msgs)
     errors.extend(b38_errs)
+
+    # --- B39 ffmpeg pad/meta FIX-COLLISION (rd-duck: B34 + crop_pad OOB) ---
+    b39_msgs, b39_errs = check_b39_ffmpeg_pad_meta_collision(ROOT)
+    msgs.extend(b39_msgs)
+    errors.extend(b39_errs)
 
     # --- B20 full-hierarchy scenario tests (rd-duck 2026-08-03 hollow audit) ---
     # Prior gate only regex-scanned test *text* and accepted comment bait (mutation
@@ -10508,6 +10862,9 @@ def _run_mutation_matrix() -> tuple[list[str], list[dict[str, str]]]:
         "B38_HOLD_LIVE_VS_APP_ONLY",
         "B38_NO_FAULT_TWINS",
         "B38_INTEGRATED_TB_ABSENT",
+        "B39_NO_PRODUCT_PAD_UP_FIRST",
+        "B39_CROP_PAD_OOB_ON_DISPLAY_EQ_SOURCE",
+        "B39_PAD_META_ORACLE_MISSING",
     ):
         txt = "\n".join(msgs)
         has = tok in txt
@@ -11393,6 +11750,73 @@ def _run_mutation_matrix() -> tuple[list[str], list[dict[str, str]]]:
         rest_sh()
         rest_old_tb()
         rest_old_sh()
+
+    # --- rd-duck B39: crop_pad-first OOB under B34 metadata ---
+    vf_b39 = ROOT / "host" / "libmisterplex" / "ffmpeg_vf.hpp"
+    vf_b39.parent.mkdir(parents=True, exist_ok=True)
+    bad_vf = (
+        "// fitgate B39 mutation — hasCrop crop_pad first (FIX-COLLISION)\n"
+        "#pragma once\n"
+        "#include <string>\n"
+        "namespace misterplex {\n"
+        "enum class FfmpegScaleMode { Off, Always, SkipIdentity };\n"
+        "struct FfmpegVfRequest {\n"
+        "  int coded_w=0,coded_h=0,display_w=0,display_h=0;\n"
+        "  int crop_left=0,crop_top=0,source_w=0,source_h=0;\n"
+        "  FfmpegScaleMode scale_mode=FfmpegScaleMode::Always;\n"
+        "  bool delivery_geometry_verified=false;\n"
+        "  std::string fps_filter, sws_flags;\n"
+        "  bool assume_source_matches_coded=false;\n"
+        "};\n"
+        "struct FfmpegVfPlan { std::string vf, reason; bool scale_applied=false, identity_skip=false; };\n"
+        "inline std::string buildCropPadNoScale(int dw,int dh,int cw,int ch,int cl,int ct,int sw) {\n"
+        "  return \"crop=\"+std::to_string(dw)+\":\"+std::to_string(dh)+\":\"+std::to_string(cl)+\":0,pad=\"\n"
+        "    +std::to_string(cw)+\":\"+std::to_string(ch)+\":0:0:color=black\";\n"
+        "}\n"
+        "inline FfmpegVfPlan buildFfmpegVideoFilter(const FfmpegVfRequest& req) {\n"
+        "  FfmpegVfPlan plan; const int dispW = req.display_w>0?req.display_w:req.coded_w;\n"
+        "  const int dispH = req.display_h>0?req.display_h:req.coded_h;\n"
+        "  const bool hasCrop = (dispW != req.coded_w || dispH != req.coded_h);\n"
+        "  const bool heightAlreadyBank = req.source_h == req.coded_h && req.source_h == dispH;\n"
+        "  const bool wideEnoughForDisplayCrop = req.source_w >= dispW; // OOB when ==\n"
+        "  if (hasCrop && heightAlreadyBank && wideEnoughForDisplayCrop) {\n"
+        "    plan.vf = buildCropPadNoScale(dispW,dispH,req.coded_w,req.coded_h,req.crop_left,req.crop_top,req.source_w);\n"
+        "    plan.reason = \"crop_pad_no_v_scale_hfit\"; return plan;\n"
+        "  }\n"
+        "  plan.vf = \"scale=\"+std::to_string(req.coded_w)+\":\"+std::to_string(req.coded_h);\n"
+        "  plan.scale_applied = true; plan.reason = \"scale_pad_center\"; return plan;\n"
+        "}\n"
+        "} // namespace\n"
+    )
+    rest_vf = _with_file_backup(vf_b39, bad_vf)
+    try:
+        rc, msgs = leg0_arch_blockers()
+        txt = "\n".join(msgs)
+        exp = (
+            "B39_NO_PRODUCT_PAD_UP_FIRST"
+            if "B39_NO_PRODUCT_PAD_UP_FIRST" in txt
+            else (
+                "B39_CROP_PAD_OOB_ON_DISPLAY_EQ_SOURCE"
+                if "B39_CROP_PAD_OOB_ON_DISPLAY_EQ_SOURCE" in txt
+                else "B39_FILTER_ORACLE_FAIL"
+            )
+        )
+        _row(
+            "B39_NO_PRODUCT_PAD_UP_FIRST",
+            "crop_pad-first + source_w>=dispW under coded432/display426",
+            exp,
+            rc,
+            msgs,
+        )
+        for tok in (
+            "B39_CROP_PAD_OOB_ON_DISPLAY_EQ_SOURCE",
+            "B39_FILTER_ORACLE_FAIL",
+            "B39_PAD_META_ORACLE_MISSING",
+        ):
+            if tok in txt:
+                _row(tok, "B39 crop_pad-first mutation", tok, rc, msgs)
+    finally:
+        rest_vf()
 
 # --- rd-duck B34: identity-on-store 432/432/0 after align ---
     lay_b34 = ROOT / "host" / "libmisterplex" / "ddr_frame_layout.hpp"

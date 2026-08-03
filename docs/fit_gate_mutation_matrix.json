@@ -417,6 +417,30 @@
       "token_hit": "1"
     },
     {
+      "check": "B39_NO_PRODUCT_PAD_UP_FIRST",
+      "inject": "live hollow / missing product TB",
+      "expect": "B39_NO_PRODUCT_PAD_UP_FIRST",
+      "verdict": "RED",
+      "true_rc": "1",
+      "token_hit": "1"
+    },
+    {
+      "check": "B39_CROP_PAD_OOB_ON_DISPLAY_EQ_SOURCE",
+      "inject": "live hollow / missing product TB",
+      "expect": "B39_CROP_PAD_OOB_ON_DISPLAY_EQ_SOURCE",
+      "verdict": "RED",
+      "true_rc": "1",
+      "token_hit": "1"
+    },
+    {
+      "check": "B39_PAD_META_ORACLE_MISSING",
+      "inject": "live hollow / missing product TB",
+      "expect": "B39_PAD_META_ORACLE_MISSING",
+      "verdict": "RED",
+      "true_rc": "1",
+      "token_hit": "1"
+    },
+    {
       "check": "B9_SYS_TOP_AR_OUT_HOLD_MISSING",
       "inject": "live defective/hollow tree (no inject)",
       "expect": "B9_SYS_TOP_AR_OUT_HOLD_MISSING",
@@ -705,6 +729,38 @@
       "token_hit": "1"
     },
     {
+      "check": "B39_NO_PRODUCT_PAD_UP_FIRST",
+      "inject": "crop_pad-first + source_w>=dispW under coded432/display426",
+      "expect": "B39_NO_PRODUCT_PAD_UP_FIRST",
+      "verdict": "RED",
+      "true_rc": "1",
+      "token_hit": "1"
+    },
+    {
+      "check": "B39_CROP_PAD_OOB_ON_DISPLAY_EQ_SOURCE",
+      "inject": "B39 crop_pad-first mutation",
+      "expect": "B39_CROP_PAD_OOB_ON_DISPLAY_EQ_SOURCE",
+      "verdict": "RED",
+      "true_rc": "1",
+      "token_hit": "1"
+    },
+    {
+      "check": "B39_FILTER_ORACLE_FAIL",
+      "inject": "B39 crop_pad-first mutation",
+      "expect": "B39_FILTER_ORACLE_FAIL",
+      "verdict": "RED",
+      "true_rc": "1",
+      "token_hit": "1"
+    },
+    {
+      "check": "B39_PAD_META_ORACLE_MISSING",
+      "inject": "B39 crop_pad-first mutation",
+      "expect": "B39_PAD_META_ORACLE_MISSING",
+      "verdict": "RED",
+      "true_rc": "1",
+      "token_hit": "1"
+    },
+    {
       "check": "B34_IDENTITY_ON_STORE",
       "inject": "align then makeDdrFrameGeometry(store) loses display 426/crop_left=2",
       "expect": "B34_IDENTITY_ON_STORE",
@@ -730,6 +786,6 @@
     }
   ],
   "failures": [],
-  "n_red": 91,
-  "head": "f4e34905c1d5"
+  "n_red": 98,
+  "head": "1ea3e0caa5b7"
 }
