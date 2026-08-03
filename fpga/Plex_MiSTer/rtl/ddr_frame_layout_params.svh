@@ -111,6 +111,17 @@ localparam int DDR_BITSTREAM_RING_ERR_PHYS  = 32'h3014_0010; // PLXE
 localparam int DDR_BITSTREAM_RECORD_HEADER_BYTES = 32;
 // PL330 after Option-C triple end (w-path) — collision fence only
 localparam int DDR_PL330_SCRATCH_PHYS = 32'h3060_0000;
+// DPB1 in DDR (w-mem): cur+ref after PL330 fence. Capacity = Option-C frame
+// (1280×720 I420); typical payload 624×480 = 449280 B/bank. See docs/dpb-ddr-design.md.
+// NOT between Option-C end and PL330 (only 0x180000 free; dual-720p needs 3 MiB).
+localparam int DDR_DPB_PHYS_BASE = 32'h3070_0000;
+localparam int DDR_DPB_BANK_STRIDE = 32'h0018_0000; // ≥ 1382400; match Option-C stride
+localparam int DDR_DPB_BANK0_PHYS = 32'h3070_0000;
+localparam int DDR_DPB_BANK1_PHYS = 32'h3088_0000; // BASE + STRIDE
+localparam int DDR_DPB_END_PHYS = 32'h30A0_0000;   // BASE + 2*STRIDE
+localparam int DDR_DPB_MAX_FRAME_BYTES = 1382400; // 1280*720*3/2
+localparam int DDR_DPB_TYP_FRAME_BYTES = 449280;  // 624*480*3/2 dominant class
+localparam int DDR_DPB_NUM_BANKS = 2;             // DPB1: current + one ref
 // Parent-measured AU sizes (real720p_2600k.mp4). Ring headroom uses WORST keyframe.
 localparam int DDR_BITSTREAM_MEASURED_MEAN_AU_BYTES  = 13507;
 localparam int DDR_BITSTREAM_MEASURED_MIN_AU_BYTES   = 413;

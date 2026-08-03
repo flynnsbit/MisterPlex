@@ -109,6 +109,16 @@ constexpr uint32_t kDdrBitstreamRingCtrlPhys = 0x30140000u;
 constexpr uint32_t kDdrBitstreamRingReadPhys = 0x30140008u;
 constexpr uint32_t kDdrBitstreamRingErrPhys = 0x30140010u;
 constexpr uint32_t kDdrPl330ScratchPhys = 0x30600000u;
+// DPB1 DDR reservation (docs/dpb-ddr-design.md) — after PL330, dual bank.
+// Collision asserts sit below after reserved-window / triple-doorbell constants.
+constexpr uint32_t kDdrDpbPhysBase = 0x30700000u;
+constexpr uint32_t kDdrDpbBankStride = 0x00180000u;
+constexpr uint32_t kDdrDpbBank0Phys = kDdrDpbPhysBase;
+constexpr uint32_t kDdrDpbBank1Phys = kDdrDpbPhysBase + kDdrDpbBankStride;
+constexpr uint32_t kDdrDpbEndPhys = kDdrDpbPhysBase + 2u * kDdrDpbBankStride; // 0x30A00000
+constexpr uint32_t kDdrDpbMaxFrameBytes = 1382400u; // 1280×720 I420 ceiling
+constexpr uint32_t kDdrDpbTypFrameBytes = 449280u;  // 624×480 dominant
+constexpr unsigned kDdrDpbNumBanks = 2u;
 constexpr int kDdrBitstreamRecordHeaderBytes = 32;
 
 // Parent-measured AU sizes (real720p_2600k.mp4, 1440 frames) — ring headroom SoT.
@@ -162,6 +172,19 @@ constexpr uint32_t kPlex720pMapBytes2Bank = 0x00300000u; // 2 * 0x180000
 constexpr uint32_t kPlex720pMapBytes3Bank = 0x00480000u; // 3 * 0x180000
 // Candidate only: base + 3*stride - 0x1000. Not product until bank field >1 bit.
 constexpr uint32_t kPlex720pTripleDoorbellPhys = 0x305FF000u;
+
+// DPB1 map fences (after triple-doorbell + reserved-window are visible).
+static_assert(kDdrDpbPhysBase >= kDdrPl330ScratchPhys,
+              "DPB must sit at/after PL330 fence");
+static_assert(kDdrDpbBankStride >= kDdrDpbMaxFrameBytes,
+              "DPB bank stride must hold max I420 frame");
+static_assert(kDdrDpbBankStride >= kDdrDpbTypFrameBytes, "DPB stride >= typical");
+static_assert(kDdrDpbEndPhys <= kPlexDdrReservedWindowEnd,
+              "DPB window inside reserved DDR");
+static_assert(kDdrDpbPhysBase >= kPlex720pYuv420pDoorbellPhys + 0x1000u,
+              "DPB after Option-C doorbell page");
+static_assert(kPlex720pTripleDoorbellPhys + 0x1000u <= kDdrDpbPhysBase,
+              "DPB must not overlap triple-doorbell candidate page");
 // PLXG — FIXED wire ABI at doorbell+0x800 (parent freeze). Literals here so
 // source-text invariant parsers resolve them; static_assert ties to mailbox_abi
 // (reachable compile-time guard — not test-only). Never re-derive from MAX_CMDS.

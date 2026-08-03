@@ -200,6 +200,27 @@ int main() {
     CHECK(!mailbox_abi::plxcPhysMatchesProductLoader(0x3007F130u));
     CHECK(!mailbox_abi::plxcPhysMatchesProductLoader(0x3047F130u));
     std::fprintf(stderr, "  PLXC_BOOTSTRAP_MAP OK leg+optc stable @0x300FF130\n");
+    // DPB1 DDR reservation (docs/dpb-ddr-design.md) — after PL330, dual Option-C stride.
+    CHECK(kDdrDpbPhysBase == 0x30700000u);
+    CHECK(kDdrDpbBankStride == 0x00180000u);
+    CHECK(kDdrDpbBank1Phys == 0x30880000u);
+    CHECK(kDdrDpbEndPhys == 0x30A00000u);
+    CHECK(kDdrDpbTypFrameBytes == 449280u);
+    CHECK(kDdrDpbMaxFrameBytes == 1382400u);
+    CHECK(kDdrDpbBankStride >= kDdrDpbMaxFrameBytes);
+    CHECK(kDdrDpbPhysBase >= kDdrPl330ScratchPhys);
+    CHECK(kDdrDpbPhysBase >= kPlex720pYuv420pDoorbellPhys + 0x1000u);
+    CHECK(kPlex720pTripleDoorbellPhys + 0x1000u <= kDdrDpbPhysBase);
+    CHECK(kDdrDpbEndPhys <= kPlexDdrReservedWindowEnd);
+    // Must not overlap Option-C present window [0x30180000, 0x30480000).
+    CHECK(kDdrDpbPhysBase >= kPlex720pDdrFramePhysBase + kPlex720pMapBytes2Bank ||
+          kDdrDpbEndPhys <= kPlex720pDdrFramePhysBase);
+    std::fprintf(stderr, "  DPB_DDR_MAP OK base=0x%x stride=0x%x end=0x%x typ=%u max=%u\n",
+                 static_cast<unsigned>(kDdrDpbPhysBase),
+                 static_cast<unsigned>(kDdrDpbBankStride),
+                 static_cast<unsigned>(kDdrDpbEndPhys),
+                 static_cast<unsigned>(kDdrDpbTypFrameBytes),
+                 static_cast<unsigned>(kDdrDpbMaxFrameBytes));
     // Historical values must not reappear as product offset.
     CHECK(kDdrFramePlxgOffset != 0x2C0u);
     CHECK(kDdrFramePlxgOffset != 0x4C0u);

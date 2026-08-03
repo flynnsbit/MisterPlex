@@ -1500,6 +1500,25 @@ def check_ddr_frame_layout_contract() -> None:
         == sv_const(layout_svh, "DDR_FRAME_PLXG_OFFSET"),
         "host/RTL PLXG offset lockstep at FIXED 0x800 (PLXC owns 0x130)",
     )
+    # DPB1 DDR reservation (docs/dpb-ddr-design.md) host/RTL lockstep.
+    check(
+        sv_const(layout_svh, "DDR_DPB_PHYS_BASE") == 0x30700000
+        and cpp_const(host, "kDdrDpbPhysBase")
+        == sv_const(layout_svh, "DDR_DPB_PHYS_BASE"),
+        "host/RTL DPB base lockstep 0x30700000",
+    )
+    check(
+        sv_const(layout_svh, "DDR_DPB_BANK_STRIDE") == 0x00180000
+        and cpp_const(host, "kDdrDpbBankStride")
+        == sv_const(layout_svh, "DDR_DPB_BANK_STRIDE"),
+        "host/RTL DPB bank stride lockstep 0x180000",
+    )
+    check(
+        sv_const(layout_svh, "DDR_DPB_END_PHYS") == 0x30A00000
+        and cpp_const(host, "kDdrDpbEndPhys")
+        == sv_const(layout_svh, "DDR_DPB_END_PHYS"),
+        "host/RTL DPB end lockstep 0x30A00000",
+    )
     print("PASS DDR frame layout ARM/RTL contract")
     print(
         "PASS DDR stride parity red-check: RTL CODED_WIDTH/Y_STRIDE 624→320 diverges from host"
