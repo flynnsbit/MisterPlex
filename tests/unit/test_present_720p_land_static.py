@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Gate: 720p present path is ON main tree + in files.qip, default-off in QSF.
+"""Gate: 720p present modules exist on this tree + in files.qip, default-off in QSF.
+
+FILE_PRESENT = rtl/<mod> exists in this worktree (not git-main membership).
+IN_FILES_QIP = listed in fpga/Plex_MiSTer/files.qip.
+Git ON_MAIN is reported by the land status file after parent merge.
 
 Red-before-green: missing QIP entry or enabled PRESENT_* product macro fails.
 """
@@ -39,12 +43,12 @@ def main() -> int:
     for name in REQUIRED:
         path = RTL / name
         if not path.is_file():
-            fails.append(f"ON_MAIN=no missing file rtl/{name}")
+            fails.append(f"FILE_PRESENT=no missing file rtl/{name}")
             continue
         if f"rtl/{name}" not in qip:
             fails.append(f"IN_FILES_QIP=no rtl/{name} not listed in files.qip")
         else:
-            print(f"OK {name}: ON_MAIN=yes IN_FILES_QIP=yes")
+            print(f"OK {name}: FILE_PRESENT=yes IN_FILES_QIP=yes")
 
     # Product macros must stay commented / absent as active assignments.
     active = re.findall(
