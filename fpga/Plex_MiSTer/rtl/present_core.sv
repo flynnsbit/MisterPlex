@@ -38,6 +38,15 @@ module present_core #(
 	input  wire        audio_en,        // OSD tone enable (when no FIFO audio)
 	input  wire        use_frame_store, // OSD force bars when 1
 
+	// Fabric content window (runtime). win_enable=0 → legacy full FRAME map.
+	// When 1, NN-stretch content_w×content_h at (content_x0,content_y0) across DE.
+	// Host programs these before switching ARM off scale (see register map card).
+	input  wire        win_enable,
+	input  wire [9:0]  content_w,
+	input  wire [9:0]  content_h,
+	input  wire [9:0]  content_x0,
+	input  wire [9:0]  content_y0,
+
 	// frame_store write (from ingest)
 	input  wire        fs_wr_en,
 	input  wire [15:0] fs_wr_pixel,
@@ -155,7 +164,7 @@ module present_core #(
 	localparam int FRAME_X_W = $clog2(FRAME_W);
 	localparam int FRAME_Y_W = $clog2(FRAME_H);
 
-	// Stretch FRAME_W×FRAME_H frame_store across Template DE (colorbars hc/vc).
+	// Stretch store content across Template DE (colorbars hc/vc).
 	//
 	// Product (Plex.qsf FRAME_W=640 FRAME_H=480, forced scandouble):
 	//   colorbars NTSC scandouble active vc=0..479 (VBlank asserts at vc==480).
@@ -169,18 +178,20 @@ module present_core #(
 	// require H_DE>=640, which is impossible at clk_sys=20 MHz / 60 Hz / 524 lines
 	// (20e6/60/524 ≈ 636 clocks/line max; see test_present_store_scale_math).
 	// STORE_X still samples 529 of FRAME_W via the 39647 mul-shift.
+	//
+	// Fabric content window (win_enable): when 1, SX/SY come from runtime
+	// content_w/h instead of FRAME_* so ARM can publish native WxH (e.g. 320x240)
+	// and fabric NN-stretches across DE. win_enable=0 is bit-compatible legacy.
+	// Mapping lives in present_content_window (NN V1; ascal remains HDMI scaler).
 	localparam H_DE = 10'd529;
 	localparam bit NATIVE_V_1TO1 = (FRAME_H > 240);
 	localparam int V_STORE_I = NATIVE_V_1TO1 ? FRAME_H : 240;
 	localparam [9:0] V_STORE = 10'(V_STORE_I);
-	localparam [9:0] V_STORE_LAST = 10'(V_STORE_I - 1);
+	// Legacy scale constants retained for source-lock tests + documentation.
+	// Runtime path uses present_content_window registered scales.
 	// store_x ≈ floor(hc * FRAME_W / 529); 39647/65536 ≈ 320/529.
 	localparam int STORE_X_SCALE = (FRAME_W * 39647) / 320;
 	localparam int STORE_Y_SCALE = (FRAME_H * 65536) / V_STORE_I;
-	localparam [FRAME_X_W-1:0] FRAME_LAST_X = FRAME_X_W'(FRAME_W - 1);
-	localparam [FRAME_Y_W-1:0] FRAME_LAST_Y = FRAME_Y_W'(FRAME_H - 1);
-	localparam [15:0] FRAME_LAST_X_16 = 16'(FRAME_W - 1);
-	localparam [15:0] FRAME_LAST_Y_16 = 16'(FRAME_H - 1);
 	// Beam Y for content + store. Native 480: use full vc (scandouble active 0..479).
 	// Legacy 240: half when scandoubled so two display lines share one store row.
 	wire [9:0] py = NATIVE_V_1TO1 ? vc : (scandouble ? (vc >> 1) : vc);
@@ -188,37 +199,40 @@ module present_core #(
 
 	// Drive store_x from free-running hc (no blank-time force-to-0). Blank-time
 	// reset handed column 0 to DE_LAG-delayed right-edge pixels (1 px wrap).
+	// Identity hc→read_hc kept at this layer for source-lock + DE_LAG docs;
+	// present_content_window also treats hc as free-running (no blank force-0).
 	wire [9:0] read_hc = hc;
-	wire [31:0] store_x_prod = read_hc * STORE_X_SCALE;
-	wire [15:0] store_x_comb = store_x_prod[31:16];
-	wire [FRAME_X_W-1:0] store_x_clamped =
-		(store_x_comb > FRAME_LAST_X_16) ? FRAME_LAST_X : store_x_comb[FRAME_X_W-1:0];
+	wire [FRAME_X_W-1:0] store_x;
+	wire [FRAME_Y_W-1:0] store_y;
+	wire                 de_r; // registered in_content for frame_store read align
+	wire                 past_last_row;
 
-	// Clamp past the content window so an out-of-range row is never fetched.
-	// colorbars can expose one surplus line vs VBlank edges; past_last_row also
-	// feeds vb_d so that line is blanked (G-VID1 bottom-edge fix, generalized
-	// from the hard-coded 240-row form to V_STORE).
-	wire       past_last_row = (py >= V_STORE);
-	wire [9:0] store_y_clamped = past_last_row ? V_STORE_LAST : py;
-	wire [31:0] store_y_prod = store_y_clamped * STORE_Y_SCALE;
-	wire [15:0] store_y_comb = store_y_prod[31:16];
-	wire [FRAME_Y_W-1:0] store_y_addr =
-		(store_y_comb > FRAME_LAST_Y_16) ? FRAME_LAST_Y : store_y_comb[FRAME_Y_W-1:0];
+	present_content_window #(
+		.FRAME_W(FRAME_W),
+		.FRAME_H(FRAME_H),
+		.H_DE_I(529),
+		.V_STORE_I(V_STORE_I)
+	) content_win (
+		.clk(clk),
+		.reset(reset),
+		.ce_pix(ce_pix_i),
+		.hc(read_hc),
+		.py(py),
+		.in_content(in_content),
+		.win_enable(win_enable),
+		.content_w(content_w),
+		.content_h(content_h),
+		.content_x0(content_x0),
+		.content_y0(content_y0),
+		.store_x(store_x),
+		.store_y(store_y),
+		.de_r(de_r),
+		.past_last_row(past_last_row)
+	);
 
-	reg [FRAME_X_W-1:0] store_x;
-	reg [FRAME_Y_W-1:0] store_y;
-	reg       de_r; // registered in_content for frame_store read align
-	always @(posedge clk) begin
-		if (reset) begin
-			store_x <= 0;
-			store_y <= '0;
-			de_r    <= 1'b0;
-		end else if (ce_pix_i) begin
-			de_r    <= in_content;
-			store_y <= store_y_addr;
-			store_x <= store_x_clamped;
-		end
-	end
+	// Keep legacy scale localparams live for elab/source-lock (child has its own).
+	(* keep = 1 *) wire [31:0] _keep_legacy_store_scale =
+		32'(STORE_X_SCALE) ^ {16'd0, 16'(STORE_Y_SCALE)};
 
 	wire [7:0] fr, fg, fb;
 	wire       has_frame;

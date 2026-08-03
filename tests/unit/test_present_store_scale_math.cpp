@@ -90,9 +90,14 @@ int main() {
     EXPECT(file_contains("fpga/Plex_MiSTer/rtl/present_core.sv",
                          "wire [9:0] py = NATIVE_V_1TO1 ? vc : (scandouble ? (vc >> 1) : vc)"),
            "py=vc on native 480 path");
-    EXPECT(file_contains("fpga/Plex_MiSTer/rtl/present_core.sv",
+    // past_last_row lives in present_content_window (fabric NN mapper).
+    EXPECT(file_contains("fpga/Plex_MiSTer/rtl/present_content_window.sv",
                          "past_last_row = (py >= V_STORE)"),
-           "past_last_row vs V_STORE");
+           "past_last_row vs V_STORE in content window");
+    EXPECT(file_contains("fpga/Plex_MiSTer/rtl/present_core.sv", "present_content_window"),
+           "present_core instantiates content window");
+    EXPECT(file_contains("fpga/Plex_MiSTer/rtl/present_core.sv", "win_enable"),
+           "present_core exposes win_enable");
     EXPECT(file_contains("fpga/Plex_MiSTer/rtl/present_core.sv",
                          ".CODED_W(DDR_FRAME_CODED_WIDTH)"),
            "ddr_frame_store CODED_W from layout params");

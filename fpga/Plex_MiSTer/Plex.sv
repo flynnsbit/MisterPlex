@@ -223,9 +223,20 @@ wire reset = RESET | status[0] | buttons[1];
 // O[4] is the native content-resolution selector shared with misterplexd.
 // C1B owns the selector/ABI; the DDR-backed frame-store branch consumes these
 // dimensions for the actual 480p present path.
+//
+// Fabric content window (present_content_window):
+//   Default win_enable=0 → legacy full-bank map (safe with ARM scale/pad to 624).
+//   Host mailbox (proposed PLXW @ doorbell+0x130) will program exact delivery
+//   WxH + win_enable=1 when ARM stops scaling. O[4] supplies the coarse default
+//   content_w/h so a future one-bit enable can arm NN stretch without mailbox.
+//   Do NOT auto-assert win_enable from O[4] alone — that breaks ARM-scaled 624
+//   frames still published today (quarter-size / wrong sample class).
 wire        content_res_640x480 = status[4];
 wire [9:0]  content_width       = content_res_640x480 ? 10'd640 : 10'd320;
 wire [9:0]  content_height      = content_res_640x480 ? 10'd480 : 10'd240;
+wire        fabric_win_enable   = 1'b0; // host mailbox override (V1 safe default)
+wire [9:0]  fabric_content_x0   = 10'd0;
+wire [9:0]  fabric_content_y0   = 10'd0;
 
 // Legacy cadence input is now fixed; the daemon handles exact content pacing.
 wire [7:0] content_fps = 8'd24;
@@ -747,6 +758,11 @@ present_core #(
 	.pattern(2'd0),
 	.audio_en(1'b0),
 	.use_frame_store(1'b0),
+	.win_enable(fabric_win_enable),
+	.content_w(content_width),
+	.content_h(content_height),
+	.content_x0(fabric_content_x0),
+	.content_y0(fabric_content_y0),
 	.fs_wr_en(fs_wr_en),
 	.fs_wr_pixel(fs_wr_pixel),
 	.fs_wr_reset(fs_wr_reset),

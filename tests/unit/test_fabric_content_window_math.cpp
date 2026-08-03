@@ -1,12 +1,14 @@
-// Fabric content-window scale math (w-geom design gate).
-// Models present_core mul-shift with RUNTIME content_w/h instead of FRAME_W/H.
+// Fabric content-window scale math (w-geom design gate + w-scaler RTL lock).
+// Models present_content_window mul-shift with RUNTIME content_w/h instead of FRAME_W/H.
 // Proves: 320x240 content covers full DE without quarter-size island.
-// true rc direct. Soft-skip never. No RTL required for this gate.
+// true rc direct. Soft-skip never.
 
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <fstream>
 #include <set>
+#include <string>
 
 namespace {
 
@@ -54,9 +56,36 @@ size_t yuv420_bytes(int w, int h) {
 
 } // namespace
 
+bool file_contains(const char* path, const char* needle) {
+    std::ifstream in(path);
+    if (!in)
+        return false;
+    std::string all((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    return all.find(needle) != std::string::npos;
+}
+
 int main() {
     constexpr int H_DE = 529;
     constexpr int V_DE = 480;
+
+    // --- RTL source locks (w-scaler) ---
+    EXPECT(file_contains("fpga/Plex_MiSTer/rtl/present_content_window.sv",
+                         "module present_content_window"),
+           "present_content_window.sv exists");
+    EXPECT(file_contains("fpga/Plex_MiSTer/rtl/present_content_window.sv", "win_enable"),
+           "window has win_enable");
+    EXPECT(file_contains("fpga/Plex_MiSTer/rtl/present_content_window.sv",
+                         "STORE_X_SCALE = (FRAME_W * 39647) / 320"),
+           "legacy STORE_X_SCALE formula in window module");
+    EXPECT(file_contains("fpga/Plex_MiSTer/rtl/present_content_window.sv",
+                         "sx_num = {18'd0, cw_eff} * 28'd39647"),
+           "runtime SX numerator");
+    EXPECT(file_contains("fpga/Plex_MiSTer/rtl/present_core.sv", "present_content_window"),
+           "present_core instantiates window");
+    EXPECT(file_contains("fpga/Plex_MiSTer/Plex.sv", "fabric_win_enable"),
+           "Plex.sv wires fabric_win_enable (safe default 0)");
+    EXPECT(file_contains("fpga/Plex_MiSTer/Plex.sv", "fabric_win_enable   = 1'b0"),
+           "win_enable defaults 0 (legacy safe)");
 
     // --- Legacy full-bank (win_enable=0 equivalent): content = 640x480 ---
     {
