@@ -1,12 +1,12 @@
 lane=w-path
-status=CRITICAL_PATH_PACK_READY
-tip=2616c894
-(1) DMA gate cmds: docs/evidence/.../PARENT_COMMANDS_DMA_AND_ROUTE_A.md
-    ddr_pl330_ingest_bench --dma-only --duration-s 25 --bank 1
-(2) Route A falsify: route_a_bank_probe --sink ram|bank (proxy output store)
-(3) Bitstream assessment: BITSTREAM_FABRIC_ASSESSMENT.md
-    traffic 13.5KB/f ~0.15ms @88MiB/s — math wins
-    gap: integration+inter+720p DPB ~8-16 cal weeks; CB pin deletes CABAC
-    modules≠product; decode_top is coeff-in not annexB-in
-DecodeIntoBank SUSPECT — no product build
-binaries: build/arm/ddr_pl330_ingest_bench build/arm/route_a_bank_probe
+status=GAP_ANALYSIS_LANDED
+tip=pending
+PARENT: bitstream move SOLVED (worst AU 60915 B = 0.66 ms); decode remains
+GAP: docs/evidence/p720-path-20260803/H264_GAP_ANALYSIS.md
+  decode_top = coeff-in I-luma bit-exact ≠ product decoder
+  durable PMS 720p bitstream on glass ~8-16 cal weeks; first I-frame 3-6
+  long pole: inter+DPB+deblock-before-ref @ 86400 MB/s
+  CABAC off critical path if CB pin holds
+RING: 256KiB >= 4*60915 static_assert; mean 13507 worst 60915 constants
+DMA: still open backup; instrument ready
+DecodeIntoBank: SUSPECT no build

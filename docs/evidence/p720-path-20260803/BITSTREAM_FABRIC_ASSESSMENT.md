@@ -120,3 +120,7 @@ bit-exact win is real and necessary; it is **not** a bitstream-to-HDMI product.
   0x30140000+ctrl; Option-C base 0x30180000 — verify ctrl page family vs 480p
   doorbell 0x300FF000** before STREAM=1 soak (layout audit item).
 EOF
+
+
+## Superseded by
+See `H264_GAP_ANALYSIS.md` for week-scale gaps; parent worst-AU 60915 B locked.

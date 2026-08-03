@@ -18,6 +18,13 @@ constexpr uint32_t kStat4Phys = 0x30140038u;
 constexpr uint32_t kStat5Phys = 0x30140040u;
 constexpr uint32_t kStat6Phys = 0x30140048u;
 constexpr size_t kRingBytes = 262144u;
+// Parent-measured real720p_2600k.mp4 (1440f): mean AU 13506.6 B, worst 60915 B.
+// Ring holds ~4.3x worst AU — do not shrink below 4x without consumer proof.
+constexpr size_t kParentMeasuredBitstreamMeanAuBytes = 13507u;
+constexpr size_t kParentMeasuredBitstreamWorstAuBytes = 60915u;
+static_assert(kRingBytes >= 4u * kParentMeasuredBitstreamWorstAuBytes,
+              "ring must hold >=4 worst-case AUs (parent 60915 B)");
+
 
 constexpr uint32_t kCtrlMagic = mailbox_abi::kPlxbMagic;
 constexpr uint32_t kCtrlDormantMagic = mailbox_abi::kPlxbDormantMagic;
