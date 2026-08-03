@@ -10,11 +10,12 @@
 // bank map PHYS_BASE/0x80000/doorbell product).
 // geom_enable=1: runtime plane pitch; bank map is CAPACITY-selected:
 //   I420 frame_bytes = y_stride*coded_h + 2*(chroma_stride*coded_h/2)
-//   if frame_bytes > legacy HPS_BANK_STRIDE (512 KiB) → Option-C
+//   usable = HPS_BANK_STRIDE − 0x1000 (doorbell/control page on bank1 tail)
+//   if frame_bytes > usable (520192, NOT full 512 KiB) → Option-C
 //     (0x30180000 / 0x180000 / 0x3047F000)
 //   else → legacy product banks.
 // Width alone must NOT select the map: product 960x540 is <1280 wide but
-// 777600 B > 524288 B and MUST use Option-C (w-mem / parent 2026-08-03).
+// 777600 B > 520192 B usable and MUST use Option-C (w-mem / parent 2026-08-03).
 
 module ddr_frame_store #(
 	parameter int FRAME_W = 640,

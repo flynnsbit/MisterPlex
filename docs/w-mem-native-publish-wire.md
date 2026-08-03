@@ -17,6 +17,9 @@ rd-duck STOP items addressed in source (await rd-duck re-audit before fit):
 4. **Raw geom** — over-max/unaligned rejected (`rt_raw_ok`); coded_w %16; no clamp-then-accept.
 5. **Line-cache frame gen** — tags are not only `{bank,line}`: each accepted doorbell/SPI bumps that bank's gen and clears matching slots; fill commit requires gen match; geom/map change bumps both gens and clears all. Without this, same-bank re-publish while pending (or bank0→1→0 with top lines still cached) swaps stale prep pixels. Gate: `tests/unit/test_ddr_frame_store_line_gen.sh` (FAULT `LINE_CACHE_FRAME_GEN=0` → stale Y; GOOD gen=1 → fresh Y + geom gen bump).
 6. **Freeze twin isolation** — gen-invalidate punches holes in a full prep set, which can mask the sticky/recycle freeze class (9eb1431a). `test_ddr_frame_store_scanout_freeze.sh` builds broken with `LINE_CACHE_FRAME_GEN=0` and good with gen=1 so both gates stay honest.
+7. **RTL selector oracle** — `test_ddr_frame_store_selector.sh` elaborates real `ddr_frame_store` and checks usable−exact / over / 720×482 / 960×540→Option-C U@518400 / storage≠DE canvas / w%16 reject. FAULT `FORCE_LEGACY_BANK_MAP` REPRO. Host-only edges are not sufficient (rd-duck).
+
+**Line-gen scope note (rd-duck 2026-08-03):** present_core clamps `rd_y` to LAST in VBlank; bank0→1→0 top-stale is not proven inevitable from VBlank alone. Independent executable REPRO remains: same-bank re-publish while pending (`line_gen` fault Y=65). Keep gen tags; do not treat as sole fit blocker.
 
 **Do not claim glass-proven native E2E until parent runs device. Do not grant fit until rd-duck clears.**
 
