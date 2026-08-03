@@ -46,9 +46,9 @@ V_TOTAL = 705   → 1182*705 = 833310 clks → 20e6/833310 = 24.0007 Hz  (film /
 exact-24 solve  = 20e6/24/1182 ≈ 705.02  (705 is 0.003% off)
 ```
 
-**Latch V_TOTAL only at frame boundary** (`frame_start` / vc==0 && hc==0). Mid-frame writes are undefined.
+**V_TOTAL latch (hardware):** host may write `rt_vtotal` anytime. Beam *captures* the request every cycle and *applies* it only on **frame wrap** (`v_wrap`) or reset — not combinational into `v_last`. Mid-frame 705→564 with `vc>563` must still complete the film frame then switch (see `test_present_vtot_latch_rtl_sim.sh`).
 
-Plex.sv currently ties `beam_use_rt_vtotal=0` (safe default 564). Host/PLXG wiring is the integrator step — ports exist on `present_core`.
+Plex.sv currently ties `beam_use_rt_vtotal=0` (safe default 564 / first-proof fixed-30). Host/PLXG wiring is the integrator step — ports exist on `present_core`.
 
 ## What “true DE” means at the pin
 

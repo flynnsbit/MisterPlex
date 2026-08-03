@@ -222,6 +222,8 @@ tests/unit/test_present_true_de_count_rtl_sim.sh
 **Fit card (w-nostub drop-in):** `docs/ascal-true-de-fit-card.md`  
 Macros: `PRESENT_BEAM_960`; runtime `win_enable=1`, `content_w/h=960/540`, `win_h_de/v_de=960/540`;
 optional `beam_use_rt_vtotal` + `beam_rt_vtotal` ∈ {564,705}.
+`rt_vtotal` is **latched at frame wrap** (not comb into `v_last`); mid-frame write test:
+`tests/unit/test_present_vtot_latch_rtl_sim.sh`. First-proof may keep fixed 564 (Plex ties OFF).
 
 ### Cadence resolution — runtime V_TOTAL (parent arithmetic **accepted**)
 

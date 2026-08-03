@@ -184,6 +184,7 @@ module present_core #(
 		.reset(reset),
 		.use_rt_vtotal(beam_use_rt_vtotal),
 		.rt_vtotal(beam_rt_vtotal),
+		.vtot_active(), // optional observe; host uses mailbox request path
 		.ce_pix(ce_pix_i),
 		.HBlank(hb),
 		.HSync(hs),

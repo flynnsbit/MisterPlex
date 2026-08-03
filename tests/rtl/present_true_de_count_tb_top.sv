@@ -29,6 +29,7 @@ module present_true_de_count_tb (
 	output wire        frame_start,
 	output wire [10:0] hc,
 	output wire [10:0] vc,
+	output wire [10:0] vtot_active,
 	output wire [10:0] store_x,
 	output wire [10:0] store_y,
 	output wire        de_out,
@@ -61,6 +62,7 @@ module present_true_de_count_tb (
 
 	wire ce_pix_i, hb, hs, vb, vs, fstart;
 	wire [10:0] hc_i, vc_i;
+	wire [10:0] vtot_act_i;
 
 	present_beam_content_de #(
 		.H_DE(P_H_DE),
@@ -83,7 +85,8 @@ module present_true_de_count_tb (
 		.VSync(vs),
 		.frame_start(fstart),
 		.hc_out(hc_i),
-		.vc_out(vc_i)
+		.vc_out(vc_i),
+		.vtot_active(vtot_act_i)
 	);
 
 	wire [10:0] py = vc_i;
@@ -142,6 +145,7 @@ module present_true_de_count_tb (
 	assign frame_start = fstart;
 	assign hc = hc_i;
 	assign vc = vc_i;
+	assign vtot_active = vtot_act_i;
 	assign store_x = store_x_w;
 	assign store_y = store_y_w;
 	assign de_out = ~hb_d & ~vb_d;
