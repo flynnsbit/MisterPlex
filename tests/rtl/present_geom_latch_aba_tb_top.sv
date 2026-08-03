@@ -29,7 +29,8 @@ module present_geom_latch_aba_tb_top (
 		.present_x(), .present_y(), .crop_left(), .crop_top(),
 		.dar_x(), .dar_y(), .content_fps(), .dar_valid(), .fps_valid(),
 		.live_valid(live_valid), .live_seq(live_seq), .live_epoch(live_epoch),
-		.pending_valid(pending_valid), .promote_pulse(), .q5_reserved_reject()
+		.pending_valid(pending_valid), .promote_pulse(), .q5_reserved_reject(),
+		.dar_hold_black()
 	);
 endmodule
 `default_nettype wire

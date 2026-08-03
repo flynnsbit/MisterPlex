@@ -26,7 +26,8 @@ module present_geom_latch_b16_tb_top (
 	output wire        fps_valid,
 	output wire        pending_valid,
 	output wire        promote_pulse,
-	output wire        q5_reserved_reject
+	output wire        q5_reserved_reject,
+	output wire        dar_hold_black
 );
 	present_geom_latch u (
 		.clk(clk), .reset(reset),
@@ -43,7 +44,8 @@ module present_geom_latch_b16_tb_top (
 		.dar_valid(dar_valid), .fps_valid(fps_valid),
 		.live_valid(live_valid), .live_seq(live_seq), .live_epoch(live_epoch),
 		.pending_valid(pending_valid), .promote_pulse(promote_pulse),
-		.q5_reserved_reject(q5_reserved_reject)
+		.q5_reserved_reject(q5_reserved_reject),
+		.dar_hold_black(dar_hold_black)
 	);
 endmodule
 `default_nettype wire

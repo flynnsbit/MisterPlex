@@ -72,4 +72,16 @@ echo "fault_coin true rc=$crc"
 [[ "$crc" -eq 2 ]]
 grep -q "REPRO B16_LOSE_COINCIDENT" "$OUT/fault_coin_run.txt"
 
-echo "PASS test_present_geom_latch_b16 product+q5+REPROs"
+echo "== B16 red twin FAULT_NO_DAR_BLACKOUT same-size 4:3→16:9 (rc=2) =="
+mkdir -p "$OUT/fault_dar"
+"$RV" "${common[@]}" --Mdir "$OUT/fault_dar" -DPRESENT_GEOM_LATCH_FAULT_NO_DAR_BLACKOUT -o b16_fault_dar
+set +e
+FAULT_NO_DAR_BLACKOUT=1 "$OUT/fault_dar/b16_fault_dar" >"$OUT/fault_dar_run.txt" 2>&1
+drc=$?
+set -e
+cat "$OUT/fault_dar_run.txt"
+echo "fault_dar true rc=$drc"
+[[ "$drc" -eq 2 ]]
+grep -q "REPRO B16_NO_DAR_BLACKOUT" "$OUT/fault_dar_run.txt"
+
+echo "PASS test_present_geom_latch_b16 product+q5+DAR_blackout+REPROs"

@@ -455,6 +455,9 @@ module ddr_frame_store #(
 	// Epoch is also tagged on each line fill; video hits require epoch match so a
 	// stale valid bit under a new pitch cannot resolve (counting oracles stay green
 	// on mixed frames otherwise).
+	// NOTE (rd-duck): geom_layout_chg is bank layout only (enable/W/H/stride/map).
+	// Same-size DAR/SAR changes do NOT assert geom_hold_black — aspect blackout
+	// is present_geom_latch.dar_hold_black ORed at Plex HDMI_BLACKOUT.
 	reg  [3:0] geom_epoch_r;
 	reg        geom_inv_tog;
 	reg        geom_hollow_r;

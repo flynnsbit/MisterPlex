@@ -5,6 +5,10 @@
 //      promote at frame start). Mid-active commit must NOT change pitch/base
 //      (or DAR/fps) inside a raster.
 // ABI #2: q5 carries DAR + content_fps; reserved[63:34] MUST be zero or reject.
+// DAR blackout: same WxH/stride DAR change never hits store geom_layout_chg
+// (store compares enable/W/H/stride/map only). Hold dar_hold_black on the
+// aspect path for N frame starts. Compare DAR tuple only — NOT PLXG seq
+// (seq advances every frame). FAULT_NO_DAR_BLACKOUT = red twin.
 //
 // FAULT_IMMEDIATE_COMMIT: restore pre-B16 promote-on-commit (red twin REPRO).
 // FAULT_LOSE_COINCIDENT: split ifs lose commit+boundary same-cycle (rd-duck).
@@ -59,7 +63,10 @@ module present_geom_latch (
 	// Pulse 1 clk when pending → live (store geom-epoch bump).
 	output reg         promote_pulse,
 	// Sticky: rejected commit due to q5 reserved nonzero (debug).
-	output reg         q5_reserved_reject
+	output reg         q5_reserved_reject,
+	// Aspect-path blackout: DAR tuple changed at promote (same-size SAR/DAR).
+	// OR into HDMI_BLACKOUT at top — store geom_hold_black does NOT see DAR.
+	output reg         dar_hold_black
 );
 
 	// Match mailbox_abi::kPlxgMagic / plxg_ddr_poller (string-hex "PLXG").
@@ -80,6 +87,28 @@ module present_geom_latch (
 	reg         pend_dar_valid, pend_fps_valid;
 	reg  [15:0] pend_seq;
 	reg  [13:0] pend_epoch;
+	reg  [1:0]  dar_black_vs_left;
+	// Blocking flag inside always_ff: DAR-changing promote this cycle.
+	reg         dar_chg_promote;
+
+	// DAR tuple change vs current live (ignore first acquire; ignore seq).
+	function automatic logic dar_tuple_chg;
+		input logic had_live;
+		input logic old_v;
+		input [11:0] old_x, old_y;
+		input logic new_v;
+		input [11:0] new_x, new_y;
+		begin
+			if (!had_live)
+				dar_tuple_chg = 1'b0;
+			else if (old_v != new_v)
+				dar_tuple_chg = 1'b1;
+			else if (new_v && ((old_x != new_x) || (old_y != new_y)))
+				dar_tuple_chg = 1'b1;
+			else
+				dar_tuple_chg = 1'b0;
+		end
+	endfunction
 
 	wire [31:0] sh_magic = sh0[31:0];
 	wire [15:0] sh_seq   = sh0[63:48];
@@ -151,8 +180,13 @@ module present_geom_latch (
 			pend_dar_x <= 12'd0; pend_dar_y <= 12'd0; pend_fps <= 8'd0;
 			pend_dar_valid <= 1'b0; pend_fps_valid <= 1'b0;
 			pend_seq <= 16'd0; pend_epoch <= 14'd0;
+			dar_hold_black <= 1'b0;
+			dar_black_vs_left <= 2'd0;
+			dar_chg_promote = 1'b0;
 		end else begin
 			promote_pulse <= 1'b0;
+			// Set on DAR-changing promote; countdown skips that cycle.
+			dar_chg_promote = 1'b0;
 
 			if (wr_en) begin
 				unique case (wr_idx)
@@ -200,6 +234,9 @@ module present_geom_latch (
 				present_y      <= sh4[26:16];
 				crop_left      <= sh4[42:32];
 				crop_top       <= sh4[58:48];
+				if (dar_tuple_chg(live_valid, dar_valid, dar_x, dar_y,
+				                  sh5[32], sh5[11:0], sh5[23:12]))
+					dar_chg_promote = 1'b1;
 				dar_x          <= sh5[11:0];
 				dar_y          <= sh5[23:12];
 				content_fps    <= sh5[31:24];
@@ -260,6 +297,9 @@ module present_geom_latch (
 				present_y      <= pend_py;
 				crop_left      <= pend_cl;
 				crop_top       <= pend_ct;
+				if (dar_tuple_chg(live_valid, dar_valid, dar_x, dar_y,
+				                  pend_dar_valid, pend_dar_x, pend_dar_y))
+					dar_chg_promote = 1'b1;
 				dar_x          <= pend_dar_x;
 				dar_y          <= pend_dar_y;
 				content_fps    <= pend_fps;
@@ -292,6 +332,9 @@ module present_geom_latch (
 				present_y      <= sh4[26:16];
 				crop_left      <= sh4[42:32];
 				crop_top       <= sh4[58:48];
+				if (dar_tuple_chg(live_valid, dar_valid, dar_x, dar_y,
+				                  sh5[32], sh5[11:0], sh5[23:12]))
+					dar_chg_promote = 1'b1;
 				dar_x          <= sh5[11:0];
 				dar_y          <= sh5[23:12];
 				content_fps    <= sh5[31:24];
@@ -348,6 +391,9 @@ module present_geom_latch (
 				present_y      <= pend_py;
 				crop_left      <= pend_cl;
 				crop_top       <= pend_ct;
+				if (dar_tuple_chg(live_valid, dar_valid, dar_x, dar_y,
+				                  pend_dar_valid, pend_dar_x, pend_dar_y))
+					dar_chg_promote = 1'b1;
 				dar_x          <= pend_dar_x;
 				dar_y          <= pend_dar_y;
 				content_fps    <= pend_fps;
@@ -358,6 +404,23 @@ module present_geom_latch (
 				live_valid     <= 1'b1;
 				pending_valid  <= 1'b0;
 				promote_pulse  <= 1'b1;
+			end
+`endif
+			// Aspect-path blackout arm + countdown (not store geom_layout_chg).
+`ifdef PRESENT_GEOM_LATCH_FAULT_NO_DAR_BLACKOUT
+			dar_hold_black <= 1'b0;
+			dar_black_vs_left <= 2'd0;
+`else
+			if (dar_chg_promote) begin
+				dar_hold_black <= 1'b1;
+				dar_black_vs_left <= 2'd2;
+			end else if (frame_boundary && dar_hold_black) begin
+				if (dar_black_vs_left <= 2'd1) begin
+					dar_black_vs_left <= 2'd0;
+					dar_hold_black <= 1'b0;
+				end else begin
+					dar_black_vs_left <= dar_black_vs_left - 2'd1;
+				end
 			end
 `endif
 		end

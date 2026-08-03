@@ -238,7 +238,82 @@ int main(int argc, char** argv) {
 		            (unsigned)t->live_seq);
 	}
 
-	std::printf("PASS B16+q5 stage/promote 624->320->960->416; mid-active never mixed; coincident ok\n");
+	// rd-duck: same WxH/stride DAR 4:3→16:9 must raise dar_hold_black.
+	// Store geom_layout_chg cannot see DAR; seq advances every frame — do not
+	// use seq as the change signal.
+	{
+		const bool fault_no_dar = (std::getenv("FAULT_NO_DAR_BLACKOUT") != nullptr);
+		// Drain any residual blackout from prior promotes.
+		for (int i = 0; i < 8; ++i) {
+			t->frame_boundary = 1; tick(t);
+			t->frame_boundary = 0; tick(t);
+		}
+		if (t->dar_hold_black) {
+			std::fprintf(stderr, "FAIL setup: dar_hold_black stuck before DAR test\n");
+			return 1;
+		}
+		// 720×480 bank layout fixed; only DAR changes (anamorphic class).
+		Geom g43{720, 480, 720, 360, 10, 1, 4, 3, 24, true, true, 0};
+		Geom g169{720, 480, 720, 360, 11, 1, 16, 9, 24, true, true, 0};
+		write_geom(t, g43);
+		promote(t);
+		if (check_live(t, g43, "dar_base_4_3")) return 1;
+		// First acquire may or may not blackout; clear hold before same-size chg.
+		for (int i = 0; i < 8; ++i) {
+			t->frame_boundary = 1; tick(t);
+			t->frame_boundary = 0; tick(t);
+		}
+		if (t->dar_hold_black) {
+			std::fprintf(stderr, "FAIL: blackout did not clear after base 4:3\n");
+			return 1;
+		}
+		// Same layout, new seq, DAR 16:9 only.
+		write_geom(t, g169);
+		if (t->dar_x != 4 || t->dar_y != 3) {
+			std::fprintf(stderr, "FAIL mid-active DAR changed before promote\n");
+			return 1;
+		}
+		if (t->dar_hold_black) {
+			std::fprintf(stderr, "FAIL dar_hold_black raised before promote\n");
+			return 1;
+		}
+		promote(t);
+		if (check_live(t, g169, "dar_16_9")) return 1;
+		if (fault_no_dar) {
+			if (t->dar_hold_black) {
+				std::fprintf(stderr, "FAIL red twin unexpectedly held black\n");
+				return 1;
+			}
+			std::printf("REPRO B16_NO_DAR_BLACKOUT same-size 4:3→16:9 no hold\n");
+			delete t;
+			return 2;
+		}
+		if (!t->dar_hold_black) {
+			std::fprintf(stderr,
+				"FAIL product: same-size DAR 4:3→16:9 did not raise dar_hold_black "
+				"(store geom_layout_chg cannot cover this)\n");
+			return 1;
+		}
+		// Seq-only republish same DAR must NOT re-arm blackout after clear.
+		for (int i = 0; i < 8; ++i) {
+			t->frame_boundary = 1; tick(t);
+			t->frame_boundary = 0; tick(t);
+		}
+		if (t->dar_hold_black) {
+			std::fprintf(stderr, "FAIL dar_hold_black stuck after 16:9 settle\n");
+			return 1;
+		}
+		Geom g169b{720, 480, 720, 360, 12, 1, 16, 9, 24, true, true, 0};
+		write_geom(t, g169b);
+		promote(t);
+		if (t->dar_hold_black) {
+			std::fprintf(stderr, "FAIL seq-only same DAR re-armed blackout\n");
+			return 1;
+		}
+		std::printf("dar_same_size_ok 720x480 4:3→16:9 hold then seq-only quiet\n");
+	}
+
+	std::printf("PASS B16+q5 stage/promote 624->320->960->416; mid-active never mixed; coincident ok; DAR blackout ok\n");
 	delete t;
 	return 0;
 }

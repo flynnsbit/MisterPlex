@@ -34,13 +34,17 @@ assign HDMI_FREEZE = 0;
 // Forward decl: driven by present_core under PRESENT_BEAM_960 (else tied 0 in core).
 wire geom_hold_black;
 wire geom_hollow_fault;
-// B16: raise during geometry transition. ascal swblack is size-only; same-size
-// SAR and mid-session pitch changes need an explicit blackout. Driven from
-// ddr_frame_store.geom_hold_black (pending PLXG promote + epoch invalidate).
+// B16 blackout:
+//   geom_hold_black — store layout change (enable/W/H/stride/map) + epoch.
+//   dar_hold_black  — aspect path: same WxH/stride DAR change (q5). Store does
+//                     NOT see DAR; ascal swblack is size-only. OR both here.
+// (rd-duck: prior comment claiming store covered same-size SAR was false.)
+wire dar_hold_black;
 `ifdef PRESENT_BEAM_960
-assign HDMI_BLACKOUT = geom_hold_black;
+assign HDMI_BLACKOUT = geom_hold_black | dar_hold_black;
 `else
 assign HDMI_BLACKOUT = 0;
+assign dar_hold_black = 1'b0;
 `endif
 assign HDMI_BOB_DEINT = 0;
 
@@ -760,6 +764,7 @@ wire [11:0] plxg_dar_x, plxg_dar_y;
 wire  [7:0] plxg_content_fps;
 wire        plxg_dar_valid, plxg_fps_valid;
 wire        plxg_q5_reserved_reject;
+wire        plxg_dar_hold_black;
 wire [15:0] plxg_live_seq;
 wire [13:0] plxg_live_epoch;
 wire        plxg_want, plxg_rd;
@@ -875,8 +880,12 @@ present_geom_latch u_plxg_latch (
 	.live_epoch(plxg_live_epoch),
 	.pending_valid(plxg_pending_valid),
 	.promote_pulse(plxg_promote_pulse),
-	.q5_reserved_reject(plxg_q5_reserved_reject)
+	.q5_reserved_reject(plxg_q5_reserved_reject),
+	.dar_hold_black(plxg_dar_hold_black)
 );
+`ifdef PRESENT_BEAM_960
+assign dar_hold_black = plxg_dar_hold_black;
+`endif
 
 plxg_ddr_poller #(
 	.ENABLE(1'b1),
@@ -916,7 +925,7 @@ plxg_ddr_poller #(
 	|plxg_last_seq | |plxg_last_epoch | plxg_win_en | |plxg_cw | |plxg_ch | |m1_sub_grant |
 	|plxg_cnt_bad_epoch | plxg_boot_baseline_done |
 	plxg_dar_valid | plxg_fps_valid | |plxg_dar_x | |plxg_content_fps |
-	plxg_q5_reserved_reject;
+	plxg_q5_reserved_reject | plxg_dar_hold_black;
 `else
 // Non-DDR builds: stub PLXG outputs so content mux still elaborates.
 wire        plxg_win_en = 1'b0;
