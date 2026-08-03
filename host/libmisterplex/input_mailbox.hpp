@@ -27,6 +27,8 @@ constexpr uint32_t kUnderrunMailboxMagic   = mailbox_abi::kPlxfMagic;
 constexpr uint32_t kBankReleaseMailboxPhys  = mailbox_abi::kPlxdAddr;
 constexpr uint32_t kBankReleaseMailboxMagic = mailbox_abi::kPlxdMagic;
 constexpr uint8_t kFrameStoreDebugFormatError = 0xE1;
+// geom_enable=1 but rt_raw_ok=0 (unaligned/over-max). Loud reject — not silent legacy.
+constexpr uint8_t kFrameStoreDebugGeomReject = 0xE2;
 
 // Offsets from live DOORBELL_PHYS (RTL: DOORBELL_PHYS + offset).
 constexpr uint32_t kDdrStatusMailboxOffset = mailbox_abi::kPlxsOffset;
@@ -74,11 +76,16 @@ struct FrameStoreStatus {
     bool nonYuvDoorbellRejected() const {
         return debug_state == kFrameStoreDebugFormatError;
     }
+    bool geomRejected() const {
+        return debug_state == kFrameStoreDebugGeomReject;
+    }
 };
 
 inline const char* frameStoreDebugDescription(uint8_t debug) {
     if (debug == kFrameStoreDebugFormatError)
         return "frame store refused non-YUV doorbell (0xE1)";
+    if (debug == kFrameStoreDebugGeomReject)
+        return "frame store rejected runtime geom (0xE2 unaligned/over-max/zero)";
     return "frame store debug state";
 }
 

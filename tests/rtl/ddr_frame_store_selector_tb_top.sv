@@ -35,6 +35,8 @@ module ddr_frame_store_selector_tb (
 	output wire [10:0] obs_coded_h,
 	output wire [8:0]  obs_y_fetch_qw,
 	output wire [7:0]  obs_c_fetch_qw,
+	output wire [7:0]  obs_debug_state,
+	output wire        obs_geom_reject_r,
 	input  wire        DDRAM_BUSY,
 	input  wire [63:0] DDRAM_DOUT,
 	input  wire        DDRAM_DOUT_READY,
@@ -138,6 +140,8 @@ module ddr_frame_store_selector_tb (
 	assign obs_coded_h        = dut.eff_coded_h;
 	assign obs_y_fetch_qw     = dut.eff_y_fetch_qw;
 	assign obs_c_fetch_qw     = dut.eff_c_fetch_qw;
+	assign obs_debug_state    = debug_state;
+	assign obs_geom_reject_r  = dut.geom_reject_r;
 endmodule
 
 `default_nettype wire

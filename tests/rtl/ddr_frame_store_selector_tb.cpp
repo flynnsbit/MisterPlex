@@ -196,14 +196,41 @@ int main(int argc, char** argv) {
 
 	const char* mode = std::getenv("SELECTOR_MODE");
 	const bool fault = mode && std::string(mode) == "fault";
-	const bool expect_fresh = !fault;
+	const bool silent_geom = mode && std::string(mode) == "silent_geom";
+	const bool expect_fresh = !fault && !silent_geom;
 
 	std::cout << "PRE-REGISTER selector fault=" << fault
+	          << " silent_geom=" << silent_geom
 	          << " usable=" << kUsable
 	          << " expect_optc_960=" << (expect_fresh ? 1 : 0) << "\n";
 
 	Sim sim;
 	sim.resetCycles();
+
+	// Red twin: silent reject path — raw_ok=0 but NO sticky 0xE2 (defect class).
+	if (silent_geom) {
+		sim.driveGeom(true, 468, 360, 468, 234, 468, 360);
+		for (int i = 0; i < 8; ++i)
+			sim.tick();
+		if (sim.top.obs_raw_ok != 0 || sim.top.obs_geom_en_r != 0) {
+			std::cerr << "FAIL silent twin setup: 468 must fail raw_ok\n";
+			return 1;
+		}
+		// Defect: no loud marker — this is what product must NOT do.
+		if (sim.top.obs_geom_reject_r != 0 || sim.top.obs_debug_state == 0xE2) {
+			std::cerr << "FAIL silent twin: expected NO 0xE2 under FAULT_SILENT\n";
+			return 1;
+		}
+		// Still on legacy bank map (silent fallthrough).
+		if (sim.top.obs_base_w0 != kLegBaseW0) {
+			std::cerr << "FAIL silent twin: expected legacy base\n";
+			return 1;
+		}
+		std::cout << "REPRO_OK silent_geom: 468x360 raw_ok=0 geom_en=0 no 0xE2 "
+		          << "debug=0x" << std::hex << (int)sim.top.obs_debug_state
+		          << std::dec << " (silent legacy fallthrough)\n";
+		return 0;
+	}
 
 	// Realizable usable-exact: h=512, ys=680, cs=336, w=672 → 512*(680+336)=520192
 	const uint32_t exact_payload = i420Bytes(680, 336, 512);
@@ -238,7 +265,12 @@ int main(int argc, char** argv) {
 	    {"reject_odd_h", true, 960, 541, 960, 480, 960, 541, false, false, 0, 0,
 	     false},
 	    {"reject_zero", true, 0, 540, 960, 480, 0, 0, false, false, 0, 0, false},
-	};
+	        // PMS AR-fit boxes (parent survey) — must loud-reject, not silent legacy
+	        {"pms_468x360", true, 468, 360, 468, 234, 468, 360, false, false, 0, 0,
+	         false},
+	        {"pms_426x240", true, 426, 240, 426, 213, 426, 240, false, false, 0, 0,
+	         false},
+	    };
 
 	// Sanity host arithmetic
 	if (exact_payload != kUsable) {
@@ -279,11 +311,35 @@ int main(int argc, char** argv) {
 		return 1;
 	}
 
+	// Loud geom reject (0xE2): PMS 468x360 stays geom_en_r=0 and sticky E2.
+	// Extra ticks for clk→clk_ddr 2FF of geom_reject_r.
+	sim.driveGeom(true, 468, 360, 468, 234, 468, 360);
+	for (int i = 0; i < 8; ++i)
+		sim.tick();
+	if (sim.top.obs_geom_en_r != 0 || sim.top.obs_raw_ok != 0) {
+		std::cerr << "FAIL loud reject: 468x360 must not enable geom\n";
+		return 1;
+	}
+	if (sim.top.obs_geom_reject_r == 0 || sim.top.obs_debug_state != 0xE2) {
+		std::cerr << "FAIL loud reject: expect sticky 0xE2 debug_state got 0x"
+		          << std::hex << (int)sim.top.obs_debug_state << std::dec
+		          << " reject_r=" << (int)sim.top.obs_geom_reject_r << "\n";
+		return 1;
+	}
+	// Mode exit clears sticky.
+	sim.driveGeom(false, 0, 0, 0, 0, 0, 0);
+	for (int i = 0; i < 8; ++i)
+		sim.tick();
+	if (sim.top.obs_geom_reject_r != 0 || sim.top.obs_debug_state == 0xE2) {
+		std::cerr << "FAIL loud reject: geom_enable=0 must clear 0xE2\n";
+		return 1;
+	}
+
 	if (g_fails) {
 		std::cerr << "FAIL selector: " << g_fails << " checks\n";
 		return 1;
 	}
 	std::cout << "PASS selector_product: usable edges + 960x540 Option-C "
-	          << "U@518400 + w%16 reject + storage!=canvas\n";
+	          << "U@518400 + w%16 reject + storage!=canvas + loud_E2\n";
 	return 0;
 }

@@ -41,8 +41,9 @@ elif [[ "$VERILATOR_RC" -ne 0 ]]; then
 fi
 
 FAULT_BUILD="$ROOT/build/verilator/ddr_selector_fault"
+SILENT_BUILD="$ROOT/build/verilator/ddr_selector_silent"
 GOOD_BUILD="$ROOT/build/verilator/ddr_selector_good"
-mkdir -p "$FAULT_BUILD" "$GOOD_BUILD"
+mkdir -p "$FAULT_BUILD" "$SILENT_BUILD" "$GOOD_BUILD"
 echo "RTL SIM: using $VERILATOR_VERSION" >&2
 
 common_sv=(
@@ -67,7 +68,18 @@ set -e
 printf '%s\n' "$FAULT_OUT"
 echo "fault rc=$FAULT_RC"
 
-echo "=== B) GOOD: capacity usable selector (expect PASS Option-C 960) ===" >&2
+echo "=== A2) FAULT: SILENT_GEOM_REJECT (expect REPRO no 0xE2 on 468x360) ===" >&2
+"$RUN_VERILATOR" "${vflags[@]}" --Mdir "$SILENT_BUILD" \
+  -DDDR_FRAME_STORE_FAULT_SILENT_GEOM_REJECT \
+  "${common_sv[@]}"
+set +e
+SILENT_OUT="$(SELECTOR_MODE=silent_geom "$SILENT_BUILD/Vddr_frame_store_selector_tb" 2>&1)"
+SILENT_RC=$?
+set -e
+printf '%s\n' "$SILENT_OUT"
+echo "silent rc=$SILENT_RC"
+
+echo "=== B) GOOD: capacity usable selector (expect PASS Option-C 960 + loud_E2) ===" >&2
 "$RUN_VERILATOR" "${vflags[@]}" --Mdir "$GOOD_BUILD" \
   "${common_sv[@]}"
 set +e
@@ -78,15 +90,20 @@ printf '%s\n' "$GOOD_OUT"
 echo "good rc=$GOOD_RC"
 
 assert_sim_executed "selector-fault" "$FAULT_OUT" "REPRO_OK" "selector_fault" "960x540"
-assert_sim_executed "selector-good" "$GOOD_OUT" "PASS selector_product" "U@518400" "w%16 reject"
+assert_sim_executed "selector-silent" "$SILENT_OUT" "REPRO_OK" "silent_geom" "no 0xE2"
+assert_sim_executed "selector-good" "$GOOD_OUT" "PASS selector_product" "U@518400" "loud_E2"
 
 if [[ "$FAULT_RC" -ne 0 ]] || ! grep -q 'REPRO_OK' <<<"$FAULT_OUT"; then
   echo "FAIL: fault twin did not reproduce forced-legacy on 960x540" >&2
+  exit 1
+fi
+if [[ "$SILENT_RC" -ne 0 ]] || ! grep -q 'REPRO_OK silent_geom' <<<"$SILENT_OUT"; then
+  echo "FAIL: silent-geom twin did not REPRO missing 0xE2" >&2
   exit 1
 fi
 if [[ "$GOOD_RC" -ne 0 ]] || ! grep -q 'PASS selector_product' <<<"$GOOD_OUT"; then
   echo "FAIL: product selector oracle did not pass" >&2
   exit 1
 fi
-echo "OK ddr_frame_store_selector: REPRO_OK fault + PASS product (TB executed)"
+echo "OK ddr_frame_store_selector: REPRO legacy + REPRO silent + PASS product (TB executed)"
 exit 0

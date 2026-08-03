@@ -511,6 +511,54 @@ inline bool plxgPayloadNeedsOptionC(size_t payloadBytes) {
     return payloadBytes > kPlxgLegacyUsableBytes;
 }
 
+// Align display width up to the store's coded_w multiple-of-16 rule.
+// PMS AR-fit can deliver 468/638/426/… — host must pad coded/stride, not pass raw.
+inline int ddrAlignCodedWidth16(int displayW) {
+    if (displayW <= 0)
+        return 0;
+    return (displayW + 15) & ~15;
+}
+
+// Tight I420 payload with optional row pad: y_stride*h + chroma_stride*h
+// (chroma_stride covers U+V as stride*(h/2)*2 = stride*h).
+inline size_t ddrI420PayloadBytes(int yStride, int chromaStride, int height) {
+    if (yStride <= 0 || chromaStride <= 0 || height <= 0 || (height & 1))
+        return 0;
+    return static_cast<size_t>(yStride) * static_cast<size_t>(height) +
+           static_cast<size_t>(chromaStride) * static_cast<size_t>(height);
+}
+
+// Native-push layout: pad coded_w to 16, keep display_w, even height.
+// crop_right = coded_w - display_w. y_stride = coded_w (no extra row pad).
+// Store does NOT invent row padding beyond y_stride — payload is exact.
+struct DdrNativePaddedLayout {
+    int display_w = 0;
+    int display_h = 0;
+    int coded_w = 0;
+    int coded_h = 0;
+    int y_stride = 0;
+    int chroma_stride = 0;
+    int crop_right = 0;
+    size_t payload_bytes = 0;
+    bool valid = false;
+};
+
+inline DdrNativePaddedLayout makeDdrNativePaddedLayout(int displayW, int displayH) {
+    DdrNativePaddedLayout o{};
+    if (displayW <= 0 || displayH <= 0 || (displayH & 1))
+        return o;
+    o.display_w = displayW;
+    o.display_h = displayH;
+    o.coded_w = ddrAlignCodedWidth16(displayW);
+    o.coded_h = displayH; // even already
+    o.y_stride = o.coded_w;           // no extra pad past coded_w
+    o.chroma_stride = o.coded_w / 2;  // 8-aligned when coded_w%16==0
+    o.crop_right = o.coded_w - o.display_w;
+    o.payload_bytes = ddrI420PayloadBytes(o.y_stride, o.chroma_stride, o.coded_h);
+    o.valid = plxgGeomDimsOk(o.coded_w, o.coded_h, o.y_stride, o.chroma_stride);
+    return o;
+}
+
 // Geom dims accepted by RTL.
 // coded_w must be a multiple of 16: chroma fetch is coded_w>>4 qwords (= w/2 bytes).
 // 8-aligned-only widths (e.g. 968 with chroma_stride 488) pass stride%8 checks but

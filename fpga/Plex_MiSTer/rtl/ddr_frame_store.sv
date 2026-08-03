@@ -283,10 +283,21 @@ module ddr_frame_store #(
 	// Reject malformed / over-max raw geometry — no clamp-then-accept.
 	wire geom_enable_eff = geom_enable & rt_raw_ok;
 `endif
+	// Loud reject (parent PMS AR-fit): geom requested but raw fails → sticky fault.
+	// Without this, !geom_enable_eff silently reloads LEGACY 624×480 and scans a
+	// host native buffer as the wrong pitch (shear). Prefer black + PLXF 0xE2.
+	// FAULT twin: silent fallthrough (no sticky, no 0xE2) — red REPRO for loud path.
+`ifdef DDR_FRAME_STORE_FAULT_SILENT_GEOM_REJECT
+	wire geom_reject_now = 1'b0;
+`else
+	wire geom_reject_now = geom_enable & ~rt_raw_ok;
+`endif
+	reg  geom_reject_r;
 
 	always @(posedge clk) begin
 		if (reset) begin
 			geom_en_r      <= 1'b0;
+			geom_reject_r  <= 1'b0;
 			eff_coded_w    <= 11'(CODED_W);
 			eff_coded_h    <= 11'(CODED_H);
 			eff_y_stride   <= 12'(CODED_W);
@@ -309,6 +320,12 @@ module ddr_frame_store #(
 			eff_doorbell_w <= LEG_DOORBELL_W;
 		end else if (!geom_enable_eff) begin
 			geom_en_r      <= 1'b0;
+			// Sticky reject while host still asserts geom_enable with bad raw;
+			// clear only when geom is off (mode exit) — not on silent legacy fallthrough.
+			if (geom_reject_now)
+				geom_reject_r <= 1'b1;
+			else if (!geom_enable)
+				geom_reject_r <= 1'b0;
 			eff_coded_w    <= 11'(CODED_W);
 			eff_coded_h    <= 11'(CODED_H);
 			eff_y_stride   <= 12'(CODED_W);
@@ -331,6 +348,7 @@ module ddr_frame_store #(
 			eff_doorbell_w <= LEG_DOORBELL_W;
 		end else begin
 			geom_en_r      <= 1'b1;
+			geom_reject_r  <= 1'b0; // accepted good geom clears sticky
 			eff_coded_w    <= rt_cw_cl;
 			eff_coded_h    <= rt_ch_cl;
 			eff_y_stride   <= rt_ys_cl;
@@ -385,6 +403,9 @@ module ddr_frame_store #(
 	localparam [31:0] MAGIC_D = 32'h504C_5844; // PLXD bank-release (Display-bank)
 	localparam [1:0] DOORBELL_FORMAT_YUV420P = 2'd1;
 	localparam [7:0] DEBUG_FORMAT_ERROR = 8'hE1; // PLXF frame-debug: rejected non-YUV doorbell
+	// PLXF frame-debug: geom_enable=1 but rt_raw_ok=0 (unaligned/over-max/zero).
+	// Was silent legacy fallback → sheared picture. Now sticky + black + 0xE2.
+	localparam [7:0] DEBUG_GEOM_REJECT = 8'hE2;
 
 	// Gray-code conversions for safe multi-bit CDC (want_y crossing)
 	function automatic [Y_W-1:0] y_bin2gray(input [Y_W-1:0] b);
@@ -768,7 +789,12 @@ module ddr_frame_store #(
 				frame_miss_toggle <= ~frame_miss_toggle;
 			end
 
-			if ((rd_active_d || !rd_active) && rd_visible_d && has_frame && !miss_d && y_hit_r && c_hit_r) begin
+			// geom_reject_r: force black — never scan legacy pitch over a native buffer.
+			if (geom_reject_r) begin
+				rd_r <= 8'd0;
+				rd_g <= 8'd0;
+				rd_b <= 8'd0;
+			end else if ((rd_active_d || !rd_active) && rd_visible_d && has_frame && !miss_d && y_hit_r && c_hit_r) begin
 				rd_r <= sat8(r_calc);
 				rd_g <= sat8(g_calc);
 				rd_b <= sat8(b_calc);
@@ -1142,7 +1168,20 @@ module ddr_frame_store #(
 	                  db_stale_fallback;
 	wire spi_edge_ddr = start_d2 != start_seen;
 
-	assign debug_state = format_error ? DEBUG_FORMAT_ERROR : {LINE_COUNT[2:0], |y_valid, state_ddr};
+	// geom_reject_r (clk) → 2FF → clk_ddr for PLXF debug_state.
+	reg geom_reject_s1, geom_reject_s2;
+	always @(posedge clk_ddr) begin
+		if (reset_ddr) begin
+			geom_reject_s1 <= 1'b0;
+			geom_reject_s2 <= 1'b0;
+		end else begin
+			geom_reject_s1 <= geom_reject_r;
+			geom_reject_s2 <= geom_reject_s1;
+		end
+	end
+	assign debug_state = format_error ? DEBUG_FORMAT_ERROR :
+	                     (geom_reject_s2 ? DEBUG_GEOM_REJECT :
+	                      {LINE_COUNT[2:0], |y_valid, state_ddr});
 
 	always @(posedge clk_ddr) begin
 		if (reset_ddr) begin
