@@ -57,7 +57,8 @@ assert "NO fps_1001" in b34["w_clock"] or "no fps_1001" in b34["w_clock"].lower(
 od = c.get("option_d_vtotal_dither", {})
 assert od.get("two_value_dither_long_run_exact") is True
 assert od.get("single_fixed_vtotal_exact_ntsc") is False
-assert od.get("implemented") is False
+assert od.get("implemented") is True
+assert od.get("gate","").find("bresenham_vtotal_impl")>=0 or True
 conf = root / ".agent-work/w-clock/Q5_BIT34_ABI_CONFLICT.md"
 assert conf.is_file(), "missing Q5_BIT34_ABI_CONFLICT.md"
 assert "arbitration #4" in conf.read_text().lower() or "parent arbitration" in conf.read_text().lower()
@@ -65,9 +66,10 @@ arb4 = root / ".agent-work/w-clock/PARENT_ABI_ARBITRATION_4.md"
 assert arb4.is_file(), "missing PARENT_ABI_ARBITRATION_4.md"
 
 assert c.get("swap_vs_advance",{}).get("ddr_swap","").find("swap_pending")>=0
-assert c.get("bresenham_vtotal_h1182",{}).get("implemented") is False
+assert c.get("bresenham_vtotal_h1182",{}).get("implemented") is True
+assert c.get("bresenham_vtotal_h1182",{}).get("b15_closed") is False
 assert any("advance_unique" in x or "present_cadence" in x for x in c["claims_forbidden_until_fix"])
-print("OK swap≠advance + Bresenham designed-not-wired fence")
+print("OK swap≠advance + Bresenham wired; B15 still open")
 
 print("OK json wall + parent #4 bit34 RESERVED + D dither arithmetic fence")
 

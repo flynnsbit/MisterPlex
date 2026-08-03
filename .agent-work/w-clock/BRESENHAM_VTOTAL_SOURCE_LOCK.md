@@ -49,7 +49,7 @@ Mean cycles/frame = `clk/rate`. Mean V = `clk/(rate·H)`.
 Verified (awk): `clk/(H·Vavg)` hits each target **exactly** (err 0 within double).
 One-line jitter = H/clk = **59.1 µs**.
 
-### Bresenham sketch (not product-wired yet)
+### Bresenham product (wired  — present_vtotal_bresenham.sv)
 
 ```
 // each frame_start / v_wrap:
@@ -88,3 +88,20 @@ Until then: B15 = integer class + honest wall only.
 
 Parent: cadence exactness is rank **(c)** after fit + 720p present.
 This doc + gate are honesty/artefact; **Bresenham FSM not product-enabled**.
+
+
+## Implementation status (w-clock)
+
+| Item | State |
+|------|-------|
+| `present_vtotal_bresenham.sv` | **wired** into `present_core` BEAM_960 → `rt_vtotal` |
+| Product default | NTSC means by film/TV class (`fps<=24` film) |
+| `FAULT_FIXED_VTOTAL` | RED twin — fixed 705/564 misses NTSC |
+| `FAULT_BRES_EXACT_INT` | exact 24/30 duties 35/28 over 1773 |
+| bit34 / fps_1001 | **not** consumed (RESERVED #4) |
+| B15 closed | **false** — swap still `fstart && swap_pending` |
+| Gate | `tests/unit/test_bresenham_vtotal_impl.sh` true rc=0 |
+| Parent miss | duty **0.72476 at V=706**, not 705 |
+
+Long-run beam Hz is exact. Displayed unique-frame source-lock still needs ARM
+swap policy or a proven queue — do **not** claim B15 closed.

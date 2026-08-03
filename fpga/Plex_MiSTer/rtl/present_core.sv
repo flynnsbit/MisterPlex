@@ -259,7 +259,23 @@ module present_core #(
 	// Fixed line class @20 MHz: 1182 clocks/line. V_TOTAL selects 30 vs 24 Hz.
 	// beam_film_class defined above (shared with cadence_display_hz).
 	wire [10:0] beam_htot_req = 11'd1182;
-	wire [10:0] beam_vtot_req = beam_film_class ? 11'd705 : 11'd564;
+	// Bresenham V_TOTAL: exact long-run NTSC (default) or fixed under FAULT.
+	// Updates on fstart after beam latches current vtot (registered).
+	wire [10:0] beam_vtot_bres;
+	wire        beam_vtot_hi;
+	present_vtotal_bresenham u_vtot_bres (
+		.clk(clk),
+		.reset(reset),
+		.enable(1'b1),
+		.film_class(beam_film_class),
+		.frame_tick(fstart),
+		.vtotal_out(beam_vtot_bres),
+		.v_lo_out(),
+		.v_hi_out(),
+		.chose_hi(beam_vtot_hi)
+	);
+	wire [10:0] beam_vtot_req = beam_vtot_bres;
+	wire _unused_vtot_hi = beam_vtot_hi;
 
 	(* noprune *) present_beam_content_de #(
 		.H_DE(960),

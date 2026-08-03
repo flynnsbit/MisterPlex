@@ -35,6 +35,9 @@ awk 'BEGIN{
   f=(1251250/1773)-705; if (f<0.72||f>0.73) exit 1
   t=(1001000/1773)-564; if (t<0.57||t>0.59) exit 1
   print "OK duties film@706=" f " n30@565=" t
+  # parent miss: 0.72476 at 706 not 705
+  if (f < 0.7247 || f > 0.7248) exit 1
+  print "OK PARENT MISS corrected: duty@706=" f
 }' | tee "$OUT/math.txt"
 
 python3 - "$ROOT" <<'PY'
@@ -42,7 +45,8 @@ import json, re, sys
 from pathlib import Path
 root = Path(sys.argv[1])
 c = json.loads((root/"assets/ntsc_rational_cadence_wall.json").read_text())
-assert c["bresenham_vtotal_h1182"]["implemented"] is False
+assert c["bresenham_vtotal_h1182"]["implemented"] is True
+assert c["bresenham_vtotal_h1182"].get("b15_closed") is False
 assert c["bresenham_vtotal_h1182"]["long_run_hz_exact"] is True
 assert c["swap_vs_advance"]["ddr_swap"].find("swap_pending") >= 0
 assert "B15 closed via present_cadence" in " ".join(c["claims_forbidden_until_fix"]) or \
@@ -61,7 +65,7 @@ if re.search(r"\.swap_pending\s*\(\s*advance", code):
 doc = (root/".agent-work/w-clock/BRESENHAM_VTOTAL_SOURCE_LOCK.md").read_text()
 assert "Do not close B15" in doc or "Do not close B15" in doc.replace("do not","Do not")
 assert "1251250/1773" in doc and "1001000/1773" in doc
-print("OK json+core swap≠advance fence; Bresenham not implemented")
+print("OK json+core swap≠advance fence; Bresenham implemented=True b15_closed=False")
 print("PASS test_bresenham_vtotal_arith GREEN")
 PY
 

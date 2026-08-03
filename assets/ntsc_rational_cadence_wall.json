@@ -1,7 +1,7 @@
 {
   "title": "NTSC rational cadence wall (rd-duck B15 follow-up)",
   "owner": "w-clock",
-  "status": "OPEN_CADENCE \u2014 swap\u2260advance; Bresenham V designed not wired; no B15 source-lock close",
+  "status": "OPEN_B15_SWAP \u2014 Bresenham V_TOTAL product-wired (NTSC class default); B15 still not closed on cadence/advance; bit34 RESERVED",
   "parent_arbitration_4": {
     "bit34": "RESERVED stays; w-path #2.1 VACATED",
     "w_mem_reserved_check": "CORRECT stays",
@@ -21,11 +21,14 @@
   "option_d_vtotal_dither": {
     "single_fixed_vtotal_exact_ntsc": false,
     "two_value_dither_long_run_exact": true,
-    "arithmetic": "V=705.7248 duty; ~72.48% frames at V=706; jitter 1182 cyc = 59.1 us",
+    "arithmetic": "V_mean=705.72476; ~72.48% frames at V=706; jitter 1182 cyc = 59.1 us",
     "ascal_absorb_default_product": true,
     "ascal_evidence": ".agent-work/w-clock/ASCAL_VSYNC_DITHER_ABSORB.md",
     "priority": "rank (c) after fit + 720p present \u2014 not a 720p blocker",
-    "implemented": false
+    "implemented": true,
+    "rtl": "fpga/Plex_MiSTer/rtl/present_vtotal_bresenham.sv",
+    "gate": "tests/unit/test_bresenham_vtotal_impl.sh",
+    "parent_miss": "72.48% duty is at V=706 not 705"
   },
   "clk_sys_hz": 20000000,
   "beam": {
@@ -71,9 +74,11 @@
     "source-locked displayed unique frames without Bresenham beam or proven swap queue"
   ],
   "claims_allowed": [
-    "integer 24/25/30 class selection and short-window advance math",
+    "parent miss: duty 0.72476 at V=706 not 705",
     "beam line rate fixed f_h=20e6/1182",
-    "unspecified fps_valid=0 \u2192 film 24 (no invent 30)"
+    "Bresenham V_TOTAL long-run beam Hz exact NTSC over 1773 frames (module+arith)",
+    "unspecified fps_valid=0 \u2192 film 24 (no invent 30)",
+    "integer 24/25/30 class selection and short-window advance math"
   ],
   "options_for_parent_abi": [
     {
@@ -123,7 +128,7 @@
     "note": "even integer 24/30 need rare extra lines for zero long-haul slip"
   },
   "bresenham_vtotal_h1182": {
-    "implemented": false,
+    "implemented": true,
     "clk_sys_hz": 20000000,
     "H_TOTAL": 1182,
     "rates": {
@@ -164,7 +169,21 @@
     "long_run_hz_exact": true,
     "ascal_one_line_absorb_default": true,
     "ascal_evidence": ".agent-work/w-clock/ASCAL_VSYNC_DITHER_ABSORB.md",
-    "doc": ".agent-work/w-clock/BRESENHAM_VTOTAL_SOURCE_LOCK.md"
+    "doc": ".agent-work/w-clock/BRESENHAM_VTOTAL_SOURCE_LOCK.md",
+    "product_default": "ntsc_class_by_film_tv",
+    "rtl": "fpga/Plex_MiSTer/rtl/present_vtotal_bresenham.sv",
+    "wired_in": "present_core.sv PRESENT_BEAM_960 u_vtot_bres \u2192 rt_vtotal",
+    "gate": "tests/unit/test_bresenham_vtotal_impl.sh",
+    "parent_miss_duty": "72.48% is at V=706 not 705",
+    "b15_closed": false,
+    "notes_impl": [
+      "NTSC film 1285/1773 @706; TV 1028/1773 @565; exact lock over DEN=1773",
+      "FAULT_FIXED_VTOTAL red twin proves fixed 705/564 miss NTSC",
+      "FAULT_BRES_EXACT_INT optional exact 24/30",
+      "bit34 RESERVED \u2014 no fps_1001 consumer; INT vs NTSC not ABI-selected yet",
+      "B15 NOT closed: DDR swap still fstart&&swap_pending, not advance",
+      "ascal lowlat=0 absorbs 59.1us one-line jitter (prior Route B evidence)"
+    ]
   },
   "b15_close_requires": [
     "beam mean period matches content rational (Bresenham V or equiv)",
