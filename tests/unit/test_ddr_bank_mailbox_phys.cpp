@@ -63,7 +63,9 @@ int main() {
     std::cout << "CASE legacy_plxd_phys EXECUTED\n";
     const uint32_t leg = bankReleaseMailboxPhys(mailbox_abi::kLegacyFrameStoreDoorbellPhys);
     expect(leg == 0x3007F128u, "legacy doorbell → PLXD 0x3007F128");
-    expect(leg == mailbox_abi::kPlxdAddr, "legacy PLXD matches kPlxdAddr example");
+    expect(leg == mailbox_abi::kLegacyPlxdAddr, "legacy PLXD matches kLegacyPlxdAddr");
+    expect(mailbox_abi::kPlxdAddr == 0x300FF128u, "product kPlxdAddr is 0x300FF128");
+    expect(leg != mailbox_abi::kPlxdAddr, "legacy PLXD ≠ product kPlxdAddr");
 
     // Offsets match RTL (DOORBELL_PHYS + const).
     std::cout << "CASE offsets EXECUTED\n";

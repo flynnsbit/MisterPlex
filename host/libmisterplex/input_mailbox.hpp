@@ -13,8 +13,10 @@
 
 namespace misterplex {
 
-// Re-export magics + *legacy example* absolute addrs from the spec.
-// Runtime consumers: prefer k*Offset + frameStoreMailboxPhys(doorbell).
+// Re-export magics + *product-page* absolute addrs from the spec
+// (doorbell-relative product 480p page). Runtime consumers that follow a
+// live layout doorbell (incl. 720p 0x3047F000) must use
+// frameStoreMailboxPhys(doorbell, k*Offset) / bankReleaseMailboxPhys(door).
 constexpr uint32_t kDdrStatusMailboxPhys   = mailbox_abi::kPlxsAddr;
 constexpr uint32_t kDdrStatusMailboxMagic  = mailbox_abi::kPlxsMagic;
 constexpr uint32_t kInputMailboxPhys       = mailbox_abi::kPlxiAddr;
@@ -23,9 +25,10 @@ constexpr uint32_t kMemtestMailboxPhys     = mailbox_abi::kPlxmAddr;
 constexpr uint32_t kMemtestMailboxMagic    = mailbox_abi::kPlxmMagic;
 constexpr uint32_t kUnderrunMailboxPhys    = mailbox_abi::kPlxfAddr;
 constexpr uint32_t kUnderrunMailboxMagic   = mailbox_abi::kPlxfMagic;
-// Legacy absolute PLXD (0x3007F128). Do NOT use for product doorbell 0x300FF000.
+// Product PLXD (0x300FF128). Legacy example is mailbox_abi::kLegacyPlxdAddr.
 constexpr uint32_t kBankReleaseMailboxPhys  = mailbox_abi::kPlxdAddr;
 constexpr uint32_t kBankReleaseMailboxMagic = mailbox_abi::kPlxdMagic;
+constexpr uint32_t kLegacyBankReleaseMailboxPhys = mailbox_abi::kLegacyPlxdAddr;
 constexpr uint8_t kFrameStoreDebugFormatError = 0xE1;
 // geom_enable=1 but rt_raw_ok=0 (unaligned/over-max). Loud reject — not silent legacy.
 constexpr uint8_t kFrameStoreDebugGeomReject = 0xE2;

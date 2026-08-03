@@ -39,11 +39,12 @@ struct MailboxEntry {
 //   PLXF +0x118, DIAG +0x120, PLXD +0x128, PLXC +0x130, PLXO +0x138, list +0x140
 //   PLXG +0x800  (FIXED present-geometry slot — independent of MAX_CMDS; MUST NOT use +0x130)
 // Product 480p YUV doorbell is 0x300FF000 → PLXD live at 0x300FF128.
-// The 0x3007F000 family below is the *legacy example base* (older packed-320
-// map). Consumers MUST resolve via frameStoreMailboxPhys(doorbell, offset),
-// never hard-read the legacy absolute PLXD/PLXF addresses against a product
-// doorbell — that reads bank0 padding / boot residue and desyncs bank select
-// (parent bank0 U≈0x04/0x19 green-cast class on c5382bee).
+// k*Addr constants below are DERIVED product-page absolutes (doorbell+offset).
+// Runtime consumers MUST still resolve via
+// frameStoreMailboxPhys(layout.doorbell_phys, offset) so 720p doorbell
+// 0x3047F000 carries every mailbox. Never hard-read legacy 0x3007Fxxx against
+// a product doorbell — that reads bank0 padding / boot residue and desyncs
+// bank select (parent bank0 U≈0x04/0x19 green-cast class on c5382bee).
 
 // Byte offsets from DOORBELL_PHYS (single source for ARM + invariant gates).
 constexpr uint32_t kPlxkOffset = 0x000u;
@@ -72,50 +73,57 @@ constexpr uint32_t kPlxcListMaxCmds = 112u;
 constexpr uint32_t kPlxgOffset = 0x800u; // FIXED — do not re-derive from MAX_CMDS
 constexpr uint32_t kPlxgMagic = 0x504C5847u; // "PLXG"
 constexpr uint32_t kPlxgBytes = 40u; // 5 qwords
-// Product 480p YUV control page (ddr_frame_layout_params DDR_FRAME_YUV420P_DOORBELL).
-// RTL plxg_ddr_poller: BOOT_DOORBELL=0x300FF000, PLXG_OFF=0x800 → Q0 at 0x300FF800.
-// Addressing scheme: DOORBELL-RELATIVE offsets. Absolute product live =
-//   product_doorbell + offset (0x300FF000 + 0x128 = PLXD 0x300FF128, etc).
-// The 0x3007Fxxx k*Addr table below is LEGACY EXAMPLE base only (collision gates).
-constexpr uint32_t kPlxgBootstrapDoorbellPhys = 0x300FF000u;
-constexpr uint32_t kPlxgBootstrapPhys = 0x300FF800u; // bootstrap doorbell + kPlxgOffset
+// ---- Product control-page doorbell (canonical) ----
+// Parent decision (integ/product): DOORBELL-RELATIVE is canonical.
+// Rationale: 720p has its OWN doorbell (ddr_frame_layout
+// kPlex720pYuv420pDoorbellPhys = 0x3047F000; RTL DOORBELL_PHYS_720P). An
+// absolute hardcoded PLXD cannot express two resolutions with two doorbells —
+// relative addressing is architecturally forced by the 720p target.
+// Product 480p YUV doorbell = RTL ddr_frame_layout_params
+// DDR_FRAME_YUV420P_DOORBELL_PHYS / plxg_ddr_poller BOOT_DOORBELL.
+#define MISTERPLEX_HAS_PRODUCT_DOORBELL_CONST 1
+constexpr uint32_t kProductFrameStoreDoorbellPhys = 0x300FF000u;
+constexpr uint32_t kPlxgBootstrapDoorbellPhys = kProductFrameStoreDoorbellPhys;
+constexpr uint32_t kPlxgBootstrapPhys =
+    kProductFrameStoreDoorbellPhys + kPlxgOffset; // 0x300FF800
 static_assert(kPlxgBootstrapPhys == kPlxgBootstrapDoorbellPhys + kPlxgOffset,
               "PLXG bootstrap phys = product doorbell + FIXED 0x800");
 static_assert(kPlxgBytes == 40u, "PLXG is 5 qwords");
 
 // Legacy example doorbell base (historical 0x3007F000 control page).
+// Table/collision example ONLY — never the product live page.
 constexpr uint32_t kLegacyFrameStoreDoorbellPhys = 0x3007F000u;
 
 inline constexpr uint32_t frameStoreMailboxPhys(uint32_t doorbell_phys, uint32_t offset) {
     return doorbell_phys + offset;
 }
 
-// Absolute addresses for the legacy example base — table/collision gates only.
-// Literals (not base+offset expressions) so static parsers in test_rtl_invariants
-// can resolve them. Must equal kLegacyFrameStoreDoorbellPhys + k*Offset.
-// Runtime ARM paths must use frameStoreMailboxPhys(ddrLayout_.doorbell_phys, …).
-constexpr uint32_t kPlxkAddr  = 0x3007F000u;
+// ---- Product-canonical absolute addresses (DERIVED = doorbell + offset) ----
+// Runtime ARM paths still resolve via frameStoreMailboxPhys(layout.doorbell, …)
+// so 720p doorbell 0x3047F000 carries every mailbox with it. These k*Addr
+// constants name the *product 480p* page for tables/static_assert/docs.
+constexpr uint32_t kPlxkAddr = kProductFrameStoreDoorbellPhys + kPlxkOffset;
 constexpr uint32_t kPlxkMagic = 0x504C584Bu; // "PLXK"
 
 // PLXS — Status (FPGA→ARM). OSD word + heartbeat.
-constexpr uint32_t kPlxsAddr  = 0x3007F100u;
+constexpr uint32_t kPlxsAddr = kProductFrameStoreDoorbellPhys + kPlxsOffset;
 constexpr uint32_t kPlxsMagic = 0x504C5853u; // "PLXS"
 
 // PLXI — Input (FPGA→ARM). Playback commands (pause/resume/seek).
-constexpr uint32_t kPlxiAddr  = 0x3007F108u;
+constexpr uint32_t kPlxiAddr = kProductFrameStoreDoorbellPhys + kPlxiOffset;
 constexpr uint32_t kPlxiMagic = 0x504C5849u; // "PLXI"
 
 // PLXM — SDRAM bring-up (FPGA→ARM). Memory test state.
-constexpr uint32_t kPlxmAddr  = 0x3007F110u;
+constexpr uint32_t kPlxmAddr = kProductFrameStoreDoorbellPhys + kPlxmOffset;
 constexpr uint32_t kPlxmMagic = 0x504C584Du; // "PLXM"
 
 // PLXF — Frame-store status (FPGA→ARM). Underrun count + debug state.
-constexpr uint32_t kPlxfAddr  = 0x3007F118u;
+constexpr uint32_t kPlxfAddr = kProductFrameStoreDoorbellPhys + kPlxfOffset;
 constexpr uint32_t kPlxfMagic = 0x504C5846u; // "PLXF"
 
 // SDRAM diagnostic (FPGA→ARM). No magic header, raw layout.
-constexpr uint32_t kSdramDiagAddr = 0x3007F120u;
-// No magic — raw diagnostic word.
+constexpr uint32_t kSdramDiagAddr =
+    kProductFrameStoreDoorbellPhys + kSdramDiagOffset;
 
 // PLXD — Bank-release ACK (FPGA→ARM). Tells ARM which bank is safe to write.
 // Layout (64-bit, little-endian):
@@ -130,34 +138,75 @@ constexpr uint32_t kSdramDiagAddr = 0x3007F120u;
 //   !swap_pending → free_bank_mask = disp_bank ? 0b01 : 0b10
 //   swap_pending  → free_bank_mask = 0b00 (both banks in use)
 //   On vsync swap: old disp_bank becomes free, frames_done++
-// Legacy absolute (example base only) — product live addr is doorbell+0x128:
-constexpr uint32_t kPlxdAddr  = 0x3007F128u;
+// Product live = product_doorbell + 0x128 = 0x300FF128 (NOT legacy 0x3007F128).
+constexpr uint32_t kPlxdAddr = kProductFrameStoreDoorbellPhys + kPlxdOffset;
 constexpr uint32_t kPlxdMagic = 0x504C5844u; // "PLXD"
 
 // PLXC — Chrome list control (ARM→FPGA). Semantic cmds only; fabric owns scale.
 // Layout (64-bit LE): [31:0] magic "PLXC", [32] enable, [33] reserved,
 // [47:34] cmd_count, [63:48] seq. List payload at doorbell+0x140.
-constexpr uint32_t kPlxcAddr  = 0x3007F130u;
+constexpr uint32_t kPlxcAddr = kProductFrameStoreDoorbellPhys + kPlxcOffset;
 constexpr uint32_t kPlxcMagic = 0x504C5843u; // "PLXC"
 
 // PLXO — Chrome telemetry (FPGA→ARM). Applied HDMI_W/H mirror + chrome_hw.
-constexpr uint32_t kPlxoAddr  = 0x3007F138u;
+constexpr uint32_t kPlxoAddr = kProductFrameStoreDoorbellPhys + kPlxoOffset;
 constexpr uint32_t kPlxoMagic = 0x504C584Fu; // "PLXO"
 
 // PLXG — Present / glass geometry (ARM→FPGA). Coded + display window for scaler.
-// FIXED offset +0x800 (parent ABI freeze). Magic/bytes/bootstrap defined above.
-// History: +0x2C0 @48-cmd, briefly +0x4C0 when list grew with MAX_CMDS — frozen off that.
-// kPlxgAddr is LEGACY EXAMPLE base (0x3007F000+0x800) for collision table parsers only.
-// Product live bootstrap is kPlxgBootstrapPhys (0x300FF800), not this absolute.
-constexpr uint32_t kPlxgAddr  = 0x3007F800u; // legacy example base + FIXED 0x800
+// FIXED offset +0x800 (parent ABI freeze). Product live = kPlxgBootstrapPhys.
+constexpr uint32_t kPlxgAddr = kProductFrameStoreDoorbellPhys + kPlxgOffset;
 static_assert(kPlxgOffset != kPlxcOffset, "PLXG must not collide with PLXC +0x130");
 static_assert(kPlxgOffset == 0x800u, "PLXG wire ABI is FIXED at +0x800");
 // Bound only: list may leave a hole before PLXG; it must not overrun into PLXG.
 static_assert(kPlxlOffset + kPlxcListMaxCmds * 8u <= kPlxgOffset,
               "chrome list must not grow into fixed PLXG +0x800");
 static_assert(kPlxcListMaxCmds == 112u, "list depth must match kMaxCmds/RTL MAX_CMDS");
-static_assert(kPlxgAddr == kLegacyFrameStoreDoorbellPhys + kPlxgOffset,
+static_assert(kPlxgAddr == kPlxgBootstrapPhys,
+              "product kPlxgAddr == bootstrap PLXG phys");
+
+// Drift guards: every product k*Addr is doorbell + offset (silent desync class).
+static_assert(kPlxkAddr == kProductFrameStoreDoorbellPhys + kPlxkOffset, "PLXK rel");
+static_assert(kPlxsAddr == kProductFrameStoreDoorbellPhys + kPlxsOffset, "PLXS rel");
+static_assert(kPlxiAddr == kProductFrameStoreDoorbellPhys + kPlxiOffset, "PLXI rel");
+static_assert(kPlxmAddr == kProductFrameStoreDoorbellPhys + kPlxmOffset, "PLXM rel");
+static_assert(kPlxfAddr == kProductFrameStoreDoorbellPhys + kPlxfOffset, "PLXF rel");
+static_assert(kSdramDiagAddr == kProductFrameStoreDoorbellPhys + kSdramDiagOffset,
+              "DIAG rel");
+static_assert(kPlxdAddr == kProductFrameStoreDoorbellPhys + kPlxdOffset, "PLXD rel");
+static_assert(kPlxcAddr == kProductFrameStoreDoorbellPhys + kPlxcOffset, "PLXC rel");
+static_assert(kPlxoAddr == kProductFrameStoreDoorbellPhys + kPlxoOffset, "PLXO rel");
+static_assert(kPlxgAddr == kProductFrameStoreDoorbellPhys + kPlxgOffset, "PLXG rel");
+static_assert(kPlxdAddr == 0x300FF128u, "product PLXD live phys");
+static_assert(kPlxdAddr != 0x3007F128u, "product PLXD must not be legacy absolute");
+
+// ---- Legacy example absolutes (historical 0x3007F000 page) ----
+// Named kLegacy* so nothing silently treats them as product live.
+#define MISTERPLEX_HAS_LEGACY_PLXD_CONST 1
+constexpr uint32_t kLegacyPlxkAddr =
+    kLegacyFrameStoreDoorbellPhys + kPlxkOffset;
+constexpr uint32_t kLegacyPlxsAddr =
+    kLegacyFrameStoreDoorbellPhys + kPlxsOffset;
+constexpr uint32_t kLegacyPlxiAddr =
+    kLegacyFrameStoreDoorbellPhys + kPlxiOffset;
+constexpr uint32_t kLegacyPlxmAddr =
+    kLegacyFrameStoreDoorbellPhys + kPlxmOffset;
+constexpr uint32_t kLegacyPlxfAddr =
+    kLegacyFrameStoreDoorbellPhys + kPlxfOffset;
+constexpr uint32_t kLegacySdramDiagAddr =
+    kLegacyFrameStoreDoorbellPhys + kSdramDiagOffset;
+constexpr uint32_t kLegacyPlxdAddr =
+    kLegacyFrameStoreDoorbellPhys + kPlxdOffset;
+constexpr uint32_t kLegacyPlxcAddr =
+    kLegacyFrameStoreDoorbellPhys + kPlxcOffset;
+constexpr uint32_t kLegacyPlxoAddr =
+    kLegacyFrameStoreDoorbellPhys + kPlxoOffset;
+constexpr uint32_t kLegacyPlxgAddr =
+    kLegacyFrameStoreDoorbellPhys + kPlxgOffset;
+static_assert(kLegacyPlxdAddr == 0x3007F128u, "legacy example PLXD");
+static_assert(kLegacyPlxdAddr != kPlxdAddr, "legacy/product PLXD gap 0x80000");
+static_assert(kLegacyPlxgAddr == kLegacyFrameStoreDoorbellPhys + kPlxgOffset,
               "legacy example PLXG abs = legacy doorbell + offset");
+
 // Bit-field positions (in the upper 32 bits, i.e. offset from bit 32):
 constexpr unsigned kPlxdFreeBankMaskBit = 0;  // bits [33:32] → [1:0] of upper word
 constexpr unsigned kPlxdFreeBankMaskWidth = 2;
@@ -208,7 +257,7 @@ constexpr std::array<MailboxEntry, 11> kAllMailboxes = {{
     {"PLXD", kPlxdAddr,     kPlxdMagic,     8, "fpga_to_arm",  true},
     {"PLXC", kPlxcAddr,     kPlxcMagic,     8, "arm_to_fpga",  true},
     {"PLXO", kPlxoAddr,     kPlxoMagic,     8, "fpga_to_arm",  true},
-    {"PLXG", kPlxgAddr,     kPlxgMagic,    40, "arm_to_fpga",  true}, // 5 qwords; legacy abs table
+    {"PLXG", kPlxgAddr,     kPlxgMagic,    40, "arm_to_fpga",  true}, // 5 qwords; product page
     {"PLXB", kPlxbAddr,     kPlxbMagic,     8, "arm_to_fpga",  true},
 }};
 

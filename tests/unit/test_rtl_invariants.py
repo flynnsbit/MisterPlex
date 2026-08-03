@@ -441,6 +441,12 @@ def cpp_const(text: str, name: str) -> int:
             for part in expr.split("|"):
                 value |= resolve(part)
             return value
+        # Product mailbox addrs are doorbell + offset (derived, not hardcoded).
+        if "+" in expr:
+            value = 0
+            for part in expr.split("+"):
+                value += resolve(part.strip())
+            return value
         # Handle namespace::symbol references (e.g. mailbox_abi::kPlxsAddr)
         if "::" in expr:
             bare = expr.rsplit("::", 1)[1]
@@ -801,14 +807,16 @@ def check_mailboxes() -> None:
     host = spec_text + "\n" + fpga_spi + "\n" + input_h
 
     # --- Verify spec declares authoritative values ---
+    # Product-canonical page = 0x300FF000 + offset (doorbell-relative).
+    # Legacy 0x3007Fxxx lives under kLegacy*Addr only.
     spec_entries = {
-        "PLXK": ("kPlxkAddr", "kPlxkMagic", 0x3007F000, 0x504C584B),
-        "PLXS": ("kPlxsAddr", "kPlxsMagic", 0x3007F100, 0x504C5853),
-        "PLXI": ("kPlxiAddr", "kPlxiMagic", 0x3007F108, 0x504C5849),
-        "PLXM": ("kPlxmAddr", "kPlxmMagic", 0x3007F110, 0x504C584D),
-        "PLXF": ("kPlxfAddr", "kPlxfMagic", 0x3007F118, 0x504C5846),
-        "DIAG": ("kSdramDiagAddr", None, 0x3007F120, None),
-        "PLXD": ("kPlxdAddr", "kPlxdMagic", 0x3007F128, 0x504C5844),
+        "PLXK": ("kPlxkAddr", "kPlxkMagic", 0x300FF000, 0x504C584B),
+        "PLXS": ("kPlxsAddr", "kPlxsMagic", 0x300FF100, 0x504C5853),
+        "PLXI": ("kPlxiAddr", "kPlxiMagic", 0x300FF108, 0x504C5849),
+        "PLXM": ("kPlxmAddr", "kPlxmMagic", 0x300FF110, 0x504C584D),
+        "PLXF": ("kPlxfAddr", "kPlxfMagic", 0x300FF118, 0x504C5846),
+        "DIAG": ("kSdramDiagAddr", None, 0x300FF120, None),
+        "PLXD": ("kPlxdAddr", "kPlxdMagic", 0x300FF128, 0x504C5844),
         "PLXB": ("kPlxbAddr", "kPlxbMagic", 0x30140000, 0x504C5842),
     }
     for name, (addr_sym, magic_sym, exp_addr, exp_magic) in spec_entries.items():
@@ -836,10 +844,10 @@ def check_mailboxes() -> None:
 
     # --- Cross-check RTL against spec for frame-store mailboxes ---
     rtl_cases = [
-        ("PLXS", "MAILBOX_PHYS", "MAGIC_S", 0x3007F100, 0x504C5853, 0x100),
-        ("PLXI", "INPUT_MAILBOX_PHYS", "MAGIC_I", 0x3007F108, 0x504C5849, 0x108),
-        ("PLXM", "MEMTEST_MAILBOX_PHYS", "MAGIC_M", 0x3007F110, 0x504C584D, 0x110),
-        ("PLXF", "UNDERRUN_MAILBOX_PHYS", "MAGIC_F", 0x3007F118, 0x504C5846, 0x118),
+        ("PLXS", "MAILBOX_PHYS", "MAGIC_S", 0x300FF100, 0x504C5853, 0x100),
+        ("PLXI", "INPUT_MAILBOX_PHYS", "MAGIC_I", 0x300FF108, 0x504C5849, 0x108),
+        ("PLXM", "MEMTEST_MAILBOX_PHYS", "MAGIC_M", 0x300FF110, 0x504C584D, 0x110),
+        ("PLXF", "UNDERRUN_MAILBOX_PHYS", "MAGIC_F", 0x300FF118, 0x504C5846, 0x118),
     ]
     for magic, rtl_addr, rtl_magic, expected_addr, expected_magic, offset in rtl_cases:
         ra_expr = sv_param_expr(rtl, rtl_addr)
@@ -881,23 +889,32 @@ def check_mailboxes() -> None:
     )
 
     # --- Cross-check PLXD bank-release against spec ---
-    # Legacy example absolute (doorbell base 0x3007F000) still equals 0x3007F128.
-    # Product doorbell is 0x300FF000 → live PLXD is 0x300FF128 via offset 0x128.
+    # Product-canonical kPlxdAddr / kBankReleaseMailboxPhys = 0x300FF128.
+    # Legacy example remains under kLegacyPlxdAddr = 0x3007F128.
     plxd_addr = cpp_const(host, "kBankReleaseMailboxPhys")
     plxd_magic = cpp_const(host, "kBankReleaseMailboxMagic")
-    check(plxd_addr == 0x3007F128,
-          f"legacy example PLXD address must be 0x3007F128 (got 0x{plxd_addr:08X})")
+    check(plxd_addr == 0x300FF128,
+          f"product PLXD address must be 0x300FF128 (got 0x{plxd_addr:08X})")
     check(plxd_magic == 0x504C5844,
           f"PLXD bank-release magic must be 0x504C5844 'PLXD' (got 0x{plxd_magic:08X})")
     plxd_off = cpp_const(spec_text, "kPlxdOffset")
     check(plxd_off == 0x128,
           f"kPlxdOffset must be 0x128 (got 0x{plxd_off:X})")
-    product_doorbell = 0x300FF000
+    product_doorbell = cpp_const(spec_text, "kProductFrameStoreDoorbellPhys")
+    check(product_doorbell == 0x300FF000,
+          f"kProductFrameStoreDoorbellPhys must be 0x300FF000 (got 0x{product_doorbell:08X})")
     product_plxd = product_doorbell + plxd_off
     check(product_plxd == 0x300FF128,
           f"product PLXD must be 0x300FF128 (got 0x{product_plxd:08X})")
+    check(product_plxd == plxd_addr,
+          "kBankReleaseMailboxPhys must equal product_doorbell + kPlxdOffset")
     check(product_plxd != 0x3007F128,
           "product PLXD must not collapse to legacy absolute 0x3007F128")
+    legacy_plxd = cpp_const(spec_text, "kLegacyPlxdAddr")
+    check(legacy_plxd == 0x3007F128,
+          f"kLegacyPlxdAddr must remain 0x3007F128 (got 0x{legacy_plxd:08X})")
+    check(legacy_plxd != plxd_addr,
+          "legacy and product PLXD must differ")
     spi = (ROOT / "arm" / "misterplexd" / "fpga_spi.cpp").read_text()
     check("bankReleaseMailboxPhys(ddrLayout_.doorbell_phys)" in spi,
           "fpga_spi readBankRelease must use bankReleaseMailboxPhys(doorbell)")
@@ -2374,7 +2391,7 @@ def check_ddr_bank_handoff_contract() -> None:
 
     print(
         "PASS DDR bank handoff publishes fenced frames and guards same-bank reuse "
-        "(PLXD bank-release ACK at 0x3007F128)"
+        "(PLXD bank-release ACK at product doorbell+0x128 = 0x300FF128)"
     )
 
 
