@@ -100,7 +100,15 @@ set_global_assignment -name VERILOG_MACRO "FRAME_LINES_8=1"
 #set_global_assignment -name VERILOG_MACRO "PRESENT_BEAM_960=1"
 #set_global_assignment -name VERILOG_MACRO "PRESENT_MULTI_PIXEL=1"
 #set_global_assignment -name VERILOG_MACRO "PRESENT_PX_PER_CLK=1"
+# --- clk_pix PLL (w-clock; DEFAULT OFF) ---
+# Adds pll outclk_3. Default 29.700000 MHz = 1650*750*24 (CEA 720p totals @24).
+# Optional 74.250000 MHz = 1650*750*60 (CEA VIC 4 720p60): also set PRESENT_CLK_PIX_74_25.
+# Requires parent-granted fit. Source Plex_clk_pix.sdc with the same enable.
+# Rate note: MULTI_PIXEL + PPC=1 @ clk_sys=20 cannot feed 29.7 Mpix/s — need
+# PPC=2 (store N-wide) or beam-on-clk_pix. See .agent-work/w-clock/720P_CLK_DDR_ARITH.md
 #set_global_assignment -name VERILOG_MACRO "PRESENT_CLK_PIX_PLL=1"
+#set_global_assignment -name VERILOG_MACRO "PRESENT_CLK_PIX_74_25=1"
+#set_global_assignment -name SDC_FILE Plex_clk_pix.sdc
 
 
 # sys/sys.tcl carries the upstream MiSTer single-stick SDRAM_* pin assignments.

@@ -183,3 +183,15 @@ require approximately:
 | 2026-07-27 | `60df5a2` | ddr_bus_arbiter: moved from clk_sys to clk_ddr |
 | 2026-07-27 | `3c6d1d2` | ddr_bus_arbiter: added m1 response FIFO (beat-drop fix) |
 | 2026-07-27 | `610c298` | ddr_bus_arbiter: registered + 2-FF sync on m1_busy |
+
+## PRESENT_CLK_PIX_PLL (default OFF — w-clock)
+
+When `PRESENT_CLK_PIX_PLL=1`, `pll_0002` adds `outclk_3` = clk_pix (29.70 MHz default, or 74.25 with `PRESENT_CLK_PIX_74_25`). Product build does not enable this.
+
+| # | Crossing | Dir | Protection |
+|---|---|---|---|
+| P1 | present_npx_path group data | clk_sys→clk_pix | async_fifo gray |
+| P2 | prefill_go | clk_sys→clk_pix | 2FF |
+| P3 | reset into pix | async | 2FF mp_rst_pix* |
+
+SDC: `Plex_clk_pix.sdc` sets asynchronous clock groups clk_pix ⊥ clk_sys and clk_pix ⊥ clk_ddr. Do not false_path residual_csum.
