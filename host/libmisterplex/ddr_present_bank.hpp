@@ -124,11 +124,17 @@ inline bool makeDdrPublishPlan(const DdrPublishFrame& frame, int bank, DdrPublis
     }
     // PLXG from *this* frame.geometry — never hardwire Legacy480 (rd-duck:
     // 320×240 payload + 624 PLXG = guaranteed shear / wrong bank pitch).
-    const PlxgRecord plxg = makePlxgRecordFromStorage(
-        cw, ch, dw, dh, frame.geometry.crop_left, frame.geometry.crop_top, /*seq=*/1);
+    // FromGeometry enforces crop+display==coded (B14 426→432 keeps inset).
+    const PlxgRecord plxg = makePlxgRecordFromGeometry(frame.geometry, /*seq=*/1);
     if (!plxg.valid) {
         if (err)
             *err = "publishDdrFrame: cannot build capacity-selected PLXG from geometry";
+        return false;
+    }
+    // dw/dh already folded into plxg via geometry; keep locals for native_push.
+    if (dw <= 0 || dh <= 0) {
+        if (err)
+            *err = "publishDdrFrame: display geometry invalid";
         return false;
     }
     const DdrFrameGeometry mapGeom = ddrCanvasGeometryForBankMap(map);

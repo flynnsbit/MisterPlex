@@ -357,6 +357,39 @@ int main(int argc, char** argv) {
 		return 1;
 	}
 	std::cout << "MEASURED_CROP_PLUS1 crop_l=10 disp_w=615 reject E2\n";
+	// B14 Direct-Part: coded 432 display 426 crop_left 2 (FFmpeg pad x=2).
+	// Raw 426 is rejected above; padded storage must ACCEPT window (rd-duck).
+	sim.driveGeom(true, 432, 240, 432, 216, 426, 240, /*crop_l*/ 2, /*crop_t*/ 0);
+	if (sim.top.obs_raw_ok == 0 || sim.top.obs_geom_en_r == 0) {
+		std::cerr << "FAIL B14 432/426/crop2 must accept raw_ok="
+		          << (int)sim.top.obs_raw_ok << " en_r=" << (int)sim.top.obs_geom_en_r
+		          << "\n";
+		return 1;
+	}
+	if (sim.top.obs_payload_bytes != 155520u) {
+		std::cerr << "FAIL B14 payload expect 155520 got " << sim.top.obs_payload_bytes
+		          << "\n";
+		return 1;
+	}
+	if (sim.top.obs_optc_map != 0) {
+		std::cerr << "FAIL B14 155520 must stay LEG map\n";
+		return 1;
+	}
+	std::cout << "MEASURED_B14_432_426 crop_l=2 disp=426 coded=432 raw_ok=1 payload=155520\n";
+	// Identity 432/432/crop0 also raw_ok (self-consistent) but is metadata FAULT
+	// for Direct-Part — host oracle rejects B14 predicate; store still accepts.
+	sim.driveGeom(true, 432, 240, 432, 216, 432, 240, /*crop_l*/ 0, /*crop_t*/ 0);
+	if (sim.top.obs_raw_ok == 0) {
+		std::cerr << "FAIL identity 432 window must raw_ok (self-consistent)\n";
+		return 1;
+	}
+	// crop2 + display 432 → 434 > 432 must reject
+	sim.driveGeom(true, 432, 240, 432, 216, 432, 240, /*crop_l*/ 2, /*crop_t*/ 0);
+	if (sim.top.obs_raw_ok != 0 || sim.top.obs_geom_reject_now == 0) {
+		std::cerr << "FAIL B14 neg: crop2+disp432 must reject\n";
+		return 1;
+	}
+	std::cout << "MEASURED_B14_NEG crop2+disp432 reject\n";
 	// Vertical: crop_t=0, dh=480, ch=480 PASS; crop_t=1 FAIL
 	sim.driveGeom(true, 624, 480, 624, 312, 624, 480, 0, 0);
 	if (sim.top.obs_raw_ok == 0) {

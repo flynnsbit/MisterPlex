@@ -608,6 +608,130 @@ inline DdrFrameGeometry ddrFrameGeometryForFpgaPresentFaultIdentityStore(int sto
     return makeDdrFrameGeometry(storeW, storeH); // crop_right=0, display=store
 }
 
+// PLXG from full geometry (generic publish / B14). present_x is glass placement
+// (ascal) — record q4 px/py stay 0; crop_left/top are FFmpeg storage insets.
+// Rejects crop+display != coded (half-built identity 432/432 with wrong crop).
+inline PlxgRecord makePlxgRecordFromGeometry(const DdrFrameGeometry& g, uint16_t seq) {
+    const int cw = g.coded_width.get();
+    const int ch = g.coded_height.get();
+    const int dw = g.display_width.get() > 0 ? g.display_width.get() : cw;
+    const int dh = g.display_height.get() > 0 ? g.display_height.get() : ch;
+    if (cw <= 0 || ch <= 0 || dw <= 0 || dh <= 0)
+        return PlxgRecord{};
+    if (dw + g.crop_left + g.crop_right != cw || dh + g.crop_top + g.crop_bottom != ch)
+        return PlxgRecord{};
+    return makePlxgRecordFromStorage(cw, ch, dw, dh, g.crop_left, g.crop_top, seq);
+}
+
+// Product mux q3 rule (plex_present_geom_mux): content-bearing → display from
+// latched q3 dw/dh; never unconditional display=coded (kills 624/618 and 432/426).
+inline int plexMuxPresentDisplayW(bool live_valid, int content_w, int content_h, int coded_w,
+                                  int plxg_dw) {
+    const bool content = live_valid && content_w != 0 && content_h != 0;
+    if (!content)
+        return coded_w;
+    return (plxg_dw != 0) ? plxg_dw : coded_w;
+}
+inline int plexMuxPresentDisplayWFaultEqCoded(int coded_w) { return coded_w; }
+
+// Forward: full definition with store window helpers below (chain oracle).
+inline bool ddrRtRawWindowOk(int codedW, int codedH, int displayW, int displayH, int cropLeft,
+                             int cropTop, int presentX = 0, int presentY = 0, int maxRdW = 1280,
+                             int maxRdH = 720);
+
+// Host→record→latch→mux→store-window oracle for Direct-Part 426→432 (rd-duck).
+// Product path must pass; identity-store FAULT must fail the B14 predicate.
+struct DdrB14Pad426ChainOracle {
+    bool product_ok = false;
+    bool fault_identity_fails_b14 = false;
+    int coded_w = 0;
+    int display_w = 0;
+    int crop_left = 0;
+    int crop_right = 0;
+    int h_de = 0;
+    int content_w = 0;
+    int mux_display_w = 0;
+    int mux_fault_display_w = 0;
+    bool store_window_ok = false;
+    const char* fail = "";
+};
+
+inline DdrB14Pad426ChainOracle ddrB14Pad426HostRecordMuxStoreOracle() {
+    DdrB14Pad426ChainOracle o{};
+    const DdrFrameGeometry g = makeDdrFrameGeometryFromDelivered(426, 240);
+    o.coded_w = g.coded_width.get();
+    o.display_w = g.display_width.get();
+    o.crop_left = g.crop_left;
+    o.crop_right = g.crop_right;
+    if (o.coded_w != 432 || o.display_w != 426 || o.crop_left != 2 || o.crop_right != 4) {
+        o.fail = "geometry not coded432/display426/crop2+4";
+        return o;
+    }
+    // present_x = glass placement (ascal); storage pad inset is crop_left only.
+    if (g.present_x != 0 || g.present_y != 0) {
+        o.fail = "present_x/y must be 0; crop_left is FFmpeg pad inset";
+        return o;
+    }
+    const PlxgRecord rec = makePlxgRecordFromGeometry(g, /*seq=*/1);
+    if (!rec.valid) {
+        o.fail = "makePlxgRecordFromGeometry rejected product geometry";
+        return o;
+    }
+    PlxgLatchModel latch{};
+    uint8_t page[0x800 + 64]{};
+    if (!plxgProgramRecord(page, rec, latch)) {
+        o.fail = "latch commit failed";
+        return o;
+    }
+    o.h_de = latch.h_de;
+    o.content_w = latch.content_w;
+    o.mux_display_w = plexMuxPresentDisplayW(latch.live_valid, latch.content_w, latch.content_h,
+                                             latch.coded_w, latch.display_w);
+    o.mux_fault_display_w = plexMuxPresentDisplayWFaultEqCoded(latch.coded_w);
+    o.store_window_ok =
+        ddrRtRawWindowOk(latch.coded_w, latch.coded_h, latch.display_w, latch.display_h,
+                         latch.crop_left, latch.crop_top);
+    if (latch.coded_w != 432 || latch.display_w != 426 || latch.crop_left != 2) {
+        o.fail = "latch lost q3 display/crop";
+        return o;
+    }
+    if (o.h_de != 426 || o.content_w != 426) {
+        o.fail = "DE/content must track display 426 not padded 432";
+        return o;
+    }
+    if (o.mux_display_w != 426) {
+        o.fail = "mux product must pass q3 display=426";
+        return o;
+    }
+    if (o.mux_fault_display_w != 432) {
+        o.fail = "mux FAULT twin must alias display=coded 432";
+        return o;
+    }
+    if (!o.store_window_ok) {
+        o.fail = "store window crop2+display426 must fit coded432";
+        return o;
+    }
+    if (((rec.q[2] >> 32) & 0x7FFu) != 432u || (rec.q[2] & 0x7FFu) != 426u ||
+        ((rec.q[3] >> 32) & 0x7FFu) != 426u || ((rec.q[4] >> 32) & 0x7FFu) != 2u ||
+        (rec.q[1] & 0x7FFu) != 426u) {
+        o.fail = "record qwords not B14 432/426/crop2";
+        return o;
+    }
+    o.product_ok = true;
+
+    const DdrFrameGeometry gFault =
+        ddrFrameGeometryForFpgaPresentFaultIdentityStore(432, 240);
+    const bool faultLooksB14 = (gFault.display_width.get() == 426 && gFault.crop_left == 2);
+    const PlxgRecord recFault = makePlxgRecordFromGeometry(gFault, /*seq=*/2);
+    const bool faultB14 =
+        recFault.valid && ((recFault.q[3] >> 32) & 0x7FFu) == 426u &&
+        ((recFault.q[4] >> 32) & 0x7FFu) == 2u && (recFault.q[2] & 0x7FFu) == 426u;
+    o.fault_identity_fails_b14 = !faultLooksB14 && !faultB14;
+    if (!o.fault_identity_fails_b14)
+        o.fail = "FAULT identity 432 incorrectly satisfies B14 display/crop";
+    return o;
+}
+
 // Product intermediate tier (PMS Constrained Baseline 960×540 → fabric upscale).
 inline bool ddrIsProduct960x540Content(int w, int h) {
     return w == kDdr720pOutputSourceWidth && h == kDdr720pOutputSourceHeight;
@@ -644,8 +768,8 @@ inline bool ddrPlxgCanvasDimsFault(int plxgCodedW, int plxgCodedH) {
 // display_w/h 0 → coded (RTL rt_dw_nz). Widened sums; sum==coded PASS, +1 FAIL.
 // maxRdW/H default product MAX_CODED / FRAME max (1280×720).
 inline bool ddrRtRawWindowOk(int codedW, int codedH, int displayW, int displayH,
-                             int cropLeft, int cropTop, int presentX = 0,
-                             int presentY = 0, int maxRdW = 1280, int maxRdH = 720) {
+                             int cropLeft, int cropTop, int presentX,
+                             int presentY, int maxRdW, int maxRdH) {
     if (codedW <= 0 || codedH <= 0)
         return false;
     const int dw = (displayW == 0) ? codedW : displayW;

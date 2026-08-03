@@ -1,4 +1,5 @@
 // Unit tests for host/libmisterplex/ffmpeg_vf.hpp — scale policy + sws_flags.
+#include "libmisterplex/ddr_frame_layout.hpp"
 #include "libmisterplex/ffmpeg_vf.hpp"
 #include "libmisterplex/yuv420p_chroma_health.hpp"
 
@@ -558,6 +559,34 @@ int main() {
                "16:9 1080p into 624 → ~350");
         std::printf("GREEN_WIDTH_MISMATCH w640=hfit w720=hfit v350=scale d426=scale "
                     "foar_coded_not_618=1\n");
+    }
+
+    // --- B14 Direct-Part 426→432 (not product 624 canvas) ---
+    // FFmpeg pad inset x=2 must match host geometry crop_left (rd-duck).
+    {
+        const auto g = ddrFfmpegGeometryForPresent(426, 240, /*wantFpga*/ true);
+        expect(g.coded_width.get() == 432 && g.display_width.get() == 426, "B14 geom 432/426");
+        expect(g.crop_left == 2 && g.crop_right == 4, "B14 crop L2/R4");
+        FfmpegVfRequest r;
+        r.coded_w = g.coded_width.get();
+        r.coded_h = g.coded_height.get();
+        r.display_w = g.display_width.get();
+        r.display_h = g.display_height.get();
+        r.crop_left = g.crop_left;
+        r.crop_top = g.crop_top;
+        r.source_w = 426;
+        r.source_h = 240;
+        r.scale_mode = FfmpegScaleMode::Always;
+        r.delivery_geometry_verified = true;
+        const auto p = buildFfmpegVideoFilter(r);
+        expect(!p.identity_skip, "B14 not identity_skip (coded!=source)");
+        expect(p.vf.find("crop=426:240:2:0") != std::string::npos, "B14 crop at x=2");
+        expect(p.vf.find("pad=432:240") != std::string::npos, "B14 pad to 432");
+        expect(p.vf.find("pad=624:480") == std::string::npos, "B14 not product 624 canvas");
+        // FAULT: identity store geometry would claim source==coded 432.
+        const auto gFault = ddrFrameGeometryForFpgaPresentFaultIdentityStore(432, 240);
+        expect(gFault.display_width.get() == 432 && gFault.crop_left == 0, "FAULT id 432");
+        std::printf("GREEN_B14_426_432 crop_x=2 pad=432 not624\n");
     }
 
     // --- Loss2 half-res (parent A/B: request=397 → measured=312x240) ---

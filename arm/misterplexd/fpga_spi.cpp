@@ -763,7 +763,10 @@ bool FpgaSpi::setDdrFrameLayout(const DdrFrameGeometry& geometry, DdrFrameFormat
 }
 
 bool FpgaSpi::setDdrFrameLayout(int width, int height, DdrFrameFormat format) {
-    return setDdrFrameLayout(makeDdrFrameGeometry(width, height), format);
+    // Never identity makeDdrFrameGeometry(w,h): unaligned 426 must B14-pad
+    // (432/426/crop2); bare 432 loses delivered display (rd-duck half-closure).
+    // Prefer setDdrFrameLayout(geometry) when store+delivered are both known.
+    return setDdrFrameLayout(ddrFrameGeometryForFpgaPresent(width, height), format);
 }
 
 void FpgaSpi::setDdrMemSync(bool on) {
@@ -2191,7 +2194,10 @@ bool FpgaSpi::publishDdrFabricOwned(const DdrPublishFrame& frame,
 
 bool FpgaSpi::sendYuv420pFrameDdr(const uint8_t* yuv420p, size_t len, int width, int height,
                                   int bank) {
-    return sendYuv420pFrameDdr(yuv420p, len, makeDdrFrameGeometry(width, height), bank);
+    // ddrFrameGeometryForFpgaPresent: 426→B14 pad metadata; not identity WxH.
+    // For padded store 432 with known delivered 426 use the geometry overload.
+    return sendYuv420pFrameDdr(yuv420p, len, ddrFrameGeometryForFpgaPresent(width, height),
+                               bank);
 }
 
 bool FpgaSpi::sendPcmChunk(const uint8_t* pcm, size_t len, uint8_t index) {

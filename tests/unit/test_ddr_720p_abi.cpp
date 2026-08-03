@@ -598,9 +598,26 @@ int main() {
             const auto leg = makePlxgRecordLegacy480(1);
             CHECK(leg.valid && (leg.q[2] & 0x7FFu) == 624u);
             CHECK(((leg.q[3] >> 32) & 0x7FFu) == 618u);
+            // Host→record→latch→mux→store-window chain (rd-duck half-closure).
+            // Mux 624/618 alone cannot catch a producer that emits 432/432.
+            const auto chain = ddrB14Pad426HostRecordMuxStoreOracle();
+            CHECK(chain.product_ok);
+            CHECK(chain.fault_identity_fails_b14);
+            CHECK(chain.mux_display_w == 426 && chain.mux_fault_display_w == 432);
+            CHECK(chain.store_window_ok);
+            CHECK(chain.h_de == 426 && chain.content_w == 426);
+            CHECK(((plan426.plxg_q[3] >> 32) & 0x7FFu) == 426u);
+            // FAULT identity geometry must NOT publish B14 display/crop.
+            DdrPublishFrame frFault{px426.data(), px426.size(), gFault};
+            DdrPublishPlan planFault{};
+            std::string errFault;
+            CHECK(makeDdrPublishPlan(frFault, 0, planFault, &errFault));
+            CHECK(((planFault.plxg_q[3] >> 32) & 0x7FFu) == 432u); // wrong display
+            CHECK(((planFault.plxg_q[4] >> 32) & 0x7FFu) == 0u);   // lost crop
+            CHECK((planFault.plxg_q[2] & 0x7FFu) == 432u);         // DE=coded squeeze
             std::fprintf(stderr,
                          "  B14_PAD_426_POLICY OK coded=432 display=426 crop=2+4 "
-                         "de=426 squeeze_fault~%.4f\n",
+                         "de=426 chain_ok=1 fault_id_fails_b14=1 squeeze_fault~%.4f\n",
                          squeeze);
         }
         // PMS AR-fit 468×360: raw fails; pad coded=480 → accepted storage
