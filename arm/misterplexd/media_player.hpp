@@ -144,6 +144,8 @@ public:
     int64_t avDriftMs() const { return avDriftMs_.load(); }
     int64_t droppedFrames() const { return droppedFrames_.load(); }
     void setDecodeSize(int w, int h);
+    // Known PMS/delivery coded size; enables identity vf skip when == bank.
+    void setExpectedDeliverySize(int w, int h);
     // Host recon frames presented this session (I/IDR only)
     int64_t reconFrames() const { return reconFrames_.load(); }
     bool reconPresentOk() const { return reconPresentOk_.load(); }
@@ -305,6 +307,8 @@ private:
     std::string currentHeaders_;
     int64_t durationMs_ = 0;
     int outW_ = 320;
+    int expectedDeliveryW_ = 0;
+    int expectedDeliveryH_ = 0;
     int outH_ = 240;
 };
 

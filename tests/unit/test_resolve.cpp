@@ -46,9 +46,9 @@ int main() {
     CHECK(h.find("X-Plex-Session-Identifier: sess1") != std::string::npos);
     CHECK(h.find("X-Plex-Token: tok") != std::string::npos);
 
-    // --- PMS universal transcode profile table / 480p guard ---
+    // --- PMS universal transcode profile table / geometry ceiling ---
     const auto& profiles = plexTranscodeProfiles();
-    CHECK(profiles.size() == 2);
+    CHECK(profiles.size() == 3);
     WeakLadder w240;
     CHECK(applyPlexTranscodeProfile("240p", w240));
     CHECK(w240.profileName == "240p");
@@ -122,6 +122,50 @@ int main() {
     bad480 = w480;
     bad480.h264Level = 31;
     CHECK(!validateWeakLadder(bad480));
+
+    // --- 720p profile + ceiling (must not silently clamp) ---
+    WeakLadder w720;
+    CHECK(applyPlexTranscodeProfile("720p", w720));
+    CHECK(w720.profileName == "720p");
+    CHECK(w720.videoResolution == "1280x720");
+    CHECK(w720.maxVideoBitrateKbps == 3000);
+    CHECK(w720.videoQuality == 70);
+    CHECK(w720.h264Profile == "baseline");
+    CHECK(w720.h264Level == 30);
+    CHECK(validateWeakLadder(w720));
+    WeakLadder by720res;
+    CHECK(applyPlexTranscodeProfile("1280x720", by720res));
+    CHECK(by720res.profileName == "720p");
+
+    const auto start720 =
+        buildUniversalTranscodeUrl("http://pms.example:32400", "/library/metadata/7", "tok",
+                                   "sess720", 0, w720);
+    CHECK(start720.find("videoResolution=1280x720") != std::string::npos);
+    CHECK(start720.find("maxVideoBitrate=3000") != std::string::npos);
+    CHECK(start720.find("videoQuality=70") != std::string::npos);
+    CHECK(start720.find("videoProfile=baseline") != std::string::npos);
+    CHECK(start720.find("videoLevel=30") != std::string::npos);
+    CHECK(start720.find("directPlay=0") != std::string::npos);
+    CHECK(start720.find("directStream=0") != std::string::npos);
+    const auto extra720 = plexClientProfileExtra(w720);
+    CHECK(extra720.find("name=video.width&value=1280") != std::string::npos);
+    CHECK(extra720.find("name=video.height&value=720") != std::string::npos);
+    const auto caps720 = plexClientCapabilities(w720);
+    CHECK(caps720.find("resolution:1280x720") != std::string::npos);
+
+    // NEGATIVES — naive "just raise a number" implementations must fail these:
+    WeakLadder bad1080 = w720;
+    bad1080.videoResolution = "1920x1080";
+    CHECK(!validateWeakLadder(bad1080)); // above product ceiling
+    WeakLadder badHigh = w720;
+    badHigh.h264Profile = "high";
+    CHECK(!validateWeakLadder(badHigh));
+    WeakLadder badLvl = w720;
+    badLvl.h264Level = 31;
+    CHECK(!validateWeakLadder(badLvl));
+    WeakLadder badBr = w720;
+    badBr.maxVideoBitrateKbps = 1000;
+    CHECK(!validateWeakLadder(badBr)); // 720p floor
 
     // --- Phase 4 multi-server conf helpers (no network) ---
     CHECK(normalizePlexBase("http://pms.lan:32400/") == "http://pms.lan:32400");

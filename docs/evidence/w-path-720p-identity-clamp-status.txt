@@ -1,0 +1,49 @@
+# w-path status — 720p clamp + identity vf
+branch: w-path-720p-identity-clamp
+pin_base: 842e45c90a848ab11739fc2de82cc1a66c0fea4d
+tip: e0e4093eda56b724bdc1bfb2c86bf6bd57770a29
+worktree: /home/flynnsbit/Projects/MisterPlex-wt-path-720fix
+
+## Delivered
+1. contentResolutionFromSize(1280,720) → 1280x720 (was silent clamp to 640x480)
+2. OSD O[5:4] tiers: 0=240p 1=480p 2/3=720p; CONF_STR v8; confstr guard O[5:4]
+3. plexTranscodeProfiles +720p {1280x720, 3000kbps, q70, baseline, L30}
+4. validateWeakLadder ceiling 1280x720; still rejects 1080 / high / L>30 / low BR
+5. setExpectedDeliverySize + identity vf skip when src==bank (no scale/pad)
+6. Startup log: content resolution=… weak=… profile=baseline level=30 decode=WxH present_MBps@24=
+
+## PMS request (built by daemon for 720p tier)
+  videoResolution=1280x720
+  maxVideoBitrate=3000
+  videoQuality=70
+  videoCodec=h264
+  videoProfile=baseline
+  videoLevel=30
+  directPlay=0 directStream=0
+  Client-Profile-Extra: video.width=1280 video.height=720 baseline level=30
+
+## Tests (direct rc)
+  ./build/test_osd_menu     true rc=0
+  ./build/test_playback_vf  true rc=0
+  ./build/test_resolve      true rc=0
+  make unit                 true rc=0
+
+## PREDICTION (not device-measured — parent owns glass)
+  Parent measured native 720p decode 0.939x excluding DDR write.
+  Prior 624x480 scale delta ~2.95 ms/f; identity skip removes that scale/pad stage.
+  PREDICTED saving at 720p24: ~2–5 ms/f (~5–12% of 41.7 ms budget) if PMS delivers
+  exact 1280x720; larger if a prior path was upscaling SD→720.
+  PREDICTED net: 0.939x → ~0.96–1.02x decode-only IF delivery is true 1280x720 CB.
+  This is a PREDICTION until parent measures on device. MISS risk: PMS ceiling
+  delivers shorter coded height → identity skip wrong → need scale again.
+
+## Units vs pin 842e45c9
+  content_modes.hpp / playback_vf.hpp — new host headers
+  osd_menu / plex_resolve / media_player / main — daemon path
+  Plex.sv O[5:4] v8 — source only, NO FIT (parent HELD)
+
+## Parent live checks
+  DECODE=1280x720 OSD_CONTROL=0 (or menu O[5:4]=2 after RBF)
+  expect log: content resolution=1280x720 weak=1280x720 bitrate=3000
+  expect media: vf identity skip … filter=fps=… or (none)
+  expect NO scale=1280:720 in ffmpeg argv when delivery matches

@@ -311,7 +311,9 @@ int main(int argc, char** argv) {
             weak.profileName = "custom";
             weak.videoResolution = decodeRes;
             if (!weakBitrateExplicit) {
-                if (decodeW >= 640)
+                if (decodeW >= 1280 || decodeH >= 720)
+                    weak.maxVideoBitrateKbps = 3000;
+                else if (decodeW >= 640)
                     weak.maxVideoBitrateKbps = 2500;
                 else if (decodeW >= 480)
                     weak.maxVideoBitrateKbps = 1500;
@@ -555,14 +557,21 @@ int main(int argc, char** argv) {
         int64_t off = req.offsetMs;
         const auto contentRes = contentResolutionForNextPlay();
         player.setDecodeSize(contentRes.width, contentRes.height);
+        // Ask PMS for this exact tier; matching delivery → identity vf (no ARM scale).
+        player.setExpectedDeliverySize(contentRes.width, contentRes.height);
         const auto weakForPlay =
             weakForContentResolution(weak, contentRes, weakBitrateExplicit);
+        const double mBps24 =
+            (static_cast<double>(contentRes.width) * contentRes.height * 1.5 * 24.0) /
+            (1024.0 * 1024.0);
         std::fprintf(stderr,
                      "misterplexd: content resolution=%s source=%s status_word=0x%04x "
-                     "weak=%s bitrate=%d\n",
-                     contentRes.label, osdControl ? "OSD O[4]" : "conf/--decode",
+                     "weak=%s bitrate=%d profile=baseline level=30 "
+                     "decode=%dx%d present_MBps@24=%.2f\n",
+                     contentRes.label, osdControl ? "OSD O[5:4]" : "conf/--decode",
                      player.lastOsdWord(), weakForPlay.videoResolution.c_str(),
-                     weakForPlay.maxVideoBitrateKbps);
+                     weakForPlay.maxVideoBitrateKbps, contentRes.width, contentRes.height,
+                     mBps24);
         auto [resolved, base] = resolveAgainstServers(req, defaultPms, off, weakForPlay);
 
         if (gen != playGen.load()) {

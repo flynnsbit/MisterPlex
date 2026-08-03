@@ -146,9 +146,13 @@ bool videoCodecIsH264(const std::string& codecRaw) {
 } // namespace
 
 const std::vector<PlexTranscodeProfile>& plexTranscodeProfiles() {
+    // Keep aligned with host/libmisterplex/content_modes.hpp and OSD tiers.
     static const std::vector<PlexTranscodeProfile> profiles = {
         {"240p", "320x240", 1000, 40, "baseline", 30},
         {"480p", "640x480", 2500, 60, "baseline", 30},
+        // 720p: Constrained Baseline L3.0. 3000 kbps is a product knee above the
+        // lab CB 720p24 asset (~488 kbps) without asking for High/CABAC or L>3.0.
+        {"720p", "1280x720", 3000, 70, "baseline", 30},
     };
     return profiles;
 }
@@ -313,9 +317,14 @@ bool validateWeakLadder(const WeakLadder& weak, std::string* why) {
         return fail("H.264 profile must be baseline for the current decoder");
     if (weak.h264Level > 30)
         return fail("H.264 level must not exceed 3.0 for the current decoder");
-    if (w >= 640 || h >= 480) {
-        if (w > 640 || h > 480)
-            return fail("current built-in profiles stop at 640x480");
+    // Geometry ceiling is the product content max (1280x720). Profile/level and
+    // per-tier bitrate floors stay hard — do not delete these guards.
+    if (w > 1280 || h > 720)
+        return fail("current built-in profiles stop at 1280x720");
+    if (w >= 1280 || h >= 720) {
+        if (weak.maxVideoBitrateKbps < 2000)
+            return fail("720p profile bitrate is too low");
+    } else if (w >= 640 || h >= 480) {
         if (weak.maxVideoBitrateKbps < 2000)
             return fail("480p profile bitrate is too low");
     } else if (weak.maxVideoBitrateKbps < 750) {

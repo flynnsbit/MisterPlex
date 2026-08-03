@@ -146,7 +146,7 @@ def validate(entries: list[str]) -> None:
         else:
             fail(f"unrecognised entry `{entry}`")
 
-    for required in ("F1", "F2", "F3", "O[4]", "O[9:6]", "O[15:14]", "J1", "v"):
+    for required in ("F1", "F2", "F3", "O[5:4]", "O[9:6]", "O[15:14]", "J1", "v"):
         if required not in seen:
             fail(f"required CONF_STR entry `{required}` is missing")
     print("PASS CONF_STR guard: structure, field counts, file slots and status bits are sane")

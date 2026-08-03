@@ -15,8 +15,8 @@
 //   [1]      A/V resync       0=On 1=Off
 //   [2]      TV Mode          (core)
 //   [3]      Audio clock trim 0=On (685 ppm) 1=Off
-//   [4]      Content res      0=320x240 (proven default), 1=640x480 (480p path)
-//   [5]      reserved         do not reuse without a config-version bump
+//   [5:4]    Content res      0=320x240, 1=640x480, 2=1280x720, 3=1280x720
+//                             (v8: bit5 claimed from reserved for 720p tier)
 //   [9:6]    A/V offset       4-bit SIGNED, 20 ms per step -> -160..+140 ms.
 //                             Signed (not biased) so the power-on value 0 means
 //                             0 ms without needing a non-zero CONF_STR default,
@@ -88,16 +88,46 @@ inline int osdAvOffsetMsFromIndex(unsigned idx) {
     return i * kOsdAvOffsetStepMs + kOsdAvOffsetDefaultMs;
 }
 
-inline ContentResolution contentResolutionFromOsdWord(uint16_t word) {
-    if ((word >> 4) & 1u)
-        return {640, 480, "640x480", 2000};
+// Explicit product table — never silently clamp 1280x720 down to 640x480.
+inline ContentResolution contentResolution240() {
     return {320, 240, "320x240", 1000};
+}
+inline ContentResolution contentResolution480() {
+    // weakBitrate matches plexTranscodeProfiles 480p (2500), not the old 2000 floor.
+    return {640, 480, "640x480", 2500};
+}
+inline ContentResolution contentResolution720() {
+    // 3000 kbps CB L3.0 knee — see content_modes.hpp / plexTranscodeProfiles.
+    return {1280, 720, "1280x720", 3000};
+}
+
+inline ContentResolution contentResolutionFromOsdWord(uint16_t word) {
+    // O[5:4]: 0=240p, 1=480p, 2/3=720p
+    const unsigned tier = (static_cast<unsigned>(word) >> 4) & 0x3u;
+    if (tier >= 2u)
+        return contentResolution720();
+    if (tier == 1u)
+        return contentResolution480();
+    return contentResolution240();
 }
 
 inline ContentResolution contentResolutionFromSize(int w, int h) {
+    if (w <= 0 || h <= 0)
+        return contentResolution240();
+    // Exact supported sizes first.
+    if (w == 1280 && h == 720)
+        return contentResolution720();
+    if (w == 640 && h == 480)
+        return contentResolution480();
+    if (w == 320 && h == 240)
+        return contentResolution240();
+    // Tier by largest product mode the request reaches — 720 before 480 so a
+    // DECODE=1280x720 (or any >=720p axis) is never collapsed to 480p.
+    if (w >= 1280 || h >= 720)
+        return contentResolution720();
     if (w >= 640 || h >= 480)
-        return {640, 480, "640x480", 2000};
-    return {320, 240, "320x240", 1000};
+        return contentResolution480();
+    return contentResolution240();
 }
 
 inline OsdSettings decodeOsdWord(uint16_t word) {
@@ -110,14 +140,15 @@ inline OsdSettings decodeOsdWord(uint16_t word) {
     return s;
 }
 
-// Bits the daemon reacts to. [0] reset, [2] TV mode, [5] reserved,
+// Bits the daemon reacts to. [0] reset, [2] TV mode,
 // [10]/[11] flush triggers and [13:12] DDR kick/bank are not user settings and
-// toggle constantly during playback.
+// toggle constantly during playback. [5:4] is the content-resolution tier (v8).
 //
 // The daemon NEVER writes these bits. Main_MiSTer owns the OSD word (and saves it
-// to config/Plex_v7.CFG); a daemon-side write only fights Main's shadow and makes
-// the value flap between the two.
-constexpr uint16_t kOsdOwnedMask = 0xC3DA;
+// to config/Plex_v8.CFG after the CONF_STR bump); a daemon-side write only fights
+// Main's shadow and makes the value flap between the two.
+// Was 0xC3DA (bit5 reserved); now 0xC3FA so O[5] participates in change detect.
+constexpr uint16_t kOsdOwnedMask = 0xC3FA;
 
 inline bool osdChanged(uint16_t a, uint16_t b) {
     return ((a ^ b) & kOsdOwnedMask) != 0;

@@ -235,7 +235,7 @@ def build_report() -> list[GateReport]:
                 "CONF_STR structure in Plex.sv is well-formed: file slots have "
                 "3-character extension chunks, option entries have correct choice "
                 "counts for their bit widths, status bits do not overlap, required "
-                "entries (F1-F3, O[4], O[9:6], O[15:14], J1, v) are present."
+                "entries (F1-F3, O[5:4], O[9:6], O[15:14], J1, v) are present."
             ),
             does_not_prove=(
                 "Does NOT prove the OSD actually renders correctly — only structure. "

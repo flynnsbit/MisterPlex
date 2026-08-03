@@ -56,11 +56,9 @@ localparam CONF_STR = {
 	"O[122:121],Aspect ratio,Original,Full Screen,[ARC1],[ARC2];",
 	// Default first option = NTSC (status[2]=0). Bump v, so saved PAL is cleared.
 	"O[2],TV Mode,NTSC,PAL;",
-	// O[5:4] Content FPS is written by misterplexd from the exact PMS frame rate,
-	// so it is intentionally NOT a menu item. O[4] is now the single source of
-	// truth for native content resolution; misterplexd reads the same OSD word
-	// through the DDR mailbox before each play.
-	"O[4],Content resolution,320x240,640x480;",
+	// O[5:4] content tier (host osd_menu.hpp SoT): 0=240p 1=480p 2/3=720p.
+	// Two bits require exactly four CONF_STR choices (guard-enforced).
+	"O[5:4],Content resolution,320x240,640x480,1280x720,1280x720;",
 	"-;",
 	// misterplexd reads these back over UIO and applies them live (no restart).
 	// Positive = hold the frame back = video LATER. Raise it when audio sounds
@@ -79,7 +77,7 @@ localparam CONF_STR = {
 	"R[0],Reset and close OSD;",
 	// J1 maps to joystick_0 bits 4..7; names feed MiSTer's controller mapper.
 	"J1,Play/Pause,Stop,Skip Fwd,Skip Back;",
-	"v,7;", // reset OSD: v7 clears stale pre-480p status[4] before content-res owns it
+	"v,8;", // reset OSD: v8 claims O[5:4] for 240/480/720 content tier
 	"V,v",`BUILD_DATE
 };
 
@@ -229,9 +227,14 @@ wire reset = RESET | status[0] | buttons[1];
 // O[4] is the native content-resolution selector shared with misterplexd.
 // C1B owns the selector/ABI; the DDR-backed frame-store branch consumes these
 // dimensions for the actual 480p present path.
-wire        content_res_640x480 = status[4];
-wire [9:0]  content_width       = content_res_640x480 ? 10'd640 : 10'd320;
-wire [9:0]  content_height      = content_res_640x480 ? 10'd480 : 10'd240;
+// O[5:4] content tier: 0=240p, 1=480p, 2/3=720p (host osd_menu.hpp SoT).
+wire [1:0]  content_res_tier    = status[5:4];
+wire        content_res_640x480 = (content_res_tier == 2'b01);
+wire        content_res_720p    = (content_res_tier >= 2'b10);
+wire [10:0] content_width       = content_res_720p ? 11'd1280 :
+                                  (content_res_640x480 ? 11'd640 : 11'd320);
+wire [10:0] content_height      = content_res_720p ? 11'd720 :
+                                  (content_res_640x480 ? 11'd480 : 11'd240);
 
 // ---------------------------------------------------------------------------
 // L4 720p present geom hierarchy (DEFAULT OFF via PLEX_PRESENT_720P_L4).

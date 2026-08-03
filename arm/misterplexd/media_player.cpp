@@ -3,6 +3,7 @@
 #include "libmisterplex/av_clock.hpp"
 #include "libmisterplex/idle_screen.hpp"
 #include "libmisterplex/osd_menu.hpp"
+#include "libmisterplex/playback_vf.hpp"
 #include "libmisterplex/h264_nal_dispatch.hpp"
 #include "libmisterplex/h264_recon.hpp"
 #include <algorithm>
@@ -683,6 +684,19 @@ void MediaPlayer::setDecodeSize(int w, int h) {
         h = 720;
     outW_ = w;
     outH_ = h;
+}
+
+void MediaPlayer::setExpectedDeliverySize(int w, int h) {
+    // 0x0 clears the hint (unknown delivery → keep scale/pad).
+    if (w <= 0 || h <= 0) {
+        expectedDeliveryW_ = 0;
+        expectedDeliveryH_ = 0;
+        return;
+    }
+    w &= ~1;
+    h &= ~1;
+    expectedDeliveryW_ = w;
+    expectedDeliveryH_ = h;
 }
 
 std::string MediaPlayer::lastError() const {
@@ -1892,19 +1906,38 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
     // Force CFR at the exact content rate FIRST in the chain: frameIndex ↔ content
     // time then holds by construction (even if PMS emits a different rate than its
     // metadata claims), and frames dropped by the fps filter are never scaled.
+    //
+    // Identity skip: when the known delivery size already equals the coded bank
+    // (and display==coded), emit NO scale/pad — free ARM against the 0.939x wall.
+    const int srcW = expectedDeliveryW_;
+    const int srcH = expectedDeliveryH_;
+    const bool displayMatchesCoded = (rawDisplayW == rawW && rawDisplayH == rawH);
+    const bool identityGeometry =
+        displayMatchesCoded && srcW > 0 && srcH > 0 && srcW == rawW && srcH == rawH;
+
     if (fpsNum_ > 0 && fpsDen_ > 0) {
-        vf = "fps=" + std::to_string(fpsNum_) + "/" + std::to_string(fpsDen_) + ",";
+        vf = "fps=" + std::to_string(fpsNum_) + "/" + std::to_string(fpsDen_);
     }
-    if (rawDisplayW != rawW || rawDisplayH != rawH) {
-        char displayScale[64];
-        std::snprintf(displayScale, sizeof(displayScale), "%d:%d", rawDisplayW, rawDisplayH);
-        vf += std::string("scale=") + displayScale +
-              ":force_original_aspect_ratio=decrease,pad=" + scale + ":" +
-              std::to_string(ddrGeometry.crop_left) + ":" +
-              std::to_string(ddrGeometry.crop_top) + ":color=black";
-    } else {
-        vf += std::string("scale=") + scale +
-              ":force_original_aspect_ratio=decrease,pad=" + scale + ":(ow-iw)/2:(oh-ih)/2";
+    if (!identityGeometry) {
+        if (!vf.empty())
+            vf += ",";
+        if (!displayMatchesCoded) {
+            char displayScale[64];
+            std::snprintf(displayScale, sizeof(displayScale), "%d:%d", rawDisplayW, rawDisplayH);
+            vf += std::string("scale=") + displayScale +
+                  ":force_original_aspect_ratio=decrease,pad=" + scale + ":" +
+                  std::to_string(ddrGeometry.crop_left) + ":" +
+                  std::to_string(ddrGeometry.crop_top) + ":color=black";
+        } else {
+            // Unknown or mismatched source → scale/pad into the bank (legacy path).
+            vf += std::string("scale=") + scale +
+                  ":force_original_aspect_ratio=decrease,pad=" + scale + ":(ow-iw)/2:(oh-ih)/2";
+        }
+    }
+    if (identityGeometry) {
+        log("media: vf identity skip src=" + std::to_string(srcW) + "x" + std::to_string(srcH) +
+            " bank=" + std::to_string(rawW) + "x" + std::to_string(rawH) +
+            " filter=" + (vf.empty() ? "(none)" : vf));
     }
 
     const bool testPattern = (url == "testsrc" || url.rfind("lavfi", 0) == 0);
