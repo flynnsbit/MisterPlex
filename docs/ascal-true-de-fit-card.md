@@ -17,7 +17,7 @@ MERGE=/path/to/merged-tree
 
 **B16 product file list (rd-duck hold):** merged `files.qip` must list beam + `plex_present_geom_mux` + `plxg_ddr_poller` + `present_geom_latch` + q5 aspect/fps module; product QSF must active-`PRESENT_BEAM_960=1`.  
 
-**B20 full-hierarchy tests (rd-duck hold a–f):** multi-module TBs required for (a) explicit PLXG disable under BEAM, (b) commit@frame_boundary, (c) DDR fill during geom invalidate, (d) retained DDR across FPGA reset+daemon restart, (e) delayed poll vs early doorbell atomic bank+geom, (f) distinct bank swaps @24/30 not frame_start counts. Isolated latch-only TBs do not clear.  
+**B20 full-hierarchy tests (rd-duck hold a–g):** multi-module TBs required for (a) explicit PLXG disable under BEAM, (b) commit@frame_boundary, (c) DDR fill during geom invalidate, (d) retained DDR across FPGA reset+daemon restart, (e) delayed poll vs early doorbell atomic bank+geom, (f) distinct bank swaps @24/30 not frame_start counts, **(g) async CDC PLXC_EXT_WE**: continuous `host_we` over N×`S_PUSH_LIST`+`S_PUSH_CTRL` vs sys_top edge-detect `d2&~d3` (20→74.25MHz) with **≥2 cmds+ctrl** — same-clock component TBs are blind. Isolated latch-only TBs do not clear.  
 
 **B10:** `discover_design(macro_qsf=)` must actually run (`LEG0_DISCOVER_DESIGN EXECUTED`); TypeError/stale `rtl_lint` → `B10_DISCOVER_DESIGN_DID_NOT_RUN` (check did not execute).  
 **B14:** `coded_w` 16-align reject required (`rt_coded_w[3:0]==0`); PMS AR-fit 468/638/626 is an observed defect class.  

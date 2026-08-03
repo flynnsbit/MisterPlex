@@ -163,6 +163,7 @@ LIVE_OPEN_BLOCKER_TOKENS = (
     "B20_HIER_D_RETAINED_DDR_RESET_RESTART",
     "B20_HIER_E_POLL_DOORBELL_ATOMIC",
     "B20_HIER_F_BANK_SWAP_24_30",
+    "B20_HIER_G_PLXC_ASYNC_CDC_MULTIBEAT",
 )
 
 # Sibling-lane fixes that exist but are not merged into this gated tree.
@@ -2101,6 +2102,8 @@ def leg0_arch_blockers() -> tuple[int, list[str]]:
         r"ddr_frame_store",
         r"present_beam_content_de|PRESENT_BEAM_960",
         r"plxg|plex_present_geom_mux|plxg_ddr_poller|present_geom_latch",
+        # OSD/loader ↔ sys_top path (rd-duck PLXC CDC class)
+        r"sys_top|PLXC_EXT_WE|plex_chrome|host_we|S_PUSH_LIST",
     ]
     scenarios = [
         (
@@ -2154,6 +2157,20 @@ def leg0_arch_blockers() -> tuple[int, list[str]]:
                 r"not\s+just\s+frame_start|frame_start.*insufficient|bank_id|observed_bank",
             ],
             "actual distinct bank swaps at 24/30 — not just raster frame_start counts",
+        ),
+        (
+            "B20_HIER_G_PLXC_ASYNC_CDC_MULTIBEAT",
+            [
+                r"PLXC_EXT_WE|plxc_ext_we",
+                r"host_we",
+                r"S_PUSH_LIST|PUSH_LIST",
+                r"S_PUSH_CTRL|PUSH_CTRL",
+                r"async|CDC|74\.25|clk_hdmi|two.?clock|dual.?clock|20\s*(MHz)?\s*→\s*74|edge.?detect|d2\s*&\s*~d3",
+                r">=\s*2|2\s*cmds?|two\s+cmds?|multi.?beat|N\s*S_PUSH|list.*ctrl|remainder",
+            ],
+            "async CDC: w-osd loader holds host_we over N S_PUSH_LIST + S_PUSH_CTRL while "
+            "sys_top edge-detects PLXC_EXT_WE (d2&~d3); only first beat crosses 20→74.25MHz "
+            "— require full-hierarchy test with >=2 cmds + ctrl (same-clock TBs are blind)",
         ),
     ]
 
@@ -3394,6 +3411,8 @@ def _mutation_per_blocker_clear_restore() -> list[str]:
 // (d) retained DDR across FPGA reset daemon restart epoch session ABA
 // (e) delayed poll early doorbell plxg_ddr_poller bank+geom atomic geometry atomic
 // (f) bank_swap distinct bank at 24 and 30 content_fps not just frame_start bank_id observed_bank
+// (g) async CDC PLXC_EXT_WE host_we S_PUSH_LIST S_PUSH_CTRL dual-clock 20→74.25 edge-detect d2 & ~d3
+//     multi-beat >=2 cmds list+ctrl remainder must cross; same-clock TB blind
 """
     for tok in (
         "B20_HIER_A_PLXG_EXPLICIT_DISABLE",
@@ -3402,6 +3421,7 @@ def _mutation_per_blocker_clear_restore() -> list[str]:
         "B20_HIER_D_RETAINED_DDR_RESET_RESTART",
         "B20_HIER_E_POLL_DOORBELL_ATOMIC",
         "B20_HIER_F_BANK_SWAP_24_30",
+        "B20_HIER_G_PLXC_ASYNC_CDC_MULTIBEAT",
     ):
         file_create_specs.append((tok, dummy_hier, hier_body))
 
