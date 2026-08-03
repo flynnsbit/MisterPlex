@@ -171,3 +171,20 @@ PRE-REG: HIT = all G1–G7 quoted; else NO-GO keep Route B
 3. Do **not** claim CEA 720p24. Do **not** add fabric decoder same fit.  
 4. Capture glass @60 HDMI via ascal; score unique content cadence ~24.  
 5. Route B remains fallback.
+
+---
+
+## 10. Executable fit kit (parent handoff)
+
+Directory: `.agent-work/w-clock/fit-native-720p24/`
+
+| Artifact | Path |
+|----------|------|
+| **SDC (real text)** | `fit-native-720p24/Plex_native720p24.sdc` |
+| **PLL edit (not applied)** | `fit-native-720p24/PLL_EDIT.md` — `pll_0002.v` `output_clock_frequency0` `"20.000000 MHz"` → `"24.000000 MHz"` |
+| **STA assertions** | `fit-native-720p24/STA_PASS_CRITERIA.md` + `sta_pass_criteria.json` |
+| **Risks** | `fit-native-720p24/RISKS.md` — **32.59 does not auto-survive** |
+| **L0–L4 verify** | `fit-native-720p24/LADDER_VERIFY.md` |
+
+**Corner that counts:** Slow **1100mV 100C Final**. Fast-only → reject.  
+**Fmax floor:** clk_sys ≥ **24.000** MHz; path owner named; not `decode_stub`.

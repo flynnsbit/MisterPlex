@@ -1,0 +1,44 @@
+{
+  "fit_mode": "native_720p24",
+  "corner_required": {
+    "speed": "Slow",
+    "voltage": "1100mV",
+    "temperature_c": 100,
+    "timing_models": "Final",
+    "accept_fast_only": false
+  },
+  "clocks": {
+    "clk_sys": {
+      "mhz_min": 24.0,
+      "mhz_target": 24.0,
+      "name_substrings": ["general[0]", "divclk", "clk_sys"]
+    },
+    "clk_ddr": {
+      "mhz_min": 90.0,
+      "mhz_target": 90.0,
+      "name_substrings": ["general[2]", "clk_ddr"]
+    }
+  },
+  "slack": {
+    "setup_min_ns": 0.0,
+    "hold_min_ns": 0.0
+  },
+  "path_owner": {
+    "require_named_from_to": true,
+    "forbidden_substrings": ["decode_stub"],
+    "identify_if_fmax_below_mhz": 26.4,
+    "prior_nostub_owner_hint": "slice_hdr_parser residual_csum"
+  },
+  "beam": {
+    "de_w": 1280,
+    "de_h": 720,
+    "h_total": 1312,
+    "v_total": 762,
+    "fps_arith": 24.006146
+  },
+  "gates": [
+    "make post-fit-timing STA_RPT=...",
+    "path owner extraction (w-fitgate)",
+    "make post-fit-hierarchy FIT_RPT=..."
+  ]
+}
