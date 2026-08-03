@@ -165,13 +165,28 @@ constexpr uint32_t kPlex720pTripleDoorbellPhys = 0x305FF000u;
 // PLXG — FIXED wire ABI at doorbell+0x800 (parent freeze). Literals here so
 // source-text invariant parsers resolve them; static_assert ties to mailbox_abi
 // (reachable compile-time guard — not test-only). Never re-derive from MAX_CMDS.
-// PLXC owns +0x130; list +0x140.. must not grow into PLXG (bound assert).
+// PLXC owns +0x130 on the *control bootstrap* page (product 0x300FF000), not on
+// the Option-C frame doorbell — list +0x140.. must not grow into PLXG.
 constexpr uint32_t kDdrFramePlxgOffset = 0x800u;
 constexpr uint32_t kDdrFramePlxgMagic = 0x504C5847u; // "PLXG"
 constexpr uint32_t kDdrFramePlxgQwords = 6u;
 constexpr uint32_t kDdrFramePlxgBytes = 48u; // q0..q5
 constexpr uint32_t kDdrFramePlxgQ5Offset = 0x828u;
 constexpr uint32_t kDdrFramePlxgBootstrapPhys = 0x300FF800u;
+// PLXC/PLXO/list bootstrap (lockstep mailbox_abi) — chrome never tracks frame map.
+constexpr uint32_t kDdrFrameControlBootstrapDoorbellPhys = 0x300FF000u;
+constexpr uint32_t kDdrFramePlxcBootstrapPhys = 0x300FF130u;
+constexpr uint32_t kDdrFramePlxoBootstrapPhys = 0x300FF138u;
+constexpr uint32_t kDdrFramePlxlBootstrapPhys = 0x300FF140u;
+static_assert(kDdrFrameControlBootstrapDoorbellPhys ==
+                  mailbox_abi::kControlBootstrapDoorbellPhys,
+              "control bootstrap doorbell lockstep");
+static_assert(kDdrFramePlxcBootstrapPhys == mailbox_abi::kPlxcBootstrapPhys,
+              "PLXC bootstrap phys lockstep");
+static_assert(kDdrFramePlxoBootstrapPhys == mailbox_abi::kPlxoBootstrapPhys,
+              "PLXO bootstrap phys lockstep");
+static_assert(kDdrFramePlxlBootstrapPhys == mailbox_abi::kPlxlBootstrapPhys,
+              "PLXL bootstrap phys lockstep");
 static_assert(kDdrFramePlxgOffset == mailbox_abi::kPlxgOffset,
               "ddr_frame_layout PLXG offset must equal mailbox_abi (reachable guard)");
 static_assert(kDdrFramePlxgMagic == mailbox_abi::kPlxgMagic,
@@ -2046,6 +2061,40 @@ inline bool fabricOwnedForbidsArmClearYuvCropPad() { return true; }
 
 inline uint32_t plxgMailboxPhys(uint32_t doorbellPhys) {
     return doorbellPhys + kDdrFramePlxgOffset;
+}
+
+// PLXC/PLXO/list — always control bootstrap page (not active frame doorbell).
+// Option-C frame doorbell 0x3047F000 + 0x130 is a FAULT write target (rd-duck).
+inline uint32_t plxcControlPhys() { return mailbox_abi::plxcControlPhys(); }
+inline uint32_t plxoControlPhys() { return mailbox_abi::plxoControlPhys(); }
+inline uint32_t plxlControlPhys() { return mailbox_abi::plxlControlPhys(); }
+
+// Product host policy: ignore active frame map when publishing chrome.
+inline uint32_t plxcPhysForActiveFrameDoorbell(uint32_t /*active_frame_doorbell*/) {
+    return plxcControlPhys();
+}
+// FAULT twin: follow active frame doorbell (splits under Option-C / example base).
+inline uint32_t plxcPhysFaultFollowFrameDoorbell(uint32_t active_frame_doorbell) {
+    return mailbox_abi::plxcPhysFaultFromActiveDoorbell(active_frame_doorbell);
+}
+// Loader default phys (module param DOORBELL_PHYS + 0x130).
+inline uint32_t plxcProductLoaderPhys() {
+    return kDdrFramePlxcBootstrapPhys;
+}
+// Legacy↔Option-C transition: host+loader stay on bootstrap while frame db moves.
+inline bool plxcMapStableAcrossFrameDoorbellChange(uint32_t leg_db, uint32_t optc_db) {
+    const uint32_t h_leg = plxcPhysForActiveFrameDoorbell(leg_db);
+    const uint32_t h_opt = plxcPhysForActiveFrameDoorbell(optc_db);
+    return h_leg == h_opt && h_leg == plxcProductLoaderPhys() &&
+           mailbox_abi::plxcPhysMatchesProductLoader(h_leg);
+}
+// FAULT: following frame doorbell diverges loader vs host under Option-C.
+inline bool plxcMapFaultFollowFrameDivergesUnderOptionC(uint32_t leg_db, uint32_t optc_db) {
+    const uint32_t loader = plxcProductLoaderPhys();
+    const uint32_t host_opt = plxcPhysFaultFollowFrameDoorbell(optc_db);
+    const uint32_t host_leg = plxcPhysFaultFollowFrameDoorbell(leg_db);
+    // Under legacy product db, fault may still match loader; under Option-C it must not.
+    return host_leg == loader && host_opt != loader;
 }
 
 } // namespace misterplex

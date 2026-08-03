@@ -29,7 +29,7 @@ rd-duck STOP items addressed in source (await rd-duck re-audit before fit):
 |-------|------|
 | `ddr_bus_arbiter_plxc` | m0 scanout > m1 stream/PLXG > m3 PLXC; `starve_video=0` product |
 | `ddr_plxc_master_bridge` | chrome req/gnt ↔ arbiter want/rd/we |
-| `plex_chrome_ddr_loader` | ENABLE via `PLEX_CHROME_DDR`; doorbell `0x300FF000`+0x130 |
+| `plex_chrome_ddr_loader` | ENABLE via `PLEX_CHROME_DDR`; **bootstrap** doorbell `0x300FF000`+0x130 (not `0x3007F000`, not Option-C `0x3047F000`) — see `docs/plxc-bootstrap-map.md` |
 | Product TB evidence | loads≥1, bridge_gnt≥1, bridge_rd≥1, **video_underrun=0**, max_lat=4 |
 | Red twin | `starve_video=1` + flood m3 → **video_underrun≥1** (REPRO) |
 

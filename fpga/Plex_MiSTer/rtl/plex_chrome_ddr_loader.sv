@@ -6,6 +6,12 @@
 //      push list words + PLXC ctrl to host_if (payload before ctrl — matches ARM).
 //   2) Periodically WR doorbell+0x138 (PLXO) so chromePlaneHw can leave fail-closed.
 //
+// Control bootstrap page (w-mem arbitration / rd-duck): DOORBELL_PHYS default is
+// product YUV doorbell 0x300FF000 — same 4 KiB page as PLXG bootstrap. PLXC does
+// NOT follow Option-C frame doorbell 0x3047F000 and must not default to the
+// legacy-example 0x3007F000 page (host/loader map split). Plex.sv overrides the
+// same literal; keep default lockstep so w-osd TB/defaults cannot drift.
+//
 // Bus: single-beat 64-bit master. Integrator (ddr_frame_store / TB) owns
 // arbitration. Never rings frame doorbell; PLXC only.
 //
@@ -17,7 +23,8 @@
 module plex_chrome_ddr_loader #(
     parameter bit        ENABLE         = 1'b0,
     parameter int        MAX_CMDS       = 48,
-    parameter [31:0]     DOORBELL_PHYS  = 32'h3007_F000,
+    // Product control bootstrap (mailbox_abi::kControlBootstrapDoorbellPhys).
+    parameter [31:0]     DOORBELL_PHYS  = 32'h300F_F000,
     parameter [31:0]     PLXC_OFF       = 32'h130,
     parameter [31:0]     PLXO_OFF       = 32'h138,
     parameter [31:0]     PLXL_OFF       = 32'h140,

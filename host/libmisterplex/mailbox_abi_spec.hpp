@@ -183,12 +183,54 @@ constexpr uint32_t kPlxdAddr  = 0x3007F128u;
 constexpr uint32_t kPlxdMagic = 0x504C5844u; // "PLXD"
 
 // PLXC — Chrome list control (ARM→FPGA). Semantic cmds; fabric owns scale.
+// Absolute kPlxcAddr below is the *legacy example* base (0x3007F000+0x130) for
+// collision tables only — same class as kPlxdAddr. Product/live path:
+//   bootstrap doorbell 0x300FF000 + kPlxcOffset → 0x300FF130
+// (see kPlxcBootstrapPhys). w-osd must not hardwire 0x3007F130 (rd-duck).
 constexpr uint32_t kPlxcAddr  = 0x3007F130u;
 constexpr uint32_t kPlxcMagic = 0x504C5843u; // "PLXC"
 
 // PLXO — Chrome telemetry (FPGA→ARM). Applied HDMI_W/H mirror + chrome_hw.
 constexpr uint32_t kPlxoAddr  = 0x3007F138u;
 constexpr uint32_t kPlxoMagic = 0x504C584Fu; // "PLXO"
+
+// ---- Control bootstrap page (PLXC/PLXO/list + PLXG) — OWNER w-mem ----
+// Arbitration (rd-duck cross-lane PLXC map): chrome control does NOT follow the
+// active *frame* doorbell. Under Option-C the frame doorbell moves to
+// 0x3047F000 while the 4 KiB control page stays on product legacy doorbell
+// 0x300FF000 (chicken-egg; same page as PLXG bootstrap). Loader default and
+// host writes must both use this page — never 0x3007F000 example, never
+// Option-C frame doorbell + 0x130.
+//   PLXC 0x300FF130  PLXO 0x300FF138  list 0x300FF140  PLXG 0x300FF800
+constexpr uint32_t kControlBootstrapDoorbellPhys = kPlxgBootstrapDoorbellPhys; // 0x300FF000
+constexpr uint32_t kPlxcBootstrapPhys =
+    kControlBootstrapDoorbellPhys + kPlxcOffset; // 0x300FF130
+constexpr uint32_t kPlxoBootstrapPhys =
+    kControlBootstrapDoorbellPhys + kPlxoOffset; // 0x300FF138
+constexpr uint32_t kPlxlBootstrapPhys =
+    kControlBootstrapDoorbellPhys + kPlxlOffset; // 0x300FF140
+static_assert(kControlBootstrapDoorbellPhys == 0x300FF000u,
+              "control bootstrap = product YUV doorbell");
+static_assert(kPlxcBootstrapPhys == 0x300FF130u, "product PLXC bootstrap phys");
+static_assert(kPlxoBootstrapPhys == 0x300FF138u, "product PLXO bootstrap phys");
+static_assert(kPlxlBootstrapPhys == 0x300FF140u, "product PLXL bootstrap phys");
+static_assert(kPlxcBootstrapPhys != kPlxcAddr,
+              "product PLXC must not equal legacy-example absolute 0x3007F130");
+static_assert(kPlxcBootstrapPhys != 0x3047F000u + kPlxcOffset,
+              "product PLXC must not sit on Option-C frame doorbell");
+
+// Host publish / loader poll — always bootstrap page (ignore active frame map).
+inline constexpr uint32_t plxcControlPhys() { return kPlxcBootstrapPhys; }
+inline constexpr uint32_t plxoControlPhys() { return kPlxoBootstrapPhys; }
+inline constexpr uint32_t plxlControlPhys() { return kPlxlBootstrapPhys; }
+// FAULT: resolve PLXC from active frame doorbell (Option-C or wrong example).
+inline constexpr uint32_t plxcPhysFaultFromActiveDoorbell(uint32_t active_doorbell_phys) {
+    return frameStoreMailboxPhys(active_doorbell_phys, kPlxcOffset);
+}
+// True when host write phys matches product chrome loader (bootstrap).
+inline constexpr bool plxcPhysMatchesProductLoader(uint32_t host_plxc_phys) {
+    return host_plxc_phys == kPlxcBootstrapPhys;
+}
 
 // PLXG — Present geometry (ARM→FPGA). FIXED +0x800 (parent ABI freeze).
 constexpr uint32_t kPlxgAddr = 0x3007F800u; // legacy example base + FIXED 0x800

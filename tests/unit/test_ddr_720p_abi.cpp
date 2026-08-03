@@ -175,6 +175,25 @@ int main() {
     CHECK(mailbox_abi::kPlxlOffset + mailbox_abi::kPlxcListMaxCmds * 8u <=
           mailbox_abi::kPlxgOffset);
     CHECK(mailbox_abi::kPlxcListMaxCmds == 112u);
+    // PLXC bootstrap map (rd-duck / w-osd): fixed 0x300FF130 — not example
+    // 0x3007F130, not Option-C frame doorbell +0x130. Stable across leg↔optc.
+    CHECK(mailbox_abi::kControlBootstrapDoorbellPhys == 0x300FF000u);
+    CHECK(mailbox_abi::kPlxcBootstrapPhys == 0x300FF130u);
+    CHECK(kDdrFramePlxcBootstrapPhys == 0x300FF130u);
+    CHECK(plxcControlPhys() == 0x300FF130u);
+    CHECK(plxcProductLoaderPhys() == 0x300FF130u);
+    CHECK(plxcControlPhys() != mailbox_abi::kPlxcAddr); // not legacy-example abs
+    CHECK(plxcControlPhys() != 0x3007F130u);
+    CHECK(plxcControlPhys() != 0x3047F130u);
+    CHECK(plxcMapStableAcrossFrameDoorbellChange(0x300FF000u, 0x3047F000u));
+    CHECK(plxcPhysForActiveFrameDoorbell(0x300FF000u) == 0x300FF130u);
+    CHECK(plxcPhysForActiveFrameDoorbell(0x3047F000u) == 0x300FF130u);
+    CHECK(plxcMapFaultFollowFrameDivergesUnderOptionC(0x300FF000u, 0x3047F000u));
+    CHECK(plxcPhysFaultFollowFrameDoorbell(0x3047F000u) == 0x3047F130u);
+    CHECK(plxcPhysFaultFollowFrameDoorbell(0x3007F000u) == 0x3007F130u);
+    CHECK(!mailbox_abi::plxcPhysMatchesProductLoader(0x3007F130u));
+    CHECK(!mailbox_abi::plxcPhysMatchesProductLoader(0x3047F130u));
+    std::fprintf(stderr, "  PLXC_BOOTSTRAP_MAP OK leg+optc stable @0x300FF130\n");
     // Historical values must not reappear as product offset.
     CHECK(kDdrFramePlxgOffset != 0x2C0u);
     CHECK(kDdrFramePlxgOffset != 0x4C0u);
