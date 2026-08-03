@@ -1,30 +1,35 @@
-HEAD: 2a035983
-FULL: 2a035983663a6dc389a73d7562caa09596c7ff91
 lane: w-fitgate
-role: fit-release gate ruler
+HEAD: 6a1d653d
+FULL: 6a1d653dfaac38001d68301b93af66697ac1e9f0
+branch: w-fitgate (pushed origin/w-fitgate — NOT merged to main)
+worktree: /home/flynnsbit/Projects/MisterPlex-wt-fitgate
 GRANT: NO
 selftest: PASS true_rc=0
-mutation_matrix: rows=31 red=31 fail_holes=0 (+ STA path-owner + Fmax rows)
+mutation_matrix: rows=31 red=31 fail_holes=0
 
-PARENT VERIFICATION (read-only; do NOT merge to main):
-  Branch:  w-fitgate
-  Worktree: /home/flynnsbit/Projects/MisterPlex-wt-fitgate
-  Commit with scripts/fit_release_gate.py: see git -C worktree rev-parse HEAD after push
+=== PARENT: how to run MY gate independently ===
+# Note: 3fbfd16d was a gate *identity hash*, not a git commit. Use:
 
-  RULER=/home/flynnsbit/Projects/MisterPlex-wt-fitgate
-  MERGE=<your main tree>
+git fetch origin w-fitgate
+git worktree add --detach /tmp/wt-fitgate-ro origin/w-fitgate
+# or use existing: /home/flynnsbit/Projects/MisterPlex-wt-fitgate
 
-  "$RULER/scripts/fit_release_gate.sh" --root "$MERGE" --qsf "$MERGE/fpga/Plex_MiSTer/Plex.qsf"
-  echo "true rc=$?"
-  # expect FIT_RELEASE_GATE_FAIL leg=unit (main RED) true rc!=0
+RULER=/tmp/wt-fitgate-ro   # or the worktree above
+MERGE=/path/to/your/main   # tree under test
 
-  Or after: git fetch origin w-fitgate && git worktree add --detach /path/wt-fitgate-ro origin/w-fitgate
+"$RULER/scripts/fit_release_gate.sh" \
+  --root "$MERGE" \
+  --qsf  "$MERGE/fpga/Plex_MiSTer/Plex.qsf"
+echo "true rc=$?"
+# Expect while main unit RED: FIT_RELEASE_GATE_FAIL leg=unit  true rc=1
 
-POST-FIT leg4 (native 720p@30):
-  docs/fit_fmax_requirements.json  clk_sys min 30.24 MHz
-  --post-fit-only --sta-rpt Plex.sta.rpt
-  FAIL STA_PATH_OWNER_UNRESOLVABLE if summary-only (no From/To Node)
-  FAIL STA_FMAX_BELOW_REQUIREMENT if Fmax < named floor
-  matrix RED: both; GREEN control path-detail fixture true_rc=0
+"$RULER/scripts/fit_release_gate.sh" --self-test; echo "true rc=$?"
 
+# POST-FIT (after you release Quartus; summary-only fails):
+"$RULER/scripts/fit_release_gate.sh" --post-fit-only \
+  --sta-rpt /path/to/Plex.sta.rpt
+echo "true rc=$?"
+
+leg4_slot11 real summary STA: true rc=1 STA_PATH_OWNER_UNRESOLVABLE
+named_target: native_720p30_tight_blanking_clk_sys min_fmax=30.24
 No Quartus fit taken. No device. Not merged to main.
