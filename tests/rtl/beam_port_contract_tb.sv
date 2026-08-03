@@ -18,7 +18,7 @@ module beam_port_contract_tb;
 		.use_rt_geom(1'b1),
 		.rt_h_de(11'd320),
 		.rt_h_total(11'd1182),
-		.rt_v_active(11'd240),
+		.rt_v_active(11'd240), .rt_de_apply(1'b1),
 		.ce_pix(ce),
 		.HBlank(hb),
 		.HSync(hs),

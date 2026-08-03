@@ -20,6 +20,14 @@
 //   Sync windows are derived from latched actives (+fixed porch/width) so a single
 //   true_de extent always matches content without separate sync programming.
 //
+// B20 (rd-duck): DE apply is gated by rt_de_apply at v_wrap.
+//   Store bank+app_* swap only when swap_pending && pending_ready.
+//   Beam must not take NEW H_DE/V_ACTIVE while store still displays OLD bank
+//   geometry — that is the island/tear under delayed pending_ready.
+//   rt_de_apply=1 → latch DE candidates; =0 → hold prior DE.
+//   V_TOTAL (Bresenham cadence) still updates every v_wrap (orthogonal).
+//   FAULT_B20_BEAM_FREE_RUN: force apply every wrap (red twin).
+//
 // STA (honest): exact Fmax with runtime compares is UNKNOWN until Plex.sta.rpt.
 // Structure is 11-bit magnitude compares vs registers (same class as colorbars).
 // Pre-register: expect meet 20 MHz if nostub-class; stub Fmax 23.46 leaves ~17% —
@@ -52,6 +60,9 @@ module present_beam_content_de #(
 	input  wire [10:0] rt_h_de,
 	input  wire [10:0] rt_h_total,
 	input  wire [10:0] rt_v_active,
+	// B20: 1 = allow DE/H_TOTAL/V_ACTIVE latch this v_wrap; 0 = hold.
+	// Default-tie 1'b1 only for bars/no-store paths. Product: swap_fire.
+	input  wire        rt_de_apply,
 	output reg         ce_pix,
 	output reg         HBlank,
 	output reg         HSync,
@@ -142,9 +153,20 @@ module present_beam_content_de #(
 		end else begin
 			// Apply pending geometry only when completing a frame.
 			if (v_wrap) begin
+`ifdef FAULT_B20_BEAM_FREE_RUN
+				// RED: always take candidate DE (ignores store swap readiness).
 				hde_act  <= hde_req;
 				htot_act <= htot_req;
 				vact_act <= vact_req;
+`else
+				// B20: DE only when apply qualifies (swap_fire / free-run).
+				if (rt_de_apply || !use_rt_geom) begin
+					hde_act  <= hde_req;
+					htot_act <= htot_req;
+					vact_act <= vact_req;
+				end
+`endif
+				// V_TOTAL always: Bresenham cadence is orthogonal to bank geom.
 				vtot_act <= vtot_req;
 				frame_start <= 1'b1;
 			end

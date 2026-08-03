@@ -96,7 +96,10 @@ module ddr_frame_store #(
 	output reg  [15:0] underrun_count,
 	output reg  [15:0] frames_done,
 	output reg         doorbell_ok,
-	output wire  [7:0] debug_state
+	output wire  [7:0] debug_state,
+	// B20 beam coupling (w-clock): sys-domain pending_ready for DE apply gate.
+	// Same signal as swap qualifier (pending_ready_s2). Safe to leave open.
+	output wire        pending_ready
 );
 	localparam int X_W = $clog2(FRAME_W);
 	localparam int Y_W = $clog2(FRAME_H);
@@ -236,6 +239,7 @@ module ddr_frame_store #(
 	reg pending_bank_s1, pending_bank_s2;
 	reg pending_ready_s1, pending_ready_s2;
 	reg pending_ready_ddr;
+	assign pending_ready = pending_ready_s2;
 	reg swap_req_t_ddr;
 	reg vsync_toggle;
 	reg reset_ddr_s1, reset_ddr_s2;

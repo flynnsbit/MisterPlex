@@ -55,7 +55,7 @@ module present_b13_mux_e2e_tb;
 		.clk(clk), .reset(reset),
 		.use_rt_vtotal(1'b1), .rt_vtotal(11'd564),
 		.use_rt_geom(1'b1),
-		.rt_h_de(beam_hde), .rt_h_total(11'd1182), .rt_v_active(beam_vact),
+		.rt_h_de(beam_hde), .rt_h_total(11'd1182), .rt_v_active(beam_vact), .rt_de_apply(1'b1),
 		.ce_pix(ce), .HBlank(hb), .HSync(hs), .VBlank(vb), .VSync(vs),
 		.frame_start(fstart), .hc_out(hc), .vc_out(vc),
 		.vtot_active(vtot_act), .hde_active(hde_act), .htot_active(htot_act),

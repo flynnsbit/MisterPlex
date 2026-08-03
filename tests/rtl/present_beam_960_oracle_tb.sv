@@ -36,7 +36,7 @@ module present_beam_960_oracle_tb;
 	) beam (
 		.clk(clk), .reset(reset),
 		.use_rt_vtotal(1'b0), .rt_vtotal(11'd0),
-		.use_rt_geom(1'b0), .rt_h_de(11'd0), .rt_h_total(11'd0), .rt_v_active(11'd0),
+		.use_rt_geom(1'b0), .rt_h_de(11'd0), .rt_h_total(11'd0), .rt_v_active(11'd0), .rt_de_apply(1'b1),
 		.ce_pix(ce), .HBlank(hb), .HSync(hs), .VBlank(vb), .VSync(vs),
 		.frame_start(fstart), .hc_out(hc), .vc_out(vc),
 		.vtot_active(vtot_act), .hde_active(hde_act), .htot_active(htot_act),
@@ -53,7 +53,7 @@ module present_beam_960_oracle_tb;
 	) beam705 (
 		.clk(clk), .reset(reset705),
 		.use_rt_vtotal(1'b1), .rt_vtotal(11'd705),
-		.use_rt_geom(1'b0), .rt_h_de(11'd0), .rt_h_total(11'd0), .rt_v_active(11'd0),
+		.use_rt_geom(1'b0), .rt_h_de(11'd0), .rt_h_total(11'd0), .rt_v_active(11'd0), .rt_de_apply(1'b1),
 		.ce_pix(ce705), .HBlank(hb705), .HSync(hs705), .VBlank(vb705), .VSync(vs705),
 		.frame_start(fs705), .hc_out(hc705), .vc_out(vc705),
 		.vtot_active(vtot705), .hde_active(hde705), .htot_active(htot705),
@@ -71,7 +71,7 @@ module present_beam_960_oracle_tb;
 	) beam_rt (
 		.clk(clk), .reset(reset_rt),
 		.use_rt_vtotal(1'b1), .rt_vtotal(rtvt),
-		.use_rt_geom(use_g), .rt_h_de(rthde), .rt_h_total(rtht), .rt_v_active(rtvact),
+		.use_rt_geom(use_g), .rt_h_de(rthde), .rt_h_total(rtht), .rt_v_active(rtvact), .rt_de_apply(1'b1),
 		.ce_pix(cert), .HBlank(hbrt), .HSync(hsrt), .VBlank(vbrt), .VSync(vsrt),
 		.frame_start(fsrt), .hc_out(hcrt), .vc_out(vcrt),
 		.vtot_active(vtotrt), .hde_active(hde_rt), .htot_active(htot_rt),

@@ -182,6 +182,7 @@ module present_core #(
 	// Legacy non-beam: keep top-level display_hz (50/60).
 	// NOTE: DDR bank swap uses vsync_pulse=fstart && swap_pending — NOT advance.
 	// advance still feeds colorbars content_index + stat_advance only (C1).
+wire       store_pending_ready;
 `ifdef PRESENT_BEAM_960
 	wire [7:0] cadence_display_hz = beam_film_class ? 8'd24 : 8'd30;
 `else
@@ -259,6 +260,24 @@ module present_core #(
 	// Fixed line class @20 MHz: 1182 clocks/line. V_TOTAL selects 30 vs 24 Hz.
 	// beam_film_class defined above (shared with cadence_display_hz).
 	wire [10:0] beam_htot_req = 11'd1182;
+	// B20 (rd-duck): beam DE apply must share the store swap qualifier.
+	// Candidate content_w/h may promote at geom latch VSync while store keeps
+	// old app_*/bank until swap_pending && pending_ready. Free-running beam DE
+	// would paint NEW H_DE over OLD store columns (island under delayed ready).
+	// apply = free-run (bars) OR swap_fire OR idle/legacy (no live pending wait).
+	// FAULT_B20_BEAM_FREE_RUN handled inside beam (always apply DE).
+`ifdef DDR_FRAME_STORE
+	wire beam_swap_fire = swap_pending && store_pending_ready;
+	wire beam_de_free   = !use_frame_store;
+	// Idle/bars content_w=0 fallback and legacy geom_enable=0: no bank wait.
+	wire beam_de_idle   = use_frame_store && !swap_pending &&
+	                     ((content_w == 11'd0) || !geom_enable);
+	wire beam_de_apply  = beam_de_free || beam_swap_fire || beam_de_idle;
+`else
+	wire beam_de_apply  = 1'b1;
+	assign store_pending_ready = 1'b1; // unused without DDR store
+`endif
+
 	// Bresenham V_TOTAL: exact long-run NTSC (default) or fixed under FAULT.
 	// Updates on fstart after beam latches current vtot (registered).
 	wire [10:0] beam_vtot_bres;
@@ -296,6 +315,7 @@ module present_core #(
 		.rt_h_de(beam_hde_req),
 		.rt_h_total(beam_htot_req),
 		.rt_v_active(beam_vact_req),
+		.rt_de_apply(beam_de_apply),
 		.ce_pix(ce_pix_i),
 		.HBlank(hb),
 		.HSync(hs),
@@ -698,6 +718,7 @@ module present_core #(
 		.frames_done(ddr_frames_done),
 		.doorbell_ok(ddr_doorbell_ok),
 		.debug_state(frame_sdram_state),
+		.pending_ready(store_pending_ready),
 		.geom_hold_black(geom_hold_black),
 		.geom_hollow_fault(geom_hollow_fault),
 		.q5_reserved_reject(q5_reserved_reject)
@@ -766,7 +787,8 @@ module present_core #(
 		.underrun_count(frame_underruns),
 		.frames_done(ddr_frames_done),
 		.doorbell_ok(ddr_doorbell_ok),
-		.debug_state(frame_sdram_state)
+		.debug_state(frame_sdram_state),
+		.pending_ready(store_pending_ready)
 	);
 `endif // DDR_FRAME_STORE_RUNTIME_GEOM
 `else // !DDR_FRAME_STORE
@@ -811,6 +833,8 @@ module present_core #(
 		.underrun_count(frame_underruns),
 		.debug_state(frame_sdram_state)
 	);
+	// SDRAM frame_store has no pending_ready — free-run DE apply (no DDR prep).
+	assign store_pending_ready = 1'b1;
 `endif
 
 `ifdef PRESENT_MULTI_PIXEL

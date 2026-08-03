@@ -74,7 +74,7 @@ module b15_cadence_framecount_tb;
 		.clk(clk), .reset(reset),
 		.use_rt_vtotal(1'b1), .rt_vtotal(beam_vtot_req),
 		.use_rt_geom(1'b1),
-		.rt_h_de(11'd960), .rt_h_total(11'(H_TOT)), .rt_v_active(11'd540),
+		.rt_h_de(11'd960), .rt_h_total(11'(H_TOT)), .rt_v_active(11'd540), .rt_de_apply(1'b1),
 		.ce_pix(ce), .HBlank(hb), .HSync(hs), .VBlank(vb), .VSync(vs),
 		.frame_start(fstart), .hc_out(hc), .vc_out(vc),
 		.vtot_active(vtot_act), .hde_active(hde_act), .htot_active(htot_act),
