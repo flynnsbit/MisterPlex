@@ -193,3 +193,31 @@ NOT done (explicit):
   - No SPI/status export of counters yet (ports exist on module)
 
 ========================================================================
+(h) plex_chrome_ddr_loader — PLXC poll + PLXO publish (LANDED)
+========================================================================
+Module: fpga/Plex_MiSTer/rtl/plex_chrome_ddr_loader.sv  ENABLE default 0
+Host:   host/libmisterplex/plex_chrome_ddr_loader.hpp
+Purpose: consume ARM writeChromeCommandList (list@+0x140 then PLXC@+0x130)
+         and publish PLXO@+0x138 with chrome_hw so chromePlaneHw can unfail-close.
+
+Protocol (2-phase mem master):
+  req → gnt → rd_valid (reads) / complete on gnt (writes)
+  New PLXC seq → RD list[0..count) → host_we list → host_we ctrl@0xFF
+  ENABLE=0: m_req=0 host_we=0 forever (nostub-safe)
+
+PLXO pack (matches ARM readChromeHwPresent hi bit0):
+  [31:0] magic PLXO, [32] chrome_hw, [44:33] mon_w, [56:45] mon_h, [60:57] scale
+
+Evidence (true rc):
+  test_plex_chrome_ddr_loader:           true rc=0
+  test_plex_chrome_ddr_loader_rtl_sim:   true rc=0
+    PASS quiet / PASS load / PASS same-seq / PASS plxo / PASS bad-magic
+  rollcall: true rc=0
+
+NOT product-wired: needs ddr_frame_store arbiter slot (w-mem coord) + sys_top
+  plxc_ext_* OR + PLXO path. has_frame still stub 1'b1 (fail-open, no black).
+
+Parent DDR mmap evidence #3: noted; does not change this lane (zero per-pixel
+  still required). Cached bank is w-mem milestone toward 720p24.
+
+========================================================================
