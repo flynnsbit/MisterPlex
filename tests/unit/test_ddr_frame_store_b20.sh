@@ -81,7 +81,8 @@ set -e
 printf '%s\n' "$GOOD_OUT"
 echo "product true rc=$GOOD_RC"
 assert_sim_executed "b20-product" "$GOOD_OUT" \
-  "OK delayed-promotion" "OK B20 product" "MEASURED after_promote" "MEASURED after_swap"
+  "OK delayed-promotion" "OK B20 product" "OK B20 mode-exit" \
+  "MEASURED after_promote" "MEASURED after_swap" "MEASURED mode_exit"
 if [[ "$GOOD_RC" -ne 0 ]]; then
   echo "FAIL b20 product rc=$GOOD_RC" >&2
   exit "$GOOD_RC"

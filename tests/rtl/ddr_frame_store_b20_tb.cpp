@@ -159,6 +159,22 @@ struct Sim {
 			tick();
 	}
 
+	// Mode-exit disable: geom_enable=0 (eff→LEG) but latch still live+seq
+	// so b20_atomic stays 1 — must NOT free-run app_* (rd-duck).
+	void driveGeomDisableLive(uint16_t seq) {
+		top.geom_enable = 0;
+		top.rt_geom_live = 1;
+		top.rt_geom_seq = seq;
+		top.rt_coded_w = 0;
+		top.rt_coded_h = 0;
+		top.rt_y_stride = 0;
+		top.rt_chroma_stride = 0;
+		top.rt_display_w = 0;
+		top.rt_display_h = 0;
+		for (int i = 0; i < 8; ++i)
+			tick();
+	}
+
 	void ring(int bank, uint16_t plxgSeq) {
 		mem[offQ(kDoorbellPhys)] =
 		    (static_cast<uint64_t>(doorbellHi(frameSeq++, bank, plxgSeq)) << 32) | kMagic;
@@ -311,6 +327,67 @@ int runProduct() {
 		return 1;
 	}
 	std::cout << "OK B20 product holds pitch until bank swap\n";
+
+	// ---- Mode-exit under live seq: must NOT free-run app to LEG ----
+	// app is 80; disable geom_enable while live+seq remains → b20_atomic.
+	// Free-run would snap app→64 immediately (624-in-960 class with mux DE).
+	sim.driveGeomDisableLive(/*seq*/7);
+	std::cout << "MEASURED mode_exit_drop eff=" << (int)sim.top.obs_eff_coded_w
+	          << " app=" << (int)sim.top.obs_app_coded_w
+	          << " atomic=" << (int)sim.top.obs_b20_atomic << "\n";
+	if (!sim.top.obs_b20_atomic) {
+		std::cerr << "FAIL mode-exit: b20_atomic must stay 1 under live+seq disable\n";
+		return 1;
+	}
+	if ((int)sim.top.obs_eff_coded_w != kLegacyW) {
+		std::cerr << "FAIL mode-exit: eff must be LEG after geom_enable=0 got "
+		          << (int)sim.top.obs_eff_coded_w << "\n";
+		return 1;
+	}
+	if ((int)sim.top.obs_app_coded_w != kNewW) {
+		std::cerr << "FAIL mode-exit: app free-ran to " << (int)sim.top.obs_app_coded_w
+		          << " before bank swap (expected hold " << kNewW << ")\n";
+		return 1;
+	}
+	// Doorbell accept snapshots LEG into pend; app still holds 80.
+	// has_frame is already 1 — wait on frames_done advance, not has_frame.
+	const int framesAtDisable = (int)sim.top.frames_done;
+	sim.ring(/*bank*/0, /*plxg*/7);
+	if (!sim.waitSwapPending(50000)) {
+		std::cerr << "FAIL mode-exit: no swap_pending on disable doorbell\n";
+		return 1;
+	}
+	if ((int)sim.top.obs_app_coded_w != kNewW) {
+		std::cerr << "FAIL mode-exit: app changed at disable doorbell accept\n";
+		return 1;
+	}
+	if (!sim.top.obs_pend_app_valid) {
+		std::cerr << "FAIL mode-exit: pend_app_valid must set on disable accept\n";
+		return 1;
+	}
+	bool swapped = false;
+	for (int i = 0; i < 200000; ++i) {
+		if ((int)sim.top.frames_done > framesAtDisable &&
+		    (int)sim.top.obs_app_coded_w == kLegacyW) {
+			swapped = true;
+			break;
+		}
+		if ((i % 32) == 0)
+			sim.vsync();
+		else
+			sim.tick();
+	}
+	std::cout << "MEASURED mode_exit_swap app=" << (int)sim.top.obs_app_coded_w
+	          << " disp_bank=" << (int)sim.top.obs_disp_bank
+	          << " frames=" << (int)sim.top.frames_done
+	          << " (was " << framesAtDisable << ")\n";
+	if (!swapped) {
+		std::cerr << "FAIL mode-exit: app must become LEG at bank swap got "
+		          << (int)sim.top.obs_app_coded_w
+		          << " frames_done=" << (int)sim.top.frames_done << "\n";
+		return 1;
+	}
+	std::cout << "OK B20 mode-exit holds pitch until bank swap (no free-run)\n";
 	return 0;
 }
 

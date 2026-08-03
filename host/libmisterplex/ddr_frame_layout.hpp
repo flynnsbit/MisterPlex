@@ -978,9 +978,12 @@ inline bool ddrCouplingProductHoldsBankUntilGeom() {
 // B20: bank+geometry atomic apply. Coupling alone is not enough — free-running
 // store pitch after PLXG promote still reads the old bank with the new stride.
 // Applied geometry must promote with the bank swap, not with PLXG live.
+// Mode-exit (geom_enable drop → cand=LEG) is also bank-gated under live seq
+// (rd-duck free-run disable + 960 DE = 624-in-960 island).
 struct DdrBankGeomAtomicModel {
     bool geom_live = false;
     uint16_t geom_seq = 0;
+    bool geom_enable = false; // product PLXG geom_enable; false ⇒ cand LEG
     int cand_w = 624;   // free-running candidate after PLXG promote
     int app_w = 624;    // applied display pitch width
     int pend_w = 624;
@@ -994,9 +997,19 @@ struct DdrBankGeomAtomicModel {
     void promoteGeom(int w, uint16_t seq) {
         geom_live = true;
         geom_seq = seq;
+        geom_enable = true;
         cand_w = w;
         if (fault_free_run_geom)
             app_w = w; // B20 defect: pitch changes before bank swap
+    }
+
+    // Mode-exit disable while latch remains live+seq (b20_atomic). cand→LEG;
+    // product holds app until doorbell+swap. FAULT free-runs app→LEG now.
+    void modeExitDisable() {
+        geom_enable = false;
+        cand_w = 624;
+        if (fault_free_run_geom || !geom_live || geom_seq == 0)
+            app_w = 624; // free-run only when !atomic (or fault twin)
     }
 
     // Returns true if doorbell accepted (coupled). Does NOT apply geometry.
@@ -1006,7 +1019,7 @@ struct DdrBankGeomAtomicModel {
         bank_pending = true;
         pend_bank = b;
         pend_plxg_seq = plxgSeq;
-        pend_w = cand_w; // snapshot at accept
+        pend_w = cand_w; // snapshot at accept (LEG after modeExitDisable)
         return true;
     }
 
@@ -1064,6 +1077,35 @@ inline bool ddrB20IndependentObserversNoMix() {
         return false;
     m.frameSwap();
     return m.app_w == 960 && m.disp_bank == 1;
+}
+
+// rd-duck: mode-exit under live seq must hold app until bank swap (no free-run).
+inline bool ddrB20ProductModeExitHoldsUntilSwap() {
+    DdrBankGeomAtomicModel m;
+    m.promoteGeom(320, 7);
+    if (!m.observeDoorbell(1, 7))
+        return false;
+    m.frameSwap();
+    if (m.app_w != 320)
+        return false;
+    m.modeExitDisable(); // cand→624; product holds app=320
+    if (m.app_w != 320 || m.cand_w != 624)
+        return false;
+    if (!m.observeDoorbell(0, 7))
+        return false;
+    if (m.app_w != 320 || m.pend_w != 624)
+        return false; // still hold through accept; pend=LEG
+    m.frameSwap();
+    return m.app_w == 624 && m.disp_bank == 0;
+}
+
+// FAULT REPRO: free-run mode-exit snaps app to LEG before swap.
+inline bool ddrB20FaultModeExitFreeRunsBeforeSwap() {
+    DdrBankGeomAtomicModel m;
+    m.fault_free_run_geom = true;
+    m.promoteGeom(320, 7);
+    m.modeExitDisable();
+    return m.app_w == 624; // defect: free-ran without swap
 }
 
 // rd-duck: writePlxgRecord computes useSeq but sendDdrFrame used plan.plxg_seq

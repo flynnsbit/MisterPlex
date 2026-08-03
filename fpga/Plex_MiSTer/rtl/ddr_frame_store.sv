@@ -23,8 +23,11 @@
 // independent observers. Free-running store pitch from live PLXG exposes the new
 // stride on the still-displayed old bank. When rt_geom_live && rt_geom_seq!=0,
 // applied pitch/base (app_*) update only at the bank-swap vsync from a snapshot
-// taken at doorbell accept (pend_app). plxg_seq==0 / !live keeps free-run for
-// legacy TBs. FAULT_B20_FREE_RUN_GEOM restores free-run under live seq (REPRO).
+// taken at doorbell accept (pend_app) — INCLUDING mode-exit (!geom_enable_eff →
+// LEG params). Free-running disable under live seq painted LEG pitch while the
+// still-displayed Option-C bank + mux DE could still be 960 (624-in-960 island).
+// plxg_seq==0 / !live keeps free-run for legacy TBs. FAULT_B20_FREE_RUN_GEOM
+// restores free-run under live seq (REPRO).
 
 module ddr_frame_store #(
 	parameter int FRAME_W = 640,
@@ -789,52 +792,57 @@ module ddr_frame_store #(
 				vsync_toggle <= ~vsync_toggle;
 			end
 
-			// B20 free-run / mode-exit (not bank-gated).
-			if (!geom_enable_eff) begin
-				app_geom_en <= 1'b0;
-				app_coded_w <= 11'(CODED_W);
-				app_coded_h <= 11'(CODED_H);
-				app_y_stride <= 12'(CODED_W);
-				app_c_stride <= 11'(CODED_W/2);
-				app_disp_w <= 11'(DISPLAY_W);
-				app_disp_h <= 11'(DISPLAY_H);
-				app_pres_x <= 11'(PRESENT_X);
-				app_pres_y <= 11'(PRESENT_Y);
-				app_crop_l <= 11'(CROP_LEFT);
-				app_crop_t <= 11'(CROP_TOP);
-				app_y_fetch_qw <= 9'(Y_LINE_QWORDS);
-				app_c_fetch_qw <= 8'(C_LINE_QWORDS);
-				app_y_pitch_qw <= 9'(Y_LINE_QWORDS);
-				app_c_pitch_qw <= 8'(C_LINE_QWORDS);
-				app_u_base_qw <= LEG_U_PLANE_BASE;
-				app_v_base_qw <= LEG_V_PLANE_BASE;
-				app_optc_map <= 1'b0;
-				app_base_w0 <= LEG_BASE_W0;
-				app_base_w1 <= LEG_BASE_W1;
-				app_doorbell_w <= LEG_DOORBELL_W;
-				pend_app_valid <= 1'b0;
-			end else if (!b20_atomic) begin
-				app_geom_en <= geom_en_r;
-				app_coded_w <= eff_coded_w;
-				app_coded_h <= eff_coded_h;
-				app_y_stride <= eff_y_stride;
-				app_c_stride <= eff_c_stride;
-				app_disp_w <= eff_disp_w;
-				app_disp_h <= eff_disp_h;
-				app_pres_x <= eff_pres_x;
-				app_pres_y <= eff_pres_y;
-				app_crop_l <= eff_crop_l;
-				app_crop_t <= eff_crop_t;
-				app_y_fetch_qw <= eff_y_fetch_qw;
-				app_c_fetch_qw <= eff_c_fetch_qw;
-				app_y_pitch_qw <= eff_y_pitch_qw;
-				app_c_pitch_qw <= eff_c_pitch_qw;
-				app_u_base_qw <= eff_u_base_qw;
-				app_v_base_qw <= eff_v_base_qw;
-				app_optc_map <= eff_optc_map;
-				app_base_w0 <= eff_base_w0;
-				app_base_w1 <= eff_base_w1;
-				app_doorbell_w <= eff_doorbell_w;
+			// B20 free-run ONLY when !b20_atomic (ungated / legacy TB).
+			// Mode-exit under live seq (!geom_enable_eff && b20_atomic): eff_* is
+			// already LEG; doorbell snapshots pend_app=LEG; bank swap applies.
+			// Must NOT free-run app_* here (rd-duck 624-in-960 island class).
+			if (!b20_atomic) begin
+				if (!geom_enable_eff) begin
+					app_geom_en <= 1'b0;
+					app_coded_w <= 11'(CODED_W);
+					app_coded_h <= 11'(CODED_H);
+					app_y_stride <= 12'(CODED_W);
+					app_c_stride <= 11'(CODED_W/2);
+					app_disp_w <= 11'(DISPLAY_W);
+					app_disp_h <= 11'(DISPLAY_H);
+					app_pres_x <= 11'(PRESENT_X);
+					app_pres_y <= 11'(PRESENT_Y);
+					app_crop_l <= 11'(CROP_LEFT);
+					app_crop_t <= 11'(CROP_TOP);
+					app_y_fetch_qw <= 9'(Y_LINE_QWORDS);
+					app_c_fetch_qw <= 8'(C_LINE_QWORDS);
+					app_y_pitch_qw <= 9'(Y_LINE_QWORDS);
+					app_c_pitch_qw <= 8'(C_LINE_QWORDS);
+					app_u_base_qw <= LEG_U_PLANE_BASE;
+					app_v_base_qw <= LEG_V_PLANE_BASE;
+					app_optc_map <= 1'b0;
+					app_base_w0 <= LEG_BASE_W0;
+					app_base_w1 <= LEG_BASE_W1;
+					app_doorbell_w <= LEG_DOORBELL_W;
+					pend_app_valid <= 1'b0;
+				end else begin
+					app_geom_en <= geom_en_r;
+					app_coded_w <= eff_coded_w;
+					app_coded_h <= eff_coded_h;
+					app_y_stride <= eff_y_stride;
+					app_c_stride <= eff_c_stride;
+					app_disp_w <= eff_disp_w;
+					app_disp_h <= eff_disp_h;
+					app_pres_x <= eff_pres_x;
+					app_pres_y <= eff_pres_y;
+					app_crop_l <= eff_crop_l;
+					app_crop_t <= eff_crop_t;
+					app_y_fetch_qw <= eff_y_fetch_qw;
+					app_c_fetch_qw <= eff_c_fetch_qw;
+					app_y_pitch_qw <= eff_y_pitch_qw;
+					app_c_pitch_qw <= eff_c_pitch_qw;
+					app_u_base_qw <= eff_u_base_qw;
+					app_v_base_qw <= eff_v_base_qw;
+					app_optc_map <= eff_optc_map;
+					app_base_w0 <= eff_base_w0;
+					app_base_w1 <= eff_base_w1;
+					app_doorbell_w <= eff_doorbell_w;
+				end
 			end
 
 			// B16 epoch / hold-black / hollow — on applied app_* change.
