@@ -148,7 +148,7 @@ module plex_chrome_e2e_tb (
     plex_chrome #(
         .BOOT_DEMO(0),
         .MAX_CMDS(112),
-        .HIT_SCAN(112)
+        .HIT_SCAN(48)
     ) u_chrome (
         .clk_hdmi(clk),
         .reset(reset),

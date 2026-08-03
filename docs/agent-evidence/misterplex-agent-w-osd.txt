@@ -191,3 +191,9 @@ BEFORE: always @(posedge rd_clk) if (rd_rst) — rd domain misses RESET when clk
 AFTER:  always @(posedge rd_clk or posedge rd_rst) + 2FF sync deassert per domain
 TB: connected_reset_while_rd_frozen — drain xact (rd_ptr>0), freeze, RESET, scrub mem, resume
   good true rc=0; full sync-only mutant ghost n=8 true rc!=0
+
+== HIT_SCAN pre-fit cap (rd-duck) ==
+MAX_CMDS storage=112, HIT_SCAN paint=48 (sys_top + RTL default + kHitScan)
+Shipping path ship_skip total=41 fits_scan; true_worst 102 store-only
+Gates: test_plex_chrome_cmds, test_plex_chrome_hit_scan_static, test_ddr_720p_abi
+true rc=0 all; rollcall OK

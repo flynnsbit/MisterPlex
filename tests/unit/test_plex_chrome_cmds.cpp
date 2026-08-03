@@ -99,11 +99,39 @@ static void checkRedTwinArmPixelBakeCaught() {
     }
 }
 
-// Player UI inventory vs MAX_CMDS — do not silently trim requirements.
+// Player UI inventory: storage (kMaxCmds) vs paint scan (kHitScan) are separate.
+// Product pre-fit: HIT_SCAN=48 covers shipping daemon path; full simultaneous UI
+// may exceed scan and is deferred to scanline-indexed renderer (rd-duck).
 static void checkPlayerUiCommandBudget() {
     using namespace misterplex::plex_chrome_cmds;
+    CHECK(kHitScan == 48);
+    CHECK(kMaxCmds == 112);
+    CHECK(kHitScan < kMaxCmds);
 
-    // --- Core HUD (state + title + times + bar): parent glass capture class ---
+    // --- Shipping daemon path: publishPlxcHud(..., nullptr) — no title/notice/buf ---
+    // media_player.cpp:1261,1268. Worst long-time + full bar + huge skip ≤41.
+    BuildArgs ship;
+    ship.outW = kHdmiOutW;
+    ship.outH = kHdmiOutH;
+    ship.state = misterplex::PlaybackOverlayState::Playing;
+    ship.positionMs = 359999000;
+    ship.durationMs = 359999000;
+    ship.title = nullptr;
+    ship.notice = nullptr;
+    ship.buffering = false;
+    ship.skipDeltaMs = 999999000;
+    HudBudget bShip = countHudBudget(ship);
+    std::fprintf(stderr,
+                 "UI_BUDGET ship_skip total=%d fits_scan=%d hit=%d max=%d\n",
+                 bShip.totalUncapped, bShip.fitsHitScan ? 1 : 0, kHitScan, kMaxCmds);
+    CHECK(bShip.totalUncapped <= 41);
+    CHECK(bShip.fitsHitScan);
+    CHECK(bShip.fitsProductList);
+    CHECK(buildPlaybackHud(ship).size() == static_cast<size_t>(bShip.totalUncapped));
+    ship.skipDeltaMs = 0;
+    CHECK(countHudBudget(ship).totalUncapped <= kHitScan);
+
+    // --- Core HUD with title (still must fit scan for product paint) ---
     BuildArgs core;
     core.state = misterplex::PlaybackOverlayState::Stopped;
     core.positionMs = 125000;
@@ -112,48 +140,52 @@ static void checkPlayerUiCommandBudget() {
     HudBudget bCore = countHudBudget(core);
     std::fprintf(stderr,
                  "UI_BUDGET core total=%d panel=%d state=%d title=%d time=%d track=%d fill=%d "
-                 "fits=%d max=%d\n",
+                 "fits_scan=%d fits_store=%d hit=%d max=%d\n",
                  bCore.totalUncapped, bCore.panel, bCore.stateGlyphs, bCore.titleGlyphs,
-                 bCore.timeGlyphs, bCore.track, bCore.fillChunks, bCore.fitsProductList ? 1 : 0,
-                 kMaxCmds);
+                 bCore.timeGlyphs, bCore.track, bCore.fillChunks, bCore.fitsHitScan ? 1 : 0,
+                 bCore.fitsProductList ? 1 : 0, kHitScan, kMaxCmds);
     CHECK(bCore.panel == 1);
     CHECK(bCore.track == 1);
     CHECK(bCore.stateGlyphs == 7); // STOPPED
     CHECK(bCore.titleGlyphs >= 10);
     CHECK(bCore.timeGlyphs >= 6);
     CHECK(bCore.fitsProductList);
-    CHECK(bCore.totalUncapped <= kMaxCmds);
+    CHECK(bCore.fitsHitScan);
+    CHECK(bCore.totalUncapped <= kHitScan);
     CHECK(buildPlaybackHud(core).size() == static_cast<size_t>(bCore.totalUncapped));
 
     // --- Full simultaneous (core + skip + notice + buffering) ---
+    // Storage must absorb; paint scan may not until scanline renderer.
     BuildArgs full = core;
     full.skipDeltaMs = 30000;
     full.notice = "F12 INERT ON THIS BUILD";
     full.buffering = true;
     HudBudget bFull = countHudBudget(full);
     std::fprintf(stderr,
-                 "UI_BUDGET full total=%d skip=%d notice=%d buf=%d fits=%d max=%d\n",
+                 "UI_BUDGET full total=%d skip=%d notice=%d buf=%d fits_scan=%d fits_store=%d\n",
                  bFull.totalUncapped, bFull.skip, bFull.notice, bFull.buffering,
-                 bFull.fitsProductList ? 1 : 0, bFull.maxCmds);
+                 bFull.fitsHitScan ? 1 : 0, bFull.fitsProductList ? 1 : 0);
     CHECK(bFull.skip > 0);
     CHECK(bFull.notice > 0);
     CHECK(bFull.buffering > 0);
-    // Product list depth must absorb the simultaneous full UI (no silent trim).
     CHECK(bFull.fitsProductList);
     CHECK(bFull.totalUncapped <= kMaxCmds);
+    // Product buildPlaybackHud truncates to kHitScan when over scan.
+    CHECK(buildPlaybackHud(full).size() <= static_cast<size_t>(kHitScan));
 
-    // PLAYING worst title + full bar fill
+    // PLAYING worst title + full bar fill — still within scan
     BuildArgs play;
     play.state = misterplex::PlaybackOverlayState::Playing;
     play.positionMs = 3599999;
     play.durationMs = 3600000;
     play.title = "0123456789012345678"; // 19
     HudBudget bPlay = countHudBudget(play);
-    std::fprintf(stderr, "UI_BUDGET playing_worst total=%d fits=%d\n", bPlay.totalUncapped,
-                 bPlay.fitsProductList ? 1 : 0);
+    std::fprintf(stderr, "UI_BUDGET playing_worst total=%d fits_scan=%d\n", bPlay.totalUncapped,
+                 bPlay.fitsHitScan ? 1 : 0);
     CHECK(bPlay.fitsProductList);
+    CHECK(bPlay.fitsHitScan);
 
-    // --- True worst case under current API caps (title19 + notice31 + long times + skip + buf) ---
+    // --- True worst under API caps: fits storage, exceeds HIT_SCAN (deferred UI) ---
     BuildArgs worst;
     worst.outW = kHdmiOutW;
     worst.outH = kHdmiOutH;
@@ -171,12 +203,28 @@ static void checkPlayerUiCommandBudget() {
     worst.notice = notice31;
     worst.buffering = true;
     HudBudget bW = countHudBudget(worst);
-    std::fprintf(stderr, "UI_BUDGET true_worst_720p total=%d max=%d fits=%d\n",
-                 bW.totalUncapped, kMaxCmds, bW.fitsProductList ? 1 : 0);
+    std::fprintf(stderr, "UI_BUDGET true_worst_720p total=%d hit=%d max=%d scan=%d store=%d\n",
+                 bW.totalUncapped, kHitScan, kMaxCmds, bW.fitsHitScan ? 1 : 0,
+                 bW.fitsProductList ? 1 : 0);
     CHECK(bW.totalUncapped >= 79); // prior short-simultaneous under-count
     CHECK(bW.totalUncapped <= kMaxCmds);
     CHECK(bW.fitsProductList);
-    // Growth ceiling note: new HUD elements or longer caps raise this; kMaxCmds is the hard gate.
+    CHECK(!bW.fitsHitScan); // documents deferred full-UI vs pre-fit scan
+    CHECK(buildPlaybackHud(worst).size() == static_cast<size_t>(kHitScan));
+
+    // Source gate: shipping publish sites pass nullptr title (no title cmds).
+    FILE* mp = std::fopen("arm/misterplexd/media_player.cpp", "r");
+    CHECK(mp != nullptr);
+    if (mp) {
+        std::string src;
+        char buf[4096];
+        while (std::fgets(buf, sizeof(buf), mp))
+            src += buf;
+        std::fclose(mp);
+        CHECK(src.find("publishPlxcHud(state, positionMs, durationMs, nullptr)") != std::string::npos);
+        CHECK(src.find("publishPlxcHud(overlay_.state(), positionMs_.load(), durationMs(), nullptr") !=
+              std::string::npos);
+    }
 
     // Volume: not a drawn player-HUD element today (no glyph/rect). Residual: N/A.
 }

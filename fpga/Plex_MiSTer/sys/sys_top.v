@@ -1379,7 +1379,7 @@ cyclonev_hps_interface_peripheral_i2c hdmi_i2c
 	plex_chrome #(
 		.BOOT_DEMO(0),
 		.MAX_CMDS(112),
-		.HIT_SCAN(112)
+		.HIT_SCAN(48)
 	) u_plex_chrome (
 		.clk_hdmi(clk_hdmi),
 		.reset(reset_req),

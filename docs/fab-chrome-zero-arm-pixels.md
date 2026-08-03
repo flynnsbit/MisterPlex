@@ -26,7 +26,7 @@ ARM never blends HUD pixels into the content bank when `chromePlaneLive()`.
 | Buffering chip | progress log only | box+9 glyphs | Now expressible |
 | Volume | not drawn on HDMI HUD | 0 | N/A |
 
-### Budget vs `MAX_CMDS=112` / `HIT_SCAN=112`
+### Budget vs `MAX_CMDS=112` / `HIT_SCAN=48`
 
 | Scenario | `totalUncapped` | Fits 112? |
 |----------|-----------------|-----------|
@@ -97,7 +97,7 @@ tests/unit/test_plex_chrome_counted_rtl_sim.sh
 
 3. **OPEN — Volume** is not a glass HUD element in the current design.
 
-4. **CLOSED (depth) / OPEN (Fmax)** — `MAX_CMDS=HIT_SCAN=112` absorbs true worst
+4. **CLOSED (depth) / OPEN (Fmax)** — `MAX_CMDS=112 HIT_SCAN=48` absorbs true worst
    102. Yosys +119% cells vs 48. **Quartus Fmax on clk_hdmi still unknown.**
    PLXG **FIXED +0x800** — w-mem/w-scaler must match; list bound-checked only.
 

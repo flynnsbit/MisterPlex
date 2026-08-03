@@ -104,6 +104,7 @@ EXPECTED_COMMANDS = [
     "$(ROOT)/build/test_plex_chrome_sim",
     "$(ROOT)/build/test_plex_chrome_cmds",
     "$(ROOT)/build/test_ddr_720p_abi",
+    "bash $(ROOT)/tests/unit/test_plex_chrome_hit_scan_static.sh",
     "python3 $(ROOT)/tests/unit/test_plex_chrome_write_path_static.py",
     "$(ROOT)/build/test_present_pace",
     "$(ROOT)/build/test_plex_chrome_ddr_loader",

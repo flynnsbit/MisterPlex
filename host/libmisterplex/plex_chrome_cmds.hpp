@@ -32,8 +32,10 @@ namespace plex_chrome_cmds {
 inline constexpr uint32_t kMagic = mailbox_abi::kPlxcMagic;
 inline constexpr uint32_t kOffset = mailbox_abi::kPlxcOffset;
 inline constexpr uint32_t kListOffset = mailbox_abi::kPlxlOffset;
-inline constexpr int kMaxCmds = 112; // true worst ~102 @720p full UI; see countHudBudget
-inline constexpr int kHitScan = 112; // match RTL HIT_SCAN (== MAX_CMDS)
+inline constexpr int kMaxCmds = 112; // list storage/ABI depth (loader/host_if)
+// Match RTL HIT_SCAN — per-pixel combo depth, NOT storage. Pre-fit product=48
+// (rd-duck: 112-scan doubles yosys cells; shipping path ≤41 cmds).
+inline constexpr int kHitScan = 48;
 inline constexpr int kFontW = 8;
 inline constexpr int kFontH = 8;
 inline constexpr int kFontAdvance = 9; // 8 + 1 gap
@@ -274,7 +276,9 @@ struct HudBudget {
     int buffering = 0;  // box + glyphs
     int totalUncapped = 0;
     int maxCmds = kMaxCmds;
-    bool fitsProductList = true;
+    int hitScan = kHitScan;
+    bool fitsProductList = true; // ≤ storage depth (kMaxCmds)
+    bool fitsHitScan = true;     // ≤ paint scan depth (kHitScan) — product gate
 };
 
 inline HudBudget countHudBudget(const BuildArgs& a); // defined after builder
@@ -393,16 +397,18 @@ inline std::vector<uint64_t> buildPlaybackHudUncapped(const BuildArgs& a) {
 
 inline std::vector<uint64_t> buildPlaybackHud(const BuildArgs& a) {
     auto cmds = buildPlaybackHudUncapped(a);
-    // Product feed to RTL — never exceed list depth. Truncation is a *visible*
-    // residual when totalUncapped > kMaxCmds (see countHudBudget / docs).
-    if (cmds.size() > static_cast<size_t>(kMaxCmds))
-        cmds.resize(static_cast<size_t>(kMaxCmds));
+    // Product feed: never exceed paint scan (HIT_SCAN). Storage may be deeper
+    // (kMaxCmds) for ABI/loader headroom, but chrome_at only walks kHitScan.
+    // Truncation past kHitScan is a visible residual — shipping path must fit.
+    if (cmds.size() > static_cast<size_t>(kHitScan))
+        cmds.resize(static_cast<size_t>(kHitScan));
     return cmds;
 }
 
 inline HudBudget countHudBudget(const BuildArgs& a) {
     HudBudget b;
     b.maxCmds = kMaxCmds;
+    b.hitScan = kHitScan;
     // Element-wise recount so the inventory is legible (not just total).
     BuildArgs base = a;
     base.skipDeltaMs = 0;
@@ -461,6 +467,7 @@ inline HudBudget countHudBudget(const BuildArgs& a) {
     const auto all = buildPlaybackHudUncapped(a);
     b.totalUncapped = static_cast<int>(all.size());
     b.fitsProductList = b.totalUncapped <= kMaxCmds;
+    b.fitsHitScan = b.totalUncapped <= kHitScan;
     (void)glyphs;
     (void)rects;
     return b;

@@ -49,11 +49,12 @@ int main() {
     // Hole is intentional: UI budget may grow without moving PLXG.
     CHECK(list_end < mailbox_abi::kPlxgOffset);
 
-    // --- Host chrome depth matches ABI list depth ---
+    // --- Host chrome depth matches ABI list depth; HIT_SCAN is paint-only ---
     CHECK(misterplex::plex_chrome_cmds::kMaxCmds ==
           static_cast<int>(mailbox_abi::kPlxcListMaxCmds));
-    CHECK(misterplex::plex_chrome_cmds::kHitScan ==
-          misterplex::plex_chrome_cmds::kMaxCmds);
+    CHECK(misterplex::plex_chrome_cmds::kHitScan == 48);
+    CHECK(misterplex::plex_chrome_cmds::kHitScan <
+          misterplex::plex_chrome_cmds::kMaxCmds); // pre-fit: scan << storage
 
     // --- Product doorbell + FIXED offset ---
     CHECK(kPlex480pYuv420pDoorbellPhys == 0x300FF000u);

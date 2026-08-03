@@ -55,8 +55,13 @@
 `timescale 1ns / 1ps
 
 module plex_chrome #(
-    parameter int MAX_CMDS = 112, // true worst simultaneous UI ~102 @720p (was 48; overflow residual)
-    parameter int HIT_SCAN = 112, // == MAX_CMDS: full list visible; yosys cell cost scales ~linear
+    parameter int MAX_CMDS = 112, // list storage/ABI depth (may hold > scan)
+    // Pre-fit cap (rd-duck yosys): HIT_SCAN drives chrome_at combo cost, not
+    // storage. 112/112 ≈ 77.7k cells; 112-store/48-scan ≈ 35.5k (−54%). Shipping
+    // daemon path (null title/notice, no buffering) ≤41 cmds incl. huge skip;
+    // HIT_SCAN=48 covers that with headroom. Full 102-cmd simultaneous UI is
+    // deferred to a scanline-indexed renderer — do not fit HIT_SCAN=112 first.
+    parameter int HIT_SCAN = 48,
     parameter int FONT_W   = 8,
     parameter int FONT_H   = 8,
     parameter bit BOOT_DEMO = 1'b0,

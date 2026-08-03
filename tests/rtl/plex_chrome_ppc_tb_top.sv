@@ -56,7 +56,7 @@ module plex_chrome_ppc_tb (
     plex_chrome #(
         .BOOT_DEMO(0),
         .MAX_CMDS(112),
-        .HIT_SCAN(112),
+        .HIT_SCAN(48),
         .PX_PER_CLK(2)
     ) u_chrome (
         .clk_hdmi(clk),

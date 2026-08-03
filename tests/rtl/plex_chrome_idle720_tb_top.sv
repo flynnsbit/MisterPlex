@@ -83,7 +83,7 @@ module plex_chrome_idle720_tb #(
     plex_chrome #(
         .BOOT_DEMO(0),
         .MAX_CMDS(112),
-        .HIT_SCAN(112),
+        .HIT_SCAN(48),
         .PX_PER_CLK(PX_PER_CLK),
         .FAULT_LEGACY_480P_LAYOUT(FAULT_LEGACY_480P_LAYOUT),
         .FAULT_HDMI_LAYOUT_ON_CORE_DE(FAULT_HDMI_LAYOUT_ON_CORE_DE)

@@ -1,76 +1,58 @@
 # MAX_CMDS / HIT_SCAN cost (w-osd)
 
-## Why 112 (not 48, not “79”)
+## Split: storage vs paint scan (pre-fit decision)
 
-| Scenario (HDMI_OUT 1280×720) | `totalUncapped` |
-|-----------------------------|-----------------|
-| Core STOPPED + 19-char title + bar | 38 |
-| Prior “simultaneous short” (skip+notice+buf) | **79** |
-| **True worst under current API caps** (title19 + notice31 + H:MM:SS times + huge skip + buffering + full bar) | **102** |
-| Same worst @ 1080p canvas | **104** |
+| Parameter | Product value | Role |
+|-----------|--------------:|------|
+| `MAX_CMDS` / `kMaxCmds` | **112** | List **storage** + loader/ABI depth |
+| `HIT_SCAN` / `kHitScan` | **48** | Per-pixel `chrome_at` walk (combo cost) |
 
-**79 was not the true worst case** — it used short times/notice. Product
-`kMaxCmds` / RTL `MAX_CMDS` / `HIT_SCAN` are **112** (102 + headroom for one
-small element without another ABI move).
+rd-duck yosys (w-osd HEAD): `MAX_CMDS=112` + `HIT_SCAN=48` → **35,541** generic cells
+vs committed 112/112 = **77,749** (−42,208 / **−54.3%**). 112-store/48-scan vs 48/48
+differs by only **+32** cells — **list depth is not the cost; HIT_SCAN is**.
 
-Growth that **can** raise the figure again:
+### Runtime cmd inventory (HDMI_OUT 1280×720)
 
-- Raising title/notice string caps
-- Adding volume / multi-line notices / extra chips
-- New HUD elements on glass
+| Scenario | `totalUncapped` | fits HIT_SCAN=48? |
+|----------|----------------:|:------------------:|
+| Shipping daemon (`title=null`, `notice=null`, `buffering=false`) + huge skip | **41** | yes |
+| Same shipping path, no skip | **30** | yes |
+| Core STOPPED + 19-char title + bar | ~38 | yes |
+| Prior “simultaneous short” (skip+notice+buf) | **79** | no (deferred) |
+| True worst API caps (title19+notice31+H:MM:SS+huge skip+buf+full bar) | **~98–102** | no (deferred) |
 
-Growth that does **not** (today): content/core geometry — chrome is HDMI_OUT only.
+Evidence: `media_player.cpp` `publishPlxcHud(..., nullptr)` — daemon never feeds
+title/notice/buffering today. Gate: `test_plex_chrome_cmds` + `test_plex_chrome_hit_scan_static.sh`.
 
-`kMaxCmds` is the hard gate: `buildPlaybackHud` truncates; uncapped inventory
-must stay ≤112 or we raise again (and move PLXG again).
+**Product feed** (`buildPlaybackHud`) truncates to **`kHitScan`**. Storage may still
+hold 112 for ABI/loader; fabric paints only the first `HIT_SCAN` entries.
+
+Full simultaneous 102-cmd UI is **deferred** to a scanline-indexed renderer
+(HBLANK active list). Do **not** first-fit `HIT_SCAN=112`.
 
 ## Mailbox map (parent ABI freeze)
 
 ```
 PLXC  +0x130
-list  +0x140 .. +0x4BF   (112 × 8B = 0x380; may grow)
+list  +0x140 .. +0x4BF   (112 × 8B = 0x380; storage)
 PLXG  +0x800 FIXED       (NOT kPlxl + MAX_CMDS*8)
 ```
 
 Bound only: `kPlxlOffset + kPlxcListMaxCmds*8 <= kPlxgOffset`.
-UI budget changes must **not** relocate PLXG. w-mem/w-scaler must use **+0x800**.
-Gate: `./build/test_ddr_720p_abi` (builds in this lane).
 
 ## Yosys generic cell counts (not Quartus ALM / not Fmax)
 
-Method: `read_verilog -sv plex_chrome.sv` → `chparam MAX_CMDS=HIT_SCAN=N` →
-`proc; opt_clean; memory -nomap; stat`. Logs:
-`.agent-work/chrome-area/stat_n{48,80,104,112,128}.txt`.
+| MAX_CMDS / HIT_SCAN | cells (approx) | notes |
+|--------------------:|---------------:|-------|
+| 48 / 48 | 35509 | baseline |
+| **112 / 48** | **~35541** | **product pre-fit** (−54% vs 112/112) |
+| 112 / 112 | 77749 | rejected for first fit |
+| 128 / 128 | 88309 | — |
 
-| N | cells | $eq | $mux | $mem_v2 | list bits (2×N×64) |
-|---|------:|----:|-----:|--------:|-------------------:|
-| 48 | 35509 | 15659 | 13597 | 50 | 6144 |
-| 80 | 56629 | 24779 | 21981 | 82 | 10240 |
-| 104 | 72469 | 31619 | 28269 | 106 | 13312 |
-| **112** | **77749** | **33899** | **30365** | **114** | **14336** |
-| 128 | 88309 | 38459 | 34557 | 130 | 16384 |
+Combo depth of `chrome_at` scales on **`clk_hdmi`**. Fmax **UNKNOWN until Quartus**.
 
-**Δ 48 → 112:** cells +42240 (**+119%**). Combo depth of `chrome_at` scales with
-`HIT_SCAN` (per-pixel on **`clk_hdmi`**, not clk_sys).
+## Decision
 
-### M10K (analytic, not fit)
-
-Dual list 2×112×64 = 14336 bits ≈ 1.4× M10K (10 kbit). Expect **2 M10K** if
-consolidated; do **not** infer M10K count from yosys `$mem_v2` (114 is
-pre-map fragments).
-
-### Fmax
-
-**UNKNOWN without Quartus.** Chrome sits on `clk_hdmi` (~74.25 MHz @720p60).
-Parent’s 23.46 MHz clk_sys margin does **not** bound this path. If fit Fmax
-fails, fallback design (not implemented here):
-
-- Keep `MAX_CMDS=112` storage
-- Build a **per-scanline active list** in HBLANK (worst band ~32 cmds for
-  notice31) and set `HIT_SCAN`≈40 for DE — services 112 logical cmds without
-  112 parallel comparators.
-
-## Decision for parent
-
-Ship **112** with measured yosys Δ; **Quartus Fmax is the open fit question**.
-Do not trim UI. Do not assume 79 was the ceiling.
+1. First fit: **`MAX_CMDS=112`, `HIT_SCAN=48`** (`sys_top.v`, RTL defaults, `kHitScan`).
+2. Merged gate: shipping runtime cmd count **≤48** (`fitsHitScan`).
+3. Defer full 102-command simultaneous UI to scanline-indexed path.
