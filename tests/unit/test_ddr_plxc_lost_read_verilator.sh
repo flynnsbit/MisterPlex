@@ -70,6 +70,38 @@ if ! printf '%s\n' "$OUT0" | grep -qE 'm3_hang=0'; then
   echo "FAIL product expected m3_hang=0" >&2
   FAIL=1
 fi
+if ! printf '%s\n' "$OUT0" | grep -qE 'm3_lost=0'; then
+  echo "FAIL product expected m3_lost=0" >&2
+  FAIL=1
+fi
+if ! printf '%s\n' "$OUT0" | grep -qE 'm1_lost=0'; then
+  echo "FAIL product expected m1_lost=0" >&2
+  FAIL=1
+fi
+if ! printf '%s\n' "$OUT0" | grep -qE 'coll_complete_m3=[1-9]'; then
+  echo "FAIL product expected coll_complete_m3>=1" >&2
+  FAIL=1
+fi
+if ! printf '%s\n' "$OUT0" | grep -qE 'coll_lost_m3=0'; then
+  echo "FAIL product expected coll_lost_m3=0" >&2
+  FAIL=1
+fi
+if ! printf '%s\n' "$OUT0" | grep -qE 'coll_m0m3=.*rd=[1-9]'; then
+  # fall through to coll_rd field
+  :
+fi
+if ! printf '%s\n' "$OUT0" | grep -qE 'rd=[1-9]'; then
+  echo "FAIL product expected coll m0+m3 rd>=1" >&2
+  FAIL=1
+fi
+if ! printf '%s\n' "$OUT0" | grep -qE 'we=[1-9]'; then
+  echo "FAIL product expected coll m0+m3 we>=1" >&2
+  FAIL=1
+fi
+if ! printf '%s\n' "$OUT0" | grep -qE 'coll_m0m1=[1-9]'; then
+  echo "FAIL product expected coll_m0m1>=1" >&2
+  FAIL=1
+fi
 
 echo "=== FAULT twin FAULT_LOST_READ=1 ===" >&2
 EXE1="$(build_one 1)"
@@ -78,11 +110,11 @@ OUT1="$("$EXE1" 2>&1)"
 RC1=$?
 set -e
 printf '%s\n' "$OUT1"
-echo "fault lost_read exe_rc=$RC1 (expect hang)"
-if printf '%s\n' "$OUT1" | grep -qE 'fill_hang=[1-9]|m3_hang=[1-9]|m1_hang=[1-9]|REPRO m[0-9]-hang'; then
-  echo "REPRO fault-lost-read hang observed"
+echo "fault lost_read exe_rc=$RC1 (expect hang/lost)"
+if printf '%s\n' "$OUT1" | grep -qE 'fill_hang=[1-9]|m3_hang=[1-9]|m1_hang=[1-9]|coll_lost_m3=[1-9]|REPRO hang'; then
+  echo "REPRO fault-lost-read hang/lost observed"
 else
-  echo "FAIL fault twin did not hang (race not reproduced)" >&2
+  echo "FAIL fault twin did not hang or lose collided lower (race not reproduced)" >&2
   FAIL=1
 fi
 

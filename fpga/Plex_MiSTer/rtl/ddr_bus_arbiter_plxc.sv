@@ -6,16 +6,18 @@
 //   m3 — PLXC chrome loader (clk_m3 domain, async FIFO responses).
 //
 // Priority (product STARVE_VIDEO=0):
-//   1) Complete an already-issued lower-master command (never mask m1_cmd/m3_cmd)
+//   1) While grant_m1/m3 is held: exclusive lower slot — never m0_ov, never
+//      revoke for m0. Complete m*_cmd or release only on !m*_want && !m*_cmd.
 //   2) else m0 (live or skid) on free slots
 //   3) else m1_want / m3_want grants
 //
-// Lost-read contracts (rd-duck):
-//   A) Store launch-edge: one-shot m0_rd must not be lost when grant_m* NBA races
-//      the pulse — product skids m0 and holds m0_busy until accept.
-//   B) Bridge S_ISSUE: !a_busy is NOT acceptance (CDC lag). m0_ov must NOT mask an
-//      already-issued m1/m3 command; bridges advance only on a_*_accept.
-//   FAULT_LOST_READ=1 restores revoke-only + m0_ov-always (red twin).
+// Lost-read contracts (rd-duck 44981ab0 residual):
+//   A) Store launch-edge: skid m0 one-shot while lower grant held.
+//   B) Bridge may sample !busy and arm a_rd before a_accept CDC. Product must
+//      NOT drop grant_m3/m1 for m0 while want is live — else WAIT_R hangs with
+//      no issued DDR beat and no retry token. a_*_accept is the only advance.
+//   FAULT_LOST_READ: m0_ov masks lower mux under grant + revoke-only (loses
+//      collided lower request; REPRO hang).
 //
 // STARVE_VIDEO=1 (red twin only): m3 sticky over m0 — must produce underrun
 // in the concurrent-load TB. Never synthesize product with STARVE_VIDEO=1.
@@ -150,13 +152,16 @@ module ddr_bus_arbiter_plxc #(
 	wire [63:0] m0_eff_din   = m0_use_live ? m0_din      : m0_skid_din;
 	wire [7:0]  m0_eff_be    = m0_use_live ? m0_be       : m0_skid_be;
 
-	// Never mask an already-issued lower command (bridge may have accepted !busy).
+	// Product: any held lower grant owns the mux until cmd completes or want
+	// drops — not merely while m*_cmd is high (bridge arms rd one cycle late).
+	wire lower_grant_held = grant_m1 || grant_m3;
 	wire lower_cmd_inflight =
 		(grant_m1 && m1_cmd) || (grant_m3 && m3_cmd);
 
-	// Product m0 mux override only when it will not kill an in-flight lower cmd.
-	// FAULT twin: m0_ov forced off (old hang: grant masks one-shot m0_rd).
-	wire m0_ov = !starve && !FAULT_LOST_READ && m0_eff_cmd && !lower_cmd_inflight;
+	// Product m0_ov only when NO lower grant is held (skid m0 instead).
+	// FAULT: m0_ov under grant even without lower cmd — masks mux, loses lower.
+	wire m0_ov = !starve && m0_eff_cmd &&
+	             (FAULT_LOST_READ ? lower_grant_held : !lower_grant_held);
 	wire use_m1 = grant_m1 && !m0_ov;
 	wire use_m3 = grant_m3 && !grant_m1 && !m0_ov;
 
@@ -345,10 +350,10 @@ module ddr_bus_arbiter_plxc #(
 			if (DDRAM_DOUT_READY && rsp_active)
 				rsp_left <= rsp_left - 9'd1;
 
-			// Capture m0 one-shot into skid when blocked by issued lower cmd.
+			// Capture m0 one-shot into skid whenever a lower grant is held or
+			// lower rsp is in flight (product). FAULT does not skid (lost m0).
 			if (!FAULT_LOST_READ && !starve && m0_live_cmd && !m0_skid_v) begin
-				if (lower_cmd_inflight ||
-				    ((grant_m1 || grant_m3) && !m0_ov) ||
+				if (lower_grant_held || lower_cmd_inflight ||
 				    (rsp_pipe_active && (rsp_owner_m1 || rsp_owner_m3 ||
 				                         rsp_owner_m1_r || rsp_owner_m3_r))) begin
 					m0_skid_v <= 1'b1;
@@ -363,44 +368,51 @@ module ddr_bus_arbiter_plxc #(
 
 			if (!DDRAM_BUSY && !rsp_pipe_active) begin
 				if (grant_m1) begin
-					if (!starve && !FAULT_LOST_READ && m1_cmd) begin
-						// Finish issued m1 — do not revoke under m0.
+					if (starve) begin
 						if (m1_rd) begin
 							rsp_owner_m1 <= 1'b1;
 							rsp_owner_m3 <= 1'b0;
 							rsp_left <= {1'b0, m1_burstcnt};
 							grant_m1 <= 1'b0;
 							cnt_grant_m1 <= cnt_grant_m1 + 32'd1;
-						end else if (m1_we) begin
+						end else if (m1_we || !m1_want_s2) begin
+							grant_m1 <= 1'b0;
+							if (m1_we)
+								cnt_grant_m1 <= cnt_grant_m1 + 32'd1;
+						end
+					end else if (FAULT_LOST_READ) begin
+						// 44981ab0 residual: m0 steals — revoke grant, lose lower.
+						if (m0_live_cmd) begin
+							grant_m1 <= 1'b0;
+						end else if (m1_rd) begin
+							rsp_owner_m1 <= 1'b1;
+							rsp_owner_m3 <= 1'b0;
+							rsp_left <= {1'b0, m1_burstcnt};
 							grant_m1 <= 1'b0;
 							cnt_grant_m1 <= cnt_grant_m1 + 32'd1;
+						end else if (m1_we || !m1_want_s2) begin
+							grant_m1 <= 1'b0;
+							if (m1_we)
+								cnt_grant_m1 <= cnt_grant_m1 + 32'd1;
 						end
-					end else if (!starve && !FAULT_LOST_READ && m0_eff_cmd && !m1_cmd) begin
-						// Free grant slot: service m0 (live/skid), drop idle grant.
-						grant_m1 <= 1'b0;
-						if (m0_eff_rd_w) begin
-							rsp_owner_m1 <= 1'b0;
-							rsp_owner_m3 <= 1'b0;
-							rsp_left <= {1'b0, m0_eff_burst};
-							cnt_grant_m0 <= cnt_grant_m0 + 32'd1;
-							m0_skid_v <= 1'b0;
-						end else begin
-							cnt_grant_m0 <= cnt_grant_m0 + 32'd1;
-							m0_skid_v <= 1'b0;
+					end else begin
+						// Product: exclusive grant until cmd done or want idle.
+						// NEVER revoke for m0 while m1_want (bridge may arm next).
+						if (m1_cmd) begin
+							if (m1_rd) begin
+								rsp_owner_m1 <= 1'b1;
+								rsp_owner_m3 <= 1'b0;
+								rsp_left <= {1'b0, m1_burstcnt};
+								grant_m1 <= 1'b0;
+								cnt_grant_m1 <= cnt_grant_m1 + 32'd1;
+							end else begin
+								grant_m1 <= 1'b0;
+								cnt_grant_m1 <= cnt_grant_m1 + 32'd1;
+							end
+						end else if (!m1_want_s2) begin
+							grant_m1 <= 1'b0;
 						end
-					end else if (!starve && FAULT_LOST_READ && m0_live_cmd) begin
-						// Old bug: revoke grant only — no rsp accept this edge.
-						grant_m1 <= 1'b0;
-					end else if (m1_rd) begin
-						rsp_owner_m1 <= 1'b1;
-						rsp_owner_m3 <= 1'b0;
-						rsp_left <= {1'b0, m1_burstcnt};
-						grant_m1 <= 1'b0;
-						cnt_grant_m1 <= cnt_grant_m1 + 32'd1;
-					end else if (m1_we || !m1_want_s2) begin
-						grant_m1 <= 1'b0;
-						if (m1_we)
-							cnt_grant_m1 <= cnt_grant_m1 + 32'd1;
+						// else hold grant_m1; m0 stays in skid
 					end
 				end else if (grant_m3) begin
 					if (starve) begin
@@ -417,6 +429,7 @@ module ddr_bus_arbiter_plxc #(
 							grant_m3 <= 1'b0;
 						end
 					end else if (FAULT_LOST_READ) begin
+						// Lose collided lower: drop grant under m0, no m3 accept.
 						if (m0_live_cmd) begin
 							grant_m3 <= 1'b0;
 						end else if (m3_rd) begin
@@ -431,7 +444,8 @@ module ddr_bus_arbiter_plxc #(
 								cnt_grant_m3 <= cnt_grant_m3 + 32'd1;
 						end
 					end else begin
-						// Product: never drop grant under issued m3_cmd.
+						// Product: exclusive grant_m3 — finish cmd or idle want.
+						// Do NOT hand slot to m0 while m3_want (rd-duck WAIT hang).
 						if (m3_cmd) begin
 							if (m3_rd) begin
 								rsp_owner_m1 <= 1'b0;
@@ -443,21 +457,10 @@ module ddr_bus_arbiter_plxc #(
 								grant_m3 <= 1'b0;
 								cnt_grant_m3 <= cnt_grant_m3 + 32'd1;
 							end
-						end else if (m0_eff_cmd) begin
-							grant_m3 <= 1'b0;
-							if (m0_eff_rd_w) begin
-								rsp_owner_m1 <= 1'b0;
-								rsp_owner_m3 <= 1'b0;
-								rsp_left <= {1'b0, m0_eff_burst};
-								cnt_grant_m0 <= cnt_grant_m0 + 32'd1;
-								m0_skid_v <= 1'b0;
-							end else begin
-								cnt_grant_m0 <= cnt_grant_m0 + 32'd1;
-								m0_skid_v <= 1'b0;
-							end
 						end else if (!m3_want_s2) begin
 							grant_m3 <= 1'b0;
 						end
+						// else hold grant_m3; m0 skid
 					end
 				end else begin
 					// Idle owner selection
@@ -499,12 +502,9 @@ module ddr_bus_arbiter_plxc #(
 				end
 			end
 
-			if (!starve) begin
-				if (grant_m1 && !DDRAM_BUSY && m1_cmd && !m1_rd)
-					grant_m1 <= 1'b0;
-				if (grant_m3 && !DDRAM_BUSY && m3_cmd && !m3_rd)
-					grant_m3 <= 1'b0;
-			end
+			// No trailing grant-clear: write acceptance is only inside the
+			// !DDRAM_BUSY && !rsp_pipe_active owner path. A free-running clear
+			// would drop m1/m3_we while rsp_pipe is still draining another master.
 		end
 	end
 endmodule

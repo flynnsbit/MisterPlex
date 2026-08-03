@@ -1,9 +1,11 @@
-// ddr_plxc_lost_read_tb_top — m0 store launch vs m1/m3 issued-cmd collision
+// ddr_plxc_lost_read_tb_top — per-request conservation under m0 vs m1/m3
 //
-// rd-duck: m0_ov must not mask an already-issued lower command; bridge must
-// not treat !busy as acceptance. Product: both m0 fills and m1/m3 bridge
-// transactions complete after exact same-edge collisions. FAULT_LOST_READ
-// restores old hang class.
+// rd-duck (44981ab0 residual): grant_m3 + bridge arm on !busy then m0 revoke
+// loses the lower command (WAIT_R forever). Product holds lower grant until
+// cmd completes or want drops; bridge advances only on a_accept.
+//
+// Gates: directed m0+m3-rd, m0+m3-we, m0+m1-rd with per-request IDs.
+// Product: every lower req completes; FAULT: a_accept=!busy + revoke loses lower.
 `timescale 1ns / 1ps
 `default_nettype none
 
@@ -27,10 +29,19 @@ module ddr_plxc_lost_read_tb_top #(
 	output wire        grant_m3_live,
 	output wire [3:0]  m0_state_live,
 	output wire [31:0] collision_m0_m3,
-	output wire [31:0] collision_m0_m1
+	output wire [31:0] collision_m0_m1,
+	output wire [31:0] m3_req_total,
+	output wire [31:0] m3_done_total,
+	output wire [31:0] m3_lost_ids,
+	output wire [31:0] m1_req_total,
+	output wire [31:0] m1_done_total,
+	output wire [31:0] m1_lost_ids,
+	output wire [31:0] coll_m0_m3_rd,
+	output wire [31:0] coll_m0_m3_we,
+	output wire [31:0] coll_complete_m3,
+	output wire [31:0] coll_lost_m3
 );
 
-	// ---- Fake DDR (CAS=2) ----
 	reg        ddr_busy;
 	reg  [7:0] ddr_burst_left;
 	reg [28:0] ddr_addr_r;
@@ -88,11 +99,29 @@ module ddr_plxc_lost_read_tb_top #(
 		end
 	end
 
-	// ---- m0: product store pulse model ----
+	localparam int HANG_LIM = 400;
+	reg [1:0] phase;
+	reg [15:0] phase_ctr;
+	wire en_m1 = run_enable && (phase == 2'd2 || (phase == 2'd3 && phase_ctr[2]));
+	wire en_m3 = run_enable && (phase == 2'd0 || phase == 2'd1 ||
+	                            (phase == 2'd3 && !phase_ctr[2]));
+	wire m3_do_we = (phase == 2'd1);
+	always @(posedge clk) begin
+		if (reset) begin
+			phase <= 2'd0;
+			phase_ctr <= 16'd0;
+		end else if (run_enable) begin
+			phase_ctr <= phase_ctr + 16'd1;
+			if (phase_ctr == 16'd1999) begin
+				phase_ctr <= 16'd0;
+				phase <= phase + 2'd1;
+			end
+		end
+	end
+
 	localparam [3:0] ST_IDLE  = 4'd0;
 	localparam [3:0] ST_ISSUE = 4'd1;
 	localparam [3:0] ST_WAIT  = 4'd2;
-	localparam int   HANG_LIM = 512;
 	localparam int   BEATS_PER_LINE = 4;
 	localparam int   LINE_GAP = 2;
 
@@ -111,36 +140,18 @@ module ddr_plxc_lost_read_tb_top #(
 	reg [31:0] ok_r, hang_r;
 	reg [28:0] line_base;
 	reg [31:0] coll_m3_r, coll_m1_r;
-	reg        prev_m3_rd, prev_m1_rd;
+	reg [31:0] coll_m3_rd_r, coll_m3_we_r;
 
 	assign fill_ok   = ok_r;
 	assign fill_hang = hang_r;
 	assign m0_state_live = st;
 	assign collision_m0_m3 = coll_m3_r;
 	assign collision_m0_m1 = coll_m1_r;
+	assign coll_m0_m3_rd = coll_m3_rd_r;
+	assign coll_m0_m3_we = coll_m3_we_r;
 
-	wire m1_rd_w, m3_rd_w;
-
-	// Phase: 0 = m0+m3 (m1 quiet), 1 = m0+m1 (m3 quiet), 2 = both sparse.
-	// Prevents m1 sticky-want from starving m3 for the whole run.
-	reg [1:0] phase;
-	reg [15:0] phase_ctr;
-	wire en_m1 = run_enable && (phase == 2'd1 || (phase == 2'd2 && phase_ctr[2]));
-	wire en_m3 = run_enable && (phase == 2'd0 || (phase == 2'd2 && !phase_ctr[2]));
-	always @(posedge clk) begin
-		if (reset) begin
-			phase <= 2'd0;
-			phase_ctr <= 16'd0;
-		end else if (run_enable) begin
-			phase_ctr <= phase_ctr + 16'd1;
-			if (phase_ctr == 16'd2499) begin
-				phase_ctr <= 16'd0;
-				if (phase == 2'd0) phase <= 2'd1;
-				else if (phase == 2'd1) phase <= 2'd2;
-				else phase <= 2'd0;
-			end
-		end
-	end
+	wire m1_rd_w, m3_rd_w, m3_we_w;
+	wire grant_m3_w;
 
 	always @(posedge clk) begin
 		if (reset) begin
@@ -159,19 +170,22 @@ module ddr_plxc_lost_read_tb_top #(
 			line_base <= 29'd64;
 			coll_m3_r <= 32'd0;
 			coll_m1_r <= 32'd0;
-			prev_m3_rd <= 1'b0;
-			prev_m1_rd <= 1'b0;
+			coll_m3_rd_r <= 32'd0;
+			coll_m3_we_r <= 32'd0;
 		end else begin
 			if (!m0_busy) begin
 				m0_rd <= 1'b0;
 				m0_we <= 1'b0;
 			end
 
-			// Exact same-edge collision count (after NBA both may be 1).
-			prev_m3_rd <= m3_rd_w;
-			prev_m1_rd <= m1_rd_w;
-			if (m0_rd && m3_rd_w)
+			if (m0_rd && m3_rd_w) begin
 				coll_m3_r <= coll_m3_r + 32'd1;
+				coll_m3_rd_r <= coll_m3_rd_r + 32'd1;
+			end
+			if (m0_rd && m3_we_w) begin
+				coll_m3_r <= coll_m3_r + 32'd1;
+				coll_m3_we_r <= coll_m3_we_r + 32'd1;
+			end
 			if (m0_rd && m1_rd_w)
 				coll_m1_r <= coll_m1_r + 32'd1;
 
@@ -233,11 +247,9 @@ module ddr_plxc_lost_read_tb_top #(
 					end
 					default: st <= ST_IDLE;
 				endcase
-				// Product only: directed same-edge m0 vs issued lower cmd.
-				// FAULT twin omits inject so classic launch-edge fill_hang REPROs
-				// (revoke-only grant drop + m0_ov-always without m0 skid accept).
+
 				if (!FAULT_LOST_READ) begin
-					if (run_enable && m3_rd_w && grant_m3_w) begin
+					if (run_enable && grant_m3_w && (m3_rd_w || m3_we_w)) begin
 						m0_rd <= 1'b1;
 						m0_burstcnt <= 8'd1;
 						m0_addr <= line_base;
@@ -259,19 +271,19 @@ module ddr_plxc_lost_read_tb_top #(
 						end
 					end
 				end
-
 			end
 		end
 	end
 
-	// ---- m1 via real bridge (PLXG-like) ----
-	wire m1_busy, m1_accept;
+	wire m1_busy, m1_accept_arb;
 	wire [63:0] m1_dout;
 	wire m1_dout_ready;
 	wire m1_want, m1_rd, m1_we;
 	wire [7:0] m1_burstcnt, m1_be;
 	wire [28:0] m1_addr;
 	wire [63:0] m1_din;
+	wire m1_accept = FAULT_LOST_READ ? !m1_busy : m1_accept_arb;
+
 	reg        c1_req, c1_we;
 	reg [28:0] c1_addr;
 	reg [63:0] c1_wdata;
@@ -281,11 +293,17 @@ module ddr_plxc_lost_read_tb_top #(
 	reg [15:0] m1_wait_ctr;
 	reg        m1_inflight;
 	reg [7:0]  m1_gap;
+	reg [15:0] m1_id_next;
+	reg [15:0] m1_id_inflight;
+	reg [31:0] m1_req_r, m1_done_r, m1_lost_r;
 
 	assign m1_beats = m1_beats_r;
 	assign m1_gnts  = m1_gnts_r;
 	assign m1_hang  = m1_hang_r;
 	assign m1_rd_w  = m1_rd;
+	assign m1_req_total = m1_req_r;
+	assign m1_done_total = m1_done_r;
+	assign m1_lost_ids = m1_lost_r;
 
 	ddr_plxc_master_bridge u_m1_br (
 		.clk(clk),
@@ -299,7 +317,6 @@ module ddr_plxc_lost_read_tb_top #(
 		.c_rdata(c1_rdata),
 		.a_want(m1_want),
 		.a_busy(m1_busy),
-		// FAULT: !busy-as-accept REPRO hang under m0_ov mask (rd-duck).
 		.a_accept(m1_accept),
 		.a_burstcnt(m1_burstcnt),
 		.a_addr(m1_addr),
@@ -318,7 +335,7 @@ module ddr_plxc_lost_read_tb_top #(
 		if (reset) begin
 			c1_req <= 1'b0;
 			c1_we <= 1'b0;
-			c1_addr <= 29'd200;
+			c1_addr <= 29'd0;
 			c1_wdata <= 64'd0;
 			m1_beats_r <= 32'd0;
 			m1_gnts_r <= 32'd0;
@@ -326,47 +343,57 @@ module ddr_plxc_lost_read_tb_top #(
 			m1_wait_ctr <= 16'd0;
 			m1_inflight <= 1'b0;
 			m1_gap <= 8'd0;
+			m1_id_next <= 16'd1;
+			m1_id_inflight <= 16'd0;
+			m1_req_r <= 32'd0;
+			m1_done_r <= 32'd0;
+			m1_lost_r <= 32'd0;
 		end else begin
 			c1_req <= 1'b0;
-			if (!en_m1) begin
-				m1_inflight <= 1'b0;
-				m1_wait_ctr <= 16'd0;
-				m1_gap <= 8'd0;
-			end else if (m1_inflight) begin
+			// Drain in-flight even when phase disables new m1 reqs.
+			if (m1_inflight) begin
 				m1_wait_ctr <= m1_wait_ctr + 16'd1;
 				if (c1_gnt)
 					m1_gnts_r <= m1_gnts_r + 32'd1;
 				if (c1_rd_valid) begin
 					m1_beats_r <= m1_beats_r + 32'd1;
+					m1_done_r <= m1_done_r + 32'd1;
 					m1_inflight <= 1'b0;
 					m1_wait_ctr <= 16'd0;
 					m1_gap <= 8'd1;
-					c1_addr <= c1_addr + 29'd1;
 				end else if (m1_wait_ctr >= HANG_LIM[15:0]) begin
 					m1_hang_r <= m1_hang_r + 32'd1;
+					m1_lost_r <= m1_lost_r + 32'd1;
 					m1_inflight <= 1'b0;
 					m1_wait_ctr <= 16'd0;
 					m1_gap <= 8'd4;
 				end
+			end else if (!en_m1) begin
+				m1_gap <= 8'd0;
 			end else if (m1_gap != 8'd0) begin
 				m1_gap <= m1_gap - 8'd1;
 			end else begin
 				c1_req <= 1'b1;
 				c1_we <= 1'b0;
+				c1_addr <= {13'd1, m1_id_next};
+				m1_id_inflight <= m1_id_next;
+				m1_id_next <= m1_id_next + 16'd1;
+				m1_req_r <= m1_req_r + 32'd1;
 				m1_inflight <= 1'b1;
 				m1_wait_ctr <= 16'd0;
 			end
 		end
 	end
 
-	// ---- m3 via real bridge (PLXC) ----
-	wire m3_busy, m3_accept;
+	wire m3_busy, m3_accept_arb;
 	wire [63:0] m3_dout;
 	wire m3_dout_ready;
 	wire m3_want, m3_rd, m3_we;
 	wire [7:0] m3_burstcnt, m3_be;
 	wire [28:0] m3_addr;
 	wire [63:0] m3_din;
+	wire m3_accept = FAULT_LOST_READ ? !m3_busy : m3_accept_arb;
+
 	reg        c3_req, c3_we;
 	reg [28:0] c3_addr;
 	reg [63:0] c3_wdata;
@@ -376,11 +403,24 @@ module ddr_plxc_lost_read_tb_top #(
 	reg [15:0] m3_wait_ctr;
 	reg        m3_inflight;
 	reg [7:0]  m3_gap;
+	reg [15:0] m3_id_next;
+	reg [15:0] m3_id_inflight;
+	reg [31:0] m3_req_r, m3_done_r, m3_lost_r;
+	reg        m3_coll_marked;
+	reg [31:0] coll_complete_m3_r, coll_lost_m3_r;
+	reg        m3_is_we_inflight;
 
 	assign m3_beats = m3_beats_r;
 	assign m3_gnts  = m3_gnts_r;
 	assign m3_hang  = m3_hang_r;
 	assign m3_rd_w  = m3_rd;
+	assign m3_we_w  = m3_we;
+	assign m3_req_total = m3_req_r;
+	assign m3_done_total = m3_done_r;
+	assign m3_lost_ids = m3_lost_r;
+	assign coll_complete_m3 = coll_complete_m3_r;
+	assign coll_lost_m3 = coll_lost_m3_r;
+	assign grant_m3_live = grant_m3_w;
 
 	ddr_plxc_master_bridge u_m3_br (
 		.clk(clk),
@@ -412,7 +452,7 @@ module ddr_plxc_lost_read_tb_top #(
 		if (reset) begin
 			c3_req <= 1'b0;
 			c3_we <= 1'b0;
-			c3_addr <= 29'd8;
+			c3_addr <= 29'd0;
 			c3_wdata <= 64'd0;
 			m3_beats_r <= 32'd0;
 			m3_gnts_r <= 32'd0;
@@ -420,41 +460,76 @@ module ddr_plxc_lost_read_tb_top #(
 			m3_wait_ctr <= 16'd0;
 			m3_inflight <= 1'b0;
 			m3_gap <= 8'd0;
+			m3_id_next <= 16'd1;
+			m3_id_inflight <= 16'd0;
+			m3_req_r <= 32'd0;
+			m3_done_r <= 32'd0;
+			m3_lost_r <= 32'd0;
+			m3_coll_marked <= 1'b0;
+			coll_complete_m3_r <= 32'd0;
+			coll_lost_m3_r <= 32'd0;
+			m3_is_we_inflight <= 1'b0;
 		end else begin
 			c3_req <= 1'b0;
-			if (!en_m3) begin
-				m3_inflight <= 1'b0;
-				m3_wait_ctr <= 16'd0;
-				m3_gap <= 8'd0;
-			end else if (m3_inflight) begin
+			if (m3_inflight && m0_rd && (m3_rd || m3_we))
+				m3_coll_marked <= 1'b1;
+
+			// Keep completing an in-flight txn even if phase disables new reqs.
+			if (m3_inflight) begin
 				m3_wait_ctr <= m3_wait_ctr + 16'd1;
-				if (c3_gnt)
+				if (c3_gnt) begin
 					m3_gnts_r <= m3_gnts_r + 32'd1;
+					if (m3_is_we_inflight) begin
+						m3_done_r <= m3_done_r + 32'd1;
+						if (m3_coll_marked)
+							coll_complete_m3_r <= coll_complete_m3_r + 32'd1;
+						m3_inflight <= 1'b0;
+						m3_wait_ctr <= 16'd0;
+						m3_gap <= 8'd0;
+						m3_coll_marked <= 1'b0;
+						m3_is_we_inflight <= 1'b0;
+					end
+				end
 				if (c3_rd_valid) begin
 					m3_beats_r <= m3_beats_r + 32'd1;
+					m3_done_r <= m3_done_r + 32'd1;
+					if (m3_coll_marked)
+						coll_complete_m3_r <= coll_complete_m3_r + 32'd1;
 					m3_inflight <= 1'b0;
 					m3_wait_ctr <= 16'd0;
-					m3_gap <= 8'd0; // sticky pressure on m3
-					c3_addr <= c3_addr + 29'd1;
+					m3_gap <= 8'd0;
+					m3_coll_marked <= 1'b0;
+					m3_is_we_inflight <= 1'b0;
 				end else if (m3_wait_ctr >= HANG_LIM[15:0]) begin
 					m3_hang_r <= m3_hang_r + 32'd1;
+					m3_lost_r <= m3_lost_r + 32'd1;
+					if (m3_coll_marked)
+						coll_lost_m3_r <= coll_lost_m3_r + 32'd1;
 					m3_inflight <= 1'b0;
 					m3_wait_ctr <= 16'd0;
 					m3_gap <= 8'd2;
+					m3_coll_marked <= 1'b0;
+					m3_is_we_inflight <= 1'b0;
 				end
+			end else if (!en_m3) begin
+				m3_gap <= 8'd0;
 			end else if (m3_gap != 8'd0) begin
 				m3_gap <= m3_gap - 8'd1;
 			end else begin
 				c3_req <= 1'b1;
-				c3_we <= 1'b0;
+				c3_we <= m3_do_we;
+				c3_addr <= {13'd2, m3_id_next};
+				c3_wdata <= {48'd0, m3_id_next};
+				m3_id_inflight <= m3_id_next;
+				m3_id_next <= m3_id_next + 16'd1;
+				m3_req_r <= m3_req_r + 32'd1;
 				m3_inflight <= 1'b1;
 				m3_wait_ctr <= 16'd0;
+				m3_coll_marked <= 1'b0;
+				m3_is_we_inflight <= m3_do_we;
 			end
 		end
 	end
-
-	wire grant_m3_w;
-	assign grant_m3_live = grant_m3_w;
 
 	ddr_bus_arbiter_plxc #(
 		.STARVE_VIDEO(1'b0),
@@ -485,7 +560,7 @@ module ddr_plxc_lost_read_tb_top #(
 		.m1_din(m1_din),
 		.m1_be(m1_be),
 		.m1_we(m1_we),
-		.m1_accept(m1_accept),
+		.m1_accept(m1_accept_arb),
 		.m3_busy(m3_busy),
 		.m3_burstcnt(m3_burstcnt),
 		.m3_addr(m3_addr),
@@ -495,7 +570,7 @@ module ddr_plxc_lost_read_tb_top #(
 		.m3_din(m3_din),
 		.m3_be(m3_be),
 		.m3_we(m3_we),
-		.m3_accept(m3_accept),
+		.m3_accept(m3_accept_arb),
 		.grant_m3_live(grant_m3_w),
 		.cnt_grant_m0(arb_m0),
 		.cnt_grant_m1(arb_m1),
