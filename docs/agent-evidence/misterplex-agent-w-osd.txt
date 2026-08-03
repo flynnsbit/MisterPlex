@@ -57,3 +57,16 @@ Defect: valid PLXG disable free-runs store app_* to legacy + clears
 Owner: w-mem. Integration gate: native→disable→legacy eventual visible frame.
 w-osd: no merge/release; q5/chrome work does not close this path.
 HEAD=fbb321d2
+
+=== rd-duck 2026-08-03T08:48:31-05:00 B20 beam≠bank/app atomicity HOLE ===
+bank+store app_* atomic with each other; BEAM DE NOT in that xact.
+  present_geom_latch promotes PLXG at VSync rise (w-mem)
+  w-clock beam latches content_w/h at v_wrap unconditionally
+  ddr_frame_store swaps app_* only if swap_pending && pending_ready_s2
+If DDR prep misses boundary: NEW H_DE/V_ACTIVE + OLD bank/app geom.
+B20 TB = store-only → cannot see. Violates old/new/black under contention.
+Need: one commit/ready handshake for beam+bank+app OR hold black/old DE
+  until store confirms swap; merged TB must delay pending_ready past one fstart.
+Owners: w-mem (latch/store) + w-clock (beam); w-osd integ wires only.
+w-osd: HOLD merge; do not claim B16/B20 closed at product without this.
+HEAD=2e91adb5
