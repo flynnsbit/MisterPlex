@@ -122,12 +122,14 @@ Threat: pixel-path divide; keep SX/SY registered. Fill-path `fill_y * pitch` is 
 | 4-tap poly V | ~4+ | ascal-class | high on clk_sys | near-ascal | **NO** — ascal already on HDMI |
 
 **Decision as code:**
-- Integration fit = **NN** (`PRESENT_WINDOW_BILINEAR` undefined).
-- V2 RTL: `present_bilinear_lerp.sv` + window `store_x1/y1/frac_*` under
-  `PRESENT_WINDOW_BILINEAR`. Tap fetch through `present_core`/`ddr_frame_store`
-  is **not** auto-wired (fit risk / Quartus needs a real consumer later).
-- Gate: `tests/unit/test_present_bilinear_rtl_sim.sh` (macro ON sim).
-- clk_pix: no 20 MHz hardwire; mul path OK at w-clock’s ~29.7 MHz 720p24 CEA.
+- Integration fit = **NN** (`PRESENT_WINDOW_BILINEAR` / `PRESENT_SCALE_4_3` undefined).
+- **Product 4/3** (960×540→1280×720): `present_scale_4_3.sv` — `src=dst*3/4`,
+  `phase=dst[1:0]`, 4-entry weight ROM. No general divider. Macro OFF.
+  Gate: `tests/unit/test_present_scale_4_3_rtl_sim.sh` (+ RED invert/phase_obo).
+- V vertical: **ship 2-tap**; optional `PRESENT_SCALE_4_3_VTAPS4` (2–4 M10K) if
+  line-twitter on glass. H 2-tap enough at 4/3.
+- V2 general bilinear: `present_bilinear_lerp.sv` under `PRESENT_WINDOW_BILINEAR`.
+- clk_pix: no 20 MHz hardwire; *3>>2 + ROM OK at w-clock ~29.7 MHz.
 
 Red-before-green scale faults (sim `+define`):
 `PRESENT_WINDOW_FAULT_IDENTITY_SCALE` · `…_FLOOR_SCALE` · `…_INVERT_RATIO`.

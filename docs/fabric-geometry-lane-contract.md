@@ -110,3 +110,19 @@ Gate encodes the same numbers: `tests/unit/test_720p_geometry_lane_agree.cpp`.
 `win_enable=0`, `geom_enable=0`, `FABRIC_NATIVE_720P_GEOM` undefined,
 `PRESENT_WINDOW_BILINEAR` undefined → bit-identical legacy 480p path vs control
 `d1b24e0c` at reset.
+
+## Product 4/3 scaler (`present_scale_4_3`)
+
+Exact rational path for ship **960×540 → 1280×720** (not general Q16):
+`src = dst*3/4`, `phase = dst[1:0]`, 4-entry bilinear weight ROM.
+Macro `PRESENT_SCALE_4_3` default **OFF**. General `present_content_window` still
+covers PMS 720×404 and arbitrary PLXG.
+
+| Filter | M10K | Ship? |
+|--------|-----:|-------|
+| NN 4/3 | 0 | fit OK |
+| H+V 2-tap biline | 0 (+2 dual-Y) | **preferred quality**; V twitter residual possible |
+| V 4-tap | +2..4 | if glass line-twitter after 2-tap |
+
+**w-clock boundary:** hc/py = `glass_x0/y`, H_DE=1280, clk_pix≈29.7 MHz for 720p24.
+Scaler has no 20 MHz hardwire (*3>>2 + ROM).
