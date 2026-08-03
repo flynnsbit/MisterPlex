@@ -1,6 +1,12 @@
 w-clock STATUS
 branch: w-clock-bump
-top: mp_rd_ur telemetry + 1000ppm producer lead + prefill16 + reset_pix
-tests: elab/longhaul/integrated/path/full PASS
-macros: OFF
-fit: NOT run
+fit: HELD (parent) — PIX24 29.7 only when granted
+macros: PRESENT_* default OFF
+
+DONE this tick:
+- deleted stale npx_full_raster_run.txt (pre-fix HARD FAIL landmine)
+- peak vs sustained analysis (FIFO ≠ DDR refresh cushion)
+- PIX30 developed: 37.125 PLL ifdef PRESENT_CLK_PIX_30, STA stage1b, margin 1.077x
+- doc: NPX_PEAK_VS_SUSTAINED_AND_PIX30.md
+
+NO glass claim. NO fit.

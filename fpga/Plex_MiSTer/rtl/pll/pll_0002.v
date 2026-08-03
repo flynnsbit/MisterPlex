@@ -68,7 +68,12 @@ module  pll_0002(
 		.phase_shift2("0 ps"),
 		.duty_cycle2(50),
 `ifdef PRESENT_CLK_PIX_PLL
+`ifdef PRESENT_CLK_PIX_30
+		// PIX30: 1650*750*30 — second STA grant only; default remains PIX24.
+		.output_clock_frequency3("37.125000 MHz"),
+`else
 		.output_clock_frequency3("29.700000 MHz"),
+`endif
 `else
 		.output_clock_frequency3("0 MHz"),
 `endif

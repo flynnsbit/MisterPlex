@@ -65,11 +65,26 @@
       "balance_ok": true
     },
     "PIX30": {
-      "status": "PROPOSED_NOT_APPLIED",
+      "status": "LANDED_IFDEF_DEFAULT_OFF",
       "clk_pix_mhz": 37.125,
-      "formula": "1650*750*30",
-      "note": "30 fps CEA totals; fabric PPC>=2 at clk_sys=20 (40>=37.125). Not this fit.",
-      "min_ppc": 2
+      "formula": "1650*750*30 = 37125000",
+      "macros": ["PRESENT_CLK_PIX_PLL", "PRESENT_CLK_PIX_30"],
+      "note": "Nested under PRESENT_CLK_PIX_PLL; default OFF. Held fit remains PIX24 only. Fabric peak 40 vs 37.125 = 1.077x thin margin.",
+      "min_ppc": 2,
+      "peak_fabric_mpix_at_min_ppc": 40.0,
+      "out_mpix": 37.125,
+      "producer_lead_ppm": 1000,
+      "producer_target_mpix": 37.162125,
+      "balance_ok": true,
+      "balance_margin_ratio": 1.077,
+      "pll_strings": {
+        "reference_clock_frequency": "50.0 MHz",
+        "output_clock_frequency0": "20.000000 MHz",
+        "output_clock_frequency2": "90.000000 MHz",
+        "output_clock_frequency3": "37.125000 MHz"
+      },
+      "plan_doc": ".agent-work/w-clock/NPX_PEAK_VS_SUSTAINED_AND_PIX30.md",
+      "forbidden_on_held_fit": true
     }
   },
   "forbidden": {

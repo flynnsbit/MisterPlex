@@ -143,13 +143,15 @@ CEA totals **1650×750** (unchanged):
 
 **Held fit (A/B @24 only): `clk_pix=29.7` unchanged.**  
 
-**PIX30:** same PLL outclk_3 retarget `37.125000 MHz`, fractional VCO, STA prereg:
+**PIX30 (developed — see `NPX_PEAK_VS_SUSTAINED_AND_PIX30.md`):**
 
-- `Fmax(clk_pix) ≥ 37.125` hard  
-- PPC≥2: peak sys 40 Mpix/s ≥ 37.125 → **fabric OK at ship 20 MHz** (balance)  
-- Related-edge / CDC story same class as PIX24 (sys↔pix async_fifo)  
+- PLL: nested `PRESENT_CLK_PIX_30` → `output_clock_frequency3("37.125000 MHz")` (default OFF)  
+- `MP_CLK_PIX_HZ=37_125_000` + same 1000 ppm lead → producer **37.162** Mpix/s  
+- Peak 40 / 37.125 = **1.077× only** — fabric OK on paper, thin; long-haul @37.125 before claim  
+- STA: `assets/clk_pix_sta_prereg.json` **stage1b_pix30** — Fmax_pix ≥ 37.125 hard  
+- If STA green: 30 fps wall is **ARM 34.50 vs 33.33 only** (w-path tier), not clk_pix  
 
-**PIX60:** already in plan; needs PPC=4 for fabric 18.56 &lt; 20; STA unknown until fit.
+**PIX60:** already in plan; needs PPC=4 for fabric peak; STA unknown until fit.
 
 **ascal:** HDMI remains `video_mode` 720p60; core rate is **input** to ascal. 29.7 vs 37.125 is **content delivery rate into scaler**, not VIC legality (see `ASCAL_VS_CORE_RASTER.md`).
 

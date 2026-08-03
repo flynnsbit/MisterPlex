@@ -88,6 +88,63 @@
     "on_fmax_pix_short": "pipeline pix domain \u2014 do not false_path; do not bump clk_sys",
     "on_fmax_sys_short_from_wide_fifo": "narrow MLAB packing or AW \u2014 do not re-introduce sys-side serialize"
   },
+  "stage1b_pix30": {
+    "status": "PREREG_NOT_THIS_FIT",
+    "macros": [
+      "PRESENT_MULTI_PIXEL",
+      "PRESENT_PX_PER_CLK=2",
+      "PRESENT_CLK_PIX_PLL",
+      "PRESENT_CLK_PIX_30"
+    ],
+    "pll": {
+      "number_of_clocks": 4,
+      "output_clock_frequency3": "37.125000 MHz",
+      "clk_sys_unchanged": "20.000000 MHz",
+      "clk_ddr_unchanged": "90.000000 MHz"
+    },
+    "fabric_balance": {
+      "peak_sys_mpix": 40.0,
+      "consumer_mpix": 37.125,
+      "lead_ppm": 1000,
+      "producer_target_mpix": 37.162125,
+      "margin_ratio": 1.077,
+      "note": "Thin vs PIX24 1.35x — any >~7% systematic beam bubble fails long-term"
+    },
+    "npx_fifo": {
+      "architecture": "same_wide_group_as_pix24",
+      "prefill_groups_product": 16,
+      "fifo_aw": 6,
+      "cushion_us_at_37_125_full": 3.45,
+      "cushion_us_prefill16": 0.86
+    },
+    "pass": {
+      "fmax_clk_sys_mhz_min": 20.0,
+      "fmax_clk_pix_mhz_min": 37.125,
+      "setup_slack_all_constrained_ns_min": 0.0,
+      "hierarchy_nonzero": [
+        "u_mp_timing",
+        "u_mp_beam",
+        "u_mp_npx_path",
+        "u_mp_rate"
+      ],
+      "async_fifo_mem_false_path_still_present": true,
+      "no_whole_domain_false_path_sys_pix": true
+    },
+    "fail": [
+      "fmax_clk_pix < 37.125",
+      "fmax_clk_sys < 20.0",
+      "neg setup slack on gray pointer / pix cone",
+      "new whole-domain false_path clk_sys\u2194clk_pix",
+      "u_mp_rate elided"
+    ],
+    "on_fmax_pix_short": "pipeline pix domain \u2014 do not false_path; do not bump clk_sys",
+    "on_balance_fail_sim": "raise PPC to 4 or keep content delivery at 24/29.7",
+    "explicitly_unknown_until_fit": [
+      "exact multi-pixel Fmax MHz at 37.125",
+      "worst path endpoint names"
+    ],
+    "evidence_doc": ".agent-work/w-clock/NPX_PEAK_VS_SUSTAINED_AND_PIX30.md"
+  },
   "stage2_pix60": {
     "pll_output_clock_frequency3": "74.250000 MHz",
     "min_ppc": 4,

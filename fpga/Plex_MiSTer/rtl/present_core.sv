@@ -306,7 +306,12 @@ module present_core #(
 	wire                mp_wr_full, mp_wr_af, mp_rd_ur, mp_rd_empty;
 
 `ifdef PRESENT_CLK_PIX_PLL
-	localparam int MP_CLK_PIX_HZ = 29_700_000; // PIX24; PIX60=74_250_000 on grant
+`ifdef PRESENT_CLK_PIX_30
+	// PIX30 glass content rate (not held fit). Requires PRESENT_CLK_PIX_PLL.
+	localparam int MP_CLK_PIX_HZ = 37_125_000;
+`else
+	localparam int MP_CLK_PIX_HZ = 29_700_000; // PIX24 held fit
+`endif
 	localparam bit MP_INCLUDE_SYNC = 1'b1;
 `else
 	localparam int MP_CLK_PIX_HZ = 20_000_000;
@@ -339,7 +344,7 @@ module present_core #(
 	// near the high-water / backpressure side. Equal averages + ppm drift will
 	// eventually underrun a finite FIFO; overflow can throttle via in_ready,
 	// underflow cannot. Lead is absorbed by skid/async almost_full.
-	// 1000 ppm of 29.7e6 = 29700 → target 29_729_700 px/s group-equivalent.
+	// 1000 ppm lead: PIX24 → 29_729_700; PIX30 → 37_162_125 px/s equiv.
 	localparam int MP_PROD_LEAD_PPM = 1000;
 	localparam int MP_RATE_PIX_HZ =
 		MP_CLK_PIX_HZ + (MP_CLK_PIX_HZ / (1_000_000 / MP_PROD_LEAD_PPM));
