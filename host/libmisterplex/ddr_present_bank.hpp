@@ -36,10 +36,14 @@ struct DdrPublishPlan {
     // describes the Option-C map window (stride/doorbell/phys).
     size_t copy_bytes = 0;
     bool native_push = false;
+    // Capacity-selected bank map (LEG vs Option-C) matching layout window.
+    DdrBankMap bank_map = DdrBankMap::Legacy480p;
     // true ⇒ writePlxg then embed *committed* useSeq in doorbell (enable or
     // disable). false ⇒ doorbell field 0 (true legacy, no PLXG this frame).
     bool program_plxg = false;
     // Atomic 6-qword PLXG at bootstrap phys (0x300FF800). Not 3 temporal beats.
+    // q5 default 0; inject DAR/fps via injectPlxgQ5IntoPublishPlan — NEVER a
+    // standalone product write at active doorbell+0x828 (rd-duck).
     uint64_t plxg_q[6]{};
     // Advisory seed for writePlxg only — NEVER the doorbell field. Doorbell
     // must use committed useSeq when program_plxg (0 here means ungated ABI).
@@ -133,12 +137,23 @@ inline bool makeDdrPublishPlan(const DdrPublishFrame& frame, int bank, DdrPublis
     out.bank_offset = bankOff;
     out.bank_phys = layout.phys_base + static_cast<uint32_t>(bankOff);
     out.copy_bytes = frame.len;
+    out.bank_map = map;
     // native_push when storage is not the full tier canvas coded rectangle.
     out.native_push = (cw != mapGeom.coded_width.get() || ch != mapGeom.coded_height.get());
     out.program_plxg = true;
     out.plxg_seq = 1; // advisory; writePlxgRecord ignores and bumps
     for (int i = 0; i < 6; ++i)
         out.plxg_q[i] = plxg.q[i];
+    // Default q5=0; path injects DAR/fps into plxg_q[5] before writePlxgRecord.
+    return true;
+}
+
+// Overlay path DAR/fps q5 onto a publish plan for the same generation as bank
+// kick (rd-duck: one seqlock with writePlxgRecord — never standalone +0x828).
+inline bool injectPlxgQ5IntoPublishPlan(DdrPublishPlan& plan, uint64_t q5) {
+    if (!injectPlxgQ5IntoRecord(plan.plxg_q, q5))
+        return false;
+    plan.program_plxg = true;
     return true;
 }
 

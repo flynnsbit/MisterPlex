@@ -1272,7 +1272,55 @@ int main() {
         }
     }
 
-if (fails) {
+// ---- PLXG q5 full-record E2E (rd-duck BLOCKING) ----
+    // q5 rides one 6-qword seqlock; standalone +0x828 never promotes; Option-C
+    // active doorbell+0x828 is poller-blind (bootstrap 0x300FF828 only).
+    {
+        const uint64_t q5 = packPlxgQ5(/*dar*/16, 9, /*fps*/24, true, true);
+        CHECK(plxgQ5ReservedOk(q5));
+        CHECK(q5 != 0);
+        CHECK(!plxgRefuseStandaloneQ5ProductWrite(q5));
+        CHECK(plxgStandaloneQ5PhysIsPollerBlind(plxgFaultOptionCStandaloneQ5Phys()));
+        CHECK(plxgFaultOptionCStandaloneQ5Phys() == 0x3047F828u);
+        CHECK(!plxgStandaloneQ5PhysIsPollerBlind(mailbox_abi::kPlxgBootstrapPhys + 40u));
+
+        // LEG 320×240 + 624×480 and Option-C 960/720: inject survives commit.
+        const int cases[][2] = {{320, 240}, {624, 480}, {960, 540}, {1280, 720}};
+        for (const auto& hw : cases) {
+            const PlxgRecord base = makePlxgRecordFromStorage(
+                hw[0], hw[1], hw[0], hw[1], 0, 0, /*seq*/1);
+            CHECK(base.valid);
+            uint16_t committed = 0;
+            uint64_t latched = 0;
+            CHECK(plxgQ5FullRecordE2E(base.q, q5, /*softLast*/0, &committed, &latched));
+            CHECK(committed != 0);
+            CHECK(!plxgSeqDoorbellFieldIsReservedUngated(committed));
+            CHECK(latched == q5);
+            // Plan inject helper
+            std::vector<uint8_t> px(static_cast<size_t>(yuv420pFrameBytes(hw[0], hw[1])), 0);
+            DdrPublishFrame fr{};
+            fr.payload = px.data();
+            fr.len = px.size();
+            fr.geometry = makeDdrFrameGeometry(hw[0], hw[1]);
+            DdrPublishPlan plan{};
+            std::string err;
+            CHECK(makeDdrPublishPlan(fr, 0, plan, &err));
+            CHECK(plan.plxg_q[5] == 0); // default zero before inject
+            CHECK(injectPlxgQ5IntoPublishPlan(plan, q5));
+            CHECK(plan.plxg_q[5] == q5);
+            CHECK(plan.program_plxg);
+            // Capacity map still LEG/Option-C (not geom-derived doorbell).
+            CHECK(ddrFrameLayoutMatchesRtlCapacityMap(plan.layout));
+        }
+        // NEG: reserved bits refuse inject
+        const uint64_t dirty = packPlxgQ5FaultFps1001OnWire(16, 9, 24, true, true, true);
+        CHECK(!plxgQ5ReservedOk(dirty));
+        uint64_t tmp[6]{};
+        CHECK(!injectPlxgQ5IntoRecord(tmp, dirty));
+        std::fprintf(stderr, "  PLXG_Q5_FULL_RECORD_E2E_LEG_OPTIONC OK\n");
+    }
+
+    if (fails) {
         std::fprintf(stderr, "test_ddr_720p_abi: %d fails\n", fails);
         return 1;
     }

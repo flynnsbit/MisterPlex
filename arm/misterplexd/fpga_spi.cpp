@@ -847,6 +847,25 @@ void FpgaSpi::releasePlxgBootstrapMap() {
     }
 }
 
+bool FpgaSpi::stagePlxgQ5(uint64_t q5) {
+    if (!misterplex::plxgQ5ReservedOk(q5)) {
+        setErr("stagePlxgQ5: reserved [63:34] must be zero");
+        return false;
+    }
+    // Stage only — never poke active doorbell+0x828 (poller fixed at 0x300FF800).
+    plxgQ5Pending_ = q5;
+    plxgQ5PendingValid_ = true;
+    return true;
+}
+
+bool FpgaSpi::writePlxgQ5Standalone(uint64_t q5) {
+    (void)q5;
+    // Product refuse (rd-duck): standalone q5 never promotes; Option-C+0x828 is
+    // poller-blind. Use stagePlxgQ5 + program_plxg full record instead.
+    setErr("writePlxgQ5Standalone: refused — q5 must ride writePlxgRecord seqlock");
+    return false;
+}
+
 bool FpgaSpi::writePlxgRecord(const uint64_t q[6], uint16_t seq,
                               uint16_t* committedSeqOut) {
     if (!q) {
@@ -1766,9 +1785,22 @@ bool FpgaSpi::sendDdrFrame(const DdrPublishFrame& frame, const DdrPublishPlan& p
     // Mode-exit/full-canvas also program_plxg (disable): must couple to that
     // committed seq too — plan.plxg_seq was historically 0 (= doorbell ungated)
     // which let bank swap under still-live native pitch (B20).
+    // q5 (DAR/fps): inject staged path q5 into THIS generation's body — never a
+    // standalone doorbell+0x828 poke (rd-duck BLOCKING; poller needs new q0 seq).
     uint16_t committedPlxgSeq = 0;
     if (plan.program_plxg) {
-        if (!writePlxgRecord(plan.plxg_q, plan.plxg_seq, &committedPlxgSeq))
+        uint64_t plxgWords[6];
+        for (int i = 0; i < 6; ++i)
+            plxgWords[i] = plan.plxg_q[i];
+        if (plxgQ5PendingValid_) {
+            if (!misterplex::injectPlxgQ5IntoRecord(plxgWords, plxgQ5Pending_)) {
+                setErr("sendDdrFrame: pending PLXG q5 reserved bits illegal");
+                return false;
+            }
+            plxgQ5PendingValid_ = false;
+            plxgQ5Pending_ = 0;
+        }
+        if (!writePlxgRecord(plxgWords, plan.plxg_seq, &committedPlxgSeq))
             return false;
         if (misterplex::ddrDoorbellPlxgSeqPublishIllegalUngated(true, committedPlxgSeq)) {
             setErr("sendDdrFrame: committed PLXG seq packs doorbell field 0 "

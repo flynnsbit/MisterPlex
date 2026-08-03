@@ -382,6 +382,45 @@ inline void plxgHostStoreAtomic(uint8_t* ctrlPage, const PlxgRecord& rec) {
     plxgHostCommitQ0(ctrlPage, rec.q[0]);
 }
 
+// ---- q5 product path (rd-duck BLOCKING): ride full 6-qword seqlock only ----
+// Poller commits body only when q0 epoch/seq changes (plxg_ddr_poller skips
+// body when q0 == last). Standalone poke at doorbell+0x828 never promotes.
+// Poller is FIXED at bootstrap 0x300FF800 — Option-C active doorbell+0x828 is
+// never read. Inject q5 into plan.plxg_q[5] before writePlxgRecord.
+
+// Legal product path: overlay DAR/fps into a full record body (q0..q5).
+inline bool injectPlxgQ5IntoRecord(uint64_t plxg_q[6], uint64_t q5) {
+    if (!plxg_q || !plxgQ5ReservedOk(q5))
+        return false;
+    plxg_q[5] = q5;
+    return true;
+}
+
+// FAULT / pre-fix product: poke q5 alone at +0x828 without new q0 seq.
+// Poller must NOT promote this (seq unchanged).
+inline void plxgFaultWriteQ5OnlyStandalone(uint8_t* ctrlPage, uint64_t q5) {
+    if (!ctrlPage)
+        return;
+    std::memcpy(ctrlPage + mailbox_abi::kPlxgQ5Offset, &q5, 8);
+}
+
+// Product MUST refuse standalone q5 wire writes (always false).
+// Path/MediaPlayer may only stage pending q5 for inject into plxg_q[5].
+inline bool plxgRefuseStandaloneQ5ProductWrite(uint64_t /*q5*/) {
+    return false;
+}
+
+// Option-C active-map q5 address is NOT the poller read address.
+// Literal keeps plxg_record free of ddr_frame_layout include (cycle).
+inline uint32_t plxgFaultOptionCStandaloneQ5Phys() {
+    return 0x3047F000u + mailbox_abi::kPlxgQ5Offset; // 0x3047F828
+}
+inline bool plxgStandaloneQ5PhysIsPollerBlind(uint32_t phys) {
+    // Poller fixed bootstrap record end: 0x300FF800..0x300FF82F.
+    const uint32_t bootQ5 = mailbox_abi::kPlxgBootstrapPhys + 5u * 8u; // 0x300FF828
+    return phys != bootQ5;
+}
+
 // Read retained q0 seq from control page (before invalidate). Magic required.
 inline bool plxgCtrlLoadRetainedSeq(const uint8_t* ctrlPage, uint16_t* seqOut) {
     return plxgQ0Seq(plxgCtrlLoadQ(ctrlPage, 0), seqOut);
@@ -486,6 +525,61 @@ inline bool plxgPollerObserveVerified(PlxgPollerModel& p, const uint64_t snap[6]
     p.last_epoch = epoch;
     p.boot_baseline_done = true;
     ++p.cnt_commit;
+    return true;
+}
+
+// E2E: inject q5 → seqlock full record on bootstrap page → poller commits
+// nonzero DAR/fps; q5-only poke after must not promote. softLast seeds seq.
+// Defined after PlxgPollerModel (uses observe helpers).
+inline bool plxgQ5FullRecordE2E(const uint64_t plan_q_in[6], uint64_t q5, uint16_t softLast,
+                                uint16_t* committedOut, uint64_t* latchedQ5Out) {
+    if (!plan_q_in || !plxgQ5ReservedOk(q5) || q5 == 0)
+        return false;
+    uint8_t page[0x1000]{};
+    PlxgPollerModel pol{};
+    plxgPollerObserveEmpty(pol); // boot baseline on empty DDR
+    if (!pol.boot_baseline_done)
+        return false;
+
+    PlxgRecord rec{};
+    for (int i = 0; i < 6; ++i)
+        rec.q[i] = plan_q_in[i];
+    if (!injectPlxgQ5IntoRecord(rec.q, q5))
+        return false;
+    rec.valid = true;
+    uint16_t sw = softLast;
+    const uint16_t used = plxgHostWriteRecordRestartSafe(page, rec, &sw, /*honor*/ true);
+    if (used == 0 || plxgSeqDoorbellFieldIsReservedUngated(used))
+        return false;
+
+    uint64_t snap[6];
+    for (int i = 0; i < 6; ++i)
+        snap[i] = plxgCtrlLoadQ(page, i);
+    if (!plxgPollerObserveVerified(pol, snap, snap[0]))
+        return false;
+    if (pol.cnt_commit != 1 || snap[5] != q5)
+        return false;
+    // q5 wire image at FIXED +0x828 on bootstrap page.
+    uint64_t q5le = 0;
+    std::memcpy(&q5le, page + mailbox_abi::kPlxgQ5Offset, 8);
+    if (q5le != q5)
+        return false;
+
+    // NEG: standalone q5 poke — poller sees same q0 seq → skip body.
+    const uint64_t other = packPlxgQ5(4, 3, 25, true, true);
+    plxgFaultWriteQ5OnlyStandalone(page, other);
+    uint64_t snap2[6];
+    for (int i = 0; i < 6; ++i)
+        snap2[i] = plxgCtrlLoadQ(page, i);
+    if (plxgPollerObserveVerified(pol, snap2, snap2[0]))
+        return false; // must not promote
+    if (pol.cnt_commit != 1)
+        return false;
+
+    if (committedOut)
+        *committedOut = used;
+    if (latchedQ5Out)
+        *latchedQ5Out = q5;
     return true;
 }
 

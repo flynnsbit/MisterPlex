@@ -112,6 +112,13 @@ public:
     // Programs PLXG beats before doorbell when plan.program_plxg is set.
     bool publishDdrFabricOwned(const DdrPublishFrame& frame,
                                const DdrFabricOwnedPresentPlan& present, int bank = 0);
+    // Stage DAR/fps q5 for the next program_plxg publish. NEVER pokes active
+    // doorbell+0x828 alone (rd-duck: poller only promotes on new q0 seq at
+    // bootstrap 0x300FF800). Injected into plan.plxg_q[5] inside sendDdrFrame
+    // before writePlxgRecord (same generation as bank kick).
+    bool stagePlxgQ5(uint64_t q5);
+    // Product refuse: standalone q5 wire write is banned (always false).
+    bool writePlxgQ5Standalone(uint64_t q5);
     int lastPublishedBank() const { return lastPublishedBank_; }
     // DDR frame mmap policy. Default true keeps the proven strongly-ordered/device
     // mapping; false is a lab knob for write-combine/cacheable /dev/mem tests.
@@ -418,6 +425,9 @@ private:
     // writePlxgRecord seed from retained DDR q0 (rd-duck restart/ABA). Never
     // emit useSeq from plxgLastSeq_+1 alone while FPGA last_seq may still be N.
     uint16_t plxgLastSeq_ = 0;
+    // Pending path DAR/fps for inject into next writePlxgRecord body (not wire).
+    bool plxgQ5PendingValid_ = false;
+    uint64_t plxgQ5Pending_ = 0;
     void seedPlxgLastSeqFromRetainedLocked();
     int bitstreamMemFd_ = -1;
     uint8_t* bitstreamMap_ = nullptr;

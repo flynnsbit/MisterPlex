@@ -432,6 +432,13 @@ $(ROOT)/build/test_ddr_720p_abi: $(ROOT)/tests/unit/test_ddr_720p_abi.cpp \
 	@mkdir -p $(ROOT)/build
 	$(CXX) $(CXXFLAGS) -o $@ $(ROOT)/tests/unit/test_ddr_720p_abi.cpp
 
+$(ROOT)/build/test_plxg_q5_publish_e2e: $(ROOT)/tests/unit/test_plxg_q5_publish_e2e.cpp \
+		$(ROOT)/host/libmisterplex/plxg_record.hpp \
+		$(ROOT)/host/libmisterplex/ddr_present_bank.hpp \
+		$(ROOT)/host/libmisterplex/mailbox_abi_spec.hpp
+	@mkdir -p $(ROOT)/build
+	$(CXX) $(CXXFLAGS) -o $@ $(ROOT)/tests/unit/test_plxg_q5_publish_e2e.cpp
+
 $(ROOT)/build/test_fabric_ddr_top_wire: $(ROOT)/tests/unit/test_fabric_ddr_top_wire.cpp
 	@mkdir -p $(ROOT)/build
 	$(CXX) $(CXXFLAGS) -o $@ $(ROOT)/tests/unit/test_fabric_ddr_top_wire.cpp
@@ -441,7 +448,7 @@ $(ROOT)/build/test_fabric_ddr_top_wire: $(ROOT)/tests/unit/test_fabric_ddr_top_w
 # to print "No rule" and exit 2 (parent fit gate false positive).
 # .PHONY so a pre-existing binary never skips the absolute dep rebuild.
 .PHONY: build/test_fabric_ddr_top_wire build/test_bitstream_ring_abi \
-	build/test_h264_level_limits build/test_ddr_720p_abi
+	build/test_h264_level_limits build/test_ddr_720p_abi build/test_plxg_q5_publish_e2e
 build/test_fabric_ddr_top_wire:
 	@$(MAKE) --no-print-directory $(ROOT)/build/test_fabric_ddr_top_wire
 build/test_bitstream_ring_abi:
@@ -450,6 +457,8 @@ build/test_h264_level_limits:
 	@$(MAKE) --no-print-directory $(ROOT)/build/test_h264_level_limits
 build/test_ddr_720p_abi:
 	@$(MAKE) --no-print-directory $(ROOT)/build/test_ddr_720p_abi
+build/test_plxg_q5_publish_e2e:
+	@$(MAKE) --no-print-directory $(ROOT)/build/test_plxg_q5_publish_e2e
 
 $(ROOT)/build/test_ddr_publish_barrier: $(ROOT)/tests/unit/test_ddr_publish_barrier.cpp \
 		$(ROOT)/host/libmisterplex/ddr_publish_barrier.hpp \
