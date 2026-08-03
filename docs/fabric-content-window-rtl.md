@@ -118,13 +118,16 @@ Threat: pixel-path divide; keep SX/SY registered. Fill-path `fill_y * pitch` is 
 | Filter | Extra M10K | DSP | Fmax risk | Visual | Ship? |
 |--------|----------:|----:|-----------|--------|-------|
 | **NN (V1)** | **0** | **0** | none (mul+>>16) | shimmer on motion; worst = 720×404→1280×720 | **YES — this fit** |
-| Bilinear V only | ~2 (Y line pair @1280) | 2–4 | low | kills most vertical shimmer | phase 2 if glass ugly |
-| Bilinear H+V | ~2–3 | 4–8 | mod (H taps from qword) | TV-acceptable soft | phase 2 |
+| **Bilinear H+V (V2)** | lerp **0**; dual-Y hold **~2** if wired | 0–4 optional | OK @29.7 / 74.25 clk_pix | kills most NN shimmer | **RTL landed, macro OFF** |
 | 4-tap poly V | ~4+ | ascal-class | high on clk_sys | near-ascal | **NO** — ascal already on HDMI |
 
-**Decision for integration:** NN is good enough for the first fit. Free M10K went
-88→356; bilinear is affordable but gold-plating before a moving-720p glass proof
-is the wrong order. ascal does not re-filter when core DE already equals glass.
+**Decision as code:**
+- Integration fit = **NN** (`PRESENT_WINDOW_BILINEAR` undefined).
+- V2 RTL: `present_bilinear_lerp.sv` + window `store_x1/y1/frac_*` under
+  `PRESENT_WINDOW_BILINEAR`. Tap fetch through `present_core`/`ddr_frame_store`
+  is **not** auto-wired (fit risk / Quartus needs a real consumer later).
+- Gate: `tests/unit/test_present_bilinear_rtl_sim.sh` (macro ON sim).
+- clk_pix: no 20 MHz hardwire; mul path OK at w-clock’s ~29.7 MHz 720p24 CEA.
 
 Red-before-green scale faults (sim `+define`):
 `PRESENT_WINDOW_FAULT_IDENTITY_SCALE` · `…_FLOOR_SCALE` · `…_INVERT_RATIO`.

@@ -7,17 +7,19 @@
 //   win_enable=0 → legacy full-bank FRAME_W×FRAME_H (bit-compatible 480p path)
 //   win_enable=1 → stretch content_w×content_h at (content_x0,content_y0) across DE
 //
-// Quality V1: nearest-neighbour only — SHIPS first fit (parent: no gold-plate).
-//   Cost: 0 extra M10K, 0 DSP, pixel path = one 11×20 mul + >>16 + clamp.
-//   Visual: motion shimmer / stair-step on edges; worst case is PMS 720×404
-//   upscaled to 1280×720 (large NN magnify). HDMI ascal does NOT re-filter when
-//   core DE already equals the glass raster (w-clock PRESENT_MULTI_PIXEL).
+// Quality:
+//   V1 NN (default) — SHIPS first integration fit. 0 M10K, 0 DSP.
+//   V2 bilinear — `PRESENT_WINDOW_BILINEAR` (default OFF). This module exports
+//     floor/ceil sample coords + Q8 fracs; `present_bilinear_lerp.sv` does 2×2.
+//     Tap fetch / line hold is NOT auto-wired into present_core (fit risk).
+//     Cost when fully wired: lerp 0 M10K; dual Y lines ≈2 M10K @1280 or 2nd
+//     DDR fetch. Fmax: mul+>> only — OK at clk_pix 29.7 MHz (720p24 CEA) and
+//     74.25 MHz class; no pixel-path divide. 4-tap polyphase: do not build
+//     (ascal owns HDMI polyphase).
 //
-//   Affordable later (356 free M10K post-nostub) — NOT this fit:
-//     bilinear V  : ~2 M10K (Y line pair @1280) + 2–4 DSP lerp, low Fmax risk
-//     bilinear H+V: ~2–3 M10K + 4–8 DSP, needs 2-tap H from qword pair
-//     4-tap poly V: ~4 M10K + ascal-class DSP — DO NOT; ascal already on HDMI
-//   Phase-2 decision: only if glass shimmer is unacceptable after NN milestone.
+// clk_pix note (w-clock): product may run ce_pix above clk_sys 20 MHz once
+// pixel PLL lands (~29.7 for true 720p24). This mapper has no dependence on
+// 20 MHz — SX/SY update off ce_pix critical path; pixel path is one mul.
 //
 // Pixel path = mul-shift + add + clamp only. Scale dividers run when window
 // regs change and land in sx_r/sy_r — off the ce_pix critical path.
@@ -68,6 +70,16 @@ module present_content_window #(
 	output reg         de_r,
 	// py past active DE rows — present_core ORs into VBlank (G-VID1).
 	output wire        past_last_row
+	// Bilinear sample neighbourhood (meaningful when PRESENT_WINDOW_BILINEAR).
+	// When macro OFF, x1==x0, y1==y0, frac==0 → NN-equivalent if a consumer
+	// still wires lerp (safe default).
+`ifdef PRESENT_WINDOW_BILINEAR
+	,
+	output reg  [$clog2(STORE_W)-1:0] store_x1,
+	output reg  [$clog2(STORE_H)-1:0] store_y1,
+	output reg  [7:0]  frac_x,
+	output reg  [7:0]  frac_y
+`endif
 );
 
 	localparam int STORE_X_W = $clog2(STORE_W);
@@ -202,15 +214,43 @@ module present_content_window #(
 	wire [STORE_X_W-1:0] store_x_clamped = store_x_comb[STORE_X_W-1:0];
 	wire [STORE_Y_W-1:0] store_y_addr    = store_y_comb[STORE_Y_W-1:0];
 
+	// Bilinear neighbourhood: ceil sample + Q8 frac from Q16 residue.
+	// frac = prod[15:8] (upper 8 of fractional 16). At last column/row, x1=x0
+	// and frac forced 0 so lerp collapses to NN (no OOB read).
+	wire [15:0] x1_sum = store_x_comb + 16'd1;
+	wire [15:0] y1_sum = store_y_comb + 16'd1;
+	wire at_x_last = (store_x_comb >= {1'b0, last_x_r});
+	wire at_y_last = (store_y_comb >= {1'b0, last_y_r});
+	wire [15:0] store_x1_comb = at_x_last ? store_x_comb :
+		((x1_sum > {1'b0, last_x_r}) ? last_x_r : x1_sum);
+	wire [15:0] store_y1_comb = at_y_last ? store_y_comb :
+		((y1_sum > {1'b0, last_y_r}) ? last_y_r : y1_sum);
+	wire [7:0] frac_x_raw = store_x_prod[15:8];
+	wire [7:0] frac_y_raw = store_y_prod[15:8];
+	wire [7:0] frac_x_comb = at_x_last ? 8'd0 : frac_x_raw;
+	wire [7:0] frac_y_comb = at_y_last ? 8'd0 : frac_y_raw;
+
 	always @(posedge clk) begin
 		if (reset) begin
 			store_x <= '0;
 			store_y <= '0;
 			de_r    <= 1'b0;
+`ifdef PRESENT_WINDOW_BILINEAR
+			store_x1 <= '0;
+			store_y1 <= '0;
+			frac_x   <= 8'd0;
+			frac_y   <= 8'd0;
+`endif
 		end else if (ce_pix) begin
 			de_r    <= in_content;
 			store_x <= store_x_clamped;
 			store_y <= store_y_addr;
+`ifdef PRESENT_WINDOW_BILINEAR
+			store_x1 <= store_x1_comb[STORE_X_W-1:0];
+			store_y1 <= store_y1_comb[STORE_Y_W-1:0];
+			frac_x   <= frac_x_comb;
+			frac_y   <= frac_y_comb;
+`endif
 		end
 	end
 

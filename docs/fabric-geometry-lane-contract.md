@@ -78,12 +78,33 @@ Under `PRESENT_MULTI_PIXEL` + `use_ext`: window **must** take beam `glass_x0` an
 
 ## Quality (first fit)
 
-**NN only** for integration. Honest cost of bilinear/poly is in
-`docs/fabric-content-window-rtl.md` — deferred so the fit ships.
+| Macro | Default | Role |
+|-------|---------|------|
+| (none) NN | ON path | Integration fit — 0 M10K |
+| `PRESENT_WINDOW_BILINEAR` | **OFF** | Fracs + `present_bilinear_lerp` landed; tap fetch not auto-wired |
+
+### clk_pix rate (w-clock finding)
+
+Same-clock `clk_pix=clk_sys=20` caps ≈16.16 Hz at CEA totals. True 720p24 needs
+**≈29.7 MHz** pixel clock (separate PLL — w-clock). Scaler pixel path is mul+shift
+only (no divide on `ce_pix`) → correct at 29.7 and 74.25 class; no 20 MHz assumption.
+
+### Sibling pins (quoted — escalate if drift)
+
+| Lane | File | Pin |
+|------|------|-----|
+| w-clock | `present_video_timing_720p.sv` | `H_DE_L=1280`, `V_ACTIVE_L=720` |
+| w-clock | `present_beam_ppc.sv` defaults | `H_DE=1280`, `V_ACTIVE=720` |
+| w-clock | `present_core.sv` macros OFF | `H_DE=10'd529` Template |
+| w-osd | `plex_chrome_cmds.hpp` | `kTargetOutW=1280`, `kTargetOutH=720` |
+| w-scaler | `ddr_frame_layout.hpp` | Option-C + coded 1280×720 |
+
+Gate encodes the same numbers: `tests/unit/test_720p_geometry_lane_agree.cpp`.
 
 ---
 
 ## Default OFF
 
-`win_enable=0`, `geom_enable=0`, `FABRIC_NATIVE_720P_GEOM` undefined → bit-identical
-legacy 480p path vs control `d1b24e0c` at reset.
+`win_enable=0`, `geom_enable=0`, `FABRIC_NATIVE_720P_GEOM` undefined,
+`PRESENT_WINDOW_BILINEAR` undefined → bit-identical legacy 480p path vs control
+`d1b24e0c` at reset.
