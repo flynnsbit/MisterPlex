@@ -36,6 +36,13 @@ G requires: `measured_cdc_async=1`, `measured_host_we_beats=2`, `measured_ctrl_b
 w-scaler `present_core` **must not win wholesale**. That tip dropped w-mem B16 `geom_live_seq`/`geom_live_valid`, `stat_geom_hold_black`/`stat_geom_hollow`, store `.rt_geom_*` / `.geom_hold_black` nets, and Option-C `#()` wiring; and lacked w-clock B15 `beam_film_class` → `cadence_display_hz` (24/30) into `present_cadence.display_hz`.  
 **Same-symbol opposite-direction green-in-isolation:** each lane alone is green; ancestry/file presence stay green after a bad merge; **connections** are gone. Gate asserts **ports + instance nets + Plex.sv hierarchy wiring**, not ancestor SHA. Measured: mem has B16 ports+nets+Plex; scaler/clock tip core OK but Plex unconnected; c5bd6009 core missing ports+cadence.  
 
+**B23 single-owner table (parent arbitration #3):**  
+Three whole-file-adoption incidents (ddr_frame_store / Plex.sv q5 nets / present_core) share one root cause: multi-owner files resolved by taking "the good copy".  
+**SoT:** `docs/rtl_single_owner_table.json` — owners: w-mem (store, latch, mailbox_abi), w-clock (present_core, beam, fps_sel), w-scaler (window, plex_video_ar), w-osd (**Plex.sv integration only — patches not copies**), w-fitgate (this gate).  
+**Rule:** non-owner NEVER whole-file-copies; submit precise patch/port contract to owner.  
+**Canonical ABI #2 nets:** `plxg_*` (w-mem producer wins). `fabric_dar_*` / `fabric_content_fps` without `plxg_*` → `B23_ABI2_FABRIC_NETS_NOT_PLXG` (incident #2 / undriven class).  
+**Gate backstop:** `B23_OWNER_MARKERS_MISSING` when owner contract markers drop; ownership is the **cure**, gate is not. B19 catches content drop #1; B20_UNCONNECTED catches #2 wiring; B22 catches #3 present_core ports — B23 names the process class.  
+
 **B1 OPTION_C vs geom-off legacy (rd-duck — architecture):**  
 Host `makeDdrPublishPlan` (ddr_present_bank.hpp) on mode-exit / PLXG disable programs **legacy** phys base + doorbell **`0x300FF000`**. FPGA `geom_enable=0` must poll that map.  
 **Forbidden:** `` `ifdef OPTION_C `` rebinding `LEG_BASE_W0`/`LEG_DOORBELL_W` to `PHYS_BASE_720P`/`DOORBELL_PHYS_720P` — then geom-off still polls Option-C and **ignores host legacy frames**. Gate token **`B1_OPTION_C_REBASES_LEGACY`**.  

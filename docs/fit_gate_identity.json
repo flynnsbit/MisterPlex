@@ -1,5 +1,5 @@
 {
-  "gate_identity_hash": "2128b46587b5fdb0427eded85ef501a293e5a2b3",
+  "gate_identity_hash": "b49990e3c8acd735d58f4f98dbdf61ee3863050e",
   "paths": [
     "scripts/fit_release_gate.py",
     "scripts/fit_release_gate.sh",

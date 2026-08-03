@@ -1,0 +1,126 @@
+{
+  "version": 1,
+  "arbitration": "PARENT ARBITRATION #3 — 2026-08-03",
+  "binding": "A non-owner NEVER whole-file-copies an owned file. Submit a precise patch or port/param contract to the owner. Plex.sv is integration-only (w-osd).",
+  "canonical_abi2_net_prefix": "plxg_",
+  "deprecated_abi2_aliases": ["fabric_dar_", "fabric_content_fps", "fabric_fps_"],
+  "incidents": [
+    {
+      "id": 1,
+      "file": "fpga/Plex_MiSTer/rtl/ddr_frame_store.sv",
+      "class": "whole-file adoption dropped owner content",
+      "gate_backstop": "B19_MERGE_LOSS + B7/B14 evidence"
+    },
+    {
+      "id": 2,
+      "file": "fpga/Plex_MiSTer/Plex.sv",
+      "class": "producer/consumer net rename; zero drivers",
+      "gate_backstop": "B20_UNCONNECTED_PRODUCER + plxg_* canonical"
+    },
+    {
+      "id": 3,
+      "file": "fpga/Plex_MiSTer/rtl/present_core.sv",
+      "class": "whole-file adoption reopened B7+B15+B16",
+      "gate_backstop": "B22 present_core merge-semantics"
+    }
+  ],
+  "owners": [
+    {
+      "path": "fpga/Plex_MiSTer/rtl/ddr_frame_store.sv",
+      "owner": "w-mem",
+      "note": "w-scaler adopted + never-touch-again",
+      "required_markers": [
+        "rt_need_optc",
+        "rt_payload_bytes",
+        "LEG_BANK_USABLE",
+        "rt_coded_w[3:0]",
+        "rt_geom_seq",
+        "geom_hold_black"
+      ]
+    },
+    {
+      "path": "fpga/Plex_MiSTer/rtl/present_geom_latch.sv",
+      "owner": "w-mem",
+      "note": "PLXG / ABI #2 producer, B16 atomic promotion",
+      "required_markers": [
+        "promote_pulse",
+        "live_epoch",
+        "sh_epoch"
+      ]
+    },
+    {
+      "path": "host/libmisterplex/mailbox_abi_spec.hpp",
+      "owner": "w-mem",
+      "note": "kPlxgOffset 0x800 frozen; q5 at +0x828",
+      "required_markers": [
+        "0x800",
+        "0x828"
+      ],
+      "optional_if_missing": true
+    },
+    {
+      "path": "fpga/Plex_MiSTer/rtl/present_core.sv",
+      "owner": "w-clock",
+      "note": "raster/cadence top; B15 lives here; non-owners patch via w-clock",
+      "required_markers": [
+        "geom_live_seq",
+        "geom_live_valid",
+        "stat_geom_hold_black",
+        "stat_geom_hollow",
+        "PHYS_BASE_720P",
+        "beam_film_class",
+        "cadence_display_hz"
+      ]
+    },
+    {
+      "path": "fpga/Plex_MiSTer/rtl/present_beam_content_de.sv",
+      "owner": "w-clock",
+      "note": "collision #7 arbitrated; others consume",
+      "required_markers": [
+        "module present_beam_content_de",
+        "hc",
+        "vc"
+      ]
+    },
+    {
+      "path": "fpga/Plex_MiSTer/rtl/plex_content_fps_sel.sv",
+      "owner": "w-clock",
+      "required_markers": [
+        "module plex_content_fps_sel"
+      ],
+      "optional_if_missing": true
+    },
+    {
+      "path": "fpga/Plex_MiSTer/rtl/present_content_window.sv",
+      "owner": "w-scaler",
+      "required_markers": [
+        "module present_content_window"
+      ],
+      "optional_if_missing": true
+    },
+    {
+      "path": "fpga/Plex_MiSTer/rtl/plex_video_ar.sv",
+      "owner": "w-scaler",
+      "note": "B9 consumer",
+      "required_markers": [
+        "module plex_video_ar"
+      ],
+      "optional_if_missing": true
+    },
+    {
+      "path": "fpga/Plex_MiSTer/Plex.sv",
+      "owner": "w-osd",
+      "note": "INTEGRATION ONLY — lanes submit patches, never whole-file copies",
+      "required_markers": []
+    },
+    {
+      "path": "scripts/fit_release_gate.py",
+      "owner": "w-fitgate",
+      "note": "single-owner lane, reviewer sign-off",
+      "required_markers": [
+        "LEG0_ARCH_BLOCKERS_EXECUTED",
+        "run_b20_hierarchy_exec_gate"
+      ]
+    }
+  ]
+}

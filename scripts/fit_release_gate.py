@@ -114,6 +114,7 @@ GATED_PATHSPECS = (
     "docs/ascal-true-de-fit-card.md",
     "docs/product-4-3-scaler-decision.md",
     "docs/fit_gate_identity.json",
+    "docs/rtl_single_owner_table.json",
     "Makefile",
 )
 # Ruler identity: gate + companions that must stay in lockstep across lanes.
@@ -178,6 +179,9 @@ LIVE_OPEN_BLOCKER_TOKENS = (
     "B22_PRESENT_CORE_GEOM_LIVE_PORTS",
     "B22_PRESENT_CORE_BLACKOUT_HOLLOW_PORTS",
     "B22_PRESENT_CORE_CADENCE_CORE_HZ",
+    # Parent arb #3 single-owner backstop (markers on owned files)
+    "B23_OWNER_MARKERS_MISSING",
+    # B23_ABI2_FABRIC_NETS_NOT_PLXG: closed-class reinject (not always live)
 )
 
 # Sibling-lane fixes that exist but are not merged into this gated tree.
@@ -1710,6 +1714,115 @@ def _check_present_core_merge_semantics(
     return msgs, errors
 
 
+def run_single_owner_table_gate(root: Path) -> tuple[list[str], list[str]]:
+    """Parent arbitration #3 — single-owner file table (gate is backstop, not cure).
+
+    Ownership prevents whole-file adoption at the source. Gate verifies owner
+    contract markers remain on the gated tree and that ABI #2 nets are plxg_*.
+    """
+    msgs: list[str] = []
+    errors: list[str] = []
+    candidates = [
+        root / "docs" / "rtl_single_owner_table.json",
+        RULER_ROOT / "docs" / "rtl_single_owner_table.json",
+    ]
+    path = next((p for p in candidates if p.is_file()), None)
+    if path is None:
+        errors.append(
+            "B23_OWNER_TABLE_MISSING: docs/rtl_single_owner_table.json absent. "
+            "Parent arbitration #3 is binding — table must ship with the ruler."
+        )
+        msgs.append("LEG0_B23_OWNER_TABLE_MISS")
+        return msgs, errors
+    try:
+        data = json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError) as exc:
+        errors.append(f"B23_OWNER_TABLE_BAD_JSON: {path}: {exc}")
+        return msgs, errors
+
+    owners = list(data.get("owners") or [])
+    canon = str(data.get("canonical_abi2_net_prefix") or "plxg_")
+    deprecated = [str(x) for x in (data.get("deprecated_abi2_aliases") or [])]
+    msgs.append(
+        f"LEG0_B23_OWNER_TABLE_EXECUTED path={path} n_files={len(owners)} "
+        f"abi2_prefix={canon} arbitration={data.get('arbitration', '?')}"
+    )
+    msgs.append(
+        "LEG0_B23_OWNER_RULE non-owner NEVER whole-file-copies an owned file; "
+        "submit precise patch/port contract to owner. Plex.sv=w-osd integration only. "
+        "Gate is backstop not cure (parent arb #3)."
+    )
+
+    for ent in owners:
+        rel = str(ent.get("path") or "")
+        owner = str(ent.get("owner") or "?")
+        markers = [str(m) for m in (ent.get("required_markers") or [])]
+        optional = bool(ent.get("optional_if_missing"))
+        fpath = root / rel
+        # Ruler-owned scripts always checked on RULER_ROOT when scanning foreign root.
+        if rel.startswith("scripts/") and not fpath.is_file():
+            fpath = RULER_ROOT / rel
+        if not fpath.is_file():
+            if optional:
+                msgs.append(
+                    f"LEG0_B23_OWNER_FILE_ABSENT_OPTIONAL path={rel} owner={owner}"
+                )
+                continue
+            errors.append(
+                f"B23_OWNER_FILE_MISSING: owned file {rel} (owner={owner}) absent "
+                f"from gated tree. Whole-file drop / never-merged class."
+            )
+            continue
+        try:
+            txt = fpath.read_text(errors="replace")
+        except OSError as exc:
+            errors.append(f"B23_OWNER_FILE_UNREADABLE: {rel}: {exc}")
+            continue
+        missing = [m for m in markers if m not in txt]
+        msgs.append(
+            f"LEG0_B23_OWNER_SCAN path={rel} owner={owner} "
+            f"markers_ok={len(markers) - len(missing)}/{len(markers)} "
+            f"missing={missing[:6]}"
+        )
+        if missing:
+            errors.append(
+                f"B23_OWNER_MARKERS_MISSING: {rel} (owner={owner}) lacks contract "
+                f"markers {missing}. Parent arb #3: non-owners must not whole-file "
+                f"adopt this path — dropped markers reopen multi-blocker classes "
+                f"(incidents #1 ddr_frame_store, #3 present_core). "
+                f"Submit a patch to {owner}; do not copy another lane's file."
+            )
+
+    # ABI #2 canonical nets: fabric_* consumer without plxg_* is incident #2 class.
+    plex = root / "fpga" / "Plex_MiSTer" / "Plex.sv"
+    if plex.is_file():
+        pt = plex.read_text(errors="replace")
+        fabric_hits = sorted(
+            set(re.findall(r"\bfabric_(?:dar_[\w]+|content_fps|fps_[\w]+)\b", pt))
+        )
+        plxg_hits = sorted(set(re.findall(r"\bplxg_(?:dar_[\w]+|content_fps|fps_[\w]+|q5)\b", pt)))
+        msgs.append(
+            f"LEG0_B23_ABI2_NETS fabric={fabric_hits[:8]} plxg={plxg_hits[:8]}"
+        )
+        if fabric_hits and not plxg_hits:
+            errors.append(
+                "B23_ABI2_FABRIC_NETS_NOT_PLXG: Plex.sv uses fabric_* ABI #2 nets "
+                f"{fabric_hits[:6]} without plxg_* producers. Parent arb #3: "
+                "canonical prefix is plxg_* (w-mem producer wins). Merge that kept "
+                "consumer and dropped producer → zero drivers (incident #2 / "
+                "B20_UNCONNECTED_PRODUCER class). Reconcile fabric_* → plxg_*."
+            )
+        elif fabric_hits and plxg_hits:
+            msgs.append(
+                "LEG0_B23_ABI2_BOTH_PREFIXES present — ensure fabric_* are aliases "
+                "or removed; plxg_* is SoT"
+            )
+        for dep in deprecated:
+            if dep in pt and canon not in "plxg_":
+                pass  # covered above
+    return msgs, errors
+
+
 def leg0_arch_blockers() -> tuple[int, list[str]]:
     """rd-duck fit blockers — FAIL until a coherent candidate clears each.
 
@@ -1720,6 +1833,11 @@ def leg0_arch_blockers() -> tuple[int, list[str]]:
     msgs: list[str] = ["LEG0_ARCH_BLOCKERS_EXECUTED begin"]
     errors: list[str] = []
     msgs.append(f"LEG0_SCAN_ROOT root={ROOT} ruler={RULER_ROOT}")
+
+    # Parent arbitration #3 — single-owner table (backstop; ownership is the cure).
+    o_msgs, o_errs = run_single_owner_table_gate(ROOT)
+    msgs.extend(o_msgs)
+    errors.extend(o_errs)
 
     # Live sibling attribution (parent routing: unmerged vs unimplemented).
     _LIVE_ATTR, _LIVE_ATTR_MSGS = scan_sibling_attribution()
@@ -4022,6 +4140,8 @@ def _mutation_per_blocker_clear_restore() -> list[str]:
     dec = ROOT / "docs" / "product-4-3-scaler-decision.md"
     dummy_test = ROOT / "tests" / "unit" / "_fitgate_mut_ddr_beam_dummy.sh"
     dummy_ar = ROOT / "tests" / "unit" / "_fitgate_mut_ar_dummy.sh"
+    owner_table = ROOT / "docs" / "rtl_single_owner_table.json"
+    mailbox = ROOT / "host" / "libmisterplex" / "mailbox_abi_spec.hpp"
 
     def clear_layout_960(txt: str) -> str:
         txt = re.sub(
@@ -4266,6 +4386,21 @@ present_core u_mut_b22_core (
 """
         return inject + txt
 
+    def clear_b23_owner_markers(txt: str) -> str:
+        """Inject every arb #3 owner contract marker so B23_OWNER_MARKERS_MISSING clears."""
+        # Full union of table markers (comment bait is enough — gate is presence, not elab).
+        inject = (
+            "\n// fitgate mut B23_OWNER_MARKERS_MISSING clear — parent arb #3 markers\n"
+            "// rt_need_optc rt_payload_bytes LEG_BANK_USABLE rt_coded_w[3:0] "
+            "rt_geom_seq geom_hold_black promote_pulse live_epoch sh_epoch "
+            "0x800 0x828 geom_live_seq geom_live_valid stat_geom_hold_black "
+            "stat_geom_hollow PHYS_BASE_720P beam_film_class cadence_display_hz "
+            "module present_beam_content_de module plex_content_fps_sel "
+            "module present_content_window module plex_video_ar "
+            "LEG0_ARCH_BLOCKERS_EXECUTED run_b20_hierarchy_exec_gate\n"
+        )
+        return inject + txt
+
     # Each entry: token, list of (path, transform) applied together for clear.
     specs: list[tuple[str, list[tuple[Path, object]]]] = [
         ("B1_LAYOUT_NOT_960", [(layout, clear_layout_960)]),
@@ -4301,6 +4436,17 @@ present_core u_mut_b22_core (
         (
             "B22_PRESENT_CORE_CADENCE_CORE_HZ",
             [(core, clear_b22_present_core)],
+        ),
+        # Parent arb #3: inject owner contract markers into every owned artefact.
+        (
+            "B23_OWNER_MARKERS_MISSING",
+            [
+                (store, clear_b23_owner_markers),
+                (latch, clear_b23_owner_markers),
+                (mailbox, clear_b23_owner_markers),
+                (core, clear_b23_owner_markers),
+                (beam, clear_b23_owner_markers),
+            ],
         ),
         # Store-wire / plex-unconnected only fire when ports exist — closed reinject.
         (
@@ -5334,6 +5480,108 @@ def _mutation_closed_class_reinject() -> list[str]:
                             synth.unlink()
                         except OSError:
                             pass
+
+    # B23 parent arb #3 — single-owner table + ABI #2 fabric_* without plxg_*.
+    # Prove strip-after-clear: ancestry/table presence alone must not keep green.
+    owner_tbl = ROOT / "docs" / "rtl_single_owner_table.json"
+    marker_blob = (
+        "// mut B23 full owner markers seed\n"
+        "// rt_need_optc rt_payload_bytes LEG_BANK_USABLE rt_coded_w[3:0] "
+        "rt_geom_seq geom_hold_black promote_pulse live_epoch sh_epoch "
+        "0x800 0x828 geom_live_seq geom_live_valid stat_geom_hold_black "
+        "stat_geom_hollow PHYS_BASE_720P beam_film_class cadence_display_hz "
+        "module present_beam_content_de module plex_content_fps_sel "
+        "module present_content_window module plex_video_ar "
+        "LEG0_ARCH_BLOCKERS_EXECUTED run_b20_hierarchy_exec_gate\n"
+    )
+    b23_paths = [
+        RTL / "ddr_frame_store.sv",
+        RTL / "present_geom_latch.sv",
+        ROOT / "host" / "libmisterplex" / "mailbox_abi_spec.hpp",
+        RTL / "present_core.sv",
+        RTL / "present_beam_content_de.sv",
+    ]
+    if owner_tbl.is_file() and all(p.is_file() for p in b23_paths):
+        restorers_b23: list = []
+        try:
+            # 1) Seed all markers so B23_OWNER_MARKERS_MISSING would clear.
+            for p in b23_paths:
+                restorers_b23.append(
+                    _with_file_backup(p, marker_blob + p.read_text())
+                )
+            _rc, msgs = leg0_arch_blockers()
+            toks = _leg0_error_tokens(msgs)
+            if "B23_OWNER_MARKERS_MISSING" in toks:
+                fails.append(
+                    "B23 seed: markers still missing after full inject — HOLE in clear path"
+                )
+            else:
+                # 2) Strip one required store marker; must re-fire (not ancestry).
+                store_now = b23_paths[0]
+                cur = store_now.read_text().replace(
+                    "rt_need_optc", "rt_need_OPT_C_REMOVED", 1
+                )
+                store_now.write_text(cur)
+                _rc2, msgs2 = leg0_arch_blockers()
+                toks2 = _leg0_error_tokens(msgs2)
+                if "B23_OWNER_MARKERS_MISSING" not in toks2:
+                    fails.append(
+                        "B23_OWNER_MARKERS_MISSING: strip rt_need_optc after clear "
+                        "did not fire — HOLE (table/ancestry alone insufficient)"
+                    )
+                else:
+                    print(
+                        "  MUT_OK B23_OWNER_MARKERS_MISSING "
+                        "seed_clear=1 strip_reinject_fire=1"
+                    )
+        finally:
+            for r in reversed(restorers_b23):
+                r()
+
+        # Bad JSON table must fire.
+        rest_t = _with_file_backup(owner_tbl, "{not-valid-json")
+        try:
+            _rc, msgs = leg0_arch_blockers()
+            toks = _leg0_error_tokens(msgs)
+            txt = "\n".join(msgs)
+            if "B23_OWNER_TABLE_BAD_JSON" not in toks and "B23_OWNER_TABLE_BAD_JSON" not in txt:
+                fails.append(
+                    "B23_OWNER_TABLE_BAD_JSON: corrupt table reinject did not fire — HOLE"
+                )
+            else:
+                print("  MUT_OK B23_OWNER_TABLE_BAD_JSON reinject_fire=1")
+        finally:
+            rest_t()
+
+    # B23_ABI2: fabric_* ABI #2 nets without plxg_* producers (incident #2).
+    if plex_p.is_file():
+        old_px2 = plex_p.read_text()
+        bad_px2 = re.sub(
+            r"\bplxg_(?:dar_[\w]+|content_fps|fps_[\w]+|q5)\b",
+            "/*mut_plxg*/",
+            old_px2,
+        )
+        if "fabric_dar_valid" not in bad_px2:
+            bad_px2 += (
+                "\n// mut B23 ABI2 fabric-only (no plxg_ producers)\n"
+                "wire fabric_dar_valid;\n"
+                "wire [11:0] fabric_dar_x, fabric_dar_y;\n"
+                "wire fabric_fps_valid;\n"
+                "wire [7:0] fabric_content_fps;\n"
+                "plex_video_ar u_mut_ar(.host_dar_valid(fabric_dar_valid));\n"
+            )
+        rest = _with_file_backup(plex_p, bad_px2)
+        try:
+            _rc, msgs = leg0_arch_blockers()
+            toks = _leg0_error_tokens(msgs)
+            if "B23_ABI2_FABRIC_NETS_NOT_PLXG" not in toks:
+                fails.append(
+                    "B23_ABI2_FABRIC_NETS_NOT_PLXG: fabric-only reinject did not fire — HOLE"
+                )
+            else:
+                print("  MUT_OK B23_ABI2_FABRIC_NETS_NOT_PLXG reinject_fire=1")
+        finally:
+            rest()
 
     return fails
 
