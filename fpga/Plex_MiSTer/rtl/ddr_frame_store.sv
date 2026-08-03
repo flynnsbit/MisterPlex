@@ -1,4 +1,6 @@
 // HPS-DDR-backed YUV420p frame store.
+// OWNER: w-mem (parent arbitration #3). Non-owners: patch contract only — never
+// whole-file adopt. w-scaler has formally never-touch-again this file.
 //
 // Reads planar YUV420 from HPS DDR banks into bank-tagged M10K line buffers.
 // Legacy defaults match host/libmisterplex/ddr_frame_layout.hpp (624×480).
