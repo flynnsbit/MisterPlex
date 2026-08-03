@@ -1265,8 +1265,11 @@ def check_ddr_frame_layout_contract() -> None:
         ("kPlex480pCodedHeight", "DDR_FRAME_CODED_HEIGHT"),
         ("kPlex480pDisplayWidth", "DDR_FRAME_DISPLAY_WIDTH"),
         ("kPlex480pDisplayHeight", "DDR_FRAME_DISPLAY_HEIGHT"),
-        ("kPlex480pPresentedWidth", "DDR_FRAME_PRESENTED_WIDTH"),
-        ("kPlex480pPresentedHeight", "DDR_FRAME_PRESENTED_HEIGHT"),
+        # Product max-tier presented (960×540 ceiling) vs legacy 480p pillarbox.
+        ("kDdrFramePresentedWidth", "DDR_FRAME_PRESENTED_WIDTH"),
+        ("kDdrFramePresentedHeight", "DDR_FRAME_PRESENTED_HEIGHT"),
+        ("kPlex480pPresentedWidth", "DDR_FRAME_LEGACY480_PRESENTED_WIDTH"),
+        ("kPlex480pPresentedHeight", "DDR_FRAME_LEGACY480_PRESENTED_HEIGHT"),
         ("kPlex480pCropLeft", "DDR_FRAME_CROP_LEFT"),
         ("kPlex480pCropRight", "DDR_FRAME_CROP_RIGHT"),
         ("kPlex480pCropTop", "DDR_FRAME_CROP_TOP"),

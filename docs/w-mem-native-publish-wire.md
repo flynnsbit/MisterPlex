@@ -77,3 +77,15 @@ cd /home/flynnsbit/Projects/MisterPlex-wt-mem
 python3 tests/unit/test_rtl_invariants.py; echo "true rc=$?"
 make arm-plexd
 ```
+
+## B1 / B4 / B12 (2026-08-03 parent mandate)
+
+| ID | Fix | Evidence |
+|----|-----|----------|
+| B1 | `OPTION_C` compile-time LEG→Option-C bank re-base in `ddr_frame_store`; `DDR_FRAME_PRESENTED=960×540` max tier; dual-header `kDdrFramePresented*` + `DDR_FRAME_LEGACY480_PRESENTED*`; QSF `OPTION_C=1` | fit gate: no B1_*; `LEG0_LAYOUT presented=960x540` |
+| B4 | `present_geom_latch` q0[47:34] epoch; product requires epoch≠0 + new (epoch,seq); `FAULT_NO_EPOCH` red twin | `./tests/unit/test_present_geom_latch_aba.sh` rc=0; REPRO on fault |
+| B12 | Store RGB lag measured @960 and @624 | `./tests/unit/test_ddr_store_rgb_lag.sh` rc=0; **lag_cycles=1** both; DE_LAG=3 kept; comment cites measure |
+
+Fit gate (strong from w-fitgate): **LEG0_FAIL count=3** (was 7): B6 store oracle, B10 discover_design kwarg (fitgate), B13 runtime DE ports. B1/B4/B12 clear.
+
+NBA/line-gen: still absent on tip (`31f1a1a1` revert) — named symbols unreachable.

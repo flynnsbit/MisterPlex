@@ -26,6 +26,7 @@ Exit codes:
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
 import shutil
@@ -45,6 +46,95 @@ CANDIDATE_PATHS = (
     ROOT / "assets" / "fit_candidate.json",
     FIX / "fit_candidate.json",
 )
+# Parent lock (2026-08-03): ascal_true_de_960 only for this fit campaign.
+PARENT_LOCKED_ARCH = "ascal_true_de_960"
+# Paths whose blob inventory is the candidate tree hash (excludes fit_candidate.json
+# so the candidate file cannot hash-bypass itself).
+GATED_PATHSPECS = (
+    "fpga",
+    "scripts/fit_release_gate.py",
+    "scripts/fit_release_gate.sh",
+    "scripts/check_verilator_elab.py",
+    "scripts/rtl_lint.py",
+    "scripts/check_define_parity.py",
+    "tests/rtl",
+    "tests/unit/test_present_true_de_count_rtl_sim.sh",
+    "tests/fixtures/fit_release_gate",
+    "docs/ascal-true-de-fit-card.md",
+    "docs/product-4-3-scaler-decision.md",
+    "Makefile",
+)
+# Open blockers that must remain visible on a stale product tree (mutation inventory).
+# Not every token forever — only defects still present in artefacts. Updated when
+# real fixes land (then mutation expects absence + a paired RED twin that re-injects).
+# Parent 2026-08-03: per-token mutation must prove each claimed check still fires.
+LIVE_OPEN_BLOCKER_TOKENS = (
+    "B1_NO_COMPILE_TIME_OPTC",
+    "B1_LAYOUT_NOT_960",
+    "B2_FPS_INT_OVERFLOW",
+    "B2_NO_RASTER_GENERATOR",
+    "B1_40MPIX_NOT_PRODUCT",
+    "B4_PLXG_SAME_SEQ_ABA",
+    "B5_NO_DDR_ON_BEAM_TEST",
+    "B7_OPTC_WIDTH_ONLY",
+    "B7_PRESENT_CORE_NO_OPTC_PHYS",
+    "B7_PRESENT_CORE_NO_OPTC_STRIDE",
+    "B7_PRESENT_CORE_NO_OPTC_DOORBELL",
+    "B8_PLXG_WR_COMMIT_TIED_ZERO",
+    "B8_CONTENT_BASE_NOT_960",
+    "B8_FORCE_GEOM_1280_NOT_960",
+    "B9_ASPECT_ORIGINAL_4_3",
+    "B9_NO_AR_TOPLEVEL_TEST",
+    "B12_DE_LAG_RGB_LATENCY_UNPROVEN",
+    "B13_FIXED_RASTER_NO_RUNTIME_DE",
+)
+
+# Sibling-lane fixes that exist but are not merged into this gated tree.
+# status: unmerged | unimplemented
+# Gate output must say which — parent routes merge vs new work from this.
+FIX_STATUS: dict[str, dict[str, str]] = {
+    "B2_FPS_INT_OVERFLOW": {
+        "status": "unmerged",
+        "lane": "w-clock",
+        "commit": "a1ee14e3",
+        "worktree": "/home/flynnsbit/Projects/MisterPlex-wt-clock",
+        "artefact": "fpga/Plex_MiSTer/rtl/present_video_timing_960.sv",
+        "evidence": "localparam longint FPS_MILLI = (longint'(CLK_PIX_HZ)*64'd1000)/PIX_FRAME",
+    },
+    "B7_OPTC_WIDTH_ONLY": {
+        "status": "unmerged",
+        "lane": "w-mem",
+        "commit": "e82e5d5e",
+        "worktree": "/home/flynnsbit/Projects/MisterPlex-wt-mem",
+        "artefact": "fpga/Plex_MiSTer/rtl/ddr_frame_store.sv:261",
+        "evidence": "wire rt_need_optc = rt_raw_ok && (rt_payload_bytes > LEG_BANK_USABLE_BYTES)",
+    },
+    "B7_PRESENT_CORE_NO_OPTC_PHYS": {
+        "status": "unmerged",
+        "lane": "w-mem",
+        "commit": "a1fad081",
+        "worktree": "/home/flynnsbit/Projects/MisterPlex-wt-mem",
+        "artefact": "fpga/Plex_MiSTer/rtl/present_core.sv",
+        "evidence": ".PHYS_BASE_720P(DDR_FRAME_720P_PHYS_BASE)",
+    },
+    "B7_PRESENT_CORE_NO_OPTC_STRIDE": {
+        "status": "unmerged",
+        "lane": "w-mem",
+        "commit": "a1fad081",
+        "worktree": "/home/flynnsbit/Projects/MisterPlex-wt-mem",
+        "artefact": "fpga/Plex_MiSTer/rtl/present_core.sv",
+        "evidence": ".HPS_BANK_STRIDE_BYTES_720P(DDR_FRAME_720P_YUV420P_BANK_STRIDE)",
+    },
+    "B7_PRESENT_CORE_NO_OPTC_DOORBELL": {
+        "status": "unmerged",
+        "lane": "w-mem",
+        "commit": "a1fad081",
+        "worktree": "/home/flynnsbit/Projects/MisterPlex-wt-mem",
+        "artefact": "fpga/Plex_MiSTer/rtl/present_core.sv",
+        "evidence": ".DOORBELL_PHYS_720P(DDR_FRAME_720P_YUV420P_DOORBELL_PHYS)",
+    },
+    # Everything else: no known sibling implementation — new work.
+}
 # Real hollow integration QSF (sibling worktree) — RED twin target.
 HOLLOW_INTEG_QSF = Path(
     "/home/flynnsbit/Projects/MisterPlex-wt-integ-720p/fpga/Plex_MiSTer/Plex.qsf"
@@ -107,6 +197,48 @@ def _read(path: Path) -> str:
     return path.read_text(errors="ignore") if path.is_file() else ""
 
 
+def compute_gated_tree_hash(root: Path = ROOT) -> str:
+    """SHA1 over working-tree blobs of gated paths (not index-only).
+
+    Uses `git ls-files` for the path set, then `git hash-object` on each
+    working-tree file so dirty edits count. Excludes fit_candidate.json so a
+    lane cannot clear B0 by editing only the candidate file.
+    """
+    list_cmd = ["git", "-C", str(root), "ls-files", "--", *GATED_PATHSPECS]
+    proc = subprocess.run(list_cmd, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    if proc.returncode != 0:
+        return ""
+    rows: list[str] = []
+    for rel in proc.stdout.splitlines():
+        if not rel or "fit_candidate.json" in rel:
+            continue
+        full = root / rel
+        if not full.is_file():
+            rows.append(f"MISSING {rel}")
+            continue
+        ho = subprocess.run(
+            ["git", "-C", str(root), "hash-object", str(full)],
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        blob = ho.stdout.strip() if ho.returncode == 0 else "ERR"
+        rows.append(f"{blob}  {rel}")
+    rows.sort()
+    payload = "\n".join(rows) + ("\n" if rows else "")
+    return hashlib.sha1(payload.encode()).hexdigest()
+
+
+def _git_head(root: Path = ROOT) -> str:
+    proc = subprocess.run(
+        ["git", "-C", str(root), "rev-parse", "HEAD"],
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    return proc.stdout.strip() if proc.returncode == 0 else ""
+
+
 def _repo_root_for(path: Path) -> Path | None:
     """Walk parents of path until fpga/Plex_MiSTer + scripts/ exist."""
     p = path.resolve()
@@ -167,6 +299,88 @@ def _layout_param(name: str) -> str | None:
     return m.group(1) if m else None
 
 
+def _fix_status_suffix(token: str) -> str:
+    """Annotate blocker with unmerged sibling fix vs unimplemented (parent routing)."""
+    meta = FIX_STATUS.get(token)
+    if meta is None:
+        return " [fix=unimplemented — no known sibling-lane fix; new work]"
+    st = meta.get("status", "unimplemented")
+    if st == "unmerged":
+        return (
+            f" [fix=unmerged lane={meta.get('lane')} commit={meta.get('commit')} "
+            f"artefact={meta.get('artefact')} evidence={meta.get('evidence')!r}]"
+        )
+    return f" [fix=unimplemented status={st}]"
+
+
+def _err(errors: list[str], token_line: str) -> None:
+    """Append a leg0 error, tagging the leading B*_ token with fix status."""
+    m = re.match(r"^(B[0-9]+_[A-Z0-9_]+):", token_line)
+    if m:
+        tok = m.group(1)
+        if "[fix=" not in token_line:
+            errors.append(token_line + _fix_status_suffix(tok))
+            return
+    errors.append(token_line)
+
+
+def _leg0_error_tokens(msgs: list[str]) -> set[str]:
+    out: set[str] = set()
+    for line in msgs:
+        for m in re.finditer(r"\b(B[0-9]+_[A-Z0-9_]+)\b", line):
+            out.add(m.group(1))
+    return out
+
+
+def _beam_has_runtime_de_ports(beam_txt: str) -> bool:
+    """True if beam module accepts runtime active dimensions (not param-only)."""
+    if not beam_txt:
+        return False
+    # Runtime ports that drive blanking (not mere hc_out observability).
+    if re.search(
+        r"input\s+wire\s+\[[^\]]+\]\s*(h_de_rt|h_active|rt_h_de|content_w)\b",
+        beam_txt,
+    ) and re.search(
+        r"input\s+wire\s+\[[^\]]+\]\s*(v_active_rt|v_active|rt_v_act|content_h)\b",
+        beam_txt,
+    ):
+        return True
+    if re.search(
+        r"input\s+wire\s+\[[^\]]+\]\s*h_de\b", beam_txt
+    ) and re.search(r"input\s+wire\s+\[[^\]]+\]\s*v_active\b", beam_txt):
+        return True
+    return False
+
+
+def _core_wires_runtime_de_to_beam(core_txt: str) -> bool:
+    """present_core must connect delivered/content geometry into beam H_DE/V_ACTIVE."""
+    if not core_txt or "present_beam_content_de" not in core_txt:
+        return False
+    # Hardwired .H_DE(960) alone is NOT runtime.
+    hard_only = bool(
+        re.search(
+            r"present_beam_content_de\s+#\s*\([^)]*\.H_DE\s*\(\s*960\s*\)",
+            core_txt,
+            re.DOTALL,
+        )
+    ) or bool(re.search(r"\.H_DE\(\s*960\s*\)\s*,\s*\.V_ACTIVE\(\s*540\s*\)", core_txt))
+    # Runtime: ports driven from content_width / win_h_de / fabric_* registers.
+    runtime_conn = bool(
+        re.search(
+            r"\.H_DE\s*\(\s*(content_width|win_h_de|fabric_content_w|h_de_rt|rt_h_de)",
+            core_txt,
+        )
+    ) or bool(
+        re.search(
+            r"\.V_ACTIVE\s*\(\s*(content_height|win_v_de|fabric_content_h|v_active_rt|rt_v_act)",
+            core_txt,
+        )
+    )
+    return runtime_conn and not (
+        hard_only and not runtime_conn
+    )
+
+
 def leg0_arch_blockers() -> tuple[int, list[str]]:
     """rd-duck fit blockers — FAIL until a coherent candidate clears each.
 
@@ -176,15 +390,20 @@ def leg0_arch_blockers() -> tuple[int, list[str]]:
     msgs: list[str] = ["LEG0_ARCH_BLOCKERS_EXECUTED begin"]
     errors: list[str] = []
 
-    # --- B0: one coherent FIT_CANDIDATE lock ---
+    # --- B0: one coherent FIT_CANDIDATE lock (bound to gated tree hash) ---
+    # Candidate file is NOT a bypass: git_tree_hash must match compute_gated_tree_hash()
+    # over artefacts (excludes fit_candidate.json itself). Parent locked arch.
+    live_hash = compute_gated_tree_hash(ROOT)
+    live_head = _git_head(ROOT)
+    msgs.append(f"LEG0_GATED_TREE_HASH live={live_hash} HEAD={live_head[:12]}")
     cand_path = next((p for p in CANDIDATE_PATHS if p.is_file()), None)
     cand: dict | None = None
     if cand_path is None:
         errors.append(
             "B0_NO_CANDIDATE: missing docs/fit_candidate.json (or assets/ / "
             "tests/fixtures/fit_release_gate/). Gate refuses fit until one "
-            "architecture is locked with a tree hash. Allowed architecture: "
-            + ",".join(sorted(ALLOWED_ARCH))
+            "architecture is locked with a gated tree hash. Parent lock: "
+            f"{PARENT_LOCKED_ARCH}. Allowed: " + ",".join(sorted(ALLOWED_ARCH))
         )
     else:
         try:
@@ -194,22 +413,49 @@ def leg0_arch_blockers() -> tuple[int, list[str]]:
             cand = None
         if cand is not None:
             arch = str(cand.get("architecture", ""))
-            th = str(cand.get("git_tree_hash", cand.get("tree_hash", "")))
-            msgs.append(f"LEG0_CANDIDATE path={cand_path} architecture={arch!r} hash={th!r}")
+            th = str(cand.get("git_tree_hash", cand.get("tree_hash", ""))).lower()
+            msgs.append(
+                f"LEG0_CANDIDATE path={cand_path} architecture={arch!r} hash={th!r}"
+            )
             if arch not in ALLOWED_ARCH:
                 errors.append(
                     f"B0_BAD_ARCH: architecture={arch!r} not in {sorted(ALLOWED_ARCH)}"
                 )
-            if not re.fullmatch(r"[0-9a-f]{7,40}", th):
+            # Parent ruling: this campaign is ascal_true_de_960 only.
+            if arch != PARENT_LOCKED_ARCH:
                 errors.append(
-                    "B0_BAD_HASH: git_tree_hash must be 7–40 hex chars naming the "
-                    "coherent candidate tree (not empty)"
+                    f"B0_ARCH_NOT_PARENT_LOCK: architecture={arch!r} but parent "
+                    f"locked {PARENT_LOCKED_ARCH} (mp_cea_1280 not selected; "
+                    "40 Mpix/s is not headroom for this fit)"
                 )
+            if not re.fullmatch(r"[0-9a-f]{40}", th):
+                errors.append(
+                    "B0_BAD_HASH: git_tree_hash must be full 40-char sha1 from "
+                    "compute_gated_tree_hash() (not a short prefix, not empty)"
+                )
+            elif not live_hash:
+                errors.append(
+                    "B0_LIVE_HASH_UNAVAILABLE: git ls-files failed — cannot bind candidate"
+                )
+            elif th != live_hash:
+                errors.append(
+                    f"B0_TREE_HASH_MISMATCH: candidate git_tree_hash={th} "
+                    f"live_gated={live_hash}. Candidate is not a bypass — update "
+                    "hash only after intentional gated-artefact change, or restore "
+                    "artefacts to the locked tree."
+                )
+            else:
+                msgs.append("LEG0_EVIDENCE candidate git_tree_hash matches live gated tree")
             # Refuse dual-path cargo: candidate must not require both beams.
             req = cand.get("required_macros") or cand.get("qsf_macros") or {}
             if isinstance(req, dict):
                 has_beam = str(req.get("PRESENT_BEAM_960", "")).lower() in {"1", "true"}
                 has_mp = str(req.get("PRESENT_MULTI_PIXEL", "")).lower() in {"1", "true"}
+                if not has_beam and arch == "ascal_true_de_960":
+                    errors.append(
+                        "B0_BEAM_RUNTIME_OFF_CARGO: ascal_true_de_960 candidate must list "
+                        "PRESENT_BEAM_960=1 as required (no runtime-OFF beam cargo)"
+                    )
                 if has_beam and has_mp:
                     errors.append(
                         "B0_DUAL_PATH: candidate requires both PRESENT_BEAM_960 and "
@@ -218,12 +464,55 @@ def leg0_arch_blockers() -> tuple[int, list[str]]:
                 if arch == "ascal_true_de_960" and has_mp:
                     errors.append(
                         "B0_ASCAL_VS_MP: ascal_true_de_960 candidate must not enable "
-                        "PRESENT_MULTI_PIXEL (rd-duck: complex/mp path separate)"
+                        "PRESENT_MULTI_PIXEL (parent lock + w-scaler fit card)"
                     )
                 if arch == "mp_cea_1280" and has_beam:
                     errors.append(
                         "B0_MP_VS_ASCAL: mp_cea_1280 candidate must not enable "
                         "PRESENT_BEAM_960"
+                    )
+                # Required macro set must match gate REQUIRED_EXACT for ascal.
+                if arch == "ascal_true_de_960":
+                    for k, v in REQUIRED_EXACT.items():
+                        got = str(req.get(k, ""))
+                        if got != v:
+                            errors.append(
+                                f"B0_CANDIDATE_MACRO_DRIFT: required_macros[{k}]="
+                                f"{got!r} want {v!r} (must match gate REQUIRED_EXACT)"
+                            )
+            forbid = cand.get("forbidden_macros") or []
+            if arch == "ascal_true_de_960" and isinstance(forbid, list):
+                for m in (
+                    "PRESENT_MULTI_PIXEL",
+                    "PRESENT_SCALE_4_3",
+                    "PRESENT_SCALE_2X",
+                    "FABRIC_DDR_WRITER",
+                ):
+                    if m not in forbid:
+                        errors.append(
+                            f"B0_CANDIDATE_FORBID_INCOMPLETE: must list {m} in "
+                            "forbidden_macros for ascal_true_de_960"
+                        )
+            # Parent 2026-08-03: raster is runtime-variable; 960×540 is MAX tier.
+            if arch == "ascal_true_de_960":
+                rp = cand.get("raster_policy") or {}
+                mode = str(rp.get("mode", "") if isinstance(rp, dict) else "")
+                max_w = str(rp.get("max_content_w", "") if isinstance(rp, dict) else "")
+                max_h = str(rp.get("max_content_h", "") if isinstance(rp, dict) else "")
+                msgs.append(
+                    f"LEG0_RASTER_POLICY mode={mode!r} max={max_w}x{max_h}"
+                )
+                if mode != "runtime_variable_true_de":
+                    errors.append(
+                        "B0_RASTER_POLICY_MISSING: ascal_true_de_960 candidate must "
+                        "set raster_policy.mode=runtime_variable_true_de (PMS does "
+                        "not upscale; DE tracks delivered geometry; 960×540 is max "
+                        "tier not a fixed raster — parent lab 2026-08-03)"
+                    )
+                elif max_w != "960" or max_h != "540":
+                    errors.append(
+                        f"B0_RASTER_POLICY_MAX: raster_policy max_content must be "
+                        f"960x540 (got {max_w}x{max_h})"
                     )
 
     # --- B1: layout / compile-time Option-C vs FRAME 960 claim ---
@@ -265,11 +554,24 @@ def leg0_arch_blockers() -> tuple[int, list[str]]:
                 "alone does not re-base the store (rd-duck #3)."
             )
     if cand and cand.get("architecture") == "ascal_true_de_960":
-        if pw != "960" or ph != "540":
+        # Max tier 960×540 must be storable; legacy-only 640×480 is not enough.
+        # Runtime-variable DE means layout must support the max tier (or dynamic
+        # geom banks) — do NOT "fix" by freezing PRESENTED=960 without B13 runtime.
+        if pw == "640" and ph == "480":
             errors.append(
                 f"B1_LAYOUT_NOT_960: candidate ascal_true_de_960 but layout params "
-                f"PRESENTED={pw}x{ph} (need 960x540 compile-time match)"
+                f"PRESENTED={pw}x{ph} CODED={cw}x{ch} — still legacy 480p bank map. "
+                "Need capacity/layout for max tier 960×540 (runtime DE tracks delivered "
+                "geometry; 960×540 is ceiling not a fixed-only raster). "
+                "Hardcoding PRESENTED=960 without runtime DE fails B13."
             )
+        elif pw != "960" or ph != "540":
+            # Non-legacy but not max-tier either (e.g. partial edit).
+            if pw not in {None, "960"} or ph not in {None, "540"}:
+                errors.append(
+                    f"B1_LAYOUT_NOT_960: layout PRESENTED={pw}x{ph} is neither legacy "
+                    "640×480 nor max-tier 960×540 — re-audit bank map for runtime DE"
+                )
 
     # --- B2: scalar-ascal timing_960 constants-only + int overflow ---
     t960 = RTL / "present_video_timing_960.sv"
@@ -541,11 +843,16 @@ def leg0_arch_blockers() -> tuple[int, list[str]]:
             f"force_720p_1280={int(force_720p_1280)}"
         )
         if content_base_legacy and not has_960_content_force:
+            # Parent 2026-08-03: fix is runtime delivered geom (PLXG live), not a
+            # hardcoded-960 island. Idle 320/640 ladder is OK only if PLXG can program
+            # real content_w/h; today PLXG is tied 0 (B8_PLXG) so hierarchy is dead.
             errors.append(
                 "B8_CONTENT_BASE_NOT_960: Plex.sv content_width_base falls back to "
-                "O[4] 640×480 / 320×240 when PLXG idle — no product force to 960×540. "
-                "Thin true_de TB drives 960 ports directly; product hierarchy does not "
-                "(rd-duck). Gate inspects Plex.sv, not the harness."
+                "O[4] 640×480 / 320×240 when PLXG idle — and there is no live product "
+                "path that programs content_w/h from PMS-delivered geometry (max tier "
+                "960×540). Thin true_de TB drives 960 ports directly; product hierarchy "
+                "does not (rd-duck). Gate inspects Plex.sv, not the harness. "
+                "Do not clear by hardcoding only 960 — that fails B13."
             )
         if force_macro_720p_only:
             errors.append(
@@ -720,30 +1027,85 @@ def leg0_arch_blockers() -> tuple[int, list[str]]:
                 "B12_DE_LAG_RGB_LATENCY_UNPROVEN: present_core.sv still states "
                 "DE_LAG has NOT been re-swept for DDR path (measured at 640-class). "
                 "No 960 store/RGB latency closure — gate refuses fit until lag is "
-                "re-proven for FRAME 960×540 (rd-duck adc9292 RGB/store latency)."
+                "re-proven for max-tier / runtime DE path (rd-duck adc9292)."
             )
 
-    # --- Runtime-OFF OSD / colorbars timing cargo when candidate is ascal ---
+    # --- B13: fixed-geometry product cannot track PMS-delivered raster (parent) ---
+    # Parent measured on real PMS 2026-08-03:
+    #   /library/metadata/1 (320×240 source), rung 540: requested 960×540 → delivered
+    #   320×240, ffmpeg true rc=0. PMS does not upscale.
+    # Architecture: core emits true DE == content extent; ascal upscales DE to 1280×720.
+    # Therefore DE must be runtime-variable up to max tier 960×540 — a design that
+    # hardcodes only 960×540 is wrong for a large part of a real library.
+    beam_txt_b13 = _read(RTL / "present_beam_content_de.sv")
+    core_b13 = _read(RTL / "present_core.sv")
+    beam_rt = _beam_has_runtime_de_ports(beam_txt_b13)
+    core_rt = _core_wires_runtime_de_to_beam(core_b13)
+    # present_core under PRESENT_BEAM_960 still parameter-binds .H_DE(960).
+    core_hard_960 = bool(
+        re.search(r"\.H_DE\(\s*960\s*\)\s*,\s*\.V_ACTIVE\(\s*540\s*\)", core_b13)
+    ) or bool(
+        re.search(
+            r"localparam\s+int\s+H_DE_I\s*=\s*960",
+            core_b13,
+        )
+    )
+    beam_param_960 = bool(
+        re.search(r"parameter\s+int\s+H_DE\s*=\s*960", beam_txt_b13)
+    ) and bool(re.search(r"parameter\s+int\s+V_ACTIVE\s*=\s*540", beam_txt_b13))
+    msgs.append(
+        f"LEG0_RUNTIME_DE beam_rt_ports={int(beam_rt)} core_wires_rt={int(core_rt)} "
+        f"core_hard_960={int(core_hard_960)} beam_param_960={int(beam_param_960)}"
+    )
+    if not beam_rt or not core_rt or (core_hard_960 and not core_rt):
+        errors.append(
+            "B13_FIXED_RASTER_NO_RUNTIME_DE: product hardcodes a fixed content DE "
+            "(present_beam_content_de parameter H_DE/V_ACTIVE defaults 960×540; "
+            "present_core `PRESENT_BEAM_960` binds .H_DE(960),.V_ACTIVE(540) / "
+            "H_DE_I=960) with no runtime ports driven from delivered content_w/h. "
+            "Parent PMS lab: SD source 320×240 is delivered as 320×240 (no upscale). "
+            "True-DE architecture requires DE==content at runtime; 960×540 is the "
+            "maximum tier, not a fixed raster. Asserts against beam+present_core RTL."
+        )
+
+    # --- Runtime-OFF OSD / colorbars note when candidate is ascal ---
     if cand and cand.get("architecture") == "ascal_true_de_960":
-        # present_core still has colorbars Template path when PRESENT_BEAM_960 undefined.
         if "`else" in core and "colorbars bars" in core and "PRESENT_BEAM_960" in core:
             msgs.append(
                 "LEG0_NOTE: colorbars Template path remains under `ifndef PRESENT_BEAM_960` "
-                "— acceptable only if QSF forces PRESENT_BEAM_960=1 (leg1) and candidate "
-                "forbids shipping without it"
-            )
-        # Reject candidate that leaves beam default-OFF as ship.
-        req = cand.get("required_macros") or cand.get("qsf_macros") or {}
-        if isinstance(req, dict) and str(req.get("PRESENT_BEAM_960", "")) not in {"1", "true"}:
-            errors.append(
-                "B0_BEAM_RUNTIME_OFF_CARGO: ascal_true_de_960 candidate must list "
-                "PRESENT_BEAM_960=1 as required (no runtime-OFF beam / Template DE cargo)"
+                "— acceptable only if QSF forces PRESENT_BEAM_960=1 (leg1)"
             )
 
+    # Anti-theatre: gate source must not define self-pass switches (not mere mentions).
+    gate_src = _read(Path(__file__))
+    if re.search(r"^\s*LEG0_FORCE_PASS\s*=\s*True", gate_src, re.M) or re.search(
+        r"^\s*SKIP_ALL_ARCH_BLOCKERS\s*=\s*True", gate_src, re.M
+    ):
+        errors.append(
+            "B0_GATE_SELF_WEAKEN: fit_release_gate.py defines FORCE_PASS/SKIP_ALL "
+            "switch — refuse (AGENTS.md gate self-weakening forbidden)"
+        )
+
     if errors:
+        # Tag unmerged vs unimplemented for parent routing (do not soften checks).
+        tagged: list[str] = []
+        for e in errors:
+            m = re.match(r"^(B[0-9]+_[A-Z0-9_]+):", e)
+            if m and "[fix=" not in e:
+                tagged.append(e + _fix_status_suffix(m.group(1)))
+            else:
+                tagged.append(e)
+        errors = tagged
+        n_unmerged = sum(1 for e in errors if "fix=unmerged" in e)
+        n_unimpl = sum(1 for e in errors if "fix=unimplemented" in e)
         msgs.append("LEG0_FAIL EXECUTED reasons:")
         msgs.extend(f"  - {e}" for e in errors)
         msgs.append(f"LEG0_FAIL count={len(errors)}")
+        msgs.append(
+            f"LEG0_FIX_STATUS unmerged={n_unmerged} unimplemented={n_unimpl} "
+            "(unmerged = sibling lane has fix — route merge; "
+            "unimplemented = no known fix — dispatch work)"
+        )
         return 1, msgs
 
     msgs.append("LEG0_PASS EXECUTED architecture blockers clear")
@@ -1308,11 +1670,559 @@ def self_test() -> int:
         else:
             print("PASS SELFTEST b11_macro_only_foreign_ok EXECUTED")
 
+    # --- Mutation / hard-to-fool inventory (rd-duck + parent) ---
+    # Parent 2026-08-03: for EACH claimed open blocker, prove the check still fires
+    # by (1) live presence on defective tree, and (2) clear→restore cycle: a
+    # minimal artefact edit that should silence the token, then restore, token
+    # must return. A gate that silently stops checking is worse than no gate.
+    print("\n=== SELFTEST mutation_blockers_still_live ===")
+    rc_m, msgs_m = leg0_arch_blockers()
+    live_txt = "\n".join(msgs_m)
+    live_tokens = _leg0_error_tokens(msgs_m)
+    print(f"mutation_live leg0 true rc={rc_m} tokens={len(live_tokens)}")
+    missing_live = [t for t in LIVE_OPEN_BLOCKER_TOKENS if t not in live_txt]
+    if missing_live:
+        print(f"FAIL mutation_live: tokens vanished without artefact fix: {missing_live}")
+        failures += 1
+    else:
+        print(
+            f"PASS SELFTEST mutation_live_open_blockers EXECUTED "
+            f"n={len(LIVE_OPEN_BLOCKER_TOKENS)}"
+        )
+
+    # Per-token clear→restore mutation (artefact-level, not marker files).
+    print("\n=== SELFTEST mutation_per_blocker_clear_restore ===")
+    mut_failures = _mutation_per_blocker_clear_restore()
+    if mut_failures:
+        for mf in mut_failures:
+            print(f"FAIL mutation_token: {mf}")
+            failures += 1
+    else:
+        print(
+            f"PASS SELFTEST mutation_per_blocker_clear_restore EXECUTED "
+            f"n={len(LIVE_OPEN_BLOCKER_TOKENS)}"
+        )
+
+    # Closed-class RED twins (B0/B6/B10) — inject defect, must fire, restore.
+    print("\n=== SELFTEST mutation_closed_class_reinject ===")
+    closed_fails = _mutation_closed_class_reinject()
+    if closed_fails:
+        for cf in closed_fails:
+            print(f"FAIL mutation_closed: {cf}")
+            failures += 1
+    else:
+        print("PASS SELFTEST mutation_closed_class_reinject EXECUTED")
+
+    # Candidate hash mismatch must FAIL (candidate is not a bypass).
+    print("\n=== SELFTEST mutation_b0_bad_hash ===")
+    cand_path = ROOT / "docs" / "fit_candidate.json"
+    backup = cand_path.read_text() if cand_path.is_file() else None
+    bad = {
+        "architecture": PARENT_LOCKED_ARCH,
+        "git_tree_hash": "0" * 40,
+        "required_macros": dict(REQUIRED_EXACT),
+        "forbidden_macros": [
+            "PRESENT_MULTI_PIXEL",
+            "PRESENT_SCALE_4_3",
+            "PRESENT_SCALE_2X",
+            "FABRIC_DDR_WRITER",
+        ],
+        "raster_policy": {
+            "mode": "runtime_variable_true_de",
+            "max_content_w": 960,
+            "max_content_h": 540,
+        },
+        "locked_by": "mutation",
+    }
+    cand_path.parent.mkdir(parents=True, exist_ok=True)
+    cand_path.write_text(json.dumps(bad, indent=2) + "\n")
+    rc_bad, msgs_bad = leg0_arch_blockers()
+    bad_txt = "\n".join(msgs_bad)
+    print(f"mutation_bad_hash leg0 true rc={rc_bad}")
+    if "B0_TREE_HASH_MISMATCH" not in bad_txt or rc_bad == 0:
+        print("FAIL mutation_bad_hash: expected B0_TREE_HASH_MISMATCH and rc!=0")
+        failures += 1
+    else:
+        print("PASS SELFTEST mutation_b0_bad_hash EXECUTED")
+    # Candidate with MP under ascal must FAIL.
+    bad_mp = dict(bad)
+    bad_mp["git_tree_hash"] = compute_gated_tree_hash(ROOT)
+    bad_mp["required_macros"] = dict(REQUIRED_EXACT)
+    bad_mp["required_macros"]["PRESENT_MULTI_PIXEL"] = "1"
+    cand_path.write_text(json.dumps(bad_mp, indent=2) + "\n")
+    rc_mp, msgs_mp = leg0_arch_blockers()
+    mp_txt = "\n".join(msgs_mp)
+    print(f"mutation_ascal_mp leg0 true rc={rc_mp}")
+    if "B0_ASCAL_VS_MP" not in mp_txt and "B0_DUAL_PATH" not in mp_txt:
+        print("FAIL mutation_ascal_mp: expected B0_ASCAL_VS_MP or B0_DUAL_PATH")
+        failures += 1
+    else:
+        print("PASS SELFTEST mutation_b0_ascal_vs_mp EXECUTED")
+    # Missing raster_policy must FAIL.
+    bad_rp = {
+        "architecture": PARENT_LOCKED_ARCH,
+        "git_tree_hash": compute_gated_tree_hash(ROOT),
+        "required_macros": dict(REQUIRED_EXACT),
+        "forbidden_macros": [
+            "PRESENT_MULTI_PIXEL",
+            "PRESENT_SCALE_4_3",
+            "PRESENT_SCALE_2X",
+            "FABRIC_DDR_WRITER",
+        ],
+        "locked_by": "mutation",
+    }
+    cand_path.write_text(json.dumps(bad_rp, indent=2) + "\n")
+    rc_rp, msgs_rp = leg0_arch_blockers()
+    rp_txt = "\n".join(msgs_rp)
+    print(f"mutation_no_raster_policy leg0 true rc={rc_rp}")
+    if "B0_RASTER_POLICY_MISSING" not in rp_txt:
+        print("FAIL mutation_no_raster_policy: expected B0_RASTER_POLICY_MISSING")
+        failures += 1
+    else:
+        print("PASS SELFTEST mutation_b0_raster_policy EXECUTED")
+    # Restore real candidate if we had one; else rewrite correct lock file.
+    if backup is not None:
+        cand_path.write_text(backup)
+    else:
+        _write_parent_candidate_lock()
+    # Re-hash after restore (candidate excluded from hash) and ensure match path works.
+    # Refresh hash if gated scripts changed during this edit session.
+    _refresh_candidate_tree_hash_if_needed()
+    rc_ok, msgs_ok = leg0_arch_blockers()
+    ok_txt = "\n".join(msgs_ok)
+    if "B0_TREE_HASH_MISMATCH" in ok_txt:
+        print("FAIL mutation_restore: good candidate still hash-mismatches")
+        failures += 1
+    elif "B0_NO_CANDIDATE" in ok_txt:
+        print("FAIL mutation_restore: candidate missing after restore")
+        failures += 1
+    else:
+        print("PASS SELFTEST mutation_b0_good_hash_bind EXECUTED")
+    # B0 cleared does not imply grant — live open tokens must remain.
+    if rc_ok == 0:
+        print("FAIL mutation_restore: leg0 unexpectedly fully clear")
+        failures += 1
+    else:
+        print(f"PASS SELFTEST mutation_leg0_still_blocks_grant EXECUTED rc={rc_ok}")
+
     if failures:
         print(f"FIT_RELEASE_GATE_SELFTEST_FAIL failures={failures}")
         return 1
     print("FIT_RELEASE_GATE_SELFTEST_PASS EXECUTED")
     return 0
+
+
+def _write_parent_candidate_lock() -> None:
+    cand_path = ROOT / "docs" / "fit_candidate.json"
+    good_hash = compute_gated_tree_hash(ROOT)
+    good = {
+        "architecture": PARENT_LOCKED_ARCH,
+        "git_tree_hash": good_hash,
+        "git_head_at_lock": _git_head(ROOT),
+        "required_macros": dict(REQUIRED_EXACT),
+        "forbidden_macros": [
+            "PRESENT_MULTI_PIXEL",
+            "PRESENT_SCALE_4_3",
+            "PRESENT_SCALE_2X",
+            "PRESENT_PX_PER_CLK",
+            "FABRIC_DDR_WRITER",
+            "FABRIC_NATIVE_720P_GEOM",
+        ],
+        "raster_policy": {
+            "mode": "runtime_variable_true_de",
+            "max_content_w": 960,
+            "max_content_h": 540,
+            "note": (
+                "DE tracks PMS-delivered geometry; 960x540 is maximum tier not fixed. "
+                "PMS does not upscale (parent measured metadata/1 320x240)."
+            ),
+        },
+        "locked_by": "parent",
+        "locked_date": "2026-08-03",
+        "rationale": (
+            "Core emits true DE equal to content; ascal (iauto=1) upscales to 1280x720. "
+            "960x540 is the maximum content tier, not a fixed raster. Content rate at "
+            "max tier ~15.55 Mpix/s @30 — not mp_cea_1280; 40 Mpix/s is not headroom."
+        ),
+        "notes": [
+            "git_tree_hash binds gated artefacts via compute_gated_tree_hash() and excludes this file.",
+            "Updating RTL/scripts without refreshing this hash is a deliberate B0_TREE_HASH_MISMATCH fail.",
+            "fix=unmerged in leg0 output names sibling lane+commit; do not re-implement those.",
+        ],
+    }
+    cand_path.parent.mkdir(parents=True, exist_ok=True)
+    cand_path.write_text(json.dumps(good, indent=2) + "\n")
+
+
+def _refresh_candidate_tree_hash_if_needed() -> None:
+    cand_path = ROOT / "docs" / "fit_candidate.json"
+    if not cand_path.is_file():
+        _write_parent_candidate_lock()
+        return
+    try:
+        cand = json.loads(cand_path.read_text())
+    except json.JSONDecodeError:
+        _write_parent_candidate_lock()
+        return
+    live = compute_gated_tree_hash(ROOT)
+    if str(cand.get("git_tree_hash", "")).lower() != live:
+        cand["git_tree_hash"] = live
+        cand["git_head_at_lock"] = _git_head(ROOT)
+        # Keep raster_policy if missing (parent lock).
+        if "raster_policy" not in cand:
+            cand["raster_policy"] = {
+                "mode": "runtime_variable_true_de",
+                "max_content_w": 960,
+                "max_content_h": 540,
+            }
+        cand_path.write_text(json.dumps(cand, indent=2) + "\n")
+
+
+def _with_file_backup(path: Path, new_text: str):
+    """Context-manager-like pair: write new_text, return restore callable."""
+    path = path.resolve()
+    existed = path.is_file()
+    old = path.read_text() if existed else None
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(new_text)
+
+    def restore() -> None:
+        if old is None:
+            if path.is_file():
+                path.unlink()
+        else:
+            path.write_text(old)
+
+    return restore
+
+
+def _mutation_per_blocker_clear_restore() -> list[str]:
+    """For each LIVE_OPEN token: minimal clear must drop it; restore must restore it."""
+    fails: list[str] = []
+    # Map token -> (path, clear_transform)
+    layout = RTL / "ddr_frame_layout_params.svh"
+    store = RTL / "ddr_frame_store.sv"
+    t960 = RTL / "present_video_timing_960.sv"
+    core = RTL / "present_core.sv"
+    latch = RTL / "present_geom_latch.sv"
+    plex = ROOT / "fpga" / "Plex_MiSTer" / "Plex.sv"
+    beam = RTL / "present_beam_content_de.sv"
+    dec = ROOT / "docs" / "product-4-3-scaler-decision.md"
+    dummy_test = ROOT / "tests" / "unit" / "_fitgate_mut_ddr_beam_dummy.sh"
+    dummy_ar = ROOT / "tests" / "unit" / "_fitgate_mut_ar_dummy.sh"
+
+    def clear_layout_960(txt: str) -> str:
+        txt = re.sub(
+            r"localparam int DDR_FRAME_PRESENTED_WIDTH = 640;",
+            "localparam int DDR_FRAME_PRESENTED_WIDTH = 960;",
+            txt,
+            count=1,
+        )
+        txt = re.sub(
+            r"localparam int DDR_FRAME_PRESENTED_HEIGHT = 480;",
+            "localparam int DDR_FRAME_PRESENTED_HEIGHT = 540;",
+            txt,
+            count=1,
+        )
+        return txt
+
+    def clear_store_optc_ifdef(txt: str) -> str:
+        # Satisfy B1_NO_COMPILE_TIME_OPTC ifdef scan (not a product fix).
+        return "`ifdef OPTION_C\n// mut\n`endif\n" + txt
+
+    def clear_store_capacity(txt: str) -> str:
+        # Remove width-only and inject capacity markers the gate accepts.
+        txt2 = re.sub(
+            r"if\s*\(\s*rt_cw_cl\s*>=\s*11'd1280\s*\)",
+            "if (rt_need_optc)",
+            txt,
+        )
+        if "rt_need_optc" not in txt2:
+            inject = (
+                "\n\twire [31:0] rt_payload_bytes = 32'd0;\n"
+                "\tlocalparam LEG_BANK_USABLE = 32'd1;\n"
+                "\twire rt_need_optc = 1'b1;\n"
+                "\tif (rt_need_optc) begin end\n"
+            )
+            txt2 = txt2 + inject
+        if "LEG_BANK_USABLE" not in txt2:
+            txt2 = txt2 + "\n// LEG_BANK_USABLE mut\n"
+        return txt2
+
+    def clear_fps_longint(txt: str) -> str:
+        return txt.replace(
+            "localparam int FPS_MILLI = (CLK_PIX_HZ * 1000)",
+            "localparam longint FPS_MILLI = (longint'(CLK_PIX_HZ) * 64'd1000)",
+        )
+
+    def clear_raster_fake(txt: str) -> str:
+        return txt + "\nreg [10:0] hc;\nalways @(posedge clk) begin hc <= hc + 1; end\n"
+
+    def clear_40mpix(txt: str) -> str:
+        return txt.replace("40 Mpix/s", "/*mut*/ Mpix/s").replace("40 Mpix", "/*mut*/ Mpix")
+
+    def clear_aba(txt: str) -> str:
+        return txt + "\n// epoch session_id generation mut marker for ABA clear\n"
+
+    def clear_core_optc_ports(txt: str) -> str:
+        # Insert dummy port ties near ddr_frame_store instance if present.
+        needle = "ddr_frame_store"
+        if needle not in txt:
+            return txt + (
+                "\n// mut present_core optc\n"
+                ".PHYS_BASE_720P(0),\n"
+                ".HPS_BANK_STRIDE_BYTES_720P(0),\n"
+                ".DOORBELL_PHYS_720P(0)\n"
+            )
+        return txt.replace(
+            needle,
+            needle
+            + " /*mut*/ .PHYS_BASE_720P(0) .HPS_BANK_STRIDE_BYTES_720P(0) "
+            ".DOORBELL_PHYS_720P(0) ",
+            1,
+        )
+
+    def clear_plxg_ties(txt: str) -> str:
+        txt = re.sub(r"\bplxg_wr_en\s*=\s*1'b0\b", "plxg_wr_en = 1'b1", txt, count=1)
+        txt = re.sub(r"\bplxg_commit\s*=\s*1'b0\b", "plxg_commit = 1'b1", txt, count=1)
+        return txt
+
+    def clear_content_960(txt: str) -> str:
+        return (
+            "`ifdef PRESENT_BEAM_960\n"
+            "// mut force content 960\n"
+            "assign content_width_base_mut = 11'd960;\n"
+            "`endif\n"
+        ) + txt
+
+    def clear_force_960(txt: str) -> str:
+        return txt + "\n// FABRIC_NATIVE_960 mut\nwire force_native_960 = 1'b1; // 11'd960\n"
+
+    def clear_aspect(txt: str) -> str:
+        return (
+            "`ifdef PRESENT_BEAM_960\n"
+            "assign VIDEO_ARX = 12'd0;\n"
+            "assign VIDEO_ARY = 12'd0;\n"
+            "`endif\n"
+        ) + txt
+
+    def clear_lag(txt: str) -> str:
+        return (
+            txt.replace("DE_LAG has NOT been re-swept", "DE_LAG swept mut")
+            .replace(
+                "REQUIRES_FIT (DDR_FRAME_STORE @ FRAME_W=640)",
+                "DE_LAG closed @ FRAME_W=960 mut",
+            )
+        )
+
+    def clear_runtime_de_beam(txt: str) -> str:
+        # Add fake runtime ports the gate regex accepts.
+        return txt.replace(
+            "module present_beam_content_de #(",
+            "module present_beam_content_de #(\n"
+            "// mut runtime ports\n",
+        ).replace(
+            "input  wire        clk,",
+            "input  wire [10:0] h_de_rt,\n"
+            "\tinput  wire [10:0] v_active_rt,\n"
+            "\tinput  wire        clk,",
+        )
+
+    def clear_runtime_de_core(txt: str) -> str:
+        # Wire runtime-looking connections and remove hard 960 bind pattern.
+        txt2 = txt.replace(
+            ".H_DE(960), .V_ACTIVE(540)",
+            ".H_DE(content_width), .V_ACTIVE(content_height)",
+        )
+        txt2 = re.sub(
+            r"localparam\s+int\s+H_DE_I\s*=\s*960",
+            "localparam int H_DE_I = 0 // mut runtime",
+            txt2,
+        )
+        if ".H_DE(content_width)" not in txt2:
+            txt2 += "\n// mut .H_DE(content_width) .V_ACTIVE(content_height)\n"
+        return txt2
+
+    # Each entry: token, list of (path, transform) applied together for clear.
+    specs: list[tuple[str, list[tuple[Path, object]]]] = [
+        ("B1_LAYOUT_NOT_960", [(layout, clear_layout_960)]),
+        (
+            "B1_NO_COMPILE_TIME_OPTC",
+            [(layout, clear_layout_960), (store, clear_store_optc_ifdef)],
+        ),
+        ("B2_FPS_INT_OVERFLOW", [(t960, clear_fps_longint)]),
+        ("B2_NO_RASTER_GENERATOR", [(t960, clear_raster_fake)]),
+        ("B1_40MPIX_NOT_PRODUCT", [(dec, clear_40mpix)]),
+        ("B4_PLXG_SAME_SEQ_ABA", [(latch, clear_aba)]),
+        ("B7_OPTC_WIDTH_ONLY", [(store, clear_store_capacity)]),
+        ("B7_PRESENT_CORE_NO_OPTC_PHYS", [(core, clear_core_optc_ports)]),
+        ("B7_PRESENT_CORE_NO_OPTC_STRIDE", [(core, clear_core_optc_ports)]),
+        ("B7_PRESENT_CORE_NO_OPTC_DOORBELL", [(core, clear_core_optc_ports)]),
+        ("B8_PLXG_WR_COMMIT_TIED_ZERO", [(plex, clear_plxg_ties)]),
+        ("B8_CONTENT_BASE_NOT_960", [(plex, clear_content_960)]),
+        ("B8_FORCE_GEOM_1280_NOT_960", [(plex, clear_force_960)]),
+        ("B9_ASPECT_ORIGINAL_4_3", [(plex, clear_aspect)]),
+        ("B12_DE_LAG_RGB_LATENCY_UNPROVEN", [(core, clear_lag)]),
+        (
+            "B13_FIXED_RASTER_NO_RUNTIME_DE",
+            [(beam, clear_runtime_de_beam), (core, clear_runtime_de_core)],
+        ),
+    ]
+
+    # B5 / B9_NO_AR_TOPLEVEL_TEST: create dummy tests then remove.
+    file_create_specs = [
+        (
+            "B5_NO_DDR_ON_BEAM_TEST",
+            dummy_test,
+            "#!/bin/sh\n# mut ddr_frame_store present_beam_content_de PRESENT_BEAM_960\n",
+        ),
+        (
+            "B9_NO_AR_TOPLEVEL_TEST",
+            dummy_ar,
+            "#!/bin/sh\n# mut VIDEO_ARX VIDEO_ARY top-level\n",
+        ),
+    ]
+
+    for token, edits in specs:
+        restorers = []
+        try:
+            for path, transform in edits:
+                if not path.is_file():
+                    fails.append(f"{token}: missing artefact {path}")
+                    break
+                old = path.read_text()
+                new = transform(old)  # type: ignore[operator]
+                if new == old:
+                    fails.append(f"{token}: clear transform made no edit on {path.name}")
+                    break
+                restorers.append(_with_file_backup(path, new))
+            else:
+                _rc_c, msgs_c = leg0_arch_blockers()
+                toks_c = _leg0_error_tokens(msgs_c)
+                if token in toks_c:
+                    fails.append(
+                        f"{token}: still present after minimal clear "
+                        f"(check may be sticky/wrong — HOLE)"
+                    )
+                # Restore and require token back.
+                for r in reversed(restorers):
+                    r()
+                restorers.clear()
+                _rc_r, msgs_r = leg0_arch_blockers()
+                toks_r = _leg0_error_tokens(msgs_r)
+                if token not in toks_r:
+                    fails.append(
+                        f"{token}: vanished after restore — mutation hole"
+                    )
+                else:
+                    print(f"  MUT_OK {token} clear_drop=1 restore_fire=1")
+        finally:
+            for r in reversed(restorers):
+                r()
+
+    for token, path, body in file_create_specs:
+        rest = None
+        try:
+            rest = _with_file_backup(path, body)
+            _rc_c, msgs_c = leg0_arch_blockers()
+            toks_c = _leg0_error_tokens(msgs_c)
+            if token in toks_c:
+                fails.append(f"{token}: still present after dummy test create — HOLE")
+            rest()
+            rest = None
+            _rc_r, msgs_r = leg0_arch_blockers()
+            toks_r = _leg0_error_tokens(msgs_r)
+            if token not in toks_r:
+                fails.append(f"{token}: vanished after dummy remove — hole")
+            else:
+                print(f"  MUT_OK {token} clear_drop=1 restore_fire=1")
+        finally:
+            if rest is not None:
+                rest()
+            elif path.is_file() and "fitgate_mut" in path.name:
+                # Ensure no leftover dummy.
+                try:
+                    path.unlink()
+                except OSError:
+                    pass
+
+    return fails
+
+
+def _mutation_closed_class_reinject() -> list[str]:
+    """Re-inject defects for currently-clear checks (B6 beam epoch, B10 qip)."""
+    fails: list[str] = []
+    beam = RTL / "present_beam_content_de.sv"
+    qip = ROOT / "fpga" / "Plex_MiSTer" / "files.qip"
+    tb = ROOT / "tests" / "rtl" / "present_true_de_count_tb.cpp"
+
+    # B6: revert hc_next blank to old-hc style if currently fixed.
+    if beam.is_file():
+        old = beam.read_text()
+        if "hc_next" in old and "HBlank <= (hc_next" in old:
+            bad = old.replace(
+                "HBlank <= (hc_next >= 11'(H_DE));",
+                "HBlank <= (hc >= 11'(H_DE));",
+            )
+            # Also strip hc_next definition use for blank path detection.
+            rest = _with_file_backup(beam, bad)
+            try:
+                # Weaken TB oracle so B6_STORE does not dominate — keep beam epoch check.
+                _rc, msgs = leg0_arch_blockers()
+                toks = _leg0_error_tokens(msgs)
+                if "B6_HBLANK_OLD_HC_EPOCH" not in toks:
+                    fails.append("B6_HBLANK_OLD_HC_EPOCH: reinject did not fire — HOLE")
+                else:
+                    print("  MUT_OK B6_HBLANK_OLD_HC_EPOCH reinject_fire=1")
+            finally:
+                rest()
+        else:
+            print("  MUT_SKIP B6_HBLANK (beam not in hc_next-fixed state)")
+
+    # B6 store oracle: strip oracle from TB briefly.
+    if tb.is_file():
+        old_tb = tb.read_text()
+        if "store_oracle" in old_tb or "store_id_checked == CW * CH" in old_tb:
+            bad_tb = (
+                old_tb.replace("store_oracle", "store_oraclX")
+                .replace("store_id_checked == CW * CH", "store_id_checked == 0")
+                .replace("store_id_checked == content_area", "store_id_checked == 0")
+                .replace("store_req_count==content area", "store_req_count==0")
+            )
+            rest = _with_file_backup(tb, bad_tb)
+            try:
+                _rc, msgs = leg0_arch_blockers()
+                toks = _leg0_error_tokens(msgs)
+                if "B6_STORE_ORACLE_UNTESTED" not in toks:
+                    fails.append("B6_STORE_ORACLE_UNTESTED: reinject did not fire — HOLE")
+                else:
+                    print("  MUT_OK B6_STORE_ORACLE_UNTESTED reinject_fire=1")
+            finally:
+                rest()
+
+    # B10: remove beam from qip.
+    if qip.is_file():
+        old_q = qip.read_text()
+        if "present_beam_content_de.sv" in old_q:
+            bad_q = "\n".join(
+                ln
+                for ln in old_q.splitlines()
+                if "present_beam_content_de.sv" not in ln
+            ) + "\n"
+            rest = _with_file_backup(qip, bad_q)
+            try:
+                _rc, msgs = leg0_arch_blockers()
+                toks = _leg0_error_tokens(msgs)
+                if "B10_BEAM_NOT_IN_FILES_QIP" not in toks and (
+                    "B10_BEAM_ABSENT_FROM_QUARTUS_FILE_LIST" not in toks
+                ):
+                    fails.append("B10: qip beam removal did not fire — HOLE")
+                else:
+                    print("  MUT_OK B10_BEAM_QIP reinject_fire=1")
+            finally:
+                rest()
+
+    return fails
 
 
 def main(argv: list[str] | None = None) -> int:

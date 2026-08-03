@@ -879,8 +879,11 @@ bool FpgaSpi::writePlxgRecord(const uint64_t q[5], uint16_t seq) {
     uint64_t words[5];
     for (int i = 0; i < 5; ++i)
         words[i] = q[i];
-    // Force Q0 magic + seq (geom/win flags preserved from packed plan).
-    const uint64_t flags = (words[0] >> 32) & 0xFFFFull; // low 16 of hi
+    // Force Q0 magic + seq (geom/win/epoch flags preserved from packed plan).
+    // B4: epoch in q0[47:34] must be nonzero — default to 1 if caller left 0.
+    uint64_t flags = (words[0] >> 32) & 0xFFFFull; // low 16 of hi: win/geom/epoch
+    if (((flags >> 2) & 0x3FFFull) == 0)
+        flags |= (1ull << 2); // epoch=1
     words[0] = (static_cast<uint64_t>(useSeq) << 48) |
                (flags << 32) |
                static_cast<uint64_t>(mailbox_abi::kPlxgMagic);

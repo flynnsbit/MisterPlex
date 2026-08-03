@@ -8,7 +8,13 @@
 //
 // Write model (sim + future DDR poller):
 //   Host writes qwords 0..4 then pulses commit. On commit, if q0[31:0]==MAGIC
-//   and seq != last_seq, shadow → live outputs. Bad magic → no change.
+//   and the (epoch,seq) pair is new, shadow → live outputs. Bad magic → no change.
+//
+// B4 session/epoch (rd-duck ABA):
+//   q0[47:34] = epoch/session_id (14 bits). seq alone is not restart-safe:
+//   after FPGA reset last_seq=0, retained DDR q0 seq=N with epoch=0 is an ABA
+//   hole if the latch only checks sh_seq != last_seq. Product requires epoch!=0
+//   and (epoch,seq) != (last_epoch,last_seq). Host packs epoch via packPlxgQ0.
 //
 // Reset / never-committed: every enable and dimension output is 0 so
 // present_content_window + ddr_frame_store stay on synthesis legacy path.
@@ -46,18 +52,29 @@ module present_geom_latch #(
 	output reg [10:0]  crop_left,
 	output reg [10:0]  crop_top,
 	output reg         live_valid,  // 1 after at least one accepted commit
-	output reg [15:0]  live_seq
+	output reg [15:0]  live_seq,
+	output reg [13:0]  live_epoch
 );
 	// Shadow bank (host fills, commit promotes).
 	reg [63:0] sh [0:4];
 	reg [15:0] last_seq;
+	reg [13:0] last_epoch;
 
 	wire [31:0] sh_magic = sh[0][31:0];
 	wire        sh_win   = sh[0][32];
 	wire        sh_geom  = sh[0][33];
+	// q0[47:34] = epoch/session (14 bits). Zero is illegal on product path.
+	wire [13:0] sh_epoch = sh[0][47:34];
 	wire [15:0] sh_seq   = sh[0][63:48];
 	wire        magic_ok = (sh_magic == MAGIC);
+`ifdef PRESENT_GEOM_LATCH_FAULT_NO_EPOCH
+	// Red twin: seq-only accept (pre-B4). Reproduces reset ABA on retained seq.
 	wire        seq_new  = magic_ok && (sh_seq != last_seq);
+`else
+	// Product: require nonzero epoch and a new (epoch,seq) pair.
+	wire        seq_new  = magic_ok && (sh_epoch != 14'd0) &&
+	                       ((sh_epoch != last_epoch) || (sh_seq != last_seq));
+`endif
 
 	integer i;
 	always @(posedge clk) begin
@@ -84,7 +101,9 @@ module present_geom_latch #(
 			crop_top      <= 11'd0;
 			live_valid    <= 1'b0;
 			live_seq      <= 16'd0;
+			live_epoch    <= 14'd0;
 			last_seq      <= 16'd0;
+			last_epoch    <= 14'd0;
 		end else begin
 			if (wr_en && (wr_idx <= 3'd4))
 				sh[wr_idx] <= wr_data;
@@ -95,6 +114,8 @@ module present_geom_latch #(
 				geom_enable <= sh_geom;
 				live_seq    <= sh_seq;
 				last_seq    <= sh_seq;
+				live_epoch  <= sh_epoch;
+				last_epoch  <= sh_epoch;
 				live_valid  <= 1'b1;
 				// Q1 content window
 				content_w  <= sh[1][10:0];
@@ -120,5 +141,4 @@ module present_geom_latch #(
 		end
 	end
 endmodule
-
 `default_nettype wire

@@ -362,6 +362,9 @@ module present_core #(
 
 `include "ddr_frame_layout_params.svh"
 
+	// B1: under PRESENT_BEAM_960 / OPTION_C the store compile-time LEG map is
+	// Option-C (see ddr_frame_store `ifdef OPTION_C). PHYS_BASE_720P params are
+	// always passed so capacity select and OPTION_C re-base share one source.
 	ddr_frame_store #(
 		.FRAME_W(FRAME_W),
 		.FRAME_H(FRAME_H),
@@ -378,7 +381,7 @@ module present_core #(
 		.PHYS_BASE(32'h3000_0000),
 		.HPS_BANK_STRIDE_BYTES(DDR_FRAME_YUV420P_BANK_STRIDE),
 		.DOORBELL_PHYS(DDR_FRAME_YUV420P_DOORBELL_PHYS),
-		// Option-C 720p banks (capacity select in ddr_frame_store — w-mem)
+		// Option-C banks (capacity select + compile-time OPTION_C LEG re-base)
 		.PHYS_BASE_720P(DDR_FRAME_720P_PHYS_BASE),
 		.HPS_BANK_STRIDE_BYTES_720P(DDR_FRAME_720P_YUV420P_BANK_STRIDE),
 		.DOORBELL_PHYS_720P(DDR_FRAME_720P_YUV420P_DOORBELL_PHYS)
@@ -502,13 +505,14 @@ module present_core #(
 	// Each extra clk of lag eats ~0.6 of a source column off the left and repeats it
 	// on the right, which is precisely the right-edge "bar".
 	//
-	// REQUIRES_FIT (DDR_FRAME_STORE @ FRAME_W=640): DE_LAG has NOT been re-swept for
-	// ddr_frame_store's deeper path (rd_visible pipeline + YUV + BRAM). A too-small
-	// lag wraps previous-line right columns onto the left edge (ragged boundary +
-	// left clip). Parent HDMI after ARM stride fix still saw ~44 px per-line left
-	// wander — retune with gen_edge_markers.py on an authorised fit; do not guess
-	// a new constant here without that sweep. Keep the frame_store-proven value
-	// until then so we do not silently eat left columns.
+	// B12 DE_LAG @ DDR_FRAME_STORE + 960 max tier (build-host Verilator measure):
+	//   tests/unit/test_ddr_store_rgb_lag.sh → store rd_active→RGB lag_cycles=1
+	//   at both coded_w=960 (Option-C) and coded_w=624 (legacy). Geometry does
+	//   NOT change store RGB pipeline depth (B12_COMPARE lag960=lag624).
+	//   DE_LAG=3 keeps HBlank/HSync delayed past store RGB + content_window de_r
+	//   on PRESENT_BEAM_960 / FRAME_W=960 the same way as 640-class.
+	//   Evidence: DE_LAG 960 store lag_cycles=1 (script true rc=0).
+	// Parent HDMI edge paint remains the glass-level confirmation after fit.
 	localparam DE_LAG = 3'd3;
 	reg [DE_LAG-1:0] hb_sr, hs_sr;
 	always @(posedge clk) begin

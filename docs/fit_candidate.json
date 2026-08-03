@@ -1,0 +1,34 @@
+{
+  "architecture": "ascal_true_de_960",
+  "git_tree_hash": "700f8d63d15a6cc8d8065618857e16890ccc5659",
+  "git_head_at_lock": "6feee950779358e31a03f885a3bcb1ffec8abab2",
+  "required_macros": {
+    "FRAME_W": "960",
+    "FRAME_H": "540",
+    "PRESENT_BEAM_960": "1",
+    "DDR_FRAME_STORE": "1",
+    "PRODUCT_NO_STUB": "1",
+    "OPTION_C": "1"
+  },
+  "forbidden_macros": [
+    "PRESENT_MULTI_PIXEL",
+    "PRESENT_SCALE_4_3",
+    "PRESENT_SCALE_2X",
+    "PRESENT_PX_PER_CLK",
+    "FABRIC_DDR_WRITER",
+    "FABRIC_NATIVE_720P_GEOM"
+  ],
+  "raster_policy": {
+    "mode": "runtime_variable_true_de",
+    "max_content_w": 960,
+    "max_content_h": 540,
+    "note": "DE tracks PMS-delivered geometry; 960x540 is maximum tier not fixed. PMS does not upscale (parent measured metadata/1 320x240)."
+  },
+  "locked_by": "w-mem",
+  "locked_date": "2026-08-03",
+  "rationale": "Core emits true DE equal to content; ascal upscales to 1280x720. B1 OPTION_C compile-time bank re-base + capacity select; B4 PLXG epoch; B12 DE_LAG 960 measure.",
+  "notes": [
+    "git_tree_hash binds gated artefacts via compute_gated_tree_hash() and excludes this file.",
+    "OPTION_C re-bases LEG_* banks to Option-C PHYS/stride/doorbell when geom_enable=0."
+  ]
+}

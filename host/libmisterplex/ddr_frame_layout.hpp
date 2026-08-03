@@ -10,10 +10,16 @@
 
 namespace misterplex {
 
+// Product max-tier presented (ascal_true_de_960 ceiling). Runtime DE tracks
+// delivered content; 960×540 is maximum not a fixed raster. Mirrors
+// DDR_FRAME_PRESENTED_* in ddr_frame_layout_params.svh (dual-header lockstep).
+constexpr PresentedWidth kDdrFramePresentedWidth{960};
+constexpr PresentedHeight kDdrFramePresentedHeight{540};
+
 // 480p geometry contract (coded / display-cropped / presented are NOT interchangeable):
 //   coded 624x480  — H.264 payload and DDR bank layout
 //   display 618x480 — after right crop of 6
-//   presented 640x480 — VGA scanout after 11+11 pillarbox
+//   presented 640x480 — VGA scanout after 11+11 pillarbox (legacy silicon)
 constexpr CodedWidth kPlex480pCodedWidth{624};
 constexpr CodedHeight kPlex480pCodedHeight{480};
 constexpr DisplayWidth kPlex480pDisplayWidth{618};

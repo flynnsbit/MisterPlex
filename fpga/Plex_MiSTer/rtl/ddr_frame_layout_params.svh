@@ -2,18 +2,28 @@
 // The C++ unit/RTL invariant tests compare these values against the host header;
 // update both sides together if the stream geometry or bank layout changes.
 //
-// PRODUCT SILICON (shipping RBF): 480p block below — wired by present_core today.
-// AGGRESSIVE 720p TIER: DDR_FRAME_720P_* — host+RTL opt-in only after matching RBF.
-// 720p uses Option-C phys base after the bitstream ring so bank payloads cannot
-// stomp 0x30100000 ring data / PLXB (see docs/p720-ddr-abi.md).
+// PRODUCT MAX TIER (ascal_true_de_960): DDR_FRAME_PRESENTED_* = 960×540 ceiling.
+// Runtime DE tracks delivered content (PMS does not upscale; smaller sources stay
+// native). CODED/DISPLAY/bank plane defaults below remain the LEGACY 480p silicon
+// canvas used when geom_enable=0 without OPTION_C. Under `define OPTION_C,
+// ddr_frame_store re-bases LEG_* bank map to Option-C PHYS/stride/doorbell so a
+// geom-off path cannot sit on 0x30000000/0x80000 while the campaign max tier is
+// 960×540 (B1). FRAME_W=960 QSF alone does NOT re-base the store.
+//
+// LEGACY 480p constants: DDR_FRAME_LEGACY480_* (dual-header ↔ kPlex480p*).
+// AGGRESSIVE 720p canvas: DDR_FRAME_720P_* — Option-C after bitstream ring.
 
-// ---- Product 480p (default silicon) ----
+// ---- Product presented max tier (runtime-variable true-DE ceiling) ----
+// Gate/layout lock: PRESENTED names the max glass-side content tier, not a fixed
+// raster. CODED_* below stay legacy 480p storage defaults for geom_enable=0.
+localparam int DDR_FRAME_PRESENTED_WIDTH = 960;
+localparam int DDR_FRAME_PRESENTED_HEIGHT = 540;
+
+// ---- Legacy 480p storage/bank defaults (geom_enable=0 without OPTION_C) ----
 localparam int DDR_FRAME_CODED_WIDTH = 624;
 localparam int DDR_FRAME_CODED_HEIGHT = 480;
 localparam int DDR_FRAME_DISPLAY_WIDTH = 618;
 localparam int DDR_FRAME_DISPLAY_HEIGHT = 480;
-localparam int DDR_FRAME_PRESENTED_WIDTH = 640;
-localparam int DDR_FRAME_PRESENTED_HEIGHT = 480;
 localparam int DDR_FRAME_CROP_LEFT = 0;
 localparam int DDR_FRAME_CROP_RIGHT = 6;
 localparam int DDR_FRAME_CROP_TOP = 0;
@@ -33,10 +43,21 @@ localparam int DDR_FRAME_CHROMA_STRIDE_BYTES = 312;
 localparam int DDR_FRAME_RGB565_BANK_STRIDE = 32'h000C_0000;
 localparam int DDR_FRAME_YUV420P_BANK_STRIDE = 32'h0008_0000;
 localparam int DDR_FRAME_RGB565_DOORBELL_PHYS = 32'h3017_F000;
+// Bootstrap control page (PLXG/PLXC) stays on legacy doorbell even under Option-C
+// banks — chicken-egg safe. Frame payload doorbell may move with OPTION_C re-base.
 localparam int DDR_FRAME_YUV420P_DOORBELL_PHYS = 32'h300F_F000;
 localparam int DDR_FRAME_YUV_BLACK_Y = 16;
 localparam int DDR_FRAME_YUV_BLACK_U = 128;
 localparam int DDR_FRAME_YUV_BLACK_V = 128;
+
+// Explicit legacy-480 aliases (dual-header ↔ kPlex480pPresented*).
+localparam int DDR_FRAME_LEGACY480_PRESENTED_WIDTH = 640;
+localparam int DDR_FRAME_LEGACY480_PRESENTED_HEIGHT = 480;
+localparam int DDR_FRAME_LEGACY480_CODED_WIDTH = 624;
+localparam int DDR_FRAME_LEGACY480_CODED_HEIGHT = 480;
+localparam int DDR_FRAME_LEGACY480_YUV420P_BANK_STRIDE = 32'h0008_0000;
+localparam int DDR_FRAME_LEGACY480_YUV420P_DOORBELL_PHYS = 32'h300F_F000;
+localparam int DDR_FRAME_LEGACY480_PHYS_BASE = 32'h3000_0000;
 
 // ---- Aggressive 720p tier (opt-in; requires RBF + daemon PLXG handshake) ----
 // Geometry: coded=display=presented 1280x720 identity (16:9, no pillar).

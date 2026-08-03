@@ -163,14 +163,29 @@ module ddr_frame_store #(
 	localparam [Y_W-1:0] LEG_PRESENT_END_Y = Y_W'(PRESENT_Y + DISPLAY_H);
 	localparam [CODED_X_W-1:0] LEG_CROP_LEFT = CODED_X_W'(CROP_LEFT);
 	localparam [CODED_Y_W-1:0] LEG_CROP_TOP = CODED_Y_W'(CROP_TOP);
+	// ---- Compile-time bank map (B1) ----------------------------------------
+	// Without OPTION_C: LEG_* = module PHYS_BASE/stride/doorbell (480p product).
+	// With OPTION_C: LEG_* re-bases to Option-C so geom_enable=0 is still on a
+	// capacity-safe map for the 960×540 max tier. Capacity *predicate* always
+	// compares against fixed 480p usable (0x7F000), not the active LEG stride —
+	// otherwise OPTION_C would make rt_need_optc vacuously false.
+	// `ifdef OPTION_C is the compile-time bank path the fit gate requires;
+	// FRAME_W=960 QSF alone does not re-base these localparams.
+`ifdef OPTION_C
+	localparam [28:0] LEG_BASE_W0 = PHYS_BASE_720P[31:3];
+	localparam [28:0] LEG_BANK_STRIDE_QWORDS = 29'(HPS_BANK_STRIDE_BYTES_720P / 8);
+	localparam [28:0] LEG_BASE_W1 = PHYS_BASE_720P[31:3] + LEG_BANK_STRIDE_QWORDS;
+	// Frame doorbell follows Option-C; PLXG bootstrap stays on 0x300FF000 via poller.
+	localparam [28:0] LEG_DOORBELL_W = DOORBELL_PHYS_720P[31:3];
+`else
 	localparam [28:0] LEG_BASE_W0 = PHYS_BASE[31:3];
 	localparam [28:0] LEG_BANK_STRIDE_QWORDS = 29'(HPS_BANK_STRIDE_BYTES / 8);
-	// Usable payload per bank = stride − doorbell page (0x1000). bank1End must
-	// be <= doorbell = base + 2*stride − 0x1000 ⇒ frame_bytes <= stride − 0x1000.
-	localparam [28:0] LEG_BANK_USABLE_QWORDS =
-		29'((HPS_BANK_STRIDE_BYTES > 32'h1000 ? (HPS_BANK_STRIDE_BYTES - 32'h1000) : 32'd0) / 8);
 	localparam [28:0] LEG_BASE_W1 = PHYS_BASE[31:3] + LEG_BANK_STRIDE_QWORDS;
 	localparam [28:0] LEG_DOORBELL_W = DOORBELL_PHYS[31:3];
+`endif
+	// Usable payload threshold for capacity select = legacy 480p stride − 4KiB.
+	// Fixed (not derived from LEG stride) so OPTION_C re-base cannot hide oversize.
+	localparam [28:0] LEG_BANK_USABLE_QWORDS = 29'(32'h0007_F000 / 8); // 520192/8
 	localparam [28:0] OPTC_BASE_W0 = PHYS_BASE_720P[31:3];
 	localparam [28:0] OPTC_BANK_STRIDE_QWORDS = 29'(HPS_BANK_STRIDE_BYTES_720P / 8);
 	localparam [28:0] OPTC_BASE_W1 = PHYS_BASE_720P[31:3] + OPTC_BANK_STRIDE_QWORDS;
@@ -256,8 +271,9 @@ module ddr_frame_store #(
 	wire [31:0] rt_payload_bytes =
 		({20'd0, rt_ys_cl} * {20'd0, rt_ch_cl}) +
 		({21'd0, rt_cs_cl} * {21'd0, rt_ch_cl});
-	localparam [31:0] LEG_BANK_USABLE_BYTES =
-		(HPS_BANK_STRIDE_BYTES > 32'h1000) ? (HPS_BANK_STRIDE_BYTES - 32'h1000) : 32'd0;
+	// Capacity threshold = legacy 480p usable (stride 0x80000 − 0x1000). Not the
+	// active LEG stride — under OPTION_C LEG is already Option-C sized.
+	localparam [31:0] LEG_BANK_USABLE_BYTES = 32'h0007_F000; // 520192
 	wire rt_need_optc = rt_raw_ok && (rt_payload_bytes > LEG_BANK_USABLE_BYTES);
 
 	// FAULT: ignore geom_enable (always legacy pitch) — red twin for runtime-stride gate.

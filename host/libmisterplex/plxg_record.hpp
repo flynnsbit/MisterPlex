@@ -46,14 +46,23 @@ inline constexpr int kPlxgBodyOrder[4] = {1, 2, 3, 4};
 // Legacy name: body then logical q0 slot (invalidate is step 0, not in this list).
 inline constexpr int kPlxgPublishOrder[5] = {1, 2, 3, 4, 0};
 
-inline uint64_t packPlxgQ0(bool winEnable, bool geomEnable, uint16_t seq) {
+// q0 pack lockstep present_geom_latch.sv:
+//   [31:0] magic  [32] win  [33] geom  [47:34] epoch/session  [63:48] seq
+// epoch==0 is illegal on the product path (B4 ABA after FPGA reset).
+inline uint64_t packPlxgQ0(bool winEnable, bool geomEnable, uint16_t seq,
+                           uint16_t epoch = 1) {
     uint64_t hi = 0;
     if (winEnable)
         hi |= 1ull << 0; // bit 32
     if (geomEnable)
         hi |= 1ull << 1; // bit 33
-    hi |= (static_cast<uint64_t>(seq) << 16); // bits 63:48 → hi[31:16]
+    hi |= (static_cast<uint64_t>(epoch & 0x3FFFu) << 2); // bits 47:34 → hi[15:2]
+    hi |= (static_cast<uint64_t>(seq) << 16);            // bits 63:48 → hi[31:16]
     return (hi << 32) | static_cast<uint64_t>(mailbox_abi::kPlxgMagic);
+}
+
+inline uint16_t plxgQ0Epoch(uint64_t q0) {
+    return static_cast<uint16_t>((q0 >> 34) & 0x3FFFu);
 }
 
 inline uint64_t packPlxgQ1(int contentW, int contentH, int x0, int y0) {
@@ -412,6 +421,7 @@ struct DdrM1SubarbModel {
 };
 
 // Behavioral latch (host/TB) — same promotion rules as present_geom_latch.sv.
+// fault_no_epoch=true models PRESENT_GEOM_LATCH_FAULT_NO_EPOCH (B4 red twin).
 struct PlxgLatchModel {
     bool win_enable = false;
     bool geom_enable = false;
@@ -422,6 +432,9 @@ struct PlxgLatchModel {
     bool live_valid = false;
     uint16_t live_seq = 0;
     uint16_t last_seq = 0;
+    uint16_t live_epoch = 0;
+    uint16_t last_epoch = 0;
+    bool fault_no_epoch = false; // red twin: seq-only accept
     uint64_t sh[5]{};
 };
 
@@ -434,12 +447,24 @@ inline bool plxgLatchCommit(PlxgLatchModel& m) {
     if (static_cast<uint32_t>(m.sh[0]) != mailbox_abi::kPlxgMagic)
         return false;
     const uint16_t seq = static_cast<uint16_t>(m.sh[0] >> 48);
-    if (seq == m.last_seq)
-        return false;
+    const uint16_t epoch = plxgQ0Epoch(m.sh[0]);
+    if (m.fault_no_epoch) {
+        // Pre-B4: seq != last_seq only — accepts epoch=0 after reset (ABA).
+        if (seq == m.last_seq)
+            return false;
+    } else {
+        // Product: nonzero epoch and new (epoch,seq) pair.
+        if (epoch == 0)
+            return false;
+        if (epoch == m.last_epoch && seq == m.last_seq)
+            return false;
+    }
     m.win_enable = ((m.sh[0] >> 32) & 1ull) != 0;
     m.geom_enable = ((m.sh[0] >> 33) & 1ull) != 0;
     m.live_seq = seq;
     m.last_seq = seq;
+    m.live_epoch = epoch;
+    m.last_epoch = epoch;
     m.live_valid = true;
     m.content_w = static_cast<int>(m.sh[1] & 0x7FFu);
     m.content_h = static_cast<int>((m.sh[1] >> 16) & 0x7FFu);

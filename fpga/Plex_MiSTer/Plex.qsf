@@ -80,6 +80,8 @@ set_global_assignment -name VERILOG_MACRO "SDRAM_CL3=1"
 #set_global_assignment -name VERILOG_MACRO "MISTER_DISABLE_ALSA=1"
 
 set_global_assignment -name VERILOG_MACRO "DDR_FRAME_STORE=1"
+# B1: compile-time Option-C bank re-base in ddr_frame_store (geom_enable=0 safe for max tier)
+set_global_assignment -name VERILOG_MACRO "OPTION_C=1"
 
 # fabric_ddr_writer — OFF by default (w-mem). Integration fit: uncomment ALL of:
 #set_global_assignment -name VERILOG_MACRO "FABRIC_DDR_WRITER=1"

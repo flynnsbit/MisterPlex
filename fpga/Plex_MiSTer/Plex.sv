@@ -746,6 +746,7 @@ wire [11:0] plxg_y_stride;
 wire [10:0] plxg_c_stride, plxg_dw, plxg_dh;
 wire [10:0] plxg_px, plxg_py, plxg_cl, plxg_ct;
 wire [15:0] plxg_live_seq;
+wire [13:0] plxg_live_epoch;
 wire        plxg_want, plxg_rd;
 wire  [7:0] plxg_burstcnt;
 wire [28:0] plxg_addr;
@@ -829,7 +830,8 @@ present_geom_latch u_plxg_latch (
 	.crop_left(plxg_cl),
 	.crop_top(plxg_ct),
 	.live_valid(plxg_live_valid),
-	.live_seq(plxg_live_seq)
+	.live_seq(plxg_live_seq),
+	.live_epoch(plxg_live_epoch)
 );
 
 plxg_ddr_poller #(
