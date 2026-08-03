@@ -1214,8 +1214,11 @@ cyclonev_hps_interface_peripheral_i2c hdmi_i2c
 	wire        fab_idle_sig_en;
 	wire        fab_chrome_sig_en;
 	wire        fab_chrome_demo_en;
+	wire        fab_play_beacon_en;
 	// PLEX_FAB_IDLE and PLEX_FAB_CHROME are mutually exclusive integration demos.
 	// If both defined, IDLE wins (parent should enable one fit at a time).
+	// PLEX_FAB_PLAY_BEACON: lime 32×32 vsync-toggle marker for content-independent
+	// PLAYING motion. Allowed with CHROME or default path; forced off under IDLE.
 `ifdef PLEX_FAB_IDLE
 	// ARM-off milestone: fabric idle always (until has_frame CDC). Mode 2 =
 	// screensaver — chevron drifts with vsync phase (moving pattern). Cyan
@@ -1226,6 +1229,7 @@ cyclonev_hps_interface_peripheral_i2c hdmi_i2c
 	assign fab_idle_sig_en   = 1'b1;
 	assign fab_chrome_sig_en = 1'b0;
 	assign fab_chrome_demo_en= 1'b0;
+	assign fab_play_beacon_en= 1'b0;
 `elsif PLEX_FAB_CHROME
 	// Playback chrome off ARM: built-in STOPPED HUD + magenta TR/BL signature.
 	// has_frame=1 so idle plane stays off; video/din shows under the bar.
@@ -1235,6 +1239,11 @@ cyclonev_hps_interface_peripheral_i2c hdmi_i2c
 	assign fab_idle_sig_en   = 1'b0;
 	assign fab_chrome_sig_en = 1'b1;
 	assign fab_chrome_demo_en= 1'b1;
+`ifdef PLEX_FAB_PLAY_BEACON
+	assign fab_play_beacon_en= 1'b1;
+`else
+	assign fab_play_beacon_en= 1'b0;
+`endif
 `else
 	assign has_frame_chrome  = 1'b1;
 	assign fab_idle_phase_en = 1'b0;
@@ -1242,6 +1251,11 @@ cyclonev_hps_interface_peripheral_i2c hdmi_i2c
 	assign fab_idle_sig_en   = 1'b0;
 	assign fab_chrome_sig_en = 1'b0;
 	assign fab_chrome_demo_en= 1'b0;
+`ifdef PLEX_FAB_PLAY_BEACON
+	assign fab_play_beacon_en= 1'b1;
+`else
+	assign fab_play_beacon_en= 1'b0;
+`endif
 `endif
 	assign plxc_ext_we    = 1'b0;
 	assign plxc_ext_addr  = 8'd0;
@@ -1352,6 +1366,7 @@ cyclonev_hps_interface_peripheral_i2c hdmi_i2c
 		.idle_sig_en(fab_idle_sig_en),
 		.chrome_sig_en(fab_chrome_sig_en),
 		.chrome_demo_en(fab_chrome_demo_en),
+		.play_beacon_en(fab_play_beacon_en),
 		.chrome_hw(plex_chrome_hw),
 		.mon_width(plex_chrome_mon_w),
 		.mon_height(plex_chrome_mon_h),
@@ -1362,6 +1377,7 @@ cyclonev_hps_interface_peripheral_i2c hdmi_i2c
 	// dangling and Quartus could drop them (and, with them, prove-nothing fits).
 	// XOR into RGB only when DE=0 so active video is bit-identical; blanking
 	// carries a sticky hash so the nets remain observable to the fitter.
+	// play_beacon_en folded in — default 0 does not change active-video path.
 	(* noprune *) (* preserve *) reg [23:0] chrome_keep_r;
 	always @(posedge clk_hdmi) begin
 		if (reset_req)
@@ -1369,10 +1385,10 @@ cyclonev_hps_interface_peripheral_i2c hdmi_i2c
 		else
 			chrome_keep_r <= chrome_keep_r
 				^ {plex_chrome_mon_w[11:0], plex_chrome_mon_h[11:0]}
-				^ {12'd0, plex_chrome_mon_scale[3:0],
+				^ {11'd0, plex_chrome_mon_scale[3:0],
 				   plex_chrome_hw, fab_idle_sig_en, fab_chrome_sig_en,
-				   fab_chrome_demo_en, plxc_idle_en, fab_idle_phase_en,
-				   has_frame_chrome, 1'b1};
+				   fab_chrome_demo_en, fab_play_beacon_en, plxc_idle_en,
+				   fab_idle_phase_en, has_frame_chrome, 1'b1};
 	end
 	wire [23:0] hdmi_data_chrome_kept =
 		hdmi_de_chrome ? hdmi_data_chrome

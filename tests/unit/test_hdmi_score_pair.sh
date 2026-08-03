@@ -131,6 +131,27 @@ check "E pure black" "E_NOSIGNAL" \
 check "B1 good then dead" "B1_ONE_SHOT_THEN_DEAD" \
   "$WORKDIR/b1_t0.png" "$WORKDIR/b1_t1.png"
 
+# Beacon flip on static full raster → A via beacon_motion
+python3 - "$WORKDIR" <<'PY'
+import os, sys
+import numpy as np
+from PIL import Image
+d = sys.argv[1]
+H, W = 1080, 1920
+def base():
+    im = np.zeros((H, W, 3), dtype=np.uint8)
+    im[100:800, 100:1300, 0] = 80
+    im[100:800, 100:1300, 1] = 100
+    im[100:800, 100:1300, 2] = 140
+    return im
+a = base(); b = base()
+b[400:432, 1200:1232] = (0x40, 0xFF, 0x40)
+Image.fromarray(a).save(os.path.join(d, "beacon_t0.png"))
+Image.fromarray(b).save(os.path.join(d, "beacon_t1.png"))
+PY
+check "beacon lime flip static content" "A_FABRIC_PLAY_OK" \
+  "$WORKDIR/beacon_t0.png" "$WORKDIR/beacon_t1.png"
+
 check_rc "grabber flag" "UNKNOWN_GRABBER" 3 --grabber-not-ready
 check_rc "grabber token" "UNKNOWN_GRABBER" 3 GRABBER_NOT_READY
 

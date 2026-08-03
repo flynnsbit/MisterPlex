@@ -1,17 +1,18 @@
 lane=w-osd branch=w-osd-fabric-plane
-status=READY — scorer instrument-validated on real ctrl720 + wedge frames
+status=READY_FOR_MERGE — PLAY_BEACON landed for this exclusive fit
 
-## Instrument validation (true rc=0 unit)
-ctrl720_arm.png self -> VERDICT=CONTROL_ARM_IDLE  (NOT A)
-wedge_check.png self -> VERDICT=E_NOSIGNAL       (was UNSCORED hole; fixed)
-ctrl->wedge          -> VERDICT=B1_ONE_SHOT_THEN_DEAD
---grabber-not-ready  -> VERDICT=UNKNOWN_GRABBER exit 3
+## w-nostub merge note (time-sensitive)
+Branch tip includes PLEX_FAB_PLAY_BEACON (default OFF).
+For PLAYING glass score on this fit, enable WITH present/scale macros:
+  VERILOG_MACRO "PLEX_FAB_PLAY_BEACON=1"
+Do NOT combine with PLEX_FAB_IDLE (beacon forced off under idle).
+Safe with PLEX_FAB_CHROME. Geometry untouched. keep-sink includes enable bit only in blanking.
 
-## PLAYING score
-docs/fab-playing-parent-capture-contract.md
-scripts/hdmi_score_pair.sh t0.png t1.png
-# if capture rc=1: scripts/hdmi_score_pair.sh --grabber-not-ready
+## Prove offline
+tests/unit/test_plex_chrome_beacon_rtl_sim.sh  true rc=0
+tests/unit/test_hdmi_score_pair.sh             true rc=0  (beacon flip → A)
 
-## IDLE
-docs/fab-idle-postfit-gate.md
-make post-fit-fab-idle FIT_RPT=$FITDIR/Plex.fit.rpt MAP_RPT=$FITDIR/Plex.map.rpt
+## Glass PLAYING
+scripts/hdmi_capture_idle.sh play-t0.png; sleep 1; ... t1.png
+scripts/hdmi_score_pair.sh t0 t1
+  motion_pass = DIFF high OR LIME_DELTA>=400

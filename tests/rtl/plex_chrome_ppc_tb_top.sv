@@ -83,6 +83,7 @@ module plex_chrome_ppc_tb (
         .idle_sig_en(1'b0),
         .chrome_sig_en(1'b0),
         .chrome_demo_en(1'b0),
+        .play_beacon_en(1'b0),
         .chrome_hw(),
         .mon_width(),
         .mon_height(),

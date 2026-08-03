@@ -57,6 +57,7 @@ def stats(path):
     orange = int(((R > 150) & (G > 90) & (G < 200) & (B < 90)).sum())
     cyan = int(((R < 80) & (G > 140) & (B > 180)).sum())
     magenta = int(((R > 180) & (G < 80) & (B > 100) & (B < 200)).sum())
+    lime = int(((R > 40) & (R < 120) & (G > 200) & (B > 40) & (B < 120)).sum())
     tot = im.sum(axis=2)
     rows = np.where(tot.max(axis=1) > 60)[0]
     cols = np.where(tot.max(axis=0) > 60)[0]
@@ -73,6 +74,7 @@ def stats(path):
         "orange": orange,
         "cyan": cyan,
         "magenta": magenta,
+        "lime": lime,
         "aw": aw,
         "ah": ah,
         "area": aw * ah,
@@ -105,6 +107,8 @@ diff_px = int((d > 20.0).sum())
 aw, ah, area = b["aw"], b["ah"], b["area"]
 mean, std = b["mean"], b["std"]
 orange, cyan, magenta = b["orange"], b["cyan"], b["magenta"]
+lime0, lime1 = a["lime"], b["lime"]
+lime_delta = abs(lime0 - lime1)
 ns0, ns1 = is_nosignal(a), is_nosignal(b)
 
 CTRL_AW, CTRL_AH = 923, 717
@@ -126,6 +130,9 @@ def near_control(aw_, ah_, area_):
 
 active_pass = aw >= PASS_AW and ah >= PASS_AH and area >= PASS_AREA
 diff_pass = diff_px >= PASS_DIFF_PX and diff_mean >= PASS_DIFF_MEAN
+# Content-independent: lime beacon flip (PLEX_FAB_PLAY_BEACON). 32x32=1024.
+beacon_motion = lime_delta >= 400
+motion_pass = diff_pass or beacon_motion
 content = PASS_MEAN_LO <= mean <= PASS_MEAN_HI and std >= 18.0
 cyan_idle = cyan >= 2000
 orange_chevron = orange > PASS_ORANGE_MAX
@@ -144,9 +151,9 @@ elif cyan_idle and orange >= 500:
     verdict = "B3_IDLE"
 elif cyan_idle:
     verdict = "D1_CYAN_WRONG_STATE"
-elif active_pass and cyan_ok and orange_ok and content and diff_pass:
+elif active_pass and cyan_ok and orange_ok and content and motion_pass:
     verdict = "A_FABRIC_PLAY_OK"
-elif active_pass and cyan_ok and orange_ok and content and not diff_pass:
+elif active_pass and cyan_ok and orange_ok and content and not motion_pass:
     verdict = "B2_STATIC_FULL_RASTER"
 elif content and near_control(aw, ah, area) and cyan_ok:
     verdict = "C1_ARM_LETTERBOX"
@@ -164,10 +171,11 @@ print(
     f"ACTIVE0={a['aw']}x{a['ah']} ACTIVE1={aw}x{ah} AREA1={area} "
     f"ACTIVE_X1=[{b['ax0']},{b['ax1']}]\n"
     f"MEAN0={a['mean']:.1f} STD0={a['std']:.1f} MEAN1={mean:.1f} STD1={std:.1f}\n"
-    f"ORANGE1={orange} CYAN1={cyan} MAGENTA1={magenta}\n"
+    f"ORANGE1={orange} CYAN1={cyan} MAGENTA1={magenta} LIME0={lime0} LIME1={lime1} LIME_DELTA={lime_delta}\n"
     f"DIFF_MEAN={diff_mean:.3f} DIFF_PX={diff_px}\n"
     f"NOSIGNAL0={int(ns0)} NOSIGNAL1={int(ns1)}\n"
     f"GATES active_pass={int(active_pass)} diff_pass={int(diff_pass)} "
+    f"beacon_motion={int(beacon_motion)} motion_pass={int(motion_pass)} "
     f"content={int(content)} cyan_ok={int(cyan_ok)} orange_ok={int(orange_ok)}\n"
     f"VERDICT={verdict}"
 )

@@ -98,6 +98,7 @@ module plex_chrome_idle720_tb #(
         .idle_sig_en(idle_sig_en),
         .chrome_sig_en(1'b0),
         .chrome_demo_en(1'b0),
+        .play_beacon_en(1'b0),
         .chrome_hw(),
         .mon_width(mon_width),
         .mon_height(mon_height),

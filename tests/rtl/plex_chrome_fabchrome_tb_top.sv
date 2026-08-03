@@ -45,6 +45,7 @@ module plex_chrome_fabchrome_tb (
         .idle_sig_en(1'b0),
         .chrome_sig_en(chrome_sig_en),
         .chrome_demo_en(chrome_demo_en),
+        .play_beacon_en(1'b0),
         .chrome_hw(),
         .mon_width(),
         .mon_height(),

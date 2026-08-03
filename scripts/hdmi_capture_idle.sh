@@ -14,13 +14,14 @@
 # Exit:   0  captured, stats printed
 #         1  GRABBER_NOT_READY  (device busy/absent, or every try was black)
 #
-# Prints: MEAN=… STD=… ORANGE_PX=… CYAN_PX=… MAGENTA_PX=… ACTIVE=WxH FILE=…
+# Prints: MEAN=… STD=… ORANGE_PX=… CYAN_PX=… MAGENTA_PX=… LIME_PX=… ACTIVE=WxH FILE=…
 #   MEAN 15..70 with a healthy ORANGE_PX is the good Plex chevron idle.
 #   CYAN_PX: fabric-idle signature (00C8FF L-brackets). ARM idle ⇒ 0.
 #   FAB_IDLE PASS (pre-reg): CYAN_PX>=2000, ORANGE_PX>=500, motion across 2 snaps.
 #   FAB_CHROME PASS (pre-reg): MAGENTA_PX>=1500, ORANGE_PX>=200, CYAN_PX~0.
-#   PLAYING PASS (pre-reg): docs/fab-playing-parent-capture-contract.md
-#     ACTIVE>=1100x680, CYAN~0, ORANGE<=4000, pair DIFF via hdmi_score_pair.sh
+#   LIME_PX: PLAYING beacon 40FF40 (PLEX_FAB_PLAY_BEACON). Toggles ~0.5s period.
+#   PLAYING PASS: docs/fab-playing-parent-capture-contract.md
+#     ACTIVE>=1100x680, CYAN~0, ORANGE<=4000, DIFF or LIME flip via hdmi_score_pair.sh
 #   MEAN >= 100 near-uniform is the documented mixed-pair GREEN failure.
 #   MEAN == 0 with STD == 0 across all tries is a genuine black screen — which
 #   is the mixed-pair failure mode where the core never frees a DDR bank.
@@ -82,6 +83,8 @@ orange = int(((R > 150) & (G > 90) & (G < 200) & (B < 90)).sum())
 cyan = int(((R < 80) & (G > 140) & (B > 180)).sum())
 # Fabric playback signature magenta FF2D95
 magenta = int(((R > 180) & (G < 80) & (B > 100) & (B < 200)).sum())
+# PLAYING beacon lime 40FF40 (not orange/cyan/magenta masks)
+lime = int(((R > 40) & (R < 120) & (G > 200) & (B > 40) & (B < 120)).sum())
 tot = im.sum(axis=2)
 rows = np.where(tot.max(axis=1) > 60)[0]
 cols = np.where(tot.max(axis=0) > 60)[0]
@@ -91,8 +94,8 @@ if len(rows) and len(cols):
 else:
     active, ax = "0x0", ""
 mean, std = lum.mean(), lum.std()
-print(f"MEAN={mean:.1f} STD={std:.1f} ORANGE_PX={orange} CYAN_PX={cyan} MAGENTA_PX={magenta} ACTIVE={active}{ax} "
-      f"TRY={sys.argv[2]} FILE={sys.argv[1]}")
+print(f"MEAN={mean:.1f} STD={std:.1f} ORANGE_PX={orange} CYAN_PX={cyan} MAGENTA_PX={magenta} "
+      f"LIME_PX={lime} ACTIVE={active}{ax} TRY={sys.argv[2]} FILE={sys.argv[1]}")
 # A perfectly uniform black frame is indistinguishable from a grabber that never
 # locked, so report it as not-yet-settled and let the caller retry.
 sys.exit(3 if (mean == 0.0 and std == 0.0) else 0)

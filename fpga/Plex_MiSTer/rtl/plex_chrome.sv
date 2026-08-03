@@ -76,6 +76,9 @@ module plex_chrome #(
     input  wire        chrome_sig_en,
     // Built-in STOPPED HUD without ARM PLXC (PLEX_FAB_CHROME demo). Off by default.
     input  wire        chrome_demo_en,
+    // PLAYING content-independent motion beacon (PLEX_FAB_PLAY_BEACON). Default off.
+    // Lime 32×32 block toggles on a free-running vsync divider — fabric-only.
+    input  wire        play_beacon_en,
 
     output reg         chrome_hw,
     output reg  [11:0] mon_width,
@@ -534,10 +537,55 @@ module plex_chrome #(
     // Fabric signatures (ARM never emits these pure primaries in idle/overlay):
     //   idle:     cyan 00_C8_FF at TL+BR
     //   playback: magenta FF_2D_95 at TR+BL  (orthogonal corners)
+    //   playing:  lime 40_FF_40 32×32 mid-right toggle (PLEX_FAB_PLAY_BEACON)
     localparam [11:0] SIG_MARK = 12'd64;
     localparam [11:0] SIG_BAR  = 12'd12;
     localparam [23:0] SIG_CYAN    = 24'h00_C8_FF;
     localparam [23:0] SIG_MAGENTA = 24'hFF_2D_95;
+    localparam [23:0] SIG_LIME    = 24'h40_FF_40;
+    localparam [11:0] BEACON_SZ   = 12'd32;
+
+    // Free-running vsync divider — independent of video content / ARM.
+    reg        vs_d1_bcn;
+    reg [4:0]  beacon_div;
+    reg        beacon_on;
+    always @(posedge clk_hdmi) begin
+        if (reset) begin
+            vs_d1_bcn  <= 1'b0;
+            beacon_div <= 5'd0;
+            beacon_on  <= 1'b0;
+        end else begin
+            vs_d1_bcn <= vs_in;
+            if (play_beacon_en && !idle_en && vs_in && !vs_d1_bcn) begin
+                // ~16 frames/half-period @60Hz ≈ 0.27 s; 1 s dual-snap sees a flip
+                if (beacon_div == 5'd15) begin
+                    beacon_div <= 5'd0;
+                    beacon_on  <= ~beacon_on;
+                end else begin
+                    beacon_div <= beacon_div + 5'd1;
+                end
+            end
+            if (!play_beacon_en || idle_en) begin
+                beacon_div <= 5'd0;
+                beacon_on  <= 1'b0;
+            end
+        end
+    end
+
+    // Mid-right, clear of cyan/magenta L-brackets and bottom HUD band.
+    function automatic play_beacon_mark;
+        input [11:0] px, py;
+        reg [11:0] x0, y0;
+        begin
+            play_beacon_mark = 1'b0;
+            if (HDMI_WIDTH > (BEACON_SZ + 12'd16) && HDMI_HEIGHT > (BEACON_SZ + 12'd32)) begin
+                x0 = HDMI_WIDTH - BEACON_SZ - 12'd16;
+                y0 = (HDMI_HEIGHT >> 1) - (BEACON_SZ >> 1);
+                play_beacon_mark = (px >= x0) && (px < (x0 + BEACON_SZ)) &&
+                                   (py >= y0) && (py < (y0 + BEACON_SZ));
+            end
+        end
+    endfunction
 
     function automatic idle_fab_mark;
         input [11:0] px, py;
@@ -682,6 +730,7 @@ module plex_chrome #(
     reg [23:0] ir;
     reg        chrome_on;
     reg        want_sig;
+    reg        want_beacon;
 
     always @(*) begin
         lane_rgb  = {PX_PER_CLK*24{1'b0}};
@@ -695,11 +744,15 @@ module plex_chrome #(
             chrome_on = ch[24] | demo[24];
             want_sig  = chrome_sig_en && !idle_en && (latched_en | chrome_demo_en) &&
                         chrome_fab_mark(lx, hy);
-            lane_hit[lane_i]  = chrome_on | want_sig;
+            want_beacon = play_beacon_en && !idle_en && beacon_on &&
+                          play_beacon_mark(lx, hy);
+            lane_hit[lane_i]  = chrome_on | want_sig | want_beacon;
             lane_idle[lane_i] = idle_en && (idle_mode != 2'd3);
-            // Priority: magenta sig > list hit > demo HUD > idle > video
+            // Priority: magenta > lime beacon > list > demo HUD > idle > video
             if (want_sig)
                 lane_rgb[lane_i*24 +: 24] = SIG_MAGENTA;
+            else if (want_beacon)
+                lane_rgb[lane_i*24 +: 24] = SIG_LIME;
             else if (ch[24])
                 lane_rgb[lane_i*24 +: 24] = ch[23:0];
             else if (demo[24])

@@ -52,6 +52,12 @@ Any scorer that GREENS the control frame as PLAYING PASS is **broken**.
 - `CYAN_PX≥2000` — that is the **idle** signature
 - Magenta L-brackets — only if this fit also enables `PLEX_FAB_CHROME` (orthogonal demo)
 
+**Integration motion beacon (preferred this fit):** `PLEX_FAB_PLAY_BEACON=1`
+lime `#40FF40` 32×32 mid-right, toggles every 16 vsync (~0.5 s period). Fabric-only.
+Scorer: `LIME_DELTA≥400` ⇒ `beacon_motion` ⇒ `motion_pass` even when DIFF low.
+Forced **off** under `PLEX_FAB_IDLE`. Default OFF bit-identical. Does **not** touch
+PLXG / 960×540 / HUD coords / keep-sink active video.
+
 **Required platform knobs:**
 
 | Knob | Value |
@@ -287,7 +293,7 @@ is a **content-dependent** motion proxy, not a present-path heartbeat.
 | Keep DIFF for the **integration gate cast** | **Do this.** Gate cast must be a **known-motion** scene (BBB chase / high-motion proxy), same discipline as parent’s 720p control stream. Document on the command card. |
 | Lower DIFF to “catch dark scenes” | **Reject** as default — collides with JPEG slop and frozen-bank B2. |
 | Triple snap, max pairwise DIFF | Minor help; still content-dependent. Optional later. |
-| Content-independent fabric beacon | **Best product fix**, separate from this gate: a vsync-phase **1–2 px marker** or existing chrome sig edge toggled in blanking/corner while PLAYING + plane live (idle already has screensaver motion under FAB_IDLE). Not required to land the first fit gate if cast is motion-known. |
+| Content-independent fabric beacon | **LANDED** `PLEX_FAB_PLAY_BEACON` lime toggle — use for this fit: a vsync-phase **1–2 px marker** or existing chrome sig edge toggled in blanking/corner while PLAYING + plane live (idle already has screensaver motion under FAB_IDLE). Not required to land the first fit gate if cast is motion-known. |
 | Screensaver motion as PLAYING key | **Wrong state** — that path is idle (`has_frame=0`). Do not enable FAB_IDLE during a PLAYING claim. |
 
 **Contract rule:** PLAYING PASS **A** is only claimed on a **pre-declared motion cast**.
