@@ -209,6 +209,8 @@ module present_core #(
 		(content_h == 11'd0) ? 11'd540 :
 		(content_h > 11'(FRAME_H)) ? 11'(FRAME_H) : content_h;
 	// Fixed line class @20 MHz: 1182 clocks/line. V_TOTAL selects 30 vs 24 Hz.
+	// B15: content_fps MUST be runtime (PLXG). <=25 → film 705 (~24.0007 Hz);
+	// else TV 564 (~30.0008 Hz). Hardwired 24 made 564 unreachable (blocker).
 	wire [10:0] beam_htot_req = 11'd1182;
 	wire [10:0] beam_vtot_req = (content_fps <= 8'd25) ? 11'd705 : 11'd564;
 

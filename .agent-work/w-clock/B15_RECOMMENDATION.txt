@@ -1,0 +1,4 @@
+B15 RECOMMEND: PLXG transport of content_fps (Q1 gap nibbles).
+NOT fixed-30-only without sustained zero-underrun proof (UNKNOWN on device).
+Idle default under BEAM_960 = 30 until PLXG fps live; film sets 24 via PLXG.
+Do not close by hardcoding 30.

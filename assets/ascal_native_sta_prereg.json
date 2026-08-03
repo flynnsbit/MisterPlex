@@ -134,5 +134,13 @@
     "product_force": "force_native_960 = ~plxg_live under PRESENT_BEAM_960",
     "green": "tests/unit/test_present_b13_mux_e2e.sh product mux\u2192beam 624/416/320/960 exact + idle 960",
     "red": "FAULT_B8_FORCE_ALWAYS pins 960 over live PLXG 624"
+  },
+  "b15_runtime_content_fps": {
+    "defect": "hardwired content_fps=24 forced V_TOTAL=705 always",
+    "recommend": "PLXG Q1 gap-nibble content_fps; idle default 30 under BEAM_960",
+    "not_fixed_30_only": "needs sustained zero-underrun proof for option B \u2014 UNKNOWN on device",
+    "framecount_proof": "tests/unit/test_b15_cadence_framecount.sh window=4*1182*705 \u2192 4@24 / 5@30",
+    "v705_sta": "still UNKNOWN until fit; prereg medium @20 MHz",
+    "w_mem_owns": "packPlxgQ1 + present_geom_latch decode; w-clock staged plxg_content_fps_*=0"
   }
 }

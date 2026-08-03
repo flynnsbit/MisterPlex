@@ -1,10 +1,8 @@
 w-clock STATUS
-tip: d99c126f
-B13: ON (ac4932ea) parent-verified exact ladder
-Collision#5 E2E: GREEN product mux→beam 624/416/320/960 + idle 960; RED FAULT_B8_FORCE_ALWAYS
-mux: w-mem owned force=~plxg_live; w-clock did NOT edit force policy (copy for compile/E2E)
-416x234: oracle + E2E exact
-H_TOTAL=1182: f_h≈16.920 kHz all DE (test_beam_htotal_line_rate rc=0)
-V705 STA: prereg medium expect@20; sim exact; Fmax UNKNOWN until fit
-Overclock: PLL 20/90 unapplied; stub Fmax 23.46 → no 25 ship; ceiling 20 until BEAM_960 STA
-NO Quartus fit. NO device.
+B15: content_fps RUNTIME (removed hardwired 24)
+  recommend PLXG transport Q1[15:12]|[31:28]; idle 30 under BEAM_960
+  framecount exact 4@24 / 5@30; RED ignore-fps
+  plxg_content_fps_* staged 0 — w-mem owns pack/latch
+V705 STA: UNKNOWN until fit (prereg medium @20)
+Overclock: 20 ship / 25 blocked stub 23.46
+NO fit. NO device.

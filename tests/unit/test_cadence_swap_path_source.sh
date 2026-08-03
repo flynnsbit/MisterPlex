@@ -45,12 +45,27 @@ check "vsync_pulse from fstart" \
 check "advance tied unused at top" \
   "$ROOT/fpga/Plex_MiSTer/Plex.sv" \
   '_unused = \|\{[^}]*advance'
-check "daemon paces content comment" \
+# B15 overturned hardwired-24 (that froze V_TOTAL=705). Runtime fps required.
+check "B15 runtime content_fps banner" \
   "$ROOT/fpga/Plex_MiSTer/Plex.sv" \
-  'daemon handles exact content pacing'
-check "content_fps hardwired 24" \
+  'B15: content_fps is RUNTIME'
+check "B15 content_fps idle/runtime mux" \
   "$ROOT/fpga/Plex_MiSTer/Plex.sv" \
-  'content_fps = 8.d24|content_fps = 8'\''d24'
+  'content_fps_idle|plxg_content_fps'
+# Hardwired 24 only allowed under FAULT_B15 red twin
+if grep -nE "content_fps = 8'd24|content_fps = 8.d24" "$ROOT/fpga/Plex_MiSTer/Plex.sv" \
+  | grep -v FAULT_B15 >/dev/null 2>&1; then
+  # lines matching may be FAULT body without FAULT on same line
+  if ! grep -B3 -E "content_fps = 8'd24" "$ROOT/fpga/Plex_MiSTer/Plex.sv" \
+      | grep -q FAULT_B15_FPS_HARDWIRE_24; then
+    echo "FAIL C1/B15: content_fps hardwired 24 outside FAULT_B15" >&2
+    FAIL=1
+  else
+    echo "OK C1/B15: hardwired 24 only under FAULT_B15 red twin"
+  fi
+else
+  echo "OK C1/B15: no hardwired content_fps=24 in product path"
+fi
 
 # cadence.hpp not included from arm/
 if grep -rn --include='*.cpp' --include='*.hpp' 'cadence.hpp' "$ROOT/arm" >/dev/null 2>&1; then
