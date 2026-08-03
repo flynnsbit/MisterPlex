@@ -6,6 +6,7 @@
     "DDR_FRAME_STORE_FAULT_CHROMA_VERTICAL_FULLRES": "Injected DDR frame-store expected-red fault.",
     "DDR_FRAME_STORE_FAULT_SWAP_UV_READ": "Injected DDR frame-store expected-red fault.",
     "DEQUANT_FAULT_QP_SWEEP": "Injected dequant QP-sweep fault for overflow boundary verification.",
+    "FAULT_NB_CTX_NO_GEOM_REJECT": "Injected nb_ctx expected-red fault: swallow sticky geom_reject to prove silent-corruption path is gated.",
     "H264_DEBLOCK_FAULT_MB_COMMIT_EARLY": "Injected deblock/DPB seam expected-red fault.",
     "H264_DEBLOCK_FAULT_REF_READY_EARLY": "Injected deblock/DPB seam expected-red fault.",
     "P3_INTRA_FRAME_RARE_NEGATIVE_TEST": "Injected intra-frame expected-red fault.",
