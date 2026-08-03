@@ -1,0 +1,42 @@
+{
+  "id": "route_b_content_de_budget",
+  "title": "Route B first-fit: host-emittable content DE must fit clk_sys",
+  "clk_sys_hz": 20000000,
+  "first_fit": {
+    "PRESENT_BEAM_960": true,
+    "PRESENT_MULTI_PIXEL": false,
+    "ppc": 1,
+    "max_content_de": {"w": 960, "h": 540},
+    "hdmi_glass": {"w": 1280, "h": 720},
+    "note": "Glass 720p is ascal upscale; core DE stays ≤960×540"
+  },
+  "blocked_content_de": {
+    "w": 1280,
+    "h": 720,
+    "active_mpix_24": 22.1184,
+    "active_exceeds_clk_at_24": true,
+    "beam_min_blank_htot": 1312,
+    "beam_min_blank_vtot": 736,
+    "beam_fps_at_20mhz": 20.7118,
+    "misses_24": true,
+    "misses_30": true
+  },
+  "max_tier_ok": {
+    "w": 960,
+    "h": 540,
+    "active_mpix_30": 15.552,
+    "fits_clk": true,
+    "beam_htot_product": 1182,
+    "beam_vtot_film": 705,
+    "beam_fps_film": 24.0007
+  },
+  "host_cap": {
+    "setDecodeSize_max": "kRouteBMaxContentWidth/Height 960x540",
+    "forbidden_silent_1280": true
+  },
+  "w_path_contract": {
+    "TranscodeHd720_auto_for_source_gt_720": "FORBIDDEN on first-fit without fitted MULTI_PIXEL",
+    "required": "cap request/store content ≤960x540 or reject/fallback loudly"
+  },
+  "gate": "tests/unit/test_route_b_content_de_budget.sh"
+}

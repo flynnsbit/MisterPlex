@@ -312,6 +312,9 @@ module present_core #(
 		if (FRAME_W != 960 || FRAME_H != 540)
 			$error("PRESENT_BEAM_960 requires FRAME_W=960 FRAME_H=540 (got %0d x %0d)",
 				FRAME_W, FRAME_H);
+		// Route B first-fit: bank must not exceed max tier (1280 content DE is glass-only).
+		if (FRAME_W > 960 || FRAME_H > 540)
+			$error("PRESENT_BEAM_960 first-fit forbids FRAME >960x540 without MULTI_PIXEL");
 `ifdef PRESENT_MULTI_PIXEL
 		$error("PRESENT_BEAM_960 and PRESENT_MULTI_PIXEL are mutually exclusive (first fit ascal path)");
 `endif
@@ -341,12 +344,19 @@ module present_core #(
 	wire [10:0] beam_src_h = app_content_h;
 `endif
 `endif
+	// Route B max-tier clamp (960×540): host/PLXG must not drive a 1280×720
+	// content DE on 1ppc@20MHz (min-blank beam → ~20.7 Hz). FRAME_W is 960 on
+	// first-fit; keep an explicit tier ceiling so a mis-set FRAME cannot open 1280.
+	localparam int RT_MAX_HDE  = 960;
+	localparam int RT_MAX_VACT = 540;
+	wire [10:0] beam_hde_cap = (11'(FRAME_W) < 11'(RT_MAX_HDE)) ? 11'(FRAME_W) : 11'(RT_MAX_HDE);
+	wire [10:0] beam_vact_cap = (11'(FRAME_H) < 11'(RT_MAX_VACT)) ? 11'(FRAME_H) : 11'(RT_MAX_VACT);
 	wire [10:0] beam_hde_req =
-		(beam_src_w == 11'd0) ? 11'd960 :
-		(beam_src_w > 11'(FRAME_W)) ? 11'(FRAME_W) : beam_src_w;
+		(beam_src_w == 11'd0) ? beam_hde_cap :
+		(beam_src_w > beam_hde_cap) ? beam_hde_cap : beam_src_w;
 	wire [10:0] beam_vact_req =
-		(beam_src_h == 11'd0) ? 11'd540 :
-		(beam_src_h > 11'(FRAME_H)) ? 11'(FRAME_H) : beam_src_h;
+		(beam_src_h == 11'd0) ? beam_vact_cap :
+		(beam_src_h > beam_vact_cap) ? beam_vact_cap : beam_src_h;
 	// Fixed line class @20 MHz: 1182 clocks/line. V_TOTAL selects 30 vs 24 Hz.
 	// beam_film_class from app_content_fps (shared with cadence_display_hz).
 	// Fixed line class @20 MHz: 1182 clocks/line. V_TOTAL selects 30 vs 24 Hz.

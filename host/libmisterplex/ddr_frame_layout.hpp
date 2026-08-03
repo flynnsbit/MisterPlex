@@ -497,6 +497,32 @@ inline bool decodeDdrDoorbell(uint32_t lo, uint32_t hi, DdrFrameFormat expectedF
 constexpr CodedWidth kDdrFrameStoreMaxWidth{640};
 constexpr CodedHeight kDdrFrameStoreMaxHeight{480};
 
+// ---- Route B first-fit content DE ceiling (w-clock / PRESENT_BEAM_960) ----
+// Core raster is 1ppc @ clk_sys=20 MHz, mutually exclusive with PRESENT_MULTI_PIXEL.
+// Max tier content window is 960×540 (ascal upscales to HDMI 1280×720 glass).
+// A host-emitted 1280×720 *content* DE is not glass — it is a beam load:
+//   active alone: 1280*720*24 = 22.118 Mpix/s > 20
+//   beam min-blank clamp (hde+32)×(vact+16)=1312×736 → 20e6/(1312*736)=20.712 Hz
+// so film/TV both silently drop to ~20.7 unique frames/s. Cap decode/content here.
+constexpr int kRouteBClkSysHz = 20'000'000;
+constexpr int kRouteBMaxContentWidth = 960;
+constexpr int kRouteBMaxContentHeight = 540;
+// True when content DE at fps cannot be scanned at clk_sys even with zero blanking.
+inline constexpr bool routeBContentDeExceedsClk(int hDe, int vAct, int fps) noexcept {
+    if (hDe <= 0 || vAct <= 0 || fps <= 0)
+        return true;
+    return (static_cast<long long>(hDe) * vAct * fps) > kRouteBClkSysHz;
+}
+// Beam floor totals after present_beam_content_de min pads (32 H, 16 V).
+inline constexpr bool routeBBeamMinBlankMissesFps(int hDe, int vAct, int fps) noexcept {
+    if (hDe <= 0 || vAct <= 0 || fps <= 0)
+        return true;
+    const long long htot = static_cast<long long>(hDe) + 32;
+    const long long vtot = static_cast<long long>(vAct) + 16;
+    // fps_beam = clk/(htot*vtot); miss when clk < fps*htot*vtot
+    return (static_cast<long long>(kRouteBClkSysHz) < fps * htot * vtot);
+}
+
 // Check whether a decoded frame resolution is acceptable for the DDR frame store.
 // Requirements:
 //   1. MB-aligned (width and height are multiples of 16)

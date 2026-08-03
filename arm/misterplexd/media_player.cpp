@@ -946,10 +946,15 @@ void MediaPlayer::setDecodeSize(CodedWidth cw, CodedHeight ch) {
     // Even dimensions for YUV-friendly sources
     w &= ~1;
     h &= ~1;
-    if (w > 1280)
-        w = 1280;
-    if (h > 720)
-        h = 720;
+    // Route B first-fit (PRESENT_BEAM_960, 1ppc @ 20 MHz): content DE ≤960×540.
+    // HDMI 1280×720 is ascal *glass*, not core DE. A 1280×720 content beam cannot
+    // hit 24 fps (active 22.12 Mpix/s; min-blank clamp ~20.7 Hz). Do not silently
+    // accept HD content sizes that the fitted fabric will under-scan.
+    // Raise only when a fitted PRESENT_MULTI_PIXEL (or higher clk_sys) product lands.
+    if (w > misterplex::kRouteBMaxContentWidth)
+        w = misterplex::kRouteBMaxContentWidth;
+    if (h > misterplex::kRouteBMaxContentHeight)
+        h = misterplex::kRouteBMaxContentHeight;
     outW_ = w;
     outH_ = h;
 }
