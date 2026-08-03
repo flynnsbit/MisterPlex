@@ -231,9 +231,25 @@
       "verdict": "RED",
       "true_rc": "1",
       "token_hit": "1"
+    },
+    {
+      "check": "STA_PATH_OWNER_UNRESOLVABLE",
+      "inject": "STA present (Fmax summary) but path owner unresolvable",
+      "expect": "STA_PATH_OWNER_UNRESOLVABLE",
+      "verdict": "RED",
+      "true_rc": "1",
+      "token_hit": "1"
+    },
+    {
+      "check": "STA_FMAX_BELOW_REQUIREMENT",
+      "inject": "summary STA clk_sys Fmax < 30.24 (native 720p@30)",
+      "expect": "STA_FMAX_BELOW_REQUIREMENT",
+      "verdict": "RED",
+      "true_rc": "1",
+      "token_hit": "1"
     }
   ],
   "failures": [],
-  "n_red": 29,
-  "head": "b3a1f8c05ceb"
+  "n_red": 31,
+  "head": "270dbabc87f4"
 }

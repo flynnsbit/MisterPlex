@@ -120,6 +120,7 @@ GATED_PATHSPECS = (
     "docs/product-4-3-scaler-decision.md",
     "docs/fit_gate_identity.json",
     "docs/rtl_single_owner_table.json",
+    "docs/fit_fmax_requirements.json",
     "tests/unit/B20_HIER_MANIFEST.json",
     "tests/unit/B24_Q5_FPS_1001_MANIFEST.json",
     "tests/unit/B25_PLXC_DOORBELL_DUAL_MAP_MANIFEST.json",
@@ -5522,6 +5523,223 @@ def leg_rtl_lint_precondition() -> tuple[int, list[str]]:
     return arc, msgs
 
 
+# ---------------------------------------------------------------------------
+# Leg 4 — POST-FIT STA: named Fmax floor + critical-path OWNER (parent 2026-08-03)
+# Native 720p@30 tight blanking needs clk_sys ≥ 30.24 MHz. Weeks lost to Fmax
+# numbers whose owning module nobody checked (decode_stub lat_p_mb_addr path).
+# Summary-only STA (Fmax table, no From/To Node) → STA_PATH_OWNER_UNRESOLVABLE.
+# ---------------------------------------------------------------------------
+DEFAULT_FMAX_REQ = RULER_ROOT / "docs" / "fit_fmax_requirements.json"
+_STA_FROM_NODE_RE = re.compile(
+    r"(?im)(?:^|\n)\s*(?:;\s*)?From Node\s*(?:;|:)\s*(\S+)"
+)
+_STA_TO_NODE_RE = re.compile(
+    r"(?im)(?:^|\n)\s*(?:;\s*)?To Node\s*(?:;|:)\s*(\S+)"
+)
+_STA_FMAX_ROW_RE = re.compile(
+    r";\s*(\d+(?:\.\d+)?)\s*MHz\s*;\s*(\d+(?:\.\d+)?)\s*MHz\s*;\s*([^;]+?)\s*;"
+)
+
+
+def load_fmax_requirements(path: Path | None = None) -> dict:
+    p = path or DEFAULT_FMAX_REQ
+    if not p.is_file():
+        # Fallback baked requirement if docs missing on a foreign root.
+        return {
+            "named_target": "native_720p30_tight_blanking_clk_sys",
+            "rationale": "720p@30 tight blanking needs clk_sys >= 30.24 MHz",
+            "clocks": [
+                {
+                    "alias": "clk_sys",
+                    "match_substrings": [
+                        "general[0].gpll~PLL_OUTPUT_COUNTER|divclk"
+                    ],
+                    "min_fmax_mhz": 30.24,
+                }
+            ],
+            "require_critical_path_owner": True,
+        }
+    return json.loads(p.read_text())
+
+
+def parse_sta_fmax_mhz(text: str) -> list[tuple[str, float, float]]:
+    """Return (clock_name, fmax_mhz, restricted_mhz) from Fmax Summary table."""
+    rows: list[tuple[str, float, float]] = []
+    in_fmax = False
+    saw_header = False
+    for line in text.splitlines():
+        if line.startswith("; Fmax Summary"):
+            in_fmax = True
+            saw_header = False
+            continue
+        if in_fmax and "Fmax" in line and "Clock Name" in line:
+            saw_header = True
+            continue
+        if in_fmax and saw_header:
+            if not line.strip() or line.startswith("This panel reports"):
+                break
+            m = _STA_FMAX_ROW_RE.search(line)
+            if m:
+                rows.append(
+                    (m.group(3).strip(), float(m.group(1)), float(m.group(2)))
+                )
+    return rows
+
+
+def extract_sta_path_owners(text: str) -> list[str]:
+    """Named path endpoints from path-detail STA (not summary-only)."""
+    owners: list[str] = []
+    for rx in (_STA_FROM_NODE_RE, _STA_TO_NODE_RE):
+        for m in rx.finditer(text):
+            node = m.group(1).strip().strip(";")
+            if node and node.lower() not in {"node", "to", "from"}:
+                owners.append(node)
+    # Also accept "From Node    : hier|path" colon form already covered.
+    # Dedup preserve order.
+    seen: set[str] = set()
+    out: list[str] = []
+    for o in owners:
+        if o not in seen:
+            seen.add(o)
+            out.append(o)
+    return out
+
+
+def path_owner_module(node: str) -> str:
+    """Best-effort owning module from Quartus hierarchy node name."""
+    # emu|decode_stub|lat_p_mb_addr[5] → decode_stub
+    parts = [p for p in re.split(r"[|:/]", node) if p]
+    if not parts:
+        return node
+    # skip top wrappers
+    for p in parts:
+        base = re.sub(r"\[.*$", "", p)
+        if base.lower() in {"emu", "sys_top", "pll", "u_pll"}:
+            continue
+        if base:
+            return base
+    return re.sub(r"\[.*$", "", parts[-1])
+
+
+def analyze_post_fit_sta(
+    text: str,
+    req: dict,
+    *,
+    sta_label: str = "STA",
+) -> tuple[int, list[str]]:
+    """Score STA text against named Fmax floors + path-owner resolvability."""
+    msgs: list[str] = [
+        "LEG4_POST_FIT_STA_EXECUTED begin",
+        f"LEG4_STA_LABEL {sta_label}",
+    ]
+    target = str(req.get("named_target") or "unnamed")
+    rationale = str(req.get("rationale") or "")
+    msgs.append(f"LEG4_NAMED_TARGET {target}")
+    if rationale:
+        msgs.append(f"LEG4_RATIONALE {rationale[:240]}")
+
+    fmax_rows = parse_sta_fmax_mhz(text)
+    msgs.append(f"LEG4_FMAX_ROWS n={len(fmax_rows)}")
+    for clk, fmx, rst in fmax_rows:
+        msgs.append(f"LEG4_FMAX clock={clk!r} fmax_mhz={fmx} restricted_mhz={rst}")
+
+    if not fmax_rows:
+        msgs.append(
+            "LEG4_FAIL STA_FMAX_TABLE_MISSING: no Fmax Summary rows — "
+            "cannot assert named Fmax floor (not a soft-skip)"
+        )
+        return 1, msgs
+
+    owners = extract_sta_path_owners(text)
+    require_owner = bool(req.get("require_critical_path_owner", True))
+    msgs.append(f"LEG4_PATH_OWNERS n={len(owners)} require={int(require_owner)}")
+    if owners:
+        for o in owners[:12]:
+            msgs.append(
+                f"LEG4_PATH_OWNER node={o} module={path_owner_module(o)}"
+            )
+    elif require_owner:
+        msgs.append(
+            "LEG4_FAIL STA_PATH_OWNER_UNRESOLVABLE: STA has Fmax/slack summary "
+            "but no From Node/To Node (or equivalent) path detail — critical path "
+            "OWNER cannot be identified. Observed defect class: weeks lost to "
+            "Fmax whose owning module nobody checked (decode_stub "
+            "lat_p_mb_addr→mv_col_al_x). Summary-only export is not sign-off."
+        )
+        return 1, msgs
+
+    # Fmax floors for named clocks
+    clocks = list(req.get("clocks") or [])
+    if not clocks:
+        msgs.append("LEG4_FAIL STA_FMAX_REQ_EMPTY: requirements.clocks missing")
+        return 1, msgs
+
+    for spec in clocks:
+        alias = str(spec.get("alias") or "clock")
+        needles = [str(x) for x in (spec.get("match_substrings") or [])]
+        need = float(spec.get("min_fmax_mhz") or 0.0)
+        if need <= 0:
+            msgs.append(f"LEG4_FAIL STA_FMAX_REQ_BAD alias={alias} min_fmax_mhz={need}")
+            return 1, msgs
+        matched: list[tuple[str, float]] = []
+        for clk, fmx, _rst in fmax_rows:
+            if any(n in clk for n in needles):
+                matched.append((clk, fmx))
+        if not matched:
+            msgs.append(
+                f"LEG4_FAIL STA_FMAX_CLOCK_MISSING alias={alias} "
+                f"needles={needles} — named requirement clock not in Fmax table"
+            )
+            return 1, msgs
+        # Use min Fmax among matches (conservative)
+        best_clk, best_f = min(matched, key=lambda t: t[1])
+        msgs.append(
+            f"LEG4_FMAX_CHECK alias={alias} clock={best_clk!r} "
+            f"fmax_mhz={best_f} min_required_mhz={need}"
+        )
+        if best_f + 1e-9 < need:
+            msgs.append(
+                f"LEG4_FAIL STA_FMAX_BELOW_REQUIREMENT alias={alias} "
+                f"got_mhz={best_f} need_mhz={need} target={target} "
+                f"clock={best_clk}"
+            )
+            return 1, msgs
+
+    # Owner present and Fmax OK
+    owner_mod = path_owner_module(owners[0]) if owners else "n/a"
+    msgs.append(
+        f"LEG4_PASS EXECUTED target={target} fmax_ok=1 "
+        f"path_owner_module={owner_mod} owners_n={len(owners)}"
+    )
+    return 0, msgs
+
+
+def leg4_post_fit_sta(
+    sta_rpt: Path,
+    *,
+    req_path: Path | None = None,
+) -> tuple[int, list[str]]:
+    """POST-FIT leg: named Fmax floor + resolvable critical-path owner."""
+    msgs: list[str] = []
+    msgs.append(f"LEG4_STA_RPT path={sta_rpt}")
+    if not sta_rpt.is_file():
+        msgs.append(
+            f"LEG4_FAIL STA_RPT_MISSING: {sta_rpt} — post-fit leg did not run "
+            "(soft-skip ≠ PASS when STA was required)"
+        )
+        return 1, msgs
+    try:
+        text = sta_rpt.read_text(errors="ignore")
+    except OSError as exc:
+        msgs.append(f"LEG4_FAIL STA_RPT_UNREADABLE: {sta_rpt}: {exc}")
+        return 1, msgs
+    req = load_fmax_requirements(req_path)
+    rc, amsgs = analyze_post_fit_sta(text, req, sta_label=str(sta_rpt))
+    msgs.extend(amsgs)
+    msgs.append(f"leg4_post_fit true rc={rc}")
+    return rc, msgs
+
+
 def leg2_elab(qsf: Path) -> tuple[int, list[str]]:
     """Elaborate the *Quartus* file list (qsf+qip) under the QSF macro set.
 
@@ -5768,6 +5986,9 @@ def run_gate(
     skip_identity: bool = False,
     skip_unit: bool = False,
     skip_rtl_lint: bool = False,
+    sta_rpt: Path | None = None,
+    fmax_req: Path | None = None,
+    post_fit_only: bool = False,
 ) -> int:
     print(CROSS_LANE)
     print(f"FIT_RELEASE_GATE qsf={qsf}")
@@ -5778,6 +5999,20 @@ def run_gate(
     )
     live_id = compute_gate_identity_hash(ROOT)
     print(f"FIT_RELEASE_GATE_IDENTITY live={live_id}")
+
+    # POST-FIT-only path: STA Fmax + path owner (after parent releases Quartus slot).
+    if post_fit_only:
+        if sta_rpt is None:
+            print("FIT_RELEASE_GATE_FAIL leg=4 (post_fit_only requires --sta-rpt)")
+            return 2
+        rc4, msgs4 = leg4_post_fit_sta(sta_rpt, req_path=fmax_req)
+        print("\n".join(msgs4))
+        print(f"leg4_post_fit true rc={rc4}")
+        if rc4 != 0:
+            print("FIT_RELEASE_GATE_FAIL leg=4 (post-fit STA Fmax/path-owner)")
+            return rc4
+        print("FIT_RELEASE_GATE_PASS EXECUTED leg=4 POST_FIT_STA_OK")
+        return 0
 
     # Ruler parity first — refuse untrustworthy counts on divergent scripts.
     if not skip_identity:
@@ -5888,12 +6123,33 @@ def run_gate(
         print("FIT_RELEASE_GATE_FAIL leg=3 (true_de/store_full)")
         return rc3
 
+    # Optional POST-FIT when parent supplies STA after releasing the Quartus slot.
+    if sta_rpt is not None:
+        rc4, msgs4 = leg4_post_fit_sta(sta_rpt, req_path=fmax_req)
+        print("\n".join(msgs4))
+        print(f"leg4_post_fit true rc={rc4}")
+        if rc4 != 0:
+            print("FIT_RELEASE_GATE_FAIL leg=4 (post-fit STA Fmax/path-owner)")
+            return rc4
+        if skip_arch:
+            print(
+                "FIT_RELEASE_GATE_PASS EXECUTED legs=1+2+3+4 "
+                "(arch skipped — NOT a fit grant)"
+            )
+        else:
+            print(
+                "FIT_RELEASE_GATE_PASS EXECUTED "
+                "legs=unit+rtl-lint+0+1+2+3+4 POST_FIT_OK"
+            )
+        return 0
+
     if skip_arch:
         print("FIT_RELEASE_GATE_PASS EXECUTED legs=1+2+3 (arch skipped — NOT a fit grant)")
     else:
         print(
             "FIT_RELEASE_GATE_PASS EXECUTED "
-            "legs=unit+rtl-lint+0+1+2+3 READY_TO_FIT_CANDIDATE"
+            "legs=unit+rtl-lint+0+1+2+3 READY_TO_FIT_CANDIDATE "
+            "(post-fit STA not supplied — run again with --sta-rpt after fit)"
         )
     return 0
 
@@ -6930,6 +7186,55 @@ def _run_mutation_matrix() -> tuple[list[str], list[dict[str, str]]]:
             os.environ.pop("FIT_GATE_RTL_LINT_CMD", None)
         else:
             os.environ["FIT_GATE_RTL_LINT_CMD"] = old_le
+
+    # --- Parent 2026-08-03: POST-FIT STA path owner + Fmax floor ---
+    fix = RULER_ROOT / "tests" / "fixtures" / "fit_release_gate"
+    sum_sta = fix / "sta_summary_only.sta.rpt"
+    ok_sta = fix / "sta_path_owner_ok.sta.rpt"
+    req = load_fmax_requirements(RULER_ROOT / "docs" / "fit_fmax_requirements.json")
+    if sum_sta.is_file():
+        rc_s4, msgs_s4 = analyze_post_fit_sta(
+            sum_sta.read_text(errors="ignore"), req, sta_label=str(sum_sta)
+        )
+        _row(
+            "STA_PATH_OWNER_UNRESOLVABLE",
+            "STA present (Fmax summary) but path owner unresolvable",
+            "STA_PATH_OWNER_UNRESOLVABLE",
+            rc_s4,
+            msgs_s4,
+        )
+        # Same summary also fails Fmax floor if owner check disabled — separate row
+        req_no_owner = dict(req)
+        req_no_owner["require_critical_path_owner"] = False
+        rc_f4, msgs_f4 = analyze_post_fit_sta(
+            sum_sta.read_text(errors="ignore"),
+            req_no_owner,
+            sta_label=str(sum_sta),
+        )
+        _row(
+            "STA_FMAX_BELOW_REQUIREMENT",
+            "summary STA clk_sys Fmax < 30.24 (native 720p@30)",
+            "STA_FMAX_BELOW_REQUIREMENT",
+            rc_f4,
+            msgs_f4,
+        )
+    else:
+        fails.append("STA fixtures missing for post-fit matrix")
+
+    if ok_sta.is_file():
+        rc_ok, msgs_ok = analyze_post_fit_sta(
+            ok_sta.read_text(errors="ignore"), req, sta_label=str(ok_sta)
+        )
+        # Green twin must PASS (rc=0) — record as control, not RED hole
+        print(
+            f"MATRIX_ROW check=STA_PATH_OWNER_OK_CONTROL inject='path-detail STA' "
+            f"expect=LEG4_PASS verdict={'GREEN' if rc_ok == 0 else 'RED'} "
+            f"token_hit={int(any('LEG4_PASS' in m for m in msgs_ok))} true_rc={rc_ok}"
+        )
+        if rc_ok != 0:
+            fails.append(
+                f"STA_PATH_OWNER_OK_CONTROL: path-detail fixture must PASS, rc={rc_ok}"
+            )
 
     print("MUTATION_MATRIX_END")
     n_red = sum(1 for r in rows if r["verdict"] == "RED")
@@ -9655,6 +9960,27 @@ def main(argv: list[str] | None = None) -> int:
         help="Isolation only: skip leg0 architecture blockers (NOT a fit grant)",
     )
     ap.add_argument(
+        "--sta-rpt",
+        type=Path,
+        default=None,
+        help=(
+            "POST-FIT: Quartus Plex.sta.rpt path. Asserts named Fmax floors "
+            "(docs/fit_fmax_requirements.json) and fails if critical-path OWNER "
+            "is unresolvable (summary-only STA)."
+        ),
+    )
+    ap.add_argument(
+        "--fmax-req",
+        type=Path,
+        default=None,
+        help="Override Fmax requirements JSON (default: docs/fit_fmax_requirements.json)",
+    )
+    ap.add_argument(
+        "--post-fit-only",
+        action="store_true",
+        help="Run only leg4 post-fit STA (requires --sta-rpt). No pre-fit grant.",
+    )
+    ap.add_argument(
         "--print-integration-help",
         action="store_true",
         help="Print supported w-osd/integration invocation and exit 0",
@@ -9662,28 +9988,34 @@ def main(argv: list[str] | None = None) -> int:
     args = ap.parse_args(argv)
     if args.print_integration_help:
         print(
-            """FIT_RELEASE_GATE integration (w-osd) — supported invocation
-============================================================
-Canonical ruler lives in w-fitgate. Merged RTL is a different tree.
-B11 forbids QSF from tree A + RTL from tree B unless --root unifies them.
+            """FIT_RELEASE_GATE — how to run the ruler (parent independent verification)
+=========================================================================
+Branch:  w-fitgate   (committed; NOT merged to main)
+Worktree (read-only OK):
+  /home/flynnsbit/Projects/MisterPlex-wt-fitgate
+Or from any clone after fetch:
+  git fetch origin w-fitgate
+  git worktree add --detach /path/to/wt-fitgate-ro origin/w-fitgate
 
-  MERGE=/path/to/merged-integration-tree
-  RULER=/home/flynnsbit/Projects/MisterPlex-wt-fitgate
+RULER=/home/flynnsbit/Projects/MisterPlex-wt-fitgate   # or your worktree
+MERGE=/path/to/main-or-merged-tree
 
-  # Full grant path (only number that can release the fit):
-  "$RULER/scripts/fit_release_gate.sh" \\
-      --root "$MERGE" \\
-      --qsf  "$MERGE/fpga/Plex_MiSTer/Plex.qsf"
-  echo "true rc=$?"
+# Against YOUR main tree (expect GRANT NO / unit RED while main is red):
+"$RULER/scripts/fit_release_gate.sh" \\
+    --root "$MERGE" \\
+    --qsf  "$MERGE/fpga/Plex_MiSTer/Plex.qsf"
+echo "true rc=$?"
+# Expect: FIT_RELEASE_GATE_FAIL leg=unit  (or earlier leg)  true rc!=0
 
-Requirements:
-  - $MERGE has fpga/Plex_MiSTer (+ QSF under $MERGE)
-  - docs/fit_candidate.json in $MERGE with git_tree_hash for THAT tree
-    (after merge: run gate once, copy printed live_gated hash into candidate)
-  - Gate identity is the RULER scripts (LEG0_COUNT_REFUSED if ruler drifts)
-  - Do NOT point --qsf at a foreign tree without --root (B11)
+# Self-test on the ruler (mutation matrix):
+"$RULER/scripts/fit_release_gate.sh" --self-test; echo "true rc=$?"
 
-Per-lane counts are NOT fit grants. Only the merged --root run is.
+# POST-FIT after parent releases Quartus slot (named Fmax + path owner):
+"$RULER/scripts/fit_release_gate.sh" --post-fit-only \\
+    --sta-rpt /path/to/Plex.sta.rpt
+echo "true rc=$?"
+
+B11: QSF and RTL must share --root. Do not merge w-fitgate to main while RED.
 """
         )
         return 0
@@ -9694,10 +10026,15 @@ Per-lane counts are NOT fit grants. Only the merged --root run is.
     if args.root is not None:
         apply_scan_root(args.root)
     qsf = args.qsf.resolve() if args.qsf is not None else DEFAULT_QSF.resolve()
+    sta = args.sta_rpt.resolve() if args.sta_rpt is not None else None
+    freq = args.fmax_req.resolve() if args.fmax_req is not None else None
     return run_gate(
         qsf,
         skip_arch=args.skip_arch,
         force_island=args.force_island_leg3,
+        sta_rpt=sta,
+        fmax_req=freq,
+        post_fit_only=args.post_fit_only,
     )
 
 

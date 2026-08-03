@@ -2,11 +2,27 @@ lane: w-fitgate
 role: fit-release gate ruler
 GRANT: NO
 selftest: PASS true_rc=0
-mutation_matrix: rows=29 red=29 fail_holes=0
-rd-duck B20 product use_frame_store tie (2026-08-03):
-  - Elaborate Plex.sv .use_frame_store(1'b0) Force bars=No
-  - B20_PRODUCT_UFS_FORCE_BARS_AS_OWNERSHIP: w-clock hold/free on ufs + product 0 → free-run RED (closed-class reinject; matrix true_rc=1)
-  - B20_HIER_H_PRODUCT_UFS0_HOLD_UNPROVEN: H must measure product-ufs0 hold; isolated ufs=1 TB = false evidence (live open; matrix true_rc=1)
-  - B20_HIER_MANIFEST H require_stdout += measured_product_use_frame_store_tie=0, measured_b20_hold_under_product_ufs0=1, measured_isolated_ufs1_false_evidence=1
-notes: no Quartus; no device; ownership must be geom_live/store swap not O[9]
-identity: rebased after ufs gate
+mutation_matrix: rows=31 red=31 fail_holes=0 (+ STA path-owner + Fmax rows)
+
+PARENT VERIFICATION (read-only; do NOT merge to main):
+  Branch:  w-fitgate
+  Worktree: /home/flynnsbit/Projects/MisterPlex-wt-fitgate
+  Commit with scripts/fit_release_gate.py: see git -C worktree rev-parse HEAD after push
+
+  RULER=/home/flynnsbit/Projects/MisterPlex-wt-fitgate
+  MERGE=<your main tree>
+
+  "$RULER/scripts/fit_release_gate.sh" --root "$MERGE" --qsf "$MERGE/fpga/Plex_MiSTer/Plex.qsf"
+  echo "true rc=$?"
+  # expect FIT_RELEASE_GATE_FAIL leg=unit (main RED) true rc!=0
+
+  Or after: git fetch origin w-fitgate && git worktree add --detach /path/wt-fitgate-ro origin/w-fitgate
+
+POST-FIT leg4 (native 720p@30):
+  docs/fit_fmax_requirements.json  clk_sys min 30.24 MHz
+  --post-fit-only --sta-rpt Plex.sta.rpt
+  FAIL STA_PATH_OWNER_UNRESOLVABLE if summary-only (no From/To Node)
+  FAIL STA_FMAX_BELOW_REQUIREMENT if Fmax < named floor
+  matrix RED: both; GREEN control path-detail fixture true_rc=0
+
+No Quartus fit taken. No device. Not merged to main.

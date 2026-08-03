@@ -1,0 +1,22 @@
+{
+  "named_target": "native_720p30_tight_blanking_clk_sys",
+  "rationale": "Parent/w-clock 2026-08-03: stub Fmax 23.46 MHz (path lat_p_mb_addr->mv_col_al_x inside decode_stub, Plex.sta.rpt) killed native 720p. Without stub, Fmax measured 32.59 MHz. Native 720p@30 tight blanking needs 30.24 MHz on clk_sys — only 7.8% margin at 32.59. STA without a named critical-path owner is the defect class that burned weeks on an unowned Fmax number.",
+  "clocks": [
+    {
+      "alias": "clk_sys",
+      "match_substrings": [
+        "general[0].gpll~PLL_OUTPUT_COUNTER|divclk"
+      ],
+      "min_fmax_mhz": 30.24,
+      "note": "clk_sys / core 20 MHz domain; native 720p@30 tight blanking requirement"
+    }
+  ],
+  "require_critical_path_owner": true,
+  "path_owner_markers": [
+    "From Node",
+    "To Node",
+    "Data Arrival Path",
+    "Launch Clock",
+    "Latch Clock"
+  ]
+}
