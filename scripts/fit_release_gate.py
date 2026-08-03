@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
-"""Fit-release gate: QSF macros + elab + true_de + architecture blockers.
+"""Fit-release gate: unit+lint preconditions + QSF macros + elab + true_de + arch.
 
+Hard preconditions (parent 2026-08-03 — refuse GRANT on RED main):
+  unit     — full `make unit` GREEN; true rc printed. Soft-skip / tool-missing
+             SKIP (Verilator not found) / exit 77 / UNSCORED ≠ PASS.
+  rtl-lint — explicit `scripts/rtl_lint.py` GREEN. quartus-sv-subset STATIC_PASS
+             is NOT elaboration (blind_spot=static_subset_only; undeclared ids).
 Leg 0 — rd-duck architecture blockers (must clear before any fit grant):
         coherent FIT_CANDIDATE, no int FPS overflow cargo, real raster SoT,
         compile-time Option-C / layout match, capacity-selected Option-C
@@ -3469,9 +3474,13 @@ def leg0_arch_blockers() -> tuple[int, list[str]]:
         "(scripts/run_verilator.sh→oss-cad-suite; missing=HARD FAIL not soft-skip); "
         "EXECUTABLE=B20_hier_manifest,B24_q5_fps_1001,B25_plxc_dual_map,"
         "B28_q5_atomic_poller,B29_direct_part_vf,B30_plxc_cdc_stopped_rd,"
-        "leg2_elab,leg3_true_de "
+        "leg_unit_make_unit,leg_rtl_lint,leg2_elab,leg3_true_de "
         "(named scripts + CASE EXECUTED + rc0; fault twin rc!=0); "
         "OWNERSHIP=B23_single_owner_table; "
+        "PRECONDITION_UNIT=full_make_unit_GREEN_true_rc "
+        "(soft-skip/tool-miss/rc77/rc78≠PASS; SKIP RTL SIM Verilator not found≠PASS); "
+        "PRECONDITION_RTL_LINT=scripts/rtl_lint.py_explicit "
+        "(quartus-sv-subset STATIC_PASS≠elab; blind_spot=static_subset_only); "
         "LIMITATION_STRING=wrong-producer twin not covered by greps; "
         "LIMITATION_B20=has-driver≠intended-driver; "
         "B2_NO_RASTER_GENERATOR=RETIRED(w-clock timing_960 constants-only; beam=raster SoT)"
@@ -5026,12 +5035,245 @@ def leg1_macros(qsf: Path) -> tuple[int, list[str], dict[str, str]]:
     return 0, msgs, active
 
 
+# Parent 2026-08-03: main make unit RED must refuse GRANT. Soft-skip laundering
+# (tool-missing SKIP → exit 0) and quartus-sv-subset-as-elab are observed traps.
+_UNIT_TOOL_MISS_SKIP_RE = re.compile(
+    r"(SKIP RTL SIM:.*Verilator not found|"
+    r"SKIP-NOT-PASS|"
+    r"Verilator runner not found|"
+    r"ALLOW_MISSING_VERILATOR=1|"
+    r"UNSCORED|"
+    r"soft-skip\s*(?:≠|!=|<>)\s*PASS)",
+    re.IGNORECASE,
+)
+_UNIT_GATE_SKIP_HIGH_RE = re.compile(
+    r"GATE_SKIP\s+HIGH\s+rtl-sim-verilator-coverage",
+    re.IGNORECASE,
+)
+
+
+def analyze_unit_result(rc: int, out: str) -> tuple[int, list[str]]:
+    """Score make-unit output. Soft-skip / tool-missing is NEVER a pass.
+
+    Parent traps (observed):
+      1) make unit rc!=0 (e.g. h264_dpb_mc clamp) → GRANT NO
+      2) SKIP RTL SIM Verilator not found with success rc → soft-skip laundering
+      3) exit 77 / UNSCORED treated as pass → forbidden
+    """
+    msgs: list[str] = [
+        "LEG_UNIT_PRECONDITION_EXECUTED begin",
+        f"leg_unit true rc={rc}",
+    ]
+    skip_hits: list[str] = []
+    for line in out.splitlines():
+        s = line.strip()
+        if not s:
+            continue
+        if _UNIT_TOOL_MISS_SKIP_RE.search(s) or _UNIT_GATE_SKIP_HIGH_RE.search(s):
+            skip_hits.append(s[:240])
+        if s.startswith("GATE_SKIP ") or "SKIP RTL SIM" in s or "SKIP-NOT-PASS" in s:
+            if s not in skip_hits:
+                # Count all skip summary lines for visibility (not all are fatal alone).
+                if "GATE_SKIP_SUMMARY" in s or s.startswith("GATE_SKIP "):
+                    skip_hits.append(s[:240])
+    # Prefer structured summary counts when present.
+    m_sum = re.search(
+        r"GATE_SKIP_SUMMARY total=(\d+) critical=(\d+) high=(\d+) advisory=(\d+)",
+        out,
+    )
+    if m_sum:
+        msgs.append(
+            "LEG_UNIT_SKIP_COUNTS "
+            f"total={m_sum.group(1)} critical={m_sum.group(2)} "
+            f"high={m_sum.group(3)} advisory={m_sum.group(4)}"
+        )
+    else:
+        msgs.append(f"LEG_UNIT_SKIP_LINES n={len(skip_hits)}")
+    for h in skip_hits[:40]:
+        msgs.append(f"LEG_UNIT_SKIP_HIT {h}")
+
+    if rc == 77:
+        msgs.append(
+            "LEG_UNIT_FAIL UNIT_SOFT_SKIP_RC77: exit 77 is NOT a pass "
+            "(AGENTS.md soft-skip ≠ PASS)"
+        )
+        return 1, msgs
+    if rc == 78:
+        msgs.append(
+            "LEG_UNIT_FAIL UNIT_CRITICAL_SKIP_RC78: CRITICAL coverage skip "
+            "(e.g. live PMS) is not a fit-grant green"
+        )
+        return 1, msgs
+    if rc != 0:
+        # Keep a short tail of the failure for the parent log.
+        tail = "\n".join(out.splitlines()[-30:])
+        if tail.strip():
+            msgs.append("LEG_UNIT_FAIL_TAIL begin")
+            msgs.append(tail)
+            msgs.append("LEG_UNIT_FAIL_TAIL end")
+        msgs.append(
+            f"LEG_UNIT_FAIL UNIT_SUITE_RED: make unit true rc={rc} "
+            "(fit refused — Quartus exclusive must not burn on RED unit tree; "
+            "parent 2026-08-03 h264_dpb_mc class)"
+        )
+        return 1, msgs
+
+    # rc==0: still reject tool-missing / soft-skip laundering.
+    launder = [
+        h
+        for h in skip_hits
+        if _UNIT_TOOL_MISS_SKIP_RE.search(h)
+        or _UNIT_GATE_SKIP_HIGH_RE.search(h)
+        or "Verilator not found" in h
+        or "SKIP-NOT-PASS" in h
+        or "UNSCORED" in h
+    ]
+    # CRITICAL in summary with rc0 should already be 78 from wrapper; belt+suspenders.
+    if m_sum and int(m_sum.group(2)) > 0:
+        launder.append(f"critical_skips={m_sum.group(2)} with unit_rc=0")
+    if launder:
+        msgs.append(
+            "LEG_UNIT_FAIL UNIT_SOFT_SKIP_LAUNDER: unit rc=0 but tool-missing/"
+            f"soft-skip markers present (n={len(launder)}). Soft-skip ≠ PASS."
+        )
+        for h in launder[:12]:
+            msgs.append(f"LEG_UNIT_LAUNDER_HIT {h}")
+        return 1, msgs
+
+    msgs.append(
+        f"LEG_UNIT_PASS EXECUTED make unit true rc=0 skip_hits={len(skip_hits)} "
+        "(no tool-missing launder)"
+    )
+    return 0, msgs
+
+
+def leg_unit_precondition() -> tuple[int, list[str]]:
+    """Hard precondition: full `make unit` GREEN on gated ROOT; true rc printed.
+
+    Override for mutation/selftest only:
+      FIT_GATE_UNIT_CMD — shell command run instead of `make unit`
+    Never soft-skip when the suite is unavailable — missing make is FAIL.
+    """
+    msgs: list[str] = []
+    override = os.environ.get("FIT_GATE_UNIT_CMD", "").strip()
+    env = os.environ.copy()
+    # Force tool-missing path to refuse success inside RTL sims.
+    env["ALLOW_MISSING_VERILATOR"] = "0"
+    env.pop("FIT_GATE_UNIT_CMD", None)
+
+    if override:
+        msgs.append(f"LEG_UNIT_CMD override={override!r}")
+        proc = subprocess.run(
+            ["bash", "-lc", override],
+            cwd=str(ROOT),
+            env=env,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+        )
+        rc, out = proc.returncode, proc.stdout
+    else:
+        make = shutil.which("make") or "make"
+        cmd = [make, "-C", str(ROOT), "unit"]
+        msgs.append("LEG_UNIT_CMD " + " ".join(cmd))
+        rc, out = _run(cmd, cwd=ROOT, env=env)
+
+    # Always show the observed rc on its own line (parent: capture true rc=).
+    print(f"leg_unit observed true rc={rc}")
+    arc, amsgs = analyze_unit_result(rc, out or "")
+    msgs.extend(amsgs)
+    return arc, msgs
+
+
+def analyze_rtl_lint_result(rc: int, out: str) -> tuple[int, list[str]]:
+    """Score rtl-lint. quartus-sv-subset STATIC_PASS must never substitute."""
+    msgs: list[str] = [
+        "LEG_RTL_LINT_EXECUTED begin",
+        f"leg_rtl_lint true rc={rc}",
+    ]
+    # Parent trap: subset gate is static_curated_patterns_only — no elab/inference.
+    if "STATIC_PASS Quartus SV subset" in out and "RTL lint: PASS" not in out:
+        msgs.append(
+            "LEG_RTL_LINT_FAIL SUBSET_NOT_ELAB: quartus-sv-subset STATIC_PASS "
+            "observed without rtl-lint PASS — blind_spot=static_subset_only_"
+            "no_elaboration_or_inference (undeclared ids slip through; parent "
+            "proved dpb_mem_rd_q)"
+        )
+        return 1, msgs
+    if rc == 3 or "RTL LINT REFUSED" in out or "Verilator not found" in out:
+        msgs.append(
+            "LEG_RTL_LINT_FAIL RTL_LINT_TOOL_MISSING: Verilator missing — "
+            "lint DID NOT RUN (not soft-skip pass)"
+        )
+        return 3 if rc == 3 else 1, msgs
+    if rc == 77:
+        msgs.append("LEG_RTL_LINT_FAIL soft-skip rc=77 is NOT a pass")
+        return 1, msgs
+    if rc != 0:
+        tail = "\n".join((out or "").splitlines()[-40:])
+        if tail.strip():
+            msgs.append("LEG_RTL_LINT_FAIL_TAIL begin")
+            msgs.append(tail)
+            msgs.append("LEG_RTL_LINT_FAIL_TAIL end")
+        msgs.append(
+            f"LEG_RTL_LINT_FAIL RTL_LINT_RED: make rtl-lint / rtl_lint.py "
+            f"true rc={rc} (required; quartus-sv-subset is NOT a substitute)"
+        )
+        return 1, msgs
+    if "RTL lint: PASS" not in (out or ""):
+        msgs.append(
+            "LEG_RTL_LINT_FAIL RTL_LINT_NO_PASS_TOKEN: rc=0 but missing "
+            "'RTL lint: PASS' — refuse hollow success"
+        )
+        return 1, msgs
+    msgs.append(
+        "LEG_RTL_LINT_PASS EXECUTED rtl_lint.py true rc=0 "
+        "(explicit; NOT quartus-sv-subset)"
+    )
+    return 0, msgs
+
+
+def leg_rtl_lint_precondition() -> tuple[int, list[str]]:
+    """Hard precondition: explicit `rtl_lint.py` GREEN (not quartus-sv-subset).
+
+    Override: FIT_GATE_RTL_LINT_CMD for mutation/selftest only.
+    """
+    msgs: list[str] = []
+    override = os.environ.get("FIT_GATE_RTL_LINT_CMD", "").strip()
+    env = os.environ.copy()
+    env.pop("FIT_GATE_RTL_LINT_CMD", None)
+    if override:
+        msgs.append(f"LEG_RTL_LINT_CMD override={override!r}")
+        proc = subprocess.run(
+            ["bash", "-lc", override],
+            cwd=str(ROOT),
+            env=env,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+        )
+        rc, out = proc.returncode, proc.stdout
+    else:
+        script = RULER_ROOT / "scripts" / "rtl_lint.py"
+        # Always run ruler lint script against scan ROOT via set_repo_root path:
+        # rtl_lint reads ROOT from its own module; call with cwd=ROOT and
+        # ensure discover uses gated tree (apply_scan_root already set rtl_lint).
+        cmd = [sys.executable, str(script)]
+        msgs.append("LEG_RTL_LINT_CMD " + " ".join(cmd))
+        rc, out = _run(cmd, cwd=ROOT, env=env)
+    print(f"leg_rtl_lint observed true rc={rc}")
+    arc, amsgs = analyze_rtl_lint_result(rc, out or "")
+    msgs.extend(amsgs)
+    return arc, msgs
+
+
 def leg2_elab(qsf: Path) -> tuple[int, list[str]]:
     """Elaborate the *Quartus* file list (qsf+qip) under the QSF macro set.
 
     This is the pre-fit stand-in for Quartus analysis/elaboration: file list comes
     from files.qip via rtl_lint.discover_design — not from TB hand-lists. Soft-skip
     ≠ PASS. True quartus_map is not run here (sole exclusive slot).
+    quartus-sv-subset is NEVER accepted as a substitute for this leg or rtl-lint.
     """
     msgs: list[str] = []
     # Pre-flight: beam must be on the Quartus file list before claiming elab.
@@ -5269,6 +5511,8 @@ def run_gate(
     skip_true_de: bool = False,
     force_island: bool = False,
     skip_identity: bool = False,
+    skip_unit: bool = False,
+    skip_rtl_lint: bool = False,
 ) -> int:
     print(CROSS_LANE)
     print(f"FIT_RELEASE_GATE qsf={qsf}")
@@ -5301,6 +5545,54 @@ def run_gate(
     if rc_tree != 0:
         print("FIT_RELEASE_GATE_FAIL leg=tree (B11 foreign QSF vs RTL root)")
         return rc_tree
+
+    # Parent 2026-08-03: HARD preconditions before any fit-grant path.
+    # Isolation (--skip-arch) also skips unit/lint unless explicitly forced off
+    # via skip_unit=False with skip_arch (not used); default isolation skips.
+    do_unit = not skip_unit and not skip_arch
+    do_lint = not skip_rtl_lint and not skip_arch
+    if skip_arch and not skip_unit:
+        # Isolation fixtures must not burn a full make unit; never a grant path.
+        print(
+            "LEG_UNIT_SKIP isolation/skip_arch path — NOT a fit grant "
+            "(full make unit required on grant path)"
+        )
+        do_unit = False
+    if skip_arch and not skip_rtl_lint:
+        print(
+            "LEG_RTL_LINT_SKIP isolation/skip_arch path — NOT a fit grant "
+            "(explicit rtl-lint required on grant path; subset ≠ elab)"
+        )
+        do_lint = False
+
+    if do_unit:
+        rc_u, msgs_u = leg_unit_precondition()
+        print("\n".join(msgs_u))
+        print(f"leg_unit true rc={rc_u}")
+        if rc_u != 0:
+            print(
+                "FIT_RELEASE_GATE_FAIL leg=unit "
+                f"(make unit not GREEN; observed precondition rc={rc_u})"
+            )
+            return rc_u
+    elif skip_unit and not skip_arch:
+        print("LEG_UNIT_SKIP requested — not a pass path for release")
+        return 1
+
+    if do_lint:
+        rc_l, msgs_l = leg_rtl_lint_precondition()
+        print("\n".join(msgs_l))
+        print(f"leg_rtl_lint true rc={rc_l}")
+        if rc_l != 0:
+            print(
+                "FIT_RELEASE_GATE_FAIL leg=rtl-lint "
+                f"(explicit rtl_lint required; quartus-sv-subset ≠ elab; "
+                f"observed rc={rc_l})"
+            )
+            return rc_l
+    elif skip_rtl_lint and not skip_arch:
+        print("LEG_RTL_LINT_SKIP requested — not a pass path for release")
+        return 1
 
     if not skip_arch:
         rc0, msgs0 = leg0_arch_blockers()
@@ -5344,7 +5636,10 @@ def run_gate(
     if skip_arch:
         print("FIT_RELEASE_GATE_PASS EXECUTED legs=1+2+3 (arch skipped — NOT a fit grant)")
     else:
-        print("FIT_RELEASE_GATE_PASS EXECUTED legs=0+1+2+3 READY_TO_FIT_CANDIDATE")
+        print(
+            "FIT_RELEASE_GATE_PASS EXECUTED "
+            "legs=unit+rtl-lint+0+1+2+3 READY_TO_FIT_CANDIDATE"
+        )
     return 0
 
 
@@ -6225,6 +6520,109 @@ def _run_mutation_matrix() -> tuple[list[str], list[dict[str, str]]]:
         # Live-open rows only fail matrix if token is in LIVE_OPEN and missing
         if tok in LIVE_OPEN_BLOCKER_TOKENS and not red:
             fails.append(f"{tok}: live-open matrix row not RED")
+
+    # --- Parent 2026-08-03: unit RED / soft-skip launder / subset≠elab ---
+    # Fast pure scoring (no full make unit in matrix); overrides exercise run path.
+    rc_u, msgs_u = analyze_unit_result(
+        2,
+        "FAIL h264_dpb_mc RTL: luma window clamp mismatch idx=4 got=20 want=17\n",
+    )
+    _row(
+        "UNIT_SUITE_RED",
+        "make unit true rc=2 (h264_dpb_mc clamp)",
+        "UNIT_SUITE_RED",
+        rc_u,
+        msgs_u,
+    )
+
+    rc_s, msgs_s = analyze_unit_result(
+        0,
+        "SKIP RTL SIM: Verilator not found; h264_dpb_mc real RTL simulation was NOT run.\n"
+        "GATE_SKIP_SUMMARY total=1 critical=0 high=1 advisory=0\n"
+        "GATE_SKIP HIGH rtl-sim-verilator-coverage: reason=SKIP RTL SIM: Verilator not found\n",
+    )
+    _row(
+        "UNIT_SOFT_SKIP_LAUNDER",
+        "unit rc=0 + SKIP RTL SIM Verilator not found",
+        "UNIT_SOFT_SKIP_LAUNDER",
+        rc_s,
+        msgs_s,
+    )
+
+    rc77, msgs77 = analyze_unit_result(77, "SKIP-NOT-PASS: soft-skip≠PASS\n")
+    _row(
+        "UNIT_SOFT_SKIP_RC77",
+        "unit exit 77 soft-skip",
+        "UNIT_SOFT_SKIP_RC77",
+        rc77,
+        msgs77,
+    )
+
+    rc_sub, msgs_sub = analyze_rtl_lint_result(
+        0,
+        "STATIC_PASS Quartus SV subset pattern scan: 12 file(s); "
+        "limitation=static_curated_patterns_only; "
+        "blind_spot=static_subset_only_no_elaboration_or_inference\n",
+    )
+    _row(
+        "SUBSET_NOT_ELAB",
+        "quartus-sv-subset STATIC_PASS without rtl-lint PASS",
+        "SUBSET_NOT_ELAB",
+        rc_sub,
+        msgs_sub,
+    )
+
+    rc_lint, msgs_lint = analyze_rtl_lint_result(
+        2,
+        "RTL LINT ERROR: Can't find definition of variable: dpb_mem_rd_q\n",
+    )
+    _row(
+        "RTL_LINT_RED",
+        "rtl_lint rc=2 undeclared dpb_mem_rd_q",
+        "RTL_LINT_RED",
+        rc_lint,
+        msgs_lint,
+    )
+
+    # Override path: FIT_GATE_UNIT_CMD that soft-launders must fail leg_unit.
+    old_env = os.environ.get("FIT_GATE_UNIT_CMD")
+    try:
+        os.environ["FIT_GATE_UNIT_CMD"] = (
+            "echo 'SKIP RTL SIM: Verilator not found; NOT run.'; exit 0"
+        )
+        rc_ov, msgs_ov = leg_unit_precondition()
+        _row(
+            "UNIT_CMD_SOFT_LAUNDER_OVERRIDE",
+            "FIT_GATE_UNIT_CMD echo SKIP+exit0",
+            "UNIT_SOFT_SKIP_LAUNDER",
+            rc_ov,
+            msgs_ov,
+        )
+    finally:
+        if old_env is None:
+            os.environ.pop("FIT_GATE_UNIT_CMD", None)
+        else:
+            os.environ["FIT_GATE_UNIT_CMD"] = old_env
+
+    old_le = os.environ.get("FIT_GATE_RTL_LINT_CMD")
+    try:
+        os.environ["FIT_GATE_RTL_LINT_CMD"] = (
+            "echo 'STATIC_PASS Quartus SV subset pattern scan: 1 file(s); "
+            "limitation=static_curated_patterns_only'; exit 0"
+        )
+        rc_lo, msgs_lo = leg_rtl_lint_precondition()
+        _row(
+            "RTL_LINT_SUBSET_BAIT_OVERRIDE",
+            "FIT_GATE_RTL_LINT_CMD subset STATIC_PASS only",
+            "SUBSET_NOT_ELAB",
+            rc_lo,
+            msgs_lo,
+        )
+    finally:
+        if old_le is None:
+            os.environ.pop("FIT_GATE_RTL_LINT_CMD", None)
+        else:
+            os.environ["FIT_GATE_RTL_LINT_CMD"] = old_le
 
     print("MUTATION_MATRIX_END")
     n_red = sum(1 for r in rows if r["verdict"] == "RED")

@@ -159,9 +159,65 @@
       "verdict": "RED",
       "true_rc": "1",
       "token_hit": "1"
+    },
+    {
+      "check": "UNIT_SUITE_RED",
+      "inject": "make unit true rc=2 (h264_dpb_mc clamp)",
+      "expect": "UNIT_SUITE_RED",
+      "verdict": "RED",
+      "true_rc": "1",
+      "token_hit": "1"
+    },
+    {
+      "check": "UNIT_SOFT_SKIP_LAUNDER",
+      "inject": "unit rc=0 + SKIP RTL SIM Verilator not found",
+      "expect": "UNIT_SOFT_SKIP_LAUNDER",
+      "verdict": "RED",
+      "true_rc": "1",
+      "token_hit": "1"
+    },
+    {
+      "check": "UNIT_SOFT_SKIP_RC77",
+      "inject": "unit exit 77 soft-skip",
+      "expect": "UNIT_SOFT_SKIP_RC77",
+      "verdict": "RED",
+      "true_rc": "1",
+      "token_hit": "1"
+    },
+    {
+      "check": "SUBSET_NOT_ELAB",
+      "inject": "quartus-sv-subset STATIC_PASS without rtl-lint PASS",
+      "expect": "SUBSET_NOT_ELAB",
+      "verdict": "RED",
+      "true_rc": "1",
+      "token_hit": "1"
+    },
+    {
+      "check": "RTL_LINT_RED",
+      "inject": "rtl_lint rc=2 undeclared dpb_mem_rd_q",
+      "expect": "RTL_LINT_RED",
+      "verdict": "RED",
+      "true_rc": "1",
+      "token_hit": "1"
+    },
+    {
+      "check": "UNIT_CMD_SOFT_LAUNDER_OVERRIDE",
+      "inject": "FIT_GATE_UNIT_CMD echo SKIP+exit0",
+      "expect": "UNIT_SOFT_SKIP_LAUNDER",
+      "verdict": "RED",
+      "true_rc": "1",
+      "token_hit": "1"
+    },
+    {
+      "check": "RTL_LINT_SUBSET_BAIT_OVERRIDE",
+      "inject": "FIT_GATE_RTL_LINT_CMD subset STATIC_PASS only",
+      "expect": "SUBSET_NOT_ELAB",
+      "verdict": "RED",
+      "true_rc": "1",
+      "token_hit": "1"
     }
   ],
   "failures": [],
-  "n_red": 20,
-  "head": "37ef85e9ffc8"
+  "n_red": 27,
+  "head": "c706ded3d621"
 }

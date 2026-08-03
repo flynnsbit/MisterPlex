@@ -1,5 +1,5 @@
 {
-  "gate_identity_hash": "4bbec2e20a555947610c5af654fb4caae1ff64a9",
+  "gate_identity_hash": "3fbfd16ddaee6f5f714d4f619ffc2a6673c29f56",
   "paths": [
     "scripts/fit_release_gate.py",
     "scripts/fit_release_gate.sh",
@@ -9,7 +9,7 @@
   ],
   "locked_by": "w-fitgate",
   "locked_date": "2026-08-03",
-  "reason": "B28 q5 atomic + B29 DP vf + B30 CDC stopped-rd + B20_H delayed pending",
+  "reason": "selftest intentional identity lock after gate edits \u2014 not a bypass",
   "notes": [
     "INTENTIONAL REBASE of ruler identity after gate script change \u2014 not a bypass.",
     "Lanes must run this same identity; divergent fit_release_gate.py/rtl_lint.py must not report LEG0 counts (LEG0_COUNT_REFUSED).",
