@@ -1,29 +1,23 @@
 lane: w-fitgate
 role: fit-release gate ruler (scripts/fit_release_gate.py OWNER)
 branch: w-fitgate
-HEAD: 64854f01
+HEAD: ed295d1c (code 64854f01)
 GRANT: NO
 selftest: PASS (FIT_RELEASE_GATE_SELFTEST_PASS true_rc=0)
 mutation_matrix: rows=34 red=34 fail_holes=0
-gate_identity: fb2eb7cb8709…
 
-parent_run (from main or any merge tree):
+parent_run:
   git fetch origin w-fitgate
   RULER=/home/flynnsbit/Projects/MisterPlex-wt-fitgate
   # or: git worktree add --detach "$HOME/wt-fg-ro" origin/w-fitgate
   "$RULER/scripts/fit_release_gate.sh" --root "$MERGE" --qsf "$MERGE/fpga/Plex_MiSTer/Plex.qsf"
   # post-fit: --post-fit-only --sta-rpt Plex.sta.rpt
 
-B31 HIT_SCAN pre-fit cap (rd-duck yosys −54% cells):
-  product HIT_SCAN=48 paint / MAX_CMDS=112 storage; shipping cmds≤48
-  w-osd measured shipping_cmds=41 (publishPlxcHud nullptr title)
-  LIVE_OPEN: B31_HIT_SCAN_PRODUCT_ABSENT
-  reinject RED: B31_HIT_SCAN_NOT_48, B31_HIT_SCAN_112_FORBIDDEN
-  B31_HIT_SCAN_PRODUCT_ABSENT: inject='live hollow / missing product TB' true_rc=1 RED
-  B31_HIT_SCAN_NOT_48: inject='plex_chrome HIT_SCAN default forced 112 (seeded hollow)' true_rc=1 RED
-  B31_HIT_SCAN_112_FORBIDDEN: inject='sys_top .HIT_SCAN(112) (seeded)' true_rc=1 RED
+B31 HIT_SCAN pre-fit (rd-duck yosys −54% cells @ HIT_SCAN=112):
+  product HIT_SCAN=48 paint / MAX_CMDS=112 storage; shipping ≤48
+  w-osd: measured_shipping_cmds=41 (publishPlxcHud nullptr title)
+  LIVE_OPEN B31_HIT_SCAN_PRODUCT_ABSENT true_rc=1
+  reinject B31_HIT_SCAN_NOT_48 / B31_HIT_SCAN_112_FORBIDDEN true_rc=1
 
-leg4_post_fit: clk_sys Fmax≥30.24 + critical path owner required
-no_quartus / no_device / no_main_merge (main unit RED)
-
-updated: 2026-08-03T15:51:14Z
+leg4: clk_sys Fmax≥30.24 + path owner required
+no_quartus / no_device / no_main_merge
