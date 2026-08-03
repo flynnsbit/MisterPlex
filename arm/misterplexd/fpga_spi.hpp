@@ -136,6 +136,17 @@ public:
     // frames_done alone is NOT proof — on c5382bee it is bank_vsync_count.
     // No per-session reset — parent cluster instrument field 1.
     bool plxdLivenessProven() const { return plxdLive_.proven; }
+
+    // After an external load_core the HPS /dev/mem maps stay open but the FPGA
+    // fabric is new. Steady-state sendDdrFrame with ddrKickMode_==1 skips the
+    // first-kick busy/has_frame verify (fpga_spi.cpp), so presents can advance
+    // while scanout stays on the idle latch. Force the next publish to re-probe
+    // kick + clear PLXD liveness state. Does not munmap (use reopenPresentPath).
+    void forceDdrKickReprobe();
+
+    // close()+open() FPGA manager map and DDR maps; force kick reprobe.
+    // Returns open() result. Used when presents advance without PLXD proof.
+    bool reopenPresentPath();
     struct DdrDoorbellStatus {
         uint32_t seq = 0;
         int bank = 0;

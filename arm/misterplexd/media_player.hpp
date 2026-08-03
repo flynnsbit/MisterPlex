@@ -7,6 +7,7 @@
 #include "fpga_spi.hpp"
 #include "libmisterplex/idle_screen.hpp"
 #include "libmisterplex/coded_size.hpp"
+#include "libmisterplex/fpga_scanout_health.hpp"
 #include "libmisterplex/mraudio_status.hpp"
 #include "libmisterplex/osd_control.hpp"
 #include "libmisterplex/osd_menu.hpp"
@@ -426,6 +427,8 @@ private:
     std::atomic<uint64_t> streamSeq_{0};    // bumped at each stream START
     // FPGA presents this session (wall-clock capped)
     int64_t presentCount_ = 0;
+    // PLXD bank-identity samples vs presents (parent: first cast after load_core).
+    FpgaScanoutHealth scanoutHealth_{};
     mutable std::mutex mu_;
     mutable std::mutex summaryMu_;
     PlaybackSummary lastSummary_;

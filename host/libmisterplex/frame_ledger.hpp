@@ -27,11 +27,15 @@ void frameLedgerProcessStart(int64_t lifetimeFrames, int64_t lifetimePresents,
 // publishMisses: present attempted but DDR/FPGA publish failed (not A/V drops).
 //
 // reason tokens (product):
-//   stop_or_seek         — user stop / seek restart
-//   natural_eof          — content ended with at least one assembled frame OR present
-//   zero_frame_playback  — frames=0 AND presents=0 without stop/seek
+//   stop_or_seek              — user stop / seek restart
+//   natural_eof               — content ended with at least one assembled frame OR present
+//   zero_frame_playback       — frames=0 AND presents=0 without stop/seek
+//   present_without_scanout   — presents advanced but PLXD bank-identity never proved live
 // Field defect (parent 2026-08-02): crop=618:480 on fleet 624x350 → ffmpeg emits
 // 0 frames, session reported reason=natural_eof. That MUST be zero_frame_playback.
+// Field defect (parent 2026-08-02): first cast after load_core → presents>0 while HDMI
+// idle froze; residual lines said fpga_obs=none (static supply label). MUST be
+// present_without_scanout when scanout health never saw plxd_live.
 void frameLedgerSessionEnd(uint64_t sessionId, int64_t frames, int64_t presents, int64_t drops,
                            const char* reason, int64_t publishMisses = 0);
 
@@ -39,20 +43,32 @@ void frameLedgerSessionEnd(uint64_t sessionId, int64_t frames, int64_t presents,
 inline constexpr const char* kFrameLedgerReasonStopOrSeek = "stop_or_seek";
 inline constexpr const char* kFrameLedgerReasonNaturalEof = "natural_eof";
 inline constexpr const char* kFrameLedgerReasonZeroFrame = "zero_frame_playback";
+inline constexpr const char* kFrameLedgerReasonPresentWithoutScanout =
+    "present_without_scanout";
 
 // Classify session-end reason. Zero-frame total failure is NEVER natural_eof.
+// presentWithoutScanout overrides natural_eof when ARM presents advanced without
+// PLXD bank-identity proof (see fpga_scanout_health.hpp).
 inline const char* frameLedgerClassifyEndReason(bool stopOrSeek, int64_t frames,
-                                                int64_t presents) {
+                                                int64_t presents,
+                                                bool presentWithoutScanout = false) {
     if (stopOrSeek)
         return kFrameLedgerReasonStopOrSeek;
     if (frames == 0 && presents == 0)
         return kFrameLedgerReasonZeroFrame;
+    if (presentWithoutScanout && presents > 0)
+        return kFrameLedgerReasonPresentWithoutScanout;
     return kFrameLedgerReasonNaturalEof;
 }
 
 inline bool frameLedgerIsZeroFrameFailure(const char* reason) {
     return reason != nullptr &&
            std::string(reason) == kFrameLedgerReasonZeroFrame;
+}
+
+inline bool frameLedgerIsPresentWithoutScanout(const char* reason) {
+    return reason != nullptr &&
+           std::string(reason) == kFrameLedgerReasonPresentWithoutScanout;
 }
 
 // One greppable ERROR line for zero-frame sessions (field defect class).
@@ -140,12 +156,18 @@ inline bool frameLedgerResidualExplainedByPublishMiss(const FrameLedgerLive& s) 
 // Compact key=value fragment for telemetry (no leading/trailing space).
 //
 // HONEST LABELS (parent 2026-08-01): every field carries its derivation.
-// All counters below are SUPPLY-SIDE (ARM control flow). None observe the FPGA
-// scanout/swap. residual == frames-presents-drops by arithmetic; when the only
-// non-present paths are pacer-drop or publish-miss, residual == publish_misses.
-// Do NOT print a second name for residual that sounds independent (no bare
-// "unaccounted=" duplicate).
-inline std::string frameLedgerTelemetryFragment(const FrameLedgerLive& s) {
+// All counters below are SUPPLY-SIDE (ARM control flow). residual ==
+// frames-presents-drops by arithmetic; when the only non-present paths are
+// pacer-drop or publish-miss, residual == publish_misses.
+//
+// fpgaObs (parent 2026-08-02 clarification):
+//   Default "none" means residual_scope is supply-only — FPGA was NOT sampled
+//   for THIS fragment. It is NOT "observation succeeded and found nothing".
+//   Callers that sample PLXD must pass plxd_live / plxd_absent / plxd_stale
+//   (see fpga_scanout_health.hpp). Do not treat none as a pass.
+inline std::string frameLedgerTelemetryFragment(const FrameLedgerLive& s,
+                                                const char* fpgaObs = "none") {
+    const char* obs = (fpgaObs && fpgaObs[0]) ? fpgaObs : "none";
     return "frames=" + std::to_string(s.frames) + " frames_src=pipe_assemble" +
            " presents=" + std::to_string(s.presents) + " presents_src=arm_publish_ok" +
            " drops=" + std::to_string(s.drops) + " drops_src=av_pacer" +
@@ -154,7 +176,7 @@ inline std::string frameLedgerTelemetryFragment(const FrameLedgerLive& s) {
            " residual=" + std::to_string(s.residual) +
            " residual_eq=frames-presents-drops" +
            " residual_scope=supply_arm_only" +
-           " fpga_obs=none" +
+           " fpga_obs=" + obs +
            " tag=measured";
 }
 

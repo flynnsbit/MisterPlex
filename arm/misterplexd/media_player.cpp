@@ -6,6 +6,7 @@
 #include "libmisterplex/av_clock.hpp"
 #include "libmisterplex/ffmpeg_vf.hpp"
 #include "libmisterplex/frame_ledger.hpp"
+#include "libmisterplex/fpga_scanout_health.hpp"
 #include "libmisterplex/supply_bucket.hpp"
 #include "libmisterplex/idle_screen.hpp"
 #include "libmisterplex/last_frame_latch.hpp"
@@ -1197,9 +1198,11 @@ void MediaPlayer::stop() {
     seekReqMs_.store(-1);
     positionMs_.store(0);
     showPlaybackOverlay(PlaybackOverlayState::Stopped, 0, 0);
-    // Retire the background FPGA users BEFORE tearing the SPI/mmap state down.
-    // stop() closes FpgaSpi and reloads the core; an OSD poll or idle paint in
-    // flight would then ioctl through an unmapped handle and take the daemon down.
+    // Retire background FPGA users before any path that might repaint.
+    // NOTE (source, 2026-08-02): stop() does NOT call fpga_.close() and does NOT
+    // reload the core. The /dev/mem mmap from initPresent stays open across stop
+    // and across an external load_core — see reopenPresentPath() for recovery
+    // when presents advance without PLXD bank-identity proof.
     stopOsdPoll();
     stopIdle();
     if (fb_.ok())
@@ -3203,6 +3206,7 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                 "same frame");
         usedRawVideo = true;
         presentCount_ = 0;
+        scanoutHealth_ = FpgaScanoutHealth{};
         audioBytes_.store(0);
         measuredDeliveryW_.store(0);
         measuredDeliveryH_.store(0);
@@ -4332,6 +4336,38 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                 const int64_t ltU = frameLedgerResidual(ltF, ltP, ltD);
                 const uint64_t pep = processEpoch_.load(std::memory_order_acquire);
                 const uint64_t sseq = streamSeq_.load(std::memory_order_acquire);
+                // Real FPGA observation for this 1 Hz line (not residual static "none").
+                // Parent 2026-08-02: presents advanced while HDMI idle after load_core.
+                const char* fpgaObsTok = kFpgaObsNotSampled;
+                if (presentMode_ != "none" && fpga_.ok()) {
+                    BankReleaseStatus brsHz{};
+                    FpgaScanoutSample samp{};
+                    samp.presents = presentCount_;
+                    samp.read_ok = fpga_.readBankRelease(brsHz);
+                    if (samp.read_ok) {
+                        samp.bank_sig = fpgaScanoutBankSig(brsHz.free_bank_mask, brsHz.disp_bank,
+                                                           brsHz.swap_pending);
+                    }
+                    fpgaObsTok = fpgaScanoutNoteSample(scanoutHealth_, samp);
+                    if (fpgaScanoutShouldReopen(scanoutHealth_)) {
+                        scanoutHealth_.reopen_attempted = true;
+                        log(fpgaScanoutPresentWithoutProofErrorLine(
+                            scanoutHealth_, presentCount_, frameIndex) +
+                            " action=reopen_present_path");
+                        const bool re = fpga_.reopenPresentPath();
+                        log(std::string("media: scanout_reopen ok=") + (re ? "1" : "0") +
+                            " err=" + (re ? "none" : fpga_.lastError()) +
+                            " note=force_ddr_kick_reprobe_after_load_core_class" +
+                            " tag=measured");
+                        if (re)
+                            useDdrF1_ = true;
+                    } else if (fpgaScanoutPresentWithoutProof(scanoutHealth_) &&
+                               !scanoutHealth_.failure_logged) {
+                        scanoutHealth_.failure_logged = true;
+                        log(fpgaScanoutPresentWithoutProofErrorLine(
+                            scanoutHealth_, presentCount_, frameIndex));
+                    }
+                }
                 // A5: av_drift_ms is servo error (pinned near -lead). Also emit
                 // display-path offset (presentCount) which drops do not auto-heal.
                 char avServoBuf[384];
@@ -4360,7 +4396,7 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                     (mw > 0 && mh > 0) ? yuv420pFrameBytesWH(mw, mh) : 0;
                 const size_t pipeMod =
                     frameBytes ? (totalBytes % frameBytes) : 0;
-                log("media: " + frameLedgerTelemetryFragment(led) +
+                log("media: " + frameLedgerTelemetryFragment(led, fpgaObsTok) +
                     " vfps=" + fmtFpsRate(vfps) +
                     " pfps=" + fmtFpsRate(pfps) +
                     " audio_s=" + fmtSec3(a_sec) +
@@ -4391,6 +4427,7 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                     " reader_bytes=" + std::to_string(frameBytes) +
                     " pipe_total_mod=" + std::to_string(pipeMod) +
                     " desync_risk=" + (pipeDesyncRisk_.load() ? "1" : "0") +
+                    " plxd_live_samples=" + std::to_string(scanoutHealth_.live_samples) +
                     " lifetime_frames=" + std::to_string(ltF) +
                     " lifetime_presents=" + std::to_string(ltP) +
                     " lifetime_drops=" + std::to_string(ltD) +
@@ -4847,8 +4884,11 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
     const uint64_t sid = sessionSeq_.fetch_add(1, std::memory_order_relaxed) + 1;
     // Field defect (parent 2026-08-02): crop=618 on 624x350 → 0 frames, log said
     // natural_eof. Zero-frame total failure must be a distinct ERROR reason.
+    // Field defect (parent 2026-08-02): presents>0 with frozen HDMI after load_core
+    // while residual lines said fpga_obs=none (static). present_without_scanout.
+    const bool noScanout = fpgaScanoutPresentWithoutProof(scanoutHealth_);
     const char* endReason =
-        frameLedgerClassifyEndReason(stop_.load(), sessFrames, sessPresents);
+        frameLedgerClassifyEndReason(stop_.load(), sessFrames, sessPresents, noScanout);
     if (frameLedgerIsZeroFrameFailure(endReason)) {
         const int mw = measuredDeliveryW_.load();
         const int mh = measuredDeliveryH_.load();
@@ -4867,6 +4907,10 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
         }
         log(frameLedgerZeroFrameErrorLine(mw, mh, prodBytes, readerBytes, vfPlan.reason));
     }
+    if (frameLedgerIsPresentWithoutScanout(endReason) && !scanoutHealth_.failure_logged) {
+        scanoutHealth_.failure_logged = true;
+        log(fpgaScanoutPresentWithoutProofErrorLine(scanoutHealth_, sessPresents, sessFrames));
+    }
     frameLedgerSessionEnd(sid, sessFrames, sessPresents, sessDrops, endReason, sessPubMiss);
 
     const auto ledEnd = frameLedgerLiveOf(sessFrames, sessPresents, sessDrops, sessPubMiss);
@@ -4876,7 +4920,9 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
     const int64_t ltM = lifetimePublishMisses_.load();
     const uint64_t pep = processEpoch_.load(std::memory_order_acquire);
     const uint64_t sseq = streamSeq_.load(std::memory_order_acquire);
-    log("media: session end " + frameLedgerTelemetryFragment(ledEnd) +
+    const char* endObs =
+        (scanoutHealth_.samples > 0) ? scanoutHealth_.last_obs : kFpgaObsNotSampled;
+    log("media: session end " + frameLedgerTelemetryFragment(ledEnd, endObs) +
         " session=" + std::to_string(sid) +
         " process_epoch=" + std::to_string(pep) +
         " stream_seq=" + std::to_string(sseq) +
@@ -4889,6 +4935,9 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
             std::to_string(frameLedgerResidual(ltF, ltP, ltD)) +
         " lifetime_residual_eq=frames-presents-drops" +
         " lifetime_residual_scope=supply_arm_only" +
+        " plxd_live_samples=" + std::to_string(scanoutHealth_.live_samples) +
+        " plxd_absent_samples=" + std::to_string(scanoutHealth_.absent_samples) +
+        " plxd_stale_samples=" + std::to_string(scanoutHealth_.stale_samples) +
         " recon=" + std::to_string(reconFrames_.load()) +
         " cabac=" + (cabacSkip_.load() ? "1" : "0") +
         " stream=" + (streamEnabled_ ? "on" : "off") +
