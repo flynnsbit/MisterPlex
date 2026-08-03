@@ -1,7 +1,9 @@
 // Small dual-clock FIFO for clock-domain crossings.
 module async_fifo #(
 	parameter int WIDTH = 8,
-	parameter int AW    = 4
+	parameter int AW    = 4,
+	// Assert wr_almost_full when free slots <= AF_HEADROOM (sticky band, not a single count).
+	parameter int AF_HEADROOM = 4
 )(
 	input  wire             wr_clk,
 	input  wire             wr_reset,
@@ -24,15 +26,21 @@ module async_fifo #(
 	reg [AW:0] rd_bin, rd_gray;
 	reg [AW:0] rd_gray_w1, rd_gray_w2;
 	reg [AW:0] wr_gray_r1, wr_gray_r2;
-	// Registered first-word-fall-through read port: consumers still see
-	// rd_empty=0 only when rd_data is valid, but no fast-clock RAM data fans
-	// straight into slow-domain logic.
 	reg [WIDTH-1:0] rd_data_r;
 	reg             rd_valid;
 	localparam [AW:0] PTR_ONE = {{AW{1'b0}}, 1'b1};
 
 	function automatic [AW:0] bin2gray(input [AW:0] b);
 		bin2gray = (b >> 1) ^ b;
+	endfunction
+
+	function automatic [AW:0] gray2bin(input [AW:0] g);
+		integer gi;
+		begin
+			gray2bin[AW] = g[AW];
+			for (gi = AW - 1; gi >= 0; gi = gi - 1)
+				gray2bin[gi] = gray2bin[gi + 1] ^ g[gi];
+		end
 	endfunction
 
 	wire [AW:0] wr_gray_full = {~rd_gray_w2[AW:AW-1], rd_gray_w2[AW-2:0]};
@@ -46,9 +54,16 @@ module async_fifo #(
 	wire [AW:0] rd_bin_next  = rd_bin + (rd_prefetch ? PTR_ONE : '0);
 	wire [AW:0] rd_gray_next = bin2gray(rd_bin_next);
 
+	// Occupancy from wr_bin vs CDC-synced rd gray→bin. Conservative under lag.
+	// almost_full for free <= AF_HEADROOM (occ >= DEPTH - AF_HEADROOM), and when full.
+	// Old bug: only (wr_bin+4) gray == full → true at exactly 4 free, false at 3/2/1.
+	wire [AW:0] rd_bin_wsync = gray2bin(rd_gray_w2);
+	wire [AW:0] wr_occ = wr_bin - rd_bin_wsync;
+	localparam int OCC_AF = (DEPTH > AF_HEADROOM) ? (DEPTH - AF_HEADROOM) : 0;
+	wire wr_af_level = (wr_occ >= OCC_AF[AW:0]);
+
 	assign wr_full = wr_full_now;
-	wire [AW:0] wr_bin_plus4_gray = bin2gray(wr_bin + {{AW-2{1'b0}}, 3'd4});
-	assign wr_almost_full = wr_full_now || (wr_bin_plus4_gray == wr_gray_full);
+	assign wr_almost_full = wr_full_now || wr_af_level;
 	assign rd_empty = !rd_valid;
 	assign rd_data = rd_data_r;
 

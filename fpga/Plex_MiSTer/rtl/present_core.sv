@@ -795,10 +795,11 @@ module present_core #(
 	// backpressure). Black only in blank — never flash black mid-line on CE holes.
 	// Outputs r/g/b/H*/V* are driven from this path whenever use_ext (runtime
 	// has_frame) so Quartus cannot DCE the beam→store→npx chain as dead.
-	// Hold on clk_pix (output domain) — was clk; dual-clock safe.
+	// Hold on clk_pix (output domain). Reset must be pix-synced (mp_reset_pix),
+	// never raw clk_sys `reset` sampled as data on clk_pix.
 	reg [7:0] mp_r_hold, mp_g_hold, mp_b_hold;
 	always @(posedge clk_pix) begin
-		if (reset) begin
+		if (mp_reset_pix) begin
 			mp_r_hold <= 8'd0;
 			mp_g_hold <= 8'd0;
 			mp_b_hold <= 8'd0;
@@ -817,12 +818,13 @@ module present_core #(
 	wire [7:0] mp_b_px = mp_out_ce ? mp_out_b : mp_b_hold;
 	// Mode-on (PRESENT_MULTI_PIXEL+DDR): mp path owns H/V always.
 	// CLK_VIDEO may be clk_pix — never fall back to legacy hb_d/br (20 MHz state).
-	// RGB: frame pixels when has_frame & !force-bars; else black (continuous raster).
-	// Force-bars (use_frame_store) still allowed only on same-clock builds.
+	// PLL mode: do NOT gate RGB on unsynchronised clk_sys has_frame/use_frame_store.
+	// Npx path already pushes black on !has_frame / store miss; a second gate on
+	// async status tears DE. Pass mp_* pixels straight out.
 `ifdef PRESENT_CLK_PIX_PLL
-	assign r = mp_de_out ? ((has_frame && !use_frame_store) ? mp_r_px : 8'd0) : 8'd0;
-	assign g = mp_de_out ? ((has_frame && !use_frame_store) ? mp_g_px : 8'd0) : 8'd0;
-	assign b = mp_de_out ? ((has_frame && !use_frame_store) ? mp_b_px : 8'd0) : 8'd0;
+	assign r = mp_de_out ? mp_r_px : 8'd0;
+	assign g = mp_de_out ? mp_g_px : 8'd0;
+	assign b = mp_de_out ? mp_b_px : 8'd0;
 	assign ce_pix = 1'b1; // CLK_VIDEO==clk_pix; CE always
 	assign HBlank = mp_hb_d;
 	assign HSync  = mp_hs_d;

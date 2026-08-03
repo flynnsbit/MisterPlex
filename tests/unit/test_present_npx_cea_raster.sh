@@ -34,6 +34,11 @@ run_one() {
   "$OUT/$name/Vpresent_npx_cea_raster_tb" >"$OUT/$name.log" 2>&1
   local rc=$?
   set -e
+  if [[ $rc -ne 0 ]]; then
+    tail -40 "$OUT/$name.log"
+    echo "FAIL $name nonzero rc=$rc (marker alone is not enough)" >&2
+    exit 1
+  fi
   grep -q "$pass_pat" "$OUT/$name.log" || {
     tail -40 "$OUT/$name.log"
     echo "FAIL $name missing '$pass_pat' rc=$rc" >&2
