@@ -126,7 +126,25 @@ if [[ "$RC_DIS" -ne 2 ]] || ! printf '%s\n' "$OUT_DIS" | grep -q 'REPRO disable-
 fi
 echo "PASS red twin disable-ignored REPRO (rc=2)"
 
-# --- Static: mux idle fallback + owned disable ---
+# --- Red twin D: disable keeps 960 DE (624-in-960 island class) ---
+EXE_K960="$(build_one disable_keep960 \
+  +define+PRESENT_BEAM_960 \
+  +define+DDR_FRAME_STORE \
+  +define+FAULT_B8_DISABLE_KEEP_960_DE \
+  -CFLAGS "-std=c++17 -O2 -DFAULT_B8_DISABLE_KEEP_960_DE")"
+set +e
+OUT_K960="$("$EXE_K960" 2>&1)"
+RC_K960=$?
+set -e
+printf '%s\n' "$OUT_K960"
+echo "plex_b8_hier_disable_keep960 true rc=$RC_K960"
+if [[ "$RC_K960" -ne 2 ]] || ! printf '%s\n' "$OUT_K960" | grep -q 'REPRO disable-keep-960-de'; then
+  echo "FAIL disable-keep-960-de red twin did not REPRO (rc=$RC_K960)" >&2
+  exit 1
+fi
+echo "PASS red twin disable-keep-960-de REPRO (rc=2)"
+
+# --- Static: mux idle fallback + owned disable + legacy DE ---
 MUX="$ROOT/fpga/Plex_MiSTer/rtl/plex_present_geom_mux.sv"
 if ! grep -qE 'beam_fallback_960 = ~plxg_owned|force_native_960 = ~plxg_live' "$MUX"; then
   echo "FAIL mux missing idle-only beam fallback (COLLISION #5 / disable fix)" >&2
@@ -138,6 +156,14 @@ if ! grep -q 'plxg_owned' "$MUX"; then
 fi
 if ! grep -q 'present_geom_enable = (beam_fallback_960 & ~plxg_owned)' "$MUX"; then
   echo "FAIL mux geom_enable still forced under owned disable" >&2
+  exit 1
+fi
+if ! grep -q 'LEG_DE_W' "$MUX" || ! grep -q 'disable_legacy' "$MUX"; then
+  echo "FAIL mux missing true-legacy DE on disable (rd-duck 624-in-960)" >&2
+  exit 1
+fi
+if grep -n 'disable_beam_de' "$MUX" | grep -q '960'; then
+  echo "FAIL mux still couples disable to 960 DE" >&2
   exit 1
 fi
 if grep -n "force_native_960 = 1'b1" "$MUX" | grep -v FAULT_B8_FORCE_ALWAYS | grep -q .; then

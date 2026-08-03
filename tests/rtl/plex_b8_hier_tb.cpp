@@ -143,6 +143,27 @@ int main(int argc, char** argv) {
 	std::fprintf(stderr, "REPRO disable-ignored geom_en=1 yst=960 (mode exit broken)\n");
 	delete t;
 	return 2;
+
+#elif defined(FAULT_B8_DISABLE_KEEP_960_DE)
+	// rd-duck: geom_off + 960 DE → 624 island in 960 canvas (display bug).
+	std::fprintf(stderr, "=== FAULT_B8_DISABLE_KEEP_960_DE (island-in-canvas) ===\n");
+	inject_disable(t);
+	std::fprintf(stderr, "fault_keep960: geom=%u cw=%u de=%ux%u\n",
+	             t->obs_geom_en, t->obs_content_w, t->obs_win_h_de, t->obs_win_v_de);
+	if (t->obs_geom_en) {
+		fail("keep960 twin expected geom_off");
+		delete t;
+		return 1;
+	}
+	if (t->obs_win_h_de != 960 || t->obs_win_v_de != 540) {
+		fail("keep960 twin did not pin 960 DE — cannot see island defect");
+		delete t;
+		return 1;
+	}
+	std::fprintf(stderr,
+	             "REPRO disable-keep-960-de geom_off de=960x540 (624-in-960 class)\n");
+	delete t;
+	return 2;
 #else
 	std::fprintf(stderr, "=== PRODUCT PRESENT_BEAM_960 + PLXG runtime DE ===\n");
 
@@ -232,7 +253,9 @@ int main(int argc, char** argv) {
 	std::fprintf(stderr, "Option-C capacity: p960=%u p1280=%u usable=%u\n", payload_960,
 	             payload_1280, usable);
 
-	// --- 3) Explicit disable must NOT re-arm 960 store geom (rd-duck) ---
+	// --- 3) Explicit disable → true legacy DE 640×480, NOT 960 (rd-duck) ---
+	// geom_enable=0 (LEG store); content/DE presented 640×480. Old product kept
+	// 960 DE → 624 island inside 960 canvas → ascal ~824×640 glass.
 	inject_disable(t);
 	std::fprintf(stderr,
 	             "disable: win=%u geom=%u cw=%u ch=%u coded=%ux%u yst=%u de=%ux%u\n",
@@ -243,9 +266,33 @@ int main(int argc, char** argv) {
 		fail("disable: present_geom_enable must be 0 (legacy store path)");
 	if (t->obs_y_stride == 960 && t->obs_geom_en)
 		fail("disable: store still forced to 960 stride");
-	// Beam DE may stay 960 for glass; that is separate from store geom.
-	if (t->obs_win_h_de != 960 || t->obs_win_v_de != 540)
-		fail("disable: beam DE should keep 960×540 max-tier window");
+	if (t->obs_content_w != 640 || t->obs_content_h != 480)
+		fail("disable: content must be presented legacy 640×480");
+	if (t->obs_win_h_de != 640 || t->obs_win_v_de != 480)
+		fail("disable: beam DE must be true legacy 640×480 (not 960×540)");
+	// Pixel-extent oracle: forbid 960 DE while geom_off (island-in-canvas class).
+	if (!t->obs_geom_en && t->obs_win_h_de == 960 && t->obs_win_v_de == 540)
+		fail("disable: PIXEL_EXTENT geom_off+960DE forbidden (624-in-960 class)");
+	std::fprintf(stderr, "PASS disable legacy DE 640×480 geom_off (no 960 island)\n");
+
+	// --- 3b) Content-bearing legacy 624×480 mode-exit (preferred host path) ---
+	inject_geom(t, 624, 480, 624, 312);
+	std::fprintf(stderr,
+	             "legacy480: geom=%u cw=%u ch=%u yst=%u de=%ux%u\n",
+	             t->obs_geom_en, t->obs_content_w, t->obs_content_h, t->obs_y_stride,
+	             t->obs_win_h_de, t->obs_win_v_de);
+	if (!t->obs_geom_en)
+		fail("legacy480: geom_enable must be 1");
+	if (t->obs_content_w != 624 || t->obs_content_h != 480)
+		fail("legacy480: content must track 624×480");
+	if (t->obs_y_stride != 624)
+		fail("legacy480: y_stride must be 624");
+	if (t->obs_win_h_de != 624 || t->obs_win_v_de != 480)
+		fail("legacy480: win DE must track content (true-DE)");
+	// Extent: content fills DE (no black-inclusive larger canvas).
+	if (t->obs_win_h_de != t->obs_content_w || t->obs_win_v_de != t->obs_content_h)
+		fail("legacy480: PIXEL_EXTENT content must equal DE");
+	std::fprintf(stderr, "PASS legacy480 content=DE 624×480 (full hierarchy extent)\n");
 #if defined(FAULT_B8_DISABLE_IGNORED)
 	// Built only under red twin compile - not this product path.
 #endif

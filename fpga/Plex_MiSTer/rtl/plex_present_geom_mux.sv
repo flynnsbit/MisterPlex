@@ -2,8 +2,12 @@
 //
 // COLLISION #5: force_native_960 is MAX-TIER FALLBACK when PLXG is idle only.
 // rd-duck explicit-disable: live_valid=1,cw=ch=0,geom=0 is mode exit — must NOT
-// re-enable 960 store geometry. Beam DE fallback is separate from store geom.
-// Storage under beam fallback is 960×540 (U@518400), NOT DE canvas 1280.
+// re-enable 960 store geometry. Beam DE under disable is TRUE LEGACY (640×480),
+// not max-tier 960 — keeping 960 DE with geom_off paints a 624 island inside a
+// 960 canvas and ascal letterboxes (~824×640 glass). Size changes are ascal's job.
+// Idle (no PLXG) still uses 960×540 storage fallback (U@518400).
+// Prefer host content-bearing legacy PLXG (geom=1, 624×480) on mode-exit;
+// zero-record disable is the safety net.
 
 `timescale 1ns / 1ps
 `default_nettype none
@@ -56,12 +60,15 @@ module plex_present_geom_mux (
 	wire [10:0] ladder_w = content_res_640x480 ? 11'd640 : 11'd320;
 	wire [10:0] ladder_h = content_res_640x480 ? 11'd480 : 11'd240;
 
+	// Presented scanout contract (ddr_frame_layout.hpp kPlex480pPresented*).
+	localparam [10:0] LEG_DE_W = 11'd640;
+	localparam [10:0] LEG_DE_H = 11'd480;
+
 `ifdef PRESENT_BEAM_960
 `ifdef FAULT_B8_FORCE_ALWAYS
 	wire beam_fallback_960 = 1'b1;
 `elsif FAULT_B8_DISABLE_IGNORED
-	// RED twin (rd-duck #6): treat content-empty as idle so owned disable
-	// re-arms 960 store geom (pre-fix: plxg_live required cw/ch nonzero).
+	// RED twin: treat content-empty as idle so owned disable re-arms 960 geom.
 	wire beam_fallback_960 = ~plxg_content;
 `else
 	// Idle only — owned disable does not count as idle.
@@ -70,21 +77,15 @@ module plex_present_geom_mux (
 `else
 	wire beam_fallback_960 = 1'b0;
 `endif
+
 `ifdef FABRIC_NATIVE_720P_GEOM
 	wire force_native_720p = 1'b1;
 `else
 	wire force_native_720p = 1'b0;
 `endif
 
-	// Under owned disable: keep HDMI beam at max-tier DE (960×540) so the glass
-	// does not collapse, but store geom_enable stays 0 → true legacy bank map
-	// (PHYS 0x30000000 / doorbell 0x300FF000), matching host makeDdrPublishPlan.
-	wire disable_beam_de = plxg_owned && !plxg_content && !plxg_geom_en;
-`ifdef PRESENT_BEAM_960
-	wire beam_de_960 = beam_fallback_960 | disable_beam_de;
-`else
-	wire beam_de_960 = 1'b0;
-`endif
+	// Owned disable (zero content, geom=0).
+	wire disable_legacy = plxg_owned && !plxg_content && !plxg_geom_en;
 
 `ifdef FAULT_B8_FORCE_ALWAYS
 	// RED twin COLLISION #5: force-first pins 960 over live PLXG content.
@@ -118,19 +119,22 @@ module plex_present_geom_mux (
 		(force_native_720p ? 11'd1280 : plxg_hde);
 	assign present_win_v_de = beam_fallback_960 ? 11'd540 :
 		(force_native_720p ? 11'd720 : plxg_vde);
-`else
-	assign present_win_enable  = beam_fallback_960 | force_native_720p | plxg_win_en | disable_beam_de;
-	// Store geom: NEVER arm from beam fallback while PLXG owns the latch.
+`elsif FAULT_B8_DISABLE_KEEP_960_DE
+	// RED twin (rd-duck): geom_off but beam stays 960×540 → 624 island in 960 DE.
+	assign present_win_enable  = beam_fallback_960 | force_native_720p | plxg_win_en | disable_legacy;
 	assign present_geom_enable = (beam_fallback_960 & ~plxg_owned) | force_native_720p | plxg_geom_en;
 	assign content_width  = plxg_content ? plxg_cw :
-		(beam_de_960 ? 11'd960 : (force_native_720p ? 11'd1280 : ladder_w));
+		(disable_legacy ? 11'd960 :
+		(beam_fallback_960 ? 11'd960 : (force_native_720p ? 11'd1280 : ladder_w)));
 	assign content_height = plxg_content ? plxg_ch :
-		(beam_de_960 ? 11'd540 : (force_native_720p ? 11'd720 : ladder_h));
+		(disable_legacy ? 11'd540 :
+		(beam_fallback_960 ? 11'd540 : (force_native_720p ? 11'd720 : ladder_h)));
 	assign present_win_h_de = plxg_content ? plxg_hde :
-		(beam_de_960 ? 11'd960 : (force_native_720p ? 11'd1280 : plxg_hde));
+		(disable_legacy ? 11'd960 :
+		(beam_fallback_960 ? 11'd960 : (force_native_720p ? 11'd1280 : plxg_hde)));
 	assign present_win_v_de = plxg_content ? plxg_vde :
-		(beam_de_960 ? 11'd540 : (force_native_720p ? 11'd720 : plxg_vde));
-	// Store coded/stride only when content-bearing or idle force; disable → 0.
+		(disable_legacy ? 11'd540 :
+		(beam_fallback_960 ? 11'd540 : (force_native_720p ? 11'd720 : plxg_vde)));
 	assign present_geom_coded_w = plxg_content ? plxg_coded_w :
 		((beam_fallback_960 & ~plxg_owned) ? 11'd960 :
 		(force_native_720p ? 11'd1280 : plxg_coded_w));
@@ -141,6 +145,59 @@ module plex_present_geom_mux (
 		((beam_fallback_960 & ~plxg_owned) ? 12'd960 :
 		(force_native_720p ? 12'd1280 : plxg_y_stride));
 	assign present_geom_chroma_stride = plxg_content ? plxg_c_stride :
+		((beam_fallback_960 & ~plxg_owned) ? 11'd480 :
+		(force_native_720p ? 11'd640 : plxg_c_stride));
+`else
+	// PRODUCT
+	// Priority: content-bearing PLXG > owned disable (legacy DE) > idle 960 >
+	//           force 720p > ladder.
+	assign present_win_enable  = beam_fallback_960 | force_native_720p | plxg_win_en
+	                           | disable_legacy;
+	// Store geom: NEVER arm from beam fallback while PLXG owns the latch.
+	assign present_geom_enable = (beam_fallback_960 & ~plxg_owned) | force_native_720p
+	                           | plxg_geom_en;
+
+	assign content_width =
+		plxg_content      ? plxg_cw :
+		disable_legacy    ? LEG_DE_W :
+		beam_fallback_960 ? 11'd960 :
+		force_native_720p ? 11'd1280 :
+		ladder_w;
+	assign content_height =
+		plxg_content      ? plxg_ch :
+		disable_legacy    ? LEG_DE_H :
+		beam_fallback_960 ? 11'd540 :
+		force_native_720p ? 11'd720 :
+		ladder_h;
+	assign present_win_h_de =
+		plxg_content      ? plxg_hde :
+		disable_legacy    ? LEG_DE_W :
+		beam_fallback_960 ? 11'd960 :
+		force_native_720p ? 11'd1280 :
+		plxg_hde;
+	assign present_win_v_de =
+		plxg_content      ? plxg_vde :
+		disable_legacy    ? LEG_DE_H :
+		beam_fallback_960 ? 11'd540 :
+		force_native_720p ? 11'd720 :
+		plxg_vde;
+
+	// Store coded/stride: content-bearing or idle force; disable → leave 0
+	// (present_geom_enable=0 → ddr_frame_store LEG params).
+	assign present_geom_coded_w =
+		plxg_content ? plxg_coded_w :
+		((beam_fallback_960 & ~plxg_owned) ? 11'd960 :
+		(force_native_720p ? 11'd1280 : plxg_coded_w));
+	assign present_geom_coded_h =
+		plxg_content ? plxg_coded_h :
+		((beam_fallback_960 & ~plxg_owned) ? 11'd540 :
+		(force_native_720p ? 11'd720 : plxg_coded_h));
+	assign present_geom_y_stride =
+		plxg_content ? plxg_y_stride :
+		((beam_fallback_960 & ~plxg_owned) ? 12'd960 :
+		(force_native_720p ? 12'd1280 : plxg_y_stride));
+	assign present_geom_chroma_stride =
+		plxg_content ? plxg_c_stride :
 		((beam_fallback_960 & ~plxg_owned) ? 11'd480 :
 		(force_native_720p ? 11'd640 : plxg_c_stride));
 `endif

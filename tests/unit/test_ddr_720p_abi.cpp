@@ -783,8 +783,9 @@ int main() {
             CHECK(plxgProgramRecord(page.data(), dis2, lm));
             CHECK(!lm.geom_enable); // mode exit clears sticky Option-C
         }
-        // Legacy full-canvas publish MUST program PLXG disable (not leave sticky).
-        // rd-duck: plan.plxg_seq must NOT be 0 (0 = doorbell ungated encoding).
+        // Legacy full-canvas publish: content-bearing 624×480 PLXG (rd-duck DE fix).
+        // geom=1 + 624 → LEG capacity; beam DE 640 so no 624-in-960 island.
+        // plan.plxg_seq must NOT be 0 (0 = doorbell ungated encoding).
         {
             std::vector<uint8_t> payload(449280u, 0);
             DdrPublishFrame fr{payload.data(), payload.size(), plex480pDdrFrameGeometry(),
@@ -795,12 +796,25 @@ int main() {
             CHECK(plan.program_plxg);
             CHECK(!plan.native_push);
             CHECK(plan.plxg_seq != 0); // advisory non-zero; 0 would ungate
-            CHECK(((plan.plxg_q[0] >> 33) & 1ull) == 0ull);
+            CHECK(((plan.plxg_q[0] >> 33) & 1ull) == 1ull); // geom_enable=1
+            CHECK(((plan.plxg_q[0] >> 32) & 1ull) == 1ull); // win_enable=1
+            // coded_w/h in q2[42:32]/58:48]
+            CHECK(((plan.plxg_q[2] >> 32) & 0x7FFu) == 624u);
+            CHECK(((plan.plxg_q[2] >> 48) & 0x7FFu) == 480u);
+            // h_de/v_de presented 640×480
+            CHECK((plan.plxg_q[2] & 0x7FFu) == 640u);
+            CHECK(((plan.plxg_q[2] >> 16) & 0x7FFu) == 480u);
+            // y_stride 624, chroma 312
+            CHECK((plan.plxg_q[3] & 0xFFFu) == 624u);
+            CHECK(((plan.plxg_q[3] >> 16) & 0x7FFu) == 312u);
+            // Payload fits LEG usable → no Option-C
+            CHECK(!ddrI420PayloadNeedsOptionCBank(449280u));
             // Doorbell field for this publish uses committed, never plan seed 0.
             CHECK(ddrDoorbellPlxgSeqForPublish(true, /*committed*/6) == 6);
             CHECK(ddrDoorbellPlxgSeqPublishIllegalUngated(true, 0));
             CHECK(!ddrDoorbellPlxgSeqPublishIllegalUngated(true, 6));
             CHECK(ddrDoorbellPlxgSeqForPublish(false, 99) == 0); // true legacy
+            std::fprintf(stderr, "  MODE_EXIT_LEGACY480_PLXG OK\n");
         }
         // Raw geom: over-max rejected (no silent clamp-accept).
         CHECK(plxgRawGeomOk(960, 540, 960, 480));
