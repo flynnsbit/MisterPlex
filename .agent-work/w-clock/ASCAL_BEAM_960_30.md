@@ -1,11 +1,22 @@
-# Ascal-native beam class: 960×540 @ ~30 Hz (first fit)
+# Ascal-native beam class: 960×540 @ **30 Hz** (LOCKED for first fit)
 
-**Stale log:** `npx_full_raster_run.txt` removed again (HARD FAIL landmine).
+**Cadence DECISION (parent 2026-08-03):** **30 Hz**, not 24.  
+ascal FB decouples *clocks* but not *field repeat*: 24→60 = 5:2 judder; 30→60 = 2:1 clean.
 
-**Pivot:** first fit = true **960×540 core DE** @ **clk_sys 20 MHz**; ascal → HPS 1280×720@60.  
-`PRESENT_CLK_PIX_PLL` / 2-PPC remain **default-OFF upgrade**.
+**true_de evidence (machine):**
+```
+PRODUCT_30_V564 H_TOT=1182 V_TOT=564 fps@20M=30.0008
+de_w_max=960 de_lines=540 de_pixels=518400 true_de=1  rc=0
+island_1280 true_de=0 rc=1
+```
+(w-scaler `test_present_true_de_count_rtl_sim` + `test_true_content_de_contract`)
+
+**Stale log:** `npx_full_raster_run.txt` deleted (must stay gone).
+
+**QSF card for w-nostub:** `.agent-work/w-clock/W_NOSTUB_QSF_BEAM_CONSTANTS.md`
 
 ---
+
 
 ## 1) Is 30 Hz achievable? Best blanking
 
@@ -22,9 +33,10 @@
 **Active rate @30A:**  
 `960×540×30.0008 ≈ **15.55 Mpix/s**`
 
-**1px path peak:** `20 Mpix/s` (CE=1) → margin **1.29×**.  
-**Legacy serialize 13.33** applies only if MULTI_PIXEL **serialize** path ON — **not** this fit.  
-⇒ **B1 wide-FIFO is NOT load-bearing for ascal-native 1px @15.55.** Still keep B1 as upgrade when PPC path ships.
+**1px path peak:** `20 Mpix/s` (CE=1) → margin **1.29×** → **B1 not required on 1px path.**  
+**Legacy serialize 13.33:** 15.55 > 13.33 → B1 **would** be load-bearing if MULTI_PIXEL serialize were ON.  
+First fit macros: MULTI_PIXEL **OFF**, so shipping path is 1px. B1 stays verified green (default OFF) for PPC upgrade.  
+*(Parent note: 15.55>13.33 is real arithmetic but applies to the serialize ceiling, not CE=1.)*
 
 **640×360@30:** `6.91 Mpix/s` — trivial on same 20 MHz class (exact 2× ladder tier).
 

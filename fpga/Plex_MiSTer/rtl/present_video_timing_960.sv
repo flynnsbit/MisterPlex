@@ -5,7 +5,9 @@
 // Primary: ~30.0008 Hz  (H_TOTAL=1182, V_TOTAL=564)
 //   20e6/(1182*564) = 30.0008…  Hblank=222  Vblank=24
 // Alternate exact-ish 30.012: 1190×560 (Hblank=230, Vblank=20)
-// Film 24 Hz option: 1389×600 → 23.997 Hz (Hblank=429, Vblank=60)
+// Film 24 Hz options:
+//   preferred companion (w-scaler): 1182×705 → 24.0007 (fixed H, runtime V)
+//   MODE=2 legacy: 1389×600 → 23.997 Hz (Hblank=429, Vblank=60)
 //
 // Default OFF — selected only when PRESENT_BEAM_960 (parent fit grant).
 // Does NOT enable PRESENT_CLK_PIX_PLL / MULTI_PIXEL.

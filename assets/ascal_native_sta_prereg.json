@@ -1,40 +1,58 @@
 {
-  "schema": 1,
+  "schema": 2,
   "name": "misterplex-ascal-native-sta-prereg",
-  "description": "STA cuts for first ascal-native 960x540@30 fit. Locked before fit.",
+  "description": "STA cuts for first ascal-native 960x540@30 fit. Locked BEFORE fit (rule 0).",
   "hard_rule": "negative_slack_equals_hard_fail",
+  "prediction_preregistered_before_fit": {
+    "timestamp_note": "preregistered 2026-08-03 by w-clock; fit not run by this lane",
+    "expect_pass": true,
+    "confidence": "medium",
+    "basis": "clk_sys remains 20 MHz; no clk_pix PLL; DE/beam logic is counters + muxes comparable to existing colorbars path; prior nostub Fmax ~32 MHz leaves ~12 MHz headroom if hierarchy similar",
+    "explicit_unknown": "exact Fmax and worst path — unknown until Plex.sta.rpt Fmax Summary",
+    "miss_policy": "if fmax_clk_sys < 20.0 or any setup slack < 0 → HARD FAIL; publish miss, do not invent BUILD_OK"
+  },
   "stage_ascal_native_960_30": {
-    "macros": ["PRESENT_BEAM_960 (when wired)", "PRESENT_MULTI_PIXEL OFF", "PRESENT_CLK_PIX_PLL OFF"],
+    "macros": {
+      "PRESENT_BEAM_960": "ON for fit",
+      "PRESENT_MULTI_PIXEL": "OFF",
+      "PRESENT_CLK_PIX_PLL": "OFF",
+      "PRESENT_CLK_PIX_30": "OFF"
+    },
     "clocks": {
       "clk_sys_mhz": 20.0,
       "clk_ddr_mhz": 90.0,
-      "clk_pix": "tied_to_clk_sys_or_absent"
+      "clk_pix": "absent_or_tied_clk_sys"
+    },
+    "geometry": {
+      "h_de": 960,
+      "v_active": 540,
+      "h_total": 1182,
+      "v_total": 564,
+      "true_de": 1
     },
     "pass": {
       "fmax_clk_sys_mhz_min": 20.0,
       "setup_slack_all_constrained_ns_min": 0.0,
-      "hierarchy_beam_960_nonzero_if_macro": true
+      "hold_slack_min_ns": 0.0,
+      "hierarchy_present_beam_or_timing_960_survives": true,
+      "h_de_not_529": true
     },
     "fail": [
       "fmax_clk_sys < 20.0",
       "any constrained setup slack < 0",
-      "PRESENT_CLK_PIX_PLL accidentally ON without grant",
-      "H_DE still 529 while claiming 960 beam"
-    ],
-    "explicitly_unknown_until_fit": [
-      "exact Fmax MHz",
-      "worst path names",
-      "ascal polyphase quality vs custom 4/3 (glass, not STA)"
+      "PRESENT_CLK_PIX_PLL accidentally ON",
+      "H_DE still 529 while claiming 960 beam",
+      "true_de contract red (island DE)"
     ],
     "not_in_scope": [
       "fmax_clk_pix >= 29.7",
-      "wide-group FIFO pix cone"
+      "wide-group FIFO pix cone",
+      "glass capture / ascal visual quality"
     ]
   },
-  "prediction_preregistered": {
-    "beam_fps": 30.0008,
-    "active_mpix": 15.552,
-    "b1_required": false,
-    "reason": "1px CE=1 peak 20 Mpix/s > 15.552; serialize 13.33 only if MULTI_PIXEL serialize path ON"
+  "active_rate": {
+    "mpix_s": 15.552,
+    "vs_1px_peak_20": "PASS margin 1.286x",
+    "vs_serialize_13_33": "N/A on 1px path; FAIL if MULTI_PIXEL serialize ON without B1"
   }
 }

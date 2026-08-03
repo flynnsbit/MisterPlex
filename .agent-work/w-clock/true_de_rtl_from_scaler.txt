@@ -1,0 +1,49 @@
+RTL SIM: Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
+make: Entering directory '/home/flynnsbit/Projects/MisterPlex-wt-scaler/build/verilator/present_true_de_count'
+make: Nothing to be done for 'default'.
+make: Leaving directory '/home/flynnsbit/Projects/MisterPlex-wt-scaler/build/verilator/present_true_de_count'
+- V e r i l a t i o n   R e p o r t: Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
+- Verilator: Built from 0.000 MB sources in 0 modules, into 0.000 MB in 0 C++ files needing 0.000 MB
+- Verilator: Walltime 0.006 s (elab=0.000, cvt=0.000, bld=0.006); cpu 0.001 s on 1 threads; allocated 20.324 MB
+CASE true_de_count EXECUTED mode=PRODUCT_30_V564 H_TOT=1182 V_TOT=564 clks/frame=666648 fps@20M=30.0008 de_w_min=960 de_w_max=960 de_lines=540 de_pixels=518400 de_uniform=1 store_req=518400 store_id_ok=1 store_id_fail=0/518400 store_x_range=0..959 store_x0=1 line_req=960..960 store_full=1 true_de=1 beam_expect=960x540 win_de=960x540 rt_vt=0
+PASS true_de_count mode=PRODUCT_30_V564 true_de=1 store_full=1 de=960x540 fps=30.0008
+product30 true rc=0
+make: Entering directory '/home/flynnsbit/Projects/MisterPlex-wt-scaler/build/verilator/present_true_de_count_24'
+make: Nothing to be done for 'default'.
+make: Leaving directory '/home/flynnsbit/Projects/MisterPlex-wt-scaler/build/verilator/present_true_de_count_24'
+- V e r i l a t i o n   R e p o r t: Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
+- Verilator: Built from 0.000 MB sources in 0 modules, into 0.000 MB in 0 C++ files needing 0.000 MB
+- Verilator: Walltime 0.006 s (elab=0.000, cvt=0.000, bld=0.006); cpu 0.001 s on 1 threads; allocated 20.324 MB
+CASE true_de_count EXECUTED mode=PRODUCT_24_V705 H_TOT=1182 V_TOT=705 clks/frame=833310 fps@20M=24.0007 de_w_min=960 de_w_max=960 de_lines=540 de_pixels=518400 de_uniform=1 store_req=518400 store_id_ok=1 store_id_fail=0/518400 store_x_range=0..959 store_x0=1 line_req=960..960 store_full=1 true_de=1 beam_expect=960x540 win_de=960x540 rt_vt=705
+PASS true_de_count mode=PRODUCT_24_V705 true_de=1 store_full=1 de=960x540 fps=24.0007
+product24 true rc=0
+make: Entering directory '/home/flynnsbit/Projects/MisterPlex-wt-scaler/build/verilator/present_true_de_count_island'
+make: Nothing to be done for 'default'.
+make: Leaving directory '/home/flynnsbit/Projects/MisterPlex-wt-scaler/build/verilator/present_true_de_count_island'
+- V e r i l a t i o n   R e p o r t: Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
+- Verilator: Built from 0.000 MB sources in 0 modules, into 0.000 MB in 0 C++ files needing 0.000 MB
+- Verilator: Walltime 0.006 s (elab=0.000, cvt=0.000, bld=0.006); cpu 0.001 s on 1 threads; allocated 20.324 MB
+FAIL de_w==960
+FAIL de_h==540
+FAIL de_pixels==518400
+FAIL every line exactly 960
+FAIL true_de==1
+CASE true_de_count EXECUTED mode=ISLAND_1280 H_TOT=1650 V_TOT=750 clks/frame=1237500 fps@20M=16.1616 de_w_min=1280 de_w_max=1280 de_lines=720 de_pixels=921600 de_uniform=1 store_req=921600 store_id_ok=0 store_id_fail=921599/921600 store_x_range=0..959 store_x0=1 line_req=1280..1280 store_full=0 true_de=0 beam_expect=1280x720 win_de=1280x720 rt_vt=0
+FAIL true_de_count fails=5 mode=ISLAND_1280 true_de=0 de=1280x720 store_req=921600
+island true rc=1
+PASS red-check ISLAND_1280 true_rc=1
+make: Entering directory '/home/flynnsbit/Projects/MisterPlex-wt-scaler/build/verilator/present_true_de_count_vtot_bad'
+make: Nothing to be done for 'default'.
+make: Leaving directory '/home/flynnsbit/Projects/MisterPlex-wt-scaler/build/verilator/present_true_de_count_vtot_bad'
+- V e r i l a t i o n   R e p o r t: Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
+- Verilator: Built from 0.000 MB sources in 0 modules, into 0.000 MB in 0 C++ files needing 0.000 MB
+- Verilator: Walltime 0.007 s (elab=0.000, cvt=0.000, bld=0.007); cpu 0.001 s on 1 threads; allocated 20.324 MB
+FAIL de_w==960
+FAIL de_pixels==518400
+FAIL every line exactly 960
+FAIL true_de==1
+CASE true_de_count EXECUTED mode=FAULT_VTOT_BAD_DE H_TOT=1400 V_TOT=705 clks/frame=987000 fps@20M=20.2634 de_w_min=1280 de_w_max=1280 de_lines=540 de_pixels=691200 de_uniform=1 store_req=691200 store_id_ok=0 store_id_fail=690660/691200 store_x_range=0..959 store_x0=1 line_req=1280..1280 store_full=0 true_de=0 beam_expect=1280x540 win_de=1280x540 rt_vt=705
+FAIL true_de_count fails=4 mode=FAULT_VTOT_BAD_DE true_de=0 de=1280x540 store_req=691200
+vtot_bad_de true rc=1
+PASS red-check FAULT_VTOT_BAD_DE true_rc=1
+OK present_true_de_count_rtl_sim: 30+24 counted true_de + RED island/vtot
