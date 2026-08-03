@@ -467,6 +467,24 @@ inline DdrBankMap ddrSelectBankMapForContent(int contentW, int contentH) {
     return ddrSelectBankMapForI420(contentW, contentW / 2, contentH);
 }
 
+// Pin layout bank window to the product tier map (LEG 0x80000 / Option-C
+// 0x180000). Geometry-derived alignUp(frame_bytes) alone yields 0x40000 for
+// 320×240 and a non-product doorbell — host rings the wrong page while PLXG
+// describes content (rd-duck shear/wrong-bank class). Plane fields stay content.
+inline void ddrPinTierBankWindow(DdrFrameLayout& layout, DdrBankMap map) {
+    if (map == DdrBankMap::OptionC720p) {
+        layout.phys_base = kPlex720pDdrFramePhysBase;
+        layout.bank_stride = kPlex720pYuv420pBankStride;
+        layout.doorbell_phys = kPlex720pYuv420pDoorbellPhys;
+        layout.map_bytes = kPlex720pYuv420pBankStride * 2u;
+    } else {
+        layout.phys_base = kDdrFramePhysBase;
+        layout.bank_stride = kPlex480pYuv420pBankStride;
+        layout.doorbell_phys = kPlex480pYuv420pDoorbellPhys;
+        layout.map_bytes = kPlex480pYuv420pBankStride * 2u;
+    }
+}
+
 // DE / glass canvas for a bank map tier (scaler output). NOT storage / FFmpeg size.
 inline DdrFrameGeometry ddrCanvasGeometryForBankMap(DdrBankMap map) {
     return (map == DdrBankMap::OptionC720p) ? plex720pDdrFrameGeometry()

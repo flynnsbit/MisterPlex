@@ -185,18 +185,57 @@ inline PlxgRecord makePlxgRecord960x540Native(uint16_t seq) {
     return r;
 }
 
+// Content-bearing PLXG from storage dims (generic publish / mode-exit).
+// Source-native DE = coded W×H (w-clock LEG_CW rule) — NOT presented pillar
+// and NOT glass canvas. Strides = coded tight I420. present_x/y = 0 (ascal
+// owns glass placement). crop_left/top program the visible window.
+// FAULT twin: hardwiring Legacy480 for a non-624 payload shears (rd-duck 320).
+inline PlxgRecord makePlxgRecordFromStorage(int codedW, int codedH, int displayW,
+                                            int displayH, int cropLeft, int cropTop,
+                                            uint16_t seq) {
+    PlxgRecord r{};
+    const int dw = displayW > 0 ? displayW : codedW;
+    const int dh = displayH > 0 ? displayH : codedH;
+    const int cl = cropLeft < 0 ? 0 : cropLeft;
+    const int ct = cropTop < 0 ? 0 : cropTop;
+    const int yStride = codedW;
+    const int cStride = codedW / 2;
+    if (!plxgGeomDimsOk(codedW, codedH, yStride, cStride))
+        return r;
+    // crop+display must fit coded (loud host twin of RTL rt_raw_window).
+    if (static_cast<int64_t>(cl) + dw > codedW || static_cast<int64_t>(ct) + dh > codedH)
+        return r;
+    if (dw <= 0 || dh <= 0)
+        return r;
+    r.seq = seq;
+    r.q[0] = packPlxgQ0(/*win*/ true, /*geom*/ true, seq);
+    // q1 content window = visible display at origin (no glass pillar in DE).
+    r.q[1] = packPlxgQ1(dw, dh, /*x0*/ 0, /*y0*/ 0);
+    r.q[2] = packPlxgQ2(/*h_de*/ codedW, /*v_de*/ codedH, codedW, codedH);
+    r.q[3] = packPlxgQ3(yStride, cStride, dw, dh);
+    r.q[4] = packPlxgQ4(/*px*/ 0, /*py*/ 0, cl, ct);
+    r.q[5] = packPlxgQ5(0, 0, 0, false, false);
+    r.valid = true;
+    return r;
+}
+
 // Preferred mode-exit (rd-duck / w-clock source-native): content-bearing
 // product 480p geometry. geom_enable=1 + 624×480 → LEG map; beam DE tracks
 // storage/coded 624 (NOT presented pillar 640 — that is ascal glass work).
-// h_de/v_de = cw/ch = 624×480; coded/stride = 624/312; display 618.
 inline PlxgRecord makePlxgRecordLegacy480(uint16_t seq) {
+    return makePlxgRecordFromStorage(/*cw*/ 624, /*ch*/ 480, /*dw*/ 618, /*dh*/ 480,
+                                     /*cl*/ 0, /*ct*/ 0, seq);
+}
+
+// FAULT twin: always emit Legacy480 regardless of storage (rd-duck 320 shear).
+inline PlxgRecord makePlxgRecordFaultAlwaysLegacy480(uint16_t seq) {
     PlxgRecord r{};
     r.seq = seq;
     r.q[0] = packPlxgQ0(/*win*/ true, /*geom*/ true, seq);
-    r.q[1] = packPlxgQ1(/*cw*/ 624, /*ch*/ 480, /*x0*/ 0, /*y0*/ 0);
-    r.q[2] = packPlxgQ2(/*h_de*/ 624, /*v_de*/ 480, /*coded*/ 624, /*ch*/ 480);
-    r.q[3] = packPlxgQ3(/*y*/ 624, /*c*/ 312, /*dw*/ 618, /*dh*/ 480);
-    r.q[4] = packPlxgQ4(/*px*/ 0, /*py*/ 0, /*cl*/ 0, /*ct*/ 0);
+    r.q[1] = packPlxgQ1(624, 480, 0, 0);
+    r.q[2] = packPlxgQ2(624, 480, 624, 480);
+    r.q[3] = packPlxgQ3(624, 312, 618, 480);
+    r.q[4] = packPlxgQ4(0, 0, 0, 0);
     r.q[5] = packPlxgQ5(0, 0, 0, false, false);
     r.valid = true;
     return r;

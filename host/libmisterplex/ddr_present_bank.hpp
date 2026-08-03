@@ -66,18 +66,53 @@ inline bool makeDdrPublishPlan(const DdrPublishFrame& frame, int bank, DdrPublis
             *err = "publishDdrFrame: bank must be 0 or 1";
         return false;
     }
+    const int cw = frame.geometry.coded_width.get();
+    const int ch = frame.geometry.coded_height.get();
+    const int dw = frame.geometry.display_width.get() > 0 ? frame.geometry.display_width.get()
+                                                          : cw;
+    const int dh = frame.geometry.display_height.get() > 0 ? frame.geometry.display_height.get()
+                                                          : ch;
+    // Payload must match storage coded I420 (identity or full-canvas tier).
+    const size_t need = yuv420pFrameBytes(cw, ch);
+    if (need == 0 || frame.len != need) {
+        if (err)
+            *err = "publishDdrFrame: frame size does not match derived DDR geometry";
+        return false;
+    }
+    // B14: coded_w % 16 == 0 (RTL rt_raw_aligned). Unaligned → hard reject.
+    if ((cw & 15) != 0 || (ch & 1) != 0) {
+        if (err)
+            *err = "publishDdrFrame: coded geometry fails B14/alignment";
+        return false;
+    }
+    // Capacity-selected tier map (LEG vs Option-C). Do NOT leave bank_stride as
+    // alignUp(frame_bytes) — 320×240 → 0x40000 rings a non-product doorbell.
+    const DdrBankMap map = ddrSelectBankMapForContent(cw, ch);
+    const uint32_t tierPhys = (map == DdrBankMap::OptionC720p) ? kPlex720pDdrFramePhysBase
+                                                               : kDdrFramePhysBase;
+    // Explicit exotic physBase (neither LEG nor Option-C default) is honored for
+    // tests; otherwise pin the capacity tier so host and RTL share a map.
+    const uint32_t phys =
+        (physBase != kDdrFramePhysBase && physBase != kPlex720pDdrFramePhysBase) ? physBase
+                                                                                 : tierPhys;
     DdrFrameLayout layout =
-        makeDdrFrameLayout(frame.geometry, physBase, kDdrFrameStrideAlign, frame.format);
+        makeDdrFrameLayout(frame.geometry, phys, kDdrFrameStrideAlign, frame.format);
+    if (layout.frame_bytes == 0) {
+        if (err)
+            *err = "publishDdrFrame: invalid DDR frame geometry";
+        return false;
+    }
+    // Always pin product tier window when using a known map phys base.
+    if (phys == kDdrFramePhysBase || phys == kPlex720pDdrFramePhysBase)
+        ddrPinTierBankWindow(layout, map);
     if (!ddrFrameLayoutValid(layout)) {
         if (err)
             *err = "publishDdrFrame: invalid DDR frame geometry";
         return false;
     }
-    // Full-canvas path: payload must match derived geometry frame_bytes.
-    // Native path uses makeDdrFabricOwnedPublishPlan (copy_bytes < canvas).
-    if (frame.len != layout.frame_bytes) {
+    if (frame.len > static_cast<size_t>(ddrBankUsablePayloadBytes(layout.bank_stride))) {
         if (err)
-            *err = "publishDdrFrame: frame size does not match derived DDR geometry";
+            *err = "publishDdrFrame: payload exceeds tier bank usable capacity";
         return false;
     }
     const size_t bankOff = static_cast<size_t>(bank) * layout.bank_stride;
@@ -86,24 +121,40 @@ inline bool makeDdrPublishPlan(const DdrPublishFrame& frame, int bank, DdrPublis
             *err = "publishDdrFrame: derived bank offset is outside DDR frame window";
         return false;
     }
+    // PLXG from *this* frame.geometry — never hardwire Legacy480 (rd-duck:
+    // 320×240 payload + 624 PLXG = guaranteed shear / wrong bank pitch).
+    const PlxgRecord plxg = makePlxgRecordFromStorage(
+        cw, ch, dw, dh, frame.geometry.crop_left, frame.geometry.crop_top, /*seq=*/1);
+    if (!plxg.valid) {
+        if (err)
+            *err = "publishDdrFrame: cannot build capacity-selected PLXG from geometry";
+        return false;
+    }
+    const DdrFrameGeometry mapGeom = ddrCanvasGeometryForBankMap(map);
     out.layout = layout;
     out.bank = bank;
     out.bank_offset = bankOff;
     out.bank_phys = layout.phys_base + static_cast<uint32_t>(bankOff);
     out.copy_bytes = frame.len;
-    out.native_push = false;
-    // Mode-exit: content-bearing product 480p PLXG (rd-duck / source-native).
-    // geom_enable=1 + 624×480 → LEG map; beam DE 624×480 (w-clock LEG_CW),
-    // not presented 640 and not sticky 960. Zero-record disable remains for
-    // tests; product full-canvas uses Legacy480.
-    // program_plxg=true ⇒ doorbell carries committed useSeq (never field 0).
+    // native_push when storage is not the full tier canvas coded rectangle.
+    out.native_push = (cw != mapGeom.coded_width.get() || ch != mapGeom.coded_height.get());
     out.program_plxg = true;
     out.plxg_seq = 1; // advisory; writePlxgRecord ignores and bumps
-    {
-        const PlxgRecord leg = makePlxgRecordLegacy480(/*seq=*/1);
-        for (int i = 0; i < 6; ++i)
-            out.plxg_q[i] = leg.q[i];
-    }
+    for (int i = 0; i < 6; ++i)
+        out.plxg_q[i] = plxg.q[i];
+    return true;
+}
+
+// FAULT twin: hardwired Legacy480 PLXG regardless of frame.geometry (320 shear).
+inline bool makeDdrPublishPlanFaultAlwaysLegacy480Plxg(const DdrPublishFrame& frame, int bank,
+                                                       DdrPublishPlan& out,
+                                                       std::string* err = nullptr) {
+    if (!makeDdrPublishPlan(frame, bank, out, err))
+        return false;
+    const PlxgRecord bad = makePlxgRecordFaultAlwaysLegacy480(/*seq=*/1);
+    for (int i = 0; i < 6; ++i)
+        out.plxg_q[i] = bad.q[i];
+    out.native_push = false;
     return true;
 }
 

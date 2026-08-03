@@ -132,15 +132,35 @@ static void checkDdrPublishGeometrySwitch() {
         std::fprintf(stderr, "DDR publish geometry failed for 320x240: %s\n", err.c_str());
         ++fails;
     } else {
-        if (p320.layout.bank_stride != 0x40000u || p320.bank_offset != 0x40000u ||
-            p320.bank_phys != 0x30040000u || p320.layout.doorbell_phys != 0x3007F000u) {
+        // Capacity-selected LEG tier window (not alignUp-derived 0x40000).
+        // 320 payload fits usable LEG; doorbell must be product 0x300FF000.
+        if (p320.layout.bank_stride != 0x80000u || p320.bank_offset != 0x80000u ||
+            p320.bank_phys != 0x30080000u || p320.layout.doorbell_phys != 0x300FF000u) {
             std::fprintf(stderr,
                          "DDR publish geometry failed for 320x240: stride=0x%05x "
-                         "bank1=0x%08x doorbell=0x%08x, expected 0x40000/0x30040000/"
-                         "0x3007F000\n",
+                         "bank1=0x%08x doorbell=0x%08x, expected 0x80000/0x30080000/"
+                         "0x300FF000 (capacity LEG tier)\n",
                          static_cast<unsigned>(p320.layout.bank_stride),
                          static_cast<unsigned>(p320.bank_phys),
                          static_cast<unsigned>(p320.layout.doorbell_phys));
+            ++fails;
+        }
+        // PLXG must describe 320 storage — not hardwired Legacy480 (rd-duck shear).
+        const unsigned plxgCw = static_cast<unsigned>((p320.plxg_q[2] >> 32) & 0x7FFu);
+        const unsigned plxgCh = static_cast<unsigned>((p320.plxg_q[2] >> 48) & 0x7FFu);
+        if (plxgCw != 320u || plxgCh != 240u) {
+            std::fprintf(stderr,
+                         "DDR publish geometry failed for 320x240: PLXG coded=%ux%u "
+                         "expected 320x240 (not Legacy480 624)\n",
+                         plxgCw, plxgCh);
+            ++fails;
+        }
+        if (!p320.native_push || !p320.program_plxg) {
+            std::fprintf(stderr,
+                         "DDR publish geometry failed for 320x240: native_push=%d "
+                         "program_plxg=%d\n",
+                         static_cast<int>(p320.native_push),
+                         static_cast<int>(p320.program_plxg));
             ++fails;
         }
     }
@@ -166,11 +186,20 @@ static void checkDdrPublishGeometrySwitch() {
                          static_cast<unsigned>(p480.layout.doorbell_phys));
             ++fails;
         }
-        if (p320.bank_phys == p480.bank_phys) {
+        // Same LEG tier bank1 phys is expected (capacity pin). Geometry must
+        // still differ in PLXG coded dims — that is the anti-shear contract.
+        const unsigned c320 = static_cast<unsigned>((p320.plxg_q[2] >> 32) & 0x7FFu);
+        const unsigned c480 = static_cast<unsigned>((p480.plxg_q[2] >> 32) & 0x7FFu);
+        if (c320 == c480) {
             std::fprintf(stderr,
-                         "DDR publish geometry failed: 320x240 and 624x480 bank1 both "
-                         "resolved to 0x%08x; geometry was not carried into publish\n",
-                         static_cast<unsigned>(p480.bank_phys));
+                         "DDR publish geometry failed: 320 and 624 share PLXG coded_w=%u; "
+                         "geometry was not carried into PLXG\n",
+                         c320);
+            ++fails;
+        }
+        if (c480 != 624u) {
+            std::fprintf(stderr,
+                         "DDR publish geometry failed for 624x480: PLXG coded_w=%u\n", c480);
             ++fails;
         }
     }

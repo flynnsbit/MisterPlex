@@ -129,14 +129,19 @@ int main() {
     CHECK(err.find("frame size") != std::string::npos ||
           err.find("does not match") != std::string::npos);
 
-    // Identity-320 geometry is valid math but is NOT product silicon — publish
-    // plan may accept it in isolation; product match gate must fail.
+    // Identity-320: capacity-selected LEG tier bank window + PLXG 320 (not
+    // Legacy480). Product-silicon match gate still fails (coded ≠ 624).
     const auto g320 = makeDdrFrameGeometry(320, 240);
     DdrPublishFrame f320{yuv320.data(), yuv320.size(), g320, DdrFrameFormat::Yuv420p};
     CHECK(makeDdrPublishPlan(f320, 0, plan0, &err));
     CHECK(!ddrFrameLayoutMatchesProductSilicon(plan0.layout));
     CHECK(plan0.layout.frame_bytes == 115200u);
-    CHECK(plan0.layout.bank_stride == 0x40000u); // NOT product 0x80000
+    CHECK(plan0.layout.bank_stride == 0x80000u); // capacity LEG tier, not 0x40000
+    CHECK(plan0.layout.doorbell_phys == 0x300FF000u);
+    CHECK(plan0.native_push);
+    CHECK(((plan0.plxg_q[2] >> 32) & 0x7FFu) == 320u);
+    CHECK(((plan0.plxg_q[2] >> 48) & 0x7FFu) == 240u);
+    CHECK((plan0.plxg_q[3] & 0xFFFu) == 320u); // y_stride
 
     // Full coded source pack origin = (0,0) — native 480p fills the bank.
     int x0 = -1, y0 = -1;

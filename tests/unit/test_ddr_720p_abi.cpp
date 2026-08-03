@@ -89,11 +89,17 @@ int main() {
     CHECK(plan.bank_offset == 0x180000u);
     CHECK(plan.bank_phys == 0x30300000u);
     CHECK(plan.layout.doorbell_phys == 0x3047F000u);
-    // Default phys base must NOT silently produce Option-C addresses.
-    DdrPublishPlan badBase{};
-    CHECK(makeDdrPublishPlan(fr, 1, badBase, &err)); // valid math at 0x30000000
-    CHECK(badBase.layout.doorbell_phys == 0x302FF000u);
-    CHECK(badBase.layout.doorbell_phys != kPlex720pYuv420pDoorbellPhys);
+    // Capacity-select: 720p payload MUST pin Option-C (not naive 0x30000000 enlarge).
+    // Pre-fix "valid math at default base" stomped the bitstream ring and rang a
+    // non-product doorbell — rejected as the shear/wrong-bank class (rd-duck).
+    DdrPublishPlan autoMap{};
+    CHECK(makeDdrPublishPlan(fr, 1, autoMap, &err));
+    CHECK(autoMap.layout.phys_base == kPlex720pDdrFramePhysBase);
+    CHECK(autoMap.layout.doorbell_phys == kPlex720pYuv420pDoorbellPhys);
+    CHECK(autoMap.layout.bank_stride == kPlex720pYuv420pBankStride);
+    CHECK(((autoMap.plxg_q[2] >> 32) & 0x7FFu) == 1280u);
+    CHECK(((autoMap.plxg_q[2] >> 48) & 0x7FFu) == 720u);
+    CHECK(!autoMap.native_push); // full tier canvas coded rectangle
 
     // --- Product 480p must not regress ---
     const auto p480 = makeDdrFrameLayout(plex480pDdrFrameGeometry());
@@ -860,6 +866,8 @@ int main() {
             // y_stride 624, chroma 312
             CHECK((plan.plxg_q[3] & 0xFFFu) == 624u);
             CHECK(((plan.plxg_q[3] >> 16) & 0x7FFu) == 312u);
+            // display 618 (q3)
+            CHECK(((plan.plxg_q[3] >> 32) & 0x7FFu) == 618u);
             // Payload fits LEG usable → no Option-C
             CHECK(!ddrI420PayloadNeedsOptionCBank(449280u));
             // Doorbell field for this publish uses committed, never plan seed 0.
@@ -868,6 +876,60 @@ int main() {
             CHECK(!ddrDoorbellPlxgSeqPublishIllegalUngated(true, 6));
             CHECK(ddrDoorbellPlxgSeqForPublish(false, 99) == 0); // true legacy
             std::fprintf(stderr, "  MODE_EXIT_LEGACY480_PLXG OK\n");
+        }
+        // Generic publish: capacity-selected PLXG from frame.geometry (rd-duck
+        // 320 shear — must NOT hardwire Legacy480). E2E 320/416/624/720.
+        {
+            auto checkTier = [&](int w, int h, uint32_t expectDb, bool expectNative,
+                                 bool expectOptC) {
+                const size_t nbytes = yuv420pFrameBytes(w, h);
+                std::vector<uint8_t> pay(nbytes, 0x5A);
+                DdrFrameGeometry g = makeDdrFrameGeometry(w, h);
+                if (w == 624 && h == 480)
+                    g = plex480pDdrFrameGeometry();
+                DdrPublishFrame fr{pay.data(), pay.size(), g, DdrFrameFormat::Yuv420p};
+                DdrPublishPlan plan{};
+                std::string e;
+                CHECK(makeDdrPublishPlan(fr, 0, plan, &e));
+                CHECK(plan.program_plxg);
+                CHECK(plan.copy_bytes == nbytes);
+                CHECK(plan.layout.frame_bytes == nbytes);
+                CHECK(plan.layout.doorbell_phys == expectDb);
+                CHECK(plan.native_push == expectNative);
+                CHECK(ddrI420PayloadNeedsOptionCBank(nbytes) == expectOptC);
+                CHECK(((plan.plxg_q[2] >> 32) & 0x7FFu) == static_cast<unsigned>(w));
+                CHECK(((plan.plxg_q[2] >> 48) & 0x7FFu) == static_cast<unsigned>(h));
+                CHECK((plan.plxg_q[2] & 0x7FFu) == static_cast<unsigned>(w)); // h_de
+                CHECK((plan.plxg_q[3] & 0xFFFu) == static_cast<unsigned>(w)); // y_stride
+                // FAULT twin: always-Legacy480 shears any non-624 content.
+                if (w != 624 || h != 480) {
+                    DdrPublishPlan fault{};
+                    CHECK(makeDdrPublishPlanFaultAlwaysLegacy480Plxg(fr, 0, fault, &e));
+                    CHECK(((fault.plxg_q[2] >> 32) & 0x7FFu) == 624u);
+                    CHECK(((fault.plxg_q[2] >> 32) & 0x7FFu) !=
+                          static_cast<unsigned>(w)); // REPRO shear
+                }
+            };
+            checkTier(320, 240, 0x300FF000u, /*native*/ true, /*optc*/ false);
+            checkTier(416, 240, 0x300FF000u, /*native*/ true, /*optc*/ false);
+            checkTier(624, 480, 0x300FF000u, /*native*/ false, /*optc*/ false);
+            checkTier(1280, 720, 0x3047F000u, /*native*/ false, /*optc*/ true);
+            // 960×540 intermediate → Option-C + native_push + PLXG 960.
+            {
+                const size_t n = yuv420pFrameBytes(960, 540);
+                std::vector<uint8_t> pay(n, 0);
+                DdrPublishFrame fr{pay.data(), pay.size(), makeDdrFrameGeometry(960, 540),
+                                   DdrFrameFormat::Yuv420p};
+                DdrPublishPlan plan{};
+                std::string e;
+                CHECK(makeDdrPublishPlan(fr, 0, plan, &e));
+                CHECK(plan.layout.doorbell_phys == 0x3047F000u);
+                CHECK(plan.native_push);
+                CHECK(((plan.plxg_q[2] >> 32) & 0x7FFu) == 960u);
+                CHECK(((plan.plxg_q[2] >> 48) & 0x7FFu) == 540u);
+                CHECK((plan.plxg_q[3] & 0xFFFu) == 960u);
+            }
+            std::fprintf(stderr, "  PUBLISH_GEOM_PLXG_320_416_624_720 OK\n");
         }
         // Raw geom: over-max rejected (no silent clamp-accept).
         CHECK(plxgRawGeomOk(960, 540, 960, 480));
