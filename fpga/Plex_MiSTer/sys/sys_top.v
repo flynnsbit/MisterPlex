@@ -1206,6 +1206,10 @@ cyclonev_hps_interface_peripheral_i2c hdmi_i2c
 		.list_we(1'b0),
 		.list_waddr(8'd0),
 		.list_wdata(64'd0),
+		// w-osd fabric idle plane: default OFF (identity to d1b24e0c BOOT_DEMO chrome)
+		.idle_en(1'b0),
+		.idle_mode(2'd0),
+		.idle_phase(16'd0),
 		.chrome_hw(plex_chrome_hw),
 		.mon_width(plex_chrome_mon_w),
 		.mon_height(plex_chrome_mon_h),

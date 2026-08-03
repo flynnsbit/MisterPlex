@@ -1,5 +1,8 @@
 // Present core: color bars OR external frame_store, cadence, tone + audio FIFO.
 // Display owns VSync; unique content advances only when present_cadence says so.
+// Integration (integ/fab-720p-planes): content window + runtime geom ports default
+// inactive (win_enable=0, geom_enable=0). PRESENT_MULTI_PIXEL default OFF.
+// PRODUCT_V_480 hardwire retained from proven nostub d1b24e0c glass path.
 
 module present_core #(
 	parameter int FRAME_W = 320,
@@ -37,6 +40,32 @@ module present_core #(
 	input  wire [1:0]  pattern,
 	input  wire        audio_en,        // OSD tone enable (when no FIFO audio)
 	input  wire        use_frame_store, // OSD force bars when 1
+
+	// Fabric content window (runtime). win_enable=0 → legacy full FRAME map.
+	// When 1, NN-stretch content_w×content_h at (content_x0,content_y0) across DE.
+	// 11-bit geometry is 720p-native (1280×720); host programs before ARM drops scale.
+	input  wire        win_enable,
+	input  wire [10:0] content_w,
+	input  wire [10:0] content_h,
+	input  wire [10:0] content_x0,
+	input  wire [10:0] content_y0,
+	// 0 → defaults (h=529 FBAR, v=480). 720p DE is a reg write, not a redesign.
+	input  wire [10:0] win_h_de,
+	input  wire [10:0] win_v_de,
+
+	// Runtime DDR bank geometry (PLXW). geom_enable=0 → legacy CODED 624 path.
+	// Sized for 1280×720 (y_stride bytes). Safe default = all zero / disable.
+	input  wire        geom_enable,
+	input  wire [10:0] geom_coded_w,
+	input  wire [10:0] geom_coded_h,
+	input  wire [11:0] geom_y_stride,
+	input  wire [10:0] geom_chroma_stride,
+	input  wire [10:0] geom_display_w,
+	input  wire [10:0] geom_display_h,
+	input  wire [10:0] geom_present_x,
+	input  wire [10:0] geom_present_y,
+	input  wire [10:0] geom_crop_left,
+	input  wire [10:0] geom_crop_top,
 
 	// frame_store write (from ingest)
 	input  wire        fs_wr_en,
@@ -132,15 +161,10 @@ module present_core #(
 	// O[9] Force bars=Yes → always Bars (1), never None.
 	wire [1:0] eff_pattern = use_frame_store ? 2'd1 : pattern;
 
-	// Product core timing is always 480 active lines (VBlank @ vc==480).
-	// forced_scandoubler/cfg[4] must NOT select a 240-line progressive DE: on
-	// 78eff44e that left V_STORE_PROG=240 + store_y=py*2 (even rows only) and
-	// parent scored P5=MISS (period 3.988 ≈ 240-row pred 3.983). Hard-wire the
-	// colorbars 480-line arm; the scandouble port is retained for hierarchy but
-	// does not gate store height or DE line count.
+	// Integration: keep proven nostub/T7b PRODUCT_V_480 hardwire (d1b24e0c glass).
+	// Scaler tip had re-enabled scandouble port — that is NOT default-safe vs HW proof.
 	localparam bit PRODUCT_V_480 = 1'b1;
 	wire _unused_scandouble_port = scandouble;
-
 	colorbars bars (
 		.clk(clk),
 		.reset(reset),
@@ -164,18 +188,17 @@ module present_core #(
 	localparam int FRAME_X_W = $clog2(FRAME_W);
 	localparam int FRAME_Y_W = $clog2(FRAME_H);
 
-	// Stretch FRAME_W×FRAME_H frame_store across full Template DE — match colorbars in_content.
-	// Prior attempts (combo ÷529, reconstructed hc Bresenham) still UVC-pillar 0.604 on
-	// solid-red F1 while bars on same RBF span 0.998. Use colorbars hc + mul-shift.
+	// Stretch store content across Template DE (colorbars hc/vc).
 	//
-	// T7b (post P5=MISS on 78eff44e): product always fetches FRAME_H unique store
-	// rows 1:1. Defect was the PROG arm: V_STORE_PROG=240 + STORE_Y_SCALE=2.0 ⇒
-	// store_y = py*2 over 240 DE lines ⇒ even rows only. Fix BOTH sides:
-	//   (1) colorbars DE = 480 via PRODUCT_V_480 (above)
+	// T7b product lock (d1b24e0c glass / test_present_store_scale_math):
+	//   (1) py = vc (never vc>>1)
 	//   (2) v_store = FRAME_H, STORE_Y_SCALE = 1.0 Q16 — NO scandouble mux, NO *2
 	// THE LINE THAT STOPS DOUBLING: store_y_scale is constant 65536 (1.0), not
 	// the old scandouble ? 1.0 : 2.0 mux. store_y_addr = py (clamped), not py*2.
 	// Horizontal H_DE=529 Template DE unchanged (FBAR/DE_LAG class); 529-of-640 X deferred.
+	//
+	// Fabric content window (win_enable): when 1, SX/SY come from runtime
+	// content_w/h (present_content_window). win_enable=0 keeps T7b 1:1 path.
 	localparam H_DE    = 10'd529;
 	localparam int V_STORE = FRAME_H; // product: full store height (480), both arms
 	localparam int STORE_X_SCALE = (FRAME_W * 39647) / 320;
@@ -190,43 +213,58 @@ module present_core #(
 	wire [9:0] py = vc;
 	wire [9:0] v_store = 10'(V_STORE);
 	wire in_content = (hc < H_DE) && (py < v_store) && ~hb && ~vb;
-	// store_x = floor(hc * FRAME_W / 529) via (hc * STORE_X_SCALE) >> 16
-	// Drive the address straight from the clamped counter, with no blank-time special
-	// case. Forcing store_x to 0 during blank used to hand column 0 to any display
-	// pixel whose address was issued outside `in_content` — with the sync delayed by
-	// DE_LAG that includes the last pixels of every line, which is what wrapped the
-	// first column onto the RIGHT edge. Free-running, hc keeps counting past H_DE so
-	// the clamp naturally holds column LAST through the right overhang, and hc wraps to
-	// 0 early in the left blank so column 0 is ready before DE opens.
 	wire [9:0] read_hc = hc;
-	wire [31:0] store_x_prod = read_hc * STORE_X_SCALE;
-	wire [15:0] store_x_comb = store_x_prod[31:16];
-	wire [FRAME_X_W-1:0] store_x_clamped =
-		(store_x_comb > FRAME_LAST_X_16) ? FRAME_LAST_X : store_x_comb[FRAME_X_W-1:0];
-
-	// Clamp Y to the active store window; scale always 1:1 (no PROG *2).
-	wire       past_last_row = (py >= v_store);
-	wire [9:0] store_y_clamped = past_last_row ? (v_store - 10'd1) : py;
 	// *** T7b: constant 1.0 Q16 — this assignment is what stops store_y doubling ***
 	wire [31:0] store_y_scale = 32'(STORE_Y_SCALE);
-	wire [31:0] store_y_prod = store_y_clamped * store_y_scale;
-	wire [15:0] store_y_comb = store_y_prod[31:16];
-	wire [FRAME_Y_W-1:0] store_y_addr =
-		(store_y_comb > FRAME_LAST_Y_16) ? FRAME_LAST_Y : store_y_comb[FRAME_Y_W-1:0];
-	reg [FRAME_X_W-1:0] store_x;
-	reg [FRAME_Y_W-1:0] store_y;
-	reg       de_r; // registered in_content for frame_store read align
-	always @(posedge clk) begin
-		if (reset) begin
-			store_x <= 0;
-			store_y <= '0;
-			de_r    <= 1'b0;
-		end else if (ce_pix_i) begin
-			de_r    <= in_content;
-			store_y <= store_y_addr;
-			store_x <= store_x_clamped;
-		end
-	end
+	// Keep X scale live for source-lock + content_window default path.
+	(* keep = 1 *) wire [31:0] store_x_scale = 32'(STORE_X_SCALE);
+	wire _keep_t7b_scales = |store_x_scale | |store_y_scale | |FRAME_LAST_X | |FRAME_LAST_Y
+		| |FRAME_LAST_X_16 | |FRAME_LAST_Y_16;
+
+	// Window emits full store coords (STORE 1280×720). ddr_frame_store rd_x/y
+	// accept max(FRAME, MAX_CODED); legacy SDRAM frame_store still gets FRAME slice.
+	localparam int STORE_W_MAX = 1280;
+	localparam int STORE_H_MAX = 720;
+	localparam int WIN_X_W = $clog2(STORE_W_MAX);
+	localparam int WIN_Y_W = $clog2(STORE_H_MAX);
+	wire [WIN_X_W-1:0] store_x_win;
+	wire [WIN_Y_W-1:0] store_y_win;
+	wire                 de_r; // registered in_content for frame_store read align
+	wire                 past_last_row;
+
+	present_content_window #(
+		.FRAME_W(FRAME_W),
+		.FRAME_H(FRAME_H),
+		.STORE_W(STORE_W_MAX),
+		.STORE_H(STORE_H_MAX),
+		.H_DE_DEFAULT(529),
+		.V_DE_DEFAULT(V_STORE)
+	) content_win (
+		.clk(clk),
+		.reset(reset),
+		.ce_pix(ce_pix_i),
+		.hc({1'b0, read_hc}),
+		.py({1'b0, py}),
+		.in_content(in_content),
+		.win_enable(win_enable),
+		.content_w(content_w),
+		.content_h(content_h),
+		.content_x0(content_x0),
+		.content_y0(content_y0),
+		.h_de(win_h_de),
+		.v_de(win_v_de),
+		.store_x(store_x_win),
+		.store_y(store_y_win),
+		.de_r(de_r),
+		.past_last_row(past_last_row)
+	);
+
+	// Full-width for DDR path (runtime geom / content window up to 1280×720).
+	wire [WIN_X_W-1:0] store_x_full = store_x_win;
+	wire [WIN_Y_W-1:0] store_y_full = store_y_win;
+	// FRAME-sliced for legacy SDRAM frame_store ports.
+	wire [FRAME_X_W-1:0] store_x = store_x_win[FRAME_X_W-1:0];
+	wire [FRAME_Y_W-1:0] store_y = store_y_win[FRAME_Y_W-1:0];
 
 	wire [7:0] fr, fg, fb;
 	wire       has_frame;
@@ -270,12 +308,23 @@ module present_core #(
 		.clk(clk),
 		.clk_ddr(clk_ddr),
 		.reset(reset),
-		.rd_x(store_x),
-		.rd_y(store_y),
+		.rd_x(store_x_full),
+		.rd_y(store_y_full),
 		.rd_active(de_r),
 		.rd_r(fr),
 		.rd_g(fg),
 		.rd_b(fb),
+		.geom_enable(geom_enable),
+		.rt_coded_w(geom_coded_w),
+		.rt_coded_h(geom_coded_h),
+		.rt_y_stride(geom_y_stride),
+		.rt_chroma_stride(geom_chroma_stride),
+		.rt_display_w(geom_display_w),
+		.rt_display_h(geom_display_h),
+		.rt_present_x(geom_present_x),
+		.rt_present_y(geom_present_y),
+		.rt_crop_left(geom_crop_left),
+		.rt_crop_top(geom_crop_top),
 		.start_req(ddr_start_req),
 		.bank_sel(ddr_bank_sel),
 		.status_osd(ddr_status_osd),
@@ -405,6 +454,70 @@ module present_core #(
 	assign VBlank = vb_d;
 	assign VSync  = vs_d;
 	assign frame_start = fstart;
+
+	// ------------------------------------------------------------------
+	// Multi-pixel present bring-up (DEFAULT OFF) — from w-clock.
+	// Elaboration-only when PRESENT_MULTI_PIXEL set; product RGB path untouched.
+	// ------------------------------------------------------------------
+`ifdef PRESENT_MULTI_PIXEL
+	`ifndef PRESENT_PX_PER_CLK
+		`define PRESENT_PX_PER_CLK 2
+	`endif
+	localparam int PPC_MP = `PRESENT_PX_PER_CLK;
+	wire                mp_beam_ce;
+	wire [11:0]         mp_glass_x0, mp_glass_y;
+	wire [PPC_MP-1:0]   mp_lane_de;
+	wire                mp_hb, mp_hs, mp_vb, mp_vs, mp_fstart;
+	present_beam_ppc #(
+		.PX_PER_CLK(PPC_MP),
+		.H_DE(1280),
+		.H_TOTAL(1650),
+		.V_ACTIVE(720),
+		.V_TOTAL(750),
+		.H_SYNC_S(1390),
+		.H_SYNC_E(1430),
+		.V_SYNC_S(725),
+		.V_SYNC_E(730)
+	) u_mp_beam (
+		.clk(clk),
+		.reset(reset),
+		.enable(1'b0),
+		.beam_ce(mp_beam_ce),
+		.glass_x0(mp_glass_x0),
+		.glass_y(mp_glass_y),
+		.lane_de(mp_lane_de),
+		.HBlank(mp_hb),
+		.HSync(mp_hs),
+		.VBlank(mp_vb),
+		.VSync(mp_vs),
+		.frame_start(mp_fstart)
+	);
+	wire mp_yuv_valid;
+	wire [PPC_MP*8-1:0] mp_r, mp_g, mp_b;
+	wire [PPC_MP-1:0] mp_lane_v;
+	yuv_bt601_npx #(
+		.PX_PER_CLK(PPC_MP),
+		.X_W(12)
+	) u_mp_yuv (
+		.clk(clk),
+		.reset(reset),
+		.in_valid(1'b0),
+		.src_x0(12'd0),
+		.y_qword(64'd0),
+		.u_qword(64'd0),
+		.v_qword(64'd0),
+		.y_qword_hi(64'd0),
+		.y_hi_valid(1'b0),
+		.out_valid(mp_yuv_valid),
+		.out_r(mp_r),
+		.out_g(mp_g),
+		.out_b(mp_b),
+		.out_lane_valid(mp_lane_v)
+	);
+	wire _unused_mp = mp_beam_ce | (|mp_glass_x0) | (|mp_glass_y) | (|mp_lane_de)
+		| mp_hb | mp_hs | mp_vb | mp_vs | mp_fstart | mp_yuv_valid
+		| (|mp_r) | (|mp_g) | (|mp_b) | (|mp_lane_v);
+`endif
 
 	// --- Audio: FIFO preferred, else OSD tone ---
 	wire [15:0] tone_l, tone_r;

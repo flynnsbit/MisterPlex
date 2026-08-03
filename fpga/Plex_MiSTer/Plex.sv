@@ -223,9 +223,69 @@ wire reset = RESET | status[0] | buttons[1];
 // O[4] is the native content-resolution selector shared with misterplexd.
 // C1B owns the selector/ABI; the DDR-backed frame-store branch consumes these
 // dimensions for the actual 480p present path.
+//
+// Fabric content window (present_content_window) + PLXG geom latch (w-scaler):
+//   Default win_enable=0 / geom_enable=0 → legacy full-bank map (d1b24e0c path).
+//   Host programs PLXG when ARM drops scale; wr_en/commit tied 0 until poller lands.
+//   Do NOT auto-assert win_enable from O[4] alone — breaks ARM-scaled 624 banks.
 wire        content_res_640x480 = status[4];
 wire [9:0]  content_width       = content_res_640x480 ? 10'd640 : 10'd320;
 wire [9:0]  content_height      = content_res_640x480 ? 10'd480 : 10'd240;
+wire        plxg_wr_en   = 1'b0;
+wire [2:0]  plxg_wr_idx  = 3'd0;
+wire [63:0] plxg_wr_data = 64'd0;
+wire        plxg_commit  = 1'b0;
+wire        fabric_win_enable;
+wire        fabric_geom_enable;
+wire [10:0] fabric_content_w_lat;
+wire [10:0] fabric_content_h_lat;
+wire [10:0] fabric_content_x0;
+wire [10:0] fabric_content_y0;
+wire [10:0] fabric_h_de;
+wire [10:0] fabric_v_de;
+wire [10:0] fabric_geom_coded_w;
+wire [10:0] fabric_geom_coded_h;
+wire [11:0] fabric_geom_y_stride;
+wire [10:0] fabric_geom_chroma_stride;
+wire [10:0] fabric_geom_display_w;
+wire [10:0] fabric_geom_display_h;
+wire [10:0] fabric_geom_present_x;
+wire [10:0] fabric_geom_present_y;
+wire [10:0] fabric_geom_crop_left;
+wire [10:0] fabric_geom_crop_top;
+wire        fabric_plxg_live;
+wire [15:0] fabric_plxg_seq;
+present_geom_latch plxg_latch (
+	.clk(clk_sys),
+	.reset(reset),
+	.wr_en(plxg_wr_en),
+	.wr_idx(plxg_wr_idx),
+	.wr_data(plxg_wr_data),
+	.commit(plxg_commit),
+	.win_enable(fabric_win_enable),
+	.geom_enable(fabric_geom_enable),
+	.content_w(fabric_content_w_lat),
+	.content_h(fabric_content_h_lat),
+	.content_x0(fabric_content_x0),
+	.content_y0(fabric_content_y0),
+	.h_de(fabric_h_de),
+	.v_de(fabric_v_de),
+	.coded_w(fabric_geom_coded_w),
+	.coded_h(fabric_geom_coded_h),
+	.y_stride(fabric_geom_y_stride),
+	.chroma_stride(fabric_geom_chroma_stride),
+	.display_w(fabric_geom_display_w),
+	.display_h(fabric_geom_display_h),
+	.present_x(fabric_geom_present_x),
+	.present_y(fabric_geom_present_y),
+	.crop_left(fabric_geom_crop_left),
+	.crop_top(fabric_geom_crop_top),
+	.live_valid(fabric_plxg_live),
+	.live_seq(fabric_plxg_seq)
+);
+// Keep O[4] defaults visible for future PLXG seed; latch owns live enables.
+wire _keep_content_menu = |content_width | |content_height | fabric_plxg_live | (|fabric_plxg_seq)
+	| (|fabric_content_w_lat) | (|fabric_content_h_lat);
 
 // Legacy cadence input is now fixed; the daemon handles exact content pacing.
 wire [7:0] content_fps = 8'd24;
@@ -747,6 +807,25 @@ present_core #(
 	.pattern(2'd0),
 	.audio_en(1'b0),
 	.use_frame_store(1'b0),
+	// w-scaler: default-off window/geom (latch reset → enables 0; dims unused)
+	.win_enable(fabric_win_enable),
+	.content_w(fabric_content_w_lat),
+	.content_h(fabric_content_h_lat),
+	.content_x0(fabric_content_x0),
+	.content_y0(fabric_content_y0),
+	.win_h_de(fabric_h_de),
+	.win_v_de(fabric_v_de),
+	.geom_enable(fabric_geom_enable),
+	.geom_coded_w(fabric_geom_coded_w),
+	.geom_coded_h(fabric_geom_coded_h),
+	.geom_y_stride(fabric_geom_y_stride),
+	.geom_chroma_stride(fabric_geom_chroma_stride),
+	.geom_display_w(fabric_geom_display_w),
+	.geom_display_h(fabric_geom_display_h),
+	.geom_present_x(fabric_geom_present_x),
+	.geom_present_y(fabric_geom_present_y),
+	.geom_crop_left(fabric_geom_crop_left),
+	.geom_crop_top(fabric_geom_crop_top),
 	.fs_wr_en(fs_wr_en),
 	.fs_wr_pixel(fs_wr_pixel),
 	.fs_wr_reset(fs_wr_reset),

@@ -91,6 +91,15 @@ set_global_assignment -name VERILOG_MACRO "FRAME_LINES_8=1"
 # Prior stub-in Fmax baseline: 8fdf440f clk_sys 23.46 MHz; nostub proof c74c6863 32.59 MHz.
 set_global_assignment -name VERILOG_MACRO "PRODUCT_NO_STUB=1"
 
+# --- integ/fab-720p-planes feature macros (ALL default OFF) ---
+# PRESENT_MULTI_PIXEL: w-clock 2/4 ppc beam+YUV (elab hooks only until wired)
+# set_global_assignment -name VERILOG_MACRO "PRESENT_MULTI_PIXEL=1"
+# set_global_assignment -name VERILOG_MACRO "PRESENT_PX_PER_CLK=2"
+# FABRIC_DDR_WRITER: w-mem zero-ARM bank fill (needs arbiter 3rd master)
+# set_global_assignment -name VERILOG_MACRO "FABRIC_DDR_WRITER=1"
+# Content window / runtime geom: host PLXG latch defaults win_enable=0 geom_enable=0
+# (no QSF macro; safe at reset without enable).
+
 # sys/sys.tcl carries the upstream MiSTer single-stick SDRAM_* pin assignments.
 # Do not source sys/sys_dual_sdram.tcl for this lab unit: only one stick is installed.
 source sys/sys.tcl

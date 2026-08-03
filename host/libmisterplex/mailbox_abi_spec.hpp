@@ -36,7 +36,9 @@ struct MailboxEntry {
 //
 // RTL places the control page relative to DOORBELL_PHYS:
 //   PLXK +0x000, PLXS +0x100, PLXI +0x108, PLXM +0x110,
-//   PLXF +0x118, DIAG +0x120, PLXD +0x128
+//   PLXF +0x118, DIAG +0x120, PLXD +0x128,
+//   PLXC +0x130, PLXO +0x138, list +0x140 (chrome cmds),
+//   PLXG +0x2C0 PROVISIONAL (see CONFLICT below)
 // Product 480p YUV doorbell is 0x300FF000 → PLXD live at 0x300FF128.
 // The 0x3007F000 family below is the *legacy example base* (older packed-320
 // map). Consumers MUST resolve via frameStoreMailboxPhys(doorbell, offset),
@@ -52,6 +54,18 @@ constexpr uint32_t kPlxmOffset = 0x110u;
 constexpr uint32_t kPlxfOffset = 0x118u;
 constexpr uint32_t kSdramDiagOffset = 0x120u;
 constexpr uint32_t kPlxdOffset = 0x128u;
+// plex_chrome semantic list (ARM→FPGA) and HDMI mirror (FPGA→ARM).
+// Doorbell-relative only — never hardcode absolute phys.
+constexpr uint32_t kPlxcOffset = 0x130u;
+constexpr uint32_t kPlxoOffset = 0x138u;
+constexpr uint32_t kPlxlOffset = 0x140u; // list payload base (64-bit cmds)
+//
+// CONFLICT (parent must arbitrate): w-scaler/w-mem claimed PLXG @ +0x130 and
+// w-osd claimed PLXC @ +0x130. Both cannot occupy the same slot. Integration
+// keeps chrome RTL defaults (PLXC/PLXO/list @ 0x130/138/140) and parks PLXG at
+// +0x2C0 (after a 48×8B chrome list). NOT a final ABI — surface only.
+constexpr uint32_t kPlxgOffset = 0x2C0u;
+constexpr uint32_t kPlxgMagic = 0x504C5847u; // "PLXG"
 
 // Legacy example doorbell base (historical 0x3007F000 control page).
 constexpr uint32_t kLegacyFrameStoreDoorbellPhys = 0x3007F000u;
@@ -103,6 +117,21 @@ constexpr uint32_t kSdramDiagAddr = 0x3007F120u;
 // Legacy absolute (example base only) — product live addr is doorbell+0x128:
 constexpr uint32_t kPlxdAddr  = 0x3007F128u;
 constexpr uint32_t kPlxdMagic = 0x504C5844u; // "PLXD"
+
+// PLXC — Chrome list control (ARM→FPGA). Semantic cmds only; fabric owns scale.
+// Layout (64-bit LE): [31:0] magic "PLXC", [32] enable, [33] reserved,
+// [47:34] cmd_count, [63:48] seq. List payload at doorbell+0x140.
+constexpr uint32_t kPlxcAddr  = 0x3007F130u;
+constexpr uint32_t kPlxcMagic = 0x504C5843u; // "PLXC"
+
+// PLXO — Chrome telemetry (FPGA→ARM). Applied HDMI_W/H mirror + chrome_hw.
+constexpr uint32_t kPlxoAddr  = 0x3007F138u;
+constexpr uint32_t kPlxoMagic = 0x504C584Fu; // "PLXO"
+
+// PLXG — Geometry program (ARM→FPGA). Content window + bank stride (present_geom_latch).
+// PROVISIONAL addr — see kPlxgOffset CONFLICT note (scaler/mem vs osd @ +0x130).
+constexpr uint32_t kPlxgAddr  = 0x3007F2C0u;
+// kPlxgMagic defined with kPlxgOffset above.
 // Bit-field positions (in the upper 32 bits, i.e. offset from bit 32):
 constexpr unsigned kPlxdFreeBankMaskBit = 0;  // bits [33:32] → [1:0] of upper word
 constexpr unsigned kPlxdFreeBankMaskWidth = 2;
@@ -128,7 +157,7 @@ struct MagicEntry {
     uint32_t magic;
 };
 
-constexpr std::array<MagicEntry, 7> kAllMagics = {{
+constexpr std::array<MagicEntry, 10> kAllMagics = {{
     {"PLXK", kPlxkMagic},
     {"PLXS", kPlxsMagic},
     {"PLXI", kPlxiMagic},
@@ -136,11 +165,15 @@ constexpr std::array<MagicEntry, 7> kAllMagics = {{
     {"PLXF", kPlxfMagic},
     {"PLXD", kPlxdMagic},
     {"PLXB", kPlxbMagic},
+    {"PLXC", kPlxcMagic},
+    {"PLXO", kPlxoMagic},
+    {"PLXG", kPlxgMagic},
 }};
 
 // ---- All addressed mailboxes (for address-collision detection) ----
 // Every occupied DDR mailbox slot. Gate rejects overlapping addresses.
-constexpr std::array<MailboxEntry, 8> kAllMailboxes = {{
+// Note: chrome list payload [+0x140 .. +0x2BF) is NOT registered as 8B slots here.
+constexpr std::array<MailboxEntry, 11> kAllMailboxes = {{
     {"PLXK", kPlxkAddr,     kPlxkMagic,     8, "arm_to_fpga",  true},
     {"PLXS", kPlxsAddr,     kPlxsMagic,     8, "fpga_to_arm",  true},
     {"PLXI", kPlxiAddr,     kPlxiMagic,     8, "fpga_to_arm",  true},
@@ -148,6 +181,9 @@ constexpr std::array<MailboxEntry, 8> kAllMailboxes = {{
     {"PLXF", kPlxfAddr,     kPlxfMagic,     8, "fpga_to_arm",  true},
     {"DIAG", kSdramDiagAddr, 0,             8, "fpga_to_arm",  false},
     {"PLXD", kPlxdAddr,     kPlxdMagic,     8, "fpga_to_arm",  true},
+    {"PLXC", kPlxcAddr,     kPlxcMagic,     8, "arm_to_fpga",  true},
+    {"PLXO", kPlxoAddr,     kPlxoMagic,     8, "fpga_to_arm",  true},
+    {"PLXG", kPlxgAddr,     kPlxgMagic,     8, "arm_to_fpga",  true},
     {"PLXB", kPlxbAddr,     kPlxbMagic,     8, "arm_to_fpga",  true},
 }};
 

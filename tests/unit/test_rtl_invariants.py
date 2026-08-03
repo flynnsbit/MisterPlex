@@ -12,6 +12,11 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 PRESENT_CORE = Path(os.environ.get("PRESENT_CORE", ROOT / "fpga/Plex_MiSTer/rtl/present_core.sv"))
+PRESENT_CONTENT_WINDOW = Path(
+    os.environ.get(
+        "PRESENT_CONTENT_WINDOW", ROOT / "fpga/Plex_MiSTer/rtl/present_content_window.sv"
+    )
+)
 PLEX_SV = Path(os.environ.get("PLEX_SV", ROOT / "fpga/Plex_MiSTer/Plex.sv"))
 PLEX_SDC = Path(os.environ.get("PLEX_SDC", ROOT / "fpga/Plex_MiSTer/Plex.sdc"))
 SYS_TOP_SDC = Path(os.environ.get("SYS_TOP_SDC", ROOT / "fpga/Plex_MiSTer/sys/sys_top.sdc"))
@@ -494,30 +499,51 @@ def check_present_core() -> None:
         "simulation/hardware sweep and update this test with the new measured value.",
     )
 
-    assigns = re.findall(r"\bstore_x\s*<=\s*([^;]+);", text)
+    # G-VID1 store_x edge-wrap: assignment may live in present_content_window when
+    # present_core instantiates it (default-off win_enable keeps T7b 1:1 mapping).
+    # Same strength: only reset=>0 and ce_pix=>store_x_clamped; never blank force-0.
+    uses_content_window = "present_content_window" in text
+    if uses_content_window:
+        check(
+            PRESENT_CONTENT_WINDOW.is_file(),
+            "present_core instantiates present_content_window but file is missing",
+        )
+        sx_text = sv_module_text(
+            strip_comments(read(PRESENT_CONTENT_WINDOW)), "present_content_window"
+        )
+        sx_owner = "present_content_window"
+    else:
+        sx_text = text
+        sx_owner = "present_core"
+
+    assigns = re.findall(r"\bstore_x\s*<=\s*([^;]+);", sx_text)
     rhs = [norm(a) for a in assigns]
+    zero_ok = {"10'd0", "0", "10'h0", "'0"}
     check(
         "store_x_clamped" in rhs,
-        "present_core no longer assigns store_x <= store_x_clamped on ce_pix. The edge-wrap "
+        f"{sx_owner} no longer assigns store_x <= store_x_clamped on ce_pix. The edge-wrap "
         "fix depends on store_x following the clamped counter through blank/overhang pixels.",
     )
-    zero_assigns = [x for x in rhs if x in {"10'd0", "0", "10'h0"}]
+    zero_assigns = [x for x in rhs if x in zero_ok]
     check(
-        len(zero_assigns) == 1 and all(x in {"10'd0", "0", "10'h0", "store_x_clamped"} for x in rhs),
-        "present_core store_x has a non-reset or extra zero assignment. Do not reset store_x "
+        len(zero_assigns) == 1
+        and all(x in zero_ok or x == "store_x_clamped" for x in rhs),
+        f"{sx_owner} store_x has a non-reset or extra zero assignment. Do not reset store_x "
         "during blank time: that handed source column 0 to delayed right-edge pixels and caused "
         "the visible 1-pixel wrap. Keep only reset=>0 and ce_pix=>store_x_clamped.",
     )
     check(
         not any("in_content" in x or "?" in x for x in rhs),
-        "present_core store_x assignment is conditional on content/blank. The G-VID1 fix requires "
+        f"{sx_owner} store_x assignment is conditional on content/blank. The G-VID1 fix requires "
         "no blank-time store_x reset; store_x must follow store_x_clamped on every ce_pix.",
     )
 
     nt = norm(text)
+    nt_sx = norm(sx_text)
     # Legacy (pre-T7): hard-coded V_STORE=240 even-row window.
     # T7: scandouble mux V_STORE_SD/PROG (PROG was still 240 — P5=MISS on 78eff44e).
     # T7b: v_store=FRAME_H always (no scandouble mux); clamp still on v_store.
+    # Content-window: past_last_row on py vs v_de_r + py_clamped (same blank-bottom intent).
     legacy_y_clamp = (
         "past_last_row=(py>=10'd240)" in nt
         and "store_y_clamped=past_last_row?10'd239:py" in nt
@@ -533,11 +559,18 @@ def check_present_core() -> None:
         and "v_store=10'(V_STORE)" in nt
         and "localparamintV_STORE=FRAME_H" in nt
     )
+    window_y_clamp = (
+        uses_content_window
+        and "past_last_row=(py>=v_de_r)" in nt_sx
+        and "py_clamped=past_last_row?v_last:py" in nt_sx
+        and "v_store=10'(V_STORE)" in nt
+        and "localparamintV_STORE=FRAME_H" in nt
+    )
     check(
-        legacy_y_clamp or t7_y_clamp or t7b_y_clamp,
+        legacy_y_clamp or t7_y_clamp or t7b_y_clamp or window_y_clamp,
         "present_core past_last_row clamp is missing. It prevents fetching past the active "
         "store window and stops the bottom-edge artifact; restore past_last_row and "
-        "store_y_clamped (legacy py>=240→239, T7 mux, or T7b v_store=FRAME_H).",
+        "store_y_clamped (legacy/T7/T7b) or content_window py_clamped + V_STORE=FRAME_H.",
     )
     check(
         "vb_d=vb|past_last_row" in nt,
@@ -737,7 +770,9 @@ def check_frame_store_cdc_contract() -> None:
             "DDR-to-present pending-ready flag must be two-flop synchronised",
         ),
         (
-            "line_buf_ram#(.WIDTH(Y_LINE_QWORDS),.AW(Y_QW_AW),.DATA_W(64))yram(.wr_clk(clk_ddr)",
+            # WIDTH may be Y_LINE_QWORDS (480p fixed) or Y_LINE_QWORDS_MAX (720p-ready);
+            # CDC requirement is wr_clk=clk_ddr regardless of depth param name.
+            "yram(.wr_clk(clk_ddr)",
             "frame line-buffer RAM writes must remain in clk_ddr",
         ),
         (
@@ -747,6 +782,11 @@ def check_frame_store_cdc_contract() -> None:
     ]
     for needle, msg in requirements:
         check(needle in nft, f"ddr_frame_store CDC contract: {msg}")
+    # Still require a real line_buf_ram instance (not a decoy port name alone).
+    check(
+        "line_buf_ram#(" in nft and "yram(" in nft,
+        "ddr_frame_store CDC contract: yram must remain a line_buf_ram instance",
+    )
 
     check(
         "wr_gray" in nt_afifo
@@ -1421,13 +1461,17 @@ def check_ddr_frame_store_yuv_read_contract() -> None:
                 "V_PLANE_BASE=Y_PLANE_QWORDS+C_PLANE_QWORDS",
                 "V read base must immediately follow U",
             ),
+            # U/V base: either fixed U_PLANE_BASE (nostub product) or runtime d_*_base_qw
+            # that is reset-loaded from U_PLANE_BASE (geom_enable=0 identity).
             (
                 "u_addr=fill_bank_base+U_PLANE_BASE+fill_cy_qword+fill_qword_c",
                 "U fetch address must use U_PLANE_BASE",
+                "alt:u_addr=fill_bank_base+d_u_base_qw+fill_cy_qword+fill_qword_c",
             ),
             (
                 "v_addr=fill_bank_base+V_PLANE_BASE+fill_cy_qword+fill_qword_c",
                 "V fetch address must use V_PLANE_BASE",
+                "alt:v_addr=fill_bank_base+d_v_base_qw+fill_cy_qword+fill_qword_c",
             ),
             (
                 "chroma_addr=fill_plane_v?v_addr:u_addr",
@@ -1488,13 +1532,28 @@ def check_ddr_frame_store_yuv_read_contract() -> None:
             (
                 "fill_cy_qword={{(30-Y_W){1'b0}},fill_cy}*C_LINE_QWORDS_W",
                 "chroma DDR line address must stride by the chroma line width",
+                "alt:fill_cy_qword={{(30-Y_W){1'b0}},fill_cy}*c_pitch_qw_w",
             ),
             ("u_pix=pick_byte(selected_u_q,c_sel_r)", "YUV converter U input must come from U RAM"),
             ("v_pix=pick_byte(selected_v_q,c_sel_r)", "YUV converter V input must come from V RAM"),
             ("r_calc_w=(y_ext<<<8)+(21'sd359*v_s)", "red channel must derive from V"),
             ("b_calc_w=(y_ext<<<8)+(21'sd454*u_s)", "blue channel must derive from U"),
         ]
-        return [msg for needle, msg in required if needle not in text_norm]
+        missing: list[str] = []
+        for item in required:
+            needle = item[0]
+            msg = item[1]
+            alt = item[2][4:] if len(item) > 2 and item[2].startswith("alt:") else None
+            if needle in text_norm or (alt is not None and alt in text_norm):
+                continue
+            missing.append(msg)
+        # Runtime path must still seed d_* from product U/V_PLANE_BASE on reset.
+        if "d_u_base_qw" in text_norm:
+            if "d_u_base_qw<=U_PLANE_BASE" not in text_norm and "d_u_base_qw<=LEG_U_PLANE_BASE" not in text_norm:
+                missing.append("runtime d_u_base_qw must reset-load U_PLANE_BASE (geom-off identity)")
+            if "d_v_base_qw<=V_PLANE_BASE" not in text_norm and "d_v_base_qw<=LEG_V_PLANE_BASE" not in text_norm:
+                missing.append("runtime d_v_base_qw must reset-load V_PLANE_BASE (geom-off identity)")
+        return missing
 
     def enforce(text_norm: str, label: str) -> None:
         missing = missing_requirements(text_norm)
@@ -1514,6 +1573,14 @@ def check_ddr_frame_store_yuv_read_contract() -> None:
         .replace(
             "v_addr=fill_bank_base+V_PLANE_BASE+fill_cy_qword+fill_qword_c",
             "v_addr=fill_bank_base+U_PLANE_BASE+fill_cy_qword+fill_qword_c",
+        )
+        .replace(
+            "u_addr=fill_bank_base+d_u_base_qw+fill_cy_qword+fill_qword_c",
+            "u_addr=fill_bank_base+d_v_base_qw+fill_cy_qword+fill_qword_c",
+        )
+        .replace(
+            "v_addr=fill_bank_base+d_v_base_qw+fill_cy_qword+fill_qword_c",
+            "v_addr=fill_bank_base+d_u_base_qw+fill_cy_qword+fill_qword_c",
         )
     )
     if not missing_requirements(swapped):
@@ -1762,9 +1829,11 @@ def check_present_geometry_stride_contract() -> None:
                 # DDR row pitch in the fill FSM — this is the reader stride that must
                 # match ARM line_bytes. Default CODED_W=FRAME_W (640) would walk 640 B/line
                 # while the writer lays 624 B/line → 16 px leftward creep per scanline.
+                # Runtime geom uses y_pitch_qw_w (reset-loaded to Y_LINE_QWORDS).
                 frame_norm,
                 "fill_y_qword={{(29-Y_W){1'b0}},fill_y}*Y_LINE_QWORDS_W",
                 "RTL DDR Y fill address must step by Y_LINE_QWORDS (CODED_W/8), never FRAME_W",
+                "fill_y_qword={{(29-Y_W){1'b0}},fill_y}*y_pitch_qw_w",
             ),
             (
                 frame_norm,
@@ -1780,6 +1849,7 @@ def check_present_geometry_stride_contract() -> None:
                 frame_norm,
                 "fill_cy_qword={{(30-Y_W){1'b0}},fill_cy}*C_LINE_QWORDS_W",
                 "RTL chroma fetch address must stride by 312-byte chroma lines",
+                "fill_cy_qword={{(30-Y_W){1'b0}},fill_cy}*c_pitch_qw_w",
             ),
             (
                 # Product path is planar YUV420p. RGB565_LINE_QWORDS must not appear in
@@ -1794,7 +1864,15 @@ def check_present_geometry_stride_contract() -> None:
                 "RTL must black on linebuf miss — mid-line late-hit is the other ragged-left mechanism",
             ),
         ]
-        return [msg for haystack, needle, msg in required if needle not in haystack]
+        missing: list[str] = []
+        for item in required:
+            haystack, needle, msg = item[0], item[1], item[2]
+            # Optional 4th element: alternate needle (runtime pitch form).
+            alt = item[3] if len(item) > 3 else None
+            if needle in haystack or (alt is not None and alt in haystack):
+                continue
+            missing.append(msg)
+        return missing
 
     missing = missing_stride_requirements(host_nt, media_nt, frame_nt, ffmpeg_vf_nt)
     if missing:

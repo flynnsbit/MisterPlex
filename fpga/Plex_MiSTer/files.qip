@@ -38,6 +38,17 @@ set_global_assignment -name SYSTEMVERILOG_FILE rtl/h264_inter_nb_ctx.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/h264_decode_core.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/decode_stub.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/stream_path.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/present_content_window.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/present_geom_latch.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/present_beam_ppc.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/yuv_bt601_npx.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/fabric_ddr_writer.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/fabric_ddr_write_path.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/fabric_i420_pattern_src.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/fabric_luma_linebuf.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/plex_chrome_ddr_loader.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/plex_chrome_host_if.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/present_pace_seq.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/present_core.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/plex_chrome.sv
 set_global_assignment -name SDC_FILE Plex.sdc

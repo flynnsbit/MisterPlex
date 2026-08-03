@@ -1,0 +1,7 @@
+RTL lint: using Verilator 5.051 devel rev v5.050-99-gf8fb1d664 (mod)
+RTL lint: parsed 94 Quartus RTL/context files; reporting 54 owned files
+RTL lint: propagated QSF macros SDRAM_CLK_142=1 SDRAM_CL3=1 DDR_FRAME_STORE=1 FRAME_W=640 FRAME_H=480 FRAME_LINES_8=1 PRODUCT_NO_STUB=1
+RTL lint warning counts (owned RTL only; vendor/generated excluded):
+  clean: 0 tracked warnings
+RTL lint: ignored 89 vendor/generated context errors; see build/rtl_lint_verilator.log
+RTL lint: PASS no warning regressions above /home/flynnsbit/Projects/MisterPlex-wt-integ-720p/tests/fixtures/rtl_lint_baseline.json
