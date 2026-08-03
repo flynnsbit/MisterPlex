@@ -102,6 +102,15 @@ if ! grep -q "localparam H_DE    = 10'd529" "$RTL/present_core.sv"; then
 fi
 echo "OK mp_elab structural markers present"
 
+# Anti-elision / telemetry (rd-duck): underrun must be status-visible, not only _unused
+for m in mp_rd_ur_sticky MP_UR_STICKY mp_stat_frame_underruns 'PREFILL_GROUPS(16)' mp_reset_pix MP_PROD_LEAD_PPM; do
+  if ! grep -qF "$m" "$RTL/present_core.sv"; then
+    echo "FAIL mp_elab missing marker $m"
+    exit 1
+  fi
+done
+echo "OK mp_elab underrun telemetry + reset_pix + lead markers"
+
 # GREEN: elaborate with macro ON
 GBUILD="$BUILD/green"
 mkdir -p "$GBUILD"

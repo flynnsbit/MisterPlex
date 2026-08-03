@@ -1,7 +1,6 @@
 w-clock STATUS
 branch: w-clock-bump
-top: mp integration sync ownership + black DE fill + mp_fstart
-tests: mp_integrated NO_FRAME+FRAME PASS; cea/full/path PASS
-macros: PRESENT_* default OFF
+top: mp_rd_ur telemetry + 1000ppm producer lead + prefill16 + reset_pix
+tests: elab/longhaul/integrated/path/full PASS
+macros: OFF
 fit: NOT run
-device: none

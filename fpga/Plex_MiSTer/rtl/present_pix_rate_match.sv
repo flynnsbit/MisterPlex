@@ -4,8 +4,10 @@
 //   long-term: enables/s = F_PIX_HZ / PX_PER_CLK
 //              pixels/s  = F_PIX_HZ
 //
-// Used when clk_pix is a separate PLL out faster than clk_sys so a free-running
-// sys beam would finish each line too early (blanking race). See CLK_PIX_PLL_PLAN.md.
+// Product (PRESENT_CLK_PIX_PLL) sets F_PIX_HZ slightly *above* nominal clk_pix
+// (producer lead, ~1000 ppm) so the CDC FIFO runs against backpressure rather
+// than exact equality. Overflow throttles via in_ready; underflow cannot.
+// See present_core MP_PROD_LEAD_PPM / CLK_PIX_PLL_PLAN.md.
 //
 // Default product path does not instantiate this (PRESENT_CLK_PIX_PLL off).
 

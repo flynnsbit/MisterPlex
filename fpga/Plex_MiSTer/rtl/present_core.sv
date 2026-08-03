@@ -335,11 +335,18 @@ module present_core #(
 	);
 
 `ifdef PRESENT_CLK_PIX_PLL
-	// Average pixel rate = MP_CLK_PIX_HZ so line time matches clk_pix domain.
+	// Producer LEAD: average slightly above nominal clk_pix so the FIFO runs
+	// near the high-water / backpressure side. Equal averages + ppm drift will
+	// eventually underrun a finite FIFO; overflow can throttle via in_ready,
+	// underflow cannot. Lead is absorbed by skid/async almost_full.
+	// 1000 ppm of 29.7e6 = 29700 → target 29_729_700 px/s group-equivalent.
+	localparam int MP_PROD_LEAD_PPM = 1000;
+	localparam int MP_RATE_PIX_HZ =
+		MP_CLK_PIX_HZ + (MP_CLK_PIX_HZ / (1_000_000 / MP_PROD_LEAD_PPM));
 	wire mp_rate_fire;
 	present_pix_rate_match #(
 		.F_SYS_HZ(20_000_000),
-		.F_PIX_HZ(MP_CLK_PIX_HZ),
+		.F_PIX_HZ(MP_RATE_PIX_HZ),
 		.PX_PER_CLK(PRESENT_PPC)
 	) u_mp_rate (
 		.clk(clk),
@@ -617,15 +624,29 @@ module present_core #(
 	wire mp_npx_vb = mp_push_vb;
 	wire mp_npx_vs = mp_push_vs;
 
+	// clk_pix reset: async assert / sync deassert (never raw `reset` in pix domain).
+	(* noprune *) reg mp_rst_pix0, mp_rst_pix1;
+	always @(posedge clk_pix or posedge reset) begin
+		if (reset) begin
+			mp_rst_pix0 <= 1'b1;
+			mp_rst_pix1 <= 1'b1;
+		end else begin
+			mp_rst_pix0 <= 1'b0;
+			mp_rst_pix1 <= mp_rst_pix0;
+		end
+	end
+	wire mp_reset_pix = mp_rst_pix1;
+
 	present_npx_path #(
 		.PX_PER_CLK(PRESENT_PPC),
 		.FIFO_AW(6),
-		.INCLUDE_SYNC(MP_INCLUDE_SYNC)
+		.INCLUDE_SYNC(MP_INCLUDE_SYNC),
+		.PREFILL_GROUPS(16)  // startup watermark (rd-duck long-haul)
 	) u_mp_npx_path (
 		.clk_sys(clk),
 		.reset_sys(reset),
 		.clk_pix(clk_pix),
-		.reset_pix(reset),
+		.reset_pix(mp_reset_pix),
 		.in_valid(mp_npx_valid),
 		.in_r(mp_npx_r),
 		.in_g(mp_npx_g),
@@ -649,6 +670,42 @@ module present_core #(
 		.rd_underrun(mp_rd_ur),
 		.rd_empty(mp_rd_empty)
 	);
+
+	// --- Observable pix underrun (anti-DCE): sticky + count into stat_frame_underruns
+	// mp_rd_ur is clk_pix; toggle-sync to clk, then sticky/count on sys.
+	// status bit15 of stat_frame_underruns = mp_rd_ur_sticky (MP_UR_STICKY marker).
+	(* noprune *) reg        mp_rd_ur_toggle_pix;
+	(* noprune *) reg [2:0]  mp_rd_ur_sync_sys;
+	(* noprune *) reg        mp_rd_ur_sticky;
+	(* noprune *) reg [14:0] mp_rd_ur_count;
+	always @(posedge clk_pix or posedge mp_reset_pix) begin
+		if (mp_reset_pix)
+			mp_rd_ur_toggle_pix <= 1'b0;
+		else if (mp_rd_ur)
+			mp_rd_ur_toggle_pix <= ~mp_rd_ur_toggle_pix;
+	end
+	wire mp_rd_ur_sys_pulse = mp_rd_ur_sync_sys[2] ^ mp_rd_ur_sync_sys[1];
+	always @(posedge clk) begin
+		if (reset) begin
+			mp_rd_ur_sync_sys <= 3'b0;
+			mp_rd_ur_sticky   <= 1'b0;
+			mp_rd_ur_count    <= 15'd0;
+		end else begin
+			mp_rd_ur_sync_sys <= {mp_rd_ur_sync_sys[1:0], mp_rd_ur_toggle_pix};
+			if (mp_rd_ur_sys_pulse) begin
+				mp_rd_ur_sticky <= 1'b1;
+				if (mp_rd_ur_count != 15'h7fff)
+					mp_rd_ur_count <= mp_rd_ur_count + 15'd1;
+			end
+		end
+	end
+	// Combine store underruns (low) with mp pix underrun sticky (bit15).
+	wire [14:0] mp_ur_sum =
+		(frame_underruns[14:0] > (15'h7fff - mp_rd_ur_count))
+			? 15'h7fff
+			: (frame_underruns[14:0] + mp_rd_ur_count);
+	wire [15:0] mp_stat_frame_underruns = {mp_rd_ur_sticky, mp_ur_sum};
+
 	// Dual-clock: FIFO sideband owns H/V. Same-clock: beam direct (low LAT).
 `ifdef PRESENT_CLK_PIX_PLL
 	wire mp_hb_d = mp_out_hb;
@@ -664,10 +721,11 @@ module present_core #(
 	wire mp_de_out = ~mp_hb_d & ~mp_vb_d;
 	wire mp_mode_ok = (mp_h_de == 12'd1280) && (mp_v_act == 12'd720)
 		&& (mp_h_total == 12'd1650) && (mp_v_total == 12'd750);
-	wire _unused_mp_flags = mp_beam_ce | mp_wr_full | mp_wr_af | mp_rd_ur
-		| mp_rd_empty | (|mp_lane_de_r) | (|fs_lane_v_n) | (MP_STORE_LAT == 4)
+	// Keep hierarchy roots referenced; underrun sticky is status-visible (not only here).
+	wire _unused_mp_flags = mp_beam_ce | mp_wr_full | mp_wr_af | mp_rd_empty
+		| (|mp_lane_de_r) | (|fs_lane_v_n) | (MP_STORE_LAT == 4)
 		| mp_mode_ok | mp_needs_fast_pix | (|mp_fps_milli) | mp_identity_geom_ok
-		| mp_use_fs;
+		| mp_use_fs | mp_rd_ur_sticky | (|mp_rd_ur_count) | mp_reset_pix;
 `endif
 `endif
 
@@ -848,7 +906,16 @@ module present_core #(
 	assign stat_has_audio     = has_audio;
 	assign stat_audio_underrun = fifo_underrun;
 	assign stat_swap_pending  = swap_pending;
+`ifdef PRESENT_MULTI_PIXEL
+`ifdef DDR_FRAME_STORE
+	// bit15 = mp_rd_ur_sticky; [14:0] = store underruns + mp pix underrun count
+	assign stat_frame_underruns = mp_stat_frame_underruns;
+`else
 	assign stat_frame_underruns = frame_underruns;
+`endif
+`else
+	assign stat_frame_underruns = frame_underruns;
+`endif
 	assign stat_frame_sdram_state = frame_sdram_state;
 
 endmodule
