@@ -413,6 +413,195 @@ struct PlxgPollerSim {
     }
 };
 
+// ---------------------------------------------------------------------------
+// B20 store-contract model (host oracle for w-mem / w-clock RTL).
+//
+// rd-duck: product ddr_frame_store snapshots pitch/beam at swap_req but sets
+//   applied_geom_seq_r <= rt_geom_seq (LIVE) at swap — so if PLXG N+1 promotes
+//   while bank N waits prep/VS, bank N is labeled seq N+1. It also freezes only
+//   cw/ch/hde/vde, not win/x0/y0/fps/DAR. w-clock still samples LIVE app_*.
+//
+// Required contract this model encodes:
+//   1) At doorbell ACCEPT: match db expected_plxg_seq against committed PLXG
+//      (poller latched seq). Capture pend {bank, full q0..q5 tuple, pend_geom_seq}.
+//   2) Live PLXG may promote to N+1 while pend holds N — pend must not follow.
+//   3) swap_applied exports the PEND tuple/seq/bank — never live rt_geom_seq.
+//   4) Clock/consumers must take store-applied pulse fields, never live mux.
+// ---------------------------------------------------------------------------
+struct DdrStoreVisualTuple {
+    uint16_t geom_seq = 0;
+    int bank = 0;
+    uint64_t q[6]{};
+    bool valid = false;
+
+    int content_w() const {
+        int w = 0;
+        unpackPlxgQ1(q[1], &w, nullptr, nullptr, nullptr);
+        return w;
+    }
+    int content_x0() const {
+        int x = 0;
+        unpackPlxgQ1(q[1], nullptr, nullptr, &x, nullptr);
+        return x;
+    }
+    int h_de() const {
+        int h = 0;
+        unpackPlxgQ2(q[2], &h, nullptr, nullptr, nullptr);
+        return h;
+    }
+    int coded_w() const {
+        int c = 0;
+        unpackPlxgQ2(q[2], nullptr, nullptr, &c, nullptr);
+        return c;
+    }
+    int display_w() const {
+        int d = 0;
+        unpackPlxgQ3(q[3], nullptr, nullptr, &d, nullptr);
+        return d;
+    }
+    int present_x() const {
+        int p = 0;
+        unpackPlxgQ4(q[4], &p, nullptr, nullptr, nullptr);
+        return p;
+    }
+    int crop_left() const {
+        int c = 0;
+        unpackPlxgQ4(q[4], nullptr, nullptr, &c, nullptr);
+        return c;
+    }
+    uint64_t q5() const { return q[5]; }
+};
+
+// Correct store couple: freeze full visual tuple at doorbell match.
+struct DdrStoreB20CoupleSim {
+    DdrStoreVisualTuple live{};   // last poller-committed (rt_geom)
+    DdrStoreVisualTuple pend{};   // frozen at doorbell accept
+    DdrStoreVisualTuple applied{}; // last swap_applied export
+    bool match_fail = false;
+
+    void onPlxgCommit(const uint64_t body[6], uint16_t seq) {
+        if (!body || seq == 0)
+            return;
+        live.valid = true;
+        live.geom_seq = seq;
+        for (int i = 0; i < 6; ++i)
+            live.q[i] = body[i];
+    }
+
+    // Doorbell acceptance: expected_plxg_seq must equal currently committed live.
+    // Captures pend from LIVE at match time (full tuple, not cw/ch/hde/vde only).
+    bool acceptDoorbell(int bank, uint16_t expected_plxg_seq) {
+        match_fail = false;
+        if (!live.valid || expected_plxg_seq == 0 ||
+            plxgSeqDoorbellFieldIsReservedUngated(expected_plxg_seq) ||
+            expected_plxg_seq != live.geom_seq) {
+            match_fail = true;
+            return false;
+        }
+        pend = live;
+        pend.bank = bank;
+        pend.geom_seq = expected_plxg_seq; // doorbell-associated seq, not later live
+        pend.valid = true;
+        return true;
+    }
+
+    // VS/prep complete: export pend as applied. Live may already be N+1.
+    bool swapApply() {
+        if (!pend.valid)
+            return false;
+        applied = pend;
+        applied.valid = true;
+        // Consume pend (one-shot) — next doorbell required.
+        pend.valid = false;
+        return true;
+    }
+};
+
+// FAULTY model of current RTL class: applied_geom_seq <= LIVE at swap.
+// Used only as NEG oracle — product host tests must FAIL this path for N→N+1.
+struct DdrStoreB20FaultyLiveSeqAtSwap {
+    DdrStoreVisualTuple live{};
+    DdrStoreVisualTuple pend{}; // bank/pitch only (partial)
+    DdrStoreVisualTuple applied{};
+
+    void onPlxgCommit(const uint64_t body[6], uint16_t seq) {
+        if (!body || seq == 0)
+            return;
+        live.valid = true;
+        live.geom_seq = seq;
+        for (int i = 0; i < 6; ++i)
+            live.q[i] = body[i];
+    }
+
+    bool acceptDoorbell(int bank, uint16_t /*expected_plxg_seq*/) {
+        // Fault: ignore match; snapshot only partial beam dims from live.
+        if (!live.valid)
+            return false;
+        pend.valid = true;
+        pend.bank = bank;
+        // partial: keep coded/de from live but DO NOT freeze geom_seq or full q
+        pend.q[2] = live.q[2];
+        pend.geom_seq = 0; // not captured at doorbell
+        return true;
+    }
+
+    bool swapApply() {
+        if (!pend.valid || !live.valid)
+            return false;
+        applied = pend;
+        // Fault: label with LIVE seq + LIVE full tuple (N+1 wins over bank N).
+        applied.geom_seq = live.geom_seq;
+        for (int i = 0; i < 6; ++i)
+            applied.q[i] = live.q[i];
+        applied.bank = pend.bank;
+        applied.valid = true;
+        pend.valid = false;
+        return true;
+    }
+};
+
+// Oracle: doorbell N → live promote N+1 before swap → applied must be N/tuple N.
+// Returns true when CORRECT sim keeps N and FAULTY sim mis-labels as N+1.
+inline bool b20PromoteBeforeSwapOracle(const uint64_t tuple_n[6], uint16_t seq_n,
+                                       const uint64_t tuple_n1[6], uint16_t seq_n1,
+                                       int bank_n) {
+    if (!tuple_n || !tuple_n1 || seq_n == 0 || seq_n1 == 0 || seq_n == seq_n1)
+        return false;
+
+    DdrStoreB20CoupleSim ok{};
+    ok.onPlxgCommit(tuple_n, seq_n);
+    if (!ok.acceptDoorbell(bank_n, seq_n))
+        return false;
+    // N+1 promotes while bank N waits prep/VS.
+    ok.onPlxgCommit(tuple_n1, seq_n1);
+    if (ok.live.geom_seq != seq_n1)
+        return false;
+    if (!ok.swapApply())
+        return false;
+    // Expect bank N / tuple N / seq N — not live N+1.
+    if (!ok.applied.valid || ok.applied.bank != bank_n || ok.applied.geom_seq != seq_n)
+        return false;
+    for (int i = 0; i < 6; ++i) {
+        if (ok.applied.q[i] != tuple_n[i])
+            return false;
+    }
+
+    DdrStoreB20FaultyLiveSeqAtSwap bad{};
+    bad.onPlxgCommit(tuple_n, seq_n);
+    if (!bad.acceptDoorbell(bank_n, seq_n))
+        return false;
+    bad.onPlxgCommit(tuple_n1, seq_n1);
+    if (!bad.swapApply())
+        return false;
+    // Fault signature: applied seq follows live N+1 (and/or tuple N+1).
+    if (bad.applied.geom_seq != seq_n1)
+        return false; // oracle requires the fault to mis-label
+    if (bad.applied.q[1] == tuple_n[1] && bad.applied.geom_seq == seq_n)
+        return false;
+
+    return true;
+}
+
 // Standalone q5 poke at +0x828 without new q0 — poller must NOT promote (NEG).
 inline void plxgFaultWriteQ5Only(uint8_t* ctrlPage, uint64_t q5) {
     if (!ctrlPage)

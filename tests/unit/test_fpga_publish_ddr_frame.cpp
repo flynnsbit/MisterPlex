@@ -166,11 +166,60 @@ int main() {
         expect(plan.plxg_q[1] != 0 || plan.plxg_q[2] != 0, "plan body non-empty");
     }
 
+    // rd-duck B20: N doorbell → promote N+1 before N swap.
+    // Correct store freezes full visual tuple + pend_geom_seq at doorbell match;
+    // faulty RTL (applied_geom_seq <= live at swap) mis-labels bank N as N+1.
+    {
+        const auto gN = ddrFrameGeometryForFpgaPresent(320, 240);
+        const auto gN1 = ddrStorageGeometryForContent(426, 240); // distinct tuple
+        expect(gN1.display_width.get() == 426 && gN1.present_x == 2, "N+1 pad tuple");
+        const auto layN = makeDdrFrameLayout(gN);
+        const auto layN1 = makeDdrFrameLayout(gN1);
+        auto recN = makePlxgRecordFromGeometry(gN, layN, /*seq*/ 3);
+        auto recN1 = makePlxgRecordFromGeometry(gN1, layN1, /*seq*/ 7);
+        expect(recN.valid && recN1.valid, "N/N+1 records");
+        // Distinct content so mis-label is observable (not seq-only).
+        expect(recN.q[1] != recN1.q[1] && recN.q[3] != recN1.q[3], "tuples differ");
+        expect(b20PromoteBeforeSwapOracle(recN.q, /*seq_n*/ 3, recN1.q, /*seq_n1*/ 7,
+                                          /*bank_n*/ 0),
+               "B20 N→N+1 promote-before-swap: correct keeps N, fault takes N+1");
+
+        // Integration: two host publishes + store sim with mid-flight promote.
+        DdrStoreB20CoupleSim store{};
+        PlxgPollerSim pol2{};
+        pol2.reset();
+        // Replay current page is gen2 from earlier; rebuild clean couple from couples.
+        const auto c1 = spi.lastPublishCouple(); // gen2 after bank1 publish
+        expect(c1.valid && c1.plxg_seq != 0, "host couple available");
+
+        // Synthetic: commit N from couple body, doorbell bank0, then commit N+1 pad.
+        store.onPlxgCommit(recN.q, 3);
+        expect(store.acceptDoorbell(/*bank*/ 0, /*exp*/ 3), "store accept N");
+        store.onPlxgCommit(recN1.q, 7); // promote while pend waits
+        expect(store.live.geom_seq == 7 && store.pend.geom_seq == 3, "pend frozen at N");
+        expect(store.swapApply(), "swap N");
+        expect(store.applied.geom_seq == 3 && store.applied.bank == 0, "applied seq/bank N");
+        expect(store.applied.display_w() == 320 && store.applied.content_w() == 320,
+               "applied tuple N (320), not 426");
+        // Next frame N+1
+        expect(store.acceptDoorbell(/*bank*/ 1, /*exp*/ 7), "store accept N+1");
+        expect(store.swapApply(), "swap N+1");
+        expect(store.applied.geom_seq == 7 && store.applied.bank == 1, "applied N+1");
+        expect(store.applied.display_w() == 426 && store.applied.present_x() == 2 &&
+                   store.applied.crop_left() == 2,
+               "applied full visual tuple N+1 (win/x0/crop, not cw/ch only)");
+
+        // NEG: mismatched doorbell seq refused (no bare kick accept).
+        store.onPlxgCommit(recN.q, 3);
+        expect(!store.acceptDoorbell(0, /*wrong*/ 9), "NEG mismatch doorbell refused");
+        expect(store.match_fail, "NEG match_fail set");
+    }
+
     if (g_fails) {
         std::fprintf(stderr, "test_fpga_publish_ddr_frame: %d FAIL(s)\n", g_fails);
         return 1;
     }
     std::printf("PASS test_fpga_publish_ddr_frame 320 LEG+PLXG_seqlock+q5 "
-                "B20_couple+baseline_poller+bank1\n");
+                "B20_couple+baseline_poller+bank1+N_to_N1_oracle\n");
     return 0;
 }

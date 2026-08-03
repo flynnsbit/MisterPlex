@@ -18,6 +18,10 @@
 - `applied_geom_seq` at swap must be the **store doorbell snapshot** seq, not live candidate N+1.
 - Lock must cover full visual tuple (win enable/origin/fps/q5), not only cw/ch/hde/vde.
 - Product proof needs real `plxg_ddr_poller` RTL, not only `PlxgPollerSim`.
+- **N→N+1 race (rd-duck):** if PLXG promotes while bank N waits prep/VS, live-at-swap
+  labels bank N with seq N+1. Host oracle `b20PromoteBeforeSwapOracle` +
+  `DdrStoreB20CoupleSim` encode the required freeze-at-doorbell contract
+  (see `B20_N_PROMOTE_BEFORE_SWAP.md`). Faulty model reds live-seq-at-swap.
 
 ## Honest status
 
@@ -25,7 +29,9 @@
 |-------|--------|
 | Host PLXG+kick same transaction | DONE |
 | Doorbell carries expected PLXG seq | DONE (host pack) |
+| Host N→N+1 promote-before-swap oracle | DONE (contract sim) |
 | Store wait/match before DMA | **RTL-OWED w-mem** |
+| pend_geom_seq + full tuple at doorbell | **RTL-OWED w-mem** |
 | applied_seq from doorbell snapshot | **RTL-OWED w-mem** |
 | app_* from store snapshot not live | **RTL-OWED w-clock** |
 
