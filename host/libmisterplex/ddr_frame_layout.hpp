@@ -838,12 +838,13 @@ inline bool ddrFrameStoreAccepts720pTier(int codedWidth, int codedHeight) {
     return ddrFrameStoreAccepts720pTier(CodedWidth{codedWidth}, CodedHeight{codedHeight});
 }
 
-// Option-C *content* acceptance (native_push display geometry). Even dims only;
+// Option-C *content* acceptance (native_push display geometry).
+// Width must be 16-aligned (chroma fetch = w>>4 qwords). Height even only —
 // MB-align not required (540 is a valid display height). Capacity must need
 // Option-C or explicitly fit under Option-C stride, and reject legacy-only path
 // when payload overruns 512 KiB.
 inline bool ddrFrameStoreAcceptsOptionCContent(int contentW, int contentH) {
-    if (contentW <= 0 || contentH <= 0 || (contentW & 1) || (contentH & 1))
+    if (contentW <= 0 || contentH <= 0 || (contentW & 15) || (contentH & 1))
         return false;
     if (contentW > kDdrFrameStore720pMaxWidth.get() ||
         contentH > kDdrFrameStore720pMaxHeight.get())
@@ -1022,7 +1023,8 @@ struct DdrNativeContentLayout {
 
 inline DdrNativeContentLayout makeDdrNativeContentLayout(int w, int h) {
     DdrNativeContentLayout c{};
-    if (w <= 0 || h <= 0 || (w & 1) || (h & 1))
+    // w%16: fabric chroma fetch is w>>4 qwords; w%2 alone is not enough (968 trap).
+    if (w <= 0 || h <= 0 || (w & 15) || (h & 1))
         return c;
     c.width = w;
     c.height = h;
@@ -1035,9 +1037,10 @@ inline DdrNativeContentLayout makeDdrNativeContentLayout(int w, int h) {
     c.v_offset = y_bytes + c_bytes;
     c.frame_bytes = static_cast<size_t>(y_bytes + 2u * c_bytes);
     c.y_line_qwords = w / 8;
-    c.chroma_line_qwords = c.chroma_stride / 8;
+    c.chroma_line_qwords = c.chroma_stride / 8; // == w/16 when w%16==0
     c.valid = (c.frame_bytes == yuv420pFrameBytes(w, h)) && (c.y_line_qwords * 8 == w) &&
-              ((c.chroma_stride % 8) == 0);
+              (c.chroma_line_qwords * 8 == c.chroma_stride) &&
+              (c.chroma_line_qwords == (w >> 4)) && ((c.chroma_stride % 8) == 0);
     return c;
 }
 

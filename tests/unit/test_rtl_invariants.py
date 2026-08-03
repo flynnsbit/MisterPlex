@@ -1419,6 +1419,16 @@ def check_ddr_frame_layout_contract() -> None:
         "ddr_frame_store Option-C select must use exact-byte payload vs usable "
         "(LEG_BANK_USABLE_BYTES) with raw geom reject — not qword floor alone",
     )
+    # coded_w % 16 == 0 (chroma fetch is >>4); 8-aligned-only is a trap (968).
+    check(
+        "rt_coded_w[3:0]" in store or "rt_coded_w[3:0]==4'd0" in store_ns,
+        "ddr_frame_store raw align must require coded_w%16==0 (not merely %8)",
+    )
+    check(
+        "rt_coded_w[2:0]==3'd0" not in store_ns
+        or "rt_coded_w[3:0]" in store,
+        "ddr_frame_store must not accept 8-aligned-only coded_w without %16 check",
+    )
     plex_sv = (ROOT / "fpga/Plex_MiSTer/Plex.sv").read_text(encoding="utf-8", errors="replace")
     plex_ns = plex_sv.replace(" ", "")
     check(

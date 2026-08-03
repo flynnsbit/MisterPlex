@@ -403,8 +403,22 @@ int main() {
         CHECK(plxgI420PayloadBytes(960, 480, 540) == 777600u);
         CHECK(plxgI420PayloadBytes(720, 360, 482) == 520560u);
         CHECK(plxgGeomDimsOk(960, 540, 960, 480));
+        CHECK(plxgGeomDimsOk(624, 480, 624, 312));
         CHECK(!plxgGeomDimsOk(961, 540, 961, 480)); // odd width
         CHECK(!plxgGeomDimsOk(960, 541, 960, 480)); // odd height
+        // 8-aligned trap: 968%16!=0; chroma fetch >>4 drops 4 bytes (rd-duck).
+        CHECK((968 & 7) == 0);
+        CHECK((968 & 15) != 0);
+        CHECK((968 >> 4) * 8 == 480);
+        CHECK(968 / 2 == 484);
+        CHECK(!plxgGeomDimsOk(968, 540, 968, 488));
+        CHECK(!plxgGeomDimsOk(968, 540, 968, 484));
+        CHECK(!plxgRawGeomOk(968, 540, 968, 488));
+        CHECK(!makeDdrNativeContentLayout(968, 540).valid);
+        CHECK(makeDdrNativeContentLayout(960, 540).valid);
+        // Product 540 height stays accepted (even, not MB-aligned).
+        CHECK(plxgGeomDimsOk(960, 540, 960, 480));
+        CHECK((540 & 15) == 12);
         CHECK(ddrSelectBankMapForContent(624, 480) == DdrBankMap::Legacy480p);
         CHECK(ddrSelectBankMapForContent(320, 240) == DdrBankMap::Legacy480p);
         CHECK(ddrSelectBankMapForContent(720, 482) == DdrBankMap::OptionC720p);

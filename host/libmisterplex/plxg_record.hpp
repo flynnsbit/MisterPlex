@@ -243,15 +243,22 @@ inline bool plxgPayloadNeedsOptionC(size_t payloadBytes) {
     return payloadBytes > kPlxgLegacyUsableBytes;
 }
 
-// Geom dims accepted by RTL (multiple of 8 width, even height, strides aligned).
+// Geom dims accepted by RTL.
+// coded_w must be a multiple of 16: chroma fetch is coded_w>>4 qwords (= w/2 bytes).
+// 8-aligned-only widths (e.g. 968 with chroma_stride 488) pass stride%8 checks but
+// drop the last 4 chroma bytes under >>4 fetch — reject them here (rd-duck).
+// Height: even only (4:2:0). Display 540 is valid; do NOT require h%16.
 inline bool plxgGeomDimsOk(int codedW, int codedH, int yStride, int chromaStride) {
     if (codedW <= 0 || codedH <= 0 || yStride <= 0 || chromaStride <= 0)
         return false;
-    if ((codedW & 7) != 0 || (codedH & 1) != 0)
+    if ((codedW & 15) != 0 || (codedH & 1) != 0)
         return false;
     if ((yStride & 7) != 0 || (chromaStride & 7) != 0)
         return false;
     if (yStride < codedW || chromaStride < (codedW / 2))
+        return false;
+    // Fetch coverage oracle: (coded_w>>4)*8 == coded_w/2.
+    if (((codedW >> 4) * 8) != (codedW / 2))
         return false;
     return true;
 }

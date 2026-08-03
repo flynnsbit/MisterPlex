@@ -232,7 +232,10 @@ module ddr_frame_store #(
 	                       (rt_coded_h <= 11'(MAX_CODED_H)) &&
 	                       (rt_y_stride <= 12'(MAX_CODED_W)) &&
 	                       (rt_chroma_stride <= 11'(MAX_CODED_W/2));
-	wire rt_raw_aligned = (rt_coded_w[2:0] == 3'd0) && !rt_coded_h[0] &&
+	// coded_w must be 16-aligned: chroma fetch is coded_w>>4 qwords (= w/2 bytes).
+	// 8-aligned-only traps (e.g. 968) pass stride%8 but drop 4 chroma bytes (rd-duck).
+	// Height: even only (4:2:0). Display 540 is valid; MB-align is NOT required here.
+	wire rt_raw_aligned = (rt_coded_w[3:0] == 4'd0) && !rt_coded_h[0] &&
 	                      (rt_y_stride[2:0] == 3'd0) && (rt_chroma_stride[2:0] == 3'd0) &&
 	                      (rt_y_stride >= {1'b0, rt_coded_w}) &&
 	                      (rt_chroma_stride >= {1'b0, rt_coded_w[10:1]});
@@ -321,8 +324,8 @@ module ddr_frame_store #(
 			eff_pres_y     <= rt_present_y;
 			eff_crop_l     <= rt_crop_left;
 			eff_crop_t     <= rt_crop_top;
-			eff_y_fetch_qw <= rt_cw_cl[10:3]; // coded_w/8 (require multiple of 8)
-			eff_c_fetch_qw <= rt_cw_cl[10:4]; // coded_w/16
+			eff_y_fetch_qw <= rt_cw_cl[10:3]; // coded_w/8  (w%16==0 ⇒ exact)
+			eff_c_fetch_qw <= rt_cw_cl[10:4]; // coded_w/16 (chroma bytes = w/2)
 			eff_y_pitch_qw <= rt_ys_cl[11:3]; // stride/8
 			eff_c_pitch_qw <= rt_cs_cl[10:3];
 			eff_u_base_qw  <= rt_y_bytes_qw;
