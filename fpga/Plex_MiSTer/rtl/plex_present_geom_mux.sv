@@ -212,16 +212,17 @@ module plex_present_geom_mux (
 
 	assign present_content_x0 = plxg_content ? plxg_cx0 : 11'd0;
 	assign present_content_y0 = plxg_content ? plxg_cy0 : 11'd0;
-	// PLXG q3 display_w/h (rd-duck): must NOT alias coded. Product silicon
-	// packs coded=624 display=618 crop_left=3; display=coded → src_x through
-	// 626 and unfilled bytes (bounds reject once E2 is live).
+	// PLXG q3 display_w/h (rd-duck pivot-stale contract): plxg_dw/dh MUST drive
+	// present_geom_display_* when plxg_content. Never unconditional
+	// display=coded — that kills Legacy480 (624/618 crop3) and B14 pad
+	// (432/426 crop2): store bounds treat pad as picture; ascal squeezes.
+	// Idle/disable/force paths: no q3 → display tracks coded (deliberate).
 `ifdef FAULT_MUX_DISPLAY_EQ_CODED
 	// RED twin: q3 display dead — always coded (contract drop REPRO).
 	assign present_geom_display_w = present_geom_coded_w;
 	assign present_geom_display_h = present_geom_coded_h;
 `else
-	// Content-bearing: q3 dw/dh (0 → coded fallback). Synthetic idle/force
-	// paths keep display == coded (no separate display field).
+	// Content-bearing: latched q3 dw/dh (0 → coded fallback for sparse records).
 	wire [10:0] plxg_dw_eff = (plxg_dw != 11'd0) ? plxg_dw : plxg_coded_w;
 	wire [10:0] plxg_dh_eff = (plxg_dh != 11'd0) ? plxg_dh : plxg_coded_h;
 	assign present_geom_display_w = plxg_content ? plxg_dw_eff : present_geom_coded_w;

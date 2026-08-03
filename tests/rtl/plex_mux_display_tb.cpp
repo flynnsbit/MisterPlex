@@ -83,5 +83,73 @@ int main(int argc, char** argv) {
 		return 1;
 	}
 	std::cout << "OK plex_mux_display 624/618 + crop bounds oracle\n";
+
+	// ---- B14 pad 432 coded / 426 display / crop_left=2 (rd-duck + w-mem) ----
+	// Equal-geometry tests are blind to q3; this is the second coded!=display
+	// class (Direct-Part library items). display must stay 426, not alias 432.
+	constexpr int kPadCoded = 432;
+	constexpr int kPadDisp = 426;
+	constexpr int kPadCropL = 2;
+	constexpr int kPadCropR = 4; // informational; mux sees left only
+	(void)kPadCropR;
+	top.plxg_live = 1;
+	top.plxg_geom = 1;
+	top.plxg_cw = kPadDisp; // content DE tracks delivered
+	top.plxg_ch = 240;
+	top.plxg_coded_w = kPadCoded;
+	top.plxg_coded_h = 240;
+	top.plxg_y_stride = kPadCoded;
+	top.plxg_c_stride = kPadCoded / 2;
+	top.plxg_dw = kPadDisp;
+	top.plxg_dh = 240;
+	top.plxg_cl = kPadCropL;
+	top.plxg_ct = 0;
+	top.eval();
+	std::cout << "MEASURED mux432/426 coded=" << (int)top.obs_coded_w
+	          << " disp=" << (int)top.obs_display_w
+	          << " crop_l=" << (int)top.obs_crop_l
+	          << " window_ok=" << (int)top.obs_window_ok << "\n";
+	if ((int)top.obs_coded_w != kPadCoded) {
+		std::cerr << "FAIL 426: coded_w expected " << kPadCoded << " got "
+		          << (int)top.obs_coded_w << "\n";
+		return 1;
+	}
+	if ((int)top.obs_display_w != kPadDisp) {
+		std::cerr << "FAIL 426: display_w expected " << kPadDisp
+		          << " (q3 B14) got " << (int)top.obs_display_w
+		          << " — coded alias squeezes pad as content\n";
+		return 1;
+	}
+	if ((int)top.obs_crop_l != kPadCropL) {
+		std::cerr << "FAIL 426: crop_left expected " << kPadCropL << " got "
+		          << (int)top.obs_crop_l << "\n";
+		return 1;
+	}
+	if (!top.obs_window_ok) {
+		std::cerr << "FAIL 426: crop2+display426 must be <= coded432\n";
+		return 1;
+	}
+	// Negative: display=coded 432 with crop2 → 434 > 432 (would pass if
+	// display were ignored; here we force dw=431 edge then oversize).
+	top.plxg_dw = 431; // 2+431=433 > 432
+	top.eval();
+	if (top.obs_window_ok) {
+		std::cerr << "FAIL 426 neg: crop2+disp431 must exceed coded432\n";
+		return 1;
+	}
+	// Idle fallback: !live → display tracks idle coded (960 under PRESENT_BEAM
+	// not set here → ladder/force leave coded from last? Without live, content
+	// false → display := coded path. Drive live=0, coded stays 432 → disp 432.
+	top.plxg_live = 0;
+	top.plxg_dw = kPadDisp; // must be ignored when !plxg_content
+	top.eval();
+	if ((int)top.obs_display_w != (int)top.obs_coded_w) {
+		std::cerr << "FAIL idle: display must fallback to coded when !content got "
+		          << (int)top.obs_display_w << " coded=" << (int)top.obs_coded_w
+		          << "\n";
+		return 1;
+	}
+	std::cout << "MEASURED mux_idle display=coded=" << (int)top.obs_display_w << "\n";
+	std::cout << "OK plex_mux_display 432/426 B14 pad + idle fallback\n";
 	return 0;
 }

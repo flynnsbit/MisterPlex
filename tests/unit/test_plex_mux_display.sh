@@ -36,6 +36,8 @@ printf '%s\n' "$OUT"
 echo "product true rc=$RC"
 grep -q "OK plex_mux_display 624/618" <<<"$OUT"
 grep -q "MEASURED mux624/618" <<<"$OUT"
+grep -q "OK plex_mux_display 432/426" <<<"$OUT"
+grep -q "MEASURED mux432/426" <<<"$OUT"
 [[ "$RC" -eq 0 ]] || { echo "FAIL product rc=$RC" >&2; exit "$RC"; }
 
 echo "=== B) FAULT_MUX_DISPLAY_EQ_CODED (expect display=624 REPRO) ===" >&2
