@@ -1,5 +1,4 @@
 // fabric_ddr_write_path — pattern (or external) source → fabric_ddr_writer.
-// Single start/bank pulse interface for idle / bring-up without ARM pixels.
 // Macro FABRIC_DDR_WRITER default OFF.
 //
 `default_nettype none
@@ -16,18 +15,17 @@ module fabric_ddr_write_path #(
 	input  wire        clk,
 	input  wire        reset,
 
-	// Pulse to paint one I420 frame into bank_id via internal pattern source.
 	input  wire        start,
 	input  wire [1:0]  bank_id,
+	input  wire [7:0]  frame_phase_in,
+	input  wire        use_ext_phase,
 
-	// Optional external source (when USE_INTERNAL_PATTERN=0)
 	input  wire        ext_valid,
 	output wire        ext_ready,
 	input  wire [63:0] ext_data,
 	input  wire        ext_frame_start,
 	input  wire [1:0]  ext_bank_id,
 
-	// DDRAM master
 	output wire        DDRAM_CLK,
 	input  wire        DDRAM_BUSY,
 	output wire  [7:0] DDRAM_BURSTCNT,
@@ -42,12 +40,14 @@ module fabric_ddr_write_path #(
 	output wire        busy,
 	output wire        frame_done,
 	output wire [28:0] dbg_seq,
-	output wire [1:0]  dbg_last_bank
+	output wire [1:0]  dbg_last_bank,
+	output wire [7:0]  frame_phase_out
 );
 
 	wire        p_valid, p_ready, p_sof, p_busy, p_done;
 	wire [63:0] p_data;
 	wire [1:0]  p_bank;
+	wire [7:0]  p_phase;
 
 	wire        s_valid = USE_INTERNAL_PATTERN ? p_valid : ext_valid;
 	wire [63:0] s_data  = USE_INTERNAL_PATTERN ? p_data  : ext_data;
@@ -57,6 +57,7 @@ module fabric_ddr_write_path #(
 
 	assign ext_ready = USE_INTERNAL_PATTERN ? 1'b0 : s_ready;
 	assign p_ready   = USE_INTERNAL_PATTERN ? s_ready : 1'b0;
+	assign frame_phase_out = USE_INTERNAL_PATTERN ? p_phase : 8'd0;
 
 	generate
 		if (USE_INTERNAL_PATTERN) begin : g_pat
@@ -68,13 +69,16 @@ module fabric_ddr_write_path #(
 				.reset(reset),
 				.start(start),
 				.bank_id(bank_id),
+				.frame_phase_in(frame_phase_in),
+				.use_ext_phase(use_ext_phase),
 				.src_valid(p_valid),
 				.src_ready(p_ready),
 				.src_data(p_data),
 				.src_frame_start(p_sof),
 				.src_bank_id(p_bank),
 				.busy(p_busy),
-				.done_pulse(p_done)
+				.done_pulse(p_done),
+				.frame_phase_out(p_phase)
 			);
 		end else begin : g_nopat
 			assign p_valid = 1'b0;
@@ -83,11 +87,12 @@ module fabric_ddr_write_path #(
 			assign p_bank  = 2'd0;
 			assign p_busy  = 1'b0;
 			assign p_done  = 1'b0;
-			wire _u = start ^ bank_id[0] ^ bank_id[1];
+			assign p_phase = 8'd0;
 		end
 	endgenerate
 
 	wire [2:0] dbg_state_unused;
+	(* keep = 1 *) wire keep_writer_busy;
 	fabric_ddr_writer #(
 		.CODED_W(CODED_W),
 		.CODED_H(CODED_H),
@@ -119,6 +124,7 @@ module fabric_ddr_write_path #(
 		.dbg_last_bank(dbg_last_bank),
 		.dbg_state(dbg_state_unused)
 	);
+	assign keep_writer_busy = busy | frame_done | |dbg_seq;
 
 endmodule
 

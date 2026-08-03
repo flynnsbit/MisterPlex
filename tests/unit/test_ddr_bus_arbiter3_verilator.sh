@@ -21,6 +21,7 @@ echo "RTL SIM: using $VERILATOR_VERSION" >&2
 RTL=(
   "$ROOT/fpga/Plex_MiSTer/rtl/async_fifo.sv"
   "$ROOT/fpga/Plex_MiSTer/rtl/ddr_bus_arbiter3.sv"
+  "$ROOT/fpga/Plex_MiSTer/rtl/fabric_bank_credit.sv"
   "$ROOT/fpga/Plex_MiSTer/rtl/fabric_i420_pattern_src.sv"
   "$ROOT/fpga/Plex_MiSTer/rtl/fabric_ddr_writer.sv"
   "$ROOT/fpga/Plex_MiSTer/rtl/fabric_ddr_write_path.sv"

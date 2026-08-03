@@ -83,12 +83,14 @@ set_global_assignment -name VERILOG_MACRO "DDR_FRAME_STORE=1"
 
 # fabric_ddr_writer — OFF by default (w-mem). Integration fit: uncomment ALL of:
 #set_global_assignment -name VERILOG_MACRO "FABRIC_DDR_WRITER=1"
-# Optional 720p Option-C banks (needs w-scaler read path first):
-#set_global_assignment -name VERILOG_MACRO "FABRIC_DDR_WRITER_720P=1"
+# Default banks when enabled = Option-C 720p (0x30180000 / 0x180000 / 0x3047F000).
+# Product 480p bank opt-out (glass without w-scaler CODED-1280 read):
+#set_global_assignment -name VERILOG_MACRO "FABRIC_DDR_WRITER_480P=1"
 #set_global_assignment -name SYSTEMVERILOG_FILE rtl/fabric_ddr_writer.sv
 #set_global_assignment -name SYSTEMVERILOG_FILE rtl/fabric_i420_pattern_src.sv
 #set_global_assignment -name SYSTEMVERILOG_FILE rtl/fabric_ddr_write_path.sv
 #set_global_assignment -name SYSTEMVERILOG_FILE rtl/fabric_ddr_attach.sv
+#set_global_assignment -name SYSTEMVERILOG_FILE rtl/fabric_bank_credit.sv
 #set_global_assignment -name SYSTEMVERILOG_FILE rtl/ddr_bus_arbiter3.sv
 #set_global_assignment -name SYSTEMVERILOG_FILE rtl/fabric_luma_linebuf.sv
 set_global_assignment -name VERILOG_MACRO "FRAME_W=640"

@@ -1,33 +1,51 @@
 agent=w-mem
 branch=w-mem-720p-abi
-HEAD=15c5bb45
-status=LANDED Sweep-3 retract + arbiter3/attach RTL
+HEAD=ac278edf
+status=READY_FOR_INTEGRATION_FIT (macro OFF default)
 
-## Parent Sweep-3 absorbed (RETRACTED cache win)
-best_bank=86.262 MiB/s / 15.283 ms
-coherent_flush=66.380 / 19.861 (penalty +4.578)
-host_copy ordinary RAM=439.788 / 2.998 UNREACHABLE on bank
-serial FAIL: 1500/3500/4000 all sums > 41.667
-candidate_tier_kbit=3500 (PMS real 1280x720 floor; 1500 not delivery)
+## Delivered this commit
+- fabric_bank_credit.sv: free_mask/claim/commit/vsync (PLXD-compatible)
+- fabric_ddr_attach: credit-aware produce; claim abort if !produce_en
+- fabric_i420_pattern_src: moving Y ramp via frame_phase
+- Plex.sv: Option-C 720p default under FABRIC_DDR_WRITER; 480P opt-out
+- host fabric_bank_credit.hpp + unit test
+- arbiter3 TB: credit_vsync + m2_over_m1 green
 
-## RTL landed
-- ddr_bus_arbiter3.sv (m0>m2>m1, sticky m2, yield idle m1)
-- fabric_ddr_attach.sv
-- fabric_ddr_writer defaults from ddr_frame_layout_params.svh
-- FABRIC_DDR_WRITER still OFF in Plex.qsf (product arbiter untouched)
+## Stood down
+- mmap cache-policy (parent Sweep-3 retract; coherent flush worse)
 
-## true rc
+## Integration fit recipe (parent)
+Uncomment in Plex.qsf:
+  VERILOG_MACRO FABRIC_DDR_WRITER=1
+  SYSTEMVERILOG_FILE rtl/{fabric_ddr_writer,fabric_i420_pattern_src,
+    fabric_ddr_write_path,fabric_ddr_attach,fabric_bank_credit,
+    ddr_bus_arbiter3,fabric_luma_linebuf}.sv
+Optional without w-scaler: FABRIC_DDR_WRITER_480P=1
+Do NOT enable 720p glass expect until w-scaler CODED 1280 read lands
+(Option-C banks invisible to product 624-wide reader).
+
+## true rc (this worktree)
+- test_fabric_ddr_top_wire: 0
+- test_fabric_bank_credit: 0
+- test_ddr_720p_abi: 0
 - test_ddr_mem_map_policy: 0
-- test_ddr_720p_abi: 0 (serial_fits all 0, hostcopy_reachable=0, SHIP_OK=1 fpga)
 - fabric_ddr_writer_verilator: 0
 - fabric_ddr_write_path_verilator: 0
-- ddr_bus_arbiter3_verilator: 0 (was red 11/12 + sticky m1; fixed)
+- ddr_bus_arbiter3_verilator: 0
 
-## Ship path
-publish_bytes=0 only. Map policy work demoted to correctness hazard.
-Route A PL330 overlap: sketch only (max fits @3500k); parent measures.
+## Parent measure after fit
+1. make post-fit-hierarchy — non-zero rows:
+   fabric_ddr_attach, fabric_bank_credit, fabric_ddr_writer, ddr_bus_arbiter3
+2. With 480P macro: HDMI moving pattern, ARM idle
+   scripts/hdmi_capture_idle.sh <out.png>
+3. Sustained fabric→DDR3 BW: unknown until device run
 
-## Unknowns
-- sustained fabric→DDR3 BW on device
-- stream_path top wiring of arbiter3 (fit slot w-nostub)
-- doorbell bank field still 1 bit
+## ARM ms
+- Pattern path: ARM publish_bytes=0 for those frames (fit proof)
+- 720p24 ship still needs real producer (decode→bank); pattern ≠ ship
+- Ship gate remains publish_bytes=0 / FPGA-written banks
+
+## Contract for w-scaler / w-path
+- Option-C base 0x30180000 stride 0x180000 doorbell 0x3047F000
+- free_mask bit must be 1 before fill; commit then vsync frees old disp
+- docs/fabric-ddr-writer-iface.md

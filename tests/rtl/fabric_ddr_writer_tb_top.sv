@@ -55,13 +55,16 @@ module fabric_ddr_writer_tb_top (
 		.reset(reset),
 		.start(pattern_start && use_pattern),
 		.bank_id(pattern_bank_id),
+		.frame_phase_in(8'd0),
+		.use_ext_phase(1'b0),
 		.src_valid(p_valid),
 		.src_ready(p_ready),
 		.src_data(p_data),
 		.src_frame_start(p_sof),
 		.src_bank_id(p_bank),
 		.busy(pattern_busy),
-		.done_pulse(pattern_done)
+		.done_pulse(pattern_done),
+		.frame_phase_out()
 	);
 
 	fabric_ddr_writer #(

@@ -24,6 +24,7 @@ module fabric_ddr_write_path_tb_top (
 	) dut (
 		.clk(clk), .reset(reset),
 		.start(start), .bank_id(bank_id),
+		.frame_phase_in(8'd0), .use_ext_phase(1'b0),
 		.ext_valid(1'b0), .ext_ready(), .ext_data(64'd0),
 		.ext_frame_start(1'b0), .ext_bank_id(2'd0),
 		.DDRAM_CLK(), .DDRAM_BUSY(DDRAM_BUSY),
@@ -32,7 +33,7 @@ module fabric_ddr_write_path_tb_top (
 		.DDRAM_RD(DDRAM_RD), .DDRAM_DIN(DDRAM_DIN),
 		.DDRAM_BE(DDRAM_BE), .DDRAM_WE(DDRAM_WE),
 		.busy(busy), .frame_done(frame_done),
-		.dbg_seq(), .dbg_last_bank()
+		.dbg_seq(), .dbg_last_bank(), .frame_phase_out()
 	);
 endmodule
 `default_nettype wire

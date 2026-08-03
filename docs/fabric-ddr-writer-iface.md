@@ -1,15 +1,35 @@
 # fabric_ddr_writer — interface card (w-mem ↔ w-clock ↔ w-scaler)
 
-Status: RTL module + Verilator TB landed; **not** instantiated in product
-(`FABRIC_DDR_WRITER` macro default OFF in `Plex.qsf`).
+Status: RTL + credit + attach + Verilator TBs landed; **not** product-default
+(`FABRIC_DDR_WRITER` macro remains commented OFF in `Plex.qsf`).
 
 ## Ownership split (avoid fit merge conflicts)
 
 | Lane | Owns | Does **not** touch |
 |------|------|---------------------|
-| **w-mem** | `fabric_ddr_writer.sv`, Option-C bank ABI, doorbell write ordering, pixel-source stream contract | scanout timing, content-window scaler math |
-| **w-scaler** | content-window **read** path, runtime-coded window regs | DDR write master, doorbell issue |
+| **w-mem** | write path, Option-C ABI, `fabric_bank_credit`, doorbell order, pattern producer | scanout timing, content-window scaler math |
+| **w-scaler** | content-window **read** of the same banks, runtime coded window | DDR write master, doorbell issue |
 | **w-clock** | multi-pixel present datapath, clk_sys scanout budget | bank fill, doorbell |
+| **w-path** | ARM/PL330 external producer into free banks | fabric credit RTL (consumes contract) |
+
+## Bank credit contract (write ↔ read)
+
+Module: `fabric_bank_credit.sv` · host mirror: `fabric_bank_credit.hpp`
+
+| Signal | Meaning |
+|--------|---------|
+| `free_mask[i]=1` | producer may fill bank *i* |
+| `claim_req/ack` | exclusive take of one free bank |
+| `commit_pulse` + `commit_bank` | payload+doorbell done → `swap_pending`, `free_mask=0` |
+| `vsync_swap` | pending → disp; old disp bit set free; `frames_done++` |
+
+Product PLXD layout (hi word): `free[1:0] | disp<<2 | swap<<3 | frames<<16`.
+PLXD phys = doorbell + `0x128` → Option-C `0x3047F128`.
+
+**Corruption class (rd-duck):** never write a bank while free bit is clear
+(scanout may be mid-read). After commit, free_mask stays 0 until vsync frees
+the previous display bank. Attach drops claim when `produce_en` deasserts so
+a late claim cannot steal the bank freed by vsync.
 
 ## Pixel-source contract (producers → writer)
 
@@ -20,9 +40,8 @@ src_frame_start    // high with first beat of frame
 src_bank           // 0/1 sampled on first accepted beat
 ```
 
-Producers (idle painter, test pattern, future fabric decode) must emit **full
-coded-canvas I420** in bank order. Native content smaller than canvas is a
-producer concern (pad or coordinate PLXG native_push v2) — writer does not scale.
+Internal producer: `fabric_i420_pattern_src` — Y ramp + `frame_phase` scroll
+(visible motion). External path reserved for PL330/decode bridge (w-path).
 
 ## DDRAM master contract
 
@@ -32,47 +51,74 @@ producer concern (pad or coordinate PLXG native_push v2) — writer does not sca
 - Payload then **drain fence** then **one** doorbell write:
   - `DIN[31:0] = PLXK (0x504C584B)`
   - `DIN[63:32] = {bank, format[1:0]=2'b01, seq[28:0]}`
-- Parameters: `PHYS_BASE`, `HPS_BANK_STRIDE_BYTES`, `DOORBELL_PHYS` (base may move).
+- Parameters: `PHYS_BASE`, `HPS_BANK_STRIDE_BYTES`, `DOORBELL_PHYS`.
+
+## Option-C ABI (parent-verified iomem)
+
+| Field | Value |
+|-------|------:|
+| base | `0x30180000` |
+| bank stride | `0x00180000` |
+| bank1 | `0x30300000` |
+| doorbell | `0x3047F000` |
+| 720p I420 | 1_382_400 B |
+
+Inside `memmap=513M$511M`; nothing claimed in `/proc/iomem` @ 0x3xxxxxxx.
 
 ## Arbiter integration
 
-Product `ddr_bus_arbiter` stays 2-master (untouched). Additive `ddr_bus_arbiter3`
-+ `fabric_ddr_attach` provide m2 for the writer:
+Product `ddr_bus_arbiter` stays 2-master when macro OFF (bit-identical path).
+`ddr_bus_arbiter3` + attach when ON:
 
 | Master | Role | Priority when bus free |
 |--------|------|------------------------|
-| m0 | frame-store present RD | highest (cmd wins) |
-| m2 | fabric_ddr_writer WE | next (`m2_want` = writer busy) |
+| m0 | frame-store present RD | highest |
+| m2 | fabric_ddr_writer WE | next (`m2_want`) |
 | m1 | bitstream RD | lowest |
 
-**Do not** steal m1. Outstanding depth = 1 WE is enough for 720p30 (~5.8% of
-90 MHz) if grant share ≥ ~6%. Sustained fabric→DDR3 BW: unknown until fit +
-parent measure.
+## Rate (TB evidence)
 
-## Rate (evidence from TB print)
-
-- 720p24: 33.18 MB/s → bus_frac ≈ 4.6%
+- 720p24: 33.18 MB/s → bus_frac ≈ 4.6% @ 90 MHz × 8 B
 - 720p30: 41.47 MB/s → bus_frac ≈ 5.8%
-- rate_closes=1 with outstanding_depth=1 (no shared-bus model in TB)
-
-## Ship gate (host)
-
-`ddr720p24ShipAcceptsZeroArmPerPixel` requires `publish_bytes=0` — fabric writer
-is the path that makes that true.
-
-## Parent iomem (2026-08-02)
-
-Option-C `0x30180000` / `0x3047F000` **parent-verified** inside `memmap=513M$511M` reserved window.
-Headroom ≈251.5 MB. Prefer deeper banks/prefetch over cramped layouts. Triple-buffer map constants
-exist (`kPlex720pMapBytes3Bank`); doorbell still 1-bit bank until frame-store widens.
+- Sustained fabric→DDR3 BW on device: **unknown — parent measures after fit**
 
 ## Plex.sv top wire (default OFF)
 
-When `FABRIC_DDR_WRITER=1` (QSF commented by default):
-- Product `ddr_bus_arbiter` is replaced by `ddr_bus_arbiter3` + `fabric_ddr_attach`
-- Idle FSM on `clk_ddr` paints bank0 then bank1 with internal I420 pattern after reset
-- **Stops while `has_frame` (CDC 2FF)** so ARM playback banks are not stomped
-- Default bank ABI = **product 480p** (`0x30000000` / stride `0x80000` / doorbell `0x300FF000`) so glass works without w-scaler
-- `FABRIC_DDR_WRITER_720P=1` switches attach to Option-C 720p (needs scaler read path)
+When `FABRIC_DDR_WRITER=1`:
+- Default bank ABI = **Option-C 720p**
+- `FABRIC_DDR_WRITER_480P=1` → product 480p banks (`0x30000000` / `0x80000` / `0x300FF000`)
+- Continuous `produce_en = !has_frame` (2FF CDC); ARM playback not stomped
+- `vsync_swap` from VSync falling edge (clk_ddr); credit only acts if `swap_pending`
+- `(* keep *)` on WE + free_mask + frames_done + phase so fit cannot prune
 
-Integration fit recipe: uncomment the `FABRIC_DDR_WRITER` macro + the five SV files in `Plex.qsf`. Do not enable 720P until w-scaler lands CODED 1280 read.
+## Integration fit recipe (parent)
+
+Uncomment in `Plex.qsf`:
+```
+VERILOG_MACRO FABRIC_DDR_WRITER=1
+SYSTEMVERILOG_FILE rtl/fabric_ddr_writer.sv
+SYSTEMVERILOG_FILE rtl/fabric_i420_pattern_src.sv
+SYSTEMVERILOG_FILE rtl/fabric_ddr_write_path.sv
+SYSTEMVERILOG_FILE rtl/fabric_ddr_attach.sv
+SYSTEMVERILOG_FILE rtl/fabric_bank_credit.sv
+SYSTEMVERILOG_FILE rtl/ddr_bus_arbiter3.sv
+SYSTEMVERILOG_FILE rtl/fabric_luma_linebuf.sv
+```
+Optional bring-up without w-scaler: also `FABRIC_DDR_WRITER_480P=1`.
+
+## Parent measure commands (post-fit)
+
+```bash
+# hierarchy must show non-zero rows (not optimised away)
+make post-fit-hierarchy FIT_RPT=...   # expect fabric_ddr_attach, fabric_bank_credit,
+                                      # fabric_ddr_writer, ddr_bus_arbiter3
+
+# glass: moving Y ramp, ARM idle (no cast). Capture via helper only:
+scripts/hdmi_capture_idle.sh /path/to/frame.png
+# score: ACTIVE non-black, phase motion across frames; daemon must not DDR-push
+```
+
+## Ship gate (host)
+
+`ddr720p24ShipAcceptsZeroArmPerPixel` requires `publish_bytes=0` — fabric-written
+banks are the path that makes that true. Pattern is fit/bring-up proof, not ship.

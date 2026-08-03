@@ -39,8 +39,14 @@ int main() {
     CHECK(top.find("ddr_bus_arbiter ddr_arb") != std::string::npos); // default path
     // Idle producer must not paint over has_frame (synced).
     CHECK(top.find("has_frame_s2") != std::string::npos);
-    CHECK(top.find("FAB_BASE = 32'h3000_0000") != std::string::npos); // product banks default
+    CHECK(top.find("DDR_FRAME_720P_PHYS_BASE") != std::string::npos); // Option-C default
+    CHECK(top.find("produce_en") != std::string::npos);
+    CHECK(top.find("FABRIC_DDR_WRITER_480P") != std::string::npos); // opt-out to product banks
+    CHECK(top.find("fabric_bank_credit") != std::string::npos ||
+          top.find("fabric_free_mask") != std::string::npos);
+    CHECK(qsf.find("rtl/fabric_bank_credit.sv") != std::string::npos);
+    CHECK(qsf.find("FABRIC_DDR_WRITER_480P=1") != std::string::npos);
     if (fails) { std::fprintf(stderr,"test_fabric_ddr_top_wire: %d fails\n", fails); return 1; }
-    std::printf("test_fabric_ddr_top_wire: OK default_off=1 arb3_wired=1 product_banks=1\n");
+    std::printf("test_fabric_ddr_top_wire: OK default_off=1 arb3_wired=1 optionc_default=1\n");
     return 0;
 }

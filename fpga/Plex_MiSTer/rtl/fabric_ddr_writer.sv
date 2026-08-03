@@ -103,6 +103,11 @@ module fabric_ddr_writer #(
 	assign busy      = (state != ST_IDLE);
 	assign dbg_state = state;
 
+	// Survive Quartus dead-code elimination when macro-enabled (rd-duck):
+	// hierarchy rows must be non-zero post-fit. Tie observability to WE path.
+	(* keep = 1 *) wire keep_writer =
+		busy | frame_done | DDRAM_WE | |dbg_seq | |wr_addr_q | |q_left;
+
 	wire issue_ok = !DDRAM_BUSY;
 	wire skid_fire = (state == ST_RUN) && skid_valid && issue_ok;
 	assign src_ready =

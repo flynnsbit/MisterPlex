@@ -811,12 +811,28 @@ present_core #(
 );
 
 `ifdef DDR_FRAME_STORE
-// FABRIC_DDR_WRITER (default OFF): replace 2-master arbiter with arbiter3 +
-// fabric_ddr_attach pattern producer. Product 480p bank params so an
-// integration enable paints banks present_core already reads. 720p Option-C
-// params selected with FABRIC_DDR_WRITER_720P (needs w-scaler read path).
+// FABRIC_DDR_WRITER (default OFF): arbiter3 + credit-aware fabric_ddr_attach.
+// Fit target = Option-C 720p moving pattern (ARM touches zero pixels).
+// FABRIC_DDR_WRITER_480P opts out to product 480p banks (no scaler needed).
+// w-scaler owns CODED-1280 read of Option-C banks; w-mem owns write + credit.
 `ifdef FABRIC_DDR_WRITER
 `include "rtl/ddr_frame_layout_params.svh"
+
+// Option-C 720p is the fit target (parent: moving 1280x720, ARM zero pixels).
+// Override with FABRIC_DDR_WRITER_480P for product-bank bring-up without scaler.
+`ifdef FABRIC_DDR_WRITER_480P
+localparam int FAB_W = DDR_FRAME_CODED_WIDTH;
+localparam int FAB_H = DDR_FRAME_CODED_HEIGHT;
+localparam [31:0] FAB_BASE = 32'h3000_0000;
+localparam int FAB_STRIDE = DDR_FRAME_YUV420P_BANK_STRIDE;
+localparam [31:0] FAB_DB = DDR_FRAME_YUV420P_DOORBELL_PHYS;
+`else
+localparam int FAB_W = DDR_FRAME_720P_CODED_WIDTH;
+localparam int FAB_H = DDR_FRAME_720P_CODED_HEIGHT;
+localparam [31:0] FAB_BASE = DDR_FRAME_720P_PHYS_BASE;
+localparam int FAB_STRIDE = DDR_FRAME_720P_YUV420P_BANK_STRIDE;
+localparam [31:0] FAB_DB = DDR_FRAME_720P_YUV420P_DOORBELL_PHYS;
+`endif
 
 wire        fabric_m2_want, fabric_m2_busy;
 wire  [7:0] fabric_m2_burstcnt;
@@ -830,82 +846,34 @@ wire        fabric_m2_we;
 wire        fabric_busy, fabric_frame_done;
 wire [28:0] fabric_dbg_seq;
 wire [1:0]  fabric_dbg_bank;
+wire [1:0]  fabric_free_mask;
+wire        fabric_disp_bank, fabric_swap_pending;
+wire [15:0] fabric_frames_done;
+wire [7:0]  fabric_phase;
 
-// Idle producer: after reset, paint bank0 then bank1 once each when ARM has
-// not published a frame yet (has_frame=0). Re-arms on falling has_frame so
-// fabric can reclaim idle without stomping live playback banks.
-reg        fabric_start;
-reg  [1:0] fabric_bank;
-reg  [1:0] fabric_phase; // 0=wait, 1=start b0, 2=wait done, 3=start b1, done
-reg [15:0] fabric_delay;
-// has_frame is clk_sys — 2FF into clk_ddr before FSM use
-reg        has_frame_s1, has_frame_s2, has_frame_d;
-
+// has_frame (clk_sys) → clk_ddr; produce only when ARM is not owning banks
+reg has_frame_s1, has_frame_s2;
+reg vsync_s1, vsync_s2, vsync_s3, fabric_vsync_swap;
 always @(posedge clk_ddr) begin
 	if (reset) begin
-		fabric_start <= 1'b0;
-		fabric_bank  <= 2'd0;
-		fabric_phase <= 2'd0;
-		fabric_delay <= 16'd0;
 		has_frame_s1 <= 1'b0;
 		has_frame_s2 <= 1'b0;
-		has_frame_d  <= 1'b0;
+		vsync_s1 <= 1'b0;
+		vsync_s2 <= 1'b0;
+		vsync_s3 <= 1'b0;
+		fabric_vsync_swap <= 1'b0;
 	end else begin
-		fabric_start <= 1'b0;
 		has_frame_s1 <= has_frame;
 		has_frame_s2 <= has_frame_s1;
-		has_frame_d  <= has_frame_s2;
-		// Re-arm when host drops frame ownership (idle return).
-		if (has_frame_d && !has_frame_s2)
-			fabric_phase <= 2'd0;
-
-		if (has_frame_s2) begin
-			// ARM/host owns banks — do not paint over playback.
-			fabric_phase <= 2'd0;
-			fabric_delay <= 16'd0;
-		end else begin
-			case (fabric_phase)
-			2'd0: begin
-				if (fabric_delay != 16'hFFFF)
-					fabric_delay <= fabric_delay + 16'd1;
-				// ~0.7 ms @90 MHz settle after reset/idle before first paint
-				if (fabric_delay == 16'd65535) begin
-					fabric_bank  <= 2'd0;
-					fabric_start <= 1'b1;
-					fabric_phase <= 2'd1;
-				end
-			end
-			2'd1: begin
-				if (fabric_frame_done) begin
-					fabric_bank  <= 2'd1;
-					fabric_start <= 1'b1;
-					fabric_phase <= 2'd2;
-				end
-			end
-			2'd2: begin
-				if (fabric_frame_done)
-					fabric_phase <= 2'd3; // both banks painted; hold
-			end
-			default: ;
-			endcase
-		end
+		// VSync falling edge as swap opportunity (present domain)
+		vsync_s1 <= VSync;
+		vsync_s2 <= vsync_s1;
+		vsync_s3 <= vsync_s2;
+		fabric_vsync_swap <= vsync_s3 & ~vsync_s2;
 	end
 end
 
-`ifdef FABRIC_DDR_WRITER_720P
-localparam int FAB_W = DDR_FRAME_720P_CODED_WIDTH;
-localparam int FAB_H = DDR_FRAME_720P_CODED_HEIGHT;
-localparam [31:0] FAB_BASE = DDR_FRAME_720P_PHYS_BASE;
-localparam int FAB_STRIDE = DDR_FRAME_720P_YUV420P_BANK_STRIDE;
-localparam [31:0] FAB_DB = DDR_FRAME_720P_YUV420P_DOORBELL_PHYS;
-`else
-// Product silicon banks (visible to present_core today)
-localparam int FAB_W = DDR_FRAME_CODED_WIDTH;
-localparam int FAB_H = DDR_FRAME_CODED_HEIGHT;
-localparam [31:0] FAB_BASE = 32'h3000_0000;
-localparam int FAB_STRIDE = DDR_FRAME_YUV420P_BANK_STRIDE;
-localparam [31:0] FAB_DB = DDR_FRAME_YUV420P_DOORBELL_PHYS;
-`endif
+wire fabric_produce_en = !has_frame_s2;
 
 fabric_ddr_attach #(
 	.CODED_W(FAB_W),
@@ -918,8 +886,8 @@ fabric_ddr_attach #(
 ) fabric_attach (
 	.clk(clk_ddr),
 	.reset(reset),
-	.start(fabric_start),
-	.bank_id(fabric_bank),
+	.produce_en(fabric_produce_en),
+	.vsync_swap(fabric_vsync_swap),
 	.ext_valid(1'b0),
 	.ext_ready(),
 	.ext_data(64'd0),
@@ -938,7 +906,12 @@ fabric_ddr_attach #(
 	.busy(fabric_busy),
 	.frame_done(fabric_frame_done),
 	.dbg_seq(fabric_dbg_seq),
-	.dbg_last_bank(fabric_dbg_bank)
+	.dbg_last_bank(fabric_dbg_bank),
+	.free_mask(fabric_free_mask),
+	.disp_bank(fabric_disp_bank),
+	.swap_pending(fabric_swap_pending),
+	.frames_done(fabric_frames_done),
+	.frame_phase(fabric_phase)
 );
 
 ddr_bus_arbiter3 ddr_arb (
@@ -985,10 +958,12 @@ ddr_bus_arbiter3 ddr_arb (
 	.DDRAM_WE(DDRAM_WE)
 );
 
-// Keep fabric debug visible to fit (prevents pruning under keep-ish tools)
+// Force hierarchy retention: WE path + credit + phase must not prune
 (* keep = 1 *) wire _keep_fabric_ddr =
-	fabric_busy | fabric_frame_done | |fabric_dbg_seq | |fabric_dbg_bank |
-	fabric_m2_want;
+	fabric_busy | fabric_frame_done | fabric_m2_want | fabric_m2_we |
+	|fabric_dbg_seq | |fabric_free_mask | fabric_disp_bank |
+	fabric_swap_pending | |fabric_frames_done | |fabric_phase |
+	|FAB_BASE[15:0] | |FAB_DB[15:0];
 `else
 ddr_bus_arbiter ddr_arb (
 	.clk(clk_ddr),
