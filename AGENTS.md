@@ -91,6 +91,9 @@ values are redacted from every text file that is.
 
 ## Key docs
 
+- **[`docs/LESSONS.md`](docs/LESSONS.md) — accumulated case law under rule 0. Read this
+  before reasoning about a build, a gate, a device symptom, or an area budget. Every rule
+  in it was paid for with a real wrong conclusion in this project.**
 - `docs/phase3-decode.md`, `docs/phase3-3l-idct.md` — decode path  
 - `docs/p3-wide-rca.md` — full-width / pillar  
 - `docs/crt-lcd-lab-checklist.md` — CRT/LCD lab  
