@@ -1,6 +1,6 @@
 w-osd status 2026-08-03T08:44:20-05:00
 branch: w-osd-fabric-plane
-HEAD: pending-commit
+HEAD: d8681cc0
 
 PARENT asks: rollcall + make unit verdict + q5 registered + MISSING reconciliation
 
