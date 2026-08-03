@@ -1,25 +1,29 @@
-w-mem STATUS tip=5759df14 branch=w-mem-720p-abi ts=20260803T185941Z
-main@origin=85bef583 worktree=/home/flynnsbit/Projects/MisterPlex-wt-mem
+w-mem tip=9cb3196d branch=w-mem-720p-abi ts=20260803T212400Z
+main@origin=85bef583 (re-pin at merge)
 NO Quartus · NO device
 
-=== rd-duck PLXG reset/liveness (5759df14) ===
-Verdict ACCEPTED: retained DDR does NOT assert plxg_live (baseline without commit).
-Reclassified as LIVENESS/OWNERSHIP GAP — not stale-live closure.
-- epoch default 1 is NOT boot/session nonce
-- pre-poll single publish swallowed as baseline → never live until NEW pair
-- daemon restart w/o FPGA reset: prior live held until NEW publish (ownership OK)
-Product protocol: plxgHostEnsureLiveDoublePublish (2 distinct seqlocks)
-Future: true host↔FPGA boot nonce/ACK (not implemented)
-Evidence:
-  build/test_ddr_720p_abi true rc=0 (PLXG_RACE_PRE_POLL_LIVENESS OK)
-  test_plxg_boot_baseline_verilator.sh true rc=0 (race REPRO+EnsureLive)
+=== rd-duck B14 FIX-COLLISION 426→432 (this tip) ===
+ACCEPTED: corrected coded432/display426/crop L2/R4 hit hasCrop&&heightBank&&
+source>=disp → buildCropPadNoScale → crop=426:240:2:0 OOB on 426-wide source.
+Identity 432/432 "worked" only because metadata was wrong.
+FIX: source==display<coded → pad-only (pad=432:240:2:0:color=black); no source
+crop. PLXG still transports crop_left/right. display_exact 618→624 same class.
+Evidence (true rc):
+  ./build/test_ffmpeg_vf → rc=0 GREEN_B14_426_432 pad_only=...
+  bash tests/unit/test_b14_426_pad_ffmpeg.sh → rc=0 (live ffmpeg 311040 B + black inset)
+  ./build/test_ddr_720p_abi → rc=0 B14_PAD_426_POLICY chain_ok
+  ./build/test_force_scale_construction → rc=0
+NOTE: some ffmpeg clamp OOB crop to same bytes as pad — still forbidden to emit crop=
 
-=== L0-L4 (measured branch@5759df14 / origin/main@ see git) ===
-PLXG/PLXC cluster still L3-branch / L0-main (parent sequences merge)
-plxg_ddr_poller comment+behavior L3 branch; EnsureLive host header L0→needs path wire
-ddr_frame_store B20 L0-branch deltas; shell L4 on main if present
+=== prior ===
+4c02a41a B20 NBA island beam feed-forward + beam_ack hold
+5759df14 PLXG EnsureLive pre-poll liveness
+
+=== L0-L4 (ref=w-mem-720p-abi@this-tip; origin/main@85bef583) ===
+ffmpeg_vf.hpp pad-only: L0 branch host (no RTL)
+ddr geometry B14: L0/L1 branch (host unit green); product path needs w-path wire
+PLXG/PLXC/B20 RTL: L3-branch / L0-main (parent merges)
+present_beam_content_de runtime: L3 branch; L4 needs PRESENT_BEAM_960
 
 === OPEN ===
-Wire EnsureLive into product session-open writePlxg (w-path cross-lane)
-Boot nonce/ACK fabric status (optional future)
-DPB→DDR P1 not started
+EnsureLive product writePlxg (w-path); DPB→DDR; parent merge sequencing

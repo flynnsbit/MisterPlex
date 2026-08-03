@@ -216,6 +216,11 @@ inline std::string buildScalePadCropped(int display_w, int display_h, int coded_
 //   - wider than coded (e.g. 640x480): center-crop with ffmpeg expr so the
 //     visible window is taken from the source middle without any scale.
 // After crop, iw=display_w so pad x collapses to crop_left.
+//
+// FORBIDDEN when source_w == display_w < coded_w (B14 426→432): crop at
+// crop_left on a source that is already display-wide is OOB (rd-duck). Use
+// buildPadOnlyNoScale instead — pad inset carries crop_left; PLXG metadata
+// still transports crop_left/right for fabric.
 inline std::string buildCropPadNoScale(int display_w, int display_h, int coded_w, int coded_h,
                                        int crop_left, int crop_top,
                                        int source_w = 0) {
@@ -232,6 +237,29 @@ inline std::string buildCropPadNoScale(int display_w, int display_h, int coded_w
                              "-ih)/2";
     return crop + ",pad=" + std::to_string(coded_w) + ":" + std::to_string(coded_h) + ":" +
            padX + ":" + padY + ":color=black";
+}
+
+// B14 / Direct-Part: source == display < coded. No source crop — pad only at
+// destination inset (crop_left, crop_top). FFmpeg pad x/y are absolute when
+// source already fills the display window.
+inline std::string buildPadOnlyNoScale(int coded_w, int coded_h, int crop_left, int crop_top) {
+    return "pad=" + std::to_string(coded_w) + ":" + std::to_string(coded_h) + ":" +
+           std::to_string(crop_left) + ":" + std::to_string(crop_top) + ":color=black";
+}
+
+// True when filter must pad-only (not crop-then-pad).
+inline bool ffmpegPadOnlySourceEqualsDisplay(int source_w, int source_h, int display_w,
+                                             int display_h, int coded_w, int coded_h) {
+    if (source_w <= 0 || source_h <= 0 || coded_w <= 0 || coded_h <= 0)
+        return false;
+    if (display_w <= 0)
+        display_w = coded_w;
+    if (display_h <= 0)
+        display_h = coded_h;
+    if (display_w == coded_w && display_h == coded_h)
+        return false; // no pad bank
+    return source_w == display_w && source_h == display_h && source_w < coded_w &&
+           source_h == coded_h;
 }
 
 inline std::string buildScalePadCentered(int coded_w, int coded_h,
@@ -446,11 +474,24 @@ inline FfmpegVfPlan buildFfmpegVideoFilter(const FfmpegVfRequest& req) {
     // unverified bank-exact guess (those take FOAR above / below). Hfit path
     // (e.g. 640x480 claim) still crop-pads when H matches bank.
     // 240p / shorter sources FOAR into coded bank (need V upscale).
+    //
+    // B14 (rd-duck FIX-COLLISION): source==display<coded (426→432) must NOT
+    // take crop+pad — crop=426:240:crop_left=2 on a 426-wide input is OOB.
+    // Pad-only at destination inset; PLXG still carries crop_left/right.
     const bool heightAlreadyBank = req.source_h > 0 && req.source_h == req.coded_h &&
                                    req.source_h == dispH;
+    const bool padOnlyB14 = ffmpegPadOnlySourceEqualsDisplay(
+        req.source_w, req.source_h, dispW, dispH, req.coded_w, req.coded_h);
+    if (hasCrop && padOnlyB14 && !exactUnverified) {
+        append(buildPadOnlyNoScale(req.coded_w, req.coded_h, req.crop_left, req.crop_top));
+        return finish(false, false, "pad_only_source_eq_display");
+    }
     const bool wideEnoughForDisplayCrop =
         req.source_w > 0 && req.source_w >= dispW;
-    if (hasCrop && heightAlreadyBank && wideEnoughForDisplayCrop && !exactUnverified) {
+    // crop+pad requires source wider than display OR source==coded (inset crop
+    // of a full coded raster). source==display<coded already handled above.
+    if (hasCrop && heightAlreadyBank && wideEnoughForDisplayCrop && !exactUnverified &&
+        !padOnlyB14) {
         append(buildCropPadNoScale(dispW, dispH, req.coded_w, req.coded_h, req.crop_left,
                                    req.crop_top, req.source_w));
         if (exactCodedSource)

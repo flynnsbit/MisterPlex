@@ -277,8 +277,12 @@ int main() {
             // Non-exact bank-height wide deliveries (WIDTH mismatch, H==480):
             // crop+pad hfit, no V resample. Exact unverified: crop+pad pin.
             // Verified exact identity is covered outside this loop.
+            // source==display<coded (618→624, 426→432): pad-only — crop at
+            // crop_left on display-wide source is OOB (rd-duck B14 collision).
+            const bool padOnlyDisplayExact = ffmpegPadOnlySourceEqualsDisplay(
+                c.sw, c.sh, disp_w, disp_h, coded_w, coded_h);
             const bool bankHeightWideNonExact =
-                !exactBank && (c.sh == coded_h && c.sw >= disp_w);
+                !exactBank && !padOnlyDisplayExact && (c.sh == coded_h && c.sw >= disp_w);
             if (exactBank) {
                 // Unverified exact CLAIM under Always: FOAR into coded (not crop).
                 // Host: crop=618:480 on real 624x350 delivery → ffmpeg EINVAL.
@@ -294,6 +298,14 @@ int main() {
                        (std::string("exact claim no fixed crop for ") + c.name).c_str());
                 expect_eq(p.reason, "force_unverified_claim_scale_pad_coded",
                           "exact bank reason");
+            } else if (padOnlyDisplayExact) {
+                expect(!p.scale_applied && !p.identity_skip,
+                       (std::string("FORCE_SCALE pad-only for ") + c.name).c_str());
+                expect(p.vf.find("crop=") == std::string::npos,
+                       (std::string("pad-only no source crop for ") + c.name).c_str());
+                expect(p.vf.find("pad=624:480") != std::string::npos,
+                       (std::string("pad-only pads coded for ") + c.name).c_str());
+                expect_eq(p.reason, "pad_only_source_eq_display", "pad-only reason");
             } else if (bankHeightWideNonExact) {
                 expect(!p.scale_applied && !p.identity_skip,
                        (std::string("FORCE_SCALE bank-h crop-pad for ") + c.name).c_str());
@@ -562,11 +574,26 @@ int main() {
     }
 
     // --- B14 Direct-Part 426→432 (not product 624 canvas) ---
-    // FFmpeg pad inset x=2 must match host geometry crop_left (rd-duck).
+    // Pad-only at destination inset x=2; NEVER crop source at crop_left when
+    // source==display<coded (rd-duck FIX-COLLISION: crop=426:240:2:0 is OOB).
+    // PLXG/metadata still carry coded432 display426 crop L2/R4.
     {
+        expect(ffmpegPadOnlySourceEqualsDisplay(426, 240, 426, 240, 432, 240),
+               "B14 pad-only predicate");
+        expect(!ffmpegPadOnlySourceEqualsDisplay(640, 480, 618, 480, 624, 480),
+               "hfit 640 is not pad-only");
+        expect(!ffmpegPadOnlySourceEqualsDisplay(624, 480, 618, 480, 624, 480),
+               "exact coded is not pad-only");
+
         const auto g = ddrFfmpegGeometryForPresent(426, 240, /*wantFpga*/ true);
         expect(g.coded_width.get() == 432 && g.display_width.get() == 426, "B14 geom 432/426");
         expect(g.crop_left == 2 && g.crop_right == 4, "B14 crop L2/R4");
+        // Overload with delivered dims must preserve display/crop when store=432.
+        const auto gDel = ddrFrameGeometryForFpgaPresent(432, 240, 426, 240);
+        expect(gDel.coded_width.get() == 432 && gDel.display_width.get() == 426 &&
+                   gDel.crop_left == 2 && gDel.crop_right == 4,
+               "B14 present(store,delivered) keeps 426/crop");
+
         FfmpegVfRequest r;
         r.coded_w = g.coded_width.get();
         r.coded_h = g.coded_height.get();
@@ -580,13 +607,26 @@ int main() {
         r.delivery_geometry_verified = true;
         const auto p = buildFfmpegVideoFilter(r);
         expect(!p.identity_skip, "B14 not identity_skip (coded!=source)");
-        expect(p.vf.find("crop=426:240:2:0") != std::string::npos, "B14 crop at x=2");
-        expect(p.vf.find("pad=432:240") != std::string::npos, "B14 pad to 432");
+        expect(!p.scale_applied, "B14 pad-only no scale");
+        expect_eq(p.reason, "pad_only_source_eq_display", "B14 pad-only reason");
+        expect_eq(p.vf, "pad=432:240:2:0:color=black", "B14 pad-only string");
+        expect(p.vf.find("crop=") == std::string::npos, "B14 no source crop (OOB twin)");
         expect(p.vf.find("pad=624:480") == std::string::npos, "B14 not product 624 canvas");
+        // FAULT twin: old crop+pad string is OOB on 426-wide source.
+        const std::string faultCrop =
+            buildCropPadNoScale(426, 240, 432, 240, /*crop_left=*/2, /*crop_top=*/0,
+                                /*source_w=*/426);
+        expect(faultCrop.find("crop=426:240:2:0") != std::string::npos,
+               "FAULT old path still builds OOB crop (negative oracle)");
+        expect(p.vf != faultCrop, "product must not equal FAULT crop+pad");
         // FAULT: identity store geometry would claim source==coded 432.
         const auto gFault = ddrFrameGeometryForFpgaPresentFaultIdentityStore(432, 240);
         expect(gFault.display_width.get() == 432 && gFault.crop_left == 0, "FAULT id 432");
-        std::printf("GREEN_B14_426_432 crop_x=2 pad=432 not624\n");
+        // Host→record→mux→store still B14 with corrected metadata.
+        const auto chain = ddrB14Pad426HostRecordMuxStoreOracle();
+        expect(chain.product_ok && chain.fail[0] == '\0', "B14 host/record/mux/store");
+        expect(chain.fault_identity_fails_b14, "B14 identity FAULT fails predicate");
+        std::printf("GREEN_B14_426_432 pad_only=432:240:2:0 no_crop meta=426/L2R4\n");
     }
 
     // --- Loss2 half-res (parent A/B: request=397 → measured=312x240) ---
