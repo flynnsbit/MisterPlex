@@ -1,30 +1,12 @@
 lane: w-fitgate
-HEAD: 0b96c0d569dc
+HEAD: 1137e20639b5
 branch: w-fitgate
 worktree: /home/flynnsbit/Projects/MisterPlex-wt-fitgate
 GRANT: NO
 selftest: FIT_RELEASE_GATE_SELFTEST_PASS EXECUTED true_rc=0
-mutation_matrix: docs/fit_gate_mutation_matrix.json
-  rows=14 red=14 fail_holes=0
-  B0_TREE_HASH | deadbeef hash | RED | true_rc=1
-  B10_BEAM_QIP | remove beam from qip | RED | true_rc=1
-  B6_HBLANK_OLD_HC_EPOCH | HBlank<=hc old | RED | true_rc=1
-  B1_LAYOUT_NOT_960 | force 640x480 layout | RED | true_rc=1
-  B20_HIER_MANIFEST | empty scenarios[] | RED | true_rc=1
-  B20_UNCONNECTED_PRODUCER | drop .content_w pin | RED | true_rc=1
-  STRING_IFDEF_AWARE | FAULT_X wraps token | RED | true_rc=1
-  B25_PLXC_DUAL_MAP | empty manifest | RED | true_rc=1
-  B24_Q5_FPS_1001 | empty manifest | RED | true_rc=1
-  B9_SYS_TOP_AR_OUT_HOLD_MISSING | live | RED | true_rc=1
-  B9_POST_ASCAL_DAR_BLACKOUT_MISSING | live | RED | true_rc=1
-  B26_STORE_CROP_DISPLAY_BOUNDS_MISSING | live | RED | true_rc=1
-  B27_FFMPEG_PAD_CHROMA_EVEN_ORACLE | live | RED | true_rc=1
-  B23_OWNERSHIP | live | RED | true_rc=1
-B20_verilator: scripts/run_verilator.sh → ~/.local/oss-cad-suite/bin/verilator
-  missing/rc127/rc77 = HARD FAIL (not soft-skip)
-  live hollow sweep: n_findings=11 verilator_rc=2
-string_checks: product_active_sv strips FAULT_*/RED_TWIN_*/FIT_MUTATION_*
-  B19 evidence + B15 hardwire use product view (red-twin protected)
-B2_NO_RASTER_GENERATOR: RETIRED (w-clock; timing_960 math pack; beam=SoT)
-hollow_leg0: FAIL count~49 GRANT=NO (correct)
-identity: intentional rebase post ruler edit
+mutation_matrix: docs/fit_gate_mutation_matrix.json rows=14 red=14 fail_holes=0
+  (each row RED with true_rc=1 — see JSON for inject/expect)
+B20: run_verilator.sh→oss-cad-suite; missing=HARD FAIL; pin-drop matrix RED
+string: product_active_sv FAULT_* strip (B15/B19 protected)
+B2_NO_RASTER_GENERATOR: RETIRED
+hollow_leg0: FAIL ~49 reasons GRANT=NO
