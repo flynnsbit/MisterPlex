@@ -1,7 +1,7 @@
 lane=w-fitgate
 branch=w-fitgate
 worktree=/home/flynnsbit/Projects/MisterPlex-wt-fitgate
-tip=2679d3bd full=2679d3bd2e94b2c317bb428c59a6bef0c9c50f43
+tip=844ba93c full=844ba93c8e74585916929b5addb7c4683bb938de
 origin=origin/w-fitgate (pushed)
 GRANT=NO
 FIT_SLOT=HELD (parent only; this lane never takes Quartus)
@@ -26,7 +26,7 @@ TRUE main@ad928cb1 (pinned detached worktree MisterPlex-wt-fitgate-meas-main):
 
 GATE FIX commits:
   307f8685 B37: ABSENT≠dead; LEG0_B37_MEASURED_REF branch+sha required
-  2679d3bd candidate lock head refresh + status
+  2679d3bd candidate lock; 844ba93c status tip
 
 SELFTEST (true rc direct):
   python3 scripts/fit_release_gate.py --self-test; echo "true rc=$?"
