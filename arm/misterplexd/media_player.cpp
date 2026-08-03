@@ -18,6 +18,7 @@
 #include "libmisterplex/yuv420p_chroma_health.hpp"
 #include "libmisterplex/publish_interval_ledger.hpp"
 #include "libmisterplex/publish_swap_delta_ledger.hpp"
+#include "libmisterplex/frame_cost_ledger.hpp"
 #include <algorithm>
 #include <atomic>
 #include <cctype>
@@ -3512,6 +3513,17 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
             int64_t drops = 0;
         } prof;
         const bool profilePresent = presentProfile_;
+        // FRAME_COST_LEDGER: p50/p95/p99 of work_us = read_wall + pixel + ddr
+        // (excludes A/V Hold pacing). Light wall stamps only when profile is off.
+        const bool frameCostOn = frameCostLedger_ || profilePresent;
+        misterplex::FrameCostLedger frameCost{};
+        int64_t frameCostReadUs = 0;
+        int64_t frameCostPixelUs = 0;
+        auto logFrameCost = [&](const char* tag) {
+            if (!frameCostLedger_ || frameCost.empty())
+                return;
+            log(std::string("media: ") + frameCost.formatLine(tag));
+        };
         auto logProfile = [&]() {
             if (!profilePresent || prof.frames <= 0)
                 return;
@@ -3573,6 +3585,8 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                 " ddr_cpu_us_p=" + std::to_string(avgPresented(prof.ddrCpuUs)) +
                 " frame_bytes=" + std::to_string(frameBytes) +
                 " fmt=" + ffmpegPixFmt(videoFmt));
+            // Percentiles sit beside means; do not reset frameCost (session ring).
+            logFrameCost("present_profile_tick");
             prof = PresentProfileAccum{};
         };
 
@@ -3699,24 +3713,38 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                     } else {
                         ok = false;
                     }
-                    if (profilePresent && ok) {
-                        const int64_t ddrCpu1 = threadCpuMicros();
+                    if (ok && (profilePresent || frameCostOn)) {
                         const auto dt = fpga_.lastDdrTiming();
-                        const int64_t accounted = dt.prep_wait_us + dt.copy_us + dt.flush_us +
-                                                  dt.doorbell_us + dt.post_wait_us;
-                        prof.ddrPrepWaitUs += dt.prep_wait_us;
-                        prof.ddrCopyUs += dt.copy_us;
-                        prof.ddrFlushUs += dt.flush_us;
-                        prof.ddrDoorbellUs += dt.doorbell_us;
-                        prof.ddrPostWaitUs += dt.post_wait_us;
-                        prof.ddrBankReuseWaitUs += dt.bank_reuse_wait_us;
-                        prof.ddrPlxdPollUs += dt.plxa_poll_us;
-                        prof.ddrPlxdPollIters += dt.plxa_poll_iters;
-                        prof.ddrPlxdUsed += dt.plxa_used ? 1 : 0;
-                        prof.ddrTotalUs += dt.total_us;
-                        prof.ddrCpuUs += ddrCpu1 - ddrCpu0;
-                        if (dt.total_us > accounted)
-                            prof.ddrUnaccountedUs += dt.total_us - accounted;
+                        if (profilePresent) {
+                            const int64_t ddrCpu1 = threadCpuMicros();
+                            const int64_t accounted = dt.prep_wait_us + dt.copy_us + dt.flush_us +
+                                                      dt.doorbell_us + dt.post_wait_us;
+                            prof.ddrPrepWaitUs += dt.prep_wait_us;
+                            prof.ddrCopyUs += dt.copy_us;
+                            prof.ddrFlushUs += dt.flush_us;
+                            prof.ddrDoorbellUs += dt.doorbell_us;
+                            prof.ddrPostWaitUs += dt.post_wait_us;
+                            prof.ddrBankReuseWaitUs += dt.bank_reuse_wait_us;
+                            prof.ddrPlxdPollUs += dt.plxa_poll_us;
+                            prof.ddrPlxdPollIters += dt.plxa_poll_iters;
+                            prof.ddrPlxdUsed += dt.plxa_used ? 1 : 0;
+                            prof.ddrTotalUs += dt.total_us;
+                            prof.ddrCpuUs += ddrCpu1 - ddrCpu0;
+                            if (dt.total_us > accounted)
+                                prof.ddrUnaccountedUs += dt.total_us - accounted;
+                        }
+                        // Deadline cost: pipe-fill + chroma pad + DDR present.
+                        // EXCLUDES A/V Hold sleep (pacing). Cap to uint32.
+                        if (frameCostLedger_ && countPresent) {
+                            const int64_t work = frameCostReadUs + frameCostPixelUs +
+                                                 static_cast<int64_t>(dt.total_us);
+                            const uint32_t wu =
+                                work < 0 ? 0u
+                                         : (work > static_cast<int64_t>(UINT32_MAX)
+                                                ? UINT32_MAX
+                                                : static_cast<uint32_t>(work));
+                            frameCost.note(wu);
+                        }
                     }
                     if (!ok)
                         log("media: DDR YUV420p F1 unavailable: " +
@@ -3976,7 +4004,10 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
             std::chrono::steady_clock::time_point readEnd;
             int64_t readCpuStart = 0;
             int64_t readCpuEnd = 0;
-            if (profilePresent)
+            frameCostReadUs = 0;
+            frameCostPixelUs = 0;
+            // Wall stamp for cost ledger (VDSO) even when full PRESENT_PROFILE is off.
+            if (profilePresent || frameCostOn)
                 readStart = std::chrono::steady_clock::now();
             if (profilePresent)
                 readCpuStart = threadCpuMicros();
@@ -4074,10 +4105,12 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                     frameReadMaxBytes = n;
                 totalBytes += static_cast<size_t>(n);
             }
-            if (profilePresent) {
-                readCpuEnd = threadCpuMicros();
+            if (profilePresent || frameCostOn)
                 readEnd = std::chrono::steady_clock::now();
-            }
+            if (profilePresent)
+                readCpuEnd = threadCpuMicros();
+            if (frameCostOn && got >= frameBytes)
+                frameCostReadUs = microsBetween(readStart, readEnd);
             if (paused_.load())
                 continue;
             if (got < frameBytes) {
@@ -4099,9 +4132,9 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
             got = 0;
 
             if (videoFmt == RawVideoFormat::Yuv420p) {
-                if (profilePresent) {
+                if (profilePresent || frameCostOn) {
                     const auto pix0 = std::chrono::steady_clock::now();
-                    const int64_t pixCpu0 = threadCpuMicros();
+                    const int64_t pixCpu0 = profilePresent ? threadCpuMicros() : 0;
                     clearYuv420pCropPadding(frame.data(), ddrGeometry);
                     // Safety net for defect A: if U/V stayed near 0 (green-cast
                     // class), force studio-neutral chroma so scanout is greyscale
@@ -4114,10 +4147,13 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                                 std::to_string(rawW) + "x" + std::to_string(rawH) +
                                 " — green-cast class; check identity_skip / PMS delivery");
                     }
-                    const int64_t pixCpu1 = threadCpuMicros();
                     const auto pix1 = std::chrono::steady_clock::now();
-                    prof.pixelUs += microsBetween(pix0, pix1);
-                    prof.pixelCpuUs += pixCpu1 - pixCpu0;
+                    frameCostPixelUs = microsBetween(pix0, pix1);
+                    if (profilePresent) {
+                        const int64_t pixCpu1 = threadCpuMicros();
+                        prof.pixelUs += frameCostPixelUs;
+                        prof.pixelCpuUs += pixCpu1 - pixCpu0;
+                    }
                 } else {
                     clearYuv420pCropPadding(frame.data(), ddrGeometry);
                     if (repairDeadYuv420pChroma(frame.data(), rawW, rawH)) {
@@ -4515,10 +4551,15 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
             }
             if (profilePresent && prof.frames >= 300)
                 logProfile();
+            // Ledger-only path (no PRESENT_PROFILE): dump every 300 notes.
+            if (frameCostLedger_ && !profilePresent && frameCost.count > 0 &&
+                (frameCost.count % 300ull) == 0ull)
+                logFrameCost("periodic");
         }
 
         if (profilePresent)
             logProfile();
+        logFrameCost("session_end");
         if (rfd >= 0)
             ::close(rfd);
         // Close video first so ffmpeg can exit and EOF stderr for the pump join.

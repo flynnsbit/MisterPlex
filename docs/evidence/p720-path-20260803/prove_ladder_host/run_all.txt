@@ -1,0 +1,32 @@
+=== RUNG 540 requested=960x540 maxBR=2000 maxFR=24 mode=match expect=960x540 ===
+requested_url_nolog=http://127.0.0.1:32400/video/:/transcode/universal/start.mp4?hasMDE=1&path=%2Flibrary%2Fmetadata%2F2&mediaIndex=0&partIndex=0&protocol=http&fastSeek=1&directPlay=0&directStream=0&subtitleSize=100&audioBoost=100&location=lan&copyts=1&session=prove-ladder-31107-540&videoQuality=100&videoResolution=960x540&maxVideoBitrate=2000&videoCodec=h264&audioCodec=aac&videoProfile=baseline&videoLevel=31
+requested_pms=960x540 maxVideoBitrate=2000
+decision_curl true rc=0
+sample_curl true rc=0 bytes=615888
+ffmpeg true rc=0
+ffmpeg_banner=  Stream #0:0[0x100]: Video: h264 (Main) ([27][0][0][0] / 0x001B), yuv420p(progressive), 960x540 [SAR 1:1 DAR 16:9], 24 fps, 24 tbr, 90k tbn, start 1.483333
+delivered_src=ffmpeg_banner
+RESULT tag=540 requested=960x540 maxBR=2000 delivered_banner=960x540 decision_xml=960x540 fps=24 decoded=960x540
+PASS 540: delivered matches expect 960x540 src=ffmpeg_banner
+=== RUNG 360 requested=640x360 maxBR=1000 maxFR=0 mode=match expect=640x360 ===
+requested_url_nolog=http://127.0.0.1:32400/video/:/transcode/universal/start.mp4?hasMDE=1&path=%2Flibrary%2Fmetadata%2F2&mediaIndex=0&partIndex=0&protocol=http&fastSeek=1&directPlay=0&directStream=0&subtitleSize=100&audioBoost=100&location=lan&copyts=1&session=prove-ladder-31107-360&videoQuality=100&videoResolution=640x360&maxVideoBitrate=1000&videoCodec=h264&audioCodec=aac&videoProfile=baseline&videoLevel=30
+requested_pms=640x360 maxVideoBitrate=1000
+decision_curl true rc=0
+sample_curl true rc=0 bytes=501396
+ffmpeg true rc=0
+ffmpeg_banner=  Stream #0:0[0x100]: Video: h264 (High) ([27][0][0][0] / 0x001B), yuv420p(progressive), 640x360 [SAR 1:1 DAR 16:9], 24 fps, 24 tbr, 90k tbn, start 1.483333
+delivered_src=ffmpeg_banner
+RESULT tag=360 requested=640x360 maxBR=1000 delivered_banner=640x360 decision_xml=640x360 fps=24 decoded=640x360
+PASS 360: delivered matches expect 640x360 src=ffmpeg_banner
+=== RUNG 540-trap requested=960x540 maxBR=1500 maxFR=0 mode=trap540 expect=720x404 ===
+requested_url_nolog=http://127.0.0.1:32400/video/:/transcode/universal/start.mp4?hasMDE=1&path=%2Flibrary%2Fmetadata%2F2&mediaIndex=0&partIndex=0&protocol=http&fastSeek=1&directPlay=0&directStream=0&subtitleSize=100&audioBoost=100&location=lan&copyts=1&session=prove-ladder-31107-540-trap&videoQuality=100&videoResolution=960x540&maxVideoBitrate=1500&videoCodec=h264&audioCodec=aac&videoProfile=baseline&videoLevel=31
+requested_pms=960x540 maxVideoBitrate=1500
+decision_curl true rc=0
+sample_curl true rc=0 bytes=542192
+ffmpeg true rc=0
+ffmpeg_banner=  Stream #0:0[0x100]: Video: h264 (High) ([27][0][0][0] / 0x001B), yuv420p(progressive), 720x404 [SAR 404:405 DAR 16:9], 24 fps, 24 tbr, 90k tbn, start 1.483333
+delivered_src=ffmpeg_banner
+RESULT tag=540-trap requested=960x540 maxBR=1500 delivered_banner=720x404 decision_xml=720x404 fps=24 decoded=720x404
+PASS 540-trap: GENUINE_540_FAIL trap fired measured=720x404 (red twin OK)
+SUMMARY prove_ladder_delivery FAILS=0
+true rc=0

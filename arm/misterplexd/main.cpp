@@ -223,6 +223,7 @@ int main(int argc, char** argv) {
     bool ddrMemSync = true;
     bool ddrMemFlush = false;
     bool presentProfile = false;
+    bool frameCostLedger = false;
     bool streamEnabled = false;
     // Prefer library H.264 Part (transcoded=0) instead of PMS universal.
     // Default tracks STREAM unless PREFER_DIRECT_H264 overrides, except Path720p
@@ -451,6 +452,9 @@ int main(int argc, char** argv) {
         v = loadConf(confPath, "PRESENT_PROFILE");
         if (!v.empty())
             presentProfile = confTruthy(v);
+        v = loadConf(confPath, "FRAME_COST_LEDGER");
+        if (!v.empty())
+            frameCostLedger = confTruthy(v);
         v = loadConf(confPath, "STREAM");
         if (!v.empty())
             streamEnabled = confTruthy(v);
@@ -704,6 +708,7 @@ int main(int argc, char** argv) {
     player.setDdrMemSync(ddrMemSync);
     player.setDdrMemFlush(ddrMemFlush);
     player.setPresentProfile(presentProfile);
+    player.setFrameCostLedger(frameCostLedger);
     player.setStreamEnabled(streamEnabled);
     player.setStreamSkipRgb(streamSkipRgb);
     player.setFfmpegScaleMode(ffmpegScaleMode);
@@ -858,7 +863,8 @@ int main(int argc, char** argv) {
     std::fprintf(stderr, "misterplexd: DDR_MEM_SYNC=%s DDR_MEM_FLUSH=%s\n",
                  ddrMemSync ? "1" : "0", ddrMemFlush ? "1" : "0");
     std::fprintf(stderr, "misterplexd: DDR_FRAME_FORMAT=yuv420p\n");
-    std::fprintf(stderr, "misterplexd: PRESENT_PROFILE=%s\n", presentProfile ? "1" : "0");
+    std::fprintf(stderr, "misterplexd: PRESENT_PROFILE=%s FRAME_COST_LEDGER=%s\n",
+                 presentProfile ? "1" : "0", frameCostLedger ? "1" : "0");
     std::fprintf(stderr,
                  "misterplexd: FFMPEG_SCALE=%s FFMPEG_SWS_FLAGS=%s "
                  "FFMPEG_SCALE_ASSUME_MATCH=%s DDR_YUV_FORCE_SCALE=%s "

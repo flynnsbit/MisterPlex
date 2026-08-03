@@ -67,6 +67,9 @@ public:
     void setDdrMemFlush(bool on) { fpga_.setDdrMemFlush(on); }
     void setDdrFrameFormat(DdrFrameFormat format) { ddrFrameFormat_ = format; }
     void setPresentProfile(bool on) { presentProfile_ = on; }
+    // Per-frame work_us ledger (read+present excl. pacing) → p50/p95/p99/max.
+    // Conf FRAME_COST_LEDGER=1. Hot path is one uint32 store; dump sorts off-path.
+    void setFrameCostLedger(bool on) { frameCostLedger_ = on; }
     // STREAM=1: demux annex-B H.264 → host I-slice recon (I420 → F1) + F3 stub feed
     void setStreamEnabled(bool on) { streamEnabled_ = on; }
     // When STREAM recon owns F1, optionally drop heavy FFmpeg RGB decode (keep audio).
@@ -396,6 +399,7 @@ private:
     FpgaSpi fpga_;
     DdrFrameFormat ddrFrameFormat_ = DdrFrameFormat::Yuv420p;
     bool presentProfile_ = false;
+    bool frameCostLedger_ = false;
     bool useDdrF1_ = true; // F1 product presentation attempts DDR YUV420p only.
     int ddrBank_ = 0;      // ping-pong 0/1; stride comes from ddr_frame_layout.hpp
     // Successful publish timestamps (doorbell/swap_req). See publish_interval_ledger.hpp.
