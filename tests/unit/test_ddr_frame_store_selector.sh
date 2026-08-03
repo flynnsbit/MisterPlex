@@ -79,6 +79,20 @@ set -e
 printf '%s\n' "$SILENT_OUT"
 echo "silent rc=$SILENT_RC"
 
+echo "=== A3) FAULT: OPTION_C_LEG_REBASE (expect REPRO geom_off on Option-C) ===" >&2
+REBASE_BUILD="$ROOT/build/verilator/ddr_selector_leg_rebase"
+mkdir -p "$REBASE_BUILD"
+"$RUN_VERILATOR" "${vflags[@]}" --Mdir "$REBASE_BUILD" \
+  -DOPTION_C \
+  -DDDR_FRAME_STORE_FAULT_OPTION_C_LEG_REBASE \
+  "${common_sv[@]}"
+set +e
+REBASE_OUT="$(SELECTOR_MODE=leg_rebase_fault "$REBASE_BUILD/Vddr_frame_store_selector_tb" 2>&1)"
+REBASE_RC=$?
+set -e
+printf '%s\n' "$REBASE_OUT"
+echo "leg_rebase rc=$REBASE_RC"
+
 echo "=== B) GOOD: capacity usable selector (expect PASS Option-C 960 + loud_E2) ===" >&2
 "$RUN_VERILATOR" "${vflags[@]}" --Mdir "$GOOD_BUILD" \
   "${common_sv[@]}"
@@ -89,9 +103,24 @@ set -e
 printf '%s\n' "$GOOD_OUT"
 echo "good rc=$GOOD_RC"
 
+echo "=== B2) GOOD + product QSF -DOPTION_C (geom_off must stay true legacy) ===" >&2
+OPTC_BUILD="$ROOT/build/verilator/ddr_selector_optc_qsf"
+mkdir -p "$OPTC_BUILD"
+"$RUN_VERILATOR" "${vflags[@]}" --Mdir "$OPTC_BUILD" \
+  -DOPTION_C \
+  "${common_sv[@]}"
+set +e
+OPTC_OUT="$(SELECTOR_MODE=good "$OPTC_BUILD/Vddr_frame_store_selector_tb" 2>&1)"
+OPTC_RC=$?
+set -e
+printf '%s\n' "$OPTC_OUT"
+echo "optc_qsf rc=$OPTC_RC"
+
 assert_sim_executed "selector-fault" "$FAULT_OUT" "REPRO_OK" "selector_fault" "960x540"
 assert_sim_executed "selector-silent" "$SILENT_OUT" "REPRO_OK" "silent_geom" "no 0xE2"
-assert_sim_executed "selector-good" "$GOOD_OUT" "PASS selector_product" "U@518400" "loud_E2"
+assert_sim_executed "selector-leg-rebase" "$REBASE_OUT" "REPRO_OK leg_rebase" "Option-C"
+assert_sim_executed "selector-good" "$GOOD_OUT" "PASS selector_product" "U@518400" "loud_E2" "MEASURED_GEOM_OFF"
+assert_sim_executed "selector-optc-qsf" "$OPTC_OUT" "PASS selector_product" "MEASURED_GEOM_OFF" "base=0x30000000"
 
 if [[ "$FAULT_RC" -ne 0 ]] || ! grep -q 'REPRO_OK' <<<"$FAULT_OUT"; then
   echo "FAIL: fault twin did not reproduce forced-legacy on 960x540" >&2
@@ -101,9 +130,17 @@ if [[ "$SILENT_RC" -ne 0 ]] || ! grep -q 'REPRO_OK silent_geom' <<<"$SILENT_OUT"
   echo "FAIL: silent-geom twin did not REPRO missing 0xE2" >&2
   exit 1
 fi
+if [[ "$REBASE_RC" -ne 0 ]] || ! grep -q 'REPRO_OK leg_rebase' <<<"$REBASE_OUT"; then
+  echo "FAIL: LEG-rebase twin did not REPRO geom_off on Option-C" >&2
+  exit 1
+fi
 if [[ "$GOOD_RC" -ne 0 ]] || ! grep -q 'PASS selector_product' <<<"$GOOD_OUT"; then
   echo "FAIL: product selector oracle did not pass" >&2
   exit 1
 fi
-echo "OK ddr_frame_store_selector: REPRO legacy + REPRO silent + PASS product (TB executed)"
+if [[ "$OPTC_RC" -ne 0 ]] || ! grep -q 'base=0x30000000' <<<"$OPTC_OUT"; then
+  echo "FAIL: product -DOPTION_C geom_off is not true legacy" >&2
+  exit 1
+fi
+echo "OK ddr_frame_store_selector: REPRO legacy + silent + leg_rebase + PASS product + OPTION_C geom_off"
 exit 0

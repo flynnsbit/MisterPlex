@@ -370,9 +370,8 @@ module present_core #(
 
 `include "ddr_frame_layout_params.svh"
 
-	// B1: under PRESENT_BEAM_960 / OPTION_C the store compile-time LEG map is
-	// Option-C (see ddr_frame_store `ifdef OPTION_C). PHYS_BASE_720P params are
-	// always passed so capacity select and OPTION_C re-base share one source.
+	// B1: LEG map is always true 480p legacy; PHYS_BASE_720P params feed runtime
+	// rt_need_optc → Option-C only (no compile-time LEG re-base).
 	ddr_frame_store #(
 		.FRAME_W(FRAME_W),
 		.FRAME_H(FRAME_H),
@@ -389,7 +388,7 @@ module present_core #(
 		.PHYS_BASE(32'h3000_0000),
 		.HPS_BANK_STRIDE_BYTES(DDR_FRAME_YUV420P_BANK_STRIDE),
 		.DOORBELL_PHYS(DDR_FRAME_YUV420P_DOORBELL_PHYS),
-		// Option-C banks (capacity select + compile-time OPTION_C LEG re-base)
+		// Option-C banks (runtime capacity select via rt_need_optc)
 		.PHYS_BASE_720P(DDR_FRAME_720P_PHYS_BASE),
 		.HPS_BANK_STRIDE_BYTES_720P(DDR_FRAME_720P_YUV420P_BANK_STRIDE),
 		.DOORBELL_PHYS_720P(DDR_FRAME_720P_YUV420P_DOORBELL_PHYS)

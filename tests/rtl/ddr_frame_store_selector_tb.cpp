@@ -198,7 +198,9 @@ int main(int argc, char** argv) {
 	const char* mode = std::getenv("SELECTOR_MODE");
 	const bool fault = mode && std::string(mode) == "fault";
 	const bool silent_geom = mode && std::string(mode) == "silent_geom";
-	const bool expect_fresh = !fault && !silent_geom;
+	const bool leg_rebase_fault =
+	    mode && std::string(mode) == "leg_rebase_fault";
+	const bool expect_fresh = !fault && !silent_geom && !leg_rebase_fault;
 
 	std::cout << "PRE-REGISTER selector fault=" << fault
 	          << " silent_geom=" << silent_geom
@@ -231,6 +233,24 @@ int main(int argc, char** argv) {
 		          << "debug=0x" << std::hex << (int)sim.top.obs_debug_state
 		          << std::dec << " (silent legacy fallthrough)\n";
 		return 0;
+	}
+
+	// RED TWIN: compile-time LEG→Option-C rebase under OPTION_C — geom_off
+	// must NOT match host legacy doorbell (this is the rd-duck defect).
+	if (leg_rebase_fault) {
+		sim.driveGeom(false, 0, 0, 0, 0, 0, 0);
+		const uint32_t base = static_cast<uint32_t>(sim.top.obs_base_w0) << 3;
+		const uint32_t db = static_cast<uint32_t>(sim.top.obs_doorbell_w) << 3;
+		std::cout << "MEASURED leg_rebase_fault geom_off base=0x" << std::hex
+		          << base << " db=0x" << db << std::dec << "\n";
+		// Defect: LEG rebased → Option-C phys/doorbell while geom off.
+		if (base == kOptcBasePhys && db == kOptcDoorbellPhys) {
+			std::cout << "REPRO_OK leg_rebase: geom_off on Option-C map "
+			          << "(host still rings legacy 0x300FF000)\n";
+			return 0;
+		}
+		std::cerr << "FAIL leg_rebase twin: expected Option-C LEG rebase on geom_off\n";
+		return 1;
 	}
 
 	// Realizable usable-exact: h=512, ys=680, cs=336, w=672 → 512*(680+336)=520192
@@ -401,6 +421,22 @@ int main(int argc, char** argv) {
 		std::cerr << "FAIL selector: " << g_fails << " checks\n";
 		return 1;
 	}
+	// rd-duck: explicit disable / geom_off must stay true legacy even when
+	// product QSF defines OPTION_C (this binary may be built -DOPTION_C).
+	sim.driveGeom(false, 0, 0, 0, 0, 0, 0);
+	{
+		const uint32_t base = static_cast<uint32_t>(sim.top.obs_base_w0) << 3;
+		const uint32_t db = static_cast<uint32_t>(sim.top.obs_doorbell_w) << 3;
+		std::cout << "MEASURED_GEOM_OFF base=0x" << std::hex << base
+		          << " db=0x" << db << std::dec
+		          << " optc=" << (int)sim.top.obs_optc_map << "\n";
+		if (sim.top.obs_optc_map != 0 || base != kLegBasePhys || db != kLegDoorbellPhys) {
+			std::cerr << "FAIL geom_off must be true legacy 0x30000000/0x300FF000 "
+			          << "(not Option-C) under product OPTION_C\n";
+			return 1;
+		}
+	}
+
 	std::cout << "PASS selector_product: usable edges + 960x540 Option-C "
 	          << "U@518400 + w%16 reject + storage!=canvas + loud_E2 + q5_E4\n";
 	return 0;

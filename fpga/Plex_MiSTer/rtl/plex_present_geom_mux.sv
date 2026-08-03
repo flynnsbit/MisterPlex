@@ -77,7 +77,8 @@ module plex_present_geom_mux (
 `endif
 
 	// Under owned disable: keep HDMI beam at max-tier DE (960×540) so the glass
-	// does not collapse, but store geom_enable stays 0 (legacy bank pitch).
+	// does not collapse, but store geom_enable stays 0 → true legacy bank map
+	// (PHYS 0x30000000 / doorbell 0x300FF000), matching host makeDdrPublishPlan.
 	wire disable_beam_de = plxg_owned && !plxg_content && !plxg_geom_en;
 `ifdef PRESENT_BEAM_960
 	wire beam_de_960 = beam_fallback_960 | disable_beam_de;

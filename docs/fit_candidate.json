@@ -26,9 +26,9 @@
   },
   "locked_by": "w-mem",
   "locked_date": "2026-08-03",
-  "rationale": "Core emits true DE equal to content; ascal upscales to 1280x720. B1 OPTION_C compile-time bank re-base + capacity select; B4 PLXG epoch; B12 DE_LAG 960 measure.",
+  "rationale": "Core emits true DE equal to content; ascal upscales to 1280x720. B1 OPTION_C runtime capacity select (LEG stays legacy on geom off); B4 PLXG epoch; B12 DE_LAG 960 measure.",
   "notes": [
     "git_tree_hash binds gated artefacts via compute_gated_tree_hash() and excludes this file.",
-    "OPTION_C re-bases LEG_* banks to Option-C PHYS/stride/doorbell when geom_enable=0."
+    "OPTION_C enables OPTC_* via rt_need_optc only; geom_enable=0 keeps true legacy LEG_* (host disable path)."
   ]
 }
