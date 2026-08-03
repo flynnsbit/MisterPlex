@@ -70,3 +70,13 @@ Need: one commit/ready handshake for beam+bank+app OR hold black/old DE
 Owners: w-mem (latch/store) + w-clock (beam); w-osd integ wires only.
 w-osd: HOLD merge; do not claim B16/B20 closed at product without this.
 HEAD=2e91adb5
+
+=== rd-duck 2026-08-03T08:49:49-05:00 mode-exit DE 640 vs 624 COLLISION ===
+w-mem plex_present_geom_mux: LEG_DE_W=640 → 640×480 on valid disable
+w-clock: LEG_CW=624 → 624×480
+Source-native rule: true DE tracks delivered/storage, no island.
+640 = 624-wide store in wider DE — contradicts w-clock/path ownership.
+Last-writer-wins unless owner table/gate asserts exact 624 mode-exit.
+SETTLE before merge. Owners: w-mem (mux) + w-clock (beam LEG_CW).
+w-osd: HOLD; do not pick a side in Plex.sv without owner contract.
+HEAD=bb62dee1
