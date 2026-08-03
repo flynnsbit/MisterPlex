@@ -208,3 +208,15 @@ device wire.
 | Copy rate at 1382400 B (not scaled from 449280) | Parent: `ddr_write_bench --len 1382400` |
 | Fabric full-frame read BW vs line-timed DE | Sim or ILA on `ddram_frame_rd` issue rate @720p |
 | CPU headroom with PMS-delivered 720p (no ARM upscale) | Parent soak + `ffprobe` real stream WxH |
+
+## fabric_ddr_writer (RTL)
+
+Module: `fpga/Plex_MiSTer/rtl/fabric_ddr_writer.sv`  
+TB: `tests/unit/test_fabric_ddr_writer_verilator.sh`  
+Iface: `docs/fabric-ddr-writer-iface.md`
+
+- Parameterised geometry (480p and 720p are parameter sets).
+- Fills I420 bank, drain fence, one doorbell (PLXK).
+- Macro `FABRIC_DDR_WRITER` default **OFF** (commented in `Plex.qsf`).
+- Burst arithmetic: 720p30 = 5.8% of clk_ddr@90MHz @ 8B/cycle; outstanding=1 closes
+  if arbiter grant ≥ ~6%. Shared-bus grant is **unverified on device**.
