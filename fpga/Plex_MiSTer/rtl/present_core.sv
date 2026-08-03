@@ -402,19 +402,14 @@ module present_core #(
 	localparam [15:0] FRAME_LAST_X_16 = 16'(FRAME_W - 1);
 	localparam [15:0] FRAME_LAST_Y_16 = 16'(FRAME_H - 1);
 
-	// Stretch FRAME_W×FRAME_H frame_store across full Template DE — match colorbars in_content.
-	// Prior attempts (combo ÷529, reconstructed hc Bresenham) still UVC-pillar 0.604 on
-	// solid-red F1 while bars on same RBF span 0.998. Use colorbars hc + mul-shift.
-	// PRESENT_BEAM_960: identity map uses hc/vc (still feeds store_x_clamped name so
-	// G-VID1 scanout invariants remain a single assign pair).
-	localparam H_DE    = 10'd529;
-	localparam V_STORE = 10'd240;
-	localparam int STORE_X_SCALE = (FRAME_W * 39647) / 320;
-	localparam int STORE_Y_SCALE = (FRAME_H * 65536) / 240;
 	// Exact clone of colorbars in_content (full DE paint region).
+	// py is Template scandouble domain; beam L4/960 use hc11/vc11 for store map.
 	wire [9:0] py = scandouble ? (vc >> 1) : vc;
 `ifdef PLEX_PRESENT_720P_L4
 	// L4: present_content_window owns store map (identity when content==DE).
+	// NO Template H_DE=529 / V_STORE=240 — those live only in the `else` branch.
+	// STORE_* and DE defaults all derive from FRAME_*/L4_* so 1280×720 cannot
+	// silently keep a 480p-era paint window.
 	wire in_content_l4 = ~hb & ~vb & (hc11 < hde_act11) & (vc11 < vact_act11);
 	wire past_last_row; // driven by content_window
 	wire [FRAME_X_W-1:0] store_x_clamped;
@@ -448,18 +443,31 @@ module present_core #(
 		.past_last_row(past_last_row)
 	);
 	wire in_content = in_content_l4;
-	wire [9:0] store_y_clamped = past_last_row ? 10'd239 : py; // G-VID1 text anchor
+	// Clamp text uses FRAME_H-1 (not 239) so 720p does not inherit 480p last-row.
+	wire [9:0] store_y_clamped =
+		past_last_row ? 10'(FRAME_H > 0 ? FRAME_H - 1 : 0) : py;
 	wire _unused_l4_win = de_r_win | |store_y_clamped;
 `elsif PRESENT_BEAM_960
+	// Identity map: store coords track FRAME_W×FRAME_H, not Template 240-row domain.
 	wire in_content = ~hb & ~vb & (hc11 < hde_act11) & (vc11 < vact_act11);
-	wire       past_last_row = (py >= 10'd240); // kept for vb_d invariant text; beam blanks via DE
-	wire [9:0] store_y_clamped = past_last_row ? 10'd239 : py;
+	wire       past_last_row = (py >= 10'(FRAME_H));
+	wire [9:0] store_y_clamped =
+		past_last_row ? 10'(FRAME_H > 0 ? FRAME_H - 1 : 0) : py;
 	wire [FRAME_X_W-1:0] store_x_clamped =
 		(hc11 >= 11'(FRAME_W)) ? FRAME_LAST_X : FRAME_X_W'(hc11);
 	wire [FRAME_Y_W-1:0] store_y_addr =
 		(vc11 >= 11'(FRAME_H)) ? FRAME_LAST_Y : FRAME_Y_W'(vc11);
 	wire _unused_beam_store_y_clamped = |store_y_clamped;
 `else
+	// ---- Template / FBAR default path (product v0.3.0) ----
+	// H_DE=529 and V_STORE=240 are colorbars DE geometry, NOT FRAME_W/FRAME_H.
+	// They must remain fixed so G-VID1 / FBAR stay bit-identical at FRAME 640×480.
+	// Do NOT retarget these when enabling L4 — L4 is a separate ifdef branch above.
+	localparam H_DE    = 10'd529;
+	localparam V_STORE = 10'd240;
+	// Map Template DE (529×240) onto FRAME_W×FRAME_H store (default 640×480).
+	localparam int STORE_X_SCALE = (FRAME_W * 39647) / 320;
+	localparam int STORE_Y_SCALE = (FRAME_H * 65536) / 240;
 	wire in_content = (hc < H_DE) && (py < V_STORE) && ~hb && ~vb;
 
 	// store_x = floor(hc * 320 / 529) ≈ (hc * 39647) >> 16  (39647/65536 ≈ 0.6049)
