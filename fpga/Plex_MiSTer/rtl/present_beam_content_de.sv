@@ -48,6 +48,26 @@ module present_beam_content_de #(
 	assign hc_out = hc;
 	assign vc_out = vc;
 
+	// Next-counter epoch (combinational). Blank/sync NBA must use these so the
+	// registered HBlank/VBlank/HSync correspond to the same hc/vc visible after
+	// the edge. Using pre-update hc made wrap observe hc=0 with HBlank still 1,
+	// so in_content=(hc<H_DE)&&~hb dropped x=0 every line
+	// (store_id_checked=959*V_ACTIVE=517860 vs 518400) — rd-duck 34ddf031.
+	reg [10:0] hc_next;
+	reg [10:0] vc_next;
+	always @(*) begin
+		if (hc == 11'(H_LAST)) begin
+			hc_next = 11'd0;
+			if (vc == 11'(V_LAST))
+				vc_next = 11'd0;
+			else
+				vc_next = vc + 11'd1;
+		end else begin
+			hc_next = hc + 11'd1;
+			vc_next = vc;
+		end
+	end
+
 	always @(posedge clk) begin
 		// 1 clk/pix path @ clk_sys (20 MHz) — matches w-clock B1 1px content DE plan.
 		ce_pix <= 1'b1;
@@ -62,33 +82,25 @@ module present_beam_content_de #(
 			VBlank <= 1'b1;
 			VSync  <= 1'b0;
 		end else begin
-			// Advance on every cycle (ce_pix sticky 1 after reset release).
-			if (hc == 11'(H_LAST)) begin
-				hc <= 11'd0;
-				if (vc == 11'(V_LAST)) begin
-					vc <= 11'd0;
-					frame_start <= 1'b1;
-				end else begin
-					vc <= vc + 11'd1;
-				end
-			end else begin
-				hc <= hc + 11'd1;
-			end
+			hc <= hc_next;
+			vc <= vc_next;
+			if (hc == 11'(H_LAST) && vc == 11'(V_LAST))
+				frame_start <= 1'b1;
 
-			// Level blanks from *current* counters (same-cycle as colorbars style).
-			HBlank <= (hc >= 11'(H_DE));
-			VBlank <= (vc >= 11'(V_ACTIVE));
+			// Levels from *next* counters — same epoch as registered hc/vc.
+			HBlank <= (hc_next >= 11'(H_DE));
+			VBlank <= (vc_next >= 11'(V_ACTIVE));
 
-			if (hc == 11'(H_SYNC_S))
+			if (hc_next == 11'(H_SYNC_S))
 				HSync <= 1'b1;
-			if (hc == 11'(H_SYNC_E))
+			if (hc_next == 11'(H_SYNC_E))
 				HSync <= 1'b0;
 
-			// VS edges on H_SYNC_S (Template-style keying).
-			if (hc == 11'(H_SYNC_S)) begin
-				if (vc == 11'(V_SYNC_S))
+			// VS edges on H_SYNC_S (Template-style keying), same epoch as hc_next.
+			if (hc_next == 11'(H_SYNC_S)) begin
+				if (vc_next == 11'(V_SYNC_S))
 					VSync <= 1'b1;
-				else if (vc == 11'(V_SYNC_E))
+				else if (vc_next == 11'(V_SYNC_E))
 					VSync <= 1'b0;
 			end
 		end

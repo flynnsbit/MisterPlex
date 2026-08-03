@@ -1,8 +1,9 @@
 # Asca-native true 960×540 DE — fit card (w-scaler → w-nostub)
 
-**Gate:** counted RTL sim `tests/unit/test_present_true_de_count_rtl_sim.sh`  
-**Measured product:** `true_de=1 de_w=960 de_lines=540 de_pixels=518400` @ `H_TOT=1182 V_TOT=564` (`fps@20M=30.0008`)  
-**RED:** `PRESENT_BEAM_FAULT_ISLAND_1280` → `de=1280x720 true_de=0` rc≠0 + EXECUTED
+**Gate:** counted RTL sim `tests/unit/test_present_true_de_count_rtl_sim.sh` + `make fit-gate`  
+**Measured product:** `true_de=1 de_w=960 de_lines=540 de_pixels=518400 store_req=518400 store_oracle=1 store_x_range=0..959` @ `H_TOT=1182 V_TOT=564` (`fps@20M=30.0008`)  
+**RED:** `PRESENT_BEAM_FAULT_ISLAND_1280` → `de=1280x720 true_de=0` rc≠0 + EXECUTED  
+**Also RED (rd-duck):** DE-only greenwash — `de_pixels=518400` with `store_req=517860` (959×540, x=0 dropped) is **not** fit-ready. Beam blank/sync must use **same counter epoch** as registered `hc`/`vc` (`hc_next`).
 
 ## Synthesis / QSF (drop-in)
 
@@ -39,7 +40,8 @@ After DE_LAG on HBlank (present_core outs):
 1. Count cycles with `~HBlank & ~VBlank` per line → **960** every active line  
 2. Count such lines per frame → **540**  
 3. `de_pixels` → **518400**  
-4. ascal `iauto=1` will measure **ihsize=960 ivsize=540** from `i_de`
+4. **`store_req` / coordinate oracle** → **518400** requests, **x=0..959** every active line (identity `store_x==hc`). DE count alone is insufficient.  
+5. ascal `iauto=1` will measure **ihsize=960 ivsize=540** from `i_de`
 
 ## Forbidden (RED in sim)
 
@@ -64,7 +66,8 @@ If w-clock moves H_TOTAL/V_TOTAL, re-run this sim with matching beam params; DE 
 ## Parent verify
 
 ```bash
-cd <wt-scaler>
-tests/unit/test_present_true_de_count_rtl_sim.sh; echo tde=$?
-# expect product true_de=1 de=960x540; RED island true_rc=1
+cd <wt-fitgate>   # or tree with hc_next beam + store oracle
+tests/unit/test_present_true_de_count_rtl_sim.sh; echo "true rc=$?"
+# expect: store_req=518400 store_oracle=1 store_x_range=0..959 true_de=1; RED island true_rc=1
+make fit-gate-selftest; echo "true rc=$?"
 ```

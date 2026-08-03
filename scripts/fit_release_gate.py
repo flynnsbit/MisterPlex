@@ -293,6 +293,45 @@ def leg0_arch_blockers() -> tuple[int, list[str]]:
     else:
         msgs.append("LEG0_DDR_BEAM_TESTS " + " ".join(beam_ddr_tests))
 
+    # --- B6: beam blank/sync must share counter epoch (rd-duck store x0 drop) ---
+    # Defect: HBlank <= (hc >= H_DE) with NBA after hc<=hc+1 uses OLD hc, so
+    # observed hc=0 still HBlank=1 → in_content drops x=0 (517860 vs 518400).
+    beam_txt = _read(RTL / "present_beam_content_de.sv")
+    if beam_txt:
+        uses_old_hc_blank = bool(
+            re.search(r"HBlank\s*<=\s*\(\s*hc\s*>=", beam_txt)
+        ) and not bool(re.search(r"HBlank\s*<=\s*\(\s*hc_next\s*>=", beam_txt))
+        has_hc_next = "hc_next" in beam_txt
+        tb_cpp = _read(ROOT / "tests" / "rtl" / "present_true_de_count_tb.cpp")
+        has_store_area_check = (
+            "store_req_count==content area" in tb_cpp
+            or "store_id_checked == content_area" in tb_cpp
+            or "store_id_checked == CW * CH" in tb_cpp
+        )
+        has_oracle = "store_oracle" in tb_cpp or "store coordinate oracle" in tb_cpp
+        if uses_old_hc_blank or not has_hc_next:
+            errors.append(
+                "B6_HBLANK_OLD_HC_EPOCH: present_beam_content_de.sv must drive "
+                "HBlank/VBlank/HSync from hc_next/vc_next (same epoch as registered "
+                "counters). Old-hc NBA blank drops store x=0 every line "
+                "(store_id_checked=959*540=517860 vs de_pixels=518400) — rd-duck "
+                "34ddf031 scalar-ascal proof."
+            )
+        else:
+            msgs.append(
+                "LEG0_EVIDENCE beam uses hc_next epoch for HBlank (B6 static clear)"
+            )
+        if not has_store_area_check or not has_oracle:
+            errors.append(
+                "B6_STORE_ORACLE_UNTESTED: present_true_de_count_tb.cpp must require "
+                "store_id_checked==CW*CH and full x0..CW-1 coordinate oracle — DE-only "
+                "true_de greenwash is forbidden (rd-duck)."
+            )
+        else:
+            msgs.append(
+                "LEG0_EVIDENCE true_de_count asserts store_req==area + coordinate oracle"
+            )
+
     # --- Runtime-OFF OSD / colorbars timing cargo when candidate is ascal ---
     if cand and cand.get("architecture") == "ascal_true_de_960":
         # present_core still has colorbars Template path when PRESENT_BEAM_960 undefined.
@@ -475,13 +514,27 @@ def leg3_true_de(
     m = re.search(r"true_de=(\d+)", rout)
     de_w = re.search(r"de_w_max=(\d+)", rout)
     de_h = re.search(r"de_lines=(\d+)", rout)
+    # store_id_fail=N/M or store_req=M — M must equal content area (rd-duck 517860 trap)
+    store_m = re.search(r"store_id_fail=\d+/(\d+)", rout)
+    store_req = re.search(r"store_req=(\d+)", rout)
+    store_oracle = re.search(r"store_oracle=(\d+)", rout)
+    store_x_range = re.search(r"store_x_range=(-?\d+)\.\.(-?\d+)", rout)
     if not m or not de_w or not de_h:
         msgs.append("LEG3_FAIL EXECUTED could not parse true_de/de_w/de_lines")
         return 1, msgs
 
     td, dw, dh = int(m.group(1)), int(de_w.group(1)), int(de_h.group(1))
+    area = fw * fh
+    checked = int(store_m.group(1)) if store_m else -1
+    if store_req:
+        checked = int(store_req.group(1))
+    oracle = int(store_oracle.group(1)) if store_oracle else -1
+    sx0 = int(store_x_range.group(1)) if store_x_range else -1
+    sx1 = int(store_x_range.group(2)) if store_x_range else -1
     msgs.append(
-        f"LEG3_MEASURE content={fw}x{fh} de={dw}x{dh} true_de={td} island_inject={int(island)}"
+        f"LEG3_MEASURE content={fw}x{fh} de={dw}x{dh} true_de={td} "
+        f"store_req={checked} store_oracle={oracle} store_x={sx0}..{sx1} "
+        f"island_inject={int(island)}"
     )
 
     if island:
@@ -496,6 +549,21 @@ def leg3_true_de(
         msgs.append("LEG3_FAIL EXECUTED island/true_de=0 — release blocked")
         return 1, msgs
 
+    # Hard fail the 959×H store shortfall even if someone weakens true_de again.
+    if checked != area:
+        msgs.append(
+            f"LEG3_FAIL EXECUTED B6_STORE_SHORTFALL store_req={checked} want={area} "
+            f"({fw}x{fh}). de_pixels-alone is not enough — rd-duck: 517860=959*540 "
+            "meant x=0 never reached store while true_de greenwashed."
+        )
+        return 1, msgs
+    if oracle != 1 or sx0 != 0 or sx1 != fw - 1:
+        msgs.append(
+            f"LEG3_FAIL EXECUTED B6_STORE_ORACLE store_oracle={oracle} "
+            f"store_x_range={sx0}..{sx1} want oracle=1 x=0..{fw-1}"
+        )
+        return 1, msgs
+
     if rrc != 0 or td != 1 or dw != fw or dh != fh:
         msgs.append(
             f"LEG3_FAIL EXECUTED need true_de=1 de={fw}x{fh} rc=0; "
@@ -503,7 +571,10 @@ def leg3_true_de(
         )
         return 1, msgs
 
-    msgs.append(f"LEG3_PASS EXECUTED true_de=1 de={dw}x{dh} content={fw}x{fh}")
+    msgs.append(
+        f"LEG3_PASS EXECUTED true_de=1 de={dw}x{dh} content={fw}x{fh} "
+        f"store_req={checked} store_oracle=1 x=0..{fw-1}"
+    )
     return 0, msgs
 
 
