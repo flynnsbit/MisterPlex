@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# CEA raster + phase/seed sweep for wide-group present_npx_path (+prefill).
+# CEA raster + phase sweep; real rate_match; H_TOTAL slots + HS width.
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 if [[ -x "$ROOT/scripts/run_verilator.sh" ]]; then
@@ -15,6 +15,7 @@ OUT="$ROOT/build/verilator/present_npx_cea_raster"
 mkdir -p "$OUT"
 SRCS=(
   "$ROOT/tests/rtl/present_npx_cea_raster_tb.sv"
+  "$ROOT/fpga/Plex_MiSTer/rtl/present_pix_rate_match.sv"
   "$ROOT/fpga/Plex_MiSTer/rtl/present_npx_path.sv"
   "$ROOT/fpga/Plex_MiSTer/rtl/async_fifo.sv"
 )
@@ -27,7 +28,6 @@ run_one() {
   local pass_pat="$1"
   shift
   rm -rf "$OUT/$name"
-  # remaining args are -G flags
   "$RUN_VERILATOR" -Wno-fatal --binary --timing --top-module present_npx_cea_raster_tb \
     "$@" -Mdir "$OUT/$name" "${SRCS[@]}" >/dev/null
   set +e
@@ -42,24 +42,20 @@ run_one() {
   echo "OK $name rc=$rc"
 }
 
-# Fast geometry: full CEA line width, few lines — proves blanking HS + prefill
-# under Bresenham. Full 750-line frame is optional slow path (FULL=1).
 HT=1650
 HDE=1280
 if [[ "${FULL:-0}" == "1" ]]; then
   VA=720; VT=750; VSS=725; VSE=730
 else
-  # Short frame: keep HS geometry; place VS inside VT
   VA=8; VT=12; VSS=9; VSE=11
 fi
 
-GCOMMON=(-GH_DE=$HDE -GH_TOTAL=$HT -GV_ACTIVE=$VA -GV_TOTAL=$VT   -GV_SYNC_S=$VSS -GV_SYNC_E=$VSE -GPREFILL=8 -GPX_PER_CLK=2)
+GCOMMON=(-GH_DE=$HDE -GH_TOTAL=$HT -GV_ACTIVE=$VA -GV_TOTAL=$VT \
+  -GV_SYNC_S=$VSS -GV_SYNC_E=$VSE -GPREFILL=8 -GPX_PER_CLK=2 -GNUM_FRAMES=2)
 
 run_one green_cea "PASS present_npx_cea act=" "${GCOMMON[@]}" -GPHASE_PS=0 -GACC_SEED=0
 run_one red_cea "PASS present_npx_cea RED" "${GCOMMON[@]}" -GRED_STARVE=1
 
-# Phase + accumulator seed sweep (rd-duck: 0..16ns risk window + outside).
-# Default = representative grid. EXTENDED=1 for dense grid.
 if [[ "${EXTENDED:-0}" == "1" ]]; then
   PHASES=(0 5 10 15 18 20 25 30 34)
   SEEDS=(0 100 200 300)

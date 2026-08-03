@@ -564,6 +564,9 @@ module present_core #(
 	//    DE without fs (no frame / miss)=black. No-frame still runs continuous raster.
 	// 3) Mode-on H/V/ce always from mp path — never legacy hb_d while CLK_VIDEO=clk_pix.
 	// 4) ddr vsync_pulse = mp_fstart (bank swap on 720 beam, not colorbars fstart).
+	// 5) FORBIDDEN: dual-latency OR (blank@1 | fs_n_valid@LAT). Same-cycle collision
+	//    drops a raster group; blank can overtake trailing DE. All groups share one
+	//    ordered pipe; mp_npx_valid = mp_push only (see RED_DUAL_OR TB).
 	//
 	// LAT: beam_ce→mp_de_r(1) + rd_active_r(1) + rd_active_d(1) + yuv(1) = 4.
 	localparam int MP_STORE_LAT = 4;

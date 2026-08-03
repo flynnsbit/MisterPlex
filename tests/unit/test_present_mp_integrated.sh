@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Integrated beam→mock-store→tag→npx (rd-duck integration class).
+# Integrated beam→rate_match→mock-store→ordered-tag→npx (+ RED dual-OR).
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 if [[ -x "$ROOT/scripts/run_verilator.sh" ]]; then
@@ -15,6 +15,7 @@ mkdir -p "$OUT"
 SRCS=(
   "$ROOT/tests/rtl/present_mp_integrated_tb.sv"
   "$ROOT/fpga/Plex_MiSTer/rtl/present_beam_ppc.sv"
+  "$ROOT/fpga/Plex_MiSTer/rtl/present_pix_rate_match.sv"
   "$ROOT/fpga/Plex_MiSTer/rtl/present_npx_path.sv"
   "$ROOT/fpga/Plex_MiSTer/rtl/async_fifo.sv"
 )
@@ -28,10 +29,12 @@ run_one() {
   "$OUT/$name/Vpresent_mp_integrated_tb" >"$OUT/$name.log" 2>&1
   local rc=$?
   set -e
-  grep -q "$pat" "$OUT/$name.log" || { tail -30 "$OUT/$name.log"; echo "FAIL $name"; exit 1; }
+  grep -q "$pat" "$OUT/$name.log" || { tail -40 "$OUT/$name.log"; echo "FAIL $name rc=$rc"; exit 1; }
   echo "OK $name rc=$rc"
 }
 run_one no_frame "PASS present_mp_integrated NO_FRAME" -GHAS_FRAME=0
 run_one with_frame "PASS present_mp_integrated FRAME" -GHAS_FRAME=1
+# RED: dual-latency OR must drop groups (rd-duck defect class)
+run_one red_dual_or "PASS present_mp_integrated RED_DUAL_OR" -GHAS_FRAME=1 -GRED_DUAL_OR=1
 echo "PASS test_present_mp_integrated"
 exit 0
