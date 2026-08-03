@@ -2,6 +2,7 @@
 
 #include "libmisterplex/status_telemetry.hpp"
 #include "libmisterplex/pixel_format.hpp"
+#include "libmisterplex/plxd_discover.hpp"
 
 #include <algorithm>
 #include <atomic>
@@ -720,6 +721,7 @@ void FpgaSpi::setDdrMemSync(bool on) {
 void FpgaSpi::releaseDdrMap() {
     mboxInit_ = false;
     mboxAlive_ = false;
+    plxdPhysCached_ = 0;
     inputMboxEdge_.reset();
     if (ddrMap_) {
         munmap(ddrMap_, ddrMapLen_);
@@ -1579,29 +1581,61 @@ bool FpgaSpi::readBankRelease(BankReleaseStatus& out) {
         return false;
     if (!ensureDdrMap())
         return false;
-    if (kBankReleaseMailboxPhys < ddrLayout_.phys_base) {
-        setErr("readBankRelease: PLXD mailbox is outside DDR frame window");
-        return false;
-    }
-    const size_t off = static_cast<size_t>(kBankReleaseMailboxPhys - ddrLayout_.phys_base);
-    if (off + 8 > ddrMapLen_) {
-        setErr("readBankRelease: PLXD mailbox is outside mapped DDR frame window");
-        return false;
-    }
-    volatile uint32_t* mw = reinterpret_cast<volatile uint32_t*>(ddrMap_ + off);
-    for (int attempt = 0; attempt < 4; ++attempt) {
-        const uint32_t lo0 = mw[0];
-        const uint32_t hi0 = mw[1];
-        __sync_synchronize();
-        const uint32_t lo1 = mw[0];
-        const uint32_t hi1 = mw[1];
-        if (decodeStableBankRelease(lo0, hi0, lo1, hi1, out)) {
-            clearErr();
-            return true;
+
+    auto try_at = [&](uint32_t phys) -> bool {
+        if (phys < ddrLayout_.phys_base)
+            return false;
+        const size_t off = static_cast<size_t>(phys - ddrLayout_.phys_base);
+        if (off + 8 > ddrMapLen_)
+            return false;
+        volatile uint32_t* mw = reinterpret_cast<volatile uint32_t*>(ddrMap_ + off);
+        for (int attempt = 0; attempt < 4; ++attempt) {
+            const uint32_t lo0 = mw[0];
+            const uint32_t hi0 = mw[1];
+            __sync_synchronize();
+            const uint32_t lo1 = mw[0];
+            const uint32_t hi1 = mw[1];
+            if (decodeStableBankRelease(lo0, hi0, lo1, hi1, out)) {
+                plxdPhysCached_ = phys;
+                clearErr();
+                return true;
+            }
+            usleep(200);
         }
-        usleep(200);
-    }
-    setErr("readBankRelease: PLXD mailbox absent or unstable");
+        return false;
+    };
+
+    // Fast path: previously discovered address.
+    if (plxdPhysCached_ != 0 && try_at(plxdPhysCached_))
+        return true;
+
+    // Runtime discovery across absolute + doorbell-relative candidates so main
+    // (0x3007F128) and integ/product (doorbell+0x128) both work without an ABI
+    // header fight. See libmisterplex/plxd_discover.hpp.
+    auto disc = discoverPlxdMailbox([&](uint32_t phys, uint64_t& word) -> bool {
+        if (phys < ddrLayout_.phys_base)
+            return false;
+        const size_t off = static_cast<size_t>(phys - ddrLayout_.phys_base);
+        if (off + 8 > ddrMapLen_)
+            return false;
+        volatile uint32_t* mw = reinterpret_cast<volatile uint32_t*>(ddrMap_ + off);
+        const uint32_t lo = mw[0];
+        const uint32_t hi = mw[1];
+        word = static_cast<uint64_t>(lo) | (static_cast<uint64_t>(hi) << 32);
+        return true;
+    });
+    if (disc.found && try_at(disc.phys_addr))
+        return true;
+
+    // Last attempt: layout doorbell-relative offset matching other mailboxes.
+    const uint32_t rel =
+        ddrLayout_.doorbell_phys + (kBankReleaseMailboxPhys - kDdrDoorbellPhys);
+    if (try_at(rel))
+        return true;
+    if (try_at(kBankReleaseMailboxPhys))
+        return true;
+
+    setErr("readBankRelease: PLXD mailbox absent or unstable (discovery miss)");
     return false;
 }
 

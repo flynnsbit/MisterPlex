@@ -288,6 +288,8 @@ private:
     bool ddrMemFlush_ = false;
     DdrTiming lastDdrTiming_{};
     DdrFrameLayout ddrLayout_ = makeDdrFrameLayout(320, 240);
+    // Cached PLXD phys after runtime discovery (0 = not yet found).
+    uint32_t plxdPhysCached_ = 0;
     uint32_t doorbellSeq_ = 0;
     double lastDdrBankDoorbellMs_[2] = {-1.0, -1.0};
     bool mboxInit_ = false;
