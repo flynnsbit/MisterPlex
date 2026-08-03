@@ -215,6 +215,25 @@ module ddr_frame_store #(
 	output wire [10:0] pend_beam_hde_o,
 	output wire [10:0] pend_beam_vde_o
 );
+	// ---- Bank-stride overflow guard (w-nostub landmine class) ---------------
+	// FRAME/MAX I420 must fit LEG or Option-C usable capacity. Elaboration
+	// $error if 1280×720 is paired with 512 KiB-only stride (silent neighbour
+	// bank corruption). See ddr_bank_stride_guard.sv.
+	wire bank_stride_overflow_fault;
+	ddr_bank_stride_guard #(
+		.FRAME_W(FRAME_W),
+		.FRAME_H(FRAME_H),
+		.CODED_W(CODED_W),
+		.CODED_H(CODED_H),
+		.MAX_W(MAX_CODED_W),
+		.MAX_H(MAX_CODED_H),
+		.LEG_STRIDE(HPS_BANK_STRIDE_BYTES),
+		.OPTC_STRIDE(HPS_BANK_STRIDE_BYTES_720P),
+		.DOORBELL_PAGE(32'h1000)
+	) u_bank_stride_guard (
+		.overflow_fault(bank_stride_overflow_fault)
+	);
+
 	// Port/scan domain: cover presentation FRAME and max content.
 	localparam int RD_W_MAX = (FRAME_W > MAX_CODED_W) ? FRAME_W : MAX_CODED_W;
 	localparam int RD_H_MAX = (FRAME_H > MAX_CODED_H) ? FRAME_H : MAX_CODED_H;
@@ -373,23 +392,32 @@ module ddr_frame_store #(
 	// Capacity threshold = legacy 480p usable (stride 0x80000 − 0x1000). Not the
 	// fixed 480p usable — never the active bank stride.
 	localparam [31:0] LEG_BANK_USABLE_BYTES = 32'h0007_F000; // 520192
+	// Option-C usable (stride − doorbell page). Payload above this is a hard
+	// bank overflow even on the 720p map — must sticky-reject, not write.
+	localparam [31:0] OPTC_BANK_USABLE_BYTES =
+		32'(HPS_BANK_STRIDE_BYTES_720P) - 32'h1000; // 0x17F000 when 0x180000
 	wire rt_need_optc = rt_raw_ok && (rt_payload_bytes > LEG_BANK_USABLE_BYTES);
+	// Loud: I420 payload larger than Option-C usable → sticky geom_reject
+	// (same class as under-strided FRAME_W=1280 on 512 KiB banks).
+	wire rt_bank_overflow = rt_raw_ok && (rt_payload_bytes > OPTC_BANK_USABLE_BYTES);
 
 	// FAULT: ignore geom_enable (always legacy pitch) — red twin for runtime-stride gate.
 `ifdef DDR_FRAME_STORE_FAULT_IGNORE_GEOM
 	wire geom_enable_eff = 1'b0;
 `else
 	// Reject malformed / over-max raw geometry — no clamp-then-accept.
-	wire geom_enable_eff = geom_enable & rt_raw_ok;
+	// Bank overflow also drops enable (no Option-C write past end of bank).
+	wire geom_enable_eff = geom_enable & rt_raw_ok & ~rt_bank_overflow;
 `endif
 	// Loud reject (parent PMS AR-fit): geom requested but raw fails → sticky fault.
 	// Without this, !geom_enable_eff silently reloads LEGACY 624×480 and scans a
 	// host native buffer as the wrong pitch (shear). Prefer black + PLXF 0xE2.
+	// Also sticky on bank overflow (payload > Option-C usable).
 	// FAULT twin: silent fallthrough (no sticky, no 0xE2) — red REPRO for loud path.
 `ifdef DDR_FRAME_STORE_FAULT_SILENT_GEOM_REJECT
 	wire geom_reject_now = 1'b0;
 `else
-	wire geom_reject_now = geom_enable & ~rt_raw_ok;
+	wire geom_reject_now = geom_enable & (~rt_raw_ok | rt_bank_overflow);
 `endif
 	reg  geom_reject_r;
 

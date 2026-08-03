@@ -300,10 +300,31 @@ localparam int FRAME_BYTES = FRAME_W * FRAME_H * 3 / 2;
 `else
 localparam int FRAME_BYTES = FRAME_STRIDE * FRAME_H * 2;
 `endif
+// Bank stride MUST track the dual-header contract (ddr_frame_layout_params.svh /
+// ddr_frame_layout.hpp), not an ad-hoc power-of-two ladder. 1280×720 I420 =
+// 1_382_400 > 0x80000 (512 KiB). A ladder step of 1 MiB/2 MiB that is never
+// wired into ddr_frame_store still leaves the store on 512 KiB LEG defaults and
+// SILENTLY corrupts the neighbour bank (w-nostub landmine).
+// Literals lockstep with svh (do NOT `include here — present_core/FAB blocks
+// include the svh in their own scopes; a file-level ifndef would starve them).
+//   LEGACY stride 0x00080000 usable 0x7F000 · Option-C 0x00180000 usable 0x17F000
+`ifdef DDR_FRAME_STORE
+localparam int DDR_CONTRACT_LEG_STRIDE  = 32'h0008_0000;
+localparam int DDR_CONTRACT_OPTC_STRIDE = 32'h0018_0000;
+localparam int DDR_CONTRACT_LEG_USABLE  = 32'h0007_F000; // stride - 0x1000
+localparam int DDR_CONTRACT_OPTC_USABLE = 32'h0017_F000;
+localparam int HPS_BANK_STRIDE_BYTES =
+	(FRAME_BYTES <= DDR_CONTRACT_LEG_USABLE)  ? DDR_CONTRACT_LEG_STRIDE :
+	(FRAME_BYTES <= DDR_CONTRACT_OPTC_USABLE) ? DDR_CONTRACT_OPTC_STRIDE :
+	0; // ddr_bank_stride_guard $error when store elaborates with bad FRAME
+localparam int HPS_BANK_STRIDE_BYTES_720P = DDR_CONTRACT_OPTC_STRIDE;
+`else
+// Non-DDR (RGB565 SDRAM path): keep historical ladder for SPI/frame_store only.
 localparam int HPS_BANK_STRIDE_BYTES =
 	(FRAME_BYTES <= 262144)  ? 262144  :
 	(FRAME_BYTES <= 1048576) ? 1048576 :
 	(FRAME_BYTES <= 2097152) ? 2097152 : 4194304;
+`endif
 
 // Single-stick SDRAM controller. At cold start the destructive B1 memtest owns
 // the stick, publishes PLXM, then hands the port to the B2 frame store.

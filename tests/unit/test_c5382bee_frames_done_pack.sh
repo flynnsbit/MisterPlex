@@ -6,7 +6,9 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 FIT="$ROOT/.agent-work/w-fit/leftedge3-proj/rtl/ddr_frame_store.sv"
+FIT="$ROOT/.agent-work/w-fit/leftedge3-proj/rtl/ddr_bank_stride_guard.sv"
 TIP="$ROOT/fpga/Plex_MiSTer/rtl/ddr_frame_store.sv"
+TIP="$ROOT/fpga/Plex_MiSTer/rtl/ddr_bank_stride_guard.sv"
 EV="$ROOT/.agent-work/w-fit/evidence-leftedge3-build-ok.txt"
 
 FAIL=0

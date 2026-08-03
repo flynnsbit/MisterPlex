@@ -170,3 +170,8 @@ localparam int DDR_FRAME_LEGACY_BANK_STRIDE_BYTES = 32'h0008_0000; // 524288
 localparam int DDR_FRAME_BANK_DOORBELL_PAGE_BYTES = 32'h1000;      // 4096
 localparam int DDR_FRAME_LEGACY_BANK_USABLE_BYTES = 32'h0007_F000; // 520192 = 0x80000-0x1000
 localparam int DDR_FRAME_720P_BANK_USABLE_BYTES = 32'h0017_F000;   // 1568768 = 0x180000-0x1000
+
+// Compile-time capacity lock (mirrors ddr_bank_stride_guard / host static_assert).
+// 1280×720 I420 must fit Option-C usable; 624×480 must fit legacy usable.
+localparam int DDR_FRAME_I420_BYTES_720P_CHECK = 1280 * 720 * 3 / 2; // 1382400
+localparam int DDR_FRAME_I420_BYTES_480P_CHECK = 624 * 480 * 3 / 2;   // 449280

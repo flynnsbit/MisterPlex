@@ -96,8 +96,17 @@ static_assert(kPlex720pChromaStrideBytes == kPlex720pCodedWidth.get() / 2,
               "720p chroma stride must equal coded width/2");
 static_assert(kPlex720pYuv420pBytes == 1280 * 720 * 3 / 2,
               "720p I420 byte count");
+// LANDMINE LOCK (w-nostub): 720p I420 must NEVER be paired with 512 KiB banks.
+// 1382400 / 524288 ≈ 2.64 → silent neighbour-bank corruption if FRAME_W=1280
+// lands without Option-C stride 0x180000. Guarded in RTL by ddr_bank_stride_guard.
+static_assert(kPlex720pYuv420pBytes > 0x00080000u,
+              "720p I420 exceeds legacy 512KiB bank stride (landmine class)");
 // alignUp(1382400, 0x40000) = 0x180000; doorbell = phys + 2*stride - 0x1000.
 constexpr uint32_t kPlex720pYuv420pBankStride = 0x00180000u;
+static_assert(kPlex720pYuv420pBankStride == 0x00180000u,
+              "Option-C bank stride must be 1.5MiB (0x180000)");
+static_assert(kPlex720pYuv420pBytes <= kPlex720pYuv420pBankStride - 0x1000u,
+              "720p I420 must fit Option-C usable (stride - doorbell page)");
 constexpr uint32_t kPlex720pDdrFramePhysBase = 0x30180000u;
 constexpr uint32_t kPlex720pYuv420pDoorbellPhys = 0x3047F000u;
 

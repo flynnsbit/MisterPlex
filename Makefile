@@ -119,6 +119,7 @@ unit-unlocked: unit-rollcall preflight $(ROOT)/build/test_cadence $(ROOT)/build/
 	$(ROOT)/build/test_coded_size_adopt
 	$(ROOT)/build/test_ffmpeg_vf
 	bash $(ROOT)/tests/unit/test_b14_426_pad_ffmpeg.sh
+	bash $(ROOT)/tests/unit/test_ddr_bank_stride_guard.sh
 	$(ROOT)/build/test_force_scale_construction
 	bash $(ROOT)/tests/unit/test_force_scale_ffmpeg_out.sh
 	bash $(ROOT)/tests/unit/test_force_scale_sws_cost.sh

@@ -22,10 +22,12 @@ check_absent_in_swap() {
   # ddr_frame_store swap block must not mention cadence/advance_unique
   if grep -nE 'advance_unique|present_cadence|content_fps' \
       "$ROOT/fpga/Plex_MiSTer/rtl/ddr_frame_store.sv" | grep -i swap >/dev/null 2>&1; then
+      "$ROOT/fpga/Plex_MiSTer/rtl/ddr_bank_stride_guard.sv" | grep -i swap >/dev/null 2>&1; then
     echo "FAIL C1: cadence symbol near swap in ddr_frame_store" >&2
     FAIL=1
   else
     echo "OK C1: no cadence symbols driving ddr_frame_store.sv"
+    echo "OK C1: no cadence symbols driving ddr_bank_stride_guard.sv"
   fi
 }
 
@@ -38,6 +40,7 @@ check "advance is only stat_advance assign" \
   'assign[[:space:]]+stat_advance[[:space:]]*=[[:space:]]*advance'
 check "ddr swap condition" \
   "$ROOT/fpga/Plex_MiSTer/rtl/ddr_frame_store.sv" \
+  "$ROOT/fpga/Plex_MiSTer/rtl/ddr_bank_stride_guard.sv" \
   'vsync_pulse && swap_pending && pending_ready_s2'
 check "vsync_pulse from fstart" \
   "$ROOT/fpga/Plex_MiSTer/rtl/present_core.sv" \
@@ -63,11 +66,14 @@ fi
 
 # bank_vsync_count not in PLXD pack (fabric hist limitation)
 if grep -n 'bank_vsync_count' "$ROOT/fpga/Plex_MiSTer/rtl/ddr_frame_store.sv" | head -5; then
+if grep -n 'bank_vsync_count' "$ROOT/fpga/Plex_MiSTer/rtl/ddr_bank_stride_guard.sv" | head -5; then
   if grep -n 'frames_done_d2' "$ROOT/fpga/Plex_MiSTer/rtl/ddr_frame_store.sv" | head -3; then
+  if grep -n 'frames_done_d2' "$ROOT/fpga/Plex_MiSTer/rtl/ddr_bank_stride_guard.sv" | head -3; then
     echo "OK C1: frames_done packed; bank_vsync_count exists (must not be PLXD frames field)"
   fi
 fi
 if grep -nE 'DDRAM_DIN <= \{bank_vsync_count' "$ROOT/fpga/Plex_MiSTer/rtl/ddr_frame_store.sv"; then
+if grep -nE 'DDRAM_DIN <= \{bank_vsync_count' "$ROOT/fpga/Plex_MiSTer/rtl/ddr_bank_stride_guard.sv"; then
   echo "FAIL C1: bank_vsync_count unexpectedly packed as PLXD word" >&2
   FAIL=1
 else
