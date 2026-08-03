@@ -87,16 +87,21 @@ int main() {
         CHECK(s.mayRingDoorbell(), "dma doorbell");
     }
 
-    // Budget arithmetic (parent CLEAN decode alone 35.94 + bank copy)
-    CHECK(!ddrIngestSerialDecodePlusCopyFits(kParentDecode720pCleanAloneMs, 15.283),
+    // Budget arithmetic (parent CLEAN decode 35.94 + copy 14.978)
+    CHECK(!ddrIngestSerialDecodePlusCopyFits(kParentDecode720pCleanAloneMs,
+                                             kParentBankCopy720pMs),
           "serial clean FAIL");
-    CHECK(ddrIngestOverlapMaxFits(kParentDecode720pCleanAloneMs, 15.283),
+    CHECK(ddrIngestOverlapMaxFits(kParentDecode720pCleanAloneMs, kParentBankCopy720pMs),
           "overlap max PASS sketch");
     CHECK(ddrIngestRouteABridgeCandidate(kParentDecode720pCleanAloneMs), "route A candidate");
     CHECK(!ddrIngestRouteAIsShipGate(), "route A not ship gate");
     CHECK(kParentDecode720pCleanAloneMs == 35.94, "clean alone constant");
+    CHECK(kParentBankCopy720pMs == 14.978, "clean copy constant");
     CHECK(kParentDecode720pProduct2600kMs == 35.94, "product alias = clean");
     CHECK(kParentDecode720p2500kMs == 35.87, "historical 2500k anchor");
+    // NEG: serial sum must exceed budget
+    CHECK(kParentDecode720pCleanAloneMs + kParentBankCopy720pMs > kIngestBudget24fpsMs,
+          "NEG serial over budget");
 
     // Mode conf parse
     CHECK(ddrIngestModeFromConf("pl330") == DdrIngestMode::Pl330Overlap, "conf pl330");

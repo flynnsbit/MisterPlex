@@ -78,13 +78,12 @@ struct DdrIngestContract {
 // --- Budget helpers (parent-measured constants; do not invent device rates) ---
 
 constexpr double kIngestBudget24fpsMs = 41.667;
-constexpr double kParentBankCopy720pMs = 15.283; // best mapped bank (pre-awk; re-confirm later)
-// Parent CLEAN re-measure 2026-08-03 after killing rogue awk PID 12021 (exit=0):
-//   decode alone x2: 35.82 / 36.05 → mean 35.94 ms/f  margin 5.73 ms vs 41.667
-//   decode + DDR writer 46.57 (+10.63); decode + one CPU burner 48.21 (+12.27)
-// RETRACTED (awk contamination): serial 21.1 ms "bank anomaly", bank-sweep table,
-//   "CPU-theft dominated" headline, DMA 23.839 ms, dual-burner 52.26 ms.
-// Prior in-session 35.87/36.27 kept as historical aliases only.
+// Parent CLEAN consolidated budget 2026-08-03 (post-awk kill; anomaly chase CLOSED):
+//   decode alone 35.94 ms/f (margin 5.73); CPU bank copy 14.978 ms/f (was ~15.06–15.28)
+//   serial decode+copy 50.92 FAIL by 9.25; any concurrent peer 45–48 FAIL
+//   verified sustained DMA still UNMEASURED until instrument-fixed bench re-run
+// RETRACTED: bank-address anomaly, bank-sweep table, DMA 23.8 / 0.01 ms figures
+constexpr double kParentBankCopy720pMs = 14.978;
 constexpr double kParentDecode720pCleanAloneMs = 35.94;
 constexpr double kParentDecode720p2500kMs = 35.87; // earlier same-session arm
 constexpr double kParentDecode720pProduct2600kMs = kParentDecode720pCleanAloneMs;
