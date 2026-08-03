@@ -29,8 +29,37 @@ inline constexpr int kFontW = 8;
 inline constexpr int kFontH = 8;
 inline constexpr int kFontAdvance = 9; // 8 + 1 gap
 // Product target raster (parameter, not a 480p-era leftover).
+// OUTPUT / HDMI space only — never coded bank (960×540) or legacy 624×480.
 inline constexpr int kTargetOutW = 1280;
 inline constexpr int kTargetOutH = 720;
+
+// True when (w,h) is a known *coded/bank* size that must not drive PLXC geometry.
+// Defect class (parent 2026-08-03): code that keys "720p work" on source width
+// (e.g. coded_w>=1280) while product source is 960×540 and only glass is 1280×720.
+inline bool isCodedBankSizeNotHdmi(int w, int h) {
+    if (w <= 0 || h <= 0)
+        return false;
+    if (w == 960 && h == 540)
+        return true;
+    if (w == 624 && h == 480)
+        return true;
+    if (w == 640 && h == 480)
+        return true;
+    if (w == 320 && h == 240)
+        return true;
+    // 16-aligned coded pad of 540 → 544 must not become chrome canvas either
+    if (w == 960 && h == 544)
+        return true;
+    return false;
+}
+
+// HDMI/output-class raster suitable for PLXC / fabric chrome composite.
+inline bool isHdmiChromeRaster(int w, int h) {
+    if (isCodedBankSizeNotHdmi(w, h))
+        return false;
+    // Loose floor: below ~720p-class letterbox control is not an HDMI chrome canvas
+    return w >= 1100 && h >= 680;
+}
 
 enum class Op : uint8_t { End = 0, Rect = 1, Glyph = 2, RectPal = 3 };
 

@@ -1222,9 +1222,21 @@ void MediaPlayer::publishPlxcHud(PlaybackOverlayState state, int64_t positionMs,
                                  int64_t durationMs, const char* title) {
     // Semantic list only — never pixels. Cheap vs full-frame bake; still ARM
     // until a single progress-fraction register lands (see agent evidence).
+    // PLXC coords are HDMI/output only. If chromeOut was ever poisoned with a
+    // coded bank size (960×540 class), force product glass defaults — never
+    // emit a HUD that sits in source space on a 1280×720 beam.
+    int cow = chromeOutW_;
+    int coh = chromeOutH_;
+    if (plex_chrome_cmds::isCodedBankSizeNotHdmi(cow, coh) ||
+        !plex_chrome_cmds::isHdmiChromeRaster(cow, coh)) {
+        cow = plex_chrome_cmds::kTargetOutW;
+        coh = plex_chrome_cmds::kTargetOutH;
+        chromeOutW_ = cow;
+        chromeOutH_ = coh;
+    }
     plex_chrome_cmds::BuildArgs a;
-    a.outW = chromeOutW_;
-    a.outH = chromeOutH_;
+    a.outW = cow;
+    a.outH = coh;
     a.state = state;
     a.positionMs = positionMs;
     a.durationMs = durationMs;

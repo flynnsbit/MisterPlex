@@ -129,6 +129,9 @@ def near_control(aw_, ah_, area_):
     ) or area_ <= int(CTRL_AREA * 1.05)
 
 active_pass = aw >= PASS_AW and ah >= PASS_AH and area >= PASS_AREA
+# Coarse full-raster hint only. A 5-line crop (715 vs 720) still clears
+# active_pass@680 and usually FULLFILL@700 — not a precision crop detector.
+fullfill = aw >= 1240 and ah >= 700
 diff_pass = diff_px >= PASS_DIFF_PX and diff_mean >= PASS_DIFF_MEAN
 # Content-independent: lime beacon flip (PLEX_FAB_PLAY_BEACON). 32x32=1024.
 beacon_motion = lime_delta >= 400
@@ -174,7 +177,8 @@ print(
     f"ORANGE1={orange} CYAN1={cyan} MAGENTA1={magenta} LIME0={lime0} LIME1={lime1} LIME_DELTA={lime_delta}\n"
     f"DIFF_MEAN={diff_mean:.3f} DIFF_PX={diff_px}\n"
     f"NOSIGNAL0={int(ns0)} NOSIGNAL1={int(ns1)}\n"
-    f"GATES active_pass={int(active_pass)} diff_pass={int(diff_pass)} "
+    f"GATES active_pass={int(active_pass)} fullfill={int(fullfill)} "
+    f"diff_pass={int(diff_pass)} "
     f"beacon_motion={int(beacon_motion)} motion_pass={int(motion_pass)} "
     f"content={int(content)} cyan_ok={int(cyan_ok)} orange_ok={int(orange_ok)}\n"
     f"VERDICT={verdict}"

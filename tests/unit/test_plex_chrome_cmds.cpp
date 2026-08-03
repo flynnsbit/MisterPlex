@@ -169,6 +169,40 @@ static void checkHudIsOutputNotCoded() {
     CHECK(minY > 540u - 80u); // still in lower band of 720, not mid-540
 }
 
+// Width-keyed defect class: coded sizes must never be accepted as HDMI chrome.
+static void checkCodedSizeRejectedForChrome() {
+    using namespace misterplex::plex_chrome_cmds;
+    CHECK(isCodedBankSizeNotHdmi(960, 540));
+    CHECK(isCodedBankSizeNotHdmi(960, 544)); // 16-aligned pad of 540
+    CHECK(isCodedBankSizeNotHdmi(624, 480));
+    CHECK(isCodedBankSizeNotHdmi(320, 240));
+    CHECK(!isCodedBankSizeNotHdmi(1280, 720));
+    CHECK(!isCodedBankSizeNotHdmi(1920, 1080));
+    CHECK(isHdmiChromeRaster(1280, 720));
+    CHECK(!isHdmiChromeRaster(960, 540));
+    CHECK(!isHdmiChromeRaster(923, 717)); // control letterbox — not a chrome canvas setter
+
+    // If HUD is wrongly built in coded 960×540, bar lives below mid-540 — RED shape.
+    BuildArgs bad;
+    bad.outW = 960;
+    bad.outH = 540;
+    bad.state = misterplex::PlaybackOverlayState::Playing;
+    bad.positionMs = 30000;
+    bad.durationMs = 120000;
+    auto cmds = buildPlaybackHud(bad);
+    unsigned maxY = 0;
+    for (uint64_t w : cmds) {
+        const unsigned y = static_cast<unsigned>((w >> 24) & 0xFFFF);
+        if (y > maxY)
+            maxY = y;
+    }
+    std::fprintf(stderr, "coded-HUD maxY=%u (must be <540 — proves wrong canvas)\n", maxY);
+    CHECK(maxY < 540u);
+    CHECK(maxY > 0u);
+    // Product path must not use this canvas:
+    CHECK(!isHdmiChromeRaster(bad.outW, bad.outH));
+}
+
 int main() {
     checkPackRoundtrip();
     checkNoPixelBakeWhenLive();
@@ -176,6 +210,7 @@ int main() {
     checkStoppedHudHasBarAndState();
     check720pHudBudget();
     checkHudIsOutputNotCoded();
+    checkCodedSizeRejectedForChrome();
     if (fails) {
         std::fprintf(stderr, "test_plex_chrome_cmds: %d FAIL(s)\n", fails);
         return 1;

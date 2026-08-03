@@ -11,6 +11,7 @@
 #include "libmisterplex/osd_control.hpp"
 #include "libmisterplex/osd_menu.hpp"
 #include "libmisterplex/playback_overlay.hpp"
+#include "libmisterplex/plex_chrome_cmds.hpp"
 #include "libmisterplex/publish_interval_ledger.hpp"
 #include "libmisterplex/publish_swap_delta_ledger.hpp"
 
@@ -170,7 +171,12 @@ public:
     void setChromePlaneHwPresent(bool hw) { chromePlaneHw_ = hw; }
     bool chromePlaneLive() const { return chromePlaneConf_ && chromePlaneHw_; }
     // Applied HDMI raster for PLXC geometry (720p-first defaults).
+    // Refuses coded/bank sizes (960×540, 624×480, …) — those are source, not glass.
     void setChromeOutputSize(int w, int h) {
+        if (w > 0 && h > 0 &&
+            misterplex::plex_chrome_cmds::isCodedBankSizeNotHdmi(w, h)) {
+            return; // keep prior HDMI defaults; never adopt coded as chrome canvas
+        }
         if (w > 0)
             chromeOutW_ = w;
         if (h > 0)

@@ -1,18 +1,11 @@
-lane=w-osd branch=w-osd-fabric-plane
-status=READY_FOR_MERGE — PLAY_BEACON landed for this exclusive fit
+lane=w-osd tip=pending hunt+guards
+beacon=5c498b29 PLEX_FAB_PLAY_BEACON already landed
 
-## w-nostub merge note (time-sensitive)
-Branch tip includes PLEX_FAB_PLAY_BEACON (default OFF).
-For PLAYING glass score on this fit, enable WITH present/scale macros:
-  VERILOG_MACRO "PLEX_FAB_PLAY_BEACON=1"
-Do NOT combine with PLEX_FAB_IDLE (beacon forced off under idle).
-Safe with PLEX_FAB_CHROME. Geometry untouched. keep-sink includes enable bit only in blanking.
+## Hunt: source≥1280 defect class in chrome path
+docs/chrome-source-vs-output-hunt.md
+- fabric RTL: CLEAN (HDMI_* only, no coded_w>=1280)
+- PLXC ARM: defaults 1280x720; never used outW_ decode; hardened refuse 960x540
+- ACTIVE PASS-A (>=680): does NOT catch 5-line crop — honest
 
-## Prove offline
-tests/unit/test_plex_chrome_beacon_rtl_sim.sh  true rc=0
-tests/unit/test_hdmi_score_pair.sh             true rc=0  (beacon flip → A)
-
-## Glass PLAYING
-scripts/hdmi_capture_idle.sh play-t0.png; sleep 1; ... t1.png
-scripts/hdmi_score_pair.sh t0 t1
-  motion_pass = DIFF high OR LIME_DELTA>=400
+## w-nostub
+Still merge 5c498b29+ for PLAY_BEACON; enable PLEX_FAB_PLAY_BEACON=1 on fit

@@ -115,6 +115,8 @@ scripts/hdmi_score_pair.sh $EV/play-nodaemon-t0.png $EV/play-nodaemon-t1.png
 | **ACTIVE_W** | **≥ 1100** | control **923** | Geometry: fabric fills toward 1280-class |
 | **ACTIVE_H** | **≥ 680** | control **717** is tall letterbox; width is the weak axis — **both** gates | H alone can false-green a pillar box |
 | **ACTIVE area** | **≥ 1100×680 = 748000** | control 923×717≈661k | Area must grow, not just reshape |
+| **FULLFILL** (informational) | ACTIVE ≥1240×700 | — | Coarse full-raster hint only; **does not** catch a 5-line crop |
+| **5-line crop** | **invisible to PASS-A** | e.g. 715 vs 720 | Gate floor is 680 — 35 lines of slack. See `docs/chrome-source-vs-output-hunt.md` |
 | **CYAN_PX** | **≤ 200** | control 0 | Idle plane must be off during PLAYING claim |
 | **ORANGE_PX** | **≤ 4000** | control **12889** | Rejects “still showing idle chevron” as PLAYING |
 | **MEAN** | **20 .. 160** | control 14.4 | Content band; not black, not clipped white field |
