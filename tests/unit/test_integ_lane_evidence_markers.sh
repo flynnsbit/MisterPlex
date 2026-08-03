@@ -84,5 +84,13 @@ if [[ "$fails" -gt 0 ]]; then
   echo "test_integ_lane_evidence_markers: FAIL"
   exit 1
 fi
+
+# q5 connectivity (parent miss #11) — presence of module is not enough
+grep -q 'u_content_fps_sel' "$ROOT/fpga/Plex_MiSTer/Plex.sv" || { echo "FAIL missing u_content_fps_sel"; exit 1; }
+grep -q 'host_dar_valid(plxg_dar_valid)' "$ROOT/fpga/Plex_MiSTer/Plex.sv" || { echo "FAIL B9 dar not on plxg_dar_valid"; exit 1; }
+grep -q '\.dar_x(plxg_dar_x)' "$ROOT/fpga/Plex_MiSTer/Plex.sv" || { echo "FAIL latch dar_x not plxg_dar_x"; exit 1; }
+grep -qE 'fabric_dar_' "$ROOT/fpga/Plex_MiSTer/Plex.sv" && { echo "FAIL fabric_dar_* must be gone"; exit 1; } || true
+echo "OK q5 connectivity markers (sel+plxg_dar)"
+
 echo "test_integ_lane_evidence_markers: PASS"
 exit 0

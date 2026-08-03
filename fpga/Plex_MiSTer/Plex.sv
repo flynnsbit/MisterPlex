@@ -62,20 +62,24 @@ assign PLXC_EXT_WDATA = plxc_core_wdata;
 //////////////////////////////////////////////////////////////////
 
 wire [1:0] ar = status[122:121];
-// fabric_dar_* / fabric_content_fps from present_geom_latch q5 (parent ABI #2).
-// w-scaler consumes dar_*; w-clock consumes content_fps (do not hardcode 30).
-wire        fabric_dar_valid;
-wire [11:0] fabric_dar_x;
-wire [11:0] fabric_dar_y;
-wire        fabric_fps_valid;
-wire [7:0]  fabric_content_fps;
+// Parent ABI #2 q5 nets — CANONICAL names plxg_* (w-mem producer authority).
+// Do not reintroduce fabric_* aliases; one naming scheme only.
+// B9: plxg_dar_* → plex_video_ar. Unspecified dar_valid=0 + menu Original →
+// deliberate legacy 4:3 fallback (documented in plex_video_ar.sv). Full Screen
+// remains 0:0. PRESENT_BEAM_960 must NOT force zero-AR once host DAR is live.
+// B15: plxg_fps_* → plex_content_fps_sel → present_core (never invent 30).
+wire        plxg_dar_valid;
+wire [11:0] plxg_dar_x;
+wire [11:0] plxg_dar_y;
+wire        plxg_fps_valid;
+wire [7:0]  plxg_content_fps;
 // B9: plex_video_ar — Full Screen under menu; host DAR when latch q5 valid.
 // See rtl/plex_video_ar.sv + docs/b9-display-aspect.md.
 plex_video_ar u_plex_video_ar (
 	.ar_menu(ar),
-	.host_dar_valid(fabric_dar_valid),
-	.host_dar_x(fabric_dar_x),
-	.host_dar_y(fabric_dar_y),
+	.host_dar_valid(plxg_dar_valid),
+	.host_dar_x(plxg_dar_x),
+	.host_dar_y(plxg_dar_y),
 	.VIDEO_ARX(VIDEO_ARX),
 	.VIDEO_ARY(VIDEO_ARY)
 );
@@ -263,8 +267,19 @@ wire reset = RESET | status[0] | buttons[1];
 // Final content_width/height mux is after PLXG latch (PRESENT_BEAM_960 force).
 wire        content_res_640x480 = status[4];
 
-// Legacy cadence input is now fixed; the daemon handles exact content pacing.
+// B15: content_fps from PLXG q5 via plex_content_fps_sel (w-clock owner).
+// fps_valid && fps!=0 → q5 value; else unspecified → film 24. Never invent 30.
+// FAULT_B15_FPS_HARDWIRE_24: red twin restores pre-B15 permanent 24.
+`ifdef FAULT_B15_FPS_HARDWIRE_24
 wire [7:0] content_fps = 8'd24;
+`else
+wire [7:0] content_fps;
+plex_content_fps_sel u_content_fps_sel (
+	.fps_valid(plxg_fps_valid),
+	.content_fps_q5(plxg_content_fps),
+	.content_fps_eff(content_fps)
+);
+`endif
 
 // Refresh interval = floor((f_MHz * 64_000us / 8192 rows) - 1). The
 // counter toggles refresh after REFRESH_CYCLES+1 clocks, so every option
@@ -862,11 +877,11 @@ present_geom_latch u_plxg_latch (
 	.present_y(plxg_py),
 	.crop_left(plxg_cl),
 	.crop_top(plxg_ct),
-	.dar_valid(fabric_dar_valid),
-	.dar_x(fabric_dar_x),
-	.dar_y(fabric_dar_y),
-	.fps_valid(fabric_fps_valid),
-	.content_fps(fabric_content_fps),
+	.dar_valid(plxg_dar_valid),
+	.dar_x(plxg_dar_x),
+	.dar_y(plxg_dar_y),
+	.fps_valid(plxg_fps_valid),
+	.content_fps(plxg_content_fps),
 	.live_valid(plxg_live_valid),
 	.live_seq(plxg_live_seq),
 	.live_epoch(plxg_live_epoch),
@@ -905,7 +920,8 @@ plxg_ddr_poller #(
 (* keep = 1 *) wire _keep_plxg =
 	plxg_geom_en | plxg_live_valid | |plxg_live_seq | plxg_want |
 	|plxg_cnt_commit | |plxg_cnt_bad | |plxg_cnt_torn | plxg_busy_poll |
-	|plxg_last_seq | plxg_win_en | |plxg_cw | |plxg_ch | |m1_sub_grant;
+	|plxg_last_seq | plxg_win_en | |plxg_cw | |plxg_ch | |m1_sub_grant |
+	plxg_dar_valid | plxg_fps_valid | |plxg_dar_x | |plxg_dar_y | |plxg_content_fps;
 `else
 // Non-DDR builds: stub PLXG outputs so content mux still elaborates.
 wire        plxg_win_en = 1'b0;
@@ -917,6 +933,12 @@ wire [10:0] plxg_coded_w = 11'd0, plxg_coded_h = 11'd0;
 wire [11:0] plxg_y_stride = 12'd0;
 wire [10:0] plxg_c_stride = 11'd0, plxg_dw = 11'd0, plxg_dh = 11'd0;
 wire [10:0] plxg_px = 11'd0, plxg_py = 11'd0, plxg_cl = 11'd0, plxg_ct = 11'd0;
+// q5 nets declared at module scope for B9/B15; drive idle when no latch.
+assign plxg_dar_valid = 1'b0;
+assign plxg_dar_x = 12'd0;
+assign plxg_dar_y = 12'd0;
+assign plxg_fps_valid = 1'b0;
+assign plxg_content_fps = 8'd0;
 `endif
 
 // --- Product content / geom hierarchy (B8) ---

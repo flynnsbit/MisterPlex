@@ -1,49 +1,23 @@
-w-osd integration REDO status
-time: 2026-08-03T06:08:08-05:00
-branch: integ/fab-720p-product-v2
-worktree: /home/flynnsbit/Projects/MisterPlex-wt-integ-product-v2
-HEAD: 9b47220dc32c0faa2aa980cc61636f8a247da4ef
-tip: 9b47220d integ(v2): fit-gate identity set + evidence logs + agent status
+w-osd integ q5 wire (B9+B15) — integ/fab-720p-product-v2
+date: 2026-08-03
 
-## Base / tips merged (at start of redo)
-base: main 77e1e78d → branch integ/fab-720p-product-v2
-merged order: mem d691d947 → clock e8064a4b → scaler c19a679c → osd 4c379a84 → path 6c0a20d2
-NOTE: during merge, lane tips advanced; gate reports under-take:
-  w-mem tip 234516998e74 NOT ancestor (B9/B12 tokens)
-  w-clock tip 1237b1710162, w-scaler c5bd6009, w-path f36321d6 advanced
-  w-osd 4c379a84 IS ancestor
+PARENT finding on 5231397b: latch q5 ports missing; fabric_* undriven.
+On tip fea8c6cf before this commit: DAR latch→fabric_*→video_ar WAS connected
+(post 6d2568ff); B15 still dead (content_fps=8'd24; fps_sel not instanced).
 
-## Deliverable: lane-evidence gate (permanent)
-tests/unit/test_integ_lane_evidence_markers.sh  true rc=0  pass=16 fail=0
-Store on integ: lines=1822 rt_need_optc=3 align=1 geom_reject=22 (NOT the v1 loss class)
-merge_loss=0 on fit-gate B19 scan
+FIX:
+- Canonical nets plxg_* only (no fabric_* aliases)
+- u_plxg_latch .dar_*/.fps_*/.content_fps → plxg_*
+- u_plex_video_ar host_dar_* ← plxg_dar_*
+- u_content_fps_sel ← plxg_fps_valid/plxg_content_fps → content_fps → present_core
+- FAULT_B15_FPS_HARDWIRE_24 red twin keeps permanent 24
+- Non-DDR stub assigns plxg_dar_*/fps_* = 0
+- AR unspecified fallback 4:3 documented deliberate (plex_video_ar Original)
 
-## Fit-gate (identity MATCH 0c6978df…)
-GATE_IDENTITY_MATCH EXECUTED
-LEG0_DISCOVER_DESIGN n_files=101
-LEG0_FAIL count=14   (v1 product was 19; hollow was 19)
-LEG0_FIX_STATUS unmerged=2 unimplemented=9 merge_loss=0 lane_tip_not_merged=1
-LEG0_PRESENT_CORE_OPTC_PORTS phys720=1 stride720=1 doorbell720=1
-fit_gate_final_true_rc=1
+PROOF true rc:
+  test_plex_q5_product_wire_rtl_sim.sh  true rc=0
+    green: ARX=16 ARY=9 c_fps_eff=30; unspecified→24; no_dar→4:3
+    drop FAULT_DROP_LATCH_Q5: AR 4:3 fps 24 (not 16:9/30) EXECUTED
+  test_integ_lane_evidence_markers.sh   (q5 connectivity markers added)
 
-## Collision #7 — beam ports
-At tips: clock_only=[] scaler_only=[] — PORT LISTS MATCH (rt_h_total/htot_active shared).
-Integ kept clock beam.
-
-## Collision #8 — path layout vs media_player
-layout.hpp: mem 0x800 + storage APIs + path kPlex360p* (clean once).
-media_player.cpp: path tip for q5 — LACKS ddrStorageGeometryForContent call sites. REPORT only.
-
-## Test matrix (direct true rc)
-evidence markers          true rc=0
-chrome_counted            true rc=0
-true_de_count             true rc=0
-beam_oracle               true rc=0
-beam_elab                 true rc=0
-beam_arith                true rc=0
-beam_ddr                  true rc=1  TB_LOCAL_960 store_accepted/rd_underrun
-m1_subarb                 true rc=0
-ddr_720p_abi              build true rc=2  no Makefile rule (osd Makefile)
-make unit                 true rc=2  rollcall MISSING_COMMAND + UNREGISTERED chrome_counted
-
-## No Quartus. No device. No BUILD_OK claim.
+No Quartus. No device.

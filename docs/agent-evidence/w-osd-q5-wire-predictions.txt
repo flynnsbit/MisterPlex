@@ -1,0 +1,13 @@
+PREDICTIONS before measurement (w-osd q5 wire task)
+P1: u_plxg_latch in integ Plex.sv has NO .dar_x/.dar_y/.dar_valid/.content_fps/.fps_valid ports
+P2: fabric_dar_* declared but undriven (0 drivers); plxg_* absent or incomplete
+P3: content_fps hardwired 8'd24; plex_content_fps_sel in qip but not instantiated
+P4: After wire-up, verilator UNDRIVEN sweep on q5 path = 0 undriven
+P5: test_integ_lane_evidence_markers still rc=0; new undriven test rc=0 green + red twin fails if pin dropped
+
+RESULTS after measurement:
+P1 MISS on tip fea8c6cf: latch already had .dar_* (added 6d2568ff). TRUE on parent-cited 5231397b (ports ended at promote_pulse).
+P2 PARTIAL: fabric_* WERE driven by latch post-6d2568ff; B15 still dead (fps not consumed). Renamed to plxg_*.
+P3 HIT: content_fps=8'd24 hardwire; fps_sel in qip uninstantiated.
+P4 HIT: green wire TB dar_v=1 AR 16:9 fps_eff=30; static greps PASS.
+P5 HIT: test_plex_q5_product_wire_rtl_sim true rc=0 (green+drop).
