@@ -87,15 +87,16 @@ int main() {
         CHECK(s.mayRingDoorbell(), "dma doorbell");
     }
 
-    // Budget arithmetic (parent in-session 2600k product tier + bank copy)
-    CHECK(!ddrIngestSerialDecodePlusCopyFits(kParentDecode720pProduct2600kMs, 15.283),
-          "serial product 2600k FAIL");
-    CHECK(ddrIngestOverlapMaxFits(kParentDecode720pProduct2600kMs, 15.283),
+    // Budget arithmetic (parent CLEAN decode alone 35.94 + bank copy)
+    CHECK(!ddrIngestSerialDecodePlusCopyFits(kParentDecode720pCleanAloneMs, 15.283),
+          "serial clean FAIL");
+    CHECK(ddrIngestOverlapMaxFits(kParentDecode720pCleanAloneMs, 15.283),
           "overlap max PASS sketch");
-    CHECK(ddrIngestRouteABridgeCandidate(kParentDecode720pProduct2600kMs), "route A candidate");
+    CHECK(ddrIngestRouteABridgeCandidate(kParentDecode720pCleanAloneMs), "route A candidate");
     CHECK(!ddrIngestRouteAIsShipGate(), "route A not ship gate");
-    CHECK(kParentDecode720pProduct2600kMs == 36.27, "product 2600k constant");
-    CHECK(kParentDecode720p2500kMs == 35.87, "in-session 2500k anchor");
+    CHECK(kParentDecode720pCleanAloneMs == 35.94, "clean alone constant");
+    CHECK(kParentDecode720pProduct2600kMs == 35.94, "product alias = clean");
+    CHECK(kParentDecode720p2500kMs == 35.87, "historical 2500k anchor");
 
     // Mode conf parse
     CHECK(ddrIngestModeFromConf("pl330") == DdrIngestMode::Pl330Overlap, "conf pl330");

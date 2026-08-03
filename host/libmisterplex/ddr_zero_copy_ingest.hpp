@@ -78,14 +78,16 @@ struct DdrIngestContract {
 // --- Budget helpers (parent-measured constants; do not invent device rates) ---
 
 constexpr double kIngestBudget24fpsMs = 41.667;
-constexpr double kParentBankCopy720pMs = 15.283; // best mapped bank, Sweep-3/4
-// Parent device 2026-08-03 in-session re-anchor (300f/arm, exit=0):
-//   2500k mean 35.87 ms/f (was 36.845 cross-session — do not interpolate sessions)
-//   2600k mean 36.27 ms/f  ← product tier (~maxBR=3100 delivers ~2585k content)
-//   budget margin @2600k = 5.40 ms (13.0%). Parent miss vs pre-reg 36.8–37.4.
-constexpr double kParentDecode720p2500kMs = 35.87;
-constexpr double kParentDecode720pProduct2600kMs = 36.27;
-// Alias kept for call sites that said "approx 2600".
+constexpr double kParentBankCopy720pMs = 15.283; // best mapped bank (pre-awk; re-confirm later)
+// Parent CLEAN re-measure 2026-08-03 after killing rogue awk PID 12021 (exit=0):
+//   decode alone x2: 35.82 / 36.05 → mean 35.94 ms/f  margin 5.73 ms vs 41.667
+//   decode + DDR writer 46.57 (+10.63); decode + one CPU burner 48.21 (+12.27)
+// RETRACTED (awk contamination): serial 21.1 ms "bank anomaly", bank-sweep table,
+//   "CPU-theft dominated" headline, DMA 23.839 ms, dual-burner 52.26 ms.
+// Prior in-session 35.87/36.27 kept as historical aliases only.
+constexpr double kParentDecode720pCleanAloneMs = 35.94;
+constexpr double kParentDecode720p2500kMs = 35.87; // earlier same-session arm
+constexpr double kParentDecode720pProduct2600kMs = kParentDecode720pCleanAloneMs;
 constexpr double kParentDecode720pApprox2600kMs = kParentDecode720pProduct2600kMs;
 // Universal geometry floor content ~2585k after maxBR=3100 (w-path fine matrix).
 
