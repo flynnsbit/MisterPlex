@@ -141,3 +141,25 @@ native_480p rc=0  (geom tied off)
 2. w-mem `fabric_ddr_writer` + Option-C bank live  
 3. ARM native publish + win_enable=1 + geom_enable=1  
 4. Parent glass + FEED remeasure (scale + present bytes)
+
+## Qword export (multi-pixel free lunch)
+
+`DDR_FRAME_STORE_EXPORT_QWORDS` (compile-time, **off in product**) adds ports on
+`ddr_frame_store`:
+
+| Port | Width | Meaning |
+|------|-------|---------|
+| `rd_y_qword` | 64 | Y linebuf qword at the YUV-calc stage |
+| `rd_u_qword` / `rd_v_qword` | 64 | Chroma qwords (same stage) |
+| `rd_src_x_q` | 11 | Store X aligned with `y_sel_r` (one beam cycle) |
+| `rd_qword_valid` | 1 | Hit + visible + has_frame at that stage |
+
+One luma qword holds **8** samples → N≤8 pixels/clk with no extra DDR read when
+lanes share `src_x[10:3]`. Chroma 4:2:0: byte index `(x>>1)[2:0]`.
+
+Consumer: w-clock `yuv_bt601_npx` (do not duplicate). Product path leaves the
+define off so pinout and ALM stay identical for w-nostub.
+
+RBG: `tests/unit/test_ddr_qword_export_rtl_sim.sh`
+- GREEN: lanes 0..3 from one export match single-pixel `rd_r/g/b`
+- RED: `FAULT_QWORD_LANE0` (always Y byte0) must mismatch lanes 1..3

@@ -69,6 +69,16 @@ module ddr_frame_store #(
 	output reg  [7:0]  rd_g,
 	output reg  [7:0]  rd_b,
 
+	// Optional multi-pixel handoff (w-clock yuv_bt601_npx). Enabled only when
+	// DDR_FRAME_STORE_EXPORT_QWORDS is defined so legacy TBs stay pin-compatible.
+`ifdef DDR_FRAME_STORE_EXPORT_QWORDS
+	output reg  [63:0] rd_y_qword,
+	output reg  [63:0] rd_u_qword,
+	output reg  [63:0] rd_v_qword,
+	output reg  [10:0] rd_src_x_q,
+	output reg         rd_qword_valid,
+`endif
+
 	// Runtime bank geometry (PLXW). geom_enable=0 → parameter legacy path.
 	// Callers must tie these (product: Plex/present_core; TBs: 0).
 	// No port defaults — Verilator was ignoring C++ drivers when defaults existed.
@@ -480,6 +490,7 @@ module ddr_frame_store #(
 	reg y_hit_r, c_hit_r;
 	reg [SLOT_W-1:0] y_hit_idx_r, c_hit_idx_r;
 	reg [2:0] y_sel_r, c_sel_r;
+	reg [10:0] src_x_d;  // aligns with y_sel_r (one beam cycle)
 
 	integer vi;
 	reg y_hit_now, c_hit_now;
@@ -566,6 +577,14 @@ module ddr_frame_store #(
 			c_hit_idx_r <= '0;
 			y_sel_r <= 3'd0;
 			c_sel_r <= 3'd0;
+`ifdef DDR_FRAME_STORE_EXPORT_QWORDS
+			rd_y_qword <= 64'd0;
+			rd_u_qword <= 64'd0;
+			rd_v_qword <= 64'd0;
+			rd_src_x_q <= 11'd0;
+			rd_qword_valid <= 1'b0;
+`endif
+			src_x_d <= 11'd0;
 		end else begin
 			y_valid_v1 <= y_valid_hold;
 			y_valid_v2 <= y_valid_v1;
@@ -610,6 +629,20 @@ module ddr_frame_store #(
 			c_hit_idx_r <= c_hit_idx_now;
 			y_sel_r <= src_x[2:0];
 			c_sel_r <= src_x[3:1];
+			// Delay src_x one cycle to pair with y_sel_r / selected_* (hit_idx_r).
+			src_x_d <= src_x[10:0];
+`ifdef DDR_FRAME_STORE_EXPORT_QWORDS
+			// Export at the YUV-calc stage: selected_* uses y_hit_idx_r and
+			// y_sel_r/src_x_d are the prior beam sample. rd_r/g/b register
+			// r_calc one cycle later — same data the multi-pixel free-lunch
+			// path (w-clock yuv_bt601_npx) should consume. N<=8 from one Y qword
+			// when lanes share src_x_d[10:3].
+			rd_y_qword <= selected_y_q;
+			rd_u_qword <= selected_u_q;
+			rd_v_qword <= selected_v_q;
+			rd_src_x_q <= src_x_d;
+			rd_qword_valid <= rd_active_r && rd_visible_r && has_frame && y_hit_r && c_hit_r;
+`endif
 			miss_d <= rd_miss_now;
 			if (miss_d && underrun_count != 16'hFFFF) begin
 				underrun_count <= underrun_count + 16'd1;
