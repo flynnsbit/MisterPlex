@@ -104,10 +104,11 @@
     "prereg_expect_pass_20mhz": true,
     "confidence": "medium",
     "miss_if": "fmax_clk_sys < 20.0 OR any setup slack < 0",
-    "basis": "705 is data in existing vtot_act path — no new multi-cycle structure vs 564",
+    "basis": "705 is data in existing vtot_act path \u2014 no new multi-cycle structure vs 564",
     "parent_fit_gate": "REQUIRED before release; w-clock does not run Quartus",
     "parent_check": "make post-fit-timing STA_RPT=... && make post-fit-timing-margin; publish Fmax Summary L128-class line for clk_sys",
-    "prediction_locked": "PASS @20 MHz medium; MISS publishable if Fmax_sys<20 or slack<0"
+    "prediction_locked": "PASS @20 MHz medium; MISS publishable if Fmax_sys<20 or slack<0",
+    "parent_note": "STA is post-fit (parent withdrew pre-fit gate); score prereg after fit"
   },
   "ascal_vsync_dither_option_d": {
     "priority": "c_after_fit_and_720p_present",
@@ -115,7 +116,7 @@
     "ascal_absorb_default": true,
     "evidence": ".agent-work/w-clock/ASCAL_VSYNC_DITHER_ABSORB.md",
     "implemented": false,
-    "sta_impact": "UNKNOWN_UNTIL_IMPLEMENTED — dither FSM not in netlist yet; V705 fixed-constant STA is the current film gate"
+    "sta_impact": "UNKNOWN_UNTIL_IMPLEMENTED \u2014 dither FSM not in netlist yet; V705 fixed-constant STA is the current film gate"
   },
   "b13_runtime_de": {
     "use_rt_geom": true,
@@ -159,5 +160,21 @@
     "evidence": "ascal.vhd iauto ih from DE-high himax not H_TOTAL",
     "gate": "tests/unit/test_ascal_iauto_de_only.sh",
     "extreme": "H_DE=320 blank=862 ratio=2.69 iauto_ih=320"
+  },
+  "route_ab_720p_glass": {
+    "verdict": "ROUTE_B",
+    "native_720p_beam_at_20mhz": false,
+    "route_a_30_24_mhz": {
+      "prereg_if_trial_fit": "miss if Fmax_sys < 30.24 or slack < 0",
+      "stub_fmax_23_46_blocks": true,
+      "product_path": false,
+      "pll_applied": false
+    },
+    "route_b": {
+      "core_beam": "content DE @20 MHz H=1182",
+      "glass": "ascal upscale to HDMI 1280x720",
+      "overclock_required": false
+    },
+    "json": "assets/route_ab_720p_glass.json"
   }
 }

@@ -1,0 +1,41 @@
+{
+  "title": "720p glass Route A vs B",
+  "owner": "w-clock",
+  "verdict": "ROUTE_B",
+  "prereg": ".agent-work/w-clock/ROUTE_AB_720P_PREREG.md",
+  "evidence": ".agent-work/w-clock/ROUTE_AB_720P_VERDICT.md",
+  "w_scaler_coord": "MisterPlex-wt-scaler/docs/ascal-vs-content-window-division.md",
+  "route_a_native_720p_beam": {
+    "feasible_at_20mhz": false,
+    "tight_1344x750_fps_at_20": 19.8413,
+    "mhz_for_30fps_tight": 30.24,
+    "mhz_for_24fps_tight": 24.19,
+    "stub_fmax_mhz": 23.46,
+    "nostub_fmax_mhz": 32.59,
+    "stub_blocks_30_24": true,
+    "pll_applied": false,
+    "sta_30_24": "UNKNOWN_UNTIL_FIT — prereg miss if Fmax_sys < 30.24 or slack < 0",
+    "product_path": false
+  },
+  "route_b_ascal_upscale": {
+    "product_path": true,
+    "ascal_upscales": true,
+    "output_timing_from": "sys_top WIDTH/HEIGHT HDMI config",
+    "core_beam": "content true-DE H_TOTAL=1182 V=564/705",
+    "arx_ary_pillars": true,
+    "hdmi_1280x720_windows": {
+      "4:3": {"videow": 960, "videoh": 720, "pillar": 160},
+      "16:9": {"videow": 1280, "videoh": 720, "pillar": 0},
+      "5:3": {"videow": 1200, "videoh": 720, "pillar": 40}
+    },
+    "max_tier_mpix_30": 15.552,
+    "clk_sys_mhz": 20.0,
+    "overclock_required_for_glass_720p": false
+  },
+  "division": {
+    "beam": "w-clock true content DE",
+    "window_store_map": "w-scaler present_content_window",
+    "dar_pins": "w-scaler plex_video_ar + q5",
+    "glass_upscale_pillars": "sys_top AR + ascal"
+  }
+}
