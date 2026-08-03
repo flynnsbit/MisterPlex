@@ -2,6 +2,10 @@
 # q5 end-to-end product wire: latch → plxg_* → AR + fps_sel.
 # Static Plex.sv connectivity + hierarchy RTL. Red: FAULT_DROP_LATCH_Q5.
 # Presence is not connectivity — this is parent miss #11 class.
+# HOST SEQLOCK FENCE (rd-duck): this proves FABRIC consumers only. Standalone
+# writePlxgQ5 at doorbell+0x828 never promotes under w-mem poller; q5 must ride
+# writePlxgRecord (6-qword) on bootstrap 0x300FF800 and Option-C. See
+# test_plxg_q5_host_seqlock_static.py — fabric PASS ≠ host publish PASS.
 set -euo pipefail
 
 assert_exec() {

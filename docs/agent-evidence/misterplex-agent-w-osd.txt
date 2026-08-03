@@ -106,3 +106,14 @@ Also: w-mem 1ae3c749 disable DE=640 vs w-clock 58eb6fe3 DE=624 —
   last-writer collision REMAINS (reaffirm prior hold).
 w-osd: fence any product B15 'exact fps' language; q5 wire ≠ exact cadence.
 HEAD=6dc45c87
+
+=== rd-duck 2026-08-03T08:57:20-05:00 BLOCKING q5 standalone write vs seqlock ===
+w-path c23f3e1a writePlxgQ5 at doorbell_phys+0x828; re-apply before kick.
+w-mem writePlxgRecord: body then q0/new seq; poller skips if seq unchanged.
+Standalone q5 never promoted; plan may zero q5; Option-C 0x3047F828 unread
+  (poller bootstrap 0x300FF800).
+Fix: q5 in DdrPublishPlan + same writePlxgRecord gen; refuse writePlxgQ5.
+E2E: nonzero DAR/fps survives full record+poller both LEG and Option-C.
+w-osd: fabric q5 wire FENCED ≠ host publish; added
+  test_plxg_q5_host_seqlock_static (PASS while writePlxgQ5 absent).
+HEAD=61c0b8a7
