@@ -5,8 +5,9 @@
 // and assets/multi_pixel_present_contract.json. Product default is 1 px/clk.
 // `define PRESENT_MULTI_PIXEL  — connect beam → ddr N-wide → present_npx_path → RGB/CE
 // `define PRESENT_PX_PER_CLK N — 1|2|4 (only meaningful with PRESENT_MULTI_PIXEL)
+// `define PRESENT_CLK_PIX_PLL — separate clk_pix (outclk_3); rate-match + sync sideband
 // Neither macro is defined in shipping / default fits (default-safe).
-// Parent enables both in an integration fit grant — do not define in QSF without grant.
+// Parent enables in an integration fit grant — do not define in QSF without grant.
 
 `ifdef PRESENT_MULTI_PIXEL
 	`ifndef PRESENT_PX_PER_CLK
@@ -41,6 +42,9 @@ module present_core #(
 	input  wire        clk,
 	input  wire        clk_sdram,
 	input  wire        clk_audio,
+	// Optional separate pixel clock (PRESENT_CLK_PIX_PLL). When the macro is
+	// off, Plex ties this to clk_sys; port exists so hierarchy stays stable.
+	input  wire        clk_pix,
 	input  wire        reset,
 
 	input  wire        pal,
@@ -282,9 +286,10 @@ module present_core #(
 	// (FBAR/DE_LAG) is UNTOUCHED. Do not move H_DE=529 without parent grant.
 	//
 	// Beam (CEA 720p geometry) → store read at glass_x0 → N-wide RGB →
-	// present_npx_path serializer → 1 px/clk. clk_pix tied to clk until a
-	// dedicated PLL out is granted (CLK_PIX_PLL_PLAN.md).
-	// Same-clock: beam backpressured by present_npx_path.in_ready.
+	// present_npx_path serializer → 1 px/clk.
+	// Same-clock bring-up: clk_pix==clk, beam backpressured by in_ready.
+	// PRESENT_CLK_PIX_PLL: Bresenham rate-match to F_PIX + FIFO sync sideband
+	// so line time matches clk_pix (see CLK_PIX_PLL_PLAN.md).
 	//
 	// H ownership: beam steps glass_x0 by PPC (w-clock). w-scaler maps
 	// glass→store and supplies Y qword+1 for straddle; active 1280 DE with
@@ -297,16 +302,25 @@ module present_core #(
 	wire                mp_hb, mp_hs, mp_vb, mp_vs, mp_fstart;
 	wire                mp_out_ce;
 	wire [7:0]          mp_out_r, mp_out_g, mp_out_b;
+	wire                mp_out_hb, mp_out_hs, mp_out_vb, mp_out_vs;
 	wire                mp_wr_full, mp_wr_af, mp_rd_ur, mp_rd_empty;
 
-	// Timing constants + effective refresh at same-clock 20 MHz (~16.16 fps).
+`ifdef PRESENT_CLK_PIX_PLL
+	localparam int MP_CLK_PIX_HZ = 29_700_000; // PIX24; PIX60=74_250_000 on grant
+	localparam bit MP_INCLUDE_SYNC = 1'b1;
+`else
+	localparam int MP_CLK_PIX_HZ = 20_000_000;
+	localparam bit MP_INCLUDE_SYNC = 1'b0;
+`endif
+
+	// Timing constants + effective refresh at CLK_PIX_HZ.
 	// keep/noprune: mode must survive map for post-fit hierarchy checks.
 	(* noprune *) wire [11:0] mp_h_de, mp_h_total, mp_v_act, mp_v_total;
 	(* noprune *) wire [11:0] mp_hs_s, mp_hs_e, mp_vs_s, mp_vs_e;
 	(* noprune *) wire [15:0] mp_fps_milli;
 	(* noprune *) wire        mp_needs_fast_pix;
 	present_video_timing_720p #(
-		.CLK_PIX_HZ(20_000_000)
+		.CLK_PIX_HZ(MP_CLK_PIX_HZ)
 	) u_mp_timing (
 		.h_de(mp_h_de),
 		.h_total(mp_h_total),
@@ -319,6 +333,24 @@ module present_core #(
 		.fps_eff_milli(mp_fps_milli),
 		.cea_24_needs_faster_pix(mp_needs_fast_pix)
 	);
+
+`ifdef PRESENT_CLK_PIX_PLL
+	// Average pixel rate = MP_CLK_PIX_HZ so line time matches clk_pix domain.
+	wire mp_rate_fire;
+	present_pix_rate_match #(
+		.F_SYS_HZ(20_000_000),
+		.F_PIX_HZ(MP_CLK_PIX_HZ),
+		.PX_PER_CLK(PRESENT_PPC)
+	) u_mp_rate (
+		.clk(clk),
+		.reset(reset),
+		.in_ready(mp_in_ready),
+		.fire(mp_rate_fire)
+	);
+	wire mp_beam_en = ~reset & mp_in_ready & mp_rate_fire;
+`else
+	wire mp_beam_en = ~reset & mp_in_ready;
+`endif
 
 	present_beam_ppc #(
 		.PX_PER_CLK(PRESENT_PPC),
@@ -333,7 +365,7 @@ module present_core #(
 	) u_mp_beam (
 		.clk(clk),
 		.reset(reset),
-		.enable(~reset & mp_in_ready),
+		.enable(mp_beam_en),
 		.beam_ce(mp_beam_ce),
 		.glass_x0(mp_glass_x0),
 		.glass_y(mp_glass_y),
@@ -489,25 +521,77 @@ module present_core #(
 
 `ifdef PRESENT_MULTI_PIXEL
 `ifdef DDR_FRAME_STORE
-	// Serialize N-wide store RGB → 1 px/clk. Feed on fs_n_valid (commit pulse).
+	// Serialize N-wide store RGB → 1 px/clk.
+	// Same-clock (INCLUDE_SYNC=0): push on fs_n_valid only; sync from beam.
+	// Dual-clock (INCLUDE_SYNC=1): also push black+sync on blank beam steps so
+	// clk_pix HS/VS advance through blanking (FIFO is the only sync path).
+	// DE groups still come from store (fs_n_valid) with sync sampled at beam.
+	// Delayed beam sync sample for npx sideband (not timing package mp_hs_s).
+	reg mp_hb_sam, mp_hs_sam, mp_vb_sam, mp_vs_sam;
+	reg mp_blank_push;
+	always @(posedge clk) begin
+		if (reset) begin
+			mp_hb_sam <= 1'b1;
+			mp_hs_sam <= 1'b0;
+			mp_vb_sam <= 1'b1;
+			mp_vs_sam <= 1'b0;
+			mp_blank_push <= 1'b0;
+		end else begin
+			mp_blank_push <= 1'b0;
+			if (mp_beam_ce) begin
+				mp_hb_sam <= mp_hb;
+				mp_hs_sam <= mp_hs;
+				mp_vb_sam <= mp_vb;
+				mp_vs_sam <= mp_vs;
+				// Blank group: no store commit; inject black into npx.
+				if (MP_INCLUDE_SYNC && !(|mp_lane_de))
+					mp_blank_push <= 1'b1;
+			end
+		end
+	end
+	wire mp_npx_valid = fs_n_valid | mp_blank_push;
+	wire [PRESENT_PPC*8-1:0] mp_npx_r =
+		fs_n_valid ? fs_r_n : {PRESENT_PPC{8'd0}};
+	wire [PRESENT_PPC*8-1:0] mp_npx_g =
+		fs_n_valid ? fs_g_n : {PRESENT_PPC{8'd0}};
+	wire [PRESENT_PPC*8-1:0] mp_npx_b =
+		fs_n_valid ? fs_b_n : {PRESENT_PPC{8'd0}};
+	wire [PRESENT_PPC-1:0] mp_npx_lane =
+		fs_n_valid ? {PRESENT_PPC{1'b1}} :
+		(mp_blank_push ? {PRESENT_PPC{1'b1}} : {PRESENT_PPC{1'b0}});
+	// Sync: prefer sampled beam flags with store/blank push.
+	wire mp_npx_hb = mp_hb_sam;
+	wire mp_npx_hs = mp_hs_sam;
+	wire mp_npx_vb = mp_vb_sam;
+	wire mp_npx_vs = mp_vs_sam;
+
 	present_npx_path #(
 		.PX_PER_CLK(PRESENT_PPC),
-		.FIFO_AW(6)
+		.FIFO_AW(6),
+		.INCLUDE_SYNC(MP_INCLUDE_SYNC)
 	) u_mp_npx_path (
 		.clk_sys(clk),
 		.reset_sys(reset),
-		.clk_pix(clk),
+		.clk_pix(clk_pix),
 		.reset_pix(reset),
-		.in_valid(fs_n_valid),
-		.in_r(fs_r_n),
-		.in_g(fs_g_n),
-		.in_b(fs_b_n),
-		.in_lane_valid(fs_n_valid ? {PRESENT_PPC{1'b1}} : {PRESENT_PPC{1'b0}}),
+		.in_valid(mp_npx_valid),
+		.in_r(mp_npx_r),
+		.in_g(mp_npx_g),
+		.in_b(mp_npx_b),
+		.in_lane_valid(mp_npx_lane),
+		.in_hblank(mp_npx_hb),
+		.in_hsync(mp_npx_hs),
+		.in_vblank(mp_npx_vb),
+		.in_vsync(mp_npx_vs),
 		.in_ready(mp_in_ready),
 		.out_ce(mp_out_ce),
 		.out_r(mp_out_r),
 		.out_g(mp_out_g),
 		.out_b(mp_out_b),
+		.out_hblank(mp_out_hb),
+		.out_hsync(mp_out_hs),
+		.out_vblank(mp_out_vb),
+		.out_vsync(mp_out_vs),
 		.wr_full(mp_wr_full),
 		.wr_almost_full(mp_wr_af),
 		.rd_underrun(mp_rd_ur),
@@ -516,11 +600,19 @@ module present_core #(
 	// DE_LAG for multi-pixel is UNKNOWN until parent HDMI edge sweep on an
 	// authorised multi-pixel fit. Start with 0 delay on beam blank (data path
 	// has its own store+npx latency); do not claim calibration.
+	// Dual-clock: prefer FIFO sideband sync (pixel-aligned). Same-clock: beam.
 	localparam int MP_SYNC_LAG = 0;
+`ifdef PRESENT_CLK_PIX_PLL
+	wire mp_hb_d = mp_out_hb;
+	wire mp_hs_d = mp_out_hs;
+	wire mp_vb_d = mp_out_vb;
+	wire mp_vs_d = mp_out_vs;
+`else
 	wire mp_hb_d = mp_hb;
 	wire mp_hs_d = mp_hs;
 	wire mp_vb_d = mp_vb;
 	wire mp_vs_d = mp_vs;
+`endif
 	wire mp_de_out = ~mp_hb_d & ~mp_vb_d;
 	// Sanity: beam DE must match timing package (elab-time constants).
 	// If this ever mismatches, integration fit is wrong — fail closed in sim.
@@ -590,8 +682,9 @@ module present_core #(
 	// backpressure). Black only in blank — never flash black mid-line on CE holes.
 	// Outputs r/g/b/H*/V* are driven from this path whenever use_ext (runtime
 	// has_frame) so Quartus cannot DCE the beam→store→npx chain as dead.
+	// Hold on clk_pix (output domain) — was clk; dual-clock safe.
 	reg [7:0] mp_r_hold, mp_g_hold, mp_b_hold;
-	always @(posedge clk) begin
+	always @(posedge clk_pix) begin
 		if (reset) begin
 			mp_r_hold <= 8'd0;
 			mp_g_hold <= 8'd0;
@@ -612,7 +705,11 @@ module present_core #(
 	assign r = use_ext ? (mp_de_out ? mp_r_px : 8'd0) : (show_pattern ? br : 8'd0);
 	assign g = use_ext ? (mp_de_out ? mp_g_px : 8'd0) : (show_pattern ? bg : 8'd0);
 	assign b = use_ext ? (mp_de_out ? mp_b_px : 8'd0) : (show_pattern ? bb : 8'd0);
+`ifdef PRESENT_CLK_PIX_PLL
+	assign ce_pix = 1'b1; // CLK_VIDEO==clk_pix; CE always
+`else
 	assign ce_pix = 1'b1;
+`endif
 	assign HBlank = use_ext ? mp_hb_d : hb_d;
 	assign HSync  = use_ext ? mp_hs_d : hs_d;
 	assign VBlank = use_ext ? mp_vb_d : vb_d;

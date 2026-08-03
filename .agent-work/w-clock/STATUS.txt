@@ -1,7 +1,6 @@
 w-clock STATUS
 ==============
-clk_pix PLAN: PIX24=29.7 / PIX60=74.25 outclk_3 — NOT applied (sys stays 20)
-Near-term: 720p OUTPUT (glass), not 720p SOURCE (ARM decode+copy FAILs true 720)
-clk_pix still required for CEA refresh either way
-PRESENT fabric work: no clk_sys bump @ PPC>=2/4
-Macro OFF; CDC intact
+CRITICAL PATH: clk_pix PIX24=29.7 (outclk_3) — PLL NOT applied
+Scaffolded: rate_match, sync sideband, clk_pix port, CLK_VIDEO mux (macro OFF)
+Default OFF: bit-identical path when PRESENT_* unset
+Near-term product: 960x540→720p OUTPUT; clk_pix gates true 24 Hz glass

@@ -37,7 +37,7 @@ module wrap;
   wire [7:0] DBE;
   wire DCLK;
   present_core #(.FRAME_W(640), .FRAME_H(480), .FRAME_STRIDE(640), .FRAME_LINE_COUNT(8)) u (
-    .clk(clk), .clk_sdram(clk_sdram), .clk_audio(clk_audio), .reset(reset),
+    .clk(clk), .clk_sdram(clk_sdram), .clk_audio(clk_audio), .clk_pix(clk), .reset(reset),
     .pal(1'b0), .scandouble(1'b1), .content_fps(8'd24), .display_hz(8'd60),
     .pattern(2'd0), .audio_en(1'b0), .use_frame_store(1'b0),
     .fs_wr_en(1'b0), .fs_wr_pixel(16'd0), .fs_wr_reset(1'b0), .fs_swap(1'b0), .fs_wr_ready(),

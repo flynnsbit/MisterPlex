@@ -210,6 +210,7 @@ EXPECTED_COMMANDS = [
     "$(ROOT)/tests/unit/test_present_720p_fit_contract.sh",
     "$(ROOT)/tests/unit/test_fabric_clock_headroom.sh",
     "$(ROOT)/tests/unit/test_clk_pix_pll_plan.sh",
+    "$(ROOT)/tests/unit/test_present_pix_rate_match.sh",
     "$(ROOT)/tests/unit/test_present_multi_pixel_elab.sh",
     "$(ROOT)/tests/unit/test_release_rbf_hash.sh",
     "$(ROOT)/tests/unit/test_sdram_startup_verilator.sh",

@@ -727,6 +727,18 @@ wire  [7:0] present_ddr_be;
 wire        present_ddr_we;
 `endif
 
+// clk_pix: shipping ties to clk_sys. PRESENT_CLK_PIX_PLL (parent grant) uses
+// pll outclk_3 @ 29.7/74.25 — see .agent-work/w-clock/CLK_PIX_PLL_PLAN.md.
+// PLL outclk_3 is NOT in shipping pll_0002.v (still 3 clocks).
+`ifdef PRESENT_CLK_PIX_PLL
+	wire clk_pix;
+	// Apply-time: wire .outclk_3(clk_pix) on pll once number_of_clocks=4.
+	// Until then this ifdef must not be set in product QSF (gate will fail).
+	assign clk_pix = clk_sys; // placeholder — real outclk_3 replaces this on grant
+`else
+	wire clk_pix = clk_sys;
+`endif
+
 present_core #(
 	.FRAME_W(FRAME_W),
 	.FRAME_H(FRAME_H),
@@ -736,6 +748,7 @@ present_core #(
 	.clk(clk_sys),
 	.clk_sdram(clk_sdram),
 	.clk_audio(CLK_AUDIO),
+	.clk_pix(clk_pix),
 	.reset(present_reset),
 	.pal(status[2]),
 	.scandouble(forced_scandoubler),
@@ -846,8 +859,14 @@ ddr_bus_arbiter ddr_arb (
 );
 `endif
 
+`ifdef PRESENT_CLK_PIX_PLL
+// True pixel clock domain (after PLL outclk_3 grant). CE=1: one RGB per edge.
+assign CLK_VIDEO = clk_pix;
+assign CE_PIXEL  = 1'b1;
+`else
 assign CLK_VIDEO = clk_sys;
 assign CE_PIXEL  = ce_pix;
+`endif
 assign VGA_DE = ~(HBlank | VBlank);
 assign VGA_HS = HSync;
 assign VGA_VS = VSync;

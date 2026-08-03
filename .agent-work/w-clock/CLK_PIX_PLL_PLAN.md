@@ -242,11 +242,14 @@ Stage 0 is the queued integration fit. This doc unblocks Stage 1 design without 
 | Item | State |
 |------|--------|
 | This plan + contract + gate | **APPLIED** (docs/scripts) |
-| `pll_0002.v` outclk_3 | **NOT applied** |
-| `Plex.sv` CLK_VIDEO mux | **NOT applied** |
+| `present_core.clk_pix` port + `clk_pix(clk_pix)` npx | **APPLIED** (default tie `clk_pix=clk_sys`) |
+| `present_pix_rate_match` Bresenham | **APPLIED** (instantiated only under `PRESENT_CLK_PIX_PLL`) |
+| `present_npx_path` INCLUDE_SYNC sideband + blank inject | **APPLIED** (INCLUDE_SYNC=0 default) |
+| `Plex.sv` CLK_VIDEO mux under `PRESENT_CLK_PIX_PLL` | **APPLIED** (macro OFF → ship path) |
+| `pll_0002.v` outclk_3 | **NOT applied** — placeholder still `assign clk_pix=clk_sys` |
 | `PRESENT_CLK_PIX_PLL` product QSF | **NOT applied** |
 | SDC clk_pix comment block | **APPLIED** (comments) |
-| Claim 24/60 Hz on glass | **FORBIDDEN** until STA + capture |
+| Claim 24/60 Hz on glass | **FORBIDDEN** until STA + capture + real outclk_3 |
 
 ---
 

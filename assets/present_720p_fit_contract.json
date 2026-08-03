@@ -19,7 +19,7 @@
       "u_mp_npx_path",
       "localparam H_DE    = 10'd529",
       "H_DE(1280)",
-      "clk_pix(clk)"
+      "clk_pix(clk_pix)"
     ],
     "present_npx_path": "fpga/Plex_MiSTer/rtl/present_npx_path.sv",
     "npx_must_contain": [
