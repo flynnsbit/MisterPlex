@@ -50,7 +50,9 @@
     "ac48fbe9a34646e2": "false_path @ fpga/Plex_MiSTer/sys/sys_top.sdc:73 \u2014 scaler-false-path: scaler configuration outputs",
     "de1e19a50000bdd5": "false_path @ fpga/Plex_MiSTer/sys/sys_top.sdc:74 \u2014 scaler-false-path: scaler configuration outputs",
     "88177291f638ba21": "false_path @ fpga/Plex_MiSTer/sys/sys_top.sdc:76 \u2014 REVIEW: false_path on non-obvious target",
-    "cec5dcaef6dfb306": "false_path @ fpga/Plex_MiSTer/sys/sys_top.sdc:77 \u2014 REVIEW: false_path on non-obvious target"
+    "cec5dcaef6dfb306": "false_path @ fpga/Plex_MiSTer/sys/sys_top.sdc:77 \u2014 REVIEW: false_path on non-obvious target",
+    "a2ff373066af8638": "clock_groups @ fpga/Plex_MiSTer/Plex_clk_pix.sdc:28 \u2014 PRESENT_CLK_PIX_PLL default-OFF SDC: clk_pix vs clk_sys crossed only via present_npx_path async_fifo gray + 2FF (source-proven CDC); file not sourced in product QSF",
+    "80914f1b557a9074": "clock_groups @ fpga/Plex_MiSTer/Plex_clk_pix.sdc:32 \u2014 PRESENT_CLK_PIX_PLL default-OFF SDC: clk_pix vs clk_ddr asynchronous; same FIFO CDC class; file not sourced in product QSF"
   },
   "expected_sta_clocks": [
     "general[0].gpll",
