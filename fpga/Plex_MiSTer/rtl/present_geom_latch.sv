@@ -2,7 +2,7 @@
 //
 // Magic: PLXG ("Plex Geometry") 0x504C5847. Not PLXW — that magic is already
 // used by the bitstream ring session-low stat (mailbox_abi_spec.hpp).
-// Proposed control-page offset: DOORBELL+0x130 (after PLXD @ +0x128).
+// Control-page offset: DOORBELL+0x800 (ABI FREEZE). Never +0x130 (PLXC).
 // Final ABI header ownership: w-mem; this module is the READ/present consumer
 // latch so fabric can leave reset-default (all zero → legacy bit-exact path).
 //

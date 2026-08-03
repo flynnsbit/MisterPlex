@@ -1,6 +1,7 @@
 #pragma once
 
 #include "libmisterplex/geometry_units.hpp"
+#include "libmisterplex/mailbox_abi_spec.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -91,8 +92,25 @@ constexpr uint32_t kPlex720pYuv420pDoorbellPhys = 0x3047F000u;
 constexpr uint32_t kPlexDdrReservedWindowStart = 0x1FF00000u;
 constexpr uint32_t kPlexDdrReservedWindowEnd = 0x40000000u;
 constexpr uint32_t kPlex720pMapBytes2Bank = 0x00300000u;
-constexpr uint32_t kDdrFramePlxgOffset = 0x130u;
+// PLXG — ABI FREEZE (parent 2026-08-03): FIXED doorbell+0x800.
+// Independent of MAX_CMDS / chrome list length. Never 0x130 (PLXC).
+// Single source: mailbox_abi::kPlxgOffset; duplicate is compile-checked below.
+constexpr uint32_t kDdrFramePlxgOffset = 0x800u;
 constexpr uint32_t kDdrFramePlxgMagic = 0x504C5847u; // "PLXG"
+constexpr uint32_t kDdrFramePlxgBytes = 40u;
+constexpr uint32_t kDdrFramePlxgBootstrapPhys = 0x300FF800u;
+static_assert(kDdrFramePlxgOffset == mailbox_abi::kPlxgOffset,
+              "kDdrFramePlxgOffset must equal mailbox_abi::kPlxgOffset (ABI freeze)");
+static_assert(kDdrFramePlxgMagic == mailbox_abi::kPlxgMagic,
+              "PLXG magic must match mailbox_abi_spec");
+static_assert(kDdrFramePlxgOffset != mailbox_abi::kPlxcOffset,
+              "PLXG must not collide with PLXC +0x130");
+static_assert(kDdrFramePlxgOffset == 0x800u, "PLXG offset is ABI-frozen at 0x800");
+static_assert(kDdrFramePlxgBootstrapPhys == mailbox_abi::kPlxgBootstrapPhys,
+              "PLXG bootstrap phys must match mailbox_abi_spec");
+inline constexpr uint32_t plxgMailboxPhys(uint32_t doorbell_phys) {
+    return doorbell_phys + kDdrFramePlxgOffset;
+}
 
 // ---- Product ship path: STORAGE vs CANVAS (must not conflate) ----
 //

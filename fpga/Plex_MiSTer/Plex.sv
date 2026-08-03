@@ -226,14 +226,14 @@ wire reset = RESET | status[0] | buttons[1];
 //
 // Fabric content window (present_content_window):
 //   Default win_enable=0 → legacy full-bank map (safe with ARM scale/pad to 624).
-//   Host mailbox (proposed PLXW @ doorbell+0x130) will program exact delivery
+//   Host mailbox PLXG @ doorbell+0x800 (ABI FREEZE; never +0x130/PLXC) programs
 //   WxH + win_enable=1 when ARM stops scaling. O[4] supplies the coarse default
 //   content_w/h so a future one-bit enable can arm NN stretch without mailbox.
 //   Do NOT auto-assert win_enable from O[4] alone — that breaks ARM-scaled 624
 //   frames still published today (quarter-size / wrong sample class).
 wire        content_res_640x480 = status[4];
 // PLXG geom latch (present_geom_latch): host programs window + bank geometry.
-// Magic PLXG 0x504C5847 @ proposed doorbell+0x130 — NOT PLXW (bitstream stat).
+// Magic PLXG 0x504C5847 @ doorbell+0x800 (ABI FREEZE) — NOT PLXC +0x130 / NOT PLXW.
 // wr_en/commit tied 0 until DDR poller / w-mem ABI lands → reset-safe all-zero
 // outputs keep win_enable=0 and geom_enable=0 (legacy bit-exact 480p path).
 wire        plxg_wr_en   = 1'b0;

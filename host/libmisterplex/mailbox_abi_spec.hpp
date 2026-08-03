@@ -53,6 +53,31 @@ constexpr uint32_t kPlxfOffset = 0x118u;
 constexpr uint32_t kSdramDiagOffset = 0x120u;
 constexpr uint32_t kPlxdOffset = 0x128u;
 
+// plex_chrome semantic list (ARM→FPGA) and HDMI mirror (FPGA→ARM).
+// Doorbell-relative only — never hardcode absolute phys.
+// PLXC owns +0x130. List payload base +0x140. Depth is a UI tuning knob.
+constexpr uint32_t kPlxcOffset = 0x130u;
+constexpr uint32_t kPlxoOffset = 0x138u;
+constexpr uint32_t kPlxlOffset = 0x140u; // list payload base (64-bit cmds)
+// List depth must match plex_chrome_cmds::kMaxCmds / RTL MAX_CMDS when chrome is on.
+// 112 × 8B = 0x380 bytes → occupies +0x140 .. +0x4BF inclusive.
+constexpr uint32_t kPlxcListMaxCmds = 112u;
+
+// PLXG — 5-qword atomic geometry record (ARM→FPGA). Matches present_geom_latch.sv.
+// ABI FREEZE (parent 2026-08-03): FIXED offset 0x800 — NOT derived from MAX_CMDS.
+// A wire ABI must not move when a UI budget changes. Bound-check only:
+//   kPlxlOffset + kPlxcListMaxCmds*8 <= kPlxgOffset
+// HARD RULE: never place PLXG at kPlxcOffset (0x130).
+constexpr uint32_t kPlxgOffset = 0x800u;
+constexpr uint32_t kPlxgMagic = 0x504C5847u; // "PLXG"
+constexpr uint32_t kPlxgBytes = 40u; // 5 qwords
+constexpr uint32_t kPlxgBootstrapDoorbellPhys = 0x300FF000u; // product YUV doorbell
+constexpr uint32_t kPlxgBootstrapPhys = 0x300FF800u; // bootstrap + kPlxgOffset
+static_assert(kPlxgOffset == 0x800u, "PLXG offset is ABI-frozen at 0x800");
+static_assert(kPlxgOffset != kPlxcOffset, "PLXG must not collide with PLXC +0x130");
+static_assert(kPlxlOffset + kPlxcListMaxCmds * 8u <= kPlxgOffset,
+              "chrome list must not grow into fixed PLXG slot");
+
 // Legacy example doorbell base (historical 0x3007F000 control page).
 constexpr uint32_t kLegacyFrameStoreDoorbellPhys = 0x3007F000u;
 
@@ -128,7 +153,14 @@ struct MagicEntry {
     uint32_t magic;
 };
 
-constexpr std::array<MagicEntry, 7> kAllMagics = {{
+constexpr uint32_t kPlxcMagic = 0x504C5843u; // "PLXC"
+constexpr uint32_t kPlxoMagic = 0x504C584Fu; // "PLXO"
+// Absolute PLXC/PLXG on legacy example base (collision gate only).
+constexpr uint32_t kPlxcAddr = 0x3007F130u; // legacy doorbell + kPlxcOffset
+constexpr uint32_t kPlxoAddr = 0x3007F138u;
+constexpr uint32_t kPlxgAddr = 0x3007F800u; // legacy doorbell + kPlxgOffset (ABI freeze)
+
+constexpr std::array<MagicEntry, 10> kAllMagics = {{
     {"PLXK", kPlxkMagic},
     {"PLXS", kPlxsMagic},
     {"PLXI", kPlxiMagic},
@@ -136,11 +168,16 @@ constexpr std::array<MagicEntry, 7> kAllMagics = {{
     {"PLXF", kPlxfMagic},
     {"PLXD", kPlxdMagic},
     {"PLXB", kPlxbMagic},
+    {"PLXC", kPlxcMagic},
+    {"PLXO", kPlxoMagic},
+    {"PLXG", kPlxgMagic},
 }};
 
 // ---- All addressed mailboxes (for address-collision detection) ----
 // Every occupied DDR mailbox slot. Gate rejects overlapping addresses.
-constexpr std::array<MailboxEntry, 8> kAllMailboxes = {{
+// Chrome list payload (+0x140 .. +0x4BF) is not a single 8B slot — omitted here;
+// bound-check above keeps it out of PLXG.
+constexpr std::array<MailboxEntry, 11> kAllMailboxes = {{
     {"PLXK", kPlxkAddr,     kPlxkMagic,     8, "arm_to_fpga",  true},
     {"PLXS", kPlxsAddr,     kPlxsMagic,     8, "fpga_to_arm",  true},
     {"PLXI", kPlxiAddr,     kPlxiMagic,     8, "fpga_to_arm",  true},
@@ -148,6 +185,9 @@ constexpr std::array<MailboxEntry, 8> kAllMailboxes = {{
     {"PLXF", kPlxfAddr,     kPlxfMagic,     8, "fpga_to_arm",  true},
     {"DIAG", kSdramDiagAddr, 0,             8, "fpga_to_arm",  false},
     {"PLXD", kPlxdAddr,     kPlxdMagic,     8, "fpga_to_arm",  true},
+    {"PLXC", kPlxcAddr,     kPlxcMagic,     8, "arm_to_fpga",  true},
+    {"PLXO", kPlxoAddr,     kPlxoMagic,     8, "fpga_to_arm",  true},
+    {"PLXG", kPlxgAddr,     kPlxgMagic,    40, "arm_to_fpga",  true},
     {"PLXB", kPlxbAddr,     kPlxbMagic,     8, "arm_to_fpga",  true},
 }};
 

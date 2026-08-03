@@ -23,6 +23,10 @@
 
 ## Runtime mailbox / PLXG (before first present)
 
+**ABI FREEZE:** PLXG @ doorbell+**`0x800`** (`kDdrFramePlxgOffset` == `mailbox_abi::kPlxgOffset`).
+Never `0x130` (PLXC). Never derived from `MAX_CMDS`. Bound only:
+`kPlxlOffset + kPlxcListMaxCmds*8 <= 0x800`. Bootstrap `0x300FF800`.
+
 | Port / field | Value | Notes |
 |--------------|------:|-------|
 | `win_enable` / fabric_win_enable | **1** | window owns map |

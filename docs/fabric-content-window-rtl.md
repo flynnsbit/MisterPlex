@@ -74,7 +74,8 @@ Parent real 720p decode: **41.073 ms/f** (98.6% of 41.667 budget). Non-decode mu
 
 **Magic is PLXG (`0x504C5847`), not PLXW** — PLXW is already the bitstream session-low stat.
 
-Proposed block @ doorbell+0x130 (host-writable; w-mem owns final ABI headers).
+ABI FREEZE block @ doorbell+**0x800** (fixed; not MAX_CMDS-derived). Never +0x130 (PLXC).
+w-mem owns final ABI headers long-term; both `kDdrFramePlxgOffset` and `mailbox_abi::kPlxgOffset` must equal `0x800`.
 RTL latch: `present_geom_latch.sv` (wired in `Plex.sv`, wr tied 0 until poller).
 
 | Off | Field | Bits | Reset | Notes |
