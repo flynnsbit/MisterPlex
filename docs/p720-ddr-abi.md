@@ -126,11 +126,30 @@ shallow RAMs (`docs/linebuf-repack-and-qpel-scope.md`).
 
 ---
 
-## 5. fab-dma — **fabric-owned present** (ARM out of the loop)
+## 5. fab-dma — **zero ARM per-pixel at 720p24** (hard gate)
 
-**Choice (mandate):** Prefer the uglier split where fabric owns scale + black-pad
-+ placement and ARM only tight-writes decoder output, over an elegant path where
-ARM still scale/pads a cheaper canvas. 720p is the reward for evacuating ARM.
+### Parent hardware 2026-08-02 (real 720p content — supersedes synthetic blip)
+
+| Measure | ms/f | Source |
+|---------|-----:|--------|
+| 1280×720 @4000k decode-only, default threads | **41.073** | parent device verdict |
+| 24 fps budget | **41.667** | 1000/24 |
+| Residual after decode | **0.594 (1.4%)** | budget − decode |
+| 624×480 @1800k decode-only | 15.969 | same harness |
+| FEED non-decode @480p (present+pipe+scale) | **18.628** | 10.411+5.263+2.954 |
+
+**Invalidates:** any plan that leaves ARM memcpy of 720p I420 (~22.15 ms @59.521 MiB/s)
+or scaled non-decode (~3× memory-bound → tens of ms). Ship gate is
+`ddr720p24ShipAcceptsZeroArmPerPixel` — `arm_push_bytes==0`.
+
+**Choice:** FPGA-written Option-C banks (`makeDdrFpgaWrittenBankPlan`) over
+ARM tight-write fabric-owned present. Fabric-owned ARM write remains a **bridge**
+for 480p evacuation only — not 720p24 ship.
+
+## 5b. Fabric-owned present (480p bridge / intermediate)
+
+**Choice (mandate):** Prefer fabric scale + black-pad + placement over ARM canvas
+pad. At 720p24 this is **necessary but not sufficient** — pixel push must also leave ARM.
 
 | ARM job today | Fabric-owned path | ARM ms removed | How known |
 |---------------|-------------------|----------------|-----------|

@@ -669,6 +669,17 @@ constexpr double kDdrArchiveNoSyncMibps = 59.521;
 constexpr double kFeedArchiveScaleMs = 2.95;
 // FEED archive product present wall mean (ms/f) — not equal to pure copy.
 constexpr double kFeedArchivePresentMs = 10.41;
+// FEED non-decode ARM buckets @480p (present+pipe+scale), quoted parent rollup.
+constexpr double kFeedArchiveNonDecodeMs = 10.411 + 5.263 + 2.954; // 18.628
+// Parent device 2026-08-02 real-content 720p decode-only (both cores), ms/f.
+// Source: /tmp/misterplex-parent-720p-decode-verdict.txt (parent-owned measure).
+constexpr double kParent720pDecodeMsDefaultThreads = 41.073;
+constexpr double kParent480pDecodeMsDefaultThreads = 15.969;
+constexpr double kFrameBudget24fpsMs = 41.667;
+// 720p decode alone / budget = 41.073/41.667 ≈ 98.6%. Margin 0.594 ms.
+// ANY ARM per-pixel work at 720p24 is unshippable against this margin.
+constexpr double kParent720pDecodeBudgetFraction =
+    kParent720pDecodeMsDefaultThreads / kFrameBudget24fpsMs;
 
 struct DdrNativePushPlan {
     size_t native_bytes = 0;  // tight content I420
@@ -790,13 +801,25 @@ struct DdrArmPresentBudget {
     double scale_ms_removed_feed480 = 0.0;
     // True when path asks fabric to own scale+black+placement.
     bool fabric_owned = false;
-    // ARM still participates in pixel push (true until FPGA decode owns pixels).
+    // ARM still participates in pixel push (true until FPGA writes banks).
     bool arm_still_pushes_pixels = true;
+    // Hard 720p24 ship gate: arm_push_bytes==0 AND no ARM scale/pad/pack.
+    // Parent measure: 720p decode alone is 41.073 ms/f of 41.667 (0.59 ms margin).
+    // A tight 1280x720 memcpy alone projects ~22.15 ms — unshippable.
+    bool zero_arm_per_pixel = false;
     // Sum of *known* removed walls (copy projection + optional FEED scale).
     // Does NOT claim packYuv/clearYuv/PLXD overhead — those are unknown.
     double known_ms_removed_floor = 0.0;
     bool valid = false;
 };
+
+// 720p24 ship acceptance for the present/memory plane: ARM does zero per-pixel
+// work. Decode may remain on ARM only if every other plane is evacuated AND
+// fabric (or non-CPU DMA that ARM does not await per pixel) fills banks.
+inline bool ddr720p24ShipAcceptsZeroArmPerPixel(const DdrArmPresentBudget& b) {
+    return b.valid && b.zero_arm_per_pixel && b.arm_push_bytes == 0 &&
+           b.arm_copy_ms == 0.0 && !b.arm_still_pushes_pixels;
+}
 
 // Build the fabric-owned present contract for a content rectangle inside a tier
 // canvas. publish_bytes == native I420 only; PLXG must carry the window.
@@ -821,14 +844,18 @@ struct DdrFabricOwnedPresentPlan {
 
 inline DdrArmPresentBudget makeDdrArmPresentBudget(const DdrNativePushPlan& native,
                                                    DdrPresentOffload offload,
-                                                   bool countFeedScaleRemoval) {
+                                                   bool countFeedScaleRemoval,
+                                                   bool armPushesPixels = true) {
     DdrArmPresentBudget b{};
     if (!native.valid)
         return b;
-    b.arm_push_bytes = native.native_bytes;
-    b.arm_copy_ms = ddrPushMsAtRate(native.native_bytes, kDdrArchiveNoSyncMibps);
+    b.arm_push_bytes = armPushesPixels ? native.native_bytes : 0;
+    b.arm_copy_ms =
+        armPushesPixels ? ddrPushMsAtRate(native.native_bytes, kDdrArchiveNoSyncMibps) : 0.0;
     b.canvas_copy_ms = ddrPushMsAtRate(native.canvas_bytes, kDdrArchiveNoSyncMibps);
-    b.copy_ms_removed = b.canvas_copy_ms - b.arm_copy_ms;
+    // When ARM pushes nothing, the entire canvas copy term is evacuated.
+    b.copy_ms_removed =
+        armPushesPixels ? (b.canvas_copy_ms - b.arm_copy_ms) : b.canvas_copy_ms;
     if (b.copy_ms_removed < 0.0)
         b.copy_ms_removed = 0.0;
     b.fabric_owned = ddrPresentOffloadHas(offload, DdrPresentOffload::FabricScale) &&
@@ -837,7 +864,8 @@ inline DdrArmPresentBudget makeDdrArmPresentBudget(const DdrNativePushPlan& nati
     if (countFeedScaleRemoval &&
         ddrPresentOffloadHas(offload, DdrPresentOffload::FabricScale))
         b.scale_ms_removed_feed480 = kFeedArchiveScaleMs;
-    b.arm_still_pushes_pixels = true; // pixel push until FPGA decode
+    b.arm_still_pushes_pixels = armPushesPixels;
+    b.zero_arm_per_pixel = !armPushesPixels && b.fabric_owned;
     b.known_ms_removed_floor = b.copy_ms_removed + b.scale_ms_removed_feed480;
     b.valid = true;
     return b;
@@ -870,7 +898,8 @@ inline DdrFabricOwnedPresentPlan makeDdrFabricOwnedPresentPlan(
     if (!ddrFrameLayoutValid(p.canvas_layout))
         return p;
     p.publish_bytes = p.native.native_bytes;
-    p.budget = makeDdrArmPresentBudget(p.native, p.offload, countFeedScaleRemoval);
+    p.budget = makeDdrArmPresentBudget(p.native, p.offload, countFeedScaleRemoval,
+                                       /*armPushesPixels=*/true);
     // PLXG coded size = tier canvas (bank stride/doorbell family); native_push=1
     // tells fabric the payload is content_w×content_h tight at (x0,y0).
     // Content window words are a second mailbox beat (see encodePlxgContentWindow).
@@ -879,6 +908,45 @@ inline DdrFabricOwnedPresentPlan makeDdrFabricOwnedPresentPlan(
                                          /*enable=*/true, /*nativePush=*/true);
     p.valid = p.budget.valid;
     return p;
+}
+
+// FPGA-written banks: ARM publishes **zero** pixel bytes. Fabric decode/MC/IDCT
+// (or other fabric producer) fills Option-C / product banks; ARM only programs
+// PLXG + rings doorbell / feeds bitstream ring. This is the only present path
+// that can meet ddr720p24ShipAcceptsZeroArmPerPixel given parent 41.073 ms/f
+// decode-only margin of 0.59 ms (tight 720p memcpy alone ≈ 22 ms — fatal).
+inline DdrFabricOwnedPresentPlan makeDdrFpgaWrittenBankPlan(
+    const DdrFrameGeometry& canvasGeom, uint32_t canvasPhysBase = kPlex720pDdrFramePhysBase,
+    bool countFeedScaleRemoval = true) {
+    // Content == full canvas; producer is fabric, not ARM.
+    DdrFabricOwnedPresentPlan p = makeDdrFabricOwnedPresentPlan(
+        canvasGeom.coded_width.get(), canvasGeom.coded_height.get(), canvasGeom,
+        canvasPhysBase, 0, 0, countFeedScaleRemoval);
+    if (!p.valid)
+        return p;
+    p.publish_bytes = 0; // hard: ARM memcpy length
+    p.budget = makeDdrArmPresentBudget(p.native, p.offload, countFeedScaleRemoval,
+                                       /*armPushesPixels=*/false);
+    // native_push=0: fabric is the pixel producer; window still full-frame.
+    p.plxg_word = encodePlxgGeometryWord(canvasGeom.coded_width.get(),
+                                         canvasGeom.coded_height.get(),
+                                         /*enable=*/true, /*nativePush=*/false);
+    p.valid = p.budget.valid && ddr720p24ShipAcceptsZeroArmPerPixel(p.budget);
+    return p;
+}
+
+// Residual headroom after parent-measured 720p decode if non-decode is fully off ARM.
+// Returns budget - decode_ms. Positive means room for jitter only — not for memcpy.
+inline double ddr720p24ResidualMsAfterDecodeOnly(
+    double decodeMs = kParent720pDecodeMsDefaultThreads,
+    double budgetMs = kFrameBudget24fpsMs) {
+    return budgetMs - decodeMs;
+}
+
+// True when a projected ARM copy term alone would blow the residual decode margin.
+inline bool ddr720p24ArmCopyExceedsDecodeMargin(size_t armPushBytes) {
+    const double copyMs = ddrPushMsAtRate(armPushBytes, kDdrArchiveNoSyncMibps);
+    return copyMs > ddr720p24ResidualMsAfterDecodeOnly();
 }
 
 // Second PLXG beat: content window inside the tier bank. Magic still PLXG;

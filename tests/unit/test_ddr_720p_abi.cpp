@@ -188,8 +188,9 @@ int main() {
     CHECK(fpub.publish.layout.frame_bytes == 449280u); // tier bank still 480p
     CHECK(fpub.payload_bytes < fpub.publish.layout.frame_bytes);
 
-    // 720p tier + full 720p content: pad savings 0; scale removal still counted
-    // when ARM skips vf (FEED 2.95 is 480p anchor — flagged as such).
+    // 720p tier + full 720p content with ARM tight write: pad savings 0.
+    // Parent measure: 720p decode alone 41.073 ms/f → 0.59 ms residual.
+    // Tight 720p memcpy ~22.15 ms EXCEEDS residual → NOT ship-acceptable.
     const auto fab720 = makeDdrFabricOwnedPresentPlan(
         1280, 720, plex720pDdrFrameGeometry(), kPlex720pDdrFramePhysBase);
     CHECK(fab720.valid);
@@ -198,6 +199,28 @@ int main() {
     CHECK(fab720.budget.scale_ms_removed_feed480 == kFeedArchiveScaleMs);
     CHECK(fab720.budget.known_ms_removed_floor == kFeedArchiveScaleMs);
     CHECK(fab720.canvas_layout.doorbell_phys == 0x3047F000u);
+    CHECK(fab720.budget.arm_still_pushes_pixels);
+    CHECK(!ddr720p24ShipAcceptsZeroArmPerPixel(fab720.budget));
+    CHECK(ddr720p24ArmCopyExceedsDecodeMargin(1382400u));
+    CHECK(ddr720p24ResidualMsAfterDecodeOnly() > 0.5 &&
+          ddr720p24ResidualMsAfterDecodeOnly() < 0.7); // ~0.594
+    CHECK(kParent720pDecodeMsDefaultThreads == 41.073);
+    CHECK(kFeedArchiveNonDecodeMs > 18.6 && kFeedArchiveNonDecodeMs < 18.7);
+
+    // ONLY ship path: FPGA-written banks, ARM push_bytes=0.
+    const auto fpgaBanks =
+        makeDdrFpgaWrittenBankPlan(plex720pDdrFrameGeometry(), kPlex720pDdrFramePhysBase);
+    CHECK(fpgaBanks.valid);
+    CHECK(fpgaBanks.publish_bytes == 0u);
+    CHECK(fpgaBanks.budget.arm_push_bytes == 0u);
+    CHECK(fpgaBanks.budget.arm_copy_ms == 0.0);
+    CHECK(!fpgaBanks.budget.arm_still_pushes_pixels);
+    CHECK(fpgaBanks.budget.zero_arm_per_pixel);
+    CHECK(ddr720p24ShipAcceptsZeroArmPerPixel(fpgaBanks.budget));
+    // Entire canvas copy term counted as removed vs ARM-push baseline.
+    CHECK(fpgaBanks.budget.copy_ms_removed > 22.0 && fpgaBanks.budget.copy_ms_removed < 22.3);
+    CHECK(fpgaBanks.budget.known_ms_removed_floor >
+          fpgaBanks.budget.copy_ms_removed); // + FEED scale
 
     // 480p content on 720p canvas: large pad evacuation if ARM had been
     // forced to fill 720p banks (ugly path we refuse to keep on ARM).
@@ -230,8 +253,14 @@ int main() {
                 fab320.budget.known_ms_removed_floor, fab320.budget.copy_ms_removed,
                 fab320.budget.scale_ms_removed_feed480);
     std::printf("  FABRIC_OWNED 720 native known_ms_removed_floor=%.3f "
-                "(copy=%.3f; arm_still_pushes=%d)\n",
+                "(copy=%.3f; arm_still_pushes=%d) SHIP_OK=%d\n",
                 fab720.budget.known_ms_removed_floor, fab720.budget.copy_ms_removed,
-                fab720.budget.arm_still_pushes_pixels ? 1 : 0);
+                fab720.budget.arm_still_pushes_pixels ? 1 : 0,
+                ddr720p24ShipAcceptsZeroArmPerPixel(fab720.budget) ? 1 : 0);
+    std::printf("  FPGA_WRITTEN_BANKS publish_bytes=%zu known_ms_removed_floor=%.3f "
+                "SHIP_OK=%d residual_after_decode=%.3f\n",
+                fpgaBanks.publish_bytes, fpgaBanks.budget.known_ms_removed_floor,
+                ddr720p24ShipAcceptsZeroArmPerPixel(fpgaBanks.budget) ? 1 : 0,
+                ddr720p24ResidualMsAfterDecodeOnly());
     return 0;
 }
