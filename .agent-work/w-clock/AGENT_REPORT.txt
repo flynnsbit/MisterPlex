@@ -1,49 +1,22 @@
-# w-clock agent report — multi-pixel P1 path
-# Worktree: MisterPlex-wt-clock · branch w-clock-bump
-# No Quartus fit · No device access · PRESENT_MULTI_PIXEL OFF · PLL 20/90 untouched
+# w-clock report (latest)
+Branch w-clock-bump · No fit · No device · PRESENT_MULTI_PIXEL OFF · PLL 20/90
 
-## (a) Verified clock/Fmax (unchanged sources)
-- PLL SoT pll_0002.v: out0=20.000000 MHz clk_sys, out2=90.000000 MHz clk_ddr
-- STA Fmax: stub 8fdf440f = 23.46 MHz; nostub c74c6863 = 32.59 MHz (prior reports)
+## LANDED this session
+1. present_npx_path.sv — N-wide clk_sys → async_fifo → 1px clk_pix (combo FWFT pop)
+2. ddr_frame_store N-wide ports PX_PER_CLK default 1 (rd_r_n=rd_r); N>1 yuv_bt601_npx
+3. CLK_PIX_PLL_PLAN.md — 29.7 / 74.25 clk_pix proposal, not applied
+4. Doc: 1650 EVEN %4=2; Route B mandatory; honesty scanout not done
 
-## (b) 720p clk_sys need @ N ppc (exact)
-content 1280*720*24 = 22.1184e6
-  N=1: 22.12  FAIL ship20 | N=2: 11.06 OK | N=4: 5.53 OK
-CEA 1650*750*24 = 29.7e6 → N=2: 14.85 OK@20
-CEA 1650*750*60 = 74.25e6 → N=2: 37.13 FAIL nostub | N=4: 18.56 OK@20
+## Scan-out arithmetic (programme facts)
+content 720p24: 22.12 Mpix/s > ship 20 @1ppc FAIL; @2ppc 11.06 OK
+CEA 720p60: 74.25 @1ppc WALL; @2ppc 37.13 FAIL nostub; @4ppc 18.56 OK@20
 
-## (c) Staged proposal
-- Prefer N=2 present for 720p24 (no overclock). N=4 for CEA720p60.
-- PLL Target B 30/90 optional if 1ppc path retained; not required if multi-pixel lands.
-- PLL NOT applied this branch.
+## ARM ms removed by this lane
+0 (unconnected). Parent measures when wired.
 
-## (d) CDC
-present_npx_path: only async_fifo gray pointers cross clk_sys↔clk_pix.
-No bare multi-bit RGB across domains.
+## Ceiling
+No clk_sys overclock needed for 720p24 if ≥2ppc lands. 720p60 needs 4ppc not PLL fantasy.
+Wider-path Fmax impact: UNKNOWN until fit.
 
-## (e) SDC/gates
-- multi_pixel_present_contract + unit tests (red before green)
-- present_npx_path verilator beat conservation
-- No new false_path/multicycle
-
-## (f) Ceiling
-720p60@1ppc = WALL vs 32.59. 720p24@1ppc needs >20. Multi-pixel is the lever.
-Wider datapath Fmax impact: UNKNOWN until fit (w-nostub/parent).
-
-## (g) Unknowns
-- Product STA with PRESENT_MULTI_PIXEL ON
-- clk_pix PLL availability on Cyclone V PLL outs
-- ddr_frame_store N-wide timing
-- ARM ms removed: 0 until wired (measure: fabric present ON vs ARM scale bucket)
-
-## Parent corrections absorbed
-- 1650 is EVEN; 1650%4=2 (not odd)
-- mmap cache policy worth nothing; serial ARM decode+copy dead
-- Route B fabric pixels mandatory
-- "scanout done" overstated — modules macro-OFF unconnected
-
-## LANDED files
-fpga/Plex_MiSTer/rtl/present_npx_path.sv
-tests/rtl/present_npx_path_tb.sv
-tests/unit/test_present_npx_path_verilator.sh
-+ qip/Makefile/rollcall/contract/doc/STATUS
+## Unknowns
+Product STA with multi-pixel ON; legal PLL strings for 29.7/74.25; DE_LAG at H_DE=1280.

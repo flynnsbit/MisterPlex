@@ -2,32 +2,27 @@
 # Branch: w-clock-bump · No fit · No device · PLL 20/90 · PRESENT_MULTI_PIXEL OFF
 
 ## LANDED
-e8c21f59 present_npx_path P1 serializer (N-wide→async_fifo→1px) + beat TB; macro OFF
-afa55819 verilator red/green yuv_bt601_npx + present_beam_ppc
-4a786ae6 multi-pixel design + arith contract gate
+- present_npx_path P1 serializer + beat TB (macro OFF)
+- ddr_frame_store rd_r_n/g/b_n + PX_PER_CLK=1 passthrough; N>1 → yuv_bt601_npx
+- CLK_PIX_PLL_PLAN.md (design only, not applied)
+- 1650 EVEN / %4=2; Route B mandatory; scanout NOT product-done
 
-## Parent corrections absorbed
-- mmap cache policy WORTH NOTHING (rd-duck right); serial ARM decode+copy DEAD all tiers
-- Route B fabric pixels mandatory; Route A overlap unproven
-- 1650 EVEN; 1650%4=2 (not odd)
-- "scanout done" overstated — modules macro-OFF unconnected
+## Arithmetic
+720p24 @2ppc 11–15 MHz OK@20. CEA720p60 @4ppc 18.56 OK@20; @2ppc 37.13 FAIL nostub.
 
-## Arithmetic (contract-gated)
-720p24 @2ppc: 11.06–14.85 MHz OK @ ship 20
-CEA720p60 @2ppc 37.13 FAIL nostub; @4ppc 18.56 OK@20
-
-## ARM ms removed by this lane
-0 until multi-pixel wired to replace ARM present/scale. Measure: parent profile.
+## ARM ms removed
+0 until wired. Measure: parent fabric present ON vs ARM scale bucket.
 
 ## Validated (true rc)
 test_present_npx_path_verilator.sh rc=0
 test_multi_pixel_present.sh rc=0
 test_yuv_bt601_npx_verilator.sh rc=0
-test_unit_rollcall.py rc=0
-rtl_lint PASS (clean)
+test_ddr_frame_store_warm_reset.sh rc=0
+test_ddr_frame_store_scanout_colour.sh rc=0
+rtl_lint PASS
 
-## Remaining (no fit)
-1. ddr_frame_store N-wide read ports (PPC=1 bit-identical default)
-2. Dedicated clk_pix PLL + Plex.sv CE_PIXEL mux (parent grant)
-3. Product wire-up only after parent fit grant
-4. w-scaler §5 interface freeze before merge
+## Remaining
+1. Wire present path: store rd_*_n → present_npx_path → CE_PIXEL (parent grant)
+2. clk_pix PLL out legal M/N (CLK_PIX_PLL_PLAN.md) — not applied
+3. w-scaler §5 freeze before merge
+4. nostub fit (w-nostub) then multi-pixel fit grant

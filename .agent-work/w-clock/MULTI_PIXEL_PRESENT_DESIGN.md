@@ -284,5 +284,5 @@ PLL Target B_30_90 becomes **optional** for 720p24 if S3@N=2 meets timing at 20 
 | DE_LAG for N-wide ddr path | HDMI edge sweep |
 | ARM ms removed | parent profile fabric present ON vs ARM scale |
 | Dedicated clk_pix PLL + top CE_PIXEL mux | parent fit grant; wire `present_npx_path` out to Plex.sv |
-| ddr_frame_store N-wide ports | next SV slice; default PPC=1 bit-identical |
+| ddr_frame_store N-wide ports | **landed** `PX_PER_CLK` default 1: `rd_r_n`=`rd_r`; N>1 generate → `yuv_bt601_npx` on commit snapshot |
 | Real 720p cy/MB fabric decode | decode bench (not this lane) |

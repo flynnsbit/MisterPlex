@@ -46,7 +46,12 @@ module ddr_frame_store #(
 	//    NBA order cleared swap_pending after setting it, dropping the doorbell
 	//    under sustained high-rate publish (playback ~24 fps) while idle's slow
 	//    presents rarely collide with the 1-cycle vsync window.
-	parameter bit SWAP_REQ_HOLDS_PENDING_ACROSS_VSYNC = 1'b1
+	parameter bit SWAP_REQ_HOLDS_PENDING_ACROSS_VSYNC = 1'b1,
+	// Multi-pixel present (w-clock). Default 1 = bit-identical scalar path.
+	// PX_PER_CLK in {1,2,4}. N>1 uses yuv_bt601_npx on the latched beam qword;
+	// aligned x0 (x0%N==0) never straddles a Y qword — see MULTI_PIXEL_PRESENT_DESIGN.
+	// Product present_core leaves this at 1; wide ports may float unconnected.
+	parameter int PX_PER_CLK = 1
 )(
 	input  wire        clk,
 	input  wire        clk_ddr,
@@ -58,6 +63,12 @@ module ddr_frame_store #(
 	output reg  [7:0]  rd_r,
 	output reg  [7:0]  rd_g,
 	output reg  [7:0]  rd_b,
+	// N-wide RGB (lane0 == rd_r/g/b when PX_PER_CLK==1). Safe to leave open.
+	output wire [PX_PER_CLK*8-1:0] rd_r_n,
+	output wire [PX_PER_CLK*8-1:0] rd_g_n,
+	output wire [PX_PER_CLK*8-1:0] rd_b_n,
+	output wire [PX_PER_CLK-1:0]   rd_lane_valid_n,
+	output wire                    rd_n_valid,
 
 	input  wire        start_req,
 	input  wire        bank_sel,
@@ -331,6 +342,11 @@ module ddr_frame_store #(
 	reg y_hit_r, c_hit_r;
 	reg [SLOT_W-1:0] y_hit_idx_r, c_hit_idx_r;
 	reg [2:0] y_sel_r, c_sel_r;
+	// N-pixel snapshot of beam qwords (aligned to scalar RGB commit cycle).
+	reg [63:0] npx_y_q_r, npx_u_q_r, npx_v_q_r;
+	reg [CODED_X_W-1:0] npx_src_x_r;
+	reg npx_commit_r;
+	reg [CODED_X_W-1:0] src_x_r;
 
 	integer vi;
 	reg y_hit_now, c_hit_now;
@@ -417,6 +433,12 @@ module ddr_frame_store #(
 			c_hit_idx_r <= '0;
 			y_sel_r <= 3'd0;
 			c_sel_r <= 3'd0;
+			npx_y_q_r <= 64'd0;
+			npx_u_q_r <= 64'd0;
+			npx_v_q_r <= 64'd0;
+			npx_src_x_r <= '0;
+			npx_commit_r <= 1'b0;
+			src_x_r <= '0;
 		end else begin
 			y_valid_v1 <= y_valid_hold;
 			y_valid_v2 <= y_valid_v1;
@@ -461,6 +483,7 @@ module ddr_frame_store #(
 			c_hit_idx_r <= c_hit_idx_now;
 			y_sel_r <= src_x[2:0];
 			c_sel_r <= src_x[3:1];
+			src_x_r <= src_x;
 			miss_d <= rd_miss_now;
 			if (miss_d && underrun_count != 16'hFFFF) begin
 				underrun_count <= underrun_count + 16'd1;
@@ -471,13 +494,64 @@ module ddr_frame_store #(
 				rd_r <= sat8(r_calc);
 				rd_g <= sat8(g_calc);
 				rd_b <= sat8(b_calc);
+				// Snapshot qwords + src_x_r (same age as y_sel_r) for N-wide extract.
+				npx_y_q_r <= selected_y_q;
+				npx_u_q_r <= selected_u_q;
+				npx_v_q_r <= selected_v_q;
+				npx_src_x_r <= src_x_r;
+				npx_commit_r <= 1'b1;
 			end else if (!has_frame || !rd_visible_d || miss_d) begin
 				rd_r <= 8'd0;
 				rd_g <= 8'd0;
 				rd_b <= 8'd0;
+				npx_commit_r <= 1'b0;
+			end else begin
+				npx_commit_r <= 1'b0;
 			end
 		end
 	end
+
+	// --- N-wide RGB ports (w-clock multi-pixel) --------------------------------
+	// PX_PER_CLK==1: wire-through scalar RGB (bit-identical, no extra math).
+	// PX_PER_CLK>1: yuv_bt601_npx on committed beam qword. Aligned groups
+	// (src_x0 % PX_PER_CLK == 0, PX_PER_CLK in {2,4}) stay inside one Y qword.
+	generate
+		if (PX_PER_CLK == 1) begin : gen_rd_npx_scalar
+			assign rd_r_n = rd_r;
+			assign rd_g_n = rd_g;
+			assign rd_b_n = rd_b;
+			assign rd_lane_valid_n = npx_commit_r ? 1'b1 : 1'b0;
+			assign rd_n_valid = npx_commit_r;
+		end else begin : gen_rd_npx_wide
+			wire npx_out_valid;
+			wire [PX_PER_CLK*8-1:0] npx_r, npx_g, npx_b;
+			wire [PX_PER_CLK-1:0] npx_lv;
+			yuv_bt601_npx #(
+				.PX_PER_CLK(PX_PER_CLK),
+				.X_W(CODED_X_W)
+			) u_yuv_npx (
+				.clk(clk),
+				.reset(reset),
+				.in_valid(npx_commit_r),
+				.src_x0(npx_src_x_r),
+				.y_qword(npx_y_q_r),
+				.u_qword(npx_u_q_r),
+				.v_qword(npx_v_q_r),
+				.y_qword_hi(64'd0),
+				.y_hi_valid(1'b0),
+				.out_valid(npx_out_valid),
+				.out_r(npx_r),
+				.out_g(npx_g),
+				.out_b(npx_b),
+				.out_lane_valid(npx_lv)
+			);
+			assign rd_r_n = npx_r;
+			assign rd_g_n = npx_g;
+			assign rd_b_n = npx_b;
+			assign rd_lane_valid_n = npx_lv;
+			assign rd_n_valid = npx_out_valid;
+		end
+	endgenerate
 
 	localparam [3:0] S_IDLE       = 4'd0;
 	localparam [3:0] S_LINE_ISSUE = 4'd1;
