@@ -21,6 +21,16 @@ module plex_chrome_plxc_cdc_tb (
 	output wire        prod_cfg_enable,
 	output wire [7:0]  prod_cfg_count,
 	output wire [15:0] prod_cfg_seq,
+	output wire        prod_wr_full,
+	// shallow CDC (DEPTH=8) for stopped-rd fill-to-full + resume
+	input  wire        sh_we,
+	input  wire [7:0]  sh_addr,
+	input  wire [63:0] sh_data,
+	output wire        sh_host_we,
+	output wire [7:0]  sh_host_addr,
+	output wire [63:0] sh_host_data,
+	output wire        sh_wr_full,
+	output wire        sh_rd_empty,
 	// fault edge CDC observe
 	output wire        fault_host_we,
 	output wire [7:0]  fault_host_addr,
@@ -28,6 +38,7 @@ module plex_chrome_plxc_cdc_tb (
 );
 	wire full, afull, empty;
 	wire f_full, f_afull, f_empty;
+	wire sh_afull;
 
 	plex_chrome_plxc_cdc #(.DEPTH(128)) u_prod (
 		.wr_clk(clk_sys),
@@ -43,6 +54,24 @@ module plex_chrome_plxc_cdc_tb (
 		.rd_addr(prod_host_addr),
 		.rd_data(prod_host_data),
 		.rd_empty(empty)
+	);
+	assign prod_wr_full = full;
+
+	// DEPTH=8: fill while rd clock stopped, then resume — conservation under stall.
+	plex_chrome_plxc_cdc #(.DEPTH(8)) u_shallow (
+		.wr_clk(clk_sys),
+		.wr_rst(reset),
+		.wr_en(sh_we), // TB must hold sh_we=0 when sh_wr_full (loader host_ready)
+		.wr_addr(sh_addr),
+		.wr_data(sh_data),
+		.wr_full(sh_wr_full),
+		.wr_almost_full(sh_afull),
+		.rd_clk(clk_hdmi),
+		.rd_rst(reset),
+		.rd_we(sh_host_we),
+		.rd_addr(sh_host_addr),
+		.rd_data(sh_host_data),
+		.rd_empty(sh_rd_empty)
 	);
 
 	plex_chrome_plxc_cdc_edge_fault u_fault (

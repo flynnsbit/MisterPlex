@@ -12,6 +12,8 @@ module plex_chrome_ddr_loader_tb (
     input  wire        mem_half_hi,   // 0=lo[31:0], 1=hi[63:32]
     input  wire [31:0] mem_wdata32_host,
     input  wire        run_tick,      // advance soft time (unused; clk is enough)
+    // CDC backpressure: 0 = stall S_PUSH_* (rd-duck silent-loss fix)
+    input  wire        host_ready,
     // observe ENABLE=1
     output wire        host_we_on,
     output wire [7:0]  host_addr_on,
@@ -112,6 +114,7 @@ module plex_chrome_ddr_loader_tb (
         .m_gnt(m_gnt_on),
         .m_rd_valid(m_rd_valid_on),
         .m_rdata(m_rdata_on),
+        .host_ready(host_ready),
         .host_we(host_we_on),
         .host_addr(host_addr_on),
         .host_wdata(host_wdata_on),
@@ -141,6 +144,7 @@ module plex_chrome_ddr_loader_tb (
         .m_gnt(1'b0),
         .m_rd_valid(1'b0),
         .m_rdata(64'd0),
+        .host_ready(1'b1),
         .host_we(host_we_off),
         .host_addr(),
         .host_wdata(),

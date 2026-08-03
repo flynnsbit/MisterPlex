@@ -151,3 +151,12 @@ RESIDUAL (still open, owner w-path):
 GATE: tests/unit/test_dp_verified_vf_plan_order_static.py
   GREEN true rc=0; DROP TWIN clear-before-plan would FAIL (proved locally)
 w-osd does NOT claim DP identity/pad-only product path closed.
+
+=== rd-duck 2026-08-03T09:14:44-05:00 PLXC CDC silent-loss FIXED ===
+loader host_ready; advance li/last_seq only when ready.
+sys_top: PLXC_EXT_READY = ~plxc_cdc_full → emu → loader.
+CDC TB: stopped_rd bi=7 freeze saw_full=1; resume bi=13 sh_out=13 PASS
+DROP twin ignore-full: sh_out=3 < 13 PASS
+loader TB: host_ready_stall PASS (no last_seq/we while blocked; seq91 resume)
+cdc true rc=0; loader product true rc=0 (mutate twin FAIL expected)
+Still HOLLOW product OSD: m_gnt=0 until w-mem.

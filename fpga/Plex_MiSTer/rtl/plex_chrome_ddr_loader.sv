@@ -6,6 +6,9 @@
 //   2) RE-READ PLXC (seqlock). Abort if magic gone or ctrl != snapshot
 //      (rd-duck: host may overwrite body while old ctrl still valid).
 //   3) Push list words + PLXC ctrl to host_if (payload before ctrl).
+//      host_ready must be 1 to accept a beat (CDC !wr_full). Advance li /
+//      commit last_seq only on accepted beats — never drop into a full FIFO
+//      (rd-duck: silent loss when hdmi clock stops or second xact queues).
 //   4) Periodically WR doorbell+0x138 (PLXO) so chromePlaneHw can leave fail-closed.
 //
 // Host contract (ARM writeChromeCommandList):
@@ -39,7 +42,8 @@ module plex_chrome_ddr_loader #(
     input  wire        m_rd_valid,  // read data valid (1 cycle)
     input  wire [63:0] m_rdata,
 
-    // → plex_chrome_host_if
+    // → plex_chrome_host_if (or CDC wr port). host_ready = !wr_full.
+    input  wire        host_ready,
     output reg         host_we,
     output reg  [7:0]  host_addr,
     output reg  [63:0] host_wdata,
@@ -260,23 +264,30 @@ module plex_chrome_ddr_loader #(
                 end
 
                 S_PUSH_LIST: begin
-                    host_we    <= 1'b1;
-                    host_addr  <= li;
-                    host_wdata <= list_q[li[$clog2(MAX_CMDS)-1:0]];
-                    if (li + 8'd1 >= snap_count)
-                        st <= S_PUSH_CTRL;
-                    else
-                        li <= li + 8'd1;
+                    // Stall without advancing when CDC/host cannot accept.
+                    if (host_ready) begin
+                        host_we    <= 1'b1;
+                        host_addr  <= li;
+                        host_wdata <= list_q[li[$clog2(MAX_CMDS)-1:0]];
+                        if (li + 8'd1 >= snap_count)
+                            st <= S_PUSH_CTRL;
+                        else
+                            li <= li + 8'd1;
+                    end
                 end
 
                 S_PUSH_CTRL: begin
-                    host_we    <= 1'b1;
-                    host_addr  <= 8'hFF;
-                    host_wdata <= ctrl_q;
-                    last_seq   <= snap_seq;
-                    cnt_loads  <= cnt_loads + 32'd1;
-                    need_plxo  <= 1'b1;
-                    st         <= S_IDLE;
+                    // last_seq only after ctrl beat is accepted — else loader
+                    // would never retry a dropped ctrl (silent HUD loss).
+                    if (host_ready) begin
+                        host_we    <= 1'b1;
+                        host_addr  <= 8'hFF;
+                        host_wdata <= ctrl_q;
+                        last_seq   <= snap_seq;
+                        cnt_loads  <= cnt_loads + 32'd1;
+                        need_plxo  <= 1'b1;
+                        st         <= S_IDLE;
+                    end
                 end
 
                 S_WR_PLXO: begin

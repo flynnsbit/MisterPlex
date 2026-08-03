@@ -112,6 +112,7 @@ int main(int argc, char** argv) {
     t->mem_addr_host = 0;
     t->mem_wdata_host = 0;
     t->run_tick = 0;
+    t->host_ready = 1; // product: !cdc_full
     for (int i = 0; i < 4; ++i)
         tick(t);
     t->reset = 0;
@@ -365,6 +366,40 @@ int main(int argc, char** argv) {
         }
     }
 #endif
+
+    // host_ready=0 during push: must NOT commit last_seq; resume commits.
+    std::fprintf(stderr, "=== host_ready stall (CDC full class) ===\n");
+    std::fprintf(stderr, "EXECUTED host_ready_stall\n");
+    {
+        wait_idle(t);
+        const uint16_t seq_before = t->last_seq_on;
+        const uint32_t loads_before = t->cnt_loads_on;
+        t->host_ready = 0;
+        publish_seqlock(t, {glyph('R', 9, 9), glyph('S', 10, 10)}, 91);
+        // Plenty of time to reach S_PUSH_* and spin
+        for (int i = 0; i < 600; ++i)
+            tick(t);
+        if (t->last_seq_on != seq_before)
+            fail("host_ready=0 must not commit last_seq");
+        if (t->cnt_loads_on != loads_before)
+            fail("host_ready=0 must not bump cnt_loads");
+        // May still be busy stuck in PUSH — that is correct stall.
+        int host_we_while_blocked = 0;
+        for (int i = 0; i < 32; ++i) {
+            tick(t);
+            if (t->host_we_on)
+                ++host_we_while_blocked;
+        }
+        if (host_we_while_blocked != 0)
+            fail("host_ready=0 must not assert host_we");
+        t->host_ready = 1;
+        if (!wait_last_seq(t, 91, 1200))
+            fail("host_ready resume did not commit seq91");
+        else if (t->cnt_loads_on <= loads_before)
+            fail("host_ready resume must bump cnt_loads");
+        else
+            pass("host_ready_stall");
+    }
 
     delete t;
     if (fails) {

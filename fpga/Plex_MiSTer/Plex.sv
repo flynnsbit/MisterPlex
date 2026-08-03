@@ -1149,6 +1149,8 @@ plex_chrome_ddr_loader #(
 	.m_gnt(1'b0),
 	.m_rd_valid(1'b0),
 	.m_rdata(64'd0),
+	// PLXC_EXT_READY from sys_top (!u_plxc_cdc.wr_full). Stall push when 0.
+	.host_ready(PLXC_EXT_READY),
 	.host_we(plxc_core_we),
 	.host_addr(plxc_core_addr),
 	.host_wdata(plxc_core_wdata),

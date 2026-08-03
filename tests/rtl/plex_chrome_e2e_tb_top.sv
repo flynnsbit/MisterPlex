@@ -92,6 +92,7 @@ module plex_chrome_e2e_tb (
         .m_gnt(m_gnt),
         .m_rd_valid(m_rd_valid),
         .m_rdata(m_rdata),
+        .host_ready(1'b1),
         .host_we(host_we),
         .host_addr(host_addr),
         .host_wdata(host_wdata),

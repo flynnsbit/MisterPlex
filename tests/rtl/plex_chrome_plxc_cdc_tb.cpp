@@ -1,6 +1,8 @@
 // Multi-clock PLXC CDC hierarchy: 20 MHz sys → 74.25 MHz hdmi.
 // Green: consecutive loader-style burst of 2 list + ctrl → all 3 on hdmi + host_if.
 // Green: full MAX_CMDS=112 list + ctrl-last (113 beats) conservation — no drop.
+// Green: stopped-rd fill-to-full then resume (DEPTH=8) — all body+ctrl conserved
+//        when wr only advances on !wr_full (loader host_ready). DROP twin ignores full.
 // Red: edge-detect twin sees only 1 beat (EXECUTED fail path).
 #include "Vplex_chrome_plxc_cdc_tb.h"
 #include "verilated.h"
@@ -144,6 +146,9 @@ int main(int argc, char** argv) {
     t->sys_we = 0;
     t->sys_addr = 0;
     t->sys_data = 0;
+    t->sh_we = 0;
+    t->sh_addr = 0;
+    t->sh_data = 0;
 
     std::vector<Beat> prod, fault, list_beats;
     int list_we_n = 0;
@@ -296,6 +301,213 @@ int main(int argc, char** argv) {
             fail("full_list: cfg_seq want 99");
         if (fails == 0)
             std::fprintf(stderr, "PASS full_list_conservation\n");
+    }
+
+    // --- stopped rd clock: fill shallow FIFO, stall on full, resume, conserve ---
+    // Observations that FAIL under silent drop (no host_ready):
+    //   sh_out.size() != N, any payload mismatch, ctrl not last, last beat lost.
+    std::fprintf(stderr, "=== STOPPED-rd fill-to-full then resume (DEPTH=8) ===\n");
+    std::fprintf(stderr, "EXECUTED stopped_rd_fill_resume\n");
+    {
+        constexpr int N_LIST = 12; // > DEPTH=8 so full is hit with rd frozen
+        std::vector<Beat> xact;
+        xact.reserve(static_cast<size_t>(N_LIST) + 1);
+        for (int i = 0; i < N_LIST; ++i) {
+            const uint64_t d = 0xBEEFull << 48 | (uint64_t)(0x1000 + i) << 16 | (uint64_t)i;
+            xact.push_back({static_cast<uint8_t>(i), d});
+        }
+        const uint64_t ctrl_sh =
+            0x504C5843ull | (1ull << 32) | (static_cast<uint64_t>(N_LIST) << 34) | (55ull << 48);
+        xact.push_back({0xFF, ctrl_sh});
+
+        std::vector<Beat> sh_out;
+        // Freeze hdmi: only toggle sys. Sample sh_host_we never fires while frozen.
+        auto step_sys_only = [&](int sys_cycles, bool sample_rd) {
+            for (int c = 0; c < sys_cycles; ++c) {
+                // low
+                for (int h = 0; h < SYS_HALF; ++h) {
+                    main_time++;
+                    t->clk_sys = 0;
+                    if (!sample_rd)
+                        t->clk_hdmi = 0;
+                    else {
+                        int nh = static_cast<int>(main_time % 14);
+                        t->clk_hdmi = (nh < 7) ? 1 : 0;
+                    }
+                    t->eval();
+                }
+                // high — sample wr_full after eval on rising
+                for (int h = 0; h < SYS_HALF; ++h) {
+                    main_time++;
+                    t->clk_sys = 1;
+                    int prev_h = t->clk_hdmi;
+                    if (!sample_rd)
+                        t->clk_hdmi = 0;
+                    else {
+                        int nh = static_cast<int>(main_time % 14);
+                        t->clk_hdmi = (nh < 7) ? 1 : 0;
+                    }
+                    t->eval();
+                    if (sample_rd && !prev_h && t->clk_hdmi && t->sh_host_we) {
+                        sh_out.push_back({static_cast<uint8_t>(t->sh_host_addr),
+                                          static_cast<uint64_t>(t->sh_host_data)});
+                    }
+                }
+            }
+        };
+
+        // Align and freeze rd
+        t->clk_hdmi = 0;
+        t->sh_we = 0;
+        step_sys_only(4, false);
+
+        size_t bi = 0;
+        int saw_full = 0;
+        int stalled_while_full = 0;
+        // Ready-aware push (loader host_ready = !wr_full): hold beat until accepted.
+        int guard = 0;
+        while (bi < xact.size() && guard < 5000) {
+            ++guard;
+            // Drive only on sys rising; we=1 only when !full
+            // half low
+            for (int h = 0; h < SYS_HALF; ++h) {
+                main_time++;
+                t->clk_sys = 0;
+                t->clk_hdmi = 0;
+                t->eval();
+            }
+            const int full_now = t->sh_wr_full ? 1 : 0;
+            if (full_now)
+                saw_full = 1;
+            if (full_now) {
+                t->sh_we = 0; // stall — do not drop
+                ++stalled_while_full;
+            } else if (bi < xact.size()) {
+                t->sh_we = 1;
+                t->sh_addr = xact[bi].addr;
+                t->sh_data = xact[bi].data;
+            } else {
+                t->sh_we = 0;
+            }
+            for (int h = 0; h < SYS_HALF; ++h) {
+                main_time++;
+                t->clk_sys = 1;
+                t->clk_hdmi = 0;
+                t->eval();
+            }
+            // Accepted this sys cycle if we asserted and not full at drive time
+            if (t->sh_we && !full_now)
+                ++bi;
+            t->sh_we = 0;
+        }
+        if (bi != xact.size()) {
+            // With rd frozen and DEPTH=8, ready-aware push cannot finish all 13
+            // until resume — that is expected. bi should be <= 8-ish.
+            std::fprintf(stderr,
+                         "stopped_rd: after freeze push bi=%zu saw_full=%d stall_cyc=%d "
+                         "(expect bi<=8 and saw_full)\n",
+                         bi, saw_full, stalled_while_full);
+            if (!saw_full)
+                fail("stopped_rd: never saw wr_full with rd frozen");
+            if (stalled_while_full < 1)
+                fail("stopped_rd: never stalled on full");
+            if (bi >= xact.size())
+                fail("stopped_rd: completed all beats while rd frozen (impossible if full works)");
+        }
+
+        // Resume hdmi + continue ready-aware push of remainder
+        guard = 0;
+        while ((bi < xact.size() || !t->sh_rd_empty) && guard < 8000) {
+            ++guard;
+            int prev_h = t->clk_hdmi;
+            int ns = static_cast<int>((main_time + 1) % 50);
+            int nh = static_cast<int>((main_time + 1) % 14);
+            main_time++;
+            int next_sys = (ns < 25) ? 1 : 0;
+            int next_hdmi = (nh < 7) ? 1 : 0;
+            if (!t->clk_sys && next_sys) {
+                const int full_now = t->sh_wr_full ? 1 : 0;
+                if (!full_now && bi < xact.size()) {
+                    t->sh_we = 1;
+                    t->sh_addr = xact[bi].addr;
+                    t->sh_data = xact[bi].data;
+                    ++bi;
+                } else {
+                    t->sh_we = 0;
+                }
+            }
+            t->clk_sys = next_sys;
+            t->clk_hdmi = next_hdmi;
+            t->eval();
+            if (!prev_h && next_hdmi && t->sh_host_we) {
+                sh_out.push_back({static_cast<uint8_t>(t->sh_host_addr),
+                                  static_cast<uint64_t>(t->sh_host_data)});
+            }
+            if (next_sys == 0)
+                t->sh_we = 0;
+        }
+        // Drain remainder
+        step_sys_only(80, true);
+
+        std::fprintf(stderr,
+                     "stopped_rd: bi=%zu sh_out=%zu saw_full=%d stall_cyc=%d\n", bi,
+                     sh_out.size(), saw_full, stalled_while_full);
+
+        if (bi != xact.size())
+            fail("stopped_rd: did not accept all beats after resume");
+        if (sh_out.size() != xact.size())
+            fail("stopped_rd: output beat count != input (conservation)");
+        bool ok = sh_out.size() == xact.size();
+        for (size_t i = 0; ok && i < xact.size(); ++i) {
+            if (sh_out[i].addr != xact[i].addr || sh_out[i].data != xact[i].data)
+                ok = false;
+        }
+        if (!ok)
+            fail("stopped_rd: body/ctrl payload conservation");
+        if (!sh_out.empty() && sh_out.back().addr != 0xFF)
+            fail("stopped_rd: newest ctrl must be last");
+        if (!sh_out.empty() && sh_out.back().data != ctrl_sh)
+            fail("stopped_rd: newest ctrl payload");
+        if (fails == 0)
+            std::fprintf(stderr, "PASS stopped_rd_fill_resume\n");
+
+        // DROP twin: ignore full while rd frozen — must LOSE beats (proves gate bites).
+        std::fprintf(stderr, "EXECUTED stopped_rd_drop_twin\n");
+        // reset shallow via full reset pulse
+        t->reset = 1;
+        t->sh_we = 0;
+        step_sys_only(5, false);
+        t->reset = 0;
+        step_sys_only(5, false);
+        sh_out.clear();
+        // Blind push all beats with rd frozen (no ready check) — product silent-loss class
+        bi = 0;
+        while (bi < xact.size()) {
+            for (int h = 0; h < SYS_HALF; ++h) {
+                main_time++;
+                t->clk_sys = 0;
+                t->clk_hdmi = 0;
+                t->eval();
+            }
+            t->sh_we = 1;
+            t->sh_addr = xact[bi].addr;
+            t->sh_data = xact[bi].data;
+            for (int h = 0; h < SYS_HALF; ++h) {
+                main_time++;
+                t->clk_sys = 1;
+                t->clk_hdmi = 0;
+                t->eval();
+            }
+            ++bi;
+            t->sh_we = 0;
+        }
+        // resume drain
+        step_sys_only(100, true);
+        std::fprintf(stderr, "drop_twin sh_out=%zu (want < %zu)\n", sh_out.size(), xact.size());
+        if (sh_out.size() >= xact.size())
+            fail("drop_twin: expected silent loss when ignoring wr_full");
+        else
+            std::fprintf(stderr, "PASS stopped_rd_drop_twin (loss visible)\n");
     }
 
     if (fails) {

@@ -7,11 +7,12 @@
 // the whole burst to ONE clk_hdmi pulse; later list words + ctrl are dropped.
 // Same-clock loader/host_if TBs cannot see this.
 //
-// Fix: small async FIFO. Every wr_clk cycle with wr_en=1 enqueues {addr,data}.
+// Fix: small async FIFO. Every wr_clk cycle with wr_en=1 && !wr_full enqueues.
 // rd_clk dequeues one beat per cycle (rd_we pulse) with coherent multi-bit data.
-// Depth is power-of-two; gray-coded pointers. No toggle/ack round-trip required
-// when rd_clk > wr_clk (hdmi 74.25 MHz vs sys 20 MHz) — still safe if briefly
-// inverted via almost_full (loader may ignore until backpressure is wired).
+// Depth is power-of-two; gray-coded pointers.
+// Backpressure (rd-duck silent-loss): wr_full/almost_full MUST gate the loader
+// host_ready. Loader advances li / commits last_seq only on accepted beats.
+// Dropping wr_en while full without stall is a silent body/ctrl loss mode.
 //
 // FAULT_EDGE_DETECT: compile the broken edge path for the red twin TB only.
 

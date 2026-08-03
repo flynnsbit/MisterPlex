@@ -80,9 +80,11 @@ output        HAS_FRAME,
 
 // MiSTerPlex extension — PLXC host beats (clk_sys domain). sys_top CDC's into
 // clk_hdmi chrome host_if. Default 0 until plex_chrome_ddr_loader is armed.
+// PLXC_EXT_READY = !cdc wr_full — loader must stall push when 0 (no silent drop).
 output        PLXC_EXT_WE,
 output  [7:0] PLXC_EXT_ADDR,
 output [63:0] PLXC_EXT_WDATA,
+input         PLXC_EXT_READY,
 
 // I/O board button press simulation (active high)
 // b[1]: user button

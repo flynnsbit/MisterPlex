@@ -1231,6 +1231,9 @@ cyclonev_hps_interface_peripheral_i2c hdmi_i2c
 		.rd_data(plxc_ext_wdata),
 		.rd_empty(plxc_cdc_empty)
 	);
+	// Back to core loader: accept only when FIFO has room (rd-duck silent-loss).
+	// almost_full is observational headroom; ready uses !full (exact accept).
+	wire plxc_ext_ready_sys = ~plxc_cdc_full;
 
 	// Boot keepalive: list_we must toggle (anti-elision). PLXC enable bit is 0
 	// unless PLEX_FAB_BOOT_PLXC — default-OFF is honest pass-through.
@@ -2137,7 +2140,8 @@ emu emu
 	.HAS_FRAME(has_frame_sys),
 	.PLXC_EXT_WE(plxc_ext_we_sys),
 	.PLXC_EXT_ADDR(plxc_ext_addr_sys),
-	.PLXC_EXT_WDATA(plxc_ext_wdata_sys)
+	.PLXC_EXT_WDATA(plxc_ext_wdata_sys),
+	.PLXC_EXT_READY(plxc_ext_ready_sys)
 );
 
 endmodule
