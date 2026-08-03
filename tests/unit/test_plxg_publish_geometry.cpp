@@ -35,6 +35,32 @@ static void checkTier(int w, int h, const char* tag) {
     expect(plan.layout.frame_bytes == bytes, (std::string(tag) + " layout.frame_bytes").c_str());
     expect(plan.layout.line_bytes == w, (std::string(tag) + " y_stride==w").c_str());
     expect(plan.layout.chroma_line_bytes == w / 2, (std::string(tag) + " c_stride").c_str());
+    // Bank map: LEG if payload ≤520192 else Option-C — never geometry-derived.
+    expect(!ddrLayoutBankMapIsGeometryDerived(plan.layout),
+           (std::string(tag) + " fixed LEG/Option-C bank map").c_str());
+    if (bytes <= static_cast<size_t>(kPlex480pYuv420pBankUsableBytes)) {
+        expect(plan.bank_map == DdrBankMap::Legacy480p, (std::string(tag) + " LEG map").c_str());
+        expect(plan.layout.bank_stride == kPlex480pYuv420pBankStride,
+               (std::string(tag) + " LEG stride 0x80000").c_str());
+        expect(plan.layout.doorbell_phys == kPlex480pYuv420pDoorbellPhys,
+               (std::string(tag) + " LEG doorbell 0x300FF000").c_str());
+        expect(plan.layout.phys_base == kDdrFramePhysBase, (std::string(tag) + " LEG base").c_str());
+    } else {
+        expect(plan.bank_map == DdrBankMap::OptionC720p, (std::string(tag) + " Option-C map").c_str());
+        expect(plan.layout.bank_stride == kPlex720pYuv420pBankStride,
+               (std::string(tag) + " Option-C stride").c_str());
+        expect(plan.layout.doorbell_phys == kPlex720pYuv420pDoorbellPhys,
+               (std::string(tag) + " Option-C doorbell").c_str());
+    }
+    // NEG: raw makeDdrFrameLayout for small frames is geometry-derived (0x40000 trap).
+    if (w == 320 && h == 240) {
+        const auto raw = makeDdrFrameLayout(g);
+        expect(ddrLayoutBankMapIsGeometryDerived(raw), "NEG raw 320 is geometry-derived map");
+        expect(raw.bank_stride == 0x40000u && raw.doorbell_phys == 0x3007F000u,
+               "NEG raw 320 is 0x40000/0x3007F000 trap");
+        expect(plan.layout.bank_stride != raw.bank_stride,
+               "publish must not keep raw geometry bank stride");
+    }
 
     int cw = 0, ch = 0, ys = 0, cs = 0, deW = 0, deH = 0;
     unpackPlxgQ2(plan.plxg_q[2], &deW, &deH, &cw, &ch);

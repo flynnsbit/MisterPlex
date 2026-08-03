@@ -148,14 +148,23 @@ int main() {
     CHECK(err.find("frame size") != std::string::npos ||
           err.find("does not match") != std::string::npos);
 
-    // Identity-320 geometry is valid math but is NOT product silicon — publish
-    // plan may accept it in isolation; product match gate must fail.
+    // Identity-320 content on FIXED LEG bank map (rd-duck): stride 0x80000 /
+    // doorbell 0x300FF000 — NOT geometry-derived 0x40000/0x3007F000.
     const auto g320 = makeDdrFrameGeometry(320, 240);
     DdrPublishFrame f320{yuv320.data(), yuv320.size(), g320, DdrFrameFormat::Yuv420p};
     CHECK(makeDdrPublishPlan(f320, 0, plan0, &err));
-    CHECK(!ddrFrameLayoutMatchesProductSilicon(plan0.layout));
+    CHECK(!ddrFrameLayoutMatchesProductSilicon(plan0.layout)); // content still 320
     CHECK(plan0.layout.frame_bytes == 115200u);
-    CHECK(plan0.layout.bank_stride == 0x40000u); // NOT product 0x80000
+    CHECK(plan0.layout.line_bytes == 320);
+    CHECK(plan0.layout.bank_stride == kPlex480pYuv420pBankStride); // LEG 0x80000
+    CHECK(plan0.layout.doorbell_phys == kPlex480pYuv420pDoorbellPhys);
+    CHECK(plan0.layout.phys_base == kDdrFramePhysBase);
+    CHECK(plan0.bank_map == DdrBankMap::Legacy480p);
+    CHECK(!ddrLayoutBankMapIsGeometryDerived(plan0.layout));
+    // Bare makeDdrFrameLayout still geometry-derives — publish must not use it raw.
+    const auto raw320 = makeDdrFrameLayout(g320);
+    CHECK(ddrLayoutBankMapIsGeometryDerived(raw320));
+    CHECK(raw320.bank_stride == 0x40000u);
 
     // Full coded source pack origin = (0,0) — native 480p fills the bank.
     int x0 = -1, y0 = -1;

@@ -1,0 +1,1 @@
+PASS test_plxg_publish_geometry tiers=320/416/624/720/540/720p PLXG_matches_payload NO_LEGACY480_SHEAR

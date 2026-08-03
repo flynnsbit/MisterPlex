@@ -1,10 +1,4 @@
-w-path STATUS tip=pending PLXG publish geometry
-branch=w-path-720p
-
-CLOSED (rd-duck):
-- makeDdrPublishPlan PLXG from frame.geometry (no Legacy480 shear on 320)
-- test_plxg_publish_geometry 320/416/624/720 e2e
-- stale 320→624 canvas expectations updated (source-aware)
-
-Prior: aa35ec80 ffmpeg oracle mandatory; d140add5 barrier; d53a8789 DP gate
-HELD: q5 bit34 RESERVED; no Quartus; no MiSTer
+w-path tip=pending bankmap pin
+CLOSED: makeDdrPublishPlan pins fixed LEG/Option-C map (no 0x40000/0x3007F000 for 320)
+Prior: 1465a7ea PLXG from geometry; aa35ec80 ffmpeg oracle
+HELD: bit34 reserved; no Quartus; no MiSTer

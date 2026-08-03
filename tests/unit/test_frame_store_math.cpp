@@ -132,15 +132,22 @@ static void checkDdrPublishGeometrySwitch() {
         std::fprintf(stderr, "DDR publish geometry failed for 320x240: %s\n", err.c_str());
         ++fails;
     } else {
-        if (p320.layout.bank_stride != 0x40000u || p320.bank_offset != 0x40000u ||
-            p320.bank_phys != 0x30040000u || p320.layout.doorbell_phys != 0x3007F000u) {
+        // LEG map for native 320 (rd-duck): same physical window as 480 product.
+        if (p320.layout.bank_stride != 0x80000u || p320.bank_offset != 0x80000u ||
+            p320.bank_phys != 0x30080000u || p320.layout.doorbell_phys != 0x300FF000u ||
+            p320.layout.line_bytes != 320) {
             std::fprintf(stderr,
                          "DDR publish geometry failed for 320x240: stride=0x%05x "
-                         "bank1=0x%08x doorbell=0x%08x, expected 0x40000/0x30040000/"
-                         "0x3007F000\n",
+                         "bank1=0x%08x doorbell=0x%08x line=%d, expected LEG "
+                         "0x80000/0x30080000/0x300FF000 line=320\n",
                          static_cast<unsigned>(p320.layout.bank_stride),
                          static_cast<unsigned>(p320.bank_phys),
-                         static_cast<unsigned>(p320.layout.doorbell_phys));
+                         static_cast<unsigned>(p320.layout.doorbell_phys),
+                         p320.layout.line_bytes);
+            ++fails;
+        }
+        if (misterplex::ddrLayoutBankMapIsGeometryDerived(p320.layout)) {
+            std::fprintf(stderr, "DDR publish 320 used geometry-derived bank map\n");
             ++fails;
         }
     }
@@ -166,11 +173,20 @@ static void checkDdrPublishGeometrySwitch() {
                          static_cast<unsigned>(p480.layout.doorbell_phys));
             ++fails;
         }
-        if (p320.bank_phys == p480.bank_phys) {
+        // Bank1 phys is the same LEG window; content line_bytes must still differ.
+        if (p320.bank_phys != p480.bank_phys) {
             std::fprintf(stderr,
-                         "DDR publish geometry failed: 320x240 and 624x480 bank1 both "
-                         "resolved to 0x%08x; geometry was not carried into publish\n",
+                         "DDR publish geometry failed: 320 and 480 bank1 phys differ "
+                         "(0x%08x vs 0x%08x); expected shared LEG map\n",
+                         static_cast<unsigned>(p320.bank_phys),
                          static_cast<unsigned>(p480.bank_phys));
+            ++fails;
+        }
+        if (p320.layout.line_bytes == p480.layout.line_bytes) {
+            std::fprintf(stderr,
+                         "DDR publish geometry failed: 320 and 480 share line_bytes=%d; "
+                         "content geometry was not carried into publish\n",
+                         p320.layout.line_bytes);
             ++fails;
         }
     }

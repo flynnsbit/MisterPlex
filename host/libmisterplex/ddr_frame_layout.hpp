@@ -716,6 +716,63 @@ constexpr uint32_t kPlex720pDdrFramePhysBase = 0x30180000u;
 constexpr uint32_t kPlex720pYuv420pBankStride = 0x00180000u;
 constexpr uint32_t kPlex720pYuv420pDoorbellPhys = 0x3047F000u;
 constexpr uint32_t kPlex720pMapBytes2Bank = 0x00300000u; // 2 * stride
+
+// RTL capacity selector: only two physical bank maps (rd-duck generic-native).
+// Content coded W×H / line_bytes may be source-native; bank_stride/doorbell MUST
+// be one of these fixed maps — never geometry-derived alignUp(frame_bytes)
+// (that yields 0x40000/0x3007F000 for 320×240 and kicks the wrong window).
+enum class DdrBankMap : uint8_t { Legacy480p = 0, OptionC720p = 1 };
+
+constexpr uint32_t kPlex480pMapBytes2Bank = kPlex480pYuv420pBankStride * 2u; // 0x100000
+
+inline DdrBankMap ddrSelectBankMapForPayloadBytes(size_t frameBytes) {
+    return ddrI420PayloadNeedsOptionCBank(frameBytes) ? DdrBankMap::OptionC720p
+                                                      : DdrBankMap::Legacy480p;
+}
+
+inline DdrBankMap ddrSelectBankMapForContent(int contentW, int contentH) {
+    if (contentW <= 0 || contentH <= 0 || (contentW & 1) || (contentH & 1))
+        return DdrBankMap::Legacy480p;
+    return ddrSelectBankMapForPayloadBytes(yuv420pFrameBytes(contentW, contentH));
+}
+
+// Pin phys/stride/doorbell/map to the RTL fixed LEG or Option-C window.
+// Leaves content plane fields (coded W/H, line_bytes, frame_bytes, U/V offs) intact.
+// Caller must still run ddrFrameLayoutValid after pin.
+inline bool ddrPinLayoutToBankMap(DdrFrameLayout& layout, DdrBankMap map) {
+    if (layout.frame_bytes == 0)
+        return false;
+    if (map == DdrBankMap::OptionC720p) {
+        if (layout.frame_bytes > static_cast<size_t>(kPlex720pYuv420pBankStride))
+            return false;
+        layout.phys_base = kPlex720pDdrFramePhysBase;
+        layout.bank_stride = kPlex720pYuv420pBankStride;
+        layout.doorbell_phys = kPlex720pYuv420pDoorbellPhys;
+        layout.map_bytes = kPlex720pMapBytes2Bank;
+        return true;
+    }
+    if (layout.frame_bytes > static_cast<size_t>(kPlex480pYuv420pBankUsableBytes))
+        return false;
+    layout.phys_base = kDdrFramePhysBase;
+    layout.bank_stride = kPlex480pYuv420pBankStride;
+    layout.doorbell_phys = kPlex480pYuv420pDoorbellPhys;
+    layout.map_bytes = kPlex480pMapBytes2Bank;
+    return true;
+}
+
+// True when layout still has geometry-derived bank window (the 320→0x40000 trap).
+inline bool ddrLayoutBankMapIsGeometryDerived(const DdrFrameLayout& l) {
+    if (l.bank_stride == kPlex480pYuv420pBankStride &&
+        l.doorbell_phys == kPlex480pYuv420pDoorbellPhys &&
+        l.phys_base == kDdrFramePhysBase)
+        return false;
+    if (l.bank_stride == kPlex720pYuv420pBankStride &&
+        l.doorbell_phys == kPlex720pYuv420pDoorbellPhys &&
+        l.phys_base == kPlex720pDdrFramePhysBase)
+        return false;
+    return true;
+}
+
 constexpr uint32_t kPlex720pMapBytes3Bank = 0x00480000u; // 3 * stride
 // First byte after triple-bank Option-C window (base + 3*stride).
 constexpr uint32_t kPlex720pOptionCTripleEndPhys =

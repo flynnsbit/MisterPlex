@@ -31,11 +31,11 @@ struct DdrPublishPlan {
     size_t bank_offset = 0;
     uint32_t bank_phys = 0;
     // Capacity-selected PLXG body matching layout/geometry (rd-duck shear fix).
-    // Must NOT hardcode Legacy480 when payload is source-native (320/416/…).
     bool program_plxg = false;
     uint64_t plxg_q[6]{};
     uint16_t plxg_seq = 0;
     size_t copy_bytes = 0; // 0 ⇒ layout.frame_bytes
+    DdrBankMap bank_map = DdrBankMap::Legacy480p;
 };
 
 inline size_t ddrPublishCopyBytes(const DdrPublishPlan& plan) {
@@ -56,28 +56,36 @@ inline bool makeDdrPublishPlan(const DdrPublishFrame& frame, int bank, DdrPublis
             *err = "publishDdrFrame: bank must be 0 or 1";
         return false;
     }
-    // Phys base from *payload capacity*, not canvas tier label. 960x540 =
-    // 777600 > legacy usable 520192 → Option-C window (w-mem capacity predicate).
-    const bool optionC = ddrI420PayloadNeedsOptionCBank(frame.len);
-    const uint32_t physBase = optionC ? kPlex720pDdrFramePhysBase : kDdrFramePhysBase;
+
+    // Content plane layout from geometry (coded W/H, strides, plane offs, frame_bytes).
+    // Bank window is NOT geometry-derived — RTL only has LEG (0x80000/0x300FF000)
+    // or Option-C. alignUp(115200)→0x40000/0x3007F000 is the wrong physical map
+    // (rd-duck amplifier on generic-native).
     DdrFrameLayout layout =
-        makeDdrFrameLayout(frame.geometry, physBase, kDdrFrameStrideAlign, frame.format);
-    if (optionC && ddrFrameLayoutValid(layout)) {
-        layout.phys_base = kPlex720pDdrFramePhysBase;
-        layout.bank_stride = kPlex720pYuv420pBankStride;
-        layout.doorbell_phys = kPlex720pYuv420pDoorbellPhys;
-        layout.map_bytes = kPlex720pMapBytes2Bank;
-    }
-    if (!ddrFrameLayoutValid(layout)) {
-        if (err)
-            *err = "publishDdrFrame: invalid DDR frame geometry";
-        return false;
-    }
+        makeDdrFrameLayout(frame.geometry, kDdrFramePhysBase, kDdrFrameStrideAlign, frame.format);
     if (frame.len != layout.frame_bytes) {
         if (err)
             *err = "publishDdrFrame: frame size does not match derived DDR geometry";
         return false;
     }
+
+    const DdrBankMap map = ddrSelectBankMapForPayloadBytes(frame.len);
+    if (!ddrPinLayoutToBankMap(layout, map)) {
+        if (err)
+            *err = "publishDdrFrame: payload does not fit capacity-selected bank map";
+        return false;
+    }
+    if (!ddrFrameLayoutValid(layout)) {
+        if (err)
+            *err = "publishDdrFrame: invalid DDR frame geometry after bank-map pin";
+        return false;
+    }
+    if (ddrLayoutBankMapIsGeometryDerived(layout)) {
+        if (err)
+            *err = "publishDdrFrame: refused geometry-derived bank map (LEG/Option-C only)";
+        return false;
+    }
+
     const size_t bankOff = static_cast<size_t>(bank) * layout.bank_stride;
     if (bankOff + frame.len > layout.map_bytes || layout.phys_base + bankOff < layout.phys_base) {
         if (err)
@@ -85,9 +93,8 @@ inline bool makeDdrPublishPlan(const DdrPublishFrame& frame, int bank, DdrPublis
         return false;
     }
 
-    // PLXG must track storage geometry of *this* frame (rd-duck 320×240 shear).
-    // Product 480p canvas keeps the pillarbox Legacy480 record; every other
-    // capacity-selected size packs from geometry+layout (never force 624×480).
+    // PLXG tracks storage content geometry (not bank canvas). Product 480 keeps
+    // pillarbox Legacy480 body; other tiers pack from geometry+layout.
     PlxgRecord plxg{};
     const bool product480 =
         frame.geometry.coded_width.get() == kPlex480pCodedWidth.get() &&
@@ -117,6 +124,7 @@ inline bool makeDdrPublishPlan(const DdrPublishFrame& frame, int bank, DdrPublis
     out.copy_bytes = frame.len;
     out.program_plxg = true;
     out.plxg_seq = plxg.seq;
+    out.bank_map = map;
     for (int i = 0; i < 6; ++i)
         out.plxg_q[i] = plxg.q[i];
     return true;
