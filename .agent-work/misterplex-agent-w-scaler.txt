@@ -1,0 +1,99 @@
+# w-scaler — honest full-MB decode budget redo
+branch: w-scaler-budget-honest
+base:   8609fd78 (detached pin → branch)
+HEAD:   868d2c7f
+date:   2026-03-29
+
+## PREREG (before measure)
+- densest 624 CAVLC_all p95 ~196 (prior claim)
+- recon_lb=34 HARDCODED not measured in tree
+- reviewer 196.2+34+16=246.2 OVER 231.5 — structure likely CONFIRM
+- full pipeline IDR est ~450 >> 231 FAIL
+
+## PREREG MISS (published)
+- On 8609fd78 multi-symbol CAVLC, densest 624 p95 is **154.5** not 196.2
+- reviewer-style partial becomes 154.5+34+16=**204.5 UNDER** 231.5
+- Still FAILS complete-frame metric (see below)
+
+## 0) Product hierarchy (CONFIRMED — not product evidence)
+files.qip @8609fd78:
+  h264_cavlc_residual.sv : YES (line 35)
+  decode_stub.sv         : YES (line 43)
+  h264_decode_top/core/skeleton/intra_nb_ctx : ABSENT (rg count 0)
+stream_path.sv:289 instantiates decode_stub only
+h264_cavlc_residual_block only reached from h264_decode_skeleton.sv:83
+  (skeleton NOT in files.qip → Quartus prunes CAVLC)
+
+230.2 cy/MB characterised a sim pipeline that is NOT in the RBF.
+
+## 1) Verify/refute reviewer 246.2
+Arithmetic structure: CONFIRMED
+  196.2 + 34 + 16 = 246.2 exactly
+  34 = legacy TB literal recon_lb (luma-oriented); +16 = 8 chroma blk × 2 cy
+Source:
+  tests/rtl/h264_cavlc_real_mb_cycles_tb.cpp recon_lb was hardcoded 34
+  fixture dequant_idct: 24 blocks × 2 cy = 48 (16Y+8C)
+  h264_decode_core.sv:131-141 IQ/IDCT/recon CONTRACT: Combinational (0 cy today)
+
+On THIS tree densest remeasure:
+  CAVLC_all p95=154.5 → 154.5+34+16=204.5 UNDER 231.5 (partial only)
+  CAVLC_all max=288 → 288+48=336 OVER even partial recon_full
+
+## 2) Full per-MB cost (serial; unimplemented ≠ 0)
+| Stage            | cy/MB | Class      | Basis |
+|------------------|------:|------------|-------|
+| CAVLC residual   | meas  | MEASURED  | real-MB Verilator (luma+chroma) |
+| dequant+IDCT+recon | 48  | ESTIMATE  | fixture 24×2; RTL comb today |
+| intra_pred (I)   | 30    | ESTIMATE  | fixture |
+| MC (P)           | 250   | ESTIMATE  | fixture not_implemented |
+| deblock          | 100   | ESTIMATE  | fixture not_implemented |
+| DDR writeback    | 50    | ESTIMATE  | fixture not_implemented |
+| control          | 30    | ESTIMATE  | fixture |
+
+I_mean = cavlc_mean + 48+30+100+50+30 = cavlc + 258
+P_mean = cavlc_mean + 48+250+100+50+30 = cavlc + 478
+
+**KILLER:** fixed I stages alone = 258 > 231.5. Zero-CAVLC still fails 720p@24@20MHz.
+
+Dense 624 residual mean=24.28 → I_mean=282.3  P_mean=502.3
+
+## 3) 1280×720@24 @ clk_sys=20 MHz
+frame_budget = 20e6/24 = 833333.3 cy/frame
+mb_budget    = 833333.3/3600 = 231.48 cy/MB
+
+| Stream (scaled to 3600 MB by mean density) | frame_I | frame_P | fclk_I | fclk_P | fclk_P_wc |
+|---|---:|---:|---:|---:|---:|
+| rk7 1280 sparse mean=6.21 | 951k OVER | 1.74M OVER | 22.8 | 41.8 | 64.5 |
+| 320 IDR mean=41.66 | 1.08M | 1.87M | 25.9 | 44.9 | 66.2 |
+| 320 inter mean=38.62 | 1.07M | 1.86M | 25.6 | 44.6 | 65.8 |
+| **624 dense mean=24.28** | **1.02M** | **1.81M** | **24.4** | **43.4** | **66.2** |
+
+**VERDICT: FAIL** complete pipeline at 20 MHz for both I and P on every stream.
+Required clk_sys (mean, 24 fps): ~24–26 MHz I-only, **~42–45 MHz P**, ~66 MHz P worst-case all-max.
+Plausibility: project Fmax history ~23–33 MHz with/without stub — **I-only is borderline; product P path needs ~2× clk_sys or heavy MC overlap/parallelism below the 250 est.** Not free; needs STA after real RTL exists.
+
+## 4) Metric challenge — p95 is wrong for hard RT
+5% of 3600 MB = 180 MB. p95 ignores their integral cost.
+Implemented acceptance metric in TB + unit test:
+  frame_cy = sum(cavlc_i) + N*(recon+pred/MC+deblock+DDR+ctrl)
+Negative cases locked:
+  - zeroing MC/deblock/DDR → false UNDER (102 < 231) — DETECTED
+  - legacy p95+34 UNDER while complete P frame OVER — FALSE_PASS DETECTED on all 4 streams
+
+## Remeasured CAVLC (MEASURED, residual only) @8609fd78+patch
+| stream | n | p50 | p95 | p99 | max | mean |
+|---|---:|---:|---:|---:|---:|---:|
+| rk7 1280 | 3600 | 3 | 3.0 | 126 | 269 | 6.21 |
+| 320 IDR | 300 | 3 | 177.5 | 274 | 288 | 41.66 |
+| 320 inter | 300 | 3 | 164.3 | 267 | 284 | 38.62 |
+| 624 dense | 1170 | 3 | 154.5 | 228 | 288 | 24.28 |
+
+## Gates
+- test_decode_full_mb_budget true rc=0
+- test_h264_cavlc_real_mb_cycles true rc=0
+- No Quartus fit. No device. Lint baseline untouched.
+
+## Files
+- tests/rtl/h264_cavlc_real_mb_cycles_tb.cpp  (frame metric + honest stages)
+- tests/unit/test_decode_full_mb_budget.cpp   (arith + negatives)
+- Makefile (wire unit test)
