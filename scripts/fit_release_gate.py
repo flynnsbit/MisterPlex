@@ -264,6 +264,13 @@ LIVE_OPEN_BLOCKER_TOKENS = (
     "B35_SIMULTANEOUS_NO_IN_BYPASS",
     "B35_SIMULTANEOUS_TB_ABSENT",
     # B35_SIMULTANEOUS_NBA_TAG_SAMPLE / TB_DX_ONLY: closed-class reinject
+    # rd-duck: w-osd/integ still HOLLOW — no live PLXG/PLXC path (B4 not close)
+    "B36_QSF_HOLLOW_720P_MACROS",
+    "B36_QIP_MISSING_LIVE_MODULES",
+    "B36_LATCH_WR_COMMIT_TIED_ZERO",
+    "B36_NO_POLLER_LATCH_MUX_STORE",
+    "B36_PLXC_MASTER_TIED_ZERO",
+    "B36_OLD_2MASTER_ARBITER",
 )
 
 # Sibling-lane fixes that exist but are not merged into this gated tree.
@@ -6176,6 +6183,327 @@ def run_b27_ffmpeg_pad_chroma_even(root: Path) -> tuple[list[str], list[str]]:
     return msgs, errors
 
 
+
+def check_b36_merged_hierarchy_live(root: Path) -> tuple[list[str], list[str]]:
+    """B36: merged product must actually wire live PLXG + PLXC — not hollow stubs.
+
+    rd-duck (w-osd / integ decisively HOLLOW; fit HOLD; B4 not close):
+      Plex.qsf often only DDR_FRAME_STORE + FRAME_W=640/H=480; PRESENT_BEAM_960,
+      OPTION_C, PRODUCT_NO_STUB, PLEX_CHROME_DDR/FAB_CHROME absent/commented.
+      files.qip lacks present_beam_content_de, plex_present_geom_mux, plxg_ddr_poller,
+      ddr_bus_arbiter_plxc. Plex.sv: present_geom_latch wr_en/commit/frame_boundary
+      tied 0; PLXC loader m_gnt/m_rd_valid/m_rdata tied 0; present_core
+      use_frame_store=0; top still instantiates old 2-master ddr_bus_arbiter.
+      Cannot consume PLXG, runtime geom/q5, Option-C, or PLXC. HIT_SCAN=48 is
+      irrelevant if loader never reads.
+    Require: QSF macros + qip file-set oracle + elaborated hierarchy evidence for
+      live poller→latch→mux→store and PLXC master→3-way arbiter before slot.
+    """
+    msgs: list[str] = ["LEG0_B36_MERGED_HIERARCHY_LIVE_EXECUTED begin"]
+    errors: list[str] = []
+
+    qsf = root / "fpga" / "Plex_MiSTer" / "Plex.qsf"
+    qip = root / "fpga" / "Plex_MiSTer" / "files.qip"
+    plex = root / "fpga" / "Plex_MiSTer" / "Plex.sv"
+
+    qsf_txt = _read(qsf) or ""
+    qip_txt = _read(qip) or ""
+    plex_txt = product_active_sv(_read(plex) or "") if plex.is_file() else ""
+
+    # --- QSF active macros (commented = absent) ---
+    active: dict[str, str] = {}
+    if qsf.is_file():
+        try:
+            macros = discover_quartus_macros(qsf)
+            active = {n: m.value for n, m in macros.items() if n != "BUILD_DATE"}
+        except Exception as exc:  # noqa: BLE001 — surface parse failure
+            errors.append(
+                f"B36_QSF_HOLLOW_720P_MACROS: discover_quartus_macros failed: {exc}"
+            )
+            active = {}
+    else:
+        errors.append("B36_QSF_HOLLOW_720P_MACROS: missing Plex.qsf")
+
+    def _on(name: str, want: str | None = None) -> bool:
+        if name not in active:
+            return False
+        if want is None:
+            return True
+        return str(active.get(name, "")).strip() == str(want)
+
+    has_beam = _on("PRESENT_BEAM_960", "1")
+    has_fw = _on("FRAME_W", "960")
+    has_fh = _on("FRAME_H", "540")
+    has_nostub = _on("PRODUCT_NO_STUB", "1")
+    has_ddr = _on("DDR_FRAME_STORE", "1")
+    hollow_wh = _on("FRAME_W", "640") or _on("FRAME_H", "480")
+    # Chrome path: either PLEX_CHROME_DDR or PLEX_FAB_CHROME active when loader present
+    has_chrome_macro = _on("PLEX_CHROME_DDR", "1") or _on("PLEX_FAB_CHROME", "1") or _on(
+        "PLEX_CHROME_DDR"
+    ) or _on("PLEX_FAB_CHROME")
+    # OPTION_C is map mode — not always required, but note absence when only LEG
+    has_optc = _on("OPTION_C", "1") or _on("OPTION_C")
+
+    msgs.append(
+        f"LEG0_B36_QSF beam={int(has_beam)} fw960={int(has_fw)} fh540={int(has_fh)} "
+        f"nostub={int(has_nostub)} ddr={int(has_ddr)} hollow_wh={int(hollow_wh)} "
+        f"chrome={int(has_chrome_macro)} optc={int(has_optc)} "
+        f"active_n={len(active)}"
+    )
+    if not (has_beam and has_fw and has_fh and has_nostub and has_ddr) or hollow_wh:
+        errors.append(
+            "B36_QSF_HOLLOW_720P_MACROS: active QSF must enable PRESENT_BEAM_960=1, "
+            "FRAME_W=960, FRAME_H=540, PRODUCT_NO_STUB=1, DDR_FRAME_STORE=1 and must "
+            "NOT leave FRAME 640/480 as the product raster. Commented macros are "
+            "absent. rd-duck: w-osd/integ lines ~82-85 hollow (DDR_FRAME_STORE+"
+            "640/480 only) cannot consume PLXG/runtime geom. "
+            f"beam={int(has_beam)} 960x540={int(has_fw and has_fh)} "
+            f"nostub={int(has_nostub)} hollow_wh={int(hollow_wh)}."
+        )
+    else:
+        msgs.append("LEG0_B36_OK QSF 720p product macros active")
+
+    # --- files.qip must list live path modules ---
+    need_qip = (
+        ("present_beam_content_de", "present_beam_content_de.sv"),
+        ("plex_present_geom_mux", "plex_present_geom_mux.sv"),
+        ("plxg_ddr_poller", "plxg_ddr_poller.sv"),
+        ("ddr_bus_arbiter_plxc", "ddr_bus_arbiter_plxc.sv"),
+    )
+    qip_hits = {
+        key: bool(re.search(re.escape(fn), qip_txt)) if qip_txt else False
+        for key, fn in need_qip
+    }
+    # Also require RTL on disk
+    rtl = root / "fpga" / "Plex_MiSTer" / "rtl"
+    disk_hits = {
+        key: (rtl / fn).is_file()
+        for key, fn in need_qip
+    }
+    msgs.append(
+        "LEG0_B36_QIP "
+        + " ".join(f"{k}={int(qip_hits[k])}/{int(disk_hits[k])}" for k, _ in need_qip)
+    )
+    missing = [k for k, _ in need_qip if not (qip_hits[k] and disk_hits[k])]
+    if missing:
+        errors.append(
+            "B36_QIP_MISSING_LIVE_MODULES: files.qip + rtl/ must include "
+            "present_beam_content_de, plex_present_geom_mux, plxg_ddr_poller, "
+            "ddr_bus_arbiter_plxc (on disk AND in qip). rd-duck: without these "
+            "Quartus never sees the live path — sim-only modules are not product. "
+            f"missing={missing}."
+        )
+    else:
+        msgs.append("LEG0_B36_OK qip+disk live modules present")
+
+    # Old 2-master arbiter alone is hollow for PLXC
+    qip_old_arb = bool(re.search(r"ddr_bus_arbiter\.sv", qip_txt)) and not qip_hits[
+        "ddr_bus_arbiter_plxc"
+    ]
+    inst_old = bool(
+        re.search(r"\bddr_bus_arbiter\s+#?\s*\w*\s*\w*\s*\(", plex_txt)
+        or re.search(r"\bddr_bus_arbiter\s+\w+\s*\(", plex_txt)
+    )
+    inst_plxc_arb = bool(
+        re.search(r"\bddr_bus_arbiter_plxc\b", plex_txt)
+    )
+    msgs.append(
+        f"LEG0_B36_ARB qip_old_only={int(qip_old_arb)} inst_old={int(inst_old)} "
+        f"inst_plxc={int(inst_plxc_arb)}"
+    )
+    if qip_old_arb or (inst_old and not inst_plxc_arb) or not inst_plxc_arb:
+        errors.append(
+            "B36_OLD_2MASTER_ARBITER: product must instantiate ddr_bus_arbiter_plxc "
+            "(3-way: present + stream + PLXC master), not only legacy 2-master "
+            "ddr_bus_arbiter. rd-duck: top still uses old arbiter → PLXC cannot "
+            "get a real grant. "
+            f"old_inst={int(inst_old)} plxc_inst={int(inst_plxc_arb)} "
+            f"qip_old_only={int(qip_old_arb)}."
+        )
+    else:
+        msgs.append("LEG0_B36_OK 3-way ddr_bus_arbiter_plxc instantiated")
+
+    if not plex.is_file():
+        errors.append(
+            "B36_NO_POLLER_LATCH_MUX_STORE: missing Plex.sv — cannot prove "
+            "poller→latch→mux→store hierarchy."
+        )
+        errors.append(
+            "B36_LATCH_WR_COMMIT_TIED_ZERO: missing Plex.sv — cannot prove latch inputs."
+        )
+        errors.append(
+            "B36_PLXC_MASTER_TIED_ZERO: missing Plex.sv — cannot prove PLXC master."
+        )
+        return msgs, errors
+
+    # --- present_geom_latch must not be hollow-tied ---
+    latch_ports = _extract_sv_instance_ports(plex_txt, "present_geom_latch") or ""
+    if not latch_ports:
+        m = re.search(
+            r"present_geom_latch\s+\w+\s*\(([\s\S]{0,2500}?)\)\s*;",
+            plex_txt,
+        )
+        latch_ports = m.group(1) if m else ""
+    latch_inst = bool(latch_ports) or bool(re.search(r"\bpresent_geom_latch\b", plex_txt))
+    wr_tied = bool(re.search(r"\.wr_en\s*\(\s*1'b0\s*\)", latch_ports))
+    commit_tied = bool(re.search(r"\.commit\s*\(\s*1'b0\s*\)", latch_ports))
+    fb_tied = bool(re.search(r"\.frame_boundary\s*\(\s*1'b0\s*\)", latch_ports))
+    msgs.append(
+        f"LEG0_B36_LATCH inst={int(latch_inst)} wr0={int(wr_tied)} "
+        f"commit0={int(commit_tied)} fb0={int(fb_tied)}"
+    )
+    # has_poller used below for chain; precompute for latch liveness
+    has_poller_early = bool(re.search(r"\bplxg_ddr_poller\b", plex_txt))
+    latch_hollow = (
+        (not latch_inst)
+        or (wr_tied and commit_tied)
+        or fb_tied
+        or (latch_inst and not has_poller_early)
+    )
+    if latch_hollow:
+        errors.append(
+            "B36_LATCH_WR_COMMIT_TIED_ZERO: present_geom_latch must receive live "
+            "wr_en/commit/frame_boundary from plxg_ddr_poller (and VS), not "
+            ".wr_en(1'b0)/.commit(1'b0)/.frame_boundary(1'b0). Absent poller with "
+            "a latch instance is also hollow (no live write path). rd-duck Plex.sv "
+            "~1075-82 — latch never leaves reset; no PLXG/q5. "
+            f"inst={int(latch_inst)} wr0={int(wr_tied)} commit0={int(commit_tied)} "
+            f"fb0={int(fb_tied)} poller={int(has_poller_early)}."
+        )
+    else:
+        msgs.append("LEG0_B36_OK latch live-fed from poller")
+
+    # --- poller → latch → mux → store connectivity ---
+    has_poller = bool(re.search(r"\bplxg_ddr_poller\b", plex_txt))
+    has_mux = bool(re.search(r"\bplex_present_geom_mux\b", plex_txt))
+    has_store = bool(re.search(r"\bddr_frame_store\b", plex_txt))
+    # Wire names: poller outputs into latch wr/commit
+    poller_to_latch = bool(
+        re.search(
+            r"plxg_ddr_poller[\s\S]{0,2000}?present_geom_latch|"
+            r"present_geom_latch[\s\S]{0,800}?\.wr_en\s*\(\s*(?!1'b0)[\w\.]+",
+            plex_txt,
+        )
+    ) or (
+        has_poller
+        and bool(re.search(r"\.wr_en\s*\(\s*(?!1'b0)plxg_|poller_|wr_en", latch_ports))
+    )
+    # Mux consumes latch live outputs
+    mux_from_latch = bool(
+        re.search(
+            r"plex_present_geom_mux[\s\S]{0,2000}?(plxg_live|live_seq|geom_enable)|"
+            r"\.live_valid\s*\(\s*plxg_|\.geom_enable\s*\(\s*plxg_",
+            plex_txt,
+        )
+    ) or (has_mux and has_poller)
+    # Store takes runtime geom from mux/latch
+    store_from_path = bool(
+        re.search(
+            r"ddr_frame_store[\s\S]{0,2500}?(rt_geom|geom_enable|plxg_|mux_)",
+            plex_txt,
+        )
+    ) or (has_store and has_mux)
+
+    msgs.append(
+        f"LEG0_B36_CHAIN poller={int(has_poller)} mux={int(has_mux)} "
+        f"store={int(has_store)} p2l={int(poller_to_latch)} "
+        f"m2l={int(mux_from_latch)} s_path={int(store_from_path)}"
+    )
+    if not (
+        has_poller
+        and has_mux
+        and has_store
+        and poller_to_latch
+        and mux_from_latch
+        and store_from_path
+        and not (wr_tied and commit_tied)
+    ):
+        errors.append(
+            "B36_NO_POLLER_LATCH_MUX_STORE: need elaborated live chain "
+            "plxg_ddr_poller → present_geom_latch → plex_present_geom_mux → "
+            "ddr_frame_store with non-tied wr/commit and geom nets. Module "
+            "presence alone is hollow (rd-duck parent miss #11 class). "
+            f"poller={int(has_poller)} latch_live={int(not (wr_tied and commit_tied))} "
+            f"mux={int(has_mux)} store={int(has_store)}."
+        )
+    else:
+        msgs.append("LEG0_B36_OK poller→latch→mux→store chain evidenced")
+
+    # --- PLXC loader must not have master response ties ---
+    loader_ports = _extract_sv_instance_ports(plex_txt, "plex_chrome_ddr_loader") or ""
+    if not loader_ports:
+        m = re.search(
+            r"plex_chrome_ddr_loader\s*(?:#\s*\([^;]*?\))?\s*\w+\s*\(([\s\S]{0,2000}?)\)\s*;",
+            plex_txt,
+        )
+        loader_ports = m.group(1) if m else ""
+    has_loader = bool(loader_ports) or bool(
+        re.search(r"\bplex_chrome_ddr_loader\b", plex_txt)
+    )
+    m_gnt0 = bool(re.search(r"\.m_gnt\s*\(\s*1'b0\s*\)", loader_ports))
+    m_rdv0 = bool(re.search(r"\.m_rd_valid\s*\(\s*1'b0\s*\)", loader_ports))
+    m_rdata0 = bool(
+        re.search(r"\.m_rdata\s*\(\s*(64'd0|0)\s*\)", loader_ports)
+    )
+    # Real grant from 3-way arb
+    m_gnt_live = bool(
+        re.search(
+            r"\.m_gnt\s*\(\s*(?!1'b0)[\w\.]+",
+            loader_ports,
+        )
+    ) and not m_gnt0
+    plxc_to_arb = bool(
+        re.search(
+            r"ddr_bus_arbiter_plxc[\s\S]{0,2500}?(plxc_m_|m3_|chrome)",
+            plex_txt,
+            re.I,
+        )
+    ) or bool(
+        re.search(r"\.(m3_|plxc_)(req|gnt|rd|we)", plex_txt)
+        and inst_plxc_arb
+    )
+    msgs.append(
+        f"LEG0_B36_PLXC loader={int(has_loader)} gnt0={int(m_gnt0)} "
+        f"rdv0={int(m_rdv0)} rdata0={int(m_rdata0)} gnt_live={int(m_gnt_live)} "
+        f"to_arb={int(plxc_to_arb)} chrome_macro={int(has_chrome_macro)}"
+    )
+    # Hollow if loader present with ties, OR chrome path claimed without live master
+    if has_loader and (m_gnt0 or m_rdv0 or m_rdata0 or not m_gnt_live or not plxc_to_arb):
+        errors.append(
+            "B36_PLXC_MASTER_TIED_ZERO: plex_chrome_ddr_loader must connect m_gnt/"
+            "m_rd_valid/m_rdata to ddr_bus_arbiter_plxc master port — not "
+            ".m_gnt(1'b0)/.m_rd_valid(1'b0)/.m_rdata(64'd0). rd-duck ~1152-60: "
+            "loader never completes a DDR read; HIT_SCAN=48 is irrelevant if "
+            "loader never reads. Also require PLEX_CHROME_DDR/FAB_CHROME when "
+            "shipping chrome. "
+            f"gnt0={int(m_gnt0)} rdv0={int(m_rdv0)} rdata0={int(m_rdata0)} "
+            f"to_arb={int(plxc_to_arb)} chrome_macro={int(has_chrome_macro)}."
+        )
+    elif not has_loader and not has_chrome_macro:
+        # No loader and no chrome macro — still fail PLXC path for product HUD
+        errors.append(
+            "B36_PLXC_MASTER_TIED_ZERO: no plex_chrome_ddr_loader instance and no "
+            "PLEX_CHROME_DDR/PLEX_FAB_CHROME macro — product cannot load PLXC "
+            "chrome from DDR (rd-duck: hollow OSD path)."
+        )
+    else:
+        msgs.append("LEG0_B36_OK PLXC master connected to 3-way arbiter")
+
+    # B4 / HIT_SCAN note: B31 alone cannot clear this hierarchy
+    msgs.append(
+        "LEG0_B36_NOTE HIT_SCAN=48 (B31) is NOT evidence of live chrome if "
+        "B36_PLXC_MASTER_TIED_ZERO — B4 not close until loader reads"
+    )
+
+    if not errors:
+        msgs.append(
+            "LEG0_B36_PASS merged hierarchy live "
+            "(QSF+qip+poller→latch→mux→store+PLXC→3way)"
+        )
+    return msgs, errors
+
+
+
 def leg0_arch_blockers() -> tuple[int, list[str]]:
     """rd-duck fit blockers — FAIL until a coherent candidate clears each.
 
@@ -6201,7 +6529,7 @@ def leg0_arch_blockers() -> tuple[int, list[str]]:
         "B9_dar_bank_gen_match(bank_gen+DAR∧bank+ascal_obuf),B9_shadow_vs_pipeline(o_vsv1_sideband_not_delayed_hdmi_vs),"
         "B33_plxc_arb_issued_lower_safe(44981ab0 req/accept+per-req TB),"
         "B34_host_plxg_pad_display(426→432 display+crop+q1/q3 g++),"
-        "B35_ascal_simultaneous_tag_bypass(in_*+full_tag_TB+RED),"
+        "B35_ascal_simultaneous_tag_bypass(in_*+full_tag_TB+RED),B36_merged_hierarchy_live(qsf+qip+poller→latch→mux→store+PLXC→3way_arb),"
         "leg_unit_make_unit,leg_rtl_lint,leg2_elab,leg3_true_de; "
         "B20_PRODUCT_UFS_TIE=elaborate Plex.sv .use_frame_store(1'b0) + reject "
         "ownership-on-ufs (w-clock free-run) + H require product-ufs0 hold measured_* "
@@ -7635,6 +7963,11 @@ def leg0_arch_blockers() -> tuple[int, list[str]]:
     b35_msgs, b35_errs = check_b35_ascal_simultaneous_tag_bypass(ROOT)
     msgs.extend(b35_msgs)
     errors.extend(b35_errs)
+
+    # --- B36 merged hierarchy live (rd-duck w-osd/integ HOLLOW; B4 not close) ---
+    b36_msgs, b36_errs = check_b36_merged_hierarchy_live(ROOT)
+    msgs.extend(b36_msgs)
+    errors.extend(b36_errs)
 
     # --- B20 full-hierarchy scenario tests (rd-duck 2026-08-03 hollow audit) ---
     # Prior gate only regex-scanned test *text* and accepted comment bait (mutation
@@ -9494,6 +9827,12 @@ def _run_mutation_matrix() -> tuple[list[str], list[dict[str, str]]]:
         "B35_ASCAL_BUF_MODEL_ABSENT",
         "B35_SIMULTANEOUS_NO_IN_BYPASS",
         "B35_SIMULTANEOUS_TB_ABSENT",
+        "B36_QSF_HOLLOW_720P_MACROS",
+        "B36_QIP_MISSING_LIVE_MODULES",
+        "B36_LATCH_WR_COMMIT_TIED_ZERO",
+        "B36_NO_POLLER_LATCH_MUX_STORE",
+        "B36_PLXC_MASTER_TIED_ZERO",
+        "B36_OLD_2MASTER_ARBITER",
     ):
         txt = "\n".join(msgs)
         has = tok in txt
@@ -10155,7 +10494,72 @@ def _run_mutation_matrix() -> tuple[list[str], list[dict[str, str]]]:
         rest_a()
         rest_s()
 
-    # --- rd-duck B34: identity-on-store 432/432/0 after align ---
+    
+    # --- rd-duck B36: hollow latch+PLXC+2master (w-osd class) ---
+    plex_b36 = ROOT / "fpga" / "Plex_MiSTer" / "Plex.sv"
+    qip_b36 = ROOT / "fpga" / "Plex_MiSTer" / "files.qip"
+    qsf_b36 = ROOT / "fpga" / "Plex_MiSTer" / "Plex.qsf"
+    plex_b36.parent.mkdir(parents=True, exist_ok=True)
+    bad_plex = (
+        "// fitgate B36 mutation — hollow latch/PLXC/2master (rd-duck w-osd)\n"
+        "module plex_top;\n"
+        "present_geom_latch u_plxg_latch (\n"
+        "  .clk(clk_sys),\n"
+        "  .wr_en(1'b0),\n"
+        "  .commit(1'b0),\n"
+        "  .frame_boundary(1'b0)\n"
+        ");\n"
+        "plex_chrome_ddr_loader u_plxc_ddr_loader (\n"
+        "  .m_gnt(1'b0),\n"
+        "  .m_rd_valid(1'b0),\n"
+        "  .m_rdata(64'd0)\n"
+        ");\n"
+        "ddr_bus_arbiter ddr_arb (\n"
+        "  .clk(clk_ddr)\n"
+        ");\n"
+        "endmodule\n"
+    )
+    bad_qip = (
+        "// fitgate B36 hollow qip — old arbiter only\n"
+        "set_global_assignment -name SYSTEMVERILOG_FILE rtl/ddr_bus_arbiter.sv\n"
+    )
+    bad_qsf = (
+        "# fitgate B36 hollow qsf\n"
+        "set_global_assignment -name VERILOG_MACRO \"DDR_FRAME_STORE=1\"\n"
+        "set_global_assignment -name VERILOG_MACRO \"FRAME_W=640\"\n"
+        "set_global_assignment -name VERILOG_MACRO \"FRAME_H=480\"\n"
+        "#set_global_assignment -name VERILOG_MACRO \"PRESENT_BEAM_960=1\"\n"
+        "#set_global_assignment -name VERILOG_MACRO \"PRODUCT_NO_STUB=1\"\n"
+        "#set_global_assignment -name VERILOG_MACRO \"PLEX_CHROME_DDR=1\"\n"
+    )
+    rest_p = _with_file_backup(plex_b36, bad_plex)
+    rest_q = _with_file_backup(qip_b36, bad_qip)
+    rest_qs = _with_file_backup(qsf_b36, bad_qsf)
+    try:
+        rc, msgs = leg0_arch_blockers()
+        txt = "\n".join(msgs)
+        exp = (
+            "B36_LATCH_WR_COMMIT_TIED_ZERO"
+            if "B36_LATCH_WR_COMMIT_TIED_ZERO" in txt
+            else (
+                "B36_PLXC_MASTER_TIED_ZERO"
+                if "B36_PLXC_MASTER_TIED_ZERO" in txt
+                else "B36_QSF_HOLLOW_720P_MACROS"
+            )
+        )
+        _row(
+            "B36_HOLLOW_OSD_INTEG",
+            "latch wr/commit/fb=0 + PLXC m_*=0 + 2master arb + QSF 640/480",
+            exp,
+            rc,
+            msgs,
+        )
+    finally:
+        rest_p()
+        rest_q()
+        rest_qs()
+
+# --- rd-duck B34: identity-on-store 432/432/0 after align ---
     lay_b34 = ROOT / "host" / "libmisterplex" / "ddr_frame_layout.hpp"
     plxg_b34 = ROOT / "host" / "libmisterplex" / "plxg_record.hpp"
     lay_b34.parent.mkdir(parents=True, exist_ok=True)

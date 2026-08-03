@@ -297,6 +297,54 @@
       "token_hit": "1"
     },
     {
+      "check": "B36_QSF_HOLLOW_720P_MACROS",
+      "inject": "live hollow / missing product TB",
+      "expect": "B36_QSF_HOLLOW_720P_MACROS",
+      "verdict": "RED",
+      "true_rc": "1",
+      "token_hit": "1"
+    },
+    {
+      "check": "B36_QIP_MISSING_LIVE_MODULES",
+      "inject": "live hollow / missing product TB",
+      "expect": "B36_QIP_MISSING_LIVE_MODULES",
+      "verdict": "RED",
+      "true_rc": "1",
+      "token_hit": "1"
+    },
+    {
+      "check": "B36_LATCH_WR_COMMIT_TIED_ZERO",
+      "inject": "live hollow / missing product TB",
+      "expect": "B36_LATCH_WR_COMMIT_TIED_ZERO",
+      "verdict": "RED",
+      "true_rc": "1",
+      "token_hit": "1"
+    },
+    {
+      "check": "B36_NO_POLLER_LATCH_MUX_STORE",
+      "inject": "live hollow / missing product TB",
+      "expect": "B36_NO_POLLER_LATCH_MUX_STORE",
+      "verdict": "RED",
+      "true_rc": "1",
+      "token_hit": "1"
+    },
+    {
+      "check": "B36_PLXC_MASTER_TIED_ZERO",
+      "inject": "live hollow / missing product TB",
+      "expect": "B36_PLXC_MASTER_TIED_ZERO",
+      "verdict": "RED",
+      "true_rc": "1",
+      "token_hit": "1"
+    },
+    {
+      "check": "B36_OLD_2MASTER_ARBITER",
+      "inject": "live hollow / missing product TB",
+      "expect": "B36_OLD_2MASTER_ARBITER",
+      "verdict": "RED",
+      "true_rc": "1",
+      "token_hit": "1"
+    },
+    {
       "check": "B9_SYS_TOP_AR_OUT_HOLD_MISSING",
       "inject": "live defective/hollow tree (no inject)",
       "expect": "B9_SYS_TOP_AR_OUT_HOLD_MISSING",
@@ -521,6 +569,14 @@
       "token_hit": "1"
     },
     {
+      "check": "B36_HOLLOW_OSD_INTEG",
+      "inject": "latch wr/commit/fb=0 + PLXC m_*=0 + 2master arb + QSF 640/480",
+      "expect": "B36_LATCH_WR_COMMIT_TIED_ZERO",
+      "verdict": "RED",
+      "true_rc": "1",
+      "token_hit": "1"
+    },
+    {
       "check": "B34_IDENTITY_ON_STORE",
       "inject": "align then makeDdrFrameGeometry(store) loses display 426/crop_left=2",
       "expect": "B34_IDENTITY_ON_STORE",
@@ -546,6 +602,6 @@
     }
   ],
   "failures": [],
-  "n_red": 68,
-  "head": "db53835e7d42"
+  "n_red": 75,
+  "head": "dd864d0151ee"
 }
