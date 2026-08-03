@@ -87,6 +87,7 @@ unit-unlocked: unit-rollcall preflight $(ROOT)/build/test_cadence $(ROOT)/build/
 	bash $(ROOT)/tests/unit/test_main_rc0_paths.sh
 	bash $(ROOT)/tests/unit/test_daemon_rc0_paths.sh
 	bash $(ROOT)/tests/unit/test_exit_reason_sigterm_e2e.sh
+	bash $(ROOT)/tests/unit/test_drops_bind_process_epoch.sh
 	bash $(ROOT)/tests/unit/test_soak_continuity_assert.sh
 	bash $(ROOT)/tests/unit/test_soak_ledger_report.sh
 	bash $(ROOT)/tests/unit/test_supervise_death_snap_static.sh

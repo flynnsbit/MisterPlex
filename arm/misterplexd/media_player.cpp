@@ -3743,6 +3743,14 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                                 " residual=" + std::to_string(residual) +
                                 " residual_eq=frames-presents-drops" +
                                 " residual_scope=supply_arm_only" +
+                                // P4: per-stream counters reset on respawn — bind identity.
+                                " process_epoch=" +
+                                std::to_string(processEpoch_.load()) +
+                                " pid=" +
+                                std::to_string(static_cast<long>(::getpid())) +
+                                " session_epoch=" +
+                                sessionEpochString(processEpoch_.load(),
+                                                   streamSeq_.load()) +
                                 " fpga_obs=none" +
                                 " err=" +
                                 (ddrErr.empty() ? fpga_.lastError() : ddrErr) +
@@ -4262,7 +4270,15 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                         " drift_ms=" + std::to_string(avDriftMs_.load()) +
                         " drops=" + std::to_string(dropsNow) +
                         " frames=" + std::to_string(frameIndex) +
-                        " presents=" + std::to_string(presentCount_));
+                        " presents=" + std::to_string(presentCount_) +
+                        // P4: drops= alone is per-stream; bind process life so a
+                        // mid-soak respawn cannot look like continuity.
+                        " process_epoch=" +
+                        std::to_string(processEpoch_.load()) +
+                        " pid=" +
+                        std::to_string(static_cast<long>(::getpid())) +
+                        " session_epoch=" +
+                        sessionEpochString(processEpoch_.load(), streamSeq_.load()));
                 }
             } else {
                 dropRun = 0;
@@ -4767,6 +4783,10 @@ void MediaPlayer::threadMain(std::string url, int64_t startMs, std::string heade
                 " supply_class=" +
                 (rtEnd.class_name ? rtEnd.class_name : "NO-DATA") +
                 " wall_s=" + fmtSec3(wallEnd) +
+                " process_epoch=" + std::to_string(processEpoch_.load()) +
+                " pid=" + std::to_string(static_cast<long>(::getpid())) +
+                " session_epoch=" +
+                sessionEpochString(processEpoch_.load(), streamSeq_.load()) +
                 " tag=measured");
         }
         {
