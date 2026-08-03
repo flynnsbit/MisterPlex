@@ -60,6 +60,30 @@ module present_core #(
 	input  wire [10:0] content_w,
 	input  wire [10:0] content_h,
 
+	// ---- w-mem / w-scaler ports (owner integrates; non-owners submit patches) ----
+	// Fabric content window (w-scaler). win_enable=0 → beam identity / full FRAME.
+	input  wire        win_enable = 1'b0,
+	input  wire [10:0] content_x0 = 11'd0,
+	input  wire [10:0] content_y0 = 11'd0,
+	input  wire [10:0] win_h_de = 11'd0,
+	input  wire [10:0] win_v_de = 11'd0,
+
+	// Runtime DDR bank geometry + B16 live seq (w-mem latch). geom_enable=0 → legacy.
+	input  wire        geom_enable = 1'b0,
+	input  wire [15:0] geom_live_seq = 16'd0,
+	input  wire        geom_live_valid = 1'b0,
+	input  wire        q5_reserved_reject = 1'b0,
+	input  wire [10:0] geom_coded_w = 11'd0,
+	input  wire [10:0] geom_coded_h = 11'd0,
+	input  wire [11:0] geom_y_stride = 12'd0,
+	input  wire [10:0] geom_chroma_stride = 11'd0,
+	input  wire [10:0] geom_display_w = 11'd0,
+	input  wire [10:0] geom_display_h = 11'd0,
+	input  wire [10:0] geom_present_x = 11'd0,
+	input  wire [10:0] geom_present_y = 11'd0,
+	input  wire [10:0] geom_crop_left = 11'd0,
+	input  wire [10:0] geom_crop_top = 11'd0,
+
 	// frame_store write (from ingest)
 	input  wire        fs_wr_en,
 	input  wire [15:0] fs_wr_pixel,
@@ -128,7 +152,10 @@ module present_core #(
 	output wire        stat_audio_underrun,
 	output wire        stat_swap_pending,
 	output wire [15:0] stat_frame_underruns,
-	output wire  [7:0] stat_frame_sdram_state
+	output wire  [7:0] stat_frame_sdram_state,
+	// B16: geometry transition blackout / hollow (w-mem store; raise HDMI_BLACKOUT)
+	output wire        stat_geom_hold_black,
+	output wire        stat_geom_hollow
 );
 `ifdef PRESENT_MULTI_PIXEL
 	localparam int PRESENT_PPC = `PRESENT_PX_PER_CLK;
@@ -366,6 +393,16 @@ module present_core #(
 	wire        wr_done;
 	wire [15:0] frame_underruns;
 	wire [7:0]  frame_sdram_state;
+	// B16 from ddr_frame_store when DDR_FRAME_STORE_RUNTIME_GEOM (w-mem store).
+	wire       geom_hold_black;
+	wire       geom_hollow_fault;
+	// Keep window/geom ports referenced so unused-input elision cannot drop them.
+	wire _keep_win_geom_ports =
+		win_enable | (|content_x0) | (|content_y0) | (|win_h_de) | (|win_v_de)
+		| geom_enable | (|geom_live_seq) | geom_live_valid | q5_reserved_reject
+		| (|geom_coded_w) | (|geom_coded_h) | (|geom_y_stride) | (|geom_chroma_stride)
+		| (|geom_display_w) | (|geom_display_h) | (|geom_present_x) | (|geom_present_y)
+		| (|geom_crop_left) | (|geom_crop_top);
 
 `ifdef DDR_FRAME_STORE
 	assign fs_wr_ready = 1'b1;
@@ -555,6 +592,103 @@ module present_core #(
 	wire                 fstore_rd_a = de_r;
 `endif
 
+	// B7 Option-C 720p map constants (must match w-mem ddr_frame_layout / host).
+	// Prefer included params when present; else parent-verified literals.
+`ifdef DDR_FRAME_720P_PHYS_BASE
+	localparam [31:0] PC_PHYS_BASE_720P = DDR_FRAME_720P_PHYS_BASE;
+	localparam int    PC_STRIDE_720P    = DDR_FRAME_720P_YUV420P_BANK_STRIDE;
+	localparam [31:0] PC_DOORBELL_720P  = DDR_FRAME_720P_YUV420P_DOORBELL_PHYS;
+`else
+	localparam [31:0] PC_PHYS_BASE_720P = 32'h3018_0000;
+	localparam int    PC_STRIDE_720P    = 32'h0018_0000;
+	localparam [31:0] PC_DOORBELL_720P  = 32'h3047_F000;
+`endif
+
+	// Store connect policy (parent arbitration #3):
+	//   DDR_FRAME_STORE_RUNTIME_GEOM — w-mem store with B7 params + B16 ports.
+	//   else — clock/legacy store (PX_PER_CLK multi-pixel); B16 stats tied off.
+	// Product BEAM_960 + B7/B16 requires w-mem store merge (do not whole-file drop).
+`ifdef DDR_FRAME_STORE_RUNTIME_GEOM
+	ddr_frame_store #(
+		.FRAME_W(FRAME_W),
+		.FRAME_H(FRAME_H),
+		.FRAME_STRIDE(FRAME_STRIDE),
+		.CODED_W(DDR_FRAME_CODED_WIDTH),
+		.CODED_H(DDR_FRAME_CODED_HEIGHT),
+		.DISPLAY_W(DDR_FRAME_DISPLAY_WIDTH),
+		.DISPLAY_H(DDR_FRAME_DISPLAY_HEIGHT),
+		.CROP_LEFT(DDR_FRAME_CROP_LEFT),
+		.CROP_TOP(DDR_FRAME_CROP_TOP),
+		.PRESENT_X(DDR_FRAME_PILLARBOX_LEFT),
+		.PRESENT_Y(0),
+		.LINE_COUNT(FRAME_LINE_COUNT),
+		.PHYS_BASE(32'h3000_0000),
+		.HPS_BANK_STRIDE_BYTES(DDR_FRAME_YUV420P_BANK_STRIDE),
+		.DOORBELL_PHYS(DDR_FRAME_YUV420P_DOORBELL_PHYS),
+		// B7 Option-C (capacity select + OPTION_C LEG re-base) — from w-mem 23451699
+		.PHYS_BASE_720P(PC_PHYS_BASE_720P),
+		.HPS_BANK_STRIDE_BYTES_720P(PC_STRIDE_720P),
+		.DOORBELL_PHYS_720P(PC_DOORBELL_720P)
+	) fstore (
+		.clk(clk),
+		.clk_ddr(clk_ddr),
+		.reset(reset),
+		.rd_x(fstore_rd_x),
+		.rd_y(fstore_rd_y),
+		.rd_active(fstore_rd_a),
+		.rd_r(fr),
+		.rd_g(fg),
+		.rd_b(fb),
+		.geom_enable(geom_enable),
+		.rt_geom_seq(geom_live_seq),
+		.rt_geom_live(geom_live_valid),
+		.rt_coded_w(geom_coded_w),
+		.rt_coded_h(geom_coded_h),
+		.rt_y_stride(geom_y_stride),
+		.rt_chroma_stride(geom_chroma_stride),
+		.rt_display_w(geom_display_w),
+		.rt_display_h(geom_display_h),
+		.rt_present_x(geom_present_x),
+		.rt_present_y(geom_present_y),
+		.rt_crop_left(geom_crop_left),
+		.rt_crop_top(geom_crop_top),
+		.start_req(ddr_start_req),
+		.bank_sel(ddr_bank_sel),
+		.status_osd(ddr_status_osd),
+		.input_cmd_valid(ddr_input_cmd_valid),
+		.input_cmd(ddr_input_cmd),
+		.sdram_test_state(ddr_sdram_test_state),
+		.sdram_size_code(ddr_sdram_size_code),
+		.sdram_error_count(ddr_sdram_error_count),
+		.DDRAM_CLK(DDRAM_CLK),
+		.DDRAM_BUSY(DDRAM_BUSY),
+		.DDRAM_BURSTCNT(DDRAM_BURSTCNT),
+		.DDRAM_ADDR(DDRAM_ADDR),
+		.DDRAM_DOUT(DDRAM_DOUT),
+		.DDRAM_DOUT_READY(DDRAM_DOUT_READY),
+		.DDRAM_RD(DDRAM_RD),
+		.DDRAM_DIN(DDRAM_DIN),
+		.DDRAM_BE(DDRAM_BE),
+		.DDRAM_WE(DDRAM_WE),
+`ifdef PRESENT_MULTI_PIXEL
+		.vsync_pulse(mp_out_fs),
+`else
+		.vsync_pulse(fstart),
+`endif
+		.has_frame(has_frame),
+		.swap_pending(swap_pending),
+		.underrun_count(frame_underruns),
+		.frames_done(ddr_frames_done),
+		.doorbell_ok(ddr_doorbell_ok),
+		.debug_state(frame_sdram_state),
+		.geom_hold_black(geom_hold_black),
+		.geom_hollow_fault(geom_hollow_fault),
+		.q5_reserved_reject(q5_reserved_reject)
+	);
+`else
+	// Legacy/clock store (PX_PER_CLK). B7/B16 not on this pin list — tie stats.
+	assign geom_hold_black = 1'b0;
+	assign geom_hollow_fault = 1'b0;
 	ddr_frame_store #(
 		.FRAME_W(FRAME_W),
 		.FRAME_H(FRAME_H),
@@ -606,8 +740,6 @@ module present_core #(
 		.DDRAM_BE(DDRAM_BE),
 		.DDRAM_WE(DDRAM_WE),
 `ifdef PRESENT_MULTI_PIXEL
-		// Bank swap on FIFO-aligned frame_start (not raw beam mp_fstart).
-		// Raw beam fstart leads RGB by LAT+prefill → mid-frame bank tear.
 		.vsync_pulse(mp_out_fs),
 `else
 		.vsync_pulse(fstart),
@@ -619,7 +751,8 @@ module present_core #(
 		.doorbell_ok(ddr_doorbell_ok),
 		.debug_state(frame_sdram_state)
 	);
-`else
+`endif // DDR_FRAME_STORE_RUNTIME_GEOM
+`else // !DDR_FRAME_STORE
 	frame_store #(
 		.FRAME_W(FRAME_W),
 		.FRAME_H(FRAME_H),
@@ -894,6 +1027,10 @@ module present_core #(
 		| mp_mode_ok | mp_needs_fast_pix | (|mp_fps_milli) | mp_identity_geom_ok
 		| mp_use_fs | mp_rd_ur_sticky | (|mp_rd_ur_count) | mp_reset_pix;
 `endif
+
+	// Non-DDR path: no B16 store blackout.
+	assign geom_hold_black = 1'b0;
+	assign geom_hollow_fault = 1'b0;
 `endif
 
 	// Product: once a frame is ingested, always show frame_store unless O[9] Force bars.
@@ -1086,5 +1223,8 @@ module present_core #(
 	assign stat_frame_underruns = frame_underruns;
 `endif
 	assign stat_frame_sdram_state = frame_sdram_state;
+	assign stat_geom_hold_black = geom_hold_black;
+	assign stat_geom_hollow     = geom_hollow_fault;
+	wire _keep_b16_stats = stat_geom_hold_black | stat_geom_hollow | _keep_win_geom_ports;
 
 endmodule
