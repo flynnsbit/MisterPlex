@@ -1,11 +1,11 @@
 lane=w-path
-status=AWAITING_CLEAN_DMA_GATE
-tip=c19cac2c
-PARENT_CONTROL720: video_mode=0 beam; core d1b24e0c CYAN_PX=0 ACTIVE=923x717 (ARM path)
-BUDGET_CLEAN: decode 35.94 + copy 14.978 = 50.92 FAIL; margin decode-alone 5.73
-anomaly CLOSED (no address effect)
-DMA: instrument c4cf0392 ready — parent re-run when free after integration fit
+status=PL330_CRITICAL_AWAITING_GATE
+tip=pending
+ARCH: CPU bank copy STRUCTURAL 88MiB/s uncached (outside System RAM) — closed FAIL serial
+DecodeIntoBank SUSPECT — no further build until measured
+PL330 = critical path; instrument ready (linux DMAGO + content + ceiling)
+PARENT_GATE:
   ddr_pl330_ingest_bench --dma-only --duration-s 25 --bank 1
-  gate only if pl330_verdict=VERIFIED_REAL_DMA
-binary: build/arm/ddr_pl330_ingest_bench
+  binary build/arm/ddr_pl330_ingest_bench
+budget: decode 35.94 copy 14.978 serial 50.9 FAIL
 tests: zero_copy true_rc=0

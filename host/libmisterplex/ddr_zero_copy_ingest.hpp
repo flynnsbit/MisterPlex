@@ -1,27 +1,26 @@
 #pragma once
 
-// Zero-CPU-copy / overlapped DDR bank ingest (w-path Route A).
+// HPS bank ingest (w-path). Parent 2026-08-03 architecture lock:
 //
-// Parent 2026-08-03: serial decode+bank-copy is DEAD at every true-720 tier
-// (best bank write 15.283 ms/f). Overlap max(decode,copy) is the only ARM-side
-// arithmetic that can close 720p24 until fabric owns pixels entirely.
+// STRUCTURAL: bank at 0x30xx_xxxx is OUTSIDE kernel System RAM (cmdline
+// mem=511M memmap=513M$511M; iomem System RAM ends 0x1fefffff). /dev/mem maps
+// it uncached/device regardless of O_SYNC. Measured CPU store ceiling ~88 MiB/s
+// (~14.97 ms/f for 720p I420). --no-sync/--flush do NOT help (0/5 pre-reg).
+// ⇒ decode(35.94)+CPU full-frame move(>=14.97) >= 50.9 ms vs 41.667 — CLOSED FAIL.
 //
 // Modes (product default remains CpuSerial via existing sendDdrFrame):
-//   CpuSerial       — memcpy then doorbell (today; fails 720p24 budget)
-//   DecodeIntoBank  — decoder writes bank virt directly (still CPU stores to
-//                     O_SYNC bank; may be slower than RAM+memcpy — measure)
-//   Pl330Overlap    — decode into locked RAM; PL330 mem2mem into bank; CPU free
-//                     for next decode. Concurrency vs DDR controller UNKNOWN
-//                     until parent measures (do not assume max() holds).
+//   CpuSerial       — memcpy then doorbell (DEAD for 720p24; 480p only)
+//   DecodeIntoBank  — SUSPECT not a win: decoder would store+reload refs from
+//                     same uncached bank. Do NOT productize until measured.
+//   Pl330Overlap    — CRITICAL PATH for any ARM-side 720p24: PL330 via L3 is
+//                     not subject to CPU uncached-store stall. Concurrency with
+//                     decode still UNMEASURED (bench c4cf0392 must verify bytes).
 //
-// Doorbell ordering (absolute — parent tearing class):
-//   payload fully FPGA-visible → then exactly one doorbell. Never reverse.
-//   PLXD bank credit (when present) gates which bank may be filled.
+// Endgame (mandate): fabric owns pixels / h264_decode_top — stop crossing the
+// uncached boundary with frame payloads at all.
 //
-// Coordinate with w-mem: bank phys / stride / doorbell magic = ddr_frame_layout;
-// fabric_ddr_writer is the fabric producer path (publish_bytes=0 ship gate).
-// This lane fills the *HPS* producer gap: real decoded frames → Option-C banks
-// without burning decode-critical CPU on the copy.
+// Doorbell ordering (absolute): payload FPGA-visible → then one doorbell.
+// Coordinate w-mem: bank/doorbell ABI; fabric_ddr_writer = fabric producer.
 
 #include "libmisterplex/ddr_frame_layout.hpp"
 
@@ -78,13 +77,15 @@ struct DdrIngestContract {
 // --- Budget helpers (parent-measured constants; do not invent device rates) ---
 
 constexpr double kIngestBudget24fpsMs = 41.667;
-// Parent CLEAN consolidated budget 2026-08-03 (post-awk kill; anomaly chase CLOSED):
-//   decode alone 35.94 ms/f (margin 5.73); CPU bank copy 14.978 ms/f (was ~15.06–15.28)
-//   serial decode+copy 50.92 FAIL by 9.25; any concurrent peer 45–48 FAIL
-//   verified sustained DMA still UNMEASURED until instrument-fixed bench re-run
-// RETRACTED: bank-address anomaly, bank-sweep table, DMA 23.8 / 0.01 ms figures
+// Parent CLEAN budget 2026-08-03 (post-awk; nosync 0/5; anomaly CLOSED):
+//   decode alone 35.94 (margin 5.73); CPU bank copy 14.978 STRUCTURAL uncached
+//   serial 50.9+ FAIL closed; DMA verified sustained = THE open ARM question
+//   DecodeIntoBank suspect (same uncached stores) — do not build further yet
 constexpr double kParentBankCopy720pMs = 14.978;
+constexpr double kParentBankCopy720pMiBps = 88.045; // --sync control, structural
 constexpr double kParentDecode720pCleanAloneMs = 35.94;
+// true: CPU full-frame bank move cannot be tuned past uncached ceiling on this map
+constexpr bool kParentCpuBankCopyIsStructuralCeiling = true;
 constexpr double kParentDecode720p2500kMs = 35.87; // earlier same-session arm
 constexpr double kParentDecode720pProduct2600kMs = kParentDecode720pCleanAloneMs;
 constexpr double kParentDecode720pApprox2600kMs = kParentDecode720pProduct2600kMs;
