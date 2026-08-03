@@ -74,18 +74,21 @@ module present_npx_path #(
 	localparam int SKID_AF_LEVEL = SKID_D - 4;
 	localparam int PRE_W = 8;
 
-	function automatic [W-1:0] pack_group(
-		input fs, vs, hs, vb, hb,
-		input [PX_PER_CLK-1:0] lv,
-		input [RGB_N-1:0] r, g, b
-	);
-		begin
-			if (INCLUDE_SYNC)
-				pack_group = {fs, vs, hs, vb, hb, lv, r, g, b};
-			else
-				pack_group = {lv, r, g, b};
+	// Pack width must match W exactly. A single function with
+	// if (INCLUDE_SYNC) still typechecks BOTH concatenations against
+	// [W-1:0]: default INCLUDE_SYNC=0 => W=100, sync branch is 105
+	// (SYNC_W=5) → WIDTHTRUNC. generate keeps only the live expression.
+	wire [W-1:0] in_packed;
+	generate
+		if (INCLUDE_SYNC) begin : g_pack_sync
+			assign in_packed = {
+				in_fstart, in_vsync, in_hsync, in_vblank, in_hblank,
+				in_lane_valid, in_r, in_g, in_b
+			};
+		end else begin : g_pack_rgb
+			assign in_packed = {in_lane_valid, in_r, in_g, in_b};
 		end
-	endfunction
+	endgenerate
 
 	reg [W-1:0]     skid_mem [0:SKID_D-1];
 	reg [SKID_AW:0] skid_wp, skid_rp;
@@ -132,10 +135,6 @@ module present_npx_path #(
 	reg [PRE_W-1:0] wr_group_count;
 	reg             prefill_go_sys;
 	reg             prefill_go_p1, prefill_go_pix;
-
-	wire [W-1:0] in_packed = pack_group(
-		in_fstart, in_vsync, in_hsync, in_vblank, in_hblank,
-		in_lane_valid, in_r, in_g, in_b);
 
 	wire skid_accept = in_valid && !skid_full;
 
