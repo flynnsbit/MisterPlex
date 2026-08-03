@@ -23,9 +23,15 @@ fabchrome RED+GREEN: true rc=0
 chrome/idle720/ppc/e2e: true rc=0
 test_plex_chrome_cmds: true rc=0
 
+## Parent control arm (MEASURED glass, binding)
+d1b24e0c + video_mode=0:
+  MEAN=14.4 STD=24.4 ORANGE_PX=12889 CYAN_PX=0 ACTIVE=923x717 rc=0
+CYAN=0 on real chain. ACTIVE=923x717 = 480p-class letterbox (2nd discriminator).
+
 ## Parent capture — idle (FAB_IDLE)
 docs/fab-idle-parent-capture-contract.md
-PASS: CYAN>=2000 ORANGE>=500 motion; kill PID still moves
+PASS: CYAN>=2000 + ACTIVE > 923x717 + motion; kill PID still moves
+Colour and geometry must agree.
 
 ## Parent capture — chrome (FAB_CHROME)
 docs/fab-chrome-parent-capture-contract.md

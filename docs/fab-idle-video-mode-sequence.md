@@ -19,35 +19,34 @@ stay false (Template DE) while fabric still fills the **HDMI** raster.
 
 ## Single sequence (one change per step)
 
-### Step 0 — Control (no geometry claim)
+### Step 0 — Control (MEASURED — binding reference)
 
-- RBF: nostub-class / macros **OFF** (`d1b24e0c` family)
-- **Do not touch** `MiSTer.ini`
-- Capture: `scripts/hdmi_capture_idle.sh …`
-- Expect: daemon idle if misterplexd running — **CYAN_PX≈0**, ORANGE high possible  
-- Record **ACTIVE=…** as lab baseline (often letterboxed inside 1920×1080 grabber)
+Parent already ran this with beam at `video_mode=0` and core `d1b24e0c` (2026-08-03):
 
-### Step 1 — Fabric idle only (no ini change)
+```
+MEAN=14.4  STD=24.4  ORANGE_PX=12889  CYAN_PX=0  ACTIVE=923x717  true rc=0
+```
+
+- RBF: nostub-class / macros **OFF** (`d1b24e0c`)
+- Beam: **already** `video_mode=0` on device (backup `MiSTer.ini.bak-parent720`, restore=8)
+- **CYAN_PX=0** on the real capture chain — fabric PASS cannot be the daemon
+- **ACTIVE=923×717** = 480p-class canvas letterboxed into 720p raster (second discriminator)
+- Pre-reg control HIT 4/4 — cite these numbers, not the older MEAN=23/ORANGE=20161 pair
+
+### Step 1 — Fabric idle core (beam already mode 0 — do not re-touch ini)
 
 - Fit/enable: **`PLEX_FAB_IDLE=1` only** (no `PRESENT_MULTI_PIXEL`, no `PLEX_FAB_CHROME`)
-- **Still no ini change**
-- Expect: cyan TL+BR, drifting amber chevron, **CYAN_PX≥2000**
-- **ACTIVE outer box** may match Step 0 (same HDMI mode); content is fabric
-- If CYAN PASS here, geometry of marks follows **current** `hdmi_width/height`
+- **Leave `video_mode=0` alone** — parent already set it so the only delta is the core
+- Expect vs control:
+  - **CYAN_PX≥2000** (control was 0)
+  - ORANGE present; chevron **drifts** (t0/t1)
+  - **ACTIVE grows past 923×717** toward full 1280-class if native fabric canvas lands
+  - CYAN and ACTIVE should **agree**; mismatch = investigate, not green
 
-### Step 2 — True 1280×720 HDMI canvas (ini only)
+### Step 2 — (already done on device) video_mode=0
 
-- Same FAB_IDLE RBF
-- Set **only**:
-  ```
-  video_mode=0
-  video_mode_ntsc=0
-  video_mode_pal=0
-  ```
-  Soft-reboot / core reload after ini
-- Expect: fabric idle still; chevron `size=min(W,H)/3` with W/H≈1280/720; cyan marks on 720p raster
-- **ACTIVE** should move toward **1280×720-class** content (grabber may still report 1920×1080 sensor with letterbox — score ORANGE/CYAN, not only ACTIVE string)
-- Geometry delta vs Step 1 is from **ini**, not from a new RBF
+Parent completed beam switch before the fit. Re-run only if ini was restored to 8.
+If someone restores mode 8 mid-session, re-do control before scoring fabric.
 
 ### Step 3 — Optional separate fit: multi-pixel core DE
 

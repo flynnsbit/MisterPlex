@@ -54,13 +54,26 @@ When **ON** + HDMI mode 1280×720:
 
 ### ARM idle (control — must NOT match PASS)
 
+**Parent measured on glass 2026-08-03** (core `d1b24e0c`, `video_mode=0`, grabber chain):
+
+```
+MEAN=14.4  STD=24.4  ORANGE_PX=12889  CYAN_PX=0  ACTIVE=923x717  TRY=1  rc=0
+```
+
+Visual: ARM orange chevron + STOPPED overlay 0:00/0:00, dark canvas, letterboxed in
+1920×1080 grabber. **CYAN_PX=0 on this exact capture chain** — closes the false-GREEN trap.
+
 | Element | ARM today |
 |---------|-----------|
 | Colours | Same amber/bg (`kIdleFg/Bg`) — **colour alone is not proof** |
-| Canvas | Daemon often **624×480** / 320×240 paint (`paintIdle` paths) |
-| Cyan corners | **Never** — `CYAN_PX` must be **0** on pure ARM idle |
+| Canvas | 480p-class content letterboxed → measured **ACTIVE≈923×717** @ mode 0 |
+| Cyan corners | **Never** — measured **CYAN_PX=0** |
 | Motion | Only if daemon screensaver loop runs; **stops if daemon stopped** |
 | Log | `media: idle screen painted` / DDR publish — **not** fabric skip line |
+
+**Second discriminator (parent):** fabric native 1280×720 canvas should grow **ACTIVE**
+toward the full raster vs control **923×717**. Colour (CYAN) and geometry (ACTIVE)
+must **agree**. If they disagree, report both — do not green on one alone.
 
 ---
 
@@ -85,10 +98,11 @@ scripts/hdmi_capture_idle.sh docs/agent-evidence/fab-idle-nodaemon.png
 
 | Metric | PASS | Rationale |
 |--------|------|-----------|
-| **CYAN_PX** | **≥ 2000** | Fabric L-brackets; ARM idle ≈ 0 |
-| **ORANGE_PX** | **≥ 500** | Chevron present (JPEG/scale dependent) |
-| **MEAN** | **12 .. 80** | Not black (0), not green-fail (≥100 flat) |
-| **STD** | **> 5** | Not uniform field |
+| **CYAN_PX** | **≥ 2000** | Fabric L-brackets; control arm measured **0** |
+| **ORANGE_PX** | **≥ 500** | Chevron present (control had 12889 — fabric may differ) |
+| **MEAN** | **12 .. 80** | Control was 14.4; not black (0), not flat ≥100 |
+| **STD** | **> 5** | Not uniform field (control 24.4) |
+| **ACTIVE** | **Wider than control 923×717** toward full 1280-class | Geometry discriminator |
 | **Motion** | t0 vs t1: **ORANGE centroid or ACTIVE_X shifts**, or visual chevron moved | vsync phase drift |
 | **Daemon stopped** | snap still has CYAN+ORANGE+motion | ARM not required for picture |
 
@@ -102,8 +116,9 @@ scripts/hdmi_capture_idle.sh docs/agent-evidence/fab-idle-nodaemon.png
 | Picture dies when daemon killed | Fabric idle **not** on (macro OFF or elided) |
 | Post-fit `u_plex_chrome` M10K=0 | Elided — void fit (w-nostub hierarchy gate) |
 
-**ARM-lookalike false GREEN this contract rejects:** parent’s prior
-`MEAN=23 ORANGE_PX=20161` with **no cyan** = daemon idle, **not** this milestone.
+**ARM-lookalike false GREEN this contract rejects:**
+- Prior: `MEAN=23 ORANGE_PX=20161` no cyan (daemon idle, pre-mode-0)
+- **Mode-0 control (binding):** `MEAN=14.4 ORANGE_PX=12889 CYAN_PX=0 ACTIVE=923x717`
 
 ---
 
