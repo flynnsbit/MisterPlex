@@ -1,22 +1,18 @@
-w-mem STATUS — 960x540 -> 720p OUTPUT product path locked
+w-mem STATUS — product margin corrected to +7.16 (decode+sws)
 
-HEAD: (pending) product path constants + plan
+HEAD: (pending) retract +10.49 ship figure
 
-PARENT PRODUCT (5/5 HIT, control OK):
-  960x540 decode 22.75 + copy 8.42 = 31.17 margin +10.49 PASS
-  1024x576 margin 6.05 REJECT (<10 peer-tax floor)
-  true 720p source+CPU copy FAIL
+PARENT CORRECTION
+  decode-only 22.51; decode+sws+out 26.08 (+3.57); +copy 8.42 = 34.50 margin +7.16
+  ARM downscale-from-720p 51.78/44.95 FAIL trap
+  Ask PMS for 960x540 is 1.74x cheaper than fetch-720p+shrink
 
 LANDED
-  kPlex720pOutputSource 960x540 / 777600 B
-  makePlex720pOutputFrom540pSourcePlan + ddr720pOutputProductPathAccepts
-  zero-arm ship gate UNCHANGED (true source / FPGA banks)
-  DPB still delivered L31 (32542695)
-  docs/p720-output-product-path.md
+  kParent960x540DecodeSwsOutMs=26.08 Total=34.50 Margin=7.16
+  decode-only +10.49 marked retracted as ship figure
+  ddr720pArmDownscalePathRejected; accept defaults to sws figure
+  test: margin~7.16 ACCEPT
 
 PARENT VERIFY
   cd /home/flynnsbit/Projects/MisterPlex-wt-mem
   make $(pwd)/build/test_ddr_720p_abi && ./build/test_ddr_720p_abi; echo "true rc=$?"
-  # expect: 720p_OUTPUT 960x540 publish=777600 ACCEPT
-
-No device. No Quartus.

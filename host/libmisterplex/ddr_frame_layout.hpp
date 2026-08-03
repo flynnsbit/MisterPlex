@@ -770,12 +770,21 @@ constexpr double kFrameBudget24fpsMs = 41.667;
 constexpr int kPlex720pOutputSourceWidth = 960;
 constexpr int kPlex720pOutputSourceHeight = 540;
 constexpr int kPlex720pOutputSourceBytes = 960 * 540 * 3 / 2; // 777600
-// Parent wall ms (proxy table):
-constexpr double kParent960x540DecodeMs = 22.75;
-constexpr double kParent960x540CopyMs = 8.42;   // native I420 @ structural ~88 MiB/s
-constexpr double kParent960x540TotalMs = 31.17; // decode+copy
-constexpr double kParent960x540MarginMs = 10.49; // vs 41.667
-// Sibling probes (same session) — 1024x576 margin too thin vs concurrent-peer tax.
+// Parent wall ms — corrected 2026-08-03 (decode+sws, not -f null alone).
+// Sweep-18 proxy decode-only 22.75 was optimistic by ~3.33 ms on product total.
+// Device conf: FFMPEG_SWS_FLAGS=fast_bilinear, DDR_YUV_FORCE_SCALE=1.
+constexpr double kParent960x540DecodeOnlyMs = 22.51;          // -f null remeasure
+constexpr double kParent960x540DecodeOnlyMsProxyArchive = 22.75; // sweep-18 proxy
+constexpr double kParent960x540DecodeSwsOutMs = 26.08;        // decode+sws+rawvideo
+constexpr double kParent960x540SwsOverheadMs = 3.57;          // 26.08 - 22.51
+// Alias: product path MUST budget sws/out, not decode-only.
+constexpr double kParent960x540DecodeMs = kParent960x540DecodeSwsOutMs;
+constexpr double kParent960x540CopyMs = 8.42; // native I420 @ structural ~88 MiB/s
+constexpr double kParent960x540TotalMs = 34.50;   // 26.08 + 8.42 product
+constexpr double kParent960x540MarginMs = 7.16;   // vs 41.667 — PASS, not +10.49
+constexpr double kParent960x540DecodeOnlyTotalMs = 31.17; // archive decode-only+copy
+constexpr double kParent960x540DecodeOnlyMarginMs = 10.49; // retracted as ship figure
+// Sibling probes (decode-only proxy table) — 1024x576 still too thin.
 constexpr double kParent1024x576DecodeMs = 26.03;
 constexpr double kParent1024x576CopyMs = 9.58;
 constexpr double kParent1024x576TotalMs = 35.61;
@@ -789,8 +798,12 @@ constexpr double kParent720pSourceDecodeProxyMs = 35.33;
 constexpr double kParent720pSourceCopyMs = 14.97;
 constexpr double kParent720pSourceTotalMs = 50.31;
 constexpr double kParent720pSourceMarginMs = -8.64;
-// Minimum margin we refuse to ship for intermediate source (peer tax ~10+ ms class).
-constexpr double kPlex720pOutputMinMarginMs = 10.0;
+// TRAP: fetch 720p and ARM-downscale (parent arms C/D) — FAIL before copy.
+constexpr double kParent720pArmDownscaleTo960Ms = 51.78;
+constexpr double kParent720pArmDownscaleTo624Ms = 44.95;
+// Product margin floor = measured +7.16 path (not the retracted +10.49 decode-only).
+// Concurrent peer still dangerous; E2E cast is parent-only proof.
+constexpr double kPlex720pOutputMinMarginMs = 7.0;
 
 static_assert(kPlex720pOutputSourceBytes == 777600, "960x540 I420 bytes");
 static_assert(kPlex720pOutputSourceWidth < 1280 && kPlex720pOutputSourceHeight < 720,
@@ -950,15 +963,27 @@ inline bool ddr720p24ShipAcceptsZeroArmPerPixel(const DdrArmPresentBudget& b) {
 // Accept 720p-OUTPUT product path: native push of intermediate source into Option-C
 // canvas with fabric scale. Distinct from ddr720p24ShipAcceptsZeroArmPerPixel (true
 // 720p source / FPGA-written banks).
-inline bool ddr720pOutputProductPathAccepts(const DdrArmPresentBudget& b, double decodeMs,
-                                            double marginFloorMs = kPlex720pOutputMinMarginMs) {
+// armNonCopyMs MUST include sws/output when that work is on the ARM (parent 26.08),
+// not decode-only -f null (22.51). Default = kParent960x540DecodeSwsOutMs.
+inline bool ddr720pOutputProductPathAccepts(
+    const DdrArmPresentBudget& b, double armNonCopyMs = kParent960x540DecodeSwsOutMs,
+    double marginFloorMs = kPlex720pOutputMinMarginMs) {
     if (!b.valid || !b.arm_still_pushes_pixels || b.arm_push_bytes == 0)
         return false;
     if (!b.fabric_owned)
         return false; // must not ARM scale/pad into canvas
-    const double total = decodeMs + b.arm_copy_ms;
+    // Refuse the trap path: ARM downscale-from-720p already exceeds the deadline.
+    if (armNonCopyMs >= kFrameBudget24fpsMs)
+        return false;
+    const double total = armNonCopyMs + b.arm_copy_ms;
     const double margin = kFrameBudget24fpsMs - total;
     return margin >= marginFloorMs;
+}
+
+// Explicit reject: fetch 720p and shrink on ARM (parent 51.78 / 44.95 ms).
+inline bool ddr720pArmDownscalePathRejected(double armDownscaleMs) {
+    return armDownscaleMs >= kFrameBudget24fpsMs ||
+           armDownscaleMs >= kParent720pArmDownscaleTo960Ms - 0.01;
 }
 
 // Build the fabric-owned present contract for a content rectangle inside a tier

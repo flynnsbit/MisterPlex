@@ -3,36 +3,44 @@
 ## What ships
 
 ```
-960x540 Constrained Baseline source
-  -> ARM decode 22.75 ms + native I420 copy 8.42 ms = 31.17 ms
-  -> margin +10.49 ms vs 41.667 @24fps
-  -> PLXG native_push into Option-C bank (0x30180000)
-  -> fabric upscale to 1280x720 raster on glass
+PMS  -> Constrained Baseline 960x540  (videoProfile=baseline pinned)
+ARM  -> decode + sws/out 26.08 ms + native copy 8.42 ms = 34.50 ms
+       margin +7.16 ms vs 41.667 @24fps
+FABRIC -> upscale 960x540 -> native 1280x720 raster on glass
 ```
 
-This is **720p output**. It is **not** 720p source. Parent proxy instrument
-validated (1280x720 control within 0.4% of PMS). 5/5 predictions HIT.
+This is **720p output**. It is **not** 720p source.
 
-## What does not ship on this path
+## Correction log
 
-| Path | Verdict |
-|------|---------|
-| 1280x720 source + CPU copy | FAIL (-6.95 to -8.77 ms) |
-| 1024x576 intermediate | PASS math but margin 6.05 < ~10 ms peer tax — rejected |
-| 854x480 | conservative fallback (+14.31) |
-| FPGA-written banks / zero ARM pixels | separate ship gate (`publish_bytes=0`) |
-| Full fabric H.264 decode | multi-month endgame |
-| DMA true 720p source | w-path upgrade (kills 14.97 ms copy) |
+| Figure | Status |
+|--------|--------|
+| +10.49 ms margin (decode-only 22.75 + copy) | **Retracted as ship figure** |
+| +7.16 ms margin (decode+sws 26.08 + copy 8.42) | **Standing product** |
+| sws/out overhead | +3.57 ms (measured; conf has FORCE_SCALE) |
+
+`-f null` is decode only. First sws probe `wall_s=0.08` was ffmpeg `-y` omission, not a result.
+
+## Ask PMS, do not ARM-downscale
+
+| Path | ARM non-copy | +copy | margin |
+|------|-------------:|------:|-------:|
+| PMS→960x540 | 26.08 | 34.50 | **+7.16 PASS** |
+| PMS→720p, ARM→960 | 51.78 | 60.20 | **-18.53 FAIL** |
+| PMS→720p, ARM→624 | 44.95 | (before copy) | **FAIL** |
+
+Fetching 720p and shrinking on the ARM is strictly worse than every other option.
 
 ## ABI
 
-- `makePlex720pOutputFrom540pSourcePlan()` — publish_bytes=777600, fabric_owned
-- `ddr720pOutputProductPathAccepts` — margin floor 10 ms, fabric scale required
-- `ddr720p24ShipAcceptsZeroArmPerPixel` — unchanged; true 720p source / fabric writer
-- DPB sizing: delivered level 31 (`h264_level_limits.hpp`)
-- Caveat: `-f null` decode-only; E2E cast is parent-only on glass
+- `makePlex720pOutputFrom540pSourcePlan()` — publish_bytes=777600
+- `ddr720pOutputProductPathAccepts` defaults to **decode+sws 26.08**
+- `ddr720pArmDownscalePathRejected` — trap guard
+- `ddr720p24ShipAcceptsZeroArmPerPixel` — true source / FPGA banks (unchanged)
+- DPB: delivered level 31
 
-## Clocks
+## Dependencies
 
-w-clock: `clk_pix` ~29.7 MHz for 720p24 CEA (separate PLL). Multi-pixel alone
-does not raise output Hz while `clk_pix = clk_sys = 20 MHz`.
+- **w-scaler**: 960×540 → 1280×720 (1.333× non-integer) load-bearing
+- **w-clock**: `clk_pix` ~29.7 MHz for 720p24 CEA
+- **w-path**: DMA = upgrade to true 720p source
