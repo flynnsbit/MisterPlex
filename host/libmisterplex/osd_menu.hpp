@@ -63,19 +63,20 @@ constexpr int kPlex480pWeakBitrateKbps = 2000;
 //    maxVideoBitrate: lab PMS @ maxBR<=3000 delivers coded **720x404**, not 1280x720
 //    (daemon URL builder, unique session, rk2/rk7 — see LAB_PMS_720_DAEMON_PATH.md).
 //
-// 2) Universal maxVideoBitrate floor for genuine 1280x720 (lab coded-size matrix):
-//      >=3500 → 1280x720 SAR 1:1; <=3000 → 720x404. Product weak default = 3500
-//      (geometry min). Parent decode @3500 = 38.751 ms/f when content is 3500k.
+// 2) Universal maxVideoBitrate floor for genuine 1280x720 (lab fine matrix 2026-08-03):
+//      maxBR=3000 → 720x404; maxBR=3100 → **1280x720** SAR 1:1 CB L31 (ffprobe).
+//      Decision content bitrate at maxBR=3100 ≈ 2585 kbps (PMS under-runs the cap).
+//      Earlier coarse matrix jumped 3000→3500 and overstated the floor as 3500.
 //
 // Prefer Path720p Direct Play of ~1500k native 720p assets for ARM budget;
 // universal keeps the geometry-safe weak bitrate below.
 constexpr int kPlex720pDecodeOptimalBitrateKbps = 1500;
-constexpr int kPlex720pWeakBitrateKbps = 3500; // universal maxVideoBitrate pin
+constexpr int kPlex720pWeakBitrateKbps = 3100; // universal maxVideoBitrate pin (lab floor)
 // H.264 Level 3.1 is required for general 1280x720 (MaxFS). Lab source is
 // oddly tagged L3.0; product ladder requests L3.1 for the 720p tier.
 constexpr int kPlex720pH264Level = 31;
-static_assert(kPlex720pWeakBitrateKbps >= 3500,
-              "universal 720p weak bitrate must stay at geometry floor (lab ≥3500)");
+static_assert(kPlex720pWeakBitrateKbps >= 3100,
+              "universal 720p weak bitrate must stay at geometry floor (lab ≥3100)");
 static_assert(kPlex720pDecodeOptimalBitrateKbps < kPlex720pWeakBitrateKbps,
               "decode-optimal content tier is below universal geometry floor");
 

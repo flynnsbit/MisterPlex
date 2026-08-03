@@ -114,7 +114,7 @@ int main() {
     CHECK(conf720.height == kPlex720pCodedHeight);
     CHECK(std::string(conf720.label) == "1280x720");
     CHECK(conf720.weakBitrateKbps == kPlex720pWeakBitrateKbps);
-    CHECK(kPlex720pWeakBitrateKbps == 3500);
+    CHECK(kPlex720pWeakBitrateKbps == 3100);
     CHECK(kPlex720pDecodeOptimalBitrateKbps == 1500);
     CHECK(conf720.presentPolicy == ContentPresentPolicy::Path720p);
     CHECK(std::string(conf720.userLabel) == "1280x720");

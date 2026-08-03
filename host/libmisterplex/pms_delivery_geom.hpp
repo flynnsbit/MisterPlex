@@ -153,16 +153,15 @@ inline bool isGenuine720pDelivery(int delivered_w, int delivered_h) {
 }
 
 // Lab-measured maxVideoBitrate gate for true 1280x720 on 16:9 HD sources
-// (daemon URL builder + unique session, lab PMS 2026-08-03):
-//   rk2 1920x1080: maxBR<=3000 → coded 720x404 SAR~1:1; >=3500 → 1280x720 SAR 1:1
-//   maxBR=1500/2000/2500 (any videoQuality 40–100) → still 720x404 — cannot
-//   force full 1280x720 via bitrate alone below the step.
-//   rk7 native 720 @4000 → 1280x720; @1500 → 720x404
-//   rk83 1440x1080 4:3 @4000 → coded **960x720** (square-pixel fit — not full width)
-// Parent device decode of *already* 1280x720@1500k is cheap (32.4 ms/f) — that is
-// a content/DP tier, not this universal maxBR gate.
-// Product universal weak = kPlex720pWeakBitrateKbps (3500 geometry floor).
-inline constexpr int kPmsTrue720pMinBitrateKbpsMeasured = 3500;
+// (daemon URL builder + unique session, lab PMS 2026-08-03 fine matrix):
+//   rk2: maxBR=3000 → 720x404; maxBR=3100 → 1280x720 SAR 1:1 (start.mp4 ffprobe).
+//   Decision content bitrate @ maxBR=3100 ≈ 2585 kbps (cap under-run).
+//   maxBR=1500/2000/2500/3000 → 720x404 — cannot force full height below the step.
+//   rk7 @2500 → 720x404; decision @3200+ → 1280x720.
+//   rk83 4:3 @4000 → coded **960x720** (square-pixel fit — not full width).
+// Parent device decode of *already* 1280x720@1500k is a content/DP tier, not this gate.
+// Product universal weak = kPlex720pWeakBitrateKbps (3100 geometry floor).
+inline constexpr int kPmsTrue720pMinBitrateKbpsMeasured = 3100;
 
 inline bool pmsBitrateLikelyTrue720p(int maxVideoBitrateKbps) {
     return maxVideoBitrateKbps >= kPmsTrue720pMinBitrateKbpsMeasured;

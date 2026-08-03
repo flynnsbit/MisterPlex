@@ -84,7 +84,7 @@ See `BITRATE_1500_VS_GEOMETRY.md`.
 
 | Area | Change |
 |---|---|
-| `osd_menu.hpp` | `contentResolutionFor720p()`, dual pin `kPlex720pDecodeOptimalBitrateKbps=1500` + `kPlex720pWeakBitrateKbps=3500`, `Path720p`; `DECODE=1280x720` maps to 720p ladder; OSD tier 11 behind `OSD_TIER11_720P` default 0; **`preferDirectH264ForContent`** — Path720p defaults DP when conf unset |
+| `osd_menu.hpp` | `contentResolutionFor720p()`, dual pin `kPlex720pDecodeOptimalBitrateKbps=1500` + `kPlex720pWeakBitrateKbps=3100`, `Path720p`; `DECODE=1280x720` maps to 720p ladder; OSD tier 11 behind `OSD_TIER11_720P` default 0; **`preferDirectH264ForContent`** — Path720p defaults DP when conf unset |
 | `ddr_frame_layout.hpp` | `kPlex720pCodedWidth/Height`, `kPlex720pYuv420pBytes=1382400`; **DDR accept still rejects 720** (w-mem) |
 | `plex_resolve.{hpp,cpp}` | Profile `720p` → 1280x720 / **3500** kbps / q70 / baseline / L31; validate allows exact path-720; ladder steps 4000…400 incl. 2500 |
 | `pms_delivery_geom.hpp` | `isGenuine720pDelivery`, `pmsBitrateLikelyTrue720p` (≥3500); **`deliveryBasisForResolve`** → `direct_play_part` when !transcoded |
@@ -136,7 +136,7 @@ Source: parent `/tmp/misterplex-parent-720p-decode-verdict.txt` (device `ffmpeg_
 - Discard synthetic 1080p blip 32.4 ms/f — not representative.
 - 480p CPU-time 22.02 vs archived 21.562 (2.1%) — harness OK.
 - Decode wall scales **0.836× linear-in-pixels** and **sub-linear in bitrate** (2.67× kbit → 1.267× time).
-- **Dual product pin:** content/DP optimal **1500**; universal weak **3500** (geometry). Parent 1500 curve is of *already* 1280×720 — not PMS maxBR=1500 (which codes 720×404).
+- **Dual product pin:** content/DP optimal **1500**; universal weak **3100** (geometry). Parent 1500 curve is of *already* 1280×720 — not PMS maxBR=1500 (which codes 720×404).
 
 **Invalidated:** any plan that leaves present/pipe/scale on ARM at 720p; host “~70–120% if scale skipped” without fabric offload; pinning universal maxBR=1500 as true-720.
 
@@ -176,7 +176,7 @@ Parent `ddr_write_bench` (device, true rc=0):
 | decode1500 + mapped bank write | 32.427+15.210=**47.637** | 114.3% | **FAIL** (−5.97) |
 | decode1500 + host-copy ceiling | 32.427+2.998=**35.425** | 85.0% | PASS-class if bank maps cached (+6.24) |
 
-- **mmap cache policy ≈ 12.2 ms/f** — w-mem owns; unproven until cached/WC bank remap + flush-before-doorbell.
+- **mmap cache policy RETRACTED by parent#4** — coherent flush *costs* +4.6 ms; best bank write stays ~15.28 ms/f. Serial decode+copy dead at every tier.
 - Product present/DDR @480p archived **10.411** vs raw bank **4.795** → **2.17×** packing/stride overhead still on top of raw write.
 - Prior ~22 ms / 59 MiB/s 720p copy figure was pessimistic; **15.21 ms @ 86.7 MiB/s** is the measured mapped rate. Conclusion “naive ARM copy does not fit” still holds at 1500k decode.
 - Scale evacuation on true DP 720 remains **necessary**; path does not touch mmap.
@@ -254,10 +254,13 @@ Daemon `buildUniversalTranscodeUrl` + full Chrome/MiSTerPlex headers + **unique 
 
 See `LAB_PMS_720_DAEMON_PATH.md` + `BITRATE_1500_VS_GEOMETRY.md`.
 
-**Dual pin (landed `eb4a832e`):** `kPlex720pDecodeOptimalBitrateKbps=1500` (DP/content); `kPlex720pWeakBitrateKbps=3500` (universal geometry floor). Lab: maxBR=1500 any quality → coded **720×404**.
+**Dual pin (landed `eb4a832e`):** `kPlex720pDecodeOptimalBitrateKbps=1500` (DP/content); `kPlex720pWeakBitrateKbps=3100` (universal geometry floor). Lab fine matrix: maxBR=3000→720×404; **3100→1280×720** (content ~2585k). maxBR=1500→720×404.
 
 OSD product: `OSD_TIER11_720P` default **0**; when 1, O[5:4]=11 → Path720p.
 
 ### Commit tip (w-path-720p)
 - `eb4a832e` dual bitrate pin + 1500 geometry NEG probes
 - prior: lab 720 daemon path, OSD tier11 flag, Path720p ladder, DP identity
+
+
+See `GEOMETRY_FLOOR_3100.md` — universal weak pin lowered 3500→**3100** after fine matrix.

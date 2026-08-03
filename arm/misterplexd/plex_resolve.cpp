@@ -365,7 +365,7 @@ int recommendedMinVideoBitrateKbps(const WeakLadder& weak) {
     if (!parseResolution(weak.videoResolution, w, h))
         return 0;
     // Defaults from osd_menu.hpp ladder constants — quality/ARM-margin heuristics,
-    // not H.264 level contracts. 720p floor is measured (true 1280x720 needs ≥3500).
+    // not H.264 level contracts. 720p floor is measured (true 1280x720 needs ≥3100).
     if (w == kPlex720pCodedWidth.get() && h == kPlex720pCodedHeight.get())
         return kPlex720pWeakBitrateKbps;
     // 480p default = kPlex480pWeakBitrateKbps (2000).
@@ -392,11 +392,11 @@ bool weakLadderBitrateBelowRecommended(const WeakLadder& weak, std::string* deta
 
 int nextLowerLadderBitrateKbps(int currentKbps) {
     // Fixed descending steps — no link-speed constant. Geometry unchanged.
-    // 4000/3500: path-720p universal (lab: <3500 → coded 720x404). 1500 is the
-    // parent decode-optimal content/DP tier for already-1280x720 — stepping to
-    // 1500 on universal loses true 720 geometry.
+    // 4000/3500/3100: path-720p universal (lab: 3000→720x404; 3100→1280x720).
+    // 1500 is the parent decode-optimal content/DP tier for already-1280x720 —
+    // stepping to 1500 on universal loses true 720 geometry.
     // Absolute floor 400 keeps validateWeakLadder positive without inventing capacity.
-    static constexpr int kSteps[] = {4000, 3500, 3000, 2500, 2000, 1500, 1000, 750, 500, 400};
+    static constexpr int kSteps[] = {4000, 3500, 3100, 3000, 2500, 2000, 1500, 1000, 750, 500, 400};
     if (currentKbps <= kSteps[sizeof(kSteps) / sizeof(kSteps[0]) - 1])
         return 0; // already at floor — cannot step
     for (int s : kSteps) {

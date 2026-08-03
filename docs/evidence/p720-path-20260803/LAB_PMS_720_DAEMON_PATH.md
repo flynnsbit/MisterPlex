@@ -36,7 +36,7 @@ Lab universal maxBR (any quality):
 
 | maxVideoBitrate | Geometry (16:9 lab rk2) | Role |
 |---:|---|---|
-| **3500** | true 1280×720 | **Universal product weak pin** (geometry floor) |
+| **3100** | true 1280×720 | **Universal product weak pin** (fine-matrix floor) |
 | **4000** | true 1280×720 | Ladder step above floor |
 | **1500** (universal) | **720×404** | FAIL true-720 — do not pin as universal maxBR |
 | ≤3000 | **720×404** | FAIL true-720 |

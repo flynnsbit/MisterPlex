@@ -82,7 +82,7 @@ PRESENT=fpga
 # OSD_TIER11_720P=1
 #
 # Path720p bitrate (two different numbers — do not conflate):
-#   Universal maxVideoBitrate default 3500 = lab geometry floor for coded 1280x720.
+#   Universal maxVideoBitrate default 3100 = lab geometry floor for coded 1280x720.
 #   WEAK_BITRATE=1500 on universal → PMS delivers 720x404 (NOT true 720p).
 #   Decode-optimal *content* tier is 1500 kbit already-1280x720 CB via Direct Play
 #   (parent device: 32.4 ms/f vs 41.1 @4000). Prefer PREFER_DIRECT_H264 + library
