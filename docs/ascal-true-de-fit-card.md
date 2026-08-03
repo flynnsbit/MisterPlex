@@ -4,6 +4,15 @@
 **Raster policy (parent 2026-08-03):** **runtime-variable** DE tracking PMS-delivered geometry. **960×540 is the maximum tier, not a fixed raster.** PMS does **not** upscale (lab: `/library/metadata/1` 320×240 source stays 320×240 at rung 540). Gate **B13** fails fixed-only beam/core binds.  
 **Gate:** `make fit-gate` / `scripts/fit_release_gate.sh` — leg0 architecture + macros + elab + counted true_de.  
 **Ruler identity:** `docs/fit_gate_identity.json` binds gate scripts; divergent lane copies get `LEG0_COUNT_REFUSED` (do not compare counts across rulers).  
+**Integration (w-osd only grant path):** run the **fitgate ruler** against the **merged tree**:
+```bash
+RULER=/home/flynnsbit/Projects/MisterPlex-wt-fitgate
+MERGE=/path/to/merged-tree
+"$RULER/scripts/fit_release_gate.sh" --root "$MERGE" --qsf "$MERGE/fpga/Plex_MiSTer/Plex.qsf"
+# true rc=$?   — only this count can release the fit; per-lane counts cannot
+```
+`--root` unifies QSF+RTL (B11). Sibling fix tags are **live-scanned** at gate time (`tip=` + timestamp; `tip_newer=1` if static table lagged).  
+
 **B10:** `discover_design(macro_qsf=)` must actually run (`LEG0_DISCOVER_DESIGN EXECUTED`); TypeError/stale `rtl_lint` → `B10_DISCOVER_DESIGN_DID_NOT_RUN` (check did not execute).  
 **B14:** `coded_w` 16-align reject required (`rt_coded_w[3:0]==0`); PMS AR-fit 468/638/626 is an observed defect class.  
 

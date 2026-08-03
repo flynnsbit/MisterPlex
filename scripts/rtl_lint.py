@@ -15,6 +15,19 @@ from check_define_parity import verilator_define_args
 ROOT = Path(__file__).resolve().parents[1]
 PROJECT = ROOT / "fpga" / "Plex_MiSTer"
 DEFAULT_BASELINE = ROOT / "tests" / "fixtures" / "rtl_lint_baseline.json"
+
+
+def set_repo_root(root: Path) -> None:
+    """Retarget file discovery to a scan/integration tree (fit-gate --root).
+
+    Gate scripts may live in the canonical w-fitgate ruler while RTL/QSF come
+    from a merged integration worktree. discover_design must read THAT tree's
+    Plex.qsf + files.qip — not the ruler's.
+    """
+    global ROOT, PROJECT, DEFAULT_BASELINE
+    ROOT = Path(root).resolve()
+    PROJECT = ROOT / "fpga" / "Plex_MiSTer"
+    DEFAULT_BASELINE = ROOT / "tests" / "fixtures" / "rtl_lint_baseline.json"
 WARN_RE = re.compile(r"^%Warning-([A-Z0-9_]+):\s+([^:]+):(\d+):(\d+):")
 ERROR_FILE_RE = re.compile(r"^%Error(?:-[A-Z0-9_]+)?:\s+([^:]+):(\d+):(\d+):")
 INTERESTING_RE = re.compile(r"^(?:WIDTHTRUNC|WIDTHEXPAND|WIDTH|UNSIGNED|IMPLICIT)")
@@ -94,14 +107,22 @@ def parse_assignment_file(path: Path, seen: set[Path], ordered: list[Path], macr
                     ordered.append(source)
 
 
-def discover_design(macro_qsf: Path | None = None) -> tuple[list[Path], list[str]]:
+def discover_design(
+    macro_qsf: Path | None = None,
+    *,
+    project_root: Path | None = None,
+) -> tuple[list[Path], list[str]]:
     """Discover Quartus RTL file list + product macros.
 
     File list always comes from the project Plex.qsf + files.qip (what the fit
     compiles). Macros may be taken from an alternate QSF (fit-release gate) so
     elaboration can be forced to the *intended* fit macro set without editing
     the live project file mid-gate.
+
+    project_root: optional override (same as set_repo_root) for one call.
     """
+    if project_root is not None:
+        set_repo_root(project_root)
     ordered: list[Path] = []
     file_macros: list[str] = []
     seen: set[Path] = set()

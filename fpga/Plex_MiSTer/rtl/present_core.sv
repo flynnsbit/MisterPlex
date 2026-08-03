@@ -286,7 +286,7 @@ module present_core #(
 	localparam int WIN_H_DE_DEFAULT = 529;
 	localparam int WIN_V_DE_DEFAULT = V_STORE_I;
 `endif
-	// Window emits full store coords (STORE 1280×720). ddr_frame_store rd_x/y
+	// Window emits full store coords (STORE 1280×720). rd_x/y
 	// accept max(FRAME, MAX_CODED); legacy SDRAM frame_store still gets FRAME slice.
 	localparam int STORE_W_MAX = 1280;
 	localparam int STORE_H_MAX = 720;

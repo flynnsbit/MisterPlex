@@ -34,8 +34,11 @@ import subprocess
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "scripts"))
+# RULER_ROOT = tree that owns this gate script (canonical w-fitgate).
+# ROOT = tree under scan (may be integration merge via --root).
+RULER_ROOT = Path(__file__).resolve().parents[1]
+ROOT = RULER_ROOT
+sys.path.insert(0, str(RULER_ROOT / "scripts"))
 
 from check_define_parity import discover_quartus_macros  # noqa: E402
 
@@ -48,6 +51,53 @@ CANDIDATE_PATHS = (
 )
 # Parent lock (2026-08-03): ascal_true_de_960 only for this fit campaign.
 PARENT_LOCKED_ARCH = "ascal_true_de_960"
+
+# Sibling worktrees scanned live at gate time for unmerged-vs-unimplemented.
+SIBLING_LANES: dict[str, Path] = {
+    "w-mem": Path("/home/flynnsbit/Projects/MisterPlex-wt-mem"),
+    "w-clock": Path("/home/flynnsbit/Projects/MisterPlex-wt-clock"),
+    "w-scaler": Path("/home/flynnsbit/Projects/MisterPlex-wt-scaler"),
+    "w-osd": Path("/home/flynnsbit/Projects/MisterPlex-wt-osd"),
+    "w-path": Path("/home/flynnsbit/Projects/MisterPlex-wt-path"),
+    "w-nostub": Path("/home/flynnsbit/Projects/MisterPlex-wt-nostub"),
+    "w-integ": Path("/home/flynnsbit/Projects/MisterPlex-wt-integ-720p"),
+}
+
+
+def apply_scan_root(scan_root: Path) -> None:
+    """Point artefact scans at an integration/foreign tree; keep ruler scripts.
+
+    Supported w-osd / integration invocation (canonical ruler, merged RTL):
+
+      /path/to/MisterPlex-wt-fitgate/scripts/fit_release_gate.sh \\
+        --root /path/to/merged-tree \\
+        --qsf  /path/to/merged-tree/fpga/Plex_MiSTer/Plex.qsf
+
+    B11 requires QSF under the same --root (no macros-A + RTL-B).
+    Gate identity is always the ruler script identity (RULER_ROOT).
+    """
+    global ROOT, DEFAULT_QSF, FIX, CANDIDATE_PATHS, GATE_IDENTITY_FILE, RTL
+    ROOT = Path(scan_root).resolve()
+    if not (ROOT / "fpga" / "Plex_MiSTer").is_dir():
+        raise SystemExit(
+            f"FIT_RELEASE_GATE_ERROR: --root {ROOT} missing fpga/Plex_MiSTer"
+        )
+    DEFAULT_QSF = ROOT / "fpga" / "Plex_MiSTer" / "Plex.qsf"
+    FIX = ROOT / "tests" / "fixtures" / "fit_release_gate"
+    CANDIDATE_PATHS = (
+        ROOT / "docs" / "fit_candidate.json",
+        ROOT / "assets" / "fit_candidate.json",
+        FIX / "fit_candidate.json",
+        # Fallback: ruler candidate only supplies arch lock macros — tree hash
+        # still computed on ROOT; mismatch is expected until integration locks.
+        RULER_ROOT / "docs" / "fit_candidate.json",
+    )
+    # Identity file always from ruler (count refusal on divergent rulers).
+    GATE_IDENTITY_FILE = RULER_ROOT / "docs" / "fit_gate_identity.json"
+    RTL = ROOT / "fpga" / "Plex_MiSTer" / "rtl"
+    import rtl_lint  # noqa: WPS433
+
+    rtl_lint.set_repo_root(ROOT)
 # Paths whose blob inventory is the candidate tree hash (excludes fit_candidate.json
 # so the candidate file cannot hash-bypass itself).
 GATED_PATHSPECS = (
@@ -75,7 +125,8 @@ GATE_IDENTITY_PATHSPECS = (
     "scripts/check_define_parity.py",
     "scripts/check_verilator_elab.py",
 )
-GATE_IDENTITY_FILE = ROOT / "docs" / "fit_gate_identity.json"
+GATE_IDENTITY_FILE = RULER_ROOT / "docs" / "fit_gate_identity.json"
+RTL = ROOT / "fpga" / "Plex_MiSTer" / "rtl"
 # Open blockers that must remain visible on a stale product tree (mutation inventory).
 # Not every token forever — only defects still present in artefacts. Updated when
 # real fixes land (then mutation expects absence + a paired RED twin that re-injects).
@@ -184,7 +235,6 @@ FIX_STATUS: dict[str, dict[str, str]] = {
 HOLLOW_INTEG_QSF = Path(
     "/home/flynnsbit/Projects/MisterPlex-wt-integ-720p/fpga/Plex_MiSTer/Plex.qsf"
 )
-RTL = ROOT / "fpga" / "Plex_MiSTer" / "rtl"
 ALLOWED_ARCH = frozenset({"ascal_true_de_960", "mp_cea_1280"})
 
 # Required for ascal-native 960×540 content DE fit (docs/ascal-true-de-fit-card.md).
@@ -298,13 +348,16 @@ def compute_gated_tree_hash(root: Path = ROOT) -> str:
     return _hash_pathspecs(root, GATED_PATHSPECS, exclude_substr="fit_candidate.json")
 
 
-def compute_gate_identity_hash(root: Path = ROOT) -> str:
+def compute_gate_identity_hash(root: Path | None = None) -> str:
     """SHA1 of the gate ruler scripts only (cross-lane parity).
 
+    Always hashes RULER_ROOT scripts (the executing gate), never the --root
+    scan tree. The ``root`` argument is ignored (kept for call-site compat).
     Lanes must invoke this same identity. A 217-byte drift between worktrees
     previously produced conflicting counts (parent miss #9).
     """
-    return _hash_pathspecs(root, GATE_IDENTITY_PATHSPECS)
+    del root  # scan tree must never affect ruler identity
+    return _hash_pathspecs(RULER_ROOT, GATE_IDENTITY_PATHSPECS)
 
 
 def check_gate_identity() -> tuple[int, list[str]]:
@@ -314,7 +367,7 @@ def check_gate_identity() -> tuple[int, list[str]]:
     Returns (1, msgs) on mismatch — caller must NOT print LEG0_FAIL count as truth.
     """
     msgs: list[str] = []
-    live = compute_gate_identity_hash(ROOT)
+    live = compute_gate_identity_hash()
     msgs.append(f"GATE_IDENTITY live={live}")
     # Prefer docs/fit_gate_identity.json; fall back to field inside fit_candidate.json.
     canon = ""
@@ -461,18 +514,291 @@ def _layout_param(name: str) -> str | None:
     return m.group(1) if m else None
 
 
+# Filled once per leg0 by scan_sibling_attribution().
+_LIVE_ATTR: dict[str, dict[str, str]] = {}
+_LIVE_ATTR_MSGS: list[str] = []
+
+
+def _git_tip_meta(worktree: Path) -> dict[str, str]:
+    """Return tip sha, iso timestamp, subject for a worktree (empty on failure)."""
+    if not worktree.is_dir():
+        return {}
+    proc = subprocess.run(
+        ["git", "-C", str(worktree), "log", "-1", "--format=%H%x09%ci%x09%s"],
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    if proc.returncode != 0 or not proc.stdout.strip():
+        return {}
+    parts = proc.stdout.strip().split("\t", 2)
+    if len(parts) < 3:
+        return {}
+    return {
+        "commit": parts[0],
+        "commit_short": parts[0][:12],
+        "timestamp": parts[1],
+        "subject": parts[2][:120],
+        "worktree": str(worktree),
+    }
+
+
+def _file_has_all(path: Path, patterns: list[str]) -> bool:
+    if not path.is_file():
+        return False
+    txt = path.read_text(errors="ignore")
+    return all(re.search(p, txt) for p in patterns)
+
+
+def scan_sibling_attribution() -> tuple[dict[str, dict[str, str]], list[str]]:
+    """Live-scan sibling tips for fix evidence. Parent routing depends on this.
+
+    Each hit records lane tip SHA + timestamp. If a static FIX_STATUS commit is
+    older than the lane tip, tip_newer=1 is set so stale tags are visible.
+    """
+    msgs: list[str] = ["LEG0_SIBLING_SCAN_EXECUTED begin"]
+    # token -> list of (lane, relpath, patterns)
+    probes: dict[str, list[tuple[str, str, list[str]]]] = {
+        "B2_FPS_INT_OVERFLOW": [
+            (
+                "w-clock",
+                "fpga/Plex_MiSTer/rtl/present_video_timing_960.sv",
+                [r"localparam\s+longint\s+FPS_MILLI", r"longint'\(CLK_PIX_HZ\)"],
+            )
+        ],
+        "B6_HBLANK_OLD_HC_EPOCH": [
+            (
+                "w-scaler",
+                "fpga/Plex_MiSTer/rtl/present_beam_content_de.sv",
+                [r"hc_n|hc_next", r"HBlank\s*<=\s*\(\s*hc_"],
+            ),
+            (
+                "w-clock",
+                "fpga/Plex_MiSTer/rtl/present_beam_content_de.sv",
+                [r"use_rt_geom", r"HBlank\s*<="],
+            ),
+        ],
+        "B6_STORE_ORACLE_UNTESTED": [
+            (
+                "w-scaler",
+                "tests/rtl/present_true_de_count_tb.cpp",
+                [r"store_full", r"oracle_full|store_oracle|visit_unique"],
+            )
+        ],
+        "B7_OPTC_WIDTH_ONLY": [
+            (
+                "w-mem",
+                "fpga/Plex_MiSTer/rtl/ddr_frame_store.sv",
+                [r"\brt_need_optc\b", r"rt_payload_bytes", r"LEG_BANK_USABLE"],
+            )
+        ],
+        "B7_PRESENT_CORE_NO_OPTC_PHYS": [
+            (
+                "w-mem",
+                "fpga/Plex_MiSTer/rtl/present_core.sv",
+                [r"\.PHYS_BASE_720P\s*\("],
+            )
+        ],
+        "B7_PRESENT_CORE_NO_OPTC_STRIDE": [
+            (
+                "w-mem",
+                "fpga/Plex_MiSTer/rtl/present_core.sv",
+                [r"\.HPS_BANK_STRIDE_BYTES_720P\s*\("],
+            )
+        ],
+        "B7_PRESENT_CORE_NO_OPTC_DOORBELL": [
+            (
+                "w-mem",
+                "fpga/Plex_MiSTer/rtl/present_core.sv",
+                [r"\.DOORBELL_PHYS_720P\s*\("],
+            )
+        ],
+        "B8_PLXG_WR_COMMIT_TIED_ZERO": [
+            (
+                "w-mem",
+                "fpga/Plex_MiSTer/Plex.sv",
+                # untied: declaration without `= 1'b0` assign on same tree + poller
+                [r"wire\s+plxg_wr_en\s*,\s*plxg_commit", r"plxg_ddr_poller|plex_present_geom_mux"],
+            )
+        ],
+        "B8_CONTENT_BASE_NOT_960": [
+            (
+                "w-mem",
+                "fpga/Plex_MiSTer/rtl/plex_present_geom_mux.sv",
+                [r"plex_present_geom_mux", r"force_native_960", r"plxg_live"],
+            )
+        ],
+        "B8_FORCE_GEOM_1280_NOT_960": [
+            (
+                "w-mem",
+                "fpga/Plex_MiSTer/rtl/plex_present_geom_mux.sv",
+                [r"force_native_960", r"11'd960", r"PRESENT_BEAM_960"],
+            )
+        ],
+        "B13_FIXED_RASTER_NO_RUNTIME_DE": [
+            (
+                "w-clock",
+                "fpga/Plex_MiSTer/rtl/present_core.sv",
+                [r"use_rt_geom\s*\(\s*1'b1\s*\)", r"rt_h_de\s*\(", r"content_w"],
+            ),
+            (
+                "w-scaler",
+                "fpga/Plex_MiSTer/rtl/present_beam_content_de.sv",
+                [r"use_rt_geom", r"rt_h_de"],
+            ),
+        ],
+        "B14_CODED_W_16_ALIGN_UNENFORCED": [
+            (
+                "w-mem",
+                "fpga/Plex_MiSTer/rtl/ddr_frame_store.sv",
+                [r"rt_coded_w\[3:0\]\s*==\s*4'd0", r"rt_raw_aligned"],
+            ),
+            (
+                "w-scaler",
+                "tests/rtl/present_true_de_count_tb.cpp",
+                [r"FAULT_NON16_W|Non16W", r"align16_ok"],
+            ),
+        ],
+        "B4_PLXG_SAME_SEQ_ABA": [
+            (
+                "w-mem",
+                "fpga/Plex_MiSTer/rtl/present_geom_latch.sv",
+                [r"\bepoch\b", r"session|generation"],
+            )
+        ],
+        "B1_NO_COMPILE_TIME_OPTC": [
+            (
+                "w-mem",
+                "fpga/Plex_MiSTer/rtl/ddr_frame_store.sv",
+                [r"`ifdef\s+OPTION_C", r"PHYS_BASE_720P"],
+            )
+        ],
+        "B1_LAYOUT_NOT_960": [
+            (
+                "w-mem",
+                "fpga/Plex_MiSTer/rtl/ddr_frame_layout_params.svh",
+                [r"DDR_FRAME_PRESENTED_WIDTH\s*=\s*960", r"DDR_FRAME_PRESENTED_HEIGHT\s*=\s*540"],
+            )
+        ],
+        "B12_DE_LAG_RGB_LATENCY_UNPROVEN": [
+            (
+                "w-mem",
+                "fpga/Plex_MiSTer/rtl/present_core.sv",
+                [r"DE_LAG.*960|960.*DE_LAG|DE_LAG swept"],
+            )
+        ],
+        "B9_ASPECT_ORIGINAL_4_3": [
+            (
+                "w-mem",
+                "fpga/Plex_MiSTer/Plex.sv",
+                [r"`ifdef\s+PRESENT_BEAM_960", r"VIDEO_ARX\s*=\s*12'd0", r"VIDEO_ARY\s*=\s*12'd0"],
+            )
+        ],
+    }
+
+    out: dict[str, dict[str, str]] = {}
+    tip_cache: dict[str, dict[str, str]] = {}
+
+    for token, plist in probes.items():
+        hit = None
+        for lane, rel, pats in plist:
+            wt = SIBLING_LANES.get(lane)
+            if wt is None or not wt.is_dir():
+                continue
+            if lane not in tip_cache:
+                tip_cache[lane] = _git_tip_meta(wt)
+            tip = tip_cache[lane]
+            if not tip:
+                continue
+            path = wt / rel
+            if _file_has_all(path, pats):
+                hit = {
+                    "status": "unmerged",
+                    "lane": lane,
+                    "commit": tip["commit_short"],
+                    "commit_full": tip["commit"],
+                    "timestamp": tip["timestamp"],
+                    "subject": tip["subject"],
+                    "artefact": rel,
+                    "worktree": tip["worktree"],
+                    "evidence": f"live scan matched {len(pats)} patterns @ tip",
+                }
+                break
+        static = FIX_STATUS.get(token, {})
+        if hit:
+            # Staleness vs static table commit (if any).
+            static_c = str(static.get("commit", ""))
+            tip_newer = "0"
+            if static_c and hit["commit_full"].startswith(static_c):
+                tip_newer = "0"  # tag is exact tip prefix
+            elif static_c:
+                # tip differs from static tag — almost always tip is newer work
+                tip_newer = "1"
+                hit["static_tag_commit"] = static_c
+                hit["note"] = (
+                    f"static FIX_STATUS commit={static_c} differs from live tip "
+                    f"{hit['commit']}; using live tip (parent: do not trust stale tag)"
+                )
+            out[token] = hit
+            msgs.append(
+                f"LEG0_SIBLING_HIT token={token} lane={hit['lane']} "
+                f"commit={hit['commit']} ts={hit['timestamp']} "
+                f"tip_newer_than_static_tag={tip_newer} artefact={hit['artefact']}"
+            )
+        else:
+            out[token] = {
+                "status": "unimplemented",
+                "evidence": "no sibling tip matched live probes",
+            }
+            # Still report lane tips we checked for this token's preferred lanes.
+            lanes_tried = sorted({p[0] for p in plist})
+            tips = []
+            for ln in lanes_tried:
+                t = tip_cache.get(ln) or _git_tip_meta(SIBLING_LANES.get(ln, Path(".")))
+                tip_cache[ln] = t
+                if t:
+                    tips.append(f"{ln}@{t['commit_short']}({t['timestamp']})")
+            msgs.append(
+                f"LEG0_SIBLING_MISS token={token} tried={','.join(tips) or 'none'}"
+            )
+
+    # Always print tip roster for routing.
+    for lane, wt in sorted(SIBLING_LANES.items()):
+        t = tip_cache.get(lane) or _git_tip_meta(wt)
+        if t:
+            msgs.append(
+                f"LEG0_SIBLING_TIP lane={lane} commit={t['commit_short']} "
+                f"ts={t['timestamp']} subject={t['subject']!r}"
+            )
+        else:
+            msgs.append(f"LEG0_SIBLING_TIP lane={lane} UNAVAILABLE path={wt}")
+
+    msgs.append(f"LEG0_SIBLING_SCAN_EXECUTED hits={sum(1 for v in out.values() if v.get('status')=='unmerged')}")
+    return out, msgs
+
+
 def _fix_status_suffix(token: str) -> str:
-    """Annotate blocker with unmerged sibling fix vs unimplemented (parent routing)."""
-    meta = FIX_STATUS.get(token)
+    """Annotate blocker with live unmerged sibling fix vs unimplemented."""
+    meta = _LIVE_ATTR.get(token) or FIX_STATUS.get(token)
     if meta is None:
         return " [fix=unimplemented — no known sibling-lane fix; new work]"
     st = meta.get("status", "unimplemented")
     if st == "unmerged":
+        ts = meta.get("timestamp", "?")
+        extra = ""
+        if meta.get("static_tag_commit"):
+            extra = f" static_tag={meta['static_tag_commit']} tip_newer=1"
+        elif meta.get("note"):
+            extra = " tip_refreshed=1"
+        # Use tip= not commit= — error bodies often contain plxg_commit=1'b0.
         return (
-            f" [fix=unmerged lane={meta.get('lane')} commit={meta.get('commit')} "
-            f"artefact={meta.get('artefact')} evidence={meta.get('evidence')!r}]"
+            f" [fix=unmerged lane={meta.get('lane')} tip={meta.get('commit')} "
+            f"ts={ts} artefact={meta.get('artefact')} "
+            f"evidence={meta.get('evidence')!r}{extra}]"
         )
-    return f" [fix=unimplemented status={st}]"
+    return (
+        " [fix=unimplemented — no known sibling-lane fix at live tip; new work]"
+    )
 
 
 def _err(errors: list[str], token_line: str) -> None:
@@ -487,10 +813,26 @@ def _err(errors: list[str], token_line: str) -> None:
 
 
 def _leg0_error_tokens(msgs: list[str]) -> set[str]:
+    """Tokens from real leg0 *error* lines only.
+
+    Must ignore LEG0_SIBLING_HIT / info lines that mention the same B*_ names —
+    those are routing attribution, not open defects on the gated tree. A prior
+    mutation hole treated sibling hits as sticky blockers (clear never dropped).
+    """
     out: set[str] = set()
     for line in msgs:
-        for m in re.finditer(r"\b(B[0-9]+_[A-Z0-9_]+)\b", line):
+        s = line.strip()
+        if s.startswith("- "):
+            s = s[2:].lstrip()
+        # Error lines are "Bnn_TOKEN: message" (optionally after LEG0_FAIL reasons).
+        m = re.match(r"^(B[0-9]+_[A-Z0-9_]+)\s*:", s)
+        if m:
             out.add(m.group(1))
+            continue
+        # Identity / refuse lines that are not B* but gate-level:
+        m2 = re.match(r"^(GATE_[A-Z0-9_]+)\s*:", s)
+        if m2:
+            out.add(m2.group(1))
     return out
 
 
@@ -538,8 +880,14 @@ def leg0_arch_blockers() -> tuple[int, list[str]]:
     Evidence is quoted from this tree's source (rule 0). Checks auto-pass only
     when the cited defect is gone from the files.
     """
+    global _LIVE_ATTR, _LIVE_ATTR_MSGS
     msgs: list[str] = ["LEG0_ARCH_BLOCKERS_EXECUTED begin"]
     errors: list[str] = []
+    msgs.append(f"LEG0_SCAN_ROOT root={ROOT} ruler={RULER_ROOT}")
+
+    # Live sibling attribution (parent routing: unmerged vs unimplemented).
+    _LIVE_ATTR, _LIVE_ATTR_MSGS = scan_sibling_attribution()
+    msgs.extend(_LIVE_ATTR_MSGS)
 
     # --- B0: one coherent FIT_CANDIDATE lock (bound to gated tree hash) ---
     # Candidate file is NOT a bypass: git_tree_hash must match compute_gated_tree_hash()
@@ -879,30 +1227,41 @@ def leg0_arch_blockers() -> tuple[int, list[str]]:
     else:
         msgs.append("LEG0_EVIDENCE Option-C capacity-selected via rt_need_optc")
 
-    # present_core must wire Option-C phys params (not leave module defaults only
-    # while claiming PLXG/usable-capacity). Defaults exist on the module but
-    # product lock is explicit DDR_FRAME_720P_* from layout params.
-    if ".PHYS_BASE_720P(" not in core:
+    # present_core must wire Option-C phys params on the *instance* parameter
+    # list (not a comment substring — mutation once greenwashed via comment).
+    fstore_params = ""
+    m_fs = re.search(
+        r"ddr_frame_store\s*#\s*\((.*?)\)\s*\w+\s*\(",
+        core,
+        re.DOTALL,
+    )
+    if m_fs:
+        fstore_params = m_fs.group(1)
+    has_phys720 = bool(re.search(r"\.PHYS_BASE_720P\s*\(", fstore_params))
+    has_stride720 = bool(re.search(r"\.HPS_BANK_STRIDE_BYTES_720P\s*\(", fstore_params))
+    has_db720 = bool(re.search(r"\.DOORBELL_PHYS_720P\s*\(", fstore_params))
+    msgs.append(
+        f"LEG0_PRESENT_CORE_OPTC_PORTS phys720={int(has_phys720)} "
+        f"stride720={int(has_stride720)} doorbell720={int(has_db720)} "
+        f"fstore_param_chars={len(fstore_params)}"
+    )
+    if not has_phys720:
         errors.append(
             "B7_PRESENT_CORE_NO_OPTC_PHYS: present_core.sv ddr_frame_store #() does not "
             "pass .PHYS_BASE_720P(...) — only legacy PHYS_BASE/stride/doorbell. "
             "Merge/verify PLXG Option-C param wiring (w-mem present_core reference)."
         )
-    if ".HPS_BANK_STRIDE_BYTES_720P(" not in core:
+    if not has_stride720:
         errors.append(
             "B7_PRESENT_CORE_NO_OPTC_STRIDE: present_core.sv missing "
-            ".HPS_BANK_STRIDE_BYTES_720P(...) on ddr_frame_store"
+            ".HPS_BANK_STRIDE_BYTES_720P(...) on ddr_frame_store instance"
         )
-    if ".DOORBELL_PHYS_720P(" not in core:
+    if not has_db720:
         errors.append(
             "B7_PRESENT_CORE_NO_OPTC_DOORBELL: present_core.sv missing "
-            ".DOORBELL_PHYS_720P(...) on ddr_frame_store"
+            ".DOORBELL_PHYS_720P(...) on ddr_frame_store instance"
         )
-    if (
-        ".PHYS_BASE_720P(" in core
-        and ".HPS_BANK_STRIDE_BYTES_720P(" in core
-        and ".DOORBELL_PHYS_720P(" in core
-    ):
+    if has_phys720 and has_stride720 and has_db720:
         msgs.append("LEG0_EVIDENCE present_core passes PHYS_BASE_720P/stride/doorbell720")
 
     # Fit card must not claim usable-capacity is already product code while stale.
@@ -1268,6 +1627,89 @@ def leg0_arch_blockers() -> tuple[int, list[str]]:
                 "LEG0_NOTE: colorbars Template path remains under `ifndef PRESENT_BEAM_960` "
                 "— acceptable only if QSF forces PRESENT_BEAM_960=1 (leg1)"
             )
+
+    # --- B15: ifdef collision class (parent: 6 occurrences tonight) ---
+    # Observed class: one `ifdef PRESENT_BEAM_960` enables runtime DE in present_core
+    # while another module under the same macro forces constant 960×540 content/geom
+    # (w-mem mux pin vs w-clock content_w/h). Full multi-driver SV is not tractable
+    # statically; this check covers the named collision pair with quoted artefacts.
+    plex_b15 = _read(ROOT / "fpga" / "Plex_MiSTer" / "Plex.sv")
+    mux_b15 = _read(RTL / "plex_present_geom_mux.sv")
+    core_b15 = _read(RTL / "present_core.sv")
+    # Runtime-enable under PRESENT_BEAM_960 / beam path in core:
+    core_enables_rt = bool(
+        re.search(r"use_rt_geom\s*\(\s*1'b1\s*\)", core_b15)
+    ) or bool(re.search(r"rt_h_de\s*\(\s*beam_hde_req", core_b15))
+    # Force-constant override under PRESENT_BEAM_960 in hierarchy/mux:
+    force_const_960 = False
+    force_src = ""
+    if mux_b15:
+        # force_native_960=1'b1 under ifdef (unconditional pin) — collision
+        if re.search(
+            r"`ifdef\s+PRESENT_BEAM_960[\s\S]{0,400}?force_native_960\s*=\s*1'b1",
+            mux_b15,
+        ) and not re.search(
+            r"force_native_960\s*=\s*~plxg_live",
+            mux_b15,
+        ):
+            force_const_960 = True
+            force_src = "plex_present_geom_mux.sv force_native_960=1 under PRESENT_BEAM_960"
+        # content_width = force ? 960 with force always 1
+        if re.search(r"force_native_960\s*=\s*1'b1", mux_b15) and re.search(
+            r"content_width\s*=\s*force_native_960\s*\?\s*11'd960", mux_b15
+        ):
+            # Only collision if force is unconditional (not ~plxg_live)
+            if not re.search(r"force_native_960\s*=\s*~plxg_live", mux_b15):
+                force_const_960 = True
+                force_src = "plex_present_geom_mux.sv pins content_width 960 when force=1"
+    if plex_b15 and re.search(
+        r"`ifdef\s+PRESENT_BEAM_960[\s\S]{0,800}?content_width[^\n]*=[^\n]*11'd960",
+        plex_b15,
+    ):
+        # Direct Plex.sv force under macro (collision #5 class before mux split)
+        if not re.search(r"plxg_live|fabric_plxg_live", plex_b15):
+            force_const_960 = True
+            force_src = force_src or "Plex.sv PRESENT_BEAM_960 forces content 960"
+        # Also: keep markers that pin 960 under beam without PLXG priority
+        if re.search(
+            r"`ifdef\s+PRESENT_BEAM_960[\s\S]{0,200}?_b8_PRESENT_BEAM_960_content_w\s*=\s*11'd960",
+            plex_b15,
+        ):
+            # markers alone are not policy if mux has plxg priority — note only
+            msgs.append(
+                "LEG0_COLLISION_NOTE Plex.sv has _b8_PRESENT_BEAM_960_content_w=960 marker"
+            )
+    # present_core hard .H_DE(960) while also use_rt_geom — soft note if both
+    core_hard_and_rt = bool(
+        re.search(r"\.H_DE\(\s*960\s*\)", core_b15)
+    ) and core_enables_rt
+    msgs.append(
+        f"LEG0_COLLISION_SCAN core_rt={int(core_enables_rt)} "
+        f"force_const_960={int(force_const_960)} core_hard_and_rt={int(core_hard_and_rt)} "
+        f"src={force_src or 'none'}"
+    )
+    if core_enables_rt and force_const_960:
+        errors.append(
+            "B15_IFDEF_COLLISION_PRESENT_BEAM_960: same macro PRESENT_BEAM_960 enables "
+            "runtime DE in present_core (use_rt_geom/rt_h_de←content_w) AND forces "
+            f"constant 960×540 override ({force_src}). Parent collision class "
+            "(6× tonight): one ifdef must not both enable a feature and pin a "
+            "constant that defeats it. Fix: force only as PLXG-idle fallback "
+            "(~plxg_live), never unconditional under the enable macro."
+        )
+    elif force_const_960 and not core_enables_rt:
+        # Force without runtime path is B13/B8 territory; still flag policy pin.
+        msgs.append(
+            "LEG0_COLLISION_NOTE force_const_960 without core_rt — covered by B8/B13"
+        )
+    # Tractability note (always printed once).
+    msgs.append(
+        "LEG0_COLLISION_TRACTABILITY: full multi-driver/SV elaboration not attempted; "
+        "B15 covers named PRESENT_BEAM_960 enable-vs-force pair across "
+        "present_core + plex_present_geom_mux/Plex.sv (observed class). "
+        "General 'two modules drive same signal with contradictory policies' "
+        "requires elaboration — not statically complete here."
+    )
 
     # Anti-theatre: gate source must not define self-pass switches (not mere mentions).
     gate_src = _read(Path(__file__))
@@ -2257,22 +2699,27 @@ def _mutation_per_blocker_clear_restore() -> list[str]:
         return txt + "\n// epoch session_id generation mut marker for ABA clear\n"
 
     def clear_core_optc_ports(txt: str) -> str:
-        # Insert dummy port ties near ddr_frame_store instance if present.
-        needle = "ddr_frame_store"
-        if needle not in txt:
+        # Inject into the real ddr_frame_store #(...) parameter list only.
+        m = re.search(r"(ddr_frame_store\s*#\s*\()(.*?)(\)\s*\w+\s*\()", txt, re.DOTALL)
+        if not m:
             return txt + (
-                "\n// mut present_core optc\n"
-                ".PHYS_BASE_720P(0),\n"
-                ".HPS_BANK_STRIDE_BYTES_720P(0),\n"
-                ".DOORBELL_PHYS_720P(0)\n"
+                "\n// mut present_core optc fallback — no instance found\n"
+                "ddr_frame_store #(\n"
+                "\t.PHYS_BASE_720P(0),\n"
+                "\t.HPS_BANK_STRIDE_BYTES_720P(0),\n"
+                "\t.DOORBELL_PHYS_720P(0)\n"
+                ") mut_fstore (\n);\n"
             )
-        return txt.replace(
-            needle,
-            needle
-            + " /*mut*/ .PHYS_BASE_720P(0) .HPS_BANK_STRIDE_BYTES_720P(0) "
-            ".DOORBELL_PHYS_720P(0) ",
-            1,
+        params = m.group(2)
+        inject = (
+            "\n\t.PHYS_BASE_720P(DDR_FRAME_720P_PHYS_BASE),\n"
+            "\t.HPS_BANK_STRIDE_BYTES_720P(DDR_FRAME_720P_YUV420P_BANK_STRIDE),\n"
+            "\t.DOORBELL_PHYS_720P(DDR_FRAME_720P_YUV420P_DOORBELL_PHYS),\n"
         )
+        if ".PHYS_BASE_720P(" in params:
+            return txt  # already clear
+        new_params = inject + params
+        return txt[: m.start()] + m.group(1) + new_params + m.group(3) + txt[m.end() :]
 
     def clear_plxg_ties(txt: str) -> str:
         txt = re.sub(r"\bplxg_wr_en\s*=\s*1'b0\b", "plxg_wr_en = 1'b1", txt, count=1)
@@ -2407,7 +2854,8 @@ def _mutation_per_blocker_clear_restore() -> list[str]:
             else:
                 _rc_c, msgs_c = leg0_arch_blockers()
                 toks_c = _leg0_error_tokens(msgs_c)
-                if token in toks_c:
+                clear_ok = token not in toks_c
+                if not clear_ok:
                     fails.append(
                         f"{token}: still present after minimal clear "
                         f"(check may be sticky/wrong — HOLE)"
@@ -2418,11 +2866,12 @@ def _mutation_per_blocker_clear_restore() -> list[str]:
                 restorers.clear()
                 _rc_r, msgs_r = leg0_arch_blockers()
                 toks_r = _leg0_error_tokens(msgs_r)
-                if token not in toks_r:
+                restore_ok = token in toks_r
+                if not restore_ok:
                     fails.append(
                         f"{token}: vanished after restore — mutation hole"
                     )
-                else:
+                if clear_ok and restore_ok:
                     print(f"  MUT_OK {token} clear_drop=1 restore_fire=1")
         finally:
             for r in reversed(restorers):
@@ -2434,15 +2883,17 @@ def _mutation_per_blocker_clear_restore() -> list[str]:
             rest = _with_file_backup(path, body)
             _rc_c, msgs_c = leg0_arch_blockers()
             toks_c = _leg0_error_tokens(msgs_c)
-            if token in toks_c:
+            clear_ok = token not in toks_c
+            if not clear_ok:
                 fails.append(f"{token}: still present after dummy test create — HOLE")
             rest()
             rest = None
             _rc_r, msgs_r = leg0_arch_blockers()
             toks_r = _leg0_error_tokens(msgs_r)
-            if token not in toks_r:
+            restore_ok = token in toks_r
+            if not restore_ok:
                 fails.append(f"{token}: vanished after dummy remove — hole")
-            else:
+            if clear_ok and restore_ok:
                 print(f"  MUT_OK {token} clear_drop=1 restore_fire=1")
         finally:
             if rest is not None:
@@ -2596,10 +3047,20 @@ def _mutation_closed_class_reinject() -> list[str]:
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument(
+        "--root",
+        type=Path,
+        default=None,
+        help=(
+            "Scan/integration tree root (fpga/Plex_MiSTer). Gate scripts stay on "
+            "the ruler (this file's repo). w-osd merge: "
+            "fitgate/scripts/fit_release_gate.sh --root $MERGE --qsf $MERGE/fpga/Plex_MiSTer/Plex.qsf"
+        ),
+    )
+    ap.add_argument(
         "--qsf",
         type=Path,
-        default=DEFAULT_QSF,
-        help="Quartus settings file to parse (default: project Plex.qsf)",
+        default=None,
+        help="Quartus settings file (default: <root>/fpga/Plex_MiSTer/Plex.qsf)",
     )
     ap.add_argument(
         "--self-test",
@@ -2616,11 +3077,48 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Isolation only: skip leg0 architecture blockers (NOT a fit grant)",
     )
+    ap.add_argument(
+        "--print-integration-help",
+        action="store_true",
+        help="Print supported w-osd/integration invocation and exit 0",
+    )
     args = ap.parse_args(argv)
+    if args.print_integration_help:
+        print(
+            """FIT_RELEASE_GATE integration (w-osd) — supported invocation
+============================================================
+Canonical ruler lives in w-fitgate. Merged RTL is a different tree.
+B11 forbids QSF from tree A + RTL from tree B unless --root unifies them.
+
+  MERGE=/path/to/merged-integration-tree
+  RULER=/home/flynnsbit/Projects/MisterPlex-wt-fitgate
+
+  # Full grant path (only number that can release the fit):
+  "$RULER/scripts/fit_release_gate.sh" \\
+      --root "$MERGE" \\
+      --qsf  "$MERGE/fpga/Plex_MiSTer/Plex.qsf"
+  echo "true rc=$?"
+
+Requirements:
+  - $MERGE has fpga/Plex_MiSTer (+ QSF under $MERGE)
+  - docs/fit_candidate.json in $MERGE with git_tree_hash for THAT tree
+    (after merge: run gate once, copy printed live_gated hash into candidate)
+  - Gate identity is the RULER scripts (LEG0_COUNT_REFUSED if ruler drifts)
+  - Do NOT point --qsf at a foreign tree without --root (B11)
+
+Per-lane counts are NOT fit grants. Only the merged --root run is.
+"""
+        )
+        return 0
     if args.self_test:
+        # Self-test always on ruler tree.
+        apply_scan_root(RULER_ROOT)
         return self_test()
+    if args.root is not None:
+        apply_scan_root(args.root)
+    qsf = args.qsf.resolve() if args.qsf is not None else DEFAULT_QSF.resolve()
     return run_gate(
-        args.qsf.resolve(),
+        qsf,
         skip_arch=args.skip_arch,
         force_island=args.force_island_leg3,
     )
